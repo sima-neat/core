@@ -96,18 +96,22 @@ gst-inspect-1.0 neatpciehost
 
 The Windows preview is a native Visual Studio build of the `pcie::Model` vision
 API. It does not support `pcie::genai::GenAIModel`. Install the matching x64
-GStreamer MSVC runtime and the SiMa PCIe driver first. Then install the supplied
-Scheduler PCIe-host ZIP and Neat PCIe-host ZIP into the same
-`C:\Program Files\SimaPCIeHost` root. Install the separately supplied
-`win_amd64` wheel into a venv:
+GStreamer MSVC runtime, the SiMa PCIe driver and the existing SiMa CLI first.
+Create the application environment, then ask the CLI to install the matched
+Scheduler MSI, Core MSI and `win_amd64` wheel as one cohort:
 
 ```powershell
 py -3 -m venv pyneatpcie
-$wheel = Get-ChildItem .\pyneatpcie-*-win_amd64.whl | Select-Object -First 1
-if (-not $wheel) { throw "No PyNeatPCIe Windows wheel was found" }
-.\pyneatpcie\Scripts\python.exe -m pip install $wheel.FullName
+sima-cli neat install core/pciehost/windows/amd64@3.0 `
+  --python-executable .\pyneatpcie\Scripts\python.exe
 .\pyneatpcie\Scripts\python.exe -m pip check
 ```
+
+The CLI verifies the published checksums, invokes Windows Installer for Scheduler
+and then Core, and invokes pip through the Python executable you supplied. Run
+the same command again for repair or upgrade. Omit `--python-executable` for a
+native C++-only installation. Windows Installer owns native removal; pip owns
+removal from the selected Python environment.
 
 The Python package discovers DLLs under the default install root and the default
 x64 GStreamer location before importing its extension. For another install root,

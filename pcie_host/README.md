@@ -417,8 +417,9 @@ metadata for the MSI and optional wheel. The default per-machine destination is
 
 Core does not copy or repackage Scheduler-owned files. The release publication
 places both owner-produced MSIs in the same manifest so customers do not manage
-the repository boundary. The Platform driver, host DLLs and daemon remain a
-separate Platform prerequisite.
+the repository boundary. Scheduler CI retains its owner-produced candidate but
+does not expose it as a customer release before Core's combined hardware gate.
+The Platform driver, host DLLs and daemon remain a separate Platform prerequisite.
 
 ### Windows package CI
 
@@ -441,11 +442,23 @@ installation root remains. The retained dependency receipt hashes the Platform
 runtime DLLs and records the GStreamer and CMake dependency inputs used by Core.
 
 The retained `core-pciehost-windows-amd64` artifact is the complete ordered
-cohort: Scheduler MSI, Core MSI, optional `pyneatpcie` wheel, checksum metadata,
-producer receipts and installer logs. It remains marked as not hardware-qualified.
-A separate Windows 11 runner attached directly to a Modalix card must consume
-this same artifact for inference, lifecycle, recovery and performance gates
-before release promotion.
+cohort: Scheduler MSI, Core MSI, optional `pyneatpcie` wheel, C++ hardware test
+extras, checksum metadata, producer receipts and installer logs. A separate
+`pcie-windows-hardware` Windows 11 runner consumes those exact bytes locally. It
+holds an exclusive card lock, verifies the card runtime checksum, installs the
+cohort, runs the public C++ and Python vision suites, and then removes Python,
+Core and Scheduler in reverse order. Release admission requires the same resource
+checksums, no remaining card worker, and a clean install root. GenAI remains off
+in validation-only runs until its Windows transport is supported. Customer
+publication is deliberately blocked until the same lane can run the complete
+C++ and Python GenAI matrix.
+
+Validation runs may use unsigned development artifacts. A publishing run requires
+Scheduler and Core to sign their shipped EXE, DLL, PYD and MSI files with a
+runner-provisioned certificate and RFC 3161 timestamp. CI records and verifies
+the Authenticode results before the direct-card gate; publication only runs after
+both gates pass. The certificate and private key stay in the Windows certificate
+store and are not repository inputs.
 
 `build.sh` follows the Scheduler policy in Core's `deps/manifest.json`, in the
 `production` publication environment by default. Branch `snap` first tries

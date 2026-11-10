@@ -1,0 +1,105 @@
+#!/usr/bin/env python3
+"""Idempotent emergency cleanup for the Windows PCIe hardware CI job."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+from pathlib import Path
+import re
+import shutil
+import subprocess
+import sys
+
+from qualify_windows_hardware import stop_card_workers
+from windows_candidate import validate_candidate
+
+
+def stale_lock_pid(path: Path) -> int | None:
+  try:
+    match = re.search(r"\bpid=(\d+)\b", path.read_text(encoding="utf-8"))
+  except OSError:
+    return None
+  return int(match.group(1)) if match else None
+
+
+def process_is_running(pid: int) -> bool:
+  result = subprocess.run(
+      ["tasklist.exe", "/FI", f"PID eq {pid}", "/NH", "/FO", "CSV"],
+      check=False, capture_output=True, text=True)
+  return result.returncode == 0 and f'"{pid}"' in result.stdout
+
+
+def recover_stale_lock(path: Path) -> None:
+  if not path.exists():
+    return
+  pid = stale_lock_pid(path)
+  if pid is None or process_is_running(pid):
+    raise RuntimeError(f"refusing to clear an active or unreadable PCIe hardware lock: {path}")
+  path.unlink()
+
+
+def remove_msi(msi: Path, log: Path) -> int:
+  result = subprocess.run(
+      ["msiexec.exe", "/x", str(msi), "/quiet", "/norestart", "/L*v", str(log)],
+      check=False)
+  if result.returncode not in {0, 1605}:
+    raise RuntimeError(f"Windows Installer cleanup failed with {result.returncode}; see {log}")
+  return result.returncode
+
+
+def cleanup(args: argparse.Namespace) -> None:
+  if sys.platform != "win32":
+    raise RuntimeError("Windows PCIe cleanup must run on Windows")
+  candidate = validate_candidate(args.candidate)
+  evidence = args.evidence.resolve()
+  evidence.mkdir(parents=True, exist_ok=True)
+  errors = []
+  results = {}
+
+  try:
+    stop_card_workers(args, evidence)
+    results["card_workers"] = "stopped"
+  except BaseException as error:
+    errors.append(str(error))
+  for owner, msi in (("core", candidate.core_msi), ("scheduler", candidate.scheduler_msi)):
+    try:
+      results[f"{owner}_msi"] = remove_msi(msi, evidence / f"recovery-{owner}-msi.log")
+    except BaseException as error:
+      errors.append(str(error))
+  shutil.rmtree(args.work.resolve() / "venv", ignore_errors=True)
+  install_root = Path(os.environ["ProgramFiles"]) / "SimaPCIeHost"
+  if install_root.exists():
+    errors.append(f"cohort left files after recovery removal: {install_root}")
+
+  if errors:
+    results["lock"] = "retained for operator recovery"
+  else:
+    try:
+      recover_stale_lock(args.lock_file.resolve())
+      results["lock"] = "released"
+    except BaseException as error:
+      errors.append(str(error))
+  receipt = {"errors": errors, "results": results}
+  (evidence / "recovery-cleanup.json").write_text(
+      json.dumps(receipt, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+  if errors:
+    raise RuntimeError("; ".join(errors))
+
+
+def main() -> None:
+  parser = argparse.ArgumentParser(description=__doc__)
+  parser.add_argument("--candidate", type=Path, required=True)
+  parser.add_argument("--card-host", required=True)
+  parser.add_argument("--card-user", default="sima")
+  parser.add_argument("--evidence", type=Path, required=True)
+  parser.add_argument("--lock-file", type=Path, required=True)
+  parser.add_argument("--ssh-key", type=Path, required=True)
+  parser.add_argument("--work", type=Path, required=True)
+  args = parser.parse_args()
+  cleanup(args)
+
+
+if __name__ == "__main__":
+  main()

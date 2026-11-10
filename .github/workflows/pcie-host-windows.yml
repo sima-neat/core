@@ -6,12 +6,28 @@ on:
         description: Scheduler Actions run containing the exact Windows candidate
         type: string
         required: true
+      include_genai:
+        description: Run GenAI acceptance when the Windows transport is enabled
+        type: boolean
+        default: false
+      validation_only:
+        description: Build and qualify without signing or publishing
+        type: boolean
+        default: true
   workflow_dispatch:
     inputs:
       scheduler_run_id:
         description: Scheduler Actions run containing scheduler-native-windows-amd64
         type: string
         required: true
+      include_genai:
+        description: Run GenAI acceptance when the Windows transport is enabled
+        type: boolean
+        default: false
+      validation_only:
+        description: Build and qualify without signing or publishing
+        type: boolean
+        default: true
 permissions:
   contents: read
 concurrency:
@@ -25,7 +41,13 @@ jobs:
         with:
           persist-credentials: false
       - run: python3 pcie_host/tests/test_windows_ci.py
-      - run: python3 -m py_compile scripts/ci/pciehost/build_windows.py
+      - run: >-
+          python3 -m py_compile
+          scripts/ci/pciehost/build_windows.py
+          scripts/ci/pciehost/cleanup_windows_hardware.py
+          scripts/ci/pciehost/qualify_windows_hardware.py
+          scripts/ci/pciehost/verify_windows_release.py
+          scripts/ci/pciehost/windows_candidate.py
       - run: git diff --check
   native:
     name: Native Windows amd64 cohort
@@ -42,6 +64,9 @@ jobs:
       SIMA_WINDOWS_CMAKE_PREFIX_PATH: ${{ vars.SIMA_WINDOWS_CMAKE_PREFIX_PATH }}
       SIMA_WINDOWS_PLATFORM_RUNTIME_DIR: ${{ vars.SIMA_WINDOWS_PLATFORM_RUNTIME_DIR }}
       SIMA_WINDOWS_PYTHON_WHEELHOUSE: ${{ vars.SIMA_WINDOWS_PYTHON_WHEELHOUSE }}
+      SIMA_WINDOWS_SIGNING_CERTIFICATE_SHA1: ${{ vars.SIMA_WINDOWS_SIGNING_CERTIFICATE_SHA1 }}
+      SIMA_WINDOWS_SIGNING_MACHINE_STORE: ${{ vars.SIMA_WINDOWS_SIGNING_MACHINE_STORE }}
+      SIMA_WINDOWS_SIGNING_TIMESTAMP_URL: ${{ vars.SIMA_WINDOWS_SIGNING_TIMESTAMP_URL }}
     steps:
       - uses: actions/checkout@v5
         with:
@@ -98,6 +123,21 @@ jobs:
               if ($prefix) { $arguments += @("--dependency-prefix", $prefix) }
             }
           }
+          if ("${{ inputs.validation_only }}" -ne "true") {
+            if (-not $env:SIMA_WINDOWS_SIGNING_CERTIFICATE_SHA1) {
+              throw "Release mode requires SIMA_WINDOWS_SIGNING_CERTIFICATE_SHA1"
+            }
+            $arguments += @(
+              "--require-signatures",
+              "--signing-certificate-sha1", $env:SIMA_WINDOWS_SIGNING_CERTIFICATE_SHA1
+            )
+            if ($env:SIMA_WINDOWS_SIGNING_TIMESTAMP_URL) {
+              $arguments += @("--signing-timestamp-url", $env:SIMA_WINDOWS_SIGNING_TIMESTAMP_URL)
+            }
+            if ($env:SIMA_WINDOWS_SIGNING_MACHINE_STORE -eq "true") {
+              $arguments += "--signing-machine-store"
+            }
+          }
           & python @arguments
           if ($LASTEXITCODE -ne 0) { throw "Windows Core producer failed: $LASTEXITCODE" }
       - name: Retain Core Windows cohort and evidence
@@ -108,3 +148,169 @@ jobs:
           path: ${{ runner.temp }}/core-windows-dist/*
           if-no-files-found: error
           retention-days: 7
+  hardware:
+    name: Direct-card Windows acceptance
+    needs: native
+    if: needs.native.result == 'success'
+    concurrency:
+      group: core-windows-pcie-hardware-card0
+      cancel-in-progress: false
+    environment: production
+    runs-on: [self-hosted, Windows, X64, pcie-windows-hardware, default]
+    timeout-minutes: 180
+    permissions:
+      contents: read
+      actions: read
+    env:
+      GSTREAMER_ROOT_X86_64: ${{ vars.GSTREAMER_ROOT_X86_64 }}
+      SIMA_WINDOWS_CMAKE_PREFIX_PATH: ${{ vars.SIMA_WINDOWS_CMAKE_PREFIX_PATH }}
+      SIMA_WINDOWS_PLATFORM_RUNTIME_DIR: ${{ vars.SIMA_WINDOWS_PLATFORM_RUNTIME_DIR }}
+      SIMA_WINDOWS_PYTHON_WHEELHOUSE: ${{ vars.SIMA_WINDOWS_PYTHON_WHEELHOUSE }}
+      SIMAPCIE_BOXDECODE_IMAGE: ${{ vars.SIMA_WINDOWS_PCIE_BOXDECODE_IMAGE }}
+      SIMAPCIE_CARD_GST_DEBUG: ${{ vars.SIMAPCIE_PCIEHOST_CARD_GST_DEBUG }}
+      SIMAPCIE_CARD_HOST: ${{ vars.SIMA_WINDOWS_PCIE_CARD_HOST }}
+      SIMAPCIE_CARD_ID: "0"
+      SIMAPCIE_EXPECTED_CARD_RUNTIME_SHA256: ${{ vars.SIMA_WINDOWS_PCIE_EXPECTED_CARD_RUNTIME_SHA256 }}
+      SIMAPCIE_EXPECTED_CARD_WORKER_SHA256: ${{ vars.SIMA_WINDOWS_PCIE_EXPECTED_CARD_WORKER_SHA256 }}
+      SIMAPCIE_EXPECTED_CARD_GENAI_WORKER_SHA256: ${{ vars.SIMA_WINDOWS_PCIE_EXPECTED_CARD_GENAI_WORKER_SHA256 }}
+      SIMAPCIE_GENAI_MODELS_PATH: ${{ vars.SIMA_WINDOWS_PCIE_GENAI_MODELS_PATH }}
+      SIMAPCIE_GENAI_TEST_ASSETS: ${{ vars.SIMA_WINDOWS_PCIE_GENAI_TEST_ASSETS }}
+      SIMAPCIE_LIFECYCLE_CYCLES: "10"
+      SIMAPCIE_LIFETIME_ITERATIONS: "20"
+      SIMAPCIE_MLA_ONLY_BF16_MODEL: ${{ vars.SIMA_WINDOWS_PCIE_MLA_ONLY_BF16_MODEL }}
+      SIMAPCIE_MLA_ONLY_MODEL: ${{ vars.SIMA_WINDOWS_PCIE_MLA_ONLY_MODEL }}
+      SIMAPCIE_PULL_TIMEOUT_MS: "30000"
+      SIMAPCIE_READINESS_TIMEOUT_MS: "180000"
+      SIMAPCIE_SSH_KEY: ${{ vars.SIMA_WINDOWS_PCIE_SSH_KEY }}
+      SIMAPCIE_STRESS_ITERATIONS: "1000"
+      SIMAPCIE_STRESS_QUEUES: "0 1 2 3 4 5"
+      SIMAPCIE_SYNC_ITERATIONS: "50"
+      SIMAPCIE_TEST_IMAGE: ${{ vars.SIMA_WINDOWS_PCIE_TEST_IMAGE }}
+      SIMAPCIE_TEST_ITERATIONS: "1000"
+      SIMAPCIE_TEST_REQUIREMENTS: ${{ vars.SIMA_WINDOWS_PCIE_TEST_REQUIREMENTS }}
+      SIMAPCIE_USER: "sima"
+      SIMAPCIE_YOLOV8_MODEL: ${{ vars.SIMA_WINDOWS_PCIE_YOLOV8_MODEL }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/download-artifact@v4
+        with:
+          name: core-pciehost-windows-amd64
+          path: ${{ runner.temp }}/core-windows-candidate
+      - name: Install, test both APIs, and remove exact cohort
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          if ("${{ inputs.validation_only }}" -ne "true" -and "${{ inputs.include_genai }}" -ne "true") {
+            throw "Customer release requires the complete Windows GenAI hardware matrix"
+          }
+          foreach ($name in @(
+            "GSTREAMER_ROOT_X86_64",
+            "SIMA_WINDOWS_PLATFORM_RUNTIME_DIR",
+            "SIMA_WINDOWS_PYTHON_WHEELHOUSE",
+            "SIMAPCIE_CARD_HOST",
+            "SIMAPCIE_EXPECTED_CARD_RUNTIME_SHA256",
+            "SIMAPCIE_EXPECTED_CARD_WORKER_SHA256",
+            "SIMAPCIE_SSH_KEY",
+            "SIMAPCIE_YOLOV8_MODEL",
+            "SIMAPCIE_MLA_ONLY_MODEL",
+            "SIMAPCIE_MLA_ONLY_BF16_MODEL",
+            "SIMAPCIE_TEST_IMAGE",
+            "SIMAPCIE_BOXDECODE_IMAGE"
+          )) {
+            if (-not (Get-Item "env:$name").Value) { throw "Required hardware variable is unset: $name" }
+          }
+          $arguments = @(
+            "scripts/ci/pciehost/qualify_windows_hardware.py",
+            "--candidate", "$env:RUNNER_TEMP\core-windows-candidate",
+            "--card-host", $env:SIMAPCIE_CARD_HOST,
+            "--expected-card-runtime-sha256", $env:SIMAPCIE_EXPECTED_CARD_RUNTIME_SHA256,
+            "--expected-card-worker-sha256", $env:SIMAPCIE_EXPECTED_CARD_WORKER_SHA256,
+            "--gstreamer-root", $env:GSTREAMER_ROOT_X86_64,
+            "--lock-file", "$env:USERPROFILE\.sima\locks\neat-pcie-card0.lock",
+            "--platform-runtime", $env:SIMA_WINDOWS_PLATFORM_RUNTIME_DIR,
+            "--python-wheelhouse", $env:SIMA_WINDOWS_PYTHON_WHEELHOUSE,
+            "--source-root", $env:GITHUB_WORKSPACE,
+            "--ssh-key", $env:SIMAPCIE_SSH_KEY,
+            "--work", "$env:RUNNER_TEMP\core-windows-hardware",
+            "--evidence", "$env:RUNNER_TEMP\core-windows-hardware-evidence"
+          )
+          if ("${{ inputs.include_genai }}" -eq "true") {
+            if (-not $env:SIMAPCIE_EXPECTED_CARD_GENAI_WORKER_SHA256) {
+              throw "GenAI qualification requires SIMAPCIE_EXPECTED_CARD_GENAI_WORKER_SHA256"
+            }
+            $arguments += @(
+              "--include-genai",
+              "--expected-card-genai-worker-sha256", $env:SIMAPCIE_EXPECTED_CARD_GENAI_WORKER_SHA256
+            )
+          }
+          if ($env:SIMA_WINDOWS_CMAKE_PREFIX_PATH) {
+            foreach ($prefix in $env:SIMA_WINDOWS_CMAKE_PREFIX_PATH.Split(";")) {
+              if ($prefix) { $arguments += @("--dependency-prefix", $prefix) }
+            }
+          }
+          if ($env:SIMAPCIE_TEST_REQUIREMENTS) {
+            foreach ($requirement in $env:SIMAPCIE_TEST_REQUIREMENTS.Split(";")) {
+              if ($requirement) { $arguments += @("--test-requirement", $requirement) }
+            }
+          }
+          & python @arguments
+          if ($LASTEXITCODE -ne 0) { throw "Windows hardware qualification failed: $LASTEXITCODE" }
+      - name: Recover card and native installation
+        if: always()
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          & python scripts/ci/pciehost/cleanup_windows_hardware.py `
+            --candidate "$env:RUNNER_TEMP\core-windows-candidate" `
+            --card-host $env:SIMAPCIE_CARD_HOST `
+            --evidence "$env:RUNNER_TEMP\core-windows-hardware-evidence" `
+            --lock-file "$env:USERPROFILE\.sima\locks\neat-pcie-card0.lock" `
+            --ssh-key $env:SIMAPCIE_SSH_KEY `
+            --work "$env:RUNNER_TEMP\core-windows-hardware"
+          if ($LASTEXITCODE -ne 0) { throw "Windows hardware recovery failed: $LASTEXITCODE" }
+      - name: Enforce release admission
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $arguments = @(
+            "scripts/ci/pciehost/verify_windows_release.py",
+            "--candidate", "$env:RUNNER_TEMP\core-windows-candidate",
+            "--qualification", "$env:RUNNER_TEMP\core-windows-hardware-evidence\hardware-qualification.json",
+            "--expected-commit", $env:GITHUB_SHA,
+            "--output", "$env:RUNNER_TEMP\core-windows-hardware-evidence\release-admission.json"
+          )
+          if ("${{ inputs.validation_only }}" -ne "true") {
+            $arguments += @("--require-signatures", "--require-genai")
+          }
+          & python @arguments
+          if ($LASTEXITCODE -ne 0) { throw "Windows release admission failed: $LASTEXITCODE" }
+      - name: Retain direct-card evidence
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: core-pciehost-windows-hardware-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/core-windows-hardware-evidence/*
+          if-no-files-found: error
+          retention-days: 14
+  publish:
+    name: Publish qualified Windows cohort
+    needs: hardware
+    if: inputs.validation_only != true && needs.hardware.result == 'success'
+    permissions:
+      contents: read
+      actions: write
+      id-token: write
+    uses: sima-neat/.github/.github/workflows/vulcan-publish-artifacts.yml@58c7dc729d9e995631578cfc33643613d81d44a4
+    with:
+      environment_name: production
+      artifact_namespace: core
+      source_branch: ${{ github.head_ref || github.ref_name }}
+      source_commit: ${{ github.sha }}
+      artifact_folder: pciehost/windows/amd64
+      artifact_pattern: core-pciehost-windows-amd64
+      artifact_glob: '*'
+      publish_manifest: true
+      cleanup_github_artifacts: false

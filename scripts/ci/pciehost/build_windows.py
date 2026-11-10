@@ -18,6 +18,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import zipfile
 
 
@@ -129,6 +130,99 @@ def inspect_x64(path: Path, dumpbin: str) -> None:
     raise ValueError(f"built artifact is not an x64 PE/COFF file: {path}")
 
 
+def authenticode_status(path: Path, powershell: str) -> dict[str, str | None]:
+  script = (
+      "$signature = Get-AuthenticodeSignature -LiteralPath $args[0]; "
+      "$thumbprint = $null; "
+      "$timestampThumbprint = $null; "
+      "if ($signature.SignerCertificate) {$thumbprint = $signature.SignerCertificate.Thumbprint}; "
+      "if ($signature.TimeStamperCertificate) "
+      "{$timestampThumbprint = $signature.TimeStamperCertificate.Thumbprint}; "
+      "[pscustomobject]@{"
+      "status=[string]$signature.Status; "
+      "message=[string]$signature.StatusMessage; "
+      "thumbprint=$thumbprint; timestamp_thumbprint=$timestampThumbprint} | "
+      "ConvertTo-Json -Compress"
+  )
+  value = json.loads(run(
+      [powershell, "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script, path],
+      capture=True,
+  ))
+  return {
+      "status": str(value.get("status", "")),
+      "message": str(value.get("message", "")),
+      "thumbprint": value.get("thumbprint"),
+      "timestamp_thumbprint": value.get("timestamp_thumbprint"),
+  }
+
+
+def sign_files(paths: list[Path], signtool: str, certificate_sha1: str,
+               timestamp_url: str, machine_store: bool) -> None:
+  certificate_sha1 = certificate_sha1.replace(" ", "").upper()
+  if not re.fullmatch(r"[0-9A-F]{40}", certificate_sha1):
+    raise ValueError("the Windows signing certificate SHA-1 is invalid")
+  if not timestamp_url.startswith("https://"):
+    raise ValueError("the Windows signing timestamp URL must use HTTPS")
+  for path in paths:
+    command = [signtool, "sign", "/sha1", certificate_sha1]
+    if machine_store:
+      command.append("/sm")
+    command.extend(["/fd", "SHA256", "/tr", timestamp_url, "/td", "SHA256", path])
+    run(command)
+
+
+def native_files(root: Path) -> list[Path]:
+  return [
+      path for path in sorted(root.rglob("*"))
+      if path.is_file() and path.suffix.lower() in (".dll", ".exe", ".pyd")
+  ]
+
+
+def build_sources_for_installed(build_root: Path, installed_roots: list[Path]) -> list[Path]:
+  build_by_name: dict[str, list[Path]] = {}
+  for path in native_files(build_root):
+    build_by_name.setdefault(path.name.lower(), []).append(path)
+  selected = []
+  for name in sorted({path.name.lower() for root in installed_roots for path in native_files(root)}):
+    matches = build_by_name.get(name, [])
+    if len(matches) != 1:
+      raise ValueError(f"cannot identify one build source for shipped native file {name}: {matches}")
+    selected.append(matches[0])
+  if not selected:
+    raise ValueError("Windows Core producer installed no native files")
+  return selected
+
+
+def wheel_native_signatures(wheel: Path, powershell: str) -> list[dict]:
+  with tempfile.TemporaryDirectory() as directory:
+    root = Path(directory)
+    with zipfile.ZipFile(wheel) as archive:
+      native_names = [name for name in archive.namelist() if name.lower().endswith(".pyd")]
+      if not native_names:
+        raise ValueError("Windows wheel contains no PYD to verify")
+      for name in native_names:
+        if Path(name).is_absolute() or ".." in Path(name).parts:
+          raise ValueError(f"unsafe wheel member: {name}")
+        archive.extract(name, root)
+    return [
+        {"path": name, **authenticode_status(root / name, powershell)}
+        for name in native_names
+    ]
+
+
+def require_valid_signatures(records: list[dict], description: str,
+                             certificate_sha1: str) -> None:
+  expected = certificate_sha1.replace(" ", "").upper()
+  invalid = [
+      record["path"] for record in records
+      if record.get("status") != "Valid"
+      or str(record.get("thumbprint", "")).upper() != expected
+      or not record.get("timestamp_thumbprint")
+  ]
+  if invalid:
+    raise RuntimeError(f"{description} has missing or invalid Authenticode signatures: {invalid}")
+
+
 def msi_transaction(msi: Path, action: str, log: Path) -> int:
   result = subprocess.run(
       ["msiexec.exe", f"/{action}", str(msi), "/quiet", "/norestart", "/L*v", str(log)],
@@ -195,6 +289,7 @@ def build(args: argparse.Namespace) -> None:
   dumpbin = require_program("dumpbin.exe")
   cl = require_program("cl.exe")
   ninja = require_program("ninja.exe")
+  powershell = require_program("pwsh.exe")
   python = require_file(Path(sys.executable), "producer Python")
   if not os.environ.get("WIX"):
     raise ValueError("WIX must name the pinned WiX v3 tool directory")
@@ -256,6 +351,7 @@ def build(args: argparse.Namespace) -> None:
         "-DCMAKE_PREFIX_PATH=" + prefix_path,
         "-DSimaScheduler_DIR=" + str(scheduler_config),
         "-DSIMAPCIE_BUILD_TESTS=ON",
+        "-DSIMAPCIE_BUILD_HARDWARE_TESTS=ON",
         "-DSIMAPCIE_BUILD_PYTHON=ON",
         "-DPython3_EXECUTABLE=" + str(python),
         "-DPython_EXECUTABLE=" + str(python),
@@ -276,9 +372,32 @@ def build(args: argparse.Namespace) -> None:
     for component in ("Runtime", "Development"):
       run([cmake, "--install", build_dir, "--config", "Release", "--prefix", stage,
            "--component", component], env=environment)
-    stage.rename(relocated)
     run([cmake, "--install", build_dir, "--config", "Release", "--prefix", python_stage,
          "--component", "PcieHostPython"], env=environment)
+    if args.signing_certificate_sha1:
+      signtool = require_program("signtool.exe")
+      sign_files(
+          build_sources_for_installed(build_dir, [stage, python_stage]),
+          signtool, args.signing_certificate_sha1,
+          args.signing_timestamp_url, args.signing_machine_store)
+      for component in ("Runtime", "Development"):
+        run([cmake, "--install", build_dir, "--config", "Release", "--prefix", stage,
+             "--component", component], env=environment)
+      run([cmake, "--install", build_dir, "--config", "Release", "--prefix", python_stage,
+           "--component", "PcieHostPython"], env=environment)
+    elif args.require_signatures:
+      raise RuntimeError("release mode requires a Windows signing certificate")
+    stage.rename(relocated)
+    hardware_tests = output / "hardware-tests"
+    run([cmake, "--install", build_dir, "--config", "Release", "--prefix", hardware_tests,
+         "--component", "PcieHostExtras"], env=environment)
+    hardware_native = native_files(hardware_tests)
+    if not hardware_native:
+      raise ValueError("Windows Core producer installed no C++ hardware test executables")
+    if args.signing_certificate_sha1:
+      sign_files(
+          hardware_native, signtool, args.signing_certificate_sha1,
+          args.signing_timestamp_url, args.signing_machine_store)
 
     version = json.loads((ROOT / "deps" / "manifest.json").read_text(encoding="utf-8"))[
         "package-version"]
@@ -325,6 +444,10 @@ def build(args: argparse.Namespace) -> None:
     if len(core_packages) != 1:
       raise ValueError(f"expected exactly one Core MSI, found {len(core_packages)}")
     core_msi = core_packages[0]
+    if args.signing_certificate_sha1:
+      sign_files(
+          [core_msi], signtool, args.signing_certificate_sha1,
+          args.signing_timestamp_url, args.signing_machine_store)
     shutil.copy2(scheduler_msi, output / scheduler_msi.name)
     scheduler_msi = output / scheduler_msi.name
 
@@ -346,6 +469,38 @@ def build(args: argparse.Namespace) -> None:
       require_file(required, "installed Core MSI payload")
     check_consumer(install_root, "installed")
     run([gst_inspect, plugin], env=environment)
+
+    signature_records = []
+    for owner, root in (("core", relocated), ("python", python_stage),
+                        ("hardware-tests", hardware_tests)):
+      for path in native_files(root):
+        signature_records.append({
+            "owner": owner,
+            "path": path.relative_to(root).as_posix(),
+            **authenticode_status(path, powershell),
+        })
+    signature_records.extend({
+        "owner": "package",
+        "path": path.name,
+        **authenticode_status(path, powershell),
+    } for path in (scheduler_msi, core_msi))
+    signature_records.extend({"owner": "python-wheel", **record}
+                             for record in wheel_native_signatures(wheel, powershell))
+    scheduler_plugin_signature = {
+        "owner": "scheduler",
+        "path": plugin.relative_to(install_root).as_posix(),
+        **authenticode_status(plugin, powershell),
+    }
+    signature_records.append(scheduler_plugin_signature)
+    if args.require_signatures:
+      require_valid_signatures(
+          signature_records, "release candidate", args.signing_certificate_sha1)
+    write_json(output / "windows-signatures.json", {
+        "certificate_sha1": args.signing_certificate_sha1.replace(" ", "").upper(),
+        "release_required": args.require_signatures,
+        "records": signature_records,
+        "timestamp_url": args.signing_timestamp_url if args.signing_certificate_sha1 else None,
+    })
 
     before_repeat = file_inventory(install_root)
     scheduler_repeat_code = msi_transaction(
@@ -508,6 +663,10 @@ def main() -> None:
   parser.add_argument("--platform-runtime", type=Path, required=True)
   parser.add_argument("--python-wheelhouse", type=Path, required=True)
   parser.add_argument("--scheduler-candidate", type=Path, required=True)
+  parser.add_argument("--require-signatures", action="store_true")
+  parser.add_argument("--signing-certificate-sha1", default="")
+  parser.add_argument("--signing-machine-store", action="store_true")
+  parser.add_argument("--signing-timestamp-url", default="https://timestamp.digicert.com")
   parser.add_argument("--work", type=Path, required=True)
   build(parser.parse_args())
 
