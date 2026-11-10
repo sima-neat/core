@@ -118,6 +118,15 @@ def verify(candidate_dir: Path, qualification_path: Path, expected_commit: str,
       or repair.get("scheduler") != "PASS"
       or customer_install.get("plugin_discovery") != "PASS"):
     raise ValueError("hardware qualification did not prove MSI repair and plugin discovery")
+  if require_signatures:
+    upgrade = customer_install.get("upgrade")
+    if (not isinstance(upgrade, dict) or upgrade.get("status") != "PASS"
+        or not re.fullmatch(r"[0-9a-f]{40}", str(upgrade.get("baseline_commit", "")))
+        or upgrade.get("baseline_commit") == candidate.core_commit
+        or not upgrade.get("baseline_version") or not upgrade.get("candidate_version")
+        or upgrade.get("baseline_version") == upgrade.get("candidate_version")
+        or upgrade.get("candidate_version") != candidate.metadata.get("version")):
+      raise ValueError("release qualification did not prove a real MSI package upgrade")
   sima_cli = qualification.get("sima_cli")
   if (not isinstance(sima_cli, dict)
       or not re.fullmatch(r"[0-9a-f]{40}", str(sima_cli.get("commit", "")))

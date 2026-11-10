@@ -468,6 +468,16 @@ Scheduler Windows workflow, and the exact successful sima-cli workflow. Existing
 Linux regressions and dependency producer validation therefore cannot be bypassed
 by dispatching the Windows workflow directly.
 
+A publishing run also selects an earlier successful Core Windows workflow by
+run ID and full commit. The hardware runner installs that cohort first through
+the same `sima-cli` command, then installs the release candidate over it. The
+two cohorts must have different Core package versions and different package
+bytes. Release admission fails unless the upgrade succeeds and the candidate
+still passes repair, plug-in discovery, API, fault-recovery, and clean-removal
+checks. The unconditional recovery step knows both MSI cohorts, so it can remove
+the older installation if the candidate fails before Windows Installer finishes
+the upgrade.
+
 The hardware runner's pinned offline wheelhouse must contain the dependencies
 of both `pyneatpcie` and the selected `sima-cli` wheel. This keeps the acceptance
 transaction independent of PyPI while still exercising the real customer CLI.

@@ -259,6 +259,26 @@ def stage_local_registry(candidate, root: Path) -> Path:
   return package
 
 
+def load_upgrade_base(candidate, directory: Path | None, expected_commit: str):
+  if directory is None:
+    return None
+  upgrade_base = validate_candidate(directory)
+  if upgrade_base.core_commit != expected_commit:
+    raise ValueError(
+        "upgrade baseline commit does not match --expected-upgrade-base-commit")
+  if upgrade_base.core_commit == candidate.core_commit:
+    raise ValueError("upgrade baseline and candidate name the same Core commit")
+  upgrade_base_version = str(upgrade_base.metadata.get("version", ""))
+  candidate_version = str(candidate.metadata.get("version", ""))
+  if not upgrade_base_version or not candidate_version:
+    raise ValueError("upgrade baseline and candidate must name package versions")
+  if upgrade_base_version == candidate_version:
+    raise ValueError("upgrade baseline and candidate must have different package versions")
+  if upgrade_base.resources == candidate.resources:
+    raise ValueError("upgrade baseline and candidate contain identical package resources")
+  return upgrade_base
+
+
 @contextmanager
 def local_registry(root: Path):
   handler = partial(SimpleHTTPRequestHandler, directory=str(root))
@@ -627,6 +647,8 @@ def run_python_tests(args: argparse.Namespace, python: Path, evidence: Path,
 def qualify(args: argparse.Namespace) -> None:
   require_windows()
   candidate = validate_candidate(args.candidate)
+  upgrade_base = load_upgrade_base(
+      candidate, args.upgrade_base_candidate, args.expected_upgrade_base_commit)
   evidence = require_fresh_directory(args.evidence, "evidence directory")
   work = require_fresh_directory(args.work, "hardware work directory")
   wheelhouse = args.python_wheelhouse.resolve(strict=True)
@@ -698,14 +720,28 @@ def qualify(args: argparse.Namespace) -> None:
       cli_environment.pop("PYTHONPATH", None)
       cli_environment["PIP_NO_INDEX"] = "1"
       cli_environment["PIP_FIND_LINKS"] = str(wheelhouse)
-      download_root = work / "customer downloads with spaces"
+      native_download_root = work / "native customer downloads with spaces"
       target = "core/pciehost/windows/amd64@3.0"
+      if upgrade_base is not None:
+        upgrade_registry_root = work / "upgrade baseline registry with spaces"
+        stage_local_registry(upgrade_base, upgrade_registry_root)
+        with local_registry(upgrade_registry_root) as registry_url:
+          upgrade_base_command = [
+              cli, "neat", "--base-url", registry_url, "install", target,
+              "--install-dir", native_download_root,
+          ]
+          run_logged(
+              upgrade_base_command, evidence / "sima-cli-upgrade-baseline-install.log",
+              env=cli_environment, cwd=work, timeout=1800)
+        if not install_root.is_dir():
+          raise RuntimeError("sima-cli installed no native upgrade baseline")
+
       native_registry_root = work / "native only registry with spaces"
       stage_local_registry(candidate, native_registry_root)
       with local_registry(native_registry_root) as registry_url:
         native_command = [
             cli, "neat", "--base-url", registry_url, "install", target,
-            "--install-dir", download_root,
+            "--install-dir", native_download_root,
         ]
         run_logged(
             native_command, evidence / "sima-cli-native-only-install.log",
@@ -720,10 +756,11 @@ def qualify(args: argparse.Namespace) -> None:
       missing_registry_root = work / "missing wheel registry with spaces"
       missing_package = stage_local_registry(candidate, missing_registry_root)
       (missing_package / candidate.wheel.name).unlink()
+      missing_download_root = work / "missing wheel downloads with spaces"
       with local_registry(missing_registry_root) as registry_url:
         missing_command = [
             cli, "neat", "--base-url", registry_url, "install", target,
-            "--install-dir", download_root,
+            "--install-dir", missing_download_root,
             "--python-executable", python,
         ]
         missing_code = run_expected_failure(
@@ -738,10 +775,11 @@ def qualify(args: argparse.Namespace) -> None:
 
       registry_root = work / "complete registry with spaces"
       stage_local_registry(candidate, registry_root)
+      recovery_download_root = work / "recovery downloads with spaces"
       with local_registry(registry_root) as registry_url:
         command = [
             cli, "neat", "--base-url", registry_url, "install", target,
-            "--install-dir", download_root,
+            "--install-dir", recovery_download_root,
             "--python-executable", python,
         ]
         run_logged(
@@ -752,12 +790,19 @@ def qualify(args: argparse.Namespace) -> None:
             env=cli_environment, cwd=work, timeout=1800)
       result["customer_install"] = {
           "command": target,
-          "download_path_with_spaces": str(download_root),
+          "download_path_with_spaces": str(recovery_download_root),
           "missing_wheel": {"exit_code": missing_code, "status": "PASS"},
           "native_only": "PASS",
           "recovery": "PASS",
           "repeat": "PASS",
       }
+      if upgrade_base is not None:
+        result["customer_install"]["upgrade"] = {
+            "baseline_commit": upgrade_base.core_commit,
+            "baseline_version": str(upgrade_base.metadata["version"]),
+            "candidate_version": str(candidate.metadata["version"]),
+            "status": "PASS",
+        }
 
       result["customer_install"]["repair"] = {
           "core": repair_owned_file(
@@ -829,6 +874,14 @@ def qualify(args: argparse.Namespace) -> None:
             candidate.scheduler_msi, evidence / "scheduler-msi-uninstall.log")
       except BaseException as error:
         cleanup_errors.append(str(error))
+      if install_root.exists() and upgrade_base is not None:
+        for owner, msi in (("core", upgrade_base.core_msi),
+                           ("scheduler", upgrade_base.scheduler_msi)):
+          try:
+            result["cleanup"][f"upgrade_base_{owner}_msi"] = remove_msi(
+                msi, evidence / f"upgrade-base-{owner}-msi-uninstall.log")
+          except BaseException as error:
+            cleanup_errors.append(str(error))
       shutil.rmtree(venv, ignore_errors=True)
       if install_root.exists():
         cleanup_errors.append(f"cohort left files after removal: {install_root}")
@@ -881,6 +934,8 @@ def main() -> None:
   parser.add_argument("--ssh-key", type=Path, required=True)
   parser.add_argument("--test-requirement", action="append", default=[])
   parser.add_argument("--test-timeout-seconds", type=int, default=7200)
+  parser.add_argument("--upgrade-base-candidate", type=Path)
+  parser.add_argument("--expected-upgrade-base-commit", default="")
   parser.add_argument("--work", type=Path, required=True)
   args = parser.parse_args()
   for name in ("expected_card_runtime_sha256", "expected_card_worker_sha256"):
@@ -888,6 +943,12 @@ def main() -> None:
       parser.error(f"--{name.replace('_', '-')} must be a SHA-256 digest")
   if not re.fullmatch(r"[0-9a-f]{40}", args.expected_sima_cli_commit):
     parser.error("--expected-sima-cli-commit must be a full lowercase Git commit")
+  if (args.upgrade_base_candidate is None) != (not args.expected_upgrade_base_commit):
+    parser.error(
+        "--upgrade-base-candidate and --expected-upgrade-base-commit must be supplied together")
+  if args.upgrade_base_candidate is not None and not re.fullmatch(
+      r"[0-9a-f]{40}", args.expected_upgrade_base_commit):
+    parser.error("--expected-upgrade-base-commit must be a full lowercase Git commit")
   if args.include_genai and not re.fullmatch(
       r"[0-9a-fA-F]{64}", args.expected_card_genai_worker_sha256):
     parser.error("--expected-card-genai-worker-sha256 is required with --include-genai")

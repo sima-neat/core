@@ -22,6 +22,14 @@ on:
         description: Successful Vulcan CI run for this exact Core commit (required for release)
         type: string
         default: ''
+      upgrade_base_run_id:
+        description: Earlier successful Core Windows run used as the release upgrade baseline
+        type: string
+        default: ''
+      upgrade_base_commit:
+        description: Full Core commit selected by upgrade_base_run_id
+        type: string
+        default: ''
       include_genai:
         description: Run GenAI acceptance when the Windows transport is enabled
         type: boolean
@@ -50,6 +58,14 @@ on:
         required: true
       linux_run_id:
         description: Successful Vulcan CI run for this exact Core commit (required for release)
+        type: string
+        default: ''
+      upgrade_base_run_id:
+        description: Earlier successful Core Windows run used as the release upgrade baseline
+        type: string
+        default: ''
+      upgrade_base_commit:
+        description: Full Core commit selected by upgrade_base_run_id
         type: string
         default: ''
       include_genai:
@@ -156,6 +172,29 @@ jobs:
             --workflow-name "Scheduler native Windows PCIe host" \
             --workflow-path ".github/workflows/pcie-host-windows.yml" \
             --output "${RUNNER_TEMP}/scheduler-release-admission.json"
+      - name: Admit exact successful Windows upgrade baseline
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          if [[ ! "${{ inputs.upgrade_base_run_id }}" =~ ^[1-9][0-9]*$ ]]; then
+            echo "Release mode requires a numeric upgrade_base_run_id." >&2
+            exit 1
+          fi
+          if [[ ! "${{ inputs.upgrade_base_commit }}" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "Release mode requires a full lowercase upgrade_base_commit." >&2
+            exit 1
+          fi
+          if [[ "${{ inputs.upgrade_base_commit }}" == "${GITHUB_SHA}" ]]; then
+            echo "Windows upgrade baseline must differ from the release candidate." >&2
+            exit 1
+          fi
+          python3 scripts/ci/pciehost/verify_linux_release_run.py \
+            --repository "${GITHUB_REPOSITORY}" \
+            --run-id "${{ inputs.upgrade_base_run_id }}" \
+            --expected-commit "${{ inputs.upgrade_base_commit }}" \
+            --workflow-name "Core native Windows PCIe host" \
+            --workflow-path ".github/workflows/pcie-host-windows.yml" \
+            --output "${RUNNER_TEMP}/windows-upgrade-base-admission.json"
       - name: Retain Linux release admission
         uses: actions/upload-artifact@v6
         with:
@@ -164,6 +203,7 @@ jobs:
             ${{ runner.temp }}/linux-release-admission.json
             ${{ runner.temp }}/scheduler-release-admission.json
             ${{ runner.temp }}/sima-cli-release-admission.json
+            ${{ runner.temp }}/windows-upgrade-base-admission.json
           if-no-files-found: error
           retention-days: 14
   native:
@@ -317,6 +357,15 @@ jobs:
         with:
           name: core-pciehost-windows-amd64
           path: ${{ runner.temp }}/core-windows-candidate
+      - name: Download exact Windows upgrade baseline
+        if: inputs.validation_only != true
+        uses: actions/download-artifact@v4
+        with:
+          name: core-pciehost-windows-amd64
+          path: ${{ runner.temp }}/core-windows-upgrade-base
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.upgrade_base_run_id }}
+          github-token: ${{ github.token }}
       - name: Mint read-only sima-cli artifact token
         id: sima-cli-token
         uses: actions/create-github-app-token@v2
@@ -384,6 +433,12 @@ jobs:
               "--expected-card-genai-worker-sha256", $env:SIMAPCIE_EXPECTED_CARD_GENAI_WORKER_SHA256
             )
           }
+          if ("${{ inputs.validation_only }}" -ne "true") {
+            $arguments += @(
+              "--upgrade-base-candidate", "$env:RUNNER_TEMP\core-windows-upgrade-base",
+              "--expected-upgrade-base-commit", "${{ inputs.upgrade_base_commit }}"
+            )
+          }
           if ($env:SIMA_WINDOWS_CMAKE_PREFIX_PATH) {
             foreach ($prefix in $env:SIMA_WINDOWS_CMAKE_PREFIX_PATH.Split(";")) {
               if ($prefix) { $arguments += @("--dependency-prefix", $prefix) }
@@ -401,13 +456,21 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          & python scripts/ci/pciehost/cleanup_windows_hardware.py `
-            --candidate "$env:RUNNER_TEMP\core-windows-candidate" `
-            --card-host $env:SIMAPCIE_CARD_HOST `
-            --evidence "$env:RUNNER_TEMP\core-windows-hardware-evidence" `
-            --lock-file "$env:USERPROFILE\.sima\locks\neat-pcie-card0.lock" `
-            --ssh-key $env:SIMAPCIE_SSH_KEY `
-            --work "$env:RUNNER_TEMP\core-windows-hardware"
+          $arguments = @(
+            "scripts/ci/pciehost/cleanup_windows_hardware.py",
+            "--candidate", "$env:RUNNER_TEMP\core-windows-candidate",
+            "--card-host", $env:SIMAPCIE_CARD_HOST,
+            "--evidence", "$env:RUNNER_TEMP\core-windows-hardware-evidence",
+            "--lock-file", "$env:USERPROFILE\.sima\locks\neat-pcie-card0.lock",
+            "--ssh-key", $env:SIMAPCIE_SSH_KEY,
+            "--work", "$env:RUNNER_TEMP\core-windows-hardware"
+          )
+          if (Test-Path -LiteralPath "$env:RUNNER_TEMP\core-windows-upgrade-base") {
+            $arguments += @(
+              "--upgrade-base-candidate", "$env:RUNNER_TEMP\core-windows-upgrade-base"
+            )
+          }
+          & python @arguments
           if ($LASTEXITCODE -ne 0) { throw "Windows hardware recovery failed: $LASTEXITCODE" }
       - name: Enforce release admission
         shell: pwsh

@@ -53,6 +53,8 @@ def cleanup(args: argparse.Namespace) -> None:
   if sys.platform != "win32":
     raise RuntimeError("Windows PCIe cleanup must run on Windows")
   candidate = validate_candidate(args.candidate)
+  upgrade_base = (validate_candidate(args.upgrade_base_candidate)
+                  if args.upgrade_base_candidate is not None else None)
   evidence = args.evidence.resolve()
   evidence.mkdir(parents=True, exist_ok=True)
   errors = []
@@ -68,8 +70,20 @@ def cleanup(args: argparse.Namespace) -> None:
       results[f"{owner}_msi"] = remove_msi(msi, evidence / f"recovery-{owner}-msi.log")
     except BaseException as error:
       errors.append(str(error))
-  shutil.rmtree(args.work.resolve() / "venv", ignore_errors=True)
   install_root = Path(os.environ["ProgramFiles"]) / "SimaPCIeHost"
+  if install_root.exists() and upgrade_base is not None:
+    for owner, msi in (("core", upgrade_base.core_msi),
+                       ("scheduler", upgrade_base.scheduler_msi)):
+      try:
+        results[f"upgrade_base_{owner}_msi"] = remove_msi(
+            msi, evidence / f"recovery-upgrade-base-{owner}-msi.log")
+      except BaseException as error:
+        errors.append(str(error))
+  work = args.work.resolve()
+  if work == Path(work.anchor) or work == Path.home().resolve():
+    errors.append(f"refusing to remove unsafe hardware work directory: {work}")
+  else:
+    shutil.rmtree(work, ignore_errors=True)
   if install_root.exists():
     errors.append(f"cohort left files after recovery removal: {install_root}")
 
@@ -96,6 +110,7 @@ def main() -> None:
   parser.add_argument("--evidence", type=Path, required=True)
   parser.add_argument("--lock-file", type=Path, required=True)
   parser.add_argument("--ssh-key", type=Path, required=True)
+  parser.add_argument("--upgrade-base-candidate", type=Path)
   parser.add_argument("--work", type=Path, required=True)
   args = parser.parse_args()
   cleanup(args)

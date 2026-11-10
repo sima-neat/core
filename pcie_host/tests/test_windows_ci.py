@@ -20,7 +20,7 @@ assert SPEC.loader
 SPEC.loader.exec_module(MODULE)
 from windows_candidate import sha256, validate_candidate  # noqa: E402
 from qualify_windows_hardware import (  # noqa: E402
-    ExclusiveLock, sima_cli_identity, stage_local_registry,
+    ExclusiveLock, load_upgrade_base, sima_cli_identity, stage_local_registry,
     stage_path_fixtures, stress_queues)
 from verify_linux_release_run import verify_run as verify_linux_run  # noqa: E402
 from verify_windows_release import verify  # noqa: E402
@@ -100,6 +100,12 @@ class WindowsCiContracts(unittest.TestCase):
     self.assertIn("--require-signatures", source)
     self.assertIn("Recover card and native installation", source)
     self.assertIn("if: always()", source)
+    self.assertIn("upgrade_base_run_id", source)
+    self.assertIn("upgrade_base_commit", source)
+    self.assertIn("Admit exact successful Windows upgrade baseline", source)
+    self.assertIn('"Core native Windows PCIe host"', source)
+    self.assertIn("core-windows-upgrade-base", source)
+    self.assertIn("--expected-upgrade-base-commit", source)
 
   def test_producer_records_runtime_inputs_and_repeat_installation(self):
     source = SCRIPT.read_text(encoding="utf-8")
@@ -115,6 +121,11 @@ class WindowsCiContracts(unittest.TestCase):
     self.assertIn("process.kill()", source)
     self.assertIn('"/fa"', source)
     self.assertIn('"gst-inspect-1.0.exe"', source)
+    self.assertIn('work / "native customer downloads with spaces"', source)
+    self.assertIn('work / "missing wheel downloads with spaces"', source)
+    self.assertIn('work / "recovery downloads with spaces"', source)
+    cleanup = (SCRIPT_DIR / "cleanup_windows_hardware.py").read_text(encoding="utf-8")
+    self.assertIn("shutil.rmtree(work, ignore_errors=True)", cleanup)
 
   def test_wheel_payload_reader_checks_crc(self):
     with tempfile.TemporaryDirectory() as directory:
@@ -124,12 +135,13 @@ class WindowsCiContracts(unittest.TestCase):
         archive.writestr("pyneatpcie/__init__.py", b"")
       self.assertEqual(MODULE.wheel_payload_names(wheel), {"pyneatpcie/__init__.py"})
 
-  def windows_candidate(self, root: Path, *, signed: bool = True):
+  def windows_candidate(self, root: Path, *, signed: bool = True,
+                        commit: str = "c" * 40, version: str = "0.6.2"):
     scheduler = root / "scheduler.msi"
     core = root / "core.msi"
     wheel = root / "pyneatpcie.whl"
     for path, content in ((scheduler, b"scheduler"), (core, b"core"), (wheel, b"wheel")):
-      path.write_bytes(content)
+      path.write_bytes(content + commit.encode("ascii"))
     resources = {path.name: sha256(path) for path in (scheduler, core, wheel)}
     qualification_resource = root / "qualification-resource.bin"
     qualification_resource.write_bytes(b"hardware-tests-and-signature-receipt")
@@ -167,7 +179,6 @@ class WindowsCiContracts(unittest.TestCase):
         "release_required": signed,
         "timestamp_url": "https://timestamp.example" if signed else None,
     }), encoding="utf-8")
-    commit = "c" * 40
     (root / "metadata.json").write_text(json.dumps({
         "artifact": {"package_path": "pciehost/windows/amd64"},
         "commit": commit,
@@ -183,6 +194,7 @@ class WindowsCiContracts(unittest.TestCase):
         "repository": "sima-neat/core",
         "resources": list(resources),
         "resources-checksum": resources,
+        "version": version,
     }), encoding="utf-8")
     (root / "host-candidate.json").write_text(json.dumps({
         "core_source_commit": commit,
@@ -211,6 +223,12 @@ class WindowsCiContracts(unittest.TestCase):
             "repair": {"core": "PASS", "scheduler": "PASS"},
             "recovery": "PASS",
             "repeat": "PASS",
+            "upgrade": {
+                "baseline_commit": "b" * 40,
+                "baseline_version": "0.6.1",
+                "candidate_version": version,
+                "status": "PASS",
+            },
         },
         "path_fixtures": {
             "SIMAPCIE_YOLOV8_MODEL": r"C:\qualification assets\model.tar.gz",
@@ -293,6 +311,39 @@ class WindowsCiContracts(unittest.TestCase):
       commit, _, qualification = self.windows_candidate(root, signed=False)
       with self.assertRaisesRegex(ValueError, "not built in signed release mode"):
         verify(root, qualification, commit, True)
+
+  def test_release_gate_requires_real_package_upgrade(self):
+    with tempfile.TemporaryDirectory() as directory:
+      root = Path(directory)
+      commit, _, qualification = self.windows_candidate(root)
+      value = json.loads(qualification.read_text(encoding="utf-8"))
+      del value["customer_install"]["upgrade"]
+      qualification.write_text(json.dumps(value), encoding="utf-8")
+      with self.assertRaisesRegex(ValueError, "real MSI package upgrade"):
+        verify(root, qualification, commit, True)
+
+  def test_upgrade_baseline_must_name_a_different_package_version(self):
+    with tempfile.TemporaryDirectory() as directory:
+      root = Path(directory)
+      candidate_root = root / "candidate"
+      baseline_root = root / "baseline"
+      candidate_root.mkdir()
+      baseline_root.mkdir()
+      candidate_commit, _, _ = self.windows_candidate(
+          candidate_root, commit="c" * 40, version="0.6.2")
+      baseline_commit, _, _ = self.windows_candidate(
+          baseline_root, commit="b" * 40, version="0.6.1")
+      candidate = validate_candidate(candidate_root)
+      baseline = load_upgrade_base(candidate, baseline_root, baseline_commit)
+      self.assertEqual(baseline.core_commit, baseline_commit)
+      self.assertNotEqual(candidate_commit, baseline_commit)
+      with self.assertRaisesRegex(ValueError, "does not match"):
+        load_upgrade_base(candidate, baseline_root, "a" * 40)
+      baseline.metadata["version"] = candidate.metadata["version"]
+      (baseline_root / "metadata.json").write_text(
+          json.dumps(baseline.metadata), encoding="utf-8")
+      with self.assertRaisesRegex(ValueError, "different package versions"):
+        load_upgrade_base(candidate, baseline_root, baseline_commit)
 
   def test_release_gate_rejects_unsigned_platform_dependency(self):
     with tempfile.TemporaryDirectory() as directory:
