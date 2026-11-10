@@ -59,6 +59,7 @@ struct Args {
   int pull_timeout_ms = env_int_or_default("SIMAPCIE_PULL_TIMEOUT_MS", 30000);
   int lifecycle_cycles = env_int_or_default("SIMAPCIE_LIFECYCLE_CYCLES", 3);
   int lifetime_iterations = env_int_or_default("SIMAPCIE_LIFETIME_ITERATIONS", 20);
+  std::string card_env = env_or_default("SIMAPCIE_CARD_ENV", "");
   std::string card_gst_debug = env_or_default("SIMAPCIE_CARD_GST_DEBUG", "");
   std::string card_gst_debug_file = env_or_default("SIMAPCIE_CARD_GST_DEBUG_FILE", "");
 };
@@ -270,6 +271,7 @@ pcie::ConnectionOptions connection(const Args& args) {
   value.user = args.user;
   value.queue = args.queue;
   value.max_inflight = 1;
+  value.card_env = args.card_env;
   value.card_gst_debug = args.card_gst_debug;
   value.card_gst_debug_file = args.card_gst_debug_file;
   return value;
