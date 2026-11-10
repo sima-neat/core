@@ -4,6 +4,7 @@
 import importlib.util
 import json
 from pathlib import Path
+import subprocess
 import sys
 import tempfile
 from types import SimpleNamespace
@@ -22,8 +23,8 @@ assert SPEC.loader
 SPEC.loader.exec_module(MODULE)
 from windows_candidate import dependency_identity, sha256, validate_candidate  # noqa: E402
 from qualify_windows_hardware import (  # noqa: E402
-    ExclusiveLock, card_snapshot, load_upgrade_base, parse_performance_log,
-    sima_cli_identity, stage_local_registry,
+    ExclusiveLock, RemoteExclusiveLock, card_snapshot, load_upgrade_base,
+    parse_performance_log, sima_cli_identity, stage_local_registry,
     stage_invalid_wheel_registry, stage_path_fixtures, stress_queues)
 from verify_linux_release_run import verify_run as verify_linux_run  # noqa: E402
 from verify_windows_release import verify  # noqa: E402
@@ -294,7 +295,8 @@ class WindowsCiContracts(unittest.TestCase):
             "workers": "0",
         },
         "cleanup": {
-            "core_msi": "PASS", "errors": [], "python": "PASS", "scheduler_msi": "PASS"},
+            "core_msi": "PASS", "errors": [], "python": "PASS", "remote_lock": "PASS",
+            "scheduler_msi": "PASS"},
         "customer_install": {
             "command": "core/pciehost/windows/amd64@3.0",
             "download_path_with_spaces": r"C:\customer downloads\candidate",
@@ -615,6 +617,34 @@ class WindowsCiContracts(unittest.TestCase):
       with ExclusiveLock(path) as lock:
         lock.retain()
       self.assertTrue(path.is_file())
+      path.unlink()
+      with ExclusiveLock(path) as lock:
+        lock.retain()
+        lock.release_on_exit()
+      self.assertFalse(path.exists())
+
+  def test_card_side_lock_is_owned_and_released_by_token(self):
+    with tempfile.TemporaryDirectory() as directory:
+      root = Path(directory)
+      key = root / "id_ed25519"
+      key.write_text("fixture", encoding="ascii")
+      args = SimpleNamespace(card_host="10.0.0.2", card_user="sima", ssh_key=key)
+      token = "a" * 32
+      remote_lock = RemoteExclusiveLock(args, "/tmp/neat-pcie-card0.lock", token)
+      completed = subprocess.CompletedProcess([], 0, "")
+      with mock.patch("qualify_windows_hardware.subprocess.run", return_value=completed) as run:
+        remote_lock.acquire(root / "acquire.log")
+        remote_lock.release(root / "release.log")
+      self.assertEqual(run.call_count, 2)
+      acquire_command = run.call_args_list[0].args[0][-1]
+      release_command = run.call_args_list[1].args[0][-1]
+      self.assertIn("mkdir", acquire_command)
+      self.assertIn(token, acquire_command)
+      self.assertIn('test "$owner" = "$token"', release_command)
+
+      owner = subprocess.CompletedProcess([], 0, f"owner={token}\n")
+      with mock.patch("qualify_windows_hardware.subprocess.run", return_value=owner):
+        self.assertEqual(remote_lock.owner(root / "owner.log"), token)
 
   def test_card_snapshot_records_platform_3_build_identity(self):
     with tempfile.TemporaryDirectory() as directory:

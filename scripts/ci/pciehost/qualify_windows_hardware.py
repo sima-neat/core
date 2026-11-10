@@ -19,6 +19,7 @@ import os
 from pathlib import Path
 import platform
 import re
+import secrets
 import shutil
 import subprocess
 import sys
@@ -179,8 +180,9 @@ try {
 
 
 class ExclusiveLock:
-  def __init__(self, path: Path):
+  def __init__(self, path: Path, remote_token: str = ""):
     self.path = path.resolve()
+    self.remote_token = remote_token
     self.fd: int | None = None
     self.retain_on_exit = False
 
@@ -192,7 +194,10 @@ class ExclusiveLock:
       raise RuntimeError(
           f"PCIe hardware lock already exists: {self.path}; verify the card is idle before clearing it"
       ) from error
-    os.write(self.fd, f"pid={os.getpid()} started={datetime.now(timezone.utc).isoformat()}\n".encode())
+    record = f"pid={os.getpid()} started={datetime.now(timezone.utc).isoformat()}"
+    if self.remote_token:
+      record += f" remote_token={self.remote_token}"
+    os.write(self.fd, (record + "\n").encode())
     return self
 
   def __exit__(self, exc_type, exc_value, traceback):
@@ -204,6 +209,9 @@ class ExclusiveLock:
 
   def retain(self) -> None:
     self.retain_on_exit = True
+
+  def release_on_exit(self) -> None:
+    self.retain_on_exit = False
 
 
 def run_logged(command: list[object], log: Path, *, env: dict[str, str] | None = None,
@@ -383,6 +391,67 @@ def ssh_command(args: argparse.Namespace, remote: str) -> list[str]:
       f"{args.card_user}@{args.card_host}",
       remote,
   ]
+
+
+class RemoteExclusiveLock:
+  """Atomic card-side lock shared by every host that can SSH to the card."""
+
+  def __init__(self, args: argparse.Namespace, path: str, token: str):
+    self.args = args
+    self.path = _validate_remote_path(path)
+    if not re.fullmatch(r"[0-9a-f]{32}", token):
+      raise ValueError("remote PCIe hardware lock token must be 128-bit lowercase hex")
+    self.token = token
+    self.acquired = False
+    self.conflicted = False
+
+  def _run(self, remote: str, log: Path) -> subprocess.CompletedProcess[str]:
+    result = subprocess.run(
+        ssh_command(self.args, remote), stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        text=True, timeout=30, check=False)
+    log.write_text(
+        f"returncode={result.returncode}\n{result.stdout}", encoding="utf-8", errors="replace")
+    return result
+
+  def owner(self, log: Path) -> str | None:
+    remote = (
+        f"set -eu; lock={self.path}; "
+        "if [ -d \"$lock\" ]; then "
+        "test -r \"$lock/owner\"; printf 'owner='; cat \"$lock/owner\"; "
+        "else printf 'owner=\\n'; fi"
+    )
+    result = self._run(remote, log)
+    if result.returncode != 0:
+      raise RuntimeError(f"could not inspect card-side PCIe lock; see {log}")
+    match = re.fullmatch(r"owner=([0-9a-f]{32})?\s*", result.stdout)
+    if not match:
+      raise RuntimeError(f"card-side PCIe lock owner is invalid; see {log}")
+    return match.group(1) or None
+
+  def acquire(self, log: Path) -> None:
+    remote = (
+        f"set -eu; lock={self.path}; token={self.token}; "
+        "if mkdir \"$lock\" 2>/dev/null; then "
+        "trap 'rm -f \"$lock/owner\"; rmdir \"$lock\" 2>/dev/null || true' EXIT; "
+        "umask 077; printf '%s\\n' \"$token\" > \"$lock/owner\"; trap - EXIT; "
+        "else printf 'lock_owner='; cat \"$lock/owner\" 2>/dev/null || true; exit 73; fi"
+    )
+    result = self._run(remote, log)
+    self.conflicted = result.returncode == 73
+    if result.returncode != 0:
+      raise RuntimeError(f"card-side PCIe lock is already held or unavailable; see {log}")
+    self.acquired = True
+
+  def release(self, log: Path) -> None:
+    remote = (
+        f"set -eu; lock={self.path}; token={self.token}; "
+        "test -r \"$lock/owner\"; read -r owner < \"$lock/owner\"; "
+        "test \"$owner\" = \"$token\"; rm -f \"$lock/owner\"; rmdir \"$lock\""
+    )
+    result = self._run(remote, log)
+    if result.returncode != 0:
+      raise RuntimeError(f"could not release owned card-side PCIe lock; see {log}")
+    self.acquired = False
 
 
 def card_snapshot(args: argparse.Namespace, evidence: Path, label: str) -> dict[str, str]:
@@ -806,7 +875,18 @@ def qualify(args: argparse.Namespace) -> None:
   result["host"]["windows_security"] = windows_security_snapshot(
       evidence / "windows-security-state.log")
 
-  with ExclusiveLock(args.lock_file) as card_lock:
+  remote_lock_token = secrets.token_hex(16)
+  with ExclusiveLock(args.lock_file, remote_lock_token) as card_lock:
+    remote_lock = RemoteExclusiveLock(args, args.remote_lock_path, remote_lock_token)
+    try:
+      remote_lock.acquire(evidence / "card-lock-acquire.log")
+    except BaseException:
+      # SSH can disconnect after the remote mkdir succeeds. Retain our token for
+      # recovery unless the remote command explicitly reported lock contention.
+      if not remote_lock.conflicted:
+        card_lock.retain()
+      raise
+    card_lock.retain()
     try:
       baseline = card_snapshot(args, evidence, "baseline")
       result["card_baseline"] = baseline
@@ -1040,6 +1120,13 @@ def qualify(args: argparse.Namespace) -> None:
           cleanup_errors.append("card did not return to its qualified baseline")
       except BaseException as error:
         cleanup_errors.append(str(error))
+      if not cleanup_errors:
+        try:
+          remote_lock.release(evidence / "card-lock-release.log")
+          card_lock.release_on_exit()
+          result["cleanup"]["remote_lock"] = "PASS"
+        except BaseException as error:
+          cleanup_errors.append(str(error))
       result["cleanup"]["errors"] = cleanup_errors
       result["completed_at_utc"] = datetime.now(timezone.utc).isoformat()
       if cleanup_errors:
@@ -1072,6 +1159,7 @@ def main() -> None:
   parser.add_argument("--gstreamer-root", type=Path, required=True)
   parser.add_argument("--include-genai", action="store_true")
   parser.add_argument("--lock-file", type=Path, required=True)
+  parser.add_argument("--remote-lock-path", default="/tmp/neat-pcie-card0.lock")
   parser.add_argument("--platform-runtime", type=Path, required=True)
   parser.add_argument("--python-wheelhouse", type=Path, required=True)
   parser.add_argument("--sima-cli-candidate", type=Path, required=True)

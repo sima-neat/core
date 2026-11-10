@@ -111,7 +111,10 @@ def verify(candidate_dir: Path, qualification_path: Path, expected_commit: str,
   cleanup = qualification.get("cleanup")
   if not isinstance(cleanup, dict) or cleanup.get("errors") != []:
     raise ValueError("hardware qualification did not prove clean removal")
-  expected_cleanup = {"core_msi": "PASS", "python": "PASS", "scheduler_msi": "PASS"}
+  expected_cleanup = {
+      "core_msi": "PASS", "python": "PASS", "remote_lock": "PASS",
+      "scheduler_msi": "PASS",
+  }
   if any(cleanup.get(name) != value for name, value in expected_cleanup.items()):
     raise ValueError("hardware qualification did not remove every customer-owned component")
   customer_install = qualification.get("customer_install")

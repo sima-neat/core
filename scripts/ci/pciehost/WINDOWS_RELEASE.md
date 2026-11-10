@@ -122,10 +122,13 @@ Retain these artifacts with the release record:
 - `core-pciehost-windows-hardware-<run>-<attempt>`;
 - `core-pciehost-linux-admission-<run>-<attempt>`.
 
-The hardware workflow always stops card workers, uninstalls the wheel and both
+The hardware workflow holds both a runner-local lock and an atomic card-side
+lock, then stops card workers, uninstalls the wheel and both
 MSI cohorts, removes its disposable downloads, compares the final card state
 with the baseline, including the exact Platform 3.0 `/etc/buildinfo` hash, and
-then releases the local lock. If cleanup fails, the lock
-at `%USERPROFILE%\.sima\locks\neat-pcie-card0.lock` is deliberately retained.
-Do not delete it until the evidence logs have been reviewed and the runner,
+then releases both locks. Emergency cleanup only touches a retained card lock
+when its owner token matches the retained local record. If cleanup fails, the lock
+at `%USERPROFILE%\.sima\locks\neat-pcie-card0.lock` and its matching
+`/tmp/neat-pcie-card0.lock` card directory are deliberately retained. Do not
+delete either until the evidence logs have been reviewed and the runner,
 installation root, workers, firmware, and queues have been restored manually.

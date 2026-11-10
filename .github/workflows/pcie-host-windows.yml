@@ -423,6 +423,7 @@ jobs:
             "--expected-sima-cli-commit", "${{ inputs.sima_cli_commit }}",
             "--gstreamer-root", $env:GSTREAMER_ROOT_X86_64,
             "--lock-file", "$env:USERPROFILE\.sima\locks\neat-pcie-card0.lock",
+            "--remote-lock-path", "/tmp/neat-pcie-card0.lock",
             "--platform-runtime", $env:SIMA_WINDOWS_PLATFORM_RUNTIME_DIR,
             "--python-wheelhouse", $env:SIMA_WINDOWS_PYTHON_WHEELHOUSE,
             "--sima-cli-candidate", "$env:RUNNER_TEMP\sima-cli-candidate",
@@ -472,6 +473,7 @@ jobs:
             "--card-host", $env:SIMAPCIE_CARD_HOST,
             "--evidence", "$env:RUNNER_TEMP\core-windows-hardware-evidence",
             "--lock-file", "$env:USERPROFILE\.sima\locks\neat-pcie-card0.lock",
+            "--remote-lock-path", "/tmp/neat-pcie-card0.lock",
             "--ssh-key", $env:SIMAPCIE_SSH_KEY,
             "--work", "$env:RUNNER_TEMP\core-windows-hardware"
           )

@@ -12,7 +12,7 @@ import shutil
 import subprocess
 import sys
 
-from qualify_windows_hardware import stop_card_workers
+from qualify_windows_hardware import RemoteExclusiveLock, stop_card_workers
 from windows_candidate import validate_candidate
 
 
@@ -22,6 +22,14 @@ def stale_lock_pid(path: Path) -> int | None:
   except OSError:
     return None
   return int(match.group(1)) if match else None
+
+
+def stale_lock_remote_token(path: Path) -> str | None:
+  try:
+    match = re.search(r"\bremote_token=([0-9a-f]{32})\b", path.read_text(encoding="utf-8"))
+  except OSError:
+    return None
+  return match.group(1) if match else None
 
 
 def process_is_running(pid: int) -> bool:
@@ -60,6 +68,22 @@ def cleanup(args: argparse.Namespace) -> None:
   errors = []
   results = {}
 
+  local_lock = args.lock_file.resolve()
+  remote_token = None
+  if local_lock.exists():
+    pid = stale_lock_pid(local_lock)
+    remote_token = stale_lock_remote_token(local_lock)
+    if pid is None or process_is_running(pid) or remote_token is None:
+      raise RuntimeError(
+          f"refusing cleanup with an active or unreadable PCIe hardware lock: {local_lock}")
+  probe_token = remote_token or ("0" * 32)
+  remote_lock = RemoteExclusiveLock(args, args.remote_lock_path, probe_token)
+  remote_owner = remote_lock.owner(evidence / "recovery-card-lock-inspect.log")
+  if remote_token is None and remote_owner is not None:
+    raise RuntimeError("refusing cleanup because the card-side PCIe lock has another owner")
+  if remote_token is not None and remote_owner != remote_token:
+    raise RuntimeError("refusing cleanup because local and card-side PCIe lock owners differ")
+
   try:
     stop_card_workers(args, evidence)
     results["card_workers"] = "stopped"
@@ -91,6 +115,9 @@ def cleanup(args: argparse.Namespace) -> None:
     results["lock"] = "retained for operator recovery"
   else:
     try:
+      if remote_token is not None:
+        remote_lock.release(evidence / "recovery-card-lock-release.log")
+        results["remote_lock"] = "released"
       recover_stale_lock(args.lock_file.resolve())
       results["lock"] = "released"
     except BaseException as error:
@@ -109,6 +136,7 @@ def main() -> None:
   parser.add_argument("--card-user", default="sima")
   parser.add_argument("--evidence", type=Path, required=True)
   parser.add_argument("--lock-file", type=Path, required=True)
+  parser.add_argument("--remote-lock-path", default="/tmp/neat-pcie-card0.lock")
   parser.add_argument("--ssh-key", type=Path, required=True)
   parser.add_argument("--upgrade-base-candidate", type=Path)
   parser.add_argument("--work", type=Path, required=True)
