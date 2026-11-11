@@ -482,10 +482,23 @@ RUN_TEST(
         const auto compiled_query = stagesemantics::build_boxdecode_compiled_contract(*query);
         require(compiled_query.payload.num_classes == 91,
                 "model-managed DETR must exclude its background channel");
+        auto conflicting_mpk = query_mpk;
         MpkPluginIoContract conflicting_decoder;
+        conflicting_decoder.name = "BoxDecode_0";
+        conflicting_decoder.kernel = "boxdecode";
         conflicting_decoder.decode_type = "yolov8";
-        require(!build_boxdecode_static_contract_from_mpk(query_mpk, make_flags(false, false),
-                                                          &conflicting_decoder, &error,
+        conflicting_mpk.plugins.push_back(std::move(conflicting_decoder));
+        conflicting_mpk.edges.push_back(MpkContractEdge{
+            .src_plugin_index = 1U,
+            .src_output_index = 0,
+            .dst_plugin_index = 2U,
+            .dst_input_index = 0,
+            .src_plugin = "MLA_0_ofm_unpack",
+            .dst_plugin = "BoxDecode_0",
+            .tensor_name = "bbox_0",
+        });
+        require(!build_boxdecode_static_contract_from_mpk(conflicting_mpk, make_flags(false, false),
+                                                          &conflicting_mpk.plugins.back(), &error,
                                                           simaai::neat::BoxDecodeType::Detr),
                 "requested DETR must not overwrite an authored conflicting MPK family");
         require_contains(error, "conflicts", "MPK family conflict must be actionable");

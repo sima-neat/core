@@ -133,6 +133,20 @@ void detr_default_resolution() {
                   compiled.payload.score_activation == BoxDecodeScoreActivation::Softmax,
               "DETR must exclude the final background channel from its class count");
       check(compiled, {640, 640, 1280, 720, ResizeMode::Stretch});
+      auto planar = *raw;
+      for (auto& tensor : planar.tensors) {
+        const auto channels = tensor.input_shape.back();
+        tensor.input_shape = tensor.slice_shape = {channels, 1, 100};
+        tensor.layout = "CHW";
+        tensor.stride_bytes = {400, 400, 4};
+      }
+      const auto planar_compiled = stagesemantics::build_boxdecode_compiled_contract(planar);
+      require(planar_compiled.payload.slice_shapes[0].sizes[0] == 1 &&
+                  planar_compiled.payload.slice_shapes[0].sizes[1] == 100 &&
+                  planar_compiled.payload.slice_shapes[0].sizes[2] == 4 &&
+                  planar_compiled.payload.slice_shapes[1].sizes[2] == classes + 1,
+              "DETR compiled dense CHW slices must be canonical HWC");
+      check(planar_compiled, {640, 640, 1280, 720, ResizeMode::Stretch});
       auto subset = plugin_contracts::extract_boxdecode_contract_subset_from_static_contract(*raw);
       subset.num_classes = 0;
       subset.score_activation = BoxDecodeScoreActivation::Unknown;
@@ -519,13 +533,19 @@ void detr_numerical_publication() {
     out.push_back({data, req.storage_bytes});
     public_inputs.push_back({data, req.storage_bytes});
   }
-  require(!test::execute_host(numerical, in, out),
-          "classic DETR checked numerical execution failed");
+  // The numerical operation owns prepared scratch. The free execute_host
+  // helper is only for workspace-free callbacks such as wire publication.
+  test::OperationProbe executor, publisher;
+  require(!executor.prepare(numerical) && !publisher.prepare(publication),
+          "classic DETR numerical/publication preparation failed");
+  const auto numerical_status = executor.execute_host(executor.operation(), in, out);
+  require(!numerical_status, numerical_status ? numerical_status->message.c_str()
+                                              : "classic DETR checked numerical execution failed");
   const auto wire_bytes = inspect(publication).output_requirements()[0].storage_bytes;
   HostStorage wire(wire_bytes);
   const std::array<c::MutableBytes, 1> published{
       {{static_cast<std::byte*>(wire.memory.get()), wire_bytes}}};
-  require(!test::execute_host(publication, public_inputs, published),
+  require(!publisher.execute_host(publisher.operation(), public_inputs, published),
           "classic DETR publication failed");
   require(wire.read<std::int32_t>(0) == 2, "classic DETR lost a valid query");
   for (int row = 0; row < 2; ++row) {
