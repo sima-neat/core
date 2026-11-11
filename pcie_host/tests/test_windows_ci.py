@@ -205,8 +205,23 @@ class WindowsCiContracts(unittest.TestCase):
   def scheduler_candidate(self, root: Path) -> Path:
     msi = root / "scheduler.msi"
     msi.write_bytes(b"scheduler-msi")
+    native_junit = root / "native-tests.xml"
+    native_junit.write_text(
+        '<testsuites><testsuite tests="1"><testcase name="scheduler_native"/>'
+        '</testsuite></testsuites>', encoding="utf-8")
     receipt = root / "host-candidate.json"
-    receipt.write_text("{}\n", encoding="utf-8")
+    receipt.write_text(json.dumps({
+        "native_tests": {
+            "errors": 0,
+            "exit_code": 0,
+            "failures": 0,
+            "junit_sha256": MODULE.sha256(native_junit),
+            "names": ["scheduler_native"],
+            "skipped": 0,
+            "tests": 1,
+        },
+        "source_commit": "a" * 40,
+    }) + "\n", encoding="utf-8")
     dependencies = root / "windows-dependencies.json"
     dependencies.write_text(json.dumps({
         "gstreamer": {
@@ -221,7 +236,8 @@ class WindowsCiContracts(unittest.TestCase):
         ]},
     }), encoding="utf-8")
     resources = {
-        path.name: MODULE.sha256(path) for path in (msi, receipt, dependencies)}
+        path.name: MODULE.sha256(path)
+        for path in (msi, native_junit, receipt, dependencies)}
     (root / "metadata.json").write_text(json.dumps({
         "artifact": {"architecture": "amd64", "profile": "pcie-host-windows"},
         "commit": "a" * 40,
@@ -266,6 +282,27 @@ class WindowsCiContracts(unittest.TestCase):
       self.scheduler_candidate(root)
       with self.assertRaisesRegex(ValueError, "is not the selected commit"):
         MODULE.verify_scheduler_candidate(root, "b" * 40)
+
+  def test_scheduler_candidate_rejects_skipped_native_evidence(self):
+    with tempfile.TemporaryDirectory() as directory:
+      root = Path(directory)
+      self.scheduler_candidate(root)
+      native_junit = root / "native-tests.xml"
+      native_junit.write_text(
+          '<testsuites><testsuite tests="1" skipped="1">'
+          '<testcase name="scheduler_native"><skipped/></testcase>'
+          '</testsuite></testsuites>', encoding="utf-8")
+      receipt_path = root / "host-candidate.json"
+      receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+      receipt["native_tests"]["junit_sha256"] = MODULE.sha256(native_junit)
+      receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
+      metadata_path = root / "metadata.json"
+      metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+      metadata["resources-checksum"]["native-tests.xml"] = MODULE.sha256(native_junit)
+      metadata["resources-checksum"]["host-candidate.json"] = MODULE.sha256(receipt_path)
+      metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
+      with self.assertRaisesRegex(ValueError, "zero-skip pass"):
+        MODULE.verify_scheduler_candidate(root, "a" * 40)
 
   def test_workflow_uses_exact_scheduler_artifact_and_restricted_runner(self):
     source = WORKFLOW.read_text(encoding="utf-8")

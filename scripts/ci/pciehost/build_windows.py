@@ -136,6 +136,19 @@ def verify_scheduler_candidate(directory: Path, expected_commit: str) -> tuple[d
     path = require_file(root / name, "Scheduler candidate resource")
     if sha256(path) != checksums[name]:
       raise ValueError(f"Scheduler candidate checksum differs: {name}")
+  receipt_path = require_file(root / "host-candidate.json", "Scheduler host receipt")
+  receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+  native_tests = receipt.get("native_tests")
+  native_names = native_tests.get("names") if isinstance(native_tests, dict) else None
+  native_junit = require_file(root / "native-tests.xml", "Scheduler native JUnit evidence")
+  if (receipt.get("source_commit") != expected_commit
+      or not isinstance(native_names, list) or not native_names
+      or native_tests.get("exit_code") != 0
+      or native_tests.get("junit_sha256") != sha256(native_junit)):
+    raise ValueError("Scheduler candidate lacks exact native test evidence")
+  native_summary = require_junit_cases(native_junit, set(native_names))
+  if any(native_tests.get(key) != value for key, value in native_summary.items()):
+    raise ValueError("Scheduler candidate native test receipt differs from its JUnit evidence")
   installation = metadata.get("installation", {})
   if installation.get("type") != "windows-msi":
     raise ValueError("Scheduler candidate is not a Windows MSI installation")

@@ -74,6 +74,8 @@ run IDs between repositories.
 Native CTest and Python hardware/GenAI runs emit JUnit evidence. The candidate is
 rejected if the observed case set differs from the required set or contains any
 skip, failure, or error; a successful process exit alone is not release evidence.
+The Core producer applies the same check to the selected Scheduler profile before
+it installs or repackages that dependency.
 
 ## Validation and bootstrap overrides
 
