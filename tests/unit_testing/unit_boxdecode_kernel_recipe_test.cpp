@@ -236,9 +236,15 @@ void focal_query_contract() {
       tensor.input_shape = {tensor.input_shape.back(), 1, 300};
       tensor.slice_shape = tensor.input_shape;
       tensor.layout = "CHW";
+      tensor.stride_bytes = {1200, 1200, 4};
     }
     const auto planar_compiled = stagesemantics::build_boxdecode_compiled_contract(planar);
-    require(planar_compiled.payload.num_classes == classes, "focal planar class inference");
+    require(planar_compiled.payload.num_classes == classes &&
+                planar_compiled.payload.slice_shapes[0].sizes[0] == 1 &&
+                planar_compiled.payload.slice_shapes[0].sizes[1] == 300 &&
+                planar_compiled.payload.slice_shapes[0].sizes[2] == 4 &&
+                planar_compiled.payload.slice_shapes[1].sizes[2] == classes,
+            "focal planar class inference and canonical HWC slice projection");
     check(planar_compiled, {640, 640, 1280, 720, ResizeMode::Stretch});
 
     for (int fault = 0; fault < 7; ++fault) {
@@ -673,6 +679,91 @@ void detr_numerical_publication() {
             "classic DETR sigmoid boxes/class/original-frame mapping mismatch");
     require(std::abs(wire.read<float>(offset + 16) - (row == 0 ? 2.f / 3.f : 1.f / 3.f)) < 2e-6f,
             "classic DETR softmax must retain background in the denominator");
+  }
+}
+
+void focal_numerical_publication() {
+  for (const std::string layout : {"HWC", "CHW", "NCHW"}) {
+    BoxDecodeStaticContract authored;
+    authored.decode_type = BoxDecodeType::DetrFocal;
+    authored.topk = 3;
+    authored.detection_threshold = 0.6;
+    for (int channels : {4, 3}) {
+      BoxDecodeTensorStaticContract tensor;
+      tensor.input_shape = layout == "HWC"   ? std::vector<int>{1, 2, channels}
+                           : layout == "CHW" ? std::vector<int>{channels, 1, 2}
+                                             : std::vector<int>{1, channels, 1, 2};
+      tensor.slice_shape = tensor.input_shape;
+      tensor.data_type = "FP32";
+      tensor.layout = layout;
+      tensor.stride_bytes = layout == "HWC"
+                                ? std::vector<std::int64_t>{8 * channels, 4 * channels, 4}
+                            : layout == "CHW" ? std::vector<std::int64_t>{8, 8, 4}
+                                              : std::vector<std::int64_t>{8 * channels, 8, 8, 4};
+      tensor.logical_name = tensor.backend_name = "query" + std::to_string(authored.tensors.size());
+      tensor.source_storage_kind = BoxDecodeSourceStorageKind::DenseHwcPhysical;
+      authored.tensors.push_back(std::move(tensor));
+    }
+    const auto compiled = stagesemantics::build_boxdecode_compiled_contract(authored);
+    const auto prepared = check(compiled, {640, 640, 1280, 720, ResizeMode::Stretch});
+    const auto& members = prepared.compiled.recipe->members;
+    const auto& numerical = members[prepared.decode_member].executable;
+    const auto& publication = members.back().executable;
+    test::OperationProbe executor, publisher;
+    require(!executor.prepare(numerical) && !publisher.prepare(publication),
+            "focal numerical/publication preparation failed");
+    const auto description = inspect(numerical);
+    std::vector<std::shared_ptr<HostStorage>> inputs, outputs;
+    std::vector<c::ConstBytes> in, publication_inputs;
+    std::vector<c::MutableBytes> out;
+    for (const auto& requirement : description.input_requirements()) {
+      inputs.push_back(std::make_shared<HostStorage>(requirement.storage_bytes));
+      in.push_back(
+          {static_cast<const std::byte*>(inputs.back()->memory.get()), requirement.storage_bytes});
+    }
+    const auto write = [&](std::size_t port, std::size_t query, std::size_t channel, float value) {
+      const std::size_t channels = port == 0 ? 4 : 3;
+      inputs[port]->set_float(layout == "HWC" ? query * channels + channel : channel * 2 + query,
+                              value);
+    };
+    for (std::size_t query = 0; query < 2; ++query) {
+      write(0, query, 0, query == 0 ? .25f : .75f);
+      write(0, query, 1, query == 0 ? .25f : .75f);
+      write(0, query, 2, .2f);
+      write(0, query, 3, .2f);
+    }
+    const std::array<float, 6> logits{0.f, std::log(2.f), std::log(3.f), std::log(4.f), 0.f, 0.f};
+    for (std::size_t query = 0; query < 2; ++query)
+      for (std::size_t channel = 0; channel < 3; ++channel)
+        write(1, query, channel, logits[query * 3 + channel]);
+    for (const auto& requirement : description.output_requirements()) {
+      outputs.push_back(std::make_shared<HostStorage>(requirement.storage_bytes));
+      auto* data = static_cast<std::byte*>(outputs.back()->memory.get());
+      out.push_back({data, requirement.storage_bytes});
+      publication_inputs.push_back({data, requirement.storage_bytes});
+    }
+    const auto status = executor.execute_host(executor.operation(), in, out);
+    require(!status, status ? status->message.c_str() : "focal numerical execution failed");
+    const auto wire_bytes = inspect(publication).output_requirements()[0].storage_bytes;
+    HostStorage wire(wire_bytes);
+    const std::array<c::MutableBytes, 1> published{
+        {{static_cast<std::byte*>(wire.memory.get()), wire_bytes}}};
+    require(!publisher.execute_host(publisher.operation(), publication_inputs, published),
+            "focal publication failed");
+    require(wire.read<std::int32_t>(0) == 3,
+            "focal must retain three query/class pairs from two queries");
+    const std::array<float, 3> scores{.8f, .75f, 2.f / 3.f};
+    const std::array<int, 3> classes{0, 2, 1};
+    for (std::size_t row = 0; row < 3; ++row) {
+      const std::size_t offset = 4 + row * 24;
+      require(wire.read<std::int32_t>(offset) == (row == 0 ? 832 : 192) &&
+                  wire.read<std::int32_t>(offset + 4) == (row == 0 ? 468 : 108) &&
+                  wire.read<std::int32_t>(offset + 8) == 256 &&
+                  wire.read<std::int32_t>(offset + 12) == 144 &&
+                  wire.read<std::int32_t>(offset + 20) == classes[row] &&
+                  std::abs(wire.read<float>(offset + 16) - scores[row]) < 2e-6f,
+              "focal planar/dense sigmoid, pair ranking or original-frame XYWH oracle failed");
+    }
   }
 }
 
@@ -1816,6 +1907,7 @@ int main(int argc, char** argv) {
     detr_default_resolution();
     query_source_dtypes();
     detr_numerical_publication();
+    focal_numerical_publication();
     families();
     oriented_contract_and_execution();
     oriented_carrier_conversions();
