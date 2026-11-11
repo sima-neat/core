@@ -30,8 +30,9 @@ SSH-key, model, media, and GenAI asset variables named in
 runner and pass only its path. Store the card sudo credential as the protected
 `DEVKIT_PASSWORD` environment secret; it is sent only on standard input and is
 never placed in a command line or retained artifact. The production environment
-also supplies the read-only GitHub App credentials used to fetch Scheduler and
-sima-cli artifacts.
+also supplies the read-only GitHub App credentials used only when an unpublished
+Scheduler or sima-cli Actions artifact is selected as a bootstrap override.
+Normal runs resolve publication manifests over the approved artifact endpoint.
 `SIMA_WINDOWS_CMAKE_PREFIX_PATH` must include the native OpenCV CMake package,
 and `SIMA_WINDOWS_DEPENDENCY_RUNTIME_PATH` must include the matching directory
 that contains its runtime DLLs. The current qualified input is the official
@@ -46,126 +47,109 @@ private directory, and temporarily selects its matching firmware. It restores
 the original firmware and removes the private card files before releasing the
 card lock.
 
-## Workflow bootstrap
+## Normal CI path
 
-GitHub accepts `workflow_dispatch` only after that workflow file exists on the
-repository's default branch. For the first review of these workflows:
+Scheduler's main CI builds Linux and Windows native profiles from one Scheduler
+revision. It publishes the Windows profile at
+`scheduler/<branch>/<commit>/pcie-host-windows-amd64` and advances Scheduler's
+branch `latest` tag only after the DevKit and every native profile pass.
 
-1. open the Scheduler and Core changes as pull requests against `develop`;
-2. let Scheduler run its unsigned Windows producer on the trusted
-   same-repository pull request;
-3. let Core run its unprivileged contract job; its producer, card, signing, and
-   publication jobs deliberately do not run in a pull-request context;
-4. review and merge through the normal repository gates; and
-5. only then use `workflow_dispatch` against the exact branch, tag, or commit
-   selected for qualification.
+Core's main `Vulcan CI` calls the Windows workflow after the same Core revision
+has passed its Linux build, DevKit, and PCIe-card gates. The Windows lane:
 
-Do not weaken the pull-request boundary to make the first dispatch possible.
-The post-merge dispatch is where explicit Scheduler, sima-cli, Linux, and
-upgrade run identities enter the Core workflow.
+1. follows Core's Scheduler snap policy and resolves the immutable Windows
+   profile through the runner's existing bootstrap `sima-cli`;
+2. resolves an immutable published sima-cli candidate for the customer-flow
+   test and independently verifies both publication manifests and resources;
+3. builds the ordered Scheduler/Core/wheel cohort;
+4. installs and qualifies the same run's exact Linux card payload on the card;
+5. runs the customer CLI, C++, Python, lifecycle, fault, performance, and GenAI
+   acceptance; and
+6. publishes the tested Windows cohort before Core can advance its branch
+   `latest` tag.
 
-## Validation run
+This is the normal release path. It does not require maintainers to copy workflow
+run IDs between repositories.
 
-Run the four required workflows from the exact branches under review:
+## Validation and bootstrap overrides
+
+Run a non-publishing validation of the entire Core cohort with:
 
 ```text
 gh workflow run vulcan-ci.yml --repo sima-neat/core \
   --ref <core-ref> -f validation_only=true
+```
 
-gh workflow run pcie-host-windows.yml --repo sima-neat/scheduler \
-  --ref <scheduler-ref> -f validation_only=true
+The main workflow still runs Windows hardware qualification, but skips Linux and
+Windows publication and branch promotion. A direct Windows dispatch is useful
+when debugging against a completed Linux run:
 
-gh workflow run vulcan-ci.yml --repo sima-neat/sima-cli \
-  --ref <sima-cli-ref>
-
+```text
 gh workflow run pcie-host-windows.yml --repo sima-neat/core \
   --ref <core-ref> \
-  -f linux_run_id=<core-linux-run-id> \
-  -f scheduler_run_id=<scheduler-run-id> \
-  -f scheduler_commit=<full-scheduler-commit> \
-  -f sima_cli_run_id=<sima-cli-run-id> \
-  -f sima_cli_commit=<full-sima-cli-commit> \
+  -f linux_run_id=<same-commit-core-vulcan-run-id> \
   -f include_genai=false \
   -f validation_only=true
 ```
 
-The Core run builds the ordered Scheduler/Core/wheel cohort and runs the
-direct-card vision matrix. It must consume the named producer artifacts,
-including the same-commit Linux card payload; do not upload replacements.
-Validation runs do not publish, regardless of signing. `require_signatures`
-defaults to `false` in both Windows workflows. Checksums and exact producer
-identity remain mandatory for unsigned Neat MSIs, DLLs, executables and wheels.
-This does not change Windows security policy or the separately delivered
-Platform driver. A customer policy that rejects unsigned user-space code needs
-a signed package; the installer must not disable that policy.
+By default that dispatch resolves published Scheduler and sima-cli revisions.
+During initial bootstrap, or when intentionally testing unpublished producer
+changes, supply `scheduler_run_id` with `scheduler_commit`, or `sima_cli_run_id`
+with `sima_cli_commit`. Each pair is admitted against its source workflow before
+the artifact is used. Do not upload replacement files or mix a run ID with a
+different commit.
 
-## Release run
+Validation runs do not publish. `require_signatures` defaults to `false` in both
+Windows workflows, while checksums, immutable manifests, exact producer identity,
+and hardware cleanup remain mandatory. This does not change Windows security
+policy or the separately delivered Platform driver. A customer policy that
+rejects unsigned user-space code needs a signed package; the installer never
+disables that policy.
 
-Before the release run:
+## Publishing and formal release checks
 
-1. Run Core `Vulcan CI` for the candidate commit and retain its successful run
-   ID as the Linux regression admission.
-2. Run Scheduler's Windows workflow with `validation_only=false`. Use that run
-   ID and its full Scheduler commit.
-3. Retain a successful earlier Core Windows run whose `package-version` is
-   lower than the candidate. Its `core-pciehost-windows-amd64` artifact must
-   still be inside the seven-day retention window.
-4. Confirm the selected sima-cli run produced `sima-cli-dist` for the exact
-   sima-cli commit.
-5. If a signed delivery is needed, set `require_signatures=true` in both
-   Scheduler and Core. Confirm the certificate and timestamp service are
-   available and the Platform runtime DLL signatures meet that optional gate.
-6. Set `include_genai=true` only after the released Windows Platform provider,
-   daemon, models, and acceptance assets are installed. The lane selects the
-   GenAI worker from the same admitted Linux candidate as the tensor worker.
+Normal branch and tag runs enter the Windows lane from Core's main CI with
+`include_genai=true` and `validation_only=false`. Publication is rejected unless
+the Windows 11 customer-install, direct-card, complete GenAI, and cleanup evidence
+passes. Core promotes only the bytes that passed; it does not rebuild them.
 
-The two release prerequisites that differ from the validation commands are:
-
-```text
-gh workflow run vulcan-ci.yml --repo sima-neat/core \
-  --ref <core-ref> -f validation_only=true
-
-gh workflow run pcie-host-windows.yml --repo sima-neat/scheduler \
-  --ref <scheduler-ref> -f validation_only=false
-```
-
-Dispatch the candidate:
+Cross-version upgrade is a formal release check rather than a cost paid by every
+branch commit. To run it against an earlier qualified Windows cohort, dispatch
+the Windows workflow with:
 
 ```text
 gh workflow run pcie-host-windows.yml --repo sima-neat/core \
   --ref <core-ref> \
-  -f scheduler_run_id=<scheduler-run-id> \
-  -f scheduler_commit=<full-scheduler-commit> \
-  -f sima_cli_run_id=<sima-cli-run-id> \
-  -f sima_cli_commit=<full-sima-cli-commit> \
-  -f linux_run_id=<core-linux-run-id> \
+  -f linux_run_id=<same-commit-core-vulcan-run-id> \
+  -f require_upgrade=true \
   -f upgrade_base_run_id=<earlier-core-windows-run-id> \
   -f upgrade_base_commit=<full-earlier-core-commit> \
   -f include_genai=true \
   -f validation_only=false
 ```
 
-The release workflow refuses to publish unless the exact Linux, Scheduler,
-sima-cli, upgrade, Windows 11, customer-install, direct-card, GenAI, and cleanup
-evidence passes. Real upgrade evidence is required even when signing is off.
-Signature checks are an additional opt-in gate, not a substitute for release
-qualification. Publication promotes the tested artifact; it does not rebuild it.
-The full GenAI release gate remains pending a release-scope decision; passing
-the vision-only validation lane does not close that requirement.
+The baseline must have a lower Core package version and different package bytes.
+The qualifier installs it through the same customer command, upgrades to the
+candidate, repeats repair, plug-in discovery, API, fault-recovery, and cleanup,
+and retains evidence for both cohorts.
 
-The local install evidence is not yet complete release qualification. It used a
-loopback registry and an administrator account. The qualifier can require an
-older, different-version MSI cohort, but that real upgrade still needs a run.
-Wheel failure deliberately preserves successful native installation for retry;
-this is not a transaction that rolls back all three packages. Qualify MSI failure
-rollback and ordinary-user runtime separately, using the approved delivery
-endpoint and CLI distribution before claiming the complete customer path.
+Set `require_signatures=true` in Scheduler and Core only when delivery policy
+requires Authenticode. The optional gate requires the certificate, timestamp
+service, complete Scheduler/Core signature receipts, and accepted Platform DLL
+signatures. Signing is additional provenance; it does not replace tests.
+
+Wheel installation failure deliberately preserves successful native MSI work so
+the customer can retry the Python step. This is not a transaction that rolls all
+three packages back. MSI repair, repeat installation, failure recovery, and clean
+removal are exercised on every publishing run; the older-version upgrade is the
+separate formal gate described above.
 
 ## Evidence and recovery
 
 Retain these artifacts with the release record:
 
 - `scheduler-native-windows-amd64`;
+- `core-pciehost-windows-dependencies`;
 - `core-pciehost-windows-amd64`;
 - `core-pciehost-windows-hardware-<run>-<attempt>`;
 - `core-pciehost-linux-admission-<run>-<attempt>`.

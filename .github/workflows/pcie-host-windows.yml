@@ -1,31 +1,34 @@
 name: Core native Windows PCIe host
 on:
-  # Pull requests exercise only the unprivileged contract job. The producer,
-  # card, and publication jobs require explicit artifact identities and are
-  # entered through workflow_dispatch or a trusted reusable-workflow caller.
+  # Pull requests exercise only the unprivileged contract job. Trusted callers
+  # resolve published dependencies; explicit run IDs are bootstrap overrides.
   pull_request:
   workflow_call:
     inputs:
       scheduler_run_id:
-        description: Scheduler Actions run containing the exact Windows candidate
+        description: Optional Scheduler Actions run override for an unpublished candidate
         type: string
-        required: true
+        default: ''
       scheduler_commit:
-        description: Full Scheduler commit selected by scheduler_run_id
+        description: Full Scheduler commit selected by scheduler_run_id, when supplied
         type: string
-        required: true
+        default: ''
       sima_cli_run_id:
-        description: sima-cli Vulcan CI run containing the exact customer installer
+        description: Optional sima-cli Actions run override for an unpublished candidate
         type: string
-        required: true
+        default: ''
       sima_cli_commit:
-        description: Full sima-cli commit selected by sima_cli_run_id
+        description: Full sima-cli commit selected by sima_cli_run_id, when supplied
         type: string
-        required: true
+        default: ''
       linux_run_id:
-        description: Successful Vulcan CI run for this exact Core/card commit
+        description: Prior successful Vulcan CI run; empty when the caller supplies this run
         type: string
-        required: true
+        default: ''
+      linux_current_run:
+        description: Use this caller run's already-qualified Linux/card candidate
+        type: boolean
+        default: false
       upgrade_base_run_id:
         description: Earlier successful Core Windows run used as the release upgrade baseline
         type: string
@@ -34,6 +37,10 @@ on:
         description: Full Core commit selected by upgrade_base_run_id
         type: string
         default: ''
+      require_upgrade:
+        description: Require a real prior Windows release upgrade (formal release gate)
+        type: boolean
+        default: false
       include_genai:
         description: Run GenAI acceptance when the Windows transport is enabled
         type: boolean
@@ -49,25 +56,34 @@ on:
   workflow_dispatch:
     inputs:
       scheduler_run_id:
-        description: Scheduler Actions run containing scheduler-native-windows-amd64
+        description: Optional Scheduler Actions run containing an unpublished candidate
         type: string
-        required: true
+        required: false
+        default: ''
       scheduler_commit:
-        description: Full Scheduler commit selected by scheduler_run_id
+        description: Full Scheduler commit selected by scheduler_run_id, when supplied
         type: string
-        required: true
+        required: false
+        default: ''
       sima_cli_run_id:
-        description: sima-cli Vulcan CI run containing sima-cli-dist
+        description: Optional sima-cli Actions run containing an unpublished candidate
         type: string
-        required: true
+        required: false
+        default: ''
       sima_cli_commit:
-        description: Full sima-cli commit selected by sima_cli_run_id
+        description: Full sima-cli commit selected by sima_cli_run_id, when supplied
         type: string
-        required: true
+        required: false
+        default: ''
       linux_run_id:
         description: Successful Vulcan CI run for this exact Core/card commit
         type: string
-        required: true
+        required: false
+        default: ''
+      linux_current_run:
+        description: Use this run's already-qualified Linux/card candidate
+        type: boolean
+        default: false
       upgrade_base_run_id:
         description: Earlier successful Core Windows run used as the release upgrade baseline
         type: string
@@ -76,6 +92,10 @@ on:
         description: Full Core commit selected by upgrade_base_run_id
         type: string
         default: ''
+      require_upgrade:
+        description: Require a real prior Windows release upgrade (formal release gate)
+        type: boolean
+        default: false
       include_genai:
         description: Run GenAI acceptance when the Windows transport is enabled
         type: boolean
@@ -103,6 +123,7 @@ jobs:
       - run: python3 pcie_host/tests/test_windows_ci.py
       - run: >-
           python3 -m py_compile
+          scripts/ci/pciehost/acquire_windows_dependencies.py
           scripts/ci/pciehost/build_windows.py
           scripts/ci/pciehost/cleanup_windows_hardware.py
           scripts/ci/pciehost/qualify_windows_hardware.py
@@ -123,8 +144,28 @@ jobs:
       - uses: actions/checkout@v5
         with:
           persist-credentials: false
+      - name: Validate dependency and admission selectors
+        run: |
+          if { [[ -n "${{ inputs.scheduler_run_id }}" ]] && [[ -z "${{ inputs.scheduler_commit }}" ]]; } ||
+             { [[ -z "${{ inputs.scheduler_run_id }}" ]] && [[ -n "${{ inputs.scheduler_commit }}" ]]; }; then
+            echo "scheduler_run_id and scheduler_commit must be supplied together." >&2
+            exit 1
+          fi
+          if { [[ -n "${{ inputs.sima_cli_run_id }}" ]] && [[ -z "${{ inputs.sima_cli_commit }}" ]]; } ||
+             { [[ -z "${{ inputs.sima_cli_run_id }}" ]] && [[ -n "${{ inputs.sima_cli_commit }}" ]]; }; then
+            echo "sima_cli_run_id and sima_cli_commit must be supplied together." >&2
+            exit 1
+          fi
+          if [[ "${{ inputs.linux_current_run }}" == "true" && -n "${{ inputs.linux_run_id }}" ]]; then
+            echo "linux_current_run and linux_run_id are mutually exclusive." >&2
+            exit 1
+          fi
+          if [[ "${{ inputs.require_upgrade }}" != "true" && ( -n "${{ inputs.upgrade_base_run_id }}" || -n "${{ inputs.upgrade_base_commit }}" ) ]]; then
+            echo "Upgrade baseline inputs require require_upgrade=true." >&2
+            exit 1
+          fi
       - name: Mint read-only dependency run token
-        if: inputs.validation_only != true
+        if: inputs.scheduler_run_id != '' || inputs.sima_cli_run_id != ''
         id: dependency-token
         uses: actions/create-github-app-token@v2
         with:
@@ -137,6 +178,7 @@ jobs:
           permission-actions: read
           permission-contents: read
       - name: Admit exact successful Vulcan CI run
+        if: inputs.linux_current_run != true
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
@@ -149,17 +191,29 @@ jobs:
             --run-id "${{ inputs.linux_run_id }}" \
             --expected-commit "${GITHUB_SHA}" \
             --output "${RUNNER_TEMP}/linux-release-admission.json"
+      - name: Admit this caller's qualified Linux candidate
+        if: inputs.linux_current_run == true
+        run: |
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          Path(os.environ['RUNNER_TEMP'], 'linux-release-admission.json').write_text(
+              json.dumps({'schema_version': 1, 'repository': os.environ['GITHUB_REPOSITORY'],
+                          'run_id': int(os.environ['GITHUB_RUN_ID']),
+                          'commit': os.environ['GITHUB_SHA'],
+                          'admission': 'qualified-by-caller-needs'}, indent=2) + '\n')
+          PY
       - name: Admit exact successful sima-cli run
-        if: inputs.validation_only != true
+        if: inputs.sima_cli_run_id != ''
         env:
           GITHUB_TOKEN: ${{ steps.dependency-token.outputs.token }}
         run: |
           if [[ ! "${{ inputs.sima_cli_run_id }}" =~ ^[1-9][0-9]*$ ]]; then
-            echo "Release mode requires a numeric sima_cli_run_id." >&2
+            echo "sima_cli_run_id must be numeric." >&2
             exit 1
           fi
           if [[ ! "${{ inputs.sima_cli_commit }}" =~ ^[0-9a-f]{40}$ ]]; then
-            echo "Release mode requires a full lowercase sima_cli_commit." >&2
+            echo "sima_cli_commit must be a full lowercase commit." >&2
             exit 1
           fi
           python3 scripts/ci/pciehost/verify_linux_release_run.py \
@@ -168,16 +222,16 @@ jobs:
             --expected-commit "${{ inputs.sima_cli_commit }}" \
             --output "${RUNNER_TEMP}/sima-cli-release-admission.json"
       - name: Admit exact successful Scheduler Windows run
-        if: inputs.validation_only != true
+        if: inputs.scheduler_run_id != ''
         env:
           GITHUB_TOKEN: ${{ steps.dependency-token.outputs.token }}
         run: |
           if [[ ! "${{ inputs.scheduler_run_id }}" =~ ^[1-9][0-9]*$ ]]; then
-            echo "Release mode requires a numeric scheduler_run_id." >&2
+            echo "scheduler_run_id must be numeric." >&2
             exit 1
           fi
           if [[ ! "${{ inputs.scheduler_commit }}" =~ ^[0-9a-f]{40}$ ]]; then
-            echo "Release mode requires a full lowercase scheduler_commit." >&2
+            echo "scheduler_commit must be a full lowercase commit." >&2
             exit 1
           fi
           python3 scripts/ci/pciehost/verify_linux_release_run.py \
@@ -188,16 +242,16 @@ jobs:
             --workflow-path ".github/workflows/pcie-host-windows.yml" \
             --output "${RUNNER_TEMP}/scheduler-release-admission.json"
       - name: Admit exact successful Windows upgrade baseline
-        if: inputs.validation_only != true
+        if: inputs.require_upgrade == true
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           if [[ ! "${{ inputs.upgrade_base_run_id }}" =~ ^[1-9][0-9]*$ ]]; then
-            echo "Release mode requires a numeric upgrade_base_run_id." >&2
+            echo "The formal upgrade gate requires a numeric upgrade_base_run_id." >&2
             exit 1
           fi
           if [[ ! "${{ inputs.upgrade_base_commit }}" =~ ^[0-9a-f]{40}$ ]]; then
-            echo "Release mode requires a full lowercase upgrade_base_commit." >&2
+            echo "The formal upgrade gate requires a full lowercase upgrade_base_commit." >&2
             exit 1
           fi
           if [[ "${{ inputs.upgrade_base_commit }}" == "${GITHUB_SHA}" ]]; then
@@ -222,10 +276,93 @@ jobs:
             ${{ runner.temp }}/windows-upgrade-base-admission.json
           if-no-files-found: error
           retention-days: 14
+  dependencies:
+    name: Resolve immutable Windows dependency cohort
+    needs: [contracts, linux_release]
+    if: needs.contracts.result == 'success' && needs.linux_release.result == 'success'
+    environment: production
+    runs-on: [self-hosted, Windows, X64, pcie-windows-build, default]
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Mint read-only dependency run token
+        if: inputs.scheduler_run_id != '' || inputs.sima_cli_run_id != ''
+        id: app-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.NEAT_RELEASES_APP_ID }}
+          private-key: ${{ secrets.NEAT_RELEASES_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: |
+            scheduler
+            sima-cli
+          permission-actions: read
+          permission-contents: read
+      - name: Download unpublished Scheduler override
+        if: inputs.scheduler_run_id != ''
+        uses: actions/download-artifact@v4
+        with:
+          name: scheduler-native-windows-amd64
+          path: ${{ runner.temp }}/scheduler-windows-override
+          repository: sima-neat/scheduler
+          run-id: ${{ inputs.scheduler_run_id }}
+          github-token: ${{ steps.app-token.outputs.token }}
+      - name: Download unpublished sima-cli override
+        if: inputs.sima_cli_run_id != ''
+        uses: actions/download-artifact@v4
+        with:
+          name: sima-cli-dist
+          path: ${{ runner.temp }}/sima-cli-override
+          repository: sima-neat/sima-cli
+          run-id: ${{ inputs.sima_cli_run_id }}
+          github-token: ${{ steps.app-token.outputs.token }}
+      - name: Resolve, verify, and record dependencies
+        shell: powershell
+        env:
+          SOURCE_BRANCH: ${{ github.head_ref || github.ref_name }}
+          SIMA_CLI_CHECK_FOR_UPDATE: "0"
+        run: |
+          $ErrorActionPreference = "Stop"
+          if (-not (Get-Command sima-cli -ErrorAction SilentlyContinue)) {
+            throw "The Windows build runner requires the supported bootstrap sima-cli"
+          }
+          $arguments = @(
+            "scripts/ci/pciehost/acquire_windows_dependencies.py",
+            "--branch", $env:SOURCE_BRANCH,
+            "--environment", "production",
+            "--output", "$env:RUNNER_TEMP\core-windows-dependencies"
+          )
+          if (Test-Path -LiteralPath "$env:RUNNER_TEMP\scheduler-windows-override") {
+            $arguments += @(
+              "--scheduler-candidate", "$env:RUNNER_TEMP\scheduler-windows-override",
+              "--scheduler-commit", "${{ inputs.scheduler_commit }}"
+            )
+          }
+          if (Test-Path -LiteralPath "$env:RUNNER_TEMP\sima-cli-override") {
+            $arguments += @(
+              "--sima-cli-candidate", "$env:RUNNER_TEMP\sima-cli-override",
+              "--sima-cli-commit", "${{ inputs.sima_cli_commit }}"
+            )
+          }
+          & python @arguments
+          if ($LASTEXITCODE -ne 0) { throw "Windows dependency resolution failed: $LASTEXITCODE" }
+      - name: Retain exact Windows dependency cohort
+        uses: actions/upload-artifact@v6
+        with:
+          name: core-pciehost-windows-dependencies
+          path: ${{ runner.temp }}/core-windows-dependencies
+          if-no-files-found: error
+          retention-days: 7
   native:
     name: Native Windows amd64 cohort
-    needs: contracts
-    if: github.event_name != 'pull_request' && github.repository == 'sima-neat/core'
+    needs: [dependencies, linux_release]
+    if: needs.dependencies.result == 'success' && needs.linux_release.result == 'success' && github.repository == 'sima-neat/core'
     environment: production
     runs-on: [self-hosted, Windows, X64, pcie-windows-build, default]
     timeout-minutes: 75
@@ -246,30 +383,18 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 0
-      - name: Mint read-only Scheduler artifact token
-        id: app-token
-        uses: actions/create-github-app-token@v2
-        with:
-          app-id: ${{ secrets.NEAT_RELEASES_APP_ID }}
-          private-key: ${{ secrets.NEAT_RELEASES_APP_PRIVATE_KEY }}
-          owner: ${{ github.repository_owner }}
-          repositories: scheduler
-          permission-actions: read
-          permission-contents: read
-      - name: Download exact Scheduler Windows candidate
+      - name: Download exact Windows dependency cohort
         uses: actions/download-artifact@v4
         with:
-          name: scheduler-native-windows-amd64
-          path: ${{ runner.temp }}/scheduler-windows-candidate
-          repository: sima-neat/scheduler
-          run-id: ${{ inputs.scheduler_run_id }}
-          github-token: ${{ steps.app-token.outputs.token }}
+          name: core-pciehost-windows-dependencies
+          path: ${{ runner.temp }}/core-windows-dependencies
       - name: Build, test, package, install, and remove Core cohort
         shell: powershell
         env:
           SOURCE_BRANCH: ${{ github.head_ref || github.ref_name }}
         run: |
           $ErrorActionPreference = "Stop"
+          $selection = Get-Content -Raw "$env:RUNNER_TEMP\core-windows-dependencies\selection.json" | ConvertFrom-Json
           $vswhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"
           $installation = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
           if (-not $installation) { throw "Visual Studio x64 C++ tools are unavailable" }
@@ -286,11 +411,11 @@ jobs:
           $arguments = @(
             "scripts/ci/pciehost/build_windows.py",
             "--branch", $env:SOURCE_BRANCH,
-            "--expected-scheduler-commit", "${{ inputs.scheduler_commit }}",
+            "--expected-scheduler-commit", $selection.scheduler.commit,
             "--gstreamer-root", $env:GSTREAMER_ROOT_X86_64,
             "--platform-runtime", $env:SIMA_WINDOWS_PLATFORM_RUNTIME_DIR,
             "--python-wheelhouse", $env:SIMA_WINDOWS_PYTHON_WHEELHOUSE,
-            "--scheduler-candidate", "$env:RUNNER_TEMP\scheduler-windows-candidate",
+            "--scheduler-candidate", "$env:RUNNER_TEMP\core-windows-dependencies\scheduler",
             "--work", "$env:RUNNER_TEMP\core-windows-build",
             "--output", "$env:RUNNER_TEMP\core-windows-dist"
           )
@@ -377,7 +502,19 @@ jobs:
         with:
           name: core-pciehost-windows-amd64
           path: ${{ runner.temp }}/core-windows-candidate
-      - name: Download exact Linux card candidate
+      - name: Download exact Windows dependency cohort
+        uses: actions/download-artifact@v4
+        with:
+          name: core-pciehost-windows-dependencies
+          path: ${{ runner.temp }}/core-windows-dependencies
+      - name: Download this run's exact Linux card candidate
+        if: inputs.linux_current_run == true
+        uses: actions/download-artifact@v4
+        with:
+          name: neat-core-dist
+          path: ${{ runner.temp }}/core-card-candidate
+      - name: Download prior run's exact Linux card candidate
+        if: inputs.linux_current_run != true
         uses: actions/download-artifact@v4
         with:
           name: neat-core-dist
@@ -386,7 +523,7 @@ jobs:
           run-id: ${{ inputs.linux_run_id }}
           github-token: ${{ github.token }}
       - name: Download exact Windows upgrade baseline
-        if: inputs.validation_only != true
+        if: inputs.require_upgrade == true
         uses: actions/download-artifact@v4
         with:
           name: core-pciehost-windows-amd64
@@ -394,28 +531,11 @@ jobs:
           repository: ${{ github.repository }}
           run-id: ${{ inputs.upgrade_base_run_id }}
           github-token: ${{ github.token }}
-      - name: Mint read-only sima-cli artifact token
-        id: sima-cli-token
-        uses: actions/create-github-app-token@v2
-        with:
-          app-id: ${{ secrets.NEAT_RELEASES_APP_ID }}
-          private-key: ${{ secrets.NEAT_RELEASES_APP_PRIVATE_KEY }}
-          owner: ${{ github.repository_owner }}
-          repositories: sima-cli
-          permission-actions: read
-          permission-contents: read
-      - name: Download exact sima-cli customer installer
-        uses: actions/download-artifact@v4
-        with:
-          name: sima-cli-dist
-          path: ${{ runner.temp }}/sima-cli-candidate
-          repository: sima-neat/sima-cli
-          run-id: ${{ inputs.sima_cli_run_id }}
-          github-token: ${{ steps.sima-cli-token.outputs.token }}
       - name: Install, test both APIs, and remove exact cohort
         shell: powershell
         run: |
           $ErrorActionPreference = "Stop"
+          $selection = Get-Content -Raw "$env:RUNNER_TEMP\core-windows-dependencies\selection.json" | ConvertFrom-Json
           if ("${{ inputs.validation_only }}" -ne "true" -and "${{ inputs.include_genai }}" -ne "true") {
             throw "Customer release requires the complete Windows GenAI hardware matrix"
           }
@@ -441,13 +561,13 @@ jobs:
             "--card-candidate", "$env:RUNNER_TEMP\core-card-candidate",
             "--card-host", $env:SIMAPCIE_CARD_HOST,
             "--expected-card-commit", $env:GITHUB_SHA,
-            "--expected-sima-cli-commit", "${{ inputs.sima_cli_commit }}",
+            "--expected-sima-cli-commit", $selection.sima_cli.commit,
             "--gstreamer-root", $env:GSTREAMER_ROOT_X86_64,
             "--lock-file", "$env:USERPROFILE\.sima\locks\neat-pcie-card0.lock",
             "--remote-lock-path", "/tmp/neat-pcie-card0.lock",
             "--platform-runtime", $env:SIMA_WINDOWS_PLATFORM_RUNTIME_DIR,
             "--python-wheelhouse", $env:SIMA_WINDOWS_PYTHON_WHEELHOUSE,
-            "--sima-cli-candidate", "$env:RUNNER_TEMP\sima-cli-candidate",
+            "--sima-cli-candidate", "$env:RUNNER_TEMP\core-windows-dependencies\sima-cli",
             "--source-root", $env:GITHUB_WORKSPACE,
             "--ssh-key", $env:SIMAPCIE_SSH_KEY,
             "--work", "$env:RUNNER_TEMP\core-windows-hardware",
@@ -456,7 +576,7 @@ jobs:
           if ("${{ inputs.include_genai }}" -eq "true") {
             $arguments += "--include-genai"
           }
-          if ("${{ inputs.validation_only }}" -ne "true") {
+          if ("${{ inputs.require_upgrade }}" -eq "true") {
             $arguments += @(
               "--upgrade-base-candidate", "$env:RUNNER_TEMP\core-windows-upgrade-base",
               "--expected-upgrade-base-commit", "${{ inputs.upgrade_base_commit }}"
@@ -511,7 +631,10 @@ jobs:
             "--output", "$env:RUNNER_TEMP\core-windows-hardware-evidence\release-admission.json"
           )
           if ("${{ inputs.validation_only }}" -ne "true") {
-            $arguments += @("--require-release", "--require-genai")
+            $arguments += "--require-genai"
+          }
+          if ("${{ inputs.require_upgrade }}" -eq "true") {
+            $arguments += "--require-release"
           }
           if ("${{ inputs.require_signatures }}" -eq "true") {
             $arguments += "--require-signatures"

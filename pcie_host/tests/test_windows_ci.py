@@ -13,12 +13,14 @@ import tempfile
 from types import SimpleNamespace
 import unittest
 from unittest import mock
+import zipfile
 
 
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "scripts" / "ci" / "pciehost" / "build_windows.py"
 SCRIPT_DIR = SCRIPT.parent
 WORKFLOW = ROOT / ".github" / "workflows" / "pcie-host-windows.yml"
+MAIN_WORKFLOW = ROOT / ".github" / "workflows" / "vulcan-ci.yml"
 sys.path.insert(0, str(SCRIPT_DIR))
 SPEC = importlib.util.spec_from_file_location("build_windows", SCRIPT)
 MODULE = importlib.util.module_from_spec(SPEC)
@@ -37,6 +39,7 @@ from verify_linux_release_run import verify_run as verify_linux_run  # noqa: E40
 from verify_windows_release import verify  # noqa: E402
 import prepare_card_qualification_candidate as CARD_PREP  # noqa: E402
 import cleanup_windows_hardware as RECOVERY  # noqa: E402
+import acquire_windows_dependencies as WINDOWS_DEPENDENCIES  # noqa: E402
 
 
 def posix_shell():
@@ -71,6 +74,58 @@ def normalized_link_target(path):
 
 
 class WindowsCiContracts(unittest.TestCase):
+  def test_dependency_acquisition_extracts_one_safe_cli_wheel(self):
+    with tempfile.TemporaryDirectory() as directory:
+      root = Path(directory)
+      publication = root / "publication"
+      publication.mkdir()
+      package = publication / "sima-cli-package-test.zip"
+      with zipfile.ZipFile(package, "w") as archive:
+        archive.writestr("sima_cli-1.0-py3-none-any.whl", b"wheel")
+        archive.writestr("windows.bat", b"installer")
+      wheel = WINDOWS_DEPENDENCIES.extract_sima_cli_wheel(
+          publication, root / "candidate")
+      self.assertEqual(wheel.read_bytes(), b"wheel")
+
+  def test_dependency_acquisition_rejects_nested_cli_wheel(self):
+    with tempfile.TemporaryDirectory() as directory:
+      root = Path(directory)
+      publication = root / "publication"
+      publication.mkdir()
+      with zipfile.ZipFile(publication / "sima-cli-package-test.zip", "w") as archive:
+        archive.writestr("nested/sima_cli-1.0-py3-none-any.whl", b"wheel")
+      with self.assertRaisesRegex(ValueError, "unsafe wheel"):
+        WINDOWS_DEPENDENCIES.extract_sima_cli_wheel(
+            publication, root / "candidate")
+
+  def test_dependency_acquisition_stages_admitted_actions_overrides(self):
+    with tempfile.TemporaryDirectory() as directory:
+      root = Path(directory)
+      scheduler = root / "scheduler"
+      cli = root / "cli"
+      scheduler.mkdir()
+      cli.mkdir()
+      (scheduler / "scheduler.msi").write_bytes(b"scheduler")
+      (cli / "sima_cli-test.whl").write_bytes(b"cli")
+      result = subprocess.run([
+          sys.executable, str(SCRIPT_DIR / "acquire_windows_dependencies.py"),
+          "--branch", "develop", "--output", str(root / "output"),
+          "--scheduler-candidate", str(scheduler),
+          "--scheduler-commit", "a" * 40,
+          "--sima-cli-candidate", str(cli),
+          "--sima-cli-commit", "b" * 40,
+      ], text=True, capture_output=True, check=False)
+      self.assertEqual(result.returncode, 0, result.stderr)
+      selection = json.loads((root / "output" / "selection.json").read_text())
+      self.assertEqual(selection["scheduler"]["commit"], "a" * 40)
+      self.assertEqual(selection["sima_cli"]["commit"], "b" * 40)
+      self.assertEqual(
+          (root / "output" / "scheduler" / "scheduler.msi").read_bytes(),
+          b"scheduler")
+      self.assertEqual(
+          (root / "output" / "sima-cli" / "sima_cli-test.whl").read_bytes(),
+          b"cli")
+
   def test_recovery_requires_known_private_stage_ownership(self):
     with tempfile.TemporaryDirectory() as directory:
       evidence = Path(directory)
@@ -189,9 +244,7 @@ class WindowsCiContracts(unittest.TestCase):
     source = WORKFLOW.read_text(encoding="utf-8")
     self.assertIn("  pull_request:\n", source)
     self.assertIn("if: github.event_name != 'pull_request'", source)
-    self.assertIn(
-        "if: github.event_name != 'pull_request' && github.repository == 'sima-neat/core'",
-        source)
+    self.assertIn("github.repository == 'sima-neat/core'", source)
     self.assertIn("scheduler_run_id", source)
     self.assertIn("scheduler_commit", source)
     self.assertIn("--expected-scheduler-commit", source)
@@ -207,7 +260,8 @@ class WindowsCiContracts(unittest.TestCase):
     self.assertIn("scripts/ci/pciehost/cleanup_windows_hardware.py", source)
     self.assertIn("needs: [hardware, linux_release]", source)
     self.assertIn("linux_run_id", source)
-    self.assertIn("Download exact Linux card candidate", source)
+    self.assertIn("Download this run's exact Linux card candidate", source)
+    self.assertIn("Download prior run's exact Linux card candidate", source)
     self.assertIn("name: neat-core-dist", source)
     self.assertIn("--card-candidate", source)
     self.assertIn("--expected-card-commit", source)
@@ -218,7 +272,8 @@ class WindowsCiContracts(unittest.TestCase):
     self.assertIn("sima_cli_run_id", source)
     self.assertIn("sima-cli-dist", source)
     self.assertIn("--require-signatures", source)
-    self.assertIn('"--require-release", "--require-genai"', source)
+    self.assertIn('$arguments += "--require-genai"', source)
+    self.assertIn('$arguments += "--require-release"', source)
     self.assertIn('if ("${{ inputs.require_signatures }}" -eq "true")', source)
     self.assertIn("Recover card and native installation", source)
     self.assertIn("if: always()", source)
@@ -230,8 +285,17 @@ class WindowsCiContracts(unittest.TestCase):
     self.assertIn("--expected-upgrade-base-commit", source)
     self.assertIn("SIMA_WINDOWS_DEPENDENCY_RUNTIME_PATH", source)
     self.assertIn("--dependency-runtime-dir", source)
-    self.assertEqual(source.count("repositories: scheduler"), 1)
-    self.assertEqual(source.count("shell: powershell"), 4)
+    self.assertIn("scripts/ci/pciehost/acquire_windows_dependencies.py", source)
+    self.assertIn("core-pciehost-windows-dependencies", source)
+    self.assertIn("linux_current_run", source)
+    self.assertIn("require_upgrade", source)
+    self.assertEqual(source.count("shell: powershell"), 5)
+
+  def test_main_ci_requires_windows_acceptance_before_promotion(self):
+    source = MAIN_WORKFLOW.read_text(encoding="utf-8")
+    self.assertIn("test-pciehost-windows:", source)
+    self.assertIn("uses: ./.github/workflows/pcie-host-windows.yml", source)
+    self.assertIn("needs.test-pciehost-windows.result == 'success'", source)
 
   def test_producer_accepts_inbox_windows_powershell(self):
     def which(name):

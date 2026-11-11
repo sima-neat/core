@@ -385,8 +385,9 @@ implementation sources are build-only inputs to Scheduler CI and are not include
 in the delivered artifacts. The PCIe driver and Platform userspace library remain
 separately provisioned.
 
-Linux PCIe host builds include the GenAI APIs and transport. Native Windows
-builds expose the same API types but currently support vision inference only.
+Linux and Windows PCIe host builds include the same public vision and GenAI API
+surfaces. Release qualification runs the complete GenAI matrix on Windows;
+validation-only runs may be used for the shorter vision path.
 Neither build acquires the device Scheduler profile, Runner, Kernels or Codecs.
 
 ### Windows package
@@ -416,19 +417,23 @@ metadata for the MSI and optional wheel. The default per-machine destination is
 `C:\Program Files\SimaPCIeHost`; a packaging test can set
 `SIMAPCIE_WIX_INSTALL_DIRECTORY` to an isolated directory at configure time.
 
-Core does not copy or repackage Scheduler-owned files. The release publication
-places both owner-produced MSIs in the same manifest so customers do not manage
-the repository boundary. Scheduler CI retains its owner-produced candidate but
-does not expose it as a customer release before Core's combined hardware gate.
+Core does not copy or repackage Scheduler-owned files. Scheduler publishes its
+owner-produced MSI as an immutable native profile, and Core places that exact MSI
+beside the Core MSI in the customer manifest. Customers still install one cohort
+and do not manage the repository boundary. Core's combined hardware gate owns
+qualification of that customer cohort.
 The Platform driver, host DLLs and daemon remain a separate Platform prerequisite.
 
 ### Windows package CI
 
-The Windows producer is `.github/workflows/pcie-host-windows.yml`. Its required
-`scheduler_run_id` and `scheduler_commit` select the exact successful
-`scheduler-native-windows-amd64` workflow artifact and bind it to the expected
-Scheduler source revision; it never resolves an unqualified latest Scheduler build. The
-restricted `pcie-windows-build` runner supplies the supported MSVC, WiX v3,
+The Windows producer is `.github/workflows/pcie-host-windows.yml`. Normal Core CI
+uses the same Scheduler policy as Linux: it tries the current Core branch, falls
+back to `develop` only when the published branch index proves the branch is
+absent, resolves the branch's immutable revision once, and verifies the publisher
+manifest and resource hashes. It resolves and records an immutable published
+sima-cli candidate in the same way. Explicit workflow run IDs are available only
+for qualifying unpublished Scheduler or sima-cli candidates. The restricted
+`pcie-windows-build` runner supplies the supported MSVC, WiX v3,
 GStreamer, Platform runtime, CMake dependencies and a pinned Python dependency
 wheelhouse.
 
@@ -451,8 +456,8 @@ extras, checksum metadata, producer receipts and installer logs. A separate
 `pcie-windows-hardware` Windows 11 runner consumes those exact bytes locally. It
 holds matching runner/card locks and admits the exact same-commit Linux Core
 artifact. Inside those locks it privately stages that artifact's firmware and
-tensor and GenAI workers, installs the exact `sima-cli` candidate selected by
-workflow run and commit, exposes the cohort through disposable loopback
+tensor and GenAI workers, installs the exact published `sima-cli` candidate
+recorded in the dependency cohort, exposes the release through disposable loopback
 registries, and exercises native-only install,
 a missing-wheel download failure, a checksum-valid but invalid-wheel pip failure
 after native installation, recovery with the real wheel, and a repeated matching
@@ -468,24 +473,23 @@ Python, Core and Scheduler in reverse order. It restores the stock card firmware
 and removes the private Linux payload before releasing either lock. Latency and
 throughput logs are converted to structured positive, finite measurements in the
 retained evidence. Release admission requires the same resource checksums, no
-remaining card worker, and a clean install root. GenAI remains off
-in validation-only runs until its Windows transport is supported. Customer
-publication is deliberately blocked until the same lane can run the complete
-C++ and Python GenAI matrix. Release mode also requires the run ID of a
-successful `Vulcan CI` workflow for the exact Core commit, the exact successful
-Scheduler Windows workflow, and the exact successful sima-cli workflow. Existing
-Linux regressions and dependency producer validation therefore cannot be bypassed
-by dispatching the Windows workflow directly.
+remaining card worker, and a clean install root. A standalone validation may omit
+GenAI for a shorter diagnostic run. Customer publication requires the complete
+C++ and Python GenAI matrix. In the normal path the Windows lane is called by Core's main
+Vulcan workflow after the same-revision Linux build, DevKit, and PCIe-card gates;
+the Windows lane consumes that run's exact card payload. A standalone dispatch
+must instead identify a prior successful Linux run for the same Core commit.
+Windows success and publication are required before Core advances its branch
+`latest` tag, so Linux regressions and dependency validation cannot be bypassed.
 
-A publishing run also selects an earlier successful Core Windows workflow by
-run ID and full commit. The hardware runner installs that cohort first through
-the same `sima-cli` command, then installs the release candidate over it. The
-two cohorts must have increasing Core package versions and different package
-bytes. Release admission fails unless the upgrade succeeds and the candidate
-still passes repair, plug-in discovery, API, fault-recovery, and clean-removal
-checks. The unconditional recovery step knows both MSI cohorts, so it can remove
-the older installation if the candidate fails before Windows Installer finishes
-the upgrade.
+Formal release qualification may additionally set `require_upgrade=true` and
+select an earlier successful Core Windows workflow by run ID and full commit.
+The hardware runner installs that cohort first through the same `sima-cli`
+command, then installs the release candidate over it. The two cohorts must have
+increasing Core package versions and different package bytes. This cross-version
+test is not repeated for every branch promotion, matching Linux policy; repeat
+install, repair, failure recovery, and clean removal remain mandatory on every
+Windows publishing run.
 
 The hardware runner's pinned offline wheelhouse must contain the dependencies
 of both `pyneatpcie` and the selected `sima-cli` wheel. This keeps the acceptance
@@ -494,14 +498,14 @@ The maintainer sequence, runner inputs, workflow commands, retained evidence,
 and recovery procedure are documented in
 [`scripts/ci/pciehost/WINDOWS_RELEASE.md`](../scripts/ci/pciehost/WINDOWS_RELEASE.md).
 
-Validation runs may use unsigned development artifacts. A publishing run requires
-Scheduler and Core to sign their shipped EXE, DLL, PYD and MSI files with a
-runner-provisioned certificate and RFC 3161 timestamp. CI records and verifies
-the Authenticode results before the direct-card gate, verifies the complete
-Scheduler signature receipt, and independently requires valid timestamped
-signatures on the separately supplied Platform runtime DLLs. Publication only
-runs after both gates pass. The certificate and private key stay in the Windows
-certificate store and are not repository inputs.
+Checksums, immutable publisher manifests, exact producer commits, and hardware
+qualification are mandatory. Authenticode is an optional policy gate: when
+`require_signatures=true`, Scheduler and Core sign their shipped EXE, DLL, PYD,
+and MSI files with a runner-provisioned certificate and RFC 3161 timestamp, and
+CI verifies the signature receipts plus the separately supplied Platform runtime
+DLL signatures. Unsigned Neat user-space packages may be published when company
+policy permits them; the installer never bypasses Windows application-control
+policy. Platform owns signing of its driver and other Platform deliverables.
 
 `build.sh` follows the Scheduler policy in Core's `deps/manifest.json`, in the
 `production` publication environment by default. Branch `snap` first tries
