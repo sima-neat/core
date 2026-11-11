@@ -53,6 +53,22 @@ def posix_shell():
   raise FileNotFoundError("POSIX shell is unavailable for remote-command contract fixtures")
 
 
+def run_posix(command):
+  shell = posix_shell()
+  environment = os.environ.copy()
+  environment["PATH"] = os.pathsep.join((str(Path(shell).parent), environment["PATH"]))
+  return subprocess.run(
+      [shell, "-c", command], capture_output=True, text=True,
+      check=False, env=environment)
+
+
+def normalized_link_target(path):
+  target = os.readlink(path)
+  if os.name == "nt" and target.startswith("\\\\?\\"):
+    target = target[4:]
+  return os.path.normcase(os.path.normpath(target))
+
+
 class WindowsCiContracts(unittest.TestCase):
   def test_recovery_requires_known_private_stage_ownership(self):
     with tempfile.TemporaryDirectory() as directory:
@@ -78,10 +94,8 @@ class WindowsCiContracts(unittest.TestCase):
         (stage / "customer-data").write_text("preserve unless owned")
         if owner is not None:
           (stage / ".qualification-owner").write_text(owner)
-        result = subprocess.run(
-            [posix_shell(), "-c",
-             card_stage_cleanup_command({"stage": str(stage)}, "this-run")],
-            capture_output=True, text=True, check=False)
+        result = run_posix(
+            card_stage_cleanup_command({"stage": str(stage)}, "this-run"))
         self.assertEqual(result.returncode == 0, owner == "this-run")
         self.assertEqual(stage.exists(), owner != "this-run")
 
@@ -757,8 +771,7 @@ class WindowsCiContracts(unittest.TestCase):
             # Simulate loss of the SSH result after one link was created.
             command = command.split("ln -sT", 2)[0] + "ln -sT" + command.split("ln -sT", 2)[1]
             command += " false"
-          result = subprocess.run(
-              [posix_shell(), "-c", command], capture_output=True, text=True)
+          result = run_posix(command)
           if result.returncode:
             raise RuntimeError(result.stderr or "injected disconnect")
 
@@ -777,7 +790,9 @@ class WindowsCiContracts(unittest.TestCase):
         elif existing == "directory":
           self.assertEqual((destinations[1] / "stock-state").read_text(), "stock")
         elif existing == "dangling-link":
-          self.assertEqual(os.readlink(destinations[0]), str(root / "missing-stock-target"))
+          self.assertEqual(
+              normalized_link_target(destinations[0]),
+              os.path.normcase(os.path.normpath(root / "missing-stock-target")))
         else:
           self.assertFalse(any(path.exists() or path.is_symlink() for path in destinations))
 
