@@ -13,6 +13,7 @@
 #include "pipeline/internal/sima/BoxDecodeKernelAdmission.h"
 #include "pipeline/internal/sima/BoxDecodeTypeUtils.h"
 #include "pipeline/internal/sima/BoxDecodeStaticContractExtractor.h"
+#include "pipeline/internal/sima/PluginContractSubsets.h"
 #include "pipeline/internal/sima/stagesemantics/BoxDecodeStageSemantics.h"
 #include "pipeline/internal/contract/ContractFacts.h"
 #include "gst/GstInit.h"
@@ -106,6 +107,59 @@ BoxDecodeKernelRecipeResult check(const CompiledBoxDecodeContract& s,
     require(port.source == gs::TensorStagePortSource::Output, "publication reads private outputs");
   return r;
 }
+void detr_default_resolution() {
+  // The previous family smoke injected Softmax into a compiled payload, so it
+  // could not catch Model/raw-head Auto failing before numerical preparation.
+  for (int classes : {1, 3, 80, 91}) {
+    for (const std::string score_name : {"output_7", "class_logit_0", "class_prob_0"}) {
+      TensorList heads;
+      for (int channels : {4, classes + 1}) {
+        auto tensor = Tensor::from_vector(std::vector<float>(100 * channels, 0.f),
+                                          {1, 100, channels}, TensorMemory::CPU);
+        tensor.layout = TensorLayout::HWC;
+        tensor.route.name = heads.empty() ? "output_0" : score_name;
+        heads.push_back(std::move(tensor));
+      }
+      BoxDecodeStandaloneContractOverrides overrides;
+      overrides.source_storage_kind = BoxDecodeSourceStorageKind::DenseHwcPhysical;
+      std::string error;
+      auto raw = build_boxdecode_static_contract_from_sample(
+          sample_from_tensors(heads), BoxDecodeType::Detr, {}, overrides, &error);
+      require(raw && raw->score_activation == BoxDecodeScoreActivation::Softmax,
+              "DETR family must resolve Softmax independently of endpoint names");
+      raw->topk = 100;
+      const auto compiled = stagesemantics::build_boxdecode_compiled_contract(*raw);
+      require(compiled.payload.num_classes == classes &&
+                  compiled.payload.score_activation == BoxDecodeScoreActivation::Softmax,
+              "DETR must exclude the final background channel from its class count");
+      check(compiled, {640, 640, 1280, 720, ResizeMode::Stretch});
+      auto subset = plugin_contracts::extract_boxdecode_contract_subset_from_static_contract(*raw);
+      subset.num_classes = 0;
+      subset.score_activation = BoxDecodeScoreActivation::Unknown;
+      stagesemantics::BoxDecodeCompiledContractOptions options;
+      options.decode_type = BoxDecodeType::Detr;
+      options.topk = 100;
+      const auto inferred =
+          stagesemantics::build_boxdecode_compiled_contract_from_subset(subset, options);
+      require(inferred.payload.num_classes == classes &&
+                  inferred.payload.score_activation == BoxDecodeScoreActivation::Softmax,
+              "unresolved DETR MPK subset must resolve the same fixed contract");
+      check(inferred, {640, 640, 1280, 720, ResizeMode::Stretch});
+      for (auto activation :
+           {BoxDecodeScoreActivation::Identity, BoxDecodeScoreActivation::Sigmoid}) {
+        options.score_activation = activation;
+        bool rejected = false;
+        try {
+          (void)stagesemantics::build_boxdecode_compiled_contract_from_subset(subset, options);
+        } catch (const std::invalid_argument&) {
+          rejected = true;
+        }
+        require(rejected, "DETR accepted a contradictory authored score activation");
+      }
+    }
+  }
+}
+
 void families() {
   auto rcnn = source(BoxDecodeType::RcnnStage1, 1);
   for (int side : {136, 68, 34, 17, 9}) {
@@ -406,6 +460,60 @@ struct HostStorage final {
     std::memcpy(static_cast<std::byte*>(memory.get()) + element * 4, &value, 4);
   }
 };
+void detr_numerical_publication() {
+  auto request = source(BoxDecodeType::Detr, 2);
+  request.payload.topk = 2;
+  request.payload.score_activation = BoxDecodeScoreActivation::Softmax;
+  request.payload.detection_threshold = 0.1f;
+  request.payload.nms_iou_threshold = 0;
+  input(request, 1, 2, 4, "FP32", 0);
+  input(request, 1, 2, 3, "FP32", 0);
+  const auto prepared = check(request, {640, 640, 1280, 720, ResizeMode::Stretch});
+  const auto& members = prepared.compiled.recipe->members;
+  const auto& numerical = members[prepared.decode_member].executable;
+  const auto& publication = members.back().executable;
+  const auto description = inspect(numerical);
+  std::vector<std::shared_ptr<HostStorage>> inputs, outputs;
+  std::vector<c::ConstBytes> in, public_inputs;
+  std::vector<c::MutableBytes> out;
+  for (const auto& req : description.input_requirements()) {
+    inputs.push_back(std::make_shared<HostStorage>(req.storage_bytes));
+    in.push_back({static_cast<const std::byte*>(inputs.back()->memory.get()), req.storage_bytes});
+  }
+  // Box logits zero => normalized centre/extent 0.5. Score probabilities are
+  // independently known ratios [1,2,3]/6 and [4,1,1]/6, with background last.
+  for (std::size_t i = 0; i < 8; ++i)
+    inputs[0]->set_float(i, 0.f);
+  const std::array<float, 6> logits{0.f, std::log(2.f), std::log(3.f), std::log(4.f), 0.f, 0.f};
+  for (std::size_t i = 0; i < logits.size(); ++i)
+    inputs[1]->set_float(i, logits[i]);
+  for (const auto& req : description.output_requirements()) {
+    outputs.push_back(std::make_shared<HostStorage>(req.storage_bytes));
+    auto* data = static_cast<std::byte*>(outputs.back()->memory.get());
+    out.push_back({data, req.storage_bytes});
+    public_inputs.push_back({data, req.storage_bytes});
+  }
+  require(!test::execute_host(numerical, in, out),
+          "classic DETR checked numerical execution failed");
+  const auto wire_bytes = inspect(publication).output_requirements()[0].storage_bytes;
+  HostStorage wire(wire_bytes);
+  const std::array<c::MutableBytes, 1> published{
+      {{static_cast<std::byte*>(wire.memory.get()), wire_bytes}}};
+  require(!test::execute_host(publication, public_inputs, published),
+          "classic DETR publication failed");
+  require(wire.read<std::int32_t>(0) == 2, "classic DETR lost a valid query");
+  for (int row = 0; row < 2; ++row) {
+    const std::size_t offset = 4 + row * 24;
+    require(wire.read<std::int32_t>(offset) == 320 && wire.read<std::int32_t>(offset + 4) == 180 &&
+                wire.read<std::int32_t>(offset + 8) == 640 &&
+                wire.read<std::int32_t>(offset + 12) == 360 &&
+                wire.read<std::int32_t>(offset + 20) == row,
+            "classic DETR sigmoid boxes/class/original-frame mapping mismatch");
+    require(std::abs(wire.read<float>(offset + 16) - (row == 0 ? 2.f / 3.f : 1.f / 3.f)) < 2e-6f,
+            "classic DETR softmax must retain background in the denominator");
+  }
+}
+
 void yolo26_direct_mask_projection() {
   auto s = source(BoxDecodeType::YoloV26Seg, 1);
   s.payload.nms_iou_threshold = 0.;
@@ -1542,6 +1650,8 @@ int main(int argc, char** argv) {
     oriented_source_geometry();
     oriented_publication_sample_bridge();
     linear_metadata_contracts();
+    detr_default_resolution();
+    detr_numerical_publication();
     families();
     oriented_contract_and_execution();
     oriented_carrier_conversions();

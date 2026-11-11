@@ -405,8 +405,8 @@ constexpr const char* box_decode_type_contract_summary(BoxDecodeType type) {
   case BoxDecodeType::YoloV10Seg:
     return "YOLO-seg contract: same class-depth rules as YOLO plus segmentation decode path.";
   case BoxDecodeType::Detr:
-    return "DETR contract: class channels inferred from max depth across heads; max depth must be "
-           ">4.";
+    return "DETR contract: four box logits and N+1 class logits on one query grid; "
+           "background-aware softmax, N foreground classes, stretch resize, no NMS.";
   case BoxDecodeType::EffDet:
   case BoxDecodeType::RcnnStage1:
   case BoxDecodeType::Centernet:

@@ -8129,6 +8129,12 @@ CompiledBoxDecodeContract ModelAccess::build_boxdecode_stage_contract(const Mode
   validate_requested_boxdecode_contract_type(contract->decode_type, opt.decode_type,
                                              "Model-managed boxdecode derivation");
 
+  if (opt.decode_type == BoxDecodeType::Detr && contract->decode_type != BoxDecodeType::Detr) {
+    // The explicit family selects a fixed score recipe. Generic MPK endpoint
+    // names such as class_logit only infer sigmoid before that selection; they
+    // are not an authored override of classic DETR's classwise softmax.
+    contract->score_activation = pipeline_internal::sima::BoxDecodeScoreActivation::Unknown;
+  }
   contract->decode_type = opt.decode_type;
   contract->topk = opt.top_k;
   contract->detection_threshold = opt.score_threshold;

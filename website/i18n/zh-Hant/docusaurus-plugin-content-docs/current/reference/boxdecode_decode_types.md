@@ -82,6 +82,20 @@ opt.top_k = 100;
 
 軸對齊偵測結果的顯示圖可將結果傳給 `SimaRender`。`decode_bbox(...)` 僅適用於既有的方框前置格式；此函式與 `SimaRender` 都不接受旋轉框。
 
+## 傳統 DETR {#classic-detr}
+
+對於同一查詢網格上的四通道方框 logits，以及最後一個通道為背景的類別 logits，請選擇 `Detr`。將 `decode_type_option` 保持為 `Auto`：配方會選擇 Softmax，不依賴張量名稱。背景會參與分母計算，但不計入前景類別數，也不會被選為輸出。方框座標會套用 sigmoid；此解碼器不適用於已正規化的 focal-loss 方框。
+
+請使用 Stretch 與正值 `top_k`。解碼器不套用 NMS，並透過前處理中繼資料還原原始影格座標。明確指定機率值的配置或衝突的分數啟用函數會遭拒絕。
+
+```python
+options = pyneat.ModelOptions()
+options.decode_type = pyneat.BoxDecodeType.Detr
+options.preprocess.resize.mode = pyneat.ResizeMode.Stretch
+options.top_k = 100
+options.score_threshold = 0.7
+```
+
 ## YOLOv8 與 YOLO11 旋轉邊界框 {#yolov8-oriented-boxes}
 
 選取 `BoxDecodeType::YoloV8Obb`（Python：`pyneat.BoxDecodeType.YoloV8Obb`；代碼 `yolov8-obb` 或 `yolo11-obb`）。提供九個依角色分組的 INT8、BF16 或 FP32 頭：三個 64 通道 DFL 邊界框頭、三個類別 logit 頭，以及三個角度 logit 頭，各組依步幅 8、16、32 排列。完整類別數由類別頭推導。
