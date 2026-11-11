@@ -6,6 +6,7 @@ import getpass
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -38,6 +39,20 @@ import prepare_card_qualification_candidate as CARD_PREP  # noqa: E402
 import cleanup_windows_hardware as RECOVERY  # noqa: E402
 
 
+def posix_shell():
+  shell = shutil.which("sh")
+  if shell:
+    return shell
+  git = shutil.which("git")
+  if git:
+    git_root = Path(git).resolve().parent.parent
+    for candidate in (git_root / "usr" / "bin" / "sh.exe",
+                      git_root / "bin" / "sh.exe"):
+      if candidate.is_file():
+        return str(candidate)
+  raise FileNotFoundError("POSIX shell is unavailable for remote-command contract fixtures")
+
+
 class WindowsCiContracts(unittest.TestCase):
   def test_recovery_requires_known_private_stage_ownership(self):
     with tempfile.TemporaryDirectory() as directory:
@@ -64,7 +79,8 @@ class WindowsCiContracts(unittest.TestCase):
         if owner is not None:
           (stage / ".qualification-owner").write_text(owner)
         result = subprocess.run(
-            ["sh", "-c", card_stage_cleanup_command({"stage": str(stage)}, "this-run")],
+            [posix_shell(), "-c",
+             card_stage_cleanup_command({"stage": str(stage)}, "this-run")],
             capture_output=True, text=True, check=False)
         self.assertEqual(result.returncode == 0, owner == "this-run")
         self.assertEqual(stage.exists(), owner != "this-run")
@@ -741,7 +757,8 @@ class WindowsCiContracts(unittest.TestCase):
             # Simulate loss of the SSH result after one link was created.
             command = command.split("ln -sT", 2)[0] + "ln -sT" + command.split("ln -sT", 2)[1]
             command += " false"
-          result = subprocess.run(["sh", "-c", command], capture_output=True, text=True)
+          result = subprocess.run(
+              [posix_shell(), "-c", command], capture_output=True, text=True)
           if result.returncode:
             raise RuntimeError(result.stderr or "injected disconnect")
 
