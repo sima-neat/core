@@ -468,7 +468,8 @@ RUN_TEST(
           query_mla.canonical_output_dtype = "FP32";
           query_mla.quant.reset();
           query_mla.output_tensors[0].dtype = "FP32";
-          query_mla.output_tensors[0].mpk_shape = {1, static_cast<std::int64_t>(source_bytes)};
+          query_mla.output_tensors[0].mpk_shape = {
+              1, static_cast<std::int64_t>(source_bytes / sizeof(float))};
           query_mla.output_tensors[0].size_bytes = source_bytes;
           auto& query_unpack = query_mpk.plugins[1];
           for (int port = 0; port < 2; ++port) {
