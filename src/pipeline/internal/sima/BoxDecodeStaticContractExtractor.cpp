@@ -3142,7 +3142,8 @@ build_boxdecode_static_contract_from_mpk(const MpkContract& contract,
 
 std::optional<BoxDecodeStaticContract> build_boxdecode_static_contract_from_mpk(
     const MpkContract& contract, const ModelManagedRouteFlags& route_flags,
-    const MpkPluginIoContract* terminal_stage, std::string* error_message) {
+    const MpkPluginIoContract* terminal_stage, std::string* error_message,
+    BoxDecodeType requested_decode_type) {
   auto fail = [&](std::string message) -> std::optional<BoxDecodeStaticContract> {
     set_error(error_message, message);
     return std::nullopt;
@@ -3172,6 +3173,7 @@ std::optional<BoxDecodeStaticContract> build_boxdecode_static_contract_from_mpk(
   }
 
   BoxDecodeStaticContract out;
+  out.decode_type = requested_decode_type;
   out.score_activation = BoxDecodeScoreActivation::Unknown;
   // Source an explicitly authored decode type from the MPK BoxDecode stage. Prefer the explicit
   // terminal stage; otherwise fall back to the BoxDecode plugin in the chain.
@@ -3185,6 +3187,9 @@ std::optional<BoxDecodeStaticContract> build_boxdecode_static_contract_from_mpk(
     }
   }
   if (boxdecode_stage) {
+    if (const auto declared = parse_box_decode_type_token(boxdecode_stage->decode_type);
+        declared && !box_decode_type_matches_requested_contract(*declared, requested_decode_type))
+      return fail("boxdecode requested family conflicts with the MPK decoder contract");
     if (const auto parsed_type = parse_box_decode_type_token(boxdecode_stage->decode_type);
         parsed_type.has_value() &&
         (box_decode_type_is_ssd_family(*parsed_type) || *parsed_type == BoxDecodeType::SuperPoint ||

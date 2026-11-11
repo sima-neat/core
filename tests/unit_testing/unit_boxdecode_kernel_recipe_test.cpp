@@ -274,6 +274,32 @@ void focal_query_contract() {
   }
 }
 
+void detr_source_dtypes() {
+  // Preserve the actual ports until checked numerical admission. Relabelling
+  // the scores with the first port's dtype would reinterpret their bytes.
+  TensorList heads{Tensor::from_vector(std::vector<std::uint16_t>(8), {1, 2, 4}),
+                   Tensor::from_vector(std::vector<float>(6), {1, 2, 3})};
+  heads[0].dtype = TensorDType::BFloat16;
+  for (auto& tensor : heads)
+    tensor.layout = TensorLayout::HWC;
+  BoxDecodeStandaloneContractOverrides overrides;
+  overrides.source_storage_kind = BoxDecodeSourceStorageKind::DenseHwcPhysical;
+  std::string error;
+  auto raw = build_boxdecode_static_contract_from_sample(
+      sample_from_tensors(heads), BoxDecodeType::Detr, {}, overrides, &error);
+  require(raw && raw->tensors[0].data_type == "BF16" && raw->tensors[1].data_type == "FP32",
+          "DETR extraction must preserve each source port's dtype");
+  raw->topk = 2;
+  bool rejected = false;
+  try {
+    check(stagesemantics::build_boxdecode_compiled_contract(*raw),
+          {640, 640, 1280, 720, ResizeMode::Stretch});
+  } catch (const std::invalid_argument&) {
+    rejected = true;
+  }
+  require(rejected, "DETR numerical admission must reject mixed head dtypes");
+}
+
 void families() {
   auto rcnn = source(BoxDecodeType::RcnnStage1, 1);
   for (int side : {136, 68, 34, 17, 9}) {
@@ -580,8 +606,8 @@ void detr_numerical_publication() {
   request.payload.score_activation = BoxDecodeScoreActivation::Softmax;
   request.payload.detection_threshold = 0.1f;
   request.payload.nms_iou_threshold = 0;
-  input(request, 1, 2, 4, "FP32", 0);
-  input(request, 1, 2, 3, "FP32", 0);
+  input(request, 1, 2, 4, "FP32");
+  input(request, 1, 2, 3, "FP32");
   const auto prepared = check(request, {640, 640, 1280, 720, ResizeMode::Stretch});
   const auto& members = prepared.compiled.recipe->members;
   const auto& numerical = members[prepared.decode_member].executable;
@@ -1766,6 +1792,7 @@ int main(int argc, char** argv) {
     linear_metadata_contracts();
     focal_query_contract();
     detr_default_resolution();
+    detr_source_dtypes();
     detr_numerical_publication();
     families();
     oriented_contract_and_execution();
