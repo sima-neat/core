@@ -322,8 +322,9 @@ void maybe_infer_score_activation_from_boxdecode_contract_local(BoxDecodeStaticC
     contract->score_activation = BoxDecodeScoreActivation::Softmax;
     return;
   }
-  if (contract->decode_type == BoxDecodeType::RcnnStage1) {
-    // The stage-one RPN recipe has one objectness logit per anchor.
+  if (contract->decode_type == BoxDecodeType::RcnnStage1 ||
+      contract->decode_type == BoxDecodeType::DetrFocal) {
+    // RPN objectness and focal query scores are independent sigmoid logits.
     contract->score_activation = BoxDecodeScoreActivation::Sigmoid;
     return;
   }
@@ -3194,7 +3195,7 @@ std::optional<BoxDecodeStaticContract> build_boxdecode_static_contract_from_mpk(
         parsed_type.has_value() &&
         (box_decode_type_is_ssd_family(*parsed_type) || *parsed_type == BoxDecodeType::SuperPoint ||
          *parsed_type == BoxDecodeType::YoloV5 || *parsed_type == BoxDecodeType::YoloXSegPose ||
-         *parsed_type == BoxDecodeType::Detr)) {
+         *parsed_type == BoxDecodeType::Detr || *parsed_type == BoxDecodeType::DetrFocal)) {
       out.decode_type = *parsed_type;
     }
     if (const auto parsed_option =

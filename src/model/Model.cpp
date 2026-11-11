@@ -8120,7 +8120,9 @@ CompiledBoxDecodeContract ModelAccess::build_boxdecode_stage_contract(const Mode
   std::string contract_error;
   auto contract = pipeline_internal::sima::build_boxdecode_static_contract_from_mpk(
       *mpk, *route_flags, nullptr, &contract_error,
-      opt.decode_type == BoxDecodeType::Detr ? opt.decode_type : BoxDecodeType::Unspecified);
+      (opt.decode_type == BoxDecodeType::Detr || opt.decode_type == BoxDecodeType::DetrFocal)
+          ? opt.decode_type
+          : BoxDecodeType::Unspecified);
   if (!contract.has_value()) {
     throw std::runtime_error(
         "Model-managed boxdecode derivation failed to derive tensor contract from MPK: " +
