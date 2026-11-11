@@ -1017,7 +1017,9 @@ std::shared_ptr<Node> Normalization(NormalizationOptions options) {
     if (!std::isfinite(options.mean[i]) || !std::isfinite(options.stddev[i]) ||
         (options.rescale_factor ? options.stddev[i] == 0 : options.stddev[i] <= 0))
       throw std::invalid_argument(
-          "Normalization requires finite means and positive finite standard deviations");
+          options.rescale_factor
+              ? "Normalization requires finite means and nonzero finite source divisors"
+              : "Normalization requires finite means and positive finite standard deviations");
   auto opt = image_options(options.element_name);
   opt.normalize = true;
   opt.output_dtype = "BF16";
