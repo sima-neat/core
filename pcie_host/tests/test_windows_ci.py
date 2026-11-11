@@ -27,7 +27,8 @@ from windows_candidate import dependency_identity, sha256, validate_candidate  #
 from qualify_windows_hardware import (  # noqa: E402
     ExclusiveLock, RemoteExclusiveLock, card_snapshot, card_stage_cleanup_command, load_upgrade_base,
     parse_performance_log, require_powershell as require_hardware_powershell,
-    remove_installed_tutorial_facade, run_captured_to_file, run_sudo_remote,
+    recover_windows_platform_device, remove_installed_tutorial_facade,
+    run_captured_to_file, run_sudo_remote,
     sima_cli_identity, stage_card_candidate, stage_installed_tutorial_facade,
     stage_invalid_wheel_registry, stage_local_registry, stage_path_fixtures,
     stress_queues, validate_card_candidate)
@@ -250,6 +251,10 @@ class WindowsCiContracts(unittest.TestCase):
     self.assertIn('command.append("--terminate-on-pull-timeout")', source)
     self.assertIn('evidence / "client-process-death-worker-cleanup.log"', source)
     self.assertIn('evidence / "client-process-death-platform-recovery.log"', source)
+    self.assertIn('evidence / "client-process-death-card-readiness.log"', source)
+    self.assertIn('"simaai_pcie_test.exe"', source)
+    self.assertIn("Device recovery successful", source)
+    self.assertIn("Stop-Service -InputObject $service", source)
     self.assertIn('evidence / "card-candidate-platform-start.log"', source)
     self.assertIn('evidence / "card-stock-platform-recovery.log"', source)
     self.assertIn("Restart-Service -InputObject $service", source)
@@ -270,6 +275,26 @@ class WindowsCiContracts(unittest.TestCase):
     self.assertIn("shutil.rmtree(work, ignore_errors=True)", cleanup)
     self.assertIn("restore_card_candidate(args, remote_token", cleanup)
     self.assertIn('evidence / "recovery-platform-service.log"', cleanup)
+
+  def test_platform_device_recovery_requires_vendor_tool(self):
+    with tempfile.TemporaryDirectory() as directory:
+      root = Path(directory)
+      with self.assertRaisesRegex(RuntimeError, "recovery tool is unavailable"):
+        recover_windows_platform_device(root, root / "recovery.log")
+
+  def test_platform_device_recovery_uses_provisioned_vendor_tool(self):
+    with tempfile.TemporaryDirectory() as directory:
+      root = Path(directory)
+      tool = root / "simaai_pcie_test.exe"
+      tool.write_bytes(b"fixture")
+      with mock.patch("qualify_windows_hardware.require_powershell",
+                      return_value="powershell.exe"), \
+           mock.patch("qualify_windows_hardware.run_logged") as run:
+        recover_windows_platform_device(root, root / "recovery.log")
+      self.assertEqual(
+          run.call_args.kwargs["env"]["SIMA_WINDOWS_PLATFORM_RECOVERY_TOOL"],
+          str(tool))
+      self.assertEqual(run.call_args.kwargs["timeout"], 120)
 
   def test_wheel_payload_reader_checks_crc(self):
     with tempfile.TemporaryDirectory() as directory:

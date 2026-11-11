@@ -848,6 +848,51 @@ def restart_windows_platform_service(log: Path) -> None:
        "-Command", command], log, timeout=60)
 
 
+def recover_windows_platform_device(platform_runtime: Path, log: Path) -> None:
+  """Remove and rescan the Platform-owned card after an unclean client exit."""
+  recovery_tool = platform_runtime.resolve(strict=True) / "simaai_pcie_test.exe"
+  if not recovery_tool.is_file():
+    raise RuntimeError(
+        "Platform device recovery tool is unavailable: "
+        f"{recovery_tool}")
+  command = r"""
+$ErrorActionPreference = 'Stop'
+$service = Get-Service -Name 'SiMaMlaDaemon' -ErrorAction Stop
+$output = @()
+$exitCode = $null
+try {
+  Stop-Service -InputObject $service -Force -ErrorAction Stop
+  $service.WaitForStatus(
+      [System.ServiceProcess.ServiceControllerStatus]::Stopped,
+      [TimeSpan]::FromSeconds(30))
+  if ($service.Status -ne [System.ServiceProcess.ServiceControllerStatus]::Stopped) {
+    throw 'SiMaMlaDaemon did not stop before device recovery'
+  }
+  $output = @(& $env:SIMA_WINDOWS_PLATFORM_RECOVERY_TOOL -R -c 0 2>&1)
+  $exitCode = $LASTEXITCODE
+} finally {
+  Start-Service -InputObject $service -ErrorAction SilentlyContinue
+  $service.WaitForStatus(
+      [System.ServiceProcess.ServiceControllerStatus]::Running,
+      [TimeSpan]::FromSeconds(30))
+}
+$output | ForEach-Object { Write-Output $_ }
+Write-Output "recovery_tool_exit=$exitCode"
+if (($output | Out-String) -notmatch '(?m)^Device recovery successful\s*$') {
+  throw 'Platform device remove/rescan did not report success'
+}
+if ($service.Status -ne [System.ServiceProcess.ServiceControllerStatus]::Running) {
+  throw 'SiMaMlaDaemon did not return to running state after device recovery'
+}
+Start-Sleep -Seconds 2
+"""
+  environment = os.environ.copy()
+  environment["SIMA_WINDOWS_PLATFORM_RECOVERY_TOOL"] = str(recovery_tool)
+  run_logged(
+      [require_powershell(), "-NoLogo", "-NoProfile", "-NonInteractive",
+       "-Command", command], log, env=environment, timeout=120)
+
+
 def wait_for_no_card_workers(args: argparse.Namespace, log: Path, timeout: int) -> None:
   remote = (
       "printf 'workers='; "
@@ -867,6 +912,31 @@ def wait_for_no_card_workers(args: argparse.Namespace, log: Path, timeout: int) 
           return
         if time.monotonic() >= deadline:
           raise RuntimeError(f"card worker did not stop within {timeout} seconds; see {log}")
+        time.sleep(1)
+    finally:
+      attempt.unlink(missing_ok=True)
+
+
+def wait_for_card_ssh(args: argparse.Namespace, log: Path, timeout: int) -> None:
+  """Wait for card networking to return after the Windows PnP rescan."""
+  deadline = time.monotonic() + timeout
+  attempt = log.with_name(log.name + ".attempt")
+  with log.open("w", encoding="utf-8", errors="replace") as output:
+    try:
+      while True:
+        try:
+          result = run_captured_to_file(
+              ssh_command(args, "true"), attempt, timeout=15)
+        except subprocess.TimeoutExpired:
+          result = subprocess.CompletedProcess([], 124, "SSH probe timed out")
+        output.write(
+            f"returncode={result.returncode} {result.stdout.strip()}\n")
+        output.flush()
+        if result.returncode == 0:
+          return
+        if time.monotonic() >= deadline:
+          raise RuntimeError(
+              f"card SSH did not recover within {timeout} seconds; see {log}")
         time.sleep(1)
     finally:
       attempt.unlink(missing_ok=True)
@@ -954,8 +1024,11 @@ def run_fault_recovery_tests(args: argparse.Namespace, test_root: Path, evidence
     stream.close()
   terminate_card_workers(args, evidence / "client-process-death-worker-cleanup.log")
   wait_for_no_card_workers(args, evidence / "client-process-death-drain.log", 120)
-  restart_windows_platform_service(
+  recover_windows_platform_device(
+      args.platform_runtime,
       evidence / "client-process-death-platform-recovery.log")
+  wait_for_card_ssh(
+      args, evidence / "client-process-death-card-readiness.log", 120)
   run_logged(
       [recovery, "--sync-iterations", "1", "--iterations", "0"],
       evidence / "cpp-test_client_process_death_queue_reuse.log", env=environment,
