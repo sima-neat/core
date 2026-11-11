@@ -71,7 +71,8 @@ def verify_platform_signatures(candidate_root: Path) -> list[str]:
 
 
 def verify(candidate_dir: Path, qualification_path: Path, expected_commit: str,
-           require_signatures: bool, require_genai: bool = False) -> dict:
+           require_signatures: bool, require_genai: bool = False,
+           require_release: bool = False) -> dict:
   candidate = validate_candidate(candidate_dir)
   if candidate.core_commit != expected_commit:
     raise ValueError(
@@ -141,7 +142,7 @@ def verify(candidate_dir: Path, qualification_path: Path, expected_commit: str,
       or repair.get("scheduler") != "PASS"
       or customer_install.get("plugin_discovery") != "PASS"):
     raise ValueError("hardware qualification did not prove MSI repair and plugin discovery")
-  if require_signatures:
+  if require_release:
     upgrade = customer_install.get("upgrade")
     if (not isinstance(upgrade, dict) or upgrade.get("status") != "PASS"
         or not re.fullmatch(r"[0-9a-f]{40}", str(upgrade.get("baseline_commit", "")))
@@ -285,6 +286,7 @@ def verify(candidate_dir: Path, qualification_path: Path, expected_commit: str,
       "host_security_recorded": True,
       "path_qualified": True,
       "customer_install_qualified": True,
+      "release_gates_required": require_release,
       "genai_qualified": require_genai,
       "resources": candidate.resources,
       "dependency_signatures": dependency_signatures,
@@ -299,12 +301,14 @@ def main() -> None:
   parser.add_argument("--expected-commit", required=True)
   parser.add_argument("--qualification", type=Path, required=True)
   parser.add_argument("--require-genai", action="store_true")
+  parser.add_argument("--require-release", action="store_true",
+                      help="Require release lifecycle evidence even for unsigned packages")
   parser.add_argument("--require-signatures", action="store_true")
   parser.add_argument("--output", type=Path, required=True)
   args = parser.parse_args()
   result = verify(
       args.candidate, args.qualification, args.expected_commit,
-      args.require_signatures, args.require_genai)
+      args.require_signatures, args.require_genai, args.require_release)
   args.output.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 

@@ -92,12 +92,16 @@ gh workflow run pcie-host-windows.yml --repo sima-neat/core \
 The Core run builds the ordered Scheduler/Core/wheel cohort and runs the
 direct-card vision matrix. It must consume the named producer artifacts,
 including the same-commit Linux card payload; do not upload replacements.
-Validation artifacts may be unsigned and are not eligible for customer
-publication.
+Validation runs do not publish, regardless of signing. `require_signatures`
+defaults to `false` in both Windows workflows. Checksums and exact producer
+identity remain mandatory for unsigned Neat MSIs, DLLs, executables and wheels.
+This does not change Windows security policy or the separately delivered
+Platform driver. A customer policy that rejects unsigned user-space code needs
+a signed package; the installer must not disable that policy.
 
 ## Release run
 
-Before the signed run:
+Before the release run:
 
 1. Run Core `Vulcan CI` for the candidate commit and retain its successful run
    ID as the Linux regression admission.
@@ -108,8 +112,9 @@ Before the signed run:
    still be inside the seven-day retention window.
 4. Confirm the selected sima-cli run produced `sima-cli-dist` for the exact
    sima-cli commit.
-5. Confirm the signing certificate and timestamp service are available on the
-   producer, and the Platform runtime DLL signatures are valid.
+5. If a signed delivery is needed, set `require_signatures=true` in both
+   Scheduler and Core. Confirm the certificate and timestamp service are
+   available and the Platform runtime DLL signatures meet that optional gate.
 6. Set `include_genai=true` only after the released Windows Platform provider,
    daemon, models, and acceptance assets are installed. The lane selects the
    GenAI worker from the same admitted Linux candidate as the tensor worker.
@@ -129,7 +134,7 @@ Dispatch the candidate:
 ```text
 gh workflow run pcie-host-windows.yml --repo sima-neat/core \
   --ref <core-ref> \
-  -f scheduler_run_id=<signed-scheduler-run-id> \
+  -f scheduler_run_id=<scheduler-run-id> \
   -f scheduler_commit=<full-scheduler-commit> \
   -f sima_cli_run_id=<sima-cli-run-id> \
   -f sima_cli_commit=<full-sima-cli-commit> \
@@ -141,9 +146,20 @@ gh workflow run pcie-host-windows.yml --repo sima-neat/core \
 ```
 
 The release workflow refuses to publish unless the exact Linux, Scheduler,
-sima-cli, upgrade, signature, Windows 11, customer-install, direct-card, GenAI,
-and cleanup evidence passes. Publication promotes the tested artifact; it does
-not rebuild it.
+sima-cli, upgrade, Windows 11, customer-install, direct-card, GenAI, and cleanup
+evidence passes. Real upgrade evidence is required even when signing is off.
+Signature checks are an additional opt-in gate, not a substitute for release
+qualification. Publication promotes the tested artifact; it does not rebuild it.
+The full GenAI release gate remains pending a release-scope decision; passing
+the vision-only validation lane does not close that requirement.
+
+The local install evidence is not yet complete release qualification. It used a
+loopback registry and an administrator account. The qualifier can require an
+older, different-version MSI cohort, but that real upgrade still needs a run.
+Wheel failure deliberately preserves successful native installation for retry;
+this is not a transaction that rolls back all three packages. Qualify MSI failure
+rollback and ordinary-user runtime separately, using the approved delivery
+endpoint and CLI distribution before claiming the complete customer path.
 
 ## Evidence and recovery
 
@@ -160,7 +176,11 @@ private Linux card candidate, uninstalls the wheel and both MSI cohorts, removes
 its disposable downloads, compares the final card state with the baseline,
 including the exact Platform 3.0 `/etc/buildinfo` hash, and then releases both
 locks. Emergency cleanup only touches a retained card lock when its owner token
-matches the retained local record. If cleanup fails, the lock
+matches the retained local record. Without an owned lock, it does not stop workers,
+uninstall MSIs or remove a work directory. Tutorial paths are temporary links to
+the private candidate, and cleanup only removes links pointing at that candidate.
+Pre-existing worker files, directories and dangling links cause staging to fail
+without deleting them. If cleanup fails, the lock
 at `%USERPROFILE%\.sima\locks\neat-pcie-card0.lock` and its matching
 `/tmp/neat-pcie-card0.lock` card directory are deliberately retained. Do not
 delete either until the evidence logs have been reviewed and the runner,

@@ -17,7 +17,7 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 import json
 import math
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import platform
 import re
 import secrets
@@ -539,6 +539,17 @@ def run_sudo_remote(args: argparse.Namespace, remote: str, log: Path,
     raise RuntimeError(f"privileged card command failed with {result.returncode}; see {log}")
 
 
+def card_stage_cleanup_command(paths: dict[str, str], token: str) -> str:
+  """Only remove a private stage whose creation receipt matches this run."""
+  stage = shlex.quote(paths["stage"])
+  marker = shlex.quote(paths["stage"] + "/.qualification-owner")
+  return (
+      f"set -eu; if [ -e {stage} ] || [ -L {stage} ]; then "
+      f"test ! -L {stage}; test -f {marker}; test ! -L {marker}; "
+      f'test "$(cat {marker})" = {shlex.quote(token)}; rm -rf -- {stage}; fi'
+  )
+
+
 def stage_card_candidate(args: argparse.Namespace, candidate: CardCandidate, token: str,
                          evidence: Path) -> dict[str, str]:
   paths = card_candidate_paths(token)
@@ -553,8 +564,9 @@ def stage_card_candidate(args: argparse.Namespace, candidate: CardCandidate, tok
       "/usr/lib/aarch64-linux-gnu/gstreamer-1.0",
   )
   prepare = (
-      f"set -eu; test ! -e {paths['stage']}; umask 077; "
-      f"mkdir -p {paths['packages']} {paths['root']} {paths['run']} {paths['log']}"
+      f"set -eu; umask 077; mkdir {paths['stage']}; "
+      f"printf '%s\\n' {token} > {paths['stage']}/.qualification-owner; "
+      f"mkdir {paths['packages']} {paths['root']} {paths['run']} {paths['log']}"
   )
   try:
     run_logged(ssh_command(args, prepare), evidence / "card-candidate-prepare.log", timeout=30)
@@ -597,7 +609,7 @@ def stage_card_candidate(args: argparse.Namespace, candidate: CardCandidate, tok
   except BaseException as error:
     try:
       cleanup = run_captured_to_file(
-          ssh_command(args, f"rm -rf -- {paths['stage']}"),
+          ssh_command(args, card_stage_cleanup_command(paths, token)),
           evidence / "card-candidate-stage-cleanup.log", timeout=60)
       if cleanup.returncode != 0:
         error.add_note(
@@ -671,7 +683,8 @@ def restore_card_candidate(args: argparse.Namespace, token: str, evidence: Path)
   )
   run_sudo_remote(args, command, evidence / "card-candidate-restore.log")
   cleanup = (
-      f"set -eu; rm -rf -- {paths['stage']}; rm -f -- {lock}/baseline_firmware; "
+      card_stage_cleanup_command(paths, token) +
+      f"; rm -f -- {lock}/baseline_firmware; "
       f"test ! -e {paths['stage']}"
   )
   run_logged(
@@ -1153,6 +1166,16 @@ def run_python_tests(args: argparse.Namespace, python: Path, evidence: Path,
   return completed
 
 
+def tutorial_facade_links(staged: dict[str, str]) -> dict[str, str]:
+  """Default tutorial paths point only at this locked candidate's private files."""
+  root = staged["root"] + "/tutorial-facade"
+  return {
+      "/usr/bin/pcie-pipeline-builder": root + "/worker",
+      "/run/sima-neat/pcie": root + "/run",
+      "/var/log/sima-neat/pcie": root + "/log",
+  }
+
+
 def stage_installed_tutorial_facade(args: argparse.Namespace,
                                     staged: dict[str, str], evidence: Path) -> None:
   root = staged["root"]
@@ -1175,40 +1198,48 @@ def stage_installed_tutorial_facade(args: argparse.Namespace,
       f"{shlex.quote(worker)} \"$@\"",
       "",
   ))
+  links = tutorial_facade_links(staged)
+  private = shlex.quote(root + "/tutorial-facade")
   owner = shlex.quote(args.card_user)
-  command = (
-      "set -eu; "
-      "test ! -e /usr/bin/pcie-pipeline-builder; "
-      "test ! -e /run/sima-neat/pcie; "
-      "test ! -e /var/log/sima-neat/pcie; "
-      f"install -d -o {owner} -g {owner} -m 0700 "
-      "/run/sima-neat/pcie /var/log/sima-neat/pcie; "
-      f"printf %s {shlex.quote(wrapper)} > /usr/bin/pcie-pipeline-builder; "
-      "chown root:root /usr/bin/pcie-pipeline-builder; "
-      "chmod 0755 /usr/bin/pcie-pipeline-builder"
-  )
-  try:
-    run_sudo_remote(args, command, evidence / "tutorial-card-facade-stage.log")
-  except BaseException as error:
-    try:
-      remove_installed_tutorial_facade(
-          args, evidence / "tutorial-card-facade-stage-cleanup.log")
-    except BaseException as cleanup_error:
-      error.add_note(f"tutorial facade cleanup also failed: {cleanup_error}")
-    raise
+  commands = ["set -eu"]
+  # Reject existing files, directories AND dangling links before any mutation.
+  for destination in links:
+    path = shlex.quote(destination)
+    parent = shlex.quote(str(PurePosixPath(destination).parent))
+    commands.extend((f"test ! -e {path}", f"test ! -L {path}",
+                     f"test ! -L {parent}"))
+  commands.extend((
+      f"mkdir {private}",
+      f"chown {owner}:{owner} {private}",
+      f"install -d -o {owner} -g {owner} -m 0700 {private}/run {private}/log",
+      f"printf %s {shlex.quote(wrapper)} > {private}/worker",
+      f"chmod 0755 {private}/worker",
+  ))
+  for index, (destination, target) in enumerate(links.items()):
+    parent = shlex.quote(str(PurePosixPath(destination).parent))
+    commands.append(
+        f"if [ ! -d {parent} ]; then mkdir {parent}; "
+        f"touch {private}/parent-{index}; fi")
+    # -T is essential: an existing directory must not receive a nested link.
+    commands.append(f"ln -sT {shlex.quote(target)} {shlex.quote(destination)}")
+  run_sudo_remote(args, "; ".join(commands), evidence / "tutorial-card-facade-stage.log")
 
 
-def remove_installed_tutorial_facade(args: argparse.Namespace, log: Path) -> None:
-  command = (
-      "set -eu; "
-      "rm -f /usr/bin/pcie-pipeline-builder; "
-      "rm -rf /run/sima-neat/pcie /var/log/sima-neat/pcie; "
-      "rmdir /run/sima-neat /var/log/sima-neat 2>/dev/null || true; "
-      "test ! -e /usr/bin/pcie-pipeline-builder; "
-      "test ! -e /run/sima-neat/pcie; "
-      "test ! -e /var/log/sima-neat/pcie"
-  )
-  run_sudo_remote(args, command, log)
+def remove_installed_tutorial_facade(args: argparse.Namespace, staged: dict[str, str],
+                                     log: Path) -> None:
+  """Reconcile even an uncertain stage without deleting an existing installation."""
+  private = shlex.quote(staged["root"] + "/tutorial-facade")
+  commands = ["set -eu"]
+  for index, (destination, target) in enumerate(tutorial_facade_links(staged).items()):
+    path = shlex.quote(destination)
+    commands.append(
+        f'if [ -L {path} ] && [ "$(readlink {path})" = {shlex.quote(target)} ]; '
+        f"then rm -- {path}; fi")
+    parent = shlex.quote(str(PurePosixPath(destination).parent))
+    commands.append(
+        f"if [ -f {private}/parent-{index} ]; then "
+        f"rmdir {parent}; rm -- {private}/parent-{index}; fi")
+  run_sudo_remote(args, "; ".join(commands), log)
 
 
 def run_customer_tutorials(args: argparse.Namespace, install_root: Path, python: Path,
@@ -1526,12 +1557,12 @@ def qualify(args: argparse.Namespace) -> None:
           [python, "-c", "import pyneatpcie as p; assert p.Model and p.Runtime and p.Tensor"],
           evidence / "python-import.log", env=environment, cwd=work, timeout=60)
 
-      stage_installed_tutorial_facade(args, staged_card, evidence)
       tutorial_facade_staged = True
+      stage_installed_tutorial_facade(args, staged_card, evidence)
       result["tests"]["tutorial"] = run_customer_tutorials(
           args, install_root, python, work, evidence, environment)
       remove_installed_tutorial_facade(
-          args, evidence / "tutorial-card-facade-cleanup.log")
+          args, staged_card, evidence / "tutorial-card-facade-cleanup.log")
       tutorial_facade_staged = False
       result["tests"]["cpp"] = run_cpp_tests(args, candidate.root, evidence, environment)
       result["tests"]["python"] = run_python_tests(args, python, evidence, environment)
@@ -1547,18 +1578,19 @@ def qualify(args: argparse.Namespace) -> None:
           "type": type(error).__name__,
       }
     finally:
+      if card_stage_attempted:
+        try:
+          stop_card_workers(args, evidence)
+        except BaseException as error:
+          cleanup_errors.append(str(error))
       if tutorial_facade_staged:
         try:
           remove_installed_tutorial_facade(
-              args, evidence / "tutorial-card-facade-final-cleanup.log")
+              args, staged_card, evidence / "tutorial-card-facade-final-cleanup.log")
           result["cleanup"]["tutorial_facade"] = "PASS"
         except BaseException as error:
           cleanup_errors.append(str(error))
-      try:
-        stop_card_workers(args, evidence)
-      except BaseException as error:
-        cleanup_errors.append(str(error))
-      if card_stage_attempted:
+      if card_stage_attempted and not cleanup_errors:
         try:
           restore_card_candidate(args, remote_lock_token, evidence)
           result["cleanup"]["card_candidate"] = "PASS"
@@ -1601,7 +1633,9 @@ def qualify(args: argparse.Namespace) -> None:
         result["card_final"] = final
         baseline = result.get("card_baseline", {})
         unchanged = ("platform_release", "platform_sha256", "firmware", "remoteproc_state")
-        if (final["workers"] != "0" or final["genai_workers"] != "0"
+        expected_workers = "0" if card_stage_attempted else baseline.get("workers", "0")
+        expected_genai = "0" if card_stage_attempted else baseline.get("genai_workers", "0")
+        if (final["workers"] != expected_workers or final["genai_workers"] != expected_genai
             or any(name in baseline and final.get(name) != baseline[name] for name in unchanged)):
           cleanup_errors.append("card did not return to its qualified baseline")
       except BaseException as error:

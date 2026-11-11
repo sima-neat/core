@@ -2,6 +2,7 @@
 """Contracts for the native Windows Core PCIe-host producer."""
 
 import importlib.util
+import getpass
 import json
 import os
 from pathlib import Path
@@ -24,7 +25,7 @@ assert SPEC.loader
 SPEC.loader.exec_module(MODULE)
 from windows_candidate import dependency_identity, sha256, validate_candidate  # noqa: E402
 from qualify_windows_hardware import (  # noqa: E402
-    ExclusiveLock, RemoteExclusiveLock, card_snapshot, load_upgrade_base,
+    ExclusiveLock, RemoteExclusiveLock, card_snapshot, card_stage_cleanup_command, load_upgrade_base,
     parse_performance_log, require_powershell as require_hardware_powershell,
     remove_installed_tutorial_facade, run_captured_to_file, run_sudo_remote,
     sima_cli_identity, stage_card_candidate, stage_installed_tutorial_facade,
@@ -33,9 +34,60 @@ from qualify_windows_hardware import (  # noqa: E402
 from verify_linux_release_run import verify_run as verify_linux_run  # noqa: E402
 from verify_windows_release import verify  # noqa: E402
 import prepare_card_qualification_candidate as CARD_PREP  # noqa: E402
+import cleanup_windows_hardware as RECOVERY  # noqa: E402
 
 
 class WindowsCiContracts(unittest.TestCase):
+  def test_recovery_requires_known_private_stage_ownership(self):
+    with tempfile.TemporaryDirectory() as directory:
+      evidence = Path(directory)
+      for code, output, expected in ((0, "owned", True), (0, "absent", False),
+                                     (1, "", None), (0, "unexpected", None)):
+        with self.subTest(code=code, output=output), \
+            mock.patch.object(RECOVERY, "ssh_command", side_effect=lambda _args, cmd: [cmd]), \
+            mock.patch.object(RECOVERY, "run_captured_to_file", return_value=
+                              subprocess.CompletedProcess([], code, output)):
+          if expected is None:
+            with self.assertRaisesRegex(RuntimeError, "ownership is unknown"):
+              RECOVERY.card_stage_owned(SimpleNamespace(), "a" * 32, evidence)
+          else:
+            self.assertIs(RECOVERY.card_stage_owned(SimpleNamespace(), "a" * 32, evidence),
+                          expected)
+
+  def test_private_stage_cleanup_requires_its_creation_receipt(self):
+    for owner in (None, "another-run", "this-run"):
+      with self.subTest(owner=owner), tempfile.TemporaryDirectory() as directory:
+        stage = Path(directory) / "stage with spaces"
+        stage.mkdir()
+        (stage / "customer-data").write_text("preserve unless owned")
+        if owner is not None:
+          (stage / ".qualification-owner").write_text(owner)
+        result = subprocess.run(
+            ["sh", "-c", card_stage_cleanup_command({"stage": str(stage)}, "this-run")],
+            capture_output=True, text=True, check=False)
+        self.assertEqual(result.returncode == 0, owner == "this-run")
+        self.assertEqual(stage.exists(), owner != "this-run")
+
+  def test_recovery_without_owned_lock_does_not_mutate_host_or_card(self):
+    with tempfile.TemporaryDirectory() as directory:
+      root = Path(directory)
+      args = SimpleNamespace(candidate=root, upgrade_base_candidate=None,
+                             evidence=root / "evidence", lock_file=root / "absent.lock",
+                             remote_lock_path="/tmp/neat-pcie-card0.lock")
+      with mock.patch.object(RECOVERY.sys, "platform", "win32"), \
+          mock.patch.object(RECOVERY, "validate_candidate"), \
+          mock.patch.object(RECOVERY, "RemoteExclusiveLock") as lock, \
+          mock.patch.object(RECOVERY, "stop_card_workers") as stop, \
+          mock.patch.object(RECOVERY, "remove_msi") as remove, \
+          mock.patch.object(RECOVERY.shutil, "rmtree") as remove_work:
+        lock.return_value.owner.return_value = None
+        RECOVERY.cleanup(args)
+      stop.assert_not_called()
+      remove.assert_not_called()
+      remove_work.assert_not_called()
+      receipt = json.loads((args.evidence / "recovery-cleanup.json").read_text())
+      self.assertEqual(receipt["errors"], [])
+
   def scheduler_candidate(self, root: Path) -> Path:
     msi = root / "scheduler.msi"
     msi.write_bytes(b"scheduler-msi")
@@ -134,6 +186,8 @@ class WindowsCiContracts(unittest.TestCase):
     self.assertIn("sima_cli_run_id", source)
     self.assertIn("sima-cli-dist", source)
     self.assertIn("--require-signatures", source)
+    self.assertIn('"--require-release", "--require-genai"', source)
+    self.assertIn('if ("${{ inputs.require_signatures }}" -eq "true")', source)
     self.assertIn("Recover card and native installation", source)
     self.assertIn("if: always()", source)
     self.assertIn("upgrade_base_run_id", source)
@@ -207,7 +261,7 @@ class WindowsCiContracts(unittest.TestCase):
     self.assertIn('work / "missing wheel downloads with spaces"', source)
     self.assertIn('work / "invalid wheel downloads with spaces"', source)
     self.assertIn('work / "recovery downloads with spaces"', source)
-    self.assertIn("if card_stage_attempted:", source)
+    self.assertIn("if card_stage_attempted and not cleanup_errors:", source)
     self.assertIn("restore_card_candidate(args, remote_lock_token", source)
     self.assertIn("stdin=subprocess.DEVNULL", source)
     self.assertIn('cli_environment["SIMA_CLI_CHECK_FOR_UPDATE"] = "0"', source)
@@ -627,12 +681,63 @@ class WindowsCiContracts(unittest.TestCase):
       log = Path(directory) / "cleanup.log"
       with mock.patch(
           "qualify_windows_hardware.run_sudo_remote") as run:
-        remove_installed_tutorial_facade(SimpleNamespace(), log)
+        remove_installed_tutorial_facade(
+            SimpleNamespace(), {"root": "/tmp/neat-pcie-card0.fixture/root"}, log)
       command = run.call_args.args[1]
-      self.assertIn("rm -f /usr/bin/pcie-pipeline-builder", command)
-      self.assertIn("rm -rf /run/sima-neat/pcie /var/log/sima-neat/pcie", command)
-      self.assertNotIn("/tmp/neat-pcie-card0", command)
+      self.assertIn("readlink /usr/bin/pcie-pipeline-builder", command)
+      self.assertIn("rm -- /usr/bin/pcie-pipeline-builder", command)
+      self.assertNotIn("rm -rf", command)
       self.assertEqual(run.call_args.args[2], log)
+
+  def test_tutorial_facade_preserves_existing_paths_and_reconciles_partial_stage(self):
+    # Execute the actual POSIX commands in a disposable tree, not on a card.
+    for existing in ("file", "directory", "dangling-link", "none", "partial"):
+      with self.subTest(existing=existing), tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        private_root = root / "candidate"
+        private_root.mkdir()
+        facade = private_root / "tutorial-facade"
+        destinations = [root / "bin" / "worker", root / "run" / "pcie", root / "log" / "pcie"]
+        links = dict(zip(map(str, destinations),
+                         (str(facade / name) for name in ("worker", "run", "log"))))
+        destinations[0].parent.mkdir()
+        if existing == "file":
+          destinations[0].write_text("stock-worker")
+        elif existing == "directory":
+          destinations[1].mkdir(parents=True)
+          (destinations[1] / "stock-state").write_text("stock")
+        elif existing == "dangling-link":
+          destinations[0].symlink_to(root / "missing-stock-target")
+        staged = {"root": str(private_root), "worker": str(private_root / "real-worker")}
+        args = SimpleNamespace(card_user=getpass.getuser())
+
+        def execute(_args, command, _log):
+          if existing == "partial" and "ln -sT" in command:
+            # Simulate loss of the SSH result after one link was created.
+            command = command.split("ln -sT", 2)[0] + "ln -sT" + command.split("ln -sT", 2)[1]
+            command += " false"
+          result = subprocess.run(["sh", "-c", command], capture_output=True, text=True)
+          if result.returncode:
+            raise RuntimeError(result.stderr or "injected disconnect")
+
+        with mock.patch("qualify_windows_hardware.tutorial_facade_links", return_value=links), \
+             mock.patch("qualify_windows_hardware.run_sudo_remote", side_effect=execute):
+          if existing == "none":
+            stage_installed_tutorial_facade(args, staged, root)
+            self.assertTrue(all(path.is_symlink() for path in destinations))
+          else:
+            with self.assertRaises(RuntimeError):
+              stage_installed_tutorial_facade(args, staged, root)
+          remove_installed_tutorial_facade(args, staged, root / "cleanup.log")
+          remove_installed_tutorial_facade(args, staged, root / "cleanup-repeat.log")
+        if existing == "file":
+          self.assertEqual(destinations[0].read_text(), "stock-worker")
+        elif existing == "directory":
+          self.assertEqual((destinations[1] / "stock-state").read_text(), "stock")
+        elif existing == "dangling-link":
+          self.assertEqual(os.readlink(destinations[0]), str(root / "missing-stock-target"))
+        else:
+          self.assertFalse(any(path.exists() or path.is_symlink() for path in destinations))
 
   def test_candidate_rejects_changed_qualification_resource(self):
     with tempfile.TemporaryDirectory() as directory:
@@ -680,7 +785,24 @@ class WindowsCiContracts(unittest.TestCase):
       del value["customer_install"]["upgrade"]
       qualification.write_text(json.dumps(value), encoding="utf-8")
       with self.assertRaisesRegex(ValueError, "real MSI package upgrade"):
-        verify(root, qualification, commit, True)
+        verify(root, qualification, commit, True, require_release=True)
+      # Signing can also be checked in a non-release validation run.
+      admission = verify(root, qualification, commit, True)
+      self.assertFalse(admission["release_gates_required"])
+
+  def test_unsigned_release_requires_upgrade_without_requiring_signatures(self):
+    with tempfile.TemporaryDirectory() as directory:
+      root = Path(directory)
+      commit, _, qualification = self.windows_candidate(root, signed=False)
+      admission = verify(root, qualification, commit, False, require_release=True)
+      self.assertTrue(admission["release_gates_required"])
+      self.assertFalse(admission["signatures_required"])
+      self.assertFalse(admission["signatures_valid"])
+      value = json.loads(qualification.read_text(encoding="utf-8"))
+      del value["customer_install"]["upgrade"]
+      qualification.write_text(json.dumps(value), encoding="utf-8")
+      with self.assertRaisesRegex(ValueError, "real MSI package upgrade"):
+        verify(root, qualification, commit, False, require_release=True)
 
   def test_release_gate_requires_partial_wheel_failure_recovery(self):
     with tempfile.TemporaryDirectory() as directory:

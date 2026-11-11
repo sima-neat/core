@@ -39,9 +39,13 @@ on:
         type: boolean
         default: false
       validation_only:
-        description: Build and qualify without signing or publishing
+        description: Build and qualify without publishing
         type: boolean
         default: true
+      require_signatures:
+        description: Require Authenticode for Neat user-space packages (optional)
+        type: boolean
+        default: false
   workflow_dispatch:
     inputs:
       scheduler_run_id:
@@ -77,9 +81,13 @@ on:
         type: boolean
         default: false
       validation_only:
-        description: Build and qualify without signing or publishing
+        description: Build and qualify without publishing
         type: boolean
         default: true
+      require_signatures:
+        description: Require Authenticode for Neat user-space packages (optional)
+        type: boolean
+        default: false
 permissions:
   contents: read
 concurrency:
@@ -294,9 +302,9 @@ jobs:
           foreach ($directory in $env:SIMA_WINDOWS_DEPENDENCY_RUNTIME_PATH.Split(";")) {
             if ($directory) { $arguments += @("--dependency-runtime-dir", $directory) }
           }
-          if ("${{ inputs.validation_only }}" -ne "true") {
+          if ("${{ inputs.require_signatures }}" -eq "true") {
             if (-not $env:SIMA_WINDOWS_SIGNING_CERTIFICATE_SHA1) {
-              throw "Release mode requires SIMA_WINDOWS_SIGNING_CERTIFICATE_SHA1"
+              throw "Signed packages require SIMA_WINDOWS_SIGNING_CERTIFICATE_SHA1"
             }
             $arguments += @(
               "--require-signatures",
@@ -503,7 +511,10 @@ jobs:
             "--output", "$env:RUNNER_TEMP\core-windows-hardware-evidence\release-admission.json"
           )
           if ("${{ inputs.validation_only }}" -ne "true") {
-            $arguments += @("--require-signatures", "--require-genai")
+            $arguments += @("--require-release", "--require-genai")
+          }
+          if ("${{ inputs.require_signatures }}" -eq "true") {
+            $arguments += "--require-signatures"
           }
           & python @arguments
           if ($LASTEXITCODE -ne 0) { throw "Windows release admission failed: $LASTEXITCODE" }

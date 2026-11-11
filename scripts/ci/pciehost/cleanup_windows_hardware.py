@@ -13,7 +13,8 @@ import subprocess
 import sys
 
 from qualify_windows_hardware import (
-    RemoteExclusiveLock, restart_windows_platform_service, restore_card_candidate,
+    RemoteExclusiveLock, card_candidate_paths, remove_installed_tutorial_facade,
+    restart_windows_platform_service, restore_card_candidate, run_captured_to_file, ssh_command,
     stop_card_workers)
 from windows_candidate import validate_candidate
 
@@ -59,6 +60,21 @@ def remove_msi(msi: Path, log: Path) -> int:
   return result.returncode
 
 
+def card_stage_owned(args: argparse.Namespace, token: str, evidence: Path) -> bool:
+  paths = card_candidate_paths(token)
+  command = (
+      f"set -eu; stage={paths['stage']}; "
+      'if [ ! -e "$stage" ] && [ ! -L "$stage" ]; then printf absent; '
+      'else test ! -L "$stage"; test -f "$stage/.qualification-owner"; '
+      f'test "$(cat "$stage/.qualification-owner")" = {token}; printf owned; fi'
+  )
+  result = run_captured_to_file(
+      ssh_command(args, command), evidence / "recovery-stage-owner.log", timeout=30)
+  if result.returncode != 0 or result.stdout not in {"owned", "absent"}:
+    raise RuntimeError("private card stage ownership is unknown; retaining recovery state")
+  return result.stdout == "owned"
+
+
 def cleanup(args: argparse.Namespace) -> None:
   if sys.platform != "win32":
     raise RuntimeError("Windows PCIe cleanup must run on Windows")
@@ -85,14 +101,25 @@ def cleanup(args: argparse.Namespace) -> None:
     raise RuntimeError("refusing cleanup because the card-side PCIe lock has another owner")
   if remote_token is not None and remote_owner != remote_token:
     raise RuntimeError("refusing cleanup because local and card-side PCIe lock owners differ")
+  if remote_token is None:
+    # A completed qualifier already released its locks. Do not stop somebody
+    # else's workers or uninstall packages from a subsequent customer session.
+    (evidence / "recovery-cleanup.json").write_text(
+        json.dumps({"errors": [], "results": {"lock": "absent; no recovery needed"}},
+                   indent=2) + "\n", encoding="utf-8")
+    return
 
-  try:
-    stop_card_workers(args, evidence)
-    results["card_workers"] = "stopped"
-  except BaseException as error:
-    errors.append(str(error))
-  if remote_token is not None:
+  staged = card_stage_owned(args, remote_token, evidence)
+  if staged:
     try:
+      stop_card_workers(args, evidence)
+      results["card_workers"] = "stopped"
+    except BaseException as error:
+      errors.append(str(error))
+  if staged and not errors:
+    try:
+      remove_installed_tutorial_facade(
+          args, card_candidate_paths(remote_token), evidence / "recovery-tutorial-facade.log")
       restore_card_candidate(args, remote_token, evidence)
       results["card_candidate"] = "restored"
       restart_windows_platform_service(evidence / "recovery-platform-service.log")
