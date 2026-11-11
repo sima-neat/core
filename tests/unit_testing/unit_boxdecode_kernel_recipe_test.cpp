@@ -160,6 +160,120 @@ void detr_default_resolution() {
   }
 }
 
+void focal_query_contract() {
+  static_assert(static_cast<int>(BoxDecodeType::Detr) == 13);
+  static_assert(static_cast<int>(BoxDecodeType::DetrFocal) == 27);
+  require(parse_box_decode_type_token("detr-focal") == BoxDecodeType::DetrFocal,
+          "focal public token did not round-trip");
+  // Focal profiles define their score domain; tensor endpoint names do not.
+  TensorList raw_heads;
+  for (int channels : {4, 80}) {
+    auto tensor = Tensor::from_vector(std::vector<float>(300 * channels, .5f), {1, 300, channels},
+                                      TensorMemory::CPU);
+    tensor.layout = TensorLayout::HWC;
+    tensor.route.name = channels == 4 ? "features" : "output_7";
+    raw_heads.push_back(std::move(tensor));
+  }
+  BoxDecodeStandaloneContractOverrides raw_overrides;
+  raw_overrides.source_storage_kind = BoxDecodeSourceStorageKind::DenseHwcPhysical;
+  raw_overrides.tess_needed = false;
+  raw_overrides.quant_needed = false;
+  std::string raw_error;
+  const auto raw_contract = build_boxdecode_static_contract_from_sample(
+      sample_from_tensors(raw_heads), BoxDecodeType::DetrFocal, {}, raw_overrides, &raw_error);
+  require(raw_contract && raw_contract->score_activation == BoxDecodeScoreActivation::Sigmoid,
+          "focal raw sample must not require class_logit endpoint names");
+  for (int classes : {1, 4, 80, 366, 777, 1024}) {
+    BoxDecodeStaticContract authored;
+    authored.decode_type = BoxDecodeType::DetrFocal;
+    authored.topk = 300;
+    for (int channels : {4, classes}) {
+      BoxDecodeTensorStaticContract tensor;
+      tensor.input_shape = {1, 300, channels};
+      tensor.slice_shape = tensor.input_shape;
+      tensor.data_type = "FP32";
+      tensor.layout = "HWC";
+      // Arbitrary export names must not control the focal class count.
+      tensor.logical_name = "output" + std::to_string(authored.tensors.size());
+      tensor.backend_name = tensor.logical_name;
+      tensor.source_storage_kind = BoxDecodeSourceStorageKind::DenseHwcPhysical;
+      authored.tensors.push_back(std::move(tensor));
+    }
+    const auto compiled = stagesemantics::build_boxdecode_compiled_contract(authored);
+    require(compiled.payload.num_classes == classes &&
+                compiled.payload.score_activation == BoxDecodeScoreActivation::Sigmoid,
+            "focal static class-depth/sigmoid resolution failed");
+    check(compiled, {640, 640, 1280, 720, ResizeMode::Stretch});
+    auto subset =
+        plugin_contracts::extract_boxdecode_contract_subset_from_static_contract(authored);
+    // MPKs can leave the class count unresolved. Exercise the actual subset
+    // fallback, rather than forwarding a count already inferred upstream.
+    subset.num_classes = 0;
+    stagesemantics::BoxDecodeCompiledContractOptions options;
+    options.decode_type = BoxDecodeType::DetrFocal;
+    options.topk = 300;
+    const auto from_subset =
+        stagesemantics::build_boxdecode_compiled_contract_from_subset(subset, options);
+    require(from_subset.payload.num_classes == classes,
+            "focal MPK subset class depth was not resolved");
+    check(from_subset, {640, 640, 1280, 720, ResizeMode::Stretch});
+    auto planar = authored;
+    for (auto& tensor : planar.tensors) {
+      tensor.input_shape = {tensor.input_shape.back(), 1, 300};
+      tensor.slice_shape = tensor.input_shape;
+      tensor.layout = "CHW";
+    }
+    const auto planar_compiled = stagesemantics::build_boxdecode_compiled_contract(planar);
+    require(planar_compiled.payload.num_classes == classes, "focal planar class inference");
+    check(planar_compiled, {640, 640, 1280, 720, ResizeMode::Stretch});
+
+    for (int fault = 0; fault < 7; ++fault) {
+      auto bad = compiled;
+      auto geometry = BoxDecodeGeometryOptions{640, 640, 1280, 720, ResizeMode::Stretch};
+      if (fault == 0)
+        bad.payload.num_classes = classes + 1;
+      if (fault == 1)
+        bad.payload.score_activation = BoxDecodeScoreActivation::Softmax;
+      if (fault == 2)
+        bad.payload.nms_iou_threshold = .5;
+      if (fault == 3)
+        geometry.resize = ResizeMode::Letterbox;
+      if (fault == 4)
+        bad.payload.decode_type_option = BoxDecodeTypeOption::GroupedByRoleProbability;
+      if (fault == 5)
+        bad.payload.decode_type_option = BoxDecodeTypeOption::PackedPerHead;
+      if (fault == 6)
+        bad.runtime_contract.logical_inputs[0].shape = {1, 299, 4};
+      bool rejected = false;
+      try {
+        (void)check(bad, geometry);
+      } catch (const std::invalid_argument&) {
+        rejected = true;
+      }
+      require(rejected, "focal accepted incompatible class/domain/NMS/resize/layout/head geometry");
+    }
+    authored.score_activation = BoxDecodeScoreActivation::Identity;
+    bool rejected = false;
+    try {
+      (void)stagesemantics::build_boxdecode_compiled_contract(authored);
+    } catch (const std::invalid_argument&) {
+      rejected = true;
+    }
+    require(rejected, "focal static probability domain was silently relabeled");
+  }
+  for (int classes : {0, 1025}) {
+    auto bad = source(BoxDecodeType::DetrFocal, classes);
+    bool rejected = false;
+    try {
+      (void)check(bad, {640, 640, 1280, 720, ResizeMode::Stretch});
+    } catch (const std::invalid_argument& error) {
+      rejected =
+          std::string(error.what()).find("focal class count must be 1..1024") != std::string::npos;
+    }
+    require(rejected, "focal construction class bound not enforced");
+  }
+}
+
 void families() {
   auto rcnn = source(BoxDecodeType::RcnnStage1, 1);
   for (int side : {136, 68, 34, 17, 9}) {
@@ -1650,6 +1764,7 @@ int main(int argc, char** argv) {
     oriented_source_geometry();
     oriented_publication_sample_bridge();
     linear_metadata_contracts();
+    focal_query_contract();
     detr_default_resolution();
     detr_numerical_publication();
     families();
