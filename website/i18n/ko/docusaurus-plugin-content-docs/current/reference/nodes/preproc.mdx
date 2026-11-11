@@ -74,6 +74,8 @@ BF16 입력 모델에서는 일반 옵션으로 원본 이미지 연산을 설�
 
 Model 이미지 전처리에서는 `preprocess.quantize.enable`과 `preprocess.tessellate.enable`을 `Auto`로 두세요. 명시적인 텐서 경로는 이러한 고정 이미지 옵션을 처리할 수 없으므로 거부됩니다.
 
+Model의 `preprocess.resize.interpolation`과 독립형 `ResizeOptions.interpolation`은 같은 `ResizeInterpolation` 열거형을 사용합니다. 새 코드에서는 형식이 지정된 옵션을 사용하세요. 기본값 `None`은 기존 `scaling_type` 문자열과 Bilinear 기본 동작을 유지합니다. 열거형 값은 기존 기본값보다 우선하며, 충돌하는 기본값 이외의 문자열은 거부됩니다.
+
 ```python
 import pyneat
 
@@ -83,7 +85,7 @@ p.kind = pyneat.InputKind.Image
 p.input_max_width, p.input_max_height = 1280, 720
 p.resize.enable = pyneat.AutoFlag.On
 p.resize.mode = pyneat.ResizeMode.Stretch
-p.resize.scaling_type = "BILINEAR_ANTIALIASED"
+p.resize.interpolation = pyneat.ResizeInterpolation.BilinearAntialiased
 p.rescale_factor = 1.0 / 255.0
 p.normalize.enable = pyneat.AutoFlag.On
 p.normalize.mean = [0.485, 0.456, 0.406]

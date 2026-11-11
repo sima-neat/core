@@ -25,6 +25,8 @@ flowchart LR
     Benchmark[Core benchmark reports] --> Sentinel[Optional Sentinel telemetry]
 ```
 
+Model 與獨立的 Resize 共用僅含值的 `ResizeInterpolation` 列舉及單一取樣器權杖對應。Model 規劃會先解析可選的型別設定，再處理圖像意圖、階段投影與圖形來源資訊；既有字串僅保留在相容性邊界。
+
 模型與獨立影像選項會轉換為相同的一般 Preproc 請求。固定來源運算保留原始 FP32 數值縮放、尺寸縮放後的平均值／除數，以及量化步長的運算邊界；它不是任意順序的轉換解譯器。輸入 dtype、量化及實體佈局仍由 MPK 決定。新選項需明確啟用，省略時保留舊版位元組。Core 只投影意圖與幾何資訊；數值檢查及執行由 Kernels 負責。
 
 Kernels 仍是操作目錄與數值准入的權威來源。Scheduler 透過 Runner 轉送一般化要求；

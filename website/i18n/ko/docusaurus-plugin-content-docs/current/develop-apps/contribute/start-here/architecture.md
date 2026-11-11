@@ -26,6 +26,8 @@ flowchart LR
     Benchmark[Core benchmark reports] --> Sentinel[Optional Sentinel telemetry]
 ```
 
+Model과 독립형 Resize는 값 전용 `ResizeInterpolation` 열거형과 하나의 샘플러 토큰 매핑을 공유합니다. Model 계획은 이미지 의도, 스테이지 투영, 그래프 출처를 처리하기 전에 선택적인 열거형 설정을 해석합니다. 기존 문자열은 호환성 경계로 유지됩니다.
+
 모델과 독립형 이미지 옵션은 동일한 일반 Preproc 요청으로 내려갑니다. 고정 원본 연산은 원래 FP32 재스케일링, 크기 조정 후 평균/제수, 양자화 스텝 경계를 유지하며 임의 순서 변환 인터프리터가 아닙니다. 입력 dtype, 양자화, 물리 레이아웃은 여전히 MPK가 결정합니다. 새 옵션은 명시적으로 선택하며 생략하면 기존 바이트를 유지합니다. Core는 의도와 기하만 전달하고, 수치적 허용 여부와 실행은 Kernels가 소유합니다.
 
 Kernels는 연산 카탈로그와 수치 연산 허용 판정의 권한을 유지합니다.

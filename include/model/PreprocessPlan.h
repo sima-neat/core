@@ -104,7 +104,11 @@ struct ResizeSpec {
   int height = 0;                          ///< Target height (px). `0` = inferred from contract.
   ResizeMode mode = ResizeMode::Letterbox; ///< How to handle aspect-ratio mismatch.
   int pad_value = 114; ///< Pad fill value when `mode == Letterbox` (default 114, YOLO convention).
-  std::string scaling_type = "BILINEAR"; ///< Sampler kind: `"BILINEAR"`, `"NEAREST"`, etc.
+  /// Legacy compatibility spelling. Prefer interpolation for new code.
+  std::string scaling_type = "BILINEAR";
+  /// Typed sampler; omitted retains scaling_type and its legacy Bilinear default.
+  /// When set, the legacy default is ignored; a conflicting nondefault string is rejected.
+  std::optional<ResizeInterpolation> interpolation;
 };
 
 /// Color-format conversion parameters.

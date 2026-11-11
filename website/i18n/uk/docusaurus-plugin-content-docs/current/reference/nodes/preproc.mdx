@@ -74,6 +74,8 @@ tensors = pyneat.stages.preproc(
 
 Для попередньої обробки зображень у Model залиште `preprocess.quantize.enable` і `preprocess.tessellate.enable` у стані `Auto`. Явно вибрані тензорні шляхи не можуть застосувати ці фіксовані параметри зображення, тому їх відхилено.
 
+Model `preprocess.resize.interpolation` і окремий `ResizeOptions.interpolation` використовують той самий перелік `ResizeInterpolation`. У новому коді використовуйте типізований параметр. Типове значення `None` зберігає попередній рядок `scaling_type` та типовий режим Bilinear. Типізоване значення має перевагу над цим попереднім типовим значенням; суперечливий нетиповий рядок відхиляється.
+
 ```python
 import pyneat
 
@@ -83,7 +85,7 @@ p.kind = pyneat.InputKind.Image
 p.input_max_width, p.input_max_height = 1280, 720
 p.resize.enable = pyneat.AutoFlag.On
 p.resize.mode = pyneat.ResizeMode.Stretch
-p.resize.scaling_type = "BILINEAR_ANTIALIASED"
+p.resize.interpolation = pyneat.ResizeInterpolation.BilinearAntialiased
 p.rescale_factor = 1.0 / 255.0
 p.normalize.enable = pyneat.AutoFlag.On
 p.normalize.mean = [0.485, 0.456, 0.406]

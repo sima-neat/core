@@ -4588,6 +4588,13 @@ NB_MODULE(_pyneat_core, m) {
       .value("Legacy", simaai::neat::PreprocFloatingConversion::Legacy)
       .value("NearestEven", simaai::neat::PreprocFloatingConversion::NearestEven);
 
+  nb::enum_<simaai::neat::ResizeInterpolation>(m, "ResizeInterpolation")
+      .value("Nearest", simaai::neat::ResizeInterpolation::Nearest)
+      .value("Bilinear", simaai::neat::ResizeInterpolation::Bilinear)
+      .value("Bicubic", simaai::neat::ResizeInterpolation::Bicubic)
+      .value("BoxAverage", simaai::neat::ResizeInterpolation::BoxAverage)
+      .value("BilinearAntialiased", simaai::neat::ResizeInterpolation::BilinearAntialiased);
+
   nb::class_<simaai::neat::ResizeSpec>(m, "ResizeSpec")
       .def(nb::init<>())
       .def_rw("enable", &simaai::neat::ResizeSpec::enable)
@@ -4595,7 +4602,8 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("height", &simaai::neat::ResizeSpec::height)
       .def_rw("mode", &simaai::neat::ResizeSpec::mode)
       .def_rw("pad_value", &simaai::neat::ResizeSpec::pad_value)
-      .def_rw("scaling_type", &simaai::neat::ResizeSpec::scaling_type);
+      .def_rw("scaling_type", &simaai::neat::ResizeSpec::scaling_type)
+      .def_rw("interpolation", &simaai::neat::ResizeSpec::interpolation);
 
   nb::class_<simaai::neat::ColorConvertSpec>(m, "ColorConvertSpec")
       .def(nb::init<>())
@@ -5335,12 +5343,6 @@ NB_MODULE(_pyneat_core, m) {
       .value("NV12", simaai::neat::ImageFormat::NV12)
       .value("I420", simaai::neat::ImageFormat::I420)
       .value("NV16", simaai::neat::ImageFormat::NV16);
-  nb::enum_<simaai::neat::ResizeInterpolation>(m, "ResizeInterpolation")
-      .value("Nearest", simaai::neat::ResizeInterpolation::Nearest)
-      .value("Bilinear", simaai::neat::ResizeInterpolation::Bilinear)
-      .value("Bicubic", simaai::neat::ResizeInterpolation::Bicubic)
-      .value("BoxAverage", simaai::neat::ResizeInterpolation::BoxAverage)
-      .value("BilinearAntialiased", simaai::neat::ResizeInterpolation::BilinearAntialiased);
   nb::enum_<simaai::neat::ResizeFit>(m, "ResizeFit")
       .value("Stretch", simaai::neat::ResizeFit::Stretch)
       .value("Contain", simaai::neat::ResizeFit::Contain);

@@ -11,7 +11,6 @@
 namespace simaai::neat {
 /// Raw UInt8 image formats. Numerical tensor dtypes are intentionally separate.
 enum class ImageFormat { RGB, BGR, GRAY8, NV12, I420, NV16 };
-enum class ResizeInterpolation { Nearest, Bilinear, Bicubic, BoxAverage, BilinearAntialiased };
 enum class ResizeFit { Stretch, Contain };
 enum class ImageColorMatrix { Bt601, Bt709 };
 enum class ImageYuvRange { Full, Limited };

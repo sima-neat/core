@@ -1,5 +1,6 @@
 #include "nodes/sima/Preproc.h"
 #include "nodes/sima/internal/ImageTransformPolicy.h"
+#include "nodes/sima/internal/ResizeInterpolation.h"
 
 #include "builder/InputContractConfigurable.h"
 #include "model/internal/ModelInternal.h"
@@ -973,25 +974,10 @@ std::shared_ptr<Node> Resize(ResizeOptions options) {
   opt.dynamic_input_dims = true;
   opt.aspect_ratio = options.fit == ResizeFit::Contain;
   opt.pad_value = options.pad_value;
-  switch (options.interpolation) {
-  case ResizeInterpolation::Nearest:
-    opt.scaling_type = "NEAREST";
-    break;
-  case ResizeInterpolation::Bilinear:
-    opt.scaling_type = "BILINEAR";
-    break;
-  case ResizeInterpolation::BilinearAntialiased:
-    opt.scaling_type = "BILINEAR_ANTIALIASED";
-    break;
-  case ResizeInterpolation::Bicubic:
-    opt.scaling_type = "BICUBIC";
-    break;
-  case ResizeInterpolation::BoxAverage:
-    opt.scaling_type = "INTERAREA";
-    break;
-  default:
+  const auto* interpolation = internal::resize_interpolation_token(options.interpolation);
+  if (!interpolation)
     throw std::invalid_argument("Resize: invalid interpolation");
-  }
+  opt.scaling_type = interpolation;
   internal::ImageTransformPolicy policy;
   policy.mode = internal::ImageTransformMode::Resize;
   policy.color = options.color;

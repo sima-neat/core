@@ -4,6 +4,7 @@
 #include "test_utils.h"
 
 #include <functional>
+#include <utility>
 #include <string>
 #include <vector>
 
@@ -14,6 +15,7 @@ using simaai::neat::InputKind;
 using simaai::neat::Model;
 using simaai::neat::NormalizePreset;
 using simaai::neat::PreprocessGraphFamily;
+using simaai::neat::ResizeInterpolation;
 using simaai::neat::ResizeMode;
 using simaai::neat::Transform;
 using simaai::neat::TransformType;
@@ -68,12 +70,86 @@ RUN_TEST(
     "unit_input_planner_semantics_test", ([] {
       PreprocessCapabilities caps = all_caps();
 
+      // Model and standalone Resize share the same typed sampler. Resolve it
+      // before intent detection, route selection, snapshots and stage projection.
+      {
+        static_assert(static_cast<int>(ResizeInterpolation::Nearest) == 0);
+        static_assert(static_cast<int>(ResizeInterpolation::BilinearAntialiased) == 4);
+        const std::pair<ResizeInterpolation, const char*> samplers[] = {
+            {ResizeInterpolation::Nearest, "NEAREST"},
+            {ResizeInterpolation::Bilinear, "BILINEAR"},
+            {ResizeInterpolation::Bicubic, "BICUBIC"},
+            {ResizeInterpolation::BoxAverage, "INTERAREA"},
+            {ResizeInterpolation::BilinearAntialiased, "BILINEAR_ANTIALIASED"}};
+        Model::Options legacy;
+        require(!legacy.preprocess.resize.interpolation &&
+                    legacy.preprocess.resize.scaling_type == "BILINEAR",
+                "legacy resize default changed");
+        for (const auto& [sampler, token] : samplers) {
+          Model::Options typed;
+          typed.preprocess.resize.interpolation = sampler;
+          const auto planned = plan_preprocess(typed, caps);
+          require(planned.resolved_plan.effective.resize.scaling_type == token &&
+                      planned.resolved_plan.effective.resize.enable == AutoFlag::On &&
+                      planned.resolved_plan.resolved_kind == InputKind::Image &&
+                      planned.resolved_plan.graph_family == PreprocessGraphFamily::Preproc,
+                  "typed sampler was ignored or lowered differently");
+          typed.preprocess.resize.scaling_type = token;
+          require(plan_preprocess(typed, caps).resolved_plan.effective.resize.scaling_type == token,
+                  "matching legacy/typed samplers conflict");
+        }
+        legacy.preprocess.resize.scaling_type = "NEAREST_NEIGHBOUR";
+        legacy.preprocess.resize.interpolation = ResizeInterpolation::Nearest;
+        require(plan_preprocess(legacy, caps).resolved_plan.effective.resize.scaling_type ==
+                    "NEAREST",
+                "legacy nearest alias did not agree with typed Nearest");
+        legacy.preprocess.resize.interpolation.reset();
+        legacy.preprocess.resize.enable = AutoFlag::On;
+        require(plan_preprocess(legacy, caps).resolved_plan.effective.resize.scaling_type ==
+                    "NEAREST_NEIGHBOUR",
+                "legacy-only string behavior changed");
+        legacy.preprocess.resize.interpolation = ResizeInterpolation::Bicubic;
+        require_throws_contains([&] { (void)plan_preprocess(legacy, caps); }, "conflicts",
+                                "conflicting nondefault legacy/typed samplers were accepted");
+        legacy.preprocess.resize.interpolation = static_cast<ResizeInterpolation>(999);
+        require_throws_contains([&] { (void)plan_preprocess(legacy, caps); },
+                                "interpolation is invalid",
+                                "invalid typed sampler silently fell back");
+        Model::Options transformed;
+        Transform resize_transform;
+        resize_transform.type = TransformType::Resize;
+        resize_transform.resize.interpolation = ResizeInterpolation::Nearest;
+        transformed.preprocess.transforms.push_back(resize_transform);
+        const auto transformed_plan = plan_preprocess(transformed, caps);
+        require(transformed_plan.resolved_plan.effective.resize.enable == AutoFlag::On &&
+                    transformed_plan.resolved_plan.effective.resize.scaling_type == "NEAREST" &&
+                    transformed_plan.resolved_plan.graph_family == PreprocessGraphFamily::Preproc,
+                "typed legacy transform must preserve explicit resize intent");
+        for (int fault = 0; fault < 4; ++fault) {
+          Model::Options typed;
+          typed.preprocess.resize.interpolation = ResizeInterpolation::Nearest;
+          if (fault == 0)
+            typed.preprocess.kind = InputKind::Tensor;
+          if (fault == 1)
+            typed.preprocess.enable = AutoFlag::Off;
+          if (fault == 2)
+            typed.preprocess.resize.enable = AutoFlag::Off;
+          if (fault == 3)
+            typed.preprocess.quantize.enable = AutoFlag::On;
+          require_throws_contains([&] { (void)plan_preprocess(typed, caps); },
+                                  fault == 2   ? "resize.enable=Off"
+                                  : fault == 3 ? "Preproc image route"
+                                               : "fixed image preprocessing",
+                                  "typed sampler was silently routed away");
+        }
+      }
+
       // Ordinary fixed options are real image intent, even without an
       // explicit kind/resize/normalize enable flag.
       {
         Model::Options opt;
         opt.preprocess.rescale_factor = 1.f / 255.f;
-        opt.preprocess.resize.scaling_type = "BILINEAR_ANTIALIASED";
+        opt.preprocess.resize.interpolation = ResizeInterpolation::BilinearAntialiased;
         const auto planned = plan_preprocess(opt, caps);
         require(planned.resolved_plan.enabled &&
                     planned.resolved_plan.resolved_kind == InputKind::Image &&
