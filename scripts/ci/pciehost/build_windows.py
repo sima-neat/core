@@ -500,13 +500,14 @@ def build(args: argparse.Namespace) -> None:
 
     def check_consumer(prefix: Path, label: str) -> None:
       consumer_build = consumer_build_root / label
+      consumer_prefix_path = ";".join((str(prefix), str(install_root), str(gstreamer_root)))
       run([
           cmake,
           "-S", PCIE_HOST / "tests" / "package_smoke",
           "-B", consumer_build,
           "-G", "Ninja",
           "-DCMAKE_BUILD_TYPE=Release",
-          "-DCMAKE_PREFIX_PATH=" + ";".join((str(prefix), prefix_path)),
+          "-DCMAKE_PREFIX_PATH=" + consumer_prefix_path,
       ], env=environment)
       run([cmake, "--build", consumer_build], env=environment)
       binary = consumer_build / "sima_pcie_host_package_smoke.exe"
@@ -546,10 +547,36 @@ def build(args: argparse.Namespace) -> None:
     for required in (
         install_root / "include" / "simaai" / "neat" / "pcie" / "Model.h",
         install_root / "lib" / "sima_neat_pcie_host.lib",
+        install_root / "include" / "nlohmann" / "json.hpp",
+        install_root / "share" / "licenses" / "sima-pcie-host" /
+        "nlohmann-json-LICENSE.MIT",
+        install_root / "bin" / "sima-pcie-host-env.cmd",
+        install_root / "bin" / "sima-pcie-host-run.cmd",
+        install_root / "bin" / "sima-pcie-host-doctor.cmd",
     ):
       require_file(required, "installed Core MSI payload")
     check_consumer(install_root, "installed")
     run([gst_inspect, plugin], env=environment)
+
+    activation_environment = os.environ.copy()
+    for name in (
+        "CMAKE_PREFIX_PATH", "GSTREAMER_ROOT_X86_64", "GST_PLUGIN_PATH",
+        "GST_PLUGIN_PATH_1_0", "PKG_CONFIG", "PKG_CONFIG_PATH",
+        "SIMA_PCIE_HOST_ENVIRONMENT", "SIMA_PCIE_HOST_LIBRARY_PATH",
+        "SIMA_WINDOWS_PLATFORM_RUNTIME_DIR",
+    ):
+      activation_environment.pop(name, None)
+    windows_root = Path(os.environ["SystemRoot"])
+    activation_environment["PATH"] = os.pathsep.join((
+        str(windows_root / "System32"), str(windows_root),
+        str(windows_root / "System32" / "Wbem"),
+        str(windows_root / "System32" / "WindowsPowerShell" / "v1.0"),
+        str(windows_root / "System32" / "OpenSSH"),
+    ))
+    run([
+        "cmd.exe", "/d", "/c",
+        install_root / "bin" / "sima-pcie-host-doctor.cmd",
+    ], env=activation_environment)
 
     signature_records = []
     for owner, root in (("core", relocated), ("python", python_stage),
@@ -605,11 +632,8 @@ def build(args: argparse.Namespace) -> None:
         "--find-links", wheelhouse,
         wheel,
     ], env=environment)
-    import_environment = environment.copy()
+    import_environment = activation_environment.copy()
     import_environment.pop("PYTHONPATH", None)
-    import_environment["SIMA_PCIE_HOST_LIBRARY_PATH"] = str(install_root / "bin")
-    import_environment["PATH"] = os.pathsep.join(
-        (str(install_root / "bin"), import_environment["PATH"]))
     run([
         customer_python,
         "-c",
@@ -655,6 +679,7 @@ def build(args: argparse.Namespace) -> None:
         "hardware_qualified": False,
         "installed_consumer": "PASS",
         "plugin_load": "PASS",
+        "process_activation": "PASS",
         "python_import": "PASS",
         "relocated_consumer": "PASS",
         "repeat_install": "PASS",

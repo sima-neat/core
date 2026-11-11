@@ -4,7 +4,6 @@ include(CMakeFindDependencyMacro)
 find_dependency(PkgConfig REQUIRED)
 find_dependency(Threads REQUIRED)
 find_dependency(ZLIB REQUIRED)
-find_dependency(nlohmann_json REQUIRED)
 find_dependency(SimaScheduler CONFIG COMPONENTS @SIMAPCIE_SCHEDULER_CONFIG_COMPONENTS@)
 pkg_check_modules(SIMAPCIE_GST REQUIRED IMPORTED_TARGET GLOBAL
   gstreamer-1.0

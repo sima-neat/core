@@ -14,6 +14,7 @@ class CMakePackageContract(unittest.TestCase):
   def test_export_dependencies_exist_before_targets_are_loaded(self):
     template = (ROOT / "cmake/SimaPCIeHostConfig.cmake.in").read_text(encoding="utf-8")
     self.assertIn("PkgConfig::SIMAPCIE_GST", (ROOT / "CMakeLists.txt").read_text())
+    self.assertNotIn("find_dependency(nlohmann_json", template)
     self.assertLess(
         template.index("pkg_check_modules(SIMAPCIE_GST"),
         template.index('include("${CMAKE_CURRENT_LIST_DIR}/SimaPCIeHostTargets.cmake")'),

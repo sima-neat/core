@@ -135,7 +135,8 @@ target_include_directories(sima_neat_pcie_host
     ${SIMA_NEAT_CORE_ROOT}/src
     ${SIMAPCIE_GST_INCLUDE_DIRS}
 )
-target_link_libraries(sima_neat_pcie_host PUBLIC nlohmann_json::nlohmann_json
+target_link_libraries(sima_neat_pcie_host PUBLIC
+  $<BUILD_INTERFACE:nlohmann_json::nlohmann_json>
   PRIVATE SimaScheduler::pcie_host)
 target_link_libraries(sima_neat_pcie_host PRIVATE
   PkgConfig::SIMAPCIE_GST
@@ -170,6 +171,36 @@ if(NOT WIN32)
   install(FILES ${SIMA_NEAT_CORE_ROOT}/scripts/neat_pcie_status.py
     DESTINATION ${CMAKE_INSTALL_DATADIR}/sima-pcie-host
     COMPONENT Runtime)
+endif()
+
+if(WIN32)
+  get_target_property(SIMAPCIE_NLOHMANN_INCLUDE_DIRS
+    nlohmann_json::nlohmann_json INTERFACE_INCLUDE_DIRECTORIES)
+  set(SIMAPCIE_NLOHMANN_INCLUDE_ROOT "")
+  foreach(candidate IN LISTS SIMAPCIE_NLOHMANN_INCLUDE_DIRS)
+    if(EXISTS "${candidate}/nlohmann/json.hpp")
+      set(SIMAPCIE_NLOHMANN_INCLUDE_ROOT "${candidate}")
+      break()
+    endif()
+  endforeach()
+  if(SIMAPCIE_NLOHMANN_INCLUDE_ROOT STREQUAL "")
+    message(FATAL_ERROR "Could not locate the selected nlohmann/json.hpp for Windows packaging")
+  endif()
+  install(DIRECTORY ${SIMAPCIE_NLOHMANN_INCLUDE_ROOT}/nlohmann
+    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
+    COMPONENT Development
+  )
+  install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/third_party/nlohmann-json-LICENSE.MIT
+    DESTINATION ${CMAKE_INSTALL_DATADIR}/licenses/sima-pcie-host
+    COMPONENT Development
+  )
+  install(PROGRAMS
+    ${CMAKE_CURRENT_SOURCE_DIR}/scripts/windows/sima-pcie-host-env.cmd
+    ${CMAKE_CURRENT_SOURCE_DIR}/scripts/windows/sima-pcie-host-run.cmd
+    ${CMAKE_CURRENT_SOURCE_DIR}/scripts/windows/sima-pcie-host-doctor.cmd
+    DESTINATION ${CMAKE_INSTALL_BINDIR}
+    COMPONENT Runtime
+  )
 endif()
 
 set(SIMAPCIE_APPLICATION_SKILL_INSTALL_DIR

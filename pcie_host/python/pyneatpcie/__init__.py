@@ -22,11 +22,45 @@ def _prepend_env_path(name, directories):
     _os.environ[name] = _os.pathsep.join(merged)
 
 
+def _windows_platform_service_directory():
+  try:
+    import winreg
+
+    with winreg.OpenKey(
+        winreg.HKEY_LOCAL_MACHINE,
+        r"SYSTEM\CurrentControlSet\Services\SiMaMlaDaemon",
+    ) as service:
+      command, _ = winreg.QueryValueEx(service, "ImagePath")
+  except (ImportError, OSError):
+    return None
+
+  command = _os.path.expandvars(str(command)).strip()
+  if command.startswith('"'):
+    end = command.find('"', 1)
+    executable = command[1:end] if end > 1 else ""
+  else:
+    executable = command.split(maxsplit=1)[0] if command else ""
+  return _Path(executable).parent if executable else None
+
+
 def _windows_runtime_directories(package_dir):
   candidates = [package_dir, package_dir.parent / "bin"]
   for token in _os.environ.get("SIMA_PCIE_HOST_LIBRARY_PATH", "").split(_os.pathsep):
     if token:
       candidates.append(_Path(token))
+
+  platform_runtime = _os.environ.get("SIMA_WINDOWS_PLATFORM_RUNTIME_DIR")
+  if platform_runtime:
+    candidates.append(_Path(platform_runtime))
+  service_runtime = _windows_platform_service_directory()
+  if service_runtime:
+    candidates.append(service_runtime)
+
+  gstreamer_root = _os.environ.get("GSTREAMER_ROOT_X86_64")
+  if gstreamer_root:
+    candidates.append(_Path(gstreamer_root) / "bin")
+
+  candidates.append(_Path(r"C:\simaai\build\x64\Bin\Release"))
 
   program_files = _os.environ.get("ProgramFiles")
   if program_files:
@@ -108,4 +142,5 @@ _sys.modules[__name__ + ".genai"] = genai
 
 del _configure_runtime_environment
 del _prepend_env_path
+del _windows_platform_service_directory
 del _windows_runtime_directories
