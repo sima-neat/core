@@ -25,6 +25,8 @@ flowchart LR
     Benchmark[Core benchmark reports] --> Sentinel[Optional Sentinel telemetry]
 ```
 
+模型與獨立影像選項會轉換為相同的一般 Preproc 請求。固定來源運算保留原始 FP32 數值縮放、尺寸縮放後的平均值／除數，以及量化步長的運算邊界；它不是任意順序的轉換解譯器。輸入 dtype、量化及實體佈局仍由 MPK 決定。新選項需明確啟用，省略時保留舊版位元組。Core 只投影意圖與幾何資訊；數值檢查及執行由 Kernels 負責。
+
 Kernels 仍是操作目錄與數值准入的權威來源。Scheduler 透過 Runner 轉送一般化要求；
 Scheduler 與 Core 都不維護韌體 ID 或逐操作派送表。Core 保留公開節點 API、幾何原則
 與線路格式處理。Scheduler 在套件組驗證後具體化新的轉接器／解析器工廠。

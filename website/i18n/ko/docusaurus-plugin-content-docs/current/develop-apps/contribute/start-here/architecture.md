@@ -26,6 +26,8 @@ flowchart LR
     Benchmark[Core benchmark reports] --> Sentinel[Optional Sentinel telemetry]
 ```
 
+모델과 독립형 이미지 옵션은 동일한 일반 Preproc 요청으로 내려갑니다. 고정 원본 연산은 원래 FP32 재스케일링, 크기 조정 후 평균/제수, 양자화 스텝 경계를 유지하며 임의 순서 변환 인터프리터가 아닙니다. 입력 dtype, 양자화, 물리 레이아웃은 여전히 MPK가 결정합니다. 새 옵션은 명시적으로 선택하며 생략하면 기존 바이트를 유지합니다. Core는 의도와 기하만 전달하고, 수치적 허용 여부와 실행은 Kernels가 소유합니다.
+
 Kernels는 연산 카탈로그와 수치 연산 허용 판정의 권한을 유지합니다.
 Scheduler는 Runner를 통해 범용 요청을 전달하며, Scheduler와 Core 모두 펌웨어 ID나
 연산별 디스패치 테이블을 유지하지 않습니다. Core는 공개 노드 API, 형상 정책과

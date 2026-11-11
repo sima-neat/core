@@ -98,3 +98,33 @@ def test_decoded_group_byte_estimates_follow_spatial_overrides(group):
     options.decoder_raw_output = False
     options.output_caps.format = pyneat.Format.Auto
     assert project(options).byte_size == 0
+
+
+def test_fixed_preproc_options_are_additive_and_round_trip():
+    options = pyneat.ModelOptions()
+    p = options.preprocess
+    assert p.rescale_factor is None and p.quantization_step is None
+    assert p.floating_conversion == pyneat.PreprocFloatingConversion.Legacy
+    assert p.color_conversion_placement == pyneat.PreprocColorConversionPlacement.AfterResize
+    p.rescale_factor = 1.0 / 255.0
+    p.resize.scaling_type = "BILINEAR_ANTIALIASED"
+    p.normalize.enable = pyneat.AutoFlag.On
+    p.normalize.mean = [0.485, 0.456, 0.406]
+    p.normalize.stddev = [0.229, 0.224, 0.225]
+    p.floating_conversion = pyneat.PreprocFloatingConversion.NearestEven
+    assert options.preprocess.rescale_factor == pytest.approx(1.0 / 255.0)
+    assert options.preprocess.floating_conversion == pyneat.PreprocFloatingConversion.NearestEven
+    standalone = pyneat.PreprocOptions()
+    standalone.rescale_factor = 1.0
+    standalone.quantization_step = 0.25
+    standalone.color_conversion_placement = pyneat.PreprocColorConversionPlacement.BeforeResize
+    assert standalone.quantization_step == 0.25
+    norm = pyneat.NormalizationOptions()
+    norm.rescale_factor = 1.0 / 255.0
+    norm.floating_conversion = pyneat.PreprocFloatingConversion.NearestEven
+    norm.stddev = [1.0, -0.25, 1.0]
+    assert pyneat.nodes.normalization(norm) is not None
+    resize = pyneat.ResizeOptions()
+    resize.width = resize.height = 8
+    resize.interpolation = pyneat.ResizeInterpolation.BilinearAntialiased
+    assert pyneat.nodes.resize(resize) is not None

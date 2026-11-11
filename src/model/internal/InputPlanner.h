@@ -14,6 +14,11 @@
 
 namespace simaai::neat::internal {
 
+// One intent predicate shared by input and route planning. Numerical admission
+// stays in Kernels; this only prevents explicit image work being routed away.
+bool fixed_preprocess_arithmetic_requested(const PreprocessOptions&);
+bool antialiased_preprocess_resize_requested(const PreprocessOptions&);
+
 enum class RequiredPreprocessOp {
   Resize = 0,
   ColorConvert = 1,

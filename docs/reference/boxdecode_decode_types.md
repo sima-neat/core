@@ -499,7 +499,7 @@ masks = seg.masks.to_numpy()
 
 ## Upgrading
 
-The new options change C++ object layouts. Core uses ABI 6, `libsima_neat.so.6`. Rebuild C++ applications, plugins and Python bindings with matching headers and libraries. Do not link ABI 5 binaries to ABI 6 through a compatibility symlink.
+The earlier BoxDecode options introduced ABI 6. The current source-arithmetic options require ABI 7 (`libsima_neat.so.7`). Rebuild C++ applications, plugins and Python bindings with matching headers and libraries. Do not load ABI 5/6 binaries through compatibility symlinks.
 
 
 ### Combined YOLOX input admission

@@ -3023,6 +3023,8 @@ bool extract_route_capability_from_mpk_graph(const ModelPack& pack, RouteCapabil
 }
 
 bool preprocess_auto_mode(const PreprocessOptions& p) {
+  if (fixed_preprocess_arithmetic_requested(p) || antialiased_preprocess_resize_requested(p))
+    return false;
   if (p.enable != AutoFlag::Auto)
     return false;
   if (p.kind != InputKind::Auto)
@@ -3053,6 +3055,8 @@ bool preprocess_auto_mode(const PreprocessOptions& p) {
 }
 
 bool generic_preproc_requested(const PreprocessOptions& p) {
+  if (fixed_preprocess_arithmetic_requested(p) || antialiased_preprocess_resize_requested(p))
+    return true;
   if (p.kind == InputKind::Image) {
     return true;
   }

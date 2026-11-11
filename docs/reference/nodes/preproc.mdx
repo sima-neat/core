@@ -68,6 +68,41 @@ tensors = pyneat.stages.preproc(
 )
 ```
 
+## Fixed source arithmetic {#fixed-source-arithmetic}
+
+For a BF16-input model, configure the original image arithmetic with ordinary options:
+
+```python
+import pyneat
+
+options = pyneat.ModelOptions()
+p = options.preprocess
+p.kind = pyneat.InputKind.Image
+p.input_max_width, p.input_max_height = 1280, 720
+p.resize.enable = pyneat.AutoFlag.On
+p.resize.mode = pyneat.ResizeMode.Stretch
+p.resize.scaling_type = "BILINEAR_ANTIALIASED"
+p.rescale_factor = 1.0 / 255.0
+p.normalize.enable = pyneat.AutoFlag.On
+p.normalize.mean = [0.485, 0.456, 0.406]
+p.normalize.stddev = [0.229, 0.224, 0.225]
+p.normalize.has_explicit_stats = True
+p.floating_conversion = pyneat.PreprocFloatingConversion.NearestEven
+model = pyneat.Model("/path/to/bf16_model.tar.gz", options)
+```
+
+For RGB/Gray, `rescale_factor` multiplies source pixels before resizing; enabled normalization then subtracts `normalize.mean` and divides by `normalize.stddev` after resizing. No implicit `/255` is added on this route. Set the factor to `1` for unscaled input. Preserve the original FP32 coefficients rather than converting them to legacy affine parameters. The fixed arithmetic supports `NO_SCALING`, `NEAREST` and `BILINEAR_ANTIALIASED`, not ordinary bilinear or bicubic.
+
+BF16 still truncates by default; only explicit `PreprocFloatingConversion.NearestEven` selects nearest-even. Standalone `PreprocOptions.output_dtype="FP16"` selects binary16, which always rounds nearest-even. The same fixed options are available on standalone `PreprocOptions`; `NormalizationOptions` also accepts `rescale_factor` and `floating_conversion`, and `ResizeInterpolation.BilinearAntialiased` selects the sampler on `nodes.resize`.
+
+For INT8 output, supply the original positive `quantization_step`; Core checks its FP32 reciprocal against the MPK multiplier and keeps the model's zero point. This is a consistency check, not recovery of the original step. A missing or conflicting step fails explicitly. Standalone graphs author `q_zp`; their transport multiplier can be derived from the supplied step. Execution divides by the original step, rounds the quotient nearest-even, adds the zero point and saturates.
+
+For YUV-to-RGB input, `color_conversion_placement` defaults to `PreprocColorConversionPlacement.AfterResize`: component resizing precedes the UInt8 RGB decode boundary, then rescale/normalization run. `BeforeResize` moves that decode boundary before RGB rescale/sampling. Other color routes reject this override. Do not assume either route is equivalent to a Pillow/torchvision preprocessing pipeline; verify its order and intermediate dtype.
+
+Use image input without a `transforms` override. Conflicting disable flags and unsupported combinations fail rather than silently changing the request. The MPK still owns output shape, dtype, quantization and physical layout; source capacity is independent of model dimensions. Omitting the new options preserves legacy arithmetic. These additive fields change C++ object layouts: this version uses ABI 7 (`libsima_neat.so.7`). Rebuild applications, plugins and Python bindings with matching headers/libraries; do not use compatibility symlinks to load ABI 5/6 binaries.
+
+
+
 ## Ways to use it
 
 | Use case | API | Guidance |

@@ -67,6 +67,42 @@ void require_throws_contains(const std::function<void()>& fn, const std::string&
 RUN_TEST("unit_input_planner_semantics_test", ([] {
            PreprocessCapabilities caps = all_caps();
 
+           // Ordinary fixed options are real image intent, even without an
+           // explicit kind/resize/normalize enable flag.
+           {
+             Model::Options opt;
+             opt.preprocess.rescale_factor = 1.f / 255.f;
+             opt.preprocess.resize.scaling_type = "BILINEAR_ANTIALIASED";
+             const auto planned = plan_preprocess(opt, caps);
+             require(planned.resolved_plan.enabled &&
+                         planned.resolved_plan.resolved_kind == InputKind::Image &&
+                         planned.resolved_plan.graph_family == PreprocessGraphFamily::Preproc &&
+                         planned.resolved_plan.effective.resize.enable == AutoFlag::On &&
+                         planned.resolved_plan.effective.rescale_factor ==
+                             opt.preprocess.rescale_factor,
+                     "fixed options disappeared during input planning");
+             for (int fault = 0; fault < 4; ++fault) {
+               auto bad = opt;
+               if (fault == 0)
+                 bad.preprocess.enable = AutoFlag::Off;
+               if (fault == 1)
+                 bad.preprocess.kind = InputKind::Tensor;
+               if (fault == 2)
+                 bad.preprocess.transforms.push_back(Transform{});
+               if (fault == 3)
+                 bad.preprocess.resize.enable = AutoFlag::Off;
+               require_throws_contains([&] { (void)plan_preprocess(bad, caps); },
+                                       fault == 3 ? "resize.enable=Off"
+                                                  : "fixed image preprocessing",
+                                       "contradictory fixed intent was silently ignored");
+             }
+             opt.preprocess.normalize.enable = AutoFlag::On;
+             opt.preprocess.normalize.stddev = {1.f, -0.25f, 0.5f};
+             const auto signed_divisor = plan_preprocess(opt, caps);
+             require(signed_divisor.resolved_plan.effective.normalize.stddev[1] == -0.25f,
+                     "source divisor sign was changed");
+           }
+
            // transforms + simple flags => warn + transforms override.
            {
              Model::Options opt;

@@ -15,7 +15,10 @@
  */
 #pragma once
 
+#include "nodes/sima/PreprocMath.h"
+
 #include <array>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -250,6 +253,17 @@ struct PreprocessOptions {
                                      ///< per-stage specs above.
   NormalizePreset preset =
       NormalizePreset::None; ///< If non-`None`, supplies `mean`/`stddev` defaults.
+
+  /// Original FP32 source multiplier (RGB/Gray before resize; YUV after its decode boundary).
+  /// Presence selects fixed source arithmetic;
+  /// normalize.mean/stddev then mean a post-resize subtraction/division, with no implied /255.
+  std::optional<float> rescale_factor;
+  /// Original positive FP32 INT8 step, never reconstructed from a reciprocal.
+  /// Model routes require agreement with the MPK quantizer; zero point stays model-owned.
+  std::optional<float> quantization_step;
+  PreprocColorConversionPlacement color_conversion_placement =
+      PreprocColorConversionPlacement::AfterResize;
+  PreprocFloatingConversion floating_conversion = PreprocFloatingConversion::Legacy;
 };
 
 /**

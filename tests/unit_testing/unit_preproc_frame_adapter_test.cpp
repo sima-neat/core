@@ -1,5 +1,7 @@
 #include "pipeline/internal/sima/PreprocFrameAdapter.h"
 #include <cmath>
+#include <bit>
+#include <limits>
 #include <algorithm>
 #include <chrono>
 #include <iomanip>
@@ -254,6 +256,87 @@ void immutable_policy_instances() {
           "retry rechecked or changed immutable numerical policy");
   std::cout << "Preproc immutable policy: concurrent instances, shared domain and retry PASS\n";
 }
+void fixed_arithmetic_contract() {
+  using namespace simaai::neat;
+  constexpr float factor = 0x1.010102p-8f;
+  // This source step cannot be recovered by reciprocal-round-tripping its
+  // FP32 multiplier. Inspect the original payload, not merely its inverse.
+  constexpr auto step_bits = std::uint32_t{0x3c46a60c};
+  constexpr float source_step = std::bit_cast<float>(step_bits);
+  for (bool quantized : {false, true}) {
+    for (bool nearest_even : {false, true}) {
+      if (quantized && nearest_even)
+        continue;
+      auto cfg = config(1, quantized);
+      cfg->scaling_type = "BILINEAR_ANTIALIASED";
+      cfg->rescale_factor = factor;
+      cfg->channel_stddev[1] = -0.25f;
+      cfg->floating_conversion =
+          nearest_even ? PreprocFloatingConversion::NearestEven : PreprocFloatingConversion::Legacy;
+      if (quantized) {
+        cfg->quantization_step = source_step;
+        cfg->q_scale = float(1.0f / source_step);
+      }
+      auto capture = std::make_shared<Capture>();
+      probe::Options options;
+      options.capture = capture;
+      auto stage = take(PreprocProbe::create(cfg, options));
+      auto* input = gst_buffer_new_allocate(nullptr, 192, nullptr);
+      auto* output_meta = gst_structure_new_empty("test");
+      probe::Binding binding;
+      okay(stage->bind(input, Storage{}, binding, output_meta));
+      const auto bytes = binding.operation->output_requirements(0).storage_bytes;
+      binding.outputs.push_back({std::make_shared<Owner>(bytes, 0x200000), 0, bytes});
+      auto done =
+          stage->session().executor(0)->submit(*binding.operation, binding.inputs, binding.outputs);
+      okay(done.wait());
+      const auto bits = [&](std::size_t offset) {
+        require(capture->packet.payload.size() >= offset + 4, "short fixed arithmetic packet");
+        std::uint32_t value;
+        std::memcpy(&value, capture->packet.payload.data() + offset, 4);
+        return value;
+      };
+      require(bits(256) == (7U | (quantized ? 8U : 0U) | (nearest_even ? 16U : 0U)),
+              "fixed arithmetic flags or BF16 legacy cast policy changed");
+      require(bits(260) == std::bit_cast<std::uint32_t>(factor), "source rescale was folded");
+      for (unsigned c = 0; c < 3; ++c) {
+        require(word(capture->packet, 264 + 4 * c) == float(cfg->channel_mean[c]) &&
+                    word(capture->packet, 276 + 4 * c) == float(cfg->channel_stddev[c]),
+                "normalization was folded into legacy affine coefficients");
+        require(word(capture->packet, 140 + 4 * c) == 0.0f &&
+                    word(capture->packet, 152 + 4 * c) == 1.0f,
+                "fixed route retained a second legacy normalization");
+      }
+      if (quantized)
+        require(bits(288) == step_bits, "source quantizer step was reconstructed from reciprocal");
+      require(integer(output_meta, "preproc_original_width") == 8,
+              "fixed arithmetic lost original-frame metadata");
+      gst_structure_free(output_meta);
+      gst_buffer_unref(input);
+    }
+  }
+  const auto rejects = [](std::shared_ptr<core::ProcessCvuStagePayload> cfg,
+                          const char* expected_field) {
+    auto checked = PreprocProbe::check(cfg);
+    const auto* error = std::get_if<rt::Error>(&checked);
+    require(error && error->field == expected_field, "fixed arithmetic did not reject precisely");
+  };
+  auto missing_factor = config(1);
+  missing_factor->floating_conversion = PreprocFloatingConversion::NearestEven;
+  rejects(missing_factor, "rescale_factor");
+  auto missing_step = config(1, true);
+  missing_step->rescale_factor = factor;
+  rejects(missing_step, "quantization_step");
+  auto conflicting_step = config(1, true);
+  conflicting_step->rescale_factor = factor;
+  conflicting_step->quantization_step = 0.5f;
+  rejects(conflicting_step, "quantization_step");
+  auto invalid_enum = config(1);
+  invalid_enum->floating_conversion = static_cast<PreprocFloatingConversion>(999);
+  rejects(invalid_enum, "floating_conversion");
+  std::cout << "Fixed Preproc source coefficients, casts, step and rejection contracts PASS\n";
+}
+
 void contract() {
   for (bool quantized : {false, true}) {
     auto capture = std::make_shared<Capture>();
@@ -1191,63 +1274,68 @@ void maximum_roi_admission() {
 // metadata changes and sample reporting stay outside the measured bind call.
 void benchmark_preparation() {
   constexpr std::size_t warmup = 200, samples = 4000;
-  for (const std::string_view route :
-       {"fixed", "alternating", "unique", "list-fixed", "list-alternating", "list-unique"}) {
-    const bool list = route.starts_with("list-");
-    const auto pattern = list ? route.substr(5) : route;
-    auto capture = std::make_shared<Capture>();
-    probe::Options options;
-    options.capture = capture;
-    auto cfg = config(3);
-    auto source = cfg->input_tensors[0].descriptor();
-    source.shape.sizes[0] = 480;
-    source.shape.sizes[1] = 640;
-    source.layout.strided.strides_bytes[0] = 640 * 3;
-    cfg->input_tensors[0] = cfg->input_tensors[0].with_geometry(source);
-    auto stage = take(PreprocProbe::create(cfg, options));
-    auto* input = gst_buffer_new_allocate(nullptr, 640 * 480 * 3, nullptr);
-    auto* meta = gst_custom_meta_get_structure(gst_buffer_add_custom_meta(input, "GstSimaMeta"));
-    if (list) {
-      gst_structure_set(meta, "preproc_roi_count", G_TYPE_INT, 3, "preproc_roi_input_batch_size",
-                        G_TYPE_INT, 1, nullptr);
-      set_list(meta, "preproc_roi_batch_indices", {0, 0, 0});
-    } else {
-      gst_structure_set(meta, "preproc_roi_enable", G_TYPE_BOOLEAN, TRUE, "preproc_roi_y",
-                        G_TYPE_INT, 0, "preproc_roi_width", G_TYPE_INT, 4, "preproc_roi_height",
-                        G_TYPE_INT, 4, nullptr);
+  for (bool fixed_math : {false, true})
+    for (const std::string_view route :
+         {"fixed", "alternating", "unique", "list-fixed", "list-alternating", "list-unique"}) {
+      const bool list = route.starts_with("list-");
+      const auto pattern = list ? route.substr(5) : route;
+      auto capture = std::make_shared<Capture>();
+      probe::Options options;
+      options.capture = capture;
+      auto cfg = config(3);
+      if (fixed_math) {
+        cfg->rescale_factor = 1.f / 255.f;
+        cfg->scaling_type = "BILINEAR_ANTIALIASED";
+      }
+      auto source = cfg->input_tensors[0].descriptor();
+      source.shape.sizes[0] = 480;
+      source.shape.sizes[1] = 640;
+      source.layout.strided.strides_bytes[0] = 640 * 3;
+      cfg->input_tensors[0] = cfg->input_tensors[0].with_geometry(source);
+      auto stage = take(PreprocProbe::create(cfg, options));
+      auto* input = gst_buffer_new_allocate(nullptr, 640 * 480 * 3, nullptr);
+      auto* meta = gst_custom_meta_get_structure(gst_buffer_add_custom_meta(input, "GstSimaMeta"));
+      if (list) {
+        gst_structure_set(meta, "preproc_roi_count", G_TYPE_INT, 3, "preproc_roi_input_batch_size",
+                          G_TYPE_INT, 1, nullptr);
+        set_list(meta, "preproc_roi_batch_indices", {0, 0, 0});
+      } else {
+        gst_structure_set(meta, "preproc_roi_enable", G_TYPE_BOOLEAN, TRUE, "preproc_roi_y",
+                          G_TYPE_INT, 0, "preproc_roi_width", G_TYPE_INT, 4, "preproc_roi_height",
+                          G_TYPE_INT, 4, nullptr);
+      }
+      auto* published = gst_structure_new_empty("test");
+      std::vector<double> elapsed;
+      elapsed.reserve(samples);
+      for (std::size_t i = 0; i < warmup + samples; ++i) {
+        const int x = pattern == "fixed" ? 0 : pattern == "alternating" ? int(i % 2) : int(i % 512);
+        const int y = pattern == "unique" ? int(i / 512) : 0;
+        if (list)
+          set_list(meta, "preproc_roi_rects", {x, y, 4, 4, x + 4, y, 4, 4, x + 8, y, 4, 4});
+        else
+          gst_structure_set(meta, "preproc_roi_x", G_TYPE_INT, x, "preproc_roi_y", G_TYPE_INT, y,
+                            nullptr);
+        probe::Binding binding;
+        const auto start = std::chrono::steady_clock::now();
+        const auto error = stage->bind(input, Storage{}, binding, published);
+        const auto end = std::chrono::steady_clock::now();
+        okay(error);
+        require(integer(published, "preproc_roi_x") == x, "stale benchmark ROI");
+        if (list)
+          require(integer(published, "preproc_roi_count") == 3 &&
+                      gst_value_list_get_size(
+                          gst_structure_get_value(published, "preproc_roi_rects")) == 12,
+                  "stale benchmark ROI list");
+        if (i >= warmup)
+          elapsed.push_back(std::chrono::duration<double, std::micro>(end - start).count());
+      }
+      std::sort(elapsed.begin(), elapsed.end());
+      std::cout << "preproc_bind_host_us," << (fixed_math ? "source-" : "") << route << ','
+                << std::fixed << std::setprecision(3) << elapsed[samples / 2] << ','
+                << elapsed[samples * 99 / 100] << ',' << elapsed.back() << '\n';
+      gst_structure_free(published);
+      gst_buffer_unref(input);
     }
-    auto* published = gst_structure_new_empty("test");
-    std::vector<double> elapsed;
-    elapsed.reserve(samples);
-    for (std::size_t i = 0; i < warmup + samples; ++i) {
-      const int x = pattern == "fixed" ? 0 : pattern == "alternating" ? int(i % 2) : int(i % 512);
-      const int y = pattern == "unique" ? int(i / 512) : 0;
-      if (list)
-        set_list(meta, "preproc_roi_rects", {x, y, 4, 4, x + 4, y, 4, 4, x + 8, y, 4, 4});
-      else
-        gst_structure_set(meta, "preproc_roi_x", G_TYPE_INT, x, "preproc_roi_y", G_TYPE_INT, y,
-                          nullptr);
-      probe::Binding binding;
-      const auto start = std::chrono::steady_clock::now();
-      const auto error = stage->bind(input, Storage{}, binding, published);
-      const auto end = std::chrono::steady_clock::now();
-      okay(error);
-      require(integer(published, "preproc_roi_x") == x, "stale benchmark ROI");
-      if (list)
-        require(integer(published, "preproc_roi_count") == 3 &&
-                    gst_value_list_get_size(
-                        gst_structure_get_value(published, "preproc_roi_rects")) == 12,
-                "stale benchmark ROI list");
-      if (i >= warmup)
-        elapsed.push_back(std::chrono::duration<double, std::micro>(end - start).count());
-    }
-    std::sort(elapsed.begin(), elapsed.end());
-    std::cout << "preproc_bind_host_us," << route << ',' << std::fixed << std::setprecision(3)
-              << elapsed[samples / 2] << ',' << elapsed[samples * 99 / 100] << ',' << elapsed.back()
-              << '\n';
-    gst_structure_free(published);
-    gst_buffer_unref(input);
-  }
 }
 
 void image_frontend_metadata_and_bounds() {
@@ -1407,6 +1495,7 @@ int main(int argc, char** argv) {
     cold_generic_preparation();
     immutable_policy_instances();
     contract();
+    fixed_arithmetic_contract();
     typed_format_mapping();
     checked_plane_resolver();
     decoder_storage_geometry();

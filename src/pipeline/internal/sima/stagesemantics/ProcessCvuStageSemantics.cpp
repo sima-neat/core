@@ -6141,6 +6141,11 @@ initialize_preproc_payload_from_options_local(const ::simaai::neat::PreprocOptio
   payload.tessellate = opt.tessellate ? 1 : 0;
   payload.channel_mean.assign(opt.channel_mean.begin(), opt.channel_mean.end());
   payload.channel_stddev.assign(opt.channel_stddev.begin(), opt.channel_stddev.end());
+  payload.rescale_factor = opt.rescale_factor;
+  payload.quantization_step = opt.quantization_step;
+  payload.color_conversion_placement = opt.color_conversion_placement;
+  payload.floating_conversion = opt.floating_conversion;
+
   payload.input_img_type = opt.input_img_type;
   payload.output_img_type = opt.output_img_type;
   payload.input_dtype = "UINT8";

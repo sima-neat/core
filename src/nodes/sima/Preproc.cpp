@@ -150,7 +150,16 @@ void canonicalize_quantized_output_defaults(PreprocOptions* opt) {
     return;
   }
   if (!opt->q_scale.has_value()) {
-    opt->q_scale = 1.0;
+    if (opt->quantization_step) {
+      const float step = *opt->quantization_step;
+      if (!std::isfinite(step) || step <= 0)
+        throw std::invalid_argument("Preproc quantization_step must be finite and positive");
+      // Populate the existing transport metadata from the authored source
+      // step, not the other way round. Execution still receives that step.
+      opt->q_scale = float(1.0f / step);
+    } else {
+      opt->q_scale = 1.0;
+    }
   }
   if (!opt->q_zp.has_value()) {
     opt->q_zp = 0;
@@ -235,6 +244,9 @@ std::string canonical_preproc_output_dtype_or_throw(const std::string& raw_token
   }
   if (token == "EVXX_BFLOAT16" || token == "BFLOAT16" || token == "BF16") {
     return "EVXX_BFLOAT16";
+  }
+  if (token == "FP16" || token == "FLOAT16" || token == "EVXX_FLOAT16") {
+    return "FP16";
   }
   throw std::runtime_error("Preproc: unsupported output_dtype token '" + raw_token + "'");
 }
@@ -384,6 +396,14 @@ json build_preproc_json(const PreprocOptions& opt) {
   j["q_scale"] = opt.q_scale.value_or(1.0);
   j["channel_mean"] = json::array({mean3[0], mean3[1], mean3[2]});
   j["channel_stddev"] = json::array({std3[0], std3[1], std3[2]});
+  if (opt.rescale_factor)
+    j["rescale_factor"] = *opt.rescale_factor;
+  if (opt.quantization_step)
+    j["quantization_step"] = *opt.quantization_step;
+  if (opt.color_conversion_placement != PreprocColorConversionPlacement::AfterResize)
+    j["color_conversion_placement"] = static_cast<int>(opt.color_conversion_placement);
+  if (opt.floating_conversion != PreprocFloatingConversion::Legacy)
+    j["floating_conversion"] = static_cast<int>(opt.floating_conversion);
 
   j["input_img_type"] = in_fmt;
   j["output_img_type"] = out_fmt;
@@ -960,6 +980,9 @@ std::shared_ptr<Node> Resize(ResizeOptions options) {
   case ResizeInterpolation::Bilinear:
     opt.scaling_type = "BILINEAR";
     break;
+  case ResizeInterpolation::BilinearAntialiased:
+    opt.scaling_type = "BILINEAR_ANTIALIASED";
+    break;
   case ResizeInterpolation::Bicubic:
     opt.scaling_type = "BICUBIC";
     break;
@@ -992,7 +1015,7 @@ std::shared_ptr<Node> ColorConvert(ColorConvertOptions options) {
 std::shared_ptr<Node> Normalization(NormalizationOptions options) {
   for (std::size_t i = 0; i < options.mean.size(); ++i)
     if (!std::isfinite(options.mean[i]) || !std::isfinite(options.stddev[i]) ||
-        options.stddev[i] <= 0)
+        (options.rescale_factor ? options.stddev[i] == 0 : options.stddev[i] <= 0))
       throw std::invalid_argument(
           "Normalization requires finite means and positive finite standard deviations");
   auto opt = image_options(options.element_name);
@@ -1000,6 +1023,8 @@ std::shared_ptr<Node> Normalization(NormalizationOptions options) {
   opt.output_dtype = "BF16";
   opt.channel_mean.assign(options.mean.begin(), options.mean.end());
   opt.channel_stddev.assign(options.stddev.begin(), options.stddev.end());
+  opt.rescale_factor = options.rescale_factor;
+  opt.floating_conversion = options.floating_conversion;
   internal::ImageTransformPolicy policy;
   policy.mode = internal::ImageTransformMode::Normalization;
   return image_node(std::move(opt), std::move(policy));

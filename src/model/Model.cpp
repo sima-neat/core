@@ -5225,6 +5225,11 @@ void populate_model_managed_preproc_options(PreprocOptions* opt,
   opt->normalize = plan.normalize;
   opt->channel_mean = plan.mean;
   opt->channel_stddev = plan.stddev;
+  opt->rescale_factor = effective.rescale_factor;
+  opt->quantization_step = effective.quantization_step;
+  opt->color_conversion_placement = effective.color_conversion_placement;
+  opt->floating_conversion = effective.floating_conversion;
+
   opt->tessellate = flags.tess_needed;
   opt->single_output_handoff = true;
   if (effective.resize.enable == AutoFlag::On) {

@@ -68,6 +68,41 @@ tensors = pyneat.stages.preproc(
 )
 ```
 
+## 固定順序的來源運算 {#fixed-source-arithmetic}
+
+對於 BF16 輸入模型，請透過一般選項設定原始影像運算。
+
+```python
+import pyneat
+
+options = pyneat.ModelOptions()
+p = options.preprocess
+p.kind = pyneat.InputKind.Image
+p.input_max_width, p.input_max_height = 1280, 720
+p.resize.enable = pyneat.AutoFlag.On
+p.resize.mode = pyneat.ResizeMode.Stretch
+p.resize.scaling_type = "BILINEAR_ANTIALIASED"
+p.rescale_factor = 1.0 / 255.0
+p.normalize.enable = pyneat.AutoFlag.On
+p.normalize.mean = [0.485, 0.456, 0.406]
+p.normalize.stddev = [0.229, 0.224, 0.225]
+p.normalize.has_explicit_stats = True
+p.floating_conversion = pyneat.PreprocFloatingConversion.NearestEven
+model = pyneat.Model("/path/to/bf16_model.tar.gz", options)
+```
+
+對 RGB/Gray，`rescale_factor` 會在縮放尺寸前乘上來源像素；啟用的正規化接著在縮放後減去 `normalize.mean`，再除以 `normalize.stddev`。此路徑不會隱含加入 `/255`。若保留原始像素範圍，請將係數設為 `1`。請保留原始 FP32 係數，不要折疊成舊版仿射參數。固定運算支援 `NO_SCALING`、`NEAREST`、`BILINEAR_ANTIALIASED`，不支援一般 bilinear 或 bicubic。
+
+BF16 預設仍使用截斷。只有明確指定 `PreprocFloatingConversion.NearestEven` 才會使用最接近偶數捨入。獨立的 `PreprocOptions.output_dtype="FP16"` 會選擇 binary16，且一律使用最接近偶數捨入。獨立 `PreprocOptions` 也提供相同固定選項；`NormalizationOptions` 另接受 `rescale_factor` 與 `floating_conversion`，而 `ResizeInterpolation.BilinearAntialiased` 可選擇 `nodes.resize` 的取樣方式。
+
+INT8 輸出必須提供原始正值 `quantization_step`。Core 會檢查其 FP32 倒數是否符合 MPK 乘數，並保留模型的零點。這是相容性檢查，不是還原原始步長。缺少或衝突的步長會明確失敗。獨立圖需指定 `q_zp`，傳輸中繼資料的乘數可由步長推導。執行時會除以原始步長，將商捨入至最接近偶數，再加上零點並飽和處理。
+
+YUV-to-RGB 的 `color_conversion_placement` 預設為 `PreprocColorConversionPlacement.AfterResize`：先縮放各分量，再經過 UInt8 RGB 解碼邊界，最後重新縮放數值與正規化。`BeforeResize` 會將此解碼邊界移至 RGB 數值縮放與取樣之前。其他色彩路徑會拒絕此覆寫。請勿假設其等同於 Pillow/torchvision；應驗證順序與中間 dtype。
+
+請使用影像輸入，且不要以 `transforms` 覆寫。衝突的停用旗標或不支援的組合會失敗，而非默默變更請求。輸出形狀、dtype、量化與實體佈局仍由 MPK 決定；來源容量不受模型尺寸限制。省略新選項會保留舊版運算。新增欄位改變了 C++ 物件佈局，因此此版本使用 ABI 7 (`libsima_neat.so.7`)。請以相符的標頭與函式庫重新建置應用程式、外掛程式及 Python 繫結；不要透過相容性符號連結載入 ABI 5/6 二進位檔。
+
+
+
 ## 使用方式
 
 | 使用案例 | API | 指南 |
