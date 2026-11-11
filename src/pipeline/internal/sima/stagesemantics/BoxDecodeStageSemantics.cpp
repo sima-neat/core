@@ -1687,6 +1687,23 @@ CompiledBoxDecodeContract build_boxdecode_compiled_contract_from_subset(
       options.pose_classes.empty() ? subset.pose_classes : options.pose_classes,
       compiled.payload.num_classes, "BoxDecode");
   compiled.payload.slice_shapes = subset.slice_shapes;
+  // Dense slice extents arrive in the logical input's axis order. The recipe
+  // payload owns canonical HWC extents; normalize once rather than asking each
+  // reader to guess whether a CHW tensor's slice was already transformed.
+  for (std::size_t i = 0; i < compiled.payload.slice_shapes.size(); ++i) {
+    if (subset.tensor_storage_kind[i] !=
+            static_cast<int>(BoxDecodeSourceStorageKind::DenseHwcPhysical) ||
+        (subset.logical_inputs[i].layout != "CHW" && subset.logical_inputs[i].layout != "NCHW"))
+      continue;
+    auto& slice = compiled.payload.slice_shapes[i];
+    if (slice.rank >= 3) {
+      const auto channels = slice.sizes[slice.rank - 3];
+      slice.sizes[slice.rank - 3] = slice.sizes[slice.rank - 2];
+      slice.sizes[slice.rank - 2] = slice.sizes[slice.rank - 1];
+      slice.sizes[slice.rank - 1] = channels;
+    }
+  }
+
   compiled.payload.tensor_storage_kind = subset.tensor_storage_kind;
   compiled.payload.superpoint = subset.superpoint;
   if (compiled.payload.decode_type == BoxDecodeType::SuperPoint) {
