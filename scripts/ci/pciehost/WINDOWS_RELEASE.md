@@ -69,7 +69,8 @@ has passed its Linux build, DevKit, and PCIe-card gates. The Windows lane:
    `latest` tag.
 
 This is the normal release path. It does not require maintainers to copy workflow
-run IDs between repositories.
+run IDs between repositories. Scheduler follows Core's branch/snap policy;
+sima-cli resolves from its supported `main` channel.
 
 Native CTest and Python hardware/GenAI runs emit JUnit evidence. The candidate is
 rejected if the observed case set differs from the required set or contains any

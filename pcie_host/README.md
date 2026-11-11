@@ -431,7 +431,8 @@ uses the same Scheduler policy as Linux: it tries the current Core branch, falls
 back to `develop` only when the published branch index proves the branch is
 absent, resolves the branch's immutable revision once, and verifies the publisher
 manifest and resource hashes. It resolves and records an immutable published
-sima-cli candidate in the same way. Explicit workflow run IDs are available only
+sima-cli candidate from the supported `main` channel in the same way. Explicit
+workflow run IDs are available only
 for qualifying unpublished Scheduler or sima-cli candidates. The restricted
 `pcie-windows-build` runner supplies the supported MSVC, WiX v3,
 GStreamer, Platform runtime, CMake dependencies and a pinned Python dependency

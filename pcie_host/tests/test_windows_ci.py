@@ -153,6 +153,10 @@ class WindowsCiContracts(unittest.TestCase):
           (root / "output" / "sima-cli" / "sima_cli-test.whl").read_bytes(),
           b"cli")
 
+  def test_dependency_acquisition_defaults_to_supported_cli_channel(self):
+    source = (SCRIPT_DIR / "acquire_windows_dependencies.py").read_text(encoding="utf-8")
+    self.assertIn('parser.add_argument("--sima-cli-branch", default="main")', source)
+
   def test_recovery_requires_known_private_stage_ownership(self):
     with tempfile.TemporaryDirectory() as directory:
       evidence = Path(directory)

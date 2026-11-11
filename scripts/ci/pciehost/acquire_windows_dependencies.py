@@ -74,7 +74,7 @@ def main() -> None:
   parser.add_argument("--scheduler-commit")
   parser.add_argument("--sima-cli-candidate", type=Path)
   parser.add_argument("--sima-cli-commit")
-  parser.add_argument("--sima-cli-branch", default="develop")
+  parser.add_argument("--sima-cli-branch", default="main")
   args = parser.parse_args()
 
   for candidate, commit, label in (
