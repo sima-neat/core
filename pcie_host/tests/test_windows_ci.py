@@ -57,6 +57,7 @@ def run_posix(command):
   shell = posix_shell()
   environment = os.environ.copy()
   environment["PATH"] = os.pathsep.join((str(Path(shell).parent), environment["PATH"]))
+  environment["WINDOWS_FIXTURE_PYTHON"] = sys.executable
   return subprocess.run(
       [shell, "-c", command], capture_output=True, text=True,
       check=False, env=environment)
@@ -753,8 +754,8 @@ class WindowsCiContracts(unittest.TestCase):
         private_root.mkdir()
         facade = private_root / "tutorial-facade"
         destinations = [root / "bin" / "worker", root / "run" / "pcie", root / "log" / "pcie"]
-        links = dict(zip(map(str, destinations),
-                         (str(facade / name) for name in ("worker", "run", "log"))))
+        links = dict(zip((path.as_posix() for path in destinations),
+                         ((facade / name).as_posix() for name in ("worker", "run", "log"))))
         destinations[0].parent.mkdir()
         if existing == "file":
           destinations[0].write_text("stock-worker")
@@ -763,7 +764,8 @@ class WindowsCiContracts(unittest.TestCase):
           (destinations[1] / "stock-state").write_text("stock")
         elif existing == "dangling-link":
           destinations[0].symlink_to(root / "missing-stock-target")
-        staged = {"root": str(private_root), "worker": str(private_root / "real-worker")}
+        staged = {"root": private_root.as_posix(),
+                  "worker": (private_root / "real-worker").as_posix()}
         args = SimpleNamespace(card_user=getpass.getuser())
 
         def execute(_args, command, _log):
@@ -771,6 +773,43 @@ class WindowsCiContracts(unittest.TestCase):
             # Simulate loss of the SSH result after one link was created.
             command = command.split("ln -sT", 2)[0] + "ln -sT" + command.split("ln -sT", 2)[1]
             command += " false"
+          if os.name == "nt":
+            # Git for Windows provides the POSIX filesystem tools used by this
+            # fixture, but its minimal distribution does not include chown or
+            # install. The disposable tree already belongs to the test user;
+            # model ownership as a no-op and preserve install's directory/mode
+            # behavior without weakening the generated card command.
+            command = """\
+chown() { :; }
+chmod() { :; }
+ln() {
+  [ "$1" = -sT ] || return 2
+  shift
+  "$WINDOWS_FIXTURE_PYTHON" -c \
+    'import os, sys; os.symlink(sys.argv[1], sys.argv[2], target_is_directory=os.path.isdir(sys.argv[1]))' \
+    "$1" "$2"
+}
+readlink() {
+  "$WINDOWS_FIXTURE_PYTHON" -c \
+    'import os, sys; slash=chr(92); print(os.readlink(sys.argv[1]).removeprefix(slash*2+"?"+slash).replace(slash, "/"))' \
+    "$1"
+}
+install() {
+  mode=
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      -d) shift ;;
+      -o|-g) shift 2 ;;
+      -m) mode="$2"; shift 2 ;;
+      --) shift; break ;;
+      -*) return 2 ;;
+      *) break ;;
+    esac
+  done
+  mkdir -p -- "$@" || return
+  [ -z "$mode" ] || chmod "$mode" "$@"
+}
+""" + command
           result = run_posix(command)
           if result.returncode:
             raise RuntimeError(result.stderr or "injected disconnect")
