@@ -71,6 +71,10 @@ has passed its Linux build, DevKit, and PCIe-card gates. The Windows lane:
 This is the normal release path. It does not require maintainers to copy workflow
 run IDs between repositories.
 
+Native CTest and Python hardware/GenAI runs emit JUnit evidence. The candidate is
+rejected if the observed case set differs from the required set or contains any
+skip, failure, or error; a successful process exit alone is not release evidence.
+
 ## Validation and bootstrap overrides
 
 Run a non-publishing validation of the entire Core cohort with:

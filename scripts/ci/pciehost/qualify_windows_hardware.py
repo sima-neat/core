@@ -29,7 +29,8 @@ import threading
 import time
 import zipfile
 
-from windows_candidate import dependency_identity, msi_version, sha256, validate_candidate
+from windows_candidate import (
+    dependency_identity, msi_version, require_junit_cases, sha256, validate_candidate)
 
 
 PASS_CODES = {0}
@@ -1223,8 +1224,14 @@ def run_python_tests(args: argparse.Namespace, python: Path, evidence: Path,
       cwd=args.source_root,
       timeout=args.test_timeout_seconds,
   )
+  require_junit_cases(evidence / "python-hardware.xml", set(BASE_PYTHON_TESTS))
   completed = list(BASE_PYTHON_TESTS)
   if args.include_genai:
+    genai_tests = {
+        "test_genai_llm_run_stream_history_and_cancel",
+        "test_genai_vlm_run_and_stream",
+        "test_genai_asr_file_pcm_translation_and_stream",
+    }
     run_logged(
         [python, "-m", "pytest", "-vv", "--junitxml", evidence / "python-genai.xml",
          "pcie_host/python/tests/test_genai_hardware.py"],
@@ -1233,9 +1240,8 @@ def run_python_tests(args: argparse.Namespace, python: Path, evidence: Path,
         cwd=args.source_root,
         timeout=args.test_timeout_seconds,
     )
-    completed.extend(("test_genai_llm_run_stream_history_and_cancel",
-                      "test_genai_vlm_run_and_stream",
-                      "test_genai_asr_file_pcm_translation_and_stream"))
+    require_junit_cases(evidence / "python-genai.xml", genai_tests)
+    completed.extend(sorted(genai_tests))
   return completed
 
 

@@ -21,7 +21,7 @@ import sys
 import tempfile
 import zipfile
 
-from windows_candidate import dependency_identity
+from windows_candidate import dependency_identity, require_junit_cases
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -430,8 +430,10 @@ def build(args: argparse.Namespace) -> None:
     for path in sorted(build_dir.rglob("*")):
       if path.is_file() and path.suffix.lower() in (".dll", ".exe", ".pyd"):
         inspect_x64(path, dumpbin)
-    run([ctest, "--test-dir", build_dir, "--output-on-failure", "--no-tests=error"],
-        env=environment)
+    native_junit = output / "native-tests.xml"
+    run([ctest, "--test-dir", build_dir, "--output-on-failure", "--no-tests=error",
+         "--output-junit", native_junit], env=environment)
+    native_test_summary = require_junit_cases(native_junit, set(test_names))
 
     for component in ("Runtime", "Development", "PcieHostTutorials"):
       run([cmake, "--install", build_dir, "--config", "Release", "--prefix", stage,
@@ -683,7 +685,12 @@ def build(args: argparse.Namespace) -> None:
         "compiler": {"path": cl, "version_output": run([cl, "/?"], env=environment, capture=True)},
         "core_source_commit": commit,
         "hardware_qualified": False,
-        "native_tests": {"exit_code": 0, "names": test_names},
+        "native_tests": {
+            "exit_code": 0,
+            "junit_sha256": sha256(native_junit),
+            "names": test_names,
+            **native_test_summary,
+        },
         "profile": "pciehost/windows/amd64",
         "python": {
             "executable": str(python),
@@ -701,6 +708,7 @@ def build(args: argparse.Namespace) -> None:
                 output / "scheduler-windows-signatures.json"),
             "scheduler-windows-dependencies.json": sha256(
                 output / "scheduler-windows-dependencies.json"),
+            "native-tests.xml": sha256(native_junit),
             "windows-dependencies.json": sha256(output / "windows-dependencies.json"),
             "windows-signatures.json": sha256(output / "windows-signatures.json"),
         },

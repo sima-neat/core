@@ -26,7 +26,8 @@ SPEC = importlib.util.spec_from_file_location("build_windows", SCRIPT)
 MODULE = importlib.util.module_from_spec(SPEC)
 assert SPEC.loader
 SPEC.loader.exec_module(MODULE)
-from windows_candidate import dependency_identity, sha256, validate_candidate  # noqa: E402
+from windows_candidate import (  # noqa: E402
+    dependency_identity, require_junit_cases, sha256, validate_candidate)
 from qualify_windows_hardware import (  # noqa: E402
     ExclusiveLock, RemoteExclusiveLock, card_snapshot, card_stage_cleanup_command, load_upgrade_base,
     parse_performance_log, require_powershell as require_hardware_powershell,
@@ -74,6 +75,32 @@ def normalized_link_target(path):
 
 
 class WindowsCiContracts(unittest.TestCase):
+  def test_junit_policy_requires_exact_zero_skip_cases(self):
+    with tempfile.TemporaryDirectory() as directory:
+      path = Path(directory) / "tests.xml"
+      path.write_text(
+          '<testsuites><testsuite tests="2"><testcase name="alpha"/>'
+          '<testcase name="beta"/></testsuite></testsuites>', encoding="utf-8")
+      self.assertEqual(
+          require_junit_cases(path, {"alpha", "beta"}),
+          {"tests": 2, "skipped": 0, "failures": 0, "errors": 0})
+
+  def test_junit_policy_rejects_skip_or_changed_case_set(self):
+    with tempfile.TemporaryDirectory() as directory:
+      path = Path(directory) / "tests.xml"
+      path.write_text(
+          '<testsuites><testsuite tests="2" skipped="1">'
+          '<testcase name="alpha"><skipped/></testcase>'
+          '<testcase name="other"/></testsuite></testsuites>', encoding="utf-8")
+      with self.assertRaisesRegex(ValueError, "required case set"):
+        require_junit_cases(path, {"alpha", "beta"})
+      path.write_text(
+          '<testsuites><testsuite tests="1" skipped="1">'
+          '<testcase name="alpha"><skipped/></testcase></testsuite></testsuites>',
+          encoding="utf-8")
+      with self.assertRaisesRegex(ValueError, "zero-skip pass"):
+        require_junit_cases(path, {"alpha"})
+
   def test_dependency_acquisition_extracts_one_safe_cli_wheel(self):
     with tempfile.TemporaryDirectory() as directory:
       root = Path(directory)
@@ -337,9 +364,15 @@ class WindowsCiContracts(unittest.TestCase):
     self.assertNotIn("copytree(platform_runtime", source)
     self.assertIn("SUPPORTED_PYTHON = (3, 14)", source)
     self.assertIn('"dependency_runtime"', source)
+    self.assertIn('"--output-junit", native_junit', source)
+    self.assertIn("require_junit_cases(native_junit, set(test_names))", source)
 
   def test_hardware_qualification_bounds_blocker_and_injects_process_faults(self):
     source = (SCRIPT_DIR / "qualify_windows_hardware.py").read_text(encoding="utf-8")
+    self.assertIn(
+        'require_junit_cases(evidence / "python-hardware.xml", set(BASE_PYTHON_TESTS))',
+        source)
+    self.assertIn('require_junit_cases(evidence / "python-genai.xml", genai_tests)', source)
     self.assertIn('command.extend(["--iterations", "10", "--interval-ms", "0"])', source)
     self.assertIn('completed.append("test_worker_loss_recovery")', source)
     self.assertIn('completed.append("test_client_process_death_recovery")', source)
@@ -409,6 +442,10 @@ class WindowsCiContracts(unittest.TestCase):
     resources = {path.name: sha256(path) for path in (scheduler, core, wheel)}
     qualification_resource = root / "qualification-resource.bin"
     qualification_resource.write_bytes(b"hardware-tests-and-signature-receipt")
+    native_junit = root / "native-tests.xml"
+    native_junit.write_text(
+        '<testsuites><testsuite tests="1"><testcase name="native_contract"/>'
+        '</testsuite></testsuites>', encoding="utf-8")
     signature_record = {
         "path": scheduler.name,
         "status": "Valid" if signed else "NotSigned",
@@ -475,8 +512,18 @@ class WindowsCiContracts(unittest.TestCase):
     }), encoding="utf-8")
     (root / "host-candidate.json").write_text(json.dumps({
         "core_source_commit": commit,
+        "native_tests": {
+            "errors": 0,
+            "exit_code": 0,
+            "failures": 0,
+            "junit_sha256": sha256(native_junit),
+            "names": ["native_contract"],
+            "skipped": 0,
+            "tests": 1,
+        },
         "profile": "pciehost/windows/amd64",
         "qualification_resources": {
+            native_junit.name: sha256(native_junit),
             qualification_resource.name: sha256(qualification_resource),
             scheduler_signatures.name: sha256(scheduler_signatures),
             dependencies.name: sha256(dependencies),
@@ -620,6 +667,17 @@ class WindowsCiContracts(unittest.TestCase):
       candidate.core_msi.write_bytes(b"changed")
       with self.assertRaisesRegex(ValueError, "checksum differs"):
         validate_candidate(root)
+
+  def test_release_gate_rejects_native_skip_receipt(self):
+    with tempfile.TemporaryDirectory() as directory:
+      root = Path(directory)
+      commit, _, qualification = self.windows_candidate(root)
+      receipt_path = root / "host-candidate.json"
+      receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+      receipt["native_tests"]["skipped"] = 1
+      receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
+      with self.assertRaisesRegex(ValueError, "zero-skip pass"):
+        verify(root, qualification, commit, False)
 
   def test_card_candidate_binds_exact_linux_payload(self):
     with tempfile.TemporaryDirectory() as directory:

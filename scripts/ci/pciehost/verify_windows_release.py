@@ -10,7 +10,7 @@ from pathlib import Path
 from pathlib import PureWindowsPath
 import re
 
-from windows_candidate import dependency_identity, msi_version, validate_candidate
+from windows_candidate import dependency_identity, msi_version, sha256, validate_candidate
 
 
 def read_object(path: Path, description: str) -> dict:
@@ -106,6 +106,16 @@ def verify(candidate_dir: Path, qualification_path: Path, expected_commit: str,
     raise ValueError("hardware qualification covered a different Core commit")
   if qualified_candidate.get("resources") != candidate.resources:
     raise ValueError("hardware qualification covered different package bytes")
+  native_tests = candidate.receipt.get("native_tests")
+  native_names = native_tests.get("names") if isinstance(native_tests, dict) else None
+  if (not isinstance(native_names, list) or not native_names
+      or native_tests.get("exit_code") != 0
+      or native_tests.get("tests") != len(native_names)
+      or native_tests.get("skipped") != 0
+      or native_tests.get("failures") != 0
+      or native_tests.get("errors") != 0
+      or native_tests.get("junit_sha256") != sha256(candidate.root / "native-tests.xml")):
+    raise ValueError("Windows native qualification was not an exact zero-skip pass")
   if qualification.get("dependencies") != dependency_identity(
       candidate.root, require_dependency_runtime=True):
     raise ValueError("hardware qualification used a different runtime dependency cohort")

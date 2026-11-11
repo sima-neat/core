@@ -8,6 +8,7 @@ import hashlib
 import json
 from pathlib import Path
 import re
+import xml.etree.ElementTree as ET
 
 
 def sha256(path: Path) -> str:
@@ -23,6 +24,32 @@ def msi_version(value: object) -> tuple[int, int, int]:
   if not match:
     raise ValueError(f"Windows candidate version is not numeric major.minor.patch: {value!r}")
   return tuple(int(part) for part in match.groups())
+
+
+def require_junit_cases(path: Path, expected: set[str]) -> dict[str, int]:
+  """Require an exact, passing, zero-skip JUnit case set."""
+  try:
+    root = ET.parse(path).getroot()
+  except (OSError, ET.ParseError) as error:
+    raise ValueError(f"invalid JUnit evidence: {path}: {error}") from error
+  cases = list(root.iter("testcase"))
+  names = [case.get("name", "") for case in cases]
+  if not cases or any(not name for name in names) or len(names) != len(set(names)):
+    raise ValueError(f"JUnit evidence has missing or duplicate test cases: {path}")
+  missing = sorted(expected - set(names))
+  unexpected = sorted(set(names) - expected)
+  if missing or unexpected:
+    raise ValueError(
+        f"JUnit evidence differs from the required case set: "
+        f"missing={missing}, unexpected={unexpected}")
+  skipped = sum(1 for case in cases if case.find("skipped") is not None)
+  failures = sum(1 for case in cases if case.find("failure") is not None)
+  errors = sum(1 for case in cases if case.find("error") is not None)
+  if skipped or failures or errors:
+    raise ValueError(
+        f"JUnit evidence is not a zero-skip pass: "
+        f"skipped={skipped}, failures={failures}, errors={errors}")
+  return {"tests": len(cases), "skipped": 0, "failures": 0, "errors": 0}
 
 
 def dependency_identity(directory: Path, *, require_dependency_runtime: bool = False) -> dict:

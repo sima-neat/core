@@ -472,10 +472,12 @@ tests, proves the affected queue can be reopened after each failure, and removes
 Python, Core and Scheduler in reverse order. It restores the stock card firmware
 and removes the private Linux payload before releasing either lock. Latency and
 throughput logs are converted to structured positive, finite measurements in the
-retained evidence. Release admission requires the same resource checksums, no
-remaining card worker, and a clean install root. A standalone validation may omit
-GenAI for a shorter diagnostic run. Customer publication requires the complete
-C++ and Python GenAI matrix. In the normal path the Windows lane is called by Core's main
+retained evidence. Native CTest and Python JUnit receipts must contain the exact
+expected case sets with zero skips, failures, or errors. Release admission
+requires the same resource checksums, no remaining card worker, and a clean
+install root. A standalone validation may omit GenAI for a shorter diagnostic
+run. Customer publication requires the complete C++ and Python GenAI matrix. In
+the normal path the Windows lane is called by Core's main
 Vulcan workflow after the same-revision Linux build, DevKit, and PCIe-card gates;
 the Windows lane consumes that run's exact card payload. A standalone dispatch
 must instead identify a prior successful Linux run for the same Core commit.
