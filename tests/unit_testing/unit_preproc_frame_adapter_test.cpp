@@ -263,56 +263,69 @@ void fixed_arithmetic_contract() {
   // FP32 multiplier. Inspect the original payload, not merely its inverse.
   constexpr auto step_bits = std::uint32_t{0x3c46a60c};
   constexpr float source_step = std::bit_cast<float>(step_bits);
-  for (bool quantized : {false, true}) {
-    for (bool nearest_even : {false, true}) {
-      if (quantized && nearest_even)
+  for (bool normalized : {false, true}) {
+    for (bool quantized : {false, true}) {
+      if (!normalized && !quantized)
         continue;
-      auto cfg = config(1, quantized);
-      cfg->scaling_type = "BILINEAR_ANTIALIASED";
-      cfg->rescale_factor = factor;
-      cfg->channel_stddev[1] = -0.25f;
-      cfg->floating_conversion =
-          nearest_even ? PreprocFloatingConversion::NearestEven : PreprocFloatingConversion::Legacy;
-      if (quantized) {
-        cfg->quantization_step = source_step;
-        cfg->q_scale = float(1.0f / source_step);
+      for (bool nearest_even : {false, true}) {
+        if (quantized && nearest_even)
+          continue;
+        auto cfg = config(1, quantized);
+        cfg->scaling_type = "BILINEAR_ANTIALIASED";
+        cfg->normalize = normalized ? 1 : 0;
+        if (normalized)
+          cfg->rescale_factor = factor;
+        cfg->channel_stddev[1] = -0.25f;
+        cfg->floating_conversion = nearest_even ? PreprocFloatingConversion::NearestEven
+                                                : PreprocFloatingConversion::Legacy;
+        if (quantized) {
+          cfg->quantization_step = source_step;
+          cfg->q_scale = float(1.0f / source_step);
+        }
+        auto capture = std::make_shared<Capture>();
+        probe::Options options;
+        options.capture = capture;
+        auto stage = take(PreprocProbe::create(cfg, options));
+        auto* input = gst_buffer_new_allocate(nullptr, 192, nullptr);
+        auto* output_meta = gst_structure_new_empty("test");
+        probe::Binding binding;
+        okay(stage->bind(input, Storage{}, binding, output_meta));
+        const auto bytes = binding.operation->output_requirements(0).storage_bytes;
+        binding.outputs.push_back({std::make_shared<Owner>(bytes, 0x200000), 0, bytes});
+        auto done = stage->session().executor(0)->submit(*binding.operation, binding.inputs,
+                                                         binding.outputs);
+        okay(done.wait());
+        const auto bits = [&](std::size_t offset) {
+          require(capture->packet.payload.size() >= offset + 4, "short fixed arithmetic packet");
+          std::uint32_t value;
+          std::memcpy(&value, capture->packet.payload.data() + offset, 4);
+          return value;
+        };
+        require(bits(256) == (1U | (normalized ? 6U : 0U) | (quantized ? 8U : 0U) |
+                              (nearest_even ? 16U : 0U)),
+                "fixed arithmetic flags or BF16 legacy cast policy changed");
+        require(bits(260) == std::bit_cast<std::uint32_t>(normalized ? factor : 1.f),
+                "source rescale was folded");
+        for (unsigned c = 0; c < 3; ++c) {
+          require(word(capture->packet, 264 + 4 * c) ==
+                          (normalized ? float(cfg->channel_mean[c]) : 0.f) &&
+                      word(capture->packet, 276 + 4 * c) ==
+                          (normalized ? float(cfg->channel_stddev[c]) : 1.f),
+                  "normalization was folded into legacy affine coefficients");
+          require(word(capture->packet, 140 + 4 * c) == 0.0f &&
+                      word(capture->packet, 152 + 4 * c) == 1.0f,
+                  "fixed route retained a second legacy normalization");
+        }
+        if (quantized) {
+          require(bits(288) == step_bits,
+                  "source quantizer step was reconstructed from reciprocal");
+          require(bits(20) == 1U, "quantize-only INT8 was reinterpreted as raw UInt8");
+        }
+        require(integer(output_meta, "preproc_original_width") == 8,
+                "fixed arithmetic lost original-frame metadata");
+        gst_structure_free(output_meta);
+        gst_buffer_unref(input);
       }
-      auto capture = std::make_shared<Capture>();
-      probe::Options options;
-      options.capture = capture;
-      auto stage = take(PreprocProbe::create(cfg, options));
-      auto* input = gst_buffer_new_allocate(nullptr, 192, nullptr);
-      auto* output_meta = gst_structure_new_empty("test");
-      probe::Binding binding;
-      okay(stage->bind(input, Storage{}, binding, output_meta));
-      const auto bytes = binding.operation->output_requirements(0).storage_bytes;
-      binding.outputs.push_back({std::make_shared<Owner>(bytes, 0x200000), 0, bytes});
-      auto done =
-          stage->session().executor(0)->submit(*binding.operation, binding.inputs, binding.outputs);
-      okay(done.wait());
-      const auto bits = [&](std::size_t offset) {
-        require(capture->packet.payload.size() >= offset + 4, "short fixed arithmetic packet");
-        std::uint32_t value;
-        std::memcpy(&value, capture->packet.payload.data() + offset, 4);
-        return value;
-      };
-      require(bits(256) == (7U | (quantized ? 8U : 0U) | (nearest_even ? 16U : 0U)),
-              "fixed arithmetic flags or BF16 legacy cast policy changed");
-      require(bits(260) == std::bit_cast<std::uint32_t>(factor), "source rescale was folded");
-      for (unsigned c = 0; c < 3; ++c) {
-        require(word(capture->packet, 264 + 4 * c) == float(cfg->channel_mean[c]) &&
-                    word(capture->packet, 276 + 4 * c) == float(cfg->channel_stddev[c]),
-                "normalization was folded into legacy affine coefficients");
-        require(word(capture->packet, 140 + 4 * c) == 0.0f &&
-                    word(capture->packet, 152 + 4 * c) == 1.0f,
-                "fixed route retained a second legacy normalization");
-      }
-      if (quantized)
-        require(bits(288) == step_bits, "source quantizer step was reconstructed from reciprocal");
-      require(integer(output_meta, "preproc_original_width") == 8,
-              "fixed arithmetic lost original-frame metadata");
-      gst_structure_free(output_meta);
-      gst_buffer_unref(input);
     }
   }
   const auto rejects = [](std::shared_ptr<core::ProcessCvuStagePayload> cfg,
