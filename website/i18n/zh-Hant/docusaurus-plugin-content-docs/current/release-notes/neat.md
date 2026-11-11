@@ -7,6 +7,16 @@ sidebar_position: 3
 
 SiMa.ai Neat Library 的版本資訊。
 
+## 0.6.1（尚未發行） {#v061}
+
+### 重大變更 {#v061-breaking}
+
+- Neat Library 的 C++ ABI 現在是 7（`libsima_neat.so.7`）。`PreprocessOptions`、`PreprocOptions` 和 `NormalizationOptions` 新增了欄位。請使用相符的標頭及執行階段套件，重新建置 C++ 應用程式、外掛程式與 Python 繫結；不要重用 ABI 6 二進位檔，也不要新增相容性符號連結。
+
+### 前處理 {#v061-preproc}
+
+- 既有前處理選項現在可指定抗鋸齒雙線性縮放、明確的原始重新縮放係數、色彩轉換位置，以及浮點轉換原則。在固定原始算術路徑中，平均值和標準差欄位保留原始平均值及除數，而不是折疊後的仿射轉換。BF16 預設維持既有截斷方式，最接近偶數捨入須明確啟用。FP16 使用最接近偶數捨入。精確 INT8 量化需要與模型乘數一致的原始步長；無法從乘數重建該步長。未指定新選項時，維持既有路徑。請參閱 [Preproc](/reference/nodes/preproc)。
+
 ## 0.6.0
 
 ### 破壞性變更
