@@ -411,6 +411,20 @@ pip through the exact Python executable supplied by the customer. Repeating the
 command uses Windows Installer's upgrade/repair behavior and skips the pip step
 when the requested `pyneatpcie` version already imports successfully.
 
+The MSIs do not redistribute Platform or third-party binaries. A supported host
+therefore also needs the qualified Platform runtime, GStreamer MSVC development
+installation, and the CMake packages required by the exported static C++ target
+(including zlib and nlohmann JSON). CI currently supplies those roots explicitly;
+that runner setup is not a customer installation contract. Do not publish the
+selector until a clean-host install or process-scoped activation path proves that
+ordinary C++ and Python processes find the same qualified dependency cohort
+without relying on a developer shell or a machine-wide PATH mutation.
+
+In current sima-cli syntax, `@3.0` selects the artifact branch named `3.0`; it is
+not inferred from `platform-version`. Production delivery must create and promote
+that channel, or the documented command must use the exact Core release-tag form
+already used by the Linux PCIe packages.
+
 Build the MSI from a configured native Windows build directory with `cpack`.
 Use `scripts/create_windows_metadata.py` to create the matching sima-cli
 metadata for the MSI and optional wheel. The default per-machine destination is
