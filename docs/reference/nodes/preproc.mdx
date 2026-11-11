@@ -72,6 +72,8 @@ tensors = pyneat.stages.preproc(
 
 For a BF16-input model, configure the original image arithmetic with ordinary options:
 
+For Model image preprocessing, leave `preprocess.quantize.enable` and `preprocess.tessellate.enable` as `Auto`. Explicit tensor-route selections cannot carry these fixed image options and are rejected.
+
 ```python
 import pyneat
 

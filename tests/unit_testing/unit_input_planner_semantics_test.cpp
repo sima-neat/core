@@ -95,6 +95,20 @@ RUN_TEST(
                                   fault == 3 ? "resize.enable=Off" : "fixed image preprocessing",
                                   "contradictory fixed intent was silently ignored");
         }
+        // Quant/Tess families cannot carry source image arithmetic. With
+        // resize disabled this used to pass without applying the new factor.
+        for (int tensor_route = 0; tensor_route < 3; ++tensor_route) {
+          Model::Options bad;
+          bad.preprocess.rescale_factor = 1.f;
+          bad.preprocess.resize.enable = AutoFlag::Off;
+          bad.preprocess.resize.scaling_type = "NO_SCALING";
+          if (tensor_route != 1)
+            bad.preprocess.quantize.enable = AutoFlag::On;
+          if (tensor_route != 0)
+            bad.preprocess.tessellate.enable = AutoFlag::On;
+          require_throws_contains([&] { (void)plan_preprocess(bad, caps); }, "Preproc image route",
+                                  "tensor route silently discarded source image arithmetic");
+        }
         opt.preprocess.normalize.enable = AutoFlag::On;
         opt.preprocess.normalize.stddev = {1.f, -0.25f, 0.5f};
         const auto signed_divisor = plan_preprocess(opt, caps);

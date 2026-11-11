@@ -845,6 +845,13 @@ PreprocessPlannerResult plan_preprocess(const Model::Options& options,
     effective.tessellate.enable = tess_enabled ? AutoFlag::On : AutoFlag::Off;
   }
 
+  if (enabled && (fixed_arithmetic || antialiased_resize) && (quant_enabled || tess_enabled)) {
+    throw std::invalid_argument(
+        "fixed image preprocessing requires the Preproc image route; leave "
+        "preprocess.quantize.enable and preprocess.tessellate.enable as Auto instead of "
+        "selecting a tensor route");
+  }
+
   PreprocessGraphFamily family = PreprocessGraphFamily::Disabled;
   if (enabled) {
     if (quant_enabled && tess_enabled) {

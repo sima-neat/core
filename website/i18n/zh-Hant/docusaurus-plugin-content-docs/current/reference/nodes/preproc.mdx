@@ -72,6 +72,8 @@ tensors = pyneat.stages.preproc(
 
 對於 BF16 輸入模型，請透過一般選項設定原始影像運算。
 
+使用 Model 圖像前處理時，請將 `preprocess.quantize.enable` 和 `preprocess.tessellate.enable` 保持為 `Auto`。明確選取的張量路徑無法套用這些固定圖像選項，因此會被拒絕。
+
 ```python
 import pyneat
 

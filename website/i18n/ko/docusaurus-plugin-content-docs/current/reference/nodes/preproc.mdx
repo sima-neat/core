@@ -72,6 +72,8 @@ tensors = pyneat.stages.preproc(
 
 BF16 입력 모델에서는 일반 옵션으로 원본 이미지 연산을 설정합니다.
 
+Model 이미지 전처리에서는 `preprocess.quantize.enable`과 `preprocess.tessellate.enable`을 `Auto`로 두세요. 명시적인 텐서 경로는 이러한 고정 이미지 옵션을 처리할 수 없으므로 거부됩니다.
+
 ```python
 import pyneat
 
