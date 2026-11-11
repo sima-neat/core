@@ -1,4 +1,4 @@
-"""Typed image frontends share Preproc without widening its existing options ABI."""
+"""Typed image frontends and fixed Preproc options use the shared prepared path."""
 import pytest
 import pyneat
 
