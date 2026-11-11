@@ -1561,8 +1561,8 @@ CompiledBoxDecodeContract build_boxdecode_compiled_contract_from_subset(
                 static_cast<int>(BoxDecodeSourceStorageKind::DenseHwcPhysical)
             ? scores.sizes[chw ? scores.rank - 3 : scores.rank - 1]
             : logical.shape[chw ? logical.shape.size() - 3 : logical.shape.size() - 1];
-    if (depth < 1 || depth > 256)
-      throw std::invalid_argument("focal query class depth must be 1..256");
+    if (depth < 1 || depth > 1024)
+      throw std::invalid_argument("focal query class depth must be 1..1024");
     compiled.payload.num_classes = static_cast<int>(depth);
   }
   if (box_decode_type_is_oriented(compiled.payload.decode_type)) {

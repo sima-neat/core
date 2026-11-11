@@ -151,8 +151,11 @@ void focal_query_contract() {
                 compiled.payload.score_activation == BoxDecodeScoreActivation::Sigmoid,
             "focal static class-depth/sigmoid resolution failed");
     check(compiled, {640, 640, 1280, 720, ResizeMode::Stretch});
-    const auto subset =
+    auto subset =
         plugin_contracts::extract_boxdecode_contract_subset_from_static_contract(authored);
+    // MPKs can leave the class count unresolved. Exercise the actual subset
+    // fallback, rather than forwarding a count already inferred upstream.
+    subset.num_classes = 0;
     stagesemantics::BoxDecodeCompiledContractOptions options;
     options.decode_type = BoxDecodeType::DetrFocal;
     options.topk = 300;
