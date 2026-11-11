@@ -324,7 +324,7 @@ NMS IoU 為零時，YOLO26 略過 NMS。其他啟用 NMS 的 YOLO 與 SSD 設定
 
 | API 列舉 | 後端權杖 | 典型的模型系列 |
 | --- | --- | --- |
-| `BoxDecodeType::Yolo` | `yolo` | 通用 YOLO 樣式的檢測頭 |
+| `BoxDecodeType::Yolo` | `yolo` | 以模型像素為單位的已解碼 `cx,cy,w,h` |
 | `BoxDecodeType::YoloV5` | `yolov5` | YOLOv5 偵測 |
 | `BoxDecodeType::YoloV5Seg` | `yolov5-seg` | YOLOv5 分割 |
 | `BoxDecodeType::YoloV7` | `yolov7` | YOLOv7 偵測 |
@@ -354,8 +354,7 @@ NMS IoU 為零時，YOLO26 略過 NMS。其他啟用 NMS 的 YOLO 與 SSD 設定
 
 ## 選擇合適的類型
 
-- 如果您使用的是 SiMa 提供的或 SiMa 編譯的模型套件，請選擇與模型系列相符的 `BoxDecodeType`，並將 `decode_type_option` 保持為 `Auto`。
-- 如果您的偵測結果遺漏，或者所有分數都異常偏低，請先確認解碼模型是否與匯出的模型頭相符。YOLOX、YOLOv6 和 YOLO26 使用原始/邏輯樣式的模型頭，不應像僅使用機率值的 YOLO 模型頭一樣進行處理。
+- 請依匯出的模型頭契約選擇：`YoloV6` 接受原始 l/t/r/b 距離與類別 logits。對於在圖內解碼邊界框的 YOLOv6 模型封存檔，請使用 `Yolo`；若輸出依 `[bbox_0..2, class_prob_0..2]` 分組，請設定 `decode_type_option=GroupedByRoleProbability`，並將 `num_classes` 設為訓練時的類別數。
 - 如果方塊的位置或大小比例顯示不正確，請檢查影像調整大小的策略。僅在您的圖表沒有上游 `Preproc` 階段來寫入調整大小的中繼資料時，才使用 `resize_mode_override`。
 - 如果您正在製作自訂的模型套件，請務必確保封存檔準確地描述了檢測頭：張量順序、邏輯形狀、實際儲存方式、dtype/量化、分數範圍、類別數量，以及任何切片輸出。應用程式程式碼不應需要針對這些細節進行調整。
 

@@ -58,8 +58,8 @@ namespace simaai::neat {
 enum class BoxDecodeType : std::int32_t {
   // Internal sentinel; runtime decode requires a concrete value.
   Unspecified = 0, ///< Sentinel: no decode family selected (fails fast at runtime).
-  // YOLO-family (generic token).
-  Yolo = 1,         ///< Generic YOLO family token.
+  // YOLO family.
+  Yolo = 1,         ///< Decoded cx/cy/w/h heads in model pixels.
   YoloV5 = 2,       ///< Standard-anchor YOLOv5 detection with three raw packed heads.
   YoloV5Seg = 3,    ///< YOLOv5 segmentation.
   YoloV7 = 4,       ///< YOLOv7 detection.

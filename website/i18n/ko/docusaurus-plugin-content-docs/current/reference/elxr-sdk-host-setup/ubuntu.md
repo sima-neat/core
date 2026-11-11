@@ -9,7 +9,7 @@ sidebar_position: 1
 ## 필수 조건
 
 - Ubuntu 22.04 또는 24.04 호스트.
-- Docker 엔진이 설치되었고 정상적으로 작동합니다.
+- Docker 엔진 %%dependency.docker.minimum%% 이상이 설치되었고 정상적으로 작동합니다. 버전은 `docker --version`으로 확인할 수 있습니다.
 - 호스트에 `sima-cli`가 설치되었습니다.
 - Modalix 및 DevKit는 동일한 네트워크에서 연결 가능합니다.
 

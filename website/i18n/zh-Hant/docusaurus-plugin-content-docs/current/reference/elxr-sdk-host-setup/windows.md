@@ -10,7 +10,7 @@ sidebar_position: 2
 
 - Windows 11 主機。
 - [WSL](https://learn.microsoft.com/en-us/windows/wsl/install) 已安裝並正常運作。
-- Docker Engine 安裝在 WSL 內部。
+- Docker Engine %%dependency.docker.minimum%% 或更新版本安裝在 WSL 內部。可使用 `docker --version` 檢查版本。
 - `sima-cli` 已安裝在 WSL 內部。
 
 ## 從 WSL 開始。

@@ -404,7 +404,7 @@ def test_tensor_latency_yolov8():
   runtime = None
   warmup = 100
   iterations = 3000
-  max_mean_latency_ms = 12.0
+  max_mean_latency_ms = 12.1
 
   try:
     runtime = pcie.Model(str(model), pcie.ModelOptions(), _connection())

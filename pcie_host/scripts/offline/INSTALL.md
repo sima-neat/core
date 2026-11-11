@@ -41,10 +41,14 @@ Docker and Internet access are not needed on the customer system.
 
 To discard an environment and install from scratch, explicitly run `./install.sh --recreate-venv` (standalone Core) or `sudo python3 -B install.py --recreate-venv` (PCIe). This removes packages and files in the selected environment without backup. In the SDK, the option applies to the paired DevKit, not SDK host Python. Save required files first. Preflight and verification-only commands never recreate environments.
 
+The downloaded archive may have an 8-character SHA-256 suffix before `.tar.gz`.
+The extraction command accepts both legacy and checksum-suffixed filenames. Keep
+only the selected installer archive in the current directory before extracting it.
+
 Run on the host in an interactive terminal:
 
 ```sh
-tar -xzf neat-pcie-offline-installer.tar.gz
+tar -xzf neat-pcie-offline-installer*.tar.gz
 cd neat-offline
 sudo python3 -B install.py
 ```

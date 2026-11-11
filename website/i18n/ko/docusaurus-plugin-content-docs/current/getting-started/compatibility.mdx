@@ -25,7 +25,7 @@ Palette SDK에는 여러 버전의 구성 요소가 있습니다. 대부분의 �
 
 각 Palette SDK 릴리스 시리즈는 특정 DevKit 소프트웨어 버전을 대상으로 합니다. SDK의 패치 업데이트는 새로운 DevKit 이미지를 요구하지 않고도 도구 관련 문제를 해결할 수 있습니다. 예를 들어, 2.1.3.0을 포함한 Palette SDK 2.1.3.x 릴리스는 DevKit 소프트웨어 2.1.3과 호환됩니다.
 
-아래 표에 표시된 페어링을 사용하는 한 SDK를 재설치하지 않고도 최신 호환 Neat Library를 설치할 수 있습니다. 예를 들어, Neat Library 0.6.0과 Palette SDK 3.0.0.0을 함께 사용하십시오.
+아래 표에 표시된 페어링을 사용하는 한 SDK를 재설치하지 않고도 최신 호환 Neat Library를 설치할 수 있습니다. 예를 들어, Neat Library 0.6.1과 Palette SDK 3.0.0.1을 함께 사용하십시오.
 
 :::note
 이 페이지에 나열된 버전은 지원되는 버전 조합입니다.
@@ -58,11 +58,12 @@ DevKit 펌웨어를 확인하고 업데이트하는 방법에 대한 지침은 [
 | **2.1.3.0** | WSL을 통해 Windows 11, Ubuntu 22.04 또는 24.04, Apple Silicon 기반의 최신 macOS | **2.1.3** |
 | **2.1.3.1** | WSL을 통해 Windows 11, Ubuntu 22.04 또는 24.04, Apple Silicon 기반의 최신 macOS | **2.1.3** |
 | **3.0.0.0** | WSL을 통해 Windows 11, Ubuntu 22.04 또는 24.04, Apple Silicon 기반의 최신 macOS | **3.0.0** |
+| **3.0.0.1** | WSL을 통해 Windows 11, Ubuntu 22.04 또는 24.04, Apple Silicon 기반의 최신 macOS | **3.0.0** |
 
-DevKit 소프트웨어와 호환되는 특정 SDK 버전을 설치하십시오. 예를 들어 DevKit 소프트웨어 3.0.0용 Palette SDK 3.0.0.0을 호스트에서 설치하려면 다음 명령을 실행하십시오.
+DevKit 소프트웨어와 호환되는 특정 SDK 버전을 설치하십시오. 예를 들어 DevKit 소프트웨어 3.0.0용 Palette SDK 3.0.0.1을 호스트에서 설치하려면 다음 명령을 실행하십시오.
 
 <ShellCommand prompt="host">
-sima-cli neat install sdk@v3.0.0.0
+sima-cli neat install sdk@v3.0.0.1
 </ShellCommand>
 
 특정 태그와 릴리스 채널에 대해서는 [특정 SDK 버전 설치](/getting-started/dev-environment/install-the-environment/#install-a-specific-sdk-version)를 참조하십시오.
@@ -80,16 +81,17 @@ sima-cli neat install sdk@v3.0.0.0
 | **0.3.0** | **2.1.2.3** | **2.1.2** | 최신 0.3 버전입니다. |
 | **0.4.0** | **2.1.3.0** | **2.1.3** | 지원되는 릴리스. |
 | **0.5.0** | **2.1.3.1** | **2.1.3** | 지원되는 릴리스. |
-| **0.6.0** | **3.0.0.0** | **3.0.0** | 현재 릴리스. |
+| **0.6.0** | **3.0.0.0** | **3.0.0** | 지원되는 릴리스. |
+| **0.6.1** | **3.0.0.1** | **3.0.0** | 현재 릴리스. |
 
 DevKit 소프트웨어 버전이 중요한 이유는 장치 내 런타임, 펌웨어 및 시스템 패키지가 일련의 세트로 설치되기 때문입니다. 펌웨어 버전 간에 구성 요소를 혼합하면 애플리케이션을 빌드할 때 예상치 못한 동작이 발생할 수 있습니다.
 
 일반적으로 처음 설정할 때는 이러한 명령을 실행하지 않습니다. SDK가 호환되는 Neat Library를 자동으로 설치합니다. 호환되는 Palette SDK 내에서 또는 DevKit에 직접 특정 Neat 라이브러리 버전을 지정해야 할 때만 사용하십시오.
 
-Neat Library 0.6.0의 경우:
+Neat Library 0.6.1의 경우:
 
 <ShellCommand prompt="sdk|devkit">
-sima-cli neat install core@v0.6.0
+sima-cli neat install core@v0.6.1
 </ShellCommand>
 
 Neat Library 0.1.0 버전:
@@ -108,11 +110,12 @@ Neat 앱 버전은 Neat Library 버전과 독립적으로 작동합니다. 앱�
 | [**0.5.0**](https://github.com/sima-neat/apps/releases/tag/v0.5.0) | **0.4.0** |
 | [**0.5.1**](https://github.com/sima-neat/apps/releases/tag/v0.5.1) | **0.5.0** |
 | [**0.6.0**](https://github.com/sima-neat/apps/releases/tag/v0.6.0) | **0.6.0** |
+| [**0.6.1**](https://github.com/sima-neat/apps/releases/tag/v0.6.1) | **0.6.1** |
 
-호환되는 Palette SDK 또는 DevKit에서 Apps 0.5.0을 설치합니다.
+호환되는 Palette SDK 또는 DevKit에서 Apps 0.6.1을 설치합니다.
 
 <ShellCommand prompt="sdk|devkit">
-sima-cli neat install apps@v0.5.0
+sima-cli neat install apps@v0.6.1
 </ShellCommand>
 
 ## Model Compiler
@@ -135,6 +138,7 @@ SDK 설치/설정 과정에서 해당 환경에 사용할 수 있는 Model Compi
 | **2.1.3** | **2.1.3.0** | Ubuntu 24.04 `x86_64` / `aarch64` | Apple Silicon은 Palette SDK 내부에 설치하여 지원됩니다. |
 | **2.1.3.1** | **2.1.3.1** | Ubuntu 24.04 `x86_64` / `aarch64` | Apple Silicon은 Palette SDK 내부에 설치하여 지원됩니다. |
 | **3.0.0** | **3.0.0.0** | Ubuntu 24.04 `x86_64` / `aarch64` | Apple Silicon은 Palette SDK 내부에 설치하여 지원됩니다. |
+| **3.0.0.1** | **3.0.0.1** | Ubuntu 24.04 `x86_64` / `aarch64` | Apple Silicon은 Palette SDK 내부에 설치하여 지원됩니다. |
 
 호스트 환경 열은 독립 실행형 Model Compiler 설치에 적용됩니다. 예를 들어, Ubuntu 22.04 호스트를 사용하는 고객은 Palette SDK 2.1.3.0 내부에 설치하여 Model Compiler 2.1.3을 계속 사용할 수 있습니다. 이는 Palette SDK가 호환되는 Ubuntu 24.04 기반 컨테이너 환경을 제공하기 때문입니다.
 
@@ -153,17 +157,17 @@ neat
 ```text
 Neat Environment
   Mode               Palette SDK
-  SDK Version        3.0.0_Palette_SDK_neat_v3.0.0.0
+  SDK Version        3.0.0_Palette_SDK_neat_v3.0.0.1
   Platform Version   3.0.0
   Sysroot            /opt/toolchain/aarch64/modalix
   Update check       online
 
 Components
-  Neat core              0.6.0 channel=release env=prod latest=0.6.0
-  PyNeat                 0.6.0
-  neat-runtime           0.6.0
-  neat-gst-plugins       0.6.0
-  neat-llima             0.6.0
+  Neat core              0.6.1 channel=release env=prod latest=0.6.1
+  PyNeat                 0.6.1
+  neat-runtime           0.6.1
+  neat-gst-plugins       0.6.1
+  neat-llima             0.6.1
   neat-insight           0.0.9 channel=release status=Running venv=/opt/neat-insight/venv
   Model Compiler         not installed
 
