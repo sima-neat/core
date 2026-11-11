@@ -472,7 +472,9 @@ tests, proves the affected queue can be reopened after each failure, and removes
 Python, Core and Scheduler in reverse order. It restores the stock card firmware
 and removes the private Linux payload before releasing either lock. Latency and
 throughput logs are converted to structured positive, finite measurements in the
-retained evidence. Native CTest and Python JUnit receipts must contain the exact
+retained evidence. The Windows lane uses the same 100-frame warmup, 3,000-frame
+measurement, 12 ms maximum mean latency, and 440 FPS minimum throughput gates as
+the Linux PCIe lane. Native CTest and Python JUnit receipts must contain the exact
 expected case sets with zero skips, failures, or errors. Release admission
 requires the same resource checksums, no remaining card worker, and a clean
 install root. A standalone validation may omit GenAI for a shorter diagnostic

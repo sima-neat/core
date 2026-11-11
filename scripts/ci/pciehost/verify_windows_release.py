@@ -241,6 +241,9 @@ def verify(candidate_dir: Path, qualification_path: Path, expected_commit: str,
       or not positive_metrics(
           throughput, {"frames", "total_ms", "fps", "input_mib_per_s", "output_mib_per_s"})):
     raise ValueError("hardware qualification did not retain valid performance measurements")
+  if (latency["count"] != 3000 or throughput["frames"] != 3000
+      or latency["mean_ms"] > 12.0 or throughput["fps"] < 440.0):
+    raise ValueError("hardware qualification did not meet the Linux PCIe performance gate")
   path_fixtures = qualification.get("path_fixtures")
   if not isinstance(path_fixtures, dict) or len(path_fixtures) != 3:
     raise ValueError("hardware qualification did not record Windows path fixtures")

@@ -1195,8 +1195,14 @@ def run_cpp_tests(args: argparse.Namespace, candidate_root: Path, evidence: Path
 
   performance = test_root / "test_tensor_perf.exe"
   for mode in ("latency", "throughput"):
+    command: list[object] = [
+        performance, "--mode", mode, "--warmup", "100", "--iterations", "3000"]
+    if mode == "latency":
+      command.extend(["--max-mean-latency-ms", "12"])
+    else:
+      command.extend(["--min-throughput-fps", "440"])
     run_logged(
-        [performance, "--mode", mode], evidence / f"cpp-test_tensor_{mode}.log",
+        command, evidence / f"cpp-test_tensor_{mode}.log",
         env=environment, cwd=test_root, timeout=args.test_timeout_seconds)
     completed.append(f"test_tensor_{mode}")
 

@@ -413,6 +413,9 @@ class WindowsCiContracts(unittest.TestCase):
     self.assertIn('command.extend(["--iterations", "10", "--interval-ms", "0"])', source)
     self.assertIn('completed.append("test_worker_loss_recovery")', source)
     self.assertIn('completed.append("test_client_process_death_recovery")', source)
+    self.assertIn('["--max-mean-latency-ms", "12"]', source)
+    self.assertIn('["--min-throughput-fps", "440"]', source)
+    self.assertIn('"--warmup", "100", "--iterations", "3000"', source)
     self.assertIn('command.append("--terminate-on-pull-timeout")', source)
     self.assertIn('evidence / "client-process-death-worker-cleanup.log"', source)
     self.assertIn('evidence / "client-process-death-platform-recovery.log"', source)
@@ -640,10 +643,10 @@ class WindowsCiContracts(unittest.TestCase):
             "SIMAPCIE_BOXDECODE_IMAGE": r"C:\qualification assets\people.jpg",
         },
         "performance": {
-            "latency": {"count": 1000, "effective_fps": 91.2, "mean_ms": 10.9},
+            "latency": {"count": 3000, "effective_fps": 91.2, "mean_ms": 10.9},
             "throughput": {
-                "fps": 155.4,
-                "frames": 1000,
+                "fps": 600.0,
+                "frames": 3000,
                 "input_mib_per_s": 31.2,
                 "output_mib_per_s": 0.6,
                 "total_ms": 6435.0,
@@ -1143,6 +1146,17 @@ install() {
       commit, _, qualification = self.windows_candidate(root)
       with self.assertRaisesRegex(ValueError, "complete Windows GenAI matrix"):
         verify(root, qualification, commit, True, True)
+
+  def test_release_gate_enforces_linux_performance_thresholds(self):
+    with tempfile.TemporaryDirectory() as directory:
+      root = Path(directory)
+      commit, _, qualification = self.windows_candidate(root)
+      value = json.loads(qualification.read_text(encoding="utf-8"))
+      value["performance"]["latency"]["mean_ms"] = 12.1
+      value["performance"]["throughput"]["fps"] = 439.9
+      qualification.write_text(json.dumps(value), encoding="utf-8")
+      with self.assertRaisesRegex(ValueError, "Linux PCIe performance gate"):
+        verify(root, qualification, commit, False)
 
   def test_release_gate_rejects_incomplete_vision_matrix(self):
     with tempfile.TemporaryDirectory() as directory:
