@@ -116,10 +116,11 @@ def metadata(msi: Path, wheel: Path, version: str, branch: str, commit: str,
           },
       ],
       "post-message": (
-          "[bold]Native Neat PCIe host installation completed.[/bold]\n"
+          "[bold]Neat PCIe host installation completed.[/bold]\n"
           "Run 'C:\\Program Files\\SimaPCIeHost\\bin\\pcie-setup.cmd' once to provision "
-          "passwordless card SSH. Use --python-executable <path> to install Python support "
-          "into an application environment."
+          "passwordless card SSH. Python support is available in "
+          "'%USERPROFILE%\\pyneatpcie'; use --python-executable <path> to select a different "
+          "environment or --native-only to omit Python support."
       ),
   }
   artifact_paths = {}

@@ -402,18 +402,19 @@ other Python minors are not part of the first qualified Windows configuration.
 The customer installs the complete cohort with one command:
 
 ```powershell
-sima-cli neat install core/pciehost/windows/amd64@3.0 `
-  --python-executable .\.venv\Scripts\python.exe
+sima-cli neat install core/pciehost/windows/amd64@3.0
 ```
 
-Omit `--python-executable` for a native-only installation. The CLI verifies every
-artifact checksum and checks OpenSSH, the Platform service, GStreamer, and the
-selected Python environment before starting either installer. It installs the
-Scheduler MSI and then the Core MSI, runs the installed host doctor, syncs the
-package-matched customer skill, and invokes pip through the exact Python
-executable supplied by the customer. Repeating the command uses Windows
+The CLI creates or reuses `%USERPROFILE%\pyneatpcie` and installs the wheel
+there automatically. It verifies every artifact checksum and checks OpenSSH,
+the Platform service, GStreamer, and the compatible Python installation before
+starting either installer. It installs the Scheduler MSI and then the Core MSI,
+runs the installed host doctor, syncs the package-matched customer skill, and
+invokes pip through the managed environment. Repeating the command uses Windows
 Installer's upgrade/repair behavior and skips the pip step when the requested
-`pyneatpcie` version already imports successfully.
+`pyneatpcie` version already imports successfully. Use
+`--python-executable <path>` to select another environment or `--native-only`
+to install only the native C++ cohort.
 
 Provision passwordless card SSH once after installation. The Windows utility
 mirrors `pcie-setup.sh`, but uses Windows OpenSSH and streams the public key to
@@ -492,11 +493,11 @@ holds matching runner/card locks and admits the exact same-commit Linux Core
 artifact. Inside those locks it privately stages that artifact's firmware and
 tensor and GenAI workers, installs the exact published `sima-cli` candidate
 recorded in the dependency cohort, exposes the release through disposable loopback
-registries, and exercises native-only install,
-a missing-wheel download failure, a checksum-valid but invalid-wheel pip failure
-after native installation, recovery with the real wheel, and a repeated matching
-install through the documented `sima-cli neat install`
-command. It deletes and repairs one Core-owned and one Scheduler-owned file through
+registries, and exercises native-only install, a missing-wheel download failure,
+a checksum-valid but invalid-wheel pip failure after native installation,
+automatic managed-environment recovery with the real wheel, and a repeated
+matching install through the documented `sima-cli neat install` command. It
+deletes and repairs one Core-owned and one Scheduler-owned file through
 Windows Installer, records the Windows version, elevation, Smart App Control, and
 effective AppLocker visibility without changing policy, rechecks plugin discovery,
 rejects a Platform runtime or GStreamer dependency that differs from the producer,

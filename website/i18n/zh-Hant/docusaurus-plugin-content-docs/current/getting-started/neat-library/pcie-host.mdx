@@ -82,16 +82,14 @@ gst-inspect-1.0 neatpciehost
 
 ## 安裝 Windows 11 原生預覽
 
-Windows 預覽是 `pcie::Model` 視覺 API 的原生 Visual Studio 建置，不支援 `pcie::genai::GenAIModel`。請先安裝相符的 x64 GStreamer MSVC 執行階段、SiMa PCIe 驅動程式，以及現有的 SiMa CLI。建立應用程式環境後，使用 CLI 將相符的 Scheduler MSI、Core MSI 和 `win_amd64` wheel 安裝為同一組套件。
+Windows 預覽是 `pcie::Model` 視覺 API 的原生 Visual Studio 建置，不支援 `pcie::genai::GenAIModel`。請先安裝相符的 x64 GStreamer MSVC 執行階段、SiMa PCIe 驅動程式，以及現有的 SiMa CLI，然後使用 CLI 將相符的 Scheduler MSI、Core MSI 和 `win_amd64` wheel 安裝為同一組套件。
 
 ```powershell
-py -3 -m venv pyneatpcie
-sima-cli neat install core/pciehost/windows/amd64@3.0 `
-  --python-executable .\pyneatpcie\Scripts\python.exe
-.\pyneatpcie\Scripts\python.exe -m pip check
+sima-cli neat install core/pciehost/windows/amd64@3.0
+& "$env:USERPROFILE\pyneatpcie\Scripts\python.exe" -m pip check
 ```
 
-CLI 會在執行 MSI 前檢查 Windows OpenSSH、Platform 服務、GStreamer，以及所選的 Python 環境。接著驗證所有已發布的總和檢查碼，呼叫 Windows Installer 安裝 Scheduler 與 Core，執行已安裝的主機診斷，並安裝與套件版本相符的程式設計代理技能；最後再透過您指定的 Python 執行檔呼叫 pip。如需修復或升級，請再次執行相同指令。若只安裝原生 C++，請省略 `--python-executable`。原生元件由 Windows Installer 負責移除；所選 Python 環境中的套件則由 pip 負責移除。
+CLI 會在執行 MSI 前檢查 Windows OpenSSH、Platform 服務、GStreamer，以及相容的 Python 安裝。它會建立或重用 `%USERPROFILE%\pyneatpcie` 環境、驗證所有已發布的總和檢查碼、呼叫 Windows Installer 安裝 Scheduler 與 Core，並執行主機診斷及安裝相符的程式設計代理技能和 wheel。如需修復或升級，請再次執行相同指令。若要使用其他環境，請指定 `--python-executable <path>`；若只安裝原生 C++，請使用 `--native-only`。原生元件由 Windows Installer 負責移除；Python 套件則由 pip 負責移除。
 
 安裝完成後，請設定一次連到卡片的免密碼 SSH：
 
@@ -106,7 +104,7 @@ CLI 會在執行 MSI 前檢查 Windows OpenSSH、Platform 服務、GStreamer，�
 請在原始碼和建置樹狀目錄之外驗證已安裝的 wheel 與外掛程式：
 
 ```powershell
-$venv = (Resolve-Path .\pyneatpcie).Path
+$venv = "$env:USERPROFILE\pyneatpcie"
 $root = "C:\Program Files\SimaPCIeHost"
 $gst = "C:\Program Files\gstreamer\1.0\msvc_x86_64\bin\gst-inspect-1.0.exe"
 $env:PATH = "$root\bin;$(Split-Path $gst);$env:PATH"

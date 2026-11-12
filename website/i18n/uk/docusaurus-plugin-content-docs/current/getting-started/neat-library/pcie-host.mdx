@@ -84,16 +84,14 @@ gst-inspect-1.0 neatpciehost
 
 ## Установлення нативної попередньої версії для Windows 11
 
-Попередня версія для Windows — це нативна збірка Visual Studio для API обробки зображень `pcie::Model`. Вона не підтримує `pcie::genai::GenAIModel`. Спочатку встановіть відповідне середовище виконання x64 GStreamer MSVC, драйвер SiMa PCIe та наявний SiMa CLI. Створіть середовище застосунку, а потім за допомогою CLI встановіть узгоджені пакети Scheduler MSI, Core MSI та wheel `win_amd64` як єдиний набір.
+Попередня версія для Windows — це нативна збірка Visual Studio для API обробки зображень `pcie::Model`. Вона не підтримує `pcie::genai::GenAIModel`. Спочатку встановіть відповідне середовище виконання x64 GStreamer MSVC, драйвер SiMa PCIe та наявний SiMa CLI. Потім за допомогою CLI встановіть узгоджені пакети Scheduler MSI, Core MSI та wheel `win_amd64` як єдиний набір.
 
 ```powershell
-py -3 -m venv pyneatpcie
-sima-cli neat install core/pciehost/windows/amd64@3.0 `
-  --python-executable .\pyneatpcie\Scripts\python.exe
-.\pyneatpcie\Scripts\python.exe -m pip check
+sima-cli neat install core/pciehost/windows/amd64@3.0
+& "$env:USERPROFILE\pyneatpcie\Scripts\python.exe" -m pip check
 ```
 
-Перед запуском MSI CLI перевіряє Windows OpenSSH, службу Platform, GStreamer і вибране середовище Python. Потім він перевіряє всі опубліковані контрольні суми, запускає Windows Installer для Scheduler і Core, виконує встановлену діагностику хоста, установлює узгоджену з пакетом навичку для агента програмування та запускає pip через указаний виконуваний файл Python. Для відновлення або оновлення повторно виконайте ту саму команду. Для встановлення лише нативної версії C++ не вказуйте `--python-executable`. Видаленням нативних компонентів керує Windows Installer, а видаленням із вибраного середовища Python — pip.
+Перед запуском MSI CLI перевіряє Windows OpenSSH, службу Platform, GStreamer і сумісний Python. Він створює або повторно використовує середовище `%USERPROFILE%\pyneatpcie`, перевіряє опубліковані контрольні суми, запускає Windows Installer для Scheduler і Core, виконує діагностику хоста та встановлює узгоджені навичку агента й wheel. Для відновлення або оновлення повторно виконайте ту саму команду. Щоб вибрати інше середовище, використайте `--python-executable <path>`; щоб установити лише нативну версію C++, використайте `--native-only`. Видаленням нативних компонентів керує Windows Installer, а видаленням пакета Python — pip.
 
 Після встановлення один раз налаштуйте SSH-доступ до карти без пароля:
 
@@ -108,7 +106,7 @@ sima-cli neat install core/pciehost/windows/amd64@3.0 `
 Перевірте встановлені wheel і плагін поза деревом вихідного коду та збірки:
 
 ```powershell
-$venv = (Resolve-Path .\pyneatpcie).Path
+$venv = "$env:USERPROFILE\pyneatpcie"
 $root = "C:\Program Files\SimaPCIeHost"
 $gst = "C:\Program Files\gstreamer\1.0\msvc_x86_64\bin\gst-inspect-1.0.exe"
 $env:PATH = "$root\bin;$(Split-Path $gst);$env:PATH"

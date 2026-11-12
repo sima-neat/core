@@ -77,6 +77,8 @@ class WindowsMetadataTests(unittest.TestCase):
     self.assertEqual(set(result["resources"]), {msi.name, wheel.name})
     self.assertEqual(len(result["resources-checksum"][msi.name]), 64)
     self.assertEqual(len(result["resources-checksum"][wheel.name]), 64)
+    self.assertIn("%USERPROFILE%\\pyneatpcie", result["installation"]["post-message"])
+    self.assertIn("--native-only", result["installation"]["post-message"])
     self.assertNotIn("script", result["installation"])
 
   def test_native_only_metadata_does_not_request_python_installation(self):

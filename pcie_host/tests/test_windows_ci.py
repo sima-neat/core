@@ -413,6 +413,12 @@ class WindowsCiContracts(unittest.TestCase):
 
   def test_hardware_qualification_bounds_blocker_and_injects_process_faults(self):
     source = (SCRIPT_DIR / "qualify_windows_hardware.py").read_text(encoding="utf-8")
+    customer_recovery = source.split(
+        'registry_root = work / "complete registry with spaces"', 1
+    )[1].split('result["customer_install"]', 1)[0]
+    self.assertIn('"--native-only",', source)
+    self.assertIn("managed_python.is_file()", customer_recovery)
+    self.assertNotIn('"--python-executable", python', customer_recovery)
     self.assertIn(
         'require_junit_cases(evidence / "python-hardware.xml", set(BASE_PYTHON_TESTS))',
         source)

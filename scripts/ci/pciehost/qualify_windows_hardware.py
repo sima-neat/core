@@ -1680,6 +1680,9 @@ def qualify(args: argparse.Namespace) -> None:
   }
   venv = work / "venv"
   cli_venv = work / "sima-cli-venv"
+  customer_home = work / "customer home with spaces"
+  managed_venv = customer_home / "pyneatpcie"
+  managed_python = managed_venv / "Scripts" / "python.exe"
   failure: BaseException | None = None
   cleanup_errors: list[str] = []
 
@@ -1759,6 +1762,8 @@ def qualify(args: argparse.Namespace) -> None:
       cli_environment["PIP_NO_INDEX"] = "1"
       cli_environment["PIP_FIND_LINKS"] = str(wheelhouse)
       cli_environment["SIMA_CLI_CHECK_FOR_UPDATE"] = "0"
+      cli_environment["USERPROFILE"] = str(customer_home)
+      cli_environment["HOME"] = str(customer_home)
       native_download_root = work / "native customer downloads with spaces"
       target = "core/pciehost/windows/amd64@3.0"
       if upgrade_base is not None:
@@ -1781,6 +1786,7 @@ def qualify(args: argparse.Namespace) -> None:
         native_command = [
             cli, "neat", "--base-url", registry_url, "install", target,
             "--install-dir", native_download_root,
+            "--native-only",
         ]
         run_logged(
             native_command, evidence / "sima-cli-native-only-install.log",
@@ -1838,7 +1844,6 @@ def qualify(args: argparse.Namespace) -> None:
         command = [
             cli, "neat", "--base-url", registry_url, "install", target,
             "--install-dir", recovery_download_root,
-            "--python-executable", python,
         ]
         run_logged(
             command, evidence / "sima-cli-customer-recovery-install.log",
@@ -1846,9 +1851,20 @@ def qualify(args: argparse.Namespace) -> None:
         run_logged(
             command, evidence / "sima-cli-customer-repeat-install.log",
             env=cli_environment, cwd=work, timeout=1800)
+      if not managed_python.is_file():
+        raise RuntimeError(
+            "default sima-cli flow did not create the managed pyneatpcie environment")
+      run_logged(
+          [managed_python, "-m", "pip", "install", "--no-index", "--find-links",
+           wheelhouse, *requirements],
+          evidence / "managed-python-test-dependencies-install.log",
+          timeout=900,
+      )
+      python = managed_python
       result["customer_install"] = {
           "command": target,
           "download_path_with_spaces": str(recovery_download_root),
+          "managed_python": str(managed_python),
           "missing_wheel": {"exit_code": missing_code, "status": "PASS"},
           "native_only": "PASS",
           "recovery": "PASS",
@@ -1953,14 +1969,24 @@ def qualify(args: argparse.Namespace) -> None:
           result["cleanup"]["platform_service"] = "PASS"
         except BaseException as error:
           cleanup_errors.append(str(error))
-      customer_python = venv / "Scripts" / "python.exe"
-      if customer_python.is_file():
-        try:
-          run_logged([customer_python, "-m", "pip", "uninstall", "-y", "pyneatpcie"],
-                     evidence / "pip-uninstall.log", timeout=300)
-          result["cleanup"]["python"] = "PASS"
-        except BaseException as error:
-          cleanup_errors.append(str(error))
+      python_environments = [
+          (managed_python, "managed-python-uninstall.log"),
+          (venv / "Scripts" / "python.exe", "override-python-uninstall.log"),
+      ]
+      python_cleanup_errors = []
+      for customer_python, log_name in python_environments:
+        if customer_python.is_file():
+          try:
+            run_logged(
+                [customer_python, "-m", "pip", "uninstall", "-y", "pyneatpcie"],
+                evidence / log_name, timeout=300)
+          except BaseException as error:
+            python_cleanup_errors.append(str(error))
+      cleanup_errors.extend(python_cleanup_errors)
+      if not any(path.is_file() for path, _ in python_environments):
+        result["cleanup"]["python"] = "not-installed"
+      elif not python_cleanup_errors:
+        result["cleanup"]["python"] = "PASS"
       try:
         result["cleanup"]["core_msi"] = remove_msi(
             candidate.core_msi, evidence / "core-msi-uninstall.log")

@@ -82,16 +82,14 @@ gst-inspect-1.0 neatpciehost
 
 ## Windows 11 ネイティブプレビューをインストールする
 
-Windowsプレビューは、`pcie::Model`ビジョンAPIのネイティブVisual Studioビルドです。`pcie::genai::GenAIModel`はサポートしていません。最初に、対応するx64 GStreamer MSVCランタイム、SiMa PCIeドライバー、および既存のSiMa CLIをインストールしてください。アプリケーション環境を作成し、CLIを使用して、対応するScheduler MSI、Core MSI、および`win_amd64` wheelを1つのコホートとしてインストールします。
+Windowsプレビューは、`pcie::Model`ビジョンAPIのネイティブVisual Studioビルドです。`pcie::genai::GenAIModel`はサポートしていません。最初に、対応するx64 GStreamer MSVCランタイム、SiMa PCIeドライバー、および既存のSiMa CLIをインストールしてください。その後、CLIを使用して、対応するScheduler MSI、Core MSI、および`win_amd64` wheelを1つのコホートとしてインストールします。
 
 ```powershell
-py -3 -m venv pyneatpcie
-sima-cli neat install core/pciehost/windows/amd64@3.0 `
-  --python-executable .\pyneatpcie\Scripts\python.exe
-.\pyneatpcie\Scripts\python.exe -m pip check
+sima-cli neat install core/pciehost/windows/amd64@3.0
+& "$env:USERPROFILE\pyneatpcie\Scripts\python.exe" -m pip check
 ```
 
-CLIはMSIを実行する前に、Windows OpenSSH、Platformサービス、GStreamer、および選択したPython環境を確認します。その後、公開済みのすべてのチェックサムを検証し、SchedulerとCoreに対してWindows Installerを実行し、インストール済みのホスト診断を実行して、パッケージに対応するコーディングエージェントのスキルをインストールします。最後に、指定したPython実行ファイルを介してpipを実行します。修復またはアップグレードする場合は、同じコマンドを再度実行してください。ネイティブC++のみをインストールする場合は、`--python-executable`を省略します。ネイティブコンポーネントの削除はWindows Installerが管理し、選択したPython環境からの削除はpipが管理します。
+CLIはMSIを実行する前に、Windows OpenSSH、Platformサービス、GStreamer、および互換性のあるPythonを確認します。`%USERPROFILE%\pyneatpcie`環境を作成または再利用し、公開済みのチェックサムを検証して、SchedulerとCoreに対してWindows Installerを実行します。さらに、ホスト診断、パッケージに対応するコーディングエージェントのスキル、およびwheelをインストールします。修復またはアップグレードする場合は、同じコマンドを再度実行してください。別の環境を使用する場合は`--python-executable <path>`を、ネイティブC++のみをインストールする場合は`--native-only`を使用します。ネイティブコンポーネントの削除はWindows Installerが、Pythonパッケージの削除はpipが管理します。
 
 インストール後に一度、カードへのパスワードなしSSHを設定します。
 
@@ -106,7 +104,7 @@ Pythonパッケージは、拡張モジュールをインポートする前に�
 ソースツリーおよびビルドツリーの外部から、インストール済みのwheelとプラグインを確認します。
 
 ```powershell
-$venv = (Resolve-Path .\pyneatpcie).Path
+$venv = "$env:USERPROFILE\pyneatpcie"
 $root = "C:\Program Files\SimaPCIeHost"
 $gst = "C:\Program Files\gstreamer\1.0\msvc_x86_64\bin\gst-inspect-1.0.exe"
 $env:PATH = "$root\bin;$(Split-Path $gst);$env:PATH"
