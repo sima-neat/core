@@ -283,6 +283,10 @@ void focal_query_contract() {
   }
   for (int classes : {0, 1025}) {
     auto bad = source(BoxDecodeType::DetrFocal, classes);
+    // Keep the input contract valid so this witness reaches class admission,
+    // rather than failing first on an unrelated empty input/storage count.
+    input(bad, 1, 300, 4, "FP32");
+    input(bad, 1, 300, 80, "FP32");
     bool rejected = false;
     try {
       (void)check(bad, {640, 640, 1280, 720, ResizeMode::Stretch});
