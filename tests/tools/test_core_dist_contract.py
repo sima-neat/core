@@ -1915,7 +1915,7 @@ remove_installed_local_deb_packages
     ('lib64', 'lib/x86_64-linux-gnu/neat/runtime', 'lib/x86_64-linux-gnu/neat/gst-plugins'),
     ('lib/core', 'support/runtime', 'plugins/frontend'),
 ])
-@pytest.mark.parametrize('legacy_abi', ['5', '7'])
+@pytest.mark.parametrize('legacy_abi', ['5', 'previous', 'next'])
 def test_actual_core_install_rpath_is_relative_and_shared_only(tmp_path, libdir, runtime_dir, plugin_dir, legacy_abi):
     """Compile the production target properties; static clients own their path.
 
@@ -1927,8 +1927,13 @@ def test_actual_core_install_rpath_is_relative_and_shared_only(tmp_path, libdir,
     manifest = json.loads((ROOT / 'deps/manifest.json').read_text())
     abi = manifest['abi-version']
     platform_version = manifest['platform-version']
-    # Released Core 0.5.0 uses ABI 5. ABI 6 is the unreleased 0.6.0 line;
-    # older same-ABI previews still require rebuilt consumers, not loader isolation.
+    # Preserve the released ABI5 witness and both adjacent incompatible SONAMEs.
+    # Read the current ABI from the manifest, so future bumps cannot turn the
+    # negative fixture into a same-ABI provider.
+    if legacy_abi == 'previous':
+        legacy_abi = str(int(abi) - 1)
+    elif legacy_abi == 'next':
+        legacy_abi = str(int(abi) + 1)
     assert int(abi) > 5
     assert legacy_abi != abi
     properties = re.search(r'set_target_properties\(sima_neat PROPERTIES.*?\n\)',

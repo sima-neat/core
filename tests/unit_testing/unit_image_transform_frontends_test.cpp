@@ -12,6 +12,7 @@
 #include "test_main.h"
 #include <gst/video/video.h>
 #include <memory>
+#include <utility>
 
 namespace {
 using namespace simaai::neat;
@@ -43,6 +44,25 @@ template <class F> void rejects(F fn) {
   require(rejected, "invalid image frontend request accepted");
 }
 void contracts() {
+  for (const auto& [sampler, token] :
+       {std::pair{ResizeInterpolation::Nearest, "NEAREST"},
+        std::pair{ResizeInterpolation::Bilinear, "BILINEAR"},
+        std::pair{ResizeInterpolation::Bicubic, "BICUBIC"},
+        std::pair{ResizeInterpolation::BoxAverage, "INTERAREA"},
+        std::pair{ResizeInterpolation::BilinearAntialiased, "BILINEAR_ANTIALIASED"}}) {
+    ResizeOptions options;
+    options.width = options.height = 8;
+    options.interpolation = sampler;
+    auto node = nodes::Resize(options);
+    auto& resize = preproc(node);
+    resize.output_spec(input());
+    CompiledNodeContract compiled;
+    std::string error;
+    require(resize.compile_node_contract({}, &compiled, &error), "typed resize: " + error);
+    require(compiled.processcvu->payload.scaling_type == token,
+            "standalone sampler token disagrees with the Model sampler");
+  }
+
   for (const auto format : {ImageFormat::RGB, ImageFormat::BGR, ImageFormat::GRAY8,
                             ImageFormat::NV12, ImageFormat::I420, ImageFormat::NV16}) {
     ColorConvertOptions options;

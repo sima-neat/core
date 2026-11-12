@@ -5225,10 +5225,15 @@ void populate_model_managed_preproc_options(PreprocOptions* opt,
   opt->normalize = plan.normalize;
   opt->channel_mean = plan.mean;
   opt->channel_stddev = plan.stddev;
+  opt->rescale_factor = effective.rescale_factor;
+  opt->quantization_step = effective.quantization_step;
+  opt->color_conversion_placement = effective.color_conversion_placement;
+  opt->floating_conversion = effective.floating_conversion;
+
   opt->tessellate = flags.tess_needed;
   opt->single_output_handoff = true;
   if (effective.resize.enable == AutoFlag::On) {
-    opt->scaling_type = effective.resize.scaling_type;
+    opt->scaling_type = internal::resolve_resize_scaling_type(effective.resize);
     opt->pad_value = effective.resize.pad_value;
     switch (effective.resize.mode) {
     case ResizeMode::Letterbox:
@@ -6497,12 +6502,17 @@ template <typename EnumT> int model_options_enum_int(EnumT value) {
 }
 
 nlohmann::ordered_json resize_spec_json(const ResizeSpec& spec) {
-  return {{"enable", model_options_enum_int(spec.enable)},
-          {"width", spec.width},
-          {"height", spec.height},
-          {"mode", model_options_enum_int(spec.mode)},
-          {"pad_value", spec.pad_value},
-          {"scaling_type", spec.scaling_type}};
+  nlohmann::ordered_json out{{"enable", model_options_enum_int(spec.enable)},
+                             {"width", spec.width},
+                             {"height", spec.height},
+                             {"mode", model_options_enum_int(spec.mode)},
+                             {"pad_value", spec.pad_value},
+                             {"scaling_type", internal::resolve_resize_scaling_type(spec)}};
+  // A typed selection is explicit resize intent even when its token equals
+  // the legacy default. Preserve that distinction in stage cache identity.
+  if (spec.interpolation)
+    out["interpolation"] = model_options_enum_int(*spec.interpolation);
+  return out;
 }
 
 nlohmann::ordered_json color_convert_spec_json(const ColorConvertSpec& spec) {
@@ -6548,19 +6558,28 @@ nlohmann::ordered_json preprocess_options_json(const PreprocessOptions& opt) {
   for (const auto& transform : opt.transforms) {
     transforms.push_back(transform_json(transform));
   }
-  return {{"kind", model_options_enum_int(opt.kind)},
-          {"enable", model_options_enum_int(opt.enable)},
-          {"input_max_width", opt.input_max_width},
-          {"input_max_height", opt.input_max_height},
-          {"input_max_depth", opt.input_max_depth},
-          {"resize", resize_spec_json(opt.resize)},
-          {"color_convert", color_convert_spec_json(opt.color_convert)},
-          {"layout_convert", layout_convert_spec_json(opt.layout_convert)},
-          {"normalize", normalize_spec_json(opt.normalize)},
-          {"quantize", quantize_spec_json(opt.quantize)},
-          {"tessellate", tessellate_spec_json(opt.tessellate)},
-          {"transforms", std::move(transforms)},
-          {"preset", model_options_enum_int(opt.preset)}};
+  nlohmann::ordered_json out{{"kind", model_options_enum_int(opt.kind)},
+                             {"enable", model_options_enum_int(opt.enable)},
+                             {"input_max_width", opt.input_max_width},
+                             {"input_max_height", opt.input_max_height},
+                             {"input_max_depth", opt.input_max_depth},
+                             {"resize", resize_spec_json(opt.resize)},
+                             {"color_convert", color_convert_spec_json(opt.color_convert)},
+                             {"layout_convert", layout_convert_spec_json(opt.layout_convert)},
+                             {"normalize", normalize_spec_json(opt.normalize)},
+                             {"quantize", quantize_spec_json(opt.quantize)},
+                             {"tessellate", tessellate_spec_json(opt.tessellate)},
+                             {"transforms", std::move(transforms)},
+                             {"preset", model_options_enum_int(opt.preset)}};
+  if (opt.rescale_factor)
+    out["rescale_factor"] = *opt.rescale_factor;
+  if (opt.quantization_step)
+    out["quantization_step"] = *opt.quantization_step;
+  if (opt.color_conversion_placement != PreprocColorConversionPlacement::AfterResize)
+    out["color_conversion_placement"] = model_options_enum_int(opt.color_conversion_placement);
+  if (opt.floating_conversion != PreprocFloatingConversion::Legacy)
+    out["floating_conversion"] = model_options_enum_int(opt.floating_conversion);
+  return out;
 }
 
 nlohmann::ordered_json processcvu_options_json(const ProcessCvuOptions& opt) {
