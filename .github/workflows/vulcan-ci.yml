@@ -20,7 +20,7 @@ on:
         default: false
         type: boolean
       stream_profile:
-        description: "Weekly DevKit media fixtures (none, http, or all)"
+        description: "DevKit Media Fixtures (none, http, or all)"
         required: false
         default: http
         type: string
@@ -60,7 +60,7 @@ on:
         default: false
         type: boolean
       stream_profile:
-        description: "Weekly DevKit media fixtures"
+        description: "DevKit Media Fixtures"
         required: false
         default: http
         type: choice
