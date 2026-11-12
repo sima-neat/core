@@ -150,8 +150,10 @@ def verify(candidate_dir: Path, qualification_path: Path, expected_commit: str,
   repair = customer_install.get("repair")
   if (not isinstance(repair, dict) or repair.get("core") != "PASS"
       or repair.get("scheduler") != "PASS"
-      or customer_install.get("plugin_discovery") != "PASS"):
-    raise ValueError("hardware qualification did not prove MSI repair and plugin discovery")
+      or customer_install.get("plugin_discovery") != "PASS"
+      or customer_install.get("process_activation") != "PASS"):
+    raise ValueError(
+        "hardware qualification did not prove MSI repair and customer process activation")
   if require_release:
     upgrade = customer_install.get("upgrade")
     if (not isinstance(upgrade, dict) or upgrade.get("status") != "PASS"

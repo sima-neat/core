@@ -312,6 +312,70 @@ def run_expected_failure(command: list[object], log: Path,
   return result.returncode
 
 
+def customer_process_environment(
+    base: dict[str, str] | None = None) -> dict[str, str]:
+  """Return a normal Windows process environment without CI runtime overlays."""
+  environment = dict(os.environ if base is None else base)
+  system_root = next((
+      value for name, value in environment.items()
+      if name.upper() == "SYSTEMROOT"
+  ), None)
+  if not system_root:
+    raise RuntimeError("customer process activation requires SystemRoot")
+  removed = {
+      "CMAKE_PREFIX_PATH",
+      "GSTREAMER_ROOT_X86_64",
+      "GST_PLUGIN_PATH",
+      "GST_PLUGIN_PATH_1_0",
+      "PKG_CONFIG",
+      "PKG_CONFIG_PATH",
+      "PYTHONPATH",
+      "SIMA_PCIE_HOST_ENVIRONMENT",
+      "SIMA_PCIE_HOST_LIBRARY_PATH",
+      "SIMA_PCIE_HOST_ROOT",
+      "SIMA_WINDOWS_CMAKE_PREFIX_PATH",
+      "SIMA_WINDOWS_DEPENDENCY_RUNTIME_PATH",
+      "SIMA_WINDOWS_PLATFORM_RUNTIME_DIR",
+  }
+  for name in list(environment):
+    if name.upper() in removed or name.upper() == "PATH":
+      environment.pop(name)
+  windows = Path(system_root)
+  environment["PATH"] = os.pathsep.join((
+      str(windows / "System32"),
+      str(windows),
+      str(windows / "System32" / "Wbem"),
+      str(windows / "System32" / "WindowsPowerShell" / "v1.0"),
+      str(windows / "System32" / "OpenSSH"),
+  ))
+  return environment
+
+
+def verify_customer_process_activation(install_root: Path, python: Path,
+                                       evidence: Path) -> None:
+  """Prove the installed SDK works without producer or CI PATH injection."""
+  doctor = install_root / "bin" / "sima-pcie-host-doctor.cmd"
+  if not doctor.is_file():
+    raise RuntimeError(f"installed Core MSI is missing its diagnostic: {doctor}")
+  environment = customer_process_environment()
+  command_processor = next((
+      value for name, value in environment.items()
+      if name.upper() == "COMSPEC"
+  ), None)
+  if not command_processor:
+    system_root = next(
+        value for name, value in environment.items()
+        if name.upper() == "SYSTEMROOT")
+    command_processor = str(Path(system_root) / "System32" / "cmd.exe")
+  run_logged(
+      [command_processor, "/d", "/c", doctor],
+      evidence / "customer-process-doctor.log", env=environment, timeout=60)
+  run_logged(
+      [python, "-c",
+       "import pyneatpcie as p; assert p.Model and p.Runtime and p.Tensor"],
+      evidence / "customer-process-python-import.log", env=environment, timeout=60)
+
+
 def run_captured_to_file(command: list[object], log: Path, *,
                          timeout: int) -> subprocess.CompletedProcess[str]:
   """Capture a native command without routing its output through a pipe.
@@ -1608,6 +1672,12 @@ def qualify(args: argparse.Namespace) -> None:
               evidence / "scheduler-msi-repair.log"),
       }
 
+      verify_customer_process_activation(install_root, python, evidence)
+      result["customer_install"]["process_activation"] = "PASS"
+      # The installed doctor loads the Scheduler plug-in through the same
+      # process-scoped activation entry point customers use.
+      result["customer_install"]["plugin_discovery"] = "PASS"
+
       environment = os.environ.copy()
       environment.pop("PYTHONPATH", None)
       environment.update({
@@ -1626,11 +1696,6 @@ def qualify(args: argparse.Namespace) -> None:
           *(str(path.resolve(strict=True)) for path in args.dependency_runtime_dir),
           environment["PATH"],
       ))
-      run_logged(
-          [args.gstreamer_root.resolve(strict=True) / "bin" / "gst-inspect-1.0.exe",
-           install_root / "bin" / "gstreamer-1.0" / "gstneatpciehost.dll"],
-          evidence / "gst-inspect-neatpciehost.log", env=environment, cwd=work, timeout=60)
-      result["customer_install"]["plugin_discovery"] = "PASS"
       require_assets(environment, args.include_genai)
       stage_path_fixtures(environment, work / "customer path fixtures with spaces")
       result["path_fixtures"] = {

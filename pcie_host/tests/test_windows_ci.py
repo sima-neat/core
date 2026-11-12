@@ -29,13 +29,14 @@ SPEC.loader.exec_module(MODULE)
 from windows_candidate import (  # noqa: E402
     dependency_identity, require_junit_cases, sha256, validate_candidate)
 from qualify_windows_hardware import (  # noqa: E402
-    ExclusiveLock, RemoteExclusiveLock, card_snapshot, card_stage_cleanup_command, load_upgrade_base,
+    ExclusiveLock, RemoteExclusiveLock, card_snapshot, card_stage_cleanup_command,
+    customer_process_environment, load_upgrade_base,
     parse_performance_log, require_powershell as require_hardware_powershell,
     recover_windows_platform_device, remove_installed_tutorial_facade,
     run_captured_to_file, run_sudo_remote,
     sima_cli_identity, stage_card_candidate, stage_installed_tutorial_facade,
     stage_invalid_wheel_registry, stage_local_registry, stage_path_fixtures,
-    stress_queues, validate_card_candidate)
+    stress_queues, validate_card_candidate, verify_customer_process_activation)
 from verify_linux_release_run import verify_run as verify_linux_run  # noqa: E402
 from verify_windows_release import verify  # noqa: E402
 import prepare_card_qualification_candidate as CARD_PREP  # noqa: E402
@@ -448,6 +449,57 @@ class WindowsCiContracts(unittest.TestCase):
     self.assertIn("restore_card_candidate(args, remote_token", cleanup)
     self.assertIn('evidence / "recovery-platform-service.log"', cleanup)
 
+  def test_customer_process_environment_excludes_ci_runtime_overlays(self):
+    environment = customer_process_environment({
+        "COMSPEC": r"C:\Windows\System32\cmd.exe",
+        "PROGRAMFILES": r"C:\Program Files",
+        "SYSTEMROOT": r"C:\Windows",
+        "Path": r"C:\producer\bin",
+        "CMAKE_PREFIX_PATH": r"C:\producer\prefix",
+        "GSTREAMER_ROOT_X86_64": r"C:\producer\gstreamer",
+        "GST_PLUGIN_PATH_1_0": r"C:\producer\plugins",
+        "PYTHONPATH": r"C:\producer\python",
+        "SIMA_PCIE_HOST_LIBRARY_PATH": r"C:\producer\core",
+        "SIMA_WINDOWS_DEPENDENCY_RUNTIME_PATH": r"C:\producer\runtime",
+        "SIMA_WINDOWS_PLATFORM_RUNTIME_DIR": r"C:\producer\platform",
+    })
+    self.assertEqual(environment["PROGRAMFILES"], r"C:\Program Files")
+    self.assertNotIn("producer", environment["PATH"].lower())
+    for name in (
+        "CMAKE_PREFIX_PATH", "GSTREAMER_ROOT_X86_64", "GST_PLUGIN_PATH_1_0",
+        "PYTHONPATH", "SIMA_PCIE_HOST_LIBRARY_PATH",
+        "SIMA_WINDOWS_DEPENDENCY_RUNTIME_PATH", "SIMA_WINDOWS_PLATFORM_RUNTIME_DIR",
+    ):
+      self.assertNotIn(name, environment)
+
+  def test_customer_process_activation_runs_doctor_and_python_cleanly(self):
+    with tempfile.TemporaryDirectory() as directory:
+      root = Path(directory)
+      doctor = root / "bin" / "sima-pcie-host-doctor.cmd"
+      doctor.parent.mkdir()
+      doctor.write_text("@exit /b 0\n", encoding="utf-8")
+      python = root / "python.exe"
+      python.write_bytes(b"fixture")
+      base = {
+          "ComSpec": r"C:\Windows\System32\cmd.exe",
+          "ProgramFiles": r"C:\Program Files",
+          "SystemRoot": r"C:\Windows",
+          "PATH": r"C:\producer\bin",
+          "GSTREAMER_ROOT_X86_64": r"C:\producer\gstreamer",
+          "SIMA_WINDOWS_PLATFORM_RUNTIME_DIR": r"C:\producer\platform",
+      }
+      with mock.patch.dict(os.environ, base, clear=True), \
+           mock.patch("qualify_windows_hardware.run_logged") as run:
+        verify_customer_process_activation(root, python, root)
+      self.assertEqual(run.call_count, 2)
+      doctor_call, python_call = run.call_args_list
+      self.assertEqual(doctor_call.args[0][1:3], ["/d", "/c"])
+      self.assertEqual(doctor_call.args[0][3], doctor)
+      self.assertEqual(python_call.args[0][0], python)
+      for call in (doctor_call, python_call):
+        self.assertNotIn("GSTREAMER_ROOT_X86_64", call.kwargs["env"])
+        self.assertNotIn("SIMA_WINDOWS_PLATFORM_RUNTIME_DIR", call.kwargs["env"])
+
   def test_platform_device_recovery_requires_vendor_tool(self):
     with tempfile.TemporaryDirectory() as directory:
       root = Path(directory)
@@ -615,6 +667,7 @@ class WindowsCiContracts(unittest.TestCase):
             "missing_wheel": {"exit_code": 1, "status": "PASS"},
             "native_only": "PASS",
             "plugin_discovery": "PASS",
+            "process_activation": "PASS",
             "repair": {"core": "PASS", "scheduler": "PASS"},
             "recovery": "PASS",
             "repeat": "PASS",
@@ -1074,6 +1127,16 @@ install() {
       del value["customer_install"]["wheel_failure"]
       qualification.write_text(json.dumps(value), encoding="utf-8")
       with self.assertRaisesRegex(ValueError, "native success, wheel failure, and retry"):
+        verify(root, qualification, commit, True)
+
+  def test_release_gate_requires_customer_process_activation(self):
+    with tempfile.TemporaryDirectory() as directory:
+      root = Path(directory)
+      commit, _, qualification = self.windows_candidate(root)
+      value = json.loads(qualification.read_text(encoding="utf-8"))
+      del value["customer_install"]["process_activation"]
+      qualification.write_text(json.dumps(value), encoding="utf-8")
+      with self.assertRaisesRegex(ValueError, "customer process activation"):
         verify(root, qualification, commit, True)
 
   def test_upgrade_baseline_must_name_a_different_package_version(self):
