@@ -8,6 +8,7 @@ import unittest
 
 PACKAGING = Path(__file__).parents[1] / "cmake" / "PackagingWindows.cmake"
 ROOT = Path(__file__).parents[1]
+WINDOWS_PRODUCER = ROOT.parent / "scripts" / "ci" / "pciehost" / "build_windows.py"
 
 
 class WindowsPackagingContract(unittest.TestCase):
@@ -34,9 +35,13 @@ class WindowsPackagingContract(unittest.TestCase):
     self.assertIn("scripts/windows/sima-pcie-host-env.cmd", cmake)
     self.assertIn("scripts/windows/sima-pcie-host-run.cmd", cmake)
     self.assertIn("scripts/windows/sima-pcie-host-doctor.cmd", cmake)
+    self.assertIn("scripts/windows/pcie-setup.cmd", cmake)
+    self.assertIn("scripts/windows/pcie-setup.ps1", cmake)
     self.assertIn("COMPONENT Runtime", cmake)
     self.assertIn("SIMAPCIE_NLOHMANN_INCLUDE_ROOT", cmake)
     self.assertIn("nlohmann-json-LICENSE.MIT", cmake)
+    self.assertIn("skills/neat-pcie-application-builder/playbook.yml", cmake)
+    self.assertIn("skills/neat-pcie-application-builder/targets/", cmake)
 
     environment = (ROOT / "scripts/windows/sima-pcie-host-env.cmd").read_text(
         encoding="utf-8"
@@ -59,6 +64,26 @@ class WindowsPackagingContract(unittest.TestCase):
     )
     self.assertIn("SiMaMlaDaemon", doctor)
     self.assertIn("gst-inspect-1.0.exe", doctor)
+
+    setup_wrapper = (ROOT / "scripts/windows/pcie-setup.cmd").read_text(
+        encoding="utf-8"
+    )
+    setup_script = (ROOT / "scripts/windows/pcie-setup.ps1").read_text(
+        encoding="utf-8"
+    )
+    self.assertIn("pcie-setup.ps1", setup_wrapper)
+    self.assertIn("ExecutionPolicy Bypass", setup_wrapper)
+    self.assertNotIn("Set-ExecutionPolicy", setup_wrapper)
+    self.assertIn("StrictHostKeyChecking=yes", setup_script)
+    self.assertIn("StrictHostKeyChecking=accept-new", setup_script)
+    self.assertNotIn("ssh-keyscan.exe", setup_script)
+    self.assertNotIn("StrictHostKeyChecking=no", setup_script)
+    self.assertNotIn("UserKnownHostsFile=NUL", setup_script)
+
+    producer = WINDOWS_PRODUCER.read_text(encoding="utf-8")
+    self.assertIn('install_root / "bin" / "pcie-setup.cmd"', producer)
+    self.assertIn('"-Hosts", "10.0.0.2", "-DryRun"', producer)
+    self.assertIn('"neat-pcie-application-builder" / "playbook.yml"', producer)
 
 
 if __name__ == "__main__":

@@ -107,11 +107,25 @@ sima-cli neat install core/pciehost/windows/amd64@3.0 `
 .\pyneatpcie\Scripts\python.exe -m pip check
 ```
 
-The CLI verifies the published checksums, invokes Windows Installer for Scheduler
-and then Core, and invokes pip through the Python executable you supplied. Run
-the same command again for repair or upgrade. Omit `--python-executable` for a
-native C++-only installation. Windows Installer owns native removal; pip owns
-removal from the selected Python environment.
+Before either MSI runs, the CLI checks Windows OpenSSH, the Platform service,
+GStreamer, and the selected Python environment. It then verifies every published
+checksum, invokes Windows Installer for Scheduler and Core, runs the installed
+host doctor, installs the package-matched coding-agent skill, and invokes pip
+through the Python executable you supplied. Run the same command again for
+repair or upgrade. Omit `--python-executable` for a native C++-only installation.
+Windows Installer owns native removal; pip owns removal from the selected Python
+environment.
+
+Provision passwordless SSH to the card once after installation:
+
+```powershell
+& "C:\Program Files\SimaPCIeHost\bin\pcie-setup.cmd"
+```
+
+The utility discovers a card address from a local `10.0.N.1` management link.
+Pass `-Hosts 10.0.0.2` when discovery is unavailable. OpenSSH prompts for the
+card password only when its public key is not already enrolled; the utility does
+not store the password.
 
 The Python package discovers DLLs under the default install root and the default
 x64 GStreamer location before importing its extension. For another install root,
@@ -126,6 +140,7 @@ $root = "C:\Program Files\SimaPCIeHost"
 $gst = "C:\Program Files\gstreamer\1.0\msvc_x86_64\bin\gst-inspect-1.0.exe"
 $env:PATH = "$root\bin;$(Split-Path $gst);$env:PATH"
 Set-Location $env:TEMP
+& "$root\bin\sima-pcie-host-doctor.cmd"
 & "$venv\Scripts\python.exe" -c "import pyneatpcie as p; print(p.__version__, p.Model)"
 & $gst "$root\bin\gstreamer-1.0\gstneatpciehost.dll"
 ```

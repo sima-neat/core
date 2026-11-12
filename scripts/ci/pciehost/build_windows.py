@@ -553,6 +553,15 @@ def build(args: argparse.Namespace) -> None:
         install_root / "bin" / "sima-pcie-host-env.cmd",
         install_root / "bin" / "sima-pcie-host-run.cmd",
         install_root / "bin" / "sima-pcie-host-doctor.cmd",
+        install_root / "bin" / "pcie-setup.cmd",
+        install_root / "bin" / "pcie-setup.ps1",
+        install_root / "share" / "sima-pcie-host" / "skills" /
+        "neat-pcie-application-builder" / "SKILL.md",
+        install_root / "share" / "sima-pcie-host" / "skills" /
+        "neat-pcie-application-builder" / "playbook.yml",
+        install_root / "share" / "sima-pcie-host" / "skills" /
+        "neat-pcie-application-builder" / "targets" / "codex" / "agents" /
+        "openai.yaml",
     ):
       require_file(required, "installed Core MSI payload")
     check_consumer(install_root, "installed")
@@ -576,6 +585,11 @@ def build(args: argparse.Namespace) -> None:
     run([
         "cmd.exe", "/d", "/c",
         install_root / "bin" / "sima-pcie-host-doctor.cmd",
+    ], env=activation_environment)
+    run([
+        "cmd.exe", "/d", "/c",
+        install_root / "bin" / "pcie-setup.cmd",
+        "-Hosts", "10.0.0.2", "-DryRun",
     ], env=activation_environment)
 
     signature_records = []

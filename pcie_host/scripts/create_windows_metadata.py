@@ -21,9 +21,79 @@ def metadata(msi: Path, wheel: Path, version: str, branch: str, commit: str,
   resources = []
   installation = {
       "type": "windows-msi",
+      "prerequisites": [
+          {
+              "name": "Windows OpenSSH client",
+              "type": "executable",
+              "value": "ssh.exe",
+              "guidance": (
+                  "Install the Windows OpenSSH Client optional feature and reopen the terminal."
+              ),
+          },
+          {
+              "name": "Windows OpenSSH secure-copy client",
+              "type": "executable",
+              "value": "scp.exe",
+              "guidance": (
+                  "Install the Windows OpenSSH Client optional feature and reopen the terminal."
+              ),
+          },
+          {
+              "name": "Windows OpenSSH key generator",
+              "type": "executable",
+              "value": "ssh-keygen.exe",
+              "guidance": (
+                  "Install the Windows OpenSSH Client optional feature and reopen the terminal."
+              ),
+          },
+          {
+              "name": "SiMa Platform PCIe service",
+              "type": "windows-service",
+              "value": "SiMaMlaDaemon",
+              "guidance": (
+                  "Install the compatible SiMa Platform 3.0 Windows package and start "
+                  "the SiMaMlaDaemon service."
+              ),
+          },
+          {
+              "name": "GStreamer 1.0 MSVC x64 runtime",
+              "type": "file",
+              "candidates": [
+                  {
+                      "environment": "GSTREAMER_ROOT_X86_64",
+                      "relative": "bin\\gstreamer-1.0-0.dll",
+                  },
+                  {
+                      "environment": "ProgramFiles",
+                      "relative": "gstreamer\\1.0\\msvc_x86_64\\bin\\gstreamer-1.0-0.dll",
+                  },
+              ],
+              "guidance": (
+                  "Install the GStreamer 1.0 MSVC x64 runtime or set "
+                  "GSTREAMER_ROOT_X86_64 to its installation root."
+              ),
+          },
+      ],
+      "verification": {
+          "command": {
+              "environment": "ProgramFiles",
+              "relative": "SimaPCIeHost\\bin\\sima-pcie-host-doctor.cmd",
+          },
+      },
+      "skills": [
+          {
+              "environment": "ProgramFiles",
+              "relative": (
+                  "SimaPCIeHost\\share\\sima-pcie-host\\skills\\"
+                  "neat-pcie-application-builder"
+              ),
+          },
+      ],
       "post-message": (
           "[bold]Native Neat PCIe host installation completed.[/bold]\n"
-          "Use --python-executable <path> to install Python support into an application environment."
+          "Run 'C:\\Program Files\\SimaPCIeHost\\bin\\pcie-setup.cmd' once to provision "
+          "passwordless card SSH. Use --python-executable <path> to install Python support "
+          "into an application environment."
       ),
   }
   artifact_paths = {}
@@ -54,6 +124,8 @@ def metadata(msi: Path, wheel: Path, version: str, branch: str, commit: str,
         "distribution": "pyneatpcie",
         "version": version,
         "import": "pyneatpcie",
+        "requires-python": "3.14",
+        "arch": "amd64",
     }
 
   checksums = {resource: sha256(artifact_paths[resource]) for resource in resources}

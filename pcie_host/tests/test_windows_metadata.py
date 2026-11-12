@@ -28,6 +28,38 @@ class WindowsMetadataTests(unittest.TestCase):
     self.assertEqual(result["installation"]["msi"], msi.name)
     self.assertEqual(result["installation"]["python"]["wheel"], wheel.name)
     self.assertEqual(result["installation"]["python"]["version"], "0.6.1")
+    self.assertEqual(result["installation"]["python"]["requires-python"], "3.14")
+    self.assertEqual(result["installation"]["python"]["arch"], "amd64")
+    self.assertEqual(
+        result["installation"]["verification"]["command"],
+        {
+            "environment": "ProgramFiles",
+            "relative": "SimaPCIeHost\\bin\\sima-pcie-host-doctor.cmd",
+        },
+    )
+    self.assertEqual(
+        result["installation"]["skills"],
+        [{
+            "environment": "ProgramFiles",
+            "relative": (
+                "SimaPCIeHost\\share\\sima-pcie-host\\skills\\"
+                "neat-pcie-application-builder"
+            ),
+        }],
+    )
+    prerequisites = result["installation"]["prerequisites"]
+    self.assertEqual(
+        [item["value"] for item in prerequisites if item["type"] == "executable"],
+        ["ssh.exe", "scp.exe", "ssh-keygen.exe"],
+    )
+    self.assertIn(
+        "SiMaMlaDaemon",
+        [item.get("value") for item in prerequisites],
+    )
+    self.assertIn(
+        "gstreamer-1.0-0.dll",
+        prerequisites[-1]["candidates"][0]["relative"],
+    )
     self.assertEqual(set(result["resources"]), {msi.name, wheel.name})
     self.assertEqual(len(result["resources-checksum"][msi.name]), 64)
     self.assertEqual(len(result["resources-checksum"][wheel.name]), 64)

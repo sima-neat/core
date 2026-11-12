@@ -406,10 +406,28 @@ sima-cli neat install core/pciehost/windows/amd64@3.0 `
 ```
 
 Omit `--python-executable` for a native-only installation. The CLI verifies every
-artifact checksum, installs the Scheduler MSI and then the Core MSI, and invokes
-pip through the exact Python executable supplied by the customer. Repeating the
-command uses Windows Installer's upgrade/repair behavior and skips the pip step
-when the requested `pyneatpcie` version already imports successfully.
+artifact checksum and checks OpenSSH, the Platform service, GStreamer, and the
+selected Python environment before starting either installer. It installs the
+Scheduler MSI and then the Core MSI, runs the installed host doctor, syncs the
+package-matched customer skill, and invokes pip through the exact Python
+executable supplied by the customer. Repeating the command uses Windows
+Installer's upgrade/repair behavior and skips the pip step when the requested
+`pyneatpcie` version already imports successfully.
+
+Provision passwordless card SSH once after installation. The Windows utility
+mirrors `pcie-setup.sh`, but uses Windows OpenSSH and streams the public key to
+the remote shell because Windows does not provide `ssh-copy-id`:
+
+```powershell
+& "C:\Program Files\SimaPCIeHost\bin\pcie-setup.cmd"
+# If management-address discovery is unavailable:
+& "C:\Program Files\SimaPCIeHost\bin\pcie-setup.cmd" -Hosts 10.0.0.2
+```
+
+OpenSSH prompts interactively only when the key is not already enrolled. Do not
+put the card password in a command argument. The `.cmd` wrapper uses a
+process-scoped PowerShell execution-policy override for this installed unsigned
+script; it does not persistently change user or machine policy.
 
 The MSIs do not redistribute Platform or third-party binaries. A supported host
 therefore also needs the qualified Platform runtime, GStreamer MSVC development

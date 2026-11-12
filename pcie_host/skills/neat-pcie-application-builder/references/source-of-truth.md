@@ -58,6 +58,14 @@ Test-Path "$root\include\simaai\neat\pcie\Model.h"
 Select-String -Path "$root\include\simaai\neat\pcie\Model.h" -Pattern "class Model"
 ```
 
+For a newly installed host, run the package doctor and provision card SSH before
+building a model:
+
+```powershell
+& "$root\bin\sima-pcie-host-doctor.cmd"
+& "$root\bin\pcie-setup.cmd"
+```
+
 For Python, use the interpreter that owns the installed wheel. The PCIe package installer uses
 `~/pyneatpcie/bin/python` by default when Python support is requested:
 

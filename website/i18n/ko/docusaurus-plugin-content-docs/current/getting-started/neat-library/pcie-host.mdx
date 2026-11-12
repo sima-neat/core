@@ -91,7 +91,15 @@ sima-cli neat install core/pciehost/windows/amd64@3.0 `
 .\pyneatpcie\Scripts\python.exe -m pip check
 ```
 
-CLI는 게시된 체크섬을 확인하고 Scheduler, Core 순서로 Windows Installer를 실행한 다음 사용자가 지정한 Python 실행 파일을 통해 pip를 실행합니다. 복구 또는 업그레이드가 필요하면 같은 명령을 다시 실행하세요. 네이티브 C++ 전용 설치에는 `--python-executable`을 생략합니다. 네이티브 제거는 Windows Installer가 관리하고, 선택한 Python 환경에서의 제거는 pip가 관리합니다.
+CLI는 MSI를 실행하기 전에 Windows OpenSSH, Platform 서비스, GStreamer 및 선택한 Python 환경을 확인합니다. 그런 다음 게시된 모든 체크섬을 확인하고 Scheduler와 Core에 대해 Windows Installer를 실행하며, 설치된 호스트 진단을 실행하고 패키지와 일치하는 코딩 에이전트 스킬을 설치합니다. 마지막으로 사용자가 지정한 Python 실행 파일을 통해 pip를 실행합니다. 복구 또는 업그레이드가 필요하면 같은 명령을 다시 실행하세요. 네이티브 C++ 전용 설치에는 `--python-executable`을 생략합니다. 네이티브 제거는 Windows Installer가 관리하고, 선택한 Python 환경에서의 제거는 pip가 관리합니다.
+
+설치 후 한 번 카드에 암호 없는 SSH를 구성합니다.
+
+```powershell
+& "C:\Program Files\SimaPCIeHost\bin\pcie-setup.cmd"
+```
+
+이 유틸리티는 로컬 `10.0.N.1` 관리 링크에서 카드 주소를 검색합니다. 자동 검색을 사용할 수 없으면 `-Hosts 10.0.0.2`를 전달하세요. 공개 키가 아직 등록되지 않은 경우에만 OpenSSH가 카드 암호를 요청하며, 암호는 저장되지 않습니다.
 
 Python 패키지는 확장 모듈을 가져오기 전에 기본 설치 루트와 기본 x64 GStreamer 위치에서 DLL을 검색합니다. 다른 설치 루트를 사용하려면 `SIMA_PCIE_HOST_LIBRARY_PATH`를 PCIe 호스트 및 GStreamer DLL이 있는 디렉터리로 설정하세요.
 
@@ -103,6 +111,7 @@ $root = "C:\Program Files\SimaPCIeHost"
 $gst = "C:\Program Files\gstreamer\1.0\msvc_x86_64\bin\gst-inspect-1.0.exe"
 $env:PATH = "$root\bin;$(Split-Path $gst);$env:PATH"
 Set-Location $env:TEMP
+& "$root\bin\sima-pcie-host-doctor.cmd"
 & "$venv\Scripts\python.exe" -c "import pyneatpcie as p; print(p.__version__, p.Model)"
 & $gst "$root\bin\gstreamer-1.0\gstneatpciehost.dll"
 ```

@@ -20,8 +20,14 @@ $root = "C:\Program Files\SimaPCIeHost"
 $gst = "C:\Program Files\gstreamer\1.0\msvc_x86_64\bin\gst-inspect-1.0.exe"
 $env:PATH = "$root\bin;$(Split-Path $gst);$env:PATH"
 Test-Path "$root\include\simaai\neat\pcie\Model.h"
+& "$root\bin\sima-pcie-host-doctor.cmd"
 & $gst "$root\bin\gstreamer-1.0\gstneatpciehost.dll"
 ```
+
+Before the first connected-card run on Windows, provision or verify passwordless
+SSH with `& "$root\bin\pcie-setup.cmd"`. Pass `-Hosts 10.0.0.2` if automatic
+management-link discovery is unavailable. Let OpenSSH prompt interactively;
+never put a card password in source code or a command argument.
 
 Check `Model.h` for `pcie::Model` or `genai/GenAIModel.h` for GenAI under
 `/usr/include/simaai/neat/pcie/`. For `pcie::Model`, also run `gst-inspect-1.0 neatpciehost`.

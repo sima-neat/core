@@ -93,7 +93,15 @@ sima-cli neat install core/pciehost/windows/amd64@3.0 `
 .\pyneatpcie\Scripts\python.exe -m pip check
 ```
 
-CLI перевіряє опубліковані контрольні суми, послідовно запускає Windows Installer для Scheduler і Core, а потім запускає pip через указаний виконуваний файл Python. Для відновлення або оновлення повторно виконайте ту саму команду. Для встановлення лише нативної версії C++ не вказуйте `--python-executable`. Видаленням нативних компонентів керує Windows Installer, а видаленням із вибраного середовища Python — pip.
+Перед запуском MSI CLI перевіряє Windows OpenSSH, службу Platform, GStreamer і вибране середовище Python. Потім він перевіряє всі опубліковані контрольні суми, запускає Windows Installer для Scheduler і Core, виконує встановлену діагностику хоста, установлює узгоджену з пакетом навичку для агента програмування та запускає pip через указаний виконуваний файл Python. Для відновлення або оновлення повторно виконайте ту саму команду. Для встановлення лише нативної версії C++ не вказуйте `--python-executable`. Видаленням нативних компонентів керує Windows Installer, а видаленням із вибраного середовища Python — pip.
+
+Після встановлення один раз налаштуйте SSH-доступ до карти без пароля:
+
+```powershell
+& "C:\Program Files\SimaPCIeHost\bin\pcie-setup.cmd"
+```
+
+Програма знаходить адресу карти через локальне з'єднання керування `10.0.N.1`. Якщо автоматичне виявлення недоступне, передайте `-Hosts 10.0.0.2`. OpenSSH запитує пароль карти лише тоді, коли відкритий ключ ще не зареєстровано, і не зберігає цей пароль.
 
 Перед імпортом розширення пакет Python шукає DLL у стандартному корені встановлення та стандартному розташуванні x64 GStreamer. Для іншого кореня встановлення задайте в `SIMA_PCIE_HOST_LIBRARY_PATH` каталоги з DLL хоста PCIe та GStreamer.
 
@@ -105,6 +113,7 @@ $root = "C:\Program Files\SimaPCIeHost"
 $gst = "C:\Program Files\gstreamer\1.0\msvc_x86_64\bin\gst-inspect-1.0.exe"
 $env:PATH = "$root\bin;$(Split-Path $gst);$env:PATH"
 Set-Location $env:TEMP
+& "$root\bin\sima-pcie-host-doctor.cmd"
 & "$venv\Scripts\python.exe" -c "import pyneatpcie as p; print(p.__version__, p.Model)"
 & $gst "$root\bin\gstreamer-1.0\gstneatpciehost.dll"
 ```

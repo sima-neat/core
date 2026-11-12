@@ -198,6 +198,11 @@ if(WIN32)
     ${CMAKE_CURRENT_SOURCE_DIR}/scripts/windows/sima-pcie-host-env.cmd
     ${CMAKE_CURRENT_SOURCE_DIR}/scripts/windows/sima-pcie-host-run.cmd
     ${CMAKE_CURRENT_SOURCE_DIR}/scripts/windows/sima-pcie-host-doctor.cmd
+    ${CMAKE_CURRENT_SOURCE_DIR}/scripts/windows/pcie-setup.cmd
+    DESTINATION ${CMAKE_INSTALL_BINDIR}
+    COMPONENT Runtime
+  )
+  install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/scripts/windows/pcie-setup.ps1
     DESTINATION ${CMAKE_INSTALL_BINDIR}
     COMPONENT Runtime
   )
@@ -206,6 +211,7 @@ endif()
 set(SIMAPCIE_APPLICATION_SKILL_INSTALL_DIR
   ${CMAKE_INSTALL_DATADIR}/sima-pcie-host/skills/neat-pcie-application-builder)
 install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/skills/neat-pcie-application-builder/SKILL.md
+  ${CMAKE_CURRENT_SOURCE_DIR}/skills/neat-pcie-application-builder/playbook.yml
   DESTINATION ${SIMAPCIE_APPLICATION_SKILL_INSTALL_DIR}
   COMPONENT Runtime
 )
@@ -215,6 +221,10 @@ install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/skills/neat-pcie-application-build
 )
 install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/skills/neat-pcie-application-builder/targets/codex/agents/
   DESTINATION ${SIMAPCIE_APPLICATION_SKILL_INSTALL_DIR}/agents
+  COMPONENT Runtime
+)
+install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/skills/neat-pcie-application-builder/targets/
+  DESTINATION ${SIMAPCIE_APPLICATION_SKILL_INSTALL_DIR}/targets
   COMPONENT Runtime
 )
 
