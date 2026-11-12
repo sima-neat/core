@@ -98,6 +98,49 @@ options.top_k = 100
 options.score_threshold = 0.7
 ```
 
+## Focal-loss query detectors
+
+Use `BoxDecodeType::DetrFocal` (Python: `pyneat.BoxDecodeType.DetrFocal`, token
+`detr-focal`) for two ordered tensors: normalized `cx,cy,width,height` coordinates
+with depth 4, then independent class logits with depth N. Their query axes and dtypes must
+match; N is 1–1024. FP32, BF16 and authored INT8 storage are supported.
+
+The profile applies sigmoid only to class logits and selects the global top-K
+query/class pairs. One query can produce several classes. There is no background
+class, box sigmoid, per-query argmax, NMS or small-area filter. Set `top_k` to a
+positive cap, `detection_threshold=0` for unfiltered top-K, and
+`nms_iou_threshold=0`. Use Stretch and the actual image/model dimensions.
+
+The existing `BBOX` output clips boxes to the image and rounds XYWH coordinates
+to integers; `decode_bbox` exposes these coordinates as floats, without restoring
+subpixel precision. Use `decode_bbox(..., strict=True)` in Python to preserve
+zero-area rows created by rounding instead of the default degenerate-box filter.
+Measure this representation's accuracy separately from an
+unclipped floating-point reference. Classic `BoxDecodeType::Detr` is unchanged:
+it expects box logits and background-aware softmax scores, not these tensors.
+
+The Python raw-geometry overload mirrors the C++ factory when you supply the
+head tensors yourself. For dense FP32 heads, retain the model's complete output
+adapters and declare their actual storage explicitly. Do not truncate to raw
+MLA output or relabel padded bytes as dense tensors.
+
+```python
+node = pyneat.nodes.sima_box_decode(
+    pyneat.BoxDecodeType.DetrFocal,
+    original_width=1280, original_height=720,
+    model_width=640, model_height=640,
+    detection_threshold=0.0, nms_iou_threshold=0.0, top_k=300,
+    decode_type_option=pyneat.BoxDecodeTypeOption.InterleavedByHeadLogit,
+    source_storage=pyneat.BoxDecodeSourceStorage.DenseHwc,
+    detess=False, dequant=False,
+    resize_mode=pyneat.ResizeMode.Stretch,
+)
+```
+
+Finite reversed extents use the same endpoint clipping and become empty BBOX
+records, without replacing the selected pair or changing its score. Nonfinite
+coordinates or logits still fail before publication.
+
 ## YOLOv8 and YOLO11 oriented boxes {#yolov8-oriented-boxes}
 
 Select `BoxDecodeType::YoloV8Obb` (Python: `pyneat.BoxDecodeType.YoloV8Obb`; tokens
