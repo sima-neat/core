@@ -72,6 +72,20 @@ opt.top_k = 100;
 
 軸に平行な検出結果の表示グラフでは、結果を `SimaRender` に渡せます。`decode_bbox(...)` は既存のボックス先頭形式にのみ使ってください。これも `SimaRender` も回転ボックスには対応していません。
 
+## 従来の DETR {#classic-detr}
+
+同じクエリグリッド上にある、4 チャネルのボックスロジットと末尾に背景チャネルを持つクラスロジットには `Detr` を選択します。`decode_type_option` は `Auto` のままにしてください。テンソル名に依存せず、レシピが Softmax を選択します。背景は分母に含まれますが、前景クラス数と出力の選択からは除外されます。ボックス座標には sigmoid が適用されます。既に正規化された focal-loss のボックス用デコーダーではありません。
+
+Stretch と正の `top_k` を使用してください。NMS は適用されず、前処理メタデータを使って元フレームの座標へ変換します。確率値を指定するレイアウトや矛盾するスコア活性化は拒否されます。
+
+```python
+options = pyneat.ModelOptions()
+options.decode_type = pyneat.BoxDecodeType.Detr
+options.preprocess.resize.mode = pyneat.ResizeMode.Stretch
+options.top_k = 100
+options.score_threshold = 0.7
+```
+
 ## YOLOv8 と YOLO11 の回転ボックス {#yolov8-oriented-boxes}
 
 `BoxDecodeType::YoloV8Obb`（Python: `pyneat.BoxDecodeType.YoloV8Obb`、トークン `yolov8-obb` または `yolo11-obb`）を選択します。INT8、BF16、FP32 のヘッド 9 個を役割別にグループ化して渡します。64 チャネルの DFL ボックス、クラスロジット、角度ロジットの各ヘッド 3 個を、ストライド 8、16、32 の順に並べます。完全なクラス数はクラスヘッドから推定されます。

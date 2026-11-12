@@ -172,7 +172,7 @@ std::optional<SuperPointOutputFormat> parse_superpoint_output_format_token(std::
 
 bool box_decode_type_uses_per_port_dtype(BoxDecodeType type) {
   return type == BoxDecodeType::SuperPoint || type == BoxDecodeType::YoloXSegPose ||
-         box_decode_type_is_oriented(type);
+         type == BoxDecodeType::Detr || box_decode_type_is_oriented(type);
 }
 
 bool is_box_decode_type_specified(BoxDecodeType type) {

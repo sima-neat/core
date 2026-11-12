@@ -84,6 +84,20 @@ opt.top_k = 100;
 
 축 정렬 감지 표시 그래프는 결과를 `SimaRender`에 전달할 수 있습니다. `decode_bbox(...)`는 기존 박스 선두 형식에만 사용하십시오. 이 함수와 `SimaRender`는 회전 박스를 지원하지 않습니다.
 
+## 기존 DETR {#classic-detr}
+
+동일한 쿼리 격자의 4채널 박스 로짓 헤드와 마지막에 배경 채널이 있는 클래스 로짓 헤드에는 `Detr`를 선택합니다. `decode_type_option`은 `Auto`로 유지하세요. 레시피가 텐서 이름과 무관하게 Softmax를 선택합니다. 배경은 분모에는 포함되지만 전경 클래스 수와 출력 선택에서는 제외됩니다. 박스 좌표에는 sigmoid가 적용됩니다. 이미 정규화된 focal-loss 박스를 위한 디코더는 아닙니다.
+
+Stretch와 양수 `top_k`를 사용하세요. 디코더는 NMS를 적용하지 않으며 전처리 메타데이터로 원본 프레임 좌표를 복원합니다. 확률값 레이아웃이나 충돌하는 점수 활성화 설정은 거부됩니다.
+
+```python
+options = pyneat.ModelOptions()
+options.decode_type = pyneat.BoxDecodeType.Detr
+options.preprocess.resize.mode = pyneat.ResizeMode.Stretch
+options.top_k = 100
+options.score_threshold = 0.7
+```
+
 ## YOLOv8 및 YOLO11 회전 바운딩 박스 {#yolov8-oriented-boxes}
 
 `BoxDecodeType::YoloV8Obb`(Python: `pyneat.BoxDecodeType.YoloV8Obb`, 토큰 `yolov8-obb` 또는 `yolo11-obb`)를 선택합니다. INT8, BF16 또는 FP32 헤드 9개를 역할별로 묶어 전달합니다. 64채널 DFL 박스 헤드, 클래스 로짓 헤드, 각도 로짓 헤드를 각각 3개씩 스트라이드 8, 16, 32 순서로 배치합니다. 전체 클래스 수는 클래스 헤드에서 추론합니다.

@@ -84,6 +84,20 @@ opt.top_k = 100;
 
 Axis-aligned detection-display graphs can feed the result to `SimaRender`. Use `decode_bbox(...)` only for the existing box-leading formats; neither it nor `SimaRender` accepts oriented boxes.
 
+## Classic DETR {#classic-detr}
+
+Select `Detr` for one four-channel box-logit head and one class-logit head with a final background channel on the same query grid. Leave `decode_type_option` as `Auto`: the recipe selects Softmax without tensor-name hints. The background participates in the denominator but is excluded from the foreground class count and output selection. Box coordinates use sigmoid; this is not a decoder for already-normalized focal-loss boxes.
+
+Use Stretch and a positive `top_k`. The decoder applies no NMS and maps results to the original frame using preprocessing metadata. Explicit probability-valued layouts or conflicting score activations are rejected.
+
+```python
+options = pyneat.ModelOptions()
+options.decode_type = pyneat.BoxDecodeType.Detr
+options.preprocess.resize.mode = pyneat.ResizeMode.Stretch
+options.top_k = 100
+options.score_threshold = 0.7
+```
+
 ## YOLOv8 and YOLO11 oriented boxes {#yolov8-oriented-boxes}
 
 Select `BoxDecodeType::YoloV8Obb` (Python: `pyneat.BoxDecodeType.YoloV8Obb`; tokens
