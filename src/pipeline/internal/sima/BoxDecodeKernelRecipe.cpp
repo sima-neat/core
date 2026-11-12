@@ -571,7 +571,7 @@ BoxDecodeKernelRecipeResult prepare_boxdecode_kernel(const CompiledBoxDecodeCont
         decoded_objectness = objectness;
       }
       if (selected_profile == "detr_v1") {
-        if (hwc(runtime.logical_inputs[boxes].shape, runtime.logical_inputs[boxes].layout)[2] != 4)
+        if (logical_depth(boxes) != 4)
           std::swap(boxes, scores);
       }
       if (selected_profile == "detr_focal" &&
