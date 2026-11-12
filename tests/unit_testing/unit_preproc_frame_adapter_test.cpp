@@ -37,6 +37,14 @@ void okay(rt::Status result) {
 using Capture = probe::Capture;
 using Owner = probe::Owner;
 using Storage = probe::Storage;
+// This recording-only test transport acknowledges the current Preproc wire
+// version. It captures real prepared packets; it does not emulate EV pixels or
+// change production firmware capabilities. Legacy numerical defaults also use ABI7.
+std::shared_ptr<Capture> preproc_capture() {
+  auto capture = std::make_shared<Capture>();
+  capture->maximum_abi = 7;
+  return capture;
+}
 class PreprocProbe : public probe::AdapterProbe {
   std::shared_ptr<lower::PreprocFrameAdapter> adapter_;
 
@@ -220,7 +228,7 @@ void immutable_policy_instances() {
     for (std::size_t j = 0; j < i; ++j)
       require(instances[i] != instances[j], "concurrent policy instantiation shared mutable state");
   }
-  auto capture = std::make_shared<Capture>();
+  auto capture = preproc_capture();
   probe::Options options;
   options.domain = std::make_shared<probe::Domain>(capture);
   std::weak_ptr<probe::Domain> domain = options.domain;
@@ -288,7 +296,7 @@ void fixed_arithmetic_contract() {
       cfg->quantization_step = source_step;
       cfg->q_scale = float(1.0f / source_step);
     }
-    auto capture = std::make_shared<Capture>();
+    auto capture = preproc_capture();
     probe::Options options;
     options.capture = capture;
     auto stage = take(PreprocProbe::create(cfg, options));
@@ -301,6 +309,7 @@ void fixed_arithmetic_contract() {
     auto done =
         stage->session().executor(0)->submit(*binding.operation, binding.inputs, binding.outputs);
     okay(done.wait());
+    require(capture->packet.abi == 7, "fixed source arithmetic must retain checked Preproc ABI7");
     const auto bits = [&](std::size_t offset) {
       require(capture->packet.payload.size() >= offset + 4, "short fixed arithmetic packet");
       std::uint32_t value;
@@ -357,7 +366,7 @@ void fixed_arithmetic_contract() {
 
 void contract() {
   for (bool quantized : {false, true}) {
-    auto capture = std::make_shared<Capture>();
+    auto capture = preproc_capture();
     probe::Options options;
     options.capture = capture;
     auto cfg = config(1, quantized);
@@ -385,7 +394,7 @@ void contract() {
     gst_structure_free(out);
     gst_buffer_unref(input);
   }
-  auto capture = std::make_shared<Capture>();
+  auto capture = preproc_capture();
   probe::Options options;
   options.capture = capture;
   auto p = take(PreprocProbe::create(config(3), options));
@@ -429,7 +438,7 @@ void contract() {
   // Raw legacy INT8 is an unsigned byte stream, not saturating signed math.
   auto raw = config(1, true);
   raw->normalize = 0;
-  auto raw_capture = std::make_shared<Capture>();
+  auto raw_capture = preproc_capture();
   probe::Options raw_options;
   raw_options.capture = raw_capture;
   auto raw_op = take(PreprocProbe::create(raw, raw_options));
@@ -460,13 +469,17 @@ void contract() {
   tile.layout.tiled.tile_sizes[1] = 8;
   tile.layout.tiled.tile_sizes[2] = 3;
   raw->output_tensors[0] = raw->output_tensors[0].with_geometry(tile);
-  auto old_firmware = std::make_shared<Capture>();
-  old_firmware->maximum_abi = 4;
-  auto old_options = raw_options;
-  old_options.capture = old_firmware;
-  require(std::holds_alternative<rt::Error>(PreprocProbe::create(raw, old_options)) &&
-              old_firmware->packet.empty(),
-          "ABI4 firmware must reject ABI5 before submission");
+  for (const auto maximum_abi : {4U, 5U, 6U}) {
+    auto old_firmware = std::make_shared<Capture>();
+    old_firmware->maximum_abi = maximum_abi;
+    auto old_options = raw_options;
+    old_options.capture = old_firmware;
+    const auto rejected = PreprocProbe::create(raw, old_options);
+    const auto* error = std::get_if<rt::Error>(&rejected);
+    require(error && error->field == "prepared.ev74" && old_firmware->admissions > 0 &&
+                old_firmware->submissions == 0 && old_firmware->packet.empty(),
+            "ABI4/5/6 transports must reject checked Preproc ABI7 before submission");
+  }
   auto tiled = take(PreprocProbe::create(raw, raw_options));
   auto* tiled_input = gst_buffer_new_allocate(nullptr, 192, nullptr);
   auto* tiled_meta = gst_structure_new_empty("test");
@@ -481,8 +494,8 @@ void contract() {
   std::uint32_t encoding = 0;
   std::memcpy(&dtype, raw_capture->packet.payload.data() + 20, 4);
   std::memcpy(&encoding, raw_capture->packet.payload.data() + 116, 4);
-  require(dtype == 0 && encoding == 1 && raw_capture->packet.abi == 5,
-          "raw tiled bytes must advertise native UInt8 ABI5");
+  require(dtype == 0 && encoding == 1 && raw_capture->packet.abi == 7,
+          "raw tiled bytes must advertise native UInt8 ABI7");
   gst_structure_free(tiled_meta);
   gst_buffer_unref(tiled_input);
 
@@ -554,7 +567,7 @@ void typed_format_mapping() {
         output.layout.strided.strides_bytes[1] = 2;
         c.output_tensors[0] = c.output_tensors[0].with_geometry(output);
       }
-      auto capture = std::make_shared<Capture>();
+      auto capture = preproc_capture();
       probe::Options options;
       options.capture = capture;
       auto stage = take(PreprocProbe::create(cfg, options));
@@ -607,7 +620,7 @@ void decoder_storage_geometry() {
     input_descriptor.layout.strided.strides_bytes[0] = width * 3;
     cfg->input_tensors[0] = cfg->input_tensors[0].with_geometry(input_descriptor);
     probe::Options options;
-    options.capture = std::make_shared<Capture>();
+    options.capture = preproc_capture();
     auto stage = take(PreprocProbe::create(cfg, options));
     std::unique_ptr<GstStructure, decltype(&gst_structure_free)> published(
         gst_structure_new_empty("test"), gst_structure_free);
@@ -673,7 +686,7 @@ void checked_plane_resolver() {
     auto cfg = config();
     cfg->input_img_type = format.name;
     probe::Options options;
-    options.capture = std::make_shared<Capture>();
+    options.capture = preproc_capture();
     auto stage = take(Preproc::create(cfg, options));
     auto* input = gst_buffer_new();
     gsize offsets[GST_VIDEO_MAX_PLANES]{};
@@ -794,7 +807,7 @@ void checked_plane_resolver() {
 }
 
 void dynamic_preparation_cache() {
-  auto capture = std::make_shared<Capture>();
+  auto capture = preproc_capture();
   probe::Options options;
   options.domain = std::make_shared<probe::Domain>(capture);
   const auto policy = take(PreprocProbe::check_policy(config(3)));
@@ -991,7 +1004,7 @@ void dynamic_preparation_cache() {
 // geometry/pitch. Returning to defaults must never reuse an override as a base.
 void default_geometry_and_padding() {
   probe::Options options;
-  options.capture = std::make_shared<Capture>();
+  options.capture = preproc_capture();
   for (const auto& [name, x, y] :
        {std::tuple{"center", 2, 2}, std::tuple{"topleft", 0, 0}, std::tuple{"topright", 4, 0},
         std::tuple{"bottomleft", 0, 4}, std::tuple{"bottomright", 4, 4}}) {
@@ -1076,7 +1089,7 @@ void default_geometry_and_padding() {
 
 void borrowed_roi_indices() {
   probe::Options options;
-  options.capture = std::make_shared<Capture>();
+  options.capture = preproc_capture();
   auto stage = take(PreprocProbe::create(config(3), options));
   auto* input = gst_buffer_new_allocate(nullptr, 384, nullptr);
   auto* meta = gst_custom_meta_get_structure(gst_buffer_add_custom_meta(input, "GstSimaMeta"));
@@ -1123,7 +1136,7 @@ void borrowed_roi_indices() {
 
 void publication_ownership_and_replacement() {
   probe::Options options;
-  options.capture = std::make_shared<Capture>();
+  options.capture = preproc_capture();
   auto stage = take(PreprocProbe::create(config(), options));
   auto* input = gst_buffer_new_allocate(nullptr, 192, nullptr);
   auto* meta = gst_custom_meta_get_structure(gst_buffer_add_custom_meta(input, "GstSimaMeta"));
@@ -1194,7 +1207,7 @@ void publication_ownership_and_replacement() {
 // the full admission bound with one source frame, not 4096 image allocations.
 void maximum_roi_admission() {
   constexpr int requested = 4096;
-  auto capture = std::make_shared<Capture>();
+  auto capture = preproc_capture();
   probe::Options options;
   options.capture = capture;
   require(std::holds_alternative<rt::Error>(PreprocProbe::create(config(51), options)),
@@ -1297,7 +1310,7 @@ void benchmark_preparation() {
          {"fixed", "alternating", "unique", "list-fixed", "list-alternating", "list-unique"}) {
       const bool list = route.starts_with("list-");
       const auto pattern = list ? route.substr(5) : route;
-      auto capture = std::make_shared<Capture>();
+      auto capture = preproc_capture();
       probe::Options options;
       options.capture = capture;
       auto cfg = config(3);
@@ -1365,7 +1378,7 @@ void image_frontend_metadata_and_bounds() {
   cfg->scaling_type = "NO_SCALING";
   cfg->aspect_ratio = 0;
   probe::Options options;
-  options.capture = std::make_shared<Capture>();
+  options.capture = preproc_capture();
   auto adapter = take(PreprocProbe::create(cfg, options));
   auto* smaller = gst_caps_new_simple("video/x-raw", "format", G_TYPE_STRING, "RGB", "width",
                                       G_TYPE_INT, 4, "height", G_TYPE_INT, 4, nullptr);
@@ -1434,7 +1447,7 @@ void image_frontend_input_rejections() {
   cfg->normalize = cfg->aspect_ratio = 0;
   cfg->scaling_type = "NO_SCALING";
   probe::Options options;
-  options.capture = std::make_shared<Capture>();
+  options.capture = preproc_capture();
   auto adapter = take(PreprocProbe::create(cfg, options));
   const auto caps = [](const char* key = nullptr, const char* value = nullptr) {
     auto* result = gst_caps_new_simple("video/x-raw", "format", G_TYPE_STRING, "NV12", "width",
