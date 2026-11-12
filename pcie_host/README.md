@@ -52,10 +52,11 @@ Set `connection.card_id` to select the card; its default address is
 `10.0.<card_id>.2`. Set `connection.card_host` to override that address.
 For speculative decoding, pass the parent directory of a prepared target/draft
 pair. Both models load in one card session using their compiled configuration.
-GenAI transport is currently available on Linux hosts only. The native Windows
-preview supports `pcie::Model` vision inference; its GenAI symbols are present
-for source compatibility, but constructing a GenAI model reports that the
-Windows provider exposes vision queues only.
+Linux uses the native Platform service for GenAI transport. Windows uses the
+matching Platform service exported by `SiMaPCIe.dll`; the Neat package resolves
+that DLL at runtime and does not redistribute it. Windows GenAI is a supported
+customer configuration only after the matching Platform package and the full
+C++ and Python GenAI release matrix have passed qualification.
 
 ### Multi-model runtime
 

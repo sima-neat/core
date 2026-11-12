@@ -57,6 +57,10 @@ def dependency_identity(directory: Path, *, require_dependency_runtime: bool = F
   receipt = _read_json(root / "windows-dependencies.json", "Windows dependency receipt")
   platform = receipt.get("platform")
   runtime_dlls = platform.get("runtime_dlls") if isinstance(platform, dict) else None
+  platform_version = platform.get("version") if isinstance(platform, dict) else None
+  if (not isinstance(platform_version, str)
+      or not re.fullmatch(r"[0-9]+(?:[.][0-9]+){2,3}", platform_version)):
+    raise ValueError("Windows dependency receipt has no exact Platform version")
   if not isinstance(runtime_dlls, list) or not runtime_dlls:
     raise ValueError("Windows dependency receipt has no Platform runtime DLLs")
   dlls = []
@@ -89,6 +93,7 @@ def dependency_identity(directory: Path, *, require_dependency_runtime: bool = F
       != len(normalized_gstreamer_dlls)):
     raise ValueError("Windows dependency receipt has duplicate GStreamer runtime DLLs")
   identity = {
+      "platform_version": platform_version,
       "gstreamer": {
           "pkg_config_sha256": pkg_config_sha256,
           "runtime_dlls": sorted(

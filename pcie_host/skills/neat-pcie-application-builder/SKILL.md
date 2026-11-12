@@ -75,5 +75,6 @@ was not exercised.
   or a prepared LLiMa model directory.
 - Verify behavior against the installed release instead of guessing from memory or another Neat
   environment.
-- On native Windows, use only `pcie::Model` vision inference. The GenAI symbols are importable for
-  source compatibility, but the Windows provider does not implement the GenAI transport.
+- On native Windows, GenAI requires the release-qualified Platform package that provides
+  `SiMaPCIe.dll`. Do not report Windows GenAI as supported from an import check alone; run the
+  matching C++ and Python connected-card acceptance tests.

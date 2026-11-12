@@ -148,12 +148,17 @@ def verify(candidate_dir: Path, qualification_path: Path, expected_commit: str,
     raise ValueError(
         "hardware qualification did not prove native success, wheel failure, and retry")
   repair = customer_install.get("repair")
+  standard_user = customer_install.get("standard_user")
   if (not isinstance(repair, dict) or repair.get("core") != "PASS"
       or repair.get("scheduler") != "PASS"
       or customer_install.get("plugin_discovery") != "PASS"
-      or customer_install.get("process_activation") != "PASS"):
+      or customer_install.get("process_activation") != "PASS"
+      or not isinstance(standard_user, dict)
+      or standard_user.get("is_administrator") is not False
+      or standard_user.get("doctor") != "PASS"
+      or standard_user.get("python") != "PASS"):
     raise ValueError(
-        "hardware qualification did not prove MSI repair and customer process activation")
+        "hardware qualification did not prove MSI repair and standard-user process activation")
   if require_release:
     upgrade = customer_install.get("upgrade")
     if (not isinstance(upgrade, dict) or upgrade.get("status") != "PASS"

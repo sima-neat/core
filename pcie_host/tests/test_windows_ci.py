@@ -236,7 +236,7 @@ class WindowsCiContracts(unittest.TestCase):
             ],
             "version_output": "gst-inspect version 1.26.0",
         },
-        "platform": {"runtime_dlls": [
+        "platform": {"version": "3.0.0.2", "runtime_dlls": [
             {"name": "sima-platform.dll", "sha256": "d" * 64},
         ]},
     }), encoding="utf-8")
@@ -353,6 +353,8 @@ class WindowsCiContracts(unittest.TestCase):
     self.assertIn("core-windows-upgrade-base", source)
     self.assertIn("--expected-upgrade-base-commit", source)
     self.assertIn("SIMA_WINDOWS_DEPENDENCY_RUNTIME_PATH", source)
+    self.assertIn("SIMA_WINDOWS_PLATFORM_INCLUDE_DIR", source)
+    self.assertIn('source_branch: "3.0"', source)
     self.assertIn("--dependency-runtime-dir", source)
     self.assertIn("scripts/ci/pciehost/acquire_windows_dependencies.py", source)
     self.assertIn("core-pciehost-windows-dependencies", source)
@@ -425,6 +427,9 @@ class WindowsCiContracts(unittest.TestCase):
     self.assertIn('evidence / "client-process-death-worker-cleanup.log"', source)
     self.assertIn('evidence / "client-process-death-platform-recovery.log"', source)
     self.assertIn('evidence / "client-process-death-card-readiness.log"', source)
+    self.assertIn("New-LocalUser", source)
+    self.assertIn("Remove-LocalUser", source)
+    self.assertIn("standard_user", source)
     self.assertIn('"simaai_pcie_test.exe"', source)
     self.assertIn("Device recovery successful", source)
     self.assertIn("Stop-Service -InputObject $service", source)
@@ -565,6 +570,7 @@ class WindowsCiContracts(unittest.TestCase):
             "version_output": "gst-inspect version 1.26.0",
         },
         "platform": {
+            "version": "3.0.0.2",
             "runtime_dlls": [{
                 "name": "sima-platform.dll",
                 "sha256": "d" * 64,
@@ -671,6 +677,12 @@ class WindowsCiContracts(unittest.TestCase):
             "repair": {"core": "PASS", "scheduler": "PASS"},
             "recovery": "PASS",
             "repeat": "PASS",
+            "standard_user": {
+                "account": "TEST\\sna-1234",
+                "doctor": "PASS",
+                "is_administrator": False,
+                "python": "PASS",
+            },
             "upgrade": {
                 "baseline_commit": "b" * 40,
                 "baseline_version": "0.6.1",
@@ -680,6 +692,7 @@ class WindowsCiContracts(unittest.TestCase):
             "wheel_failure": {"exit_code": 1, "status": "PASS"},
         },
         "dependencies": {
+            "platform_version": "3.0.0.2",
             "gstreamer": {
                 "pkg_config_sha256": "e" * 64,
                 "runtime_dlls": [
@@ -1136,7 +1149,17 @@ install() {
       value = json.loads(qualification.read_text(encoding="utf-8"))
       del value["customer_install"]["process_activation"]
       qualification.write_text(json.dumps(value), encoding="utf-8")
-      with self.assertRaisesRegex(ValueError, "customer process activation"):
+      with self.assertRaisesRegex(ValueError, "standard-user process activation"):
+        verify(root, qualification, commit, True)
+
+  def test_release_gate_requires_non_administrator_process_activation(self):
+    with tempfile.TemporaryDirectory() as directory:
+      root = Path(directory)
+      commit, _, qualification = self.windows_candidate(root)
+      value = json.loads(qualification.read_text(encoding="utf-8"))
+      value["customer_install"]["standard_user"]["is_administrator"] = True
+      qualification.write_text(json.dumps(value), encoding="utf-8")
+      with self.assertRaisesRegex(ValueError, "standard-user process activation"):
         verify(root, qualification, commit, True)
 
   def test_upgrade_baseline_must_name_a_different_package_version(self):

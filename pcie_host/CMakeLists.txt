@@ -54,6 +54,14 @@ find_package(PkgConfig REQUIRED)
 find_package(Threads REQUIRED)
 if(WIN32)
   find_package(SimaScheduler CONFIG REQUIRED COMPONENTS pcie_host)
+  if(NOT SIMAPCIE_PLATFORM_SERVICE_INCLUDE_DIR)
+    message(FATAL_ERROR
+      "SIMAPCIE_PLATFORM_SERVICE_INCLUDE_DIR must name the supported Windows "
+      "Platform SDK include directory")
+  endif()
+  find_path(SIMAPCIE_PLATFORM_SERVICE_HEADER_DIR simaai_svc.h
+    PATHS "${SIMAPCIE_PLATFORM_SERVICE_INCLUDE_DIR}"
+    NO_DEFAULT_PATH REQUIRED)
   set(SIMAPCIE_GENAI_SERVICE_SOURCE
     ${SIMA_NEAT_CORE_ROOT}/shared/pcie_genai/ServiceWindows.cpp)
 else()
@@ -119,6 +127,10 @@ add_library(sima_neat_pcie_host STATIC
 target_compile_definitions(sima_neat_pcie_host PRIVATE SIMA_NEAT_INTERNAL=1)
 target_include_directories(sima_neat_pcie_host PRIVATE
   ${SIMA_NEAT_CORE_ROOT}/shared/pcie_genai)
+if(WIN32)
+  target_include_directories(sima_neat_pcie_host PRIVATE
+    ${SIMAPCIE_PLATFORM_SERVICE_HEADER_DIR})
+endif()
 target_include_directories(sima_neat_pcie_host PUBLIC $<BUILD_INTERFACE:${SIMA_NEAT_CORE_ROOT}/include>)
 target_link_libraries(sima_neat_pcie_host PRIVATE ${CMAKE_DL_LIBS})
 if(NOT WIN32)

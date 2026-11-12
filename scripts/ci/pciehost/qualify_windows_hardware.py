@@ -148,7 +148,25 @@ def verify_dependency_cohort(candidate, platform_runtime: Path, gstreamer_root: 
       text=True, timeout=60, check=False)
   if result.returncode != 0:
     raise RuntimeError("could not read the hardware runner's GStreamer version")
+  platform_script = r"""
+$paths = @(
+  'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*',
+  'HKLM:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*'
+)
+$matches = @(Get-ItemProperty $paths -ErrorAction SilentlyContinue |
+  Where-Object { $_.DisplayName -eq 'SiMa.ai Windows Host Package' })
+if ($matches.Count -ne 1 -or -not $matches[0].DisplayVersion) { exit 3 }
+[Console]::Out.Write([string]$matches[0].DisplayVersion)
+"""
+  platform_result = subprocess.run(
+      ["powershell.exe", "-NoLogo", "-NoProfile", "-NonInteractive",
+       "-Command", platform_script],
+      stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=60,
+      check=False)
+  if platform_result.returncode != 0 or not platform_result.stdout.strip():
+    raise RuntimeError("could not read the installed SiMa Platform package version")
   actual = {
+      "platform_version": platform_result.stdout.strip(),
       "gstreamer": {
           "pkg_config_sha256": sha256(pkg_config),
           "runtime_dlls": [
@@ -374,6 +392,90 @@ def verify_customer_process_activation(install_root: Path, python: Path,
       [python, "-c",
        "import pyneatpcie as p; assert p.Model and p.Runtime and p.Tensor"],
       evidence / "customer-process-python-import.log", env=environment, timeout=60)
+
+
+def verify_standard_user_process_activation(install_root: Path, python: Path,
+                                            work: Path, evidence: Path) -> dict:
+  """Run the installed diagnostics and Python API as a disposable standard user."""
+  doctor = install_root / "bin" / "sima-pcie-host-doctor.cmd"
+  if not doctor.is_file():
+    raise RuntimeError(f"installed Core MSI is missing its diagnostic: {doctor}")
+  wrapper = work / "standard-user-activation.cmd"
+  wrapper.write_text(
+      "@echo off\n"
+      "powershell.exe -NoLogo -NoProfile -NonInteractive -Command "
+      "\"$i=[Security.Principal.WindowsIdentity]::GetCurrent(); "
+      "$p=[Security.Principal.WindowsPrincipal]::new($i); "
+      "if($p.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)){exit 97}\"\n"
+      "if errorlevel 1 exit /b %errorlevel%\n"
+      f'call "{doctor}"\n'
+      "if errorlevel 1 exit /b %errorlevel%\n"
+      f'"{python}" -c "import pyneatpcie as p; assert p.Model and p.Runtime and p.Tensor"\n'
+      "exit /b %errorlevel%\n",
+      encoding="utf-8",
+  )
+  script = r"""
+$ErrorActionPreference = 'Stop'
+$name = 'sna-' + $PID
+$bytes = New-Object byte[] 32
+$rng = [Security.Cryptography.RandomNumberGenerator]::Create()
+$rng.GetBytes($bytes)
+$rng.Dispose()
+$plain = [Convert]::ToBase64String($bytes) + 'aA1!'
+$secure = ConvertTo-SecureString $plain -AsPlainText -Force
+$created = $false
+try {
+  $user = New-LocalUser -Name $name -Password $secure -AccountNeverExpires `
+    -PasswordNeverExpires -UserMayNotChangePassword
+  $created = $true
+  $account = "$env:COMPUTERNAME\$name"
+  $admin = @(Get-LocalGroupMember -Group 'Administrators' -ErrorAction Stop |
+    Where-Object { $_.SID -eq $user.SID }).Count -ne 0
+  if ($admin) { throw 'temporary acceptance user unexpectedly belongs to Administrators' }
+  & icacls.exe $env:SIMA_STANDARD_USER_WORK /grant "${account}:(OI)(CI)(M)" /T /Q | Out-Null
+  if ($LASTEXITCODE -ne 0) { throw "icacls failed: $LASTEXITCODE" }
+  $credential = [Management.Automation.PSCredential]::new($account, $secure)
+  $process = Start-Process -FilePath $env:ComSpec `
+    -ArgumentList @('/d', '/c', $env:SIMA_STANDARD_USER_WRAPPER) `
+    -Credential $credential -LoadUserProfile -Wait -PassThru `
+    -RedirectStandardOutput $env:SIMA_STANDARD_USER_STDOUT `
+    -RedirectStandardError $env:SIMA_STANDARD_USER_STDERR
+  if ($process.ExitCode -ne 0) { throw "standard-user activation failed: $($process.ExitCode)" }
+  [pscustomobject]@{
+    account = $account
+    is_administrator = $false
+    doctor = 'PASS'
+    python = 'PASS'
+  } | ConvertTo-Json -Compress
+} finally {
+  if ($created) { Remove-LocalUser -Name $name -ErrorAction Stop }
+}
+"""
+  environment = os.environ.copy()
+  environment.update({
+      "SIMA_STANDARD_USER_STDERR": str(evidence / "standard-user-stderr.log"),
+      "SIMA_STANDARD_USER_STDOUT": str(evidence / "standard-user-stdout.log"),
+      "SIMA_STANDARD_USER_WORK": str(work),
+      "SIMA_STANDARD_USER_WRAPPER": str(wrapper),
+  })
+  result = subprocess.run(
+      ["powershell.exe", "-NoLogo", "-NoProfile", "-NonInteractive",
+       "-Command", script],
+      stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=300,
+      env=environment, check=False)
+  (evidence / "standard-user-control.log").write_text(
+      f"returncode={result.returncode}\nstdout={result.stdout}\nstderr={result.stderr}",
+      encoding="utf-8", errors="replace")
+  if result.returncode != 0:
+    raise RuntimeError("standard-user process activation failed; see acceptance logs")
+  try:
+    receipt = json.loads(result.stdout)
+  except json.JSONDecodeError as error:
+    raise RuntimeError("standard-user process activation returned invalid evidence") from error
+  if (not isinstance(receipt, dict) or receipt.get("is_administrator") is not False
+      or receipt.get("doctor") != "PASS" or receipt.get("python") != "PASS"):
+    raise RuntimeError("standard-user process activation evidence is incomplete")
+  return receipt
 
 
 def run_captured_to_file(command: list[object], log: Path, *,
@@ -1674,6 +1776,8 @@ def qualify(args: argparse.Namespace) -> None:
 
       verify_customer_process_activation(install_root, python, evidence)
       result["customer_install"]["process_activation"] = "PASS"
+      result["customer_install"]["standard_user"] = verify_standard_user_process_activation(
+          install_root, python, work, evidence)
       # The installed doctor loads the Scheduler plug-in through the same
       # process-scoped activation entry point customers use.
       result["customer_install"]["plugin_discovery"] = "PASS"

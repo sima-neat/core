@@ -17,7 +17,10 @@ def sha256(path: Path) -> str:
 
 
 def metadata(msi: Path, wheel: Path, version: str, branch: str, commit: str,
-             scheduler_msi: Path = None, scheduler_version: str = None) -> dict:
+             scheduler_msi: Path = None, scheduler_version: str = None,
+             platform_version: str = None, gstreamer_version: str = None) -> dict:
+  if not platform_version or not gstreamer_version:
+    raise ValueError("Windows metadata requires exact Platform and GStreamer versions")
   resources = []
   installation = {
       "type": "windows-msi",
@@ -47,6 +50,15 @@ def metadata(msi: Path, wheel: Path, version: str, branch: str, commit: str,
               ),
           },
           {
+              "name": "SiMa Platform Windows package",
+              "type": "windows-product",
+              "value": "SiMa.ai Windows Host Package",
+              "version": platform_version,
+              "guidance": (
+                  f"Install SiMa Platform Windows package {platform_version}."
+              ),
+          },
+          {
               "name": "SiMa Platform PCIe service",
               "type": "windows-service",
               "value": "SiMaMlaDaemon",
@@ -56,20 +68,25 @@ def metadata(msi: Path, wheel: Path, version: str, branch: str, commit: str,
               ),
           },
           {
-              "name": "GStreamer 1.0 MSVC x64 runtime",
-              "type": "file",
+              "name": f"GStreamer {gstreamer_version} MSVC x64 runtime",
+              "type": "command-version",
+              "version": gstreamer_version,
+              "arguments": ["--version"],
+              "version-pattern": (
+                  r"(?m)^gst-inspect-1\.0 version ([0-9]+(?:\.[0-9]+){2})$"
+              ),
               "candidates": [
                   {
                       "environment": "GSTREAMER_ROOT_X86_64",
-                      "relative": "bin\\gstreamer-1.0-0.dll",
+                      "relative": "bin\\gst-inspect-1.0.exe",
                   },
                   {
                       "environment": "ProgramFiles",
-                      "relative": "gstreamer\\1.0\\msvc_x86_64\\bin\\gstreamer-1.0-0.dll",
+                      "relative": "gstreamer\\1.0\\msvc_x86_64\\bin\\gst-inspect-1.0.exe",
                   },
               ],
               "guidance": (
-                  "Install the GStreamer 1.0 MSVC x64 runtime or set "
+                  f"Install GStreamer {gstreamer_version} MSVC x64 or set "
                   "GSTREAMER_ROOT_X86_64 to its installation root."
               ),
           },
@@ -168,6 +185,8 @@ def main() -> None:
   parser.add_argument("--msi", required=True, type=Path)
   parser.add_argument("--scheduler-msi", type=Path)
   parser.add_argument("--scheduler-version")
+  parser.add_argument("--platform-version", required=True)
+  parser.add_argument("--gstreamer-version", required=True)
   parser.add_argument("--wheel", type=Path)
   parser.add_argument("--version", required=True)
   parser.add_argument("--branch", required=True)
@@ -182,7 +201,8 @@ def main() -> None:
           metadata(args.msi.resolve(), args.wheel.resolve() if args.wheel else None,
                    args.version, args.branch, args.commit,
                    args.scheduler_msi.resolve() if args.scheduler_msi else None,
-                   args.scheduler_version),
+                   args.scheduler_version, args.platform_version,
+                   args.gstreamer_version),
           indent=2,
       ) + "\n",
       encoding="utf-8",

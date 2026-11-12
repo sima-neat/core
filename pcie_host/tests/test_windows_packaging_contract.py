@@ -12,6 +12,18 @@ WINDOWS_PRODUCER = ROOT.parent / "scripts" / "ci" / "pciehost" / "build_windows.
 
 
 class WindowsPackagingContract(unittest.TestCase):
+  def test_windows_genai_adapter_uses_platform_service_provider(self):
+    source = (ROOT.parent / "shared" / "pcie_genai" / "ServiceWindows.cpp").read_text(
+        encoding="utf-8"
+    )
+    for symbol in (
+        "simaai_svc_open_card", "simaai_svc_subscribe", "simaai_svc_notify",
+        "simaai_svc_recv", "simaai_svc_get_file", "simaai_svc_put_file",
+        "simaai_svc_handle", "CancelIoEx",
+    ):
+      self.assertIn(symbol, source)
+    self.assertNotIn("provider exposes vision queues only", source)
+
   def test_msi_has_stable_upgrade_and_install_ownership(self):
     source = PACKAGING.read_text(encoding="utf-8")
     self.assertIn('set(CPACK_GENERATOR "WIX")', source)

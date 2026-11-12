@@ -304,6 +304,11 @@ def build(args: argparse.Namespace) -> None:
   scheduler_metadata, scheduler_msi = verify_scheduler_candidate(
       args.scheduler_candidate, args.expected_scheduler_commit)
   scheduler_dependencies = dependency_identity(args.scheduler_candidate)
+  platform_include = require_directory(
+      args.platform_include, "Platform service include directory")
+  require_file(platform_include / "simaai_svc.h", "Platform service header")
+  require_file(platform_include / "simaai_svc_proto.h", "Platform service protocol header")
+  require_file(platform_include / "simapcie.h", "Platform PCIe header")
   gstreamer_root = require_directory(args.gstreamer_root, "GStreamer MSVC root")
   gstreamer_bin = require_directory(gstreamer_root / "bin", "GStreamer binary directory")
   gstreamer_dlls = sorted(
@@ -319,6 +324,7 @@ def build(args: argparse.Namespace) -> None:
   if not platform_dlls:
     raise ValueError(f"Platform runtime directory contains no DLLs: {platform_runtime}")
   producer_dependencies = {
+      "platform_version": scheduler_dependencies["platform_version"],
       "gstreamer": {
           "pkg_config_sha256": sha256(pkg_config),
           "runtime_dlls": [
@@ -427,6 +433,7 @@ def build(args: argparse.Namespace) -> None:
         "-DCMAKE_INSTALL_PREFIX=" + str(stage),
         "-DCMAKE_PREFIX_PATH=" + prefix_path,
         "-DSimaScheduler_DIR=" + str(scheduler_config),
+        "-DSIMAPCIE_PLATFORM_SERVICE_INCLUDE_DIR=" + str(platform_include),
         "-DSIMAPCIE_BUILD_TESTS=ON",
         "-DSIMAPCIE_BUILD_HARDWARE_TESTS=ON",
         "-DSIMAPCIE_BUILD_PYTHON=ON",
@@ -655,11 +662,18 @@ def build(args: argparse.Namespace) -> None:
     ], env=import_environment, cwd=Path(os.environ["TEMP"]))
 
     scheduler_version = str(scheduler_metadata.get("version", ""))
+    gstreamer_match = re.search(
+        r"(?m)^gst-inspect-1[.]0 version ([0-9]+(?:[.][0-9]+){2})$",
+        producer_dependencies["gstreamer"]["version_output"])
+    if not gstreamer_match:
+      raise ValueError("could not read the exact GStreamer version")
     run([
         python,
         PCIE_HOST / "scripts" / "create_windows_metadata.py",
         "--scheduler-msi", scheduler_msi,
         "--scheduler-version", scheduler_version,
+        "--platform-version", producer_dependencies["platform_version"],
+        "--gstreamer-version", gstreamer_match.group(1),
         "--msi", core_msi,
         "--wheel", wheel,
         "--version", version,
@@ -720,6 +734,7 @@ def build(args: argparse.Namespace) -> None:
                 [gst_inspect, "--version"], env=environment, capture=True),
         },
         "platform": {
+            "version": producer_dependencies["platform_version"],
             "runtime_directory": str(platform_runtime),
             "runtime_dlls": [
                 {
@@ -821,6 +836,7 @@ def main() -> None:
   parser.add_argument("--jobs", type=int, default=4)
   parser.add_argument("--output", type=Path, required=True)
   parser.add_argument("--platform-runtime", type=Path, required=True)
+  parser.add_argument("--platform-include", type=Path, required=True)
   parser.add_argument("--python-wheelhouse", type=Path, required=True)
   parser.add_argument("--scheduler-candidate", type=Path, required=True)
   parser.add_argument("--require-signatures", action="store_true")

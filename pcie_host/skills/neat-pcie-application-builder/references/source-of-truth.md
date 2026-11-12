@@ -80,8 +80,9 @@ On Windows, use the interpreter in the venv where the wheel was installed:
 .\pyneatpcie\Scripts\python.exe -c "import pyneatpcie as p; print(p.__version__, p.Model, p.Tensor)"
 ```
 
-For GenAI on Linux, inspect `genai/GenAIModel.h` instead and import `pyneatpcie.genai`.
-Do not treat importable GenAI symbols as Windows transport support.
+For GenAI, inspect `genai/GenAIModel.h` and import `pyneatpcie.genai`. On Windows, the transport
+also depends on the matching Platform service in `SiMaPCIe.dll`; do not treat importable symbols
+alone as connected-card support.
 Older installed releases may not include GenAI; do not silently substitute local Core APIs.
 
 Nanobind callables do not always expose useful `inspect.signature()` output. Prefer `help()`,

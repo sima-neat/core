@@ -373,6 +373,7 @@ jobs:
       GSTREAMER_ROOT_X86_64: ${{ vars.GSTREAMER_ROOT_X86_64 }}
       SIMA_WINDOWS_CMAKE_PREFIX_PATH: ${{ vars.SIMA_WINDOWS_CMAKE_PREFIX_PATH }}
       SIMA_WINDOWS_DEPENDENCY_RUNTIME_PATH: ${{ vars.SIMA_WINDOWS_DEPENDENCY_RUNTIME_PATH }}
+      SIMA_WINDOWS_PLATFORM_INCLUDE_DIR: ${{ vars.SIMA_WINDOWS_PLATFORM_INCLUDE_DIR }}
       SIMA_WINDOWS_PLATFORM_RUNTIME_DIR: ${{ vars.SIMA_WINDOWS_PLATFORM_RUNTIME_DIR }}
       SIMA_WINDOWS_PYTHON_WHEELHOUSE: ${{ vars.SIMA_WINDOWS_PYTHON_WHEELHOUSE }}
       SIMA_WINDOWS_SIGNING_CERTIFICATE_SHA1: ${{ vars.SIMA_WINDOWS_SIGNING_CERTIFICATE_SHA1 }}
@@ -403,6 +404,7 @@ jobs:
           foreach ($name in @(
             "GSTREAMER_ROOT_X86_64",
             "SIMA_WINDOWS_DEPENDENCY_RUNTIME_PATH",
+            "SIMA_WINDOWS_PLATFORM_INCLUDE_DIR",
             "SIMA_WINDOWS_PLATFORM_RUNTIME_DIR",
             "SIMA_WINDOWS_PYTHON_WHEELHOUSE"
           )) {
@@ -414,6 +416,7 @@ jobs:
             "--expected-scheduler-commit", $selection.scheduler.commit,
             "--gstreamer-root", $env:GSTREAMER_ROOT_X86_64,
             "--platform-runtime", $env:SIMA_WINDOWS_PLATFORM_RUNTIME_DIR,
+            "--platform-include", $env:SIMA_WINDOWS_PLATFORM_INCLUDE_DIR,
             "--python-wheelhouse", $env:SIMA_WINDOWS_PYTHON_WHEELHOUSE,
             "--scheduler-candidate", "$env:RUNNER_TEMP\core-windows-dependencies\scheduler",
             "--work", "$env:RUNNER_TEMP\core-windows-build",
@@ -650,7 +653,7 @@ jobs:
           if-no-files-found: error
           retention-days: 14
   publish:
-    name: Publish qualified Windows cohort
+    name: Publish qualified Windows cohort to core/3.0
     needs: [hardware, linux_release]
     if: inputs.validation_only != true && needs.hardware.result == 'success' && needs.linux_release.result == 'success'
     permissions:
@@ -661,7 +664,9 @@ jobs:
     with:
       environment_name: production
       artifact_namespace: core
-      source_branch: ${{ github.head_ref || github.ref_name }}
+      # The customer selector is a Platform compatibility channel, not the
+      # implementation branch name. The exact commit remains immutable below.
+      source_branch: "3.0"
       source_commit: ${{ github.sha }}
       artifact_folder: pciehost/windows/amd64
       artifact_pattern: core-pciehost-windows-amd64
