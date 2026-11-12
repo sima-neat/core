@@ -398,9 +398,13 @@ def verify_standard_user_process_activation(install_root: Path, python: Path,
                                             work: Path, evidence: Path) -> dict:
   """Run the installed diagnostics and Python API as a disposable standard user."""
   doctor = install_root / "bin" / "sima-pcie-host-doctor.cmd"
+  runner = install_root / "bin" / "sima-pcie-host-run.cmd"
   if not doctor.is_file():
     raise RuntimeError(f"installed Core MSI is missing its diagnostic: {doctor}")
+  if not runner.is_file():
+    raise RuntimeError(f"installed Core MSI is missing its launcher: {runner}")
   wrapper = work / "standard-user-activation.cmd"
+  run_log = work / "standard-user-activation.log"
   wrapper.write_text(
       "@echo off\n"
       "powershell.exe -NoLogo -NoProfile -NonInteractive -Command "
@@ -408,15 +412,19 @@ def verify_standard_user_process_activation(install_root: Path, python: Path,
       "$p=[Security.Principal.WindowsPrincipal]::new($i); "
       "if($p.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)){exit 97}\"\n"
       "if errorlevel 1 exit /b %errorlevel%\n"
-      f'call "{doctor}"\n'
-      "if errorlevel 1 exit /b %errorlevel%\n"
-      f'"{python}" -c "import pyneatpcie as p; assert p.Model and p.Runtime and p.Tensor"\n'
-      "exit /b %errorlevel%\n",
+      f'call "{doctor}" > "{run_log}" 2>&1\n'
+      "if errorlevel 1 exit /b 98\n"
+      f'call "{runner}" "{python}" -c "import pyneatpcie as p; '
+      'assert p.Model and p.Runtime and p.Tensor" '
+      f'>> "{run_log}" 2>&1\n'
+      "if errorlevel 1 exit /b 99\n"
+      "exit /b 0\n",
       encoding="utf-8",
   )
   script = r"""
 $ErrorActionPreference = 'Stop'
 $name = 'sna-' + $PID
+$profilePath = Join-Path $env:SystemDrive "Users\$name"
 $bytes = New-Object byte[] 32
 $rng = [Security.Cryptography.RandomNumberGenerator]::Create()
 $rng.GetBytes($bytes)
@@ -432,15 +440,76 @@ try {
   $admin = @(Get-LocalGroupMember -Group 'Administrators' -ErrorAction Stop |
     Where-Object { $_.SID -eq $user.SID }).Count -ne 0
   if ($admin) { throw 'temporary acceptance user unexpectedly belongs to Administrators' }
+  & net.exe user $name /passwordreq:yes | Out-Null
+  if ($LASTEXITCODE -ne 0) { throw "could not require the temporary password: $LASTEXITCODE" }
   & icacls.exe $env:SIMA_STANDARD_USER_WORK /grant "${account}:(OI)(CI)(M)" /T /Q | Out-Null
   if ($LASTEXITCODE -ne 0) { throw "icacls failed: $LASTEXITCODE" }
-  $credential = [Management.Automation.PSCredential]::new($account, $secure)
-  $process = Start-Process -FilePath $env:ComSpec `
-    -ArgumentList @('/d', '/c', $env:SIMA_STANDARD_USER_WRAPPER) `
-    -Credential $credential -LoadUserProfile -Wait -PassThru `
-    -RedirectStandardOutput $env:SIMA_STANDARD_USER_STDOUT `
-    -RedirectStandardError $env:SIMA_STANDARD_USER_STDERR
-  if ($process.ExitCode -ne 0) { throw "standard-user activation failed: $($process.ExitCode)" }
+  Add-Type -TypeDefinition @'
+using System;
+using System.ComponentModel;
+using System.Runtime.InteropServices;
+using System.Text;
+public static class SimaStandardUserProcess {
+  [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+  public struct StartupInfo {
+    public int cb; public string reserved; public string desktop; public string title;
+    public int x; public int y; public int xSize; public int ySize;
+    public int xCountChars; public int yCountChars; public int fillAttribute;
+    public int flags; public short showWindow; public short reserved2;
+    public IntPtr reserved2Pointer; public IntPtr standardInput;
+    public IntPtr standardOutput; public IntPtr standardError;
+  }
+  [StructLayout(LayoutKind.Sequential)]
+  public struct ProcessInformation {
+    public IntPtr process; public IntPtr thread; public int processId; public int threadId;
+  }
+  [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+  static extern bool CreateProcessWithLogonW(string user, string domain, string password,
+    int logonFlags, string application, StringBuilder command, int creationFlags,
+    IntPtr environment, string currentDirectory, ref StartupInfo startup,
+    out ProcessInformation process);
+  [DllImport("kernel32.dll", SetLastError = true)] static extern uint WaitForSingleObject(
+    IntPtr handle, uint milliseconds);
+  [DllImport("kernel32.dll", SetLastError = true)] static extern bool GetExitCodeProcess(
+    IntPtr process, out uint exitCode);
+  [DllImport("kernel32.dll", SetLastError = true)] static extern bool TerminateProcess(
+    IntPtr process, uint exitCode);
+  [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr handle);
+  public static uint Run(string user, string domain, string password, string application,
+                         string arguments, string currentDirectory) {
+    var startup = new StartupInfo(); startup.cb = Marshal.SizeOf(startup);
+    ProcessInformation process;
+    var command = new StringBuilder("\"" + application + "\" " + arguments);
+    if (!CreateProcessWithLogonW(user, domain, password, 1, application, command,
+        0x08000000, IntPtr.Zero, currentDirectory, ref startup, out process))
+      throw new Win32Exception(Marshal.GetLastWin32Error());
+    try {
+      uint wait = WaitForSingleObject(process.process, 300000);
+      if (wait == 258) {
+        TerminateProcess(process.process, 124);
+        WaitForSingleObject(process.process, 10000);
+        throw new TimeoutException("standard-user process timed out");
+      }
+      if (wait != 0) throw new Win32Exception(Marshal.GetLastWin32Error());
+      uint exitCode;
+      if (!GetExitCodeProcess(process.process, out exitCode))
+        throw new Win32Exception(Marshal.GetLastWin32Error());
+      return exitCode;
+    } finally { CloseHandle(process.thread); CloseHandle(process.process); }
+  }
+}
+'@
+  $arguments = '/d /c ""' + $env:SIMA_STANDARD_USER_WRAPPER + '""'
+  $exitCode = [SimaStandardUserProcess]::Run(
+    $name, $env:COMPUTERNAME, $plain, $env:ComSpec, $arguments,
+    $env:SIMA_STANDARD_USER_WORK)
+  if ($exitCode -ne 0) {
+    $runLog = Join-Path $env:SIMA_STANDARD_USER_WORK 'standard-user-activation.log'
+    $details = if (Test-Path -LiteralPath $runLog) {
+      Get-Content -LiteralPath $runLog -Raw
+    } else { 'no standard-user process log' }
+    throw "standard-user activation failed: $exitCode`n$details"
+  }
   [pscustomobject]@{
     account = $account
     is_administrator = $false
@@ -448,13 +517,32 @@ try {
     python = 'PASS'
   } | ConvertTo-Json -Compress
 } finally {
-  if ($created) { Remove-LocalUser -Name $name -ErrorAction Stop }
+  if ($created) {
+    $profileWaitDeadline = [DateTime]::UtcNow.AddSeconds(5)
+    do {
+      $profile = Get-CimInstance Win32_UserProfile -ErrorAction SilentlyContinue |
+        Where-Object { $_.SID -eq [string]$user.SID } | Select-Object -First 1
+      if ($profile -and $profile.Loaded) { Start-Sleep -Milliseconds 250 }
+    } while ($profile -and $profile.Loaded -and
+             [DateTime]::UtcNow -lt $profileWaitDeadline)
+    if ($profile -and $profile.Loaded) {
+      & reg.exe unload "HKU\$([string]$user.SID)" | Out-Null
+      if ($LASTEXITCODE -ne 0) { throw 'temporary user registry hive remained loaded' }
+      $profile = Get-CimInstance Win32_UserProfile -ErrorAction SilentlyContinue |
+        Where-Object { $_.SID -eq [string]$user.SID } | Select-Object -First 1
+    }
+    if ($profile -and $profile.Loaded) { throw 'temporary user profile remained loaded' }
+    if ($profile) { Remove-CimInstance -InputObject $profile -ErrorAction Stop }
+    Remove-LocalUser -Name $name -ErrorAction Stop
+    $profileDeadline = [DateTime]::UtcNow.AddSeconds(30)
+    while ((Test-Path -LiteralPath $profilePath) -and
+           [DateTime]::UtcNow -lt $profileDeadline) { Start-Sleep -Milliseconds 250 }
+    if (Test-Path -LiteralPath $profilePath) { throw 'temporary user profile was not removed' }
+  }
 }
 """
   environment = os.environ.copy()
   environment.update({
-      "SIMA_STANDARD_USER_STDERR": str(evidence / "standard-user-stderr.log"),
-      "SIMA_STANDARD_USER_STDOUT": str(evidence / "standard-user-stdout.log"),
       "SIMA_STANDARD_USER_WORK": str(work),
       "SIMA_STANDARD_USER_WRAPPER": str(wrapper),
   })
