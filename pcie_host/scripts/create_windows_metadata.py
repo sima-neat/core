@@ -50,9 +50,18 @@ def metadata(msi: Path, wheel: Path, version: str, branch: str, commit: str,
               ),
           },
           {
-              "name": "SiMa Platform Windows package",
-              "type": "windows-product",
-              "value": "SiMa.ai Windows Host Package",
+              "name": "SiMa Platform MLA driver",
+              "type": "windows-pnp-driver",
+              "value": "SiMa.ai MLA Device",
+              "version": platform_version,
+              "guidance": (
+                  f"Install SiMa Platform Windows package {platform_version}."
+              ),
+          },
+          {
+              "name": "SiMa Platform virtual Ethernet driver",
+              "type": "windows-pnp-driver",
+              "value": "SiMa.ai Virtual Ethernet Adapter",
               "version": platform_version,
               "guidance": (
                   f"Install SiMa Platform Windows package {platform_version}."

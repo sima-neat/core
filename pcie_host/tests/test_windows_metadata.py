@@ -58,10 +58,15 @@ class WindowsMetadataTests(unittest.TestCase):
         "SiMaMlaDaemon",
         [item.get("value") for item in prerequisites],
     )
-    platform = next(
-        item for item in prerequisites if item["name"] == "SiMa Platform Windows package")
-    self.assertEqual(platform["version"], "3.0.0.2")
-    self.assertEqual(platform["type"], "windows-product")
+    platform_drivers = [
+        item for item in prerequisites if item["type"] == "windows-pnp-driver"
+    ]
+    self.assertEqual(
+        [item["value"] for item in platform_drivers],
+        ["SiMa.ai MLA Device", "SiMa.ai Virtual Ethernet Adapter"],
+    )
+    self.assertEqual(
+        {item["version"] for item in platform_drivers}, {"3.0.0.2"})
     gstreamer = prerequisites[-1]
     self.assertEqual(gstreamer["type"], "command-version")
     self.assertEqual(gstreamer["version"], "1.28.6")

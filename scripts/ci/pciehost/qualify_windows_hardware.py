@@ -149,14 +149,13 @@ def verify_dependency_cohort(candidate, platform_runtime: Path, gstreamer_root: 
   if result.returncode != 0:
     raise RuntimeError("could not read the hardware runner's GStreamer version")
   platform_script = r"""
-$paths = @(
-  'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*',
-  'HKLM:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*'
-)
-$matches = @(Get-ItemProperty $paths -ErrorAction SilentlyContinue |
-  Where-Object { $_.DisplayName -eq 'SiMa.ai Windows Host Package' })
-if ($matches.Count -ne 1 -or -not $matches[0].DisplayVersion) { exit 3 }
-[Console]::Out.Write([string]$matches[0].DisplayVersion)
+$names = @('SiMa.ai MLA Device', 'SiMa.ai Virtual Ethernet Adapter')
+$matches = @(Get-CimInstance Win32_PnPSignedDriver -ErrorAction SilentlyContinue |
+  Where-Object { $_.DeviceName -in $names })
+if ($matches.Count -ne $names.Count) { exit 3 }
+$versions = @($matches | Select-Object -ExpandProperty DriverVersion -Unique)
+if ($versions.Count -ne 1 -or -not $versions[0]) { exit 4 }
+[Console]::Out.Write([string]$versions[0])
 """
   platform_result = subprocess.run(
       ["powershell.exe", "-NoLogo", "-NoProfile", "-NonInteractive",
@@ -164,7 +163,7 @@ if ($matches.Count -ne 1 -or -not $matches[0].DisplayVersion) { exit 3 }
       stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=60,
       check=False)
   if platform_result.returncode != 0 or not platform_result.stdout.strip():
-    raise RuntimeError("could not read the installed SiMa Platform package version")
+    raise RuntimeError("could not read a single active SiMa Platform driver version")
   actual = {
       "platform_version": platform_result.stdout.strip(),
       "gstreamer": {
