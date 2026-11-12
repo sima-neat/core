@@ -35,7 +35,6 @@ def plan(runners=None, **kwargs):
 @pytest.mark.parametrize('count', range(1, 10))
 def test_adapts_to_capacity_and_preserves_every_lane(count):
     p = plan([runner(i) for i in range(count)])
-    assert len(p['shards']) <= 7
     assert sorted(t for s in p['shards'] for t in s['tasks']) == sorted(planner.LANES)
     assert all('rtsp' not in s['labels'] for s in p['shards'])
     assert len({s['candidate'] for s in p['shards']}) == min(count, 7)
@@ -57,7 +56,9 @@ def test_weekly_streams_use_the_default_pool_without_rtsp_runners(profile):
     p = plan(weekly=True, stream_profile=profile)
     stream = next(s for s in p['shards'] if 'streams' in s['tasks'])
     assert stream['pool'] == 'default'
-    assert len(p['shards']) <= 7
+    assert sum(s['pool'] == 'default' for s in p['shards']) == 6
+    assert sum(s['pool'] == 'llm-16gb' for s in p['shards']) == 2
+    assert len({s['candidate'] for s in p['shards']}) == 8
     assert all('rtsp' not in s['labels'] for s in p['shards'])
 
 

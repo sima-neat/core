@@ -12,6 +12,8 @@ from urllib.request import Request, urlopen
 # Seconds from successful develop run 40626198772. Setup is per worker.
 LANES = {"fast": 230, "e2e-0": 257, "e2e-1": 257,
          "genai": 129, "genai-python": 100, "performance": 276, "python-tutorials": 310}
+MAX_GENERAL_SHARDS = 6
+MAX_GENAI_SHARDS = 2
 
 def collect(get, path, key):
     result = []
@@ -73,13 +75,14 @@ def task_pool(task):
 def validate_plan(plan):
     shards = plan["shards"]
     expected = expected_lanes(plan.get("weekly", False))
-    if not 1 <= len(shards) <= 7:
-        raise ValueError("Expected one to seven DevKit shards")
+    maximum_shards = MAX_GENERAL_SHARDS + MAX_GENAI_SHARDS
+    if not 1 <= len(shards) <= maximum_shards:
+        raise ValueError(f"Expected 1 to {maximum_shards} DevKit shards")
     if len({s["id"] for s in shards}) != len(shards):
         raise ValueError("Duplicate shard IDs")
     if Counter(t for s in shards for t in s["tasks"]) != Counter(expected.keys()):
         raise ValueError("Every canonical lane must be assigned exactly once")
-    for pool, maximum in (("default", 5), ("llm-16gb", 2)):
+    for pool, maximum in (("default", MAX_GENERAL_SHARDS), ("llm-16gb", MAX_GENAI_SHARDS)):
         if sum(s["pool"] == pool for s in shards) > maximum:
             raise ValueError("Capability pool exceeds its fleet cap")
     for shard in shards:
@@ -95,10 +98,10 @@ def validate_plan(plan):
             raise ValueError("DevKit selectors must not require the legacy RTSP label")
 
 
-def make_plan(runners, required, sha, maximum=5, plan_id="local", *, weekly=False,
+def make_plan(runners, required, sha, maximum=MAX_GENERAL_SHARDS, plan_id="local", *, weekly=False,
               stream_profile="http", excluded_names=()):
-    if not 1 <= maximum <= 5:
-        raise ValueError("Default fleet cap must be one to five")
+    if not 1 <= maximum <= MAX_GENERAL_SHARDS:
+        raise ValueError(f"Default fleet cap must be 1 to {MAX_GENERAL_SHARDS}")
     if weekly and stream_profile not in ("none", "http", "all"):
         raise ValueError("Unknown stream capability profile")
     required = {x.casefold() for x in required}
@@ -108,7 +111,7 @@ def make_plan(runners, required, sha, maximum=5, plan_id="local", *, weekly=Fals
     excluded = [r for r in runners if r["name"].casefold() in {x.casefold() for x in excluded_names}]
     shards, reserved = [], set()
     # Admit scarce memory-specific workers first. Count each candidate once.
-    for pool, limit in (("llm-16gb", 2), ("default", maximum)):
+    for pool, limit in (("llm-16gb", MAX_GENAI_SHARDS), ("default", maximum)):
         tasks = {t: w for t, w in expected.items() if task_pool(t) == pool}
         if not tasks:
             continue
