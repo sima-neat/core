@@ -19,6 +19,11 @@ on:
         required: false
         default: false
         type: boolean
+      stream_profile:
+        description: "Weekly DevKit media fixtures (none, http, or all)"
+        required: false
+        default: http
+        type: string
       validation_only:
         description: "Validate a standard build without publishing or promoting its artifacts"
         required: false
@@ -54,6 +59,15 @@ on:
         required: false
         default: false
         type: boolean
+      stream_profile:
+        description: "Weekly DevKit media fixtures"
+        required: false
+        default: http
+        type: choice
+        options:
+          - none
+          - http
+          - all
       validation_only:
         description: "Validate a standard build without publishing or promoting its artifacts"
         required: false
@@ -872,7 +886,7 @@ jobs:
           RUNNER_GROUP: ${{ needs.resolve-test-runner.outputs.modalix_runner_group }}
           REQUIRED_LABELS: ${{ needs.resolve-test-runner.outputs.runner_labels }}
           RUN_LONG_TESTS: ${{ inputs.run_long_tests && 'true' || 'false' }}
-          STREAM_PROFILE: ${{ vars.NEAT_CI_STREAM_PROFILE || 'http' }}
+          STREAM_PROFILE: ${{ inputs.stream_profile || 'http' }}
           CORE_UNREADY_RUNNERS: ${{ vars.CORE_UNREADY_RUNNERS || '[]' }}
         run: python3 tools/ci/plan_devkit_shards.py --group "$RUNNER_GROUP" --labels "$REQUIRED_LABELS"
       - uses: actions/upload-artifact@v4
@@ -1331,28 +1345,11 @@ jobs:
         if: ${{ contains(fromJSON(matrix.tasks), 'e2e-0') }}
         env:
           SIMA_YOLOV8_VARIANTS_BASE_URL: https://docs.sima.ai/pkg_downloads/SDK2.0.0/models/modalix
-          SIMANEAT_TEST_RTSP_H264_URL: ${{ vars.SIMANEAT_TEST_RTSP_H264_URL }}
-          SIMANEAT_TEST_RTSP_H264_URLS: ${{ vars.SIMANEAT_TEST_RTSP_H264_URLS }}
-          SIMANEAT_TEST_RTSP_H265_URL: ${{ vars.SIMANEAT_TEST_RTSP_H265_URL }}
-          SIMANEAT_TEST_RTSP_H265_URLS: ${{ vars.SIMANEAT_TEST_RTSP_H265_URLS }}
-          SIMANEAT_TEST_RTSP_MJPEG_URL: ${{ vars.SIMANEAT_TEST_RTSP_MJPEG_URL }}
-          SIMANEAT_TEST_RTSP_MJPEG_URLS: ${{ vars.SIMANEAT_TEST_RTSP_MJPEG_URLS }}
-          SIMANEAT_TEST_RTSP_MJPEG_FPS: ${{ vars.SIMANEAT_TEST_RTSP_MJPEG_FPS }}
-          SIMANEAT_TEST_HTTP_MJPEG_URL: ${{ vars.SIMANEAT_TEST_HTTP_MJPEG_URL }}
-          SIMANEAT_TEST_HTTP_MJPEG_URLS: ${{ vars.SIMANEAT_TEST_HTTP_MJPEG_URLS }}
-          SIMANEAT_TEST_HTTP_MJPEG_FPS: ${{ vars.SIMANEAT_TEST_HTTP_MJPEG_FPS }}
           SIMA_NEAT_TEST_USB_CAMERA: ${{ vars.SIMA_NEAT_TEST_USB_CAMERA }}
           SIMA_CTEST_TAIL_ONLY: "0"
           SIMA_CTEST_E2E_JOBS: "1"
         run: |
           set -x
-          # Temporary external RTSP pause until runner connectivity is restored: core#890.
-          # Restore the H.265 URL prerequisite check when removing this pause.
-          # Keep HTTP cases in the mixed codec tests enabled by clearing only RTSP URLs.
-          unset SIMANEAT_TEST_RTSP_H264_URL SIMANEAT_TEST_RTSP_H264_URLS \
-            SIMANEAT_TEST_RTSP_H265_URL SIMANEAT_TEST_RTSP_H265_URLS \
-            SIMANEAT_TEST_RTSP_MJPEG_URL SIMANEAT_TEST_RTSP_MJPEG_URLS
-          echo "External streams have separate explicit capability-profile accounting; core#890 gaps remain."
           TEST_DIR="$(cat _work/extras_lib_dir.txt)/tests"
           MPK_ROOT="${RUNNER_TEMP:-/tmp}/sima-mpk-${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-0}-${GITHUB_JOB:-test}"
           mkdir -p "${MPK_ROOT}"
@@ -1400,28 +1397,11 @@ jobs:
         if: ${{ contains(fromJSON(matrix.tasks), 'e2e-1') }}
         env:
           SIMA_YOLOV8_VARIANTS_BASE_URL: https://docs.sima.ai/pkg_downloads/SDK2.0.0/models/modalix
-          SIMANEAT_TEST_RTSP_H264_URL: ${{ vars.SIMANEAT_TEST_RTSP_H264_URL }}
-          SIMANEAT_TEST_RTSP_H264_URLS: ${{ vars.SIMANEAT_TEST_RTSP_H264_URLS }}
-          SIMANEAT_TEST_RTSP_H265_URL: ${{ vars.SIMANEAT_TEST_RTSP_H265_URL }}
-          SIMANEAT_TEST_RTSP_H265_URLS: ${{ vars.SIMANEAT_TEST_RTSP_H265_URLS }}
-          SIMANEAT_TEST_RTSP_MJPEG_URL: ${{ vars.SIMANEAT_TEST_RTSP_MJPEG_URL }}
-          SIMANEAT_TEST_RTSP_MJPEG_URLS: ${{ vars.SIMANEAT_TEST_RTSP_MJPEG_URLS }}
-          SIMANEAT_TEST_RTSP_MJPEG_FPS: ${{ vars.SIMANEAT_TEST_RTSP_MJPEG_FPS }}
-          SIMANEAT_TEST_HTTP_MJPEG_URL: ${{ vars.SIMANEAT_TEST_HTTP_MJPEG_URL }}
-          SIMANEAT_TEST_HTTP_MJPEG_URLS: ${{ vars.SIMANEAT_TEST_HTTP_MJPEG_URLS }}
-          SIMANEAT_TEST_HTTP_MJPEG_FPS: ${{ vars.SIMANEAT_TEST_HTTP_MJPEG_FPS }}
           SIMA_NEAT_TEST_USB_CAMERA: ${{ vars.SIMA_NEAT_TEST_USB_CAMERA }}
           SIMA_CTEST_TAIL_ONLY: "0"
           SIMA_CTEST_E2E_JOBS: "1"
         run: |
           set -x
-          # Temporary external RTSP pause until runner connectivity is restored: core#890.
-          # Restore the H.265 URL prerequisite check when removing this pause.
-          # Keep HTTP cases in the mixed codec tests enabled by clearing only RTSP URLs.
-          unset SIMANEAT_TEST_RTSP_H264_URL SIMANEAT_TEST_RTSP_H264_URLS \
-            SIMANEAT_TEST_RTSP_H265_URL SIMANEAT_TEST_RTSP_H265_URLS \
-            SIMANEAT_TEST_RTSP_MJPEG_URL SIMANEAT_TEST_RTSP_MJPEG_URLS
-          echo "External streams have separate explicit capability-profile accounting; core#890 gaps remain."
           TEST_DIR="$(cat _work/extras_lib_dir.txt)/tests"
           MPK_ROOT="${RUNNER_TEMP:-/tmp}/sima-mpk-${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-0}-${GITHUB_JOB:-test}"
           mkdir -p "${MPK_ROOT}"
@@ -1465,22 +1445,16 @@ jobs:
               --no-tests=error
           fi
 
+      - name: Set up Colo media fixtures
+        if: ${{ inputs.run_long_tests && contains(fromJSON(matrix.tasks), 'streams') }}
+        uses: sima-neat/.github/actions/setup-colo-media-fixtures@8f11c3a93287b459aa87f6353a6428893bb0d355 # .github PR 180
+        with:
+          profile: ${{ inputs.stream_profile || 'http' }}
+
       - name: Run declared weekly stream capability profile
         if: ${{ inputs.run_long_tests && contains(fromJSON(matrix.tasks), 'streams') }}
         env:
-          NEAT_CI_STREAM_PROFILE: ${{ vars.NEAT_CI_STREAM_PROFILE || 'http' }}
-          SIMANEAT_TEST_RTSP_H264_URL: ${{ vars.SIMANEAT_TEST_RTSP_H264_URL }}
-          SIMANEAT_TEST_RTSP_H264_URLS: ${{ vars.SIMANEAT_TEST_RTSP_H264_URLS }}
-          SIMANEAT_TEST_RTSP_H264_FPS: ${{ vars.SIMANEAT_TEST_RTSP_H264_FPS }}
-          SIMANEAT_TEST_RTSP_H265_URL: ${{ vars.SIMANEAT_TEST_RTSP_H265_URL }}
-          SIMANEAT_TEST_RTSP_H265_URLS: ${{ vars.SIMANEAT_TEST_RTSP_H265_URLS }}
-          SIMANEAT_TEST_RTSP_H265_FPS: ${{ vars.SIMANEAT_TEST_RTSP_H265_FPS }}
-          SIMANEAT_TEST_RTSP_MJPEG_URL: ${{ vars.SIMANEAT_TEST_RTSP_MJPEG_URL }}
-          SIMANEAT_TEST_RTSP_MJPEG_URLS: ${{ vars.SIMANEAT_TEST_RTSP_MJPEG_URLS }}
-          SIMANEAT_TEST_RTSP_MJPEG_FPS: ${{ vars.SIMANEAT_TEST_RTSP_MJPEG_FPS }}
-          SIMANEAT_TEST_HTTP_MJPEG_URL: ${{ vars.SIMANEAT_TEST_HTTP_MJPEG_URL }}
-          SIMANEAT_TEST_HTTP_MJPEG_URLS: ${{ vars.SIMANEAT_TEST_HTTP_MJPEG_URLS }}
-          SIMANEAT_TEST_HTTP_MJPEG_FPS: ${{ vars.SIMANEAT_TEST_HTTP_MJPEG_FPS }}
+          NEAT_CI_STREAM_PROFILE: ${{ inputs.stream_profile || 'http' }}
         run: |
           # These cases used to share aggregate IDs that could PASS after only
           # one available stream. Keep omitted transport coverage explicit.
@@ -1615,11 +1589,6 @@ jobs:
 
       - name: Run Tutorial Tests
         if: ${{ contains(fromJSON(matrix.tasks), 'python-tutorials') }}
-        env:
-          SIMANEAT_TEST_RTSP_H264_URL: ${{ vars.SIMANEAT_TEST_RTSP_H264_URL }}
-          SIMANEAT_TEST_RTSP_H264_URLS: ${{ vars.SIMANEAT_TEST_RTSP_H264_URLS }}
-          SIMANEAT_TEST_RTSP_H265_URL: ${{ vars.SIMANEAT_TEST_RTSP_H265_URL }}
-          SIMANEAT_TEST_RTSP_H265_URLS: ${{ vars.SIMANEAT_TEST_RTSP_H265_URLS }}
         run: |
           EXTRAS_PREFIX="$(cat _work/extras_prefix.txt)"
           TUTORIALS_BUILD_SH="${EXTRAS_PREFIX}/build.sh"
@@ -1657,10 +1626,6 @@ jobs:
           SIMA_NEAT_TEST_MIPI_CAMERA: ${{ vars.SIMA_NEAT_TEST_MIPI_CAMERA || '0' }}
           SIMA_NEAT_TUTORIAL_MODEL_MIPI: ${{ vars.SIMA_NEAT_TUTORIAL_MODEL_MIPI }}
           SIMA_NEAT_TUTORIAL_MIPI_DECODE: ${{ vars.SIMA_NEAT_TUTORIAL_MIPI_DECODE }}
-          SIMANEAT_TEST_RTSP_H264_URL: ${{ vars.SIMANEAT_TEST_RTSP_H264_URL }}
-          SIMANEAT_TEST_RTSP_H264_URLS: ${{ vars.SIMANEAT_TEST_RTSP_H264_URLS }}
-          SIMANEAT_TEST_RTSP_H265_URL: ${{ vars.SIMANEAT_TEST_RTSP_H265_URL }}
-          SIMANEAT_TEST_RTSP_H265_URLS: ${{ vars.SIMANEAT_TEST_RTSP_H265_URLS }}
         run: |
           PYNEAT_HOME="${HOME}/pyneat"
           if [[ -x "${PYNEAT_HOME}/bin/python" ]]; then

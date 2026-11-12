@@ -53,17 +53,12 @@ def test_standard_lanes_and_memory_admission():
 
 
 @pytest.mark.parametrize('profile', ('http', 'all', 'none'))
-def test_weekly_external_sources_only_use_rtsp_pool(profile):
-    runners = [runner(i) for i in range(9)] + [runner('rtsp', labels=('firmware', 'rtsp'))]
-    p = plan(runners, weekly=True, stream_profile=profile)
+def test_weekly_streams_use_the_default_pool_without_rtsp_runners(profile):
+    p = plan(weekly=True, stream_profile=profile)
     stream = next(s for s in p['shards'] if 'streams' in s['tasks'])
-    assert stream['pool'] == ('default' if profile == 'none' else 'rtsp')
-    for s in p['shards']:
-        if s['pool'] == 'rtsp': assert s['tasks'] == ['streams']
-    assert len(p['shards']) <= 8
-    if profile != 'none':
-        with pytest.raises(ValueError, match='rtsp'):
-            plan(weekly=True, stream_profile=profile)
+    assert stream['pool'] == 'default'
+    assert len(p['shards']) <= 7
+    assert all('rtsp' not in s['labels'] for s in p['shards'])
 
 
 def test_busy_fallback_exact_firmware_and_no_online_runner():
@@ -77,16 +72,11 @@ def test_busy_fallback_exact_firmware_and_no_online_runner():
         planner.make_plan([runner(1)], ['rtsp'], 'sha')
 
 
-@pytest.mark.parametrize('status', ('online', 'offline'))
-def test_regular_selector_cannot_match_any_rtsp_registration(status):
-    # Dropping rtsp from required labels is insufficient: the scheduler could
-    # still match a RTSP runner carrying a superset of all candidate labels.
-    blocked = runner('rtsp', status=status,
-                     labels=('firmware', 'regular-only', 'modalix-som-16gig', 'rtsp'))
-    with pytest.raises(ValueError, match='No safe online'):
-        plan([runner(1), blocked])
-    safe = runner(2, labels=('firmware', 'non-rtsp-pool', 'modalix-som-16gig'))
-    assert all(s['candidate'] == safe['name'] for s in plan([runner(1), blocked, safe])['shards'])
+def test_legacy_rtsp_runner_is_eligible_without_its_label():
+    legacy = runner(1, labels=('firmware', 'modalix-som-16gig', 'rtsp'))
+    p = plan([legacy], weekly=True, stream_profile='all')
+    assert {s['candidate'] for s in p['shards']} == {legacy['name']}
+    assert all('rtsp' not in s['labels'] for s in p['shards'])
 
 
 def test_unready_runner_exclusion_applies_to_full_selector():
@@ -176,7 +166,12 @@ def test_workflow_guards_and_reruns():
         assert {'plan-devkit-tests', 'test-devkit-shard', 'test-devkit'} <= set(jobs[gate]['needs'])
     assert 'test-devkit' in jobs['promote-latest-tag']['needs']
     steps = {s.get('name'): s for s in shard['steps']}
-    assert "'streams'" in steps['Run declared weekly stream capability profile']['if']
+    stream_test = steps['Run declared weekly stream capability profile']
+    media_setup = steps['Set up Colo media fixtures']
+    assert "'streams'" in stream_test['if']
+    assert media_setup['if'] == stream_test['if']
+    assert shard['steps'].index(media_setup) < shard['steps'].index(stream_test)
+    assert 'vars.SIMANEAT_TEST_' not in (ROOT / '.github/workflows/vulcan-ci.yml').read_text()
     assert "'genai-python'" in steps['Run Python GenAI E2E tests from installed extras']['if']
     assert "'genai-python'" in steps['Prepare GenAI models']['if']
     assert "'python-tutorials'" not in steps['Prepare GenAI models']['if']
@@ -250,6 +245,5 @@ def test_default_selectors_do_not_inherit_memory_or_appliance_labels():
     p = plan(runners)
     for shard in p['shards']:
         assert 'appliance-specific' not in shard['labels']
-        assert 'model-registry' in shard['labels']
+        assert 'rtsp' not in shard['labels']
         assert ('modalix-som-16gig' in shard['labels']) == (shard['pool'] == 'llm-16gb')
-        assert not set(shard['labels']) <= planner.label_set(runners[-1])

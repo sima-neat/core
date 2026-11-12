@@ -138,8 +138,10 @@ selection:
 | Python runtime | `NEAT_CI_PYTHON_PROFILE=runtime` (default) | Enables Graph Phase 3 with the prepared ResNet fixture; Torch is explicitly excluded. |
 | Torch integration | `NEAT_CI_PYTHON_PROFILE=torch` | Set reviewed exact `NEAT_CI_TORCH_VERSION`; installation/import must succeed. |
 | MIPI camera | `SIMA_NEAT_TEST_MIPI_CAMERA=1` | Provide camera hardware, `SIMA_NEAT_TUTORIAL_MODEL_MIPI` and `SIMA_NEAT_TUTORIAL_MIPI_DECODE`. |
-| Weekly HTTP streams | `NEAT_CI_STREAM_PROFILE=http` (default) | Provide HTTP MJPEG URL(s) and positive FPS. Both HTTP cases and the synchronous smoke check remain required. |
-| Weekly HTTP + RTSP streams | `NEAT_CI_STREAM_PROFILE=all` | Also provide H264, H265 and MJPEG RTSP URL(s), plus positive MJPEG FPS. |
+| Weekly HTTP streams | `stream_profile: http` (default) | The Colo catalog provides HTTP MJPEG URLs and positive integer FPS. Both HTTP cases and the synchronous smoke check remain required. |
+| Weekly HTTP + RTSP streams | `stream_profile: all` | The catalog also provides H.264, H.265 and MJPEG RTSP URLs and positive integer MJPEG FPS. |
+
+The weekly stream job reads `/etc/colo-services.json` on its assigned DevKit to discover the catalog. Select `stream_profile: none` to omit stream cases.
 
 The hardware-free camera API test is always part of the runtime profile. Camera
 and Torch exclusions remain coverage gaps, not passes. Stream profiles cover the
