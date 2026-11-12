@@ -46,8 +46,9 @@ bool imports_model_input(const si::StageStaticSpec& stage) {
   if (!stage.frame_layout || stage.frame_layout->inputs.size() != 1U ||
       stage.physical_inputs.size() != 1U)
     return false;
-  const auto* input = std::get_if<client::DirectMemory>(&stage.frame_layout->inputs.front().source);
-  return input && input->pad == 0 && input->memory_index == 0 && input->byte_offset == 0 &&
+  const auto* input =
+      std::get_if<client::PhysicalBinding>(&stage.frame_layout->inputs.front().source);
+  return input && input->pad == 0 && input->binding_index == 0 && input->byte_offset == 0 &&
          input->size_bytes == stage.physical_inputs.front().size_bytes;
 }
 
