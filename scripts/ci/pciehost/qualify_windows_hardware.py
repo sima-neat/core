@@ -518,6 +518,7 @@ public static class SimaStandardUserProcess {
   } | ConvertTo-Json -Compress
 } finally {
   if ($created) {
+    $cleanupErrors = [Collections.Generic.List[string]]::new()
     $profileWaitDeadline = [DateTime]::UtcNow.AddSeconds(5)
     do {
       $profile = Get-CimInstance Win32_UserProfile -ErrorAction SilentlyContinue |
@@ -527,17 +528,29 @@ public static class SimaStandardUserProcess {
              [DateTime]::UtcNow -lt $profileWaitDeadline)
     if ($profile -and $profile.Loaded) {
       & reg.exe unload "HKU\$([string]$user.SID)" | Out-Null
-      if ($LASTEXITCODE -ne 0) { throw 'temporary user registry hive remained loaded' }
+      if ($LASTEXITCODE -ne 0) {
+        $cleanupErrors.Add('temporary user registry hive remained loaded')
+      }
       $profile = Get-CimInstance Win32_UserProfile -ErrorAction SilentlyContinue |
         Where-Object { $_.SID -eq [string]$user.SID } | Select-Object -First 1
     }
-    if ($profile -and $profile.Loaded) { throw 'temporary user profile remained loaded' }
-    if ($profile) { Remove-CimInstance -InputObject $profile -ErrorAction Stop }
-    Remove-LocalUser -Name $name -ErrorAction Stop
-    $profileDeadline = [DateTime]::UtcNow.AddSeconds(30)
-    while ((Test-Path -LiteralPath $profilePath) -and
-           [DateTime]::UtcNow -lt $profileDeadline) { Start-Sleep -Milliseconds 250 }
-    if (Test-Path -LiteralPath $profilePath) { throw 'temporary user profile was not removed' }
+    if ($profile -and $profile.Loaded) {
+      $cleanupErrors.Add('temporary user profile remained loaded')
+    } elseif ($profile) {
+      try { Remove-CimInstance -InputObject $profile -ErrorAction Stop }
+      catch { $cleanupErrors.Add("temporary user profile removal failed: $($_.Exception.Message)") }
+    }
+    try { Remove-LocalUser -Name $name -ErrorAction Stop }
+    catch { $cleanupErrors.Add("temporary user removal failed: $($_.Exception.Message)") }
+    if (-not ($profile -and $profile.Loaded)) {
+      $profileDeadline = [DateTime]::UtcNow.AddSeconds(30)
+      while ((Test-Path -LiteralPath $profilePath) -and
+             [DateTime]::UtcNow -lt $profileDeadline) { Start-Sleep -Milliseconds 250 }
+      if (Test-Path -LiteralPath $profilePath) {
+        $cleanupErrors.Add('temporary user profile was not removed')
+      }
+    }
+    if ($cleanupErrors.Count -ne 0) { throw ($cleanupErrors -join '; ') }
   }
 }
 """
