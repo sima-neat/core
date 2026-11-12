@@ -560,6 +560,93 @@ void detr_numerical_publication() {
   }
 }
 
+// MPK dense carriers can pad both heads to C16. Roles and numerical reads must
+// still use logical C4 boxes / C3 foreground-plus-background score slices.
+void detr_padded_numerical_publication() {
+  for (const std::string dtype : {"FP32", "BF16", "INT8"}) {
+    for (const bool reversed : {false, true}) {
+      auto request = source(BoxDecodeType::Detr, 2);
+      request.payload.topk = 2;
+      request.payload.score_activation = BoxDecodeScoreActivation::Softmax;
+      request.payload.detection_threshold = 0.1f;
+      request.payload.nms_iou_threshold = 0;
+      input(request, 1, 2, reversed ? 3 : 4, dtype);
+      input(request, 1, 2, reversed ? 4 : 3, dtype);
+      const std::size_t width = dtype == "FP32" ? 4 : dtype == "BF16" ? 2 : 1;
+      for (auto& logical : request.runtime_contract.logical_inputs) {
+        logical.shape.back() = 16;
+        logical.stride_bytes = {static_cast<std::int64_t>(32 * width),
+                                static_cast<std::int64_t>(16 * width),
+                                static_cast<std::int64_t>(width)};
+        logical.size_bytes = 32 * width;
+      }
+      const auto prepared = check(request, {640, 640, 1280, 720, ResizeMode::Stretch});
+      const auto& members = prepared.compiled.recipe->members;
+      const auto& numerical = members[prepared.decode_member].executable;
+      const auto& publication = members.back().executable;
+      const auto description = inspect(numerical);
+      std::vector<std::shared_ptr<HostStorage>> inputs, outputs;
+      std::vector<c::ConstBytes> in, public_inputs;
+      std::vector<c::MutableBytes> out;
+      for (std::size_t port = 0; port < description.input_requirements().size(); ++port) {
+        const std::size_t bytes = request.runtime_contract.logical_inputs[port].size_bytes;
+        require(bytes >= description.input_requirements()[port].storage_bytes,
+                "padded classic DETR carrier is shorter than the checked span");
+        inputs.push_back(std::make_shared<HostStorage>(bytes));
+        auto* data = static_cast<std::byte*>(inputs.back()->memory.get());
+        in.push_back({data, bytes});
+        const int channels = request.payload.slice_shapes[port].sizes[2];
+        for (std::size_t query = 0; query < 2; ++query) {
+          for (int channel = 0; channel < 16; ++channel) {
+            // Exactly zero logical logits in every dtype; nonzero padding must
+            // affect neither sigmoid boxes nor the Softmax denominator.
+            const bool padding = channel >= channels;
+            const auto offset = (query * 16 + channel) * width;
+            if (dtype == "FP32") {
+              const float value = padding ? 100.f : 0.f;
+              std::memcpy(data + offset, &value, sizeof(value));
+            } else if (dtype == "BF16") {
+              const std::uint16_t value = padding ? 0x42c8 : 0; // BF16 100 / 0.
+              std::memcpy(data + offset, &value, sizeof(value));
+            } else {
+              const std::int8_t value = padding ? 100 : -3; // Authored zero point.
+              std::memcpy(data + offset, &value, sizeof(value));
+            }
+          }
+        }
+      }
+      for (const auto& req : description.output_requirements()) {
+        outputs.push_back(std::make_shared<HostStorage>(req.storage_bytes));
+        auto* data = static_cast<std::byte*>(outputs.back()->memory.get());
+        out.push_back({data, req.storage_bytes});
+        public_inputs.push_back({data, req.storage_bytes});
+      }
+      test::OperationProbe executor, publisher;
+      require(!executor.prepare(numerical) && !publisher.prepare(publication),
+              "padded classic DETR numerical/publication preparation failed");
+      require(!executor.execute_host(executor.operation(), in, out),
+              "padded classic DETR numerical execution failed");
+      const auto bytes = inspect(publication).output_requirements()[0].storage_bytes;
+      HostStorage wire(bytes);
+      const std::array<c::MutableBytes, 1> published{
+          {{static_cast<std::byte*>(wire.memory.get()), bytes}}};
+      require(!publisher.execute_host(publisher.operation(), public_inputs, published),
+              "padded classic DETR publication failed");
+      require(wire.read<std::int32_t>(0) == 2, "padded classic DETR lost a query");
+      for (int row = 0; row < 2; ++row) {
+        const std::size_t offset = 4 + row * 24;
+        require(wire.read<std::int32_t>(offset) == 320 &&
+                    wire.read<std::int32_t>(offset + 4) == 180 &&
+                    wire.read<std::int32_t>(offset + 8) == 640 &&
+                    wire.read<std::int32_t>(offset + 12) == 360 &&
+                    wire.read<std::int32_t>(offset + 20) == 0 &&
+                    std::abs(wire.read<float>(offset + 16) - 1.f / 3.f) < 2e-6f,
+                "padded classic DETR must use logical roles and ignore padding values");
+      }
+    }
+  }
+}
+
 void yolo26_direct_mask_projection() {
   auto s = source(BoxDecodeType::YoloV26Seg, 1);
   s.payload.nms_iou_threshold = 0.;
@@ -1699,6 +1786,7 @@ int main(int argc, char** argv) {
     detr_default_resolution();
     detr_source_dtypes();
     detr_numerical_publication();
+    detr_padded_numerical_publication();
     families();
     oriented_contract_and_execution();
     oriented_carrier_conversions();
