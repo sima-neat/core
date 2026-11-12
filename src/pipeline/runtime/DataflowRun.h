@@ -6,8 +6,8 @@
 // The Dataflow backend's Run state (H0 plan 3.7). RunCore holds one in `dataflow_` for a Run that
 // Graph::build() put on the Neat Dataflow runtime (RunOptions::backend), and every public Run entry
 // branches to it before it reads any GStreamer state. The interface uses Core types only; the
-// implementation (DataflowRun.cpp) is the only place that holds runtime objects, and it exists only
-// in builds configured with SIMANEAT_DATAFLOW_SOURCE_DIR.
+// implementation (DataflowRun.cpp and its DataflowInputPort) holds the runtime objects, and it
+// exists only in builds configured with SIMANEAT_DATAFLOW_SOURCE_DIR.
 
 #include "nodes/common/Output.h"
 #include "nodes/io/Input.h"
@@ -19,6 +19,7 @@
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -116,12 +117,21 @@ struct DataflowRunConfig {
   std::string label;                     ///< the graph, for messages
 };
 
+// "[a, b]": endpoint names in messages.
+inline std::string dataflow_names_text(const std::vector<std::string>& names) {
+  std::string out = "[";
+  for (std::size_t i = 0; i < names.size(); ++i) {
+    out += (i == 0 ? "" : ", ") + names[i];
+  }
+  return out + "]";
+}
+
 // Builds the Run state. A seed binds the (one) input's spec now (one tensor: a leaf; several: a
 // record); without one, each input whose declaration (an image, or a declared shape) gives its
 // spec binds now and every other input binds at its own first push. Throws NeatError on a compile
 // error.
 std::unique_ptr<DataflowRunState> make_dataflow_run_state(RunCore& core, DataflowRunConfig config,
-                                                          const TensorList& seed);
+                                                          std::span<const Tensor> seed);
 
 #pragma GCC visibility pop
 

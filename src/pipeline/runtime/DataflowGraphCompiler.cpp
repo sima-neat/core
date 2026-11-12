@@ -1,186 +1,35 @@
-// The Dataflow backend's compiler (H0 plan 3.4, 3.6; H0 step 10, H0c): RunOptions::backend and
-// SIMA_NEAT_BACKEND decide the runtime of a Graph::build(). A qualifying graph has public Inputs
-// and Outputs only, each Output fed by exactly one Input, after the public boundaries inside it are
-// elided as compile_public_graph elides them. Each Input becomes one Feed with one link per Output
-// it feeds (a fan-out when there are several) and one Fetch per Output, on a Session of its own, in
-// one Run state (DataflowRun.cpp). Everything else (fan-in and combine, operators, device memory)
-// stays on GStreamer, or fails loudly when RunBackend::Dataflow was asked for explicitly.
+// The Dataflow backend's graph compiler (H0 plan 3.4, 3.6; H0 step 10, H0c): whether a graph
+// qualifies for Dataflow and, when it does, its Run configuration. A qualifying graph has public
+// Inputs and Outputs only, each Output fed by exactly one Input, after the public boundaries
+// inside it are elided as compile_public_graph elides them. Each Input becomes one Feed with one
+// link per Output it feeds (a fan-out when there are several) and one Fetch per Output, on a
+// Session of its own (DataflowInputPort.cpp), in one Run state (DataflowRun.cpp). Everything else
+// (fan-in and combine, operators, device memory) is declined (DataflowBackendSelect.cpp). Here:
+// qualification, endpoint names, and the mapping of RunOptions and OutputOptions to link depths
+// and policies.
 
 #include "pipeline/runtime/DataflowGraphCompiler.h"
 
 #include "pipeline/ErrorCodes.h"
 #include "pipeline/Graph.h"
 #include "pipeline/graph/internal/GraphBuildInternal.h"
-#include "pipeline/internal/EnvUtil.h"
-#include "pipeline/internal/ErrorUtil.h"
 #include "pipeline/internal/InputStreamUtil.h"
 #include "pipeline/internal/PublicInputContract.h"
-#include "pipeline/internal/SampleProjection.h"
 #include "pipeline/runtime/RunCore.h"
 
 #if defined(SIMANEAT_WITH_DATAFLOW)
-#include "pipeline/internal/DataflowErrorMap.h"
+#include "pipeline/internal/DataflowRuntime.h"
 #endif
 
 #include <algorithm>
-#include <array>
-#include <cctype>
 #include <cstdint>
-#include <cstdio>
 #include <functional>
-#include <mutex>
 #include <set>
-#include <span>
 #include <string>
-#include <string_view>
 #include <utility>
 #include <vector>
 
-#if defined(SIMA_WITH_OPENCV)
-#include <opencv2/core/mat.hpp>
-#endif
-
 namespace simaai::neat::runtime {
-
-namespace {
-
-constexpr const char* kBackendEnv = "SIMA_NEAT_BACKEND";
-
-std::string lower(std::string value) {
-  std::transform(value.begin(), value.end(), value.begin(),
-                 [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-  return value;
-}
-
-// SIMA_NEAT_BACKEND, read at every Graph::build so a test can set it per run.
-std::string backend_env() {
-  return lower(pipeline_internal::env_str(kBackendEnv, ""));
-}
-
-// One stderr line per process and key: the options Dataflow ignores, and an unknown env value.
-void warn_once(const std::string& key, const std::string& message) {
-  static std::mutex mu;
-  static std::set<std::string> seen;
-  {
-    std::lock_guard<std::mutex> lock(mu);
-    if (!seen.insert(key).second) {
-      return;
-    }
-  }
-  std::fprintf(stderr, "[WARN] %s\n", message.c_str());
-}
-
-// With SIMA_NEAT_BACKEND set, every Graph::build says which runtime it took and why: the evidence a
-// test log needs to tell a Dataflow block from one that stayed on GStreamer.
-void trace_choice(const char* where, const char* backend, const std::string& detail) {
-  if (pipeline_internal::env_str(kBackendEnv, "").empty()) {
-    return;
-  }
-  std::fprintf(stderr, "[NEAT] %s: backend=%s (%s)\n", where ? where : "Graph::build", backend,
-               detail.c_str());
-}
-
-// The verdict: build on Dataflow, stay on GStreamer, or fail (explicit Dataflow only).
-struct Want {
-  bool dataflow = false;
-  bool explicit_request = false;
-};
-
-Want wanted_backend(const RunOptions& opt) {
-  if (opt.backend == RunBackend::GStreamer) {
-    return {};
-  }
-  if (opt.backend == RunBackend::Dataflow) {
-    return {true, true};
-  }
-  const std::string env = backend_env();
-  if (env.empty() || env == "auto" || env == "gstreamer") {
-    return {};
-  }
-  if (env != "dataflow") {
-    warn_once("env:" + env, std::string(kBackendEnv) + "=" + env +
-                                " is not a backend (dataflow, gstreamer, auto); using GStreamer");
-    return {};
-  }
-  return {true, false};
-}
-
-// Why Dataflow does not take this Run: an error for an explicit request, a trace line for Auto.
-std::shared_ptr<RunCore> decline(const Want& want, const char* where, const char* code,
-                                 const std::string& reason) {
-  if (want.explicit_request) {
-    pipeline_internal::error_util::throw_session_error(
-        code, std::string(where ? where : "Graph::build") + ": RunBackend::Dataflow: " + reason, {},
-        "Build this Run with RunBackend::GStreamer or RunBackend::Auto.");
-  }
-  trace_choice(where, "gstreamer", std::string(kBackendEnv) + "=dataflow: " + reason);
-  return nullptr;
-}
-
-#if defined(SIMANEAT_WITH_DATAFLOW)
-
-namespace df = pipeline_internal::df;
-
-std::string join(const std::vector<std::string>& names) {
-  std::string out = "[";
-  for (std::size_t i = 0; i < names.size(); ++i) {
-    out += (i == 0 ? "" : ", ") + names[i];
-  }
-  return out + "]";
-}
-
-std::string node_text(const Node& node) {
-  const std::string label = node.user_label();
-  return label.empty() ? node.kind() : node.kind() + " '" + label + "'";
-}
-
-// ---- seeds -------------------------------------------------------------------------------------
-// The seed of a seeded build is the Run's representative input: it binds the input's spec and is
-// not pushed (GStreamer's preflight pushes and pulls it once, which leaves no output behind
-// either). One tensor binds a leaf, several a record.
-struct Seed {
-  TensorList tensors;      // empty: no seed
-  std::string unsupported; // a seed this backend cannot carry
-};
-
-Seed seed_from_sample(const Sample& sample) {
-  Seed seed;
-  if (sample.kind == SampleKind::Bundle) {
-    if (sample.fields.size() == 1U) {
-      return seed_from_sample(sample.fields.front());
-    }
-    // Core pushes a Bundle one field at a time (RunPush.cpp:1082-1086): each field is an item,
-    // and they share no binding.
-    seed.unsupported = "a Bundle seed of " + std::to_string(sample.fields.size()) +
-                       " fields (several items for one input) does not bind one spec; seed with "
-                       "one of its fields";
-    return seed;
-  }
-  if (sample_has_tensor_list(sample)) {
-    seed.tensors = sample.tensors;
-    return seed;
-  }
-  if (sample.tensor.has_value()) {
-    seed.tensors.push_back(*sample.tensor);
-    return seed;
-  }
-  seed.unsupported = "the seed Sample has no tensor";
-  return seed;
-}
-
-// ---- qualification (plan 3.6) ------------------------------------------------------------------
-// The public endpoints of a qualifying graph, and who feeds whom.
-struct Qualification {
-  std::string reason;                // empty: qualifies
-  std::vector<std::size_t> inputs;   // public Input vertices, vertex order
-  std::vector<std::size_t> outputs;  // public Output vertices, vertex order
-  std::vector<std::size_t> producer; // per output (index into outputs): its input (into inputs)
-  std::vector<std::size_t> fan_out;  // per input: how many outputs it feeds
-};
-
-#endif // SIMANEAT_WITH_DATAFLOW
-
-} // namespace
 
 // What the compiler reads of a Graph's private composition (Graph::CompositionView), copied out by
 // its friend DataflowGraphAccess. Hidden as DataflowGraphAccess is: Core-internal.
@@ -242,6 +91,23 @@ DataflowGraphView DataflowGraphAccess::view(const Graph& graph) {
 #if defined(SIMANEAT_WITH_DATAFLOW)
 
 namespace {
+
+namespace df = pipeline_internal::df;
+
+std::string node_text(const Node& node) {
+  const std::string label = node.user_label();
+  return label.empty() ? node.kind() : node.kind() + " '" + label + "'";
+}
+
+// ---- qualification (plan 3.6) ------------------------------------------------------------------
+// The public endpoints of a qualifying graph, and who feeds whom.
+struct Qualification {
+  std::string reason;                // empty: qualifies
+  std::vector<std::size_t> inputs;   // public Input vertices, vertex order
+  std::vector<std::size_t> outputs;  // public Output vertices, vertex order
+  std::vector<std::size_t> producer; // per output (index into outputs): its input (into inputs)
+  std::vector<std::size_t> fan_out;  // per input: how many outputs it feeds
+};
 
 // The public endpoints of the graph and who feeds whom, after compile_public_graph's boundary
 // elision (normalize_public_boundaries_for_execution, ExecutionGraphCompiler.cpp:427-650): an
@@ -479,42 +345,6 @@ std::string shared_name(const std::vector<Endpoint>& endpoints, const char* kind
   return {};
 }
 
-// The options Dataflow does not read (plan 3.4), when set away from their defaults: one warning
-// per process and option.
-void warn_ignored_options(const DataflowRunConfig& config) {
-  const InputOptions defaults{};
-  const auto ignored = [](const char* option) {
-    warn_once(std::string("ignored:") + option,
-              std::string("Dataflow backend: ") + option +
-                  " has no meaning on this backend and is ignored");
-  };
-  for (const DataflowInputConfig& input : config.inputs) {
-    const InputOptions& in = input.input;
-    if (in.is_live != defaults.is_live)
-      ignored("InputOptions::is_live");
-    if (in.do_timestamp != defaults.do_timestamp)
-      ignored("InputOptions::do_timestamp");
-    if (in.stream_type != defaults.stream_type)
-      ignored("InputOptions::stream_type");
-    if (!in.caps_override.empty())
-      ignored("InputOptions::caps_override");
-    if (in.max_bytes != defaults.max_bytes)
-      ignored("InputOptions::max_bytes");
-    if (in.block != defaults.block)
-      ignored("InputOptions::block");
-    if (in.fps_n != defaults.fps_n || in.fps_d != defaults.fps_d)
-      ignored("InputOptions::fps_n/fps_d");
-    if (!in.buffer_name.empty())
-      ignored("InputOptions::buffer_name");
-    if (in.preprocess_meta.has_value() && in.preprocess_meta->enabled)
-      ignored("InputOptions::preprocess_meta");
-  }
-  for (const DataflowOutputConfig& output : config.outputs) {
-    if (output.output.sync)
-      ignored("OutputOptions::sync");
-  }
-}
-
 // Every name of `endpoints`, sorted, once.
 template <class Endpoint>
 std::vector<std::string> sorted_union(const std::vector<Endpoint>& endpoints) {
@@ -595,7 +425,7 @@ DataflowRunConfig derive_config(const Graph& graph, const DataflowGraphView& vie
   if (config.run.queue_depth > 0) {
     ingress_depth = static_cast<std::uint32_t>(config.run.queue_depth);
   } else {
-    warn_once(
+    dataflow_warn_once(
         "clamp:queue_depth",
         "Dataflow backend: RunOptions::queue_depth=" + std::to_string(config.run.queue_depth) +
             " (unbounded) has no equivalent on this backend; it counts as " +
@@ -609,12 +439,12 @@ DataflowRunConfig derive_config(const Graph& graph, const DataflowGraphView& vie
       output.terminal_depth = static_cast<std::uint32_t>(output.output.max_buffers);
     } else {
       output.terminal_depth = ingress_depth;
-      warn_once("clamp:max_buffers",
-                "Dataflow backend: OutputOptions::max_buffers=" +
-                    std::to_string(output.output.max_buffers) +
-                    " (unbounded) has no equivalent on this backend; it counts as " +
-                    std::to_string(output.terminal_depth) +
-                    " (RunOptions::queue_depth, or 4) in the link depth");
+      dataflow_warn_once("clamp:max_buffers",
+                         "Dataflow backend: OutputOptions::max_buffers=" +
+                             std::to_string(output.output.max_buffers) +
+                             " (unbounded) has no equivalent on this backend; it counts as " +
+                             std::to_string(output.terminal_depth) +
+                             " (RunOptions::queue_depth, or 4) in the link depth");
     }
     // Each term is at most INT_MAX, so the sum fits; compile_dataflow_net checks the link's range.
     output.link_depth = output.ingress_depth + output.terminal_depth;
@@ -648,7 +478,7 @@ DataflowRunConfig derive_config(const Graph& graph, const DataflowGraphView& vie
       (config.outputs[o].terminal_drop ? lossy : lossless) = true;
     }
     if (lossy && lossless && config.link_policy != OverflowPolicy::Block) {
-      *why = "Input " + join(input.names) +
+      *why = "Input " + dataflow_names_text(input.names) +
              " feeds Outputs with and without OutputOptions::drop under OverflowPolicy::" +
              std::string(policy_text(config.link_policy)) +
              ": a blocking push would wait for room on some of its links and evict on the "
@@ -661,729 +491,78 @@ DataflowRunConfig derive_config(const Graph& graph, const DataflowGraphView& vie
   return config;
 }
 
-// The [NEAT] line of a Run that takes Dataflow: every input and the links of its Outputs.
-std::string describe_choice(const DataflowRunConfig& config,
-                            const std::vector<std::optional<DataflowInputBinding>>& bindings) {
-  std::string out;
-  for (std::size_t i = 0; i < config.inputs.size(); ++i) {
-    const DataflowInputConfig& input = config.inputs[i];
-    out += (i == 0 ? "" : "; ") + std::string("input ") + join(input.names) +
-           (bindings[i] ? " " + bindings[i]->text : " bound by its first push") + " -> ";
-    for (std::size_t k = 0; k < input.outputs.size(); ++k) {
-      const DataflowOutputConfig& output = config.outputs[input.outputs[k]];
-      out += (k == 0 ? "" : ", ") + std::string("output ") + join(output.names) + " link depth " +
-             std::to_string(output.link_depth) + " (queue_depth " +
-             std::to_string(output.ingress_depth) + " + max_buffers " +
-             std::to_string(output.terminal_depth) + ")" +
-             (output.terminal_drop                                 ? " drop oldest (Output drop)"
-              : config.link_policy == OverflowPolicy::KeepLatest   ? " try_push keep latest"
-              : config.link_policy == OverflowPolicy::DropIncoming ? " try_push drop incoming"
-                                                                   : " block");
-    }
+} // namespace
+
+// The options Dataflow does not read (plan 3.4), when set away from their defaults: one warning
+// per process and option.
+void warn_ignored_dataflow_options(const DataflowRunConfig& config) {
+  const InputOptions defaults{};
+  const auto ignored = [](const char* option) {
+    dataflow_warn_once(std::string("ignored:") + option,
+                       std::string("Dataflow backend: ") + option +
+                           " has no meaning on this backend and is ignored");
+  };
+  for (const DataflowInputConfig& input : config.inputs) {
+    const InputOptions& in = input.input;
+    if (in.is_live != defaults.is_live)
+      ignored("InputOptions::is_live");
+    if (in.do_timestamp != defaults.do_timestamp)
+      ignored("InputOptions::do_timestamp");
+    if (in.stream_type != defaults.stream_type)
+      ignored("InputOptions::stream_type");
+    if (!in.caps_override.empty())
+      ignored("InputOptions::caps_override");
+    if (in.max_bytes != defaults.max_bytes)
+      ignored("InputOptions::max_bytes");
+    if (in.block != defaults.block)
+      ignored("InputOptions::block");
+    if (in.fps_n != defaults.fps_n || in.fps_d != defaults.fps_d)
+      ignored("InputOptions::fps_n/fps_d");
+    if (!in.buffer_name.empty())
+      ignored("InputOptions::buffer_name");
+    if (in.preprocess_meta.has_value() && in.preprocess_meta->enabled)
+      ignored("InputOptions::preprocess_meta");
   }
-  return out;
+  for (const DataflowOutputConfig& output : config.outputs) {
+    if (output.output.sync)
+      ignored("OutputOptions::sync");
+  }
 }
 
-std::shared_ptr<RunCore> build_impl(const Graph& graph, const RunOptions& opt, RunMode mode,
-                                    const Seed& seed, const char* where, const Want& want) {
-  if (mode != RunMode::Async) {
-    return decline(want, where, error_codes::kPipelineShape,
-                   "synchronous runs (Graph::run) are not supported before H1");
-  }
+InputOptions dataflow_seed_input_options(const Graph& graph) {
+  const DataflowGraphView view = DataflowGraphAccess::view(graph);
+  const Qualification q = qualify(view);
+  return q.reason.empty() && q.inputs.size() == 1U ? *view.inputs[q.inputs.front()]
+                                                   : InputOptions{};
+}
+
+std::optional<DataflowRunConfig> plan_dataflow_run(const Graph& graph, const RunOptions& opt,
+                                                   const DataflowSeed& seed, DataflowDecline* why) {
+  const auto decline = [why](const char* code, std::string reason) {
+    *why = DataflowDecline{code, std::move(reason)};
+    return std::nullopt;
+  };
   const DataflowGraphView view = DataflowGraphAccess::view(graph);
   const Qualification q = qualify(view);
   if (!q.reason.empty()) {
-    return decline(want, where, error_codes::kPipelineShape, q.reason);
+    return decline(error_codes::kPipelineShape, q.reason);
   }
   if (!seed.unsupported.empty()) {
-    return decline(want, where, error_codes::kInputShape, seed.unsupported);
+    return decline(error_codes::kInputShape, seed.unsupported);
   }
   if (!seed.tensors.empty() && q.inputs.size() != 1U) {
     // GStreamer's own rule (connected_default_input_segment_or_throw, GraphBuildInput.cpp:193).
-    return decline(want, where, error_codes::kInputShape,
+    return decline(error_codes::kInputShape,
                    "a seed for a graph of " + std::to_string(q.inputs.size()) +
                        " public Inputs: graph has no unambiguous default input; build without a "
                        "seed");
   }
-  std::string why;
-  DataflowRunConfig config = derive_config(graph, view, q, opt, &why);
-  if (!why.empty()) {
-    return decline(want, where, error_codes::kPipelineShape, why);
+  std::string reason;
+  DataflowRunConfig config = derive_config(graph, view, q, opt, &reason);
+  if (!reason.empty()) {
+    return decline(error_codes::kPipelineShape, reason);
   }
-  // Each input's spec, when a seed or the declaration gives it now; an unsupported declaration or
-  // seed is decided here, before a Run exists.
-  std::vector<std::optional<DataflowInputBinding>> bindings;
-  for (const DataflowInputConfig& input : config.inputs) {
-    bindings.push_back(
-        seed.tensors.size() > 1U
-            ? bind_dataflow_record(input.input, seed.tensors, &why)
-            : bind_dataflow_input(input.input,
-                                  seed.tensors.empty() ? nullptr : &seed.tensors.front(), &why));
-    if (!why.empty()) {
-      return decline(want, where, error_codes::kInputShape, why);
-    }
-  }
-  warn_ignored_options(config);
-  trace_choice(where, "dataflow", describe_choice(config, bindings));
-
-  auto core = std::make_shared<RunCore>();
-  initialize_run_identity(*core);
-  core->opt = config.run;
-  core->mode = RunMode::Async;
-  core->dataflow_ = make_dataflow_run_state(*core, std::move(config), seed.tensors);
-  return core;
-}
-
-} // namespace
-#endif // SIMANEAT_WITH_DATAFLOW
-
-namespace {
-
-// The common head of the four entries: no Dataflow wanted, or no runtime in this build.
-template <class Build>
-std::shared_ptr<RunCore> dispatch(const RunOptions& opt, const char* where, Build&& build) {
-  const Want want = wanted_backend(opt);
-  if (!want.dataflow) {
-    return nullptr;
-  }
-#if defined(SIMANEAT_WITH_DATAFLOW)
-  (void)where; // the build reports with it
-  return build(want);
-#else
-  (void)build;
-  return decline(want, where, error_codes::kPipelineShape,
-                 "this build of libsima_neat has no Dataflow backend (configure it with "
-                 "SIMANEAT_DATAFLOW_SOURCE_DIR)");
-#endif
-}
-
-} // namespace
-
-std::shared_ptr<RunCore> DataflowGraphAccess::build(const Graph& graph, const RunOptions& opt,
-                                                    RunMode mode, const char* where) {
-  return dispatch(opt, where, [&](const auto& want) -> std::shared_ptr<RunCore> {
-#if defined(SIMANEAT_WITH_DATAFLOW)
-    return build_impl(graph, opt, mode, Seed{}, where, want);
-#else
-    (void)graph;
-    (void)mode;
-    (void)want;
-    return nullptr;
-#endif
-  });
-}
-
-std::shared_ptr<RunCore> DataflowGraphAccess::build(const Graph& graph, const RunOptions& opt,
-                                                    RunMode mode, const TensorList& seed,
-                                                    const char* where) {
-  return dispatch(opt, where, [&](const auto& want) -> std::shared_ptr<RunCore> {
-#if defined(SIMANEAT_WITH_DATAFLOW)
-    if (seed.empty()) {
-      throw std::runtime_error("Graph::build(inputs): empty tensor list");
-    }
-    Seed s;
-    s.tensors = seed;
-    return build_impl(graph, opt, mode, s, where, want);
-#else
-    (void)graph;
-    (void)mode;
-    (void)seed;
-    (void)want;
-    return nullptr;
-#endif
-  });
-}
-
-std::shared_ptr<RunCore> DataflowGraphAccess::build(const Graph& graph, const RunOptions& opt,
-                                                    RunMode mode, const Sample& seed,
-                                                    const char* where) {
-  return dispatch(opt, where, [&](const auto& want) -> std::shared_ptr<RunCore> {
-#if defined(SIMANEAT_WITH_DATAFLOW)
-    if (seed.empty()) {
-      throw std::runtime_error("Graph::build(inputs): empty sample list");
-    }
-    return build_impl(graph, opt, mode, seed_from_sample(seed), where, want);
-#else
-    (void)graph;
-    (void)mode;
-    (void)seed;
-    (void)want;
-    return nullptr;
-#endif
-  });
-}
-
-std::shared_ptr<RunCore> DataflowGraphAccess::build(const Graph& graph, const RunOptions& opt,
-                                                    RunMode mode, const std::vector<cv::Mat>& seed,
-                                                    const char* where) {
-  return dispatch(opt, where, [&](const auto& want) -> std::shared_ptr<RunCore> {
-#if defined(SIMANEAT_WITH_DATAFLOW) && defined(SIMA_WITH_OPENCV)
-    // GStreamer's own checks and texts (GraphBuildInput.cpp:2702-2711).
-    if (seed.empty()) {
-      throw std::runtime_error("Graph::build(inputs): empty image list");
-    }
-    for (std::size_t i = 0; i < seed.size(); ++i) {
-      if (seed[i].empty()) {
-        throw std::runtime_error("Graph::build(inputs): empty image input at index " +
-                                 std::to_string(i));
-      }
-    }
-    Seed s;
-    if (seed.size() != 1U) {
-      s.unsupported =
-          "a seed of " + std::to_string(seed.size()) + " images (a record) is not supported yet";
-      return build_impl(graph, opt, mode, s, where, want);
-    }
-    // The seed only binds the spec: a CPU view, whatever the Input's memory policy.
-    const DataflowGraphView view = DataflowGraphAccess::view(graph);
-    const Qualification q = qualify(view);
-    InputOptions input =
-        q.reason.empty() && q.inputs.size() == 1U ? *view.inputs[q.inputs.front()] : InputOptions{};
-    input.memory_policy = InputMemoryPolicy::SystemMemory;
-    s.tensors.push_back(tensor_from_cv_mat(seed.front(), input, "Graph::build(inputs)"));
-    return build_impl(graph, opt, mode, s, where, want);
-#else
-    (void)graph;
-    (void)mode;
-    (void)seed;
-    (void)want;
-    return nullptr;
-#endif
-  });
-}
-
-#if defined(SIMANEAT_WITH_DATAFLOW)
-
-// ---- the input's spec (plan 3.4: InputOptions and the seed give shape, bounds and format) -------
-
-namespace {
-
-std::optional<df::DType> dataflow_dtype(TensorDType dtype) {
-  switch (dtype) {
-  case TensorDType::UInt8:
-    return df::DType::UInt8;
-  case TensorDType::Int8:
-    return df::DType::Int8;
-  case TensorDType::UInt16:
-    return df::DType::UInt16;
-  case TensorDType::Int16:
-    return df::DType::Int16;
-  case TensorDType::Int32:
-    return df::DType::Int32;
-  case TensorDType::BFloat16:
-    return df::DType::BFloat16;
-  case TensorDType::Float32:
-    return df::DType::Float32;
-  case TensorDType::Float64:
-    return std::nullopt;
-  }
-  return std::nullopt;
-}
-
-std::optional<ImageSpec::PixelFormat> pixel_format(FormatTag tag) {
-  switch (tag) {
-  case FormatTag::RGB:
-    return ImageSpec::PixelFormat::RGB;
-  case FormatTag::BGR:
-    return ImageSpec::PixelFormat::BGR;
-  case FormatTag::GRAY8:
-    return ImageSpec::PixelFormat::GRAY8;
-  case FormatTag::NV12:
-    return ImageSpec::PixelFormat::NV12;
-  case FormatTag::I420:
-    return ImageSpec::PixelFormat::I420;
-  case FormatTag::NV16:
-    return ImageSpec::PixelFormat::NV16;
-  default:
-    return std::nullopt;
-  }
-}
-
-// The declared format first, then the tensor's own, as describe_tensor_geometry_or_throw reads
-// them (InputStreamUtil.cpp:1513-1516).
-std::optional<ImageSpec::PixelFormat> image_format(const InputOptions& declared,
-                                                   const Tensor* tensor) {
-  if (auto fmt = pixel_format(declared.format.tag)) {
-    return fmt;
-  }
-  if (tensor && tensor->semantic.image.has_value() &&
-      tensor->semantic.image->format != ImageSpec::PixelFormat::UNKNOWN) {
-    return tensor->semantic.image->format;
-  }
-  return std::nullopt;
-}
-
-// One axis: max_* bounds it (min 1), a declared size fixes it, otherwise the tensor's size does.
-std::optional<df::Dim> axis_dim(int declared, int max, std::int64_t actual, std::string* why,
-                                const char* axis) {
-  if (max > 0) {
-    if (actual > max) {
-      *why = std::string("the seed's ") + axis + " " + std::to_string(actual) +
-             " exceeds InputOptions::max_" + axis + " " + std::to_string(max);
-      return std::nullopt;
-    }
-    return df::Dim(1, max);
-  }
-  if (declared > 0) {
-    return df::Dim(declared);
-  }
-  if (actual > 0) {
-    return df::Dim(actual);
-  }
-  return std::nullopt;
-}
-
-// Which axes are height, width and channels, as tensor_compat_dims_from_shape reads a shape
-// (InputStreamUtil.cpp:115-160). -1: none.
-struct AxisRoles {
-  int height = -1;
-  int width = -1;
-  int depth = -1;
-};
-
-AxisRoles axis_roles(std::size_t rank, TensorLayout layout) {
-  const int r = static_cast<int>(rank);
-  AxisRoles roles;
-  if (layout == TensorLayout::HW) {
-    roles.height = r >= 2 ? r - 2 : -1;
-    roles.width = r - 1;
-  } else if (layout == TensorLayout::CHW) {
-    roles.depth = r >= 3 ? r - 3 : -1;
-    roles.height = r >= 2 ? r - 2 : -1;
-    roles.width = r - 1;
-  } else if (r >= 3) {
-    roles.height = r - 3;
-    roles.width = r - 2;
-    roles.depth = r - 1;
-  } else if (r == 2) {
-    roles.height = 0;
-    roles.width = 1;
-  } else {
-    roles.width = 0;
-  }
-  return roles;
-}
-
-// Planar NV12 or I420 at the bound: planes packed back to back at the bound's pitches.
-df::Planar planar_layout(df::PixelFormat format, std::int64_t max_h, std::int64_t max_w) {
-  df::Planar planar;
-  planar.format = format;
-  const std::int64_t half_w = (max_w + 1) / 2;
-  const std::int64_t half_h = (max_h + 1) / 2;
-  planar.plane[0] = {0, max_w};
-  if (format == df::PixelFormat::NV12) {
-    planar.planes = 2;
-    planar.plane[1] = {max_w * max_h, half_w * 2};
-  } else {
-    planar.planes = 3;
-    planar.plane[1] = {max_w * max_h, half_w};
-    planar.plane[2] = {max_w * max_h + half_h * half_w, half_w};
-  }
-  return planar;
-}
-
-std::string describe_spec(const df::PortSpec& spec) {
-  // A record's description is one TensorSpec per field: up to kMaxFields of them.
-  std::vector<char> buffer(spec.is_record() ? df::kDescribeMax * (df::kMaxFields + 1U)
-                                            : df::kDescribeMax);
-  df::Writer writer{std::span<char>(buffer)};
-  df::describe(spec, writer);
-  return std::string(writer.view());
-}
-
-// InputOptions::shape (Graph::input(name, shape, dtype)): the spec is the declaration, whatever
-// the seed or the first push (validate_public_input checks a push against it). A dynamic axis is
-// Dim{1, max_shape[i]}; without a bound it cannot be sized, so the Run declines.
-std::optional<DataflowInputBinding> bind_declared_shape(const InputOptions& declared,
-                                                        std::string* why) {
-  const auto dtype = dataflow_dtype(declared.dtype);
-  if (!dtype) {
-    *why = "the declared dtype Float64 has no Dataflow dtype";
-    return std::nullopt;
-  }
-  if (declared.shape.size() > df::kMaxRank) {
-    *why = "a declared shape of rank " + std::to_string(declared.shape.size()) +
-           " is not supported (1 to 6)";
-    return std::nullopt;
-  }
-  df::TensorSpec spec;
-  spec.dtype = *dtype;
-  spec.layout = df::Dense{};
-  spec.shape.rank = static_cast<std::uint8_t>(declared.shape.size());
-  for (std::size_t i = 0; i < declared.shape.size(); ++i) {
-    const std::int64_t size = declared.shape[i];
-    const std::int64_t bound = declared.max_shape.empty() ? -1 : declared.max_shape[i];
-    if (size > 0) {
-      spec.shape.dims[i] = df::Dim(size);
-    } else if (bound > 0) {
-      spec.shape.dims[i] = df::Dim(1, bound);
-    } else {
-      *why = "axis " + std::to_string(i) +
-             " of the declared shape is dynamic without a bound; the Dataflow backend sizes its "
-             "input pool at build, so declare one (Graph::input's max_shape)";
-      return std::nullopt;
-    }
-  }
-  DataflowInputBinding binding;
-  binding.dtype = declared.dtype;
-  binding.rank = declared.shape.size();
-  binding.spec.payload = spec;
-  binding.spec.capacity_hint =
-      static_cast<std::uint32_t>(std::clamp(declared.pool_max_buffers, 0, 4096));
-  if (const df::Status status = df::validate(binding.spec)) {
-    *why = std::string("the declared shape is not valid: ") + status->message;
-    return std::nullopt;
-  }
-  binding.text = describe_spec(binding.spec);
-  return binding;
-}
-
-} // namespace
-
-std::optional<DataflowInputBinding> bind_dataflow_input(const InputOptions& declared,
-                                                        const Tensor* tensor, std::string* why) {
-  why->clear();
-  if (declared.memory_policy == InputMemoryPolicy::Ev74 ||
-      declared.memory_policy == InputMemoryPolicy::Dms0) {
-    *why = "InputOptions::memory_policy Ev74 or Dms0 (device memory) is not supported before H0b";
-    return std::nullopt;
-  }
-  if (declared.payload_type == PayloadType::Encoded || declared.format.tag == FormatTag::H264 ||
-      declared.format.tag == FormatTag::H265 || declared.format.tag == FormatTag::ENCODED) {
-    *why = "encoded input is not supported before H1";
-    return std::nullopt;
-  }
-  if (!declared.shape.empty()) {
-    return bind_declared_shape(declared, why);
-  }
-  const std::optional<ImageSpec::PixelFormat> fmt = image_format(declared, tensor);
-  if (fmt == ImageSpec::PixelFormat::NV16) {
-    *why = "NV16 input is not supported before H1";
-    return std::nullopt;
-  }
-  const bool nv12 = fmt == ImageSpec::PixelFormat::NV12;
-  const bool i420 = fmt == ImageSpec::PixelFormat::I420;
-
-  DataflowInputBinding binding;
-  df::TensorSpec spec;
-  if (tensor) {
-    if (tensor->has_tiled_storage()) {
-      *why = "tiled (MLA) tensors are not supported before H1";
-      return std::nullopt;
-    }
-    if (tensor->semantic.encoded.has_value() || tensor->semantic.byte_stream.has_value()) {
-      *why = "encoded and byte-stream payloads are not supported before H1";
-      return std::nullopt;
-    }
-    const auto dtype = dataflow_dtype(tensor->dtype);
-    if (!dtype) {
-      *why = "Float64 tensors have no Dataflow dtype";
-      return std::nullopt;
-    }
-    if (tensor->is_composite() != (nv12 || i420)) {
-      *why = tensor->is_composite()
-                 ? "a composite tensor other than NV12 or I420 is not supported before H1"
-                 : "an NV12 or I420 tensor without plane records is not supported";
-      return std::nullopt;
-    }
-    binding.dtype = tensor->dtype;
-    binding.layout = tensor->layout;
-    binding.axis_semantics = tensor->axis_semantics;
-    binding.semantic = tensor->semantic;
-    binding.semantic.preprocess.reset(); // per-frame runtime metadata, not part of the spec
-    spec.dtype = *dtype;
-    if (nv12 || i420) {
-      const int h = tensor->height();
-      const int w = tensor->width();
-      const auto hd = axis_dim(declared.height, declared.max_height, h, why, "height");
-      const auto wd = axis_dim(declared.width, declared.max_width, w, why, "width");
-      if (!hd || !wd) {
-        if (why->empty())
-          *why = "the seed has no width or height";
-        return std::nullopt;
-      }
-      spec.shape = df::Shape::of({*hd, *wd, df::Dim(3)});
-      binding.rank = 2;
-    } else {
-      const std::size_t rank = tensor->shape.size();
-      if (rank == 0U || rank > df::kMaxRank) {
-        *why = "a tensor of rank " + std::to_string(rank) + " is not supported (1 to 6)";
-        return std::nullopt;
-      }
-      const AxisRoles roles = axis_roles(rank, tensor->layout);
-      spec.shape.rank = static_cast<std::uint8_t>(rank);
-      for (std::size_t i = 0; i < rank; ++i) {
-        const int axis = static_cast<int>(i);
-        const std::int64_t actual = tensor->shape[i];
-        std::optional<df::Dim> dim;
-        if (axis == roles.height) {
-          dim = axis_dim(declared.height, declared.max_height, actual, why, "height");
-        } else if (axis == roles.width) {
-          dim = axis_dim(declared.width, declared.max_width, actual, why, "width");
-        } else if (axis == roles.depth && !fmt) {
-          dim = axis_dim(declared.depth, declared.max_depth, actual, why, "depth");
-        } else if (actual > 0) {
-          dim = df::Dim(actual); // channels of an image format, batch and other axes: fixed
-        }
-        if (!dim) {
-          if (why->empty())
-            *why = "axis " + std::to_string(i) + " of the seed is empty";
-          return std::nullopt;
-        }
-        spec.shape.dims[i] = *dim;
-      }
-      binding.rank = rank;
-    }
-  } else {
-    // Declaration only: an image with its format and both sizes (or bounds) declared.
-    if (!fmt || (declared.payload_type != PayloadType::Image &&
-                 declared.payload_type != PayloadType::Auto)) {
-      return std::nullopt; // bound by the first push
-    }
-    std::string unused;
-    const auto hd = axis_dim(declared.height, declared.max_height, 0, &unused, "height");
-    const auto wd = axis_dim(declared.width, declared.max_width, 0, &unused, "width");
-    if (!hd || !wd) {
-      return std::nullopt;
-    }
-    spec.dtype = df::DType::UInt8;
-    binding.dtype = TensorDType::UInt8;
-    binding.semantic.image = ImageSpec{*fmt, ""};
-    if (nv12 || i420) {
-      spec.shape = df::Shape::of({*hd, *wd, df::Dim(3)});
-      binding.layout = TensorLayout::HW;
-      binding.rank = 2;
-    } else if (*fmt == ImageSpec::PixelFormat::GRAY8) {
-      spec.shape = df::Shape::of({*hd, *wd});
-      binding.layout = TensorLayout::HW;
-      binding.rank = 2;
-    } else {
-      spec.shape = df::Shape::of({*hd, *wd, df::Dim(3)});
-      binding.layout = TensorLayout::HWC;
-      binding.rank = 3;
-    }
-  }
-  if (fmt && !binding.semantic.image.has_value()) {
-    binding.semantic.image = ImageSpec{*fmt, ""};
-  } else if (fmt) {
-    binding.semantic.image->format = *fmt;
-  }
-  if (nv12 || i420) {
-    binding.planes = nv12 ? DataflowInputBinding::Planes::Nv12 : DataflowInputBinding::Planes::I420;
-    spec.dtype = df::DType::UInt8;
-    spec.layout = planar_layout(nv12 ? df::PixelFormat::NV12 : df::PixelFormat::I420,
-                                spec.shape.dims[0].max, spec.shape.dims[1].max);
-  } else {
-    spec.layout = df::Dense{};
-  }
-  binding.spec.payload = spec;
-  binding.spec.capacity_hint =
-      static_cast<std::uint32_t>(std::clamp(declared.pool_max_buffers, 0, 4096));
-  if (const df::Status status = df::validate(binding.spec)) {
-    *why = std::string("the input's spec is not valid: ") + status->message;
-    return std::nullopt;
-  }
-  binding.text = describe_spec(binding.spec);
-  return binding;
-}
-
-std::string dataflow_binding_mismatch(const DataflowInputBinding& binding, const Tensor& tensor) {
-  if (binding.is_record()) {
-    return "one tensor where a record of " + std::to_string(binding.fields.size()) +
-           " is bound; the input is bound to " + binding.text +
-           " (Dataflow backend: by its seed or its first push)";
-  }
-  const auto& spec = std::get<df::TensorSpec>(binding.spec.payload);
-  const auto mismatch = [&](const std::string& what) {
-    return what + "; the input is bound to " + binding.text +
-           " (Dataflow backend: by its declaration, its seed or its first push)";
-  };
-  if (tensor.dtype != binding.dtype) {
-    return mismatch("dtype differs");
-  }
-  if (binding.semantic.image.has_value() && tensor.semantic.image.has_value() &&
-      tensor.semantic.image->format != ImageSpec::PixelFormat::UNKNOWN &&
-      tensor.semantic.image->format != binding.semantic.image->format) {
-    return mismatch(std::string("image format ") +
-                    pipeline_internal::pixel_format_token(tensor.semantic.image->format) +
-                    " differs");
-  }
-  if (binding.planes != DataflowInputBinding::Planes::None) {
-    if (!tensor.is_composite()) {
-      return mismatch("a dense tensor where planes are bound");
-    }
-    const std::int64_t h = tensor.height();
-    const std::int64_t w = tensor.width();
-    if (!spec.shape.dims[0].contains(h) || !spec.shape.dims[1].contains(w)) {
-      return mismatch("size " + std::to_string(w) + "x" + std::to_string(h) + " is out of bounds");
-    }
-    if ((h % 2) != 0 || (w % 2) != 0) {
-      return mismatch("odd size " + std::to_string(w) + "x" + std::to_string(h));
-    }
-    return {};
-  }
-  if (tensor.is_composite()) {
-    return mismatch("a composite tensor where a dense one is bound");
-  }
-  if (tensor.shape.size() != spec.shape.rank) {
-    return mismatch("rank " + std::to_string(tensor.shape.size()) + " differs");
-  }
-  for (std::size_t i = 0; i < spec.shape.rank; ++i) {
-    if (!spec.shape.dims[i].contains(tensor.shape[i])) {
-      return mismatch("dimension " + std::to_string(i) + " = " + std::to_string(tensor.shape[i]) +
-                      " is out of bounds");
-    }
-  }
-  return {};
-}
-
-std::optional<DataflowInputBinding> bind_dataflow_record(const InputOptions& declared,
-                                                         std::span<const Tensor> fields,
-                                                         std::string* why) {
-  why->clear();
-  if (!declared.shape.empty()) {
-    *why = "an item of " + std::to_string(fields.size()) +
-           " tensors where one tensor of a declared shape is expected";
-    return std::nullopt;
-  }
-  if (fields.size() > df::kMaxFields) {
-    *why = "a record of " + std::to_string(fields.size()) + " tensors is not supported (at most " +
-           std::to_string(df::kMaxFields) + ")";
-    return std::nullopt;
-  }
-  // Each field binds as an undeclared tensor of its own: the InputOptions describe one tensor (an
-  // image's format and size), so only their memory and pool settings apply to a field.
-  InputOptions field_declared;
-  field_declared.memory_policy = declared.memory_policy;
-  field_declared.use_simaai_pool = declared.use_simaai_pool;
-  field_declared.pool_max_buffers = declared.pool_max_buffers;
-  DataflowInputBinding binding;
-  df::RecordSchema schema;
-  for (std::size_t i = 0; i < fields.size(); ++i) {
-    std::optional<DataflowInputBinding> field =
-        bind_dataflow_input(field_declared, &fields[i], why);
-    if (!field) {
-      *why = "field " + std::to_string(i) +
-             " of the record: " + (why->empty() ? std::string("cannot be bound") : *why);
-      return std::nullopt;
-    }
-    if (field->planes != DataflowInputBinding::Planes::None) {
-      *why = "field " + std::to_string(i) +
-             " of the record is an NV12 or I420 image; planar record fields are not supported "
-             "before H1";
-      return std::nullopt;
-    }
-    // Dense fields, fixed by the tensor: a field's own declaration does not exist before H1.
-    df::TensorSpec spec = std::get<df::TensorSpec>(field->spec.payload);
-    for (std::size_t d = 0; d < spec.shape.rank; ++d) {
-      spec.shape.dims[d] = df::Dim(fields[i].shape[d]);
-    }
-    schema.fields.push_back(
-        df::Field{df::FieldId{static_cast<std::uint16_t>(i)}, std::to_string(i), spec});
-    DataflowFieldBinding meta;
-    meta.dtype = field->dtype;
-    meta.layout = field->layout;
-    meta.axis_semantics = std::move(field->axis_semantics);
-    meta.semantic = std::move(field->semantic);
-    meta.rank = field->rank;
-    binding.fields.push_back(std::move(meta));
-  }
-  binding.spec.payload = std::move(schema);
-  binding.spec.capacity_hint =
-      static_cast<std::uint32_t>(std::clamp(declared.pool_max_buffers, 0, 4096));
-  if (const df::Status status = df::validate(binding.spec)) {
-    *why = std::string("the record's spec is not valid: ") + status->message;
-    return std::nullopt;
-  }
-  const auto& bound = std::get<df::RecordSchema>(binding.spec.payload);
-  for (std::size_t i = 0; i < binding.fields.size(); ++i) {
-    binding.fields[i].offset = df::field_offset(bound, i);
-    binding.fields[i].extent_offset = df::field_extent_offset(bound, i);
-  }
-  binding.text = describe_spec(binding.spec);
-  return binding;
-}
-
-std::string dataflow_record_mismatch(const DataflowInputBinding& binding,
-                                     std::span<const Tensor> fields) {
-  const auto mismatch = [&](const std::string& what) {
-    return what + "; the input is bound to the record " + binding.text +
-           " (Dataflow backend: by its seed or its first push)";
-  };
-  if (!binding.is_record()) {
-    return "an item of " + std::to_string(fields.size()) +
-           " tensors where one tensor is bound; the input is bound to " + binding.text +
-           " (Dataflow backend: by its declaration, its seed or its first push)";
-  }
-  if (fields.size() != binding.fields.size()) {
-    return mismatch("an item of " + std::to_string(fields.size()) + " tensors");
-  }
-  const auto& schema = std::get<df::RecordSchema>(binding.spec.payload);
-  for (std::size_t i = 0; i < fields.size(); ++i) {
-    const Tensor& tensor = fields[i];
-    const df::TensorSpec& spec = schema.fields[i].spec;
-    const std::string field = "field " + std::to_string(i) + ": ";
-    if (tensor.dtype != binding.fields[i].dtype) {
-      return mismatch(field + "dtype differs");
-    }
-    if (tensor.is_composite() || tensor.has_tiled_storage()) {
-      return mismatch(field + "a composite or tiled tensor where a dense one is bound");
-    }
-    if (tensor.shape.size() != spec.shape.rank) {
-      return mismatch(field + "rank " + std::to_string(tensor.shape.size()) + " differs");
-    }
-    for (std::size_t d = 0; d < spec.shape.rank; ++d) {
-      if (!spec.shape.dims[d].contains(tensor.shape[d])) {
-        return mismatch(field + "dimension " + std::to_string(d) + " = " +
-                        std::to_string(tensor.shape[d]) + " is out of bounds");
-      }
-    }
-  }
-  return {};
-}
-
-DataflowNet compile_dataflow_net(const DataflowRunConfig& config, std::size_t input,
-                                 const DataflowInputBinding& binding, std::uint32_t stream) {
-  const DataflowInputConfig& in = config.inputs[input];
-  df::Net net;
-  const df::OperatorRef<df::Feed> feed = net.add<df::Feed>(
-      "input", binding.spec,
-      df::Feed::Options{.stream = df::StreamId{stream}, .loans = in.feed_loans, .max_links = 0});
-  std::vector<std::uint32_t> fetches;
-  for (std::size_t k = 0; k < in.outputs.size(); ++k) {
-    const DataflowOutputConfig& output = config.outputs[in.outputs[k]];
-    if (output.link_depth == 0U || output.link_depth > df::kMaxLinkDepth) {
-      pipeline_internal::error_util::throw_session_error(
-          error_codes::kOptionOutOfRange,
-          "Graph::build: the link depth " + std::to_string(output.link_depth) +
-              " (RunOptions::queue_depth " + std::to_string(output.ingress_depth) +
-              " + OutputOptions::max_buffers " + std::to_string(output.terminal_depth) +
-              ") is outside the Dataflow link's range 1.." + std::to_string(df::kMaxLinkDepth));
-    }
-    df::Overflow overflow = df::Overflow::Block;
-    if (output.terminal_drop || config.link_policy == OverflowPolicy::KeepLatest) {
-      overflow = df::Overflow::DropOldest;
-    } else if (config.link_policy == OverflowPolicy::DropIncoming) {
-      overflow = df::Overflow::DropIncoming;
-    }
-    // Operator names are the Plan's own (Plan::fetch(name)); Core addresses its Fetches by index.
-    const df::OperatorRef<df::Fetch> fetch =
-        net.add<df::Fetch>(k == 0U ? std::string("output") : "output" + std::to_string(k),
-                           binding.spec, df::Fetch::Options{.retained = 1});
-    if (const df::Status status = net.connect(
-            feed.out(), fetch.in(),
-            df::LinkPolicy{.depth = output.link_depth, .overflow = overflow, .stale_after = {}})) {
-      pipeline_internal::throw_dataflow_error(*status, "Graph::build");
-    }
-    fetches.push_back(fetch.index);
-  }
-  df::PlanReport failure;
-  df::Result<df::Plan> plan = std::move(net).compile(df::CompileOptions{
-      .force_fine_clock = false, .retention_limit_bytes = 0, .failure_report = &failure});
-  if (const df::Error* error = df::failure(plan)) {
-    pipeline_internal::throw_dataflow_error(*error, "Graph::build", failure.mismatch);
-  }
-  return DataflowNet{std::get<df::Plan>(std::move(plan)), feed.index, std::move(fetches)};
+  return config;
 }
 
 #endif // SIMANEAT_WITH_DATAFLOW

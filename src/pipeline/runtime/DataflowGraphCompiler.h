@@ -3,19 +3,15 @@
 #error "Internal header. Not part of the public API."
 #endif
 
-// The Dataflow backend's compiler (H0 plan 3.6; H0 step 10, H0c): which runtime a Graph::build()
-// takes, whether the graph qualifies for Dataflow, and the Nets a qualifying graph of public Inputs
-// and Outputs becomes (one per Input: its Feed and the Fetch of every Output it feeds).
-// Graph::build's four entries call DataflowGraphAccess::build before gst_init_once().
+// The Dataflow backend's build side (H0 plan 3.6; H0 step 10, H0c): which runtime a Graph::build()
+// takes (DataflowBackendSelect.cpp; Graph::build's four entries call DataflowGraphAccess::build
+// before gst_init_once()), and whether a graph qualifies for Dataflow and with which Run
+// configuration (DataflowGraphCompiler.cpp).
 
 #include "pipeline/GraphOptions.h"
 #include "pipeline/Run.h"
 #include "pipeline/TensorCore.h"
 #include "pipeline/runtime/DataflowRun.h"
-
-#if defined(SIMANEAT_WITH_DATAFLOW)
-#include "pipeline/internal/DataflowRuntime.h"
-#endif
 
 #include <cstdint>
 #include <memory>
@@ -57,70 +53,38 @@ struct __attribute__((visibility("hidden"))) DataflowGraphAccess {
 
 #pragma GCC visibility push(hidden)
 
+// One stderr line per process and key: the options Dataflow ignores or clamps, and an unknown
+// SIMA_NEAT_BACKEND value.
+void dataflow_warn_once(const std::string& key, const std::string& message);
+
+// The seed of a seeded build: the Run's representative input, which binds the (one) input's spec.
+// A view of the caller's tensors, which outlive the build.
+struct DataflowSeed {
+  std::span<const Tensor> tensors; ///< empty: no seed
+  std::string unsupported;         ///< a seed this backend cannot carry
+};
+
+// The options of the graph's public Input when it qualifies with exactly one; InputOptions{}
+// otherwise. What a cv::Mat seed is converted under. Defined with the runtime only.
+InputOptions dataflow_seed_input_options(const Graph& graph);
+
 #if defined(SIMANEAT_WITH_DATAFLOW)
 
-// One field of a record binding: the Core metadata of a dense field, and where it lives in the
-// record's slot (port_spec.h's field_offset and field_extent_offset, resolved once at binding).
-struct DataflowFieldBinding {
-  TensorDType dtype = TensorDType::UInt8;
-  TensorLayout layout = TensorLayout::Unknown;
-  std::vector<TensorAxisSemantic> axis_semantics;
-  Semantic semantic{};
-  std::size_t rank = 0;
-  std::size_t offset = 0;        ///< the field's bytes, from the slot start
-  std::size_t extent_offset = 0; ///< the field's Extent in the record header
+// Why the Dataflow backend does not take a Run.
+struct DataflowDecline {
+  const char* code = nullptr; ///< error_codes: the error of an explicit RunBackend::Dataflow
+  std::string reason;
 };
 
-// Core's side of the bound input: the port spec a pushed tensor must fit, and the Core metadata
-// (dtype, layout, semantic, planes) the runtime does not carry, restored on every pulled tensor.
-// A leaf binds a TensorSpec; a record (an item of several tensors: TensorList, TensorSet, a
-// positional Tensor::record) a RecordSchema with positional field names "0", "1", ... and one
-// DataflowFieldBinding per field.
-struct DataflowInputBinding {
-  enum class Planes { None, Nv12, I420 };
-  pipeline_internal::df::PortSpec spec;
-  TensorDType dtype = TensorDType::UInt8;
-  TensorLayout layout = TensorLayout::Unknown;
-  std::vector<TensorAxisSemantic> axis_semantics;
-  Semantic semantic{};
-  Planes planes = Planes::None;
-  std::size_t rank = 0; ///< Core rank: the spec's for a dense tensor, 2 ({H, W}) for planes
-  std::vector<DataflowFieldBinding> fields; ///< a record's fields; empty for a leaf
-  std::string text;                         ///< the spec as one line, for messages
-  bool is_record() const noexcept {
-    return !fields.empty();
-  }
-};
+// The Run configuration of `graph` under `opt` when the graph qualifies (public Inputs feeding
+// public Outputs, each Output fed by one Input) and Dataflow can carry its options and `seed`;
+// nullopt with `why` set otherwise.
+std::optional<DataflowRunConfig> plan_dataflow_run(const Graph& graph, const RunOptions& opt,
+                                                   const DataflowSeed& seed, DataflowDecline* why);
 
-// The input's binding from its declaration and, when given, a tensor (a seed or the first push).
-// nullopt with `why` set when this backend cannot carry it. A declared shape (InputOptions::shape)
-// binds from the declaration alone; each of its dynamic axes needs a bound (max_shape).
-std::optional<DataflowInputBinding> bind_dataflow_input(const InputOptions& declared,
-                                                        const Tensor* tensor, std::string* why);
-
-// A record binding from the tensors of one item (2 or more): every field dense, bound by its
-// tensor (dtype and shape fixed). nullopt with `why` set when this backend cannot carry it.
-std::optional<DataflowInputBinding> bind_dataflow_record(const InputOptions& declared,
-                                                         std::span<const Tensor> fields,
-                                                         std::string* why);
-
-// "" when `tensor` fits `binding`; otherwise why it does not.
-std::string dataflow_binding_mismatch(const DataflowInputBinding& binding, const Tensor& tensor);
-
-// "" when the item's `fields` fit the record `binding`; otherwise why they do not.
-std::string dataflow_record_mismatch(const DataflowInputBinding& binding,
-                                     std::span<const Tensor> fields);
-
-// The Net of input `input` of `config` for `binding`, compiled: one Feed, and one link and one
-// Fetch per Output the input feeds (a fan-out when there are several: one OutPort, one link per
-// Output, each with that Output's depth and policy). Throws NeatError on a compile error.
-struct DataflowNet {
-  pipeline_internal::df::Plan plan;
-  std::uint32_t feed = 0;             ///< the Feed's operator index
-  std::vector<std::uint32_t> fetches; ///< the Fetches' operator indices, the input's output order
-};
-DataflowNet compile_dataflow_net(const DataflowRunConfig& config, std::size_t input,
-                                 const DataflowInputBinding& binding, std::uint32_t stream);
+// The options Dataflow does not read (plan 3.4), when set away from their defaults: one warning
+// per process and option.
+void warn_ignored_dataflow_options(const DataflowRunConfig& config);
 
 #endif // SIMANEAT_WITH_DATAFLOW
 
