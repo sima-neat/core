@@ -561,6 +561,10 @@ struct Bound {
   /// Set, before its publish, by the first push that wraps; a pull asks Message::block() only
   /// then (its take orders that publish, and so this store, before it).
   std::atomic<bool> has_wraps{false};
+  /// RunCore::outputs_pulled when alloc last refused a wrapping try_push because every link was
+  /// full (FR14); kNoRefusal otherwise (DataflowRun::still_full).
+  static constexpr std::uint64_t kNoRefusal = ~std::uint64_t{0};
+  std::atomic<std::uint64_t> full_at{kNoRefusal};
 };
 
 // One public Input of the Run (H0c): its Session, bound by the input's declaration, its seed or its
@@ -1043,8 +1047,17 @@ private:
     if (allocation) {
       return push_allocated(c, *bound, tensor, *allocation, stamp, seq, block, where);
     }
-    // W2: wrap when safe, decided before alloc. A refusal of alloc (A3's FR14, FR7, SR1, FR3) takes
-    // no slot and keeps nothing: `wrap`, the only reference this call took, is released on return.
+    // A try_push into links that FR14 found full, with no pull since: alloc is asked first, without
+    // a wrap (still_full).
+    if (!block && bound->full_at.load(std::memory_order_relaxed) ==
+                      core_.outputs_pulled.load(std::memory_order_relaxed)) {
+      if (still_full(c, *bound, where)) {
+        return false;
+      }
+    }
+    // W2: wrap when safe. The runtime takes a wrap only with the slot (Session::alloc), so the
+    // wrap is decided before alloc; a refusal of alloc (A3's FR14, FR7, SR1, FR3) takes no slot and
+    // keeps nothing: `wrap`, the only reference this call took, is released on return.
     df::Block wrap;
     bool wrapped =
         may_wrap && bound->wraps &&
@@ -1055,6 +1068,10 @@ private:
         bound->session.alloc(bound->feed, mode, df::kNoDeadline, wrapped ? &wrap : nullptr);
     if (const df::Error* error = df::failure(allocated)) {
       if (!wrapped || error->code != df::ErrorCode::InvalidArgument) {
+        if (!block && wrapped && error->code == df::ErrorCode::Backpressure) {
+          bound->full_at.store(core_.outputs_pulled.load(std::memory_order_relaxed),
+                               std::memory_order_relaxed);
+        }
         return alloc_refused(c, *error, block, where);
       }
       // FR15: the runtime refused the wrap itself (wrap_layout and wrap_block state its rule, so
@@ -1080,6 +1097,23 @@ private:
       extent = copy_into(bound->binding, tensor, loan.bytes(), where);
     }
     return settle(c, publish(c, *bound, std::move(loan), stamp, extent, block), block, where);
+  }
+
+  // A try_push that would wrap pays the wrap decision (the storage's type query, the holder's copy
+  // and release) before alloc can refuse it. So once FR14 has refused one (every link full:
+  // Bound::full_at), and while no pull has returned since, the links are still full, and the next
+  // try_push asks alloc first, without a wrap: its refusal (true, counted as alloc_refused counts
+  // it) costs what it cost before W2. If alloc finds room after all (a pull is between its take
+  // and its count), the slot goes back at once, before the push takes its own. Out of line: the
+  // blocking push never comes here.
+  [[gnu::noinline]] bool still_full(const Component& c, Bound& bound, const char* where) {
+    const df::Result<df::WriteLoan> room = bound.session.alloc(bound.feed, df::Acquire::Fail);
+    if (const df::Error* error = df::failure(room)) {
+      (void)alloc_refused(c, *error, false, where);
+      return true;
+    }
+    bound.full_at.store(Bound::kNoRefusal, std::memory_order_relaxed);
+    return false;
   }
 
   // The first leaf of input `c` that passed validate_public_input and the binding check, kept once

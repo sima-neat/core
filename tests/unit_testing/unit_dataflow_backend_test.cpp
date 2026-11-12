@@ -14,7 +14,13 @@
 // tensors; Owned output; a pulled tensor outliving its Run; named endpoints; the push-time checks
 // of a tensor that repeats an accepted geometry, back for any change they read (C7a); a try_push
 // refused by a full link reading none of its tensor's bytes (C7c; with copy_input, so that the
-// accepted ones copy: W2 wraps them otherwise, unit_run_push_wrap_test).
+// accepted ones copy: W2 wraps them otherwise, unit_run_push_wrap_test); the one-time warnings (the
+// deprecated Run forms, the options this backend ignores); RunPreset::Realtime with an explicit
+// Block on a connected graph (kept as given) and on a linear Run (KeepLatest); concurrent stops;
+// state and measurement reads racing a stop.
+
+// This file calls the deprecated forms on purpose.
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
 
 #include "nodes/common/Output.h"
 #include "nodes/common/Queue.h"
@@ -38,6 +44,12 @@
 #include <vector>
 
 #include <opencv2/core.hpp>
+
+#include <unistd.h>
+
+#include <cstdio>
+#include <exception>
+#include <sstream>
 
 namespace {
 
@@ -103,6 +115,124 @@ std::uint64_t dropped_while(Run& run, const std::function<void()>& fn) {
   MeasureScope scope = run.start_measurement();
   fn();
   return scope.stop().counters.inputs_dropped;
+}
+
+// fd 2 to a temporary file while alive; text() restores it and returns what was written.
+class StderrCapture {
+public:
+  StderrCapture() : file_(std::tmpfile()) {
+    require(file_ != nullptr, "could not open the stderr capture");
+    std::fflush(stderr);
+    saved_ = dup(STDERR_FILENO);
+    require(saved_ >= 0 && dup2(fileno(file_), STDERR_FILENO) >= 0, "could not capture stderr");
+  }
+  ~StderrCapture() {
+    (void)text();
+    std::fclose(file_);
+  }
+  StderrCapture(const StderrCapture&) = delete;
+  StderrCapture& operator=(const StderrCapture&) = delete;
+
+  std::string text() {
+    std::fflush(stderr);
+    if (saved_ >= 0) {
+      (void)dup2(saved_, STDERR_FILENO);
+      close(saved_);
+      saved_ = -1;
+    }
+    std::rewind(file_);
+    std::string out;
+    char chunk[4096];
+    while (const auto n = std::fread(chunk, 1U, sizeof(chunk), file_)) {
+      out.append(chunk, n);
+    }
+    return out;
+  }
+
+private:
+  std::FILE* file_;
+  int saved_ = -1;
+};
+
+int lines_starting_with(const std::string& text, const std::string& prefix) {
+  int n = 0;
+  std::istringstream in(text);
+  for (std::string line; std::getline(in, line);) {
+    n += line.rfind(prefix, 0) == 0 ? 1 : 0;
+  }
+  return n;
+}
+
+// The first case of the process (the warnings are once per process). Each of Run's ten deprecated
+// forms prints one "[WARN] Run::<form> is deprecated ..." line however often it is called (H0 C5),
+// and each option this backend ignores one line however many builds set it (H0 3.10).
+void warnings_once_per_process() {
+  std::string text;
+  {
+    StderrCapture capture;
+    InputOptions image;
+    image.payload_type = PayloadType::Image;
+    image.format = FormatTag::BGR;
+    image.width = 32;
+    image.height = 24;
+    Graph g;
+    g.add(nodes::Input("image", image));
+    g.add(nodes::Output("out"));
+    Run run = g.build(dataflow());
+    const std::vector<cv::Mat> mats{cv::Mat(24, 32, CV_8UC3, cv::Scalar(1, 2, 3))};
+    for (int i = 0; i < 2; ++i) {
+      require(run.push(mats) && run.push("image", mats) && run.try_push(mats) &&
+                  run.try_push("image", mats),
+              "the cv::Mat pushes");
+      require(run.pull(2000).has_value() && run.pull("out", 2000).has_value() &&
+                  run.pull_tensors(2000).size() == 1U && run.pull_tensors("out", 2000).size() == 1U,
+              "the deprecated pulls return what was pushed");
+      require(run.pull_samples(0).empty() && run.pull_samples("out", 0).empty(),
+              "pull_samples on an empty output");
+    }
+    run.close();
+    for (int i = 0; i < 2; ++i) {
+      InputOptions in;
+      in.is_live = false;
+      in.do_timestamp = false;
+      in.stream_type = 1;
+      in.caps_override = "application/vnd.simaai.tensor";
+      in.max_bytes = 1U << 20U;
+      OutputOptions out;
+      out.sync = true;
+      Graph ignored;
+      ignored.add(nodes::Input("x", in));
+      ignored.add(nodes::Output("y", out));
+      Run quiet = ignored.build(dataflow());
+      require(quiet.push(TensorList{rgb(16, 8, 40)}) &&
+                  quiet.pull("y", std::chrono::milliseconds(5000)).ok(),
+              "a Run with ignored options round trips");
+      quiet.close();
+    }
+    text = capture.text();
+  }
+  for (const char* form : {"Run::push(const std::vector<cv::Mat>&)",
+                           "Run::push(std::string_view, const std::vector<cv::Mat>&)",
+                           "Run::try_push(const std::vector<cv::Mat>&)",
+                           "Run::try_push(std::string_view, const std::vector<cv::Mat>&)",
+                           "Run::pull(int)", "Run::pull(std::string_view, int)",
+                           "Run::pull_tensors(int)", "Run::pull_tensors(std::string_view, int)",
+                           "Run::pull_samples(int)", "Run::pull_samples(std::string_view, int)"}) {
+    const int n = lines_starting_with(
+        text, std::string("[WARN] ") + form +
+                  " is deprecated and will be removed in the next release; use Run::");
+    require(n == 1, std::string(form) + " warns exactly once, naming its replacement (it warned " +
+                        std::to_string(n) + " times):\n" + text);
+  }
+  require(lines_starting_with(text, "[WARN] Run::") == 10, "no other Run warning:\n" + text);
+  for (const char* option :
+       {"InputOptions::is_live", "InputOptions::do_timestamp", "InputOptions::stream_type",
+        "InputOptions::caps_override", "InputOptions::max_bytes", "OutputOptions::sync"}) {
+    const int n = lines_starting_with(text, std::string("[WARN] Dataflow backend: ") + option +
+                                                " has no meaning on this backend");
+    require(n == 1, std::string(option) + " warns once on Dataflow (it warned " +
+                        std::to_string(n) + " times):\n" + text);
+  }
 }
 
 void undeclared_input_bound_by_first_push() {
@@ -466,6 +596,178 @@ void blocking_push_never_drops() {
   }
 }
 
+// RunPreset::Realtime with queue_depth 1 and an explicit OverflowPolicy::Block, on a 32x24 RGB
+// input into Output EveryFrame(1). True when try_push refuses 10 times in a row, 10 ms apart,
+// within 5 s (the queue is full and stays full); `dropped`: the input drops meanwhile.
+struct RealtimeBlock {
+  InputOptions in;
+  RunOptions opt = dataflow(1);
+  RealtimeBlock() {
+    in.payload_type = PayloadType::Image;
+    in.format = FormatTag::RGB;
+    in.width = in.max_width = 32;
+    in.height = in.max_height = 24;
+    in.depth = in.max_depth = 3;
+    opt.preset = RunPreset::Realtime;
+    opt.output_memory = OutputMemory::Owned;
+  }
+  static bool refuses_when_full(Run& run, const char* input, std::uint64_t& dropped) {
+    MeasureScope scope = run.start_measurement();
+    bool refused = false;
+    int accepted = 0;
+    const auto deadline = Clock::now() + std::chrono::seconds(5);
+    for (int consecutive = 0; !refused && Clock::now() < deadline;) {
+      const TensorList item{rgb(32, 24, static_cast<std::uint8_t>(accepted))};
+      if (input ? run.try_push(input, item) : run.try_push(item)) {
+        ++accepted;
+        consecutive = 0;
+      } else if (++consecutive == 10) {
+        refused = true;
+      } else {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+      }
+    }
+    dropped = scope.stop().counters.inputs_dropped;
+    require(accepted > 0, "Realtime + Block: nothing accepted");
+    return refused;
+  }
+};
+
+// A connected (or named) graph is a graph Run, which keeps its RunOptions as given: under Realtime
+// an explicit Block refuses a try_push when the queue is full and drops nothing, and a blocking
+// push waits for a pull (pyneat's test_blocking_push_gil builds this graph).
+void connected_realtime_explicit_block() {
+  const RealtimeBlock c;
+  Graph source("input");
+  source.add(nodes::Input("input", c.in));
+  Graph sink("output");
+  sink.add(nodes::Output("output", OutputOptions::EveryFrame(1)));
+  Graph g("preset_overflow");
+  g.connect(source, sink);
+  Run run = g.build(c.opt);
+  std::uint64_t dropped = 0;
+  require(RealtimeBlock::refuses_when_full(run, "input", dropped),
+          "connected Realtime + explicit Block: try_push must refuse when full");
+  require(dropped == 0U,
+          "connected Realtime + explicit Block: try_push dropped " + std::to_string(dropped));
+  auto consumer = std::async(std::launch::async, [&] {
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    return run.pull("output", 5000);
+  });
+  const auto t0 = Clock::now();
+  const bool pushed = run.push("input", TensorList{rgb(32, 24, 0xEE)});
+  const std::int64_t waited = ms_since(t0);
+  require(consumer.wait_for(std::chrono::seconds(10)) == std::future_status::ready &&
+              consumer.get().has_value(),
+          "the consumer pulled a frame");
+  require(pushed, "the blocking push is accepted once a pull makes room");
+  require(waited >= 100, "the blocking push waited for room (" + std::to_string(waited) + " ms)");
+  run.close();
+}
+
+// A plain linear Run resolves its options as GStreamer's one-segment Run does: the Realtime preset
+// makes the same explicit Block KeepLatest, so try_push never refuses and evicts the oldest.
+void linear_realtime_block_is_keep_latest() {
+  const RealtimeBlock c;
+  Graph g = input_output(c.in, OutputOptions::EveryFrame(1));
+  Run run = g.build(TensorList{rgb(32, 24, 1)}, c.opt);
+  std::uint64_t dropped = 0;
+  require(!RealtimeBlock::refuses_when_full(run, nullptr, dropped),
+          "linear Realtime + explicit Block: KeepLatest, try_push must never refuse");
+  require(dropped > 0U, "linear Realtime + explicit Block: KeepLatest evicts past the link depth");
+  run.close();
+}
+
+// Several threads stop the same Run at once while a push is parked: every call returns, the parked
+// push is released.
+void concurrent_stops_with_a_parked_push() {
+  OutputOptions out;
+  out.max_buffers = 1;
+  Graph g = input_output({}, out);
+  Run run = g.build(TensorList{rgb(8, 8, 1)}, dataflow(1));
+  require(run.push(TensorList{rgb(8, 8, 1)}) && run.push(TensorList{rgb(8, 8, 2)}),
+          "two pushes fill the link");
+  auto parked = std::async(std::launch::async, [&] { return run.push(TensorList{rgb(8, 8, 9)}); });
+  require(parked.wait_for(std::chrono::milliseconds(150)) == std::future_status::timeout,
+          "the push parks on the full link");
+  std::atomic<bool> go{false};
+  std::vector<std::thread> stoppers;
+  const auto t0 = Clock::now();
+  for (int i = 0; i < 4; ++i) {
+    stoppers.emplace_back([&] {
+      while (!go.load(std::memory_order_acquire)) {
+        std::this_thread::yield();
+      }
+      run.stop();
+    });
+  }
+  go.store(true, std::memory_order_release);
+  for (auto& t : stoppers) {
+    t.join();
+  }
+  require(ms_since(t0) < 3000, "four concurrent stops return within 3 s");
+  require(parked.wait_for(std::chrono::seconds(1)) == std::future_status::ready && !parked.get(),
+          "the parked push is released with false");
+  require(!run.running(), "stopped");
+  run.close();
+  run.close(); // idempotent
+}
+
+// State and measurement reads from other threads while stop runs.
+void reads_race_stop() {
+  Graph g = input_output();
+  Run run = g.build(TensorList{rgb(8, 8, 1)}, dataflow());
+  for (std::uint8_t i = 0; i < 4; ++i) {
+    require(run.push(TensorList{rgb(8, 8, i)}), "push");
+  }
+  MeasureScope measurement = run.start_measurement();
+  std::atomic<bool> start{false};
+  std::atomic<bool> keep_reading{true};
+  std::atomic<std::uint64_t> reads{0};
+  const auto wait_for_start = [&] {
+    while (!start.load(std::memory_order_acquire)) {
+      std::this_thread::yield();
+    }
+  };
+  std::vector<std::thread> readers;
+  for (int i = 0; i < 4; ++i) {
+    readers.emplace_back([&] {
+      wait_for_start();
+      while (keep_reading.load(std::memory_order_acquire)) {
+        (void)run.running();
+        (void)run.can_push();
+        (void)run.can_pull();
+        (void)run.last_error();
+        (void)run.input_names();
+        reads.fetch_add(1, std::memory_order_relaxed);
+      }
+    });
+  }
+  std::exception_ptr measurement_error;
+  std::thread stop_measurement([&] {
+    wait_for_start();
+    try {
+      (void)measurement.stop();
+    } catch (...) {
+      measurement_error = std::current_exception();
+    }
+  });
+  start.store(true, std::memory_order_release);
+  run.stop();
+  stop_measurement.join();
+  std::this_thread::sleep_for(std::chrono::milliseconds(100));
+  keep_reading.store(false, std::memory_order_release);
+  for (auto& r : readers) {
+    r.join();
+  }
+  if (measurement_error) {
+    std::rethrow_exception(measurement_error);
+  }
+  require(reads.load() > 0, "the readers ran");
+  require(!run.running(), "stopped");
+  run.close();
+}
+
 void close_input_cancels_a_parked_push() {
   OutputOptions out;
   out.max_buffers = 1;
@@ -720,6 +1022,7 @@ void mat_and_bundle_pushes() {
 } // namespace
 
 RUN_TEST("unit_dataflow_backend_test", ([] {
+           warnings_once_per_process();
            undeclared_input_bound_by_first_push();
            declared_input_with_dynamic_axis();
            push_outside_declared_shape_rejected();
@@ -729,8 +1032,12 @@ RUN_TEST("unit_dataflow_backend_test", ([] {
            try_push_accounting();
            refused_try_push_reads_no_byte();
            blocking_push_never_drops();
+           connected_realtime_explicit_block();
+           linear_realtime_block_is_keep_latest();
            close_input_cancels_a_parked_push();
            stop_unblocks_pull_and_refuses_push();
+           concurrent_stops_with_a_parked_push();
+           reads_race_stop();
            pull_timeouts();
            identity_round_trip_and_names();
            nv12_planes_round_trip();
