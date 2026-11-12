@@ -28,7 +28,7 @@ enum class SimaDecodeType {
 /**
  * @brief Configuration for `SimaDecode`.
  *
- * The node wraps `neatdecoder`. It receives encoded frames and emits raw video,
+ * The node wraps the Platform `simaaidecoder`. It receives encoded frames and emits raw video,
  * normally NV12 in SiMaAI memory for downstream CVU/MLA stages.
  */
 struct SimaDecodeOptions {
@@ -36,16 +36,15 @@ struct SimaDecodeOptions {
   int sima_allocator_type = 2;                ///< SiMa allocator type for decoder output buffers.
   FormatSpec out_format = FormatTag::NV12;    ///< Raw output pixel format.
   std::string decoder_name;                   ///< Decoder element name override; empty = auto-pick.
-  bool raw_output = true;   ///< If true, emit decoder-native raw buffers directly.
-  std::string next_element; ///< Optional next-element selector ("CVU" or "APU") for `neatdecoder`.
-  int dec_width = -1;       ///< Decoded frame width override; `-1` = upstream-defined.
-  int dec_height = -1;      ///< Decoded frame height override; `-1` = upstream-defined.
-  int dec_fps = -1;         ///< Decoded frame rate override; `-1` = upstream-defined.
-  int num_buffers = -1;     ///< Output buffer pool size override; `-1` = element default.
-  int input_buffers = -1;   ///< Decoder input buffer count override; `-1` = element default.
-  std::string decoder_tuning; ///< Optional native decoder tuning ("low-memory",
-                              ///< "throughput-low-latency", ...).
-  bool memory_opt = false;    ///< If true, enable the decoder memory-optimized path.
+  bool raw_output = true;     ///< If true, emit decoder-native raw buffers directly.
+  std::string next_element;   ///< Optional next-element selector ("CVU" or "APU").
+  int dec_width = -1;         ///< Stream width; when set, the stream must match; `-1` = from caps.
+  int dec_height = -1;        ///< Stream height; when set, the stream must match; `-1` = from caps.
+  int dec_fps = -1;           ///< Deprecated: not sent to the decoder; output_spec hint only.
+  int num_buffers = -1;       ///< Output pool size (`op-pool-cnt`, 2..64); `-1` = element default.
+  int input_buffers = -1;     ///< Input pool size (`ip-pool-cnt`, 2..64); `-1` = element default.
+  std::string decoder_tuning; ///< Deprecated: ignored.
+  bool memory_opt = false;    ///< Deprecated: the decoder ignores it.
 };
 
 /**

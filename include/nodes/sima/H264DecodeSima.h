@@ -41,10 +41,10 @@ public:
    * @param decoder_name        Override decoder element name; empty = auto-pick.
    * @param raw_output          If true, emit raw frames without GStreamer metadata adapters.
    * @param next_element        Optional name of the downstream element used for wiring.
-   * @param dec_width           Decoded frame width override; `-1` = let upstream decide.
-   * @param dec_height          Decoded frame height override; `-1` = let upstream decide.
-   * @param dec_fps             Decoded framerate override; `-1` = let upstream decide.
-   * @param num_buffers         Output buffer pool size; `-1` = element default.
+   * @param dec_width           Stream width; when set, must equal it; `-1` = from caps.
+   * @param dec_height          Stream height; when set, must equal it; `-1` = from caps.
+   * @param dec_fps             Deprecated, not sent to the decoder; the rate comes from caps.
+   * @param num_buffers         Output buffer pool size (`op-pool-cnt`, 2..64); `-1` = default.
    */
   SIMA_DEPRECATED("Use SimaDecode with SimaDecodeType::H264")
   H264Decode(int sima_allocator_type = 2, std::string out_format = "NV12",

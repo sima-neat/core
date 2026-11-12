@@ -1,4 +1,5 @@
 #include "nodes/sima/SimaDecode.h"
+#include "nodes/sima/internal/DecoderPoolCount.h"
 #include "nodes/sima/internal/JpegOutputFormat.h"
 
 #include "gst/GstHelpers.h"
@@ -20,8 +21,8 @@ const char* decoder_type_name(SimaDecodeType type) {
     return "h264";
   case SimaDecodeType::JPEG:
     return "jpeg";
-  case SimaDecodeType::MJPEG:
-    return "mjpeg";
+  case SimaDecodeType::MJPEG: // simaaidecoder dec-type has no mjpeg value
+    return "jpeg";
   case SimaDecodeType::H265:
     return "h265";
   }
@@ -59,8 +60,6 @@ void require_raw_output_format_supported(const SimaDecodeOptions& opt) {
 }
 
 void append_decoder_properties(std::ostringstream& ss, const SimaDecodeOptions& opt) {
-  // I420 requires conversion into the final output planes.
-  ss << " zero-copy-output=" << (public_output_format(opt.out_format) == "I420" ? "false" : "true");
   ss << " sima-allocator-type=" << opt.sima_allocator_type;
   ss << " dec-type=" << decoder_type_name(opt.type);
   if (!opt.decoder_name.empty()) {
@@ -79,17 +78,11 @@ void append_decoder_properties(std::ostringstream& ss, const SimaDecodeOptions& 
   if (opt.dec_height > 0) {
     ss << " dec-height=" << opt.dec_height;
   }
-  if (opt.dec_fps > 0) {
-    ss << " dec-fps=" << opt.dec_fps;
-  }
   if (opt.num_buffers > 0) {
-    ss << " num-buffers=" << opt.num_buffers;
+    ss << " op-pool-cnt=" << opt.num_buffers;
   }
   if (opt.input_buffers > 0) {
-    ss << " dec-ip-cnt=" << opt.input_buffers;
-  }
-  if (!opt.decoder_tuning.empty()) {
-    ss << " decoder-tuning=" << opt.decoder_tuning;
+    ss << " ip-pool-cnt=" << opt.input_buffers;
   }
   if (opt.memory_opt) {
     ss << " memory-opt=true";
@@ -135,12 +128,14 @@ SimaDecode::SimaDecode(SimaDecodeOptions opt) : opt_(std::move(opt)) {}
 std::string SimaDecode::backend_fragment(int node_index) const {
   require_tensordecoder("SimaDecode::backend_fragment");
   require_raw_output_format_supported(opt_);
+  internal::require_decoder_pool_count("SimaDecode: num_buffers", opt_.num_buffers);
+  internal::require_decoder_pool_count("SimaDecode: input_buffers", opt_.input_buffers);
   const std::string dec = opt_.decoder_name.empty()
                               ? ("n" + std::to_string(node_index) + "_decoder")
                               : opt_.decoder_name;
 
   std::ostringstream ss;
-  ss << "neatdecoder name=" << dec;
+  ss << "simaaidecoder name=" << dec;
   append_decoder_properties(ss, opt_);
   if (opt_.raw_output) {
     return ss.str();

@@ -1,6 +1,7 @@
 #include "nodes/sima/H264DecodeSima.h"
 
 #include "gst/GstHelpers.h"
+#include "nodes/sima/internal/DecoderPoolCount.h"
 #include <memory>
 #include <sstream>
 #include <string>
@@ -23,7 +24,8 @@ std::string H264Decode::backend_fragment(int node_index) const {
   const std::string vc = "n" + std::to_string(node_index) + "_videoconvert";
   const std::string cap = "n" + std::to_string(node_index) + "_raw_caps";
   require_tensordecoder("H264Decode::backend_fragment");
-  const char* element = "neatdecoder";
+  internal::require_decoder_pool_count("H264Decode: num_buffers", num_buffers_);
+  const char* element = "simaaidecoder";
 
   if (raw_output_) {
     std::ostringstream ss;
@@ -46,10 +48,8 @@ std::string H264Decode::backend_fragment(int node_index) const {
       ss << " dec-width=" << dec_width_;
     if (dec_height_ > 0)
       ss << " dec-height=" << dec_height_;
-    if (dec_fps_ > 0)
-      ss << " dec-fps=" << dec_fps_;
     if (num_buffers_ > 0)
-      ss << " num-buffers=" << num_buffers_;
+      ss << " op-pool-cnt=" << num_buffers_;
     return ss.str();
   }
 
@@ -68,10 +68,8 @@ std::string H264Decode::backend_fragment(int node_index) const {
     ss << " dec-width=" << dec_width_;
   if (dec_height_ > 0)
     ss << " dec-height=" << dec_height_;
-  if (dec_fps_ > 0)
-    ss << " dec-fps=" << dec_fps_;
   if (num_buffers_ > 0)
-    ss << " num-buffers=" << num_buffers_;
+    ss << " op-pool-cnt=" << num_buffers_;
   ss << " ! videoconvert name=" << vc << " ! capsfilter name=" << cap << " caps=\"" << caps.str()
      << "\"";
   return ss.str();
