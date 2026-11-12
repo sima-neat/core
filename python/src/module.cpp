@@ -4603,7 +4603,8 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("mode", &simaai::neat::ResizeSpec::mode)
       .def_rw("pad_value", &simaai::neat::ResizeSpec::pad_value)
       .def_rw("scaling_type", &simaai::neat::ResizeSpec::scaling_type)
-      .def_rw("interpolation", &simaai::neat::ResizeSpec::interpolation);
+      .def_rw("interpolation", &simaai::neat::ResizeSpec::interpolation,
+              nb::for_setter(nb::arg("interpolation").none()));
 
   nb::class_<simaai::neat::ColorConvertSpec>(m, "ColorConvertSpec")
       .def(nb::init<>())
@@ -4658,8 +4659,10 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("resize", &simaai::neat::PreprocessOptions::resize)
       .def_rw("color_convert", &simaai::neat::PreprocessOptions::color_convert)
       .def_rw("layout_convert", &simaai::neat::PreprocessOptions::layout_convert)
-      .def_rw("rescale_factor", &simaai::neat::PreprocessOptions::rescale_factor)
-      .def_rw("quantization_step", &simaai::neat::PreprocessOptions::quantization_step)
+      .def_rw("rescale_factor", &simaai::neat::PreprocessOptions::rescale_factor,
+              nb::for_setter(nb::arg("rescale_factor").none()))
+      .def_rw("quantization_step", &simaai::neat::PreprocessOptions::quantization_step,
+              nb::for_setter(nb::arg("quantization_step").none()))
       .def_rw("color_conversion_placement",
               &simaai::neat::PreprocessOptions::color_conversion_placement)
       .def_rw("floating_conversion", &simaai::neat::PreprocessOptions::floating_conversion)
@@ -5388,7 +5391,8 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("mean", &simaai::neat::NormalizationOptions::mean)
       .def_rw("stddev", &simaai::neat::NormalizationOptions::stddev)
       .def_rw("element_name", &simaai::neat::NormalizationOptions::element_name)
-      .def_rw("rescale_factor", &simaai::neat::NormalizationOptions::rescale_factor)
+      .def_rw("rescale_factor", &simaai::neat::NormalizationOptions::rescale_factor,
+              nb::for_setter(nb::arg("rescale_factor").none()))
       .def_rw("floating_conversion", &simaai::neat::NormalizationOptions::floating_conversion);
 
   nb::class_<simaai::neat::PreprocOptions>(m, "PreprocOptions")
@@ -5406,8 +5410,10 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("scaled_width", &simaai::neat::PreprocOptions::scaled_width)
       .def_rw("scaled_height", &simaai::neat::PreprocOptions::scaled_height)
       .def_rw("batch_size", &simaai::neat::PreprocOptions::batch_size)
-      .def_rw("rescale_factor", &simaai::neat::PreprocOptions::rescale_factor)
-      .def_rw("quantization_step", &simaai::neat::PreprocOptions::quantization_step)
+      .def_rw("rescale_factor", &simaai::neat::PreprocOptions::rescale_factor,
+              nb::for_setter(nb::arg("rescale_factor").none()))
+      .def_rw("quantization_step", &simaai::neat::PreprocOptions::quantization_step,
+              nb::for_setter(nb::arg("quantization_step").none()))
       .def_rw("color_conversion_placement",
               &simaai::neat::PreprocOptions::color_conversion_placement)
       .def_rw("floating_conversion", &simaai::neat::PreprocOptions::floating_conversion)

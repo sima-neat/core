@@ -119,11 +119,20 @@ def test_fixed_preproc_options_are_additive_and_round_trip():
     standalone.quantization_step = 0.25
     standalone.color_conversion_placement = pyneat.PreprocColorConversionPlacement.BeforeResize
     assert standalone.quantization_step == 0.25
+    standalone.rescale_factor = None
+    standalone.quantization_step = None
+    assert standalone.rescale_factor is None and standalone.quantization_step is None
+    p.rescale_factor = None
+    p.quantization_step = 0.25
+    p.quantization_step = None
+    assert p.rescale_factor is None and p.quantization_step is None
     norm = pyneat.NormalizationOptions()
     norm.rescale_factor = 1.0 / 255.0
     norm.floating_conversion = pyneat.PreprocFloatingConversion.NearestEven
     norm.stddev = [1.0, -0.25, 1.0]
     assert pyneat.nodes.normalization(norm) is not None
+    norm.rescale_factor = None
+    assert norm.rescale_factor is None
     resize = pyneat.ResizeOptions()
     resize.width = resize.height = 8
     resize.interpolation = pyneat.ResizeInterpolation.BilinearAntialiased
