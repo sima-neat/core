@@ -123,6 +123,9 @@ std::optional<BoxDecodeType> parse_box_decode_type_token(std::string_view token)
   if (lower == "yolox-seg-pose" || lower == "yolox_seg_pose") {
     return BoxDecodeType::YoloXSegPose;
   }
+  if (lower == "detr-focal" || lower == "detr_focal") {
+    return BoxDecodeType::DetrFocal;
+  }
   if (lower == "detr") {
     return BoxDecodeType::Detr;
   }
@@ -172,6 +175,7 @@ std::optional<SuperPointOutputFormat> parse_superpoint_output_format_token(std::
 
 bool box_decode_type_uses_per_port_dtype(BoxDecodeType type) {
   return type == BoxDecodeType::SuperPoint || type == BoxDecodeType::YoloXSegPose ||
+         type == BoxDecodeType::Detr || type == BoxDecodeType::DetrFocal ||
          box_decode_type_is_oriented(type);
 }
 

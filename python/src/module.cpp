@@ -4523,11 +4523,16 @@ NB_MODULE(_pyneat_core, m) {
       .value("YoloX", simaai::neat::BoxDecodeType::YoloX)
       .value("Ssd", simaai::neat::BoxDecodeType::Ssd)
       .value("Detr", simaai::neat::BoxDecodeType::Detr)
+      .value("DetrFocal", simaai::neat::BoxDecodeType::DetrFocal)
       .value("EffDet", simaai::neat::BoxDecodeType::EffDet)
       .value("RcnnStage1", simaai::neat::BoxDecodeType::RcnnStage1)
       .value("Centernet", simaai::neat::BoxDecodeType::Centernet)
       .value("SuperPoint", simaai::neat::BoxDecodeType::SuperPoint)
       .value("YoloXSegPose", simaai::neat::BoxDecodeType::YoloXSegPose);
+
+  nb::enum_<simaai::neat::BoxDecodeSourceStorage>(m, "BoxDecodeSourceStorage")
+      .value("DenseHwc", simaai::neat::BoxDecodeSourceStorage::DenseHwc)
+      .value("PackedCBlock", simaai::neat::BoxDecodeSourceStorage::PackedCBlock);
 
   nb::enum_<simaai::neat::BoxDecodeTypeOption>(m, "BoxDecodeTypeOption")
       .value("Auto", simaai::neat::BoxDecodeTypeOption::Auto)
@@ -5548,6 +5553,24 @@ NB_MODULE(_pyneat_core, m) {
       "payload_type"_a = 96, "config_interval"_a = 1);
   nodes_mod.def("detess_dequant", &simaai::neat::nodes::DetessDequant,
                 "options"_a = simaai::neat::DetessDequantOptions{});
+  nodes_mod.def(
+      "sima_box_decode",
+      [](simaai::neat::BoxDecodeType decode_type, int original_width, int original_height,
+         int model_width, int model_height, double detection_threshold, double nms_iou_threshold,
+         int top_k, simaai::neat::BoxDecodeTypeOption decode_type_option,
+         std::optional<simaai::neat::BoxDecodeSourceStorage> source_storage,
+         std::optional<bool> detess, std::optional<bool> dequant,
+         std::optional<simaai::neat::ResizeMode> resize_mode) {
+        return simaai::neat::nodes::SimaBoxDecode(
+            decode_type, detection_threshold, nms_iou_threshold, top_k, "", original_width,
+            original_height, model_width, model_height, decode_type_option, source_storage, detess,
+            dequant, resize_mode);
+      },
+      "decode_type"_a, "original_width"_a = 0, "original_height"_a = 0, "model_width"_a = 0,
+      "model_height"_a = 0, "detection_threshold"_a = 0.0, "nms_iou_threshold"_a = 0.0,
+      "top_k"_a = 0, "decode_type_option"_a = simaai::neat::BoxDecodeTypeOption::Auto,
+      "source_storage"_a = std::nullopt, "detess"_a = std::nullopt, "dequant"_a = std::nullopt,
+      "resize_mode"_a = std::nullopt);
   nodes_mod.def(
       "sima_box_decode",
       [](const simaai::neat::Model& model, const simaai::neat::BoxDecodeOptions& options) {

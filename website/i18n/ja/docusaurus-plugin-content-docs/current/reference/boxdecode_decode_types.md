@@ -72,6 +72,47 @@ opt.top_k = 100;
 
 軸に平行な検出結果の表示グラフでは、結果を `SimaRender` に渡せます。`decode_bbox(...)` は既存のボックス先頭形式にのみ使ってください。これも `SimaRender` も回転ボックスには対応していません。
 
+## 従来の DETR {#classic-detr}
+
+同じクエリグリッド上にある、4 チャネルのボックスロジットと末尾に背景チャネルを持つクラスロジットには `Detr` を選択します。`decode_type_option` は `Auto` のままにしてください。テンソル名に依存せず、レシピが Softmax を選択します。背景は分母に含まれますが、前景クラス数と出力の選択からは除外されます。ボックス座標には sigmoid が適用されます。既に正規化された focal-loss のボックス用デコーダーではありません。
+
+Stretch と正の `top_k` を使用してください。NMS は適用されず、前処理メタデータを使って元フレームの座標へ変換します。確率値を指定するレイアウトや矛盾するスコア活性化は拒否されます。
+
+```python
+options = pyneat.ModelOptions()
+options.decode_type = pyneat.BoxDecodeType.Detr
+options.preprocess.resize.mode = pyneat.ResizeMode.Stretch
+options.top_k = 100
+options.score_threshold = 0.7
+```
+
+## Focal loss を用いるクエリ検出器
+
+正規化済み `cx,cy,width,height`（深さ4）と独立したクラスロジット（深さN）の順に並ぶ2つのテンソルには、`BoxDecodeType::DetrFocal`（Python: `pyneat.BoxDecodeType.DetrFocal`、トークン `detr-focal`）を使用します。クエリ軸とデータ型は一致し、Nは1～1024です。FP32、BF16、および量子化情報が指定されたINT8ストレージに対応します。
+
+クラスロジットだけにsigmoidを適用し、全クエリ・クラスの組から上位K件を選択します。同じクエリから複数のクラスを出力できます。背景クラス、ボックスへのsigmoid、クエリごとのargmax、NMS、小面積フィルターはありません。正の `top_k`、フィルタリングなしなら `detection_threshold=0`、必須の `nms_iou_threshold=0` を設定します。Stretchと実際の画像・モデル寸法を使用してください。
+
+既存の `BBOX` 出力はボックスを画像境界にクリップし、XYWH座標を整数に丸めます。`decode_bbox` はそれを浮動小数点値として公開しますが、サブピクセル精度は復元しません。クリップしない浮動小数点リファレンスとは別に精度への影響を測定してください。従来の `BoxDecodeType::Detr` は変更されず、この形式ではなくボックスロジットと背景クラスを含むsoftmaxスコアを期待します。
+
+Pythonでは `decode_bbox(..., strict=True)` を使用し、既定の縮退ボックス除去を避けて、丸めにより面積がゼロになった行も保持してください。
+
+Python の raw-geometry オーバーロードは C++ ファクトリに対応し、ヘッドテンソルを直接渡す場合に使用します。密な FP32 ヘッドでは、モデルの出力アダプターをすべて保持し、実際のストレージを明示してください。生の MLA 出力で打ち切ったり、パディング済みバイトを密なテンソルとして扱ったりしないでください。
+
+```python
+node = pyneat.nodes.sima_box_decode(
+    pyneat.BoxDecodeType.DetrFocal,
+    original_width=1280, original_height=720,
+    model_width=640, model_height=640,
+    detection_threshold=0.0, nms_iou_threshold=0.0, top_k=300,
+    decode_type_option=pyneat.BoxDecodeTypeOption.InterleavedByHeadLogit,
+    source_storage=pyneat.BoxDecodeSourceStorage.DenseHwc,
+    detess=False, dequant=False,
+    resize_mode=pyneat.ResizeMode.Stretch,
+)
+```
+
+有限の反転サイズは既存の端点クリップで面積ゼロの BBOX レコードになり、選択したペアとスコアを保持します。非有限の座標やロジットは、出力を公開する前に失敗します。
+
 ## YOLOv8 と YOLO11 の回転ボックス {#yolov8-oriented-boxes}
 
 `BoxDecodeType::YoloV8Obb`（Python: `pyneat.BoxDecodeType.YoloV8Obb`、トークン `yolov8-obb` または `yolo11-obb`）を選択します。INT8、BF16、FP32 のヘッド 9 個を役割別にグループ化して渡します。64 チャネルの DFL ボックス、クラスロジット、角度ロジットの各ヘッド 3 個を、ストライド 8、16、32 の順に並べます。完全なクラス数はクラスヘッドから推定されます。

@@ -82,6 +82,47 @@ opt.top_k = 100;
 
 軸對齊偵測結果的顯示圖可將結果傳給 `SimaRender`。`decode_bbox(...)` 僅適用於既有的方框前置格式；此函式與 `SimaRender` 都不接受旋轉框。
 
+## 傳統 DETR {#classic-detr}
+
+對於同一查詢網格上的四通道方框 logits，以及最後一個通道為背景的類別 logits，請選擇 `Detr`。將 `decode_type_option` 保持為 `Auto`：配方會選擇 Softmax，不依賴張量名稱。背景會參與分母計算，但不計入前景類別數，也不會被選為輸出。方框座標會套用 sigmoid；此解碼器不適用於已正規化的 focal-loss 方框。
+
+請使用 Stretch 與正值 `top_k`。解碼器不套用 NMS，並透過前處理中繼資料還原原始影格座標。明確指定機率值的配置或衝突的分數啟用函數會遭拒絕。
+
+```python
+options = pyneat.ModelOptions()
+options.decode_type = pyneat.BoxDecodeType.Detr
+options.preprocess.resize.mode = pyneat.ResizeMode.Stretch
+options.top_k = 100
+options.score_threshold = 0.7
+```
+
+## Focal loss 查詢偵測器
+
+對依序排列的兩個張量使用 `BoxDecodeType::DetrFocal`（Python：`pyneat.BoxDecodeType.DetrFocal`，權杖 `detr-focal`）：深度4的正規化 `cx,cy,width,height` 座標，接著是深度N的獨立類別logits。查詢軸與資料型別必須相符；N為1–1024。支援FP32、BF16及具有明確量化資訊的INT8儲存格式。
+
+此設定檔僅對類別logits套用sigmoid，並從所有查詢／類別配對中選取全域前K名。同一查詢可產生多個類別。沒有背景類別、方框sigmoid、逐查詢argmax、NMS或小面積篩選。設定正數 `top_k`；若不篩選top-K，設定 `detection_threshold=0`；`nms_iou_threshold=0` 為必要值。使用Stretch及實際的影像／模型尺寸。
+
+既有 `BBOX` 輸出會將方框裁切至影像邊界，並將XYWH座標四捨五入為整數。`decode_bbox` 將這些座標顯示為浮點數，但不會還原次像素精度。與未裁切的浮點參考比較時，請分別衡量此表示方式對準確度的影響。傳統 `BoxDecodeType::Detr` 維持不變：它需要方框logits及包含背景類別的softmax分數，而非這些張量。
+
+在Python中使用 `decode_bbox(..., strict=True)`，即可保留四捨五入後面積為零的列，而不套用預設的退化方框篩選。
+
+Python raw-geometry 多載對應 C++ 工廠，適合自行提供頭部張量。密集 FP32 頭部應保留模型的完整輸出介面轉換，並明確宣告實際儲存格式。請勿在原始 MLA 輸出截斷流程，或將含填補的位元組重新標示為密集張量。
+
+```python
+node = pyneat.nodes.sima_box_decode(
+    pyneat.BoxDecodeType.DetrFocal,
+    original_width=1280, original_height=720,
+    model_width=640, model_height=640,
+    detection_threshold=0.0, nms_iou_threshold=0.0, top_k=300,
+    decode_type_option=pyneat.BoxDecodeTypeOption.InterleavedByHeadLogit,
+    source_storage=pyneat.BoxDecodeSourceStorage.DenseHwc,
+    detess=False, dequant=False,
+    resize_mode=pyneat.ResizeMode.Stretch,
+)
+```
+
+有限反向尺寸會由既有端點裁切轉為零面積 BBOX 記錄，保留入選配對及分數。非有限座標或 logits 仍會在發布前失敗。
+
 ## YOLOv8 與 YOLO11 旋轉邊界框 {#yolov8-oriented-boxes}
 
 選取 `BoxDecodeType::YoloV8Obb`（Python：`pyneat.BoxDecodeType.YoloV8Obb`；代碼 `yolov8-obb` 或 `yolo11-obb`）。提供九個依角色分組的 INT8、BF16 或 FP32 頭：三個 64 通道 DFL 邊界框頭、三個類別 logit 頭，以及三個角度 logit 頭，各組依步幅 8、16、32 排列。完整類別數由類別頭推導。
