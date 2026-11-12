@@ -794,6 +794,24 @@ if (NOT unit_run_preset_overflow_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
   endif()
 endif()
 
+# W2 (zero-copy push): what a push keeps of the pushed tensor and when it lets go, registered per
+# backend as the torture test is. On Dataflow also which tensors are wrapped and which copied.
+if (NOT unit_run_push_wrap_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  add_pipeline_test(unit_run_push_wrap_test
+    ${CMAKE_CURRENT_SOURCE_DIR}/unit_testing/unit_run_push_wrap_test.cpp)
+  set_tests_properties(unit_run_push_wrap_test PROPERTIES TIMEOUT 300)
+  set_property(TEST unit_run_push_wrap_test APPEND PROPERTY LABELS "unit")
+  if (SIMANEAT_DATAFLOW_SOURCE_DIR)
+    simaneat_add_test(NAME unit_run_push_wrap_test_dataflow COMMAND unit_run_push_wrap_test)
+    simaneat_append_ctest_env(unit_run_push_wrap_test_dataflow)
+    set_property(TEST unit_run_push_wrap_test_dataflow APPEND PROPERTY ENVIRONMENT
+      "SIMA_NEAT_BACKEND=dataflow")
+    set_tests_properties(unit_run_push_wrap_test_dataflow PROPERTIES TIMEOUT 300)
+    set_property(TEST unit_run_push_wrap_test_dataflow APPEND PROPERTY LABELS
+      "strict;unit;dataflow")
+  endif()
+endif()
+
 # H0 C4, with the runtime in the build: the Dataflow twins of the GStreamer-internal tests of
 # plan D12 (public API only, RunBackend::Dataflow requested explicitly; see the exclusions at the
 # end of this file), and the differential test, which builds the same graph on both backends in

@@ -2,7 +2,10 @@
 // both backends (RunBackend::GStreamer and RunBackend::Dataflow, requested explicitly, in one
 // process), with and without frame_id / stream_id / pts_ns set and with copy_input on and off; the
 // pulled items are compared field by field and byte by byte. SIMA_NEAT_BACKEND does not matter
-// here.
+// here. W2 (zero-copy push): on Dataflow each single-input item is also checked to be wrapped (the
+// pulled tensor's first byte is the pushed one) exactly when copy_input is off and the frame fills
+// a slot (a fixed port's frames, a bounded port's frames at the bound), and copied otherwise; the
+// fixed-port variants are wrapped throughout.
 //
 // Compared (APPLICATION_MODEL.md 1.2: what applications read, plus what they echo):
 //   the pull status; Sample::kind and its payload slots (tensor / tensors / fields, and how many);
@@ -49,6 +52,7 @@
 #include "test_utils.h"
 
 #include <chrono>
+#include <cstddef>
 #include <cstdint>
 #include <iostream>
 #include <map>
@@ -117,6 +121,9 @@ struct Variant {
   bool copy_input;
   bool do_timestamp;
   bool new_pull; // Run::pull(milliseconds) -> Result<TensorList>, else Run::pull(int, Sample&)
+  // W2: no max_* bounds, so the seed (64x48) fixes the port and a slot holds exactly one frame:
+  // with copy_input off every item is wrapped on Dataflow (a linear seeded variant only).
+  bool fixed_port = false;
 };
 
 struct TensorObs {
@@ -124,6 +131,7 @@ struct TensorObs {
   std::vector<std::int64_t> shape;
   int format = -1;
   std::vector<std::uint8_t> bytes;
+  const std::byte* first = nullptr; // the tensor's first byte, when its storage has an address
 };
 
 struct Observed {
@@ -151,6 +159,9 @@ TensorObs observe(const Tensor& t) {
   o.shape = t.shape;
   o.format = t.semantic.image ? static_cast<int>(t.semantic.image->format) : -1;
   o.bytes = t.copy_dense_bytes_tight();
+  if (t.storage && t.storage->data) {
+    o.first = static_cast<const std::byte*>(t.storage->data) + t.byte_offset;
+  }
   return o;
 }
 
@@ -159,9 +170,11 @@ Run build(const Variant& v, RunBackend backend) {
   in.payload_type = PayloadType::Image;
   in.format = FormatTag::RGB;
   in.memory_policy = InputMemoryPolicy::SystemMemory;
-  in.max_width = kMaxW;
-  in.max_height = kMaxH;
-  in.max_depth = 3;
+  if (!v.fixed_port) {
+    in.max_width = kMaxW;
+    in.max_height = kMaxH;
+    in.max_depth = 3;
+  }
   in.do_timestamp = v.do_timestamp;
   OutputOptions out;
   out.max_buffers = 16;
@@ -268,6 +281,7 @@ Observed pull_one(Run& run, const Variant& v) {
 struct Outcome {
   std::vector<Observed> items;
   std::vector<std::vector<std::uint8_t>> pushed;
+  std::vector<const std::byte*> sources; // each pushed tensor's first byte
   PullStatus final_status = PullStatus::Error;
   std::string final_error;
   std::string build_error;
@@ -282,6 +296,8 @@ Outcome run_variant(const Variant& v, RunBackend backend) {
     for (std::size_t i = 0; i < items.size(); ++i) {
       sources.push_back(rgb(items[i].w, items[i].h, static_cast<std::uint8_t>(0x10 + i)));
       out.pushed.push_back(sources.back().copy_dense_bytes_tight());
+      out.sources.push_back(static_cast<const std::byte*>(sources.back().storage->data) +
+                            sources.back().byte_offset);
       require(push_item(run, v, items[i], sources.back()),
               "push of item " + std::to_string(i) + " refused");
       out.items.push_back(pull_one(run, v));
@@ -402,6 +418,7 @@ void compare(const Variant& v, const Outcome& gst, const Outcome& df, Comparison
   }
   const std::vector<Item> items = sequence(v.vary_shapes);
   bool pushed_orig_seen = false;
+  std::size_t wrapped_items = 0;
   c.equal<std::size_t>(0, "items pulled", gst.items.size(), df.items.size());
   for (std::size_t i = 0; i < items.size() && i < gst.items.size() && i < df.items.size(); ++i) {
     const Item& item = items[i];
@@ -424,6 +441,16 @@ void compare(const Variant& v, const Outcome& gst, const Outcome& df, Comparison
       c.check(i, "bytes equal between backends", g.leaves[k].bytes == d.leaves[k].bytes);
       c.check(i, "GStreamer bytes equal the pushed bytes", g.leaves[k].bytes == gst.pushed[i]);
       c.check(i, "Dataflow bytes equal the pushed bytes", d.leaves[k].bytes == df.pushed[i]);
+    }
+    // W2: Dataflow wraps the pushed storage (the pulled tensor's first byte is the pushed one)
+    // exactly when copy_input is off and the frame fills a slot: every frame of a fixed port, a
+    // frame at the bound of a bounded one; every other item is copied.
+    if (!d.leaves.empty() && i < df.sources.size()) {
+      const bool fills_slot = v.fixed_port || (item.w == kMaxW && item.h == kMaxH);
+      const bool wrapped = d.leaves.front().first == df.sources[i];
+      c.equal<bool>(i, "Dataflow wraps the pushed storage (W2)", !v.copy_input && fills_slot,
+                    wrapped);
+      wrapped_items += wrapped ? 1U : 0U;
     }
     const bool proposes_time = item.pts_ns >= 0;
     if (v.new_pull) {
@@ -512,6 +539,9 @@ void compare(const Variant& v, const Outcome& gst, const Outcome& df, Comparison
                        status_name(gst.final_status), status_name(df.final_status));
   c.equal<std::string>(items.size(), "Dataflow status after close_input", "Closed",
                        status_name(df.final_status));
+  std::cout << "  W2: Dataflow wrapped " << wrapped_items << " of " << df.items.size()
+            << " items (copy_input " << (v.copy_input ? "on" : "off")
+            << (v.fixed_port ? ", fixed port" : ", bounded port") << ")\n";
 }
 
 // ---- H0c: graphs of several endpoints -------------------------------------------------------
@@ -880,6 +910,13 @@ RUN_TEST("unit_run_backend_differential_test", ([] {
                 false, false, false, false},
                {"connected/balanced/new-pull/copy_input=on/do_timestamp=off", kBalanced, true,
                 false, true, false, true},
+               // W2: a fixed port, every item wrapped on Dataflow (copy_input off) or copied (on).
+               {"linear/balanced/fixed/old-pull/copy_input=off/do_timestamp=off", kBalanced, false,
+                false, false, false, false, true},
+               {"linear/balanced/fixed/new-pull/copy_input=off/do_timestamp=off", kBalanced, false,
+                false, false, false, true, true},
+               {"linear/balanced/fixed/new-pull/copy_input=on/do_timestamp=off", kBalanced, false,
+                false, true, false, true, true},
            };
            std::vector<std::string> failures;
            std::size_t compared = 0;

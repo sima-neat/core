@@ -117,7 +117,8 @@ enum class OutputMemory {
 /// Advanced runtime tuning knobs (most users never set these).
 struct RunAdvancedOptions {
   bool copy_input =
-      false; ///< Force a copy of every pushed input (useful when the source buffer is short-lived).
+      false; ///< Force a copy of every pushed input (useful when the source buffer is short-lived
+             ///< or reused as soon as push returns: otherwise the Run may keep its storage).
   std::size_t max_input_bytes = 0; ///< Reject pushes larger than this many bytes (0 = no cap).
   int sync_num_buffers_override =
       -1; ///< Override the appsrc `num-buffers` for sync-mode runs (-1 = auto).
@@ -715,6 +716,12 @@ public:
    * one positional record (`Tensor::record`) pushes the record's fields; a record inside a list of
    * several tensors is refused (`misconfig.input_shape`). A list of one Tensor from this Run's
    * `alloc(name)` commits it (see `alloc`).
+   *
+   * The Run may keep the pushed tensor's storage instead of copying it (every push form, `try_push`
+   * included): GStreamer copies it later on Core's input thread; the Dataflow runtime keeps a
+   * CPU tensor's `TensorBuffer` until the item is pulled and returns that storage itself from
+   * `pull`. Do not change a pushed tensor's bytes while any `Tensor` shares its storage; set
+   * `RunAdvancedOptions::copy_input` to copy at the push.
    * @return `true` once queued; `false` when the input is closed or the Run stopped.
    */
   bool push(const TensorList& inputs);

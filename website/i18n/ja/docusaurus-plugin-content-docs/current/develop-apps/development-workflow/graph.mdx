@@ -557,6 +557,7 @@ if (result) {
 - `graph.input("points", {-1, 4}, simaai::neat::TensorDType::Float32, {256, 4})` はテンソル入力を宣言します。`-1` は動的な軸を表し、最後の引数がその上限を定めます。宣言から外れる push は `misconfig.input_shape` で失敗します。`run.alloc("points")` は上限の形状を持つ書き込み可能な Tensor を返します。それを単独でリストに入れて push すること（`run.push("points", {tensor})`）がコミットであり、一度だけ行えます。
 - リスト 1 つが 1 つの項目です。最初のテンソルのスタンプが項目の `stream_name`、`frame_id`、`source_time`、`flags` を提案します（`tensor.with_stamp(stamp)`）。`seq` と `publish_time` はランタイムが書き込みます。
 - 複数のテンソルからなるリスト（`run.push({a, b})`）は位置ベースのレコードです。pull されるリストはそのテンソルを順に保持し、それぞれが項目のスタンプを持ちます。
+- `Tensor` がストレージを共有している間は、プッシュしたテンソルのバイトを変更しないでください。`push` と `try_push` はテンソルをコピーせずにそのストレージを保持することがあります。Dataflow ランタイムは項目が pull されるまでそれを保持し、`pull` からそのストレージ自体を返します。GStreamer は後で入力スレッドでコピーします。`push` が戻った直後にバッファーを再利用するには、プッシュ時にコピーする `RunOptions::advanced.copy_input = true` を設定します。
 - `run.on_output("out", callback)` は、`pull` の代わりに、`Run` が所有するスレッド上ですべての出力項目を `TensorList` としてコールバックに渡します。`run({tensor})` は push して出力を待ちます。
 - `std::optional<Sample>` を返す整数タイムアウトの pull、`pull(100)` と `pull("out", 100)` は非推奨です。`pull_tensors`、`pull_samples`、`cv::Mat` の push も同様で、それぞれプロセスごとに 1 回警告を出します。`pull(100, sample)` と `pull("out", 100, sample)` は `Sample` を埋める形式として残ります。これらがメタデータを取得する方法です。
 - `pipeline/Graph.h` は GStreamer のヘッダーを必要としなくなりました。その前に `SIMA_NEAT_GRAPH_NO_GSTREAMER` を定義しない限り、引き続き `<gst/gst.h>` をインクルードします。このインクルードは今後のリリースで削除されるため、GStreamer を使用する箇所では `<gst/gst.h>` を自分でインクルードしてください。

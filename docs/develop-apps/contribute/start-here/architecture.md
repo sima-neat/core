@@ -1300,11 +1300,21 @@ Dataflow backend (an opt-in build with `SIMANEAT_DATAFLOW_SOURCE_DIR`, for graph
 `Input`s feeding public `Output`s, each `Output` fed by one `Input`), each input is one Feed
 with one link and one Fetch per output it feeds. A fan-out (one `Graph::input` handle given
 to several `Graph::output`s, or a `graphs::Branch`) publishes each item once, and every
-output leases the same slot. `push` copies the tensor into a pool slot on the calling thread
-and waits for room on every link without dropping (an output with `OutputOptions::drop`
-evicts its oldest item instead), `try_push` applies the overflow policy on each link and is
-refused only when every link refuses, and `pull` returns a read-only `CpuExternal` tensor
-that leases the slot until its last copy is released. Each input's shape is bound by its
+output leases the same slot. `push` waits for room on every link without dropping (an
+output with `OutputOptions::drop` evicts its oldest item instead), and `try_push` applies the
+overflow policy on each link and is refused only when every link refuses, before anything is
+copied or kept. Both back the slot with the pushed tensor's own storage, without a copy, when
+it is CPU memory with an owning `TensorBuffer::holder`, laid out exactly as a slot of the input
+(dense and contiguous, or NV12/I420 planes at the input's pitches) and exactly one slot long
+(every frame of a fixed-shape input; with `InputOptions::max_*`, a frame at the bound), aligned
+to 64 bytes, neither pulled from a Dataflow Run nor lent by `Run::alloc`, in a Run of one input; the Run then keeps the tensor's `TensorBuffer` until the last pulled tensor or
+queued item using it is gone, and `pull` returns that storage itself, read-only. Any other
+tensor, and every tensor under `RunAdvancedOptions::copy_input`, is copied into a pool slot on
+the calling thread, and `pull` returns a read-only `CpuExternal` tensor that leases the slot
+until its last copy is released. On both runtimes a pushed tensor's bytes must not change
+while any `Tensor` shares its storage (GStreamer also keeps the pushed tensor and copies it
+later on Core's input thread); an application that reuses a buffer as soon as `push` returns
+sets `copy_input`. Each input's shape is bound by its
 declaration, its seed or its own first push, and enforced from then on. `push(name, ...)` and
 `pull(name, ...)` select the endpoint; the unnamed forms reach the only input or output.
 `close_input()` closes every input of the Run; there is no per-input close. Fan-in (several
@@ -1409,7 +1419,9 @@ implicit packing remains forbidden; ordinary successful zero-copy paths are unch
 
 On CPU-admissible ingress, `advanced.copy_input=true` takes its protective copy at
 queue admission, even when new allocations prefer device memory. A strict
-device-visible ingress requirement is distinct from this allocation preference.
+device-visible ingress requirement is distinct from this allocation preference. On the
+Dataflow runtime it copies every pushed tensor into a pool slot before `push` returns,
+where the push would otherwise keep the tensor's storage.
 
 #### Checked recipes and execution instances
 

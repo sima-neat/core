@@ -583,6 +583,7 @@ if (result) {
 - `graph.input("points", {-1, 4}, simaai::neat::TensorDType::Float32, {256, 4})`는 텐서 입력을 선언합니다. `-1`은 동적 축을 나타내고 마지막 인수가 그 상한을 정합니다. 선언을 벗어나는 push는 `misconfig.input_shape`로 실패합니다. `run.alloc("points")`는 상한 형태의 쓰기 가능한 Tensor를 반환하며, 이를 리스트에 단독으로 담아 push하는 것(`run.push("points", {tensor})`)이 커밋이고 한 번만 가능합니다.
 - 리스트 하나가 항목 하나입니다. 첫 번째 텐서의 스탬프가 항목의 `stream_name`, `frame_id`, `source_time`, `flags`를 제안합니다(`tensor.with_stamp(stamp)`). `seq`와 `publish_time`은 런타임이 기록합니다.
 - 여러 텐서로 된 리스트(`run.push({a, b})`)는 위치 기반 레코드입니다. pull된 리스트는 그 텐서들을 순서대로 담으며, 각 텐서는 항목의 스탬프를 가집니다.
+- 어떤 `Tensor`가 스토리지를 공유하는 동안에는 push한 텐서의 바이트를 바꾸지 마세요. `push`와 `try_push`는 텐서를 복사하는 대신 그 스토리지를 보관할 수 있습니다. Dataflow 런타임은 항목이 pull될 때까지 이를 보관하고 `pull`에서 그 스토리지 자체를 반환하며, GStreamer는 나중에 입력 스레드에서 복사합니다. `push`가 반환되자마자 버퍼를 재사용하려면 push 시점에 복사하는 `RunOptions::advanced.copy_input = true`를 설정하세요.
 - `run.on_output("out", callback)`은 `pull` 대신 `Run`이 소유한 스레드에서 모든 출력 항목을 `TensorList`로 콜백에 전달합니다. `run({tensor})`는 push하고 출력을 기다립니다.
 - `std::optional<Sample>`을 반환하는 정수 타임아웃 pull인 `pull(100)`과 `pull("out", 100)`은 사용 중단되었으며, `pull_tensors`, `pull_samples`, `cv::Mat` push도 마찬가지입니다. 각각 프로세스당 한 번 경고합니다. `pull(100, sample)`과 `pull("out", 100, sample)`은 `Sample`을 채우며 유지됩니다. 이들이 메타데이터에 접근하는 경로입니다.
 - `pipeline/Graph.h`는 더 이상 GStreamer 헤더가 필요하지 않습니다. 그보다 먼저 `SIMA_NEAT_GRAPH_NO_GSTREAMER`를 정의하지 않으면 여전히 `<gst/gst.h>`를 포함합니다. 이후 릴리스에서 이 포함이 제거되므로, GStreamer를 사용하는 곳에서는 `<gst/gst.h>`를 직접 포함하십시오.

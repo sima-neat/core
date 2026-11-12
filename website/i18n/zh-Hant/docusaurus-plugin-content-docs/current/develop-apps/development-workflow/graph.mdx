@@ -576,6 +576,7 @@ if (result) {
 - `graph.input("points", {-1, 4}, simaai::neat::TensorDType::Float32, {256, 4})` 宣告一個張量輸入：`-1` 表示動態軸，最後一個引數為其上限。超出宣告的 push 會以 `misconfig.input_shape` 失敗。`run.alloc("points")` 會傳回具有上限形狀的可寫入 Tensor；將它單獨放入清單 push（`run.push("points", {tensor})`）即為提交，且僅能一次。
 - 一個清單即為一個項目。第一個張量的戳記會提議該項目的 `stream_name`、`frame_id`、`source_time` 與 `flags`（`tensor.with_stamp(stamp)`）；`seq` 與 `publish_time` 由執行環境寫入。
 - 含有多個張量的清單（`run.push({a, b})`）是一筆依位置命名的記錄。pull 到的清單依序包含這些張量，且每個張量都帶有該項目的戳記。
+- 只要有任何 `Tensor` 共用其儲存體，就不要變更被 push 張量的位元組。`push` 與 `try_push` 可能保留張量的儲存體而不複製它：Dataflow 執行環境會保留到項目被 pull 為止，並從 `pull` 傳回該儲存體本身；GStreamer 則稍後在其輸入執行緒上複製。若要在 `push` 傳回後立即重用緩衝區，請設定 `RunOptions::advanced.copy_input = true`，它會在 push 時複製。
 - `run.on_output("out", callback)` 會在 `Run` 所擁有的執行緒上，將每個輸出項目以 `TensorList` 傳遞給回呼，取代 `pull`。`run({tensor})` 會 push 並等待輸出。
 - 傳回 `std::optional<Sample>` 的整數逾時 pull，即 `pull(100)` 與 `pull("out", 100)`，已經棄用，`pull_tensors`、`pull_samples` 與 `cv::Mat` push 也一樣；每一種在每個處理程序中只會警告一次。`pull(100, sample)` 與 `pull("out", 100, sample)` 會填入 `Sample` 並予以保留：它們是取得其中繼資料的途徑。
 - `pipeline/Graph.h` 不再需要 GStreamer 的標頭。除非在它之前定義 `SIMA_NEAT_GRAPH_NO_GSTREAMER`，否則它仍會包含 `<gst/gst.h>`；之後的版本會移除此包含，因此在使用 GStreamer 的地方請自行包含 `<gst/gst.h>`。

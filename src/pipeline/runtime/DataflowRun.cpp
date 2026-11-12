@@ -11,29 +11,44 @@
 // (SlotSeqTable); input_seq and Stamp::seq count each input's pushes.
 //
 // Verbs (WORKER.md 18.1):
-//   push      alloc(Acquire::Block) + copy + push_waiting(kNoDeadline): waits for room on each
-//             link of the input whatever its policy and never drops (RunPush.cpp:402-411). When an
-//             Output the input feeds has OutputOptions::drop, its queue is lossy for every push, as
-//             appsink drop=true is: push(kNoDeadline), which waits on the Block links (the other
-//             Outputs, under OverflowPolicy::Block, the one mix of both the compiler accepts) and
-//             evicts on the DropOldest ones.
-//   try_push  alloc(Acquire::Fail) + copy + push(passed deadline): each link's policy applies;
-//             DroppedIncoming is false and a drop, DroppedOldest true and a drop, a full Block link
-//             false and no drop (unit_run_overflow_policy_parity_test.cpp:129-163). A push every
-//             link would refuse is answered by alloc itself (the runtime's FR14, A3), before any
-//             slot or copy, and counted by the runtime as that push: alloc_refused maps it to the
-//             same outcome. A fan-out is refused only when every link refuses (a DropOldest link
-//             never does); one link taking it makes it accepted, and each other link's refusal or
-//             eviction is its Output's drop.
+//   push      alloc(Acquire::Block) + copy or wrap + push_waiting(kNoDeadline): waits for room
+//             on each link of the input whatever its policy and never drops
+//             (RunPush.cpp:402-411). When an Output the input feeds has OutputOptions::drop, its
+//             queue is lossy for every push, as appsink drop=true is: push(kNoDeadline), which
+//             waits on the Block links (the other Outputs, under OverflowPolicy::Block, the one mix
+//             of both the compiler accepts) and evicts on the DropOldest ones.
+//   try_push  alloc(Acquire::Fail) + copy or wrap + push(passed deadline): each link's policy
+//             applies; DroppedIncoming is false and a drop, DroppedOldest true and a drop, a full
+//             Block link false and no drop (unit_run_overflow_policy_parity_test.cpp:129-163). A
+//             push every link would refuse is answered by alloc itself (the runtime's FR14, A3),
+//             before any slot, copy or wrap, and counted by the runtime as that push:
+//             alloc_refused maps it to the same outcome. A fan-out is refused only when every link
+//             refuses (a DropOldest link never does); one link taking it makes it accepted, and
+//             each other link's refusal or eviction is its Output's drop.
 //   pull      -1 is kNoDeadline, 0 a passed deadline (a poll), t > 0 now + t ms. The pulled Tensor
-//             is CpuExternal over the pool slot, its holder the Message, read-only. The Outputs of
-//             a fan-out lease the one slot each message has: no copy per Output.
+//             is CpuExternal over the pool slot, its holder the Message, read-only; a wrapped
+//             message's is the pushed storage itself, and the slot returns at the pull. The
+//             Outputs of a fan-out lease the one slot each message has: no copy per Output.
 //   close_input  Session::close_input(kNoDeadline) of every input: cancels a parked push, keeps
 //             what is queued.
 //   stop      Session::stop(now + 2 s) of every input, once more on Timeout (RunLifecycle.cpp
 //             94-95).
-// The copy into the slot runs on the pushing thread, inside push: when push returns, the caller's
-// buffer is free (GStreamer retains the tensor and copies later on Core's input thread).
+//
+// Copy or wrap (W2, agent-work/h0b/plan.md 7.3, D14-D16). A push and a try_push of one tensor wrap
+// its storage instead of copying it when that is safe (wrap_layout, wrap_block): CPU storage
+// (CpuOwned, CpuExternal) with an owning holder, laid out exactly as a slot of the input's port and
+// exactly a slot long (every frame of a fixed-shape input, a frame at a bounded input's bound),
+// aligned to the port's slot alignment (64 bytes or more), neither pulled from a Dataflow Run nor a
+// Run::alloc one (D15), into a Run of one input, with RunAdvancedOptions::copy_input off.
+// Session::alloc then backs the slot with that storage (the runtime's Block, W1), keeping the
+// pushed Tensor's TensorBuffer alive (one count on its own control block: no allocation) until the
+// last pulled tensor or queued message using it is gone; the pull returns that TensorBuffer (D14).
+// Anything else is copied into the slot on the pushing thread, inside push, as before: then the
+// caller's buffer is free when push returns. Either way the application must not change a pushed
+// tensor's bytes while a Tensor shares its storage (D16; GStreamer's push also retains the tensor
+// and copies it later on Core's input thread); copy_input = true copies at the push. EV74 and
+// other device tensors (GstSample storage) are copied: every Dataflow port is Host memory until
+// H0b's device pools.
 //
 // An item is one tensor (a leaf: a TensorSpec port) or several (a record: a RecordSchema port with
 // positional field names, H0 plan 3.5). The first item binds which, as it binds the shape.
@@ -76,6 +91,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <typeinfo>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -264,6 +280,9 @@ struct LeafGeometry {
   std::vector<TensorAxisSemantic> axis_semantics;
   std::vector<Plane> planes;
   std::optional<ImageSpec> image;
+  /// wrap_layout of this geometry against the input's binding (W2), computed once: a repeated
+  /// geometry needs only wrap_block's per-storage checks.
+  bool wrappable = false;
 
   static bool keepable(const Tensor& t) noexcept {
     const Semantic& s = t.semantic;
@@ -320,6 +339,133 @@ df::Extent extent_of(const std::vector<std::int64_t>& shape) {
   for (std::size_t i = 0; i < shape.size() && i < df::kMaxRank; ++i) {
     extent.dims[i] = shape[i];
   }
+  return extent;
+}
+
+// The map_fn of a pulled tensor's storage while it leases a pool slot: the slot's bytes. One type
+// for every lease, as RunAllocationMapper marks a Run::alloc Tensor, so a push recognises such a
+// tensor by its map_fn's type and copies it instead of wrapping it (D15: a wrap would pin a slot
+// of another pool, or of this one). The same size as make_cpu_external_storage's lambda: kept
+// inside the std::function, no allocation.
+struct SlotLeaseMapper {
+  void* data = nullptr;
+  std::size_t size = 0;
+  Mapping operator()(MapMode /*mode*/) const {
+    Mapping mapping;
+    mapping.data = data;
+    mapping.size_bytes = size;
+    return mapping;
+  }
+};
+
+// make_cpu_external_storage(bytes, holder) with a SlotLeaseMapper: a read-only CpuExternal view of
+// a slot that `holder` (the Message) keeps leased.
+std::shared_ptr<TensorBuffer> lease_storage(std::span<const std::byte> bytes,
+                                            std::shared_ptr<void> holder) {
+  auto storage = std::make_shared<TensorBuffer>();
+  storage->kind = StorageKind::CpuExternal;
+  storage->device = {DeviceType::CPU, 0};
+  storage->size_bytes = bytes.size();
+  storage->holder = std::move(holder);
+  storage->data = const_cast<std::byte*>(bytes.data());
+  storage->map_fn = SlotLeaseMapper{storage->data, bytes.size()};
+  return storage;
+}
+
+// W2: whether a leaf's bytes are exactly a whole slot of `binding`'s port, so that the slot can be
+// backed by the tensor's own storage. The runtime takes a wrap only of exactly slot_bytes (block.h:
+// push then checks no extent against it), so the tensor's own bytes must be that size: every frame
+// of a fixed-shape port, a frame at the bound of a bounded one (InputOptions::max_*); a smaller
+// frame is copied. CPU storage that holds them from the tensor's first byte; a dense port's tensor
+// dense and contiguous (a slot holds it tight); a planar port's (NV12, I420) frame at the bound,
+// its planes at the offsets and pitches of the port's layout, which planar_layout packs back to
+// back (DataflowGraphCompiler.cpp). Everything read here is part of LeafGeometry, so a repeated
+// geometry reuses the answer; wrap_block checks the rest per push.
+bool wrap_layout(const DataflowInputBinding& binding, std::size_t slot_bytes, const Tensor& t) {
+  if (binding.is_record() || slot_bytes == 0U || !t.storage || t.byte_offset < 0 ||
+      (t.storage->kind != StorageKind::CpuOwned && t.storage->kind != StorageKind::CpuExternal) ||
+      t.has_tiled_storage()) {
+    return false;
+  }
+  const auto offset = static_cast<std::size_t>(t.byte_offset);
+  if (offset > t.storage->size_bytes || t.storage->size_bytes - offset < slot_bytes) {
+    return false;
+  }
+  if (binding.planes == DataflowInputBinding::Planes::None) {
+    return t.is_dense() && !t.shape.empty() &&
+           (t.strides_bytes.empty() || t.strides_bytes.size() == t.shape.size()) &&
+           t.is_contiguous() && t.dense_bytes_tight() == slot_bytes;
+  }
+  const auto& spec = std::get<df::TensorSpec>(binding.spec.payload);
+  const auto& planar = std::get<df::Planar>(spec.layout);
+  const bool nv12 = binding.planes == DataflowInputBinding::Planes::Nv12;
+  if (t.dtype != TensorDType::UInt8 || !(nv12 ? t.is_nv12() : t.is_i420()) ||
+      t.planes.size() != planar.planes) {
+    return false;
+  }
+  const Plane* y = t.try_plane(PlaneRole::Y);
+  if (!y || y->shape.size() < 2U) {
+    return false;
+  }
+  const std::int64_t rows = y->shape[0];
+  const std::int64_t cols = y->shape[1];
+  if (rows != spec.shape.dims[0].max || cols != spec.shape.dims[1].max || rows % 2 != 0 ||
+      cols % 2 != 0) {
+    return false;
+  }
+  const auto at = [&](PlaneRole role, std::size_t p, std::int64_t r, std::int64_t c) {
+    const Plane* plane = t.try_plane(role);
+    return plane && plane->shape.size() >= 2U && plane->shape[0] == r && plane->shape[1] == c &&
+           plane->byte_offset == planar.plane[p].offset_bytes &&
+           (plane->strides_bytes.empty() ? c : plane->strides_bytes[0]) ==
+               planar.plane[p].stride_bytes &&
+           (plane->strides_bytes.size() < 2U || plane->strides_bytes[1] == 1);
+  };
+  if (!at(PlaneRole::Y, 0, rows, cols)) {
+    return false;
+  }
+  return nv12 ? at(PlaneRole::UV, 1, rows / 2, cols)
+              : at(PlaneRole::U, 1, rows / 2, cols / 2) && at(PlaneRole::V, 2, rows / 2, cols / 2);
+}
+
+// W2: the Block that backs a slot with the storage of `t` (wrap_layout held): its first byte,
+// `slot_bytes` long, and as keep-alive the Tensor's own TensorBuffer, which keeps the storage's
+// holder (one count on the shared_ptr's existing control block; nothing is allocated; an
+// application can read the release from its storage's use_count, as from GStreamer's). False,
+// and a copy instead, when the storage cannot be kept or must not be: no holder or no address
+// (memory nobody owns), a lease on a Dataflow slot or a Run::alloc tensor (D15), or an address
+// not aligned to the port's slot alignment (`align_mask` = slot_alignment - 1).
+bool wrap_block(const Tensor& t, std::size_t slot_bytes, std::uintptr_t align_mask,
+                df::Block& out) {
+  const TensorBuffer& storage = *t.storage;
+  if (!storage.holder || !storage.data) {
+    return false;
+  }
+  const std::type_info& mapper = storage.map_fn.target_type(); // typeid(void) without a map_fn
+  if (mapper == typeid(SlotLeaseMapper) || mapper == typeid(RunAllocationMapper)) {
+    return false;
+  }
+  auto* data = static_cast<std::byte*>(storage.data) + t.byte_offset;
+  if ((reinterpret_cast<std::uintptr_t>(data) & align_mask) != 0U) {
+    return false;
+  }
+  out.data = data;
+  out.size = slot_bytes;
+  out.holder = t.storage;
+  return true;
+}
+
+// The extent of a wrapped leaf: what copy_into reports for the same tensor.
+df::Extent wrapped_extent(const DataflowInputBinding& binding, const Tensor& t) {
+  if (binding.planes == DataflowInputBinding::Planes::None) {
+    return extent_of(t.shape);
+  }
+  const Plane* y = t.try_plane(PlaneRole::Y);
+  df::Extent extent;
+  extent.rank = 3;
+  extent.dims[0] = y->shape[0];
+  extent.dims[1] = y->shape[1];
+  extent.dims[2] = 3;
   return extent;
 }
 
@@ -405,6 +551,16 @@ struct Bound {
   df::FeedRef feed;
   std::vector<df::FetchRef> fetches;
   std::unique_ptr<SlotSeqTable> run_seqs; ///< a Run of several inputs only: orig_input_seq
+  // W2. A push may wrap (`wraps`): a tensor port, copy_input off, and a Run of one input (in a
+  // Run of several, orig_input_seq is keyed by the slot's own address, SlotSeqTable, which a
+  // wrapped slot does not have: those copy). What a wrap must be: `slot_bytes` long, aligned to
+  // `wrap_mask` + 1 (the Feed's port, port_spec.h slot_bytes and slot_alignment). Fixed at bind.
+  bool wraps = false;
+  std::size_t slot_bytes = 0;
+  std::uintptr_t wrap_mask = 0;
+  /// Set, before its publish, by the first push that wraps; a pull asks Message::block() only
+  /// then (its take orders that publish, and so this store, before it).
+  std::atomic<bool> has_wraps{false};
 };
 
 // One public Input of the Run (H0c): its Session, bound by the input's declaration, its seed or its
@@ -549,11 +705,14 @@ public:
                                "item (the Dataflow backend carries one tensor per push)"));
     }
     validate_public_input(inputs.front(), c.config->input, stream_options_, where);
-    // A CPU view of the Mat, whatever the Input's memory policy: the push copies it into the slot.
+    // A CPU view of the Mat, whatever the Input's memory policy: the push copies it into the slot,
+    // or wraps it when the Mat owns its memory (its view's holder keeps a reference to it; a Mat
+    // over memory it does not own keeps nothing alive).
     InputOptions view_options = c.config->input;
     view_options.memory_policy = InputMemoryPolicy::SystemMemory;
     const Tensor tensor = tensor_from_cv_mat(inputs.front(), view_options, where);
-    return push_item(c, std::span<const Tensor>(&tensor, 1), Stamp{}, block, where);
+    return push_item(c, std::span<const Tensor>(&tensor, 1), Stamp{}, block, where, false, -1,
+                     inputs.front().u != nullptr);
 #else
     (void)input;
     (void)inputs;
@@ -584,7 +743,7 @@ public:
     // allocates no list per pull.
     TensorList tensors = std::move(out.tensors);
     tensors.clear();
-    out = make_sample(bound->binding, std::move(message), std::move(tensors));
+    out = make_sample(*bound, std::move(message), std::move(tensors));
     if (orig >= 0) {
       out.orig_input_seq = orig;
     }
@@ -600,7 +759,7 @@ public:
     if (status != PullStatus::Ok) {
       return status;
     }
-    fill_tensors(bound->binding, std::move(message), out);
+    fill_tensors(*bound, std::move(message), out);
     count_pulled();
     return PullStatus::Ok;
   }
@@ -823,9 +982,12 @@ private:
   // the slot. With `commit_allocation` (the blocking TensorList push only), a Tensor from this
   // Run's alloc() alone in the list is published as its slot; every other verb copies it like any
   // CPU tensor, as the GStreamer backend does. `pushed_seq`: the item's own orig_input_seq (a
-  // Sample push), -1 for none; read in a Run of several inputs only.
+  // Sample push), -1 for none; read in a Run of several inputs only. A leaf is wrapped instead of
+  // copied when that is safe (W2: wrap_layout, wrap_block), unless `may_wrap` is false (a cv::Mat
+  // that does not own its memory).
   bool push_item(Component& c, std::span<const Tensor> tensors, const Stamp& proposal, bool block,
-                 const char* where, bool commit_allocation = false, std::int64_t pushed_seq = -1) {
+                 const char* where, bool commit_allocation = false, std::int64_t pushed_seq = -1,
+                 bool may_wrap = true) {
     const InputOptions& declared = c.config->input;
     // Core's own push-time checks and texts first (RunPush.cpp:655, InputStreamUtil.cpp:2146-2190):
     // the declaration describes the item's representative (first) tensor, as on GStreamer.
@@ -875,34 +1037,62 @@ private:
       if (const std::string why = dataflow_binding_mismatch(bound->binding, tensor); !why.empty()) {
         throw_input_shape(std::string(where) + ": " + why);
       }
-      remember_validated_leaf(c, tensor);
+      remember_validated_leaf(c, *bound, tensor);
     }
     const std::int64_t seq = run_seq(*bound, pushed_seq);
     if (allocation) {
       return push_allocated(c, *bound, tensor, *allocation, stamp, seq, block, where);
     }
+    // W2: wrap when safe, decided before alloc. A refusal of alloc (A3's FR14, FR7, SR1, FR3) takes
+    // no slot and keeps nothing: `wrap`, the only reference this call took, is released on return.
+    df::Block wrap;
+    bool wrapped =
+        may_wrap && bound->wraps &&
+        (validated ? known->wrappable : wrap_layout(bound->binding, bound->slot_bytes, tensor)) &&
+        wrap_block(tensor, bound->slot_bytes, bound->wrap_mask, wrap);
+    const df::Acquire mode = block ? df::Acquire::Block : df::Acquire::Fail;
     df::Result<df::WriteLoan> allocated =
-        bound->session.alloc(bound->feed, block ? df::Acquire::Block : df::Acquire::Fail);
+        bound->session.alloc(bound->feed, mode, df::kNoDeadline, wrapped ? &wrap : nullptr);
     if (const df::Error* error = df::failure(allocated)) {
-      return alloc_refused(c, *error, block, where);
+      if (!wrapped || error->code != df::ErrorCode::InvalidArgument) {
+        return alloc_refused(c, *error, block, where);
+      }
+      // FR15: the runtime refused the wrap itself (wrap_layout and wrap_block state its rule, so
+      // this is not expected), with the slot returned and nothing kept. The copy, as before W2.
+      wrapped = false;
+      allocated = bound->session.alloc(bound->feed, mode);
+      if (const df::Error* again = df::failure(allocated)) {
+        return alloc_refused(c, *again, block, where);
+      }
     }
     df::WriteLoan loan = std::get<df::WriteLoan>(std::move(allocated));
-    if (bound->run_seqs) {
-      bound->run_seqs->set(loan.bytes().data(), seq);
+    df::Extent extent;
+    if (wrapped) {
+      // The loan's bytes are the tensor's own: nothing to copy.
+      extent = wrapped_extent(bound->binding, tensor);
+      if (!bound->has_wraps.load(std::memory_order_relaxed)) {
+        bound->has_wraps.store(true, std::memory_order_relaxed);
+      }
+    } else {
+      if (bound->run_seqs) {
+        bound->run_seqs->set(loan.bytes().data(), seq);
+      }
+      extent = copy_into(bound->binding, tensor, loan.bytes(), where);
     }
-    const df::Extent extent = copy_into(bound->binding, tensor, loan.bytes(), where);
     return settle(c, publish(c, *bound, std::move(loan), stamp, extent, block), block, where);
   }
 
   // The first leaf of input `c` that passed validate_public_input and the binding check, kept once
-  // (later pushes read it without a lock).
-  void remember_validated_leaf(Component& c, const Tensor& tensor) {
+  // (later pushes read it without a lock), with whether its geometry can be wrapped (W2).
+  void remember_validated_leaf(Component& c, const Bound& bound, const Tensor& tensor) {
     if (c.validated_leaf.load(std::memory_order_acquire) || !LeafGeometry::keepable(tensor)) {
       return;
     }
     std::lock_guard<std::mutex> lock(mu_);
     if (!c.validated_leaf_storage) {
-      c.validated_leaf_storage = std::make_unique<LeafGeometry>(LeafGeometry::of(tensor));
+      auto geometry = std::make_unique<LeafGeometry>(LeafGeometry::of(tensor));
+      geometry->wrappable = bound.wraps && wrap_layout(bound.binding, bound.slot_bytes, tensor);
+      c.validated_leaf_storage = std::move(geometry);
       c.validated_leaf.store(c.validated_leaf_storage.get(), std::memory_order_release);
     }
   }
@@ -1049,6 +1239,11 @@ private:
         std::move(binding), std::get<df::Session>(std::move(session)), net.feed, net.fetches);
     if (config_.inputs.size() > 1U) {
       bound->run_seqs = std::make_unique<SlotSeqTable>(slots);
+    }
+    if (!bound->binding.is_record()) {
+      bound->slot_bytes = df::slot_bytes(bound->binding.spec);
+      bound->wrap_mask = df::slot_alignment(bound->binding.spec) - 1U;
+      bound->wraps = !config_.run.advanced.copy_input && !bound->run_seqs;
     }
     if (const df::Status status = bound->session.start()) {
       pipeline_internal::throw_dataflow_error(*status, "Graph::build");
@@ -1412,15 +1607,17 @@ private:
     core_.outputs_ready.fetch_add(outputs, std::memory_order_relaxed);
   }
 
-  // A dense tensor over `bytes` of a pulled message, with the Core metadata the binding kept,
-  // written into `tensor` (a default Tensor, built where it is returned: a Tensor is about 1 KB,
-  // and building it elsewhere and moving it costs as much as building it).
+  // A dense tensor of a pulled message over `storage` from `byte_offset` (a lease on its slot,
+  // lease_storage; an Owned copy; or the pushed storage of a wrapped message), with the Core
+  // metadata the binding kept, written into `tensor` (a default Tensor, built where it is
+  // returned: a Tensor is about 1 KB, and building it elsewhere and moving it costs as much as
+  // building it).
   static void fill_dense(Tensor& tensor, TensorDType dtype, TensorLayout layout,
                          const std::vector<TensorAxisSemantic>& axis_semantics,
-                         const Semantic& semantic, std::span<const std::byte> bytes,
-                         const df::Extent& extent, std::shared_ptr<void> holder) {
-    tensor.storage = make_cpu_external_storage(const_cast<std::byte*>(bytes.data()), bytes.size(),
-                                               std::move(holder), true);
+                         const Semantic& semantic, const df::Extent& extent,
+                         std::shared_ptr<TensorBuffer> storage, std::int64_t byte_offset) {
+    tensor.storage = std::move(storage);
+    tensor.byte_offset = byte_offset;
     tensor.dtype = dtype;
     tensor.layout = layout;
     tensor.axis_semantics = axis_semantics;
@@ -1430,27 +1627,18 @@ private:
     tensor.shape.assign(extent.dims.begin(), extent.dims.begin() + extent.rank);
   }
 
-  static Tensor dense_tensor(TensorDType dtype, TensorLayout layout,
-                             const std::vector<TensorAxisSemantic>& axis_semantics,
-                             const Semantic& semantic, std::span<const std::byte> bytes,
-                             const df::Extent& extent, std::shared_ptr<void> holder) {
-    Tensor tensor;
-    fill_dense(tensor, dtype, layout, axis_semantics, semantic, bytes, extent, std::move(holder));
-    return tensor;
-  }
-
-  // The leaf tensor of a pulled message (dense or planar), over its slot (`holder` keeps it),
+  // The leaf tensor of a pulled message (dense or planar) over `storage` from `byte_offset`,
   // written into `tensor` (a default Tensor).
   static void fill_leaf(Tensor& tensor, const DataflowInputBinding& binding,
-                        std::span<const std::byte> bytes, const df::Extent& extent,
-                        std::shared_ptr<void> holder) {
+                        const df::Extent& extent, std::shared_ptr<TensorBuffer> storage,
+                        std::int64_t byte_offset) {
     if (binding.planes == DataflowInputBinding::Planes::None) {
       fill_dense(tensor, binding.dtype, binding.layout, binding.axis_semantics, binding.semantic,
-                 bytes, extent, std::move(holder));
+                 extent, std::move(storage), byte_offset);
       return;
     }
-    tensor.storage = make_cpu_external_storage(const_cast<std::byte*>(bytes.data()), bytes.size(),
-                                               std::move(holder), true);
+    tensor.storage = std::move(storage);
+    tensor.byte_offset = byte_offset;
     tensor.dtype = binding.dtype;
     tensor.axis_semantics = binding.axis_semantics;
     tensor.device = {DeviceType::CPU, 0};
@@ -1490,7 +1678,35 @@ private:
     return storage;
   }
 
-  // The tensors of a record message, in schema order, each over its field of the slot.
+  // W2: the pushed storage behind a wrapped message (D14), shared, with the offset of the
+  // message's first byte in it; null for a message in a slot's own memory, which the pull leases.
+  // Message::block() is asked only once the input has wrapped (Bound::has_wraps). Every wrap of a
+  // Feed is Core's own (push_item), so its holder is the pushed Tensor's TensorBuffer; a storage
+  // whose address or size no longer contains the message (the application changed the
+  // TensorBuffer against D16) is not returned, and the slot is leased instead.
+  static std::shared_ptr<TensorBuffer>
+  wrapped_storage(const Bound& bound, const df::Message& message, std::int64_t& byte_offset) {
+    if (!bound.has_wraps.load(std::memory_order_relaxed)) {
+      return nullptr;
+    }
+    df::Block block = message.block();
+    if (!block.holder) {
+      return nullptr;
+    }
+    auto storage = std::static_pointer_cast<TensorBuffer>(std::move(block.holder));
+    const std::span<const std::byte> bytes = message.bytes();
+    const auto base = reinterpret_cast<std::uintptr_t>(storage->data);
+    const auto first = reinterpret_cast<std::uintptr_t>(bytes.data());
+    if (base == 0U || first < base || first - base > storage->size_bytes ||
+        storage->size_bytes - (first - base) < bytes.size()) {
+      return nullptr;
+    }
+    byte_offset = static_cast<std::int64_t>(first - base);
+    return storage;
+  }
+
+  // The tensors of a record message, in schema order, each over its field of the slot (records
+  // are never wrapped).
   std::vector<Tensor> record_fields(const DataflowInputBinding& binding, const df::Message& message,
                                     const std::shared_ptr<void>& holder, bool owned) const {
     const df::RecordSchema& schema = *message.schema();
@@ -1501,11 +1717,9 @@ private:
       const DataflowFieldBinding& meta = binding.fields[i];
       const df::FieldView view =
           bundle.field(meta.offset, meta.extent_offset, schema.fields[i].spec);
-      Tensor field = dense_tensor(meta.dtype, meta.layout, meta.axis_semantics, meta.semantic,
-                                  view.bytes, *view.extent, owned ? nullptr : holder);
-      if (owned) {
-        field.storage = owned_copy(view.bytes);
-      }
+      Tensor field;
+      fill_dense(field, meta.dtype, meta.layout, meta.axis_semantics, meta.semantic, *view.extent,
+                 owned ? owned_copy(view.bytes) : lease_storage(view.bytes, holder), 0);
       fields.push_back(std::move(field));
     }
     return fields;
@@ -1515,8 +1729,8 @@ private:
   // (InputStreamPull.cpp:830-884): a TensorSet of the item's tensors, media type and payload tag
   // from the first tensor, identity from the stamp (SampleProjection). `tensors` (empty) lends its
   // buffer to the Sample's list.
-  Sample make_sample(const DataflowInputBinding& binding, df::Message message,
-                     TensorList tensors) const {
+  Sample make_sample(const Bound& bound, df::Message message, TensorList tensors) const {
+    const DataflowInputBinding& binding = bound.binding;
     Stamp stamp;
     core_stamp(message.stamp(), streams_, stamp);
     const bool owned = config_.run.output_memory == OutputMemory::Owned;
@@ -1537,19 +1751,22 @@ private:
       auto holder = owned ? nullptr : std::make_shared<df::Message>(message);
       out.tensors = record_fields(binding, message, holder, owned);
     } else {
-      const std::span<const std::byte> bytes = message.bytes();
       const df::Extent extent = message.extent();
       Tensor& tensor = out.tensors.emplace_back();
+      std::int64_t offset = 0;
       if (owned) {
         // OutputMemory::Owned: an independent CPU copy; the slot returns to the pool now.
-        fill_leaf(tensor, binding, bytes, extent, nullptr);
-        tensor.storage = owned_copy(bytes);
+        fill_leaf(tensor, binding, extent, owned_copy(message.bytes()), 0);
+      } else if (std::shared_ptr<TensorBuffer> pushed = wrapped_storage(bound, message, offset)) {
+        // A wrapped message (W2): the pushed storage itself (D14); the slot returns as `message`
+        // goes, at the return.
+        fill_leaf(tensor, binding, extent, std::move(pushed), offset);
       } else {
         // A lease on the slot: the Message is the holder, released with the last copy of the
         // tensor.
         auto holder = std::make_shared<df::Message>(std::move(message));
         const std::span<const std::byte> leased = holder->bytes();
-        fill_leaf(tensor, binding, leased, extent, std::move(holder));
+        fill_leaf(tensor, binding, extent, lease_storage(leased, std::move(holder)), 0);
       }
     }
     pipeline_internal::apply_pulled_stamp(stamp, out);
@@ -1559,36 +1776,54 @@ private:
   // The pulled tensors (Run::pull(milliseconds)) into `out`: one for a leaf, the fields in schema
   // order for a record, every one carrying the message's Stamp. One allocation holds the message
   // and the envelope they share; the list (unless `out` has room), and each tensor's storage and
-  // shape, are the only others. A leaf is built in its place in the list.
-  void fill_tensors(const DataflowInputBinding& binding, df::Message message,
-                    TensorList& out) const {
+  // shape, are the only others. A leaf is built in its place in the list. A wrapped message (W2)
+  // gives the pushed storage itself (D14) and its slot back at once: one allocation fewer (no
+  // storage), the envelope alone in the other.
+  void fill_tensors(const Bound& bound, df::Message message, TensorList& out) const {
+    const DataflowInputBinding& binding = bound.binding;
     const bool owned = config_.run.output_memory == OutputMemory::Owned;
-    auto pulled = std::make_shared<PulledMessage>(std::move(message));
-    core_stamp(pulled->message.stamp(), streams_, pulled->envelope.stamp);
-    std::shared_ptr<const TensorEnvelope> envelope(pulled, &pulled->envelope);
-    if (binding.is_record()) {
-      std::shared_ptr<void> holder(pulled, &pulled->message);
-      TensorList fields = record_fields(binding, pulled->message, holder, owned);
-      for (Tensor& field : fields) {
-        field.envelope = envelope;
+    std::int64_t offset = 0;
+    std::shared_ptr<TensorBuffer> pushed =
+        owned || binding.is_record() ? nullptr : wrapped_storage(bound, message, offset);
+    std::shared_ptr<PulledMessage> pulled;
+    std::shared_ptr<const TensorEnvelope> envelope;
+    if (pushed) {
+      auto own = std::make_shared<TensorEnvelope>();
+      core_stamp(message.stamp(), streams_, own->stamp);
+      envelope = std::move(own);
+    } else {
+      pulled = std::make_shared<PulledMessage>(std::move(message));
+      core_stamp(pulled->message.stamp(), streams_, pulled->envelope.stamp);
+      envelope = std::shared_ptr<const TensorEnvelope>(pulled, &pulled->envelope);
+      if (binding.is_record()) {
+        std::shared_ptr<void> holder(pulled, &pulled->message);
+        TensorList fields = record_fields(binding, pulled->message, holder, owned);
+        for (Tensor& field : fields) {
+          field.envelope = envelope;
+        }
+        if (owned) {
+          pulled->message = df::Message{}; // the copies are made: the slot returns to the pool
+        }
+        out = std::move(fields);
+        return;
       }
-      if (owned) {
-        pulled->message = df::Message{}; // the copies are made: the slot returns to the pool
-      }
-      out = std::move(fields);
-      return;
     }
-    const std::span<const std::byte> bytes = pulled->message.bytes();
-    const df::Extent extent = pulled->message.extent();
+    const df::Message& source = pushed ? message : pulled->message;
+    const std::span<const std::byte> bytes = source.bytes();
+    const df::Extent extent = source.extent();
     out.clear();
     Tensor& leaf = out.emplace_back();
-    if (owned) {
-      fill_leaf(leaf, binding, bytes, extent, nullptr);
-      leaf.storage = owned_copy(bytes);
+    if (pushed) {
+      // A wrapped message: the slot returns to the pool now; the bytes live with `pushed`.
+      message = df::Message{};
+      fill_leaf(leaf, binding, extent, std::move(pushed), offset);
+    } else if (owned) {
+      fill_leaf(leaf, binding, extent, owned_copy(bytes), 0);
       pulled->message = df::Message{};
     } else {
       df::Message* const leased = &pulled->message;
-      fill_leaf(leaf, binding, bytes, extent, std::shared_ptr<void>(std::move(pulled), leased));
+      fill_leaf(leaf, binding, extent,
+                lease_storage(bytes, std::shared_ptr<void>(std::move(pulled), leased)), 0);
     }
     leaf.envelope = std::move(envelope);
   }

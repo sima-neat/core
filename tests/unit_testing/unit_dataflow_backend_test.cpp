@@ -13,7 +13,8 @@
 // -1/0/t; identity (frame_id, stream_id, pts_ns, input_seq) round trip; NV12 planes; DMA-heap
 // tensors; Owned output; a pulled tensor outliving its Run; named endpoints; the push-time checks
 // of a tensor that repeats an accepted geometry, back for any change they read (C7a); a try_push
-// refused by a full link reading none of its tensor's bytes (C7c).
+// refused by a full link reading none of its tensor's bytes (C7c; with copy_input, so that the
+// accepted ones copy: W2 wraps them otherwise, unit_run_push_wrap_test).
 
 #include "nodes/common/Output.h"
 #include "nodes/common/Queue.h"
@@ -117,8 +118,11 @@ void undeclared_input_bound_by_first_push() {
   const Tensor out = pulled_tensor(run, 2000, "first push");
   require(out.shape == a.shape && out.dtype == TensorDType::UInt8, "shape and dtype kept");
   require(bytes_of(out) == bytes_of(a), "bytes kept");
-  require(out.storage->kind == StorageKind::CpuExternal && out.read_only,
-          "a pulled tensor is a read-only lease on the slot");
+  // `a` is wrapped (W2: CPU storage, 64-byte aligned, a whole slot): the pulled tensor is its
+  // storage itself (plan D14), read-only. A copied push's is a CpuExternal lease on the slot
+  // (unit_run_push_wrap_test).
+  require(out.storage == a.storage && out.read_only,
+          "a pulled tensor is the pushed storage, read-only");
   require(out.semantic.image && out.semantic.image->format == ImageSpec::PixelFormat::RGB,
           "image format kept");
   // The binding is enforced from now on.
@@ -393,7 +397,12 @@ void refused_try_push_reads_no_byte() {
   out.max_buffers = 1; // the link holds queue_depth 1 + max_buffers 1 = 2
   for (const OverflowPolicy policy : {OverflowPolicy::DropIncoming, OverflowPolicy::Block}) {
     Graph g = input_output({}, out);
-    Run run = g.build(TensorList{rgb(8, 8, 1)}, dataflow(1, policy));
+    // copy_input: the accepted pushes copy (and so map) the tensor, which shows the counter
+    // works; without it they wrap its storage and read no byte either (W2,
+    // unit_run_push_wrap_test).
+    RunOptions opt = dataflow(1, policy);
+    opt.advanced.copy_input = true;
+    Run run = g.build(TensorList{rgb(8, 8, 1)}, opt);
     Tensor t = rgb(8, 8, 9);
     const auto maps = std::make_shared<std::atomic<int>>(0);
     auto counted = std::make_shared<TensorBuffer>(*t.storage);
