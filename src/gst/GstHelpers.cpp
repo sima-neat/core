@@ -80,13 +80,7 @@ void require_element(const char* factory, const char* context) {
 }
 
 void require_tensordecoder(const char* context) {
-  if (!element_exists("neatdecoder")) {
-    std::ostringstream ss;
-    ss << (context ? context : "<unknown>")
-       << ": required GStreamer element not found: neatdecoder. "
-       << "Run scripts/sync_tensordecoder.sh and source scripts/use_tensordecoder.sh";
-    throw std::runtime_error(ss.str());
-  }
+  require_element("simaaidecoder", context);
 }
 
 } // namespace simaai::neat
