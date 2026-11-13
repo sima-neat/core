@@ -15,7 +15,9 @@
 //   - wrapped: the pulled tensor's storage is the pushed TensorBuffer and its first byte the
 //     pushed one, the slot returned at the pull: a dense tensor at a fixed port (every verb), at a
 //     nonzero aligned byte_offset, at a bounded port's bound (the runtime wraps exactly a slot),
-//     NV12 at the port's pitches and size, every output of a fan-out, an owning cv::Mat; held until
+//     NV12 at the port's pitches and size, every output of a fan-out, each input of a Run of two
+//     (whose orig_input_seq, the Run's push count, the message itself carries), an owning cv::Mat;
+//     held until
 //     the last pulled tensor or queued message is gone, a KeepLatest eviction included; the push
 //     reads none of its bytes;
 //   - copied: an address or a byte_offset off the slot alignment (64 bytes), a strided view, a
@@ -23,8 +25,8 @@
 //     pitches or below a bounded port's bound, a record, a
 //     tensor pulled from a Dataflow Run whose message was copied (a lease on a slot), a Run::alloc
 //     tensor through try_push (its blocking push still publishes its slot), copy_input, a storage
-//     without a holder, a cv::Mat over memory it does not own, a Run of two inputs, and
-//     OutputMemory::Owned at the pull.
+//     without a holder, a cv::Mat over memory it does not own, and OutputMemory::Owned at the
+//     pull.
 
 #include "nodes/common/Output.h"
 #include "nodes/io/Input.h"
@@ -610,8 +612,8 @@ void nv12_cases() {
   }
 }
 
-// A record, and a Run of two inputs: copied.
-void record_and_two_inputs() {
+// A record: copied.
+void record() {
   {
     // Two FP32 tensors of one shape, the record GStreamer's tensor media carries (as
     // unit_run_tensor_surface_test's positional records).
@@ -641,19 +643,67 @@ void record_and_two_inputs() {
     expect_shared("record field 1: copied", b, (*out)[1], false);
     run.close();
   }
-  {
-    Graph g;
-    g.add(nodes::Input("left", image_input(FormatTag::RGB)));
-    g.add(nodes::Output("left_out", output_options()));
-    g.add(nodes::Input("right", image_input(FormatTag::RGB)));
-    g.add(nodes::Output("right_out", output_options()));
-    g.connect("left", "left_out");
-    g.connect("right", "right_out");
-    Run run = g.build(options());
-    round_trip(run, counted_rgb(32, 24, 0x73, releases()), false,
-               "a Run of two inputs: copied (orig_input_seq is kept by slot)", "left", "left_out");
-    run.close();
+}
+
+// A Run of two inputs wraps as a Run of one does: on each input the pulled tensor is the pushed
+// storage itself, the push reads none of its bytes and keeps one reference until the pull, and
+// the storage is released exactly once. Sample::orig_input_seq is the Run's push count across
+// both inputs, which the message carries.
+void two_inputs() {
+  Graph g;
+  g.add(nodes::Input("left", image_input(FormatTag::RGB)));
+  g.add(nodes::Output("left_out", output_options()));
+  g.add(nodes::Input("right", image_input(FormatTag::RGB)));
+  g.add(nodes::Output("right_out", output_options()));
+  g.connect("left", "left_out");
+  g.connect("right", "right_out");
+  Run run = g.build(options());
+  const std::string inputs[2] = {"left", "right"};
+  const std::string outputs[2] = {"left_out", "right_out"};
+  for (int i = 0; i < 6; ++i) {
+    const std::string& input = inputs[i % 2];
+    const std::string what = "two inputs, push " + std::to_string(i) + " into " + input;
+    const Releases count = releases();
+    Tensor t = counted_rgb(32, 24, static_cast<std::uint8_t>(0x70 + i), count);
+    const auto maps = std::make_shared<std::atomic<int>>(0);
+    t.storage->map_fn = [maps, data = t.storage->data, size = t.storage->size_bytes](MapMode) {
+      maps->fetch_add(1);
+      Mapping m;
+      m.data = data;
+      m.size_bytes = size;
+      return m;
+    };
+    require(run.push(input, TensorList{t}), what + ": push");
+    // Each input's first push of the geometry runs Core's full push-time checks.
+    if (on_dataflow() && i >= 2) {
+      require(maps->load() == 0, what + ": a wrapped push reads none of the tensor's bytes");
+      require(t.storage.use_count() == 2, what + ": the queued message keeps one reference, got " +
+                                              std::to_string(t.storage.use_count()));
+    }
+    Sample s;
+    PullError err;
+    require(run.pull(outputs[i % 2], 2000, s, &err) == PullStatus::Ok, what + ": " + err.message);
+    if (on_dataflow()) {
+      require(s.orig_input_seq == i, what + ": orig_input_seq is the Run's push count, got " +
+                                         std::to_string(s.orig_input_seq));
+    } else {
+      std::fprintf(stderr, "[INFO] %s (gstreamer): orig_input_seq %lld\n", what.c_str(),
+                   static_cast<long long>(s.orig_input_seq));
+    }
+    TensorList tensors = tensors_from_sample(s);
+    require(tensors.size() == 1U, what + ": one tensor");
+    require(bytes_of(tensors.front()) == rgb_pattern(32, 24, static_cast<std::uint8_t>(0x70 + i)),
+            what + ": bytes");
+    expect_shared(what, t, tensors.front(), true);
+    t = Tensor{};
+    s = Sample{};
+    if (on_dataflow()) {
+      require(count->load() == 0, what + ": the pulled tensor holds the pushed storage");
+    }
+    tensors.clear();
+    require(eventually([&] { return count->load() == 1; }), what + ": released exactly once");
   }
+  run.close();
 }
 
 // A tensor pulled from another Run, Run::alloc tensors, copy_input, Owned output.
@@ -788,7 +838,8 @@ RUN_TEST("unit_run_push_wrap_test", ([] {
            refused_try_push_keeps_nothing();
            dense_cases();
            nv12_cases();
-           record_and_two_inputs();
+           record();
+           two_inputs();
            origin_and_options();
            mat_cases();
          }));

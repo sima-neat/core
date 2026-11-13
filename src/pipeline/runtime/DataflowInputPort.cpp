@@ -6,7 +6,7 @@
 // storage (CpuOwned, CpuExternal) with an owning holder, laid out exactly as a slot of the input's
 // port and exactly a slot long (every frame of a fixed-shape input, a frame at a bounded input's
 // bound), aligned to the port's slot alignment (64 bytes or more), neither pulled from a Dataflow
-// Run nor a Run::alloc one (D15), into a Run of one input, with RunAdvancedOptions::copy_input off.
+// Run nor a Run::alloc one (D15), with RunAdvancedOptions::copy_input off.
 // Session::alloc then backs the slot with that storage (the runtime's Block, W1), keeping the
 // pushed Tensor's TensorBuffer alive (one count on its own control block: no allocation) until the
 // last pulled tensor or queued message using it is gone; the pull returns that TensorBuffer (D14).
@@ -98,98 +98,7 @@ DataflowNet compile_dataflow_net(const DataflowRunConfig& config, std::size_t in
   return DataflowNet{std::get<df::Plan>(std::move(plan)), feed.index, std::move(fetches)};
 }
 
-// Sample::orig_input_seq of the messages of one input in a Run of several inputs, by the slot each
-// message occupies (H0c). GStreamer's graph path, which every Run of several inputs takes there,
-// numbers the pushes of the whole Run in one counter and writes it to orig_input_seq, or keeps a
-// pushed orig_input_seq (or input_seq) without counting the push (RunPush.cpp:276-287); the
-// runtime's Stamp has no field for it and its seq is per Feed. A Run of one input has no table:
-// there orig_input_seq is input_seq (seq - 1), as before.
-// The pusher writes a message's entry while it holds the slot's loan, before the publish; a puller
-// reads it while it holds a lease on the message, so the slot cannot carry another message in
-// between, and the publish's release and the take's acquire order the write before the read. The
-// keys are atomics, so a lookup may run beside the insertion of another slot's key; a slot's key
-// is inserted once (the pool's slots are fixed), and the table holds twice the pool's slots.
-class SlotSeqTable {
-public:
-  explicit SlotSeqTable(std::uint64_t slots) {
-    unsigned bits = 4;
-    while ((std::uint64_t{1} << bits) < 2U * slots && bits < 40U) {
-      ++bits;
-    }
-    shift_ = 64U - bits;
-    mask_ = (std::size_t{1} << bits) - 1U;
-    cells_ = std::make_unique<Cell[]>(mask_ + 1U);
-  }
-
-  void set(const void* slot, std::int64_t seq) noexcept {
-    for (std::size_t i = index(slot);; i = (i + 1U) & mask_) {
-      const void* key = cells_[i].key.load(std::memory_order_relaxed);
-      if (key == nullptr &&
-          cells_[i].key.compare_exchange_strong(key, slot, std::memory_order_relaxed)) {
-        key = slot;
-      }
-      if (key == slot) {
-        cells_[i].value.store(seq, std::memory_order_relaxed);
-        return;
-      }
-    }
-  }
-
-  // -1 for a slot the table has never seen.
-  std::int64_t get(const void* slot) const noexcept {
-    for (std::size_t n = 0, i = index(slot); n <= mask_; ++n, i = (i + 1U) & mask_) {
-      const void* key = cells_[i].key.load(std::memory_order_relaxed);
-      if (key == slot) {
-        return cells_[i].value.load(std::memory_order_relaxed);
-      }
-      if (key == nullptr) {
-        return -1;
-      }
-    }
-    return -1;
-  }
-
-private:
-  struct Cell {
-    std::atomic<const void*> key{nullptr};
-    std::atomic<std::int64_t> value{-1};
-  };
-  std::size_t index(const void* slot) const noexcept {
-    // Fibonacci hashing: the high bits of the product.
-    return static_cast<std::size_t>(
-        (reinterpret_cast<std::uintptr_t>(slot) * std::uint64_t{0x9E3779B97F4A7C15}) >> shift_);
-  }
-  std::unique_ptr<Cell[]> cells_;
-  std::size_t mask_ = 0;
-  unsigned shift_ = 60;
-};
-
 } // namespace
-
-// Sample::orig_input_seq in a Run of several inputs, behind one interface (SlotSeqTable, until
-// the runtime's message carries a word for it): the Run's push counter, kept per slot.
-class DataflowInputPort::RunSeqs {
-public:
-  RunSeqs(std::uint64_t slots, std::atomic<std::uint64_t>& counter)
-      : table_(slots), counter_(counter) {}
-  // The orig_input_seq of the item being pushed: the pushed one, or the next value of the Run's
-  // counter (one relaxed increment; the counter is shared by the inputs).
-  std::int64_t next(std::int64_t pushed_seq) noexcept {
-    return pushed_seq >= 0
-               ? pushed_seq
-               : static_cast<std::int64_t>(counter_.fetch_add(1, std::memory_order_relaxed));
-  }
-  void set(df::WriteLoan& loan, std::int64_t seq) noexcept {
-    table_.set(loan.bytes().data(), seq);
-  }
-  std::int64_t get(const df::Message& message) const noexcept {
-    return table_.get(message.bytes().data());
-  }
-
-private:
-  SlotSeqTable table_;
-  std::atomic<std::uint64_t>& counter_;
-};
 
 DataflowInputPort::Bound::Bound(DataflowInputBinding b, df::Session s, std::uint32_t feed_op,
                                 const std::vector<std::uint32_t>& fetch_ops)
@@ -250,25 +159,16 @@ DataflowInputPort::Bound* DataflowInputPort::bind_first(std::span<const Tensor> 
 
 DataflowInputPort::Bound* DataflowInputPort::bind_locked(DataflowInputBinding binding) {
   DataflowNet net = compile_dataflow_net(run_.config, index_, binding, stream_);
-  std::uint64_t slots = 0; // the Feed's pool: what the RunSeqs must hold
-  for (const df::PlanPort& port : net.plan.report().ports) {
-    if (port.op == net.feed) {
-      slots = port.capacity;
-    }
-  }
   df::Result<df::Session> session = std::move(net.plan).instantiate(df::SessionOptions{});
   if (const df::Error* error = df::failure(session)) {
     pipeline_internal::throw_dataflow_error(*error, "Graph::build");
   }
   auto b = std::make_unique<Bound>(std::move(binding), std::get<df::Session>(std::move(session)),
                                    net.feed, net.fetches);
-  if (run_.run_seq) {
-    b->run_seqs = std::make_unique<RunSeqs>(slots, *run_.run_seq);
-  }
   if (!b->binding.is_record()) {
     b->slot_bytes = df::slot_bytes(b->binding.spec);
     b->wrap_mask = df::slot_alignment(b->binding.spec) - 1U;
-    b->wraps = !run_.config.run.advanced.copy_input && !b->run_seqs;
+    b->wraps = !run_.config.run.advanced.copy_input;
   }
   if (const df::Status status = b->session.start()) {
     pipeline_internal::throw_dataflow_error(*status, "Graph::build");
@@ -291,18 +191,6 @@ DataflowInputPort::Bound* DataflowInputPort::wait_bound_slow(df::Deadline deadli
     cv_.wait_until(lock, deadline, ready);
   }
   return bound();
-}
-
-std::int64_t DataflowInputPort::run_seq_of(const Bound& b, const df::Message& message) noexcept {
-  return b.run_seqs->get(message);
-}
-
-std::int64_t DataflowInputPort::next_run_seq(Bound& b, std::int64_t pushed_seq) noexcept {
-  return b.run_seqs->next(pushed_seq);
-}
-
-void DataflowInputPort::set_run_seq(Bound& b, df::WriteLoan& loan, std::int64_t seq) noexcept {
-  b.run_seqs->set(loan, seq);
 }
 
 void DataflowInputPort::mark_closed() {

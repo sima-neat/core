@@ -1307,7 +1307,7 @@ copied or kept. Both back the slot with the pushed tensor's own storage, without
 it is CPU memory with an owning `TensorBuffer::holder`, laid out exactly as a slot of the input
 (dense and contiguous, or NV12/I420 planes at the input's pitches) and exactly one slot long
 (every frame of a fixed-shape input; with `InputOptions::max_*`, a frame at the bound), aligned
-to 64 bytes, neither pulled from a Dataflow Run nor lent by `Run::alloc`, in a Run of one input; the Run then keeps the tensor's `TensorBuffer` until the last pulled tensor or
+to 64 bytes, neither pulled from a Dataflow Run nor lent by `Run::alloc`; the Run then keeps the tensor's `TensorBuffer` until the last pulled tensor or
 queued item using it is gone, and `pull` returns that storage itself, read-only. Any other
 tensor, and every tensor under `RunAdvancedOptions::copy_input`, is copied into a pool slot on
 the calling thread, and `pull` returns a read-only `CpuExternal` tensor that leases the slot

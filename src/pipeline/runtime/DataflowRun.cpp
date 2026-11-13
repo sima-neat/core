@@ -317,8 +317,8 @@ public:
     if (status != PullStatus::Ok) {
       return status;
     }
-    // A Run of several inputs: the Run's push counter, read under the lease.
-    const std::int64_t orig = DataflowInputPort::orig_input_seq(*bound, message);
+    // A Run of several inputs: the Run's push counter, which the message carries.
+    const std::int64_t orig = DataflowInputPort::orig_input_seq(message);
     // The caller's list buffer is reused: Run::pull(int, Sample&, PullError*) with one Sample
     // allocates no list per pull.
     TensorList tensors = std::move(out.tensors);

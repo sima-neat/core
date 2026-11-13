@@ -88,7 +88,8 @@ public:
   // the slot. With `commit_allocation` (the blocking TensorList push only), a Tensor from this
   // Run's alloc() alone in the item is published as its slot; every other verb copies it like any
   // CPU tensor, as the GStreamer backend does. `pushed_seq`: the item's own orig_input_seq (a
-  // Sample push), -1 for none; read in a Run of several inputs only. A leaf is wrapped instead of
+  // Sample push), -1 for none; read in a Run of several inputs only, where the message carries
+  // it, or else the Run's push count, in its stamp's user word. A leaf is wrapped instead of
   // copied when that is safe (W2), unless `may_wrap` is false (a cv::Mat that does not own its
   // memory). Throws NeatError for an item the input does not take.
   // Inline (as publish, its funnel): the Run's push compiles the checks, the slot and the outcome
@@ -114,10 +115,10 @@ public:
   static df::Result<df::Message> pull(Bound& b, std::size_t link, df::Deadline deadline) noexcept {
     return b.session.pull(b.fetches[link], deadline);
   }
-  // Sample::orig_input_seq of `message` in a Run of several inputs (read under the message's
-  // lease); -1 in a Run of one input.
-  static std::int64_t orig_input_seq(const Bound& b, const df::Message& message) noexcept {
-    return b.run_seqs ? run_seq_of(b, message) : -1;
+  // Sample::orig_input_seq of `message` in a Run of several inputs: its stamp's user word, which
+  // the push set to the value plus one; -1 in a Run of one input, whose pushes leave the word 0.
+  static std::int64_t orig_input_seq(const df::Message& message) noexcept {
+    return static_cast<std::int64_t>(message.stamp().user) - 1;
   }
 
   bool closed() const noexcept {
@@ -135,7 +136,6 @@ public:
   // The Session's counters; nullopt when the input never bound.
   std::optional<df::SessionReport> report() const;
 
-  class RunSeqs;
   // The running Session of the input and what was bound with it: one Feed, one Fetch per Output
   // the input feeds (link order: DataflowInputConfig::outputs). The Run reads `binding` and
   // `has_wraps` of it to build a pulled message's tensors.
@@ -147,11 +147,9 @@ public:
     df::Session session;
     df::FeedRef feed;
     std::vector<df::FetchRef> fetches;
-    std::unique_ptr<RunSeqs> run_seqs; ///< a Run of several inputs only: orig_input_seq
-    // W2. A push may wrap (`wraps`): a tensor port, copy_input off, and a Run of one input (in a
-    // Run of several, orig_input_seq is keyed by the slot's own address, RunSeqs, which a wrapped
-    // slot does not have: those copy). What a wrap must be: `slot_bytes` long, aligned to
-    // `wrap_mask` + 1 (the Feed's port, port_spec.h slot_bytes and slot_alignment). Fixed at bind.
+    // W2. A push may wrap (`wraps`): a tensor port, copy_input off. What a wrap must be:
+    // `slot_bytes` long, aligned to `wrap_mask` + 1 (the Feed's port, port_spec.h slot_bytes and
+    // slot_alignment). Fixed at bind.
     bool wraps = false;
     std::size_t slot_bytes = 0;
     std::uintptr_t wrap_mask = 0;
@@ -173,16 +171,13 @@ private:
     return bound_.load(std::memory_order_acquire);
   }
   Bound* wait_bound_slow(df::Deadline deadline);
-  static std::int64_t run_seq_of(const Bound& b, const df::Message& message) noexcept;
-  static std::int64_t next_run_seq(Bound& b, std::int64_t pushed_seq) noexcept;
-  static void set_run_seq(Bound& b, df::WriteLoan& loan, std::int64_t seq) noexcept;
   Bound* bind_first(std::span<const Tensor> item, const char* where);
   Bound* bind_locked(DataflowInputBinding binding);
   df::Status still_full(Bound& bound);
   [[gnu::always_inline]] DataflowPushOutcome publish(Bound& bound, std::span<const Tensor> item,
                                                      const df::Stamp& stamp, bool block,
                                                      const char* where, RunAllocation* allocation,
-                                                     bool wrappable, std::int64_t seq);
+                                                     bool wrappable);
 
   const DataflowPortContext run_;
   const std::size_t index_;
@@ -248,7 +243,7 @@ private:
 inline DataflowPushOutcome DataflowInputPort::publish(Bound& b, std::span<const Tensor> item,
                                                       const df::Stamp& stamp, bool block,
                                                       const char* where, RunAllocation* allocation,
-                                                      bool wrappable, std::int64_t seq) {
+                                                      bool wrappable) {
   df::WriteLoan loan;
   const LentSlot lent(allocation, loan, where);
   const Tensor& first = item.front();
@@ -291,9 +286,6 @@ inline DataflowPushOutcome DataflowInputPort::publish(Bound& b, std::span<const 
       }
     }
     loan = std::get<df::WriteLoan>(std::move(allocated));
-  }
-  if (b.run_seqs) {
-    set_run_seq(b, loan, seq);
   }
   const auto send = [&](const auto& extent) {
     if (!block) {
@@ -364,7 +356,7 @@ inline DataflowPushOutcome DataflowInputPort::push(std::span<const Tensor> item,
       return {};
     }
   }
-  const df::Stamp stamp = dataflow_codec::runtime_stamp(proposal, run_.streams, stream_);
+  df::Stamp stamp = dataflow_codec::runtime_stamp(proposal, run_.streams, stream_);
   bool wrappable = false;
   if (item.size() > 1U || b->binding.is_record()) {
     if (const std::string why = dataflow_record_mismatch(b->binding, item); !why.empty()) {
@@ -387,8 +379,14 @@ inline DataflowPushOutcome DataflowInputPort::push(std::span<const Tensor> item,
         !allocation && may_wrap && b->wraps &&
         (known ? known->wrappable : dataflow_wrap_layout(b->binding, b->slot_bytes, tensor));
   }
-  const std::int64_t seq = b->run_seqs ? next_run_seq(*b, pushed_seq) : -1;
-  return publish(*b, item, stamp, block, where, allocation.get(), wrappable, seq);
+  if (run_.run_seq) {
+    // A Run of several inputs (GStreamer's graph ingress, RunPush.cpp:276-287): the pushed value,
+    // or the next of the Run's push counter, which its inputs share (one relaxed increment; a
+    // refused push consumes a number, as there).
+    stamp.user = 1U + (pushed_seq >= 0 ? static_cast<std::uint64_t>(pushed_seq)
+                                       : run_.run_seq->fetch_add(1, std::memory_order_relaxed));
+  }
+  return publish(*b, item, stamp, block, where, allocation.get(), wrappable);
 }
 
 #pragma GCC visibility pop
