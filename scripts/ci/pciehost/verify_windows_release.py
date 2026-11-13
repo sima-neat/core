@@ -182,6 +182,20 @@ def verify(candidate_dir: Path, qualification_path: Path, expected_commit: str,
     raise ValueError("hardware qualification has no exact sima-cli candidate identity")
   baseline_card = qualification.get("card_baseline")
   final_card = qualification.get("card_final")
+  baseline_network = qualification.get("card_network_baseline")
+  final_network = qualification.get("card_network_final")
+  network_identity = {
+      "card_host", "local_address", "interface_index", "interface_guid",
+      "interface_description", "pnp_device_id",
+  }
+  if (not isinstance(baseline_network, dict) or not isinstance(final_network, dict)
+      or not network_identity.issubset(baseline_network)
+      or not network_identity.issubset(final_network)
+      or any(baseline_network[name] != final_network[name] for name in network_identity)
+      or not re.fullmatch(
+          r"SiMa[.]ai Virtual Ethernet Adapter(?: #[0-9]+)?",
+          str(baseline_network.get("interface_description", "")))):
+    raise ValueError("hardware qualification did not bind one stable Windows adapter to the card")
   card_identity = {
       "machine", "platform_release", "platform_sha256", "firmware", "remoteproc_state",
   }

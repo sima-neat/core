@@ -78,6 +78,11 @@ skip, failure, or error; a successful process exit alone is not release evidence
 The Core producer applies the same check to the selected Scheduler profile before
 it installs or repackages that dependency.
 
+Before the card lock or any card-side change, the Windows qualifier binds the
+selected `10.0.N.2` address to its unique local `10.0.N.1` address and one up
+SiMa.ai virtual Ethernet adapter. The receipt records the adapter GUID and PnP
+device identity and proves that the same route remains selected after cleanup.
+
 Windows hardware qualification applies the existing Linux PCIe performance gate:
 100 warmup iterations followed by 3,000 measured iterations, with mean latency no
 higher than 12 ms and throughput no lower than 440 FPS for the qualified profile.

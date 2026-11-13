@@ -30,13 +30,14 @@ from windows_candidate import (  # noqa: E402
     dependency_identity, require_junit_cases, sha256, validate_candidate)
 from qualify_windows_hardware import (  # noqa: E402
     ExclusiveLock, RemoteExclusiveLock, card_snapshot, card_stage_cleanup_command,
-    customer_process_environment, load_upgrade_base,
+    card_management_addresses, customer_process_environment, load_upgrade_base,
     parse_performance_log, require_powershell as require_hardware_powershell,
     recover_windows_platform_device, remove_installed_tutorial_facade,
     run_captured_to_file, run_sudo_remote,
     sima_cli_identity, stage_card_candidate, stage_installed_tutorial_facade,
     stage_invalid_wheel_registry, stage_local_registry, stage_path_fixtures,
-    stress_queues, validate_card_candidate, verify_customer_process_activation)
+    stress_queues, validate_card_candidate, verify_customer_process_activation,
+    windows_card_network_identity)
 from verify_linux_release_run import verify_run as verify_linux_run  # noqa: E402
 from verify_windows_release import verify  # noqa: E402
 import prepare_card_qualification_candidate as CARD_PREP  # noqa: E402
@@ -402,6 +403,65 @@ class WindowsCiContracts(unittest.TestCase):
           str(Path("C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe").resolve()),
       )
 
+  def test_card_management_address_selects_the_matching_local_link(self):
+    self.assertEqual(card_management_addresses("10.0.9.2"), ("10.0.9.2", "10.0.9.1"))
+    for invalid in ("card.example", "10.0.9.3", "192.168.1.2", "::1"):
+      with self.subTest(invalid=invalid), self.assertRaisesRegex(
+          ValueError, "management IPv4|10[.]0[.]N[.]2"):
+        card_management_addresses(invalid)
+
+  def test_card_network_identity_binds_the_route_to_one_sima_adapter(self):
+    identity = {
+        "card_host": "10.0.4.2",
+        "local_address": "10.0.4.1",
+        "interface_index": 12,
+        "interface_guid": "11111111-2222-3333-4444-555555555555",
+        "interface_alias": "Ethernet 4",
+        "interface_description": "SiMa.ai Virtual Ethernet Adapter #2",
+        "interface_status": "Up",
+        "mac_address": "00-11-22-33-44-55",
+        "pnp_device_id": r"ROOT\SIMA_VETH\0004",
+        "destination_prefix": "10.0.4.0/24",
+        "next_hop": "0.0.0.0",
+    }
+    completed = subprocess.CompletedProcess([], 0, json.dumps(identity), "")
+    with tempfile.TemporaryDirectory() as directory, mock.patch(
+        "qualify_windows_hardware.require_powershell", return_value="powershell.exe"
+    ), mock.patch(
+        "qualify_windows_hardware.subprocess.run", return_value=completed
+    ) as run:
+      result = windows_card_network_identity(
+          "10.0.4.2", Path(directory) / "network.log")
+
+    self.assertEqual(result, identity)
+    self.assertNotIn("10.0.4.2", run.call_args.args[0])
+    self.assertEqual(run.call_args.kwargs["env"]["SIMA_PCIE_CARD_HOST"], "10.0.4.2")
+    self.assertEqual(run.call_args.kwargs["env"]["SIMA_PCIE_LOCAL_ADDRESS"], "10.0.4.1")
+
+  def test_card_network_identity_rejects_an_unrelated_adapter(self):
+    identity = {
+        "card_host": "10.0.0.2",
+        "local_address": "10.0.0.1",
+        "interface_index": 7,
+        "interface_guid": "11111111-2222-3333-4444-555555555555",
+        "interface_alias": "Ethernet",
+        "interface_description": "Generic Ethernet Adapter",
+        "interface_status": "Up",
+        "mac_address": "00-11-22-33-44-55",
+        "pnp_device_id": r"PCI\VEN_1234",
+        "destination_prefix": "10.0.0.0/24",
+        "next_hop": "0.0.0.0",
+    }
+    completed = subprocess.CompletedProcess([], 0, json.dumps(identity), "")
+    with tempfile.TemporaryDirectory() as directory, mock.patch(
+        "qualify_windows_hardware.require_powershell", return_value="powershell.exe"
+    ), mock.patch(
+        "qualify_windows_hardware.subprocess.run", return_value=completed
+    ):
+      with self.assertRaisesRegex(RuntimeError, "one up SiMa adapter"):
+        windows_card_network_identity(
+            "10.0.0.2", Path(directory) / "network.log")
+
   def test_signature_path_avoids_powershell_command_line_quoting(self):
     path = Path("C:/Program Files/SimaPCIeHost/bin/plugin.dll")
     output = '{"status":"NotSigned","message":"","thumbprint":null,' \
@@ -674,6 +734,14 @@ class WindowsCiContracts(unittest.TestCase):
             "remoteproc_state": "running",
             "workers": "0",
         },
+        "card_network_baseline": {
+            "card_host": "10.0.0.2",
+            "interface_description": "SiMa.ai Virtual Ethernet Adapter",
+            "interface_guid": "11111111-2222-3333-4444-555555555555",
+            "interface_index": 7,
+            "local_address": "10.0.0.1",
+            "pnp_device_id": r"ROOT\SIMA_VETH\0000",
+        },
         "card_candidate": {
             "core_commit": commit,
             "firmware": "neat-pcie-card0-" + "4" * 32,
@@ -689,6 +757,14 @@ class WindowsCiContracts(unittest.TestCase):
             "platform_sha256": "1" * 64,
             "remoteproc_state": "running",
             "workers": "0",
+        },
+        "card_network_final": {
+            "card_host": "10.0.0.2",
+            "interface_description": "SiMa.ai Virtual Ethernet Adapter",
+            "interface_guid": "11111111-2222-3333-4444-555555555555",
+            "interface_index": 7,
+            "local_address": "10.0.0.1",
+            "pnp_device_id": r"ROOT\SIMA_VETH\0000",
         },
         "cleanup": {
             "card_candidate": "PASS", "core_msi": "PASS", "errors": [],
@@ -1348,6 +1424,17 @@ install() {
       value["card_final"]["platform_release"] = "2.1.3_B4837"
       qualification.write_text(json.dumps(value), encoding="utf-8")
       with self.assertRaisesRegex(ValueError, "Platform 3.0 card baseline"):
+        verify(root, qualification, commit, True)
+
+  def test_release_gate_requires_a_stable_card_network_adapter(self):
+    with tempfile.TemporaryDirectory() as directory:
+      root = Path(directory)
+      commit, _, qualification = self.windows_candidate(root)
+      value = json.loads(qualification.read_text(encoding="utf-8"))
+      value["card_network_final"]["interface_guid"] = (
+          "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
+      qualification.write_text(json.dumps(value), encoding="utf-8")
+      with self.assertRaisesRegex(ValueError, "stable Windows adapter"):
         verify(root, qualification, commit, True)
 
   def test_release_gate_requires_structured_performance_evidence(self):

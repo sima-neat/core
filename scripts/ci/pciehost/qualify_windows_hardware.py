@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+import ipaddress
 import json
 import math
 import os
@@ -120,6 +121,99 @@ def require_powershell() -> str:
     if path:
       return str(Path(path).resolve())
   raise RuntimeError("Windows PCIe hardware qualification requires PowerShell")
+
+
+def card_management_addresses(card_host: str) -> tuple[str, str]:
+  try:
+    address = ipaddress.ip_address(card_host)
+  except ValueError as error:
+    raise ValueError(f"card host must be a literal management IPv4 address: {card_host}") from error
+  if address.version != 4:
+    raise ValueError("card host must use the supported 10.0.N.2 management address")
+  octets = tuple(int(value) for value in str(address).split("."))
+  if octets[:2] != (10, 0) or octets[3] != 2:
+    raise ValueError("card host must use the supported 10.0.N.2 management address")
+  return str(address), f"10.0.{octets[2]}.1"
+
+
+def windows_card_network_identity(card_host: str, log: Path) -> dict:
+  """Bind a card management address to one up SiMa virtual Ethernet adapter."""
+  remote, local = card_management_addresses(card_host)
+  script = r"""
+$ErrorActionPreference = 'Stop'
+$addresses = @(Get-NetIPAddress -AddressFamily IPv4 `
+  -IPAddress $env:SIMA_PCIE_LOCAL_ADDRESS -ErrorAction Stop)
+if ($addresses.Count -ne 1) { throw 'management source address is not unique' }
+$selection = @(Find-NetRoute -RemoteIPAddress $env:SIMA_PCIE_CARD_HOST `
+  -ErrorAction Stop)
+$sources = @($selection | Where-Object {
+  $_.CimClass.CimClassName -eq 'MSFT_NetIPAddress'
+})
+$routes = @($selection | Where-Object {
+  $_.CimClass.CimClassName -eq 'MSFT_NetRoute'
+})
+if ($sources.Count -ne 1 -or $routes.Count -ne 1) {
+  throw 'management route selection is not unique'
+}
+$source = $sources[0]
+$route = $routes[0]
+$adapters = @(Get-NetAdapter -InterfaceIndex $source.InterfaceIndex -ErrorAction Stop)
+if ($adapters.Count -ne 1) { throw 'management adapter is not unique' }
+$adapter = $adapters[0]
+[ordered]@{
+  card_host = $env:SIMA_PCIE_CARD_HOST
+  local_address = [string]$source.IPAddress
+  interface_index = [int]$source.InterfaceIndex
+  interface_guid = [string]$adapter.InterfaceGuid
+  interface_alias = [string]$adapter.Name
+  interface_description = [string]$adapter.InterfaceDescription
+  interface_status = [string]$adapter.Status
+  mac_address = [string]$adapter.MacAddress
+  pnp_device_id = [string]$adapter.PnPDeviceID
+  destination_prefix = [string]$route.DestinationPrefix
+  next_hop = [string]$route.NextHop
+} | ConvertTo-Json -Compress
+"""
+  environment = os.environ.copy()
+  environment.update({
+      "SIMA_PCIE_CARD_HOST": remote,
+      "SIMA_PCIE_LOCAL_ADDRESS": local,
+  })
+  command = [
+      require_powershell(), "-NoLogo", "-NoProfile", "-NonInteractive",
+      "-Command", script,
+  ]
+  result = subprocess.run(
+      command, text=True, capture_output=True, env=environment, check=False, timeout=60)
+  log.write_text(
+      "+ " + subprocess.list2cmdline(command) + "\n" + result.stdout + result.stderr,
+      encoding="utf-8", errors="replace")
+  if result.returncode != 0:
+    raise RuntimeError(f"could not bind the selected card to a Windows adapter; see {log}")
+  try:
+    identity = json.loads(result.stdout)
+  except json.JSONDecodeError as error:
+    raise RuntimeError(f"card network identity was not valid JSON; see {log}") from error
+  required = {
+      "card_host", "local_address", "interface_index", "interface_guid",
+      "interface_alias", "interface_description", "interface_status", "mac_address",
+      "pnp_device_id", "destination_prefix", "next_hop",
+  }
+  if not isinstance(identity, dict) or not required.issubset(identity):
+    raise RuntimeError(f"card network identity was incomplete; see {log}")
+  if (identity["card_host"] != remote or identity["local_address"] != local
+      or not isinstance(identity["interface_index"], int)
+      or not re.fullmatch(
+          r"[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}",
+          str(identity["interface_guid"]))
+      or not re.fullmatch(
+          r"SiMa[.]ai Virtual Ethernet Adapter(?: #[0-9]+)?",
+          str(identity["interface_description"]))
+      or str(identity["interface_status"]).lower() != "up"
+      or not identity["pnp_device_id"]
+      or identity["next_hop"] != "0.0.0.0"):
+    raise RuntimeError(f"selected card route does not use one up SiMa adapter; see {log}")
+  return identity
 
 
 def require_fresh_directory(path: Path, description: str) -> Path:
@@ -1691,6 +1785,8 @@ def qualify(args: argparse.Namespace) -> None:
 
   remote_lock_token = secrets.token_hex(16)
   with ExclusiveLock(args.lock_file, remote_lock_token) as card_lock:
+    result["card_network_baseline"] = windows_card_network_identity(
+        args.card_host, evidence / "card-network-baseline.log")
     remote_lock = RemoteExclusiveLock(args, args.remote_lock_path, remote_lock_token)
     try:
       remote_lock.acquire(evidence / "card-lock-acquire.log")
@@ -2018,6 +2114,20 @@ def qualify(args: argparse.Namespace) -> None:
         if (final["workers"] != expected_workers or final["genai_workers"] != expected_genai
             or any(name in baseline and final.get(name) != baseline[name] for name in unchanged)):
           cleanup_errors.append("card did not return to its qualified baseline")
+      except BaseException as error:
+        cleanup_errors.append(str(error))
+      try:
+        network_final = windows_card_network_identity(
+            args.card_host, evidence / "card-network-final.log")
+        result["card_network_final"] = network_final
+        network_baseline = result.get("card_network_baseline", {})
+        stable_network_identity = {
+            "card_host", "local_address", "interface_index", "interface_guid",
+            "interface_description", "pnp_device_id",
+        }
+        if any(network_final.get(name) != network_baseline.get(name)
+               for name in stable_network_identity):
+          cleanup_errors.append("card management route changed during qualification")
       except BaseException as error:
         cleanup_errors.append(str(error))
       if not cleanup_errors:
