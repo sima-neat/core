@@ -4611,7 +4611,7 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("interpolation", &simaai::neat::ResizeSpec::interpolation,
               nb::for_setter(nb::arg("interpolation").none()))
       .def_rw("shorter_side", &simaai::neat::ResizeSpec::shorter_side,
-              nb::for_setter(nb::arg("shorter_side").none()));
+              nb::for_setter(nb::arg("shorter_side").none().noconvert()));
 
   nb::class_<simaai::neat::ColorConvertSpec>(m, "ColorConvertSpec")
       .def(nb::init<>())
@@ -5380,7 +5380,7 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("width", &simaai::neat::ResizeOptions::width)
       .def_rw("height", &simaai::neat::ResizeOptions::height)
       .def_rw("shorter_side", &simaai::neat::ResizeOptions::shorter_side,
-              nb::for_setter(nb::arg("shorter_side").none()))
+              nb::for_setter(nb::arg("shorter_side").none().noconvert()))
       .def_rw("interpolation", &simaai::neat::ResizeOptions::interpolation)
       .def_rw("fit", &simaai::neat::ResizeOptions::fit)
       .def_rw("max_input_width", &simaai::neat::ResizeOptions::max_input_width)
@@ -5423,7 +5423,7 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("resize_mode", &simaai::neat::PreprocOptions::resize_mode,
               nb::for_setter(nb::arg("resize_mode").none()))
       .def_rw("shorter_side", &simaai::neat::PreprocOptions::shorter_side,
-              nb::for_setter(nb::arg("shorter_side").none()))
+              nb::for_setter(nb::arg("shorter_side").none().noconvert()))
       .def_rw("rescale_factor", &simaai::neat::PreprocOptions::rescale_factor,
               nb::for_setter(nb::arg("rescale_factor").none()))
       .def_rw("quantization_step", &simaai::neat::PreprocOptions::quantization_step,

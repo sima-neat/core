@@ -1,5 +1,7 @@
 #include "pipeline/internal/sima/PreprocFrameAdapter.h"
 #include "pipeline/internal/sima/PreprocGeometryContract.h"
+#include "pipeline/internal/InputStreamUtil.h"
+#include "nodes/io/Input.h"
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -1526,6 +1528,36 @@ void crop_geometry_dynamic_cache() {
     video->height = i % 2 ? 4 : 8;
     require(bind().operation == (i % 2 ? landscape.operation : square.operation),
             "alternating crop geometry did not reuse bounded immutable variants");
+  }
+  // Exercise the same prospective-template attachment as raw Model::run and
+  // stages::Preproc ingress. Its affine must not be mistaken for applied work.
+  for (const char* mode : {"crop", "letterbox"}) {
+    auto* raw = gst_buffer_copy_deep(input);
+    simaai::neat::InputOptions ingress;
+    simaai::neat::PreprocessMetaTemplate prospective;
+    prospective.enabled = true;
+    prospective.target_width = prospective.target_height = 8;
+    prospective.scaled_width = 20;
+    prospective.scaled_height = 10;
+    prospective.resize_mode = mode;
+    prospective.color_in = prospective.color_out = "RGB";
+    ingress.preprocess_meta = prospective;
+    require(simaai::neat::apply_simaai_preprocess_meta_template(raw, ingress, 8, 4),
+            "raw ingress template attachment failed");
+    auto* source = gst_custom_meta_get_structure(gst_buffer_get_custom_meta(raw, "GstSimaMeta"));
+    auto* result = gst_structure_copy(source);
+    probe::Binding binding;
+    okay(adapter->bind(raw, Storage{}, binding, result));
+    double scale = 0., offset = 0.;
+    require(binding.operation == landscape.operation &&
+                gst_structure_get_double(result, "preproc_affine_m00", &scale) &&
+                gst_structure_get_double(result, "preproc_affine_m02", &offset) && scale == 0.4 &&
+                std::abs(offset - 2.4) < 1e-12 &&
+                !gst_structure_has_field(result, "preproc_ingress_template") &&
+                gst_structure_has_field(source, "preproc_ingress_template"),
+            "raw ingress composed a prospective transform or leaked its marker");
+    gst_structure_free(result);
+    gst_buffer_unref(raw);
   }
   auto* meta = gst_custom_meta_get_structure(gst_buffer_add_custom_meta(input, "GstSimaMeta"));
   gst_structure_set(meta, "preproc_roi_enable", G_TYPE_BOOLEAN, TRUE, nullptr);

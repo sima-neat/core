@@ -1155,6 +1155,9 @@ PreprocFrameAdapter::bind(GstBuffer* buffer, BindingWriter& binding, GstStructur
   // Never let a stale legacy mirror replace that authority.
   auto* custom = frame ? nullptr : gst_buffer_get_custom_meta(buffer, "GstSimaMeta");
   const auto* source_meta = custom ? gst_custom_meta_get_structure(custom) : nullptr;
+  gboolean ingress_template = FALSE;
+  if (source_meta)
+    gst_structure_get_boolean(source_meta, "preproc_ingress_template", &ingress_template);
   if (compact && compact->roi_list)
     return invalid("input.preprocess", "one image requires one upstream spatial transform");
   const auto* meta = preserve_spatial_provenance ? nullptr : source_meta;
@@ -1327,7 +1330,7 @@ PreprocFrameAdapter::bind(GstBuffer* buffer, BindingWriter& binding, GstStructur
     publication = std::get<Publication>(std::move(facts));
   }
   auto facts = prepared_now ? publication : variants_[selected].publication;
-  if (preserve_spatial_provenance && (source_meta || compact)) {
+  if (preserve_spatial_provenance && (compact || (source_meta && !ingress_template))) {
     constexpr std::array names{"preproc_affine_m00", "preproc_affine_m01", "preproc_affine_m02",
                                "preproc_affine_m10", "preproc_affine_m11", "preproc_affine_m12"};
     const bool transformed =
@@ -1400,8 +1403,10 @@ PreprocFrameAdapter::bind(GstBuffer* buffer, BindingWriter& binding, GstStructur
   }
   if (compact_facts)
     *compact_facts = facts;
-  if (out)
+  if (out) {
+    gst_structure_remove_field(out, "preproc_ingress_template");
     simaai::gst::tensor_buffer_write_preprocess_facts(out, facts, fresh_metadata);
+  }
   SIMA_SCHEDULER_TRACE_CURRENT(PreprocPublishEnd);
   if (prepared_now) {
     // Commit only after both current storage and publication validate. Failed

@@ -184,5 +184,7 @@ def test_center_crop_typed_options_and_optional_reset():
     standalone.fit = pyneat.ResizeFit.Contain
     with pytest.raises(Exception, match="shorter_side"):
         pyneat.nodes.resize(standalone)
-    with pytest.raises(TypeError):
-        model.preprocess.resize.shorter_side = "256"
+    for options in (model.preprocess.resize, raw, standalone):
+        for invalid in ("256", 256.5):
+            with pytest.raises(TypeError):
+                options.shorter_side = invalid
