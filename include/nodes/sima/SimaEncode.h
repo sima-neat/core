@@ -1,7 +1,7 @@
 /**
  * @file
  * @ingroup nodes_sima
- * @brief Native hardware encoding of raw frames to H.264, H.265 or MJPEG.
+ * @brief Native hardware encoding of raw frames to H.264 or H.265 (MJPEG encode is rejected).
  */
 #pragma once
 
@@ -21,7 +21,7 @@ enum class SimaEncodeType {
   AVC = H264,
   H265 = 1,
   HEVC = H265,
-  MJPEG = 2,
+  MJPEG = 2, ///< Rejected by validation: simaaiencoder has no JPEG encode.
 };
 
 /// Codec-specific fields are optional; defaults are selected after `type`.
@@ -33,9 +33,9 @@ struct SimaEncodeOptions {
   std::optional<std::string> profile;      ///< H.264: baseline/main/high; H.265: main.
   std::optional<std::string> level;        ///< H.264/H.265: default 4.0, adjusted by hardware.
   std::optional<int> gop_length;           ///< H.264/H.265: 0..1000; 0 uses FPS, 1 is all-intra.
-  std::optional<int> idr_interval;         ///< H.264/H.265: nonnegative; 0 uses three times FPS.
-  std::optional<int> quality;              ///< MJPEG: 1..100, default 80.
-  int num_buffers = -1; ///< Encoded outputs: -1 uses the native default, or 1..20.
+  std::optional<int> idr_interval;         ///< H.264/H.265: nonnegative; 0 uses the GOP length.
+  std::optional<int> quality;              ///< MJPEG only; must stay unset (MJPEG is rejected).
+  int num_buffers = -1; ///< Encoded outputs: -1 uses the element default (10), or 2..64.
 };
 
 namespace internal {
@@ -45,8 +45,9 @@ struct SimaEncodeAccess;
 /**
  * @brief Hardware encoder with native 8-bit NV12 input preparation.
  *
- * Compatible SiMaAI NV12 storage is retained without copying. Other supported
- * raw CPU layouts are materialized by the existing encoder input adapter.
+ * Uses simaaiencoder. NV12 dma-bufs from the codec heap with a compatible layout
+ * can be encoded without a copy; other NV12 input is copied by the encoder, and other
+ * raw formats are converted to NV12 with videoconvert.
  * Resolution follows the initial input frames and stays fixed for a run.
  * This node does not resize frames.
  * Output consists of encoded frames, without RTP packetization.
