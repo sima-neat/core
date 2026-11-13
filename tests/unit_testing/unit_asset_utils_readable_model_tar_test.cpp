@@ -85,18 +85,18 @@ RUN_TEST("unit_asset_utils_readable_model_tar_test", ([] {
            const char* path = std::getenv("PATH");
            const std::string cli_path = cli.parent_path().string() + ":" + (path ? path : "");
            require(::setenv("PATH", cli_path.c_str(), 1) == 0, "failed to set fixture PATH");
-           ::unsetenv("SIMA_MODEL_TAR");
-           ::unsetenv("SIMA_YOLO_TAR");
 
            const fs::path model_root = root / "model cache's files";
            const fs::path cache = model_root / "tmp";
            write_file(model_root / "fixture", "model payload");
+           fs::create_directories(cache);
            require(::setenv("SIMA_TEST_EXPECTED_CACHE", cache.c_str(), 1) == 0,
                    "failed to set expected cache path");
            const fs::path original_dir = fs::current_path();
-           const auto downloaded = sima_test::resolve_yolov8s_tar_local_first(model_root, false);
-           require(downloaded == (cache / "yolo_v8s_mpk.tar.gz").string() &&
-                       sima_test::is_listable_tar_gz(downloaded),
+           const std::string filename = "yolo_v8s_mpk.tar.gz";
+           const auto cached_tar = cache / filename;
+           const auto downloaded = sima_test::download_yolov8s_tar_to_cache(cached_tar, {filename});
+           require(downloaded == cached_tar.string() && sima_test::is_listable_tar_gz(downloaded),
                    "modelzoo fallback did not stage the downloaded archive in the cache");
            require(fs::current_path() == original_dir, "modelzoo download changed the test cwd");
          }));

@@ -581,6 +581,28 @@ inline std::string resolve_resnet50_tar(const fs::path& root_in = {}) {
   return "";
 }
 
+// The caller holds the cache lock while downloading and staging the archive.
+inline std::string download_yolov8s_tar_to_cache(const fs::path& tmp_tar,
+                                                 const std::vector<std::string>& names) {
+  const auto tmp_dir = tmp_tar.parent_path();
+  if (run_modelzoo_get_noninteractive("yolo_v8s", tmp_dir) != 0)
+    return "";
+
+  // Model Zoo may write directly or under a model-named subdirectory.
+  for (const auto& dir : {tmp_dir, tmp_dir / "yolo_v8s"}) {
+    for (const auto& name : names) {
+      const auto downloaded = dir / name;
+      if (is_listable_tar_gz(downloaded)) {
+        if (downloaded == tmp_tar || move_to_tmp(downloaded, tmp_tar))
+          return tmp_tar.string();
+        return downloaded.string();
+      }
+      purge_unlistable_tar_gz(downloaded);
+    }
+  }
+  return "";
+}
+
 inline std::string resolve_yolov8s_tar_local_first(const fs::path& root_in, bool skip_download) {
   const fs::path root = default_asset_root(root_in);
   const fs::path root_tmp = root / "tmp";
@@ -669,18 +691,9 @@ inline std::string resolve_yolov8s_tar_local_first(const fs::path& root_in, bool
   }
 
   if (!skip_download) {
-    const int rc = run_modelzoo_get_noninteractive("yolo_v8s", tmp_dir);
-    if (rc == 0) {
-      // Model Zoo may write directly or under a model-named subdirectory.
-      for (const auto& dir : {tmp_dir, tmp_dir / "yolo_v8s"}) {
-        for (const auto& name : names) {
-          const auto downloaded = dir / name;
-          if (is_listable_tar_gz(downloaded))
-            return stage_candidate(downloaded);
-          purge_unlistable_tar_gz(downloaded);
-        }
-      }
-    }
+    const auto downloaded = download_yolov8s_tar_to_cache(tmp_tar, names);
+    if (!downloaded.empty())
+      return downloaded;
   }
 
   for (const auto& dir : search_dirs) {
