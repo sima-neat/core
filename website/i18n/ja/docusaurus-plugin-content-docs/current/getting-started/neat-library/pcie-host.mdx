@@ -89,7 +89,7 @@ sima-cli neat install core/pciehost/windows/amd64@3.0
 & "$env:USERPROFILE\pyneatpcie\Scripts\python.exe" -m pip check
 ```
 
-CLIはMSIを実行する前に、Windows OpenSSH、Platformサービス、GStreamer、および互換性のあるPythonを確認します。`%USERPROFILE%\pyneatpcie`環境を作成または再利用し、公開済みのチェックサムを検証して、SchedulerとCoreに対してWindows Installerを実行します。さらに、ホスト診断、パッケージに対応するコーディングエージェントのスキル、およびwheelをインストールします。修復またはアップグレードする場合は、同じコマンドを再度実行してください。別の環境を使用する場合は`--python-executable <path>`を、ネイティブC++のみをインストールする場合は`--native-only`を使用します。ネイティブコンポーネントの削除はWindows Installerが、Pythonパッケージの削除はpipが管理します。
+CLIはMSIを実行する前に、Windows OpenSSH、Platformサービス、GStreamer、および互換性のあるPythonを確認します。`%USERPROFILE%\pyneatpcie`環境を作成または再利用し、公開済みのチェックサムを検証して、SchedulerとCoreに対してWindows Installerを実行します。さらに、インストール済みのホスト診断ツールを実行し、パッケージに対応するコーディングエージェントのスキルをインストールして、wheelをそのPython環境にインストールします。修復またはアップグレードする場合は、同じコマンドを再度実行してください。別の環境を使用する場合は`--python-executable <path>`を、ネイティブC++のみをインストールする場合は`--native-only`を使用します。ネイティブコンポーネントの削除はWindows Installerが、Pythonパッケージの削除はpipが管理します。
 
 インストール後に一度、カードへのパスワードなしSSHを設定します。
 
