@@ -1554,8 +1554,8 @@ std::string parse_named_element_for_error(const std::string& pipeline, const std
 }
 
 std::string infer_error_node_name(const std::string& pipeline) {
-  for (const char* element : {"simaaidecoder", "neatencoder", "neatkernelrunner", "neatprocessmla",
-                              "neatobjectdecode", "neatdequant", "neatdetess"}) {
+  for (const char* element : {"simaaidecoder", "simaaiencoder", "neatkernelrunner",
+                              "neatprocessmla", "neatobjectdecode", "neatdequant", "neatdetess"}) {
     const std::string name = parse_named_element_for_error(pipeline, element);
     if (!name.empty())
       return name;
@@ -1641,8 +1641,8 @@ std::string single_sample_preflight_unsupported_reason(GstElement* parsed_pipeli
                                                        const std::string& pipeline,
                                                        const InputStreamOptions& opt) {
   const std::string lower = lower_copy(pipeline);
-  if (lower.find("neatencoder") != std::string::npos) {
-    return "pipeline contains neatencoder";
+  if (lower.find("simaaiencoder") != std::string::npos) {
+    return "pipeline contains simaaiencoder";
   }
 
   g_autoptr(GstIterator) decoders =

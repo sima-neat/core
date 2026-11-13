@@ -1287,7 +1287,7 @@ inputstream_pipeline_teardown_policy(std::string_view pipeline) {
       contains_launch_factory_token(pipeline, "neatkernelrunner") ||
       contains_launch_factory_token(pipeline, "neatprocesscvu") ||
       contains_launch_factory_token(pipeline, "simaaidecoder") ||
-      contains_launch_factory_token(pipeline, "neatencoder")) {
+      contains_launch_factory_token(pipeline, "simaaiencoder")) {
     return pipeline_internal::InputStreamTeardownPolicy::MustReachNull;
   }
   return pipeline_internal::InputStreamTeardownPolicy::Deferred;
