@@ -24,6 +24,11 @@
 //             is CpuExternal over the pool slot, its holder the Message, read-only; a wrapped
 //             message's is the pushed storage itself, and the slot returns at the pull. The
 //             Outputs of a fan-out lease the one slot each message has: no copy per Output.
+//             From a device input (H0b: memory_policy Ev74 or Dms0) it is device memory, a
+//             GstSample over the slot's DMA-BUF, read-only as well.
+// A device input's push and the tensors of its pulled messages are DataflowDeviceMemory.cpp's
+// (dataflow_device::push, pulled_sample, pulled_tensors): another translation unit, reached here
+// by one branch each, so that what this file compiles for a host input stays what it was.
 //   close_input  Session::close_input(kNoDeadline) of every input: cancels a parked push, keeps
 //             what is queued.
 //   stop      Session::stop(now + 2 s) of every input, once more on Timeout (RunLifecycle.cpp
@@ -285,9 +290,10 @@ public:
                                "item (the Dataflow backend carries one tensor per push)"));
     }
     validate_public_input(inputs.front(), port.config().input, stream_options_, where);
-    // A CPU view of the Mat, whatever the Input's memory policy: the push copies it into the slot,
-    // or wraps it when the Mat owns its memory (its view's holder keeps a reference to it; a Mat
-    // over memory it does not own keeps nothing alive).
+    // A CPU view of the Mat, whatever the Input's memory policy: the push copies it into the slot
+    // (a device input's slot is the device memory), or wraps it into a host input when the Mat
+    // owns its memory (its view's holder keeps a reference to it; a Mat over memory it does not
+    // own keeps nothing alive).
     InputOptions view_options = port.config().input;
     view_options.memory_policy = InputMemoryPolicy::SystemMemory;
     const Tensor tensor = tensor_from_cv_mat(inputs.front(), view_options, where);
@@ -323,8 +329,12 @@ public:
     // allocates no list per pull.
     TensorList tensors = std::move(out.tensors);
     tensors.clear();
-    out = codec::make_sample(bound->binding, bound->has_wraps.load(std::memory_order_relaxed),
-                             streams_, owned_output(), std::move(message), std::move(tensors));
+    out =
+        bound->device
+            ? dataflow_device::pulled_sample(bound->binding, streams_, owned_output(),
+                                             std::move(message), std::move(tensors))
+            : codec::make_sample(bound->binding, bound->has_wraps.load(std::memory_order_relaxed),
+                                 streams_, owned_output(), std::move(message), std::move(tensors));
     if (orig >= 0) {
       out.orig_input_seq = orig;
     }
@@ -340,8 +350,13 @@ public:
     if (status != PullStatus::Ok) {
       return status;
     }
-    codec::fill_tensors(bound->binding, bound->has_wraps.load(std::memory_order_relaxed), streams_,
-                        owned_output(), std::move(message), out);
+    if (bound->device) [[unlikely]] {
+      dataflow_device::pulled_tensors(bound->binding, streams_, owned_output(), std::move(message),
+                                      out);
+    } else {
+      codec::fill_tensors(bound->binding, bound->has_wraps.load(std::memory_order_relaxed),
+                          streams_, owned_output(), std::move(message), out);
+    }
     count_pulled();
     return PullStatus::Ok;
   }
@@ -515,13 +530,39 @@ private:
     throw_input_shape(std::string(where) + ": the Sample carries no tensor");
   }
 
-  // One item into `port` (DataflowInputPort::push, inlined here once), and its outcome.
+  // One item into `port` (DataflowInputPort::push, inlined here once; a device input's is
+  // device_push), and its outcome.
   bool push_item(DataflowInputPort& port, std::span<const Tensor> item, const Stamp& proposal,
                  bool block, const char* where, bool commit_allocation = false,
                  std::int64_t pushed_seq = -1, bool may_wrap = true) {
-    return settle(port,
-                  port.push(item, proposal, block, where, commit_allocation, pushed_seq, may_wrap),
-                  block, where);
+    const DataflowPushOutcome outcome =
+        port.device()
+            ? device_push(port, item, proposal, block, where, commit_allocation, pushed_seq,
+                          may_wrap)
+            : port.push(item, proposal, block, where, commit_allocation, pushed_seq, may_wrap);
+    return settle(port, outcome, block, where);
+  }
+
+  // A device input's push (H0b). Its slot is device memory under a write epoch that the publish
+  // ends; an end that fails (FR16, Unretired) published nothing and quarantined the slot: the
+  // Run's terminal error, as a pull's is, latched here before settle throws it.
+  [[gnu::noinline, gnu::cold]] DataflowPushOutcome
+  device_push(DataflowInputPort& port, std::span<const Tensor> item, const Stamp& proposal,
+              bool block, const char* where, bool commit_allocation, std::int64_t pushed_seq,
+              bool may_wrap) {
+    DataflowPushOutcome outcome = dataflow_device::push(port, item, proposal, block, where,
+                                                        commit_allocation, pushed_seq, may_wrap);
+    if (const df::Error* error = df::failure(outcome.answer);
+        error && error->code == df::ErrorCode::Unretired) {
+      const std::string text = pipeline_internal::dataflow_error_text(*error, where);
+      PullError latched;
+      latched.code = pipeline_internal::map_dataflow_error(*error).code;
+      latched.message = text;
+      latched.report = error_util::make_report(latched.code, text);
+      std::lock_guard<std::mutex> lock(error_mu_);
+      last_error_ = std::move(latched);
+    }
+    return outcome;
   }
 
   // What a port answered a push, as Core returns and counts it (push_verdict): the one place the

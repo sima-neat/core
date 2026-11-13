@@ -39,6 +39,10 @@
 
 #pragma GCC visibility push(hidden)
 #include "dataflow/dataflow.h"
+#if defined(SIMANEAT_WITH_DATAFLOW_DEVICE_MEMORY)
+// H0b: the Runner-backed source of device pools (dataflow::runner_memory). It names no Runner type.
+#include "dataflow/runner/block_source.h"
+#endif
 #pragma GCC visibility pop
 
 namespace simaai::neat::pipeline_internal {

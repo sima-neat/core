@@ -546,6 +546,16 @@ if (SIMANEAT_DATAFLOW_SOURCE_DIR)
   # gcc-14 when no C compiler is selected yet: on a cross build that is the host
   # compiler. Select C here the standard way (CC or CMAKE_C_COMPILER), as for C++.
   enable_language(C)
+  # Device memory (H0b): the runtime builds its Runner-backed BlockSource, dataflow::runner_memory,
+  # where SimaRunner::memory exists. Core's find of Scheduler is client-only and imports no lower
+  # package, so the Runner's memory package is looked for here: optional, and only for this
+  # runtime target, whose one source is the only file that includes a Runner header (no Core source
+  # does). A development tree names it with -DSimaRunner_DIR=<runner package>/usr/lib/
+  # aarch64-linux-gnu/cmake/SimaRunner. Not found: no target, and InputOptions::memory_policy Ev74
+  # and Dms0 stay off the Dataflow backend (DataflowInputBinding.cpp).
+  if (NOT TARGET SimaRunner::memory)
+    find_package(SimaRunner CONFIG QUIET COMPONENTS memory)
+  endif()
   simaneat_add_dataflow_runtime("${SIMANEAT_DATAFLOW_SOURCE_DIR}")
   set_target_properties(dataflow_core PROPERTIES
     CXX_VISIBILITY_PRESET hidden
@@ -565,6 +575,20 @@ if (SIMANEAT_DATAFLOW_SOURCE_DIR)
   target_sources(sima_neat PRIVATE $<TARGET_OBJECTS:dataflow_core>)
   target_sources(sima_neat_static PRIVATE $<TARGET_OBJECTS:dataflow_core>)
   target_compile_definitions(sima_neat_objects PRIVATE SIMANEAT_WITH_DATAFLOW=1)
+  # The runtime's device-memory object is embedded as dataflow_core's are. The Runner library it
+  # calls, libneatdmabufmemory, is already in libsima_neat.so's closure (Scheduler's libneatdmabuf
+  # needs it); it is named on the shared library's link line so that the embedded object's
+  # references bind to it directly. The static library carries the object too: whoever links
+  # libsima_neat.a from such a build links SimaRunner::memory beside it.
+  if (TARGET dataflow_runner_memory)
+    set_target_properties(dataflow_runner_memory PROPERTIES
+      CXX_VISIBILITY_PRESET hidden
+      VISIBILITY_INLINES_HIDDEN ON)
+    target_sources(sima_neat PRIVATE $<TARGET_OBJECTS:dataflow_runner_memory>)
+    target_sources(sima_neat_static PRIVATE $<TARGET_OBJECTS:dataflow_runner_memory>)
+    target_link_libraries(sima_neat PRIVATE SimaRunner::memory)
+    target_compile_definitions(sima_neat_objects PRIVATE SIMANEAT_WITH_DATAFLOW_DEVICE_MEMORY=1)
+  endif()
 endif()
 
 option(SIMANEAT_ENABLE_EDGE_LTTNG_TRACEPOINTS

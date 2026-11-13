@@ -4,15 +4,16 @@
 // inside it are elided as compile_public_graph elides them. Each Input becomes one Feed with one
 // link per Output it feeds (a fan-out when there are several) and one Fetch per Output, on a
 // Session of its own (DataflowInputPort.cpp), in one Run state (DataflowRun.cpp). Everything else
-// (fan-in and combine, operators, device memory) is declined (DataflowBackendSelect.cpp). Here:
-// qualification, endpoint names, and the mapping of RunOptions and OutputOptions to link depths
-// and policies.
+// (fan-in and combine, operators) is declined (DataflowBackendSelect.cpp). Here: qualification,
+// endpoint names, the mapping of RunOptions and OutputOptions to link depths and policies, and
+// each Input's memory (H0b: InputOptions::memory_policy resolved as GStreamer's build resolves it).
 
 #include "pipeline/runtime/DataflowGraphCompiler.h"
 
 #include "pipeline/ErrorCodes.h"
 #include "pipeline/Graph.h"
 #include "pipeline/graph/internal/GraphBuildInternal.h"
+#include "pipeline/internal/InputPolicy.h"
 #include "pipeline/internal/InputStreamUtil.h"
 #include "pipeline/internal/PublicInputContract.h"
 #include "pipeline/runtime/RunCore.h"
@@ -454,11 +455,21 @@ DataflowRunConfig derive_config(const Graph& graph, const DataflowGraphView& vie
   for (std::size_t i = 0; i < q.inputs.size(); ++i) {
     DataflowInputConfig& input = config.inputs[i];
     input.input = *view.inputs[q.inputs[i]];
+    // The Input and what it feeds, as the nodes of GStreamer's segment for it.
+    std::vector<std::shared_ptr<Node>> route{view.vertices[q.inputs[i]]};
     for (std::size_t o = 0; o < q.outputs.size(); ++o) {
       if (q.producer[o] == i) {
         input.outputs.push_back(o); // output (vertex) order
+        route.push_back(view.vertices[q.outputs[o]]);
       }
     }
+    // Where the input's pool lives (H0b plan 3.1, D4), by the function GStreamer's build asks
+    // (GraphBuildInput.cpp, ExecutionGraphCompiler.cpp resolve_pipeline_input_memory): an explicit
+    // memory_policy as given (Ev74, Dms0: a device pool); use_simaai_pool = false and Auto in front
+    // of an Output: system memory, a host pool. Kept in the input's options, as GStreamer keeps it
+    // in its appsrc options: from here on memory_policy is never Auto.
+    input.input.memory_policy =
+        pipeline_internal::resolve_input_memory(input.input, route).allocation;
     // A declared shape allows Run::alloc, whose slot the application holds while a push takes
     // another: the pool is sized for both (PORTS.md 5.4).
     input.feed_loans = input.input.shape.empty() ? 1U : 2U;

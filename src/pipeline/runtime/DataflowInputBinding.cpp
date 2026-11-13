@@ -141,6 +141,19 @@ df::Planar planar_layout(df::PixelFormat format, std::int64_t max_h, std::int64_
   return planar;
 }
 
+// Where the input's slots live: DataflowGraphCompiler resolved InputOptions::memory_policy (never
+// Auto here; a caller's own options, a cv::Mat view's, say SystemMemory).
+df::MemoryKind memory_kind(InputMemoryPolicy policy) {
+  switch (policy) {
+  case InputMemoryPolicy::Ev74:
+    return df::MemoryKind::Ev74;
+  case InputMemoryPolicy::Dms0:
+    return df::MemoryKind::Dms0;
+  default:
+    return df::MemoryKind::Host;
+  }
+}
+
 std::string describe_spec(const df::PortSpec& spec) {
   // A record's description is one TensorSpec per field: up to kMaxFields of them.
   std::vector<char> buffer(spec.is_record() ? df::kDescribeMax * (df::kMaxFields + 1U)
@@ -187,6 +200,7 @@ std::optional<DataflowInputBinding> bind_declared_shape(const InputOptions& decl
   binding.dtype = declared.dtype;
   binding.rank = declared.shape.size();
   binding.spec.payload = spec;
+  binding.spec.memory = memory_kind(declared.memory_policy);
   binding.spec.capacity_hint =
       static_cast<std::uint32_t>(std::clamp(declared.pool_max_buffers, 0, 4096));
   if (const df::Status status = df::validate(binding.spec)) {
@@ -202,11 +216,13 @@ std::optional<DataflowInputBinding> bind_declared_shape(const InputOptions& decl
 std::optional<DataflowInputBinding> bind_dataflow_input(const InputOptions& declared,
                                                         const Tensor* tensor, std::string* why) {
   why->clear();
-  if (declared.memory_policy == InputMemoryPolicy::Ev74 ||
-      declared.memory_policy == InputMemoryPolicy::Dms0) {
-    *why = "InputOptions::memory_policy Ev74 or Dms0 (device memory) is not supported before H0b";
+#if !defined(SIMANEAT_WITH_DATAFLOW_DEVICE_MEMORY)
+  if (memory_kind(declared.memory_policy) != df::MemoryKind::Host) {
+    *why = "InputOptions::memory_policy Ev74 or Dms0 (device memory) needs the Runner's memory "
+           "package, which this build of the Dataflow backend was configured without";
     return std::nullopt;
   }
+#endif
   if (declared.payload_type == PayloadType::Encoded || declared.format.tag == FormatTag::H264 ||
       declared.format.tag == FormatTag::H265 || declared.format.tag == FormatTag::ENCODED) {
     *why = "encoded input is not supported before H1";
@@ -336,6 +352,7 @@ std::optional<DataflowInputBinding> bind_dataflow_input(const InputOptions& decl
     spec.layout = df::Dense{};
   }
   binding.spec.payload = spec;
+  binding.spec.memory = memory_kind(declared.memory_policy);
   binding.spec.capacity_hint =
       static_cast<std::uint32_t>(std::clamp(declared.pool_max_buffers, 0, 4096));
   if (const df::Status status = df::validate(binding.spec)) {
@@ -405,15 +422,23 @@ std::optional<DataflowInputBinding> bind_dataflow_record(const InputOptions& dec
            " tensors where one tensor of a declared shape is expected";
     return std::nullopt;
   }
+  if (memory_kind(declared.memory_policy) != df::MemoryKind::Host) {
+    // The runtime's device ports carry one tensor (block.h); GStreamer's device pool is one too.
+    *why = "an item of " + std::to_string(fields.size()) +
+           " tensors (a record) into an input with InputOptions::memory_policy Ev74 or Dms0 is "
+           "not supported before H1";
+    return std::nullopt;
+  }
   if (fields.size() > df::kMaxFields) {
     *why = "a record of " + std::to_string(fields.size()) + " tensors is not supported (at most " +
            std::to_string(df::kMaxFields) + ")";
     return std::nullopt;
   }
   // Each field binds as an undeclared tensor of its own: the InputOptions describe one tensor (an
-  // image's format and size), so only their memory and pool settings apply to a field.
+  // image's format and size), so only their pool settings apply to a field (a record's memory is
+  // the host's, above).
   InputOptions field_declared;
-  field_declared.memory_policy = declared.memory_policy;
+  field_declared.memory_policy = InputMemoryPolicy::SystemMemory;
   field_declared.use_simaai_pool = declared.use_simaai_pool;
   field_declared.pool_max_buffers = declared.pool_max_buffers;
   DataflowInputBinding binding;
@@ -547,11 +572,19 @@ void DataflowValidatedLeaf::remember(const Tensor& tensor, bool wrappable) {
 // its planes at the offsets and pitches of the port's layout, which planar_layout packs back to
 // back. Everything read here is part of DataflowLeafGeometry, so a repeated geometry reuses the
 // answer; wrap_block (DataflowTensorCodec.h) checks the rest per push.
+// A device port (H0b: memory Ev74 or Dms0) takes device memory only: the tensor's storage is a
+// GstSample's (a TensorMemory::EV74 or MLA tensor; dataflow_device::wrap_tensor checks that it is
+// one DMA-BUF of the port's kind), laid out by the same rule. A CPU tensor is copied into the slot.
 bool dataflow_wrap_layout(const DataflowInputBinding& binding, std::size_t slot_bytes,
                           const Tensor& t) {
   if (binding.is_record() || slot_bytes == 0U || !t.storage || t.byte_offset < 0 ||
-      (t.storage->kind != StorageKind::CpuOwned && t.storage->kind != StorageKind::CpuExternal) ||
       t.has_tiled_storage()) {
+    return false;
+  }
+  if (binding.spec.memory != df::MemoryKind::Host
+          ? t.storage->kind != StorageKind::GstSample
+          : t.storage->kind != StorageKind::CpuOwned &&
+                t.storage->kind != StorageKind::CpuExternal) {
     return false;
   }
   const auto offset = static_cast<std::size_t>(t.byte_offset);

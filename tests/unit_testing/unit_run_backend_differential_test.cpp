@@ -6,6 +6,18 @@
 // pulled tensor's first byte is the pushed one) exactly when copy_input is off and the frame fills
 // a slot (a fixed port's frames, a bounded port's frames at the bound), and copied otherwise; the
 // fixed-port variants are wrapped throughout.
+// H0b (device memory): two variants with InputOptions::memory_policy = Ev74, one pushing
+// TensorMemory::EV74 tensors and one CPU tensors. Compared besides the above: whether the pulled
+// tensor is DMA-BUF memory, and whether it is the pushed DMA-BUF itself (EV74 tensors: yes on both
+// backends, GStreamer forwarding the buffer and Dataflow wrapping it; CPU tensors: no, both copy
+// into the input's pool). GStreamer refuses a CPU tensor on such an input unless
+// SIMA_ALLOW_INPUTSTREAM_CPU_TO_EV74_COPY is set (InputStreamPush.cpp), so that variant's
+// GStreamer run sets it; Dataflow copies by default (h0b plan 3.2). Tensor::device is compared too
+// (both backends label the pulled tensor CPU; the placement is the storage's). Excluded there,
+// with both values printed:
+//   - Stamp::frame_id and Stamp::source_time of a pushed EV74 tensor that proposes none: GStreamer
+//     forwards the tensor's GstBuffer, whose metadata from the tensor's creation carries a frame id
+//     and a timestamp; Dataflow carries what the push proposes (none).
 //
 // Compared (APPLICATION_MODEL.md 1.2: what applications read, plus what they echo):
 //   the pull status; Sample::kind and its payload slots (tensor / tensors / fields, and how many);
@@ -48,12 +60,14 @@
 #include "pipeline/Graph.h"
 #include "pipeline/NeatError.h"
 #include "pipeline/Result.h"
+#include "dmabuf_identity.h"
 #include "test_main.h"
 #include "test_utils.h"
 
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <iostream>
 #include <map>
 #include <sstream>
@@ -124,6 +138,9 @@ struct Variant {
   // W2: no max_* bounds, so the seed (64x48) fixes the port and a slot holds exactly one frame:
   // with copy_input off every item is wrapped on Dataflow (a linear seeded variant only).
   bool fixed_port = false;
+  // H0b: the input's memory, and whether the pushed tensors are TensorMemory::EV74 ones.
+  InputMemoryPolicy memory = InputMemoryPolicy::SystemMemory;
+  bool ev74_source = false;
 };
 
 struct TensorObs {
@@ -132,6 +149,8 @@ struct TensorObs {
   int format = -1;
   std::vector<std::uint8_t> bytes;
   const std::byte* first = nullptr; // the tensor's first byte, when its storage has an address
+  int device = 0;                   // Tensor::device.type
+  std::uint64_t dmabuf = 0;         // its DMA-BUF's inode; 0 for CPU memory
 };
 
 struct Observed {
@@ -162,6 +181,8 @@ TensorObs observe(const Tensor& t) {
   if (t.storage && t.storage->data) {
     o.first = static_cast<const std::byte*>(t.storage->data) + t.byte_offset;
   }
+  o.device = static_cast<int>(t.device.type);
+  o.dmabuf = sima_test::dmabuf_inode(t);
   return o;
 }
 
@@ -169,7 +190,7 @@ Run build(const Variant& v, RunBackend backend) {
   InputOptions in;
   in.payload_type = PayloadType::Image;
   in.format = FormatTag::RGB;
-  in.memory_policy = InputMemoryPolicy::SystemMemory;
+  in.memory_policy = v.memory;
   if (!v.fixed_port) {
     in.max_width = kMaxW;
     in.max_height = kMaxH;
@@ -281,7 +302,8 @@ Observed pull_one(Run& run, const Variant& v) {
 struct Outcome {
   std::vector<Observed> items;
   std::vector<std::vector<std::uint8_t>> pushed;
-  std::vector<const std::byte*> sources; // each pushed tensor's first byte
+  std::vector<const std::byte*> sources;     // each pushed tensor's first byte
+  std::vector<std::uint64_t> source_dmabufs; // each pushed tensor's DMA-BUF (0: CPU memory)
   PullStatus final_status = PullStatus::Error;
   std::string final_error;
   std::string build_error;
@@ -294,7 +316,9 @@ Outcome run_variant(const Variant& v, RunBackend backend) {
     const std::vector<Item> items = sequence(v.vary_shapes);
     std::vector<Tensor> sources; // kept unchanged and alive until pulled (copy_input off)
     for (std::size_t i = 0; i < items.size(); ++i) {
-      sources.push_back(rgb(items[i].w, items[i].h, static_cast<std::uint8_t>(0x10 + i)));
+      const Tensor source = rgb(items[i].w, items[i].h, static_cast<std::uint8_t>(0x10 + i));
+      sources.push_back(v.ev74_source ? source.cvu() : source);
+      out.source_dmabufs.push_back(sima_test::dmabuf_inode(sources.back()));
       out.pushed.push_back(sources.back().copy_dense_bytes_tight());
       out.sources.push_back(static_cast<const std::byte*>(sources.back().storage->data) +
                             sources.back().byte_offset);
@@ -445,7 +469,22 @@ void compare(const Variant& v, const Outcome& gst, const Outcome& df, Comparison
     // W2: Dataflow wraps the pushed storage (the pulled tensor's first byte is the pushed one)
     // exactly when copy_input is off and the frame fills a slot: every frame of a fixed port, a
     // frame at the bound of a bounded one; every other item is copied.
-    if (!d.leaves.empty() && i < df.sources.size()) {
+    const bool device = v.memory != InputMemoryPolicy::SystemMemory;
+    if (device && !g.leaves.empty() && !d.leaves.empty()) {
+      // H0b: both backends hand out device memory, and the pushed DMA-BUF itself exactly when
+      // the pushed tensor was one.
+      const TensorObs& gl = g.leaves.front();
+      const TensorObs& dl = d.leaves.front();
+      c.equal<bool>(i, "the pulled tensor is DMA-BUF memory", gl.dmabuf != 0U, dl.dmabuf != 0U);
+      c.check(i, "the Dataflow tensor is DMA-BUF memory", dl.dmabuf != 0U);
+      c.equal<int>(i, "Tensor::device", gl.device, dl.device);
+      c.equal<bool>(i, "the pulled tensor is the pushed DMA-BUF",
+                    gl.dmabuf != 0U && gl.dmabuf == gst.source_dmabufs[i],
+                    dl.dmabuf != 0U && dl.dmabuf == df.source_dmabufs[i]);
+      c.equal<bool>(i, "Dataflow wraps a pushed EV74 tensor and copies a CPU one (H0b)",
+                    v.ev74_source, dl.dmabuf != 0U && dl.dmabuf == df.source_dmabufs[i]);
+    }
+    if (!device && !d.leaves.empty() && i < df.sources.size()) {
       const bool fills_slot = v.fixed_port || (item.w == kMaxW && item.h == kMaxH);
       const bool wrapped = d.leaves.front().first == df.sources[i];
       c.equal<bool>(i, "Dataflow wraps the pushed storage (W2)", !v.copy_input && fills_slot,
@@ -453,13 +492,26 @@ void compare(const Variant& v, const Outcome& gst, const Outcome& df, Comparison
       wrapped_items += wrapped ? 1U : 0U;
     }
     const bool proposes_time = item.pts_ns >= 0;
+    // H0b: GStreamer forwards a pushed EV74 tensor's own GstBuffer and reads that buffer's
+    // metadata for what the push does not propose.
+    const char* const holder_meta =
+        "GStreamer reads the forwarded EV74 buffer's creation metadata; Dataflow carries the "
+        "push's proposal only";
     if (v.new_pull) {
       c.equal<std::size_t>(i, "list size", g.list_size, d.list_size);
-      c.equal<std::int64_t>(i, "Stamp::frame_id", g.stamp.frame_id, d.stamp.frame_id);
+      if (v.ev74_source && item.frame_id < 0) {
+        c.excluded(i, "Stamp::frame_id", std::to_string(g.stamp.frame_id),
+                   std::to_string(d.stamp.frame_id), holder_meta);
+      } else {
+        c.equal<std::int64_t>(i, "Stamp::frame_id", g.stamp.frame_id, d.stamp.frame_id);
+      }
       c.equal<std::int64_t>(i, "Stamp::frame_id vs pushed", item.frame_id, d.stamp.frame_id);
       c.equal<std::string>(i, "Stamp::stream_name", g.stamp.stream_name, d.stamp.stream_name);
       c.equal<std::uint64_t>(i, "Stamp::seq", g.stamp.seq, d.stamp.seq);
-      if (!v.do_timestamp) {
+      if (!v.do_timestamp && v.ev74_source && !proposes_time) {
+        c.excluded(i, "Stamp::source_time", std::to_string(g.stamp.source_time.ns),
+                   std::to_string(d.stamp.source_time.ns), holder_meta);
+      } else if (!v.do_timestamp) {
         c.equal<std::int64_t>(i, "Stamp::source_time.ns", g.stamp.source_time.ns,
                               d.stamp.source_time.ns);
         c.equal<int>(i, "Stamp::source_time.clock", static_cast<int>(g.stamp.source_time.clock),
@@ -917,12 +969,26 @@ RUN_TEST("unit_run_backend_differential_test", ([] {
                 false, false, false, true, true},
                {"linear/balanced/fixed/new-pull/copy_input=on/do_timestamp=off", kBalanced, false,
                 false, true, false, true, true},
+               // H0b: an Ev74 input; pushed EV74 tensors (the pulled tensor is the pushed
+               // DMA-BUF) and pushed CPU tensors (copied into the input's device pool).
+               {"linear/balanced/fixed/ev74-input/ev74-tensors/new-pull", kBalanced, false, false,
+                false, false, true, true, InputMemoryPolicy::Ev74, true},
+               {"linear/balanced/fixed/ev74-input/cpu-tensors/old-pull", kBalanced, false, false,
+                false, false, false, true, InputMemoryPolicy::Ev74, false},
            };
            std::vector<std::string> failures;
            std::size_t compared = 0;
            for (const Variant& v : variants) {
              std::cout << "== " << v.name << "\n";
+             // GStreamer takes a CPU tensor on a device input only with its compatibility copy.
+             const bool compat_copy = v.memory != InputMemoryPolicy::SystemMemory && !v.ev74_source;
+             if (compat_copy) {
+               setenv("SIMA_ALLOW_INPUTSTREAM_CPU_TO_EV74_COPY", "1", 1);
+             }
              const Outcome gst = run_variant(v, RunBackend::GStreamer);
+             if (compat_copy) {
+               unsetenv("SIMA_ALLOW_INPUTSTREAM_CPU_TO_EV74_COPY");
+             }
              const Outcome df = run_variant(v, RunBackend::Dataflow);
              Comparison c(v.name);
              compare(v, gst, df, c);

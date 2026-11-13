@@ -6,6 +6,7 @@
 
 #include "pipeline/runtime/DataflowGraphCompiler.h"
 
+#include "gst/GstInit.h"
 #include "pipeline/ErrorCodes.h"
 #include "pipeline/Graph.h"
 #include "pipeline/graph/internal/GraphBuildInternal.h"
@@ -191,6 +192,16 @@ std::shared_ptr<RunCore> build_impl(const Graph& graph, const RunOptions& opt, R
   }
   warn_ignored_dataflow_options(config);
   trace_choice(where, "dataflow", describe_choice(config, bindings));
+  // H0b: a tensor pulled from a device pool is a GstSample over a GstDmaBufMemory
+  // (DataflowDeviceMemory.cpp), so a Run with a device input starts GStreamer here, as a GStreamer
+  // Run does at its build. A Run of host inputs only never does.
+  for (const DataflowInputConfig& input : config.inputs) {
+    if (input.input.memory_policy == InputMemoryPolicy::Ev74 ||
+        input.input.memory_policy == InputMemoryPolicy::Dms0) {
+      gst_init_once();
+      break;
+    }
+  }
 
   auto core = std::make_shared<RunCore>();
   initialize_run_identity(*core);

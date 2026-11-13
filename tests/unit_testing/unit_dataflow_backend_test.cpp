@@ -18,7 +18,10 @@
 // accepted ones copy: W2 wraps them otherwise, unit_run_push_wrap_test); the one-time warnings (the
 // deprecated Run forms, the options this backend ignores); RunPreset::Realtime with an explicit
 // Block on a connected graph (kept as given) and on a linear Run (KeepLatest); concurrent stops;
-// state and measurement reads racing a stop.
+// state and measurement reads racing a stop; device inputs (H0b: InputOptions::memory_policy Ev74
+// and Dms0): a CPU tensor copied into the input's DMA-BUF pool, the pulled tensor forwarded as it
+// is into a GStreamer Run, Run::alloc on the pool, a pulled device tensor pushed back (copied), an
+// Owned pull.
 
 // This file calls the deprecated forms on purpose.
 #pragma GCC diagnostic ignored "-Wdeprecated-declarations"
@@ -29,6 +32,7 @@
 #include "pipeline/ErrorCodes.h"
 #include "pipeline/Graph.h"
 #include "pipeline/NeatError.h"
+#include "dmabuf_identity.h"
 #include "test_main.h"
 #include "test_utils.h"
 
@@ -367,13 +371,6 @@ void build_errors() {
     Graph g = input_output();
     require_neat_error([&] { (void)g.run(TensorList{rgb(8, 8, 1)}, dataflow()); },
                        error_codes::kPipelineShape, "Graph::run");
-  }
-  // Device memory: not on this backend yet.
-  {
-    InputOptions in;
-    in.memory_policy = InputMemoryPolicy::Ev74;
-    Graph g = input_output(in);
-    require_neat_error([&] { (void)g.build(dataflow()); }, error_codes::kInputShape, "H0b");
   }
   // Records (an item of several tensors) bind a record port since C2; the binding is enforced.
   {
@@ -974,14 +971,19 @@ void dma_heap_tensor_is_copied() {
 }
 
 void owned_output_and_lease_lifetime() {
-  {
+  // From a host input and from a device input (H0b) alike.
+  for (const InputMemoryPolicy memory :
+       {InputMemoryPolicy::SystemMemory, InputMemoryPolicy::Ev74}) {
     RunOptions opt = dataflow();
     opt.output_memory = OutputMemory::Owned;
-    Graph g = input_output();
+    InputOptions in;
+    in.memory_policy = memory;
+    Graph g = input_output(in);
     Run run = g.build(TensorList{rgb(8, 8, 1)}, opt);
     require(run.push(TensorList{rgb(8, 8, 5)}), "push");
     const Tensor out = pulled_tensor(run, 2000, "Owned");
     require(out.storage->kind == StorageKind::CpuOwned, "Owned output is a CPU copy");
+    require(bytes_of(out) == bytes_of(rgb(8, 8, 5)), "Owned bytes");
     run.close();
   }
   Tensor kept;
@@ -993,6 +995,119 @@ void owned_output_and_lease_lifetime() {
     run.close();
   }
   require(bytes_of(kept) == bytes_of(rgb(16, 8, 6)), "a pulled tensor outlives its Run");
+}
+
+// ---- H0b: device inputs
+// --------------------------------------------------------------------------
+
+InputOptions device_input(InputMemoryPolicy memory) {
+  InputOptions in;
+  in.payload_type = PayloadType::Image;
+  in.format = FormatTag::RGB;
+  in.memory_policy = memory;
+  return in;
+}
+
+// A CPU tensor pushed into a device input is copied into the input's pool: the pulled tensor is
+// DMA-BUF memory whose storage is placed on the input's device, its CPU read map gives the pushed
+// bytes, and the pushed storage is not kept. (Ev74; Dms0 once.)
+void cpu_tensor_into_device_input(InputMemoryPolicy memory, DeviceType device) {
+  Graph g = input_output(device_input(memory));
+  Run run = g.build(dataflow());
+  const Tensor pushed = rgb(64, 48, 0x21);
+  require(run.push(TensorList{pushed}), "a CPU tensor into a device input");
+  const Tensor out = pulled_tensor(run, 2000, "device input");
+  require(out.storage->kind == StorageKind::GstSample && sima_test::dmabuf_inode(out) != 0U,
+          "the pulled tensor is DMA-BUF memory");
+  require(out.storage->device.type == device, "its storage is placed on the input's device");
+  require(pushed.storage.use_count() == 1, "the pushed CPU storage is not kept");
+  const std::vector<std::uint8_t> expected = bytes_of(pushed);
+  const Mapping map = out.map_read();
+  require(map.data != nullptr && map.size_bytes >= expected.size() &&
+              std::memcmp(map.data, expected.data(), expected.size()) == 0,
+          "its CPU read map gives the pushed bytes");
+  run.close();
+}
+
+// A tensor pulled from an Ev74 input goes as it is into a GStreamer Run with an Ev74 input, which
+// hands out the same DMA-BUF; once both tensors are gone the slot is the pool's again, so more
+// frames than the pool holds still pass.
+void device_pull_forwards_into_gstreamer() {
+  Graph g = input_output(device_input(InputMemoryPolicy::Ev74));
+  Run source = g.build(dataflow());
+  RunOptions gst;
+  gst.backend = RunBackend::GStreamer;
+  gst.startup_preflight = false;
+  Graph g2 = input_output(device_input(InputMemoryPolicy::Ev74));
+  Run sink = g2.build(TensorList{rgb(64, 48, 0x01)}, gst);
+  const std::vector<std::uint8_t> expected = bytes_of(rgb(64, 48, 0x31));
+  {
+    require(source.push(TensorList{rgb(64, 48, 0x31)}), "push into the source");
+    const Tensor pulled = pulled_tensor(source, 2000, "source");
+    require(sink.push(TensorList{pulled}), "forward into the GStreamer Run");
+    const Tensor forwarded = pulled_tensor(sink, 5000, "GStreamer Run");
+    require(sima_test::dmabuf_inode(pulled) != 0U &&
+                sima_test::dmabuf_inode(forwarded) == sima_test::dmabuf_inode(pulled),
+            "the GStreamer Run hands out the same DMA-BUF");
+    require(bytes_of(forwarded) == expected, "forwarded bytes");
+  }
+  sink.close();
+  for (int i = 0; i < 24; ++i) {
+    const Tensor t = rgb(64, 48, static_cast<std::uint8_t>(0x40 + i));
+    require(source.push(TensorList{t}), "push after the forward " + std::to_string(i));
+    require(bytes_of(pulled_tensor(source, 2000, "after the forward")) == bytes_of(t),
+            "bytes after the forward " + std::to_string(i));
+  }
+  source.close();
+}
+
+// Run::alloc on a device input lends a slot of the device pool: what the application writes there
+// is what the pull hands out, as DMA-BUF memory.
+void alloc_on_device_input() {
+  InputOptions in;
+  in.shape = {4, 8};
+  in.dtype = TensorDType::Float32;
+  in.memory_policy = InputMemoryPolicy::Ev74;
+  Graph g;
+  g.add(nodes::Input("x", in));
+  g.add(nodes::Output("y"));
+  Run run = g.build(dataflow());
+  std::vector<float> values(32);
+  for (std::size_t i = 0; i < values.size(); ++i) {
+    values[i] = 100.0F + static_cast<float>(i);
+  }
+  Tensor t = run.alloc("x");
+  {
+    Mapping map = t.map_write();
+    require(map.data != nullptr && map.size_bytes >= values.size() * sizeof(float),
+            "the allocated slot maps for write");
+    std::memcpy(map.data, values.data(), values.size() * sizeof(float));
+  }
+  require(run.push("x", {t}), "push the allocated tensor");
+  const auto out = run.pull("y", 2000);
+  require(out && out->tensors.size() == 1U && sima_test::dmabuf_inode(out->tensors[0]) != 0U,
+          "the pulled tensor is DMA-BUF memory");
+  const std::vector<std::uint8_t> bytes = bytes_of(out->tensors[0]);
+  require(bytes.size() == values.size() * sizeof(float) &&
+              std::memcmp(bytes.data(), values.data(), bytes.size()) == 0,
+          "the pulled bytes are the ones written into the allocation");
+  run.close();
+}
+
+// A tensor pulled from a device input leases a slot of that input's pool, so pushing it into a
+// device input copies it (D15): the next pull is another DMA-BUF with the same bytes.
+void pulled_device_tensor_is_copied_back() {
+  Graph g = input_output(device_input(InputMemoryPolicy::Ev74));
+  Run run = g.build(dataflow());
+  require(run.push(TensorList{rgb(64, 48, 0x51)}), "push");
+  const Tensor first = pulled_tensor(run, 2000, "first");
+  require(run.push(TensorList{first}), "push the pulled tensor back");
+  const Tensor second = pulled_tensor(run, 2000, "second");
+  require(sima_test::dmabuf_inode(second) != 0U &&
+              sima_test::dmabuf_inode(second) != sima_test::dmabuf_inode(first),
+          "the pulled tensor was copied into another slot");
+  require(bytes_of(second) == bytes_of(rgb(64, 48, 0x51)), "bytes of the copy");
+  run.close();
 }
 
 void mat_and_bundle_pushes() {
@@ -1046,5 +1161,10 @@ RUN_TEST("unit_dataflow_backend_test", ([] {
            repeated_geometry_is_rechecked_on_change();
            dma_heap_tensor_is_copied();
            owned_output_and_lease_lifetime();
+           cpu_tensor_into_device_input(InputMemoryPolicy::Ev74, DeviceType::SIMA_CVU);
+           cpu_tensor_into_device_input(InputMemoryPolicy::Dms0, DeviceType::SIMA_MLA);
+           device_pull_forwards_into_gstreamer();
+           alloc_on_device_input();
+           pulled_device_tensor_is_copied_back();
            mat_and_bundle_pushes();
          }));

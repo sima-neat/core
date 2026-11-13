@@ -26,6 +26,8 @@ void attach_tensor_set_meta_from_tensors(GstBuffer* buffer, const TensorList& te
 
 bool sample_has_device_gstsample_producer_lifetime(const Sample& sample,
                                                    bool require_expired = false);
+// The same for one tensor: its storage was produced by a running graph's stream.
+bool tensor_has_device_gstsample_producer_lifetime(const Tensor& tensor);
 std::string cross_run_zero_copy_sample_error(const char* where);
 // Inspect retained standard DMA-BUF storage, independently of legacy device-placement flags.
 bool buffer_has_dmabuf_memory(GstBuffer* buffer);

@@ -87,8 +87,9 @@ std::string dataflow_record_mismatch(const DataflowInputBinding& binding,
                                      std::span<const Tensor> fields);
 
 // W2: whether a leaf's bytes are laid out exactly as a whole slot (`slot_bytes`) of `binding`'s
-// port, so that the slot can be backed by the tensor's own storage. Reads only what
-// DataflowLeafGeometry keeps, so a repeated geometry reuses the answer.
+// port, so that the slot can be backed by the tensor's own storage: CPU storage for a host port, a
+// GstSample's (device memory) for a device port (H0b). Reads only what DataflowLeafGeometry keeps,
+// so a repeated geometry reuses the answer.
 bool dataflow_wrap_layout(const DataflowInputBinding& binding, std::size_t slot_bytes,
                           const Tensor& tensor);
 

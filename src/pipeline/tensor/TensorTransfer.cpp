@@ -659,22 +659,6 @@ Tensor finalize_transfer_tensor(const Tensor& src, const std::shared_ptr<Storage
   return out;
 }
 
-std::shared_ptr<Storage> make_driver_dmabuf_storage(GstSample* sample, const Device& target,
-                                                    std::uint64_t target_flags) {
-  auto storage = make_gst_sample_storage(sample);
-  if (!storage || !storage->holder) {
-    return {};
-  }
-
-  // A standard GstDmaBufAllocator memory deliberately has no legacy SiMa
-  // allocator flags. Keep device placement in Tensor storage metadata while
-  // preserving the ordinary GstMemory that direct kernel importers require.
-  storage->device = target;
-  storage->sima_mem_target_flags = target_flags;
-  storage->sima_mem_flags = 0U;
-  return storage;
-}
-
 Tensor transfer_to_driver_dmabuf(const Tensor& src, const Device& target,
                                  std::uint64_t target_flags, const std::vector<Segment>& segments,
                                  std::size_t payload_bytes) {
@@ -754,6 +738,22 @@ Tensor transfer_to_driver_dmabuf(const Tensor& src, const Device& target,
 }
 
 } // namespace
+
+std::shared_ptr<Storage> make_driver_dmabuf_storage(GstSample* sample, const Device& target,
+                                                    std::uint64_t target_flags) {
+  auto storage = make_gst_sample_storage(sample);
+  if (!storage || !storage->holder) {
+    return {};
+  }
+
+  // A standard GstDmaBufAllocator memory deliberately has no legacy SiMa
+  // allocator flags. Keep device placement in Tensor storage metadata while
+  // preserving the ordinary GstMemory that direct kernel importers require.
+  storage->device = target;
+  storage->sima_mem_target_flags = target_flags;
+  storage->sima_mem_flags = 0U;
+  return storage;
+}
 
 //==============================================================================
 // Public API

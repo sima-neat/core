@@ -2833,6 +2833,10 @@ bool sample_has_device_gstsample_producer_lifetime(const Sample& sample, bool re
   return false;
 }
 
+bool tensor_has_device_gstsample_producer_lifetime(const Tensor& tensor) {
+  return tensor_has_device_gstsample_producer_lifetime_local(tensor, /*require_expired=*/false);
+}
+
 std::string cross_run_zero_copy_sample_error(const char* where) {
   return std::string(where ? where : "Run::push") +
          ": Cannot pass this zero-copy frame into another running graph. The frame was produced "

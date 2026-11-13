@@ -22,6 +22,11 @@ namespace {
 //   Timeout          Process: FR8, a pull's deadline: PullStatus::Timeout, not latched. Stop/Drain:
 //                    SR2/SR3, logged by the caller only.
 //   Internal         Runner/Kernels/Codecs origins (H0b on): infra.accelerator_execution_failed.
+//   ResourceExhausted, Unsupported  origin Runner (H0b, a device pool at Graph::build or at the
+//                    input's first push): resource.device_memory_exhausted (no CMA) and
+//                    infra.accelerator_execution_failed (no EL0 cache maintenance).
+//   Unretired        FR16 (H0b): a push whose device slot's write epoch could not end; the Run
+//                    latches it (DataflowRun.cpp, settle).
 DataflowErrorMapping row(const df::Error& e) noexcept {
   switch (e.code) {
   case df::ErrorCode::InvalidArgument:
@@ -29,7 +34,11 @@ DataflowErrorMapping row(const df::Error& e) noexcept {
             e.phase == df::Phase::Process ? error_codes::kInputShape : error_codes::kPipelineShape,
             true};
   case df::ErrorCode::ResourceExhausted:
-    return {PullStatus::Error, error_codes::kMemoryAllocationFailed, true};
+    // Origin Runner (H0b): the device heap (CMA) has no memory for a slot of a device pool.
+    return {PullStatus::Error,
+            e.origin == df::Origin::Runner ? error_codes::kDeviceMemoryExhausted
+                                           : error_codes::kMemoryAllocationFailed,
+            true};
   case df::ErrorCode::Backpressure:
     // FR2 is a push outcome (try_push false); a pull never returns it (WORKER.md 15.2).
     return {PullStatus::Error, error_codes::kRuntimePull, false};
@@ -40,7 +49,11 @@ DataflowErrorMapping row(const df::Error& e) noexcept {
     // FR9 (closed and drained), SR1 (refused after stop), O9/O10: one Closed for Core.
     return {PullStatus::Closed, error_codes::kRuntimePull, false};
   case df::ErrorCode::Unsupported:
-    return {PullStatus::Error, error_codes::kPipelineShape, true};
+    // Origin Runner (H0b): this process cannot maintain the caches of device memory.
+    return {PullStatus::Error,
+            e.origin == df::Origin::Runner ? error_codes::kAcceleratorExecutionFailed
+                                           : error_codes::kPipelineShape,
+            true};
   case df::ErrorCode::Stale:
     return {PullStatus::Error, error_codes::kInternalPluginFailure, true};
   case df::ErrorCode::Unretired:
@@ -66,7 +79,7 @@ std::string dataflow_error_text(const df::Error& error, std::string_view where) 
   std::string text(where);
   text += ": ";
   text += (error.message && *error.message) ? error.message : "runtime error";
-  if (error.code == df::ErrorCode::Unsupported) {
+  if (error.code == df::ErrorCode::Unsupported && error.origin != df::Origin::Runner) {
     text += "; not supported before H1";
   }
   text += " (Dataflow backend)";

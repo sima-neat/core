@@ -13,9 +13,16 @@
 // Anything else is copied into the slot on the pushing thread, inside push, as before: then the
 // caller's buffer is free when push returns. Either way the application must not change a pushed
 // tensor's bytes while a Tensor shares its storage (D16; GStreamer's push also retains the tensor
-// and copies it later on Core's input thread); copy_input = true copies at the push. EV74 and
-// other device tensors (GstSample storage) are copied: every Dataflow port is Host memory until
-// H0b's device pools.
+// and copies it later on Core's input thread); copy_input = true copies at the push.
+//
+// Device inputs (H0b, agent-work/h0b/plan.md 3): InputOptions::memory_policy Ev74 or Dms0 gives the
+// input's port that memory kind, and its pool one DMA-BUF per slot from the runtime's Runner-backed
+// source. A CPU tensor (and a cv::Mat, and anything a wrap is not safe for) is copied into the
+// slot: Session::alloc opened the slot's write epoch, and the push ends it (the cache clean) before
+// the message is visible. A TensorMemory::EV74 or MLA tensor of the port's kind is wrapped instead
+// (dataflow_device::wrap_tensor): its DMA-BUF backs the slot. Run::alloc lends the slot's own
+// mapping, its epoch open until the push or the drop. A host input copies device tensors
+// (GstSample storage), as before.
 //
 // An item is one tensor (a leaf: a TensorSpec port) or several (a record: a RecordSchema port with
 // positional field names, H0 plan 3.5). The first item binds which, as it binds the shape.
@@ -90,8 +97,15 @@ DataflowNet compile_dataflow_net(const DataflowRunConfig& config, std::size_t in
     fetches.push_back(fetch.index);
   }
   df::PlanReport failure;
-  df::Result<df::Plan> plan = std::move(net).compile(df::CompileOptions{
-      .force_fine_clock = false, .retention_limit_bytes = 0, .failure_report = &failure});
+  df::CompileOptions options{
+      .force_fine_clock = false, .retention_limit_bytes = 0, .failure_report = &failure};
+#if defined(SIMANEAT_WITH_DATAFLOW_DEVICE_MEMORY)
+  // Where a device port (H0b: InputOptions::memory_policy Ev74 or Dms0) takes its slots: the
+  // process's Runner-backed source, which has no state and is never destroyed. A Plan of host
+  // ports never reads it.
+  options.blocks = &df::runner::block_source();
+#endif
+  df::Result<df::Plan> plan = std::move(net).compile(options);
   if (const df::Error* error = df::failure(plan)) {
     pipeline_internal::throw_dataflow_error(*error, "Graph::build", failure.mismatch);
   }
@@ -113,7 +127,9 @@ DataflowInputPort::Bound::~Bound() = default;
 
 DataflowInputPort::DataflowInputPort(const DataflowPortContext& run, std::size_t index)
     : run_(run), index_(index), config_(run.config.inputs[index]),
-      stream_(run.streams.intern(config_.default_stream)) {
+      stream_(run.streams.intern(config_.default_stream)),
+      device_(config_.input.memory_policy == InputMemoryPolicy::Ev74 ||
+              config_.input.memory_policy == InputMemoryPolicy::Dms0) {
   for (const std::size_t o : config_.outputs) {
     lossy_block_ = lossy_block_ || run_.config.outputs[o].terminal_drop;
   }
@@ -170,6 +186,7 @@ DataflowInputPort::Bound* DataflowInputPort::bind_locked(DataflowInputBinding bi
     b->wrap_mask = df::slot_alignment(b->binding.spec) - 1U;
     b->wraps = !run_.config.run.advanced.copy_input;
   }
+  b->device = b->binding.spec.memory != df::MemoryKind::Host;
   if (const df::Status status = b->session.start()) {
     pipeline_internal::throw_dataflow_error(*status, "Graph::build");
   }
