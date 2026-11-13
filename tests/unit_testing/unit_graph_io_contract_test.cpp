@@ -360,6 +360,41 @@ RUN_TEST(
         require(rejected, "invalid serialized typed sampler silently changed its meaning");
       }
 
+      for (const auto shorter : {nlohmann::json(nullptr), nlohmann::json(256)}) {
+        auto crop = typed_options;
+        auto& resize = crop["model_fragments"][0]["model_options"]["preprocess"]["resize"];
+        resize["mode"] = 2;
+        resize["shorter_side"] = shorter;
+        const auto path = tmp_json_path("graph_io_crop.json");
+        write_text(path, crop.dump());
+        const auto loaded = Graph::load(path);
+        const auto roundtrip = tmp_json_path("graph_io_crop_roundtrip.json");
+        loaded.save(roundtrip);
+        const auto restored = nlohmann::json::parse(read_text(roundtrip));
+        const auto& actual =
+            restored["model_fragments"][0]["model_options"]["preprocess"]["resize"];
+        require(actual["mode"] == 2 && (shorter.is_null() ? !actual.contains("shorter_side")
+                                                          : actual["shorter_side"] == shorter),
+                "Crop/shorter_side graph round trip changed optional semantics");
+      }
+      for (const auto& invalid :
+           {nlohmann::json(0), nlohmann::json(-1), nlohmann::json(4097), nlohmann::json(1.5),
+            nlohmann::json(true), nlohmann::json("256")}) {
+        auto malformed = typed_options;
+        auto& resize = malformed["model_fragments"][0]["model_options"]["preprocess"]["resize"];
+        resize["mode"] = 2;
+        resize["shorter_side"] = invalid;
+        const auto path = tmp_json_path("graph_io_bad_crop.json");
+        write_text(path, malformed.dump());
+        bool rejected = false;
+        try {
+          (void)Graph::load(path);
+        } catch (const std::exception& error) {
+          rejected = std::string(error.what()).find("shorter_side") != std::string::npos;
+        }
+        require(rejected, "invalid shorter_side changed meaning during graph load");
+      }
+
       Graph realtime_app("graph_io_realtime_link_options");
       GraphLinkOptions realtime_link;
       realtime_link.policy = GraphLinkPolicy::RealtimeLatestByStream;

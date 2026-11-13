@@ -144,6 +144,55 @@ RUN_TEST(
         }
       }
 
+      // Crop alone is explicit image intent; final output remains MPK-owned.
+      {
+        Model::Options opt;
+        require(!opt.preprocess.resize.shorter_side, "legacy default selected a shorter side");
+        opt.preprocess.resize.mode = ResizeMode::Crop;
+        for (const auto shorter : {std::optional<int>{}, std::optional<int>{256}}) {
+          opt.preprocess.resize.shorter_side = shorter;
+          const auto planned = plan_preprocess(opt, caps);
+          require(planned.resolved_plan.enabled &&
+                      planned.resolved_plan.graph_family == PreprocessGraphFamily::Preproc &&
+                      planned.resolved_plan.resolved_kind == InputKind::Image &&
+                      planned.resolved_plan.effective.resize.enable == AutoFlag::On &&
+                      planned.resolved_plan.effective.resize.shorter_side == shorter &&
+                      planned.resolved_plan.effective.resize.width == 0 &&
+                      planned.resolved_plan.effective.resize.height == 0,
+                  "Crop was ignored or replaced output contract authority");
+        }
+        for (int fault = 0; fault < 7; ++fault) {
+          auto bad = opt;
+          if (fault == 0)
+            bad.preprocess.resize.mode = ResizeMode::Stretch;
+          if (fault == 1)
+            bad.preprocess.resize.shorter_side = 0;
+          if (fault == 2)
+            bad.preprocess.resize.shorter_side = 4097;
+          if (fault == 3)
+            bad.preprocess.resize.enable = AutoFlag::Off;
+          if (fault == 4)
+            bad.preprocess.kind = InputKind::Tensor;
+          if (fault == 5)
+            bad.preprocess.enable = AutoFlag::Off;
+          if (fault == 6)
+            bad.preprocess.quantize.enable = AutoFlag::On;
+          require_throws_contains([&] { (void)plan_preprocess(bad, caps); },
+                                  fault < 3    ? "shorter_side"
+                                  : fault == 3 ? "resize.enable=Off"
+                                  : fault == 6 ? "Preproc image route"
+                                               : "fixed image preprocessing",
+                                  "incompatible Crop policy was silently accepted");
+        }
+        Model::Options transformed;
+        Transform transform;
+        transform.type = TransformType::Resize;
+        transform.resize.mode = ResizeMode::Crop;
+        transformed.preprocess.transforms.push_back(transform);
+        require_throws_contains([&] { (void)plan_preprocess(transformed, caps); },
+                                "preprocess.transforms", "Crop bypassed canonical geometry policy");
+      }
+
       // Ordinary fixed options are real image intent, even without an
       // explicit kind/resize/normalize enable flag.
       {
