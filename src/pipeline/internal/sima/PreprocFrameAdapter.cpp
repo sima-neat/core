@@ -1,4 +1,5 @@
 #include "pipeline/internal/sima/PreprocFrameAdapter.h"
+#include "pipeline/internal/sima/PreprocGeometryContract.h"
 #include <simaai/scheduler/client/diagnostics.h>
 #include <algorithm>
 #include <cmath>
@@ -605,11 +606,11 @@ PreprocFrameAdapter::check_policy(const ProcessCvuStagePayload& prepared) {
     values[SourceRois] = ParameterRecords{};
   }
   auto parameters = std::get<std::vector<Parameter>>(std::move(constants));
-  constexpr std::array names{"source_roi", "source_rois", "destination", "padding"};
+  constexpr auto names = preproc_geometry_fields;
   auto& values = std::get<GeometryParameters>(params);
   for (std::size_t i = 0; i < values.size(); ++i)
     if (values[i])
-      parameters.push_back({names[i], std::move(*values[i])});
+      parameters.push_back({std::string(names[i]), std::move(*values[i])});
   auto checked = ::simaai::scheduler::client::check_kernel(
       {"preproc", Hardware::EV74, std::get<std::vector<TensorSpec>>(specs), policy->outputs,
        parameters});
@@ -645,7 +646,7 @@ PreprocFrameAdapter::check_policy(const ProcessCvuStagePayload& prepared) {
   if (policy->geometry_variant->contract_policy() != KernelVariantPolicy::FullRecheck)
     return invalid("preproc.geometry", "geometry capability must recheck the full contract");
   const auto fields = policy->geometry_variant->fields();
-  if (fields.size() != names.size() || !std::equal(fields.begin(), fields.end(), names.begin()))
+  if (!supports_preproc_geometry_fields(fields))
     return invalid("preproc.geometry",
                    "geometry capability fields differ from the prepared recipe");
   policy->initial_geometry = geometry;
