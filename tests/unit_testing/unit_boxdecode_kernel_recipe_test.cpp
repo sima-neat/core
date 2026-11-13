@@ -1435,6 +1435,27 @@ void oriented_source_geometry(BoxDecodeType type = BoxDecodeType::YoloV26Obb) {
   }
 }
 
+auto detr_geometry_heads(BoxDecodeType type) {
+  auto heads = source(type, 2);
+  heads.payload.nms_iou_threshold = 0;
+  heads.payload.score_activation = type == BoxDecodeType::Detr ? BoxDecodeScoreActivation::Softmax
+                                                               : BoxDecodeScoreActivation::Sigmoid;
+  input(heads, 1, 2, 4, "FP32");
+  input(heads, 1, 2, type == BoxDecodeType::Detr ? 3 : 2, "FP32");
+  for (auto& logical : heads.runtime_contract.logical_inputs) {
+    const auto bytes = logical.shape[0] * logical.shape[1] * logical.shape[2] * 4;
+    heads.runtime_contract.physical_inputs.push_back(
+        specbuilders::build_physical_buffer_static_spec(logical.physical_index,
+                                                        logical.physical_index, bytes,
+                                                        DeviceKind::Cpu, logical.segment_name));
+    InputBindingStaticSpec binding;
+    binding.local_logical_input_index = logical.logical_index;
+    binding.src_physical_output_index = logical.physical_index;
+    heads.runtime_contract.input_bindings.push_back(std::move(binding));
+  }
+  return heads;
+}
+
 void crop_source_geometry() {
   PreprocOptions options;
   options.set_input_shape({480, 640, 3});
@@ -1486,24 +1507,7 @@ void crop_source_geometry() {
         image.semantic.preprocess = provenance;
         context.ingress.ingress_sample = sample_from_tensors({image});
       }
-      auto heads = source(type, 2);
-      heads.payload.nms_iou_threshold = 0;
-      heads.payload.score_activation = type == BoxDecodeType::Detr
-                                           ? BoxDecodeScoreActivation::Softmax
-                                           : BoxDecodeScoreActivation::Sigmoid;
-      input(heads, 1, 2, 4, "FP32");
-      input(heads, 1, 2, type == BoxDecodeType::Detr ? 3 : 2, "FP32");
-      for (auto& logical : heads.runtime_contract.logical_inputs) {
-        const auto bytes = logical.shape[0] * logical.shape[1] * logical.shape[2] * 4;
-        heads.runtime_contract.physical_inputs.push_back(
-            specbuilders::build_physical_buffer_static_spec(logical.physical_index,
-                                                            logical.physical_index, bytes,
-                                                            DeviceKind::Cpu, logical.segment_name));
-        InputBindingStaticSpec binding;
-        binding.local_logical_input_index = logical.logical_index;
-        binding.src_physical_output_index = logical.physical_index;
-        heads.runtime_contract.input_bindings.push_back(std::move(binding));
-      }
+      auto heads = detr_geometry_heads(type);
       // The MLA-like upstream head carrier is distinct from graph ingress,
       // which contains the image and its older preprocessing provenance.
       CompiledNodeContract head_producer;
@@ -1635,26 +1639,9 @@ void composed_frontend_detection_geometry() {
             "intermediate image frontend lost the independently known Cover affine");
     for (const auto type : {BoxDecodeType::Detr, BoxDecodeType::DetrFocal})
       for (bool explicit_size : {false, true}) {
-        auto heads = source(type, 2);
+        auto heads = detr_geometry_heads(type);
         heads.payload.topk = 2;
         heads.payload.detection_threshold = .6;
-        heads.payload.nms_iou_threshold = 0;
-        heads.payload.score_activation = type == BoxDecodeType::Detr
-                                             ? BoxDecodeScoreActivation::Softmax
-                                             : BoxDecodeScoreActivation::Sigmoid;
-        input(heads, 1, 2, 4, "FP32");
-        input(heads, 1, 2, type == BoxDecodeType::Detr ? 3 : 2, "FP32");
-        for (const auto& logical : heads.runtime_contract.logical_inputs) {
-          const auto bytes = logical.shape[0] * logical.shape[1] * logical.shape[2] * 4;
-          heads.runtime_contract.physical_inputs.push_back(
-              specbuilders::build_physical_buffer_static_spec(
-                  logical.physical_index, logical.physical_index, bytes, DeviceKind::Cpu,
-                  logical.segment_name));
-          InputBindingStaticSpec binding;
-          binding.local_logical_input_index = logical.logical_index;
-          binding.src_physical_output_index = logical.physical_index;
-          heads.runtime_contract.input_bindings.push_back(std::move(binding));
-        }
         CompiledNodeContract head_producer;
         head_producer.kernel.emplace();
         head_producer.kernel->runtime_contract.physical_outputs =

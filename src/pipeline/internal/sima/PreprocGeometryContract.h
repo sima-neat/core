@@ -4,22 +4,22 @@
 #endif
 #include <algorithm>
 #include <array>
+#include <cstddef>
 #include <span>
 #include <string_view>
 
 namespace simaai::neat::pipeline_internal::sima::kernel_lowering {
-inline constexpr std::array<std::string_view, 4> preproc_geometry_fields{
-    "source_roi", "source_rois", "destination", "padding"};
+inline constexpr std::size_t preproc_legacy_geometry_field_count = 4;
+inline constexpr std::array<std::string_view, 5> preproc_geometry_fields{
+    "source_roi", "source_rois", "destination", "padding", "resize_window"};
 
-// The only supported extension documents an omittable trailing resize window.
-// Legacy four-slot updates clear that window. Unknown extensions fail closed.
+// Legacy four-slot updates clear the optional trailing window. Unknown schemas
+// fail closed; Crop requires the full five-slot capability.
 inline bool supports_preproc_geometry_fields(std::span<const std::string_view> fields,
                                              bool require_window = false) {
-  if (require_window && fields.size() != preproc_geometry_fields.size() + 1)
+  if (fields.size() != preproc_geometry_fields.size() &&
+      (require_window || fields.size() != preproc_legacy_geometry_field_count))
     return false;
-  return (fields.size() == preproc_geometry_fields.size() ||
-          (fields.size() == preproc_geometry_fields.size() + 1 &&
-           fields.back() == "resize_window")) &&
-         std::equal(preproc_geometry_fields.begin(), preproc_geometry_fields.end(), fields.begin());
+  return std::equal(fields.begin(), fields.end(), preproc_geometry_fields.begin());
 }
 } // namespace simaai::neat::pipeline_internal::sima::kernel_lowering

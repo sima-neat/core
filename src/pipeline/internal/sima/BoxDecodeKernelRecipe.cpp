@@ -734,15 +734,9 @@ BoxDecodeKernelRecipeResult prepare_boxdecode_kernel(const CompiledBoxDecodeCont
       for (const auto value : p.pose_classes)
         pose_classes.emplace_back(value);
       parameters.push_back({"pose_classes", std::move(pose_classes)});
-      if (geometry.model_to_original) {
-        const auto& t = *geometry.model_to_original;
-        parameters.push_back({"model_to_original", k::ParameterArray{t[0], t[1], t[2], t[3]}});
-      }
-    } else if (oriented) {
-      const auto& t = *geometry.model_to_original;
-      parameters.push_back({"model_to_original", k::ParameterArray{t[0], t[1], t[2], t[3]}});
-    } else if (geometry.model_to_original) {
-      if (!boxdecode_supports_detection_transform(p.decode_type))
+    }
+    if (geometry.model_to_original) {
+      if (!seg_pose && !oriented && !boxdecode_supports_detection_transform(p.decode_type))
         invalid("explicit affine is unsupported by this BoxDecode profile/task");
       const auto& t = *geometry.model_to_original;
       parameters.push_back({"model_to_original", k::ParameterArray{t[0], t[1], t[2], t[3]}});
