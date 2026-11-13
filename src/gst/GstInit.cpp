@@ -740,7 +740,9 @@ FilteredSystemPluginSet collect_filtered_system_plugins(const std::vector<std::s
         out.skipped.push_back(name);
         continue;
       }
-      if (strict_neat_only && name.find("simaai") != std::string::npos) {
+      // Strict mode keeps the Platform decoder and encoder plugins visible.
+      if (strict_neat_only && name.find("simaai") != std::string::npos &&
+          name != "libgstsimaaidecoder.so" && name != "libgstsimaaiencoder.so") {
         out.skipped.push_back(name);
         continue;
       }
