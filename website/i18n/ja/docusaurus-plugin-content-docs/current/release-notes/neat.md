@@ -7,6 +7,20 @@ sidebar_position: 3
 
 SiMa.ai Neat Library のリリースノート。
 
+## 0.6.1（未リリース） {#v061}
+
+### 互換性に影響する変更 {#v061-breaking}
+
+- Neat Library の C++ ABI は 8（`libsima_neat.so.8`）になりました。`ResizeOptions`、`ResizeSpec`、`PreprocessOptions`、`PreprocOptions`、`NormalizationOptions` にフィールドが追加されました。対応するヘッダーとランタイムパッケージで C++ アプリケーション、プラグイン、Python バインディングを再ビルドしてください。ABI 6 のバイナリを再利用したり、互換性シンボリックリンクを追加したりしないでください。
+
+### 前処理 {#v061-preproc}
+
+- 中央クロップは最終的な MPK 寸法での切り出し前に、任意の `preprocess.resize.shorter_side` を指定できるようになりました。完全なリサイズのフィルター範囲を保持し、逆変換を公開します。ABI 8 と対応するカーネルファームウェアで再ビルドし、古いバイナリを混在させないでください。
+
+- Model の前処理と単独の Resize は `ResizeInterpolation` を共有します。新しいコードではサンプラー文字列の代わりに `preprocess.resize.interpolation = ResizeInterpolation.BilinearAntialiased` を使ってください。従来の `scaling_type` 文字列は互換性を維持し、矛盾する既定値以外の文字列は拒否されます。
+
+- 既存の前処理オプションで、アンチエイリアス付きバイリニアリサイズ、明示的な元のリスケール係数、色変換の位置、浮動小数点変換方針を指定できます。固定の元算術経路では、平均と標準偏差のフィールドは合成済みアフィン変換ではなく、元の平均と除数を保持します。BF16 は従来の切り捨てが既定で、最近接偶数丸めは明示的に指定します。FP16 は最近接偶数丸めを使います。精密な INT8 量子化には、モデルの乗数と整合する元のステップが必要です。乗数からそのステップを復元することはできません。新しいオプションを指定しなければ既存の経路を維持します。[Preproc](/reference/nodes/preproc) を参照してください。
+
 ## 0.6.0
 
 ### 互換性のない変更

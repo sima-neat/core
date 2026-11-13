@@ -1,6 +1,7 @@
 #pragma once
 
 #include "builder/Node.h"
+#include "nodes/sima/PreprocMath.h"
 
 #include <array>
 #include <memory>
@@ -10,8 +11,7 @@
 namespace simaai::neat {
 /// Raw UInt8 image formats. Numerical tensor dtypes are intentionally separate.
 enum class ImageFormat { RGB, BGR, GRAY8, NV12, I420, NV16 };
-enum class ResizeInterpolation { Nearest, Bilinear, Bicubic, BoxAverage };
-enum class ResizeFit { Stretch, Contain };
+enum class ResizeFit { Stretch, Contain, Cover };
 enum class ImageColorMatrix { Bt601, Bt709 };
 enum class ImageYuvRange { Full, Limited };
 enum class ImageChromaSiting { Centered, Cosited };
@@ -43,6 +43,8 @@ struct ResizeOptions {
   ImageColorOptions color;
   ImageSurfaceLayout surface = ImageSurfaceLayout::Native;
   std::string element_name;
+  /// Cover only: resize shorter axis to this size before center cropping.
+  std::optional<int> shorter_side;
 };
 
 /// Color conversion preserves the fixed geometry negotiated for this run.
@@ -55,12 +57,17 @@ struct ColorConvertOptions {
 };
 
 /// UInt8 RGB/BGR/GRAY8 to dense BF16; coefficients are in semantic RGB order.
-/// Arithmetic follows Preproc: (x - float(mean * 255)) * float(1 / (stddev * 255)).
+/// Without rescale_factor, arithmetic retains legacy Preproc coefficients:
+/// (x - float(mean * 255)) * float(1 / (stddev * 255)).
+/// An explicit source factor instead uses FP32 rescale, subtract and divide.
 /// No resize, color conversion, tessellation or implicit CPU fallback is performed.
 struct NormalizationOptions {
   std::array<float, 3> mean{0.0f, 0.0f, 0.0f};
   std::array<float, 3> stddev{1.0f, 1.0f, 1.0f};
   std::string element_name;
+  /// Explicit source rescale; omitted retains the legacy /255 affine construction.
+  std::optional<float> rescale_factor;
+  PreprocFloatingConversion floating_conversion = PreprocFloatingConversion::Legacy;
 };
 } // namespace simaai::neat
 

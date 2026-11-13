@@ -15,7 +15,10 @@
  */
 #pragma once
 
+#include "nodes/sima/PreprocMath.h"
+
 #include <array>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -41,14 +44,6 @@ enum class InputKind {
   Auto = 0,   ///< Planner infers from caps / sample type.
   Image = 1,  ///< Decoded image (planar/packed pixels).
   Tensor = 2, ///< Already-shaped tensor; preprocess is mostly a pass-through.
-};
-
-/// How the resize stage maps non-matching input dimensions to the model's input shape.
-/// @ingroup model
-enum class ResizeMode {
-  Stretch = 0,   ///< Anisotropic scale to fit; aspect ratio not preserved.
-  Letterbox = 1, ///< Scale to fit while preserving aspect; pad the rest with `pad_value`.
-  Crop = 2,      ///< Center-crop to the target shape after isotropic scale.
 };
 
 /// Color format hint for the color-convert stage.
@@ -101,7 +96,13 @@ struct ResizeSpec {
   int height = 0;                          ///< Target height (px). `0` = inferred from contract.
   ResizeMode mode = ResizeMode::Letterbox; ///< How to handle aspect-ratio mismatch.
   int pad_value = 114; ///< Pad fill value when `mode == Letterbox` (default 114, YOLO convention).
-  std::string scaling_type = "BILINEAR"; ///< Sampler kind: `"BILINEAR"`, `"NEAREST"`, etc.
+  /// Legacy compatibility spelling. Prefer interpolation for new code.
+  std::string scaling_type = "BILINEAR";
+  /// Typed sampler; omitted retains scaling_type and its legacy Bilinear default.
+  /// When set, the legacy default is ignored; a conflicting nondefault string is rejected.
+  std::optional<ResizeInterpolation> interpolation;
+  /// Resize the shorter source axis before center cropping. Crop only; absent means cover.
+  std::optional<int> shorter_side;
 };
 
 /// Color-format conversion parameters.
@@ -250,6 +251,17 @@ struct PreprocessOptions {
                                      ///< per-stage specs above.
   NormalizePreset preset =
       NormalizePreset::None; ///< If non-`None`, supplies `mean`/`stddev` defaults.
+
+  /// Original FP32 source multiplier (RGB/Gray before resize; YUV after its decode boundary).
+  /// Presence selects fixed source arithmetic;
+  /// normalize.mean/stddev then mean a post-resize subtraction/division, with no implied /255.
+  std::optional<float> rescale_factor;
+  /// Original positive FP32 INT8 step, never reconstructed from a reciprocal.
+  /// Model routes require agreement with the MPK quantizer; zero point stays model-owned.
+  std::optional<float> quantization_step;
+  PreprocColorConversionPlacement color_conversion_placement =
+      PreprocColorConversionPlacement::AfterResize;
+  PreprocFloatingConversion floating_conversion = PreprocFloatingConversion::Legacy;
 };
 
 /**

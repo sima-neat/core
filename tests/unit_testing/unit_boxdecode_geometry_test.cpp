@@ -30,7 +30,26 @@ template <class T> T take(rt::Result<T> result) {
     throw std::runtime_error(error->field + ": " + error->message);
   return std::get<T>(std::move(result));
 }
-k::KernelExecutable executable() {
+k::KernelExecutable executable(bool crop = false) {
+  if (crop) {
+    const std::array inputs{k::TensorSpec{{1, 1, 4}, k::DType::Float32},
+                            k::TensorSpec{{1, 1, 3}, k::DType::Float32}};
+    const std::array outputs{
+        k::TensorSpec{{4, 4}, k::DType::Int32}, k::TensorSpec{{4}, k::DType::Float32},
+        k::TensorSpec{{4}, k::DType::Int32}, k::TensorSpec{{1}, k::DType::Int32}};
+    const std::array parameters{
+        k::Parameter{"profile", "detr_v1"},
+        k::Parameter{"heads", k::ParameterRecords{{{"boxes_input", 0}, {"scores_input", 1}}}},
+        k::Parameter{"model_input_size", k::ParameterArray{640, 640}},
+        k::Parameter{"original_image_size", k::ParameterArray{640, 640}},
+        k::Parameter{"model_to_original", k::ParameterArray{2.f, 3.f, 10.f, -10.f}},
+        k::Parameter{"resize", "stretch"},
+        k::Parameter{"score_activation", "softmax"},
+        k::Parameter{"num_classes", 2},
+        k::Parameter{"max_detections", 4}};
+    return take(k::check_kernel({"boxdecode", k::Target::A65, inputs, outputs, parameters}));
+  }
+
   std::vector<k::TensorSpec> inputs;
   k::ParameterRecords heads;
   for (int side : {80, 40, 20}) {
@@ -96,9 +115,9 @@ simaai::gst::TensorBufferPublicationOwner compact_publication() {
   require(bool(result), "compact publication freeze failed");
   return result;
 }
-void geometry() {
+void geometry(bool crop = false) {
   probe::OperationProbe executor;
-  const auto checked = executable();
+  const auto checked = executable(crop);
   require(!executor.prepare(checked), "real A65 preparation failed");
   const auto base = executor.operation();
   core::KernelStageRecipe recipe;
@@ -106,6 +125,15 @@ void geometry() {
   recipe.members.front().executable = checked;
   core::BoxDecodeGeometryOptions options{640, 640, 640, 640, simaai::neat::ResizeMode::Letterbox};
   options.complete_geometry = true;
+  if (crop) {
+    options.resize = simaai::neat::ResizeMode::Crop;
+    options.require_frame_transform = true;
+  }
+  const auto set = [crop](GstStructure* meta, double offset = 10.) {
+    set_geometry(meta, offset);
+    if (crop)
+      gst_structure_set(meta, "preproc_resize_mode", G_TYPE_STRING, "crop", nullptr);
+  };
   core::attach_boxdecode_geometry_resolver(recipe, 0, options, true, true);
   require(recipe.resolver_factories.size() == 1 && !recipe.members.front().resolve_factory,
           "complete geometry recipe owns live mutable state");
@@ -119,8 +147,8 @@ void geometry() {
   auto* a = gst_custom_meta_get_structure(gst_buffer_add_custom_meta(first.get(), "GstSimaMeta"));
   auto* b = gst_custom_meta_get_structure(gst_buffer_add_custom_meta(second.get(), "GstSimaMeta"));
   const std::array<GstBuffer*, 2> buffers{first.get(), second.get()};
-  set_geometry(a);
-  set_geometry(b);
+  set(a);
+  set(b);
   const auto first_variant = take(resolve(executor.preparer(), buffers));
   require(first_variant != base && take(resolve(executor.preparer(), buffers)) == first_variant,
           "complete geometry was not cached");
@@ -128,18 +156,18 @@ void geometry() {
           "complete geometry rebuilt scratch or tensor contract");
   require(take(independent(executor.preparer(), buffers)) != first_variant,
           "independent preparation shared mutable geometry cache");
-  set_geometry(a, 12.);
-  set_geometry(b, 12.);
+  set(a, 12.);
+  set(b, 12.);
   const auto changed = take(resolve(executor.preparer(), buffers));
   require(changed != first_variant && changed != base,
           "same dimensions with changed affine reused stale geometry");
-  set_geometry(a);
-  set_geometry(b);
+  set(a);
+  set(b);
   require(take(resolve(executor.preparer(), buffers)) == first_variant,
           "immutable geometry snapshot was mutated");
   for (int failure = 0; failure < 8; ++failure) {
-    set_geometry(a);
-    set_geometry(b);
+    set(a);
+    set(b);
     switch (failure) {
     case 0:
       gst_structure_set(b, "preproc_affine_m02", G_TYPE_DOUBLE, 11., nullptr);
@@ -172,20 +200,20 @@ void geometry() {
     require(std::holds_alternative<rt::Error>(resolve(executor.preparer(), buffers)),
             "invalid complete geometry accepted");
   }
-  set_geometry(a);
-  set_geometry(b);
+  set(a);
+  set(b);
   require(take(resolve(executor.preparer(), buffers)) == first_variant,
           "invalid frame evicted a valid warmed snapshot");
   // Bound cache may evict, but old snapshots remain immutable and retain resources.
   for (int i = 0; i < 6; ++i) {
-    set_geometry(a, 30. + i);
-    set_geometry(b, 30. + i);
+    set(a, 30. + i);
+    set(b, 30. + i);
     require(k::same_kernel_contract_resources(
                 take(resolve(executor.preparer(), buffers)).executable(), checked),
             "geometry cache eviction changed resource identity");
   }
-  set_geometry(a);
-  set_geometry(b);
+  set(a);
+  set(b);
   require(take(resolve(executor.preparer(), buffers)) != first_variant &&
               k::same_kernel_contract_resources(first_variant.executable(), checked),
           "eviction invalidated retained snapshot or cache was unbounded");
@@ -202,7 +230,11 @@ void geometry() {
   facts.placed = {0, 0, 320, 213};
   facts.affine = {2., 0., 10., 0., 3., -10.};
   facts.source_stride = 1920;
-  facts.resize_mode = "letterbox";
+  facts.resize_mode = crop ? "crop" : "letterbox";
+  if (crop) {
+    facts.primary = {0, 0, 640, 640};
+    facts.placed = {0, 0, 640, 640};
+  }
   facts.color_in = facts.color_out = "RGB";
   simaai::gst::TensorBufferFrameMetadata frame;
   frame.preprocess = simaai::gst::tensor_buffer_freeze_preprocess_facts(facts, &error);
@@ -228,6 +260,7 @@ int main(int argc, char** argv) {
   gst_init(&argc, &argv);
   try {
     geometry();
+    geometry(true);
     std::cout << "BoxDecode complete geometry and retained variant cache passed\n";
     return 0;
   } catch (const std::exception& error) {

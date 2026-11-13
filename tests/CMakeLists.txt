@@ -535,6 +535,7 @@ set(UNIT_TESTS
   unit_ordered_public_input_contract_test
   unit_input_metadata_admission_test
   unit_input_planner_semantics_test
+  unit_crop_geometry_test
   unit_preprocess_meta_validation_test
   unit_preprocess_roi_meta_test
   unit_preprocess_roi_api_test

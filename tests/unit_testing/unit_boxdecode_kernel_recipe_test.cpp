@@ -1,3 +1,4 @@
+#include "../support/CompactFrameFixture.h"
 #include "pipeline/DetectionTypes.h"
 #include "pipeline/gst/InputStreamInternal.h"
 #include "pipeline/internal/TensorBufferEnvelope.h"
@@ -13,10 +14,13 @@
 #include "pipeline/internal/sima/BoxDecodeKernelAdmission.h"
 #include "pipeline/internal/sima/BoxDecodeTypeUtils.h"
 #include "pipeline/internal/sima/BoxDecodeStaticContractExtractor.h"
+#include "pipeline/internal/sima/PluginContractSubsets.h"
 #include "pipeline/internal/sima/stagesemantics/BoxDecodeStageSemantics.h"
 #include "pipeline/internal/contract/ContractFacts.h"
 #include "gst/GstInit.h"
 #include "nodes/sima/Preproc.h"
+#include "nodes/sima/ImageTransform.h"
+#include "pipeline/internal/sima/PreprocFrameAdapter.h"
 #include "pipeline/internal/contract/CompiledNodeContractQuery.h"
 #include "pipeline/FeatureTypes.h"
 #include <simaai/scheduler/testing/probe.h>
@@ -106,6 +110,225 @@ BoxDecodeKernelRecipeResult check(const CompiledBoxDecodeContract& s,
     require(port.source == gs::TensorStagePortSource::Output, "publication reads private outputs");
   return r;
 }
+void detr_default_resolution() {
+  // The previous family smoke injected Softmax into a compiled payload, so it
+  // could not catch Model/raw-head Auto failing before numerical preparation.
+  for (int classes : {1, 3, 80, 91}) {
+    for (const std::string score_name : {"output_7", "class_logit_0", "class_prob_0"}) {
+      TensorList heads;
+      for (int channels : {4, classes + 1}) {
+        auto tensor = Tensor::from_vector(std::vector<float>(100 * channels, 0.f),
+                                          {1, 100, channels}, TensorMemory::CPU);
+        tensor.layout = TensorLayout::HWC;
+        tensor.route.name = heads.empty() ? "output_0" : score_name;
+        heads.push_back(std::move(tensor));
+      }
+      BoxDecodeStandaloneContractOverrides overrides;
+      overrides.source_storage_kind = BoxDecodeSourceStorageKind::DenseHwcPhysical;
+      std::string error;
+      auto raw = build_boxdecode_static_contract_from_sample(
+          sample_from_tensors(heads), BoxDecodeType::Detr, {}, overrides, &error);
+      require(raw && raw->score_activation == BoxDecodeScoreActivation::Softmax,
+              "DETR family must resolve Softmax independently of endpoint names");
+      raw->topk = 100;
+      const auto compiled = stagesemantics::build_boxdecode_compiled_contract(*raw);
+      require(compiled.payload.num_classes == classes &&
+                  compiled.payload.score_activation == BoxDecodeScoreActivation::Softmax,
+              "DETR must exclude the final background channel from its class count");
+      check(compiled, {640, 640, 1280, 720, ResizeMode::Stretch});
+      auto planar = *raw;
+      for (auto& tensor : planar.tensors) {
+        const auto channels = tensor.input_shape.back();
+        tensor.input_shape = tensor.slice_shape = {channels, 1, 100};
+        tensor.layout = "CHW";
+        tensor.stride_bytes = {400, 400, 4};
+      }
+      const auto planar_compiled = stagesemantics::build_boxdecode_compiled_contract(planar);
+      require(planar_compiled.payload.slice_shapes[0].sizes[0] == 1 &&
+                  planar_compiled.payload.slice_shapes[0].sizes[1] == 100 &&
+                  planar_compiled.payload.slice_shapes[0].sizes[2] == 4 &&
+                  planar_compiled.payload.slice_shapes[1].sizes[2] == classes + 1,
+              "DETR compiled dense CHW slices must be canonical HWC");
+      check(planar_compiled, {640, 640, 1280, 720, ResizeMode::Stretch});
+      auto subset = plugin_contracts::extract_boxdecode_contract_subset_from_static_contract(*raw);
+      subset.num_classes = 0;
+      subset.score_activation = BoxDecodeScoreActivation::Unknown;
+      stagesemantics::BoxDecodeCompiledContractOptions options;
+      options.decode_type = BoxDecodeType::Detr;
+      options.topk = 100;
+      const auto inferred =
+          stagesemantics::build_boxdecode_compiled_contract_from_subset(subset, options);
+      require(inferred.payload.num_classes == classes &&
+                  inferred.payload.score_activation == BoxDecodeScoreActivation::Softmax,
+              "unresolved DETR MPK subset must resolve the same fixed contract");
+      check(inferred, {640, 640, 1280, 720, ResizeMode::Stretch});
+      for (auto activation :
+           {BoxDecodeScoreActivation::Identity, BoxDecodeScoreActivation::Sigmoid}) {
+        options.score_activation = activation;
+        bool rejected = false;
+        try {
+          (void)stagesemantics::build_boxdecode_compiled_contract_from_subset(subset, options);
+        } catch (const std::invalid_argument&) {
+          rejected = true;
+        }
+        require(rejected, "DETR accepted a contradictory authored score activation");
+      }
+    }
+  }
+}
+
+void focal_query_contract() {
+  static_assert(static_cast<int>(BoxDecodeType::Detr) == 13);
+  static_assert(static_cast<int>(BoxDecodeType::DetrFocal) == 27);
+  require(parse_box_decode_type_token("detr-focal") == BoxDecodeType::DetrFocal,
+          "focal public token did not round-trip");
+  // Focal profiles define their score domain; tensor endpoint names do not.
+  TensorList raw_heads;
+  for (int channels : {4, 80}) {
+    auto tensor = Tensor::from_vector(std::vector<float>(300 * channels, .5f), {1, 300, channels},
+                                      TensorMemory::CPU);
+    tensor.layout = TensorLayout::HWC;
+    tensor.route.name = channels == 4 ? "features" : "output_7";
+    raw_heads.push_back(std::move(tensor));
+  }
+  BoxDecodeStandaloneContractOverrides raw_overrides;
+  raw_overrides.source_storage_kind = BoxDecodeSourceStorageKind::DenseHwcPhysical;
+  raw_overrides.tess_needed = false;
+  raw_overrides.quant_needed = false;
+  std::string raw_error;
+  const auto raw_contract = build_boxdecode_static_contract_from_sample(
+      sample_from_tensors(raw_heads), BoxDecodeType::DetrFocal, {}, raw_overrides, &raw_error);
+  require(raw_contract && raw_contract->score_activation == BoxDecodeScoreActivation::Sigmoid,
+          "focal raw sample must not require class_logit endpoint names");
+  for (int classes : {1, 4, 80, 366, 777, 1024}) {
+    BoxDecodeStaticContract authored;
+    authored.decode_type = BoxDecodeType::DetrFocal;
+    authored.topk = 300;
+    for (int channels : {4, classes}) {
+      BoxDecodeTensorStaticContract tensor;
+      tensor.input_shape = {1, 300, channels};
+      tensor.slice_shape = tensor.input_shape;
+      tensor.data_type = "FP32";
+      tensor.layout = "HWC";
+      // Arbitrary export names must not control the focal class count.
+      tensor.logical_name = "output" + std::to_string(authored.tensors.size());
+      tensor.backend_name = tensor.logical_name;
+      tensor.source_storage_kind = BoxDecodeSourceStorageKind::DenseHwcPhysical;
+      authored.tensors.push_back(std::move(tensor));
+    }
+    const auto compiled = stagesemantics::build_boxdecode_compiled_contract(authored);
+    require(compiled.payload.num_classes == classes &&
+                compiled.payload.score_activation == BoxDecodeScoreActivation::Sigmoid,
+            "focal static class-depth/sigmoid resolution failed");
+    check(compiled, {640, 640, 1280, 720, ResizeMode::Stretch});
+    auto subset =
+        plugin_contracts::extract_boxdecode_contract_subset_from_static_contract(authored);
+    // MPKs can leave the class count unresolved. Exercise the actual subset
+    // fallback, rather than forwarding a count already inferred upstream.
+    subset.num_classes = 0;
+    stagesemantics::BoxDecodeCompiledContractOptions options;
+    options.decode_type = BoxDecodeType::DetrFocal;
+    options.topk = 300;
+    const auto from_subset =
+        stagesemantics::build_boxdecode_compiled_contract_from_subset(subset, options);
+    require(from_subset.payload.num_classes == classes,
+            "focal MPK subset class depth was not resolved");
+    check(from_subset, {640, 640, 1280, 720, ResizeMode::Stretch});
+    auto planar = authored;
+    for (auto& tensor : planar.tensors) {
+      tensor.input_shape = {tensor.input_shape.back(), 1, 300};
+      tensor.slice_shape = tensor.input_shape;
+      tensor.layout = "CHW";
+      tensor.stride_bytes = {1200, 1200, 4};
+    }
+    const auto planar_compiled = stagesemantics::build_boxdecode_compiled_contract(planar);
+    require(planar_compiled.payload.num_classes == classes &&
+                planar_compiled.payload.slice_shapes[0].sizes[0] == 1 &&
+                planar_compiled.payload.slice_shapes[0].sizes[1] == 300 &&
+                planar_compiled.payload.slice_shapes[0].sizes[2] == 4 &&
+                planar_compiled.payload.slice_shapes[1].sizes[2] == classes,
+            "focal planar class inference and canonical HWC slice projection");
+    check(planar_compiled, {640, 640, 1280, 720, ResizeMode::Stretch});
+
+    for (int fault = 0; fault < 7; ++fault) {
+      auto bad = compiled;
+      auto geometry = BoxDecodeGeometryOptions{640, 640, 1280, 720, ResizeMode::Stretch};
+      if (fault == 0)
+        bad.payload.num_classes = classes + 1;
+      if (fault == 1)
+        bad.payload.score_activation = BoxDecodeScoreActivation::Softmax;
+      if (fault == 2)
+        bad.payload.nms_iou_threshold = .5;
+      if (fault == 3)
+        geometry.resize = ResizeMode::Letterbox;
+      if (fault == 4)
+        bad.payload.decode_type_option = BoxDecodeTypeOption::GroupedByRoleProbability;
+      if (fault == 5)
+        bad.payload.decode_type_option = BoxDecodeTypeOption::PackedPerHead;
+      if (fault == 6)
+        bad.runtime_contract.logical_inputs[0].shape = {1, 299, 4};
+      bool rejected = false;
+      try {
+        (void)check(bad, geometry);
+      } catch (const std::invalid_argument&) {
+        rejected = true;
+      }
+      require(rejected, "focal accepted incompatible class/domain/NMS/resize/layout/head geometry");
+    }
+    authored.score_activation = BoxDecodeScoreActivation::Identity;
+    bool rejected = false;
+    try {
+      (void)stagesemantics::build_boxdecode_compiled_contract(authored);
+    } catch (const std::invalid_argument&) {
+      rejected = true;
+    }
+    require(rejected, "focal static probability domain was silently relabeled");
+  }
+  for (int classes : {0, 1025}) {
+    auto bad = source(BoxDecodeType::DetrFocal, classes);
+    // Keep the input contract valid so this witness reaches class admission,
+    // rather than failing first on an unrelated empty input/storage count.
+    input(bad, 1, 300, 4, "FP32");
+    input(bad, 1, 300, 80, "FP32");
+    bool rejected = false;
+    try {
+      (void)check(bad, {640, 640, 1280, 720, ResizeMode::Stretch});
+    } catch (const std::invalid_argument& error) {
+      rejected =
+          std::string(error.what()).find("focal class count must be 1..1024") != std::string::npos;
+    }
+    require(rejected, "focal construction class bound not enforced");
+  }
+}
+
+void query_source_dtypes() {
+  // Preserve the actual ports until checked numerical admission. Relabelling
+  // the scores with the first port's dtype would reinterpret their bytes.
+  for (const auto type : {BoxDecodeType::Detr, BoxDecodeType::DetrFocal}) {
+    TensorList heads{Tensor::from_vector(std::vector<std::uint16_t>(8), {1, 2, 4}),
+                     Tensor::from_vector(std::vector<float>(6), {1, 2, 3})};
+    heads[0].dtype = TensorDType::BFloat16;
+    for (auto& tensor : heads)
+      tensor.layout = TensorLayout::HWC;
+    BoxDecodeStandaloneContractOverrides overrides;
+    overrides.source_storage_kind = BoxDecodeSourceStorageKind::DenseHwcPhysical;
+    std::string error;
+    auto raw = build_boxdecode_static_contract_from_sample(sample_from_tensors(heads), type, {},
+                                                           overrides, &error);
+    require(raw && raw->tensors[0].data_type == "BF16" && raw->tensors[1].data_type == "FP32",
+            "query extraction must preserve each source port's dtype");
+    raw->topk = 2;
+    bool rejected = false;
+    try {
+      check(stagesemantics::build_boxdecode_compiled_contract(*raw),
+            {640, 640, 1280, 720, ResizeMode::Stretch});
+    } catch (const std::invalid_argument&) {
+      rejected = true;
+    }
+    require(rejected, "query numerical admission must reject mixed head dtypes");
+  }
+}
+
 void families() {
   auto rcnn = source(BoxDecodeType::RcnnStage1, 1);
   for (int side : {136, 68, 34, 17, 9}) {
@@ -406,6 +629,253 @@ struct HostStorage final {
     std::memcpy(static_cast<std::byte*>(memory.get()) + element * 4, &value, 4);
   }
 };
+void detr_numerical_publication(bool crop = false) {
+  auto request = source(BoxDecodeType::Detr, 2);
+  request.payload.topk = 2;
+  request.payload.score_activation = BoxDecodeScoreActivation::Softmax;
+  request.payload.detection_threshold = 0.1f;
+  request.payload.nms_iou_threshold = 0;
+  input(request, 1, 2, 4, "FP32");
+  input(request, 1, 2, 3, "FP32");
+  BoxDecodeGeometryOptions geometry{640, 640, 1280, 720, ResizeMode::Stretch};
+  if (crop) {
+    geometry = {224, 224, 640, 480, ResizeMode::Crop};
+    geometry.model_to_original =
+        std::array<float, 4>{640.f / 341, 480.f / 256, 58 * (640.f / 341), 30.f};
+  }
+  const auto prepared = check(request, geometry);
+  const auto& members = prepared.compiled.recipe->members;
+  const auto& numerical = members[prepared.decode_member].executable;
+  const auto& publication = members.back().executable;
+  const auto description = inspect(numerical);
+  std::vector<std::shared_ptr<HostStorage>> inputs, outputs;
+  std::vector<c::ConstBytes> in, public_inputs;
+  std::vector<c::MutableBytes> out;
+  for (const auto& req : description.input_requirements()) {
+    inputs.push_back(std::make_shared<HostStorage>(req.storage_bytes));
+    in.push_back({static_cast<const std::byte*>(inputs.back()->memory.get()), req.storage_bytes});
+  }
+  // Box logits zero => normalized centre/extent 0.5. Score probabilities are
+  // independently known ratios [1,2,3]/6 and [4,1,1]/6, with background last.
+  for (std::size_t i = 0; i < 8; ++i)
+    inputs[0]->set_float(i, 0.f);
+  const std::array<float, 6> logits{0.f, std::log(2.f), std::log(3.f), std::log(4.f), 0.f, 0.f};
+  for (std::size_t i = 0; i < logits.size(); ++i)
+    inputs[1]->set_float(i, logits[i]);
+  for (const auto& req : description.output_requirements()) {
+    outputs.push_back(std::make_shared<HostStorage>(req.storage_bytes));
+    auto* data = static_cast<std::byte*>(outputs.back()->memory.get());
+    out.push_back({data, req.storage_bytes});
+    public_inputs.push_back({data, req.storage_bytes});
+  }
+  // The numerical operation owns prepared scratch. The free execute_host
+  // helper is only for workspace-free callbacks such as wire publication.
+  test::OperationProbe executor, publisher;
+  require(!executor.prepare(numerical) && !publisher.prepare(publication),
+          "classic DETR numerical/publication preparation failed");
+  const auto numerical_status = executor.execute_host(executor.operation(), in, out);
+  require(!numerical_status, numerical_status ? numerical_status->message.c_str()
+                                              : "classic DETR checked numerical execution failed");
+  const auto wire_bytes = inspect(publication).output_requirements()[0].storage_bytes;
+  HostStorage wire(wire_bytes);
+  const std::array<c::MutableBytes, 1> published{
+      {{static_cast<std::byte*>(wire.memory.get()), wire_bytes}}};
+  require(!publisher.execute_host(publisher.operation(), public_inputs, published),
+          "classic DETR publication failed");
+  require(wire.read<std::int32_t>(0) == 2, "classic DETR lost a valid query");
+  for (int row = 0; row < 2; ++row) {
+    const std::size_t offset = 4 + row * 24;
+    require(wire.read<std::int32_t>(offset) == (crop ? 214 : 320) &&
+                wire.read<std::int32_t>(offset + 4) == (crop ? 135 : 180) &&
+                wire.read<std::int32_t>(offset + 8) == (crop ? 210 : 640) &&
+                wire.read<std::int32_t>(offset + 12) == (crop ? 210 : 360) &&
+                wire.read<std::int32_t>(offset + 20) == row,
+            "classic DETR sigmoid boxes/class/original-frame mapping mismatch");
+    require(std::abs(wire.read<float>(offset + 16) - (row == 0 ? 2.f / 3.f : 1.f / 3.f)) < 2e-6f,
+            "classic DETR softmax must retain background in the denominator");
+  }
+}
+
+void focal_numerical_publication(bool crop = false) {
+  for (const std::string layout : {"HWC", "CHW", "NCHW"}) {
+    BoxDecodeStaticContract authored;
+    authored.decode_type = BoxDecodeType::DetrFocal;
+    authored.topk = 3;
+    authored.detection_threshold = 0.6;
+    for (int channels : {4, 3}) {
+      BoxDecodeTensorStaticContract tensor;
+      tensor.input_shape = layout == "HWC"   ? std::vector<int>{1, 2, channels}
+                           : layout == "CHW" ? std::vector<int>{channels, 1, 2}
+                                             : std::vector<int>{1, channels, 1, 2};
+      tensor.slice_shape = tensor.input_shape;
+      tensor.data_type = "FP32";
+      tensor.layout = layout;
+      tensor.stride_bytes = layout == "HWC"
+                                ? std::vector<std::int64_t>{8 * channels, 4 * channels, 4}
+                            : layout == "CHW" ? std::vector<std::int64_t>{8, 8, 4}
+                                              : std::vector<std::int64_t>{8 * channels, 8, 8, 4};
+      tensor.logical_name = tensor.backend_name = "query" + std::to_string(authored.tensors.size());
+      tensor.source_storage_kind = BoxDecodeSourceStorageKind::DenseHwcPhysical;
+      authored.tensors.push_back(std::move(tensor));
+    }
+    const auto compiled = stagesemantics::build_boxdecode_compiled_contract(authored);
+    BoxDecodeGeometryOptions geometry{640, 640, 1280, 720, ResizeMode::Stretch};
+    if (crop) {
+      geometry = {224, 224, 640, 480, ResizeMode::Crop};
+      geometry.model_to_original =
+          std::array<float, 4>{640.f / 341, 480.f / 256, 58 * (640.f / 341), 30.f};
+    }
+    const auto prepared = check(compiled, geometry);
+    const auto& members = prepared.compiled.recipe->members;
+    const auto& numerical = members[prepared.decode_member].executable;
+    const auto& publication = members.back().executable;
+    test::OperationProbe executor, publisher;
+    require(!executor.prepare(numerical) && !publisher.prepare(publication),
+            "focal numerical/publication preparation failed");
+    const auto description = inspect(numerical);
+    std::vector<std::shared_ptr<HostStorage>> inputs, outputs;
+    std::vector<c::ConstBytes> in, publication_inputs;
+    std::vector<c::MutableBytes> out;
+    for (const auto& requirement : description.input_requirements()) {
+      inputs.push_back(std::make_shared<HostStorage>(requirement.storage_bytes));
+      in.push_back(
+          {static_cast<const std::byte*>(inputs.back()->memory.get()), requirement.storage_bytes});
+    }
+    const auto write = [&](std::size_t port, std::size_t query, std::size_t channel, float value) {
+      const std::size_t channels = port == 0 ? 4 : 3;
+      inputs[port]->set_float(layout == "HWC" ? query * channels + channel : channel * 2 + query,
+                              value);
+    };
+    for (std::size_t query = 0; query < 2; ++query) {
+      write(0, query, 0, query == 0 ? .25f : .75f);
+      write(0, query, 1, query == 0 ? .25f : .75f);
+      write(0, query, 2, .2f);
+      write(0, query, 3, .2f);
+    }
+    const std::array<float, 6> logits{0.f, std::log(2.f), std::log(3.f), std::log(4.f), 0.f, 0.f};
+    for (std::size_t query = 0; query < 2; ++query)
+      for (std::size_t channel = 0; channel < 3; ++channel)
+        write(1, query, channel, logits[query * 3 + channel]);
+    for (const auto& requirement : description.output_requirements()) {
+      outputs.push_back(std::make_shared<HostStorage>(requirement.storage_bytes));
+      auto* data = static_cast<std::byte*>(outputs.back()->memory.get());
+      out.push_back({data, requirement.storage_bytes});
+      publication_inputs.push_back({data, requirement.storage_bytes});
+    }
+    const auto status = executor.execute_host(executor.operation(), in, out);
+    require(!status, status ? status->message.c_str() : "focal numerical execution failed");
+    const auto wire_bytes = inspect(publication).output_requirements()[0].storage_bytes;
+    HostStorage wire(wire_bytes);
+    const std::array<c::MutableBytes, 1> published{
+        {{static_cast<std::byte*>(wire.memory.get()), wire_bytes}}};
+    require(!publisher.execute_host(publisher.operation(), publication_inputs, published),
+            "focal publication failed");
+    require(wire.read<std::int32_t>(0) == 3,
+            "focal must retain three query/class pairs from two queries");
+    const std::array<float, 3> scores{.8f, .75f, 2.f / 3.f};
+    const std::array<int, 3> classes{0, 2, 1};
+    for (std::size_t row = 0; row < 3; ++row) {
+      const std::size_t offset = 4 + row * 24;
+      require(wire.read<std::int32_t>(offset) ==
+                      (crop ? (row == 0 ? 382 : 172) : (row == 0 ? 832 : 192)) &&
+                  wire.read<std::int32_t>(offset + 4) ==
+                      (crop ? (row == 0 ? 303 : 93) : (row == 0 ? 468 : 108)) &&
+                  wire.read<std::int32_t>(offset + 8) == (crop ? 84 : 256) &&
+                  wire.read<std::int32_t>(offset + 12) == (crop ? 84 : 144) &&
+                  wire.read<std::int32_t>(offset + 20) == classes[row] &&
+                  std::abs(wire.read<float>(offset + 16) - scores[row]) < 2e-6f,
+              "focal planar/dense sigmoid, pair ranking or original-frame XYWH oracle failed");
+    }
+  }
+}
+
+// MPK dense carriers can pad both heads to C16. Roles and numerical reads must
+// still use logical C4 boxes / C3 foreground-plus-background score slices.
+void detr_padded_numerical_publication() {
+  for (const std::string dtype : {"FP32", "BF16", "INT8"}) {
+    for (const bool reversed : {false, true}) {
+      auto request = source(BoxDecodeType::Detr, 2);
+      request.payload.topk = 2;
+      request.payload.score_activation = BoxDecodeScoreActivation::Softmax;
+      request.payload.detection_threshold = 0.1f;
+      request.payload.nms_iou_threshold = 0;
+      input(request, 1, 2, reversed ? 3 : 4, dtype);
+      input(request, 1, 2, reversed ? 4 : 3, dtype);
+      const std::size_t width = dtype == "FP32" ? 4 : dtype == "BF16" ? 2 : 1;
+      for (auto& logical : request.runtime_contract.logical_inputs) {
+        logical.shape.back() = 16;
+        logical.stride_bytes = {static_cast<std::int64_t>(32 * width),
+                                static_cast<std::int64_t>(16 * width),
+                                static_cast<std::int64_t>(width)};
+        logical.size_bytes = 32 * width;
+      }
+      const auto prepared = check(request, {640, 640, 1280, 720, ResizeMode::Stretch});
+      const auto& members = prepared.compiled.recipe->members;
+      const auto& numerical = members[prepared.decode_member].executable;
+      const auto& publication = members.back().executable;
+      const auto description = inspect(numerical);
+      std::vector<std::shared_ptr<HostStorage>> inputs, outputs;
+      std::vector<c::ConstBytes> in, public_inputs;
+      std::vector<c::MutableBytes> out;
+      for (std::size_t port = 0; port < description.input_requirements().size(); ++port) {
+        const std::size_t bytes = request.runtime_contract.logical_inputs[port].size_bytes;
+        require(bytes >= description.input_requirements()[port].storage_bytes,
+                "padded classic DETR carrier is shorter than the checked span");
+        inputs.push_back(std::make_shared<HostStorage>(bytes));
+        auto* data = static_cast<std::byte*>(inputs.back()->memory.get());
+        in.push_back({data, bytes});
+        const int channels = request.payload.slice_shapes[port].sizes[2];
+        for (std::size_t query = 0; query < 2; ++query) {
+          for (int channel = 0; channel < 16; ++channel) {
+            // Exactly zero logical logits in every dtype; nonzero padding must
+            // affect neither sigmoid boxes nor the Softmax denominator.
+            const bool padding = channel >= channels;
+            const auto offset = (query * 16 + channel) * width;
+            if (dtype == "FP32") {
+              const float value = padding ? 100.f : 0.f;
+              std::memcpy(data + offset, &value, sizeof(value));
+            } else if (dtype == "BF16") {
+              const std::uint16_t value = padding ? 0x42c8 : 0; // BF16 100 / 0.
+              std::memcpy(data + offset, &value, sizeof(value));
+            } else {
+              const std::int8_t value = padding ? 100 : -3; // Authored zero point.
+              std::memcpy(data + offset, &value, sizeof(value));
+            }
+          }
+        }
+      }
+      for (const auto& req : description.output_requirements()) {
+        outputs.push_back(std::make_shared<HostStorage>(req.storage_bytes));
+        auto* data = static_cast<std::byte*>(outputs.back()->memory.get());
+        out.push_back({data, req.storage_bytes});
+        public_inputs.push_back({data, req.storage_bytes});
+      }
+      test::OperationProbe executor, publisher;
+      require(!executor.prepare(numerical) && !publisher.prepare(publication),
+              "padded classic DETR numerical/publication preparation failed");
+      require(!executor.execute_host(executor.operation(), in, out),
+              "padded classic DETR numerical execution failed");
+      const auto bytes = inspect(publication).output_requirements()[0].storage_bytes;
+      HostStorage wire(bytes);
+      const std::array<c::MutableBytes, 1> published{
+          {{static_cast<std::byte*>(wire.memory.get()), bytes}}};
+      require(!publisher.execute_host(publisher.operation(), public_inputs, published),
+              "padded classic DETR publication failed");
+      require(wire.read<std::int32_t>(0) == 2, "padded classic DETR lost a query");
+      for (int row = 0; row < 2; ++row) {
+        const std::size_t offset = 4 + row * 24;
+        require(wire.read<std::int32_t>(offset) == 320 &&
+                    wire.read<std::int32_t>(offset + 4) == 180 &&
+                    wire.read<std::int32_t>(offset + 8) == 640 &&
+                    wire.read<std::int32_t>(offset + 12) == 360 &&
+                    wire.read<std::int32_t>(offset + 20) == 0 &&
+                    std::abs(wire.read<float>(offset + 16) - 1.f / 3.f) < 2e-6f,
+                "padded classic DETR must use logical roles and ignore padding values");
+      }
+    }
+  }
+}
+
 void yolo26_direct_mask_projection() {
   auto s = source(BoxDecodeType::YoloV26Seg, 1);
   s.payload.nms_iou_threshold = 0.;
@@ -962,6 +1432,378 @@ void oriented_source_geometry(BoxDecodeType type = BoxDecodeType::YoloV26Obb) {
       rejected = true;
     }
     require(rejected, "missing, anisotropic, wrong-canvas or unsupported upstream policy admitted");
+  }
+}
+
+auto detr_geometry_heads(BoxDecodeType type) {
+  auto heads = source(type, 2);
+  heads.payload.nms_iou_threshold = 0;
+  heads.payload.score_activation = type == BoxDecodeType::Detr ? BoxDecodeScoreActivation::Softmax
+                                                               : BoxDecodeScoreActivation::Sigmoid;
+  input(heads, 1, 2, 4, "FP32");
+  input(heads, 1, 2, type == BoxDecodeType::Detr ? 3 : 2, "FP32");
+  for (auto& logical : heads.runtime_contract.logical_inputs) {
+    const auto bytes = logical.shape[0] * logical.shape[1] * logical.shape[2] * 4;
+    heads.runtime_contract.physical_inputs.push_back(
+        specbuilders::build_physical_buffer_static_spec(logical.physical_index,
+                                                        logical.physical_index, bytes,
+                                                        DeviceKind::Cpu, logical.segment_name));
+    InputBindingStaticSpec binding;
+    binding.local_logical_input_index = logical.logical_index;
+    binding.src_physical_output_index = logical.physical_index;
+    heads.runtime_contract.input_bindings.push_back(std::move(binding));
+  }
+  return heads;
+}
+
+void crop_source_geometry() {
+  PreprocOptions options;
+  options.set_input_shape({480, 640, 3});
+  options.input_img_type = options.output_img_type = "RGB";
+  options.set_output_shape({224, 224, 3});
+  options.scaled_width = options.scaled_height = 224;
+  options.resize_mode = ResizeMode::Crop;
+  options.shorter_side = 256;
+  options.output_dtype = "BF16";
+  options.tessellate = false;
+  options.single_output_handoff = true;
+  CompiledNodeContract producer;
+  std::string error;
+  require(Preproc(options).compile_node_contract({}, &producer, &error), error.c_str());
+  ContractCompileInput context;
+  context.upstream_preprocess = &*producer.processcvu;
+  for (const auto prior_mode : {"", "stretch", "letterbox", "crop"})
+    for (const auto type : {BoxDecodeType::Detr, BoxDecodeType::DetrFocal}) {
+      const bool prior = *prior_mode != '\0';
+      const bool prior_crop = std::string_view(prior_mode) == "crop";
+      const bool prior_letterbox = std::string_view(prior_mode) == "letterbox";
+      const int original_width = prior_crop ? 1600 : prior ? 1280 : 640;
+      const int original_height = prior_crop ? 1200 : prior_letterbox ? 720 : prior ? 960 : 480;
+      const double upstream_scale = prior ? 2. : 1.;
+      const double upstream_x = prior_crop ? 160. : 0.;
+      const double upstream_y = prior_crop ? 120. : prior_letterbox ? -120. : 0.;
+      const double scale_x = upstream_scale * (640. / 341);
+      const double scale_y = upstream_scale * (480. / 256);
+      const double offset_x = upstream_scale * (58 * (640. / 341)) + upstream_x;
+      const double offset_y = upstream_scale * 30. + upstream_y;
+      context.ingress.ingress_sample.reset();
+      if (prior) {
+        auto image = Tensor::from_vector(std::vector<std::uint8_t>(480 * 640 * 3), {480, 640, 3},
+                                         TensorMemory::CPU);
+        image.layout = TensorLayout::HWC;
+        PreprocessRuntimeMeta provenance;
+        provenance.original_width = original_width;
+        provenance.original_height = original_height;
+        provenance.resized_width = 640;
+        provenance.resized_height = 480;
+        provenance.resize_mode = prior_mode;
+        provenance.affine_m00 = provenance.affine_m11 = upstream_scale;
+        provenance.affine_m02 = upstream_x;
+        provenance.affine_m12 = upstream_y;
+        provenance.affine_scale_x = provenance.affine_scale_y = upstream_scale;
+        provenance.affine_offset_x = upstream_x;
+        provenance.affine_offset_y = upstream_y;
+        provenance.color_in = provenance.color_out = "RGB";
+        image.semantic.preprocess = provenance;
+        context.ingress.ingress_sample = sample_from_tensors({image});
+      }
+      auto heads = detr_geometry_heads(type);
+      // The MLA-like upstream head carrier is distinct from graph ingress,
+      // which contains the image and its older preprocessing provenance.
+      CompiledNodeContract head_producer;
+      head_producer.kernel.emplace();
+      head_producer.kernel->runtime_contract.physical_outputs =
+          heads.runtime_contract.physical_inputs;
+      context.immediate_upstream = &head_producer;
+      const BoxDecodeGeometryOptions geometry{224, 224, prior ? original_width : 0,
+                                              prior ? original_height : 0, ResizeMode::Stretch};
+      const auto admitted = compile_boxdecode_kernel(heads, context, geometry);
+      require(admitted.recipe->resolver_factories.size() == 1,
+              "source crop must install mandatory per-frame affine resolver");
+      test::OperationProbe executor;
+      const auto checked = admitted.recipe->members[0].executable;
+      require(!executor.prepare(checked), "source crop preparation failed");
+      auto resolve = admitted.recipe->resolver_factories.front().instantiate();
+      const gchar* tags[] = {nullptr};
+      if (!gst_meta_get_info("GstSimaMeta"))
+        require(gst_meta_register_custom("GstSimaMeta", tags, nullptr, nullptr, nullptr),
+                "source crop metadata registration");
+      test::GstBufferOwner carrier(gst_buffer_new());
+      auto* meta =
+          gst_custom_meta_get_structure(gst_buffer_add_custom_meta(carrier.get(), "GstSimaMeta"));
+      const std::array<GstBuffer*, 1> carriers{carrier.get()};
+      require(std::holds_alternative<c::Error>(resolve(executor.preparer(), carriers)),
+              "cold crop seed substituted for missing frame metadata");
+      gst_structure_set(meta, "preproc_resize_mode", G_TYPE_STRING, "crop", nullptr);
+      require(std::holds_alternative<c::Error>(resolve(executor.preparer(), carriers)),
+              "explicit source dimensions let cold seed replace the current frame affine");
+      gst_structure_set(meta, "preproc_original_width", G_TYPE_INT, original_width,
+                        "preproc_original_height", G_TYPE_INT, original_height,
+                        "preproc_resized_width", G_TYPE_INT, 224, "preproc_resized_height",
+                        G_TYPE_INT, 224, "preproc_resize_mode", G_TYPE_STRING, "crop", nullptr);
+      require(std::holds_alternative<c::Error>(resolve(executor.preparer(), carriers)),
+              "crop dimensions without per-frame affine admitted");
+      gst_structure_set(meta, "preproc_affine_scale_x", G_TYPE_DOUBLE, scale_x,
+                        "preproc_affine_scale_y", G_TYPE_DOUBLE, scale_y, "preproc_affine_offset_x",
+                        G_TYPE_DOUBLE, offset_x, "preproc_affine_offset_y", G_TYPE_DOUBLE, offset_y,
+                        nullptr);
+      auto resolved = resolve(executor.preparer(), carriers);
+      require(std::holds_alternative<c::PreparedSelection>(resolved),
+              "source crop rejected actual anisotropic resize affine");
+      const auto first = std::get<c::PreparedSelection>(resolved);
+      require(first == executor.operation(),
+              "cold current-producer seed failed exact ingress affine composition");
+      gst_structure_set(meta, "preproc_affine_offset_x", G_TYPE_DOUBLE, offset_x + 4., nullptr);
+      auto changed = resolve(executor.preparer(), carriers);
+      require(std::holds_alternative<c::PreparedSelection>(changed) &&
+                  std::get<c::PreparedSelection>(changed) != first &&
+                  c::same_kernel_contract_resources(first.executable(), checked),
+              "same-sized crop reused stale offsets or rebuilt model resources");
+      gst_structure_remove_field(meta, "preproc_affine_scale_y");
+      require(std::holds_alternative<c::Error>(resolve(executor.preparer(), carriers)),
+              "partial crop affine admitted after warm cache hit");
+      for (int fault : {0, 1}) {
+        auto missing = context;
+        if (fault == 0) {
+          missing.upstream_preprocess = nullptr;
+          missing.ingress.ingress_sample.reset();
+        }
+        bool rejected = false;
+        try {
+          (void)compile_boxdecode_kernel(heads, missing, geometry,
+                                         fault == 0 ? ResizeMode::Crop : ResizeMode::Stretch);
+        } catch (const std::invalid_argument&) {
+          rejected = true;
+        }
+        require(rejected, "source crop accepted missing authority or conflicting resize mode");
+      }
+    }
+}
+
+// The final frontend reports its local stretch policy, while its affine still
+// maps all the way through an earlier Cover. Decoder activation must follow
+// that authoritative mapping, not only a nearest-producer "crop" token.
+void composed_frontend_detection_geometry() {
+  namespace lower = simaai::neat::pipeline_internal::sima::kernel_lowering;
+  namespace tr = simaai::gst;
+  if (!gst_meta_get_info("GstSimaMeta")) {
+    const gchar* tags[] = {nullptr};
+    require(gst_meta_register_custom("GstSimaMeta", tags, nullptr, nullptr, nullptr),
+            "composed detection metadata registration failed");
+  }
+  for (int chain = 0; chain < 3; ++chain) {
+    ResizeOptions resize;
+    resize.width = resize.height = 224;
+    resize.fit = ResizeFit::Cover;
+    resize.shorter_side = 256;
+    ColorConvertOptions color;
+    color.output_format = ImageFormat::BGR;
+    std::vector<std::shared_ptr<Node>> frontends{nodes::Resize(resize)};
+    if (chain != 1)
+      frontends.push_back(nodes::ColorConvert(color));
+    if (chain != 0)
+      frontends.push_back(nodes::Normalization());
+    OutputSpec image;
+    image.media_type = "video/x-raw";
+    image.format = "RGB";
+    image.dtype = "UInt8";
+    image.width = 640;
+    image.height = 480;
+    image.depth = 3;
+    std::vector<CompiledNodeContract> stages;
+    stages.reserve(frontends.size());
+    tr::TensorBufferPreprocessFactsOwner publication;
+    std::string error;
+    for (const auto& node : frontends) {
+      auto* frontend = dynamic_cast<Preproc*>(node.get());
+      require(frontend, "image frontend did not retain the canonical Preproc holder");
+      image = frontend->output_spec(image);
+      stages.emplace_back();
+      require(frontend->compile_node_contract({}, &stages.back(), &error), error.c_str());
+      auto checked = lower::PreprocFrameAdapter::check_policy(stages.back().processcvu->payload);
+      require(!std::holds_alternative<c::Error>(checked), "composed frontend policy rejected");
+      auto facts = lower::PreprocFrameAdapter::checked_initial_preprocess_facts(
+          std::get<std::shared_ptr<const lower::PreprocFrameAdapter::CheckedPolicy>>(checked),
+          publication ? tr::tensor_buffer_preprocess_facts(publication) : nullptr);
+      require(!std::holds_alternative<c::Error>(facts), "composed frontend facts rejected");
+      publication = std::get<tr::TensorBufferPreprocessFactsOwner>(std::move(facts));
+    }
+    const auto* facts = tr::tensor_buffer_preprocess_facts(publication);
+    // Independent geometry: shorter axis480 ->256, longer640 ->341;
+    // centered224 crop begins at(58,16), giving original-space offsets below.
+    require(facts && facts->resize_mode == "stretch" && facts->original_width == 640 &&
+                facts->original_height == 480 && facts->resized_width == 224 &&
+                facts->resized_height == 224 && std::abs(facts->affine[0] - 640. / 341) < 1e-12 &&
+                facts->affine[1] == 0 && facts->affine[3] == 0 && facts->affine[4] == 480. / 256 &&
+                std::abs(facts->affine[2] - 58 * (640. / 341)) < 1e-12 && facts->affine[5] == 30.,
+            "intermediate image frontend lost the independently known Cover affine");
+    for (const auto type : {BoxDecodeType::Detr, BoxDecodeType::DetrFocal})
+      for (bool explicit_size : {false, true}) {
+        auto heads = detr_geometry_heads(type);
+        heads.payload.topk = 2;
+        heads.payload.detection_threshold = .6;
+        CompiledNodeContract head_producer;
+        head_producer.kernel.emplace();
+        head_producer.kernel->runtime_contract.physical_outputs =
+            heads.runtime_contract.physical_inputs;
+        ContractCompileInput context;
+        context.immediate_upstream = &head_producer;
+        context.upstream_preprocess = last_preprocess_contract(stages);
+        require(context.upstream_preprocess == &*stages.back().processcvu &&
+                    context.upstream_preprocess->payload.resize_mode != ResizeMode::Crop,
+                "regression did not select the intermediate non-Crop frontend");
+        if (chain == 0 && type == BoxDecodeType::Detr && !explicit_size) {
+          // The graph's initial image belongs to older preprocessing provenance.
+          // The current inference frame below is authoritative, even when its
+          // original dimensions and mapping differ from that cold seed.
+          auto ingress = Tensor::from_vector(std::vector<std::uint8_t>(480 * 640 * 3),
+                                             {480, 640, 3}, TensorMemory::CPU);
+          ingress.layout = TensorLayout::HWC;
+          PreprocessRuntimeMeta stale;
+          stale.original_width = 1280;
+          stale.original_height = 960;
+          stale.resized_width = 640;
+          stale.resized_height = 480;
+          stale.resize_mode = "stretch";
+          stale.affine_m00 = stale.affine_m11 = 2.;
+          stale.affine_scale_x = stale.affine_scale_y = 2.;
+          stale.color_in = stale.color_out = "RGB";
+          ingress.semantic.preprocess = stale;
+          context.ingress.ingress_sample = sample_from_tensors({ingress});
+        }
+        const auto admitted = compile_boxdecode_kernel(
+            heads, context,
+            {224, 224, explicit_size ? 640 : 0, explicit_size ? 480 : 0, ResizeMode::Stretch});
+        require(admitted.recipe->resolver_factories.size() == 1,
+                "composed frontend omitted mandatory per-frame affine resolution");
+        const auto& checked = admitted.recipe->members[0].executable;
+        test::OperationProbe executor;
+        require(!executor.prepare(checked), "composed detection preparation failed");
+        auto resolve = admitted.recipe->resolver_factories.front().instantiate();
+        const auto select = [&](GstBuffer* buffer) {
+          const std::array<GstBuffer*, 1> carriers{buffer};
+          return resolve(executor.preparer(), carriers);
+        };
+        test::GstBufferOwner missing(gst_buffer_new());
+        auto* absent =
+            gst_custom_meta_get_structure(gst_buffer_add_custom_meta(missing.get(), "GstSimaMeta"));
+        require(absent, "composed detection metadata allocation failed");
+        require(std::holds_alternative<c::Error>(select(missing.get())),
+                "local preparation seed replaced missing current-frame provenance");
+        gst_structure_set(absent, "preproc_original_width", G_TYPE_INT, 640,
+                          "preproc_original_height", G_TYPE_INT, 480, "preproc_resized_width",
+                          G_TYPE_INT, 224, "preproc_resized_height", G_TYPE_INT, 224,
+                          "preproc_resize_mode", G_TYPE_STRING, "stretch", nullptr);
+        require(std::holds_alternative<c::Error>(select(missing.get())),
+                "composed frontend dimensions admitted without authoritative affine");
+        const auto carrier = [&](bool compact, double offset_delta = 0.) {
+          test::GstBufferOwner buffer(gst_buffer_new_allocate(nullptr, 4, nullptr));
+          auto current = *facts;
+          current.affine[2] += offset_delta;
+          auto owner = tr::tensor_buffer_freeze_preprocess_facts(std::move(current), &error);
+          require(bool(owner), "composed current-frame facts invalid");
+          if (compact) {
+            simaai::neat::test_support::attach_compact_frame_carrier(buffer.get());
+            tr::TensorBufferFrameMetadata frame;
+            frame.preprocess = owner;
+            require(tr::tensor_buffer_attach_frame_metadata(buffer.get(), std::move(frame), &error),
+                    error.c_str());
+            // A second metadata authority must fail closed, not override compact facts.
+            auto* stale = gst_custom_meta_get_structure(
+                gst_buffer_add_custom_meta(buffer.get(), "GstSimaMeta"));
+            gst_structure_set(stale, "preproc_resize_mode", G_TYPE_STRING, "crop",
+                              "preproc_affine_m00", G_TYPE_DOUBLE, 999., nullptr);
+            require(std::holds_alternative<c::Error>(select(buffer.get())),
+                    "competing compact and legacy authorities were accepted");
+            auto* competing = gst_buffer_get_custom_meta(buffer.get(), "GstSimaMeta");
+            require(gst_buffer_remove_meta(buffer.get(), &competing->meta),
+                    "could not remove injected competing authority");
+          } else {
+            auto* meta = gst_custom_meta_get_structure(
+                gst_buffer_add_custom_meta(buffer.get(), "GstSimaMeta"));
+            tr::tensor_buffer_write_preprocess_facts(meta, owner, false);
+          }
+          return buffer;
+        };
+        for (bool compact : {false, true}) {
+          auto current = carrier(compact);
+          auto selected = select(current.get());
+          require(std::holds_alternative<c::PreparedSelection>(selected),
+                  "composed affine labeled stretch was rejected");
+          const auto first = std::get<c::PreparedSelection>(selected);
+          require(first != executor.operation(),
+                  "local frontend cold seed replaced the actual composed current-frame affine");
+          require(c::same_kernel_contract_resources(first.executable(), checked),
+                  "composed affine rebuilt numerical resources");
+          auto repeat = select(current.get());
+          require(std::holds_alternative<c::PreparedSelection>(repeat) &&
+                      std::get<c::PreparedSelection>(repeat) == first,
+                  "identical composed affine missed the immutable geometry cache");
+          auto shifted = carrier(compact, 4.);
+          auto changed = select(shifted.get());
+          require(std::holds_alternative<c::PreparedSelection>(changed) &&
+                      std::get<c::PreparedSelection>(changed) != first,
+                  "same-size composed frame reused a stale crop offset");
+          repeat = select(current.get());
+          require(std::holds_alternative<c::PreparedSelection>(repeat) &&
+                      std::get<c::PreparedSelection>(repeat) == first,
+                  "changed frame mutated the retained geometry selection");
+          const std::array<GstBuffer*, 2> conflicting{current.get(), shifted.get()};
+          require(std::holds_alternative<c::Error>(resolve(executor.preparer(), conflicting)),
+                  "disagreeing inference head affines were silently combined");
+          // Run the actual selected numerical operation and publication. Both
+          // profiles represent normalized cxcywh=(.5,.5,.5,.5), independently
+          // mapping to integer XYWH=(214,135,210,210), not stretch(160,120,320,240).
+          const auto description = inspect(first.executable());
+          std::vector<std::shared_ptr<HostStorage>> inputs, outputs;
+          std::vector<c::ConstBytes> in, publication_inputs;
+          std::vector<c::MutableBytes> out;
+          for (const auto& req : description.input_requirements()) {
+            inputs.push_back(std::make_shared<HostStorage>(req.storage_bytes));
+            in.push_back(
+                {static_cast<const std::byte*>(inputs.back()->memory.get()), req.storage_bytes});
+          }
+          for (std::size_t i = 0; i < 8; ++i)
+            inputs[0]->set_float(i, type == BoxDecodeType::Detr ? 0.f : .5f);
+          const std::size_t classes = type == BoxDecodeType::Detr ? 3 : 2;
+          for (std::size_t i = 0; i < classes * 2; ++i)
+            inputs[1]->set_float(i, i % classes == 0 ? std::log(4.f) : 0.f);
+          for (const auto& req : description.output_requirements()) {
+            outputs.push_back(std::make_shared<HostStorage>(req.storage_bytes));
+            auto* data = static_cast<std::byte*>(outputs.back()->memory.get());
+            out.push_back({data, req.storage_bytes});
+            publication_inputs.push_back({data, req.storage_bytes});
+          }
+          require(!executor.execute_host(first, in, out),
+                  "composed-affine numerical execution failed");
+          const auto& wire_operation = admitted.recipe->members.back().executable;
+          test::OperationProbe publisher;
+          require(!publisher.prepare(wire_operation),
+                  "composed-affine publication preparation failed");
+          const auto bytes = inspect(wire_operation).output_requirements()[0].storage_bytes;
+          HostStorage wire(bytes);
+          const std::array<c::MutableBytes, 1> wire_out{
+              {{static_cast<std::byte*>(wire.memory.get()), bytes}}};
+          require(!publisher.execute_host(publisher.operation(), publication_inputs, wire_out),
+                  "composed-affine publication failed");
+          require(wire.read<std::int32_t>(0) == 2, "composed affine lost valid detections");
+          for (std::size_t row = 0; row < 2; ++row) {
+            const auto offset = 4 + row * 24;
+            require(wire.read<std::int32_t>(offset) == 214 &&
+                        wire.read<std::int32_t>(offset + 4) == 135 &&
+                        wire.read<std::int32_t>(offset + 8) == 210 &&
+                        wire.read<std::int32_t>(offset + 12) == 210 &&
+                        wire.read<std::int32_t>(offset + 20) == 0,
+                    "intermediate frontend caused crop coordinates to use full-image stretch");
+          }
+        }
+        auto partial = carrier(false);
+        auto* partial_meta =
+            gst_custom_meta_get_structure(gst_buffer_get_custom_meta(partial.get(), "GstSimaMeta"));
+        gst_structure_remove_field(partial_meta, "preproc_affine_m11");
+        require(std::holds_alternative<c::Error>(select(partial.get())),
+                "partial composed affine was accepted after a valid cached frame");
+      }
   }
 }
 
@@ -1542,6 +2384,16 @@ int main(int argc, char** argv) {
     oriented_source_geometry();
     oriented_publication_sample_bridge();
     linear_metadata_contracts();
+    focal_query_contract();
+    detr_default_resolution();
+    query_source_dtypes();
+    detr_numerical_publication();
+    detr_numerical_publication(true);
+    detr_padded_numerical_publication();
+    focal_numerical_publication();
+    focal_numerical_publication(true);
+    crop_source_geometry();
+    composed_frontend_detection_geometry();
     families();
     oriented_contract_and_execution();
     oriented_carrier_conversions();

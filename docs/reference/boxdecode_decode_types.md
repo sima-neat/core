@@ -84,6 +84,63 @@ opt.top_k = 100;
 
 Axis-aligned detection-display graphs can feed the result to `SimaRender`. Use `decode_bbox(...)` only for the existing box-leading formats; neither it nor `SimaRender` accepts oriented boxes.
 
+## Classic DETR {#classic-detr}
+
+Select `Detr` for one four-channel box-logit head and one class-logit head with a final background channel on the same query grid. Leave `decode_type_option` as `Auto`: the recipe selects Softmax without tensor-name hints. The background participates in the denominator but is excluded from the foreground class count and output selection. Box coordinates use sigmoid; this is not a decoder for already-normalized focal-loss boxes.
+
+Use Stretch and a positive `top_k`. The decoder applies no NMS and maps results to the original frame using preprocessing metadata. Explicit probability-valued layouts or conflicting score activations are rejected.
+
+```python
+options = pyneat.ModelOptions()
+options.decode_type = pyneat.BoxDecodeType.Detr
+options.preprocess.resize.mode = pyneat.ResizeMode.Stretch
+options.top_k = 100
+options.score_threshold = 0.7
+```
+
+## Focal-loss query detectors
+
+Use `BoxDecodeType::DetrFocal` (Python: `pyneat.BoxDecodeType.DetrFocal`, token
+`detr-focal`) for two ordered tensors: normalized `cx,cy,width,height` coordinates
+with depth 4, then independent class logits with depth N. Their query axes and dtypes must
+match; N is 1–1024. FP32, BF16 and authored INT8 storage are supported.
+
+The profile applies sigmoid only to class logits and selects the global top-K
+query/class pairs. One query can produce several classes. There is no background
+class, box sigmoid, per-query argmax, NMS or small-area filter. Set `top_k` to a
+positive cap, `detection_threshold=0` for unfiltered top-K, and
+`nms_iou_threshold=0`. Use Stretch and the actual image/model dimensions.
+
+The existing `BBOX` output clips boxes to the image and rounds XYWH coordinates
+to integers; `decode_bbox` exposes these coordinates as floats, without restoring
+subpixel precision. Use `decode_bbox(..., strict=True)` in Python to preserve
+zero-area rows created by rounding instead of the default degenerate-box filter.
+Measure this representation's accuracy separately from an
+unclipped floating-point reference. Classic `BoxDecodeType::Detr` is unchanged:
+it expects box logits and background-aware softmax scores, not these tensors.
+
+The Python raw-geometry overload mirrors the C++ factory when you supply the
+head tensors yourself. For dense FP32 heads, retain the model's complete output
+adapters and declare their actual storage explicitly. Do not truncate to raw
+MLA output or relabel padded bytes as dense tensors.
+
+```python
+node = pyneat.nodes.sima_box_decode(
+    pyneat.BoxDecodeType.DetrFocal,
+    original_width=1280, original_height=720,
+    model_width=640, model_height=640,
+    detection_threshold=0.0, nms_iou_threshold=0.0, top_k=300,
+    decode_type_option=pyneat.BoxDecodeTypeOption.InterleavedByHeadLogit,
+    source_storage=pyneat.BoxDecodeSourceStorage.DenseHwc,
+    detess=False, dequant=False,
+    resize_mode=pyneat.ResizeMode.Stretch,
+)
+```
+
+Finite reversed extents use the same endpoint clipping and become empty BBOX
+records, without replacing the selected pair or changing its score. Nonfinite
+coordinates or logits still fail before publication.
+
 ## YOLOv8 and YOLO11 oriented boxes {#yolov8-oriented-boxes}
 
 Select `BoxDecodeType::YoloV8Obb` (Python: `pyneat.BoxDecodeType.YoloV8Obb`; tokens
@@ -499,7 +556,7 @@ masks = seg.masks.to_numpy()
 
 ## Upgrading
 
-The new options change C++ object layouts. Core uses ABI 6, `libsima_neat.so.6`. Rebuild C++ applications, plugins and Python bindings with matching headers and libraries. Do not link ABI 5 binaries to ABI 6 through a compatibility symlink.
+The earlier BoxDecode options introduced ABI 6. The current source-arithmetic options require ABI 8 (`libsima_neat.so.8`). Rebuild C++ applications, plugins and Python bindings with matching headers and libraries. Do not load ABI 5/6/7 binaries through compatibility symlinks.
 
 
 ### Combined YOLOX input admission
@@ -522,3 +579,8 @@ preparation. This is a decoder contract for externally preprocessed tensors,
 not new support for crop production in `Model` preprocessing. A model with
 fewer than 17 keypoints still publishes the fixed
 17-slot public wire format, with unused slots set to zero.
+
+
+## Crop coordinate mapping {#crop-coordinate-mapping}
+
+Model-managed Crop supplies the actual inverse image transform to supported detection profiles, including classic DETR, DetrFocal and ordinary YOLO detection. Selection and NMS stay in model coordinates; accepted boxes are then mapped and clipped to the original image. Missing or conflicting transform metadata fails explicitly. This does not enable new crop combinations for masks, pose, RCNN proposals or SSD multiclass. Existing oriented-box profiles still require equal axis scales; integer resize dimensions may make the scales unequal.

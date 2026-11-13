@@ -4,6 +4,7 @@
 #include "test_utils.h"
 
 #include <functional>
+#include <utility>
 #include <string>
 #include <vector>
 
@@ -14,6 +15,7 @@ using simaai::neat::InputKind;
 using simaai::neat::Model;
 using simaai::neat::NormalizePreset;
 using simaai::neat::PreprocessGraphFamily;
+using simaai::neat::ResizeInterpolation;
 using simaai::neat::ResizeMode;
 using simaai::neat::Transform;
 using simaai::neat::TransformType;
@@ -64,235 +66,405 @@ void require_throws_contains(const std::function<void()>& fn, const std::string&
 
 } // namespace
 
-RUN_TEST("unit_input_planner_semantics_test", ([] {
-           PreprocessCapabilities caps = all_caps();
+RUN_TEST(
+    "unit_input_planner_semantics_test", ([] {
+      PreprocessCapabilities caps = all_caps();
 
-           // transforms + simple flags => warn + transforms override.
-           {
-             Model::Options opt;
-             opt.preprocess.kind = InputKind::Image;
-             opt.preprocess.resize.enable = AutoFlag::On;
+      // Model and standalone Resize share the same typed sampler. Resolve it
+      // before intent detection, route selection, snapshots and stage projection.
+      {
+        static_assert(static_cast<int>(ResizeInterpolation::Nearest) == 0);
+        static_assert(static_cast<int>(ResizeInterpolation::BilinearAntialiased) == 4);
+        const std::pair<ResizeInterpolation, const char*> samplers[] = {
+            {ResizeInterpolation::Nearest, "NEAREST"},
+            {ResizeInterpolation::Bilinear, "BILINEAR"},
+            {ResizeInterpolation::Bicubic, "BICUBIC"},
+            {ResizeInterpolation::BoxAverage, "INTERAREA"},
+            {ResizeInterpolation::BilinearAntialiased, "BILINEAR_ANTIALIASED"}};
+        Model::Options legacy;
+        require(!legacy.preprocess.resize.interpolation &&
+                    legacy.preprocess.resize.scaling_type == "BILINEAR",
+                "legacy resize default changed");
+        for (const auto& [sampler, token] : samplers) {
+          Model::Options typed;
+          typed.preprocess.resize.interpolation = sampler;
+          const auto planned = plan_preprocess(typed, caps);
+          require(planned.resolved_plan.effective.resize.scaling_type == token &&
+                      planned.resolved_plan.effective.resize.enable == AutoFlag::On &&
+                      planned.resolved_plan.resolved_kind == InputKind::Image &&
+                      planned.resolved_plan.graph_family == PreprocessGraphFamily::Preproc,
+                  "typed sampler was ignored or lowered differently");
+          typed.preprocess.resize.scaling_type = token;
+          require(plan_preprocess(typed, caps).resolved_plan.effective.resize.scaling_type == token,
+                  "matching legacy/typed samplers conflict");
+        }
+        legacy.preprocess.resize.scaling_type = "NEAREST_NEIGHBOUR";
+        legacy.preprocess.resize.interpolation = ResizeInterpolation::Nearest;
+        require(plan_preprocess(legacy, caps).resolved_plan.effective.resize.scaling_type ==
+                    "NEAREST",
+                "legacy nearest alias did not agree with typed Nearest");
+        legacy.preprocess.resize.interpolation.reset();
+        legacy.preprocess.resize.enable = AutoFlag::On;
+        require(plan_preprocess(legacy, caps).resolved_plan.effective.resize.scaling_type ==
+                    "NEAREST_NEIGHBOUR",
+                "legacy-only string behavior changed");
+        legacy.preprocess.resize.interpolation = ResizeInterpolation::Bicubic;
+        require_throws_contains([&] { (void)plan_preprocess(legacy, caps); }, "conflicts",
+                                "conflicting nondefault legacy/typed samplers were accepted");
+        legacy.preprocess.resize.interpolation = static_cast<ResizeInterpolation>(999);
+        require_throws_contains([&] { (void)plan_preprocess(legacy, caps); },
+                                "interpolation is invalid",
+                                "invalid typed sampler silently fell back");
+        Model::Options transformed;
+        Transform resize_transform;
+        resize_transform.type = TransformType::Resize;
+        resize_transform.resize.interpolation = ResizeInterpolation::Nearest;
+        transformed.preprocess.transforms.push_back(resize_transform);
+        const auto transformed_plan = plan_preprocess(transformed, caps);
+        require(transformed_plan.resolved_plan.effective.resize.enable == AutoFlag::On &&
+                    transformed_plan.resolved_plan.effective.resize.scaling_type == "NEAREST" &&
+                    transformed_plan.resolved_plan.graph_family == PreprocessGraphFamily::Preproc,
+                "typed legacy transform must preserve explicit resize intent");
+        for (int fault = 0; fault < 4; ++fault) {
+          Model::Options typed;
+          typed.preprocess.resize.interpolation = ResizeInterpolation::Nearest;
+          if (fault == 0)
+            typed.preprocess.kind = InputKind::Tensor;
+          if (fault == 1)
+            typed.preprocess.enable = AutoFlag::Off;
+          if (fault == 2)
+            typed.preprocess.resize.enable = AutoFlag::Off;
+          if (fault == 3)
+            typed.preprocess.quantize.enable = AutoFlag::On;
+          require_throws_contains([&] { (void)plan_preprocess(typed, caps); },
+                                  fault == 2   ? "resize.enable=Off"
+                                  : fault == 3 ? "Preproc image route"
+                                               : "fixed image preprocessing",
+                                  "typed sampler was silently routed away");
+        }
+      }
 
-             Transform t;
-             t.type = TransformType::Resize;
-             t.resize.enable = AutoFlag::On;
-             t.resize.width = 320;
-             t.resize.height = 320;
-             t.resize.mode = ResizeMode::Stretch;
-             opt.preprocess.transforms.push_back(t);
+      // Crop alone is explicit image intent; final output remains MPK-owned.
+      {
+        Model::Options opt;
+        require(!opt.preprocess.resize.shorter_side, "legacy default selected a shorter side");
+        opt.preprocess.resize.mode = ResizeMode::Crop;
+        for (const auto shorter : {std::optional<int>{}, std::optional<int>{256}}) {
+          opt.preprocess.resize.shorter_side = shorter;
+          const auto planned = plan_preprocess(opt, caps);
+          require(planned.resolved_plan.enabled &&
+                      planned.resolved_plan.graph_family == PreprocessGraphFamily::Preproc &&
+                      planned.resolved_plan.resolved_kind == InputKind::Image &&
+                      planned.resolved_plan.effective.resize.enable == AutoFlag::On &&
+                      planned.resolved_plan.effective.resize.shorter_side == shorter &&
+                      planned.resolved_plan.effective.resize.width == 0 &&
+                      planned.resolved_plan.effective.resize.height == 0,
+                  "Crop was ignored or replaced output contract authority");
+        }
+        for (int fault = 0; fault < 7; ++fault) {
+          auto bad = opt;
+          if (fault == 0)
+            bad.preprocess.resize.mode = ResizeMode::Stretch;
+          if (fault == 1)
+            bad.preprocess.resize.shorter_side = 0;
+          if (fault == 2)
+            bad.preprocess.resize.shorter_side = 4097;
+          if (fault == 3)
+            bad.preprocess.resize.enable = AutoFlag::Off;
+          if (fault == 4)
+            bad.preprocess.kind = InputKind::Tensor;
+          if (fault == 5)
+            bad.preprocess.enable = AutoFlag::Off;
+          if (fault == 6)
+            bad.preprocess.quantize.enable = AutoFlag::On;
+          require_throws_contains([&] { (void)plan_preprocess(bad, caps); },
+                                  fault < 3    ? "shorter_side"
+                                  : fault == 3 ? "resize.enable=Off"
+                                  : fault == 6 ? "Preproc image route"
+                                               : "fixed image preprocessing",
+                                  "incompatible Crop policy was silently accepted");
+        }
+        Model::Options transformed;
+        Transform transform;
+        transform.type = TransformType::Resize;
+        transform.resize.mode = ResizeMode::Crop;
+        transformed.preprocess.transforms.push_back(transform);
+        require_throws_contains([&] { (void)plan_preprocess(transformed, caps); },
+                                "preprocess.transforms", "Crop bypassed canonical geometry policy");
+      }
 
-             const PreprocessPlannerResult out = plan_preprocess(opt, caps);
-             require(out.resolved_plan.transforms_override,
-                     "planner: transforms override flag should be true");
-             require(has_warning(out, "using transforms"),
-                     "planner: expected transforms precedence warning");
-             require(out.resolved_plan.effective.resize.width == 320,
-                     "planner: transform resize width should override simple flags");
-             require(out.resolved_plan.effective.resize.height == 320,
-                     "planner: transform resize height should override simple flags");
-           }
+      // Ordinary fixed options are real image intent, even without an
+      // explicit kind/resize/normalize enable flag.
+      {
+        Model::Options opt;
+        opt.preprocess.rescale_factor = 1.f / 255.f;
+        opt.preprocess.resize.interpolation = ResizeInterpolation::BilinearAntialiased;
+        const auto planned = plan_preprocess(opt, caps);
+        require(planned.resolved_plan.enabled &&
+                    planned.resolved_plan.resolved_kind == InputKind::Image &&
+                    planned.resolved_plan.graph_family == PreprocessGraphFamily::Preproc &&
+                    planned.resolved_plan.effective.resize.enable == AutoFlag::On &&
+                    planned.resolved_plan.effective.rescale_factor == opt.preprocess.rescale_factor,
+                "fixed options disappeared during input planning");
+        for (int fault = 0; fault < 4; ++fault) {
+          auto bad = opt;
+          if (fault == 0)
+            bad.preprocess.enable = AutoFlag::Off;
+          if (fault == 1)
+            bad.preprocess.kind = InputKind::Tensor;
+          if (fault == 2)
+            bad.preprocess.transforms.push_back(Transform{});
+          if (fault == 3)
+            bad.preprocess.resize.enable = AutoFlag::Off;
+          require_throws_contains([&] { (void)plan_preprocess(bad, caps); },
+                                  fault == 3 ? "resize.enable=Off" : "fixed image preprocessing",
+                                  "contradictory fixed intent was silently ignored");
+        }
+        // Quant/Tess families cannot carry source image arithmetic. With
+        // resize disabled this used to pass without applying the new factor.
+        for (int tensor_route = 0; tensor_route < 3; ++tensor_route) {
+          Model::Options bad;
+          bad.preprocess.rescale_factor = 1.f;
+          bad.preprocess.resize.enable = AutoFlag::Off;
+          bad.preprocess.resize.scaling_type = "NO_SCALING";
+          if (tensor_route != 1)
+            bad.preprocess.quantize.enable = AutoFlag::On;
+          if (tensor_route != 0)
+            bad.preprocess.tessellate.enable = AutoFlag::On;
+          require_throws_contains([&] { (void)plan_preprocess(bad, caps); }, "Preproc image route",
+                                  "tensor route silently discarded source image arithmetic");
+        }
+        opt.preprocess.normalize.enable = AutoFlag::On;
+        opt.preprocess.normalize.stddev = {1.f, -0.25f, 0.5f};
+        const auto signed_divisor = plan_preprocess(opt, caps);
+        require(signed_divisor.resolved_plan.effective.normalize.stddev[1] == -0.25f,
+                "source divisor sign was changed");
+      }
 
-           // preprocess.enable=Off + transforms => warn + apply transforms.
-           {
-             Model::Options opt;
-             opt.preprocess.kind = InputKind::Image;
-             opt.preprocess.enable = AutoFlag::Off;
+      // transforms + simple flags => warn + transforms override.
+      {
+        Model::Options opt;
+        opt.preprocess.kind = InputKind::Image;
+        opt.preprocess.resize.enable = AutoFlag::On;
 
-             Transform t;
-             t.type = TransformType::Normalize;
-             t.normalize.enable = AutoFlag::On;
-             t.normalize.has_explicit_stats = true;
-             t.normalize.mean = {0.0f, 0.0f, 0.0f};
-             t.normalize.stddev = {255.0f, 255.0f, 255.0f};
-             opt.preprocess.transforms.push_back(t);
+        Transform t;
+        t.type = TransformType::Resize;
+        t.resize.enable = AutoFlag::On;
+        t.resize.width = 320;
+        t.resize.height = 320;
+        t.resize.mode = ResizeMode::Stretch;
+        opt.preprocess.transforms.push_back(t);
 
-             const PreprocessPlannerResult out = plan_preprocess(opt, caps);
-             require(out.resolved_plan.enabled,
-                     "planner: transforms should keep preprocess enabled");
-             require(has_warning(out, "enable=Off with non-empty transforms"),
-                     "planner: expected enable-off transform warning");
-             require(out.resolved_plan.effective.normalize.enable == AutoFlag::On,
-                     "planner: normalize should stay enabled from transforms");
-           }
+        const PreprocessPlannerResult out = plan_preprocess(opt, caps);
+        require(out.resolved_plan.transforms_override,
+                "planner: transforms override flag should be true");
+        require(has_warning(out, "using transforms"),
+                "planner: expected transforms precedence warning");
+        require(out.resolved_plan.effective.resize.width == 320,
+                "planner: transform resize width should override simple flags");
+        require(out.resolved_plan.effective.resize.height == 320,
+                "planner: transform resize height should override simple flags");
+      }
 
-           // COCO_YOLO preset expansion defaults.
-           {
-             Model::Options opt;
-             opt.preprocess.kind = InputKind::Image;
-             opt.preprocess.preset = NormalizePreset::COCO_YOLO;
-             const PreprocessPlannerResult out = plan_preprocess(opt, caps);
-             require(out.resolved_plan.effective.resize.enable == AutoFlag::On,
-                     "planner: COCO_YOLO should enable resize");
-             require(out.resolved_plan.effective.resize.mode == ResizeMode::Letterbox,
-                     "planner: COCO_YOLO should set letterbox");
-             require(out.resolved_plan.effective.resize.pad_value == 114,
-                     "planner: COCO_YOLO pad value must be 114");
-             require(out.resolved_plan.effective.normalize.enable == AutoFlag::On,
-                     "planner: COCO_YOLO should enable normalize");
-             require(out.resolved_plan.effective.normalize.stddev[0] == 1.0f &&
-                         out.resolved_plan.effective.normalize.stddev[1] == 1.0f &&
-                         out.resolved_plan.effective.normalize.stddev[2] == 1.0f,
-                     "planner: COCO_YOLO stddev must default to 1");
-           }
+      // preprocess.enable=Off + transforms => warn + apply transforms.
+      {
+        Model::Options opt;
+        opt.preprocess.kind = InputKind::Image;
+        opt.preprocess.enable = AutoFlag::Off;
 
-           // Tensor auto-family should lower tensor ingress to QuantTess when available.
-           {
-             Model::Options opt;
-             opt.preprocess.kind = InputKind::Tensor;
+        Transform t;
+        t.type = TransformType::Normalize;
+        t.normalize.enable = AutoFlag::On;
+        t.normalize.has_explicit_stats = true;
+        t.normalize.mean = {0.0f, 0.0f, 0.0f};
+        t.normalize.stddev = {255.0f, 255.0f, 255.0f};
+        opt.preprocess.transforms.push_back(t);
 
-             PreprocessCapabilities auto_caps = caps;
-             auto_caps.tensor_auto_family = PreprocessGraphFamily::QuantTess;
+        const PreprocessPlannerResult out = plan_preprocess(opt, caps);
+        require(out.resolved_plan.enabled, "planner: transforms should keep preprocess enabled");
+        require(has_warning(out, "enable=Off with non-empty transforms"),
+                "planner: expected enable-off transform warning");
+        require(out.resolved_plan.effective.normalize.enable == AutoFlag::On,
+                "planner: normalize should stay enabled from transforms");
+      }
 
-             const PreprocessPlannerResult out = plan_preprocess(opt, auto_caps);
-             require(out.resolved_plan.enabled,
-                     "planner: tensor auto-family should keep preprocess enabled");
-             require(out.resolved_plan.graph_family == PreprocessGraphFamily::QuantTess,
-                     "planner: tensor auto-family should resolve to QuantTess");
-             require(out.pipeline_type == simaai::neat::internal::PipelineType::QuantTess,
-                     "planner: tensor auto-family should set QuantTess pipeline type");
-             require(out.resolved_plan.effective.quantize.enable == AutoFlag::On,
-                     "planner: tensor auto-family should enable quantize");
-             require(out.resolved_plan.effective.tessellate.enable == AutoFlag::On,
-                     "planner: tensor auto-family should enable tessellate");
-             require(out.modelpack_media_type == "application/vnd.simaai.tensor",
-                     "planner: tensor auto-family should preserve tensor ingress media type");
-           }
+      // COCO_YOLO preset expansion defaults.
+      {
+        Model::Options opt;
+        opt.preprocess.kind = InputKind::Image;
+        opt.preprocess.preset = NormalizePreset::COCO_YOLO;
+        const PreprocessPlannerResult out = plan_preprocess(opt, caps);
+        require(out.resolved_plan.effective.resize.enable == AutoFlag::On,
+                "planner: COCO_YOLO should enable resize");
+        require(out.resolved_plan.effective.resize.mode == ResizeMode::Letterbox,
+                "planner: COCO_YOLO should set letterbox");
+        require(out.resolved_plan.effective.resize.pad_value == 114,
+                "planner: COCO_YOLO pad value must be 114");
+        require(out.resolved_plan.effective.normalize.enable == AutoFlag::On,
+                "planner: COCO_YOLO should enable normalize");
+        require(out.resolved_plan.effective.normalize.stddev[0] == 1.0f &&
+                    out.resolved_plan.effective.normalize.stddev[1] == 1.0f &&
+                    out.resolved_plan.effective.normalize.stddev[2] == 1.0f,
+                "planner: COCO_YOLO stddev must default to 1");
+      }
 
-           // Capability gating: missing requested graph family => hard error.
-           {
-             Model::Options opt;
-             opt.preprocess.kind = InputKind::Tensor;
-             opt.preprocess.quantize.enable = AutoFlag::On;
-             opt.preprocess.tessellate.enable = AutoFlag::Off;
+      // Tensor auto-family should lower tensor ingress to QuantTess when available.
+      {
+        Model::Options opt;
+        opt.preprocess.kind = InputKind::Tensor;
 
-             PreprocessCapabilities missing_quant = caps;
-             missing_quant.quant = all_ops_family(false);
-             require_throws_contains([&]() { (void)plan_preprocess(opt, missing_quant); },
-                                     "unavailable",
-                                     "planner: quant family unavailability should throw");
-           }
+        PreprocessCapabilities auto_caps = caps;
+        auto_caps.tensor_auto_family = PreprocessGraphFamily::QuantTess;
 
-           // Capability gating: op unsupported by selected family => hard error.
-           {
-             Model::Options opt;
-             opt.preprocess.kind = InputKind::Tensor;
-             opt.preprocess.quantize.enable = AutoFlag::On;
-             opt.preprocess.tessellate.enable = AutoFlag::Off;
-             opt.preprocess.color_convert.enable = AutoFlag::On;
+        const PreprocessPlannerResult out = plan_preprocess(opt, auto_caps);
+        require(out.resolved_plan.enabled,
+                "planner: tensor auto-family should keep preprocess enabled");
+        require(out.resolved_plan.graph_family == PreprocessGraphFamily::QuantTess,
+                "planner: tensor auto-family should resolve to QuantTess");
+        require(out.pipeline_type == simaai::neat::internal::PipelineType::QuantTess,
+                "planner: tensor auto-family should set QuantTess pipeline type");
+        require(out.resolved_plan.effective.quantize.enable == AutoFlag::On,
+                "planner: tensor auto-family should enable quantize");
+        require(out.resolved_plan.effective.tessellate.enable == AutoFlag::On,
+                "planner: tensor auto-family should enable tessellate");
+        require(out.modelpack_media_type == "application/vnd.simaai.tensor",
+                "planner: tensor auto-family should preserve tensor ingress media type");
+      }
 
-             PreprocessCapabilities limited = caps;
-             limited.quant.supports_color_convert = false;
-             require_throws_contains([&]() { (void)plan_preprocess(opt, limited); },
-                                     "color_convert", "planner: unsupported op should throw");
-           }
+      // Capability gating: missing requested graph family => hard error.
+      {
+        Model::Options opt;
+        opt.preprocess.kind = InputKind::Tensor;
+        opt.preprocess.quantize.enable = AutoFlag::On;
+        opt.preprocess.tessellate.enable = AutoFlag::Off;
 
-           // Meta contract fields should include conversion + normalize context.
-           {
-             Model::Options opt;
-             opt.preprocess.kind = InputKind::Image;
-             const PreprocessPlannerResult out = plan_preprocess(opt, caps);
+        PreprocessCapabilities missing_quant = caps;
+        missing_quant.quant = all_ops_family(false);
+        require_throws_contains([&]() { (void)plan_preprocess(opt, missing_quant); }, "unavailable",
+                                "planner: quant family unavailability should throw");
+      }
 
-             auto has_required = [&](const char* field) {
-               for (const auto& entry : out.resolved_plan.meta_contract.required_fields) {
-                 if (entry == field)
-                   return true;
-               }
-               return false;
-             };
+      // Capability gating: op unsupported by selected family => hard error.
+      {
+        Model::Options opt;
+        opt.preprocess.kind = InputKind::Tensor;
+        opt.preprocess.quantize.enable = AutoFlag::On;
+        opt.preprocess.tessellate.enable = AutoFlag::Off;
+        opt.preprocess.color_convert.enable = AutoFlag::On;
 
-             require(has_required("preproc_color_in"),
-                     "planner: meta contract should require preproc_color_in");
-             require(has_required("preproc_color_out"),
-                     "planner: meta contract should require preproc_color_out");
-             require(has_required("preproc_axis_perm"),
-                     "planner: meta contract should require preproc_axis_perm");
-             require(has_required("preproc_normalize"),
-                     "planner: meta contract should require preproc_normalize");
-           }
+        PreprocessCapabilities limited = caps;
+        limited.quant.supports_color_convert = false;
+        require_throws_contains([&]() { (void)plan_preprocess(opt, limited); }, "color_convert",
+                                "planner: unsupported op should throw");
+      }
 
-           // Quant+Tess route should select QuantTess when requested and available.
-           {
-             Model::Options opt;
-             opt.preprocess.kind = InputKind::Tensor;
-             opt.preprocess.quantize.enable = AutoFlag::On;
-             opt.preprocess.tessellate.enable = AutoFlag::On;
+      // Meta contract fields should include conversion + normalize context.
+      {
+        Model::Options opt;
+        opt.preprocess.kind = InputKind::Image;
+        const PreprocessPlannerResult out = plan_preprocess(opt, caps);
 
-             const PreprocessPlannerResult out = plan_preprocess(opt, caps);
-             require(out.resolved_plan.graph_family == PreprocessGraphFamily::QuantTess,
-                     "planner: quant+tess should lower to QuantTess");
-             require(out.pipeline_type == simaai::neat::internal::PipelineType::QuantTess,
-                     "planner: pipeline type should be QuantTess");
-           }
+        auto has_required = [&](const char* field) {
+          for (const auto& entry : out.resolved_plan.meta_contract.required_fields) {
+            if (entry == field)
+              return true;
+          }
+          return false;
+        };
 
-           // Explicit normalize off with ImageNet preset should emit requirement warning.
-           {
-             Model::Options opt;
-             opt.preprocess.kind = InputKind::Image;
-             opt.preprocess.preset = NormalizePreset::ImageNet;
-             opt.preprocess.normalize.enable = AutoFlag::Off;
-             opt.preprocess.resize.enable = AutoFlag::On;
-             opt.preprocess.resize.width = 224;
-             opt.preprocess.resize.height = 224;
+        require(has_required("preproc_color_in"),
+                "planner: meta contract should require preproc_color_in");
+        require(has_required("preproc_color_out"),
+                "planner: meta contract should require preproc_color_out");
+        require(has_required("preproc_axis_perm"),
+                "planner: meta contract should require preproc_axis_perm");
+        require(has_required("preproc_normalize"),
+                "planner: meta contract should require preproc_normalize");
+      }
 
-             const PreprocessPlannerResult out = plan_preprocess(opt, caps);
-             require(has_warning(out, "code=PREPROC_REQ_WARN_MODEL_DEFAULT"),
-                     "planner: expected warning code for normalize off");
-             require(has_warning(out, "op=normalize"),
-                     "planner: expected normalize op warning when preset expects normalize");
-           }
+      // Quant+Tess route should select QuantTess when requested and available.
+      {
+        Model::Options opt;
+        opt.preprocess.kind = InputKind::Tensor;
+        opt.preprocess.quantize.enable = AutoFlag::On;
+        opt.preprocess.tessellate.enable = AutoFlag::On;
 
-           // Explicit quantize off with tensor auto-family should keep quantize disabled.
-           {
-             Model::Options opt;
-             opt.preprocess.kind = InputKind::Tensor;
-             opt.preprocess.quantize.enable = AutoFlag::Off;
-             opt.preprocess.tessellate.enable = AutoFlag::Off;
-             opt.preprocess.resize.enable = AutoFlag::On;
-             opt.preprocess.resize.width = 320;
-             opt.preprocess.resize.height = 320;
+        const PreprocessPlannerResult out = plan_preprocess(opt, caps);
+        require(out.resolved_plan.graph_family == PreprocessGraphFamily::QuantTess,
+                "planner: quant+tess should lower to QuantTess");
+        require(out.pipeline_type == simaai::neat::internal::PipelineType::QuantTess,
+                "planner: pipeline type should be QuantTess");
+      }
 
-             PreprocessCapabilities quant_default_caps = caps;
-             quant_default_caps.tensor_auto_family = PreprocessGraphFamily::QuantTess;
+      // Explicit normalize off with ImageNet preset should emit requirement warning.
+      {
+        Model::Options opt;
+        opt.preprocess.kind = InputKind::Image;
+        opt.preprocess.preset = NormalizePreset::ImageNet;
+        opt.preprocess.normalize.enable = AutoFlag::Off;
+        opt.preprocess.resize.enable = AutoFlag::On;
+        opt.preprocess.resize.width = 224;
+        opt.preprocess.resize.height = 224;
 
-             const PreprocessPlannerResult out = plan_preprocess(opt, quant_default_caps);
-             require(out.resolved_plan.effective.quantize.enable == AutoFlag::Off,
-                     "planner: explicit quantize Off should override tensor auto-family");
-             require(out.resolved_plan.graph_family == PreprocessGraphFamily::Preproc,
-                     "planner: explicit quantize/tess Off should fall back to Preproc");
-           }
+        const PreprocessPlannerResult out = plan_preprocess(opt, caps);
+        require(has_warning(out, "code=PREPROC_REQ_WARN_MODEL_DEFAULT"),
+                "planner: expected warning code for normalize off");
+        require(has_warning(out, "op=normalize"),
+                "planner: expected normalize op warning when preset expects normalize");
+      }
 
-           // Tensor auto-family should resolve individual Quant and Tess families too.
-           {
-             Model::Options quant_opt;
-             quant_opt.preprocess.kind = InputKind::Tensor;
-             PreprocessCapabilities quant_caps = caps;
-             quant_caps.tensor_auto_family = PreprocessGraphFamily::Quant;
+      // Explicit quantize off with tensor auto-family should keep quantize disabled.
+      {
+        Model::Options opt;
+        opt.preprocess.kind = InputKind::Tensor;
+        opt.preprocess.quantize.enable = AutoFlag::Off;
+        opt.preprocess.tessellate.enable = AutoFlag::Off;
+        opt.preprocess.resize.enable = AutoFlag::On;
+        opt.preprocess.resize.width = 320;
+        opt.preprocess.resize.height = 320;
 
-             const PreprocessPlannerResult quant_out = plan_preprocess(quant_opt, quant_caps);
-             require(quant_out.resolved_plan.graph_family == PreprocessGraphFamily::Quant,
-                     "planner: tensor auto-family Quant should resolve to Quant");
+        PreprocessCapabilities quant_default_caps = caps;
+        quant_default_caps.tensor_auto_family = PreprocessGraphFamily::QuantTess;
 
-             Model::Options tess_opt;
-             tess_opt.preprocess.kind = InputKind::Tensor;
-             PreprocessCapabilities tess_caps = caps;
-             tess_caps.tensor_auto_family = PreprocessGraphFamily::Tess;
+        const PreprocessPlannerResult out = plan_preprocess(opt, quant_default_caps);
+        require(out.resolved_plan.effective.quantize.enable == AutoFlag::Off,
+                "planner: explicit quantize Off should override tensor auto-family");
+        require(out.resolved_plan.graph_family == PreprocessGraphFamily::Preproc,
+                "planner: explicit quantize/tess Off should fall back to Preproc");
+      }
 
-             const PreprocessPlannerResult tess_out = plan_preprocess(tess_opt, tess_caps);
-             require(tess_out.resolved_plan.graph_family == PreprocessGraphFamily::Tess,
-                     "planner: tensor auto-family Tess should resolve to Tess");
-           }
+      // Tensor auto-family should resolve individual Quant and Tess families too.
+      {
+        Model::Options quant_opt;
+        quant_opt.preprocess.kind = InputKind::Tensor;
+        PreprocessCapabilities quant_caps = caps;
+        quant_caps.tensor_auto_family = PreprocessGraphFamily::Quant;
 
-           // Explicit normalize off with no preset expectation should not emit requirement warning.
-           {
-             Model::Options opt;
-             opt.preprocess.kind = InputKind::Image;
-             opt.preprocess.resize.enable = AutoFlag::On;
-             opt.preprocess.resize.width = 224;
-             opt.preprocess.resize.height = 224;
-             opt.preprocess.normalize.enable = AutoFlag::Off;
+        const PreprocessPlannerResult quant_out = plan_preprocess(quant_opt, quant_caps);
+        require(quant_out.resolved_plan.graph_family == PreprocessGraphFamily::Quant,
+                "planner: tensor auto-family Quant should resolve to Quant");
 
-             const PreprocessPlannerResult out = plan_preprocess(opt, caps);
-             require(!has_warning(out, "op=normalize"),
-                     "planner: should not warn normalize off without model/preset expectation");
-           }
-         }));
+        Model::Options tess_opt;
+        tess_opt.preprocess.kind = InputKind::Tensor;
+        PreprocessCapabilities tess_caps = caps;
+        tess_caps.tensor_auto_family = PreprocessGraphFamily::Tess;
+
+        const PreprocessPlannerResult tess_out = plan_preprocess(tess_opt, tess_caps);
+        require(tess_out.resolved_plan.graph_family == PreprocessGraphFamily::Tess,
+                "planner: tensor auto-family Tess should resolve to Tess");
+      }
+
+      // Explicit normalize off with no preset expectation should not emit requirement warning.
+      {
+        Model::Options opt;
+        opt.preprocess.kind = InputKind::Image;
+        opt.preprocess.resize.enable = AutoFlag::On;
+        opt.preprocess.resize.width = 224;
+        opt.preprocess.resize.height = 224;
+        opt.preprocess.normalize.enable = AutoFlag::Off;
+
+        const PreprocessPlannerResult out = plan_preprocess(opt, caps);
+        require(!has_warning(out, "op=normalize"),
+                "planner: should not warn normalize off without model/preset expectation");
+      }
+    }));

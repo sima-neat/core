@@ -7,6 +7,20 @@ sidebar_position: 3
 
 SiMa.ai Neat Library의 릴리스 노트입니다.
 
+## 0.6.1(미출시) {#v061}
+
+### 호환성에 영향을 주는 변경 {#v061-breaking}
+
+- Neat Library C++ ABI는 이제 8(`libsima_neat.so.8`)입니다. `ResizeOptions`, `ResizeSpec`, `PreprocessOptions`, `PreprocOptions`, `NormalizationOptions`에 필드가 추가되었습니다. 일치하는 헤더와 런타임 패키지로 C++ 애플리케이션, 플러그인, Python 바인딩을 다시 빌드하세요. ABI 6 바이너리를 재사용하거나 호환성 심볼릭 링크를 추가하지 마세요.
+
+### 전처리 {#v061-preproc}
+
+- 중앙 자르기는 최종 MPK 크기로 자르기 전에 선택적 `preprocess.resize.shorter_side`를 지원합니다. 전체 크기 조정의 필터 범위를 유지하고 역변환을 게시합니다. ABI 8 및 일치하는 커널 펌웨어로 다시 빌드하고 이전 바이너리를 혼용하지 마세요.
+
+- Model 전처리와 독립형 Resize는 `ResizeInterpolation`을 공유합니다. 새 코드에서는 샘플러 문자열 대신 `preprocess.resize.interpolation = ResizeInterpolation.BilinearAntialiased`를 사용하세요. 기존 `scaling_type` 문자열의 호환성은 유지되며 충돌하는 기본값 이외의 문자열은 거부됩니다.
+
+- 기존 전처리 옵션에서 안티앨리어싱 이중선형 크기 조정, 명시적인 원본 재조정 계수, 색 변환 위치, 부동소수점 변환 정책을 지정할 수 있습니다. 고정 원본 산술 경로에서는 평균과 표준편차 필드가 합성된 아핀 변환 대신 원래 평균과 제수를 유지합니다. BF16은 기존 절삭이 기본이며 최근접 짝수 반올림은 명시적으로 선택합니다. FP16은 최근접 짝수 반올림을 사용합니다. 정밀 INT8 양자화에는 모델의 승수와 일치하는 원본 스텝이 필요하며, 승수로 이 스텝을 복원할 수 없습니다. 새 옵션을 지정하지 않으면 기존 경로를 유지합니다. [Preproc](/reference/nodes/preproc)를 참조하세요.
+
 ## 0.6.0
 
 ### 호환성이 깨지는 변경 사항

@@ -25,6 +25,10 @@ flowchart LR
     Benchmark[Core benchmark reports] --> Sentinel[Optional Sentinel telemetry]
 ```
 
+Model 與獨立的 Resize 共用僅含值的 `ResizeInterpolation` 列舉及單一取樣器權杖對應。Model 規劃會先解析可選的型別設定，再處理圖像意圖、階段投影與圖形來源資訊；既有字串僅保留在相容性邊界。
+
+模型與獨立影像選項會轉換為相同的一般 Preproc 請求。固定來源運算保留原始 FP32 數值縮放、尺寸縮放後的平均值／除數，以及量化步長的運算邊界；它不是任意順序的轉換解譯器。輸入 dtype、量化及實體佈局仍由 MPK 決定。新選項需明確啟用，省略時保留舊版位元組。Core 只投影意圖與幾何資訊；數值檢查及執行由 Kernels 負責。
+
 Kernels 仍是操作目錄與數值准入的權威來源。Scheduler 透過 Runner 轉送一般化要求；
 Scheduler 與 Core 都不維護韌體 ID 或逐操作派送表。Core 保留公開節點 API、幾何原則
 與線路格式處理。Scheduler 在套件組驗證後具體化新的轉接器／解析器工廠。
@@ -1696,3 +1700,8 @@ JSON 保留 `sima.neat.status.v1`，並新增 `components.pcieHost`、`component
 PyNeat 和 PyNeatPCIe 狀態會列出每個偵測到的安裝版本及其虛擬環境路徑。不同環境會顯示為多個環境，而非版本衝突。對於虛擬環境以外的套件，輸出會改為顯示套件目錄。狀態查詢只讀取套件中繼資料，不會匯入原生模組。
 
 JSON 中的每個 Python 項目會新增 `installations` 陣列。每筆記錄包含 `version`、`environment` 和 `path`（套件目錄）。在虛擬環境以外，`environment` 為 `null`。若安裝版本不同，摘要的 `version` 為 `null`；僅有多個安裝不會設定 `error`。指向同一安裝的符號連結路徑只會列出一次。
+
+
+## 裁切幾何的權責 {#crop-geometry-ownership}
+
+Core 根據實際來源尺寸，計算並檢查 Crop 的虛擬縮放尺寸與中央視窗偏移量。Kernels 保留原始來源的濾波範圍，直接計算該視窗，不插入中間影像或 CPU 裁切。最終尺寸仍由 MPK 決定。Preproc 發佈實際的模型至原始影像邊緣座標仿射轉換，並與半像素取樣中心座標區分。支援的偵測配方會在模型空間選取後使用此權威資訊；缺少或衝突的幾何資訊將被拒絕。

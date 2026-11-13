@@ -250,6 +250,8 @@ std::string_view profile(BoxDecodeType type) {
     return "efficientdet_v1";
   case BoxDecodeType::Detr:
     return "detr_v1";
+  case BoxDecodeType::DetrFocal:
+    return "detr_focal";
   case BoxDecodeType::Centernet:
     return "centernet_v1";
   case BoxDecodeType::Ssd:
@@ -305,6 +307,28 @@ const QuantStaticSpec& quantization(const LogicalInputStaticSpec& input) {
 }
 } // namespace
 
+bool boxdecode_supports_detection_transform(BoxDecodeType type) {
+  switch (type) {
+  case BoxDecodeType::YoloV26:
+  case BoxDecodeType::YoloV5:
+  case BoxDecodeType::YoloV7:
+  case BoxDecodeType::YoloV8:
+  case BoxDecodeType::YoloV9:
+  case BoxDecodeType::YoloV10:
+  case BoxDecodeType::YoloV6:
+  case BoxDecodeType::YoloX:
+  case BoxDecodeType::Yolo:
+  case BoxDecodeType::EffDet:
+  case BoxDecodeType::Detr:
+  case BoxDecodeType::DetrFocal:
+  case BoxDecodeType::Centernet:
+  case BoxDecodeType::Ssd:
+    return true;
+  default:
+    return false;
+  }
+}
+
 BoxDecodeKernelRecipeResult prepare_boxdecode_kernel(const CompiledBoxDecodeContract& source,
                                                      const BoxDecodeGeometryOptions& geometry) {
   const auto& p = source.payload;
@@ -316,7 +340,8 @@ BoxDecodeKernelRecipeResult prepare_boxdecode_kernel(const CompiledBoxDecodeCont
     invalid("model and original image geometry must be resolved");
   if (geometry.resize == ResizeMode::Crop && p.decode_type != BoxDecodeType::SuperPoint &&
       !((p.decode_type == BoxDecodeType::YoloXSegPose ||
-         box_decode_type_is_oriented(p.decode_type)) &&
+         box_decode_type_is_oriented(p.decode_type) ||
+         boxdecode_supports_detection_transform(p.decode_type)) &&
         geometry.model_to_original))
     invalid("crop geometry is not supported by the numerical recipe");
   if (p.topk == 0)
@@ -324,8 +349,12 @@ BoxDecodeKernelRecipeResult prepare_boxdecode_kernel(const CompiledBoxDecodeCont
             "decoding, or inherit a positive Model capacity with a model-bound node");
   if (p.topk < 0 || p.topk > 65536)
     invalid("top_k output capacity must be 1..65536");
-  if (p.decode_type != BoxDecodeType::SuperPoint && (p.num_classes < 1 || p.num_classes > 336))
-    invalid("class count must be 1..336 before profile-specific validation");
+  const int max_classes = p.decode_type == BoxDecodeType::DetrFocal ? 1024 : 336;
+  if (p.decode_type != BoxDecodeType::SuperPoint &&
+      (p.num_classes < 1 || p.num_classes > max_classes))
+    invalid(p.decode_type == BoxDecodeType::DetrFocal
+                ? "focal class count must be 1..1024 before profile-specific validation"
+                : "class count must be 1..336 before profile-specific validation");
   Builder build;
   build.compiled.runtime_contract = source.runtime_contract;
   auto& runtime = build.compiled.runtime_contract;
@@ -458,6 +487,12 @@ BoxDecodeKernelRecipeResult prepare_boxdecode_kernel(const CompiledBoxDecodeCont
     const bool masks = selected_task == "segmentation" || seg_pose;
     int keypoints = 17;
     const auto option = p.decode_type_option.value_or(BoxDecodeTypeOption::Auto);
+    if (selected_profile == "detr_focal" && option != BoxDecodeTypeOption::Auto &&
+        option != BoxDecodeTypeOption::InterleavedByHead &&
+        option != BoxDecodeTypeOption::InterleavedByHeadLogit &&
+        option != BoxDecodeTypeOption::GroupedByRole &&
+        option != BoxDecodeTypeOption::GroupedByRoleLogit)
+      invalid("focal queries require a two-tensor logit head layout");
     const bool split_extents = decoded && (option == BoxDecodeTypeOption::Split3Interleaved ||
                                            option == BoxDecodeTypeOption::Split3Grouped);
     const std::size_t per_head = (combined ? 1 : 2) +
@@ -559,9 +594,13 @@ BoxDecodeKernelRecipeResult prepare_boxdecode_kernel(const CompiledBoxDecodeCont
         decoded_objectness = objectness;
       }
       if (selected_profile == "detr_v1") {
-        if (hwc(runtime.logical_inputs[boxes].shape, runtime.logical_inputs[boxes].layout)[2] != 4)
+        if (logical_depth(boxes) != 4)
           std::swap(boxes, scores);
       }
+      if (selected_profile == "detr_focal" &&
+          (count != 2 || logical_depth(boxes) != 4 || logical_depth(scores) != p.num_classes))
+        invalid(
+            "focal queries require exactly [normalized cxcywh, class logits] without background");
       channels[boxes] = combined ? 3 * (p.num_classes + 5)
                         : center ? 2
                         : dfl    ? 64
@@ -662,6 +701,11 @@ BoxDecodeKernelRecipeResult prepare_boxdecode_kernel(const CompiledBoxDecodeCont
     std::vector<k::TensorSpec> tensors;
     for (const auto& in : inputs)
       tensors.push_back(in.tensor);
+    // An explicit affine is authoritative. Crop is metadata policy, not a new
+    // numerical recipe's legacy fallback mapping (DETR/SSD require Stretch).
+    const auto numerical_resize = geometry.resize == ResizeMode::Crop
+                                      ? default_boxdecode_resize_mode(p.decode_type)
+                                      : geometry.resize;
     std::vector<k::Parameter> parameters{
         {"profile", selected_profile},
         {"task", selected_task},
@@ -669,7 +713,7 @@ BoxDecodeKernelRecipeResult prepare_boxdecode_kernel(const CompiledBoxDecodeCont
         {"original_image_size",
          k::ParameterArray{geometry.original_width, geometry.original_height}},
         {"resize",
-         !oriented && geometry.resize == ResizeMode::Stretch ? "stretch" : "centered_letterbox"},
+         !oriented && numerical_resize == ResizeMode::Stretch ? "stretch" : "centered_letterbox"},
         {"num_classes", p.num_classes},
         {"max_detections", capacity},
         {"rcnn_per_level_topk", rcnn ? p.topk : 0},
@@ -690,15 +734,12 @@ BoxDecodeKernelRecipeResult prepare_boxdecode_kernel(const CompiledBoxDecodeCont
       for (const auto value : p.pose_classes)
         pose_classes.emplace_back(value);
       parameters.push_back({"pose_classes", std::move(pose_classes)});
-      if (geometry.model_to_original) {
-        const auto& t = *geometry.model_to_original;
-        parameters.push_back({"model_to_original", k::ParameterArray{t[0], t[1], t[2], t[3]}});
-      }
-    } else if (oriented) {
+    }
+    if (geometry.model_to_original) {
+      if (!seg_pose && !oriented && !boxdecode_supports_detection_transform(p.decode_type))
+        invalid("explicit affine is unsupported by this BoxDecode profile/task");
       const auto& t = *geometry.model_to_original;
       parameters.push_back({"model_to_original", k::ParameterArray{t[0], t[1], t[2], t[3]}});
-    } else if (geometry.model_to_original) {
-      invalid("explicit affine requires a complete-geometry BoxDecode profile");
     }
     numerical = checked(
         scheduler::check_kernel({"boxdecode", k::Target::A65, tensors, outputs, parameters}));

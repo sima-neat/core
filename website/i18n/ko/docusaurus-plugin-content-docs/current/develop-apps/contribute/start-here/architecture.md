@@ -26,6 +26,10 @@ flowchart LR
     Benchmark[Core benchmark reports] --> Sentinel[Optional Sentinel telemetry]
 ```
 
+Model과 독립형 Resize는 값 전용 `ResizeInterpolation` 열거형과 하나의 샘플러 토큰 매핑을 공유합니다. Model 계획은 이미지 의도, 스테이지 투영, 그래프 출처를 처리하기 전에 선택적인 열거형 설정을 해석합니다. 기존 문자열은 호환성 경계로 유지됩니다.
+
+모델과 독립형 이미지 옵션은 동일한 일반 Preproc 요청으로 내려갑니다. 고정 원본 연산은 원래 FP32 재스케일링, 크기 조정 후 평균/제수, 양자화 스텝 경계를 유지하며 임의 순서 변환 인터프리터가 아닙니다. 입력 dtype, 양자화, 물리 레이아웃은 여전히 MPK가 결정합니다. 새 옵션은 명시적으로 선택하며 생략하면 기존 바이트를 유지합니다. Core는 의도와 기하만 전달하고, 수치적 허용 여부와 실행은 Kernels가 소유합니다.
+
 Kernels는 연산 카탈로그와 수치 연산 허용 판정의 권한을 유지합니다.
 Scheduler는 Runner를 통해 범용 요청을 전달하며, Scheduler와 Core 모두 펌웨어 ID나
 연산별 디스패치 테이블을 유지하지 않습니다. Core는 공개 노드 API, 형상 정책과
@@ -1632,3 +1636,8 @@ JSON은 `sima.neat.status.v1`을 유지하며 `components.pcieHost`, `components
 PyNeat 및 PyNeatPCIe 상태는 감지된 각 설치의 버전과 가상 환경 경로를 표시합니다. 별도 환경은 버전 충돌이 아닌 여러 환경으로 표시합니다. 가상 환경 외부의 패키지는 패키지 디렉터리를 대신 표시합니다. 상태 조회는 네이티브 모듈을 가져오지 않고 패키지 메타데이터를 읽습니다.
 
 JSON의 각 Python 항목에 `installations` 배열이 추가됩니다. 각 레코드에는 `version`, `environment`, `path`(패키지 디렉터리)가 포함됩니다. 가상 환경 외부에서는 `environment`가 `null`입니다. 설치된 버전이 다르면 요약 `version`은 `null`이며, 여러 설치가 있다는 이유만으로 `error`를 설정하지 않습니다. 같은 설치를 가리키는 심볼릭 링크 경로는 한 번만 표시합니다.
+
+
+## 자르기 기하 정보의 소유권 {#crop-geometry-ownership}
+
+Core는 실제 원본 크기로 Crop의 가상 크기 조정 크기와 중앙 창 오프셋을 계산하고 검증합니다. Kernels는 원본 필터 범위를 유지하여 창을 직접 계산하며 중간 이미지나 CPU 자르기를 삽입하지 않습니다. 최종 크기는 MPK가 소유합니다. Preproc는 반 픽셀 샘플 중심 좌표와 구별되는 실제 모델-원본 경계 좌표 아핀 변환을 게시합니다. 지원되는 검출 레시피는 모델 공간 선택 후 이 정보를 사용하며 누락되거나 충돌하는 기하 정보는 거부합니다.

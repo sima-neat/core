@@ -29,6 +29,10 @@ flowchart LR
     Benchmark[Core benchmark reports] --> Sentinel[Optional Sentinel telemetry]
 ```
 
+Model and standalone Resize share the value-only `ResizeInterpolation` enum and one sampler-token mapping. Model planning resolves the optional typed selection before image intent, stage projection and graph provenance; legacy strings remain a compatibility boundary.
+
+Model and standalone image options lower to the same ordinary Preproc request. Fixed source arithmetic preserves the original FP32 rescale, post-resize mean/divisor and quantization-step boundaries; it is not an ordered transform interpreter. MPK ingress dtype, quantization and physical layout remain authoritative. New options opt in explicitly; absent options retain legacy bytes. Core only projects intent and geometry; Kernels owns numerical admission and execution.
+
 Kernels remains the operation catalogue and numerical-admission authority.
 Scheduler forwards generic requests through Runner; neither Scheduler nor Core
 maintains firmware IDs or a per-operation dispatch table. Core retains public
@@ -2290,3 +2294,8 @@ JSON retains `sima.neat.status.v1` and adds `components.pcieHost`, `components.p
 PyNeat and PyNeatPCIe status lists each detected installation with its version and virtual environment path. Separate environments are reported as multiple environments, not a version conflict. For packages outside a virtual environment, the output shows the package directory instead. Status reads package metadata without importing native modules.
 
 Each Python entry in JSON adds an `installations` array. Each record contains `version`, `environment`, and `path` (the package directory). `environment` is `null` outside a virtual environment. The summary `version` is `null` when installed versions differ; multiple installations alone do not set `error`. Symlinked paths to the same installation are listed once.
+
+
+## Crop geometry ownership {#crop-geometry-ownership}
+
+Core resolves Crop from actual source dimensions into a checked virtual resize size and center-window offset. Kernels evaluates that window directly using the original source filter support; no intermediate image or CPU crop is inserted. The final dimensions remain MPK-owned. Preproc publishes the actual model-to-original edge affine, distinct from half-pixel sample-center coordinates. Supported detection recipes consume that authority after model-space selection; missing or conflicting geometry is rejected.

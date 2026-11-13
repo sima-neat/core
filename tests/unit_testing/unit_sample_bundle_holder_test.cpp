@@ -176,7 +176,7 @@ void check_bundle_output_override_preserves_bundle_kind() {
           "second field tensor shape override mismatch");
 }
 
-void check_many_shared_views_use_unique_memory_slots() {
+void check_many_shared_views_use_unique_memory_slots(simaai::neat::TensorDType dtype) {
   using namespace simaai::neat;
   GstBufferPool* pool = gst_buffer_pool_new();
   GstStructure* config = gst_buffer_pool_get_config(pool);
@@ -204,8 +204,8 @@ void check_many_shared_views_use_unique_memory_slots() {
   for (int view_index = 0; view_index < 84; ++view_index) {
     Tensor tensor;
     tensor.storage = sources[view_index % 2];
-    tensor.dtype = TensorDType::UInt8;
-    tensor.shape = {8};
+    tensor.dtype = dtype;
+    tensor.shape = {dtype == TensorDType::BFloat16 ? 4 : 8};
     tensor.byte_offset = (view_index / 2) * 8;
     tensor.route.memory_index = 0;
     fields.push_back(std::move(tensor));
@@ -228,6 +228,10 @@ void check_many_shared_views_use_unique_memory_slots() {
           "shared view descriptors failed: " + err);
   require(descriptor.tensors.size() == 84U, "shared view descriptor count mismatch");
   for (std::size_t i = 0; i < descriptor.tensors.size(); ++i) {
+    require(descriptor.tensors[i].dtype == (dtype == TensorDType::BFloat16
+                                                ? SIMA_TENSOR_SET_DTYPE_BF16_V1
+                                                : SIMA_TENSOR_SET_DTYPE_UINT8_V1),
+            "shared views must preserve dtype without conversion");
     require(descriptor.tensors[i].memory_index == static_cast<int>(i % 2),
             "shared view memory slot mismatch");
     require(descriptor.tensors[i].byte_offset == static_cast<int64_t>((i / 2) * 8),
@@ -327,7 +331,8 @@ int main() {
     simaai::neat::gst_init_once();
 
     check_bundle_output_override_preserves_bundle_kind();
-    check_many_shared_views_use_unique_memory_slots();
+    check_many_shared_views_use_unique_memory_slots(simaai::neat::TensorDType::UInt8);
+    check_many_shared_views_use_unique_memory_slots(simaai::neat::TensorDType::BFloat16);
     check_mixed_holders_are_rejected_before_metadata_import();
 
     GstSample* source = make_tensor_sample_with_contract_meta();
