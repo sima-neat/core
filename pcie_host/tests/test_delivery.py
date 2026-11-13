@@ -423,11 +423,21 @@ GENAI_CMAKE_ARGS=()
 
     def test_exact_cmake_dependency_guard(self):
         source = (ROOT / 'CMakeLists.txt').read_text()
+        config = (ROOT / 'cmake/SimaPCIeHostConfig.cmake.in').read_text()
         self.assertIn('simaai-scheduler-pcie-host (= ${SIMAPCIE_SCHEDULER_PACKAGE_VERSION})', source)
         self.assertIn('simaai-scheduler-pcie-host-dev (= ${SIMAPCIE_SCHEDULER_PACKAGE_VERSION})', source)
         self.assertIn('NativePackageGuard.cmake', source)
         self.assertIn('set(CMAKE_CXX_STANDARD 20)', source)
         self.assertIn('set(CMAKE_CXX_STANDARD_REQUIRED ON)', source)
+        self.assertIn('if(WIN32)\n  set(SIMAPCIE_SCHEDULER_CONFIG_COMPONENTS pcie_host)', source)
+        self.assertIn(
+            'set(SIMAPCIE_SCHEDULER_CONFIG_COMPONENTS pcie_host pcie_service_headers)', source)
+        self.assertIn('@SIMAPCIE_SCHEDULER_CONFIG_COMPONENTS@', config)
+        self.assertIn('PkgConfig::SIMAPCIE_GST', source)
+        self.assertIn('pkg_check_modules(SIMAPCIE_GST REQUIRED IMPORTED_TARGET GLOBAL', config)
+        self.assertLess(
+            config.index('pkg_check_modules(SIMAPCIE_GST'),
+            config.index('include("${CMAKE_CURRENT_LIST_DIR}/SimaPCIeHostTargets.cmake")'))
         self.assertNotIn('libstdc++6 (>= 14)', source)
 
     def test_default_native_compiler_reaches_required_scheduler_component(self):

@@ -25,8 +25,9 @@ Neat PCIe 主機封裝支援以下經過驗證的主機平台：
 | --- | --- | --- |
 | Ubuntu 22.04 | x86_64 | 支援 |
 | Ubuntu 24.04 | x86_64 | 支援 |
+| Windows 11 | x86_64 | 原生預覽；僅支援視覺推論 |
 
-Arm64 主機上的建置尚未經過驗證。Windows 11 不受支援。
+Arm64 主機上的建置尚未經過驗證。Windows 預覽不支援 PCIe GenAI 傳輸。
 
 ## 線上安裝先決條件
 
@@ -78,6 +79,40 @@ source ~/pyneatpcie/bin/activate
 python3 -c "import pyneatpcie; print('pyneatpcie ready')"
 gst-inspect-1.0 neatpciehost
 </ShellCommand>
+
+## 安裝 Windows 11 原生預覽
+
+Windows 預覽是 `pcie::Model` 視覺 API 的原生 Visual Studio 建置，不支援 `pcie::genai::GenAIModel`。請先安裝相符的 x64 GStreamer MSVC 執行階段、SiMa PCIe 驅動程式，以及現有的 SiMa CLI，然後使用 CLI 將相符的 Scheduler MSI、Core MSI 和 `win_amd64` wheel 安裝為同一組套件。
+
+```powershell
+sima-cli neat install core/pciehost/windows/amd64@3.0
+& "$env:USERPROFILE\pyneatpcie\Scripts\python.exe" -m pip check
+```
+
+CLI 會在執行 MSI 前檢查 Windows OpenSSH、Platform 服務、GStreamer，以及相容的 Python 安裝。它會建立或重用 `%USERPROFILE%\pyneatpcie` 環境、驗證所有已發布的總和檢查碼、呼叫 Windows Installer 安裝 Scheduler 與 Core，並執行主機診斷及安裝相符的程式設計代理技能和 wheel。如需修復或升級，請再次執行相同指令。若要使用其他環境，請指定 `--python-executable <path>`；若只安裝原生 C++，請使用 `--native-only`。原生元件由 Windows Installer 負責移除；Python 套件則由 pip 負責移除。
+
+安裝完成後，請設定一次連到卡片的免密碼 SSH：
+
+```powershell
+& "C:\Program Files\SimaPCIeHost\bin\pcie-setup.cmd"
+```
+
+此工具會從本機的 `10.0.N.1` 管理連線探索卡片位址。若無法自動探索，請傳入 `-Hosts 10.0.0.2`。只有在公開金鑰尚未註冊時，OpenSSH 才會提示輸入卡片密碼；工具不會儲存該密碼。
+
+匯入擴充模組前，Python 套件會在預設安裝根目錄和預設 x64 GStreamer 位置尋找 DLL。若使用其他安裝根目錄，請將 `SIMA_PCIE_HOST_LIBRARY_PATH` 設為包含 PCIe 主機及 GStreamer DLL 的目錄。如果必要的 DLL 已從核准位置以外的地方載入，匯入將會失敗。請先讓安裝版本一致並啟動新程序，不要繼續使用混合的執行階段。
+
+請在原始碼和建置樹狀目錄之外驗證已安裝的 wheel 與外掛程式：
+
+```powershell
+$venv = "$env:USERPROFILE\pyneatpcie"
+$root = "C:\Program Files\SimaPCIeHost"
+$gst = "C:\Program Files\gstreamer\1.0\msvc_x86_64\bin\gst-inspect-1.0.exe"
+$env:PATH = "$root\bin;$(Split-Path $gst);$env:PATH"
+Set-Location $env:TEMP
+& "$root\bin\sima-pcie-host-doctor.cmd"
+& "$venv\Scripts\python.exe" -c "import pyneatpcie as p; print(p.__version__, p.Model)"
+& $gst "$root\bin\gstreamer-1.0\gstneatpciehost.dll"
+```
 
 ## 疑難排解
 

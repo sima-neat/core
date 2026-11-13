@@ -8,6 +8,7 @@ import base64
 import hashlib
 import platform
 import sys
+import sysconfig
 import zipfile
 from pathlib import Path
 
@@ -29,14 +30,7 @@ def wheel_abi_tag() -> str:
 
 
 def wheel_platform_tag() -> str:
-  machine = platform.machine().lower()
-  if machine in {"x86_64", "amd64"}:
-    machine = "x86_64"
-  elif machine in {"aarch64", "arm64"}:
-    machine = "aarch64"
-  else:
-    machine = machine.replace("-", "_")
-  return f"linux_{machine}"
+  return sysconfig.get_platform().replace("-", "_").replace(".", "_")
 
 
 def record_hash(data: bytes) -> str:
@@ -116,6 +110,8 @@ def main() -> int:
   args = parser.parse_args()
 
   wheel = write_wheel(args.stage_dir.resolve(), args.output_dir.resolve(), args.version)
+  if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
   print(wheel)
   return 0
 

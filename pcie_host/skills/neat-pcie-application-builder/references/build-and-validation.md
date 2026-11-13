@@ -13,6 +13,22 @@ dpkg-query -W sima-pcie-host sima-pcie-host-dev
 command -v pcie-setup.sh
 ```
 
+On Windows, verify the native installation and plugin in PowerShell:
+
+```powershell
+$root = "C:\Program Files\SimaPCIeHost"
+$gst = "C:\Program Files\gstreamer\1.0\msvc_x86_64\bin\gst-inspect-1.0.exe"
+$env:PATH = "$root\bin;$(Split-Path $gst);$env:PATH"
+Test-Path "$root\include\simaai\neat\pcie\Model.h"
+& "$root\bin\sima-pcie-host-doctor.cmd"
+& $gst "$root\bin\gstreamer-1.0\gstneatpciehost.dll"
+```
+
+Before the first connected-card run on Windows, provision or verify passwordless
+SSH with `& "$root\bin\pcie-setup.cmd"`. Pass `-Hosts 10.0.0.2` if automatic
+management-link discovery is unavailable. Let OpenSSH prompt interactively;
+never put a card password in source code or a command argument.
+
 Check `Model.h` for `pcie::Model` or `genai/GenAIModel.h` for GenAI under
 `/usr/include/simaai/neat/pcie/`. For `pcie::Model`, also run `gst-inspect-1.0 neatpciehost`.
 GenAI requires matching GenAI-capable host and card packages; plugin inspection does not
@@ -34,6 +50,10 @@ For GenAI, verify the selected interpreter exposes the separate API:
 ~/pyneatpcie/bin/python -c \
   'from pyneatpcie import genai; print(genai.GenAIModel); print(genai.GenerationRequest)'
 ```
+
+On Windows, this import check confirms only that the bindings are installed. Customer acceptance
+also requires the release-qualified Platform package and the connected-card C++ and Python GenAI
+matrix.
 
 ## C++ Build
 
@@ -61,6 +81,13 @@ and build natively on the host:
 ```bash
 cmake -S . -B build
 cmake --build build -j"$(nproc)"
+```
+
+With Visual Studio Build Tools on Windows, use the installed package prefix:
+
+```powershell
+cmake -S . -B build -A x64 -DCMAKE_PREFIX_PATH="C:\Program Files\SimaPCIeHost"
+cmake --build build --config Release
 ```
 
 ## Connected-Card Validation
@@ -98,4 +125,4 @@ When the PCIe extras bundle is present, prefer its matching-release tutorials ov
 - `share/sima-pcie-host/tutorials/029_run_genai_over_pcie/`
 
 Tutorial 026 uses separate `Model` objects on distinct queues. It does not require the excluded
-`pcie::Runtime` API.
+`pcie::Runtime` API. Tutorial 029 requires a Linux host; do not use it for native Windows.

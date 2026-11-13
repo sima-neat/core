@@ -4,8 +4,6 @@
 
 #include <zlib.h>
 
-#include <unistd.h> // mkdtemp
-
 #include <algorithm>
 #include <atomic>
 #include <array>
@@ -19,6 +17,7 @@
 #include <iterator>
 #include <limits>
 #include <optional>
+#include <random>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -27,6 +26,16 @@
 #include <unordered_set>
 #include <utility>
 #include <vector>
+
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <process.h>
+#include <windows.h>
+#else
+#include <unistd.h>
+#endif
 
 namespace simaai::neat::internal {
 namespace fs = std::filesystem;
@@ -49,7 +58,16 @@ struct ArchiveContents {
   ModelArchiveManifest manifest;
 };
 
+[[noreturn]] void throw_archive(ModelArchiveErrorClass code, const std::string& message);
+
 std::string shell_quote(const std::string& value) {
+#ifdef _WIN32
+  if (value.find('"') != std::string::npos || value.find('%') != std::string::npos) {
+    throw_archive(ModelArchiveErrorClass::InvalidArchive,
+                  "invalid_archive: Windows tar path contains an unsupported character");
+  }
+  return '"' + value + '"';
+#else
   std::string out = "'";
   for (char c : value) {
     if (c == '\'') {
@@ -60,6 +78,31 @@ std::string shell_quote(const std::string& value) {
   }
   out += "'";
   return out;
+#endif
+}
+
+const char* null_redirect() {
+#ifdef _WIN32
+  return " 2>NUL";
+#else
+  return " 2>/dev/null";
+#endif
+}
+
+FILE* open_read_pipe(const std::string& command) {
+#ifdef _WIN32
+  return ::_popen(command.c_str(), "rb");
+#else
+  return ::popen(command.c_str(), "r");
+#endif
+}
+
+int close_read_pipe(FILE* pipe) {
+#ifdef _WIN32
+  return ::_pclose(pipe);
+#else
+  return ::pclose(pipe);
+#endif
 }
 
 bool parse_uint64(const std::string& s, std::uint64_t* out) {
@@ -154,10 +197,19 @@ bool checked_add_u64(std::uint64_t a, std::uint64_t b, std::uint64_t* out) {
 }
 
 std::vector<std::string> tar_list_verbose(const std::string& tar_path) {
+#ifdef _WIN32
+  // Windows ships libarchive's bsdtar, whose verbose listing does not support
+  // GNU tar's --full-time option and includes separate link-count/owner/group
+  // fields. Keep numeric owners for deterministic parsing across localized
+  // account names.
   const std::string cmd =
-      std::string("tar --numeric-owner --full-time -tvf ") + shell_quote(tar_path) + " 2>/dev/null";
+      std::string("tar --numeric-owner -tvf ") + shell_quote(tar_path) + null_redirect();
+#else
+  const std::string cmd = std::string("tar --numeric-owner --full-time -tvf ") +
+                          shell_quote(tar_path) + null_redirect();
+#endif
 
-  FILE* pipe = ::popen(cmd.c_str(), "r");
+  FILE* pipe = open_read_pipe(cmd);
   if (!pipe) {
     throw_archive(ModelArchiveErrorClass::InvalidArchive,
                   "invalid_archive: failed to open tar listing pipe");
@@ -169,7 +221,7 @@ std::vector<std::string> tar_list_verbose(const std::string& tar_path) {
     lines.emplace_back(buffer);
   }
 
-  const int rc = ::pclose(pipe);
+  const int rc = close_read_pipe(pipe);
   if (rc != 0) {
     throw_archive(ModelArchiveErrorClass::InvalidArchive,
                   "invalid_archive: tar listing failed for " + tar_path);
@@ -392,7 +444,15 @@ TarEntry parse_tar_line(const std::string& line, const ModelArchiveLoaderOptions
   std::string date_token;
   std::string time_token;
 
+#ifdef _WIN32
+  std::string link_count;
+  std::string group;
+  std::string time_or_year_token;
+  if (!(iss >> perms >> link_count >> owner >> group >> size_token >> date_token >> time_token >>
+        time_or_year_token)) {
+#else
   if (!(iss >> perms >> owner >> size_token >> date_token >> time_token)) {
+#endif
     throw_archive(ModelArchiveErrorClass::InvalidArchive,
                   "invalid_archive: malformed tar listing line: " + line);
   }
@@ -551,9 +611,9 @@ json parse_json_entry_strict(const std::vector<std::uint8_t>& bytes, const std::
 std::vector<std::uint8_t> read_tar_entry(const std::string& tar_path,
                                          const std::string& raw_entry_path, std::size_t max_bytes) {
   const std::string cmd = std::string("tar -xOf ") + shell_quote(tar_path) + " -- " +
-                          shell_quote(raw_entry_path) + " 2>/dev/null";
+                          shell_quote(raw_entry_path) + null_redirect();
 
-  FILE* pipe = ::popen(cmd.c_str(), "r");
+  FILE* pipe = open_read_pipe(cmd);
   if (!pipe) {
     throw_archive(ModelArchiveErrorClass::InvalidArchive,
                   "invalid_archive: failed to read tar entry stream");
@@ -566,7 +626,7 @@ std::vector<std::uint8_t> read_tar_entry(const std::string& tar_path,
     const std::size_t n = ::fread(buf.data(), 1, buf.size(), pipe);
     if (n > 0) {
       if (out.size() + n > max_bytes) {
-        ::pclose(pipe);
+        close_read_pipe(pipe);
         throw_archive(ModelArchiveErrorClass::SizeLimitExceeded,
                       "size_limit_exceeded: tar entry exceeds maximum allowed bytes");
       }
@@ -577,14 +637,14 @@ std::vector<std::uint8_t> read_tar_entry(const std::string& tar_path,
       if (::feof(pipe))
         break;
       if (::ferror(pipe)) {
-        ::pclose(pipe);
+        close_read_pipe(pipe);
         throw_archive(ModelArchiveErrorClass::InvalidArchive,
                       "invalid_archive: failed reading tar entry bytes");
       }
     }
   }
 
-  const int rc = ::pclose(pipe);
+  const int rc = close_read_pipe(pipe);
   if (rc != 0) {
     throw_archive(ModelArchiveErrorClass::InvalidArchive,
                   "invalid_archive: tar entry extraction failed for " + raw_entry_path);
@@ -645,7 +705,11 @@ void require_output_space(const fs::path& root, std::uint64_t extracted_bytes,
 }
 
 ModelArchiveErrorClass write_error_class_for_path(int saved_errno, const fs::path& path) {
-  if (saved_errno == ENOSPC || saved_errno == EDQUOT) {
+  if (saved_errno == ENOSPC
+#ifndef _WIN32
+      || saved_errno == EDQUOT
+#endif
+  ) {
     return ModelArchiveErrorClass::OutputStorageUnavailable;
   }
   if (saved_errno == 0) {
@@ -659,8 +723,8 @@ ModelArchiveErrorClass write_error_class_for_path(int saved_errno, const fs::pat
   return ModelArchiveErrorClass::InvalidArchive;
 }
 
-// mkdtemp, not create_directories: it creates the directory atomically at 0700 and fails on an
-// existing name, so a pre-created symlink on a shared /tmp cannot capture the staging path.
+// Create the directory atomically and fail on an existing name, so a
+// pre-created path on a shared temporary directory cannot capture staging.
 fs::path make_staging_dir(const std::string& configured_base) {
   std::error_code ec;
   // No fallback to /tmp: an unusable staging base is a deliberate choice of filesystem that
@@ -681,8 +745,28 @@ fs::path make_staging_dir(const std::string& configured_base) {
                       ec.message() + ")");
   }
 
+#ifdef _WIN32
+  static std::atomic<std::uint64_t> sequence{0};
+  std::random_device random;
+  for (unsigned attempt = 0; attempt < 128; ++attempt) {
+    std::ostringstream leaf;
+    leaf << ".sima_mpk_stage_" << std::hex << random() << random() << '_'
+         << static_cast<unsigned long long>(::_getpid()) << '_'
+         << sequence.fetch_add(1, std::memory_order_relaxed);
+    const auto candidate = staging_base / leaf.str();
+    if (::CreateDirectoryW(candidate.c_str(), nullptr))
+      return candidate;
+    const DWORD error = ::GetLastError();
+    if (error != ERROR_ALREADY_EXISTS) {
+      throw_archive(ModelArchiveErrorClass::OutputStorageUnavailable,
+                    "failed to create archive staging directory at " + candidate.string() +
+                        " (Windows error " + std::to_string(error) + ")");
+    }
+  }
+  throw_archive(ModelArchiveErrorClass::OutputStorageUnavailable,
+                "failed to allocate a unique archive staging directory");
+#else
   const std::string templ = (staging_base / ".sima_mpk_stage_XXXXXX").string();
-
   std::vector<char> buf(templ.begin(), templ.end());
   buf.push_back('\0');
   errno = 0;
@@ -692,6 +776,7 @@ fs::path make_staging_dir(const std::string& configured_base) {
                       std::string(std::strerror(errno)) + ")");
   }
   return fs::path(buf.data());
+#endif
 }
 
 // Both inflate buffers. Sized by measurement; bounded by uInt, the limit on one inflate call.
@@ -1029,9 +1114,9 @@ std::uint64_t stream_tar_entry_to_file(const std::string& tar_path,
                                        const std::string& raw_entry_path, const fs::path& out_path,
                                        std::size_t max_bytes) {
   const std::string cmd = std::string("tar -xOf ") + shell_quote(tar_path) + " -- " +
-                          shell_quote(raw_entry_path) + " 2>/dev/null";
+                          shell_quote(raw_entry_path) + null_redirect();
 
-  FILE* pipe = ::popen(cmd.c_str(), "r");
+  FILE* pipe = open_read_pipe(cmd);
   if (!pipe) {
     throw_archive(ModelArchiveErrorClass::InvalidArchive,
                   "invalid_archive: failed to read tar entry stream");
@@ -1041,7 +1126,7 @@ std::uint64_t stream_tar_entry_to_file(const std::string& tar_path,
   std::ofstream out(out_path, std::ios::binary | std::ios::trunc);
   if (!out.is_open()) {
     const int saved_errno = errno;
-    ::pclose(pipe);
+    close_read_pipe(pipe);
     std::string msg = "failed to open extraction output file: " + out_path.string();
     if (saved_errno != 0) {
       msg += " (" + std::string(std::strerror(saved_errno)) + ")";
@@ -1057,7 +1142,7 @@ std::uint64_t stream_tar_entry_to_file(const std::string& tar_path,
     if (n > 0) {
       total += static_cast<std::uint64_t>(n);
       if (total > max_bytes) {
-        ::pclose(pipe);
+        close_read_pipe(pipe);
         throw_archive(ModelArchiveErrorClass::SizeLimitExceeded,
                       "size_limit_exceeded: extracted entry exceeds per-entry size limit");
       }
@@ -1065,7 +1150,7 @@ std::uint64_t stream_tar_entry_to_file(const std::string& tar_path,
       out.write(buf.data(), static_cast<std::streamsize>(n));
       if (!out.good()) {
         const int saved_errno = errno;
-        ::pclose(pipe);
+        close_read_pipe(pipe);
         std::string msg = "failed writing extracted entry: " + out_path.string();
         if (saved_errno != 0) {
           msg += " (" + std::string(std::strerror(saved_errno)) + ")";
@@ -1078,14 +1163,14 @@ std::uint64_t stream_tar_entry_to_file(const std::string& tar_path,
       if (::feof(pipe))
         break;
       if (::ferror(pipe)) {
-        ::pclose(pipe);
+        close_read_pipe(pipe);
         throw_archive(ModelArchiveErrorClass::InvalidArchive,
                       "invalid_archive: failed reading tar entry bytes");
       }
     }
   }
 
-  const int rc = ::pclose(pipe);
+  const int rc = close_read_pipe(pipe);
   if (rc != 0) {
     throw_archive(ModelArchiveErrorClass::InvalidArchive,
                   "invalid_archive: tar entry extraction failed for " + raw_entry_path);

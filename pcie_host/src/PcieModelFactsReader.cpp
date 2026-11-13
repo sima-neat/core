@@ -1,13 +1,13 @@
 #include "PcieModelFactsReader.h"
 #include "PcieModelFactsReaderInternal.h"
 
+#include "HostPlatform.h"
 #include "model/internal/ModelArchiveLoader.h"
 #include "pipeline/internal/TensorMath.h"
 #include "pipeline/internal/sima/static_contract/MpkDecoder.h"
 
 #include <algorithm>
 #include <cctype>
-#include <cstdlib>
 #include <filesystem>
 #include <limits>
 #include <stdexcept>
@@ -15,38 +15,11 @@
 #include <system_error>
 #include <utility>
 #include <vector>
-#include <unistd.h>
 
 namespace fs = std::filesystem;
 
 namespace simaai::neat::pcie::internal {
 namespace {
-
-class TempDir {
-public:
-  TempDir() {
-    std::string tmpl = (fs::temp_directory_path() / "sima-neat-pcie-model-XXXXXX").string();
-    std::vector<char> chars(tmpl.begin(), tmpl.end());
-    chars.push_back('\0');
-    char* made = ::mkdtemp(chars.data());
-    if (!made) {
-      throw std::runtime_error("failed to create temporary extraction directory");
-    }
-    path_ = made;
-  }
-
-  ~TempDir() {
-    std::error_code ec;
-    fs::remove_all(path_, ec);
-  }
-
-  const std::string& path() const {
-    return path_;
-  }
-
-private:
-  std::string path_;
-};
 
 std::vector<std::int64_t>
 best_shape(const simaai::neat::pipeline_internal::sima::MpkTensorContract& tensor) {
@@ -594,7 +567,7 @@ bool graph_has_boxdecode(const simaai::neat::pipeline_internal::sima::MpkContrac
 } // namespace
 
 PcieModelFacts read_model_facts(const std::string& model_path, const ModelOptions& options) {
-  TempDir temp;
+  ScopedTempDirectory temp("sima-neat-pcie-extract");
 
   simaai::neat::internal::ModelArchiveLoaderOptions loader_options;
   loader_options.check_output_free_space = false;
@@ -602,8 +575,8 @@ PcieModelFacts read_model_facts(const std::string& model_path, const ModelOption
   // archived_compile_script.*.py. Match ModelPack's runtime extraction policy:
   // keep the loader defaults strict for tests, but tolerate these extras here.
   loader_options.reject_unsupported_file_types = false;
-  const auto extracted =
-      simaai::neat::internal::ModelArchiveLoader::extract(model_path, temp.path(), loader_options);
+  const auto extracted = simaai::neat::internal::ModelArchiveLoader::extract(
+      model_path, host_path_string(temp.path()), loader_options);
 
   namespace sc = simaai::neat::pipeline_internal::sima::static_contract;
   std::string error;

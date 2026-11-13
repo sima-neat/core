@@ -2113,15 +2113,37 @@ jobs:
         run: |
           ./scripts/ci/pciehost/cleanup_queue.sh || true
 
+  test-pciehost-windows:
+    name: Build and qualify Windows PCIe host
+    if: ${{ always() && !inputs.offline_source_run_id && (inputs.build_mode || 'standard') == 'standard' && needs.detect-changes.outputs.docs_only != 'true' && needs.build.result == 'success' && needs.build-pciehost-packages.result == 'success' && needs.test-devkit.result == 'success' && needs.test-pciehost-hardware.result == 'success' }}
+    needs:
+      - detect-changes
+      - build
+      - build-pciehost-packages
+      - test-devkit
+      - test-pciehost-hardware
+    permissions:
+      actions: write
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/pcie-host-windows.yml
+    with:
+      linux_current_run: true
+      include_genai: true
+      validation_only: ${{ inputs.validation_only || false }}
+      require_signatures: false
+    secrets: inherit
+
   promote-latest-tag:
     name: Promote Latest Tag
-    if: ${{ always() && !inputs.validation_only && (github.ref_type == 'branch' || github.ref_type == 'tag') && (inputs.build_mode || 'standard') == 'standard' && needs.detect-changes.outputs.docs_only != 'true' && needs.test-devkit.result == 'success' && needs.publish-pciehost-package.result == 'success' && (needs.test-pciehost-hardware.result == 'success' || needs.test-pciehost-hardware.result == 'skipped') }}
+    if: ${{ always() && !inputs.validation_only && (github.ref_type == 'branch' || github.ref_type == 'tag') && (inputs.build_mode || 'standard') == 'standard' && needs.detect-changes.outputs.docs_only != 'true' && needs.test-devkit.result == 'success' && needs.publish-pciehost-package.result == 'success' && (needs.test-pciehost-hardware.result == 'success' || needs.test-pciehost-hardware.result == 'skipped') && needs.test-pciehost-windows.result == 'success' }}
     needs:
       - detect-changes
       - resolve-vulcan-config
       - publish-pciehost-package
       - test-devkit
       - test-pciehost-hardware
+      - test-pciehost-windows
     uses: sima-neat/.github/.github/workflows/vulcan-update-latest-artifacts.yml@main
     with:
       aws_region: ${{ needs.resolve-vulcan-config.outputs.aws_region }}
@@ -2151,6 +2173,7 @@ jobs:
       - test-devkit-shard
       - test-devkit
       - test-pciehost-hardware
+      - test-pciehost-windows
       - promote-latest-tag
     uses: ./.github/workflows/pcie-offline.yml
     with:
@@ -2178,6 +2201,7 @@ jobs:
       - test-devkit-shard
       - test-devkit
       - test-pciehost-hardware
+      - test-pciehost-windows
       - promote-latest-tag
     runs-on: ubuntu-24.04
     steps:

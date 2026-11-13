@@ -52,6 +52,11 @@ Set `connection.card_id` to select the card; its default address is
 `10.0.<card_id>.2`. Set `connection.card_host` to override that address.
 For speculative decoding, pass the parent directory of a prepared target/draft
 pair. Both models load in one card session using their compiled configuration.
+Linux uses the native Platform service for GenAI transport. Windows uses the
+matching Platform service exported by `SiMaPCIe.dll`; the Neat package resolves
+that DLL at runtime and does not redistribute it. Windows GenAI is a supported
+customer configuration only after the matching Platform package and the full
+C++ and Python GenAI release matrix have passed qualification.
 
 ### Multi-model runtime
 
@@ -144,10 +149,10 @@ Useful variants:
 pcie-setup.sh --hosts "10.0.0.2 10.0.1.2"
 pcie-setup.sh --range 0-3
 pcie-setup.sh --key ~/.ssh/sima_neat_pcie_ed25519
-pcie-setup.sh --password '<bootstrap-password>'
 ```
 
-Password/`sshpass` is only a bootstrap path for installing the key. Runtime
+When password bootstrap is required, let `pcie-setup.sh` prompt interactively;
+do not put the password in a command argument. Runtime
 PCIe model APIs use passwordless SSH. If `~/.ssh/sima_neat_pcie_ed25519` exists,
 the PCIe host automatically passes it to `ssh`/`scp`; otherwise it falls back to
 the user's normal SSH configuration.
@@ -168,6 +173,13 @@ struct ConnectionOptions {
   std::string card_gst_debug_file;
 };
 ```
+
+`card_env` also keeps host lifecycle bookkeeping aligned with a non-default
+card installation. `SIMA_NEAT_PCIE_HELPER_PATH` selects the card worker,
+`SIMA_NEAT_PCIE_RUN_DIR` selects its PID/status/start-lock directory, and
+`SIMA_NEAT_PCIE_LOG_DIR` selects its default log directory. Each override must
+be an absolute POSIX path. The selected directories must already exist and be
+writable by the SSH user. Normal packages use the defaults shown above.
 
 `card_id` is the hardware/plugin card number passed to `neatpciehost` as
 `card-number`. It is also used as the default SSH management endpoint when
@@ -374,8 +386,165 @@ implementation sources are build-only inputs to Scheduler CI and are not include
 in the delivered artifacts. The PCIe driver and Platform userspace library remain
 separately provisioned.
 
-PCIe host builds always include the GenAI APIs. They do not acquire the device
-Scheduler profile, Runner, Kernels or Codecs.
+Linux and Windows PCIe host builds include the same public vision and GenAI API
+surfaces. Release qualification runs the complete GenAI matrix on Windows;
+validation-only runs may be used for the shorter vision path.
+Neither build acquires the device Scheduler profile, Runner, Kernels or Codecs.
+
+### Windows package
+
+The native Windows build produces a Core-owned WiX v3 MSI. Scheduler produces a
+separate MSI for its channel and `neatpciehost` plugin. Release metadata pins the
+two packages as one ordered native cohort, while Windows Installer retains file
+ownership for each producer. Python remains a separate wheel owned by the
+application's Python environment. The initial wheel supports CPython 3.14 x64;
+other Python minors are not part of the first qualified Windows configuration.
+The customer installs the complete cohort with one command:
+
+```powershell
+sima-cli neat install core/pciehost/windows/amd64@3.0
+```
+
+The CLI creates or reuses `%USERPROFILE%\pyneatpcie` and installs the wheel
+there automatically. It verifies every artifact checksum and checks OpenSSH,
+the Platform service, GStreamer, and the compatible Python installation before
+starting either installer. It installs the Scheduler MSI and then the Core MSI,
+runs the installed host doctor, syncs the package-matched customer skill, and
+invokes pip through the managed environment. Repeating the command uses Windows
+Installer's upgrade/repair behavior and skips the pip step when the requested
+`pyneatpcie` version already imports successfully. Use
+`--python-executable <path>` to select another environment or `--native-only`
+to install only the native C++ cohort.
+
+Provision passwordless card SSH once after installation. The Windows utility
+mirrors `pcie-setup.sh`, but uses Windows OpenSSH and streams the public key to
+the remote shell because Windows does not provide `ssh-copy-id`:
+
+```powershell
+& "C:\Program Files\SimaPCIeHost\bin\pcie-setup.cmd"
+# If management-address discovery is unavailable:
+& "C:\Program Files\SimaPCIeHost\bin\pcie-setup.cmd" -Hosts 10.0.0.2
+```
+
+OpenSSH prompts interactively only when the key is not already enrolled. Do not
+put the card password in a command argument. The `.cmd` wrapper uses a
+process-scoped PowerShell execution-policy override for this installed unsigned
+script; it does not persistently change user or machine policy.
+
+The MSIs do not redistribute Platform or third-party binaries. A supported host
+therefore also needs the qualified Platform runtime, GStreamer MSVC development
+installation, and the CMake packages required by the exported static C++ target
+(including zlib and nlohmann JSON). CI currently supplies those roots explicitly;
+that runner setup is not a customer installation contract. Do not publish the
+selector until a clean-host install or process-scoped activation path proves that
+ordinary C++ and Python processes find the same qualified dependency cohort
+without relying on a developer shell or a machine-wide PATH mutation.
+
+In current sima-cli syntax, `@3.0` selects the artifact branch named `3.0`; it is
+not inferred from `platform-version`. Production delivery must create and promote
+that channel, or the documented command must use the exact Core release-tag form
+already used by the Linux PCIe packages.
+
+Build the MSI from a configured native Windows build directory with `cpack`.
+Use `scripts/create_windows_metadata.py` to create the matching sima-cli
+metadata for the MSI and optional wheel. The default per-machine destination is
+`C:\Program Files\SimaPCIeHost`; a packaging test can set
+`SIMAPCIE_WIX_INSTALL_DIRECTORY` to an isolated directory at configure time.
+
+Core does not copy or repackage Scheduler-owned files. Scheduler publishes its
+owner-produced MSI as an immutable native profile, and Core places that exact MSI
+beside the Core MSI in the customer manifest. Customers still install one cohort
+and do not manage the repository boundary. Core's combined hardware gate owns
+qualification of that customer cohort.
+The Platform driver, host DLLs and daemon remain a separate Platform prerequisite.
+
+### Windows package CI
+
+The Windows producer is `.github/workflows/pcie-host-windows.yml`. Normal Core CI
+uses the same Scheduler policy as Linux: it tries the current Core branch, falls
+back to `develop` only when the published branch index proves the branch is
+absent, resolves the branch's immutable revision once, and verifies the publisher
+manifest and resource hashes. It resolves and records an immutable published
+sima-cli candidate from the supported `main` channel in the same way. Explicit
+workflow run IDs are available only
+for qualifying unpublished Scheduler or sima-cli candidates. The restricted
+`pcie-windows-build` runner supplies the supported MSVC, WiX v3,
+GStreamer, Platform runtime, CMake dependencies and a pinned Python dependency
+wheelhouse.
+
+`scripts/ci/pciehost/build_windows.py` verifies every Scheduler resource against
+its published metadata, installs that MSI, builds Core and the Python extension,
+runs the non-hardware CTest suite, and verifies all generated PE files are x64.
+Before building, it requires its Platform runtime DLL hashes and GStreamer
+identity to match Scheduler's retained dependency receipt.
+It then tests a relocated CMake consumer, creates the Core MSI and wheel, installs
+the exact Core MSI, builds an installed consumer, loads the genuine Scheduler
+plug-in, repeats the ordered Scheduler-to-Core MSI installation, and imports the
+wheel from a fresh virtual environment using only the pinned wheelhouse. Cleanup
+removes the wheel, Core MSI and Scheduler MSI and fails if their shared
+installation root remains. The retained dependency receipt hashes the Platform
+runtime DLLs and records the GStreamer and CMake dependency inputs used by Core.
+
+The retained `core-pciehost-windows-amd64` artifact is the complete ordered
+cohort: Scheduler MSI, Core MSI, optional `pyneatpcie` wheel, C++ hardware test
+extras, checksum metadata, producer receipts and installer logs. A separate
+`pcie-windows-hardware` Windows 11 runner consumes those exact bytes locally. It
+holds matching runner/card locks and admits the exact same-commit Linux Core
+artifact. Inside those locks it privately stages that artifact's firmware and
+tensor and GenAI workers, installs the exact published `sima-cli` candidate
+recorded in the dependency cohort, exposes the release through disposable loopback
+registries, and exercises native-only install, a missing-wheel download failure,
+a checksum-valid but invalid-wheel pip failure after native installation,
+automatic managed-environment recovery with the real wheel, and a repeated
+matching install through the documented `sima-cli neat install` command. It
+deletes and repairs one Core-owned and one Scheduler-owned file through
+Windows Installer, records the Windows version, elevation, Smart App Control, and
+effective AppLocker visibility without changing policy, rechecks plugin discovery,
+rejects a Platform runtime or GStreamer dependency that differs from the producer,
+and then runs the public C++ and Python
+vision suites, kills a card worker and a local client in separate bounded fault
+tests, proves the affected queue can be reopened after each failure, and removes
+Python, Core and Scheduler in reverse order. It restores the stock card firmware
+and removes the private Linux payload before releasing either lock. Latency and
+throughput logs are converted to structured positive, finite measurements in the
+retained evidence. The Windows lane uses the same 100-frame warmup, 3,000-frame
+measurement, 12 ms maximum mean latency, and 440 FPS minimum throughput gates as
+the Linux PCIe lane. Native CTest and Python JUnit receipts must contain the exact
+expected case sets with zero skips, failures, or errors. Release admission
+requires the same resource checksums, no remaining card worker, and a clean
+install root. A standalone validation may omit GenAI for a shorter diagnostic
+run. Customer publication requires the complete C++ and Python GenAI matrix. In
+the normal path the Windows lane is called by Core's main
+Vulcan workflow after the same-revision Linux build, DevKit, and PCIe-card gates;
+the Windows lane consumes that run's exact card payload. A standalone dispatch
+must instead identify a prior successful Linux run for the same Core commit.
+Windows success and publication are required before Core advances its branch
+`latest` tag, so Linux regressions and dependency validation cannot be bypassed.
+
+Formal release qualification may additionally set `require_upgrade=true` and
+select an earlier successful Core Windows workflow by run ID and full commit.
+The hardware runner installs that cohort first through the same `sima-cli`
+command, then installs the release candidate over it. The two cohorts must have
+increasing Core package versions and different package bytes. This cross-version
+test is not repeated for every branch promotion, matching Linux policy; repeat
+install, repair, failure recovery, and clean removal remain mandatory on every
+Windows publishing run.
+
+The hardware runner's pinned offline wheelhouse must contain the dependencies
+of both `pyneatpcie` and the selected `sima-cli` wheel. This keeps the acceptance
+transaction independent of PyPI while still exercising the real customer CLI.
+The maintainer sequence, runner inputs, workflow commands, retained evidence,
+and recovery procedure are documented in
+[`scripts/ci/pciehost/WINDOWS_RELEASE.md`](../scripts/ci/pciehost/WINDOWS_RELEASE.md).
+
+Checksums, immutable publisher manifests, exact producer commits, and hardware
+qualification are mandatory. Authenticode is an optional policy gate: when
+`require_signatures=true`, Scheduler and Core sign their shipped EXE, DLL, PYD,
+and MSI files with a runner-provisioned certificate and RFC 3161 timestamp, and
+CI verifies the signature receipts plus the separately supplied Platform runtime
+DLL signatures. Unsigned Neat user-space packages may be published when company
+policy permits them; the installer never bypasses Windows application-control
+policy. Platform owns signing of its driver and other Platform deliverables.
 
 `build.sh` follows the Scheduler policy in Core's `deps/manifest.json`, in the
 `production` publication environment by default. Branch `snap` first tries

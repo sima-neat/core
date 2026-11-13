@@ -27,8 +27,9 @@ PCIe-карти Modalix.
 | --- | --- | --- |
 | Ubuntu 22.04 | x86_64 | Підтримується |
 | Ubuntu 24.04 | x86_64 | Підтримується |
+| Windows 11 | x86_64 | Нативна попередня версія; лише обробка зображень |
 
-Збірки для хоста Arm64 ще не були перевірені. Windows 11 не підтримується.
+Збірки для хоста Arm64 ще не були перевірені. Попередня версія для Windows не підтримує транспорт PCIe GenAI.
 
 ## Передумови встановлення через інтернет
 
@@ -80,6 +81,40 @@ source ~/pyneatpcie/bin/activate
 python3 -c "import pyneatpcie; print('pyneatpcie ready')"
 gst-inspect-1.0 neatpciehost
 </ShellCommand>
+
+## Установлення нативної попередньої версії для Windows 11
+
+Попередня версія для Windows — це нативна збірка Visual Studio для API обробки зображень `pcie::Model`. Вона не підтримує `pcie::genai::GenAIModel`. Спочатку встановіть відповідне середовище виконання x64 GStreamer MSVC, драйвер SiMa PCIe та наявний SiMa CLI. Потім за допомогою CLI встановіть узгоджені пакети Scheduler MSI, Core MSI та wheel `win_amd64` як єдиний набір.
+
+```powershell
+sima-cli neat install core/pciehost/windows/amd64@3.0
+& "$env:USERPROFILE\pyneatpcie\Scripts\python.exe" -m pip check
+```
+
+Перед запуском MSI CLI перевіряє Windows OpenSSH, службу Platform, GStreamer і сумісний Python. Він створює або повторно використовує середовище `%USERPROFILE%\pyneatpcie`, перевіряє опубліковані контрольні суми, запускає Windows Installer для Scheduler і Core, виконує діагностику хоста та встановлює узгоджені навичку агента й wheel. Для відновлення або оновлення повторно виконайте ту саму команду. Щоб вибрати інше середовище, використайте `--python-executable <path>`; щоб установити лише нативну версію C++, використайте `--native-only`. Видаленням нативних компонентів керує Windows Installer, а видаленням пакета Python — pip.
+
+Після встановлення один раз налаштуйте SSH-доступ до карти без пароля:
+
+```powershell
+& "C:\Program Files\SimaPCIeHost\bin\pcie-setup.cmd"
+```
+
+Програма знаходить адресу карти через локальне з'єднання керування `10.0.N.1`. Якщо автоматичне виявлення недоступне, передайте `-Hosts 10.0.0.2`. OpenSSH запитує пароль карти лише тоді, коли відкритий ключ ще не зареєстровано, і не зберігає цей пароль.
+
+Перед імпортом розширення пакет Python шукає DLL у стандартному корені встановлення та стандартному розташуванні x64 GStreamer. Для іншого кореня встановлення задайте в `SIMA_PCIE_HOST_LIBRARY_PATH` каталоги з DLL хоста PCIe та GStreamer. Імпорт завершується помилкою, якщо потрібну DLL уже завантажено не зі схваленого розташування. Узгодьте версії встановлених компонентів і запустіть новий процес замість роботи зі змішаним середовищем виконання.
+
+Перевірте встановлені wheel і плагін поза деревом вихідного коду та збірки:
+
+```powershell
+$venv = "$env:USERPROFILE\pyneatpcie"
+$root = "C:\Program Files\SimaPCIeHost"
+$gst = "C:\Program Files\gstreamer\1.0\msvc_x86_64\bin\gst-inspect-1.0.exe"
+$env:PATH = "$root\bin;$(Split-Path $gst);$env:PATH"
+Set-Location $env:TEMP
+& "$root\bin\sima-pcie-host-doctor.cmd"
+& "$venv\Scripts\python.exe" -c "import pyneatpcie as p; print(p.__version__, p.Model)"
+& $gst "$root\bin\gstreamer-1.0\gstneatpciehost.dll"
+```
 
 ## Усунення несправностей
 

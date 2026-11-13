@@ -29,8 +29,10 @@ The Neat PCIe host package supports the following validated host platforms:
 | --- | --- | --- |
 | Ubuntu 22.04 | x86_64 | Supported |
 | Ubuntu 24.04 | x86_64 | Supported |
+| Windows 11 | x86_64 | Native preview; vision inference only |
 
-Arm64 host builds have not yet been validated. Windows 11 is not supported.
+Arm64 host builds have not yet been validated. The Windows preview does not
+support the PCIe GenAI transport.
 
 ## Online installation prerequisites
 
@@ -89,6 +91,60 @@ source ~/pyneatpcie/bin/activate
 python3 -c "import pyneatpcie; print('pyneatpcie ready')"
 gst-inspect-1.0 neatpciehost
 </ShellCommand>
+
+## Install the Windows 11 native preview
+
+The Windows preview is a native Visual Studio build of the `pcie::Model` vision
+API. It does not support `pcie::genai::GenAIModel`. Install the matching x64
+GStreamer MSVC runtime, the SiMa PCIe driver and the existing SiMa CLI first.
+Then ask the CLI to install the matched Scheduler MSI, Core MSI and
+`win_amd64` wheel as one cohort:
+
+```powershell
+sima-cli neat install core/pciehost/windows/amd64@3.0
+& "$env:USERPROFILE\pyneatpcie\Scripts\python.exe" -m pip check
+```
+
+Before either MSI runs, the CLI checks Windows OpenSSH, the Platform service,
+GStreamer, and a compatible Python installation. It creates or reuses the
+managed environment at `%USERPROFILE%\pyneatpcie`, verifies every published
+checksum, invokes Windows Installer for Scheduler and Core, runs the installed
+host doctor, installs the package-matched coding-agent skill, and installs the
+wheel into that environment. Run the same command again for repair or upgrade.
+Use `--python-executable <path>` to install into a different environment, or
+`--native-only` for a C++-only installation. Windows Installer owns native
+removal; pip owns Python-package removal.
+
+Provision passwordless SSH to the card once after installation:
+
+```powershell
+& "C:\Program Files\SimaPCIeHost\bin\pcie-setup.cmd"
+```
+
+The utility discovers a card address from a local `10.0.N.1` management link.
+Pass `-Hosts 10.0.0.2` when discovery is unavailable. OpenSSH prompts for the
+card password only when its public key is not already enrolled; the utility does
+not store the password.
+
+The Python package discovers DLLs under the default install root and the default
+x64 GStreamer location before importing its extension. For another install root,
+set `SIMA_PCIE_HOST_LIBRARY_PATH` to the directories containing the PCIe host and
+GStreamer DLLs. Import fails if a required DLL is already loaded from outside
+these approved locations. Align the installed versions and start a fresh process
+instead of continuing with a mixed runtime.
+
+Verify the installed wheel and plugin from outside the source/build tree:
+
+```powershell
+$venv = "$env:USERPROFILE\pyneatpcie"
+$root = "C:\Program Files\SimaPCIeHost"
+$gst = "C:\Program Files\gstreamer\1.0\msvc_x86_64\bin\gst-inspect-1.0.exe"
+$env:PATH = "$root\bin;$(Split-Path $gst);$env:PATH"
+Set-Location $env:TEMP
+& "$root\bin\sima-pcie-host-doctor.cmd"
+& "$venv\Scripts\python.exe" -c "import pyneatpcie as p; print(p.__version__, p.Model)"
+& $gst "$root\bin\gstreamer-1.0\gstneatpciehost.dll"
+```
 
 ## Troubleshooting
 

@@ -1,15 +1,11 @@
 cmake_minimum_required(VERSION 3.16)
 
-set(SIMAPCIE_PACKAGE_VERSION "")
-execute_process(
-  COMMAND python3 -c "import json; print(json.load(open('../deps/manifest.json', encoding='utf-8'))['package-version'])"
-  WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-  RESULT_VARIABLE SIMAPCIE_PACKAGE_VERSION_RESULT
-  OUTPUT_VARIABLE SIMAPCIE_PACKAGE_VERSION
-  ERROR_QUIET
-  OUTPUT_STRIP_TRAILING_WHITESPACE
-)
-if (NOT SIMAPCIE_PACKAGE_VERSION_RESULT EQUAL 0 OR SIMAPCIE_PACKAGE_VERSION STREQUAL "")
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/../deps/manifest.json" SIMAPCIE_MANIFEST)
+string(REGEX MATCH
+  "\"package-version\"[ \t\r\n]*:[ \t\r\n]*\"([^\"]+)\""
+  SIMAPCIE_PACKAGE_VERSION_MATCH "${SIMAPCIE_MANIFEST}")
+set(SIMAPCIE_PACKAGE_VERSION "${CMAKE_MATCH_1}")
+if (SIMAPCIE_PACKAGE_VERSION STREQUAL "")
   message(FATAL_ERROR "Failed to read package-version from ../deps/manifest.json")
 endif()
 
@@ -18,7 +14,7 @@ project(SimaPCIeHost VERSION ${SIMAPCIE_PACKAGE_VERSION} LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
-if (CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT)
+if (CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT AND NOT WIN32)
   set(CMAKE_INSTALL_PREFIX "/usr" CACHE PATH "Install prefix" FORCE)
 endif()
 
@@ -56,7 +52,23 @@ get_filename_component(SIMA_NEAT_CORE_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/.." ABSO
 
 find_package(PkgConfig REQUIRED)
 find_package(Threads REQUIRED)
-find_package(SimaScheduler CONFIG REQUIRED COMPONENTS pcie_host pcie_service_headers)
+if(WIN32)
+  find_package(SimaScheduler CONFIG REQUIRED COMPONENTS pcie_host)
+  if(NOT SIMAPCIE_PLATFORM_SERVICE_INCLUDE_DIR)
+    message(FATAL_ERROR
+      "SIMAPCIE_PLATFORM_SERVICE_INCLUDE_DIR must name the supported Windows "
+      "Platform SDK include directory")
+  endif()
+  find_path(SIMAPCIE_PLATFORM_SERVICE_HEADER_DIR simaai_svc.h
+    PATHS "${SIMAPCIE_PLATFORM_SERVICE_INCLUDE_DIR}"
+    NO_DEFAULT_PATH REQUIRED)
+  set(SIMAPCIE_GENAI_SERVICE_SOURCE
+    ${SIMA_NEAT_CORE_ROOT}/shared/pcie_genai/ServiceWindows.cpp)
+else()
+  find_package(SimaScheduler CONFIG REQUIRED COMPONENTS pcie_host pcie_service_headers)
+  set(SIMAPCIE_GENAI_SERVICE_SOURCE
+    ${SIMA_NEAT_CORE_ROOT}/shared/pcie_genai/Service.cpp)
+endif()
 find_package(ZLIB REQUIRED)
 find_package(nlohmann_json QUIET)
 if (NOT TARGET nlohmann_json::nlohmann_json)
@@ -64,13 +76,22 @@ if (NOT TARGET nlohmann_json::nlohmann_json)
     "Missing nlohmann_json development package (Ubuntu package: "
     "nlohmann-json3-dev)")
 endif()
-pkg_check_modules(GST REQUIRED IMPORTED_TARGET
+pkg_check_modules(SIMAPCIE_GST REQUIRED IMPORTED_TARGET
   gstreamer-1.0
   gstreamer-app-1.0
   glib-2.0
 )
 
+if (WIN32)
+  set(SIMAPCIE_PROCESS_RUNNER_SOURCE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/SshRunnerWindows.cpp)
+else()
+  set(SIMAPCIE_PROCESS_RUNNER_SOURCE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/SshRunnerPosix.cpp)
+endif()
+
 set(SIMA_NEAT_PCIE_HOST_SOURCES
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/HostPlatform.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/src/Model.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/src/HostPcieChannel.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/src/HostPcieOutputLayout.cpp
@@ -82,6 +103,7 @@ set(SIMA_NEAT_PCIE_HOST_SOURCES
   ${CMAKE_CURRENT_SOURCE_DIR}/src/RemoteRuntime.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/src/Runtime.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/src/SshRunner.cpp
+  ${SIMAPCIE_PROCESS_RUNNER_SOURCE}
   ${SIMA_NEAT_CORE_ROOT}/src/model/ModelArchiveLoader.cpp
   ${SIMA_NEAT_CORE_ROOT}/src/pipeline/internal/sima/MlaElfIoTopology.cpp
   ${SIMA_NEAT_CORE_ROOT}/src/pipeline/internal/sima/MpkContract.cpp
@@ -95,7 +117,7 @@ set(SIMA_NEAT_PCIE_HOST_SOURCES
   ${CMAKE_CURRENT_SOURCE_DIR}/src/genai/MediaStage.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/src/genai/RemoteSession.cpp
   ${SIMA_NEAT_CORE_ROOT}/src/genai/ModelDirectory.cpp
-  ${SIMA_NEAT_CORE_ROOT}/shared/pcie_genai/Service.cpp
+  ${SIMAPCIE_GENAI_SERVICE_SOURCE}
 )
 
 add_library(sima_neat_pcie_host STATIC
@@ -105,9 +127,16 @@ add_library(sima_neat_pcie_host STATIC
 target_compile_definitions(sima_neat_pcie_host PRIVATE SIMA_NEAT_INTERNAL=1)
 target_include_directories(sima_neat_pcie_host PRIVATE
   ${SIMA_NEAT_CORE_ROOT}/shared/pcie_genai)
+if(WIN32)
+  target_include_directories(sima_neat_pcie_host PRIVATE
+    ${SIMAPCIE_PLATFORM_SERVICE_HEADER_DIR})
+endif()
 target_include_directories(sima_neat_pcie_host PUBLIC $<BUILD_INTERFACE:${SIMA_NEAT_CORE_ROOT}/include>)
-target_link_libraries(sima_neat_pcie_host PRIVATE ${CMAKE_DL_LIBS}
-  SimaScheduler::pcie_service_headers)
+target_link_libraries(sima_neat_pcie_host PRIVATE ${CMAKE_DL_LIBS})
+if(NOT WIN32)
+  target_link_libraries(sima_neat_pcie_host PRIVATE
+    SimaScheduler::pcie_service_headers)
+endif()
 target_include_directories(sima_neat_pcie_host
   PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
@@ -116,17 +145,19 @@ target_include_directories(sima_neat_pcie_host
     ${SIMA_NEAT_CORE_ROOT}/include
     ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${SIMA_NEAT_CORE_ROOT}/src
-    ${GST_INCLUDE_DIRS}
+    ${SIMAPCIE_GST_INCLUDE_DIRS}
 )
-target_link_libraries(sima_neat_pcie_host PUBLIC nlohmann_json::nlohmann_json
+target_link_libraries(sima_neat_pcie_host PUBLIC
+  $<BUILD_INTERFACE:nlohmann_json::nlohmann_json>
   PRIVATE SimaScheduler::pcie_host)
-target_compile_options(sima_neat_pcie_host PRIVATE ${GST_CFLAGS_OTHER})
-target_link_directories(sima_neat_pcie_host PRIVATE ${GST_LIBRARY_DIRS})
 target_link_libraries(sima_neat_pcie_host PRIVATE
-  ${GST_LIBRARIES}
+  PkgConfig::SIMAPCIE_GST
   Threads::Threads
   ZLIB::ZLIB
 )
+if (WIN32)
+  target_link_libraries(sima_neat_pcie_host PRIVATE bcrypt)
+endif()
 # ABI headers and generic wire contracts are supplied by Scheduler's native host
 # component. A separately acquired platform plugin is a runtime dependency only.
 
@@ -143,18 +174,56 @@ install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/include/simaai/
   COMPONENT Development
 )
 
-install(PROGRAMS ${CMAKE_CURRENT_SOURCE_DIR}/scripts/pcie-setup.sh
-  ${SIMA_NEAT_CORE_ROOT}/scripts/neat
-  DESTINATION ${CMAKE_INSTALL_BINDIR}
-  COMPONENT Runtime
-)
-install(FILES ${SIMA_NEAT_CORE_ROOT}/scripts/neat_pcie_status.py
-  DESTINATION ${CMAKE_INSTALL_DATADIR}/sima-pcie-host
-  COMPONENT Runtime)
+if(NOT WIN32)
+  install(PROGRAMS ${CMAKE_CURRENT_SOURCE_DIR}/scripts/pcie-setup.sh
+    ${SIMA_NEAT_CORE_ROOT}/scripts/neat
+    DESTINATION ${CMAKE_INSTALL_BINDIR}
+    COMPONENT Runtime
+  )
+  install(FILES ${SIMA_NEAT_CORE_ROOT}/scripts/neat_pcie_status.py
+    DESTINATION ${CMAKE_INSTALL_DATADIR}/sima-pcie-host
+    COMPONENT Runtime)
+endif()
+
+if(WIN32)
+  get_target_property(SIMAPCIE_NLOHMANN_INCLUDE_DIRS
+    nlohmann_json::nlohmann_json INTERFACE_INCLUDE_DIRECTORIES)
+  set(SIMAPCIE_NLOHMANN_INCLUDE_ROOT "")
+  foreach(candidate IN LISTS SIMAPCIE_NLOHMANN_INCLUDE_DIRS)
+    if(EXISTS "${candidate}/nlohmann/json.hpp")
+      set(SIMAPCIE_NLOHMANN_INCLUDE_ROOT "${candidate}")
+      break()
+    endif()
+  endforeach()
+  if(SIMAPCIE_NLOHMANN_INCLUDE_ROOT STREQUAL "")
+    message(FATAL_ERROR "Could not locate the selected nlohmann/json.hpp for Windows packaging")
+  endif()
+  install(DIRECTORY ${SIMAPCIE_NLOHMANN_INCLUDE_ROOT}/nlohmann
+    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
+    COMPONENT Development
+  )
+  install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/third_party/nlohmann-json-LICENSE.MIT
+    DESTINATION ${CMAKE_INSTALL_DATADIR}/licenses/sima-pcie-host
+    COMPONENT Development
+  )
+  install(PROGRAMS
+    ${CMAKE_CURRENT_SOURCE_DIR}/scripts/windows/sima-pcie-host-env.cmd
+    ${CMAKE_CURRENT_SOURCE_DIR}/scripts/windows/sima-pcie-host-run.cmd
+    ${CMAKE_CURRENT_SOURCE_DIR}/scripts/windows/sima-pcie-host-doctor.cmd
+    ${CMAKE_CURRENT_SOURCE_DIR}/scripts/windows/pcie-setup.cmd
+    DESTINATION ${CMAKE_INSTALL_BINDIR}
+    COMPONENT Runtime
+  )
+  install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/scripts/windows/pcie-setup.ps1
+    DESTINATION ${CMAKE_INSTALL_BINDIR}
+    COMPONENT Runtime
+  )
+endif()
 
 set(SIMAPCIE_APPLICATION_SKILL_INSTALL_DIR
   ${CMAKE_INSTALL_DATADIR}/sima-pcie-host/skills/neat-pcie-application-builder)
 install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/skills/neat-pcie-application-builder/SKILL.md
+  ${CMAKE_CURRENT_SOURCE_DIR}/skills/neat-pcie-application-builder/playbook.yml
   DESTINATION ${SIMAPCIE_APPLICATION_SKILL_INSTALL_DIR}
   COMPONENT Runtime
 )
@@ -166,10 +235,20 @@ install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/skills/neat-pcie-application-build
   DESTINATION ${SIMAPCIE_APPLICATION_SKILL_INSTALL_DIR}/agents
   COMPONENT Runtime
 )
+install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/skills/neat-pcie-application-builder/targets/
+  DESTINATION ${SIMAPCIE_APPLICATION_SKILL_INSTALL_DIR}/targets
+  COMPONENT Runtime
+)
 
 set(SimaPCIeHost_INSTALL_CMAKEDIR
   ${CMAKE_INSTALL_LIBDIR}/cmake/SimaPCIeHost
 )
+
+if(WIN32)
+  set(SIMAPCIE_SCHEDULER_CONFIG_COMPONENTS pcie_host)
+else()
+  set(SIMAPCIE_SCHEDULER_CONFIG_COMPONENTS pcie_host pcie_service_headers)
+endif()
 
 configure_package_config_file(
   ${CMAKE_CURRENT_SOURCE_DIR}/cmake/SimaPCIeHostConfig.cmake.in
@@ -202,10 +281,33 @@ install(
 
 if (SIMAPCIE_BUILD_TESTS)
   find_package(Python3 REQUIRED COMPONENTS Interpreter)
-  add_test(NAME pcie_host_delivery_contract
-    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_delivery.py")
-  add_test(NAME pcie_host_service_header_contract
-    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_service_header_contract.py")
+  add_test(NAME pcie_host_python_wheel_contract
+    COMMAND "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/python/tests/test_wheel_metadata.py")
+  add_test(NAME pcie_host_python_windows_runtime_contract
+    COMMAND "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/python/tests/test_windows_runtime.py")
+  add_test(NAME pcie_host_cmake_package_contract
+    COMMAND "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_cmake_package_contract.py")
+  add_test(NAME pcie_host_python_tutorial_contract
+    COMMAND "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_python_tutorial_contract.py")
+  add_test(NAME pcie_host_windows_packaging_contract
+    COMMAND "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_windows_packaging_contract.py")
+  add_test(NAME pcie_host_windows_metadata_contract
+    COMMAND "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_windows_metadata.py")
+  add_test(NAME pcie_host_windows_ci_contract
+    COMMAND "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_windows_ci.py")
+  if(NOT WIN32)
+    add_test(NAME pcie_host_delivery_contract
+      COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_delivery.py")
+    add_test(NAME pcie_host_service_header_contract
+      COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_service_header_contract.py")
+  endif()
   enable_testing()
 
   add_executable(unit_pcie_host_options_test
@@ -220,7 +322,7 @@ if (SIMAPCIE_BUILD_TESTS)
   target_link_libraries(unit_pcie_host_caps_test PRIVATE sima_neat_pcie_host)
   target_include_directories(unit_pcie_host_caps_test PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
-    ${GST_INCLUDE_DIRS}
+    ${SIMAPCIE_GST_INCLUDE_DIRS}
   )
 
   add_executable(unit_pcie_host_tensor_test
@@ -230,7 +332,7 @@ if (SIMAPCIE_BUILD_TESTS)
   target_include_directories(unit_pcie_host_tensor_test PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${SIMA_NEAT_CORE_ROOT}/include
-    ${GST_INCLUDE_DIRS}
+    ${SIMAPCIE_GST_INCLUDE_DIRS}
   )
 
   add_executable(unit_pcie_host_model_facts_test
@@ -248,7 +350,7 @@ if (SIMAPCIE_BUILD_TESTS)
   )
   target_include_directories(unit_pcie_host_output_layout_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
   target_link_libraries(unit_pcie_host_output_layout_test PRIVATE
-    sima_neat_pcie_host SimaScheduler::pcie_host PkgConfig::GST)
+    sima_neat_pcie_host SimaScheduler::pcie_host PkgConfig::SIMAPCIE_GST)
   add_test(NAME unit_pcie_host_output_layout_test COMMAND unit_pcie_host_output_layout_test)
 
   add_executable(unit_pcie_host_model_archive_snapshot_test
@@ -266,6 +368,13 @@ if (SIMAPCIE_BUILD_TESTS)
     ${SIMA_NEAT_CORE_ROOT}/tests
   )
   target_link_libraries(unit_pcie_host_lifecycle_test PRIVATE sima_neat_pcie_host)
+
+  add_executable(unit_pcie_pipeline_lifecycle_test
+    ${SIMA_NEAT_CORE_ROOT}/tests/unit_testing/unit_pcie_pipeline_lifecycle_test.cpp
+  )
+  target_include_directories(unit_pcie_pipeline_lifecycle_test PRIVATE
+    ${SIMA_NEAT_CORE_ROOT}
+  )
 
   add_executable(unit_pcie_host_runtime_test
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/unit_pcie_host_runtime_test.cpp
@@ -285,28 +394,40 @@ if (SIMAPCIE_BUILD_TESTS)
   target_include_directories(unit_pcie_host_async_test_runner_test
     PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
 
-  add_executable(unit_pcie_host_genai_values_test tests/unit_pcie_host_genai_values_test.cpp)
-  target_link_libraries(unit_pcie_host_genai_values_test PRIVATE sima_neat_pcie_host)
-  target_include_directories(unit_pcie_host_genai_values_test PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/src ${SIMA_NEAT_CORE_ROOT}/src
-    ${SIMA_NEAT_CORE_ROOT}/shared/pcie_genai)
-  add_test(NAME unit_pcie_host_genai_values_test COMMAND unit_pcie_host_genai_values_test)
+  if(NOT WIN32)
+    add_executable(unit_pcie_host_genai_remote_session_test
+      tests/unit_pcie_host_genai_remote_session_test.cpp)
+    target_link_libraries(unit_pcie_host_genai_remote_session_test PRIVATE sima_neat_pcie_host)
+    target_include_directories(unit_pcie_host_genai_remote_session_test PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    add_test(NAME unit_pcie_host_genai_remote_session_test
+      COMMAND unit_pcie_host_genai_remote_session_test)
+    set_tests_properties(unit_pcie_host_genai_remote_session_test PROPERTIES TIMEOUT 10)
 
-  add_library(fake_genai_service SHARED tests/fake_genai_service.cpp)
-  target_link_libraries(fake_genai_service PRIVATE SimaScheduler::pcie_service_headers)
-  target_link_libraries(fake_genai_service PRIVATE Threads::Threads)
-  set_target_properties(fake_genai_service PROPERTIES OUTPUT_NAME simaaipcie
-    LIBRARY_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/fake-genai-service)
-  target_link_libraries(unit_pcie_host_genai_values_test PRIVATE fake_genai_service)
-  set_tests_properties(unit_pcie_host_genai_values_test PROPERTIES TIMEOUT 20
-    ENVIRONMENT "LD_LIBRARY_PATH=$<TARGET_FILE_DIR:fake_genai_service>")
-  add_executable(unit_pcie_host_genai_assets_test tests/unit_pcie_host_genai_assets_test.cpp)
-  target_include_directories(unit_pcie_host_genai_assets_test PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/src ${SIMA_NEAT_CORE_ROOT}/shared/pcie_genai)
-  target_link_libraries(unit_pcie_host_genai_assets_test PRIVATE sima_neat_pcie_host fake_genai_service)
-  add_test(NAME unit_pcie_host_genai_assets_test COMMAND unit_pcie_host_genai_assets_test)
-  set_tests_properties(unit_pcie_host_genai_assets_test PROPERTIES TIMEOUT 10
-    ENVIRONMENT "LD_LIBRARY_PATH=$<TARGET_FILE_DIR:fake_genai_service>")
+    add_executable(unit_pcie_host_genai_values_test tests/unit_pcie_host_genai_values_test.cpp)
+    target_link_libraries(unit_pcie_host_genai_values_test PRIVATE sima_neat_pcie_host)
+    target_include_directories(unit_pcie_host_genai_values_test PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}/src ${SIMA_NEAT_CORE_ROOT}/src
+      ${SIMA_NEAT_CORE_ROOT}/shared/pcie_genai)
+    add_test(NAME unit_pcie_host_genai_values_test COMMAND unit_pcie_host_genai_values_test)
+
+    add_library(fake_genai_service SHARED tests/fake_genai_service.cpp)
+    target_link_libraries(fake_genai_service PRIVATE SimaScheduler::pcie_service_headers)
+    target_link_libraries(fake_genai_service PRIVATE Threads::Threads)
+    set_target_properties(fake_genai_service PROPERTIES OUTPUT_NAME simaaipcie
+      LIBRARY_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/fake-genai-service)
+    target_link_libraries(unit_pcie_host_genai_values_test PRIVATE fake_genai_service)
+    set_tests_properties(unit_pcie_host_genai_values_test PROPERTIES TIMEOUT 20
+      ENVIRONMENT "LD_LIBRARY_PATH=$<TARGET_FILE_DIR:fake_genai_service>")
+    add_executable(unit_pcie_host_genai_assets_test tests/unit_pcie_host_genai_assets_test.cpp)
+    target_include_directories(unit_pcie_host_genai_assets_test PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}/src ${SIMA_NEAT_CORE_ROOT}/shared/pcie_genai)
+    target_link_libraries(unit_pcie_host_genai_assets_test PRIVATE
+      sima_neat_pcie_host fake_genai_service)
+    add_test(NAME unit_pcie_host_genai_assets_test COMMAND unit_pcie_host_genai_assets_test)
+    set_tests_properties(unit_pcie_host_genai_assets_test PROPERTIES TIMEOUT 10
+      ENVIRONMENT "LD_LIBRARY_PATH=$<TARGET_FILE_DIR:fake_genai_service>")
+  endif()
 
   add_test(NAME unit_pcie_host_options_test COMMAND unit_pcie_host_options_test)
   add_test(NAME unit_pcie_host_caps_test COMMAND unit_pcie_host_caps_test)
@@ -315,6 +436,7 @@ if (SIMAPCIE_BUILD_TESTS)
   add_test(NAME unit_pcie_host_model_archive_snapshot_test
     COMMAND unit_pcie_host_model_archive_snapshot_test)
   add_test(NAME unit_pcie_host_lifecycle_test COMMAND unit_pcie_host_lifecycle_test)
+  add_test(NAME unit_pcie_pipeline_lifecycle_test COMMAND unit_pcie_pipeline_lifecycle_test)
   add_test(NAME unit_pcie_host_runtime_test COMMAND unit_pcie_host_runtime_test)
   add_test(NAME unit_pcie_host_ssh_runner_test COMMAND unit_pcie_host_ssh_runner_test)
   add_test(NAME unit_pcie_host_async_test_runner_test COMMAND unit_pcie_host_async_test_runner_test)
@@ -334,6 +456,11 @@ endif()
 
 if (SIMAPCIE_BUILD_PYTHON)
   add_subdirectory(python)
+endif()
+
+if(WIN32)
+  include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/PackagingWindows.cmake")
+  return()
 endif()
 
 set(CPACK_GENERATOR "DEB")

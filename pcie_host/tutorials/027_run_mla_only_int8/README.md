@@ -72,9 +72,8 @@ Install the PCIe host package and download the tutorial bundle as described in
 The tutorial runs the Model Zoo YOLO26n INT8 archive, which is compiled for
 direct MLA input and output. Download it into the extracted PCIe extras root:
 
-```bash
-sima-cli download https://docs.sima.ai/pkg_downloads/SDK2.1.3/models/modalix/yolo26-detection/yolo26n-det-int8-b1.tar.gz
-```
+Use the download URL published by the current Platform 3.0 Model Zoo release.
+The artifact URL is release-specific; do not substitute an earlier-platform model.
 
 Other archives qualify when they were compiled with the Model SDK
 `tessellate_parameters` `enable_mla=True`, an `HWC` DRAM layout on every input,

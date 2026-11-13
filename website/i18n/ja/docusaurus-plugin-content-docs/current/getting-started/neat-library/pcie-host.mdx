@@ -25,8 +25,9 @@ Neat PCIe ホストパッケージは、以下の検証済みのホストプラ�
 | --- | --- | --- |
 | Ubuntu 22.04 | x86_64 | 対応済み |
 | Ubuntu 24.04 | x86_64 | 対応済み |
+| Windows 11 | x86_64 | ネイティブプレビュー（ビジョン推論のみ） |
 
-Arm64ホストでのビルドは、まだ検証されていません。Windows 11はサポート対象外です。
+Arm64ホストでのビルドは、まだ検証されていません。WindowsプレビューはPCIe GenAIトランスポートをサポートしていません。
 
 ## オンラインインストールの前提条件
 
@@ -78,6 +79,40 @@ source ~/pyneatpcie/bin/activate
 python3 -c "import pyneatpcie; print('pyneatpcie ready')"
 gst-inspect-1.0 neatpciehost
 </ShellCommand>
+
+## Windows 11 ネイティブプレビューをインストールする
+
+Windowsプレビューは、`pcie::Model`ビジョンAPIのネイティブVisual Studioビルドです。`pcie::genai::GenAIModel`はサポートしていません。最初に、対応するx64 GStreamer MSVCランタイム、SiMa PCIeドライバー、および既存のSiMa CLIをインストールしてください。その後、CLIを使用して、対応するScheduler MSI、Core MSI、および`win_amd64` wheelを1つのコホートとしてインストールします。
+
+```powershell
+sima-cli neat install core/pciehost/windows/amd64@3.0
+& "$env:USERPROFILE\pyneatpcie\Scripts\python.exe" -m pip check
+```
+
+CLIはMSIを実行する前に、Windows OpenSSH、Platformサービス、GStreamer、および互換性のあるPythonを確認します。`%USERPROFILE%\pyneatpcie`環境を作成または再利用し、公開済みのチェックサムを検証して、SchedulerとCoreに対してWindows Installerを実行します。さらに、インストール済みのホスト診断ツールを実行し、パッケージに対応するコーディングエージェントのスキルをインストールして、wheelをそのPython環境にインストールします。修復またはアップグレードする場合は、同じコマンドを再度実行してください。別の環境を使用する場合は`--python-executable <path>`を、ネイティブC++のみをインストールする場合は`--native-only`を使用します。ネイティブコンポーネントの削除はWindows Installerが、Pythonパッケージの削除はpipが管理します。
+
+インストール後に一度、カードへのパスワードなしSSHを設定します。
+
+```powershell
+& "C:\Program Files\SimaPCIeHost\bin\pcie-setup.cmd"
+```
+
+このユーティリティは、ローカルの`10.0.N.1`管理リンクからカードのアドレスを検出します。自動検出できない場合は、`-Hosts 10.0.0.2`を指定してください。公開鍵がまだ登録されていない場合にのみOpenSSHがカードのパスワードを要求し、パスワードは保存されません。
+
+Pythonパッケージは、拡張モジュールをインポートする前に、既定のインストールルートと既定のx64 GStreamerの場所でDLLを検索します。別のインストールルートを使用する場合は、`SIMA_PCIE_HOST_LIBRARY_PATH`にPCIeホストとGStreamerのDLLを含むディレクトリを設定してください。必要なDLLが承認済みの場所とは別の場所からすでに読み込まれている場合、インポートは失敗します。混在したランタイムを使い続けず、インストール済みのバージョンを揃えてから新しいプロセスを開始してください。
+
+ソースツリーおよびビルドツリーの外部から、インストール済みのwheelとプラグインを確認します。
+
+```powershell
+$venv = "$env:USERPROFILE\pyneatpcie"
+$root = "C:\Program Files\SimaPCIeHost"
+$gst = "C:\Program Files\gstreamer\1.0\msvc_x86_64\bin\gst-inspect-1.0.exe"
+$env:PATH = "$root\bin;$(Split-Path $gst);$env:PATH"
+Set-Location $env:TEMP
+& "$root\bin\sima-pcie-host-doctor.cmd"
+& "$venv\Scripts\python.exe" -c "import pyneatpcie as p; print(p.__version__, p.Model)"
+& $gst "$root\bin\gstreamer-1.0\gstneatpciehost.dll"
+```
 
 ## トラブルシューティング
 

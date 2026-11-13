@@ -26,7 +26,8 @@ with the installed public API; treat the defaults below as guidance.
 - For `pcie::Model`, read `references/model-options.md` when configuring a card, queue, preprocessing,
   MLA-only mode, or object decode behavior.
 - For prepared LLiMa model directories (LLM, VLM, or ASR), use `pcie::genai::GenAIModel`
-  and read `references/genai.md`. Do not apply the MPK build or queue workflow.
+  and read `references/genai.md`. This transport is Linux-host-only; do not generate a Windows
+  GenAI application. Do not apply the MPK build or queue workflow.
 - Read `references/build-and-validation.md` when building, testing, or reporting validation. Do not
   claim connected-card execution from compile or import checks alone.
 
@@ -74,3 +75,6 @@ was not exercised.
   or a prepared LLiMa model directory.
 - Verify behavior against the installed release instead of guessing from memory or another Neat
   environment.
+- On native Windows, GenAI requires the release-qualified Platform package that provides
+  `SiMaPCIe.dll`. Do not report Windows GenAI as supported from an import check alone; run the
+  matching C++ and Python connected-card acceptance tests.
