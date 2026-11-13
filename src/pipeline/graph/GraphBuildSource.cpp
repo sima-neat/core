@@ -436,6 +436,7 @@ struct SourceSimaMetaProbeCtx {
   InputBufferPoolGuard guard;
   std::string element_name;
   std::string buffer_name;
+  bool decoder_output = false;
   std::atomic<bool> logged{false};
 };
 
@@ -644,7 +645,18 @@ GstPadProbeReturn source_sima_meta_probe_cb(GstPad* pad, GstPadProbeInfo* info,
   if (!buffer)
     return GST_PAD_PROBE_OK;
 
-  const int64_t frame_id = next_input_frame_id();
+  const guint64 offset = GST_BUFFER_OFFSET(buffer);
+  if (ctx->decoder_output) {
+    // simaaidecoder meta has frame-id, else the id is in the offset: gstsimaaidecoder.cpp:931-949.
+    // The fused timing probe (:2293) can add a GstSimaMeta without frame-id before this probe.
+    GstCustomMeta* meta = gst_buffer_get_custom_meta(buffer, "GstSimaMeta");
+    GstStructure* fields = meta ? gst_custom_meta_get_structure(meta) : nullptr;
+    if ((fields && gst_structure_has_field(fields, "frame-id")) ||
+        offset == GST_BUFFER_OFFSET_NONE || offset > static_cast<guint64>(G_MAXINT64))
+      return GST_PAD_PROBE_OK;
+  }
+  const int64_t frame_id =
+      ctx->decoder_output ? static_cast<int64_t>(offset) : next_input_frame_id();
   SampleTimingOverrides timing;
   timing.frame_id = frame_id;
   if (GST_CLOCK_TIME_IS_VALID(GST_BUFFER_PTS(buffer))) {
@@ -702,6 +714,11 @@ void source_sima_meta_probe_destroy(gpointer data) {
   delete static_cast<SourceSimaMetaProbeCtx*>(data);
 }
 
+bool source_sima_meta_is_decoder(const Node& node) {
+  const std::string kind = node.kind();
+  return kind == "SimaDecode" || kind == "H264Decode";
+}
+
 bool source_sima_meta_probe_required_for_node(const Node& node) {
   // This preference selects encoder input allocation. Encoded output already
   // owns its frame correlation and must not receive a new source frame ID.
@@ -712,7 +729,8 @@ bool source_sima_meta_probe_required_for_node(const Node& node) {
     return true;
   }
   const std::string kind = node.kind();
-  return kind == "Preproc" || kind == "ModelFragment" || kind == "SimaBoxDecode";
+  return kind == "Preproc" || kind == "ModelFragment" || kind == "SimaBoxDecode" ||
+         source_sima_meta_is_decoder(node);
 }
 
 bool attach_source_sima_meta_probe_for_node(GstElement* pipeline,
@@ -762,6 +780,10 @@ bool attach_source_sima_meta_probe_for_node(GstElement* pipeline,
   ctx->opt = source_meta_input_options_for_node(logical_nodes, logical_index, buffer_name);
   ctx->element_name = source_tail;
   ctx->buffer_name = buffer_name;
+  ctx->decoder_output = source_sima_meta_is_decoder(*node);
+  if (ctx->decoder_output) {
+    ctx->opt.preprocess_meta.reset();
+  }
   gst_object_unref(element);
   gst_pad_add_probe(pad, GST_PAD_PROBE_TYPE_BUFFER, source_sima_meta_probe_cb, ctx,
                     source_sima_meta_probe_destroy);
@@ -2298,7 +2320,7 @@ std::size_t attach_fused_decoder_timing_probes(GstElement* pipeline,
     const std::string factory_name = factory_c ? factory_c : "";
     const auto branch_index = parse_fused_branch_index_from_name(name);
     if (!branch_index.has_value() || *branch_index >= timing.size() ||
-        factory_name != "neatdecoder") {
+        factory_name != "simaaidecoder") {
       g_value_reset(&item);
       continue;
     }

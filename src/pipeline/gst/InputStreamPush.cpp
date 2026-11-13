@@ -123,10 +123,10 @@ private:
 
         const auto releasable_end =
             std::partition(buffers.begin(), buffers.end(), [](GstBuffer* buffer) {
-              // Some supported GStreamer releases finalize parent metadata
-              // before releasing shared memory. Return pooled parents only
-              // after every downstream memory reference is gone.
-              return gst_buffer_is_writable(buffer) && gst_buffer_is_all_memory_writable(buffer);
+              // Parent metas can go before shared memory, and a pool drops a still-shared buffer.
+              // A non-pooled parent's memory can stay shared with its producer for good.
+              return gst_buffer_is_writable(buffer) &&
+                     (buffer->pool == nullptr || gst_buffer_is_all_memory_writable(buffer));
             });
 
         lock.lock();

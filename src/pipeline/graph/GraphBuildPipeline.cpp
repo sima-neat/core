@@ -259,7 +259,7 @@ std::string gobject_property_debug_string(GObject* object, const char* property)
   return out;
 }
 
-bool gst_element_is_neatdecoder(GstElement* element) {
+bool gst_element_is_simaaidecoder(GstElement* element) {
   if (!element) {
     return false;
   }
@@ -268,10 +268,10 @@ bool gst_element_is_neatdecoder(GstElement* element) {
     return false;
   }
   const gchar* factory_name = gst_plugin_feature_get_name(GST_PLUGIN_FEATURE(factory));
-  return factory_name && std::strcmp(factory_name, "neatdecoder") == 0;
+  return factory_name && std::strcmp(factory_name, "simaaidecoder") == 0;
 }
 
-void debug_dump_neatdecoder_elements(GstElement* pipeline, GstState target, const char* where) {
+void debug_dump_simaaidecoder_elements(GstElement* pipeline, GstState target, const char* where) {
   if (!env_bool("SIMA_DECODER_ELEMENT_DEBUG", false)) {
     return;
   }
@@ -282,19 +282,7 @@ void debug_dump_neatdecoder_elements(GstElement* pipeline, GstState target, cons
   }
 
   static const char* kProps[] = {
-      "decoder-admission-required",
-      "admission-group-id",
-      "admission-stream-index",
-      "admission-lease-token-hi",
-      "admission-lease-token-lo",
-      "decoder-tuning",
-      "memory-opt",
-      "num-buffers",
-      "dec-ip-cnt",
-      "dec-width",
-      "dec-height",
-      "dec-fps",
-      "next-element",
+      "memory-opt", "op-pool-cnt", "ip-pool-cnt", "dec-width", "dec-height", "next-element",
   };
 
   std::size_t count = 0;
@@ -310,7 +298,7 @@ void debug_dump_neatdecoder_elements(GstElement* pipeline, GstState target, cons
     const GstIteratorResult r = gst_iterator_next(it, &item);
     if (r == GST_ITERATOR_OK) {
       GstElement* element = GST_ELEMENT(g_value_get_object(&item));
-      if (gst_element_is_neatdecoder(element)) {
+      if (gst_element_is_simaaidecoder(element)) {
         ++count;
         const gchar* elem_name = GST_OBJECT_NAME(element);
         std::ostringstream line;
@@ -353,7 +341,7 @@ void set_state_or_throw(GstElement* pipeline, GstState target, const char* where
     session_build_throw_session_error_simple(error_codes::kPipelineShape,
                                              std::string(where) + ": pipeline is null");
   }
-  debug_dump_neatdecoder_elements(pipeline, target, where);
+  debug_dump_simaaidecoder_elements(pipeline, target, where);
 
   while (true) {
     const int timeout_ms = resolve_state_change_timeout_ms(where);
