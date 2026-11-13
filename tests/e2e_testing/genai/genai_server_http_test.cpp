@@ -326,7 +326,8 @@ void require_tool_calls_or_text(const Json& choice, const Json& tools, const std
 // get_weather is declared second, so a server that kept only the first tool would fail. The
 // consistency checks below accept a text answer, so without this one a server that stopped
 // passing tools to the model, or a parser that stopped reading calls, would still pass.
-// Revisit the expectation when the CI text model or llima's decoding changes.
+// Revisit the expectation when the CI text model or llima's decoding changes. main() runs
+// this only when the default text model is selected.
 void request_pinned_weather_tool_call(int port) {
   const std::string label = "pinned weather tool call";
   const Json body = post_chat(
@@ -441,8 +442,7 @@ void reject_invalid_tool_options(int port) {
 void request_multi_turn(int port) {
   // The server must accept a history with an assistant turn and answer it like any request.
   // This checks that the request is accepted and answered, not what the model remembers.
-  // The non-empty answer is pinned to the CI model, like the weather scenario; the server
-  // does not guarantee it.
+  // The non-empty answer depends on the model; the server does not guarantee it.
   const Json body = post_chat(
       port,
       {{"model", "llm"},
@@ -535,7 +535,7 @@ void request_streamed_chunks(int port) {
     }
   }
   std::cout << "GENAI_SERVER_STREAM text=" << streamed_text << "\n";
-  // Non-empty text is pinned to the CI model; the server only forwards what the model emits.
+  // Non-empty text depends on the model; the server only forwards what the model emits.
   require(!trim_text(streamed_text).empty(),
           "the stream should carry generated text, got body: " + body);
 }
@@ -713,7 +713,15 @@ int main(int argc, char** argv) {
     validate_lora_requests(port);
     request_text_completion(port);
     request_streamed_chunks(port);
-    request_pinned_weather_tool_call(port);
+    // The pinned scenario expects the answer of the default text model. With another model
+    // selected through SIMA_TEST_LLIMA_TEXT_MODEL the scenario is not run; the remaining new
+    // checks need only a model that answers with text.
+    if (text_model_dir.filename() == simaai::neat::test::kDefaultTextModelName) {
+      request_pinned_weather_tool_call(port);
+    } else {
+      std::cout << "GENAI_SERVER_PINNED_TOOL_CALL not run: text model "
+                << text_model_dir.filename().string() << " is not the default\n";
+    }
     request_with_tools(port);
     request_tool_choice_none(port);
     request_multi_turn(port);
