@@ -7,7 +7,8 @@
 // building since H0c (unit_dataflow_endpoints_test covers several endpoints) and an Input feeding
 // no Output;
 // the holder push error; explicit Dataflow on a sync run; a record bound by its first push (C2);
-// the link depth (queue_depth + max_buffers, each after its default or clamp); try_push accounting
+// the link depth (the larger of queue_depth and max_buffers, each after its default or clamp);
+// try_push accounting
 // under KeepLatest, DropIncoming and Block; a blocking push that never drops under DropIncoming and
 // KeepLatest; close_input cancelling a parked push; stop unblocking a pending pull; pull timeouts
 // -1/0/t; identity (frame_id, stream_id, pts_ns, input_seq) round trip; NV12 planes; DMA-heap
@@ -399,9 +400,9 @@ void holder_push_is_an_error() {
   run.close();
 }
 
-// The link holds RunOptions::queue_depth + OutputOptions::max_buffers messages (GStreamer's input
-// queue plus its appsink), each term after its default or clamp: counted with try_push on a Block
-// link, which refuses only when the link holds the whole depth.
+// The link holds max(RunOptions::queue_depth, OutputOptions::max_buffers) messages (the deeper of
+// GStreamer's input queue and its appsink), each after its default or clamp: counted with try_push
+// on a Block link, which refuses only when the link holds the whole depth.
 int accepted_until_full(Run& run, int limit) {
   int accepted = 0;
   while (accepted < limit &&
@@ -410,7 +411,7 @@ int accepted_until_full(Run& run, int limit) {
   return accepted;
 }
 
-void link_depth_is_queue_depth_plus_max_buffers() {
+void link_depth_is_max_of_queue_depth_and_max_buffers() {
   struct Case {
     const char* what;
     RunOptions opt;
@@ -420,11 +421,11 @@ void link_depth_is_queue_depth_plus_max_buffers() {
   RunOptions reliable = dataflow();
   reliable.preset = RunPreset::Reliable; // queue_depth left at the default: the preset's 8
   const Case cases[] = {
-      {"defaults (queue_depth 4 + max_buffers 4)", dataflow(), OutputOptions{}.max_buffers, 8},
-      {"queue_depth 3 + max_buffers 2", dataflow(3), 2, 5},
-      {"Reliable preset (queue_depth 8) + max_buffers 4", reliable, 4, 12},
-      {"max_buffers 0 (unbounded) counts as queue_depth: 2 + 2", dataflow(2), 0, 4},
-      {"queue_depth 0 (unbounded) counts as 4: 4 + 1", dataflow(0), 1, 5},
+      {"defaults (queue_depth 4, max_buffers 4)", dataflow(), OutputOptions{}.max_buffers, 4},
+      {"queue_depth 2, max_buffers 5", dataflow(2), 5, 5},
+      {"Reliable preset (queue_depth 8), max_buffers 4", reliable, 4, 8},
+      {"max_buffers 0 (unbounded) counts as queue_depth 2", dataflow(2), 0, 2},
+      {"queue_depth 0 (unbounded) counts as 4, max_buffers 1", dataflow(0), 1, 4},
   };
   for (const Case& c : cases) {
     OutputOptions out;
@@ -442,34 +443,34 @@ void link_depth_is_queue_depth_plus_max_buffers() {
     }
     run.close();
   }
-  // GStreamer's pattern (async_stream_test): queue_depth + max_buffers blocking pushes before the
-  // first pull all return; the next one parks until a pull makes room.
+  // GStreamer's pattern (async_stream_test): queue_depth blocking pushes before the first pull all
+  // return; the next one parks until a pull makes room.
   OutputOptions out;
   out.max_buffers = 2;
   Graph g = input_output({}, out);
   Run run = g.build(TensorList{rgb(8, 8, 1)}, dataflow(3));
   auto pushes = std::async(std::launch::async, [&] {
-    for (int i = 0; i < 5; ++i)
+    for (int i = 0; i < 3; ++i)
       if (!run.push(TensorList{rgb(8, 8, static_cast<std::uint8_t>(i))}))
         return false;
     return true;
   });
   require(pushes.wait_for(std::chrono::seconds(2)) == std::future_status::ready && pushes.get(),
-          "queue_depth + max_buffers blocking pushes return without a puller");
-  auto sixth = std::async(std::launch::async, [&] { return run.push(TensorList{rgb(8, 8, 5)}); });
-  require(sixth.wait_for(std::chrono::milliseconds(150)) == std::future_status::timeout,
+          "queue_depth blocking pushes return without a puller");
+  auto fourth = std::async(std::launch::async, [&] { return run.push(TensorList{rgb(8, 8, 3)}); });
+  require(fourth.wait_for(std::chrono::milliseconds(150)) == std::future_status::timeout,
           "one more parks on the full link");
   require(bytes_of(pulled_tensor(run, 1000, "first")) == bytes_of(rgb(8, 8, 0)),
           "a pull takes the oldest");
-  require(sixth.wait_for(std::chrono::seconds(1)) == std::future_status::ready && sixth.get(),
+  require(fourth.wait_for(std::chrono::seconds(1)) == std::future_status::ready && fourth.get(),
           "and lets the parked push in");
   run.close();
 }
 
 void try_push_accounting() {
-  // The link holds queue_depth 1 + max_buffers 1 = 2.
+  // The link holds max(queue_depth 1, max_buffers 2) = 2.
   OutputOptions out;
-  out.max_buffers = 1;
+  out.max_buffers = 2;
   // DropIncoming: the first two are queued, the rest are dropped and counted.
   {
     Graph g = input_output({}, out);
@@ -521,10 +522,11 @@ void try_push_accounting() {
 // A try_push that the full link refuses is refused before its tensor is read: the runtime's alloc
 // answers a full link itself (scheduler-dataflow A3), so no slot is taken and nothing is copied.
 // The tensor's storage counts its maps: each accepted try_push maps it for the copy, a refused one
-// does not, and the refusals' outcome and drop count are try_push's as before (try_push_accounting).
+// does not, and the refusals' outcome and drop count are try_push's as before
+// (try_push_accounting).
 void refused_try_push_reads_no_byte() {
   OutputOptions out;
-  out.max_buffers = 1; // the link holds queue_depth 1 + max_buffers 1 = 2
+  out.max_buffers = 2; // the link holds max(queue_depth 1, max_buffers 2) = 2
   for (const OverflowPolicy policy : {OverflowPolicy::DropIncoming, OverflowPolicy::Block}) {
     Graph g = input_output({}, out);
     // copy_input: the accepted pushes copy (and so map) the tensor, which shows the counter
@@ -550,9 +552,9 @@ void refused_try_push_reads_no_byte() {
         require(!run.try_push(TensorList{t}), "refused on the full link");
       }
     });
-    require(maps->load() == accepted_maps,
-            "a refused try_push reads no byte of its tensor, got " +
-                std::to_string(maps->load() - accepted_maps) + " maps");
+    require(maps->load() == accepted_maps, "a refused try_push reads no byte of its tensor, got " +
+                                               std::to_string(maps->load() - accepted_maps) +
+                                               " maps");
     require(dropped == (policy == OverflowPolicy::DropIncoming ? 3U : 0U),
             "the drops counted as before, got " + std::to_string(dropped));
     require(bytes_of(pulled_tensor(run, 1000, "refused")) == bytes_of(rgb(8, 8, 9)),
@@ -682,7 +684,7 @@ void linear_realtime_block_is_keep_latest() {
 // push is released.
 void concurrent_stops_with_a_parked_push() {
   OutputOptions out;
-  out.max_buffers = 1;
+  out.max_buffers = 2;
   Graph g = input_output({}, out);
   Run run = g.build(TensorList{rgb(8, 8, 1)}, dataflow(1));
   require(run.push(TensorList{rgb(8, 8, 1)}) && run.push(TensorList{rgb(8, 8, 2)}),
@@ -770,11 +772,11 @@ void reads_race_stop() {
 
 void close_input_cancels_a_parked_push() {
   OutputOptions out;
-  out.max_buffers = 1;
+  out.max_buffers = 2;
   Graph g = input_output({}, out);
   Run run = g.build(TensorList{rgb(8, 8, 1)}, dataflow(1));
   require(run.push(TensorList{rgb(8, 8, 1)}) && run.push(TensorList{rgb(8, 8, 4)}),
-          "two pushes fill the link (queue_depth 1 + max_buffers 1)");
+          "two pushes fill the link (max of queue_depth 1, max_buffers 2)");
   auto parked = std::async(std::launch::async, [&] { return run.push(TensorList{rgb(8, 8, 2)}); });
   require(parked.wait_for(std::chrono::milliseconds(150)) == std::future_status::timeout,
           "the third push parks on the full link");
@@ -1028,7 +1030,7 @@ RUN_TEST("unit_dataflow_backend_test", ([] {
            push_outside_declared_shape_rejected();
            build_errors();
            holder_push_is_an_error();
-           link_depth_is_queue_depth_plus_max_buffers();
+           link_depth_is_max_of_queue_depth_and_max_buffers();
            try_push_accounting();
            refused_try_push_reads_no_byte();
            blocking_push_never_drops();

@@ -85,9 +85,9 @@ public:
 struct DataflowOutputConfig {
   OutputOptions output;             ///< the public Output's options
   std::vector<std::string> names;   ///< its public names (Graph::outputs()), sorted
-  std::uint32_t ingress_depth = 1;  ///< RunOptions::queue_depth's share of link_depth
-  std::uint32_t terminal_depth = 1; ///< OutputOptions::max_buffers' share of link_depth
-  std::uint32_t link_depth = 2;     ///< ingress_depth + terminal_depth
+  std::uint32_t ingress_depth = 1;  ///< RunOptions::queue_depth; 4 when it is <= 0
+  std::uint32_t terminal_depth = 1; ///< OutputOptions::max_buffers; ingress_depth when it is <= 0
+  std::uint32_t link_depth = 1;     ///< max(ingress_depth, terminal_depth)
   /// OutputOptions::drop: this output's queue drops its oldest message for every push, blocking
   /// or not (appsink drop=true); otherwise DataflowRunConfig::link_policy applies to try_push only.
   bool terminal_drop = false;

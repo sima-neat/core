@@ -3234,8 +3234,8 @@ target_link_libraries(unit_sima_plugins_test PRIVATE SimaScheduler::frontend)
 # a projected Sample, not the pushed TensorBuffer, until W-wrap (zero-copy push, W2). Its Branch
 # topology runs on Dataflow in unit_dataflow_endpoints_test (elided_boundaries).
 # async_stream_test pushes queue_depth (50) frames before its first pull, with Output
-# max_buffers = 8: on Dataflow the one link holds queue_depth + max_buffers messages, as GStreamer's
-# input queue and appsink together do (DataflowGraphCompiler.cpp, derive_config).
+# max_buffers = 8: on Dataflow the one link holds max(queue_depth, max_buffers) = 50 messages, the
+# deeper of GStreamer's input queue and appsink (DataflowGraphCompiler.cpp, derive_config).
 # perf_runtime_graph_async_rgb_test has no ctest entry to duplicate (PERF_TARGETS are run
 # directly).
 if (SIMANEAT_DATAFLOW_SOURCE_DIR)

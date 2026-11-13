@@ -373,11 +373,11 @@ void keep_latest_eviction() {
                  "[INFO] keep_latest_eviction: Dataflow's link rule, not run on GStreamer\n");
     return;
   }
-  Run run = input_output(image_input(FormatTag::RGB), output_options(1))
+  Run run = input_output(image_input(FormatTag::RGB), output_options(2))
                 .build(TensorList{counted_rgb(32, 24, 0, releases())},
                        options(1, OverflowPolicy::KeepLatest));
   std::vector<Releases> counts;
-  for (int i = 0; i < 3; ++i) { // the link holds queue_depth 1 + max_buffers 1 = 2
+  for (int i = 0; i < 3; ++i) { // the link holds max(queue_depth 1, max_buffers 2) = 2
     counts.push_back(releases());
     require(run.try_push(TensorList{
                 counted_rgb(32, 24, static_cast<std::uint8_t>(0x60 + i), counts.back())}),

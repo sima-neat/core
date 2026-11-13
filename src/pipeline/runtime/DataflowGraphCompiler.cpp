@@ -410,14 +410,15 @@ DataflowRunConfig derive_config(const Graph& graph, const DataflowGraphView& vie
   config.run.backend = RunBackend::Dataflow;
   config.link_policy = config.run.overflow_policy;
 
-  // One link carries both of Core's queues on the way to each Output (Run.h:176-188). On
-  // GStreamer a blocking push waits only when the input queue (RunOptions::queue_depth) and the
-  // public Output's terminal queue (OutputOptions::max_buffers) are both full, so the link holds
-  // their sum:
-  //   link depth = queue_depth + max_buffers
-  // each after its own default or clamp: queue_depth as resolved above, a value <= 0 (unbounded on
-  // GStreamer) counting as 4, reported; max_buffers <= 0 (unbounded) counts as the queue_depth
-  // term, reported (the depth is then 2 x queue_depth, 8 by default).
+  // One link stands in for both of Core's queues on the way to each Output (Run.h:176-188):
+  // GStreamer's input queue (RunOptions::queue_depth) and the public Output's terminal queue
+  // (OutputOptions::max_buffers). It is as deep as the deeper of the two:
+  //   link depth = max(queue_depth, max_buffers)
+  // not their sum: with a pusher faster than the puller the link stays full, so the latency and
+  // the tensors the application must keep alive both scale with the depth, and the sum doubled
+  // them whenever the two were set equal. queue_depth is as resolved above, a value <= 0
+  // (unbounded on GStreamer) counting as 4, reported; max_buffers <= 0 (unbounded) counts as
+  // queue_depth, reported.
   // The Output's drop flag makes its link lossy for every push, as appsink drop=true is;
   // otherwise RunOptions' overflow policy applies to try_push (KeepLatest is DropOldest). Either
   // acts only when the link holds the whole depth. In a fan-out each Output's link has its own.
@@ -442,12 +443,11 @@ DataflowRunConfig derive_config(const Graph& graph, const DataflowGraphView& vie
       dataflow_warn_once("clamp:max_buffers",
                          "Dataflow backend: OutputOptions::max_buffers=" +
                              std::to_string(output.output.max_buffers) +
-                             " (unbounded) has no equivalent on this backend; it counts as " +
-                             std::to_string(output.terminal_depth) +
-                             " (RunOptions::queue_depth, or 4) in the link depth");
+                             " (unbounded) has no equivalent on this backend; the link depth is "
+                             "RunOptions::queue_depth's, " +
+                             std::to_string(ingress_depth));
     }
-    // Each term is at most INT_MAX, so the sum fits; compile_dataflow_net checks the link's range.
-    output.link_depth = output.ingress_depth + output.terminal_depth;
+    output.link_depth = std::max(output.ingress_depth, output.terminal_depth);
     output.terminal_drop = output.output.drop;
     output.input = q.producer[o];
   }

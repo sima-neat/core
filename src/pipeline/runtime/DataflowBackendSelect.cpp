@@ -155,8 +155,8 @@ std::string describe_choice(const DataflowRunConfig& config,
     for (std::size_t k = 0; k < input.outputs.size(); ++k) {
       const DataflowOutputConfig& output = config.outputs[input.outputs[k]];
       out += (k == 0 ? "" : ", ") + std::string("output ") + dataflow_names_text(output.names) +
-             " link depth " + std::to_string(output.link_depth) + " (queue_depth " +
-             std::to_string(output.ingress_depth) + " + max_buffers " +
+             " link depth " + std::to_string(output.link_depth) + " (max of queue_depth " +
+             std::to_string(output.ingress_depth) + ", max_buffers " +
              std::to_string(output.terminal_depth) + ")" +
              (output.terminal_drop                                 ? " drop oldest (Output drop)"
               : config.link_policy == OverflowPolicy::KeepLatest   ? " try_push keep latest"

@@ -325,8 +325,8 @@ void fan_out_by_handle_reuse() {
 
 // Blocking push into a fan-out waits for room on every link; each output keeps its own depth.
 void fan_out_blocking_push_waits_for_every_link() {
-  // queue_depth 1: link a = 1 + 1, link b = 1 + 3.
-  Graph g = fan_out(out_options(1), out_options(3));
+  // queue_depth 1: link a = max(1, 2), link b = max(1, 4).
+  Graph g = fan_out(out_options(2), out_options(4));
   Run run = g.build(dataflow(1));
   require(run.push({framed(rgb(1), 1)}) && run.push({framed(rgb(2), 2)}), "two fit both links");
   auto blocked = start<bool>([&run] { return run.push({framed(rgb(3), 3)}); });
@@ -344,7 +344,7 @@ void fan_out_blocking_push_waits_for_every_link() {
 // refuses the push for all (it never drops). KeepLatest never refuses.
 void fan_out_try_push_policies() {
   {
-    Graph g = fan_out(out_options(1), out_options(3));
+    Graph g = fan_out(out_options(2), out_options(4));
     Run run = g.build(dataflow(1, OverflowPolicy::DropIncoming));
     MeasureScope scope = run.start_measurement();
     std::vector<bool> accepted;
@@ -366,7 +366,7 @@ void fan_out_try_push_policies() {
     run.close();
   }
   {
-    Graph g = fan_out(out_options(1), out_options(3));
+    Graph g = fan_out(out_options(2), out_options(4));
     Run run = g.build(dataflow(1, OverflowPolicy::Block));
     require(run.try_push({framed(rgb(1), 1)}) && run.try_push({framed(rgb(2), 2)}), "two fit");
     require(!run.try_push({framed(rgb(3), 3)}), "Block: a full link refuses the push for all");
@@ -374,7 +374,7 @@ void fan_out_try_push_policies() {
     run.close();
   }
   {
-    Graph g = fan_out(out_options(1), out_options(3));
+    Graph g = fan_out(out_options(2), out_options(4));
     Run run = g.build(dataflow(1, OverflowPolicy::KeepLatest));
     for (int i = 1; i <= 6; ++i) {
       require(run.try_push({framed(rgb(static_cast<std::uint8_t>(i)), i)}),
@@ -390,7 +390,7 @@ void fan_out_try_push_policies() {
 // output and waits for the other. Under a dropping try_push policy that mix is refused at build.
 void fan_out_mixed_drop() {
   {
-    Graph g = fan_out(out_options(1, /*drop=*/true), out_options(2));
+    Graph g = fan_out(out_options(2, /*drop=*/true), out_options(3));
     Run run = g.build(dataflow(1));
     for (int i = 1; i <= 3; ++i) {
       require(run.push({framed(rgb(static_cast<std::uint8_t>(i)), i)}),
@@ -406,7 +406,7 @@ void fan_out_mixed_drop() {
     run.close();
   }
   {
-    Graph g = fan_out(out_options(1, /*drop=*/true), out_options(2));
+    Graph g = fan_out(out_options(2, /*drop=*/true), out_options(3));
     require_neat_error([&] { (void)g.build(dataflow(1, OverflowPolicy::DropIncoming)); },
                        error_codes::kPipelineShape, "OutputOptions::drop");
   }
@@ -414,7 +414,7 @@ void fan_out_mixed_drop() {
 
 // A push blocked on one link of a fan-out (the other has room) ends with stop, within 1 s.
 void stop_with_push_blocked_on_one_link() {
-  Graph g = fan_out(out_options(1), out_options(8));
+  Graph g = fan_out(out_options(2), out_options(8));
   Run run = g.build(dataflow(1));
   require(run.push({rgb(1)}) && run.push({rgb(2)}), "link a full");
   auto blocked = start<bool>([&run] { return run.push({rgb(3)}); });

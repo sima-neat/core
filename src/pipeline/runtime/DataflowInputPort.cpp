@@ -68,8 +68,8 @@ DataflowNet compile_dataflow_net(const DataflowRunConfig& config, std::size_t in
       pipeline_internal::error_util::throw_session_error(
           error_codes::kOptionOutOfRange,
           "Graph::build: the link depth " + std::to_string(output.link_depth) +
-              " (RunOptions::queue_depth " + std::to_string(output.ingress_depth) +
-              " + OutputOptions::max_buffers " + std::to_string(output.terminal_depth) +
+              " (the larger of RunOptions::queue_depth " + std::to_string(output.ingress_depth) +
+              " and OutputOptions::max_buffers " + std::to_string(output.terminal_depth) +
               ") is outside the Dataflow link's range 1.." + std::to_string(df::kMaxLinkDepth));
     }
     df::Overflow overflow = df::Overflow::Block;
