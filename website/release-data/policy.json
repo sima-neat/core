@@ -14,6 +14,36 @@
   ],
   "literalExceptions": [
     {
+      "path": "docs/getting-started/neat-library/pcie-host.mdx",
+      "line": "Pass `-Hosts 10.0.0.2` when discovery is unavailable. OpenSSH prompts for the",
+      "count": 1,
+      "reason": "Network address example, not a release version"
+    },
+    {
+      "path": "website/i18n/ko/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
+      "line": "이 유틸리티는 로컬 `10.0.N.1` 관리 링크에서 카드 주소를 검색합니다. 자동 검색을 사용할 수 없으면 `-Hosts 10.0.0.2`를 전달하세요. 공개 키가 아직 등록되지 않은 경우에만 OpenSSH가 카드 암호를 요청하며, 암호는 저장되지 않습니다.",
+      "count": 1,
+      "reason": "Network address example, not a release version"
+    },
+    {
+      "path": "website/i18n/ja/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
+      "line": "このユーティリティは、ローカルの`10.0.N.1`管理リンクからカードのアドレスを検出します。自動検出できない場合は、`-Hosts 10.0.0.2`を指定してください。公開鍵がまだ登録されていない場合にのみOpenSSHがカードのパスワードを要求し、パスワードは保存されません。",
+      "count": 1,
+      "reason": "Network address example, not a release version"
+    },
+    {
+      "path": "website/i18n/zh-Hant/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
+      "line": "此工具會從本機的 `10.0.N.1` 管理連線探索卡片位址。若無法自動探索，請傳入 `-Hosts 10.0.0.2`。只有在公開金鑰尚未註冊時，OpenSSH 才會提示輸入卡片密碼；工具不會儲存該密碼。",
+      "count": 1,
+      "reason": "Network address example, not a release version"
+    },
+    {
+      "path": "website/i18n/uk/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
+      "line": "Програма знаходить адресу карти через локальне з'єднання керування `10.0.N.1`. Якщо автоматичне виявлення недоступне, передайте `-Hosts 10.0.0.2`. OpenSSH запитує пароль карти лише тоді, коли відкритий ключ ще не зареєстровано, і не зберігає цей пароль.",
+      "count": 1,
+      "reason": "Network address example, not a release version"
+    },
+    {
       "path": "docs/getting-started/neat-library/neat-cli.md",
       "line": "  Insight Web UI     https://10.0.0.22:9900",
       "count": 1,
