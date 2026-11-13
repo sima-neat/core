@@ -11,6 +11,20 @@ import re
 import xml.etree.ElementTree as ET
 
 
+_OPTIONAL_EVIDENCE_FILES = {
+    "core-msi-install.log",
+    "core-msi-repeat-install.log",
+    "core-msi-uninstall.log",
+    "installed-checks.json",
+    "scheduler-host-candidate.json",
+    "scheduler-installed-checks.json",
+    "scheduler-metadata.json",
+    "scheduler-msi-install.log",
+    "scheduler-msi-repeat-install.log",
+    "scheduler-msi-uninstall.log",
+}
+
+
 def sha256(path: Path) -> str:
   digest = hashlib.sha256()
   with path.open("rb") as source:
@@ -136,6 +150,34 @@ def _read_json(path: Path, description: str) -> dict:
   return value
 
 
+def _reject_uninventoried_entries(root: Path, allowed_files: set[str]) -> None:
+  allowed_directories = set()
+  for name in allowed_files:
+    relative = Path(name)
+    for parent in relative.parents:
+      if parent == Path("."):
+        break
+      allowed_directories.add(parent.as_posix())
+
+  unexpected = []
+  for path in root.rglob("*"):
+    relative = path.relative_to(root).as_posix()
+    if path.is_symlink():
+      unexpected.append(relative)
+    elif path.is_file() and relative not in allowed_files:
+      unexpected.append(relative)
+    elif path.is_dir() and relative not in allowed_directories:
+      unexpected.append(relative + "/")
+  if unexpected:
+    ordered = sorted(unexpected)
+    preview = ordered[:20]
+    suffix = (
+        f" (and {len(ordered) - len(preview)} more)"
+        if len(ordered) > len(preview) else "")
+    raise ValueError(
+        f"candidate contains uninventoried files or directories: {preview}{suffix}")
+
+
 @dataclass(frozen=True)
 class WindowsCandidate:
   root: Path
@@ -215,6 +257,16 @@ def validate_candidate(directory: Path) -> WindowsCandidate:
       raise ValueError(f"candidate resource is missing or unsafe: {name}")
     if sha256(path) != expected.lower():
       raise ValueError(f"candidate resource checksum differs: {name}")
+
+  allowed_files = {
+      "host-candidate.json",
+      "metadata.json",
+      *_OPTIONAL_EVIDENCE_FILES,
+      *resources,
+      *qualification_resources,
+      *(f"{name}.sha256" for name in resources),
+  }
+  _reject_uninventoried_entries(root, allowed_files)
 
   installation = metadata.get("installation")
   if not isinstance(installation, dict) or installation.get("type") != "windows-msi":

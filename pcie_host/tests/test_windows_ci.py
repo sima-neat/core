@@ -410,6 +410,10 @@ class WindowsCiContracts(unittest.TestCase):
     self.assertIn('"dependency_runtime"', source)
     self.assertIn('"--output-junit", native_junit', source)
     self.assertIn("require_junit_cases(native_junit, set(test_names))", source)
+    self.assertIn('cpack_output = work / "cpack"', source)
+    self.assertIn('"-B", cpack_output', source)
+    self.assertNotIn('"-B", output, "-C", "Release"', source)
+    self.assertIn("validate_candidate(output)", source)
 
   def test_hardware_qualification_bounds_blocker_and_injects_process_faults(self):
     source = (SCRIPT_DIR / "qualify_windows_hardware.py").read_text(encoding="utf-8")
@@ -645,7 +649,8 @@ class WindowsCiContracts(unittest.TestCase):
         "repository": "sima-neat/core",
         "scheduler_source_commit": "d" * 40,
     }), encoding="utf-8")
-    qualification = root / "qualification.json"
+    qualification = root.parent / f"{root.name}-qualification.json"
+    self.addCleanup(qualification.unlink, missing_ok=True)
     qualification.write_text(json.dumps({
         "candidate": {"core_commit": commit, "resources": resources},
         "card_baseline": {
@@ -1084,6 +1089,30 @@ install() {
       (root / "qualification-resource.bin").write_bytes(b"changed")
       with self.assertRaisesRegex(ValueError, "qualification resource checksum differs"):
         validate_candidate(root)
+
+  def test_candidate_rejects_uninventoried_cpack_scratch(self):
+    with tempfile.TemporaryDirectory() as directory:
+      root = Path(directory)
+      self.windows_candidate(root)
+      scratch = root / "_CPack_Packages" / "win64" / "WIX"
+      scratch.mkdir(parents=True)
+      (scratch / "files.wxs").write_text("unpublished scratch", encoding="utf-8")
+      with self.assertRaisesRegex(ValueError, "uninventoried files or directories"):
+        validate_candidate(root)
+
+  def test_candidate_accepts_inventoried_hardware_test_tree(self):
+    with tempfile.TemporaryDirectory() as directory:
+      root = Path(directory)
+      self.windows_candidate(root)
+      hardware_test = root / "hardware-tests" / "bin" / "test.exe"
+      hardware_test.parent.mkdir(parents=True)
+      hardware_test.write_bytes(b"connected-card test fixture")
+      receipt_path = root / "host-candidate.json"
+      receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+      receipt["qualification_resources"]["hardware-tests/bin/test.exe"] = sha256(
+          hardware_test)
+      receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
+      validate_candidate(root)
 
   def test_candidate_requires_dependency_signature_receipts(self):
     with tempfile.TemporaryDirectory() as directory:

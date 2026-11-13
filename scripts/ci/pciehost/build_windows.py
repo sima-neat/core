@@ -21,7 +21,7 @@ import sys
 import tempfile
 import zipfile
 
-from windows_candidate import dependency_identity, require_junit_cases
+from windows_candidate import dependency_identity, require_junit_cases, validate_candidate
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -527,12 +527,14 @@ def build(args: argparse.Namespace) -> None:
     check_consumer(relocated, "relocated")
     run([gst_inspect, plugin], env=environment)
 
+    cpack_output = work / "cpack"
     run([cpack, "--config", build_dir / "CPackConfig.cmake", "-G", "WIX",
-         "-B", output, "-C", "Release"], env=environment)
-    core_packages = sorted(output.glob("sima-pcie-host-*.msi"))
+         "-B", cpack_output, "-C", "Release"], env=environment)
+    core_packages = sorted(cpack_output.glob("sima-pcie-host-*.msi"))
     if len(core_packages) != 1:
       raise ValueError(f"expected exactly one Core MSI, found {len(core_packages)}")
-    core_msi = core_packages[0]
+    core_msi = output / core_packages[0].name
+    shutil.copy2(core_packages[0], core_msi)
     if args.signing_certificate_sha1:
       sign_files(
           [core_msi], signtool, args.signing_certificate_sha1,
@@ -824,6 +826,7 @@ def build(args: argparse.Namespace) -> None:
   checks["core_msi_remove"] = "PASS"
   checks["scheduler_msi_remove"] = "PASS"
   write_json(checks_path, checks)
+  validate_candidate(output)
 
 
 def main() -> None:
