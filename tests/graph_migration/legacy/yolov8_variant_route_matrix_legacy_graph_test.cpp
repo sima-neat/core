@@ -1515,6 +1515,7 @@ void require_preprocess_meta_on_output_local(const simaai::neat::Sample& sample,
 simaai::neat::Sample run_canonical_model_sample(const cv::Mat& img_bgr, simaai::neat::Model& model,
                                                 const simaai::neat::Model::RouteOptions& sess_opt,
                                                 int frames = 1) {
+  sima_yolov8_test::step_log("Preparing inference input");
   const simaai::neat::Tensor input = build_canonical_preprocessed_input(img_bgr, model);
   const simaai::neat::TensorList input_tensorlist{input};
   const int timeout_ms = default_model_run_timeout_ms();
@@ -1534,8 +1535,10 @@ simaai::neat::Sample run_canonical_model_sample(const cv::Mat& img_bgr, simaai::
     }
     if (std::getenv("SIMA_E2E_INPUTSTREAM_METRICS") != nullptr) {
     }
+    sima_yolov8_test::step_log("Building inference pipeline");
     auto runner = model.build(input_tensorlist, sess_opt, async_run_opt);
     require(static_cast<bool>(runner), "canonical e2e: runner build failed");
+    sima_yolov8_test::step_log("Running inference pipeline");
 
     // Hardcoded warmup + measurement split. The first frame pays a large
     // cold-start cost (RPC transport_init, dispatcher worker spin-up, kernel
@@ -1719,12 +1722,15 @@ simaai::neat::Sample run_canonical_model_sample(const cv::Mat& img_bgr, simaai::
     require(pulled.load() == effective_loop, "canonical e2e: expected " +
                                                  std::to_string(effective_loop) + " outputs, got " +
                                                  std::to_string(pulled.load()));
+    sima_yolov8_test::step_log("Closing inference pipeline");
     return last_sample;
   };
 
   auto run_once_sync = [&](int pull_timeout_ms) -> simaai::neat::Sample {
+    sima_yolov8_test::step_log("Building inference pipeline");
     auto runner = model.build(simaai::neat::TensorList{input}, sess_opt);
     require(static_cast<bool>(runner), "canonical e2e: runner build failed");
+    sima_yolov8_test::step_log("Running inference pipeline");
     simaai::neat::Sample last_sample;
     for (int frame_idx = 0; frame_idx < loop_count; ++frame_idx) {
       require(runner.push(simaai::neat::TensorList{input}),
@@ -1735,12 +1741,14 @@ simaai::neat::Sample run_canonical_model_sample(const cv::Mat& img_bgr, simaai::
                                         std::to_string(outputs.size()));
       last_sample = outputs.front();
     }
+    sima_yolov8_test::step_log("Closing inference pipeline");
     return last_sample;
   };
 
   try {
     return multithread ? run_once_async(timeout_ms) : run_once_sync(timeout_ms);
-  } catch (const std::exception&) {
+  } catch (const std::exception& e) {
+    sima_yolov8_test::step_log((std::string("Retrying inference after: ") + e.what()).c_str());
     return multithread ? run_once_async(retry_timeout_ms) : run_once_sync(retry_timeout_ms);
   }
 }
@@ -5097,6 +5105,7 @@ int main(int argc, char** argv) {
       "OpenCV required for graph_migration_legacy_yolov8_variant_route_matrix_test");
 #else
   try {
+    sima_yolov8_test::step_log("Initializing GStreamer");
     simaai::neat::gst_init_once();
     if (!simaai::neat::element_exists("neatprocessmla")) {
       return skip_long_test("missing NEAT MLA plugin (neatprocessmla)");
@@ -5126,6 +5135,7 @@ int main(int argc, char** argv) {
       require(fs::exists(tar), "single model tar not found: " + tar.string());
       packs.push_back(tar);
     } else {
+      sima_yolov8_test::step_log("Locating YOLOv8n variants");
       fs::path variants_dir = resolve_variants_dir(root, argc, argv);
       packs = collect_model_packs(variants_dir);
       if (packs.empty()) {
@@ -5140,6 +5150,7 @@ int main(int argc, char** argv) {
                                   "SIMA_YOLOV8N_VARIANTS_BASE_URL");
     }
 
+    sima_yolov8_test::step_log("Loading YOLOv8 test image");
     const cv::Mat img_bgr = sima_yolov8_test::load_people_image_or_skip(root);
     int failures = 0;
 
@@ -5156,6 +5167,7 @@ int main(int argc, char** argv) {
         apply_prepared_runner_options(prepared_runner_mode, prepared_runner_ring_depth,
                                       prepared_runner_profile, prepared_runner_dequant_flags,
                                       &model_options, nullptr);
+        sima_yolov8_test::step_log(("Loading model " + tar.filename().string()).c_str());
         simaai::neat::Model model(tar.string(), model_options);
         simaai::neat::Model::RouteOptions route_opt;
         route_opt.processcvu_requested_run_target = processcvu_run_target;
@@ -5211,6 +5223,7 @@ int main(int argc, char** argv) {
           require_preprocess_meta_on_output_local(infer_sample, img_bgr.cols, img_bgr.rows,
                                                   "canonical_e2e_output");
         }
+        sima_yolov8_test::step_log("Checking detection accuracy");
         const AccuracyResult acc =
             run_framework_boxdecode_accuracy(infer_sample, model, img_bgr, boxdecode_mode);
         require(acc.ok, "accuracy check failed: " + acc.note);
