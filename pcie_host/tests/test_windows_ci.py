@@ -780,6 +780,13 @@ class WindowsCiContracts(unittest.TestCase):
             "repair": {"core": "PASS", "scheduler": "PASS"},
             "recovery": "PASS",
             "repeat": "PASS",
+            "rollback": {
+                "baseline_commit": "b" * 40,
+                "baseline_version": "0.6.1",
+                "candidate_removal": {"core": "PASS", "scheduler": "PASS"},
+                "candidate_version": version,
+                "status": "PASS",
+            },
             "standard_user": {
                 "account": "TEST\\sna-1234",
                 "doctor": "PASS",
@@ -1257,6 +1264,16 @@ install() {
       del value["customer_install"]["upgrade"]
       qualification.write_text(json.dumps(value), encoding="utf-8")
       with self.assertRaisesRegex(ValueError, "real MSI package upgrade"):
+        verify(root, qualification, commit, False, require_release=True)
+
+  def test_release_gate_requires_real_package_rollback_and_reupgrade(self):
+    with tempfile.TemporaryDirectory() as directory:
+      root = Path(directory)
+      commit, _, qualification = self.windows_candidate(root)
+      value = json.loads(qualification.read_text(encoding="utf-8"))
+      del value["customer_install"]["rollback"]
+      qualification.write_text(json.dumps(value), encoding="utf-8")
+      with self.assertRaisesRegex(ValueError, "roll back and re-upgrade"):
         verify(root, qualification, commit, False, require_release=True)
 
   def test_release_gate_requires_partial_wheel_failure_recovery(self):

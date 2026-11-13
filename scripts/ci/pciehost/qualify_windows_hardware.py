@@ -2036,6 +2036,48 @@ def qualify(args: argparse.Namespace) -> None:
           mode: parse_performance_log(evidence / f"cpp-test_tensor_{mode}.log", mode)
           for mode in ("latency", "throughput")
       }
+      if upgrade_base is not None:
+        rollback_removal = {
+            "core": remove_msi(
+                candidate.core_msi, evidence / "rollback-candidate-core-uninstall.log"),
+            "scheduler": remove_msi(
+                candidate.scheduler_msi,
+                evidence / "rollback-candidate-scheduler-uninstall.log"),
+        }
+        if install_root.exists():
+          raise RuntimeError("candidate installation remained before rollback")
+        rollback_download_root = work / "rollback downloads with spaces"
+        with local_registry(upgrade_registry_root) as registry_url:
+          rollback_command = [
+              cli, "neat", "--base-url", registry_url, "install", target,
+              "--install-dir", rollback_download_root,
+          ]
+          run_logged(
+              rollback_command, evidence / "sima-cli-rollback-baseline-install.log",
+              env=cli_environment, cwd=work, timeout=1800)
+        rollback_baseline_evidence = evidence / "rollback-baseline"
+        rollback_baseline_evidence.mkdir()
+        verify_customer_process_activation(
+            install_root, managed_python, rollback_baseline_evidence)
+        with local_registry(registry_root) as registry_url:
+          reupgrade_command = [
+              cli, "neat", "--base-url", registry_url, "install", target,
+              "--install-dir", rollback_download_root,
+          ]
+          run_logged(
+              reupgrade_command, evidence / "sima-cli-rollback-reupgrade.log",
+              env=cli_environment, cwd=work, timeout=1800)
+        rollback_candidate_evidence = evidence / "rollback-candidate"
+        rollback_candidate_evidence.mkdir()
+        verify_customer_process_activation(
+            install_root, managed_python, rollback_candidate_evidence)
+        result["customer_install"]["rollback"] = {
+            "baseline_commit": upgrade_base.core_commit,
+            "baseline_version": str(upgrade_base.metadata["version"]),
+            "candidate_version": str(candidate.metadata["version"]),
+            "candidate_removal": rollback_removal,
+            "status": "PASS",
+        }
       result["result"] = "PASS"
     except BaseException as error:
       failure = error

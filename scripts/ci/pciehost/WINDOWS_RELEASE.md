@@ -72,6 +72,11 @@ This is the normal release path. It does not require maintainers to copy workflo
 run IDs between repositories. Scheduler follows Core's branch/snap policy;
 sima-cli resolves from its supported `main` channel.
 
+Release qualification requires a real older Windows cohort. It installs that
+cohort, upgrades to the candidate, removes the candidate, reinstalls and verifies
+the older native/Python cohort, then upgrades and verifies the candidate again.
+Synthetic version metadata is not accepted as upgrade or rollback evidence.
+
 Native CTest and Python hardware/GenAI runs emit JUnit evidence. The candidate is
 rejected if the observed case set differs from the required set or contains any
 skip, failure, or error; a successful process exit alone is not release evidence.

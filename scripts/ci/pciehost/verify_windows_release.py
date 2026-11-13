@@ -174,6 +174,14 @@ def verify(candidate_dir: Path, qualification_path: Path, expected_commit: str,
       raise ValueError("release qualification recorded an invalid MSI upgrade version") from error
     if not is_newer:
       raise ValueError("release qualification did not upgrade to a newer MSI package version")
+    rollback = customer_install.get("rollback")
+    if (not isinstance(rollback, dict) or rollback.get("status") != "PASS"
+        or rollback.get("baseline_commit") != upgrade.get("baseline_commit")
+        or rollback.get("baseline_version") != upgrade.get("baseline_version")
+        or rollback.get("candidate_version") != upgrade.get("candidate_version")
+        or rollback.get("candidate_removal") != {"core": "PASS", "scheduler": "PASS"}):
+      raise ValueError(
+          "release qualification did not roll back and re-upgrade the real MSI cohort")
   sima_cli = qualification.get("sima_cli")
   if (not isinstance(sima_cli, dict)
       or not re.fullmatch(r"[0-9a-f]{40}", str(sima_cli.get("commit", "")))
