@@ -98,8 +98,14 @@ H264EncodeSima::H264EncodeSima(int w, int h, int fps, int bitrate_kbps, std::str
                                       .level = std::move(level)} {}
 
 std::string H264EncodeSima::backend_fragment(int node_index) const {
-  return internal::encoder_fragment(options_, node_index) + " enc-width=" + std::to_string(width_) +
-         " enc-height=" + std::to_string(height_);
+  std::string fragment = internal::encoder_fragment(options_, node_index);
+  // simaaiencoder takes an unset size from caps (gstsimaaiencoder.cpp:2729-2730);
+  // an explicit 0 fails its start check (:1654-1665).
+  if (width_ > 0)
+    fragment += " enc-width=" + std::to_string(width_);
+  if (height_ > 0)
+    fragment += " enc-height=" + std::to_string(height_);
+  return fragment;
 }
 
 std::vector<std::string> H264EncodeSima::element_names(int node_index) const {

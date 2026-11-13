@@ -32,19 +32,13 @@ bool one_of(const std::string& value, std::initializer_list<const char*> choices
 } // namespace
 
 void validate_encode_options(const SimaEncodeOptions& o) {
-  require(o.type == SimaEncodeType::H264 || o.type == SimaEncodeType::H265 ||
-              o.type == SimaEncodeType::MJPEG,
-          "unsupported codec");
+  // simaaiencoder enc-type takes h264 or h265 only: gstsimaaiencoder.cpp:2215-2228.
+  require(o.type != SimaEncodeType::MJPEG, "MJPEG encode is not supported by simaaiencoder");
+  require(o.type == SimaEncodeType::H264 || o.type == SimaEncodeType::H265, "unsupported codec");
   require(o.fps > 0, "fps must be positive");
-  require(o.num_buffers == -1 || (o.num_buffers >= 1 && o.num_buffers <= 20),
-          "num_buffers must be -1 or within 1..20");
-  if (o.type == SimaEncodeType::MJPEG) {
-    require(!o.bitrate_kbps && !o.rate_control && !o.profile && !o.level && !o.gop_length &&
-                !o.idr_interval,
-            "MJPEG does not accept bitrate, rate control, profile, level, GOP or IDR settings");
-    require(!o.quality || (*o.quality >= 1 && *o.quality <= 100), "quality must be within 1..100");
-    return;
-  }
+  // op-pool-cnt range: gstsimaaiencoder.cpp:101-103, :1645-1651.
+  require(o.num_buffers == -1 || (o.num_buffers >= 2 && o.num_buffers <= 64),
+          "num_buffers must be -1 or within 2..64");
   require(!o.quality, "quality applies only to MJPEG");
   require(!o.bitrate_kbps || *o.bitrate_kbps > 0, "bitrate_kbps must be positive");
   require(!o.rate_control || one_of(*o.rate_control, {"vbr", "cbr"}),
@@ -64,28 +58,21 @@ void validate_encode_options(const SimaEncodeOptions& o) {
 }
 
 std::string encoder_fragment(const SimaEncodeOptions& o, int node_index) {
-  const char* codec = o.type == SimaEncodeType::MJPEG  ? "mjpeg"
-                      : o.type == SimaEncodeType::H265 ? "h265"
-                                                       : "h264";
+  const char* codec = o.type == SimaEncodeType::H265 ? "h265" : "h264";
   std::ostringstream ss;
-  ss << "neatencoder name=n" << node_index << "_encoder enc-type=" << codec;
-  if (o.type == SimaEncodeType::MJPEG) {
-    ss << " enc-quality=" << o.quality.value_or(80);
-  } else {
-    ss << " enc-profile="
-       << o.profile.value_or(o.type == SimaEncodeType::H265 ? "main" : "baseline")
-       << " enc-level=" << o.level.value_or("4.0")
-       << " enc-bitrate=" << o.bitrate_kbps.value_or(4000);
-    if (o.rate_control)
-      ss << " enc-bitrate-mode=" << *o.rate_control;
-    if (o.gop_length)
-      ss << " enc-gop-length=" << *o.gop_length;
-    if (o.idr_interval)
-      ss << " enc-idr-interval=" << *o.idr_interval;
-  }
+  ss << "simaaiencoder name=n" << node_index << "_encoder enc-type=" << codec;
+  ss << " enc-profile=" << o.profile.value_or(o.type == SimaEncodeType::H265 ? "main" : "baseline")
+     << " enc-level=" << o.level.value_or("4.0")
+     << " enc-bitrate=" << o.bitrate_kbps.value_or(4000);
+  if (o.rate_control)
+    ss << " enc-rc-mode=" << *o.rate_control;
+  if (o.gop_length)
+    ss << " enc-gop-length=" << *o.gop_length;
+  if (o.idr_interval)
+    ss << " enc-idr-interval=" << *o.idr_interval;
   ss << " enc-fmt=NV12 enc-frame-rate=" << o.fps << " enc-ip-mode=async ip-rate-ctrl=false";
   if (o.num_buffers != -1)
-    ss << " num-output-buffers=" << o.num_buffers;
+    ss << " op-pool-cnt=" << o.num_buffers;
   if (const char* value = std::getenv("SIMA_NEATENCODER_DUMP_CNT")) {
     if (*value)
       ss << " dump-cnt=" << value;

@@ -70,22 +70,20 @@ public:
     const std::string caps = "video/x-raw,format=NV12" + geometry.str();
 
     if (variant_ == IngressVariant::DirectNv12) {
-      return "neatencoderinput name=" + names[1] + " ! capsfilter name=" + names[2] + " caps=\"" +
-             caps + "\"";
+      return "capsfilter name=" + names[2] + " caps=\"" + caps + "\"";
     }
 
     const std::string input_caps = "video/x-raw" + geometry.str();
     return "capsfilter name=" + names[0] + " caps=\"" + input_caps +
-           "\" ! neatencoderinput name=" + names[1] + " ! capsfilter name=" + names[2] +
-           " caps=\"" + caps + "\"";
+           "\" ! videoconvert name=" + names[1] + " ! capsfilter name=" + names[2] + " caps=\"" +
+           caps + "\"";
   }
 
   std::vector<std::string> element_names(int node_index) const override {
     const auto names = fallback_element_names(node_index);
     if (variant_ == IngressVariant::DirectNv12) {
-      // Both variants retain the serialized converter/caps names. Compatible
-      // producer DMA passes through the ingress element without a copy.
-      return {names[1], names[2]};
+      // simaaiencoder imports or copies NV12 input itself: gstsimaaiencoder.cpp:3373-3378.
+      return {names[2]};
     }
     return names;
   }
@@ -149,8 +147,8 @@ bool can_encode_nv12_direct(const OutputSpec& input, bool simaai_layout_aware) {
     return false;
   }
 
-  // Memory-domain evidence selects the semantic route. The explicit ingress
-  // element checks the actual DMA allocation/layout before preserving it.
+  // Memory-domain evidence selects the semantic route. The encoder checks the actual DMA
+  // allocation/layout of each buffer before importing it.
   return input.memory == "SimaAI" && simaai_layout_aware;
 }
 
