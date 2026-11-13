@@ -1,3 +1,4 @@
+#include "../support/CompactFrameFixture.h"
 #include "pipeline/internal/sima/PreprocFrameAdapter.h"
 #include "pipeline/internal/sima/PreprocGeometryContract.h"
 #include "pipeline/internal/InputStreamUtil.h"
@@ -1594,17 +1595,14 @@ void crop_geometry_dynamic_cache() {
   gst_structure_remove_field(meta, "preproc_affine_m11");
   require(bool(adapter->bind(input, Storage{}, rejected, published)),
           "incomplete upstream provenance was silently accepted");
-  // Compact current-frame facts are the primary authority. A stale malformed
-  // legacy mirror must neither override them nor fill absent compact facts.
+  // Canonical compact facts are the sole authority, including absent facts.
+  // A second legacy authority must fail closed, never fill or override them.
   for (bool with_facts : {false, true}) {
     auto* compact_input = gst_buffer_new_allocate(nullptr, 192, nullptr);
     require(gst_buffer_add_video_meta_full(compact_input, GST_VIDEO_FRAME_FLAG_NONE,
                                            GST_VIDEO_FORMAT_RGB, 8, 4, 1, offsets, strides),
             "compact crop video metadata failed");
-    auto* stale =
-        gst_custom_meta_get_structure(gst_buffer_add_custom_meta(compact_input, "GstSimaMeta"));
-    gst_structure_set(stale, "preproc_affine_m00", G_TYPE_DOUBLE, 999.0, "preproc_roi_list_enable",
-                      G_TYPE_BOOLEAN, TRUE, nullptr);
+    simaai::neat::test_support::attach_compact_frame_carrier(compact_input);
     simaai::gst::TensorBufferFrameMetadata frame;
     std::string error;
     if (with_facts) {
@@ -1654,7 +1652,18 @@ void crop_geometry_dynamic_cache() {
     require(
         simaai::gst::tensor_buffer_attach_frame_metadata(compact_input, std::move(frame), &error),
         "compact crop frame attachment failed");
+    // Inject a competing stale mirror only after valid compact publication;
+    // normal attachment correctly refuses to overwrite a legacy authority.
+    auto* stale =
+        gst_custom_meta_get_structure(gst_buffer_add_custom_meta(compact_input, "GstSimaMeta"));
+    gst_structure_set(stale, "preproc_affine_m00", G_TYPE_DOUBLE, 999.0, "preproc_roi_list_enable",
+                      G_TYPE_BOOLEAN, TRUE, nullptr);
     probe::Binding compact_binding;
+    require(bool(adapter->bind(compact_input, Storage{}, compact_binding, published)),
+            "competing compact and legacy authorities were accepted");
+    auto* competing = gst_buffer_get_custom_meta(compact_input, "GstSimaMeta");
+    require(gst_buffer_remove_meta(compact_input, &competing->meta),
+            "could not remove injected competing authority");
     okay(adapter->bind(compact_input, Storage{}, compact_binding, published));
     require(compact_binding.operation == landscape.operation &&
                 integer(published, "preproc_original_width") == (with_facts ? 80 : 8) &&

@@ -1,3 +1,4 @@
+#include "../support/CompactFrameFixture.h"
 #include "pipeline/DetectionTypes.h"
 #include "pipeline/gst/InputStreamInternal.h"
 #include "pipeline/internal/TensorBufferEnvelope.h"
@@ -1709,21 +1710,27 @@ void composed_frontend_detection_geometry() {
         require(std::holds_alternative<c::Error>(select(missing.get())),
                 "composed frontend dimensions admitted without authoritative affine");
         const auto carrier = [&](bool compact, double offset_delta = 0.) {
-          test::GstBufferOwner buffer(gst_buffer_new());
+          test::GstBufferOwner buffer(gst_buffer_new_allocate(nullptr, 4, nullptr));
           auto current = *facts;
           current.affine[2] += offset_delta;
           auto owner = tr::tensor_buffer_freeze_preprocess_facts(std::move(current), &error);
           require(bool(owner), "composed current-frame facts invalid");
           if (compact) {
+            simaai::neat::test_support::attach_compact_frame_carrier(buffer.get());
             tr::TensorBufferFrameMetadata frame;
             frame.preprocess = owner;
             require(tr::tensor_buffer_attach_frame_metadata(buffer.get(), std::move(frame), &error),
                     error.c_str());
-            // Compact facts must win over a contradictory stale legacy mirror.
+            // A second metadata authority must fail closed, not override compact facts.
             auto* stale = gst_custom_meta_get_structure(
                 gst_buffer_add_custom_meta(buffer.get(), "GstSimaMeta"));
             gst_structure_set(stale, "preproc_resize_mode", G_TYPE_STRING, "crop",
                               "preproc_affine_m00", G_TYPE_DOUBLE, 999., nullptr);
+            require(std::holds_alternative<c::Error>(select(buffer.get())),
+                    "competing compact and legacy authorities were accepted");
+            auto* competing = gst_buffer_get_custom_meta(buffer.get(), "GstSimaMeta");
+            require(gst_buffer_remove_meta(buffer.get(), &competing->meta),
+                    "could not remove injected competing authority");
           } else {
             auto* meta = gst_custom_meta_get_structure(
                 gst_buffer_add_custom_meta(buffer.get(), "GstSimaMeta"));
