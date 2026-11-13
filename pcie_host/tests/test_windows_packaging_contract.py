@@ -62,14 +62,17 @@ class WindowsPackagingContract(unittest.TestCase):
     self.assertIn("GSTREAMER_ROOT_X86_64", environment)
     self.assertIn("CMAKE_PREFIX_PATH", environment)
     self.assertIn("GST_PLUGIN_PATH_1_0", environment)
+    self.assertNotIn(r"C:\simaai\build", environment)
     self.assertNotIn("setx", environment.lower())
 
-    python_bootstrap = (ROOT / "python/pyneatpcie/__init__.py").read_text(
-        encoding="utf-8"
+    python_bootstrap = "\n".join(
+        (ROOT / path).read_text(encoding="utf-8")
+        for path in ("python/pyneatpcie/__init__.py", "python/pyneatpcie/_windows_runtime.py")
     )
     self.assertIn("SIMA_WINDOWS_PLATFORM_RUNTIME_DIR", python_bootstrap)
     self.assertIn("GSTREAMER_ROOT_X86_64", python_bootstrap)
     self.assertIn("Services\\SiMaMlaDaemon", python_bootstrap)
+    self.assertNotIn(r"C:\simaai\build", python_bootstrap)
 
     doctor = (ROOT / "scripts/windows/sima-pcie-host-doctor.cmd").read_text(
         encoding="utf-8"

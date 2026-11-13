@@ -129,7 +129,9 @@ not store the password.
 The Python package discovers DLLs under the default install root and the default
 x64 GStreamer location before importing its extension. For another install root,
 set `SIMA_PCIE_HOST_LIBRARY_PATH` to the directories containing the PCIe host and
-GStreamer DLLs.
+GStreamer DLLs. Import fails if a required DLL is already loaded from outside
+these approved locations. Align the installed versions and start a fresh process
+instead of continuing with a mixed runtime.
 
 Verify the installed wheel and plugin from outside the source/build tree:
 

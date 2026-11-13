@@ -17,12 +17,9 @@ if not defined SIMA_WINDOWS_PLATFORM_RUNTIME_DIR (
   for /f "tokens=3" %%I in ('sc.exe qc SiMaMlaDaemon 2^>nul ^| findstr.exe /B /C:"        BINARY_PATH_NAME"') do set "_SIMAPCIE_PLATFORM_EXE=%%~I"
   if defined _SIMAPCIE_PLATFORM_EXE for %%I in ("%_SIMAPCIE_PLATFORM_EXE%") do set "SIMA_WINDOWS_PLATFORM_RUNTIME_DIR=%%~dpI"
 )
-if not defined SIMA_WINDOWS_PLATFORM_RUNTIME_DIR (
-  set "SIMA_WINDOWS_PLATFORM_RUNTIME_DIR=C:\simaai\build\x64\Bin\Release"
-)
 if not exist "%SIMA_WINDOWS_PLATFORM_RUNTIME_DIR%\SiMaPCIe.dll" (
   1>&2 echo Neat PCIe host: the SiMa Platform runtime was not found at "%SIMA_WINDOWS_PLATFORM_RUNTIME_DIR%".
-  1>&2 echo Install the supported Platform package or set SIMA_WINDOWS_PLATFORM_RUNTIME_DIR.
+  1>&2 echo Install the supported Platform package or set SIMA_WINDOWS_PLATFORM_RUNTIME_DIR to its runtime directory.
   exit /b 3
 )
 

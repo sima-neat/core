@@ -38,6 +38,21 @@ class WheelMetadataTest(unittest.TestCase):
       self.assertIn("Requires-Dist: numpy\n", metadata)
       self.assertIn("Requires-Dist: opencv-python\n", metadata)
 
+  def test_wheel_includes_windows_runtime_admission(self):
+    module = load_wheel_builder("build_pyneatpcie_wheel_runtime")
+    with tempfile.TemporaryDirectory() as temporary:
+      root = Path(temporary)
+      stage = root / "stage"
+      package = stage / "pyneatpcie"
+      package.mkdir(parents=True)
+      (package / "__init__.py").write_text("", encoding="utf-8")
+      (package / "_windows_runtime.py").write_text(
+          "def configure(package_dir): return [], []\n", encoding="utf-8")
+
+      wheel = module.write_wheel(stage, root / "dist", "1.2.3")
+      with zipfile.ZipFile(wheel) as archive:
+        self.assertIn("pyneatpcie/_windows_runtime.py", archive.namelist())
+
   def test_wheel_platform_tag_uses_interpreter_platform(self):
     module = load_wheel_builder("build_pyneatpcie_wheel_platform")
     with mock.patch.object(module.sysconfig, "get_platform", return_value="win-amd64"):

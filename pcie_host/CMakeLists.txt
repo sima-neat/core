@@ -284,6 +284,9 @@ if (SIMAPCIE_BUILD_TESTS)
   add_test(NAME pcie_host_python_wheel_contract
     COMMAND "${Python3_EXECUTABLE}"
       "${CMAKE_CURRENT_SOURCE_DIR}/python/tests/test_wheel_metadata.py")
+  add_test(NAME pcie_host_python_windows_runtime_contract
+    COMMAND "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/python/tests/test_windows_runtime.py")
   add_test(NAME pcie_host_cmake_package_contract
     COMMAND "${Python3_EXECUTABLE}"
       "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_cmake_package_contract.py")

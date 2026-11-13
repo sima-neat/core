@@ -99,7 +99,7 @@ CLI는 MSI를 실행하기 전에 Windows OpenSSH, Platform 서비스, GStreamer
 
 이 유틸리티는 로컬 `10.0.N.1` 관리 링크에서 카드 주소를 검색합니다. 자동 검색을 사용할 수 없으면 `-Hosts 10.0.0.2`를 전달하세요. 공개 키가 아직 등록되지 않은 경우에만 OpenSSH가 카드 암호를 요청하며, 암호는 저장되지 않습니다.
 
-Python 패키지는 확장 모듈을 가져오기 전에 기본 설치 루트와 기본 x64 GStreamer 위치에서 DLL을 검색합니다. 다른 설치 루트를 사용하려면 `SIMA_PCIE_HOST_LIBRARY_PATH`를 PCIe 호스트 및 GStreamer DLL이 있는 디렉터리로 설정하세요.
+Python 패키지는 확장 모듈을 가져오기 전에 기본 설치 루트와 기본 x64 GStreamer 위치에서 DLL을 검색합니다. 다른 설치 루트를 사용하려면 `SIMA_PCIE_HOST_LIBRARY_PATH`를 PCIe 호스트 및 GStreamer DLL이 있는 디렉터리로 설정하세요. 필요한 DLL이 승인된 위치가 아닌 다른 위치에서 이미 로드된 경우 가져오기가 실패합니다. 혼합된 런타임을 계속 사용하지 말고 설치 버전을 맞춘 뒤 새 프로세스를 시작하세요.
 
 소스 또는 빌드 트리 외부에서 설치된 wheel과 플러그인을 확인합니다.
 
