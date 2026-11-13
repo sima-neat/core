@@ -17,6 +17,8 @@
 #include "builder/Node.h"
 #include "builder/OutputSpec.h"
 
+#include "nodes/sima/PreprocMath.h"
+
 #include <nlohmann/json.hpp>
 
 #include <cstdint>
@@ -98,6 +100,17 @@ struct PreprocOptions {
   std::shared_ptr<const CompiledProcessCvuContract>
       compiled_contract; ///< Exact projected graph-200/arena contract for strict model routes.
   std::shared_ptr<const internal::ModelLineageBinding> model_lineage; ///< @internal
+
+  /// Original FP32 source multiplier (RGB/Gray before resize; YUV after its decode boundary).
+  /// Presence selects fixed source arithmetic;
+  /// normalize.mean/stddev then mean a post-resize subtraction/division, with no implied /255.
+  std::optional<float> rescale_factor;
+  /// Original positive FP32 INT8 step, never reconstructed from a reciprocal.
+  /// Model routes require agreement with the MPK quantizer; zero point stays model-owned.
+  std::optional<float> quantization_step;
+  PreprocColorConversionPlacement color_conversion_placement =
+      PreprocColorConversionPlacement::AfterResize;
+  PreprocFloatingConversion floating_conversion = PreprocFloatingConversion::Legacy;
 
   /// Replace the input image shape (H, W, C).
   void set_input_shape(std::vector<int> shape) {

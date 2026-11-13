@@ -7,6 +7,9 @@
 #include "test_utils.h"
 
 #include <cstdlib>
+#include <bit>
+#include <cstdint>
+#include <nlohmann/json.hpp>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
@@ -270,6 +273,92 @@ RUN_TEST(
       require_contains(superpoint_options_roundtrip_json, "\"output_format\":2",
                        io_case("superpoint_output_format_roundtrip",
                                "SuperPoint output format should survive save/load"));
+
+      // Exercise authored Model options through the actual graph writer and
+      // reader. The infer-only provenance does not execute/qualify pixels.
+      auto typed_options = nlohmann::json::parse(superpoint_options_json);
+      auto& typed_fragment = typed_options["model_fragments"][0];
+      typed_fragment["stage_role"] = "infer";
+      const float source_factor = 0x1.010102p-8f;
+      const float source_step = std::bit_cast<float>(std::uint32_t{0x3c46a60c});
+      typed_fragment["model_options"]["preprocess"] = {
+          {"input_max_width", 1280},
+          {"input_max_height", 720},
+          {"resize", {{"interpolation", 4}}},
+          {"rescale_factor", source_factor},
+          {"quantization_step", source_step},
+          {"color_conversion_placement", 1},
+          {"floating_conversion", 1},
+          {"normalize",
+           {{"mean", {0.485f, 0.456f, 0.406f}}, {"stddev", {0.229f, 0.224f, 0.225f}}}}};
+      // Zero is a valid enum value, not an omitted selection.
+      for (int sampler : {0, 4}) {
+        typed_options["model_fragments"][0]["model_options"]["preprocess"]["resize"]
+                     ["interpolation"] = sampler;
+        const auto typed_path = tmp_json_path("graph_io_typed_resize.json");
+        write_text(typed_path, typed_options.dump());
+        const auto typed_graph = Graph::load(typed_path);
+        const auto typed_roundtrip_path = tmp_json_path("graph_io_typed_resize_roundtrip.json");
+        typed_graph.save(typed_roundtrip_path);
+        const auto typed_roundtrip = nlohmann::json::parse(read_text(typed_roundtrip_path));
+        const auto& restored_preprocess =
+            typed_roundtrip["model_fragments"][0]["model_options"]["preprocess"];
+        require(restored_preprocess["resize"]["interpolation"] == sampler,
+                "typed sampler intent disappeared during graph save/load");
+        require(restored_preprocess["rescale_factor"].get<float>() == source_factor &&
+                    restored_preprocess["quantization_step"].get<float>() == source_step &&
+                    restored_preprocess["normalize"]["mean"][0].get<float>() == 0.485f &&
+                    restored_preprocess["normalize"]["stddev"][0].get<float>() == 0.229f,
+                "graph save/load changed original FP32 preprocessing coefficients");
+        require(restored_preprocess["color_conversion_placement"] == 1 &&
+                    restored_preprocess["floating_conversion"] == 1,
+                "graph save/load lost preprocessing conversion policies");
+      }
+      for (const std::string key : {"rescale_factor", "quantization_step"}) {
+        for (const auto& invalid : {nlohmann::json(1e300), nlohmann::json("not-a-number")}) {
+          auto malformed = typed_options;
+          malformed["model_fragments"][0]["model_options"]["preprocess"][key] = invalid;
+          const auto path = tmp_json_path("graph_io_bad_source_coefficient.json");
+          write_text(path, malformed.dump());
+          bool rejected = false;
+          try {
+            (void)Graph::load(path);
+          } catch (const std::exception& error) {
+            rejected = std::string(error.what()).find(key) != std::string::npos;
+          }
+          require(rejected, "unrepresentable/malformed source coefficient must fail before cast");
+        }
+      }
+      for (const std::string key : {"floating_conversion", "color_conversion_placement"}) {
+        for (const auto& invalid : {nlohmann::json(1.5), nlohmann::json(999)}) {
+          auto malformed = typed_options;
+          malformed["model_fragments"][0]["model_options"]["preprocess"][key] = invalid;
+          const auto path = tmp_json_path("graph_io_bad_source_policy.json");
+          write_text(path, malformed.dump());
+          bool rejected = false;
+          try {
+            (void)Graph::load(path);
+          } catch (const std::exception& error) {
+            rejected = std::string(error.what()).find(key) != std::string::npos;
+          }
+          require(rejected, "invalid saved preprocessing policy must fail instead of truncating");
+        }
+      }
+      for (const auto& bad_sampler :
+           {nlohmann::json(1.5), nlohmann::json(999), nlohmann::json("BilinearAntialiased")}) {
+        auto malformed = typed_options;
+        malformed["model_fragments"][0]["model_options"]["preprocess"]["resize"]["interpolation"] =
+            bad_sampler;
+        const auto path = tmp_json_path("graph_io_bad_typed_resize.json");
+        write_text(path, malformed.dump());
+        bool rejected = false;
+        try {
+          (void)Graph::load(path);
+        } catch (const std::exception& error) {
+          rejected = std::string(error.what()).find("interpolation") != std::string::npos;
+        }
+        require(rejected, "invalid serialized typed sampler silently changed its meaning");
+      }
 
       Graph realtime_app("graph_io_realtime_link_options");
       GraphLinkOptions realtime_link;

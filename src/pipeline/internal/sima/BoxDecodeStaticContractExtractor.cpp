@@ -316,8 +316,15 @@ void maybe_infer_score_activation_from_boxdecode_contract_local(BoxDecodeStaticC
       box_decode_type_is_ssd_family(contract->decode_type)) {
     return;
   }
-  if (contract->decode_type == BoxDecodeType::RcnnStage1) {
-    // The stage-one RPN recipe has one objectness logit per anchor.
+  if (contract->decode_type == BoxDecodeType::Detr) {
+    // A logit endpoint does not distinguish sigmoid from classwise softmax.
+    // Classic DETR fixes that choice independently of export endpoint names.
+    contract->score_activation = BoxDecodeScoreActivation::Softmax;
+    return;
+  }
+  if (contract->decode_type == BoxDecodeType::RcnnStage1 ||
+      contract->decode_type == BoxDecodeType::DetrFocal) {
+    // RPN objectness and focal query scores are independent sigmoid logits.
     contract->score_activation = BoxDecodeScoreActivation::Sigmoid;
     return;
   }
@@ -775,7 +782,9 @@ maybe_infer_float_yolov8_score_activation_from_sample_values_local(
 std::optional<BoxDecodeScoreActivation> resolve_boxdecode_score_activation_from_sample_local(
     const TensorList& tensors, BoxDecodeType decode_type,
     const std::optional<InputContract>& input_contract, std::string* error_message) {
-  if (decode_type == BoxDecodeType::RcnnStage1)
+  if (decode_type == BoxDecodeType::Detr)
+    return BoxDecodeScoreActivation::Softmax;
+  if (decode_type == BoxDecodeType::RcnnStage1 || decode_type == BoxDecodeType::DetrFocal)
     return BoxDecodeScoreActivation::Sigmoid;
   if (decode_type == BoxDecodeType::SuperPoint) {
     // Detector-logit normalization is part of the explicit SuperPoint profile,
@@ -3134,7 +3143,8 @@ build_boxdecode_static_contract_from_mpk(const MpkContract& contract,
 
 std::optional<BoxDecodeStaticContract> build_boxdecode_static_contract_from_mpk(
     const MpkContract& contract, const ModelManagedRouteFlags& route_flags,
-    const MpkPluginIoContract* terminal_stage, std::string* error_message) {
+    const MpkPluginIoContract* terminal_stage, std::string* error_message,
+    BoxDecodeType requested_decode_type) {
   auto fail = [&](std::string message) -> std::optional<BoxDecodeStaticContract> {
     set_error(error_message, message);
     return std::nullopt;
@@ -3164,6 +3174,7 @@ std::optional<BoxDecodeStaticContract> build_boxdecode_static_contract_from_mpk(
   }
 
   BoxDecodeStaticContract out;
+  out.decode_type = requested_decode_type;
   out.score_activation = BoxDecodeScoreActivation::Unknown;
   // Source an explicitly authored decode type from the MPK BoxDecode stage. Prefer the explicit
   // terminal stage; otherwise fall back to the BoxDecode plugin in the chain.
@@ -3177,10 +3188,14 @@ std::optional<BoxDecodeStaticContract> build_boxdecode_static_contract_from_mpk(
     }
   }
   if (boxdecode_stage) {
+    if (const auto declared = parse_box_decode_type_token(boxdecode_stage->decode_type);
+        declared && !box_decode_type_matches_requested_contract(*declared, requested_decode_type))
+      return fail("boxdecode requested family conflicts with the MPK decoder contract");
     if (const auto parsed_type = parse_box_decode_type_token(boxdecode_stage->decode_type);
         parsed_type.has_value() &&
         (box_decode_type_is_ssd_family(*parsed_type) || *parsed_type == BoxDecodeType::SuperPoint ||
-         *parsed_type == BoxDecodeType::YoloV5 || *parsed_type == BoxDecodeType::YoloXSegPose)) {
+         *parsed_type == BoxDecodeType::YoloV5 || *parsed_type == BoxDecodeType::YoloXSegPose ||
+         *parsed_type == BoxDecodeType::Detr || *parsed_type == BoxDecodeType::DetrFocal)) {
       out.decode_type = *parsed_type;
     }
     if (const auto parsed_option =

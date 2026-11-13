@@ -1841,6 +1841,24 @@ void test_cast_preproc_absorption_uses_explicit_image_layout() {
   options.tessellate = false;
   const auto original =
       sima::stagesemantics::build_processcvu_compiled_contract_from_options(options);
+  // The same immutable model-owned projection must retain source arithmetic,
+  // rather than rebuilding a legacy affine from its quant/layout decisions.
+  auto fixed_options = options;
+  fixed_options.rescale_factor = 1.f / 255.f;
+  fixed_options.floating_conversion = simaai::neat::PreprocFloatingConversion::NearestEven;
+  fixed_options.color_conversion_placement =
+      simaai::neat::PreprocColorConversionPlacement::BeforeResize;
+  auto fixed_contract =
+      sima::stagesemantics::build_processcvu_compiled_contract_from_options(fixed_options);
+  std::vector<sc::PhysicalCommandId> fixed_absorbed;
+  require(sc::project_model_managed_preproc_contract(plan, *physical, &fixed_contract,
+                                                     &fixed_absorbed, &error),
+          "fixed graph-200 projection failed: " + error);
+  require(fixed_contract.payload.rescale_factor == fixed_options.rescale_factor &&
+              fixed_contract.payload.floating_conversion == fixed_options.floating_conversion &&
+              fixed_contract.payload.color_conversion_placement ==
+                  fixed_options.color_conversion_placement,
+          "model-owned projection dropped ordinary source arithmetic options");
   auto contract = original;
   std::vector<sc::PhysicalCommandId> absorbed;
   require(sc::project_model_managed_preproc_contract(plan, *physical, &contract, &absorbed, &error),

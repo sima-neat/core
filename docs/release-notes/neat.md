@@ -7,6 +7,18 @@ sidebar_position: 3
 
 Release notes for the SiMa.ai Neat Library.
 
+## 0.6.1 (unreleased) {#v061}
+
+### Breaking changes {#v061-breaking}
+
+- The Neat Library C++ ABI is now 7 (`libsima_neat.so.7`). `ResizeSpec`, `PreprocessOptions`, `PreprocOptions` and `NormalizationOptions` gained fields. Rebuild C++ applications, plugins and Python bindings with matching headers and runtime packages; do not reuse ABI 6 binaries or add compatibility symlinks.
+
+### Preprocessing {#v061-preproc}
+
+- Model preprocessing and standalone Resize share `ResizeInterpolation`. Use `preprocess.resize.interpolation = ResizeInterpolation.BilinearAntialiased` instead of a sampler string in new code. Existing `scaling_type` strings remain compatible; conflicting nondefault strings are rejected.
+
+- Existing preprocessing options now accept antialiased bilinear resize, an explicit source rescale factor, color-conversion placement and floating-conversion policy. On the fixed source-arithmetic path, mean and standard-deviation fields retain the original mean and divisor rather than a folded affine transform. BF16 defaults to legacy truncation; nearest-even is opt-in. FP16 uses nearest-even. Precise INT8 quantization requires the original source step consistent with the model's multiplier; the multiplier cannot reconstruct that step. Absent new options preserve the existing path. See [Preproc](/reference/nodes/preproc).
+
 ## 0.6.0
 
 ### Breaking changes

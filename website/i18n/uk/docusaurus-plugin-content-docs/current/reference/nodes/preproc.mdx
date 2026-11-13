@@ -68,6 +68,45 @@ tensors = pyneat.stages.preproc(
 )
 ```
 
+## Фіксована арифметика джерела {#fixed-source-arithmetic}
+
+Для моделі з входом BF16 задайте початкову арифметику зображення звичайними параметрами.
+
+Для попередньої обробки зображень у Model залиште `preprocess.quantize.enable` і `preprocess.tessellate.enable` у стані `Auto`. Явно вибрані тензорні шляхи не можуть застосувати ці фіксовані параметри зображення, тому їх відхилено.
+
+Model `preprocess.resize.interpolation` і окремий `ResizeOptions.interpolation` використовують той самий перелік `ResizeInterpolation`. У новому коді використовуйте типізований параметр. Типове значення `None` зберігає попередній рядок `scaling_type` та типовий режим Bilinear. Типізоване значення має перевагу над цим попереднім типовим значенням; суперечливий нетиповий рядок відхиляється.
+
+```python
+import pyneat
+
+options = pyneat.ModelOptions()
+p = options.preprocess
+p.kind = pyneat.InputKind.Image
+p.input_max_width, p.input_max_height = 1280, 720
+p.resize.enable = pyneat.AutoFlag.On
+p.resize.mode = pyneat.ResizeMode.Stretch
+p.resize.interpolation = pyneat.ResizeInterpolation.BilinearAntialiased
+p.rescale_factor = 1.0 / 255.0
+p.normalize.enable = pyneat.AutoFlag.On
+p.normalize.mean = [0.485, 0.456, 0.406]
+p.normalize.stddev = [0.229, 0.224, 0.225]
+p.normalize.has_explicit_stats = True
+p.floating_conversion = pyneat.PreprocFloatingConversion.NearestEven
+model = pyneat.Model("/path/to/bf16_model.tar.gz", options)
+```
+
+Для RGB/Gray `rescale_factor` множить пікселі до зміни розміру; увімкнена нормалізація потім віднімає `normalize.mean` і ділить на `normalize.stddev`. Цей шлях не додає неявне `/255`. Для немасштабованих пікселів задайте коефіцієнт `1`. Зберігайте початкові коефіцієнти FP32, не перетворюючи їх на старі афінні параметри. Фіксована арифметика підтримує `NO_SCALING`, `NEAREST` і `BILINEAR_ANTIALIASED`, але не звичайну bilinear чи bicubic.
+
+BF16 за замовчуванням і далі використовує відсікання. Лише явне `PreprocFloatingConversion.NearestEven` обирає округлення до найближчого парного. Окремий `PreprocOptions.output_dtype="FP16"` обирає binary16, який завжди використовує таке округлення. Окремий `PreprocOptions` має ті самі фіксовані параметри. `NormalizationOptions` також приймає `rescale_factor` і `floating_conversion`, а `ResizeInterpolation.BilinearAntialiased` обирає інтерполяцію для `nodes.resize`.
+
+Для виходу INT8 задайте початковий додатний `quantization_step`. Core перевіряє відповідність його оберненого значення FP32 множнику MPK і зберігає нульову точку моделі. Це перевірка узгодженості, а не відновлення початкового кроку. Відсутній або несумісний крок спричиняє помилку. В окремому графі задайте `q_zp`; множник метаданих передавання можна обчислити з наданого кроку. Виконання ділить на початковий крок, округлює частку до найближчого парного, додає нульову точку та застосовує насичення.
+
+Для YUV-to-RGB типовим `color_conversion_placement` є `PreprocColorConversionPlacement.AfterResize`: спочатку змінюється розмір компонентів, потім проходиться межа декодування UInt8 RGB і виконуються масштабування та нормалізація. `BeforeResize` переносить цю межу перед масштабуванням і вибіркою RGB. Інші колірні шляхи відхиляють таке перевизначення. Не припускайте еквівалентність Pillow/torchvision: перевіряйте порядок і проміжний dtype.
+
+Використовуйте вхід зображення без перевизначення `transforms`. Несумісні прапорці вимкнення й непідтримувані поєднання спричиняють помилку, а не приховану зміну запиту. Форму виходу, dtype, квантування та фізичний макет і далі визначає MPK; місткість джерела не залежить від розмірів моделі. Без нових параметрів стара арифметика зберігається. Додаткові поля змінюють структуру об’єктів C++, тому ця версія використовує ABI 7 (`libsima_neat.so.7`). Перезберіть застосунки, плагіни й прив’язки Python з відповідними заголовками та бібліотеками; не завантажуйте бінарні файли ABI 5/6 через посилання для сумісності.
+
+
+
 ## Способи використання.
 
 | Приклад використання | API | Інструкція |

@@ -466,7 +466,8 @@ PreprocFrameAdapter::check_policy(const ProcessCvuStagePayload& prepared) {
     if (auto* error = std::get_if<Error>(&output))
       return *error;
     policy->output = std::get<TensorSpec>(std::move(output));
-    if (cfg.normalize != 1 && policy->output.dtype == DType::Int8) {
+    if (cfg.normalize != 1 && policy->output.dtype == DType::Int8 && !cfg.rescale_factor &&
+        !cfg.quantization_step && cfg.floating_conversion == PreprocFloatingConversion::Legacy) {
       // Legacy raw INT8 names byte-preserving [0,255] storage, not signed math.
       // Native UInt8 explicitly preserves those bytes in dense or tiled storage.
       policy->output.dtype = DType::UInt8;
@@ -727,6 +728,8 @@ Result<std::vector<Parameter>> PreprocFrameAdapter::static_parameters() const {
   const auto interpolation = upper(cfg.scaling_type);
   if (interpolation == "BILINEAR")
     interpolation_value = "bilinear";
+  else if (interpolation == "BILINEAR_ANTIALIASED")
+    interpolation_value = "bilinear_antialiased";
   else if (interpolation == "NEAREST" || interpolation == "NEAREST_NEIGHBOUR")
     interpolation_value = "nearest";
   else if (interpolation == "BICUBIC")
@@ -786,6 +789,63 @@ Result<std::vector<Parameter>> PreprocFrameAdapter::static_parameters() const {
         result.push_back({"yuv_padding", std::move(values)});
       }
     }
+  }
+  if (cfg.color_conversion_placement != PreprocColorConversionPlacement::AfterResize &&
+      cfg.color_conversion_placement != PreprocColorConversionPlacement::BeforeResize)
+    return invalid("color_conversion_placement", "unknown color-conversion placement");
+  if (cfg.floating_conversion != PreprocFloatingConversion::Legacy &&
+      cfg.floating_conversion != PreprocFloatingConversion::NearestEven)
+    return invalid("floating_conversion", "unknown floating conversion");
+  const bool fixed_arithmetic =
+      cfg.rescale_factor.has_value() || cfg.quantization_step.has_value() ||
+      cfg.floating_conversion == PreprocFloatingConversion::NearestEven ||
+      cfg.color_conversion_placement == PreprocColorConversionPlacement::BeforeResize;
+  if (fixed_arithmetic) {
+    // Keep source coefficient bits and individual FP32 rounding boundaries.
+    // In particular, never lower this request through the legacy mean*255 /
+    // reciprocal affine below, or reconstruct a source step from q_scale.
+    if (cfg.rescale_factor)
+      result.push_back({"rescale_factor", *cfg.rescale_factor});
+    if (cfg.normalize == 1) {
+      if (!cfg.rescale_factor)
+        return invalid("rescale_factor",
+                       "fixed normalization requires an explicit rescale_factor; use 1 for "
+                       "unscaled pixels or the original source factor, such as 1/255");
+      if (cfg.channel_mean.size() != 3 || cfg.channel_stddev.size() != 3)
+        return invalid("normalization", "fixed normalization requires three means and divisors");
+      ParameterArray means, divisors;
+      for (std::size_t i = 0; i < 3; ++i) {
+        means.emplace_back(float(cfg.channel_mean[i]));
+        divisors.emplace_back(float(cfg.channel_stddev[i]));
+      }
+      result.push_back({"normalization_mean", std::move(means)});
+      result.push_back({"normalization_divisor", std::move(divisors)});
+    }
+    if (cfg.quantization_step) {
+      if (policy_->output.dtype != DType::Int8 || !cfg.has_q_zp)
+        return invalid("quantization_step", "a source step requires INT8 output and a zero point");
+      const float step = *cfg.quantization_step;
+      if (!std::isfinite(step) || step <= 0)
+        return invalid("quantization_step", "the original source step must be finite and positive");
+      // A model's existing multiplier remains authoritative. An explicitly
+      // supplied original step must agree at that contract's FP32 precision;
+      // this consistency check does not claim to infer the original step.
+      if (cfg.has_q_scale && (!std::isfinite(cfg.q_scale) || cfg.q_scale <= 0 ||
+                              float(1.0f / step) != float(cfg.q_scale)))
+        return invalid("quantization_step",
+                       "source step conflicts with the authored quantizer multiplier");
+      result.push_back({"quantization_step", step});
+      result.push_back({"quantization_step_zero_point", cfg.q_zp});
+    } else if (policy_->output.dtype == DType::Int8) {
+      return invalid("quantization_step",
+                     "fixed INT8 arithmetic requires the original quantization_step; a legacy "
+                     "q_scale multiplier cannot reconstruct it");
+    }
+    if (cfg.color_conversion_placement == PreprocColorConversionPlacement::BeforeResize)
+      result.push_back({"color_conversion_placement", "before_resize"});
+    if (cfg.floating_conversion == PreprocFloatingConversion::NearestEven)
+      result.push_back({"floating_conversion", "nearest_even"});
+    return result;
   }
   ParameterArray offsets, multipliers;
   if (policy_->output.dtype == DType::Int8 && (!cfg.has_q_scale || !cfg.has_q_zp))

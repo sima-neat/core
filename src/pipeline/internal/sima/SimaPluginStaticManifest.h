@@ -37,6 +37,8 @@
 #include <simaai/scheduler/client/frame_layout.h>
 #include <ev/ev_tensor_abi.h>
 
+#include "nodes/sima/PreprocMath.h"
+
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -387,6 +389,16 @@ struct ProcessCvuStagePayload {
 
   std::vector<double> channel_mean;
   std::vector<double> channel_stddev;
+
+  /// Original FP32 multiplier before resize. Presence selects fixed source arithmetic;
+  /// normalize.mean/stddev then mean a post-resize subtraction/division, with no implied /255.
+  std::optional<float> rescale_factor;
+  /// Original positive FP32 INT8 step, never reconstructed from a reciprocal.
+  /// Model routes require agreement with the MPK quantizer; zero point stays model-owned.
+  std::optional<float> quantization_step;
+  PreprocColorConversionPlacement color_conversion_placement =
+      PreprocColorConversionPlacement::AfterResize;
+  PreprocFloatingConversion floating_conversion = PreprocFloatingConversion::Legacy;
 
   /// Layout token of the stage's `index`-th typed input (falls back to first input).
   std::string typed_input_layout_token(std::size_t index = 0U) const {
