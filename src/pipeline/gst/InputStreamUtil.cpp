@@ -3296,18 +3296,19 @@ bool copy_simaai_preprocess_meta(GstBuffer* dst, GstBuffer* src, std::string* er
       *err = "copy preprocess metadata: source buffer has no valid preprocess metadata";
     return false;
   }
+  // Snapshot origin before writing: source and destination may be the same envelope.
+  auto* source = gst_buffer_get_custom_meta(src, "GstSimaMeta");
+  gboolean prospective = FALSE;
+  if (source)
+    gst_structure_get_boolean(gst_custom_meta_get_structure(source), "preproc_ingress_template",
+                              &prospective);
   if (!write_simaai_preprocess_meta(dst, *meta)) {
     if (err)
       *err = "copy preprocess metadata: failed to write GstSimaMeta fields";
     return false;
   }
   // Copying metadata does not execute its prospective preprocessing policy.
-  auto* source = gst_buffer_get_custom_meta(src, "GstSimaMeta");
-  gboolean prospective = FALSE;
-  if (source &&
-      gst_structure_get_boolean(gst_custom_meta_get_structure(source), "preproc_ingress_template",
-                                &prospective) &&
-      prospective) {
+  if (prospective) {
     auto* target = gst_buffer_get_custom_meta(dst, "GstSimaMeta");
     gst_structure_set(gst_custom_meta_get_structure(target), "preproc_ingress_template",
                       G_TYPE_BOOLEAN, TRUE, nullptr);

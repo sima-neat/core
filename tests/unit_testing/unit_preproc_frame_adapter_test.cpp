@@ -1546,6 +1546,8 @@ void crop_geometry_dynamic_cache() {
             "raw ingress template attachment failed");
     auto* copied = gst_buffer_new();
     std::string copy_error;
+    require(simaai::neat::copy_simaai_preprocess_meta(raw, raw, &copy_error),
+            "same-envelope prospective ingress copy failed");
     require(simaai::neat::copy_simaai_preprocess_meta(copied, raw, &copy_error),
             "prospective ingress copy failed");
     auto* copied_meta =
