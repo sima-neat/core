@@ -773,6 +773,8 @@ void write_resize_json(std::ostream& oss, const ResizeSpec& spec) {
       << json_escape(spec.scaling_type) << "\"";
   if (spec.interpolation)
     oss << ",\"interpolation\":" << enum_int(*spec.interpolation);
+  if (spec.shorter_side)
+    oss << ",\"shorter_side\":" << *spec.shorter_side;
   oss << "}";
 }
 
@@ -781,7 +783,10 @@ ResizeSpec parse_resize_json(const JsonValue::JsonObject& obj) {
   spec.enable = static_cast<AutoFlag>(int_field(obj, "enable", enum_int(spec.enable)));
   spec.width = int_field(obj, "width", spec.width);
   spec.height = int_field(obj, "height", spec.height);
-  spec.mode = static_cast<ResizeMode>(int_field(obj, "mode", enum_int(spec.mode)));
+  spec.mode = static_cast<ResizeMode>(strict_enum_field(obj, "mode", enum_int(spec.mode)));
+  if (spec.mode != ResizeMode::Stretch && spec.mode != ResizeMode::Letterbox &&
+      spec.mode != ResizeMode::Crop)
+    throw std::invalid_argument("preprocess.resize.mode is invalid");
   spec.pad_value = int_field(obj, "pad_value", spec.pad_value);
   spec.scaling_type = string_field(obj, "scaling_type", spec.scaling_type);
   if (const auto* value = object_field(obj, "interpolation");
@@ -789,6 +794,13 @@ ResizeSpec parse_resize_json(const JsonValue::JsonObject& obj) {
     spec.interpolation =
         static_cast<ResizeInterpolation>(strict_enum_field(obj, "interpolation", 0));
     (void)internal::resolve_resize_scaling_type(spec);
+  }
+  if (const auto* value = object_field(obj, "shorter_side");
+      value && value->type != JsonValue::Type::Null) {
+    spec.shorter_side = strict_enum_field(obj, "shorter_side", 0);
+    if (*spec.shorter_side <= 0 || *spec.shorter_side > 4096 || spec.mode != ResizeMode::Crop)
+      throw std::invalid_argument(
+          "preprocess.resize.shorter_side requires Crop and a size in 1..4096");
   }
   return spec;
 }

@@ -39,10 +39,10 @@ using Owner = probe::Owner;
 using Storage = probe::Storage;
 // This recording-only test transport acknowledges the current Preproc wire
 // version. It captures real prepared packets; it does not emulate EV pixels or
-// change production firmware capabilities. Legacy numerical defaults also use ABI7.
+// change production firmware capabilities. Legacy numerical defaults also use ABI8.
 std::shared_ptr<Capture> preproc_capture() {
   auto capture = std::make_shared<Capture>();
-  capture->maximum_abi = 7;
+  capture->maximum_abi = 8;
   return capture;
 }
 class PreprocProbe : public probe::AdapterProbe {
@@ -172,9 +172,9 @@ void cold_generic_preparation() {
           "cold check lost the materialized ROI output capacity");
   const auto capability = take(rt::bind_kernel_variant(checked->initial_executable(), "geometry"));
   require(capability.contract_policy() == rt::KernelVariantPolicy::FullRecheck &&
-              capability.fields().size() == 4 && capability.fields()[0] == "source_roi" &&
+              capability.fields().size() == 5 && capability.fields()[0] == "source_roi" &&
               capability.fields()[1] == "source_rois" && capability.fields()[2] == "destination" &&
-              capability.fields()[3] == "padding",
+              capability.fields()[3] == "padding" && capability.fields()[4] == "resize_window",
           "preproc geometry capability does not describe the canonical update slots");
   const auto facts = inspection.preparation_facts();
   const auto accepted = std::find_if(facts.begin(), facts.end(),
@@ -183,8 +183,9 @@ void cold_generic_preparation() {
           "empty initial ROI admission omitted its checked empty facts");
   // Both kinds of optional ROI override are genuinely cleared, not inherited
   // from the initial capacity-only admission. The new ports are fully rechecked.
-  std::array<std::optional<rt::ParameterValue>, 4> values{
-      std::nullopt, std::nullopt, rt::ParameterArray{0, 0, 8, 8}, rt::ParameterArray{0, 0, 0}};
+  std::array<std::optional<rt::ParameterValue>, 5> values{
+      std::nullopt, std::nullopt, rt::ParameterArray{0, 0, 8, 8}, rt::ParameterArray{0, 0, 0},
+      std::nullopt};
   auto output = inspection.outputs()[0];
   output.shape = std::vector<std::int64_t>{1, 8, 8, 3};
   const auto ordinary =
@@ -309,7 +310,7 @@ void fixed_arithmetic_contract() {
     auto done =
         stage->session().executor(0)->submit(*binding.operation, binding.inputs, binding.outputs);
     okay(done.wait());
-    require(capture->packet.abi == 7, "fixed source arithmetic must retain checked Preproc ABI7");
+    require(capture->packet.abi == 8, "fixed source arithmetic must retain checked Preproc ABI8");
     const auto bits = [&](std::size_t offset) {
       require(capture->packet.payload.size() >= offset + 4, "short fixed arithmetic packet");
       std::uint32_t value;
@@ -469,7 +470,7 @@ void contract() {
   tile.layout.tiled.tile_sizes[1] = 8;
   tile.layout.tiled.tile_sizes[2] = 3;
   raw->output_tensors[0] = raw->output_tensors[0].with_geometry(tile);
-  for (const auto maximum_abi : {4U, 5U, 6U}) {
+  for (const auto maximum_abi : {4U, 5U, 6U, 7U}) {
     auto old_firmware = std::make_shared<Capture>();
     old_firmware->maximum_abi = maximum_abi;
     auto old_options = raw_options;
@@ -478,7 +479,7 @@ void contract() {
     const auto* error = std::get_if<rt::Error>(&rejected);
     require(error && error->field == "prepared.ev74" && old_firmware->admissions > 0 &&
                 old_firmware->submissions == 0 && old_firmware->packet.empty(),
-            "ABI4/5/6 transports must reject checked Preproc ABI7 before submission");
+            "ABI4/5/6 transports must reject checked Preproc ABI8 before submission");
   }
   auto tiled = take(PreprocProbe::create(raw, raw_options));
   auto* tiled_input = gst_buffer_new_allocate(nullptr, 192, nullptr);
@@ -494,8 +495,8 @@ void contract() {
   std::uint32_t encoding = 0;
   std::memcpy(&dtype, raw_capture->packet.payload.data() + 20, 4);
   std::memcpy(&encoding, raw_capture->packet.payload.data() + 116, 4);
-  require(dtype == 0 && encoding == 1 && raw_capture->packet.abi == 7,
-          "raw tiled bytes must advertise native UInt8 ABI7");
+  require(dtype == 0 && encoding == 1 && raw_capture->packet.abi == 8,
+          "raw tiled bytes must advertise native UInt8 ABI8");
   gst_structure_free(tiled_meta);
   gst_buffer_unref(tiled_input);
 
@@ -1369,6 +1370,174 @@ void benchmark_preparation() {
     }
 }
 
+// Real checked requests/packets and publication, not an EV pixel emulator.
+void crop_geometry_dynamic_cache() {
+  auto cfg = config();
+  cfg->resize_mode = simaai::neat::ResizeMode::Crop;
+  cfg->shorter_side = 10;
+  auto capture = preproc_capture();
+  probe::Options options;
+  options.capture = capture;
+  auto adapter = take(PreprocProbe::create(cfg, options));
+  auto* input = gst_buffer_new_allocate(nullptr, 192, nullptr);
+  auto* published = gst_structure_new_empty("test");
+  auto bind = [&] {
+    probe::Binding binding;
+    okay(adapter->bind(input, Storage{}, binding, published));
+    return binding;
+  };
+  auto check_packet = [&](probe::Binding& binding, const std::array<std::uint32_t, 4>& expected) {
+    const auto bytes = binding.operation->output_requirements(0).storage_bytes;
+    binding.outputs = {{std::make_shared<Owner>(bytes, 0x200000), 0, bytes}};
+    okay(adapter->session()
+             .executor(0)
+             ->submit(*binding.operation, binding.inputs, binding.outputs)
+             .wait());
+    require(capture->packet.abi == 8 && capture->packet.payload.size() >= 312,
+            "Crop did not select the coordinated viewport wire ABI");
+    for (std::size_t i = 0; i < expected.size(); ++i) {
+      std::uint32_t actual = 0;
+      std::memcpy(&actual, capture->packet.payload.data() + 296 + 4 * i, 4);
+      require(actual == expected[i], "crop window did not use the actual image extent");
+    }
+  };
+  const auto value = [&](const char* name) {
+    double v = 0;
+    require(gst_structure_get_double(published, name, &v), "missing crop affine");
+    return v;
+  };
+  auto square = bind();
+  check_packet(square, {10, 10, 1, 1});
+  require(std::string_view(gst_structure_get_string(published, "preproc_resize_mode")) == "crop" &&
+              value("preproc_affine_m00") == 0.8 && value("preproc_affine_m02") == 0.8,
+          "crop publication lost the exact inverse edge transform");
+  gsize offsets[GST_VIDEO_MAX_PLANES]{};
+  gint strides[GST_VIDEO_MAX_PLANES]{24};
+  auto* video = gst_buffer_add_video_meta_full(input, GST_VIDEO_FRAME_FLAG_NONE,
+                                               GST_VIDEO_FORMAT_RGB, 8, 4, 1, offsets, strides);
+  require(video, "crop video metadata allocation failed");
+  auto landscape = bind();
+  check_packet(landscape, {20, 10, 6, 1});
+  require(square.operation != landscape.operation &&
+              integer(published, "preproc_original_height") == 4 &&
+              value("preproc_affine_m00") == 0.4 &&
+              std::abs(value("preproc_affine_m02") - 2.4) < 1e-12,
+          "actual dynamic frame geometry reused a stale crop or MPK dimensions");
+  for (int i = 0; i < 8; ++i) {
+    video->height = i % 2 ? 4 : 8;
+    require(bind().operation == (i % 2 ? landscape.operation : square.operation),
+            "alternating crop geometry did not reuse bounded immutable variants");
+  }
+  auto* meta = gst_custom_meta_get_structure(gst_buffer_add_custom_meta(input, "GstSimaMeta"));
+  gst_structure_set(meta, "preproc_roi_enable", G_TYPE_BOOLEAN, TRUE, nullptr);
+  probe::Binding rejected;
+  require(bool(adapter->bind(input, Storage{}, rejected, published)),
+          "Crop silently combined with an authored source ROI");
+  gst_structure_remove_field(meta, "preproc_roi_enable");
+  gst_structure_set(meta, "preproc_original_width", G_TYPE_INT, 80, "preproc_original_height",
+                    G_TYPE_INT, 40, "preproc_affine_m00", G_TYPE_DOUBLE, 2.0, "preproc_affine_m01",
+                    G_TYPE_DOUBLE, 0.0, "preproc_affine_m02", G_TYPE_DOUBLE, 3.0,
+                    "preproc_affine_m10", G_TYPE_DOUBLE, 0.0, "preproc_affine_m11", G_TYPE_DOUBLE,
+                    2.0, "preproc_affine_m12", G_TYPE_DOUBLE, 5.0, nullptr);
+  auto composed = bind();
+  require(composed.operation == landscape.operation &&
+              integer(published, "preproc_original_width") == 80 &&
+              std::abs(value("preproc_affine_m02") - 7.8) < 1e-12 &&
+              std::abs(value("preproc_affine_m12") - 5.8) < 1e-12,
+          "upstream transform was reapplied as ROI instructions or lost during composition");
+  gst_structure_remove_field(meta, "preproc_affine_m11");
+  require(bool(adapter->bind(input, Storage{}, rejected, published)),
+          "incomplete upstream provenance was silently accepted");
+  // Compact current-frame facts are the primary authority. A stale malformed
+  // legacy mirror must neither override them nor fill absent compact facts.
+  for (bool with_facts : {false, true}) {
+    auto* compact_input = gst_buffer_new_allocate(nullptr, 192, nullptr);
+    require(gst_buffer_add_video_meta_full(compact_input, GST_VIDEO_FRAME_FLAG_NONE,
+                                           GST_VIDEO_FORMAT_RGB, 8, 4, 1, offsets, strides),
+            "compact crop video metadata failed");
+    auto* stale =
+        gst_custom_meta_get_structure(gst_buffer_add_custom_meta(compact_input, "GstSimaMeta"));
+    gst_structure_set(stale, "preproc_affine_m00", G_TYPE_DOUBLE, 999.0, "preproc_roi_list_enable",
+                      G_TYPE_BOOLEAN, TRUE, nullptr);
+    simaai::gst::TensorBufferFrameMetadata frame;
+    std::string error;
+    if (with_facts) {
+      simaai::gst::TensorBufferPreprocessFacts upstream;
+      upstream.original_width = 80;
+      upstream.original_height = 40;
+      upstream.resized_width = 8;
+      upstream.resized_height = 4;
+      upstream.primary = {0, 0, 80, 40};
+      upstream.placed = {0, 0, 8, 4};
+      upstream.affine = {2., 0., 3., 0., 2., 5.};
+      upstream.source_stride = 240;
+      upstream.resize_mode = "stretch";
+      upstream.color_in = upstream.color_out = "RGB";
+      auto cold_config = std::make_shared<core::ProcessCvuStagePayload>(*cfg);
+      auto cold_source = cold_config->input_tensors[0].descriptor();
+      cold_source.shape.sizes[0] = 4;
+      cold_config->input_tensors[0] = cold_config->input_tensors[0].with_geometry(cold_source);
+      const auto cold_policy = take(PreprocProbe::check_policy(cold_config));
+      for (const char* previous_mode : {"stretch", "crop"}) {
+        upstream.resize_mode = previous_mode;
+        const auto cold = take(
+            lower::PreprocFrameAdapter::checked_initial_preprocess_facts(cold_policy, &upstream));
+        const auto* facts = simaai::gst::tensor_buffer_preprocess_facts(cold);
+        require(facts && facts->resize_mode == "crop" && facts->resized_width == 8 &&
+                    facts->resized_height == 8 && facts->original_width == 80 &&
+                    facts->original_height == 40 && std::abs(facts->affine[2] - 7.8) < 1e-12 &&
+                    std::abs(facts->affine[5] - 5.8) < 1e-12,
+                "cold composition reused old producer mode/affine instead of current Crop");
+      }
+      auto invalid = upstream;
+      invalid.roi_list = true;
+      require(
+          std::holds_alternative<rt::Error>(
+              lower::PreprocFrameAdapter::checked_initial_preprocess_facts(cold_policy, &invalid)),
+          "cold composition accepted ambiguous ROI-list provenance");
+      invalid = upstream;
+      invalid.affine[2] = std::numeric_limits<double>::infinity();
+      require(
+          std::holds_alternative<rt::Error>(
+              lower::PreprocFrameAdapter::checked_initial_preprocess_facts(cold_policy, &invalid)),
+          "cold composition accepted nonfinite upstream provenance");
+      frame.preprocess =
+          simaai::gst::tensor_buffer_freeze_preprocess_facts(std::move(upstream), &error);
+      require(bool(frame.preprocess), "compact crop facts freeze failed");
+    }
+    require(
+        simaai::gst::tensor_buffer_attach_frame_metadata(compact_input, std::move(frame), &error),
+        "compact crop frame attachment failed");
+    probe::Binding compact_binding;
+    okay(adapter->bind(compact_input, Storage{}, compact_binding, published));
+    require(compact_binding.operation == landscape.operation &&
+                integer(published, "preproc_original_width") == (with_facts ? 80 : 8) &&
+                std::abs(value("preproc_affine_m02") - (with_facts ? 7.8 : 2.4)) < 1e-12,
+            "compact upstream facts lost authority or inherited a stale legacy mirror");
+    gst_buffer_unref(compact_input);
+  }
+  gst_structure_free(published);
+  gst_buffer_unref(input);
+  for (int fault = 0; fault < 4; ++fault) {
+    auto bad = config();
+    bad->resize_mode = simaai::neat::ResizeMode::Crop;
+    if (fault == 0)
+      bad->shorter_side = 7;
+    if (fault == 1)
+      bad->padding_type = "TOPLEFT";
+    if (fault == 2)
+      bad->scaled_width = 7;
+    if (fault == 3) {
+      bad->shorter_side = 10;
+      bad->resize_mode.reset();
+    }
+    require(std::holds_alternative<rt::Error>(PreprocProbe::check_policy(bad)),
+            "invalid Crop/legacy geometry combination escaped cold admission");
+  }
+  std::cout
+      << "Crop exact window, actual-frame geometry, immutable cache and affine authority PASS\n";
+}
+
 void image_frontend_metadata_and_bounds() {
   auto cfg = config();
   auto policy = std::make_shared<simaai::neat::internal::ImageTransformPolicy>();
@@ -1521,6 +1690,7 @@ int main(int argc, char** argv) {
     gst_meta_register_custom("GstSimaMeta", tags, nullptr, nullptr, nullptr);
   }
   try {
+    crop_geometry_dynamic_cache();
     image_frontend_metadata_and_bounds();
     image_frontend_input_rejections();
     cold_generic_preparation();

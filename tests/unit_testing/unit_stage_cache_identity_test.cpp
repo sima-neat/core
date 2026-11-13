@@ -596,6 +596,11 @@ RUN_TEST(
       different_option([](auto& o) {
         o.preprocess.resize.interpolation = ResizeInterpolation::BilinearAntialiased;
       });
+      different_option([](auto& o) { o.preprocess.resize.mode = ResizeMode::Crop; });
+      different_option([](auto& o) {
+        o.preprocess.resize.mode = ResizeMode::Crop;
+        o.preprocess.resize.shorter_side = 256;
+      });
       different_option([](auto& o) { o.preprocess.rescale_factor = 1.f; });
       different_option([](auto& o) { o.preprocess.quantization_step = 0.25f; });
       different_option([](auto& o) {
@@ -604,6 +609,15 @@ RUN_TEST(
       different_option([](auto& o) {
         o.preprocess.floating_conversion = PreprocFloatingConversion::NearestEven;
       });
+      Model::Options crop = defaults;
+      crop.preprocess.resize.mode = ResizeMode::Crop;
+      const auto cover_key = internal::model_stage_options_cache_identity(crop);
+      crop.preprocess.resize.shorter_side = 256;
+      const auto short_key = internal::model_stage_options_cache_identity(crop);
+      crop.preprocess.resize.shorter_side = 257;
+      require(cover_key != short_key &&
+                  short_key != internal::model_stage_options_cache_identity(crop),
+              "shorter-side geometry reused an incompatible cached Model stage");
       Model::Options typed_nearest = defaults, legacy_nearest = defaults;
       typed_nearest.preprocess.resize.interpolation = ResizeInterpolation::Nearest;
       legacy_nearest.preprocess.resize.scaling_type = "NEAREST";

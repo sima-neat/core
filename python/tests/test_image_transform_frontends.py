@@ -155,3 +155,34 @@ def test_model_and_standalone_resize_share_interpolation_enum(name):
     assert model.preprocess.resize.scaling_type == "NEAREST_NEIGHBOUR"
     with pytest.raises(TypeError):
         model.preprocess.resize.interpolation = "BILINEAR_ANTIALIASED"
+
+
+def test_center_crop_typed_options_and_optional_reset():
+    model = pyneat.ModelOptions()
+    assert model.preprocess.resize.shorter_side is None
+    model.preprocess.resize.mode = pyneat.ResizeMode.Crop
+    model.preprocess.resize.shorter_side = 256
+    assert model.preprocess.resize.shorter_side == 256
+    model.preprocess.resize.shorter_side = None
+    assert model.preprocess.resize.shorter_side is None
+    raw = pyneat.PreprocOptions()
+    assert raw.resize_mode is None and raw.shorter_side is None
+    raw.resize_mode = pyneat.ResizeMode.Crop
+    raw.shorter_side = 256
+    assert raw.resize_mode == pyneat.ResizeMode.Crop and raw.shorter_side == 256
+    raw.resize_mode = None
+    raw.shorter_side = None
+    assert raw.resize_mode is None and raw.shorter_side is None
+    standalone = pyneat.ResizeOptions()
+    standalone.width = standalone.height = 224
+    standalone.fit = pyneat.ResizeFit.Cover
+    standalone.shorter_side = 256
+    assert pyneat.nodes.resize(standalone) is not None
+    standalone.shorter_side = None
+    assert pyneat.nodes.resize(standalone) is not None
+    standalone.shorter_side = 256
+    standalone.fit = pyneat.ResizeFit.Contain
+    with pytest.raises(Exception, match="shorter_side"):
+        pyneat.nodes.resize(standalone)
+    with pytest.raises(TypeError):
+        model.preprocess.resize.shorter_side = "256"

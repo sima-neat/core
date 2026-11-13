@@ -626,7 +626,7 @@ struct HostStorage final {
     std::memcpy(static_cast<std::byte*>(memory.get()) + element * 4, &value, 4);
   }
 };
-void detr_numerical_publication() {
+void detr_numerical_publication(bool crop = false) {
   auto request = source(BoxDecodeType::Detr, 2);
   request.payload.topk = 2;
   request.payload.score_activation = BoxDecodeScoreActivation::Softmax;
@@ -634,7 +634,13 @@ void detr_numerical_publication() {
   request.payload.nms_iou_threshold = 0;
   input(request, 1, 2, 4, "FP32");
   input(request, 1, 2, 3, "FP32");
-  const auto prepared = check(request, {640, 640, 1280, 720, ResizeMode::Stretch});
+  BoxDecodeGeometryOptions geometry{640, 640, 1280, 720, ResizeMode::Stretch};
+  if (crop) {
+    geometry = {224, 224, 640, 480, ResizeMode::Crop};
+    geometry.model_to_original =
+        std::array<float, 4>{640.f / 341, 480.f / 256, 58 * (640.f / 341), 30.f};
+  }
+  const auto prepared = check(request, geometry);
   const auto& members = prepared.compiled.recipe->members;
   const auto& numerical = members[prepared.decode_member].executable;
   const auto& publication = members.back().executable;
@@ -676,9 +682,10 @@ void detr_numerical_publication() {
   require(wire.read<std::int32_t>(0) == 2, "classic DETR lost a valid query");
   for (int row = 0; row < 2; ++row) {
     const std::size_t offset = 4 + row * 24;
-    require(wire.read<std::int32_t>(offset) == 320 && wire.read<std::int32_t>(offset + 4) == 180 &&
-                wire.read<std::int32_t>(offset + 8) == 640 &&
-                wire.read<std::int32_t>(offset + 12) == 360 &&
+    require(wire.read<std::int32_t>(offset) == (crop ? 214 : 320) &&
+                wire.read<std::int32_t>(offset + 4) == (crop ? 135 : 180) &&
+                wire.read<std::int32_t>(offset + 8) == (crop ? 210 : 640) &&
+                wire.read<std::int32_t>(offset + 12) == (crop ? 210 : 360) &&
                 wire.read<std::int32_t>(offset + 20) == row,
             "classic DETR sigmoid boxes/class/original-frame mapping mismatch");
     require(std::abs(wire.read<float>(offset + 16) - (row == 0 ? 2.f / 3.f : 1.f / 3.f)) < 2e-6f,
@@ -686,7 +693,7 @@ void detr_numerical_publication() {
   }
 }
 
-void focal_numerical_publication() {
+void focal_numerical_publication(bool crop = false) {
   for (const std::string layout : {"HWC", "CHW", "NCHW"}) {
     BoxDecodeStaticContract authored;
     authored.decode_type = BoxDecodeType::DetrFocal;
@@ -709,7 +716,13 @@ void focal_numerical_publication() {
       authored.tensors.push_back(std::move(tensor));
     }
     const auto compiled = stagesemantics::build_boxdecode_compiled_contract(authored);
-    const auto prepared = check(compiled, {640, 640, 1280, 720, ResizeMode::Stretch});
+    BoxDecodeGeometryOptions geometry{640, 640, 1280, 720, ResizeMode::Stretch};
+    if (crop) {
+      geometry = {224, 224, 640, 480, ResizeMode::Crop};
+      geometry.model_to_original =
+          std::array<float, 4>{640.f / 341, 480.f / 256, 58 * (640.f / 341), 30.f};
+    }
+    const auto prepared = check(compiled, geometry);
     const auto& members = prepared.compiled.recipe->members;
     const auto& numerical = members[prepared.decode_member].executable;
     const auto& publication = members.back().executable;
@@ -760,10 +773,12 @@ void focal_numerical_publication() {
     const std::array<int, 3> classes{0, 2, 1};
     for (std::size_t row = 0; row < 3; ++row) {
       const std::size_t offset = 4 + row * 24;
-      require(wire.read<std::int32_t>(offset) == (row == 0 ? 832 : 192) &&
-                  wire.read<std::int32_t>(offset + 4) == (row == 0 ? 468 : 108) &&
-                  wire.read<std::int32_t>(offset + 8) == 256 &&
-                  wire.read<std::int32_t>(offset + 12) == 144 &&
+      require(wire.read<std::int32_t>(offset) ==
+                      (crop ? (row == 0 ? 382 : 172) : (row == 0 ? 832 : 192)) &&
+                  wire.read<std::int32_t>(offset + 4) ==
+                      (crop ? (row == 0 ? 303 : 93) : (row == 0 ? 468 : 108)) &&
+                  wire.read<std::int32_t>(offset + 8) == (crop ? 84 : 256) &&
+                  wire.read<std::int32_t>(offset + 12) == (crop ? 84 : 144) &&
                   wire.read<std::int32_t>(offset + 20) == classes[row] &&
                   std::abs(wire.read<float>(offset + 16) - scores[row]) < 2e-6f,
               "focal planar/dense sigmoid, pair ranking or original-frame XYWH oracle failed");
@@ -1417,6 +1432,147 @@ void oriented_source_geometry(BoxDecodeType type = BoxDecodeType::YoloV26Obb) {
   }
 }
 
+void crop_source_geometry() {
+  PreprocOptions options;
+  options.set_input_shape({480, 640, 3});
+  options.input_img_type = options.output_img_type = "RGB";
+  options.set_output_shape({224, 224, 3});
+  options.scaled_width = options.scaled_height = 224;
+  options.resize_mode = ResizeMode::Crop;
+  options.shorter_side = 256;
+  options.output_dtype = "BF16";
+  options.tessellate = false;
+  options.single_output_handoff = true;
+  CompiledNodeContract producer;
+  std::string error;
+  require(Preproc(options).compile_node_contract({}, &producer, &error), error.c_str());
+  ContractCompileInput context;
+  context.upstream_preprocess = &*producer.processcvu;
+  for (const auto prior_mode : {"", "stretch", "letterbox", "crop"})
+    for (const auto type : {BoxDecodeType::Detr, BoxDecodeType::DetrFocal}) {
+      const bool prior = *prior_mode != '\0';
+      const bool prior_crop = std::string_view(prior_mode) == "crop";
+      const bool prior_letterbox = std::string_view(prior_mode) == "letterbox";
+      const int original_width = prior_crop ? 1600 : prior ? 1280 : 640;
+      const int original_height = prior_crop ? 1200 : prior_letterbox ? 720 : prior ? 960 : 480;
+      const double upstream_scale = prior ? 2. : 1.;
+      const double upstream_x = prior_crop ? 160. : 0.;
+      const double upstream_y = prior_crop ? 120. : prior_letterbox ? -120. : 0.;
+      const double scale_x = upstream_scale * (640. / 341);
+      const double scale_y = upstream_scale * (480. / 256);
+      const double offset_x = upstream_scale * (58 * (640. / 341)) + upstream_x;
+      const double offset_y = upstream_scale * 30. + upstream_y;
+      context.ingress.ingress_sample.reset();
+      if (prior) {
+        auto image = Tensor::from_vector(std::vector<std::uint8_t>(480 * 640 * 3), {480, 640, 3},
+                                         TensorMemory::CPU);
+        image.layout = TensorLayout::HWC;
+        PreprocessRuntimeMeta provenance;
+        provenance.original_width = original_width;
+        provenance.original_height = original_height;
+        provenance.resized_width = 640;
+        provenance.resized_height = 480;
+        provenance.resize_mode = prior_mode;
+        provenance.affine_m00 = provenance.affine_m11 = upstream_scale;
+        provenance.affine_m02 = upstream_x;
+        provenance.affine_m12 = upstream_y;
+        provenance.affine_scale_x = provenance.affine_scale_y = upstream_scale;
+        provenance.affine_offset_x = upstream_x;
+        provenance.affine_offset_y = upstream_y;
+        provenance.color_in = provenance.color_out = "RGB";
+        image.semantic.preprocess = provenance;
+        context.ingress.ingress_sample = sample_from_tensors({image});
+      }
+      auto heads = source(type, 2);
+      heads.payload.nms_iou_threshold = 0;
+      heads.payload.score_activation = type == BoxDecodeType::Detr
+                                           ? BoxDecodeScoreActivation::Softmax
+                                           : BoxDecodeScoreActivation::Sigmoid;
+      input(heads, 1, 2, 4, "FP32");
+      input(heads, 1, 2, type == BoxDecodeType::Detr ? 3 : 2, "FP32");
+      for (auto& logical : heads.runtime_contract.logical_inputs) {
+        const auto bytes = logical.shape[0] * logical.shape[1] * logical.shape[2] * 4;
+        heads.runtime_contract.physical_inputs.push_back(
+            specbuilders::build_physical_buffer_static_spec(logical.physical_index,
+                                                            logical.physical_index, bytes,
+                                                            DeviceKind::Cpu, logical.segment_name));
+        InputBindingStaticSpec binding;
+        binding.local_logical_input_index = logical.logical_index;
+        binding.src_physical_output_index = logical.physical_index;
+        heads.runtime_contract.input_bindings.push_back(std::move(binding));
+      }
+      // The MLA-like upstream head carrier is distinct from graph ingress,
+      // which contains the image and its older preprocessing provenance.
+      CompiledNodeContract head_producer;
+      head_producer.kernel.emplace();
+      head_producer.kernel->runtime_contract.physical_outputs =
+          heads.runtime_contract.physical_inputs;
+      context.immediate_upstream = &head_producer;
+      const BoxDecodeGeometryOptions geometry{224, 224, prior ? original_width : 0,
+                                              prior ? original_height : 0, ResizeMode::Stretch};
+      const auto admitted = compile_boxdecode_kernel(heads, context, geometry);
+      require(admitted.recipe->resolver_factories.size() == 1,
+              "source crop must install mandatory per-frame affine resolver");
+      test::OperationProbe executor;
+      const auto checked = admitted.recipe->members[0].executable;
+      require(!executor.prepare(checked), "source crop preparation failed");
+      auto resolve = admitted.recipe->resolver_factories.front().instantiate();
+      const gchar* tags[] = {nullptr};
+      if (!gst_meta_get_info("GstSimaMeta"))
+        require(gst_meta_register_custom("GstSimaMeta", tags, nullptr, nullptr, nullptr),
+                "source crop metadata registration");
+      test::GstBufferOwner carrier(gst_buffer_new());
+      auto* meta =
+          gst_custom_meta_get_structure(gst_buffer_add_custom_meta(carrier.get(), "GstSimaMeta"));
+      const std::array<GstBuffer*, 1> carriers{carrier.get()};
+      require(std::holds_alternative<c::Error>(resolve(executor.preparer(), carriers)),
+              "cold crop seed substituted for missing frame metadata");
+      gst_structure_set(meta, "preproc_resize_mode", G_TYPE_STRING, "crop", nullptr);
+      require(std::holds_alternative<c::Error>(resolve(executor.preparer(), carriers)),
+              "explicit source dimensions let cold seed replace the current frame affine");
+      gst_structure_set(meta, "preproc_original_width", G_TYPE_INT, original_width,
+                        "preproc_original_height", G_TYPE_INT, original_height,
+                        "preproc_resized_width", G_TYPE_INT, 224, "preproc_resized_height",
+                        G_TYPE_INT, 224, "preproc_resize_mode", G_TYPE_STRING, "crop", nullptr);
+      require(std::holds_alternative<c::Error>(resolve(executor.preparer(), carriers)),
+              "crop dimensions without per-frame affine admitted");
+      gst_structure_set(meta, "preproc_affine_scale_x", G_TYPE_DOUBLE, scale_x,
+                        "preproc_affine_scale_y", G_TYPE_DOUBLE, scale_y, "preproc_affine_offset_x",
+                        G_TYPE_DOUBLE, offset_x, "preproc_affine_offset_y", G_TYPE_DOUBLE, offset_y,
+                        nullptr);
+      auto resolved = resolve(executor.preparer(), carriers);
+      require(std::holds_alternative<c::PreparedSelection>(resolved),
+              "source crop rejected actual anisotropic resize affine");
+      const auto first = std::get<c::PreparedSelection>(resolved);
+      require(first == executor.operation(),
+              "cold current-producer seed failed exact ingress affine composition");
+      gst_structure_set(meta, "preproc_affine_offset_x", G_TYPE_DOUBLE, offset_x + 4., nullptr);
+      auto changed = resolve(executor.preparer(), carriers);
+      require(std::holds_alternative<c::PreparedSelection>(changed) &&
+                  std::get<c::PreparedSelection>(changed) != first &&
+                  c::same_kernel_contract_resources(first.executable(), checked),
+              "same-sized crop reused stale offsets or rebuilt model resources");
+      gst_structure_remove_field(meta, "preproc_affine_scale_y");
+      require(std::holds_alternative<c::Error>(resolve(executor.preparer(), carriers)),
+              "partial crop affine admitted after warm cache hit");
+      for (int fault : {0, 1}) {
+        auto missing = context;
+        if (fault == 0) {
+          missing.upstream_preprocess = nullptr;
+          missing.ingress.ingress_sample.reset();
+        }
+        bool rejected = false;
+        try {
+          (void)compile_boxdecode_kernel(heads, missing, geometry,
+                                         fault == 0 ? ResizeMode::Crop : ResizeMode::Stretch);
+        } catch (const std::invalid_argument&) {
+          rejected = true;
+        }
+        require(rejected, "source crop accepted missing authority or conflicting resize mode");
+      }
+    }
+}
+
 void dfl_oriented_contract_and_execution() {
   require(parse_box_decode_type_token("yolov8-obb") == BoxDecodeType::YoloV8Obb &&
               parse_box_decode_type_token("yolo11-obb") == BoxDecodeType::YoloV8Obb,
@@ -1998,8 +2154,11 @@ int main(int argc, char** argv) {
     detr_default_resolution();
     query_source_dtypes();
     detr_numerical_publication();
+    detr_numerical_publication(true);
     detr_padded_numerical_publication();
     focal_numerical_publication();
+    focal_numerical_publication(true);
+    crop_source_geometry();
     families();
     oriented_contract_and_execution();
     oriented_carrier_conversions();

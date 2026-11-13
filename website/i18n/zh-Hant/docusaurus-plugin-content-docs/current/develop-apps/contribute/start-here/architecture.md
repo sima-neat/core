@@ -1700,3 +1700,8 @@ JSON 保留 `sima.neat.status.v1`，並新增 `components.pcieHost`、`component
 PyNeat 和 PyNeatPCIe 狀態會列出每個偵測到的安裝版本及其虛擬環境路徑。不同環境會顯示為多個環境，而非版本衝突。對於虛擬環境以外的套件，輸出會改為顯示套件目錄。狀態查詢只讀取套件中繼資料，不會匯入原生模組。
 
 JSON 中的每個 Python 項目會新增 `installations` 陣列。每筆記錄包含 `version`、`environment` 和 `path`（套件目錄）。在虛擬環境以外，`environment` 為 `null`。若安裝版本不同，摘要的 `version` 為 `null`；僅有多個安裝不會設定 `error`。指向同一安裝的符號連結路徑只會列出一次。
+
+
+## 裁切幾何的權責 {#crop-geometry-ownership}
+
+Core 根據實際來源尺寸，計算並檢查 Crop 的虛擬縮放尺寸與中央視窗偏移量。Kernels 保留原始來源的濾波範圍，直接計算該視窗，不插入中間影像或 CPU 裁切。最終尺寸仍由 MPK 決定。Preproc 發佈實際的模型至原始影像邊緣座標仿射轉換，並與半像素取樣中心座標區分。支援的偵測配方會在模型空間選取後使用此權威資訊；缺少或衝突的幾何資訊將被拒絕。

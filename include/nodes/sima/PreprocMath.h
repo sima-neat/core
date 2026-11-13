@@ -1,6 +1,14 @@
 #pragma once
 
 namespace simaai::neat {
+/// How the resize stage maps non-matching input dimensions to the model's input shape.
+/// @ingroup model
+enum class ResizeMode {
+  Stretch = 0,   ///< Anisotropic scale to fit; aspect ratio not preserved.
+  Letterbox = 1, ///< Scale to fit while preserving aspect; pad the rest with `pad_value`.
+  Crop = 2,      ///< Center-crop to the target shape after isotropic scale.
+};
+
 /// Sampling algorithm shared by Model preprocessing and standalone Resize.
 /// Existing enumerator values are preserved.
 enum class ResizeInterpolation { Nearest, Bilinear, Bicubic, BoxAverage, BilinearAntialiased };

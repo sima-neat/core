@@ -1,4 +1,5 @@
 #include "pipeline/internal/sima/PreprocFrameAdapter.h"
+#include "nodes/sima/internal/CropGeometry.h"
 #include <simaai/scheduler/client/diagnostics.h>
 #include <algorithm>
 #include <cmath>
@@ -30,13 +31,6 @@ const KernelExecutable& PreprocFrameAdapter::checked_executable(const CheckedPol
 std::shared_ptr<const gstreamer::TensorStageImagePublication>
 PreprocFrameAdapter::checked_image_publication(const CheckedPolicy& policy) {
   return policy.image_publication;
-}
-
-Result<simaai::gst::TensorBufferPreprocessFactsOwner>
-PreprocFrameAdapter::checked_initial_preprocess_facts(std::shared_ptr<const CheckedPolicy> policy) {
-  PreprocFrameAdapter adapter(std::move(policy));
-  return adapter.prepare_publication(adapter.policy_->initial_geometry,
-                                     adapter.policy_->initial_executable, nullptr);
 }
 
 using namespace ::simaai::scheduler::client;
@@ -307,6 +301,66 @@ const auto& owned_publication_keys() {
 
 } // namespace
 
+Result<PreprocFrameAdapter::Publication> PreprocFrameAdapter::compose_publication(
+    const Publication& local, const std::array<double, 6>& a, const std::array<int, 4>& roi,
+    int original_width, int original_height, bool has_roi, std::string_view color_in) {
+  const auto* base = simaai::gst::tensor_buffer_preprocess_facts(local);
+  if (!base || original_width <= 0 || original_height <= 0 ||
+      !std::all_of(a.begin(), a.end(), [](double value) { return std::isfinite(value); }))
+    return invalid("input.preprocess", "invalid upstream spatial provenance");
+  if (has_roi && (roi[0] < 0 || roi[1] < 0 || roi[2] <= 0 || roi[3] <= 0))
+    return invalid("input.preprocess", "malformed upstream ROI provenance");
+  auto composed = *base;
+  const auto& b = base->affine;
+  composed.affine = {a[0] * b[0] + a[1] * b[3],        a[0] * b[1] + a[1] * b[4],
+                     a[0] * b[2] + a[1] * b[5] + a[2], a[3] * b[0] + a[4] * b[3],
+                     a[3] * b[1] + a[4] * b[4],        a[3] * b[2] + a[4] * b[5] + a[5]};
+  if (!std::all_of(composed.affine.begin(), composed.affine.end(),
+                   [](double value) { return std::isfinite(value); }))
+    return invalid("input.preprocess", "composed upstream spatial transform is nonfinite");
+  if (has_roi) {
+    std::copy(roi.begin(), roi.end(), composed.primary.begin());
+    composed.has_roi = true;
+  }
+  composed.original_width = original_width;
+  composed.original_height = original_height;
+  if (!color_in.empty())
+    composed.color_in = color_in;
+  std::string error;
+  auto frozen = simaai::gst::tensor_buffer_freeze_preprocess_facts(std::move(composed), &error);
+  if (!frozen)
+    return invalid("output.preprocess", std::move(error));
+  return frozen;
+}
+
+Result<simaai::gst::TensorBufferPreprocessFactsOwner>
+PreprocFrameAdapter::checked_initial_preprocess_facts(
+    std::shared_ptr<const CheckedPolicy> policy,
+    const simaai::gst::TensorBufferPreprocessFacts* upstream) {
+  if (!policy)
+    return invalid("preproc.policy", "checked preprocessing policy is required");
+  PreprocFrameAdapter adapter(std::move(policy));
+  auto local = adapter.prepare_publication(adapter.policy_->initial_geometry,
+                                           adapter.policy_->initial_executable, nullptr);
+  if (std::holds_alternative<Error>(local) || !upstream)
+    return local;
+  if (upstream->roi_list || upstream->original_width <= 0 || upstream->original_width > G_MAXINT ||
+      upstream->original_height <= 0 || upstream->original_height > G_MAXINT)
+    return invalid("input.preprocess", "cold provenance requires one valid upstream image");
+  std::array<int, 4> roi{};
+  if (upstream->has_roi) {
+    for (std::size_t i = 0; i < roi.size(); ++i) {
+      if (upstream->primary[i] < 0 || upstream->primary[i] > G_MAXINT)
+        return invalid("input.preprocess", "malformed upstream ROI provenance");
+      roi[i] = static_cast<int>(upstream->primary[i]);
+    }
+  }
+  return compose_publication(std::get<Publication>(local), upstream->affine, roi,
+                             static_cast<int>(upstream->original_width),
+                             static_cast<int>(upstream->original_height), upstream->has_roi,
+                             upstream->color_in);
+}
+
 // A validated borrowed list, used only during this bind. Variants retain their
 // own immutable signatures; no frame-owned GValue or loan is cached.
 struct PreprocFrameAdapter::IntegerList {
@@ -357,9 +411,16 @@ Result<Rectangle> PreprocFrameAdapter::destination(std::int64_t source_w, std::i
   const auto& cfg = *policy_->prepared;
   if (source_w <= 0 || source_h <= 0)
     return invalid("source_roi", "ROI dimensions must be positive");
+  if (cfg.resize_mode == ResizeMode::Crop) {
+    const auto checked =
+        internal::checked_crop_geometry(source_w, source_h, w, h, cfg.shorter_side);
+    if (const auto* error = std::get_if<const char*>(&checked))
+      return invalid("resize_window", *error);
+    return Rectangle{0, 0, w, h};
+  }
   std::int64_t scaled_w = cfg.scaled_width > 0 ? cfg.scaled_width : w;
   std::int64_t scaled_h = cfg.scaled_height > 0 ? cfg.scaled_height : h;
-  if (cfg.aspect_ratio == 1) {
+  if (cfg.resize_mode ? *cfg.resize_mode == ResizeMode::Letterbox : cfg.aspect_ratio == 1) {
     // Legacy contain geometry rounds the non-limiting axis upward in FP32.
     if (w * source_h < h * source_w) {
       scaled_w = w;
@@ -581,6 +642,23 @@ PreprocFrameAdapter::check_policy(const ProcessCvuStagePayload& prepared) {
   if (auto* error = std::get_if<Error>(&constants))
     return *error;
   policy->identity_interpolation = upper(cfg.scaling_type) == "NO_SCALING";
+  if (cfg.resize_mode && *cfg.resize_mode != ResizeMode::Stretch &&
+      *cfg.resize_mode != ResizeMode::Letterbox && *cfg.resize_mode != ResizeMode::Crop)
+    return invalid("resize_mode", "unknown resize policy");
+  if (cfg.shorter_side &&
+      (cfg.resize_mode != ResizeMode::Crop || *cfg.shorter_side <= 0 || *cfg.shorter_side > 4096))
+    return invalid("shorter_side", "requires Crop and a size in 1..4096");
+  if (cfg.resize_mode == ResizeMode::Crop) {
+    if (policy->envelope.format != GST_VIDEO_FORMAT_RGB &&
+        policy->envelope.format != GST_VIDEO_FORMAT_BGR &&
+        policy->envelope.format != GST_VIDEO_FORMAT_GRAY8)
+      return invalid("resize_window", "crop currently requires RGB, BGR or Gray input");
+    const auto& shape = policy->output.shape;
+    if (upper(cfg.padding_type) != "CENTER" ||
+        (cfg.scaled_width > 0 && cfg.scaled_width != shape[shape.size() - 2]) ||
+        (cfg.scaled_height > 0 && cfg.scaled_height != shape[shape.size() - 3]))
+      return invalid("resize_mode", "crop conflicts with legacy placement or scaled dimensions");
+  }
   const auto padding = upper(cfg.padding_type);
   if (padding == "CENTER")
     policy->padding = PaddingPlacement::Center;
@@ -599,13 +677,16 @@ PreprocFrameAdapter::check_policy(const ProcessCvuStagePayload& prepared) {
   if (auto* error = std::get_if<Error>(&params))
     return *error;
   const bool roi_capacity = std::size_t(cfg.batch_size) != geometry.batch;
+  if (roi_capacity && cfg.resize_mode == ResizeMode::Crop)
+    return invalid("resize_window", "crop cannot use an ROI-list output capacity");
   if (roi_capacity) {
     auto& values = std::get<GeometryParameters>(params);
     values[SourceRoi].reset();
     values[SourceRois] = ParameterRecords{};
   }
   auto parameters = std::get<std::vector<Parameter>>(std::move(constants));
-  constexpr std::array names{"source_roi", "source_rois", "destination", "padding"};
+  constexpr std::array names{"source_roi", "source_rois", "destination", "padding",
+                             "resize_window"};
   auto& values = std::get<GeometryParameters>(params);
   for (std::size_t i = 0; i < values.size(); ++i)
     if (values[i])
@@ -888,6 +969,16 @@ PreprocFrameAdapter::parameters(const Geometry& geometry, const GstStructure* me
     gst_structure_get_boolean(meta, "preproc_roi_enable", &scalar_roi);
     list = roi_list_enabled(meta);
   }
+  if (cfg.resize_mode == ResizeMode::Crop) {
+    if (scalar_roi || list)
+      return invalid("resize_window", "crop cannot be combined with source ROI requests");
+    const auto checked =
+        internal::checked_crop_geometry(source_w, source_h, w, h, cfg.shorter_side);
+    if (const auto* error = std::get_if<const char*>(&checked))
+      return invalid("resize_window", *error);
+    const auto& window = std::get<internal::CropGeometry>(checked).window;
+    result[ResizeWindow] = ParameterArray{window[0], window[1], window[2], window[3]};
+  }
   if (list) {
     int count = -1;
     if (!gst_structure_get_int(meta, "preproc_roi_count", &count) || count < 0 || count > 4096)
@@ -945,7 +1036,8 @@ PreprocFrameAdapter::parameters(const Geometry& geometry, const GstStructure* me
     result[SourceRois] = ParameterRecords{
         {{"source_index", 0}, {"x", roi[0]}, {"y", roi[1]}, {"width", roi[2]}, {"height", roi[3]}}};
   }
-  if (identity && !list && !scalar_roi && (source_w > w || source_h > h)) {
+  if (identity && cfg.resize_mode != ResizeMode::Crop && !list && !scalar_roi &&
+      (source_w > w || source_h > h)) {
     source_w = std::min(source_w, w);
     source_h = std::min(source_h, h);
     result[SourceRoi] = ParameterArray{0, 0, std::int32_t(source_w), std::int32_t(source_h)};
@@ -1047,11 +1139,25 @@ PreprocFrameAdapter::bind(GstBuffer* buffer, BindingWriter& binding, GstStructur
   SIMA_SCHEDULER_TRACE_CURRENT(PreprocCheckBegin);
   std::lock_guard lock(mutex_);
   Geometry geometry = default_geometry_;
-  auto* custom = gst_buffer_get_custom_meta(buffer, "GstSimaMeta");
-  const auto* source_meta = custom ? gst_custom_meta_get_structure(custom) : nullptr;
   // Legacy ROI fields on an upstream result are facts, not instructions to apply a second crop.
-  const auto* meta = policy_->prepared->image_transform ? nullptr : source_meta;
-  if (policy_->prepared->image_transform && source_meta) {
+  const bool preserve_spatial_provenance =
+      policy_->prepared->image_transform || policy_->prepared->resize_mode == ResizeMode::Crop;
+  std::string compact_error;
+  const auto* frame = preserve_spatial_provenance
+                          ? simaai::gst::tensor_buffer_frame_metadata(buffer, &compact_error)
+                          : nullptr;
+  if (!compact_error.empty())
+    return invalid("input.preprocess", "malformed compact frame metadata");
+  const auto* compact =
+      frame ? simaai::gst::tensor_buffer_preprocess_facts(frame->preprocess) : nullptr;
+  // A compact frame is authoritative even when it has no preprocessing facts.
+  // Never let a stale legacy mirror replace that authority.
+  auto* custom = frame ? nullptr : gst_buffer_get_custom_meta(buffer, "GstSimaMeta");
+  const auto* source_meta = custom ? gst_custom_meta_get_structure(custom) : nullptr;
+  if (compact && compact->roi_list)
+    return invalid("input.preprocess", "one image requires one upstream spatial transform");
+  const auto* meta = preserve_spatial_provenance ? nullptr : source_meta;
+  if (preserve_spatial_provenance && source_meta) {
     if (roi_list_enabled(source_meta))
       return invalid("input.preprocess", "image frontends require one frame, not an ROI list");
     gboolean roi = FALSE;
@@ -1215,60 +1321,71 @@ PreprocFrameAdapter::bind(GstBuffer* buffer, BindingWriter& binding, GstStructur
     publication = std::get<Publication>(std::move(facts));
   }
   auto facts = prepared_now ? publication : variants_[selected].publication;
-  if (policy_->prepared->image_transform && source_meta) {
+  if (preserve_spatial_provenance && (source_meta || compact)) {
     constexpr std::array names{"preproc_affine_m00", "preproc_affine_m01", "preproc_affine_m02",
                                "preproc_affine_m10", "preproc_affine_m11", "preproc_affine_m12"};
-    const bool transformed = std::any_of(names.begin(), names.end(), [&](const char* name) {
-      return gst_structure_has_field(source_meta, name);
-    });
+    const bool transformed =
+        compact || std::any_of(names.begin(), names.end(), [&](const char* name) {
+          return gst_structure_has_field(source_meta, name);
+        });
     if (transformed) {
       std::array<double, 6> a{};
-      for (std::size_t i = 0; i < a.size(); ++i)
-        if (!gst_structure_get_double(source_meta, names[i], &a[i]) || !std::isfinite(a[i]))
-          return invalid("input.preprocess", "incomplete or nonfinite upstream spatial transform");
+      for (std::size_t i = 0; i < a.size(); ++i) {
+        if (compact)
+          a[i] = compact->affine[i];
+        else if (!gst_structure_get_double(source_meta, names[i], &a[i]))
+          return invalid("input.preprocess", "incomplete upstream spatial transform");
+        if (!std::isfinite(a[i]))
+          return invalid("input.preprocess", "nonfinite upstream spatial transform");
+      }
       int original_w = 0, original_h = 0;
-      if (!gst_structure_get_int(source_meta, "preproc_original_width", &original_w) ||
-          !gst_structure_get_int(source_meta, "preproc_original_height", &original_h) ||
-          original_w <= 0 || original_h <= 0)
+      if (compact) {
+        if (compact->original_width <= 0 || compact->original_width > G_MAXINT ||
+            compact->original_height <= 0 || compact->original_height > G_MAXINT)
+          return invalid("input.preprocess", "invalid compact original image dimensions");
+        original_w = static_cast<int>(compact->original_width);
+        original_h = static_cast<int>(compact->original_height);
+      } else if (!gst_structure_get_int(source_meta, "preproc_original_width", &original_w) ||
+                 !gst_structure_get_int(source_meta, "preproc_original_height", &original_h) ||
+                 original_w <= 0 || original_h <= 0) {
         return invalid("input.preprocess",
                        "upstream transform requires original source dimensions");
-      gboolean upstream_roi = FALSE;
-      gst_structure_get_boolean(source_meta, "preproc_roi_enable", &upstream_roi);
+      }
+      gboolean upstream_roi = compact && compact->has_roi;
+      if (!compact)
+        gst_structure_get_boolean(source_meta, "preproc_roi_enable", &upstream_roi);
       std::array<int, 4> roi{};
       if (upstream_roi) {
         constexpr std::array roi_names{"preproc_roi_x", "preproc_roi_y", "preproc_roi_width",
                                        "preproc_roi_height"};
-        for (std::size_t i = 0; i < roi_names.size(); ++i)
-          if (!gst_structure_get_int(source_meta, roi_names[i], &roi[i]) || roi[i] < 0 ||
-              (i >= 2 && roi[i] == 0))
+        for (std::size_t i = 0; i < roi_names.size(); ++i) {
+          if (compact) {
+            if (compact->primary[i] < 0 || compact->primary[i] > G_MAXINT)
+              return invalid("input.preprocess", "malformed compact upstream ROI provenance");
+            roi[i] = static_cast<int>(compact->primary[i]);
+          } else if (!gst_structure_get_int(source_meta, roi_names[i], &roi[i])) {
+            return invalid("input.preprocess", "incomplete upstream ROI provenance");
+          }
+          if (roi[i] < 0 || (i >= 2 && roi[i] == 0))
             return invalid("input.preprocess", "malformed upstream ROI provenance");
+        }
       }
-      const auto* color_value = gst_structure_get_string(source_meta, "preproc_color_in");
-      const std::string_view color = color_value ? color_value : "";
+      const auto* color_value =
+          source_meta ? gst_structure_get_string(source_meta, "preproc_color_in") : nullptr;
+      const std::string_view color = compact       ? std::string_view(compact->color_in)
+                                     : color_value ? color_value
+                                                   : "";
       auto& cache = composed_[selected];
       if (cache.base == facts && cache.upstream == a && cache.original_width == original_w &&
           cache.original_height == original_h && cache.has_roi == bool(upstream_roi) &&
           cache.roi == roi && cache.color_in == color) {
         facts = cache.result;
       } else {
-        auto composed = *simaai::gst::tensor_buffer_preprocess_facts(facts);
-        const auto b = composed.affine;
-        composed.affine = {a[0] * b[0] + a[1] * b[3],        a[0] * b[1] + a[1] * b[4],
-                           a[0] * b[2] + a[1] * b[5] + a[2], a[3] * b[0] + a[4] * b[3],
-                           a[3] * b[1] + a[4] * b[4],        a[3] * b[2] + a[4] * b[5] + a[5]};
-        if (upstream_roi) {
-          std::copy(roi.begin(), roi.end(), composed.primary.begin());
-          composed.has_roi = true;
-        }
-        composed.original_width = original_w;
-        composed.original_height = original_h;
-        if (!color.empty())
-          composed.color_in = color;
-        std::string error;
-        auto frozen =
-            simaai::gst::tensor_buffer_freeze_preprocess_facts(std::move(composed), &error);
-        if (!frozen)
-          return invalid("output.preprocess", std::move(error));
+        auto composed =
+            compose_publication(facts, a, roi, original_w, original_h, bool(upstream_roi), color);
+        if (const auto* error = std::get_if<Error>(&composed))
+          return *error;
+        auto frozen = std::get<Publication>(std::move(composed));
         cache = {
             facts, frozen, a, roi, original_w, original_h, bool(upstream_roi), std::string(color)};
         facts = std::move(frozen);
@@ -1340,7 +1457,7 @@ PreprocFrameAdapter::prepare_publication(const Geometry& geometry,
   if (auto* error = std::get_if<Error>(&normal))
     return *error;
   Rectangle placed = std::get<Rectangle>(normal);
-  if (policy_->identity_interpolation) {
+  if (policy_->identity_interpolation && cfg.resize_mode != ResizeMode::Crop) {
     primary[2] = placed[2];
     primary[3] = placed[3];
   }
@@ -1399,13 +1516,24 @@ PreprocFrameAdapter::prepare_publication(const Geometry& geometry,
   publication.quantize = policy_->output.dtype == DType::Int8;
   publication.tessellate =
       std::holds_alternative<::simaai::scheduler::client::MlaTiled>(policy_->output.layout);
-  publication.resize_mode = cfg.aspect_ratio == 1 ? "letterbox" : "stretch";
+  publication.resize_mode =
+      cfg.resize_mode == ResizeMode::Crop ? "crop"
+      : (cfg.resize_mode ? *cfg.resize_mode == ResizeMode::Letterbox : cfg.aspect_ratio == 1)
+          ? "letterbox"
+          : "stretch";
   publication.color_in = cfg.input_img_type;
   publication.color_out = cfg.output_img_type;
   publication.roi_list = list;
   publication.primary = primary;
   publication.placed = placed;
   publication.affine = affine(primary, placed);
+  if (cfg.resize_mode == ResizeMode::Crop) {
+    const auto checked =
+        internal::checked_crop_geometry(geometry.width, geometry.height, w, h, cfg.shorter_side);
+    if (const auto* error = std::get_if<const char*>(&checked))
+      return invalid("resize_window", *error);
+    publication.affine = std::get<internal::CropGeometry>(checked).model_to_source;
+  }
   publication.counts = counts;
   publication.has_roi = !indices.empty();
   publication.source_index = indices.empty() ? 0 : indices.front();

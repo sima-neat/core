@@ -7,6 +7,7 @@
 #include <gstsimaaitensorbuffer_meta.h>
 #include <atomic>
 #include <mutex>
+#include <string_view>
 #include <simaai/scheduler/client/frame_adapter.h>
 namespace simaai::neat::pipeline_internal::sima::kernel_lowering {
 using namespace ::simaai::scheduler::client;
@@ -27,8 +28,9 @@ public:
   checked_image_publication(const CheckedPolicy&);
   // Initial immutable facts from the same checked policy as runtime publication.
   // This cold query opens no session and retains no frame or adapter state.
-  static Result<simaai::gst::TensorBufferPreprocessFactsOwner>
-      checked_initial_preprocess_facts(std::shared_ptr<const CheckedPolicy>);
+  static Result<simaai::gst::TensorBufferPreprocessFactsOwner> checked_initial_preprocess_facts(
+      std::shared_ptr<const CheckedPolicy>,
+      const simaai::gst::TensorBufferPreprocessFacts* upstream = nullptr);
   // Check the complete initial image recipe before opening the graph's device.
   static Result<std::shared_ptr<PreprocFrameAdapter>>
       check(std::shared_ptr<const ProcessCvuStagePayload>);
@@ -67,7 +69,14 @@ private:
   Result<GstVideoInfo> parse_caps(const GstCaps*) const;
   Result<std::vector<TensorSpec>> input_specs(const Geometry&) const;
   // Slot order belongs to the bound geometry capability, not the frame metadata.
-  enum GeometryField { SourceRoi, SourceRois, Destination, Padding, GeometryFieldCount };
+  enum GeometryField {
+    SourceRoi,
+    SourceRois,
+    Destination,
+    Padding,
+    ResizeWindow,
+    GeometryFieldCount
+  };
   using GeometryParameters = std::array<std::optional<ParameterValue>, GeometryFieldCount>;
   Result<std::vector<Parameter>> static_parameters() const;
   Result<GeometryParameters> parameters(const Geometry&, const GstStructure*,
@@ -85,6 +94,12 @@ private:
     }
   };
   using Publication = simaai::gst::TensorBufferPreprocessFactsOwner;
+  // Pure metadata composition shared by cold seeding and runtime cache misses.
+  static Result<Publication> compose_publication(const Publication&,
+                                                 const std::array<double, 6>& upstream,
+                                                 const std::array<int, 4>& upstream_roi,
+                                                 int original_width, int original_height,
+                                                 bool has_roi, std::string_view color_in);
   Result<Publication> prepare_publication(const Geometry&, const KernelExecutable&,
                                           const GstStructure*) const;
   struct Variant {

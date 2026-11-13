@@ -307,6 +307,28 @@ const QuantStaticSpec& quantization(const LogicalInputStaticSpec& input) {
 }
 } // namespace
 
+bool boxdecode_supports_detection_transform(BoxDecodeType type) {
+  switch (type) {
+  case BoxDecodeType::YoloV26:
+  case BoxDecodeType::YoloV5:
+  case BoxDecodeType::YoloV7:
+  case BoxDecodeType::YoloV8:
+  case BoxDecodeType::YoloV9:
+  case BoxDecodeType::YoloV10:
+  case BoxDecodeType::YoloV6:
+  case BoxDecodeType::YoloX:
+  case BoxDecodeType::Yolo:
+  case BoxDecodeType::EffDet:
+  case BoxDecodeType::Detr:
+  case BoxDecodeType::DetrFocal:
+  case BoxDecodeType::Centernet:
+  case BoxDecodeType::Ssd:
+    return true;
+  default:
+    return false;
+  }
+}
+
 BoxDecodeKernelRecipeResult prepare_boxdecode_kernel(const CompiledBoxDecodeContract& source,
                                                      const BoxDecodeGeometryOptions& geometry) {
   const auto& p = source.payload;
@@ -318,7 +340,8 @@ BoxDecodeKernelRecipeResult prepare_boxdecode_kernel(const CompiledBoxDecodeCont
     invalid("model and original image geometry must be resolved");
   if (geometry.resize == ResizeMode::Crop && p.decode_type != BoxDecodeType::SuperPoint &&
       !((p.decode_type == BoxDecodeType::YoloXSegPose ||
-         box_decode_type_is_oriented(p.decode_type)) &&
+         box_decode_type_is_oriented(p.decode_type) ||
+         boxdecode_supports_detection_transform(p.decode_type)) &&
         geometry.model_to_original))
     invalid("crop geometry is not supported by the numerical recipe");
   if (p.topk == 0)
@@ -678,6 +701,11 @@ BoxDecodeKernelRecipeResult prepare_boxdecode_kernel(const CompiledBoxDecodeCont
     std::vector<k::TensorSpec> tensors;
     for (const auto& in : inputs)
       tensors.push_back(in.tensor);
+    // An explicit affine is authoritative. Crop is metadata policy, not a new
+    // numerical recipe's legacy fallback mapping (DETR/SSD require Stretch).
+    const auto numerical_resize = geometry.resize == ResizeMode::Crop
+                                      ? default_boxdecode_resize_mode(p.decode_type)
+                                      : geometry.resize;
     std::vector<k::Parameter> parameters{
         {"profile", selected_profile},
         {"task", selected_task},
@@ -685,7 +713,7 @@ BoxDecodeKernelRecipeResult prepare_boxdecode_kernel(const CompiledBoxDecodeCont
         {"original_image_size",
          k::ParameterArray{geometry.original_width, geometry.original_height}},
         {"resize",
-         !oriented && geometry.resize == ResizeMode::Stretch ? "stretch" : "centered_letterbox"},
+         !oriented && numerical_resize == ResizeMode::Stretch ? "stretch" : "centered_letterbox"},
         {"num_classes", p.num_classes},
         {"max_detections", capacity},
         {"rcnn_per_level_topk", rcnn ? p.topk : 0},
@@ -714,7 +742,10 @@ BoxDecodeKernelRecipeResult prepare_boxdecode_kernel(const CompiledBoxDecodeCont
       const auto& t = *geometry.model_to_original;
       parameters.push_back({"model_to_original", k::ParameterArray{t[0], t[1], t[2], t[3]}});
     } else if (geometry.model_to_original) {
-      invalid("explicit affine requires a complete-geometry BoxDecode profile");
+      if (!boxdecode_supports_detection_transform(p.decode_type))
+        invalid("explicit affine is unsupported by this BoxDecode profile/task");
+      const auto& t = *geometry.model_to_original;
+      parameters.push_back({"model_to_original", k::ParameterArray{t[0], t[1], t[2], t[3]}});
     }
     numerical = checked(
         scheduler::check_kernel({"boxdecode", k::Target::A65, tensors, outputs, parameters}));

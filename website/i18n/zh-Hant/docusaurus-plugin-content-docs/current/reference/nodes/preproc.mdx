@@ -103,9 +103,31 @@ INT8 輸出必須提供原始正值 `quantization_step`。Core 會檢查其 FP32
 
 YUV-to-RGB 的 `color_conversion_placement` 預設為 `PreprocColorConversionPlacement.AfterResize`：先縮放各分量，再經過 UInt8 RGB 解碼邊界，最後重新縮放數值與正規化。`BeforeResize` 會將此解碼邊界移至 RGB 數值縮放與取樣之前。其他色彩路徑會拒絕此覆寫。請勿假設其等同於 Pillow/torchvision；應驗證順序與中間 dtype。
 
-請使用影像輸入，且不要以 `transforms` 覆寫。衝突的停用旗標或不支援的組合會失敗，而非默默變更請求。輸出形狀、dtype、量化與實體佈局仍由 MPK 決定；來源容量不受模型尺寸限制。省略新選項會保留舊版運算。新增欄位改變了 C++ 物件佈局，因此此版本使用 ABI 7 (`libsima_neat.so.7`)。請以相符的標頭與函式庫重新建置應用程式、外掛程式及 Python 繫結；不要透過相容性符號連結載入 ABI 5/6 二進位檔。
+請使用影像輸入，且不要以 `transforms` 覆寫。衝突的停用旗標或不支援的組合會失敗，而非默默變更請求。輸出形狀、dtype、量化與實體佈局仍由 MPK 決定；來源容量不受模型尺寸限制。省略新選項會保留舊版運算。新增欄位改變了 C++ 物件佈局，因此此版本使用 ABI 8 (`libsima_neat.so.8`)。請以相符的標頭與函式庫重新建置應用程式、外掛程式及 Python 繫結；不要透過相容性符號連結載入 ABI 5/6/7 二進位檔。
 
 
+
+## 中央裁切 {#center-crop}
+
+使用 `ResizeMode.Crop` 將來源縮放至覆蓋模型輸入，再進行不含填補的中央裁切。設定 `resize.shorter_side` 可先將來源短邊縮放至指定大小；最終裁切尺寸仍由 MPK 決定。例如，輸入為 224×224 的模型可指定短邊 256。設為 `None` 可恢復覆蓋後裁切的行為。
+
+```python
+options = pyneat.ModelOptions()
+p = options.preprocess
+p.kind = pyneat.InputKind.Image
+p.resize.enable = pyneat.AutoFlag.On
+p.resize.mode = pyneat.ResizeMode.Crop
+p.resize.shorter_side = 256
+p.resize.interpolation = pyneat.ResizeInterpolation.BilinearAntialiased
+model = pyneat.Model("/path/to/model_224_mpk.tar.gz", options)
+```
+
+明確指定短邊時，縮放後的長邊無條件捨去小數，中央偏移量則使用最接近偶數捨入。若縮放後影像無法容納模型輸入，準備階段會失敗，而不會新增填補。只有 Crop 可使用 `shorter_side`。
+
+裁切會計算完整縮放結果中的視窗，並保留可見裁切範圍外的濾波取樣；不會以捨入來源 ROI 的方式近似。既有插值及來源運算規則仍適用，抗鋸齒雙線性插值並不保證與 Pillow 逐位元相同。初始視窗路徑接受 RGB/BGR/Gray，不接受 YUV 或明確 ROI 選取。支援的偵測設定檔會使用實際反向轉換，將框映射回原始影像。
+
+
+裁切視窗支援 Nearest、Bilinear 及 BilinearAntialiased。原始 NO_SCALING 僅在來源與虛擬縮放尺寸相同時有效。Bicubic 與 BoxAverage 視窗要求會被拒絕。
 
 ## 使用方式
 
