@@ -1,5 +1,6 @@
 #include "pipeline/internal/sima/PreprocFrameAdapter.h"
 #include "nodes/sima/internal/CropGeometry.h"
+#include "pipeline/internal/sima/PreprocGeometryContract.h"
 #include <simaai/scheduler/client/diagnostics.h>
 #include <algorithm>
 #include <cmath>
@@ -726,7 +727,7 @@ PreprocFrameAdapter::check_policy(const ProcessCvuStagePayload& prepared) {
   if (policy->geometry_variant->contract_policy() != KernelVariantPolicy::FullRecheck)
     return invalid("preproc.geometry", "geometry capability must recheck the full contract");
   const auto fields = policy->geometry_variant->fields();
-  if (fields.size() != names.size() || !std::equal(fields.begin(), fields.end(), names.begin()))
+  if (!supports_preproc_geometry_fields(fields, cfg.resize_mode == ResizeMode::Crop))
     return invalid("preproc.geometry",
                    "geometry capability fields differ from the prepared recipe");
   policy->initial_geometry = geometry;
@@ -1290,9 +1291,14 @@ PreprocFrameAdapter::bind(GstBuffer* buffer, BindingWriter& binding, GstStructur
     if (auto* error = std::get_if<Error>(&specs))
       return *error;
     SIMA_SCHEDULER_TRACE_CURRENT(PreprocPrepare);
-    auto prepared = preparer_.prepare(*policy_->geometry_variant,
-                                      {std::get<std::vector<TensorSpec>>(specs), policy_->outputs,
-                                       std::get<GeometryParameters>(params)});
+    // Ordinary preprocessing retains the four-value convention on either known
+    // descriptor. Crop was admitted only with the explicit window capability.
+    const auto count = policy_->prepared->resize_mode == ResizeMode::Crop
+                           ? std::size_t{GeometryFieldCount}
+                           : preproc_geometry_fields.size();
+    auto prepared = preparer_.prepare(
+        *policy_->geometry_variant, {std::get<std::vector<TensorSpec>>(specs), policy_->outputs,
+                                     std::span{std::get<GeometryParameters>(params)}.first(count)});
     if (auto* error = std::get_if<Error>(&prepared))
       return *error;
     operation = std::get<PreparedSelection>(std::move(prepared));

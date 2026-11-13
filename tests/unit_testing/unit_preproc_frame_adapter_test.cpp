@@ -1,4 +1,10 @@
 #include "pipeline/internal/sima/PreprocFrameAdapter.h"
+#include "pipeline/internal/sima/PreprocGeometryContract.h"
+#include <array>
+#include <cstddef>
+#include <cstdint>
+#include <optional>
+#include <string_view>
 #include <cmath>
 #include <bit>
 #include <limits>
@@ -37,13 +43,101 @@ void okay(rt::Status result) {
 using Capture = probe::Capture;
 using Owner = probe::Owner;
 using Storage = probe::Storage;
-// This recording-only test transport acknowledges the current Preproc wire
-// version. It captures real prepared packets; it does not emulate EV pixels or
-// change production firmware capabilities. Legacy numerical defaults also use ABI8.
+// Frozen compatibility profiles for the two supported installed cohorts, not a
+// general rule deriving firmware versions from descriptor arity. Expectations
+// are selected before capture, independently of the actual packet under test.
+std::optional<std::uint32_t> expected_preproc_abi(std::span<const std::string_view> fields,
+                                                  rt::KernelVariantPolicy policy) {
+  constexpr std::array<std::string_view, 4> legacy{"source_roi", "source_rois", "destination",
+                                                   "padding"};
+  constexpr std::array<std::string_view, 5> window{"source_roi", "source_rois", "destination",
+                                                   "padding", "resize_window"};
+  if (policy != rt::KernelVariantPolicy::FullRecheck)
+    return std::nullopt;
+  if (std::equal(fields.begin(), fields.end(), legacy.begin(), legacy.end()))
+    return 7;
+  if (std::equal(fields.begin(), fields.end(), window.begin(), window.end()))
+    return 8;
+  return std::nullopt;
+}
+std::uint32_t preproc_wire_abi() {
+  static const auto abi = [] {
+    const rt::TensorSpec input{{1, 8, 8, 3}, rt::DType::UInt8};
+    const std::array parameters{rt::Parameter{"input_format", "rgb"},
+                                rt::Parameter{"output_format", "rgb"},
+                                rt::Parameter{"destination", rt::ParameterArray{0, 0, 8, 8}}};
+    const auto checked =
+        take(rt::check_kernel({"preproc", rt::Target::EV74, {&input, 1}, {&input, 1}, parameters}));
+    const auto capability = take(rt::bind_kernel_variant(checked, "geometry"));
+    const auto profile = expected_preproc_abi(capability.fields(), capability.contract_policy());
+    require(profile.has_value(), "unsupported Preproc compatibility profile");
+    return *profile;
+  }();
+  return abi;
+}
+// Recording only: captures real prepared packets, not EV pixels or firmware.
 std::shared_ptr<Capture> preproc_capture() {
   auto capture = std::make_shared<Capture>();
-  capture->maximum_abi = 8;
+  capture->maximum_abi = preproc_wire_abi();
   return capture;
+}
+void check_packet_envelope(const probe::Packet& packet, std::size_t expected_bytes) {
+  require(expected_bytes >= 312 && packet.abi == preproc_wire_abi() &&
+              packet.payload.size() == expected_bytes,
+          "Preproc packet disagrees with the supported cohort ABI/length");
+  const auto u16 = [&](std::size_t offset) {
+    return std::to_integer<unsigned>(packet.payload[offset]) |
+           (std::to_integer<unsigned>(packet.payload[offset + 1]) << 8);
+  };
+  require(u16(4) == preproc_wire_abi() && u16(6) == expected_bytes,
+          "encoded Preproc header disagrees with the supported cohort");
+  // ABI8 uses formerly reserved bytes without growing the 336-byte base.
+  // These legacy-operation checks author no windows; crop checks are separate.
+  require(std::all_of(packet.payload.begin() + 296, packet.payload.begin() + 312,
+                      [](std::byte value) { return value == std::byte{}; }),
+          "legacy geometry retained an unexpected resize window");
+}
+void geometry_descriptor_compatibility() {
+  constexpr auto full = rt::KernelVariantPolicy::FullRecheck;
+  const std::vector<std::string_view> legacy{"source_roi", "source_rois", "destination", "padding"};
+  auto window = legacy;
+  window.push_back("resize_window");
+  require(lower::supports_preproc_geometry_fields(legacy) &&
+              lower::supports_preproc_geometry_fields(window) &&
+              expected_preproc_abi(legacy, full) == 7 && expected_preproc_abi(window, full) == 8,
+          "known Preproc descriptor profile rejected");
+  require(!lower::supports_preproc_geometry_fields(legacy, true) &&
+              lower::supports_preproc_geometry_fields(window, true),
+          "crop accepted a descriptor without the resize-window slot");
+  for (const auto policy :
+       {rt::KernelVariantPolicy::PreserveContract, rt::KernelVariantPolicy::Unavailable})
+    require(!expected_preproc_abi(legacy, policy) && !expected_preproc_abi(window, policy),
+            "unsupported geometry policy accepted by a compatibility profile");
+  const auto rejects = [&](const std::vector<std::string_view>& fields) {
+    require(!lower::supports_preproc_geometry_fields(fields) &&
+                !lower::supports_preproc_geometry_fields(fields, true) &&
+                !expected_preproc_abi(fields, full),
+            "unknown geometry descriptor was treated as a compatible extension");
+  };
+  rejects({});
+  for (std::size_t n = 1; n < legacy.size(); ++n)
+    rejects({legacy.begin(), legacy.begin() + n});
+  for (std::size_t i = 0; i < window.size(); ++i) {
+    auto unknown = window;
+    unknown[i] = "unknown";
+    rejects(unknown);
+    if (i > 0) {
+      auto reordered = window;
+      std::swap(reordered[0], reordered[i]);
+      rejects(reordered);
+    }
+  }
+  auto duplicate = window;
+  duplicate.back() = "padding";
+  rejects(duplicate);
+  auto extra = window;
+  extra.push_back("future_extension");
+  rejects(extra);
 }
 class PreprocProbe : public probe::AdapterProbe {
   std::shared_ptr<lower::PreprocFrameAdapter> adapter_;
@@ -171,10 +265,8 @@ void cold_generic_preparation() {
               inspection.outputs()[0].shape[0] == 3,
           "cold check lost the materialized ROI output capacity");
   const auto capability = take(rt::bind_kernel_variant(checked->initial_executable(), "geometry"));
-  require(capability.contract_policy() == rt::KernelVariantPolicy::FullRecheck &&
-              capability.fields().size() == 5 && capability.fields()[0] == "source_roi" &&
-              capability.fields()[1] == "source_rois" && capability.fields()[2] == "destination" &&
-              capability.fields()[3] == "padding" && capability.fields()[4] == "resize_window",
+  require(expected_preproc_abi(capability.fields(), capability.contract_policy()) ==
+              preproc_wire_abi(),
           "preproc geometry capability does not describe the canonical update slots");
   const auto facts = inspection.preparation_facts();
   const auto accepted = std::find_if(facts.begin(), facts.end(),
@@ -183,9 +275,8 @@ void cold_generic_preparation() {
           "empty initial ROI admission omitted its checked empty facts");
   // Both kinds of optional ROI override are genuinely cleared, not inherited
   // from the initial capacity-only admission. The new ports are fully rechecked.
-  std::array<std::optional<rt::ParameterValue>, 5> values{
-      std::nullopt, std::nullopt, rt::ParameterArray{0, 0, 8, 8}, rt::ParameterArray{0, 0, 0},
-      std::nullopt};
+  std::array<std::optional<rt::ParameterValue>, 4> values{
+      std::nullopt, std::nullopt, rt::ParameterArray{0, 0, 8, 8}, rt::ParameterArray{0, 0, 0}};
   auto output = inspection.outputs()[0];
   output.shape = std::vector<std::int64_t>{1, 8, 8, 3};
   const auto ordinary =
@@ -310,7 +401,7 @@ void fixed_arithmetic_contract() {
     auto done =
         stage->session().executor(0)->submit(*binding.operation, binding.inputs, binding.outputs);
     okay(done.wait());
-    require(capture->packet.abi == 8, "fixed source arithmetic must retain checked Preproc ABI8");
+    check_packet_envelope(capture->packet, 336);
     const auto bits = [&](std::size_t offset) {
       require(capture->packet.payload.size() >= offset + 4, "short fixed arithmetic packet");
       std::uint32_t value;
@@ -381,6 +472,7 @@ void contract() {
     auto completion =
         p->session().executor(0)->submit(*binding.operation, binding.inputs, binding.outputs);
     okay(completion.wait());
+    check_packet_envelope(capture->packet, 336);
     // Reference coefficients from legacy preproc.cc: mean*255.0 and
     // (q_scale or 1)/(stddev*255.0), each rounded once to float.
     for (unsigned i = 0; i < 3; ++i) {
@@ -423,6 +515,11 @@ void contract() {
   require(affines && gst_value_list_get_size(affines) == 12, "accepted ROI affine count");
   require(g_value_get_double(gst_value_list_get_value(affines, 8)) == -3.0,
           "second ROI destination differs");
+  const auto roi_bytes = binding.operation->output_requirements(0).storage_bytes;
+  binding.outputs.push_back({std::make_shared<Owner>(roi_bytes, 0x200000), 0, roi_bytes});
+  okay(
+      p->session().executor(0)->submit(*binding.operation, binding.inputs, binding.outputs).wait());
+  check_packet_envelope(capture->packet, 2136);
   set_list(meta, "preproc_roi_batch_indices", {INT_MAX, 0, 0});
   probe::Binding bad;
   require(bool(p->bind(input, Storage{}, bad, out)), "unbounded inferred batch admitted");
@@ -455,6 +552,7 @@ void contract() {
            .executor(0)
            ->submit(*raw_binding.operation, raw_binding.inputs, raw_binding.outputs)
            .wait());
+  check_packet_envelope(raw_capture->packet, 336);
   std::uint32_t dtype = 99;
   std::memcpy(&dtype, raw_capture->packet.payload.data() + 20, 4);
   require(dtype == 0 && word(raw_capture->packet, 152) == 1.0F,
@@ -470,7 +568,7 @@ void contract() {
   tile.layout.tiled.tile_sizes[1] = 8;
   tile.layout.tiled.tile_sizes[2] = 3;
   raw->output_tensors[0] = raw->output_tensors[0].with_geometry(tile);
-  for (const auto maximum_abi : {4U, 5U, 6U, 7U}) {
+  for (std::uint32_t maximum_abi = 4; maximum_abi < preproc_wire_abi(); ++maximum_abi) {
     auto old_firmware = std::make_shared<Capture>();
     old_firmware->maximum_abi = maximum_abi;
     auto old_options = raw_options;
@@ -479,7 +577,7 @@ void contract() {
     const auto* error = std::get_if<rt::Error>(&rejected);
     require(error && error->field == "prepared.ev74" && old_firmware->admissions > 0 &&
                 old_firmware->submissions == 0 && old_firmware->packet.empty(),
-            "ABI4/5/6 transports must reject checked Preproc ABI8 before submission");
+            "older transports must reject the selected Preproc ABI before submission");
   }
   auto tiled = take(PreprocProbe::create(raw, raw_options));
   auto* tiled_input = gst_buffer_new_allocate(nullptr, 192, nullptr);
@@ -495,8 +593,8 @@ void contract() {
   std::uint32_t encoding = 0;
   std::memcpy(&dtype, raw_capture->packet.payload.data() + 20, 4);
   std::memcpy(&encoding, raw_capture->packet.payload.data() + 116, 4);
-  require(dtype == 0 && encoding == 1 && raw_capture->packet.abi == 8,
-          "raw tiled bytes must advertise native UInt8 ABI8");
+  check_packet_envelope(raw_capture->packet, 336);
+  require(dtype == 0 && encoding == 1, "raw tiled bytes must advertise native UInt8 encoding");
   gst_structure_free(tiled_meta);
   gst_buffer_unref(tiled_input);
 
@@ -585,6 +683,7 @@ void typed_format_mapping() {
                .executor(0)
                ->submit(*binding.operation, binding.inputs, binding.outputs)
                .wait());
+      check_packet_envelope(capture->packet, 336);
       const auto field = [&](std::size_t offset) {
         std::uint32_t value = 0;
         require(capture->packet.payload.size() >= offset + sizeof(value), "short packet");
@@ -1690,6 +1789,7 @@ int main(int argc, char** argv) {
     gst_meta_register_custom("GstSimaMeta", tags, nullptr, nullptr, nullptr);
   }
   try {
+    geometry_descriptor_compatibility();
     crop_geometry_dynamic_cache();
     image_frontend_metadata_and_bounds();
     image_frontend_input_rejections();
