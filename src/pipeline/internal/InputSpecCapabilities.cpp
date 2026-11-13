@@ -1,6 +1,6 @@
 #include "pipeline/internal/InputSpecCapabilities.h"
 
-#include "gst/internal/ElementCapability.h"
+#include "gst/GstHelpers.h"
 #include "nodes/groups/internal/VideoSenderRawIngress.h"
 #include "nodes/sima/internal/SimaEncode.h"
 
@@ -9,9 +9,9 @@ namespace simaai::neat::pipeline_internal {
 simaai::neat::internal::InputSpecSpecializationContext
 discover_input_spec_specialization_context() {
   simaai::neat::internal::InputSpecSpecializationContext context;
-  const bool layout_aware =
-      simaai::neat::internal::element_boolean_capability("neatencoder", "input-layout-aware")
-          .value_or(false);
+  // simaaiencoder imports compatible NV12 dma-bufs, copies the rest:
+  // gstsimaaiencoder.cpp:3373-3378.
+  const bool layout_aware = simaai::neat::element_exists("simaaiencoder");
   context.set_capability(nodes::groups::internal::kNeatEncoderInputLayoutAwareCapability,
                          layout_aware);
   return context;
