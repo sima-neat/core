@@ -1544,6 +1544,19 @@ void crop_geometry_dynamic_cache() {
     ingress.preprocess_meta = prospective;
     require(simaai::neat::apply_simaai_preprocess_meta_template(raw, ingress, 8, 4),
             "raw ingress template attachment failed");
+    auto* copied = gst_buffer_new();
+    std::string copy_error;
+    require(simaai::neat::copy_simaai_preprocess_meta(copied, raw, &copy_error),
+            "prospective ingress copy failed");
+    auto* copied_meta =
+        gst_custom_meta_get_structure(gst_buffer_get_custom_meta(copied, "GstSimaMeta"));
+    require(gst_structure_has_field(copied_meta, "preproc_ingress_template"),
+            "copy promoted a prospective transform to applied provenance");
+    const auto applied = simaai::neat::read_simaai_preprocess_meta(copied);
+    require(applied && simaai::neat::write_simaai_preprocess_meta(copied, *applied) &&
+                !gst_structure_has_field(copied_meta, "preproc_ingress_template"),
+            "applied facts retained a prospective-template marker");
+    gst_buffer_unref(copied);
     auto* source = gst_custom_meta_get_structure(gst_buffer_get_custom_meta(raw, "GstSimaMeta"));
     auto* result = gst_structure_copy(source);
     probe::Binding binding;
