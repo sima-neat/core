@@ -8,7 +8,7 @@
     "sdk_series": {"value": "3.0", "owner": "SDK release maintainers", "source": "Published SDK release series"},
     "apps": {"value": "0.6.1", "owner": "Apps release maintainers", "source": "docs/release-notes/neat-examples.md"},
     "model_compiler": {"value": "3.0.0.1", "owner": "Model Compiler release maintainers", "source": "docs/release-notes/modelsdk.md"},
-    "insight": {"value": "0.0.9", "owner": "Insight release maintainers", "source": "docs/release-notes/insight.md"},
+    "insight": {"value": "0.0.11", "owner": "Insight release maintainers", "source": "docs/release-notes/insight.md"},
     "sima_cli": {"value": "2.1.20", "owner": "sima-cli release maintainers", "source": "docs/release-notes/sima-cli.md"}
   },
   "dependencies": {
