@@ -1286,7 +1286,7 @@ inputstream_pipeline_teardown_policy(std::string_view pipeline) {
   if (contains_launch_factory_token(pipeline, "neatprocessmla") ||
       contains_launch_factory_token(pipeline, "neatkernelrunner") ||
       contains_launch_factory_token(pipeline, "neatprocesscvu") ||
-      contains_launch_factory_token(pipeline, "neatdecoder") ||
+      contains_launch_factory_token(pipeline, "simaaidecoder") ||
       contains_launch_factory_token(pipeline, "neatencoder")) {
     return pipeline_internal::InputStreamTeardownPolicy::MustReachNull;
   }
