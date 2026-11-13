@@ -136,6 +136,12 @@ CompiledKernelContract compile_boxdecode_kernel(const CompiledBoxDecodeContract&
   }
   const bool upstream_crop = input.upstream_preprocess &&
                              input.upstream_preprocess->payload.resize_mode == ResizeMode::Crop;
+  // Image frontends compose spatial provenance even when their own local mode
+  // is Stretch (for example Cover -> ColorConvert -> Normalization). That
+  // producer contract, not the last resize label, requires affine consumption.
+  // Do not infer the same authority from legacy dimension-only ingress metadata.
+  const bool upstream_image_transform =
+      input.upstream_preprocess && input.upstream_preprocess->payload.image_transform;
   const bool crop_requested = resize_mode == ResizeMode::Crop || upstream_crop;
   const bool detection_transform =
       boxdecode_supports_detection_transform(compiled.payload.decode_type);
@@ -143,7 +149,8 @@ CompiledKernelContract compile_boxdecode_kernel(const CompiledBoxDecodeContract&
   geometry.complete_geometry =
       compiled.payload.decode_type == BoxDecodeType::YoloXSegPose ||
       geometry.uniform_transform_required ||
-      (detection_transform && (crop_requested || geometry.model_to_original.has_value()));
+      (detection_transform &&
+       (crop_requested || upstream_image_transform || geometry.model_to_original.has_value()));
   const auto affine = [](const PreprocessRuntimeMeta& meta) {
     return std::array<double, 6>{meta.affine_m00, meta.affine_m01, meta.affine_m02,
                                  meta.affine_m10, meta.affine_m11, meta.affine_m12};
@@ -169,13 +176,16 @@ CompiledKernelContract compile_boxdecode_kernel(const CompiledBoxDecodeContract&
   if (observed && observed->resize_mode == "crop" && detection_transform)
     geometry.complete_geometry = true;
   if (input.upstream_preprocess &&
-      (upstream_crop || (!observed && (crop_requested || (geometry.uniform_transform_required &&
-                                                          !geometry.model_to_original))))) {
-    // The nearest Crop producer owns the current model geometry even when the
-    // graph ingress already has older preprocessing provenance. Compose that
-    // provenance through the producer's own publication helper; never mistake
-    // an old ingress crop/letterbox for the current model's transform. The cold
-    // seed still cannot replace mandatory current per-frame publication.
+      (upstream_crop || (detection_transform && upstream_image_transform) ||
+       (!observed && (crop_requested ||
+                      (geometry.uniform_transform_required && !geometry.model_to_original))))) {
+    // Check the nearest publisher's model canvas to prepare a cold seed. This
+    // policy does not describe the whole preceding frontend chain: in particular
+    // ColorConvert/Normalization can publish a composed affine while locally
+    // reporting Stretch. Only current per-frame facts authorize execution; the
+    // local seed or older graph-ingress provenance must never replace them.
+    // The Crop seed retains its existing ingress composition, still guarded by
+    // the same mandatory current-frame resolver below.
     namespace rt = ::simaai::scheduler::client;
     using Adapter = kernel_lowering::PreprocFrameAdapter;
     auto policy = input.upstream_preprocess->payload;

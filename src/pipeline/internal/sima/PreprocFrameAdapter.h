@@ -11,6 +11,8 @@
 #include <simaai/scheduler/client/frame_adapter.h>
 namespace simaai::neat::pipeline_internal::sima::kernel_lowering {
 using namespace ::simaai::scheduler::client;
+// Keep virtual signatures independent of public Neat Status header order.
+using ::simaai::scheduler::client::Status;
 namespace gstreamer = ::simaai::scheduler::client;
 // Core-owned image geometry, caps and metadata policy. Numerical validation
 // and ROI filtering remain in kernel-owned generic preparation.
