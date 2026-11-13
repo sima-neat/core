@@ -117,6 +117,11 @@ policy or the separately delivered Platform driver. A customer policy that
 rejects unsigned user-space code needs a signed package; the installer never
 disables that policy.
 
+Direct Windows dispatch always requires an admitted completed Linux run. The
+same-run `linux_current_run` input belongs only to the reusable workflow call
+from Vulcan CI after its Linux build and hardware dependencies succeed; it is
+not a manual-dispatch override.
+
 ## Publishing and formal release checks
 
 Normal branch and tag runs enter the Windows lane from Core's main CI with

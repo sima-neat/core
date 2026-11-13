@@ -80,10 +80,6 @@ on:
         type: string
         required: false
         default: ''
-      linux_current_run:
-        description: Use this run's already-qualified Linux/card candidate
-        type: boolean
-        default: false
       upgrade_base_run_id:
         description: Earlier successful Core Windows run used as the release upgrade baseline
         type: string
@@ -146,6 +142,10 @@ jobs:
           persist-credentials: false
       - name: Validate dependency and admission selectors
         run: |
+          if [[ "${{ inputs.linux_current_run }}" == "true" && "${GITHUB_WORKFLOW}" != "Vulcan CI" ]]; then
+            echo "Same-run Linux admission is reserved for the Vulcan CI caller." >&2
+            exit 1
+          fi
           if { [[ -n "${{ inputs.scheduler_run_id }}" ]] && [[ -z "${{ inputs.scheduler_commit }}" ]]; } ||
              { [[ -z "${{ inputs.scheduler_run_id }}" ]] && [[ -n "${{ inputs.scheduler_commit }}" ]]; }; then
             echo "scheduler_run_id and scheduler_commit must be supplied together." >&2

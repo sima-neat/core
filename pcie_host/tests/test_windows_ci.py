@@ -76,6 +76,18 @@ def normalized_link_target(path):
 
 
 class WindowsCiContracts(unittest.TestCase):
+  def test_same_run_linux_admission_is_not_a_manual_dispatch_override(self):
+    workflow = WORKFLOW.read_text(encoding="utf-8")
+    dispatch = workflow.split("  workflow_dispatch:\n", 1)[1].split("\npermissions:", 1)[0]
+    self.assertNotIn("linux_current_run:", dispatch)
+    self.assertIn('"${GITHUB_WORKFLOW}" != "Vulcan CI"', workflow)
+    self.assertIn("Same-run Linux admission is reserved", workflow)
+    caller = MAIN_WORKFLOW.read_text(encoding="utf-8")
+    job = caller.split("  test-pciehost-windows:\n", 1)[1].split("  promote-latest-tag:", 1)[0]
+    self.assertIn("linux_current_run: true", job)
+    self.assertIn("needs.test-devkit.result == 'success'", job)
+    self.assertIn("needs.test-pciehost-hardware.result == 'success'", job)
+
   def test_junit_policy_requires_exact_zero_skip_cases(self):
     with tempfile.TemporaryDirectory() as directory:
       path = Path(directory) / "tests.xml"
