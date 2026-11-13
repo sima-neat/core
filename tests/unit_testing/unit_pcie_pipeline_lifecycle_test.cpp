@@ -6,8 +6,8 @@
 
 namespace {
 
-using simaai::neat::pcie_builder::CleanStopReason;
 using simaai::neat::pcie_builder::clean_stop_status;
+using simaai::neat::pcie_builder::CleanStopReason;
 
 void require(const bool condition, const char* message) {
   if (!condition) {

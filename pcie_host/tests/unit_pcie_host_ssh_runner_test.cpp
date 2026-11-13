@@ -54,8 +54,7 @@ void test_child_cleanup_shell() {
 }
 
 void test_detached_child_redirections() {
-  const std::string redirections =
-      pcie_internal::RemoteRuntime::detached_child_redirections();
+  const std::string redirections = pcie_internal::RemoteRuntime::detached_child_redirections();
   require(redirections.find("9>&-") != std::string::npos,
           "detached worker must close the launch lock descriptor");
   require(redirections.find("</dev/null") != std::string::npos,

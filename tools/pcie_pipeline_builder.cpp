@@ -48,8 +48,8 @@ using simaai::neat::PCIeSinkOptions;
 using simaai::neat::PCIeSrcOptions;
 using simaai::neat::PreprocessColorFormat;
 using simaai::neat::ResizeMode;
-using simaai::neat::pcie_builder::CleanStopReason;
 using simaai::neat::pcie_builder::clean_stop_status;
+using simaai::neat::pcie_builder::CleanStopReason;
 
 constexpr const char* kProgramName = "pcie-pipeline-builder";
 constexpr const char* kPcieSourceBufferName = "n0_pciesrc";

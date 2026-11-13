@@ -21,9 +21,8 @@ void check(int rc, const char* operation) {
 
 std::wstring platform_library() {
   wchar_t directory[32768]{};
-  const DWORD size = GetEnvironmentVariableW(
-      L"SIMA_WINDOWS_PLATFORM_RUNTIME_DIR", directory,
-      static_cast<DWORD>(std::size(directory)));
+  const DWORD size = GetEnvironmentVariableW(L"SIMA_WINDOWS_PLATFORM_RUNTIME_DIR", directory,
+                                             static_cast<DWORD>(std::size(directory)));
   if (!size)
     return L"SiMaPCIe.dll";
   if (size >= std::size(directory))
@@ -63,26 +62,22 @@ Service::Service(int card, bool endpoint) : impl_(std::make_unique<Impl>()) {
   const auto library_path = platform_library();
   impl_->library = LoadLibraryW(library_path.c_str());
   if (!impl_->library)
-    throw std::runtime_error(
-        "Install matching Windows PCIe userspace or set "
-        "SIMA_WINDOWS_PLATFORM_RUNTIME_DIR");
+    throw std::runtime_error("Install matching Windows PCIe userspace or set "
+                             "SIMA_WINDOWS_PLATFORM_RUNTIME_DIR");
   impl_->close = impl_->symbol<decltype(impl_->close)>("simaai_svc_close");
   impl_->subscribe = impl_->symbol<decltype(impl_->subscribe)>("simaai_svc_subscribe");
   impl_->notify = impl_->symbol<decltype(impl_->notify)>("simaai_svc_notify");
   impl_->recv = impl_->symbol<decltype(impl_->recv)>("simaai_svc_recv");
   impl_->fetch = impl_->symbol<decltype(impl_->fetch)>("simaai_svc_get_file");
   impl_->put = impl_->symbol<decltype(impl_->put)>("simaai_svc_put_file");
-  impl_->native_handle =
-      impl_->symbol<decltype(impl_->native_handle)>("simaai_svc_handle");
+  impl_->native_handle = impl_->symbol<decltype(impl_->native_handle)>("simaai_svc_handle");
   if (endpoint) {
-    const auto open =
-        impl_->symbol<int (*)(const char*, simaai_svc**)>("simaai_svc_open");
+    const auto open = impl_->symbol<int (*)(const char*, simaai_svc**)>("simaai_svc_open");
     check(open(nullptr, &impl_->handle), "open endpoint");
   } else {
     if (card < 0)
       throw std::invalid_argument("card_id must be nonnegative");
-    const auto open =
-        impl_->symbol<int (*)(uint32_t, simaai_svc**)>("simaai_svc_open_card");
+    const auto open = impl_->symbol<int (*)(uint32_t, simaai_svc**)>("simaai_svc_open_card");
     check(open(static_cast<uint32_t>(card), &impl_->handle), "open card");
   }
 }
@@ -115,8 +110,8 @@ void Service::send(const std::string& tag, const std::string& payload) {
 
 std::optional<std::string> Service::receive(int timeout_ms) {
   simaai_svc_note note{};
-  const int rc = impl_->recv(
-      impl_->handle, &note, impl_->buffer.data(), impl_->buffer.size(), timeout_ms);
+  const int rc =
+      impl_->recv(impl_->handle, &note, impl_->buffer.data(), impl_->buffer.size(), timeout_ms);
   if (rc == -EAGAIN || rc == -ETIMEDOUT)
     return std::nullopt;
   check(rc, "receive");
@@ -128,8 +123,8 @@ void Service::fetch(const std::string& root, const std::string& source,
   simaai_svc_xfer_opts options{};
   options.flags = SIMAAI_SVC_XF_OVERWRITE;
   simaai_svc_xfer statistics{};
-  check(impl_->fetch(impl_->handle, root.c_str(), source.c_str(), destination.c_str(),
-                     &options, &statistics),
+  check(impl_->fetch(impl_->handle, root.c_str(), source.c_str(), destination.c_str(), &options,
+                     &statistics),
         "fetch");
 }
 
@@ -137,8 +132,8 @@ void Service::put(const std::string& source, const std::string& destination) {
   simaai_svc_xfer_opts options{};
   options.flags = SIMAAI_SVC_XF_OVERWRITE;
   simaai_svc_xfer statistics{};
-  check(impl_->put(impl_->handle, source.c_str(), nullptr, destination.c_str(),
-                   &options, &statistics),
+  check(impl_->put(impl_->handle, source.c_str(), nullptr, destination.c_str(), &options,
+                   &statistics),
         "put model asset");
 }
 } // namespace simaai::neat::pcie::genai::wire

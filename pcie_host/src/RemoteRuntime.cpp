@@ -340,8 +340,8 @@ int RemoteRuntime::start(const int queue, const std::string& remote_model_path,
     ss << " --model-options " << SshRunner::shell_escape(*remote_model_options_path);
   }
   ss << detached_child_redirections() << "launched_pid=$!; "
-     << "echo \"launched_pid=$launched_pid\"; "
-     << "for i in $(seq 1 200); do " << "owner_pid=$(cat \"$pidfile\" 2>/dev/null || true); "
+     << "echo \"launched_pid=$launched_pid\"; " << "for i in $(seq 1 200); do "
+     << "owner_pid=$(cat \"$pidfile\" 2>/dev/null || true); "
      << "if [ \"$owner_pid\" = \"$launched_pid\" ]; then exit 0; fi; "
      << "if [ -n \"$owner_pid\" ] && kill -0 \"$owner_pid\" >/dev/null 2>&1 && "
      << "tr '\\0' ' ' < \"/proc/$owner_pid/cmdline\" 2>/dev/null | "
