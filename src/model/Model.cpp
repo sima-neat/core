@@ -77,6 +77,7 @@
 #include <optional>
 #include <sstream>
 #include <stdexcept>
+#include <type_traits>
 #include <string_view>
 #include <unordered_set>
 #include <utility>
@@ -4512,12 +4513,28 @@ struct Model::Impl {
   mutable bool sync_ready = false;
   mutable InputKey sync_key{};
   mutable Runner sync_runner{};
+  // The original image size a fixed-size runner serves (see
+  // internal::fixed_boxdecode_original_size); unset for every other route.
+  mutable std::optional<std::pair<int, int>> sync_original_size;
 
   template <typename Inputs> auto run_sync(Model& model, const Inputs& inputs, int timeout_ms) {
     std::lock_guard<std::mutex> lock(sync_mu);
+    // A Segment Anything BoxDecode runner publishes masks of one original
+    // image size; another frame size gets its own runner.
+    std::optional<std::pair<int, int>> original_size;
+    if constexpr (std::is_same_v<Inputs, std::vector<Tensor>>)
+      original_size = internal::ModelAccess::fixed_boxdecode_original_size(model, inputs);
+    else if constexpr (std::is_same_v<Inputs, simaai::neat::Sample>)
+      original_size = internal::ModelAccess::fixed_boxdecode_original_size(
+          model, tensors_from_sample(inputs, false));
+    if (sync_ready && original_size && original_size != sync_original_size) {
+      sync_ready = false;
+      sync_runner = Runner{};
+    }
     if (!sync_ready) {
       sync_runner = model.build(inputs);
       sync_ready = true;
+      sync_original_size = original_size;
     }
     try {
       return sync_runner.run(inputs, timeout_ms);
@@ -7979,6 +7996,20 @@ std::string ModelAccess::model_id(const Model& model) {
 
 const std::string& ModelAccess::stage_cache_identity(const Model& model) {
   return model.impl_->stage_cache_identity;
+}
+
+std::optional<std::pair<int, int>>
+ModelAccess::fixed_boxdecode_original_size(const Model& model, const TensorList& inputs) {
+  const auto& impl = *model.impl_;
+  if (!impl.preprocess_plan.session_route_plan.boxdecode_selected ||
+      !pipeline_internal::sima::box_decode_type_is_sam(impl.options.decode_type))
+    return std::nullopt;
+  for (const auto& tensor : inputs)
+    if (tensor.semantic.preprocess && tensor.semantic.preprocess->original_width > 0 &&
+        tensor.semantic.preprocess->original_height > 0)
+      return std::pair{tensor.semantic.preprocess->original_width,
+                       tensor.semantic.preprocess->original_height};
+  return std::nullopt;
 }
 
 bool ModelAccess::stage_cache_has_dynamic_boxdecode_geometry(const Model& model) {

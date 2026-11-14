@@ -11,6 +11,7 @@
 #include <iterator>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -96,6 +97,40 @@ RUN_TEST(
         require(internal::ModelAccess::build_boxdecode_stage_contract(decoded, false)
                     .payload.raw_outputs.empty(),
                 "the default BoxDecode stage must publish no raw outputs");
+      }
+
+      {
+        // Model::run keeps one runner per original image size for a Segment
+        // Anything decoder, whose masks have that size: the size the inputs
+        // publish keys the runner, so 720p then 1080p builds a second one.
+        const auto fixture =
+            admissible_fixture("edgetam_run_original_size", "etc/edgetam_mask_decoder_mpk.json",
+                               sam_test::edgetam_decoder_mpk());
+        Model::Options options;
+        options.decode_type = BoxDecodeType::EdgeTam;
+        Model decoder(fixture.tar_path, options);
+        Model raw(fixture.tar_path);
+        const auto inputs = [](int width, int height) {
+          Tensor tensor = Tensor::from_vector(std::vector<float>(4), {1, 4});
+          if (width > 0) {
+            PreprocessRuntimeMeta facts;
+            facts.resize_mode = "stretch";
+            facts.original_width = width;
+            facts.original_height = height;
+            facts.resized_width = facts.resized_height = 1024;
+            tensor.semantic.preprocess = facts;
+          }
+          return TensorList{Tensor::from_vector(std::vector<float>(4), {1, 4}), tensor};
+        };
+        const auto key = [](const Model& model, const TensorList& list) {
+          return internal::ModelAccess::fixed_boxdecode_original_size(model, list);
+        };
+        require(key(decoder, inputs(1280, 720)) == std::pair{1280, 720} &&
+                    key(decoder, inputs(1920, 1080)) == std::pair{1920, 1080},
+                "a Segment Anything decoder's runner must be keyed by the original image size");
+        require(!key(decoder, inputs(0, 0)) && !key(raw, inputs(1280, 720)) &&
+                    !key(Model(require_yolov9_tar()), inputs(1280, 720)),
+                "only a Segment Anything BoxDecode route fixes its runner to one image size");
       }
 
       {
