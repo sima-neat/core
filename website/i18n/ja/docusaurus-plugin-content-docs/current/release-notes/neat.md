@@ -11,15 +11,21 @@ SiMa.ai Neat Library のリリースノート。
 
 ### 互換性に影響する変更 {#v061-breaking}
 
-- Neat Library の C++ ABI は 9（`libsima_neat.so.9`）になりました。`ResizeOptions`、`ResizeSpec`、`PreprocessOptions`、`PreprocOptions`、`NormalizationOptions`、`Model::Options` にフィールドが追加されました。対応するヘッダーとランタイムパッケージで C++ アプリケーション、プラグイン、Python バインディングを再ビルドしてください。ABI 6 のバイナリを再利用したり、互換性シンボリックリンクを追加したりしないでください。
+- Neat Library の C++ ABI は 10（`libsima_neat.so.10`）になりました。`ResizeOptions`、`ResizeSpec`、`PreprocessOptions`、`PreprocOptions`、`NormalizationOptions`、`Model::Options` にフィールドが追加されました。対応するヘッダーとランタイムパッケージで C++ アプリケーション、プラグイン、Python バインディングを再ビルドしてください。ABI 6 のバイナリを再利用したり、互換性シンボリックリンクを追加したりしないでください。
 
 ### セマンティックセグメンテーション {#v061-segmentation}
 
 - 新しい `ResizeArgMax` ノードと `Model::Options::semantic_segmentation` オプションは、EV74 上でセグメンテーションのスコアをデコードします。デコードはクラスごとのスコアを指定サイズへバイリニアでリサイズし、スコアが最大となる最初のクラスを返します。これは SegFormer の `interpolate` と `argmax` による後処理と一致します。パディングされた MLA 出力をその場で読み取り、INT8 スコアを逆量子化せずに比較します。モデルはスコアの代わりにクラスマップを返します。この演算を含む EV74 ファームウェアが必要です。[セマンティックセグメンテーションのデコード](/reference/semantic_segmentation_decode)を参照してください。
 
+### Segment Anything のマスク {#v061-segment-anything}
+
+- 新しい `BoxDecodeType` の値は、Kernels の `sam_mask` と `sam_concept` プロファイルを使い、CPU 上で Segment Anything のモデルをデコードします: `MobileSam`、`EdgeTam`、`EfficientSam`、`EfficientSam3`（コンセプト画像モデルまたはプロンプトデコーダー）。各実行は、元画像サイズで選択されたマスクを、そのボックスと予測 IoU とともにバージョン付きマスクペイロードで返し、`decode_segmentation` で読み取れます。`Model::Options::multimask_output` は上流の `predict(multimask_output=...)` に対応し、`Model::Options::boxdecode_raw_outputs` は EdgeTAM のトラッキング向けに、BoxDecode テンソルの後にモデルの生出力も返します。これらのプロファイルを含む Kernels のリリースが必要です。[Segment Anything のマスク](/reference/boxdecode_decode_types#segment-anything-masks)を参照してください。
+
 ### 前処理 {#v061-preproc}
 
-- 中央クロップは最終的な MPK 寸法での切り出し前に、任意の `preprocess.resize.shorter_side` を指定できるようになりました。完全なリサイズのフィルター範囲を保持し、逆変換を公開します。ABI 9 と対応するカーネルファームウェアで再ビルドし、古いバイナリを混在させないでください。
+- 中央クロップは最終的な MPK 寸法での切り出し前に、任意の `preprocess.resize.shorter_side` を指定できるようになりました。完全なリサイズのフィルター範囲を保持し、逆変換を公開します。ABI 10 と対応するカーネルファームウェアで再ビルドし、古いバイナリを混在させないでください。
+
+- `preprocess.resize.placement = LetterboxPlacement.TopLeft` は、MobileSAM が想定するとおり、レターボックス処理した画像をキャンバスの原点に置き、パディングをすべて右と下に配置します。検出用の BoxDecode プロファイルは公開されたアフィン変換でボックスを変換し、ポーズ、セグメンテーション、提案のプロファイルは中央以外のレターボックスを拒否します。[Preproc](/reference/nodes/preproc)を参照してください。
 
 - Model の前処理と単独の Resize は `ResizeInterpolation` を共有します。新しいコードではサンプラー文字列の代わりに `preprocess.resize.interpolation = ResizeInterpolation.BilinearAntialiased` を使ってください。従来の `scaling_type` 文字列は互換性を維持し、矛盾する既定値以外の文字列は拒否されます。
 

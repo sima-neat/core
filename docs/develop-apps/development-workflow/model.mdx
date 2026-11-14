@@ -138,6 +138,8 @@ Set detection decode options when the route should return decoded boxes, pose re
 | `nms_iou_threshold` | The decode path should apply non-max suppression. | `0`; keep the model's packaged value. When none is packaged, YOLO26 skips NMS and other decoders suppress every overlapping box. |
 | `top_k` | You want a hard cap on detections per output. | `0`; no top-K cap. |
 | `num_classes` | The class-head depth cannot be inferred reliably, such as a single-class YOLO split head. | `0`; use MPK metadata or legacy inference. |
+| `boxdecode_raw_outputs` | The application needs the model's raw tensors as well as the decoded result, from one inference run (for example EdgeTAM tracking). | `false`; the route returns only the BoxDecode tensor. See [Raw outputs next to the decoded result](/reference/boxdecode_decode_types#raw-outputs). |
+| `multimask_output` | A Segment Anything prompt decoder should return the single-mask answer, as for a box or several points. Only the Segment Anything decode types accept `false`. | `true`; keep the candidate mask with the best predicted IoU, as for one click. See [Segment Anything masks](/reference/boxdecode_decode_types#segment-anything-masks). |
 
 For most YOLO-style models, start with `decode_type`, `score_threshold`, `nms_iou_threshold`, and `top_k`. Add `num_classes` only when the model contract needs help. Keep `decode_type_option` on `Auto` unless the tensor ordering is known to require a specific selector.
 
