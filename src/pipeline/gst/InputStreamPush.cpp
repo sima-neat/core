@@ -1016,6 +1016,17 @@ GstSample* holder_as_gstsample(const std::shared_ptr<void>& holder) {
 
 } // namespace
 
+void enforce_device_visible_tensors_or_throw(std::span<const Tensor> tensors, const char* where) {
+  if (allow_inputstream_cpu_to_device_copy()) {
+    return;
+  }
+  for (const Tensor& tensor : tensors) {
+    if (tensor_requires_cpu_to_device_copy_for_push(tensor)) {
+      throw std::runtime_error(std::string(where) + ": " + device_visible_push_guard_message());
+    }
+  }
+}
+
 bool prepare_holder_buffer_for_zero_copy_transfer(GstBuffer** buffer, const Sample* sample,
                                                   const std::shared_ptr<void>& holder,
                                                   const char* where) {

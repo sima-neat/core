@@ -206,6 +206,10 @@ void validate_public_input(const Tensor&, const InputOptions&, const InputStream
                            const char*);
 void validate_public_input(const Sample&, const InputOptions&, const InputStreamOptions&,
                            const char*);
+// The guard of a device-visible route (InputStreamPush.cpp, enforce_device_visible_push_or_throw)
+// for the tensors of one pushed item, for an ingress that holds no Sample (a device input of the
+// Dataflow backend): the same predicate, escape variable and message, prefixed with `where`.
+void enforce_device_visible_tensors_or_throw(std::span<const Tensor> tensors, const char* where);
 
 Expected<SampleSpec, Status> derive_sample_spec_or_error(const Sample& sample);
 SampleSpec derive_sample_spec_or_throw(const Sample& sample);

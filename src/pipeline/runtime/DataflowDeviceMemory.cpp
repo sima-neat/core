@@ -178,6 +178,14 @@ std::shared_ptr<TensorBuffer> pulled_storage(const df::Message& message, const d
 DataflowPushOutcome push(DataflowInputPort& port, std::span<const Tensor> item,
                          const Stamp& proposal, bool block, const char* where,
                          bool commit_allocation, std::int64_t pushed_seq, bool may_wrap) {
+  // GStreamer's guard of a device-visible route, by its own function: a CPU-backed tensor is
+  // refused unless SIMA_ALLOW_INPUTSTREAM_CPU_TO_EV74_COPY allows the copy into the slot. Not
+  // asked for a Tensor from this Run's alloc() that the push publishes as its slot (the funnel's
+  // own condition), nor for an image cv::Mat (`may_wrap` false), which GStreamer copies unasked.
+  if (may_wrap &&
+      !(commit_allocation && item.size() == 1U && allocation_of(item.front(), port.core()))) {
+    enforce_device_visible_tensors_or_throw(item, where);
+  }
   return port.push(item, proposal, block, where, commit_allocation, pushed_seq, may_wrap,
                    /*device_port=*/true);
 }

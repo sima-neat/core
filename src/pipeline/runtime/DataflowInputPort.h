@@ -85,6 +85,10 @@ public:
   bool device() const noexcept {
     return device_;
   }
+  /// The Run the input belongs to.
+  const RunCore& core() const noexcept {
+    return run_.core;
+  }
 
   // Binds now when `seed` (one tensor: a leaf; several: a record) or the declaration gives the
   // spec; otherwise the first push binds. Throws NeatError when this backend cannot carry it.

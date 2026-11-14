@@ -10,11 +10,13 @@
 // TensorMemory::EV74 tensors and one CPU tensors. Compared besides the above: whether the pulled
 // tensor is DMA-BUF memory, and whether it is the pushed DMA-BUF itself (EV74 tensors: yes on both
 // backends, GStreamer forwarding the buffer and Dataflow wrapping it; CPU tensors: no, both copy
-// into the input's pool). GStreamer refuses a CPU tensor on such an input unless
-// SIMA_ALLOW_INPUTSTREAM_CPU_TO_EV74_COPY is set (InputStreamPush.cpp), so that variant's
-// GStreamer run sets it; Dataflow copies by default (h0b plan 3.2). Tensor::device is compared too
-// (both backends label the pulled tensor CPU; the placement is the storage's). Excluded there,
-// with both values printed:
+// into the input's pool). Both backends refuse a CPU tensor on such an input unless
+// SIMA_ALLOW_INPUTSTREAM_CPU_TO_EV74_COPY is set (InputStreamPush.cpp; Dataflow asks the same
+// guard), so that variant sets it for both runs; a third variant leaves it unset and checks that
+// both refuse the first item with the guard's message (Dataflow's push throws it; GStreamer's
+// push queues the tensor and its input thread stops the Run with it, which the next pull or push
+// reports). Tensor::device is compared too (both backends label the pulled tensor CPU; the
+// placement is the storage's). Excluded there, with both values printed:
 //   - Stamp::frame_id and Stamp::source_time of a pushed EV74 tensor that proposes none: GStreamer
 //     forwards the tensor's GstBuffer, whose metadata from the tensor's creation carries a frame id
 //     and a timestamp; Dataflow carries what the push proposes (none).
@@ -79,6 +81,7 @@ namespace {
 using namespace simaai::neat;
 using namespace std::chrono_literals;
 
+constexpr const char* kCompatCopyEnv = "SIMA_ALLOW_INPUTSTREAM_CPU_TO_EV74_COPY";
 constexpr int kMaxW = 96;
 constexpr int kMaxH = 64;
 
@@ -141,6 +144,8 @@ struct Variant {
   // H0b: the input's memory, and whether the pushed tensors are TensorMemory::EV74 ones.
   InputMemoryPolicy memory = InputMemoryPolicy::SystemMemory;
   bool ev74_source = false;
+  // CPU tensors into a device input without SIMA_ALLOW_INPUTSTREAM_CPU_TO_EV74_COPY: both refuse.
+  bool refused = false;
 };
 
 struct TensorObs {
@@ -434,7 +439,35 @@ void print_row(const char* backend, std::size_t i, const Observed& o, bool new_p
   std::cout << "\n";
 }
 
+// Where a run reported the device-visible guard (its message names the variable): the exception
+// that ended it, a pull's error, or nowhere (empty).
+std::string guard_report(const Outcome& out) {
+  const auto guard = [](const std::string& text) {
+    return text.find("CPU-backed Tensor") != std::string::npos &&
+           text.find(kCompatCopyEnv) != std::string::npos;
+  };
+  if (guard(out.build_error)) {
+    return "thrown: " + out.build_error;
+  }
+  for (const Observed& o : out.items) {
+    if (guard(o.error)) {
+      return "pull: " + o.error;
+    }
+  }
+  return {};
+}
+
 void compare(const Variant& v, const Outcome& gst, const Outcome& df, Comparison& c) {
+  if (v.refused) {
+    const std::string g = guard_report(gst);
+    const std::string d = guard_report(df);
+    std::cout << "  gstreamer " << (g.empty() ? "no guard report: " + gst.build_error : g) << "\n"
+              << "  dataflow  " << (d.empty() ? "no guard report: " + df.build_error : d) << "\n";
+    c.check(0, "GStreamer refuses the CPU tensor with the guard's message", !g.empty());
+    c.check(0, "Dataflow's push of item 0 throws the guard's message",
+            df.items.empty() && d.rfind("thrown: Run::push: CPU-backed Tensor", 0) == 0);
+    return;
+  }
   c.check(0, "GStreamer run completes", gst.build_error.empty(), gst.build_error);
   c.check(0, "Dataflow run completes", df.build_error.empty(), df.build_error);
   if (!gst.build_error.empty() || !df.build_error.empty()) {
@@ -975,21 +1008,25 @@ RUN_TEST("unit_run_backend_differential_test", ([] {
                 false, false, true, true, InputMemoryPolicy::Ev74, true},
                {"linear/balanced/fixed/ev74-input/cpu-tensors/old-pull", kBalanced, false, false,
                 false, false, false, true, InputMemoryPolicy::Ev74, false},
+               {"linear/balanced/fixed/ev74-input/cpu-tensors/refused", kBalanced, false, false,
+                false, false, false, true, InputMemoryPolicy::Ev74, false, true},
            };
            std::vector<std::string> failures;
            std::size_t compared = 0;
            for (const Variant& v : variants) {
              std::cout << "== " << v.name << "\n";
-             // GStreamer takes a CPU tensor on a device input only with its compatibility copy.
-             const bool compat_copy = v.memory != InputMemoryPolicy::SystemMemory && !v.ev74_source;
+             // Both backends take a CPU tensor on a device input only with the compatibility
+             // copy allowed.
+             const bool compat_copy =
+                 v.memory != InputMemoryPolicy::SystemMemory && !v.ev74_source && !v.refused;
              if (compat_copy) {
-               setenv("SIMA_ALLOW_INPUTSTREAM_CPU_TO_EV74_COPY", "1", 1);
+               setenv(kCompatCopyEnv, "1", 1);
              }
              const Outcome gst = run_variant(v, RunBackend::GStreamer);
-             if (compat_copy) {
-               unsetenv("SIMA_ALLOW_INPUTSTREAM_CPU_TO_EV74_COPY");
-             }
              const Outcome df = run_variant(v, RunBackend::Dataflow);
+             if (compat_copy) {
+               unsetenv(kCompatCopyEnv);
+             }
              Comparison c(v.name);
              compare(v, gst, df, c);
              std::cout << "  final: gstreamer=" << status_name(gst.final_status) << " '"

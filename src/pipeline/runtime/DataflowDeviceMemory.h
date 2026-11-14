@@ -37,7 +37,13 @@ namespace dataflow_device {
 namespace df = pipeline_internal::df;
 
 // DataflowInputPort::push for a device input: the same checks, binding and publish, with a wrap
-// that is device memory (wrap_tensor) where a host input's is CPU storage.
+// that is device memory (wrap_tensor) where a host input's is CPU storage. Before them, GStreamer's
+// guard of a device-visible route (enforce_device_visible_tensors_or_throw): a CPU-backed tensor,
+// which would be copied into the slot, throws std::runtime_error with GStreamer's message unless
+// SIMA_ALLOW_INPUTSTREAM_CPU_TO_EV74_COPY is set. A device-backed tensor is never refused, wrapped
+// or copied; nor is a Tensor from this Run's alloc() that the push publishes (`commit_allocation`,
+// alone in the item); nor an image cv::Mat, which GStreamer's ingress copies without asking:
+// `may_wrap` false says the item is one (Run::push(cv::Mat) on a device input).
 DataflowPushOutcome push(DataflowInputPort& port, std::span<const Tensor> item,
                          const Stamp& proposal, bool block, const char* where,
                          bool commit_allocation, std::int64_t pushed_seq, bool may_wrap);

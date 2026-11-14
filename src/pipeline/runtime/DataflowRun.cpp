@@ -297,8 +297,13 @@ public:
     InputOptions view_options = port.config().input;
     view_options.memory_policy = InputMemoryPolicy::SystemMemory;
     const Tensor tensor = tensor_from_cv_mat(inputs.front(), view_options, where);
+    // A device input wraps no CPU view; there `may_wrap` false marks an image, which GStreamer's
+    // ingress copies into device memory without its CPU-tensor guard (a CV_32F matrix is a CPU
+    // tensor to it, and to dataflow_device::push).
+    const bool may_wrap =
+        port.device() ? !tensor.semantic.image.has_value() : inputs.front().u != nullptr;
     return push_item(port, std::span<const Tensor>(&tensor, 1), Stamp{}, block, where, false, -1,
-                     inputs.front().u != nullptr);
+                     may_wrap);
 #else
     (void)input;
     (void)inputs;

@@ -19,9 +19,10 @@
 // deprecated Run forms, the options this backend ignores); RunPreset::Realtime with an explicit
 // Block on a connected graph (kept as given) and on a linear Run (KeepLatest); concurrent stops;
 // state and measurement reads racing a stop; device inputs (H0b: InputOptions::memory_policy Ev74
-// and Dms0): a CPU tensor copied into the input's DMA-BUF pool, the pulled tensor forwarded as it
-// is into a GStreamer Run, Run::alloc on the pool, a pulled device tensor pushed back (copied), an
-// Owned pull.
+// and Dms0): a CPU tensor copied into the input's DMA-BUF pool (with the compatibility copy
+// allowed: without it the push throws, unit_run_backend_differential_test), the pulled tensor
+// forwarded as it is into a GStreamer Run, Run::alloc on the pool, a pulled device tensor pushed
+// back (copied), an Owned pull.
 
 // This file calls the deprecated forms on purpose.
 #pragma GCC diagnostic ignored "-Wdeprecated-declarations"
@@ -39,6 +40,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <functional>
 #include <future>
@@ -970,8 +972,20 @@ void dma_heap_tensor_is_copied() {
   run.close();
 }
 
+// A CPU tensor goes into a device input only with the compatibility copy allowed, as on GStreamer
+// (SIMA_ALLOW_INPUTSTREAM_CPU_TO_EV74_COPY, InputStreamPush.cpp): allowed for the scope.
+struct CompatCopy {
+  CompatCopy() {
+    setenv("SIMA_ALLOW_INPUTSTREAM_CPU_TO_EV74_COPY", "1", 1);
+  }
+  ~CompatCopy() {
+    unsetenv("SIMA_ALLOW_INPUTSTREAM_CPU_TO_EV74_COPY");
+  }
+};
+
 void owned_output_and_lease_lifetime() {
   // From a host input and from a device input (H0b) alike.
+  const CompatCopy copy;
   for (const InputMemoryPolicy memory :
        {InputMemoryPolicy::SystemMemory, InputMemoryPolicy::Ev74}) {
     RunOptions opt = dataflow();
@@ -1012,6 +1026,7 @@ InputOptions device_input(InputMemoryPolicy memory) {
 // DMA-BUF memory whose storage is placed on the input's device, its CPU read map gives the pushed
 // bytes, and the pushed storage is not kept. (Ev74; Dms0 once.)
 void cpu_tensor_into_device_input(InputMemoryPolicy memory, DeviceType device) {
+  const CompatCopy copy;
   Graph g = input_output(device_input(memory));
   Run run = g.build(dataflow());
   const Tensor pushed = rgb(64, 48, 0x21);
@@ -1033,6 +1048,7 @@ void cpu_tensor_into_device_input(InputMemoryPolicy memory, DeviceType device) {
 // hands out the same DMA-BUF; once both tensors are gone the slot is the pool's again, so more
 // frames than the pool holds still pass.
 void device_pull_forwards_into_gstreamer() {
+  const CompatCopy copy;
   Graph g = input_output(device_input(InputMemoryPolicy::Ev74));
   Run source = g.build(dataflow());
   RunOptions gst;
@@ -1097,6 +1113,7 @@ void alloc_on_device_input() {
 // A tensor pulled from a device input leases a slot of that input's pool, so pushing it into a
 // device input copies it (D15): the next pull is another DMA-BUF with the same bytes.
 void pulled_device_tensor_is_copied_back() {
+  const CompatCopy copy;
   Graph g = input_output(device_input(InputMemoryPolicy::Ev74));
   Run run = g.build(dataflow());
   require(run.push(TensorList{rgb(64, 48, 0x51)}), "push");
