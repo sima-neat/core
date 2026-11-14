@@ -54,9 +54,11 @@ model output is a single class-map tensor, `[N,H,W]`, and
 - `align_corners = false`, the default, uses half-pixel centers like PyTorch and
   Hugging Face. Set it to `true` only for a model trained with corner-aligned
   interpolation.
-- The model's postprocess must contain only dequantize or cast stages, and
-  `decode_type` must stay unset. Otherwise the `Model` constructor throws
-  `std::invalid_argument` (`ValueError` in Python).
+- The model needs a postprocess that only dequantizes or casts its scores,
+  `decode_type` must stay unset, and `inference_terminal` must not stop the model
+  before its postprocess. Otherwise the `Model` constructor throws
+  `std::invalid_argument` (`ValueError` in Python) instead of returning scores. For
+  any other model, add `nodes::ResizeArgMax(...)` after it in a `Graph`.
 
 ## Use the node in a graph
 

@@ -54,9 +54,11 @@ model = pyneat.Model("segformer_b0_ade_512_mpk.tar.gz", options)
 - Типове значення `align_corners = false` використовує центри з півпіксельним зсувом, як
   PyTorch і Hugging Face. Встановлюйте `true` лише для моделі, навченої з інтерполяцією,
   вирівняною за кутами.
-- Постобробка моделі має містити лише етапи dequantize або cast, а `decode_type` має
-  залишатися незаданим. Інакше конструктор `Model` викидає `std::invalid_argument`
-  (`ValueError` у Python).
+- Модель повинна мати постобробку, що лише виконує dequantize або cast для оцінок,
+  `decode_type` має залишатися незаданим, а `inference_terminal` не повинен зупиняти
+  модель до її постобробки. Інакше конструктор `Model` викидає `std::invalid_argument`
+  (`ValueError` у Python) замість повернення оцінок. Для будь-якої іншої моделі додайте
+  `nodes::ResizeArgMax(...)` після неї в `Graph`.
 
 ## Використання вузла в графі
 

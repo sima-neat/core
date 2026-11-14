@@ -50,9 +50,11 @@ model = pyneat.Model("segformer_b0_ade_512_mpk.tar.gz", options)
   원본의 모든 픽셀에 클래스를 지정하려면 둘 다 원본 프레임 크기로 설정하세요.
 - 기본값 `align_corners = false`는 PyTorch 및 Hugging Face와 같이 반 픽셀 중심을
   사용합니다. 모서리 정렬 보간으로 학습한 모델에서만 `true`로 설정하세요.
-- 모델의 후처리는 dequantize 또는 cast 단계로만 구성되어야 하며 `decode_type`은
-  설정하지 않아야 합니다. 그렇지 않으면 `Model` 생성자가 `std::invalid_argument`
-  (Python에서는 `ValueError`)를 발생시킵니다.
+- 모델에는 점수를 dequantize 또는 cast만 하는 후처리가 있어야 하고, `decode_type`은
+  설정하지 않아야 하며, `inference_terminal`이 후처리 전에 모델을 멈추면 안 됩니다.
+  그렇지 않으면 `Model` 생성자는 점수를 반환하는 대신 `std::invalid_argument`
+  (Python에서는 `ValueError`)를 발생시킵니다. 그 밖의 모델에는 `Graph`에서 모델 뒤에
+  `nodes::ResizeArgMax(...)`를 추가하세요.
 
 ## 그래프에서 노드 사용
 

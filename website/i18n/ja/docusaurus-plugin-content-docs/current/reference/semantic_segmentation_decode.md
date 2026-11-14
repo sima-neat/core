@@ -54,9 +54,11 @@ model = pyneat.Model("segformer_b0_ade_512_mpk.tar.gz", options)
 - 既定の `align_corners = false` は、PyTorch や Hugging Face と同じくピクセル中心を
   半ピクセルずらした座標を使います。角を揃えた補間で学習したモデルの場合にだけ
   `true` に設定してください。
-- モデルの後処理は dequantize または cast のステージだけで構成され、
-  `decode_type` は未設定でなければなりません。そうでない場合、`Model` のコンストラクターは
-  `std::invalid_argument`（Python では `ValueError`）を送出します。
+- モデルには、スコアを dequantize または cast するだけの後処理が必要です。また、
+  `decode_type` は未設定で、`inference_terminal` が後処理の前でモデルを止めてはいけません。
+  そうでない場合、`Model` のコンストラクターはスコアを返す代わりに `std::invalid_argument`
+  （Python では `ValueError`）を送出します。それ以外のモデルでは、`nodes::ResizeArgMax(...)`
+  をモデルの後ろに追加した `Graph` を使ってください。
 
 ## グラフでノードを使う
 

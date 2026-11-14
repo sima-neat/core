@@ -307,9 +307,11 @@ public:
    * class with the largest score at each pixel. The model then outputs one `[N, H, W]` class
    * map: UINT8 for at most 256 classes, otherwise INT32.
    *
-   * The `Model` constructor throws `std::invalid_argument` when the model's postprocess does
-   * more than dequantize or cast, when `decode_type` is set, or when only one of the output
-   * dimensions is set.
+   * The `Model` constructor throws `std::invalid_argument`, rather than silently returning
+   * scores, when the model has no postprocess or one that does more than dequantize or cast,
+   * when `inference_terminal` stops before the postprocess, when `decode_type` is set, or when
+   * only one of the output dimensions is set. Decode any other model's scores with
+   * `nodes::ResizeArgMax` in a `Graph`.
    */
   struct SemanticSegmentationOptions {
     bool enable = false; ///< Replace the dequantize/cast postprocess with the class-map decode.

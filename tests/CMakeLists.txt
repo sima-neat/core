@@ -563,6 +563,7 @@ set(UNIT_TESTS
   unit_model_ingress_tail_padding_test
   unit_model_output_spec_contract_test
   unit_post_region_materialization_test
+  unit_model_semantic_segmentation_test
   unit_model_metadata_test
   unit_model_route_planner_test
   unit_resnet50_mla_handoff_segment_test

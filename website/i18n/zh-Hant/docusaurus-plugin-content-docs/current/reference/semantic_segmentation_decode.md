@@ -49,8 +49,10 @@ model = pyneat.Model("segformer_b0_ade_512_mpk.tar.gz", options)
   影格尺寸，讓每個來源像素都取得類別。
 - 預設的 `align_corners = false` 與 PyTorch 及 Hugging Face 相同，使用半像素中心。
   只有在模型以角落對齊內插訓練時，才設為 `true`。
-- 模型的後處理只能包含 dequantize 或 cast 階段，且不得設定 `decode_type`。否則 `Model`
-  建構函式會擲回 `std::invalid_argument`（在 Python 中為 `ValueError`）。
+- 模型必須有僅對分數執行 dequantize 或 cast 的後處理，不得設定 `decode_type`，且
+  `inference_terminal` 不得在後處理之前停止模型。否則 `Model` 建構函式會擲回
+  `std::invalid_argument`（在 Python 中為 `ValueError`），而不是傳回分數。其他模型請在
+  `Graph` 中於模型之後加入 `nodes::ResizeArgMax(...)`。
 
 ## 在圖中使用節點
 
