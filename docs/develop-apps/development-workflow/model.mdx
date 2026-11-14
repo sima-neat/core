@@ -206,7 +206,7 @@ The legacy `preprocess.enable = Off` setting does not select MLA-only execution 
 | Choose image or tensor input | `preprocess.kind` |
 | Legacy preprocessing control (required MPK adapters remain) | `preprocess.enable` |
 | Bound dynamic image input | `preprocess.input_max_width`, `preprocess.input_max_height`, `preprocess.input_max_depth` |
-| Resize, crop, or letterbox | `preprocess.resize` |
+| Resize, crop, or letterbox (centered or top-left) | `preprocess.resize`, `preprocess.resize.placement` |
 | Convert RGB, BGR, NV12, I420, or grayscale | `preprocess.color_convert` |
 | Convert HWC, CHW, or another axis order | `preprocess.layout_convert` |
 | Apply mean/std normalization | `preprocess.normalize` or `preprocess.preset` |

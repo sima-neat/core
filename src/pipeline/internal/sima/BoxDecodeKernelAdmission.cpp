@@ -14,11 +14,32 @@
 
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <cmath>
+#include <cstdlib>
 #include <limits>
 #include <stdexcept>
 
 namespace simaai::neat::pipeline_internal::sima {
+bool boxdecode_letterbox_is_off_center(const PreprocessRuntimeMeta* observed,
+                                       const ProcessCvuStagePayload* upstream_preprocess) {
+  if (observed && !observed->resize_mode.empty()) {
+    // The adapter centers with floor((canvas - scaled) / 2); producers may round
+    // the odd pixel either way, so only a larger imbalance is a placement.
+    const auto imbalance = [](int a, int b) { return std::abs(std::int64_t(a) - b) > 1; };
+    return observed->resize_mode == "letterbox" &&
+           (imbalance(observed->pad_left, observed->pad_right) ||
+            imbalance(observed->pad_top, observed->pad_bottom));
+  }
+  if (!upstream_preprocess || upstream_preprocess->aspect_ratio != 1)
+    return false;
+  std::string padding = upstream_preprocess->padding_type;
+  std::transform(padding.begin(), padding.end(), padding.begin(),
+                 [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
+  return padding == "TOPLEFT" || padding == "TOPRIGHT" || padding == "BOTTOMLEFT" ||
+         padding == "BOTTOMRIGHT";
+}
+
 CompiledKernelContract compile_boxdecode_kernel(const CompiledBoxDecodeContract& compiled,
                                                 const ContractCompileInput& input,
                                                 BoxDecodeGeometryOptions geometry,
@@ -175,17 +196,34 @@ CompiledKernelContract compile_boxdecode_kernel(const CompiledBoxDecodeContract&
   }
   if (observed && observed->resize_mode == "crop" && detection_transform)
     geometry.complete_geometry = true;
+  // Profiles map letterboxed boxes with a centered rule. Any other placement
+  // (for example ResizeSpec TopLeft) needs the actual model-to-original affine.
+  // Placement comes from published pads or the nearest Preproc policy only.
+  const bool off_center_letterbox = boxdecode_letterbox_is_off_center(
+      observed ? &*observed : nullptr,
+      input.upstream_preprocess ? &input.upstream_preprocess->payload : nullptr);
+  if (off_center_letterbox && !geometry.complete_geometry &&
+      compiled.payload.decode_type != BoxDecodeType::SuperPoint) {
+    if (!detection_transform)
+      throw std::invalid_argument(
+          std::string("SimaBoxDecode: ") + box_decode_type_token(compiled.payload.decode_type) +
+          " decodes only a centered letterbox; a non-centered placement requires the explicit "
+          "model-to-original transform, which only detection profiles admit");
+    geometry.complete_geometry = true;
+  }
   if (input.upstream_preprocess &&
       (upstream_crop || (detection_transform && upstream_image_transform) ||
-       (!observed && (crop_requested ||
-                      (geometry.uniform_transform_required && !geometry.model_to_original))))) {
+       (!observed &&
+        (crop_requested || ((geometry.uniform_transform_required || off_center_letterbox) &&
+                            !geometry.model_to_original))))) {
     // Check the nearest publisher's model canvas to prepare a cold seed. This
     // policy does not describe the whole preceding frontend chain: in particular
     // ColorConvert/Normalization can publish a composed affine while locally
     // reporting Stretch. Only current per-frame facts authorize execution; the
     // local seed or older graph-ingress provenance must never replace them.
     // The Crop seed retains its existing ingress composition, still guarded by
-    // the same mandatory current-frame resolver below.
+    // the same mandatory current-frame resolver below. A non-centered letterbox
+    // seeds from the same checked Preproc policy that publishes frame affines.
     namespace rt = ::simaai::scheduler::client;
     using Adapter = kernel_lowering::PreprocFrameAdapter;
     auto policy = input.upstream_preprocess->payload;

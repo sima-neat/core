@@ -193,9 +193,21 @@ pyneat.stages.preproc(
 | `opt.preprocess.resize.width` / `height` | 目標模型輸入大小。`0` 表示在可行時，從模型合約中推斷。|
 | `opt.preprocess.resize.mode` | `ResizeMode::Stretch`, `ResizeMode::Letterbox`，或 `ResizeMode::Crop`. |
 | `opt.preprocess.resize.pad_value` | 用於信箱式填充的填充值。`114` 是常用的 YOLO 預設值。|
+| `opt.preprocess.resize.placement` | 信箱式放置位置：`LetterboxPlacement::Center`（預設）或 `LetterboxPlacement::TopLeft`。僅適用於 `ResizeMode::Letterbox`。 |
 | `opt.preprocess.resize.scaling_type` | 插值參數。支援的參數包括 `BILINEAR`、`NEAREST_NEIGHBOUR`、`BICUBIC`、`INTERAREA` 和 `NO_SCALING`。`NEAREST_NEIGHBOR` 和 `INTER_AREA` 也是可接受的別名。|
 
 `ResizeMode::Letterbox` 會保留長寬比，方法是縮放影像或感興趣區域 (ROI)，使其符合目標大小，然後用空白填滿剩餘區域。`ResizeMode::Stretch` 會獨立地縮放寬度和高度。`ResizeMode::Crop` 會先進行各向同性縮放，然後從中心裁剪。
+
+預設情況下，信箱式調整會依 YOLO 模型的預期，將填充平均分配在兩側。以影像位於畫布原點方式訓練的模型（例如 Segment Anything）需要 `LetterboxPlacement::TopLeft`：所有填充都放在右側和下方。例如，1280×720 的影格放到 1024×1024 的輸入時，會在上方形成 1024×576 的影像，下方則有 448 列填充。指定放置位置需要啟用信箱式調整大小；其他調整大小模式或停用調整大小時，會拒絕 `TopLeft`。
+
+```python
+opt.preprocess.resize.enable = pyneat.AutoFlag.On
+opt.preprocess.resize.mode = pyneat.ResizeMode.Letterbox
+opt.preprocess.resize.pad_value = 116
+opt.preprocess.resize.placement = pyneat.LetterboxPlacement.TopLeft
+```
+
+無論採用哪種放置方式，輸出張量的 `semantic.preprocess` 中繼資料都會記錄實際的填充，以及從模型座標到原始影像座標的仿射轉換。偵測用的 BoxDecode 設定檔會在信箱式影像未置中時使用此仿射轉換；請參閱 [BoxDecode Decode Types](/reference/boxdecode_decode_types#letterbox-placement)。
 
 ### 色彩、正規化、量化和鑲嵌
 
@@ -300,7 +312,7 @@ roi_tensors = pyneat.stages.preproc(
 
 | 症狀 | 檢查 |
 | --- | --- |
-| 框會被移動或縮放。| 請驗證 `resize.mode`、letterbox、`pad_value`，以及後續的解碼是否正確讀取 `tensor.semantic.preprocess`。|
+| 框會被移動或縮放。| 請驗證 `resize.mode`、letterbox 的 `placement` 與 `pad_value`，以及後續的解碼是否正確讀取 `tensor.semantic.preprocess`。|
 | ROI 輸出看起來完全相同。| 請確認 `batch_index`、`x`、`y`、`width` 和 `height` 是否如預期般不同，並且確認來源影像是否為不同的影像。|
 | ROI 列表呼叫在執行前發生錯誤。| 請確認影像批次不為空，所有影像的尺寸、類型和通道數都相同，`batch_index` 為有效值，且 ROI 的寬度和高度都為正數。|
 | 偵測到非預期的資料類型/佈局。| 請檢查 `model.resolved_preprocess_plan()` 以及輸出張量的語義；量化/鑲嵌操作應遵循模型路徑。|

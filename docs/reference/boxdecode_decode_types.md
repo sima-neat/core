@@ -84,6 +84,10 @@ opt.top_k = 100;
 
 Axis-aligned detection-display graphs can feed the result to `SimaRender`. Use `decode_bbox(...)` only for the existing box-leading formats; neither it nor `SimaRender` accepts oriented boxes.
 
+## Letterbox placement {#letterbox-placement}
+
+BoxDecode profiles map letterboxed detections with a centered rule. A non-centered letterbox, such as `LetterboxPlacement::TopLeft` in Model preprocessing, is detected from the pads published in `tensor.semantic.preprocess`, or from the upstream `Preproc` policy before the first frame. Detection profiles then map boxes with each frame's actual model-to-original affine: the YOLO detection families, decoded YOLO, EfficientDet, DETR, DetrFocal, CenterNet and SSD. Pose, segmentation and RCNN proposal profiles reject a non-centered letterbox instead of returning shifted results. Opposite pads that differ by one pixel are centering remainder; centered letterboxes keep their existing mapping.
+
 ## Classic DETR {#classic-detr}
 
 Select `Detr` for one four-channel box-logit head and one class-logit head with a final background channel on the same query grid. Leave `decode_type_option` as `Auto`: the recipe selects Softmax without tensor-name hints. The background participates in the denominator but is excluded from the foreground class count and output selection. Box coordinates use sigmoid; this is not a decoder for already-normalized focal-loss boxes.

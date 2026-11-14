@@ -206,7 +206,7 @@ model = pyneat.Model(model_path)
 | 이미지 또는 텐서 입력 선택 | `preprocess.kind` |
 | 기존 전처리 제어(필수 MPK 어댑터는 유지됨) | `preprocess.enable` |
 | 동적 이미지 입력 제한 | `preprocess.input_max_width`, `preprocess.input_max_height`, `preprocess.input_max_depth` |
-| 크기 조정, 자르기 또는 레터박스 적용 | `preprocess.resize` |
+| 크기 조정, 자르기 또는 레터박스 적용(가운데 또는 왼쪽 위 배치) | `preprocess.resize`, `preprocess.resize.placement` |
 | RGB, BGR, NV12, I420 또는 흑백으로 변환 | `preprocess.color_convert` |
 | HWC, CHW 또는 다른 축 순서로 변환 | `preprocess.layout_convert` |
 | 평균/표준 편차 정규화 적용 | `preprocess.normalize` 또는 `preprocess.preset` |

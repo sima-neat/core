@@ -206,7 +206,7 @@ model = pyneat.Model(model_path)
 | 画像またはテンソルを入力として選択してください。 | `preprocess.kind` |
 | 従来の前処理制御（MPKに必要なアダプターは維持） | `preprocess.enable` |
 | 動的な画像の入力を制限する | `preprocess.input_max_width`, `preprocess.input_max_height`, `preprocess.input_max_depth` |
-| サイズ変更、トリミング、またはレターボックス表示 | `preprocess.resize` |
+| サイズ変更、トリミング、またはレターボックス表示（中央または左上配置） | `preprocess.resize`、`preprocess.resize.placement` |
 | RGB、BGR、NV12、I420、またはグレースケールに変換します。 | `preprocess.color_convert` |
 | HWC、CHW、またはその他の軸の順序を変換します。 | `preprocess.layout_convert` |
 | 平均値/標準偏差による正規化を適用します。 | `preprocess.normalize`または`preprocess.preset` |

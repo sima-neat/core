@@ -11,6 +11,10 @@
 #include "pipeline/internal/sima/ContractRender.h"
 #include "pipeline/internal/sima/StageRecipePreparation.h"
 #include "pipeline/internal/sima/StageMemoryPolicy.h"
+#ifdef SIMA_NEAT_INTERNAL
+#include "pipeline/internal/sima/PreprocFrameAdapter.h"
+#include <gstsimaaitensorbuffer_meta.h>
+#endif
 #include "gst/GstInit.h"
 #include "gst/SimaPluginStaticManifestAbi.h"
 #include "test_main.h"
@@ -918,5 +922,53 @@ RUN_TEST(
         require((*cfg).value("q_scale", 0.0) == 0.5,
                 "standalone Preproc should serialize explicit q_scale");
         require((*cfg).value("q_zp", 0) == -9, "standalone Preproc should serialize explicit q_zp");
+      }
+
+      // ResizeSpec placement reaches the frame adapter through the model route:
+      // a 1280x720 source on the 640x640 canvas lands at the origin only for TopLeft.
+      {
+        const auto fixture = make_preproc_fixture("preproc_letterbox_placement");
+        for (const auto placement : {LetterboxPlacement::Center, LetterboxPlacement::TopLeft}) {
+          Model::Options model_opt;
+          model_opt.preprocess.kind = InputKind::Image;
+          model_opt.preprocess.enable = AutoFlag::On;
+          model_opt.preprocess.input_max_width = 1280;
+          model_opt.preprocess.input_max_height = 720;
+          model_opt.preprocess.color_convert.input_format = PreprocessColorFormat::RGB;
+          model_opt.preprocess.resize.enable = AutoFlag::On;
+          model_opt.preprocess.resize.mode = ResizeMode::Letterbox;
+          model_opt.preprocess.resize.pad_value = 116;
+          model_opt.preprocess.resize.placement = placement;
+          Model model(fixture.tar_path, model_opt);
+          PreprocOptions opt(model);
+          const bool top_left = placement == LetterboxPlacement::TopLeft;
+          require(opt.aspect_ratio && opt.padding_type == (top_left ? "TOPLEFT" : "CENTER") &&
+                      opt.pad_value == 116,
+                  "model letterbox placement did not reach PreprocOptions");
+#ifdef SIMA_NEAT_INTERNAL
+          require(opt.compiled_contract != nullptr &&
+                      opt.compiled_contract->payload.padding_type == opt.padding_type,
+                  "admitted Preproc contract lost the letterbox placement");
+          using Adapter = pipeline_internal::sima::kernel_lowering::PreprocFrameAdapter;
+          auto policy = opt.compiled_contract->payload;
+          if (policy.resolved_exec_backend.empty())
+            policy.resolved_exec_backend = "EVXX";
+          auto checked = Adapter::check_policy(policy);
+          require(std::holds_alternative<std::shared_ptr<const Adapter::CheckedPolicy>>(checked),
+                  "frame adapter rejected the model letterbox placement");
+          auto frozen = Adapter::checked_initial_preprocess_facts(
+              std::get<std::shared_ptr<const Adapter::CheckedPolicy>>(std::move(checked)));
+          require(std::holds_alternative<::simaai::gst::TensorBufferPreprocessFactsOwner>(frozen),
+                  "frame adapter could not publish initial letterbox facts");
+          const auto* facts = ::simaai::gst::tensor_buffer_preprocess_facts(
+              std::get<::simaai::gst::TensorBufferPreprocessFactsOwner>(frozen));
+          require(facts && facts->original_width == 1280 && facts->original_height == 720 &&
+                      facts->placed[2] == 640 && facts->placed[3] == 360 && facts->placed[0] == 0 &&
+                      facts->placed[1] == (top_left ? 0 : 140) && facts->affine[0] == 2.0 &&
+                      facts->affine[4] == 2.0 && facts->affine[2] == 0.0 &&
+                      facts->affine[5] == (top_left ? 0.0 : -280.0),
+                  "letterbox placement published the wrong rectangle or affine");
+#endif
+        }
       }
     }));

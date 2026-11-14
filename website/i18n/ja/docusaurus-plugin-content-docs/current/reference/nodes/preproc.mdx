@@ -193,9 +193,21 @@ pyneat.stages.preproc(
 | `opt.preprocess.resize.width` / `height` | は、ターゲットモデルへの入力サイズです。`0` は、可能な場合はモデルの定義から推測することを意味します。|
 | `opt.preprocess.resize.mode` | `ResizeMode::Stretch`, `ResizeMode::Letterbox`または `ResizeMode::Crop`. |
 | `opt.preprocess.resize.pad_value` | レターボックスパディングに使用する塗りつぶし値。`114` は一般的な YOLO のデフォルト値です。|
+| `opt.preprocess.resize.placement` | レターボックスの配置：`LetterboxPlacement::Center`（デフォルト）または `LetterboxPlacement::TopLeft`。`ResizeMode::Letterbox` の場合にのみ有効です。 |
 | `opt.preprocess.resize.scaling_type` |：補間方式のトークン。サポートされているトークンには、`BILINEAR`、`NEAREST_NEIGHBOUR`、`BICUBIC`、`INTERAREA`、および`NO_SCALING`が含まれます。`NEAREST_NEIGHBOR`と`INTER_AREA`は、許容される別名です。|
 
 `ResizeMode::Letterbox` は、アスペクト比を維持するために、画像または関心領域をターゲットに合わせて拡大縮小し、残りの領域をパディングします。`ResizeMode::Stretch` は、幅と高さを個別に拡大縮小します。`ResizeMode::Crop` は、等方性スケーリング後に中央部分を切り抜きます。
+
+既定では、レターボックスは YOLO モデルが想定するとおり、パディングを両側に均等に配分します。Segment Anything のように画像をキャンバスの原点に置いて学習したモデルには `LetterboxPlacement::TopLeft` が必要です。この場合、パディングはすべて右側と下側に入ります。たとえば、1280×720 のフレームを 1024×1024 の入力に配置すると、上部に 1024×576 の画像が置かれ、その下に 448 行のパディングが入ります。配置を指定するには、レターボックスのサイズ変更が有効になっている必要があります。他のサイズ変更モードや、サイズ変更が無効な場合は `TopLeft` が拒否されます。
+
+```python
+opt.preprocess.resize.enable = pyneat.AutoFlag.On
+opt.preprocess.resize.mode = pyneat.ResizeMode.Letterbox
+opt.preprocess.resize.pad_value = 116
+opt.preprocess.resize.placement = pyneat.LetterboxPlacement.TopLeft
+```
+
+出力テンソルの `semantic.preprocess` メタデータには、どちらの配置でも実際のパディングとモデル座標から元画像座標へのアフィン変換が記録されます。検出用の BoxDecode プロファイルは、中央以外に配置されたレターボックスでこのアフィン変換を使用します。[BoxDecode Decode Types](/reference/boxdecode_decode_types#letterbox-placement) を参照してください。
 
 ### 色、正規化、量子化、およびテッセレーション
 
@@ -300,7 +312,7 @@ roi_tensors = pyneat.stages.preproc(
 
 | 症状 | 確認 |
 | --- | --- |
-| バウンディングボックスがシフトまたはスケーリングされます。| 次のパラメータを確認してください：`resize.mode`、`pad_value`、およびダウンストリームのデコード処理が`tensor.semantic.preprocess`を正しく読み取ることを確認してください。|
+| バウンディングボックスがシフトまたはスケーリングされます。| 次のパラメータを確認してください：`resize.mode`、レターボックスの `placement` と `pad_value`、およびダウンストリームのデコード処理が`tensor.semantic.preprocess`を正しく読み取ることを確認してください。|
 | ROIの出力結果がすべて同じになっているようです。| `batch_index`、`x`、`y`、`width`、および`height`の値が想定どおりに異なっているか、また、元の画像がそれぞれ異なっているかを確認してください。|
 | ROIリストの呼び出し時にエラーが発生する前に、| 次の点を確認してください。画像バッチが空でないこと、すべての画像のサイズ、タイプ、チャンネルが一致していること、`batch_index` が有効であること、およびROIの幅と高さが正の値であること。|
 | 予期しないデータ型/レイアウト | `model.resolved_preprocess_plan()` と出力テンソルの意味を調べてください。量子化/テッセレーションはモデルの処理に従います。|

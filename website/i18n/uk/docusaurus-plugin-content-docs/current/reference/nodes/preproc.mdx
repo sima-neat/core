@@ -193,9 +193,21 @@ pyneat.stages.preproc(
 | `opt.preprocess.resize.width` / `height` | – цільовий розмір вхідних даних для моделі. `0` означає, що, якщо можливо, розмір визначається на основі специфікацій моделі. |
 | `opt.preprocess.resize.mode` | `ResizeMode::Stretch`, `ResizeMode::Letterbox`, або `ResizeMode::Crop`. |
 | `opt.preprocess.resize.pad_value` | Значення для заповнення при додаванні полів навколо зображення. `114` є стандартним значенням за замовчуванням для YOLO. |
+| `opt.preprocess.resize.placement` | Розміщення зображення з полями: `LetterboxPlacement::Center` (за замовчуванням) або `LetterboxPlacement::TopLeft`. Дійсне лише з `ResizeMode::Letterbox`. |
 | `opt.preprocess.resize.scaling_type` | Токен інтерполяції. Підтримувані токени включають `BILINEAR`, `NEAREST_NEIGHBOUR`, `BICUBIC`, `INTERAREA` та `NO_SCALING`. `NEAREST_NEIGHBOR` і `INTER_AREA` є допустимими альтернативними назвами. |
 
 `ResizeMode::Letterbox` зберігає пропорції, масштабуючи зображення або область інтересу, щоб воно відповідало заданим розмірам, і заповнює решту області. `ResizeMode::Stretch` масштабує ширину та висоту незалежно одна від одної. `ResizeMode::Crop` виконує центральне кадрування після ізотропного масштабування.
+
+За замовчуванням поля розподіляються порівну з обох боків, як очікують моделі YOLO. Моделям, навченим із зображенням у початку координат полотна, як-от Segment Anything, потрібне `LetterboxPlacement::TopLeft`: усі поля додаються праворуч і знизу. Наприклад, кадр 1280×720 на вході 1024×1024 стає зображенням 1024×576 угорі з 448 рядками полів під ним. Розміщення потребує ввімкненого масштабування з полями; інші режими масштабування або вимкнене масштабування відхиляють `TopLeft`.
+
+```python
+opt.preprocess.resize.enable = pyneat.AutoFlag.On
+opt.preprocess.resize.mode = pyneat.ResizeMode.Letterbox
+opt.preprocess.resize.pad_value = 116
+opt.preprocess.resize.placement = pyneat.LetterboxPlacement.TopLeft
+```
+
+Метадані `semantic.preprocess` вихідного тензора фіксують фактичні поля та афінне перетворення з координат моделі в координати оригіналу для будь-якого розміщення. Профілі BoxDecode для виявлення використовують це перетворення, якщо зображення розміщене не по центру; див. [BoxDecode Decode Types](/reference/boxdecode_decode_types#letterbox-placement).
 
 ### Колір, нормалізація, квантування та теселяція.
 
@@ -300,7 +312,7 @@ roi_tensors = pyneat.stages.preproc(
 
 | Симптом | Перевірка |
 | --- | --- |
-| Області зсуваються або масштабуються. | Перевірте `resize.mode`, letterbox, `pad_value` і те, чи правильно наступний етап декодування обробляє тензор `tensor.semantic.preprocess`. |
+| Області зсуваються або масштабуються. | Перевірте `resize.mode`, `placement` і `pad_value` для letterbox, а також те, чи правильно наступний етап декодування обробляє тензор `tensor.semantic.preprocess`. |
 | Результати обробки областей інтересу (ROI) виглядають ідентично. | Перевірте, чи значення `batch_index`, `x`, `y`, `width` і `height` відрізняються, як очікувалося, і чи вихідні зображення є різними. |
 | Виклик ROI-list викликає помилку до початку виконання. | Переконайтеся, що пакет зображень не порожній, усі зображення мають однаковий розмір/тип/кількість каналів, `batch_index` є дійсним, а ширина/висота ROI є додатними значеннями. |
 | Неочікуваний тип даних/розташування. | Перевірте `model.resolved_preprocess_plan()` та семантику тензора на виході; квантування/теселяція повинні відповідати структурі моделі. |

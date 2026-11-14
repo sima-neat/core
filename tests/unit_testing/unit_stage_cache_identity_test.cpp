@@ -635,6 +635,10 @@ RUN_TEST(
       different_option([](auto& o) { o.superpoint.profile = SuperPointProfile::LightGlueV1; });
       different_option([](auto& o) { o.superpoint.nms_radius = 0; });
       different_option([](auto& o) { o.superpoint.border_margin = 0; });
+      different_option(
+          [](auto& o) { o.preprocess.resize.placement = LetterboxPlacement::TopLeft; });
+      require(default_key.find("\"placement\"") == std::string::npos,
+              "the default centered letterbox must keep its established identity");
       different_option([](auto& o) { o.superpoint.descriptor_output_dtype = TensorDType::Int8; });
       different_option([](auto& o) {
         o.superpoint.output_format = SuperPointOutputFormat::LegacyA65InterleavedV0;

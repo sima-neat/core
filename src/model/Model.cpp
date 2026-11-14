@@ -5245,7 +5245,9 @@ void populate_model_managed_preproc_options(PreprocOptions* opt,
     switch (effective.resize.mode) {
     case ResizeMode::Letterbox:
       opt->aspect_ratio = true;
-      opt->padding_type = "CENTER";
+      // The frame adapter publishes the placed rectangle and its affine.
+      opt->padding_type =
+          effective.resize.placement == LetterboxPlacement::TopLeft ? "TOPLEFT" : "CENTER";
       break;
     case ResizeMode::Stretch:
       opt->aspect_ratio = false;
@@ -6566,6 +6568,9 @@ nlohmann::ordered_json resize_spec_json(const ResizeSpec& spec) {
                              {"mode", model_options_enum_int(spec.mode)},
                              {"pad_value", spec.pad_value},
                              {"scaling_type", internal::resolve_resize_scaling_type(spec)}};
+  // Default placement keeps the established identity of centered letterboxes.
+  if (spec.placement != LetterboxPlacement::Center)
+    out["placement"] = model_options_enum_int(spec.placement);
   // A typed selection is explicit resize intent even when its token equals
   // the legacy default. Preserve that distinction in stage cache identity.
   if (spec.interpolation)

@@ -206,7 +206,7 @@ model = pyneat.Model(model_path)
 | Оберіть зображення або тензор як вхідні дані. | `preprocess.kind` |
 | Наявний перемикач попередньої обробки (потрібні MPK адаптери залишаються) | `preprocess.enable` |
 | Зв’язаний динамічний вхід для зображень. | `preprocess.input_max_width`, `preprocess.input_max_height`, `preprocess.input_max_depth` |
-| Змініть розмір, обріжте або додайте чорні смуги зверху та знизу. | `preprocess.resize` |
+| Змініть розмір, обріжте або додайте поля (letterbox) з розміщенням по центру чи у верхньому лівому куті. | `preprocess.resize`, `preprocess.resize.placement` |
 | Перетворіть зображення у форматі RGB, BGR, NV12, I420 або відтінків сірого. | `preprocess.color_convert` |
 | Перетворіть порядок осей HWC, CHW або інший. | `preprocess.layout_convert` |
 | Застосуйте нормалізацію за допомогою середнього значення/стандартного відхилення. | `preprocess.normalize` або `preprocess.preset` |

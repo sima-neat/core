@@ -1,4 +1,5 @@
 #include "pipeline/internal/sima/BoxDecodeGeometry.h"
+#include "pipeline/internal/sima/BoxDecodeKernelAdmission.h"
 #include "pipeline/internal/sima/KernelStageRecipe.h"
 #include <simaai/scheduler/testing/probe.h>
 
@@ -255,10 +256,70 @@ void geometry(bool crop = false) {
   require(std::holds_alternative<rt::Error>(explicit_resolve(executor.preparer(), buffers)),
           "affine source extent conflict accepted");
 }
+// Placement is derived from published pads (or the Preproc policy before the
+// first frame), never from tensor shapes. One odd pixel is centering remainder.
+void letterbox_placement() {
+  simaai::neat::PreprocessRuntimeMeta facts;
+  facts.resize_mode = "letterbox";
+  facts.original_width = 1280;
+  facts.original_height = 720;
+  facts.scaled_width = 1024;
+  facts.scaled_height = 576;
+  facts.pad_top = facts.pad_bottom = 224;
+  require(!core::boxdecode_letterbox_is_off_center(&facts, nullptr),
+          "centered letterbox reported as off-center");
+  facts.pad_top = 0;
+  facts.pad_bottom = 448;
+  require(core::boxdecode_letterbox_is_off_center(&facts, nullptr),
+          "SAM top-left letterbox (pad_bottom 448) was not detected");
+  facts.pad_top = 1;
+  facts.pad_bottom = 0;
+  require(!core::boxdecode_letterbox_is_off_center(&facts, nullptr),
+          "one-pixel centering remainder must stay centered");
+  facts.pad_top = facts.pad_bottom = 0;
+  facts.pad_left = 0;
+  facts.pad_right = 2;
+  require(core::boxdecode_letterbox_is_off_center(&facts, nullptr),
+          "horizontal off-center placement was not detected");
+  facts.resize_mode = "stretch";
+  require(!core::boxdecode_letterbox_is_off_center(&facts, nullptr), "stretch has no placement");
+  core::ProcessCvuStagePayload policy;
+  policy.aspect_ratio = 1;
+  for (const char* padding : {"TOPLEFT", "topleft", "TopRight", "BOTTOMLEFT", "bottomright"}) {
+    policy.padding_type = padding;
+    require(core::boxdecode_letterbox_is_off_center(nullptr, &policy),
+            "Preproc corner placement was not detected");
+  }
+  for (const char* padding : {"CENTER", "NONE", ""}) {
+    policy.padding_type = padding;
+    require(!core::boxdecode_letterbox_is_off_center(nullptr, &policy),
+            "centered or crop Preproc policy reported as off-center");
+  }
+  policy.padding_type = "TOPLEFT";
+  policy.aspect_ratio = 0;
+  require(!core::boxdecode_letterbox_is_off_center(nullptr, &policy),
+          "a stretch Preproc policy has no placement");
+  policy.aspect_ratio = 1;
+  facts.resize_mode = "letterbox";
+  facts.pad_left = facts.pad_right = 0;
+  require(!core::boxdecode_letterbox_is_off_center(&facts, &policy),
+          "published facts must take precedence over the Preproc policy");
+  using simaai::neat::BoxDecodeType;
+  for (const auto type : {BoxDecodeType::YoloV8, BoxDecodeType::YoloV26, BoxDecodeType::Detr,
+                          BoxDecodeType::DetrFocal, BoxDecodeType::Ssd})
+    require(core::boxdecode_supports_detection_transform(type),
+            "detection profile lost its explicit transform");
+  for (const auto type : {BoxDecodeType::YoloV8Seg, BoxDecodeType::YoloV8Pose,
+                          BoxDecodeType::RcnnStage1, BoxDecodeType::SuperPoint})
+    require(!core::boxdecode_supports_detection_transform(type),
+            "auxiliary or proposal payload implicitly admitted an explicit transform");
+}
 } // namespace
 int main(int argc, char** argv) {
   gst_init(&argc, &argv);
   try {
+    letterbox_placement();
+    std::cout << "BoxDecode letterbox placement passed\n";
     geometry();
     geometry(true);
     std::cout << "BoxDecode complete geometry and retained variant cache passed\n";

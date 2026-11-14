@@ -206,7 +206,7 @@ model = pyneat.Model(model_path)
 | 選擇圖像或張量輸入 | `preprocess.kind` |
 | 既有前處理控制（保留 MPK 所需的轉接器） | `preprocess.enable` |
 | 限制動態圖像輸入 | `preprocess.input_max_width`、`preprocess.input_max_height`、`preprocess.input_max_depth` |
-| 調整大小、裁剪或使用信箱格式 | `preprocess.resize` |
+| 調整大小、裁剪或使用信箱格式（置中或左上角放置） | `preprocess.resize`、`preprocess.resize.placement` |
 | 轉換 RGB、BGR、NV12、I420 或灰度 | `preprocess.color_convert` |
 | 轉換 HWC、CHW 或其他軸順序 | `preprocess.layout_convert` |
 | 應用平均值/標準差正規化 | `preprocess.normalize` 或 `preprocess.preset` |

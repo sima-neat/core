@@ -84,6 +84,10 @@ opt.top_k = 100;
 
 축 정렬 감지 표시 그래프는 결과를 `SimaRender`에 전달할 수 있습니다. `decode_bbox(...)`는 기존 박스 선두 형식에만 사용하십시오. 이 함수와 `SimaRender`는 회전 박스를 지원하지 않습니다.
 
+## 레터박스 배치 {#letterbox-placement}
+
+BoxDecode 프로필은 레터박스가 적용된 검출 결과를 가운데 배치 규칙으로 좌표 변환합니다. Model 전처리의 `LetterboxPlacement::TopLeft`처럼 가운데가 아닌 레터박스는 `tensor.semantic.preprocess`에 게시된 패딩에서, 또는 첫 프레임 이전에는 상위 `Preproc` 정책에서 감지됩니다. 이 경우 검출 프로필(YOLO 검출 계열, 디코딩된 YOLO, EfficientDet, DETR, DetrFocal, CenterNet, SSD)은 각 프레임의 실제 모델-원본 아핀 변환으로 박스를 변환합니다. 포즈, 세그멘테이션, RCNN 제안 프로필은 어긋난 결과를 반환하는 대신 가운데가 아닌 레터박스를 거부합니다. 마주 보는 패딩의 차이가 1픽셀이면 가운데 정렬의 나머지로 취급하며, 가운데 배치 레터박스는 기존 변환을 그대로 유지합니다.
+
 ## 기존 DETR {#classic-detr}
 
 동일한 쿼리 격자의 4채널 박스 로짓 헤드와 마지막에 배경 채널이 있는 클래스 로짓 헤드에는 `Detr`를 선택합니다. `decode_type_option`은 `Auto`로 유지하세요. 레시피가 텐서 이름과 무관하게 Softmax를 선택합니다. 배경은 분모에는 포함되지만 전경 클래스 수와 출력 선택에서는 제외됩니다. 박스 좌표에는 sigmoid가 적용됩니다. 이미 정규화된 focal-loss 박스를 위한 디코더는 아닙니다.

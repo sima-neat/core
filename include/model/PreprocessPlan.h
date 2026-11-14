@@ -88,6 +88,13 @@ enum class TransformType {
   Tessellate = 5,    ///< MLA-tile reshuffle.
 };
 
+/// Where a letterbox places the resized image on the model canvas.
+/// @ingroup model
+enum class LetterboxPlacement {
+  Center = 0,  ///< Split the padding evenly between both sides of each axis (YOLO convention).
+  TopLeft = 1, ///< Image at the canvas origin; all padding on the right and bottom (SAM).
+};
+
 /// Resize / letterbox / crop parameters.
 /// @ingroup model
 struct ResizeSpec {
@@ -96,6 +103,8 @@ struct ResizeSpec {
   int height = 0;                          ///< Target height (px). `0` = inferred from contract.
   ResizeMode mode = ResizeMode::Letterbox; ///< How to handle aspect-ratio mismatch.
   int pad_value = 114; ///< Pad fill value when `mode == Letterbox` (default 114, YOLO convention).
+  /// Image placement on the canvas. Valid only with `mode == Letterbox`.
+  LetterboxPlacement placement = LetterboxPlacement::Center;
   /// Legacy compatibility spelling. Prefer interpolation for new code.
   std::string scaling_type = "BILINEAR";
   /// Typed sampler; omitted retains scaling_type and its legacy Bilinear default.

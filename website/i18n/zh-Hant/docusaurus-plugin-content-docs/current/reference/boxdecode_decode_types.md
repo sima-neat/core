@@ -82,6 +82,10 @@ opt.top_k = 100;
 
 軸對齊偵測結果的顯示圖可將結果傳給 `SimaRender`。`decode_bbox(...)` 僅適用於既有的方框前置格式；此函式與 `SimaRender` 都不接受旋轉框。
 
+## 信箱式放置位置 {#letterbox-placement}
+
+BoxDecode 設定檔以置中規則轉換信箱式調整後的偵測座標。未置中的信箱式調整（例如 Model 前處理中的 `LetterboxPlacement::TopLeft`）會從 `tensor.semantic.preprocess` 中公布的填充偵測出來；在第一個影格之前，則從上游 `Preproc` 原則判斷。此時，偵測設定檔（YOLO 偵測系列、已解碼的 YOLO、EfficientDet、DETR、DetrFocal、CenterNet 與 SSD）會使用每個影格實際的模型座標到原始影像座標仿射轉換來對應邊界框。姿勢、分割與 RCNN 提議設定檔會拒絕未置中的信箱式調整，而不是傳回偏移的結果。相對兩側填充相差一個像素時視為置中的餘數；置中的信箱式調整會維持既有的對應方式。
+
 ## 傳統 DETR {#classic-detr}
 
 對於同一查詢網格上的四通道方框 logits，以及最後一個通道為背景的類別 logits，請選擇 `Detr`。將 `decode_type_option` 保持為 `Auto`：配方會選擇 Softmax，不依賴張量名稱。背景會參與分母計算，但不計入前景類別數，也不會被選為輸出。方框座標會套用 sigmoid；此解碼器不適用於已正規化的 focal-loss 方框。

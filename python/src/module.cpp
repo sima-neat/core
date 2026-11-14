@@ -4485,6 +4485,10 @@ NB_MODULE(_pyneat_core, m) {
       .value("Letterbox", simaai::neat::ResizeMode::Letterbox)
       .value("Crop", simaai::neat::ResizeMode::Crop);
 
+  nb::enum_<simaai::neat::LetterboxPlacement>(m, "LetterboxPlacement")
+      .value("Center", simaai::neat::LetterboxPlacement::Center)
+      .value("TopLeft", simaai::neat::LetterboxPlacement::TopLeft);
+
   nb::enum_<simaai::neat::PreprocessColorFormat>(m, "PreprocessColorFormat")
       .value("Auto", simaai::neat::PreprocessColorFormat::Auto)
       .value("RGB", simaai::neat::PreprocessColorFormat::RGB)
@@ -4614,6 +4618,7 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("height", &simaai::neat::ResizeSpec::height)
       .def_rw("mode", &simaai::neat::ResizeSpec::mode)
       .def_rw("pad_value", &simaai::neat::ResizeSpec::pad_value)
+      .def_rw("placement", &simaai::neat::ResizeSpec::placement)
       .def_rw("scaling_type", &simaai::neat::ResizeSpec::scaling_type)
       .def_rw("interpolation", &simaai::neat::ResizeSpec::interpolation,
               nb::for_setter(nb::arg("interpolation").none()))

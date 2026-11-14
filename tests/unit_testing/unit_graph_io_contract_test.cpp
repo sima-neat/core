@@ -359,6 +359,37 @@ RUN_TEST(
         }
         require(rejected, "invalid serialized typed sampler silently changed its meaning");
       }
+      // Letterbox placement survives save/load; the default Center stays implicit.
+      for (int placement : {0, 1}) {
+        auto placed = typed_options;
+        auto& resize = placed["model_fragments"][0]["model_options"]["preprocess"]["resize"];
+        resize = {{"enable", 1}, {"mode", 1}, {"placement", placement}};
+        const auto path = tmp_json_path("graph_io_letterbox_placement.json");
+        write_text(path, placed.dump());
+        const auto roundtrip_path = tmp_json_path("graph_io_letterbox_placement_roundtrip.json");
+        Graph::load(path).save(roundtrip_path);
+        const auto restored = nlohmann::json::parse(read_text(roundtrip_path));
+        const auto& restored_resize =
+            restored["model_fragments"][0]["model_options"]["preprocess"]["resize"];
+        require(placement == 0 ? !restored_resize.contains("placement")
+                               : restored_resize["placement"] == placement,
+                "letterbox placement changed during graph save/load");
+      }
+      for (const auto& bad_placement :
+           {nlohmann::json(1.5), nlohmann::json(2), nlohmann::json("TopLeft")}) {
+        auto malformed = typed_options;
+        malformed["model_fragments"][0]["model_options"]["preprocess"]["resize"]["placement"] =
+            bad_placement;
+        const auto path = tmp_json_path("graph_io_bad_letterbox_placement.json");
+        write_text(path, malformed.dump());
+        bool rejected = false;
+        try {
+          (void)Graph::load(path);
+        } catch (const std::exception& error) {
+          rejected = std::string(error.what()).find("placement") != std::string::npos;
+        }
+        require(rejected, "invalid serialized letterbox placement silently changed its meaning");
+      }
 
       for (const auto shorter : {nlohmann::json(nullptr), nlohmann::json(256)}) {
         auto crop = typed_options;
