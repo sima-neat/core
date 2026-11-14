@@ -640,9 +640,9 @@ without enabling verbose GStreamer diagnostics.
 `FrameSpan` offsets are local to their allocation and buffer group, not global graph addresses. Identical offsets in different groups do not overlap. BoxDecode and ArgMax keep head-relative tensor offsets separate from storage offsets. Direct-memory and runtime physical-binding inputs retain their addressing mode.
 
 Core lowers Preproc, transforms and vision stages, including ArgMax, BoxDecode,
-SuperPoint and the LiDAR/BEV kernel nodes (SimaVoxelize, SimaPillarScatter,
-SimaBEVPoolPlan and SimaBEVPool), to canonical requests and explicit tensor-port
-mappings.
+SuperPoint, the LiDAR/BEV kernel nodes (SimaVoxelize, SimaPillarScatter,
+SimaBEVPoolPlan and SimaBEVPool) and SimaResizeArgmax, to canonical requests and
+explicit tensor-port mappings.
 Scheduler's generic tensor-stage engine owns GStreamer binding and publication;
 Runner owns dependencies, asynchronous execution and execution-time buffer lifetime. Core imports carrier
 capacities from the upstream allocation contract or ingress storage, never from
@@ -780,7 +780,10 @@ the normal stage recipe and `FrameLayout` execution path. `StaticSpecBuilders.cp
 shares metadata-only ingress projection and direct-input binding with `SimaArgMax`;
 these helpers neither prepare nor schedule kernels. The LiDAR/BEV node files do not
 include pipeline-private implementation headers. This split adds no per-frame work
-or payload copies.
+or payload copies. `SimaResizeArgmax` follows the same split. `Model::Options::semantic_segmentation`
+replaces a model's dequantize or cast postprocess with that node, which reads the
+MLA scores through the producer's strided view; the `Model` constructor rejects any
+other postprocess.
 
 Standalone `Cast` compiles typed views into a canonical `cast` request checked by Kernels. Logical identities, strides and tensor-relative offsets remain explicit. Semantic compilation reconciles ordered MLA input ports before packing; rendering preserves the checked contracts. Execution capacity defaults to four asynchronously and one synchronously, with separate output carriers for retention. Subset or reordered TensorSets use parent-retaining metadata envelopes without changing the held publication or payload.
 

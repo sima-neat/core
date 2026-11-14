@@ -10,7 +10,7 @@
  * (Cast, CastTess, Dequant, Detess, DetessCast, DetessDequant, H264DecodeSima,
  * FeatureHistogram, GriderFast, H264EncodeSima, H264Packetize, H264Parse, SimaDecode,
  * PCIeSink/Src, Preproc, QuantTess, TrackDescriptor, TrackKLT, SimaArgMax,
- * SimaBoxDecode, SimaRender).
+ * SimaBoxDecode, SimaRender, SimaResizeArgmax).
  *
  * Include this instead of cherry-picking individual node headers.
  */
@@ -70,4 +70,5 @@
 #include "nodes/sima/SimaEncode.h"
 #include "nodes/sima/SimaPillarScatter.h"
 #include "nodes/sima/SimaRender.h"
+#include "nodes/sima/SimaResizeArgmax.h"
 #include "nodes/sima/SimaVoxelize.h"

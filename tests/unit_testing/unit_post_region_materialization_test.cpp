@@ -491,4 +491,39 @@ RUN_TEST(
 
       check_preadapter_transport_vs_published_names(int8_mlatess_model_path(), "quantize",
                                                     "output_tensor");
+
+      // Options::semantic_segmentation replaces a dense dequantize/cast tail. Detection heads keep
+      // their FanoutMap regions, so construction must reject the decode before info() or
+      // a graph can report it, and BoxDecode or a half-set output size are never combined.
+      const auto expect_semantic_segmentation_rejected = [](const std::filesystem::path& model_path,
+                                                            Model::Options opt,
+                                                            const std::string& needle) {
+        if (!std::filesystem::exists(model_path)) {
+          return;
+        }
+        opt.preprocess.kind = InputKind::Tensor;
+        opt.semantic_segmentation.enable = true;
+        try {
+          Model model(model_path.string(), opt);
+        } catch (const std::invalid_argument& error) {
+          require(std::string(error.what()).find(needle) != std::string::npos,
+                  "segmentation rejection for " + model_path.filename().string() + " lacks '" +
+                      needle + "': " + error.what());
+          return;
+        }
+        throw std::runtime_error("segmentation accepted an incompatible model " +
+                                 model_path.filename().string());
+      };
+      expect_semantic_segmentation_rejected(int8_model_path(), {}, "must only dequantize or cast");
+      expect_semantic_segmentation_rejected(int8_mlatess_model_path(), {},
+                                            "must only dequantize or cast");
+      {
+        Model::Options boxdecode;
+        boxdecode.decode_type = BoxDecodeType::YoloV8;
+        expect_semantic_segmentation_rejected(int8_model_path(), boxdecode,
+                                              "BoxDecode decode_type");
+        Model::Options half_size;
+        half_size.semantic_segmentation.output_width = 640;
+        expect_semantic_segmentation_rejected(int8_model_path(), half_size, "both positive");
+      }
     }));

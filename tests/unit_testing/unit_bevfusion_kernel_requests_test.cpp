@@ -1,8 +1,7 @@
 // The exact named kernels-library requests behind the SimaVoxelize, SimaPillarScatter,
-// SimaBEVPoolPlan and SimaBEVPool Nodes, and the hand-computed known answers of the
-// independent references their numerical tests use. Pure: no Scheduler call,
-// GStreamer or device, so it runs on any host that has the Scheduler client
-// value-type headers.
+// SimaBEVPoolPlan, SimaBEVPool and SimaResizeArgmax Nodes, and the hand-computed known answers of
+// the independent references their numerical tests use. Pure: no Scheduler call, GStreamer or
+// device, so it runs on any host that has the Scheduler client value-type headers.
 #include "nodes/sima/internal/LidarBevKernelRequests.h"
 
 #include "support/bevfusion_kernel_reference.h"
@@ -729,6 +728,84 @@ void published_quantization() {
           "bev_pool INT8 from BF16 quant is 1/multiplier");
 }
 
+// SegFormer's decode: the MLA output's slice stage publishes 150 of 160 stored
+// channels as a strided view, which the request must carry unchanged.
+void resize_argmax_request() {
+  using Facts = std::vector<kr::TensorFact>;
+  SimaResizeArgmaxOptions opt;
+  opt.output_width = 1280;
+  opt.output_height = 720;
+  auto segformer = fact({1, 128, 128, 150}, rt::DType::Int8, {2621440, 20480, 160, 1});
+  segformer.quant = kr::Quantization{0.0625, -3};
+  auto plan = kr::resize_argmax_request(opt, Facts{segformer});
+  require(plan.operation == "resize_argmax" && plan.target == rt::Target::EV74,
+          "resize_argmax runs on the EV74");
+  const auto* strided = std::get_if<rt::Strided>(&plan.inputs[0].layout);
+  require(strided != nullptr && std::vector<std::int64_t>(strided->strides_bytes.begin(),
+                                                          strided->strides_bytes.begin() + 4) ==
+                                    std::vector<std::int64_t>{2621440, 20480, 160, 1},
+          "resize_argmax reads the padded MLA output in place");
+  require(plan.outputs[0].shape == std::vector<std::int64_t>{1, 720, 1280} &&
+              plan.outputs[0].dtype == rt::DType::UInt8 && plan.published[0].name == "class_map" &&
+              plan.published[0].shape == plan.outputs[0].shape,
+          "resize_argmax emits a UINT8 [N,H,W] class map");
+  require(!scalar<bool>(plan, "align_corners"), "resize_argmax defaults to half-pixel centres");
+
+  opt.align_corners = true;
+  plan = kr::resize_argmax_request(opt, Facts{fact({128, 128, 300}, rt::DType::BFloat16)});
+  require(plan.target == rt::Target::EV74 && scalar<bool>(plan, "align_corners") &&
+              std::holds_alternative<rt::Contiguous>(plan.inputs[0].layout) &&
+              plan.outputs[0].shape == std::vector<std::int64_t>{720, 1280} &&
+              plan.outputs[0].dtype == rt::DType::Int32,
+          "rank-3 scores give [H,W]; more than 256 classes need INT32 indices");
+  plan = kr::resize_argmax_request(opt, Facts{fact({2, 4, 4, 256}, rt::DType::UInt8)});
+  require(plan.outputs[0].dtype == rt::DType::UInt8 &&
+              plan.outputs[0].shape == std::vector<std::int64_t>{2, 720, 1280},
+          "256 classes still fit UINT8 indices; the batch axis is kept");
+
+  require_throws([&] { kr::resize_argmax_request(opt, Facts{fact({128, 150}, rt::DType::Int8)}); },
+                 "[h,w,C] or [N,h,w,C]", "resize_argmax rejects rank-2 scores");
+  require_throws(
+      [&] { kr::resize_argmax_request(opt, Facts{fact({1, 4, 4, 2}, rt::DType::Float16)}); },
+      "INT8, UINT8, BF16 or FP32", "resize_argmax rejects FP16 scores");
+  auto chw = fact({1, 150, 128, 128}, rt::DType::Float32);
+  chw.layout = "CHW";
+  require_throws([&] { kr::resize_argmax_request(opt, Facts{chw}); }, "channels last",
+                 "resize_argmax rejects CHW scores");
+  require_throws([&] { kr::resize_argmax_request(opt, {}); }, "exactly one",
+                 "resize_argmax takes one score tensor");
+  auto short_strides = segformer;
+  short_strides.stride_bytes.pop_back();
+  require_throws([&] { kr::resize_argmax_request(opt, Facts{short_strides}); },
+                 "strides do not match rank", "resize_argmax rejects partial strides");
+
+  // Raw integer scores rank classes like their dequantized values only under one
+  // positive scale; anything else must be dequantized before the decode.
+  auto per_axis = segformer;
+  per_axis.quant = kr::Quantization{1.0, 0, 3, std::vector<double>(150, 0.0625),
+                                    std::vector<std::int64_t>(150, 0)};
+  require_throws([&] { kr::resize_argmax_request(opt, Facts{per_axis}); }, "per-axis",
+                 "resize_argmax rejects per-class INT8 quantization");
+  auto negative = segformer;
+  negative.quant->scale = -0.0625;
+  require_throws([&] { kr::resize_argmax_request(opt, Facts{negative}); },
+                 "positive quantization scale", "resize_argmax rejects a negative score scale");
+  auto unquantized = segformer;
+  unquantized.quant.reset();
+  kr::resize_argmax_request(opt, Facts{unquantized});
+  auto bf16_per_axis = fact({1, 4, 4, 3}, rt::DType::BFloat16);
+  bf16_per_axis.quant = per_axis.quant;
+  kr::resize_argmax_request(opt, Facts{bf16_per_axis});
+
+  opt.output_width = 0;
+  require_throws([&] { kr::validate(opt); }, "must be positive",
+                 "resize_argmax rejects an empty output size");
+  opt.output_width = 1280;
+  opt.output_height = -1;
+  require_throws([&] { kr::validate(opt); }, "SimaResizeArgmax: output_width",
+                 "resize_argmax rejects a negative output height");
+}
+
 int main() {
   try {
     voxelize_request();
@@ -742,6 +819,7 @@ int main() {
     bf16_requests();
     bf16_reference_known_answers();
     published_quantization();
+    resize_argmax_request();
   } catch (const std::exception& error) {
     std::cerr << "[FAIL] unit_bevfusion_kernel_requests_test: " << error.what() << "\n";
     return 1;

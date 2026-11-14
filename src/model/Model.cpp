@@ -22,6 +22,7 @@
 #include "nodes/sima/Quant.h"
 #include "nodes/sima/QuantTess.h"
 #include "nodes/sima/SimaBoxDecode.h"
+#include "nodes/sima/SimaResizeArgmax.h"
 #include "nodes/sima/Tess.h"
 #include "pipeline/Graph.h"
 #include "pipeline/internal/Diagnostics.h"
@@ -4412,6 +4413,39 @@ build_preprocess_plan_with_verbosity(const std::string& tar_gz, const Model::Opt
   return build_preprocess_plan(tar_gz, options);
 }
 
+// The semantic-segmentation decode replaces a dtype-only postprocess (dequantize or cast;
+// slice and unpack are already read views), so it needs dense MLA class scores.
+void validate_semantic_segmentation(const Model::Options& opt,
+                                    const std::vector<internal::RouteRegion>& post_regions) {
+  using GraphKind = pipeline_internal::sima::RouteGraphKernelKind;
+  constexpr const char* prefix = "Model::Options::semantic_segmentation: ";
+  const auto& seg = opt.semantic_segmentation;
+  if (seg.output_width < 0 || seg.output_height < 0 ||
+      (seg.output_width == 0) != (seg.output_height == 0)) {
+    throw std::invalid_argument(std::string(prefix) +
+                                "set output_width and output_height both positive, or leave both "
+                                "0 to use the model input size (got " +
+                                std::to_string(seg.output_width) + "x" +
+                                std::to_string(seg.output_height) + ")");
+  }
+  if (opt.decode_type != BoxDecodeType::Unspecified) {
+    throw std::invalid_argument(std::string(prefix) +
+                                "the class-map decode replaces the postprocess and cannot be "
+                                "combined with a BoxDecode decode_type");
+  }
+  for (const auto& region : post_regions) {
+    const bool dtype_only =
+        region.kind == internal::RouteRegionKind::Linear &&
+        (region.op_kind == GraphKind::Dequantize || region.op_kind == GraphKind::Cast);
+    if (!dtype_only) {
+      throw std::invalid_argument(
+          std::string(prefix) +
+          "the model's postprocess must only dequantize or cast its class scores, but it runs '" +
+          pipeline_internal::sima::route_graph_kernel_name(region.op_kind) + "'");
+    }
+  }
+}
+
 } // namespace
 
 struct Model::Impl {
@@ -4459,6 +4493,11 @@ struct Model::Impl {
              /*queue_leaky=*/{}, options.name_suffix,
              to_internal_terminal_policy(options.inference_terminal),
              options.cleanup_extracted_model_data) {
+    // Reject an incompatible class-map decode before info() can report it.
+    if (options.semantic_segmentation.enable &&
+        preprocess_plan.session_route_plan.include_post_stage) {
+      validate_semantic_segmentation(options, preprocess_plan.session_route_plan.post_regions);
+    }
     // Names where the package was extracted. Callers debugging load time or eMMC wear need to see
     // which filesystem the automatic selection landed on, and it is not otherwise reported.
     const std::string package_root = std::filesystem::path(pack.etc_dir()).parent_path().string();
@@ -5972,6 +6011,52 @@ build_preprocess_nodes_impl(const Model& model, const internal::ModelPack& pack,
   return nodes;
 }
 
+// Class-map size: the requested one, or the model input size when both are 0.
+std::pair<int, int> semantic_segmentation_size(const Model& model, const Model::Options& opt) {
+  const auto& seg = opt.semantic_segmentation;
+  if (seg.output_width > 0 && seg.output_height > 0) {
+    return {seg.output_width, seg.output_height};
+  }
+  const ResolvedPreprocessPlan resolved = model.resolved_preprocess_plan();
+  return {resolved.mla_contract.width, resolved.mla_contract.height};
+}
+
+// SegFormer-style decode: one SimaResizeArgmax Node reads the MLA class scores in place.
+std::shared_ptr<Node>
+build_semantic_segmentation_node(const Model& model, const Model::Options& opt,
+                                 const std::vector<internal::RouteRegion>& post_regions) {
+  validate_semantic_segmentation(opt, post_regions);
+  SimaResizeArgmaxOptions decode;
+  const auto [width, height] = semantic_segmentation_size(model, opt);
+  decode.output_width = width;
+  decode.output_height = height;
+  decode.align_corners = opt.semantic_segmentation.align_corners;
+  return simaai::neat::nodes::SimaResizeArgmax(decode);
+}
+
+// The class map that replaces the score egress: [N, H, W], UINT8 for at most 256 classes.
+TensorSpec semantic_segmentation_output_spec(const Model& model, const Model::Options& opt,
+                                             const internal::SessionRoutePlan& route_plan) {
+  const auto& egress = route_plan.egress_contracts.empty() ? route_plan.egress_contract
+                                                           : route_plan.egress_contracts.front();
+  TensorSpec scores;
+  TensorSpec map;
+  if (!populate_spec_from_route_contract(egress, &scores) ||
+      (scores.shape.size() != 3 && scores.shape.size() != 4)) {
+    map.dtypes = {TensorDType::UInt8, TensorDType::Int32};
+    return map;
+  }
+  const auto [width, height] = semantic_segmentation_size(model, opt);
+  if (scores.shape.size() == 4) {
+    map.shape.push_back(scores.shape.front());
+  }
+  map.shape.push_back(height);
+  map.shape.push_back(width);
+  map.rank = static_cast<int>(map.shape.size());
+  map.dtypes = {scores.shape.back() <= 256 ? TensorDType::UInt8 : TensorDType::Int32};
+  return map;
+}
+
 std::vector<std::shared_ptr<Node>>
 build_postprocess_nodes_impl(const Model& model, const internal::ModelPack& pack,
                              const Model::Options& opt, bool sync,
@@ -5980,6 +6065,9 @@ build_postprocess_nodes_impl(const Model& model, const internal::ModelPack& pack
     return {};
   }
   const auto& post_regions = route_plan.post_regions;
+  if (opt.semantic_segmentation.enable) {
+    return {build_semantic_segmentation_node(model, opt, post_regions)};
+  }
   if (post_regions.empty()) {
     return {};
   }
@@ -6635,6 +6723,10 @@ std::string model_options_json_for_graph_provenance(const Model::Options& opt) {
   out["nms_iou_threshold"] = opt.nms_iou_threshold;
   out["top_k"] = opt.top_k;
   out["yolox_seg_pose"] = {{"pose_classes", opt.yolox_seg_pose.pose_classes}};
+  out["semantic_segmentation"] = {{"enable", opt.semantic_segmentation.enable},
+                                  {"output_width", opt.semantic_segmentation.output_width},
+                                  {"output_height", opt.semantic_segmentation.output_height},
+                                  {"align_corners", opt.semantic_segmentation.align_corners}};
   out["num_classes"] = opt.num_classes;
   out["boxdecode_original_width"] = opt.boxdecode_original_width;
   out["boxdecode_original_height"] = opt.boxdecode_original_height;
@@ -6784,6 +6876,10 @@ std::vector<TensorSpec> Model::input_specs() const {
 std::vector<TensorSpec> Model::output_specs() const {
   std::vector<TensorSpec> specs;
   const auto& route_plan = impl_->preprocess_plan.session_route_plan;
+  if (route_plan.include_post_stage && impl_->options.semantic_segmentation.enable) {
+    specs.push_back(semantic_segmentation_output_spec(*this, impl_->options, route_plan));
+    return specs;
+  }
   if (route_plan.include_post_stage &&
       route_plan.selected_post_kind == internal::PostRouteStageKind::BoxDecode) {
     TensorSpec spec;
@@ -7024,6 +7120,10 @@ Model::ModelInfo Model::info() const {
       preprocess_graph_family_name(impl_->preprocess_plan.resolved_plan.graph_family);
   out.selection.selected_post_kind =
       post_route_stage_kind_name(impl_->preprocess_plan.session_route_plan.selected_post_kind);
+  if (impl_->options.semantic_segmentation.enable &&
+      impl_->preprocess_plan.session_route_plan.include_post_stage) {
+    out.selection.selected_post_kind = "resize_argmax";
+  }
 
   out.output_topology.physical_outputs = parsed.outputs.physical.size();
   out.output_topology.logical_outputs = parsed.outputs.logical.size();

@@ -622,4 +622,74 @@ KernelRequestPlan bev_pool_request(const SimaBEVPoolOptions& opt,
   return plan;
 }
 
+void validate(const SimaResizeArgmaxOptions& opt) {
+  constexpr const char* node = "SimaResizeArgmax";
+  if (opt.output_width <= 0 || opt.output_height <= 0)
+    fail(node, "output_width and output_height must be positive");
+}
+
+KernelRequestPlan resize_argmax_request(const SimaResizeArgmaxOptions& opt,
+                                        std::span<const TensorFact> facts) {
+  constexpr const char* node = "SimaResizeArgmax";
+  validate(opt);
+  if (facts.size() != 1)
+    fail(node, "requires exactly one class-score tensor, got " + std::to_string(facts.size()));
+  const auto& scores = facts.front();
+  const auto rank = scores.shape.size();
+  if (rank != 3 && rank != 4)
+    fail(node, "class scores must be [h,w,C] or [N,h,w,C] (channels last), got " +
+                   describe(scores.shape));
+  // A logical CHW/NCHW tag would put classes outside the last axis.
+  if (scores.layout == "CHW" || scores.layout == "NCHW")
+    fail(node, "class scores must be channels last; got layout " + scores.layout);
+  switch (scores.dtype) {
+  case rt::DType::Int8:
+  case rt::DType::UInt8:
+  case rt::DType::BFloat16:
+  case rt::DType::Float32:
+    break;
+  default:
+    fail(node, "class scores must be INT8, UINT8, BF16 or FP32");
+  }
+  // Integer scores are compared raw. That ranks classes like their dequantized
+  // values only when one positive scale covers every class.
+  if (scores.quant && (scores.dtype == rt::DType::Int8 || scores.dtype == rt::DType::UInt8)) {
+    if (scores.quant->axis >= 0)
+      fail(node, "class scores with per-axis quantization cannot be compared without "
+                 "dequantization; dequantize them first");
+    if (!(scores.quant->scale > 0.0))
+      fail(node, "class scores need a positive quantization scale, got " +
+                     std::to_string(scores.quant->scale));
+  }
+  rt::TensorSpec input{scores.shape, scores.dtype};
+  if (!scores.stride_bytes.empty()) {
+    if (scores.stride_bytes.size() != rank)
+      fail(node, "class-score strides do not match rank");
+    // The model's slice stage publishes padded MLA channels as a strided view.
+    rt::Strided layout;
+    std::copy(scores.stride_bytes.begin(), scores.stride_bytes.end(), layout.strides_bytes.begin());
+    input.layout = layout;
+  }
+  std::vector<std::int64_t> shape;
+  if (rank == 4)
+    shape.push_back(scores.shape[0]);
+  shape.push_back(opt.output_height);
+  shape.push_back(opt.output_width);
+  const auto classes = scores.shape.back();
+  const auto dtype = classes <= 256 ? rt::DType::UInt8 : rt::DType::Int32;
+  checked_tensor_bytes(shape, dtype, node);
+
+  KernelRequestPlan plan;
+  plan.operation = "resize_argmax";
+  plan.target = rt::Target::EV74; // The Kernels operation is EV74-only.
+  plan.inputs = {std::move(input)};
+  plan.outputs = {rt::TensorSpec{shape, dtype}};
+  plan.parameters.push_back({"align_corners", opt.align_corners});
+  PublishedOutput published;
+  published.name = "class_map";
+  published.shape = std::move(shape);
+  plan.published = {std::move(published)};
+  return plan;
+}
+
 } // namespace simaai::neat::nodes_internal::kernel_requests

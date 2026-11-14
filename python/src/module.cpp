@@ -65,6 +65,7 @@
 #include "nodes/io/StillImageInput.h"
 #include "nodes/sima/SimaRender.h"
 #include "nodes/sima/SimaArgMax.h"
+#include "nodes/sima/SimaResizeArgmax.h"
 #include "nodes/sima/SimaBEVPool.h"
 #include "nodes/sima/SimaBEVPoolPlan.h"
 #include "nodes/sima/SimaPillarScatter.h"
@@ -3983,6 +3984,11 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("transmit", &simaai::neat::SimaArgMaxOptions::transmit)
       .def_rw("axis", &simaai::neat::SimaArgMaxOptions::axis)
       .def_rw("keepdims", &simaai::neat::SimaArgMaxOptions::keepdims);
+  nb::class_<simaai::neat::SimaResizeArgmaxOptions>(m, "SimaResizeArgmaxOptions")
+      .def(nb::init<>())
+      .def_rw("output_width", &simaai::neat::SimaResizeArgmaxOptions::output_width)
+      .def_rw("output_height", &simaai::neat::SimaResizeArgmaxOptions::output_height)
+      .def_rw("align_corners", &simaai::neat::SimaResizeArgmaxOptions::align_corners);
   // Kernels-library LiDAR/BEV Nodes: one named kernels request each, on an explicit target.
   nb::enum_<simaai::neat::SimaKernelTarget>(m, "SimaKernelTarget")
       .value("A65", simaai::neat::SimaKernelTarget::A65)
@@ -4296,6 +4302,7 @@ NB_MODULE(_pyneat_core, m) {
                 "options"_a = simaai::neat::SimaRenderOptions{});
   nodes_mod.def("sima_argmax", &simaai::neat::nodes::SimaArgMax,
                 "options"_a = simaai::neat::SimaArgMaxOptions{});
+  nodes_mod.def("sima_resize_argmax", &simaai::neat::nodes::SimaResizeArgmax, "options"_a);
   nodes_mod.def("sima_voxelize", &simaai::neat::nodes::SimaVoxelize, "options"_a);
   nodes_mod.def("sima_pillar_scatter", &simaai::neat::nodes::SimaPillarScatter, "options"_a);
   nodes_mod.def("sima_bev_pool_plan", &simaai::neat::nodes::SimaBEVPoolPlan, "options"_a);
@@ -4716,6 +4723,14 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("last_plugin_id", &simaai::neat::Model::InferenceTerminalPolicy::last_plugin_id)
       .def_rw("last_processor", &simaai::neat::Model::InferenceTerminalPolicy::last_processor);
 
+  nb::class_<simaai::neat::Model::SemanticSegmentationOptions>(m,
+                                                               "ModelSemanticSegmentationOptions")
+      .def(nb::init<>())
+      .def_rw("enable", &simaai::neat::Model::SemanticSegmentationOptions::enable)
+      .def_rw("output_width", &simaai::neat::Model::SemanticSegmentationOptions::output_width)
+      .def_rw("output_height", &simaai::neat::Model::SemanticSegmentationOptions::output_height)
+      .def_rw("align_corners", &simaai::neat::Model::SemanticSegmentationOptions::align_corners);
+
   nb::class_<simaai::neat::Model::Options>(m, "ModelOptions")
       .def(nb::init<>())
       .def_rw("preprocess", &simaai::neat::Model::Options::preprocess)
@@ -4727,6 +4742,7 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("superpoint", &simaai::neat::Model::Options::superpoint)
       .def_rw("num_classes", &simaai::neat::Model::Options::num_classes)
       .def_rw("yolox_seg_pose", &simaai::neat::Model::Options::yolox_seg_pose)
+      .def_rw("semantic_segmentation", &simaai::neat::Model::Options::semantic_segmentation)
       .def_rw("boxdecode_original_width", &simaai::neat::Model::Options::boxdecode_original_width)
       .def_rw("boxdecode_original_height", &simaai::neat::Model::Options::boxdecode_original_height)
       .def_rw("boxdecode_resize_mode", &simaai::neat::Model::Options::boxdecode_resize_mode)
