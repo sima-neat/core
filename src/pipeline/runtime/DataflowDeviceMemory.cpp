@@ -17,6 +17,7 @@
 #include <gst/allocators/gstfdmemory.h>
 #include <gst/gst.h>
 
+#include <mutex>
 #include <span>
 #include <typeinfo>
 #include <utility>
@@ -178,6 +179,11 @@ std::shared_ptr<TensorBuffer> pulled_storage(const df::Message& message, const d
 DataflowPushOutcome push(DataflowInputPort& port, std::span<const Tensor> item,
                          const Stamp& proposal, bool block, const char* where,
                          bool commit_allocation, std::int64_t pushed_seq, bool may_wrap) {
+  if (!block) {
+    if (const df::Status refusal = port.device_still_full(item, pushed_seq)) {
+      return {DataflowPushOutcome::Stage::Alloc, *refusal};
+    }
+  }
   // GStreamer's guard of a device-visible route, by its own function: a CPU-backed tensor is
   // refused unless SIMA_ALLOW_INPUTSTREAM_CPU_TO_EV74_COPY allows the copy into the slot. Not
   // asked for a Tensor from this Run's alloc() that the push publishes as its slot (the funnel's
@@ -186,8 +192,20 @@ DataflowPushOutcome push(DataflowInputPort& port, std::span<const Tensor> item,
       !(commit_allocation && item.size() == 1U && allocation_of(item.front(), port.core()))) {
     enforce_device_visible_tensors_or_throw(item, where);
   }
-  return port.push(item, proposal, block, where, commit_allocation, pushed_seq, may_wrap,
-                   /*device_port=*/true);
+  const DataflowPushOutcome outcome = port.push(item, proposal, block, where, commit_allocation,
+                                                pushed_seq, may_wrap, /*device_port=*/true);
+  port.device_remember(item, outcome);
+  return outcome;
+}
+
+void enforce_transferable(std::span<const Tensor> item, const char* where) {
+  for (const Tensor& tensor : item) {
+    // One lookup of the storage's producer mark. The Sample that the rule reads is built only for
+    // a tensor that has one: a frame of another graph, not Core's own TensorMemory::EV74 tensor.
+    if (pipeline_internal::tensor_has_device_gstsample_producer_lifetime(tensor)) {
+      DataflowInputPort::enforce_transferable(sample_from_tensors(TensorList{tensor}), where);
+    }
+  }
 }
 
 namespace {
@@ -241,5 +259,89 @@ void pulled_tensors(const DataflowInputBinding& binding,
 }
 
 } // namespace simaai::neat::runtime::dataflow_device
+
+namespace simaai::neat::runtime {
+
+// A device input's validated geometries: of the first device tensor (GstSample storage) that
+// passed the checks, kept by device_remember, and of the first CPU tensor (pushed with the
+// compatibility copy allowed), kept by the push itself. The geometry of a device tensor is not who
+// produced its memory: Core's cross-Run rule is asked of every push that repeats it.
+const DataflowLeafGeometry* DataflowInputPort::device_known(std::span<const Tensor> item,
+                                                            const char* where) const {
+  const DataflowLeafGeometry* const known = validated_device_.find_device(item);
+  if (!known) {
+    return validated_.find(item);
+  }
+  dataflow_device::enforce_transferable(item, where);
+  return known;
+}
+
+void DataflowInputPort::device_remember(std::span<const Tensor> item,
+                                        const DataflowPushOutcome& outcome) {
+  // The push reached the slot, so the item passed every check.
+  Bound* const b = bound();
+  if (b && outcome.stage != DataflowPushOutcome::Stage::Unbound && validated_device_.empty() &&
+      item.size() == 1U && !b->binding.is_record() &&
+      DataflowLeafGeometry::keepable_device(item.front())) {
+    std::lock_guard<std::mutex> lock(mu_);
+    validated_device_.remember(
+        item.front(), b->wraps && dataflow_wrap_layout(b->binding, b->slot_bytes, item.front()));
+  }
+}
+
+// A try_push that wraps a device tensor maps it (wrap_tensor) before Session::alloc can refuse it,
+// and a refused call must not pay that map. The question a host input asks once it was refused
+// (still_full: a slot taken and given back) would begin and end a write epoch on a device slot
+// whenever there is room. So a device input asks with a Block that alloc cannot take: full links
+// refuse it first, before any slot (FR14, counted as the refusal of this try_push, which it is);
+// with room the slot is taken, the wrap refused (FR15: no CPU address) and the slot returned,
+// with no write epoch and nothing kept (block.h: a wrap is checked after the slot is taken, and a
+// device port begins no epoch around a wrap). Any other refusal (FR7, a closed input, a stopped
+// Session) is the one the slot's own alloc would give, and is the push's.
+// full_at keeps what was learnt, as on a host input: a refusal by full links, until a pull.
+df::Status DataflowInputPort::device_full(Bound& b) noexcept {
+  const std::uint64_t pulled = run_.core.outputs_pulled.load(std::memory_order_relaxed);
+  const df::Block none;
+  const df::Result<df::WriteLoan> asked =
+      b.session.alloc(b.feed, df::Acquire::Fail, df::kNoDeadline, &none);
+  const df::Error* const refusal = df::failure(asked);
+  if (!refusal || refusal->code == df::ErrorCode::InvalidArgument) {
+    // Room: still_full, whose question takes a slot, is not asked after this.
+    if (b.full_at.load(std::memory_order_relaxed) != Bound::kNoRefusal) {
+      b.full_at.store(Bound::kNoRefusal, std::memory_order_relaxed);
+    }
+    return std::nullopt;
+  }
+  if (refusal->code == df::ErrorCode::Backpressure) {
+    b.full_at.store(pulled, std::memory_order_relaxed);
+  }
+  return *refusal;
+}
+
+// The refusal of a try_push while the links are known to be full (full_at: alloc refused the last
+// one and no pull was counted since), asked before the per-push checks of the tensor's memory
+// (the device-visible guard, the cross-Run rule): a refused call does nothing with the tensor, so
+// it needs none of them, and costs what a CPU tensor's refusal costs. Only for a device tensor of
+// the validated geometry, whose other checks are skipped anyway: every other item is checked
+// first, as before, and throws what it threw. None when the links are not known to be full, or
+// have room after all: the push then runs in full.
+df::Status DataflowInputPort::device_still_full(std::span<const Tensor> item,
+                                                std::int64_t pushed_seq) noexcept {
+  Bound* const b = bound();
+  if (!b ||
+      b->full_at.load(std::memory_order_relaxed) !=
+          run_.core.outputs_pulled.load(std::memory_order_relaxed) ||
+      !validated_device_.find_device(item)) {
+    return std::nullopt;
+  }
+  const df::Status refusal = device_full(*b);
+  if (refusal && run_.run_seq && pushed_seq < 0) {
+    // A Run of several inputs: a refused push consumes a number of the Run's counter (push()).
+    run_.run_seq->fetch_add(1, std::memory_order_relaxed);
+  }
+  return refusal;
+}
+
+} // namespace simaai::neat::runtime
 
 #endif // SIMANEAT_WITH_DATAFLOW

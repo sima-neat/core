@@ -1017,11 +1017,12 @@ GstSample* holder_as_gstsample(const std::shared_ptr<void>& holder) {
 } // namespace
 
 void enforce_device_visible_tensors_or_throw(std::span<const Tensor> tensors, const char* where) {
-  if (allow_inputstream_cpu_to_device_copy()) {
-    return;
-  }
+  // The tensors first: the environment is read only for a push that it could let through.
   for (const Tensor& tensor : tensors) {
     if (tensor_requires_cpu_to_device_copy_for_push(tensor)) {
+      if (allow_inputstream_cpu_to_device_copy()) {
+        return;
+      }
       throw std::runtime_error(std::string(where) + ": " + device_visible_push_guard_message());
     }
   }

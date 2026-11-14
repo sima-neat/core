@@ -529,13 +529,57 @@ std::string dataflow_record_mismatch(const DataflowInputBinding& binding,
 // ---- the validated geometry of a leaf, and whether it can be wrapped
 // ------------------------------
 
+namespace {
+
+// No Semantic beyond an image spec.
+bool plain_semantic(const Semantic& s) noexcept {
+  return !s.audio && !s.tokens && !s.text && !s.byte_stream && !s.tess && !s.encoded && !s.quant &&
+         !s.detection && !s.feature && !s.preprocess;
+}
+
+} // namespace
+
 bool DataflowLeafGeometry::keepable(const Tensor& t) noexcept {
-  const Semantic& s = t.semantic;
   return t.storage &&
          (t.storage->kind == StorageKind::CpuOwned ||
           t.storage->kind == StorageKind::CpuExternal) &&
-         !s.audio && !s.tokens && !s.text && !s.byte_stream && !s.tess && !s.encoded && !s.quant &&
-         !s.detection && !s.feature && !s.preprocess;
+         plain_semantic(t.semantic);
+}
+
+bool DataflowLeafGeometry::keepable_device(const Tensor& t) noexcept {
+  return t.storage && t.storage->kind == StorageKind::GstSample && plain_semantic(t.semantic);
+}
+
+// matches() for a device tensor: the same fields. Its own copy of the comparison, out of line, so
+// that the inline one, which every push into a host input runs, stays as it is.
+bool DataflowLeafGeometry::matches_device(const Tensor& t) const noexcept {
+  if (!keepable_device(t) || t.storage->kind != kind || t.storage->size_bytes != storage_bytes ||
+      t.dtype != dtype || t.layout != layout || t.byte_offset != byte_offset ||
+      t.device.type != device.type || t.device.id != device.id || t.shape != shape ||
+      t.strides_bytes != strides_bytes || t.axis_semantics != axis_semantics ||
+      t.planes.size() != planes.size() || t.semantic.image.has_value() != image.has_value()) {
+    return false;
+  }
+  if (image && (t.semantic.image->format != image->format ||
+                t.semantic.image->color_space != image->color_space)) {
+    return false;
+  }
+  for (std::size_t i = 0; i < planes.size(); ++i) {
+    const Plane& a = t.planes[i];
+    const Plane& b = planes[i];
+    if (a.role != b.role || a.byte_offset != b.byte_offset || a.shape != b.shape ||
+        a.strides_bytes != b.strides_bytes) {
+      return false;
+    }
+  }
+  return true;
+}
+
+const DataflowLeafGeometry*
+DataflowValidatedLeaf::find_device(std::span<const Tensor> item) const noexcept {
+  const DataflowLeafGeometry* known =
+      item.size() == 1U ? leaf_.load(std::memory_order_acquire) : nullptr;
+  return known && known->matches_device(item.front()) ? known : nullptr;
 }
 
 DataflowLeafGeometry DataflowLeafGeometry::of(const Tensor& t) {

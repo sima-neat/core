@@ -22,7 +22,7 @@
 // and Dms0): a CPU tensor copied into the input's DMA-BUF pool (with the compatibility copy
 // allowed: without it the push throws, unit_run_backend_differential_test), the pulled tensor
 // forwarded as it is into a GStreamer Run, Run::alloc on the pool, a pulled device tensor pushed
-// back (copied), an Owned pull.
+// back (copied, and copied again once its geometry is one the input has validated), an Owned pull.
 
 // This file calls the deprecated forms on purpose.
 #pragma GCC diagnostic ignored "-Wdeprecated-declarations"
@@ -1111,7 +1111,9 @@ void alloc_on_device_input() {
 }
 
 // A tensor pulled from a device input leases a slot of that input's pool, so pushing it into a
-// device input copies it (D15): the next pull is another DMA-BUF with the same bytes.
+// device input copies it (D15): the next pull is another DMA-BUF with the same bytes. And again
+// for the tensor that pull gave: its geometry has passed the input's checks by then, and what a
+// repeated geometry skips is not the wrap's own question, whose memory it is.
 void pulled_device_tensor_is_copied_back() {
   const CompatCopy copy;
   Graph g = input_output(device_input(InputMemoryPolicy::Ev74));
@@ -1124,6 +1126,13 @@ void pulled_device_tensor_is_copied_back() {
               sima_test::dmabuf_inode(second) != sima_test::dmabuf_inode(first),
           "the pulled tensor was copied into another slot");
   require(bytes_of(second) == bytes_of(rgb(64, 48, 0x51)), "bytes of the copy");
+  require(run.push(TensorList{second}), "push a pulled tensor of the validated geometry");
+  const Tensor third = pulled_tensor(run, 2000, "third");
+  require(sima_test::dmabuf_inode(third) != 0U &&
+              sima_test::dmabuf_inode(third) != sima_test::dmabuf_inode(second) &&
+              sima_test::dmabuf_inode(third) != sima_test::dmabuf_inode(first),
+          "a pulled tensor of a validated geometry was copied into another slot");
+  require(bytes_of(third) == bytes_of(rgb(64, 48, 0x51)), "bytes of the second copy");
   run.close();
 }
 

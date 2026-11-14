@@ -114,6 +114,15 @@ public:
                                                   std::int64_t pushed_seq = -1,
                                                   bool may_wrap = true, bool device_port = false);
 
+  // After a device input's push answered `outcome` (dataflow_device::push; defined in
+  // DataflowDeviceMemory.cpp): the first device tensor (GstSample storage) that passed the push's
+  // checks has its geometry kept, and a push that repeats it skips those checks (device_known).
+  void device_remember(std::span<const Tensor> item, const DataflowPushOutcome& outcome);
+  // Before a device input's try_push (dataflow_device::push): the refusal Session::alloc gives a
+  // device tensor of the validated geometry while the links are known to be full (Bound::full_at),
+  // before any other work on the item; none otherwise. `pushed_seq` as push()'s.
+  df::Status device_still_full(std::span<const Tensor> item, std::int64_t pushed_seq) noexcept;
+
   // Run::alloc: a writable Tensor over a slot of the input's pool. `at` names the call.
   Tensor alloc(const std::string& at);
 
@@ -178,7 +187,7 @@ public:
     /// store, before it.
     std::atomic<bool> has_wraps{false};
     /// RunCore::outputs_pulled when alloc last refused a wrapping try_push because every link was
-    /// full (FR14); kNoRefusal otherwise (still_full).
+    /// full (FR14); kNoRefusal otherwise (still_full; a device input: device_full).
     static constexpr std::uint64_t kNoRefusal = ~std::uint64_t{0};
     std::atomic<std::uint64_t> full_at{kNoRefusal};
   };
@@ -194,6 +203,14 @@ private:
   Bound* bind_first(std::span<const Tensor> item, const char* where);
   Bound* bind_locked(DataflowInputBinding binding);
   df::Status still_full(Bound& bound);
+  // A device input's validated geometry that `item` repeats, of a device tensor or of a CPU
+  // tensor (DataflowDeviceMemory.cpp); nullptr otherwise. For a device tensor it asks Core's
+  // cross-Run rule first (dataflow_device::enforce_transferable), which throws as the checks do.
+  const DataflowLeafGeometry* device_known(std::span<const Tensor> item, const char* where) const;
+  // A device input's try_push, before it prepares a slot (DataflowDeviceMemory.cpp): the refusal
+  // Session::alloc gives now (FR14: every link full, kept in Bound::full_at), or none when it
+  // would take a slot.
+  df::Status device_full(Bound& bound) noexcept;
   [[gnu::always_inline]] DataflowPushOutcome publish(Bound& bound, std::span<const Tensor> item,
                                                      const df::Stamp& stamp, bool block,
                                                      const char* where, RunAllocation* allocation,
@@ -213,6 +230,7 @@ private:
   std::atomic<Bound*> bound_{nullptr};
   std::atomic<bool> closed_{false};
   DataflowValidatedLeaf validated_;
+  DataflowValidatedLeaf validated_device_; ///< a device input: of a device tensor (GstSample)
 };
 
 // The backing of a Run::alloc Tensor on this backend: the loan of one slot of the input's pool.
@@ -276,6 +294,14 @@ inline DataflowPushOutcome DataflowInputPort::publish(Bound& b, std::span<const 
                                "offset 0 to be pushed");
     }
   } else {
+    // A device port's try_push asks alloc first, every time (device_full): its wrap costs a map
+    // of the tensor, which a refusal must not pay. With room, full_at is clear and the question
+    // below is not asked.
+    if (device_port && !block) {
+      if (const df::Status refusal = device_full(b)) {
+        return {DataflowPushOutcome::Stage::Alloc, *refusal};
+      }
+    }
     if (!block && b.full_at.load(std::memory_order_relaxed) ==
                       run_.core.outputs_pulled.load(std::memory_order_relaxed)) {
       if (const df::Status refusal = still_full(b)) {
@@ -362,8 +388,10 @@ inline DataflowPushOutcome DataflowInputPort::push(std::span<const Tensor> item,
     require_pushable(*allocation, where);
   }
   // A leaf with the geometry of the first leaf that passed every check below passes them again
-  // (DataflowValidatedLeaf): they are skipped for it.
-  const DataflowLeafGeometry* const known = validated_.find(item);
+  // (DataflowValidatedLeaf): they are skipped for it. A device input also keeps a device tensor's
+  // geometry, and asks the cross-Run rule, which is not geometry, of every push (device_known).
+  const DataflowLeafGeometry* const known =
+      device_port ? device_known(item, where) : validated_.find(item);
   if (!known) {
     validate_public_input(item.front(), declared, run_.stream_options, where);
     for (const Tensor& tensor : item) {

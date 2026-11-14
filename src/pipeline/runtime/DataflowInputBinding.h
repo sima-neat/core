@@ -99,6 +99,10 @@ bool dataflow_wrap_layout(const DataflowInputBinding& binding, std::size_t slot_
 // fields and of the Run's InputOptions and InputStreamOptions, which never change: a tensor whose
 // geometry equals one that passed both passes both. Only CPU storage and no Semantic beyond an
 // image spec are kept, so a tensor with anything else is always checked in full.
+// A device input (H0b) also keeps the geometry of a device tensor (GstSample storage), in a cache
+// of its own (keepable_device, matches_device): both functions read the same fields of it, the
+// storage's kind and size among them. What they do not read is asked of every push of such a
+// tensor: its memory, and whose it is (DataflowDeviceMemory.h).
 struct DataflowLeafGeometry {
   StorageKind kind = StorageKind::Unknown;
   std::size_t storage_bytes = 0;
@@ -115,11 +119,13 @@ struct DataflowLeafGeometry {
   bool wrappable = false;
 
   static bool keepable(const Tensor& t) noexcept;
+  static bool keepable_device(const Tensor& t) noexcept;
   static DataflowLeafGeometry of(const Tensor& t);
   bool matches(const Tensor& t) const noexcept;
+  bool matches_device(const Tensor& t) const noexcept;
 };
 
-// Inline: every push of a leaf asks it.
+// Inline: every push of a leaf asks it. matches_device compares the same fields.
 inline bool DataflowLeafGeometry::matches(const Tensor& t) const noexcept {
   if (!keepable(t) || t.storage->kind != kind || t.storage->size_bytes != storage_bytes ||
       t.dtype != dtype || t.layout != layout || t.byte_offset != byte_offset ||
@@ -153,6 +159,8 @@ public:
         item.size() == 1U ? leaf_.load(std::memory_order_acquire) : nullptr;
     return known && known->matches(item.front()) ? known : nullptr;
   }
+  // The same of a device input's cache of a device tensor (matches_device).
+  const DataflowLeafGeometry* find_device(std::span<const Tensor> item) const noexcept;
   bool empty() const noexcept {
     return leaf_.load(std::memory_order_acquire) == nullptr;
   }

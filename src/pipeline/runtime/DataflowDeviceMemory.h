@@ -48,6 +48,13 @@ DataflowPushOutcome push(DataflowInputPort& port, std::span<const Tensor> item,
                          const Stamp& proposal, bool block, const char* where,
                          bool commit_allocation, std::int64_t pushed_seq, bool may_wrap);
 
+// Core's cross-Run rule (DataflowInputPort::enforce_transferable) for the tensors of one item,
+// asked of every push into a device input that skips the other checks for a device tensor of a
+// validated geometry: a tensor whose storage a running graph's stream produced must carry a live
+// zero-copy loan, or the push throws. Whether a tensor is such a one is read from the tensor
+// itself; the Sample that the rule reads is built only when it is.
+void enforce_transferable(std::span<const Tensor> item, const char* where);
+
 // The Sample and the TensorList of a device input's pulled message, as the codec's make_sample
 // and fill_tensors give a host input's: one leaf (a device port carries no record), over the
 // message's device memory (pulled_storage), or over a CPU copy with `owned`
