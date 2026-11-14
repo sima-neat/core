@@ -89,6 +89,11 @@ Scores make_scores(neat::TensorDType dtype, std::vector<std::int64_t> shape, std
 neat::Tensor tensor(const Scores& s) {
   auto result = neat::Tensor::from_vector(s.stored, {static_cast<std::int64_t>(s.stored.size())},
                                           neat::TensorMemory::EV74);
+  // Reinterpret the byte carrier: drop the 1-D view's strides so a dense tensor is dense in
+  // its own shape, as SharedCarrier::view does.
+  result.strides_bytes.clear();
+  result.axis_semantics.clear();
+  result.layout = neat::TensorLayout::Unknown;
   result.dtype = s.dtype;
   result.shape = s.shape;
   if (s.pitch != static_cast<std::size_t>(s.shape.back())) {
