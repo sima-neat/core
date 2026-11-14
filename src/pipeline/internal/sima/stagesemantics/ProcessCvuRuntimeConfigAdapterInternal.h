@@ -95,6 +95,9 @@ struct CompiledProcessCvuRuntimeConfig {
 
   /// Original FP32 multiplier before resize. Presence selects fixed source arithmetic;
   /// normalize.mean/stddev then mean a post-resize subtraction/division, with no implied /255.
+  /// Explicit geometry; absent retains legacy aspect_ratio/scaled dimensions.
+  std::optional<ResizeMode> resize_mode;
+  std::optional<int> shorter_side;
   std::optional<float> rescale_factor;
   /// Original positive FP32 INT8 step, never reconstructed from a reciprocal.
   /// Model routes require agreement with the MPK quantizer; zero point stays model-owned.

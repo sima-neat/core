@@ -11,9 +11,11 @@ SiMa.ai Neat Library의 릴리스 노트입니다.
 
 ### 호환성에 영향을 주는 변경 {#v061-breaking}
 
-- Neat Library C++ ABI는 이제 7(`libsima_neat.so.7`)입니다. `ResizeSpec`, `PreprocessOptions`, `PreprocOptions`, `NormalizationOptions`에 필드가 추가되었습니다. 일치하는 헤더와 런타임 패키지로 C++ 애플리케이션, 플러그인, Python 바인딩을 다시 빌드하세요. ABI 6 바이너리를 재사용하거나 호환성 심볼릭 링크를 추가하지 마세요.
+- Neat Library C++ ABI는 이제 8(`libsima_neat.so.8`)입니다. `ResizeOptions`, `ResizeSpec`, `PreprocessOptions`, `PreprocOptions`, `NormalizationOptions`에 필드가 추가되었습니다. 일치하는 헤더와 런타임 패키지로 C++ 애플리케이션, 플러그인, Python 바인딩을 다시 빌드하세요. ABI 6 바이너리를 재사용하거나 호환성 심볼릭 링크를 추가하지 마세요.
 
 ### 전처리 {#v061-preproc}
+
+- 중앙 자르기는 최종 MPK 크기로 자르기 전에 선택적 `preprocess.resize.shorter_side`를 지원합니다. 전체 크기 조정의 필터 범위를 유지하고 역변환을 게시합니다. ABI 8 및 일치하는 커널 펌웨어로 다시 빌드하고 이전 바이너리를 혼용하지 마세요.
 
 - Model 전처리와 독립형 Resize는 `ResizeInterpolation`을 공유합니다. 새 코드에서는 샘플러 문자열 대신 `preprocess.resize.interpolation = ResizeInterpolation.BilinearAntialiased`를 사용하세요. 기존 `scaling_type` 문자열의 호환성은 유지되며 충돌하는 기본값 이외의 문자열은 거부됩니다.
 

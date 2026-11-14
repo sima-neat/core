@@ -3023,8 +3023,8 @@ bool extract_route_capability_from_mpk_graph(const ModelPack& pack, RouteCapabil
 }
 
 bool preprocess_auto_mode(const PreprocessOptions& p) {
-  if (p.resize.interpolation || fixed_preprocess_arithmetic_requested(p) ||
-      antialiased_preprocess_resize_requested(p))
+  if (p.resize.mode == ResizeMode::Crop || p.resize.shorter_side || p.resize.interpolation ||
+      fixed_preprocess_arithmetic_requested(p) || antialiased_preprocess_resize_requested(p))
     return false;
   if (p.enable != AutoFlag::Auto)
     return false;
@@ -3056,8 +3056,8 @@ bool preprocess_auto_mode(const PreprocessOptions& p) {
 }
 
 bool generic_preproc_requested(const PreprocessOptions& p) {
-  if (p.resize.interpolation || fixed_preprocess_arithmetic_requested(p) ||
-      antialiased_preprocess_resize_requested(p))
+  if (p.resize.mode == ResizeMode::Crop || p.resize.shorter_side || p.resize.interpolation ||
+      fixed_preprocess_arithmetic_requested(p) || antialiased_preprocess_resize_requested(p))
     return true;
   if (p.kind == InputKind::Image) {
     return true;
@@ -3086,7 +3086,8 @@ bool generic_preproc_requested(const PreprocessOptions& p) {
     switch (t.type) {
     case TransformType::Resize:
       if (t.resize.enable == AutoFlag::On || t.resize.width > 0 || t.resize.height > 0 ||
-          t.resize.interpolation.has_value()) {
+          t.resize.interpolation.has_value() || t.resize.mode == ResizeMode::Crop ||
+          t.resize.shorter_side) {
         return true;
       }
       break;

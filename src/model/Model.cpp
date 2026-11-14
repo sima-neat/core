@@ -5225,6 +5225,7 @@ void populate_model_managed_preproc_options(PreprocOptions* opt,
   opt->normalize = plan.normalize;
   opt->channel_mean = plan.mean;
   opt->channel_stddev = plan.stddev;
+  opt->shorter_side = effective.resize.shorter_side;
   opt->rescale_factor = effective.rescale_factor;
   opt->quantization_step = effective.quantization_step;
   opt->color_conversion_placement = effective.color_conversion_placement;
@@ -5248,8 +5249,9 @@ void populate_model_managed_preproc_options(PreprocOptions* opt,
       opt->padding_type = "CENTER";
       break;
     case ResizeMode::Crop:
+      opt->resize_mode = ResizeMode::Crop;
       opt->aspect_ratio = true;
-      opt->padding_type = "NONE";
+      opt->padding_type = "CENTER";
       break;
     }
   }
@@ -6512,6 +6514,8 @@ nlohmann::ordered_json resize_spec_json(const ResizeSpec& spec) {
   // the legacy default. Preserve that distinction in stage cache identity.
   if (spec.interpolation)
     out["interpolation"] = model_options_enum_int(*spec.interpolation);
+  if (spec.shorter_side)
+    out["shorter_side"] = *spec.shorter_side;
   return out;
 }
 

@@ -11,9 +11,11 @@ Release notes for the SiMa.ai Neat Library.
 
 ### Breaking changes {#v061-breaking}
 
-- The Neat Library C++ ABI is now 7 (`libsima_neat.so.7`). `ResizeSpec`, `PreprocessOptions`, `PreprocOptions` and `NormalizationOptions` gained fields. Rebuild C++ applications, plugins and Python bindings with matching headers and runtime packages; do not reuse ABI 6 binaries or add compatibility symlinks.
+- The Neat Library C++ ABI is now 8 (`libsima_neat.so.8`). `ResizeOptions`, `ResizeSpec`, `PreprocessOptions`, `PreprocOptions` and `NormalizationOptions` gained fields. Rebuild C++ applications, plugins and Python bindings with matching headers and runtime packages; do not reuse ABI 6 binaries or add compatibility symlinks.
 
 ### Preprocessing {#v061-preproc}
+
+- Center crop now accepts an optional `preprocess.resize.shorter_side` before the final MPK-sized crop. Cropping retains full-resize sampling support and publishes its inverse transform. Rebuild against ABI 8 and the matching kernel firmware; do not mix earlier binaries.
 
 - Model preprocessing and standalone Resize share `ResizeInterpolation`. Use `preprocess.resize.interpolation = ResizeInterpolation.BilinearAntialiased` instead of a sampler string in new code. Existing `scaling_type` strings remain compatible; conflicting nondefault strings are rejected.
 

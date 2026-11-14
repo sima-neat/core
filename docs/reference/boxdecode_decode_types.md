@@ -556,7 +556,7 @@ masks = seg.masks.to_numpy()
 
 ## Upgrading
 
-The earlier BoxDecode options introduced ABI 6. The current source-arithmetic options require ABI 7 (`libsima_neat.so.7`). Rebuild C++ applications, plugins and Python bindings with matching headers and libraries. Do not load ABI 5/6 binaries through compatibility symlinks.
+The earlier BoxDecode options introduced ABI 6. The current source-arithmetic options require ABI 8 (`libsima_neat.so.8`). Rebuild C++ applications, plugins and Python bindings with matching headers and libraries. Do not load ABI 5/6/7 binaries through compatibility symlinks.
 
 
 ### Combined YOLOX input admission
@@ -579,3 +579,8 @@ preparation. This is a decoder contract for externally preprocessed tensors,
 not new support for crop production in `Model` preprocessing. A model with
 fewer than 17 keypoints still publishes the fixed
 17-slot public wire format, with unused slots set to zero.
+
+
+## Crop coordinate mapping {#crop-coordinate-mapping}
+
+Model-managed Crop supplies the actual inverse image transform to supported detection profiles, including classic DETR, DetrFocal and ordinary YOLO detection. Selection and NMS stay in model coordinates; accepted boxes are then mapped and clipped to the original image. Missing or conflicting transform metadata fails explicitly. This does not enable new crop combinations for masks, pose, RCNN proposals or SSD multiclass. Existing oriented-box profiles still require equal axis scales; integer resize dimensions may make the scales unequal.

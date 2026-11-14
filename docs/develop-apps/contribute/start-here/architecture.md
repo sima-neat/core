@@ -2294,3 +2294,8 @@ JSON retains `sima.neat.status.v1` and adds `components.pcieHost`, `components.p
 PyNeat and PyNeatPCIe status lists each detected installation with its version and virtual environment path. Separate environments are reported as multiple environments, not a version conflict. For packages outside a virtual environment, the output shows the package directory instead. Status reads package metadata without importing native modules.
 
 Each Python entry in JSON adds an `installations` array. Each record contains `version`, `environment`, and `path` (the package directory). `environment` is `null` outside a virtual environment. The summary `version` is `null` when installed versions differ; multiple installations alone do not set `error`. Symlinked paths to the same installation are listed once.
+
+
+## Crop geometry ownership {#crop-geometry-ownership}
+
+Core resolves Crop from actual source dimensions into a checked virtual resize size and center-window offset. Kernels evaluates that window directly using the original source filter support; no intermediate image or CPU crop is inserted. The final dimensions remain MPK-owned. Preproc publishes the actual model-to-original edge affine, distinct from half-pixel sample-center coordinates. Supported detection recipes consume that authority after model-space selection; missing or conflicting geometry is rejected.

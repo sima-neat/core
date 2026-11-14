@@ -4609,7 +4609,9 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("pad_value", &simaai::neat::ResizeSpec::pad_value)
       .def_rw("scaling_type", &simaai::neat::ResizeSpec::scaling_type)
       .def_rw("interpolation", &simaai::neat::ResizeSpec::interpolation,
-              nb::for_setter(nb::arg("interpolation").none()));
+              nb::for_setter(nb::arg("interpolation").none()))
+      .def_rw("shorter_side", &simaai::neat::ResizeSpec::shorter_side,
+              nb::for_setter(nb::arg("shorter_side").none().noconvert()));
 
   nb::class_<simaai::neat::ColorConvertSpec>(m, "ColorConvertSpec")
       .def(nb::init<>())
@@ -5353,7 +5355,8 @@ NB_MODULE(_pyneat_core, m) {
       .value("NV16", simaai::neat::ImageFormat::NV16);
   nb::enum_<simaai::neat::ResizeFit>(m, "ResizeFit")
       .value("Stretch", simaai::neat::ResizeFit::Stretch)
-      .value("Contain", simaai::neat::ResizeFit::Contain);
+      .value("Contain", simaai::neat::ResizeFit::Contain)
+      .value("Cover", simaai::neat::ResizeFit::Cover);
   nb::enum_<simaai::neat::ImageColorMatrix>(m, "ImageColorMatrix")
       .value("Bt601", simaai::neat::ImageColorMatrix::Bt601)
       .value("Bt709", simaai::neat::ImageColorMatrix::Bt709);
@@ -5376,6 +5379,8 @@ NB_MODULE(_pyneat_core, m) {
       .def(nb::init<>())
       .def_rw("width", &simaai::neat::ResizeOptions::width)
       .def_rw("height", &simaai::neat::ResizeOptions::height)
+      .def_rw("shorter_side", &simaai::neat::ResizeOptions::shorter_side,
+              nb::for_setter(nb::arg("shorter_side").none().noconvert()))
       .def_rw("interpolation", &simaai::neat::ResizeOptions::interpolation)
       .def_rw("fit", &simaai::neat::ResizeOptions::fit)
       .def_rw("max_input_width", &simaai::neat::ResizeOptions::max_input_width)
@@ -5415,6 +5420,10 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("scaled_width", &simaai::neat::PreprocOptions::scaled_width)
       .def_rw("scaled_height", &simaai::neat::PreprocOptions::scaled_height)
       .def_rw("batch_size", &simaai::neat::PreprocOptions::batch_size)
+      .def_rw("resize_mode", &simaai::neat::PreprocOptions::resize_mode,
+              nb::for_setter(nb::arg("resize_mode").none()))
+      .def_rw("shorter_side", &simaai::neat::PreprocOptions::shorter_side,
+              nb::for_setter(nb::arg("shorter_side").none().noconvert()))
       .def_rw("rescale_factor", &simaai::neat::PreprocOptions::rescale_factor,
               nb::for_setter(nb::arg("rescale_factor").none()))
       .def_rw("quantization_step", &simaai::neat::PreprocOptions::quantization_step,
