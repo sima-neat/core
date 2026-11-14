@@ -21,8 +21,8 @@
 #include "nodes/sima/Preproc.h"
 #include "nodes/sima/Quant.h"
 #include "nodes/sima/QuantTess.h"
+#include "nodes/sima/ResizeArgMax.h"
 #include "nodes/sima/SimaBoxDecode.h"
-#include "nodes/sima/SimaResizeArgmax.h"
 #include "nodes/sima/Tess.h"
 #include "pipeline/Graph.h"
 #include "pipeline/internal/Diagnostics.h"
@@ -6021,17 +6021,17 @@ std::pair<int, int> semantic_segmentation_size(const Model& model, const Model::
   return {resolved.mla_contract.width, resolved.mla_contract.height};
 }
 
-// SegFormer-style decode: one SimaResizeArgmax Node reads the MLA class scores in place.
+// SegFormer-style decode: one ResizeArgMax Node reads the MLA class scores in place.
 std::shared_ptr<Node>
 build_semantic_segmentation_node(const Model& model, const Model::Options& opt,
                                  const std::vector<internal::RouteRegion>& post_regions) {
   validate_semantic_segmentation(opt, post_regions);
-  SimaResizeArgmaxOptions decode;
+  ResizeArgMaxOptions decode;
   const auto [width, height] = semantic_segmentation_size(model, opt);
   decode.output_width = width;
   decode.output_height = height;
   decode.align_corners = opt.semantic_segmentation.align_corners;
-  return simaai::neat::nodes::SimaResizeArgmax(decode);
+  return simaai::neat::nodes::ResizeArgMax(decode);
 }
 
 // The class map that replaces the score egress: [N, H, W], UINT8 for at most 256 classes.

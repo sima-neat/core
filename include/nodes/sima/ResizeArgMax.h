@@ -1,7 +1,7 @@
 /**
  * @file
  * @ingroup nodes_sima
- * @brief `SimaResizeArgmax` Node — per-class scores to a resized semantic-segmentation class map.
+ * @brief `ResizeArgMax` Node — per-class scores to a resized semantic-segmentation class map.
  *
  * Runs the kernels-library `resize_argmax` operation on the EV74. It bilinearly resizes
  * channels-last class scores to the output size and returns the first class with the largest
@@ -21,7 +21,7 @@
 namespace simaai::neat {
 
 /**
- * @brief Construction options for a `SimaResizeArgmax` Node.
+ * @brief Construction options for a `ResizeArgMax` Node.
  *
  * The input Sample holds one `scores` tensor, `[h,w,C]` or `[N,h,w,C]` with the classes on the
  * last axis: INT8, UINT8, BF16 or FP32, dense or strided. A padded MLA output, such as the
@@ -36,7 +36,7 @@ namespace simaai::neat {
  *
  * @ingroup nodes_sima
  */
-struct SimaResizeArgmaxOptions {
+struct ResizeArgMaxOptions {
   int output_width = 0;  ///< Class-map width `W`; must be positive.
   int output_height = 0; ///< Class-map height `H`; must be positive.
   /// False (default): half-pixel centers, as PyTorch and Hugging Face use for SegFormer.
@@ -49,14 +49,14 @@ struct SimaResizeArgmaxOptions {
  *
  * @ingroup nodes_sima
  */
-class SimaResizeArgmax final : public Node, public OutputSpecProvider, public NodeContractProvider {
+class ResizeArgMax final : public Node, public OutputSpecProvider, public NodeContractProvider {
 public:
-  /// Construct with `SimaResizeArgmaxOptions`; throws `std::invalid_argument` on an empty size.
-  explicit SimaResizeArgmax(SimaResizeArgmaxOptions opt);
+  /// Construct with `ResizeArgMaxOptions`; throws `std::invalid_argument` on an empty size.
+  explicit ResizeArgMax(ResizeArgMaxOptions opt);
 
   /// Type label for this Node kind.
   std::string kind() const override {
-    return "SimaResizeArgmax";
+    return "ResizeArgMax";
   }
   /// Whether the Node negotiates static or dynamic caps.
   NodeCapsBehavior caps_behavior() const override {
@@ -74,17 +74,17 @@ public:
                              std::string* error) const override;
 
   /// Inspect the Node's options.
-  const SimaResizeArgmaxOptions& options() const {
+  const ResizeArgMaxOptions& options() const {
     return opt_;
   }
 
 private:
-  SimaResizeArgmaxOptions opt_;
+  ResizeArgMaxOptions opt_;
 };
 
 } // namespace simaai::neat
 
 namespace simaai::neat::nodes {
-/// Convenience factory for a `SimaResizeArgmax` Node.
-std::shared_ptr<simaai::neat::Node> SimaResizeArgmax(SimaResizeArgmaxOptions opt);
+/// Convenience factory for a `ResizeArgMax` Node.
+std::shared_ptr<simaai::neat::Node> ResizeArgMax(ResizeArgMaxOptions opt);
 } // namespace simaai::neat::nodes

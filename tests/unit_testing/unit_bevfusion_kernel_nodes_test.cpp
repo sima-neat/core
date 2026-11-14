@@ -1,4 +1,4 @@
-// SimaVoxelize, SimaPillarScatter, SimaBEVPoolPlan, SimaBEVPool and SimaResizeArgmax
+// SimaVoxelize, SimaPillarScatter, SimaBEVPoolPlan, SimaBEVPool and ResizeArgMax
 // Nodes: deterministic fragments, option validation, cold Scheduler admission of
 // the production requests on A65 and EV74, and the stage contract each Node
 // compiles from an ingress Sample or a producer contract. The request builders
@@ -10,7 +10,7 @@
 #include "nodes/sima/SimaArgMax.h"
 #include "nodes/sima/SimaBEVPoolPlan.h"
 #include "nodes/sima/SimaPillarScatter.h"
-#include "nodes/sima/SimaResizeArgmax.h"
+#include "nodes/sima/ResizeArgMax.h"
 #include "nodes/sima/SimaVoxelize.h"
 #include "nodes/sima/internal/LidarBevKernelRequests.h"
 #include "pipeline/GraphOptions.h"
@@ -87,8 +87,8 @@ void fragments_and_definitions() {
        {"camera2lidar", "camera_intrinsics", "img_aug_matrix", "lidar_aug_matrix"},
        {"plan"}},
       {nodes::SimaBEVPool(pool), "SimaBEVPool", "bev_pool", {"depth", "context", "plan"}, {"bev"}},
-      {nodes::SimaResizeArgmax({512, 512, false}),
-       "SimaResizeArgmax",
+      {nodes::ResizeArgMax({.output_width = 512, .output_height = 512}),
+       "ResizeArgMax",
        "resize_argmax",
        {"scores"},
        {"class_map"}},
@@ -162,8 +162,8 @@ void fragments_and_definitions() {
         SimaBEVPool node(bad);
       },
       "SimaBEVPool: output_dtype", "SimaBEVPool rejects an FP32 bev");
-  require_throws([] { SimaResizeArgmax node({0, 512, false}); }, "SimaResizeArgmax: output_width",
-                 "SimaResizeArgmax rejects an empty class map");
+  require_throws([] { ResizeArgMax node({.output_width = 0, .output_height = 512}); },
+                 "ResizeArgMax: output_width", "ResizeArgMax rejects an empty class map");
 }
 
 // --------------------------------------------------------------------------
@@ -778,7 +778,7 @@ void semantic_contracts() {
 }
 
 // --------------------------------------------------------------------------
-// SimaResizeArgmax: SegFormer-sized admission and the views it reads in place
+// ResizeArgMax: SegFormer-sized admission and the views it reads in place
 // --------------------------------------------------------------------------
 // One producer tensor whose logical view may be strided over a larger carrier.
 CompiledNodeContract strided_producer(const kr::TensorFact& fact) {
@@ -799,16 +799,22 @@ void resize_argmax_contracts() {
   const auto bf16 = fact({1, 128, 128, 150}, rt::DType::BFloat16, {4980736, 38912, 304, 2});
   struct Admission {
     kr::TensorFact scores;
-    SimaResizeArgmaxOptions options;
+    ResizeArgMaxOptions options;
     std::string label;
   };
   const std::vector<Admission> cases{
-      {int8, {512, 512, false}, "SegFormer INT8 -> 512x512"},
-      {int8, {1920, 1080, false}, "SegFormer INT8 -> 1080p"},
-      {int8, {512, 512, true}, "SegFormer INT8 align_corners"},
-      {bf16, {1280, 720, false}, "SegFormer BF16 -> 720p"},
-      {fact({1, 128, 256, 19}, rt::DType::Int8), {2048, 1024, false}, "Cityscapes INT8"},
-      {fact({128, 128, 300}, rt::DType::Float32), {512, 512, false}, "FP32 300 classes"},
+      {int8, {.output_width = 512, .output_height = 512}, "SegFormer INT8 -> 512x512"},
+      {int8, {.output_width = 1920, .output_height = 1080}, "SegFormer INT8 -> 1080p"},
+      {int8,
+       {.output_width = 512, .output_height = 512, .align_corners = true},
+       "SegFormer INT8 align_corners"},
+      {bf16, {.output_width = 1280, .output_height = 720}, "SegFormer BF16 -> 720p"},
+      {fact({1, 128, 256, 19}, rt::DType::Int8),
+       {.output_width = 2048, .output_height = 1024},
+       "Cityscapes INT8"},
+      {fact({128, 128, 300}, rt::DType::Float32),
+       {.output_width = 512, .output_height = 512},
+       "FP32 300 classes"},
   };
   for (const auto& c : cases) {
     const auto plan = kr::resize_argmax_request(c.options, Facts{c.scores});
@@ -821,38 +827,43 @@ void resize_argmax_contracts() {
   }
 
   // Graph ingress: a dense channels-last tensor.
-  auto compiled = compile(SimaResizeArgmax({64, 32, false}),
+  auto compiled = compile(ResizeArgMax({.output_width = 64, .output_height = 32}),
                           {Tensor::from_vector(std::vector<std::int8_t>(8 * 16 * 19),
                                                {1, 8, 16, 19}, TensorMemory::CPU)});
   const auto& map = compiled.kernel->runtime_contract.logical_outputs.front();
   require(map.shape == std::vector<std::int64_t>{1, 32, 64} && map.dtype == "UINT8" &&
               compiled.kernel->recipe->target == rt::Target::EV74,
-          "SimaResizeArgmax publishes a UINT8 [N,H,W] class map from the EV74");
+          "ResizeArgMax publishes a UINT8 [N,H,W] class map from the EV74");
 
   // A producer's padded view is read in place, not repacked.
-  compiled = compile_upstream(SimaResizeArgmax({512, 512, false}), strided_producer(int8));
+  compiled = compile_upstream(ResizeArgMax({.output_width = 512, .output_height = 512}),
+                              strided_producer(int8));
   auto inspected = rt::inspect_kernel(compiled.kernel->recipe->members.front().executable);
-  require(std::holds_alternative<rt::KernelInspection>(inspected), "ResizeArgmax inspection");
+  require(std::holds_alternative<rt::KernelInspection>(inspected), "ResizeArgMax inspection");
   const auto* strided =
       std::get_if<rt::Strided>(&std::get<rt::KernelInspection>(inspected).inputs().front().layout);
   require(strided && strided->strides_bytes[0] == 2621440 && strided->strides_bytes[1] == 20480 &&
               strided->strides_bytes[2] == 160 && strided->strides_bytes[3] == 1,
-          "SimaResizeArgmax must read the producer's 160-byte pixel pitch in place");
+          "ResizeArgMax must read the producer's 160-byte pixel pitch in place");
   require(compiled.kernel->runtime_contract.logical_outputs.front().shape ==
               std::vector<std::int64_t>{1, 512, 512},
-          "SimaResizeArgmax producer class map");
-  compiled = compile_upstream(SimaResizeArgmax({1280, 720, false}), strided_producer(bf16));
+          "ResizeArgMax producer class map");
+  compiled = compile_upstream(ResizeArgMax({.output_width = 1280, .output_height = 720}),
+                              strided_producer(bf16));
   require(compiled.kernel->runtime_contract.logical_outputs.front().shape ==
               std::vector<std::int64_t>{1, 720, 1280},
-          "SimaResizeArgmax reads the BF16 152-scalar pitch");
+          "ResizeArgMax reads the BF16 152-scalar pitch");
 
   // Raw integer scores rank like dequantized ones only under one positive scale.
   auto per_axis = int8;
   per_axis.quant = kr::Quantization{1.0, 0, 3, std::vector<double>(150, 0.0625),
                                     std::vector<std::int64_t>(150, 0)};
   require_throws(
-      [&] { compile_upstream(SimaResizeArgmax({512, 512, false}), strided_producer(per_axis)); },
-      "per-axis", "SimaResizeArgmax rejects per-class INT8 quantization from a producer");
+      [&] {
+        compile_upstream(ResizeArgMax({.output_width = 512, .output_height = 512}),
+                         strided_producer(per_axis));
+      },
+      "per-axis", "ResizeArgMax rejects per-class INT8 quantization from a producer");
   auto scores =
       Tensor::from_vector(std::vector<std::int8_t>(4 * 4 * 3), {1, 4, 4, 3}, TensorMemory::CPU);
   scores.semantic.quant.emplace();
@@ -863,15 +874,17 @@ void resize_argmax_contracts() {
   input.ingress.ingress_sample = sample_from_tensors({scores});
   CompiledNodeContract rejected;
   std::string error;
-  require(!SimaResizeArgmax({8, 8, false}).compile_node_contract(input, &rejected, &error),
-          "SimaResizeArgmax accepted per-class INT8 ingress");
-  require_contains(error, "per-axis", "SimaResizeArgmax ingress quantization diagnostic");
+  require(!ResizeArgMax({.output_width = 8, .output_height = 8})
+               .compile_node_contract(input, &rejected, &error),
+          "ResizeArgMax accepted per-class INT8 ingress");
+  require_contains(error, "per-axis", "ResizeArgMax ingress quantization diagnostic");
   Tensor tiled = bf16_tensor(std::vector<std::uint16_t>(16, 0x3F80), {1, 1, 1, 16});
   tiled.semantic.tess = TessSpec{{1, 1, 1, 16}, "MLA_TILED_BF16_COMPACT", {0, 1, 2, 3}, 32};
   input.ingress.ingress_sample = sample_from_tensors({tiled});
-  require(!SimaResizeArgmax({8, 8, false}).compile_node_contract(input, &rejected, &error),
-          "SimaResizeArgmax treated MLA-tiled ingress as dense");
-  require_contains(error, "detessellate", "SimaResizeArgmax tiled ingress diagnostic");
+  require(!ResizeArgMax({.output_width = 8, .output_height = 8})
+               .compile_node_contract(input, &rejected, &error),
+          "ResizeArgMax treated MLA-tiled ingress as dense");
+  require_contains(error, "detessellate", "ResizeArgMax tiled ingress diagnostic");
 }
 } // namespace
 

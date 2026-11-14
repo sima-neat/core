@@ -15,7 +15,7 @@ Release notes for the SiMa.ai Neat Library.
 
 ### Semantic segmentation {#v061-segmentation}
 
-- New `SimaResizeArgmax` node and `Model::Options::semantic_segmentation` option decode segmentation scores on the EV74. The decode bilinearly resizes per-class scores to the chosen size and returns the first class with the largest score, matching SegFormer's `interpolate` and `argmax` postprocessing. It reads padded MLA outputs in place and compares INT8 scores without dequantization. The model then returns the class map instead of the scores. Requires EV74 firmware that includes the operation. See [Semantic segmentation decode](/reference/semantic_segmentation_decode).
+- New `ResizeArgMax` node and `Model::Options::semantic_segmentation` option decode segmentation scores on the EV74. The decode bilinearly resizes per-class scores to the chosen size and returns the first class with the largest score, matching SegFormer's `interpolate` and `argmax` postprocessing. It reads padded MLA outputs in place and compares INT8 scores without dequantization. The model then returns the class map instead of the scores. Requires EV74 firmware that includes the operation. See [Semantic segmentation decode](/reference/semantic_segmentation_decode).
 
 ### Preprocessing {#v061-preproc}
 

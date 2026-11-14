@@ -1,12 +1,12 @@
 ---
 title: "語意分割解碼"
-description: "使用 SimaResizeArgmax 或 Model 語意分割選項，在 EV74 上將各類別分數轉換為縮放後的類別圖"
+description: "使用 ResizeArgMax 或 Model 語意分割選項，在 EV74 上將各類別分數轉換為縮放後的類別圖"
 sidebar_position: 9
 ---
 
 # 語意分割解碼
 
-`SimaResizeArgmax` 會將分割模型的各類別分數轉換為您所選尺寸的類別圖。它會為每個輸出像素
+`ResizeArgMax` 會將分割模型的各類別分數轉換為您所選尺寸的類別圖。它會為每個輸出像素
 以雙線性方式內插每個類別的分數，並傳回分數最大的類別。這正是 SegFormer 與類似模型在
 MLA 之後需要的解碼：先以 `interpolate(mode="bilinear")` 縮放到目標尺寸，再對類別取
 `argmax`。它產生的類別圖與 Hugging Face
@@ -54,15 +54,11 @@ model = pyneat.Model("segformer_b0_ade_512_mpk.tar.gz", options)
 
 ## 在圖中使用節點
 
-C++ 的 `nodes::SimaResizeArgmax(...)` 與 Python 的 `pyneat.nodes.sima_resize_argmax(options)`
+C++ 的 `nodes::ResizeArgMax(...)` 與 Python 的 `pyneat.nodes.resize_argmax(options)`
 會對任何符合下列合約的張量執行相同解碼。此片段會將一個分數張量 `scores` 解碼為 512 x 512
 的類別圖：
 
 ```cpp
-SimaResizeArgmaxOptions decode;
-decode.output_width = 512;
-decode.output_height = 512;
-
 InputOptions input;
 input.payload_type = PayloadType::Tensor;
 input.memory_policy = InputMemoryPolicy::Ev74;
@@ -71,7 +67,7 @@ input.caps_override = "application/vnd.simaai.tensor, representation=(string)ten
 
 Graph graph;
 graph.add(nodes::Input(input));
-graph.add(nodes::SimaResizeArgmax(decode));
+graph.add(nodes::ResizeArgMax({.output_width = 512, .output_height = 512}));
 graph.add(nodes::Output());
 auto run = graph.build(TensorList{scores});
 TensorList class_map = run.run(TensorList{scores}, 1000);

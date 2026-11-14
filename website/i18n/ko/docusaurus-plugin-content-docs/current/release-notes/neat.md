@@ -15,7 +15,7 @@ SiMa.ai Neat Library의 릴리스 노트입니다.
 
 ### 시맨틱 세그멘테이션 {#v061-segmentation}
 
-- 새 `SimaResizeArgmax` 노드와 `Model::Options::semantic_segmentation` 옵션은 EV74에서 세그멘테이션 점수를 디코딩합니다. 디코딩은 클래스별 점수를 선택한 크기로 쌍선형 크기 조정하고 점수가 가장 큰 첫 번째 클래스를 반환하며, SegFormer의 `interpolate` 및 `argmax` 후처리와 일치합니다. 패딩된 MLA 출력을 그 자리에서 읽고 INT8 점수를 역양자화 없이 비교합니다. 모델은 점수 대신 클래스 맵을 반환합니다. 이 연산을 포함하는 EV74 펌웨어가 필요합니다. [시맨틱 세그멘테이션 디코딩](/reference/semantic_segmentation_decode)을 참조하세요.
+- 새 `ResizeArgMax` 노드와 `Model::Options::semantic_segmentation` 옵션은 EV74에서 세그멘테이션 점수를 디코딩합니다. 디코딩은 클래스별 점수를 선택한 크기로 쌍선형 크기 조정하고 점수가 가장 큰 첫 번째 클래스를 반환하며, SegFormer의 `interpolate` 및 `argmax` 후처리와 일치합니다. 패딩된 MLA 출력을 그 자리에서 읽고 INT8 점수를 역양자화 없이 비교합니다. 모델은 점수 대신 클래스 맵을 반환합니다. 이 연산을 포함하는 EV74 펌웨어가 필요합니다. [시맨틱 세그멘테이션 디코딩](/reference/semantic_segmentation_decode)을 참조하세요.
 
 ### 전처리 {#v061-preproc}
 

@@ -301,7 +301,7 @@ public:
   /**
    * @brief Semantic-segmentation decode of a model's class scores (SegFormer-style).
    *
-   * When enabled, a `SimaResizeArgmax` Node on the EV74 replaces the model's dequantize or cast
+   * When enabled, a `ResizeArgMax` Node on the EV74 replaces the model's dequantize or cast
    * postprocess. It reads the MLA class scores in place, including channel padding that the
    * MPK's slice stage drops, resizes them bilinearly to the output size and returns the first
    * class with the largest score at each pixel. The model then outputs one `[N, H, W]` class

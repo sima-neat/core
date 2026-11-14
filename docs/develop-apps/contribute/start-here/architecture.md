@@ -641,7 +641,7 @@ without enabling verbose GStreamer diagnostics.
 
 Core lowers Preproc, transforms and vision stages, including ArgMax, BoxDecode,
 SuperPoint, the LiDAR/BEV kernel nodes (SimaVoxelize, SimaPillarScatter,
-SimaBEVPoolPlan and SimaBEVPool) and SimaResizeArgmax, to canonical requests and
+SimaBEVPoolPlan and SimaBEVPool) and ResizeArgMax, to canonical requests and
 explicit tensor-port mappings.
 Scheduler's generic tensor-stage engine owns GStreamer binding and publication;
 Runner owns dependencies, asynchronous execution and execution-time buffer lifetime. Core imports carrier
@@ -780,7 +780,7 @@ the normal stage recipe and `FrameLayout` execution path. `StaticSpecBuilders.cp
 shares metadata-only ingress projection and direct-input binding with `SimaArgMax`;
 these helpers neither prepare nor schedule kernels. The LiDAR/BEV node files do not
 include pipeline-private implementation headers. This split adds no per-frame work
-or payload copies. `SimaResizeArgmax` follows the same split. `Model::Options::semantic_segmentation`
+or payload copies. `ResizeArgMax` follows the same split. `Model::Options::semantic_segmentation`
 replaces a model's dequantize or cast postprocess with that node, which reads the
 MLA scores through the producer's strided view; the `Model` constructor rejects any
 other postprocess.

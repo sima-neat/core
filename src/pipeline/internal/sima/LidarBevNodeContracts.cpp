@@ -273,8 +273,8 @@ bool SimaBEVPoolPlan::compile_node_contract(const ContractCompileInput& input,
   }
 }
 
-bool SimaResizeArgmax::compile_node_contract(const ContractCompileInput& input,
-                                             CompiledNodeContract* out, std::string* error) const {
+bool ResizeArgMax::compile_node_contract(const ContractCompileInput& input,
+                                         CompiledNodeContract* out, std::string* error) const {
   try {
     std::optional<CompiledRuntimeContract> ingress;
     const auto& upstream = resolve_inputs(input, kind(), ingress);

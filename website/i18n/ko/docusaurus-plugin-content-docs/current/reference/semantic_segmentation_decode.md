@@ -1,12 +1,12 @@
 ---
 title: "시맨틱 세그멘테이션 디코딩"
-description: "SimaResizeArgmax 또는 Model 시맨틱 세그멘테이션 옵션으로 클래스별 점수를 EV74에서 크기 조정된 클래스 맵으로 변환합니다"
+description: "ResizeArgMax 또는 Model 시맨틱 세그멘테이션 옵션으로 클래스별 점수를 EV74에서 크기 조정된 클래스 맵으로 변환합니다"
 sidebar_position: 9
 ---
 
 # 시맨틱 세그멘테이션 디코딩
 
-`SimaResizeArgmax`는 세그멘테이션 모델의 클래스별 점수를 원하는 크기의 클래스 맵으로
+`ResizeArgMax`는 세그멘테이션 모델의 클래스별 점수를 원하는 크기의 클래스 맵으로
 변환합니다. 출력 픽셀마다 모든 클래스 점수를 쌍선형 보간하고 점수가 가장 큰 클래스를
 반환합니다. 이는 SegFormer와 유사한 모델이 MLA 이후에 필요로 하는 디코딩으로,
 `interpolate(mode="bilinear")`로 목표 크기까지 보간한 다음 클래스에 대해 `argmax`를
@@ -56,15 +56,11 @@ model = pyneat.Model("segformer_b0_ade_512_mpk.tar.gz", options)
 
 ## 그래프에서 노드 사용
 
-C++의 `nodes::SimaResizeArgmax(...)`와 Python의 `pyneat.nodes.sima_resize_argmax(options)`는
+C++의 `nodes::ResizeArgMax(...)`와 Python의 `pyneat.nodes.resize_argmax(options)`는
 아래 계약에 맞는 모든 텐서에 같은 디코딩을 실행합니다. 다음 조각은 점수 텐서 하나,
 `scores`를 512 x 512 클래스 맵으로 디코딩합니다.
 
 ```cpp
-SimaResizeArgmaxOptions decode;
-decode.output_width = 512;
-decode.output_height = 512;
-
 InputOptions input;
 input.payload_type = PayloadType::Tensor;
 input.memory_policy = InputMemoryPolicy::Ev74;
@@ -73,7 +69,7 @@ input.caps_override = "application/vnd.simaai.tensor, representation=(string)ten
 
 Graph graph;
 graph.add(nodes::Input(input));
-graph.add(nodes::SimaResizeArgmax(decode));
+graph.add(nodes::ResizeArgMax({.output_width = 512, .output_height = 512}));
 graph.add(nodes::Output());
 auto run = graph.build(TensorList{scores});
 TensorList class_map = run.run(TensorList{scores}, 1000);

@@ -65,7 +65,7 @@
 #include "nodes/io/StillImageInput.h"
 #include "nodes/sima/SimaRender.h"
 #include "nodes/sima/SimaArgMax.h"
-#include "nodes/sima/SimaResizeArgmax.h"
+#include "nodes/sima/ResizeArgMax.h"
 #include "nodes/sima/SimaBEVPool.h"
 #include "nodes/sima/SimaBEVPoolPlan.h"
 #include "nodes/sima/SimaPillarScatter.h"
@@ -3984,11 +3984,11 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("transmit", &simaai::neat::SimaArgMaxOptions::transmit)
       .def_rw("axis", &simaai::neat::SimaArgMaxOptions::axis)
       .def_rw("keepdims", &simaai::neat::SimaArgMaxOptions::keepdims);
-  nb::class_<simaai::neat::SimaResizeArgmaxOptions>(m, "SimaResizeArgmaxOptions")
+  nb::class_<simaai::neat::ResizeArgMaxOptions>(m, "ResizeArgMaxOptions")
       .def(nb::init<>())
-      .def_rw("output_width", &simaai::neat::SimaResizeArgmaxOptions::output_width)
-      .def_rw("output_height", &simaai::neat::SimaResizeArgmaxOptions::output_height)
-      .def_rw("align_corners", &simaai::neat::SimaResizeArgmaxOptions::align_corners);
+      .def_rw("output_width", &simaai::neat::ResizeArgMaxOptions::output_width)
+      .def_rw("output_height", &simaai::neat::ResizeArgMaxOptions::output_height)
+      .def_rw("align_corners", &simaai::neat::ResizeArgMaxOptions::align_corners);
   // Kernels-library LiDAR/BEV Nodes: one named kernels request each, on an explicit target.
   nb::enum_<simaai::neat::SimaKernelTarget>(m, "SimaKernelTarget")
       .value("A65", simaai::neat::SimaKernelTarget::A65)
@@ -4302,7 +4302,7 @@ NB_MODULE(_pyneat_core, m) {
                 "options"_a = simaai::neat::SimaRenderOptions{});
   nodes_mod.def("sima_argmax", &simaai::neat::nodes::SimaArgMax,
                 "options"_a = simaai::neat::SimaArgMaxOptions{});
-  nodes_mod.def("sima_resize_argmax", &simaai::neat::nodes::SimaResizeArgmax, "options"_a);
+  nodes_mod.def("resize_argmax", &simaai::neat::nodes::ResizeArgMax, "options"_a);
   nodes_mod.def("sima_voxelize", &simaai::neat::nodes::SimaVoxelize, "options"_a);
   nodes_mod.def("sima_pillar_scatter", &simaai::neat::nodes::SimaPillarScatter, "options"_a);
   nodes_mod.def("sima_bev_pool_plan", &simaai::neat::nodes::SimaBEVPoolPlan, "options"_a);

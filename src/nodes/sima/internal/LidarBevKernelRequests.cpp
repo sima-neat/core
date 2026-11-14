@@ -622,15 +622,15 @@ KernelRequestPlan bev_pool_request(const SimaBEVPoolOptions& opt,
   return plan;
 }
 
-void validate(const SimaResizeArgmaxOptions& opt) {
-  constexpr const char* node = "SimaResizeArgmax";
+void validate(const ResizeArgMaxOptions& opt) {
+  constexpr const char* node = "ResizeArgMax";
   if (opt.output_width <= 0 || opt.output_height <= 0)
     fail(node, "output_width and output_height must be positive");
 }
 
-KernelRequestPlan resize_argmax_request(const SimaResizeArgmaxOptions& opt,
+KernelRequestPlan resize_argmax_request(const ResizeArgMaxOptions& opt,
                                         std::span<const TensorFact> facts) {
-  constexpr const char* node = "SimaResizeArgmax";
+  constexpr const char* node = "ResizeArgMax";
   validate(opt);
   if (facts.size() != 1)
     fail(node, "requires exactly one class-score tensor, got " + std::to_string(facts.size()));

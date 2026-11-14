@@ -1,4 +1,4 @@
-// Independent ResizeArgmax oracle for the SimaResizeArgmax suites, written from the
+// Independent ResizeArgMax oracle for the ResizeArgMax suites, written from the
 // normative rule in the Kernels operation contract: PyTorch upsample_bilinear2d
 // source coordinates, the interpolation
 //   r = hy * (hx * v00 + lx * v01) + ly * (hx * v10 + lx * v11)

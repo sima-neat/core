@@ -15,7 +15,7 @@ SiMa.ai Neat Library 的版本資訊。
 
 ### 語意分割 {#v061-segmentation}
 
-- 新的 `SimaResizeArgmax` 節點與 `Model::Options::semantic_segmentation` 選項會在 EV74 上解碼分割分數。解碼會將各類別分數以雙線性方式縮放至所選尺寸，並傳回分數最大的第一個類別，與 SegFormer 的 `interpolate` 和 `argmax` 後處理一致。它會就地讀取有填補的 MLA 輸出，並在不反量化的情況下比較 INT8 分數。模型接著會傳回類別圖而非分數。需要包含此運算的 EV74 韌體。請參閱[語意分割解碼](/reference/semantic_segmentation_decode)。
+- 新的 `ResizeArgMax` 節點與 `Model::Options::semantic_segmentation` 選項會在 EV74 上解碼分割分數。解碼會將各類別分數以雙線性方式縮放至所選尺寸，並傳回分數最大的第一個類別，與 SegFormer 的 `interpolate` 和 `argmax` 後處理一致。它會就地讀取有填補的 MLA 輸出，並在不反量化的情況下比較 INT8 分數。模型接著會傳回類別圖而非分數。需要包含此運算的 EV74 韌體。請參閱[語意分割解碼](/reference/semantic_segmentation_decode)。
 
 ### 前處理 {#v061-preproc}
 

@@ -1,12 +1,12 @@
 ---
 title: "セマンティックセグメンテーションのデコード"
-description: "SimaResizeArgmax または Model のセマンティックセグメンテーションオプションで、クラスごとのスコアを EV74 上でリサイズしたクラスマップに変換する"
+description: "ResizeArgMax または Model のセマンティックセグメンテーションオプションで、クラスごとのスコアを EV74 上でリサイズしたクラスマップに変換する"
 sidebar_position: 9
 ---
 
 # セマンティックセグメンテーションのデコード
 
-`SimaResizeArgmax` は、セグメンテーションモデルのクラスごとのスコアを、指定した
+`ResizeArgMax` は、セグメンテーションモデルのクラスごとのスコアを、指定した
 サイズのクラスマップに変換します。出力ピクセルごとに各クラスのスコアをバイリニア
 補間し、スコアが最大のクラスを返します。これは SegFormer などのモデルが MLA の後に
 必要とするデコードで、`interpolate(mode="bilinear")` で目的のサイズへ補間してから、
@@ -60,15 +60,11 @@ model = pyneat.Model("segformer_b0_ade_512_mpk.tar.gz", options)
 
 ## グラフでノードを使う
 
-C++ の `nodes::SimaResizeArgmax(...)` と Python の `pyneat.nodes.sima_resize_argmax(options)`
+C++ の `nodes::ResizeArgMax(...)` と Python の `pyneat.nodes.resize_argmax(options)`
 は、以下の契約を満たす任意のテンソルに同じデコードを実行します。次のフラグメントは、
 1 つのスコアテンソル `scores` を 512 x 512 のクラスマップにデコードします。
 
 ```cpp
-SimaResizeArgmaxOptions decode;
-decode.output_width = 512;
-decode.output_height = 512;
-
 InputOptions input;
 input.payload_type = PayloadType::Tensor;
 input.memory_policy = InputMemoryPolicy::Ev74;
@@ -77,7 +73,7 @@ input.caps_override = "application/vnd.simaai.tensor, representation=(string)ten
 
 Graph graph;
 graph.add(nodes::Input(input));
-graph.add(nodes::SimaResizeArgmax(decode));
+graph.add(nodes::ResizeArgMax({.output_width = 512, .output_height = 512}));
 graph.add(nodes::Output());
 auto run = graph.build(TensorList{scores});
 TensorList class_map = run.run(TensorList{scores}, 1000);

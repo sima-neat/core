@@ -1,4 +1,4 @@
-// SimaResizeArgmax hardware suite: the public Graph/Node/Run API on the EV74,
+// ResizeArgMax hardware suite: the public Graph/Node/Run API on the EV74,
 // compared byte for byte with the independent oracle. Covers the SegFormer MLA
 // score layouts (INT8 pitch 160, BF16 pitch 152), both index widths,
 // align_corners, ties and NaN, batches, frame sequences on one Run, borrowed
@@ -105,7 +105,7 @@ neat::Tensor tensor(const Scores& s) {
   return result;
 }
 
-std::vector<std::int32_t> expected(const Scores& s, const neat::SimaResizeArgmaxOptions& o) {
+std::vector<std::int32_t> expected(const Scores& s, const neat::ResizeArgMaxOptions& o) {
   const bool batched = s.shape.size() == 4;
   const auto at = [&](std::size_t i) { return static_cast<std::size_t>(s.shape[i]); };
   rr::Input in;
@@ -122,7 +122,7 @@ std::vector<std::int32_t> expected(const Scores& s, const neat::SimaResizeArgmax
                            static_cast<std::size_t>(o.output_width), o.align_corners);
 }
 
-void check(const neat::TensorList& output, const Scores& s, const neat::SimaResizeArgmaxOptions& o,
+void check(const neat::TensorList& output, const Scores& s, const neat::ResizeArgMaxOptions& o,
            const std::string& what) {
   bt::require(output.size() == 1, what + ": one class map");
   std::vector<std::int64_t> shape;
@@ -141,8 +141,8 @@ void check(const neat::TensorList& output, const Scores& s, const neat::SimaResi
   }
 }
 
-void run(const Scores& s, const neat::SimaResizeArgmaxOptions& o, const std::string& what) {
-  const auto outputs = bt::execute(neat::nodes::SimaResizeArgmax(o), {{tensor(s)}});
+void run(const Scores& s, const neat::ResizeArgMaxOptions& o, const std::string& what) {
+  const auto outputs = bt::execute(neat::nodes::ResizeArgMax(o), {{tensor(s)}});
   bt::require(outputs.size() == 1, what + ": one output per push");
   check(outputs.front(), s, o, what);
 }
@@ -150,46 +150,51 @@ void run(const Scores& s, const neat::SimaResizeArgmaxOptions& o, const std::str
 using D = neat::TensorDType;
 
 void segformer_int8_pitch160() {
-  run(make_scores(D::Int8, {1, 16, 16, 150}, 160, 1), {64, 64, false}, "INT8 pitch 160");
+  run(make_scores(D::Int8, {1, 16, 16, 150}, 160, 1), {.output_width = 64, .output_height = 64},
+      "INT8 pitch 160");
 }
 void segformer_bf16_pitch152() {
-  run(make_scores(D::BFloat16, {1, 12, 12, 150}, 152, 2, 0, 24), {80, 45, false},
-      "BF16 pitch 152 with NaN");
+  run(make_scores(D::BFloat16, {1, 12, 12, 150}, 152, 2, 0, 24),
+      {.output_width = 80, .output_height = 45}, "BF16 pitch 152 with NaN");
 }
 void int32_indices() {
-  run(make_scores(D::Float32, {1, 6, 7, 300}, 0, 3, 0, 5), {11, 13, false},
-      "FP32 300 classes -> INT32");
+  run(make_scores(D::Float32, {1, 6, 7, 300}, 0, 3, 0, 5),
+      {.output_width = 11, .output_height = 13}, "FP32 300 classes -> INT32");
 }
 void align_corners_ties() {
-  run(make_scores(D::UInt8, {1, 6, 6, 9}, 0, 4, 2), {17, 13, true}, "UINT8 align_corners ties");
-  run(make_scores(D::Int8, {1, 8, 8, 19}, 0, 5, 4), {32, 32, false}, "INT8 tie-heavy");
+  run(make_scores(D::UInt8, {1, 6, 6, 9}, 0, 4, 2),
+      {.output_width = 17, .output_height = 13, .align_corners = true}, "UINT8 align_corners ties");
+  run(make_scores(D::Int8, {1, 8, 8, 19}, 0, 5, 4), {.output_width = 32, .output_height = 32},
+      "INT8 tie-heavy");
 }
 void rank3_and_batch() {
-  run(make_scores(D::Int8, {8, 8, 19}, 0, 6), {32, 24, false}, "rank-3 scores");
-  run(make_scores(D::Int8, {2, 8, 8, 19}, 32, 7), {32, 32, false}, "batch 2, pitch 32");
+  run(make_scores(D::Int8, {8, 8, 19}, 0, 6), {.output_width = 32, .output_height = 24},
+      "rank-3 scores");
+  run(make_scores(D::Int8, {2, 8, 8, 19}, 32, 7), {.output_width = 32, .output_height = 32},
+      "batch 2, pitch 32");
 }
 void frame_sequence() {
-  const neat::SimaResizeArgmaxOptions o{96, 64, false};
+  const neat::ResizeArgMaxOptions o{.output_width = 96, .output_height = 64};
   std::vector<Scores> frames;
   std::vector<neat::TensorList> tensors;
   for (std::uint32_t f = 0; f < 3; ++f) {
     frames.push_back(make_scores(D::Int8, {1, 16, 16, 150}, 160, 10 + f));
     tensors.push_back({tensor(frames.back())});
   }
-  const auto outputs = bt::execute(neat::nodes::SimaResizeArgmax(o), tensors);
+  const auto outputs = bt::execute(neat::nodes::ResizeArgMax(o), tensors);
   bt::require(outputs.size() == frames.size(), "frame sequence: one output per push");
   for (std::size_t f = 0; f < frames.size(); ++f)
     check(outputs[f], frames[f], o, "frame " + std::to_string(f));
 }
 void retained_outputs() {
-  const neat::SimaResizeArgmaxOptions o{64, 64, false};
+  const neat::ResizeArgMaxOptions o{.output_width = 64, .output_height = 64};
   std::vector<Scores> frames;
   std::vector<neat::TensorList> tensors;
   for (std::uint32_t f = 0; f < 6; ++f) {
     frames.push_back(make_scores(D::Int8, {1, 16, 16, 150}, 160, 20 + f));
     tensors.push_back({tensor(frames.back())});
   }
-  bt::execute_retained(neat::nodes::SimaResizeArgmax(o), tensors,
+  bt::execute_retained(neat::nodes::ResizeArgMax(o), tensors,
                        [&](const neat::TensorList& output, std::size_t frame) {
                          check(output, frames[frame], o, "retained " + std::to_string(frame));
                        });
@@ -200,13 +205,14 @@ void admission_failures() {
   per_class.semantic.quant->axis = 3;
   per_class.semantic.quant->scales = {0.5f, 0.25f, 0.125f};
   per_class.semantic.quant->zero_points = {0, 0, 0};
-  bt::expect_rejected(neat::nodes::SimaResizeArgmax({8, 8, false}), {per_class}, "per-axis",
-                      "per-class INT8 quantization");
-  bt::expect_rejected(neat::nodes::SimaResizeArgmax({8, 8, false}),
+  bt::expect_rejected(neat::nodes::ResizeArgMax({.output_width = 8, .output_height = 8}),
+                      {per_class}, "per-axis", "per-class INT8 quantization");
+  bt::expect_rejected(neat::nodes::ResizeArgMax({.output_width = 8, .output_height = 8}),
                       {tensor(make_scores(D::Int8, {4, 3}, 0, 31))}, "[h,w,C] or [N,h,w,C]",
                       "rank-2 scores");
-  bt::expect_invalid_options([] { neat::nodes::SimaResizeArgmax({0, 8, false}); },
-                             "SimaResizeArgmax: output_width", "empty class map");
+  bt::expect_invalid_options(
+      [] { neat::nodes::ResizeArgMax({.output_width = 0, .output_height = 8}); },
+      "ResizeArgMax: output_width", "empty class map");
 }
 } // namespace
 

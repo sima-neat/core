@@ -1,5 +1,5 @@
 // The exact named kernels-library requests behind the SimaVoxelize, SimaPillarScatter,
-// SimaBEVPoolPlan, SimaBEVPool and SimaResizeArgmax Nodes, and the hand-computed known answers of
+// SimaBEVPoolPlan, SimaBEVPool and ResizeArgMax Nodes, and the hand-computed known answers of
 // the independent references their numerical tests use. Pure: no Scheduler call, GStreamer or
 // device, so it runs on any host that has the Scheduler client value-type headers.
 #include "nodes/sima/internal/LidarBevKernelRequests.h"
@@ -732,7 +732,7 @@ void published_quantization() {
 // channels as a strided view, which the request must carry unchanged.
 void resize_argmax_request() {
   using Facts = std::vector<kr::TensorFact>;
-  SimaResizeArgmaxOptions opt;
+  ResizeArgMaxOptions opt;
   opt.output_width = 1280;
   opt.output_height = 720;
   auto segformer = fact({1, 128, 128, 150}, rt::DType::Int8, {2621440, 20480, 160, 1});
@@ -802,7 +802,7 @@ void resize_argmax_request() {
                  "resize_argmax rejects an empty output size");
   opt.output_width = 1280;
   opt.output_height = -1;
-  require_throws([&] { kr::validate(opt); }, "SimaResizeArgmax: output_width",
+  require_throws([&] { kr::validate(opt); }, "ResizeArgMax: output_width",
                  "resize_argmax rejects a negative output height");
 }
 

@@ -1,12 +1,12 @@
 ---
 title: Semantic segmentation decode
-description: Turn per-class scores into a resized class map on the EV74 with SimaResizeArgmax or the Model semantic_segmentation options
+description: Turn per-class scores into a resized class map on the EV74 with ResizeArgMax or the Model semantic_segmentation options
 sidebar_position: 9
 ---
 
 # Semantic segmentation decode
 
-`SimaResizeArgmax` turns a segmentation model's per-class scores into a class map
+`ResizeArgMax` turns a segmentation model's per-class scores into a class map
 at the size you choose. For each output pixel it bilinearly interpolates every
 class score and returns the class with the largest score. This is the decode that
 SegFormer and similar models need after the MLA: `interpolate(mode="bilinear")` to
@@ -60,15 +60,11 @@ model output is a single class-map tensor, `[N,H,W]`, and
 
 ## Use the node in a graph
 
-`nodes::SimaResizeArgmax(...)` in C++ and `pyneat.nodes.sima_resize_argmax(options)`
+`nodes::ResizeArgMax(...)` in C++ and `pyneat.nodes.resize_argmax(options)`
 in Python run the same decode on any tensor that matches the contract below. This
 fragment decodes one score tensor, `scores`, into a 512 by 512 class map:
 
 ```cpp
-SimaResizeArgmaxOptions decode;
-decode.output_width = 512;
-decode.output_height = 512;
-
 InputOptions input;
 input.payload_type = PayloadType::Tensor;
 input.memory_policy = InputMemoryPolicy::Ev74;
@@ -77,7 +73,7 @@ input.caps_override = "application/vnd.simaai.tensor, representation=(string)ten
 
 Graph graph;
 graph.add(nodes::Input(input));
-graph.add(nodes::SimaResizeArgmax(decode));
+graph.add(nodes::ResizeArgMax({.output_width = 512, .output_height = 512}));
 graph.add(nodes::Output());
 auto run = graph.build(TensorList{scores});
 TensorList class_map = run.run(TensorList{scores}, 1000);
