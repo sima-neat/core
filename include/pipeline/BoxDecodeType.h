@@ -53,6 +53,21 @@ namespace simaai::neat {
  * contiguous prefix selection; both SSD-Mobile recipes and SSDlite-Mobile-320 require the exact
  * encoded class count.
  *
+ * `MobileSam`, `EdgeTam`, `EfficientSam` and `EfficientSam3` decode the Segment Anything models
+ * of those names. A prompt decoder's mask logits (H,W > 1, C = 1, 3 or 4 masks), C IoU
+ * predictions and an optional object score become exactly one detection whose mask has the
+ * original image size. `Model::Options::multimask_output` mirrors upstream
+ * `predict(multimask_output=...)`: `true` keeps the multimask channel with the best IoU, `false`
+ * the single-mask answer (mask 0 for MobileSAM; the SAM2 stability rule for EdgeTAM and an
+ * EfficientSAM3 four-mask decoder; EfficientSAM has no single-mask token). An object score of 0
+ * or below empties the mask. An `EfficientSam3` concept image model (detections and per-query
+ * logits) keeps up to `top_k` queries above the score threshold, each with its own mask. The
+ * canvas, original size and resize come from the inputs' `semantic.preprocess`: MobileSAM needs
+ * a top-left letterbox, the others a stretch. The output is a versioned masks payload
+ * (`SegmentationMasksHeaderV1`). A prompt decoder's record box spans the mask pixels (x and y of
+ * the first pixel, width and height in pixels) and is all zero for an empty mask; concept boxes
+ * come from the detection head.
+ *
  * @ingroup pipeline
  */
 enum class BoxDecodeType : std::int32_t {
@@ -86,6 +101,10 @@ enum class BoxDecodeType : std::int32_t {
   YoloXSegPose = 24, ///< YOLOX packed export carrying box, mask and keypoint heads together.
   YoloV8Obb = 26,    ///< YOLOv8/YOLO11 oriented boxes: DFL and angle logits, rotated Fast-NMS.
   DetrFocal = 27, ///< Normalized cxcywh + class logits; sigmoid global query/class top-K, no NMS.
+  MobileSam = 28, ///< MobileSAM prompt decoder (top-left letterbox).
+  EdgeTam = 29,   ///< EdgeTAM mask decoder, with its object score gate (stretch).
+  EfficientSam = 30,  ///< EfficientSAM prompt decoder: three multimask tokens (stretch).
+  EfficientSam3 = 31, ///< EfficientSAM3 prompt decoder or concept image model (stretch).
 };
 
 /**
@@ -191,6 +210,14 @@ constexpr const char* box_decode_type_token(BoxDecodeType type) {
     return "detr";
   case BoxDecodeType::DetrFocal:
     return "detr-focal";
+  case BoxDecodeType::MobileSam:
+    return "mobilesam";
+  case BoxDecodeType::EdgeTam:
+    return "edgetam";
+  case BoxDecodeType::EfficientSam:
+    return "efficientsam";
+  case BoxDecodeType::EfficientSam3:
+    return "efficientsam3";
   case BoxDecodeType::EffDet:
     return "effdet";
   case BoxDecodeType::RcnnStage1:
@@ -259,6 +286,10 @@ constexpr bool box_decode_type_is_yolo_family(BoxDecodeType type) {
   case BoxDecodeType::SuperPoint:
   case BoxDecodeType::Detr:
   case BoxDecodeType::DetrFocal:
+  case BoxDecodeType::MobileSam:
+  case BoxDecodeType::EdgeTam:
+  case BoxDecodeType::EfficientSam:
+  case BoxDecodeType::EfficientSam3:
   case BoxDecodeType::EffDet:
   case BoxDecodeType::RcnnStage1:
   case BoxDecodeType::Centernet:
@@ -288,6 +319,10 @@ constexpr bool box_decode_type_is_segmentation(BoxDecodeType type) {
   case BoxDecodeType::YoloV10Seg:
   case BoxDecodeType::YoloV26Seg:
   case BoxDecodeType::YoloXSegPose:
+  case BoxDecodeType::MobileSam:
+  case BoxDecodeType::EdgeTam:
+  case BoxDecodeType::EfficientSam:
+  case BoxDecodeType::EfficientSam3:
     return true;
   case BoxDecodeType::Yolo:
   case BoxDecodeType::YoloV5:
@@ -341,6 +376,10 @@ constexpr bool box_decode_type_is_pose(BoxDecodeType type) {
   case BoxDecodeType::SuperPoint:
   case BoxDecodeType::Detr:
   case BoxDecodeType::DetrFocal:
+  case BoxDecodeType::MobileSam:
+  case BoxDecodeType::EdgeTam:
+  case BoxDecodeType::EfficientSam:
+  case BoxDecodeType::EfficientSam3:
   case BoxDecodeType::EffDet:
   case BoxDecodeType::RcnnStage1:
   case BoxDecodeType::Centernet:
@@ -417,6 +456,16 @@ constexpr const char* box_decode_type_contract_summary(BoxDecodeType type) {
   case BoxDecodeType::Detr:
     return "DETR contract: four box logits and N+1 class logits on one query grid; "
            "background-aware softmax, N foreground classes, stretch resize, no NMS.";
+  case BoxDecodeType::MobileSam:
+  case BoxDecodeType::EdgeTam:
+  case BoxDecodeType::EfficientSam:
+  case BoxDecodeType::EfficientSam3:
+    return "Segment Anything contract: prompt-decoder mask logits [h,w,C] (C = 1, 3 or 4), C IoU "
+           "predictions and an optional object score give one detection, the chosen mask at "
+           "original image size with its tight box and IoU; multimask_output picks the best "
+           "multimask IoU or the single-mask answer. An EfficientSAM3 concept image model "
+           "(detections [Q,6], logits [h,w,Q]) gives up to top_k masks. MobileSAM needs a "
+           "top-left letterbox, the others a stretch, read from semantic.preprocess.";
   case BoxDecodeType::EffDet:
   case BoxDecodeType::RcnnStage1:
   case BoxDecodeType::Centernet:

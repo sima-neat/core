@@ -10,4 +10,8 @@ namespace simaai::neat::pipeline_internal::sima {
 void attach_boxdecode_geometry_resolver(KernelStageRecipe&, std::size_t member,
                                         BoxDecodeGeometryOptions, bool original_size_from_metadata,
                                         bool require_resize_metadata);
+// For outputs sized by the original image (Segment Anything). The prepared plan keeps
+// its image size; a frame whose metadata reports another size fails loudly.
+void attach_boxdecode_fixed_image_guard(KernelStageRecipe&, std::size_t member, int original_width,
+                                        int original_height);
 } // namespace simaai::neat::pipeline_internal::sima

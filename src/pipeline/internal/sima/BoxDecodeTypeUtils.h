@@ -45,6 +45,15 @@ bool is_box_decode_type_specified(BoxDecodeType type);
 /// Numerical per-head compatibility remains a Kernels admission responsibility.
 bool box_decode_type_uses_per_port_dtype(BoxDecodeType type);
 
+/// True for the Segment Anything decode types (`MobileSam`, `EdgeTam`, `EfficientSam`,
+/// `EfficientSam3`). Their masks have the original image size, so geometry is fixed per plan.
+/// A prompt decoder uses the Kernels profile `sam_mask`; an EfficientSAM3 concept image model,
+/// recognized by its detections and per-query logits, uses `sam_concept`.
+bool box_decode_type_is_sam(BoxDecodeType type);
+
+/// Model name for messages: "MobileSAM", "EdgeTAM", "EfficientSAM" or "EfficientSAM3".
+const char* box_decode_type_sam_model_name(BoxDecodeType type);
+
 /// True when the option implies all class-score channels live in the same domain (e.g.,
 /// post-sigmoid).
 bool is_box_decode_type_option_requires_uniform_score_domain(BoxDecodeTypeOption option);

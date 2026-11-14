@@ -598,8 +598,34 @@ void benchmark_disabled_resize_keeps_decode_recipe_geometry() {
   require(default_boxdecode_resize_mode(BoxDecodeType::YoloV26Obb) == ResizeMode::Letterbox &&
               default_boxdecode_resize_mode(BoxDecodeType::Ssd) == ResizeMode::Stretch &&
               default_boxdecode_resize_mode(BoxDecodeType::Detr) == ResizeMode::Stretch &&
-              default_boxdecode_resize_mode(BoxDecodeType::DetrFocal) == ResizeMode::Stretch,
-          "canonical recipe defaults must not change SSD/DETR or OBB geometry");
+              default_boxdecode_resize_mode(BoxDecodeType::DetrFocal) == ResizeMode::Stretch &&
+              default_boxdecode_resize_mode(BoxDecodeType::MobileSam) == ResizeMode::Letterbox &&
+              default_boxdecode_resize_mode(BoxDecodeType::EdgeTam) == ResizeMode::Stretch &&
+              default_boxdecode_resize_mode(BoxDecodeType::EfficientSam) == ResizeMode::Stretch &&
+              default_boxdecode_resize_mode(BoxDecodeType::EfficientSam3) == ResizeMode::Stretch,
+          "canonical recipe defaults must not change SSD/DETR or OBB geometry; SAM models keep "
+          "their encoder resize");
+  // A SAM decoder benchmark feeds its encoder's geometry: MobileSAM's top-left
+  // letterbox on 1024, a stretch to 1024 (EdgeTAM, EfficientSAM) or 1008 (EfficientSAM3).
+  const auto sam = internal::sam_benchmark_preprocess_meta(BoxDecodeType::MobileSam, 1280, 720);
+  require(sam.resize_mode == "letterbox" && sam.original_width == 1280 &&
+              sam.original_height == 720 && sam.resized_width == 1024 && sam.scaled_width == 1024 &&
+              sam.scaled_height == 576 && sam.pad_left == 0 && sam.pad_top == 0 &&
+              sam.pad_right == 0 && sam.pad_bottom == 448 && sam.affine_m00 == 1.25 &&
+              sam.affine_m11 == 1.25 && sam.affine_m02 == 0.0 && sam.affine_m12 == 0.0,
+          "MobileSAM benchmark geometry must be the top-left letterbox of the source");
+  for (const auto& [type, side] :
+       {std::pair{BoxDecodeType::EdgeTam, 1024}, std::pair{BoxDecodeType::EfficientSam, 1024},
+        std::pair{BoxDecodeType::EfficientSam3, 1008}}) {
+    const auto stretch = internal::sam_benchmark_preprocess_meta(type, 1280, 720);
+    require(stretch.resize_mode == "stretch" && stretch.original_width == 1280 &&
+                stretch.original_height == 720 && stretch.resized_width == side &&
+                stretch.resized_height == side && stretch.scaled_width == side &&
+                stretch.scaled_height == side && stretch.pad_right == 0 &&
+                stretch.pad_bottom == 0 && stretch.affine_m00 == 1280.0 / side &&
+                stretch.affine_m11 == 720.0 / side,
+            "EdgeTAM/EfficientSAM/EfficientSAM3 benchmark geometry must stretch the source");
+  }
   geometry_options.resize_mode = ResizeMode::Stretch;
   const auto explicit_meta =
       internal::resolve_benchmark_preprocess_meta(tensor, plan, {}, geometry_options);

@@ -8,7 +8,10 @@
 #include <array>
 #include <iostream>
 #include <limits>
+#include <optional>
 #include <stdexcept>
+#include <string>
+#include <utility>
 
 namespace {
 namespace k = simaai::scheduler::client;
@@ -314,12 +317,91 @@ void letterbox_placement() {
     require(!core::boxdecode_supports_detection_transform(type),
             "auxiliary or proposal payload implicitly admitted an explicit transform");
 }
+// Segment Anything geometry comes only from published preprocess facts: a
+// top-left letterbox (MobileSAM) or a stretch (EdgeTAM, EfficientSAM,
+// EfficientSAM3); the model size is the canvas, never a tensor-shape ratio.
+void sam_geometry() {
+  using simaai::neat::BoxDecodeType;
+  using simaai::neat::ResizeMode;
+  // The error names the encoder preprocess setting the model needs.
+  const auto fails = [](BoxDecodeType type, const simaai::neat::PreprocessRuntimeMeta& facts,
+                        core::BoxDecodeGeometryOptions requested, const char* message = "") {
+    try {
+      (void)core::sam_boxdecode_geometry(type, facts, requested);
+    } catch (const std::invalid_argument& error) {
+      return std::string(error.what()).find(message) != std::string::npos;
+    }
+    return false;
+  };
+  simaai::neat::PreprocessRuntimeMeta letterbox;
+  letterbox.resize_mode = "letterbox";
+  letterbox.original_width = 1280;
+  letterbox.original_height = 720;
+  letterbox.resized_width = letterbox.resized_height = 1024;
+  letterbox.scaled_width = 1024;
+  letterbox.scaled_height = 576;
+  letterbox.pad_bottom = 448;
+  auto g = core::sam_boxdecode_geometry(BoxDecodeType::MobileSam, letterbox, {});
+  require(g.resize == ResizeMode::Letterbox && g.model_width == 1024 && g.model_height == 1024 &&
+              g.original_width == 1280 && g.original_height == 720 && !g.complete_geometry,
+          "MobileSAM top-left letterbox geometry");
+  constexpr const char* kTopLeft =
+      "MobileSAM needs the image preprocessed with resize.mode=Letterbox and "
+      "resize.placement=TopLeft on the Model that preprocesses it";
+  auto centered = letterbox;
+  centered.pad_top = centered.pad_bottom = 224;
+  require(fails(BoxDecodeType::MobileSam, centered, {}, kTopLeft),
+          "a centered letterbox must be rejected with the MobileSAM encoder setting");
+  core::BoxDecodeGeometryOptions transform;
+  transform.model_to_original = std::array<float, 4>{1.25f, 1.25f, 0.f, 0.f};
+  require(fails(BoxDecodeType::MobileSam, letterbox, transform, "explicit model-to-original"),
+          "an explicit transform must be rejected");
+  for (const auto& [type, model] : {std::pair{BoxDecodeType::EdgeTam, "EdgeTAM"},
+                                    std::pair{BoxDecodeType::EfficientSam, "EfficientSAM"},
+                                    std::pair{BoxDecodeType::EfficientSam3, "EfficientSAM3"}})
+    require(fails(type, letterbox, {},
+                  (std::string(model) + " needs the image preprocessed with resize.mode=Stretch")
+                      .c_str()),
+            "a letterbox must be rejected with the stretch encoder setting");
+  simaai::neat::PreprocessRuntimeMeta stretch;
+  stretch.resize_mode = "stretch";
+  stretch.original_width = 640;
+  stretch.original_height = 480;
+  stretch.resized_width = stretch.resized_height = 1008;
+  require(fails(BoxDecodeType::MobileSam, stretch, {}, kTopLeft),
+          "a stretch must be rejected with the MobileSAM encoder setting");
+  for (const auto type :
+       {BoxDecodeType::EdgeTam, BoxDecodeType::EfficientSam, BoxDecodeType::EfficientSam3}) {
+    // A decoder Model's nominal Letterbox resize does not override the facts.
+    core::BoxDecodeGeometryOptions nominal;
+    nominal.resize = ResizeMode::Letterbox;
+    g = core::sam_boxdecode_geometry(type, stretch, nominal);
+    require(g.resize == ResizeMode::Stretch && g.model_width == 1008 && g.model_height == 1008 &&
+                g.original_width == 640 && g.original_height == 480,
+            "1008 stretch geometry");
+  }
+  core::BoxDecodeGeometryOptions requested;
+  requested.model_width = requested.model_height = 1024;
+  require(fails(BoxDecodeType::EdgeTam, stretch, requested, "model size differs"),
+          "a model size other than the published canvas must be rejected");
+  requested = {};
+  requested.original_width = 1920;
+  requested.original_height = 1080;
+  require(fails(BoxDecodeType::EdgeTam, stretch, requested, "original image size conflicts"),
+          "an original size other than the published one must be rejected");
+  auto crop = stretch;
+  crop.resize_mode = "crop";
+  require(fails(BoxDecodeType::EfficientSam, crop, {}, "report resize_mode 'crop'"),
+          "crop is not a SAM geometry");
+}
 } // namespace
 int main(int argc, char** argv) {
   gst_init(&argc, &argv);
   try {
     letterbox_placement();
     std::cout << "BoxDecode letterbox placement passed\n";
+    sam_geometry();
+    std::cout << "BoxDecode Segment Anything geometry passed\n";
     geometry();
     geometry(true);
     std::cout << "BoxDecode complete geometry and retained variant cache passed\n";

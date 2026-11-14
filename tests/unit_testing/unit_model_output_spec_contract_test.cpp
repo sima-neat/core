@@ -1,11 +1,15 @@
 #include "model/Model.h"
+#include "model/internal/ModelInternal.h"
 #include "model_archive_fixture_utils.h"
+#include "sam_decoder_fixtures.h"
 #include "test_main.h"
 #include "test_utils.h"
 
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <stdexcept>
+#include <string>
 #include <vector>
 
 namespace {
@@ -34,6 +38,112 @@ std::string shape_to_string(const std::vector<int64_t>& shape) {
 RUN_TEST(
     "unit_model_output_spec_contract_test", ([] {
       using namespace simaai::neat;
+
+      {
+        // Options::boxdecode_raw_outputs: an EdgeTAM decoder returns the BoxDecode
+        // tensor, then exactly the tensors the same Model returns without BoxDecode.
+        const auto fixture = sima_test::make_model_archive_fixture(
+            "edgetam_boxdecode_raw_outputs",
+            {{"etc/edgetam_mask_decoder_mpk.json", sam_test::edgetam_decoder_mpk()}}, true);
+        Model raw_model(fixture.tar_path);
+        const auto raw = raw_model.output_specs();
+        const std::vector<std::vector<int64_t>> shapes = {
+            {1, 256, 256, 4}, {1, 4}, {1, 1}, {1, 4, 256}};
+        require(raw.size() == shapes.size(),
+                "EdgeTAM without BoxDecode must return its four decoder outputs, got " +
+                    std::to_string(raw.size()));
+        for (std::size_t i = 0; i < raw.size(); ++i)
+          require(raw[i].dtypes == std::vector<TensorDType>{TensorDType::Float32} &&
+                      raw[i].shape == shapes[i],
+                  "EdgeTAM raw output " + std::to_string(i) + " is " +
+                      shape_to_string(raw[i].shape));
+        Model::Options options;
+        options.decode_type = BoxDecodeType::EdgeTam;
+        Model decoded(fixture.tar_path, options);
+        require(decoded.output_specs().size() == 1U,
+                "BoxDecode without raw outputs must keep one output");
+        options.boxdecode_raw_outputs = true;
+        Model both(fixture.tar_path, options);
+        const auto specs = both.output_specs();
+        require(specs.size() == 1U + raw.size() &&
+                    specs.front().dtypes == std::vector<TensorDType>{TensorDType::UInt8},
+                "BoxDecode with raw outputs must return the BoxDecode tensor first");
+        for (std::size_t i = 0; i < raw.size(); ++i)
+          require(specs[1 + i].dtypes == raw[i].dtypes && specs[1 + i].shape == raw[i].shape,
+                  "raw output " + std::to_string(i) + " differs from the route without BoxDecode");
+        const auto contract = internal::ModelAccess::build_boxdecode_stage_contract(both, false);
+        require(contract.payload.raw_outputs.size() == raw.size(),
+                "the BoxDecode stage must publish one raw output per input");
+        for (std::size_t i = 0; i < raw.size(); ++i)
+          require(contract.payload.raw_outputs[i].dtype == "FP32" &&
+                      contract.payload.raw_outputs[i].shape == shapes[i] &&
+                      !contract.payload.raw_outputs[i].name.empty(),
+                  "raw output " + std::to_string(i) + " lost its name, dtype or shape");
+        require(internal::ModelAccess::build_boxdecode_stage_contract(decoded, false)
+                    .payload.raw_outputs.empty(),
+                "the default BoxDecode stage must publish no raw outputs");
+      }
+
+      {
+        // Options::multimask_output maps per model when the BoxDecode stage is
+        // built; a choice the model cannot make fails there, by name.
+        struct Choice {
+          const char* tag;
+          std::string mpk;
+          BoxDecodeType type;
+          bool multimask;
+          const char* rejection;
+        };
+        const Choice choices[] = {
+            {"mobilesam", sam_test::kMobileSamDecoderMpk, BoxDecodeType::MobileSam, false, nullptr},
+            {"edgetam", sam_test::edgetam_decoder_mpk(), BoxDecodeType::EdgeTam, false, nullptr},
+            {"efficientsam", sam_test::efficientsam_decoder_mpk(), BoxDecodeType::EfficientSam,
+             true, nullptr},
+            {"efficientsam", sam_test::efficientsam_decoder_mpk(), BoxDecodeType::EfficientSam,
+             false, "EfficientSAM exports no single-mask token"},
+            {"efficientsam", sam_test::efficientsam_decoder_mpk(), BoxDecodeType::EfficientSam3,
+             false, "EfficientSAM3 decoder with three mask channels exports no single-mask token"},
+            {"efficientsam", sam_test::efficientsam_decoder_mpk(), BoxDecodeType::MobileSam, true,
+             "MobileSAM decoders export 1 or 4 mask channels; this one has 3"}};
+        for (const auto& c : choices) {
+          const auto fixture = sima_test::make_model_archive_fixture(
+              std::string("sam_multimask_") + c.tag,
+              {{std::string("etc/") + c.tag + "_decoder_mpk.json", c.mpk}}, true);
+          Model::Options options;
+          options.decode_type = c.type;
+          options.multimask_output = c.multimask;
+          std::string error;
+          try {
+            Model model(fixture.tar_path, options);
+            const auto contract =
+                internal::ModelAccess::build_boxdecode_stage_contract(model, false);
+            require(contract.payload.multimask_output == c.multimask,
+                    std::string(c.tag) + ": the stage lost multimask_output");
+          } catch (const std::exception& e) {
+            error = e.what();
+          }
+          if (c.rejection)
+            require(error.find(c.rejection) != std::string::npos,
+                    std::string(c.tag) + " must reject multimask_output with \"" + c.rejection +
+                        "\", got \"" + error + "\"");
+          else
+            require(error.empty(), std::string(c.tag) + ": " + error);
+        }
+        // Another decode type rejects a non-default value, as pose_classes does.
+        Model::Options yolo;
+        yolo.decode_type = BoxDecodeType::Yolo;
+        yolo.multimask_output = false;
+        std::string error;
+        try {
+          Model model(require_yolov9_tar(), yolo);
+          (void)internal::ModelAccess::build_boxdecode_stage_contract(model, false);
+        } catch (const std::exception& e) {
+          error = e.what();
+        }
+        require(error.find("multimask_output applies only to the Segment Anything decode types") !=
+                    std::string::npos,
+                "a YOLO decoder must reject multimask_output=false, got \"" + error + "\"");
+      }
 
       {
         const auto path = sima_test::test_model_archive_fixture_root_path() /

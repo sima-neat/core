@@ -169,6 +169,11 @@ PreprocessRuntimeMeta resolve_benchmark_preprocess_meta(const Tensor& tensor,
                                                         const PreprocessContractFlags& flags,
                                                         const BenchmarkOptions& options);
 
+// Segment Anything decoder inputs carry the model's encoder geometry: MobileSAM's top-left
+// letterbox on 1024, a stretch to 1024 (EdgeTAM, EfficientSAM) or 1008 (EfficientSAM3).
+PreprocessRuntimeMeta sam_benchmark_preprocess_meta(BoxDecodeType decode_type, int source_width,
+                                                    int source_height);
+
 // Internal serializer shared with cache-compatibility regression tests. Advanced execution
 // overlays are resolved before serialization; diagnostic verbosity is intentionally excluded.
 std::string model_stage_options_cache_identity(const Model::Options& options);

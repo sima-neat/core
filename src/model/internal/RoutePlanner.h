@@ -330,6 +330,10 @@ struct RouteMaterializationPlan {
   std::vector<RouteRegion> ingress_regions;
   EgressTensorContract egress_contract;
   std::vector<EgressTensorContract> egress_contracts;
+  // Model::Options::boxdecode_raw_outputs on a BoxDecode route: the tensors the same Model
+  // returns without BoxDecode, in order, with their final dtype and unique endpoint names
+  // (source_tensor_name). Published after the BoxDecode tensor. Empty otherwise.
+  std::vector<EgressTensorContract> boxdecode_raw_outputs;
   std::size_t output_physical_count = 0U;
   std::size_t output_logical_count = 0U;
   PipelineType pipeline_type = PipelineType::Preproc;

@@ -2,6 +2,7 @@
 #include "pipeline/internal/sima/BoxDecodeGeometry.h"
 #include "pipeline/internal/sima/PreprocFrameAdapter.h"
 #include "pipeline/internal/sima/BoxDecodeStaticContractExtractor.h"
+#include "pipeline/internal/sima/BoxDecodeTypeUtils.h"
 #include "pipeline/internal/sima/KernelStageRecipe.h"
 #include "pipeline/internal/sima/StaticSpecBuilders.h"
 #include "pipeline/internal/contract/ContractFacts.h"
@@ -21,6 +22,129 @@
 #include <stdexcept>
 
 namespace simaai::neat::pipeline_internal::sima {
+namespace {
+// Cold Segment Anything geometry from the nearest Preproc policy, for graphs
+// that build before a frame arrives (an EfficientSAM3 concept image model owns its Preproc).
+std::optional<PreprocessRuntimeMeta> sam_policy_facts(const ProcessCvuStagePayload* upstream) {
+  if (!upstream)
+    return std::nullopt;
+  namespace rt = ::simaai::scheduler::client;
+  using Adapter = kernel_lowering::PreprocFrameAdapter;
+  auto policy = *upstream;
+  if (policy.resolved_exec_backend.empty())
+    policy.resolved_exec_backend = "EVXX";
+  auto checked = Adapter::check_policy(policy);
+  if (const auto* error = std::get_if<rt::Error>(&checked))
+    throw std::invalid_argument("SimaBoxDecode: upstream preprocessing: " + error->message);
+  auto frozen = Adapter::checked_initial_preprocess_facts(
+      std::get<std::shared_ptr<const Adapter::CheckedPolicy>>(std::move(checked)));
+  if (const auto* error = std::get_if<rt::Error>(&frozen))
+    throw std::invalid_argument("SimaBoxDecode: upstream preprocessing facts: " + error->message);
+  const auto owner = std::get<::simaai::gst::TensorBufferPreprocessFactsOwner>(std::move(frozen));
+  const auto* facts = ::simaai::gst::tensor_buffer_preprocess_facts(owner);
+  if (!facts || facts->roi_list || facts->input_batch != 1 || facts->capacity != 1)
+    throw std::invalid_argument("SimaBoxDecode: Segment Anything requires one upstream image");
+  PreprocessRuntimeMeta meta;
+  meta.original_width = static_cast<int>(facts->original_width);
+  meta.original_height = static_cast<int>(facts->original_height);
+  meta.resized_width = static_cast<int>(facts->resized_width);
+  meta.resized_height = static_cast<int>(facts->resized_height);
+  meta.resize_mode = facts->resize_mode;
+  // Placement {x, y, w, h} of the scaled image on the canvas.
+  meta.scaled_width = static_cast<int>(facts->placed[2]);
+  meta.scaled_height = static_cast<int>(facts->placed[3]);
+  meta.pad_left = static_cast<int>(facts->placed[0]);
+  meta.pad_top = static_cast<int>(facts->placed[1]);
+  meta.pad_right = static_cast<int>(facts->resized_width - facts->placed[0] - facts->placed[2]);
+  meta.pad_bottom = static_cast<int>(facts->resized_height - facts->placed[1] - facts->placed[3]);
+  return meta;
+}
+
+// A SAM mask has the original image extent, so geometry is fixed per prepared
+// plan. It comes from the decoder inputs' published preprocess facts (the
+// encoder's top-left letterbox or stretch), or the nearest Preproc policy,
+// never from tensor shapes or Model options. The model size is the canvas.
+CompiledKernelContract compile_sam_kernel(const CompiledBoxDecodeContract& admitted,
+                                          std::optional<PreprocessRuntimeMeta> observed,
+                                          const ProcessCvuStagePayload* upstream,
+                                          BoxDecodeGeometryOptions geometry) {
+  const std::string family = box_decode_type_sam_model_name(admitted.payload.decode_type);
+  if (!observed)
+    observed = sam_policy_facts(upstream);
+  if (!observed)
+    throw std::invalid_argument(
+        "SimaBoxDecode: " + family +
+        " requires semantic.preprocess geometry on its input tensors; pass the encoder output "
+        "tensors (for example through .cvu()) so the image's preprocess facts reach the decoder");
+  geometry = sam_boxdecode_geometry(admitted.payload.decode_type, *observed, geometry);
+  auto native = prepare_boxdecode_kernel(admitted, geometry);
+  auto recipe = std::make_shared<KernelStageRecipe>(*native.compiled.recipe);
+  // No image-size variant exists: a different frame size needs a new runner.
+  attach_boxdecode_fixed_image_guard(*recipe, native.decode_member, geometry.original_width,
+                                     geometry.original_height);
+  native.compiled.recipe = std::move(recipe);
+  return std::move(native.compiled);
+}
+} // namespace
+
+BoxDecodeGeometryOptions sam_boxdecode_geometry(BoxDecodeType type,
+                                                const PreprocessRuntimeMeta& facts,
+                                                BoxDecodeGeometryOptions geometry) {
+  const std::string family = box_decode_type_sam_model_name(type);
+  // Each model was trained on one resize: MobileSAM a top-left letterbox, the
+  // others a stretch. The encoder's Model (an EfficientSAM3 concept model's own)
+  // preprocess must reproduce it.
+  const ResizeMode mode = sam_required_resize(type);
+  const bool matches =
+      !facts.has_roi_list() &&
+      (mode == ResizeMode::Stretch
+           ? facts.resize_mode == "stretch"
+           : facts.resize_mode == "letterbox" && facts.pad_left == 0 && facts.pad_top == 0);
+  if (!matches)
+    throw std::invalid_argument(
+        "SimaBoxDecode: " + family + " needs the image preprocessed with " +
+        (mode == ResizeMode::Letterbox ? "resize.mode=Letterbox and resize.placement=TopLeft"
+                                       : "resize.mode=Stretch") +
+        " on the Model that preprocesses it (the encoder" +
+        (type == BoxDecodeType::EfficientSam3 ? ", or the EfficientSAM3 concept image model" : "") +
+        "); its preprocess facts report resize_mode '" + facts.resize_mode + "', pad_left " +
+        std::to_string(facts.pad_left) + ", pad_top " + std::to_string(facts.pad_top));
+  // The published facts are authoritative. A decoder Model's nominal resize
+  // option (Letterbox by default, even without an image input) is not.
+  if (geometry.model_to_original)
+    throw std::invalid_argument("SimaBoxDecode: " + family +
+                                " derives its geometry from the published preprocess facts; an "
+                                "explicit model-to-original transform is not admitted");
+  const auto width = facts.scaled_width > 0 ? facts.scaled_width : facts.resized_width;
+  const auto height = facts.scaled_height > 0 ? facts.scaled_height : facts.resized_height;
+  const std::int64_t canvas_width = std::int64_t(width) + facts.pad_left + facts.pad_right;
+  const std::int64_t canvas_height = std::int64_t(height) + facts.pad_top + facts.pad_bottom;
+  if (canvas_width < 1 || canvas_width > 1048576 || canvas_height < 1 || canvas_height > 1048576)
+    throw std::invalid_argument("SimaBoxDecode: " + family + " canvas geometry is invalid");
+  if ((geometry.model_width > 0 && geometry.model_width != canvas_width) ||
+      (geometry.model_height > 0 && geometry.model_height != canvas_height))
+    throw std::invalid_argument("SimaBoxDecode: " + family + " model size differs from the " +
+                                std::to_string(canvas_width) + "x" + std::to_string(canvas_height) +
+                                " canvas its inputs describe");
+  if (facts.original_width < 1 || facts.original_width > 1048576 || facts.original_height < 1 ||
+      facts.original_height > 1048576)
+    throw std::invalid_argument("SimaBoxDecode: " + family +
+                                " original image dimensions must be 1..1048576");
+  if ((geometry.original_width > 0 || geometry.original_height > 0) &&
+      (geometry.original_width != facts.original_width ||
+       geometry.original_height != facts.original_height))
+    throw std::invalid_argument("SimaBoxDecode: " + family +
+                                " original image size conflicts with the input geometry");
+  geometry.model_width = static_cast<int>(canvas_width);
+  geometry.model_height = static_cast<int>(canvas_height);
+  geometry.original_width = facts.original_width;
+  geometry.original_height = facts.original_height;
+  geometry.resize = mode;
+  geometry.complete_geometry = geometry.uniform_transform_required = false;
+  geometry.require_frame_transform = false;
+  return geometry;
+}
+
 bool boxdecode_letterbox_is_off_center(const PreprocessRuntimeMeta* observed,
                                        const ProcessCvuStagePayload* upstream_preprocess) {
   if (observed && !observed->resize_mode.empty()) {
@@ -194,6 +318,10 @@ CompiledKernelContract compile_boxdecode_kernel(const CompiledBoxDecodeContract&
       observed = facts;
     }
   }
+  if (box_decode_type_is_sam(compiled.payload.decode_type))
+    return compile_sam_kernel(
+        admitted, observed,
+        input.upstream_preprocess ? &input.upstream_preprocess->payload : nullptr, geometry);
   if (observed && observed->resize_mode == "crop" && detection_transform)
     geometry.complete_geometry = true;
   // Profiles map letterboxed boxes with a centered rule. Any other placement

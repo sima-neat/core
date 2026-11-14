@@ -450,6 +450,14 @@ struct ProcessMlaStagePayload {
 };
 
 /// BoxDecode stage payload — decode flavor, NMS / topK params, slice geometry.
+/// One raw model output that a BoxDecode stage also publishes (Model::Options::
+/// boxdecode_raw_outputs): the tensor the route without BoxDecode returns for that input.
+struct BoxDecodeRawOutput {
+  std::string name;                ///< Unique endpoint name of the route without BoxDecode.
+  std::string dtype;               ///< Published dtype token (FP32, BF16, INT8).
+  std::vector<std::int64_t> shape; ///< Published shape; dense, row-major.
+};
+
 struct BoxDecodeStagePayload {
   BoxDecodeType decode_type = BoxDecodeType::Unspecified;
   stagesemantics::SsdRecipeId ssd_recipe_id = stagesemantics::SsdRecipeId::Unknown;
@@ -470,6 +478,10 @@ struct BoxDecodeStagePayload {
   std::vector<int> tensor_storage_kind;
   SuperPointStaticContract superpoint;
   std::vector<BoxDecodeTensorRole> tensor_roles;
+  /// Empty, or one entry per input in input order, published after the BoxDecode tensor.
+  std::vector<BoxDecodeRawOutput> raw_outputs;
+  /// Segment Anything: Model::Options::multimask_output (upstream predict(multimask_output)).
+  bool multimask_output = true;
 };
 
 /// Placeholder payload for quant / dequant / tess / quanttess stages (carries only a reserved field

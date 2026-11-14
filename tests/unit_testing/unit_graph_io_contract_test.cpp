@@ -425,6 +425,69 @@ RUN_TEST(
         }
         require(rejected, "invalid shorter_side changed meaning during graph load");
       }
+      // Raw BoxDecode outputs survive save/load; the default stays implicit.
+      for (const bool raw_outputs : {false, true}) {
+        auto raw = typed_options;
+        auto& model_options = raw["model_fragments"][0]["model_options"];
+        model_options.erase("boxdecode_raw_outputs");
+        if (raw_outputs)
+          model_options["boxdecode_raw_outputs"] = true;
+        const auto path = tmp_json_path("graph_io_boxdecode_raw_outputs.json");
+        write_text(path, raw.dump());
+        const auto roundtrip_path = tmp_json_path("graph_io_boxdecode_raw_outputs_roundtrip.json");
+        Graph::load(path).save(roundtrip_path);
+        const auto restored = nlohmann::json::parse(read_text(roundtrip_path));
+        const auto& restored_options = restored["model_fragments"][0]["model_options"];
+        require(raw_outputs ? restored_options["boxdecode_raw_outputs"] == true
+                            : !restored_options.contains("boxdecode_raw_outputs"),
+                "boxdecode_raw_outputs changed during graph save/load");
+      }
+      {
+        auto malformed = typed_options;
+        malformed["model_fragments"][0]["model_options"]["boxdecode_raw_outputs"] = 1;
+        const auto path = tmp_json_path("graph_io_bad_boxdecode_raw_outputs.json");
+        write_text(path, malformed.dump());
+        bool rejected = false;
+        try {
+          (void)Graph::load(path);
+        } catch (const std::exception& error) {
+          rejected = std::string(error.what()).find("boxdecode_raw_outputs") != std::string::npos;
+        }
+        require(rejected, "a non-boolean boxdecode_raw_outputs must be rejected");
+      }
+
+      // A SAM decoder's multimask_output survives save/load; true stays implicit.
+      for (const bool multimask : {true, false}) {
+        auto sam = typed_options;
+        auto& model_options = sam["model_fragments"][0]["model_options"];
+        model_options["decode_type"] = static_cast<int>(BoxDecodeType::EdgeTam);
+        model_options.erase("multimask_output");
+        if (!multimask)
+          model_options["multimask_output"] = false;
+        const auto path = tmp_json_path("graph_io_multimask_output.json");
+        write_text(path, sam.dump());
+        const auto roundtrip_path = tmp_json_path("graph_io_multimask_output_roundtrip.json");
+        Graph::load(path).save(roundtrip_path);
+        const auto restored = nlohmann::json::parse(read_text(roundtrip_path));
+        const auto& restored_options = restored["model_fragments"][0]["model_options"];
+        require(restored_options["decode_type"] == static_cast<int>(BoxDecodeType::EdgeTam) &&
+                    (multimask ? !restored_options.contains("multimask_output")
+                               : restored_options["multimask_output"] == false),
+                "multimask_output changed during graph save/load");
+      }
+      {
+        auto malformed = typed_options;
+        malformed["model_fragments"][0]["model_options"]["multimask_output"] = "single";
+        const auto path = tmp_json_path("graph_io_bad_multimask_output.json");
+        write_text(path, malformed.dump());
+        bool rejected = false;
+        try {
+          (void)Graph::load(path);
+        } catch (const std::exception& error) {
+          rejected = std::string(error.what()).find("multimask_output") != std::string::npos;
+        }
+        require(rejected, "a non-boolean multimask_output must be rejected");
+      }
 
       Graph realtime_app("graph_io_realtime_link_options");
       GraphLinkOptions realtime_link;

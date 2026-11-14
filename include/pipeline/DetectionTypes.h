@@ -109,6 +109,49 @@ static_assert(offsetof(OrientedBoxRecordV1, score) == 20);
 static_assert(offsetof(OrientedBoxRecordV1, class_id) == 24);
 static_assert(offsetof(OrientedBoxRecordV1, reserved) == 28);
 
+/**
+ * @brief Versioned, little-endian header of a masks payload whose masks are not 160×160.
+ *
+ * Segment Anything decoding (`BoxDecodeType::MobileSam`, `EdgeTam`, `EfficientSam` and an
+ * EfficientSAM3 prompt decoder with one record; an EfficientSAM3 concept image model with up to
+ * `top_k`) publishes its masks at the original image size. The
+ * payload keeps the segmentation tag; `decode_segmentation` and `decode_bbox`
+ * recognize it by `magic`. Layout: this header, then `capacity` BBOX records of
+ * `record_stride` bytes (int32 x, y, width, height; float32 score; int32 class_id) at
+ * `records_offset`, then `capacity` UInt8 masks of `mask_stride` bytes
+ * (`mask_height × mask_width`, 0 or 255) at `masks_offset`. `count` records are valid; the
+ * headerless format (uint32 count, records, 160×160 masks) is unchanged.
+ */
+struct SegmentationMasksHeaderV1 {
+  std::uint32_t magic = 0x3153414d; ///< "MAS1" little-endian.
+  std::uint16_t version = 1;
+  std::uint16_t header_bytes = 48;
+  std::uint32_t total_bytes = 48;
+  std::uint32_t count = 0;
+  std::uint32_t capacity = 0;
+  std::uint32_t mask_height = 0;
+  std::uint32_t mask_width = 0;
+  std::uint32_t records_offset = 48;
+  std::uint32_t record_stride = 24;
+  std::uint32_t masks_offset = 0; ///< Records end rounded up to 16 bytes.
+  std::uint32_t mask_stride = 0;  ///< mask_height * mask_width.
+  std::uint32_t flags = 0;
+};
+static_assert(sizeof(SegmentationMasksHeaderV1) == 48);
+static_assert(offsetof(SegmentationMasksHeaderV1, magic) == 0);
+static_assert(offsetof(SegmentationMasksHeaderV1, version) == 4);
+static_assert(offsetof(SegmentationMasksHeaderV1, header_bytes) == 6);
+static_assert(offsetof(SegmentationMasksHeaderV1, total_bytes) == 8);
+static_assert(offsetof(SegmentationMasksHeaderV1, count) == 12);
+static_assert(offsetof(SegmentationMasksHeaderV1, capacity) == 16);
+static_assert(offsetof(SegmentationMasksHeaderV1, mask_height) == 20);
+static_assert(offsetof(SegmentationMasksHeaderV1, mask_width) == 24);
+static_assert(offsetof(SegmentationMasksHeaderV1, records_offset) == 28);
+static_assert(offsetof(SegmentationMasksHeaderV1, record_stride) == 32);
+static_assert(offsetof(SegmentationMasksHeaderV1, masks_offset) == 36);
+static_assert(offsetof(SegmentationMasksHeaderV1, mask_stride) == 40);
+static_assert(offsetof(SegmentationMasksHeaderV1, flags) == 44);
+
 /// Owned dense CPU results. Geometry is FP32[N,5] cx,cy,w,h,angle (raw radians),
 /// scores FP32[N], class_ids INT32[N]. Parsing never clamps, rounds or remaps geometry.
 struct OrientedDecodeTensors {
@@ -146,7 +189,8 @@ struct PoseDecodeTensors {
  * @brief Decoded instance-segmentation tensors for one BoxDecode output tensor.
  *
  * `boxes` is a dense CPU float32 tensor of shape `[N, 6]` with the same columns
- * as `decode_bbox`. `masks` is a dense CPU uint8 tensor of shape `[N, 160, 160]`.
+ * as `decode_bbox`. `masks` is a dense CPU uint8 tensor of shape `[N, 160, 160]`, or
+ * `[N, H, W]` for a `SegmentationMasksHeaderV1` payload.
  */
 struct SegmentationDecodeTensors {
   simaai::neat::Tensor boxes;
@@ -291,6 +335,10 @@ PoseDecodeTensorList decode_pose(const simaai::neat::TensorList& pose_tensors, i
  * `uint32 count + top_k × BBOX + top_k × 160 × 160 uint8 masks`. The returned
  * boxes tensor has shape `[N, 6]`; the returned masks tensor has shape
  * `[N, 160, 160]`.
+ *
+ * A payload that starts with the `SegmentationMasksHeaderV1` magic (Segment Anything) is
+ * validated against that header instead and returns masks `[N, H, W]`. Its records are
+ * returned even when the box is empty, so the score and mask index stay available.
  */
 SegmentationDecodeTensors decode_segmentation_tensor(const simaai::neat::Tensor& tensor,
                                                      int img_w = 0, int img_h = 0, int top_k = 0,

@@ -275,4 +275,30 @@ void attach_boxdecode_geometry_resolver(KernelStageRecipe& recipe, std::size_t m
          };
        }});
 }
+void attach_boxdecode_fixed_image_guard(KernelStageRecipe& recipe, std::size_t member_index,
+                                        int original_width, int original_height) {
+  if (member_index >= recipe.members.size() || original_width < 1 || original_height < 1)
+    throw std::invalid_argument("BoxDecode fixed image guard requires a member and image size");
+  recipe.resolver_factories.push_back(
+      {member_index, [original_width, original_height]() -> KernelStageRecipe::Resolver {
+         return [original_width, original_height](
+                    const rt::VariantPreparer& preparer,
+                    std::span<GstBuffer* const> buffers) -> rt::Result<rt::PreparedSelection> {
+           const auto& base = preparer.base();
+           if (!base || buffers.empty())
+             return invalid("prepared operation and input buffers are required");
+           for (auto* buffer : buffers) {
+             auto parsed = read_geometry(buffer, false, false);
+             if (const auto* error = std::get_if<rt::Error>(&parsed))
+               return *error;
+             const auto& geometry = std::get<Geometry>(parsed);
+             if ((geometry.width || geometry.height) &&
+                 (geometry.width != original_width || geometry.height != original_height))
+               return invalid("the prepared output is sized for another original image; a new "
+                              "frame size requires a new runner");
+           }
+           return base;
+         };
+       }});
+}
 } // namespace simaai::neat::pipeline_internal::sima

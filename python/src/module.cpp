@@ -2105,7 +2105,10 @@ NB_MODULE(_pyneat_core, m) {
       },
       "Decode BoxDecode segmentation tensors into boxes and masks tensors, positional 1:1.\n\n"
       "Each result has `boxes`, a float32 tensor of shape [N, 6], and `masks`,\n"
-      "a uint8 tensor of shape [N, 160, 160].\n\n"
+      "a uint8 tensor of shape [N, 160, 160]. A versioned masks payload\n"
+      "(the Segment Anything BoxDecode types) is recognized by its header and\n"
+      "returns masks [N, H, W] at the original image size, 0 or 255; its records\n"
+      "are kept even when the mask is empty.\n\n"
       "Args:\n"
       "  segmentation_tensors: list[Tensor] of BoxDecode segmentation-format tensors.\n"
       "  clamp_to:             Optional (width, height) - clamp box coordinates to that "
@@ -4535,6 +4538,10 @@ NB_MODULE(_pyneat_core, m) {
       .value("Ssd", simaai::neat::BoxDecodeType::Ssd)
       .value("Detr", simaai::neat::BoxDecodeType::Detr)
       .value("DetrFocal", simaai::neat::BoxDecodeType::DetrFocal)
+      .value("MobileSam", simaai::neat::BoxDecodeType::MobileSam)
+      .value("EdgeTam", simaai::neat::BoxDecodeType::EdgeTam)
+      .value("EfficientSam", simaai::neat::BoxDecodeType::EfficientSam)
+      .value("EfficientSam3", simaai::neat::BoxDecodeType::EfficientSam3)
       .value("EffDet", simaai::neat::BoxDecodeType::EffDet)
       .value("RcnnStage1", simaai::neat::BoxDecodeType::RcnnStage1)
       .value("Centernet", simaai::neat::BoxDecodeType::Centernet)
@@ -4751,6 +4758,12 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("boxdecode_original_width", &simaai::neat::Model::Options::boxdecode_original_width)
       .def_rw("boxdecode_original_height", &simaai::neat::Model::Options::boxdecode_original_height)
       .def_rw("boxdecode_resize_mode", &simaai::neat::Model::Options::boxdecode_resize_mode)
+      .def_rw("boxdecode_raw_outputs", &simaai::neat::Model::Options::boxdecode_raw_outputs,
+              "Also return the raw model outputs, after the BoxDecode tensor, when the route "
+              "ends in BoxDecode (same names, dtypes and shapes as without BoxDecode).")
+      .def_rw("multimask_output", &simaai::neat::Model::Options::multimask_output,
+              "Segment Anything decoders: True keeps the best of the multimask candidates, False "
+              "the single-mask answer (upstream predict(multimask_output=...)).")
       .def_rw("upstream_name", &simaai::neat::Model::Options::upstream_name)
       .def_rw("name_suffix", &simaai::neat::Model::Options::name_suffix)
       .def_rw("cleanup_extracted_model_data",

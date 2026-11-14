@@ -27,6 +27,7 @@
 #include <gst/SimaPluginStaticManifestAbi.h>
 #include <iostream>
 #include <simaai/scheduler/client/kernel.h>
+#include <algorithm>
 #include <array>
 #include <bit>
 #include <cmath>
@@ -34,6 +35,7 @@
 #include <new>
 #include <limits>
 #include <stdexcept>
+#include <string_view>
 
 namespace test = simaai::scheduler::testing;
 namespace c = simaai::scheduler::client;
@@ -476,6 +478,408 @@ void auxiliary_tasks() {
     input(s, 160, 160, 32);
     check(s, {640, 640, 640, 640, ResizeMode::Letterbox});
   }
+}
+
+// Segment Anything prompt decoder: logits [256,256,C] of a 16-channel MLA
+// carrier, IoU [1,1,C] of a 16-value carrier and an optional object score,
+// bound by role (MobileSAM C = 4, EfficientSAM C = 3, an EfficientSAM3 single
+// mask C = 1, EdgeTAM C = 4 with object score and an unused pointer output).
+// Core-owned controls fail before admission; accepted requests need Kernels
+// sam_mask v2.
+CompiledBoxDecodeContract sam_mask_source(BoxDecodeType type, const std::string& logits_dtype,
+                                          const std::string& iou_dtype, int masks = 4,
+                                          bool object_score = false) {
+  auto s = source(type, masks);
+  s.payload.topk = 1;
+  s.payload.detection_threshold = 0;
+  s.payload.nms_iou_threshold = 0;
+  s.payload.score_activation = BoxDecodeScoreActivation::Identity;
+  s.payload.decode_type_option = BoxDecodeTypeOption::Auto;
+  const auto width = [](const std::string& dtype) -> std::int64_t {
+    return dtype == "INT8" ? 1 : dtype == "BF16" ? 2 : 4;
+  };
+  input(s, 256, 256, 16, logits_dtype);
+  input(s, 1, 1, 16, iou_dtype, 1, 1048576);
+  for (std::size_t i = 0; i < 2; ++i) {
+    auto& logical = s.runtime_contract.logical_inputs[i];
+    const auto w = width(logical.dtype);
+    logical.stride_bytes = {logical.shape[1] * 16 * w, 16 * w, w};
+    s.payload.slice_shapes[i].sizes[2] = masks;
+  }
+  s.payload.tensor_roles = {BoxDecodeTensorRole::SamMaskLogits,
+                            BoxDecodeTensorRole::SamIouPredictions};
+  if (object_score) {
+    // EdgeTAM: one FP32 object score, then object pointers [1,4,256] that are
+    // not a BoxDecode head and stay unread.
+    input(s, 1, 1, 1, "FP32");
+    input(s, 1, 4, 256, "FP32");
+    s.payload.tensor_roles.push_back(BoxDecodeTensorRole::SamObjectScore);
+    s.payload.tensor_roles.push_back(BoxDecodeTensorRole::Unknown);
+  }
+  return s;
+}
+// EfficientSAM3 concept image model: detections [1,200,6] (from an eight-value
+// BF16 row) and query-innermost mask logits [192,192,200].
+CompiledBoxDecodeContract sam_concept_source(const std::string& logits_dtype, int topk) {
+  auto s = source(BoxDecodeType::EfficientSam3, 1);
+  s.payload.topk = topk;
+  s.payload.detection_threshold = .5;
+  s.payload.nms_iou_threshold = 0;
+  s.payload.score_activation = BoxDecodeScoreActivation::Identity;
+  s.payload.decode_type_option = BoxDecodeTypeOption::Auto;
+  input(s, 1, 200, 6, "FP32");
+  input(s, 192, 192, 200, logits_dtype);
+  s.payload.tensor_roles = {BoxDecodeTensorRole::SamConceptDetections,
+                            BoxDecodeTensorRole::SamMaskLogits};
+  return s;
+}
+// Model::Options::multimask_output per model and exported channel count.
+void sam_mask_selection_contract() {
+  struct Selection {
+    BoxDecodeType type;
+    int masks;
+    bool multimask;
+    std::string_view mode;
+    int first;
+    int count;
+  };
+  const Selection selections[] = {{BoxDecodeType::MobileSam, 4, true, "best_iou", 1, 3},
+                                  {BoxDecodeType::MobileSam, 4, false, "fixed", 0, 1},
+                                  {BoxDecodeType::EdgeTam, 4, true, "best_iou", 1, 3},
+                                  {BoxDecodeType::EdgeTam, 4, false, "stability", 1, 3},
+                                  {BoxDecodeType::EfficientSam, 3, true, "best_iou", 0, 3},
+                                  {BoxDecodeType::EfficientSam3, 4, true, "best_iou", 1, 3},
+                                  {BoxDecodeType::EfficientSam3, 4, false, "stability", 1, 3},
+                                  {BoxDecodeType::EfficientSam3, 3, true, "best_iou", 0, 3}};
+  for (const auto& c : selections) {
+    const auto choice = resolve_sam_mask_selection(c.type, c.masks, c.multimask);
+    require(choice.mode == c.mode && choice.first == c.first && choice.count == c.count,
+            "multimask_output maps to another mask selection");
+  }
+  // A single-mask export has only its answer, whatever the option says.
+  for (auto type : {BoxDecodeType::MobileSam, BoxDecodeType::EdgeTam, BoxDecodeType::EfficientSam,
+                    BoxDecodeType::EfficientSam3})
+    for (bool multimask : {true, false}) {
+      const auto choice = resolve_sam_mask_selection(type, 1, multimask);
+      require(choice.mode == std::string_view("fixed") && choice.first == 0 && choice.count == 1,
+              "a one-channel export must select mask 0");
+    }
+  struct Rejection {
+    BoxDecodeType type;
+    int masks;
+    bool multimask;
+    const char* message;
+  };
+  const Rejection rejections[] = {
+      {BoxDecodeType::EfficientSam, 3, false, "EfficientSAM exports no single-mask token"},
+      {BoxDecodeType::EfficientSam3, 3, false,
+       "EfficientSAM3 decoder with three mask channels exports no single-mask token"},
+      {BoxDecodeType::MobileSam, 3, true, "MobileSAM decoders do not export 3 mask channels"},
+      {BoxDecodeType::EdgeTam, 3, true, "EdgeTAM decoders do not export 3 mask channels"},
+      {BoxDecodeType::EfficientSam, 4, true, "EfficientSAM decoders do not export 4 mask channels"},
+      {BoxDecodeType::EfficientSam3, 2, true, "EfficientSAM3 decoders do not export 2 mask"},
+      {BoxDecodeType::YoloV8Seg, 4, true, "yolov8-seg is not a Segment Anything decode type"}};
+  for (const auto& c : rejections) {
+    bool rejected = false;
+    try {
+      (void)resolve_sam_mask_selection(c.type, c.masks, c.multimask);
+    } catch (const std::invalid_argument& error) {
+      rejected = std::string(error.what()).find(c.message) != std::string::npos;
+    }
+    require(rejected, "an unsupported multimask_output choice was not rejected by name");
+  }
+}
+void sam_core_contract() {
+  static_assert(static_cast<int>(BoxDecodeType::MobileSam) == 28);
+  static_assert(static_cast<int>(BoxDecodeType::EdgeTam) == 29);
+  static_assert(static_cast<int>(BoxDecodeType::EfficientSam) == 30);
+  static_assert(static_cast<int>(BoxDecodeType::EfficientSam3) == 31);
+  struct Token {
+    BoxDecodeType type;
+    const char* token;
+    const char* alias;
+    const char* model;
+    ResizeMode resize;
+  };
+  for (const auto& c :
+       {Token{BoxDecodeType::MobileSam, "mobilesam", "Mobile-SAM", "MobileSAM",
+              ResizeMode::Letterbox},
+        Token{BoxDecodeType::EdgeTam, "edgetam", "edge-tam", "EdgeTAM", ResizeMode::Stretch},
+        Token{BoxDecodeType::EfficientSam, "efficientsam", "efficient-sam", "EfficientSAM",
+              ResizeMode::Stretch},
+        Token{BoxDecodeType::EfficientSam3, "efficientsam3", "Efficient-SAM3", "EfficientSAM3",
+              ResizeMode::Stretch}}) {
+    require(parse_box_decode_type_token(c.token) == c.type &&
+                parse_box_decode_type_token(c.alias) == c.type &&
+                std::string(box_decode_type_token(c.type)) == c.token &&
+                std::string(box_decode_type_sam_model_name(c.type)) == c.model,
+            "Segment Anything public tokens did not round-trip");
+    require(box_decode_type_is_segmentation(c.type) && !box_decode_type_is_yolo_family(c.type) &&
+                !box_decode_type_is_pose(c.type) && box_decode_type_uses_per_port_dtype(c.type) &&
+                box_decode_type_is_sam(c.type) && sam_required_resize(c.type) == c.resize,
+            "Segment Anything family predicates changed");
+  }
+  for (const auto* retired : {"sam-mask", "sam-mask-single", "sam-mask-stability", "sam-concept"})
+    require(!parse_box_decode_type_token(retired), "policy-named SAM tokens are not decode types");
+  require(!box_decode_type_is_sam(BoxDecodeType::YoloV8Seg), "YOLO-seg is not a SAM type");
+  sam_mask_selection_contract();
+  const BoxDecodeGeometryOptions letterbox{1024, 1024, 1280, 720, ResizeMode::Letterbox};
+  const BoxDecodeGeometryOptions stretch{1024, 1024, 1280, 720, ResizeMode::Stretch};
+  const auto rejected = [](const CompiledBoxDecodeContract& s, const BoxDecodeGeometryOptions& g,
+                           const char* message) {
+    try {
+      (void)prepare_boxdecode_kernel(s, g);
+    } catch (const std::invalid_argument& error) {
+      return std::string(error.what()).find(message) != std::string::npos;
+    }
+    return false;
+  };
+  for (int fault = 0; fault < 13; ++fault) {
+    auto s = sam_mask_source(BoxDecodeType::MobileSam, "INT8", "INT8");
+    auto g = letterbox;
+    const char* message = "MobileSAM";
+    if (fault == 0)
+      s.payload.topk = 4;
+    else if (fault == 1)
+      s.payload.nms_iou_threshold = .5;
+    else if (fault == 2)
+      s.payload.num_classes = 5;
+    else if (fault == 3)
+      s.payload.tensor_roles = {BoxDecodeTensorRole::SamMaskLogits,
+                                BoxDecodeTensorRole::SamMaskLogits};
+    else if (fault == 4) {
+      s = sam_mask_source(BoxDecodeType::EdgeTam, "BF16", "BF16", 4, true);
+      s.payload.tensor_roles[3] = BoxDecodeTensorRole::SamObjectScore; // Two object scores.
+      g = stretch;
+      message = "EdgeTAM tensor roles are incomplete";
+    } else if (fault == 5)
+      g.model_height = 768; // The canvas is S x S.
+    else if (fault == 6)
+      g.model_to_original = std::array<float, 4>{1.25f, 1.25f, 0.f, 0.f};
+    else if (fault == 7) {
+      s.runtime_contract.logical_inputs[1].shape = {1, 4, 16};
+      s.runtime_contract.logical_inputs[1].stride_bytes = {64, 16, 1};
+    } else if (fault == 8) {
+      // Two mask channels are not a SAM decoder output.
+      s = sam_mask_source(BoxDecodeType::MobileSam, "INT8", "INT8", 2);
+      message = "MobileSAM decoders do not export 2 mask channels";
+    } else if (fault == 9) {
+      // EfficientSAM's three channels are its multimask tokens: no single mask.
+      s = sam_mask_source(BoxDecodeType::EfficientSam, "INT8", "INT8", 3);
+      s.payload.multimask_output = false;
+      g = stretch;
+      message = "EfficientSAM exports no single-mask token";
+    } else if (fault == 10) {
+      s = sam_mask_source(BoxDecodeType::EfficientSam3, "INT8", "INT8", 3);
+      s.payload.multimask_output = false;
+      g = stretch;
+      message = "EfficientSAM3 decoder with three mask channels exports no single-mask token";
+    } else if (fault == 11) {
+      // MobileSAM was trained on a top-left letterbox ...
+      g = stretch;
+      message = "MobileSAM requires a top-left letterbox";
+    } else {
+      // ... and the others on a stretch.
+      s = sam_mask_source(BoxDecodeType::EdgeTam, "BF16", "BF16", 4, true);
+      message = "EdgeTAM requires a stretch";
+    }
+    require(rejected(s, g, message), "a Segment Anything contract violation reached Kernels");
+  }
+  for (int fault = 0; fault < 6; ++fault) {
+    auto s = sam_concept_source("FP32", 100);
+    auto g = BoxDecodeGeometryOptions{1008, 1008, 1280, 720, ResizeMode::Stretch};
+    const char* message = "EfficientSAM3 concept";
+    if (fault == 0)
+      s.payload.topk = 201; // K <= Q.
+    else if (fault == 1) {
+      g.resize = ResizeMode::Letterbox;
+      message = "EfficientSAM3 concept requires a stretch";
+    } else if (fault == 2) {
+      s.runtime_contract.logical_inputs[1].shape = {192, 192, 199};
+      s.payload.slice_shapes[1].sizes[2] = 199;
+    } else if (fault == 3) {
+      s.payload.tensor_roles = {BoxDecodeTensorRole::SamMaskLogits,
+                                BoxDecodeTensorRole::SamMaskLogits};
+      message = "EfficientSAM3 tensor roles are incomplete";
+    } else if (fault == 4)
+      g.model_to_original = std::array<float, 4>{1.25f, 1.25f, 0.f, 0.f};
+    else {
+      // A concept image model ranks detections; there is no multimask choice.
+      s.payload.multimask_output = false;
+      message = "EfficientSAM3 concept detection has no multimask choice";
+    }
+    require(rejected(s, g, message), "an EfficientSAM3 concept contract violation reached Kernels");
+  }
+}
+void sam_recipe() {
+  sam_core_contract();
+  struct Case {
+    BoxDecodeType type;
+    const char* logits;
+    const char* iou;
+    int masks;
+    bool object;
+    ResizeMode resize;
+    int side;
+    bool multimask;
+  };
+  // MobileSAM top-left letterbox; EdgeTAM stretch with an object score;
+  // EfficientSAM stretch with tokens 0..2; EfficientSAM3 prompt decoders
+  // (C = 1, 3 or 4) on a 1008 canvas.
+  const Case cases[] = {
+      {BoxDecodeType::MobileSam, "INT8", "INT8", 4, false, ResizeMode::Letterbox, 1024, true},
+      {BoxDecodeType::MobileSam, "BF16", "BF16", 4, false, ResizeMode::Letterbox, 1024, true},
+      {BoxDecodeType::MobileSam, "FP32", "FP32", 4, false, ResizeMode::Letterbox, 1024, true},
+      {BoxDecodeType::MobileSam, "BF16", "INT8", 4, false, ResizeMode::Letterbox, 1024, true},
+      {BoxDecodeType::MobileSam, "INT8", "INT8", 4, false, ResizeMode::Letterbox, 1024, false},
+      {BoxDecodeType::EdgeTam, "BF16", "BF16", 4, true, ResizeMode::Stretch, 1024, true},
+      {BoxDecodeType::EdgeTam, "BF16", "BF16", 4, true, ResizeMode::Stretch, 1024, false},
+      {BoxDecodeType::EdgeTam, "FP32", "FP32", 4, true, ResizeMode::Stretch, 1024, false},
+      {BoxDecodeType::EfficientSam, "INT8", "INT8", 3, false, ResizeMode::Stretch, 1024, true},
+      {BoxDecodeType::EfficientSam3, "FP32", "FP32", 1, false, ResizeMode::Stretch, 1008, true},
+      {BoxDecodeType::EfficientSam3, "FP32", "FP32", 1, false, ResizeMode::Stretch, 1008, false},
+      {BoxDecodeType::EfficientSam3, "BF16", "BF16", 4, false, ResizeMode::Stretch, 1008, false},
+      {BoxDecodeType::EfficientSam3, "BF16", "BF16", 3, false, ResizeMode::Stretch, 1008, true}};
+  for (const auto& c : cases) {
+    auto s = sam_mask_source(c.type, c.logits, c.iou, c.masks, c.object);
+    s.payload.multimask_output = c.multimask;
+    // The score threshold is forwarded, validated by Kernels and ignored.
+    if (!c.multimask)
+      s.payload.detection_threshold = .25;
+    const auto r = check(s, {c.side, c.side, 1280, 720, c.resize});
+    const auto& recipe = *r.compiled.recipe;
+    const auto& decode = recipe.members[r.decode_member];
+    require(recipe.output_format == kDetectionFormatBbox && recipe.members.size() == 2,
+            "Segment Anything keeps the segmentation tag and one publication member");
+    require(decode.outputs.size() == 5 && decode.outputs[4].tensor == 0 &&
+                decode.outputs[4].byte_offset == 80 &&
+                decode.outputs[4].source == gs::TensorStagePortSource::Output,
+            "the Segment Anything mask must be written after the 80-byte V1 prefix");
+    require(r.compiled.runtime_contract.physical_outputs.front().size_bytes == 80 + 1280 * 720 &&
+                r.compiled.runtime_contract.logical_outputs.front().publication_relation ==
+                    PublicationViewRelation::PackedStorage,
+            "Segment Anything wire extent or relation");
+    const auto inspection = inspect(decode.executable);
+    const std::int64_t masks = c.masks;
+    require(
+        inspection.inputs().size() == (c.object ? 3U : 2U) &&
+            inspection.inputs()[0].shape == std::vector<std::int64_t>({256, 256, masks}) &&
+            inspection.inputs()[1].shape == std::vector<std::int64_t>({1, 1, masks}) &&
+            (!c.object || inspection.inputs()[2].shape == std::vector<std::int64_t>({1, 1, 1})) &&
+            inspection.outputs()[4].shape == std::vector<std::int64_t>({1, 720, 1280}) &&
+            inspection.outputs()[4].dtype == c::DType::UInt8,
+        "Segment Anything request ports differ from the contract");
+  }
+  for (const auto* dtype : {"FP32", "BF16", "INT8"}) {
+    const auto r = check(sam_concept_source(dtype, 3), {1008, 1008, 640, 480, ResizeMode::Stretch});
+    const auto& decode = r.compiled.recipe->members[r.decode_member];
+    // Header 48 + three 24-byte records = 120, rounded up to 128 for the masks.
+    require(decode.outputs.size() == 5 && decode.outputs[4].byte_offset == 128 &&
+                r.compiled.runtime_contract.physical_outputs.front().size_bytes ==
+                    128 + 3 * 640 * 480,
+            "EfficientSAM3 concept masks follow K records of the V1 prefix");
+    const auto inspection = inspect(decode.executable);
+    require(inspection.inputs().size() == 2 &&
+                inspection.inputs()[0].shape == std::vector<std::int64_t>({1, 200, 6}) &&
+                inspection.inputs()[1].shape == std::vector<std::int64_t>({192, 192, 200}) &&
+                inspection.outputs()[0].shape == std::vector<std::int64_t>({3, 4}) &&
+                inspection.outputs()[4].shape == std::vector<std::int64_t>({3, 480, 640}),
+            "EfficientSAM3 concept request ports differ from the contract");
+  }
+}
+
+// Model::Options::boxdecode_raw_outputs: the stage also publishes every input
+// as the route without BoxDecode returns it, after the BoxDecode tensor. The
+// EdgeTAM decoder: BF16 logits and IoU slices, an FP32 object score and the
+// FP32 object pointers that no head reads.
+std::vector<BoxDecodeRawOutput> edgetam_raw_outputs() {
+  return {{"mask_logits", "FP32", {1, 256, 256, 4}},
+          {"iou_scores", "FP32", {1, 4}},
+          {"object_score_logits", "FP32", {1, 1}},
+          {"object_pointers", "FP32", {1, 4, 256}}};
+}
+void boxdecode_raw_outputs_core_contract() {
+  const BoxDecodeGeometryOptions geometry{1024, 1024, 1280, 720, ResizeMode::Stretch};
+  for (int fault = 0; fault < 3; ++fault) {
+    auto s = sam_mask_source(BoxDecodeType::EdgeTam, "BF16", "BF16", 4, true);
+    s.payload.raw_outputs = edgetam_raw_outputs();
+    if (fault == 0)
+      s.payload.raw_outputs.pop_back(); // One raw output per input.
+    else if (fault == 1)
+      s.payload.raw_outputs[3].shape = {1, 4, 128}; // The extent of input 3.
+    else
+      s.payload.raw_outputs[2].dtype = "INT8"; // No FP32 -> INT8 publication.
+    bool rejected = false;
+    try {
+      (void)prepare_boxdecode_kernel(s, geometry);
+    } catch (const std::invalid_argument& error) {
+      rejected = std::string(error.what()).find("raw output") != std::string::npos;
+    }
+    require(rejected, "an inconsistent raw output reached Kernels admission");
+  }
+}
+void boxdecode_raw_outputs() {
+  boxdecode_raw_outputs_core_contract();
+  const BoxDecodeGeometryOptions geometry{1024, 1024, 1280, 720, ResizeMode::Stretch};
+  auto s = sam_mask_source(BoxDecodeType::EdgeTam, "BF16", "BF16", 4, true);
+  // The default publishes the BoxDecode tensor alone.
+  const auto plain = prepare_boxdecode_kernel(s, geometry);
+  require(plain.compiled.runtime_contract.logical_outputs.size() == 1 &&
+              plain.compiled.runtime_contract.physical_outputs.size() == 1 &&
+              plain.compiled.recipe->members.size() == 2,
+          "BoxDecode without raw outputs must keep one public output and two members");
+  s.payload.raw_outputs = edgetam_raw_outputs();
+  const auto r = prepare_boxdecode_kernel(s, geometry);
+  const auto& runtime = r.compiled.runtime_contract;
+  const auto& recipe = *r.compiled.recipe;
+  const auto raw = edgetam_raw_outputs();
+  require(runtime.logical_outputs.size() == 5 && runtime.physical_outputs.size() == 5 &&
+              runtime.output_order.size() == 5 && recipe.members.size() == 6 &&
+              recipe.output_format == kDetectionFormatBbox,
+          "raw outputs must follow the BoxDecode tensor, one member each");
+  require(runtime.logical_outputs[0].dtype == "UINT8" &&
+              runtime.logical_outputs[0].shape.size() == 1,
+          "the BoxDecode tensor stays first");
+  // BF16 heads are cast, FP32 heads are copied; every raw member reads only
+  // its stage input and writes its own public output.
+  const std::array<c::DType, 4> sources{c::DType::BFloat16, c::DType::BFloat16, c::DType::Float32,
+                                        c::DType::Float32};
+  const std::array<std::vector<std::int64_t>, 4> views{
+      std::vector<std::int64_t>{256, 256, 4}, std::vector<std::int64_t>{1, 1, 4},
+      std::vector<std::int64_t>{1, 1, 1}, std::vector<std::int64_t>{1, 4, 256}};
+  for (std::size_t i = 0; i < raw.size(); ++i) {
+    const auto& logical = runtime.logical_outputs[1 + i];
+    std::uint64_t bytes = 4;
+    for (const auto dimension : raw[i].shape)
+      bytes *= static_cast<std::uint64_t>(dimension);
+    require(logical.logical_name == raw[i].name && logical.dtype == "FP32" &&
+                logical.shape == raw[i].shape &&
+                runtime.physical_outputs[1 + i].size_bytes == bytes &&
+                runtime.output_order[1 + i].cm_output_name == raw[i].name,
+            "raw output name, dtype, shape or size differs from the route without BoxDecode");
+    const auto& member = recipe.members[2 + i];
+    require(member.inputs.size() == 1 && member.inputs[0].tensor == i &&
+                member.inputs[0].source == gs::TensorStagePortSource::Input &&
+                member.outputs.size() == 1 && member.outputs[0].tensor == 1 + i &&
+                member.outputs[0].source == gs::TensorStagePortSource::Output &&
+                member.dependencies.empty(),
+            "a raw member must read its stage input and write its public output");
+    const auto inspection = inspect(member.executable);
+    require(inspection.inputs().size() == 1 && inspection.inputs()[0].dtype == sources[i] &&
+                inspection.inputs()[0].shape == views[i] &&
+                inspection.outputs()[0].dtype == c::DType::Float32 &&
+                inspection.outputs()[0].shape == views[i],
+            "raw member conversion differs from the contract");
+  }
+  // INT8 heads are dequantized with the canonical reciprocal scale.
+  auto quantized = sam_mask_source(BoxDecodeType::MobileSam, "INT8", "INT8");
+  quantized.payload.raw_outputs = {{"masks", "FP32", {1, 256, 256, 4}},
+                                   {"iou_predictions", "FP32", {1, 4}}};
+  const auto q =
+      prepare_boxdecode_kernel(quantized, {1024, 1024, 1280, 720, ResizeMode::Letterbox});
+  require(q.compiled.runtime_contract.logical_outputs.size() == 3 &&
+              inspect(q.compiled.recipe->members[2].executable).inputs()[0].dtype == c::DType::Int8,
+          "INT8 MobileSAM raw outputs must be dequantized from their carriers");
 }
 
 // Identity scale does not make nominal resize modes interchangeable: YOLO26
@@ -2359,6 +2763,16 @@ int main(int argc, char** argv) {
       std::cout << "YOLO26_DIRECT_MASK_PROJECTION_HOST_OPERATIONS_PASS\n";
       return 0;
     }
+    if (argc == 2 && std::string(argv[1]) == "--sam-core-contract") {
+      sam_core_contract();
+      std::cout << "SAM_CORE_CONTRACT_PASS_NO_EXECUTION\n";
+      return 0;
+    }
+    if (argc == 2 && std::string(argv[1]) == "--boxdecode-raw-outputs-core-contract") {
+      boxdecode_raw_outputs_core_contract();
+      std::cout << "BOXDECODE_RAW_OUTPUTS_CORE_CONTRACT_PASS_NO_EXECUTION\n";
+      return 0;
+    }
     if (argc == 2 && std::string(argv[1]) == "--yolo26-obb-carrier-conversions") {
       gst_init(nullptr, nullptr);
       oriented_carrier_conversions();
@@ -2385,6 +2799,8 @@ int main(int argc, char** argv) {
     oriented_publication_sample_bridge();
     linear_metadata_contracts();
     focal_query_contract();
+    sam_recipe();
+    boxdecode_raw_outputs();
     detr_default_resolution();
     query_source_dtypes();
     detr_numerical_publication();
