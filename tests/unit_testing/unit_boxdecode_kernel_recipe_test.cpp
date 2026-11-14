@@ -811,6 +811,59 @@ void sam_recipe() {
   }
 }
 
+// The Scheduler's Identity publication rule on the stage contract Core builds:
+// every member output routed to a public tensor without a physical-view
+// authority publishes exactly its checked kernel output (shape and dense
+// strides), so graph build cannot reject it with "publication shape differs
+// from checked kernel output".
+void require_exact_member_publications(const BoxDecodeKernelRecipeResult& r, const char* what) {
+  const auto& runtime = r.compiled.runtime_contract;
+  StageStaticSpec stage;
+  stage.element_name = stage.logical_stage_id = "publication_rule";
+  stage.native_kernel = r.compiled.recipe;
+  stage.logical_outputs = runtime.logical_outputs;
+  stage.physical_outputs = runtime.physical_outputs;
+  stage.physical_outputs.insert(stage.physical_outputs.end(),
+                                r.compiled.recipe->private_buffers.begin(),
+                                r.compiled.recipe->private_buffers.end());
+  stage.output_order = runtime.output_order;
+  c::TensorStagePublication publication;
+  std::string error;
+  require(build_kernel_stage_publication(stage, &publication, &error), error.c_str());
+  require(publication.contract != nullptr, what);
+  for (const auto& member : r.compiled.recipe->members) {
+    const auto inspection = inspect(member.executable);
+    for (std::size_t port = 0; port < member.outputs.size(); ++port) {
+      const auto& route = member.outputs[port];
+      if (route.source != gs::TensorStagePortSource::Output)
+        continue;
+      const auto& outputs = publication.contract->logical_outputs;
+      const auto output = std::find_if(outputs.begin(), outputs.end(), [&](const auto& candidate) {
+        return candidate.backend_output_index == static_cast<int>(route.tensor);
+      });
+      const bool authority =
+          std::any_of(publication.physical_views.begin(), publication.physical_views.end(),
+                      [&](const auto& view) {
+                        return view.backend_output_index == static_cast<int>(route.tensor);
+                      });
+      if (output == outputs.end() || authority)
+        continue;
+      const auto& checked = inspection.outputs()[port];
+      require(output->shape == checked.shape, what);
+      if (!output->stride_bytes.empty() && std::holds_alternative<c::Contiguous>(checked.layout)) {
+        std::int64_t dense = static_cast<std::int64_t>(
+            checked.dtype == c::DType::Float32 || checked.dtype == c::DType::Int32 ? 4
+            : checked.dtype == c::DType::BFloat16                                  ? 2
+                                                                                   : 1);
+        for (std::size_t axis = checked.shape.size(); axis-- > 0;) {
+          require(checked.shape[axis] <= 1 || output->stride_bytes[axis] == dense, what);
+          dense *= checked.shape[axis];
+        }
+      }
+    }
+  }
+}
+
 // Model::Options::boxdecode_raw_outputs: the stage also publishes every input
 // as the route without BoxDecode returns it, after the BoxDecode tensor. The
 // EdgeTAM decoder: BF16 logits and IoU slices, an FP32 object score and the
@@ -888,21 +941,35 @@ void boxdecode_raw_outputs() {
                 member.dependencies.empty(),
             "a raw member must read its stage input and write its public output");
     const auto inspection = inspect(member.executable);
+    // A BF16 cast reads the view with the published shape; an FP32 copy reads
+    // the HWC view. Either way the member writes the published tensor itself.
+    const bool cast = sources[i] == c::DType::BFloat16;
     require(inspection.inputs().size() == 1 && inspection.inputs()[0].dtype == sources[i] &&
-                inspection.inputs()[0].shape == views[i] &&
+                inspection.inputs()[0].shape == (cast ? raw[i].shape : views[i]) &&
                 inspection.outputs()[0].dtype == c::DType::Float32 &&
-                inspection.outputs()[0].shape == views[i],
-            "raw member conversion differs from the contract");
+                inspection.outputs()[0].shape == raw[i].shape &&
+                inspection.outputs()[0].shape == runtime.logical_outputs[1 + i].shape,
+            "a raw member must write exactly its published tensor");
   }
+  require_exact_member_publications(r, "a raw output publishes another shape than its member "
+                                       "writes");
   // INT8 heads are dequantized with the canonical reciprocal scale.
   auto quantized = sam_mask_source(BoxDecodeType::MobileSam, "INT8", "INT8");
   quantized.payload.raw_outputs = {{"masks", "FP32", {1, 256, 256, 4}},
                                    {"iou_predictions", "FP32", {1, 4}}};
   const auto q =
       prepare_boxdecode_kernel(quantized, {1024, 1024, 1280, 720, ResizeMode::Letterbox});
+  const auto dequant = inspect(q.compiled.recipe->members[2].executable);
   require(q.compiled.runtime_contract.logical_outputs.size() == 3 &&
-              inspect(q.compiled.recipe->members[2].executable).inputs()[0].dtype == c::DType::Int8,
-          "INT8 MobileSAM raw outputs must be dequantized from their carriers");
+              dequant.inputs()[0].dtype == c::DType::Int8 &&
+              dequant.inputs()[0].shape == std::vector<std::int64_t>({1, 256, 256, 4}) &&
+              dequant.outputs()[0].shape == std::vector<std::int64_t>({1, 256, 256, 4}) &&
+              inspect(q.compiled.recipe->members[3].executable).outputs()[0].shape ==
+                  std::vector<std::int64_t>({1, 4}),
+          "INT8 MobileSAM raw outputs must be dequantized from their carriers in their published "
+          "shape");
+  require_exact_member_publications(q, "an INT8 raw output publishes another shape than its "
+                                       "member writes");
 }
 
 // Identity scale does not make nominal resize modes interchangeable: YOLO26

@@ -15,6 +15,8 @@
 #include <cstring>
 #include <limits>
 #include <memory>
+#include <optional>
+#include <span>
 #include <stdexcept>
 
 namespace simaai::neat::pipeline_internal::sima {
@@ -175,6 +177,51 @@ k::KernelExecutable raw_copy_task(const k::TensorSpec& input, const k::TensorSpe
   if (const auto* error = std::get_if<k::Error>(&checked))
     invalid(std::string("raw output copy: ") + error->message);
   return std::get<k::KernelExecutable>(std::move(checked));
+}
+// The published raw tensor over a checked HWC view: the same non-unit
+// dimensions in order, so only unit axes are added or dropped (for example
+// [256,256,4] published as [1,256,256,4], or [1,1,4] as [1,4]). Unit axes take
+// the dense stride; they address nothing.
+std::optional<k::TensorSpec> published_view(const k::TensorSpec& view,
+                                            std::span<const std::int64_t> shape) {
+  const auto width = static_cast<std::int64_t>(scalar_bytes(view.dtype));
+  std::array<std::int64_t, 3> strides{};
+  if (const auto* strided = std::get_if<k::Strided>(&view.layout))
+    std::copy_n(strided->strides_bytes.begin(), 3, strides.begin());
+  else if (std::holds_alternative<k::Contiguous>(view.layout) && view.shape.size() == 3)
+    strides = {view.shape[1] * view.shape[2] * width, view.shape[2] * width, width};
+  else
+    return std::nullopt;
+  if (view.shape.size() != 3 || shape.size() > 6)
+    return std::nullopt;
+  k::Strided layout;
+  std::size_t axis = 0;
+  for (std::size_t i = 0; i < shape.size(); ++i) {
+    if (shape[i] == 1)
+      continue;
+    while (axis < 3 && view.shape[axis] == 1)
+      ++axis;
+    if (axis == 3 || view.shape[axis] != shape[i])
+      return std::nullopt;
+    layout.strides_bytes[i] = strides[axis++];
+  }
+  while (axis < 3 && view.shape[axis] == 1)
+    ++axis;
+  if (axis != 3)
+    return std::nullopt;
+  bool dense = true;
+  std::int64_t span = width;
+  for (std::size_t i = shape.size(); i-- > 0;) {
+    if (shape[i] == 1)
+      layout.strides_bytes[i] = span;
+    else if (layout.strides_bytes[i] != span)
+      dense = false;
+    span *= shape[i];
+  }
+  k::TensorSpec spec{std::vector<std::int64_t>(shape.begin(), shape.end()), view.dtype};
+  if (!dense)
+    spec.layout = layout;
+  return spec;
 }
 struct Builder {
   CompiledKernelContract compiled;
@@ -1071,7 +1118,10 @@ BoxDecodeKernelRecipeResult prepare_boxdecode_kernel(const CompiledBoxDecodeCont
     auto in = build.input(source, i, static_cast<int>(channels), true);
     if (std::holds_alternative<k::MlaCBlocked>(in.tensor.layout))
       invalid("raw output '" + raw.name + "' from an MLA C-blocked carrier is not supported");
-    const k::TensorSpec dense{in.tensor.shape, dtype(raw.dtype)};
+    // The member writes exactly the published tensor: its checked output has
+    // the raw output's own shape (with the batch axis the route without
+    // BoxDecode publishes), and a conversion reads the same-shaped view.
+    const k::TensorSpec dense{raw.shape, dtype(raw.dtype)};
     std::int64_t published = 1, viewed = 1;
     for (const auto dimension : raw.shape)
       published = dimension > 0 && published <= INT64_MAX / dimension ? published * dimension : -1;
@@ -1080,6 +1130,10 @@ BoxDecodeKernelRecipeResult prepare_boxdecode_kernel(const CompiledBoxDecodeCont
     if (published != viewed)
       invalid("raw output '" + raw.name + "' does not have the extent of BoxDecode input " +
               std::to_string(i));
+    const auto source_view = published_view(in.tensor, raw.shape);
+    if (!source_view)
+      invalid("raw output '" + raw.name + "' is not BoxDecode input " + std::to_string(i) +
+              " with unit axes added or removed");
     k::KernelExecutable executable;
     if (in.tensor.dtype == dense.dtype) {
       executable = raw_copy_task(in.tensor, dense);
@@ -1090,10 +1144,10 @@ BoxDecodeKernelRecipeResult prepare_boxdecode_kernel(const CompiledBoxDecodeCont
           {{"scale", 1.0F / static_cast<float>(q.scales[0])},
            {"zero_point", static_cast<std::int32_t>(q.zero_points[0])}}};
       executable = checked(scheduler::check_kernel(
-          {"dequant", k::Target::A65, {&in.tensor, 1}, {&dense, 1}, parameters}));
+          {"dequant", k::Target::A65, {&*source_view, 1}, {&dense, 1}, parameters}));
     } else if (in.tensor.dtype == k::DType::BFloat16 && dense.dtype == k::DType::Float32) {
       executable = checked(
-          scheduler::check_kernel({"cast", k::Target::A65, {&in.tensor, 1}, {&dense, 1}, {}}));
+          scheduler::check_kernel({"cast", k::Target::A65, {&*source_view, 1}, {&dense, 1}, {}}));
     } else {
       invalid("raw output '" + raw.name + "' needs an unsupported " + dtype_name(in.tensor.dtype) +
               " to " + raw.dtype + " conversion");
