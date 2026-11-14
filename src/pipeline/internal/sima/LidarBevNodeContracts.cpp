@@ -273,6 +273,26 @@ bool SimaBEVPoolPlan::compile_node_contract(const ContractCompileInput& input,
   }
 }
 
+bool ResizeArgMax::compile_node_contract(const ContractCompileInput& input,
+                                         CompiledNodeContract* out, std::string* error) const {
+  try {
+    std::optional<CompiledRuntimeContract> ingress;
+    const auto& upstream = resolve_inputs(input, kind(), ingress);
+    // Reads the producer's logical view in place: an MLA output whose slice stage
+    // drops padded channels arrives as its strided [N,h,w,C] view, not a copy.
+    const auto facts =
+        bev_tensor_facts(upstream, ingress ? nullptr : input.immediate_upstream, kind());
+    const auto plan = kr::resize_argmax_request(opt_, facts);
+    return compile_bev_contract(kind(), element_names(input.node_index).front(),
+                                contract_definition(), upstream, ingress.has_value(), plan, out,
+                                error);
+  } catch (const std::exception& exception) {
+    if (error)
+      *error = exception.what();
+    return false;
+  }
+}
+
 bool SimaBEVPool::compile_node_contract(const ContractCompileInput& input,
                                         CompiledNodeContract* out, std::string* error) const {
   try {

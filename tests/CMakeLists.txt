@@ -563,6 +563,7 @@ set(UNIT_TESTS
   unit_model_ingress_tail_padding_test
   unit_model_output_spec_contract_test
   unit_post_region_materialization_test
+  unit_model_semantic_segmentation_test
   unit_model_metadata_test
   unit_model_route_planner_test
   unit_resnet50_mla_handoff_segment_test
@@ -1096,6 +1097,18 @@ foreach(bevfusion_suite sima_voxelize:ev74 sima_voxelize:a65 sima_pillar_scatter
     set_tests_properties(${bevfusion_test} PROPERTIES TIMEOUT 180)
   endif()
 endforeach()
+
+# Public ResizeArgMax correctness. The operation runs on the EV74 only; the
+# byte-exact reference needs no FMA contraction.
+add_pipeline_test(resize_argmax_ev_test
+  SOURCES e2e_testing/resize_argmax_test.cpp LOCK_ACCELERATOR)
+if (NOT resize_argmax_ev_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  target_compile_definitions(resize_argmax_ev_test PRIVATE SIMA_BEVFUSION_TARGET_EV74=1)
+  target_compile_options(resize_argmax_ev_test PRIVATE -ffp-contract=off)
+  set_property(TEST resize_argmax_ev_test APPEND PROPERTY LABELS
+    "e2e;segmentation;ev74;customer_api;kernel-runner;modalix-only")
+  set_tests_properties(resize_argmax_ev_test PROPERTIES TIMEOUT 180)
+endif()
 
 add_pipeline_test(kernel_runner_public_cast_test
   SOURCES e2e_testing/kernel_runner_public_cast_test.cpp
