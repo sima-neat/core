@@ -786,6 +786,29 @@ void sam_recipe() {
                 inspection.outputs()[4].shape == std::vector<std::int64_t>({3, 480, 640}),
             "EfficientSAM3 concept request ports differ from the contract");
   }
+  // The MPK's detections carrier is [1,200,8] BF16 (two padding values per
+  // query). The port keeps that 16-byte row pitch while it describes the six
+  // used values, so column 4 is each query's score.
+  {
+    auto s = source(BoxDecodeType::EfficientSam3, 1);
+    s.payload.topk = 5;
+    s.payload.detection_threshold = .5;
+    s.payload.nms_iou_threshold = 0;
+    s.payload.score_activation = BoxDecodeScoreActivation::Identity;
+    s.payload.decode_type_option = BoxDecodeTypeOption::Auto;
+    input(s, 1, 200, 8, "BF16");
+    s.payload.slice_shapes[0].sizes[2] = 6;
+    input(s, 192, 192, 200, "BF16");
+    s.payload.tensor_roles = {BoxDecodeTensorRole::SamConceptDetections,
+                              BoxDecodeTensorRole::SamMaskLogits};
+    const auto r = check(s, {1008, 1008, 1280, 720, ResizeMode::Stretch});
+    const auto port = inspect(r.compiled.recipe->members[r.decode_member].executable).inputs()[0];
+    const auto* strided = std::get_if<c::Strided>(&port.layout);
+    require(port.shape == std::vector<std::int64_t>({1, 200, 6}) && strided &&
+                strided->strides_bytes[0] == 3200 && strided->strides_bytes[1] == 16 &&
+                strided->strides_bytes[2] == 2,
+            "EfficientSAM3 detections must keep their carrier's row pitch");
+  }
 }
 
 // Model::Options::boxdecode_raw_outputs: the stage also publishes every input

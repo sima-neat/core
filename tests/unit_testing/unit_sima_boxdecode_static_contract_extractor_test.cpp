@@ -149,6 +149,9 @@ void sam_family_static_contracts() {
     std::vector<std::vector<int>> used; // Logical HWC extent of each bound input.
     int classes;
     int topk;
+    // Physical HWC carrier each head is read from: the padded MLA buffer, not
+    // the extent its slice plugin publishes.
+    std::vector<std::vector<int>> carriers;
   };
   const auto L = BoxDecodeTensorRole::SamMaskLogits;
   const auto I = BoxDecodeTensorRole::SamIouPredictions;
@@ -159,21 +162,24 @@ void sam_family_static_contracts() {
        {L, I},
        {{256, 256, 4}, {1, 1, 4}},
        4,
-       0},
+       0,
+       {{256, 256, 16}, {1, 1, 16}}},
       {"EdgeTAM",
        sam_test::edgetam_decoder_mpk(),
        BoxDecodeType::EdgeTam,
        {L, I, BoxDecodeTensorRole::SamObjectScore, BoxDecodeTensorRole::Unknown},
        {{256, 256, 4}, {1, 1, 4}, {1, 1, 1}, {1, 4, 256}},
        4,
-       0},
+       0,
+       {{256, 256, 8}, {1, 1, 8}, {1, 1, 8}, {1, 4, 256}}},
       {"EfficientSAM",
        sam_test::efficientsam_decoder_mpk(),
        BoxDecodeType::EfficientSam,
        {I, L},
        {{1, 1, 3}, {256, 256, 3}},
        3,
-       0},
+       0,
+       {{1, 1, 16}, {256, 256, 16}}},
       // EfficientSAM3's outputs choose its route: a three-token prompt decoder
       // binds as interactive, the concept image model as concept.
       {"EfficientSAM3 interactive",
@@ -182,14 +188,19 @@ void sam_family_static_contracts() {
        {I, L},
        {{1, 1, 3}, {256, 256, 3}},
        3,
-       0},
+       0,
+       {{1, 1, 16}, {256, 256, 16}}},
       {"EfficientSAM3 concept",
        esam3_text.str(),
        BoxDecodeType::EfficientSam3,
        {BoxDecodeTensorRole::SamConceptDetections, L},
        {{1, 200, 6}, {192, 192, 200}},
        1,
-       100}};
+       100,
+       // The detections carrier is the MLA's [1,200,8] BF16 buffer; AFE names its
+       // slice "slice_MLA_0_unpack/tuple_get_item_0_slice_transform", which is a
+       // slice, not an unpack, so the carrier is not the sliced [1,200,6].
+       {{1, 200, 8}, {192, 192, 200}}}};
   for (const auto& m : members) {
     const auto mpk = load_mpk_contract_from_json(m.json, std::string(m.name) + ".json", &error);
     require(mpk.has_value(), std::string(m.name) + " fixture must parse: " + error);
@@ -205,6 +216,9 @@ void sam_family_static_contracts() {
       require(tensor.role == m.roles[i] && shape == m.used[i],
               std::string(m.name) + " head " + std::to_string(i) +
                   " must be bound by position and shape");
+      require(tensor.input_shape == m.carriers[i],
+              std::string(m.name) + " head " + std::to_string(i) +
+                  " must be read from its physical MLA carrier");
     }
     contract->decode_type = m.type;
     const auto finalized = stagesemantics::finalize_boxdecode_static_contract(
@@ -215,6 +229,15 @@ void sam_family_static_contracts() {
     const auto compiled = stagesemantics::build_boxdecode_compiled_contract(finalized);
     require(compiled.payload.tensor_roles == m.roles && compiled.payload.num_classes == m.classes,
             std::string(m.name) + " compiled contract lost its roles");
+    // The kernel port is the carrier with its row pitch, narrowed to the used extent.
+    for (std::size_t i = 0; i < m.roles.size(); ++i) {
+      const auto& carrier = m.carriers[i];
+      require(compiled.runtime_contract.logical_inputs[i].shape ==
+                      std::vector<std::int64_t>(carrier.begin(), carrier.end()) &&
+                  compiled.payload.slice_shapes[i].sizes[2] == m.used[i][2],
+              std::string(m.name) + " head " + std::to_string(i) +
+                  " lost its carrier pitch in the compiled contract");
+    }
   }
   // A decoder that is not the named model's fails before admission: the
   // three-channel EfficientSAM decoder is not MobileSAM or EdgeTAM, and the

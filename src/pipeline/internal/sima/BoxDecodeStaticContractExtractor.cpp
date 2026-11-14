@@ -2154,8 +2154,18 @@ std::optional<BoxDecodeTensorLineageFactsLocal> collect_boxdecode_tensor_lineage
     }
 
     const std::string stage_token = lower_copy_local(stage_identity_token_local(stage));
-    const bool unpack_stage = stage_token.find("unpack") != std::string::npos;
-    const bool slice_stage = stage_token.find("slice") != std::string::npos;
+    // The kernel names the transform when it says slice or unpack. AFE names a
+    // slice of an unpacked tuple item "slice_<mla>_unpack/tuple_get_item_N_slice_transform":
+    // that stage is a slice of the dense MLA carrier, not an unpack whose output
+    // is the carrier. The plugin name decides only when the kernel does not.
+    const std::string kernel_token = lower_copy_local(stage.kernel);
+    const bool kernel_slice = kernel_token.find("slice") != std::string::npos;
+    const bool kernel_unpack = kernel_token.find("unpack") != std::string::npos;
+    const bool kernel_names_role = kernel_slice || kernel_unpack;
+    const bool unpack_stage =
+        kernel_names_role ? kernel_unpack : stage_token.find("unpack") != std::string::npos;
+    const bool slice_stage =
+        kernel_names_role ? kernel_slice : stage_token.find("slice") != std::string::npos;
     const bool value_only_stage =
         !stage_is_detess_like_local(stage) &&
         (stage_is_dequant_like_local(stage) || stage_token.find("cast") != std::string::npos);
