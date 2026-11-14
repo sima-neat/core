@@ -22,7 +22,8 @@
 // and Dms0): a CPU tensor copied into the input's DMA-BUF pool (with the compatibility copy
 // allowed: without it the push throws, unit_run_backend_differential_test), the pulled tensor
 // forwarded as it is into a GStreamer Run, Run::alloc on the pool, a pulled device tensor pushed
-// back (copied, and copied again once its geometry is one the input has validated), an Owned pull.
+// back (copied, and copied again once its geometry is one the input has validated), an Owned pull,
+// also of an EV74 tensor that was wrapped.
 
 // This file calls the deprecated forms on purpose.
 #pragma GCC diagnostic ignored "-Wdeprecated-declarations"
@@ -1136,6 +1137,28 @@ void pulled_device_tensor_is_copied_back() {
   run.close();
 }
 
+// An EV74 tensor pushed into an Ev74 input backs the slot with its own DMA-BUF, which the push
+// does not map. OutputMemory::Owned needs the bytes: its pull is a CPU copy of them, read through
+// the pushed storage, which is let go with the message.
+void owned_pull_of_wrapped_device_tensor() {
+  RunOptions opt = dataflow();
+  opt.output_memory = OutputMemory::Owned;
+  Graph g = input_output(device_input(InputMemoryPolicy::Ev74));
+  Run run = g.build(opt);
+  for (int i = 0; i < 3; ++i) {
+    const Tensor pushed = rgb(64, 48, static_cast<std::uint8_t>(0x61 + i)).cvu();
+    require(sima_test::dmabuf_inode(pushed) != 0U, "the pushed tensor is DMA-BUF memory");
+    require(run.push(TensorList{pushed}), "an EV74 tensor into an Ev74 input");
+    const Tensor out = pulled_tensor(run, 2000, "Owned, device tensor");
+    require(out.storage->kind == StorageKind::CpuOwned && sima_test::dmabuf_inode(out) == 0U,
+            "Owned output of a wrapped device tensor is a CPU copy");
+    require(bytes_of(out) == bytes_of(rgb(64, 48, static_cast<std::uint8_t>(0x61 + i))),
+            "Owned bytes of a wrapped device tensor");
+    require(pushed.storage.use_count() == 1, "the pushed storage is let go with the message");
+  }
+  run.close();
+}
+
 void mat_and_bundle_pushes() {
   InputOptions in;
   in.payload_type = PayloadType::Image;
@@ -1192,5 +1215,6 @@ RUN_TEST("unit_dataflow_backend_test", ([] {
            device_pull_forwards_into_gstreamer();
            alloc_on_device_input();
            pulled_device_tensor_is_copied_back();
+           owned_pull_of_wrapped_device_tensor();
            mat_and_bundle_pushes();
          }));

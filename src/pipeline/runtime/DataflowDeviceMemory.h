@@ -58,7 +58,8 @@ void enforce_transferable(std::span<const Tensor> item, const char* where);
 // The Sample and the TensorList of a device input's pulled message, as the codec's make_sample
 // and fill_tensors give a host input's: one leaf (a device port carries no record), over the
 // message's device memory (pulled_storage), or over a CPU copy with `owned`
-// (OutputMemory::Owned). The leaf is labelled as a GStreamer Run labels a pulled DMA-BUF tensor
+// (OutputMemory::Owned; of a tensor wrapped by its descriptor, read through one map of the pushed
+// storage for the copy). The leaf is labelled as a GStreamer Run labels a pulled DMA-BUF tensor
 // (Tensor::device CPU); the placement is its storage's. `tensors` (empty) lends its buffer to the
 // Sample's list.
 Sample pulled_sample(const DataflowInputBinding& binding,
@@ -77,15 +78,22 @@ void pulled_tensors(const DataflowInputBinding& binding,
 //     Runner when its map ended: neither a tensor pulled from a Dataflow device pool (it leases a
 //     slot of that pool, D15) nor a buffer a running graph produced (another exporter's protocol,
 //     out of H0b);
-//   - `slot_bytes` of it lie in the memory from the tensor's first byte, whose CPU address, from
-//     one read map of the storage, is aligned to `align_mask` + 1.
-// The Block's holder keeps the storage and that map until the message's last drop.
-bool wrap_tensor(const Tensor& t, df::MemoryKind port, std::size_t slot_bytes,
+//   - `slot_bytes` of it lie in the memory from the tensor's first byte, and that byte's offset
+//     in the DMA-BUF is aligned to `align_mask` + 1 (a DMA-BUF maps at a page, so its CPU address
+//     in any map is aligned as its offset is).
+// On a port of fixed shape the Block is the descriptor alone (no CPU address: the runtime takes
+// such a wrap into a device port, and nothing is mapped at the push); its holder is the tensor's
+// TensorBuffer, as a host wrap's, kept until the message's last drop. On a port of bounded shape
+// the runtime wants the CPU address: one read map of the storage, whose address must be aligned
+// too, kept with the storage until the message's last drop.
+bool wrap_tensor(const Tensor& t, const df::PortSpec& port, std::size_t slot_bytes,
                  std::uintptr_t align_mask, df::Block& out);
 
 // Pull. The storage of the tensor of `message`, whose `block` (Message::block) has a descriptor:
 //   - a wrap (the Block has a holder): the pushed tensor's storage itself (D14), with the pushed
-//     tensor's byte offset; the wrap's read map ends when the caller drops the message;
+//     tensor's byte offset. Nothing was mapped for it unless the port's shape is bounded (then
+//     the wrap's read map ends when the caller drops the message); a CPU read of the pulled
+//     tensor maps through that storage, as of any EV74 tensor;
 //   - a slot of the device pool: a GstSample over one GstDmaBufMemory of the slot's descriptor
 //     (not closed with the memory: the pool owns it), placed as make_driver_dmabuf_storage places
 //     a TensorMemory::EV74 (MLA) tensor. The memory keeps a copy of the Message, and so the slot,

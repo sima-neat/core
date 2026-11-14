@@ -294,9 +294,9 @@ inline DataflowPushOutcome DataflowInputPort::publish(Bound& b, std::span<const 
                                "offset 0 to be pushed");
     }
   } else {
-    // A device port's try_push asks alloc first, every time (device_full): its wrap costs a map
-    // of the tensor, which a refusal must not pay. With room, full_at is clear and the question
-    // below is not asked.
+    // A device port's try_push asks alloc first, every time (device_full): its wrap costs the
+    // checks of the tensor's memory, which a refusal must not pay. With room, full_at is clear and
+    // the question below is not asked.
     if (device_port && !block) {
       if (const df::Status refusal = device_full(b)) {
         return {DataflowPushOutcome::Stage::Alloc, *refusal};
@@ -314,8 +314,8 @@ inline DataflowPushOutcome DataflowInputPort::publish(Bound& b, std::span<const 
     // A device port (H0b) takes device memory only: the tensor's own DMA-BUF.
     df::Block wrap;
     wrapped = wrappable &&
-              (device_port ? dataflow_device::wrap_tensor(first, b.binding.spec.memory,
-                                                          b.slot_bytes, b.wrap_mask, wrap)
+              (device_port ? dataflow_device::wrap_tensor(first, b.binding.spec, b.slot_bytes,
+                                                          b.wrap_mask, wrap)
                            : dataflow_codec::wrap_block(first, b.slot_bytes, b.wrap_mask, wrap));
     const df::Acquire mode = block ? df::Acquire::Block : df::Acquire::Fail;
     df::Result<df::WriteLoan> allocated =

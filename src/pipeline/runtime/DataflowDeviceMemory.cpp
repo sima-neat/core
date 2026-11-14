@@ -21,6 +21,7 @@
 #include <span>
 #include <typeinfo>
 #include <utility>
+#include <variant>
 
 namespace simaai::neat::runtime::dataflow_device {
 
@@ -28,8 +29,10 @@ namespace {
 
 namespace codec = dataflow_codec;
 
-// What a wrapped device message keeps: the pushed tensor's storage and the read map its CPU
-// address comes from. The pull takes `storage`; the map ends with the last drop of the message.
+// What a device message wrapped with a CPU address keeps (a port of bounded shape, wrap_tensor):
+// the pushed tensor's storage and the read map its CPU address comes from. The pull takes
+// `storage`; the map ends with the last drop of the message. A message wrapped by its descriptor
+// alone keeps the pushed tensor's TensorBuffer itself, as a host wrap does, and no map.
 struct WrapHold {
   std::shared_ptr<TensorBuffer> storage;
   std::int64_t byte_offset = 0;
@@ -117,8 +120,9 @@ std::shared_ptr<TensorBuffer> slot_storage(const df::Message& message, const df:
 
 } // namespace
 
-bool wrap_tensor(const Tensor& t, df::MemoryKind port, std::size_t slot_bytes,
+bool wrap_tensor(const Tensor& t, const df::PortSpec& port_spec, std::size_t slot_bytes,
                  std::uintptr_t align_mask, df::Block& out) {
+  const df::MemoryKind port = port_spec.memory;
   if (port == df::MemoryKind::Host || !t.storage || t.storage->kind != StorageKind::GstSample ||
       !t.storage->holder || t.byte_offset < 0) {
     return false;
@@ -140,8 +144,23 @@ bool wrap_tensor(const Tensor& t, df::MemoryKind port, std::size_t slot_bytes,
   if (offset > memory_size || memory_size - offset < slot_bytes) {
     return false;
   }
-  // The CPU address of the message's bytes (an Owned pull copies from it): one read map of the
-  // tensor's storage, kept for the message's life. A refusal ends it here.
+  out.size = slot_bytes;
+  out.fd = fd;
+  out.fd_offset = static_cast<std::size_t>(memory_offset) + offset;
+  out.kind = port;
+  const df::TensorSpec* const spec = std::get_if<df::TensorSpec>(&port_spec.payload);
+  if (spec && spec->shape.fixed()) {
+    // By the descriptor alone: nothing is mapped. The alignment asked of the CPU address is asked
+    // of the offset in the DMA-BUF, which is where that address would be in any map of it.
+    if ((out.fd_offset & align_mask) != 0U) {
+      return false;
+    }
+    out.data = nullptr;
+    out.holder = t.storage;
+    return true;
+  }
+  // A port of bounded shape takes a wrap only with its CPU address (the runtime's rule): one read
+  // map of the tensor's storage, kept for the message's life. A refusal ends it here.
   auto hold = std::make_shared<WrapHold>();
   hold->mapping = storage.map(MapMode::Read);
   if (!hold->mapping.data || hold->mapping.size_bytes < offset ||
@@ -155,19 +174,34 @@ bool wrap_tensor(const Tensor& t, df::MemoryKind port, std::size_t slot_bytes,
   hold->storage = t.storage;
   hold->byte_offset = t.byte_offset;
   out.data = data;
-  out.size = slot_bytes;
-  out.fd = fd;
-  out.fd_offset = static_cast<std::size_t>(memory_offset) + offset;
-  out.kind = port;
   out.holder = std::move(hold);
   return true;
 }
 
 std::shared_ptr<TensorBuffer> pulled_storage(const df::Message& message, const df::Block& block,
                                              std::int64_t& byte_offset) {
+  if (block.holder && !block.data) {
+    // Wrapped by its descriptor (wrap_tensor): the holder is the pushed tensor's TensorBuffer, and
+    // the tensor's first byte is where the Block's offset says, past the memory's own.
+    auto storage = std::static_pointer_cast<TensorBuffer>(block.holder);
+    GstMemory* memory = dmabuf_memory(*storage);
+    gsize memory_offset = 0;
+    if (memory) {
+      gst_memory_get_sizes(memory, &memory_offset, nullptr);
+    }
+    if (!memory || block.fd_offset < memory_offset) {
+      // The application replaced the storage's memory while the Run held it (against D16).
+      pipeline_internal::error_util::throw_session_error(
+          error_codes::kMemoryAllocationFailed,
+          "Run::pull: the storage of a pushed device tensor changed while the Run held it "
+          "(Dataflow backend)");
+    }
+    byte_offset = static_cast<std::int64_t>(block.fd_offset - memory_offset);
+    return storage;
+  }
   if (block.holder) {
-    // Every wrap of a Feed is Core's own (DataflowInputPort), and a wrap with a descriptor is
-    // wrap_tensor's.
+    // Every wrap of a Feed is Core's own (DataflowInputPort), and a wrap with a descriptor and a
+    // CPU address is wrap_tensor's WrapHold.
     const auto* hold = static_cast<const WrapHold*>(block.holder.get());
     byte_offset = hold->byte_offset;
     return hold->storage;
@@ -214,8 +248,28 @@ namespace {
 // returns to the pool as the message goes).
 std::shared_ptr<TensorBuffer> leaf_storage(bool owned, const df::Message& message,
                                            std::int64_t& byte_offset) {
-  return owned ? codec::owned_copy(message.bytes())
-               : pulled_storage(message, message.block(), byte_offset);
+  if (!owned) {
+    return pulled_storage(message, message.block(), byte_offset);
+  }
+  const std::span<const std::byte> bytes = message.bytes();
+  if (!bytes.empty()) {
+    return codec::owned_copy(bytes);
+  }
+  // A tensor wrapped by its descriptor has no bytes mapped (the runtime's bytes() is empty): the
+  // copy reads them through one read map of the pushed storage, which ends here. This is the map
+  // a push took before; only an Owned pull pays it now.
+  std::int64_t offset = 0;
+  const std::shared_ptr<TensorBuffer> pushed = pulled_storage(message, message.block(), offset);
+  const std::size_t size = df::used_bytes(*message.spec(), message.extent());
+  const Mapping mapping = pushed->map(MapMode::Read);
+  const auto first = static_cast<std::size_t>(offset);
+  if (!mapping.data || mapping.size_bytes < first || mapping.size_bytes - first < size) {
+    pipeline_internal::error_util::throw_session_error(
+        error_codes::kMemoryAllocationFailed,
+        "Run::pull: a pushed device tensor could not be mapped for the Owned copy (Dataflow "
+        "backend)");
+  }
+  return codec::owned_copy({static_cast<const std::byte*>(mapping.data) + first, size});
 }
 
 } // namespace
@@ -289,12 +343,14 @@ void DataflowInputPort::device_remember(std::span<const Tensor> item,
   }
 }
 
-// A try_push that wraps a device tensor maps it (wrap_tensor) before Session::alloc can refuse it,
-// and a refused call must not pay that map. The question a host input asks once it was refused
+// A try_push that wraps a device tensor prepares the wrap (wrap_tensor: its checks, and on a port
+// of bounded shape a map) before Session::alloc can refuse it, and a refused call must not pay
+// that. The question a host input asks once it was refused
 // (still_full: a slot taken and given back) would begin and end a write epoch on a device slot
 // whenever there is room. So a device input asks with a Block that alloc cannot take: full links
 // refuse it first, before any slot (FR14, counted as the refusal of this try_push, which it is);
-// with room the slot is taken, the wrap refused (FR15: no CPU address) and the slot returned,
+// with room the slot is taken, the wrap refused (FR15: an empty Block has neither a CPU address
+// nor a descriptor) and the slot returned,
 // with no write epoch and nothing kept (block.h: a wrap is checked after the slot is taken, and a
 // device port begins no epoch around a wrap). Any other refusal (FR7, a closed input, a stopped
 // Session) is the one the slot's own alloc would give, and is the push's.
