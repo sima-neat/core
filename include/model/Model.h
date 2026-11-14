@@ -299,6 +299,31 @@ public:
   };
 
   /**
+   * @brief Semantic-segmentation decode of a model's class scores (SegFormer-style).
+   *
+   * When enabled, a `ResizeArgMax` Node on the EV74 replaces the model's dequantize or cast
+   * postprocess. It reads the MLA class scores in place, including channel padding that the
+   * MPK's slice stage drops, resizes them bilinearly to the output size and returns the first
+   * class with the largest score at each pixel. The model then outputs one `[N, H, W]` class
+   * map: UINT8 for at most 256 classes, otherwise INT32.
+   *
+   * The `Model` constructor throws `std::invalid_argument`, rather than silently returning
+   * scores, when the model has no postprocess or one that does more than dequantize or cast,
+   * when `inference_terminal` stops before the postprocess, when `decode_type` is set, or when
+   * only one of the output dimensions is set. Decode any other model's scores with
+   * `nodes::ResizeArgMax` in a `Graph`.
+   */
+  struct SemanticSegmentationOptions {
+    bool enable = false; ///< Replace the dequantize/cast postprocess with the class-map decode.
+    /// Class-map width. Leave `output_width` and `output_height` both `0` for the model input
+    /// size, or set both to the camera frame size to label every source pixel.
+    int output_width = 0;
+    int output_height = 0; ///< Class-map height; see `output_width`.
+    /// False (default): half-pixel centers, as PyTorch and Hugging Face `interpolate` use.
+    bool align_corners = false;
+  };
+
+  /**
    * @brief Where the inference pipeline should terminate.
    *
    * Most pipelines run preprocess → MLA → postprocess. This policy lets advanced users stop
@@ -382,6 +407,8 @@ public:
     /// `0` keeps legacy inference / MPK-provided metadata.
     int num_classes = 0;
     YoloXSegPoseOptions yolox_seg_pose; ///< YOLOX segmentation/pose-specific settings.
+    /// Semantic-segmentation class-map decode; replaces the dequantize/cast postprocess.
+    SemanticSegmentationOptions semantic_segmentation;
     /// Original-image width hint for BoxDecode coordinate inversion.
     /// @deprecated BoxDecode original image size is now read from preprocess metadata. Kept for
     /// transition.

@@ -28,6 +28,7 @@ sidebar_position: 1
       <li><a class="overview-link-card" href="/reference/environment-variables/"><strong>環境變數</strong><span>檢閱執行階段和建構器環境變數。</span></a></li>
       <li><a class="overview-link-card" href="/reference/tutorial-assets/"><strong>教學範例素材</strong><span>控制模型封存檔路徑和來源樹教學範例素材。</span></a></li>
       <li><a class="overview-link-card" href="/reference/boxdecode_decode_types/"><strong>BoxDecode 解碼類型</strong><span>選擇解碼類型並解析封裝的偵測輸出。</span></a></li>
+      <li><a class="overview-link-card" href="/reference/semantic_segmentation_decode/"><strong>語意分割解碼</strong><span>在 EV74 上將各類別分數轉換為縮放後的類別圖。</span></a></li>
       <li><a class="overview-link-card" href="/reference/error-codes/"><strong>錯誤碼</strong><span>將框架錯誤常數映射到原因和後續步驟。</span></a></li>
       <li><a class="overview-link-card" href="/reference/error_format/"><strong>外掛程式錯誤格式</strong><span>了解 GStreamer 外掛程式失敗時報告的結構化錯誤欄位。</span></a></li>
     </ul>
