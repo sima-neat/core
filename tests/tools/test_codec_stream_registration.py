@@ -56,6 +56,6 @@ add_test(NAME codec_runtime_stream_contract_test COMMAND /usr/bin/true)
     assert 'if (args.sync)' in implementation
     assert 'run_decoded_source_sync(test_case, url, args.frames, args.timeout_ms, source_fps);' in implementation
     workflow = (ROOT / '.github/workflows/vulcan-ci.yml').read_text()
-    assert "vars.NEAT_CI_STREAM_PROFILE || 'http'" in workflow
+    assert "inputs.stream_profile || 'http'" in workflow
     assert "E2E_LABEL_EXCLUDE='perf|llima|codec_stream|codec_aggregate'" in workflow
     assert '--label-exclude "perf|e2e"' in workflow  # Keep all 284 original Fast cases.

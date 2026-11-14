@@ -111,8 +111,10 @@ Python レーンは、選択した node ID と明示的に除外した node ID �
 | Python ランタイム | `NEAT_CI_PYTHON_PROFILE=runtime`（既定） | 準備済み ResNet フィクスチャで Graph Phase 3 を有効化し、Torch は明示的に除外します。 |
 | Torch 統合 | `NEAT_CI_PYTHON_PROFILE=torch` | レビュー済みの正確な `NEAT_CI_TORCH_VERSION` を設定し、インストール/インポートを成功させる必要があります。 |
 | MIPI カメラ | `SIMA_NEAT_TEST_MIPI_CAMERA=1` | カメラハードウェア、`SIMA_NEAT_TUTORIAL_MODEL_MIPI`、`SIMA_NEAT_TUTORIAL_MIPI_DECODE` を用意します。 |
-| 週次 HTTP ストリーム | `NEAT_CI_STREAM_PROFILE=http`（既定） | HTTP MJPEG URL と正の FPS を用意します。両方の HTTP ケースと同期スモークチェックは必須です。 |
-| 週次 HTTP + RTSP ストリーム | `NEAT_CI_STREAM_PROFILE=all` | さらに H264、H265、MJPEG の RTSP URL と正の MJPEG FPS を用意します。 |
+| 週次 HTTP ストリーム | `stream_profile: http`（既定） | Colo カタログから HTTP MJPEG URL と正の整数の FPS を取得します。両方の HTTP ケースと同期スモークチェックは必須です。 |
+| 週次 HTTP + RTSP ストリーム | `stream_profile: all` | カタログから H.264、H.265、MJPEG の RTSP URL と正の整数の MJPEG FPS も取得します。 |
+
+週次ストリームジョブは、割り当てられた DevKit の `/etc/colo-services.json` からカタログを検出します。ストリームケースを省略するには `stream_profile: none` を選択します。
 
 ハードウェア不要のカメラ API テストは常にランタイムプロファイルに含まれます。カメラや Torch の除外はカバレッジの欠落であり、合格ではありません。ストリームプロファイルが対象とするのは `codec_stream` ケースの登録であり、除外された他の RTSP レーンまで検証するものではありません。各ストリームケースにはスモークと反復契約の別々の結果があるため、HTTP ストリームが利用できても、未実行の RTSP ケースを集計 PASS に隠すことはできません。
 
