@@ -90,7 +90,8 @@ def test_sam_concept_keeps_several_masks():
   boxes = [(10, 20, 30, 40, 0.9, 0), (50, 60, 70, 80, 0.75, 0), (0, 0, 0, 0, 0.6, 0)]
   payload = _masks_v1(boxes, height=6, width=8, capacity=4)
   result = pyneat.decode_segmentation([_tensor(payload)])[0]
-  np.testing.assert_array_equal(result.boxes.to_numpy()[:, 4], [0.9, 0.75, 0.6])
+  # Scores are float32 on the wire; compare with the same float32 values.
+  np.testing.assert_array_equal(result.boxes.to_numpy()[:, 4], np.float32([0.9, 0.75, 0.6]))
   masks = result.masks.to_numpy()
   assert masks.shape == (3, 6, 8)
   assert [int(m[0, 0]) for m in masks] == [40, 80, 120]

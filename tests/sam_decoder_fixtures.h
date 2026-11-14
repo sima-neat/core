@@ -109,10 +109,11 @@ inline std::int64_t sam_numel(const std::vector<std::int64_t>& shape) {
   return n;
 }
 
-// EdgeTAM mask_decoder (models/edgetam surgery.py INTERFACES, W16A16): BF16 MLA
-// outputs mask_logits [1,256,256,4], iou_scores [1,4], object_score_logits
-// [1,1] and object_pointers [1,4,256], padded to eight values where needed,
-// sliced and cast to the float32 interface compile.py audits.
+// EdgeTAM mask_decoder (models/edgetam surgery.py INTERFACES, W16A16), with the
+// plugin graph of the CI-built manifest: one packed BF16 MLA output unpacked to
+// mask_logits [1,256,256,8], iou_scores [1,8], object_score_logits [1,8] and
+// object_pointers [1,4,256], sliced to [1,256,256,4], [1,4] and [1,1] and cast
+// to the float32 interface compile.py audits.
 inline std::string edgetam_decoder_mpk() {
   const std::vector<std::pair<std::string, std::vector<std::int64_t>>> inputs = {
       {"image_embeddings", {1, 64, 64, 256}},
@@ -146,16 +147,30 @@ inline std::string edgetam_decoder_mpk() {
                  {"iou_scores", {1, 4}, {1, 8}},
                  {"object_score_logits", {1, 1}, {1, 8}},
                  {"object_pointers", {1, 4, 256}, {1, 4, 256}}};
-  std::vector<std::pair<std::string, std::int64_t>> mla_outputs, terminal;
-  for (std::size_t i = 0; i < outputs.size(); ++i)
-    mla_outputs.push_back({"MLA_0_" + std::to_string(i), sam_numel(std::get<2>(outputs[i])) * 2});
-  mpk["plugins"].push_back(sam_plugin("MLA_0", sequence++, "", {}, mla_inputs, mla_outputs));
+  std::vector<std::pair<std::string, std::int64_t>> unpacked, terminal;
+  nlohmann::json types = nlohmann::json::array(), shapes = nlohmann::json::array();
+  std::int64_t packed = 0;
+  for (std::size_t i = 0; i < outputs.size(); ++i) {
+    const auto& padded = std::get<2>(outputs[i]);
+    unpacked.push_back({"MLA_0_ofm_unpack_transform_" + std::to_string(i), sam_numel(padded) * 2});
+    packed += unpacked.back().second;
+    types.push_back("bfloat16");
+    shapes.push_back(padded);
+  }
+  auto mla = sam_plugin("MLA_0", sequence++, "", {}, mla_inputs, {{"MLA_0", packed}});
+  mla["resources"]["executable"] = "edgetam_mask_decoder_stage1_mla.elf";
+  mpk["plugins"].push_back(std::move(mla));
+  mpk["plugins"].push_back(sam_plugin("MLA_0_ofm_unpack_transform", sequence++, "unpack_transform",
+                                      {{"tensor_types", types},
+                                       {"tensor_shapes", shapes},
+                                       {"input_shapes", {{1, packed}}},
+                                       {"output_shapes", shapes}},
+                                      {{"MLA_0", packed}}, unpacked));
   for (std::size_t i = 0; i < outputs.size(); ++i) {
     const auto& [name, shape, padded] = outputs[i];
-    std::string producer = mla_outputs[i].first;
+    std::string producer = unpacked[i].first;
     if (shape != padded) {
-      const auto slice =
-          "slice_MLA_0_unpack/tuple_get_item_" + std::to_string(i) + "_slice_transform";
+      const auto slice = "slice_MLA_0/tuple_get_item_" + std::to_string(i) + "_slice_transform";
       mpk["plugins"].push_back(sam_plugin(slice, sequence++, "slice_transform",
                                           {{"begin", std::vector<std::int64_t>(shape.size(), 0)},
                                            {"end", shape},

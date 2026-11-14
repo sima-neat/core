@@ -5,6 +5,7 @@
 #include "test_main.h"
 #include "test_utils.h"
 
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
@@ -20,6 +21,19 @@ std::string require_yolov9_tar() {
   static const auto fixture = sima_test::make_strict_model_archive_fixture(
       "unit_model_output_spec_contract_test", {}, true, "yolo_v9c_seg", true);
   return fixture.tar_path;
+}
+
+// A decoder package the board's dmabuf-plan admission accepts: the MPK plus
+// synthetic topology evidence for each MLA executable it names.
+sima_test::ModelArchiveFixture admissible_fixture(const std::string& tag, const std::string& file,
+                                                  const std::string& mpk) {
+  auto fixture = sima_test::make_model_archive_fixture(tag, {{file, mpk}}, false);
+  sima_test::write_mpk_topology_elfs(fixture.root_dir, mpk);
+  const std::string cmd = "tar -czf " + sima_test::model_archive_shell_quote(fixture.tar_path) +
+                          " -C " + sima_test::model_archive_shell_quote(fixture.root_dir) + " .";
+  if (std::system(cmd.c_str()) != 0)
+    throw std::runtime_error("failed to archive " + tag);
+  return fixture;
 }
 
 std::string shape_to_string(const std::vector<int64_t>& shape) {
@@ -42,9 +56,9 @@ RUN_TEST(
       {
         // Options::boxdecode_raw_outputs: an EdgeTAM decoder returns the BoxDecode
         // tensor, then exactly the tensors the same Model returns without BoxDecode.
-        const auto fixture = sima_test::make_model_archive_fixture(
-            "edgetam_boxdecode_raw_outputs",
-            {{"etc/edgetam_mask_decoder_mpk.json", sam_test::edgetam_decoder_mpk()}}, true);
+        const auto fixture =
+            admissible_fixture("edgetam_boxdecode_raw_outputs", "etc/edgetam_mask_decoder_mpk.json",
+                               sam_test::edgetam_decoder_mpk());
         Model raw_model(fixture.tar_path);
         const auto raw = raw_model.output_specs();
         const std::vector<std::vector<int64_t>> shapes = {
@@ -106,9 +120,9 @@ RUN_TEST(
             {"efficientsam", sam_test::efficientsam_decoder_mpk(), BoxDecodeType::MobileSam, true,
              "MobileSAM decoders export 1 or 4 mask channels; this one has 3"}};
         for (const auto& c : choices) {
-          const auto fixture = sima_test::make_model_archive_fixture(
-              std::string("sam_multimask_") + c.tag,
-              {{std::string("etc/") + c.tag + "_decoder_mpk.json", c.mpk}}, true);
+          const auto fixture =
+              admissible_fixture(std::string("sam_multimask_") + c.tag,
+                                 std::string("etc/") + c.tag + "_decoder_mpk.json", c.mpk);
           Model::Options options;
           options.decode_type = c.type;
           options.multimask_output = c.multimask;
