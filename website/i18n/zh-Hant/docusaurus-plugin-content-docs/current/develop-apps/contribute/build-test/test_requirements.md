@@ -129,8 +129,10 @@ Python 通道會記錄已選取及明確排除的節點 ID。必要的設定、�
 | Python 執行階段 | `NEAT_CI_PYTHON_PROFILE=runtime`（預設） | 使用已準備的 ResNet 測試固定資料啟用 Graph Phase 3；明確排除 Torch。 |
 | Torch 整合 | `NEAT_CI_PYTHON_PROFILE=torch` | 設定經審查的確切 `NEAT_CI_TORCH_VERSION`；安裝／匯入必須成功。 |
 | MIPI 攝影機 | `SIMA_NEAT_TEST_MIPI_CAMERA=1` | 提供攝影機硬體、`SIMA_NEAT_TUTORIAL_MODEL_MIPI` 與 `SIMA_NEAT_TUTORIAL_MIPI_DECODE`。 |
-| 每週 HTTP 串流 | `NEAT_CI_STREAM_PROFILE=http`（預設） | 提供 HTTP MJPEG URL 及正值 FPS。兩個 HTTP 案例與同步煙霧檢查都仍為必要。 |
-| 每週 HTTP + RTSP 串流 | `NEAT_CI_STREAM_PROFILE=all` | 另外提供 H264、H265 與 MJPEG RTSP URL，以及正值 MJPEG FPS。 |
+| 每週 HTTP 串流 | `stream_profile: http`（預設） | Colo 目錄提供 HTTP MJPEG URL 與正整數 FPS。兩個 HTTP 案例與同步冒煙測試仍為必要。 |
+| 每週 HTTP + RTSP 串流 | `stream_profile: all` | 目錄也提供 H.264、H.265 與 MJPEG RTSP URL，以及正整數 MJPEG FPS。 |
+
+每週串流工作會讀取所分配 DevKit 上的 `/etc/colo-services.json` 以找到目錄。若要略過串流案例，請選擇 `stream_profile: none`。
 
 不需硬體的攝影機 API 測試始終屬於執行階段設定組合。攝影機與 Torch 的排除仍是覆蓋
 缺口，不能算通過。串流設定組合涵蓋 `codec_stream` 案例註冊，不代表其他被排除的

@@ -191,6 +191,7 @@ inline fs::path ensure_yolov8n_drive_variants(const fs::path& root) {
     sima_test::purge_unlistable_tar_gz(tar_path);
 
     const std::string url = base_url + "/" + stem + ".tar.gz";
+    step_log(("Downloading YOLOv8n variant " + stem).c_str());
     const bool ok = sima_test::download_file(url, tar_path);
     require(ok, "ensure_yolov8n_drive_variants: failed to download " + url + " -> " +
                     tar_path.string() +
