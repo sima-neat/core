@@ -273,16 +273,18 @@ mask = result.masks.to_numpy()[0]  # uint8 [H, W], 0 or 255
 ### EdgeTAM tracking {#edgetam-tracking}
 
 EdgeTAM's memory encoder and memory bank need two decoder outputs that BoxDecode does not
-publish: the object pointer of the chosen mask and that mask's low-resolution logits. Set
+publish: an object pointer and the chosen mask's low-resolution logits. Set
 `boxdecode_raw_outputs` on the mask decoder Model to get them from the same run. The outputs are
 then the BoxDecode tensor, `mask_logits` `[1, 256, 256, 4]`, `iou_scores` `[1, 4]`,
 `object_score_logits` `[1, 1]` and `object_pointers` `[1, 4, 256]`, all float32.
 
 - The detection's class is the chosen plane: take `mask_logits[0, :, :, class]` for the memory
-  encoder, upsampled to 1024×1024 as the model's README describes, and `object_pointers[0, class]`
-  for the memory bank.
+  encoder, upsampled to 1024×1024 as the model's README describes.
 - Set `multimask_output=False` for a prompt of two or more points; leave it `True` for one click
   and for tracked frames. The class reports the plane either rule chose.
+- For the memory bank, take `object_pointers[0, class]` when `multimask_output=True`. When it is
+  `False`, take `object_pointers[0, 0]`: SAM 2 keeps the single-mask pointer even when its
+  stability fallback chooses a mask from planes 1–3.
 - An object score of 0 or below empties the mask and its box, but the class still names the
   chosen plane. Apply the README's object-score rule to the logits you pass to the memory encoder.
 
@@ -301,7 +303,8 @@ outputs = decoder.run(decoder_inputs)  # conditioned embeddings, high-res featur
 result = pyneat.decode_segmentation(outputs[:1])[0]
 plane = int(result.boxes.to_numpy()[0, 5])
 logits = outputs[1].to_numpy()[0, :, :, plane]  # [256, 256] low-resolution logits
-pointer = outputs[4].to_numpy()[0, plane]  # [256] object pointer
+# With multimask_output=False the memory bank takes pointer 0, whichever plane was chosen.
+pointer = outputs[4].to_numpy()[0, plane if options.multimask_output else 0]  # [256]
 ```
 
 ### EfficientSAM {#efficientsam}

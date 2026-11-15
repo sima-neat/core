@@ -213,10 +213,11 @@ mask = result.masks.to_numpy()[0]  # uint8 [H, W], 0 or 255
 
 ### EdgeTAM 추적 {#edgetam-tracking}
 
-EdgeTAM의 메모리 인코더와 메모리 뱅크에는 BoxDecode가 게시하지 않는 두 가지 디코더 출력이 필요합니다. 선택된 마스크의 객체 포인터와 그 마스크의 저해상도 로짓입니다. 마스크 디코더 Model에 `boxdecode_raw_outputs`를 설정하면 같은 실행에서 이를 얻을 수 있습니다. 출력은 BoxDecode 텐서, `mask_logits` `[1, 256, 256, 4]`, `iou_scores` `[1, 4]`, `object_score_logits` `[1, 1]`, `object_pointers` `[1, 4, 256]`이며 모두 float32입니다.
+EdgeTAM의 메모리 인코더와 메모리 뱅크에는 BoxDecode가 게시하지 않는 두 가지 디코더 출력이 필요합니다. 객체 포인터와 선택된 마스크의 저해상도 로짓입니다. 마스크 디코더 Model에 `boxdecode_raw_outputs`를 설정하면 같은 실행에서 이를 얻을 수 있습니다. 출력은 BoxDecode 텐서, `mask_logits` `[1, 256, 256, 4]`, `iou_scores` `[1, 4]`, `object_score_logits` `[1, 1]`, `object_pointers` `[1, 4, 256]`이며 모두 float32입니다.
 
-- 검출의 클래스는 선택된 플레인입니다. 메모리 인코더에는 모델 README의 설명대로 1024×1024로 업샘플링한 `mask_logits[0, :, :, class]`를, 메모리 뱅크에는 `object_pointers[0, class]`를 사용하세요.
+- 검출의 클래스는 선택된 플레인입니다. 메모리 인코더에는 모델 README의 설명대로 1024×1024로 업샘플링한 `mask_logits[0, :, :, class]`를 사용하세요.
 - 두 개 이상의 점으로 된 프롬프트에는 `multimask_output=False`를 설정하고, 클릭 한 번과 추적 중인 프레임에는 `True`로 두세요. 클래스는 어느 규칙이 선택한 플레인이든 알려 줍니다.
+- 메모리 뱅크에는 `multimask_output=True`이면 `object_pointers[0, class]`를 사용하세요. `False`이면 `object_pointers[0, 0]`을 사용하세요. SAM 2는 안정성 폴백이 플레인 1–3의 마스크를 선택하더라도 단일 마스크 포인터를 유지합니다.
 - 객체 점수가 0 이하이면 마스크와 그 박스가 비워지지만, 클래스는 여전히 선택된 플레인을 가리킵니다. 메모리 인코더에 전달하는 로짓에는 README의 객체 점수 규칙을 적용하세요.
 
 ```python
@@ -234,7 +235,8 @@ outputs = decoder.run(decoder_inputs)  # conditioned embeddings, high-res featur
 result = pyneat.decode_segmentation(outputs[:1])[0]
 plane = int(result.boxes.to_numpy()[0, 5])
 logits = outputs[1].to_numpy()[0, :, :, plane]  # [256, 256] low-resolution logits
-pointer = outputs[4].to_numpy()[0, plane]  # [256] object pointer
+# With multimask_output=False the memory bank takes pointer 0, whichever plane was chosen.
+pointer = outputs[4].to_numpy()[0, plane if options.multimask_output else 0]  # [256]
 ```
 
 ### EfficientSAM {#efficientsam}

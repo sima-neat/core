@@ -201,10 +201,11 @@ mask = result.masks.to_numpy()[0]  # uint8 [H, W], 0 or 255
 
 ### Відстеження EdgeTAM {#edgetam-tracking}
 
-Кодувальнику пам'яті та банку пам'яті EdgeTAM потрібні два виходи декодера, яких BoxDecode не публікує: вказівник об'єкта вибраної маски та низькороздільні логіти цієї маски. Задайте `boxdecode_raw_outputs` для Model декодера масок, щоб отримати їх із того самого запуску. Тоді виходами є тензор BoxDecode, `mask_logits` `[1, 256, 256, 4]`, `iou_scores` `[1, 4]`, `object_score_logits` `[1, 1]` і `object_pointers` `[1, 4, 256]`, усі float32.
+Кодувальнику пам'яті та банку пам'яті EdgeTAM потрібні два виходи декодера, яких BoxDecode не публікує: вказівник об'єкта та низькороздільні логіти вибраної маски. Задайте `boxdecode_raw_outputs` для Model декодера масок, щоб отримати їх із того самого запуску. Тоді виходами є тензор BoxDecode, `mask_logits` `[1, 256, 256, 4]`, `iou_scores` `[1, 4]`, `object_score_logits` `[1, 1]` і `object_pointers` `[1, 4, 256]`, усі float32.
 
-- Клас виявлення — це вибрана площина: для кодувальника пам'яті візьміть `mask_logits[0, :, :, class]`, збільшене до 1024×1024, як описано в README моделі, а для банку пам'яті — `object_pointers[0, class]`.
+- Клас виявлення — це вибрана площина: для кодувальника пам'яті візьміть `mask_logits[0, :, :, class]`, збільшене до 1024×1024, як описано в README моделі.
 - Для підказки з двох чи більше точок задайте `multimask_output=False`; для одного клацання та відстежуваних кадрів залиште `True`. Клас указує площину, яку вибрало будь-яке з цих правил.
+- Для банку пам'яті візьміть `object_pointers[0, class]`, якщо `multimask_output=True`. Якщо `False`, візьміть `object_pointers[0, 0]`: SAM 2 залишає вказівник однієї маски, навіть коли резервне правило стабільності вибирає маску з площин 1–3.
 - Оцінка об'єкта 0 або менша робить маску та її рамку порожніми, але клас і далі вказує вибрану площину. Застосуйте правило оцінки об'єкта з README до логітів, які передаєте кодувальнику пам'яті.
 
 ```python
@@ -222,7 +223,8 @@ outputs = decoder.run(decoder_inputs)  # conditioned embeddings, high-res featur
 result = pyneat.decode_segmentation(outputs[:1])[0]
 plane = int(result.boxes.to_numpy()[0, 5])
 logits = outputs[1].to_numpy()[0, :, :, plane]  # [256, 256] low-resolution logits
-pointer = outputs[4].to_numpy()[0, plane]  # [256] object pointer
+# With multimask_output=False the memory bank takes pointer 0, whichever plane was chosen.
+pointer = outputs[4].to_numpy()[0, plane if options.multimask_output else 0]  # [256]
 ```
 
 ### EfficientSAM {#efficientsam}

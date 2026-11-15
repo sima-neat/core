@@ -201,10 +201,11 @@ mask = result.masks.to_numpy()[0]  # uint8 [H, W], 0 or 255
 
 ### EdgeTAM のトラッキング {#edgetam-tracking}
 
-EdgeTAM のメモリエンコーダーとメモリバンクには、BoxDecode が公開しない 2 つのデコーダー出力が必要です。選択されたマスクのオブジェクトポインターと、そのマスクの低解像度ロジットです。マスクデコーダーの Model に `boxdecode_raw_outputs` を設定すると、同じ実行からこれらを取得できます。出力は BoxDecode テンソル、`mask_logits` `[1, 256, 256, 4]`、`iou_scores` `[1, 4]`、`object_score_logits` `[1, 1]`、`object_pointers` `[1, 4, 256]` で、いずれも float32 です。
+EdgeTAM のメモリエンコーダーとメモリバンクには、BoxDecode が公開しない 2 つのデコーダー出力が必要です。オブジェクトポインターと、選択されたマスクの低解像度ロジットです。マスクデコーダーの Model に `boxdecode_raw_outputs` を設定すると、同じ実行からこれらを取得できます。出力は BoxDecode テンソル、`mask_logits` `[1, 256, 256, 4]`、`iou_scores` `[1, 4]`、`object_score_logits` `[1, 1]`、`object_pointers` `[1, 4, 256]` で、いずれも float32 です。
 
-- 検出のクラスは選択されたプレーンです。メモリエンコーダーには `mask_logits[0, :, :, class]` を使い、モデルの README のとおり 1024×1024 にアップサンプリングします。メモリバンクには `object_pointers[0, class]` を使います。
+- 検出のクラスは選択されたプレーンです。メモリエンコーダーには `mask_logits[0, :, :, class]` を使い、モデルの README のとおり 1024×1024 にアップサンプリングします。
 - 2 点以上のプロンプトでは `multimask_output=False` を設定し、1 回のクリックと追跡中のフレームでは `True` のままにします。クラスは、どちらの規則でも選ばれたプレーンを示します。
+- メモリバンクには、`multimask_output=True` のときは `object_pointers[0, class]` を使います。`False` のときは `object_pointers[0, 0]` を使います。SAM 2 は、安定性のフォールバックがプレーン 1～3 のマスクを選んだ場合でも、単一マスクのポインターを使い続けます。
 - オブジェクトスコアが 0 以下の場合はマスクとそのボックスが空になりますが、クラスは選択されたプレーンを示したままです。メモリエンコーダーに渡すロジットには、README のオブジェクトスコアの規則を適用してください。
 
 ```python
@@ -222,7 +223,8 @@ outputs = decoder.run(decoder_inputs)  # conditioned embeddings, high-res featur
 result = pyneat.decode_segmentation(outputs[:1])[0]
 plane = int(result.boxes.to_numpy()[0, 5])
 logits = outputs[1].to_numpy()[0, :, :, plane]  # [256, 256] low-resolution logits
-pointer = outputs[4].to_numpy()[0, plane]  # [256] object pointer
+# With multimask_output=False the memory bank takes pointer 0, whichever plane was chosen.
+pointer = outputs[4].to_numpy()[0, plane if options.multimask_output else 0]  # [256]
 ```
 
 ### EfficientSAM {#efficientsam}

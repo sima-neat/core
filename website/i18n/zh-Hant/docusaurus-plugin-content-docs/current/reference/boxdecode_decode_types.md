@@ -211,10 +211,11 @@ mask = result.masks.to_numpy()[0]  # uint8 [H, W], 0 or 255
 
 ### EdgeTAM 追蹤 {#edgetam-tracking}
 
-EdgeTAM 的記憶體編碼器與記憶體庫需要兩個 BoxDecode 不會公布的解碼器輸出：所選遮罩的物件指標，以及該遮罩的低解析度 logit。在遮罩解碼器的 Model 上設定 `boxdecode_raw_outputs`，即可從同一次執行取得它們。輸出依序為 BoxDecode 張量、`mask_logits` `[1, 256, 256, 4]`、`iou_scores` `[1, 4]`、`object_score_logits` `[1, 1]` 與 `object_pointers` `[1, 4, 256]`，皆為 float32。
+EdgeTAM 的記憶體編碼器與記憶體庫需要兩個 BoxDecode 不會公布的解碼器輸出：物件指標，以及所選遮罩的低解析度 logit。在遮罩解碼器的 Model 上設定 `boxdecode_raw_outputs`，即可從同一次執行取得它們。輸出依序為 BoxDecode 張量、`mask_logits` `[1, 256, 256, 4]`、`iou_scores` `[1, 4]`、`object_score_logits` `[1, 1]` 與 `object_pointers` `[1, 4, 256]`，皆為 float32。
 
-- 偵測的類別即所選平面：記憶體編碼器使用 `mask_logits[0, :, :, class]`，並依模型 README 的說明放大到 1024×1024；記憶體庫使用 `object_pointers[0, class]`。
+- 偵測的類別即所選平面：記憶體編碼器使用 `mask_logits[0, :, :, class]`，並依模型 README 的說明放大到 1024×1024。
 - 兩個以上的點組成的提示請設定 `multimask_output=False`；單次點擊與追蹤中的影格請保持 `True`。無論哪個規則，類別都會指出其選擇的平面。
+- 記憶體庫在 `multimask_output=True` 時使用 `object_pointers[0, class]`；為 `False` 時使用 `object_pointers[0, 0]`。即使穩定性備援從平面 1–3 選出遮罩，SAM 2 仍保留單一遮罩的指標。
 - 物件分數為 0 或以下時，遮罩與其邊界框為空，但類別仍指出所選平面。請對傳給記憶體編碼器的 logit 套用 README 的物件分數規則。
 
 ```python
@@ -232,7 +233,8 @@ outputs = decoder.run(decoder_inputs)  # conditioned embeddings, high-res featur
 result = pyneat.decode_segmentation(outputs[:1])[0]
 plane = int(result.boxes.to_numpy()[0, 5])
 logits = outputs[1].to_numpy()[0, :, :, plane]  # [256, 256] low-resolution logits
-pointer = outputs[4].to_numpy()[0, plane]  # [256] object pointer
+# With multimask_output=False the memory bank takes pointer 0, whichever plane was chosen.
+pointer = outputs[4].to_numpy()[0, plane if options.multimask_output else 0]  # [256]
 ```
 
 ### EfficientSAM {#efficientsam}
