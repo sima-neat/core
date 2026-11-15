@@ -227,8 +227,11 @@ inline std::string efficientsam_decoder_mpk() {
                                        {"input_shapes", {{1, 1, 6, 8}}},
                                        {"output_shapes", {{1, 1, 6, 8}}}},
                                       {{"points", 192}}, {{"quantize_1", 48}}));
-  mpk["plugins"].push_back(sam_plugin(
-      "MLA_0", 3, "", {}, {{"quantize_0", 1048576}, {"quantize_1", 48}}, {{"MLA_0", 1048592}}));
+  auto mla = sam_plugin("MLA_0", 3, "", {}, {{"quantize_0", 1048576}, {"quantize_1", 48}},
+                        {{"MLA_0", 1048592}});
+  // A package's MLA program is an .elf; the ModelPack loader requires one.
+  mla["resources"]["executable"] = "efficientsam_prompt_decoder_stage1_mla.elf";
+  mpk["plugins"].push_back(std::move(mla));
   mpk["plugins"].push_back(sam_plugin(
       "MLA_0_ofm_unpack_transform", 4, "unpack_transform",
       {{"tensor_types", {"int8", "int8"}},

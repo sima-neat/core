@@ -161,9 +161,14 @@ write_topology_elf_sections(const std::filesystem::path& path,
     section.size = 16U;
   }
 
+  // The executable's directory (share/, or a subdirectory the MPK names) may not
+  // exist yet in a fresh fixture root, whatever the working directory is.
+  std::error_code directory_error;
+  std::filesystem::create_directories(path.parent_path(), directory_error);
   std::ofstream output(path, std::ios::binary | std::ios::trunc);
   if (!output.is_open()) {
-    throw std::runtime_error("failed to create synthetic MLA ELF");
+    throw std::runtime_error("failed to create synthetic MLA ELF " + path.string() +
+                             (directory_error ? ": " + directory_error.message() : ""));
   }
   output.write(reinterpret_cast<const char*>(&header), sizeof(header));
   output.write(names.data(), static_cast<std::streamsize>(names.size()));
