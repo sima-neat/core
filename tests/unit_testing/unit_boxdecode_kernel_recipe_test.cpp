@@ -2074,6 +2074,22 @@ void crop_source_geometry() {
     }
 }
 
+// A Segment Anything decoder has no image geometry without inputs, so Model::build()
+// and execution_plan() with no inputs fail and name the calls that take inputs.
+void sam_requires_input_geometry() {
+  auto heads = sam_mask_source(BoxDecodeType::MobileSam, "INT8", "INT8");
+  heads.runtime_contract.logical_inputs.clear();
+  std::string message;
+  try {
+    (void)compile_boxdecode_kernel(heads, ContractCompileInput{}, BoxDecodeGeometryOptions{});
+  } catch (const std::invalid_argument& error) {
+    message = error.what();
+  }
+  require(message.find("MobileSAM requires semantic.preprocess geometry") != std::string::npos &&
+              message.find("execution_plan(inputs)") != std::string::npos,
+          "a SAM decoder without input geometry must say to build it from inputs");
+}
+
 // The final frontend reports its local stretch policy, while its affine still
 // maps all the way through an earlier Cover. Decoder activation must follow
 // that authoritative mapping, not only a nearest-producer "crop" token.
@@ -2855,6 +2871,7 @@ int main(int argc, char** argv) {
     }
     if (argc == 2 && std::string(argv[1]) == "--sam-core-contract") {
       sam_core_contract();
+      sam_requires_input_geometry();
       std::cout << "SAM_CORE_CONTRACT_PASS_NO_EXECUTION\n";
       return 0;
     }
@@ -2890,6 +2907,7 @@ int main(int argc, char** argv) {
     linear_metadata_contracts();
     focal_query_contract();
     sam_recipe();
+    sam_requires_input_geometry();
     boxdecode_raw_outputs();
     detr_default_resolution();
     query_source_dtypes();

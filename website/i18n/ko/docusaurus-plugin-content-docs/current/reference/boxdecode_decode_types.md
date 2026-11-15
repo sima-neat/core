@@ -183,7 +183,7 @@ BoxDecode 텐서는 [버전이 지정된 마스크 페이로드](#versioned-mask
 ### 규칙 {#segment-anything-rules}
 
 - 헤드는 이름이 아니라 위치와 형상으로 연결됩니다. 마스크 로짓은 높이와 너비가 1보다 크고 사용 채널이 1, 3 또는 4개인 출력입니다. IoU 예측은 그다음 출력 중 마스크마다 값이 하나인 것입니다. 그 뒤의 단일 값은 객체 점수(EdgeTAM)입니다. EdgeTAM의 객체 포인터 같은 다른 출력은 디코딩되지 않습니다. INT8, BF16, FP32 헤드는 각각 자체 dtype과 양자화를 유지합니다. 채널 수가 지정한 모델과 맞지 않는 디코더는 거부됩니다. 예를 들어 마스크가 3개인 디코더를 `MobileSam`으로 사용할 수 없습니다.
-- 캔버스, 원본 이미지 크기, 리사이즈는 디코더 입력의 `tensor.semantic.preprocess`에서 가져옵니다. 인코더 출력 텐서를 예를 들어 `.cvu()`로 디코더에 전달하세요. EfficientSAM3 개념 이미지 모델은 패킹된 텍스트도 받으므로 Neat는 이를 텐서 경로로 실행합니다. 그 픽셀 텐서에 이 정보를 붙이세요. 정보가 표와 맞지 않으면 그래프 빌드가 바꿔야 할 설정을 알려 주며 실패합니다. 예를 들면 "MobileSAM needs the image preprocessed with resize.mode=Letterbox and resize.placement=TopLeft on the Model that preprocesses it" 같은 메시지입니다.
+- 캔버스, 원본 이미지 크기, 리사이즈는 디코더 입력의 `tensor.semantic.preprocess`에서 가져옵니다. 인코더 출력 텐서를 예를 들어 `.cvu()`로 디코더에 전달하세요. 따라서 프롬프트 디코더 Model은 입력으로만 빌드됩니다. 입력 없는 `build()`와 `execution_plan()`은 실패하므로 디코더 입력을 `execution_plan(inputs)`에 전달하세요. EfficientSAM3 개념 이미지 모델은 패킹된 텍스트도 받으므로 Neat는 이를 텐서 경로로 실행합니다. 그 픽셀 텐서에 이 정보를 붙이세요. 정보가 표와 맞지 않으면 그래프 빌드가 바꿔야 할 설정을 알려 주며 실패합니다. 예를 들면 "MobileSAM needs the image preprocessed with resize.mode=Letterbox and resize.placement=TopLeft on the Model that preprocesses it" 같은 메시지입니다.
 - 마스크가 원본 이미지 크기를 가지므로, 빌드된 러너는 하나의 원본 이미지 크기만 처리합니다. `Model::run`은 새 프레임 크기에 대해 다른 러너를 빌드합니다. 스트리밍 그래프는 크기가 다른 프레임을 잘못된 크기의 마스크로 반환하지 않고 거부합니다.
 - 프롬프트 디코더: `top_k`는 0 또는 1로, `nms_iou_threshold`는 0으로 두세요. 다른 값은 거부됩니다. `score_threshold`는 1보다 작아야 하며 그 밖에는 무시됩니다. `num_classes`는 마스크 수 또는 0입니다.
 - 개념 이미지 모델: `top_k`를 1..Q로 설정하세요.

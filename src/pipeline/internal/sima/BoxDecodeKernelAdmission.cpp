@@ -71,11 +71,16 @@ CompiledKernelContract compile_sam_kernel(const CompiledBoxDecodeContract& admit
   const std::string family = box_decode_type_sam_model_name(admitted.payload.decode_type);
   if (!observed)
     observed = sam_policy_facts(upstream);
+  // With neither input facts nor an upstream Preproc (Model::build() or
+  // execution_plan() without inputs), nothing describes the image the masks are
+  // for, so name the calls that take inputs.
   if (!observed)
     throw std::invalid_argument(
         "SimaBoxDecode: " + family +
-        " requires semantic.preprocess geometry on its input tensors; pass the encoder output "
-        "tensors (for example through .cvu()) so the image's preprocess facts reach the decoder");
+        " requires semantic.preprocess geometry on its input tensors, so its Model builds only "
+        "from inputs: pass the encoder output tensors (for example through .cvu()) to run(), "
+        "build(inputs) or execution_plan(inputs) so the image's preprocess facts reach the "
+        "decoder");
   geometry = sam_boxdecode_geometry(admitted.payload.decode_type, *observed, geometry);
   auto native = prepare_boxdecode_kernel(admitted, geometry);
   auto recipe = std::make_shared<KernelStageRecipe>(*native.compiled.recipe);

@@ -181,7 +181,7 @@ BoxDecode 張量使用[具版本的遮罩酬載](#versioned-masks-payload)。`de
 ### 規則 {#segment-anything-rules}
 
 - 頭部依位置與形狀而非名稱繫結。遮罩 logit 是高度與寬度大於 1、使用 1、3 或 4 個通道的輸出。IoU 預測是其後每個遮罩各有一個值的輸出。再之後的單一值是物件分數（EdgeTAM）。其他輸出（例如 EdgeTAM 的物件指標）不會被解碼。INT8、BF16 與 FP32 頭部各自保留自己的資料型別與量化。通道數與指定模型不符的解碼器會被拒絕，例如將三遮罩解碼器當作 `MobileSam` 使用。
-- 畫布、原始影像大小與調整大小方式取自解碼器輸入的 `tensor.semantic.preprocess`。請將編碼器的輸出張量傳給解碼器，例如使用 `.cvu()`。EfficientSAM3 概念影像模型也會接收封裝後的文字，因此 Neat 以張量路線執行它；請將這些資訊附加到其像素張量上。若資訊與上表不符，建構圖時會失敗並指出要修改的設定，例如 "MobileSAM needs the image preprocessed with resize.mode=Letterbox and resize.placement=TopLeft on the Model that preprocesses it"。
+- 畫布、原始影像大小與調整大小方式取自解碼器輸入的 `tensor.semantic.preprocess`。請將編碼器的輸出張量傳給解碼器，例如使用 `.cvu()`。因此提示解碼器的 Model 只能從其輸入建構：不帶輸入的 `build()` 與 `execution_plan()` 會失敗，請將解碼器輸入傳給 `execution_plan(inputs)`。EfficientSAM3 概念影像模型也會接收封裝後的文字，因此 Neat 以張量路線執行它；請將這些資訊附加到其像素張量上。若資訊與上表不符，建構圖時會失敗並指出要修改的設定，例如 "MobileSAM needs the image preprocessed with resize.mode=Letterbox and resize.placement=TopLeft on the Model that preprocesses it"。
 - 由於遮罩具有原始影像的大小，建構好的 runner 只服務一種原始影像大小。`Model::run` 會為新的影格大小建構另一個 runner；串流圖會拒絕其他大小的影格，而不是傳回大小錯誤的遮罩。
 - 提示解碼器：`top_k` 請保持為 0 或 1，`nms_iou_threshold` 保持為 0；其他值會被拒絕。`score_threshold` 必須小於 1，除此之外會被忽略。`num_classes` 為遮罩數量或 0。
 - 概念影像模型：將 `top_k` 設為 1..Q。

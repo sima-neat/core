@@ -234,8 +234,10 @@ With `boxdecode_raw_outputs`, the decoder's own outputs follow the BoxDecode ten
   for example a three-mask decoder as `MobileSam`.
 - The canvas, the original image size and the resize come from the decoder inputs'
   `tensor.semantic.preprocess`. Pass the encoder's output tensors to the decoder, for example with
-  `.cvu()`. The EfficientSAM3 concept image model also takes the packed text, so Neat runs it on
-  the tensor route; attach the facts to its pixel tensor. When the facts do not match the
+  `.cvu()`. A prompt decoder Model therefore builds only from its inputs: `build()` and
+  `execution_plan()` without inputs fail, so pass the decoder inputs to `execution_plan(inputs)`.
+  The EfficientSAM3 concept image model also takes the packed text, so Neat runs it on the tensor
+  route; attach the facts to its pixel tensor. When the facts do not match the
   table, building the graph fails with the setting to change, such as "MobileSAM needs the image
   preprocessed with resize.mode=Letterbox and resize.placement=TopLeft on the Model that
   preprocesses it".
