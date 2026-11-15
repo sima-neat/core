@@ -89,11 +89,18 @@ RUN_TEST(
         const auto contract = internal::ModelAccess::build_boxdecode_stage_contract(both, false);
         require(contract.payload.raw_outputs.size() == raw.size(),
                 "the BoxDecode stage must publish one raw output per input");
+        // The names the route without BoxDecode publishes, '/' included, not
+        // graph endpoint tokens ("cast_5_mask_logits").
+        const std::vector<std::string> names = {"cast_5/mask_logits", "cast_6/iou_scores",
+                                                "cast_7/object_score_logits",
+                                                "cast_8/object_pointers"};
         for (std::size_t i = 0; i < raw.size(); ++i)
           require(contract.payload.raw_outputs[i].dtype == "FP32" &&
                       contract.payload.raw_outputs[i].shape == shapes[i] &&
-                      !contract.payload.raw_outputs[i].name.empty(),
-                  "raw output " + std::to_string(i) + " lost its name, dtype or shape");
+                      contract.payload.raw_outputs[i].name == names[i],
+                  "raw output " + std::to_string(i) + " is '" +
+                      contract.payload.raw_outputs[i].name + "', not the published name '" +
+                      names[i] + "' (or lost its dtype or shape)");
         require(internal::ModelAccess::build_boxdecode_stage_contract(decoded, false)
                     .payload.raw_outputs.empty(),
                 "the default BoxDecode stage must publish no raw outputs");

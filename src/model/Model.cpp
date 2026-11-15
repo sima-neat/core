@@ -2111,12 +2111,19 @@ const char* tensor_dtype_token(TensorDType dtype) {
 // The tensors a postprocess route publishes, as Model::output_specs() reports
 // them: route egress with its final dtype (FP32 when unset or after a terminal
 // BF16->FP32 cast) and its unique endpoint name in source_tensor_name.
+// The tensors a route returns, in order. Their names are graph endpoint tokens by
+// default; `published_names` keeps the tensor names the route publishes instead (for
+// example "cast_7/detections" rather than the token "cast_7_detections").
 std::vector<internal::EgressTensorContract>
-public_post_route_egress(const internal::SessionRoutePlan& route_plan) {
+public_post_route_egress(const internal::SessionRoutePlan& route_plan,
+                         bool published_names = false) {
   std::vector<internal::EgressTensorContract> contracts = route_plan.egress_contracts;
   if (contracts.empty() && route_plan.egress_contract.valid)
     contracts.push_back(route_plan.egress_contract);
-  const auto names = egress_names_from_contracts(route_plan);
+  auto names = egress_names_from_contracts(route_plan);
+  for (std::size_t i = 0; published_names && i < contracts.size() && i < names.size(); ++i)
+    if (!contracts[i].source_tensor_name.empty())
+      names[i] = contracts[i].source_tensor_name;
   std::vector<internal::EgressTensorContract> out;
   for (std::size_t i = 0; i < contracts.size(); ++i) {
     auto contract = contracts[i];
@@ -4271,7 +4278,9 @@ internal::PreprocessPlannerResult build_preprocess_plan(const std::string& tar_g
           "Model::Options::boxdecode_raw_outputs: this model's route without BoxDecode does not "
           "return its output tensors through a postprocess stage, so there are no raw outputs to "
           "return next to the BoxDecode tensor");
-    session_route_plan.boxdecode_raw_outputs = public_post_route_egress(raw_plan);
+    // Exactly what the same Model returns without BoxDecode, names included.
+    session_route_plan.boxdecode_raw_outputs =
+        public_post_route_egress(raw_plan, /*published_names=*/true);
     if (session_route_plan.boxdecode_raw_outputs.empty())
       throw std::runtime_error("Model::Options::boxdecode_raw_outputs: the route without BoxDecode "
                                "declares no output tensors");
