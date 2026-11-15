@@ -91,8 +91,10 @@ enum class TransformType {
 /// Where a letterbox places the resized image on the model canvas.
 /// @ingroup model
 enum class LetterboxPlacement {
-  Center = 0,  ///< Split the padding evenly between both sides of each axis (YOLO convention).
-  TopLeft = 1, ///< Image at the canvas origin; all padding on the right and bottom (SAM).
+  Center = 0, ///< Split the padding evenly between both sides of each axis (YOLO convention).
+  /// Image at the canvas origin; all padding on the right and bottom. The shorter side rounds to
+  /// the nearest pixel, as Segment Anything resizes (a centered letterbox rounds it up).
+  TopLeft = 1,
 };
 
 /// Resize / letterbox / crop parameters.

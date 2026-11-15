@@ -5397,6 +5397,20 @@ void populate_model_managed_preproc_options(PreprocOptions* opt,
   }
 }
 
+// The Model's top-left letterbox resizes as Segment Anything does, rounding the
+// shorter side to the nearest pixel. Centered letterboxes and the Preproc
+// node's own placements keep the legacy upward rounding.
+std::shared_ptr<const CompiledProcessCvuContract>
+project_model_managed_preproc(const internal::ModelPack& pack, const PreprocOptions& opt,
+                              const internal::PreprocessPlannerResult& plan) {
+  auto compiled = pack.project_model_managed_preproc_contract(opt);
+  const auto& resize = plan.resolved_plan.effective.resize;
+  compiled.payload.letterbox_nearest_extent = resize.enable == AutoFlag::On &&
+                                              resize.mode == ResizeMode::Letterbox &&
+                                              resize.placement == LetterboxPlacement::TopLeft;
+  return std::make_shared<const CompiledProcessCvuContract>(std::move(compiled));
+}
+
 PreprocOptions make_model_managed_preproc_options_base(const Model& model, bool sync) {
   const auto& pack =
       sync ? internal::ModelAccess::pack_for_sync(model) : internal::ModelAccess::pack(model);
@@ -5455,8 +5469,7 @@ PreprocOptions make_preproc_options_from_typed_adapter(
   populate_model_managed_preproc_options(&opt, plan, input);
   const auto& selected_pack =
       sync ? internal::ModelAccess::pack_for_sync(model) : internal::ModelAccess::pack(model);
-  opt.compiled_contract = std::make_shared<const CompiledProcessCvuContract>(
-      selected_pack.project_model_managed_preproc_contract(opt));
+  opt.compiled_contract = project_model_managed_preproc(selected_pack, opt, plan);
   return opt;
 }
 
@@ -8171,8 +8184,7 @@ PreprocOptions ModelAccess::build_preprocess_stage_options(const Model& model, b
   PreprocOptions opt = make_model_managed_preproc_options_base(model, sync);
   populate_model_managed_preproc_options(&opt, model.impl_->preprocess_plan, nullptr);
   const auto& pack = sync ? model.impl_->pack_for_sync() : model.impl_->pack;
-  opt.compiled_contract = std::make_shared<const CompiledProcessCvuContract>(
-      pack.project_model_managed_preproc_contract(opt));
+  opt.compiled_contract = project_model_managed_preproc(pack, opt, model.impl_->preprocess_plan);
   return opt;
 }
 

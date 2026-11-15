@@ -4,6 +4,7 @@
 #include "model/internal/ModelPack.h"
 #include "model/internal/ModelFormat.h"
 #include "model/internal/ModelInternal.h"
+#include "nodes/sima/internal/LetterboxGeometry.h"
 #include "pipeline/internal/InputStreamUtil.h"
 #include "pipeline/internal/sima/BoxDecodeKernelAdmission.h"
 #include "pipeline/internal/sima/BoxDecodeTypeUtils.h"
@@ -485,13 +486,23 @@ PreprocessRuntimeMeta sam_benchmark_preprocess_meta(BoxDecodeType decode_type, i
     meta.affine_m11 = meta.affine_scale_y = double(source_height) / canvas;
     return meta;
   }
-  const double scale = std::min(double(canvas) / source_width, double(canvas) / source_height);
-  meta.scaled_width = std::clamp(int(std::llround(source_width * scale)), 1, canvas);
-  meta.scaled_height = std::clamp(int(std::llround(source_height * scale)), 1, canvas);
+  // The same rounding and per-axis affine the Model's top-left letterbox publishes.
+  const int longest = std::max(source_width, source_height);
+  meta.scaled_width = source_width == longest
+                          ? canvas
+                          : int(internal::nearest_letterbox_extent(source_width, canvas, longest));
+  meta.scaled_height =
+      source_height == longest
+          ? canvas
+          : int(internal::nearest_letterbox_extent(source_height, canvas, longest));
+  if (meta.scaled_width < 1 || meta.scaled_height < 1)
+    throw std::runtime_error("Model::benchmark: MobileSAM letterbox rounds the shorter image "
+                             "side to zero pixels");
   meta.pad_right = canvas - meta.scaled_width;
   meta.pad_bottom = canvas - meta.scaled_height;
   meta.resize_mode = "letterbox";
-  meta.affine_m00 = meta.affine_m11 = meta.affine_scale_x = meta.affine_scale_y = 1.0 / scale;
+  meta.affine_m00 = meta.affine_scale_x = double(source_width) / meta.scaled_width;
+  meta.affine_m11 = meta.affine_scale_y = double(source_height) / meta.scaled_height;
   return meta;
 }
 

@@ -394,6 +394,9 @@ struct ProcessCvuStagePayload {
   /// normalize.mean/stddev then mean a post-resize subtraction/division, with no implied /255.
   /// Explicit geometry; absent retains legacy aspect_ratio/scaled dimensions.
   std::optional<ResizeMode> resize_mode;
+  /// Model-level top-left letterbox: round the non-limiting axis to the nearest pixel
+  /// (internal::nearest_letterbox_extent). False keeps the legacy FP32 ceil.
+  bool letterbox_nearest_extent = false;
   std::optional<int> shorter_side;
   std::optional<float> rescale_factor;
   /// Original positive FP32 INT8 step, never reconstructed from a reciprocal.

@@ -614,6 +614,19 @@ void benchmark_disabled_resize_keeps_decode_recipe_geometry() {
               sam.pad_right == 0 && sam.pad_bottom == 448 && sam.affine_m00 == 1.25 &&
               sam.affine_m11 == 1.25 && sam.affine_m02 == 0.0 && sam.affine_m12 == 0.0,
           "MobileSAM benchmark geometry must be the top-left letterbox of the source");
+  // The shorter side rounds to the nearest pixel, as the Model's top-left letterbox
+  // publishes it: 427 * 1.6 = 683.2 gives 683 rows (341 padding rows), not 684.
+  for (const auto& [width, height] : {std::pair{640, 427}, std::pair{427, 640}}) {
+    const auto odd =
+        internal::sam_benchmark_preprocess_meta(BoxDecodeType::MobileSam, width, height);
+    const bool landscape = width > height;
+    require(odd.scaled_width == (landscape ? 1024 : 683) &&
+                odd.scaled_height == (landscape ? 683 : 1024) &&
+                odd.pad_right == (landscape ? 0 : 341) && odd.pad_bottom == (landscape ? 341 : 0) &&
+                odd.affine_m00 == double(width) / odd.scaled_width &&
+                odd.affine_m11 == double(height) / odd.scaled_height,
+            "MobileSAM benchmark geometry must round the shorter side as the Model does");
+  }
   for (const auto& [type, side] :
        {std::pair{BoxDecodeType::EdgeTam, 1024}, std::pair{BoxDecodeType::EfficientSam, 1024},
         std::pair{BoxDecodeType::EfficientSam3, 1008}}) {

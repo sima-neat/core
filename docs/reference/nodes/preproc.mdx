@@ -198,7 +198,7 @@ These are the user-facing options to prefer in application code.
 
 `ResizeMode::Letterbox` preserves aspect ratio by scaling the image or ROI to fit the target and padding the remaining area. `ResizeMode::Stretch` scales width and height independently. `ResizeMode::Crop` center-crops after isotropic scaling.
 
-By default a letterbox splits the padding evenly on both sides, as YOLO models expect. Models trained with the image at the canvas origin, such as Segment Anything, need `LetterboxPlacement::TopLeft`: all padding goes to the right and bottom. For example, a 1280×720 frame on a 1024×1024 input becomes a 1024×576 image at the top with 448 padding rows below it. Placement requires an enabled letterbox resize; other resize modes, or a disabled resize, reject `TopLeft`.
+By default a letterbox splits the padding evenly on both sides, as YOLO models expect. Models trained with the image at the canvas origin, such as Segment Anything, need `LetterboxPlacement::TopLeft`: all padding goes to the right and bottom. For example, a 1280×720 frame on a 1024×1024 input becomes a 1024×576 image at the top with 448 padding rows below it. The shorter side is rounded to the nearest pixel, as Segment Anything rounds it: a 640×427 frame becomes 1024×683 with 341 padding rows. A centered letterbox rounds the shorter side up instead (684 rows for that frame). Placement requires an enabled letterbox resize; other resize modes, or a disabled resize, reject `TopLeft`.
 
 ```python
 opt.preprocess.resize.enable = pyneat.AutoFlag.On

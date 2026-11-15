@@ -198,7 +198,7 @@ pyneat.stages.preproc(
 
 `ResizeMode::Letterbox` 會保留長寬比，方法是縮放影像或感興趣區域 (ROI)，使其符合目標大小，然後用空白填滿剩餘區域。`ResizeMode::Stretch` 會獨立地縮放寬度和高度。`ResizeMode::Crop` 會先進行各向同性縮放，然後從中心裁剪。
 
-預設情況下，信箱式調整會依 YOLO 模型的預期，將填充平均分配在兩側。以影像位於畫布原點方式訓練的模型（例如 Segment Anything）需要 `LetterboxPlacement::TopLeft`：所有填充都放在右側和下方。例如，1280×720 的影格放到 1024×1024 的輸入時，會在上方形成 1024×576 的影像，下方則有 448 列填充。指定放置位置需要啟用信箱式調整大小；其他調整大小模式或停用調整大小時，會拒絕 `TopLeft`。
+預設情況下，信箱式調整會依 YOLO 模型的預期，將填充平均分配在兩側。以影像位於畫布原點方式訓練的模型（例如 Segment Anything）需要 `LetterboxPlacement::TopLeft`：所有填充都放在右側和下方。例如，1280×720 的影格放到 1024×1024 的輸入時，會在上方形成 1024×576 的影像，下方則有 448 列填充。較短的一邊會像 Segment Anything 一樣四捨五入到最接近的像素：640×427 的影格會變成 1024×683，並有 341 列填充。置中的信箱式調整則會將較短的一邊無條件進位（此影格為 684 列）。指定放置位置需要啟用信箱式調整大小；其他調整大小模式或停用調整大小時，會拒絕 `TopLeft`。
 
 ```python
 opt.preprocess.resize.enable = pyneat.AutoFlag.On
