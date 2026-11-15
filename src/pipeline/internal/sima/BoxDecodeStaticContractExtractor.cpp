@@ -3500,6 +3500,13 @@ std::optional<BoxDecodeStaticContract> build_boxdecode_static_contract_from_mpk(
   const bool preserve_raw_packed_parent_source =
       terminal_stage == nullptr && selected_lineages->preserve_raw_packed_parent_source &&
       mla_stage->output_tensors.size() == 1U;
+  // Several MLA outputs and no unpack plugin (EfficientSAM3: detections in MLA_0_0, sliced by
+  // "slice_MLA_0_unpack/tuple_get_item_0_slice_transform"; logits in MLA_0_1): a head binds the
+  // MLA output segment the MLA stage publishes, not the name of the plugin BoxDecode replaces,
+  // which no stage publishes in this route.
+  const bool direct_multi_output_parent_source = terminal_stage == nullptr &&
+                                                 !explicit_unpack_boundary &&
+                                                 mla_stage->output_tensors.size() > 1U;
   const auto terminal_plugin_index = effective_terminal_plugin_index;
   if (boxdecode_stage && (!terminal_plugin_index.has_value() ||
                           boxdecode_stage->input_tensors.size() != logical_outputs.size())) {
@@ -3599,7 +3606,8 @@ std::optional<BoxDecodeStaticContract> build_boxdecode_static_contract_from_mpk(
     if (source_byte_offset == 0 && tensor.byte_offset > 0) {
       source_byte_offset = tensor.byte_offset;
     }
-    if ((preserve_raw_packed_parent_source || explicit_unpack_boundary) &&
+    if ((preserve_raw_packed_parent_source || explicit_unpack_boundary ||
+         direct_multi_output_parent_source) &&
         !source_parent_segment_name.empty()) {
       entry.source_segment_name = source_parent_segment_name;
     } else {
@@ -3614,7 +3622,8 @@ std::optional<BoxDecodeStaticContract> build_boxdecode_static_contract_from_mpk(
     out.tensors.push_back(std::move(entry));
     out.tensor_names.push_back(out.tensors.back().logical_name);
     BoxDecodePhysicalInputStaticContract physical_input;
-    if ((preserve_raw_packed_parent_source || explicit_unpack_boundary) &&
+    if ((preserve_raw_packed_parent_source || explicit_unpack_boundary ||
+         direct_multi_output_parent_source) &&
         !source_parent_segment_name.empty()) {
       physical_input.name = source_parent_segment_name;
     }

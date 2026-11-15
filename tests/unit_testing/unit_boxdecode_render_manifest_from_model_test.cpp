@@ -18,6 +18,9 @@
 
 #include <algorithm>
 #include <filesystem>
+#include <cstdlib>
+#include <iterator>
+#include <fstream>
 #include <optional>
 
 namespace {
@@ -230,6 +233,86 @@ const simaai::neat::pipeline_internal::sima::StageStaticSpec* find_first_rendere
   return nullptr;
 }
 
+// EfficientSAM3's image model has two MLA outputs and no unpack plugin: the
+// detections leave in MLA_0_0 ([1,200,8] BF16, sliced by a plugin named
+// "slice_MLA_0_unpack/tuple_get_item_0_slice_transform") and the logits in
+// MLA_0_1. The MLA stage publishes both in one allocation (logits first). Each
+// BoxDecode input must bind its own MLA output span; a binding left unresolved
+// reads memory 0 at offset 0, the start of the logits, so no query ever scores.
+void efficientsam3_concept_reads_its_mla_outputs() {
+  using namespace simaai::neat;
+  namespace ps = pipeline_internal::sima;
+  std::ifstream seed(sima_test::test_model_archive_fixture_root_path() / "strict-seeds" /
+                     "efficientsam3_mpk.json");
+  const std::string mpk((std::istreambuf_iterator<char>(seed)), std::istreambuf_iterator<char>());
+  require(!mpk.empty(), "EfficientSAM3 strict seed must be installed");
+  auto fixture = sima_test::make_model_archive_fixture(
+      "efficientsam3_concept_render", {{"etc/efficientsam3_image_model_mpk.json", mpk}}, false);
+  sima_test::write_mpk_topology_elfs(fixture.root_dir, mpk);
+  const std::string archive = "tar -czf " + sima_test::model_archive_shell_quote(fixture.tar_path) +
+                              " -C " + sima_test::model_archive_shell_quote(fixture.root_dir) +
+                              " .";
+  require(std::system(archive.c_str()) == 0, "failed to archive the EfficientSAM3 fixture");
+  Model::Options options;
+  options.preprocess.kind = InputKind::Tensor;
+  options.preprocess.enable = AutoFlag::Off;
+  options.decode_type = BoxDecodeType::EfficientSam3;
+  options.top_k = 5;
+  options.score_threshold = 0.5f;
+  Model model(fixture.tar_path, options);
+  auto nodes = internal::ModelAccess::build_public_inference_nodes(model);
+  nodes.push_back(nodes::SimaBoxDecode(model, BoxDecodeType::EfficientSam3, 0.5, 0.0, 5));
+  // The concept model reads its geometry from the pixel tensor's published facts.
+  Tensor pixels = Tensor::from_vector(std::vector<float>(1008 * 1008 * 3), {1, 1008, 1008, 3},
+                                      TensorMemory::CPU);
+  PreprocessRuntimeMeta facts;
+  facts.resize_mode = "stretch";
+  facts.original_width = 1280;
+  facts.original_height = 720;
+  facts.resized_width = facts.resized_height = 1008;
+  pixels.semantic.preprocess = facts;
+  Sample sample;
+  sample.kind = SampleKind::TensorSet;
+  sample.tensors = {
+      pixels, Tensor::from_vector(std::vector<float>(17 * 256), {1, 17, 256}, TensorMemory::CPU)};
+  ContractCompileInput input;
+  input.ingress.ingress_sample = sample;
+  ps::ManifestBuildDiagnostics diagnostics;
+  const auto compiled = compile_node_contracts(nodes, input, &diagnostics);
+  require(diagnostics.errors.empty(), "EfficientSAM3 concept route must compile");
+  auto manifest = render_manifest_from_compiled_contracts(compiled, input, &diagnostics);
+  require(manifest.has_value() && diagnostics.errors.empty(),
+          "EfficientSAM3 concept route must render");
+  ps::finalize_pipeline_storage(*manifest);
+  const ps::StageStaticSpec* mla = nullptr;
+  const ps::StageStaticSpec* box = nullptr;
+  for (const auto& stage : manifest->stages) {
+    if (stage.native_kernel && stage.native_kernel->boxdecode_settings)
+      box = &stage;
+    else if (!box && stage.frame_layout && stage.physical_outputs.size() == 2)
+      mla = &stage;
+  }
+  require(mla && box && mla->frame_layout && box->frame_layout &&
+              box->frame_layout->inputs.size() == 2 && box->input_bindings.size() == 2,
+          "EfficientSAM3 concept route must render an MLA stage feeding BoxDecode");
+  for (std::size_t i = 0; i < 2; ++i) {
+    const auto& binding = box->input_bindings[i];
+    require(binding.src_stage_index >= 0 &&
+                binding.source_segment_name == mla->physical_outputs[i].segment_name,
+            "each EfficientSAM3 BoxDecode input must bind the MLA output that holds it");
+    const auto* span = std::get_if<simaai::scheduler::client::KnownFrameSpan>(
+        &box->frame_layout->inputs[i].source);
+    const auto produced =
+        std::find_if(mla->frame_layout->outputs.begin(), mla->frame_layout->outputs.end(),
+                     [&](const auto& output) { return output.tensor == i; });
+    require(span && produced != mla->frame_layout->outputs.end() &&
+                span->span.allocation_index == produced->span.allocation_index &&
+                span->span.byte_offset == produced->span.byte_offset &&
+                span->span.size_bytes == produced->span.size_bytes,
+            "each EfficientSAM3 BoxDecode input must read its MLA output's span, not memory 0 at "
+            "offset 0");
+  }
+}
 } // namespace
 
 RUN_TEST(
@@ -461,4 +544,6 @@ RUN_TEST(
       require(rendered_box->input_bindings.front().source_segment_name ==
                   boxdecode_runtime->input_bindings.front().source_segment_name,
               "rendered boxdecode stage should preserve upstream packed segment binding");
+
+      efficientsam3_concept_reads_its_mla_outputs();
     }));

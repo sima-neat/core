@@ -219,6 +219,15 @@ void sam_family_static_contracts() {
       require(tensor.input_shape == m.carriers[i],
               std::string(m.name) + " head " + std::to_string(i) +
                   " must be read from its physical MLA carrier");
+      // ... and bind a segment the MLA stage publishes, not the name of a
+      // plugin BoxDecode replaces (EfficientSAM3: MLA_0_0, not the slice).
+      bool published = false;
+      for (const auto& plugin : mpk->plugins)
+        if (plugin.processor == "MLA")
+          for (const auto& output : plugin.output_tensors)
+            published = published || output.name == tensor.source_segment_name;
+      require(published, std::string(m.name) + " head " + std::to_string(i) + " binds '" +
+                             tensor.source_segment_name + "', which no MLA output publishes");
     }
     contract->decode_type = m.type;
     const auto finalized = stagesemantics::finalize_boxdecode_static_contract(
