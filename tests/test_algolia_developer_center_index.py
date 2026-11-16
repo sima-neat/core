@@ -143,5 +143,49 @@ class ReleaseRecordTests(unittest.TestCase):
                         MODULE.generate_records(docs, "https://developer.sima.ai", MODULE.DEFAULT_MAX_RECORD_BYTES)
 
 
+class RecordTitleTests(unittest.TestCase):
+    """Titles follow the page: H1, then frontmatter title, then the file name (#800)."""
+
+    def _titles(self, english: str, localized: dict[str, str]) -> dict[str, str]:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            docs_dir = root / "docs"
+            (docs_dir / "guide").mkdir(parents=True)
+            (docs_dir / "guide" / "configure-sdk.md").write_text(english, encoding="utf-8")
+            for language, text in localized.items():
+                target = root / "i18n" / language / "docusaurus-plugin-content-docs" / "current" / "guide"
+                target.mkdir(parents=True)
+                (target / "configure-sdk.md").write_text(text, encoding="utf-8")
+            records, _ = MODULE.generate_records(
+                docs_dir,
+                "https://build.neat.sima.ai",
+                MODULE.DEFAULT_MAX_RECORD_BYTES,
+                root / "i18n",
+            )
+            self.assertTrue(all(record["hierarchy"]["lvl1"] == record["title"] for record in records))
+            return {record["language"]: record["title"] for record in records}
+
+    def test_frontmatter_title_is_used_when_there_is_no_h1(self) -> None:
+        titles = self._titles(
+            "---\ntitle: Configure the SDK\n---\nEnglish body.\n",
+            {
+                "ja": "---\ntitle: SDK を設定します。\n---\n日本語の本文。\n",
+                "uk": "---\ntitle: 'Налаштування SDK'\nsidebar_position: 2\n---\nУкраїнський текст.\n",
+            },
+        )
+        self.assertEqual(titles, {"en": "Configure the SDK", "ja": "SDK を設定します。", "uk": "Налаштування SDK"})
+
+    def test_h1_still_wins_over_frontmatter_title(self) -> None:
+        titles = self._titles(
+            "---\ntitle: Configure\n---\n# Configure the Palette SDK\nBody.\n",
+            {"ko": "---\ntitle: 구성\n---\n# Palette SDK 구성\n본문.\n"},
+        )
+        self.assertEqual(titles, {"en": "Configure the Palette SDK", "ko": "Palette SDK 구성"})
+
+    def test_file_name_fallback_is_unchanged(self) -> None:
+        titles = self._titles("---\nsidebar_position: 1\n---\nBody.\n", {"zh-Hant": "本文。\n"})
+        self.assertEqual(titles, {"en": "Configure Sdk", "zh-Hant": "Configure Sdk"})
+
+
 if __name__ == "__main__":
     unittest.main()

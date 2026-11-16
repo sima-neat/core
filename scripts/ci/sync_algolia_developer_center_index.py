@@ -58,17 +58,21 @@ def strip_frontmatter(text: str) -> str:
     return text
 
 
-def frontmatter_slug(text: str) -> str | None:
+def frontmatter_value(text: str, key: str) -> str | None:
     if not text.startswith("---\n"):
         return None
     end = text.find("\n---\n", 4)
     if end == -1:
         return None
     frontmatter = text[4:end]
-    match = re.search(r"^slug:\s*(.+?)\s*$", frontmatter, re.MULTILINE)
+    match = re.search(rf"^{re.escape(key)}:\s*(.+?)\s*$", frontmatter, re.MULTILINE)
     if not match:
         return None
     return match.group(1).strip().strip("'\"") or None
+
+
+def frontmatter_slug(text: str) -> str | None:
+    return frontmatter_value(text, "slug")
 
 
 def clean_markdown(text: str) -> str:
@@ -81,11 +85,14 @@ def clean_markdown(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
-def title_from_markdown(path: Path, text: str) -> str:
+def title_from_markdown(path: Path, text: str, frontmatter_title: str | None = None) -> str:
+    """Return the page's H1, else its frontmatter title, else a title from the file name."""
     for line in text.splitlines():
         match = re.match(r"^#\s+(.+?)\s*$", line.strip())
         if match:
             return clean_markdown(match.group(1))
+    if frontmatter_title:
+        return clean_markdown(frontmatter_title)
     return path.stem.replace("-", " ").replace("_", " ").title()
 
 
@@ -228,7 +235,7 @@ def generate_records(
                 continue
 
             rel = path.relative_to(language_docs_dir).as_posix()
-            title = title_from_markdown(path, raw)
+            title = title_from_markdown(path, raw, frontmatter_value(source_text, "title"))
             section = section_for_path(path, language_docs_dir)
             url = route_for_path(
                 path,
