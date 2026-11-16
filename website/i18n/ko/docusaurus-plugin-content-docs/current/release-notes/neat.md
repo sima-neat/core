@@ -45,15 +45,15 @@ SiMa.ai Neat Library의 릴리스 노트입니다.
 - 이제 모든 구체화된 파이프라인 세그먼트는 `build()` 중에 최종 GStreamer 이름을 검증합니다. 명시적인 `validate()` 호출은 필요하지 않습니다. 중복되거나 누락된 이름은 `misconfig.pipeline_shape`와 함께 실패하며, 잘린 파이프라인을 생성하지 않습니다.
 - 사용자 지정 프래그먼트는 이제 모든 명시적 이름을 보고하고, 선언과 함께 이름이 지정된 패드 참조도 변환합니다. 이름 충돌은 자동으로 이름을 바꾸는 대신 거부됩니다.
 
-| 릴리스 | 호환되는 Palette SDK | 참고 사항 |
-| --- | --- | --- |
-| 0.6.2 | 3.0.0.2 | [Neat Library 0.6.2](https://github.com/sima-neat/core/releases/tag/v0.6.2) |
-| 0.6.1 | 3.0.0.1 | [Neat Library 0.6.1](https://github.com/sima-neat/core/releases/tag/v0.6.1) |
-| 0.6.0 | 3.0.0.0 | [Neat Library 0.6.0](https://github.com/sima-neat/core/releases/tag/v0.6.0) |
-| 0.5.0 | 2.1.3.1 | [Neat Library 0.5.0](https://github.com/sima-neat/core/releases/tag/v0.5.0) |
-| 0.4.0 | 2.1.3.0 | [Neat Library 0.4.0](https://github.com/sima-neat/core/releases/tag/v0.4.0) |
-| 0.3.0 | 2.1.2.3 | [Neat Library 0.3.0](https://github.com/sima-neat/core/releases/tag/v0.3.0) |
-| 0.2.2 | 2.1.2.2 | [Neat Library 0.2.2](https://github.com/sima-neat/core/releases/tag/v0.2.2) |
-| 0.2.1 | 2.1.2.1 | [Neat Library 0.2.1](https://github.com/sima-neat/core/releases/tag/v0.2.1) |
-| 0.2.0 | 2.1.2 | [Neat Library 0.2.0](https://github.com/sima-neat/core/releases/tag/v0.2.0) |
-| 0.1.0 | 2.0.0 | [Neat Library 0.1.0](https://github.com/sima-neat/core/releases/tag/v0.1.0) |
+| 릴리스 | C++ ABI | 호환되는 Palette SDK | 참고 사항 |
+| --- | --- | --- | --- |
+| 0.6.2 | 9 | 3.0.0.2 | [Neat Library 0.6.2](https://github.com/sima-neat/core/releases/tag/v0.6.2) |
+| 0.6.1 | 6 | 3.0.0.1 | [Neat Library 0.6.1](https://github.com/sima-neat/core/releases/tag/v0.6.1) |
+| 0.6.0 | 6 | 3.0.0.0 | [Neat Library 0.6.0](https://github.com/sima-neat/core/releases/tag/v0.6.0) |
+| 0.5.0 | 5 | 2.1.3.1 | [Neat Library 0.5.0](https://github.com/sima-neat/core/releases/tag/v0.5.0) |
+| 0.4.0 | 4 | 2.1.3.0 | [Neat Library 0.4.0](https://github.com/sima-neat/core/releases/tag/v0.4.0) |
+| 0.3.0 | 3 | 2.1.2.3 | [Neat Library 0.3.0](https://github.com/sima-neat/core/releases/tag/v0.3.0) |
+| 0.2.2 | 2 | 2.1.2.2 | [Neat Library 0.2.2](https://github.com/sima-neat/core/releases/tag/v0.2.2) |
+| 0.2.1 | 2 | 2.1.2.1 | [Neat Library 0.2.1](https://github.com/sima-neat/core/releases/tag/v0.2.1) |
+| 0.2.0 | 2 | 2.1.2 | [Neat Library 0.2.0](https://github.com/sima-neat/core/releases/tag/v0.2.0) |
+| 0.1.0 | 2 | 2.0.0 | [Neat Library 0.1.0](https://github.com/sima-neat/core/releases/tag/v0.1.0) |
