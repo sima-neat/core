@@ -77,6 +77,19 @@ GENAI_ADMISSION_TESTS = {
     "test_genai_worker_loss_recovery",
 }
 SUPPORTED_PYTHON = (3, 14)
+STANDARD_USER_GENAI_ENVIRONMENT = {
+    "PATH",
+    "SIMA_NEAT_PCIE_GENAI_CARD_ENV",
+    "SIMA_PCIE_HOST_LIBRARY_PATH",
+    "SIMAPCIE_CARD_HOST",
+    "SIMAPCIE_CARD_ID",
+    "SIMAPCIE_GENAI_MODELS_PATH",
+    "SIMAPCIE_GENAI_REQUEST_TIMEOUT_MS",
+    "SIMAPCIE_GENAI_TEST_ASSETS",
+    "SIMAPCIE_READINESS_TIMEOUT_MS",
+    "SIMAPCIE_USER",
+    "SIMA_TEST_LLIMA_ASR_MODEL",
+}
 
 
 @dataclass(frozen=True)
@@ -632,14 +645,31 @@ def verify_customer_process_activation(install_root: Path, python: Path,
       evidence / "customer-process-python-import.log", env=environment, timeout=60)
 
 
-def remove_private_python_tree(path: Path) -> None:
-  """Remove a qualification-owned Python tree without hiding residue."""
+def remove_qualification_tree(path: Path, description: str) -> None:
+  """Remove one qualification-owned tree and fail if any residue remains."""
   try:
     shutil.rmtree(path)
   except FileNotFoundError:
     return
   if path.exists():
-    raise RuntimeError(f"temporary standard-user Python was not removed: {path}")
+    raise RuntimeError(f"{description} was not removed: {path}")
+
+
+def standard_user_wrapper() -> str:
+  """Return a static wrapper; all paths and child inputs stay out of batch text."""
+  return (
+      "@echo off\n"
+      "setlocal\n"
+      "set \"SIMAPCIE_GENAI_MEDIA_DIRECTORY=\"\n"
+      "set \"SIMAPCIE_GENAI_MEDIA_SERVE_ROOT=\"\n"
+      "call \"%SIMA_STANDARD_USER_DOCTOR%\" > \"%SIMA_STANDARD_USER_RUN_LOG%\" 2>&1\n"
+      "if errorlevel 1 exit /b 98\n"
+      "call \"%SIMA_STANDARD_USER_RUNNER%\" \"%SIMA_STANDARD_USER_PYTHON%\" "
+      "\"%SIMA_STANDARD_USER_DRIVER%\" \"%SIMA_STANDARD_USER_PAYLOAD%\" "
+      "\"%SIMA_STANDARD_USER_RECEIPT%\" >> \"%SIMA_STANDARD_USER_RUN_LOG%\" 2>&1\n"
+      "if errorlevel 1 exit /b 99\n"
+      "exit /b 0\n"
+  )
 
 
 def create_standard_user_python(wheel: Path, wheelhouse: Path, portable_root: Path,
@@ -658,8 +688,11 @@ def create_standard_user_python(wheel: Path, wheelhouse: Path, portable_root: Pa
 
 
 def verify_standard_user_process_activation(install_root: Path, wheel: Path,
-                                            wheelhouse: Path, work: Path,
-                                            evidence: Path) -> dict:
+                                            wheelhouse: Path, candidate_root: Path,
+                                            work: Path, evidence: Path,
+                                            hardware_environment: dict[str, str],
+                                            include_genai: bool,
+                                            timeout_seconds: int) -> dict:
   """Run the installed diagnostics and Python API as a disposable standard user."""
   doctor = install_root / "bin" / "sima-pcie-host-doctor.cmd"
   runner = install_root / "bin" / "sima-pcie-host-run.cmd"
@@ -672,42 +705,57 @@ def verify_standard_user_process_activation(install_root: Path, wheel: Path,
     raise RuntimeError("standard-user acceptance requires ProgramData")
   portable_root = Path(program_data) / (
       "SimaPCIeHostAcceptance-" + secrets.token_hex(8))
+  driver_source = Path(__file__).with_name("standard_user_genai.py")
+  if not driver_source.is_file():
+    raise RuntimeError(f"standard-user GenAI driver is missing: {driver_source}")
+  source_key = Path(hardware_environment.get("SIMAPCIE_SSH_KEY", ""))
+  if include_genai and not source_key.is_file():
+    raise RuntimeError(f"standard-user GenAI SSH key is unavailable: {source_key}")
+  test_root = candidate_root / "hardware-tests" / "lib" / "sima-pcie-host" / "tests"
+  executable = test_root / "test_genai_run.exe"
+  if include_genai and not executable.is_file():
+    raise RuntimeError(f"candidate is missing standard-user GenAI hardware test: {executable}")
+  driver = work / "standard-user-genai.py"
+  shutil.copy2(driver_source, driver)
+  receipt_path = work / "standard-user-genai.json"
+  payload_path = work / "standard-user-genai-input.json"
+  private_root = work / ("standard-user-private-" + secrets.token_hex(8))
+  private_root.mkdir()
+  private_key = private_root / "card-ssh-key"
   try:
-    python = create_standard_user_python(wheel, wheelhouse, portable_root, evidence)
+    if include_genai:
+      shutil.copy2(source_key, private_key)
+    child_environment = {
+        name: hardware_environment[name]
+        for name in STANDARD_USER_GENAI_ENVIRONMENT
+        if hardware_environment.get(name)
+    }
+    if include_genai:
+      child_environment["SIMAPCIE_SSH_KEY"] = str(private_key)
+    write_json(payload_path, {
+        "environment": child_environment,
+        "executable": str(executable),
+        "include_genai": include_genai,
+        "timeout_seconds": timeout_seconds,
+    })
+    wrapper = work / "standard-user-activation.cmd"
+    run_log = work / "standard-user-activation.log"
+    wrapper.write_text(standard_user_wrapper(), encoding="utf-8")
   except BaseException as error:
     try:
-      remove_private_python_tree(portable_root)
+      remove_qualification_tree(private_root, "temporary standard-user private input")
     except BaseException as cleanup_error:
       error.add_note(str(cleanup_error))
     raise
-  python_check = work / "standard-user-python-check.py"
-  python_check.write_text(
-      "from pathlib import Path\n"
-      "import sys\n"
-      "import pyneatpcie as p\n"
-      "root = Path(sys.prefix).resolve()\n"
-      "module = Path(p.__file__).resolve()\n"
-      "assert root in module.parents, (root, module)\n"
-      "assert p.Model and p.Runtime and p.Tensor\n",
-      encoding="utf-8",
-  )
-  wrapper = work / "standard-user-activation.cmd"
-  run_log = work / "standard-user-activation.log"
-  wrapper.write_text(
-      "@echo off\n"
-      "powershell.exe -NoLogo -NoProfile -NonInteractive -Command "
-      "\"$i=[Security.Principal.WindowsIdentity]::GetCurrent(); "
-      "$p=[Security.Principal.WindowsPrincipal]::new($i); "
-      "if($p.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)){exit 97}\"\n"
-      "if errorlevel 1 exit /b %errorlevel%\n"
-      f'call "{doctor}" > "{run_log}" 2>&1\n'
-      "if errorlevel 1 exit /b 98\n"
-      f'call "{runner}" "{python}" "{python_check}" '
-      f'>> "{run_log}" 2>&1\n'
-      "if errorlevel 1 exit /b 99\n"
-      "exit /b 0\n",
-      encoding="utf-8",
-  )
+  try:
+    python = create_standard_user_python(wheel, wheelhouse, portable_root, evidence)
+  except BaseException as error:
+    for cleanup_path in (portable_root, private_root):
+      try:
+        remove_qualification_tree(cleanup_path, "temporary standard-user setup")
+      except BaseException as cleanup_error:
+        error.add_note(str(cleanup_error))
+    raise
   script = r"""
 $ErrorActionPreference = 'Stop'
 $name = 'sna-' + $PID
@@ -731,6 +779,10 @@ try {
   if ($LASTEXITCODE -ne 0) { throw "could not require the temporary password: $LASTEXITCODE" }
   & icacls.exe $env:SIMA_STANDARD_USER_WORK /grant "${account}:(OI)(CI)(M)" /T /Q | Out-Null
   if ($LASTEXITCODE -ne 0) { throw "icacls failed: $LASTEXITCODE" }
+  & icacls.exe $env:SIMA_STANDARD_USER_PRIVATE /inheritance:r /grant:r `
+    "${account}:(OI)(CI)(RX)" "*S-1-5-18:(OI)(CI)(F)" `
+    "*S-1-5-32-544:(OI)(CI)(F)" /T /Q | Out-Null
+  if ($LASTEXITCODE -ne 0) { throw "private input icacls failed: $LASTEXITCODE" }
   & icacls.exe $env:SIMA_STANDARD_USER_PYTHON_ROOT /grant "${account}:(OI)(CI)(RX)" /T /Q |
     Out-Null
   if ($LASTEXITCODE -ne 0) { throw "Python icacls failed: $LASTEXITCODE" }
@@ -766,7 +818,7 @@ public static class SimaStandardUserProcess {
     IntPtr process, uint exitCode);
   [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr handle);
   public static uint Run(string user, string domain, string password, string application,
-                         string arguments, string currentDirectory) {
+                         string arguments, string currentDirectory, uint timeoutMilliseconds) {
     var startup = new StartupInfo(); startup.cb = Marshal.SizeOf(startup);
     ProcessInformation process;
     var command = new StringBuilder("\"" + application + "\" " + arguments);
@@ -774,7 +826,7 @@ public static class SimaStandardUserProcess {
         0x08000000, IntPtr.Zero, currentDirectory, ref startup, out process))
       throw new Win32Exception(Marshal.GetLastWin32Error());
     try {
-      uint wait = WaitForSingleObject(process.process, 300000);
+      uint wait = WaitForSingleObject(process.process, timeoutMilliseconds);
       if (wait == 258) {
         TerminateProcess(process.process, 124);
         WaitForSingleObject(process.process, 10000);
@@ -790,9 +842,10 @@ public static class SimaStandardUserProcess {
 }
 '@
   $arguments = '/d /c ""' + $env:SIMA_STANDARD_USER_WRAPPER + '""'
+  $timeoutMilliseconds = [uint32]([uint64]$env:SIMA_STANDARD_USER_TIMEOUT_SECONDS * 1000)
   $exitCode = [SimaStandardUserProcess]::Run(
     $name, $env:COMPUTERNAME, $plain, $env:ComSpec, $arguments,
-    $env:SIMA_STANDARD_USER_WORK)
+    $env:SIMA_STANDARD_USER_WORK, $timeoutMilliseconds)
   if ($exitCode -ne 0) {
     $runLog = Join-Path $env:SIMA_STANDARD_USER_WORK 'standard-user-activation.log'
     $details = if (Test-Path -LiteralPath $runLog) {
@@ -852,7 +905,16 @@ public static class SimaStandardUserProcess {
 """
   environment = os.environ.copy()
   environment.update({
+      "SIMA_STANDARD_USER_DOCTOR": str(doctor),
+      "SIMA_STANDARD_USER_DRIVER": str(driver),
+      "SIMA_STANDARD_USER_PAYLOAD": str(payload_path),
+      "SIMA_STANDARD_USER_PRIVATE": str(private_root),
+      "SIMA_STANDARD_USER_PYTHON": str(python),
       "SIMA_STANDARD_USER_WORK": str(work),
+      "SIMA_STANDARD_USER_RECEIPT": str(receipt_path),
+      "SIMA_STANDARD_USER_RUN_LOG": str(run_log),
+      "SIMA_STANDARD_USER_RUNNER": str(runner),
+      "SIMA_STANDARD_USER_TIMEOUT_SECONDS": str(timeout_seconds + 60),
       "SIMA_STANDARD_USER_WRAPPER": str(wrapper),
       "SIMA_STANDARD_USER_PYTHON_ROOT": str(portable_root),
   })
@@ -862,18 +924,23 @@ public static class SimaStandardUserProcess {
     result = subprocess.run(
         ["powershell.exe", "-NoLogo", "-NoProfile", "-NonInteractive",
          "-Command", script],
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=300,
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        timeout=timeout_seconds + 120,
         env=environment, check=False)
   except BaseException as error:
     control_error = error
   finally:
-    try:
-      remove_private_python_tree(portable_root)
-    except BaseException as cleanup_error:
-      if control_error is None:
-        control_error = cleanup_error
-      else:
-        control_error.add_note(str(cleanup_error))
+    for cleanup_path, description in (
+        (portable_root, "temporary standard-user Python"),
+        (private_root, "temporary standard-user private input"),
+    ):
+      try:
+        remove_qualification_tree(cleanup_path, description)
+      except BaseException as cleanup_error:
+        if control_error is None:
+          control_error = cleanup_error
+        else:
+          control_error.add_note(str(cleanup_error))
   if control_error is not None:
     raise control_error
   if result is None:
@@ -890,6 +957,22 @@ public static class SimaStandardUserProcess {
   if (not isinstance(receipt, dict) or receipt.get("is_administrator") is not False
       or receipt.get("doctor") != "PASS" or receipt.get("python") != "PASS"):
     raise RuntimeError("standard-user process activation evidence is incomplete")
+  try:
+    child_receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+  except (OSError, json.JSONDecodeError) as error:
+    raise RuntimeError("standard-user process returned no valid child receipt") from error
+  if (not isinstance(child_receipt, dict) or child_receipt.get("python") != "PASS"
+      or child_receipt.get("process_is_administrator") is not False
+      or child_receipt.get("standard_user") != "PASS"):
+    raise RuntimeError("standard-user Python evidence is incomplete")
+  receipt.update(child_receipt)
+  if include_genai:
+    required_genai = {
+        "config_binding", "connection_options", "default_root", "override_absence",
+        "real_genai", "required_assets_readable", "sentinel", "sentinel_cleanup",
+    }
+    if any(receipt.get(name) != "PASS" for name in required_genai):
+      raise RuntimeError("standard-user default-root GenAI evidence is incomplete")
   return receipt
 
 
@@ -1807,16 +1890,17 @@ def require_assets(environment: dict[str, str], include_genai: bool) -> None:
       if not value or not Path(value).is_dir():
         raise RuntimeError(f"required Windows PCIe GenAI asset directory is unavailable: {name}")
     media_directory = environment.get("SIMAPCIE_GENAI_MEDIA_DIRECTORY", "")
-    if (not media_directory or not Path(media_directory).is_absolute()
-        or not Path(media_directory).is_dir()):
-      raise RuntimeError(
-          "Windows PCIe GenAI requires an existing absolute Platform media directory: "
-          "SIMAPCIE_GENAI_MEDIA_DIRECTORY")
     media_serve_root = environment.get("SIMAPCIE_GENAI_MEDIA_SERVE_ROOT", "")
-    if not media_serve_root or "\0" in media_serve_root:
+    if bool(media_directory) != bool(media_serve_root):
       raise RuntimeError(
-          "Windows PCIe GenAI requires the Platform media service root: "
-          "SIMAPCIE_GENAI_MEDIA_SERVE_ROOT")
+          "Windows PCIe GenAI media overrides require directory and service root as a pair")
+    if (media_directory and (not Path(media_directory).is_absolute()
+                             or not Path(media_directory).is_dir())):
+      raise RuntimeError(
+          "Windows PCIe GenAI custom media override requires an existing absolute directory: "
+          "SIMAPCIE_GENAI_MEDIA_DIRECTORY")
+    if media_serve_root and "\0" in media_serve_root:
+      raise RuntimeError("Windows PCIe GenAI custom media service root is invalid")
 
 
 def stage_path_fixtures(environment: dict[str, str], root: Path) -> None:
@@ -2402,8 +2486,6 @@ def qualify(args: argparse.Namespace) -> None:
 
       verify_customer_process_activation(install_root, python, evidence)
       result["customer_install"]["process_activation"] = "PASS"
-      result["customer_install"]["standard_user"] = verify_standard_user_process_activation(
-          install_root, candidate.wheel, wheelhouse, work, evidence)
       # The installed doctor loads the Scheduler plug-in through the same
       # process-scoped activation entry point customers use.
       result["customer_install"]["plugin_discovery"] = "PASS"
@@ -2427,11 +2509,15 @@ def qualify(args: argparse.Namespace) -> None:
           environment["PATH"],
       ))
       require_assets(environment, args.include_genai)
+      result["customer_install"]["standard_user"] = verify_standard_user_process_activation(
+          install_root, candidate.wheel, wheelhouse, candidate.root, work, evidence,
+          environment, args.include_genai, args.test_timeout_seconds)
       if args.include_genai:
-        result["genai_media"] = {
-            "directory": environment["SIMAPCIE_GENAI_MEDIA_DIRECTORY"],
-            "serve_root": environment["SIMAPCIE_GENAI_MEDIA_SERVE_ROOT"],
-        }
+        if environment.get("SIMAPCIE_GENAI_MEDIA_DIRECTORY"):
+          result["genai_media"] = {
+              "directory": environment["SIMAPCIE_GENAI_MEDIA_DIRECTORY"],
+              "serve_root": environment["SIMAPCIE_GENAI_MEDIA_SERVE_ROOT"],
+          }
       stage_path_fixtures(environment, work / "customer path fixtures with spaces")
       result["path_fixtures"] = {
           name: environment[name]

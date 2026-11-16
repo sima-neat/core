@@ -155,8 +155,10 @@ def verify(candidate_dir: Path, qualification_path: Path, expected_commit: str,
       or customer_install.get("process_activation") != "PASS"
       or not isinstance(standard_user, dict)
       or standard_user.get("is_administrator") is not False
+      or standard_user.get("process_is_administrator") is not False
       or standard_user.get("doctor") != "PASS"
-      or standard_user.get("python") != "PASS"):
+      or standard_user.get("python") != "PASS"
+      or standard_user.get("standard_user") != "PASS"):
     raise ValueError(
         "hardware qualification did not prove MSI repair and standard-user process activation")
   if require_release:
@@ -308,14 +310,45 @@ def verify(candidate_dir: Path, qualification_path: Path, expected_commit: str,
     expected_outcomes = {name: "PASS" for name in required_genai}
     if genai_admission != expected_outcomes:
       raise ValueError("release qualification has incomplete Windows GenAI outcomes")
+    standard_genai_outcomes = {
+        "config_binding", "connection_options", "default_root", "override_absence",
+        "real_genai", "required_assets_readable", "sentinel", "sentinel_cleanup",
+    }
+    if any(standard_user.get(name) != "PASS" for name in standard_genai_outcomes):
+      raise ValueError(
+          "release qualification did not prove default-root real GenAI as a standard user")
+    if (standard_user.get("default_media_serve_root") != "data"
+        or standard_user.get("real_genai_case") != "test_genai_asr_run"):
+      raise ValueError(
+          "release qualification did not use the advertised default GenAI service root")
+    default_directory = PureWindowsPath(str(standard_user.get("default_media_directory", "")))
+    common_application_data = PureWindowsPath(
+        str(standard_user.get("common_application_data", "")))
+    platform_config = PureWindowsPath(str(standard_user.get("platform_config", "")))
+    configured_directory = PureWindowsPath(
+        str(standard_user.get("platform_config_media_directory", "")))
+    if (not common_application_data.is_absolute() or not common_application_data.drive
+        or default_directory != common_application_data / "SiMa.ai" / "data"
+        or platform_config != common_application_data / "SiMa.ai" / "simaai-mla-daemon.conf"
+        or configured_directory != default_directory):
+      raise ValueError(
+          "release qualification did not bind Windows CommonApplicationData GenAI defaults")
+    standard_executable = (
+        candidate.root / "hardware-tests" / "lib" / "sima-pcie-host" / "tests"
+        / "test_genai_run.exe")
+    if (not standard_executable.is_file()
+        or standard_user.get("real_genai_executable_sha256") != sha256(standard_executable)):
+      raise ValueError(
+          "release qualification standard-user GenAI run used a different executable")
     media = qualification.get("genai_media")
-    if not isinstance(media, dict) or set(media) != {"directory", "serve_root"}:
-      raise ValueError("release qualification has no Windows GenAI media staging contract")
-    media_directory = PureWindowsPath(str(media["directory"]))
-    if not media_directory.is_absolute() or not media_directory.drive:
-      raise ValueError("release qualification has an invalid Windows GenAI media directory")
-    if not isinstance(media["serve_root"], str) or not media["serve_root"]:
-      raise ValueError("release qualification has an invalid Windows GenAI media service root")
+    if media is not None:
+      if not isinstance(media, dict) or set(media) != {"directory", "serve_root"}:
+        raise ValueError("release qualification has an invalid custom GenAI media contract")
+      media_directory = PureWindowsPath(str(media["directory"]))
+      if not media_directory.is_absolute() or not media_directory.drive:
+        raise ValueError("release qualification has an invalid Windows GenAI media directory")
+      if not isinstance(media["serve_root"], str) or not media["serve_root"]:
+        raise ValueError("release qualification has an invalid Windows GenAI media service root")
 
   signatures = read_object(candidate.root / "windows-signatures.json", "signature receipt")
   records = signatures.get("records")

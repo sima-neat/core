@@ -41,12 +41,16 @@ from qualify_windows_hardware import (  # noqa: E402
     parse_performance_log, require_powershell as require_hardware_powershell,
     prepare_openssh_secret_directory,
     recover_windows_platform_device, remove_installed_tutorial_facade,
+    remove_qualification_tree,
     restore_card_candidate, run_captured_to_file, run_sudo_remote,
     run_windows_openssh,
     sima_cli_identity, stage_card_candidate, stage_installed_tutorial_facade,
     stage_invalid_wheel_registry, stage_local_registry, stage_path_fixtures,
-    stress_queues, validate_card_candidate, verify_customer_process_activation,
+    standard_user_wrapper, stress_queues, validate_card_candidate,
+    verify_customer_process_activation,
     windows_card_network_identity)
+from standard_user_genai import (  # noqa: E402
+    prove_writable_sentinel, read_serve_mapping, run as run_standard_user_genai)
 from verify_linux_release_run import verify_run as verify_linux_run  # noqa: E402
 from verify_windows_release import verify  # noqa: E402
 import qualify_windows_hardware as HARDWARE  # noqa: E402
@@ -638,13 +642,19 @@ class WindowsCiContracts(unittest.TestCase):
     self.assertIn("SIMA_WINDOWS_PCIE_GENAI_MEDIA_DIRECTORY", workflow)
     self.assertIn("SIMA_WINDOWS_PCIE_GENAI_MEDIA_SERVE_ROOT", workflow)
     self.assertIn("Required Windows GenAI variable is unset", workflow)
+    self.assertIn("media overrides require directory and service root as a pair", workflow)
     self.assertIn(
-        "install_root, candidate.wheel, wheelhouse, work, evidence", source)
+        "install_root, candidate.wheel, wheelhouse, candidate.root, work, evidence", source)
     self.assertIn('[sys.executable, "-m", "venv", "--copies", portable_root]', source)
     self.assertIn('"--force-reinstall", wheel', source)
-    self.assertIn('assert root in module.parents, (root, module)', source)
+    driver = (SCRIPT_DIR / "standard_user_genai.py").read_text(encoding="utf-8")
+    self.assertIn("prefix not in module.parents", driver)
+    self.assertIn("p.genai.ConnectionOptions()", driver)
+    self.assertIn("common_application_data().resolve(strict=True)", driver)
+    self.assertIn('read_serve_mapping(configuration, options.media_serve_root)', driver)
+    self.assertIn('[executable, "asr", assets]', driver)
     self.assertNotIn("Path(sys.base_prefix).resolve", source)
-    self.assertIn("remove_private_python_tree(portable_root)", source)
+    self.assertIn('(private_root, "temporary standard-user private input")', source)
     self.assertIn("TerminateProcess", source)
     self.assertIn("Remove-LocalUser", source)
     self.assertIn("$cleanupErrors", source)
@@ -696,15 +706,82 @@ class WindowsCiContracts(unittest.TestCase):
         path.mkdir()
         environment[name] = str(path)
 
-      with self.assertRaisesRegex(RuntimeError, "Platform media directory"):
-        HARDWARE.require_assets(environment, True)
+      HARDWARE.require_assets(environment, True)
       media = root / "Platform media with spaces"
       media.mkdir()
       environment["SIMAPCIE_GENAI_MEDIA_DIRECTORY"] = str(media.resolve())
-      with self.assertRaisesRegex(RuntimeError, "media service root"):
+      with self.assertRaisesRegex(RuntimeError, "as a pair"):
         HARDWARE.require_assets(environment, True)
       environment["SIMAPCIE_GENAI_MEDIA_SERVE_ROOT"] = "data"
       HARDWARE.require_assets(environment, True)
+      del environment["SIMAPCIE_GENAI_MEDIA_DIRECTORY"]
+      with self.assertRaisesRegex(RuntimeError, "as a pair"):
+        HARDWARE.require_assets(environment, True)
+
+  def test_standard_user_wrapper_uses_json_inputs_and_clears_media_overrides(self):
+    wrapper = standard_user_wrapper()
+    self.assertIn('set "SIMAPCIE_GENAI_MEDIA_DIRECTORY="', wrapper)
+    self.assertIn('set "SIMAPCIE_GENAI_MEDIA_SERVE_ROOT="', wrapper)
+    self.assertIn('"%SIMA_STANDARD_USER_PAYLOAD%"', wrapper)
+    self.assertIn('"%SIMA_STANDARD_USER_RECEIPT%"', wrapper)
+    self.assertNotIn("C:\\", wrapper)
+    self.assertNotIn("{", wrapper)
+
+  def test_standard_user_platform_config_binding_is_deterministic(self):
+    with tempfile.TemporaryDirectory() as directory:
+      config = Path(directory) / "simaai-mla-daemon.conf"
+      config.write_text(
+          '\ufeff[serve]\ndata = "C:\\ProgramData\\SiMa.ai\\data"\n',
+          encoding="utf-8")
+      self.assertEqual(
+          read_serve_mapping(config, "data"),
+          Path(r"C:\ProgramData\SiMa.ai\data"))
+      with self.assertRaisesRegex(RuntimeError, r"\[serve\] missing"):
+        read_serve_mapping(config, "missing")
+      config.write_text("[serve\ndata=x\n", encoding="utf-8")
+      with self.assertRaisesRegex(RuntimeError, "cannot read Platform daemon configuration"):
+        read_serve_mapping(config, "data")
+
+  def test_standard_user_non_genai_path_preserves_installed_python_assertions(self):
+    with tempfile.TemporaryDirectory() as directory:
+      payload = Path(directory) / "payload.json"
+      payload.write_text(
+          json.dumps({"environment": {}, "include_genai": False}), encoding="utf-8")
+      installed = Path(sys.prefix) / "Lib" / "site-packages" / "pyneatpcie" / "__init__.py"
+      module = SimpleNamespace(
+          __file__=str(installed), Model=object(), Runtime=object(), Tensor=object())
+      with mock.patch.dict(sys.modules, {"pyneatpcie": module}), \
+          mock.patch.dict(os.environ, {}, clear=True):
+        self.assertEqual(run_standard_user_genai(payload), {
+            "process_is_administrator": False,
+            "python": "PASS",
+            "standard_user": "PASS",
+        })
+      with mock.patch.dict(sys.modules, {"pyneatpcie": module}), \
+          mock.patch.dict(os.environ, {
+              "SIMAPCIE_GENAI_MEDIA_DIRECTORY": r"C:\admin-only",
+          }, clear=True), \
+          self.assertRaisesRegex(RuntimeError, "retained forbidden override"):
+        run_standard_user_genai(payload)
+
+  def test_standard_user_sentinel_is_removed_on_success_and_failure(self):
+    with tempfile.TemporaryDirectory() as directory:
+      root = Path(directory)
+      prove_writable_sentinel(root, "success")
+      self.assertFalse((root / ".neat-standard-user-success").exists())
+      with mock.patch.object(Path, "read_text", return_value="changed"):
+        with self.assertRaisesRegex(RuntimeError, "contents changed"):
+          prove_writable_sentinel(root, "failure")
+      self.assertFalse((root / ".neat-standard-user-failure").exists())
+
+  def test_standard_user_private_input_cleanup_removes_nested_key(self):
+    with tempfile.TemporaryDirectory() as directory:
+      private = Path(directory) / "standard-user-private"
+      private.mkdir()
+      (private / "card-ssh-key").write_bytes(b"fixture")
+      remove_qualification_tree(private, "temporary standard-user private input")
+      self.assertFalse(private.exists())
+      remove_qualification_tree(private, "temporary standard-user private input")
 
   def test_customer_process_environment_excludes_ci_runtime_overlays(self):
     environment = customer_process_environment({
@@ -869,6 +946,11 @@ class WindowsCiContracts(unittest.TestCase):
     resources = {path.name: sha256(path) for path in (scheduler, core, wheel)}
     qualification_resource = root / "qualification-resource.bin"
     qualification_resource.write_bytes(b"hardware-tests-and-signature-receipt")
+    standard_user_genai = (
+        root / "hardware-tests" / "lib" / "sima-pcie-host" / "tests"
+        / "test_genai_run.exe")
+    standard_user_genai.parent.mkdir(parents=True)
+    standard_user_genai.write_bytes(b"exact-candidate-standard-user-genai" + commit.encode("ascii"))
     native_junit = root / "native-tests.xml"
     native_junit.write_text(
         '<testsuites><testsuite tests="1"><testcase name="native_contract"/>'
@@ -951,6 +1033,7 @@ class WindowsCiContracts(unittest.TestCase):
         },
         "profile": "pciehost/windows/amd64",
         "qualification_resources": {
+            standard_user_genai.relative_to(root).as_posix(): sha256(standard_user_genai),
             native_junit.name: sha256(native_junit),
             qualification_resource.name: sha256(qualification_resource),
             scheduler_signatures.name: sha256(scheduler_signatures),
@@ -1029,9 +1112,26 @@ class WindowsCiContracts(unittest.TestCase):
             },
             "standard_user": {
                 "account": "TEST\\sna-1234",
+                "common_application_data": r"C:\ProgramData",
+                "config_binding": "PASS",
+                "connection_options": "PASS",
+                "default_media_directory": r"C:\ProgramData\SiMa.ai\data",
+                "default_media_serve_root": "data",
+                "default_root": "PASS",
                 "doctor": "PASS",
                 "is_administrator": False,
+                "override_absence": "PASS",
+                "platform_config": r"C:\ProgramData\SiMa.ai\simaai-mla-daemon.conf",
+                "platform_config_media_directory": r"C:\ProgramData\SiMa.ai\data",
+                "process_is_administrator": False,
                 "python": "PASS",
+                "real_genai": "PASS",
+                "real_genai_case": "test_genai_asr_run",
+                "real_genai_executable_sha256": sha256(standard_user_genai),
+                "required_assets_readable": "PASS",
+                "sentinel": "PASS",
+                "sentinel_cleanup": "PASS",
+                "standard_user": "PASS",
             },
             "upgrade": {
                 "baseline_commit": "b" * 40,
@@ -1116,6 +1216,29 @@ class WindowsCiContracts(unittest.TestCase):
         },
     }), encoding="utf-8")
     return commit, resources, qualification
+
+  def enable_genai_qualification(self, qualification: Path) -> dict:
+    cpp_tests = {
+        "test_genai_llm_run", "test_genai_vlm_run", "test_genai_asr_run",
+    }
+    python_tests = {
+        "test_genai_asr_file_pcm_translation_and_stream",
+        "test_genai_bounded_cancellation_soak_and_context_cleanup",
+        "test_genai_competing_sessions_are_isolated",
+        "test_genai_llm_run_stream_history_and_cancel",
+        "test_genai_request_timeout_and_restart_after_failure",
+        "test_genai_resource_cleanup", "test_genai_restart_after_service_loss",
+        "test_genai_restart_after_worker_loss", "test_genai_service_loss_recovery",
+        "test_genai_vlm_run_and_stream", "test_genai_worker_loss_recovery",
+    }
+    value = json.loads(qualification.read_text(encoding="utf-8"))
+    value["tests"]["cpp"].extend(sorted(cpp_tests))
+    value["tests"]["python"].extend(sorted(python_tests))
+    value["genai_admission"] = {
+        name: "PASS" for name in sorted(cpp_tests | python_tests)
+    }
+    qualification.write_text(json.dumps(value), encoding="utf-8")
+    return value
 
   def test_candidate_and_release_gate_bind_exact_bytes(self):
     with tempfile.TemporaryDirectory() as directory:
@@ -1804,6 +1927,60 @@ install() {
       qualification.write_text(json.dumps(value), encoding="utf-8")
       with self.assertRaisesRegex(ValueError, "standard-user process activation"):
         verify(root, qualification, commit, True)
+      value["customer_install"]["standard_user"]["is_administrator"] = False
+      value["customer_install"]["standard_user"]["process_is_administrator"] = True
+      qualification.write_text(json.dumps(value), encoding="utf-8")
+      with self.assertRaisesRegex(ValueError, "standard-user process activation"):
+        verify(root, qualification, commit, True)
+
+  def test_genai_release_rejects_custom_or_admin_only_standard_user_false_passes(self):
+    with tempfile.TemporaryDirectory() as directory:
+      root = Path(directory)
+      commit, _, qualification = self.windows_candidate(root)
+      original = self.enable_genai_qualification(qualification)
+      for field in (
+          "config_binding", "connection_options", "default_root", "override_absence",
+          "real_genai", "required_assets_readable", "sentinel", "sentinel_cleanup",
+      ):
+        value = json.loads(json.dumps(original))
+        value["customer_install"]["standard_user"][field] = "SKIPPED"
+        qualification.write_text(json.dumps(value), encoding="utf-8")
+        with self.subTest(field=field), self.assertRaisesRegex(
+            ValueError, "default-root real GenAI as a standard user"):
+          verify(root, qualification, commit, False, require_genai=True)
+
+      value = json.loads(json.dumps(original))
+      value["customer_install"]["standard_user"]["is_administrator"] = True
+      qualification.write_text(json.dumps(value), encoding="utf-8")
+      with self.assertRaisesRegex(ValueError, "standard-user process activation"):
+        verify(root, qualification, commit, False, require_genai=True)
+
+      value = json.loads(json.dumps(original))
+      del value["customer_install"]["standard_user"]["default_media_directory"]
+      qualification.write_text(json.dumps(value), encoding="utf-8")
+      with self.assertRaisesRegex(ValueError, "CommonApplicationData"):
+        verify(root, qualification, commit, False, require_genai=True)
+
+  def test_genai_release_admits_default_root_without_custom_overrides(self):
+    with tempfile.TemporaryDirectory() as directory:
+      root = Path(directory)
+      commit, _, qualification = self.windows_candidate(root)
+      value = self.enable_genai_qualification(qualification)
+      del value["genai_media"]
+      qualification.write_text(json.dumps(value), encoding="utf-8")
+      result = verify(root, qualification, commit, False, require_genai=True)
+      self.assertTrue(result["genai_qualified"])
+
+  def test_genai_release_binds_standard_user_run_to_candidate_executable(self):
+    with tempfile.TemporaryDirectory() as directory:
+      root = Path(directory)
+      commit, _, qualification = self.windows_candidate(root)
+      value = self.enable_genai_qualification(qualification)
+      value["customer_install"]["standard_user"][
+          "real_genai_executable_sha256"] = "0" * 64
+      qualification.write_text(json.dumps(value), encoding="utf-8")
+      with self.assertRaisesRegex(ValueError, "different executable"):
+        verify(root, qualification, commit, False, require_genai=True)
 
   def test_upgrade_baseline_must_name_a_different_package_version(self):
     with tempfile.TemporaryDirectory() as directory:
@@ -1913,8 +2090,7 @@ install() {
       changed = json.loads(qualification.read_text(encoding="utf-8"))
       changed.pop("genai_media")
       qualification.write_text(json.dumps(changed), encoding="utf-8")
-      with self.assertRaisesRegex(ValueError, "media staging contract"):
-        verify(root, qualification, commit, True, True)
+      self.assertTrue(verify(root, qualification, commit, True, True)["genai_qualified"])
       changed["genai_media"] = value["genai_media"]
       qualification.write_text(json.dumps(changed), encoding="utf-8")
 
