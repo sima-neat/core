@@ -190,6 +190,9 @@ class RecordTitleTests(unittest.TestCase):
             "comment": ("title: Configure SDK # draft name\n", "Configure SDK"),
             "escaped": ('title: "Say \\"hi\\" to the SDK"\n', 'Say "hi" to the SDK'),
             "single-quoted": ("title: 'It''s the SDK'\n", "It's the SDK"),
+            "yaml-1.1-bool": ("title: No\n", "No"),
+            "yaml-1.1-on": ("title: On\n", "On"),
+            "leading-zero": ("title: 0123\n", "0123"),
         }
         for name, (frontmatter, expected) in cases.items():
             with self.subTest(name):

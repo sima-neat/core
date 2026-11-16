@@ -15,10 +15,17 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
-try:  # PyYAML reads frontmatter scalars the way Docusaurus does; optional so CI never breaks.
+try:  # PyYAML reads quoting, folding and comments the way Docusaurus does; optional so CI never breaks.
     import yaml
 except ImportError:  # pragma: no cover - exercised only where PyYAML is absent
     yaml = None
+
+if yaml is not None:
+
+    class TextLoader(yaml.SafeLoader):
+        """Read every plain scalar as text, so `title: No` stays "No" instead of YAML 1.1 False."""
+
+    TextLoader.yaml_implicit_resolvers = {}
 
 
 SOURCE = "software"
@@ -78,7 +85,7 @@ def frontmatter_value(text: str, key: str) -> str | None:
         return None
     if yaml is not None:
         try:
-            data = yaml.safe_load(frontmatter)
+            data = yaml.load(frontmatter, Loader=TextLoader)  # noqa: S506 - SafeLoader subclass
         except yaml.YAMLError:
             data = None
         if isinstance(data, dict):
