@@ -63,6 +63,9 @@ g::ConnectionOptions connection() {
   result.ssh_key = env("SIMAPCIE_SSH_KEY");
   result.startup_timeout_ms = std::stoi(env("SIMAPCIE_READINESS_TIMEOUT_MS", "180000"));
   result.request_timeout_ms = std::stoi(env("SIMAPCIE_GENAI_REQUEST_TIMEOUT_MS", "120000"));
+  if (const auto directory = env("SIMAPCIE_GENAI_MEDIA_DIRECTORY"); !directory.empty())
+    result.media_directory = directory;
+  result.media_serve_root = env("SIMAPCIE_GENAI_MEDIA_SERVE_ROOT", result.media_serve_root);
   return result;
 }
 

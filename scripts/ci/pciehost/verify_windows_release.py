@@ -308,6 +308,14 @@ def verify(candidate_dir: Path, qualification_path: Path, expected_commit: str,
     expected_outcomes = {name: "PASS" for name in required_genai}
     if genai_admission != expected_outcomes:
       raise ValueError("release qualification has incomplete Windows GenAI outcomes")
+    media = qualification.get("genai_media")
+    if not isinstance(media, dict) or set(media) != {"directory", "serve_root"}:
+      raise ValueError("release qualification has no Windows GenAI media staging contract")
+    media_directory = PureWindowsPath(str(media["directory"]))
+    if not media_directory.is_absolute() or not media_directory.drive:
+      raise ValueError("release qualification has an invalid Windows GenAI media directory")
+    if not isinstance(media["serve_root"], str) or not media["serve_root"]:
+      raise ValueError("release qualification has an invalid Windows GenAI media service root")
 
   signatures = read_object(candidate.root / "windows-signatures.json", "signature receipt")
   records = signatures.get("records")

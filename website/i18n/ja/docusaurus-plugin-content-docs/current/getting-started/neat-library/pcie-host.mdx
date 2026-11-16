@@ -25,9 +25,9 @@ Neat PCIe ホストパッケージは、以下の検証済みのホストプラ�
 | --- | --- | --- |
 | Ubuntu 22.04 | x86_64 | 対応済み |
 | Ubuntu 24.04 | x86_64 | 対応済み |
-| Windows 11 | x86_64 | ネイティブプレビュー（ビジョン推論のみ） |
+| Windows 11 | x86_64 | ネイティブプレビュー（GenAI のリリースには認定が必要） |
 
-Arm64ホストでのビルドは、まだ検証されていません。WindowsプレビューはPCIe GenAIトランスポートをサポートしていません。
+Arm64ホストでのビルドは、まだ検証されていません。WindowsパッケージにはPCIe GenAI APIが含まれていますが、対応するPlatformプロバイダーとWindows向けC++およびPython GenAIの完全なリリースマトリックスが認定されるまでは、サポート対象の顧客構成ではありません。
 
 ## オンラインインストールの前提条件
 
@@ -82,7 +82,7 @@ gst-inspect-1.0 neatpciehost
 
 ## Windows 11 ネイティブプレビューをインストールする
 
-Windowsプレビューは、`pcie::Model`ビジョンAPIのネイティブVisual Studioビルドです。`pcie::genai::GenAIModel`はサポートしていません。最初に、対応するx64 GStreamer MSVCランタイム、SiMa PCIeドライバー、および既存のSiMa CLIをインストールしてください。その後、CLIを使用して、対応するScheduler MSI、Core MSI、および`win_amd64` wheelを1つのコホートとしてインストールします。
+Windowsプレビューは、`pcie::Model`ビジョンAPIのネイティブVisual Studioビルドであり、`pcie::genai::GenAIModel`も含まれます。上記のとおり、GenAIのリリースには引き続き認定が必要です。APIをインストールするだけでは、Platformトランスポートやカードモデルは認定されません。最初に、対応するx64 GStreamer MSVCランタイム、SiMa PCIeドライバー、および既存のSiMa CLIをインストールしてください。その後、CLIを使用して、対応するScheduler MSI、Core MSI、および`win_amd64` wheelを1つのコホートとしてインストールします。
 
 ```powershell
 sima-cli neat install core/pciehost/windows/amd64@3.0

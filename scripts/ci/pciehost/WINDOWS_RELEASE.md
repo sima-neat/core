@@ -33,6 +33,16 @@ never placed in a command line or retained artifact. The production environment
 also supplies the read-only GitHub App credentials used only when an unpublished
 Scheduler or sima-cli Actions artifact is selected as a bootstrap override.
 Normal runs resolve publication manifests over the approved artifact endpoint.
+For GenAI qualification, configure
+`SIMA_WINDOWS_PCIE_GENAI_MEDIA_DIRECTORY` and
+`SIMA_WINDOWS_PCIE_GENAI_MEDIA_SERVE_ROOT` from the installed Platform provider.
+Platform 3.0 defaults to `%ProgramData%\SiMa.ai\data` and the `data` root. Core
+resolves `%ProgramData%` through the Windows CommonApplicationData known folder,
+not from an environment variable. The
+directory must be the existing absolute host path served by the named root; do
+not substitute Core's Linux `/srv/simaai/data` default. The release gate records
+and validates both values so a customized daemon configuration cannot be tested
+against the wrong host directory.
 `SIMA_WINDOWS_CMAKE_PREFIX_PATH` must include the native OpenCV CMake package,
 and `SIMA_WINDOWS_DEPENDENCY_RUNTIME_PATH` must include the matching directory
 that contains its runtime DLLs. The current qualified input is the official

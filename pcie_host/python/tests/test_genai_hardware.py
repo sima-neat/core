@@ -26,6 +26,10 @@ def _connection(request_timeout_ms=None):
   result.request_timeout_ms = (
       int(os.environ.get("SIMAPCIE_GENAI_REQUEST_TIMEOUT_MS", "120000"))
       if request_timeout_ms is None else request_timeout_ms)
+  if os.environ.get("SIMAPCIE_GENAI_MEDIA_DIRECTORY"):
+    result.media_directory = os.environ["SIMAPCIE_GENAI_MEDIA_DIRECTORY"]
+  if os.environ.get("SIMAPCIE_GENAI_MEDIA_SERVE_ROOT"):
+    result.media_serve_root = os.environ["SIMAPCIE_GENAI_MEDIA_SERVE_ROOT"]
   return result
 
 

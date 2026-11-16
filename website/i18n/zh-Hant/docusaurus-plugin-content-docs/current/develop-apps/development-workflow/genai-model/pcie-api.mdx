@@ -19,6 +19,8 @@ slug: /develop-apps/development-workflow/genai-model/pcie-api
 - 確認連接的卡片已按照安裝步驟完成設定。
 - 在主機上準備 LLiMa 模型目錄。請傳入絕對路徑，或相對於應用程式目前工作目錄的路徑，而非卡端本機路徑。模型開啟期間，請保持檔案可讀取且不要變更。
 
+在 Windows 上，相符的 Platform 安裝程式會在 Windows CommonApplicationData 已知資料夾下佈建 `data` 服務根目錄，通常為 `%ProgramData%\SiMa.ai\data`；API 會解析該已知資料夾，並預設使用此目錄。如果 Platform 常駐程式設定將 `data` 對應至其他位置，請先將 `connection.media_directory` 和 `connection.media_serve_root` 設為發布的配對，再傳送影像或音訊請求。Linux 會繼續使用 `/srv/simaai/data`。在該提供者合約以及完整的 C++ 與 Python 硬體矩陣通過資格驗證之前，Windows GenAI 並非受支援的客戶設定。
+
 ## 執行文字請求
 
 此範例假設應用程式目前工作目錄下的 `./models/` 中已有 `Qwen3-0.6B-Autoround-a16w4`。

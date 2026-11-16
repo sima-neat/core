@@ -632,6 +632,12 @@ class WindowsCiContracts(unittest.TestCase):
     self.assertIn("CreateProcessWithLogonW", source)
     self.assertIn('"SimaPCIeHostAcceptance-" + secrets.token_hex(8)', source)
     self.assertIn('evidence / "standard-user-python-install.log"', source)
+    self.assertIn('"SIMAPCIE_GENAI_MEDIA_DIRECTORY"', source)
+    self.assertIn('"SIMAPCIE_GENAI_MEDIA_SERVE_ROOT"', source)
+    workflow = WORKFLOW.read_text(encoding="utf-8")
+    self.assertIn("SIMA_WINDOWS_PCIE_GENAI_MEDIA_DIRECTORY", workflow)
+    self.assertIn("SIMA_WINDOWS_PCIE_GENAI_MEDIA_SERVE_ROOT", workflow)
+    self.assertIn("Required Windows GenAI variable is unset", workflow)
     self.assertIn(
         "install_root, candidate.wheel, wheelhouse, work, evidence", source)
     self.assertIn('[sys.executable, "-m", "venv", "--copies", portable_root]', source)
@@ -670,6 +676,35 @@ class WindowsCiContracts(unittest.TestCase):
     self.assertIn("--card-sudo-password-stdin", cleanup)
     self.assertIn("restore_card_candidate(args, remote_token", cleanup)
     self.assertIn('evidence / "recovery-platform-service.log"', cleanup)
+
+  def test_genai_qualification_requires_platform_media_contract(self):
+    with tempfile.TemporaryDirectory() as directory:
+      root = Path(directory)
+      environment = {}
+      for name in (
+          "SIMAPCIE_YOLOV8_MODEL",
+          "SIMAPCIE_MLA_ONLY_MODEL",
+          "SIMAPCIE_MLA_ONLY_BF16_MODEL",
+          "SIMAPCIE_TEST_IMAGE",
+          "SIMAPCIE_BOXDECODE_IMAGE",
+      ):
+        path = root / name
+        path.write_bytes(b"fixture")
+        environment[name] = str(path)
+      for name in ("SIMAPCIE_GENAI_MODELS_PATH", "SIMAPCIE_GENAI_TEST_ASSETS"):
+        path = root / name
+        path.mkdir()
+        environment[name] = str(path)
+
+      with self.assertRaisesRegex(RuntimeError, "Platform media directory"):
+        HARDWARE.require_assets(environment, True)
+      media = root / "Platform media with spaces"
+      media.mkdir()
+      environment["SIMAPCIE_GENAI_MEDIA_DIRECTORY"] = str(media.resolve())
+      with self.assertRaisesRegex(RuntimeError, "media service root"):
+        HARDWARE.require_assets(environment, True)
+      environment["SIMAPCIE_GENAI_MEDIA_SERVE_ROOT"] = "data"
+      HARDWARE.require_assets(environment, True)
 
   def test_customer_process_environment_excludes_ci_runtime_overlays(self):
     environment = customer_process_environment({
@@ -1005,6 +1040,10 @@ class WindowsCiContracts(unittest.TestCase):
                 "status": "PASS",
             },
             "wheel_failure": {"exit_code": 1, "status": "PASS"},
+        },
+        "genai_media": {
+            "directory": r"C:\ProgramData\SiMa\PCIe GenAI media",
+            "serve_root": "data",
         },
         "dependencies": {
             "platform_version": "3.0.0.2",
@@ -1870,6 +1909,14 @@ install() {
       qualification.write_text(json.dumps(value), encoding="utf-8")
       admission = verify(root, qualification, commit, True, True)
       self.assertTrue(admission["genai_qualified"])
+
+      changed = json.loads(qualification.read_text(encoding="utf-8"))
+      changed.pop("genai_media")
+      qualification.write_text(json.dumps(changed), encoding="utf-8")
+      with self.assertRaisesRegex(ValueError, "media staging contract"):
+        verify(root, qualification, commit, True, True)
+      changed["genai_media"] = value["genai_media"]
+      qualification.write_text(json.dumps(changed), encoding="utf-8")
 
       for missing in sorted(python_tests):
         with self.subTest(missing=missing):

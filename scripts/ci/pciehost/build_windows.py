@@ -506,23 +506,27 @@ def build(args: argparse.Namespace) -> None:
       raise ValueError(f"wheel duplicates MSI-owned native files: {duplicated}")
 
     def check_consumer(prefix: Path, label: str) -> None:
-      consumer_build = consumer_build_root / label
       consumer_prefix_path = ";".join((str(prefix), str(install_root), str(gstreamer_root)))
-      run([
-          cmake,
-          "-S", PCIE_HOST / "tests" / "package_smoke",
-          "-B", consumer_build,
-          "-G", "Ninja",
-          "-DCMAKE_BUILD_TYPE=Release",
-          "-DCMAKE_PREFIX_PATH=" + consumer_prefix_path,
-      ], env=environment)
-      run([cmake, "--build", consumer_build], env=environment)
-      binary = consumer_build / "sima_pcie_host_package_smoke.exe"
-      inspect_x64(binary, dumpbin)
       consumer_environment = environment.copy()
       consumer_environment["PATH"] = os.pathsep.join(
           (str(prefix / "bin"), str(install_root / "bin"), consumer_environment["PATH"]))
-      run([binary], env=consumer_environment)
+      for source, executable in (
+          (PCIE_HOST / "tests" / "package_smoke", "sima_pcie_host_package_smoke.exe"),
+          (PCIE_HOST / "tests" / "installed_genai_consumer", "installed_genai_consumer.exe"),
+      ):
+        consumer_build = consumer_build_root / label / source.name
+        run([
+            cmake,
+            "-S", source,
+            "-B", consumer_build,
+            "-G", "Ninja",
+            "-DCMAKE_BUILD_TYPE=Release",
+            "-DCMAKE_PREFIX_PATH=" + consumer_prefix_path,
+        ], env=environment)
+        run([cmake, "--build", consumer_build], env=environment)
+        binary = consumer_build / executable
+        inspect_x64(binary, dumpbin)
+        run([binary], env=consumer_environment)
 
     check_consumer(relocated, "relocated")
     run([gst_inspect, plugin], env=environment)
@@ -660,7 +664,13 @@ def build(args: argparse.Namespace) -> None:
     run([
         customer_python,
         "-c",
-        "import pyneatpcie as p; assert p.__version__; assert p.Model; assert p.Runtime; assert p.Tensor",
+        "from pathlib import Path; import pyneatpcie as p; assert p.__version__; "
+        "assert p.Model; assert p.Runtime; "
+        "assert p.Tensor; assert p.genai.GenAIModel; assert p.genai.GenerationRequest; "
+        "assert p.genai.ConnectionOptions; c = p.genai.ConnectionOptions(); "
+        "media = Path(c.media_directory); assert media.is_absolute(); "
+        "assert tuple(part.lower() for part in media.parts[-2:]) == ('sima.ai', 'data'); "
+        "assert c.media_serve_root == 'data'",
     ], env=import_environment, cwd=Path(os.environ["TEMP"]))
 
     scheduler_version = str(scheduler_metadata.get("version", ""))

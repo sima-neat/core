@@ -1806,6 +1806,17 @@ def require_assets(environment: dict[str, str], include_genai: bool) -> None:
       value = environment.get(name, "")
       if not value or not Path(value).is_dir():
         raise RuntimeError(f"required Windows PCIe GenAI asset directory is unavailable: {name}")
+    media_directory = environment.get("SIMAPCIE_GENAI_MEDIA_DIRECTORY", "")
+    if (not media_directory or not Path(media_directory).is_absolute()
+        or not Path(media_directory).is_dir()):
+      raise RuntimeError(
+          "Windows PCIe GenAI requires an existing absolute Platform media directory: "
+          "SIMAPCIE_GENAI_MEDIA_DIRECTORY")
+    media_serve_root = environment.get("SIMAPCIE_GENAI_MEDIA_SERVE_ROOT", "")
+    if not media_serve_root or "\0" in media_serve_root:
+      raise RuntimeError(
+          "Windows PCIe GenAI requires the Platform media service root: "
+          "SIMAPCIE_GENAI_MEDIA_SERVE_ROOT")
 
 
 def stage_path_fixtures(environment: dict[str, str], root: Path) -> None:
@@ -2416,6 +2427,11 @@ def qualify(args: argparse.Namespace) -> None:
           environment["PATH"],
       ))
       require_assets(environment, args.include_genai)
+      if args.include_genai:
+        result["genai_media"] = {
+            "directory": environment["SIMAPCIE_GENAI_MEDIA_DIRECTORY"],
+            "serve_root": environment["SIMAPCIE_GENAI_MEDIA_SERVE_ROOT"],
+        }
       stage_path_fixtures(environment, work / "customer path fixtures with spaces")
       result["path_fixtures"] = {
           name: environment[name]

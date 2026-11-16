@@ -25,9 +25,9 @@ Neat PCIe 主機封裝支援以下經過驗證的主機平台：
 | --- | --- | --- |
 | Ubuntu 22.04 | x86_64 | 支援 |
 | Ubuntu 24.04 | x86_64 | 支援 |
-| Windows 11 | x86_64 | 原生預覽；僅支援視覺推論 |
+| Windows 11 | x86_64 | 原生預覽；GenAI 需通過版本發布資格驗證 |
 
-Arm64 主機上的建置尚未經過驗證。Windows 預覽不支援 PCIe GenAI 傳輸。
+Arm64 主機上的建置尚未經過驗證。Windows 套件包含 PCIe GenAI API，但在相符的 Platform 提供者以及完整的 Windows C++ 與 Python GenAI 版本發布矩陣通過資格驗證之前，這並非受支援的客戶設定。
 
 ## 線上安裝先決條件
 
@@ -82,7 +82,7 @@ gst-inspect-1.0 neatpciehost
 
 ## 安裝 Windows 11 原生預覽
 
-Windows 預覽是 `pcie::Model` 視覺 API 的原生 Visual Studio 建置，不支援 `pcie::genai::GenAIModel`。請先安裝相符的 x64 GStreamer MSVC 執行階段、SiMa PCIe 驅動程式，以及現有的 SiMa CLI，然後使用 CLI 將相符的 Scheduler MSI、Core MSI 和 `win_amd64` wheel 安裝為同一組套件。
+Windows 預覽是 `pcie::Model` 視覺 API 的原生 Visual Studio 建置，並包含 `pcie::genai::GenAIModel`。如上所述，GenAI 仍需通過版本發布資格驗證；僅安裝 API 並不代表 Platform 傳輸或卡片模型已通過資格驗證。請先安裝相符的 x64 GStreamer MSVC 執行階段、SiMa PCIe 驅動程式，以及現有的 SiMa CLI，然後使用 CLI 將相符的 Scheduler MSI、Core MSI 和 `win_amd64` wheel 安裝為同一組套件。
 
 ```powershell
 sima-cli neat install core/pciehost/windows/amd64@3.0

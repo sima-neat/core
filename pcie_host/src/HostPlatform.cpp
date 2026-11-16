@@ -9,6 +9,7 @@
 #include <fstream>
 #include <iomanip>
 #include <limits>
+#include <memory>
 #include <random>
 #include <sstream>
 #include <stdexcept>
@@ -21,6 +22,7 @@
 #include <process.h>
 #include <windows.h>
 #include <bcrypt.h>
+#include <shlobj.h>
 #else
 #include <sys/stat.h>
 #include <unistd.h>
@@ -53,6 +55,19 @@ std::string temp_token() {
 }
 
 } // namespace
+
+#ifdef _WIN32
+std::filesystem::path host_common_application_data_directory() {
+  PWSTR path = nullptr;
+  const HRESULT status =
+      SHGetKnownFolderPath(FOLDERID_ProgramData, KF_FLAG_DEFAULT, nullptr, &path);
+  std::unique_ptr<wchar_t, decltype(&CoTaskMemFree)> allocated(path, &CoTaskMemFree);
+  if (FAILED(status) || !allocated) {
+    throw std::runtime_error("Windows CommonApplicationData (FOLDERID_ProgramData) is unavailable");
+  }
+  return std::filesystem::path(allocated.get());
+}
+#endif
 
 ScopedTempDirectory::ScopedTempDirectory(const std::string& prefix) {
   if (!valid_temp_prefix(prefix)) {

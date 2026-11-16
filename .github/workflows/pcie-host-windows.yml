@@ -538,6 +538,8 @@ jobs:
       SIMAPCIE_CARD_HOST: ${{ vars.SIMA_WINDOWS_PCIE_CARD_HOST }}
       SIMAPCIE_CARD_ID: "0"
       SIMAPCIE_GENAI_MODELS_PATH: ${{ vars.SIMA_WINDOWS_PCIE_GENAI_MODELS_PATH }}
+      SIMAPCIE_GENAI_MEDIA_DIRECTORY: ${{ vars.SIMA_WINDOWS_PCIE_GENAI_MEDIA_DIRECTORY }}
+      SIMAPCIE_GENAI_MEDIA_SERVE_ROOT: ${{ vars.SIMA_WINDOWS_PCIE_GENAI_MEDIA_SERVE_ROOT }}
       SIMAPCIE_GENAI_TEST_ASSETS: ${{ vars.SIMA_WINDOWS_PCIE_GENAI_TEST_ASSETS }}
       SIMAPCIE_LIFECYCLE_CYCLES: "10"
       SIMAPCIE_LIFETIME_ITERATIONS: "20"
@@ -608,6 +610,18 @@ jobs:
             "SIMAPCIE_BOXDECODE_IMAGE"
           )) {
             if (-not (Get-Item "env:$name").Value) { throw "Required hardware variable is unset: $name" }
+          }
+          if ("${{ inputs.include_genai }}" -eq "true") {
+            foreach ($name in @(
+              "SIMAPCIE_GENAI_MEDIA_DIRECTORY",
+              "SIMAPCIE_GENAI_MEDIA_SERVE_ROOT",
+              "SIMAPCIE_GENAI_MODELS_PATH",
+              "SIMAPCIE_GENAI_TEST_ASSETS"
+            )) {
+              if (-not (Get-Item "env:$name").Value) {
+                throw "Required Windows GenAI variable is unset: $name"
+              }
+            }
           }
           $arguments = @(
             "scripts/ci/pciehost/qualify_windows_hardware.py",

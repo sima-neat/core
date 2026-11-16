@@ -29,10 +29,12 @@ The Neat PCIe host package supports the following validated host platforms:
 | --- | --- | --- |
 | Ubuntu 22.04 | x86_64 | Supported |
 | Ubuntu 24.04 | x86_64 | Supported |
-| Windows 11 | x86_64 | Native preview; vision inference only |
+| Windows 11 | x86_64 | Native preview; GenAI is release-gated |
 
-Arm64 host builds have not yet been validated. The Windows preview does not
-support the PCIe GenAI transport.
+Arm64 host builds have not yet been validated. The Windows package contains the
+PCIe GenAI API, but it is not a supported customer configuration until a matching
+Platform provider and the full Windows C++ and Python GenAI release matrix have
+passed qualification.
 
 ## Online installation prerequisites
 
@@ -95,10 +97,11 @@ gst-inspect-1.0 neatpciehost
 ## Install the Windows 11 native preview
 
 The Windows preview is a native Visual Studio build of the `pcie::Model` vision
-API. It does not support `pcie::genai::GenAIModel`. Install the matching x64
-GStreamer MSVC runtime, the SiMa PCIe driver and the existing SiMa CLI first.
-Then ask the CLI to install the matched Scheduler MSI, Core MSI and
-`win_amd64` wheel as one cohort:
+API and includes `pcie::genai::GenAIModel`. GenAI remains release-gated as
+described above; installing the API alone does not qualify the Platform transport
+or card models. Install the matching x64 GStreamer MSVC runtime, the SiMa PCIe
+driver and the existing SiMa CLI first. Then ask the CLI to install the matched
+Scheduler MSI, Core MSI and `win_amd64` wheel as one cohort:
 
 ```powershell
 sima-cli neat install core/pciehost/windows/amd64@3.0

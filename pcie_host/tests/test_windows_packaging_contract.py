@@ -105,6 +105,39 @@ class WindowsPackagingContract(unittest.TestCase):
     self.assertIn('"-Hosts", "10.0.0.2", "-DryRun"', producer)
     self.assertIn('"neat-pcie-application-builder" / "playbook.yml"', producer)
 
+  def test_installed_package_smoke_covers_genai_cpp_and_python_apis(self):
+    producer = WINDOWS_PRODUCER.read_text(encoding="utf-8")
+    self.assertIn('PCIE_HOST / "tests" / "installed_genai_consumer"', producer)
+    self.assertIn('"installed_genai_consumer.exe"', producer)
+    self.assertIn("assert p.genai.GenAIModel", producer)
+    self.assertIn("assert p.genai.GenerationRequest", producer)
+    self.assertIn("assert p.genai.ConnectionOptions", producer)
+
+  def test_windows_genai_media_defaults_follow_platform_contract(self):
+    header = (
+        ROOT / "include" / "simaai" / "neat" / "pcie" / "genai" / "GenAIModel.h"
+    ).read_text(encoding="utf-8")
+    host_platform = (ROOT / "src" / "HostPlatform.cpp").read_text(encoding="utf-8")
+    media_stage = (ROOT / "src" / "genai" / "MediaStage.cpp").read_text(
+        encoding="utf-8"
+    )
+    cmake = (ROOT / "CMakeLists.txt").read_text(encoding="utf-8")
+    consumer = (ROOT / "tests" / "installed_genai_consumer" / "main.cpp").read_text(
+        encoding="utf-8"
+    )
+    producer = WINDOWS_PRODUCER.read_text(encoding="utf-8")
+
+    self.assertIn("host_common_application_data_directory()", header)
+    self.assertIn('media_directory = "/srv/simaai/data"', header)
+    self.assertIn("SHGetKnownFolderPath(FOLDERID_ProgramData", host_platform)
+    self.assertNotIn('_wgetenv(L"PROGRAMDATA")', host_platform)
+    self.assertIn("bcrypt ole32 shell32", cmake)
+    self.assertIn("SHGetKnownFolderPath(FOLDERID_ProgramData", consumer)
+    self.assertNotIn(r"C:\ProgramData\SiMa.ai\data", producer)
+    self.assertIn(r"%ProgramData%\SiMa.ai\simaai-mla-daemon.conf", media_stage)
+    self.assertIn("missing or is not a directory", media_stage)
+    self.assertIn("noncanonical or traverses a symlink", media_stage)
+
 
 if __name__ == "__main__":
   unittest.main()
