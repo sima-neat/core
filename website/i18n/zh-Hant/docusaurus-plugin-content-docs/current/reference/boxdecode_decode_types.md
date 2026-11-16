@@ -147,7 +147,7 @@ node = pyneat.nodes.sima_box_decode(
 | MobileSAM | `MobileSam`（`mobilesam`） | 編碼器：`resize.mode=Letterbox`、`resize.placement=TopLeft`、1024×1024、`pad_value=116`；`preset=ImageNet` | `multimask_output` |
 | EdgeTAM | `EdgeTam`（`edgetam`） | 影像編碼器：`resize.mode=Stretch`、1024×1024、無填補；`preset=ImageNet` | `multimask_output`；追蹤時使用 `boxdecode_raw_outputs` |
 | EfficientSAM-T / -S | `EfficientSam`（`efficientsam`） | 編碼器：`resize.mode=Stretch`、1024×1024、無填補；不使用預設集，`normalize.enable=On`（數值 0–1；編碼器會自行正規化） | `multimask_output` 保持 true |
-| EfficientSAM3 互動式 | `EfficientSam3`（`efficientsam3`） | 影像編碼器：`resize.mode=Stretch`、1008×1008、無填補；`normalize.mean` 與 `normalize.stddev` 為 0.5 | `multimask_output` |
+| EfficientSAM3 互動式 | `EfficientSam3`（`efficientsam3`） | 影像編碼器：`resize.mode=Stretch`、1008×1008、無填補；`normalize.enable=On`，`normalize.mean` 與 `normalize.stddev` 為 (0.5, 0.5, 0.5) | `multimask_output` |
 | EfficientSAM3 概念 | `EfficientSam3`（`efficientsam3`） | 概念影像模型本身，走張量路線：應用程式將影像拉伸到 1008×1008、縮放到 [−1, 1]，並附上 `resize_mode="stretch"` 的 `semantic.preprocess` | `top_k`、`score_threshold` |
 
 Python 使用相同的名稱：`pyneat.BoxDecodeType.MobileSam`、`EdgeTam`、`EfficientSam` 與 `EfficientSam3`。MobileSAM 在正規化之後以 0 填補，相當於 ImageNet 的平均像素（124、116、104）；`pad_value=116` 是其近似值。遮罩永遠不會覆蓋填補區域。當 EfficientSAM3 Model 的輸出是偵測 `[Q, 6]` 與 Q 個通道的遮罩 logit 時，它被視為概念影像模型，否則視為提示解碼器。

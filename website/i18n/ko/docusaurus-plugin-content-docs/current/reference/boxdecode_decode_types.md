@@ -149,7 +149,7 @@ Segment Anything 모델마다 전용 디코드 타입이 있습니다. 프롬프
 | MobileSAM | `MobileSam`(`mobilesam`) | 인코더: `resize.mode=Letterbox`, `resize.placement=TopLeft`, 1024×1024, `pad_value=116`; `preset=ImageNet` | `multimask_output` |
 | EdgeTAM | `EdgeTam`(`edgetam`) | 이미지 인코더: `resize.mode=Stretch`, 1024×1024, 패딩 없음; `preset=ImageNet` | `multimask_output`; 추적에는 `boxdecode_raw_outputs` |
 | EfficientSAM-T / -S | `EfficientSam`(`efficientsam`) | 인코더: `resize.mode=Stretch`, 1024×1024, 패딩 없음; 프리셋 없음, `normalize.enable=On`(값은 0–1, 정규화는 인코더가 직접 수행) | `multimask_output`은 true로 유지 |
-| EfficientSAM3 대화형 | `EfficientSam3`(`efficientsam3`) | 이미지 인코더: `resize.mode=Stretch`, 1008×1008, 패딩 없음; `normalize.mean`과 `normalize.stddev`는 0.5 | `multimask_output` |
+| EfficientSAM3 대화형 | `EfficientSam3`(`efficientsam3`) | 이미지 인코더: `resize.mode=Stretch`, 1008×1008, 패딩 없음; `normalize.enable=On`과 `normalize.mean`, `normalize.stddev` (0.5, 0.5, 0.5) | `multimask_output` |
 | EfficientSAM3 개념 | `EfficientSam3`(`efficientsam3`) | 개념 이미지 모델 자체(텐서 경로): 애플리케이션이 이미지를 1008×1008로 늘리고 [−1, 1]로 스케일링한 뒤 `resize_mode="stretch"`인 `semantic.preprocess`를 붙입니다 | `top_k`, `score_threshold` |
 
 Python도 같은 이름을 사용합니다: `pyneat.BoxDecodeType.MobileSam`, `EdgeTam`, `EfficientSam`, `EfficientSam3`. MobileSAM은 정규화한 뒤 0으로 패딩하며, 이는 ImageNet 평균 픽셀(124, 116, 104)에 해당합니다. `pad_value=116`은 이를 근사합니다. 마스크는 패딩 영역을 덮지 않습니다. EfficientSAM3 Model은 출력이 검출 `[Q, 6]`과 Q 채널 마스크 로짓이면 개념 이미지 모델로, 그렇지 않으면 프롬프트 디코더로 처리됩니다.

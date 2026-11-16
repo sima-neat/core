@@ -178,7 +178,7 @@ detections, each with its own mask.
 | MobileSAM | `MobileSam` (`mobilesam`) | Encoder: `resize.mode=Letterbox`, `resize.placement=TopLeft`, 1024×1024, `pad_value=116`; `preset=ImageNet` | `multimask_output` |
 | EdgeTAM | `EdgeTam` (`edgetam`) | Image encoder: `resize.mode=Stretch`, 1024×1024, no padding; `preset=ImageNet` | `multimask_output`; `boxdecode_raw_outputs` for tracking |
 | EfficientSAM-T / -S | `EfficientSam` (`efficientsam`) | Encoder: `resize.mode=Stretch`, 1024×1024, no padding; no preset, `normalize.enable=On` (values 0–1; the encoder normalizes itself) | Leave `multimask_output` true |
-| EfficientSAM3 interactive | `EfficientSam3` (`efficientsam3`) | Image encoder: `resize.mode=Stretch`, 1008×1008, no padding; `normalize.mean` and `normalize.stddev` 0.5 | `multimask_output` |
+| EfficientSAM3 interactive | `EfficientSam3` (`efficientsam3`) | Image encoder: `resize.mode=Stretch`, 1008×1008, no padding; `normalize.enable=On` with `normalize.mean` and `normalize.stddev` (0.5, 0.5, 0.5) | `multimask_output` |
 | EfficientSAM3 concept | `EfficientSam3` (`efficientsam3`) | The concept image model itself, on the tensor route: the application stretches the image to 1008×1008, scales it to [−1, 1] and attaches `semantic.preprocess` with `resize_mode="stretch"` | `top_k`, `score_threshold` |
 
 Python uses the same names: `pyneat.BoxDecodeType.MobileSam`, `EdgeTam`, `EfficientSam` and

@@ -137,7 +137,7 @@ Segment Anything の各モデルには、それぞれ専用のデコードタイ
 | MobileSAM | `MobileSam`（`mobilesam`） | エンコーダー: `resize.mode=Letterbox`、`resize.placement=TopLeft`、1024×1024、`pad_value=116`。`preset=ImageNet` | `multimask_output` |
 | EdgeTAM | `EdgeTam`（`edgetam`） | 画像エンコーダー: `resize.mode=Stretch`、1024×1024、パディングなし。`preset=ImageNet` | `multimask_output`。トラッキングには `boxdecode_raw_outputs` |
 | EfficientSAM-T / -S | `EfficientSam`（`efficientsam`） | エンコーダー: `resize.mode=Stretch`、1024×1024、パディングなし。プリセットなし、`normalize.enable=On`（値は 0〜1。正規化はエンコーダー自身が行います） | `multimask_output` は true のまま |
-| EfficientSAM3 インタラクティブ | `EfficientSam3`（`efficientsam3`） | 画像エンコーダー: `resize.mode=Stretch`、1008×1008、パディングなし。`normalize.mean` と `normalize.stddev` は 0.5 | `multimask_output` |
+| EfficientSAM3 インタラクティブ | `EfficientSam3`（`efficientsam3`） | 画像エンコーダー: `resize.mode=Stretch`、1008×1008、パディングなし。`normalize.enable=On` と、`normalize.mean` および `normalize.stddev` (0.5, 0.5, 0.5) | `multimask_output` |
 | EfficientSAM3 コンセプト | `EfficientSam3`（`efficientsam3`） | コンセプト画像モデル自身（テンソルルート）: アプリケーションが画像を 1008×1008 に引き伸ばし、[−1, 1] にスケーリングし、`resize_mode="stretch"` の `semantic.preprocess` を付けます | `top_k`、`score_threshold` |
 
 Python でも同じ名前を使います: `pyneat.BoxDecodeType.MobileSam`、`EdgeTam`、`EfficientSam`、`EfficientSam3`。MobileSAM は正規化の後に 0 でパディングします。これは ImageNet の平均画素（124、116、104）に相当し、`pad_value=116` はその近似です。マスクがパディング部分を覆うことはありません。EfficientSAM3 の Model は、出力が検出 `[Q, 6]` と Q チャネルのマスクロジットであればコンセプト画像モデル、それ以外であればプロンプトデコーダーとして扱われます。

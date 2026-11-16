@@ -3,6 +3,7 @@
 #include "test_main.h"
 #include "test_utils.h"
 
+#include <array>
 #include <functional>
 #include <utility>
 #include <string>
@@ -374,6 +375,24 @@ RUN_TEST(
                     out.resolved_plan.effective.normalize.stddev[1] == 1.0f &&
                     out.resolved_plan.effective.normalize.stddev[2] == 1.0f,
                 "planner: COCO_YOLO stddev must default to 1");
+      }
+
+      // The EfficientSAM3 encoder recipe in the BoxDecode reference: statistics alone leave
+      // normalization Auto, which resolves off without a preset; enable=On applies them.
+      {
+        Model::Options opt;
+        opt.preprocess.kind = InputKind::Image;
+        opt.preprocess.normalize.mean = {0.5f, 0.5f, 0.5f};
+        opt.preprocess.normalize.stddev = {0.5f, 0.5f, 0.5f};
+        require(plan_preprocess(opt, caps).resolved_plan.effective.normalize.enable != AutoFlag::On,
+                "planner: statistics without normalize.enable must not enable normalize");
+        opt.preprocess.normalize.enable = AutoFlag::On;
+        const auto out = plan_preprocess(opt, caps);
+        const auto& normalize = out.resolved_plan.effective.normalize;
+        require(normalize.enable == AutoFlag::On &&
+                    normalize.mean == std::array{0.5f, 0.5f, 0.5f} &&
+                    normalize.stddev == std::array{0.5f, 0.5f, 0.5f},
+                "planner: EfficientSAM3 normalize.enable=On must apply mean and stddev 0.5");
       }
 
       // Tensor auto-family should lower tensor ingress to QuantTess when available.
