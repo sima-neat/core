@@ -406,14 +406,13 @@ modify_sysroot() {
 }
 
 prepare_scheduler_sdk() {
-  # Check the sysroot version and fetch the Runner's platform archives. The
-  # selected set stays in deps/; nothing is installed into the sysroot.
+  # Validate the active target SDK; selected NEAT packages stay in deps/.
   if [[ "${DOCS_ONLY}" != "ON" && "${ELXR_SDK}" == "ON" &&
-        "${INSTALL_DEPS_ONLY}" != "ON" && -z "${NEAT_RUNNER_PLATFORM_RUNTIME_DEBS:-}" ]]; then
+        "${INSTALL_DEPS_ONLY}" != "ON" ]]; then
     local sdk_exports
-    rm -rf -- "${NEAT_SCHEDULER_DEPS_DIR}/platform-debs"
+    rm -rf -- "${NEAT_SCHEDULER_DEPS_DIR}/sdk-verification"
     sdk_exports="$(NEAT_UPDATE_SYSROOT="${UPDATE_SYSROOT}" SDK_PKG_LIST="${SDK_PKG_LIST:+${SDK_PKG_LIST},}nlohmann-json3-dev,libyaml-cpp-dev" \
-      bash scripts/ci/prepare_scheduler_sdk.sh "${NEAT_SCHEDULER_DEPS_DIR}/platform-debs")"
+      bash scripts/ci/prepare_scheduler_sdk.sh "${NEAT_SCHEDULER_DEPS_DIR}/sdk-verification")"
     eval "${sdk_exports}"
   fi
 }
@@ -2111,6 +2110,15 @@ generate_package_buildinfo_json() {
     if [[ "${BUILD_PYTHON}" == "ON" && -n "${ELXR_TARGET_PYTHON_INCLUDE_DIR}" ]]; then
       selected_args+=(--python-include-dir "${ELXR_TARGET_PYTHON_INCLUDE_DIR}")
     fi
+  fi
+  if [[ -n "${NEAT_SDK_VERIFICATION_JSON:-}" ]]; then
+    if [[ "${phase}" == "final" ]]; then
+      # Re-observe the target after compilation; never carry stale preflight
+      # identity into the installed package metadata.
+      python3 tools/build_dependencies.py verify-sdk --core "${REPO_ROOT}" \
+        --sysroot "${SYSROOT}" --compiler "${CXX}" > "${NEAT_SDK_VERIFICATION_JSON}"
+    fi
+    selected_args+=(--sdk-verification-json "${NEAT_SDK_VERIFICATION_JSON}")
   fi
   if [[ -n "${NEAT_TARGET_SDK_RELEASE_FILE:-}" ]]; then
     selected_args+=(--target-sdk-release-file "${NEAT_TARGET_SDK_RELEASE_FILE}")

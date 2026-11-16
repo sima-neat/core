@@ -84,6 +84,47 @@ opt.top_k = 100;
 
 축 정렬 감지 표시 그래프는 결과를 `SimaRender`에 전달할 수 있습니다. `decode_bbox(...)`는 기존 박스 선두 형식에만 사용하십시오. 이 함수와 `SimaRender`는 회전 박스를 지원하지 않습니다.
 
+## 기존 DETR {#classic-detr}
+
+동일한 쿼리 격자의 4채널 박스 로짓 헤드와 마지막에 배경 채널이 있는 클래스 로짓 헤드에는 `Detr`를 선택합니다. `decode_type_option`은 `Auto`로 유지하세요. 레시피가 텐서 이름과 무관하게 Softmax를 선택합니다. 배경은 분모에는 포함되지만 전경 클래스 수와 출력 선택에서는 제외됩니다. 박스 좌표에는 sigmoid가 적용됩니다. 이미 정규화된 focal-loss 박스를 위한 디코더는 아닙니다.
+
+Stretch와 양수 `top_k`를 사용하세요. 디코더는 NMS를 적용하지 않으며 전처리 메타데이터로 원본 프레임 좌표를 복원합니다. 확률값 레이아웃이나 충돌하는 점수 활성화 설정은 거부됩니다.
+
+```python
+options = pyneat.ModelOptions()
+options.decode_type = pyneat.BoxDecodeType.Detr
+options.preprocess.resize.mode = pyneat.ResizeMode.Stretch
+options.top_k = 100
+options.score_threshold = 0.7
+```
+
+## Focal loss 쿼리 검출기
+
+정규화된 `cx,cy,width,height` 좌표(깊이4), 독립 클래스 로짓(깊이N) 순서의 두 텐서에는 `BoxDecodeType::DetrFocal`(Python: `pyneat.BoxDecodeType.DetrFocal`, 토큰 `detr-focal`)을 사용합니다. 쿼리 축과 데이터 형식이 일치해야 하며 N은1–1024입니다. FP32, BF16 및 명시된 양자화 정보를 가진 INT8 저장 형식을 지원합니다.
+
+클래스 로짓에만 sigmoid를 적용하고 전체 쿼리/클래스 쌍에서 상위K개를 선택합니다. 한 쿼리에서 여러 클래스를 출력할 수 있습니다. 배경 클래스, 박스 sigmoid, 쿼리별 argmax, NMS 또는 작은 면적 필터는 없습니다. 양수 `top_k`, 필터 없는 top-K를 위한 `detection_threshold=0`, 필수 값 `nms_iou_threshold=0`을 설정합니다. Stretch와 실제 이미지/모델 크기를 사용하세요.
+
+기존 `BBOX` 출력은 박스를 이미지 경계로 잘라내고 XYWH 좌표를 정수로 반올림합니다. `decode_bbox`는 이 값을 실수로 제공하지만 서브픽셀 정밀도를 복원하지 않습니다. 잘라내지 않은 부동소수점 기준과 비교할 때 이 표현의 정확도 영향을 별도로 측정하세요. 기존 `BoxDecodeType::Detr`는 변경되지 않으며, 이 텐서가 아닌 박스 로짓과 배경 클래스를 포함한 softmax 점수를 요구합니다.
+
+Python에서 `decode_bbox(..., strict=True)`를 사용하면 기본 퇴화 박스 필터 대신 반올림으로 면적이0이 된 행도 유지합니다.
+
+Python raw-geometry 오버로드는 헤드 텐서를 직접 제공할 때 C++ 팩토리와 같은 경로를 사용합니다. 조밀한 FP32 헤드는 모델의 전체 출력 어댑터를 유지하고 실제 스토리지를 명시하세요. 원시 MLA 출력에서 중단하거나 패딩된 바이트를 조밀한 텐서로 다시 표시하지 마세요.
+
+```python
+node = pyneat.nodes.sima_box_decode(
+    pyneat.BoxDecodeType.DetrFocal,
+    original_width=1280, original_height=720,
+    model_width=640, model_height=640,
+    detection_threshold=0.0, nms_iou_threshold=0.0, top_k=300,
+    decode_type_option=pyneat.BoxDecodeTypeOption.InterleavedByHeadLogit,
+    source_storage=pyneat.BoxDecodeSourceStorage.DenseHwc,
+    detess=False, dequant=False,
+    resize_mode=pyneat.ResizeMode.Stretch,
+)
+```
+
+유한한 뒤집힌 크기는 기존 끝점 클리핑으로 면적이 0인 BBOX 레코드가 되며 선택된 쌍과 점수를 유지합니다. 비유한 좌표나 로짓은 게시 전에 실패합니다.
+
 ## YOLOv8 및 YOLO11 회전 바운딩 박스 {#yolov8-oriented-boxes}
 
 `BoxDecodeType::YoloV8Obb`(Python: `pyneat.BoxDecodeType.YoloV8Obb`, 토큰 `yolov8-obb` 또는 `yolo11-obb`)를 선택합니다. INT8, BF16 또는 FP32 헤드 9개를 역할별로 묶어 전달합니다. 64채널 DFL 박스 헤드, 클래스 로짓 헤드, 각도 로짓 헤드를 각각 3개씩 스트라이드 8, 16, 32 순서로 배치합니다. 전체 클래스 수는 클래스 헤드에서 추론합니다.
@@ -409,7 +450,7 @@ masks = seg.masks.to_numpy()
 
 ## 업그레이드
 
-새 옵션으로 C++ 객체 레이아웃이 변경됩니다. Core는 ABI 6, `libsima_neat.so.6`를 사용합니다. 일치하는 헤더와 라이브러리로 C++ 애플리케이션, 플러그인 및 Python 바인딩을 다시 빌드하십시오. 호환성 심볼릭 링크로 ABI 5 바이너리를 ABI 6에 연결하지 마십시오.
+이전 BoxDecode 옵션은 ABI 6을 도입했습니다. 현재 원본 연산 옵션은 ABI 8 (`libsima_neat.so.8`)이 필요합니다. 일치하는 헤더와 라이브러리로 C++ 앱, 플러그인, Python 바인딩을 다시 빌드하고 호환성 심볼릭 링크로 ABI 5/6/7 바이너리를 로드하지 마세요.
 
 
 ### 결합 YOLOX 입력 허용 검사
@@ -430,3 +471,8 @@ masks = seg.masks.to_numpy()
 이는 외부에서 전처리된 텐서의 디코더 계약이며, `Model` 전처리에 자르기 생성 지원을
 추가하는 것은 아닙니다. 키포인트가 17개보다 적은 모델도 고정된 17슬롯 공개 와이어
 형식을 게시하며 사용하지 않는 슬롯은 0으로 설정됩니다.
+
+
+## 자르기 좌표 매핑 {#crop-coordinate-mapping}
+
+모델 관리 Crop은 기존 DETR, DetrFocal 및 일반 YOLO 검출을 포함한 지원 프로파일에 실제 이미지 역변환을 전달합니다. 선택과 NMS는 모델 좌표에서 수행한 뒤 선택된 상자를 원본 이미지에 매핑하고 클리핑합니다. 변환 메타데이터가 없거나 충돌하면 명시적으로 실패합니다. 마스크, 포즈, RCNN 제안 또는 SSD multiclass의 새 자르기 조합은 활성화하지 않습니다. 기존 회전 상자 프로파일은 여전히 동일한 축 배율을 요구하며 정수 크기 조정으로 배율이 달라질 수 있습니다.

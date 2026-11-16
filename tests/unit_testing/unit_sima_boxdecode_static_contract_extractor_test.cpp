@@ -455,6 +455,63 @@ RUN_TEST(
       require(extracted->physical_inputs[0].size_bytes == extracted->tensors[0].source_size_bytes,
               "boxdecode extractor should preserve physical source size");
 
+      // Model's explicit family must enter extraction before generic endpoint
+      // names infer a score activation. No model-name or user Softmax override.
+      for (const auto type :
+           {simaai::neat::BoxDecodeType::Detr, simaai::neat::BoxDecodeType::DetrFocal}) {
+        for (const std::string score_name : {"output_7", "class_prob_0", "class_logit_0"}) {
+          const bool focal = type == simaai::neat::BoxDecodeType::DetrFocal;
+          const int score_channels = focal ? 91 : 92;
+          const auto source_bytes = 100 * (4 + score_channels) * sizeof(float);
+          auto query_mpk = mpk;
+          auto& query_mla = query_mpk.plugins[0];
+          query_mla.canonical_output_dtype = "FP32";
+          query_mla.quant.reset();
+          query_mla.output_tensors[0].dtype = "FP32";
+          query_mla.output_tensors[0].mpk_shape = {
+              1, static_cast<std::int64_t>(source_bytes / sizeof(float))};
+          query_mla.output_tensors[0].size_bytes = source_bytes;
+          auto& query_unpack = query_mpk.plugins[1];
+          for (int port = 0; port < 2; ++port) {
+            auto& tensor = query_unpack.output_tensors[port];
+            const int channels = port == 0 ? 4 : score_channels;
+            tensor.dtype = "FP32";
+            tensor.name = port == 0 ? "bbox_0" : score_name;
+            tensor.mpk_shape = tensor.logical_shape = {1, 100, channels};
+            tensor.size_bytes = 100 * channels * sizeof(float);
+          }
+          const auto query = build_boxdecode_static_contract_from_mpk(
+              query_mpk, make_flags(false, false), nullptr, &error, type);
+          require(query && query->decode_type == type &&
+                      query->score_activation == (focal ? BoxDecodeScoreActivation::Sigmoid
+                                                        : BoxDecodeScoreActivation::Softmax),
+                  "requested query family must resolve activation before generic naming: " + error);
+          const auto compiled_query = stagesemantics::build_boxdecode_compiled_contract(*query);
+          require(compiled_query.payload.num_classes == 91,
+                  "model-managed query family must count only foreground classes");
+          auto conflicting_mpk = query_mpk;
+          MpkPluginIoContract conflicting_decoder;
+          conflicting_decoder.name = "BoxDecode_0";
+          conflicting_decoder.kernel = "boxdecode";
+          conflicting_decoder.decode_type = "yolov8";
+          conflicting_mpk.plugins.push_back(std::move(conflicting_decoder));
+          conflicting_mpk.edges.push_back(MpkContractEdge{
+              .src_plugin_index = 1U,
+              .src_output_index = 0,
+              .dst_plugin_index = 2U,
+              .dst_input_index = 0,
+              .src_plugin = "MLA_0_ofm_unpack",
+              .dst_plugin = "BoxDecode_0",
+              .tensor_name = "bbox_0",
+          });
+          require(!build_boxdecode_static_contract_from_mpk(
+                      conflicting_mpk, make_flags(false, false), &conflicting_mpk.plugins.back(),
+                      &error, type),
+                  "requested query family must not overwrite an authored conflicting MPK family");
+          require_contains(error, "conflicts", "MPK family conflict must be actionable");
+        }
+      }
+
       const auto extracted_missing_detess =
           build_boxdecode_static_contract_from_mpk(mpk, make_flags(true, true), &error);
       require(!extracted_missing_detess.has_value(),

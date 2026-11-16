@@ -1,4 +1,5 @@
 #include "model/internal/InputPlanner.h"
+#include "nodes/sima/internal/ResizeInterpolation.h"
 
 #include "pipeline/internal/EnvUtil.h"
 #include "pipeline/internal/InputPolicy.h"
@@ -53,6 +54,9 @@ void validate_layout_convert_spec(const LayoutConvertSpec& spec) {
 }
 
 bool has_non_default_simple_preprocess(const PreprocessOptions& p) {
+  if (p.resize.mode == ResizeMode::Crop || p.resize.shorter_side || p.resize.interpolation ||
+      fixed_preprocess_arithmetic_requested(p) || antialiased_preprocess_resize_requested(p))
+    return true;
   if (p.preset != NormalizePreset::None)
     return true;
   if (p.resize.enable != AutoFlag::Auto || p.resize.width > 0 || p.resize.height > 0)
@@ -222,7 +226,14 @@ std::string kernel_name_from_family(PreprocessGraphFamily family) {
   return "preproc";
 }
 
-void enforce_normalize_stats(const NormalizeSpec& spec) {
+void enforce_normalize_stats(const NormalizeSpec& spec, bool fixed_arithmetic) {
+  if (fixed_arithmetic) {
+    for (std::size_t i = 0; i < 3; ++i)
+      if (!std::isfinite(spec.mean[i]) || !std::isfinite(spec.stddev[i]) || spec.stddev[i] == 0)
+        throw std::invalid_argument(
+            "fixed preprocess normalization requires finite means and nonzero finite divisors");
+    return;
+  }
   auto positive = [](float v) { return v > 0.0f; };
   if (!positive(spec.stddev[0]) || !positive(spec.stddev[1]) || !positive(spec.stddev[2])) {
     throw std::invalid_argument("preprocess.normalize.stddev values must be > 0");
@@ -625,15 +636,82 @@ PreprocessCapabilities inspect_preprocess_capabilities(const ModelPack& pack) {
   return out;
 }
 
+std::string resolve_resize_scaling_type(const ResizeSpec& spec) {
+  if (!spec.interpolation)
+    return spec.scaling_type;
+  const auto* token = resize_interpolation_token(*spec.interpolation);
+  if (!token)
+    throw std::invalid_argument("preprocess.resize.interpolation is invalid");
+  auto legacy = pipeline_internal::upper_copy(spec.scaling_type);
+  if (legacy == "NEAREST_NEIGHBOUR")
+    legacy = "NEAREST";
+  // The historical default is not evidence of an authored conflicting choice.
+  // Keep its public value unchanged while allowing a typed-only assignment.
+  if (legacy != "BILINEAR" && legacy != token)
+    throw std::invalid_argument(
+        "preprocess.resize.interpolation conflicts with legacy scaling_type; use the typed "
+        "option alone or matching values");
+  return token;
+}
+
+bool fixed_preprocess_arithmetic_requested(const PreprocessOptions& p) {
+  return p.rescale_factor.has_value() || p.quantization_step.has_value() ||
+         p.color_conversion_placement != PreprocColorConversionPlacement::AfterResize ||
+         p.floating_conversion != PreprocFloatingConversion::Legacy;
+}
+
+bool antialiased_preprocess_resize_requested(const PreprocessOptions& p) {
+  return pipeline_internal::upper_copy(resolve_resize_scaling_type(p.resize)) ==
+         "BILINEAR_ANTIALIASED";
+}
+
 PreprocessPlannerResult plan_preprocess(const Model::Options& options,
                                         const PreprocessCapabilities& capabilities) {
   PreprocessPlannerResult out;
   out.resolved_plan.requested = options.preprocess;
   PreprocessOptions effective = options.preprocess;
+  effective.resize.scaling_type = resolve_resize_scaling_type(effective.resize);
+  const bool typed_resize = effective.resize.interpolation.has_value();
+  const bool crop = effective.resize.mode == ResizeMode::Crop || effective.resize.shorter_side;
+  if (effective.resize.mode != ResizeMode::Stretch &&
+      effective.resize.mode != ResizeMode::Letterbox && effective.resize.mode != ResizeMode::Crop)
+    throw std::invalid_argument("preprocess.resize.mode is invalid");
+  if (effective.resize.shorter_side &&
+      (effective.resize.mode != ResizeMode::Crop || *effective.resize.shorter_side <= 0 ||
+       *effective.resize.shorter_side > 4096))
+    throw std::invalid_argument(
+        "preprocess.resize.shorter_side requires Crop and a size in 1..4096");
+  const bool fixed_arithmetic = fixed_preprocess_arithmetic_requested(effective);
+  const bool antialiased_resize = antialiased_preprocess_resize_requested(effective);
+  if (effective.color_conversion_placement != PreprocColorConversionPlacement::AfterResize &&
+      effective.color_conversion_placement != PreprocColorConversionPlacement::BeforeResize)
+    throw std::invalid_argument("preprocess.color_conversion_placement is invalid");
+  if (effective.floating_conversion != PreprocFloatingConversion::Legacy &&
+      effective.floating_conversion != PreprocFloatingConversion::NearestEven)
+    throw std::invalid_argument("preprocess.floating_conversion is invalid");
+  if (effective.rescale_factor && !std::isfinite(*effective.rescale_factor))
+    throw std::invalid_argument("preprocess.rescale_factor must be finite");
+  if (effective.quantization_step &&
+      (!std::isfinite(*effective.quantization_step) || *effective.quantization_step <= 0))
+    throw std::invalid_argument("preprocess.quantization_step must be finite and positive");
+  if ((crop || typed_resize || fixed_arithmetic || antialiased_resize) &&
+      (effective.enable == AutoFlag::Off || effective.kind == InputKind::Tensor ||
+       !effective.transforms.empty()))
+    throw std::invalid_argument(
+        "fixed image preprocessing requires image input and preprocessing enabled, without a "
+        "preprocess.transforms override");
+  if ((crop || typed_resize || antialiased_resize) && effective.resize.enable == AutoFlag::Off)
+    throw std::invalid_argument("resize policy conflicts with preprocess.resize.enable=Off");
+  for (const auto& transform : effective.transforms)
+    if (transform.type == TransformType::Resize &&
+        (transform.resize.mode == ResizeMode::Crop || transform.resize.shorter_side ||
+         upper_copy(resolve_resize_scaling_type(transform.resize)) == "BILINEAR_ANTIALIASED"))
+      throw std::invalid_argument("configure Crop and antialiased sampling through "
+                                  "preprocess.resize, not preprocess.transforms");
   PreprocessExplicitKnobs explicit_knobs;
-  explicit_knobs.resize = options.preprocess.resize.enable != AutoFlag::Auto ||
-                          options.preprocess.resize.width > 0 ||
-                          options.preprocess.resize.height > 0;
+  explicit_knobs.resize =
+      options.preprocess.resize.enable != AutoFlag::Auto || options.preprocess.resize.width > 0 ||
+      options.preprocess.resize.height > 0 || crop || typed_resize || antialiased_resize;
   explicit_knobs.color_convert =
       options.preprocess.color_convert.enable != AutoFlag::Auto ||
       options.preprocess.color_convert.input_format != PreprocessColorFormat::Auto ||
@@ -668,7 +746,8 @@ PreprocessPlannerResult plan_preprocess(const Model::Options& options,
       switch (t.type) {
       case TransformType::Resize:
         explicit_knobs.resize = explicit_knobs.resize || t.resize.enable != AutoFlag::Auto ||
-                                t.resize.width > 0 || t.resize.height > 0;
+                                t.resize.width > 0 || t.resize.height > 0 ||
+                                t.resize.interpolation.has_value();
         break;
       case TransformType::ColorConvert:
         explicit_knobs.color_convert =
@@ -704,6 +783,8 @@ PreprocessPlannerResult plan_preprocess(const Model::Options& options,
     apply_preset(&effective);
   }
 
+  effective.resize.scaling_type = resolve_resize_scaling_type(effective.resize);
+
   // MPK input_range describes the numeric domain expected at model ingress; it is
   // metadata, not an instruction to enable CVU preproc normalization.  Keep
   // normalization user-driven: explicit mean/stddev or a preset may supply
@@ -717,9 +798,11 @@ PreprocessPlannerResult plan_preprocess(const Model::Options& options,
     effective.enable = AutoFlag::On;
   }
 
-  bool resize_enabled = resolve_step_enabled(
-      effective.resize.enable, effective.resize.width > 0 || effective.resize.height > 0 ||
-                                   effective.preset == NormalizePreset::COCO_YOLO);
+  bool resize_enabled =
+      resolve_step_enabled(effective.resize.enable,
+                           effective.resize.width > 0 || effective.resize.height > 0 ||
+                               effective.preset == NormalizePreset::COCO_YOLO || crop ||
+                               antialiased_resize || effective.resize.interpolation.has_value());
   bool color_enabled = resolve_step_enabled(
       effective.color_convert.enable,
       effective.color_convert.input_format != PreprocessColorFormat::Auto ||
@@ -735,7 +818,8 @@ PreprocessPlannerResult plan_preprocess(const Model::Options& options,
   InputKind kind = effective.kind;
   if (kind == InputKind::Auto) {
     const bool image_like = resize_enabled || color_enabled || layout_enabled ||
-                            normalize_enabled || effective.preset != NormalizePreset::None;
+                            normalize_enabled || effective.preset != NormalizePreset::None ||
+                            fixed_arithmetic || effective.resize.interpolation.has_value();
     const bool tensor_like =
         effective.quantize.enable == AutoFlag::On || effective.tessellate.enable == AutoFlag::On;
     if (image_like) {
@@ -764,7 +848,7 @@ PreprocessPlannerResult plan_preprocess(const Model::Options& options,
     enabled = false;
   } else if (effective.enable == AutoFlag::Auto) {
     enabled = resize_enabled || color_enabled || layout_enabled || normalize_enabled ||
-              quant_enabled || tess_enabled;
+              quant_enabled || tess_enabled || fixed_arithmetic;
   }
 
   if (!enabled) {
@@ -777,7 +861,7 @@ PreprocessPlannerResult plan_preprocess(const Model::Options& options,
   }
 
   if (normalize_enabled) {
-    enforce_normalize_stats(effective.normalize);
+    enforce_normalize_stats(effective.normalize, fixed_arithmetic);
   }
 
   const AutoFlag requested_quant_flag = effective.quantize.enable;
@@ -796,6 +880,15 @@ PreprocessPlannerResult plan_preprocess(const Model::Options& options,
     effective.tessellate.enable = AutoFlag::Auto;
   } else {
     effective.tessellate.enable = tess_enabled ? AutoFlag::On : AutoFlag::Off;
+  }
+
+  if (enabled &&
+      (crop || fixed_arithmetic || antialiased_resize || effective.resize.interpolation) &&
+      (quant_enabled || tess_enabled)) {
+    throw std::invalid_argument(
+        "fixed image preprocessing requires the Preproc image route; leave "
+        "preprocess.quantize.enable and preprocess.tessellate.enable as Auto instead of "
+        "selecting a tensor route");
   }
 
   PreprocessGraphFamily family = PreprocessGraphFamily::Disabled;

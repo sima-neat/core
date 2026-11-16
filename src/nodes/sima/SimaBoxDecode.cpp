@@ -941,7 +941,9 @@ SimaBoxDecode::SimaBoxDecode(const simaai::neat::Model& model, BoxDecodeType dec
     } else if (decode_type_option == BoxDecodeTypeOption::GroupedByRoleLogit ||
                decode_type_option == BoxDecodeTypeOption::InterleavedByHeadLogit) {
       compiled_contract.payload.score_activation =
-          pipeline_internal::sima::BoxDecodeScoreActivation::Sigmoid;
+          compiled_contract.payload.decode_type == BoxDecodeType::Detr
+              ? pipeline_internal::sima::BoxDecodeScoreActivation::Softmax
+              : pipeline_internal::sima::BoxDecodeScoreActivation::Sigmoid;
     }
   }
   apply_yolov26_compiled_payload_overrides(&compiled_contract);

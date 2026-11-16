@@ -597,7 +597,8 @@ void benchmark_disabled_resize_keeps_decode_recipe_geometry() {
           "disabled image resize must preserve identity YOLO26 letterbox metadata");
   require(default_boxdecode_resize_mode(BoxDecodeType::YoloV26Obb) == ResizeMode::Letterbox &&
               default_boxdecode_resize_mode(BoxDecodeType::Ssd) == ResizeMode::Stretch &&
-              default_boxdecode_resize_mode(BoxDecodeType::Detr) == ResizeMode::Stretch,
+              default_boxdecode_resize_mode(BoxDecodeType::Detr) == ResizeMode::Stretch &&
+              default_boxdecode_resize_mode(BoxDecodeType::DetrFocal) == ResizeMode::Stretch,
           "canonical recipe defaults must not change SSD/DETR or OBB geometry");
   geometry_options.resize_mode = ResizeMode::Stretch;
   const auto explicit_meta =

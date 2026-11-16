@@ -10,6 +10,7 @@
 #include <cctype>
 #include <cstdio>
 #include <initializer_list>
+#include <limits>
 #include <optional>
 #include <stdexcept>
 #include <string_view>
@@ -695,7 +696,40 @@ bool decode_type_is_packed_yolo(BoxDecodeType type) {
 
 int infer_raw_yolo_class_depth(const BoxDecodeStaticContract& contract);
 
+int detr_foreground_classes(std::int64_t first_depth, std::int64_t second_depth) {
+  // The recipe admits either port order; if both depths are four, boxes come
+  // first. The final score channel is background, not a selectable class.
+  const auto scores = first_depth == 4 ? second_depth : second_depth == 4 ? first_depth : 0;
+  return scores > 1 && scores <= std::numeric_limits<int>::max() ? int(scores - 1) : 0;
+}
+
 int infer_boxdecode_num_classes_from_contract(const BoxDecodeStaticContract& contract) {
+  if (contract.decode_type == BoxDecodeType::DetrFocal) {
+    const auto channels = [](const BoxDecodeTensorStaticContract& tensor) {
+      const auto& shape = tensor.source_storage_kind == BoxDecodeSourceStorageKind::DenseHwcPhysical
+                              ? tensor.slice_shape
+                              : tensor.input_shape;
+      if (shape.size() < 3)
+        return 0;
+      const bool chw = tensor.layout == "CHW" || tensor.layout == "NCHW";
+      return shape[chw ? shape.size() - 3 : shape.size() - 1];
+    };
+    return contract.tensors.size() == 2 && channels(contract.tensors[0]) == 4
+               ? channels(contract.tensors[1])
+               : 0;
+  }
+  if (contract.decode_type == BoxDecodeType::Detr) {
+    const auto depth = [](const auto& tensor) {
+      const auto& shape = tensor.source_storage_kind == BoxDecodeSourceStorageKind::DenseHwcPhysical
+                              ? tensor.slice_shape
+                              : tensor.input_shape;
+      const bool chw = tensor.layout == "CHW" || tensor.layout == "NCHW";
+      return shape.size() >= 3 ? shape[chw ? shape.size() - 3 : shape.size() - 1] : 0;
+    };
+    return contract.tensors.size() == 2
+               ? detr_foreground_classes(depth(contract.tensors[0]), depth(contract.tensors[1]))
+               : 0;
+  }
   if (box_decode_type_is_oriented(contract.decode_type))
     return infer_oriented_yolo_classes(contract);
   if (contract.decode_type == BoxDecodeType::RcnnStage1)
@@ -766,6 +800,14 @@ int infer_boxdecode_num_classes_from_contract(const BoxDecodeStaticContract& con
 
 int resolve_boxdecode_num_classes(const BoxDecodeStaticContract& contract, int user_num_classes,
                                   const char* context) {
+  if (contract.decode_type == BoxDecodeType::Detr) {
+    const int classes = infer_boxdecode_num_classes_from_contract(contract);
+    if (!classes || (user_num_classes > 0 && user_num_classes != classes))
+      throw std::invalid_argument(
+          "classic DETR requires one four-channel box head and the complete foreground class "
+          "count; the final score channel is background");
+    return classes;
+  }
   if (box_decode_type_is_oriented(contract.decode_type)) {
     const int classes = infer_oriented_yolo_classes(contract);
     if (!classes || (user_num_classes > 0 && user_num_classes != classes))
@@ -1349,6 +1391,14 @@ void apply_yolox_seg_pose_model_managed_contract_defaults(BoxDecodeStaticContrac
 
 void validate_model_managed_boxdecode_option_override(BoxDecodeType decode_type,
                                                       BoxDecodeTypeOption requested) {
+  if (decode_type == BoxDecodeType::Detr && requested != BoxDecodeTypeOption::Auto &&
+      requested != BoxDecodeTypeOption::GroupedByRole &&
+      requested != BoxDecodeTypeOption::GroupedByRoleLogit &&
+      requested != BoxDecodeTypeOption::InterleavedByHead &&
+      requested != BoxDecodeTypeOption::InterleavedByHeadLogit) {
+    throw std::invalid_argument("classic DETR requires a two-tensor logit layout; "
+                                "probability-valued heads are unsupported");
+  }
   if (decode_type == BoxDecodeType::YoloV5 && requested != BoxDecodeTypeOption::Auto &&
       requested != BoxDecodeTypeOption::PackedPerHead) {
     throw std::invalid_argument(
@@ -1467,6 +1517,23 @@ CompiledBoxDecodeContract build_boxdecode_compiled_contract_from_subset(
   compiled.payload.score_activation = options.score_activation != BoxDecodeScoreActivation::Unknown
                                           ? options.score_activation
                                           : subset.score_activation;
+  if (compiled.payload.decode_type == BoxDecodeType::DetrFocal) {
+    if (compiled.payload.score_activation != BoxDecodeScoreActivation::Unknown &&
+        compiled.payload.score_activation != BoxDecodeScoreActivation::Sigmoid)
+      throw std::invalid_argument("focal query decoding requires class logits and sigmoid");
+    compiled.payload.score_activation = BoxDecodeScoreActivation::Sigmoid;
+  }
+  if (compiled.payload.decode_type == BoxDecodeType::Detr) {
+    validate_model_managed_boxdecode_option_override(
+        BoxDecodeType::Detr,
+        compiled.payload.decode_type_option.value_or(BoxDecodeTypeOption::Auto));
+    if (compiled.payload.score_activation != BoxDecodeScoreActivation::Unknown &&
+        compiled.payload.score_activation != BoxDecodeScoreActivation::Softmax) {
+      throw std::invalid_argument(
+          "classic DETR requires class logits and background-aware softmax");
+    }
+    compiled.payload.score_activation = BoxDecodeScoreActivation::Softmax;
+  }
   if (box_decode_type_is_ssd_family(compiled.payload.decode_type)) {
     const auto* descriptor = find_ssd_recipe_descriptor(compiled.payload.ssd_recipe_id);
     if (!descriptor) {
@@ -1529,6 +1596,41 @@ CompiledBoxDecodeContract build_boxdecode_compiled_contract_from_subset(
                                : subset.num_classes,
                            "BoxDecode");
   compiled.payload.num_classes = options.num_classes > 0 ? options.num_classes : subset.num_classes;
+  if (compiled.payload.decode_type == BoxDecodeType::Detr) {
+    const auto depth = [&](std::size_t i) -> std::int64_t {
+      const auto& logical = subset.logical_inputs[i];
+      const bool chw = logical.layout == "CHW" || logical.layout == "NCHW";
+      if (subset.tensor_storage_kind[i] ==
+          static_cast<int>(BoxDecodeSourceStorageKind::DenseHwcPhysical)) {
+        const auto& shape = subset.slice_shapes[i];
+        return shape.rank >= 3 ? shape.sizes[chw ? shape.rank - 3 : shape.rank - 1] : 0;
+      }
+      return logical.shape.size() >= 3
+                 ? logical.shape[chw ? logical.shape.size() - 3 : logical.shape.size() - 1]
+                 : 0;
+    };
+    const int classes =
+        subset.logical_inputs.size() == 2 ? detr_foreground_classes(depth(0), depth(1)) : 0;
+    if (!classes || (compiled.payload.num_classes > 0 && compiled.payload.num_classes != classes))
+      throw std::invalid_argument("classic DETR requires the complete foreground class count");
+    compiled.payload.num_classes = classes;
+  }
+  if (compiled.payload.decode_type == BoxDecodeType::DetrFocal &&
+      compiled.payload.num_classes <= 0 && subset.slice_shapes.size() == 2) {
+    const auto& scores = subset.slice_shapes[1];
+    const auto& logical = subset.logical_inputs[1];
+    const bool chw = logical.layout == "CHW" || logical.layout == "NCHW";
+    if (scores.rank < 3 || logical.shape.size() < 3)
+      throw std::invalid_argument("focal query scores require a trailing HWC or CHW view");
+    const auto depth =
+        subset.tensor_storage_kind[1] ==
+                static_cast<int>(BoxDecodeSourceStorageKind::DenseHwcPhysical)
+            ? scores.sizes[chw ? scores.rank - 3 : scores.rank - 1]
+            : logical.shape[chw ? logical.shape.size() - 3 : logical.shape.size() - 1];
+    if (depth < 1 || depth > 1024)
+      throw std::invalid_argument("focal query class depth must be 1..1024");
+    compiled.payload.num_classes = static_cast<int>(depth);
+  }
   if (box_decode_type_is_oriented(compiled.payload.decode_type)) {
     // A route override may select OBB after the MPK subset was extracted. Resolve
     // the complete grouped signature again, including the one-class case where
@@ -1585,6 +1687,23 @@ CompiledBoxDecodeContract build_boxdecode_compiled_contract_from_subset(
       options.pose_classes.empty() ? subset.pose_classes : options.pose_classes,
       compiled.payload.num_classes, "BoxDecode");
   compiled.payload.slice_shapes = subset.slice_shapes;
+  // Dense slice extents arrive in the logical input's axis order. The recipe
+  // payload owns canonical HWC extents; normalize once rather than asking each
+  // reader to guess whether a CHW tensor's slice was already transformed.
+  for (std::size_t i = 0; i < compiled.payload.slice_shapes.size(); ++i) {
+    if (subset.tensor_storage_kind[i] !=
+            static_cast<int>(BoxDecodeSourceStorageKind::DenseHwcPhysical) ||
+        (subset.logical_inputs[i].layout != "CHW" && subset.logical_inputs[i].layout != "NCHW"))
+      continue;
+    auto& slice = compiled.payload.slice_shapes[i];
+    if (slice.rank >= 3) {
+      const auto channels = slice.sizes[slice.rank - 3];
+      slice.sizes[slice.rank - 3] = slice.sizes[slice.rank - 2];
+      slice.sizes[slice.rank - 2] = slice.sizes[slice.rank - 1];
+      slice.sizes[slice.rank - 1] = channels;
+    }
+  }
+
   compiled.payload.tensor_storage_kind = subset.tensor_storage_kind;
   compiled.payload.superpoint = subset.superpoint;
   if (compiled.payload.decode_type == BoxDecodeType::SuperPoint) {

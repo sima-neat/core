@@ -195,7 +195,8 @@ build_boxdecode_static_contract_from_mpk(const MpkContract& contract,
 /// Build a box-decode static contract from an MPK with an explicit terminal stage.
 std::optional<BoxDecodeStaticContract> build_boxdecode_static_contract_from_mpk(
     const MpkContract& contract, const ModelManagedRouteFlags& route_flags,
-    const MpkPluginIoContract* terminal_stage, std::string* error_message);
+    const MpkPluginIoContract* terminal_stage, std::string* error_message,
+    BoxDecodeType requested_decode_type = BoxDecodeType::Unspecified);
 
 /// Build a box-decode static contract from a raw `TensorList` plus optional input contract.
 std::optional<BoxDecodeStaticContract> build_boxdecode_static_contract_from_tensors(

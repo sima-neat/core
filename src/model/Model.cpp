@@ -21,6 +21,7 @@
 #include "nodes/sima/Preproc.h"
 #include "nodes/sima/Quant.h"
 #include "nodes/sima/QuantTess.h"
+#include "nodes/sima/ResizeArgMax.h"
 #include "nodes/sima/SimaBoxDecode.h"
 #include "nodes/sima/Tess.h"
 #include "pipeline/Graph.h"
@@ -4459,6 +4460,11 @@ struct Model::Impl {
              /*queue_leaky=*/{}, options.name_suffix,
              to_internal_terminal_policy(options.inference_terminal),
              options.cleanup_extracted_model_data) {
+    // Reject a class-map decode the route cannot run before info() can report it.
+    if (options.semantic_segmentation.enable) {
+      internal::validate_semantic_segmentation(options, preprocess_plan.session_route_plan,
+                                               pack.has_terminal_policy());
+    }
     // Names where the package was extracted. Callers debugging load time or eMMC wear need to see
     // which filesystem the automatic selection landed on, and it is not otherwise reported.
     const std::string package_root = std::filesystem::path(pack.etc_dir()).parent_path().string();
@@ -5225,10 +5231,16 @@ void populate_model_managed_preproc_options(PreprocOptions* opt,
   opt->normalize = plan.normalize;
   opt->channel_mean = plan.mean;
   opt->channel_stddev = plan.stddev;
+  opt->shorter_side = effective.resize.shorter_side;
+  opt->rescale_factor = effective.rescale_factor;
+  opt->quantization_step = effective.quantization_step;
+  opt->color_conversion_placement = effective.color_conversion_placement;
+  opt->floating_conversion = effective.floating_conversion;
+
   opt->tessellate = flags.tess_needed;
   opt->single_output_handoff = true;
   if (effective.resize.enable == AutoFlag::On) {
-    opt->scaling_type = effective.resize.scaling_type;
+    opt->scaling_type = internal::resolve_resize_scaling_type(effective.resize);
     opt->pad_value = effective.resize.pad_value;
     switch (effective.resize.mode) {
     case ResizeMode::Letterbox:
@@ -5243,8 +5255,9 @@ void populate_model_managed_preproc_options(PreprocOptions* opt,
       opt->padding_type = "CENTER";
       break;
     case ResizeMode::Crop:
+      opt->resize_mode = ResizeMode::Crop;
       opt->aspect_ratio = true;
-      opt->padding_type = "NONE";
+      opt->padding_type = "CENTER";
       break;
     }
   }
@@ -5965,6 +5978,53 @@ build_preprocess_nodes_impl(const Model& model, const internal::ModelPack& pack,
   return nodes;
 }
 
+// Class-map size: the requested one, or the model input size when both are 0.
+std::pair<int, int> semantic_segmentation_size(const Model& model, const Model::Options& opt) {
+  const auto& seg = opt.semantic_segmentation;
+  if (seg.output_width > 0 && seg.output_height > 0) {
+    return {seg.output_width, seg.output_height};
+  }
+  const ResolvedPreprocessPlan resolved = model.resolved_preprocess_plan();
+  return {resolved.mla_contract.width, resolved.mla_contract.height};
+}
+
+// SegFormer-style decode: one ResizeArgMax Node reads the MLA class scores in place.
+std::shared_ptr<Node> build_semantic_segmentation_node(const Model& model,
+                                                       const internal::ModelPack& pack,
+                                                       const Model::Options& opt,
+                                                       const internal::SessionRoutePlan& route) {
+  internal::validate_semantic_segmentation(opt, route, pack.has_terminal_policy());
+  ResizeArgMaxOptions decode;
+  const auto [width, height] = semantic_segmentation_size(model, opt);
+  decode.output_width = width;
+  decode.output_height = height;
+  decode.align_corners = opt.semantic_segmentation.align_corners;
+  return simaai::neat::nodes::ResizeArgMax(decode);
+}
+
+// The class map that replaces the score egress: [N, H, W], UINT8 for at most 256 classes.
+TensorSpec semantic_segmentation_output_spec(const Model& model, const Model::Options& opt,
+                                             const internal::SessionRoutePlan& route_plan) {
+  const auto& egress = route_plan.egress_contracts.empty() ? route_plan.egress_contract
+                                                           : route_plan.egress_contracts.front();
+  TensorSpec scores;
+  TensorSpec map;
+  if (!populate_spec_from_route_contract(egress, &scores) ||
+      (scores.shape.size() != 3 && scores.shape.size() != 4)) {
+    map.dtypes = {TensorDType::UInt8, TensorDType::Int32};
+    return map;
+  }
+  const auto [width, height] = semantic_segmentation_size(model, opt);
+  if (scores.shape.size() == 4) {
+    map.shape.push_back(scores.shape.front());
+  }
+  map.shape.push_back(height);
+  map.shape.push_back(width);
+  map.rank = static_cast<int>(map.shape.size());
+  map.dtypes = {scores.shape.back() <= 256 ? TensorDType::UInt8 : TensorDType::Int32};
+  return map;
+}
+
 std::vector<std::shared_ptr<Node>>
 build_postprocess_nodes_impl(const Model& model, const internal::ModelPack& pack,
                              const Model::Options& opt, bool sync,
@@ -5973,6 +6033,9 @@ build_postprocess_nodes_impl(const Model& model, const internal::ModelPack& pack
     return {};
   }
   const auto& post_regions = route_plan.post_regions;
+  if (opt.semantic_segmentation.enable) {
+    return {build_semantic_segmentation_node(model, pack, opt, route_plan)};
+  }
   if (post_regions.empty()) {
     return {};
   }
@@ -6497,12 +6560,19 @@ template <typename EnumT> int model_options_enum_int(EnumT value) {
 }
 
 nlohmann::ordered_json resize_spec_json(const ResizeSpec& spec) {
-  return {{"enable", model_options_enum_int(spec.enable)},
-          {"width", spec.width},
-          {"height", spec.height},
-          {"mode", model_options_enum_int(spec.mode)},
-          {"pad_value", spec.pad_value},
-          {"scaling_type", spec.scaling_type}};
+  nlohmann::ordered_json out{{"enable", model_options_enum_int(spec.enable)},
+                             {"width", spec.width},
+                             {"height", spec.height},
+                             {"mode", model_options_enum_int(spec.mode)},
+                             {"pad_value", spec.pad_value},
+                             {"scaling_type", internal::resolve_resize_scaling_type(spec)}};
+  // A typed selection is explicit resize intent even when its token equals
+  // the legacy default. Preserve that distinction in stage cache identity.
+  if (spec.interpolation)
+    out["interpolation"] = model_options_enum_int(*spec.interpolation);
+  if (spec.shorter_side)
+    out["shorter_side"] = *spec.shorter_side;
+  return out;
 }
 
 nlohmann::ordered_json color_convert_spec_json(const ColorConvertSpec& spec) {
@@ -6548,19 +6618,28 @@ nlohmann::ordered_json preprocess_options_json(const PreprocessOptions& opt) {
   for (const auto& transform : opt.transforms) {
     transforms.push_back(transform_json(transform));
   }
-  return {{"kind", model_options_enum_int(opt.kind)},
-          {"enable", model_options_enum_int(opt.enable)},
-          {"input_max_width", opt.input_max_width},
-          {"input_max_height", opt.input_max_height},
-          {"input_max_depth", opt.input_max_depth},
-          {"resize", resize_spec_json(opt.resize)},
-          {"color_convert", color_convert_spec_json(opt.color_convert)},
-          {"layout_convert", layout_convert_spec_json(opt.layout_convert)},
-          {"normalize", normalize_spec_json(opt.normalize)},
-          {"quantize", quantize_spec_json(opt.quantize)},
-          {"tessellate", tessellate_spec_json(opt.tessellate)},
-          {"transforms", std::move(transforms)},
-          {"preset", model_options_enum_int(opt.preset)}};
+  nlohmann::ordered_json out{{"kind", model_options_enum_int(opt.kind)},
+                             {"enable", model_options_enum_int(opt.enable)},
+                             {"input_max_width", opt.input_max_width},
+                             {"input_max_height", opt.input_max_height},
+                             {"input_max_depth", opt.input_max_depth},
+                             {"resize", resize_spec_json(opt.resize)},
+                             {"color_convert", color_convert_spec_json(opt.color_convert)},
+                             {"layout_convert", layout_convert_spec_json(opt.layout_convert)},
+                             {"normalize", normalize_spec_json(opt.normalize)},
+                             {"quantize", quantize_spec_json(opt.quantize)},
+                             {"tessellate", tessellate_spec_json(opt.tessellate)},
+                             {"transforms", std::move(transforms)},
+                             {"preset", model_options_enum_int(opt.preset)}};
+  if (opt.rescale_factor)
+    out["rescale_factor"] = *opt.rescale_factor;
+  if (opt.quantization_step)
+    out["quantization_step"] = *opt.quantization_step;
+  if (opt.color_conversion_placement != PreprocColorConversionPlacement::AfterResize)
+    out["color_conversion_placement"] = model_options_enum_int(opt.color_conversion_placement);
+  if (opt.floating_conversion != PreprocFloatingConversion::Legacy)
+    out["floating_conversion"] = model_options_enum_int(opt.floating_conversion);
+  return out;
 }
 
 nlohmann::ordered_json processcvu_options_json(const ProcessCvuOptions& opt) {
@@ -6612,6 +6691,10 @@ std::string model_options_json_for_graph_provenance(const Model::Options& opt) {
   out["nms_iou_threshold"] = opt.nms_iou_threshold;
   out["top_k"] = opt.top_k;
   out["yolox_seg_pose"] = {{"pose_classes", opt.yolox_seg_pose.pose_classes}};
+  out["semantic_segmentation"] = {{"enable", opt.semantic_segmentation.enable},
+                                  {"output_width", opt.semantic_segmentation.output_width},
+                                  {"output_height", opt.semantic_segmentation.output_height},
+                                  {"align_corners", opt.semantic_segmentation.align_corners}};
   out["num_classes"] = opt.num_classes;
   out["boxdecode_original_width"] = opt.boxdecode_original_width;
   out["boxdecode_original_height"] = opt.boxdecode_original_height;
@@ -6761,6 +6844,10 @@ std::vector<TensorSpec> Model::input_specs() const {
 std::vector<TensorSpec> Model::output_specs() const {
   std::vector<TensorSpec> specs;
   const auto& route_plan = impl_->preprocess_plan.session_route_plan;
+  if (impl_->options.semantic_segmentation.enable) {
+    specs.push_back(semantic_segmentation_output_spec(*this, impl_->options, route_plan));
+    return specs;
+  }
   if (route_plan.include_post_stage &&
       route_plan.selected_post_kind == internal::PostRouteStageKind::BoxDecode) {
     TensorSpec spec;
@@ -7001,6 +7088,9 @@ Model::ModelInfo Model::info() const {
       preprocess_graph_family_name(impl_->preprocess_plan.resolved_plan.graph_family);
   out.selection.selected_post_kind =
       post_route_stage_kind_name(impl_->preprocess_plan.session_route_plan.selected_post_kind);
+  if (impl_->options.semantic_segmentation.enable) {
+    out.selection.selected_post_kind = "resize_argmax";
+  }
 
   out.output_topology.physical_outputs = parsed.outputs.physical.size();
   out.output_topology.logical_outputs = parsed.outputs.logical.size();
@@ -7627,6 +7717,50 @@ BenchmarkReport Model::benchmark(bool include_plugin_latency) {
 
 namespace internal {
 
+void validate_semantic_segmentation(const Model::Options& options, const SessionRoutePlan& route,
+                                    bool stops_before_postprocess) {
+  using GraphKind = pipeline_internal::sima::RouteGraphKernelKind;
+  const std::string prefix = "Model::Options::semantic_segmentation: ";
+  const auto& seg = options.semantic_segmentation;
+  if (seg.output_width < 0 || seg.output_height < 0 ||
+      (seg.output_width == 0) != (seg.output_height == 0)) {
+    throw std::invalid_argument(prefix +
+                                "set output_width and output_height both positive, or leave both "
+                                "0 to use the model input size (got " +
+                                std::to_string(seg.output_width) + "x" +
+                                std::to_string(seg.output_height) + ")");
+  }
+  if (options.decode_type != BoxDecodeType::Unspecified) {
+    throw std::invalid_argument(prefix +
+                                "the class-map decode replaces the postprocess and cannot be "
+                                "combined with a BoxDecode decode_type");
+  }
+  if (stops_before_postprocess) {
+    throw std::invalid_argument(prefix +
+                                "inference_terminal stops the model before its postprocess, so "
+                                "the class-map decode would never run");
+  }
+  // The decode replaces a dtype-only postprocess (dequantize or cast; slice and unpack are
+  // already read views), so it needs dense MLA class scores.
+  if (!route.include_post_stage || route.post_regions.empty()) {
+    throw std::invalid_argument(prefix +
+                                "the model has no dequantize or cast postprocess for the "
+                                "class-map decode to replace; add nodes::ResizeArgMax after "
+                                "the model in a Graph instead");
+  }
+  for (const auto& region : route.post_regions) {
+    const bool dtype_only =
+        region.kind == RouteRegionKind::Linear &&
+        (region.op_kind == GraphKind::Dequantize || region.op_kind == GraphKind::Cast);
+    if (!dtype_only) {
+      throw std::invalid_argument(
+          prefix +
+          "the model's postprocess must only dequantize or cast its class scores, but it runs '" +
+          pipeline_internal::sima::route_graph_kernel_name(region.op_kind) + "'");
+    }
+  }
+}
+
 Tensor remap_tensor_to_consumer_identity(Tensor tensor,
                                          const IngressConsumerTensorIdentity& identity) {
   if (identity.logical_index >= 0) {
@@ -8119,7 +8253,10 @@ CompiledBoxDecodeContract ModelAccess::build_boxdecode_stage_contract(const Mode
 
   std::string contract_error;
   auto contract = pipeline_internal::sima::build_boxdecode_static_contract_from_mpk(
-      *mpk, *route_flags, &contract_error);
+      *mpk, *route_flags, nullptr, &contract_error,
+      (opt.decode_type == BoxDecodeType::Detr || opt.decode_type == BoxDecodeType::DetrFocal)
+          ? opt.decode_type
+          : BoxDecodeType::Unspecified);
   if (!contract.has_value()) {
     throw std::runtime_error(
         "Model-managed boxdecode derivation failed to derive tensor contract from MPK: " +

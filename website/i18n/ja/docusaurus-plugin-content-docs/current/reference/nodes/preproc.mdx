@@ -68,6 +68,67 @@ tensors = pyneat.stages.preproc(
 )
 ```
 
+## 固定順序の元の演算 {#fixed-source-arithmetic}
+
+BF16 入力モデルでは、通常のオプションで元の画像演算を設定します。
+
+Model の画像前処理では、`preprocess.quantize.enable` と `preprocess.tessellate.enable` を `Auto` のままにしてください。明示的なテンソル経路ではこれらの固定画像オプションを適用できないため、拒否されます。
+
+Model の `preprocess.resize.interpolation` と単独の `ResizeOptions.interpolation` は、同じ `ResizeInterpolation` 列挙型を使います。新しいコードでは型付きオプションを使ってください。既定の `None` は従来の `scaling_type` 文字列と Bilinear の既定動作を維持します。型付きの値は従来の既定値に優先し、既定値以外の矛盾する文字列は拒否されます。
+
+```python
+import pyneat
+
+options = pyneat.ModelOptions()
+p = options.preprocess
+p.kind = pyneat.InputKind.Image
+p.input_max_width, p.input_max_height = 1280, 720
+p.resize.enable = pyneat.AutoFlag.On
+p.resize.mode = pyneat.ResizeMode.Stretch
+p.resize.interpolation = pyneat.ResizeInterpolation.BilinearAntialiased
+p.rescale_factor = 1.0 / 255.0
+p.normalize.enable = pyneat.AutoFlag.On
+p.normalize.mean = [0.485, 0.456, 0.406]
+p.normalize.stddev = [0.229, 0.224, 0.225]
+p.normalize.has_explicit_stats = True
+p.floating_conversion = pyneat.PreprocFloatingConversion.NearestEven
+model = pyneat.Model("/path/to/bf16_model.tar.gz", options)
+```
+
+RGB/Gray では `rescale_factor` がリサイズ前の画素に乗算され、その後、有効な正規化が `normalize.mean` を減算して `normalize.stddev` で除算します。この経路では暗黙の `/255` は追加されません。元の画素値を使う場合は係数を `1` にします。元の FP32 係数を保持し、従来のアフィン係数へ変換しないでください。固定演算が対応する補間は `NO_SCALING`、`NEAREST`、`BILINEAR_ANTIALIASED` であり、通常の bilinear や bicubic ではありません。
+
+BF16 の既定動作は切り捨てです。明示的な `PreprocFloatingConversion.NearestEven` のみが最近接偶数丸めを選択します。単独の `PreprocOptions.output_dtype="FP16"` は常に最近接偶数丸めの binary16 を選択します。同じ固定オプションを単独の `PreprocOptions` でも使用できます。`NormalizationOptions` は `rescale_factor` と `floating_conversion` に対応し、`ResizeInterpolation.BilinearAntialiased` は `nodes.resize` のサンプラーを選択します。
+
+INT8 出力では、元の正の `quantization_step` を指定してください。Core はその FP32 逆数と MPK の乗数の一致を確認し、モデルのゼロ点を保持します。これは整合性の確認であり、元のステップの復元ではありません。欠落や矛盾はエラーになります。単独のグラフでは `q_zp` を指定し、転送メタデータの乗数はステップから導出できます。実行時は元のステップで除算し、商を最近接偶数へ丸め、ゼロ点を加算して飽和処理します。
+
+YUV-to-RGB では `color_conversion_placement` の既定値 `PreprocColorConversionPlacement.AfterResize` により、成分のリサイズ後に UInt8 RGB のデコード境界を通り、再スケーリングと正規化を行います。`BeforeResize` はその境界を RGB の再スケーリングとサンプリングの前へ移します。他の色変換経路では拒否されます。Pillow/torchvision と同じ演算だと仮定せず、順序と中間 dtype を確認してください。
+
+画像入力を使用し、`transforms` で上書きしないでください。無効化フラグとの競合や未対応の組み合わせは明示的に失敗します。出力の形状、dtype、量子化、物理レイアウトは引き続き MPK が決定し、入力容量はモデルの寸法とは独立です。新しいオプションを省略すると従来の演算を保持します。追加フィールドにより C++ オブジェクトのレイアウトが変わるため、このバージョンは ABI 8 (`libsima_neat.so.8`) を使用します。対応するヘッダーとライブラリでアプリケーション、プラグイン、Python バインディングを再ビルドし、互換性用シンボリックリンクで ABI 5/6/7 のバイナリを読み込まないでください。
+
+
+
+## 中央クロップ {#center-crop}
+
+`ResizeMode.Crop` は入力画像がモデル入力を覆うまでリサイズし、パディングなしで中央を切り出します。`resize.shorter_side` を設定すると、まず入力の短辺を指定サイズにリサイズします。最終クロップ寸法は引き続き MPK が決定します。例えば、224×224 入力のモデルには短辺 256 を指定します。`None` に戻すと、モデル入力を覆ってから切り出す動作になります。
+
+```python
+options = pyneat.ModelOptions()
+p = options.preprocess
+p.kind = pyneat.InputKind.Image
+p.resize.enable = pyneat.AutoFlag.On
+p.resize.mode = pyneat.ResizeMode.Crop
+p.resize.shorter_side = 256
+p.resize.interpolation = pyneat.ResizeInterpolation.BilinearAntialiased
+model = pyneat.Model("/path/to/model_224_mpk.tar.gz", options)
+```
+
+短辺を明示した場合、リサイズ後の長辺は切り捨て、中央オフセットは最近接偶数丸めで決定します。モデル入力を収められない場合は、パディングを追加せず準備時に失敗します。`shorter_side` は Crop でのみ使用できます。
+
+クロップはリサイズ全体のウィンドウを計算し、表示範囲外のフィルターサンプルも保持します。入力 ROI の座標を丸める近似ではありません。既存の補間とソース演算の規則が適用され、アンチエイリアス付き双線形補間でも Pillow とのビット単位の一致は保証しません。初期ウィンドウ経路は RGB/BGR/Gray を受け付け、YUV や明示的 ROI は受け付けません。対応する検出プロファイルは実際の逆変換でボックスを元画像へ戻します。
+
+
+クロップウィンドウは Nearest、Bilinear、BilinearAntialiased に対応します。生の NO_SCALING は入力と仮想リサイズ寸法が等しい場合のみ有効です。Bicubic と BoxAverage のウィンドウ要求は拒否します。
+
 ## その使い道
 
 | ユースケース | API | ガイドライン |
