@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "releases": {
     "core": {"value": "0.6.2", "owner": "Core maintainers", "source": "deps/manifest.json#package-version"},
-    "platform": {"value": "3.0.2", "owner": "Core maintainers", "source": "deps/manifest.json#platform-version"},
+    "platform": {"value": "3.0.1", "owner": "Core maintainers", "source": "deps/manifest.json#platform-version"},
     "sdk": {"value": "3.0.0.2", "owner": "SDK release maintainers", "source": "docs/release-notes/neat-development-environment.md"},
     "sdk_channel": {"value": "release-3.0", "owner": "SDK release maintainers", "source": "Published SDK channel; independent of the build dependency channel"},
     "sdk_series": {"value": "3.0", "owner": "SDK release maintainers", "source": "Published SDK release series"},

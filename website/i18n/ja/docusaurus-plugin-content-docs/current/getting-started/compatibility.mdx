@@ -59,9 +59,9 @@ DevKit のファームウェアの確認と更新の手順については、[フ
 | **2.1.3.1** | WSL を介した Windows 11、Ubuntu 22.04 または 24.04、Apple Silicon 搭載の最新 macOS | **2.1.3** |
 | **3.0.0.0** | WSL を介した Windows 11、Ubuntu 22.04 または 24.04、Apple Silicon 搭載の最新 macOS | **3.0.0** |
 | **3.0.0.1** | WSL を介した Windows 11、Ubuntu 22.04 または 24.04、Apple Silicon 搭載の最新 macOS | **3.0.0** |
-| **3.0.0.2** | WSL を介した Windows 11、Ubuntu 22.04 または 24.04、Apple Silicon 搭載の最新 macOS | **3.0.2** |
+| **3.0.0.2** | WSL を介した Windows 11、Ubuntu 22.04 または 24.04、Apple Silicon 搭載の最新 macOS | **3.0.1** |
 
-DevKit ソフトウェアと互換性のある特定の SDK バージョンをインストールしてください。たとえば、DevKit ソフトウェア 3.0.2 用の Palette SDK 3.0.0.2 をホストからインストールするには、次のコマンドを実行します。
+DevKit ソフトウェアと互換性のある特定の SDK バージョンをインストールしてください。たとえば、DevKit ソフトウェア 3.0.1 用の Palette SDK 3.0.0.2 をホストからインストールするには、次のコマンドを実行します。
 
 <ShellCommand prompt="host">
 sima-cli neat install sdk@v3.0.0.2
@@ -84,7 +84,7 @@ sima-cli neat install sdk@v3.0.0.2
 | **0.5.0** | **2.1.3.1** | **2.1.3** | サポート対象のリリース。 |
 | **0.6.0** | **3.0.0.0** | **3.0.0** | サポート対象のリリース。 |
 | **0.6.1** | **3.0.0.1** | **3.0.0** | サポート対象のリリース。 |
-| **0.6.2** | **3.0.0.2** | **3.0.2** | 現在のリリース。 |
+| **0.6.2** | **3.0.0.2** | **3.0.1** | 現在のリリース。 |
 
 DevKitのソフトウェアバージョンは重要です。なぜなら、デバイス上のランタイム、ファームウェア、およびシステムパッケージが、互いに対応したセットとしてインストールされるからです。異なるファームウェアバージョン間でコンポーネントを混在させると、アプリケーションのビルド時に予期しない動作が発生する可能性があります。
 
@@ -96,7 +96,7 @@ Neat Library 0.6.1の場合：
 sima-cli neat install core@v0.6.1
 </ShellCommand>
 
-Platform 3.0.2 の DevKit で Neat Library 0.6.2 を指定してインストールするには：
+Platform 3.0.1 の DevKit で Neat Library 0.6.2 を指定してインストールするには：
 
 <ShellCommand prompt="devkit">
 sima-cli neat install core@v0.6.2
@@ -127,7 +127,7 @@ Neat アプリのバージョンは、Neat Library のバージョンとは独�
 sima-cli neat install apps@v0.6.1
 </ShellCommand>
 
-Platform 3.0.2 の DevKit で Apps 0.6.2 を指定してインストールするには：
+Platform 3.0.1 の DevKit で Apps 0.6.2 を指定してインストールするには：
 
 <ShellCommand prompt="devkit">
 sima-cli neat install apps@v0.6.2

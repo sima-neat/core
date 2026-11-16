@@ -59,9 +59,9 @@ cat /etc/buildinfo
 | **2.1.3.1** | 透過 WSL 使用 Windows 11，或使用 Ubuntu 22.04 或 24.04，以及最新版本的 macOS 搭配 Apple Silicon 晶片。 | **2.1.3** |
 | **3.0.0.0** | 透過 WSL 使用 Windows 11，或使用 Ubuntu 22.04 或 24.04，以及最新版本的 macOS 搭配 Apple Silicon 晶片。 | **3.0.0** |
 | **3.0.0.1** | 透過 WSL 使用 Windows 11，或使用 Ubuntu 22.04 或 24.04，以及最新版本的 macOS 搭配 Apple Silicon 晶片。 | **3.0.0** |
-| **3.0.0.2** | 透過 WSL 使用 Windows 11，或使用 Ubuntu 22.04 或 24.04，以及最新版本的 macOS 搭配 Apple Silicon 晶片。 | **3.0.2** |
+| **3.0.0.2** | 透過 WSL 使用 Windows 11，或使用 Ubuntu 22.04 或 24.04，以及最新版本的 macOS 搭配 Apple Silicon 晶片。 | **3.0.1** |
 
-請安裝與 DevKit 軟體相容的特定 SDK 版本。例如，從主機安裝適用於 DevKit 軟體 3.0.2 的 Palette SDK 3.0.0.2：
+請安裝與 DevKit 軟體相容的特定 SDK 版本。例如，從主機安裝適用於 DevKit 軟體 3.0.1 的 Palette SDK 3.0.0.2：
 
 <ShellCommand prompt="host">
 sima-cli neat install sdk@v3.0.0.2
@@ -84,7 +84,7 @@ sima-cli neat install sdk@v3.0.0.2
 | **0.5.0** | **2.1.3.1** | **2.1.3** | 支援的版本。 |
 | **0.6.0** | **3.0.0.0** | **3.0.0** | 支援的版本。 |
 | **0.6.1** | **3.0.0.1** | **3.0.0** | 支援的版本。 |
-| **0.6.2** | **3.0.0.2** | **3.0.2** | 目前版本。 |
+| **0.6.2** | **3.0.0.2** | **3.0.1** | 目前版本。 |
 
 DevKit 軟體的版本很重要，因為裝置上的執行階段、韌體和系統套件會以一組相容的元件形式安裝。如果您混合不同韌體版本的元件，即使您的應用程式建置成功，也可能會發生意想不到的行為。
 
@@ -96,7 +96,7 @@ DevKit 軟體的版本很重要，因為裝置上的執行階段、韌體和系�
 sima-cli neat install core@v0.6.1
 </ShellCommand>
 
-若要在 Platform 3.0.2 DevKit 上指定安裝 Neat Library 0.6.2：
+若要在 Platform 3.0.1 DevKit 上指定安裝 Neat Library 0.6.2：
 
 <ShellCommand prompt="devkit">
 sima-cli neat install core@v0.6.2
@@ -127,7 +127,7 @@ Neat 應用程式版本與 Neat Library 版本是獨立的。安裝應用程式�
 sima-cli neat install apps@v0.6.1
 </ShellCommand>
 
-若要在 Platform 3.0.2 DevKit 上指定安裝 Apps 0.6.2：
+若要在 Platform 3.0.1 DevKit 上指定安裝 Apps 0.6.2：
 
 <ShellCommand prompt="devkit">
 sima-cli neat install apps@v0.6.2
