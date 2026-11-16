@@ -574,10 +574,14 @@ void sam_mask_selection_contract() {
       {BoxDecodeType::EfficientSam, 3, false, "EfficientSAM exports no single-mask token"},
       {BoxDecodeType::EfficientSam3, 3, false,
        "EfficientSAM3 decoder with three mask channels exports no single-mask token"},
-      {BoxDecodeType::MobileSam, 3, true, "MobileSAM decoders do not export 3 mask channels"},
-      {BoxDecodeType::EdgeTam, 3, true, "EdgeTAM decoders do not export 3 mask channels"},
-      {BoxDecodeType::EfficientSam, 4, true, "EfficientSAM decoders do not export 4 mask channels"},
-      {BoxDecodeType::EfficientSam3, 2, true, "EfficientSAM3 decoders do not export 2 mask"},
+      {BoxDecodeType::MobileSam, 3, true,
+       "MobileSAM decoders export 1 or 4 mask channels; this one has 3"},
+      {BoxDecodeType::EdgeTam, 3, true,
+       "EdgeTAM decoders export 1 or 4 mask channels; this one has 3"},
+      {BoxDecodeType::EfficientSam, 4, true,
+       "EfficientSAM decoders export 1 or 3 mask channels; this one has 4"},
+      {BoxDecodeType::EfficientSam3, 2, true,
+       "EfficientSAM3 decoders export 1, 3 or 4 mask channels; this one has 2"},
       {BoxDecodeType::YoloV8Seg, 4, true, "yolov8-seg is not a Segment Anything decode type"}};
   for (const auto& c : rejections) {
     bool rejected = false;
@@ -662,7 +666,7 @@ void sam_core_contract() {
     } else if (fault == 8) {
       // Two mask channels are not a SAM decoder output.
       s = sam_mask_source(BoxDecodeType::MobileSam, "INT8", "INT8", 2);
-      message = "MobileSAM decoders do not export 2 mask channels";
+      message = "MobileSAM decoders export 1 or 4 mask channels; this one has 2";
     } else if (fault == 9) {
       // EfficientSAM's three channels are its multimask tokens: no single mask.
       s = sam_mask_source(BoxDecodeType::EfficientSam, "INT8", "INT8", 3);

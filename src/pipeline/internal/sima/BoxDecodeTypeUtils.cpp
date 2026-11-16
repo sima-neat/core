@@ -211,6 +211,23 @@ const char* box_decode_type_sam_model_name(BoxDecodeType type) {
   }
 }
 
+bool box_decode_type_sam_exports_masks(BoxDecodeType type, int masks) {
+  return masks == 1 || (masks == 4 && type != BoxDecodeType::EfficientSam) ||
+         (masks == 3 &&
+          (type == BoxDecodeType::EfficientSam || type == BoxDecodeType::EfficientSam3));
+}
+
+const char* box_decode_type_sam_mask_counts(BoxDecodeType type) {
+  switch (type) {
+  case BoxDecodeType::EfficientSam:
+    return "1 or 3";
+  case BoxDecodeType::EfficientSam3:
+    return "1, 3 or 4";
+  default:
+    return "1 or 4";
+  }
+}
+
 bool is_box_decode_type_specified(BoxDecodeType type) {
   return type != BoxDecodeType::Unspecified;
 }

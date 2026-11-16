@@ -54,6 +54,15 @@ bool box_decode_type_is_sam(BoxDecodeType type);
 /// Model name for messages: "MobileSAM", "EdgeTAM", "EfficientSAM" or "EfficientSAM3".
 const char* box_decode_type_sam_model_name(BoxDecodeType type);
 
+/// The mask channel counts a Segment Anything decoder of this type exports: 1 (a single-mask
+/// export), 4 (a single-mask token then three multimask tokens; not EfficientSAM) or 3 (three
+/// multimask tokens; EfficientSAM and EfficientSAM3). The one rule for admission and the recipe.
+bool box_decode_type_sam_exports_masks(BoxDecodeType type, int masks);
+
+/// The counts box_decode_type_sam_exports_masks admits, for messages: "1 or 4", "1 or 3" or
+/// "1, 3 or 4".
+const char* box_decode_type_sam_mask_counts(BoxDecodeType type);
+
 /// True when the option implies all class-score channels live in the same domain (e.g.,
 /// post-sigmoid).
 bool is_box_decode_type_option_requires_uniform_score_domain(BoxDecodeTypeOption option);

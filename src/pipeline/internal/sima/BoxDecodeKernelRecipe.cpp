@@ -459,14 +459,12 @@ SamMaskSelection resolve_sam_mask_selection(BoxDecodeType type, int masks, bool 
   // A single-mask export has only the answer to give.
   if (masks == 1)
     return {"fixed", 0, 1};
-  const bool four = masks == 4 && type != BoxDecodeType::EfficientSam;
-  const bool three =
-      masks == 3 && (type == BoxDecodeType::EfficientSam || type == BoxDecodeType::EfficientSam3);
-  if (!four && !three)
-    throw std::invalid_argument("BoxDecode kernel recipe: " + model + " decoders do not export " +
-                                std::to_string(masks) +
-                                " mask channels; use the decode type of the model that produced "
-                                "this decoder");
+  if (!box_decode_type_sam_exports_masks(type, masks))
+    throw std::invalid_argument("BoxDecode kernel recipe: " + model + " decoders export " +
+                                box_decode_type_sam_mask_counts(type) +
+                                " mask channels; this one has " + std::to_string(masks) +
+                                "; use the decode type of the model that produced this decoder");
+  const bool four = masks == 4, three = masks == 3;
   // Channels 1..3 of four (token 0 is the single-mask answer), or EfficientSAM's
   // three multimask tokens at channels 0..2.
   const int first = four ? 1 : 0;

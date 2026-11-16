@@ -726,14 +726,12 @@ int resolve_sam_topk(BoxDecodeType type, bool concept_model, int topk, int queri
 // 0..3, EfficientSAM its three multimask tokens, EfficientSAM3 either; a
 // single-mask export has one.
 void validate_sam_mask_count(BoxDecodeType type, int masks, const char* context) {
-  const bool four = type != BoxDecodeType::EfficientSam;
-  const bool three = type == BoxDecodeType::EfficientSam || type == BoxDecodeType::EfficientSam3;
-  if (masks == 1 || (masks == 4 && four) || (masks == 3 && three))
+  if (box_decode_type_sam_exports_masks(type, masks))
     return;
-  const char* exported = !three ? "1 or 4" : !four ? "1 or 3" : "1, 3 or 4";
   throw std::invalid_argument(std::string(context ? context : "BoxDecode") + " " +
                               box_decode_type_sam_model_name(type) + " decoders export " +
-                              exported + " mask channels; this one has " + std::to_string(masks) +
+                              box_decode_type_sam_mask_counts(type) +
+                              " mask channels; this one has " + std::to_string(masks) +
                               ". Use the decode type of the model that produced it");
 }
 
