@@ -21,9 +21,11 @@ import zipfile
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "scripts" / "ci" / "pciehost" / "build_windows.py"
 SCRIPT_DIR = SCRIPT.parent
+GENAI_TEST_DIR = ROOT / "pcie_host" / "python" / "tests"
 WORKFLOW = ROOT / ".github" / "workflows" / "pcie-host-windows.yml"
 MAIN_WORKFLOW = ROOT / ".github" / "workflows" / "vulcan-ci.yml"
 sys.path.insert(0, str(SCRIPT_DIR))
+sys.path.insert(0, str(GENAI_TEST_DIR))
 SPEC = importlib.util.spec_from_file_location("build_windows", SCRIPT)
 MODULE = importlib.util.module_from_spec(SPEC)
 assert SPEC.loader
@@ -47,10 +49,13 @@ from qualify_windows_hardware import (  # noqa: E402
     windows_card_network_identity)
 from verify_linux_release_run import verify_run as verify_linux_run  # noqa: E402
 from verify_windows_release import verify  # noqa: E402
+import qualify_windows_hardware as HARDWARE  # noqa: E402
 import prepare_card_qualification_candidate as CARD_PREP  # noqa: E402
 import build_card_qualification_dependencies as CARD_DEPS  # noqa: E402
 import cleanup_windows_hardware as RECOVERY  # noqa: E402
 import acquire_windows_dependencies as WINDOWS_DEPENDENCIES  # noqa: E402
+from genai_admission_contract import (  # noqa: E402
+    is_bounded_competing_session_rejection, is_injected_transport_failure)
 
 
 def posix_shell():
@@ -85,6 +90,39 @@ def normalized_link_target(path):
 
 
 class WindowsCiContracts(unittest.TestCase):
+  def test_genai_failure_classifiers_reject_unrelated_errors(self):
+    for message in (
+        "GenAI admission rejected: card resource unavailable",
+        "another session owns this resource",
+        "session limit reached",
+        "device busy",
+    ):
+      with self.subTest(message=message):
+        self.assertTrue(is_bounded_competing_session_rejection(message))
+    for message in (
+        RuntimeError("model configuration is malformed"),
+        ValueError("worker readiness timed out"),
+        "could not open unrelated file",
+        "invalid session identifier",
+    ):
+      with self.subTest(message=message):
+        self.assertFalse(is_bounded_competing_session_rejection(message))
+
+    for message in (
+        "GenAI worker stopped responding",
+        "PCIe service receive failed: -5",
+        "connection reset by peer",
+    ):
+      with self.subTest(message=message):
+        self.assertTrue(is_injected_transport_failure(message))
+    for message in (
+        "GenAI request timeout",
+        "model asset is missing",
+        "invalid prompt",
+    ):
+      with self.subTest(message=message):
+        self.assertFalse(is_injected_transport_failure(message))
+
   def test_windows_openssh_batch_wrapper_redirects_before_python(self):
     line = _windows_openssh_batch_line(
         ["ssh.exe", "card", "printf '%s\\n' value"],
@@ -564,6 +602,11 @@ class WindowsCiContracts(unittest.TestCase):
         'require_junit_cases(evidence / "python-hardware.xml", set(BASE_PYTHON_TESTS))',
         source)
     self.assertIn('require_junit_cases(evidence / "python-genai.xml", genai_tests)', source)
+    self.assertIn("run_genai_fault_recovery_tests(", source)
+    self.assertIn('stop_windows_platform_service(evidence / "genai-service-loss-injection.log")',
+                  source)
+    self.assertIn('evidence / "genai-worker-loss-injection.log"', source)
+    self.assertIn('completed.append("test_genai_resource_cleanup")', source)
     self.assertIn('command.extend(["--iterations", "10", "--interval-ms", "0"])', source)
     self.assertIn('completed.append("test_worker_loss_recovery")', source)
     self.assertIn('completed.append("test_client_process_death_recovery")', source)
@@ -723,6 +766,46 @@ class WindowsCiContracts(unittest.TestCase):
           run.call_args.kwargs["env"]["SIMA_WINDOWS_PLATFORM_RECOVERY_TOOL"],
           str(tool))
       self.assertEqual(run.call_args.kwargs["timeout"], 120)
+
+  def test_genai_fault_harness_injects_worker_and_service_loss_then_restarts(self):
+    with tempfile.TemporaryDirectory() as directory:
+      root = Path(directory)
+      evidence = root / "evidence"
+      evidence.mkdir()
+      args = SimpleNamespace(source_root=root, test_timeout_seconds=900)
+      processes = []
+      for _ in range(2):
+        process = mock.Mock()
+        process.poll.return_value = 0
+        process.wait.return_value = 0
+        processes.append(process)
+
+      def record_fault(_process, log, _marker, _timeout):
+        log.write_text(
+            "GENAI_FAULT_READY\nGENAI_FAULT_OBSERVED: injected fixture fault\n",
+            encoding="utf-8")
+      with mock.patch.object(HARDWARE.subprocess, "Popen", side_effect=processes), \
+           mock.patch.object(
+               HARDWARE, "wait_for_log", side_effect=record_fault) as wait_for_log, \
+           mock.patch.object(HARDWARE, "run_logged") as run_logged, \
+           mock.patch.object(HARDWARE, "ssh_command", return_value=["ssh.exe", "card"]), \
+           mock.patch.object(HARDWARE, "stop_windows_platform_service") as stop_service, \
+           mock.patch.object(HARDWARE, "restart_windows_platform_service") as restart_service, \
+           mock.patch.object(HARDWARE, "wait_for_no_genai_workers") as wait_for_no_workers:
+        completed = HARDWARE.run_genai_fault_recovery_tests(
+            args, Path("python.exe"), evidence, {"TEST": "1"})
+
+      self.assertEqual(completed, [
+          "test_genai_worker_loss_recovery", "test_genai_restart_after_worker_loss",
+          "test_genai_service_loss_recovery", "test_genai_restart_after_service_loss",
+      ])
+      self.assertEqual(wait_for_log.call_count, 2)
+      stop_service.assert_called_once_with(evidence / "genai-service-loss-injection.log")
+      restart_service.assert_called_once_with(evidence / "genai-service-loss-recovery.log")
+      self.assertEqual(wait_for_no_workers.call_count, 2)
+      commands = [call.args[0] for call in run_logged.call_args_list]
+      self.assertIn(["ssh.exe", "card"], commands)
+      self.assertEqual(sum(command[-1] == "smoke" for command in commands), 2)
 
   def test_wheel_payload_reader_checks_crc(self):
     with tempfile.TemporaryDirectory() as directory:
@@ -1747,6 +1830,52 @@ install() {
       root = Path(directory)
       commit, _, qualification = self.windows_candidate(root)
       with self.assertRaisesRegex(ValueError, "complete Windows GenAI matrix"):
+        verify(root, qualification, commit, True, True)
+
+  def test_release_gate_requires_genai_failure_recovery_and_cleanup_matrix(self):
+    cpp_tests = {
+        "test_genai_llm_run", "test_genai_vlm_run", "test_genai_asr_run",
+    }
+    python_tests = {
+        "test_genai_asr_file_pcm_translation_and_stream",
+        "test_genai_bounded_cancellation_soak_and_context_cleanup",
+        "test_genai_competing_sessions_are_isolated",
+        "test_genai_llm_run_stream_history_and_cancel",
+        "test_genai_request_timeout_and_restart_after_failure",
+        "test_genai_resource_cleanup",
+        "test_genai_restart_after_service_loss",
+        "test_genai_restart_after_worker_loss",
+        "test_genai_service_loss_recovery",
+        "test_genai_vlm_run_and_stream",
+        "test_genai_worker_loss_recovery",
+    }
+    with tempfile.TemporaryDirectory() as directory:
+      root = Path(directory)
+      commit, _, qualification = self.windows_candidate(root)
+      value = json.loads(qualification.read_text(encoding="utf-8"))
+      value["tests"]["cpp"].extend(sorted(cpp_tests))
+      value["tests"]["python"].extend(sorted(python_tests))
+      value["genai_admission"] = {
+          name: "PASS" for name in sorted(cpp_tests | python_tests)
+      }
+      qualification.write_text(json.dumps(value), encoding="utf-8")
+      admission = verify(root, qualification, commit, True, True)
+      self.assertTrue(admission["genai_qualified"])
+
+      for missing in sorted(python_tests):
+        with self.subTest(missing=missing):
+          changed = json.loads(qualification.read_text(encoding="utf-8"))
+          changed["tests"]["python"].remove(missing)
+          qualification.write_text(json.dumps(changed), encoding="utf-8")
+          with self.assertRaisesRegex(ValueError, "complete Windows GenAI matrix"):
+            verify(root, qualification, commit, True, True)
+          changed["tests"]["python"].append(missing)
+          qualification.write_text(json.dumps(changed), encoding="utf-8")
+
+      changed = json.loads(qualification.read_text(encoding="utf-8"))
+      changed["genai_admission"]["test_genai_service_loss_recovery"] = "FAIL"
+      qualification.write_text(json.dumps(changed), encoding="utf-8")
+      with self.assertRaisesRegex(ValueError, "incomplete Windows GenAI outcomes"):
         verify(root, qualification, commit, True, True)
 
   def test_release_gate_enforces_linux_performance_thresholds(self):

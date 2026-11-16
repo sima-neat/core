@@ -60,6 +60,22 @@ BASE_PYTHON_TESTS = (
     "test_image_run_yolov8",
     "test_image_boxdecode_run_yolov8",
 )
+GENAI_ADMISSION_TESTS = {
+    "test_genai_asr_file_pcm_translation_and_stream",
+    "test_genai_asr_run",
+    "test_genai_bounded_cancellation_soak_and_context_cleanup",
+    "test_genai_competing_sessions_are_isolated",
+    "test_genai_llm_run",
+    "test_genai_llm_run_stream_history_and_cancel",
+    "test_genai_request_timeout_and_restart_after_failure",
+    "test_genai_resource_cleanup",
+    "test_genai_restart_after_service_loss",
+    "test_genai_restart_after_worker_loss",
+    "test_genai_service_loss_recovery",
+    "test_genai_vlm_run",
+    "test_genai_vlm_run_and_stream",
+    "test_genai_worker_loss_recovery",
+}
 SUPPORTED_PYTHON = (3, 14)
 
 
@@ -1455,6 +1471,22 @@ def restart_windows_platform_service(log: Path) -> None:
        "-Command", command], log, timeout=60)
 
 
+def stop_windows_platform_service(log: Path) -> None:
+  command = (
+      "$service = Get-Service -Name 'SiMaMlaDaemon' -ErrorAction Stop; "
+      "Stop-Service -InputObject $service -Force -ErrorAction Stop; "
+      "$service.WaitForStatus("
+      "[System.ServiceProcess.ServiceControllerStatus]::Stopped, "
+      "[TimeSpan]::FromSeconds(30)); "
+      "if ($service.Status -ne "
+      "[System.ServiceProcess.ServiceControllerStatus]::Stopped) { "
+      "throw 'SiMaMlaDaemon did not reach stopped state' }"
+  )
+  run_logged(
+      [require_powershell(), "-NoLogo", "-NoProfile", "-NonInteractive",
+       "-Command", command], log, timeout=60)
+
+
 def recover_windows_platform_device(platform_runtime: Path, log: Path) -> None:
   """Remove and rescan the Platform-owned card after an unclean client exit."""
   recovery_tool = platform_runtime.resolve(strict=True) / "simaai_pcie_test.exe"
@@ -1519,6 +1551,31 @@ def wait_for_no_card_workers(args: argparse.Namespace, log: Path, timeout: int) 
           return
         if time.monotonic() >= deadline:
           raise RuntimeError(f"card worker did not stop within {timeout} seconds; see {log}")
+        time.sleep(1)
+    finally:
+      attempt.unlink(missing_ok=True)
+
+
+def wait_for_no_genai_workers(args: argparse.Namespace, log: Path, timeout: int) -> None:
+  remote = (
+      "printf 'genai_workers='; "
+      "pgrep -fc '(^|/)[n]eat-pcie-genai-worker([[:space:]]|$)' || true"
+  )
+  deadline = time.monotonic() + timeout
+  attempt = log.with_name(log.name + ".attempt")
+  with log.open("w", encoding="utf-8", errors="replace") as output:
+    try:
+      while True:
+        result = run_captured_to_file(
+            ssh_command(args, remote), attempt, timeout=30)
+        output.write(f"returncode={result.returncode} {result.stdout.strip()}\n")
+        output.flush()
+        match = re.search(r"genai_workers=(\d+)", result.stdout)
+        if result.returncode == 0 and match and int(match.group(1)) == 0:
+          return
+        if time.monotonic() >= deadline:
+          raise RuntimeError(
+              f"card GenAI worker did not stop within {timeout} seconds; see {log}")
         time.sleep(1)
     finally:
       attempt.unlink(missing_ok=True)
@@ -1641,6 +1698,94 @@ def run_fault_recovery_tests(args: argparse.Namespace, test_root: Path, evidence
       evidence / "cpp-test_client_process_death_queue_reuse.log", env=environment,
       cwd=test_root, timeout=args.test_timeout_seconds)
   completed.append("test_client_process_death_recovery")
+  return completed
+
+
+def run_genai_fault_recovery_tests(
+    args: argparse.Namespace, python: Path, evidence: Path,
+    environment: dict[str, str]) -> list[str]:
+  client = args.source_root / "pcie_host/python/tests/genai_fault_client.py"
+  completed = []
+
+  def launch(label: str) -> tuple[subprocess.Popen, object, Path]:
+    log = evidence / f"python-{label}.log"
+    stream = log.open("w", encoding="utf-8", errors="replace")
+    command = [python, client, "wait-for-failure"]
+    stream.write("+ " + subprocess.list2cmdline([str(value) for value in command]) + "\n")
+    stream.flush()
+    process = subprocess.Popen(
+        [str(value) for value in command], cwd=args.source_root, env=environment,
+        stdout=stream, stderr=subprocess.STDOUT, text=True)
+    try:
+      wait_for_log(process, log, "GENAI_FAULT_READY", 900)
+    except BaseException:
+      if process.poll() is None:
+        process.kill()
+      process.wait(timeout=30)
+      stream.close()
+      raise
+    return process, stream, log
+
+  def require_observed_failure(
+      process: subprocess.Popen, stream, log: Path, label: str) -> None:
+    try:
+      try:
+        returncode = process.wait(timeout=120)
+      except subprocess.TimeoutExpired as error:
+        raise RuntimeError(f"{label} did not terminate after fault injection") from error
+      if returncode != 0:
+        raise RuntimeError(f"{label} failed with exit code {returncode}")
+      stream.flush()
+      observed = log.read_text(encoding="utf-8", errors="replace")
+      if "GENAI_FAULT_OBSERVED:" not in observed:
+        raise RuntimeError(f"{label} exited without recording the injected fault")
+    finally:
+      if process.poll() is None:
+        process.kill()
+        process.wait(timeout=30)
+      stream.close()
+
+  def recovery_smoke(label: str) -> None:
+    run_logged(
+        [python, client, "smoke"], evidence / f"python-{label}.log",
+        env=environment, cwd=args.source_root, timeout=args.test_timeout_seconds)
+
+  process, stream, log = launch("test_genai_worker_loss_recovery")
+  try:
+    remote = (
+        "pkill -KILL -f '(^|/)[n]eat-pcie-genai-worker([[:space:]]|$)' "
+        "2>/dev/null || true"
+    )
+    run_logged(
+        ssh_command(args, remote), evidence / "genai-worker-loss-injection.log", timeout=30)
+    require_observed_failure(process, stream, log, "GenAI worker-loss client")
+  finally:
+    if process.poll() is None:
+      process.kill()
+      process.wait(timeout=30)
+      stream.close()
+  wait_for_no_genai_workers(args, evidence / "genai-worker-loss-drain.log", 120)
+  recovery_smoke("test_genai_restart_after_worker_loss")
+  completed.extend((
+      "test_genai_worker_loss_recovery", "test_genai_restart_after_worker_loss"))
+
+  process, stream, log = launch("test_genai_service_loss_recovery")
+  service_stop_attempted = False
+  try:
+    service_stop_attempted = True
+    stop_windows_platform_service(evidence / "genai-service-loss-injection.log")
+    require_observed_failure(process, stream, log, "GenAI service-loss client")
+  finally:
+    if process.poll() is None:
+      process.kill()
+      process.wait(timeout=30)
+      stream.close()
+    if service_stop_attempted:
+      restart_windows_platform_service(evidence / "genai-service-loss-recovery.log")
+  wait_for_no_genai_workers(args, evidence / "genai-service-loss-drain.log", 120)
+  recovery_smoke("test_genai_restart_after_service_loss")
+  completed.extend((
+      "test_genai_service_loss_recovery", "test_genai_restart_after_service_loss"))
   return completed
 
 
@@ -1840,7 +1985,10 @@ def run_python_tests(args: argparse.Namespace, python: Path, evidence: Path,
   completed = list(BASE_PYTHON_TESTS)
   if args.include_genai:
     genai_tests = {
+        "test_genai_bounded_cancellation_soak_and_context_cleanup",
+        "test_genai_competing_sessions_are_isolated",
         "test_genai_llm_run_stream_history_and_cancel",
+        "test_genai_request_timeout_and_restart_after_failure",
         "test_genai_vlm_run_and_stream",
         "test_genai_asr_file_pcm_translation_and_stream",
     }
@@ -1854,6 +2002,11 @@ def run_python_tests(args: argparse.Namespace, python: Path, evidence: Path,
     )
     require_junit_cases(evidence / "python-genai.xml", genai_tests)
     completed.extend(sorted(genai_tests))
+    completed.extend(run_genai_fault_recovery_tests(
+        args, python, evidence, environment))
+    wait_for_no_genai_workers(
+        args, evidence / "genai-release-resource-cleanup.log", 120)
+    completed.append("test_genai_resource_cleanup")
   return completed
 
 
@@ -2282,6 +2435,14 @@ def qualify(args: argparse.Namespace) -> None:
       tutorial_facade_staged = False
       result["tests"]["cpp"] = run_cpp_tests(args, candidate.root, evidence, environment)
       result["tests"]["python"] = run_python_tests(args, python, evidence, environment)
+      if args.include_genai:
+        completed_genai = (
+            set(result["tests"]["cpp"]) | set(result["tests"]["python"]))
+        if not GENAI_ADMISSION_TESTS.issubset(completed_genai):
+          raise RuntimeError("Windows GenAI qualification did not complete every admission case")
+        result["genai_admission"] = {
+            name: "PASS" for name in sorted(GENAI_ADMISSION_TESTS)
+        }
       result["performance"] = {
           mode: parse_performance_log(evidence / f"cpp-test_tensor_{mode}.log", mode)
           for mode in ("latency", "throughput")

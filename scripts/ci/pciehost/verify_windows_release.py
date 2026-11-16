@@ -289,13 +289,25 @@ def verify(candidate_dir: Path, qualification_path: Path, expected_commit: str,
       raise ValueError("release qualification did not use the exact Linux GenAI worker")
     names = set(tests["cpp"]) | set(tests["python"])
     required_genai = {
+        "test_genai_bounded_cancellation_soak_and_context_cleanup",
+        "test_genai_competing_sessions_are_isolated",
         "test_genai_llm_run", "test_genai_vlm_run", "test_genai_asr_run",
         "test_genai_llm_run_stream_history_and_cancel",
+        "test_genai_request_timeout_and_restart_after_failure",
+        "test_genai_resource_cleanup",
+        "test_genai_restart_after_service_loss",
+        "test_genai_restart_after_worker_loss",
+        "test_genai_service_loss_recovery",
         "test_genai_vlm_run_and_stream",
         "test_genai_asr_file_pcm_translation_and_stream",
+        "test_genai_worker_loss_recovery",
     }
     if not required_genai.issubset(names):
       raise ValueError("release qualification did not run the complete Windows GenAI matrix")
+    genai_admission = qualification.get("genai_admission")
+    expected_outcomes = {name: "PASS" for name in required_genai}
+    if genai_admission != expected_outcomes:
+      raise ValueError("release qualification has incomplete Windows GenAI outcomes")
 
   signatures = read_object(candidate.root / "windows-signatures.json", "signature receipt")
   records = signatures.get("records")
