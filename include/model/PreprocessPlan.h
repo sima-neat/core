@@ -105,8 +105,6 @@ struct ResizeSpec {
   int height = 0;                          ///< Target height (px). `0` = inferred from contract.
   ResizeMode mode = ResizeMode::Letterbox; ///< How to handle aspect-ratio mismatch.
   int pad_value = 114; ///< Pad fill value when `mode == Letterbox` (default 114, YOLO convention).
-  /// Image placement on the canvas. Valid only with `mode == Letterbox`.
-  LetterboxPlacement placement = LetterboxPlacement::Center;
   /// Legacy compatibility spelling. Prefer interpolation for new code.
   std::string scaling_type = "BILINEAR";
   /// Typed sampler; omitted retains scaling_type and its legacy Bilinear default.
@@ -114,6 +112,9 @@ struct ResizeSpec {
   std::optional<ResizeInterpolation> interpolation;
   /// Resize the shorter source axis before center cropping. Crop only; absent means cover.
   std::optional<int> shorter_side;
+  /// Image placement on the canvas. Valid only with `mode == Letterbox`. Last, so existing
+  /// positional initializers keep their meaning.
+  LetterboxPlacement placement = LetterboxPlacement::Center;
 };
 
 /// Color-format conversion parameters.

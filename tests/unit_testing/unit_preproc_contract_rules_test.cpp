@@ -947,6 +947,15 @@ RUN_TEST(
         require((*cfg).value("q_zp", 0) == -9, "standalone Preproc should serialize explicit q_zp");
       }
 
+      // An existing positional ResizeSpec initializer keeps its meaning; placement is appended.
+      {
+        const ResizeSpec legacy{AutoFlag::On, 640, 480, ResizeMode::Letterbox, 114, "BILINEAR"};
+        require(legacy.scaling_type == "BILINEAR" && legacy.pad_value == 114 &&
+                    legacy.placement == LetterboxPlacement::Center && !legacy.interpolation &&
+                    !legacy.shorter_side,
+                "positional ResizeSpec initializer changed meaning");
+      }
+
       // ResizeSpec placement reaches the frame adapter through the model route:
       // a 1280x720 source on the 640x640 canvas lands at the origin only for TopLeft.
       {
