@@ -1208,6 +1208,13 @@ class WindowsCiContracts(unittest.TestCase):
         pid = 41
         returncode = 0
 
+        def __enter__(inner_self):
+          return inner_self
+
+        def __exit__(inner_self, exc_type, exc_value, traceback):
+          del inner_self, exc_type, exc_value, traceback
+          return False
+
         def communicate(inner_self, timeout):
           del timeout
           wrappers = list(log.parent.glob("*.openssh.cmd"))
@@ -1216,6 +1223,10 @@ class WindowsCiContracts(unittest.TestCase):
           self.assertEqual(len(inputs), 1)
           observed["wrapper"] = wrappers[0].read_text(encoding="utf-8")
           observed["secret"] = inputs[0].read_bytes()
+          return None, None
+
+        def poll(inner_self):
+          return inner_self.returncode
 
       with mock.patch("qualify_windows_hardware.subprocess.Popen", return_value=Process()):
         result = run_windows_openssh(

@@ -103,10 +103,16 @@ def copy_library(sysroot: Path, package: Path, name: str) -> dict[str, str]:
 
 
 def normalize_timestamps(root: Path, epoch: int) -> None:
+  def set_timestamp(path: Path) -> None:
+    if os.utime in os.supports_follow_symlinks:
+      os.utime(path, (epoch, epoch), follow_symlinks=False)
+    else:
+      os.utime(path, (epoch, epoch))
+
   for path in sorted(root.rglob("*"), reverse=True):
     if not path.is_symlink():
-      os.utime(path, (epoch, epoch), follow_symlinks=False)
-  os.utime(root, (epoch, epoch), follow_symlinks=False)
+      set_timestamp(path)
+  set_timestamp(root)
 
 
 def build(sysroot: Path, sdk_release: Path, build_identity: Path, output: Path,
