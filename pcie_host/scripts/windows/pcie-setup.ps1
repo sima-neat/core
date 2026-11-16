@@ -90,13 +90,15 @@ function Invoke-BoundedCommand {
     if (-not $process.Start()) {
       throw "Failed to start $Executable."
     }
+    $standardOutputDrain = $process.StandardOutput.ReadToEndAsync()
+    $standardErrorDrain = $process.StandardError.ReadToEndAsync()
     if (-not $process.WaitForExit($TimeoutMilliseconds)) {
       $timedOut = $true
       $process.Kill()
       $process.WaitForExit()
     }
-    $null = $process.StandardOutput.ReadToEnd()
-    $null = $process.StandardError.ReadToEnd()
+    [System.Threading.Tasks.Task]::WaitAll(
+        [System.Threading.Tasks.Task[]]@($standardOutputDrain, $standardErrorDrain))
     return [pscustomobject]@{
       ExitCode = if ($timedOut) { $null } else { $process.ExitCode }
       TimedOut = $timedOut

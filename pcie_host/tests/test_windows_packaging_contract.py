@@ -108,6 +108,51 @@ class WindowsPackagingContract(unittest.TestCase):
     self.assertIn('"-Hosts", "10.0.0.2", "-DryRun"', producer)
     self.assertIn('"neat-pcie-application-builder" / "playbook.yml"', producer)
 
+  def test_setup_drains_redirected_process_output_while_command_runs(self):
+    setup_script = (ROOT / "scripts/windows/pcie-setup.ps1").read_text(
+        encoding="utf-8"
+    )
+    bounded_command = setup_script.split(
+        "function Invoke-BoundedCommand {", 1
+    )[1].split("function Test-KeyAccess {", 1)[0]
+
+    process_started = bounded_command.index("if (-not $process.Start())")
+    stdout_drain = bounded_command.index(
+        "$standardOutputDrain = $process.StandardOutput.ReadToEndAsync()"
+    )
+    stderr_drain = bounded_command.index(
+        "$standardErrorDrain = $process.StandardError.ReadToEndAsync()"
+    )
+    bounded_wait = bounded_command.index(
+        "if (-not $process.WaitForExit($TimeoutMilliseconds))"
+    )
+    process_kill = bounded_command.index("$process.Kill()")
+    killed_process_exit = bounded_command.index("$process.WaitForExit()")
+    drain_completion = bounded_command.index(
+        "[System.Threading.Tasks.Task]::WaitAll("
+    )
+
+    self.assertLess(process_started, stdout_drain)
+    self.assertLess(process_started, stderr_drain)
+    self.assertLess(stdout_drain, bounded_wait)
+    self.assertLess(stderr_drain, bounded_wait)
+    self.assertLess(bounded_wait, drain_completion)
+    self.assertLess(process_kill, drain_completion)
+    self.assertLess(killed_process_exit, drain_completion)
+    self.assertIn(
+        "[System.Threading.Tasks.Task[]]@($standardOutputDrain, $standardErrorDrain)",
+        bounded_command,
+    )
+    self.assertNotIn("StandardOutput.ReadToEnd()", bounded_command)
+    self.assertNotIn("StandardError.ReadToEnd()", bounded_command)
+    self.assertNotIn(".Result", bounded_command)
+    self.assertNotIn("Write-", bounded_command)
+    self.assertIn(
+        "ExitCode = if ($timedOut) { $null } else { $process.ExitCode }",
+        bounded_command,
+    )
+    self.assertIn("TimedOut = $timedOut", bounded_command)
+
   def test_ci_rollback_fixture_fails_after_windows_installer_owns_state(self):
     wxs = (ROLLBACK_FIXTURE / "rollback_fixture.wxs").read_text(encoding="utf-8")
     probe = (ROLLBACK_FIXTURE / "rollback_probe.c").read_text(encoding="utf-8")
