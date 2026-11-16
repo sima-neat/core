@@ -323,6 +323,38 @@ def selected_build(args: argparse.Namespace, repo_root: Path) -> dict:
     return {"target_sdk": target_sdk, "pyneat": pyneat}
 
 
+def verified_build_platform(args: argparse.Namespace, selected: dict) -> dict | None:
+    """Bind Scheduler's SDK admission to the actual final CMake selection."""
+    if args.sdk_verification_json is None:
+        return None  # Native host/PCIe and standalone metadata do not select a target SDK.
+    verification = json.loads(args.sdk_verification_json.read_text(encoding="utf-8"))
+    value = verification.get("build_platform") if isinstance(verification, dict) else None
+    if (not isinstance(value, dict) or set(value) != {"elxr_version", "sysroot_version", "target"}
+            or any(not isinstance(item, str) or not item.strip() for item in value.values())):
+        raise ValueError("SDK verification lacks build_platform; rebuild the selected Scheduler/Runner")
+    if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+_(?:master|develop)_B[1-9][0-9]*", value["elxr_version"]):
+        raise ValueError("SDK verification has invalid elxr_version")
+    if not re.fullmatch(r"[0-9][A-Za-z0-9.+:~\-]*", value["sysroot_version"]):
+        raise ValueError("SDK verification has invalid sysroot_version")
+    if not re.fullmatch(r"[A-Za-z0-9_.+\-]+", value["target"]):
+        raise ValueError("SDK verification has invalid target")
+    target_sdk = selected["target_sdk"]
+    root = target_sdk.get("sysroot")
+    verified_root = verification.get("sysroot")
+    if (not root or not isinstance(verified_root, str) or not verified_root
+            or Path(root).resolve() != Path(verified_root).resolve()):
+        raise ValueError("Configured sysroot differs from Scheduler SDK verification")
+    compiler = verification.get("compiler")
+    if not isinstance(compiler, dict) or compiler.get("target") != value["target"]:
+        raise ValueError("SDK verification compiler target differs from build_platform")
+    if args.phase == "final":
+        target = subprocess.check_output(
+            [target_sdk["compiler"]["path"], "-dumpmachine"], text=True).strip()
+        if target != value["target"]:
+            raise ValueError("Configured compiler target differs from Scheduler SDK verification")
+    return value
+
+
 def build_compatibility(args: argparse.Namespace, repo_root: Path, selected: dict) -> dict:
     """Policy floors are not observed build-host or selected-target identities."""
     import copy
@@ -394,6 +426,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--cmake-cache", type=Path)
     parser.add_argument("--sysroot", type=Path)
     parser.add_argument("--target-sdk-release-file", type=Path)
+    parser.add_argument("--sdk-verification-json", type=Path,
+                        help="Selected Scheduler verify-sdk observations for the active target SDK.")
     parser.add_argument("--python-enabled", choices=("on", "off", "unknown"), default="unknown")
     parser.add_argument("--python-include-dir", type=Path)
     parser.add_argument("--python-extension", type=Path)
@@ -416,6 +450,7 @@ def main() -> int:
     state = source_state(repo_root, output_path)
     full_sha = state["git_sha"]
     selected = selected_build(args, repo_root)
+    build_platform = verified_build_platform(args, selected)
     short_sha = full_sha[:12] if full_sha else ""
     ref_type = os.environ.get("GITHUB_REF_TYPE") or (
         "tag" if git_value(repo_root, "describe", "--tags", "--exact-match") else "branch"
@@ -455,6 +490,8 @@ def main() -> int:
         "dependencies": {},
         "compatibility": build_compatibility(args, repo_root, selected),
     }
+    if build_platform is not None:
+        payload["build_platform"] = build_platform
     if args.scheduler_ref:
         payload["dependencies"]["scheduler"] = split_ref(args.scheduler_ref)
     if args.llima_ref:

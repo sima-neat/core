@@ -2304,3 +2304,7 @@ Each Python entry in JSON adds an `installations` array. Each record contains `v
 ## Crop geometry ownership {#crop-geometry-ownership}
 
 Core resolves Crop from actual source dimensions into a checked virtual resize size and center-window offset. Kernels evaluates that window directly using the original source filter support; no intermediate image or CPU crop is inserted. The final dimensions remain MPK-owned. Preproc publishes the actual model-to-original edge affine, distinct from half-pixel sample-center coordinates. Supported detection recipes consume that authority after model-space selection; missing or conflicting geometry is rejected.
+
+## SDK platform build identity {#sdk-platform-build-identity}
+
+Core records the active target SDK as `build_platform` with `elxr_version`, the full `sysroot_version`, and compiler `target`. Scheduler validates the same identity against Runner and its own build record. Core refreshes that validation after compilation and checks the final CMake sysroot and compiler target before generating installed metadata. The selected SDK supplies platform libraries; Core does not download platform DEBs for provenance checks. NEAT package integrity and separate target qualification remain required. Rebuild Runner, Scheduler and Core in that order when migrating identity-less producer records.
