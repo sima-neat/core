@@ -186,6 +186,38 @@ def test_walkthrough_segments_pair_across_languages() -> None:
 
 
 _LLIMA_DEFAULT_MODELS_DIR = "/media/nvme/llima/models"
+_FENCED_CODE_RE = re.compile(r"^```[^\n]*\n(.*?)^```", re.MULTILINE | re.DOTALL)
+# The only command allowed to name the NVMe default: assigning it to the variable.
+_LLIMA_MODELS_PATH_EXPORT_RE = re.compile(r"^#?\s*export\s+LLIMA_MODELS_PATH=")
+
+
+def _hardcoded_llima_model_paths(readme_text: str) -> list[str]:
+  """Command lines in fenced code blocks that hardcode the NVMe models dir,
+  whether the invocation is on one line or split with `\\` continuations."""
+  return [
+      line.strip()
+      for block in _FENCED_CODE_RE.findall(readme_text)
+      for line in block.splitlines()
+      if _LLIMA_DEFAULT_MODELS_DIR in line
+      and not _LLIMA_MODELS_PATH_EXPORT_RE.match(line.strip())
+  ]
+
+
+def test_hardcoded_llima_model_paths_detects_single_and_multi_line_commands() -> None:
+  readme = (
+      "Prose may mention `/media/nvme/llima/models`.\n\n"
+      "```bash\n"
+      "export LLIMA_MODELS_PATH=/media/nvme/llima/models\n"
+      "python3 example.py --model /media/nvme/llima/models/foo\n"
+      "./tutorial \\\n"
+      "  --model /media/nvme/llima/models/bar\n"
+      "./tutorial --model \"$LLIMA_MODELS_PATH/baz\"\n"
+      "```\n"
+  )
+  assert _hardcoded_llima_model_paths(readme) == [
+      "python3 example.py --model /media/nvme/llima/models/foo",
+      "--model /media/nvme/llima/models/bar",
+  ]
 
 
 def test_llima_tutorials_document_models_path_without_nvme() -> None:
@@ -204,11 +236,7 @@ def test_llima_tutorials_document_models_path_without_nvme() -> None:
     assert "export LLIMA_MODELS_PATH=" in text, (
         f"{readme} pulls LLiMa models but does not show how to set LLIMA_MODELS_PATH"
     )
-    hardcoded = [
-        line.strip()
-        for line in text.splitlines()
-        if line.lstrip().startswith("--") and _LLIMA_DEFAULT_MODELS_DIR in line
-    ]
+    hardcoded = _hardcoded_llima_model_paths(text)
     assert not hardcoded, (
         f"{readme} hardcodes {_LLIMA_DEFAULT_MODELS_DIR} in commands; "
         f"use \"$LLIMA_MODELS_PATH/<model>\" instead: {hardcoded}"
