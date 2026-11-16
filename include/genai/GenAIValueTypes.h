@@ -20,6 +20,9 @@ struct GenerationMetrics {
   std::uint32_t generated_tokens = 0;
   double time_to_first_token_s = 0.0;
   double tokens_per_second = 0.0;
+  /// Prompt tokens fed to the language model after the chat template is applied.
+  /// Set by VisionLanguageModel::run(); 0 when the model does not report it.
+  std::uint32_t prompt_tokens = 0;
 };
 
 struct GenerationResult {

@@ -455,6 +455,7 @@ struct VisionLanguageModel::Impl {
     text_streamer->set_tool_call_enabled(!preserved_tokens.empty());
     simaai::llima::ChronoTimer timer_ttft{true};
     auto prepared = prepare_input(request);
+    record_prompt_tokens(prepared.input_token_ids.size());
     auto vision_ofm_maps = language_model->create_input_buffers(prepared.input_token_ids);
     fill_vision_buffers(vision_ofm_maps, prepared);
 
@@ -687,6 +688,11 @@ struct VisionLanguageModel::Impl {
     std::lock_guard<std::mutex> lock(metrics_mutex);
     metrics = {};
     token_limit_reached = false;
+  }
+
+  void record_prompt_tokens(std::size_t count) {
+    std::lock_guard<std::mutex> lock(metrics_mutex);
+    metrics.prompt_tokens = static_cast<std::uint32_t>(count);
   }
 
   void record_metric(const std::string& metric, double value) {
