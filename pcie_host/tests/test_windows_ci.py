@@ -2,6 +2,7 @@
 """Contracts for the native Windows Core PCIe-host producer."""
 
 import base64
+import contextlib
 import importlib.util
 import getpass
 import json
@@ -36,6 +37,7 @@ from qualify_windows_hardware import (  # noqa: E402
     card_management_addresses,
     create_standard_user_python, customer_process_environment, load_upgrade_base,
     parse_performance_log, require_powershell as require_hardware_powershell,
+    prepare_openssh_secret_directory,
     recover_windows_platform_device, remove_installed_tutorial_facade,
     restore_card_candidate, run_captured_to_file, run_sudo_remote,
     run_windows_openssh,
@@ -1144,10 +1146,23 @@ class WindowsCiContracts(unittest.TestCase):
         destination.write_bytes(name.encode("ascii"))
         return {"file": name, "sha256": sha256(destination), "soname": name}
 
-      with mock.patch.object(CARD_DEPS, "copy_library", side_effect=copy_fixture):
-        archive = CARD_DEPS.build(
-            sysroot, sdk_release, build_identity, output, "sha256:" + "a" * 64,
-            "c" * 40, 1700000000)
+      dpkg_deb = shutil.which("dpkg-deb")
+
+      def build_fixture(command, **_kwargs):
+        archive_path = Path(command[-1])
+        archive_path.write_bytes(b"format-faithful packaging is covered on Linux")
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+      patches = [mock.patch.object(
+          CARD_DEPS, "copy_library", side_effect=copy_fixture)]
+      if not dpkg_deb:
+        patches.append(mock.patch.object(
+            CARD_DEPS.subprocess, "run", side_effect=build_fixture))
+      with patches[0]:
+        with patches[1] if len(patches) == 2 else contextlib.nullcontext():
+          archive = CARD_DEPS.build(
+              sysroot, sdk_release, build_identity, output,
+              "sha256:" + "a" * 64, "c" * 40, 1700000000)
       self.assertTrue(archive.is_file())
       receipt = json.loads(
           (output / "card-qualification-dependencies.json").read_text(
@@ -1155,11 +1170,12 @@ class WindowsCiContracts(unittest.TestCase):
       self.assertEqual(receipt["core_commit"], "c" * 40)
       self.assertEqual(receipt["packages"], [
           {"file": archive.name, "sha256": sha256(archive)}])
-      listing = subprocess.run(
-          ["dpkg-deb", "-c", str(archive)], capture_output=True, text=True,
-          timeout=30, check=True).stdout
-      for name in CARD_DEPS.REQUIRED_LIBRARIES:
-        self.assertIn(name, listing)
+      if dpkg_deb:
+        listing = subprocess.run(
+            [dpkg_deb, "-c", str(archive)], capture_output=True, text=True,
+            timeout=30, check=True).stdout
+        for name in CARD_DEPS.REQUIRED_LIBRARIES:
+          self.assertIn(name, listing)
 
   def test_release_rejects_incomplete_card_candidate_identity(self):
     with tempfile.TemporaryDirectory() as directory:
@@ -1215,8 +1231,8 @@ class WindowsCiContracts(unittest.TestCase):
           del inner_self, exc_type, exc_value, traceback
           return False
 
-        def communicate(inner_self, timeout):
-          del timeout
+        def communicate(inner_self, input=None, timeout=None):
+          del input, timeout
           wrappers = list(log.parent.glob("*.openssh.cmd"))
           inputs = list(secret_root.glob("*.openssh-input"))
           self.assertEqual(len(wrappers), 1)
@@ -1228,16 +1244,21 @@ class WindowsCiContracts(unittest.TestCase):
         def poll(inner_self):
           return inner_self.returncode
 
-      with mock.patch("qualify_windows_hardware.subprocess.Popen", return_value=Process()):
-        result = run_windows_openssh(
-            ["ssh.exe", "card", "true"], log,
-            input_value="fixture-secret", secret_root=secret_root,
-            redact_stdin=True)
+      prepare_openssh_secret_directory(secret_root)
+      with mock.patch(
+          "qualify_windows_hardware.prepare_openssh_secret_directory",
+          return_value=secret_root), mock.patch(
+              "qualify_windows_hardware.subprocess.Popen", return_value=Process()):
+          result = run_windows_openssh(
+              ["ssh.exe", "card", "true"], log,
+              input_value="fixture-secret", secret_root=secret_root,
+              redact_stdin=True)
       self.assertEqual(result.returncode, 0)
       self.assertEqual(observed["secret"], b"fixture-secret\n")
       self.assertNotIn("fixture-secret", observed["wrapper"])
       self.assertFalse(any(secret_root.glob("*.openssh-input")))
-      self.assertEqual(secret_root.stat().st_mode & 0o777, 0o700)
+      if sys.platform != "win32":
+        self.assertEqual(secret_root.stat().st_mode & 0o777, 0o700)
       self.assertNotIn("fixture-secret", log.read_text(encoding="utf-8"))
 
   def test_card_sudo_stdin_secret_is_reused_from_process_memory(self):
