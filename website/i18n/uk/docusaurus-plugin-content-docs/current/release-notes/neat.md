@@ -19,7 +19,7 @@ sidebar_position: 3
 
 ### Маски Segment Anything {#v062-segment-anything}
 
-- Нові значення `BoxDecodeType` декодують моделі Segment Anything на CPU через профілі Kernels `sam_mask` і `sam_concept`: `MobileSam`, `EdgeTamSeg`, `EdgeTamTrack`, `EfficientSam` і `EfficientSam3` (модель зображень концептів або декодер підказок). Кожен запуск повертає вибрану маску розміром оригінального зображення з її рамкою та передбаченим IoU у версійованому корисному навантаженні масок; його читає `decode_segmentation`. `Model::Options::multimask_output` відповідає висхідному `predict(multimask_output=...)`. `EdgeTamTrack` також повертає необроблені виходи декодера після тензора BoxDecode для відстеження EdgeTAM; `EdgeTamSeg` повертає лише маску. Потрібен випуск Kernels із цими профілями. Див. [Маски Segment Anything](/reference/boxdecode_decode_types#segment-anything-masks).
+- Нові значення `BoxDecodeType` декодують MobileSAM, EdgeTAM, EfficientSAM і EfficientSAM3 у маски розміром оригінального зображення. `EdgeTamSeg` повертає маску, а `EdgeTamTrack` також повертає необроблені виходи декодера для відстеження. Див. [Маски Segment Anything](/reference/boxdecode_decode_types#segment-anything-masks).
 
 ### Попередня обробка {#v062-preproc}
 

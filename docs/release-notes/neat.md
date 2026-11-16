@@ -19,7 +19,7 @@ Release notes for the SiMa.ai Neat Library.
 
 ### Segment Anything masks {#v062-segment-anything}
 
-- New `BoxDecodeType` values decode Segment Anything models on the CPU through the Kernels `sam_mask` and `sam_concept` profiles: `MobileSam`, `EdgeTamSeg`, `EdgeTamTrack`, `EfficientSam` and `EfficientSam3` (concept image model or prompt decoder). Each run returns the selected mask at the original image size with its box and predicted IoU in a versioned masks payload; `decode_segmentation` reads it. `Model::Options::multimask_output` mirrors upstream `predict(multimask_output=...)`. `EdgeTamTrack` also returns the decoder's raw outputs after the BoxDecode tensor, for EdgeTAM tracking; `EdgeTamSeg` returns only the mask. Requires a Kernels release with these profiles. See [Segment Anything masks](/reference/boxdecode_decode_types#segment-anything-masks).
+- New `BoxDecodeType` values decode MobileSAM, EdgeTAM, EfficientSAM and EfficientSAM3 into masks at the original image size. `EdgeTamSeg` returns the mask, and `EdgeTamTrack` also returns the decoder's raw outputs for tracking. See [Segment Anything masks](/reference/boxdecode_decode_types#segment-anything-masks).
 
 ### Preprocessing {#v062-preproc}
 

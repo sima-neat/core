@@ -75,7 +75,7 @@ opt.top_k = 100;
 
 ## Розміщення letterbox {#letterbox-placement}
 
-Профілі BoxDecode перетворюють координати виявлень після letterbox за правилом центрованого розміщення. Нецентроване розміщення, як-от `LetterboxPlacement::TopLeft` у попередній обробці Model, визначається з полів, опублікованих у `tensor.semantic.preprocess`, або, до першого кадру, з політики попереднього `Preproc`. Тоді профілі виявлення (сімейства виявлення YOLO, декодований YOLO, EfficientDet, DETR, DetrFocal, CenterNet і SSD) перетворюють рамки за фактичним афінним перетворенням кожного кадру з координат моделі в координати оригіналу. Профілі пози, сегментації та пропозицій RCNN відхиляють нецентроване розміщення замість того, щоб повертати зсунуті результати. Різниця в один піксель між протилежними полями є залишком центрування; центровані зображення зберігають наявне перетворення. Натомість типи Segment Anything вимагають letterbox із розміщенням у верхньому лівому куті або розтягування; див. [Маски Segment Anything](#segment-anything-masks).
+Нецентроване розміщення letterbox, як-от `LetterboxPlacement::TopLeft` (див. [Зміна розміру в Preproc](/reference/nodes/preproc#resize-and-aspect-ratio)), підтримують профілі виявлення, які перетворюють рамки за афінним перетворенням кожного кадру з координат моделі в координати оригіналу: сімейства виявлення YOLO, декодований YOLO, EfficientDet, DETR, DetrFocal, CenterNet і SSD. Профілі пози, сегментації та пропозицій RCNN відхиляють таке розміщення замість того, щоб повертати зсунуті результати. Центровані зображення зберігають своє перетворення. Типи Segment Anything мають власні вимоги; див. [Правила Segment Anything](#segment-anything-rules).
 
 ## Класичний DETR {#classic-detr}
 
@@ -130,7 +130,7 @@ node = pyneat.nodes.sima_box_decode(
 | EfficientSAM3, інтерактивний | `EfficientSam3` (`efficientsam3`) | Кодувальник зображень: `resize.mode=Stretch`, 1008×1008, без доповнення; `normalize.enable=On` з `normalize.mean` і `normalize.stddev` (0.5, 0.5, 0.5) | `multimask_output` |
 | EfficientSAM3, концепти | `EfficientSam3` (`efficientsam3`) | Сама модель зображень концептів на тензорному маршруті: застосунок розтягує зображення до 1008×1008, масштабує його до [−1, 1] і додає `semantic.preprocess` з `resize_mode="stretch"` | `top_k`, `score_threshold` |
 
-Python використовує ті самі назви: `pyneat.BoxDecodeType.MobileSam`, `EdgeTamSeg`, `EdgeTamTrack`, `EfficientSam` і `EfficientSam3`. MobileSAM доповнює нулями після нормалізації, що відповідає середньому пікселю ImageNet (124, 116, 104); `pad_value=116` наближає його. Маски ніколи не покривають доповнення. Model EfficientSAM3 вважається моделлю зображень концептів, коли її виходи — виявлення `[Q, 6]` і логіти масок із Q каналами, а інакше — декодером підказок.
+Python використовує ті самі назви: `pyneat.BoxDecodeType.MobileSam`, `EdgeTamSeg`, `EdgeTamTrack`, `EfficientSam` і `EfficientSam3`. MobileSAM доповнює нулями після нормалізації, що відповідає середньому пікселю ImageNet (124, 116, 104); `pad_value=116` наближає його. Маски ніколи не покривають доповнення. Model EfficientSAM3 вважається моделлю зображень концептів, коли її виходи — виявлення `[Q, 6]` і логіти масок із Q каналами, а інакше — декодером підказок. Повний робочий процес кожної моделі описано в її README у [sima-neat/models](https://github.com/sima-neat/models), наприклад у [README EdgeTAM](https://github.com/sima-neat/models/tree/develop/models/edgetam).
 
 `Model::Options::multimask_output` (Python: `ModelOptions.multimask_output`) відповідає висхідному `predict(multimask_output=...)`. Залиште `true` для одного клацання, яке неоднозначне; задайте `false` для рамки або кількох точок.
 
@@ -158,16 +158,19 @@ Python використовує ті самі назви: `pyneat.BoxDecodeType.
 
 `EdgeTamSeg` і всі інші типи Segment Anything повертають лише тензор BoxDecode. З `EdgeTamTrack` після нього йдуть власні виходи декодера; див. [Відстеження EdgeTAM](#edgetam-tracking).
 
+`SimaRender` не малює ці маски: він малює лише навантаження сегментації без заголовка, маски якого менші за кадр. Малюйте маски Segment Anything за результатом `decode_segmentation`.
+
 ### Правила {#segment-anything-rules}
 
-- Голови зіставляються за позицією та формою, а не за назвою. Логіти масок — це вихід із висотою та шириною понад 1 і 1, 3 або 4 використаними каналами. Передбачення IoU — наступний вихід з одним значенням на маску. Одиничне значення після нього — оцінка об'єкта (EdgeTAM). Інші виходи, як-от вказівники об'єктів EdgeTAM, не декодуються. Голови INT8, BF16 і FP32 зберігають власний dtype і квантування. Декодер, кількість каналів якого не відповідає названій моделі, відхиляється, наприклад декодер із трьома масками як `MobileSam`.
-- Полотно, розмір оригінального зображення та зміну розміру беруть із `tensor.semantic.preprocess` входів декодера. Передайте вихідні тензори кодувальника декодеру, наприклад через `.cvu()`. Тому Model декодера підказок будується лише зі своїх входів: `build()` і `execution_plan()` без входів завершуються помилкою, тож передайте входи декодера в `execution_plan(inputs)`. Модель зображень концептів EfficientSAM3 також приймає упакований текст, тому Neat запускає її на тензорному маршруті; додайте ці дані до її тензора пікселів. Коли дані не відповідають таблиці, побудова графа завершується помилкою з параметром, який треба змінити, наприклад "MobileSAM needs the image preprocessed with resize.mode=Letterbox and resize.placement=TopLeft on the Model that preprocesses it".
-- Маски покривають усе зображення, розмір якого змінено один раз. Дані, чия афінна матриця відображає полотно на частину зображення (наприклад, обрізання або ROI перед зміною розміру), відхиляються. Так само відхиляється масштабований розмір, який декодер не відтворює: попередня обробка Model з `resize.placement=TopLeft` округлює коротшу сторону до найближчого пікселя, як Segment Anything, а окремий letterbox `Preproc` округлює її вгору. Дані, які ви додаєте самі, як-от для тензора пікселів EfficientSAM3, мають містити цю афінну матрицю: `affine_m00` = оригінальна ширина / масштабована ширина, `affine_m11` = оригінальна висота / масштабована висота.
-- Побудований runner обслуговує один розмір оригінального зображення, бо маски мають цей розмір. `Model::run` будує інший runner для нового розміру кадру; потоковий граф відхиляє кадр іншого розміру, а не повертає маски неправильного розміру.
-- Декодери підказок: залиште `top_k` рівним 0 або 1, а `nms_iou_threshold` — 0; інші значення відхиляються. `score_threshold` має бути меншим за 1 і в іншому ігнорується. `num_classes` — кількість масок або 0.
-- Моделі зображень концептів: задайте `top_k` у межах 1..Q.
+- **Виходи декодера.** Декодер підказок експортує логіти масок із кількістю масок названої моделі (1, 3 або 4), один передбачений IoU на маску та, для EdgeTAM, оцінку об'єкта; приймаються виходи INT8, BF16 і FP32. Модель зображень концептів експортує виявлення `[Q, 6]` і логіти масок для кожного запиту.
+- **Параметри.** Декодери підказок: залиште `top_k` рівним 0 або 1, а `nms_iou_threshold` — 0; `score_threshold` має бути меншим за 1 і в іншому ігнорується; `num_classes` — кількість масок або 0. Моделі зображень концептів: задайте `top_k` у межах 1..Q.
+- **Геометрія зображення.** Полотно, розмір оригінального зображення та зміну розміру беруть із `tensor.semantic.preprocess` входів декодера, і ці дані мають відповідати таблиці; інакше побудова завершується помилкою з параметром, який треба змінити. Передайте виходи кодувальника декодеру через `.cvu()` і будуйте декодер підказок із його входів через `build(inputs)` або `execution_plan(inputs)`. На тензорному маршруті моделі зображень концептів додайте ці дані до її тензора пікселів.
+- **Усе зображення, розмір якого змінено один раз.** Обрізання або ROI перед зміною розміру відхиляється, так само як і масштабований розмір, який декодер не відтворює. Для MobileSAM застосовуйте letterbox із `resize.placement=TopLeft` у Model, що виконує попередню обробку зображення та округлює так само, як Segment Anything, а не окремим вузлом `Preproc`. Дані, які ви додаєте самі, мають містити афінну матрицю: `affine_m00` = оригінальна ширина / масштабована ширина, `affine_m11` = оригінальна висота / масштабована висота.
+- **Один розмір зображення на runner.** Маски мають розмір оригінального зображення, тому побудований runner обслуговує один розмір. `Model::run` будує інший runner для нового розміру; потоковий граф відхиляє кадр іншого розміру.
 
-### MobileSAM {#mobilesam}
+### Кодувальник і декодер {#segment-anything-example}
+
+Приклад для MobileSAM; для іншої моделі використовуйте її параметри кодувальника та тип декодування з таблиці.
 
 ```python
 encoder_options = pyneat.ModelOptions()
@@ -192,11 +195,7 @@ mask = result.masks.to_numpy()[0]  # uint8 [H, W], 0 or 255
 
 ### Відстеження EdgeTAM {#edgetam-tracking}
 
-Кодувальнику пам'яті та банку пам'яті EdgeTAM потрібні два виходи декодера, яких BoxDecode не декодує: вказівник об'єкта та низькороздільні логіти вибраної маски. Задайте `decode_type = EdgeTamTrack` для Model декодера масок, щоб отримати їх із того самого запуску; використовуйте `EdgeTamSeg`, коли потрібна лише маска. `EdgeTamTrack` спочатку повертає тензор BoxDecode, а за ним усі виходи декодера в порядку MPK — точно так, як та сама Model повертає їх без BoxDecode (з тими самими назвами, типами даних і формами): `mask_logits` `[1, 256, 256, 4]`, `iou_scores` `[1, 4]`, `object_score_logits` `[1, 1]` і `object_pointers` `[1, 4, 256]`, усі float32. `Model::output_specs()`, `Model::run`, раннери та `pull` повідомляють той самий список.
-
-- Кожен необроблений вихід коштує одне перетворення на кадр усередині етапу BoxDecode (BF16 у FP32 або деквантування). Повернуті тензори належать результату.
-- Декодуйте лише перший тензор, наприклад `pyneat.decode_segmentation(outputs[:1])`. Необроблені тензори не мають тегу виявлення.
-- `EdgeTamTrack` відхиляється, коли маршрут моделі без BoxDecode не має етапу постобробки, з якого можна повернути тензори.
+Кодувальнику пам'яті та банку пам'яті EdgeTAM потрібні низькороздільні логіти вибраної маски та її вказівник об'єкта, яких BoxDecode не декодує. `EdgeTamTrack` повертає тензор BoxDecode, а за ним виходи декодера з того самого запуску — точно так, як та сама Model повертає їх без BoxDecode: `mask_logits` `[1, 256, 256, 4]`, `iou_scores` `[1, 4]`, `object_score_logits` `[1, 1]` і `object_pointers` `[1, 4, 256]`, усі float32. Кожен із них коштує одне перетворення на кадр. Декодуйте лише перший тензор; необроблені тензори не мають тегу виявлення. `EdgeTamTrack` відхиляється, коли маршрут моделі без BoxDecode не може повернути тензори.
 
 - Клас виявлення — це вибрана площина: для кодувальника пам'яті візьміть `mask_logits[0, :, :, class]`, збільшене до 1024×1024, як описано в README моделі.
 - Для підказки з двох чи більше точок задайте `multimask_output=False`; для одного клацання та відстежуваних кадрів залиште `True`. Клас указує площину, яку вибрало будь-яке з цих правил.
@@ -204,38 +203,15 @@ mask = result.masks.to_numpy()[0]  # uint8 [H, W], 0 or 255
 - Оцінка об'єкта 0 або менша робить маску та її рамку порожніми, але клас і далі вказує вибрану площину. Застосуйте правило оцінки об'єкта з README до логітів, які передаєте кодувальнику пам'яті.
 
 ```python
-encoder_options = pyneat.ModelOptions()
-encoder_options.preprocess.resize.mode = pyneat.ResizeMode.Stretch
-encoder_options.preprocess.preset = pyneat.NormalizePreset.ImageNet
-encoder = pyneat.Model("/path/to/edgetam_image_encoder_mpk.tar.gz", encoder_options)
-
 options = pyneat.ModelOptions()
 options.decode_type = pyneat.BoxDecodeType.EdgeTamTrack
 decoder = pyneat.Model("/path/to/edgetam_mask_decoder_mpk.tar.gz", options)
 
-outputs = decoder.run(decoder_inputs)  # conditioned embeddings, high-res features, prompt
+outputs = decoder.run(decoder_inputs)
 result = pyneat.decode_segmentation(outputs[:1])[0]
 plane = int(result.boxes.to_numpy()[0, 5])
 logits = outputs[1].to_numpy()[0, :, :, plane]  # [256, 256] low-resolution logits
-# With multimask_output=False the memory bank takes pointer 0, whichever plane was chosen.
 pointer = outputs[4].to_numpy()[0, plane if options.multimask_output else 0]  # [256]
-```
-
-### EfficientSAM {#efficientsam}
-
-```python
-encoder_options = pyneat.ModelOptions()
-encoder_options.preprocess.resize.mode = pyneat.ResizeMode.Stretch
-encoder_options.preprocess.normalize.enable = pyneat.AutoFlag.On  # values 0-1 only
-encoder = pyneat.Model("/path/to/efficientsam_vit_t_image_encoder_mpk.tar.gz", encoder_options)
-
-options = pyneat.ModelOptions()
-options.decode_type = pyneat.BoxDecodeType.EfficientSam  # multimask_output stays True
-decoder = pyneat.Model("/path/to/efficientsam_vit_t_prompt_decoder_mpk.tar.gz", options)
-
-embeddings = encoder.run([image])[0]
-outputs = decoder.run([embeddings.cvu(), points, labels])
-result = pyneat.decode_segmentation(outputs)[0]
 ```
 
 ### Концепти EfficientSAM3 {#efficientsam3-concept}
@@ -426,25 +402,7 @@ options.yolox_seg_pose.pose_classes = [0, 5]
 
 ### Версійне корисне навантаження масок {#versioned-masks-payload}
 
-Маски, які не мають розміру 160×160, як-от вихід Segment Anything, використовують версійний заголовок замість початкової кількості. Тензор зберігає тег `BBOX`; `decode_segmentation` і `decode_bbox` розпізнають корисне навантаження за магічним значенням, тому наявні навантаження сегментації не змінюються. Розмітка C++ — `SegmentationMasksHeaderV1` у `pipeline/DetectionTypes.h`:
-
-| Зсув | Розмір | Тип | Поле | Значення |
-| --- | --- | --- | --- | --- |
-| 0 | 4 | `uint32` | `magic` | `0x3153414D` (`"MAS1"`) |
-| 4 | 2 | `uint16` | `version` | `1` |
-| 6 | 2 | `uint16` | `header_bytes` | `48` |
-| 8 | 4 | `uint32` | `total_bytes` | Розмір усього навантаження |
-| 12 | 4 | `uint32` | `count` | Дійсні записи |
-| 16 | 4 | `uint32` | `capacity` | Слоти записів і масок |
-| 20 | 4 | `uint32` | `mask_height` | Рядки маски (висота оригінального зображення) |
-| 24 | 4 | `uint32` | `mask_width` | Стовпці маски (ширина оригінального зображення) |
-| 28 | 4 | `uint32` | `records_offset` | `48` |
-| 32 | 4 | `uint32` | `record_stride` | `24` (`RawBox`) |
-| 36 | 4 | `uint32` | `masks_offset` | Кінець записів, округлений угору до 16 байтів |
-| 40 | 4 | `uint32` | `mask_stride` | `mask_height × mask_width` |
-| 44 | 4 | `uint32` | `flags` | `0` |
-
-Записи використовують наведену вище розмітку `RawBox`. Кожна маска має тип `uint8` зі значеннями 0 або 255. Неправильний заголовок або розмір відхиляється; записи повертаються, навіть якщо їхня рамка порожня.
+Маски, які не мають розміру 160×160, як-от вихід Segment Anything, використовують версійний заголовок замість початкової кількості. Його розмітка — [`SegmentationMasksHeaderV1`](/reference/cppapi/structs/simaai-neat-segmentationmasksheaderv1) у `pipeline/DetectionTypes.h`: заголовок, потім записи `RawBox`, потім одна маска `uint8` на запис зі значеннями 0 або 255. Читайте його за допомогою `decode_segmentation`, яка повертає рамки й маски та відхиляє неправильний заголовок або розмір. Тензор зберігає тег `BBOX`, а `decode_segmentation` і `decode_bbox` розпізнають корисне навантаження за магічним значенням, тому наявні навантаження сегментації не змінюються. `SimaRender` його не приймає.
 
 ## Коли `model.run` повертає необроблені результати.
 

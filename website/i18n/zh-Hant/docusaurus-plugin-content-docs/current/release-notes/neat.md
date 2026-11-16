@@ -19,7 +19,7 @@ SiMa.ai Neat Library 的版本資訊。
 
 ### Segment Anything 遮罩 {#v062-segment-anything}
 
-- 新的 `BoxDecodeType` 值透過 Kernels 的 `sam_mask` 與 `sam_concept` 設定檔，在 CPU 上解碼 Segment Anything 模型：`MobileSam`、`EdgeTamSeg`、`EdgeTamTrack`、`EfficientSam` 與 `EfficientSam3`（概念影像模型或提示解碼器）。每次執行都會以具版本的遮罩酬載，傳回原始影像大小的所選遮罩及其邊界框與預測 IoU，可用 `decode_segmentation` 讀取。`Model::Options::multimask_output` 對應上游的 `predict(multimask_output=...)`。`EdgeTamTrack` 會為 EdgeTAM 追蹤在 BoxDecode 張量之後一併傳回解碼器的原始輸出；`EdgeTamSeg` 只傳回遮罩。需要包含這些設定檔的 Kernels 版本。請參閱 [Segment Anything 遮罩](/reference/boxdecode_decode_types#segment-anything-masks)。
+- 新的 `BoxDecodeType` 值會將 MobileSAM、EdgeTAM、EfficientSAM 與 EfficientSAM3 解碼為原始影像大小的遮罩。`EdgeTamSeg` 傳回遮罩，`EdgeTamTrack` 還會傳回供追蹤使用的解碼器原始輸出。請參閱 [Segment Anything 遮罩](/reference/boxdecode_decode_types#segment-anything-masks)。
 
 ### 前處理 {#v062-preproc}
 

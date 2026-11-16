@@ -87,7 +87,7 @@ Axis-aligned detection-display graphs can feed the result to `SimaRender`. Use `
 
 ## Letterbox placement {#letterbox-placement}
 
-BoxDecode profiles map letterboxed detections with a centered rule. A non-centered letterbox, such as `LetterboxPlacement::TopLeft` in Model preprocessing, is detected from the pads published in `tensor.semantic.preprocess`, or from the upstream `Preproc` policy before the first frame. Detection profiles then map boxes with each frame's actual model-to-original affine: the YOLO detection families, decoded YOLO, EfficientDet, DETR, DetrFocal, CenterNet and SSD. Pose, segmentation and RCNN proposal profiles reject a non-centered letterbox instead of returning shifted results. Opposite pads that differ by one pixel are centering remainder; centered letterboxes keep their existing mapping. The Segment Anything types instead require a top-left letterbox or a stretch; see [Segment Anything masks](#segment-anything-masks).
+A non-centered letterbox, such as `LetterboxPlacement::TopLeft` (see [Preproc resize](/reference/nodes/preproc#resize-and-aspect-ratio)), is supported by the detection profiles, which map boxes through each frame's model-to-original affine: the YOLO detection families, decoded YOLO, EfficientDet, DETR, DetrFocal, CenterNet and SSD. Pose, segmentation and RCNN proposal profiles reject it instead of returning shifted results. Centered letterboxes keep their mapping. The Segment Anything types have their own requirements; see [Segment Anything rules](#segment-anything-rules).
 
 ## Classic DETR {#classic-detr}
 
@@ -165,7 +165,9 @@ Python uses the same names: `pyneat.BoxDecodeType.MobileSam`, `EdgeTamSeg`, `Edg
 `EfficientSam` and `EfficientSam3`. MobileSAM pads with zeros after normalizing, which is the ImageNet mean pixel
 (124, 116, 104); `pad_value=116` approximates it. Masks never cover the padding. An
 EfficientSAM3 Model is a concept image model when its outputs are detections `[Q, 6]` and mask
-logits with Q channels, and a prompt decoder otherwise.
+logits with Q channels, and a prompt decoder otherwise. Each model's README in
+[sima-neat/models](https://github.com/sima-neat/models) has its full workflow, such as the
+[EdgeTAM README](https://github.com/sima-neat/models/tree/develop/models/edgetam).
 
 `Model::Options::multimask_output` (Python: `ModelOptions.multimask_output`) mirrors upstream
 `predict(multimask_output=...)`. Leave it `true` for one click, which is ambiguous; set it to
@@ -204,39 +206,36 @@ The BoxDecode tensor uses the [versioned masks payload](#versioned-masks-payload
 `EdgeTamSeg` and every other Segment Anything type return the BoxDecode tensor alone. With
 `EdgeTamTrack`, the decoder's own outputs follow it; see [EdgeTAM tracking](#edgetam-tracking).
 
+`SimaRender` does not draw these masks: it draws only the headerless segmentation payload, whose
+masks are smaller than the frame. Draw Segment Anything masks from the `decode_segmentation`
+result.
+
 ### Rules {#segment-anything-rules}
 
-- Heads are bound by position and shape, not by name. The mask logits are the output with height
-  and width above 1 and 1, 3 or 4 used channels. The IoU predictions are the next output with one
-  value per mask. A later single value is the object score (EdgeTAM). Other outputs, such as
-  EdgeTAM's object pointers, are not decoded. INT8, BF16 and FP32 heads each keep their own dtype
-  and quantization. A decoder whose channel count does not match the named model is rejected,
-  for example a three-mask decoder as `MobileSam`.
-- The canvas, the original image size and the resize come from the decoder inputs'
-  `tensor.semantic.preprocess`. Pass the encoder's output tensors to the decoder, for example with
-  `.cvu()`. A prompt decoder Model therefore builds only from its inputs: `build()` and
-  `execution_plan()` without inputs fail, so pass the decoder inputs to `execution_plan(inputs)`.
-  The EfficientSAM3 concept image model also takes the packed text, so Neat runs it on the tensor
-  route; attach the facts to its pixel tensor. When the facts do not match the
-  table, building the graph fails with the setting to change, such as "MobileSAM needs the image
-  preprocessed with resize.mode=Letterbox and resize.placement=TopLeft on the Model that
-  preprocesses it".
-- The masks cover the whole image resized once. Facts whose affine maps the canvas onto part of
-  the image, such as a crop or ROI before the resize, are rejected. So is a scaled size the decoder
-  does not reproduce: Model preprocessing with `resize.placement=TopLeft` rounds the shorter side
-  to the nearest pixel as Segment Anything does, while a standalone `Preproc` letterbox rounds it
-  up. Facts you attach yourself, such as the EfficientSAM3 pixel tensor's, must carry that
-  affine: `affine_m00` = original width / scaled width and `affine_m11` = original height / scaled
-  height.
-- A built runner serves one original image size, because the masks have that size. `Model::run`
-  builds another runner for a new frame size; a streaming graph rejects a frame of another size
-  instead of returning wrongly sized masks.
-- Prompt decoders: leave `top_k` at 0 or 1 and `nms_iou_threshold` at 0; other values are
-  rejected. `score_threshold` must be below 1 and is otherwise ignored. `num_classes` is the mask
-  count or 0.
-- Concept image models: set `top_k` to 1..Q.
+- **Decoder outputs.** A prompt decoder exports mask logits with the mask count of the named model
+  (1, 3 or 4), one predicted IoU per mask and, for EdgeTAM, an object score; INT8, BF16 and FP32
+  outputs are accepted. A concept image model exports detections `[Q, 6]` and per-query mask
+  logits.
+- **Options.** Prompt decoders: leave `top_k` at 0 or 1 and `nms_iou_threshold` at 0;
+  `score_threshold` must be below 1 and is otherwise ignored; `num_classes` is the mask count or 0.
+  Concept image models: set `top_k` to 1..Q.
+- **Image geometry.** The canvas, the original image size and the resize come from the decoder
+  inputs' `tensor.semantic.preprocess` and must match the table; otherwise building fails and names
+  the setting to change. Pass the encoder's outputs to the decoder with `.cvu()`, and build a prompt
+  decoder from its inputs with `build(inputs)` or `execution_plan(inputs)`. On the concept image
+  model's tensor route, attach the facts to its pixel tensor.
+- **Whole image, resized once.** A crop or ROI before the resize is rejected, and so is a scaled
+  size the decoder does not reproduce. For MobileSAM, letterbox with `resize.placement=TopLeft` on
+  the Model that preprocesses the image, which rounds as Segment Anything does, not with a
+  standalone `Preproc` node. Facts you attach yourself must carry the affine: `affine_m00` =
+  original width / scaled width and `affine_m11` = original height / scaled height.
+- **One image size per runner.** The masks have the original image size, so a built runner serves
+  one size. `Model::run` builds another runner for a new size; a streaming graph rejects a frame of
+  another size.
 
-### MobileSAM {#mobilesam}
+### Encoder and decoder {#segment-anything-example}
+
+MobileSAM; for another model, use its encoder settings and decode type from the table.
 
 ```python
 encoder_options = pyneat.ModelOptions()
@@ -261,21 +260,13 @@ mask = result.masks.to_numpy()[0]  # uint8 [H, W], 0 or 255
 
 ### EdgeTAM tracking {#edgetam-tracking}
 
-EdgeTAM's memory encoder and memory bank need two decoder outputs that BoxDecode does not
-decode: an object pointer and the chosen mask's low-resolution logits. Set
-`decode_type = EdgeTamTrack` on the mask decoder Model to get them from the same run; use
-`EdgeTamSeg` when only the mask is needed. `EdgeTamTrack` returns the BoxDecode tensor first,
-then every decoder output in MPK order, exactly as the same Model returns them without BoxDecode
-(the same names, dtypes and shapes): `mask_logits` `[1, 256, 256, 4]`, `iou_scores` `[1, 4]`,
-`object_score_logits` `[1, 1]` and `object_pointers` `[1, 4, 256]`, all float32.
-`Model::output_specs()`, `Model::run`, runners and `pull` all report the same list.
-
-- Each raw output costs one conversion per frame inside the BoxDecode stage (BF16 to FP32, or a
-  dequantization). The returned tensors are owned by the result.
-- Decode only the first tensor, for example `pyneat.decode_segmentation(outputs[:1])`. The raw
-  tensors carry no detection tag.
-- `EdgeTamTrack` is rejected when the model's route without BoxDecode has no postprocess stage to
-  return the tensors from.
+EdgeTAM's memory encoder and memory bank need the chosen mask's low-resolution logits and its
+object pointer, which BoxDecode does not decode. `EdgeTamTrack` returns the BoxDecode tensor, then
+the decoder's outputs from the same run, exactly as the same Model returns them without BoxDecode:
+`mask_logits` `[1, 256, 256, 4]`, `iou_scores` `[1, 4]`, `object_score_logits` `[1, 1]` and
+`object_pointers` `[1, 4, 256]`, all float32. Each costs one conversion per frame. Decode only the
+first tensor; the raw tensors carry no detection tag. `EdgeTamTrack` is rejected when the model's
+route without BoxDecode cannot return the tensors.
 
 - The detection's class is the chosen plane: take `mask_logits[0, :, :, class]` for the memory
   encoder, upsampled to 1024×1024 as the model's README describes.
@@ -288,38 +279,15 @@ then every decoder output in MPK order, exactly as the same Model returns them w
   chosen plane. Apply the README's object-score rule to the logits you pass to the memory encoder.
 
 ```python
-encoder_options = pyneat.ModelOptions()
-encoder_options.preprocess.resize.mode = pyneat.ResizeMode.Stretch
-encoder_options.preprocess.preset = pyneat.NormalizePreset.ImageNet
-encoder = pyneat.Model("/path/to/edgetam_image_encoder_mpk.tar.gz", encoder_options)
-
 options = pyneat.ModelOptions()
 options.decode_type = pyneat.BoxDecodeType.EdgeTamTrack
 decoder = pyneat.Model("/path/to/edgetam_mask_decoder_mpk.tar.gz", options)
 
-outputs = decoder.run(decoder_inputs)  # conditioned embeddings, high-res features, prompt
+outputs = decoder.run(decoder_inputs)
 result = pyneat.decode_segmentation(outputs[:1])[0]
 plane = int(result.boxes.to_numpy()[0, 5])
 logits = outputs[1].to_numpy()[0, :, :, plane]  # [256, 256] low-resolution logits
-# With multimask_output=False the memory bank takes pointer 0, whichever plane was chosen.
 pointer = outputs[4].to_numpy()[0, plane if options.multimask_output else 0]  # [256]
-```
-
-### EfficientSAM {#efficientsam}
-
-```python
-encoder_options = pyneat.ModelOptions()
-encoder_options.preprocess.resize.mode = pyneat.ResizeMode.Stretch
-encoder_options.preprocess.normalize.enable = pyneat.AutoFlag.On  # values 0-1 only
-encoder = pyneat.Model("/path/to/efficientsam_vit_t_image_encoder_mpk.tar.gz", encoder_options)
-
-options = pyneat.ModelOptions()
-options.decode_type = pyneat.BoxDecodeType.EfficientSam  # multimask_output stays True
-decoder = pyneat.Model("/path/to/efficientsam_vit_t_prompt_decoder_mpk.tar.gz", options)
-
-embeddings = encoder.run([image])[0]
-outputs = decoder.run([embeddings.cvu(), points, labels])
-result = pyneat.decode_segmentation(outputs)[0]
 ```
 
 ### EfficientSAM3 concept {#efficientsam3-concept}
@@ -561,28 +529,13 @@ options.yolox_seg_pose.pose_classes = [0, 5]
 ### Versioned masks payload {#versioned-masks-payload}
 
 Masks that are not 160×160, such as Segment Anything output, use a versioned header instead of
-the leading count. The tensor keeps the `BBOX` tag; `decode_segmentation` and `decode_bbox` recognize
-the payload by its magic, so existing segmentation payloads are unchanged. The C++ layout is
-`SegmentationMasksHeaderV1` in `pipeline/DetectionTypes.h`:
-
-| Offset | Size | Type | Field | Value |
-| --- | --- | --- | --- | --- |
-| 0 | 4 | `uint32` | `magic` | `0x3153414D` (`"MAS1"`) |
-| 4 | 2 | `uint16` | `version` | `1` |
-| 6 | 2 | `uint16` | `header_bytes` | `48` |
-| 8 | 4 | `uint32` | `total_bytes` | Size of the whole payload |
-| 12 | 4 | `uint32` | `count` | Valid records |
-| 16 | 4 | `uint32` | `capacity` | Record and mask slots |
-| 20 | 4 | `uint32` | `mask_height` | Mask rows (original image height) |
-| 24 | 4 | `uint32` | `mask_width` | Mask columns (original image width) |
-| 28 | 4 | `uint32` | `records_offset` | `48` |
-| 32 | 4 | `uint32` | `record_stride` | `24` (`RawBox`) |
-| 36 | 4 | `uint32` | `masks_offset` | End of the records, rounded up to 16 bytes |
-| 40 | 4 | `uint32` | `mask_stride` | `mask_height × mask_width` |
-| 44 | 4 | `uint32` | `flags` | `0` |
-
-Records use the `RawBox` layout above. Each mask is `uint8`, 0 or 255. A malformed header or
-extent is rejected; records are returned even when their box is empty.
+the leading count. Its layout is
+[`SegmentationMasksHeaderV1`](/reference/cppapi/structs/simaai-neat-segmentationmasksheaderv1)
+in `pipeline/DetectionTypes.h`: the header, then `RawBox` records, then one `uint8` mask per
+record, 0 or 255. Read it with `decode_segmentation`, which returns the boxes and masks and rejects
+a malformed header or extent. The tensor keeps the `BBOX` tag, and `decode_segmentation` and
+`decode_bbox` recognize the payload by its magic, so existing segmentation payloads are unchanged.
+`SimaRender` does not accept it.
 
 ## When `model.run` returns raw heads
 

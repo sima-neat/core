@@ -185,7 +185,7 @@ pyneat.stages.preproc(
 
 These are the user-facing options to prefer in application code.
 
-### Resize and aspect ratio
+### Resize and aspect ratio {#resize-and-aspect-ratio}
 
 | Option | Meaning |
 | --- | --- |
@@ -198,12 +198,11 @@ These are the user-facing options to prefer in application code.
 
 `ResizeMode::Letterbox` preserves aspect ratio by scaling the image or ROI to fit the target and padding the remaining area. `ResizeMode::Stretch` scales width and height independently. `ResizeMode::Crop` center-crops after isotropic scaling.
 
-By default a letterbox splits the padding evenly on both sides, as YOLO models expect. Models trained with the image at the canvas origin, such as Segment Anything, need `LetterboxPlacement::TopLeft`: all padding goes to the right and bottom. For example, a 1280×720 frame on a 1024×1024 input becomes a 1024×576 image at the top with 448 padding rows below it. The shorter side is rounded to the nearest pixel, as Segment Anything rounds it: a 640×427 frame becomes 1024×683 with 341 padding rows. A centered letterbox rounds the shorter side up instead (684 rows for that frame). Placement requires an enabled letterbox resize; other resize modes, or a disabled resize, reject `TopLeft`.
+By default a letterbox splits the padding evenly on both sides, as YOLO models expect. Models trained with the image at the canvas origin, such as Segment Anything, need `LetterboxPlacement::TopLeft`: all padding goes to the right and bottom, and the shorter side is rounded to the nearest pixel, as Segment Anything rounds it. On a 1024×1024 input, a 640×427 frame becomes a 1024×683 image with 341 padding rows below it; a centered letterbox rounds up to 684 rows instead. Placement requires an enabled letterbox resize; other resize modes, or a disabled resize, reject `TopLeft`.
 
 ```python
 opt.preprocess.resize.enable = pyneat.AutoFlag.On
 opt.preprocess.resize.mode = pyneat.ResizeMode.Letterbox
-opt.preprocess.resize.pad_value = 116
 opt.preprocess.resize.placement = pyneat.LetterboxPlacement.TopLeft
 ```
 
