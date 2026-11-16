@@ -182,8 +182,9 @@ class RecordTitleTests(unittest.TestCase):
         )
         self.assertEqual(titles, {"en": "Configure the Palette SDK", "ko": "Palette SDK 구성"})
 
-    @unittest.skipUnless(MODULE.yaml is not None, "PyYAML is not installed")
     def test_frontmatter_title_follows_yaml_scalars(self) -> None:
+        # Fail rather than skip: without PyYAML the index silently falls back to a line match.
+        self.assertIsNotNone(MODULE.yaml, "PyYAML is required for YAML frontmatter titles (python3-yaml)")
         cases = {
             "folded": ("title: >-\n  Configure the\n  Palette SDK\n", "Configure the Palette SDK"),
             "comment": ("title: Configure SDK # draft name\n", "Configure SDK"),
