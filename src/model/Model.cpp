@@ -42,6 +42,7 @@
 #include "pipeline/runtime/RunCore.h"
 #include "pipeline/runtime/RunInternal.h"
 #include "pipeline/internal/contract/PluginCompiledContracts.h"
+#include "pipeline/internal/sima/BoxDecodeKernelRecipe.h"
 #include "pipeline/internal/sima/BoxDecodeStaticContractExtractor.h"
 #include "pipeline/internal/sima/BoxDecodeTypeUtils.h"
 #include "pipeline/internal/sima/MlaStaticContractExtractor.h"
@@ -76,6 +77,7 @@
 #include <optional>
 #include <sstream>
 #include <stdexcept>
+#include <type_traits>
 #include <string_view>
 #include <unordered_set>
 #include <utility>
@@ -2083,6 +2085,75 @@ std::vector<std::string> egress_names_from_contracts(const internal::SessionRout
     names.push_back("output");
   }
   return make_unique_endpoint_names(std::move(names), "ofm");
+}
+
+const char* tensor_dtype_token(TensorDType dtype) {
+  switch (dtype) {
+  case TensorDType::UInt8:
+    return "UINT8";
+  case TensorDType::Int8:
+    return "INT8";
+  case TensorDType::UInt16:
+    return "UINT16";
+  case TensorDType::Int16:
+    return "INT16";
+  case TensorDType::Int32:
+    return "INT32";
+  case TensorDType::BFloat16:
+    return "BF16";
+  case TensorDType::Float64:
+    return "FP64";
+  default:
+    return "FP32";
+  }
+}
+
+// The tensors a postprocess route publishes, as Model::output_specs() reports
+// them: route egress with its final dtype (FP32 when unset or after a terminal
+// BF16->FP32 cast) and its unique endpoint name in source_tensor_name.
+// The tensors a route returns, in order. Their names are graph endpoint tokens by
+// default; `published_names` keeps the tensor names the route publishes instead (for
+// example "cast_7/detections" rather than the token "cast_7_detections").
+std::vector<internal::EgressTensorContract>
+public_post_route_egress(const internal::SessionRoutePlan& route_plan,
+                         bool published_names = false) {
+  std::vector<internal::EgressTensorContract> contracts = route_plan.egress_contracts;
+  if (contracts.empty() && route_plan.egress_contract.valid)
+    contracts.push_back(route_plan.egress_contract);
+  auto names = egress_names_from_contracts(route_plan);
+  for (std::size_t i = 0; published_names && i < contracts.size() && i < names.size(); ++i)
+    if (!contracts[i].source_tensor_name.empty())
+      names[i] = contracts[i].source_tensor_name;
+  std::vector<internal::EgressTensorContract> out;
+  for (std::size_t i = 0; i < contracts.size(); ++i) {
+    auto contract = contracts[i];
+    if (!contract.valid || contract.logical_shape.empty())
+      continue;
+    contract.dtype = tensor_dtype_token(contract.dtype.empty() ? TensorDType::Float32
+                                                               : dtype_from_format(contract.dtype));
+    if (i < names.size())
+      contract.source_tensor_name = names[i];
+    out.push_back(std::move(contract));
+  }
+  if (route_plan.post_cast_bf16_to_fp32) {
+    std::vector<internal::EgressTensorContract> fp32;
+    for (const auto& contract : out)
+      if (contract.dtype == std::string("FP32"))
+        fp32.push_back(contract);
+    if (!fp32.empty())
+      return fp32;
+    for (auto& contract : out)
+      contract.dtype = "FP32";
+  }
+  return out;
+}
+
+TensorSpec tensor_spec_from_public_egress(const internal::EgressTensorContract& contract) {
+  TensorSpec spec;
+  spec.dtypes = {dtype_from_format(contract.dtype)};
+  spec.shape = contract.logical_shape;
+  spec.rank = static_cast<int>(spec.shape.size());
+  return spec;
 }
 
 std::vector<std::string> aggregate_egress_name_for_model_route(const std::string& model_id,
@@ -4191,6 +4262,28 @@ internal::PreprocessPlannerResult build_preprocess_plan(const std::string& tar_g
   if (route.ambiguous) {
     session_route_plan.diagnostics.push_back("route-ambiguous=" + route.ambiguity_reason);
   }
+  if (options.decode_type == BoxDecodeType::EdgeTamTrack && session_route_plan.boxdecode_selected) {
+    // EdgeTAM tracking: the raw outputs are exactly what the same Model returns without BoxDecode.
+    Model::Options raw = options;
+    raw.decode_type = BoxDecodeType::Unspecified;
+    raw.score_threshold = 0.0f;
+    raw.nms_iou_threshold = 0.0f;
+    raw.top_k = 0;
+    const internal::SessionRoutePlan raw_plan =
+        internal::build_route_plan(raw, model_semantics, &capability, &capability_pack);
+    if (raw_plan.boxdecode_selected || !raw_plan.include_post_stage ||
+        raw_plan.selected_post_kind == internal::PostRouteStageKind::BoxDecode)
+      throw std::runtime_error(
+          "BoxDecodeType::EdgeTamTrack: this model's route without BoxDecode does not return its "
+          "output tensors through a postprocess stage, so there are no raw outputs to return "
+          "next to the BoxDecode tensor; use EdgeTamSeg for the mask alone");
+    // Exactly what the same Model returns without BoxDecode, names included.
+    session_route_plan.boxdecode_raw_outputs =
+        public_post_route_egress(raw_plan, /*published_names=*/true);
+    if (session_route_plan.boxdecode_raw_outputs.empty())
+      throw std::runtime_error("BoxDecodeType::EdgeTamTrack: the route without BoxDecode "
+                               "declares no output tensors");
+  }
   plan.session_route_plan = session_route_plan;
   populate_effective_model_managed_contract_fields(&plan, capability_pack);
 
@@ -4428,12 +4521,28 @@ struct Model::Impl {
   mutable bool sync_ready = false;
   mutable InputKey sync_key{};
   mutable Runner sync_runner{};
+  // The original image size a fixed-size runner serves (see
+  // internal::fixed_boxdecode_original_size); unset for every other route.
+  mutable std::optional<std::pair<int, int>> sync_original_size;
 
   template <typename Inputs> auto run_sync(Model& model, const Inputs& inputs, int timeout_ms) {
     std::lock_guard<std::mutex> lock(sync_mu);
+    // A Segment Anything BoxDecode runner publishes masks of one original
+    // image size; another frame size gets its own runner.
+    std::optional<std::pair<int, int>> original_size;
+    if constexpr (std::is_same_v<Inputs, std::vector<Tensor>>)
+      original_size = internal::ModelAccess::fixed_boxdecode_original_size(model, inputs);
+    else if constexpr (std::is_same_v<Inputs, simaai::neat::Sample>)
+      original_size = internal::ModelAccess::fixed_boxdecode_original_size(
+          model, tensors_from_sample(inputs, false));
+    if (sync_ready && original_size && original_size != sync_original_size) {
+      sync_ready = false;
+      sync_runner = Runner{};
+    }
     if (!sync_ready) {
       sync_runner = model.build(inputs);
       sync_ready = true;
+      sync_original_size = original_size;
     }
     try {
       return sync_runner.run(inputs, timeout_ms);
@@ -5245,7 +5354,9 @@ void populate_model_managed_preproc_options(PreprocOptions* opt,
     switch (effective.resize.mode) {
     case ResizeMode::Letterbox:
       opt->aspect_ratio = true;
-      opt->padding_type = "CENTER";
+      // The frame adapter publishes the placed rectangle and its affine.
+      opt->padding_type =
+          effective.resize.placement == LetterboxPlacement::TopLeft ? "TOPLEFT" : "CENTER";
       break;
     case ResizeMode::Stretch:
       opt->aspect_ratio = false;
@@ -5283,6 +5394,20 @@ void populate_model_managed_preproc_options(PreprocOptions* opt,
     opt->q_scale.reset();
     opt->q_zp.reset();
   }
+}
+
+// The Model's top-left letterbox resizes as Segment Anything does, rounding the
+// shorter side to the nearest pixel. Centered letterboxes and the Preproc
+// node's own placements keep the legacy upward rounding.
+std::shared_ptr<const CompiledProcessCvuContract>
+project_model_managed_preproc(const internal::ModelPack& pack, const PreprocOptions& opt,
+                              const internal::PreprocessPlannerResult& plan) {
+  auto compiled = pack.project_model_managed_preproc_contract(opt);
+  const auto& resize = plan.resolved_plan.effective.resize;
+  compiled.payload.letterbox_nearest_extent = resize.enable == AutoFlag::On &&
+                                              resize.mode == ResizeMode::Letterbox &&
+                                              resize.placement == LetterboxPlacement::TopLeft;
+  return std::make_shared<const CompiledProcessCvuContract>(std::move(compiled));
 }
 
 PreprocOptions make_model_managed_preproc_options_base(const Model& model, bool sync) {
@@ -5343,8 +5468,7 @@ PreprocOptions make_preproc_options_from_typed_adapter(
   populate_model_managed_preproc_options(&opt, plan, input);
   const auto& selected_pack =
       sync ? internal::ModelAccess::pack_for_sync(model) : internal::ModelAccess::pack(model);
-  opt.compiled_contract = std::make_shared<const CompiledProcessCvuContract>(
-      selected_pack.project_model_managed_preproc_contract(opt));
+  opt.compiled_contract = project_model_managed_preproc(selected_pack, opt, plan);
   return opt;
 }
 
@@ -5779,7 +5903,10 @@ std::shared_ptr<Node> build_postprocess_node_from_region(
     const ResolvedPreprocessPlan resolved = model.resolved_preprocess_plan();
     int model_width = 0;
     int model_height = 0;
-    if (resolved.effective.resize.width > 0 && resolved.effective.resize.height > 0) {
+    if (pipeline_internal::sima::box_decode_type_is_sam(decode_type)) {
+      // The SAM canvas comes from the inputs' published preprocess facts,
+      // never the decoder's embedding input; BoxDecode admission derives it.
+    } else if (resolved.effective.resize.width > 0 && resolved.effective.resize.height > 0) {
       model_width = resolved.effective.resize.width;
       model_height = resolved.effective.resize.height;
     } else if (resolved.mla_contract.width > 0 && resolved.mla_contract.height > 0) {
@@ -6566,6 +6693,9 @@ nlohmann::ordered_json resize_spec_json(const ResizeSpec& spec) {
                              {"mode", model_options_enum_int(spec.mode)},
                              {"pad_value", spec.pad_value},
                              {"scaling_type", internal::resolve_resize_scaling_type(spec)}};
+  // Default placement keeps the established identity of centered letterboxes.
+  if (spec.placement != LetterboxPlacement::Center)
+    out["placement"] = model_options_enum_int(spec.placement);
   // A typed selection is explicit resize intent even when its token equals
   // the legacy default. Preserve that distinction in stage cache identity.
   if (spec.interpolation)
@@ -6729,6 +6859,9 @@ std::string model_options_json_for_graph_provenance(const Model::Options& opt) {
   if (execution.internal_queue_depth)
     advanced["internal_queue_depth"] = *execution.internal_queue_depth;
   out["advanced_execution"] = std::move(advanced);
+  // Added only when set, so existing stage identities are unchanged.
+  if (!opt.multimask_output)
+    out["multimask_output"] = false;
   return out.dump();
 }
 
@@ -6854,45 +6987,20 @@ std::vector<TensorSpec> Model::output_specs() const {
     spec.dtypes = {TensorDType::UInt8};
     spec.rank = -1;
     specs.push_back(std::move(spec));
+    // BoxDecodeType::EdgeTamTrack: the route's raw tensors follow the BoxDecode tensor.
+    for (const auto& raw : route_plan.boxdecode_raw_outputs)
+      specs.push_back(tensor_spec_from_public_egress(raw));
     return specs;
   }
 
   if (route_plan.include_post_stage) {
     // Route egress is already the selected postprocess contract. Describing it
     // must not render executable nodes or require an MLA artifact.
-    const auto append_egress = [&](const internal::EgressTensorContract& egress) {
-      TensorSpec spec;
-      if (populate_spec_from_route_contract(egress, &spec) && !spec.shape.empty()) {
-        if (spec.dtypes.empty()) {
-          spec.dtypes = {TensorDType::Float32};
-        }
-        specs.push_back(std::move(spec));
-      }
-    };
-    if (!route_plan.egress_contracts.empty()) {
-      for (const auto& egress : route_plan.egress_contracts) {
-        append_egress(egress);
-      }
-    } else {
-      append_egress(route_plan.egress_contract);
-    }
+    for (const auto& egress : public_post_route_egress(route_plan))
+      specs.push_back(tensor_spec_from_public_egress(egress));
     if (specs.empty()) {
       throw std::runtime_error("Model::output_specs: selected postprocess route requires explicit "
                                "MPK egress contracts.");
-    }
-    if (route_plan.post_cast_bf16_to_fp32) {
-      std::vector<TensorSpec> fp32_specs;
-      for (const auto& spec : specs) {
-        if (spec.dtypes.front() == TensorDType::Float32) {
-          fp32_specs.push_back(spec);
-        }
-      }
-      if (!fp32_specs.empty()) {
-        return fp32_specs;
-      }
-      for (auto& spec : specs) {
-        spec.dtypes = {TensorDType::Float32};
-      }
     }
     return specs;
   }
@@ -7912,11 +8020,27 @@ const std::string& ModelAccess::stage_cache_identity(const Model& model) {
   return model.impl_->stage_cache_identity;
 }
 
+std::optional<std::pair<int, int>>
+ModelAccess::fixed_boxdecode_original_size(const Model& model, const TensorList& inputs) {
+  const auto& impl = *model.impl_;
+  if (!impl.preprocess_plan.session_route_plan.boxdecode_selected ||
+      !pipeline_internal::sima::box_decode_type_is_sam(impl.options.decode_type))
+    return std::nullopt;
+  for (const auto& tensor : inputs)
+    if (tensor.semantic.preprocess && tensor.semantic.preprocess->original_width > 0 &&
+        tensor.semantic.preprocess->original_height > 0)
+      return std::pair{tensor.semantic.preprocess->original_width,
+                       tensor.semantic.preprocess->original_height};
+  return std::nullopt;
+}
+
 bool ModelAccess::stage_cache_has_dynamic_boxdecode_geometry(const Model& model) {
   const auto& impl = *model.impl_;
+  // SAM mask extents equal the original image: each frame size needs its own runner.
   return impl.preprocess_plan.session_route_plan.boxdecode_selected &&
          impl.options.decode_type != BoxDecodeType::Unspecified &&
-         impl.options.decode_type != BoxDecodeType::SuperPoint;
+         impl.options.decode_type != BoxDecodeType::SuperPoint &&
+         !pipeline_internal::sima::box_decode_type_is_sam(impl.options.decode_type);
 }
 
 std::string model_stage_options_cache_identity(const Model::Options& options) {
@@ -8060,8 +8184,7 @@ PreprocOptions ModelAccess::build_preprocess_stage_options(const Model& model, b
   PreprocOptions opt = make_model_managed_preproc_options_base(model, sync);
   populate_model_managed_preproc_options(&opt, model.impl_->preprocess_plan, nullptr);
   const auto& pack = sync ? model.impl_->pack_for_sync() : model.impl_->pack;
-  opt.compiled_contract = std::make_shared<const CompiledProcessCvuContract>(
-      pack.project_model_managed_preproc_contract(opt));
+  opt.compiled_contract = project_model_managed_preproc(pack, opt, model.impl_->preprocess_plan);
   return opt;
 }
 
@@ -8172,6 +8295,64 @@ DetessDequantOptions ModelAccess::build_detessdequant_stage_options(const Model&
   return opt;
 }
 
+namespace {
+// BoxDecodeType::EdgeTamTrack: the route without BoxDecode publishes one tensor per BoxDecode
+// input, in input order; the BoxDecode stage publishes the same tensors after its own.
+CompiledBoxDecodeContract with_boxdecode_raw_outputs(CompiledBoxDecodeContract compiled,
+                                                     const internal::SessionRoutePlan& route_plan) {
+  const auto& raw = route_plan.boxdecode_raw_outputs;
+  if (raw.empty())
+    return compiled;
+  const auto inputs = compiled.runtime_contract.logical_inputs.size();
+  if (raw.size() != inputs)
+    throw std::runtime_error("BoxDecodeType::EdgeTamTrack: the route without BoxDecode returns " +
+                             std::to_string(raw.size()) + " tensors, but BoxDecode reads " +
+                             std::to_string(inputs) + "; they must correspond one to one");
+  compiled.payload.raw_outputs.clear();
+  for (const auto& contract : raw)
+    compiled.payload.raw_outputs.push_back(
+        {contract.source_tensor_name, contract.dtype, contract.logical_shape});
+  return compiled;
+}
+
+// Options::multimask_output belongs to the Segment Anything decode types; any
+// other decode type rejects a non-default value, as pose_classes does. The
+// mapping is checked here so a wrong combination fails before Kernels.
+void apply_model_sam_options(pipeline_internal::sima::BoxDecodeStagePayload* payload,
+                             const Model::Options& options, const char* context) {
+  using pipeline_internal::sima::box_decode_type_is_sam;
+  if (!box_decode_type_is_sam(payload->decode_type)) {
+    if (!options.multimask_output)
+      throw std::invalid_argument(
+          std::string(context) +
+          ": multimask_output applies only to the Segment Anything decode types (mobilesam, "
+          "edgetam-seg, edgetam-track, efficientsam, efficientsam3), but decode_type=" +
+          pipeline_internal::sima::box_decode_type_token_string(payload->decode_type));
+    return;
+  }
+  payload->multimask_output = options.multimask_output;
+  const auto& roles = payload->tensor_roles;
+  if (std::find(roles.begin(), roles.end(),
+                pipeline_internal::sima::BoxDecodeTensorRole::SamConceptDetections) !=
+      roles.end()) {
+    if (!options.multimask_output)
+      throw std::invalid_argument(std::string(context) +
+                                  ": EfficientSAM3 concept detection has no multimask choice; "
+                                  "leave multimask_output true");
+    return;
+  }
+  (void)pipeline_internal::sima::resolve_sam_mask_selection(
+      payload->decode_type, payload->num_classes, options.multimask_output);
+}
+
+CompiledBoxDecodeContract finish_model_boxdecode_contract(CompiledBoxDecodeContract compiled,
+                                                          const Model::Options& options,
+                                                          const internal::SessionRoutePlan& plan) {
+  apply_model_sam_options(&compiled.payload, options, "Model-managed boxdecode stage");
+  return with_boxdecode_raw_outputs(std::move(compiled), plan);
+}
+} // namespace
+
 CompiledBoxDecodeContract ModelAccess::build_boxdecode_stage_contract(const Model& model,
                                                                       bool sync) {
   require_model_managed_stage(model, StageNodeKind::BoxDecode, "SimaBoxDecode(Model)");
@@ -8217,7 +8398,8 @@ CompiledBoxDecodeContract ModelAccess::build_boxdecode_stage_contract(const Mode
               compiled->payload.decode_type, opt.yolox_seg_pose.pose_classes,
               compiled->payload.num_classes, "Model-managed boxdecode stage");
     }
-    return *compiled;
+    return finish_model_boxdecode_contract(std::move(*compiled), opt,
+                                           model.impl_->preprocess_plan.session_route_plan);
   }
 
   if (!pipeline_internal::sima::is_box_decode_type_specified(opt.decode_type)) {
@@ -8240,7 +8422,7 @@ CompiledBoxDecodeContract ModelAccess::build_boxdecode_stage_contract(const Mode
   std::string exact_route_error;
   auto exact_route_flags =
       pipeline_internal::sima::resolve_model_managed_boxdecode_route_flags_from_mpk(
-          *mpk, nullptr, &exact_route_error);
+          *mpk, nullptr, &exact_route_error, opt.decode_type);
   if (!exact_route_flags.has_value()) {
     throw std::runtime_error(
         "Model-managed external boxdecode route facts could not be derived from exact MPK "
@@ -8254,7 +8436,8 @@ CompiledBoxDecodeContract ModelAccess::build_boxdecode_stage_contract(const Mode
   std::string contract_error;
   auto contract = pipeline_internal::sima::build_boxdecode_static_contract_from_mpk(
       *mpk, *route_flags, nullptr, &contract_error,
-      (opt.decode_type == BoxDecodeType::Detr || opt.decode_type == BoxDecodeType::DetrFocal)
+      (opt.decode_type == BoxDecodeType::Detr || opt.decode_type == BoxDecodeType::DetrFocal ||
+       pipeline_internal::sima::box_decode_type_is_sam(opt.decode_type))
           ? opt.decode_type
           : BoxDecodeType::Unspecified);
   if (!contract.has_value()) {
@@ -8317,7 +8500,9 @@ CompiledBoxDecodeContract ModelAccess::build_boxdecode_stage_contract(const Mode
     pipeline_internal::sima::stagesemantics::resolve_grouped_yolo_dfl_score_domain(&finalized);
   }
 
-  return pipeline_internal::sima::stagesemantics::build_boxdecode_compiled_contract(finalized);
+  return finish_model_boxdecode_contract(
+      pipeline_internal::sima::stagesemantics::build_boxdecode_compiled_contract(finalized), opt,
+      model.impl_->preprocess_plan.session_route_plan);
 }
 
 void ModelAccess::configure_session_input_route(simaai::neat::Graph& session, const Model& model,

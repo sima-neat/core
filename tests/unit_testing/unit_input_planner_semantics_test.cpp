@@ -3,6 +3,7 @@
 #include "test_main.h"
 #include "test_utils.h"
 
+#include <array>
 #include <functional>
 #include <utility>
 #include <string>
@@ -12,6 +13,7 @@ namespace {
 
 using simaai::neat::AutoFlag;
 using simaai::neat::InputKind;
+using simaai::neat::LetterboxPlacement;
 using simaai::neat::Model;
 using simaai::neat::NormalizePreset;
 using simaai::neat::PreprocessGraphFamily;
@@ -241,6 +243,73 @@ RUN_TEST(
                 "source divisor sign was changed");
       }
 
+      // Letterbox placement is resize intent of a letterbox only. Center keeps
+      // the established default; TopLeft survives planning and transforms.
+      {
+        static_assert(static_cast<int>(LetterboxPlacement::Center) == 0);
+        static_assert(static_cast<int>(LetterboxPlacement::TopLeft) == 1);
+        Model::Options defaults;
+        require(defaults.preprocess.resize.placement == LetterboxPlacement::Center,
+                "letterbox placement default changed");
+        Model::Options top_left;
+        top_left.preprocess.kind = InputKind::Image;
+        top_left.preprocess.resize.enable = AutoFlag::On;
+        top_left.preprocess.resize.mode = ResizeMode::Letterbox;
+        top_left.preprocess.resize.pad_value = 116;
+        top_left.preprocess.resize.placement = LetterboxPlacement::TopLeft;
+        const auto planned = plan_preprocess(top_left, caps);
+        require(planned.resolved_plan.effective.resize.placement == LetterboxPlacement::TopLeft &&
+                    planned.resolved_plan.effective.resize.mode == ResizeMode::Letterbox &&
+                    planned.resolved_plan.effective.resize.pad_value == 116 &&
+                    planned.resolved_plan.effective.resize.enable == AutoFlag::On &&
+                    planned.resolved_plan.graph_family == PreprocessGraphFamily::Preproc,
+                "TopLeft letterbox was not retained by planning");
+        Model::Options preset = top_left;
+        preset.preprocess.resize.mode = ResizeMode::Stretch;
+        preset.preprocess.preset = NormalizePreset::COCO_YOLO;
+        require(plan_preprocess(preset, caps).resolved_plan.effective.resize.placement ==
+                    LetterboxPlacement::TopLeft,
+                "the COCO_YOLO letterbox preset must keep an explicit placement");
+        Model::Options transformed;
+        Transform letterbox;
+        letterbox.type = TransformType::Resize;
+        letterbox.resize = top_left.preprocess.resize;
+        transformed.preprocess.transforms.push_back(letterbox);
+        require(plan_preprocess(transformed, caps).resolved_plan.effective.resize.placement ==
+                    LetterboxPlacement::TopLeft,
+                "a Resize transform must carry its letterbox placement");
+        for (int fault = 0; fault < 6; ++fault) {
+          auto bad = top_left;
+          const char* needle = "requires ResizeMode.Letterbox";
+          if (fault == 0) {
+            bad.preprocess.resize.mode = ResizeMode::Stretch;
+          } else if (fault == 1) {
+            bad.preprocess.resize.mode = ResizeMode::Crop;
+          } else if (fault == 2) {
+            bad.preprocess.resize.placement = static_cast<LetterboxPlacement>(7);
+            needle = "placement is invalid";
+          } else if (fault == 3) {
+            bad.preprocess.resize.enable = AutoFlag::Off;
+            needle = "enabled letterbox resize";
+          } else if (fault == 4) {
+            bad.preprocess.resize.enable = AutoFlag::Auto;
+            needle = "enabled letterbox resize";
+          } else {
+            bad.preprocess.transforms = transformed.preprocess.transforms;
+            bad.preprocess.transforms.front().resize.mode = ResizeMode::Stretch;
+          }
+          require_throws_contains([&] { (void)plan_preprocess(bad, caps); }, needle,
+                                  "invalid letterbox placement was silently ignored");
+        }
+        auto mixed = transformed;
+        mixed.preprocess.resize.placement = LetterboxPlacement::TopLeft;
+        mixed.preprocess.transforms.front().resize.placement = LetterboxPlacement::Center;
+        const auto mixed_plan = plan_preprocess(mixed, caps);
+        require(mixed_plan.resolved_plan.effective.resize.placement == LetterboxPlacement::Center &&
+                    has_warning(mixed_plan, "using transforms"),
+                "transforms must own placement and warn about the ignored simple field");
+      }
+
       // transforms + simple flags => warn + transforms override.
       {
         Model::Options opt;
@@ -306,6 +375,24 @@ RUN_TEST(
                     out.resolved_plan.effective.normalize.stddev[1] == 1.0f &&
                     out.resolved_plan.effective.normalize.stddev[2] == 1.0f,
                 "planner: COCO_YOLO stddev must default to 1");
+      }
+
+      // The EfficientSAM3 encoder recipe in the BoxDecode reference: statistics alone leave
+      // normalization Auto, which resolves off without a preset; enable=On applies them.
+      {
+        Model::Options opt;
+        opt.preprocess.kind = InputKind::Image;
+        opt.preprocess.normalize.mean = {0.5f, 0.5f, 0.5f};
+        opt.preprocess.normalize.stddev = {0.5f, 0.5f, 0.5f};
+        require(plan_preprocess(opt, caps).resolved_plan.effective.normalize.enable != AutoFlag::On,
+                "planner: statistics without normalize.enable must not enable normalize");
+        opt.preprocess.normalize.enable = AutoFlag::On;
+        const auto out = plan_preprocess(opt, caps);
+        const auto& normalize = out.resolved_plan.effective.normalize;
+        require(normalize.enable == AutoFlag::On &&
+                    normalize.mean == std::array{0.5f, 0.5f, 0.5f} &&
+                    normalize.stddev == std::array{0.5f, 0.5f, 0.5f},
+                "planner: EfficientSAM3 normalize.enable=On must apply mean and stddev 0.5");
       }
 
       // Tensor auto-family should lower tensor ingress to QuantTess when available.
