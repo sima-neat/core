@@ -85,26 +85,6 @@ opt.top_k = 100;
 
 Axis-aligned detection-display graphs can feed the result to `SimaRender`. Use `decode_bbox(...)` only for the existing box-leading formats; neither it nor `SimaRender` accepts oriented boxes.
 
-## Raw outputs next to the decoded result {#raw-outputs}
-
-Set `Model::Options::boxdecode_raw_outputs` (Python: `ModelOptions.boxdecode_raw_outputs`) when an
-application needs the decoded result and the model's raw tensors from the same inference run.
-The route then returns the BoxDecode tensor first, followed by every model output in MPK order,
-exactly as the same Model returns them without BoxDecode: the same names, dtypes and shapes.
-`Model::output_specs()`, `Model::run`, runners and `pull` all report the same list.
-
-- The default is `false`: one BoxDecode tensor, with no extra output or cost. Existing
-  BoxDecode routes are unchanged.
-- With the option, each raw output costs one conversion per frame inside the BoxDecode stage
-  (for example BF16 to FP32, or a dequantization). The stage reads each model output once for
-  the decode and once for its raw copy; the returned tensors are owned by the result.
-- Model outputs that no BoxDecode head reads, such as EdgeTAM's object pointers, are returned
-  only with this option.
-- Decode only the first tensor, for example `pyneat.decode_segmentation(outputs[:1])`. The raw
-  tensors carry no detection tag.
-- The option is ignored when the route has no BoxDecode, and rejected when the model's route
-  without BoxDecode has no postprocess stage to return the tensors from.
-
 ## Letterbox placement {#letterbox-placement}
 
 BoxDecode profiles map letterboxed detections with a centered rule. A non-centered letterbox, such as `LetterboxPlacement::TopLeft` in Model preprocessing, is detected from the pads published in `tensor.semantic.preprocess`, or from the upstream `Preproc` policy before the first frame. Detection profiles then map boxes with each frame's actual model-to-original affine: the YOLO detection families, decoded YOLO, EfficientDet, DETR, DetrFocal, CenterNet and SSD. Pose, segmentation and RCNN proposal profiles reject a non-centered letterbox instead of returning shifted results. Opposite pads that differ by one pixel are centering remainder; centered letterboxes keep their existing mapping. The Segment Anything types instead require a top-left letterbox or a stretch; see [Segment Anything masks](#segment-anything-masks).
@@ -176,13 +156,13 @@ detections, each with its own mask.
 | Model | `decode_type` (token) | Preprocess of the Model that sees the image | Decoder options |
 | --- | --- | --- | --- |
 | MobileSAM | `MobileSam` (`mobilesam`) | Encoder: `resize.mode=Letterbox`, `resize.placement=TopLeft`, 1024×1024, `pad_value=116`; `preset=ImageNet` | `multimask_output` |
-| EdgeTAM | `EdgeTam` (`edgetam`) | Image encoder: `resize.mode=Stretch`, 1024×1024, no padding; `preset=ImageNet` | `multimask_output`; `boxdecode_raw_outputs` for tracking |
+| EdgeTAM | `EdgeTamSeg` (`edgetam-seg`) for the mask; `EdgeTamTrack` (`edgetam-track`) for tracking | Image encoder: `resize.mode=Stretch`, 1024×1024, no padding; `preset=ImageNet` | `multimask_output` |
 | EfficientSAM-T / -S | `EfficientSam` (`efficientsam`) | Encoder: `resize.mode=Stretch`, 1024×1024, no padding; no preset, `normalize.enable=On` (values 0–1; the encoder normalizes itself) | Leave `multimask_output` true |
 | EfficientSAM3 interactive | `EfficientSam3` (`efficientsam3`) | Image encoder: `resize.mode=Stretch`, 1008×1008, no padding; `normalize.enable=On` with `normalize.mean` and `normalize.stddev` (0.5, 0.5, 0.5) | `multimask_output` |
 | EfficientSAM3 concept | `EfficientSam3` (`efficientsam3`) | The concept image model itself, on the tensor route: the application stretches the image to 1008×1008, scales it to [−1, 1] and attaches `semantic.preprocess` with `resize_mode="stretch"` | `top_k`, `score_threshold` |
 
-Python uses the same names: `pyneat.BoxDecodeType.MobileSam`, `EdgeTam`, `EfficientSam` and
-`EfficientSam3`. MobileSAM pads with zeros after normalizing, which is the ImageNet mean pixel
+Python uses the same names: `pyneat.BoxDecodeType.MobileSam`, `EdgeTamSeg`, `EdgeTamTrack`,
+`EfficientSam` and `EfficientSam3`. MobileSAM pads with zeros after normalizing, which is the ImageNet mean pixel
 (124, 116, 104); `pad_value=116` approximates it. Masks never cover the padding. An
 EfficientSAM3 Model is a concept image model when its outputs are detections `[Q, 6]` and mask
 logits with Q channels, and a prompt decoder otherwise.
@@ -194,9 +174,9 @@ logits with Q channels, and a prompt decoder otherwise.
 | `decode_type` | `multimask_output=true` (default) | `multimask_output=false` |
 | --- | --- | --- |
 | `MobileSam` | Best predicted IoU of masks 1–3 | Mask 0 |
-| `EdgeTam` | Best predicted IoU of masks 1–3 | Mask 0 when it is stable, otherwise the best of masks 1–3 |
+| `EdgeTamSeg`, `EdgeTamTrack` | Best predicted IoU of masks 1–3 | Mask 0 when it is stable, otherwise the best of masks 1–3 |
 | `EfficientSam` | Best predicted IoU of masks 0–2 | Rejected: EfficientSAM exports no single-mask token |
-| `EfficientSam3` prompt decoder | Best predicted IoU of masks 1–3 of four, or 0–2 of three | Four masks: as `EdgeTam`. Three masks: rejected |
+| `EfficientSam3` prompt decoder | Best predicted IoU of masks 1–3 of four, or 0–2 of three | Four masks: as EdgeTAM. Three masks: rejected |
 | `EfficientSam3` concept | Up to `top_k` queries above `score_threshold` | Rejected: concept detection has no multimask choice |
 
 - Mask 0 is stable, as in SAM2, when at least 98% of its logits above −0.05 are also above 0.05.
@@ -221,8 +201,8 @@ The BoxDecode tensor uses the [versioned masks payload](#versioned-masks-payload
   and class. EdgeTAM's object score of 0 or below empties the mask, as upstream. A concept model
   returns the kept queries in descending score order (ties by query index).
 
-With `boxdecode_raw_outputs`, the decoder's own outputs follow the BoxDecode tensor; see
-[Raw outputs next to the decoded result](#raw-outputs).
+`EdgeTamSeg` and every other Segment Anything type return the BoxDecode tensor alone. With
+`EdgeTamTrack`, the decoder's own outputs follow it; see [EdgeTAM tracking](#edgetam-tracking).
 
 ### Rules {#segment-anything-rules}
 
@@ -282,10 +262,20 @@ mask = result.masks.to_numpy()[0]  # uint8 [H, W], 0 or 255
 ### EdgeTAM tracking {#edgetam-tracking}
 
 EdgeTAM's memory encoder and memory bank need two decoder outputs that BoxDecode does not
-publish: an object pointer and the chosen mask's low-resolution logits. Set
-`boxdecode_raw_outputs` on the mask decoder Model to get them from the same run. The outputs are
-then the BoxDecode tensor, `mask_logits` `[1, 256, 256, 4]`, `iou_scores` `[1, 4]`,
+decode: an object pointer and the chosen mask's low-resolution logits. Set
+`decode_type = EdgeTamTrack` on the mask decoder Model to get them from the same run; use
+`EdgeTamSeg` when only the mask is needed. `EdgeTamTrack` returns the BoxDecode tensor first,
+then every decoder output in MPK order, exactly as the same Model returns them without BoxDecode
+(the same names, dtypes and shapes): `mask_logits` `[1, 256, 256, 4]`, `iou_scores` `[1, 4]`,
 `object_score_logits` `[1, 1]` and `object_pointers` `[1, 4, 256]`, all float32.
+`Model::output_specs()`, `Model::run`, runners and `pull` all report the same list.
+
+- Each raw output costs one conversion per frame inside the BoxDecode stage (BF16 to FP32, or a
+  dequantization). The returned tensors are owned by the result.
+- Decode only the first tensor, for example `pyneat.decode_segmentation(outputs[:1])`. The raw
+  tensors carry no detection tag.
+- `EdgeTamTrack` is rejected when the model's route without BoxDecode has no postprocess stage to
+  return the tensors from.
 
 - The detection's class is the chosen plane: take `mask_logits[0, :, :, class]` for the memory
   encoder, upsampled to 1024×1024 as the model's README describes.
@@ -304,8 +294,7 @@ encoder_options.preprocess.preset = pyneat.NormalizePreset.ImageNet
 encoder = pyneat.Model("/path/to/edgetam_image_encoder_mpk.tar.gz", encoder_options)
 
 options = pyneat.ModelOptions()
-options.decode_type = pyneat.BoxDecodeType.EdgeTam
-options.boxdecode_raw_outputs = True
+options.decode_type = pyneat.BoxDecodeType.EdgeTamTrack
 decoder = pyneat.Model("/path/to/edgetam_mask_decoder_mpk.tar.gz", options)
 
 outputs = decoder.run(decoder_inputs)  # conditioned embeddings, high-res features, prompt
@@ -684,7 +673,8 @@ feeds the same control.
 | `BoxDecodeType::SuperPoint` | `superpoint` | SuperPoint detector and descriptor postprocessing |
 | `BoxDecodeType::Detr` | `detr` | DETR-style transformer detection |
 | `BoxDecodeType::MobileSam` | `mobilesam` | MobileSAM prompt decoder (top-left letterbox) |
-| `BoxDecodeType::EdgeTam` | `edgetam` | EdgeTAM mask decoder, with its object score (stretch) |
+| `BoxDecodeType::EdgeTamSeg` | `edgetam-seg` | EdgeTAM mask decoder, with its object score (stretch) |
+| `BoxDecodeType::EdgeTamTrack` | `edgetam-track` | `EdgeTamSeg`, then the decoder's raw outputs for tracking |
 | `BoxDecodeType::EfficientSam` | `efficientsam` | EfficientSAM prompt decoder, three multimask tokens (stretch) |
 | `BoxDecodeType::EfficientSam3` | `efficientsam3` | EfficientSAM3 prompt decoder, or concept image model with one mask per kept query (stretch) |
 | `BoxDecodeType::EffDet` | `effdet` | EfficientDet detection |
@@ -808,7 +798,7 @@ masks = seg.masks.to_numpy()
 
 ## Upgrading
 
-The earlier BoxDecode options introduced ABI 6. The current source-arithmetic options require ABI 10 (`libsima_neat.so.10`). Rebuild C++ applications, plugins and Python bindings with matching headers and libraries. Do not load ABI 5–9 binaries through compatibility symlinks.
+The earlier BoxDecode options introduced ABI 6. The current source-arithmetic options require ABI 7 (`libsima_neat.so.7`). Rebuild C++ applications, plugins and Python bindings with matching headers and libraries. Do not load ABI 5 or 6 binaries through compatibility symlinks.
 
 
 ### Combined YOLOX input admission

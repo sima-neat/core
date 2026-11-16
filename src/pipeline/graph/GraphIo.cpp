@@ -1167,8 +1167,6 @@ void write_model_options_json(std::ostream& oss, const Model::Options& opt) {
   write_prepared_runner_options_json(oss, opt.prepared_runner);
   oss << ",\"async_queue_depth\":" << opt.async_queue_depth;
   // Written only when set, so existing graphs keep their established text.
-  if (opt.boxdecode_raw_outputs)
-    oss << ",\"boxdecode_raw_outputs\":true";
   if (!opt.multimask_output)
     oss << ",\"multimask_output\":false";
   oss << "}";
@@ -1231,11 +1229,6 @@ Model::Options parse_model_options_json(const JsonValue::JsonObject& obj) {
   if (const JsonValue* v = object_field(obj, "boxdecode_resize_mode");
       v && v->type == JsonValue::Type::Number) {
     opt.boxdecode_resize_mode = static_cast<ResizeMode>(static_cast<int>(v->num));
-  }
-  if (const JsonValue* v = object_field(obj, "boxdecode_raw_outputs")) {
-    if (v->type != JsonValue::Type::Bool)
-      throw std::invalid_argument("model_options.boxdecode_raw_outputs must be a boolean");
-    opt.boxdecode_raw_outputs = v->b;
   }
   if (const JsonValue* v = object_field(obj, "multimask_output")) {
     if (v->type != JsonValue::Type::Bool)

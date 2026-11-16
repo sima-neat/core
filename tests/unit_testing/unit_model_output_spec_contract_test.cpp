@@ -55,10 +55,10 @@ RUN_TEST(
       using namespace simaai::neat;
 
       {
-        // Options::boxdecode_raw_outputs: an EdgeTAM decoder returns the BoxDecode
-        // tensor, then exactly the tensors the same Model returns without BoxDecode.
+        // BoxDecodeType::EdgeTamTrack: an EdgeTAM decoder returns the BoxDecode tensor, then
+        // exactly the tensors the same Model returns without BoxDecode; EdgeTamSeg the mask alone.
         const auto fixture =
-            admissible_fixture("edgetam_boxdecode_raw_outputs", "etc/edgetam_mask_decoder_mpk.json",
+            admissible_fixture("edgetam_track_raw_outputs", "etc/edgetam_mask_decoder_mpk.json",
                                sam_test::edgetam_decoder_mpk());
         Model raw_model(fixture.tar_path);
         const auto raw = raw_model.output_specs();
@@ -73,16 +73,16 @@ RUN_TEST(
                   "EdgeTAM raw output " + std::to_string(i) + " is " +
                       shape_to_string(raw[i].shape));
         Model::Options options;
-        options.decode_type = BoxDecodeType::EdgeTam;
+        options.decode_type = BoxDecodeType::EdgeTamSeg;
         Model decoded(fixture.tar_path, options);
         require(decoded.output_specs().size() == 1U,
-                "BoxDecode without raw outputs must keep one output");
-        options.boxdecode_raw_outputs = true;
+                "EdgeTamSeg must return the BoxDecode tensor alone");
+        options.decode_type = BoxDecodeType::EdgeTamTrack;
         Model both(fixture.tar_path, options);
         const auto specs = both.output_specs();
         require(specs.size() == 1U + raw.size() &&
                     specs.front().dtypes == std::vector<TensorDType>{TensorDType::UInt8},
-                "BoxDecode with raw outputs must return the BoxDecode tensor first");
+                "EdgeTamTrack must return the BoxDecode tensor first, then the raw outputs");
         for (std::size_t i = 0; i < raw.size(); ++i)
           require(specs[1 + i].dtypes == raw[i].dtypes && specs[1 + i].shape == raw[i].shape,
                   "raw output " + std::to_string(i) + " differs from the route without BoxDecode");
@@ -103,7 +103,7 @@ RUN_TEST(
                       names[i] + "' (or lost its dtype or shape)");
         require(internal::ModelAccess::build_boxdecode_stage_contract(decoded, false)
                     .payload.raw_outputs.empty(),
-                "the default BoxDecode stage must publish no raw outputs");
+                "the EdgeTamSeg BoxDecode stage must publish no raw outputs");
       }
 
       {
@@ -114,7 +114,7 @@ RUN_TEST(
             admissible_fixture("edgetam_run_original_size", "etc/edgetam_mask_decoder_mpk.json",
                                sam_test::edgetam_decoder_mpk());
         Model::Options options;
-        options.decode_type = BoxDecodeType::EdgeTam;
+        options.decode_type = BoxDecodeType::EdgeTamSeg;
         Model decoder(fixture.tar_path, options);
         Model raw(fixture.tar_path);
         const auto inputs = [](int width, int height) {
@@ -152,7 +152,9 @@ RUN_TEST(
         };
         const Choice choices[] = {
             {"mobilesam", sam_test::kMobileSamDecoderMpk, BoxDecodeType::MobileSam, false, nullptr},
-            {"edgetam", sam_test::edgetam_decoder_mpk(), BoxDecodeType::EdgeTam, false, nullptr},
+            {"edgetam", sam_test::edgetam_decoder_mpk(), BoxDecodeType::EdgeTamSeg, false, nullptr},
+            {"edgetam", sam_test::edgetam_decoder_mpk(), BoxDecodeType::EdgeTamTrack, false,
+             nullptr},
             {"efficientsam", sam_test::efficientsam_decoder_mpk(), BoxDecodeType::EfficientSam,
              true, nullptr},
             {"efficientsam", sam_test::efficientsam_decoder_mpk(), BoxDecodeType::EfficientSam,

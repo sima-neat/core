@@ -545,8 +545,10 @@ void sam_mask_selection_contract() {
   };
   const Selection selections[] = {{BoxDecodeType::MobileSam, 4, true, "best_iou", 1, 3},
                                   {BoxDecodeType::MobileSam, 4, false, "fixed", 0, 1},
-                                  {BoxDecodeType::EdgeTam, 4, true, "best_iou", 1, 3},
-                                  {BoxDecodeType::EdgeTam, 4, false, "stability", 1, 3},
+                                  {BoxDecodeType::EdgeTamSeg, 4, true, "best_iou", 1, 3},
+                                  {BoxDecodeType::EdgeTamSeg, 4, false, "stability", 1, 3},
+                                  {BoxDecodeType::EdgeTamTrack, 4, true, "best_iou", 1, 3},
+                                  {BoxDecodeType::EdgeTamTrack, 4, false, "stability", 1, 3},
                                   {BoxDecodeType::EfficientSam, 3, true, "best_iou", 0, 3},
                                   {BoxDecodeType::EfficientSam3, 4, true, "best_iou", 1, 3},
                                   {BoxDecodeType::EfficientSam3, 4, false, "stability", 1, 3},
@@ -557,8 +559,9 @@ void sam_mask_selection_contract() {
             "multimask_output maps to another mask selection");
   }
   // A single-mask export has only its answer, whatever the option says.
-  for (auto type : {BoxDecodeType::MobileSam, BoxDecodeType::EdgeTam, BoxDecodeType::EfficientSam,
-                    BoxDecodeType::EfficientSam3})
+  for (auto type :
+       {BoxDecodeType::MobileSam, BoxDecodeType::EdgeTamSeg, BoxDecodeType::EdgeTamTrack,
+        BoxDecodeType::EfficientSam, BoxDecodeType::EfficientSam3})
     for (bool multimask : {true, false}) {
       const auto choice = resolve_sam_mask_selection(type, 1, multimask);
       require(choice.mode == std::string_view("fixed") && choice.first == 0 && choice.count == 1,
@@ -576,7 +579,9 @@ void sam_mask_selection_contract() {
        "EfficientSAM3 decoder with three mask channels exports no single-mask token"},
       {BoxDecodeType::MobileSam, 3, true,
        "MobileSAM decoders export 1 or 4 mask channels; this one has 3"},
-      {BoxDecodeType::EdgeTam, 3, true,
+      {BoxDecodeType::EdgeTamSeg, 3, true,
+       "EdgeTAM decoders export 1 or 4 mask channels; this one has 3"},
+      {BoxDecodeType::EdgeTamTrack, 3, true,
        "EdgeTAM decoders export 1 or 4 mask channels; this one has 3"},
       {BoxDecodeType::EfficientSam, 4, true,
        "EfficientSAM decoders export 1 or 3 mask channels; this one has 4"},
@@ -595,9 +600,10 @@ void sam_mask_selection_contract() {
 }
 void sam_core_contract() {
   static_assert(static_cast<int>(BoxDecodeType::MobileSam) == 28);
-  static_assert(static_cast<int>(BoxDecodeType::EdgeTam) == 29);
+  static_assert(static_cast<int>(BoxDecodeType::EdgeTamSeg) == 29);
   static_assert(static_cast<int>(BoxDecodeType::EfficientSam) == 30);
   static_assert(static_cast<int>(BoxDecodeType::EfficientSam3) == 31);
+  static_assert(static_cast<int>(BoxDecodeType::EdgeTamTrack) == 32);
   struct Token {
     BoxDecodeType type;
     const char* token;
@@ -605,14 +611,16 @@ void sam_core_contract() {
     const char* model;
     ResizeMode resize;
   };
-  for (const auto& c :
-       {Token{BoxDecodeType::MobileSam, "mobilesam", "Mobile-SAM", "MobileSAM",
-              ResizeMode::Letterbox},
-        Token{BoxDecodeType::EdgeTam, "edgetam", "edge-tam", "EdgeTAM", ResizeMode::Stretch},
-        Token{BoxDecodeType::EfficientSam, "efficientsam", "efficient-sam", "EfficientSAM",
-              ResizeMode::Stretch},
-        Token{BoxDecodeType::EfficientSam3, "efficientsam3", "Efficient-SAM3", "EfficientSAM3",
-              ResizeMode::Stretch}}) {
+  for (const auto& c : {Token{BoxDecodeType::MobileSam, "mobilesam", "Mobile-SAM", "MobileSAM",
+                              ResizeMode::Letterbox},
+                        Token{BoxDecodeType::EdgeTamSeg, "edgetam-seg", "EdgeTAM_Seg", "EdgeTAM",
+                              ResizeMode::Stretch},
+                        Token{BoxDecodeType::EdgeTamTrack, "edgetam-track", "EdgeTAM_Track",
+                              "EdgeTAM", ResizeMode::Stretch},
+                        Token{BoxDecodeType::EfficientSam, "efficientsam", "efficient-sam",
+                              "EfficientSAM", ResizeMode::Stretch},
+                        Token{BoxDecodeType::EfficientSam3, "efficientsam3", "Efficient-SAM3",
+                              "EfficientSAM3", ResizeMode::Stretch}}) {
     require(parse_box_decode_type_token(c.token) == c.type &&
                 parse_box_decode_type_token(c.alias) == c.type &&
                 std::string(box_decode_type_token(c.type)) == c.token &&
@@ -652,7 +660,7 @@ void sam_core_contract() {
       s.payload.tensor_roles = {BoxDecodeTensorRole::SamMaskLogits,
                                 BoxDecodeTensorRole::SamMaskLogits};
     else if (fault == 4) {
-      s = sam_mask_source(BoxDecodeType::EdgeTam, "BF16", "BF16", 4, true);
+      s = sam_mask_source(BoxDecodeType::EdgeTamTrack, "BF16", "BF16", 4, true);
       s.payload.tensor_roles[3] = BoxDecodeTensorRole::SamObjectScore; // Two object scores.
       g = stretch;
       message = "EdgeTAM tensor roles are incomplete";
@@ -684,7 +692,7 @@ void sam_core_contract() {
       message = "MobileSAM requires a top-left letterbox";
     } else {
       // ... and the others on a stretch.
-      s = sam_mask_source(BoxDecodeType::EdgeTam, "BF16", "BF16", 4, true);
+      s = sam_mask_source(BoxDecodeType::EdgeTamSeg, "BF16", "BF16", 4, true);
       message = "EdgeTAM requires a stretch";
     }
     require(rejected(s, g, message), "a Segment Anything contract violation reached Kernels");
@@ -736,9 +744,9 @@ void sam_recipe() {
       {BoxDecodeType::MobileSam, "FP32", "FP32", 4, false, ResizeMode::Letterbox, 1024, true},
       {BoxDecodeType::MobileSam, "BF16", "INT8", 4, false, ResizeMode::Letterbox, 1024, true},
       {BoxDecodeType::MobileSam, "INT8", "INT8", 4, false, ResizeMode::Letterbox, 1024, false},
-      {BoxDecodeType::EdgeTam, "BF16", "BF16", 4, true, ResizeMode::Stretch, 1024, true},
-      {BoxDecodeType::EdgeTam, "BF16", "BF16", 4, true, ResizeMode::Stretch, 1024, false},
-      {BoxDecodeType::EdgeTam, "FP32", "FP32", 4, true, ResizeMode::Stretch, 1024, false},
+      {BoxDecodeType::EdgeTamSeg, "BF16", "BF16", 4, true, ResizeMode::Stretch, 1024, true},
+      {BoxDecodeType::EdgeTamSeg, "BF16", "BF16", 4, true, ResizeMode::Stretch, 1024, false},
+      {BoxDecodeType::EdgeTamTrack, "FP32", "FP32", 4, true, ResizeMode::Stretch, 1024, false},
       {BoxDecodeType::EfficientSam, "INT8", "INT8", 3, false, ResizeMode::Stretch, 1024, true},
       {BoxDecodeType::EfficientSam3, "FP32", "FP32", 1, false, ResizeMode::Stretch, 1008, true},
       {BoxDecodeType::EfficientSam3, "FP32", "FP32", 1, false, ResizeMode::Stretch, 1008, false},
@@ -868,7 +876,7 @@ void require_exact_member_publications(const BoxDecodeKernelRecipeResult& r, con
   }
 }
 
-// Model::Options::boxdecode_raw_outputs: the stage also publishes every input
+// BoxDecodeType::EdgeTamTrack: the stage also publishes every input
 // as the route without BoxDecode returns it, after the BoxDecode tensor. The
 // EdgeTAM decoder: BF16 logits and IoU slices, an FP32 object score and the
 // FP32 object pointers that no head reads.
@@ -881,7 +889,7 @@ std::vector<BoxDecodeRawOutput> edgetam_raw_outputs() {
 void boxdecode_raw_outputs_core_contract() {
   const BoxDecodeGeometryOptions geometry{1024, 1024, 1280, 720, ResizeMode::Stretch};
   for (int fault = 0; fault < 3; ++fault) {
-    auto s = sam_mask_source(BoxDecodeType::EdgeTam, "BF16", "BF16", 4, true);
+    auto s = sam_mask_source(BoxDecodeType::EdgeTamTrack, "BF16", "BF16", 4, true);
     s.payload.raw_outputs = edgetam_raw_outputs();
     if (fault == 0)
       s.payload.raw_outputs.pop_back(); // One raw output per input.
@@ -901,13 +909,14 @@ void boxdecode_raw_outputs_core_contract() {
 void boxdecode_raw_outputs() {
   boxdecode_raw_outputs_core_contract();
   const BoxDecodeGeometryOptions geometry{1024, 1024, 1280, 720, ResizeMode::Stretch};
-  auto s = sam_mask_source(BoxDecodeType::EdgeTam, "BF16", "BF16", 4, true);
-  // The default publishes the BoxDecode tensor alone.
+  auto s = sam_mask_source(BoxDecodeType::EdgeTamSeg, "BF16", "BF16", 4, true);
+  // EdgeTamSeg publishes the BoxDecode tensor alone.
   const auto plain = prepare_boxdecode_kernel(s, geometry);
   require(plain.compiled.runtime_contract.logical_outputs.size() == 1 &&
               plain.compiled.runtime_contract.physical_outputs.size() == 1 &&
               plain.compiled.recipe->members.size() == 2,
           "BoxDecode without raw outputs must keep one public output and two members");
+  s = sam_mask_source(BoxDecodeType::EdgeTamTrack, "BF16", "BF16", 4, true);
   s.payload.raw_outputs = edgetam_raw_outputs();
   const auto r = prepare_boxdecode_kernel(s, geometry);
   const auto& runtime = r.compiled.runtime_contract;

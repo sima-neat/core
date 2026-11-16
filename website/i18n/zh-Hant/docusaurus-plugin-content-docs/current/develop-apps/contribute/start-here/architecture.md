@@ -456,7 +456,7 @@ BoxDecode 與 SuperPoint 數值輸出保持私用；相依的 Core 線路序列�
 
 不可變的核心配方會在具型別節點契約轉換後，保留生產者定義的張量傳輸格式。冷路徑發布會將此格式套用至新建與快取的 caps，絕不從核心名稱或位元組形狀推斷語意。公開 OBB 張量維持為具有 `BBOX_OBB_V1` 語意的密集一維 UInt8。
 
-使用 `Model::Options::boxdecode_raw_outputs` 時，BoxDecode 核心階段也會依沒有 BoxDecode 的路線傳回的方式，將每個模型輸出公布為線路之後的公開輸出。這些成員只讀取階段輸入，因此解碼不會等待它們，而階段會保留輸入直到所有成員完成。Segment Anything 遮罩使用版本化的 `SegmentationMasksHeaderV1` 酬載，標籤與其他分割輸出相同。核心會在序列化器的標頭與記錄前綴之後，直接寫入原始大小的遮罩，就像 YOLO26 遮罩接在邊界框前綴之後一樣。無標頭的 160×160 酬載維持不變，軸對齊繪製器不接受版本化酬載。
+使用 `BoxDecodeType::EdgeTamTrack` 時，BoxDecode 核心階段也會依沒有 BoxDecode 的路線傳回的方式，將每個模型輸出公布為線路之後的公開輸出。這些成員只讀取階段輸入，因此解碼不會等待它們，而階段會保留輸入直到所有成員完成。Segment Anything 遮罩使用版本化的 `SegmentationMasksHeaderV1` 酬載，標籤與其他分割輸出相同。核心會在序列化器的標頭與記錄前綴之後，直接寫入原始大小的遮罩，就像 YOLO26 遮罩接在邊界框前綴之後一樣。無標頭的 160×160 酬載維持不變，軸對齊繪製器不接受版本化酬載。
 
 InputStream 會在發布 Sample 之前，將定義的格式投射至每個傳回的張量，包括自有複本與快取中繼資料路徑。因此，原始 `Sample.tensors` 與 `TensorList` 便利 API 具有相同的偵測語意。
 

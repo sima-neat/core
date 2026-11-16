@@ -11,7 +11,7 @@ sidebar_position: 3
 
 ### Несумісні зміни {#v061-breaking}
 
-- C++ ABI Neat Library тепер має версію 10 (`libsima_neat.so.10`). До `ResizeOptions`, `ResizeSpec`, `PreprocessOptions`, `PreprocOptions`, `NormalizationOptions` і `Model::Options` додано поля. Перебудуйте C++ застосунки, плагіни та прив’язки Python з відповідними заголовками й пакетами виконання; не використовуйте повторно двійкові файли ABI 6 і не створюйте символічні посилання сумісності.
+- C++ ABI Neat Library тепер має версію 7 (`libsima_neat.so.7`). До `ResizeOptions`, `ResizeSpec`, `PreprocessOptions`, `PreprocOptions`, `NormalizationOptions` і `Model::Options` додано поля. Перебудуйте C++ застосунки, плагіни та прив’язки Python з відповідними заголовками й пакетами виконання; не використовуйте повторно двійкові файли ABI 6 і не створюйте символічні посилання сумісності.
 
 ### Семантична сегментація {#v061-segmentation}
 
@@ -19,11 +19,11 @@ sidebar_position: 3
 
 ### Маски Segment Anything {#v061-segment-anything}
 
-- Нові значення `BoxDecodeType` декодують моделі Segment Anything на CPU через профілі Kernels `sam_mask` і `sam_concept`: `MobileSam`, `EdgeTam`, `EfficientSam` і `EfficientSam3` (модель зображень концептів або декодер підказок). Кожен запуск повертає вибрану маску розміром оригінального зображення з її рамкою та передбаченим IoU у версійованому корисному навантаженні масок; його читає `decode_segmentation`. `Model::Options::multimask_output` відповідає висхідному `predict(multimask_output=...)`, а `Model::Options::boxdecode_raw_outputs` також повертає необроблені виходи моделі після тензора BoxDecode для відстеження EdgeTAM. Потрібен випуск Kernels із цими профілями. Див. [Маски Segment Anything](/reference/boxdecode_decode_types#segment-anything-masks).
+- Нові значення `BoxDecodeType` декодують моделі Segment Anything на CPU через профілі Kernels `sam_mask` і `sam_concept`: `MobileSam`, `EdgeTamSeg`, `EdgeTamTrack`, `EfficientSam` і `EfficientSam3` (модель зображень концептів або декодер підказок). Кожен запуск повертає вибрану маску розміром оригінального зображення з її рамкою та передбаченим IoU у версійованому корисному навантаженні масок; його читає `decode_segmentation`. `Model::Options::multimask_output` відповідає висхідному `predict(multimask_output=...)`. `EdgeTamTrack` також повертає необроблені виходи декодера після тензора BoxDecode для відстеження EdgeTAM; `EdgeTamSeg` повертає лише маску. Потрібен випуск Kernels із цими профілями. Див. [Маски Segment Anything](/reference/boxdecode_decode_types#segment-anything-masks).
 
 ### Попередня обробка {#v061-preproc}
 
-- Центральне обрізання тепер приймає необов’язкове `preprocess.resize.shorter_side` перед обрізанням до кінцевого розміру MPK. Воно зберігає фільтрацію повного масштабування та публікує обернене перетворення. Перебудуйте з ABI 10 і відповідною прошивкою ядра; не змішуйте попередні бінарні файли.
+- Центральне обрізання тепер приймає необов’язкове `preprocess.resize.shorter_side` перед обрізанням до кінцевого розміру MPK. Воно зберігає фільтрацію повного масштабування та публікує обернене перетворення. Перебудуйте з ABI 7 і відповідною прошивкою ядра; не змішуйте попередні бінарні файли.
 
 - `preprocess.resize.placement = LetterboxPlacement.TopLeft` розміщує зображення з letterbox у початку полотна, а все доповнення — праворуч і знизу, як очікує MobileSAM. Профілі BoxDecode для виявлення відображають рамки через опубліковане афінне перетворення; профілі пози, сегментації та пропозицій відхиляють нецентрований letterbox. Див. [Preproc](/reference/nodes/preproc).
 

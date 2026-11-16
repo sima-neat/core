@@ -138,7 +138,6 @@ model = pyneat.Model(model_path, options)
 | `nms_iou_threshold` | 디코딩 경로에 비최대값 억제(NMS)를 적용해야 합니다. | `0`; 모델에 패키징된 값을 유지합니다. 패키징된 값이 없으면 YOLO26은 NMS를 건너뛰고, 다른 디코더는 겹치는 모든 박스를 억제합니다. |
 | `top_k` | 출력당 감지 횟수에 제한을 두려는 경우. | `0`; 상위 K 제한이 없습니다. |
 | `num_classes` | 클래스 헤드 깊이를 안정적으로 추론할 수 없는 경우(예: 단일 클래스 YOLO 분할 헤드). | `0`; MPK 메타데이터 또는 이전 추론을 사용합니다. |
-| `boxdecode_raw_outputs` | 애플리케이션이 한 번의 추론 실행에서 디코딩 결과와 함께 모델의 원시 텐서도 필요로 하는 경우(예: EdgeTAM 추적). | `false`; 경로는 BoxDecode 텐서만 반환합니다. [디코딩 결과와 함께 원시 출력 반환](/reference/boxdecode_decode_types#raw-outputs)을 참조하세요. |
 | `multimask_output` | Segment Anything 프롬프트 디코더가 박스나 여러 점의 경우처럼 단일 마스크 답을 반환해야 하는 경우. `false`는 Segment Anything 디코드 타입만 허용합니다. | `true`; 클릭 한 번의 경우처럼 예측 IoU가 가장 높은 후보 마스크를 남깁니다. [Segment Anything 마스크](/reference/boxdecode_decode_types#segment-anything-masks)를 참조하세요. |
 
 대부분의 YOLO 스타일 모델의 경우 `decode_type`, `score_threshold`, `nms_iou_threshold` 및 `top_k`로 시작하세요. 모델 계약에 도움이 필요한 경우에만 `num_classes`를 추가하세요. 텐서 순서에 특정 선택자가 필요한 것으로 알려지지 않은 한 `decode_type_option`을 `Auto`로 유지하세요.

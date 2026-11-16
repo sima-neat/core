@@ -11,7 +11,7 @@ SiMa.ai Neat Library의 릴리스 노트입니다.
 
 ### 호환성에 영향을 주는 변경 {#v061-breaking}
 
-- Neat Library C++ ABI는 이제 10(`libsima_neat.so.10`)입니다. `ResizeOptions`, `ResizeSpec`, `PreprocessOptions`, `PreprocOptions`, `NormalizationOptions`, `Model::Options`에 필드가 추가되었습니다. 일치하는 헤더와 런타임 패키지로 C++ 애플리케이션, 플러그인, Python 바인딩을 다시 빌드하세요. ABI 6 바이너리를 재사용하거나 호환성 심볼릭 링크를 추가하지 마세요.
+- Neat Library C++ ABI는 이제 7(`libsima_neat.so.7`)입니다. `ResizeOptions`, `ResizeSpec`, `PreprocessOptions`, `PreprocOptions`, `NormalizationOptions`, `Model::Options`에 필드가 추가되었습니다. 일치하는 헤더와 런타임 패키지로 C++ 애플리케이션, 플러그인, Python 바인딩을 다시 빌드하세요. ABI 6 바이너리를 재사용하거나 호환성 심볼릭 링크를 추가하지 마세요.
 
 ### 시맨틱 세그멘테이션 {#v061-segmentation}
 
@@ -19,11 +19,11 @@ SiMa.ai Neat Library의 릴리스 노트입니다.
 
 ### Segment Anything 마스크 {#v061-segment-anything}
 
-- 새 `BoxDecodeType` 값은 Kernels의 `sam_mask` 및 `sam_concept` 프로필로 CPU에서 Segment Anything 모델을 디코딩합니다: `MobileSam`, `EdgeTam`, `EfficientSam`, `EfficientSam3`(개념 이미지 모델 또는 프롬프트 디코더). 각 실행은 원본 이미지 크기의 선택된 마스크를 박스 및 예측 IoU와 함께 버전이 지정된 마스크 페이로드로 반환하며, `decode_segmentation`으로 읽습니다. `Model::Options::multimask_output`은 업스트림 `predict(multimask_output=...)`에 대응하고, `Model::Options::boxdecode_raw_outputs`는 EdgeTAM 추적을 위해 BoxDecode 텐서 뒤에 모델의 원시 출력도 반환합니다. 이 프로필이 포함된 Kernels 릴리스가 필요합니다. [Segment Anything 마스크](/reference/boxdecode_decode_types#segment-anything-masks)를 참조하세요.
+- 새 `BoxDecodeType` 값은 Kernels의 `sam_mask` 및 `sam_concept` 프로필로 CPU에서 Segment Anything 모델을 디코딩합니다: `MobileSam`, `EdgeTamSeg`, `EdgeTamTrack`, `EfficientSam`, `EfficientSam3`(개념 이미지 모델 또는 프롬프트 디코더). 각 실행은 원본 이미지 크기의 선택된 마스크를 박스 및 예측 IoU와 함께 버전이 지정된 마스크 페이로드로 반환하며, `decode_segmentation`으로 읽습니다. `Model::Options::multimask_output`은 업스트림 `predict(multimask_output=...)`에 대응합니다. `EdgeTamTrack`은 EdgeTAM 추적을 위해 BoxDecode 텐서 뒤에 디코더의 원시 출력도 반환하고, `EdgeTamSeg`는 마스크만 반환합니다. 이 프로필이 포함된 Kernels 릴리스가 필요합니다. [Segment Anything 마스크](/reference/boxdecode_decode_types#segment-anything-masks)를 참조하세요.
 
 ### 전처리 {#v061-preproc}
 
-- 중앙 자르기는 최종 MPK 크기로 자르기 전에 선택적 `preprocess.resize.shorter_side`를 지원합니다. 전체 크기 조정의 필터 범위를 유지하고 역변환을 게시합니다. ABI 10 및 일치하는 커널 펌웨어로 다시 빌드하고 이전 바이너리를 혼용하지 마세요.
+- 중앙 자르기는 최종 MPK 크기로 자르기 전에 선택적 `preprocess.resize.shorter_side`를 지원합니다. 전체 크기 조정의 필터 범위를 유지하고 역변환을 게시합니다. ABI 7 및 일치하는 커널 펌웨어로 다시 빌드하고 이전 바이너리를 혼용하지 마세요.
 
 - `preprocess.resize.placement = LetterboxPlacement.TopLeft`는 MobileSAM이 기대하는 대로 레터박스 이미지를 캔버스 원점에 두고 모든 패딩을 오른쪽과 아래쪽에 배치합니다. 검출 BoxDecode 프로필은 게시된 아핀 변환으로 박스를 매핑하며, 포즈, 세그멘테이션, 제안 프로필은 중앙에 있지 않은 레터박스를 거부합니다. [Preproc](/reference/nodes/preproc)를 참조하세요.
 

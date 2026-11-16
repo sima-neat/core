@@ -54,8 +54,8 @@ void sam_mask_static_contract() {
     const std::int64_t scalar = quantized ? 1 : 2;
     // MobileSAM's own type, and the SAM2-style types whose decoders share its
     // four-channel prompt-decoder outputs.
-    for (const auto type :
-         {BoxDecodeType::MobileSam, BoxDecodeType::EdgeTam, BoxDecodeType::EfficientSam3}) {
+    for (const auto type : {BoxDecodeType::MobileSam, BoxDecodeType::EdgeTamSeg,
+                            BoxDecodeType::EdgeTamTrack, BoxDecodeType::EfficientSam3}) {
       const auto flags =
           resolve_model_managed_boxdecode_route_flags_from_mpk(mpk, nullptr, &error, type);
       require(flags && flags->quant_needed == quantized && !flags->tess_needed,
@@ -166,7 +166,7 @@ void sam_family_static_contracts() {
        {{256, 256, 16}, {1, 1, 16}}},
       {"EdgeTAM",
        sam_test::edgetam_decoder_mpk(),
-       BoxDecodeType::EdgeTam,
+       BoxDecodeType::EdgeTamSeg,
        {L, I, BoxDecodeTensorRole::SamObjectScore, BoxDecodeTensorRole::Unknown},
        {{256, 256, 4}, {1, 1, 4}, {1, 1, 1}, {1, 4, 256}},
        4,
@@ -263,7 +263,7 @@ void sam_family_static_contracts() {
   for (const auto& m :
        {Mismatch{&*esam, BoxDecodeType::MobileSam,
                  "MobileSAM decoders export 1 or 4 mask channels; this one has 3"},
-        Mismatch{&*esam, BoxDecodeType::EdgeTam,
+        Mismatch{&*esam, BoxDecodeType::EdgeTamTrack,
                  "EdgeTAM decoders export 1 or 4 mask channels; this one has 3"},
         Mismatch{&*mobile, BoxDecodeType::EfficientSam,
                  "EfficientSAM decoders export 1 or 3 mask channels; this one has 4"}}) {

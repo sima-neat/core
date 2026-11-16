@@ -129,8 +129,11 @@ std::optional<BoxDecodeType> parse_box_decode_type_token(std::string_view token)
   if (lower == "mobilesam" || lower == "mobile-sam") {
     return BoxDecodeType::MobileSam;
   }
-  if (lower == "edgetam" || lower == "edge-tam") {
-    return BoxDecodeType::EdgeTam;
+  if (lower == "edgetam-seg" || lower == "edgetam_seg") {
+    return BoxDecodeType::EdgeTamSeg;
+  }
+  if (lower == "edgetam-track" || lower == "edgetam_track") {
+    return BoxDecodeType::EdgeTamTrack;
   }
   if (lower == "efficientsam" || lower == "efficient-sam") {
     return BoxDecodeType::EfficientSam;
@@ -192,15 +195,17 @@ bool box_decode_type_uses_per_port_dtype(BoxDecodeType type) {
 }
 
 bool box_decode_type_is_sam(BoxDecodeType type) {
-  return type == BoxDecodeType::MobileSam || type == BoxDecodeType::EdgeTam ||
-         type == BoxDecodeType::EfficientSam || type == BoxDecodeType::EfficientSam3;
+  return type == BoxDecodeType::MobileSam || type == BoxDecodeType::EdgeTamSeg ||
+         type == BoxDecodeType::EdgeTamTrack || type == BoxDecodeType::EfficientSam ||
+         type == BoxDecodeType::EfficientSam3;
 }
 
 const char* box_decode_type_sam_model_name(BoxDecodeType type) {
   switch (type) {
   case BoxDecodeType::MobileSam:
     return "MobileSAM";
-  case BoxDecodeType::EdgeTam:
+  case BoxDecodeType::EdgeTamSeg:
+  case BoxDecodeType::EdgeTamTrack:
     return "EdgeTAM";
   case BoxDecodeType::EfficientSam:
     return "EfficientSAM";

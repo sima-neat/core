@@ -1,6 +1,5 @@
 #include "nodes/sima/SimaBoxDecode.h"
 #include "pipeline/FeatureTypes.h"
-#include "pipeline/GraphOptions.h"
 
 #include <cstring>
 #include <iostream>
@@ -113,23 +112,6 @@ int main() {
             "legacy descriptor shape mismatch");
     require(legacy_decoded.descriptors.dtype == TensorDType::Int8,
             "legacy descriptor dtype mismatch");
-
-    // With boxdecode_raw_outputs the TensorSet holds the decoded legacy tensor, then the raw heads:
-    // the first tensor keeps the sample's legacy tag and the raw heads stay untagged.
-    std::vector<std::uint8_t> raw_legacy(sizeof(std::int32_t) + kLegacyStride, 0U);
-    std::memcpy(raw_legacy.data(), &count, sizeof(count));
-    Sample raw_sample;
-    raw_sample.kind = SampleKind::TensorSet;
-    raw_sample.payload_tag = kFeatureFormatLegacyA65V0;
-    raw_sample.tensors.push_back(byte_tensor(std::move(raw_legacy), nullptr));
-    raw_sample.tensors.push_back(byte_tensor(std::vector<std::uint8_t>(16, 0U), nullptr));
-    tag_feature_format_in_sample(raw_sample);
-    require(read_feature_format(raw_sample.tensors.front()) == kFeatureFormatLegacyA65V0 &&
-                read_feature_format(raw_sample.tensors.back()).empty(),
-            "raw-output TensorSet must tag only its decoded legacy feature tensor");
-    require(decode_superpoint_tensor(raw_sample.tensors.front()).descriptors.shape ==
-                std::vector<std::int64_t>({1, 256}),
-            "legacy SuperPoint tensor with raw outputs must decode");
 
     BoxDecodeOptions options{BoxDecodeType::SuperPoint};
     options.superpoint.profile = SuperPointProfile::LightGlueV1;

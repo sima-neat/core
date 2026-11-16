@@ -53,10 +53,10 @@ namespace simaai::neat {
  * contiguous prefix selection; both SSD-Mobile recipes and SSDlite-Mobile-320 require the exact
  * encoded class count.
  *
- * `MobileSam`, `EdgeTam`, `EfficientSam` and `EfficientSam3` decode the Segment Anything models
- * of those names. A prompt decoder's mask logits (H,W > 1, C = 1, 3 or 4 masks), C IoU
- * predictions and an optional object score become exactly one detection whose mask has the
- * original image size. `Model::Options::multimask_output` mirrors upstream
+ * `MobileSam`, `EdgeTamSeg`, `EdgeTamTrack`, `EfficientSam` and `EfficientSam3` decode the
+ * Segment Anything models of those names. A prompt decoder's mask logits (H,W > 1, C = 1, 3 or 4
+ * masks), C IoU predictions and an optional object score become exactly one detection whose mask
+ * has the original image size. `Model::Options::multimask_output` mirrors upstream
  * `predict(multimask_output=...)`: `true` keeps the multimask channel with the best IoU, `false`
  * the single-mask answer (mask 0 for MobileSAM; the SAM2 stability rule for EdgeTAM and an
  * EfficientSAM3 four-mask decoder; EfficientSAM has no single-mask token). An object score of 0
@@ -66,7 +66,10 @@ namespace simaai::neat {
  * a top-left letterbox, the others a stretch. The output is a versioned masks payload
  * (`SegmentationMasksHeaderV1`). A prompt decoder's record box spans the mask pixels (x and y of
  * the first pixel, width and height in pixels) and is all zero for an empty mask; concept boxes
- * come from the detection head.
+ * come from the detection head. `EdgeTamSeg` returns only that payload. `EdgeTamTrack` returns
+ * the payload first, then the mask decoder's own outputs in MPK order, exactly as the same Model
+ * without BoxDecode returns them, from the same run: EdgeTAM tracking keeps the object pointer
+ * and the chosen mask's low-resolution logits for its memory.
  *
  * @ingroup pipeline
  */
@@ -100,11 +103,12 @@ enum class BoxDecodeType : std::int32_t {
   YoloV26Obb = 25,   ///< YOLO26 oriented boxes: raw radians, grouped FP32 heads, no NMS.
   YoloXSegPose = 24, ///< YOLOX packed export carrying box, mask and keypoint heads together.
   YoloV8Obb = 26,    ///< YOLOv8/YOLO11 oriented boxes: DFL and angle logits, rotated Fast-NMS.
-  DetrFocal = 27, ///< Normalized cxcywh + class logits; sigmoid global query/class top-K, no NMS.
-  MobileSam = 28, ///< MobileSAM prompt decoder (top-left letterbox).
-  EdgeTam = 29,   ///< EdgeTAM mask decoder, with its object score gate (stretch).
+  DetrFocal = 27,  ///< Normalized cxcywh + class logits; sigmoid global query/class top-K, no NMS.
+  MobileSam = 28,  ///< MobileSAM prompt decoder (top-left letterbox).
+  EdgeTamSeg = 29, ///< EdgeTAM mask decoder, with its object score gate (stretch): the mask.
   EfficientSam = 30,  ///< EfficientSAM prompt decoder: three multimask tokens (stretch).
   EfficientSam3 = 31, ///< EfficientSAM3 prompt decoder or concept image model (stretch).
+  EdgeTamTrack = 32,  ///< `EdgeTamSeg`, then the decoder's raw outputs for tracking.
 };
 
 /**
@@ -212,8 +216,10 @@ constexpr const char* box_decode_type_token(BoxDecodeType type) {
     return "detr-focal";
   case BoxDecodeType::MobileSam:
     return "mobilesam";
-  case BoxDecodeType::EdgeTam:
-    return "edgetam";
+  case BoxDecodeType::EdgeTamSeg:
+    return "edgetam-seg";
+  case BoxDecodeType::EdgeTamTrack:
+    return "edgetam-track";
   case BoxDecodeType::EfficientSam:
     return "efficientsam";
   case BoxDecodeType::EfficientSam3:
@@ -287,7 +293,8 @@ constexpr bool box_decode_type_is_yolo_family(BoxDecodeType type) {
   case BoxDecodeType::Detr:
   case BoxDecodeType::DetrFocal:
   case BoxDecodeType::MobileSam:
-  case BoxDecodeType::EdgeTam:
+  case BoxDecodeType::EdgeTamSeg:
+  case BoxDecodeType::EdgeTamTrack:
   case BoxDecodeType::EfficientSam:
   case BoxDecodeType::EfficientSam3:
   case BoxDecodeType::EffDet:
@@ -320,7 +327,8 @@ constexpr bool box_decode_type_is_segmentation(BoxDecodeType type) {
   case BoxDecodeType::YoloV26Seg:
   case BoxDecodeType::YoloXSegPose:
   case BoxDecodeType::MobileSam:
-  case BoxDecodeType::EdgeTam:
+  case BoxDecodeType::EdgeTamSeg:
+  case BoxDecodeType::EdgeTamTrack:
   case BoxDecodeType::EfficientSam:
   case BoxDecodeType::EfficientSam3:
     return true;
@@ -377,7 +385,8 @@ constexpr bool box_decode_type_is_pose(BoxDecodeType type) {
   case BoxDecodeType::Detr:
   case BoxDecodeType::DetrFocal:
   case BoxDecodeType::MobileSam:
-  case BoxDecodeType::EdgeTam:
+  case BoxDecodeType::EdgeTamSeg:
+  case BoxDecodeType::EdgeTamTrack:
   case BoxDecodeType::EfficientSam:
   case BoxDecodeType::EfficientSam3:
   case BoxDecodeType::EffDet:
@@ -457,7 +466,8 @@ constexpr const char* box_decode_type_contract_summary(BoxDecodeType type) {
     return "DETR contract: four box logits and N+1 class logits on one query grid; "
            "background-aware softmax, N foreground classes, stretch resize, no NMS.";
   case BoxDecodeType::MobileSam:
-  case BoxDecodeType::EdgeTam:
+  case BoxDecodeType::EdgeTamSeg:
+  case BoxDecodeType::EdgeTamTrack:
   case BoxDecodeType::EfficientSam:
   case BoxDecodeType::EfficientSam3:
     return "Segment Anything contract: prompt-decoder mask logits [h,w,C] (C = 1, 3 or 4), C IoU "

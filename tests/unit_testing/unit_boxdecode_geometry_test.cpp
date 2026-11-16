@@ -405,7 +405,8 @@ void sam_geometry() {
   transform.model_to_original = std::array<float, 4>{1.25f, 1.25f, 0.f, 0.f};
   require(fails(BoxDecodeType::MobileSam, letterbox, transform, "explicit model-to-original"),
           "an explicit transform must be rejected");
-  for (const auto& [type, model] : {std::pair{BoxDecodeType::EdgeTam, "EdgeTAM"},
+  for (const auto& [type, model] : {std::pair{BoxDecodeType::EdgeTamSeg, "EdgeTAM"},
+                                    std::pair{BoxDecodeType::EdgeTamTrack, "EdgeTAM"},
                                     std::pair{BoxDecodeType::EfficientSam, "EfficientSAM"},
                                     std::pair{BoxDecodeType::EfficientSam3, "EfficientSAM3"}})
     require(fails(type, letterbox, {},
@@ -421,8 +422,8 @@ void sam_geometry() {
   whole_image(stretch);
   require(fails(BoxDecodeType::MobileSam, stretch, {}, kTopLeft),
           "a stretch must be rejected with the MobileSAM encoder setting");
-  for (const auto type :
-       {BoxDecodeType::EdgeTam, BoxDecodeType::EfficientSam, BoxDecodeType::EfficientSam3}) {
+  for (const auto type : {BoxDecodeType::EdgeTamSeg, BoxDecodeType::EdgeTamTrack,
+                          BoxDecodeType::EfficientSam, BoxDecodeType::EfficientSam3}) {
     // A decoder Model's nominal Letterbox resize does not override the facts.
     core::BoxDecodeGeometryOptions nominal;
     nominal.resize = ResizeMode::Letterbox;
@@ -433,12 +434,12 @@ void sam_geometry() {
   }
   core::BoxDecodeGeometryOptions requested;
   requested.model_width = requested.model_height = 1024;
-  require(fails(BoxDecodeType::EdgeTam, stretch, requested, "model size differs"),
+  require(fails(BoxDecodeType::EdgeTamSeg, stretch, requested, "model size differs"),
           "a model size other than the published canvas must be rejected");
   requested = {};
   requested.original_width = 1920;
   requested.original_height = 1080;
-  require(fails(BoxDecodeType::EdgeTam, stretch, requested, "original image size conflicts"),
+  require(fails(BoxDecodeType::EdgeTamTrack, stretch, requested, "original image size conflicts"),
           "an original size other than the published one must be rejected");
   auto crop = stretch;
   crop.resize_mode = "crop";
@@ -455,7 +456,7 @@ void sam_geometry() {
   padded.scaled_width = 1000;
   padded.pad_right = 8;
   whole_image(padded);
-  require(fails(BoxDecodeType::EdgeTam, padded, {}, "image scaled to 1008x1008"),
+  require(fails(BoxDecodeType::EdgeTamSeg, padded, {}, "image scaled to 1008x1008"),
           "a stretch that leaves padding must be rejected");
 }
 // A prepared Segment Anything plan keeps the image and preprocessing it was

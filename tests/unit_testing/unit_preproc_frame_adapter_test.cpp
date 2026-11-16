@@ -94,7 +94,7 @@ void check_packet_envelope(const probe::Packet& packet, std::size_t expected_byt
   };
   require(u16(4) == preproc_wire_abi() && u16(6) == expected_bytes,
           "encoded Preproc header disagrees with the supported cohort");
-  // ABI8 uses formerly reserved bytes without growing the 336-byte base.
+  // ABI 7 uses formerly reserved bytes without growing the 336-byte base.
   // These legacy-operation checks author no windows; crop checks are separate.
   require(std::all_of(packet.payload.begin() + 296, packet.payload.begin() + 312,
                       [](std::byte value) { return value == std::byte{}; }),

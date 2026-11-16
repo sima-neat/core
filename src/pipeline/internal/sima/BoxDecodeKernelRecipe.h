@@ -13,8 +13,9 @@ namespace simaai::neat::pipeline_internal::sima {
 // model-shaped input with no resize operation. Explicit provenance still wins.
 constexpr ResizeMode default_boxdecode_resize_mode(BoxDecodeType type) {
   return (type == BoxDecodeType::Ssd || type == BoxDecodeType::Detr ||
-          type == BoxDecodeType::DetrFocal || type == BoxDecodeType::EdgeTam ||
-          type == BoxDecodeType::EfficientSam || type == BoxDecodeType::EfficientSam3)
+          type == BoxDecodeType::DetrFocal || type == BoxDecodeType::EdgeTamSeg ||
+          type == BoxDecodeType::EdgeTamTrack || type == BoxDecodeType::EfficientSam ||
+          type == BoxDecodeType::EfficientSam3)
              ? ResizeMode::Stretch
              : ResizeMode::Letterbox;
 }

@@ -600,7 +600,8 @@ void benchmark_disabled_resize_keeps_decode_recipe_geometry() {
               default_boxdecode_resize_mode(BoxDecodeType::Detr) == ResizeMode::Stretch &&
               default_boxdecode_resize_mode(BoxDecodeType::DetrFocal) == ResizeMode::Stretch &&
               default_boxdecode_resize_mode(BoxDecodeType::MobileSam) == ResizeMode::Letterbox &&
-              default_boxdecode_resize_mode(BoxDecodeType::EdgeTam) == ResizeMode::Stretch &&
+              default_boxdecode_resize_mode(BoxDecodeType::EdgeTamSeg) == ResizeMode::Stretch &&
+              default_boxdecode_resize_mode(BoxDecodeType::EdgeTamTrack) == ResizeMode::Stretch &&
               default_boxdecode_resize_mode(BoxDecodeType::EfficientSam) == ResizeMode::Stretch &&
               default_boxdecode_resize_mode(BoxDecodeType::EfficientSam3) == ResizeMode::Stretch,
           "canonical recipe defaults must not change SSD/DETR or OBB geometry; SAM models keep "
@@ -628,7 +629,8 @@ void benchmark_disabled_resize_keeps_decode_recipe_geometry() {
             "MobileSAM benchmark geometry must round the shorter side as the Model does");
   }
   for (const auto& [type, side] :
-       {std::pair{BoxDecodeType::EdgeTam, 1024}, std::pair{BoxDecodeType::EfficientSam, 1024},
+       {std::pair{BoxDecodeType::EdgeTamSeg, 1024}, std::pair{BoxDecodeType::EdgeTamTrack, 1024},
+        std::pair{BoxDecodeType::EfficientSam, 1024},
         std::pair{BoxDecodeType::EfficientSam3, 1008}}) {
     const auto stretch = internal::sam_benchmark_preprocess_meta(type, 1280, 720);
     require(stretch.resize_mode == "stretch" && stretch.original_width == 1280 &&

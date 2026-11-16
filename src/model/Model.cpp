@@ -4262,27 +4262,26 @@ internal::PreprocessPlannerResult build_preprocess_plan(const std::string& tar_g
   if (route.ambiguous) {
     session_route_plan.diagnostics.push_back("route-ambiguous=" + route.ambiguity_reason);
   }
-  if (options.boxdecode_raw_outputs && session_route_plan.boxdecode_selected) {
-    // The raw outputs are exactly what the same Model returns without BoxDecode.
+  if (options.decode_type == BoxDecodeType::EdgeTamTrack && session_route_plan.boxdecode_selected) {
+    // EdgeTAM tracking: the raw outputs are exactly what the same Model returns without BoxDecode.
     Model::Options raw = options;
     raw.decode_type = BoxDecodeType::Unspecified;
     raw.score_threshold = 0.0f;
     raw.nms_iou_threshold = 0.0f;
     raw.top_k = 0;
-    raw.boxdecode_raw_outputs = false;
     const internal::SessionRoutePlan raw_plan =
         internal::build_route_plan(raw, model_semantics, &capability, &capability_pack);
     if (raw_plan.boxdecode_selected || !raw_plan.include_post_stage ||
         raw_plan.selected_post_kind == internal::PostRouteStageKind::BoxDecode)
       throw std::runtime_error(
-          "Model::Options::boxdecode_raw_outputs: this model's route without BoxDecode does not "
-          "return its output tensors through a postprocess stage, so there are no raw outputs to "
-          "return next to the BoxDecode tensor");
+          "BoxDecodeType::EdgeTamTrack: this model's route without BoxDecode does not return its "
+          "output tensors through a postprocess stage, so there are no raw outputs to return "
+          "next to the BoxDecode tensor; use EdgeTamSeg for the mask alone");
     // Exactly what the same Model returns without BoxDecode, names included.
     session_route_plan.boxdecode_raw_outputs =
         public_post_route_egress(raw_plan, /*published_names=*/true);
     if (session_route_plan.boxdecode_raw_outputs.empty())
-      throw std::runtime_error("Model::Options::boxdecode_raw_outputs: the route without BoxDecode "
+      throw std::runtime_error("BoxDecodeType::EdgeTamTrack: the route without BoxDecode "
                                "declares no output tensors");
   }
   plan.session_route_plan = session_route_plan;
@@ -6861,8 +6860,6 @@ std::string model_options_json_for_graph_provenance(const Model::Options& opt) {
     advanced["internal_queue_depth"] = *execution.internal_queue_depth;
   out["advanced_execution"] = std::move(advanced);
   // Added only when set, so existing stage identities are unchanged.
-  if (opt.boxdecode_raw_outputs)
-    out["boxdecode_raw_outputs"] = true;
   if (!opt.multimask_output)
     out["multimask_output"] = false;
   return out.dump();
@@ -6990,7 +6987,7 @@ std::vector<TensorSpec> Model::output_specs() const {
     spec.dtypes = {TensorDType::UInt8};
     spec.rank = -1;
     specs.push_back(std::move(spec));
-    // Options::boxdecode_raw_outputs: the route's raw tensors follow the BoxDecode tensor.
+    // BoxDecodeType::EdgeTamTrack: the route's raw tensors follow the BoxDecode tensor.
     for (const auto& raw : route_plan.boxdecode_raw_outputs)
       specs.push_back(tensor_spec_from_public_egress(raw));
     return specs;
@@ -8299,7 +8296,7 @@ DetessDequantOptions ModelAccess::build_detessdequant_stage_options(const Model&
 }
 
 namespace {
-// Options::boxdecode_raw_outputs: the route without BoxDecode publishes one tensor per BoxDecode
+// BoxDecodeType::EdgeTamTrack: the route without BoxDecode publishes one tensor per BoxDecode
 // input, in input order; the BoxDecode stage publishes the same tensors after its own.
 CompiledBoxDecodeContract with_boxdecode_raw_outputs(CompiledBoxDecodeContract compiled,
                                                      const internal::SessionRoutePlan& route_plan) {
@@ -8308,8 +8305,7 @@ CompiledBoxDecodeContract with_boxdecode_raw_outputs(CompiledBoxDecodeContract c
     return compiled;
   const auto inputs = compiled.runtime_contract.logical_inputs.size();
   if (raw.size() != inputs)
-    throw std::runtime_error("Model::Options::boxdecode_raw_outputs: the route without BoxDecode "
-                             "returns " +
+    throw std::runtime_error("BoxDecodeType::EdgeTamTrack: the route without BoxDecode returns " +
                              std::to_string(raw.size()) + " tensors, but BoxDecode reads " +
                              std::to_string(inputs) + "; they must correspond one to one");
   compiled.payload.raw_outputs.clear();
@@ -8330,7 +8326,7 @@ void apply_model_sam_options(pipeline_internal::sima::BoxDecodeStagePayload* pay
       throw std::invalid_argument(
           std::string(context) +
           ": multimask_output applies only to the Segment Anything decode types (mobilesam, "
-          "edgetam, efficientsam, efficientsam3), but decode_type=" +
+          "edgetam-seg, edgetam-track, efficientsam, efficientsam3), but decode_type=" +
           pipeline_internal::sima::box_decode_type_token_string(payload->decode_type));
     return;
   }

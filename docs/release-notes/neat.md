@@ -11,7 +11,7 @@ Release notes for the SiMa.ai Neat Library.
 
 ### Breaking changes {#v061-breaking}
 
-- The Neat Library C++ ABI is now 10 (`libsima_neat.so.10`). `ResizeOptions`, `ResizeSpec`, `PreprocessOptions`, `PreprocOptions`, `NormalizationOptions` and `Model::Options` gained fields. Rebuild C++ applications, plugins and Python bindings with matching headers and runtime packages; do not reuse ABI 6 binaries or add compatibility symlinks.
+- The Neat Library C++ ABI is now 7 (`libsima_neat.so.7`). `ResizeOptions`, `ResizeSpec`, `PreprocessOptions`, `PreprocOptions`, `NormalizationOptions` and `Model::Options` gained fields. Rebuild C++ applications, plugins and Python bindings with matching headers and runtime packages; do not reuse ABI 6 binaries or add compatibility symlinks.
 
 ### Semantic segmentation {#v061-segmentation}
 
@@ -19,11 +19,11 @@ Release notes for the SiMa.ai Neat Library.
 
 ### Segment Anything masks {#v061-segment-anything}
 
-- New `BoxDecodeType` values decode Segment Anything models on the CPU through the Kernels `sam_mask` and `sam_concept` profiles: `MobileSam`, `EdgeTam`, `EfficientSam` and `EfficientSam3` (concept image model or prompt decoder). Each run returns the selected mask at the original image size with its box and predicted IoU in a versioned masks payload; `decode_segmentation` reads it. `Model::Options::multimask_output` mirrors upstream `predict(multimask_output=...)`, and `Model::Options::boxdecode_raw_outputs` also returns the model's raw outputs after the BoxDecode tensor, for EdgeTAM tracking. Requires a Kernels release with these profiles. See [Segment Anything masks](/reference/boxdecode_decode_types#segment-anything-masks).
+- New `BoxDecodeType` values decode Segment Anything models on the CPU through the Kernels `sam_mask` and `sam_concept` profiles: `MobileSam`, `EdgeTamSeg`, `EdgeTamTrack`, `EfficientSam` and `EfficientSam3` (concept image model or prompt decoder). Each run returns the selected mask at the original image size with its box and predicted IoU in a versioned masks payload; `decode_segmentation` reads it. `Model::Options::multimask_output` mirrors upstream `predict(multimask_output=...)`. `EdgeTamTrack` also returns the decoder's raw outputs after the BoxDecode tensor, for EdgeTAM tracking; `EdgeTamSeg` returns only the mask. Requires a Kernels release with these profiles. See [Segment Anything masks](/reference/boxdecode_decode_types#segment-anything-masks).
 
 ### Preprocessing {#v061-preproc}
 
-- Center crop now accepts an optional `preprocess.resize.shorter_side` before the final MPK-sized crop. Cropping retains full-resize sampling support and publishes its inverse transform. Rebuild against ABI 10 and the matching kernel firmware; do not mix earlier binaries.
+- Center crop now accepts an optional `preprocess.resize.shorter_side` before the final MPK-sized crop. Cropping retains full-resize sampling support and publishes its inverse transform. Rebuild against ABI 7 and the matching kernel firmware; do not mix earlier binaries.
 
 - `preprocess.resize.placement = LetterboxPlacement.TopLeft` places a letterboxed image at the canvas origin with all padding on the right and bottom, as MobileSAM expects. Detection BoxDecode profiles map boxes through the published affine; pose, segmentation and proposal profiles reject a non-centered letterbox. See [Preproc](/reference/nodes/preproc).
 

@@ -83,16 +83,6 @@ opt.top_k = 100;
 
 軸對齊偵測結果的顯示圖可將結果傳給 `SimaRender`。`decode_bbox(...)` 僅適用於既有的方框前置格式；此函式與 `SimaRender` 都不接受旋轉框。
 
-## 在解碼結果旁傳回原始輸出 {#raw-outputs}
-
-當應用程式需要從同一次推論執行同時取得解碼結果與模型的原始張量時，請設定 `Model::Options::boxdecode_raw_outputs`（Python：`ModelOptions.boxdecode_raw_outputs`）。路線會先傳回 BoxDecode 張量，接著依 MPK 順序傳回每個模型輸出，與同一個 Model 在沒有 BoxDecode 時傳回的完全相同：名稱、資料類型與形狀都相同。`Model::output_specs()`、`Model::run`、執行器與 `pull` 都會回報相同的清單。
-
-- 預設值為 `false`：只傳回一個 BoxDecode 張量，沒有額外的輸出或成本。既有的 BoxDecode 路線不變。
-- 使用此選項時，每個原始輸出在 BoxDecode 階段中每個影格需要一次轉換（例如 BF16 轉 FP32，或反量化）。此階段會讀取每個模型輸出兩次，一次用於解碼，一次用於原始複本；傳回的張量由結果擁有。
-- 沒有任何 BoxDecode 輸出頭讀取的模型輸出（例如 EdgeTAM 的物件指標）只會在使用此選項時傳回。
-- 只解碼第一個張量，例如 `pyneat.decode_segmentation(outputs[:1])`。原始張量不帶偵測標籤。
-- 路線沒有 BoxDecode 時會忽略此選項；若模型在沒有 BoxDecode 時的路線沒有可傳回張量的後處理階段，則會拒絕此選項。
-
 ## 信箱式放置位置 {#letterbox-placement}
 
 BoxDecode 設定檔以置中規則轉換信箱式調整後的偵測座標。未置中的信箱式調整（例如 Model 前處理中的 `LetterboxPlacement::TopLeft`）會從 `tensor.semantic.preprocess` 中公布的填充偵測出來；在第一個影格之前，則從上游 `Preproc` 原則判斷。此時，偵測設定檔（YOLO 偵測系列、已解碼的 YOLO、EfficientDet、DETR、DetrFocal、CenterNet 與 SSD）會使用每個影格實際的模型座標到原始影像座標仿射轉換來對應邊界框。姿勢、分割與 RCNN 提議設定檔會拒絕未置中的信箱式調整，而不是傳回偏移的結果。相對兩側填充相差一個像素時視為置中的餘數；置中的信箱式調整會維持既有的對應方式。相反地，Segment Anything 類型需要左上角放置的信箱式調整或拉伸；請參閱 [Segment Anything 遮罩](#segment-anything-masks)。
@@ -145,21 +135,21 @@ node = pyneat.nodes.sima_box_decode(
 | 模型 | `decode_type`（權杖） | 接收影像之 Model 的前處理 | 解碼器選項 |
 | --- | --- | --- | --- |
 | MobileSAM | `MobileSam`（`mobilesam`） | 編碼器：`resize.mode=Letterbox`、`resize.placement=TopLeft`、1024×1024、`pad_value=116`；`preset=ImageNet` | `multimask_output` |
-| EdgeTAM | `EdgeTam`（`edgetam`） | 影像編碼器：`resize.mode=Stretch`、1024×1024、無填補；`preset=ImageNet` | `multimask_output`；追蹤時使用 `boxdecode_raw_outputs` |
+| EdgeTAM | 遮罩使用 `EdgeTamSeg`（`edgetam-seg`）；追蹤使用 `EdgeTamTrack`（`edgetam-track`） | 影像編碼器：`resize.mode=Stretch`、1024×1024、無填補；`preset=ImageNet` | `multimask_output` |
 | EfficientSAM-T / -S | `EfficientSam`（`efficientsam`） | 編碼器：`resize.mode=Stretch`、1024×1024、無填補；不使用預設集，`normalize.enable=On`（數值 0–1；編碼器會自行正規化） | `multimask_output` 保持 true |
 | EfficientSAM3 互動式 | `EfficientSam3`（`efficientsam3`） | 影像編碼器：`resize.mode=Stretch`、1008×1008、無填補；`normalize.enable=On`，`normalize.mean` 與 `normalize.stddev` 為 (0.5, 0.5, 0.5) | `multimask_output` |
 | EfficientSAM3 概念 | `EfficientSam3`（`efficientsam3`） | 概念影像模型本身，走張量路線：應用程式將影像拉伸到 1008×1008、縮放到 [−1, 1]，並附上 `resize_mode="stretch"` 的 `semantic.preprocess` | `top_k`、`score_threshold` |
 
-Python 使用相同的名稱：`pyneat.BoxDecodeType.MobileSam`、`EdgeTam`、`EfficientSam` 與 `EfficientSam3`。MobileSAM 在正規化之後以 0 填補，相當於 ImageNet 的平均像素（124、116、104）；`pad_value=116` 是其近似值。遮罩永遠不會覆蓋填補區域。當 EfficientSAM3 Model 的輸出是偵測 `[Q, 6]` 與 Q 個通道的遮罩 logit 時，它被視為概念影像模型，否則視為提示解碼器。
+Python 使用相同的名稱：`pyneat.BoxDecodeType.MobileSam`、`EdgeTamSeg`、`EdgeTamTrack`、`EfficientSam` 與 `EfficientSam3`。MobileSAM 在正規化之後以 0 填補，相當於 ImageNet 的平均像素（124、116、104）；`pad_value=116` 是其近似值。遮罩永遠不會覆蓋填補區域。當 EfficientSAM3 Model 的輸出是偵測 `[Q, 6]` 與 Q 個通道的遮罩 logit 時，它被視為概念影像模型，否則視為提示解碼器。
 
 `Model::Options::multimask_output`（Python：`ModelOptions.multimask_output`）對應上游的 `predict(multimask_output=...)`。單次點擊有歧義，請保持 `true`；使用方框或多個點時設為 `false`。
 
 | `decode_type` | `multimask_output=true`（預設） | `multimask_output=false` |
 | --- | --- | --- |
 | `MobileSam` | 遮罩 1–3 中預測 IoU 最佳者 | 遮罩 0 |
-| `EdgeTam` | 遮罩 1–3 中預測 IoU 最佳者 | 遮罩 0 穩定時取遮罩 0，否則取遮罩 1–3 中最佳者 |
+| `EdgeTamSeg`、`EdgeTamTrack` | 遮罩 1–3 中預測 IoU 最佳者 | 遮罩 0 穩定時取遮罩 0，否則取遮罩 1–3 中最佳者 |
 | `EfficientSam` | 遮罩 0–2 中預測 IoU 最佳者 | 拒絕：EfficientSAM 沒有匯出單一遮罩權杖 |
-| `EfficientSam3` 提示解碼器 | 四個遮罩時取遮罩 1–3、三個遮罩時取遮罩 0–2 中預測 IoU 最佳者 | 四個遮罩：與 `EdgeTam` 相同。三個遮罩：拒絕 |
+| `EfficientSam3` 提示解碼器 | 四個遮罩時取遮罩 1–3、三個遮罩時取遮罩 0–2 中預測 IoU 最佳者 | 四個遮罩：與 EdgeTAM 相同。三個遮罩：拒絕 |
 | `EfficientSam3` 概念 | 分數高於 `score_threshold` 的最多 `top_k` 個查詢 | 拒絕：概念偵測沒有多遮罩選擇 |
 
 - 與 SAM2 相同，當遮罩 0 中高於 −0.05 的 logit 至少有 98% 也高於 0.05 時，遮罩 0 即為穩定。
@@ -176,7 +166,7 @@ BoxDecode 張量使用[具版本的遮罩酬載](#versioned-masks-payload)。`de
 - **遮罩。** `uint8`；重新取樣到原始影像大小的 logit 大於 0 的位置為 255，其餘為 0。
 - **數量。** 提示解碼器一律為 1：空遮罩的邊界框全為 0，但保留其分數與類別。與上游相同，EdgeTAM 的物件分數為 0 或以下時，遮罩為空。概念模型依分數由高到低（同分時依查詢索引）傳回保留的查詢。
 
-設定 `boxdecode_raw_outputs` 時，解碼器本身的輸出會接在 BoxDecode 張量之後；請參閱[在解碼結果旁傳回原始輸出](#raw-outputs)。
+`EdgeTamSeg` 與其他所有 Segment Anything 類型只傳回 BoxDecode 張量。使用 `EdgeTamTrack` 時，解碼器本身的輸出會接在其後；請參閱[EdgeTAM 追蹤](#edgetam-tracking)。
 
 ### 規則 {#segment-anything-rules}
 
@@ -212,7 +202,11 @@ mask = result.masks.to_numpy()[0]  # uint8 [H, W], 0 or 255
 
 ### EdgeTAM 追蹤 {#edgetam-tracking}
 
-EdgeTAM 的記憶體編碼器與記憶體庫需要兩個 BoxDecode 不會公布的解碼器輸出：物件指標，以及所選遮罩的低解析度 logit。在遮罩解碼器的 Model 上設定 `boxdecode_raw_outputs`，即可從同一次執行取得它們。輸出依序為 BoxDecode 張量、`mask_logits` `[1, 256, 256, 4]`、`iou_scores` `[1, 4]`、`object_score_logits` `[1, 1]` 與 `object_pointers` `[1, 4, 256]`，皆為 float32。
+EdgeTAM 的記憶體編碼器與記憶體庫需要兩個 BoxDecode 不會解碼的解碼器輸出：物件指標，以及所選遮罩的低解析度 logit。在遮罩解碼器的 Model 上設定 `decode_type = EdgeTamTrack`，即可從同一次執行取得它們；只需要遮罩時請使用 `EdgeTamSeg`。`EdgeTamTrack` 會先傳回 BoxDecode 張量，接著依 MPK 順序傳回每個解碼器輸出，與同一個 Model 在沒有 BoxDecode 時傳回的完全相同（名稱、資料類型與形狀都相同）：`mask_logits` `[1, 256, 256, 4]`、`iou_scores` `[1, 4]`、`object_score_logits` `[1, 1]` 與 `object_pointers` `[1, 4, 256]`，皆為 float32。`Model::output_specs()`、`Model::run`、執行器與 `pull` 都會回報相同的清單。
+
+- 每個原始輸出在 BoxDecode 階段中每個影格需要一次轉換（BF16 轉 FP32，或反量化）。傳回的張量由結果擁有。
+- 只解碼第一個張量，例如 `pyneat.decode_segmentation(outputs[:1])`。原始張量不帶偵測標籤。
+- 若模型在沒有 BoxDecode 時的路線沒有可傳回張量的後處理階段，則會拒絕 `EdgeTamTrack`。
 
 - 偵測的類別即所選平面：記憶體編碼器使用 `mask_logits[0, :, :, class]`，並依模型 README 的說明放大到 1024×1024。
 - 兩個以上的點組成的提示請設定 `multimask_output=False`；單次點擊與追蹤中的影格請保持 `True`。無論哪個規則，類別都會指出其選擇的平面。
@@ -226,8 +220,7 @@ encoder_options.preprocess.preset = pyneat.NormalizePreset.ImageNet
 encoder = pyneat.Model("/path/to/edgetam_image_encoder_mpk.tar.gz", encoder_options)
 
 options = pyneat.ModelOptions()
-options.decode_type = pyneat.BoxDecodeType.EdgeTam
-options.boxdecode_raw_outputs = True
+options.decode_type = pyneat.BoxDecodeType.EdgeTamTrack
 decoder = pyneat.Model("/path/to/edgetam_mask_decoder_mpk.tar.gz", options)
 
 outputs = decoder.run(decoder_inputs)  # conditioned embeddings, high-res features, prompt
@@ -545,7 +538,8 @@ NMS IoU 為零時，YOLO26 略過 NMS。其他啟用 NMS 的 YOLO 與 SSD 設定
 | `BoxDecodeType::SuperPoint` | `superpoint` | SuperPoint 檢測器和描述符後處理 |
 | `BoxDecodeType::Detr` | `detr` | DETR 樣式的變壓器檢測 |
 | `BoxDecodeType::MobileSam` | `mobilesam` | MobileSAM 提示解碼器（左上角放置的信箱式調整） |
-| `BoxDecodeType::EdgeTam` | `edgetam` | EdgeTAM 遮罩解碼器，含物件分數（拉伸） |
+| `BoxDecodeType::EdgeTamSeg` | `edgetam-seg` | EdgeTAM 遮罩解碼器，含物件分數（拉伸） |
+| `BoxDecodeType::EdgeTamTrack` | `edgetam-track` | `EdgeTamSeg`，之後接著供追蹤使用的解碼器原始輸出 |
 | `BoxDecodeType::EfficientSam` | `efficientsam` | EfficientSAM 提示解碼器，三個多遮罩權杖（拉伸） |
 | `BoxDecodeType::EfficientSam3` | `efficientsam3` | EfficientSAM3 提示解碼器，或每個保留的查詢一個遮罩的概念影像模型（拉伸） |
 | `BoxDecodeType::EffDet` | `effdet` | EfficientDet 偵測 |
@@ -630,7 +624,7 @@ masks = seg.masks.to_numpy()
 
 ## 升級
 
-先前的 BoxDecode 選項引入了 ABI 6。目前的來源運算選項需要 ABI 10 (`libsima_neat.so.10`)。請以相符的標頭與函式庫重新建置 C++ 應用程式、外掛程式及 Python 繫結；不要透過相容性符號連結載入 ABI 5–9 二進位檔。
+先前的 BoxDecode 選項引入了 ABI 6。目前的來源運算選項需要 ABI 7 (`libsima_neat.so.7`)。請以相符的標頭與函式庫重新建置 C++ 應用程式、外掛程式及 Python 繫結；不要透過相容性符號連結載入 ABI 5 或 6 二進位檔。
 
 
 ### 組合 YOLOX 輸入准入

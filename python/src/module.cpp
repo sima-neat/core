@@ -4539,7 +4539,8 @@ NB_MODULE(_pyneat_core, m) {
       .value("Detr", simaai::neat::BoxDecodeType::Detr)
       .value("DetrFocal", simaai::neat::BoxDecodeType::DetrFocal)
       .value("MobileSam", simaai::neat::BoxDecodeType::MobileSam)
-      .value("EdgeTam", simaai::neat::BoxDecodeType::EdgeTam)
+      .value("EdgeTamSeg", simaai::neat::BoxDecodeType::EdgeTamSeg)
+      .value("EdgeTamTrack", simaai::neat::BoxDecodeType::EdgeTamTrack)
       .value("EfficientSam", simaai::neat::BoxDecodeType::EfficientSam)
       .value("EfficientSam3", simaai::neat::BoxDecodeType::EfficientSam3)
       .value("EffDet", simaai::neat::BoxDecodeType::EffDet)
@@ -4758,9 +4759,6 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("boxdecode_original_width", &simaai::neat::Model::Options::boxdecode_original_width)
       .def_rw("boxdecode_original_height", &simaai::neat::Model::Options::boxdecode_original_height)
       .def_rw("boxdecode_resize_mode", &simaai::neat::Model::Options::boxdecode_resize_mode)
-      .def_rw("boxdecode_raw_outputs", &simaai::neat::Model::Options::boxdecode_raw_outputs,
-              "Also return the raw model outputs, after the BoxDecode tensor, when the route "
-              "ends in BoxDecode (same names, dtypes and shapes as without BoxDecode).")
       .def_rw("multimask_output", &simaai::neat::Model::Options::multimask_output,
               "Segment Anything decoders: True keeps the best of the multimask candidates, False "
               "the single-mask answer (upstream predict(multimask_output=...)).")

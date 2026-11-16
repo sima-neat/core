@@ -112,9 +112,9 @@ static_assert(offsetof(OrientedBoxRecordV1, reserved) == 28);
 /**
  * @brief Versioned, little-endian header of a masks payload whose masks are not 160×160.
  *
- * Segment Anything decoding (`BoxDecodeType::MobileSam`, `EdgeTam`, `EfficientSam` and an
- * EfficientSAM3 prompt decoder with one record; an EfficientSAM3 concept image model with up to
- * `top_k`) publishes its masks at the original image size. The
+ * Segment Anything decoding (`BoxDecodeType::MobileSam`, `EdgeTamSeg`, `EdgeTamTrack`,
+ * `EfficientSam` and an EfficientSAM3 prompt decoder with one record; an EfficientSAM3 concept
+ * image model with up to `top_k`) publishes its masks at the original image size. The
  * payload keeps the segmentation tag; `decode_segmentation` and `decode_bbox`
  * recognize it by `magic`. Layout: this header, then `capacity` BBOX records of
  * `record_stride` bytes (int32 x, y, width, height; float32 score; int32 class_id) at

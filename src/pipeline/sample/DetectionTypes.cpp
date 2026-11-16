@@ -696,8 +696,8 @@ SegmentationPoseDecodeTensorList decode_segmentation_pose(const simaai::neat::Te
 
 void tag_detection_format_in_sample(simaai::neat::Sample& sample) {
   // A BoxDecode route publishes its decoded tensor first. With
-  // Model::Options::boxdecode_raw_outputs the model's raw tensors follow it
-  // and keep no detection tag.
+  // BoxDecodeType::EdgeTamTrack the model's raw tensors follow it and keep no
+  // detection tag.
   const bool decoded_first = sample.kind == simaai::neat::SampleKind::TensorSet &&
                              sample.tensors.size() > 1U &&
                              sample.tensors.front().dtype == simaai::neat::TensorDType::UInt8 &&

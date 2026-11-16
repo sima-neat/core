@@ -40,8 +40,15 @@ def _tensor(payload: bytes) -> pyneat.Tensor:
   )
 
 
-# One decode type per Segment Anything model, with Core's enum values.
-SAM_TYPES = {"MobileSam": 28, "EdgeTam": 29, "EfficientSam": 30, "EfficientSam3": 31}
+# One decode type per Segment Anything model, and EdgeTAM's with or without its raw outputs,
+# with Core's enum values.
+SAM_TYPES = {
+    "MobileSam": 28,
+    "EdgeTamSeg": 29,
+    "EfficientSam": 30,
+    "EfficientSam3": 31,
+    "EdgeTamTrack": 32,
+}
 
 
 def test_sam_decode_types():
@@ -51,8 +58,10 @@ def test_sam_decode_types():
   for decode_type in types:
     options.decode_type = decode_type
     assert options.decode_type == decode_type
-  for retired in ("SamMask", "SamMaskSingle", "SamMaskStability", "SamConcept"):
+  for retired in ("SamMask", "SamMaskSingle", "SamMaskStability", "SamConcept", "EdgeTam"):
     assert not hasattr(pyneat.BoxDecodeType, retired)
+  # EdgeTamTrack returns the raw outputs; no option does.
+  assert not hasattr(options, "boxdecode_raw_outputs")
 
 
 def test_multimask_output_option():
@@ -60,20 +69,13 @@ def test_multimask_output_option():
   # mapping and its rejections are checked when the BoxDecode stage is built.
   options = pyneat.ModelOptions()
   assert options.multimask_output is True
-  options.decode_type = pyneat.BoxDecodeType.EdgeTam
+  options.decode_type = pyneat.BoxDecodeType.EdgeTamSeg
   options.multimask_output = False
   assert options.multimask_output is False
 
 
-def test_boxdecode_raw_outputs_option():
-  options = pyneat.ModelOptions()
-  assert options.boxdecode_raw_outputs is False
-  options.boxdecode_raw_outputs = True
-  assert options.boxdecode_raw_outputs is True
-
-
 def test_decoded_tensor_comes_first_with_raw_outputs():
-  # With raw outputs the BoxDecode tensor is first; decode only that one.
+  # EdgeTamTrack returns the BoxDecode tensor first, then the raw outputs; decode only that one.
   payload = _masks_v1([(320, 144, 426, 360, 0.8125, 2)], height=72, width=128)
   logits = pyneat.Tensor.from_numpy(np.zeros((1, 256, 256, 4), np.float32), copy=True,
                                     memory=pyneat.TensorMemory.CPU)

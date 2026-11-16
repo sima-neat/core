@@ -599,7 +599,7 @@ RUN_TEST(
         require(rejected, "malformed V1 masks payload was accepted");
       }
       {
-        // Model::Options::boxdecode_raw_outputs: the BoxDecode tensor comes first
+        // BoxDecodeType::EdgeTamTrack: the BoxDecode tensor comes first
         // in a BBOX set and alone takes the detection tag; raw tensors keep none.
         auto wire = make_wire_tensor(make_masks_v1_payload(1, 1, 4, 6), "");
         wire.semantic.detection.reset();

@@ -453,8 +453,8 @@ struct ProcessMlaStagePayload {
 };
 
 /// BoxDecode stage payload — decode flavor, NMS / topK params, slice geometry.
-/// One raw model output that a BoxDecode stage also publishes (Model::Options::
-/// boxdecode_raw_outputs): the tensor the route without BoxDecode returns for that input.
+/// One raw model output that a BoxDecode stage also publishes (BoxDecodeType::EdgeTamTrack):
+/// the tensor the route without BoxDecode returns for that input.
 struct BoxDecodeRawOutput {
   std::string name;                ///< Unique endpoint name of the route without BoxDecode.
   std::string dtype;               ///< Published dtype token (FP32, BF16, INT8).

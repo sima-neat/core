@@ -632,10 +632,12 @@ RUN_TEST(
               "one-ULP source coefficient changes must invalidate preparation identity");
       different_option([](auto& o) { o.num_classes = 80; });
       different_option([](auto& o) { o.decode_type = BoxDecodeType::MobileSam; });
-      // Each SAM model, and each multimask_output choice, is its own stage.
+      // Each SAM model, EdgeTAM with or without its raw outputs, and each multimask_output
+      // choice is its own stage.
       std::vector<std::string> sam_keys;
-      for (const auto type : {BoxDecodeType::MobileSam, BoxDecodeType::EdgeTam,
-                              BoxDecodeType::EfficientSam, BoxDecodeType::EfficientSam3})
+      for (const auto type :
+           {BoxDecodeType::MobileSam, BoxDecodeType::EdgeTamSeg, BoxDecodeType::EdgeTamTrack,
+            BoxDecodeType::EfficientSam, BoxDecodeType::EfficientSam3})
         for (const bool multimask : {true, false}) {
           Model::Options sam = defaults;
           sam.decode_type = type;
@@ -653,9 +655,6 @@ RUN_TEST(
       different_option([](auto& o) { o.superpoint.profile = SuperPointProfile::LightGlueV1; });
       different_option([](auto& o) { o.superpoint.nms_radius = 0; });
       different_option([](auto& o) { o.superpoint.border_margin = 0; });
-      different_option([](auto& o) { o.boxdecode_raw_outputs = true; });
-      require(default_key.find("boxdecode_raw_outputs") == std::string::npos,
-              "the default BoxDecode route must keep its established identity");
       different_option(
           [](auto& o) { o.preprocess.resize.placement = LetterboxPlacement::TopLeft; });
       require(default_key.find("\"placement\"") == std::string::npos,

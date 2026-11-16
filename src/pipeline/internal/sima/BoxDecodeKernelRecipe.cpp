@@ -1101,7 +1101,7 @@ BoxDecodeKernelRecipeResult prepare_boxdecode_kernel(const CompiledBoxDecodeCont
   build.recipe->members.push_back(std::move(decode));
   build.recipe->members.push_back(
       {publication.executable, std::move(publication_inputs), {{0, 0}}, {decode_member}, {}});
-  // Model::Options::boxdecode_raw_outputs: each input also becomes public
+  // BoxDecodeType::EdgeTamTrack: each input also becomes public
   // output 1 + i, exactly as the route without BoxDecode returns it. These
   // members read stage inputs only, so they never wait for the decode, and
   // the stage keeps its inputs until every member has finished.

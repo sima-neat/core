@@ -11,7 +11,7 @@ SiMa.ai Neat Library 的版本資訊。
 
 ### 重大變更 {#v061-breaking}
 
-- Neat Library 的 C++ ABI 現在是 10（`libsima_neat.so.10`）。`ResizeOptions`、`ResizeSpec`、`PreprocessOptions`、`PreprocOptions`、`NormalizationOptions` 和 `Model::Options` 新增了欄位。請使用相符的標頭及執行階段套件，重新建置 C++ 應用程式、外掛程式與 Python 繫結；不要重用 ABI 6 二進位檔，也不要新增相容性符號連結。
+- Neat Library 的 C++ ABI 現在是 7（`libsima_neat.so.7`）。`ResizeOptions`、`ResizeSpec`、`PreprocessOptions`、`PreprocOptions`、`NormalizationOptions` 和 `Model::Options` 新增了欄位。請使用相符的標頭及執行階段套件，重新建置 C++ 應用程式、外掛程式與 Python 繫結；不要重用 ABI 6 二進位檔，也不要新增相容性符號連結。
 
 ### 語意分割 {#v061-segmentation}
 
@@ -19,11 +19,11 @@ SiMa.ai Neat Library 的版本資訊。
 
 ### Segment Anything 遮罩 {#v061-segment-anything}
 
-- 新的 `BoxDecodeType` 值透過 Kernels 的 `sam_mask` 與 `sam_concept` 設定檔，在 CPU 上解碼 Segment Anything 模型：`MobileSam`、`EdgeTam`、`EfficientSam` 與 `EfficientSam3`（概念影像模型或提示解碼器）。每次執行都會以具版本的遮罩酬載，傳回原始影像大小的所選遮罩及其邊界框與預測 IoU，可用 `decode_segmentation` 讀取。`Model::Options::multimask_output` 對應上游的 `predict(multimask_output=...)`，而 `Model::Options::boxdecode_raw_outputs` 會為 EdgeTAM 追蹤在 BoxDecode 張量之後一併傳回模型的原始輸出。需要包含這些設定檔的 Kernels 版本。請參閱 [Segment Anything 遮罩](/reference/boxdecode_decode_types#segment-anything-masks)。
+- 新的 `BoxDecodeType` 值透過 Kernels 的 `sam_mask` 與 `sam_concept` 設定檔，在 CPU 上解碼 Segment Anything 模型：`MobileSam`、`EdgeTamSeg`、`EdgeTamTrack`、`EfficientSam` 與 `EfficientSam3`（概念影像模型或提示解碼器）。每次執行都會以具版本的遮罩酬載，傳回原始影像大小的所選遮罩及其邊界框與預測 IoU，可用 `decode_segmentation` 讀取。`Model::Options::multimask_output` 對應上游的 `predict(multimask_output=...)`。`EdgeTamTrack` 會為 EdgeTAM 追蹤在 BoxDecode 張量之後一併傳回解碼器的原始輸出；`EdgeTamSeg` 只傳回遮罩。需要包含這些設定檔的 Kernels 版本。請參閱 [Segment Anything 遮罩](/reference/boxdecode_decode_types#segment-anything-masks)。
 
 ### 前處理 {#v061-preproc}
 
-- 中央裁切現在接受選用的 `preprocess.resize.shorter_side`，再裁切至最終 MPK 尺寸。裁切會保留完整縮放的濾波範圍並發佈反向轉換。請使用 ABI 10 與相符的核心韌體重新建置，不要混用舊版二進位檔。
+- 中央裁切現在接受選用的 `preprocess.resize.shorter_side`，再裁切至最終 MPK 尺寸。裁切會保留完整縮放的濾波範圍並發佈反向轉換。請使用 ABI 7 與相符的核心韌體重新建置，不要混用舊版二進位檔。
 
 - `preprocess.resize.placement = LetterboxPlacement.TopLeft` 會如 MobileSAM 所預期，將信箱式調整後的影像放在畫布原點，所有填補都放在右側與下方。偵測用的 BoxDecode 設定檔會透過公布的仿射轉換對應邊界框；姿態、分割與提案設定檔會拒絕非置中的信箱式調整。請參閱 [Preproc](/reference/nodes/preproc)。
 
