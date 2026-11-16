@@ -11,11 +11,15 @@ Release notes for the SiMa.ai Neat Library.
 
 ### Breaking changes {#v061-breaking}
 
-- The Neat Library C++ ABI is now 8 (`libsima_neat.so.8`). `ResizeOptions`, `ResizeSpec`, `PreprocessOptions`, `PreprocOptions` and `NormalizationOptions` gained fields. Rebuild C++ applications, plugins and Python bindings with matching headers and runtime packages; do not reuse ABI 6 binaries or add compatibility symlinks.
+- The Neat Library C++ ABI is now 9 (`libsima_neat.so.9`). `ResizeOptions`, `ResizeSpec`, `PreprocessOptions`, `PreprocOptions`, `NormalizationOptions` and `Model::Options` gained fields. Rebuild C++ applications, plugins and Python bindings with matching headers and runtime packages; do not reuse ABI 6 binaries or add compatibility symlinks.
+
+### Semantic segmentation {#v061-segmentation}
+
+- New `ResizeArgMax` node and `Model::Options::semantic_segmentation` option decode segmentation scores on the EV74. The decode bilinearly resizes per-class scores to the chosen size and returns the first class with the largest score, matching SegFormer's `interpolate` and `argmax` postprocessing. It reads padded MLA outputs in place and compares INT8 scores without dequantization. The model then returns the class map instead of the scores. Requires EV74 firmware that includes the operation. See [Semantic segmentation decode](/reference/semantic_segmentation_decode).
 
 ### Preprocessing {#v061-preproc}
 
-- Center crop now accepts an optional `preprocess.resize.shorter_side` before the final MPK-sized crop. Cropping retains full-resize sampling support and publishes its inverse transform. Rebuild against ABI 8 and the matching kernel firmware; do not mix earlier binaries.
+- Center crop now accepts an optional `preprocess.resize.shorter_side` before the final MPK-sized crop. Cropping retains full-resize sampling support and publishes its inverse transform. Rebuild against ABI 9 and the matching kernel firmware; do not mix earlier binaries.
 
 - Model preprocessing and standalone Resize share `ResizeInterpolation`. Use `preprocess.resize.interpolation = ResizeInterpolation.BilinearAntialiased` instead of a sampler string in new code. Existing `scaling_type` strings remain compatible; conflicting nondefault strings are rejected.
 

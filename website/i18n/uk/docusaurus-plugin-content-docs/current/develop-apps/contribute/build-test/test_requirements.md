@@ -141,8 +141,10 @@ CPU всього процесу в мікросекундах на заверш�
 | Середовище виконання Python | `NEAT_CI_PYTHON_PROFILE=runtime` (типово) | Вмикає Graph Phase 3 з підготовленими тестовими даними ResNet; Torch явно виключено. |
 | Інтеграція Torch | `NEAT_CI_PYTHON_PROFILE=torch` | Задайте перевірену точну версію `NEAT_CI_TORCH_VERSION`; встановлення та імпорт мають завершитися успішно. |
 | Камера MIPI | `SIMA_NEAT_TEST_MIPI_CAMERA=1` | Надайте камеру, `SIMA_NEAT_TUTORIAL_MODEL_MIPI` та `SIMA_NEAT_TUTORIAL_MIPI_DECODE`. |
-| Щотижневі потоки HTTP | `NEAT_CI_STREAM_PROFILE=http` (типово) | Надайте URL потоків HTTP MJPEG і додатну частоту FPS. Обидва випадки HTTP та синхронна базова перевірка залишаються обов’язковими. |
-| Щотижневі потоки HTTP + RTSP | `NEAT_CI_STREAM_PROFILE=all` | Додатково надайте URL потоків RTSP H264, H265 та MJPEG і додатну частоту MJPEG FPS. |
+| Щотижневі потоки HTTP | `stream_profile: http` (типово) | Каталог Colo надає URL потоків HTTP MJPEG і додатну цілу частоту FPS. Обидва випадки HTTP та синхронна базова перевірка залишаються обов’язковими. |
+| Щотижневі потоки HTTP + RTSP | `stream_profile: all` | Каталог також надає URL потоків RTSP H.264, H.265 та MJPEG і додатну цілу частоту MJPEG FPS. |
+
+Щотижневе завдання потоків знаходить каталог через `/etc/colo-services.json` на призначеному DevKit. Виберіть `stream_profile: none`, щоб пропустити потокові перевірки.
 
 Тест API камери без обладнання завжди входить до профілю середовища виконання.
 Виключення камери та Torch залишаються прогалинами покриття, а не успіхами.

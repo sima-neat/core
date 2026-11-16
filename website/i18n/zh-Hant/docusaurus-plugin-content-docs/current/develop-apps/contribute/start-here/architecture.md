@@ -447,7 +447,7 @@ Scheduler 在準備階段依此關係檢查每個輸出綁定，包括 dtype、�
 `FrameSpan` 位移屬於個別配置與緩衝群組，不是整張圖的全域位址。不同群組中的相同位移不會重疊。BoxDecode 和 ArgMax 將輸出頭相對張量位移與儲存位移分開。直接記憶體輸入與執行階段實體繫結輸入維持原有定址方式。
 
 Core 將 Preproc、轉換與視覺階段，包括 ArgMax、BoxDecode、SuperPoint 與 LiDAR/BEV 核心節點（SimaVoxelize、SimaPillarScatter、
-SimaBEVPoolPlan 與 SimaBEVPool），降階為
+SimaBEVPoolPlan 與 SimaBEVPool）與 ResizeArgMax，降階為
 標準要求與明確張量埠對應。Scheduler 的一般化張量階段引擎擁有 GStreamer 綁定與
 發布；Runner 擁有相依、非同步執行與執行期間緩衝區生命週期。
 Core 從上游分配契約或輸入儲存空間匯入載體容量，絕不只根據邏輯形狀推斷。
@@ -566,7 +566,7 @@ LiDAR/BEV 節點將選項、埠描述與無副作用的數值要求建構保留�
 Scheduler 既有的 `check_kernel(...)` API，並使用一般的階段執行配方與 `FrameLayout`
 執行路徑。`StaticSpecBuilders.cpp` 與 `SimaArgMax` 共用僅處理中繼資料的輸入投影及
 直接輸入繫結；這些輔助函式不會準備或排程核心。LiDAR/BEV 節點檔案不會包含管線
-私有實作標頭。此分工不會新增逐影格工作或承載資料複製。
+私有實作標頭。此分工不會新增逐影格工作或承載資料複製。 `ResizeArgMax` 也採用相同分工。`Model::Options::semantic_segmentation` 會以該節點取代模型的 dequantize 或 cast 後處理，節點透過上游的跨步檢視讀取 MLA 分數；`Model` 建構函式會拒絕其他任何後處理。
 
 獨立的 `Cast` 將具型別檢視編譯成由 Kernels 檢查的標準 `cast` 要求。邏輯身分、步幅與張量相對位移保持明確。語意編譯在配置前調整有序 MLA 輸入埠；呈現過程保留已檢查合約。執行容量預設為非同步 4、同步 1，並以獨立輸出載體支援保留。子集或重新排序的 TensorSet 使用保留父物件的中繼資料封套，不修改已持有的發布資訊與承載資料。
 
