@@ -7,21 +7,21 @@ sidebar_position: 3
 
 SiMa.ai Neat Library의 릴리스 노트입니다.
 
-## 0.6.1(미출시) {#v061}
+## 0.6.2(미출시) {#v062}
 
-### 호환성에 영향을 주는 변경 {#v061-breaking}
+### 호환성에 영향을 주는 변경 {#v062-breaking}
 
-- Neat Library C++ ABI는 이제 7(`libsima_neat.so.7`)입니다. `ResizeOptions`, `ResizeSpec`, `PreprocessOptions`, `PreprocOptions`, `NormalizationOptions`, `Model::Options`에 필드가 추가되었습니다. 일치하는 헤더와 런타임 패키지로 C++ 애플리케이션, 플러그인, Python 바인딩을 다시 빌드하세요. ABI 6 바이너리를 재사용하거나 호환성 심볼릭 링크를 추가하지 마세요.
+- Neat Library C++ ABI는 이제 7(`libsima_neat.so.7`)입니다. `ResizeOptions`, `ResizeSpec`, `PreprocessOptions`, `PreprocOptions`, `NormalizationOptions`, `Model::Options`에 필드가 추가되었습니다. 일치하는 헤더와 런타임 패키지로 C++ 애플리케이션, 플러그인, Python 바인딩을 다시 빌드하세요. ABI 6 바이너리(0.6.0 및 0.6.1)를 재사용하거나 호환성 심볼릭 링크를 추가하지 마세요.
 
-### 시맨틱 세그멘테이션 {#v061-segmentation}
+### 시맨틱 세그멘테이션 {#v062-segmentation}
 
 - 새 `ResizeArgMax` 노드와 `Model::Options::semantic_segmentation` 옵션은 EV74에서 세그멘테이션 점수를 디코딩합니다. 디코딩은 클래스별 점수를 선택한 크기로 쌍선형 크기 조정하고 점수가 가장 큰 첫 번째 클래스를 반환하며, SegFormer의 `interpolate` 및 `argmax` 후처리와 일치합니다. 패딩된 MLA 출력을 그 자리에서 읽고 INT8 점수를 역양자화 없이 비교합니다. 모델은 점수 대신 클래스 맵을 반환합니다. 이 연산을 포함하는 EV74 펌웨어가 필요합니다. [시맨틱 세그멘테이션 디코딩](/reference/semantic_segmentation_decode)을 참조하세요.
 
-### Segment Anything 마스크 {#v061-segment-anything}
+### Segment Anything 마스크 {#v062-segment-anything}
 
 - 새 `BoxDecodeType` 값은 Kernels의 `sam_mask` 및 `sam_concept` 프로필로 CPU에서 Segment Anything 모델을 디코딩합니다: `MobileSam`, `EdgeTamSeg`, `EdgeTamTrack`, `EfficientSam`, `EfficientSam3`(개념 이미지 모델 또는 프롬프트 디코더). 각 실행은 원본 이미지 크기의 선택된 마스크를 박스 및 예측 IoU와 함께 버전이 지정된 마스크 페이로드로 반환하며, `decode_segmentation`으로 읽습니다. `Model::Options::multimask_output`은 업스트림 `predict(multimask_output=...)`에 대응합니다. `EdgeTamTrack`은 EdgeTAM 추적을 위해 BoxDecode 텐서 뒤에 디코더의 원시 출력도 반환하고, `EdgeTamSeg`는 마스크만 반환합니다. 이 프로필이 포함된 Kernels 릴리스가 필요합니다. [Segment Anything 마스크](/reference/boxdecode_decode_types#segment-anything-masks)를 참조하세요.
 
-### 전처리 {#v061-preproc}
+### 전처리 {#v062-preproc}
 
 - 중앙 자르기는 최종 MPK 크기로 자르기 전에 선택적 `preprocess.resize.shorter_side`를 지원합니다. 전체 크기 조정의 필터 범위를 유지하고 역변환을 게시합니다. ABI 7 및 일치하는 커널 펌웨어로 다시 빌드하고 이전 바이너리를 혼용하지 마세요.
 
@@ -30,6 +30,28 @@ SiMa.ai Neat Library의 릴리스 노트입니다.
 - Model 전처리와 독립형 Resize는 `ResizeInterpolation`을 공유합니다. 새 코드에서는 샘플러 문자열 대신 `preprocess.resize.interpolation = ResizeInterpolation.BilinearAntialiased`를 사용하세요. 기존 `scaling_type` 문자열의 호환성은 유지되며 충돌하는 기본값 이외의 문자열은 거부됩니다.
 
 - 기존 전처리 옵션에서 안티앨리어싱 이중선형 크기 조정, 명시적인 원본 재조정 계수, 색 변환 위치, 부동소수점 변환 정책을 지정할 수 있습니다. 고정 원본 산술 경로에서는 평균과 표준편차 필드가 합성된 아핀 변환 대신 원래 평균과 제수를 유지합니다. BF16은 기존 절삭이 기본이며 최근접 짝수 반올림은 명시적으로 선택합니다. FP16은 최근접 짝수 반올림을 사용합니다. 정밀 INT8 양자화에는 모델의 승수와 일치하는 원본 스텝이 필요하며, 승수로 이 스텝을 복원할 수 없습니다. 새 옵션을 지정하지 않으면 기존 경로를 유지합니다. [Preproc](/reference/nodes/preproc)를 참조하세요.
+
+## 0.6.1 {#v061}
+
+0.6.1은 0.6.0의 문제를 수정하며 ABI 6(`libsima_neat.so.6`)을 유지합니다. 0.6.0용으로 빌드한 애플리케이션은 다시 빌드하지 않고 실행됩니다.
+
+### 수정 사항 {#v061-fixes}
+
+- 호스트에서 디바이스로의 전송은 라이브 입력을 막지 않고 풀링된 DMA 버퍼를 다시 재사용하며, 프로세스 전체의 DMA 전송 캐시는 크기가 제한됩니다. 캐시에서 제거할 때 아직 사용 중인 텐서는 절대 해제하지 않습니다.
+- 처리 중인 작업이 없는 비동기 실행은 더 이상 시간 초과되지 않으며, 입력이 도착하면 재개됩니다. `Run::run()`과 `Model::run()`은 호출별 `timeout_ms`에 따라 출력을 기다립니다. `Run::pull(-1)`과 마찬가지로 `-1`은 무제한으로 기다립니다. `RunOptions::input_timeout_ms`는 입력 모드 `Graph::run()`과 시드 기반 빌드 사전 검증에 적용됩니다.
+- `Model`은 네이티브 MLA 입력 배치 전체를 검증합니다.
+- 패킹된 출력을 가진 MLA 전용 모델은 타입이 지정된 출력 뷰를 유지합니다.
+- 모델에서 관리하는 경로는 레거시 YOLOv6 팩처럼 그래프 안에서 디코딩되는 YOLO 헤드를 허용합니다. 이러한 헤드에는 `BoxDecodeType::Yolo`를 사용하세요.
+- 실행 보고서는 네이티브 BoxDecode 설정을 유지합니다.
+- H.265 인코더는 지원하지 않는 레벨 4.2를 거부합니다.
+- 비디오 송신기는 더 이상 입력을 3840×2160으로 제한하지 않습니다. 단, 크기는 여전히 양의 짝수여야 합니다.
+- 오프라인 PCIe 호스트 번들은 종속성 입력이 바뀌면 다시 빌드되며, 아카이브 이름에 체크섬 접미사가 붙습니다.
+
+### 문서 {#v061-docs}
+
+- H.264 디코딩 입력은 8비트, 4:2:0, 프로그레시브여야 합니다. High 10, High 4:2:2 및 인터레이스 비트스트림은 지원되지 않습니다.
+- SDK 호스트에는 Docker Engine 20.10.10 이상이 필요합니다.
+- Model 가이드에 `preprocess.enable = Off`가 비활성화하는 항목과 남는 MPK 어댑터를 설명했습니다.
 
 ## 0.6.0
 
