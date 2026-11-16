@@ -4,7 +4,7 @@ description: "安裝 PCIe 主機的執行階段，以便在連接的 Modalix PCI
 sidebar_position: 3
 ---
 
-請使用此頁面，在已連接至 Modalix PCIe 卡的 Linux 主機上安裝 Neat PCIe 主機套件。
+請使用此頁面，在已連接至 Modalix PCIe 卡且受支援的 Linux 或 Windows 主機上安裝 Neat PCIe 主機套件。
 
 Neat PCIe 主機套件提供協同處理 API，用於將來自主機的輸入傳送到已連接的 Modalix PCIe 卡，並接收推論結果。
 
@@ -116,17 +116,21 @@ Set-Location $env:TEMP
 
 ## 疑難排解
 
-如果 SSH 佈線無法自動偵測到卡片，請先確認主機是否能夠連線到其管理位址：
+如果 SSH 佈建無法自動偵測到卡片，請確認主機是否能夠連線到其管理位址，然後明確指定該位址來執行已安裝的設定工具。
+
+在 Linux 上：
 
 <ShellCommand prompt="pcie-host">
 ping -c 1 10.0.0.2
-</ShellCommand>
-
-然後以明確指定的位址執行已安裝的設定工具：
-
-<ShellCommand prompt="pcie-host">
 pcie-setup.sh --hosts "10.0.0.2"
 </ShellCommand>
+
+在 Windows 上，請開啟 PowerShell：
+
+```powershell
+Test-Connection -ComputerName 10.0.0.2 -Count 1
+& "C:\Program Files\SimaPCIeHost\bin\pcie-setup.cmd" -Hosts 10.0.0.2
+```
 
 如果套件安裝或執行階段啟動失敗，請確認 PCIe 主機套件以及安裝在卡上的 Neat Library，是否來自相容的版本。
 

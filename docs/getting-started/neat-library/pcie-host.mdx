@@ -4,8 +4,8 @@ description: Install the PCIe host runtime to run models on a connected Modalix 
 sidebar_position: 3
 ---
 
-Use this page to install the Neat PCIe host package on a Linux machine connected
-to a Modalix PCIe Card.
+Use this page to install the Neat PCIe host package on a supported Linux or
+Windows machine connected to a Modalix PCIe Card.
 
 The Neat PCIe host package provides co-processing APIs for sending input from a
 host machine to a connected Modalix PCIe Card and receiving inference results.
@@ -151,18 +151,23 @@ Set-Location $env:TEMP
 
 ## Troubleshooting
 
-If SSH provisioning cannot discover the card automatically, first verify that
-the host can reach its management address:
+If SSH provisioning cannot discover the card automatically, verify that the
+host can reach its management address and then run the installed setup utility
+with the address explicitly.
+
+On Linux:
 
 <ShellCommand prompt="pcie-host">
 ping -c 1 10.0.0.2
-</ShellCommand>
-
-Then run the installed setup utility with the address explicitly:
-
-<ShellCommand prompt="pcie-host">
 pcie-setup.sh --hosts "10.0.0.2"
 </ShellCommand>
+
+On Windows, open PowerShell:
+
+```powershell
+Test-Connection -ComputerName 10.0.0.2 -Count 1
+& "C:\Program Files\SimaPCIeHost\bin\pcie-setup.cmd" -Hosts 10.0.0.2
+```
 
 If package installation or runtime startup fails, confirm that the PCIe host
 package and the Neat Library installed on the card are from compatible

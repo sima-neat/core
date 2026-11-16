@@ -92,6 +92,18 @@
       "reason": "Network address example, not a release version"
     },
     {
+      "path": "docs/getting-started/neat-library/pcie-host.mdx",
+      "line": "Test-Connection -ComputerName 10.0.0.2 -Count 1",
+      "count": 1,
+      "reason": "Network address example, not a release version"
+    },
+    {
+      "path": "docs/getting-started/neat-library/pcie-host.mdx",
+      "line": "& \"C:\\Program Files\\SimaPCIeHost\\bin\\pcie-setup.cmd\" -Hosts 10.0.0.2",
+      "count": 1,
+      "reason": "Network address example, not a release version"
+    },
+    {
       "path": "website/i18n/ko/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
       "line": "  호스트에서 접근할 수 있습니다. 카드 0의 기본 주소는 `10.0.0.2`입니다.",
       "count": 1,
@@ -106,6 +118,18 @@
     {
       "path": "website/i18n/ko/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
       "line": "pcie-setup.sh --hosts \"10.0.0.2\"",
+      "count": 1,
+      "reason": "Network address example, not a release version"
+    },
+    {
+      "path": "website/i18n/ko/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
+      "line": "Test-Connection -ComputerName 10.0.0.2 -Count 1",
+      "count": 1,
+      "reason": "Network address example, not a release version"
+    },
+    {
+      "path": "website/i18n/ko/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
+      "line": "& \"C:\\Program Files\\SimaPCIeHost\\bin\\pcie-setup.cmd\" -Hosts 10.0.0.2",
       "count": 1,
       "reason": "Network address example, not a release version"
     },
@@ -128,6 +152,18 @@
       "reason": "Network address example, not a release version"
     },
     {
+      "path": "website/i18n/ja/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
+      "line": "Test-Connection -ComputerName 10.0.0.2 -Count 1",
+      "count": 1,
+      "reason": "Network address example, not a release version"
+    },
+    {
+      "path": "website/i18n/ja/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
+      "line": "& \"C:\\Program Files\\SimaPCIeHost\\bin\\pcie-setup.cmd\" -Hosts 10.0.0.2",
+      "count": 1,
+      "reason": "Network address example, not a release version"
+    },
+    {
       "path": "website/i18n/zh-Hant/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
       "line": "  可以從主機存取。預設的卡片 0 位址為 `10.0.0.2`。",
       "count": 1,
@@ -146,6 +182,18 @@
       "reason": "Network address example, not a release version"
     },
     {
+      "path": "website/i18n/zh-Hant/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
+      "line": "Test-Connection -ComputerName 10.0.0.2 -Count 1",
+      "count": 1,
+      "reason": "Network address example, not a release version"
+    },
+    {
+      "path": "website/i18n/zh-Hant/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
+      "line": "& \"C:\\Program Files\\SimaPCIeHost\\bin\\pcie-setup.cmd\" -Hosts 10.0.0.2",
+      "count": 1,
+      "reason": "Network address example, not a release version"
+    },
+    {
       "path": "website/i18n/uk/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
       "line": "  доступний з хоста. Адреса за замовчуванням для карти 0: `10.0.0.2`.",
       "count": 1,
@@ -160,6 +208,18 @@
     {
       "path": "website/i18n/uk/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
       "line": "pcie-setup.sh --hosts \"10.0.0.2\"",
+      "count": 1,
+      "reason": "Network address example, not a release version"
+    },
+    {
+      "path": "website/i18n/uk/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
+      "line": "Test-Connection -ComputerName 10.0.0.2 -Count 1",
+      "count": 1,
+      "reason": "Network address example, not a release version"
+    },
+    {
+      "path": "website/i18n/uk/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
+      "line": "& \"C:\\Program Files\\SimaPCIeHost\\bin\\pcie-setup.cmd\" -Hosts 10.0.0.2",
       "count": 1,
       "reason": "Network address example, not a release version"
     },

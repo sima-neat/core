@@ -4,7 +4,7 @@ description: "연결된 Modalix PCIe 카드에서 모델을 실행하려면 PCIe
 sidebar_position: 3
 ---
 
-이 페이지를 사용하여 Linux 시스템에 Neat PCIe 호스트 패키지를 설치하고, Modalix PCIe 카드에 연결합니다.
+이 페이지를 사용하여 Modalix PCIe 카드에 연결된 지원 대상 Linux 또는 Windows 시스템에 Neat PCIe 호스트 패키지를 설치합니다.
 
 Neat PCIe 호스트 패키지는 호스트 시스템에서 연결된 Modalix PCIe 카드로 입력을 보내고 추론 결과를 수신하기 위한 공동 처리 API를 제공합니다.
 
@@ -116,17 +116,21 @@ Set-Location $env:TEMP
 
 ## 문제 해결
 
-SSH 프로비저닝으로 카드를 자동으로 검색할 수 없는 경우, 먼저 호스트가 관리 주소에 접속할 수 있는지 확인하십시오.
+SSH 프로비저닝으로 카드를 자동으로 검색할 수 없는 경우, 호스트가 관리 주소에 접속할 수 있는지 확인한 다음 설치된 설정 유틸리티에 주소를 명시하여 실행합니다.
+
+Linux:
 
 <ShellCommand prompt="pcie-host">
 ping -c 1 10.0.0.2
-</ShellCommand>
-
-그런 다음 설치된 설정 유틸리티를 실행하고 주소를 명시적으로 지정합니다.
-
-<ShellCommand prompt="pcie-host">
 pcie-setup.sh --hosts "10.0.0.2"
 </ShellCommand>
+
+Windows에서는 PowerShell을 엽니다.
+
+```powershell
+Test-Connection -ComputerName 10.0.0.2 -Count 1
+& "C:\Program Files\SimaPCIeHost\bin\pcie-setup.cmd" -Hosts 10.0.0.2
+```
 
 패키지 설치 또는 런타임 시작에 실패하는 경우, PCIe 호스트 패키지와 카드에 설치된 Neat Library가 호환되는 버전인지 확인하십시오.
 
