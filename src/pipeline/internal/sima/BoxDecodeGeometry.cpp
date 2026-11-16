@@ -23,6 +23,7 @@ struct Geometry {
   // sam_boxdecode_geometry() admits them.
   std::int64_t canvas_width = 0, canvas_height = 0;
   std::array<std::int64_t, 4> placed{};
+  bool roi_list = false;
 };
 rt::Error invalid(const char* message) {
   return {rt::ErrorCode::InvalidRequest, "boxdecode.geometry", message};
@@ -68,7 +69,8 @@ rt::Result<Geometry> read_geometry(GstBuffer* buffer, bool complete, bool unifor
                       {},
                       facts->resized_width,
                       facts->resized_height,
-                      facts->placed};
+                      facts->placed,
+                      facts->roi_list};
     if (complete) {
       if (facts->roi_list)
         return invalid("one BoxDecode frame requires one unambiguous preprocessing transform");
@@ -99,6 +101,9 @@ rt::Result<Geometry> read_geometry(GstBuffer* buffer, bool complete, bool unifor
     gst_structure_get_int(meta, "preproc_pad_right", &right);
     gst_structure_get_int(meta, "preproc_pad_top", &top);
     gst_structure_get_int(meta, "preproc_pad_bottom", &bottom);
+    gboolean roi_list = FALSE;
+    gst_structure_get_boolean(meta, "preproc_roi_list_enable", &roi_list);
+    geometry.roi_list = roi_list;
     const std::int64_t width = scaled_width > 0 ? scaled_width : resized_width;
     const std::int64_t height = scaled_height > 0 ? scaled_height : resized_height;
     geometry.placed = {left, top, width, height};
@@ -314,6 +319,7 @@ void attach_boxdecode_fixed_image_guard(KernelStageRecipe& recipe, std::size_t m
            const auto& base = preparer.base();
            if (!base || buffers.empty())
              return invalid("prepared operation and input buffers are required");
+           bool described = false;
            for (auto* buffer : buffers) {
              auto parsed = read_geometry(buffer, false, false);
              if (const auto* error = std::get_if<rt::Error>(&parsed))
@@ -322,6 +328,11 @@ void attach_boxdecode_fixed_image_guard(KernelStageRecipe& recipe, std::size_t m
              // An input without preprocess facts (a prompt) describes no image.
              if (!geometry.width && !geometry.height)
                continue;
+             described = true;
+             // As cold admission requires: one image, not an ROI list.
+             if (geometry.roi_list)
+               return invalid("Segment Anything decodes one image; ROI-list preprocessing is not "
+                              "admitted");
              if (geometry.width != image.original_width || geometry.height != image.original_height)
                return invalid("the prepared output is sized for another original image; a new "
                               "frame size requires a new runner");
@@ -334,6 +345,12 @@ void attach_boxdecode_fixed_image_guard(KernelStageRecipe& recipe, std::size_t m
                               "placement than the prepared plan; other preprocessing requires a "
                               "new runner");
            }
+           // Every run decodes for an image: without its facts the masks would silently use the
+           // previous image's geometry.
+           if (!described)
+             return invalid("Segment Anything decoding needs the image's semantic.preprocess facts "
+                            "on its inputs on every run; pass the encoder outputs, for example "
+                            "through .cvu()");
            return base;
          };
        }});

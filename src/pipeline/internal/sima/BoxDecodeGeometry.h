@@ -22,8 +22,9 @@ void attach_boxdecode_geometry_resolver(KernelStageRecipe&, std::size_t member,
                                         BoxDecodeGeometryOptions, bool original_size_from_metadata,
                                         bool require_resize_metadata);
 // For outputs sized by the original image (Segment Anything). The prepared plan keeps
-// its image and preprocessing; a frame whose metadata reports another size, resize
-// mode, canvas or placement fails loudly.
+// its image and preprocessing. Every run needs at least one input with the image's
+// facts (inputs without facts, such as prompts, are skipped); a frame whose facts report
+// an ROI list, another size, resize mode, canvas or placement fails loudly.
 void attach_boxdecode_fixed_image_guard(KernelStageRecipe&, std::size_t member,
                                         BoxDecodeFixedImage);
 } // namespace simaai::neat::pipeline_internal::sima

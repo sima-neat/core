@@ -451,6 +451,12 @@ void sam_fixed_image() {
   const std::array<GstBuffer*, 2> with_prompt{prompt.get(), legacy.get()};
   require(take(resolve(executor.preparer(), with_prompt)) == base,
           "the admitted frame and a prompt without facts must keep the prepared plan");
+  // A later run whose inputs all lack facts must not reuse the previous image's geometry.
+  require(rejects(prompt.get(), "semantic.preprocess facts on its inputs on every run"),
+          "a run without any image facts must be rejected");
+  set("letterbox", 1280, 720, 1024, 1024, 576, 0);
+  gst_structure_set(meta, "preproc_roi_list_enable", G_TYPE_BOOLEAN, TRUE, nullptr);
+  require(rejects(legacy.get(), "ROI-list"), "ROI-list facts must be rejected as at admission");
   set("letterbox", 1280, 720, 1024, 1024, 576, 224);
   require(rejects(legacy.get(), kPreprocessing), "a centered letterbox must be rejected");
   set("stretch", 1280, 720, 1024, 1024, 1024, 0);
