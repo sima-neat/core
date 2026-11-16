@@ -270,6 +270,8 @@ void efficientsam3_concept_reads_its_mla_outputs() {
   facts.original_width = 1280;
   facts.original_height = 720;
   facts.resized_width = facts.resized_height = 1008;
+  facts.affine_m00 = 1280. / 1008.;
+  facts.affine_m11 = 720. / 1008.;
   pixels.semantic.preprocess = facts;
   Sample sample;
   sample.kind = SampleKind::TensorSet;

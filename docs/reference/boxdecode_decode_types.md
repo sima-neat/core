@@ -241,6 +241,13 @@ With `boxdecode_raw_outputs`, the decoder's own outputs follow the BoxDecode ten
   table, building the graph fails with the setting to change, such as "MobileSAM needs the image
   preprocessed with resize.mode=Letterbox and resize.placement=TopLeft on the Model that
   preprocesses it".
+- The masks cover the whole image resized once. Facts whose affine maps the canvas onto part of
+  the image, such as a crop or ROI before the resize, are rejected. So is a scaled size the decoder
+  does not reproduce: Model preprocessing with `resize.placement=TopLeft` rounds the shorter side
+  to the nearest pixel as Segment Anything does, while a standalone `Preproc` letterbox rounds it
+  up. Facts you attach yourself, such as the EfficientSAM3 pixel tensor's, must carry that
+  affine: `affine_m00` = original width / scaled width and `affine_m11` = original height / scaled
+  height.
 - A built runner serves one original image size, because the masks have that size. `Model::run`
   builds another runner for a new frame size; a streaming graph rejects a frame of another size
   instead of returning wrongly sized masks.
@@ -344,6 +351,8 @@ facts = pyneat.PreprocessRuntimeMeta()
 facts.resize_mode = "stretch"
 facts.original_width, facts.original_height = rgb.shape[1], rgb.shape[0]
 facts.resized_width = facts.resized_height = 1008
+facts.affine_m00 = facts.original_width / 1008  # model-to-original scale
+facts.affine_m11 = facts.original_height / 1008
 semantic = pixels.semantic
 semantic.preprocess = facts
 pixels.semantic = semantic

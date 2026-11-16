@@ -182,6 +182,7 @@ BoxDecode 張量使用[具版本的遮罩酬載](#versioned-masks-payload)。`de
 
 - 頭部依位置與形狀而非名稱繫結。遮罩 logit 是高度與寬度大於 1、使用 1、3 或 4 個通道的輸出。IoU 預測是其後每個遮罩各有一個值的輸出。再之後的單一值是物件分數（EdgeTAM）。其他輸出（例如 EdgeTAM 的物件指標）不會被解碼。INT8、BF16 與 FP32 頭部各自保留自己的資料型別與量化。通道數與指定模型不符的解碼器會被拒絕，例如將三遮罩解碼器當作 `MobileSam` 使用。
 - 畫布、原始影像大小與調整大小方式取自解碼器輸入的 `tensor.semantic.preprocess`。請將編碼器的輸出張量傳給解碼器，例如使用 `.cvu()`。因此提示解碼器的 Model 只能從其輸入建構：不帶輸入的 `build()` 與 `execution_plan()` 會失敗，請將解碼器輸入傳給 `execution_plan(inputs)`。EfficientSAM3 概念影像模型也會接收封裝後的文字，因此 Neat 以張量路線執行它；請將這些資訊附加到其像素張量上。若資訊與上表不符，建構圖時會失敗並指出要修改的設定，例如 "MobileSAM needs the image preprocessed with resize.mode=Letterbox and resize.placement=TopLeft on the Model that preprocesses it"。
+- 遮罩涵蓋只調整過一次大小的整張影像。若資訊的仿射變換將畫布對應到影像的一部分（例如調整大小前的裁切或 ROI），會被拒絕。解碼器無法重現的縮放尺寸也會被拒絕：設定 `resize.placement=TopLeft` 的 Model 前處理會像 Segment Anything 一樣將短邊四捨五入到最接近的像素，而獨立 `Preproc` 的 letterbox 則會無條件進位。自行附加的資訊（例如 EfficientSAM3 像素張量的資訊）必須包含此仿射變換：`affine_m00` = 原始寬度 / 縮放後寬度，`affine_m11` = 原始高度 / 縮放後高度。
 - 由於遮罩具有原始影像的大小，建構好的 runner 只服務一種原始影像大小。`Model::run` 會為新的影格大小建構另一個 runner；串流圖會拒絕其他大小的影格，而不是傳回大小錯誤的遮罩。
 - 提示解碼器：`top_k` 請保持為 0 或 1，`nms_iou_threshold` 保持為 0；其他值會被拒絕。`score_threshold` 必須小於 1，除此之外會被忽略。`num_classes` 為遮罩數量或 0。
 - 概念影像模型：將 `top_k` 設為 1..Q。
@@ -272,6 +273,8 @@ facts = pyneat.PreprocessRuntimeMeta()
 facts.resize_mode = "stretch"
 facts.original_width, facts.original_height = rgb.shape[1], rgb.shape[0]
 facts.resized_width = facts.resized_height = 1008
+facts.affine_m00 = facts.original_width / 1008  # model-to-original scale
+facts.affine_m11 = facts.original_height / 1008
 semantic = pixels.semantic
 semantic.preprocess = facts
 pixels.semantic = semantic

@@ -334,6 +334,13 @@ void sam_geometry() {
     }
     return false;
   };
+  // A Preproc publishes original = model * (original / scaled) - pad * that scale.
+  const auto whole_image = [](simaai::neat::PreprocessRuntimeMeta& facts) {
+    facts.affine_m00 = double(facts.original_width) / facts.scaled_width;
+    facts.affine_m11 = double(facts.original_height) / facts.scaled_height;
+    facts.affine_m02 = -facts.pad_left * facts.affine_m00;
+    facts.affine_m12 = -facts.pad_top * facts.affine_m11;
+  };
   simaai::neat::PreprocessRuntimeMeta letterbox;
   letterbox.resize_mode = "letterbox";
   letterbox.original_width = 1280;
@@ -342,6 +349,7 @@ void sam_geometry() {
   letterbox.scaled_width = 1024;
   letterbox.scaled_height = 576;
   letterbox.pad_bottom = 448;
+  whole_image(letterbox);
   auto g = core::sam_boxdecode_geometry(BoxDecodeType::MobileSam, letterbox, {});
   require(g.resize == ResizeMode::Letterbox && g.model_width == 1024 && g.model_height == 1024 &&
               g.original_width == 1280 && g.original_height == 720 && !g.complete_geometry,
@@ -351,8 +359,48 @@ void sam_geometry() {
       "resize.placement=TopLeft on the Model that preprocesses it";
   auto centered = letterbox;
   centered.pad_top = centered.pad_bottom = 224;
+  whole_image(centered);
   require(fails(BoxDecodeType::MobileSam, centered, {}, kTopLeft),
           "a centered letterbox must be rejected with the MobileSAM encoder setting");
+  // The kernel crops int(extent * canvas / longest + 0.5) pixels: 1000x601 scales to
+  // 1024x615. A standalone TOPLEFT Preproc rounds upward to 616.
+  auto odd = letterbox;
+  odd.original_width = 1000;
+  odd.original_height = 601;
+  odd.scaled_height = 615;
+  odd.pad_bottom = 1024 - 615;
+  whole_image(odd);
+  g = core::sam_boxdecode_geometry(BoxDecodeType::MobileSam, odd, {});
+  require(g.original_width == 1000 && g.original_height == 601 && g.model_height == 1024,
+          "the SAM-rounded 1000x601 letterbox must be admitted");
+  auto rounded_up = odd;
+  rounded_up.scaled_height = 616;
+  rounded_up.pad_bottom = 1024 - 616;
+  whole_image(rounded_up);
+  require(fails(BoxDecodeType::MobileSam, rounded_up, {},
+                "masks need the 1000x601 image scaled to 1024x615 on its 1024x1024 canvas; its "
+                "preprocess facts report 1024x616"),
+          "an upward-rounded scaled extent must be rejected");
+  auto wide = letterbox;
+  wide.resized_height = 768;
+  wide.scaled_height = 576;
+  wide.pad_bottom = 192;
+  whole_image(wide);
+  require(fails(BoxDecodeType::MobileSam, wide, {}, "letterboxes onto a square canvas"),
+          "a non-square letterbox canvas must be rejected");
+  // A crop composed before the resize keeps the resize mode but maps the canvas onto
+  // part of the image.
+  auto cropped = letterbox;
+  cropped.affine_m02 = 160.;
+  require(fails(BoxDecodeType::MobileSam, cropped, {},
+                "the preprocess affine must map the 1024x576 scaled image onto the whole "
+                "1280x720 image (affine_m00 = 1280/1024, affine_m11 = 720/576"),
+          "a letterbox of a cropped region must be rejected");
+  auto identity = letterbox;
+  identity.affine_m00 = identity.affine_m11 = 1.;
+  identity.affine_m02 = identity.affine_m12 = 0.;
+  require(fails(BoxDecodeType::MobileSam, identity, {}, "or facts without that affine"),
+          "facts without their model-to-original affine must be rejected");
   core::BoxDecodeGeometryOptions transform;
   transform.model_to_original = std::array<float, 4>{1.25f, 1.25f, 0.f, 0.f};
   require(fails(BoxDecodeType::MobileSam, letterbox, transform, "explicit model-to-original"),
@@ -369,6 +417,8 @@ void sam_geometry() {
   stretch.original_width = 640;
   stretch.original_height = 480;
   stretch.resized_width = stretch.resized_height = 1008;
+  stretch.scaled_width = stretch.scaled_height = 1008;
+  whole_image(stretch);
   require(fails(BoxDecodeType::MobileSam, stretch, {}, kTopLeft),
           "a stretch must be rejected with the MobileSAM encoder setting");
   for (const auto type :
@@ -394,6 +444,19 @@ void sam_geometry() {
   crop.resize_mode = "crop";
   require(fails(BoxDecodeType::EfficientSam, crop, {}, "report resize_mode 'crop'"),
           "crop is not a SAM geometry");
+  // Crop then Stretch: Preproc composes the crop into the affine and publishes the
+  // last stage's stretch over the original 640x480 source.
+  auto crop_then_stretch = stretch;
+  crop_then_stretch.affine_m00 = 540. / 1008.;
+  crop_then_stretch.affine_m02 = 100.;
+  require(fails(BoxDecodeType::EfficientSam, crop_then_stretch, {}, "onto the whole 640x480 image"),
+          "a stretch of a cropped region must be rejected");
+  auto padded = stretch;
+  padded.scaled_width = 1000;
+  padded.pad_right = 8;
+  whole_image(padded);
+  require(fails(BoxDecodeType::EdgeTam, padded, {}, "image scaled to 1008x1008"),
+          "a stretch that leaves padding must be rejected");
 }
 // A prepared Segment Anything plan keeps the image and preprocessing it was
 // admitted for. Every frame is checked against all of it, not only its size:
@@ -468,8 +531,24 @@ void sam_fixed_image() {
   set("letterbox", 1920, 1080, 1024, 1024, 576, 0);
   require(rejects(legacy.get(), "sized for another original image"),
           "another image size must be rejected");
+  // The kernel ignores the affine: a crop composed before the resize must fail every run.
+  constexpr const char* kAffine = "does not map the scaled image onto the whole image";
+  set("letterbox", 1280, 720, 1024, 1024, 576, 0);
+  gst_structure_set(meta, "preproc_affine_m00", G_TYPE_DOUBLE, 1.25, "preproc_affine_m01",
+                    G_TYPE_DOUBLE, 0., "preproc_affine_m02", G_TYPE_DOUBLE, 0.,
+                    "preproc_affine_m10", G_TYPE_DOUBLE, 0., "preproc_affine_m11", G_TYPE_DOUBLE,
+                    1.25, "preproc_affine_m12", G_TYPE_DOUBLE, 0., nullptr);
+  require(take(resolve(executor.preparer(), with_prompt)) == base,
+          "a whole-image legacy affine must keep the prepared plan");
+  gst_structure_set(meta, "preproc_affine_m02", G_TYPE_DOUBLE, 160., nullptr);
+  require(rejects(legacy.get(), kAffine), "a legacy affine of a cropped region must be rejected");
+  set("letterbox", 1280, 720, 1024, 1024, 576, 0);
+  gst_structure_set(meta, "preproc_affine_scale_x", G_TYPE_DOUBLE, 1.0, "preproc_affine_scale_y",
+                    G_TYPE_DOUBLE, 1.0, "preproc_affine_offset_x", G_TYPE_DOUBLE, 0.,
+                    "preproc_affine_offset_y", G_TYPE_DOUBLE, 0., nullptr);
+  require(rejects(legacy.get(), kAffine), "legacy affine aliases must be checked too");
   // Compact producer facts are checked the same way.
-  const auto compact = [](std::array<std::int64_t, 4> placed) {
+  const auto compact = [](std::array<std::int64_t, 4> placed, double crop_x = 0.) {
     Buffer buffer(gst_buffer_new_allocate(nullptr, 4, nullptr));
     std::string error;
     require(
@@ -481,7 +560,8 @@ void sam_fixed_image() {
     facts.resized_width = facts.resized_height = 1024;
     facts.primary = {0, 0, 1280, 720};
     facts.placed = placed;
-    facts.affine = {1.25, 0., -1.25 * double(placed[0]), 0., 1.25, -1.25 * double(placed[1])};
+    facts.affine = {1.25, 0.,   crop_x - 1.25 * double(placed[0]),
+                    0.,   1.25, -1.25 * double(placed[1])};
     facts.source_stride = 3840;
     facts.resize_mode = "letterbox";
     facts.color_in = facts.color_out = "RGB";
@@ -499,6 +579,8 @@ void sam_fixed_image() {
           "compact facts of the admitted preprocessing must keep the prepared plan");
   auto centered = compact({0, 224, 1024, 576});
   require(rejects(centered.get(), kPreprocessing), "a compact centered letterbox must be rejected");
+  auto composed = compact({0, 0, 1024, 576}, 160.);
+  require(rejects(composed.get(), kAffine), "a compact composed crop must be rejected");
 }
 } // namespace
 int main(int argc, char** argv) {

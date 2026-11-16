@@ -172,6 +172,7 @@ BoxDecode テンソルは[バージョン付きマスクペイロード](#versio
 
 - ヘッドは名前ではなく、位置と形状で対応付けられます。マスクのロジットは、高さと幅が 1 を超え、使用チャネルが 1、3 または 4 の出力です。IoU の予測は、その次の出力のうちマスクごとに 1 つの値を持つものです。その後にある単一の値はオブジェクトスコア（EdgeTAM）です。EdgeTAM のオブジェクトポインターなど、それ以外の出力はデコードされません。INT8、BF16、FP32 の各ヘッドは、それぞれのデータ型と量子化を保持します。チャネル数が指定したモデルと一致しないデコーダーは拒否されます。たとえば、3 マスクのデコーダーを `MobileSam` として使うことはできません。
 - キャンバス、元画像サイズ、リサイズは、デコーダー入力の `tensor.semantic.preprocess` から取得します。エンコーダーの出力テンソルを、たとえば `.cvu()` でデコーダーに渡してください。そのため、プロンプトデコーダーの Model は入力からのみ構築されます。入力なしの `build()` と `execution_plan()` は失敗するので、デコーダーの入力を `execution_plan(inputs)` に渡してください。EfficientSAM3 のコンセプト画像モデルはパック済みのテキストも受け取るため、Neat はテンソルルートで実行します。その画素テンソルにこれらの情報を付けてください。情報が表と一致しない場合、グラフの構築は変更すべき設定を示して失敗します。たとえば "MobileSAM needs the image preprocessed with resize.mode=Letterbox and resize.placement=TopLeft on the Model that preprocesses it" のようなメッセージです。
+- マスクは、一度だけリサイズされた画像全体を覆います。アフィン変換がキャンバスを画像の一部に対応付ける情報（リサイズ前のクロップや ROI など）は拒否されます。デコーダーが再現しないスケール後のサイズも同様です。`resize.placement=TopLeft` を指定した Model の前処理は Segment Anything と同じく短辺を最も近いピクセルに丸めますが、単独の `Preproc` のレターボックスは切り上げます。EfficientSAM3 の画素テンソルのように自分で付ける情報には、このアフィン変換を含めてください。`affine_m00` = 元の幅 / スケール後の幅、`affine_m11` = 元の高さ / スケール後の高さです。
 - マスクは元画像サイズを持つため、構築されたランナーは 1 つの元画像サイズにのみ対応します。`Model::run` はフレームサイズが変わると別のランナーを構築します。ストリーミンググラフは、誤ったサイズのマスクを返す代わりに、異なるサイズのフレームを拒否します。
 - プロンプトデコーダー: `top_k` は 0 または 1、`nms_iou_threshold` は 0 のままにしてください。それ以外の値は拒否されます。`score_threshold` は 1 未満である必要があり、それ以外の点では無視されます。`num_classes` はマスク数または 0 です。
 - コンセプト画像モデル: `top_k` を 1..Q に設定します。
@@ -262,6 +263,8 @@ facts = pyneat.PreprocessRuntimeMeta()
 facts.resize_mode = "stretch"
 facts.original_width, facts.original_height = rgb.shape[1], rgb.shape[0]
 facts.resized_width = facts.resized_height = 1008
+facts.affine_m00 = facts.original_width / 1008  # model-to-original scale
+facts.affine_m11 = facts.original_height / 1008
 semantic = pixels.semantic
 semantic.preprocess = facts
 pixels.semantic = semantic

@@ -10,6 +10,7 @@
 #include "pipeline/internal/sima/stagesemantics/SsdDecodeContract.h"
 
 #include "pipeline/internal/TensorBufferEnvelope.h"
+#include "nodes/sima/internal/LetterboxGeometry.h"
 
 #include <gst/gst.h>
 
@@ -57,6 +58,12 @@ std::optional<PreprocessRuntimeMeta> sam_policy_facts(const ProcessCvuStagePaylo
   meta.pad_top = static_cast<int>(facts->placed[1]);
   meta.pad_right = static_cast<int>(facts->resized_width - facts->placed[0] - facts->placed[2]);
   meta.pad_bottom = static_cast<int>(facts->resized_height - facts->placed[1] - facts->placed[3]);
+  meta.affine_m00 = facts->affine[0];
+  meta.affine_m01 = facts->affine[1];
+  meta.affine_m02 = facts->affine[2];
+  meta.affine_m10 = facts->affine[3];
+  meta.affine_m11 = facts->affine[4];
+  meta.affine_m12 = facts->affine[5];
   return meta;
 }
 
@@ -152,6 +159,46 @@ BoxDecodeGeometryOptions sam_boxdecode_geometry(BoxDecodeType type,
        geometry.original_height != facts.original_height))
     throw std::invalid_argument("SimaBoxDecode: " + family +
                                 " original image size conflicts with the input geometry");
+  const auto size = [](std::int64_t w, std::int64_t h) {
+    return std::to_string(w) + "x" + std::to_string(h);
+  };
+  // The kernel derives the scaled extent itself: a stretch fills the canvas, and a
+  // top-left letterbox fills a square canvas along the longest side and rounds the
+  // other side to the nearest pixel, as SAM does (a standalone Preproc rounds upward).
+  std::int64_t expected_width = canvas_width, expected_height = canvas_height;
+  if (mode == ResizeMode::Letterbox) {
+    if (canvas_width != canvas_height)
+      throw std::invalid_argument("SimaBoxDecode: " + family +
+                                  " letterboxes onto a square canvas; its inputs describe " +
+                                  size(canvas_width, canvas_height));
+    using ::simaai::neat::internal::nearest_letterbox_extent;
+    const std::int64_t longest = std::max(facts.original_width, facts.original_height);
+    expected_width = nearest_letterbox_extent(facts.original_width, canvas_width, longest);
+    expected_height = nearest_letterbox_extent(facts.original_height, canvas_width, longest);
+  }
+  if (width != expected_width || height != expected_height)
+    throw std::invalid_argument(
+        "SimaBoxDecode: " + family + " masks need the " +
+        size(facts.original_width, facts.original_height) + " image scaled to " +
+        size(expected_width, expected_height) + " on its " + size(canvas_width, canvas_height) +
+        " canvas; its preprocess facts report " + size(width, height) +
+        (mode == ResizeMode::Letterbox
+             ? ". Letterbox it with resize.placement=TopLeft on the Model that preprocesses it, "
+               "which rounds as Segment Anything does"
+             : ""));
+  if (!boxdecode_affine_covers_image({facts.affine_m00, facts.affine_m01, facts.affine_m02,
+                                      facts.affine_m10, facts.affine_m11, facts.affine_m12},
+                                     facts.original_width, facts.original_height,
+                                     {facts.pad_left, facts.pad_top, width, height}))
+    throw std::invalid_argument(
+        "SimaBoxDecode: " + family +
+        " masks cover the whole image resized once, so the preprocess affine must map the " +
+        size(width, height) + " scaled image onto the whole " +
+        size(facts.original_width, facts.original_height) + " image (affine_m00 = " +
+        std::to_string(facts.original_width) + "/" + std::to_string(width) +
+        ", affine_m11 = " + std::to_string(facts.original_height) + "/" + std::to_string(height) +
+        ", no offset or shear), as a Model's preprocessing publishes; a crop or ROI before the "
+        "resize, or facts without that affine, would place the masks wrongly");
   geometry.model_width = static_cast<int>(canvas_width);
   geometry.model_height = static_cast<int>(canvas_height);
   geometry.original_width = facts.original_width;
