@@ -65,7 +65,7 @@ SiMa.ai Neat Library의 릴리스 노트입니다.
 
 | 릴리스 | 호환되는 Palette SDK | 참고 사항 |
 | --- | --- | --- |
-| 0.6.2 | 미정 | [0.6.2](#v062) |
+| 0.6.2 | 3.0.0.2 | [0.6.2](#v062) |
 | 0.6.1 | 3.0.0.1 | [Neat Library 0.6.1](https://github.com/sima-neat/core/releases/tag/v0.6.1) |
 | 0.6.0 | 3.0.0.0 | [Neat Library 0.6.0](https://github.com/sima-neat/core/releases/tag/v0.6.0) |
 | 0.5.0 | 2.1.3.1 | [Neat Library 0.5.0](https://github.com/sima-neat/core/releases/tag/v0.5.0) |
