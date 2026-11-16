@@ -396,6 +396,28 @@ RUN_TEST(
               "complete external YOLO preprocessing provenance must not require metadata from an "
               "absent Preproc element");
 
+      // The Model route reaches the same contract from explicit original dimensions alone: with
+      // no resize stage and no explicit boxdecode_resize_mode, the canvas falls back to the MLA
+      // input and the non-SSD resize hint discharges the metadata bucket.
+      Model::Options route_opt = external_opt;
+      route_opt.boxdecode_original_width = 1280;
+      route_opt.boxdecode_original_height = 720;
+      Model route_model(tar_path, route_opt);
+      const SimaBoxDecode* route_box = nullptr;
+      const auto route_nodes = internal::ModelAccess::build_public_postprocess_nodes(route_model);
+      for (const auto& node : route_nodes)
+        if (const auto* box = dynamic_cast<const SimaBoxDecode*>(node.get()))
+          route_box = box;
+      require(route_box != nullptr && route_box->model_width_internal() == 640 &&
+                  route_box->model_height_internal() == 640 &&
+                  route_box->original_width_internal() == 1280 &&
+                  route_box->original_height_internal() == 720,
+              "external-preprocessing Model route must fall back to the MLA canvas");
+      const auto route_req = route_box->preprocess_meta_requirement();
+      require(!route_req.has_value() || route_req->required_fields.empty(),
+              "external-preprocessing Model route must not require metadata from an absent "
+              "Preproc element");
+
       auto nodes = internal::ModelAccess::build_public_inference_nodes(model);
       require(!nodes.empty(), "inference fragment should contain renderable nodes");
 

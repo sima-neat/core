@@ -5908,6 +5908,9 @@ std::shared_ptr<Node> build_postprocess_node_from_region(
       // The SAM canvas comes from the inputs' published preprocess facts,
       // never the decoder's embedding input; BoxDecode admission derives it.
     } else if (resolved.effective.resize.width > 0 && resolved.effective.resize.height > 0) {
+      model_width = resolved.effective.resize.width;
+      model_height = resolved.effective.resize.height;
+    } else if (resolved.mla_contract.width > 0 && resolved.mla_contract.height > 0) {
       model_width = resolved.mla_contract.width;
       model_height = resolved.mla_contract.height;
     }
