@@ -56,6 +56,8 @@ cd website && yarn start           # preview the site
 
 이 하위 디렉터리에는 각 워크플로에 속한 스크립트가 저장되어 있습니다. CI는 `ci/` 스크립트 세트를 실행하고, 개발자는 `dev/` 스크립트를 임시로 실행하며, 릴리스 엔지니어는 `release/` 스크립트를 실행합니다. 애플리케이션 코드에서 이 스크립트에 의존하지 마십시오.
 
+`scripts/ci/prepare_scheduler_sdk.sh`는 `deps/` 아래의 검증된 SDK 관찰 파일 경로를 `NEAT_SDK_VERIFICATION_JSON`으로 내보냅니다. `build.sh`는 컴파일 후 이 파일을 새로 검증하고 패키지 메타데이터 생성기에 전달합니다. 이 변수는 내부 빌드 상태를 전달합니다. 의존성 패키지는 `--scheduler`로 선택하고 SDK 업데이트는 `--update-sysroot`로 요청합니다.
+
 ## 새로 체크아웃한 소스 코드에서 문서 생성기를 실행합니다.
 
 ```bash
