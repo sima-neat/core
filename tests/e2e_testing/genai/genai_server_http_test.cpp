@@ -17,6 +17,8 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <set>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -204,6 +206,55 @@ void request_text_completion(int port) {
   require(trim_text(text) == kExpectedText, "server text completion returned unexpected text");
 }
 
+std::string request_completion_id(int port, const std::string& endpoint, bool stream) {
+  auto client = make_client(port);
+  Json request = {{"model", "llm"}, {"max_tokens", 4}, {"stream", stream}};
+  if (endpoint == "/v1/chat/completions") {
+    request["messages"] = Json::array({{{"role", "user"}, {"content", "Say hi."}}});
+  } else {
+    request["prompt"] = "Say hi.";
+  }
+  const std::string label = "POST " + endpoint + (stream ? " stream" : "") + " id";
+  auto result = client.Post(endpoint, request.dump(), "application/json");
+  if (!stream) {
+    return parse_response(result, label).at("id").get<std::string>();
+  }
+  if (!result || result->status != 200) {
+    parse_response(result, label);
+  }
+
+  // Every chunk of one streamed response must carry the same id.
+  std::string id;
+  std::istringstream lines(result->body);
+  for (std::string line; std::getline(lines, line);) {
+    if (line.rfind("data: ", 0) != 0 || line == "data: [DONE]") {
+      continue;
+    }
+    const auto chunk_id = Json::parse(line.substr(6)).at("id").get<std::string>();
+    require(id.empty() || chunk_id == id, label + " returned chunks with different ids");
+    id = chunk_id;
+  }
+  require(!id.empty(), label + " returned no chunks");
+  return id;
+}
+
+void require_unique_completion_ids(int port) {
+  const std::vector<std::pair<std::string, std::string>> cases = {
+      {"/v1/chat/completions", "chatcmpl-"},
+      {"/v1/completions", "cmpl-"},
+  };
+  std::set<std::string> seen;
+  for (const auto& [endpoint, prefix] : cases) {
+    for (const bool stream : {false, false, true, true}) {
+      const auto id = request_completion_id(port, endpoint, stream);
+      std::cout << "GENAI_SERVER_ID endpoint=" << endpoint << " stream=" << stream << " id=" << id
+                << "\n";
+      require(id.rfind(prefix, 0) == 0, endpoint + " id missing prefix " + prefix + ": " + id);
+      require(seen.insert(id).second, endpoint + " reused completion id " + id);
+    }
+  }
+}
+
 void check_context_limits(int port, const fs::path& model_dir) {
   const auto config = Json::parse(read_file(model_dir / "devkit/vlm_config.json"));
   const auto window = config.at("pipeline_cfg").at("max_num_tokens").get<std::size_t>();
@@ -374,6 +425,7 @@ int main(int argc, char** argv) {
     reject_unsupported_thinking(port);
     validate_lora_requests(port);
     request_text_completion(port);
+    require_unique_completion_ids(port);
     check_context_limits(port, text_model_dir);
     request_image_completion(port, image_path);
     request_audio(port, audio_path, "/v1/audio/transcriptions", "transcribe", kExpectedAsrText,
