@@ -15,6 +15,11 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
+try:  # PyYAML reads frontmatter scalars the way Docusaurus does; optional so CI never breaks.
+    import yaml
+except ImportError:  # pragma: no cover - exercised only where PyYAML is absent
+    yaml = None
+
 
 SOURCE = "software"
 DEFAULT_LOCALE = "en"
@@ -58,13 +63,30 @@ def strip_frontmatter(text: str) -> str:
     return text
 
 
-def frontmatter_value(text: str, key: str) -> str | None:
+def frontmatter_block(text: str) -> str | None:
     if not text.startswith("---\n"):
         return None
     end = text.find("\n---\n", 4)
     if end == -1:
         return None
-    frontmatter = text[4:end]
+    return text[4:end]
+
+
+def frontmatter_value(text: str, key: str) -> str | None:
+    frontmatter = frontmatter_block(text)
+    if frontmatter is None:
+        return None
+    if yaml is not None:
+        try:
+            data = yaml.safe_load(frontmatter)
+        except yaml.YAMLError:
+            data = None
+        if isinstance(data, dict):
+            value = data.get(key)
+            if value is None:
+                return None
+            return str(value).strip() or None
+    # Without PyYAML, or for frontmatter that is not valid YAML, read a simple `key: value` line.
     match = re.search(rf"^{re.escape(key)}:\s*(.+?)\s*$", frontmatter, re.MULTILINE)
     if not match:
         return None

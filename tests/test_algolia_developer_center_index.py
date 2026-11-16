@@ -182,6 +182,27 @@ class RecordTitleTests(unittest.TestCase):
         )
         self.assertEqual(titles, {"en": "Configure the Palette SDK", "ko": "Palette SDK 구성"})
 
+    @unittest.skipUnless(MODULE.yaml is not None, "PyYAML is not installed")
+    def test_frontmatter_title_follows_yaml_scalars(self) -> None:
+        cases = {
+            "folded": ("title: >-\n  Configure the\n  Palette SDK\n", "Configure the Palette SDK"),
+            "comment": ("title: Configure SDK # draft name\n", "Configure SDK"),
+            "escaped": ('title: "Say \\"hi\\" to the SDK"\n', 'Say "hi" to the SDK'),
+            "single-quoted": ("title: 'It''s the SDK'\n", "It's the SDK"),
+        }
+        for name, (frontmatter, expected) in cases.items():
+            with self.subTest(name):
+                titles = self._titles(f"---\n{frontmatter}---\nBody.\n", {})
+                self.assertEqual(titles, {"en": expected})
+
+    def test_simple_frontmatter_title_without_pyyaml(self) -> None:
+        saved, MODULE.yaml = MODULE.yaml, None
+        try:
+            titles = self._titles("---\ntitle: 'Налаштування SDK'\n---\nBody.\n", {})
+        finally:
+            MODULE.yaml = saved
+        self.assertEqual(titles, {"en": "Налаштування SDK"})
+
     def test_file_name_fallback_is_unchanged(self) -> None:
         titles = self._titles("---\nsidebar_position: 1\n---\nBody.\n", {"zh-Hant": "本文。\n"})
         self.assertEqual(titles, {"en": "Configure Sdk", "zh-Hant": "Configure Sdk"})
