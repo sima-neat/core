@@ -256,7 +256,9 @@ std::string read_feature_format(const Tensor& tensor) {
 }
 
 void tag_feature_format_in_sample(Sample& sample) {
-  if (sample.kind == SampleKind::TensorSet && sample.tensors.size() == 1U) {
+  // The decoded feature tensor comes first; with boxdecode_raw_outputs the raw heads follow it
+  // and stay untagged.
+  if (sample.kind == SampleKind::TensorSet && !sample.tensors.empty()) {
     std::string format = !sample.payload_tag.empty() ? sample.payload_tag : sample.format;
     if (format == kFeatureFormatPointsV1 || format == kFeatureFormatLegacyA65V0) {
       tag_feature_format(sample.tensors.front(), std::move(format));
