@@ -474,6 +474,7 @@ jobs:
           -e GITHUB_REF_NAME="${{ github.ref_name }}" \
           -e GITHUB_REF_TYPE="${{ github.ref_type }}" \
           -e GITHUB_SHA="${{ github.sha }}" \
+          -e SDK_IMAGE_ID="${sdk_image_id}" \
           -e NEAT_PACKAGE_NAME="gh:sima-neat/core" \
           -e NEAT_PACKAGE_DESCRIPTION="SiMa.ai Palette Neat" \
           -e NEAT_VULCAN_ENV="${neat_vulcan_env}" \
@@ -509,11 +510,11 @@ jobs:
                 --environment sdk \
                 --build-root /tmp/sima-neat-doc-examples-sdk
             fi
+            python3 scripts/ci/pciehost/sdk_build_identity.py record \
+              --source-image "${SDK_IMAGE_ID:?SDK image identity required}" \
+              --core-commit "${GITHUB_SHA:?GitHub source commit required}" \
+              --output dist/sdk-build-image.json
           '
-        python3 scripts/ci/pciehost/sdk_build_identity.py record \
-          --source-image "${sdk_image_id}" \
-          --core-commit "${GITHUB_SHA}" \
-          --output dist/sdk-build-image.json
 
       post_build_command: ls -lh dist
 
@@ -2199,6 +2200,7 @@ jobs:
       - code-hygiene
       - resolve-test-runner
       - build
+      - build-pcie-card-qualification-dependencies
       - build-pciehost-packages
       - publish-vulcan-artifacts
       - publish-pciehost-package
@@ -2227,6 +2229,7 @@ jobs:
       - code-hygiene
       - resolve-test-runner
       - build
+      - build-pcie-card-qualification-dependencies
       - build-pciehost-packages
       - publish-vulcan-artifacts
       - publish-pciehost-package
