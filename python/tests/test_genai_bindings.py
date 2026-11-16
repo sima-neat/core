@@ -392,10 +392,13 @@ def test_genai_value_types_and_text_sample_helpers():
   result.no_speech_prob = 0.1
   result.avg_logprob = -0.2
   result.metrics.generated_tokens = 1
+  result.metrics.prompt_tokens = 7
+  assert pyneat.GenerationMetrics().prompt_tokens == 0
   assert result.language == "en"
   assert result.no_speech_prob == pytest.approx(0.1)
   assert result.avg_logprob == pytest.approx(-0.2)
   assert result.metrics.generated_tokens == 1
+  assert result.metrics.prompt_tokens == 7
 
   token = pyneat.TokenSample()
   token.text = "d"
@@ -482,6 +485,7 @@ def test_genai_direct_text_generation_and_streaming():
     assert _trim_text(result.text) == _EXPECTED_TEXT
     _assert_finish_reason(result.finish_reason)
     assert result.metrics.generated_tokens > 0
+    assert result.metrics.prompt_tokens > 0
 
     streamed_text = []
     final_sample = None

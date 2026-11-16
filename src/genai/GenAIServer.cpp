@@ -267,6 +267,12 @@ nlohmann::json chat_message_response(const GenerationResult& result, bool ollama
   return message;
 }
 
+nlohmann::json usage_json(const GenerationMetrics& metrics) {
+  return {{"prompt_tokens", metrics.prompt_tokens},
+          {"completion_tokens", metrics.generated_tokens},
+          {"total_tokens", metrics.prompt_tokens + metrics.generated_tokens}};
+}
+
 GenerationMetrics metrics_with_ttft_once(GenerationMetrics metrics, bool& ttft_sent) {
   if (metrics.time_to_first_token_s <= 0.0) {
     return metrics;
@@ -1211,7 +1217,7 @@ struct GenAIServer::Impl {
                             {{{"index", 0},
                               {"message", message},
                               {"finish_reason", choice_finish_reason(result.finish_reason)}}})},
-                       {"usage", {{"completion_tokens", result.metrics.generated_tokens}}}});
+                       {"usage", usage_json(result.metrics)}});
       }
     } catch (const std::exception& e) {
       set_error(res, e);
@@ -1257,7 +1263,7 @@ struct GenAIServer::Impl {
                             {{{"index", 0},
                               {"text", result.text},
                               {"finish_reason", choice_finish_reason(result.finish_reason)}}})},
-                       {"usage", {{"completion_tokens", result.metrics.generated_tokens}}}});
+                       {"usage", usage_json(result.metrics)}});
       }
     } catch (const std::exception& e) {
       set_error(res, e);

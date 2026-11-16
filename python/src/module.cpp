@@ -2211,7 +2211,8 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("generated_tokens", &simaai::neat::genai::GenerationMetrics::generated_tokens)
       .def_rw("time_to_first_token_s",
               &simaai::neat::genai::GenerationMetrics::time_to_first_token_s)
-      .def_rw("tokens_per_second", &simaai::neat::genai::GenerationMetrics::tokens_per_second);
+      .def_rw("tokens_per_second", &simaai::neat::genai::GenerationMetrics::tokens_per_second)
+      .def_rw("prompt_tokens", &simaai::neat::genai::GenerationMetrics::prompt_tokens);
 
   nb::class_<simaai::neat::genai::GenerationRequest>(m, "GenerationRequest")
       .def(nb::init<>())

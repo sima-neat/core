@@ -13,6 +13,7 @@
 #include <chrono>
 #include <cmath>
 #include <cctype>
+#include <cstdint>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -187,6 +188,16 @@ void require_model_list_contains(int port) {
   }
 }
 
+void require_usage(const Json& body, const std::string& label) {
+  const auto& usage = body.at("usage");
+  const auto prompt_tokens = usage.at("prompt_tokens").get<std::uint64_t>();
+  const auto completion_tokens = usage.at("completion_tokens").get<std::uint64_t>();
+  require(prompt_tokens > 0U, label + " usage.prompt_tokens should be positive");
+  require(completion_tokens > 0U, label + " usage.completion_tokens should be positive");
+  require(usage.at("total_tokens").get<std::uint64_t>() == prompt_tokens + completion_tokens,
+          label + " usage.total_tokens should equal prompt_tokens + completion_tokens");
+}
+
 void request_text_completion(int port) {
   auto client = make_client(port);
   const Json request = {
@@ -202,6 +213,18 @@ void request_text_completion(int port) {
   const std::string text = body.at("choices").at(0).at("message").at("content").get<std::string>();
   std::cout << "GENAI_SERVER_TEXT text=" << text << "\n";
   require(trim_text(text) == kExpectedText, "server text completion returned unexpected text");
+  require_usage(body, "chat completion");
+
+  const Json completion_request = {
+      {"model", "llm"},
+      {"prompt", "The capital of Germany is"},
+      {"max_tokens", 8},
+      {"stream", false},
+  };
+  const Json completion =
+      parse_response(client.Post("/v1/completions", completion_request.dump(), "application/json"),
+                     "POST /v1/completions text");
+  require_usage(completion, "text completion");
 }
 
 void check_context_limits(int port, const fs::path& model_dir) {
@@ -306,6 +329,7 @@ void request_image_completion(int port, const fs::path& image_path) {
   const std::string text = body.at("choices").at(0).at("message").at("content").get<std::string>();
   std::cout << "GENAI_SERVER_VLM text=" << text << "\n";
   require(!trim_text(text).empty(), "server image chat expected non-empty generated text");
+  require_usage(body, "image chat completion");
 }
 
 void request_audio(int port, const fs::path& audio_path, const std::string& endpoint,
