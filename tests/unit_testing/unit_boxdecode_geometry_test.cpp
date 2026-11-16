@@ -6,6 +6,7 @@
 #include <gstsimaaitensorbuffer_meta.h>
 
 #include <array>
+#include <cstdint>
 #include <iostream>
 #include <limits>
 #include <optional>
@@ -394,6 +395,105 @@ void sam_geometry() {
   require(fails(BoxDecodeType::EfficientSam, crop, {}, "report resize_mode 'crop'"),
           "crop is not a SAM geometry");
 }
+// A prepared Segment Anything plan keeps the image and preprocessing it was
+// admitted for. Every frame is checked against all of it, not only its size:
+// a centered letterbox of the same image would otherwise get masks placed for
+// the admitted top-left letterbox.
+void sam_fixed_image() {
+  probe::OperationProbe executor;
+  const auto checked = executable();
+  require(!executor.prepare(checked), "real A65 preparation failed");
+  const auto base = executor.operation();
+  core::KernelStageRecipe recipe;
+  recipe.members.resize(1);
+  recipe.members.front().executable = checked;
+  // MobileSAM: 1280x720 letterboxed top-left onto 1024x1024, scaled to 1024x576.
+  const core::BoxDecodeFixedImage image{1280, 720, "letterbox", 1024, 1024, {0, 0, 1024, 576}};
+  bool rejected = false;
+  try {
+    auto incomplete = image;
+    incomplete.resize_mode.clear();
+    core::attach_boxdecode_fixed_image_guard(recipe, 0, incomplete);
+  } catch (const std::invalid_argument&) {
+    rejected = true;
+  }
+  require(rejected && recipe.resolver_factories.empty(),
+          "a fixed image without its preprocessing must be rejected");
+  core::attach_boxdecode_fixed_image_guard(recipe, 0, image);
+  auto resolve = recipe.resolver_factories.front().instantiate();
+  const auto rejects = [&](GstBuffer* buffer, const char* message) {
+    const std::array<GstBuffer*, 1> one{buffer};
+    auto result = resolve(executor.preparer(), one);
+    const auto* error = std::get_if<rt::Error>(&result);
+    return error && error->message.find(message) != std::string::npos;
+  };
+  constexpr const char* kPreprocessing = "another resize mode, canvas or placement";
+  const gchar* tags[] = {nullptr};
+  if (!gst_meta_get_info("GstSimaMeta"))
+    require(gst_meta_register_custom("GstSimaMeta", tags, nullptr, nullptr, nullptr),
+            "metadata registration failed");
+  Buffer legacy(gst_buffer_new()), prompt(gst_buffer_new());
+  auto* meta =
+      gst_custom_meta_get_structure(gst_buffer_add_custom_meta(legacy.get(), "GstSimaMeta"));
+  const auto set = [meta](const char* mode, int original_width, int original_height, int canvas,
+                          int scaled_width, int scaled_height, int top) {
+    gst_structure_remove_all_fields(meta);
+    gst_structure_set(
+        meta, "preproc_original_width", G_TYPE_INT, original_width, "preproc_original_height",
+        G_TYPE_INT, original_height, "preproc_resized_width", G_TYPE_INT, canvas,
+        "preproc_resized_height", G_TYPE_INT, canvas, "preproc_scaled_width", G_TYPE_INT,
+        scaled_width, "preproc_scaled_height", G_TYPE_INT, scaled_height, "preproc_pad_left",
+        G_TYPE_INT, 0, "preproc_pad_right", G_TYPE_INT, canvas - scaled_width, "preproc_pad_top",
+        G_TYPE_INT, top, "preproc_pad_bottom", G_TYPE_INT, canvas - scaled_height - top,
+        "preproc_resize_mode", G_TYPE_STRING, mode, nullptr);
+  };
+  set("letterbox", 1280, 720, 1024, 1024, 576, 0);
+  const std::array<GstBuffer*, 2> with_prompt{prompt.get(), legacy.get()};
+  require(take(resolve(executor.preparer(), with_prompt)) == base,
+          "the admitted frame and a prompt without facts must keep the prepared plan");
+  set("letterbox", 1280, 720, 1024, 1024, 576, 224);
+  require(rejects(legacy.get(), kPreprocessing), "a centered letterbox must be rejected");
+  set("stretch", 1280, 720, 1024, 1024, 1024, 0);
+  require(rejects(legacy.get(), kPreprocessing), "a stretch must be rejected");
+  set("letterbox", 1280, 720, 1008, 1008, 567, 0);
+  require(rejects(legacy.get(), kPreprocessing), "another canvas must be rejected");
+  set("letterbox", 1280, 720, 1024, 1024, 577, 0);
+  require(rejects(legacy.get(), kPreprocessing), "another scaled extent must be rejected");
+  set("letterbox", 1920, 1080, 1024, 1024, 576, 0);
+  require(rejects(legacy.get(), "sized for another original image"),
+          "another image size must be rejected");
+  // Compact producer facts are checked the same way.
+  const auto compact = [](std::array<std::int64_t, 4> placed) {
+    Buffer buffer(gst_buffer_new_allocate(nullptr, 4, nullptr));
+    std::string error;
+    require(
+        simaai::gst::tensor_buffer_attach_publication(buffer.get(), compact_publication(), &error),
+        "attach compact publication failed");
+    simaai::gst::TensorBufferPreprocessFacts facts;
+    facts.original_width = 1280;
+    facts.original_height = 720;
+    facts.resized_width = facts.resized_height = 1024;
+    facts.primary = {0, 0, 1280, 720};
+    facts.placed = placed;
+    facts.affine = {1.25, 0., -1.25 * double(placed[0]), 0., 1.25, -1.25 * double(placed[1])};
+    facts.source_stride = 3840;
+    facts.resize_mode = "letterbox";
+    facts.color_in = facts.color_out = "RGB";
+    simaai::gst::TensorBufferFrameMetadata frame;
+    frame.preprocess = simaai::gst::tensor_buffer_freeze_preprocess_facts(facts, &error);
+    require(bool(frame.preprocess), "compact facts freeze failed");
+    require(
+        simaai::gst::tensor_buffer_attach_frame_metadata(buffer.get(), std::move(frame), &error),
+        "compact facts attach failed");
+    return buffer;
+  };
+  auto top_left = compact({0, 0, 1024, 576});
+  const std::array<GstBuffer*, 1> admitted{top_left.get()};
+  require(take(resolve(executor.preparer(), admitted)) == base,
+          "compact facts of the admitted preprocessing must keep the prepared plan");
+  auto centered = compact({0, 224, 1024, 576});
+  require(rejects(centered.get(), kPreprocessing), "a compact centered letterbox must be rejected");
+}
 } // namespace
 int main(int argc, char** argv) {
   gst_init(&argc, &argv);
@@ -402,6 +502,8 @@ int main(int argc, char** argv) {
     std::cout << "BoxDecode letterbox placement passed\n";
     sam_geometry();
     std::cout << "BoxDecode Segment Anything geometry passed\n";
+    sam_fixed_image();
+    std::cout << "BoxDecode Segment Anything fixed image guard passed\n";
     geometry();
     geometry(true);
     std::cout << "BoxDecode complete geometry and retained variant cache passed\n";

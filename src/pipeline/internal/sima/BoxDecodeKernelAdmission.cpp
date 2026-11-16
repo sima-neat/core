@@ -84,9 +84,21 @@ CompiledKernelContract compile_sam_kernel(const CompiledBoxDecodeContract& admit
   geometry = sam_boxdecode_geometry(admitted.payload.decode_type, *observed, geometry);
   auto native = prepare_boxdecode_kernel(admitted, geometry);
   auto recipe = std::make_shared<KernelStageRecipe>(*native.compiled.recipe);
-  // No image-size variant exists: a different frame size needs a new runner.
-  attach_boxdecode_fixed_image_guard(*recipe, native.decode_member, geometry.original_width,
-                                     geometry.original_height);
+  // No image-size variant exists: a different frame size or preprocessing (resize
+  // mode, canvas, placement) needs a new runner, so every frame is checked against
+  // the facts admitted here.
+  const int scaled_width =
+      observed->scaled_width > 0 ? observed->scaled_width : observed->resized_width;
+  const int scaled_height =
+      observed->scaled_height > 0 ? observed->scaled_height : observed->resized_height;
+  attach_boxdecode_fixed_image_guard(
+      *recipe, native.decode_member,
+      {geometry.original_width,
+       geometry.original_height,
+       observed->resize_mode,
+       geometry.model_width,
+       geometry.model_height,
+       {observed->pad_left, observed->pad_top, scaled_width, scaled_height}});
   native.compiled.recipe = std::move(recipe);
   return std::move(native.compiled);
 }

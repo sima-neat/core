@@ -5,6 +5,7 @@
 #include <array>
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <mutex>
 #include <stdexcept>
 #include <string_view>
@@ -18,6 +19,10 @@ struct Geometry {
   int width = 0, height = 0, model_width = 0, model_height = 0;
   std::string_view resize;
   std::optional<Transform> transform;
+  // Canvas and the scaled image's {x, y, width, height} on it, normalized as
+  // sam_boxdecode_geometry() admits them.
+  std::int64_t canvas_width = 0, canvas_height = 0;
+  std::array<std::int64_t, 4> placed{};
 };
 rt::Error invalid(const char* message) {
   return {rt::ErrorCode::InvalidRequest, "boxdecode.geometry", message};
@@ -60,7 +65,10 @@ rt::Result<Geometry> read_geometry(GstBuffer* buffer, bool complete, bool unifor
                       static_cast<int>(facts->resized_width),
                       static_cast<int>(facts->resized_height),
                       facts->resize_mode,
-                      {}};
+                      {},
+                      facts->resized_width,
+                      facts->resized_height,
+                      facts->placed};
     if (complete) {
       if (facts->roi_list)
         return invalid("one BoxDecode frame requires one unambiguous preprocessing transform");
@@ -80,6 +88,23 @@ rt::Result<Geometry> read_geometry(GstBuffer* buffer, bool complete, bool unifor
   gst_structure_get_int(meta, "preproc_original_height", &geometry.height);
   if (const auto* mode = gst_structure_get_string(meta, "preproc_resize_mode"))
     geometry.resize = mode;
+  {
+    int resized_width = 0, resized_height = 0, scaled_width = 0, scaled_height = 0;
+    int left = 0, right = 0, top = 0, bottom = 0;
+    gst_structure_get_int(meta, "preproc_resized_width", &resized_width);
+    gst_structure_get_int(meta, "preproc_resized_height", &resized_height);
+    gst_structure_get_int(meta, "preproc_scaled_width", &scaled_width);
+    gst_structure_get_int(meta, "preproc_scaled_height", &scaled_height);
+    gst_structure_get_int(meta, "preproc_pad_left", &left);
+    gst_structure_get_int(meta, "preproc_pad_right", &right);
+    gst_structure_get_int(meta, "preproc_pad_top", &top);
+    gst_structure_get_int(meta, "preproc_pad_bottom", &bottom);
+    const std::int64_t width = scaled_width > 0 ? scaled_width : resized_width;
+    const std::int64_t height = scaled_height > 0 ? scaled_height : resized_height;
+    geometry.placed = {left, top, width, height};
+    geometry.canvas_width = width + left + right;
+    geometry.canvas_height = height + top + bottom;
+  }
   if (complete) {
     gst_structure_get_int(meta, "preproc_resized_width", &geometry.model_width);
     gst_structure_get_int(meta, "preproc_resized_height", &geometry.model_height);
@@ -276,14 +301,16 @@ void attach_boxdecode_geometry_resolver(KernelStageRecipe& recipe, std::size_t m
        }});
 }
 void attach_boxdecode_fixed_image_guard(KernelStageRecipe& recipe, std::size_t member_index,
-                                        int original_width, int original_height) {
-  if (member_index >= recipe.members.size() || original_width < 1 || original_height < 1)
-    throw std::invalid_argument("BoxDecode fixed image guard requires a member and image size");
+                                        BoxDecodeFixedImage image) {
+  if (member_index >= recipe.members.size() || image.original_width < 1 ||
+      image.original_height < 1 || image.canvas_width < 1 || image.canvas_height < 1 ||
+      image.resize_mode.empty())
+    throw std::invalid_argument(
+        "BoxDecode fixed image guard requires a member, the image size and its preprocessing");
   recipe.resolver_factories.push_back(
-      {member_index, [original_width, original_height]() -> KernelStageRecipe::Resolver {
-         return [original_width, original_height](
-                    const rt::VariantPreparer& preparer,
-                    std::span<GstBuffer* const> buffers) -> rt::Result<rt::PreparedSelection> {
+      {member_index, [image = std::move(image)]() -> KernelStageRecipe::Resolver {
+         return [image](const rt::VariantPreparer& preparer,
+                        std::span<GstBuffer* const> buffers) -> rt::Result<rt::PreparedSelection> {
            const auto& base = preparer.base();
            if (!base || buffers.empty())
              return invalid("prepared operation and input buffers are required");
@@ -292,10 +319,20 @@ void attach_boxdecode_fixed_image_guard(KernelStageRecipe& recipe, std::size_t m
              if (const auto* error = std::get_if<rt::Error>(&parsed))
                return *error;
              const auto& geometry = std::get<Geometry>(parsed);
-             if ((geometry.width || geometry.height) &&
-                 (geometry.width != original_width || geometry.height != original_height))
+             // An input without preprocess facts (a prompt) describes no image.
+             if (!geometry.width && !geometry.height)
+               continue;
+             if (geometry.width != image.original_width || geometry.height != image.original_height)
                return invalid("the prepared output is sized for another original image; a new "
                               "frame size requires a new runner");
+             // The kernel maps masks back with the admitted resize, canvas and placement.
+             if (geometry.resize != image.resize_mode ||
+                 geometry.canvas_width != image.canvas_width ||
+                 geometry.canvas_height != image.canvas_height ||
+                 !std::equal(image.placed.begin(), image.placed.end(), geometry.placed.begin()))
+               return invalid("the frame was preprocessed with another resize mode, canvas or "
+                              "placement than the prepared plan; other preprocessing requires a "
+                              "new runner");
            }
            return base;
          };
