@@ -90,6 +90,15 @@ def normalized_link_target(path):
 
 
 class WindowsCiContracts(unittest.TestCase):
+  def test_native_windows_genai_runs_production_adapter_against_test_only_dll(self):
+    cmake = (ROOT / "pcie_host/CMakeLists.txt").read_text(encoding="utf-8")
+    self.assertIn("tests/fake_genai_service_windows.cpp", cmake)
+    self.assertIn("OUTPUT_NAME SiMaPCIe", cmake)
+    self.assertIn("SIMA_WINDOWS_PLATFORM_RUNTIME_DIR=$<TARGET_FILE_DIR:fake_genai_service>", cmake)
+    self.assertIn("unit_pcie_host_genai_service_test", cmake)
+    self.assertIn("unit_pcie_host_genai_assets_test", cmake)
+    self.assertNotIn("install(TARGETS fake_genai_service", cmake)
+
   def test_genai_failure_classifiers_reject_unrelated_errors(self):
     for message in (
         "GenAI admission rejected: card resource unavailable",

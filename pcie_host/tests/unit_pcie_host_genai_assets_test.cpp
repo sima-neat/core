@@ -1,9 +1,10 @@
 #include "genai/ModelAssets.h"
+#include <atomic>
+#include <cerrno>
 #include <chrono>
 #include <fstream>
 #include <iostream>
 #include <thread>
-#include <unistd.h>
 
 extern "C" {
 void test_genai_receive_root(const char*);
@@ -21,11 +22,13 @@ void require(bool value, const char* message) {
 struct Directory {
   std::filesystem::path path;
   Directory() {
-    char name[] = "/tmp/neat-genai-assets-XXXXXX";
-    const auto* made = mkdtemp(name);
-    if (!made)
-      throw std::runtime_error("mkdtemp failed");
-    path = made;
+    static std::atomic<unsigned long> sequence{0};
+    path = std::filesystem::temp_directory_path() /
+           ("neat-genai-assets-" +
+            std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + "-" +
+            std::to_string(++sequence));
+    if (!std::filesystem::create_directory(path))
+      throw std::runtime_error("temporary directory creation failed");
   }
   ~Directory() {
     std::error_code error;
@@ -94,8 +97,18 @@ int main() {
     require(read_asset("target/elf_files/model.elf") == "target" &&
                 read_asset("draft/elf_files/model.elf") == "draft",
             "Identically named target/draft files retain distinct contents");
-    std::filesystem::create_symlink(directory.path, model / "escape");
     bool rejected = false;
+    try {
+      request(6, "../unavailable");
+    } catch (const std::invalid_argument&) {
+      rejected = true;
+    } catch (const std::runtime_error&) {
+      rejected = true;
+    }
+    require(rejected && test_genai_copies() == 4, "Reject path escape before upload");
+#ifndef _WIN32
+    std::filesystem::create_symlink(directory.path, model / "escape");
+    rejected = false;
     try {
       request(6, "escape/unavailable");
     } catch (const std::invalid_argument&) {
@@ -104,6 +117,10 @@ int main() {
       rejected = true;
     }
     require(rejected && test_genai_copies() == 4, "Reject symlink escape before upload");
+#else
+    require(!request(6, "another-missing.bin") && test_genai_copies() == 4,
+            "Missing asset preserves the sequential transfer channel");
+#endif
     test_genai_put_error(-EACCES);
     rejected = false;
     try {

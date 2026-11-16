@@ -302,6 +302,79 @@ if (SIMAPCIE_BUILD_TESTS)
   add_test(NAME pcie_host_windows_ci_contract
     COMMAND "${Python3_EXECUTABLE}"
       "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_windows_ci.py")
+  # Exercise the production service adapters without a card or Platform daemon.
+  # The fake provider is test-only and has no install or package rule.
+  if(WIN32)
+    set(SIMAPCIE_FAKE_GENAI_SERVICE_SOURCE
+      tests/fake_genai_service_windows.cpp)
+  else()
+    set(SIMAPCIE_FAKE_GENAI_SERVICE_SOURCE
+      tests/fake_genai_service.cpp)
+  endif()
+  add_library(fake_genai_service SHARED ${SIMAPCIE_FAKE_GENAI_SERVICE_SOURCE})
+  target_link_libraries(fake_genai_service PRIVATE
+    nlohmann_json::nlohmann_json Threads::Threads)
+  if(WIN32)
+    target_include_directories(fake_genai_service PRIVATE
+      ${SIMAPCIE_PLATFORM_SERVICE_HEADER_DIR})
+    set_target_properties(fake_genai_service PROPERTIES
+      OUTPUT_NAME SiMaPCIe
+      PREFIX ""
+      WINDOWS_EXPORT_ALL_SYMBOLS ON
+      RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/fake-genai-service
+      ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/fake-genai-service)
+  else()
+    target_link_libraries(fake_genai_service PRIVATE SimaScheduler::pcie_service_headers)
+    set_target_properties(fake_genai_service PROPERTIES OUTPUT_NAME simaaipcie
+      LIBRARY_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/fake-genai-service)
+  endif()
+
+  add_executable(unit_pcie_host_genai_service_test
+    tests/unit_pcie_host_genai_service_test.cpp)
+  target_include_directories(unit_pcie_host_genai_service_test PRIVATE
+    ${SIMA_NEAT_CORE_ROOT}/shared/pcie_genai)
+  if(WIN32)
+    target_include_directories(unit_pcie_host_genai_service_test PRIVATE
+      ${SIMAPCIE_PLATFORM_SERVICE_HEADER_DIR})
+  else()
+    target_link_libraries(unit_pcie_host_genai_service_test PRIVATE
+      SimaScheduler::pcie_service_headers)
+  endif()
+  target_link_libraries(unit_pcie_host_genai_service_test PRIVATE
+    sima_neat_pcie_host fake_genai_service)
+  if(WIN32)
+    add_test(NAME unit_pcie_host_genai_service_test
+      COMMAND ${CMAKE_COMMAND} -E env
+        "SIMA_WINDOWS_PLATFORM_RUNTIME_DIR=$<TARGET_FILE_DIR:fake_genai_service>"
+        "PATH=$<TARGET_FILE_DIR:fake_genai_service>$<SEMICOLON>$ENV{PATH}"
+        $<TARGET_FILE:unit_pcie_host_genai_service_test>)
+  else()
+    add_test(NAME unit_pcie_host_genai_service_test
+      COMMAND ${CMAKE_COMMAND} -E env
+        "LD_LIBRARY_PATH=$<TARGET_FILE_DIR:fake_genai_service>:$ENV{LD_LIBRARY_PATH}"
+        $<TARGET_FILE:unit_pcie_host_genai_service_test>)
+  endif()
+  set_tests_properties(unit_pcie_host_genai_service_test PROPERTIES TIMEOUT 10)
+
+  add_executable(unit_pcie_host_genai_assets_test tests/unit_pcie_host_genai_assets_test.cpp)
+  target_include_directories(unit_pcie_host_genai_assets_test PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src ${SIMA_NEAT_CORE_ROOT}/shared/pcie_genai)
+  target_link_libraries(unit_pcie_host_genai_assets_test PRIVATE
+    sima_neat_pcie_host fake_genai_service)
+  if(WIN32)
+    add_test(NAME unit_pcie_host_genai_assets_test
+      COMMAND ${CMAKE_COMMAND} -E env
+        "SIMA_WINDOWS_PLATFORM_RUNTIME_DIR=$<TARGET_FILE_DIR:fake_genai_service>"
+        "PATH=$<TARGET_FILE_DIR:fake_genai_service>$<SEMICOLON>$ENV{PATH}"
+        $<TARGET_FILE:unit_pcie_host_genai_assets_test>)
+  else()
+    add_test(NAME unit_pcie_host_genai_assets_test
+      COMMAND ${CMAKE_COMMAND} -E env
+        "LD_LIBRARY_PATH=$<TARGET_FILE_DIR:fake_genai_service>:$ENV{LD_LIBRARY_PATH}"
+        $<TARGET_FILE:unit_pcie_host_genai_assets_test>)
+  endif()
+  set_tests_properties(unit_pcie_host_genai_assets_test PROPERTIES TIMEOUT 10)
+
   if(NOT WIN32)
     add_test(NAME pcie_host_delivery_contract
       COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_delivery.py")
@@ -411,21 +484,8 @@ if (SIMAPCIE_BUILD_TESTS)
       ${SIMA_NEAT_CORE_ROOT}/shared/pcie_genai)
     add_test(NAME unit_pcie_host_genai_values_test COMMAND unit_pcie_host_genai_values_test)
 
-    add_library(fake_genai_service SHARED tests/fake_genai_service.cpp)
-    target_link_libraries(fake_genai_service PRIVATE SimaScheduler::pcie_service_headers)
-    target_link_libraries(fake_genai_service PRIVATE Threads::Threads)
-    set_target_properties(fake_genai_service PROPERTIES OUTPUT_NAME simaaipcie
-      LIBRARY_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/fake-genai-service)
     target_link_libraries(unit_pcie_host_genai_values_test PRIVATE fake_genai_service)
     set_tests_properties(unit_pcie_host_genai_values_test PROPERTIES TIMEOUT 20
-      ENVIRONMENT "LD_LIBRARY_PATH=$<TARGET_FILE_DIR:fake_genai_service>")
-    add_executable(unit_pcie_host_genai_assets_test tests/unit_pcie_host_genai_assets_test.cpp)
-    target_include_directories(unit_pcie_host_genai_assets_test PRIVATE
-      ${CMAKE_CURRENT_SOURCE_DIR}/src ${SIMA_NEAT_CORE_ROOT}/shared/pcie_genai)
-    target_link_libraries(unit_pcie_host_genai_assets_test PRIVATE
-      sima_neat_pcie_host fake_genai_service)
-    add_test(NAME unit_pcie_host_genai_assets_test COMMAND unit_pcie_host_genai_assets_test)
-    set_tests_properties(unit_pcie_host_genai_assets_test PROPERTIES TIMEOUT 10
       ENVIRONMENT "LD_LIBRARY_PATH=$<TARGET_FILE_DIR:fake_genai_service>")
   endif()
 
