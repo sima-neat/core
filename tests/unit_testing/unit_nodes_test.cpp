@@ -187,6 +187,22 @@ int main() {
     require_contains(depay->backend_fragment(2), "payload=97", "Depay payload mismatch");
     require(depay->backend_fragment(2).find("width=(int)[") == std::string::npos,
             "Depay without explicit caps should not emit open-ended width ranges");
+    require_contains(depay->backend_fragment(2),
+                     "h264parse name=n2_h264parse disable-passthrough=true config-interval=-1 ",
+                     "H264 parser should repeat SPS/PPS before every IDR by default");
+    require_contains(simaai::neat::nodes::H264Depacketize(97, /*h264_parse_config_interval=*/0)
+                         ->backend_fragment(2),
+                     "config-interval=0 ",
+                     "H264 parser should keep an explicit config-interval of 0");
+    bool depay_interval_threw = false;
+    try {
+      (void)simaai::neat::nodes::H264Depacketize(97, /*h264_parse_config_interval=*/-2)
+          ->backend_fragment(2);
+    } catch (const std::invalid_argument& e) {
+      depay_interval_threw =
+          std::string(e.what()).find("h264_parse_config_interval") != std::string::npos;
+    }
+    require(depay_interval_threw, "An H264 config-interval below -1 should throw");
     auto depay_partial = simaai::neat::nodes::H264Depacketize(
         97, /*h264_parse_config_interval=*/1, /*h264_fps=*/30,
         /*h264_width=*/1280, /*h264_height=*/-1, /*enforce_h264_caps=*/true);

@@ -36,8 +36,8 @@ struct RtspEncodedInputOptions {
   bool sync_mode = false;      ///< If true, sink elements run in sync (real-time) mode.
   int h264_payload_type = 96;  ///< Deprecated; use `payload_type`. RTP payload type for H.264.
   int mjpeg_payload_type = 26; ///< Deprecated; use `payload_type`. RTP payload type for MJPEG.
-  int h264_parse_config_interval =
-      -1;               ///< SPS/PPS reinjection interval for H.264 parser (-1 = default).
+  int h264_parse_config_interval = -1; ///< H.264 parser SPS/PPS repeat: -1 = before every IDR
+                                       ///< (default), 0 = off, N > 0 = every N s.
   int h264_fps = -1;    ///< Expected H.264 FPS injected into parser caps (-1 = unspecified).
   int h264_width = -1;  ///< Expected H.264 width injected into parser caps (-1 = unspecified).
   int h264_height = -1; ///< Expected H.264 height injected into parser caps (-1 = unspecified).
