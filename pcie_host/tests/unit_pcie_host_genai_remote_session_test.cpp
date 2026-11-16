@@ -100,6 +100,8 @@ int main() {
 
     std::ifstream input(arguments);
     const std::string contents((std::istreambuf_iterator<char>(input)), {});
+    require(contents.find("-o\nStrictHostKeyChecking=yes\n") != std::string::npos,
+            "GenAI worker launch did not enforce strict SSH host identity verification");
     require(contents.find("/tmp/private/neat-pcie-genai-worker") != std::string::npos,
             "GenAI worker launch did not use the selected helper");
     require(contents.find("LD_LIBRARY_PATH=/tmp/private/lib") != std::string::npos,

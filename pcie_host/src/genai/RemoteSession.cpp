@@ -53,8 +53,15 @@ RemoteSession::~RemoteSession() {
   }
 }
 std::vector<std::string> RemoteSession::ssh(const std::string& script) const {
-  std::vector<std::string> args{
-      open_ssh_executable("ssh"), "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", "-p", "22"};
+  std::vector<std::string> args{open_ssh_executable("ssh"),
+                                "-o",
+                                "BatchMode=yes",
+                                "-o",
+                                "StrictHostKeyChecking=yes",
+                                "-o",
+                                "ConnectTimeout=5",
+                                "-p",
+                                "22"};
   std::string key = options_.ssh_key;
   if (key.empty()) {
     if (const auto home = host_home_directory(); home.has_value()) {
