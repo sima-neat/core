@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
-# Check the SDK against the selected Scheduler's pinned sysroot and fetch the
-# Runner's exact platform archives into a fresh folder. The sysroot is changed
+# Check the active SDK against the selected Scheduler platform identity.
+# Store the observed identity without downloading platform packages. The sysroot is changed
 # only when NEAT_UPDATE_SYSROOT=ON (build.sh --update-sysroot).
 # stdout is exclusively shell exports; provisioning and validation use stderr.
 set -euo pipefail
-[[ $# == 1 ]] || { echo 'Usage: prepare_scheduler_sdk.sh FRESH_ARCHIVE_CACHE' >&2; exit 2; }
-package_dir=$(realpath -m "$1")
-[[ ! -e "$package_dir" ]] || { echo 'SDK archive cache must be fresh' >&2; exit 1; }
-mkdir -p "$package_dir"
+[[ $# == 1 ]] || { echo 'Usage: prepare_scheduler_sdk.sh FRESH_VERIFICATION_DIRECTORY' >&2; exit 2; }
+verification_dir=$(realpath -m "$1")
+[[ ! -e "$verification_dir" ]] || { echo 'SDK verification directory must be fresh' >&2; exit 1; }
+mkdir -p "$verification_dir"
 policy=$(python3 tools/build_dependencies.py sdk-policy --core "$PWD")
 sysroot_version=$(python3 tools/ci/scheduler_sdk_policy.py --policy-json "$policy" --field sysroot-version)
 # SDK images may set SDK_PKG_LIST with whitespace and empty entries.
@@ -44,51 +44,23 @@ fi
 # The official environment selects the SDK compiler, not the host's default c++.
 source /opt/bin/simaai-init-build-env modalix >&2
 python3 tools/build_dependencies.py verify-sdk --core "$PWD" \
-  --sysroot /opt/toolchain/aarch64/modalix --compiler "$CXX" > "$package_dir/sdk-verification.json"
-cat "$package_dir/sdk-verification.json" >&2
-
-# Download the exact platform DEBs the selected Runner consumes, with a private
-# APT configuration so neither the sysroot nor the dpkg state changes. -B keeps
-# bytecode out of the receipted Scheduler tools folder.
-platform_debs=$(python3 -B - "$NEAT_SCHEDULER_PACKAGE_DIR" "$NEAT_RUNNER_PACKAGE_DIR" <<'PY'
+  --sysroot /opt/toolchain/aarch64/modalix --compiler "$CXX" > "$verification_dir/sdk-verification.json"
+# Reject old coordinator output before dependency preparation can ask for the
+# retired platform archive selection.
+python3 - "$verification_dir/sdk-verification.json" <<'PY'
+import json
 import sys
 from pathlib import Path
-scheduler, runner = map(Path, sys.argv[1:])
-prefix = scheduler / 'usr' if (scheduler / 'usr').is_dir() else scheduler
-sys.path.insert(0, str(prefix / 'share/SimaScheduler/tools'))
-from client_dependencies import platform_provider_contracts, receipt
-for provider in platform_provider_contracts(receipt(runner, 'SimaRunner')).values():
-    deb = provider['debian_provider']
-    print(f"{deb['Package']}:{deb['Architecture']}={deb['Version']}")
+
+verification = json.loads(Path(sys.argv[1]).read_text())
+platform = verification.get('build_platform') if isinstance(verification, dict) else None
+if (not isinstance(platform, dict) or set(platform) != {'elxr_version', 'sysroot_version', 'target'}
+        or any(not isinstance(value, str) or not value.strip() for value in platform.values())):
+    raise SystemExit('ERROR: Scheduler SDK verification lacks build_platform; '
+                     'rebuild Runner, then Scheduler, before building Core.')
 PY
-)
-apt_trust=trusted=yes
-if [[ "$sysroot_version" != *~* ]]; then
-  repository=https://repo.sima.ai/elxr/deb/release
-  apt_trust=signed-by=/etc/apt/trusted.gpg.d/simaai.gpg
-elif [[ "$sysroot_version" == *~pre* ]]; then
-  repository=${SYSROOT_PRE_RELEASE_REPOSITORY:-https://debian.neat.sima.ai/pre-release}
-else
-  repository=${SYSROOT_DAILY_REPOSITORY:-https://debian.neat.sima.ai/daily}
-fi
-apt_dir="$package_dir/apt"
-mkdir -p "$apt_dir/lists/partial" "$apt_dir/empty" "$package_dir/downloads"
-echo "deb [arch=arm64 $apt_trust] $repository agate non-free" > "$apt_dir/sources.list"
-cat > "$apt_dir/apt.conf" <<EOF
-Dir::Etc::sourcelist "$apt_dir/sources.list";
-Dir::Etc::sourceparts "$apt_dir/empty";
-Dir::Etc::preferencesparts "$apt_dir/empty";
-Dir::State::lists "$apt_dir/lists";
-Dir::State::status "/dev/null";
-Dir::Cache::pkgcache "";
-Dir::Cache::srcpkgcache "";
-APT::Architecture "arm64";
-EOF
-if [[ -n "$platform_debs" ]]; then
-  APT_CONFIG="$apt_dir/apt.conf" apt-get update -q >&2
-  # shellcheck disable=SC2086 # one package=version per word
-  (cd "$package_dir/downloads" && APT_CONFIG="$apt_dir/apt.conf" apt-get download $platform_debs >&2)
-fi
-# The coordinator checks each archive against the Runner receipt's hashes.
-python3 tools/build_dependencies.py platform-archives --core "$PWD" \
-  --platform-package-dir "$package_dir/downloads"
+cat "$verification_dir/sdk-verification.json" >&2
+
+# Only the selected SDK supplies platform libraries and package identity.
+# Consumers receive the verified observations; no live APT lookup is required.
+printf 'export NEAT_SDK_VERIFICATION_JSON=%q\n' "$verification_dir/sdk-verification.json"
