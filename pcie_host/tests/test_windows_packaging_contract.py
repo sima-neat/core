@@ -135,6 +135,21 @@ class WindowsPackagingContract(unittest.TestCase):
     self.assertIn("assert p.genai.GenerationRequest", producer)
     self.assertIn("assert p.genai.ConnectionOptions", producer)
 
+  def test_installed_skill_preserves_qualified_windows_genai_api(self):
+    skill_root = ROOT / "skills" / "neat-pcie-application-builder"
+    skill = (skill_root / "SKILL.md").read_text(encoding="utf-8")
+    validation = (skill_root / "references" / "build-and-validation.md").read_text(
+        encoding="utf-8"
+    )
+
+    self.assertNotIn("Linux-host-only", skill)
+    self.assertIn("release-qualified Platform", skill)
+    self.assertIn("SiMaPCIe.dll", skill)
+    self.assertIn("matching host/card packages", skill)
+    self.assertNotIn("requires a Linux host", validation)
+    self.assertIn("release-qualified Platform", validation)
+    self.assertIn("connected-card acceptance", validation)
+
   def test_windows_genai_media_defaults_follow_platform_contract(self):
     header = (
         ROOT / "include" / "simaai" / "neat" / "pcie" / "genai" / "GenAIModel.h"

@@ -125,4 +125,5 @@ When the PCIe extras bundle is present, prefer its matching-release tutorials ov
 - `share/sima-pcie-host/tutorials/029_run_genai_over_pcie/`
 
 Tutorial 026 uses separate `Model` objects on distinct queues. It does not require the excluded
-`pcie::Runtime` API. Tutorial 029 requires a Linux host; do not use it for native Windows.
+`pcie::Runtime` API. On native Windows, use tutorial 029 only with a release-qualified Platform
+provider, prepared models and assets, matching host/card packages, and connected-card acceptance.
