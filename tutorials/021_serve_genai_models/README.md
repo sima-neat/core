@@ -45,6 +45,17 @@ The response should include the served names registered in this tutorial: `llm`,
 ## Run
 
 
+`llima pull` stores models under `/media/nvme/llima/models` by default, so these steps expect an NVMe drive mounted at `/media/nvme` on the Modalix DevKit. `LLIMA_MODELS_PATH` sets the model directory. On a DevKit without NVMe, set it to a writable directory with enough free space instead. Set it in the same shell where you run the commands below:
+
+```bash
+# DevKit with NVMe: the default llima models directory
+export LLIMA_MODELS_PATH=/media/nvme/llima/models
+
+# DevKit without NVMe: use a writable directory with enough free space instead
+# export LLIMA_MODELS_PATH="$HOME/llima/models"
+# mkdir -p "$LLIMA_MODELS_PATH"
+```
+
 On the Modalix DevKit, download the LLM, VLM, and ASR models from Hugging Face using the LLiMa CLI:
 
 ```bash
@@ -58,26 +69,26 @@ Start the server on Modalix with all three DevKit-local model directories:
 **Python:**
 ```bash
 python3 share/sima-neat/tutorials/021_serve_genai_models/serve_genai_models.py \
-  --llm /media/nvme/llima/models/Qwen3-4B-Instruct-2507-GPTQ-a16w4 \
-  --vlm /media/nvme/llima/models/Qwen3-VL-4B-Instruct-GPTQ-a16w4 \
-  --asr /media/nvme/llima/models/whisper-small-a16w8
+  --llm "$LLIMA_MODELS_PATH/Qwen3-4B-Instruct-2507-GPTQ-a16w4" \
+  --vlm "$LLIMA_MODELS_PATH/Qwen3-VL-4B-Instruct-GPTQ-a16w4" \
+  --asr "$LLIMA_MODELS_PATH/whisper-small-a16w8"
 ```
 
 **C++ (prebuilt):**
 ```bash
 ./lib/sima-neat/tutorials/tutorial_021_serve_genai_models \
-  --llm /media/nvme/llima/models/Qwen3-4B-Instruct-2507-GPTQ-a16w4 \
-  --vlm /media/nvme/llima/models/Qwen3-VL-4B-Instruct-GPTQ-a16w4 \
-  --asr /media/nvme/llima/models/whisper-small-a16w8
+  --llm "$LLIMA_MODELS_PATH/Qwen3-4B-Instruct-2507-GPTQ-a16w4" \
+  --vlm "$LLIMA_MODELS_PATH/Qwen3-VL-4B-Instruct-GPTQ-a16w4" \
+  --asr "$LLIMA_MODELS_PATH/whisper-small-a16w8"
 ```
 
 **C++ (build from source):**
 ```bash
 ./build.sh --target tutorial_021_serve_genai_models
 ./build/tutorials-standalone/tutorial_021_serve_genai_models \
-  --llm /media/nvme/llima/models/Qwen3-4B-Instruct-2507-GPTQ-a16w4 \
-  --vlm /media/nvme/llima/models/Qwen3-VL-4B-Instruct-GPTQ-a16w4 \
-  --asr /media/nvme/llima/models/whisper-small-a16w8
+  --llm "$LLIMA_MODELS_PATH/Qwen3-4B-Instruct-2507-GPTQ-a16w4" \
+  --vlm "$LLIMA_MODELS_PATH/Qwen3-VL-4B-Instruct-GPTQ-a16w4" \
+  --asr "$LLIMA_MODELS_PATH/whisper-small-a16w8"
 ```
 
 Drop `--vlm` or `--asr` if you only want to serve a subset during development.

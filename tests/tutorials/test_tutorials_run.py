@@ -185,6 +185,37 @@ def test_walkthrough_segments_pair_across_languages() -> None:
       )
 
 
+_LLIMA_DEFAULT_MODELS_DIR = "/media/nvme/llima/models"
+
+
+def test_llima_tutorials_document_models_path_without_nvme() -> None:
+  """Tutorials that `llima pull` models must work on a DevKit without NVMe:
+  they explain `LLIMA_MODELS_PATH` and pass model directories through it
+  instead of hardcoding the NVMe default (issue #1347)."""
+  readmes = sorted(TUTORIALS_ROOT.glob("[0-9][0-9][0-9]_*/README.md")) + sorted(
+      TUTORIALS_ROOT.glob("[0-9][0-9][0-9]_*/i18n/*/README.md")
+  )
+  checked = 0
+  for readme in readmes:
+    text = readme.read_text(encoding="utf-8")
+    if not re.search(r"^llima pull\s", text, re.MULTILINE):
+      continue
+    checked += 1
+    assert "export LLIMA_MODELS_PATH=" in text, (
+        f"{readme} pulls LLiMa models but does not show how to set LLIMA_MODELS_PATH"
+    )
+    hardcoded = [
+        line.strip()
+        for line in text.splitlines()
+        if line.lstrip().startswith("--") and _LLIMA_DEFAULT_MODELS_DIR in line
+    ]
+    assert not hardcoded, (
+        f"{readme} hardcodes {_LLIMA_DEFAULT_MODELS_DIR} in commands; "
+        f"use \"$LLIMA_MODELS_PATH/<model>\" instead: {hardcoded}"
+    )
+  assert checked, "expected at least one tutorial README that runs `llima pull`"
+
+
 def test_ctested_python_usage_comments_use_current_script_names() -> None:
   ctested_chapters = _ctested_chapters()
   for _, py_path in _tutorial_py_files():

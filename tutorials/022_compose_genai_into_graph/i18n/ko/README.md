@@ -43,6 +43,17 @@ LLM, VLM 또는 ASR 작업이 더 큰 작업의 한 단계일 때 GenAI 그래�
 
 ## Run
 
+`llima pull`은 기본적으로 모델을 `/media/nvme/llima/models`에 저장하므로, 이 단계는 Modalix DevKit의 `/media/nvme`에 NVMe 드라이브가 마운트되어 있다고 가정합니다. 모델 디렉터리는 `LLIMA_MODELS_PATH`로 지정합니다. NVMe가 없는 DevKit에서는 대신 여유 공간이 충분한 쓰기 가능한 디렉터리를 지정하세요. 아래 명령을 실행할 셸과 같은 셸에서 설정합니다.
+
+```bash
+# DevKit with NVMe: the default llima models directory
+export LLIMA_MODELS_PATH=/media/nvme/llima/models
+
+# DevKit without NVMe: use a writable directory with enough free space instead
+# export LLIMA_MODELS_PATH="$HOME/llima/models"
+# mkdir -p "$LLIMA_MODELS_PATH"
+```
+
  Modalix DevKitLFM2-VL 1.6B VLM을 다운로드하세요. Hugging Face 다음 텍스트를 사용하여 LLiMa CLI:
 
 ```bash
@@ -54,14 +65,14 @@ llima pull LFM2-VL-1.6B-a16w4
 **Python:**
 ```bash
 python3 share/sima-neat/tutorials/022_compose_genai_into_graph/compose_genai_into_graph.py \
-  --model /media/nvme/llima/models/LFM2-VL-1.6B-a16w4 \
+  --model "$LLIMA_MODELS_PATH/LFM2-VL-1.6B-a16w4" \
   --image share/sima-neat/tutorials/assets/fronalpstock_1330.jpg
 ```
 
 **C++ (prebuilt):**
 ```bash
 ./lib/sima-neat/tutorials/tutorial_022_compose_genai_into_graph \
-  --model /media/nvme/llima/models/LFM2-VL-1.6B-a16w4 \
+  --model "$LLIMA_MODELS_PATH/LFM2-VL-1.6B-a16w4" \
   --image share/sima-neat/tutorials/assets/fronalpstock_1330.jpg
 ```
 
@@ -69,7 +80,7 @@ python3 share/sima-neat/tutorials/022_compose_genai_into_graph/compose_genai_int
 ```bash
 ./build.sh --target tutorial_022_compose_genai_into_graph
 ./build/tutorials-standalone/tutorial_022_compose_genai_into_graph \
-  --model /media/nvme/llima/models/LFM2-VL-1.6B-a16w4 \
+  --model "$LLIMA_MODELS_PATH/LFM2-VL-1.6B-a16w4" \
   --image share/sima-neat/tutorials/assets/fronalpstock_1330.jpg
 ```
 

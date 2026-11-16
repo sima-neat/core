@@ -43,6 +43,17 @@ When you use `messages`, attach images to the user message that needs them. This
 
 ## Run
 
+`llima pull` stores models under `/media/nvme/llima/models` by default, so these steps expect an NVMe drive mounted at `/media/nvme` on the Modalix DevKit. `LLIMA_MODELS_PATH` sets the model directory. On a DevKit without NVMe, set it to a writable directory with enough free space instead. Set it in the same shell where you run the commands below:
+
+```bash
+# DevKit with NVMe: the default llima models directory
+export LLIMA_MODELS_PATH=/media/nvme/llima/models
+
+# DevKit without NVMe: use a writable directory with enough free space instead
+# export LLIMA_MODELS_PATH="$HOME/llima/models"
+# mkdir -p "$LLIMA_MODELS_PATH"
+```
+
 On the Modalix DevKit, download the LFM2-VL 1.6B VLM from Hugging Face using the LLiMa CLI:
 
 ```bash
@@ -54,14 +65,14 @@ Run the tutorial on Modalix with the DevKit-local model directory and a local im
 **Python:**
 ```bash
 python3 share/sima-neat/tutorials/020_run_a_vlm/run_a_vlm.py \
-  --model /media/nvme/llima/models/LFM2-VL-1.6B-a16w4 \
+  --model "$LLIMA_MODELS_PATH/LFM2-VL-1.6B-a16w4" \
   --image tests/images/people.jpg
 ```
 
 **C++ (prebuilt):**
 ```bash
 ./lib/sima-neat/tutorials/tutorial_020_run_a_vlm \
-  --model /media/nvme/llima/models/LFM2-VL-1.6B-a16w4 \
+  --model "$LLIMA_MODELS_PATH/LFM2-VL-1.6B-a16w4" \
   --image tests/images/people.jpg
 ```
 
@@ -69,7 +80,7 @@ python3 share/sima-neat/tutorials/020_run_a_vlm/run_a_vlm.py \
 ```bash
 ./build.sh --target tutorial_020_run_a_vlm
 ./build/tutorials-standalone/tutorial_020_run_a_vlm \
-  --model /media/nvme/llima/models/LFM2-VL-1.6B-a16w4 \
+  --model "$LLIMA_MODELS_PATH/LFM2-VL-1.6B-a16w4" \
   --image tests/images/people.jpg
 ```
 

@@ -41,6 +41,17 @@ curl http://<modalix-ip>:9998/v1/models
 
 ## Run
 
+`llima pull`은 기본적으로 모델을 `/media/nvme/llima/models`에 저장하므로, 이 단계는 Modalix DevKit의 `/media/nvme`에 NVMe 드라이브가 마운트되어 있다고 가정합니다. 모델 디렉터리는 `LLIMA_MODELS_PATH`로 지정합니다. NVMe가 없는 DevKit에서는 대신 여유 공간이 충분한 쓰기 가능한 디렉터리를 지정하세요. 아래 명령을 실행할 셸과 같은 셸에서 설정합니다.
+
+```bash
+# DevKit with NVMe: the default llima models directory
+export LLIMA_MODELS_PATH=/media/nvme/llima/models
+
+# DevKit without NVMe: use a writable directory with enough free space instead
+# export LLIMA_MODELS_PATH="$HOME/llima/models"
+# mkdir -p "$LLIMA_MODELS_PATH"
+```
+
 Modalix DevKit에서 Hugging Face에서 LLM, VLM 및 ASR 모델을 LLiMa CLI를 사용하여 다운로드합니다.
 
 ```bash
@@ -54,26 +65,26 @@ Modalix에서 세 개의 DevKit 로컬 모델 디렉터리가 모두 있는 상�
 **Python:**
 ```bash
 python3 share/sima-neat/tutorials/021_serve_genai_models/serve_genai_models.py \
-  --llm /media/nvme/llima/models/Qwen3-4B-Instruct-2507-GPTQ-a16w4 \
-  --vlm /media/nvme/llima/models/Qwen3-VL-4B-Instruct-GPTQ-a16w4 \
-  --asr /media/nvme/llima/models/whisper-small-a16w8
+  --llm "$LLIMA_MODELS_PATH/Qwen3-4B-Instruct-2507-GPTQ-a16w4" \
+  --vlm "$LLIMA_MODELS_PATH/Qwen3-VL-4B-Instruct-GPTQ-a16w4" \
+  --asr "$LLIMA_MODELS_PATH/whisper-small-a16w8"
 ```
 
 **C++ (prebuilt):**
 ```bash
 ./lib/sima-neat/tutorials/tutorial_021_serve_genai_models \
-  --llm /media/nvme/llima/models/Qwen3-4B-Instruct-2507-GPTQ-a16w4 \
-  --vlm /media/nvme/llima/models/Qwen3-VL-4B-Instruct-GPTQ-a16w4 \
-  --asr /media/nvme/llima/models/whisper-small-a16w8
+  --llm "$LLIMA_MODELS_PATH/Qwen3-4B-Instruct-2507-GPTQ-a16w4" \
+  --vlm "$LLIMA_MODELS_PATH/Qwen3-VL-4B-Instruct-GPTQ-a16w4" \
+  --asr "$LLIMA_MODELS_PATH/whisper-small-a16w8"
 ```
 
 **C++ (build from source):**
 ```bash
 ./build.sh --target tutorial_021_serve_genai_models
 ./build/tutorials-standalone/tutorial_021_serve_genai_models \
-  --llm /media/nvme/llima/models/Qwen3-4B-Instruct-2507-GPTQ-a16w4 \
-  --vlm /media/nvme/llima/models/Qwen3-VL-4B-Instruct-GPTQ-a16w4 \
-  --asr /media/nvme/llima/models/whisper-small-a16w8
+  --llm "$LLIMA_MODELS_PATH/Qwen3-4B-Instruct-2507-GPTQ-a16w4" \
+  --vlm "$LLIMA_MODELS_PATH/Qwen3-VL-4B-Instruct-GPTQ-a16w4" \
+  --asr "$LLIMA_MODELS_PATH/whisper-small-a16w8"
 ```
 
 개발 중에 하위 집합만 배포하려는 경우 `--vlm` 또는 `--asr`을 제거합니다.

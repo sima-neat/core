@@ -42,6 +42,17 @@ curl http://<modalix-ip>:9998/v1/models
 ## Run
 
 
+За замовчуванням `llima pull` зберігає моделі в `/media/nvme/llima/models`, тому ці кроки розраховані на NVMe-накопичувач, змонтований у `/media/nvme` на Modalix DevKit. Каталог моделей задає змінна `LLIMA_MODELS_PATH`. Якщо в DevKit немає NVMe, вкажіть у ній натомість каталог із правом запису та достатнім вільним місцем. Задайте змінну в тій самій оболонці, у якій виконуватимете наведені нижче команди:
+
+```bash
+# DevKit with NVMe: the default llima models directory
+export LLIMA_MODELS_PATH=/media/nvme/llima/models
+
+# DevKit without NVMe: use a writable directory with enough free space instead
+# export LLIMA_MODELS_PATH="$HOME/llima/models"
+# mkdir -p "$LLIMA_MODELS_PATH"
+```
+
 На Modalix DevKit завантажте моделі LLM, VLM та ASR з Hugging Face, використовуючи CLI LLiMa:
 
 ```bash
@@ -55,26 +66,26 @@ llima pull whisper-small-a16w8
 **Python:**
 ```bash
 python3 share/sima-neat/tutorials/021_serve_genai_models/serve_genai_models.py \
-  --llm /media/nvme/llima/models/Qwen3-4B-Instruct-2507-GPTQ-a16w4 \
-  --vlm /media/nvme/llima/models/Qwen3-VL-4B-Instruct-GPTQ-a16w4 \
-  --asr /media/nvme/llima/models/whisper-small-a16w8
+  --llm "$LLIMA_MODELS_PATH/Qwen3-4B-Instruct-2507-GPTQ-a16w4" \
+  --vlm "$LLIMA_MODELS_PATH/Qwen3-VL-4B-Instruct-GPTQ-a16w4" \
+  --asr "$LLIMA_MODELS_PATH/whisper-small-a16w8"
 ```
 
 **C++ (prebuilt):**
 ```bash
 ./lib/sima-neat/tutorials/tutorial_021_serve_genai_models \
-  --llm /media/nvme/llima/models/Qwen3-4B-Instruct-2507-GPTQ-a16w4 \
-  --vlm /media/nvme/llima/models/Qwen3-VL-4B-Instruct-GPTQ-a16w4 \
-  --asr /media/nvme/llima/models/whisper-small-a16w8
+  --llm "$LLIMA_MODELS_PATH/Qwen3-4B-Instruct-2507-GPTQ-a16w4" \
+  --vlm "$LLIMA_MODELS_PATH/Qwen3-VL-4B-Instruct-GPTQ-a16w4" \
+  --asr "$LLIMA_MODELS_PATH/whisper-small-a16w8"
 ```
 
 **C++ (build from source):**
 ```bash
 ./build.sh --target tutorial_021_serve_genai_models
 ./build/tutorials-standalone/tutorial_021_serve_genai_models \
-  --llm /media/nvme/llima/models/Qwen3-4B-Instruct-2507-GPTQ-a16w4 \
-  --vlm /media/nvme/llima/models/Qwen3-VL-4B-Instruct-GPTQ-a16w4 \
-  --asr /media/nvme/llima/models/whisper-small-a16w8
+  --llm "$LLIMA_MODELS_PATH/Qwen3-4B-Instruct-2507-GPTQ-a16w4" \
+  --vlm "$LLIMA_MODELS_PATH/Qwen3-VL-4B-Instruct-GPTQ-a16w4" \
+  --asr "$LLIMA_MODELS_PATH/whisper-small-a16w8"
 ```
 
 Видаліть `--vlm` або `--asr`, якщо ви хочете використовувати лише частину моделей під час розробки.

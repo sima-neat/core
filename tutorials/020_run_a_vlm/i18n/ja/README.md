@@ -43,6 +43,17 @@
 
 ## Run
 
+`llima pull` は既定でモデルを `/media/nvme/llima/models` に保存するため、この手順では Modalix DevKit の `/media/nvme` に NVMe ドライブがマウントされていることを前提としています。モデルディレクトリは `LLIMA_MODELS_PATH` で指定します。NVMe がない DevKit では、代わりに十分な空き容量がある書き込み可能なディレクトリを指定してください。以下のコマンドを実行するのと同じシェルで設定します。
+
+```bash
+# DevKit with NVMe: the default llima models directory
+export LLIMA_MODELS_PATH=/media/nvme/llima/models
+
+# DevKit without NVMe: use a writable directory with enough free space instead
+# export LLIMA_MODELS_PATH="$HOME/llima/models"
+# mkdir -p "$LLIMA_MODELS_PATH"
+```
+
 Modalix DevKit で、Hugging Face から LLiMa CLI を使用して LFM2-VL 1.6B VLM をダウンロードします。
 
 ```bash
@@ -54,14 +65,14 @@ Modalix で、DevKit ローカルモデルディレクトリとローカル画�
 **Python:**
 ```bash
 python3 share/sima-neat/tutorials/020_run_a_vlm/run_a_vlm.py \
-  --model /media/nvme/llima/models/LFM2-VL-1.6B-a16w4 \
+  --model "$LLIMA_MODELS_PATH/LFM2-VL-1.6B-a16w4" \
   --image tests/images/people.jpg
 ```
 
 **C++ (prebuilt):**
 ```bash
 ./lib/sima-neat/tutorials/tutorial_020_run_a_vlm \
-  --model /media/nvme/llima/models/LFM2-VL-1.6B-a16w4 \
+  --model "$LLIMA_MODELS_PATH/LFM2-VL-1.6B-a16w4" \
   --image tests/images/people.jpg
 ```
 
@@ -69,7 +80,7 @@ python3 share/sima-neat/tutorials/020_run_a_vlm/run_a_vlm.py \
 ```bash
 ./build.sh --target tutorial_020_run_a_vlm
 ./build/tutorials-standalone/tutorial_020_run_a_vlm \
-  --model /media/nvme/llima/models/LFM2-VL-1.6B-a16w4 \
+  --model "$LLIMA_MODELS_PATH/LFM2-VL-1.6B-a16w4" \
   --image tests/images/people.jpg
 ```
 

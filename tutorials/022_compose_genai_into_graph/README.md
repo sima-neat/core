@@ -43,6 +43,17 @@ Pull from `tokens` until a `done` sample arrives. The `done` sample is a bundle 
 
 ## Run
 
+`llima pull` stores models under `/media/nvme/llima/models` by default, so these steps expect an NVMe drive mounted at `/media/nvme` on the Modalix DevKit. `LLIMA_MODELS_PATH` sets the model directory. On a DevKit without NVMe, set it to a writable directory with enough free space instead. Set it in the same shell where you run the commands below:
+
+```bash
+# DevKit with NVMe: the default llima models directory
+export LLIMA_MODELS_PATH=/media/nvme/llima/models
+
+# DevKit without NVMe: use a writable directory with enough free space instead
+# export LLIMA_MODELS_PATH="$HOME/llima/models"
+# mkdir -p "$LLIMA_MODELS_PATH"
+```
+
 On the Modalix DevKit, download the LFM2-VL 1.6B VLM from Hugging Face using the LLiMa CLI:
 
 ```bash
@@ -54,14 +65,14 @@ Run the tutorial on Modalix with the DevKit-local model directory and a local im
 **Python:**
 ```bash
 python3 share/sima-neat/tutorials/022_compose_genai_into_graph/compose_genai_into_graph.py \
-  --model /media/nvme/llima/models/LFM2-VL-1.6B-a16w4 \
+  --model "$LLIMA_MODELS_PATH/LFM2-VL-1.6B-a16w4" \
   --image share/sima-neat/tutorials/assets/fronalpstock_1330.jpg
 ```
 
 **C++ (prebuilt):**
 ```bash
 ./lib/sima-neat/tutorials/tutorial_022_compose_genai_into_graph \
-  --model /media/nvme/llima/models/LFM2-VL-1.6B-a16w4 \
+  --model "$LLIMA_MODELS_PATH/LFM2-VL-1.6B-a16w4" \
   --image share/sima-neat/tutorials/assets/fronalpstock_1330.jpg
 ```
 
@@ -69,7 +80,7 @@ python3 share/sima-neat/tutorials/022_compose_genai_into_graph/compose_genai_int
 ```bash
 ./build.sh --target tutorial_022_compose_genai_into_graph
 ./build/tutorials-standalone/tutorial_022_compose_genai_into_graph \
-  --model /media/nvme/llima/models/LFM2-VL-1.6B-a16w4 \
+  --model "$LLIMA_MODELS_PATH/LFM2-VL-1.6B-a16w4" \
   --image share/sima-neat/tutorials/assets/fronalpstock_1330.jpg
 ```
 

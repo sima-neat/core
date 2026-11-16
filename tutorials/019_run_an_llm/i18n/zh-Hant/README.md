@@ -47,6 +47,17 @@
 
 ## Run
 
+`llima pull` 預設會將模型儲存在 `/media/nvme/llima/models`，因此這些步驟假設 Modalix DevKit 已在 `/media/nvme` 掛載 NVMe 磁碟。模型目錄由 `LLIMA_MODELS_PATH` 指定。若 DevKit 沒有 NVMe，請改為指定具有足夠可用空間且可寫入的目錄。請在執行下列指令的同一個 shell 中設定：
+
+```bash
+# DevKit with NVMe: the default llima models directory
+export LLIMA_MODELS_PATH=/media/nvme/llima/models
+
+# DevKit without NVMe: use a writable directory with enough free space instead
+# export LLIMA_MODELS_PATH="$HOME/llima/models"
+# mkdir -p "$LLIMA_MODELS_PATH"
+```
+
 在 Modalix DevKit 上，使用 LLiMa CLI 從 Hugging Face 下載一個 LLM，例如 Qwen3 4B：
 
 ```bash
@@ -58,20 +69,20 @@ llima pull Qwen3-4B-Instruct-2507-GPTQ-a16w4
 **Python:**
 ```bash
 python3 share/sima-neat/tutorials/019_run_an_llm/run_an_llm.py \
-  --model /media/nvme/llima/models/Qwen3-4B-Instruct-2507-GPTQ-a16w4
+  --model "$LLIMA_MODELS_PATH/Qwen3-4B-Instruct-2507-GPTQ-a16w4"
 ```
 
 **C++ (prebuilt):**
 ```bash
 ./lib/sima-neat/tutorials/tutorial_019_run_an_llm \
-  --model /media/nvme/llima/models/Qwen3-4B-Instruct-2507-GPTQ-a16w4
+  --model "$LLIMA_MODELS_PATH/Qwen3-4B-Instruct-2507-GPTQ-a16w4"
 ```
 
 **C++ (build from source):**
 ```bash
 ./build.sh --target tutorial_019_run_an_llm
 ./build/tutorials-standalone/tutorial_019_run_an_llm \
-  --model /media/nvme/llima/models/Qwen3-4B-Instruct-2507-GPTQ-a16w4
+  --model "$LLIMA_MODELS_PATH/Qwen3-4B-Instruct-2507-GPTQ-a16w4"
 ```
 
 預期的輸出是一個簡單的提示回應、一個系統提示的回應、一個具有上下文意識的後續回應，以及一個串流式的最終回應。
