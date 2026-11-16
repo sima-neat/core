@@ -49,6 +49,8 @@ cd website && yarn start           # preview the site
 
 These subdirectories hold scripts that are owned by their respective workflows — CI runs the `ci/` set, developers run `dev/` ad-hoc, release engineering runs `release/`. Don't depend on them from application code.
 
+`scripts/ci/prepare_scheduler_sdk.sh` exports `NEAT_SDK_VERIFICATION_JSON`, the path to its verified SDK observation file under `deps/`. `build.sh` refreshes this file after compilation and passes it to package metadata generation. This variable carries internal build state. Use `--scheduler` to select dependency packages and `--update-sysroot` to request SDK updates.
+
 ## Running the doc generator from a clean checkout
 
 ```bash
