@@ -39,7 +39,10 @@ slug: /develop-apps/contribute/release-checklist
    - `project(SimaNeat VERSION x.y.z)`가 `CMakeLists.txt`에 업데이트되었습니다.
    - `package-version` 및 `platform-version`가 필요한 경우 `deps/manifest.json`에 업데이트되었습니다.
    - `modelzoo-version`이 검증된 Model Zoo 릴리스를 명시적으로 선택하며, `platform-version`과 다를 경우에만 해당됩니다. 생략하면 Model Zoo 해결은 기본적으로 `platform-version`으로 설정됩니다.
-   - `abi-version`이 `deps/manifest.json`에 있으며, 공개 C++ 유형 레이아웃 또는 내보낸 바이너리 계약이 호환되지 않게 변경될 때마다 증가합니다. 모든 C++ 애플리케이션 및 Python 바인딩은 해당 ABI를 사용하여 다시 빌드됩니다.
+   - `deps/manifest.json`의 `abi-version`은 공개 C++ 유형 레이아웃 또는 내보낸 바이너리 계약에 호환되지 않는 변경이 있고,
+     `develop`이 여전히 `main`과 같은 ABI 버전을 사용하는 경우에만 증가시킵니다.
+     `develop`에 다음 릴리스를 위한 더 높은 ABI 버전이 이미 있으면, 릴리스 전의 추가적인 ABI 비호환 변경에도 그 버전을 유지합니다.
+     호환되지 않는 변경 후에는 일치하는 헤더와 라이브러리를 사용하여 모든 C++ 애플리케이션과 Python 바인딩을 다시 빌드합니다.
    - 릴리스/태그 본문에 릴리스 노트가 준비되었습니다.
 
 릴리스 흐름에서 "알려진 충돌 목록"은 허용되지 않습니다. 모든 충돌 회귀는 수정될 때까지 릴리스를 차단합니다.
