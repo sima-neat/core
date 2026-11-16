@@ -658,6 +658,8 @@ build_processcvu_payload_from_runtime_config_common(const CompiledProcessCvuRunt
   payload.runtime_output_logical_layout_list = config.runtime_output_logical_layout_list;
   payload.channel_mean.assign(config.channel_mean.begin(), config.channel_mean.end());
   payload.channel_stddev.assign(config.channel_stddev.begin(), config.channel_stddev.end());
+  payload.resize_mode = config.resize_mode;
+  payload.shorter_side = config.shorter_side;
   payload.rescale_factor = config.rescale_factor;
   payload.quantization_step = config.quantization_step;
   payload.color_conversion_placement = config.color_conversion_placement;

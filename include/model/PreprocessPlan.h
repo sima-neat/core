@@ -46,14 +46,6 @@ enum class InputKind {
   Tensor = 2, ///< Already-shaped tensor; preprocess is mostly a pass-through.
 };
 
-/// How the resize stage maps non-matching input dimensions to the model's input shape.
-/// @ingroup model
-enum class ResizeMode {
-  Stretch = 0,   ///< Anisotropic scale to fit; aspect ratio not preserved.
-  Letterbox = 1, ///< Scale to fit while preserving aspect; pad the rest with `pad_value`.
-  Crop = 2,      ///< Center-crop to the target shape after isotropic scale.
-};
-
 /// Color format hint for the color-convert stage.
 /// @ingroup model
 enum class PreprocessColorFormat {
@@ -109,6 +101,8 @@ struct ResizeSpec {
   /// Typed sampler; omitted retains scaling_type and its legacy Bilinear default.
   /// When set, the legacy default is ignored; a conflicting nondefault string is rejected.
   std::optional<ResizeInterpolation> interpolation;
+  /// Resize the shorter source axis before center cropping. Crop only; absent means cover.
+  std::optional<int> shorter_side;
 };
 
 /// Color-format conversion parameters.

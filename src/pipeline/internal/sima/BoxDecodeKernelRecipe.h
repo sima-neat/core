@@ -9,6 +9,15 @@
 #include "pipeline/internal/contract/PluginCompiledContracts.h"
 
 namespace simaai::neat::pipeline_internal::sima {
+// Nominal geometry belongs to the admitted decode recipe, even for identity
+// model-shaped input with no resize operation. Explicit provenance still wins.
+constexpr ResizeMode default_boxdecode_resize_mode(BoxDecodeType type) {
+  return (type == BoxDecodeType::Ssd || type == BoxDecodeType::Detr ||
+          type == BoxDecodeType::DetrFocal)
+             ? ResizeMode::Stretch
+             : ResizeMode::Letterbox;
+}
+
 struct BoxDecodeGeometryOptions {
   int model_width = 0, model_height = 0;
   int original_width = 0, original_height = 0;
@@ -21,6 +30,9 @@ struct BoxDecodeGeometryOptions {
   // A source-driven cold seed must never substitute for per-frame authority.
   bool require_frame_transform = false;
 };
+// Axis-aligned ordinary boxes only; proposals and auxiliary payloads are not
+// implicitly admitted when a new decode type is added.
+bool boxdecode_supports_detection_transform(BoxDecodeType);
 struct BoxDecodeKernelRecipeResult {
   CompiledKernelContract compiled;
   std::size_t decode_member = 0;

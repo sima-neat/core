@@ -54,8 +54,8 @@ void validate_layout_convert_spec(const LayoutConvertSpec& spec) {
 }
 
 bool has_non_default_simple_preprocess(const PreprocessOptions& p) {
-  if (p.resize.interpolation || fixed_preprocess_arithmetic_requested(p) ||
-      antialiased_preprocess_resize_requested(p))
+  if (p.resize.mode == ResizeMode::Crop || p.resize.shorter_side || p.resize.interpolation ||
+      fixed_preprocess_arithmetic_requested(p) || antialiased_preprocess_resize_requested(p))
     return true;
   if (p.preset != NormalizePreset::None)
     return true;
@@ -672,6 +672,15 @@ PreprocessPlannerResult plan_preprocess(const Model::Options& options,
   PreprocessOptions effective = options.preprocess;
   effective.resize.scaling_type = resolve_resize_scaling_type(effective.resize);
   const bool typed_resize = effective.resize.interpolation.has_value();
+  const bool crop = effective.resize.mode == ResizeMode::Crop || effective.resize.shorter_side;
+  if (effective.resize.mode != ResizeMode::Stretch &&
+      effective.resize.mode != ResizeMode::Letterbox && effective.resize.mode != ResizeMode::Crop)
+    throw std::invalid_argument("preprocess.resize.mode is invalid");
+  if (effective.resize.shorter_side &&
+      (effective.resize.mode != ResizeMode::Crop || *effective.resize.shorter_side <= 0 ||
+       *effective.resize.shorter_side > 4096))
+    throw std::invalid_argument(
+        "preprocess.resize.shorter_side requires Crop and a size in 1..4096");
   const bool fixed_arithmetic = fixed_preprocess_arithmetic_requested(effective);
   const bool antialiased_resize = antialiased_preprocess_resize_requested(effective);
   if (effective.color_conversion_placement != PreprocColorConversionPlacement::AfterResize &&
@@ -685,23 +694,24 @@ PreprocessPlannerResult plan_preprocess(const Model::Options& options,
   if (effective.quantization_step &&
       (!std::isfinite(*effective.quantization_step) || *effective.quantization_step <= 0))
     throw std::invalid_argument("preprocess.quantization_step must be finite and positive");
-  if ((typed_resize || fixed_arithmetic || antialiased_resize) &&
+  if ((crop || typed_resize || fixed_arithmetic || antialiased_resize) &&
       (effective.enable == AutoFlag::Off || effective.kind == InputKind::Tensor ||
        !effective.transforms.empty()))
     throw std::invalid_argument(
         "fixed image preprocessing requires image input and preprocessing enabled, without a "
         "preprocess.transforms override");
-  if ((typed_resize || antialiased_resize) && effective.resize.enable == AutoFlag::Off)
-    throw std::invalid_argument("interpolation conflicts with preprocess.resize.enable=Off");
+  if ((crop || typed_resize || antialiased_resize) && effective.resize.enable == AutoFlag::Off)
+    throw std::invalid_argument("resize policy conflicts with preprocess.resize.enable=Off");
   for (const auto& transform : effective.transforms)
     if (transform.type == TransformType::Resize &&
-        upper_copy(resolve_resize_scaling_type(transform.resize)) == "BILINEAR_ANTIALIASED")
-      throw std::invalid_argument(
-          "configure antialiased sampling through preprocess.resize, not preprocess.transforms");
+        (transform.resize.mode == ResizeMode::Crop || transform.resize.shorter_side ||
+         upper_copy(resolve_resize_scaling_type(transform.resize)) == "BILINEAR_ANTIALIASED"))
+      throw std::invalid_argument("configure Crop and antialiased sampling through "
+                                  "preprocess.resize, not preprocess.transforms");
   PreprocessExplicitKnobs explicit_knobs;
   explicit_knobs.resize =
       options.preprocess.resize.enable != AutoFlag::Auto || options.preprocess.resize.width > 0 ||
-      options.preprocess.resize.height > 0 || typed_resize || antialiased_resize;
+      options.preprocess.resize.height > 0 || crop || typed_resize || antialiased_resize;
   explicit_knobs.color_convert =
       options.preprocess.color_convert.enable != AutoFlag::Auto ||
       options.preprocess.color_convert.input_format != PreprocessColorFormat::Auto ||
@@ -791,7 +801,7 @@ PreprocessPlannerResult plan_preprocess(const Model::Options& options,
   bool resize_enabled =
       resolve_step_enabled(effective.resize.enable,
                            effective.resize.width > 0 || effective.resize.height > 0 ||
-                               effective.preset == NormalizePreset::COCO_YOLO ||
+                               effective.preset == NormalizePreset::COCO_YOLO || crop ||
                                antialiased_resize || effective.resize.interpolation.has_value());
   bool color_enabled = resolve_step_enabled(
       effective.color_convert.enable,
@@ -872,7 +882,8 @@ PreprocessPlannerResult plan_preprocess(const Model::Options& options,
     effective.tessellate.enable = tess_enabled ? AutoFlag::On : AutoFlag::Off;
   }
 
-  if (enabled && (fixed_arithmetic || antialiased_resize || effective.resize.interpolation) &&
+  if (enabled &&
+      (crop || fixed_arithmetic || antialiased_resize || effective.resize.interpolation) &&
       (quant_enabled || tess_enabled)) {
     throw std::invalid_argument(
         "fixed image preprocessing requires the Preproc image route; leave "

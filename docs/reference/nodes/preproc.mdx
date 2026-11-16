@@ -103,9 +103,31 @@ For INT8 output, supply the original positive `quantization_step`; Core checks i
 
 For YUV-to-RGB input, `color_conversion_placement` defaults to `PreprocColorConversionPlacement.AfterResize`: component resizing precedes the UInt8 RGB decode boundary, then rescale/normalization run. `BeforeResize` moves that decode boundary before RGB rescale/sampling. Other color routes reject this override. Do not assume either route is equivalent to a Pillow/torchvision preprocessing pipeline; verify its order and intermediate dtype.
 
-Use image input without a `transforms` override. Conflicting disable flags and unsupported combinations fail rather than silently changing the request. The MPK still owns output shape, dtype, quantization and physical layout; source capacity is independent of model dimensions. Omitting the new options preserves legacy arithmetic. These additive fields change C++ object layouts: this version uses ABI 7 (`libsima_neat.so.7`). Rebuild applications, plugins and Python bindings with matching headers/libraries; do not use compatibility symlinks to load ABI 5/6 binaries.
+Use image input without a `transforms` override. Conflicting disable flags and unsupported combinations fail rather than silently changing the request. The MPK still owns output shape, dtype, quantization and physical layout; source capacity is independent of model dimensions. Omitting the new options preserves legacy arithmetic. These additive fields change C++ object layouts: this version uses ABI 8 (`libsima_neat.so.8`). Rebuild applications, plugins and Python bindings with matching headers/libraries; do not use compatibility symlinks to load ABI 5/6/7 binaries.
 
 
+
+## Center crop {#center-crop}
+
+Use `ResizeMode.Crop` to resize until the source covers the model input, then take a center crop without padding. Set `resize.shorter_side` to resize the shorter source side first; the final crop dimensions still come from the MPK. For example, select shorter side 256 for a model with a 224×224 input. Set it to `None` to restore cover-and-crop.
+
+```python
+options = pyneat.ModelOptions()
+p = options.preprocess
+p.kind = pyneat.InputKind.Image
+p.resize.enable = pyneat.AutoFlag.On
+p.resize.mode = pyneat.ResizeMode.Crop
+p.resize.shorter_side = 256
+p.resize.interpolation = pyneat.ResizeInterpolation.BilinearAntialiased
+model = pyneat.Model("/path/to/model_224_mpk.tar.gz", options)
+```
+
+The longer resized dimension is rounded down for an explicit shorter side; center offsets use nearest-even rounding. If the resized image cannot contain the model input, preparation fails instead of adding padding. Only Crop accepts `shorter_side`.
+
+Crop samples a window of the full resize, retaining filter support outside the visible crop. It does not approximate the operation by rounding a source ROI. Existing interpolation and source-arithmetic rules still apply; antialiased bilinear does not promise bit-exact Pillow output. The window route initially accepts RGB/BGR/Gray, not YUV or explicit ROI selections. Supported detection profiles use the actual inverse transform to map boxes to the original image.
+
+
+Crop windows support Nearest, Bilinear and BilinearAntialiased. Raw NO_SCALING is valid only when source and virtual resize dimensions match. Bicubic and BoxAverage window requests are rejected.
 
 ## Ways to use it
 

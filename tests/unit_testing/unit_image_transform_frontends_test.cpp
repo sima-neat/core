@@ -63,6 +63,32 @@ void contracts() {
             "standalone sampler token disagrees with the Model sampler");
   }
 
+  // Cover is a typed facade over the same Crop adapter, not a second stage.
+  for (const auto shorter : {std::optional<int>{}, std::optional<int>{10}}) {
+    ResizeOptions o;
+    o.width = o.height = 8;
+    o.fit = ResizeFit::Cover;
+    o.shorter_side = shorter;
+    auto node = nodes::Resize(o);
+    auto& p = preproc(node);
+    const auto output = p.output_spec(input());
+    CompiledNodeContract compiled;
+    std::string error;
+    require(p.compile_node_contract({}, &compiled, &error), "Cover compilation: " + error);
+    const auto& payload = compiled.processcvu->payload;
+    require(payload.resize_mode == ResizeMode::Crop && payload.shorter_side == shorter &&
+                output.width == 8 && output.height == 8,
+            "Cover lost final output contract or optional shorter-side policy");
+    require(!std::holds_alternative<rt::Error>(lower::PreprocFrameAdapter::check_policy(payload)),
+            "Cover failed canonical adapter admission");
+  }
+  rejects([] {
+    ResizeOptions o;
+    o.width = o.height = 8;
+    o.shorter_side = 10;
+    nodes::Resize(o);
+  });
+
   for (const auto format : {ImageFormat::RGB, ImageFormat::BGR, ImageFormat::GRAY8,
                             ImageFormat::NV12, ImageFormat::I420, ImageFormat::NV16}) {
     ColorConvertOptions options;

@@ -134,9 +134,23 @@ CompiledKernelContract compile_boxdecode_kernel(const CompiledBoxDecodeContract&
              existing->address_source != physical.address_source)
       throw std::invalid_argument("SimaBoxDecode: shared head carrier contracts disagree");
   }
+  const bool upstream_crop = input.upstream_preprocess &&
+                             input.upstream_preprocess->payload.resize_mode == ResizeMode::Crop;
+  // Image frontends compose spatial provenance even when their own local mode
+  // is Stretch (for example Cover -> ColorConvert -> Normalization). That
+  // producer contract, not the last resize label, requires affine consumption.
+  // Do not infer the same authority from legacy dimension-only ingress metadata.
+  const bool upstream_image_transform =
+      input.upstream_preprocess && input.upstream_preprocess->payload.image_transform;
+  const bool crop_requested = resize_mode == ResizeMode::Crop || upstream_crop;
+  const bool detection_transform =
+      boxdecode_supports_detection_transform(compiled.payload.decode_type);
   geometry.uniform_transform_required = box_decode_type_is_oriented(compiled.payload.decode_type);
-  geometry.complete_geometry = compiled.payload.decode_type == BoxDecodeType::YoloXSegPose ||
-                               geometry.uniform_transform_required;
+  geometry.complete_geometry =
+      compiled.payload.decode_type == BoxDecodeType::YoloXSegPose ||
+      geometry.uniform_transform_required ||
+      (detection_transform &&
+       (crop_requested || upstream_image_transform || geometry.model_to_original.has_value()));
   const auto affine = [](const PreprocessRuntimeMeta& meta) {
     return std::array<double, 6>{meta.affine_m00, meta.affine_m01, meta.affine_m02,
                                  meta.affine_m10, meta.affine_m11, meta.affine_m12};
@@ -150,18 +164,28 @@ CompiledKernelContract compile_boxdecode_kernel(const CompiledBoxDecodeContract&
       if (observed && (observed->original_width != facts.original_width ||
                        observed->original_height != facts.original_height))
         throw std::invalid_argument("SimaBoxDecode: ingress tensors disagree on image geometry");
-      if (geometry.complete_geometry && observed &&
+      if (observed &&
+          (geometry.complete_geometry || observed->resize_mode == "crop" ||
+           facts.resize_mode == "crop") &&
           (affine(*observed) != affine(facts) || observed->resize_mode != facts.resize_mode ||
            observed->roi_list_enabled != facts.roi_list_enabled))
         throw std::invalid_argument("SimaBoxDecode: ingress tensors disagree on affine geometry");
       observed = facts;
     }
   }
-  if (!observed && geometry.uniform_transform_required && !geometry.model_to_original &&
-      input.upstream_preprocess) {
-    // Source-driven graphs have no frame at build time. Derive the cold seed
-    // from the same checked Preproc policy that will publish frame affines,
-    // never from tensor shapes or a fabricated identity transform.
+  if (observed && observed->resize_mode == "crop" && detection_transform)
+    geometry.complete_geometry = true;
+  if (input.upstream_preprocess &&
+      (upstream_crop || (detection_transform && upstream_image_transform) ||
+       (!observed && (crop_requested ||
+                      (geometry.uniform_transform_required && !geometry.model_to_original))))) {
+    // Check the nearest publisher's model canvas to prepare a cold seed. This
+    // policy does not describe the whole preceding frontend chain: in particular
+    // ColorConvert/Normalization can publish a composed affine while locally
+    // reporting Stretch. Only current per-frame facts authorize execution; the
+    // local seed or older graph-ingress provenance must never replace them.
+    // The Crop seed retains its existing ingress composition, still guarded by
+    // the same mandatory current-frame resolver below.
     namespace rt = ::simaai::scheduler::client;
     using Adapter = kernel_lowering::PreprocFrameAdapter;
     auto policy = input.upstream_preprocess->payload;
@@ -171,14 +195,24 @@ CompiledKernelContract compile_boxdecode_kernel(const CompiledBoxDecodeContract&
     auto checked = Adapter::check_policy(policy);
     if (const auto* error = std::get_if<rt::Error>(&checked))
       throw std::invalid_argument("SimaBoxDecode: upstream preprocessing: " + error->message);
+    std::optional<::simaai::gst::TensorBufferPreprocessFacts> ingress_provenance;
+    if (upstream_crop && observed) {
+      ingress_provenance.emplace();
+      ingress_provenance->original_width = observed->original_width;
+      ingress_provenance->original_height = observed->original_height;
+      ingress_provenance->affine = affine(*observed);
+      ingress_provenance->color_in = observed->color_in;
+      ingress_provenance->roi_list = observed->has_roi_list();
+    }
     auto frozen = Adapter::checked_initial_preprocess_facts(
-        std::get<std::shared_ptr<const Adapter::CheckedPolicy>>(std::move(checked)));
+        std::get<std::shared_ptr<const Adapter::CheckedPolicy>>(std::move(checked)),
+        ingress_provenance ? &*ingress_provenance : nullptr);
     if (const auto* error = std::get_if<rt::Error>(&frozen))
       throw std::invalid_argument("SimaBoxDecode: upstream preprocessing facts: " + error->message);
     const auto owner = std::get<::simaai::gst::TensorBufferPreprocessFactsOwner>(std::move(frozen));
     const auto* facts = ::simaai::gst::tensor_buffer_preprocess_facts(owner);
     if (!facts || facts->roi_list || facts->input_batch != 1 || facts->capacity != 1)
-      throw std::invalid_argument("SimaBoxDecode: oriented decoding requires one upstream image");
+      throw std::invalid_argument("SimaBoxDecode: complete geometry requires one upstream image");
     if ((geometry.model_width > 0 && geometry.model_width != facts->resized_width) ||
         (geometry.model_height > 0 && geometry.model_height != facts->resized_height))
       throw std::invalid_argument(
@@ -249,6 +283,10 @@ CompiledKernelContract compile_boxdecode_kernel(const CompiledBoxDecodeContract&
     else
       throw std::invalid_argument("SimaBoxDecode: unsupported preprocess resize geometry");
   }
+  if (observed && observed->resize_mode == "crop" && geometry.resize != ResizeMode::Crop)
+    throw std::invalid_argument("SimaBoxDecode: explicit resize mode conflicts with producer crop");
+  if (geometry.resize == ResizeMode::Crop && observed && observed->resize_mode != "crop")
+    throw std::invalid_argument("SimaBoxDecode: crop requires matching producer resize metadata");
   if (geometry.complete_geometry && observed) {
     // Both compact preprocess facts and the public metadata projection carry
     // model-to-original coefficients. Do not invert them a second time.

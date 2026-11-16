@@ -103,9 +103,31 @@ INT8 出力では、元の正の `quantization_step` を指定してください
 
 YUV-to-RGB では `color_conversion_placement` の既定値 `PreprocColorConversionPlacement.AfterResize` により、成分のリサイズ後に UInt8 RGB のデコード境界を通り、再スケーリングと正規化を行います。`BeforeResize` はその境界を RGB の再スケーリングとサンプリングの前へ移します。他の色変換経路では拒否されます。Pillow/torchvision と同じ演算だと仮定せず、順序と中間 dtype を確認してください。
 
-画像入力を使用し、`transforms` で上書きしないでください。無効化フラグとの競合や未対応の組み合わせは明示的に失敗します。出力の形状、dtype、量子化、物理レイアウトは引き続き MPK が決定し、入力容量はモデルの寸法とは独立です。新しいオプションを省略すると従来の演算を保持します。追加フィールドにより C++ オブジェクトのレイアウトが変わるため、このバージョンは ABI 7 (`libsima_neat.so.7`) を使用します。対応するヘッダーとライブラリでアプリケーション、プラグイン、Python バインディングを再ビルドし、互換性用シンボリックリンクで ABI 5/6 のバイナリを読み込まないでください。
+画像入力を使用し、`transforms` で上書きしないでください。無効化フラグとの競合や未対応の組み合わせは明示的に失敗します。出力の形状、dtype、量子化、物理レイアウトは引き続き MPK が決定し、入力容量はモデルの寸法とは独立です。新しいオプションを省略すると従来の演算を保持します。追加フィールドにより C++ オブジェクトのレイアウトが変わるため、このバージョンは ABI 8 (`libsima_neat.so.8`) を使用します。対応するヘッダーとライブラリでアプリケーション、プラグイン、Python バインディングを再ビルドし、互換性用シンボリックリンクで ABI 5/6/7 のバイナリを読み込まないでください。
 
 
+
+## 中央クロップ {#center-crop}
+
+`ResizeMode.Crop` は入力画像がモデル入力を覆うまでリサイズし、パディングなしで中央を切り出します。`resize.shorter_side` を設定すると、まず入力の短辺を指定サイズにリサイズします。最終クロップ寸法は引き続き MPK が決定します。例えば、224×224 入力のモデルには短辺 256 を指定します。`None` に戻すと、モデル入力を覆ってから切り出す動作になります。
+
+```python
+options = pyneat.ModelOptions()
+p = options.preprocess
+p.kind = pyneat.InputKind.Image
+p.resize.enable = pyneat.AutoFlag.On
+p.resize.mode = pyneat.ResizeMode.Crop
+p.resize.shorter_side = 256
+p.resize.interpolation = pyneat.ResizeInterpolation.BilinearAntialiased
+model = pyneat.Model("/path/to/model_224_mpk.tar.gz", options)
+```
+
+短辺を明示した場合、リサイズ後の長辺は切り捨て、中央オフセットは最近接偶数丸めで決定します。モデル入力を収められない場合は、パディングを追加せず準備時に失敗します。`shorter_side` は Crop でのみ使用できます。
+
+クロップはリサイズ全体のウィンドウを計算し、表示範囲外のフィルターサンプルも保持します。入力 ROI の座標を丸める近似ではありません。既存の補間とソース演算の規則が適用され、アンチエイリアス付き双線形補間でも Pillow とのビット単位の一致は保証しません。初期ウィンドウ経路は RGB/BGR/Gray を受け付け、YUV や明示的 ROI は受け付けません。対応する検出プロファイルは実際の逆変換でボックスを元画像へ戻します。
+
+
+クロップウィンドウは Nearest、Bilinear、BilinearAntialiased に対応します。生の NO_SCALING は入力と仮想リサイズ寸法が等しい場合のみ有効です。Bicubic と BoxAverage のウィンドウ要求は拒否します。
 
 ## その使い道
 

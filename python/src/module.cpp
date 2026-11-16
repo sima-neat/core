@@ -65,6 +65,7 @@
 #include "nodes/io/StillImageInput.h"
 #include "nodes/sima/SimaRender.h"
 #include "nodes/sima/SimaArgMax.h"
+#include "nodes/sima/ResizeArgMax.h"
 #include "nodes/sima/SimaBEVPool.h"
 #include "nodes/sima/SimaBEVPoolPlan.h"
 #include "nodes/sima/SimaPillarScatter.h"
@@ -3983,6 +3984,11 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("transmit", &simaai::neat::SimaArgMaxOptions::transmit)
       .def_rw("axis", &simaai::neat::SimaArgMaxOptions::axis)
       .def_rw("keepdims", &simaai::neat::SimaArgMaxOptions::keepdims);
+  nb::class_<simaai::neat::ResizeArgMaxOptions>(m, "ResizeArgMaxOptions")
+      .def(nb::init<>())
+      .def_rw("output_width", &simaai::neat::ResizeArgMaxOptions::output_width)
+      .def_rw("output_height", &simaai::neat::ResizeArgMaxOptions::output_height)
+      .def_rw("align_corners", &simaai::neat::ResizeArgMaxOptions::align_corners);
   // Kernels-library LiDAR/BEV Nodes: one named kernels request each, on an explicit target.
   nb::enum_<simaai::neat::SimaKernelTarget>(m, "SimaKernelTarget")
       .value("A65", simaai::neat::SimaKernelTarget::A65)
@@ -4296,6 +4302,7 @@ NB_MODULE(_pyneat_core, m) {
                 "options"_a = simaai::neat::SimaRenderOptions{});
   nodes_mod.def("sima_argmax", &simaai::neat::nodes::SimaArgMax,
                 "options"_a = simaai::neat::SimaArgMaxOptions{});
+  nodes_mod.def("resize_argmax", &simaai::neat::nodes::ResizeArgMax, "options"_a);
   nodes_mod.def("sima_voxelize", &simaai::neat::nodes::SimaVoxelize, "options"_a);
   nodes_mod.def("sima_pillar_scatter", &simaai::neat::nodes::SimaPillarScatter, "options"_a);
   nodes_mod.def("sima_bev_pool_plan", &simaai::neat::nodes::SimaBEVPoolPlan, "options"_a);
@@ -4609,7 +4616,9 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("pad_value", &simaai::neat::ResizeSpec::pad_value)
       .def_rw("scaling_type", &simaai::neat::ResizeSpec::scaling_type)
       .def_rw("interpolation", &simaai::neat::ResizeSpec::interpolation,
-              nb::for_setter(nb::arg("interpolation").none()));
+              nb::for_setter(nb::arg("interpolation").none()))
+      .def_rw("shorter_side", &simaai::neat::ResizeSpec::shorter_side,
+              nb::for_setter(nb::arg("shorter_side").none().noconvert()));
 
   nb::class_<simaai::neat::ColorConvertSpec>(m, "ColorConvertSpec")
       .def(nb::init<>())
@@ -4714,6 +4723,14 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("last_plugin_id", &simaai::neat::Model::InferenceTerminalPolicy::last_plugin_id)
       .def_rw("last_processor", &simaai::neat::Model::InferenceTerminalPolicy::last_processor);
 
+  nb::class_<simaai::neat::Model::SemanticSegmentationOptions>(m,
+                                                               "ModelSemanticSegmentationOptions")
+      .def(nb::init<>())
+      .def_rw("enable", &simaai::neat::Model::SemanticSegmentationOptions::enable)
+      .def_rw("output_width", &simaai::neat::Model::SemanticSegmentationOptions::output_width)
+      .def_rw("output_height", &simaai::neat::Model::SemanticSegmentationOptions::output_height)
+      .def_rw("align_corners", &simaai::neat::Model::SemanticSegmentationOptions::align_corners);
+
   nb::class_<simaai::neat::Model::Options>(m, "ModelOptions")
       .def(nb::init<>())
       .def_rw("preprocess", &simaai::neat::Model::Options::preprocess)
@@ -4725,6 +4742,7 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("superpoint", &simaai::neat::Model::Options::superpoint)
       .def_rw("num_classes", &simaai::neat::Model::Options::num_classes)
       .def_rw("yolox_seg_pose", &simaai::neat::Model::Options::yolox_seg_pose)
+      .def_rw("semantic_segmentation", &simaai::neat::Model::Options::semantic_segmentation)
       .def_rw("boxdecode_original_width", &simaai::neat::Model::Options::boxdecode_original_width)
       .def_rw("boxdecode_original_height", &simaai::neat::Model::Options::boxdecode_original_height)
       .def_rw("boxdecode_resize_mode", &simaai::neat::Model::Options::boxdecode_resize_mode)
@@ -5353,7 +5371,8 @@ NB_MODULE(_pyneat_core, m) {
       .value("NV16", simaai::neat::ImageFormat::NV16);
   nb::enum_<simaai::neat::ResizeFit>(m, "ResizeFit")
       .value("Stretch", simaai::neat::ResizeFit::Stretch)
-      .value("Contain", simaai::neat::ResizeFit::Contain);
+      .value("Contain", simaai::neat::ResizeFit::Contain)
+      .value("Cover", simaai::neat::ResizeFit::Cover);
   nb::enum_<simaai::neat::ImageColorMatrix>(m, "ImageColorMatrix")
       .value("Bt601", simaai::neat::ImageColorMatrix::Bt601)
       .value("Bt709", simaai::neat::ImageColorMatrix::Bt709);
@@ -5376,6 +5395,8 @@ NB_MODULE(_pyneat_core, m) {
       .def(nb::init<>())
       .def_rw("width", &simaai::neat::ResizeOptions::width)
       .def_rw("height", &simaai::neat::ResizeOptions::height)
+      .def_rw("shorter_side", &simaai::neat::ResizeOptions::shorter_side,
+              nb::for_setter(nb::arg("shorter_side").none().noconvert()))
       .def_rw("interpolation", &simaai::neat::ResizeOptions::interpolation)
       .def_rw("fit", &simaai::neat::ResizeOptions::fit)
       .def_rw("max_input_width", &simaai::neat::ResizeOptions::max_input_width)
@@ -5415,6 +5436,10 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("scaled_width", &simaai::neat::PreprocOptions::scaled_width)
       .def_rw("scaled_height", &simaai::neat::PreprocOptions::scaled_height)
       .def_rw("batch_size", &simaai::neat::PreprocOptions::batch_size)
+      .def_rw("resize_mode", &simaai::neat::PreprocOptions::resize_mode,
+              nb::for_setter(nb::arg("resize_mode").none()))
+      .def_rw("shorter_side", &simaai::neat::PreprocOptions::shorter_side,
+              nb::for_setter(nb::arg("shorter_side").none().noconvert()))
       .def_rw("rescale_factor", &simaai::neat::PreprocOptions::rescale_factor,
               nb::for_setter(nb::arg("rescale_factor").none()))
       .def_rw("quantization_step", &simaai::neat::PreprocOptions::quantization_step,

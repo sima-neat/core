@@ -11,7 +11,7 @@
 namespace simaai::neat {
 /// Raw UInt8 image formats. Numerical tensor dtypes are intentionally separate.
 enum class ImageFormat { RGB, BGR, GRAY8, NV12, I420, NV16 };
-enum class ResizeFit { Stretch, Contain };
+enum class ResizeFit { Stretch, Contain, Cover };
 enum class ImageColorMatrix { Bt601, Bt709 };
 enum class ImageYuvRange { Full, Limited };
 enum class ImageChromaSiting { Centered, Cosited };
@@ -43,6 +43,8 @@ struct ResizeOptions {
   ImageColorOptions color;
   ImageSurfaceLayout surface = ImageSurfaceLayout::Native;
   std::string element_name;
+  /// Cover only: resize shorter axis to this size before center cropping.
+  std::optional<int> shorter_side;
 };
 
 /// Color conversion preserves the fixed geometry negotiated for this run.

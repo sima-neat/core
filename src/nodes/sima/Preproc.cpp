@@ -397,6 +397,10 @@ json build_preproc_json(const PreprocOptions& opt) {
   j["q_scale"] = opt.q_scale.value_or(1.0);
   j["channel_mean"] = json::array({mean3[0], mean3[1], mean3[2]});
   j["channel_stddev"] = json::array({std3[0], std3[1], std3[2]});
+  if (opt.resize_mode)
+    j["resize_mode"] = static_cast<int>(*opt.resize_mode);
+  if (opt.shorter_side)
+    j["shorter_side"] = *opt.shorter_side;
   if (opt.rescale_factor)
     j["rescale_factor"] = *opt.rescale_factor;
   if (opt.quantization_step)
@@ -963,11 +967,18 @@ std::shared_ptr<Node> image_node(PreprocOptions options, internal::ImageTransfor
 std::shared_ptr<Node> Resize(ResizeOptions options) {
   if (options.width <= 0 || options.height <= 0 || options.max_input_width < 0 ||
       options.max_input_height < 0 ||
-      (options.fit != ResizeFit::Stretch && options.fit != ResizeFit::Contain) ||
+      (options.fit != ResizeFit::Stretch && options.fit != ResizeFit::Contain &&
+       options.fit != ResizeFit::Cover) ||
       options.pad_value < 0 || options.pad_value > 255)
     throw std::invalid_argument(
         "Resize requires positive output dimensions and valid bounds/padding");
+  if (options.shorter_side && (options.fit != ResizeFit::Cover || *options.shorter_side <= 0 ||
+                               *options.shorter_side > 4096))
+    throw std::invalid_argument("Resize shorter_side requires Cover and a size in 1..4096");
   auto opt = image_options(options.element_name);
+  if (options.fit == ResizeFit::Cover)
+    opt.resize_mode = ResizeMode::Crop;
+  opt.shorter_side = options.shorter_side;
   opt.output_shape = {options.height, options.width, 3};
   opt.scaled_width = options.width;
   opt.scaled_height = options.height;

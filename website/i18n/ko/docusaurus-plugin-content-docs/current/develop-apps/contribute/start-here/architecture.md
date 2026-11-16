@@ -446,7 +446,7 @@ Core 게시/캐리어 메타데이터는 명시적으로 유지되며 수치 타
 `FrameSpan` 오프셋은 그래프 전체 주소가 아니라 해당 할당과 버퍼 그룹 내부 값입니다. 서로 다른 그룹의 같은 오프셋은 겹치지 않습니다. BoxDecode와 ArgMax는 헤드 상대 텐서 오프셋과 저장 공간 오프셋을 분리합니다. 직접 메모리 입력과 런타임 물리 바인딩 입력은 각 주소 지정 방식을 유지합니다.
 
 Core는 Preproc, 변환과 ArgMax, BoxDecode, SuperPoint, LiDAR/BEV 커널 노드(SimaVoxelize, SimaPillarScatter,
-SimaBEVPoolPlan, SimaBEVPool) 등의 비전 단계를 표준 요청과
+SimaBEVPoolPlan, SimaBEVPool), ResizeArgMax 등의 비전 단계를 표준 요청과
 명시적 텐서 포트 매핑으로 lowering합니다. Scheduler의 범용 텐서 단계 엔진은 GStreamer
 바인딩과 게시를 소유하고, Runner는 의존성, 비동기 실행과 실행 중 버퍼 수명을 소유합니다.
 Core는 논리 형상만이 아니라 상위 할당 계약이나 입력 저장소에서 캐리어 용량을 가져옵니다.
@@ -567,7 +567,7 @@ Scheduler의 기존 `check_kernel(...)` API에 연산 이름을 전달하고 일
 레시피와 `FrameLayout` 실행 경로를 사용합니다. `StaticSpecBuilders.cpp`는 메타데이터만
 다루는 입력 투영과 직접 입력 바인딩을 `SimaArgMax`와 공유합니다. 이 헬퍼는 커널을
 준비하거나 스케줄링하지 않습니다. LiDAR/BEV 노드 파일은 파이프라인 내부 구현 헤더를
-포함하지 않습니다. 이 분리는 프레임별 작업이나 페이로드 복사를 추가하지 않습니다.
+포함하지 않습니다. 이 분리는 프레임별 작업이나 페이로드 복사를 추가하지 않습니다. `ResizeArgMax`도 같은 분리를 따릅니다. `Model::Options::semantic_segmentation`은 모델의 dequantize 또는 cast 후처리를 이 노드로 대체하며, 노드는 생산자의 스트라이드 뷰를 통해 MLA 점수를 읽습니다. 그 밖의 후처리는 `Model` 생성자가 거부합니다.
 
 독립 `Cast`는 타입이 있는 뷰를 Kernels가 검증하는 표준 `cast` 요청으로 컴파일합니다. 논리 식별, 스트라이드 및 텐서 상대 오프셋을 명시적으로 유지합니다. 의미 컴파일은 패킹 전 MLA 입력 포트 순서를 맞추고 렌더링은 검증된 계약을 유지합니다. 실행 용량 기본값은 비동기 4, 동기 1이며 출력 유지용 캐리어는 별도입니다. 부분 또는 순서를 바꾼 TensorSet은 부모를 유지하는 메타데이터 엔벌로프를 사용하며 기존 게시 정보나 페이로드를 수정하지 않습니다.
 
@@ -1636,3 +1636,8 @@ JSON은 `sima.neat.status.v1`을 유지하며 `components.pcieHost`, `components
 PyNeat 및 PyNeatPCIe 상태는 감지된 각 설치의 버전과 가상 환경 경로를 표시합니다. 별도 환경은 버전 충돌이 아닌 여러 환경으로 표시합니다. 가상 환경 외부의 패키지는 패키지 디렉터리를 대신 표시합니다. 상태 조회는 네이티브 모듈을 가져오지 않고 패키지 메타데이터를 읽습니다.
 
 JSON의 각 Python 항목에 `installations` 배열이 추가됩니다. 각 레코드에는 `version`, `environment`, `path`(패키지 디렉터리)가 포함됩니다. 가상 환경 외부에서는 `environment`가 `null`입니다. 설치된 버전이 다르면 요약 `version`은 `null`이며, 여러 설치가 있다는 이유만으로 `error`를 설정하지 않습니다. 같은 설치를 가리키는 심볼릭 링크 경로는 한 번만 표시합니다.
+
+
+## 자르기 기하 정보의 소유권 {#crop-geometry-ownership}
+
+Core는 실제 원본 크기로 Crop의 가상 크기 조정 크기와 중앙 창 오프셋을 계산하고 검증합니다. Kernels는 원본 필터 범위를 유지하여 창을 직접 계산하며 중간 이미지나 CPU 자르기를 삽입하지 않습니다. 최종 크기는 MPK가 소유합니다. Preproc는 반 픽셀 샘플 중심 좌표와 구별되는 실제 모델-원본 경계 좌표 아핀 변환을 게시합니다. 지원되는 검출 레시피는 모델 공간 선택 후 이 정보를 사용하며 누락되거나 충돌하는 기하 정보는 거부합니다.

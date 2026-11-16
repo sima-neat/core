@@ -101,6 +101,10 @@ struct PreprocOptions {
       compiled_contract; ///< Exact projected graph-200/arena contract for strict model routes.
   std::shared_ptr<const internal::ModelLineageBinding> model_lineage; ///< @internal
 
+  /// Explicit geometry; absent retains legacy aspect_ratio/scaled dimensions.
+  std::optional<ResizeMode> resize_mode;
+  /// Crop-only shorter-side resize; absent selects the smallest covering resize.
+  std::optional<int> shorter_side;
   /// Original FP32 source multiplier (RGB/Gray before resize; YUV after its decode boundary).
   /// Presence selects fixed source arithmetic;
   /// normalize.mean/stddev then mean a post-resize subtraction/division, with no implied /255.

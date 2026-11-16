@@ -6141,6 +6141,8 @@ initialize_preproc_payload_from_options_local(const ::simaai::neat::PreprocOptio
   payload.tessellate = opt.tessellate ? 1 : 0;
   payload.channel_mean.assign(opt.channel_mean.begin(), opt.channel_mean.end());
   payload.channel_stddev.assign(opt.channel_stddev.begin(), opt.channel_stddev.end());
+  payload.resize_mode = opt.resize_mode;
+  payload.shorter_side = opt.shorter_side;
   payload.rescale_factor = opt.rescale_factor;
   payload.quantization_step = opt.quantization_step;
   payload.color_conversion_placement = opt.color_conversion_placement;

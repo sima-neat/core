@@ -141,6 +141,13 @@ void check_model_tensor_inputs(const TensorList& inputs,
 // Pure admission check shared by synthetic input construction and contract tests.
 void validate_synthetic_benchmark_image_format(const TensorSpec& spec);
 
+// Pure check behind Model::Options::semantic_segmentation, shared with contract tests. Throws
+// std::invalid_argument unless the class-map decode can replace the route's postprocess: the
+// route must have one that only dequantizes or casts, the terminal policy must not stop before
+// it, decode_type must be unset, and the output size must be set in full or left at 0.
+void validate_semantic_segmentation(const Model::Options& options, const SessionRoutePlan& route,
+                                    bool stops_before_postprocess);
+
 /// Project the latency window (`latency_samples` inputs), the throughput window
 /// (`throughput_samples` inputs), and Sentinel telemetry into the public benchmark report.
 /// `num_samples` is the requested count that `energy_joules` is normalized to.
