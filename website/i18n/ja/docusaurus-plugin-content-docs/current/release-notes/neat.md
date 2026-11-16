@@ -7,17 +7,17 @@ sidebar_position: 3
 
 SiMa.ai Neat Library のリリースノート。
 
-## 0.6.1（未リリース） {#v061}
+## 0.6.2（未リリース） {#v062}
 
-### 互換性に影響する変更 {#v061-breaking}
+### 互換性に影響する変更 {#v062-breaking}
 
 - Neat Library の C++ ABI は 9（`libsima_neat.so.9`）になりました。`ResizeOptions`、`ResizeSpec`、`PreprocessOptions`、`PreprocOptions`、`NormalizationOptions`、`Model::Options` にフィールドが追加されました。対応するヘッダーとランタイムパッケージで C++ アプリケーション、プラグイン、Python バインディングを再ビルドしてください。ABI 6 のバイナリを再利用したり、互換性シンボリックリンクを追加したりしないでください。
 
-### セマンティックセグメンテーション {#v061-segmentation}
+### セマンティックセグメンテーション {#v062-segmentation}
 
 - 新しい `ResizeArgMax` ノードと `Model::Options::semantic_segmentation` オプションは、EV74 上でセグメンテーションのスコアをデコードします。デコードはクラスごとのスコアを指定サイズへバイリニアでリサイズし、スコアが最大となる最初のクラスを返します。これは SegFormer の `interpolate` と `argmax` による後処理と一致します。パディングされた MLA 出力をその場で読み取り、INT8 スコアを逆量子化せずに比較します。モデルはスコアの代わりにクラスマップを返します。この演算を含む EV74 ファームウェアが必要です。[セマンティックセグメンテーションのデコード](/reference/semantic_segmentation_decode)を参照してください。
 
-### 前処理 {#v061-preproc}
+### 前処理 {#v062-preproc}
 
 - 中央クロップは最終的な MPK 寸法での切り出し前に、任意の `preprocess.resize.shorter_side` を指定できるようになりました。完全なリサイズのフィルター範囲を保持し、逆変換を公開します。ABI 9 と対応するカーネルファームウェアで再ビルドし、古いバイナリを混在させないでください。
 
@@ -65,6 +65,7 @@ SiMa.ai Neat Library のリリースノート。
 
 | リリース | 互換性のある Palette SDK | 備考 |
 |---|---|---|
+| 0.6.2 | 未確定 | [0.6.2](#v062) |
 | 0.6.1 | 3.0.0.1 | [Neat Library 0.6.1](https://github.com/sima-neat/core/releases/tag/v0.6.1) |
 | 0.6.0 | 3.0.0.0 | [Neat Library 0.6.0](https://github.com/sima-neat/core/releases/tag/v0.6.0) |
 | 0.5.0 | 2.1.3.1 | [Neat Library 0.5.0](https://github.com/sima-neat/core/releases/tag/v0.5.0) |

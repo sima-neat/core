@@ -82,7 +82,8 @@ sima-cli neat install sdk@v3.0.0.1
 | **0.4.0** | **2.1.3.0** | **2.1.3** | 지원되는 릴리스. |
 | **0.5.0** | **2.1.3.1** | **2.1.3** | 지원되는 릴리스. |
 | **0.6.0** | **3.0.0.0** | **3.0.0** | 지원되는 릴리스. |
-| **0.6.1** | **3.0.0.1** | **3.0.0** | 현재 릴리스. |
+| **0.6.1** | **3.0.0.1** | **3.0.0** | 지원되는 릴리스입니다. |
+| **0.6.2** | 미정 | **3.0.2** | 출시 예정입니다. |
 
 DevKit 소프트웨어 버전이 중요한 이유는 장치 내 런타임, 펌웨어 및 시스템 패키지가 일련의 세트로 설치되기 때문입니다. 펌웨어 버전 간에 구성 요소를 혼합하면 애플리케이션을 빌드할 때 예상치 못한 동작이 발생할 수 있습니다.
 
@@ -92,6 +93,12 @@ Neat Library 0.6.1의 경우:
 
 <ShellCommand prompt="sdk|devkit">
 sima-cli neat install core@v0.6.1
+</ShellCommand>
+
+Platform 3.0.2 DevKit에 Neat Library 0.6.2를 지정하여 설치하려면:
+
+<ShellCommand prompt="devkit">
+sima-cli neat install core@v0.6.2
 </ShellCommand>
 
 Neat Library 0.1.0 버전:
@@ -111,11 +118,18 @@ Neat 앱 버전은 Neat Library 버전과 독립적으로 작동합니다. 앱�
 | [**0.5.1**](https://github.com/sima-neat/apps/releases/tag/v0.5.1) | **0.5.0** |
 | [**0.6.0**](https://github.com/sima-neat/apps/releases/tag/v0.6.0) | **0.6.0** |
 | [**0.6.1**](https://github.com/sima-neat/apps/releases/tag/v0.6.1) | **0.6.1** |
+| **0.6.2** | **0.6.2** |
 
 호환되는 Palette SDK 또는 DevKit에서 Apps 0.6.1을 설치합니다.
 
 <ShellCommand prompt="sdk|devkit">
 sima-cli neat install apps@v0.6.1
+</ShellCommand>
+
+Platform 3.0.2 DevKit에 Apps 0.6.2를 지정하여 설치하려면:
+
+<ShellCommand prompt="devkit">
+sima-cli neat install apps@v0.6.2
 </ShellCommand>
 
 ## Model Compiler

@@ -7,17 +7,17 @@ sidebar_position: 3
 
 SiMa.ai Neat Library 的版本資訊。
 
-## 0.6.1（尚未發行） {#v061}
+## 0.6.2（尚未發行） {#v062}
 
-### 重大變更 {#v061-breaking}
+### 重大變更 {#v062-breaking}
 
 - Neat Library 的 C++ ABI 現在是 9（`libsima_neat.so.9`）。`ResizeOptions`、`ResizeSpec`、`PreprocessOptions`、`PreprocOptions`、`NormalizationOptions` 和 `Model::Options` 新增了欄位。請使用相符的標頭及執行階段套件，重新建置 C++ 應用程式、外掛程式與 Python 繫結；不要重用 ABI 6 二進位檔，也不要新增相容性符號連結。
 
-### 語意分割 {#v061-segmentation}
+### 語意分割 {#v062-segmentation}
 
 - 新的 `ResizeArgMax` 節點與 `Model::Options::semantic_segmentation` 選項會在 EV74 上解碼分割分數。解碼會將各類別分數以雙線性方式縮放至所選尺寸，並傳回分數最大的第一個類別，與 SegFormer 的 `interpolate` 和 `argmax` 後處理一致。它會就地讀取有填補的 MLA 輸出，並在不反量化的情況下比較 INT8 分數。模型接著會傳回類別圖而非分數。需要包含此運算的 EV74 韌體。請參閱[語意分割解碼](/reference/semantic_segmentation_decode)。
 
-### 前處理 {#v061-preproc}
+### 前處理 {#v062-preproc}
 
 - 中央裁切現在接受選用的 `preprocess.resize.shorter_side`，再裁切至最終 MPK 尺寸。裁切會保留完整縮放的濾波範圍並發佈反向轉換。請使用 ABI 9 與相符的核心韌體重新建置，不要混用舊版二進位檔。
 
@@ -65,6 +65,7 @@ SiMa.ai Neat Library 的版本資訊。
 
 | 版本 | 相容的 Palette SDK | 備註 |
 |---|---|---|
+| 0.6.2 | 尚未確認 | [0.6.2](#v062) |
 | 0.6.1 | 3.0.0.1 | [Neat Library 0.6.1](https://github.com/sima-neat/core/releases/tag/v0.6.1) |
 | 0.6.0 | 3.0.0.0 | [Neat Library 0.6.0](https://github.com/sima-neat/core/releases/tag/v0.6.0) |
 | 0.5.0 | 2.1.3.1 | [Neat Library 0.5.0](https://github.com/sima-neat/core/releases/tag/v0.5.0) |
