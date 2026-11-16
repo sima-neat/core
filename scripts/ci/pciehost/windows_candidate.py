@@ -220,6 +220,8 @@ def validate_candidate(directory: Path) -> WindowsCandidate:
   if not isinstance(qualification_resources, dict) or not qualification_resources:
     raise ValueError("candidate receipt has no qualification resource inventory")
   required_qualification_resources = {
+      "msi-transaction-rollback.json",
+      "msi-transaction-rollback.log",
       "scheduler-windows-signatures.json",
       "scheduler-windows-dependencies.json",
       "windows-dependencies.json",

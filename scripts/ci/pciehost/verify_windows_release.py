@@ -70,6 +70,58 @@ def verify_platform_signatures(candidate_root: Path) -> list[str]:
   return verified
 
 
+def verify_msi_transaction_rollback(candidate_root: Path) -> dict:
+  receipt = read_object(
+      candidate_root / "msi-transaction-rollback.json",
+      "MSI failed-transaction rollback receipt")
+  if receipt.get("schema_version") != 1 or receipt.get("status") != "PASS":
+    raise ValueError("candidate did not pass the MSI failed-transaction rollback gate")
+  fixture = receipt.get("fixture")
+  product_code_pattern = r"\{[0-9A-F]{8}(?:-[0-9A-F]{4}){3}-[0-9A-F]{12}\}"
+  if (not isinstance(fixture, dict)
+      or fixture.get("custom_action") != "FailAfterOwnedState"
+      or not re.fullmatch(product_code_pattern, str(fixture.get("product_code", "")))
+      or not re.fullmatch(r"[0-9a-f]{64}", str(fixture.get("msi_sha256", "")))):
+    raise ValueError("MSI rollback receipt has an invalid CI fixture identity")
+  failure = receipt.get("failure")
+  if failure != {"expected_exit_code": 1603, "observed_exit_code": 1603}:
+    raise ValueError("MSI rollback fixture did not fail through Windows Installer")
+  if receipt.get("mid_transaction") != {"file": "PASS", "registry": "PASS"}:
+    raise ValueError("MSI rollback fixture did not observe its transaction-owned state")
+  expected_rollback = {
+      "install_directory": "PASS",
+      "product_registration": "PASS",
+      "registry": "PASS",
+      "sentinel": "PASS",
+  }
+  if receipt.get("rollback") != expected_rollback:
+    raise ValueError("MSI rollback fixture left files or product registration behind")
+  cohort = receipt.get("preserved_cohort")
+  if (not isinstance(cohort, dict)
+      or cohort.get("file_inventory") != "PASS"
+      or not re.fullmatch(r"[0-9a-f]{64}", str(cohort.get("file_inventory_sha256", "")))
+      or cohort.get("installed_consumer") != "PASS"
+      or cohort.get("plugin_discovery") != "PASS"):
+    raise ValueError("failed MSI transaction did not preserve the installed cohort")
+  product_codes = set()
+  for owner in ("scheduler", "core"):
+    state = cohort.get(owner)
+    if (not isinstance(state, dict)
+        or state.get("state_before") != "DEFAULT"
+        or state.get("state_after") != "DEFAULT"
+        or not re.fullmatch(product_code_pattern, str(state.get("product_code", "")))):
+      raise ValueError(
+          f"failed MSI transaction did not preserve {owner} product registration")
+    product_codes.add(state["product_code"])
+  if len(product_codes | {fixture["product_code"]}) != 3:
+    raise ValueError("MSI rollback receipt reuses a product identity")
+  log = candidate_root / "msi-transaction-rollback.log"
+  if (not log.is_file() or log.stat().st_size == 0
+      or receipt.get("installer_log_sha256") != sha256(log)):
+    raise ValueError("MSI rollback receipt does not bind its verbose installer log")
+  return receipt
+
+
 def verify(candidate_dir: Path, qualification_path: Path, expected_commit: str,
            require_signatures: bool, require_genai: bool = False,
            require_release: bool = False) -> dict:
@@ -77,6 +129,7 @@ def verify(candidate_dir: Path, qualification_path: Path, expected_commit: str,
   if candidate.core_commit != expected_commit:
     raise ValueError(
         f"candidate Core commit {candidate.core_commit} is not workflow commit {expected_commit}")
+  verify_msi_transaction_rollback(candidate.root)
 
   qualification = read_object(qualification_path, "hardware qualification")
   if qualification.get("result") != "PASS":
@@ -381,6 +434,7 @@ def verify(candidate_dir: Path, qualification_path: Path, expected_commit: str,
       "host_security_recorded": True,
       "path_qualified": True,
       "customer_install_qualified": True,
+      "msi_transaction_rollback_qualified": True,
       "release_gates_required": require_release,
       "genai_qualified": require_genai,
       "resources": candidate.resources,

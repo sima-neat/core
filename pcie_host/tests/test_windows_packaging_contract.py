@@ -9,6 +9,9 @@ import unittest
 PACKAGING = Path(__file__).parents[1] / "cmake" / "PackagingWindows.cmake"
 ROOT = Path(__file__).parents[1]
 WINDOWS_PRODUCER = ROOT.parent / "scripts" / "ci" / "pciehost" / "build_windows.py"
+ROLLBACK_FIXTURE = (
+    ROOT.parent / "scripts" / "ci" / "pciehost" / "windows_msi_rollback_fixture"
+)
 
 
 class WindowsPackagingContract(unittest.TestCase):
@@ -104,6 +107,25 @@ class WindowsPackagingContract(unittest.TestCase):
     self.assertIn('install_root / "bin" / "pcie-setup.cmd"', producer)
     self.assertIn('"-Hosts", "10.0.0.2", "-DryRun"', producer)
     self.assertIn('"neat-pcie-application-builder" / "playbook.yml"', producer)
+
+  def test_ci_rollback_fixture_fails_after_windows_installer_owns_state(self):
+    wxs = (ROLLBACK_FIXTURE / "rollback_fixture.wxs").read_text(encoding="utf-8")
+    probe = (ROLLBACK_FIXTURE / "rollback_probe.c").read_text(encoding="utf-8")
+    producer = WINDOWS_PRODUCER.read_text(encoding="utf-8")
+    self.assertIn('Execute="deferred"', wxs)
+    self.assertIn('After="WriteRegistryValues"', wxs)
+    self.assertNotIn('After="InstallFiles"', wxs)
+    self.assertIn('Id="RollbackSentinel"', wxs)
+    self.assertIn('Id="RollbackFailureProbe"', wxs)
+    self.assertIn('Key="Software\\SiMa.ai\\NeatPcieRollbackFixture"', wxs)
+    self.assertIn("require_sibling_sentinel", probe)
+    self.assertIn("require_registry_sentinel", probe)
+    self.assertIn('"schema_version=1\\r\\nfile=present\\r\\nregistry=present\\r\\n"', probe)
+    self.assertIn("return ERROR_INSTALL_FAILURE", probe)
+    self.assertIn("qualify_failed_msi_transaction", producer)
+    self.assertIn('"msi-transaction-rollback.json"', producer)
+    self.assertNotIn("windows_msi_rollback_fixture", (ROOT / "CMakeLists.txt").read_text(
+        encoding="utf-8"))
 
   def test_installed_package_smoke_covers_genai_cpp_and_python_apis(self):
     producer = WINDOWS_PRODUCER.read_text(encoding="utf-8")

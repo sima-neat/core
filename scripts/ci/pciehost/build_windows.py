@@ -9,6 +9,7 @@ copying Scheduler-owned files into the Core MSI or Python wheel.
 from __future__ import annotations
 
 import argparse
+import ctypes
 import hashlib
 import json
 import os
@@ -28,6 +29,12 @@ ROOT = Path(__file__).resolve().parents[3]
 PCIE_HOST = ROOT / "pcie_host"
 EXPECTED_MACHINE = "AMD64"
 SUPPORTED_PYTHON = (3, 14)
+MSI_INSTALLSTATE_UNKNOWN = -1
+MSI_INSTALLSTATE_DEFAULT = 5
+ROLLBACK_FIXTURE_PRODUCT_CODE = "{5C5FB61E-7355-4B72-87FD-5FDD4CC2715B}"
+ROLLBACK_FIXTURE_REGISTRY_KEY = r"Software\SiMa.ai\NeatPcieRollbackFixture"
+ROLLBACK_FIXTURE_OBSERVATION = (
+    "SiMaNeatMsiRollbackObserved-5C5FB61E-7355-4B72-87FD-5FDD4CC2715B.txt")
 
 
 def sha256(path: Path) -> str:
@@ -285,6 +292,277 @@ def file_inventory(root: Path) -> dict[str, str]:
   }
 
 
+def inventory_digest(inventory: dict[str, str]) -> str:
+  encoded = json.dumps(inventory, sort_keys=True, separators=(",", ":")).encode("utf-8")
+  return hashlib.sha256(encoded).hexdigest()
+
+
+def msi_product_code(msi: Path) -> str:
+  """Read ProductCode through the Windows Installer database API."""
+  if sys.platform != "win32":
+    raise ValueError("MSI database inspection requires Windows")
+  installer = ctypes.WinDLL("msi", use_last_error=True)
+  handle_type = ctypes.c_uint
+  database = handle_type()
+  view = handle_type()
+  record = handle_type()
+  installer.MsiOpenDatabaseW.argtypes = [
+      ctypes.c_wchar_p, ctypes.c_void_p, ctypes.POINTER(handle_type)]
+  installer.MsiOpenDatabaseW.restype = ctypes.c_uint
+  installer.MsiDatabaseOpenViewW.argtypes = [
+      handle_type, ctypes.c_wchar_p, ctypes.POINTER(handle_type)]
+  installer.MsiDatabaseOpenViewW.restype = ctypes.c_uint
+  installer.MsiViewExecute.argtypes = [handle_type, handle_type]
+  installer.MsiViewExecute.restype = ctypes.c_uint
+  installer.MsiViewFetch.argtypes = [handle_type, ctypes.POINTER(handle_type)]
+  installer.MsiViewFetch.restype = ctypes.c_uint
+  installer.MsiRecordGetStringW.argtypes = [
+      handle_type, ctypes.c_uint, ctypes.c_wchar_p, ctypes.POINTER(ctypes.c_uint)]
+  installer.MsiRecordGetStringW.restype = ctypes.c_uint
+  installer.MsiCloseHandle.argtypes = [handle_type]
+  installer.MsiCloseHandle.restype = ctypes.c_uint
+
+  handles: list[int] = []
+  try:
+    status = installer.MsiOpenDatabaseW(str(msi), None, ctypes.byref(database))
+    if status != 0:
+      raise RuntimeError(f"MsiOpenDatabaseW failed for {msi}: {status}")
+    handles.append(database.value)
+    query = "SELECT `Value` FROM `Property` WHERE `Property`='ProductCode'"
+    status = installer.MsiDatabaseOpenViewW(database, query, ctypes.byref(view))
+    if status != 0:
+      raise RuntimeError(f"MsiDatabaseOpenViewW failed for {msi}: {status}")
+    handles.append(view.value)
+    status = installer.MsiViewExecute(view, 0)
+    if status != 0:
+      raise RuntimeError(f"MsiViewExecute failed for {msi}: {status}")
+    status = installer.MsiViewFetch(view, ctypes.byref(record))
+    if status != 0:
+      raise RuntimeError(f"MSI has no ProductCode row: {msi}: {status}")
+    handles.append(record.value)
+    capacity = ctypes.c_uint(64)
+    value = ctypes.create_unicode_buffer(capacity.value + 1)
+    status = installer.MsiRecordGetStringW(record, 1, value, ctypes.byref(capacity))
+    if status != 0:
+      raise RuntimeError(f"MsiRecordGetStringW failed for {msi}: {status}")
+    product_code = value.value.upper()
+    if not re.fullmatch(
+        r"\{[0-9A-F]{8}(?:-[0-9A-F]{4}){3}-[0-9A-F]{12}\}", product_code):
+      raise RuntimeError(f"MSI has an invalid ProductCode: {msi}: {product_code!r}")
+    return product_code
+  finally:
+    for handle in reversed(handles):
+      installer.MsiCloseHandle(handle)
+
+
+def msi_product_state(product_code: str) -> int:
+  if sys.platform != "win32":
+    raise ValueError("MSI product-state inspection requires Windows")
+  installer = ctypes.WinDLL("msi", use_last_error=True)
+  installer.MsiQueryProductStateW.argtypes = [ctypes.c_wchar_p]
+  installer.MsiQueryProductStateW.restype = ctypes.c_int
+  return int(installer.MsiQueryProductStateW(product_code))
+
+
+def registry_sentinel_exists() -> bool:
+  if sys.platform != "win32":
+    raise ValueError("registry inspection requires Windows")
+  import winreg  # pylint: disable=import-outside-toplevel
+  try:
+    with winreg.OpenKey(
+        winreg.HKEY_LOCAL_MACHINE, ROLLBACK_FIXTURE_REGISTRY_KEY, 0,
+        winreg.KEY_READ | winreg.KEY_WOW64_64KEY) as key:
+      value, value_type = winreg.QueryValueEx(key, "Sentinel")
+      return value_type == winreg.REG_SZ and value == "owned-by-windows-installer"
+  except FileNotFoundError:
+    return False
+
+
+def registry_fixture_key_exists() -> bool:
+  if sys.platform != "win32":
+    raise ValueError("registry inspection requires Windows")
+  import winreg  # pylint: disable=import-outside-toplevel
+  try:
+    with winreg.OpenKey(
+        winreg.HKEY_LOCAL_MACHINE, ROLLBACK_FIXTURE_REGISTRY_KEY, 0,
+        winreg.KEY_READ | winreg.KEY_WOW64_64KEY):
+      return True
+  except FileNotFoundError:
+    return False
+
+
+def remove_fixture_registry_key() -> None:
+  if sys.platform != "win32":
+    return
+  import winreg  # pylint: disable=import-outside-toplevel
+  try:
+    winreg.DeleteKeyEx(
+        winreg.HKEY_LOCAL_MACHINE, ROLLBACK_FIXTURE_REGISTRY_KEY,
+        access=winreg.KEY_WOW64_64KEY)
+  except FileNotFoundError:
+    pass
+
+
+def common_application_data(powershell: str) -> Path:
+  value = run([
+      powershell, "-NoLogo", "-NoProfile", "-NonInteractive", "-Command",
+      "[Environment]::GetFolderPath([Environment+SpecialFolder]::CommonApplicationData)",
+  ], capture=True)
+  path = Path(value)
+  if not value or not path.is_absolute():
+    raise RuntimeError(f"Windows CommonApplicationData is invalid: {value!r}")
+  return path
+
+
+def build_msi_rollback_fixture(work: Path, cl: str, wix_root: Path,
+                               environment: dict[str, str]) -> Path:
+  fixture_source = ROOT / "scripts" / "ci" / "pciehost" / "windows_msi_rollback_fixture"
+  source = require_file(fixture_source / "rollback_probe.c", "rollback probe source")
+  wxs = require_file(fixture_source / "rollback_fixture.wxs", "rollback fixture WiX source")
+  require_file(fixture_source / "rollback-sentinel.txt", "rollback sentinel source")
+  candle = require_file(wix_root / "candle.exe", "WiX candle")
+  light = require_file(wix_root / "light.exe", "WiX light")
+  fixture_work = work / "msi-rollback-fixture"
+  fixture_work.mkdir()
+  shutil.copy2(fixture_source / "rollback-sentinel.txt", fixture_work)
+  probe = fixture_work / "rollback-probe.exe"
+  run([
+      cl, "/nologo", "/W4", "/WX", "/O2", "/DUNICODE", "/D_UNICODE",
+      "/Fo" + str(fixture_work / "rollback-probe.obj"),
+      "/Fe" + str(probe), source,
+      "/link", "advapi32.lib", "ole32.lib", "shell32.lib",
+  ], cwd=fixture_work, env=environment)
+  require_file(probe, "built rollback probe")
+  wix_object = fixture_work / "rollback-fixture.wixobj"
+  run([
+      candle, "-nologo", "-arch", "x64",
+      "-out", wix_object, wxs,
+  ], cwd=fixture_work, env=environment)
+  fixture_msi = fixture_work / "rollback-fixture.msi"
+  run([light, "-nologo", "-out", fixture_msi, wix_object],
+      cwd=fixture_work, env=environment)
+  return require_file(fixture_msi, "built rollback fixture MSI")
+
+
+def qualify_failed_msi_transaction(
+    fixture_msi: Path, scheduler_msi: Path, core_msi: Path, install_root: Path,
+    common_data: Path, log: Path) -> dict:
+  """Prove that Windows Installer atomically rolls back a deferred failure."""
+  scheduler_product = msi_product_code(scheduler_msi)
+  core_product = msi_product_code(core_msi)
+  fixture_product = msi_product_code(fixture_msi)
+  if fixture_product != ROLLBACK_FIXTURE_PRODUCT_CODE:
+    raise RuntimeError("CI rollback fixture ProductCode changed unexpectedly")
+  product_states_before = {
+      "scheduler": msi_product_state(scheduler_product),
+      "core": msi_product_state(core_product),
+      "fixture": msi_product_state(fixture_product),
+  }
+  if (product_states_before["scheduler"] != MSI_INSTALLSTATE_DEFAULT
+      or product_states_before["core"] != MSI_INSTALLSTATE_DEFAULT
+      or product_states_before["fixture"] != MSI_INSTALLSTATE_UNKNOWN):
+    raise RuntimeError(
+        f"MSI rollback fixture has invalid product preconditions: {product_states_before}")
+
+  fixture_root = common_data / "SiMa.ai" / "NeatPcieRollbackFixture"
+  sentinel = fixture_root / "rollback-sentinel.txt"
+  observation = common_data / ROLLBACK_FIXTURE_OBSERVATION
+  if fixture_root.exists() or observation.exists() or registry_fixture_key_exists():
+    raise RuntimeError("MSI rollback fixture state was not clean before installation")
+  inventory_before = file_inventory(install_root)
+  if not inventory_before:
+    raise RuntimeError("installed Scheduler/Core cohort is empty before rollback test")
+
+  result = None
+  try:
+    result = subprocess.run(
+        ["msiexec.exe", "/i", str(fixture_msi), "/quiet", "/norestart",
+         "/L*v", str(log)],
+        check=False,
+    )
+    observed = observation.read_text(encoding="ascii") if observation.is_file() else ""
+    expected_observation = "schema_version=1\nfile=present\nregistry=present\n"
+    inventory_after = file_inventory(install_root)
+    product_states_after = {
+        "scheduler": msi_product_state(scheduler_product),
+        "core": msi_product_state(core_product),
+        "fixture": msi_product_state(fixture_product),
+    }
+    failures = []
+    if result.returncode != 1603:
+      failures.append(f"expected Windows Installer failure 1603, got {result.returncode}")
+    if observed != expected_observation:
+      failures.append("deferred failure probe did not observe the MSI-owned file and registry")
+    if fixture_root.exists() or sentinel.exists():
+      failures.append("Windows Installer rollback left the fixture install directory")
+    if registry_sentinel_exists() or registry_fixture_key_exists():
+      failures.append("Windows Installer rollback left the fixture registry key or value")
+    if product_states_after["fixture"] != MSI_INSTALLSTATE_UNKNOWN:
+      failures.append("Windows Installer rollback left the fixture product registered")
+    if product_states_after["scheduler"] != MSI_INSTALLSTATE_DEFAULT:
+      failures.append("failed MSI transaction changed Scheduler product registration")
+    if product_states_after["core"] != MSI_INSTALLSTATE_DEFAULT:
+      failures.append("failed MSI transaction changed Core product registration")
+    if inventory_after != inventory_before:
+      failures.append("failed MSI transaction changed the installed Scheduler/Core inventory")
+    if not log.is_file() or log.stat().st_size == 0:
+      failures.append("failed MSI transaction did not produce a verbose installer log")
+    else:
+      log_bytes = log.read_bytes()
+      action_ascii = b"FailAfterOwnedState"
+      action_utf16 = "FailAfterOwnedState".encode("utf-16-le")
+      if action_ascii not in log_bytes and action_utf16 not in log_bytes:
+        # The action identifier is stable even when the surrounding Windows
+        # Installer messages are localized.
+        failures.append("installer log did not record the deferred failure action")
+    if failures:
+      raise RuntimeError("; ".join(failures))
+    return {
+        "schema_version": 1,
+        "status": "PASS",
+        "fixture": {
+            "custom_action": "FailAfterOwnedState",
+            "msi_sha256": sha256(fixture_msi),
+            "product_code": fixture_product,
+        },
+        "failure": {"expected_exit_code": 1603, "observed_exit_code": result.returncode},
+        "mid_transaction": {"file": "PASS", "registry": "PASS"},
+        "rollback": {
+            "install_directory": "PASS",
+            "product_registration": "PASS",
+            "registry": "PASS",
+            "sentinel": "PASS",
+        },
+        "preserved_cohort": {
+            "file_inventory": "PASS",
+            "file_inventory_sha256": inventory_digest(inventory_before),
+            "scheduler": {
+                "product_code": scheduler_product,
+                "state_before": "DEFAULT",
+                "state_after": "DEFAULT",
+            },
+            "core": {
+                "product_code": core_product,
+                "state_before": "DEFAULT",
+                "state_after": "DEFAULT",
+            },
+        },
+        "installer_log_sha256": sha256(log),
+    }
+  finally:
+    # Leave the shared runner clean even when the assertion itself exposes a
+    # rollback defect. These paths and ProductCode belong only to this fixture.
+    if msi_product_state(fixture_product) != MSI_INSTALLSTATE_UNKNOWN:
+      subprocess.run(
+          ["msiexec.exe", "/x", fixture_product, "/quiet", "/norestart"],
+          check=False,
+      )
+    observation.unlink(missing_ok=True)
+    if fixture_root.exists():
+      shutil.rmtree(fixture_root)
+    remove_fixture_registry_key()
+
+
 def wheel_payload_names(wheel: Path) -> set[str]:
   with zipfile.ZipFile(wheel) as archive:
     bad = archive.testzip()
@@ -370,6 +648,7 @@ def build(args: argparse.Namespace) -> None:
   python = require_file(Path(sys.executable), "producer Python")
   if not os.environ.get("WIX"):
     raise ValueError("WIX must name the pinned WiX v3 tool directory")
+  wix_root = require_directory(Path(os.environ["WIX"]), "pinned WiX v3 tool directory")
 
   work = args.work.resolve()
   output = args.output.resolve()
@@ -545,6 +824,9 @@ def build(args: argparse.Namespace) -> None:
           args.signing_timestamp_url, args.signing_machine_store)
     shutil.copy2(scheduler_msi, output / scheduler_msi.name)
     scheduler_msi = output / scheduler_msi.name
+    rollback_fixture_msi = build_msi_rollback_fixture(work, cl, wix_root, environment)
+    inspect_x64(
+        rollback_fixture_msi.parent / "rollback-probe.exe", dumpbin)
 
     core_install_code = msi_transaction(core_msi, "i", output / "core-msi-install.log")
     core_installed = True
@@ -579,6 +861,17 @@ def build(args: argparse.Namespace) -> None:
       require_file(required, "installed Core MSI payload")
     check_consumer(install_root, "installed")
     run([gst_inspect, plugin], env=environment)
+
+    rollback_receipt = qualify_failed_msi_transaction(
+        rollback_fixture_msi, scheduler_msi, core_msi, install_root,
+        common_application_data(powershell), output / "msi-transaction-rollback.log")
+    check_consumer(install_root, "after-failed-msi-transaction")
+    run([gst_inspect, plugin], env=environment)
+    rollback_receipt["preserved_cohort"].update({
+        "installed_consumer": "PASS",
+        "plugin_discovery": "PASS",
+    })
+    write_json(output / "msi-transaction-rollback.json", rollback_receipt)
 
     activation_environment = os.environ.copy()
     for name in (
@@ -723,6 +1016,7 @@ def build(args: argparse.Namespace) -> None:
         "python_import": "PASS",
         "relocated_consumer": "PASS",
         "repeat_install": "PASS",
+        "transaction_rollback": "PASS",
         "scheduler_msi_install": "PASS",
         "scheduler_msi_remove": "PENDING_CLEANUP",
     })
@@ -788,6 +1082,10 @@ def build(args: argparse.Namespace) -> None:
             "scheduler-windows-dependencies.json": sha256(
                 output / "scheduler-windows-dependencies.json"),
             "native-tests.xml": sha256(native_junit),
+            "msi-transaction-rollback.json": sha256(
+                output / "msi-transaction-rollback.json"),
+            "msi-transaction-rollback.log": sha256(
+                output / "msi-transaction-rollback.log"),
             "windows-dependencies.json": sha256(output / "windows-dependencies.json"),
             "windows-signatures.json": sha256(output / "windows-signatures.json"),
         },

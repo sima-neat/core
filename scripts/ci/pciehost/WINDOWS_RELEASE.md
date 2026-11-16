@@ -98,6 +98,17 @@ skip, failure, or error; a successful process exit alone is not release evidence
 The Core producer applies the same check to the selected Scheduler profile before
 it installs or repackages that dependency.
 
+The native producer also builds a CI-only MSI that owns one file and one registry
+value. A deferred custom action runs after `WriteRegistryValues` (and therefore
+after `InstallFiles`), records that both are present, then returns a failure
+through Windows Installer. The gate requires exit code 1603, removal of
+the fixture directory, registry key/value, and product registration, and an unchanged
+Scheduler/Core file inventory and product state. It reruns the installed C++
+consumer and Scheduler plug-in discovery afterward. The fixture MSI is kept only
+in the workflow's temporary build directory; it is not part of the customer
+candidate. `msi-transaction-rollback.json` and its checksum-bound verbose log are
+the release evidence for this gate.
+
 Before the card lock or any card-side change, the Windows qualifier binds the
 selected `10.0.N.2` address to its unique local `10.0.N.1` address and one up
 SiMa.ai virtual Ethernet adapter. The receipt records the adapter GUID and PnP

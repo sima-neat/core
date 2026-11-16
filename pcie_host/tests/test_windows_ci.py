@@ -94,6 +94,52 @@ def normalized_link_target(path):
 
 
 class WindowsCiContracts(unittest.TestCase):
+  def test_failed_msi_transaction_receipt_binds_preserved_cohort(self):
+    with tempfile.TemporaryDirectory() as directory:
+      root = Path(directory)
+      common_data = root / "ProgramData"
+      common_data.mkdir()
+      install_root = root / "SimaPCIeHost"
+      install_root.mkdir()
+      (install_root / "owned.dll").write_bytes(b"unchanged cohort")
+      scheduler = root / "scheduler.msi"
+      core = root / "core.msi"
+      fixture = root / "rollback-fixture.msi"
+      for path in (scheduler, core, fixture):
+        path.write_bytes(path.name.encode("ascii"))
+      log = root / "msi-transaction-rollback.log"
+      product_codes = {
+          scheduler: "{11111111-2222-3333-4444-555555555555}",
+          core: "{AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE}",
+          fixture: MODULE.ROLLBACK_FIXTURE_PRODUCT_CODE,
+      }
+
+      def failed_install(_command, **_kwargs):
+        (common_data / MODULE.ROLLBACK_FIXTURE_OBSERVATION).write_text(
+            "schema_version=1\nfile=present\nregistry=present\n", encoding="ascii")
+        log.write_text("FailAfterOwnedState", encoding="utf-8")
+        return SimpleNamespace(returncode=1603)
+
+      def product_state(product_code):
+        if product_code == MODULE.ROLLBACK_FIXTURE_PRODUCT_CODE:
+          return MODULE.MSI_INSTALLSTATE_UNKNOWN
+        return MODULE.MSI_INSTALLSTATE_DEFAULT
+
+      with mock.patch.object(MODULE, "msi_product_code", side_effect=product_codes.get), \
+           mock.patch.object(MODULE, "msi_product_state", side_effect=product_state), \
+           mock.patch.object(MODULE, "registry_sentinel_exists", return_value=False), \
+           mock.patch.object(MODULE, "registry_fixture_key_exists", return_value=False), \
+           mock.patch.object(MODULE.subprocess, "run", side_effect=failed_install):
+        receipt = MODULE.qualify_failed_msi_transaction(
+            fixture, scheduler, core, install_root, common_data, log)
+
+      self.assertEqual(receipt["status"], "PASS")
+      self.assertEqual(receipt["failure"]["observed_exit_code"], 1603)
+      self.assertEqual(receipt["mid_transaction"], {"file": "PASS", "registry": "PASS"})
+      self.assertEqual(receipt["rollback"]["product_registration"], "PASS")
+      self.assertEqual(receipt["preserved_cohort"]["file_inventory"], "PASS")
+      self.assertFalse((common_data / MODULE.ROLLBACK_FIXTURE_OBSERVATION).exists())
+
   def test_native_windows_genai_runs_production_adapter_against_test_only_dll(self):
     cmake = (ROOT / "pcie_host/CMakeLists.txt").read_text(encoding="utf-8")
     self.assertIn("tests/fake_genai_service_windows.cpp", cmake)
@@ -946,6 +992,45 @@ class WindowsCiContracts(unittest.TestCase):
     resources = {path.name: sha256(path) for path in (scheduler, core, wheel)}
     qualification_resource = root / "qualification-resource.bin"
     qualification_resource.write_bytes(b"hardware-tests-and-signature-receipt")
+    rollback_log = root / "msi-transaction-rollback.log"
+    rollback_log.write_text(
+        "Action start: FailAfterOwnedState\nWindows Installer rollback\n",
+        encoding="utf-8")
+    rollback_receipt = root / "msi-transaction-rollback.json"
+    rollback_receipt.write_text(json.dumps({
+        "schema_version": 1,
+        "status": "PASS",
+        "fixture": {
+            "custom_action": "FailAfterOwnedState",
+            "msi_sha256": "1" * 64,
+            "product_code": "{5C5FB61E-7355-4B72-87FD-5FDD4CC2715B}",
+        },
+        "failure": {"expected_exit_code": 1603, "observed_exit_code": 1603},
+        "mid_transaction": {"file": "PASS", "registry": "PASS"},
+        "rollback": {
+            "install_directory": "PASS",
+            "product_registration": "PASS",
+            "registry": "PASS",
+            "sentinel": "PASS",
+        },
+        "preserved_cohort": {
+            "file_inventory": "PASS",
+            "file_inventory_sha256": "2" * 64,
+            "installed_consumer": "PASS",
+            "plugin_discovery": "PASS",
+            "scheduler": {
+                "product_code": "{11111111-2222-3333-4444-555555555555}",
+                "state_before": "DEFAULT",
+                "state_after": "DEFAULT",
+            },
+            "core": {
+                "product_code": "{AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE}",
+                "state_before": "DEFAULT",
+                "state_after": "DEFAULT",
+            },
+        },
+        "installer_log_sha256": sha256(rollback_log),
+    }), encoding="utf-8")
     standard_user_genai = (
         root / "hardware-tests" / "lib" / "sima-pcie-host" / "tests"
         / "test_genai_run.exe")
@@ -1036,6 +1121,8 @@ class WindowsCiContracts(unittest.TestCase):
             standard_user_genai.relative_to(root).as_posix(): sha256(standard_user_genai),
             native_junit.name: sha256(native_junit),
             qualification_resource.name: sha256(qualification_resource),
+            rollback_log.name: sha256(rollback_log),
+            rollback_receipt.name: sha256(rollback_receipt),
             scheduler_signatures.name: sha256(scheduler_signatures),
             dependencies.name: sha256(dependencies),
             scheduler_dependencies.name: sha256(scheduler_dependencies),
@@ -1897,6 +1984,47 @@ install() {
       qualification.write_text(json.dumps(value), encoding="utf-8")
       with self.assertRaisesRegex(ValueError, "roll back and re-upgrade"):
         verify(root, qualification, commit, False, require_release=True)
+
+  def test_release_gate_requires_failed_msi_transaction_rollback(self):
+    with tempfile.TemporaryDirectory() as directory:
+      root = Path(directory)
+      commit, _, qualification = self.windows_candidate(root)
+      admission = verify(root, qualification, commit, False)
+      self.assertTrue(admission["msi_transaction_rollback_qualified"])
+
+    mutations = (
+        ("failure", "observed_exit_code", 0, "fail through Windows Installer"),
+        ("mid_transaction", "file", "FAIL", "transaction-owned state"),
+        ("rollback", "product_registration", "FAIL", "registration behind"),
+        ("preserved_cohort", "file_inventory", "FAIL", "preserve the installed cohort"),
+    )
+    for section, key, replacement, message in mutations:
+      with self.subTest(section=section, key=key), tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        commit, _, qualification = self.windows_candidate(root)
+        receipt_path = root / "msi-transaction-rollback.json"
+        receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+        receipt[section][key] = replacement
+        receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
+        host_path = root / "host-candidate.json"
+        host = json.loads(host_path.read_text(encoding="utf-8"))
+        host["qualification_resources"][receipt_path.name] = sha256(receipt_path)
+        host_path.write_text(json.dumps(host), encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, message):
+          verify(root, qualification, commit, False)
+
+  def test_release_gate_binds_failed_msi_transaction_log(self):
+    with tempfile.TemporaryDirectory() as directory:
+      root = Path(directory)
+      commit, _, qualification = self.windows_candidate(root)
+      log = root / "msi-transaction-rollback.log"
+      log.write_text("changed exact verbose log", encoding="utf-8")
+      host_path = root / "host-candidate.json"
+      host = json.loads(host_path.read_text(encoding="utf-8"))
+      host["qualification_resources"][log.name] = sha256(log)
+      host_path.write_text(json.dumps(host), encoding="utf-8")
+      with self.assertRaisesRegex(ValueError, "bind its verbose installer log"):
+        verify(root, qualification, commit, False)
 
   def test_release_gate_requires_partial_wheel_failure_recovery(self):
     with tempfile.TemporaryDirectory() as directory:
