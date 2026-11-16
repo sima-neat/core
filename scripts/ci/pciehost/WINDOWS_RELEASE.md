@@ -41,11 +41,14 @@ OpenCV 5.0.0 x64 package (SHA-256
 Scheduler, Core, and hardware must resolve the same GStreamer identity, exact
 Platform runtime DLL hashes, and exact additional runtime DLL hashes; the
 workflows reject a mixed dependency cohort. The card does not need a preinstalled
-tensor worker. The job downloads `neat-core-dist` from the admitted Linux run,
-verifies its resource inventory, extracts the Debian payload into an owned
-private directory, and temporarily selects its matching firmware. It restores
-the original firmware and removes the private card files before releasing the
-card lock.
+tensor worker. Core CI separately builds a private ARM64 qualification-dependency
+bundle from the same immutable SDK image; that bundle is not part of
+`neat-core-dist` and is never published as a customer package. The Windows
+workflow verifies the SDK-image build receipt and checksum-binds the bundle to
+`neat-core-dist` from the admitted Linux run, extracts the combined Debian
+payload into an owned private directory, and
+temporarily selects its matching firmware. It restores the original firmware
+and removes the private card files before releasing the card lock.
 
 ## Normal CI path
 
@@ -62,7 +65,8 @@ has passed its Linux build, DevKit, and PCIe-card gates. The Windows lane:
 2. resolves an immutable published sima-cli candidate for the customer-flow
    test and independently verifies both publication manifests and resources;
 3. builds the ordered Scheduler/Core/wheel cohort;
-4. installs and qualifies the same run's exact Linux card payload on the card;
+4. checksum-binds the same run's Linux payload to its private SDK dependency
+   bundle, then installs that candidate only in the card qualification sandbox;
 5. runs the customer CLI, C++, Python, lifecycle, fault, performance, and GenAI
    acceptance; and
 6. publishes the tested Windows cohort before Core can advance its branch

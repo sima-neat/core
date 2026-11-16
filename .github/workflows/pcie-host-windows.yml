@@ -120,9 +120,11 @@ jobs:
       - run: >-
           python3 -m py_compile
           scripts/ci/pciehost/acquire_windows_dependencies.py
+          scripts/ci/pciehost/build_card_qualification_dependencies.py
           scripts/ci/pciehost/build_windows.py
           scripts/ci/pciehost/cleanup_windows_hardware.py
           scripts/ci/pciehost/qualify_windows_hardware.py
+          scripts/ci/pciehost/sdk_build_identity.py
           scripts/ci/pciehost/verify_linux_release_run.py
           scripts/ci/pciehost/verify_windows_release.py
           scripts/ci/pciehost/windows_candidate.py
@@ -276,6 +278,63 @@ jobs:
             ${{ runner.temp }}/windows-upgrade-base-admission.json
           if-no-files-found: error
           retention-days: 14
+  card_candidate:
+    name: Prepare private card qualification candidate
+    needs: [contracts, linux_release]
+    if: needs.contracts.result == 'success' && needs.linux_release.result == 'success'
+    runs-on: ubuntu-24.04
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - name: Download this run's exact Linux candidate
+        if: inputs.linux_current_run == true
+        uses: actions/download-artifact@v4
+        with:
+          name: neat-core-dist
+          path: ${{ runner.temp }}/core-card-source
+      - name: Download prior run's exact Linux candidate
+        if: inputs.linux_current_run != true
+        uses: actions/download-artifact@v4
+        with:
+          name: neat-core-dist
+          path: ${{ runner.temp }}/core-card-source
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.linux_run_id }}
+          github-token: ${{ github.token }}
+      - name: Download this run's exact SDK dependency bundle
+        if: inputs.linux_current_run == true
+        uses: actions/download-artifact@v4
+        with:
+          name: core-pcie-card-qualification-dependencies
+          path: ${{ runner.temp }}/core-card-dependencies
+      - name: Download prior run's exact SDK dependency bundle
+        if: inputs.linux_current_run != true
+        uses: actions/download-artifact@v4
+        with:
+          name: core-pcie-card-qualification-dependencies
+          path: ${{ runner.temp }}/core-card-dependencies
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.linux_run_id }}
+          github-token: ${{ github.token }}
+      - name: Bind Core and SDK dependencies into one private candidate
+        run: |
+          set -euo pipefail
+          python3 scripts/ci/pciehost/prepare_card_qualification_candidate.py \
+            --source "${RUNNER_TEMP}/core-card-source" \
+            --dependencies "${RUNNER_TEMP}/core-card-dependencies" \
+            --output "${RUNNER_TEMP}/core-card-candidate" \
+            --expected-commit "${GITHUB_SHA}"
+      - name: Retain private card qualification candidate
+        uses: actions/upload-artifact@v6
+        with:
+          name: core-pcie-card-qualification-candidate
+          path: ${{ runner.temp }}/core-card-candidate/*
+          if-no-files-found: error
+          retention-days: 7
   dependencies:
     name: Resolve immutable Windows dependency cohort
     needs: [contracts, linux_release]
@@ -457,8 +516,8 @@ jobs:
           retention-days: 7
   hardware:
     name: Direct-card Windows acceptance
-    needs: [native, linux_release]
-    if: needs.native.result == 'success' && needs.linux_release.result == 'success'
+    needs: [native, linux_release, card_candidate]
+    if: needs.native.result == 'success' && needs.linux_release.result == 'success' && needs.card_candidate.result == 'success'
     concurrency:
       group: core-windows-pcie-hardware-card0
       cancel-in-progress: false
@@ -478,7 +537,6 @@ jobs:
       SIMAPCIE_CARD_GST_DEBUG: ${{ vars.SIMAPCIE_PCIEHOST_CARD_GST_DEBUG }}
       SIMAPCIE_CARD_HOST: ${{ vars.SIMA_WINDOWS_PCIE_CARD_HOST }}
       SIMAPCIE_CARD_ID: "0"
-      SIMAPCIE_CARD_SUDO_PASSWORD: ${{ secrets.DEVKIT_PASSWORD }}
       SIMAPCIE_GENAI_MODELS_PATH: ${{ vars.SIMA_WINDOWS_PCIE_GENAI_MODELS_PATH }}
       SIMAPCIE_GENAI_TEST_ASSETS: ${{ vars.SIMA_WINDOWS_PCIE_GENAI_TEST_ASSETS }}
       SIMAPCIE_LIFECYCLE_CYCLES: "10"
@@ -510,21 +568,11 @@ jobs:
         with:
           name: core-pciehost-windows-dependencies
           path: ${{ runner.temp }}/core-windows-dependencies
-      - name: Download this run's exact Linux card candidate
-        if: inputs.linux_current_run == true
+      - name: Download exact private card qualification candidate
         uses: actions/download-artifact@v4
         with:
-          name: neat-core-dist
+          name: core-pcie-card-qualification-candidate
           path: ${{ runner.temp }}/core-card-candidate
-      - name: Download prior run's exact Linux card candidate
-        if: inputs.linux_current_run != true
-        uses: actions/download-artifact@v4
-        with:
-          name: neat-core-dist
-          path: ${{ runner.temp }}/core-card-candidate
-          repository: ${{ github.repository }}
-          run-id: ${{ inputs.linux_run_id }}
-          github-token: ${{ github.token }}
       - name: Download exact Windows upgrade baseline
         if: inputs.require_upgrade == true
         uses: actions/download-artifact@v4
@@ -536,8 +584,12 @@ jobs:
           github-token: ${{ github.token }}
       - name: Install, test both APIs, and remove exact cohort
         shell: powershell
+        env:
+          QUALIFIER_CARD_SUDO_PASSWORD: ${{ secrets.DEVKIT_PASSWORD }}
         run: |
           $ErrorActionPreference = "Stop"
+          $cardSudoPassword = $env:QUALIFIER_CARD_SUDO_PASSWORD
+          Remove-Item Env:QUALIFIER_CARD_SUDO_PASSWORD -ErrorAction SilentlyContinue
           $selection = Get-Content -Raw "$env:RUNNER_TEMP\core-windows-dependencies\selection.json" | ConvertFrom-Json
           if ("${{ inputs.validation_only }}" -ne "true" -and "${{ inputs.include_genai }}" -ne "true") {
             throw "Customer release requires the complete Windows GenAI hardware matrix"
@@ -548,7 +600,6 @@ jobs:
             "SIMA_WINDOWS_PLATFORM_RUNTIME_DIR",
             "SIMA_WINDOWS_PYTHON_WHEELHOUSE",
             "SIMAPCIE_CARD_HOST",
-            "SIMAPCIE_CARD_SUDO_PASSWORD",
             "SIMAPCIE_SSH_KEY",
             "SIMAPCIE_YOLOV8_MODEL",
             "SIMAPCIE_MLA_ONLY_MODEL",
@@ -573,6 +624,7 @@ jobs:
             "--sima-cli-candidate", "$env:RUNNER_TEMP\core-windows-dependencies\sima-cli",
             "--source-root", $env:GITHUB_WORKSPACE,
             "--ssh-key", $env:SIMAPCIE_SSH_KEY,
+            "--card-sudo-password-stdin",
             "--work", "$env:RUNNER_TEMP\core-windows-hardware",
             "--evidence", "$env:RUNNER_TEMP\core-windows-hardware-evidence"
           )
@@ -598,13 +650,18 @@ jobs:
               if ($requirement) { $arguments += @("--test-requirement", $requirement) }
             }
           }
-          & python @arguments
+          if (-not $cardSudoPassword) { throw "Required hardware secret is unset: DEVKIT_PASSWORD" }
+          $cardSudoPassword | & python @arguments
           if ($LASTEXITCODE -ne 0) { throw "Windows hardware qualification failed: $LASTEXITCODE" }
       - name: Recover card and native installation
         if: always()
         shell: powershell
+        env:
+          RECOVERY_CARD_SUDO_PASSWORD: ${{ secrets.DEVKIT_PASSWORD }}
         run: |
           $ErrorActionPreference = "Stop"
+          $cardSudoPassword = $env:RECOVERY_CARD_SUDO_PASSWORD
+          Remove-Item Env:RECOVERY_CARD_SUDO_PASSWORD -ErrorAction SilentlyContinue
           $arguments = @(
             "scripts/ci/pciehost/cleanup_windows_hardware.py",
             "--candidate", "$env:RUNNER_TEMP\core-windows-candidate",
@@ -613,6 +670,7 @@ jobs:
             "--lock-file", "$env:USERPROFILE\.sima\locks\neat-pcie-card0.lock",
             "--remote-lock-path", "/tmp/neat-pcie-card0.lock",
             "--ssh-key", $env:SIMAPCIE_SSH_KEY,
+            "--card-sudo-password-stdin",
             "--work", "$env:RUNNER_TEMP\core-windows-hardware"
           )
           if (Test-Path -LiteralPath "$env:RUNNER_TEMP\core-windows-upgrade-base") {
@@ -620,7 +678,8 @@ jobs:
               "--upgrade-base-candidate", "$env:RUNNER_TEMP\core-windows-upgrade-base"
             )
           }
-          & python @arguments
+          if (-not $cardSudoPassword) { throw "Required recovery secret is unset: DEVKIT_PASSWORD" }
+          $cardSudoPassword | & python @arguments
           if ($LASTEXITCODE -ne 0) { throw "Windows hardware recovery failed: $LASTEXITCODE" }
       - name: Enforce release admission
         shell: powershell

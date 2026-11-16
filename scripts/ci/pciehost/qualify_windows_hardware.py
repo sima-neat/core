@@ -9,10 +9,12 @@ and reverse-order cleanup as one transaction.
 from __future__ import annotations
 
 import argparse
+import base64
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from functools import partial
+import hashlib
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 import ipaddress
 import json
@@ -164,7 +166,7 @@ $adapter = $adapters[0]
   card_host = $env:SIMA_PCIE_CARD_HOST
   local_address = [string]$source.IPAddress
   interface_index = [int]$source.InterfaceIndex
-  interface_guid = [string]$adapter.InterfaceGuid
+  interface_guid = ([guid]$adapter.InterfaceGuid).ToString('D')
   interface_alias = [string]$adapter.Name
   interface_description = [string]$adapter.InterfaceDescription
   interface_status = [string]$adapter.Status
@@ -379,9 +381,136 @@ class ExclusiveLock:
     self.retain_on_exit = False
 
 
+def _windows_openssh_batch_line(argv: list[str], output: Path, *,
+                                input_file: Path | None = None) -> str:
+  """Redirect OpenSSH before Python gives it redirected standard handles."""
+  powershell_arguments = ",".join(
+      "'" + value.replace("'", "''") + "'" for value in argv)
+  powershell = (
+      f"$argv=@({powershell_arguments});$exe=$argv[0];"
+      "[string[]]$rest=$argv[1..($argv.Length-1)];"
+      "& $exe @rest;exit $LASTEXITCODE"
+  )
+  encoded = base64.b64encode(powershell.encode("utf-16le")).decode("ascii")
+  command = (
+      "powershell.exe -NoLogo -NoProfile -NonInteractive -EncodedCommand "
+      + encoded + " > " + subprocess.list2cmdline([str(output)]) + " 2>&1"
+  )
+  if input_file is not None:
+    command += " < " + subprocess.list2cmdline([str(input_file)])
+  command = command.replace("%", "%%")
+  return command
+
+
+def prepare_openssh_secret_directory(path: Path) -> Path:
+  """Create a qualification-owned directory whose contents only the runner can read."""
+  root = path.resolve()
+  root.mkdir(mode=0o700, parents=True, exist_ok=True)
+  if sys.platform == "win32":
+    script = r"""
+$ErrorActionPreference = 'Stop'
+$sid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+& icacls.exe $env:SIMA_OPENSSH_SECRET_ROOT /inheritance:r `
+  /grant:r "*$($sid):(OI)(CI)(F)" /Q | Out-Null
+if ($LASTEXITCODE -ne 0) { throw "icacls failed: $LASTEXITCODE" }
+"""
+    environment = os.environ.copy()
+    environment["SIMA_OPENSSH_SECRET_ROOT"] = str(root)
+    subprocess.run(
+        ["powershell.exe", "-NoLogo", "-NoProfile", "-NonInteractive",
+         "-Command", script],
+        env=environment, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL, timeout=30, check=True)
+  else:
+    root.chmod(0o700)
+  return root
+
+
+def run_windows_openssh(command: list[object], log: Path, *,
+                        input_value: str = "",
+                        secret_root: Path | None = None,
+                        env: dict[str, str] | None = None,
+                        cwd: Path | None = None,
+                        timeout: int = 3600,
+                        redact_stdin: bool = False) -> subprocess.CompletedProcess[str]:
+  """Run Windows OpenSSH through a batch file with direct file redirection.
+
+  OpenSSH for Windows 9.5 can authenticate, run the remote command, receive EOF,
+  and then block forever when CPython created its stdout/stderr handles.  A batch
+  wrapper gives ssh.exe/scp.exe ordinary file handles before Python starts it.
+  """
+  argv = [str(value) for value in command]
+  wrapper = log.with_name(f".{log.name}.openssh.cmd")
+  child_output = log.with_name(f".{log.name}.openssh-output.log")
+  child_input = None
+  if wrapper.exists() or child_output.exists():
+    raise RuntimeError(f"stale Windows OpenSSH wrapper state exists beside {log}")
+  if "\n" in input_value or "\r" in input_value:
+    raise ValueError("Windows OpenSSH input secret must be one line")
+  process: subprocess.Popen[str] | None = None
+  timed_out: subprocess.TimeoutExpired | None = None
+  try:
+    if input_value:
+      if secret_root is None:
+        raise ValueError("Windows OpenSSH secret input requires a private directory")
+      secret_directory = prepare_openssh_secret_directory(secret_root)
+      child_input = secret_directory / (secrets.token_hex(16) + ".openssh-input")
+      child_input.write_bytes(input_value.encode("utf-8") + b"\n")
+    wrapper.write_text(
+        "@echo off\r\n"
+        + _windows_openssh_batch_line(
+            argv, child_output,
+            input_file=child_input)
+        + "\r\nexit /b %errorlevel%\r\n",
+        encoding="utf-8",
+    )
+    process = subprocess.Popen(
+        ["cmd.exe", "/d", "/c", str(wrapper)],
+        cwd=cwd,
+        env=env,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        text=True,
+        creationflags=getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0),
+    )
+    try:
+      process.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired as error:
+      timed_out = error
+      subprocess.run(
+          ["taskkill.exe", "/PID", str(process.pid), "/T", "/F"],
+          stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+          stderr=subprocess.DEVNULL, check=False, timeout=30)
+      process.communicate(timeout=30)
+  finally:
+    captured = child_output.read_text(
+        encoding="utf-8", errors="replace") if child_output.is_file() else ""
+    suffix = " [stdin redacted]" if redact_stdin else ""
+    try:
+      log.write_text(
+          "+ " + subprocess.list2cmdline(argv) + suffix + "\n" + captured,
+          encoding="utf-8", errors="replace")
+    finally:
+      wrapper.unlink(missing_ok=True)
+      child_output.unlink(missing_ok=True)
+      if child_input is not None:
+        child_input.unlink(missing_ok=True)
+  if timed_out is not None:
+    raise timed_out
+  if process is None:
+    raise RuntimeError("Windows OpenSSH wrapper did not start")
+  return subprocess.CompletedProcess(argv, process.returncode, captured, None)
+
+
 def run_logged(command: list[object], log: Path, *, env: dict[str, str] | None = None,
                cwd: Path | None = None, timeout: int = 3600) -> None:
   argv = [str(value) for value in command]
+  if Path(argv[0]).name.lower() in {"scp.exe", "ssh.exe"}:
+    result = run_windows_openssh(argv, log, env=env, cwd=cwd, timeout=timeout)
+    if result.returncode not in PASS_CODES:
+      raise RuntimeError(f"command failed with {result.returncode}; see {log}")
+    return
   with log.open("w", encoding="utf-8", errors="replace") as output:
     output.write("+ " + subprocess.list2cmdline(argv) + "\n")
     output.flush()
@@ -487,8 +616,34 @@ def verify_customer_process_activation(install_root: Path, python: Path,
       evidence / "customer-process-python-import.log", env=environment, timeout=60)
 
 
-def verify_standard_user_process_activation(install_root: Path, python: Path,
-                                            work: Path, evidence: Path) -> dict:
+def remove_private_python_tree(path: Path) -> None:
+  """Remove a qualification-owned Python tree without hiding residue."""
+  try:
+    shutil.rmtree(path)
+  except FileNotFoundError:
+    return
+  if path.exists():
+    raise RuntimeError(f"temporary standard-user Python was not removed: {path}")
+
+
+def create_standard_user_python(wheel: Path, wheelhouse: Path, portable_root: Path,
+                                evidence: Path) -> Path:
+  """Create a fresh venv and force the candidate wheel into that environment."""
+  subprocess.run(
+      [sys.executable, "-m", "venv", "--copies", portable_root], check=True)
+  python = portable_root / "Scripts" / "python.exe"
+  if not python.is_file():
+    raise RuntimeError("fresh standard-user Python environment has no python.exe")
+  run_logged(
+      [python, "-m", "pip", "install", "--no-index", "--find-links", wheelhouse,
+       "--force-reinstall", wheel],
+      evidence / "standard-user-python-install.log", timeout=300)
+  return python
+
+
+def verify_standard_user_process_activation(install_root: Path, wheel: Path,
+                                            wheelhouse: Path, work: Path,
+                                            evidence: Path) -> dict:
   """Run the installed diagnostics and Python API as a disposable standard user."""
   doctor = install_root / "bin" / "sima-pcie-host-doctor.cmd"
   runner = install_root / "bin" / "sima-pcie-host-run.cmd"
@@ -496,6 +651,30 @@ def verify_standard_user_process_activation(install_root: Path, python: Path,
     raise RuntimeError(f"installed Core MSI is missing its diagnostic: {doctor}")
   if not runner.is_file():
     raise RuntimeError(f"installed Core MSI is missing its launcher: {runner}")
+  program_data = os.environ.get("PROGRAMDATA")
+  if not program_data:
+    raise RuntimeError("standard-user acceptance requires ProgramData")
+  portable_root = Path(program_data) / (
+      "SimaPCIeHostAcceptance-" + secrets.token_hex(8))
+  try:
+    python = create_standard_user_python(wheel, wheelhouse, portable_root, evidence)
+  except BaseException as error:
+    try:
+      remove_private_python_tree(portable_root)
+    except BaseException as cleanup_error:
+      error.add_note(str(cleanup_error))
+    raise
+  python_check = work / "standard-user-python-check.py"
+  python_check.write_text(
+      "from pathlib import Path\n"
+      "import sys\n"
+      "import pyneatpcie as p\n"
+      "root = Path(sys.prefix).resolve()\n"
+      "module = Path(p.__file__).resolve()\n"
+      "assert root in module.parents, (root, module)\n"
+      "assert p.Model and p.Runtime and p.Tensor\n",
+      encoding="utf-8",
+  )
   wrapper = work / "standard-user-activation.cmd"
   run_log = work / "standard-user-activation.log"
   wrapper.write_text(
@@ -507,8 +686,7 @@ def verify_standard_user_process_activation(install_root: Path, python: Path,
       "if errorlevel 1 exit /b %errorlevel%\n"
       f'call "{doctor}" > "{run_log}" 2>&1\n'
       "if errorlevel 1 exit /b 98\n"
-      f'call "{runner}" "{python}" -c "import pyneatpcie as p; '
-      'assert p.Model and p.Runtime and p.Tensor" '
+      f'call "{runner}" "{python}" "{python_check}" '
       f'>> "{run_log}" 2>&1\n'
       "if errorlevel 1 exit /b 99\n"
       "exit /b 0\n",
@@ -537,6 +715,9 @@ try {
   if ($LASTEXITCODE -ne 0) { throw "could not require the temporary password: $LASTEXITCODE" }
   & icacls.exe $env:SIMA_STANDARD_USER_WORK /grant "${account}:(OI)(CI)(M)" /T /Q | Out-Null
   if ($LASTEXITCODE -ne 0) { throw "icacls failed: $LASTEXITCODE" }
+  & icacls.exe $env:SIMA_STANDARD_USER_PYTHON_ROOT /grant "${account}:(OI)(CI)(RX)" /T /Q |
+    Out-Null
+  if ($LASTEXITCODE -ne 0) { throw "Python icacls failed: $LASTEXITCODE" }
   Add-Type -TypeDefinition @'
 using System;
 using System.ComponentModel;
@@ -643,6 +824,12 @@ public static class SimaStandardUserProcess {
         $cleanupErrors.Add('temporary user profile was not removed')
       }
     }
+    try {
+      Remove-Item -LiteralPath $env:SIMA_STANDARD_USER_PYTHON_ROOT -Recurse -Force `
+        -ErrorAction Stop
+    } catch {
+      $cleanupErrors.Add("temporary Python removal failed: $($_.Exception.Message)")
+    }
     if ($cleanupErrors.Count -ne 0) { throw ($cleanupErrors -join '; ') }
   }
 }
@@ -651,12 +838,30 @@ public static class SimaStandardUserProcess {
   environment.update({
       "SIMA_STANDARD_USER_WORK": str(work),
       "SIMA_STANDARD_USER_WRAPPER": str(wrapper),
+      "SIMA_STANDARD_USER_PYTHON_ROOT": str(portable_root),
   })
-  result = subprocess.run(
-      ["powershell.exe", "-NoLogo", "-NoProfile", "-NonInteractive",
-       "-Command", script],
-      stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=300,
-      env=environment, check=False)
+  result = None
+  control_error = None
+  try:
+    result = subprocess.run(
+        ["powershell.exe", "-NoLogo", "-NoProfile", "-NonInteractive",
+         "-Command", script],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=300,
+        env=environment, check=False)
+  except BaseException as error:
+    control_error = error
+  finally:
+    try:
+      remove_private_python_tree(portable_root)
+    except BaseException as cleanup_error:
+      if control_error is None:
+        control_error = cleanup_error
+      else:
+        control_error.add_note(str(cleanup_error))
+  if control_error is not None:
+    raise control_error
+  if result is None:
+    raise RuntimeError("standard-user acceptance control process did not start")
   (evidence / "standard-user-control.log").write_text(
       f"returncode={result.returncode}\nstdout={result.stdout}\nstderr={result.stderr}",
       encoding="utf-8", errors="replace")
@@ -674,30 +879,8 @@ public static class SimaStandardUserProcess {
 
 def run_captured_to_file(command: list[object], log: Path, *,
                          timeout: int) -> subprocess.CompletedProcess[str]:
-  """Capture a native command without routing its output through a pipe.
-
-  Windows OpenSSH 9.5 can receive the remote exit status and still block while
-  closing a redirected pipe.  A regular file handle avoids that client bug and
-  also preserves partial output when a command times out.
-  """
-  argv = [str(value) for value in command]
-  with log.open("w", encoding="utf-8", errors="replace") as output:
-    output.write("+ " + subprocess.list2cmdline(argv) + "\n")
-    output.flush()
-    output_offset = output.tell()
-    result = subprocess.run(
-        argv,
-        stdin=subprocess.DEVNULL,
-        stdout=output,
-        stderr=subprocess.STDOUT,
-        text=True,
-        timeout=timeout,
-        check=False,
-    )
-  with log.open("r", encoding="utf-8", errors="replace") as output:
-    output.seek(output_offset)
-    captured = output.read()
-  return subprocess.CompletedProcess(argv, result.returncode, captured, None)
+  """Capture Windows OpenSSH output through its batch-file workaround."""
+  return run_windows_openssh(command, log, timeout=timeout)
 
 
 def remove_msi(msi: Path, log: Path) -> str:
@@ -870,12 +1053,15 @@ def card_candidate_paths(token: str) -> dict[str, str]:
 
 
 def _card_sudo_password(args: argparse.Namespace) -> str:
-  name = args.card_sudo_password_env
-  if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name):
-    raise ValueError("card sudo password environment variable name is invalid")
-  password = os.environ.get(name, "")
-  if "\n" in password or "\r" in password:
-    raise ValueError("card sudo password must be one line")
+  if getattr(args, "card_sudo_password_stdin", False):
+    password = getattr(args, "card_sudo_password_value", "")
+  else:
+    name = args.card_sudo_password_env
+    if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name):
+      raise ValueError("card sudo password environment variable name is invalid")
+    password = os.environ.get(name, "")
+  if not password or "\n" in password or "\r" in password:
+    raise ValueError("card sudo password must be one non-empty line")
   return password
 
 
@@ -890,12 +1076,10 @@ def run_sudo_remote(args: argparse.Namespace, remote: str, log: Path,
       f"printf '%s\\n' \"$secret\" | exec sudo -S -p '' sh -c {quoted}"
   )
   argv = ssh_command(args, launcher)
-  with log.open("w", encoding="utf-8", errors="replace") as output:
-    output.write("+ " + subprocess.list2cmdline(argv) + " [stdin redacted]\n")
-    output.flush()
-    result = subprocess.run(
-        argv, input=_card_sudo_password(args) + "\n", stdout=output,
-        stderr=subprocess.STDOUT, text=True, timeout=timeout, check=False)
+  result = run_windows_openssh(
+      argv, log, input_value=_card_sudo_password(args),
+      secret_root=Path(args.work) / ".openssh-secrets",
+      timeout=timeout, redact_stdin=True)
   if result.returncode != 0:
     raise RuntimeError(f"privileged card command failed with {result.returncode}; see {log}")
 
@@ -1007,18 +1191,66 @@ def activate_card_candidate(args: argparse.Namespace, staged: dict[str, str],
   run_logged(
       ssh_command(args, remember), evidence / "card-candidate-baseline-record.log", timeout=30)
   remoteproc = "/sys/class/remoteproc/remoteproc1"
-  command = (
-      "set -eu; "
+  request = f"{staged['run']}/firmware-restore-request"
+  active = f"{staged['run']}/firmware-active"
+  restored = f"{staged['run']}/firmware-restored"
+  failure = f"{staged['run']}/firmware-broker-error"
+  broker_log = f"{staged['log']}/firmware-broker.log"
+  broker_source = f"{staged['run']}/firmware-broker.sh"
+  token = Path(staged["stage"]).name.rsplit(".", 1)[-1]
+  if not re.fullmatch(r"[0-9a-f]{32}", token):
+    raise ValueError("card candidate stage does not end in its lock token")
+  broker = (
+      "#!/bin/sh\n"
+      "set -eu\n"
       f"source={staged['firmware_source']}; target={staged['firmware_installed']}; "
       f"candidate={staged['firmware_name']}; baseline={shlex.quote(baseline_firmware)}; "
-      f"remoteproc={remoteproc}; test -r \"$source\"; test ! -e \"$target\"; "
-      "restore() { printf stop > \"$remoteproc/state\" 2>/dev/null || true; "
-      "printf '%s' \"$baseline\" > \"$remoteproc/firmware\" 2>/dev/null || true; "
-      "printf start > \"$remoteproc/state\" 2>/dev/null || true; rm -f \"$target\"; }; "
-      "trap restore EXIT; install -m 0644 \"$source\" \"$target\"; "
+      f"remoteproc={remoteproc}; request={request}; active={active}; restored={restored}; "
+      f"failure={failure}; token={token}\n"
+      "restore() { current=$(cat \"$remoteproc/firmware\"); "
+      "if [ \"$current\" = \"$candidate\" ]; then printf stop > \"$remoteproc/state\"; "
+      "printf '%s' \"$baseline\" > \"$remoteproc/firmware\"; "
+      "printf start > \"$remoteproc/state\"; "
+      "elif [ \"$current\" != \"$baseline\" ]; then return 75; fi; "
+      "grep -qx \"$baseline\" \"$remoteproc/firmware\"; "
+      "grep -qx running \"$remoteproc/state\"; rm -f \"$target\"; }; "
+      "failed() { status=$?; trap - EXIT HUP INT TERM; restore >/dev/null 2>&1 || true; "
+      "printf '%s\\n' \"$status\" > \"$failure\"; exit \"$status\"; }; "
+      "trap failed EXIT HUP INT TERM; test -r \"$source\"; test ! -e \"$target\"; "
+      "test ! -e \"$request\"; test ! -e \"$active\"; test ! -e \"$restored\"; "
+      "install -m 0644 \"$source\" \"$target\"; "
       "printf stop > \"$remoteproc/state\"; printf '%s' \"$candidate\" > \"$remoteproc/firmware\"; "
       "printf start > \"$remoteproc/state\"; grep -qx \"$candidate\" \"$remoteproc/firmware\"; "
-      "grep -qx running \"$remoteproc/state\"; trap - EXIT"
+      "grep -qx running \"$remoteproc/state\"; printf '%s\\n' \"$candidate\" > \"$active\"; "
+      "remaining=10800; while [ ! -f \"$request\" ]; do "
+      "test \"$remaining\" -gt 0; remaining=$((remaining - 1)); sleep 1; done; "
+      "test \"$(cat \"$request\")\" = \"$token\"; restore; "
+      "printf '%s\\n' \"$baseline\" > \"$restored\"; trap - EXIT HUP INT TERM"
+  )
+  broker_sha256 = hashlib.sha256(broker.encode("utf-8")).hexdigest()
+  encoded_broker = base64.b64encode(broker.encode("utf-8")).decode("ascii")
+  stage_broker = (
+      f"set -eu; umask 077; test ! -e {broker_source}; "
+      f"printf '%s' {encoded_broker} | base64 -d > {broker_source}; "
+      f"chmod 0500 {broker_source}; "
+      f"test \"$(sha256sum {broker_source} | awk '{{print $1}}')\" = {broker_sha256}"
+  )
+  run_logged(
+      ssh_command(args, stage_broker), evidence / "card-candidate-broker-stage.log", timeout=30)
+  broker_root = f"/run/neat-pcie-card0-{token}-firmware-broker"
+  command = (
+      f"set -eu; test ! -e {request}; test ! -e {active}; test ! -e {failure}; "
+      f"test -f {broker_source}; test ! -L {broker_source}; "
+      f"test \"$(sha256sum {broker_source} | awk '{{print $1}}')\" = {broker_sha256}; "
+      f"broker_root={broker_root}; test ! -e \"$broker_root\"; "
+      f"install -m 0500 -o root -g root {broker_source} \"$broker_root\"; "
+      "trap 'rm -f \"$broker_root\"' EXIT; "
+      f"nohup \"$broker_root\" </dev/null > {broker_log} 2>&1 & pid=$!; "
+      "remaining=120; while [ ! -r " + active + " ]; do "
+      f"if [ -r {failure} ]; then cat {failure} >&2; exit 76; fi; "
+      "kill -0 \"$pid\" 2>/dev/null; test \"$remaining\" -gt 0; "
+      "remaining=$((remaining - 1)); sleep 1; done; "
+      f"test \"$(cat {active})\" = {staged['firmware_name']}"
   )
   run_sudo_remote(args, command, evidence / "card-candidate-activate.log")
 
@@ -1027,22 +1259,36 @@ def restore_card_candidate(args: argparse.Namespace, token: str, evidence: Path)
   paths = card_candidate_paths(token)
   lock = _validate_remote_path(args.remote_lock_path)
   remoteproc = "/sys/class/remoteproc/remoteproc1"
-  command = (
+  request = f"{paths['run']}/firmware-restore-request"
+  active = f"{paths['run']}/firmware-active"
+  restored = f"{paths['run']}/firmware-restored"
+  failure = f"{paths['run']}/firmware-broker-error"
+  request_restore = (
       "set -eu; "
-      f"lock={lock}; target={paths['firmware_installed']}; candidate={paths['firmware_name']}; "
-      f"remoteproc={remoteproc}; "
-      "if [ -r \"$lock/baseline_firmware\" ]; then "
-      "read -r baseline < \"$lock/baseline_firmware\"; "
+      f"if [ -e {paths['stage']} ] || [ -L {paths['stage']} ]; then "
+      f"test ! -L {paths['stage']}; test -f {paths['stage']}/.qualification-owner; "
+      f"test ! -L {paths['stage']}/.qualification-owner; "
+      f"test \"$(cat {paths['stage']}/.qualification-owner)\" = {token}; "
+      f"if [ -r {lock}/baseline_firmware ]; then "
+      f"baseline=$(cat {lock}/baseline_firmware); "
       "case \"$baseline\" in (*[!A-Za-z0-9._+-]*|'') exit 74;; esac; "
-      "read -r current < \"$remoteproc/firmware\"; "
-      "if [ \"$current\" = \"$candidate\" ]; then "
-      "printf stop > \"$remoteproc/state\"; printf '%s' \"$baseline\" > \"$remoteproc/firmware\"; "
-      "printf start > \"$remoteproc/state\"; "
-      "elif [ \"$current\" != \"$baseline\" ]; then exit 75; fi; "
-      "grep -qx \"$baseline\" \"$remoteproc/firmware\"; grep -qx running \"$remoteproc/state\"; "
-      "fi; rm -f \"$target\""
+      f"if [ -r {active} ] && [ ! -r {restored} ] && [ ! -r {failure} ]; then "
+      f"test ! -e {request}; printf '%s\\n' {token} > {request}; "
+      "remaining=180; while [ ! -r " + restored + " ]; do "
+      f"if [ -r {failure} ]; then break; fi; "
+      "test \"$remaining\" -gt 0; remaining=$((remaining - 1)); sleep 1; done; fi; "
+      f"if [ -r {restored} ]; then test \"$(cat {restored})\" = \"$baseline\"; fi; "
+      f"test ! -e {paths['firmware_installed']}; "
+      f"grep -qx \"$baseline\" {remoteproc}/firmware; "
+      f"grep -qx running {remoteproc}/state; "
+      f"else test ! -e {active}; test ! -e {restored}; test ! -e {failure}; "
+      f"test ! -e {paths['firmware_installed']}; fi; "
+      f"else test ! -e {lock}/baseline_firmware; "
+      f"test ! -e {paths['firmware_installed']}; fi"
   )
-  run_sudo_remote(args, command, evidence / "card-candidate-restore.log")
+  run_logged(
+      ssh_command(args, request_restore),
+      evidence / "card-candidate-restore.log", timeout=240)
   cleanup = (
       card_stage_cleanup_command(paths, token) +
       f"; rm -f -- {lock}/baseline_firmware; "
@@ -1799,6 +2045,8 @@ def qualify(args: argparse.Namespace) -> None:
     card_lock.retain()
     staged_card: dict[str, str] | None = None
     card_stage_attempted = False
+    card_stage_owned = False
+    firmware_activation_attempted = False
     tutorial_facade_staged = False
     try:
       baseline = card_snapshot(args, evidence, "baseline")
@@ -1809,6 +2057,8 @@ def qualify(args: argparse.Namespace) -> None:
       card_stage_attempted = True
       staged_card = stage_card_candidate(
           args, card_candidate, remote_lock_token, evidence)
+      card_stage_owned = True
+      firmware_activation_attempted = True
       activate_card_candidate(args, staged_card, baseline["firmware"], evidence)
       active_card = card_snapshot(
           args, evidence, "candidate",
@@ -1989,7 +2239,7 @@ def qualify(args: argparse.Namespace) -> None:
       verify_customer_process_activation(install_root, python, evidence)
       result["customer_install"]["process_activation"] = "PASS"
       result["customer_install"]["standard_user"] = verify_standard_user_process_activation(
-          install_root, python, work, evidence)
+          install_root, candidate.wheel, wheelhouse, work, evidence)
       # The installed doctor loads the Scheduler plug-in through the same
       # process-scoped activation entry point customers use.
       result["customer_install"]["plugin_discovery"] = "PASS"
@@ -2086,7 +2336,7 @@ def qualify(args: argparse.Namespace) -> None:
           "type": type(error).__name__,
       }
     finally:
-      if card_stage_attempted:
+      if firmware_activation_attempted:
         try:
           stop_card_workers(args, evidence)
         except BaseException as error:
@@ -2102,9 +2352,12 @@ def qualify(args: argparse.Namespace) -> None:
         try:
           restore_card_candidate(args, remote_lock_token, evidence)
           result["cleanup"]["card_candidate"] = "PASS"
-          restart_windows_platform_service(
-              evidence / "card-stock-platform-recovery.log")
-          result["cleanup"]["platform_service"] = "PASS"
+          result["cleanup"]["card_stage_state"] = (
+              "owned" if card_stage_owned else "partial")
+          if firmware_activation_attempted:
+            restart_windows_platform_service(
+                evidence / "card-stock-platform-recovery.log")
+            result["cleanup"]["platform_service"] = "PASS"
         except BaseException as error:
           cleanup_errors.append(str(error))
       python_environments = [
@@ -2151,8 +2404,9 @@ def qualify(args: argparse.Namespace) -> None:
         result["card_final"] = final
         baseline = result.get("card_baseline", {})
         unchanged = ("platform_release", "platform_sha256", "firmware", "remoteproc_state")
-        expected_workers = "0" if card_stage_attempted else baseline.get("workers", "0")
-        expected_genai = "0" if card_stage_attempted else baseline.get("genai_workers", "0")
+        expected_workers = "0" if firmware_activation_attempted else baseline.get("workers", "0")
+        expected_genai = (
+            "0" if firmware_activation_attempted else baseline.get("genai_workers", "0"))
         if (final["workers"] != expected_workers or final["genai_workers"] != expected_genai
             or any(name in baseline and final.get(name) != baseline[name] for name in unchanged)):
           cleanup_errors.append("card did not return to its qualified baseline")
@@ -2172,6 +2426,16 @@ def qualify(args: argparse.Namespace) -> None:
           cleanup_errors.append("card management route changed during qualification")
       except BaseException as error:
         cleanup_errors.append(str(error))
+      try:
+        shutil.rmtree(work)
+      except FileNotFoundError:
+        pass
+      except OSError as error:
+        cleanup_errors.append(f"hardware work directory cleanup failed: {error}")
+      if work.exists():
+        cleanup_errors.append(f"hardware work directory remained after cleanup: {work}")
+      else:
+        result["cleanup"]["work"] = "PASS"
       if not cleanup_errors:
         try:
           remote_lock.release(evidence / "card-lock-release.log")
@@ -2186,7 +2450,6 @@ def qualify(args: argparse.Namespace) -> None:
         card_lock.retain()
       write_json(evidence / "hardware-qualification.json", result)
 
-  shutil.rmtree(work, ignore_errors=True)
   if cleanup_errors:
     raise RuntimeError("hardware cleanup failed: " + "; ".join(cleanup_errors))
   if failure is not None:
@@ -2200,6 +2463,9 @@ def main() -> None:
   parser.add_argument("--card-host", required=True)
   parser.add_argument(
       "--card-sudo-password-env", default="SIMAPCIE_CARD_SUDO_PASSWORD")
+  parser.add_argument(
+      "--card-sudo-password-stdin", action="store_true",
+      help="read one password line once from inherited stdin")
   parser.add_argument("--card-user", default="sima")
   parser.add_argument("--dependency-prefix", action="append", default=[], type=Path)
   parser.add_argument("--dependency-runtime-dir", action="append", default=[], type=Path)
@@ -2231,6 +2497,10 @@ def main() -> None:
   if args.upgrade_base_candidate is not None and not re.fullmatch(
       r"[0-9a-f]{40}", args.expected_upgrade_base_commit):
     parser.error("--expected-upgrade-base-commit must be a full lowercase Git commit")
+  if args.card_sudo_password_stdin:
+    args.card_sudo_password_value = sys.stdin.readline().rstrip("\r\n")
+    if not args.card_sudo_password_value:
+      parser.error("--card-sudo-password-stdin received no password line")
   qualify(args)
 
 

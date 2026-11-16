@@ -11,6 +11,7 @@ import shutil
 import subprocess
 
 from qualify_windows_hardware import validate_card_candidate, write_json
+from sdk_build_identity import validate_identity
 from windows_candidate import sha256
 
 
@@ -46,6 +47,45 @@ def prepare(source: Path, dependencies: Path, output: Path,
   dependency_debs = sorted(dependencies.glob("*.deb"), key=lambda path: path.name)
   if not dependency_debs:
     raise ValueError("card dependency input contains no Debian packages")
+  producer_receipt_path = dependencies / "card-qualification-dependencies.json"
+  try:
+    producer_receipt = json.loads(producer_receipt_path.read_text(encoding="utf-8"))
+  except (OSError, json.JSONDecodeError) as error:
+    raise ValueError("card dependency input has no valid producer receipt") from error
+  if (not isinstance(producer_receipt, dict)
+      or producer_receipt.get("schema_version") != 1
+      or producer_receipt.get("core_commit") != expected_commit
+      or producer_receipt.get("architecture") != "arm64"
+      or not re.fullmatch(
+          r"[0-9a-f]{64}",
+          str(producer_receipt.get("sdk_build_identity_sha256", "")))
+      or not re.fullmatch(
+          r"(?:[a-z0-9][a-z0-9._/-]*@)?sha256:[0-9a-f]{64}",
+          str(producer_receipt.get("source_image", "")))):
+    raise ValueError("card dependency producer receipt has an invalid cohort identity")
+  receipt_packages = producer_receipt.get("packages")
+  if not isinstance(receipt_packages, list) or not receipt_packages:
+    raise ValueError("card dependency producer receipt has no package inventory")
+  expected_packages = {}
+  for item in receipt_packages:
+    if (not isinstance(item, dict) or not isinstance(item.get("file"), str)
+        or Path(item["file"]).name != item["file"]
+        or not item["file"].endswith(".deb")
+        or not re.fullmatch(r"[0-9a-f]{64}", str(item.get("sha256", "")))):
+      raise ValueError("card dependency producer receipt has an invalid package")
+    if item["file"] in expected_packages:
+      raise ValueError("card dependency producer receipt has duplicate packages")
+    expected_packages[item["file"]] = item["sha256"]
+  if {path.name for path in dependency_debs} != set(expected_packages):
+    raise ValueError("card dependency files differ from the producer receipt")
+  for path in dependency_debs:
+    if sha256(path) != expected_packages[path.name]:
+      raise ValueError(f"card dependency checksum differs: {path.name}")
+  build_identity_path = source / "sdk-build-image.json"
+  validate_identity(
+      build_identity_path, str(producer_receipt["source_image"]), expected_commit)
+  if sha256(build_identity_path) != producer_receipt["sdk_build_identity_sha256"]:
+    raise ValueError("card dependency SDK build identity checksum differs")
   if output.resolve().exists():
     raise ValueError(f"private card qualification candidate already exists: {output}")
 
@@ -58,6 +98,11 @@ def prepare(source: Path, dependencies: Path, output: Path,
   metadata_path = output / "metadata-all.json"
   metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
   resources = dict(metadata["resources-checksum"])
+  if build_identity_path.name in resources:
+    if resources[build_identity_path.name] != sha256(build_identity_path):
+      raise ValueError("Core SDK build identity inventory checksum differs")
+  else:
+    resources[build_identity_path.name] = sha256(build_identity_path)
   for path, identity in zip(dependency_debs, identities, strict=True):
     if path.name in resources or (output / path.name).exists():
       raise ValueError(f"card dependency duplicates a candidate resource: {path.name}")
@@ -67,7 +112,9 @@ def prepare(source: Path, dependencies: Path, output: Path,
   receipt_name = "windows-card-qualification-dependencies.json"
   receipt = {
       "dependencies": identities,
+      "producer": producer_receipt,
       "purpose": "private non-installing Windows PCIe card qualification",
+      "source_sdk_build_identity_sha256": sha256(build_identity_path),
       "source_core_commit": expected_commit,
       "source_metadata_sha256": sha256(source / "metadata-all.json"),
   }

@@ -144,7 +144,14 @@ def cleanup(args: argparse.Namespace) -> None:
   if work == Path(work.anchor) or work == Path.home().resolve():
     errors.append(f"refusing to remove unsafe hardware work directory: {work}")
   else:
-    shutil.rmtree(work, ignore_errors=True)
+    try:
+      shutil.rmtree(work)
+    except FileNotFoundError:
+      pass
+    except OSError as error:
+      errors.append(f"hardware work directory cleanup failed: {error}")
+    if work.exists():
+      errors.append(f"hardware work directory remained after recovery: {work}")
   if install_root.exists():
     errors.append(f"cohort left files after recovery removal: {install_root}")
 
@@ -172,6 +179,9 @@ def main() -> None:
   parser.add_argument("--card-host", required=True)
   parser.add_argument(
       "--card-sudo-password-env", default="SIMAPCIE_CARD_SUDO_PASSWORD")
+  parser.add_argument(
+      "--card-sudo-password-stdin", action="store_true",
+      help="read one password line once from inherited stdin")
   parser.add_argument("--card-user", default="sima")
   parser.add_argument("--evidence", type=Path, required=True)
   parser.add_argument("--lock-file", type=Path, required=True)
@@ -180,6 +190,10 @@ def main() -> None:
   parser.add_argument("--upgrade-base-candidate", type=Path)
   parser.add_argument("--work", type=Path, required=True)
   args = parser.parse_args()
+  if args.card_sudo_password_stdin:
+    args.card_sudo_password_value = sys.stdin.readline().rstrip("\r\n")
+    if not args.card_sudo_password_value:
+      parser.error("--card-sudo-password-stdin received no password line")
   cleanup(args)
 
 

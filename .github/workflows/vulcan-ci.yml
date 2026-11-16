@@ -496,8 +496,75 @@ jobs:
                 --build-root /tmp/sima-neat-doc-examples-sdk
             fi
           '
+        python3 scripts/ci/pciehost/sdk_build_identity.py record \
+          --source-image "${sdk_image_id}" \
+          --core-commit "${GITHUB_SHA}" \
+          --output dist/sdk-build-image.json
 
       post_build_command: ls -lh dist
+
+  build-pcie-card-qualification-dependencies:
+    name: Build private PCIe card qualification dependencies
+    if: ${{ !inputs.offline_source_run_id && (inputs.build_mode || 'standard') == 'standard' && needs.detect-changes.outputs.docs_only != 'true' && needs.build.result == 'success' }}
+    needs:
+      - resolve-vulcan-config
+      - detect-changes
+      - build
+    runs-on:
+      - self-hosted
+      - linux
+      - arm64
+      - vulcan-${{ needs.resolve-vulcan-config.outputs.vulcan_env }}
+      - sdk-build
+      - ${{ needs.resolve-vulcan-config.outputs.sdk_cache }}
+      - ${{ needs.resolve-vulcan-config.outputs.capacity }}
+    permissions:
+      actions: read
+      contents: read
+      packages: read
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Download exact Core build identity
+        uses: actions/download-artifact@v4
+        with:
+          name: neat-core-dist
+          path: ${{ runner.temp }}/core-build
+      - name: Build immutable SDK dependency bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          build_identity="${RUNNER_TEMP}/core-build/sdk-build-image.json"
+          source_image=$(python3 scripts/ci/pciehost/sdk_build_identity.py verify \
+            --identity "${build_identity}" --core-commit "${GITHUB_SHA}")
+          test "$(docker image inspect --format '{{.Id}}' "${source_image}")" = "${source_image}"
+          test "$(docker image inspect --format '{{.Architecture}}' "${source_image}")" = arm64
+          output="${RUNNER_TEMP}/core-pcie-card-qualification-dependencies"
+          install -d -m 0700 "${output}"
+          source_date_epoch=$(git show -s --format=%ct "${GITHUB_SHA}")
+          docker run --rm --pull=never --network=none \
+            --cpus=2 --memory=2g --pids-limit=128 \
+            --mount "type=bind,src=${GITHUB_WORKSPACE},dst=/workspace,readonly" \
+            --mount "type=bind,src=${RUNNER_TEMP}/core-build,dst=/core-build,readonly" \
+            --mount "type=bind,src=${output},dst=/output" \
+            --entrypoint python3 "${source_image}" \
+            /workspace/scripts/ci/pciehost/build_card_qualification_dependencies.py \
+              --sysroot /opt/toolchain/aarch64/modalix \
+              --sdk-release /etc/sdk-release \
+              --build-identity /core-build/sdk-build-image.json \
+              --output /output \
+              --source-image "${source_image}" \
+              --core-commit "${GITHUB_SHA}" \
+              --source-date-epoch "${source_date_epoch}"
+      - name: Retain private qualification dependency bundle
+        uses: actions/upload-artifact@v6
+        with:
+          name: core-pcie-card-qualification-dependencies
+          path: ${{ runner.temp }}/core-pcie-card-qualification-dependencies/*
+          if-no-files-found: error
+          retention-days: 7
 
   publish-vulcan-artifacts:
     name: Publish to Vulcan
@@ -2115,10 +2182,11 @@ jobs:
 
   test-pciehost-windows:
     name: Build and qualify Windows PCIe host
-    if: ${{ always() && !inputs.offline_source_run_id && (inputs.build_mode || 'standard') == 'standard' && needs.detect-changes.outputs.docs_only != 'true' && needs.build.result == 'success' && needs.build-pciehost-packages.result == 'success' && needs.test-devkit.result == 'success' && needs.test-pciehost-hardware.result == 'success' }}
+    if: ${{ always() && !inputs.offline_source_run_id && (inputs.build_mode || 'standard') == 'standard' && needs.detect-changes.outputs.docs_only != 'true' && needs.build.result == 'success' && needs.build-pcie-card-qualification-dependencies.result == 'success' && needs.build-pciehost-packages.result == 'success' && needs.test-devkit.result == 'success' && needs.test-pciehost-hardware.result == 'success' }}
     needs:
       - detect-changes
       - build
+      - build-pcie-card-qualification-dependencies
       - build-pciehost-packages
       - test-devkit
       - test-pciehost-hardware
