@@ -11,7 +11,7 @@
  * graph execution without owning a long-lived runner.
  *
  * This header also defines:
- *   - `OverflowPolicy` — how `push()` behaves when the input queue is full.
+ *   - `OverflowPolicy` — how `try_push()` handles a full input queue.
  *   - `RunPreset` — preset bundles for common workloads (realtime, balanced, reliable).
  *   - `RunOptions` — runtime knobs (queue depth, overflow policy, output memory).
  *   - `MeasureScope` / `MeasureReport` — the canonical measurement surface.
@@ -154,7 +154,7 @@ using GraphRunAutoExportOptions = RunAutoExportOptions;
 struct RunOptions {
   RunPreset preset = RunPreset::Balanced; ///< Convenience preset that tunes the other fields.
   /**
-   * @brief Capacity of ingress and internal runtime queues.
+   * @brief Default capacity per ingress or internal runtime queue, in samples.
    *
    * Framework-created output queues also use this default. A public `Output` node owns its
    * terminal queue contract through `OutputOptions::max_buffers`, which takes precedence over this
@@ -162,9 +162,11 @@ struct RunOptions {
    */
   int queue_depth = 4;
   /**
-   * @brief Overflow policy for ingress and general runtime queues.
+   * @brief Admission policy for `try_push()` on a full input queue.
    *
-   * A public `Output` node uses its `OutputOptions::drop` policy instead.
+   * `Block` returns false for retry. `DropIncoming` counts a drop and returns false.
+   * `KeepLatest` replaces the oldest pending input, counts a drop, and returns true.
+   * A public `Output` node has its own `OutputOptions::drop` policy.
    */
   OverflowPolicy overflow_policy = OverflowPolicy::Block;
   OutputMemory output_memory =
@@ -236,7 +238,7 @@ struct RunOptions {
   }
 
   /**
-   * @brief Optional callback invoked when an input frame is dropped by the overflow policy.
+   * @brief Optional callback for frames discarded while the input stream changes format.
    *
    * Useful for telemetry — log the drop reason, update a counter, etc. Callback runs on the
    * pushing thread; keep it short.
@@ -649,12 +651,13 @@ public:
 
   /**
    * @brief Push `cv::Mat` inputs into the pipeline. Multi-input models accept one Mat per ingress.
-   * @return `true` on success; behavior on full queue is governed by `RunOptions::overflow_policy`.
+   * @return `true` once accepted. Waits for input space under every overflow policy.
+   * A graph input timeout returns `false` and leaves accepted work available to drain.
    */
   bool push(const std::vector<cv::Mat>& inputs);
   /// Push `cv::Mat` inputs into a named graph ingress. Use for multi-input graphs.
   bool push(std::string_view input_name, const std::vector<cv::Mat>& inputs);
-  /// Non-blocking variant of `push`; returns `false` immediately if the queue is full.
+  /// Applies `RunOptions::overflow_policy` without waiting for input space.
   bool try_push(const std::vector<cv::Mat>& inputs);
   /// Non-blocking named-ingress variant.
   bool try_push(std::string_view input_name, const std::vector<cv::Mat>& inputs);

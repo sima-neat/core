@@ -479,14 +479,9 @@ run = graph.build([tensor])
 
 反壓表示圖無法像應用程式希望的那樣快速地接受或發出資料。
 
-請有意識地使用以下控制項：
-
-- `queue_depth` 控制在執行階段佇列中可以等待多少工作。
-- `overflow_policy = Block` 對產生者應用反壓。
-- `overflow_policy = KeepLatest` 捨棄較舊的佇列輸入，以確保即時串流保持最新。
-- `overflow_policy = DropIncoming` 在佇列已滿時拒絕新的輸入。
-- `try_push(...)` 會傳回 `false`，而不是阻塞。
-- `on_input_drop` 會報告已捨棄的輸入，並提供 `InputDropInfo` 欄位，例如 `stream_id`、`frame_id`、`port_name` 和 `reason`。
+- `queue_depth` 設定每個採用此預設值的執行階段佇列容量。多個佇列及處理階段可以同時保有影格。
+- `push()` 會等待空位。輸入佇列已滿時，`try_push()` 會套用 `overflow_policy`。
+- `inputs_enqueued` 計算已接受的樣本數，`inputs_dropped` 計算依策略捨棄的樣本數。因 `Block` 拒絕而可重試的輸入不會計入這兩個計數器。
 
 對於多執行緒，請為一個 `Run` 使用一個推送執行緒和一個拉取執行緒。除非您的應用程式對這些呼叫進行序列化，否則請勿從多個執行緒同時向同一個 `Run` 推送資料。
 

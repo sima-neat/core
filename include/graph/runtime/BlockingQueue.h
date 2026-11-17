@@ -12,9 +12,12 @@
 #include <deque>
 #include <cstdint>
 #include <mutex>
+#include <optional>
 #include <utility>
 
 namespace simaai::neat::graph::runtime {
+
+enum class QueueOffer { Enqueued, ReplacedOldest, Full, Closed };
 
 enum class QueueTelemetryLevel : std::uint8_t {
   CountersOnly,
@@ -245,22 +248,32 @@ public:
 
   /// Non-blocking move push; returns false if closed or full.
   bool try_push(T&& item) {
+    return offer(std::move(item), nullptr) == QueueOffer::Enqueued;
+  }
+
+  /// Offer without waiting. If full, move the oldest queued item into `evicted` when supplied.
+  QueueOffer offer(T&& item, std::optional<T>* evicted) {
     const bool timing = timing_enabled();
     std::lock_guard<std::mutex> lock(mu_);
     if (closed_) {
       push_closed_count_.fetch_add(1, std::memory_order_relaxed);
-      return false;
+      return QueueOffer::Closed;
     }
-    if (!has_capacity_locked()) {
+    const bool full = !has_capacity_locked();
+    if (full && (!evicted || queue_.empty())) {
       push_timeout_count_.fetch_add(1, std::memory_order_relaxed);
-      return false;
+      return QueueOffer::Full;
     }
     queue_.push_back(QueueEntry{std::move(item), timing ? std::chrono::steady_clock::now()
                                                         : std::chrono::steady_clock::time_point{}});
+    if (full) {
+      evicted->emplace(std::move(queue_.front().value));
+      queue_.pop_front();
+    }
     push_count_.fetch_add(1, std::memory_order_relaxed);
     update_high_watermark_locked();
     cv_not_empty_.notify_one();
-    return true;
+    return full ? QueueOffer::ReplacedOldest : QueueOffer::Enqueued;
   }
 
   /// Restore an item to the front of the queue. Intended for a consumer that popped an item but

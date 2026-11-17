@@ -232,9 +232,10 @@ runtime::Endpoint named_input_endpoint_or_throw(const runtime::RunCore& core,
 
 runtime::EdgeRouterOptions graph_router_options_for_push(const runtime::RunCore& core, bool block) {
   runtime::EdgeRouterOptions options = core.graph_options.router_options();
+  options.request_stop_on_backpressure = false;
   if (!block) {
     options.push_timeout_ms = 0;
-    options.request_stop_on_backpressure = false;
+    options.public_try_push_policy = core.opt.overflow_policy;
   }
   return options;
 }
@@ -328,7 +329,6 @@ bool push_graph_samples_to_endpoint(runtime::RunCore& core, const runtime::Endpo
                    static_cast<long long>(stamped.duration_ns), stamped.stream_id.c_str(),
                    block ? 1 : 0);
     }
-    core.inputs_enqueued.fetch_add(1, std::memory_order_relaxed);
     const auto entry_at = std::chrono::steady_clock::now();
     runtime::trace_graph_message_event(runtime::TraceGraphMessageEventType::GraphEntry,
                                        core.graph_execution_.get(), runtime::invalid_edge_index(),
@@ -338,6 +338,7 @@ bool push_graph_samples_to_endpoint(runtime::RunCore& core, const runtime::Endpo
                          graph_router_options_for_push(core, block))) {
       return false;
     }
+    core.inputs_enqueued.fetch_add(1, std::memory_order_relaxed);
     core.record_graph_sample_entry(endpoint_name, stamped, entry_at);
     core.inputs_pushed.fetch_add(1, std::memory_order_relaxed);
   }
@@ -395,6 +396,9 @@ InputQueueAdmission admit_input_queue_locked(runtime::RunCore& core,
                                              runtime::PipelineSegmentRuntime& segment,
                                              std::unique_lock<std::mutex>& lock, bool block) {
   const int max = core.opt.queue_depth;
+  if (core.stop_requested.load()) {
+    return {false, max, "stop_requested"};
+  }
   if (segment.input_closed) {
     return {false, max, "input_closed"};
   }

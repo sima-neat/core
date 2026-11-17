@@ -59,6 +59,7 @@ struct RuntimePipelineQueueMsg {
   Sample sample;
   std::size_t edge_index = static_cast<std::size_t>(-1);
   bool sanitized = false;
+  graph::PortId source_port = graph::kInvalidPort;
 };
 
 struct IdentitySeqKey {

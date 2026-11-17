@@ -78,16 +78,13 @@ Use reusable mode for:
 
 ## Push timing
 
-`Run::push(...)` returns after the input is accepted at the graph boundary. It does not wait for that input to traverse every node.
+`push()` waits for input space under every overflow policy. If a graph input times out, it returns `false`. You can drain accepted work and retry. A successful submission means the input entered the graph.
 
-When the input queue is full:
+`try_push()` returns immediately when the input queue is full.
 
-- `OverflowPolicy::Block` applies backpressure to the producer;
-- `OverflowPolicy::DropIncoming` rejects the new input;
-- `OverflowPolicy::KeepLatest` drops older queued input so the live path stays fresh;
-- `try_push(...)` returns `false` instead of blocking.
-
-Choose the policy that matches the source. File and batch jobs usually want `Block`. Live streams usually want a freshness policy.
+- `Block` returns `false`. The caller can retry.
+- `DropIncoming` returns `false` and counts the incoming sample as dropped.
+- `KeepLatest` replaces the oldest pending sample, counts one drop, and returns `true`.
 
 ## Inline queues
 

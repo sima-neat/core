@@ -83,6 +83,7 @@ struct GraphRuntimeOptions {
   int pull_timeout_ms = 50;
   VerboseOptions verbose;
   RunOptions pipeline;
+  bool queue_public_input = false;
   PowerMonitorOptions power_monitor;
 
   EdgeRouterOptions router_options() const {
@@ -99,6 +100,7 @@ graph_runtime_options_from_run_options(const RunOptions& opt, const VerboseOptio
   GraphRuntimeOptions out;
   out.edge_queue = opt.queue_depth > 0 ? static_cast<std::size_t>(opt.queue_depth) : 0U;
   out.verbose = verbose;
+  out.queue_public_input = true;
   out.pipeline = opt;
   out.power_monitor = opt.power_monitor;
   // Connected public Graph::build() uses RunOptions as the only customer-facing
@@ -239,6 +241,9 @@ struct RunCore : std::enable_shared_from_this<RunCore> {
                                      Sample&& sample, std::size_t edge_index,
                                      const EdgeRouterOptions& options,
                                      bool cancel_on_public_input_close = false);
+  bool graph_dispatch_direct_input(const PipelineSegmentRuntime& pipe, graph::PortId port,
+                                   Sample sample, const EdgeRouterOptions& options,
+                                   bool cancel_on_public_input_close);
   bool graph_push(simaai::neat::graph::NodeId node_id, simaai::neat::graph::PortId port,
                   bool has_port, const Sample& sample, const EdgeRouterOptions& options);
   void record_graph_sample_entry(std::string_view endpoint, const Sample& sample,

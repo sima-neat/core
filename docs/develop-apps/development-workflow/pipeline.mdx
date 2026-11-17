@@ -491,14 +491,9 @@ run = graph.build([tensor])
 
 Backpressure means the graph cannot accept or emit data as fast as the app wants.
 
-Use these controls deliberately:
-
-- `queue_depth` controls how much work can wait in runtime queues.
-- `overflow_policy = Block` applies backpressure to the producer.
-- `overflow_policy = KeepLatest` drops older queued input so live streams stay fresh.
-- `overflow_policy = DropIncoming` rejects new input when the queue is full.
-- `try_push(...)` returns `false` instead of blocking.
-- `on_input_drop` reports dropped input with `InputDropInfo` fields such as `stream_id`, `frame_id`, `port_name`, and `reason`.
+- `queue_depth` sets the capacity of each runtime queue that uses this default. Several queues and processing stages can hold frames at the same time.
+- `push()` waits for space. `try_push()` applies `overflow_policy` when the input queue is full.
+- `inputs_enqueued` counts accepted submissions. `inputs_dropped` counts samples discarded by the policy. A retryable `Block` refusal increments neither counter.
 
 For threading, use one push thread and one pull thread for a `Run`. Do not push to the same `Run` concurrently from multiple threads unless your app serializes those calls.
 
