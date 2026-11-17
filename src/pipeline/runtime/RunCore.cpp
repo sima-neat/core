@@ -1162,8 +1162,7 @@ bool RunCore::graph_push(simaai::neat::graph::NodeId node_id, simaai::neat::grap
       return false;
     }
 
-    RuntimePipelineQueueMsg queued{.sample = sample,
-                                   .source_port = has_port ? port : graph::kInvalidPort};
+    RuntimePipelineQueueMsg queued{.sample = sample};
     const auto cancelled = [this] { return graph_stop_requested() || graph_public_input_closed(); };
     const bool ok =
         enqueue_graph_input(*this, *pipe.transport.input_queue, std::move(queued), options);

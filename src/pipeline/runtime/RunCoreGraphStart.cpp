@@ -1267,7 +1267,7 @@ void start_pipeline_push_thread(const std::shared_ptr<RunCore>& core, std::size_
       if (pipe.seg.boundary.direct_graph_source) {
         // Admission has already succeeded for all branches. Drain accepted inputs even after EOS.
         try {
-          core->graph_dispatch_direct_input(pipe, queued.source_port, std::move(queued.sample),
+          core->graph_dispatch_direct_input(pipe, graph::kInvalidPort, std::move(queued.sample),
                                             core->graph_options.router_options(), false);
         } catch (const NeatError& error) {
           core->graph_request_stop(error);

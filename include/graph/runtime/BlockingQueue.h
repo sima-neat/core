@@ -228,22 +228,7 @@ public:
 
   /// Non-blocking copy push; returns false if closed or full.
   bool try_push(const T& item) {
-    const bool timing = timing_enabled();
-    std::lock_guard<std::mutex> lock(mu_);
-    if (closed_) {
-      push_closed_count_.fetch_add(1, std::memory_order_relaxed);
-      return false;
-    }
-    if (!has_capacity_locked()) {
-      push_timeout_count_.fetch_add(1, std::memory_order_relaxed);
-      return false;
-    }
-    queue_.push_back(QueueEntry{item, timing ? std::chrono::steady_clock::now()
-                                             : std::chrono::steady_clock::time_point{}});
-    push_count_.fetch_add(1, std::memory_order_relaxed);
-    update_high_watermark_locked();
-    cv_not_empty_.notify_one();
-    return true;
+    return offer_impl(item, nullptr) == QueueOffer::Enqueued;
   }
 
   /// Non-blocking move push; returns false if closed or full.
@@ -253,27 +238,7 @@ public:
 
   /// Offer without waiting. If full, move the oldest queued item into `evicted` when supplied.
   QueueOffer offer(T&& item, std::optional<T>* evicted) {
-    const bool timing = timing_enabled();
-    std::lock_guard<std::mutex> lock(mu_);
-    if (closed_) {
-      push_closed_count_.fetch_add(1, std::memory_order_relaxed);
-      return QueueOffer::Closed;
-    }
-    const bool full = !has_capacity_locked();
-    if (full && (!evicted || queue_.empty())) {
-      push_timeout_count_.fetch_add(1, std::memory_order_relaxed);
-      return QueueOffer::Full;
-    }
-    queue_.push_back(QueueEntry{std::move(item), timing ? std::chrono::steady_clock::now()
-                                                        : std::chrono::steady_clock::time_point{}});
-    if (full) {
-      evicted->emplace(std::move(queue_.front().value));
-      queue_.pop_front();
-    }
-    push_count_.fetch_add(1, std::memory_order_relaxed);
-    update_high_watermark_locked();
-    cv_not_empty_.notify_one();
-    return full ? QueueOffer::ReplacedOldest : QueueOffer::Enqueued;
+    return offer_impl(std::move(item), evicted);
   }
 
   /// Restore an item to the front of the queue. Intended for a consumer that popped an item but
@@ -418,6 +383,32 @@ private:
 
   std::size_t effective_size_locked() const {
     return queue_.size() + restore_reservations_;
+  }
+
+  template <class U> QueueOffer offer_impl(U&& item, std::optional<T>* evicted) {
+    const bool timing = timing_enabled();
+    std::lock_guard<std::mutex> lock(mu_);
+    if (closed_) {
+      push_closed_count_.fetch_add(1, std::memory_order_relaxed);
+      return QueueOffer::Closed;
+    }
+    if (has_capacity_locked()) {
+      evicted = nullptr;
+    } else if (!evicted || queue_.empty()) {
+      push_timeout_count_.fetch_add(1, std::memory_order_relaxed);
+      return QueueOffer::Full;
+    }
+    queue_.emplace_back(std::forward<U>(item), timing ? std::chrono::steady_clock::now()
+                                                      : std::chrono::steady_clock::time_point{});
+    if (evicted) {
+      // Only the move overload requests eviction. The copy overload also supports copy-only T.
+      evicted->emplace(std::forward<U>(queue_.front().value));
+      queue_.pop_front();
+    }
+    push_count_.fetch_add(1, std::memory_order_relaxed);
+    update_high_watermark_locked();
+    cv_not_empty_.notify_one();
+    return evicted ? QueueOffer::ReplacedOldest : QueueOffer::Enqueued;
   }
 
   bool pop_impl(T& out, int timeout_ms, bool reserve_restore_slot) {
