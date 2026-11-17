@@ -69,7 +69,8 @@ revision. It publishes the Windows profile at
 branch `latest` tag only after the DevKit and every native profile pass.
 
 Vulcan CI runs the Windows lane only when the repository variable
-`ENABLE_WINDOWS_PCIE_CI` is `true`; otherwise it skips the lane, and branch
+`ENABLE_WINDOWS_PCIE_CI` is `true` and Vulcan CI is the top-level workflow
+(not when another workflow calls it); otherwise it skips the lane, and branch
 `latest` promotion and validation-only runs accept that skip.
 
 Core's main `Vulcan CI` calls the Windows workflow after the same Core revision

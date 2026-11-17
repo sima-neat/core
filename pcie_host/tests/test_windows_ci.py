@@ -698,6 +698,7 @@ class WindowsCiContracts(unittest.TestCase):
             context = {
                 "always()": True,
                 "vars.ENABLE_WINDOWS_PCIE_CI": variable,
+                "github.workflow": "Vulcan CI",
                 "inputs.offline_source_run_id": "",
                 "inputs.validation_only": False,
                 "inputs.build_mode": "standard",
@@ -734,6 +735,52 @@ class WindowsCiContracts(unittest.TestCase):
               else:
                 with self.assertRaisesRegex(SystemExit, "test-pciehost-windows"):
                   exec(compile(gate, str(MAIN_WORKFLOW), "exec"), {})
+
+  def test_workflows_calling_main_ci_skip_the_windows_lane_and_accept_the_skip(self):
+    # A called workflow sees the top-level caller's name, which the Windows
+    # preflight rejects for same-run Linux admission.
+    source = MAIN_WORKFLOW.read_text(encoding="utf-8")
+    self.assertEqual(re.search(r"(?m)^name: (.+)$", source)[1], "Vulcan CI")
+    self.assertIn('"${GITHUB_WORKFLOW}" != "Vulcan CI"', WORKFLOW.read_text(encoding="utf-8"))
+
+    def job(name):
+      return re.search(rf"(?ms)^  {re.escape(name)}:\n(.*?)(?=^  [\w-]+:\n|\Z)", source)[1]
+
+    def condition(name):
+      return re.search(r"(?m)^    if: (.+)$", job(name))[1]
+
+    callers = {}
+    for path in sorted(MAIN_WORKFLOW.parent.glob("*.yml")):
+      text = path.read_text(encoding="utf-8")
+      if "uses: ./.github/workflows/vulcan-ci.yml" in text:
+        callers[path.name] = re.search(r"(?m)^name: (.+)$", text)[1].strip()
+    self.assertEqual(set(callers), {
+        "long-tests-weekly.yml", "vulcan-fuzz-nightly.yml", "zero-skip.yml"})
+    gate_flag = re.search(r"(?m)^          WINDOWS_PCIE_CI: (.+)$", job("validation-complete"))[1]
+    for workflow_name in (*callers.values(), "Vulcan CI"):
+      with self.subTest(workflow=workflow_name):
+        context = {
+            "always()": True,
+            "vars.ENABLE_WINDOWS_PCIE_CI": "true",
+            "github.workflow": workflow_name,
+            "inputs.offline_source_run_id": "",
+            "inputs.validation_only": False,
+            "inputs.build_mode": "standard",
+            "github.ref_type": "branch",
+            "needs.detect-changes.outputs.docs_only": "false",
+        }
+        for upstream in (
+            "validate-windows-cohort-selectors", "build",
+            "build-pcie-card-qualification-dependencies", "build-pciehost-packages",
+            "test-devkit", "test-pciehost-hardware", "publish-pciehost-package"):
+          context[f"needs.{upstream}.result"] = "success"
+        called = workflow_name != "Vulcan CI"
+        self.assertEqual(
+            evaluate_actions_expression(condition("test-pciehost-windows"), context), not called)
+        context["needs.test-pciehost-windows.result"] = "skipped"
+        self.assertEqual(
+            evaluate_actions_expression(condition("promote-latest-tag"), context), called)
+        self.assertEqual(evaluate_actions_expression(gate_flag, context), not called)
 
   def test_main_ci_exposes_and_forwards_exact_windows_dependency_selectors(self):
     source = MAIN_WORKFLOW.read_text(encoding="utf-8")

@@ -520,8 +520,8 @@ the Windows lane consumes that run's exact card payload and runs validation-only
 Windows qualification success is required before Core advances its branch
 `latest` tag, so Linux regressions and dependency validation cannot be bypassed.
 Vulcan CI runs this lane only when the repository variable
-`ENABLE_WINDOWS_PCIE_CI` is `true`; otherwise the lane is skipped and does not
-gate `latest`.
+`ENABLE_WINDOWS_PCIE_CI` is `true` and Vulcan CI is not called by another
+workflow; otherwise the lane is skipped and does not gate `latest`.
 Windows packages are published only by a standalone `pcie-host-windows.yml`
 dispatch from `develop` or a `v*` tag, which must identify a prior successful
 Linux run for the same Core commit.
