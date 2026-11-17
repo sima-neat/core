@@ -8,6 +8,12 @@ from pathlib import Path
 
 
 SCRIPT = Path(__file__).parents[1] / "scripts" / "create_windows_metadata.py"
+SKILL_MANIFEST = (
+    Path(__file__).parents[1]
+    / "skills"
+    / "neat-pcie-application-builder"
+    / "playbook.yml"
+)
 SPEC = importlib.util.spec_from_file_location("create_windows_metadata", SCRIPT)
 MODULE = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(MODULE)
@@ -42,6 +48,7 @@ class WindowsMetadataTests(unittest.TestCase):
     self.assertEqual(
         result["installation"]["skills"],
         [{
+            "id": "neat-pcie-application-builder",
             "environment": "ProgramFiles",
             "relative": (
                 "SimaPCIeHost\\share\\sima-pcie-host\\skills\\"
@@ -49,6 +56,12 @@ class WindowsMetadataTests(unittest.TestCase):
             ),
         }],
     )
+    manifest_id = next(
+        line.split(":", 1)[1].strip()
+        for line in SKILL_MANIFEST.read_text(encoding="utf-8").splitlines()
+        if line.startswith("id:")
+    )
+    self.assertEqual(result["installation"]["skills"][0]["id"], manifest_id)
     prerequisites = result["installation"]["prerequisites"]
     self.assertEqual(
         [item["value"] for item in prerequisites if item["type"] == "executable"],

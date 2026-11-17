@@ -113,6 +113,7 @@ def metadata(msi: Path, wheel: Path, version: str, branch: str, commit: str,
       },
       "skills": [
           {
+              "id": "neat-pcie-application-builder",
               "environment": "ProgramFiles",
               "relative": (
                   "SimaPCIeHost\\share\\sima-pcie-host\\skills\\"

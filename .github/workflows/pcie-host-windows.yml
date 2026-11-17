@@ -431,6 +431,7 @@ jobs:
       actions: read
     env:
       GSTREAMER_ROOT_X86_64: ${{ vars.GSTREAMER_ROOT_X86_64 }}
+      SIMA_WINDOWS_SHORT_WORK_ROOT: C:\nr\c-${{ github.run_id }}-${{ github.run_attempt }}
       SIMA_WINDOWS_CMAKE_PREFIX_PATH: ${{ vars.SIMA_WINDOWS_CMAKE_PREFIX_PATH }}
       SIMA_WINDOWS_DEPENDENCY_RUNTIME_PATH: ${{ vars.SIMA_WINDOWS_DEPENDENCY_RUNTIME_PATH }}
       SIMA_WINDOWS_PLATFORM_INCLUDE_DIR: ${{ vars.SIMA_WINDOWS_PLATFORM_INCLUDE_DIR }}
@@ -470,6 +471,12 @@ jobs:
           )) {
             if (-not (Get-Item "env:$name").Value) { throw "Required producer variable is unset: $name" }
           }
+          if (-not $env:SIMA_WINDOWS_SHORT_WORK_ROOT.StartsWith("C:\nr\c-")) {
+            throw "Windows producer work root must be a run-owned directory below C:\nr"
+          }
+          if (Test-Path -LiteralPath $env:SIMA_WINDOWS_SHORT_WORK_ROOT) {
+            Remove-Item -LiteralPath $env:SIMA_WINDOWS_SHORT_WORK_ROOT -Recurse -Force
+          }
           $arguments = @(
             "scripts/ci/pciehost/build_windows.py",
             "--branch", $env:SOURCE_BRANCH,
@@ -479,7 +486,7 @@ jobs:
             "--platform-include", $env:SIMA_WINDOWS_PLATFORM_INCLUDE_DIR,
             "--python-wheelhouse", $env:SIMA_WINDOWS_PYTHON_WHEELHOUSE,
             "--scheduler-candidate", "$env:RUNNER_TEMP\core-windows-dependencies\scheduler",
-            "--work", "$env:RUNNER_TEMP\core-windows-build",
+            "--work", $env:SIMA_WINDOWS_SHORT_WORK_ROOT,
             "--output", "$env:RUNNER_TEMP\core-windows-dist"
           )
           if ($env:SIMA_WINDOWS_CMAKE_PREFIX_PATH) {
@@ -515,6 +522,17 @@ jobs:
           path: ${{ runner.temp }}/core-windows-dist/*
           if-no-files-found: error
           retention-days: 7
+      - name: Remove short Windows producer work root
+        if: always()
+        shell: powershell
+        run: |
+          $ErrorActionPreference = "Stop"
+          if (-not $env:SIMA_WINDOWS_SHORT_WORK_ROOT.StartsWith("C:\nr\c-")) {
+            throw "Refusing to remove an unexpected Windows producer work root"
+          }
+          if (Test-Path -LiteralPath $env:SIMA_WINDOWS_SHORT_WORK_ROOT) {
+            Remove-Item -LiteralPath $env:SIMA_WINDOWS_SHORT_WORK_ROOT -Recurse -Force
+          }
   hardware:
     name: Direct-card Windows acceptance
     needs: [native, linux_release, card_candidate]

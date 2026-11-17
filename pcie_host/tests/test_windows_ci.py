@@ -618,7 +618,20 @@ class WindowsCiContracts(unittest.TestCase):
     self.assertIn("core-pciehost-windows-dependencies", source)
     self.assertIn("linux_current_run", source)
     self.assertIn("require_upgrade", source)
-    self.assertEqual(source.count("shell: powershell"), 5)
+    self.assertIn(
+        r"SIMA_WINDOWS_SHORT_WORK_ROOT: C:\nr\c-${{ github.run_id }}-${{ github.run_attempt }}",
+        source,
+    )
+    native_job = source.split("  native:\n", 1)[1].split("  hardware:\n", 1)[0]
+    self.assertIn('"--work", $env:SIMA_WINDOWS_SHORT_WORK_ROOT', native_job)
+    self.assertIn("Remove short Windows producer work root", native_job)
+    self.assertEqual(
+        native_job.count(
+            "Remove-Item -LiteralPath $env:SIMA_WINDOWS_SHORT_WORK_ROOT -Recurse -Force"
+        ),
+        2,
+    )
+    self.assertEqual(source.count("shell: powershell"), 6)
 
   def test_main_ci_requires_windows_acceptance_before_promotion(self):
     source = MAIN_WORKFLOW.read_text(encoding="utf-8")
