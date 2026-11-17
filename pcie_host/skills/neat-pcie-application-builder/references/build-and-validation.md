@@ -13,7 +13,9 @@ dpkg-query -W sima-pcie-host sima-pcie-host-dev
 command -v pcie-setup.sh
 ```
 
-On Windows, verify the native installation and plugin in PowerShell:
+Native Windows needs the x64 GStreamer MSVC runtime, plus its development installation for C++
+builds. Python applications need CPython 3.14 x64, the only Python qualified for the Windows wheel.
+Verify the native installation and plugin in PowerShell:
 
 ```powershell
 $root = "C:\Program Files\SimaPCIeHost"
@@ -83,10 +85,14 @@ cmake -S . -B build
 cmake --build build -j"$(nproc)"
 ```
 
-With Visual Studio Build Tools on Windows, use the installed package prefix:
+With Visual Studio Build Tools on Windows, `find_package(SimaPCIeHost)` finds GStreamer through
+pkg-config and zlib through CMake. Point both at the GStreamer development installation:
 
 ```powershell
-cmake -S . -B build -A x64 -DCMAKE_PREFIX_PATH="C:\Program Files\SimaPCIeHost"
+$gstRoot = "C:\Program Files\gstreamer\1.0\msvc_x86_64"
+$env:PKG_CONFIG = "$gstRoot\bin\pkg-config.exe"
+$env:PKG_CONFIG_PATH = "$gstRoot\lib\pkgconfig"
+cmake -S . -B build -A x64 -DCMAKE_PREFIX_PATH="C:\Program Files\SimaPCIeHost;$gstRoot"
 cmake --build build --config Release
 ```
 
