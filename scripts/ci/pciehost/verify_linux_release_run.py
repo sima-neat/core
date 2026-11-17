@@ -14,6 +14,7 @@ import urllib.request
 GITHUB_API = "https://api.github.com"
 PAGE_SIZE = 100
 MAX_COLLECTION_ITEMS = 10_000
+MAX_ARTIFACT_SIZE_BYTES = 2 * 1024 * 1024 * 1024
 
 
 def validate_repository(repository: str) -> None:
@@ -163,6 +164,8 @@ def verify_artifact(artifacts: list[dict], run: dict, run_id: int,
     raise ValueError(f"required artifact {required_name!r} has an invalid id")
   if not _positive_integer(artifact.get("size_in_bytes")):
     raise ValueError(f"required artifact {required_name!r} is empty")
+  if artifact["size_in_bytes"] > MAX_ARTIFACT_SIZE_BYTES:
+    raise ValueError(f"required artifact {required_name!r} exceeds the size bound")
   digest = artifact.get("digest")
   if not isinstance(digest, str) or not re.fullmatch(r"sha256:[0-9a-f]{64}", digest):
     raise ValueError(f"required artifact {required_name!r} has an invalid sha256 digest")

@@ -15,11 +15,76 @@ from unittest.mock import Mock, patch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'scripts'))
+sys.path.insert(0, str(ROOT.parent / 'tools/ci'))
 import pcie_delivery as delivery
 spec = importlib.util.spec_from_file_location('native_acquisition', ROOT / 'scripts/acquire_scheduler.py')
 acquisition = importlib.util.module_from_spec(spec); spec.loader.exec_module(acquisition)
+spec = importlib.util.spec_from_file_location(
+    'client_acquisition', ROOT.parent / 'tools/ci/acquire_scheduler.py')
+client_acquisition = importlib.util.module_from_spec(spec); spec.loader.exec_module(client_acquisition)
 spec = importlib.util.spec_from_file_location('native_publication', ROOT / 'scripts/verify_published.py')
 publication = importlib.util.module_from_spec(spec); spec.loader.exec_module(publication)
+
+
+class SchedulerRunCandidate(unittest.TestCase):
+    commit = 'a' * 40
+
+    def candidate(self, root):
+        candidate = root / 'download'; candidate.mkdir()
+        resources = {}
+        for name, value in {
+                'client_bootstrap.py': b'# exact downloaded bootstrap\n',
+                'metadata.json': b'{}\n',
+                'scheduler.deb': b'exact downloaded package'}.items():
+            path = candidate / name; path.write_bytes(value)
+            resources[name] = {
+                'sha256': client_acquisition.digest(path), 'size': path.stat().st_size}
+        (candidate / 'candidate.json').write_text(json.dumps({
+            'schema_version': 1, 'component': 'scheduler', 'source_commit': self.commit,
+            'qualified': False, 'resources': resources}))
+        return candidate
+
+    def test_exact_actions_candidate_is_copied_before_bootstrap_execution(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp); candidate = self.candidate(root); staged = root / 'staged'
+            receipt = client_acquisition.stage_run_candidate(
+                candidate, staged, self.commit, 'feature/windows')
+            self.assertEqual(receipt['commit'], self.commit)
+            self.assertEqual(receipt['branch'], 'feature/windows')
+            self.assertEqual(set(receipt['resources']), {
+                'client_bootstrap.py', 'metadata.json', 'scheduler.deb'})
+            self.assertEqual((staged / 'scheduler.deb').read_bytes(),
+                             (candidate / 'scheduler.deb').read_bytes())
+
+    def test_exact_actions_candidate_fails_closed_on_identity_and_inventory_drift(self):
+        for mutation, error in (
+                ('wrong-commit', 'identity differs'),
+                ('missing', 'resource changed'),
+                ('undeclared', 'undeclared resources'),
+                ('tampered', 'resource changed')):
+            with self.subTest(mutation=mutation), tempfile.TemporaryDirectory() as temp:
+                root = Path(temp); candidate = self.candidate(root)
+                if mutation == 'wrong-commit':
+                    data = json.loads((candidate / 'candidate.json').read_text())
+                    data['source_commit'] = 'b' * 40
+                    (candidate / 'candidate.json').write_text(json.dumps(data))
+                elif mutation == 'missing':
+                    (candidate / 'scheduler.deb').unlink()
+                elif mutation == 'undeclared':
+                    (candidate / 'extra').write_text('not admitted')
+                else:
+                    (candidate / 'scheduler.deb').write_text('changed')
+                with self.assertRaisesRegex(ValueError, error):
+                    client_acquisition.stage_run_candidate(
+                        candidate, root / 'staged', self.commit, 'feature/windows')
+
+    def test_exact_actions_candidate_enforces_resource_and_size_bounds(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp); candidate = self.candidate(root)
+            with patch.object(client_acquisition, 'MAX_CANDIDATE_BYTES', 1):
+                with self.assertRaisesRegex(ValueError, 'size bound'):
+                    client_acquisition.stage_run_candidate(
+                        candidate, root / 'staged', self.commit, 'feature/windows')
 
 
 class PublicationInventory(unittest.TestCase):

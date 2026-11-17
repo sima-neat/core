@@ -384,16 +384,71 @@ jobs:
           echo "${HOME}/.sima-cli/.venv/bin" >> "${GITHUB_PATH}"
           "${HOME}/.sima-cli/.venv/bin/sima-cli" --version
 
+      - name: Mint read-only Scheduler run token
+        if: inputs.scheduler_run_id != ''
+        id: scheduler-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.NEAT_RELEASES_APP_ID }}
+          private-key: ${{ secrets.NEAT_RELEASES_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: scheduler
+          permission-actions: read
+          permission-contents: read
+
+      - name: Admit exact Scheduler analysis candidate
+        if: inputs.scheduler_run_id != ''
+        env:
+          GITHUB_TOKEN: ${{ steps.scheduler-token.outputs.token }}
+        run: |
+          set -euo pipefail
+          python3 scripts/ci/pciehost/verify_linux_release_run.py \
+            --repository "sima-neat/scheduler" \
+            --run-id "${{ inputs.scheduler_run_id }}" \
+            --expected-commit "${{ inputs.scheduler_commit }}" \
+            --workflow-name "Scheduler" \
+            --workflow-path ".github/workflows/ci.yml" \
+            --required-reusable-workflow "sima-neat/scheduler/.github/workflows/pcie-host.yml" \
+            --required-job "Check ARM64 build result and package" \
+            --required-job "Verify Scheduler build and Vulcan publication" \
+            --required-artifact "scheduler-candidate" \
+            --output "${RUNNER_TEMP}/scheduler-analysis-admission.json"
+
+      - name: Download exact Scheduler analysis candidate
+        if: inputs.scheduler_run_id != ''
+        uses: actions/download-artifact@v4
+        with:
+          name: scheduler-candidate
+          path: ${{ runner.temp }}/scheduler-analysis-candidate
+          repository: sima-neat/scheduler
+          run-id: ${{ inputs.scheduler_run_id }}
+          github-token: ${{ steps.scheduler-token.outputs.token }}
+
       - name: Acquire published Scheduler for analysis
         env:
           NEAT_VULCAN_ENV: ${{ needs.resolve-vulcan-config.outputs.vulcan_env }}
+          SCHEDULER_RUN_ID: ${{ inputs.scheduler_run_id || '' }}
+          SCHEDULER_COMMIT: ${{ inputs.scheduler_commit || '' }}
         shell: bash
         run: |
           set -euo pipefail
+          if [[ -n "${SCHEDULER_RUN_ID:-}" && -z "${SCHEDULER_COMMIT:-}" ]] ||
+             [[ -z "${SCHEDULER_RUN_ID:-}" && -n "${SCHEDULER_COMMIT:-}" ]]; then
+            echo "scheduler_run_id and scheduler_commit must be supplied together." >&2
+            exit 1
+          fi
+          scheduler_args=()
+          if [[ -n "${SCHEDULER_RUN_ID:-}" ]]; then
+            scheduler_args+=(
+              --candidate "${RUNNER_TEMP}/scheduler-analysis-candidate"
+              --commit "${SCHEDULER_COMMIT}"
+            )
+          fi
           dependency_exports=$(python3 tools/ci/acquire_scheduler.py \
             --branch "${GITHUB_HEAD_REF:-${GITHUB_REF_NAME}}" \
             --environment "$NEAT_VULCAN_ENV" \
-            --output "$RUNNER_TEMP/core-hygiene-dependencies")
+            --output "$RUNNER_TEMP/core-hygiene-dependencies" \
+            "${scheduler_args[@]}")
           eval "$dependency_exports"
           python3 - "$GITHUB_ENV" <<'PY'
           import os, sys
@@ -735,19 +790,69 @@ jobs:
           echo "${HOME}/.sima-cli/.venv/bin" >> "${GITHUB_PATH}"
           "${HOME}/.sima-cli/.venv/bin/sima-cli" --version
 
+      - name: Mint read-only Scheduler run token
+        if: inputs.scheduler_run_id != ''
+        id: scheduler-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.NEAT_RELEASES_APP_ID }}
+          private-key: ${{ secrets.NEAT_RELEASES_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: scheduler
+          permission-actions: read
+          permission-contents: read
+
+      - name: Admit exact native Scheduler candidate
+        if: inputs.scheduler_run_id != ''
+        env:
+          GITHUB_TOKEN: ${{ steps.scheduler-token.outputs.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/ci/pciehost/verify_linux_release_run.py \
+            --repository "sima-neat/scheduler" \
+            --run-id "${{ inputs.scheduler_run_id }}" \
+            --expected-commit "${{ inputs.scheduler_commit }}" \
+            --workflow-name "Scheduler" \
+            --workflow-path ".github/workflows/ci.yml" \
+            --required-reusable-workflow "sima-neat/scheduler/.github/workflows/pcie-host.yml" \
+            --required-job "Build, test, and publish native PCIe profiles / Native ${{ matrix.distro }} ${{ matrix.deb_arch }}" \
+            --required-job "Verify Scheduler build and Vulcan publication" \
+            --required-artifact "scheduler-native-${{ matrix.distro }}-${{ matrix.deb_arch }}" \
+            --output "${RUNNER_TEMP}/scheduler-native-admission.json"
+
+      - name: Download exact native Scheduler candidate
+        if: inputs.scheduler_run_id != ''
+        uses: actions/download-artifact@v4
+        with:
+          name: scheduler-native-${{ matrix.distro }}-${{ matrix.deb_arch }}
+          path: ${{ runner.temp }}/scheduler-native-candidate
+          repository: sima-neat/scheduler
+          run-id: ${{ inputs.scheduler_run_id }}
+          github-token: ${{ steps.scheduler-token.outputs.token }}
+
       - name: Build PCIe host Debian packages
         shell: bash
         run: |
           set -euo pipefail
           cd pcie_host
           scheduler_spec_args=()
-          if [[ -n "${SCHEDULER_NATIVE_SPEC}" ]]; then
+          if [[ -n "${SCHEDULER_RUN_ID}" && -z "${SCHEDULER_COMMIT}" ]] ||
+             [[ -z "${SCHEDULER_RUN_ID}" && -n "${SCHEDULER_COMMIT}" ]]; then
+            echo "scheduler_run_id and scheduler_commit must be supplied together." >&2
+            exit 1
+          fi
+          if [[ -n "${SCHEDULER_RUN_ID}" ]]; then
+            scheduler_spec_args+=(--scheduler-candidate "${RUNNER_TEMP}/scheduler-native-candidate")
+          elif [[ -n "${SCHEDULER_NATIVE_SPEC}" ]]; then
             scheduler_spec_args+=(--scheduler-spec "${SCHEDULER_NATIVE_SPEC}")
           fi
           ./build.sh --clean --all --skip-deps --jobs "${PCIE_HOST_BUILD_JOBS:-$(nproc)}" "${scheduler_spec_args[@]}" --scheduler-environment "${NEAT_VULCAN_ENV}"
         env:
           PCIE_HOST_BUILD_JOBS: ${{ vars.PCIE_HOST_BUILD_JOBS }}
           SCHEDULER_NATIVE_SPEC: ${{ vars.SCHEDULER_NATIVE_SPEC }}
+          SCHEDULER_RUN_ID: ${{ inputs.scheduler_run_id || '' }}
+          SCHEDULER_COMMIT: ${{ inputs.scheduler_commit || '' }}
           NEAT_VULCAN_ENV: ${{ needs.resolve-vulcan-config.outputs.vulcan_env }}
 
       - name: Run PCIe host unit tests

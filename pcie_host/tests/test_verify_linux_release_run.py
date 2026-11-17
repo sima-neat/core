@@ -207,6 +207,8 @@ class ReleaseRunAdmissionTests(unittest.TestCase):
         "expired": lambda artifact: artifact.update(expired=True),
         "invalid id": lambda artifact: artifact.update(id=0),
         "empty": lambda artifact: artifact.update(size_in_bytes=0),
+        "oversized": lambda artifact: artifact.update(
+            size_in_bytes=MODULE.MAX_ARTIFACT_SIZE_BYTES + 1),
         "bad digest": lambda artifact: artifact.update(digest="sha256:not-a-digest"),
         "missing binding": lambda artifact: artifact.pop("workflow_run"),
         "wrong run": lambda artifact: artifact["workflow_run"].update(id=self.run_id + 1),

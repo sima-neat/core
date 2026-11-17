@@ -705,6 +705,48 @@ class WindowsCiContracts(unittest.TestCase):
           self.assertIn(
               "needs.validate-windows-cohort-selectors.result == 'success'", match[1])
 
+  def test_main_ci_uses_exact_scheduler_run_for_linux_consumers(self):
+    source = MAIN_WORKFLOW.read_text(encoding="utf-8")
+    hygiene = source.split("  code-hygiene:\n", 1)[1].split(
+        "  resolve-test-runner:\n", 1)[0]
+    packages = source.split("  build-pciehost-packages:\n", 1)[1].split(
+        "  publish-pciehost-package:\n", 1)[0]
+
+    for body in (hygiene, packages):
+      self.assertIn("actions/create-github-app-token@v2", body)
+      self.assertIn('repository: sima-neat/scheduler', body)
+      self.assertIn('run-id: ${{ inputs.scheduler_run_id }}', body)
+      self.assertIn('--workflow-name "Scheduler"', body)
+      self.assertIn('--workflow-path ".github/workflows/ci.yml"', body)
+      self.assertIn(
+          '--required-reusable-workflow '
+          '"sima-neat/scheduler/.github/workflows/pcie-host.yml"', body)
+      self.assertIn('--required-job "Verify Scheduler build and Vulcan publication"', body)
+
+    self.assertIn('--required-artifact "scheduler-candidate"', hygiene)
+    self.assertIn('name: scheduler-candidate', hygiene)
+    self.assertIn('--candidate "${RUNNER_TEMP}/scheduler-analysis-candidate"', hygiene)
+    self.assertIn('--commit "${SCHEDULER_COMMIT}"', hygiene)
+
+    artifact = 'scheduler-native-${{ matrix.distro }}-${{ matrix.deb_arch }}'
+    self.assertIn(f'--required-artifact "{artifact}"', packages)
+    self.assertIn(f'name: {artifact}', packages)
+    self.assertIn(
+        '--scheduler-candidate "${RUNNER_TEMP}/scheduler-native-candidate"', packages)
+    self.assertIn('elif [[ -n "${SCHEDULER_NATIVE_SPEC}" ]]', packages)
+    self.assertIn(
+        'scheduler_run_id and scheduler_commit must be supplied together.', packages)
+
+  def test_scheduler_actions_artifacts_are_bounded_before_use(self):
+    verifier = (ROOT / "scripts/ci/pciehost/verify_linux_release_run.py").read_text(
+        encoding="utf-8")
+    acquisition = (ROOT / "tools/ci/acquire_scheduler.py").read_text(encoding="utf-8")
+    self.assertIn("MAX_ARTIFACT_SIZE_BYTES", verifier)
+    self.assertIn("exceeds the size bound", verifier)
+    self.assertIn("MAX_CANDIDATE_RESOURCES", acquisition)
+    self.assertIn("MAX_CANDIDATE_BYTES", acquisition)
+    self.assertIn("Scheduler candidate contains undeclared resources", acquisition)
+
   def test_main_ci_exact_windows_dependency_selectors_fail_closed(self):
     source = MAIN_WORKFLOW.read_text(encoding="utf-8")
     job = source.split("  validate-windows-cohort-selectors:\n", 1)[1].split(
