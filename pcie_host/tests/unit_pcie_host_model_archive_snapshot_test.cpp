@@ -1,6 +1,10 @@
 #include "HostPlatform.h"
 #include "ModelArchiveSnapshot.h"
+#include "model/internal/ModelArchiveLoader.h"
 
+#include <zlib.h>
+
+#include <cstdio>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -9,6 +13,7 @@
 
 namespace fs = std::filesystem;
 namespace pcie_internal = simaai::neat::pcie::internal;
+namespace loader = simaai::neat::internal;
 
 namespace {
 
@@ -87,6 +92,77 @@ void test_spaces_and_unicode_source_path_use_safe_snapshot_name() {
           "spaces or Unicode changed the model snapshot contents");
 }
 
+// One ustar member, as tests/tools/make_model_archive_fixtures.py writes them.
+std::string tar_member(const std::string& name, const std::string& data) {
+  std::string header(512, '\0');
+  const auto put = [&header](const std::size_t offset, const std::string& value) {
+    header.replace(offset, value.size(), value);
+  };
+  char size[12];
+  std::snprintf(size, sizeof(size), "%011o", static_cast<unsigned>(data.size()));
+  put(0, name);
+  put(100, "0000644");
+  put(108, "0000000");
+  put(116, "0000000");
+  put(124, size);
+  put(136, "00000000000");
+  put(148, "        ");
+  put(156, "0");
+  put(257, "ustar");
+  put(263, "00");
+  unsigned checksum = 0;
+  for (const unsigned char byte : header) {
+    checksum += byte;
+  }
+  char field[8];
+  std::snprintf(field, sizeof(field), "%06o", checksum);
+  put(148, std::string(field) + '\0' + ' ');
+  return header + data + std::string((512 - data.size() % 512) % 512, '\0');
+}
+
+std::string gzip(const std::string& data) {
+  z_stream stream{};
+  require(deflateInit2(&stream, Z_DEFAULT_COMPRESSION, Z_DEFLATED, 16 + MAX_WBITS, 8,
+                       Z_DEFAULT_STRATEGY) == Z_OK,
+          "failed to start gzip");
+  std::string out(deflateBound(&stream, static_cast<uLong>(data.size())), '\0');
+  stream.next_in = reinterpret_cast<Bytef*>(const_cast<char*>(data.data()));
+  stream.avail_in = static_cast<uInt>(data.size());
+  stream.next_out = reinterpret_cast<Bytef*>(out.data());
+  stream.avail_out = static_cast<uInt>(out.size());
+  const int status = deflate(&stream, Z_FINISH);
+  out.resize(stream.total_out);
+  deflateEnd(&stream);
+  require(status == Z_STREAM_END, "failed to gzip the test archive");
+  return out;
+}
+
+// The archive, staging and output directories sit under a name no single ANSI code page holds,
+// as under a non-ASCII Windows profile or TEMP.
+void test_loader_extracts_under_unicode_directory() {
+  pcie_internal::ScopedTempDirectory temp("sima-neat-pcie-snapshot-test");
+  const fs::path directory =
+      temp.path() / pcie_internal::host_path_from_string("Jos\xC3\xA9 \xCE\xB4");
+  fs::create_directories(directory);
+  const fs::path archive = directory / "model.tar.gz";
+  write_file(archive, gzip(tar_member("etc/model_mpk.json", "{}") +
+                           tar_member("share/model.elf", "elf") + std::string(1024, '\0')));
+
+  loader::ModelArchiveLoaderOptions options;
+  options.staging_base = pcie_internal::host_path_string(directory);
+  options.check_output_free_space = false;
+  const auto extracted = loader::ModelArchiveLoader::extract(
+      pcie_internal::host_path_string(archive), pcie_internal::host_path_string(directory / "out"),
+      options);
+  const fs::path package_root = pcie_internal::host_path_from_string(extracted.package_root);
+  require(package_root == directory / "out" / "model",
+          "loader returned a different package root: " + extracted.package_root);
+  require(read_file(package_root / "etc" / "model_mpk.json") == "{}",
+          "loader did not extract the MPK manifest under a Unicode directory");
+  require(read_file(package_root / "share" / "model.elf") == "elf",
+          "loader did not extract the model binary under a Unicode directory");
+}
+
 void test_non_tar_gz_source_is_rejected_before_snapshot() {
 #ifdef _WIN32
   pcie_internal::ScopedTempDirectory temp("sima-neat-pcie-snapshot-test");
@@ -111,6 +187,7 @@ int main() {
     test_retargeting_symlink_does_not_change_snapshot();
     test_spaces_and_unicode_source_path_use_safe_snapshot_name();
     test_non_tar_gz_source_is_rejected_before_snapshot();
+    test_loader_extracts_under_unicode_directory();
     std::cout << "[PASS] model archive snapshot\n";
     return 0;
   } catch (const std::exception& error) {

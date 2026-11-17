@@ -580,7 +580,8 @@ PcieModelFacts read_model_facts(const std::string& model_path, const ModelOption
 
   namespace sc = simaai::neat::pipeline_internal::sima::static_contract;
   std::string error;
-  const auto loaded = sc::MpkDecoder::load_package_root(extracted.package_root, &error);
+  const auto loaded =
+      sc::MpkDecoder::load_package_root(host_path_from_string(extracted.package_root), &error);
   if (!loaded.has_value()) {
     throw std::runtime_error("failed to read MPK contract: " + error);
   }

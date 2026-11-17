@@ -434,10 +434,14 @@ if (SIMAPCIE_BUILD_TESTS)
   add_executable(unit_pcie_host_model_archive_snapshot_test
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/unit_pcie_host_model_archive_snapshot_test.cpp
   )
+  target_compile_definitions(unit_pcie_host_model_archive_snapshot_test PRIVATE
+    SIMA_NEAT_INTERNAL=1)
   target_include_directories(unit_pcie_host_model_archive_snapshot_test PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${SIMA_NEAT_CORE_ROOT}/src
   )
-  target_link_libraries(unit_pcie_host_model_archive_snapshot_test PRIVATE sima_neat_pcie_host)
+  target_link_libraries(unit_pcie_host_model_archive_snapshot_test PRIVATE
+    sima_neat_pcie_host ZLIB::ZLIB)
 
   add_executable(unit_pcie_host_lifecycle_test
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/unit_pcie_host_lifecycle_test.cpp

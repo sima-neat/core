@@ -60,6 +60,26 @@ struct ArchiveContents {
 
 [[noreturn]] void throw_archive(ModelArchiveErrorClass code, const std::string& message);
 
+// Paths cross this loader's interface as UTF-8. MSVC's narrow path conversions use the ANSI code
+// page instead, which breaks a non-ASCII profile or temporary directory, so Windows converts
+// explicitly.
+fs::path utf8_path(const std::string& path) {
+#ifdef _WIN32
+  return fs::path(std::u8string(path.begin(), path.end()));
+#else
+  return fs::path(path);
+#endif
+}
+
+std::string utf8_string(const fs::path& path) {
+#ifdef _WIN32
+  const std::u8string utf8 = path.u8string();
+  return std::string(utf8.begin(), utf8.end());
+#else
+  return path.string();
+#endif
+}
+
 std::string shell_quote(const std::string& value) {
 #ifdef _WIN32
   if (value.find('"') != std::string::npos || value.find('%') != std::string::npos) {
@@ -89,9 +109,28 @@ const char* null_redirect() {
 #endif
 }
 
+// Windows tar reads its arguments in the ANSI code page, so cmd.exe opens the archive as
+// standard input and tar never sees the path.
+std::string tar_archive_operand(const std::string& tar_path) {
+#ifdef _WIN32
+  return "- <" + shell_quote(tar_path);
+#else
+  return shell_quote(tar_path);
+#endif
+}
+
 FILE* open_read_pipe(const std::string& command) {
 #ifdef _WIN32
-  return ::_popen(command.c_str(), "rb");
+  const int size = ::MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, command.data(),
+                                         static_cast<int>(command.size()), nullptr, 0);
+  if (size <= 0) {
+    throw_archive(ModelArchiveErrorClass::InvalidArchive,
+                  "invalid_archive: tar command is not valid UTF-8");
+  }
+  std::wstring wide(static_cast<std::size_t>(size), L'\0');
+  ::MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, command.data(),
+                        static_cast<int>(command.size()), wide.data(), size);
+  return ::_wpopen(wide.c_str(), L"rb");
 #else
   return ::popen(command.c_str(), "r");
 #endif
@@ -102,6 +141,14 @@ int close_read_pipe(FILE* pipe) {
   return ::_pclose(pipe);
 #else
   return ::pclose(pipe);
+#endif
+}
+
+FILE* open_archive_file(const std::string& path) {
+#ifdef _WIN32
+  return ::_wfopen(utf8_path(path).wstring().c_str(), L"rb");
+#else
+  return ::fopen(path.c_str(), "rb");
 #endif
 }
 
@@ -132,7 +179,7 @@ std::string strip_suffix(std::string value, const std::string& suffix) {
 }
 
 std::string package_name_from_archive(const fs::path& archive_path) {
-  std::string name = archive_path.filename().string();
+  std::string name = utf8_string(archive_path.filename());
   name = strip_suffix(name, ".tar.gz");
   if (name.empty()) {
     name = "package";
@@ -203,10 +250,10 @@ std::vector<std::string> tar_list_verbose(const std::string& tar_path) {
   // fields. Keep numeric owners for deterministic parsing across localized
   // account names.
   const std::string cmd =
-      std::string("tar --numeric-owner -tvf ") + shell_quote(tar_path) + null_redirect();
+      std::string("tar --numeric-owner -tvf ") + tar_archive_operand(tar_path) + null_redirect();
 #else
   const std::string cmd = std::string("tar --numeric-owner --full-time -tvf ") +
-                          shell_quote(tar_path) + null_redirect();
+                          tar_archive_operand(tar_path) + null_redirect();
 #endif
 
   FILE* pipe = open_read_pipe(cmd);
@@ -610,7 +657,7 @@ json parse_json_entry_strict(const std::vector<std::uint8_t>& bytes, const std::
 
 std::vector<std::uint8_t> read_tar_entry(const std::string& tar_path,
                                          const std::string& raw_entry_path, std::size_t max_bytes) {
-  const std::string cmd = std::string("tar -xOf ") + shell_quote(tar_path) + " -- " +
+  const std::string cmd = std::string("tar -xOf ") + tar_archive_operand(tar_path) + " -- " +
                           shell_quote(raw_entry_path) + null_redirect();
 
   FILE* pipe = open_read_pipe(cmd);
@@ -684,8 +731,8 @@ void require_output_space(const fs::path& root, std::uint64_t extracted_bytes,
   const auto space = fs::space(root, ec);
   if (ec) {
     throw_archive(ModelArchiveErrorClass::OutputStorageUnavailable,
-                  "unable to determine free space for extraction root: " + root.string() + " (" +
-                      ec.message() + ")");
+                  "unable to determine free space for extraction root: " + utf8_string(root) +
+                      " (" + ec.message() + ")");
   }
 
   const std::uint64_t available =
@@ -694,7 +741,7 @@ void require_output_space(const fs::path& root, std::uint64_t extracted_bytes,
           : static_cast<std::uint64_t>(space.available);
   if (available < required) {
     std::ostringstream oss;
-    oss << "insufficient free space extracting model archive" << " path=" << root.string()
+    oss << "insufficient free space extracting model archive" << " path=" << utf8_string(root)
         << " extracted=" << format_bytes(extracted_bytes)
         << " reserve=" << format_bytes(opt.min_output_free_bytes)
         << " required=" << format_bytes(required) << " available=" << format_bytes(available)
@@ -730,7 +777,7 @@ fs::path make_staging_dir(const std::string& configured_base) {
   // No fallback to /tmp: an unusable staging base is a deliberate choice of filesystem that
   // failed, and quietly staging on the rootfs instead could fill it.
   const fs::path configured =
-      configured_base.empty() ? fs::temp_directory_path(ec) : fs::path(configured_base);
+      configured_base.empty() ? fs::temp_directory_path(ec) : utf8_path(configured_base);
   if (ec) {
     throw_archive(ModelArchiveErrorClass::OutputStorageUnavailable,
                   "TMPDIR is unusable for archive staging (" + ec.message() + ")");
@@ -759,7 +806,7 @@ fs::path make_staging_dir(const std::string& configured_base) {
     const DWORD error = ::GetLastError();
     if (error != ERROR_ALREADY_EXISTS) {
       throw_archive(ModelArchiveErrorClass::OutputStorageUnavailable,
-                    "failed to create archive staging directory at " + candidate.string() +
+                    "failed to create archive staging directory at " + utf8_string(candidate) +
                         " (Windows error " + std::to_string(error) + ")");
     }
   }
@@ -790,7 +837,7 @@ static_assert(kInflateBufferBytes <= std::numeric_limits<uInt>::max(),
 // error, as gzip reports with exit 2.
 class GzipInflater {
 public:
-  explicit GzipInflater(const std::string& path) : in_(::fopen(path.c_str(), "rb")) {
+  explicit GzipInflater(const std::string& path) : in_(open_archive_file(path)) {
     if (in_ != nullptr && ::inflateInit2(&zs_, 16 + MAX_WBITS) == Z_OK) {
       stream_open_ = true;
     }
@@ -927,7 +974,8 @@ void inflate_archive_to_file(const std::string& archive_path, const fs::path& ou
     const auto room = room_before_reserve();
     if (!room) {
       throw_archive(ModelArchiveErrorClass::OutputStorageUnavailable,
-                    "unable to determine free space for archive staging: " + staging_dir.string());
+                    "unable to determine free space for archive staging: " +
+                        utf8_string(staging_dir));
     }
     budget = *room;
   }
@@ -943,7 +991,7 @@ void inflate_archive_to_file(const std::string& archive_path, const fs::path& ou
   std::ofstream out(out_path, std::ios::binary | std::ios::trunc);
   if (!out.is_open()) {
     const int saved_errno = errno;
-    std::string msg = "failed to open archive staging file: " + out_path.string();
+    std::string msg = "failed to open archive staging file: " + utf8_string(out_path);
     if (saved_errno != 0) {
       msg += " (" + std::string(std::strerror(saved_errno)) + ")";
     }
@@ -975,14 +1023,14 @@ void inflate_archive_to_file(const std::string& archive_path, const fs::path& ou
         if (!room) {
           throw_archive(ModelArchiveErrorClass::OutputStorageUnavailable,
                         "unable to determine free space for archive staging: " +
-                            staging_dir.string());
+                            utf8_string(staging_dir));
         }
         budget = *room;
       }
       if (n > budget) {
         std::ostringstream oss;
-        oss << "insufficient free space inflating model archive" << " path=" << staging_dir.string()
-            << " inflated=" << format_bytes(total - n)
+        oss << "insufficient free space inflating model archive"
+            << " path=" << utf8_string(staging_dir) << " inflated=" << format_bytes(total - n)
             << " reserve=" << format_bytes(opt.min_output_free_bytes) << " writable="
             << format_bytes(budget)
             // Model loading stages under the extraction base, so naming TMPDIR would send the
@@ -1000,7 +1048,7 @@ void inflate_archive_to_file(const std::string& archive_path, const fs::path& ou
         if (!room) {
           throw_archive(ModelArchiveErrorClass::OutputStorageUnavailable,
                         "unable to determine free space for archive staging: " +
-                            staging_dir.string());
+                            utf8_string(staging_dir));
         }
         budget = std::min(budget, *room);
         since_refresh = 0;
@@ -1011,7 +1059,7 @@ void inflate_archive_to_file(const std::string& archive_path, const fs::path& ou
     out.write(buf.data(), static_cast<std::streamsize>(n));
     if (!out.good()) {
       const int saved_errno = errno;
-      std::string msg = "failed writing archive staging file: " + out_path.string();
+      std::string msg = "failed writing archive staging file: " + utf8_string(out_path);
       if (saved_errno != 0) {
         msg += " (" + std::string(std::strerror(saved_errno)) + ")";
       }
@@ -1030,7 +1078,7 @@ void inflate_archive_to_file(const std::string& archive_path, const fs::path& ou
   if (!out.good()) {
     const int saved_errno = errno;
     throw_archive(write_error_class_for_path(saved_errno, out_path),
-                  "failed to flush archive staging file: " + out_path.string());
+                  "failed to flush archive staging file: " + utf8_string(out_path));
   }
 
   if (total == 0) {
@@ -1069,8 +1117,8 @@ private:
 ArchiveSnapshot::ArchiveSnapshot(const std::string& archive_path,
                                  const ModelArchiveLoaderOptions& opt)
     : source_path_(archive_path) {
-  const fs::path archive_fs_path(archive_path);
-  if (!has_canonical_archive_extension(archive_fs_path.filename().string())) {
+  const fs::path archive_fs_path = utf8_path(archive_path);
+  if (!has_canonical_archive_extension(utf8_string(archive_fs_path.filename()))) {
     throw_archive(ModelArchiveErrorClass::UnsupportedExtension,
                   "model archive must use .tar.gz: " + archive_path);
   }
@@ -1093,12 +1141,13 @@ ArchiveSnapshot::ArchiveSnapshot(const std::string& archive_path,
   }
 
   dir_ = make_staging_dir(opt.staging_base);
-  tar_path_ = (dir_ / "archive.tar").string();
+  const fs::path tar_fs_path = dir_ / "archive.tar";
+  tar_path_ = utf8_string(tar_fs_path);
 
   // The compressed size is not a lower bound for the inflated size, so there is nothing to
   // pre-check: inflate_archive_to_file enforces the reserve per chunk.
   try {
-    inflate_archive_to_file(archive_path, tar_path_, opt);
+    inflate_archive_to_file(archive_path, tar_fs_path, opt);
   } catch (...) {
     fs::remove_all(dir_, ec);
     throw;
@@ -1113,7 +1162,7 @@ ArchiveSnapshot::~ArchiveSnapshot() {
 std::uint64_t stream_tar_entry_to_file(const std::string& tar_path,
                                        const std::string& raw_entry_path, const fs::path& out_path,
                                        std::size_t max_bytes) {
-  const std::string cmd = std::string("tar -xOf ") + shell_quote(tar_path) + " -- " +
+  const std::string cmd = std::string("tar -xOf ") + tar_archive_operand(tar_path) + " -- " +
                           shell_quote(raw_entry_path) + null_redirect();
 
   FILE* pipe = open_read_pipe(cmd);
@@ -1127,7 +1176,7 @@ std::uint64_t stream_tar_entry_to_file(const std::string& tar_path,
   if (!out.is_open()) {
     const int saved_errno = errno;
     close_read_pipe(pipe);
-    std::string msg = "failed to open extraction output file: " + out_path.string();
+    std::string msg = "failed to open extraction output file: " + utf8_string(out_path);
     if (saved_errno != 0) {
       msg += " (" + std::string(std::strerror(saved_errno)) + ")";
     }
@@ -1151,7 +1200,7 @@ std::uint64_t stream_tar_entry_to_file(const std::string& tar_path,
       if (!out.good()) {
         const int saved_errno = errno;
         close_read_pipe(pipe);
-        std::string msg = "failed writing extracted entry: " + out_path.string();
+        std::string msg = "failed writing extracted entry: " + utf8_string(out_path);
         if (saved_errno != 0) {
           msg += " (" + std::string(std::strerror(saved_errno)) + ")";
         }
@@ -1204,7 +1253,7 @@ ArchiveContents validate_archive(const ArchiveSnapshot& snapshot,
 
   out.manifest.archive_path = snapshot.source_path();
   out.manifest.archive_size_bytes = snapshot.source_size_bytes();
-  out.manifest.package_name = package_name_from_archive(fs::path(snapshot.source_path()));
+  out.manifest.package_name = package_name_from_archive(utf8_path(snapshot.source_path()));
 
   std::vector<std::string> listing = tar_list_verbose(snapshot.tar_path());
   if (listing.empty()) {
@@ -1357,7 +1406,7 @@ ModelArchiveLoader::extract(const std::string& archive_path,
   // Absolute because the returned paths get baked into extracted JSON configs. Not normalized:
   // collapsing ".." lexically would disagree with how the caller resolved the same path.
   std::error_code ec;
-  const fs::path root = fs::absolute(fs::path(choose_output_root(validated.manifest)), ec);
+  const fs::path root = fs::absolute(utf8_path(choose_output_root(validated.manifest)), ec);
   if (ec) {
     throw_archive(ModelArchiveErrorClass::OutputStorageUnavailable,
                   "failed to resolve extraction root to an absolute path (" + ec.message() + ")");
@@ -1365,15 +1414,15 @@ ModelArchiveLoader::extract(const std::string& archive_path,
   fs::create_directories(root, ec);
   if (ec) {
     throw_archive(ModelArchiveErrorClass::InvalidArchive,
-                  "invalid_archive: failed to create output root: " + root.string());
+                  "invalid_archive: failed to create output root: " + utf8_string(root));
   }
 
-  const fs::path package_root = root / physical_package_leaf(validated.manifest, opt);
+  const fs::path package_root = root / utf8_path(physical_package_leaf(validated.manifest, opt));
   fs::remove_all(package_root, ec);
   if (ec) {
     throw_archive(ModelArchiveErrorClass::InvalidArchive,
                   "invalid_archive: failed to remove previous extraction output: " +
-                      package_root.string());
+                      utf8_string(package_root));
   }
   ec.clear();
   // The snapshot is already written, so on a shared filesystem this covers both coexisting.
@@ -1412,10 +1461,10 @@ ModelArchiveLoader::extract(const std::string& archive_path,
   }
 
   ModelArchiveExtractResult out;
-  out.package_root = package_root.string();
-  out.etc_dir = (package_root / "etc").string();
-  out.lib_dir = (package_root / "lib").string();
-  out.share_dir = (package_root / "share").string();
+  out.package_root = utf8_string(package_root);
+  out.etc_dir = utf8_string(package_root / "etc");
+  out.lib_dir = utf8_string(package_root / "lib");
+  out.share_dir = utf8_string(package_root / "share");
   out.manifest = std::move(validated.manifest);
   return out;
 }
