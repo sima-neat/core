@@ -10,6 +10,13 @@
 #include <string_view>
 #include <thread>
 
+#ifdef _WIN32
+#include <optional>
+
+#define NOMINMAX
+#include <windows.h>
+#endif
+
 namespace pcie_internal = simaai::neat::pcie::internal;
 
 namespace {
@@ -89,6 +96,53 @@ void test_command_runner(const std::string& executable) {
   require(timed.timed_out && timed.exit_code == 124,
           "expected bounded command timeout and timeout exit code");
 }
+
+#ifdef _WIN32
+std::optional<std::string> environment_variable(const char* name) {
+  const DWORD size = GetEnvironmentVariableA(name, nullptr, 0);
+  if (size == 0) {
+    return std::nullopt;
+  }
+  std::string value(size, '\0');
+  value.resize(GetEnvironmentVariableA(name, value.data(), size));
+  return value;
+}
+
+class ScopedEnvironmentVariable {
+public:
+  ScopedEnvironmentVariable(const char* name, const char* value)
+      : name_(name), previous_(environment_variable(name)) {
+    require(SetEnvironmentVariableA(name, value) != FALSE, std::string("could not set ") + name);
+  }
+  ~ScopedEnvironmentVariable() {
+    SetEnvironmentVariableA(name_, previous_ ? previous_->c_str() : nullptr);
+  }
+  ScopedEnvironmentVariable(const ScopedEnvironmentVariable&) = delete;
+  ScopedEnvironmentVariable& operator=(const ScopedEnvironmentVariable&) = delete;
+
+private:
+  const char* name_;
+  std::optional<std::string> previous_;
+};
+
+// A non-terminal Windows OpenSSH server session gives every descendant this
+// variable; ssh.exe children that inherit it never exit after printing.
+void test_child_environment_omits_openssh_fd_state(const std::string& executable) {
+  constexpr const char* openssh_fd_state = "c28fc6f98a2c44abbbd89d6a3037d0d9_POSIX_FD_STATE";
+  constexpr const char* ordinary = "SIMA_NEAT_PCIE_RUNNER_TEST_INHERITED";
+  const ScopedEnvironmentVariable fd_state(openssh_fd_state, "AAAAAAICAgA=");
+  const ScopedEnvironmentVariable inherited(ordinary, "kept");
+
+  const auto child =
+      pcie_internal::SshRunner::run({executable, "--print-env", openssh_fd_state, ordinary}, 2);
+  require(child.exit_code == 0 && !child.timed_out &&
+              child.output == std::string(openssh_fd_state) + " unset\n" + ordinary + "=kept\n",
+          "child environment must omit the OpenSSH descriptor state and keep the rest: " +
+              child.output);
+  require(environment_variable(openssh_fd_state) == "AAAAAAICAgA=",
+          "runner must not change the parent process environment");
+}
+#endif
 
 void test_windows_argument_quoting() {
   using Runner = pcie_internal::SshRunner;
@@ -207,6 +261,15 @@ int main(const int argc, char** argv) {
     std::this_thread::sleep_for(std::chrono::milliseconds(std::stoi(argv[2])));
     return 0;
   }
+#ifdef _WIN32
+  if (argc >= 2 && std::string_view(argv[1]) == "--print-env") {
+    for (int index = 2; index < argc; ++index) {
+      const auto value = environment_variable(argv[index]);
+      std::cout << argv[index] << (value ? "=" + *value : std::string(" unset")) << "\n";
+    }
+    return 0;
+  }
+#endif
 
   try {
     const std::string escaped = pcie_internal::SshRunner::shell_escape("ab'cd");
@@ -216,6 +279,9 @@ int main(const int argc, char** argv) {
     test_windows_argument_quoting();
     test_host_platform();
     test_command_runner(argv[0]);
+#ifdef _WIN32
+    test_child_environment_omits_openssh_fd_state(argv[0]);
+#endif
     const std::string first =
         pcie_internal::RemoteRuntime::unique_remote_upload_path("/first/model.tar.gz");
     const std::string second =

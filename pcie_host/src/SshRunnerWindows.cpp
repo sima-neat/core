@@ -6,8 +6,10 @@
 #include <cstddef>
 #include <iterator>
 #include <limits>
+#include <memory>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <thread>
 
 #define NOMINMAX
@@ -131,6 +133,42 @@ std::wstring windows_command_line(const std::vector<std::string>& args) {
   return command_line;
 }
 
+struct EnvironmentStringsDeleter {
+  void operator()(wchar_t* strings) const {
+    FreeEnvironmentStringsW(strings);
+  }
+};
+
+// Windows OpenSSH records its children's standard-handle modes in this variable,
+// and every process started inside a non-terminal OpenSSH server session inherits
+// it. ssh.exe and scp.exe trust it, treat the synchronous pipe below as
+// overlapped, and never exit after writing output. Omit it from the child only.
+std::wstring child_environment() {
+  constexpr std::wstring_view openssh_fd_state =
+      L"c28fc6f98a2c44abbbd89d6a3037d0d9_POSIX_FD_STATE=";
+  const std::unique_ptr<wchar_t, EnvironmentStringsDeleter> strings(GetEnvironmentStringsW());
+  if (!strings) {
+    throw windows_error("GetEnvironmentStringsW");
+  }
+  std::wstring block;
+  for (const wchar_t* entry = strings.get(); *entry != L'\0';) {
+    const std::wstring_view variable(entry);
+    // Environment variable names are case-insensitive on Windows.
+    const bool openssh_state =
+        variable.size() >= openssh_fd_state.size() &&
+        CompareStringOrdinal(variable.data(), static_cast<int>(openssh_fd_state.size()),
+                             openssh_fd_state.data(), static_cast<int>(openssh_fd_state.size()),
+                             TRUE) == CSTR_EQUAL;
+    if (!openssh_state) {
+      block.append(variable).push_back(L'\0');
+    }
+    entry += variable.size() + 1;
+  }
+  // Ends the block; std::wstring's own trailing NUL completes an empty block.
+  block.push_back(L'\0');
+  return block;
+}
+
 DWORD windows_timeout(const std::chrono::milliseconds timeout) {
   const auto count = std::max<std::chrono::milliseconds::rep>(timeout.count(), 1);
   return static_cast<DWORD>(std::min<std::chrono::milliseconds::rep>(
@@ -191,9 +229,11 @@ CommandResult SshRunner::run_for(const std::vector<std::string>& args,
   PROCESS_INFORMATION process_info{};
   std::wstring executable = utf8_to_wide(args.front());
   std::wstring command_line = windows_command_line(args);
+  std::wstring environment = child_environment();
   if (!CreateProcessW(executable.c_str(), command_line.data(), nullptr, nullptr, TRUE,
-                      CREATE_NO_WINDOW | CREATE_SUSPENDED | EXTENDED_STARTUPINFO_PRESENT, nullptr,
-                      nullptr, &startup.StartupInfo, &process_info)) {
+                      CREATE_NO_WINDOW | CREATE_SUSPENDED | EXTENDED_STARTUPINFO_PRESENT |
+                          CREATE_UNICODE_ENVIRONMENT,
+                      environment.data(), nullptr, &startup.StartupInfo, &process_info)) {
     throw windows_error("CreateProcessW");
   }
   WinHandle process(process_info.hProcess);

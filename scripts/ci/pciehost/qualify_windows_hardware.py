@@ -594,9 +594,10 @@ def run_windows_openssh(command: list[object], log: Path, *,
                         redact_stdin: bool = False) -> subprocess.CompletedProcess[str]:
   """Run Windows OpenSSH through a batch file with direct file redirection.
 
-  OpenSSH for Windows 9.5 can authenticate, run the remote command, receive EOF,
-  and then block forever when CPython created its stdout/stderr handles.  A batch
-  wrapper gives ssh.exe/scp.exe ordinary file handles before Python starts it.
+  Inside a non-terminal Windows OpenSSH server session, ssh.exe/scp.exe inherit
+  c28fc6f98a2c44abbbd89d6a3037d0d9_POSIX_FD_STATE, treat a synchronous pipe as
+  overlapped, and block after writing to it.  The batch wrapper redirects them
+  to ordinary files, where those writes complete.
   """
   argv = [str(value) for value in command]
   wrapper = log.with_name(f".{log.name}.openssh.cmd")
