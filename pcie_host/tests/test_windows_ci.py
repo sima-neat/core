@@ -618,6 +618,15 @@ class WindowsCiContracts(unittest.TestCase):
     self.assertIn("core-pciehost-windows-dependencies", source)
     self.assertIn("linux_current_run", source)
     self.assertIn("require_upgrade", source)
+    self.assertIn("first_release_upgrade_exemption", source)
+    self.assertIn("first_release_upgrade_exemption_reason", source)
+    self.assertIn("Publishing requires a real upgrade gate or an explicit first-release exemption.", source)
+    self.assertIn("windows-upgrade-exemption.json", source)
+    publish_job = source.split("  publish:\n", 1)[1]
+    self.assertIn(
+        "inputs.require_upgrade == true || inputs.first_release_upgrade_exemption == true",
+        publish_job,
+    )
     self.assertIn(
         r"SIMA_WINDOWS_SHORT_WORK_ROOT: C:\nr\c-${{ github.run_id }}-${{ github.run_attempt }}",
         source,
@@ -717,10 +726,26 @@ class WindowsCiContracts(unittest.TestCase):
             "github.event_name": event,
             "github.ref": ref,
             "inputs.validation_only": validation,
+            "inputs.require_upgrade": expected,
+            "inputs.first_release_upgrade_exemption": False,
             "needs.hardware.result": hardware,
             "needs.linux_release.result": linux,
         }
         self.assertEqual(evaluate_actions_expression(expression, values), expected)
+    first_release_values = {
+        "startsWith(github.ref, 'refs/tags/v')": False,
+        "github.repository": "sima-neat/core",
+        "github.event_name": "workflow_dispatch",
+        "github.ref": "refs/heads/develop",
+        "inputs.validation_only": False,
+        "inputs.require_upgrade": False,
+        "inputs.first_release_upgrade_exemption": True,
+        "needs.hardware.result": "success",
+        "needs.linux_release.result": "success",
+    }
+    self.assertTrue(evaluate_actions_expression(expression, first_release_values))
+    first_release_values["inputs.first_release_upgrade_exemption"] = False
+    self.assertFalse(evaluate_actions_expression(expression, first_release_values))
     self.assertIn("needs: [hardware, linux_release]", publish)
     self.assertIn('source_branch: "3.0"', publish)
 

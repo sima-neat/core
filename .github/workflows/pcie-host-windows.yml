@@ -41,6 +41,14 @@ on:
         description: Require a real prior Windows release upgrade (formal release gate)
         type: boolean
         default: false
+      first_release_upgrade_exemption:
+        description: Explicitly exempt only the first Windows release from a prior-release upgrade
+        type: boolean
+        default: false
+      first_release_upgrade_exemption_reason:
+        description: Auditable reason for the first-release upgrade exemption
+        type: string
+        default: ''
       include_genai:
         description: Run GenAI acceptance when the Windows transport is enabled
         type: boolean
@@ -92,6 +100,15 @@ on:
         description: Require a real prior Windows release upgrade (formal release gate)
         type: boolean
         default: false
+      first_release_upgrade_exemption:
+        description: Explicitly exempt only the first Windows release from a prior-release upgrade
+        type: boolean
+        default: false
+      first_release_upgrade_exemption_reason:
+        description: Auditable reason for the first-release upgrade exemption
+        type: string
+        required: false
+        default: ''
       include_genai:
         description: Run GenAI acceptance when the Windows transport is enabled
         type: boolean
@@ -165,6 +182,22 @@ jobs:
           fi
           if [[ "${{ inputs.require_upgrade }}" != "true" && ( -n "${{ inputs.upgrade_base_run_id }}" || -n "${{ inputs.upgrade_base_commit }}" ) ]]; then
             echo "Upgrade baseline inputs require require_upgrade=true." >&2
+            exit 1
+          fi
+          if [[ "${{ inputs.require_upgrade }}" == "true" && "${{ inputs.first_release_upgrade_exemption }}" == "true" ]]; then
+            echo "A real upgrade gate and the first-release exemption are mutually exclusive." >&2
+            exit 1
+          fi
+          if [[ "${{ inputs.first_release_upgrade_exemption }}" != "true" && -n "${{ inputs.first_release_upgrade_exemption_reason }}" ]]; then
+            echo "An exemption reason requires first_release_upgrade_exemption=true." >&2
+            exit 1
+          fi
+          if [[ "${{ inputs.validation_only }}" != "true" && "${{ inputs.require_upgrade }}" != "true" && "${{ inputs.first_release_upgrade_exemption }}" != "true" ]]; then
+            echo "Publishing requires a real upgrade gate or an explicit first-release exemption." >&2
+            exit 1
+          fi
+          if [[ "${{ inputs.first_release_upgrade_exemption }}" == "true" && -z "${{ inputs.first_release_upgrade_exemption_reason }}" ]]; then
+            echo "The first-release upgrade exemption requires a non-empty reason." >&2
             exit 1
           fi
       - name: Mint read-only dependency run token
@@ -268,6 +301,34 @@ jobs:
             --workflow-name "Core native Windows PCIe host" \
             --workflow-path ".github/workflows/pcie-host-windows.yml" \
             --output "${RUNNER_TEMP}/windows-upgrade-base-admission.json"
+      - name: Record first-release upgrade exemption
+        if: inputs.first_release_upgrade_exemption == true
+        env:
+          EXEMPTION_REASON: ${{ inputs.first_release_upgrade_exemption_reason }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          reason = os.environ["EXEMPTION_REASON"].strip()
+          if not reason:
+              raise SystemExit("The first-release upgrade exemption requires a non-empty reason.")
+          Path(os.environ["RUNNER_TEMP"], "windows-upgrade-exemption.json").write_text(
+              json.dumps(
+                  {
+                      "schema_version": 1,
+                      "repository": os.environ["GITHUB_REPOSITORY"],
+                      "commit": os.environ["GITHUB_SHA"],
+                      "scope": "first-windows-pcie-release-only",
+                      "reason": reason,
+                  },
+                  indent=2,
+              )
+              + "\n",
+              encoding="utf-8",
+          )
+          PY
       - name: Retain Linux release admission
         uses: actions/upload-artifact@v6
         with:
@@ -277,6 +338,7 @@ jobs:
             ${{ runner.temp }}/scheduler-release-admission.json
             ${{ runner.temp }}/sima-cli-release-admission.json
             ${{ runner.temp }}/windows-upgrade-base-admission.json
+            ${{ runner.temp }}/windows-upgrade-exemption.json
           if-no-files-found: error
           retention-days: 14
   card_candidate:
@@ -756,7 +818,7 @@ jobs:
   publish:
     name: Publish qualified Windows cohort to core/3.0
     needs: [hardware, linux_release]
-    if: github.repository == 'sima-neat/core' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && (github.ref == 'refs/heads/develop' || startsWith(github.ref, 'refs/tags/v')) && inputs.validation_only != true && needs.hardware.result == 'success' && needs.linux_release.result == 'success'
+    if: github.repository == 'sima-neat/core' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && (github.ref == 'refs/heads/develop' || startsWith(github.ref, 'refs/tags/v')) && inputs.validation_only != true && (inputs.require_upgrade == true || inputs.first_release_upgrade_exemption == true) && needs.hardware.result == 'success' && needs.linux_release.result == 'success'
     permissions:
       contents: read
       actions: write

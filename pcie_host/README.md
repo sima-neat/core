@@ -521,14 +521,18 @@ must instead identify a prior successful Linux run for the same Core commit.
 Windows success and publication are required before Core advances its branch
 `latest` tag, so Linux regressions and dependency validation cannot be bypassed.
 
-Formal release qualification may additionally set `require_upgrade=true` and
-select an earlier successful Core Windows workflow by run ID and full commit.
+Formal release qualification sets `require_upgrade=true` and selects an earlier
+successful Core Windows workflow by run ID and full commit.
 The hardware runner installs that cohort first through the same `sima-cli`
 command, then installs the release candidate over it. The two cohorts must have
 increasing Core package versions and different package bytes. This cross-version
 test is not repeated for every branch promotion, matching Linux policy; repeat
 install, repair, failure recovery, and clean removal remain mandatory on every
-Windows publishing run.
+Windows publishing run. Only the first Windows PCIe release may proceed without
+that prior-release baseline, and only when the publishing workflow explicitly
+sets `first_release_upgrade_exemption=true` with a non-empty
+`first_release_upgrade_exemption_reason`. CI retains that exemption as an
+admission receipt; leaving both selectors unset cannot publish.
 
 The hardware runner's pinned offline wheelhouse must contain the dependencies
 of both `pyneatpcie` and the selected `sima-cli` wheel. This keeps the acceptance
