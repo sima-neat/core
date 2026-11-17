@@ -561,6 +561,19 @@ def _windows_openssh_batch_line(argv: list[str], output: Path, *,
   return command
 
 
+def _windows_relay_safe_remote_command(remote: str) -> str:
+  """Carry an OpenSSH remote command through Windows PowerShell 5.1 unchanged.
+
+  Windows PowerShell 5.1 does not escape double quotes inside native-command
+  arguments, so ssh.exe would receive the command without them.  Base64 and
+  this decoder contain no double quote or backslash; the card's login shell
+  decodes the exact command and runs it as sshd would, with the same stdin.
+  """
+  encoded = base64.b64encode(remote.encode("utf-8")).decode("ascii")
+  return (f"set -f; IFS=; remote=$(printf %s {encoded} | base64 -d) || exit; "
+          "exec $SHELL -c $remote")
+
+
 def prepare_openssh_secret_directory(path: Path) -> Path:
   """Create a qualification-owned directory whose contents only the runner can read."""
   root = path.resolve()
@@ -600,6 +613,10 @@ def run_windows_openssh(command: list[object], log: Path, *,
   to ordinary files, where those writes complete.
   """
   argv = [str(value) for value in command]
+  relayed = argv
+  if Path(argv[0]).name.lower() == "ssh.exe":
+    # ssh_command() puts the remote command last.
+    relayed = [*argv[:-1], _windows_relay_safe_remote_command(argv[-1])]
   wrapper = log.with_name(f".{log.name}.openssh.cmd")
   child_output = log.with_name(f".{log.name}.openssh-output.log")
   child_input = None
@@ -619,7 +636,7 @@ def run_windows_openssh(command: list[object], log: Path, *,
     wrapper.write_text(
         "@echo off\r\n"
         + _windows_openssh_batch_line(
-            argv, child_output,
+            relayed, child_output,
             input_file=child_input)
         + "\r\nexit /b %errorlevel%\r\n",
         encoding="utf-8",

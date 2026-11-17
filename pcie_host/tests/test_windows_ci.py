@@ -103,6 +103,131 @@ def normalized_link_target(path):
   return os.path.normcase(os.path.normpath(target))
 
 
+WINDOWS_OPENSSH_HOP_SKIP = (
+    "replays the Windows OpenSSH hop into a bash card shell; runs on Linux")
+FIXTURE_SUDO = """\
+#!/bin/sh
+# sudo -n reports FIXTURE_SUDO_N_STATUS; sudo -S checks the piped secret.
+if [ "$1" = -n ]; then exit "$FIXTURE_SUDO_N_STATUS"; fi
+if [ "$1" = -S ]; then
+  IFS= read -r secret
+  [ "$secret" = "$FIXTURE_SUDO_SECRET" ] || exit 70
+  shift 3
+fi
+[ "$1" = sh ] && [ "$2" = -c ] || exit 71
+if [ -n "${FIXTURE_ROOT_SCRIPT:-}" ]; then printf '%s' "$3" > "$FIXTURE_ROOT_SCRIPT"; exit 0; fi
+exec "$@"
+"""
+
+
+def powershell51_native_command_line(arguments):
+  """Join arguments the way Windows PowerShell 5.1 starts a native command.
+
+  An argument with whitespace outside double quotes is wrapped in double quotes;
+  embedded double quotes and backslashes are never escaped.
+  """
+  joined = []
+  for argument in arguments:
+    quotes, after_backslash, needs_quotes = 0, False, False
+    for character in argument:
+      if character == '"' and not after_backslash:
+        quotes += 1
+      elif character.isspace() and quotes % 2 == 0:
+        needs_quotes = True
+      after_backslash = character == "\\"
+    joined.append(f'"{argument}"' if needs_quotes else argument)
+  return " ".join(joined)
+
+
+def windows_runtime_argv(command_line):
+  """Split a command line with the Microsoft C runtime rules ssh.exe uses."""
+  arguments, index, length = [], 0, len(command_line)
+  while True:
+    while index < length and command_line[index] in " \t":
+      index += 1
+    if index == length:
+      return arguments
+    argument, quoted = [], False
+    while index < length and (quoted or command_line[index] not in " \t"):
+      backslashes = 0
+      while index < length and command_line[index] == "\\":
+        backslashes += 1
+        index += 1
+      if index < length and command_line[index] == '"':
+        argument.append("\\" * (backslashes // 2))
+        if backslashes % 2:
+          argument.append('"')
+        elif quoted and command_line[index + 1:index + 2] == '"':
+          argument.append('"')
+          index += 1
+        else:
+          quoted = not quoted
+        index += 1
+      elif backslashes:
+        argument.append("\\" * backslashes)
+      else:
+        argument.append(command_line[index])
+        index += 1
+    arguments.append("".join(argument))
+
+
+class WindowsOpenSshHop:
+  """Stand-in for subprocess.Popen that replays the qualifier's OpenSSH wrapper.
+
+  cmd.exe runs the batch line, Windows PowerShell 5.1 relays the argv to ssh.exe,
+  ssh.exe joins its remote words, and the card's login shell (bash) runs them
+  with the wrapper's input file as stdin and its output file as stdout/stderr.
+  """
+
+  real_popen = subprocess.Popen
+
+  def __init__(self, root):
+    self.bin = root / "card-bin"
+    self.bin.mkdir()
+    (self.bin / "sudo").write_text(FIXTURE_SUDO, encoding="utf-8")
+    (self.bin / "sudo").chmod(0o755)
+    self.card = root / "card-home"
+    self.card.mkdir()
+    self.environment = {}
+    self.pid = 41
+    self.returncode = None
+    self.line = ""
+
+  def __call__(self, command, **_kwargs):
+    self.line = Path(command[-1]).read_bytes().decode("utf-8").split("\r\n")[1]
+    return self
+
+  def communicate(self, timeout=None):
+    match = re.fullmatch(
+        r"powershell\.exe -NoLogo -NoProfile -NonInteractive -EncodedCommand (\S+)"
+        r" > (\S+) 2>&1(?: < (\S+))?", self.line.replace("%%", "%"))
+    assert match, self.line
+    script = base64.b64decode(match[1]).decode("utf-16le")
+    array = script.split("$argv=@(", 1)[1].split(");$exe=", 1)[0]
+    relayed = [value.replace("''", "'")
+               for value in re.findall(r"'((?:[^']|'')*)'", array)]
+    argv = windows_runtime_argv(powershell51_native_command_line(relayed))
+    index = 1
+    while argv[index].startswith("-"):
+      index += 2 if argv[index] in ("-i", "-o") else 1
+    remote = " ".join(argv[index + 1:])
+    stdin = Path(match[3]).read_bytes() if match[3] else b""
+    environment = {
+        "PATH": os.pathsep.join((str(self.bin), os.environ["PATH"])),
+        "SHELL": shutil.which("bash"), **self.environment}
+    with self.real_popen(
+        [shutil.which("bash"), "-euc", remote], cwd=self.card, env=environment,
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT) as card:
+      output = card.communicate(stdin, timeout=timeout)[0]
+    Path(match[2]).write_bytes(output)
+    self.returncode = card.returncode
+    return None, None
+
+  def poll(self):
+    return self.returncode
+
+
 def evaluate_actions_expression(expression, values):
   """Evaluate the boolean subset used by the workflow admission contracts."""
   expression = expression.strip()
@@ -2394,6 +2519,70 @@ class WindowsCiContracts(unittest.TestCase):
       self.assertFalse(any((Path(directory) / "private").glob("*.openssh-input")))
       self.assertFalse(any(log.parent.glob("*.openssh.cmd")))
       self.assertNotIn("fixture-secret", log.read_text(encoding="utf-8"))
+
+  def windows_hop_args(self, root):
+    key = root / "id_ed25519"
+    key.write_text("fixture", encoding="ascii")
+    return SimpleNamespace(
+        card_host="10.0.0.2", card_user="sima", ssh_key=key,
+        card_sudo_password_stdin=True, card_sudo_password_value="fixture-secret",
+        remote_lock_path="/tmp/neat-pcie-card0.lock", work=root / "work")
+
+  @unittest.skipIf(os.name == "nt", WINDOWS_OPENSSH_HOP_SKIP)
+  def test_card_commands_keep_their_quotes_across_the_windows_hop(self):
+    remote = (
+        "set -eu; trap 'printf \"%s\\n\" \"exit  trap\"' EXIT; "
+        "awk '{print $1}' \"card input.txt\"; printf '%s\\n' \"two  spaces\"")
+    expected = "alpha\ngamma\ntwo  spaces\nexit  trap\n"
+    for sudo_n_status in ("0", "1"):
+      with self.subTest(sudo_n_status=sudo_n_status), \
+          tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        args = self.windows_hop_args(root)
+        hop = WindowsOpenSshHop(root)
+        (hop.card / "card input.txt").write_text(
+            "alpha beta\ngamma  delta\n", encoding="utf-8")
+        hop.environment = {
+            "FIXTURE_SUDO_N_STATUS": sudo_n_status,
+            "FIXTURE_SUDO_SECRET": "fixture-secret"}
+        privileged_log = root / "privileged.log"
+        with mock.patch("qualify_windows_hardware.subprocess.Popen", hop):
+          try:
+            run_sudo_remote(args, remote, privileged_log)
+          except RuntimeError as error:
+            self.fail(f"{error}: {privileged_log.read_text(encoding='utf-8')}")
+          plain = run_captured_to_file(
+              HARDWARE.ssh_command(args, remote), root / "plain.log", timeout=30)
+        self.assertEqual(
+            privileged_log.read_text(encoding="utf-8").split("\n", 1)[1], expected)
+        self.assertEqual((plain.returncode, plain.stdout), (0, expected))
+
+  @unittest.skipIf(os.name == "nt", WINDOWS_OPENSSH_HOP_SKIP)
+  def test_card_activation_reaches_root_unchanged_across_the_windows_hop(self):
+    for sudo_n_status in ("0", "1"):
+      with self.subTest(sudo_n_status=sudo_n_status), \
+          tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        args = self.windows_hop_args(root)
+        hop = WindowsOpenSshHop(root)
+        hop.environment = {
+            "FIXTURE_SUDO_N_STATUS": sudo_n_status,
+            "FIXTURE_SUDO_SECRET": "fixture-secret",
+            "FIXTURE_ROOT_SCRIPT": str(root / "root-script")}
+        with mock.patch("qualify_windows_hardware.run_logged"), \
+            mock.patch("qualify_windows_hardware.subprocess.Popen", hop), \
+            mock.patch("qualify_windows_hardware.run_sudo_remote",
+                       wraps=HARDWARE.run_sudo_remote) as privileged:
+          try:
+            activate_card_candidate(
+                args, card_candidate_paths("6" * 32), "modalix-cvu-fw", root)
+          except RuntimeError as error:
+            log = root / "card-candidate-activate.log"
+            self.fail(f"{error}: {log.read_text(encoding='utf-8')}")
+        activation = privileged.call_args.args[1]
+        self.assertIn("awk '{print $1}'", activation)
+        self.assertEqual(
+            (root / "root-script").read_text(encoding="utf-8"), activation)
 
   def test_card_candidate_bad_extraction_receipt_removes_private_stage(self):
     with tempfile.TemporaryDirectory() as directory:
