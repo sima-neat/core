@@ -1070,20 +1070,32 @@ class WindowsCiContracts(unittest.TestCase):
     bash = shutil.which("bash")
     self.assertIsNotNone(bash)
 
-    def validate(scheduler_run="", scheduler_commit="", cli_run="", cli_commit=""):
+    self.assertIn("      VALIDATION_ONLY: ${{ inputs.validation_only || false }}\n", job)
+
+    def validate(scheduler_run="", scheduler_commit="", cli_run="", cli_commit="",
+                 validation_only="true"):
       environment = os.environ.copy()
       environment.update({
           "SCHEDULER_RUN_ID": scheduler_run,
           "SCHEDULER_COMMIT": scheduler_commit,
           "SIMA_CLI_RUN_ID": cli_run,
           "SIMA_CLI_COMMIT": cli_commit,
+          "VALIDATION_ONLY": validation_only,
       })
       return subprocess.run(
           [bash, "-c", script], capture_output=True, text=True, check=False,
           env=environment)
 
     self.assertEqual(validate().returncode, 0)
+    self.assertEqual(validate(validation_only="false").returncode, 0)
     self.assertEqual(validate("41", "a" * 40, "82", "b" * 40).returncode, 0)
+    # A selected run can come from any branch; a publishing run must not use it.
+    for selectors in (("41", "a" * 40, "", ""), ("", "", "82", "b" * 40),
+                      ("41", "a" * 40, "82", "b" * 40)):
+      with self.subTest(publishing_selectors=selectors):
+        result = validate(*selectors, validation_only="false")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("run selectors require validation_only=true", result.stderr)
     invalid = (
         ("41", "", "", "", "supplied together"),
         ("", "a" * 40, "", "", "supplied together"),
@@ -1096,6 +1108,51 @@ class WindowsCiContracts(unittest.TestCase):
         result = validate(scheduler_run, scheduler_commit, cli_run, cli_commit)
         self.assertNotEqual(result.returncode, 0)
         self.assertIn(error, result.stderr)
+
+  @unittest.skipIf(os.name == "nt", WORKFLOW_BASH_SKIP)
+  def test_windows_preflight_rejects_selectors_on_publishing_runs(self):
+    workflow = WORKFLOW.read_text(encoding="utf-8")
+    step = workflow.split("- name: Validate dependency and admission selectors\n", 1)[1]
+    script = textwrap.dedent(step.split("        run: |\n", 1)[1].split("\n      - name:", 1)[0])
+    bash = shutil.which("bash")
+    self.assertIsNotNone(bash)
+    # The documented direct dispatches: validation, and first-release publication.
+    validation = {"VALIDATION_ONLY": "true"}
+    publishing = {
+        "VALIDATION_ONLY": "false",
+        "FIRST_RELEASE_UPGRADE_EXEMPTION": "true",
+        "FIRST_RELEASE_UPGRADE_EXEMPTION_REASON": "first Windows release",
+    }
+    scheduler = {"SCHEDULER_RUN_ID": "41", "SCHEDULER_COMMIT": "a" * 40}
+    sima_cli = {"SIMA_CLI_RUN_ID": "82", "SIMA_CLI_COMMIT": "b" * 40}
+    cases = (
+        ({}, validation, True),
+        ({}, publishing, True),
+        (scheduler, validation, True),
+        ({**scheduler, **sima_cli}, validation, True),
+        (scheduler, publishing, False),
+        (sima_cli, publishing, False),
+        ({**scheduler, **sima_cli}, publishing, False),
+    )
+    for selectors, mode, accepted in cases:
+      with self.subTest(selectors=sorted(selectors), validation_only=mode["VALIDATION_ONLY"]):
+        environment = os.environ.copy()
+        for name in ("LINUX_CURRENT_RUN", "SCHEDULER_RUN_ID", "SCHEDULER_COMMIT",
+                     "SIMA_CLI_RUN_ID", "SIMA_CLI_COMMIT", "LINUX_RUN_ID", "REQUIRE_UPGRADE",
+                     "UPGRADE_BASE_RUN_ID", "UPGRADE_BASE_COMMIT",
+                     "FIRST_RELEASE_UPGRADE_EXEMPTION",
+                     "FIRST_RELEASE_UPGRADE_EXEMPTION_REASON"):
+          environment[name] = ""
+        environment.update({"GITHUB_WORKFLOW": "Core native Windows PCIe host",
+                            "LINUX_CURRENT_RUN": "false", **selectors, **mode})
+        result = subprocess.run(
+            [bash, "-e", "-c", script], capture_output=True, text=True, check=False,
+            env=environment)
+        if accepted:
+          self.assertEqual(result.returncode, 0, result.stderr)
+        else:
+          self.assertNotEqual(result.returncode, 0)
+          self.assertIn("run selectors require validation_only=true", result.stderr)
 
   @unittest.skipIf(os.name == "nt", WORKFLOW_BASH_SKIP)
   def test_main_ci_windows_runs_are_validation_only_and_pass_preflight(self):

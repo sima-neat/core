@@ -192,6 +192,12 @@ jobs:
             echo "sima_cli_run_id and sima_cli_commit must be supplied together." >&2
             exit 1
           fi
+          # A selected run can come from any branch, so its bytes must never be published.
+          if [[ -n "${SCHEDULER_RUN_ID}${SCHEDULER_COMMIT}${SIMA_CLI_RUN_ID}${SIMA_CLI_COMMIT}" &&
+                "${VALIDATION_ONLY}" != "true" ]]; then
+            echo "Scheduler and sima-cli run selectors require validation_only=true; publishing uses only published dependencies." >&2
+            exit 1
+          fi
           if [[ "${LINUX_CURRENT_RUN}" == "true" && -n "${LINUX_RUN_ID}" ]]; then
             echo "linux_current_run and linux_run_id are mutually exclusive." >&2
             exit 1

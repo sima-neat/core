@@ -150,7 +150,10 @@ By default that dispatch resolves published Scheduler and sima-cli revisions.
 During initial bootstrap, or when intentionally testing unpublished producer
 changes, supply `scheduler_run_id` with `scheduler_commit`, or `sima_cli_run_id`
 with `sima_cli_commit`. Each pair is admitted against its source workflow before
-the artifact is used. The Scheduler selector names the successful root
+the artifact is used. A selected run can come from any branch, so both Vulcan CI
+and the Windows workflow reject a selector unless `validation_only=true`;
+publishing runs use only published dependencies.
+The Scheduler selector names the successful root
 `.github/workflows/ci.yml` run. That one run owns the retained Scheduler client
 candidate, all four Linux native profiles, and the Windows profile. Core uses
 those run-local candidates for code hygiene, the matching Linux/ARM package
