@@ -434,14 +434,14 @@ def baseline_record():
 def test_baseline_resolution_pulls_only_digest_and_checks_provenance(tmp_path, role, fault):
     import json
     args = SimpleNamespace(sha=SHA, work=tmp_path)
+    (tmp_path/'manifest.json').write_text('{"platform-version":"3.0.0"}')
     config = ci.baseline_config()
-    key = (config['card']['inputs_sha256'] if role == 'card' else
+    key = (config['legacy_card']['inputs_sha256'] if role == 'card' else
            ci.baseline_identity(role, ci.baseline_dependencies(baseline_record(), role)))
-    digest = config['card']['digest'] if role == 'card' else 'sha256:'+'b'*64
+    digest = config['legacy_card']['digest'] if role == 'card' else 'sha256:'+'b'*64
     local_id = 'sha256:'+'c'*64
-    recipe = config['card'].get('recipe_sha256', config['recipe_sha256']) if role == 'card' else config['recipe_sha256']
     labels = {'ai.sima.offline.'+name: value for name, value in
-              [('inputs', key), ('recipe', recipe), ('role', role)]}
+              [('inputs', key), ('recipe', config['recipe_sha256']), ('role', role)]}
     if fault == 'labels':
         labels['ai.sima.offline.inputs'] = 'd'*64
     info = {'Architecture': 'amd64' if fault == 'architecture' else 'arm64',
@@ -451,14 +451,13 @@ def test_baseline_resolution_pulls_only_digest_and_checks_provenance(tmp_path, r
          patch.object(ci, 'run', side_effect=['', json.dumps([info])]) as command:
         if fault:
             with pytest.raises(ValueError, match='provenance|architecture'):
-                ci.pull_baseline(args, role, baseline_record())
+                ci.pull_baseline(args, role, baseline_record(), tmp_path)
             assert not (tmp_path/'baseline-images.json').exists()
         else:
-            assert ci.pull_baseline(args, role, baseline_record()) == local_id
+            assert ci.pull_baseline(args, role, baseline_record(), tmp_path) == local_id
             evidence = json.loads((tmp_path/'baseline-images.json').read_text())
             assert evidence[role]['image'] == config['repository']+'@'+digest
             assert evidence[role]['inputs_sha256'] == key
-            assert evidence[role]['recipe_sha256'] == recipe
         assert command.call_args_list[0].args == ('docker', 'pull', config['repository']+'@'+digest)
         if role == 'card':
             manifest.assert_not_called()
@@ -477,29 +476,87 @@ def test_missing_host_baseline_fails_without_local_build(tmp_path):
 def test_card_image_pin_is_independent_of_packages_under_test(tmp_path):
     import json
     config = ci.baseline_config()
-    info = {'Architecture': 'arm64', 'Id': config['card']['digest'], 'Config': {'Labels': {
-        'ai.sima.offline.inputs': config['card']['inputs_sha256'],
-        'ai.sima.offline.recipe': config['card'].get('recipe_sha256', config['recipe_sha256']),
-        'ai.sima.offline.role': 'card'}}}
+    (tmp_path/'manifest.json').write_text('{"platform-version":"3.0.0"}')
+    info = {'Architecture': 'arm64', 'Id': config['legacy_card']['digest'], 'Config': {'Labels': {
+        'ai.sima.offline.inputs': config['legacy_card']['inputs_sha256'],
+        'ai.sima.offline.recipe': config['recipe_sha256'], 'ai.sima.offline.role': 'card'}}}
     with patch.object(ci.subprocess, 'run') as manifest, \
          patch.object(ci, 'run', side_effect=['', json.dumps([info])]*2) as docker:
         for sha in ('a'*40, 'b'*40):
             record = {'resources-checksum': {name: sha for name in (
                 'simaai-scheduler.deb', 'resolved-deps-manifest.json', 'scheduler_platform_admission.py')}}
-            assert ci.pull_baseline(SimpleNamespace(sha=sha, work=tmp_path), 'card', record) == config['card']['digest']
+            assert ci.pull_baseline(SimpleNamespace(sha=sha, work=tmp_path), 'card', record, tmp_path) == config['legacy_card']['digest']
         pulls = [call.args for call in docker.call_args_list if call.args[:2] == ('docker', 'pull')]
-        assert pulls == [('docker', 'pull', config['repository']+'@'+config['card']['digest'])]*2
+        assert pulls == [('docker', 'pull', config['repository']+'@'+config['legacy_card']['digest'])]*2
         manifest.assert_not_called()
 
 
-@pytest.mark.parametrize('field,value', [('digest', 'latest'), ('inputs_sha256', 'invalid'), ('recipe_sha256', 'invalid')])
-def test_invalid_card_pin_is_rejected_before_docker(tmp_path, field, value):
+@pytest.mark.parametrize('field,value', [('digest', 'latest'), ('inputs_sha256', 'invalid')])
+def test_invalid_legacy_card_pin_is_rejected_before_docker(tmp_path, field, value):
     config = ci.baseline_config()
-    config['card'][field] = value
+    config['legacy_card'][field] = value
+    (tmp_path/'manifest.json').write_text('{"platform-version":"3.0.0"}')
     with patch.object(ci, 'baseline_config', return_value=config), patch.object(ci, 'run') as docker:
-        with pytest.raises(ValueError, match='invalid pinned card baseline'):
-            ci.pull_baseline(SimpleNamespace(sha=SHA, work=tmp_path), 'card', {})
+        with pytest.raises(ValueError, match='invalid legacy card baseline'):
+            ci.pull_baseline(SimpleNamespace(sha=SHA, work=tmp_path), 'card', {}, tmp_path)
         docker.assert_not_called()
+
+
+def official_card_fixture(root):
+    import json
+    (root/'manifest.json').write_text('{"platform-version":"3.0.1"}')
+    policy = {'sysroot_version': '3.0.1', 'elxr_version': '3.0.1_master_B2796'}
+    (root/'resolved-deps-manifest.json').write_text(json.dumps({
+        'scheduler': {'buildinfo': {'build_platform': policy}}}))
+    return {'schema': 1, 'role': 'card', 'architecture': 'arm64', 'os_id': 'elxr', 'os_version': '26.04',
+            'sysroot_version': '3.0.1', 'sdk_firmware': '3.0.1_master_B2796',
+            'devkit_firmware': '3.0.1_master_B2798',
+            'image': ci.baseline_config()['repository']+'@sha256:'+'b'*64,
+            'inputs_sha256': 'c'*64, 'recipe_sha256': 'd'*64}
+
+
+def test_official_card_pulls_qualified_digest_and_records_receipt(tmp_path):
+    import json
+    receipt = official_card_fixture(tmp_path)
+    args = SimpleNamespace(bucket='artifact-bucket', work=tmp_path)
+
+    def fetch(bucket, key, path, optional):
+        assert (bucket, key, optional) == (
+            args.bucket, 'core/offline-card-baseline-v1-3.0.1-3.0.1_master_B2796.json', True)
+        path.write_text(json.dumps(receipt))
+        return True
+
+    image_id = 'sha256:'+'e'*64
+    info = {'Id': image_id, 'Architecture': 'arm64', 'Config': {'Labels': {
+        'ai.sima.offline.inputs': 'c'*64, 'ai.sima.offline.recipe': 'd'*64, 'ai.sima.offline.role': 'card'}}}
+    with patch.object(ci, 'download', side_effect=fetch), \
+         patch.object(ci, 'run', side_effect=['', json.dumps([info])]) as docker:
+        assert ci.pull_baseline(args, 'card', {}, tmp_path) == image_id
+    assert docker.call_args_list[0].args == ('docker', 'pull', receipt['image'])
+    evidence = json.loads((tmp_path/'baseline-images.json').read_text())['card']
+    assert evidence['receipt_sha256'] == ci.assemble.sha(tmp_path/'qualified-card-baseline.json')
+    assert evidence['devkit_firmware'] == receipt['devkit_firmware']
+
+
+@pytest.mark.parametrize('fault', ['missing', 'wrong-sdk', 'mutable-image'])
+def test_unqualified_official_card_never_falls_back_to_legacy(tmp_path, fault):
+    import json
+    receipt = official_card_fixture(tmp_path)
+    if fault == 'wrong-sdk':
+        receipt['sdk_firmware'] = '3.0.1_master_B2780'
+    elif fault == 'mutable-image':
+        receipt['image'] = ci.baseline_config()['repository']+':latest'
+
+    def fetch(bucket, key, path, optional):
+        if fault == 'missing':
+            return False
+        path.write_text(json.dumps(receipt))
+        return True
+
+    with patch.object(ci, 'download', side_effect=fetch), patch.object(ci, 'run') as docker:
+        with pytest.raises(ValueError, match='qualified card baseline'):
+            ci.pull_baseline(SimpleNamespace(bucket='bucket', work=tmp_path), 'card', {}, tmp_path)
+    docker.assert_not_called()
 
 
 @pytest.mark.parametrize('core', [False, True])
