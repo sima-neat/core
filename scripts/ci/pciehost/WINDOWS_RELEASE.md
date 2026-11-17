@@ -85,10 +85,11 @@ has passed its Linux build, DevKit, and PCIe-card gates. The Windows lane:
    bundle, then installs that candidate only in the card qualification sandbox;
 5. runs the customer CLI, C++, Python, lifecycle, fault, performance, and GenAI
    acceptance; and
-6. publishes the tested Windows cohort before Core can advance its branch
-   `latest` tag.
+6. publishes nothing: Vulcan CI calls it with `validation_only=true`, and while
+   the lane is enabled its success is required before Core can advance its
+   branch `latest` tag.
 
-This is the normal release path. It does not require maintainers to copy workflow
+This is the normal validation path. It does not require maintainers to copy workflow
 run IDs between repositories. Scheduler follows Core's branch/snap policy;
 sima-cli resolves from its supported `main` channel.
 
@@ -132,8 +133,9 @@ gh workflow run vulcan-ci.yml --repo sima-neat/core \
   --ref <core-ref> -f validation_only=true
 ```
 
-The main workflow still runs Windows hardware qualification, but skips Linux and
-Windows publication and branch promotion. A direct Windows dispatch is useful
+The main workflow still runs Windows hardware qualification when the lane is
+enabled, and skips Linux publication and branch promotion; Vulcan CI never
+publishes Windows packages. A direct Windows dispatch is useful
 when debugging against a completed Linux run:
 
 ```text
@@ -194,14 +196,18 @@ not a manual-dispatch override.
 ## Publishing and formal release checks
 
 Normal branch and tag runs enter the Windows lane from Core's main CI with
-`include_genai=true` and `validation_only=true`. They qualify the Windows cohort
-and gate branch `latest` promotion on that qualification, but never publish it:
+`include_genai=true` and `validation_only=true` when the lane is enabled. They
+qualify the Windows cohort and gate branch `latest` promotion on that
+qualification, but never publish it:
 a push cannot supply the upgrade baseline or first-release exemption that
 publication requires. Windows packages are published only by a direct
 `pcie-host-windows.yml` dispatch from `develop` or a `v*` tag with
 `validation_only=false` and either `require_upgrade=true` (below) or, for the
 first Windows release only, `first_release_upgrade_exemption=true` with a
-non-empty `first_release_upgrade_exemption_reason`. Publication is rejected unless
+non-empty `first_release_upgrade_exemption_reason`. Every publishing dispatch
+also needs `linux_run_id=<same-commit-core-vulcan-run-id>` and
+`include_genai=true`; without `include_genai=true` the run fails only at the
+hardware step. Publication is rejected unless
 the Windows 11 customer-install, direct-card, complete GenAI, and cleanup evidence
 passes. Core publishes only the bytes that passed; it does not rebuild them.
 
