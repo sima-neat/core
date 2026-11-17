@@ -280,7 +280,7 @@ preview = run.pull("preview", timeout_ms=2000)
 | 초기 빌드에서 첫 번째 샘플의 오류를 조기에 감지해야 합니다. | `startup_preflight = true` | 초기 빌드 결과의 무결성을 유지합니다. `pull(...)` 또는 `last_error()`를 통해 이후에 초기 샘플 실패가 발생할 수 있는 경우에만 비활성화하십시오. |
 | 소스 버퍼의 수명은 짧습니다. | `advanced.copy_input = true` | `push(...)` 이후에 사라질 수 있는 입력 메모리를 보호합니다. |
 | 입력 크기에 대한 제한을 설정해야 합니다. | `advanced.max_input_bytes` | 입력값이 너무 크면 그래프에 입력되기 전에 거부합니다. |
-| 텔레메트리 데이터를 삭제해야 합니다. | `on_input_drop` | 스트림 및 이유별로 과도한 발생 횟수와 크기 제한으로 인한 삭제 건수를 집계합니다. |
+| 입력 드롭 측정 | `inputs_dropped`, `on_input_drop` | 카운터는 오버플로 정책으로 폐기된 샘플 수를 기록합니다. 콜백은 입력 형식 변경 중 폐기된 프레임을 알려 줍니다. |
 | 빌드 시점에 증거 자료가 필요합니다. | `run_export` | 실행이 완료될 때 실행 스냅샷을 생성합니다. |
 
 ### DMA-BUF 출력 유지와 해제
@@ -623,9 +623,7 @@ auto sample = simaai::neat::Sample::from_image(
 sample.stream_id = camera_id;
 sample.frame_id = frame_number++;
 
-if (!run.try_push("image", sample)) {
-  // Count local backpressure here. Runtime drops also flow through on_input_drop.
-}
+bool accepted = run.try_push("image", sample);
 ```
 
 </CodeTab>
@@ -1315,7 +1313,7 @@ except pyneat.NeatError as error:
 5. 제로 복사 방식 또는 런타임 기반 출력을 너무 오래 보관하고 있습니까?
 6. 대기열의 깊이가 지터(jitter)를 처리하기에는 너무 얕거나, 반대로 백프레셔(backpressure)를 발생시키는 데에는 너무 깊은 것인가?
 7. 과부하 정책이 명확하게 명시되어 있습니까?
-8. `on_input_drop` 또는 로컬 `try_push(...)` 실패를 통해 드롭 수가 계산됩니까?
+8. 측정 보고서의 `inputs_dropped`에 정책으로 폐기된 샘플이 집계됩니까?
 9. 예상되는 모든 `stream_id`가 측정된 시간 범위 내에 결과를 생성합니까?
 10. 로그 기록, 디코딩 검사, 파일 입출력 또는 보고서 내보내기가 반복 실행되는 코드 내에 포함되어 있습니까?
 

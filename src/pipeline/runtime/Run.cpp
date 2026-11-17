@@ -271,6 +271,7 @@ std::shared_ptr<runtime::RunCore> runtime::RunCore::start_single_pipeline(
   RunCoreStartupGuard startup_guard(st);
   st->pipeline.stream = std::move(stream);
   st->opt = opt;
+  st->opt.overflow_policy = resolve_overflow_policy(opt);
   st->pipeline.stream_opt = stream_opt;
   st->mode = mode;
   st->pipeline.tensor_input_opt_for_cv = tensor_input_opt_for_cv;

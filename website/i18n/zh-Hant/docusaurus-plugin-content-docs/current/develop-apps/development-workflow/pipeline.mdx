@@ -280,7 +280,7 @@ preview = run.pull("preview", timeout_ms=2000)
 | 啟動時的建立應該及早捕獲第一個樣本的錯誤 | `startup_preflight = true` | 使啟動時的建立保持誠實。僅在第一個樣本的失敗可以稍後通過 `pull(...)` 或 `last_error()` 顯示時才禁用。 |
 | 來源緩衝區的生命週期很短 | `advanced.copy_input = true` | 保護輸入記憶體，該記憶體可能在 `push(...)` 之後消失。 |
 | 輸入大小需要一個保護欄 | `advanced.max_input_bytes` | 在輸入進入圖之前，拒絕過大的輸入。 |
-| 您需要丟棄遙測 | `on_input_drop` | 依資料流和原因計算超載和大小保護欄的丟棄次數。 |
+| 測量輸入丟棄數 | `inputs_dropped`、`on_input_drop` | 計數器記錄因溢位策略而丟棄的樣本數。回呼會回報輸入格式變更期間丟棄的影格。 |
 | 您需要建立時的證據 | `run_export` | 在建立執行時，寫入執行快照。 |
 
 ### 保留與釋放 DMA-BUF 輸出
@@ -620,9 +620,7 @@ auto sample = simaai::neat::Sample::from_image(
 sample.stream_id = camera_id;
 sample.frame_id = frame_number++;
 
-if (!run.try_push("image", sample)) {
-  // Count local backpressure here. Runtime drops also flow through on_input_drop.
-}
+bool accepted = run.try_push("image", sample);
 ```
 
 </CodeTab>
@@ -1313,7 +1311,7 @@ except pyneat.NeatError as error:
 5. 您是否持有零拷貝或執行階段支援的輸出太久？
 6. 佇列是否對於抖動來說太淺，或者對於回壓來說太深？
 7. 超載策略是否明確？
-8. 是否透過 `on_input_drop` 或本地 `try_push(...)` 失敗來計算遺失的資料？
+8. 測量報告中的 `inputs_dropped` 是否記錄了因策略而丟棄的樣本？
 9. 每個預期的 `stream_id` 是否在測量的時間範圍內產生輸出？
 10. 日誌、解碼檢查、檔案 I/O 或報告匯出是否位於熱迴圈內？
 

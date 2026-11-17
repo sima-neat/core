@@ -1,8 +1,10 @@
 #ifndef SIMA_NEAT_INTERNAL
 #define SIMA_NEAT_INTERNAL 1
 #endif
+#include "graphs/Fragments.h"
 #include "model/Model.h"
 #include "nodes/common/Output.h"
+#include "nodes/common/Queue.h"
 #include "nodes/io/Input.h"
 #include "pipeline/ErrorCodes.h"
 #include "pipeline/NeatError.h"
@@ -21,6 +23,7 @@
 #include <future>
 #include <mutex>
 #include <thread>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -309,7 +312,9 @@ void runner_try_push_preserves_policy_and_ownership(simaai::neat::OverflowPolicy
   runner.close();
 }
 
-void named_input_backpressure(simaai::neat::OverflowPolicy policy, bool fanout) {
+enum class Topology { Linear, DirectFanout, QueuedFanout };
+
+void named_input_backpressure(simaai::neat::OverflowPolicy policy, Topology topology) {
   using namespace simaai::neat;
   InputOptions input;
   input.payload_type = PayloadType::Tensor;
@@ -318,7 +323,22 @@ void named_input_backpressure(simaai::neat::OverflowPolicy policy, bool fanout) 
   auto source = nodes::Input("in", input);
   auto output = nodes::Output("out", OutputOptions::EveryFrame(1));
   Graph graph;
-  if (fanout) {
+  const bool fanout = topology != Topology::Linear;
+  if (topology == Topology::QueuedFanout) {
+    const QueueOptions queue{.max_buffers = 1};
+    Graph upstream("in");
+    upstream.add(source);
+    upstream.add(nodes::Queue(queue));
+    auto branch = graphs::Branch("in", {"a", "b"});
+    graph.connect(upstream, branch);
+    for (const auto& [port, name] : {std::pair{"a", "out"}, std::pair{"b", "copy"}}) {
+      Graph leg(port);
+      leg.add(nodes::Input(port, input));
+      leg.add(nodes::Queue(queue));
+      leg.add(nodes::Output(name, OutputOptions::EveryFrame(1)));
+      graph.connect(branch, leg);
+    }
+  } else if (fanout) {
     graph.connect(source, output);
     graph.connect(source, nodes::Output("copy", OutputOptions::EveryFrame(1)));
   } else {
@@ -388,9 +408,10 @@ RUN_TEST("unit_run_overflow_policy_parity_test", ([] {
            require_policy_parity(OverflowPolicy::KeepLatest, false, true);
            for (auto policy :
                 {OverflowPolicy::Block, OverflowPolicy::DropIncoming, OverflowPolicy::KeepLatest}) {
-             named_input_backpressure(policy, false);
+             named_input_backpressure(policy, Topology::Linear);
+             named_input_backpressure(policy, Topology::QueuedFanout);
              if (policy == OverflowPolicy::KeepLatest)
-               named_input_backpressure(policy, true);
+               named_input_backpressure(policy, Topology::DirectFanout);
              for (bool tensor_list : {false, true}) {
                runner_try_push_preserves_policy_and_ownership(policy, tensor_list);
              }

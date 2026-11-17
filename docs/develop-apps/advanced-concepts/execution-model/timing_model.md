@@ -78,7 +78,9 @@ Use reusable mode for:
 
 ## Push timing
 
-`push()` waits for input space under every overflow policy. If a graph input times out, it returns `false`. You can drain accepted work and retry. A successful submission means the input entered the graph.
+`push()` waits for input space under every overflow policy. If a graph input times out, it returns `false`. Drain accepted work before retrying an individual sample.
+
+Both `push()` and `try_push()` can accept the first items in a bundle or Python list of samples before returning `false`. Submit one sample per call when you need to retry.
 
 `try_push()` returns immediately when the input queue is full.
 

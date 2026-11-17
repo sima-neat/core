@@ -168,7 +168,7 @@ struct RunOptions {
    * `KeepLatest` replaces the oldest pending input, counts a drop, and returns true.
    * A public `Output` node has its own `OutputOptions::drop` policy.
    */
-  OverflowPolicy overflow_policy = OverflowPolicy::Block;
+  OverflowPolicy overflow_policy = OverflowPolicy::Auto;
   OutputMemory output_memory =
       OutputMemory::Auto; ///< Whether output tensors are zero-copy or owned.
   /**
@@ -263,7 +263,7 @@ struct InputDropInfo {
   int64_t frame_id = -1;                 ///< Source-assigned frame ID, if any.
   std::string stream_id;                 ///< Stream identifier (multi-stream pipelines).
   std::string port_name;                 ///< Ingress port name (multi-input models).
-  std::string reason; ///< Human-readable reason (e.g., `"queue_full"`, `"size_limit_exceeded"`).
+  std::string reason; ///< Why the pending input was discarded during a format change.
 };
 
 /**
@@ -669,7 +669,8 @@ public:
   bool try_push(const TensorList& inputs);
   /// Non-blocking named-ingress variant.
   bool try_push(std::string_view input_name, const TensorList& inputs);
-  /// Push full `Sample` inputs (carrying per-buffer metadata).
+  /// Push a Sample with its metadata. A bundle is submitted in order and can be partially
+  /// accepted. Submit one sample per call when retrying individual inputs.
   bool push(const Sample& msgs);
   /// Push full `Sample` inputs into a named graph ingress. Use for multi-input graphs.
   bool push(std::string_view input_name, const Sample& msgs);

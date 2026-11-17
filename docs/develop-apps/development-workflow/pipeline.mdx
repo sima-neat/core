@@ -281,7 +281,7 @@ When you combine streams, preserve the matching key that the graph expects. `Com
 | Seeded build should catch first-sample errors early | `startup_preflight = true` | Keeps seeded build honest. Disable only when first-sample failures can surface later through `pull(...)` or `last_error()`. |
 | Source buffer lifetime is short | `advanced.copy_input = true` | Protects input memory that may disappear after `push(...)`. |
 | Input size needs a guardrail | `advanced.max_input_bytes` | Rejects oversized input before it enters the graph. |
-| You need drop telemetry | `on_input_drop` | Counts overload and size-guard drops by stream and reason. |
+| Measure input drops | `inputs_dropped`, `on_input_drop` | The counter records overflow-policy drops. The callback reports frames discarded during input format changes. |
 | You need build-time evidence | `run_export` | Writes a run snapshot when the run is built. |
 
 ### Retain and release DMA-BUF outputs
@@ -632,9 +632,7 @@ auto sample = simaai::neat::Sample::from_image(
 sample.stream_id = camera_id;
 sample.frame_id = frame_number++;
 
-if (!run.try_push("image", sample)) {
-  // Count local backpressure here. Runtime drops also flow through on_input_drop.
-}
+bool accepted = run.try_push("image", sample);
 ```
 
 </CodeTab>
@@ -1328,7 +1326,7 @@ If throughput is low or outputs disappear, check these first:
 5. Are you holding zero-copy or runtime-backed outputs too long?
 6. Are queues too shallow for jitter, or too deep to expose backpressure?
 7. Is the overload policy explicit?
-8. Are drops counted through `on_input_drop` or local `try_push(...)` failures?
+8. Does the measurement report show policy drops in `inputs_dropped`?
 9. Does every expected `stream_id` produce output in the measured window?
 10. Are logs, decoding checks, file I/O, or report export inside the hot loop?
 

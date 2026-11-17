@@ -382,6 +382,9 @@ void materialize_pipeline_runtimes(const std::shared_ptr<RunCore>& core) {
     runtime->run_options = core->graph_options.pipeline;
     if (seg.boundary.graph_internal_output) {
       runtime->run_options.output_memory = simaai::neat::OutputMemory::ZeroCopy;
+      if (core->graph_options.queue_public_input) {
+        runtime->run_options.overflow_policy = OverflowPolicy::Block;
+      }
     }
     runtime->seg.nodes = runtime->nodes;
     runtime->seg.route_options = runtime->route_options;
@@ -1263,11 +1266,9 @@ void start_pipeline_push_thread(const std::shared_ptr<RunCore>& core, std::size_
                      elapsed_ns_since(pop_start));
       if (pipe.seg.boundary.direct_graph_source) {
         // Admission has already succeeded for all branches. Drain accepted inputs even after EOS.
-        auto options = core->graph_options.router_options();
-        options.push_timeout_ms = -1;
         try {
           core->graph_dispatch_direct_input(pipe, queued.source_port, std::move(queued.sample),
-                                            options, false);
+                                            core->graph_options.router_options(), false);
         } catch (const NeatError& error) {
           core->graph_request_stop(error);
         } catch (const std::exception& error) {
@@ -1495,11 +1496,6 @@ std::shared_ptr<RunCore> start_graph_plan(ExecutionGraphPlan plan, RunCoreStartO
   core->opt = opt.run_options;
   core->mode = opt.mode;
   core->graph_options = std::move(opt.graph_options);
-  if (core->graph_options.queue_public_input) {
-    const auto resolved = session_build_resolve_build_opt(opt.mode, core->opt);
-    core->opt.overflow_policy = resolved.overflow_policy;
-    core->graph_options.edge_queue = static_cast<std::size_t>(std::max(0, resolved.queue_depth));
-  }
   configure_graph_public_output_loan_gate(core, core->graph_options, opt.mode);
   core->graph_verbose_guard = std::move(opt.graph_verbose_guard);
   core->graph_execution().plan = std::move(plan);
@@ -1580,6 +1576,22 @@ std::shared_ptr<RunCore> start_graph_plan(ExecutionGraphPlan plan, RunCoreStartO
 }
 
 } // namespace
+
+GraphRuntimeOptions graph_runtime_options_from_run_options(const RunOptions& opt,
+                                                           const VerboseOptions& verbose,
+                                                           RunMode mode) {
+  GraphRuntimeOptions out;
+  const auto resolved = session_build_resolve_build_opt(mode, opt);
+  out.edge_queue = static_cast<std::size_t>(std::max(0, resolved.queue_depth));
+  out.verbose = verbose;
+  out.queue_public_input = true;
+  out.pipeline = opt;
+  out.pipeline.overflow_policy = resolved.overflow_policy;
+  // One board monitor belongs to the graph and covers all its pipeline segments.
+  out.power_monitor = opt.power_monitor;
+  out.pipeline.power_monitor = PowerMonitorOptions{};
+  return out;
+}
 
 std::shared_ptr<RunCore> RunCore::start(ExecutionGraphPlan plan, RunCoreStartOptions opt) {
   gst_init_once();

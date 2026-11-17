@@ -231,13 +231,11 @@ runtime::Endpoint named_input_endpoint_or_throw(const runtime::RunCore& core,
 }
 
 runtime::EdgeRouterOptions graph_router_options_for_push(const runtime::RunCore& core, bool block) {
-  runtime::EdgeRouterOptions options = core.graph_options.router_options();
-  options.request_stop_on_backpressure = false;
-  if (!block) {
-    options.push_timeout_ms = 0;
-    options.public_try_push_policy = core.opt.overflow_policy;
-  }
-  return options;
+  return {.edge_queue = core.graph_options.edge_queue,
+          .push_timeout_ms = block ? core.graph_options.push_timeout_ms : 0,
+          .request_stop_on_backpressure = false,
+          .public_try_push_policy =
+              block ? std::nullopt : std::optional{core.graph_options.pipeline.overflow_policy}};
 }
 
 std::string default_input_name(const runtime::RunCore& core) {
