@@ -188,10 +188,7 @@ void require_model_list_contains(int port) {
   }
 }
 
-// kExpectedText is what the default text model answers. A model chosen through
-// SIMA_TEST_LLIMA_TEXT_MODEL can answer correctly in other words, so then any non-empty text
-// passes.
-void request_text_completion(int port, bool default_text_model) {
+void request_text_completion(int port) {
   auto client = make_client(port);
   const Json request = {
       {"model", "llm"},
@@ -205,12 +202,7 @@ void request_text_completion(int port, bool default_text_model) {
                      "POST /v1/chat/completions text");
   const std::string text = body.at("choices").at(0).at("message").at("content").get<std::string>();
   std::cout << "GENAI_SERVER_TEXT text=" << text << "\n";
-  if (default_text_model) {
-    require(trim_text(text) == kExpectedText, "server text completion returned unexpected text");
-  } else {
-    std::cout << "GENAI_SERVER_TEXT exact check not run: text model is not the default\n";
-    require(!trim_text(text).empty(), "server text completion expected non-empty text");
-  }
+  require(trim_text(text) == kExpectedText, "server text completion returned unexpected text");
 }
 
 // For requests the server must reject: checks the status and returns the error object,
@@ -652,11 +644,9 @@ void request_image_completion(int port, const fs::path& image_path) {
   require(!trim_text(text).empty(), "server image chat expected non-empty generated text");
 }
 
-// The expected transcripts are what the default ASR model produces. A model chosen through
-// SIMA_TEST_LLIMA_ASR_MODEL only has to produce some text; the other fields are still checked.
 void request_audio(int port, const fs::path& audio_path, const std::string& endpoint,
                    const std::string& task, const std::string& expected_text,
-                   const std::string& expected_language, bool default_asr_model) {
+                   const std::string& expected_language) {
   auto client = make_client(port);
   httplib::MultipartFormDataItems items = {
       {"model", "asr", "", ""},
@@ -665,13 +655,8 @@ void request_audio(int port, const fs::path& audio_path, const std::string& endp
   const Json body = parse_response(client.Post(endpoint, items), "POST " + endpoint);
   const std::string text = body.at("text").get<std::string>();
   std::cout << "GENAI_SERVER_ASR text=" << text << "\n";
-  if (default_asr_model) {
-    require(normalize_transcript(text) == expected_text,
-            "server audio " + task + " returned unexpected text");
-  } else {
-    std::cout << "GENAI_SERVER_ASR exact check not run: ASR model is not the default\n";
-    require(!trim_text(text).empty(), "server audio " + task + " returned no text");
-  }
+  require(normalize_transcript(text) == expected_text,
+          "server audio " + task + " returned unexpected text");
   require(body.at("task") == task, "server audio response should report task=" + task);
   require(body.at("language") == expected_language,
           "server audio request should report detected language " + expected_language);
@@ -726,16 +711,12 @@ int main(int argc, char** argv) {
     reject_unknown_model(port);
     reject_invalid_tool_options(port);
     validate_lora_requests(port);
-    const bool default_text_model =
-        text_model_dir.filename() == simaai::neat::test::kDefaultTextModelName;
-    const bool default_asr_model =
-        asr_model_dir.filename() == simaai::neat::test::kDefaultAsrModelName;
-    request_text_completion(port, default_text_model);
+    request_text_completion(port);
     request_streamed_chunks(port);
     // The pinned scenario expects the answer of the default text model. With another model
     // selected through SIMA_TEST_LLIMA_TEXT_MODEL the scenario is not run; the remaining new
     // checks need only a model that answers with text.
-    if (default_text_model) {
+    if (text_model_dir.filename() == simaai::neat::test::kDefaultTextModelName) {
       request_pinned_weather_tool_call(port);
     } else {
       std::cout << "GENAI_SERVER_PINNED_TOOL_CALL not run: text model "
@@ -747,9 +728,9 @@ int main(int argc, char** argv) {
     check_context_limits(port, text_model_dir);
     request_image_completion(port, image_path);
     request_audio(port, audio_path, "/v1/audio/transcriptions", "transcribe", kExpectedAsrText,
-                  "en", default_asr_model);
+                  "en");
     request_audio(port, german_audio_path, "/v1/audio/translations", "translate",
-                  kExpectedTranslation, "de", default_asr_model);
+                  kExpectedTranslation, "de");
 
     server.stop();
     std::cout << "[OK] genai_server_http_test passed\n";
