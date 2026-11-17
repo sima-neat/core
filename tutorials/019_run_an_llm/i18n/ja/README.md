@@ -47,6 +47,8 @@ UI スタイルの出力の場合、`stream()` を呼び出し、返された `G
 
 ## Run
 
+NVMe がない DevKit では、`llima pull` の前に `LLIMA_MODELS_PATH` に書き込み可能なディレクトリを設定し、以下の `/media/nvme/llima/models` の代わりにそのディレクトリを使用してください。
+
 Modalix DevKit で、Hugging Face から Qwen3 4B などの LLM を LLiMa CLI を使用してダウンロードします。
 
 ```bash
