@@ -5,6 +5,10 @@ sidebar_position: 5
 
 # Model Zoo
 
+:::warning 지원 중단
+Model Zoo는 더 이상 사용되지 않습니다. Modalix용 모델을 찾고, 비교하고, 다운로드하려면 [Model Browser](/tools/model-browser/)를 사용하십시오.
+:::
+
 Model Zoo는 SiMa 장치에서 바로 실행할 수 있도록 미리 컴파일되고 양자화된 모델을 엄선한 컬렉션입니다.
 
 다음과 같은 경우에 사용하세요.

@@ -6,6 +6,8 @@ const DEVELOPER_CENTER_HOSTS = new Set([
 ]);
 const DOCS_LOCALES = new Set(["ko", "ja", "zh-Hant", "uk"]);
 const LOCALE_BEFORE_PILLARS = new Set(["examples", "hardware"]);
+// Pillars the Developer Center publishes in English only, so their links stay as written.
+const ENGLISH_ONLY_PILLARS = new Set(["models"]);
 
 function localeForFile(filePath) {
   const normalized = String(filePath || "").replaceAll("\\", "/");
@@ -83,3 +85,4 @@ function remarkLocalizeDeveloperCenterLinks(options = {}) {
 module.exports = remarkLocalizeDeveloperCenterLinks;
 module.exports.localeForFile = localeForFile;
 module.exports.localizeDeveloperCenterUrl = localizeDeveloperCenterUrl;
+module.exports.ENGLISH_ONLY_PILLARS = ENGLISH_ONLY_PILLARS;
