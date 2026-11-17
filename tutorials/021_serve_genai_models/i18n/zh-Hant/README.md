@@ -41,16 +41,7 @@ curl http://<modalix-ip>:9998/v1/models
 
 ## Run
 
-`llima pull` 預設會將模型儲存在 `/media/nvme/llima/models`，因此這些步驟假設 Modalix DevKit 已在 `/media/nvme` 掛載 NVMe 磁碟。模型目錄由 `LLIMA_MODELS_PATH` 指定。若 DevKit 沒有 NVMe，請改為指定具有足夠可用空間且可寫入的目錄。請在執行下列指令的同一個 shell 中設定：
-
-```bash
-# DevKit with NVMe: the default llima models directory
-export LLIMA_MODELS_PATH=/media/nvme/llima/models
-
-# DevKit without NVMe: use a writable directory with enough free space instead
-# export LLIMA_MODELS_PATH="$HOME/llima/models"
-# mkdir -p "$LLIMA_MODELS_PATH"
-```
+若 DevKit 沒有 NVMe，請在執行 `llima pull` 前將 `LLIMA_MODELS_PATH` 設為可寫入的目錄，並以該目錄取代下方的 `/media/nvme/llima/models`。
 
 在 Modalix DevKit 上，使用 LLiMa CLI 從 Hugging Face 下載 LLM、VLM 和 ASR 模型：
 
@@ -65,26 +56,26 @@ llima pull whisper-small-a16w8
 **Python:**
 ```bash
 python3 share/sima-neat/tutorials/021_serve_genai_models/serve_genai_models.py \
-  --llm "$LLIMA_MODELS_PATH/Qwen3-4B-Instruct-2507-GPTQ-a16w4" \
-  --vlm "$LLIMA_MODELS_PATH/Qwen3-VL-4B-Instruct-GPTQ-a16w4" \
-  --asr "$LLIMA_MODELS_PATH/whisper-small-a16w8"
+  --llm /media/nvme/llima/models/Qwen3-4B-Instruct-2507-GPTQ-a16w4 \
+  --vlm /media/nvme/llima/models/Qwen3-VL-4B-Instruct-GPTQ-a16w4 \
+  --asr /media/nvme/llima/models/whisper-small-a16w8
 ```
 
 **C++ (prebuilt):**
 ```bash
 ./lib/sima-neat/tutorials/tutorial_021_serve_genai_models \
-  --llm "$LLIMA_MODELS_PATH/Qwen3-4B-Instruct-2507-GPTQ-a16w4" \
-  --vlm "$LLIMA_MODELS_PATH/Qwen3-VL-4B-Instruct-GPTQ-a16w4" \
-  --asr "$LLIMA_MODELS_PATH/whisper-small-a16w8"
+  --llm /media/nvme/llima/models/Qwen3-4B-Instruct-2507-GPTQ-a16w4 \
+  --vlm /media/nvme/llima/models/Qwen3-VL-4B-Instruct-GPTQ-a16w4 \
+  --asr /media/nvme/llima/models/whisper-small-a16w8
 ```
 
 **C++ (build from source):**
 ```bash
 ./build.sh --target tutorial_021_serve_genai_models
 ./build/tutorials-standalone/tutorial_021_serve_genai_models \
-  --llm "$LLIMA_MODELS_PATH/Qwen3-4B-Instruct-2507-GPTQ-a16w4" \
-  --vlm "$LLIMA_MODELS_PATH/Qwen3-VL-4B-Instruct-GPTQ-a16w4" \
-  --asr "$LLIMA_MODELS_PATH/whisper-small-a16w8"
+  --llm /media/nvme/llima/models/Qwen3-4B-Instruct-2507-GPTQ-a16w4 \
+  --vlm /media/nvme/llima/models/Qwen3-VL-4B-Instruct-GPTQ-a16w4 \
+  --asr /media/nvme/llima/models/whisper-small-a16w8
 ```
 
 如果您只想在開發期間部署子集，請刪除 `--vlm` 或 `--asr`。

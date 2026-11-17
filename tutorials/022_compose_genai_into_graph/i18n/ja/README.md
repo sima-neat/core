@@ -43,16 +43,7 @@ bundleは、検出されたソース言語を報告し、利用可能な場合�
 
 ## Run
 
-`llima pull` は既定でモデルを `/media/nvme/llima/models` に保存するため、この手順では Modalix DevKit の `/media/nvme` に NVMe ドライブがマウントされていることを前提としています。モデルディレクトリは `LLIMA_MODELS_PATH` で指定します。NVMe がない DevKit では、代わりに十分な空き容量がある書き込み可能なディレクトリを指定してください。以下のコマンドを実行するのと同じシェルで設定します。
-
-```bash
-# DevKit with NVMe: the default llima models directory
-export LLIMA_MODELS_PATH=/media/nvme/llima/models
-
-# DevKit without NVMe: use a writable directory with enough free space instead
-# export LLIMA_MODELS_PATH="$HOME/llima/models"
-# mkdir -p "$LLIMA_MODELS_PATH"
-```
+NVMe がない DevKit では、`llima pull` の前に `LLIMA_MODELS_PATH` に書き込み可能なディレクトリを設定し、以下の `/media/nvme/llima/models` の代わりにそのディレクトリを使用してください。
 
 ～において Modalix DevKitLFM2-VL 1.6B VLMをダウンロードしてください。 Hugging Face を使用して LLiMa CLI：
 
@@ -65,14 +56,14 @@ llima pull LFM2-VL-1.6B-a16w4
 **Python:**
 ```bash
 python3 share/sima-neat/tutorials/022_compose_genai_into_graph/compose_genai_into_graph.py \
-  --model "$LLIMA_MODELS_PATH/LFM2-VL-1.6B-a16w4" \
+  --model /media/nvme/llima/models/LFM2-VL-1.6B-a16w4 \
   --image share/sima-neat/tutorials/assets/fronalpstock_1330.jpg
 ```
 
 **C++ (prebuilt):**
 ```bash
 ./lib/sima-neat/tutorials/tutorial_022_compose_genai_into_graph \
-  --model "$LLIMA_MODELS_PATH/LFM2-VL-1.6B-a16w4" \
+  --model /media/nvme/llima/models/LFM2-VL-1.6B-a16w4 \
   --image share/sima-neat/tutorials/assets/fronalpstock_1330.jpg
 ```
 
@@ -80,7 +71,7 @@ python3 share/sima-neat/tutorials/022_compose_genai_into_graph/compose_genai_int
 ```bash
 ./build.sh --target tutorial_022_compose_genai_into_graph
 ./build/tutorials-standalone/tutorial_022_compose_genai_into_graph \
-  --model "$LLIMA_MODELS_PATH/LFM2-VL-1.6B-a16w4" \
+  --model /media/nvme/llima/models/LFM2-VL-1.6B-a16w4 \
   --image share/sima-neat/tutorials/assets/fronalpstock_1330.jpg
 ```
 

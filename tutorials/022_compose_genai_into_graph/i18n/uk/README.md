@@ -39,16 +39,7 @@
 
 ## Run
 
-За замовчуванням `llima pull` зберігає моделі в `/media/nvme/llima/models`, тому ці кроки розраховані на NVMe-накопичувач, змонтований у `/media/nvme` на Modalix DevKit. Каталог моделей задає змінна `LLIMA_MODELS_PATH`. Якщо в DevKit немає NVMe, вкажіть у ній натомість каталог із правом запису та достатнім вільним місцем. Задайте змінну в тій самій оболонці, у якій виконуватимете наведені нижче команди:
-
-```bash
-# DevKit with NVMe: the default llima models directory
-export LLIMA_MODELS_PATH=/media/nvme/llima/models
-
-# DevKit without NVMe: use a writable directory with enough free space instead
-# export LLIMA_MODELS_PATH="$HOME/llima/models"
-# mkdir -p "$LLIMA_MODELS_PATH"
-```
+Якщо в DevKit немає NVMe, перед `llima pull` задайте в `LLIMA_MODELS_PATH` каталог із правом запису й використовуйте його замість `/media/nvme/llima/models` у командах нижче.
 
 У Modalix DevKit завантажте VLM LFM2-VL 1.6B з Hugging Face, використовуючи CLI LLiMa:
 
@@ -61,14 +52,14 @@ llima pull LFM2-VL-1.6B-a16w4
 **Python:**
 ```bash
 python3 share/sima-neat/tutorials/022_compose_genai_into_graph/compose_genai_into_graph.py \
-  --model "$LLIMA_MODELS_PATH/LFM2-VL-1.6B-a16w4" \
+  --model /media/nvme/llima/models/LFM2-VL-1.6B-a16w4 \
   --image share/sima-neat/tutorials/assets/fronalpstock_1330.jpg
 ```
 
 **C++ (prebuilt):**
 ```bash
 ./lib/sima-neat/tutorials/tutorial_022_compose_genai_into_graph \
-  --model "$LLIMA_MODELS_PATH/LFM2-VL-1.6B-a16w4" \
+  --model /media/nvme/llima/models/LFM2-VL-1.6B-a16w4 \
   --image share/sima-neat/tutorials/assets/fronalpstock_1330.jpg
 ```
 
@@ -76,7 +67,7 @@ python3 share/sima-neat/tutorials/022_compose_genai_into_graph/compose_genai_int
 ```bash
 ./build.sh --target tutorial_022_compose_genai_into_graph
 ./build/tutorials-standalone/tutorial_022_compose_genai_into_graph \
-  --model "$LLIMA_MODELS_PATH/LFM2-VL-1.6B-a16w4" \
+  --model /media/nvme/llima/models/LFM2-VL-1.6B-a16w4 \
   --image share/sima-neat/tutorials/assets/fronalpstock_1330.jpg
 ```
 

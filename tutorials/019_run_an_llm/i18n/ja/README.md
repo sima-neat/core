@@ -47,16 +47,7 @@ UI スタイルの出力の場合、`stream()` を呼び出し、返された `G
 
 ## Run
 
-`llima pull` は既定でモデルを `/media/nvme/llima/models` に保存するため、この手順では Modalix DevKit の `/media/nvme` に NVMe ドライブがマウントされていることを前提としています。モデルディレクトリは `LLIMA_MODELS_PATH` で指定します。NVMe がない DevKit では、代わりに十分な空き容量がある書き込み可能なディレクトリを指定してください。以下のコマンドを実行するのと同じシェルで設定します。
-
-```bash
-# DevKit with NVMe: the default llima models directory
-export LLIMA_MODELS_PATH=/media/nvme/llima/models
-
-# DevKit without NVMe: use a writable directory with enough free space instead
-# export LLIMA_MODELS_PATH="$HOME/llima/models"
-# mkdir -p "$LLIMA_MODELS_PATH"
-```
+NVMe がない DevKit では、`llima pull` の前に `LLIMA_MODELS_PATH` に書き込み可能なディレクトリを設定し、以下の `/media/nvme/llima/models` の代わりにそのディレクトリを使用してください。
 
 Modalix DevKit で、Hugging Face から Qwen3 4B などの LLM を LLiMa CLI を使用してダウンロードします。
 
@@ -69,20 +60,20 @@ Modalixのチュートリアルを、DevKitのローカルモデルディレク�
 **Python:**
 ```bash
 python3 share/sima-neat/tutorials/019_run_an_llm/run_an_llm.py \
-  --model "$LLIMA_MODELS_PATH/Qwen3-4B-Instruct-2507-GPTQ-a16w4"
+  --model /media/nvme/llima/models/Qwen3-4B-Instruct-2507-GPTQ-a16w4
 ```
 
 **C++ (prebuilt):**
 ```bash
 ./lib/sima-neat/tutorials/tutorial_019_run_an_llm \
-  --model "$LLIMA_MODELS_PATH/Qwen3-4B-Instruct-2507-GPTQ-a16w4"
+  --model /media/nvme/llima/models/Qwen3-4B-Instruct-2507-GPTQ-a16w4
 ```
 
 **C++ (build from source):**
 ```bash
 ./build.sh --target tutorial_019_run_an_llm
 ./build/tutorials-standalone/tutorial_019_run_an_llm \
-  --model "$LLIMA_MODELS_PATH/Qwen3-4B-Instruct-2507-GPTQ-a16w4"
+  --model /media/nvme/llima/models/Qwen3-4B-Instruct-2507-GPTQ-a16w4
 ```
 
 期待される出力は、単純なプロンプトへの回答、システムプロンプトによる回答、文脈を考慮したフォローアップ、およびストリーミング形式の最終的な応答です。

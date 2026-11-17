@@ -43,16 +43,7 @@
 
 ## Run
 
-За замовчуванням `llima pull` зберігає моделі в `/media/nvme/llima/models`, тому ці кроки розраховані на NVMe-накопичувач, змонтований у `/media/nvme` на Modalix DevKit. Каталог моделей задає змінна `LLIMA_MODELS_PATH`. Якщо в DevKit немає NVMe, вкажіть у ній натомість каталог із правом запису та достатнім вільним місцем. Задайте змінну в тій самій оболонці, у якій виконуватимете наведені нижче команди:
-
-```bash
-# DevKit with NVMe: the default llima models directory
-export LLIMA_MODELS_PATH=/media/nvme/llima/models
-
-# DevKit without NVMe: use a writable directory with enough free space instead
-# export LLIMA_MODELS_PATH="$HOME/llima/models"
-# mkdir -p "$LLIMA_MODELS_PATH"
-```
+Якщо в DevKit немає NVMe, перед `llima pull` задайте в `LLIMA_MODELS_PATH` каталог із правом запису й використовуйте його замість `/media/nvme/llima/models` у командах нижче.
 
 На Modalix DevKit завантажте VLM LFM2-VL 1.6B з Hugging Face за допомогою CLI LLiMa:
 
@@ -65,14 +56,14 @@ llima pull LFM2-VL-1.6B-a16w4
 **Python:**
 ```bash
 python3 share/sima-neat/tutorials/020_run_a_vlm/run_a_vlm.py \
-  --model "$LLIMA_MODELS_PATH/LFM2-VL-1.6B-a16w4" \
+  --model /media/nvme/llima/models/LFM2-VL-1.6B-a16w4 \
   --image tests/images/people.jpg
 ```
 
 **C++ (prebuilt):**
 ```bash
 ./lib/sima-neat/tutorials/tutorial_020_run_a_vlm \
-  --model "$LLIMA_MODELS_PATH/LFM2-VL-1.6B-a16w4" \
+  --model /media/nvme/llima/models/LFM2-VL-1.6B-a16w4 \
   --image tests/images/people.jpg
 ```
 
@@ -80,7 +71,7 @@ python3 share/sima-neat/tutorials/020_run_a_vlm/run_a_vlm.py \
 ```bash
 ./build.sh --target tutorial_020_run_a_vlm
 ./build/tutorials-standalone/tutorial_020_run_a_vlm \
-  --model "$LLIMA_MODELS_PATH/LFM2-VL-1.6B-a16w4" \
+  --model /media/nvme/llima/models/LFM2-VL-1.6B-a16w4 \
   --image tests/images/people.jpg
 ```
 

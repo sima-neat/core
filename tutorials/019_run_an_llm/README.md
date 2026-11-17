@@ -47,16 +47,7 @@ For UI-style output, call `stream()` and iterate the returned `GenerationStream`
 
 ## Run
 
-`llima pull` stores models under `/media/nvme/llima/models` by default, so these steps expect an NVMe drive mounted at `/media/nvme` on the Modalix DevKit. `LLIMA_MODELS_PATH` sets the model directory. On a DevKit without NVMe, set it to a writable directory with enough free space instead. Set it in the same shell where you run the commands below:
-
-```bash
-# DevKit with NVMe: the default llima models directory
-export LLIMA_MODELS_PATH=/media/nvme/llima/models
-
-# DevKit without NVMe: use a writable directory with enough free space instead
-# export LLIMA_MODELS_PATH="$HOME/llima/models"
-# mkdir -p "$LLIMA_MODELS_PATH"
-```
+On a DevKit without NVMe, set `LLIMA_MODELS_PATH` to a writable directory before `llima pull`, and use it instead of `/media/nvme/llima/models` below.
 
 On the Modalix DevKit, download an LLM such as Qwen3 4B from Hugging Face using the LLiMa CLI:
 
@@ -69,20 +60,20 @@ Run the tutorial on Modalix with the DevKit-local model directory:
 **Python:**
 ```bash
 python3 share/sima-neat/tutorials/019_run_an_llm/run_an_llm.py \
-  --model "$LLIMA_MODELS_PATH/Qwen3-4B-Instruct-2507-GPTQ-a16w4"
+  --model /media/nvme/llima/models/Qwen3-4B-Instruct-2507-GPTQ-a16w4
 ```
 
 **C++ (prebuilt):**
 ```bash
 ./lib/sima-neat/tutorials/tutorial_019_run_an_llm \
-  --model "$LLIMA_MODELS_PATH/Qwen3-4B-Instruct-2507-GPTQ-a16w4"
+  --model /media/nvme/llima/models/Qwen3-4B-Instruct-2507-GPTQ-a16w4
 ```
 
 **C++ (build from source):**
 ```bash
 ./build.sh --target tutorial_019_run_an_llm
 ./build/tutorials-standalone/tutorial_019_run_an_llm \
-  --model "$LLIMA_MODELS_PATH/Qwen3-4B-Instruct-2507-GPTQ-a16w4"
+  --model /media/nvme/llima/models/Qwen3-4B-Instruct-2507-GPTQ-a16w4
 ```
 
 Expected output is a simple prompt answer, a system-prompted answer, a context-aware follow-up, and a streamed final response.
