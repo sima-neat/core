@@ -28,6 +28,7 @@ sidebar_position: 1
       <li><a class="overview-link-card" href="/reference/environment-variables/"><strong>環境変数</strong><span>ランタイムおよびビルダーの環境変数を参照してください。</span></a></li>
       <li><a class="overview-link-card" href="/reference/tutorial-assets/"><strong>チュートリアルアセット</strong><span>モデルアーカイブのパスとソースツリーのチュートリアルアセットを制御します。</span></a></li>
       <li><a class="overview-link-card" href="/reference/boxdecode_decode_types/"><strong>BoxDecodeデコードタイプ</strong><span>デコードタイプを選択し、パックされた検出出力を解析します。</span></a></li>
+      <li><a class="overview-link-card" href="/reference/semantic_segmentation_decode/"><strong>セマンティックセグメンテーションのデコード</strong><span>クラスごとのスコアを、EV74 上でリサイズしたクラスマップに変換します。</span></a></li>
       <li><a class="overview-link-card" href="/reference/error-codes/"><strong>エラーコード</strong><span>フレームワークのエラー定数を原因と次の手順にマッピングします。</span></a></li>
       <li><a class="overview-link-card" href="/reference/error_format/"><strong>プラグインエラー形式</strong><span>GStreamerプラグインの失敗によって報告される構造化されたエラーフィールドを理解します。</span></a></li>
     </ul>
