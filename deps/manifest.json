@@ -1,9 +1,11 @@
 {
   "scheduler": {
-    "policy": "snap"
+    "branch": "3.0.1-prep",
+    "spec": "42e8b2b54e7a"
   },
   "llima": {
-    "policy": "snap"
+    "branch": "3.0.1-prep",
+    "spec": "646add0d1d18"
   },
   "sdk": {
     "channel": "develop"
