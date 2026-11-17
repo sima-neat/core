@@ -25,6 +25,10 @@ flowchart LR
     Benchmark[Core benchmark reports] --> Sentinel[Optional Sentinel telemetry]
 ```
 
+Model 與獨立的 Resize 共用僅含值的 `ResizeInterpolation` 列舉及單一取樣器權杖對應。Model 規劃會先解析可選的型別設定，再處理圖像意圖、階段投影與圖形來源資訊；既有字串僅保留在相容性邊界。
+
+模型與獨立影像選項會轉換為相同的一般 Preproc 請求。固定來源運算保留原始 FP32 數值縮放、尺寸縮放後的平均值／除數，以及量化步長的運算邊界；它不是任意順序的轉換解譯器。輸入 dtype、量化及實體佈局仍由 MPK 決定。新選項需明確啟用，省略時保留舊版位元組。Core 只投影意圖與幾何資訊；數值檢查及執行由 Kernels 負責。
+
 Kernels 仍是操作目錄與數值准入的權威來源。Scheduler 透過 Runner 轉送一般化要求；
 Scheduler 與 Core 都不維護韌體 ID 或逐操作派送表。Core 保留公開節點 API、幾何原則
 與線路格式處理。Scheduler 在套件組驗證後具體化新的轉接器／解析器工廠。
@@ -443,7 +447,7 @@ Scheduler 在準備階段依此關係檢查每個輸出綁定，包括 dtype、�
 `FrameSpan` 位移屬於個別配置與緩衝群組，不是整張圖的全域位址。不同群組中的相同位移不會重疊。BoxDecode 和 ArgMax 將輸出頭相對張量位移與儲存位移分開。直接記憶體輸入與執行階段實體繫結輸入維持原有定址方式。
 
 Core 將 Preproc、轉換與視覺階段，包括 ArgMax、BoxDecode、SuperPoint 與 LiDAR/BEV 核心節點（SimaVoxelize、SimaPillarScatter、
-SimaBEVPoolPlan、SimaBEVPool 與 SimaCenterHeadDecode），降階為
+SimaBEVPoolPlan、SimaBEVPool 與 SimaCenterHeadDecode）與 ResizeArgMax，降階為
 標準要求與明確張量埠對應。Scheduler 的一般化張量階段引擎擁有 GStreamer 綁定與
 發布；Runner 擁有相依、非同步執行與執行期間緩衝區生命週期。
 Core 從上游分配契約或輸入儲存空間匯入載體容量，絕不只根據邏輯形狀推斷。
@@ -562,7 +566,7 @@ LiDAR/BEV 節點將選項、埠描述與無副作用的數值要求建構保留�
 Scheduler 既有的 `check_kernel(...)` API，並使用一般的階段執行配方與 `FrameLayout`
 執行路徑。`StaticSpecBuilders.cpp` 與 `SimaArgMax` 共用僅處理中繼資料的輸入投影及
 直接輸入繫結；這些輔助函式不會準備或排程核心。LiDAR/BEV 節點檔案不會包含管線
-私有實作標頭。此分工不會新增逐影格工作或承載資料複製。
+私有實作標頭。此分工不會新增逐影格工作或承載資料複製。 `ResizeArgMax` 也採用相同分工。`Model::Options::semantic_segmentation` 會以該節點取代模型的 dequantize 或 cast 後處理，節點透過上游的跨步檢視讀取 MLA 分數；`Model` 建構函式會拒絕其他任何後處理。
 
 獨立的 `Cast` 將具型別檢視編譯成由 Kernels 檢查的標準 `cast` 要求。邏輯身分、步幅與張量相對位移保持明確。語意編譯在配置前調整有序 MLA 輸入埠；呈現過程保留已檢查合約。執行容量預設為非同步 4、同步 1，並以獨立輸出載體支援保留。子集或重新排序的 TensorSet 使用保留父物件的中繼資料封套，不修改已持有的發布資訊與承載資料。
 
@@ -1696,3 +1700,12 @@ JSON 保留 `sima.neat.status.v1`，並新增 `components.pcieHost`、`component
 PyNeat 和 PyNeatPCIe 狀態會列出每個偵測到的安裝版本及其虛擬環境路徑。不同環境會顯示為多個環境，而非版本衝突。對於虛擬環境以外的套件，輸出會改為顯示套件目錄。狀態查詢只讀取套件中繼資料，不會匯入原生模組。
 
 JSON 中的每個 Python 項目會新增 `installations` 陣列。每筆記錄包含 `version`、`environment` 和 `path`（套件目錄）。在虛擬環境以外，`environment` 為 `null`。若安裝版本不同，摘要的 `version` 為 `null`；僅有多個安裝不會設定 `error`。指向同一安裝的符號連結路徑只會列出一次。
+
+
+## 裁切幾何的權責 {#crop-geometry-ownership}
+
+Core 根據實際來源尺寸，計算並檢查 Crop 的虛擬縮放尺寸與中央視窗偏移量。Kernels 保留原始來源的濾波範圍，直接計算該視窗，不插入中間影像或 CPU 裁切。最終尺寸仍由 MPK 決定。Preproc 發佈實際的模型至原始影像邊緣座標仿射轉換，並與半像素取樣中心座標區分。支援的偵測配方會在模型空間選取後使用此權威資訊；缺少或衝突的幾何資訊將被拒絕。
+
+## SDK 平台建置識別資訊 {#sdk-platform-build-identity}
+
+Core 會將作用中目標 SDK 的 `elxr_version`、完整 `sysroot_version` 與編譯器 `target` 記錄為 `build_platform`。Scheduler 會將相同識別資訊與 Runner 及自身的建置記錄比對。Core 在編譯後重新驗證，並在產生安裝中繼資料前檢查最終 CMake sysroot 與編譯器目標。平台程式庫由選定的 SDK 提供，不會為來源檢查而下載平台 DEB。NEAT 套件完整性檢查及獨立的目標驗證仍然必要。遷移缺少識別資訊的產生端記錄時，請依 Runner、Scheduler、Core 的順序重新建置。

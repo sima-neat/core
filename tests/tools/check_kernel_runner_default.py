@@ -218,6 +218,7 @@ class KernelRunnerDefaultContract(unittest.TestCase):
             "src/nodes/sima/SimaCenterHeadDecode.cpp",
             "src/nodes/sima/SimaBEVPoolPlan.cpp",
             "src/nodes/sima/SimaBEVPool.cpp",
+            "src/nodes/sima/ResizeArgMax.cpp",
             "src/nodes/sima/internal/LidarBevKernelRequests.cpp",
             "src/nodes/sima/internal/KernelNodeDescription.cpp",
         ))

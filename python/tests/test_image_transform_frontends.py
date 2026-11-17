@@ -1,4 +1,4 @@
-"""Typed image frontends share Preproc without widening its existing options ABI."""
+"""Typed image frontends and fixed Preproc options use the shared prepared path."""
 import pytest
 import pyneat
 
@@ -98,3 +98,93 @@ def test_decoded_group_byte_estimates_follow_spatial_overrides(group):
     options.decoder_raw_output = False
     options.output_caps.format = pyneat.Format.Auto
     assert project(options).byte_size == 0
+
+
+def test_fixed_preproc_options_are_additive_and_round_trip():
+    options = pyneat.ModelOptions()
+    p = options.preprocess
+    assert p.rescale_factor is None and p.quantization_step is None
+    assert p.floating_conversion == pyneat.PreprocFloatingConversion.Legacy
+    assert p.color_conversion_placement == pyneat.PreprocColorConversionPlacement.AfterResize
+    p.rescale_factor = 1.0 / 255.0
+    p.resize.interpolation = pyneat.ResizeInterpolation.BilinearAntialiased
+    p.normalize.enable = pyneat.AutoFlag.On
+    p.normalize.mean = [0.485, 0.456, 0.406]
+    p.normalize.stddev = [0.229, 0.224, 0.225]
+    p.floating_conversion = pyneat.PreprocFloatingConversion.NearestEven
+    assert options.preprocess.rescale_factor == pytest.approx(1.0 / 255.0)
+    assert options.preprocess.floating_conversion == pyneat.PreprocFloatingConversion.NearestEven
+    standalone = pyneat.PreprocOptions()
+    standalone.rescale_factor = 1.0
+    standalone.quantization_step = 0.25
+    standalone.color_conversion_placement = pyneat.PreprocColorConversionPlacement.BeforeResize
+    assert standalone.quantization_step == 0.25
+    standalone.rescale_factor = None
+    standalone.quantization_step = None
+    assert standalone.rescale_factor is None and standalone.quantization_step is None
+    p.rescale_factor = None
+    p.quantization_step = 0.25
+    p.quantization_step = None
+    assert p.rescale_factor is None and p.quantization_step is None
+    norm = pyneat.NormalizationOptions()
+    norm.rescale_factor = 1.0 / 255.0
+    norm.floating_conversion = pyneat.PreprocFloatingConversion.NearestEven
+    norm.stddev = [1.0, -0.25, 1.0]
+    assert pyneat.nodes.normalization(norm) is not None
+    norm.rescale_factor = None
+    assert norm.rescale_factor is None
+    resize = pyneat.ResizeOptions()
+    resize.width = resize.height = 8
+    resize.interpolation = pyneat.ResizeInterpolation.BilinearAntialiased
+    assert pyneat.nodes.resize(resize) is not None
+
+
+@pytest.mark.parametrize("name", ["Nearest", "Bilinear", "Bicubic", "BoxAverage", "BilinearAntialiased"])
+def test_model_and_standalone_resize_share_interpolation_enum(name):
+    model = pyneat.ModelOptions()
+    assert model.preprocess.resize.interpolation is None
+    assert model.preprocess.resize.scaling_type == "BILINEAR"
+    sampler = getattr(pyneat.ResizeInterpolation, name)
+    model.preprocess.resize.interpolation = sampler
+    standalone = pyneat.ResizeOptions()
+    standalone.interpolation = sampler
+    assert model.preprocess.resize.interpolation == standalone.interpolation
+    model.preprocess.resize.interpolation = None
+    assert model.preprocess.resize.interpolation is None
+    model.preprocess.resize.scaling_type = "NEAREST_NEIGHBOUR"
+    assert model.preprocess.resize.scaling_type == "NEAREST_NEIGHBOUR"
+    with pytest.raises(TypeError):
+        model.preprocess.resize.interpolation = "BILINEAR_ANTIALIASED"
+
+
+def test_center_crop_typed_options_and_optional_reset():
+    model = pyneat.ModelOptions()
+    assert model.preprocess.resize.shorter_side is None
+    model.preprocess.resize.mode = pyneat.ResizeMode.Crop
+    model.preprocess.resize.shorter_side = 256
+    assert model.preprocess.resize.shorter_side == 256
+    model.preprocess.resize.shorter_side = None
+    assert model.preprocess.resize.shorter_side is None
+    raw = pyneat.PreprocOptions()
+    assert raw.resize_mode is None and raw.shorter_side is None
+    raw.resize_mode = pyneat.ResizeMode.Crop
+    raw.shorter_side = 256
+    assert raw.resize_mode == pyneat.ResizeMode.Crop and raw.shorter_side == 256
+    raw.resize_mode = None
+    raw.shorter_side = None
+    assert raw.resize_mode is None and raw.shorter_side is None
+    standalone = pyneat.ResizeOptions()
+    standalone.width = standalone.height = 224
+    standalone.fit = pyneat.ResizeFit.Cover
+    standalone.shorter_side = 256
+    assert pyneat.nodes.resize(standalone) is not None
+    standalone.shorter_side = None
+    assert pyneat.nodes.resize(standalone) is not None
+    standalone.shorter_side = 256
+    standalone.fit = pyneat.ResizeFit.Contain
+    with pytest.raises(Exception, match="shorter_side"):
+        pyneat.nodes.resize(standalone)
+    for options in (model.preprocess.resize, raw, standalone):
+        for invalid in ("256", 256.5):
+            with pytest.raises(TypeError):
+                options.shorter_side = invalid

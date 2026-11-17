@@ -9,6 +9,7 @@
 // isolation. Numerical admission remains the kernels provider's: these builders
 // only derive tensor specifications from the upstream contract and the options.
 
+#include "nodes/sima/ResizeArgMax.h"
 #include "nodes/sima/SimaBEVPool.h"
 #include "nodes/sima/SimaBEVPoolPlan.h"
 #include "nodes/sima/SimaCenterHeadDecode.h"
@@ -76,6 +77,8 @@ KernelRequestPlan bev_pool_plan_request(const SimaBEVPoolPlanOptions&, std::span
 KernelRequestPlan bev_pool_request(const SimaBEVPoolOptions&, std::span<const TensorFact>);
 KernelRequestPlan centerhead_decode_request(const SimaCenterHeadDecodeOptions&,
                                             std::span<const TensorFact>);
+/// One `[h,w,C]` or `[N,h,w,C]` score tensor -> one dense class map `[H,W]` or `[N,H,W]`.
+KernelRequestPlan resize_argmax_request(const ResizeArgMaxOptions&, std::span<const TensorFact>);
 
 /// Worst-case plan bytes for `cameras` cameras, from the kernels' published plan layouts.
 std::uint64_t bev_pool_plan_capacity_bytes(const SimaBEVPoolPlanOptions&, std::int64_t cameras);
@@ -86,6 +89,7 @@ void validate(const SimaPillarScatterOptions&);
 void validate(const SimaBEVPoolPlanOptions&);
 void validate(const SimaBEVPoolOptions&);
 void validate(const SimaCenterHeadDecodeOptions&);
+void validate(const ResizeArgMaxOptions&);
 
 rt::Target kernel_target(SimaKernelTarget);
 const char* rounding_name(SimaQuantRounding);

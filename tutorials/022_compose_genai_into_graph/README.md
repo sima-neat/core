@@ -43,6 +43,8 @@ Pull from `tokens` until a `done` sample arrives. The `done` sample is a bundle 
 
 ## Run
 
+On a DevKit without NVMe, set `LLIMA_MODELS_PATH` to a writable directory before `llima pull`, and use it instead of `/media/nvme/llima/models` below.
+
 On the Modalix DevKit, download the LFM2-VL 1.6B VLM from Hugging Face using the LLiMa CLI:
 
 ```bash

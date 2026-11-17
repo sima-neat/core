@@ -68,6 +68,67 @@ tensors = pyneat.stages.preproc(
 )
 ```
 
+## Fixed source arithmetic {#fixed-source-arithmetic}
+
+For a BF16-input model, configure the original image arithmetic with ordinary options:
+
+For Model image preprocessing, leave `preprocess.quantize.enable` and `preprocess.tessellate.enable` as `Auto`. Explicit tensor-route selections cannot carry these fixed image options and are rejected.
+
+Model `preprocess.resize.interpolation` and standalone `ResizeOptions.interpolation` use the same `ResizeInterpolation` enum. Prefer this typed option for new code. Its default `None` preserves the legacy `scaling_type` string and Bilinear default. A typed value overrides that legacy default; a conflicting nondefault string is rejected.
+
+```python
+import pyneat
+
+options = pyneat.ModelOptions()
+p = options.preprocess
+p.kind = pyneat.InputKind.Image
+p.input_max_width, p.input_max_height = 1280, 720
+p.resize.enable = pyneat.AutoFlag.On
+p.resize.mode = pyneat.ResizeMode.Stretch
+p.resize.interpolation = pyneat.ResizeInterpolation.BilinearAntialiased
+p.rescale_factor = 1.0 / 255.0
+p.normalize.enable = pyneat.AutoFlag.On
+p.normalize.mean = [0.485, 0.456, 0.406]
+p.normalize.stddev = [0.229, 0.224, 0.225]
+p.normalize.has_explicit_stats = True
+p.floating_conversion = pyneat.PreprocFloatingConversion.NearestEven
+model = pyneat.Model("/path/to/bf16_model.tar.gz", options)
+```
+
+For RGB/Gray, `rescale_factor` multiplies source pixels before resizing; enabled normalization then subtracts `normalize.mean` and divides by `normalize.stddev` after resizing. No implicit `/255` is added on this route. Set the factor to `1` for unscaled input. Preserve the original FP32 coefficients rather than converting them to legacy affine parameters. The fixed arithmetic supports `NO_SCALING`, `NEAREST` and `BILINEAR_ANTIALIASED`, not ordinary bilinear or bicubic.
+
+BF16 still truncates by default; only explicit `PreprocFloatingConversion.NearestEven` selects nearest-even. Standalone `PreprocOptions.output_dtype="FP16"` selects binary16, which always rounds nearest-even. The same fixed options are available on standalone `PreprocOptions`; `NormalizationOptions` also accepts `rescale_factor` and `floating_conversion`, and `ResizeInterpolation.BilinearAntialiased` selects the sampler on `nodes.resize`.
+
+For INT8 output, supply the original positive `quantization_step`; Core checks its FP32 reciprocal against the MPK multiplier and keeps the model's zero point. This is a consistency check, not recovery of the original step. A missing or conflicting step fails explicitly. Standalone graphs author `q_zp`; their transport multiplier can be derived from the supplied step. Execution divides by the original step, rounds the quotient nearest-even, adds the zero point and saturates.
+
+For YUV-to-RGB input, `color_conversion_placement` defaults to `PreprocColorConversionPlacement.AfterResize`: component resizing precedes the UInt8 RGB decode boundary, then rescale/normalization run. `BeforeResize` moves that decode boundary before RGB rescale/sampling. Other color routes reject this override. Do not assume either route is equivalent to a Pillow/torchvision preprocessing pipeline; verify its order and intermediate dtype.
+
+Use image input without a `transforms` override. Conflicting disable flags and unsupported combinations fail rather than silently changing the request. The MPK still owns output shape, dtype, quantization and physical layout; source capacity is independent of model dimensions. Omitting the new options preserves legacy arithmetic. These additive fields change C++ object layouts: this version uses ABI 7 (`libsima_neat.so.7`). Rebuild applications, plugins and Python bindings with matching headers/libraries; do not use compatibility symlinks to load ABI 5 or 6 binaries.
+
+
+
+## Center crop {#center-crop}
+
+Use `ResizeMode.Crop` to resize until the source covers the model input, then take a center crop without padding. Set `resize.shorter_side` to resize the shorter source side first; the final crop dimensions still come from the MPK. For example, select shorter side 256 for a model with a 224×224 input. Set it to `None` to restore cover-and-crop.
+
+```python
+options = pyneat.ModelOptions()
+p = options.preprocess
+p.kind = pyneat.InputKind.Image
+p.resize.enable = pyneat.AutoFlag.On
+p.resize.mode = pyneat.ResizeMode.Crop
+p.resize.shorter_side = 256
+p.resize.interpolation = pyneat.ResizeInterpolation.BilinearAntialiased
+model = pyneat.Model("/path/to/model_224_mpk.tar.gz", options)
+```
+
+The longer resized dimension is rounded down for an explicit shorter side; center offsets use nearest-even rounding. If the resized image cannot contain the model input, preparation fails instead of adding padding. Only Crop accepts `shorter_side`.
+
+Crop samples a window of the full resize, retaining filter support outside the visible crop. It does not approximate the operation by rounding a source ROI. Existing interpolation and source-arithmetic rules still apply; antialiased bilinear does not promise bit-exact Pillow output. The window route initially accepts RGB/BGR/Gray, not YUV or explicit ROI selections. Supported detection profiles use the actual inverse transform to map boxes to the original image.
+
+
+Crop windows support Nearest, Bilinear and BilinearAntialiased. Raw NO_SCALING is valid only when source and virtual resize dimensions match. Bicubic and BoxAverage window requests are rejected.
+
 ## Ways to use it
 
 | Use case | API | Guidance |
@@ -124,7 +185,7 @@ pyneat.stages.preproc(
 
 These are the user-facing options to prefer in application code.
 
-### Resize and aspect ratio
+### Resize and aspect ratio {#resize-and-aspect-ratio}
 
 | Option | Meaning |
 | --- | --- |
@@ -132,9 +193,20 @@ These are the user-facing options to prefer in application code.
 | `opt.preprocess.resize.width` / `height` | Target model-input size. `0` means infer from the model contract when possible. |
 | `opt.preprocess.resize.mode` | `ResizeMode::Stretch`, `ResizeMode::Letterbox`, or `ResizeMode::Crop`. |
 | `opt.preprocess.resize.pad_value` | Fill value for letterbox padding. `114` is the common YOLO default. |
+| `opt.preprocess.resize.placement` | Letterbox placement: `LetterboxPlacement::Center` (default) or `LetterboxPlacement::TopLeft`. Valid only with `ResizeMode::Letterbox`. |
 | `opt.preprocess.resize.scaling_type` | Interpolation token. Supported tokens include `BILINEAR`, `NEAREST_NEIGHBOUR`, `BICUBIC`, `INTERAREA`, and `NO_SCALING`. `NEAREST_NEIGHBOR` and `INTER_AREA` are accepted aliases. |
 
 `ResizeMode::Letterbox` preserves aspect ratio by scaling the image or ROI to fit the target and padding the remaining area. `ResizeMode::Stretch` scales width and height independently. `ResizeMode::Crop` center-crops after isotropic scaling.
+
+By default a letterbox splits the padding evenly on both sides, as YOLO models expect. Models trained with the image at the canvas origin, such as Segment Anything, need `LetterboxPlacement::TopLeft`: all padding goes to the right and bottom, and the shorter side is rounded to the nearest pixel, as Segment Anything rounds it. On a 1024×1024 input, a 640×427 frame becomes a 1024×683 image with 341 padding rows below it; a centered letterbox rounds up to 684 rows instead. Placement requires an enabled letterbox resize; other resize modes, or a disabled resize, reject `TopLeft`.
+
+```python
+opt.preprocess.resize.enable = pyneat.AutoFlag.On
+opt.preprocess.resize.mode = pyneat.ResizeMode.Letterbox
+opt.preprocess.resize.placement = pyneat.LetterboxPlacement.TopLeft
+```
+
+The output tensor's `semantic.preprocess` metadata records the actual pads and the model-to-original affine for either placement. Detection BoxDecode profiles use that affine for a non-centered letterbox; see [BoxDecode Decode Types](/reference/boxdecode_decode_types#letterbox-placement).
 
 ### Color, normalization, quantization, and tessellation
 
@@ -239,7 +311,7 @@ Important metadata fields include:
 
 | Symptom | Check |
 | --- | --- |
-| Boxes are shifted or scaled | Verify `resize.mode`, letterbox `pad_value`, and that downstream decode reads `tensor.semantic.preprocess`. |
+| Boxes are shifted or scaled | Verify `resize.mode`, letterbox `placement` and `pad_value`, and that downstream decode reads `tensor.semantic.preprocess`. |
 | ROI outputs look identical | Check that `batch_index`, `x`, `y`, `width`, and `height` differ as expected and that the source images are distinct. |
 | ROI-list call throws before running | Ensure the image batch is non-empty, all images match size/type/channels, `batch_index` is valid, and ROI width/height are positive. |
 | Unexpected dtype/layout | Inspect `model.resolved_preprocess_plan()` and the output tensor semantics; quantization/tessellation follow the model route. |

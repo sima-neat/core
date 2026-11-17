@@ -37,6 +37,8 @@
 #include <simaai/scheduler/client/frame_layout.h>
 #include <ev/ev_tensor_abi.h>
 
+#include "nodes/sima/PreprocMath.h"
+
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -388,6 +390,22 @@ struct ProcessCvuStagePayload {
   std::vector<double> channel_mean;
   std::vector<double> channel_stddev;
 
+  /// Original FP32 multiplier before resize. Presence selects fixed source arithmetic;
+  /// normalize.mean/stddev then mean a post-resize subtraction/division, with no implied /255.
+  /// Explicit geometry; absent retains legacy aspect_ratio/scaled dimensions.
+  std::optional<ResizeMode> resize_mode;
+  /// Model-level top-left letterbox: round the non-limiting axis to the nearest pixel
+  /// (internal::nearest_letterbox_extent). False keeps the legacy FP32 ceil.
+  bool letterbox_nearest_extent = false;
+  std::optional<int> shorter_side;
+  std::optional<float> rescale_factor;
+  /// Original positive FP32 INT8 step, never reconstructed from a reciprocal.
+  /// Model routes require agreement with the MPK quantizer; zero point stays model-owned.
+  std::optional<float> quantization_step;
+  PreprocColorConversionPlacement color_conversion_placement =
+      PreprocColorConversionPlacement::AfterResize;
+  PreprocFloatingConversion floating_conversion = PreprocFloatingConversion::Legacy;
+
   /// Layout token of the stage's `index`-th typed input (falls back to first input).
   std::string typed_input_layout_token(std::size_t index = 0U) const {
     if (index < input_tensors.size()) {
@@ -435,6 +453,14 @@ struct ProcessMlaStagePayload {
 };
 
 /// BoxDecode stage payload — decode flavor, NMS / topK params, slice geometry.
+/// One raw model output that a BoxDecode stage also publishes (BoxDecodeType::EdgeTamTrack):
+/// the tensor the route without BoxDecode returns for that input.
+struct BoxDecodeRawOutput {
+  std::string name;                ///< Unique endpoint name of the route without BoxDecode.
+  std::string dtype;               ///< Published dtype token (FP32, BF16, INT8).
+  std::vector<std::int64_t> shape; ///< Published shape; dense, row-major.
+};
+
 struct BoxDecodeStagePayload {
   BoxDecodeType decode_type = BoxDecodeType::Unspecified;
   stagesemantics::SsdRecipeId ssd_recipe_id = stagesemantics::SsdRecipeId::Unknown;
@@ -455,6 +481,10 @@ struct BoxDecodeStagePayload {
   std::vector<int> tensor_storage_kind;
   SuperPointStaticContract superpoint;
   std::vector<BoxDecodeTensorRole> tensor_roles;
+  /// Empty, or one entry per input in input order, published after the BoxDecode tensor.
+  std::vector<BoxDecodeRawOutput> raw_outputs;
+  /// Segment Anything: Model::Options::multimask_output (upstream predict(multimask_output)).
+  bool multimask_output = true;
 };
 
 /// Placeholder payload for quant / dequant / tess / quanttess stages (carries only a reserved field

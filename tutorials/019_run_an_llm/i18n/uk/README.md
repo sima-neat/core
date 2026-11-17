@@ -47,6 +47,8 @@
 
 ## Run
 
+Якщо в DevKit немає NVMe, перед `llima pull` задайте в `LLIMA_MODELS_PATH` каталог із правом запису й використовуйте його замість `/media/nvme/llima/models` у командах нижче.
+
 У Modalix DevKit завантажте LLM, наприклад Qwen3 4B, з Hugging Face, використовуючи LLiMa CLI:
 
 ```bash

@@ -27,6 +27,7 @@ sidebar_position: 1
       <li><a class="overview-link-card" href="/reference/environment-variables/"><strong>환경 변수</strong><span>런타임 및 빌더 환경 변수를 확인하세요.</span></a></li>
       <li><a class="overview-link-card" href="/reference/tutorial-assets/"><strong>튜토리얼 자산</strong><span>모델 아카이브 경로 및 소스 트리 튜토리얼 자산을 제어하세요.</span></a></li>
       <li><a class="overview-link-card" href="/reference/boxdecode_decode_types/"><strong>BoxDecode 디코딩 유형</strong><span>디코딩 유형을 선택하고 패킹된 감지 출력을 파싱하세요.</span></a></li>
+      <li><a class="overview-link-card" href="/reference/semantic_segmentation_decode/"><strong>시맨틱 세그멘테이션 디코딩</strong><span>EV74에서 클래스별 점수를 크기 조정된 클래스 맵으로 변환하세요.</span></a></li>
       <li><a class="overview-link-card" href="/reference/error-codes/"><strong>오류 코드</strong><span>프레임워크 오류 상수를 원인 및 다음 단계에 매핑하세요.</span></a></li>
       <li><a class="overview-link-card" href="/reference/error_format/"><strong>플러그인 오류 형식</strong><span>GStreamer 플러그인 오류로 보고되는 구조화된 오류 필드를 이해하세요.</span></a></li>
     </ul>

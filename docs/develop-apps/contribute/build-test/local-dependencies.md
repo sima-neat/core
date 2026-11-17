@@ -218,14 +218,16 @@ validates the bundled Runner, Kernels and Codecs archives. Core does not resolve
 those repositories independently.
 
 The selected Scheduler package installs its exact SDK policy. In the SDK,
-`build.sh` runs `scripts/ci/prepare_scheduler_sdk.sh`, which checks the sysroot
-version and downloads the Runner's exact platform archives into `deps/` with a
-private APT configuration. It runs `sysroot update` only with `--update-sysroot`. The
-coordinator checks the real GCC14 version/target and target SDK identities, then
-selects the exact Runner-consumed runtime provider archives through
-`NEAT_RUNNER_PLATFORM_RUNTIME_DEBS`. Native ARM64 and cross-compilers need not
-have identical executable bytes. Their target ABI and selected platform must
-match. No device installation or firmware qualification happens in this step.
+`build.sh` runs `scripts/ci/prepare_scheduler_sdk.sh`, which validates the active
+target sysroot through Scheduler's `verify-sdk` command and saves its observations
+under `deps/`. The shared `build_platform` record contains `elxr_version`, the
+complete `sysroot_version`, and the compiler `target`. These values must agree
+with the Runner and Scheduler build records. Platform DEBs are not downloaded.
+`sysroot update` runs only with `--update-sysroot` for daily/pre-release targets;
+official releases use the existing active target sysroot. A matching overlay can
+be newer than the original container image. Native ARM64 and cross compilers
+must use the same target ABI and selected platform; compiler executable bytes
+need not be identical. This step does not install on or qualify a DevKit.
 
 A `--scheduler` folder is never mixed with or replaced by a download. The existing
 `tools/ci/materialize_dependencies.py --manifest ... --output-root ...` command
@@ -272,29 +274,16 @@ fails configuration if the installed Scheduler lacks this capability. Set it to
 Rendering uses the selected Kernels/Runner packages, not a separate platform
 renderer archive. Rebuild the cohort together for request API revision 2.
 
-In the SDK, `build.sh` sets the following through
-`scripts/ci/prepare_scheduler_sdk.sh`. Outside the SDK, provide:
+Platform SimaHeap, MLA and TVM libraries come from the selected SDK/sysroot.
+Do not provide `NEAT_RUNNER_PLATFORM_RUNTIME_DEBS` or fetch platform archives to
+prove their provenance. Scheduler validates the actual SDK identity against its
+own and Runner's `build_platform` records. Core records the verified identity in
+its installed `buildinfo.json`, rechecks it after compilation, and verifies the
+final CMake sysroot and compiler target before publishing package metadata.
 
-- `NEAT_RUNNER_PLATFORM_RUNTIME_DEBS`: a JSON array of absolute paths to the exact
-  runtime provider DEBs selected by Runner. Include its required SimaHeap runtime
-  archive and the MLA and TVM runtime archives when those backends are enabled.
-  Do not include development archives in this array. Runner verifies actual loader
-  names and library bytes. Scheduler retains
-  exact archive identities and payload inventories as build evidence. Providers
-  declared Platform-owned by Runner stay outside Core's installable DEB set;
-  undeclared providers retain exact archive composition.
-
-This selection stays explicit with a `--scheduler` folder too. The immutable four-component materializer does not fetch platform
-provider archives. Acquire them from their supported producer before invoking
-Core; missing or unconsumed providers fail rather than selecting a sysroot
-fallback. Use matching development packages for compilation. On a DevKit,
-Scheduler's authenticated admission tool checks the installed Platform providers
-against the incoming consumers before package mutation. The installer rejects
-APT plans that replace or remove those providers and verifies their identity and
-installed consumer closure afterward. `FORCE_INSTALL` does not waive these checks.
-Do not rebuild a DEB merely to label a private DSO as a released provider.
-
-Package composition checks disjoint payload ownership, exact dependency
-versions and unchanged archives. These build-time checks do not qualify numerical
-execution, dynamic masks or hardware retirement. Those require the corresponding
-integration tests on the selected target cohort.
+For this metadata transition, rebuild Runner, then Scheduler, then Core. A
+producer without `build_platform` must be rebuilt; an old record does not bypass
+SDK admission. The NEAT dependency DEBs still have exact package, checksum and
+payload-ownership checks. Platform-owned libraries remain outside Core's
+installable package set. Existing device installation and hardware qualification
+remain separate; build metadata does not prove numerical execution or retirement.

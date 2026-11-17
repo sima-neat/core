@@ -43,8 +43,8 @@ configures DevKit Sync. If you skip pairing, the SDK workspace is still created
 and you can pair later.
 
 The `%%release.sdk_channel%%` package tracks the latest Palette SDK patch release in the %%release.sdk_series%%
-series. The current release is Palette SDK %%release.sdk%%, which is compatible with
-DevKit software %%release.platform%%.
+series. The current release is Palette SDK %%release.sdk%%.
+See the [Compatibility Guide](/getting-started/compatibility/) for the matching DevKit software version.
 
 During setup, `sima-cli` also offers to install the matching Model Compiler
 inside the SDK — accept the prompt if you compile or quantize models
