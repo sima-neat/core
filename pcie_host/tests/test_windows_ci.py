@@ -791,7 +791,14 @@ class WindowsCiContracts(unittest.TestCase):
         ),
         2,
     )
-    self.assertEqual(source.count("shell: powershell"), 6)
+    self.assertEqual(source.count("shell: powershell"), 8)
+    hardware_job = source.split("  hardware:\n", 1)[1].split("  publish:\n", 1)[0]
+    for job in (native_job, hardware_job):
+      # MSI install/remove needs an elevated token; fail before checkout, not mid-build.
+      steps = job.split("    steps:\n", 1)[1]
+      self.assertTrue(steps.startswith("      - name: Require an elevated runner\n"))
+      self.assertIn("IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)", steps)
+      self.assertIn("exit 1", steps.split("      - uses: actions/checkout@v5", 1)[0])
 
   def test_workflow_run_bodies_receive_inputs_only_through_env(self):
     # Expression text is substituted into the script before the shell parses

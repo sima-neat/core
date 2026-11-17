@@ -545,6 +545,16 @@ jobs:
       SIMA_WINDOWS_SIGNING_MACHINE_STORE: ${{ vars.SIMA_WINDOWS_SIGNING_MACHINE_STORE }}
       SIMA_WINDOWS_SIGNING_TIMESTAMP_URL: ${{ vars.SIMA_WINDOWS_SIGNING_TIMESTAMP_URL }}
     steps:
+      - name: Require an elevated runner
+        shell: powershell
+        run: |
+          $principal = [Security.Principal.WindowsPrincipal]::new(
+            [Security.Principal.WindowsIdentity]::GetCurrent())
+          if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+            Write-Output ("::error::$env:USERDOMAIN\$env:USERNAME is not elevated. This job " +
+              "installs per-machine MSIs; run the runner service as an administrator.")
+            exit 1
+          }
       - uses: actions/checkout@v5
         with:
           persist-credentials: false
@@ -684,6 +694,16 @@ jobs:
       SIMAPCIE_USER: "sima"
       SIMAPCIE_YOLOV8_MODEL: ${{ vars.SIMA_WINDOWS_PCIE_YOLOV8_MODEL }}
     steps:
+      - name: Require an elevated runner
+        shell: powershell
+        run: |
+          $principal = [Security.Principal.WindowsPrincipal]::new(
+            [Security.Principal.WindowsIdentity]::GetCurrent())
+          if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+            Write-Output ("::error::$env:USERDOMAIN\$env:USERNAME is not elevated. This job " +
+              "installs per-machine MSIs; run the runner service as an administrator.")
+            exit 1
+          }
       - uses: actions/checkout@v5
         with:
           persist-credentials: false
