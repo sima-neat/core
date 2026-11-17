@@ -89,6 +89,15 @@ the separately provisioned Platform prerequisites and their repository trust
 configuration, without an existing Neat installation. Never export an arbitrary
 CI runner or a card with a preinstalled runtime as the clean baseline.
 
+For official Platform releases, Vulcan builds the ARM64 card baseline from the
+published factory root. Run Vulcan's **Build reusable Ubuntu images** workflow
+with the official `offline_sysroot_version` and the full `offline_source_sha`
+of a published Core distribution for that SDK policy. Vulcan resolves the
+matching DevKit firmware, verifies the factory archive, qualifies offline
+installation, and publishes the image and its receipt. The assembler reads that
+receipt for the exact Scheduler SDK identity and pulls the image by digest.
+The legacy 3.0.0 fixture and Ubuntu host baseline lookups remain available.
+
 The metadata digest is a trust anchor supplied by the caller, not authentication
 by itself. The assembler checks every declared payload against the metadata before
 starting containers. Native Core/Scheduler producer helpers and receipts remain

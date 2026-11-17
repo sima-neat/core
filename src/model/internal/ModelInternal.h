@@ -12,6 +12,8 @@
 #include "nodes/io/Input.h"
 
 #include <memory>
+#include <optional>
+#include <utility>
 #include <vector>
 
 namespace simaai::neat {
@@ -76,6 +78,11 @@ struct ModelAccess {
   // Complete value identity for stage reuse; computed once when the Model is constructed.
   static const std::string& stage_cache_identity(const Model& model);
   static bool stage_cache_has_dynamic_boxdecode_geometry(const Model& model);
+  // The original image size a runner of this Model is fixed to: the inputs' published
+  // preprocess size when the route ends in a Segment Anything BoxDecode, whose masks have
+  // that size. nullopt for any other route, or when no input publishes the size.
+  static std::optional<std::pair<int, int>> fixed_boxdecode_original_size(const Model& model,
+                                                                          const TensorList& inputs);
   static std::string source_path(const Model& model);
   static Run& run(Model::Runner& runner);
   static const Run& run(const Model::Runner& runner);
@@ -141,6 +148,13 @@ void check_model_tensor_inputs(const TensorList& inputs,
 // Pure admission check shared by synthetic input construction and contract tests.
 void validate_synthetic_benchmark_image_format(const TensorSpec& spec);
 
+// Pure check behind Model::Options::semantic_segmentation, shared with contract tests. Throws
+// std::invalid_argument unless the class-map decode can replace the route's postprocess: the
+// route must have one that only dequantizes or casts, the terminal policy must not stop before
+// it, decode_type must be unset, and the output size must be set in full or left at 0.
+void validate_semantic_segmentation(const Model::Options& options, const SessionRoutePlan& route,
+                                    bool stops_before_postprocess);
+
 /// Project the latency window (`latency_samples` inputs), the throughput window
 /// (`throughput_samples` inputs), and Sentinel telemetry into the public benchmark report.
 /// `num_samples` is the requested count that `energy_joules` is normalized to.
@@ -161,6 +175,11 @@ PreprocessRuntimeMeta resolve_benchmark_preprocess_meta(const Tensor& tensor,
                                                         const ResolvedPreprocessPlan& plan,
                                                         const PreprocessContractFlags& flags,
                                                         const BenchmarkOptions& options);
+
+// Segment Anything decoder inputs carry the model's encoder geometry: MobileSAM's top-left
+// letterbox on 1024, a stretch to 1024 (EdgeTAM, EfficientSAM) or 1008 (EfficientSAM3).
+PreprocessRuntimeMeta sam_benchmark_preprocess_meta(BoxDecodeType decode_type, int source_width,
+                                                    int source_height);
 
 // Internal serializer shared with cache-compatibility regression tests. Advanced execution
 // overlays are resolved before serialization; diagnostic verbosity is intentionally excluded.

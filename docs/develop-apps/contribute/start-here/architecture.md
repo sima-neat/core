@@ -29,6 +29,10 @@ flowchart LR
     Benchmark[Core benchmark reports] --> Sentinel[Optional Sentinel telemetry]
 ```
 
+Model and standalone Resize share the value-only `ResizeInterpolation` enum and one sampler-token mapping. Model planning resolves the optional typed selection before image intent, stage projection and graph provenance; legacy strings remain a compatibility boundary.
+
+Model and standalone image options lower to the same ordinary Preproc request. Fixed source arithmetic preserves the original FP32 rescale, post-resize mean/divisor and quantization-step boundaries; it is not an ordered transform interpreter. MPK ingress dtype, quantization and physical layout remain authoritative. New options opt in explicitly; absent options retain legacy bytes. Core only projects intent and geometry; Kernels owns numerical admission and execution.
+
 Kernels remains the operation catalogue and numerical-admission authority.
 Scheduler forwards generic requests through Runner; neither Scheduler nor Core
 maintains firmware IDs or a per-operation dispatch table. Core retains public
@@ -636,9 +640,9 @@ without enabling verbose GStreamer diagnostics.
 `FrameSpan` offsets are local to their allocation and buffer group, not global graph addresses. Identical offsets in different groups do not overlap. BoxDecode and ArgMax keep head-relative tensor offsets separate from storage offsets. Direct-memory and runtime physical-binding inputs retain their addressing mode.
 
 Core lowers Preproc, transforms and vision stages, including ArgMax, BoxDecode,
-SuperPoint and the LiDAR/BEV kernel nodes (SimaVoxelize, SimaPillarScatter,
-SimaBEVPoolPlan and SimaBEVPool), to canonical requests and explicit tensor-port
-mappings.
+SuperPoint, the LiDAR/BEV kernel nodes (SimaVoxelize, SimaPillarScatter,
+SimaBEVPoolPlan and SimaBEVPool) and ResizeArgMax, to canonical requests and
+explicit tensor-port mappings.
 Scheduler's generic tensor-stage engine owns GStreamer binding and publication;
 Runner owns dependencies, asynchronous execution and execution-time buffer lifetime. Core imports carrier
 capacities from the upstream allocation contract or ingress storage, never from
@@ -776,7 +780,10 @@ the normal stage recipe and `FrameLayout` execution path. `StaticSpecBuilders.cp
 shares metadata-only ingress projection and direct-input binding with `SimaArgMax`;
 these helpers neither prepare nor schedule kernels. The LiDAR/BEV node files do not
 include pipeline-private implementation headers. This split adds no per-frame work
-or payload copies.
+or payload copies. `ResizeArgMax` follows the same split. `Model::Options::semantic_segmentation`
+replaces a model's dequantize or cast postprocess with that node, which reads the
+MLA scores through the producer's strided view; the `Model` constructor rejects any
+other postprocess.
 
 Standalone `Cast` compiles typed views into a canonical `cast` request checked by Kernels. Logical identities, strides and tensor-relative offsets remain explicit. Semantic compilation reconciles ordered MLA input ports before packing; rendering preserves the checked contracts. Execution capacity defaults to four asynchronously and one synchronously, with separate output carriers for retention. Subset or reordered TensorSets use parent-retaining metadata envelopes without changing the held publication or payload.
 
@@ -2290,3 +2297,12 @@ JSON retains `sima.neat.status.v1` and adds `components.pcieHost`, `components.p
 PyNeat and PyNeatPCIe status lists each detected installation with its version and virtual environment path. Separate environments are reported as multiple environments, not a version conflict. For packages outside a virtual environment, the output shows the package directory instead. Status reads package metadata without importing native modules.
 
 Each Python entry in JSON adds an `installations` array. Each record contains `version`, `environment`, and `path` (the package directory). `environment` is `null` outside a virtual environment. The summary `version` is `null` when installed versions differ; multiple installations alone do not set `error`. Symlinked paths to the same installation are listed once.
+
+
+## Crop geometry ownership {#crop-geometry-ownership}
+
+Core resolves Crop from actual source dimensions into a checked virtual resize size and center-window offset. Kernels evaluates that window directly using the original source filter support; no intermediate image or CPU crop is inserted. The final dimensions remain MPK-owned. Preproc publishes the actual model-to-original edge affine, distinct from half-pixel sample-center coordinates. Supported detection recipes consume that authority after model-space selection; missing or conflicting geometry is rejected.
+
+## SDK platform build identity {#sdk-platform-build-identity}
+
+Core records the active target SDK as `build_platform` with `elxr_version`, the full `sysroot_version`, and compiler `target`. Scheduler validates the same identity against Runner and its own build record. Core refreshes that validation after compilation and checks the final CMake sysroot and compiler target before generating installed metadata. The selected SDK supplies platform libraries; Core does not download platform DEBs for provenance checks. NEAT package integrity and separate target qualification remain required. Rebuild Runner, Scheduler and Core in that order when migrating identity-less producer records.
