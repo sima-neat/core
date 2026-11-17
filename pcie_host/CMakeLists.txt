@@ -362,6 +362,11 @@ if (SIMAPCIE_BUILD_TESTS)
   target_link_libraries(unit_pcie_host_genai_assets_test PRIVATE
     sima_neat_pcie_host fake_genai_service)
   if(WIN32)
+    # Windows resolves startup imports from System32 before PATH. Keep this
+    # test beside its fake SiMaPCIe.dll so the installed Platform DLL cannot
+    # satisfy the import by name before the test substitute is considered.
+    set_target_properties(unit_pcie_host_genai_assets_test PROPERTIES
+      RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/fake-genai-service)
     add_test(NAME unit_pcie_host_genai_assets_test
       COMMAND ${CMAKE_COMMAND} -E env
         "SIMA_WINDOWS_PLATFORM_RUNTIME_DIR=$<TARGET_FILE_DIR:fake_genai_service>"

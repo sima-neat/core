@@ -64,6 +64,7 @@ import prepare_card_qualification_candidate as CARD_PREP  # noqa: E402
 import build_card_qualification_dependencies as CARD_DEPS  # noqa: E402
 import cleanup_windows_hardware as RECOVERY  # noqa: E402
 import acquire_windows_dependencies as WINDOWS_DEPENDENCIES  # noqa: E402
+import standard_user_genai as STANDARD_USER_GENAI  # noqa: E402
 from genai_admission_contract import (  # noqa: E402
     is_bounded_competing_session_rejection, is_injected_transport_failure)
 
@@ -1090,8 +1091,15 @@ class WindowsCiContracts(unittest.TestCase):
 
       (models / "CASE.bin").write_bytes(b"upper")
       (models / "case.bin").write_bytes(b"lower")
-      with self.assertRaisesRegex(ValueError, "case-ambiguous"):
-        create_asset_manifest(environment, True, "assets-r1")
+      case_entries = [
+          entry.name for entry in models.iterdir()
+          if entry.name.casefold() == "case.bin"
+      ]
+      if len(case_entries) == 2:
+        with self.assertRaisesRegex(ValueError, "case-ambiguous"):
+          create_asset_manifest(environment, True, "assets-r1")
+      else:
+        self.assertEqual(len(case_entries), 1)
 
       invalid = fixture_asset_manifest(include_genai=True)
       invalid["genai"][GENAI_ASSETS[0]]["files"][0]["path"] = "../escape.bin"
@@ -1148,7 +1156,9 @@ class WindowsCiContracts(unittest.TestCase):
       module = SimpleNamespace(
           __file__=str(installed), Model=object(), Runtime=object(), Tensor=object())
       with mock.patch.dict(sys.modules, {"pyneatpcie": module}), \
-          mock.patch.dict(os.environ, {}, clear=True):
+          mock.patch.dict(os.environ, {}, clear=True), \
+          mock.patch.object(
+              STANDARD_USER_GENAI, "is_user_an_administrator", return_value=False):
         self.assertEqual(run_standard_user_genai(payload), {
             "process_is_administrator": False,
             "python": "PASS",
@@ -1158,6 +1168,8 @@ class WindowsCiContracts(unittest.TestCase):
           mock.patch.dict(os.environ, {
               "SIMAPCIE_GENAI_MEDIA_DIRECTORY": r"C:\admin-only",
           }, clear=True), \
+          mock.patch.object(
+              STANDARD_USER_GENAI, "is_user_an_administrator", return_value=False), \
           self.assertRaisesRegex(RuntimeError, "retained forbidden override"):
         run_standard_user_genai(payload)
 

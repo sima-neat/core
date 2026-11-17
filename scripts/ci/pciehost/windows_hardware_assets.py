@@ -274,13 +274,13 @@ def _directory_file_inventory(root: Path, description: str) -> list[dict]:
       if folded_relative in seen:
         raise ValueError(f"{description} has duplicate or case-ambiguous path: {relative}")
       seen.add(folded_relative)
+      child = directory / entry.name
       try:
-        status = entry.stat(follow_symlinks=False)
+        status = child.lstat()
       except OSError as error:
         raise ValueError(f"cannot inspect {description} entry {relative}: {error}") from error
       if entry.is_symlink() or _is_reparse_point(status):
         raise ValueError(f"{description} contains a link or reparse point: {relative}")
-      child = directory / entry.name
       if stat.S_ISDIR(status.st_mode):
         visit(child, (*parts, entry.name))
       elif stat.S_ISREG(status.st_mode):
