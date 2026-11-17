@@ -66,6 +66,7 @@
 #include "nodes/sima/SimaArgMax.h"
 #include "nodes/sima/SimaBEVPool.h"
 #include "nodes/sima/SimaBEVPoolPlan.h"
+#include "nodes/sima/SimaGridSample2D.h"
 #include "nodes/sima/SimaBoxDecode.h"
 #include "nodes/sima/SimaDecode.h"
 #include "nodes/sima/SimaEncode.h"

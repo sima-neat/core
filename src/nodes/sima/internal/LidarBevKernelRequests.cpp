@@ -628,6 +628,55 @@ void validate(const ResizeArgMaxOptions& opt) {
     fail(node, "output_width and output_height must be positive");
 }
 
+void validate(const SimaGridSample2DOptions& opt) {
+  if (opt.padding != SimaGridSample2DPadding::Zeros &&
+      opt.padding != SimaGridSample2DPadding::Border)
+    fail("SimaGridSample2D", "padding must be Zeros or Border");
+}
+
+KernelRequestPlan grid_sample_2d_request(const SimaGridSample2DOptions& opt,
+                                         std::span<const TensorFact> facts) {
+  constexpr const char* node = "SimaGridSample2D";
+  validate(opt);
+  require_arity(facts, 2, node, "features, grid");
+  const auto& feature = facts[0];
+  const auto& grid = facts[1];
+  for (std::size_t i = 0; i < facts.size(); ++i) {
+    const auto& fact = facts[i];
+    const char* port = i ? "grid" : "features";
+    if (fact.shape.size() != 4)
+      fail(node, std::string(port) + " must have rank four");
+    if (!fact.layout.empty() && fact.layout != "HWC" && fact.layout != "NHWC")
+      fail(node, std::string(port) + " must have channels-last logical axes");
+    if (fact.quant &&
+        (fact.quant->axis >= 0 || fact.quant->scale != 1.0 || fact.quant->zero_point != 0))
+      fail(node, std::string(port) + " requires unquantized floating-point values");
+    require_dense(fact, node, port);
+  }
+  if (feature.dtype != rt::DType::Float32 && feature.dtype != rt::DType::BFloat16)
+    fail(node, "features must be FP32 or BF16");
+  require_dtype(grid, rt::DType::Float32, node, "grid");
+  if (grid.shape[0] != feature.shape[0] || grid.shape[3] != 2)
+    fail(node, "grid must be [N,Ho,Wo,2] with the feature batch size");
+  const std::vector<std::int64_t> shape{feature.shape[0], grid.shape[1], grid.shape[2],
+                                        feature.shape[3]};
+  checked_tensor_bytes(shape, feature.dtype, node);
+  KernelRequestPlan plan;
+  plan.operation = "grid_sample_2d";
+  plan.target = rt::Target::A65;
+  plan.inputs = {{feature.shape, feature.dtype}, {grid.shape, grid.dtype}};
+  plan.outputs = {{shape, feature.dtype}};
+  plan.parameters = {
+      {"padding", opt.padding == SimaGridSample2DPadding::Zeros ? "zeros" : "border"},
+      {"align_corners", opt.align_corners}};
+  PublishedOutput published;
+  published.name = "sampled";
+  published.shape = shape;
+  published.layout = "NHWC";
+  plan.published = {std::move(published)};
+  return plan;
+}
+
 KernelRequestPlan resize_argmax_request(const ResizeArgMaxOptions& opt,
                                         std::span<const TensorFact> facts) {
   constexpr const char* node = "ResizeArgMax";

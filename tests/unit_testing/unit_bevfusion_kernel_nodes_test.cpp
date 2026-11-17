@@ -92,6 +92,11 @@ void fragments_and_definitions() {
        "resize_argmax",
        {"scores"},
        {"class_map"}},
+      {nodes::SimaGridSample2D(),
+       "SimaGridSample2D",
+       "grid_sample_2d",
+       {"features", "grid"},
+       {"sampled"}},
   };
   for (const auto& e : nodes) {
     require(e.node->kind() == e.kind, e.kind + " kind");
@@ -886,6 +891,27 @@ void resize_argmax_contracts() {
           "ResizeArgMax treated MLA-tiled ingress as dense");
   require_contains(error, "detessellate", "ResizeArgMax tiled ingress diagnostic");
 }
+void grid_sample_contracts() {
+  for (const bool bf16 : {false, true})
+    for (const auto padding : {SimaGridSample2DPadding::Zeros, SimaGridSample2DPadding::Border})
+      for (const bool align : {false, true}) {
+        auto feature =
+            bf16 ? bf16_tensor(std::vector<std::uint16_t>(5 * 7 * 17, 0x3f80), {1, 5, 7, 17})
+                 : Tensor::from_vector(std::vector<float>(5 * 7 * 17, 1.0f), {1, 5, 7, 17},
+                                       TensorMemory::CPU);
+        auto grid =
+            Tensor::from_vector(std::vector<float>(3 * 11 * 2), {1, 3, 11, 2}, TensorMemory::CPU);
+        const auto compiled = compile(SimaGridSample2D({padding, align}), {feature, grid});
+        const auto& runtime = compiled.kernel->runtime_contract;
+        require(runtime.logical_outputs.size() == 1 &&
+                    runtime.logical_outputs[0].shape == std::vector<std::int64_t>{1, 3, 11, 17} &&
+                    runtime.logical_outputs[0].dtype == (bf16 ? "BF16" : "FP32") &&
+                    runtime.logical_outputs[0].logical_name == "sampled",
+                "GridSample publishes checked grid geometry and feature dtype");
+      }
+  require_throws([] { SimaGridSample2D node({static_cast<SimaGridSample2DPadding>(99)}); },
+                 "padding must be", "GridSample constructor validates padding");
+}
 } // namespace
 
 int main() {
@@ -895,6 +921,7 @@ int main() {
     ingress_contracts();
     semantic_contracts();
     resize_argmax_contracts();
+    grid_sample_contracts();
   } catch (const std::exception& error) {
     std::cerr << "[FAIL] unit_bevfusion_kernel_nodes_test: " << error.what() << "\n";
     return 1;
