@@ -434,10 +434,11 @@ def baseline_record():
 def test_baseline_resolution_pulls_only_digest_and_checks_provenance(tmp_path, role, fault):
     import json
     args = SimpleNamespace(sha=SHA, work=tmp_path)
+    (tmp_path/'manifest.json').write_text('{"platform-version":"3.0.0"}')
     config = ci.baseline_config()
-    key = (config['card']['inputs_sha256'] if role == 'card' else
+    key = (config['legacy_card']['inputs_sha256'] if role == 'card' else
            ci.baseline_identity(role, ci.baseline_dependencies(baseline_record(), role)))
-    digest = config['card']['digest'] if role == 'card' else 'sha256:'+'b'*64
+    digest = config['legacy_card']['digest'] if role == 'card' else 'sha256:'+'b'*64
     local_id = 'sha256:'+'c'*64
     labels = {'ai.sima.offline.'+name: value for name, value in
               [('inputs', key), ('recipe', config['recipe_sha256']), ('role', role)]}
@@ -450,10 +451,10 @@ def test_baseline_resolution_pulls_only_digest_and_checks_provenance(tmp_path, r
          patch.object(ci, 'run', side_effect=['', json.dumps([info])]) as command:
         if fault:
             with pytest.raises(ValueError, match='provenance|architecture'):
-                ci.pull_baseline(args, role, baseline_record())
+                ci.pull_baseline(args, role, baseline_record(), tmp_path)
             assert not (tmp_path/'baseline-images.json').exists()
         else:
-            assert ci.pull_baseline(args, role, baseline_record()) == local_id
+            assert ci.pull_baseline(args, role, baseline_record(), tmp_path) == local_id
             evidence = json.loads((tmp_path/'baseline-images.json').read_text())
             assert evidence[role]['image'] == config['repository']+'@'+digest
             assert evidence[role]['inputs_sha256'] == key
@@ -475,25 +476,240 @@ def test_missing_host_baseline_fails_without_local_build(tmp_path):
 def test_card_image_pin_is_independent_of_packages_under_test(tmp_path):
     import json
     config = ci.baseline_config()
-    info = {'Architecture': 'arm64', 'Id': config['card']['digest'], 'Config': {'Labels': {
-        'ai.sima.offline.inputs': config['card']['inputs_sha256'],
+    (tmp_path/'manifest.json').write_text('{"platform-version":"3.0.0"}')
+    info = {'Architecture': 'arm64', 'Id': config['legacy_card']['digest'], 'Config': {'Labels': {
+        'ai.sima.offline.inputs': config['legacy_card']['inputs_sha256'],
         'ai.sima.offline.recipe': config['recipe_sha256'], 'ai.sima.offline.role': 'card'}}}
     with patch.object(ci.subprocess, 'run') as manifest, \
          patch.object(ci, 'run', side_effect=['', json.dumps([info])]*2) as docker:
         for sha in ('a'*40, 'b'*40):
             record = {'resources-checksum': {name: sha for name in (
                 'simaai-scheduler.deb', 'resolved-deps-manifest.json', 'scheduler_platform_admission.py')}}
-            assert ci.pull_baseline(SimpleNamespace(sha=sha, work=tmp_path), 'card', record) == config['card']['digest']
+            assert ci.pull_baseline(SimpleNamespace(sha=sha, work=tmp_path), 'card', record, tmp_path) == config['legacy_card']['digest']
         pulls = [call.args for call in docker.call_args_list if call.args[:2] == ('docker', 'pull')]
-        assert pulls == [('docker', 'pull', config['repository']+'@'+config['card']['digest'])]*2
+        assert pulls == [('docker', 'pull', config['repository']+'@'+config['legacy_card']['digest'])]*2
         manifest.assert_not_called()
 
 
 @pytest.mark.parametrize('field,value', [('digest', 'latest'), ('inputs_sha256', 'invalid')])
-def test_invalid_card_pin_is_rejected_before_docker(tmp_path, field, value):
+def test_invalid_legacy_card_pin_is_rejected_before_docker(tmp_path, field, value):
     config = ci.baseline_config()
-    config['card'][field] = value
+    config['legacy_card'][field] = value
+    (tmp_path/'manifest.json').write_text('{"platform-version":"3.0.0"}')
     with patch.object(ci, 'baseline_config', return_value=config), patch.object(ci, 'run') as docker:
-        with pytest.raises(ValueError, match='invalid pinned card baseline'):
-            ci.pull_baseline(SimpleNamespace(sha=SHA, work=tmp_path), 'card', {})
+        with pytest.raises(ValueError, match='invalid legacy card baseline'):
+            ci.pull_baseline(SimpleNamespace(sha=SHA, work=tmp_path), 'card', {}, tmp_path)
         docker.assert_not_called()
+
+
+def official_card_fixture(root):
+    import json
+    (root/'manifest.json').write_text('{"platform-version":"3.0.1"}')
+    policy = {'sysroot_version': '3.0.1', 'elxr_version': '3.0.1_master_B2796'}
+    (root/'resolved-deps-manifest.json').write_text(json.dumps({
+        'scheduler': {'buildinfo': {'build_platform': policy}}}))
+    return {'schema': 1, 'role': 'card', 'architecture': 'arm64', 'os_id': 'elxr', 'os_version': '26.04',
+            'sysroot_version': '3.0.1', 'sdk_firmware': '3.0.1_master_B2796',
+            'devkit_firmware': '3.0.1_master_B2798',
+            'image': ci.baseline_config()['repository']+'@sha256:'+'b'*64,
+            'inputs_sha256': 'c'*64, 'recipe_sha256': 'd'*64}
+
+
+def test_official_card_pulls_qualified_digest_and_records_receipt(tmp_path):
+    import json
+    receipt = official_card_fixture(tmp_path)
+    args = SimpleNamespace(bucket='artifact-bucket', work=tmp_path)
+
+    def fetch(bucket, key, path, optional):
+        assert (bucket, key, optional) == (
+            args.bucket, 'core/offline-card-baseline-v1-3.0.1-3.0.1_master_B2796.json', True)
+        path.write_text(json.dumps(receipt))
+        return True
+
+    image_id = 'sha256:'+'e'*64
+    info = {'Id': image_id, 'Architecture': 'arm64', 'Config': {'Labels': {
+        'ai.sima.offline.inputs': 'c'*64, 'ai.sima.offline.recipe': 'd'*64, 'ai.sima.offline.role': 'card'}}}
+    with patch.object(ci, 'download', side_effect=fetch), \
+         patch.object(ci, 'run', side_effect=['', json.dumps([info])]) as docker:
+        assert ci.pull_baseline(args, 'card', {}, tmp_path) == image_id
+    assert docker.call_args_list[0].args == ('docker', 'pull', receipt['image'])
+    evidence = json.loads((tmp_path/'baseline-images.json').read_text())['card']
+    assert evidence['receipt_sha256'] == ci.assemble.sha(tmp_path/'qualified-card-baseline.json')
+    assert evidence['devkit_firmware'] == receipt['devkit_firmware']
+
+
+@pytest.mark.parametrize('fault', ['missing', 'wrong-sdk', 'mutable-image'])
+def test_unqualified_official_card_never_falls_back_to_legacy(tmp_path, fault):
+    import json
+    receipt = official_card_fixture(tmp_path)
+    if fault == 'wrong-sdk':
+        receipt['sdk_firmware'] = '3.0.1_master_B2780'
+    elif fault == 'mutable-image':
+        receipt['image'] = ci.baseline_config()['repository']+':latest'
+
+    def fetch(bucket, key, path, optional):
+        if fault == 'missing':
+            return False
+        path.write_text(json.dumps(receipt))
+        return True
+
+    with patch.object(ci, 'download', side_effect=fetch), patch.object(ci, 'run') as docker:
+        with pytest.raises(ValueError, match='qualified card baseline'):
+            ci.pull_baseline(SimpleNamespace(bucket='bucket', work=tmp_path), 'card', {}, tmp_path)
+    docker.assert_not_called()
+
+
+@pytest.mark.parametrize('core', [False, True])
+def test_republished_inputs_rebuild_and_promote_staged_metadata(tmp_path, core):
+    import json
+    args = SimpleNamespace(core=core, ref='develop', sha=SHA, bucket='bucket',
+                           distro='ubuntu22', arch='amd64')
+    inputs = {'card': 'c'*64} if core else INPUTS
+    old_inputs = {**inputs, 'card': 'e'*64}
+    names = ci.metadata_names(args)
+    objects = {}
+    for filename in names:
+        if core:
+            name = ci.assemble.CORE_ARCHIVE_NAME
+            resources = {name: 'd'*64}
+            if filename == 'metadata.json':
+                resources['sima-neat-1-Linux-extras.tar.gz'] = 'f'*64
+            data = {'version': '0.6.0+develop.'+SHA[:12], 'resources': list(resources),
+                    'resources-checksum': resources, 'installation': {'script': ''},
+                    'artifact': {'type': 'offline', 'repository': 'core',
+                                 'package_path': 'offline', 'distro': 'elxr26', 'arches': ['arm64']}}
+        else:
+            data = metadata()
+        data['source_metadata_sha256'] = old_inputs
+        objects[ci.artifact_prefix(args)+'/'+filename] = json.dumps(data)
+
+    def download(bucket, key, path, optional=False):
+        if key not in objects:
+            return False
+        path.write_text(objects[key])
+        return True
+
+    with patch.object(ci, 'download', side_effect=download), patch.object(ci, 'verify_uploaded') as verify:
+        # Previously published metadata is structurally valid but has older LLiMa inputs.
+        assert ci.existing(args, tmp_path, inputs) is None
+        verify.assert_not_called()
+        # A staged generation is eligible only after it matches current inputs.
+        for filename in names:
+            data = json.loads(objects[ci.artifact_prefix(args)+'/'+filename])
+            data['source_metadata_sha256'] = inputs
+            data['resources'] = [ci.resource_name(name, digest)
+                                 for name, digest in data['resources-checksum'].items()]
+            data['resources-checksum'] = {ci.resource_name(name, digest): digest
+                                          for name, digest in data['resources-checksum'].items()}
+            objects[ci.staging_prefix(args, inputs)+'/'+filename] = json.dumps(data)
+        ready = ci.existing(args, tmp_path, inputs)
+        assert set(ready) == set(names)
+        assert all(path.name.endswith('.pending') for path in ready.values())
+        assert verify.call_count == (3 if core else 1)
+        # Old downloaded metadata still names its original bytes.
+        assert json.loads(objects[ci.artifact_prefix(args)+'/'+names[0]])['source_metadata_sha256'] == old_inputs
+
+
+def test_changed_inputs_do_not_hide_invalid_publication(tmp_path):
+    import json
+    args = SimpleNamespace(core=False, ref='develop', sha=SHA, bucket='bucket',
+                           distro='ubuntu22', arch='amd64')
+    data = metadata()
+    data['source_metadata_sha256'] = {**INPUTS, 'card': 'e'*64}
+    data['installation']['script'] = 'unexpected.sh'
+    def download(bucket, key, path, optional=False):
+        path.write_text(json.dumps(data))
+        return True
+    with patch.object(ci, 'download', side_effect=download):
+        with pytest.raises(ValueError, match='differs'):
+            ci.existing(args, tmp_path, INPUTS)
+
+
+def test_generation_staging_isolated_when_dependency_changes():
+    args = SimpleNamespace(core=False, ref='develop', sha=SHA, distro='ubuntu22', arch='amd64')
+    assert ci.staging_prefix(args, INPUTS) != ci.staging_prefix(args, {**INPUTS, 'card': 'e'*64})
+    assert ci.staging_prefix(args, INPUTS) == ci.staging_prefix(args, dict(reversed(list(INPUTS.items()))))
+
+
+def test_promotion_replaces_metadata_only_after_rechecking_sources(tmp_path):
+    args = SimpleNamespace(work=tmp_path/'publish', ref='develop', sha=SHA,
+                           bucket='bucket', kms='', distribution='')
+    def existing(args, work, inputs):
+        return {name: work/(name+'.pending') for name in ci.metadata_names(args)}
+    with patch.object(ci, 'source_metadata', return_value=({}, {}, INPUTS)) as source, \
+         patch.object(ci, 'existing', side_effect=existing), patch.object(ci, 'put') as put:
+        ci.publish(args)
+    assert source.call_count == 10
+    assert put.call_count == 6
+    assert all(not call.kwargs.get('immutable', False) for call in put.call_args_list)
+
+
+def test_online_republication_during_promotion_publishes_nothing(tmp_path):
+    args = SimpleNamespace(work=tmp_path/'publish', ref='develop', sha=SHA,
+                           bucket='bucket', kms='', distribution='')
+    changed = {**INPUTS, 'card': 'e'*64}
+    def source(args, work):
+        return {}, {}, changed if work.name.startswith('source-recheck') else INPUTS
+    with patch.object(ci, 'source_metadata', side_effect=source), \
+         patch.object(ci, 'existing', return_value={'metadata-offline.json': tmp_path/'metadata-offline.json.pending'}), \
+         patch.object(ci, 'put') as put:
+        with pytest.raises(ValueError, match='changed before offline promotion'):
+            ci.publish(args)
+        put.assert_not_called()
+
+
+def test_matching_publication_with_corrupt_archive_still_fails(tmp_path):
+    import json
+    args = SimpleNamespace(core=False, ref='develop', sha=SHA, bucket='bucket',
+                           distro='ubuntu22', arch='amd64')
+    def download(bucket, key, path, optional=False):
+        path.write_text(json.dumps(metadata()))
+        return True
+    with patch.object(ci, 'download', side_effect=download), \
+         patch.object(ci, 'verify_uploaded', side_effect=ValueError('uploaded object checksum differs')):
+        with pytest.raises(ValueError, match='checksum'):
+            ci.existing(args, tmp_path, INPUTS)
+
+
+def test_different_card_snapshots_across_variants_publish_nothing(tmp_path):
+    args = SimpleNamespace(work=tmp_path/'publish', ref='develop', sha=SHA,
+                           bucket='bucket', kms='', distribution='')
+    def source(args, work):
+        return {}, {}, {**INPUTS, 'card': 'e'*64} if args.core else INPUTS
+    with patch.object(ci, 'source_metadata', side_effect=source), \
+         patch.object(ci, 'existing', return_value={'metadata-offline.json': tmp_path/'metadata-offline.json.pending'}), \
+         patch.object(ci, 'put') as put:
+        with pytest.raises(ValueError, match='changed across offline variants'):
+            ci.publish(args)
+        put.assert_not_called()
+
+
+@pytest.mark.parametrize('name,expected', [
+    ('neat-core-offline-installer.tar.gz', 'neat-core-offline-installer-abcdef01.tar.gz'),
+    ('neat-pcie-offline-installer.tar.gz', 'neat-pcie-offline-installer-abcdef01.tar.gz'),
+    ('sima-neat-0.6.0-Linux-extras.tar.gz', 'sima-neat-0.6.0-Linux-extras-abcdef01.tar.gz'),
+])
+def test_resource_name_has_short_hash_before_archive_extension(name, expected):
+    assert ci.resource_name(name, 'abcdef012345' + '0'*52) == expected
+
+
+def test_resource_upload_does_not_overwrite_short_hash_collision(tmp_path):
+    import subprocess
+    path = tmp_path/'bundle.tar.gz'
+    path.write_bytes(b'new bundle')
+    with patch.object(ci, 'put', side_effect=subprocess.CalledProcessError(1, 'aws')) as put, \
+         patch.object(ci, 'verify_uploaded', side_effect=ValueError('uploaded object checksum differs')) as verify:
+        with pytest.raises(ValueError, match='checksum differs'):
+            ci.put_resource('bucket', 'bundle-short.tar.gz', path, '')
+    assert put.call_args.kwargs == {'immutable': True}
+    verify.assert_called_once_with('bucket', 'bundle-short.tar.gz', ci.assemble.sha(path))
+
+
+def test_resource_upload_reuses_existing_full_digest(tmp_path):
+    import subprocess
+    path = tmp_path/'bundle.tar.gz'
+    path.write_bytes(b'same bundle')
+    with patch.object(ci, 'put', side_effect=subprocess.CalledProcessError(1, 'aws')), \
+         patch.object(ci, 'verify_uploaded') as verify:
+        ci.put_resource('bucket', 'bundle-short.tar.gz', path, '')
+    verify.assert_called_once_with('bucket', 'bundle-short.tar.gz', ci.assemble.sha(path))

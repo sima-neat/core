@@ -80,7 +80,7 @@ outputs = model.output_specs()
 | 目標 | 利用可能なオプション | 備考 |
 | --- | --- | --- |
 | デコードされた画像を送信 | `preprocess.kind`、`preprocess.preset`、および、リサイズ、カラー、レイアウト、正規化、量子化、またはテッセレーションなどの特定のプリプロセスフィールド。 | アプリがピクセルデータを送信する場合にこれを使用し、Neat がそれらをモデル契約に適合するように調整します。 |
-| モデルの形状に合わせたテンソルを入力として送信 | `preprocess.kind = Tensor`; テンソルがすでにモデルの要件を満たしている場合にのみ、`preprocess.enable = Off` を設定します。 | アプリですでに前処理機能が実装されている場合は、これを使用してください。 |
+| モデルの公開入力に一致するテンソルを渡す | 前処理オプションを未設定にします。 | リサイズ・正規化済みのFP32入力にも必要なCast/Quant/Tessアダプターを維持します。 |
 | 検出結果を解析する。 | `decode_type`, `decode_type_option`, `score_threshold`, `nms_iou_threshold`, `top_k`, `num_classes` | 検出モデルには、明確なデコード意図が必要です。 |
 | 抽出したモデルファイルを保管し、必要に応じて確認できるようにします。 | `cleanup_extracted_model_data = false` | デバッグ時に役立ちます。通常の使用時には、デフォルト設定のままにしておいてください。 |
 | 1つのプロセスで複数のモデルのルートを実行する | `name_suffix`と、グラフ要素名のプレフィックス／サフィックス | 生成された名前と診断結果を読みやすく表示します。 |
@@ -138,6 +138,7 @@ model = pyneat.Model(model_path, options)
 | `nms_iou_threshold` | デコード処理では、非最大値抑制を適用する必要があります。 | `0`；モデルにパッケージされた値を保持します。パッケージされた値がない場合、YOLO26はNMSをスキップし、その他のデコーダーは重なりのあるボックスをすべて抑制します。 |
 | `top_k` | 1回の出力あたりの検出件数に上限を設けたいのですね。 | `0`；上位K件の制限なし。 |
 | `num_classes` | クラスヘッドの深さは、例えば単一クラスのYOLO分割ヘッドのように、確実に推測することはできません。 | `0`。MPKメタデータまたは従来の推論を使用してください。 |
+| `multimask_output` | Segment Anything のプロンプトデコーダーに、ボックスや複数の点の場合と同様の単一マスクの答えを返させる場合。`false` を受け付けるのは Segment Anything のデコードタイプだけです。 | `true`。1 回のクリックの場合と同様に、予測 IoU が最も高い候補マスクを残します。[Segment Anything のマスク](/reference/boxdecode_decode_types#segment-anything-masks)を参照してください。 |
 
 ほとんどのYOLOスタイルのモデルでは、まず`decode_type`、`score_threshold`、`nms_iou_threshold`、および`top_k`から始めます。モデルの構造に調整が必要な場合にのみ、`num_classes`を追加します。テンソルの順序について、特定のセレクターが必要であることがわかっている場合を除き、`decode_type_option`を`Auto`に設定したままにします。
 
@@ -176,34 +177,26 @@ model = pyneat.Model(model_path, options)
 
 ### 生のテンソル入力
 
-コンパイルされたモデルが期待する形状、データ型、およびレイアウトでテンソルをすでに作成している場合は、このパターンを使用してください。
+`model.input_specs()`に一致するテンソルを渡す場合はデフォルトを使います。NeatはMPKに必要なテンソルアダプターを維持します。
 
 <CodeTabs>
 <CodeTab label="C++" lang="cpp">
 
 ```cpp
-simaai::neat::Model::Options options;
-options.preprocess.kind = simaai::neat::InputKind::Tensor;
-options.preprocess.enable = simaai::neat::AutoFlag::Off;
-
-simaai::neat::Model model(model_path, options);
+simaai::neat::Model model(model_path);
 ```
 
 </CodeTab>
 <CodeTab label="Python" lang="python">
 
 ```python
-options = pyneat.ModelOptions()
-options.preprocess.kind = pyneat.InputKind.Tensor
-options.preprocess.enable = pyneat.AutoFlag.Off
-
-model = pyneat.Model(model_path, options)
+model = pyneat.Model(model_path)
 ```
 
 </CodeTab>
 </CodeTabs>
 
-テンソルがモデルに適した形状になっていない場合は、無理にこの方法を使用しないでください。前処理で形状を調整するか、テンソル作成コードを修正してください。
+従来の`preprocess.enable = Off`設定は、MLAのみの実行を選択したり、MPKに必要なCast/Quant/Tessアダプターを削除したりしません。空でない`preprocess.transforms`リストは`Off`より優先されます。
 
 ### フィールドガイドの準備
 
@@ -212,9 +205,9 @@ model = pyneat.Model(model_path, options)
 | 必要です | フィールド |
 | --- | --- |
 | 画像またはテンソルを入力として選択してください。 | `preprocess.kind` |
-| すでに形状が決定されているテンソルに対して、前処理を無効にする。 | `preprocess.enable = Off` |
+| 従来の前処理制御（MPKに必要なアダプターは維持） | `preprocess.enable` |
 | 動的な画像の入力を制限する | `preprocess.input_max_width`, `preprocess.input_max_height`, `preprocess.input_max_depth` |
-| サイズ変更、トリミング、またはレターボックス表示 | `preprocess.resize` |
+| サイズ変更、トリミング、またはレターボックス表示（中央または左上配置） | `preprocess.resize`、`preprocess.resize.placement` |
 | RGB、BGR、NV12、I420、またはグレースケールに変換します。 | `preprocess.color_convert` |
 | HWC、CHW、またはその他の軸の順序を変換します。 | `preprocess.layout_convert` |
 | 平均値/標準偏差による正規化を適用します。 | `preprocess.normalize`または`preprocess.preset` |

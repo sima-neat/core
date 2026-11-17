@@ -47,6 +47,8 @@ For UI-style output, call `stream()` and iterate the returned `GenerationStream`
 
 ## Run
 
+On a DevKit without NVMe, set `LLIMA_MODELS_PATH` to a writable directory before `llima pull`, and use it instead of `/media/nvme/llima/models` below.
+
 On the Modalix DevKit, download an LLM such as Qwen3 4B from Hugging Face using the LLiMa CLI:
 
 ```bash

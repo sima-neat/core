@@ -14,6 +14,13 @@ import scheduler_sdk_policy as policy
 CORE = {'platform-version': '3.0.0', 'sdk': {'channel': 'develop'}}
 
 
+@pytest.fixture
+def core_manifest(tmp_path):
+    manifest = tmp_path / 'core-manifest.json'
+    manifest.write_text(json.dumps(CORE))
+    return manifest
+
+
 def receipt(firmware='3.0.0_master_B2372', version='3.0.0~pre2372'):
     return dict(CORE, elxr_version=firmware, **{'sysroot-version': version})
 
@@ -138,7 +145,7 @@ def test_llima_checked_before_installation_and_policy_retained_after_packaging()
 
 @pytest.mark.parametrize('role', ['core', 'dev', 'cli'])
 @pytest.mark.parametrize('root_state', ['valid', 'missing', 'tampered', 'duplicate'])
-def test_llima_installs_and_caches_only_validated_root_packages(tmp_path, role, root_state):
+def test_llima_installs_and_caches_only_validated_root_packages(tmp_path, core_manifest, role, root_state):
     publication = tmp_path / 'local publication'
     publication.mkdir()
     fixture(publication)
@@ -178,6 +185,8 @@ mktemp() { command mktemp -d "$TEST_TMP/work.XXXXXX"; }
 python3() {
   if [[ "$1" == tools/build_dependencies.py ]]; then
     printf '%s\\n' "$SCHEDULER_POLICY"
+  elif [[ "$1" == tools/ci/scheduler_sdk_policy.py ]]; then
+    command python3 "$@" --core-manifest "$CORE_MANIFEST"
   else
     command python3 "$@"
   fi
@@ -186,7 +195,7 @@ python3() {
     run = lambda: subprocess.run(['/bin/bash', '-c', script + function + '\nensure_neat_llima\n'],
                             cwd=ROOT, text=True, capture_output=True,
                             env={'PATH': '/usr/bin:/bin', 'TEST_TMP': str(tmp_path),
-                                 'PYTHONDONTWRITEBYTECODE': '1',
+                                 'CORE_MANIFEST': str(core_manifest), 'PYTHONDONTWRITEBYTECODE': '1',
                                  'NEAT_LLIMA_ARTIFACT_DIR': str(publication),
                                  'NEAT_DEPS_DIR': str(tmp_path), 'NEAT_LLIMA_DEB_DIR': str(cache),
                                  'REPO_ROOT': str(ROOT), 'ELXR_SDK': 'ON', 'SYSROOT': str(sysroot),
@@ -218,7 +227,7 @@ python3() {
     policy.check_llima(receipt(), cache)
 
 
-def test_remote_policy_uses_selected_immutable_llima_commit(tmp_path, monkeypatch):
+def test_remote_policy_uses_selected_immutable_llima_commit(tmp_path, core_manifest, monkeypatch):
     fixture(tmp_path)
     manifest = (tmp_path / 'llima-package-manifest.json').read_bytes()
     metadata = (tmp_path / 'metadata.json').read_bytes()
@@ -234,7 +243,7 @@ def test_remote_policy_uses_selected_immutable_llima_commit(tmp_path, monkeypatc
 
     monkeypatch.setattr(policy, 'acquire', acquire)
     monkeypatch.setattr(sys, 'argv', ['policy', '--policy-json', json.dumps(receipt()),
-        '--llima-dir', str(tmp_path), '--llima-selector', 'develop:' + 'a' * 40,
+        '--core-manifest', str(core_manifest), '--llima-dir', str(tmp_path), '--llima-selector', 'develop:' + 'a' * 40,
         '--environment', 'production', '--output', str(tmp_path / 'scheduler-policy.json')])
     policy.main()
     assert calls == [('llima', 'develop', 'a' * 40, r'llima-package-manifest\.json')]

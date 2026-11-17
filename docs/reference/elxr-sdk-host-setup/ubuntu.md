@@ -10,7 +10,7 @@ with DevKit-Sync.
 ## Prerequisites
 
 - Ubuntu 22.04 or 24.04 host.
-- Docker Engine installed and working.
+- Docker Engine %%dependency.docker.minimum%% or later, installed and working. Check the version with `docker --version`.
 - `sima-cli` installed on the host.
 - Modalix DevKit reachable on the same network.
 

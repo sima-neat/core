@@ -3,7 +3,9 @@
 #include "test_main.h"
 #include "test_utils.h"
 
+#include <array>
 #include <functional>
+#include <utility>
 #include <string>
 #include <vector>
 
@@ -11,9 +13,11 @@ namespace {
 
 using simaai::neat::AutoFlag;
 using simaai::neat::InputKind;
+using simaai::neat::LetterboxPlacement;
 using simaai::neat::Model;
 using simaai::neat::NormalizePreset;
 using simaai::neat::PreprocessGraphFamily;
+using simaai::neat::ResizeInterpolation;
 using simaai::neat::ResizeMode;
 using simaai::neat::Transform;
 using simaai::neat::TransformType;
@@ -21,8 +25,6 @@ using simaai::neat::internal::GraphFamilyCapabilities;
 using simaai::neat::internal::plan_preprocess;
 using simaai::neat::internal::PreprocessCapabilities;
 using simaai::neat::internal::PreprocessPlannerResult;
-using simaai::neat::internal::PreprocessRouteContext;
-using simaai::neat::internal::select_shared_input_range;
 
 GraphFamilyCapabilities all_ops_family(bool available) {
   GraphFamilyCapabilities fam;
@@ -64,61 +66,249 @@ void require_throws_contains(const std::function<void()>& fn, const std::string&
   throw std::runtime_error(msg + " (no exception)");
 }
 
-// Multi-ingress MPKs: only a range shared by every ingress tensor is used.
-void require_shared_input_range_selection() {
-  using Ranges = std::vector<std::vector<double>>;
-  bool ambiguous = true;
-  require(select_shared_input_range(Ranges{{0.0, 1.0}}, &ambiguous) ==
-                  std::vector<double>({0.0, 1.0}) &&
-              !ambiguous,
-          "ranges: single ingress range is used");
-  require(select_shared_input_range(Ranges{{0.0, 1.0}, {0.0, 1.0}}, &ambiguous) ==
-                  std::vector<double>({0.0, 1.0}) &&
-              !ambiguous,
-          "ranges: identical ingress ranges are used");
-  require(select_shared_input_range(Ranges{{0.0, 1.0}, {0.0, 255.0}}, &ambiguous).empty() &&
-              ambiguous,
-          "ranges: differing ingress ranges are ambiguous");
-  require(select_shared_input_range(Ranges{{0.0, 1.0}, {}}, &ambiguous).empty() && ambiguous,
-          "ranges: a missing range after a declared one is ambiguous");
-  require(select_shared_input_range(Ranges{{}, {0.0, 1.0}}, &ambiguous).empty() && ambiguous,
-          "ranges: a missing range before a declared one is ambiguous");
-  require(select_shared_input_range(Ranges{{}, {}}, &ambiguous).empty() && !ambiguous,
-          "ranges: no declared range is not ambiguous");
-}
-
-// The plan the selected image preproc route resolves for input_range [0, 1].
-void require_model_normalized(const PreprocessPlannerResult& out, const std::string& label) {
-  const auto& rp = out.resolved_plan;
-  require(rp.enabled && rp.graph_family == PreprocessGraphFamily::Preproc &&
-              rp.graph_kernel == "preproc" && out.include_preprocess_stage,
-          label + ": resolved graph must report the enabled preproc stage");
-  require(rp.resolved_kind == InputKind::Image, label + ": resolved kind must be Image");
-  require(rp.effective.normalize.enable == AutoFlag::On && out.normalize,
-          label + ": normalize=Auto must resolve On from model input_range");
-  require(rp.effective.normalize.mean[0] == 0.0f && rp.effective.normalize.stddev[0] == 1.0f &&
-              out.mean.size() == 3U && out.mean[0] == 0.0f && out.stddev.size() == 3U &&
-              out.stddev[0] == 1.0f,
-          label + ": normalize stats must come from input_range");
-  size_t reports = 0;
-  for (const auto& warn : rp.warnings) {
-    reports += warn.find("resolved On from model input_range") != std::string::npos;
-  }
-  require(reports == 1U, label + ": model-driven normalize must be reported once");
-}
-
-void require_normalize_off(const PreprocessPlannerResult& out, const std::string& label) {
-  require(out.resolved_plan.effective.normalize.enable == AutoFlag::Off && !out.normalize,
-          label + ": normalize must stay Off");
-  require(!has_warning(out, "resolved On from model input_range"),
-          label + ": must not report model-driven normalize");
-}
-
 } // namespace
 
 RUN_TEST(
     "unit_input_planner_semantics_test", ([] {
       PreprocessCapabilities caps = all_caps();
+
+      // Model and standalone Resize share the same typed sampler. Resolve it
+      // before intent detection, route selection, snapshots and stage projection.
+      {
+        static_assert(static_cast<int>(ResizeInterpolation::Nearest) == 0);
+        static_assert(static_cast<int>(ResizeInterpolation::BilinearAntialiased) == 4);
+        const std::pair<ResizeInterpolation, const char*> samplers[] = {
+            {ResizeInterpolation::Nearest, "NEAREST"},
+            {ResizeInterpolation::Bilinear, "BILINEAR"},
+            {ResizeInterpolation::Bicubic, "BICUBIC"},
+            {ResizeInterpolation::BoxAverage, "INTERAREA"},
+            {ResizeInterpolation::BilinearAntialiased, "BILINEAR_ANTIALIASED"}};
+        Model::Options legacy;
+        require(!legacy.preprocess.resize.interpolation &&
+                    legacy.preprocess.resize.scaling_type == "BILINEAR",
+                "legacy resize default changed");
+        for (const auto& [sampler, token] : samplers) {
+          Model::Options typed;
+          typed.preprocess.resize.interpolation = sampler;
+          const auto planned = plan_preprocess(typed, caps);
+          require(planned.resolved_plan.effective.resize.scaling_type == token &&
+                      planned.resolved_plan.effective.resize.enable == AutoFlag::On &&
+                      planned.resolved_plan.resolved_kind == InputKind::Image &&
+                      planned.resolved_plan.graph_family == PreprocessGraphFamily::Preproc,
+                  "typed sampler was ignored or lowered differently");
+          typed.preprocess.resize.scaling_type = token;
+          require(plan_preprocess(typed, caps).resolved_plan.effective.resize.scaling_type == token,
+                  "matching legacy/typed samplers conflict");
+        }
+        legacy.preprocess.resize.scaling_type = "NEAREST_NEIGHBOUR";
+        legacy.preprocess.resize.interpolation = ResizeInterpolation::Nearest;
+        require(plan_preprocess(legacy, caps).resolved_plan.effective.resize.scaling_type ==
+                    "NEAREST",
+                "legacy nearest alias did not agree with typed Nearest");
+        legacy.preprocess.resize.interpolation.reset();
+        legacy.preprocess.resize.enable = AutoFlag::On;
+        require(plan_preprocess(legacy, caps).resolved_plan.effective.resize.scaling_type ==
+                    "NEAREST_NEIGHBOUR",
+                "legacy-only string behavior changed");
+        legacy.preprocess.resize.interpolation = ResizeInterpolation::Bicubic;
+        require_throws_contains([&] { (void)plan_preprocess(legacy, caps); }, "conflicts",
+                                "conflicting nondefault legacy/typed samplers were accepted");
+        legacy.preprocess.resize.interpolation = static_cast<ResizeInterpolation>(999);
+        require_throws_contains([&] { (void)plan_preprocess(legacy, caps); },
+                                "interpolation is invalid",
+                                "invalid typed sampler silently fell back");
+        Model::Options transformed;
+        Transform resize_transform;
+        resize_transform.type = TransformType::Resize;
+        resize_transform.resize.interpolation = ResizeInterpolation::Nearest;
+        transformed.preprocess.transforms.push_back(resize_transform);
+        const auto transformed_plan = plan_preprocess(transformed, caps);
+        require(transformed_plan.resolved_plan.effective.resize.enable == AutoFlag::On &&
+                    transformed_plan.resolved_plan.effective.resize.scaling_type == "NEAREST" &&
+                    transformed_plan.resolved_plan.graph_family == PreprocessGraphFamily::Preproc,
+                "typed legacy transform must preserve explicit resize intent");
+        for (int fault = 0; fault < 4; ++fault) {
+          Model::Options typed;
+          typed.preprocess.resize.interpolation = ResizeInterpolation::Nearest;
+          if (fault == 0)
+            typed.preprocess.kind = InputKind::Tensor;
+          if (fault == 1)
+            typed.preprocess.enable = AutoFlag::Off;
+          if (fault == 2)
+            typed.preprocess.resize.enable = AutoFlag::Off;
+          if (fault == 3)
+            typed.preprocess.quantize.enable = AutoFlag::On;
+          require_throws_contains([&] { (void)plan_preprocess(typed, caps); },
+                                  fault == 2   ? "resize.enable=Off"
+                                  : fault == 3 ? "Preproc image route"
+                                               : "fixed image preprocessing",
+                                  "typed sampler was silently routed away");
+        }
+      }
+
+      // Crop alone is explicit image intent; final output remains MPK-owned.
+      {
+        Model::Options opt;
+        require(!opt.preprocess.resize.shorter_side, "legacy default selected a shorter side");
+        opt.preprocess.resize.mode = ResizeMode::Crop;
+        for (const auto shorter : {std::optional<int>{}, std::optional<int>{256}}) {
+          opt.preprocess.resize.shorter_side = shorter;
+          const auto planned = plan_preprocess(opt, caps);
+          require(planned.resolved_plan.enabled &&
+                      planned.resolved_plan.graph_family == PreprocessGraphFamily::Preproc &&
+                      planned.resolved_plan.resolved_kind == InputKind::Image &&
+                      planned.resolved_plan.effective.resize.enable == AutoFlag::On &&
+                      planned.resolved_plan.effective.resize.shorter_side == shorter &&
+                      planned.resolved_plan.effective.resize.width == 0 &&
+                      planned.resolved_plan.effective.resize.height == 0,
+                  "Crop was ignored or replaced output contract authority");
+        }
+        for (int fault = 0; fault < 7; ++fault) {
+          auto bad = opt;
+          if (fault == 0)
+            bad.preprocess.resize.mode = ResizeMode::Stretch;
+          if (fault == 1)
+            bad.preprocess.resize.shorter_side = 0;
+          if (fault == 2)
+            bad.preprocess.resize.shorter_side = 4097;
+          if (fault == 3)
+            bad.preprocess.resize.enable = AutoFlag::Off;
+          if (fault == 4)
+            bad.preprocess.kind = InputKind::Tensor;
+          if (fault == 5)
+            bad.preprocess.enable = AutoFlag::Off;
+          if (fault == 6)
+            bad.preprocess.quantize.enable = AutoFlag::On;
+          require_throws_contains([&] { (void)plan_preprocess(bad, caps); },
+                                  fault < 3    ? "shorter_side"
+                                  : fault == 3 ? "resize.enable=Off"
+                                  : fault == 6 ? "Preproc image route"
+                                               : "fixed image preprocessing",
+                                  "incompatible Crop policy was silently accepted");
+        }
+        Model::Options transformed;
+        Transform transform;
+        transform.type = TransformType::Resize;
+        transform.resize.mode = ResizeMode::Crop;
+        transformed.preprocess.transforms.push_back(transform);
+        require_throws_contains([&] { (void)plan_preprocess(transformed, caps); },
+                                "preprocess.transforms", "Crop bypassed canonical geometry policy");
+      }
+
+      // Ordinary fixed options are real image intent, even without an
+      // explicit kind/resize/normalize enable flag.
+      {
+        Model::Options opt;
+        opt.preprocess.rescale_factor = 1.f / 255.f;
+        opt.preprocess.resize.interpolation = ResizeInterpolation::BilinearAntialiased;
+        const auto planned = plan_preprocess(opt, caps);
+        require(planned.resolved_plan.enabled &&
+                    planned.resolved_plan.resolved_kind == InputKind::Image &&
+                    planned.resolved_plan.graph_family == PreprocessGraphFamily::Preproc &&
+                    planned.resolved_plan.effective.resize.enable == AutoFlag::On &&
+                    planned.resolved_plan.effective.rescale_factor == opt.preprocess.rescale_factor,
+                "fixed options disappeared during input planning");
+        for (int fault = 0; fault < 4; ++fault) {
+          auto bad = opt;
+          if (fault == 0)
+            bad.preprocess.enable = AutoFlag::Off;
+          if (fault == 1)
+            bad.preprocess.kind = InputKind::Tensor;
+          if (fault == 2)
+            bad.preprocess.transforms.push_back(Transform{});
+          if (fault == 3)
+            bad.preprocess.resize.enable = AutoFlag::Off;
+          require_throws_contains([&] { (void)plan_preprocess(bad, caps); },
+                                  fault == 3 ? "resize.enable=Off" : "fixed image preprocessing",
+                                  "contradictory fixed intent was silently ignored");
+        }
+        // Quant/Tess families cannot carry source image arithmetic. With
+        // resize disabled this used to pass without applying the new factor.
+        for (int tensor_route = 0; tensor_route < 3; ++tensor_route) {
+          Model::Options bad;
+          bad.preprocess.rescale_factor = 1.f;
+          bad.preprocess.resize.enable = AutoFlag::Off;
+          bad.preprocess.resize.scaling_type = "NO_SCALING";
+          if (tensor_route != 1)
+            bad.preprocess.quantize.enable = AutoFlag::On;
+          if (tensor_route != 0)
+            bad.preprocess.tessellate.enable = AutoFlag::On;
+          require_throws_contains([&] { (void)plan_preprocess(bad, caps); }, "Preproc image route",
+                                  "tensor route silently discarded source image arithmetic");
+        }
+        opt.preprocess.normalize.enable = AutoFlag::On;
+        opt.preprocess.normalize.stddev = {1.f, -0.25f, 0.5f};
+        const auto signed_divisor = plan_preprocess(opt, caps);
+        require(signed_divisor.resolved_plan.effective.normalize.stddev[1] == -0.25f,
+                "source divisor sign was changed");
+      }
+
+      // Letterbox placement is resize intent of a letterbox only. Center keeps
+      // the established default; TopLeft survives planning and transforms.
+      {
+        static_assert(static_cast<int>(LetterboxPlacement::Center) == 0);
+        static_assert(static_cast<int>(LetterboxPlacement::TopLeft) == 1);
+        Model::Options defaults;
+        require(defaults.preprocess.resize.placement == LetterboxPlacement::Center,
+                "letterbox placement default changed");
+        Model::Options top_left;
+        top_left.preprocess.kind = InputKind::Image;
+        top_left.preprocess.resize.enable = AutoFlag::On;
+        top_left.preprocess.resize.mode = ResizeMode::Letterbox;
+        top_left.preprocess.resize.pad_value = 116;
+        top_left.preprocess.resize.placement = LetterboxPlacement::TopLeft;
+        const auto planned = plan_preprocess(top_left, caps);
+        require(planned.resolved_plan.effective.resize.placement == LetterboxPlacement::TopLeft &&
+                    planned.resolved_plan.effective.resize.mode == ResizeMode::Letterbox &&
+                    planned.resolved_plan.effective.resize.pad_value == 116 &&
+                    planned.resolved_plan.effective.resize.enable == AutoFlag::On &&
+                    planned.resolved_plan.graph_family == PreprocessGraphFamily::Preproc,
+                "TopLeft letterbox was not retained by planning");
+        Model::Options preset = top_left;
+        preset.preprocess.resize.mode = ResizeMode::Stretch;
+        preset.preprocess.preset = NormalizePreset::COCO_YOLO;
+        require(plan_preprocess(preset, caps).resolved_plan.effective.resize.placement ==
+                    LetterboxPlacement::TopLeft,
+                "the COCO_YOLO letterbox preset must keep an explicit placement");
+        Model::Options transformed;
+        Transform letterbox;
+        letterbox.type = TransformType::Resize;
+        letterbox.resize = top_left.preprocess.resize;
+        transformed.preprocess.transforms.push_back(letterbox);
+        require(plan_preprocess(transformed, caps).resolved_plan.effective.resize.placement ==
+                    LetterboxPlacement::TopLeft,
+                "a Resize transform must carry its letterbox placement");
+        for (int fault = 0; fault < 6; ++fault) {
+          auto bad = top_left;
+          const char* needle = "requires ResizeMode.Letterbox";
+          if (fault == 0) {
+            bad.preprocess.resize.mode = ResizeMode::Stretch;
+          } else if (fault == 1) {
+            bad.preprocess.resize.mode = ResizeMode::Crop;
+          } else if (fault == 2) {
+            bad.preprocess.resize.placement = static_cast<LetterboxPlacement>(7);
+            needle = "placement is invalid";
+          } else if (fault == 3) {
+            bad.preprocess.resize.enable = AutoFlag::Off;
+            needle = "enabled letterbox resize";
+          } else if (fault == 4) {
+            bad.preprocess.resize.enable = AutoFlag::Auto;
+            needle = "enabled letterbox resize";
+          } else {
+            bad.preprocess.transforms = transformed.preprocess.transforms;
+            bad.preprocess.transforms.front().resize.mode = ResizeMode::Stretch;
+          }
+          require_throws_contains([&] { (void)plan_preprocess(bad, caps); }, needle,
+                                  "invalid letterbox placement was silently ignored");
+        }
+        auto mixed = transformed;
+        mixed.preprocess.resize.placement = LetterboxPlacement::TopLeft;
+        mixed.preprocess.transforms.front().resize.placement = LetterboxPlacement::Center;
+        const auto mixed_plan = plan_preprocess(mixed, caps);
+        require(mixed_plan.resolved_plan.effective.resize.placement == LetterboxPlacement::Center &&
+                    has_warning(mixed_plan, "using transforms"),
+                "transforms must own placement and warn about the ignored simple field");
+      }
 
       // transforms + simple flags => warn + transforms override.
       {
@@ -185,6 +375,24 @@ RUN_TEST(
                     out.resolved_plan.effective.normalize.stddev[1] == 1.0f &&
                     out.resolved_plan.effective.normalize.stddev[2] == 1.0f,
                 "planner: COCO_YOLO stddev must default to 1");
+      }
+
+      // The EfficientSAM3 encoder recipe in the BoxDecode reference: statistics alone leave
+      // normalization Auto, which resolves off without a preset; enable=On applies them.
+      {
+        Model::Options opt;
+        opt.preprocess.kind = InputKind::Image;
+        opt.preprocess.normalize.mean = {0.5f, 0.5f, 0.5f};
+        opt.preprocess.normalize.stddev = {0.5f, 0.5f, 0.5f};
+        require(plan_preprocess(opt, caps).resolved_plan.effective.normalize.enable != AutoFlag::On,
+                "planner: statistics without normalize.enable must not enable normalize");
+        opt.preprocess.normalize.enable = AutoFlag::On;
+        const auto out = plan_preprocess(opt, caps);
+        const auto& normalize = out.resolved_plan.effective.normalize;
+        require(normalize.enable == AutoFlag::On &&
+                    normalize.mean == std::array{0.5f, 0.5f, 0.5f} &&
+                    normalize.stddev == std::array{0.5f, 0.5f, 0.5f},
+                "planner: EfficientSAM3 normalize.enable=On must apply mean and stddev 0.5");
       }
 
       // Tensor auto-family should lower tensor ingress to QuantTess when available.
@@ -345,158 +553,5 @@ RUN_TEST(
         const PreprocessPlannerResult out = plan_preprocess(opt, caps);
         require(!has_warning(out, "op=normalize"),
                 "planner: should not warn normalize off without model/preset expectation");
-      }
-
-      // normalize=Auto follows the model input_range once route selection picks the
-      // image preproc stage, from simple options or from a transform list.
-      {
-        PreprocessCapabilities model_caps = all_caps();
-        model_caps.has_model_input_normalization = true;
-        model_caps.model_input_mean = {0.0f, 0.0f, 0.0f};
-        model_caps.model_input_stddev = {1.0f, 1.0f, 1.0f};
-        PreprocessRouteContext image_route;
-        image_route.image_preproc_selected = true;
-
-        // Before route selection nothing is resolved from input_range.
-        Model::Options default_opt;
-        const PreprocessPlannerResult unrouted = plan_preprocess(default_opt, model_caps);
-        require(!unrouted.resolved_plan.enabled &&
-                    unrouted.resolved_plan.graph_family == PreprocessGraphFamily::Disabled,
-                "planner: default options without a route must not enable preprocess");
-        require_normalize_off(unrouted, "planner: default options without a route");
-
-        Model::Options image_opt;
-        image_opt.preprocess.kind = InputKind::Image;
-        require_normalize_off(plan_preprocess(image_opt, model_caps),
-                              "planner: explicit Image without a route");
-
-        // Default options on an MPK-selected image preproc route, with the explicit
-        // Image kind as positive control.
-        require_model_normalized(plan_preprocess(default_opt, model_caps, image_route),
-                                 "route: default options");
-        require_model_normalized(plan_preprocess(image_opt, model_caps, image_route),
-                                 "route: explicit Image");
-
-        Model::Options resize_opt;
-        resize_opt.preprocess.resize.width = 640;
-        resize_opt.preprocess.resize.height = 640;
-        require_model_normalized(plan_preprocess(resize_opt, model_caps, image_route),
-                                 "route: simple resize options");
-
-        // Transform lists: the effective Normalize intent decides, not the list itself.
-        Transform normalize_auto;
-        normalize_auto.type = TransformType::Normalize;
-        Model::Options transform_opt;
-        transform_opt.preprocess.transforms = {normalize_auto};
-        require_model_normalized(plan_preprocess(transform_opt, model_caps, image_route),
-                                 "route: Auto kind + Normalize(Auto) transform");
-        Model::Options transform_image_opt = transform_opt;
-        transform_image_opt.preprocess.kind = InputKind::Image;
-        require_model_normalized(plan_preprocess(transform_image_opt, model_caps, image_route),
-                                 "route: Image kind + Normalize(Auto) transform");
-
-        Transform resize_only;
-        resize_only.type = TransformType::Resize;
-        resize_only.resize.width = 640;
-        resize_only.resize.height = 640;
-        Model::Options resize_transform_opt;
-        resize_transform_opt.preprocess.transforms = {resize_only};
-        require_model_normalized(plan_preprocess(resize_transform_opt, model_caps, image_route),
-                                 "route: transform list without Normalize");
-
-        Transform normalize_off = normalize_auto;
-        normalize_off.normalize.enable = AutoFlag::Off;
-        Model::Options transform_off_opt;
-        transform_off_opt.preprocess.transforms = {normalize_off};
-        require_normalize_off(plan_preprocess(transform_off_opt, model_caps, image_route),
-                              "route: Normalize(Off) transform");
-
-        Transform normalize_stats = normalize_auto;
-        normalize_stats.normalize.mean = {0.5f, 0.5f, 0.5f};
-        normalize_stats.normalize.stddev = {0.25f, 0.25f, 0.25f};
-        normalize_stats.normalize.has_explicit_stats = true;
-        Model::Options transform_stats_opt;
-        transform_stats_opt.preprocess.transforms = {normalize_stats};
-        const PreprocessPlannerResult transform_stats_out =
-            plan_preprocess(transform_stats_opt, model_caps, image_route);
-        require(transform_stats_out.resolved_plan.effective.normalize.mean[0] == 0.5f &&
-                    transform_stats_out.resolved_plan.effective.normalize.stddev[0] == 0.25f,
-                "route: explicit transform normalize stats must win over input_range");
-
-        // Explicit simple options win over the model contract.
-        Model::Options off_opt;
-        off_opt.preprocess.normalize.enable = AutoFlag::Off;
-        require_normalize_off(plan_preprocess(off_opt, model_caps, image_route),
-                              "route: explicit normalize Off");
-
-        Model::Options stats_opt;
-        stats_opt.preprocess.normalize.mean = {0.5f, 0.5f, 0.5f};
-        stats_opt.preprocess.normalize.stddev = {0.25f, 0.25f, 0.25f};
-        stats_opt.preprocess.normalize.has_explicit_stats = true;
-        const PreprocessPlannerResult stats_out =
-            plan_preprocess(stats_opt, model_caps, image_route);
-        require(stats_out.resolved_plan.effective.normalize.mean[0] == 0.5f &&
-                    stats_out.resolved_plan.effective.normalize.stddev[0] == 0.25f,
-                "route: explicit normalize stats must win over input_range");
-
-        Model::Options preset_opt;
-        preset_opt.preprocess.preset = NormalizePreset::ImageNet;
-        const PreprocessPlannerResult preset_out =
-            plan_preprocess(preset_opt, model_caps, image_route);
-        require(preset_out.resolved_plan.effective.normalize.mean[0] == 0.485f,
-                "route: preset stats must win over input_range");
-
-        Model::Options disabled_opt;
-        disabled_opt.preprocess.enable = AutoFlag::Off;
-        const PreprocessPlannerResult disabled_out =
-            plan_preprocess(disabled_opt, model_caps, image_route);
-        require(!disabled_out.resolved_plan.enabled,
-                "route: explicit preprocess.enable=Off must stay disabled");
-        require_normalize_off(disabled_out, "route: explicit preprocess.enable=Off");
-        Model::Options disabled_transform_opt = transform_opt;
-        disabled_transform_opt.preprocess.enable = AutoFlag::Off;
-        require_normalize_off(plan_preprocess(disabled_transform_opt, model_caps, image_route),
-                              "route: preprocess.enable=Off with transforms");
-
-        Model::Options tensor_opt;
-        tensor_opt.preprocess.kind = InputKind::Tensor;
-        require_normalize_off(plan_preprocess(tensor_opt, model_caps, image_route),
-                              "route: tensor input");
-
-        // Models without a usable range keep raw pixels; problems are reported.
-        PreprocessCapabilities no_range_caps = model_caps;
-        no_range_caps.has_model_input_normalization = false;
-        const PreprocessPlannerResult no_range_out =
-            plan_preprocess(default_opt, no_range_caps, image_route);
-        require_normalize_off(no_range_out, "route: missing or identity input_range");
-        require(no_range_out.requirement_issues.empty() &&
-                    !has_warning(no_range_out, "input_range"),
-                "route: a missing input_range is not a contract issue");
-
-        PreprocessCapabilities ambiguous_caps = no_range_caps;
-        ambiguous_caps.model_input_range_ambiguous = true;
-        const PreprocessPlannerResult ambiguous_out =
-            plan_preprocess(default_opt, ambiguous_caps, image_route);
-        require_normalize_off(ambiguous_out, "route: ambiguous multi-ingress input_range");
-        require(has_warning(ambiguous_out, "image ingress range is ambiguous"),
-                "route: ambiguous multi-ingress input_range must be reported");
-
-        PreprocessCapabilities invalid_caps = no_range_caps;
-        invalid_caps.invalid_model_input_range = "[1, 1]";
-        const PreprocessPlannerResult invalid_out =
-            plan_preprocess(default_opt, invalid_caps, image_route);
-        require_normalize_off(invalid_out, "route: invalid input_range");
-        require(invalid_out.requirement_issues.size() == 1U &&
-                    invalid_out.requirement_issues.front().code ==
-                        "PREPROC_REQ_WARN_MODEL_INPUT_RANGE_INVALID" &&
-                    invalid_out.requirement_issues.front().source ==
-                        simaai::neat::internal::RequirementSource::MlaContract,
-                "route: invalid input_range must raise a contract diagnostic");
-        require(has_warning(invalid_out, "input_range [1, 1]"),
-                "route: invalid input_range diagnostic must name the declared range");
-        require(plan_preprocess(off_opt, invalid_caps, image_route).requirement_issues.empty(),
-                "route: explicit normalize does not depend on the invalid input_range");
-
-        require_shared_input_range_selection();
       }
     }));

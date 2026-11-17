@@ -39,8 +39,10 @@ slug: /develop-apps/contribute/release-checklist
    - `project(SimaNeat VERSION x.y.z)` が `CMakeLists.txt` に更新されていること
    - 必要に応じて、`package-version` と `platform-version` が `deps/manifest.json` に更新されていること
    - `modelzoo-version` が、`platform-version` と異なる場合に、検証済みの Model Zoo リリースを明示的に選択すること。省略された場合、Model Zoo の解決はデフォルトで `platform-version` になります。
-   - 公開されている C++ 型のレイアウトまたはエクスポートされたバイナリコントラクトが互換性のない方法で変更された場合は、`abi-version` を `deps/manifest.json` でインクリメントすること。すべての C++ アプリケーションと Python バインディングは、その ABI に対して再構築されます。
-   - `CHANGELOG.md` に `## [x.y.z]` のエントリがあること
+   - `abi-version` は、公開 C++ 型のレイアウトまたはエクスポートされたバイナリコントラクトに互換性のない変更があり、
+     かつ `develop` の ABI バージョンが `main` と同じ場合にのみ、`deps/manifest.json` でインクリメントすること。
+     `develop` が次のリリースに向けてすでに高い ABI バージョンを持つ場合、リリース前の追加の ABI 非互換変更でもそのバージョンを維持すること。
+     互換性のない変更後は、一致するヘッダーとライブラリを使って、すべての C++ アプリケーションと Python バインディングを再ビルドすること。
    - リリース/タグの本文にリリースノートが準備されていること
 
 リリースフローに「既知のクラッシャー」リストは許可されません。クラッシュ回帰が発生した場合、修正されるまでリリースはブロックされます。

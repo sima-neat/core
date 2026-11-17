@@ -1,12 +1,14 @@
 #include "nodes/common/Output.h"
 #include "nodes/io/Input.h"
 #include "pipeline/Graph.h"
+#include "pipeline/graph/internal/GraphTestHooks.h"
 #include "test_main.h"
 #include "test_utils.h"
 
 #include <chrono>
 #include <sstream>
 #include <string>
+#include <thread>
 
 namespace {
 
@@ -78,4 +80,54 @@ RUN_TEST("pull_timeout_regression_test", [] {
   }
 
   run.stop();
+
+  Graph delayed;
+  delayed.add(nodes::Input(input_opt));
+  delayed.custom("identity sleep-time=500000");
+  delayed.add(nodes::Output(OutputOptions::EveryFrame()));
+  RunOptions delayed_opt;
+  delayed_opt.preset = RunPreset::Realtime;
+  delayed_opt.output_memory = OutputMemory::Owned;
+  delayed_opt.startup_preflight = false;
+  delayed_opt.input_timeout_ms = 100;
+  delayed_opt.advanced.sync_num_buffers_override = 1;
+
+  const auto expect_run_timeout = [&](uint8_t value) {
+    try {
+      (void)delayed.run(TensorList{make_color_tensor(64, 48, ImageSpec::PixelFormat::RGB, value)},
+                        delayed_opt);
+    } catch (const std::exception& error) {
+      require_contains(error.what(), "status=Timeout", "Graph::run failed without a pull timeout");
+      return;
+    }
+    throw std::runtime_error("Graph::run returned late output from the preceding timed-out call");
+  };
+  expect_run_timeout(0x40);
+  // Give an uncancelled first output time to arrive before the next input.
+  std::this_thread::sleep_for(std::chrono::milliseconds(650));
+  expect_run_timeout(0x80);
+
+  // Multi-buffer prefill can return A after earlier waits timed out. Its cache must be gone
+  // before B is submitted, whereas a prefill with no timeout must retain its runner.
+  auto prefill = delayed.build(TensorList{seed}, delayed_opt);
+  const auto output = session_test::run_sync_prefill_for_test(prefill, seed, 100, 2);
+  require(!prefill.running(), "Successful prefill retained unresolved submissions");
+  const auto tensors = tensors_from_sample(output);
+  require(tensors.size() == 1 && tensors.front().copy_payload_bytes() == seed.copy_payload_bytes(),
+          "Successful prefill returned the wrong input");
+  const auto next = make_color_tensor(64, 48, ImageSpec::PixelFormat::RGB, 0x80);
+  prefill = delayed.build(TensorList{next}, delayed_opt);
+  const auto recovered = session_test::run_sync_prefill_for_test(prefill, next, 1000, 2);
+  require(prefill.running(), "Prefill without timeouts discarded its runner");
+  const auto recovered_tensors = tensors_from_sample(recovered);
+  require(recovered_tensors.size() == 1 &&
+              recovered_tensors.front().copy_payload_bytes() == next.copy_payload_bytes(),
+          "Prefill returned the preceding call's output");
+  try {
+    (void)session_test::run_sync_prefill_for_test(prefill, seed, 100, 2, true);
+    throw std::runtime_error("Warmed prefill unexpectedly completed");
+  } catch (const std::exception& error) {
+    require_contains(error.what(), "prefill stage produced no output", "Expected prefill timeout");
+  }
+  require(!prefill.running(), "Failed warmed prefill retained its runner");
 });

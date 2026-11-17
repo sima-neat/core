@@ -33,7 +33,7 @@ sima-cli neat install sdk@%%release.sdk_channel%%
 
 DevKitとのペアリングを選んだ場合は、表示されたプロンプトにDevKitのIPアドレスを入力します。セットアップ処理はSDKワークスペースを構成し、SDKコンテナを起動してDevKit Syncを設定します。ペアリングを省略してもSDKワークスペースは作成され、後からペアリングできます。
 
-`%%release.sdk_channel%%`パッケージは、%%release.sdk_series%%系の最新Palette SDKパッチリリースを追跡します。現在のリリースはPalette SDK %%release.sdk%%で、DevKitソフトウェア%%release.platform%%と互換性があります。
+`%%release.sdk_channel%%`パッケージは、%%release.sdk_series%%系の最新Palette SDKパッチリリースを追跡します。現在のリリースはPalette SDK %%release.sdk%%。 対応する DevKit ソフトウェアのバージョンは [互換性ガイド](/getting-started/compatibility/) を参照してください。
 
 セットアップ中、`sima-cli`は対応するModel CompilerをSDK内にインストールするか確認します。モデルを自分でコンパイルまたは量子化する場合は承認してください。別のバージョンを選択する必要はありません。コンパイル済みモデルパッケージだけを実行する場合は省略できます。後からインストールする場合、特定のパッチを固定する場合、またはスタンドアロンホストを使用する場合は、[Model Compilerのインストール](/getting-started/dev-environment/install-model-compiler/)と[互換性ガイド](/getting-started/compatibility/)を参照してください。
 

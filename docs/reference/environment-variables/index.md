@@ -75,10 +75,11 @@ Legacy per-variable debug toggles still work and override profile defaults when 
 - `SIMA_GST_POLL_SLICE_MS=<ms>` — poll slice for appsink pulls (default 200).
 - Preferred API knobs:
   - `ValidateOptions.preroll_timeout_ms` — validate() preroll timeout.
-  - `RunOptions.input_timeout_ms` — build()/run() input-mode pull timeout.
+  - `RunOptions.input_timeout_ms` — output wait for input-mode `Graph::run()` and supported seeded build preflight.
+  - `Run::run(..., timeout_ms)` / `Model::run(..., timeout_ms)` — per-call output wait; `-1` is unlimited, as in `Run::pull(-1)`.
 - Legacy fallback env vars (use only when you cannot pass options):
   - `SIMA_GST_VALIDATE_TIMEOUT_MS=<ms>` — validate() timeout (default 2000/10000).
-  - `SIMA_GST_RUN_INPUT_TIMEOUT_MS=<ms>` — run() input timeout (default 10000).
+  - `SIMA_GST_RUN_INPUT_TIMEOUT_MS=<ms>` — fallback for those `Graph::run()` / preflight output waits (default 10000).
 
 ## Diagnostics + probes
 
@@ -113,7 +114,6 @@ Legacy per-variable debug toggles still work and override profile defaults when 
 - `SIMA_INPUTSTREAM_DEBUG=1` — verbose InputStream logs.
 - `SIMA_INPUTSTREAM_WARN=1` — warnings on InputStream events.
 - `SIMA_INPUTSTREAM_POLL_MS=<ms>` — InputStream poll slice (default 50).
-- `SIMA_INPUTSTREAM_DOT_ON_TIMEOUT=1` — dump DOT on timeout.
 - `SIMA_INPUTSTREAM_META_DEBUG=1` — log GstSimaMeta details.
 - `SIMA_INPUTSTREAM_ALLOC_DEBUG=1` — allocation debug.
 - `SIMA_INPUTSTREAM_PUSH_TIMING=1` — push timing logs.

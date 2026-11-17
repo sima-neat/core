@@ -92,6 +92,18 @@ class LocalizedRecordTests(unittest.TestCase):
 
 
 class ReleaseRecordTests(unittest.TestCase):
+    def test_resolves_dependency_only_sources(self) -> None:
+        snapshot = json.loads((CORE_ROOT / "website/release-data/current.json").read_text())
+        minimum = snapshot["dependencies"]["docker"]["minimum"]["value"]
+        sources = {"windows.md": "Docker %%dependency.docker.minimum%% or later.", "plain.md": "Plain text."}
+        self.assertEqual(MODULE.resolve_release_sources(sources), {
+            "windows.md": f"Docker {minimum} or later.", "plain.md": "Plain text.",
+        })
+        for token in ("%%dependency.missing.minimum%%", "%%dependency.docker.minimum%"):
+            with self.subTest(token=token):
+                with self.assertRaisesRegex(RuntimeError, r"windows.md:1:.*dependency"):
+                    MODULE.resolve_release_sources({"windows.md": token})
+
     def test_resolves_versions_in_all_locales_before_parsing_metadata(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

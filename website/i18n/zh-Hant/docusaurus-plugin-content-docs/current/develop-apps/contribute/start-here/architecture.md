@@ -25,6 +25,10 @@ flowchart LR
     Benchmark[Core benchmark reports] --> Sentinel[Optional Sentinel telemetry]
 ```
 
+Model 與獨立的 Resize 共用僅含值的 `ResizeInterpolation` 列舉及單一取樣器權杖對應。Model 規劃會先解析可選的型別設定，再處理圖像意圖、階段投影與圖形來源資訊；既有字串僅保留在相容性邊界。
+
+模型與獨立影像選項會轉換為相同的一般 Preproc 請求。固定來源運算保留原始 FP32 數值縮放、尺寸縮放後的平均值／除數，以及量化步長的運算邊界；它不是任意順序的轉換解譯器。輸入 dtype、量化及實體佈局仍由 MPK 決定。新選項需明確啟用，省略時保留舊版位元組。Core 只投影意圖與幾何資訊；數值檢查及執行由 Kernels 負責。
+
 Kernels 仍是操作目錄與數值准入的權威來源。Scheduler 透過 Runner 轉送一般化要求；
 Scheduler 與 Core 都不維護韌體 ID 或逐操作派送表。Core 保留公開節點 API、幾何原則
 與線路格式處理。Scheduler 在套件組驗證後具體化新的轉接器／解析器工廠。
@@ -321,18 +325,13 @@ input Sample/Tensor
 
 前處理與後處理是明確的框架階段／選項。格式不符、缺少必要的前處理中繼資料、選定的硬體傳輸不可用、模型封存檔或 MPK 合約無效，或 caps 協商失敗，都應回報可採取行動的結構化錯誤，而不是暗中在執行階段修正。
 
-### 依 MPK `input_range` 進行前處理正規化
-
-模型輸入的 MPK `input_range` 是前處理合約的一部分。影像輸入會以 `[0, 255]` 像素進入 CVU 前處理，前處理會計算 `(pixel / 255 - mean) / stddev`。當 `preprocess.normalize.enable` 為 `Auto`，且未設定明確的統計值或預設組合時，一旦路由選擇將影像前處理階段排在最前面，就會依該範圍決定正規化方式；即使 MPK 階段順序在沒有前處理要求的情況下選擇了該階段，也是如此。接著 `build_preprocess_plan()` 會以選定的路由再次呼叫 `plan_preprocess()`，因此已解析計畫中的啟用旗標、圖系列與核心，以及正規化統計值會保持一致：
-
-- 有限範圍 `[lo, hi]`（`hi > lo`）會以 `mean = -lo / (hi - lo)` 與 `stddev = 1 / (hi - lo)` 啟用正規化。
-- `[0, 255]` 為恆等對應，因此正規化維持停用。
-- 只有在所有輸入張量宣告相同的值時才會使用該範圍。若範圍不同或部分缺少，正規化會維持停用，並記錄規劃器警告。
-- 若宣告的範圍不是滿足 `hi > lo` 的有限 `[lo, hi]`（例如 `[1, 1]` 或順序顛倒的範圍），正規化會維持停用，並發出 `PREPROC_REQ_WARN_MODEL_INPUT_RANGE_INVALID` 合約警告。未宣告範圍則不會發出警告。
-- 此規則依據實際生效的正規化意圖，因此將 `Normalize` 轉換保留為 `Auto` 的轉換清單，或不含 `Normalize` 轉換的轉換清單，也會套用此規則。
-- 明確的 `On` 或 `Off`（於簡易選項或轉換中設定）、明確的 `mean`/`stddev`、預設組合，以及 `preprocess.enable=Off` 一律優先於此規則。張量輸入不受影響。
-
 ---
+
+### 影像正規化原則
+
+MPK 的 `input_range` 記錄校準時觀測到的最小值與最大值，並未定義正規化方法。規劃器不會從這個欄位推導平均值與標準差，也不會因此啟用正規化。
+
+在影像前處理路徑中，未明確設定的 `preprocess.normalize.enable=Auto` 會解析為 `Off`，並在 `Model::resolved_preprocess_plan().warnings` 中加入提示。明確指定的 `On`/`Off`、`has_explicit_stats` 與 `preprocess.preset` 會保留既有行為，包括轉換清單的優先順序。自動正規化需要明確的前處理中繼資料。
 
 ### 公開執行計畫
 
@@ -454,7 +453,7 @@ Scheduler 在準備階段依此關係檢查每個輸出綁定，包括 dtype、�
 `FrameSpan` 位移屬於個別配置與緩衝群組，不是整張圖的全域位址。不同群組中的相同位移不會重疊。BoxDecode 和 ArgMax 將輸出頭相對張量位移與儲存位移分開。直接記憶體輸入與執行階段實體繫結輸入維持原有定址方式。
 
 Core 將 Preproc、轉換與視覺階段，包括 ArgMax、BoxDecode、SuperPoint 與 LiDAR/BEV 核心節點（SimaVoxelize、SimaPillarScatter、
-SimaBEVPoolPlan 與 SimaBEVPool），降階為
+SimaBEVPoolPlan 與 SimaBEVPool）與 ResizeArgMax，降階為
 標準要求與明確張量埠對應。Scheduler 的一般化張量階段引擎擁有 GStreamer 綁定與
 發布；Runner 擁有相依、非同步執行與執行期間緩衝區生命週期。
 Core 從上游分配契約或輸入儲存空間匯入載體容量，絕不只根據邏輯形狀推斷。
@@ -573,7 +572,7 @@ LiDAR/BEV 節點將選項、埠描述與無副作用的數值要求建構保留�
 Scheduler 既有的 `check_kernel(...)` API，並使用一般的階段執行配方與 `FrameLayout`
 執行路徑。`StaticSpecBuilders.cpp` 與 `SimaArgMax` 共用僅處理中繼資料的輸入投影及
 直接輸入繫結；這些輔助函式不會準備或排程核心。LiDAR/BEV 節點檔案不會包含管線
-私有實作標頭。此分工不會新增逐影格工作或承載資料複製。
+私有實作標頭。此分工不會新增逐影格工作或承載資料複製。 `ResizeArgMax` 也採用相同分工。`Model::Options::semantic_segmentation` 會以該節點取代模型的 dequantize 或 cast 後處理，節點透過上游的跨步檢視讀取 MLA 分數；`Model` 建構函式會拒絕其他任何後處理。
 
 獨立的 `Cast` 將具型別檢視編譯成由 Kernels 檢查的標準 `cast` 要求。邏輯身分、步幅與張量相對位移保持明確。語意編譯在配置前調整有序 MLA 輸入埠；呈現過程保留已檢查合約。執行容量預設為非同步 4、同步 1，並以獨立輸出載體支援保留。子集或重新排序的 TensorSet 使用保留父物件的中繼資料封套，不修改已持有的發布資訊與承載資料。
 
@@ -715,6 +714,8 @@ Core 透過已安裝的 Scheduler 用戶端傳遞不可變的 `StageRequest`。�
 即使 CPU 同層欄位需要封裝也是如此。
 仍支援明確的 CPU 記憶體與 Owned 輸出；必要的裝置配置若失敗，會直接回報，而不暗中退回 CPU 記憶體。
 應用程式不需選擇記憶體後端或初始化 GStreamer。
+
+張量傳輸依堆積類型和容量級距，重複使用各含一個緩衝區的緩衝區池。64 KiB 以下的請求向上取整至系統頁面；較大的可快取請求則以 64 KiB 為單位向上取整（若系統頁面更大，則使用該單位）。相近大小共用同一配置，但張量儲存與映射僅公開請求的載體範圍。CMA 與 DMS 共用整個行程的 LRU 快取，最多保留 128 個緩衝區池，以及向上取整後的 256 MiB 容量；借出中和閒置的槽位都計入上限。緩衝區池忙碌時不會等待先前的張量釋放，而是另行配置槽位。淘汰時會停用最久未使用的緩衝區池；閒置緩衝區立即釋放，仍在使用的張量則保留其配置，直到最後一個參照釋放。超過位元組上限的傳輸會直接配置，不納入快取。DMA 配置因 `ENOMEM` 失敗時，Core 先檢查其他執行緒是否已歸還可用槽位，再清空快取中的緩衝區池，並最多重試配置一次。持續發生的配置錯誤會傳回呼叫端。容量級距可避免為相近大小分別配置，但不同級距或並行使用量超過上限時，仍可能需要重複配置。CPU 存取會重複使用 Runner 的映射，並在每次存取時取得和釋放存取票證。
 
 輸入配置偏好與執行階段接納是不同的決定。Core 在建置時依宣告的 `Input`
 與其可執行的下游路徑解析兩者，不會將 `Auto` 改寫為明確的裝置要求。
@@ -973,6 +974,8 @@ graph.add(simaai::neat::nodes::Output());
 * `push(...)` 將輸入排入佇列（根據 `RunOptions::overflow_policy` 進行阻塞或丟棄）
 * `pull(...)` 從應用程式接收器中取出 `Sample` 輸出
 * `try_push(...)` 是非阻塞的（如果佇列已滿，則傳回 false）
+
+閒置的 `Run` 仍可繼續使用；操作期限限制的是等待時間，而非提交輸入之間的暫停。
 
 這支援完全非同步的管線（生產者/消費者分離），以及單次流程（`Graph::run(...)`）。
 
@@ -1680,11 +1683,13 @@ Core 會保留產生端的借用生命週期並重用共用底層記憶體槽位
 
 ## Core 離線交付
 
-獨立 Core 與 PCIe 離線套件使用相同的不可變 Core 發佈內容、相依性收集器、校驗碼驗證與平台相容性檢查流程。DevKit 安裝使用隔離的網路命名空間；SDK sysroot 安裝使用僅限檔案的 APT 方法。兩者均使用共用安裝鎖定。CI 會在停用網路且未經修改的已佈建基準環境中驗證套件與 Python 匯入；只有獨立套件及全部四種 PCIe 版本通過後，才會公開離線中繼資料。
+獨立 Core 與 PCIe 離線套件使用相同的已驗證 Core 發佈快照、相依性收集器、校驗碼驗證與平台相容性檢查流程。DevKit 安裝使用隔離的網路命名空間；SDK sysroot 安裝使用僅限檔案的 APT 方法。兩者均使用共用安裝鎖定。CI 會在停用網路且未經修改的已佈建基準環境中驗證套件與 Python 匯入；只有獨立套件及全部四種 PCIe 版本通過後，才會公開離線中繼資料。
 
 PCIe 離線安裝會在設定 SSH 之前探索所有卡片。它隨附既有的線上 `pcie-setup.sh`，不修改指令碼，並以呼叫使用者的身分執行，透過 `--hosts` 傳入每個已探索的位址。探索和直接路由檢查會在設定前執行，之後再透過屬於 PCI 的介面進行嚴格的 SSH 驗證。主機金鑰註冊沿用共用指令碼的既有行為。自動註冊使用 `~/.ssh/known_hosts`；自訂信任檔案必須事先設定。僅預先檢查模式不會設定 SSH。在完成 SSH 設定且主機與所有卡片通過預先檢查之前，不會開始安裝套件。
 
 獨立 Core 會發佈包含執行階段與額外套件的 `offline/metadata.json`，以及僅包含執行階段套件的 `offline/metadata-minimal.json`。
+
+即使 Core 提交相同，只要 LLiMa 等相依性變更，就會重新建置離線套件。CI 依來源輸入雜湊暫存中繼資料，並使用在 `.tar.gz` 前附加 SHA-256 前 8 個字元的資源檔名，保留舊中繼資料所參照的下載檔案。全部五種版本通過驗證並再次確認來源雜湊後，CI 才會取代下載中繼資料並使其快取失效。輸入未變更時會重用已驗證的套件；中繼資料格式錯誤或校驗碼不符時仍會停止發佈。
 
 安裝程式僅接受 Neat eLxr SDK 或已佈建的 Modalix DevKit。它會將 `/etc/sdk-release` 或 `/etc/buildinfo` 與封存檔內的套件資訊清單比對，不需要下載的發佈中繼資料。其他環境或不相容的 Platform 版本會在安裝前遭到拒絕。在 SDK 中，Core 會複製到 `/opt/toolchain/aarch64/modalix`。若已設定 `DEVKIT_SYNC_DEVKIT_IP`，同一個離線套件會透過 SSH 傳送至已配對的 DevKit。開始安裝前，兩個環境都必須通過預先檢查。在 DevKit 上則會於本機安裝。
 
@@ -1701,3 +1706,12 @@ JSON 保留 `sima.neat.status.v1`，並新增 `components.pcieHost`、`component
 PyNeat 和 PyNeatPCIe 狀態會列出每個偵測到的安裝版本及其虛擬環境路徑。不同環境會顯示為多個環境，而非版本衝突。對於虛擬環境以外的套件，輸出會改為顯示套件目錄。狀態查詢只讀取套件中繼資料，不會匯入原生模組。
 
 JSON 中的每個 Python 項目會新增 `installations` 陣列。每筆記錄包含 `version`、`environment` 和 `path`（套件目錄）。在虛擬環境以外，`environment` 為 `null`。若安裝版本不同，摘要的 `version` 為 `null`；僅有多個安裝不會設定 `error`。指向同一安裝的符號連結路徑只會列出一次。
+
+
+## 裁切幾何的權責 {#crop-geometry-ownership}
+
+Core 根據實際來源尺寸，計算並檢查 Crop 的虛擬縮放尺寸與中央視窗偏移量。Kernels 保留原始來源的濾波範圍，直接計算該視窗，不插入中間影像或 CPU 裁切。最終尺寸仍由 MPK 決定。Preproc 發佈實際的模型至原始影像邊緣座標仿射轉換，並與半像素取樣中心座標區分。支援的偵測配方會在模型空間選取後使用此權威資訊；缺少或衝突的幾何資訊將被拒絕。
+
+## SDK 平台建置識別資訊 {#sdk-platform-build-identity}
+
+Core 會將作用中目標 SDK 的 `elxr_version`、完整 `sysroot_version` 與編譯器 `target` 記錄為 `build_platform`。Scheduler 會將相同識別資訊與 Runner 及自身的建置記錄比對。Core 在編譯後重新驗證，並在產生安裝中繼資料前檢查最終 CMake sysroot 與編譯器目標。平台程式庫由選定的 SDK 提供，不會為來源檢查而下載平台 DEB。NEAT 套件完整性檢查及獨立的目標驗證仍然必要。遷移缺少識別資訊的產生端記錄時，請依 Runner、Scheduler、Core 的順序重新建置。

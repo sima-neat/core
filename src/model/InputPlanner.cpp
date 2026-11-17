@@ -1,4 +1,5 @@
 #include "model/internal/InputPlanner.h"
+#include "nodes/sima/internal/ResizeInterpolation.h"
 
 #include "pipeline/internal/EnvUtil.h"
 #include "pipeline/internal/InputPolicy.h"
@@ -53,7 +54,12 @@ void validate_layout_convert_spec(const LayoutConvertSpec& spec) {
 }
 
 bool has_non_default_simple_preprocess(const PreprocessOptions& p) {
+  if (p.resize.mode == ResizeMode::Crop || p.resize.shorter_side || p.resize.interpolation ||
+      fixed_preprocess_arithmetic_requested(p) || antialiased_preprocess_resize_requested(p))
+    return true;
   if (p.preset != NormalizePreset::None)
+    return true;
+  if (p.resize.placement != LetterboxPlacement::Center)
     return true;
   if (p.resize.enable != AutoFlag::Auto || p.resize.width > 0 || p.resize.height > 0)
     return true;
@@ -104,79 +110,6 @@ bool resolve_step_enabled(AutoFlag flag, bool default_when_auto) {
   if (flag == AutoFlag::Off)
     return false;
   return default_when_auto;
-}
-
-constexpr char kModelNormalizeAmbiguousMessage[] =
-    "preprocess.normalize=Auto left Off: MPK ingress tensors declare different or partially "
-    "missing input_range values, so the image ingress range is ambiguous; set "
-    "preprocess.normalize explicitly.";
-
-std::string model_normalize_resolved_message(const NormalizeSpec& normalize) {
-  std::ostringstream msg;
-  msg << "preprocess.normalize=Auto resolved On from model input_range (mean=" << normalize.mean[0]
-      << ", stddev=" << normalize.stddev[0]
-      << "); set preprocess.normalize.enable=Off to feed raw pixels.";
-  return msg.str();
-}
-
-bool input_range_is_valid(const std::vector<double>& input_range) {
-  return input_range.size() == 2U && std::isfinite(input_range[0]) &&
-         std::isfinite(input_range[1]) && input_range[1] > input_range[0];
-}
-
-std::string input_range_text(const std::vector<double>& input_range) {
-  std::ostringstream msg;
-  msg << "[";
-  for (std::size_t i = 0; i < input_range.size(); ++i) {
-    msg << (i ? ", " : "") << input_range[i];
-  }
-  msg << "]";
-  return msg.str();
-}
-
-RequirementIssue invalid_model_input_range_issue(const std::string& input_range) {
-  RequirementIssue issue;
-  issue.op = RequiredPreprocessOp::Normalize;
-  issue.severity = RequirementSeverity::Warning;
-  issue.source = RequirementSource::MlaContract;
-  issue.code = "PREPROC_REQ_WARN_MODEL_INPUT_RANGE_INVALID";
-  issue.reason = "MPK ingress input_range " + input_range +
-                 " is not a finite [low, high] range with high > low, so normalize=Auto cannot "
-                 "derive stats from it and stays Off.";
-  issue.fix_hint = "Fix input_range in the model pack, or set preprocess.normalize explicitly.";
-  return issue;
-}
-
-bool derive_unit_pixel_normalization_from_input_range(const std::vector<double>& input_range,
-                                                      std::array<float, 3>* mean,
-                                                      std::array<float, 3>* stddev) {
-  if (input_range.size() < 2U || !mean || !stddev) {
-    return false;
-  }
-  const double lo = input_range[0];
-  const double hi = input_range[1];
-  if (!std::isfinite(lo) || !std::isfinite(hi) || hi <= lo) {
-    return false;
-  }
-
-  // MPK input_range describes the tensor domain at the model ingress.  For image
-  // preproc, the CVU preproc graph implements:
-  //   normalized = (pixel / 255 - mean) / stddev
-  // Therefore pixel=0 maps to -mean/stddev and pixel=255 maps to
-  // (1-mean)/stddev.  Solve these two equations to recover the stats.  Any finite
-  // range with hi > lo is a valid contract; like explicit stats, the only
-  // requirement on the result is a finite mean and a positive stddev.
-  const double derived_stddev = 1.0 / (hi - lo);
-  const double derived_mean = 0.0 - lo * derived_stddev; // avoid -0 when lo == 0
-  const float mean_f = static_cast<float>(derived_mean);
-  const float stddev_f = static_cast<float>(derived_stddev);
-  if (!std::isfinite(mean_f) || !std::isfinite(stddev_f) || stddev_f <= 0.0f) {
-    return false;
-  }
-
-  mean->fill(mean_f);
-  stddev->fill(stddev_f);
-  return true;
 }
 
 void apply_preset(PreprocessOptions* p) {
@@ -266,7 +199,14 @@ std::string kernel_name_from_family(PreprocessGraphFamily family) {
   return "preproc";
 }
 
-void enforce_normalize_stats(const NormalizeSpec& spec) {
+void enforce_normalize_stats(const NormalizeSpec& spec, bool fixed_arithmetic) {
+  if (fixed_arithmetic) {
+    for (std::size_t i = 0; i < 3; ++i)
+      if (!std::isfinite(spec.mean[i]) || !std::isfinite(spec.stddev[i]) || spec.stddev[i] == 0)
+        throw std::invalid_argument(
+            "fixed preprocess normalization requires finite means and nonzero finite divisors");
+    return;
+  }
   auto positive = [](float v) { return v > 0.0f; };
   if (!positive(spec.stddev[0]) || !positive(spec.stddev[1]) || !positive(spec.stddev[2])) {
     throw std::invalid_argument("preprocess.normalize.stddev values must be > 0");
@@ -563,33 +503,6 @@ std::string canonical_mpk_kernel_kind(const std::string& raw_kernel) {
 
 } // namespace
 
-std::vector<double>
-select_shared_input_range(const std::vector<std::vector<double>>& ingress_ranges, bool* ambiguous) {
-  // The image ingress is not identified separately from the MPK ingress list, so
-  // only a range shared by every ingress tensor is trusted.  Differing or partially
-  // missing ranges are ambiguous: normalize=Auto must not pick one by manifest order.
-  const std::vector<double>* shared = nullptr;
-  bool any_missing = false;
-  bool conflict = false;
-  for (const auto& range : ingress_ranges) {
-    if (range.size() < 2U) {
-      any_missing = true;
-    } else if (!shared) {
-      shared = &range;
-    } else if (range[0] != (*shared)[0] || range[1] != (*shared)[1]) {
-      conflict = true;
-    }
-  }
-  const bool is_ambiguous = shared && (conflict || any_missing);
-  if (ambiguous) {
-    *ambiguous = is_ambiguous;
-  }
-  if (!shared || is_ambiguous) {
-    return {};
-  }
-  return {(*shared)[0], (*shared)[1]};
-}
-
 PreprocessCapabilities inspect_preprocess_capabilities(const ModelPack& pack) {
   PreprocessCapabilities out;
   out.preproc = defaults_for_kernel("preproc");
@@ -600,37 +513,6 @@ PreprocessCapabilities inspect_preprocess_capabilities(const ModelPack& pack) {
         " Ensure the model pack includes an mpk.json manifest with plugin IO contracts.");
   }
   const auto& contract = *maybe_contract;
-  std::vector<std::vector<double>> ingress_ranges;
-  ingress_ranges.reserve(contract.ingress_tensors.size());
-  for (const auto& ingress : contract.ingress_tensors) {
-    // A missing input_range declares nothing; a declared one that cannot describe a numeric
-    // domain is a contract defect and must be reported rather than treated as missing.
-    if (!ingress.input_range.empty() && !input_range_is_valid(ingress.input_range) &&
-        out.invalid_model_input_range.empty()) {
-      out.invalid_model_input_range = input_range_text(ingress.input_range);
-    }
-    ingress_ranges.push_back(ingress.input_range);
-  }
-  const std::vector<double> shared_range =
-      out.invalid_model_input_range.empty()
-          ? select_shared_input_range(ingress_ranges, &out.model_input_range_ambiguous)
-          : std::vector<double>{};
-  std::array<float, 3> mean{};
-  std::array<float, 3> stddev{};
-  if (!shared_range.empty()) {
-    if (!derive_unit_pixel_normalization_from_input_range(shared_range, &mean, &stddev)) {
-      out.invalid_model_input_range = input_range_text(shared_range);
-    } else {
-      // input_range [0, 255] maps every pixel onto itself: no normalization needed.
-      const bool identity =
-          std::fabs(mean[0]) < 1e-6f && std::fabs(stddev[0] * 255.0f - 1.0f) < 1e-4f;
-      if (!identity) {
-        out.has_model_input_normalization = true;
-        out.model_input_mean = mean;
-        out.model_input_stddev = stddev;
-      }
-    }
-  }
   const auto* mla_stage = pipeline_internal::sima::get_first_mla_stage_io_contract(contract);
   if (!mla_stage) {
     throw std::runtime_error(
@@ -720,16 +602,82 @@ PreprocessCapabilities inspect_preprocess_capabilities(const ModelPack& pack) {
   return out;
 }
 
+std::string resolve_resize_scaling_type(const ResizeSpec& spec) {
+  if (!spec.interpolation)
+    return spec.scaling_type;
+  const auto* token = resize_interpolation_token(*spec.interpolation);
+  if (!token)
+    throw std::invalid_argument("preprocess.resize.interpolation is invalid");
+  auto legacy = pipeline_internal::upper_copy(spec.scaling_type);
+  if (legacy == "NEAREST_NEIGHBOUR")
+    legacy = "NEAREST";
+  // The historical default is not evidence of an authored conflicting choice.
+  // Keep its public value unchanged while allowing a typed-only assignment.
+  if (legacy != "BILINEAR" && legacy != token)
+    throw std::invalid_argument(
+        "preprocess.resize.interpolation conflicts with legacy scaling_type; use the typed "
+        "option alone or matching values");
+  return token;
+}
+
+bool fixed_preprocess_arithmetic_requested(const PreprocessOptions& p) {
+  return p.rescale_factor.has_value() || p.quantization_step.has_value() ||
+         p.color_conversion_placement != PreprocColorConversionPlacement::AfterResize ||
+         p.floating_conversion != PreprocFloatingConversion::Legacy;
+}
+
+bool antialiased_preprocess_resize_requested(const PreprocessOptions& p) {
+  return pipeline_internal::upper_copy(resolve_resize_scaling_type(p.resize)) ==
+         "BILINEAR_ANTIALIASED";
+}
+
 PreprocessPlannerResult plan_preprocess(const Model::Options& options,
-                                        const PreprocessCapabilities& capabilities,
-                                        const PreprocessRouteContext& route) {
+                                        const PreprocessCapabilities& capabilities) {
   PreprocessPlannerResult out;
   out.resolved_plan.requested = options.preprocess;
   PreprocessOptions effective = options.preprocess;
+  effective.resize.scaling_type = resolve_resize_scaling_type(effective.resize);
+  const bool typed_resize = effective.resize.interpolation.has_value();
+  const bool crop = effective.resize.mode == ResizeMode::Crop || effective.resize.shorter_side;
+  if (effective.resize.mode != ResizeMode::Stretch &&
+      effective.resize.mode != ResizeMode::Letterbox && effective.resize.mode != ResizeMode::Crop)
+    throw std::invalid_argument("preprocess.resize.mode is invalid");
+  if (effective.resize.shorter_side &&
+      (effective.resize.mode != ResizeMode::Crop || *effective.resize.shorter_side <= 0 ||
+       *effective.resize.shorter_side > 4096))
+    throw std::invalid_argument(
+        "preprocess.resize.shorter_side requires Crop and a size in 1..4096");
+  const bool fixed_arithmetic = fixed_preprocess_arithmetic_requested(effective);
+  const bool antialiased_resize = antialiased_preprocess_resize_requested(effective);
+  if (effective.color_conversion_placement != PreprocColorConversionPlacement::AfterResize &&
+      effective.color_conversion_placement != PreprocColorConversionPlacement::BeforeResize)
+    throw std::invalid_argument("preprocess.color_conversion_placement is invalid");
+  if (effective.floating_conversion != PreprocFloatingConversion::Legacy &&
+      effective.floating_conversion != PreprocFloatingConversion::NearestEven)
+    throw std::invalid_argument("preprocess.floating_conversion is invalid");
+  if (effective.rescale_factor && !std::isfinite(*effective.rescale_factor))
+    throw std::invalid_argument("preprocess.rescale_factor must be finite");
+  if (effective.quantization_step &&
+      (!std::isfinite(*effective.quantization_step) || *effective.quantization_step <= 0))
+    throw std::invalid_argument("preprocess.quantization_step must be finite and positive");
+  if ((crop || typed_resize || fixed_arithmetic || antialiased_resize) &&
+      (effective.enable == AutoFlag::Off || effective.kind == InputKind::Tensor ||
+       !effective.transforms.empty()))
+    throw std::invalid_argument(
+        "fixed image preprocessing requires image input and preprocessing enabled, without a "
+        "preprocess.transforms override");
+  if ((crop || typed_resize || antialiased_resize) && effective.resize.enable == AutoFlag::Off)
+    throw std::invalid_argument("resize policy conflicts with preprocess.resize.enable=Off");
+  for (const auto& transform : effective.transforms)
+    if (transform.type == TransformType::Resize &&
+        (transform.resize.mode == ResizeMode::Crop || transform.resize.shorter_side ||
+         upper_copy(resolve_resize_scaling_type(transform.resize)) == "BILINEAR_ANTIALIASED"))
+      throw std::invalid_argument("configure Crop and antialiased sampling through "
+                                  "preprocess.resize, not preprocess.transforms");
   PreprocessExplicitKnobs explicit_knobs;
-  explicit_knobs.resize = options.preprocess.resize.enable != AutoFlag::Auto ||
-                          options.preprocess.resize.width > 0 ||
-                          options.preprocess.resize.height > 0;
+  explicit_knobs.resize =
+      options.preprocess.resize.enable != AutoFlag::Auto || options.preprocess.resize.width > 0 ||
+      options.preprocess.resize.height > 0 || crop || typed_resize || antialiased_resize;
   explicit_knobs.color_convert =
       options.preprocess.color_convert.enable != AutoFlag::Auto ||
       options.preprocess.color_convert.input_format != PreprocessColorFormat::Auto ||
@@ -764,7 +712,8 @@ PreprocessPlannerResult plan_preprocess(const Model::Options& options,
       switch (t.type) {
       case TransformType::Resize:
         explicit_knobs.resize = explicit_knobs.resize || t.resize.enable != AutoFlag::Auto ||
-                                t.resize.width > 0 || t.resize.height > 0;
+                                t.resize.width > 0 || t.resize.height > 0 ||
+                                t.resize.interpolation.has_value();
         break;
       case TransformType::ColorConvert:
         explicit_knobs.color_convert =
@@ -800,6 +749,19 @@ PreprocessPlannerResult plan_preprocess(const Model::Options& options,
     apply_preset(&effective);
   }
 
+  effective.resize.scaling_type = resolve_resize_scaling_type(effective.resize);
+  // Only a letterbox has padding to place; a Resize transform carries the same spec.
+  if (effective.resize.placement != LetterboxPlacement::Center &&
+      effective.resize.placement != LetterboxPlacement::TopLeft)
+    throw std::invalid_argument("preprocess.resize.placement is invalid");
+  if (effective.resize.placement != LetterboxPlacement::Center &&
+      effective.resize.mode != ResizeMode::Letterbox)
+    throw std::invalid_argument(
+        "preprocess.resize.placement TopLeft requires ResizeMode.Letterbox");
+
+  // MPK input_range contains observed calibration extrema, not a preprocessing
+  // recipe. Only explicit settings or a preset can enable normalization.
+
   validate_layout_convert_spec(effective.layout_convert);
 
   if (effective.enable == AutoFlag::Off && has_transforms) {
@@ -808,9 +770,11 @@ PreprocessPlannerResult plan_preprocess(const Model::Options& options,
     effective.enable = AutoFlag::On;
   }
 
-  bool resize_enabled = resolve_step_enabled(
-      effective.resize.enable, effective.resize.width > 0 || effective.resize.height > 0 ||
-                                   effective.preset == NormalizePreset::COCO_YOLO);
+  bool resize_enabled =
+      resolve_step_enabled(effective.resize.enable,
+                           effective.resize.width > 0 || effective.resize.height > 0 ||
+                               effective.preset == NormalizePreset::COCO_YOLO || crop ||
+                               antialiased_resize || effective.resize.interpolation.has_value());
   bool color_enabled = resolve_step_enabled(
       effective.color_convert.enable,
       effective.color_convert.input_format != PreprocessColorFormat::Auto ||
@@ -822,11 +786,15 @@ PreprocessPlannerResult plan_preprocess(const Model::Options& options,
                                              effective.preset == NormalizePreset::COCO_YOLO;
   bool normalize_enabled =
       resolve_step_enabled(effective.normalize.enable, normalize_requested_or_preset);
+  out.normalize_auto_without_config = effective.enable != AutoFlag::Off &&
+                                      effective.normalize.enable == AutoFlag::Auto &&
+                                      !normalize_requested_or_preset;
 
   InputKind kind = effective.kind;
   if (kind == InputKind::Auto) {
     const bool image_like = resize_enabled || color_enabled || layout_enabled ||
-                            normalize_enabled || effective.preset != NormalizePreset::None;
+                            normalize_enabled || effective.preset != NormalizePreset::None ||
+                            fixed_arithmetic || effective.resize.interpolation.has_value();
     const bool tensor_like =
         effective.quantize.enable == AutoFlag::On || effective.tessellate.enable == AutoFlag::On;
     if (image_like) {
@@ -855,7 +823,7 @@ PreprocessPlannerResult plan_preprocess(const Model::Options& options,
     enabled = false;
   } else if (effective.enable == AutoFlag::Auto) {
     enabled = resize_enabled || color_enabled || layout_enabled || normalize_enabled ||
-              quant_enabled || tess_enabled;
+              quant_enabled || tess_enabled || fixed_arithmetic;
   }
 
   if (!enabled) {
@@ -866,37 +834,12 @@ PreprocessPlannerResult plan_preprocess(const Model::Options& options,
     quant_enabled = false;
     tess_enabled = false;
   }
-
-  // MPK input_range is the numeric domain the MLA expects at ingress, while image
-  // input reaches the CVU preproc as [0, 255] pixels.  When the selected route feeds
-  // images through preproc and normalize is left at Auto with no stats or preset
-  // (from simple options or a transform list), follow the model contract instead of
-  // feeding raw pixels; explicit Off still wins.  Resolving here keeps enabled, the
-  // graph family and the normalize stats consistent.  See "Preprocess normalization
-  // from MPK input_range" in docs/develop-apps/contribute/start-here/architecture.md.
-  const bool normalize_left_auto =
-      effective.normalize.enable == AutoFlag::Auto && !normalize_requested_or_preset;
-  const bool image_preproc_route = route.image_preproc_selected && kind == InputKind::Image &&
-                                   options.preprocess.enable != AutoFlag::Off;
-  if (normalize_left_auto && image_preproc_route) {
-    if (capabilities.has_model_input_normalization) {
-      enabled = true;
-      normalize_enabled = true;
-      effective.normalize.mean = capabilities.model_input_mean;
-      effective.normalize.stddev = capabilities.model_input_stddev;
-      out.resolved_plan.warnings.push_back(model_normalize_resolved_message(effective.normalize));
-    } else if (!capabilities.invalid_model_input_range.empty()) {
-      const RequirementIssue issue =
-          invalid_model_input_range_issue(capabilities.invalid_model_input_range);
-      out.requirement_issues.push_back(issue);
-      out.resolved_plan.warnings.push_back(requirement_issue_message(issue));
-    } else if (capabilities.model_input_range_ambiguous) {
-      out.resolved_plan.warnings.push_back(kModelNormalizeAmbiguousMessage);
-    }
-  }
+  if (effective.resize.placement != LetterboxPlacement::Center && !resize_enabled)
+    throw std::invalid_argument("preprocess.resize.placement TopLeft requires an enabled "
+                                "letterbox resize (preprocess.resize.enable=On or a target size)");
 
   if (normalize_enabled) {
-    enforce_normalize_stats(effective.normalize);
+    enforce_normalize_stats(effective.normalize, fixed_arithmetic);
   }
 
   const AutoFlag requested_quant_flag = effective.quantize.enable;
@@ -915,6 +858,15 @@ PreprocessPlannerResult plan_preprocess(const Model::Options& options,
     effective.tessellate.enable = AutoFlag::Auto;
   } else {
     effective.tessellate.enable = tess_enabled ? AutoFlag::On : AutoFlag::Off;
+  }
+
+  if (enabled &&
+      (crop || fixed_arithmetic || antialiased_resize || effective.resize.interpolation) &&
+      (quant_enabled || tess_enabled)) {
+    throw std::invalid_argument(
+        "fixed image preprocessing requires the Preproc image route; leave "
+        "preprocess.quantize.enable and preprocess.tessellate.enable as Auto instead of "
+        "selecting a tensor route");
   }
 
   PreprocessGraphFamily family = PreprocessGraphFamily::Disabled;

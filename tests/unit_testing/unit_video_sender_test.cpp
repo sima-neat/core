@@ -308,6 +308,11 @@ RUN_TEST(
                     sender.is_raw_input(),
                 "sender must own encoding options and infer input dimensions");
         const auto sender_fragment = VideoSender(sender).describe_backend();
+        const auto raw_ingress =
+            sender_fragment.substr(0, sender_fragment.find("neatencoder name="));
+        require(raw_ingress.find("width=") == std::string::npos &&
+                    raw_ingress.find("height=") == std::string::npos,
+                "automatic sender must negotiate dimensions without a Core resolution ceiling");
         const auto sender_adapter = sender_fragment.find("neatencoderinput");
         require(sender_adapter != std::string::npos &&
                     sender_fragment.find("neatencoderinput", sender_adapter + 1) ==
@@ -352,7 +357,16 @@ RUN_TEST(
         require_invalid_argument([&] { (void)simaai::neat::SimaEncode(invalid); },
                                  "H265 accepted H264-only profile");
       }
-      for (const auto& size : {std::pair{641, 360}, std::pair{3842, 720}, std::pair{640, 2162}}) {
+      for (const auto& size : {std::pair{4032, 3040}, std::pair{3842, 720}, std::pair{640, 2162}}) {
+        const auto backend =
+            VideoSender(VideoSenderOptions::H264RtpUdpFromRaw(size.first, size.second, 30))
+                .describe_backend();
+        require_contains(backend,
+                         "format=NV12,width=" + std::to_string(size.first) +
+                             ",height=" + std::to_string(size.second) + ",framerate=30/1",
+                         "sender must preserve camera dimensions above 3840x2160");
+      }
+      for (const auto& size : {std::pair{641, 360}, std::pair{640, 361}}) {
         require_invalid_argument(
             [&] {
               (void)VideoSender(VideoSenderOptions::H264RtpUdpFromRaw(size.first, size.second, 30));

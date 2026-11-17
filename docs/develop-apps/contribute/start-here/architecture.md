@@ -29,6 +29,10 @@ flowchart LR
     Benchmark[Core benchmark reports] --> Sentinel[Optional Sentinel telemetry]
 ```
 
+Model and standalone Resize share the value-only `ResizeInterpolation` enum and one sampler-token mapping. Model planning resolves the optional typed selection before image intent, stage projection and graph provenance; legacy strings remain a compatibility boundary.
+
+Model and standalone image options lower to the same ordinary Preproc request. Fixed source arithmetic preserves the original FP32 rescale, post-resize mean/divisor and quantization-step boundaries; it is not an ordered transform interpreter. MPK ingress dtype, quantization and physical layout remain authoritative. New options opt in explicitly; absent options retain legacy bytes. Core only projects intent and geometry; Kernels owns numerical admission and execution.
+
 Kernels remains the operation catalogue and numerical-admission authority.
 Scheduler forwards generic requests through Runner; neither Scheduler nor Core
 maintains firmware IDs or a per-operation dispatch table. Core retains public
@@ -428,16 +432,11 @@ Preprocessing and postprocessing are explicit framework stages/options. A format
 required preprocessing metadata, unavailable selected hardware transport, invalid model archive or MPK contract, or caps negotiation
 failure should surface as an actionable structured error rather than a hidden runtime correction.
 
-### Preprocess normalization from MPK `input_range`
+### Image normalization policy
 
-The MPK `input_range` of the model ingress is part of the preprocessing contract. Image input reaches the CVU preproc as `[0, 255]` pixels, and the preproc computes `(pixel / 255 - mean) / stddev`. When `preprocess.normalize.enable` is `Auto` and no explicit stats or preset are set, normalization is resolved from that range once route selection has placed the image preproc stage first, including when the MPK stage order selects it without a preprocess request. `build_preprocess_plan()` then calls `plan_preprocess()` again with the selected route, so the enabled flag, graph family and kernel, and normalize stats in the resolved plan agree:
+MPK `input_range` records observed calibration extrema; it does not define a normalization recipe. The planner does not derive mean/stddev or enable normalization from that field.
 
-- A finite range `[lo, hi]` with `hi > lo` enables normalization with `mean = -lo / (hi - lo)` and `stddev = 1 / (hi - lo)`.
-- `[0, 255]` is the identity mapping, so normalization stays off.
-- The range is used only when every ingress tensor declares the same value. Differing or partially missing ranges leave normalization off and log a planner warning.
-- A declared range that is not a finite `[lo, hi]` with `hi > lo`, such as `[1, 1]` or a reversed range, leaves normalization off and raises the `PREPROC_REQ_WARN_MODEL_INPUT_RANGE_INVALID` contract warning. A missing range is not a warning.
-- The rule reads the effective normalize intent, so a transform list with a `Normalize` transform left at `Auto`, or with no `Normalize` transform, follows it too.
-- Explicit `On` or `Off` (in simple options or a transform), explicit `mean`/`stddev`, presets, and `preprocess.enable=Off` always override this rule. Tensor input is unaffected.
+For an image-preprocessing route, unconfigured `preprocess.normalize.enable=Auto` resolves to `Off` and adds an advisory to `Model::resolved_preprocess_plan().warnings`. Explicit `On`/`Off`, `has_explicit_stats`, and `preprocess.preset` keep their existing behavior, including transform-list precedence. Automatic normalization requires explicit preprocessing metadata.
 
 ### Public execution plan
 
@@ -647,9 +646,9 @@ without enabling verbose GStreamer diagnostics.
 `FrameSpan` offsets are local to their allocation and buffer group, not global graph addresses. Identical offsets in different groups do not overlap. BoxDecode and ArgMax keep head-relative tensor offsets separate from storage offsets. Direct-memory and runtime physical-binding inputs retain their addressing mode.
 
 Core lowers Preproc, transforms and vision stages, including ArgMax, BoxDecode,
-SuperPoint and the LiDAR/BEV kernel nodes (SimaVoxelize, SimaPillarScatter,
-SimaBEVPoolPlan and SimaBEVPool), to canonical requests and explicit tensor-port
-mappings.
+SuperPoint, the LiDAR/BEV kernel nodes (SimaVoxelize, SimaPillarScatter,
+SimaBEVPoolPlan and SimaBEVPool) and ResizeArgMax, to canonical requests and
+explicit tensor-port mappings.
 Scheduler's generic tensor-stage engine owns GStreamer binding and publication;
 Runner owns dependencies, asynchronous execution and execution-time buffer lifetime. Core imports carrier
 capacities from the upstream allocation contract or ingress storage, never from
@@ -787,7 +786,10 @@ the normal stage recipe and `FrameLayout` execution path. `StaticSpecBuilders.cp
 shares metadata-only ingress projection and direct-input binding with `SimaArgMax`;
 these helpers neither prepare nor schedule kernels. The LiDAR/BEV node files do not
 include pipeline-private implementation headers. This split adds no per-frame work
-or payload copies.
+or payload copies. `ResizeArgMax` follows the same split. `Model::Options::semantic_segmentation`
+replaces a model's dequantize or cast postprocess with that node, which reads the
+MLA scores through the producer's strided view; the `Model` constructor rejects any
+other postprocess.
 
 Standalone `Cast` compiles typed views into a canonical `cast` request checked by Kernels. Logical identities, strides and tensor-relative offsets remain explicit. Semantic compilation reconciles ordered MLA input ports before packing; rendering preserves the checked contracts. Execution capacity defaults to four asynchronously and one synchronously, with separate output carriers for retention. Subset or reordered TensorSets use parent-retaining metadata envelopes without changing the held publication or payload.
 
@@ -942,6 +944,23 @@ memory, its parent buffer and existing loan credit, including when a CPU sibling
 requires packing. Explicit CPU memory and Owned outputs remain supported;
 required device allocations fail rather than silently falling back to CPU
 memory. Applications do not select a memory backend or initialize GStreamer.
+
+Tensor transfers reuse one-buffer pools by heap and capacity class. Requests
+up to 64 KiB round up to a system page; larger cached requests round up to
+64 KiB (or a system page if larger). Nearby sizes share the same allocation,
+while tensor storage and mappings expose only the requested carrier span.
+A process-wide LRU cache shared by CMA and DMS retains at most 128 pools and
+256 MiB of rounded capacity, counting borrowed slots as well as idle slots.
+A busy pool never waits for an earlier tensor: transfers allocate another slot.
+Eviction deactivates the oldest pool; an idle buffer is released immediately,
+while an outstanding tensor keeps its allocation until its final reference is
+released. Transfers larger than the byte budget are allocated without caching.
+On DMA allocation failure (`ENOMEM`), Core first checks for a concurrently
+returned slot, then drains cached pools and retries allocation at most once.
+Persistent allocation errors remain visible to the caller. Size classes avoid
+separate allocations for nearby sizes, but distinct classes or concurrency that
+exceed the budget can still require repeated allocation. CPU access reuses
+Runner's mapping while each access acquires and releases its ticket.
 
 Input allocation preference and runtime admission are separate decisions. Core
 resolves both from the declared `Input` and its executable downstream route at
@@ -1288,6 +1307,8 @@ uploaded per frame.
 * `push(...)` enqueues inputs (blocking or dropping based on `RunOptions::overflow_policy`)
 * `pull(...)` dequeues `Sample` outputs from the appsink
 * `try_push(...)` is non-blocking (returns false if the queue is full)
+
+An idle `Run` remains usable; operation deadlines bound waits, not pauses between submissions.
 
 This supports fully async pipelines (producer/consumer split) as well as
 one-shot flows (`Graph::run(...)`).
@@ -2259,11 +2280,13 @@ Core reuses shared backing memory slots while retaining producer leases and skip
 
 ## Offline Core delivery
 
-Standalone Core and PCIe offline bundles use the same immutable Core publication, dependency collector, checksum verification, and platform admission lifecycle. DevKit installation uses an isolated network namespace; SDK sysroot installation uses file-only APT methods. Both use a shared installation lock. CI validates packages and Python imports against a pristine provisioned baseline with networking disabled, then exposes offline metadata only after the standalone bundle and all four PCIe variants pass.
+Standalone Core and PCIe offline bundles use the same authenticated Core publication snapshot, dependency collector, checksum verification, and platform admission lifecycle. DevKit installation uses an isolated network namespace; SDK sysroot installation uses file-only APT methods. Both use a shared installation lock. CI validates packages and Python imports against a pristine provisioned baseline with networking disabled, then exposes offline metadata only after the standalone bundle and all four PCIe variants pass.
 
 PCIe offline installation discovers all cards before SSH setup. It bundles and invokes the existing online `pcie-setup.sh` unchanged as the invoking user, supplying each discovered address through `--hosts`. Discovery and direct-route checks precede setup; strict SSH verification on the PCI-owned interface follows setup. Host-key enrollment follows the shared script's existing behavior. Automatic enrollment uses `~/.ssh/known_hosts`; custom trust files must be provisioned beforehand. Preflight-only mode never provisions SSH. No package installation starts until SSH setup and all host/card preflight checks pass.
 
 Standalone Core publishes `offline/metadata.json` with the runtime bundle and extras, and `offline/metadata-minimal.json` with only the runtime bundle.
+
+Rebuilding the same Core commit with changed dependencies (including LLiMa) rebuilds the offline bundles. CI stages metadata by source-input hashes and uses resource filenames with a 8-character SHA-256 suffix before `.tar.gz`, preserving downloads referenced by earlier metadata. After all five variants pass and source hashes are rechecked, CI replaces the download metadata and invalidates its cache. Unchanged inputs reuse verified bundles; malformed metadata and checksum failures still stop publication.
 
 The installer accepts only the Neat eLxr SDK or a provisioned Modalix DevKit. It checks `/etc/sdk-release` or `/etc/buildinfo` against the package manifest bundled in the archive; downloaded publication metadata is not required. Other environments and incompatible Platform versions are rejected before installation. In the SDK, Core is copied into `/opt/toolchain/aarch64/modalix`. If `DEVKIT_SYNC_DEVKIT_IP` is configured, the same offline bundle is transferred over SSH to the paired DevKit. Both environments must pass preflight before installation begins. On a DevKit, installation runs locally.
 
@@ -2280,3 +2303,12 @@ JSON retains `sima.neat.status.v1` and adds `components.pcieHost`, `components.p
 PyNeat and PyNeatPCIe status lists each detected installation with its version and virtual environment path. Separate environments are reported as multiple environments, not a version conflict. For packages outside a virtual environment, the output shows the package directory instead. Status reads package metadata without importing native modules.
 
 Each Python entry in JSON adds an `installations` array. Each record contains `version`, `environment`, and `path` (the package directory). `environment` is `null` outside a virtual environment. The summary `version` is `null` when installed versions differ; multiple installations alone do not set `error`. Symlinked paths to the same installation are listed once.
+
+
+## Crop geometry ownership {#crop-geometry-ownership}
+
+Core resolves Crop from actual source dimensions into a checked virtual resize size and center-window offset. Kernels evaluates that window directly using the original source filter support; no intermediate image or CPU crop is inserted. The final dimensions remain MPK-owned. Preproc publishes the actual model-to-original edge affine, distinct from half-pixel sample-center coordinates. Supported detection recipes consume that authority after model-space selection; missing or conflicting geometry is rejected.
+
+## SDK platform build identity {#sdk-platform-build-identity}
+
+Core records the active target SDK as `build_platform` with `elxr_version`, the full `sysroot_version`, and compiler `target`. Scheduler validates the same identity against Runner and its own build record. Core refreshes that validation after compilation and checks the final CMake sysroot and compiler target before generating installed metadata. The selected SDK supplies platform libraries; Core does not download platform DEBs for provenance checks. NEAT package integrity and separate target qualification remain required. Rebuild Runner, Scheduler and Core in that order when migrating identity-less producer records.

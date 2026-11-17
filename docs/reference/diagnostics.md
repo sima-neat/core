@@ -41,7 +41,7 @@ Framework errors use stable code families:
 | `build.property_invalid` | An element property is unknown or invalid | Check the property name and value with `gst-inspect-1.0` |
 | `runtime.pull` | A pull failed without a more specific root cause | Inspect the attached report and first upstream error |
 | `runtime.element_failed` | A stage failed without a more specific mapping | Correct the reported stage and its upstream input |
-| `runtime.output_timeout` | No output arrived before the configured timeout | Verify source flow or increase an expected timeout |
+| `runtime.output_timeout` | A kernel did not complete within its observation timeout | Retain affected buffers until completion or verified device recovery |
 | `runtime.unexpected_eos` | The pipeline reached EOS before a required output | Check for premature source EOS and supply enough input |
 | `io.parse` | JSON or stage-configuration parse/schema failure | Validate configuration syntax and required fields |
 | `io.open` | Graph save/load file open/read/write failure | Check path existence, permissions, and storage health |

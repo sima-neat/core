@@ -2,6 +2,7 @@
 
 #include "pipeline/BoxDecodeType.h"
 #include "pipeline/internal/sima/InternalEdgeContractResolver.h"
+#include "pipeline/internal/sima/KernelStageRecipe.h"
 #include "pipeline/internal/sima/SimaPluginStaticManifest.h"
 
 #include <simaai/scheduler/client/frame_layout.h>
@@ -242,8 +243,8 @@ json preproc_settings(const sima::ProcessCvuStagePayload& cvu) {
   return out;
 }
 
-// Thresholds and top-k of 0 leave the plugin default in place, so only set values are reported.
-json box_decode_settings(const sima::BoxDecodeStagePayload& box) {
+// Preserve the report's existing omission of nonpositive thresholds and top-k.
+json box_decode_settings(const auto& box) {
   json out = {{"decode_type", box_decode_type_token(box.decode_type)},
               {"num_classes", box.num_classes}};
   if (box.detection_threshold > 0.0) {
@@ -271,6 +272,9 @@ json node_json(const PlanNode& node) {
     out["settings"] = preproc_settings(node.stage->processcvu);
   } else if (node.stage->payload_kind == sima::StagePayloadKind::BoxDecode) {
     out["settings"] = box_decode_settings(node.stage->boxdecode);
+  } else if (const auto* recipe = node.stage->native_kernel.get();
+             recipe && recipe->boxdecode_settings) {
+    out["settings"] = box_decode_settings(*recipe->boxdecode_settings);
   }
   return out;
 }

@@ -11,17 +11,28 @@
 #include "pipeline/internal/sima/ContractRender.h"
 #include "pipeline/internal/sima/StageRecipePreparation.h"
 #include "pipeline/internal/sima/StageMemoryPolicy.h"
+#ifdef SIMA_NEAT_INTERNAL
+#include "pipeline/internal/sima/PreprocFrameAdapter.h"
+#include <gstsimaaitensorbuffer_meta.h>
+#endif
 #include "gst/GstInit.h"
 #include "gst/SimaPluginStaticManifestAbi.h"
 #include "test_main.h"
 #include "test_utils.h"
 
+#include <nlohmann/json.hpp>
+
+#include <array>
+#include <cstdint>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include <gst/gst.h>
@@ -60,14 +71,15 @@ std::vector<int> model_managed_preproc_max_input_shape(const simaai::neat::Prepr
   return {};
 }
 
-// pre_kernel "preproc" makes the MPK stage order select the image preproc route on its own.
+// The MLA input canvas is canvas x canvas (640 unless a test needs another size).
 sima_test::ModelArchiveFixture
-make_preproc_fixture(const std::string& tag, const std::string& input_range = "[0.0, 1.0]",
-                     const std::string& pre_kernel = "cast_transform") {
-  const auto fixture =
-      sima_test::make_model_archive_fixture(tag,
-                                            {
-                                                {"etc/test_model_mpk.json", std::string(R"json({
+make_preproc_fixture(const std::string& tag, int canvas = 640,
+                     const nlohmann::json& input_range = nlohmann::json::array({0.0, 1.0}),
+                     bool mpk_image_preproc = false) {
+  const auto fixture = sima_test::make_model_archive_fixture(tag,
+                                                             {
+                                                                 {"etc/test_model_mpk.json",
+                                                                  R"json({
   "name": "preproc_contract_model",
   "model_path": "preproc_contract_model.onnx",
   "model_sdk_version": "2.0.0",
@@ -77,7 +89,7 @@ make_preproc_fixture(const std::string& tag, const std::string& input_range = "[
       "name": "images",
       "type": "buffer",
       "size": 4915200,
-      "input_range": )json") + input_range + R"json(,
+      "input_range": [0.0, 1.0],
       "logical_shape": [1, 640, 640, 3],
       "logical_dtype": "FP32"
     }
@@ -90,7 +102,7 @@ make_preproc_fixture(const std::string& tag, const std::string& input_range = "[
       "config_params": {
         "desired_batch_size": 1,
         "actual_batch_size": 1,
-        "kernel": ")json" + pre_kernel + R"json(",
+        "kernel": "cast_transform",
         "params": {
           "out_dtype": "bfloat16",
           "input_shapes": [[1, 640, 640, 3]],
@@ -137,8 +149,8 @@ make_preproc_fixture(const std::string& tag, const std::string& input_range = "[
     }
   ]
 })json"},
-                                                {"etc/pipeline_sequence.json",
-                                                 R"json({
+                                                                 {"etc/pipeline_sequence.json",
+                                                                  R"json({
   "pipelines": [{
     "sequence": [
       {
@@ -162,8 +174,8 @@ make_preproc_fixture(const std::string& tag, const std::string& input_range = "[
     ]
   }]
 })json"},
-                                                {"etc/0_preproc.json",
-                                                 R"json({
+                                                                 {"etc/0_preproc.json",
+                                                                  R"json({
   "node_name": "preproc_0",
   "graph_name": "preproc",
   "input_width": 1280,
@@ -178,8 +190,8 @@ make_preproc_fixture(const std::string& tag, const std::string& input_range = "[
   "output_dtype": "BF16",
   "tessellate": false
 })json"},
-                                                {"etc/0_process_mla.json",
-                                                 R"json({
+                                                                 {"etc/0_process_mla.json",
+                                                                  R"json({
   "node_name": "mla_0",
   "input_buffers": [{"name": "preproc_0"}],
   "data_type": ["EV81_BFLOAT16"],
@@ -187,13 +199,44 @@ make_preproc_fixture(const std::string& tag, const std::string& input_range = "[
   "output_height": [80],
   "output_depth": [6]
 })json"},
-                                            },
-                                            false);
+                                                             },
+                                                             false);
+  // Another canvas rescales the 640x640x3 shapes and their FP32/BF16 byte sizes.
+  for (const char* name : {"etc/test_model_mpk.json", "etc/0_preproc.json"}) {
+    if (canvas == 640)
+      continue;
+    const auto path = std::filesystem::path(fixture.root_dir) / name;
+    std::ifstream in(path);
+    std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    in.close();
+    const std::pair<std::string, std::string> sizes[] = {
+        {"4915200", std::to_string(canvas * canvas * 12)},
+        {"2457600", std::to_string(canvas * canvas * 6)},
+        {"640", std::to_string(canvas)}};
+    for (const auto& [from, to] : sizes)
+      for (auto at = text.find(from); at != std::string::npos; at = text.find(from, at + to.size()))
+        text.replace(at, from.size(), to);
+    std::ofstream(path, std::ios::trunc) << text;
+  }
+  const auto mpk_path = std::filesystem::path(fixture.root_dir) / "etc/test_model_mpk.json";
+  std::ifstream mpk_input(mpk_path);
+  auto manifest = nlohmann::json::parse(mpk_input);
+  mpk_input.close();
+  if (input_range.is_null()) {
+    manifest["input_nodes"][0].erase("input_range");
+  } else {
+    manifest["input_nodes"][0]["input_range"] = input_range;
+  }
+  if (mpk_image_preproc) {
+    manifest["plugins"][0]["config_params"]["kernel"] = "preproc";
+  }
+  std::ofstream(mpk_path, std::ios::trunc) << manifest.dump();
   // Image preprocessing comes from Model::Options; the MPK describes its tensor target.
   // Planning needs the declared MLA topology, not an executable MLA program.
   const auto share = std::filesystem::path(fixture.root_dir) / "share";
   std::filesystem::create_directories(share);
-  sima_test::write_topology_elf(share / "stage0.elf", "data.ifm.b0", 2457600U, "data.ofm.b0",
+  sima_test::write_topology_elf(share / "stage0.elf", "data.ifm.b0",
+                                static_cast<std::uint64_t>(canvas) * canvas * 6U, "data.ofm.b0",
                                 76800U);
   const std::string archive = "tar -czf " + sima_test::model_archive_shell_quote(fixture.tar_path) +
                               " -C " + sima_test::model_archive_shell_quote(fixture.root_dir) +
@@ -303,69 +346,102 @@ std::vector<int> shape3(int h, int w, int c) {
   return out;
 }
 
-void require_auto_normalize_from_range(const std::string& tag, const std::string& input_range,
-                                       bool normalize, float mean, float stddev) {
-  using namespace simaai::neat;
-  const auto fixture = make_preproc_fixture(tag, input_range);
-  Model::Options model_opt;
-  model_opt.preprocess.kind = InputKind::Image;
-  model_opt.preprocess.enable = AutoFlag::On;
-  model_opt.preprocess.color_convert.input_format = PreprocessColorFormat::RGB;
-  Model model(fixture.tar_path, model_opt);
-  PreprocOptions opt(model);
-  const std::string label = "input_range " + input_range;
-  require(opt.normalize == normalize, label + ": unexpected normalize resolution");
-  if (normalize) {
-    require(opt.channel_mean.size() == 3U && opt.channel_mean[0] == mean &&
-                opt.channel_stddev.size() == 3U && opt.channel_stddev[0] == stddev,
-            label + ": normalize stats must be derived from the full range");
-  }
-}
-
-// InputKind::Auto: the MPK stage order selects the image preproc route on its own.  Only the
-// public resolved contract is checked: the exact MPK kernel registry has no 'preproc' entry, so
-// this fixture cannot be admitted for execution (PreprocOptions(Model) compiles that plan).
-void require_mpk_selected_route_normalizes(const std::string& tag,
-                                           const std::vector<simaai::neat::Transform>& transforms) {
-  using namespace simaai::neat;
-  const auto fixture = make_preproc_fixture(tag, "[0.0, 1.0]", "preproc");
-  Model::Options model_opt;
-  model_opt.preprocess.transforms = transforms;
-  Model model(fixture.tar_path, model_opt);
-
-  require(model.preprocess_requirements().has_preproc_stage,
-          tag + ": MPK-selected route must report an enabled preprocessing stage");
-  const ResolvedPreprocessPlan plan = model.resolved_preprocess_plan();
-  require(plan.enabled && plan.graph_family == PreprocessGraphFamily::Preproc &&
-              plan.graph_kernel == "preproc",
-          tag + ": resolved graph must agree with the selected Preproc route");
-  require(plan.effective.normalize.enable == AutoFlag::On &&
-              plan.effective.normalize.mean[0] == 0.0f &&
-              plan.effective.normalize.stddev[0] == 1.0f,
-          tag + ": resolved plan must report normalization derived from input_range [0, 1]");
-}
-
-void require_invalid_range_reported(const std::string& tag, const std::string& input_range) {
-  using namespace simaai::neat;
-  const auto fixture = make_preproc_fixture(tag, input_range, "preproc");
-  Model model(fixture.tar_path, Model::Options{});
-  const ResolvedPreprocessPlan plan = model.resolved_preprocess_plan();
-  const std::string label = "input_range " + input_range;
-  require(plan.effective.normalize.enable == AutoFlag::Off,
-          label + ": invalid input_range must not enable normalization");
-  bool reported = false;
-  for (const auto& warning : plan.warnings) {
-    reported =
-        reported || warning.find("PREPROC_REQ_WARN_MODEL_INPUT_RANGE_INVALID") != std::string::npos;
-  }
-  require(reported, label + ": invalid input_range must raise a contract diagnostic");
-}
-
 } // namespace
 
 RUN_TEST(
     "unit_preproc_contract_rules_test", ([] {
       using namespace simaai::neat;
+
+      // Calibration extrema never specify a normalization recipe. In particular,
+      // [0.2, 0.8] may be observed after /255 without changing that preprocessing.
+      {
+        const auto check = [](const sima_test::ModelArchiveFixture& fixture,
+                              const Model::Options& options, bool normalize, bool advisory,
+                              const std::string& label) {
+          Model model(fixture.tar_path, options);
+          const auto plan = model.resolved_preprocess_plan();
+          require(plan.effective.normalize.enable == (normalize ? AutoFlag::On : AutoFlag::Off),
+                  label + ": normalization must follow explicit configuration only");
+          std::size_t advisories = 0;
+          for (const auto& warning : plan.warnings) {
+            if (warning.find("preprocess.normalize=Auto resolved Off") == std::string::npos)
+              continue;
+            ++advisories;
+            require_contains(warning, "preprocess.normalize.enable=On",
+                             label + ": diagnostic must explain explicit normalization");
+            require_contains(warning, "preprocess.preset",
+                             label + ": diagnostic must mention presets");
+          }
+          require(advisories == (advisory ? 1U : 0U),
+                  label + ": only unconfigured Auto on an image route needs one advisory");
+          return plan;
+        };
+        const nlohmann::json ranges[] = {
+            nlohmann::json::array({0.0, 1.0}), nlohmann::json::array({0.2, 0.8}),
+            nlohmann::json::array({-1.0, 1.0}), nlohmann::json::array({0.0, 255.0}), nullptr};
+        for (const auto& range : ranges) {
+          const auto fixture = make_preproc_fixture("normalize_observed_range", 640, range, true);
+          const auto plan = check(fixture, {}, false, true, "MPK image route " + range.dump());
+          require(plan.requested.normalize.enable == AutoFlag::Auto,
+                  "the public Auto option must be preserved");
+          require(plan.effective.normalize.mean == std::array{0.0f, 0.0f, 0.0f} &&
+                      plan.effective.normalize.stddev == std::array{1.0f, 1.0f, 1.0f},
+                  "observed extrema must not replace the default statistics");
+        }
+
+        const auto fixture = make_preproc_fixture("normalize_explicit_policy", 640,
+                                                  nlohmann::json::array({0.2, 0.8}), true);
+        Model::Options image;
+        image.preprocess.kind = InputKind::Image;
+        image.preprocess.enable = AutoFlag::On;
+        check(fixture, image, false, true, "explicit image route");
+        require(!PreprocOptions(Model(fixture.tar_path, image)).normalize,
+                "model-managed Preproc must keep unconfigured normalization Off");
+
+        auto options = image;
+        options.preprocess.normalize.enable = AutoFlag::Off;
+        check(fixture, options, false, false, "explicit Off");
+        options.preprocess.normalize.enable = AutoFlag::On;
+        options.preprocess.normalize.mean = {0.1f, 0.2f, 0.3f};
+        options.preprocess.normalize.stddev = {0.4f, 0.5f, 0.6f};
+        const auto explicit_plan = check(fixture, options, true, false, "explicit On");
+        require(explicit_plan.effective.normalize.mean == options.preprocess.normalize.mean &&
+                    explicit_plan.effective.normalize.stddev == options.preprocess.normalize.stddev,
+                "explicit On must preserve the authored statistics");
+        options.preprocess.normalize.enable = AutoFlag::Auto;
+        options.preprocess.normalize.has_explicit_stats = true;
+        check(fixture, options, true, false, "Auto with explicit statistics");
+
+        for (const auto preset : {NormalizePreset::ImageNet, NormalizePreset::COCO_YOLO}) {
+          options = image;
+          options.preprocess.preset = preset;
+          check(fixture, options, true, false, "preset normalization");
+        }
+
+        // The effective transform list owns intent, including an Auto-only list
+        // whose image route is selected from the MPK with InputKind::Auto.
+        options = {};
+        options.preprocess.normalize.enable = AutoFlag::On;
+        Transform transform;
+        transform.type = TransformType::Normalize;
+        options.preprocess.transforms = {transform};
+        check(fixture, options, false, true, "transform Auto overrides simple On");
+        options.preprocess.transforms[0].normalize.enable = AutoFlag::Off;
+        check(fixture, options, false, false, "transform Off");
+        options.preprocess.transforms[0].normalize.enable = AutoFlag::On;
+        check(fixture, options, true, false, "transform On");
+        options.preprocess.transforms[0].normalize.enable = AutoFlag::Auto;
+        options.preprocess.transforms[0].normalize.has_explicit_stats = true;
+        check(fixture, options, true, false, "transform statistics");
+
+        const auto tensor_fixture = make_preproc_fixture("normalize_tensor_route");
+        options = {};
+        options.preprocess.kind = InputKind::Tensor;
+        check(tensor_fixture, options, false, false, "tensor route");
+        options.preprocess.enable = AutoFlag::Off;
+        check(make_infer_only_fixture("normalize_preprocessing_disabled"), options, false, false,
+              "preprocessing disabled");
+      }
 
       {
         const auto fixture = make_infer_only_fixture("preproc_contract_missing");
@@ -423,12 +499,9 @@ RUN_TEST(
                 "PreprocOptions(Model) should expose model-managed output shape");
         require(!opt.output_dtype.empty(),
                 "PreprocOptions(Model) should expose model-managed output dtype");
-        require(opt.normalize,
-                "PreprocOptions(Model) should resolve normalize=Auto On from the MPK input_range");
-        require(opt.channel_mean.size() == 3U && opt.channel_mean[0] == 0.0f &&
-                    opt.channel_stddev.size() == 3U && opt.channel_stddev[0] == 1.0f,
-                "PreprocOptions(Model) should take normalize stats from input_range [0, 1]");
-
+        require(!opt.normalize,
+                "PreprocOptions(Model) should derive normalize from the resolved preprocess plan, "
+                "not from legacy graph defaults");
 #ifdef SIMA_NEAT_INTERNAL
         require(opt.compiled_contract != nullptr,
                 "model must retain its admitted preproc contract");
@@ -558,28 +631,6 @@ RUN_TEST(
         require_not_contains(
             frag, "config=", "model-managed Preproc fragment must not emit a legacy config path");
       }
-
-      // normalize=Auto honours every finite MPK input_range; [0, 255] keeps raw pixels.
-      require_auto_normalize_from_range("preproc_range_half", "[0.0, 0.5]", true, 0.0f, 2.0f);
-      require_auto_normalize_from_range("preproc_range_shifted", "[1.0, 2.0]", true, -1.0f, 1.0f);
-      require_auto_normalize_from_range("preproc_range_symmetric", "[-1.0, 1.0]", true, 0.5f, 0.5f);
-      require_auto_normalize_from_range("preproc_range_raw_pixels", "[0.0, 255.0]", false, 0.0f,
-                                        1.0f);
-
-      // Default options and an Auto-kind Normalize(Auto) transform list on the MPK-selected
-      // Preproc route resolve the same plan as the explicit Image kind above.
-      require_mpk_selected_route_normalizes("preproc_route_default_options", {});
-      {
-        Transform normalize_auto;
-        normalize_auto.type = TransformType::Normalize;
-        require_mpk_selected_route_normalizes("preproc_route_normalize_transform",
-                                              {normalize_auto});
-      }
-
-      // A declared but unusable input_range is a contract defect, not a missing range.
-      require_invalid_range_reported("preproc_range_degenerate", "[1.0, 1.0]");
-      require_invalid_range_reported("preproc_range_reversed", "[2.0, 1.0]");
-      require_invalid_range_reported("preproc_range_single_bound", "[1.0]");
 
       {
         const auto fixture = make_preproc_fixture("preproc_dynamic_capacity_rebind");
@@ -1004,5 +1055,141 @@ RUN_TEST(
         require((*cfg).value("q_scale", 0.0) == 0.5,
                 "standalone Preproc should serialize explicit q_scale");
         require((*cfg).value("q_zp", 0) == -9, "standalone Preproc should serialize explicit q_zp");
+      }
+
+      // An existing positional ResizeSpec initializer keeps its meaning; placement is appended.
+      {
+        const ResizeSpec legacy{AutoFlag::On, 640, 480, ResizeMode::Letterbox, 114, "BILINEAR"};
+        require(legacy.scaling_type == "BILINEAR" && legacy.pad_value == 114 &&
+                    legacy.placement == LetterboxPlacement::Center && !legacy.interpolation &&
+                    !legacy.shorter_side,
+                "positional ResizeSpec initializer changed meaning");
+      }
+
+      // ResizeSpec placement reaches the frame adapter through the model route:
+      // a 1280x720 source on the 640x640 canvas lands at the origin only for TopLeft.
+      {
+        const auto fixture = make_preproc_fixture("preproc_letterbox_placement");
+        for (const auto placement : {LetterboxPlacement::Center, LetterboxPlacement::TopLeft}) {
+          Model::Options model_opt;
+          model_opt.preprocess.kind = InputKind::Image;
+          model_opt.preprocess.enable = AutoFlag::On;
+          model_opt.preprocess.input_max_width = 1280;
+          model_opt.preprocess.input_max_height = 720;
+          model_opt.preprocess.color_convert.input_format = PreprocessColorFormat::RGB;
+          model_opt.preprocess.resize.enable = AutoFlag::On;
+          model_opt.preprocess.resize.mode = ResizeMode::Letterbox;
+          model_opt.preprocess.resize.pad_value = 116;
+          model_opt.preprocess.resize.placement = placement;
+          Model model(fixture.tar_path, model_opt);
+          PreprocOptions opt(model);
+          const bool top_left = placement == LetterboxPlacement::TopLeft;
+          require(opt.aspect_ratio && opt.padding_type == (top_left ? "TOPLEFT" : "CENTER") &&
+                      opt.pad_value == 116,
+                  "model letterbox placement did not reach PreprocOptions");
+#ifdef SIMA_NEAT_INTERNAL
+          require(opt.compiled_contract != nullptr &&
+                      opt.compiled_contract->payload.padding_type == opt.padding_type,
+                  "admitted Preproc contract lost the letterbox placement");
+          using Adapter = pipeline_internal::sima::kernel_lowering::PreprocFrameAdapter;
+          auto policy = opt.compiled_contract->payload;
+          if (policy.resolved_exec_backend.empty())
+            policy.resolved_exec_backend = "EVXX";
+          auto checked = Adapter::check_policy(policy);
+          require(std::holds_alternative<std::shared_ptr<const Adapter::CheckedPolicy>>(checked),
+                  "frame adapter rejected the model letterbox placement");
+          auto frozen = Adapter::checked_initial_preprocess_facts(
+              std::get<std::shared_ptr<const Adapter::CheckedPolicy>>(std::move(checked)));
+          require(std::holds_alternative<::simaai::gst::TensorBufferPreprocessFactsOwner>(frozen),
+                  "frame adapter could not publish initial letterbox facts");
+          const auto* facts = ::simaai::gst::tensor_buffer_preprocess_facts(
+              std::get<::simaai::gst::TensorBufferPreprocessFactsOwner>(frozen));
+          require(facts && facts->original_width == 1280 && facts->original_height == 720 &&
+                      facts->placed[2] == 640 && facts->placed[3] == 360 && facts->placed[0] == 0 &&
+                      facts->placed[1] == (top_left ? 0 : 140) && facts->affine[0] == 2.0 &&
+                      facts->affine[4] == 2.0 && facts->affine[2] == 0.0 &&
+                      facts->affine[5] == (top_left ? 0.0 : -280.0),
+                  "letterbox placement published the wrong rectangle or affine");
+#endif
+        }
+      }
+
+      // A Model's top-left letterbox rounds the shorter side to the nearest pixel, as Segment
+      // Anything and its BoxDecode crop do: int(side * 1024 / longest + 0.5) in double. A
+      // centered letterbox keeps the legacy upward rounding (683.2 becomes 684).
+      {
+        const auto fixture = make_preproc_fixture("preproc_letterbox_rounding", 1024);
+        struct Case {
+          int width, height;
+          LetterboxPlacement placement;
+          std::int64_t scaled_width, scaled_height, pad_left, pad_top, pad_right, pad_bottom;
+        };
+        constexpr auto top_left = LetterboxPlacement::TopLeft;
+        constexpr auto center = LetterboxPlacement::Center;
+        for (const auto& c : std::vector<Case>{{640, 427, top_left, 1024, 683, 0, 0, 0, 341},
+                                               {427, 640, top_left, 683, 1024, 0, 0, 341, 0},
+                                               {1280, 720, top_left, 1024, 576, 0, 0, 0, 448},
+                                               {1001, 667, top_left, 1024, 682, 0, 0, 0, 342},
+                                               {667, 1001, top_left, 682, 1024, 0, 0, 342, 0},
+                                               {1920, 1081, top_left, 1024, 577, 0, 0, 0, 447},
+                                               {640, 427, center, 1024, 684, 0, 170, 0, 170},
+                                               {427, 640, center, 684, 1024, 170, 0, 170, 0},
+                                               {1001, 667, center, 1024, 683, 0, 170, 0, 171}}) {
+          Model::Options model_opt;
+          model_opt.preprocess.kind = InputKind::Image;
+          model_opt.preprocess.enable = AutoFlag::On;
+          model_opt.preprocess.input_max_width = c.width;
+          model_opt.preprocess.input_max_height = c.height;
+          model_opt.preprocess.color_convert.input_format = PreprocessColorFormat::RGB;
+          model_opt.preprocess.resize.enable = AutoFlag::On;
+          model_opt.preprocess.resize.mode = ResizeMode::Letterbox;
+          model_opt.preprocess.resize.pad_value = 116;
+          model_opt.preprocess.resize.placement = c.placement;
+          Model model(fixture.tar_path, model_opt);
+          PreprocOptions opt(model);
+          const std::string label = std::to_string(c.width) + "x" + std::to_string(c.height) +
+                                    (c.placement == top_left ? " top-left" : " centered");
+          require(opt.padding_type == (c.placement == top_left ? "TOPLEFT" : "CENTER"),
+                  label + ": model letterbox placement did not reach PreprocOptions");
+#ifdef SIMA_NEAT_INTERNAL
+          require(opt.compiled_contract != nullptr &&
+                      opt.compiled_contract->payload.letterbox_nearest_extent ==
+                          (c.placement == top_left),
+                  label + ": only the Model's top-left letterbox rounds to the nearest pixel");
+          using Adapter = pipeline_internal::sima::kernel_lowering::PreprocFrameAdapter;
+          auto policy = opt.compiled_contract->payload;
+          if (policy.resolved_exec_backend.empty())
+            policy.resolved_exec_backend = "EVXX";
+          auto checked = Adapter::check_policy(policy);
+          require(std::holds_alternative<std::shared_ptr<const Adapter::CheckedPolicy>>(checked),
+                  label + ": frame adapter rejected the model letterbox");
+          auto frozen = Adapter::checked_initial_preprocess_facts(
+              std::get<std::shared_ptr<const Adapter::CheckedPolicy>>(std::move(checked)));
+          require(std::holds_alternative<::simaai::gst::TensorBufferPreprocessFactsOwner>(frozen),
+                  label + ": frame adapter could not publish initial letterbox facts");
+          const auto* facts = ::simaai::gst::tensor_buffer_preprocess_facts(
+              std::get<::simaai::gst::TensorBufferPreprocessFactsOwner>(frozen));
+          require(facts != nullptr && facts->original_width == c.width &&
+                      facts->original_height == c.height && facts->resized_width == 1024 &&
+                      facts->resized_height == 1024,
+                  label + ": letterbox facts lost the source or canvas size");
+          const auto pad_right = facts->resized_width - facts->placed[0] - facts->placed[2];
+          const auto pad_bottom = facts->resized_height - facts->placed[1] - facts->placed[3];
+          require(facts->placed[0] == c.pad_left && facts->placed[1] == c.pad_top &&
+                      facts->placed[2] == c.scaled_width && facts->placed[3] == c.scaled_height &&
+                      pad_right == c.pad_right && pad_bottom == c.pad_bottom,
+                  label + ": letterbox published " + std::to_string(facts->placed[2]) + "x" +
+                      std::to_string(facts->placed[3]) + " at (" +
+                      std::to_string(facts->placed[0]) + ", " + std::to_string(facts->placed[1]) +
+                      "), expected " + std::to_string(c.scaled_width) + "x" +
+                      std::to_string(c.scaled_height) + " at (" + std::to_string(c.pad_left) +
+                      ", " + std::to_string(c.pad_top) + ")");
+          require(facts->affine[0] == double(c.width) / double(c.scaled_width) &&
+                      facts->affine[4] == double(c.height) / double(c.scaled_height) &&
+                      facts->affine[2] == -double(c.pad_left) * facts->affine[0] &&
+                      facts->affine[5] == -double(c.pad_top) * facts->affine[4],
+                  label + ": letterbox affine does not map the placed image to the source");
+#endif
+        }
       }
     }));

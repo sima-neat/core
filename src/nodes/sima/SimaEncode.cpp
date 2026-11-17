@@ -53,8 +53,11 @@ void validate_encode_options(const SimaEncodeOptions& o) {
               (o.type == SimaEncodeType::H264 ? one_of(*o.profile, {"baseline", "main", "high"})
                                               : *o.profile == "main"),
           "profile is unsupported for the selected codec");
-  require(!o.level || one_of(*o.level, {"4.0", "4.1", "4.2", "5.0", "5.1", "5.2"}),
-          "level must be 4.0, 4.1, 4.2, 5.0, 5.1 or 5.2");
+  require(!o.level || (o.type == SimaEncodeType::H264
+                           ? one_of(*o.level, {"4.0", "4.1", "4.2", "5.0", "5.1", "5.2"})
+                           : one_of(*o.level, {"4.0", "4.1", "5.0", "5.1", "5.2"})),
+          o.type == SimaEncodeType::H264 ? "H.264 level must be 4.0, 4.1, 4.2, 5.0, 5.1 or 5.2"
+                                         : "H.265 level must be 4.0, 4.1, 5.0, 5.1 or 5.2");
   require(!o.gop_length || (*o.gop_length >= 0 && *o.gop_length <= 1000),
           "gop_length must be within 0..1000");
   require(!o.idr_interval || *o.idr_interval >= 0, "idr_interval must be nonnegative");

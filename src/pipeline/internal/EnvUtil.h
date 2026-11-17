@@ -163,7 +163,6 @@ inline const DebugProfileRule* debug_profile_rule(const char* key) {
       {"SIMA_GST_STAGE_TIMINGS", "gst", 1},
       {"SIMA_INPUTSTREAM_ALLOC_DEBUG", "inputstream", 1},
       {"SIMA_INPUTSTREAM_DEBUG", "inputstream", 1},
-      {"SIMA_INPUTSTREAM_DOT_ON_TIMEOUT", "inputstream", 2},
       {"SIMA_INPUTSTREAM_EOS_DEBUG", "inputstream", 1},
       {"SIMA_INPUTSTREAM_HOLDER_DEBUG", "inputstream", 1},
       {"SIMA_INPUTSTREAM_META_DEBUG", "inputstream", 1},
