@@ -59,7 +59,7 @@ class SchedulerRunCandidate(unittest.TestCase):
     def test_exact_actions_candidate_fails_closed_on_identity_and_inventory_drift(self):
         for mutation, error in (
                 ('wrong-commit', 'identity differs'),
-                ('missing', 'resource changed'),
+                ('missing', 'undeclared resources'),
                 ('undeclared', 'undeclared resources'),
                 ('tampered', 'resource changed')):
             with self.subTest(mutation=mutation), tempfile.TemporaryDirectory() as temp:
@@ -81,10 +81,14 @@ class SchedulerRunCandidate(unittest.TestCase):
     def test_exact_actions_candidate_enforces_resource_and_size_bounds(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp); candidate = self.candidate(root)
-            with patch.object(client_acquisition, 'MAX_CANDIDATE_BYTES', 1):
+            with patch.object(client_acquisition, 'MAX_CANDIDATE_BYTES', 1), \
+                 patch.object(client_acquisition, 'digest') as hasher, \
+                 patch.object(client_acquisition.shutil, 'copy2') as copier:
                 with self.assertRaisesRegex(ValueError, 'size bound'):
                     client_acquisition.stage_run_candidate(
                         candidate, root / 'staged', self.commit, 'feature/windows')
+                hasher.assert_not_called()
+                copier.assert_not_called()
 
 
 class PublicationInventory(unittest.TestCase):
@@ -374,6 +378,7 @@ esac
 set -euo pipefail
 MAKE_DEB=ON; HOST_DISTRO=ubuntu24; DEB_ARCH=amd64
 SCHEDULER_SPEC=latest; SCHEDULER_ENVIRONMENT=production; SCHEDULER_CANDIDATE=''
+SCHEDULER_COMMIT=''
 current_core_branch() { printf 'feature/native'; }
 run_privileged() { echo 'unexpected privileged installation' >&2; exit 99; }
 python3() {
@@ -391,6 +396,63 @@ GENAI_CMAKE_ARGS=()
                                     check=True, capture_output=True)
             self.assertEqual(result.stdout.splitlines(), [
                 f'-DSimaScheduler_DIR={scheduler_dir}', '-DSIMAPCIE_SCHEDULER_PACKAGE_VERSION=1.2.3'])
+
+    def test_native_local_candidate_requires_external_commit_and_tuple(self):
+        commit = 'a' * 40
+        for mutation, error in (
+                ('metadata-commit', 'Invalid local Scheduler publication'),
+                ('host-commit', 'host candidate identity differs'),
+                ('host-architecture', 'host candidate identity differs')):
+            with self.subTest(mutation=mutation), tempfile.TemporaryDirectory() as temp:
+                root = Path(temp); source = root / 'candidate'; source.mkdir()
+                host = {
+                    'schema_version': 2, 'profile': 'pcie-host', 'distro': 'ubuntu24',
+                    'architecture': 'amd64', 'source_commit': commit}
+                if mutation == 'host-commit': host['source_commit'] = 'b' * 40
+                if mutation == 'host-architecture': host['architecture'] = 'arm64'
+                (source / 'host-candidate.json').write_text(json.dumps(host))
+                (source / 'native_artifacts.py').write_text('# admitted provider seam\n')
+                names = ['host-candidate.json', 'native_artifacts.py']
+                metadata = {
+                    'repository': 'sima-neat/scheduler',
+                    'branch': 'feature/native',
+                    'commit': 'b' * 40 if mutation == 'metadata-commit' else commit,
+                    'artifact': {
+                        'profile': 'pcie-host', 'distro': 'ubuntu24',
+                        'architecture': 'amd64'},
+                    'resources': names,
+                    'resources-checksum': {
+                        name: acquisition.file_digest(source / name) for name in names}}
+                (source / 'metadata.json').write_text(json.dumps(metadata))
+                with self.assertRaisesRegex(ValueError, error):
+                    acquisition.local_candidate(
+                        source, root / 'staged', commit, 'ubuntu24', 'amd64')
+
+    def test_native_local_candidate_rejects_size_before_hash_or_copy(self):
+        commit = 'a' * 40
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp); source = root / 'candidate'; source.mkdir()
+            (source / 'host-candidate.json').write_text(json.dumps({
+                'schema_version': 2, 'profile': 'pcie-host', 'distro': 'ubuntu24',
+                'architecture': 'amd64', 'source_commit': commit}))
+            (source / 'native_artifacts.py').write_text('# admitted provider seam\n')
+            names = ['host-candidate.json', 'native_artifacts.py']
+            (source / 'metadata.json').write_text(json.dumps({
+                'repository': 'sima-neat/scheduler', 'branch': 'feature/native',
+                'commit': commit,
+                'artifact': {
+                    'profile': 'pcie-host', 'distro': 'ubuntu24',
+                    'architecture': 'amd64'},
+                'resources': names,
+                'resources-checksum': {name: '0' * 64 for name in names}}))
+            with patch.object(acquisition, 'MAX_CANDIDATE_BYTES', 1), \
+                 patch.object(acquisition, 'file_digest') as hasher, \
+                 patch.object(acquisition.shutil, 'copy2') as copier:
+                with self.assertRaisesRegex(ValueError, 'size bound'):
+                    acquisition.local_candidate(
+                        source, root / 'staged', commit, 'ubuntu24', 'amd64')
+                hasher.assert_not_called()
+                copier.assert_not_called()
 
     def test_install_list_delegates_complete_plan_before_emitting_paths(self):
         selection = {'distro': 'ubuntu24', 'architecture': 'amd64', 'commit': 'a' * 40}

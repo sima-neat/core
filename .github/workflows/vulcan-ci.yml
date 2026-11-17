@@ -359,8 +359,9 @@ jobs:
 
   code-hygiene:
     name: Code Hygiene
-    if: ${{ (inputs.build_mode || 'standard') == 'standard' && needs.detect-changes.outputs.docs_only != 'true' }}
+    if: ${{ needs.validate-windows-cohort-selectors.result == 'success' && (inputs.build_mode || 'standard') == 'standard' && needs.detect-changes.outputs.docs_only != 'true' }}
     needs:
+      - validate-windows-cohort-selectors
       - resolve-vulcan-config
       - detect-changes
     environment: ${{ needs.resolve-vulcan-config.outputs.vulcan_env }}
@@ -734,8 +735,9 @@ jobs:
 
   build-pciehost-packages:
     name: Build PCIe Host ${{ matrix.distro }} ${{ matrix.deb_arch }}
-    if: ${{ (inputs.build_mode || 'standard') == 'standard' && needs.detect-changes.outputs.docs_only != 'true' }}
+    if: ${{ needs.validate-windows-cohort-selectors.result == 'success' && (inputs.build_mode || 'standard') == 'standard' && needs.detect-changes.outputs.docs_only != 'true' }}
     needs:
+      - validate-windows-cohort-selectors
       - detect-changes
       - resolve-vulcan-config
     environment: ${{ needs.resolve-vulcan-config.outputs.vulcan_env }}
@@ -843,7 +845,10 @@ jobs:
             exit 1
           fi
           if [[ -n "${SCHEDULER_RUN_ID}" ]]; then
-            scheduler_spec_args+=(--scheduler-candidate "${RUNNER_TEMP}/scheduler-native-candidate")
+            scheduler_spec_args+=(
+              --scheduler-candidate "${RUNNER_TEMP}/scheduler-native-candidate"
+              --scheduler-commit "${SCHEDULER_COMMIT}"
+            )
           elif [[ -n "${SCHEDULER_NATIVE_SPEC}" ]]; then
             scheduler_spec_args+=(--scheduler-spec "${SCHEDULER_NATIVE_SPEC}")
           fi

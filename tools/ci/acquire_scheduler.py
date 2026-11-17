@@ -14,6 +14,7 @@ from scheduler_dependency import acquire_scheduler
 
 
 MAX_CANDIDATE_RESOURCES = 256
+MAX_RESOURCE_BYTES = 1024 * 1024 * 1024
 MAX_CANDIDATE_BYTES = 2 * 1024 * 1024 * 1024
 MAX_MANIFEST_BYTES = 1024 * 1024
 
@@ -35,8 +36,12 @@ def stage_run_candidate(source, destination, commit, branch):
     source = Path(source).resolve(strict=True)
     if not source.is_dir() or source.is_symlink():
         raise ValueError('Scheduler candidate must be a real directory')
+    entries = list(source.iterdir())
+    if (len(entries) > MAX_CANDIDATE_RESOURCES + 1
+            or any(path.is_symlink() or not path.is_file() for path in entries)):
+        raise ValueError('Scheduler candidate has invalid or excessive entries')
     manifest_path = source / 'candidate.json'
-    if (manifest_path.is_symlink() or not manifest_path.is_file()
+    if (not manifest_path.is_file() or manifest_path.stat().st_size <= 0
             or manifest_path.stat().st_size > MAX_MANIFEST_BYTES):
         raise ValueError('Invalid Scheduler candidate manifest')
     manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
@@ -50,8 +55,12 @@ def stage_run_candidate(source, destination, commit, branch):
             or len(resources) > MAX_CANDIDATE_RESOURCES):
         raise ValueError('Scheduler candidate identity differs from selected run')
 
+    observed = {path.name for path in entries}
+    expected = {'candidate.json', *resources}
+    if observed != expected:
+        raise ValueError('Scheduler candidate contains undeclared resources')
+
     total = manifest_path.stat().st_size
-    admitted = {}
     for name, record in resources.items():
         if (not _safe_resource_name(name) or not isinstance(record, dict)
                 or set(record) != {'sha256', 'size'}
@@ -60,18 +69,19 @@ def stage_run_candidate(source, destination, commit, branch):
                 or not re.fullmatch(r'[0-9a-f]{64}', str(record['sha256']))):
             raise ValueError('Invalid Scheduler candidate resource declaration')
         path = source / name
-        if (path.is_symlink() or not path.is_file() or path.stat().st_size != record['size']
-                or digest(path) != record['sha256']):
+        if path.stat().st_size != record['size']:
             raise ValueError('Scheduler candidate resource changed: ' + name)
         total += record['size']
-        if total > MAX_CANDIDATE_BYTES:
+        if record['size'] > MAX_RESOURCE_BYTES or total > MAX_CANDIDATE_BYTES:
             raise ValueError('Scheduler candidate exceeds the admitted size bound')
-        admitted[name] = record['sha256']
 
-    observed = {path.name for path in source.iterdir() if path.is_file() and not path.is_symlink()}
-    expected = {'candidate.json', *resources}
-    if observed != expected or any(path.is_symlink() or not path.is_file() for path in source.iterdir()):
-        raise ValueError('Scheduler candidate contains undeclared resources')
+    # Hash only after entry count and every size are admitted.
+    admitted = {}
+    for name, record in resources.items():
+        path = source / name
+        if digest(path) != record['sha256']:
+            raise ValueError('Scheduler candidate resource changed: ' + name)
+        admitted[name] = record['sha256']
 
     destination.mkdir(parents=True, exist_ok=False)
     shutil.copy2(manifest_path, destination / manifest_path.name)

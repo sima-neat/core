@@ -89,6 +89,19 @@ def test_cli_jobs_override_invalid_environment(build_env):
     assert result.returncode == 0, result.stderr
 
 
+@pytest.mark.parametrize("arguments", [
+    ("--scheduler-candidate", "/tmp/candidate"),
+    ("--scheduler-commit", "a" * 40),
+    ("--scheduler-candidate", "/tmp/candidate", "--scheduler-commit", "short"),
+    ("--scheduler-candidate", "/tmp/candidate", "--scheduler-commit", "a" * 40,
+     "--scheduler-spec", "latest"),
+])
+def test_local_scheduler_candidate_requires_one_exact_commit(build_env, arguments):
+    result = run_build(build_env, *arguments, "--install-deps-only")
+    assert result.returncode == 2
+    assert not Path(build_env["APT_LOG"]).exists()
+
+
 def test_ci_keeps_all_native_targets_and_validation():
     workflow = yaml.safe_load((ROOT / ".github/workflows/vulcan-ci.yml").read_text())
     job = workflow["jobs"]["build-pciehost-packages"]
@@ -102,6 +115,10 @@ def test_ci_keeps_all_native_targets_and_validation():
     assert "Run PCIe host unit tests" in steps
     assert "Smoke test staged PCIe host packages and wheel" in steps
     assert '--skip-deps --jobs "${PCIE_HOST_BUILD_JOBS:-$(nproc)}"' in steps["Build PCIe host Debian packages"]["run"]
+    assert '--scheduler-candidate "${RUNNER_TEMP}/scheduler-native-candidate"' in steps["Build PCIe host Debian packages"]["run"]
+    assert '--scheduler-commit "${SCHEDULER_COMMIT}"' in steps["Build PCIe host Debian packages"]["run"]
+    assert "validate-windows-cohort-selectors" in job["needs"]
+    assert "needs.validate-windows-cohort-selectors.result == 'success'" in job["if"]
 
 
 def test_shared_image_qualification_preserves_all_targets_without_publication():

@@ -55,7 +55,9 @@ def test_hygiene_uses_vulcan_native_ubuntu_arm64_runner():
     assert ('runs-on: [self-hosted, linux, arm64, '
             '"vulcan-${{ needs.resolve-vulcan-config.outputs.vulcan_env }}", ubuntu, default]') in body
     assert 'scripts/ci/install_code_hygiene_deps.sh' in body
-    assert needs('code-hygiene') == ['resolve-vulcan-config', 'detect-changes']
+    assert needs('code-hygiene') == [
+        'validate-windows-cohort-selectors', 'resolve-vulcan-config', 'detect-changes']
+    assert "needs.validate-windows-cohort-selectors.result == 'success'" in body
     assert 'vulcan/ubuntu-build:ubuntu24-arm64-media-' in body
     assert 'HYGIENE_REQUIRE_PREINSTALLED: "1"' in body
 

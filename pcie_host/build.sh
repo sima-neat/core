@@ -31,6 +31,7 @@ DEPS_MANIFEST="${SIMAPCIE_DEPS_MANIFEST:-${CORE_ROOT}/deps/manifest.json}"
 SIMAPCIE_PYTHON_EXECUTABLE="${SIMAPCIE_PYTHON_EXECUTABLE:-}"
 SCHEDULER_SPEC=""
 SCHEDULER_CANDIDATE=""
+SCHEDULER_COMMIT=""
 SCHEDULER_ENVIRONMENT="production"
 SCHEDULER_SELECTION=""
 
@@ -51,6 +52,7 @@ Options:
   --scheduler-spec <sha|latest> Override the manifest's Scheduler revision
   --scheduler-environment <name> Publication environment (default: production)
   --scheduler-candidate <dir> Trusted local Scheduler producer output (no download)
+  --scheduler-commit <sha> Full commit expected in --scheduler-candidate
   --build-dir <dir>   Build directory (default: build)
   --debug             Build type Debug (default: Release)
   -h, --help          Show this help
@@ -184,13 +186,14 @@ while [[ $# -gt 0 ]]; do
       fi
       shift 2
       ;;
-    --scheduler-spec|--scheduler-environment|--scheduler-candidate)
+    --scheduler-spec|--scheduler-environment|--scheduler-candidate|--scheduler-commit)
       option="$1"
       [[ -n "${2:-}" ]] || { echo "ERROR: $option requires a value" >&2; exit 2; }
       case "$option" in
         --scheduler-spec) SCHEDULER_SPEC="$2" ;;
         --scheduler-environment) SCHEDULER_ENVIRONMENT="$2" ;;
         --scheduler-candidate) SCHEDULER_CANDIDATE="$2" ;;
+        --scheduler-commit) SCHEDULER_COMMIT="$2" ;;
       esac
       shift 2
       ;;
@@ -209,6 +212,20 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+
+if [[ -n "${SCHEDULER_CANDIDATE}" && -z "${SCHEDULER_COMMIT}" ]] ||
+   [[ -z "${SCHEDULER_CANDIDATE}" && -n "${SCHEDULER_COMMIT}" ]]; then
+  echo "ERROR: --scheduler-candidate and --scheduler-commit must be supplied together" >&2
+  exit 2
+fi
+if [[ -n "${SCHEDULER_CANDIDATE}" && -n "${SCHEDULER_SPEC}" ]]; then
+  echo "ERROR: --scheduler-candidate and --scheduler-spec are mutually exclusive" >&2
+  exit 2
+fi
+if [[ -n "${SCHEDULER_COMMIT}" && ! "${SCHEDULER_COMMIT}" =~ ^[0-9a-f]{40}$ ]]; then
+  echo "ERROR: --scheduler-commit requires a full lowercase Git commit" >&2
+  exit 2
+fi
 
 [[ "${BUILD_JOBS}" =~ ^[1-9][0-9]*$ ]] || { echo "ERROR: CMAKE_BUILD_PARALLEL_LEVEL must be a positive integer" >&2; exit 2; }
 
@@ -551,7 +568,9 @@ else
   native_root="$(mktemp -d "${TMPDIR:-/tmp}/core-native-scheduler.XXXXXX")"
   scheduler_spec_args=()
   if [[ -n "$SCHEDULER_SPEC" ]]; then scheduler_spec_args+=(--spec "$SCHEDULER_SPEC"); fi
-  if [[ -n "$SCHEDULER_CANDIDATE" ]]; then scheduler_spec_args+=(--candidate "$SCHEDULER_CANDIDATE"); fi
+  if [[ -n "$SCHEDULER_CANDIDATE" ]]; then
+    scheduler_spec_args+=(--candidate "$SCHEDULER_CANDIDATE" --commit "$SCHEDULER_COMMIT")
+  fi
   python3 scripts/acquire_scheduler.py --branch "$(current_core_branch)" \
     "${scheduler_spec_args[@]}" --environment "$SCHEDULER_ENVIRONMENT" \
     --distro "$HOST_DISTRO" --arch "$DEB_ARCH" --output "$native_root/selected"

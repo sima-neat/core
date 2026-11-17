@@ -733,9 +733,14 @@ class WindowsCiContracts(unittest.TestCase):
     self.assertIn(f'name: {artifact}', packages)
     self.assertIn(
         '--scheduler-candidate "${RUNNER_TEMP}/scheduler-native-candidate"', packages)
+    self.assertIn('--scheduler-commit "${SCHEDULER_COMMIT}"', packages)
     self.assertIn('elif [[ -n "${SCHEDULER_NATIVE_SPEC}" ]]', packages)
     self.assertIn(
         'scheduler_run_id and scheduler_commit must be supplied together.', packages)
+    for body in (hygiene, packages):
+      self.assertIn("- validate-windows-cohort-selectors", body)
+      self.assertIn(
+          "needs.validate-windows-cohort-selectors.result == 'success'", body)
 
   def test_scheduler_actions_artifacts_are_bounded_before_use(self):
     verifier = (ROOT / "scripts/ci/pciehost/verify_linux_release_run.py").read_text(
