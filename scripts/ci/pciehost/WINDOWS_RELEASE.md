@@ -68,6 +68,10 @@ revision. It publishes the Windows profile at
 `scheduler/<branch>/<commit>/pcie-host-windows-amd64` and advances Scheduler's
 branch `latest` tag only after the DevKit and every native profile pass.
 
+Vulcan CI runs the Windows lane only when the repository variable
+`ENABLE_WINDOWS_PCIE_CI` is `true`; otherwise it skips the lane, and branch
+`latest` promotion and validation-only runs accept that skip.
+
 Core's main `Vulcan CI` calls the Windows workflow after the same Core revision
 has passed its Linux build, DevKit, and PCIe-card gates. The Windows lane:
 

@@ -678,11 +678,62 @@ class WindowsCiContracts(unittest.TestCase):
       leaks += [(index + 1, text.strip()) for text in body if "${{ inputs." in text]
     self.assertEqual(leaks, [])
 
-  def test_main_ci_requires_windows_acceptance_before_promotion(self):
+  def test_main_ci_requires_windows_acceptance_before_promotion_only_when_enabled(self):
     source = MAIN_WORKFLOW.read_text(encoding="utf-8")
-    self.assertIn("test-pciehost-windows:", source)
     self.assertIn("uses: ./.github/workflows/pcie-host-windows.yml", source)
-    self.assertIn("needs.test-pciehost-windows.result == 'success'", source)
+
+    def job(name):
+      return re.search(rf"(?ms)^  {re.escape(name)}:\n(.*?)(?=^  [\w-]+:\n|\Z)", source)[1]
+
+    def condition(name):
+      return re.search(r"(?m)^    if: (.+)$", job(name))[1]
+
+    gate = textwrap.dedent(job("validation-complete").split(
+        "          python3 - <<'PYGATE'\n", 1)[1].split("\n          PYGATE", 1)[0])
+    gate_flag = re.search(r"(?m)^          WINDOWS_PCIE_CI: (.+)$", job("validation-complete"))[1]
+    for variable in ("", "false", "true"):
+      for hardware in ("success", "skipped"):
+        for outcome in ("success", "failure"):
+          with self.subTest(variable=variable, hardware=hardware, outcome=outcome):
+            context = {
+                "always()": True,
+                "vars.ENABLE_WINDOWS_PCIE_CI": variable,
+                "inputs.offline_source_run_id": "",
+                "inputs.validation_only": False,
+                "inputs.build_mode": "standard",
+                "github.ref_type": "branch",
+                "needs.detect-changes.outputs.docs_only": "false",
+                "needs.test-pciehost-hardware.result": hardware,
+            }
+            for upstream in (
+                "validate-windows-cohort-selectors", "build",
+                "build-pcie-card-qualification-dependencies", "build-pciehost-packages",
+                "test-devkit", "publish-pciehost-package"):
+              context[f"needs.{upstream}.result"] = "success"
+            runs = evaluate_actions_expression(condition("test-pciehost-windows"), context)
+            self.assertEqual(runs, variable == "true" and hardware == "success")
+            context["needs.test-pciehost-windows.result"] = outcome if runs else "skipped"
+            self.assertEqual(
+                evaluate_actions_expression(condition("promote-latest-tag"), context),
+                outcome == "success" if runs else variable != "true")
+
+            results = {name: {"result": "success"} for name in re.findall(
+                r"- ([\w-]+)", job("validation-complete").split("    steps:", 1)[0])}
+            for name in ("publish-vulcan-artifacts", "publish-pciehost-package",
+                         "promote-latest-tag"):
+              results[name]["result"] = "skipped"
+            results["test-pciehost-windows"]["result"] = context[
+                "needs.test-pciehost-windows.result"]
+            environment = {
+                "RESULTS": json.dumps(results), "BUILD_MODE": "standard",
+                "WINDOWS_PCIE_CI": str(evaluate_actions_expression(gate_flag, context)).lower(),
+            }
+            with mock.patch.dict(os.environ, environment):
+              if hardware == "success" and outcome == "success" or variable != "true":
+                exec(compile(gate, str(MAIN_WORKFLOW), "exec"), {})
+              else:
+                with self.assertRaisesRegex(SystemExit, "test-pciehost-windows"):
+                  exec(compile(gate, str(MAIN_WORKFLOW), "exec"), {})
 
   def test_main_ci_exposes_and_forwards_exact_windows_dependency_selectors(self):
     source = MAIN_WORKFLOW.read_text(encoding="utf-8")
