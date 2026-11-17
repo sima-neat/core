@@ -228,6 +228,8 @@ make_preproc_fixture(const std::string& tag, int canvas = 640,
     manifest["input_nodes"][0]["input_range"] = input_range;
   }
   if (mpk_image_preproc) {
+    // This historical token is only for route-plan inspection. Executable-contract
+    // tests keep Cast -> MLA and let Model add its supported image preprocessing.
     manifest["plugins"][0]["config_params"]["kernel"] = "preproc";
   }
   std::ofstream(mpk_path, std::ios::trunc) << manifest.dump();
@@ -390,7 +392,7 @@ RUN_TEST(
         }
 
         const auto fixture = make_preproc_fixture("normalize_explicit_policy", 640,
-                                                  nlohmann::json::array({0.2, 0.8}), true);
+                                                  nlohmann::json::array({0.2, 0.8}));
         Model::Options image;
         image.preprocess.kind = InputKind::Image;
         image.preprocess.enable = AutoFlag::On;
@@ -420,19 +422,21 @@ RUN_TEST(
 
         // The effective transform list owns intent, including an Auto-only list
         // whose image route is selected from the MPK with InputKind::Auto.
+        const auto transform_fixture = make_preproc_fixture(
+            "normalize_transform_route", 640, nlohmann::json::array({0.2, 0.8}), true);
         options = {};
         options.preprocess.normalize.enable = AutoFlag::On;
         Transform transform;
         transform.type = TransformType::Normalize;
         options.preprocess.transforms = {transform};
-        check(fixture, options, false, true, "transform Auto overrides simple On");
+        check(transform_fixture, options, false, true, "transform Auto overrides simple On");
         options.preprocess.transforms[0].normalize.enable = AutoFlag::Off;
-        check(fixture, options, false, false, "transform Off");
+        check(transform_fixture, options, false, false, "transform Off");
         options.preprocess.transforms[0].normalize.enable = AutoFlag::On;
-        check(fixture, options, true, false, "transform On");
+        check(transform_fixture, options, true, false, "transform On");
         options.preprocess.transforms[0].normalize.enable = AutoFlag::Auto;
         options.preprocess.transforms[0].normalize.has_explicit_stats = true;
-        check(fixture, options, true, false, "transform statistics");
+        check(transform_fixture, options, true, false, "transform statistics");
 
         const auto tensor_fixture = make_preproc_fixture("normalize_tensor_route");
         options = {};
