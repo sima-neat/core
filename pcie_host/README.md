@@ -516,10 +516,12 @@ install root. A standalone validation may omit GenAI for a shorter diagnostic
 run. Customer publication requires the complete C++ and Python GenAI matrix. In
 the normal path the Windows lane is called by Core's main
 Vulcan workflow after the same-revision Linux build, DevKit, and PCIe-card gates;
-the Windows lane consumes that run's exact card payload. A standalone dispatch
-must instead identify a prior successful Linux run for the same Core commit.
-Windows success and publication are required before Core advances its branch
+the Windows lane consumes that run's exact card payload and runs validation-only.
+Windows qualification success is required before Core advances its branch
 `latest` tag, so Linux regressions and dependency validation cannot be bypassed.
+Windows packages are published only by a standalone `pcie-host-windows.yml`
+dispatch from `develop` or a `v*` tag, which must identify a prior successful
+Linux run for the same Core commit.
 
 Formal release qualification sets `require_upgrade=true` and selects an earlier
 successful Core Windows workflow by run ID and full commit.

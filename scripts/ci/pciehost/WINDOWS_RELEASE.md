@@ -182,9 +182,16 @@ not a manual-dispatch override.
 ## Publishing and formal release checks
 
 Normal branch and tag runs enter the Windows lane from Core's main CI with
-`include_genai=true` and `validation_only=false`. Publication is rejected unless
+`include_genai=true` and `validation_only=true`. They qualify the Windows cohort
+and gate branch `latest` promotion on that qualification, but never publish it:
+a push cannot supply the upgrade baseline or first-release exemption that
+publication requires. Windows packages are published only by a direct
+`pcie-host-windows.yml` dispatch from `develop` or a `v*` tag with
+`validation_only=false` and either `require_upgrade=true` (below) or, for the
+first Windows release only, `first_release_upgrade_exemption=true` with a
+non-empty `first_release_upgrade_exemption_reason`. Publication is rejected unless
 the Windows 11 customer-install, direct-card, complete GenAI, and cleanup evidence
-passes. Core promotes only the bytes that passed; it does not rebuild them.
+passes. Core publishes only the bytes that passed; it does not rebuild them.
 
 Cross-version upgrade is a formal release check rather than a cost paid by every
 branch commit. To run it against an earlier qualified Windows cohort, dispatch

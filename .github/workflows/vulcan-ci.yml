@@ -2356,7 +2356,9 @@ jobs:
       sima_cli_commit: ${{ inputs.sima_cli_commit || '' }}
       linux_current_run: true
       include_genai: true
-      validation_only: ${{ inputs.validation_only || !((github.event_name == 'push' || github.event_name == 'workflow_dispatch') && (github.ref == 'refs/heads/develop' || startsWith(github.ref, 'refs/tags/v'))) }}
+      # A push cannot supply the upgrade baseline or first-release exemption that
+      # Windows publication requires; publish through a direct Windows dispatch.
+      validation_only: true
       require_signatures: false
     secrets: inherit
 

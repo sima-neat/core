@@ -805,38 +805,54 @@ class WindowsCiContracts(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn(error, result.stderr)
 
-  def test_main_ci_forces_non_release_windows_runs_to_validation_only(self):
+  def test_main_ci_windows_runs_are_validation_only_and_pass_preflight(self):
+    # A push cannot supply an upgrade baseline or first-release exemption, so
+    # Vulcan CI validates Windows and only a direct dispatch can publish it.
     source = MAIN_WORKFLOW.read_text(encoding="utf-8")
     job = source.split("  test-pciehost-windows:\n", 1)[1].split(
         "  promote-latest-tag:", 1)[0]
     admission = job.split("    with:\n", 1)[0]
     self.assertNotIn("refs/heads/develop", admission)
     self.assertNotIn("refs/tags/v", admission)
-    expression = re.search(r"(?m)^      validation_only: (.+)$", job).group(1)
+    forwarded = dict(re.findall(
+        r"(?m)^      (\w+): (.+)$", job.split("    with:\n", 1)[1].split("    secrets:", 1)[0]))
+    workflow = WORKFLOW.read_text(encoding="utf-8")
+    call_inputs = workflow.split("  workflow_call:\n", 1)[1].split("  workflow_dispatch:\n", 1)[0]
+    defaults = dict(re.findall(
+        r"(?m)^      (\w+):\n(?:^        (?!default:).*\n)*^        default: (.*)$", call_inputs))
+    step = workflow.split("- name: Validate dependency and admission selectors\n", 1)[1]
+    script = textwrap.dedent(step.split("        run: |\n", 1)[1].split("\n      - name:", 1)[0])
+    bash = shutil.which("bash")
+    self.assertIsNotNone(bash)
     cases = (
-        ("pull_request", "refs/pull/42/merge", False, True),
-        ("push", "refs/heads/feature/windows", False, True),
-        ("push", "refs/heads/v0.7.0", False, True),
-        ("push", "refs/tags/nightly", False, True),
-        ("workflow_dispatch", "refs/heads/feature/windows", False, True),
-        ("workflow_call", "refs/heads/feature/windows", False, True),
-        ("workflow_call", "refs/heads/develop", False, True),
-        ("push", "refs/heads/develop", False, False),
-        ("workflow_dispatch", "refs/heads/develop", False, False),
-        ("push", "refs/tags/v0.7.0", False, False),
-        ("workflow_dispatch", "refs/tags/v0.7.0-rc.1", False, False),
-        ("push", "refs/heads/develop", True, True),
+        ("push", "refs/heads/develop"),
+        ("push", "refs/tags/v0.7.0"),
+        ("workflow_dispatch", "refs/heads/develop"),
+        ("workflow_dispatch", "refs/tags/v0.7.0-rc.1"),
+        ("push", "refs/heads/feature/windows"),
     )
-    for event, ref, requested_validation, expected_validation in cases:
-      with self.subTest(event=event, ref=ref, validation=requested_validation):
-        values = {
+    for event, ref in cases:
+      with self.subTest(event=event, ref=ref):
+        context = {
             "startsWith(github.ref, 'refs/tags/v')": ref.startswith("refs/tags/v"),
             "github.event_name": event,
             "github.ref": ref,
-            "inputs.validation_only": requested_validation,
+            "inputs.validation_only": False,
         }
-        self.assertEqual(
-            evaluate_actions_expression(expression, values), expected_validation)
+        environment = os.environ.copy()
+        environment["GITHUB_WORKFLOW"] = "Vulcan CI"
+        for name, default in defaults.items():
+          value = forwarded.get(name, default).strip()
+          if re.fullmatch(r"\$\{\{ inputs\.\w+ \|\| '' \}\}|''", value):
+            value = ""
+          elif value.startswith("${{"):
+            value = str(evaluate_actions_expression(value, context)).lower()
+          environment[name.upper()] = value
+        self.assertEqual(environment["VALIDATION_ONLY"], "true")
+        result = subprocess.run(
+            [bash, "-c", script], capture_output=True, text=True, check=False,
+            env=environment)
+        self.assertEqual(result.returncode, 0, result.stderr)
 
   def test_windows_publisher_independently_requires_final_release_context(self):
     source = WORKFLOW.read_text(encoding="utf-8")
