@@ -152,13 +152,20 @@ the artifact is used. The Scheduler selector names the successful root
 `.github/workflows/ci.yml` run. That one run owns the retained Scheduler client
 candidate, all four Linux native profiles, and the Windows profile. Core uses
 those run-local candidates for code hygiene, the matching Linux/ARM package
-build, and Windows qualification instead of requiring a feature-channel
-publication. Each consumer admits the exact root workflow, reusable workflow,
-job, artifact, run attempt, repository, and full commit before downloaded code
-can execute. This also avoids depending on a standalone workflow that cannot be
-dispatched from a feature ref until the workflow already exists on Scheduler's
-default branch. Do not upload replacement files or mix a run ID with a different
-commit.
+build, and Windows qualification. The selector does not reach the SDK build:
+Vulcan CI's `Build Core on Vulcan` job runs `build.sh`, which still resolves
+Scheduler from the published channel under Core's snap policy. A bootstrap
+therefore still needs Scheduler's same-named branch to have a promoted `latest`
+tag: push the Scheduler branch first and wait for its CI to promote it before
+running Core. If Scheduler's branch index lists the branch without a promoted
+`latest`, the SDK build fails and every later job, including the Windows lane,
+is skipped; `build.sh` falls back to `develop:latest` only when the index
+confirms the branch is absent. Each consumer admits the exact root workflow,
+reusable workflow, job, artifact, run attempt, repository, and full commit
+before downloaded code can execute. This also avoids depending on a standalone
+workflow that cannot be dispatched from a feature ref until the workflow already
+exists on Scheduler's default branch. Do not upload replacement files or mix a
+run ID with a different commit.
 
 Bootstrap with an exact-source `workflow_dispatch` of Scheduler's root workflow
 on the feature branch without entering Scheduler publication lanes:
