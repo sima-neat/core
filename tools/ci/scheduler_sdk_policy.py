@@ -65,20 +65,9 @@ def check_llima(policy, directory):
 
 
 def check_release_sdk(version, firmware, sdk_release, sysroot):
-    """Require a prebuilt release SDK; never install or patch release payloads."""
-    fields = {}
-    for line in sdk_release.read_text().splitlines():
-        if ' = ' in line:
-            key, value = line.split(' = ', 1)
-            if key in fields:
-                raise ValueError(f'Duplicate SDK receipt field: {key}')
-            fields[key] = value
-    if (fields.get('Platform Version') != version or fields.get('Platform Base') != version
-            or fields.get('Platform Channel') != 'release'):
-        raise ValueError('Cached SDK does not contain the requested release; refresh its snapshot')
-    overlay = sysroot / 'var/lib/sima-sdk/sysroot-overlay'
-    if overlay.exists() or overlay.is_symlink():
-        raise ValueError('Release SDK contains an overlay; use a fresh release snapshot')
+    """Validate the active release sysroot without installing platform packages."""
+    # The active target sysroot is authoritative. /etc/sdk-release describes
+    # the container's original image and can predate a matching target overlay.
     inventory = sysroot / 'var/lib/sima-sdk/sysroot-packages.tsv'
     if inventory.is_symlink():
         raise ValueError('SDK inventory must be a regular file')
@@ -87,15 +76,15 @@ def check_release_sdk(version, firmware, sdk_release, sysroot):
         versions = [row[2] for row in records if len(row) >= 3 and row[0] == package
                     and row[1] in {'all', 'arm64'}]
         if versions != [version]:
-            raise ValueError(f'Cached SDK {package} inventory differs: {versions}')
+            raise ValueError(f'Active SDK {package} inventory differs: {versions}')
     if not (sysroot / 'usr/include').is_dir():
-        raise ValueError('Cached SDK sysroot headers are missing')
+        raise ValueError('Active SDK sysroot headers are missing')
     identities = re.findall(r'^SIMA_PACKAGE_VERSION\s*=\s*(\S+)\s*$',
                             (sysroot / 'etc/packageinfo').read_text(), re.M)
     if identities != [firmware]:
-        raise ValueError(f'Cached SDK firmware identity differs: {identities}; expected {firmware}')
-    print(f'SKIP sysroot installation: SDK already contains official release {version}; '
-          'SDK receipt and Palette/base-files inventory match.')
+        raise ValueError(f'Active SDK firmware identity differs: {identities}; expected {firmware}')
+    print(f'SKIP sysroot installation: active sysroot contains official release {version}; '
+          'firmware and Palette/base-files inventory match.')
 
 
 def main():

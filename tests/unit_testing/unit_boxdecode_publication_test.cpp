@@ -343,9 +343,67 @@ void oriented() {
   }
 }
 } // namespace
+// The V1 masks prefix: header, records and alignment padding. The producer
+// writes the masks after it in place; the prefix task never reads them.
+void masks_v1(std::int64_t capacity, std::int64_t height, std::int64_t width) {
+  const std::array<k::TensorSpec, 5> specs{{{{capacity, 4}, k::DType::Int32},
+                                            {{capacity}, k::DType::Float32},
+                                            {{capacity}, k::DType::Int32},
+                                            {{1}, k::DType::Int32},
+                                            {{capacity, height, width}, k::DType::UInt8}}};
+  Fixture f(F::MasksV1, specs);
+  const auto prefix = (48 + capacity * 24 + 15) / 16 * 16;
+  require(f.plan.bytes == std::size_t(prefix) && f.storage.size() == 4,
+          "V1 prefix extent or task inputs");
+  for (const std::int64_t count : {capacity, std::int64_t{1}, std::int64_t{0}}) {
+    write(f.storage[3].data(), std::int32_t(count));
+    for (std::int64_t i = 0; i < count; ++i) {
+      for (int q = 0; q < 4; ++q)
+        write(f.storage[0].data() + i * 16 + q * 4, std::int32_t(5 * i + q));
+      write(f.storage[1].data() + i * 4, .625f);
+      write(f.storage[2].data() + i * 4, std::int32_t(i + 1));
+    }
+    require(!f.run(), "valid V1 masks prefix rejected");
+    simaai::neat::SegmentationMasksHeaderV1 header;
+    std::memcpy(&header, f.output.data(), sizeof(header));
+    require(header.magic == 0x3153414d && header.version == 1 && header.header_bytes == 48 &&
+                header.count == count && header.capacity == capacity &&
+                header.mask_height == height && header.mask_width == width &&
+                header.records_offset == 48 && header.record_stride == 24 &&
+                header.masks_offset == prefix && header.mask_stride == height * width &&
+                header.total_bytes == prefix + capacity * height * width && header.flags == 0,
+            "V1 masks header mismatch");
+    for (std::int64_t i = 0; i < count; ++i) {
+      auto* row = f.output.data() + 48 + i * 24;
+      for (int q = 0; q < 4; ++q)
+        require(read<std::int32_t>(row + q * 4) == 5 * i + q, "V1 record box mismatch");
+      require(read<float>(row + 16) == .625f && read<std::int32_t>(row + 20) == i + 1,
+              "V1 record score/class mismatch");
+    }
+    require(std::all_of(f.output.begin() + 48 + count * 24, f.output.begin() + prefix,
+                        [](auto b) { return b == std::byte{}; }),
+            "stale V1 records or padding");
+    f.check_guard();
+  }
+  const auto before = f.output;
+  write(f.storage[3].data(), std::int32_t(capacity + 1));
+  require(bool(f.run()) && f.output == before, "invalid V1 count modified the prefix");
+  bool rejected = false;
+  try {
+    const std::array<k::TensorSpec, 5> wrong{
+        {specs[0], specs[1], specs[2], specs[3], {{capacity, height, width}, k::DType::Int8}}};
+    (void)core::prepare_boxdecode_publication(F::MasksV1, wrong);
+  } catch (const std::invalid_argument&) {
+    rejected = true;
+  }
+  require(rejected, "V1 masks must be UInt8 [K,H,W]");
+}
 int main() {
   try {
     oriented();
+    masks_v1(1, 720, 1280);
+    masks_v1(1, 1, 1);
+    masks_v1(3, 427, 640);
     rcnn();
     for (int points : {1, 13, 17})
       masks_pose(points);

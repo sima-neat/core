@@ -80,9 +80,14 @@ opt.top_k = 100;
 | 자세 | `decode_pose(...)` | `pyneat.decode_pose(...)` | 박스 `[N, 6]` 및 키포인트 `[N, 17, 3]` float32: `x, y, visibility` |
 | 분할 | `decode_segmentation(...)` | `pyneat.decode_segmentation(...)` | 박스 `[N, 6]` float32 및 마스크 `[N, 160, 160]` uint8 |
 | 분할 + 포즈 | `decode_segmentation_pose(...)` | `pyneat.decode_segmentation_pose(...)` | 박스 `[N, 6]` float32, 마스크 `[N, 160, 160]` uint8, 키포인트 `[N, 17, 3]` float32 |
+| Segment Anything | `decode_segmentation(...)` | `pyneat.decode_segmentation(...)` | 박스 `[N, 6]` float32와 원본 이미지 크기의 마스크 `[N, H, W]` uint8(프롬프트 디코더에서는 N이 1) |
 | SuperPoint | `decode_superpoint(...)` | `pyneat.decode_superpoint(...)` | 키포인트 `[N,2]`, 점수 `[N]`, 디스크립터 `[N,D]` |
 
 축 정렬 감지 표시 그래프는 결과를 `SimaRender`에 전달할 수 있습니다. `decode_bbox(...)`는 기존 박스 선두 형식에만 사용하십시오. 이 함수와 `SimaRender`는 회전 박스를 지원하지 않습니다.
+
+## 레터박스 배치 {#letterbox-placement}
+
+`LetterboxPlacement::TopLeft` 같은 가운데가 아닌 레터박스([Preproc 크기 조정](/reference/nodes/preproc#resize-and-aspect-ratio) 참조)는 검출 프로필이 지원하며, 검출 프로필은 각 프레임의 모델-원본 아핀 변환으로 박스를 변환합니다. 대상은 YOLO 검출 계열, 디코딩된 YOLO, EfficientDet, DETR, DetrFocal, CenterNet, SSD입니다. 포즈, 세그멘테이션, RCNN 제안 프로필은 어긋난 결과를 반환하는 대신 이를 거부합니다. 가운데 배치 레터박스는 기존 변환을 유지합니다. Segment Anything 유형에는 별도의 요구 사항이 있습니다. [Segment Anything 규칙](#segment-anything-rules)을 참조하세요.
 
 ## 기존 DETR {#classic-detr}
 
@@ -124,6 +129,132 @@ node = pyneat.nodes.sima_box_decode(
 ```
 
 유한한 뒤집힌 크기는 기존 끝점 클리핑으로 면적이 0인 BBOX 레코드가 되며 선택된 쌍과 점수를 유지합니다. 비유한 좌표나 로짓은 게시 전에 실패합니다.
+
+## Segment Anything 마스크 {#segment-anything-masks}
+
+Segment Anything 모델마다 전용 디코드 타입이 있습니다. 프롬프트 디코더에서 BoxDecode는 디코더 한 번의 실행을 하나의 검출로 바꿉니다. 결과는 원본 이미지 크기의 선택된 마스크, 그 마스크를 감싸는 박스, 예측된 IoU입니다. EfficientSAM3 개념 이미지 모델에서는 한 번의 실행을 각각 자체 마스크를 가진 최대 `top_k`개의 검출로 바꿉니다.
+
+| 모델 | `decode_type`(토큰) | 이미지를 받는 Model의 전처리 | 디코더 옵션 |
+| --- | --- | --- | --- |
+| MobileSAM | `MobileSam`(`mobilesam`) | 인코더: `resize.mode=Letterbox`, `resize.placement=TopLeft`, 1024×1024, `pad_value=116`; `preset=ImageNet` | `multimask_output` |
+| EdgeTAM | 마스크에는 `EdgeTamSeg`(`edgetam-seg`), 추적에는 `EdgeTamTrack`(`edgetam-track`) | 이미지 인코더: `resize.mode=Stretch`, 1024×1024, 패딩 없음; `preset=ImageNet` | `multimask_output` |
+| EfficientSAM-T / -S | `EfficientSam`(`efficientsam`) | 인코더: `resize.mode=Stretch`, 1024×1024, 패딩 없음; 프리셋 없음, `normalize.enable=On`(값은 0–1, 정규화는 인코더가 직접 수행) | `multimask_output`은 true로 유지 |
+| EfficientSAM3 대화형 | `EfficientSam3`(`efficientsam3`) | 이미지 인코더: `resize.mode=Stretch`, 1008×1008, 패딩 없음; `normalize.enable=On`과 `normalize.mean`, `normalize.stddev` (0.5, 0.5, 0.5) | `multimask_output` |
+| EfficientSAM3 개념 | `EfficientSam3`(`efficientsam3`) | 개념 이미지 모델 자체(텐서 경로): 애플리케이션이 이미지를 1008×1008로 늘리고 [−1, 1]로 스케일링한 뒤 `resize_mode="stretch"`인 `semantic.preprocess`를 붙입니다 | `top_k`, `score_threshold` |
+
+Python도 같은 이름을 사용합니다: `pyneat.BoxDecodeType.MobileSam`, `EdgeTamSeg`, `EdgeTamTrack`, `EfficientSam`, `EfficientSam3`. MobileSAM은 정규화한 뒤 0으로 패딩하며, 이는 ImageNet 평균 픽셀(124, 116, 104)에 해당합니다. `pad_value=116`은 이를 근사합니다. 마스크는 패딩 영역을 덮지 않습니다. EfficientSAM3 Model은 출력이 검출 `[Q, 6]`과 Q 채널 마스크 로짓이면 개념 이미지 모델로, 그렇지 않으면 프롬프트 디코더로 처리됩니다. 각 모델의 전체 워크플로는 [sima-neat/models](https://github.com/sima-neat/models)에 있는 모델별 README에 나와 있습니다. 예를 들어 [EdgeTAM README](https://github.com/sima-neat/models/tree/develop/models/edgetam)를 참조하세요.
+
+`Model::Options::multimask_output`(Python: `ModelOptions.multimask_output`)은 업스트림 `predict(multimask_output=...)`에 대응합니다. 모호한 클릭 한 번에는 `true`로 두고, 박스나 여러 점에는 `false`로 설정하세요.
+
+| `decode_type` | `multimask_output=true`(기본값) | `multimask_output=false` |
+| --- | --- | --- |
+| `MobileSam` | 마스크 1–3 중 예측 IoU가 가장 높은 것 | 마스크 0 |
+| `EdgeTamSeg`, `EdgeTamTrack` | 마스크 1–3 중 예측 IoU가 가장 높은 것 | 마스크 0이 안정적이면 마스크 0, 아니면 마스크 1–3 중 최상 |
+| `EfficientSam` | 마스크 0–2 중 예측 IoU가 가장 높은 것 | 거부: EfficientSAM은 단일 마스크 토큰을 내보내지 않습니다 |
+| `EfficientSam3` 프롬프트 디코더 | 4개면 마스크 1–3, 3개면 마스크 0–2 중 예측 IoU가 가장 높은 것 | 4개: EdgeTAM과 같음. 3개: 거부 |
+| `EfficientSam3` 개념 | `score_threshold`를 넘는 최대 `top_k`개의 쿼리 | 거부: 개념 검출에는 멀티마스크 선택이 없습니다 |
+
+- SAM2와 같이, 마스크 0의 로짓 중 −0.05를 넘는 것의 98% 이상이 0.05도 넘으면 마스크 0을 안정적이라고 봅니다.
+- 마스크 채널 하나로 내보낸 디코더는 어느 값이든 그 마스크를 사용합니다.
+- 다른 디코드 타입은 `multimask_output=false`를 거부합니다. 이 선택은 `Model`마다 하며, 두 디코더 Model이 같은 MPK를 사용할 수 있습니다.
+
+### 각 출력의 의미 {#segment-anything-outputs}
+
+BoxDecode 텐서는 [버전이 지정된 마스크 페이로드](#versioned-masks-payload)를 사용합니다. `decode_segmentation`은 박스 `[N, 6]`과 마스크 `[N, H, W]`를 반환합니다.
+
+- **박스.** 원본 이미지 픽셀 단위의 `x1, y1, x2, y2`입니다. 프롬프트 디코더의 박스는 마스크 픽셀을 감싸는 최소 박스입니다. `x2`와 `y2`는 마스크의 마지막 열과 행의 다음 위치이므로 `x2 - x1`은 마스크의 너비입니다. 개념 검출의 박스는 검출 헤드에서 가져와 원본 이미지에 맞게 스케일링하며 잘라내지 않습니다.
+- **점수.** 선택된 마스크의 예측 IoU, 또는 개념 쿼리의 점수입니다.
+- **클래스.** 선택된 마스크 채널(위 표의 인덱스), 또는 개념 쿼리에서는 0입니다.
+- **마스크.** `uint8`이며, 원본 이미지 크기로 리샘플링한 로짓이 0보다 큰 위치는 255, 나머지는 0입니다.
+- **개수.** 프롬프트 디코더에서는 항상 1입니다. 빈 마스크의 박스는 모두 0이지만 점수와 클래스는 유지됩니다. 업스트림과 같이 EdgeTAM의 객체 점수가 0 이하이면 마스크가 비워집니다. 개념 모델은 유지한 쿼리를 점수 내림차순(동점은 쿼리 인덱스 순)으로 반환합니다.
+
+`EdgeTamSeg`와 다른 모든 Segment Anything 타입은 BoxDecode 텐서만 반환합니다. `EdgeTamTrack`을 사용하면 디코더 자체의 출력이 그 뒤에 이어집니다. [EdgeTAM 추적](#edgetam-tracking)을 참조하세요.
+
+`SimaRender`는 이 마스크를 그리지 않습니다. 이 렌더러는 마스크가 프레임보다 작은 헤더 없는 분할 페이로드만 그립니다. Segment Anything 마스크는 `decode_segmentation` 결과로 그리세요.
+
+### 규칙 {#segment-anything-rules}
+
+- **디코더 출력.** 프롬프트 디코더는 지정한 모델의 마스크 수(1, 3 또는 4)만큼의 마스크 로짓, 마스크마다 하나의 예측 IoU, 그리고 EdgeTAM의 경우 객체 점수를 내보냅니다. INT8, BF16, FP32 출력을 허용합니다. 개념 이미지 모델은 검출 `[Q, 6]`과 쿼리별 마스크 로짓을 내보냅니다.
+- **옵션.** 프롬프트 디코더: `top_k`는 0 또는 1로, `nms_iou_threshold`는 0으로 두세요. `score_threshold`는 1보다 작아야 하며 그 밖에는 무시됩니다. `num_classes`는 마스크 수 또는 0입니다. 개념 이미지 모델: `top_k`를 1..Q로 설정하세요.
+- **이미지 기하 정보.** 캔버스, 원본 이미지 크기, 리사이즈는 디코더 입력의 `tensor.semantic.preprocess`에서 가져오며 표와 일치해야 합니다. 일치하지 않으면 빌드가 바꿔야 할 설정을 알려 주며 실패합니다. 인코더 출력을 `.cvu()`로 디코더에 전달하고, 프롬프트 디코더는 `build(inputs)` 또는 `execution_plan(inputs)`로 입력에서 빌드하세요. 개념 이미지 모델의 텐서 경로에서는 그 픽셀 텐서에 이 정보를 붙이세요.
+- **한 번 리사이즈된 이미지 전체.** 리사이즈 전 크롭이나 ROI는 거부되며, 디코더가 재현하지 못하는 스케일 크기도 마찬가지입니다. MobileSAM은 단독 `Preproc` 노드가 아니라 이미지를 전처리하는 Model에서 `resize.placement=TopLeft`로 레터박스를 적용하세요. 이 방식은 Segment Anything과 같이 반올림합니다. 직접 붙이는 정보에는 아핀 변환을 포함하세요. `affine_m00` = 원본 너비 / 스케일된 너비, `affine_m11` = 원본 높이 / 스케일된 높이입니다.
+- **러너당 이미지 크기 하나.** 마스크가 원본 이미지 크기를 가지므로, 빌드된 러너는 하나의 크기만 처리합니다. `Model::run`은 새 크기에 대해 다른 러너를 빌드합니다. 스트리밍 그래프는 크기가 다른 프레임을 거부합니다.
+
+### 인코더와 디코더 {#segment-anything-example}
+
+MobileSAM 예제입니다. 다른 모델에는 표에 있는 해당 모델의 인코더 설정과 디코드 타입을 사용하세요.
+
+```python
+encoder_options = pyneat.ModelOptions()
+encoder_options.preprocess.resize.mode = pyneat.ResizeMode.Letterbox
+encoder_options.preprocess.resize.placement = pyneat.LetterboxPlacement.TopLeft
+encoder_options.preprocess.resize.pad_value = 116
+encoder_options.preprocess.preset = pyneat.NormalizePreset.ImageNet
+encoder = pyneat.Model("/path/to/mobile_sam_image_encoder_mpk.tar.gz", encoder_options)
+
+options = pyneat.ModelOptions()
+options.decode_type = pyneat.BoxDecodeType.MobileSam
+options.multimask_output = False  # a box prompt; keep True for one click
+decoder = pyneat.Model("/path/to/mobile_sam_prompt_decoder_mpk.tar.gz", options)
+
+embeddings = encoder.run([image])[0]
+# .cvu() keeps the encoder's preprocess metadata on the embeddings.
+outputs = decoder.run([embeddings.cvu(), point_encoding, point_types])
+result = pyneat.decode_segmentation(outputs)[0]
+box = result.boxes.to_numpy()[0]  # x1, y1, x2, y2, IoU, mask index
+mask = result.masks.to_numpy()[0]  # uint8 [H, W], 0 or 255
+```
+
+### EdgeTAM 추적 {#edgetam-tracking}
+
+EdgeTAM의 메모리 인코더와 메모리 뱅크에는 선택된 마스크의 저해상도 로짓과 그 객체 포인터가 필요하지만, BoxDecode는 이를 디코딩하지 않습니다. `EdgeTamTrack`은 BoxDecode 텐서를 반환한 뒤, 같은 실행의 디코더 출력을 같은 Model이 BoxDecode 없이 반환하는 것과 정확히 같게 반환합니다. 출력은 `mask_logits` `[1, 256, 256, 4]`, `iou_scores` `[1, 4]`, `object_score_logits` `[1, 1]`, `object_pointers` `[1, 4, 256]`이며 모두 float32입니다. 각 출력마다 프레임당 한 번의 변환이 듭니다. 첫 번째 텐서만 디코딩하세요. 원시 텐서에는 검출 태그가 붙지 않습니다. BoxDecode 없는 모델 경로가 텐서를 반환할 수 없으면 `EdgeTamTrack`은 거부됩니다.
+
+- 검출의 클래스는 선택된 플레인입니다. 메모리 인코더에는 모델 README의 설명대로 1024×1024로 업샘플링한 `mask_logits[0, :, :, class]`를 사용하세요.
+- 두 개 이상의 점으로 된 프롬프트에는 `multimask_output=False`를 설정하고, 클릭 한 번과 추적 중인 프레임에는 `True`로 두세요. 클래스는 어느 규칙이 선택한 플레인이든 알려 줍니다.
+- 메모리 뱅크에는 `multimask_output=True`이면 `object_pointers[0, class]`를 사용하세요. `False`이면 `object_pointers[0, 0]`을 사용하세요. SAM 2는 안정성 폴백이 플레인 1–3의 마스크를 선택하더라도 단일 마스크 포인터를 유지합니다.
+- 객체 점수가 0 이하이면 마스크와 그 박스가 비워지지만, 클래스는 여전히 선택된 플레인을 가리킵니다. 메모리 인코더에 전달하는 로짓에는 README의 객체 점수 규칙을 적용하세요.
+
+```python
+options = pyneat.ModelOptions()
+options.decode_type = pyneat.BoxDecodeType.EdgeTamTrack
+decoder = pyneat.Model("/path/to/edgetam_mask_decoder_mpk.tar.gz", options)
+
+outputs = decoder.run(decoder_inputs)
+result = pyneat.decode_segmentation(outputs[:1])[0]
+plane = int(result.boxes.to_numpy()[0, 5])
+logits = outputs[1].to_numpy()[0, :, :, plane]  # [256, 256] low-resolution logits
+pointer = outputs[4].to_numpy()[0, plane if options.multimask_output else 0]  # [256]
+```
+
+### EfficientSAM3 개념 {#efficientsam3-concept}
+
+```python
+options = pyneat.ModelOptions()
+options.decode_type = pyneat.BoxDecodeType.EfficientSam3
+options.top_k = 20
+options.score_threshold = 0.5
+options.preprocess.kind = pyneat.InputKind.Tensor  # two inputs: pixels and packed text
+model = pyneat.Model("/path/to/efficientsam3_image_model_mpk.tar.gz", options)
+
+# Stretch to 1008x1008 and scale to [-1, 1], as SAM 3 does, and record that geometry.
+stretched = cv2.resize(rgb, (1008, 1008), interpolation=cv2.INTER_LINEAR)
+pixels = pyneat.Tensor.from_numpy(stretched.astype(np.float32) / 127.5 - 1, copy=True,
+                                  layout=pyneat.TensorLayout.HWC)
+facts = pyneat.PreprocessRuntimeMeta()
+facts.resize_mode = "stretch"
+facts.original_width, facts.original_height = rgb.shape[1], rgb.shape[0]
+facts.resized_width = facts.resized_height = 1008
+facts.affine_m00 = facts.original_width / 1008  # model-to-original scale
+facts.affine_m11 = facts.original_height / 1008
+semantic = pixels.semantic
+semantic.preprocess = facts
+pixels.semantic = semantic
+
+outputs = model.run([pixels, packed_text])
+result = pyneat.decode_segmentation(outputs)[0]
+boxes = result.boxes.to_numpy()  # [N, 6]: x1, y1, x2, y2, score, 0
+masks = result.masks.to_numpy()  # uint8 [N, H, W]
+```
 
 ## YOLOv8 및 YOLO11 회전 바운딩 박스 {#yolov8-oriented-boxes}
 
@@ -281,6 +412,10 @@ options.yolox_seg_pose.pose_classes = [0, 5]
 - `BoxDecodeOptions` 목록이 비어 있으면 모델 설정을 상속합니다. 목록을 설정하지 않으면 모든 클래스에 키포인트가 생성됩니다.
 - ID는 중복 없이 `[0, num_classes)` 범위에 있어야 합니다. 이 옵션은 `YoloXSegPose`에서만 지원됩니다.
 
+### 버전이 지정된 마스크 페이로드 {#versioned-masks-payload}
+
+Segment Anything 출력처럼 160×160이 아닌 마스크는 앞부분의 개수 대신 버전이 지정된 헤더를 사용합니다. 레이아웃은 `pipeline/DetectionTypes.h`의 [`SegmentationMasksHeaderV1`](/reference/cppapi/structs/simaai-neat-segmentationmasksheaderv1)이며, 헤더 뒤에 `RawBox` 레코드가 오고, 그 뒤에 레코드마다 하나의 `uint8` 마스크(값 0 또는 255)가 옵니다. `decode_segmentation`으로 읽으세요. 이 함수는 박스와 마스크를 반환하고 잘못된 헤더나 범위는 거부합니다. 텐서에는 `BBOX` 태그가 그대로 유지되며, `decode_segmentation`과 `decode_bbox`는 매직 값으로 페이로드를 인식하므로 기존 분할 페이로드는 변경되지 않습니다. `SimaRender`는 이 페이로드를 받지 않습니다.
+
 ## `model.run`이 원본 헤더를 반환할 때
 
 일부 모델 경로는 디코딩된 `BBOX` 텐서 대신 `model.run(...)`에서 원시 특징 맵 헤드를 반환합니다. 이는 실패한 실행이 아닙니다. 모델이 실행되었지만 해당 경로에 출력을 읽는 시점에 BoxDecode가 포함되지 않았다는 의미입니다.
@@ -362,6 +497,11 @@ MPK는 텐서 계약과 디코딩 계열 정보를 제공합니다. 필터링 �
 | `BoxDecodeType::Ssd` | `ssd` | 주문된 헤드 지오메트리에서 선택한 정확한 준비된 SSD300, SSD-Mobile-300, SSD-Mobile-320 또는 SSDlite-Mobile-320 계약 |
 | `BoxDecodeType::SuperPoint` | `superpoint` | SuperPoint 검출기 및 특징점 후처리 |
 | `BoxDecodeType::Detr` | `detr` | DETR 스타일의 트랜스포머 기반 객체 검출 |
+| `BoxDecodeType::MobileSam` | `mobilesam` | MobileSAM 프롬프트 디코더(왼쪽 위 레터박스) |
+| `BoxDecodeType::EdgeTamSeg` | `edgetam-seg` | EdgeTAM 마스크 디코더와 객체 점수(늘이기) |
+| `BoxDecodeType::EdgeTamTrack` | `edgetam-track` | `EdgeTamSeg` 결과 뒤에 추적용 디코더 원시 출력 |
+| `BoxDecodeType::EfficientSam` | `efficientsam` | EfficientSAM 프롬프트 디코더, 멀티마스크 토큰 3개(늘이기) |
+| `BoxDecodeType::EfficientSam3` | `efficientsam3` | EfficientSAM3 프롬프트 디코더, 또는 유지한 쿼리마다 마스크 하나인 개념 이미지 모델(늘이기) |
 | `BoxDecodeType::EffDet` | `effdet` | 효율적인 객체 감지 |
 | `BoxDecodeType::RcnnStage1` | `rcnn-stage1` | 순서가 지정된 RPN 헤드 다섯 개; 전역 NMS 후 영역 수준별 top-K |
 | `BoxDecodeType::Centernet` | `centernet` | CenterNet 감지 |
@@ -450,7 +590,7 @@ masks = seg.masks.to_numpy()
 
 ## 업그레이드
 
-이전 BoxDecode 옵션은 ABI 6을 도입했습니다. 현재 원본 연산 옵션은 ABI 8 (`libsima_neat.so.8`)이 필요합니다. 일치하는 헤더와 라이브러리로 C++ 앱, 플러그인, Python 바인딩을 다시 빌드하고 호환성 심볼릭 링크로 ABI 5/6/7 바이너리를 로드하지 마세요.
+이전 BoxDecode 옵션은 ABI 6을 도입했습니다. 현재 원본 연산 옵션은 ABI 7 (`libsima_neat.so.7`)이 필요합니다. 일치하는 헤더와 라이브러리로 C++ 앱, 플러그인, Python 바인딩을 다시 빌드하고 호환성 심볼릭 링크로 ABI 5 또는 6 바이너리를 로드하지 마세요.
 
 
 ### 결합 YOLOX 입력 허용 검사
