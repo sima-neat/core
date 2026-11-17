@@ -26,6 +26,8 @@ SCRIPT_DIR = SCRIPT.parent
 GENAI_TEST_DIR = ROOT / "pcie_host" / "python" / "tests"
 WORKFLOW = ROOT / ".github" / "workflows" / "pcie-host-windows.yml"
 MAIN_WORKFLOW = ROOT / ".github" / "workflows" / "vulcan-ci.yml"
+WORKFLOW_BASH_SKIP = (
+    "workflow bash steps run on Linux runners; executed by the Linux contract job")
 sys.path.insert(0, str(SCRIPT_DIR))
 sys.path.insert(0, str(GENAI_TEST_DIR))
 SPEC = importlib.util.spec_from_file_location("build_windows", SCRIPT)
@@ -869,6 +871,7 @@ class WindowsCiContracts(unittest.TestCase):
     self.assertIn("MAX_CANDIDATE_BYTES", acquisition)
     self.assertIn("Scheduler candidate contains undeclared resources", acquisition)
 
+  @unittest.skipIf(os.name == "nt", WORKFLOW_BASH_SKIP)
   def test_main_ci_exact_windows_dependency_selectors_fail_closed(self):
     source = MAIN_WORKFLOW.read_text(encoding="utf-8")
     job = source.split("  validate-windows-cohort-selectors:\n", 1)[1].split(
@@ -904,6 +907,7 @@ class WindowsCiContracts(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn(error, result.stderr)
 
+  @unittest.skipIf(os.name == "nt", WORKFLOW_BASH_SKIP)
   def test_main_ci_windows_runs_are_validation_only_and_pass_preflight(self):
     # A push cannot supply an upgrade baseline or first-release exemption, so
     # Vulcan CI validates Windows and only a direct dispatch can publish it.
