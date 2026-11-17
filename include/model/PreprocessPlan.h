@@ -88,6 +88,15 @@ enum class TransformType {
   Tessellate = 5,    ///< MLA-tile reshuffle.
 };
 
+/// Where a letterbox places the resized image on the model canvas.
+/// @ingroup model
+enum class LetterboxPlacement {
+  Center = 0, ///< Split the padding evenly between both sides of each axis (YOLO convention).
+  /// Image at the canvas origin; all padding on the right and bottom. The shorter side rounds to
+  /// the nearest pixel, as Segment Anything resizes (a centered letterbox rounds it up).
+  TopLeft = 1,
+};
+
 /// Resize / letterbox / crop parameters.
 /// @ingroup model
 struct ResizeSpec {
@@ -103,6 +112,9 @@ struct ResizeSpec {
   std::optional<ResizeInterpolation> interpolation;
   /// Resize the shorter source axis before center cropping. Crop only; absent means cover.
   std::optional<int> shorter_side;
+  /// Image placement on the canvas. Valid only with `mode == Letterbox`. Last, so existing
+  /// positional initializers keep their meaning.
+  LetterboxPlacement placement = LetterboxPlacement::Center;
 };
 
 /// Color-format conversion parameters.

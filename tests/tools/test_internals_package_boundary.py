@@ -151,6 +151,10 @@ class InternalsPackageBoundaryTest(unittest.TestCase):
 
             policy = {'platform-version': '3.0.0', 'sdk': {'channel': 'develop'},
                       'elxr_version': '3.0.0_master_B2372', 'sysroot-version': '3.0.0~pre2372'}
+            core_manifest = deps / "manifest.json"
+            core_manifest.write_text(json.dumps({
+                'platform-version': policy['platform-version'], 'sdk': policy['sdk'],
+            }))
             (artifact / 'llima-package-manifest.json').write_text(json.dumps(policy))
             (artifact / 'metadata.json').write_text(json.dumps({'resources-checksum': {
                 path.name: hashlib.sha256(path.read_bytes()).hexdigest() for path in artifact.iterdir()}}))
@@ -161,6 +165,8 @@ REPO_ROOT={shlex.quote(str(ROOT))}
 python3() {{
   if [[ "$1" == tools/build_dependencies.py && "$2" == sdk-policy ]]; then
     printf '%s\\n' {shlex.quote(json.dumps(policy))}
+  elif [[ "$1" == tools/ci/scheduler_sdk_policy.py ]]; then
+    command python3 "$@" --core-manifest {shlex.quote(str(core_manifest))}
   else
     command python3 "$@"
   fi
