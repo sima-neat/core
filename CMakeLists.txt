@@ -556,6 +556,13 @@ if (SIMANEAT_DATAFLOW_SOURCE_DIR)
   if (NOT TARGET SimaRunner::memory)
     find_package(SimaRunner CONFIG QUIET COMPONENTS memory)
   endif()
+  # The MLA operator (H1): the runtime builds dataflow::soc where SimaRunner::mla exists, on the
+  # Cortex-A65 only. Looked for here, as the memory package is and for the same reason, in a call
+  # of its own so that a Runner without the MLA component still gives device memory. Not found: no
+  # target, and a model route stays on GStreamer (DataflowGraphCompiler.cpp).
+  if (NOT TARGET SimaRunner::mla)
+    find_package(SimaRunner CONFIG QUIET COMPONENTS mla)
+  endif()
   simaneat_add_dataflow_runtime("${SIMANEAT_DATAFLOW_SOURCE_DIR}")
   set_target_properties(dataflow_core PROPERTIES
     CXX_VISIBILITY_PRESET hidden
@@ -588,6 +595,19 @@ if (SIMANEAT_DATAFLOW_SOURCE_DIR)
     target_sources(sima_neat_static PRIVATE $<TARGET_OBJECTS:dataflow_runner_memory>)
     target_link_libraries(sima_neat PRIVATE SimaRunner::memory)
     target_compile_definitions(sima_neat_objects PRIVATE SIMANEAT_WITH_DATAFLOW_DEVICE_MEMORY=1)
+  endif()
+  # The runtime's SoC operators (H1: soc::MlaOp), embedded the same way. They need device memory
+  # (an MLA port is a DMA-BUF), so they are taken only with dataflow_runner_memory. The Runner's
+  # MLA library, libsimaai_runner_mla, becomes a direct dependency of libsima_neat.so; it is
+  # installed beside libneatdmabufmemory (neat/runtime), where the library's RUNPATH finds it.
+  if (TARGET dataflow_soc AND TARGET dataflow_runner_memory)
+    set_target_properties(dataflow_soc PROPERTIES
+      CXX_VISIBILITY_PRESET hidden
+      VISIBILITY_INLINES_HIDDEN ON)
+    target_sources(sima_neat PRIVATE $<TARGET_OBJECTS:dataflow_soc>)
+    target_sources(sima_neat_static PRIVATE $<TARGET_OBJECTS:dataflow_soc>)
+    target_link_libraries(sima_neat PRIVATE SimaRunner::mla)
+    target_compile_definitions(sima_neat_objects PRIVATE SIMANEAT_WITH_DATAFLOW_SOC=1)
   endif()
 endif()
 

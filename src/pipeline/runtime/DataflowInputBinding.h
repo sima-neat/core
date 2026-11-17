@@ -42,6 +42,8 @@ struct DataflowFieldBinding {
 // A leaf binds a TensorSpec; a record (an item of several tensors: TensorList, TensorSet, a
 // positional Tensor::record) a RecordSchema with positional field names "0", "1", ... and one
 // DataflowFieldBinding per field.
+struct DataflowPulledTensor; // DataflowMlaRoute.h
+
 struct DataflowInputBinding {
   enum class Planes { None, Nv12, I420 };
   pipeline_internal::df::PortSpec spec;
@@ -53,6 +55,9 @@ struct DataflowInputBinding {
   std::size_t rank = 0; ///< Core rank: the spec's for a dense tensor, 2 ({H, W}) for planes
   std::vector<DataflowFieldBinding> fields; ///< a record's fields; empty for a leaf
   std::string text;                         ///< the spec as one line, for messages
+  /// A model route (H1): what a pulled message's tensor is, where the Fetch's port is the model
+  /// stage's output and not this spec. The Run's configuration owns it. Null: the pushed tensor.
+  const DataflowPulledTensor* pulled = nullptr;
   bool is_record() const noexcept {
     return !fields.empty();
   }
@@ -78,6 +83,10 @@ bind_dataflow_item(const InputOptions& declared, std::span<const Tensor> item, s
              ? bind_dataflow_record(declared, item, why)
              : bind_dataflow_input(declared, item.empty() ? nullptr : item.data(), why);
 }
+
+// Fixes every bounded axis of a dense leaf `binding` at its bound (a model's input has one size)
+// and describes it again. "" when done; otherwise why the spec is not valid.
+std::string fix_dataflow_binding_at_bound(DataflowInputBinding& binding);
 
 // "" when `tensor` fits `binding`; otherwise why it does not.
 std::string dataflow_binding_mismatch(const DataflowInputBinding& binding, const Tensor& tensor);

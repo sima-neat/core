@@ -20,7 +20,8 @@ namespace {
 //                    bounds (Core checks it first, so this row is the backstop):
 //                    misconfig.input_shape.
 //   Timeout          Process: FR8, a pull's deadline: PullStatus::Timeout, not latched. Stop/Drain:
-//                    SR2/SR3, logged by the caller only.
+//                    SR2/SR3, logged by the caller only. Origin Runner (H1): a device job that did
+//                    not finish in the Runner's time: infra.accelerator_execution_failed, latched.
 //   Internal         Runner/Kernels/Codecs origins (H0b on): infra.accelerator_execution_failed.
 //   ResourceExhausted, Unsupported  origin Runner (H0b, a device pool at Graph::build or at the
 //                    input's first push): resource.device_memory_exhausted (no CMA) and
@@ -43,6 +44,11 @@ DataflowErrorMapping row(const df::Error& e) noexcept {
     // FR2 is a push outcome (try_push false); a pull never returns it (WORKER.md 15.2).
     return {PullStatus::Error, error_codes::kRuntimePull, false};
   case df::ErrorCode::Timeout:
+    // Origin Runner (H1): a job the device did not finish in the Runner's own time (MlaOp). The
+    // operator failed and its Session with it: the Run's terminal error, not a pull's deadline.
+    if (e.origin == df::Origin::Runner) {
+      return {PullStatus::Error, error_codes::kAcceleratorExecutionFailed, true};
+    }
     return {e.phase == df::Phase::Process ? PullStatus::Timeout : PullStatus::Error,
             error_codes::kRuntimePull, false};
   case df::ErrorCode::Closed:

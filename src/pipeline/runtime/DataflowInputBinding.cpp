@@ -363,6 +363,21 @@ std::optional<DataflowInputBinding> bind_dataflow_input(const InputOptions& decl
   return binding;
 }
 
+std::string fix_dataflow_binding_at_bound(DataflowInputBinding& binding) {
+  auto* spec = std::get_if<df::TensorSpec>(&binding.spec.payload);
+  if (!spec || spec->shape.fixed()) {
+    return {};
+  }
+  for (std::size_t i = 0; i < spec->shape.rank; ++i) {
+    spec->shape.dims[i] = df::Dim(spec->shape.dims[i].max);
+  }
+  if (const df::Status status = df::validate(binding.spec)) {
+    return std::string("the input's spec is not valid: ") + status->message;
+  }
+  binding.text = describe_spec(binding.spec);
+  return {};
+}
+
 std::string dataflow_binding_mismatch(const DataflowInputBinding& binding, const Tensor& tensor) {
   if (binding.is_record()) {
     return "one tensor where a record of " + std::to_string(binding.fields.size()) +

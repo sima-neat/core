@@ -11,6 +11,7 @@
 #include "pipeline/internal/SimaaiGstCompat.h"
 #include "pipeline/internal/TensorTransfer.h"
 #include "pipeline/runtime/DataflowInputPort.h"
+#include "pipeline/runtime/DataflowMlaRoute.h"
 #include "pipeline/runtime/DataflowTensorCodec.h"
 
 #include <gst/allocators/gstdmabuf.h>
@@ -113,7 +114,9 @@ std::shared_ptr<TensorBuffer> slot_storage(const df::Message& message, const df:
         "Run::pull: no storage for a device slot's DMA-BUF (Dataflow backend)");
   }
   // D5: the CPU reads the slot through the pool's own mapping. The slot was written by the CPU and
-  // cleaned at its push, so the view is current and a read needs no epoch and no second mmap.
+  // cleaned at its push, or (H1, a model stage's output) by the device, and the Worker invalidated
+  // the CPU's view of it before it published the message: either way the view is current and a
+  // read needs no epoch and no second mmap.
   storage->map_fn = SlotMapper{storage->holder, const_cast<std::byte*>(bytes.data()), bytes.size()};
   return storage;
 }
@@ -121,15 +124,17 @@ std::shared_ptr<TensorBuffer> slot_storage(const df::Message& message, const df:
 } // namespace
 
 bool wrap_tensor(const Tensor& t, const df::PortSpec& port_spec, std::size_t slot_bytes,
-                 std::uintptr_t align_mask, df::Block& out) {
+                 std::uintptr_t align_mask, df::Block& out, bool any_device_memory) {
   const df::MemoryKind port = port_spec.memory;
   if (port == df::MemoryKind::Host || !t.storage || t.storage->kind != StorageKind::GstSample ||
       !t.storage->holder || t.byte_offset < 0) {
     return false;
   }
   const TensorBuffer& storage = *t.storage;
-  if (storage.device.type != device_of(port).type ||
-      storage.map_fn.target_type() == typeid(SlotMapper) ||
+  const bool kind_fits = storage.device.type == device_of(port).type ||
+                         (any_device_memory && (storage.device.type == DeviceType::SIMA_CVU ||
+                                                storage.device.type == DeviceType::SIMA_MLA));
+  if (!kind_fits || storage.map_fn.target_type() == typeid(SlotMapper) ||
       pipeline_internal::tensor_has_device_gstsample_producer_lifetime(t)) {
     return false;
   }
@@ -272,6 +277,33 @@ std::shared_ptr<TensorBuffer> leaf_storage(bool owned, const df::Message& messag
   return codec::owned_copy({static_cast<const std::byte*>(mapping.data) + first, size});
 }
 
+// H1: the leaf of a model route's pulled message, the stage's published tensor over `storage`
+// (the output buffer, from `byte_offset`), as InputStreamPull.cpp's apply_tensor_set_descriptor
+// leaves a GStreamer Run's.
+void fill_stage_leaf(Tensor& tensor, const DataflowPulledTensor& pulled,
+                     std::shared_ptr<TensorBuffer> storage, std::int64_t byte_offset) {
+  if (storage->kind == StorageKind::GstSample) {
+    // The output buffer as a GStreamer Run's appsink hands it out: a DMA-BUF carrier without a
+    // device placement, its one segment named as the stage's publication names the allocation.
+    storage->device = {DeviceType::CPU, 0};
+    storage->sima_mem_target_flags = 0U;
+    if (storage->sima_segments.size() == 1U) {
+      storage->sima_segments.front().name = pulled.route.segment_name;
+    }
+  }
+  tensor.storage = std::move(storage);
+  tensor.dtype = pulled.dtype;
+  tensor.layout = pulled.layout;
+  tensor.shape = pulled.shape;
+  tensor.strides_bytes = pulled.strides_bytes;
+  tensor.byte_offset = byte_offset + pulled.byte_offset;
+  tensor.device = {DeviceType::CPU, 0};
+  tensor.read_only = true;
+  tensor.route = pulled.route;
+  tensor.semantic.quant = pulled.quant;
+  tensor.semantic.tess.emplace().format = pulled.format;
+}
+
 } // namespace
 
 Sample pulled_sample(const DataflowInputBinding& binding,
@@ -279,6 +311,26 @@ Sample pulled_sample(const DataflowInputBinding& binding,
                      TensorList tensors) {
   Stamp stamp;
   codec::core_stamp(message.stamp(), streams, stamp);
+  if (const DataflowPulledTensor* const pulled = binding.pulled) {
+    Sample out;
+    out.kind = SampleKind::TensorSet;
+    out.owned = owned;
+    out.tensors = std::move(tensors);
+    out.media_type = "application/vnd.simaai.tensor";
+    out.payload_type = PayloadType::Tensor;
+    out.payload_tag = pulled->format;
+    out.format = pulled->format;
+    out.stream_label = pulled->stage_key;
+    out.segment_name = pulled->stage_key;
+    out.output_index = pulled->route.logical_index;
+    out.logical_output_index = pulled->route.logical_index;
+    out.route_slot = pulled->route.route_slot;
+    std::int64_t offset = 0;
+    std::shared_ptr<TensorBuffer> storage = leaf_storage(owned, message, offset);
+    fill_stage_leaf(out.tensors.emplace_back(), *pulled, std::move(storage), offset);
+    pipeline_internal::apply_pulled_stamp(stamp, out);
+    return out;
+  }
   // Shaped as codec::make_sample shapes a host input's leaf.
   Sample out;
   out.kind = SampleKind::TensorSet;
@@ -308,7 +360,11 @@ void pulled_tensors(const DataflowInputBinding& binding,
   std::shared_ptr<TensorBuffer> storage = leaf_storage(owned, message, offset);
   out.clear();
   Tensor& leaf = out.emplace_back();
-  codec::fill_leaf(leaf, binding, message.extent(), std::move(storage), offset);
+  if (binding.pulled) {
+    fill_stage_leaf(leaf, *binding.pulled, std::move(storage), offset);
+  } else {
+    codec::fill_leaf(leaf, binding, message.extent(), std::move(storage), offset);
+  }
   leaf.envelope = std::move(envelope);
 }
 

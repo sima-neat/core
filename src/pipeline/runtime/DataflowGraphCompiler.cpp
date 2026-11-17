@@ -1,7 +1,9 @@
 // The Dataflow backend's graph compiler (H0 plan 3.4, 3.6; H0 step 10, H0c): whether a graph
 // qualifies for Dataflow and, when it does, its Run configuration. A qualifying graph has public
 // Inputs and Outputs only, each Output fed by exactly one Input, after the public boundaries
-// inside it are elided as compile_public_graph elides them. Each Input becomes one Feed with one
+// inside it are elided as compile_public_graph elides them; or it is an MLA-only model route (H1:
+// one Input, Model::inference() of a model whose inference is one MLA stage, one Output), which
+// becomes Feed -> MlaOp -> Fetch (DataflowMlaRoute.h). Each Input becomes one Feed with one
 // link per Output it feeds (a fan-out when there are several) and one Fetch per Output, on a
 // Session of its own (DataflowInputPort.cpp), in one Run state (DataflowRun.cpp). Everything else
 // (fan-in and combine, operators) is declined (DataflowBackendSelect.cpp). Here: qualification,
@@ -20,6 +22,7 @@
 
 #if defined(SIMANEAT_WITH_DATAFLOW)
 #include "pipeline/internal/DataflowRuntime.h"
+#include "pipeline/runtime/DataflowMlaRoute.h"
 #endif
 
 #include <algorithm>
@@ -108,6 +111,10 @@ struct Qualification {
   std::vector<std::size_t> outputs;  // public Output vertices, vertex order
   std::vector<std::size_t> producer; // per output (index into outputs): its input (into inputs)
   std::vector<std::size_t> fan_out;  // per input: how many outputs it feeds
+  // An MLA-only model route (H1): the model fragment's vertex, between the one Input and the one
+  // Output; kNoFragment otherwise.
+  static constexpr std::size_t kNoFragment = static_cast<std::size_t>(-1);
+  std::size_t fragment = kNoFragment;
 };
 
 // The public endpoints of the graph and who feeds whom, after compile_public_graph's boundary
@@ -116,7 +123,9 @@ struct Qualification {
 // are internal boundary declarations (a Branch's, a connected fragment's), not endpoints, and an
 // edge into one continues along its outgoing edges. What is left must be public Inputs feeding
 // public Outputs, each Output fed by exactly one Input: one Feed per Input, one link and one
-// Fetch per Output it feeds.
+// Fetch per Output it feeds. One other shape qualifies (H1), in a build that has the MLA operator:
+// one Input feeding one model fragment (Model::inference(): kind "ModelFragment") feeding one
+// Output. Whether the fragment is one MLA stage is the planner's question (derive_config).
 Qualification qualify(const DataflowGraphView& view) {
   Qualification q;
   if (view.model_route) {
@@ -128,8 +137,9 @@ Qualification qualify(const DataflowGraphView& view) {
     return q;
   }
   const std::size_t n = view.vertices.size();
-  enum class Kind { None, In, Out };
+  enum class Kind { None, In, Out, Fragment };
   std::vector<Kind> kind(n, Kind::None);
+  std::size_t fragments = 0;
   for (std::size_t vertex = 0; vertex < n; ++vertex) {
     const auto& node = view.vertices[vertex];
     if (!node) {
@@ -139,6 +149,10 @@ Qualification qualify(const DataflowGraphView& view) {
       kind[vertex] = Kind::In;
     } else if (dynamic_cast<const Output*>(node.get())) {
       kind[vertex] = Kind::Out;
+    } else if (node->kind() == "ModelFragment" && dataflow_has_mla_route() && fragments == 0U) {
+      kind[vertex] = Kind::Fragment;
+      q.fragment = vertex;
+      ++fragments;
     } else {
       q.reason = "node " + node_text(*node) + " is not supported before H1";
       return q;
@@ -240,6 +254,27 @@ Qualification qualify(const DataflowGraphView& view) {
 
   constexpr std::size_t kNone = static_cast<std::size_t>(-1);
   q.producer.assign(q.outputs.size(), kNone);
+  if (q.fragment != Qualification::kNoFragment) {
+    // The model route: exactly Input -> fragment -> Output.
+    const bool chain = q.inputs.size() == 1U && q.outputs.size() == 1U && links.size() == 2U &&
+                       ((links[0] == std::pair{q.inputs[0], q.fragment} &&
+                         links[1] == std::pair{q.fragment, q.outputs[0]}) ||
+                        (links[1] == std::pair{q.inputs[0], q.fragment} &&
+                         links[0] == std::pair{q.fragment, q.outputs[0]}));
+    if (!chain) {
+      q.reason = "a model fragment (" + text(q.fragment) +
+                 ") runs on Dataflow only between one Input and one Output";
+      return q;
+    }
+    if (dynamic_cast<const Output*>(view.vertices[q.outputs[0]].get())->options().combine_policy !=
+        CombinePolicy::None) {
+      q.reason = "an Output CombinePolicy (fan-in) is not supported before H1";
+      return q;
+    }
+    q.producer[0] = 0;
+    q.fan_out.assign(1, 1);
+    return q;
+  }
   for (const auto& [from, to] : links) {
     if (kind[from] != Kind::In || kind[to] != Kind::Out) {
       q.reason = "a connection from " + text(from) + " to " + text(to) +
@@ -457,6 +492,9 @@ DataflowRunConfig derive_config(const Graph& graph, const DataflowGraphView& vie
     input.input = *view.inputs[q.inputs[i]];
     // The Input and what it feeds, as the nodes of GStreamer's segment for it.
     std::vector<std::shared_ptr<Node>> route{view.vertices[q.inputs[i]]};
+    if (q.fragment != Qualification::kNoFragment) {
+      route.push_back(view.vertices[q.fragment]);
+    }
     for (std::size_t o = 0; o < q.outputs.size(); ++o) {
       if (q.producer[o] == i) {
         input.outputs.push_back(o); // output (vertex) order
@@ -470,6 +508,20 @@ DataflowRunConfig derive_config(const Graph& graph, const DataflowGraphView& vie
     // in its appsrc options: from here on memory_policy is never Auto.
     input.input.memory_policy =
         pipeline_internal::resolve_input_memory(input.input, route).allocation;
+    if (q.fragment != Qualification::kNoFragment) {
+      // H1: the fragment as one MLA stage, from the contracts GStreamer's build compiles for the
+      // same nodes. Its input pool is where GStreamer puts it: Dms0 in front of a model fragment
+      // (Auto), or as declared.
+      input.mla = plan_dataflow_mla_stage(route, why);
+      if (!input.mla) {
+        return config;
+      }
+      if (config.outputs[input.outputs.front()].terminal_drop) {
+        *why = "OutputOptions::drop behind a model is not supported on Dataflow yet (the MLA "
+               "operator's output link would drop, which Core does not count yet)";
+        return config;
+      }
+    }
     // A declared shape allows Run::alloc, whose slot the application holds while a push takes
     // another: the pool is sized for both (PORTS.md 5.4).
     input.feed_loans = input.input.shape.empty() ? 1U : 2U;
@@ -529,9 +581,11 @@ void warn_ignored_dataflow_options(const DataflowRunConfig& config) {
       ignored("InputOptions::block");
     if (in.fps_n != defaults.fps_n || in.fps_d != defaults.fps_d)
       ignored("InputOptions::fps_n/fps_d");
-    if (!in.buffer_name.empty())
+    // A model route's Input usually carries the model's own options (Model::input_appsrc_options),
+    // which name the model's input buffer and its preprocess metadata: nothing the caller set.
+    if (!in.buffer_name.empty() && !input.mla)
       ignored("InputOptions::buffer_name");
-    if (in.preprocess_meta.has_value() && in.preprocess_meta->enabled)
+    if (in.preprocess_meta.has_value() && in.preprocess_meta->enabled && !input.mla)
       ignored("InputOptions::preprocess_meta");
   }
   for (const DataflowOutputConfig& output : config.outputs) {

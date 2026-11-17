@@ -180,6 +180,10 @@ public:
     /// The port's memory is a device's (H0b): a pulled message's tensors are built from its
     /// DMA-BUF (dataflow_device::pulled_sample, pulled_tensors). Fixed at bind.
     bool device = false;
+    /// A model route (H1): the Feed's only consumer is the MLA, which reads a DMA-BUF of either
+    /// device heap, so a wrap takes an EV74 or an MLA tensor whatever the port's own kind (as
+    /// GStreamer's input of the route does). Fixed at bind.
+    bool any_device_memory = false;
     std::size_t slot_bytes = 0;
     std::uintptr_t wrap_mask = 0;
     /// A push has wrapped: a pulled message may carry the pushed storage (W2). Set, before its
@@ -201,7 +205,8 @@ private:
   }
   Bound* wait_bound_slow(df::Deadline deadline);
   Bound* bind_first(std::span<const Tensor> item, const char* where);
-  Bound* bind_locked(DataflowInputBinding binding);
+  // `where` names the call for the error of a binding the route's model does not take.
+  Bound* bind_locked(DataflowInputBinding binding, const char* where);
   df::Status still_full(Bound& bound);
   // A device input's validated geometry that `item` repeats, of a device tensor or of a CPU
   // tensor (DataflowDeviceMemory.cpp); nullptr otherwise. For a device tensor it asks Core's
@@ -231,6 +236,9 @@ private:
   std::atomic<bool> closed_{false};
   DataflowValidatedLeaf validated_;
   DataflowValidatedLeaf validated_device_; ///< a device input: of a device tensor (GstSample)
+  /// A model route (H1): the loaded MLA model of the input's stage (DataflowMlaRoute.h), for this
+  /// Run's one operator. Null otherwise.
+  std::shared_ptr<void> mla_model_;
 };
 
 // The backing of a Run::alloc Tensor on this backend: the loan of one slot of the input's pool.
@@ -315,7 +323,7 @@ inline DataflowPushOutcome DataflowInputPort::publish(Bound& b, std::span<const 
     df::Block wrap;
     wrapped = wrappable &&
               (device_port ? dataflow_device::wrap_tensor(first, b.binding.spec, b.slot_bytes,
-                                                          b.wrap_mask, wrap)
+                                                          b.wrap_mask, wrap, b.any_device_memory)
                            : dataflow_codec::wrap_block(first, b.slot_bytes, b.wrap_mask, wrap));
     const df::Acquire mode = block ? df::Acquire::Block : df::Acquire::Fail;
     df::Result<df::WriteLoan> allocated =

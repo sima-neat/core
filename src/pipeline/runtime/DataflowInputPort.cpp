@@ -36,6 +36,7 @@
 #include "pipeline/internal/ErrorUtil.h"
 #include "pipeline/internal/InputStream.h"
 #include "pipeline/internal/SampleUtil.h"
+#include "pipeline/runtime/DataflowMlaRoute.h"
 #include "pipeline/runtime/DataflowTensorCodec.h"
 #include "pipeline/runtime/RunAllocation.h"
 #include "pipeline/runtime/RunCore.h"
@@ -54,7 +55,11 @@ using dataflow_codec::throw_input_shape;
 
 // The Net of input `input` of `config` for `binding`, compiled: one Feed, and one link and one
 // Fetch per Output the input feeds (a fan-out when there are several: one OutPort, one link per
-// Output, each with that Output's depth and policy). Throws NeatError on a compile error.
+// Output, each with that Output's depth and policy). On a model route (H1, `mla_model`), the Feed's
+// one link goes to the MLA operator and the operator's output link to the one Fetch; both links
+// have the Output's depth, the first with the Run's try_push policy, the second always Block (the
+// Worker waits for room: nothing an inference produced is dropped). Throws NeatError on a compile
+// error.
 struct DataflowNet {
   df::Plan plan;
   std::uint32_t feed = 0;             ///< the Feed's operator index
@@ -62,7 +67,8 @@ struct DataflowNet {
 };
 
 DataflowNet compile_dataflow_net(const DataflowRunConfig& config, std::size_t input,
-                                 const DataflowInputBinding& binding, std::uint32_t stream) {
+                                 const DataflowInputBinding& binding, std::uint32_t stream,
+                                 const std::shared_ptr<void>& mla_model) {
   const DataflowInputConfig& in = config.inputs[input];
   df::Net net;
   const df::OperatorRef<df::Feed> feed = net.add<df::Feed>(
@@ -84,6 +90,29 @@ DataflowNet compile_dataflow_net(const DataflowRunConfig& config, std::size_t in
       overflow = df::Overflow::DropOldest;
     } else if (config.link_policy == OverflowPolicy::DropIncoming) {
       overflow = df::Overflow::DropIncoming;
+    }
+    if (in.mla) {
+      // H1. The operator's output link is connected first, so that the Session's report lists the
+      // Output's link first, as for an Input that feeds its Output directly.
+      df::PortSpec produced;
+      const df::OperatorRef<df::Operator> mla{
+          add_dataflow_mla_op(net, *in.mla, mla_model, binding.spec, produced)};
+      const df::OperatorRef<df::Fetch> fetch =
+          net.add<df::Fetch>("output", produced, df::Fetch::Options{.retained = 1});
+      df::Status status = net.connect(mla.out(), fetch.in(),
+                                      df::LinkPolicy{.depth = output.link_depth,
+                                                     .overflow = df::Overflow::Block,
+                                                     .stale_after = {}});
+      if (!status) {
+        status = net.connect(
+            feed.out(), mla.in(),
+            df::LinkPolicy{.depth = output.link_depth, .overflow = overflow, .stale_after = {}});
+      }
+      if (status) {
+        pipeline_internal::throw_dataflow_error(*status, "Graph::build");
+      }
+      fetches.push_back(fetch.index);
+      continue;
     }
     // Operator names are the Plan's own (Plan::fetch(name)); Core addresses its Fetches by index.
     const df::OperatorRef<df::Fetch> fetch =
@@ -133,6 +162,11 @@ DataflowInputPort::DataflowInputPort(const DataflowPortContext& run, std::size_t
   for (const std::size_t o : config_.outputs) {
     lossy_block_ = lossy_block_ || run_.config.outputs[o].terminal_drop;
   }
+  if (config_.mla) {
+    // H1: the route's model, loaded at the build, where a file the MLA refuses is the build's
+    // error.
+    mla_model_ = load_dataflow_mla_model(*config_.mla, "Graph::build");
+  }
 }
 
 // The Session is destroyed with the port, after RunCore::close ran stop (A2: a destructor after a
@@ -146,9 +180,18 @@ void DataflowInputPort::bind_at_build(std::span<const Tensor> seed) {
   if (!why.empty()) {
     throw_input_shape("Graph::build: " + why + " (Dataflow backend)");
   }
+  if (binding && config_.mla && !seed.empty()) {
+    // H1: a seed the model's MLA input does not take binds nothing. GStreamer builds with such a
+    // seed too; the first push says what is wrong with its tensor, as there. (A declaration the
+    // MLA does not take is the build's error, below.)
+    DataflowInputBinding probe = *binding;
+    if (!bind_dataflow_mla_input(*config_.mla, probe).empty()) {
+      return;
+    }
+  }
   if (binding) {
     std::lock_guard<std::mutex> lock(mu_);
-    bind_locked(std::move(*binding));
+    bind_locked(std::move(*binding), "Graph::build");
   }
 }
 
@@ -170,11 +213,18 @@ DataflowInputPort::Bound* DataflowInputPort::bind_first(std::span<const Tensor> 
                       (why.empty() ? std::string("the input cannot be bound") : why) +
                       " (Dataflow backend)");
   }
-  return bind_locked(std::move(*binding));
+  return bind_locked(std::move(*binding), where);
 }
 
-DataflowInputPort::Bound* DataflowInputPort::bind_locked(DataflowInputBinding binding) {
-  DataflowNet net = compile_dataflow_net(run_.config, index_, binding, stream_);
+DataflowInputPort::Bound* DataflowInputPort::bind_locked(DataflowInputBinding binding,
+                                                         const char* where) {
+  if (config_.mla) {
+    // H1: the input is the MLA's input, whatever the declaration allows beyond it.
+    if (const std::string why = bind_dataflow_mla_input(*config_.mla, binding); !why.empty()) {
+      throw_input_shape(std::string(where) + ": " + why + " (Dataflow backend)");
+    }
+  }
+  DataflowNet net = compile_dataflow_net(run_.config, index_, binding, stream_, mla_model_);
   df::Result<df::Session> session = std::move(net.plan).instantiate(df::SessionOptions{});
   if (const df::Error* error = df::failure(session)) {
     pipeline_internal::throw_dataflow_error(*error, "Graph::build");
@@ -187,6 +237,7 @@ DataflowInputPort::Bound* DataflowInputPort::bind_locked(DataflowInputBinding bi
     b->wraps = !run_.config.run.advanced.copy_input;
   }
   b->device = b->binding.spec.memory != df::MemoryKind::Host;
+  b->any_device_memory = static_cast<bool>(config_.mla);
   if (const df::Status status = b->session.start()) {
     pipeline_internal::throw_dataflow_error(*status, "Graph::build");
   }

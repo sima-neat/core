@@ -73,7 +73,9 @@ void pulled_tensors(const DataflowInputBinding& binding,
 // `t`, whose layout is a whole slot's (dataflow_wrap_layout). True when all of these hold, and a
 // copy into the slot otherwise:
 //   - the storage is a GstSample over one standard DMA-BUF memory, with a descriptor;
-//   - it is the port's kind (an Ev74 port: placed on SIMA_CVU; a Dms0 port: on SIMA_MLA);
+//   - it is the port's kind (an Ev74 port: placed on SIMA_CVU; a Dms0 port: on SIMA_MLA), or,
+//     with `any_device_memory` (a model route, whose only consumer is the MLA: it reads a DMA-BUF
+//     of either heap), placed on either;
 //   - it is Core's own (Tensor creation, or a transfer), whose writer ended its epoch through the
 //     Runner when its map ended: neither a tensor pulled from a Dataflow device pool (it leases a
 //     slot of that pool, D15) nor a buffer a running graph produced (another exporter's protocol,
@@ -87,7 +89,7 @@ void pulled_tensors(const DataflowInputBinding& binding,
 // the runtime wants the CPU address: one read map of the storage, whose address must be aligned
 // too, kept with the storage until the message's last drop.
 bool wrap_tensor(const Tensor& t, const df::PortSpec& port, std::size_t slot_bytes,
-                 std::uintptr_t align_mask, df::Block& out);
+                 std::uintptr_t align_mask, df::Block& out, bool any_device_memory = false);
 
 // Pull. The storage of the tensor of `message`, whose `block` (Message::block) has a descriptor:
 //   - a wrap (the Block has a holder): the pushed tensor's storage itself (D14), with the pushed

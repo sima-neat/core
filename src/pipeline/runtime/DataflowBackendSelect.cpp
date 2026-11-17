@@ -18,6 +18,7 @@
 
 #if defined(SIMANEAT_WITH_DATAFLOW)
 #include "pipeline/runtime/DataflowInputBinding.h"
+#include "pipeline/runtime/DataflowMlaRoute.h"
 #endif
 
 #include <algorithm>
@@ -152,7 +153,8 @@ std::string describe_choice(const DataflowRunConfig& config,
   for (std::size_t i = 0; i < config.inputs.size(); ++i) {
     const DataflowInputConfig& input = config.inputs[i];
     out += (i == 0 ? "" : "; ") + std::string("input ") + dataflow_names_text(input.names) +
-           (bindings[i] ? " " + bindings[i]->text : " bound by its first push") + " -> ";
+           (bindings[i] ? " " + bindings[i]->text : " bound by its first push") + " -> " +
+           (input.mla ? input.mla->text + " -> " : std::string());
     for (std::size_t k = 0; k < input.outputs.size(); ++k) {
       const DataflowOutputConfig& output = config.outputs[input.outputs[k]];
       out += (k == 0 ? "" : ", ") + std::string("output ") + dataflow_names_text(output.names) +
