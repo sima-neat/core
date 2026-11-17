@@ -63,7 +63,8 @@ int main() {
     rejects_asset(model / "missing.bin", 7, "missing at expected path");
     rejects_asset(model, 7, "not a regular file");
     rejects_asset(model / "layer.bin", 8, "expected 8, received 7 bytes");
-    test_genai_receive_root(recv.c_str());
+    const auto recv_string = recv.string();
+    test_genai_receive_root(recv_string.c_str());
     const std::string session(24, 'b');
     internal::ModelAssets assets(model, session, 0);
     wire::Service worker(0);
