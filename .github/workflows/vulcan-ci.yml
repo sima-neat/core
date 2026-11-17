@@ -401,12 +401,14 @@ jobs:
         if: inputs.scheduler_run_id != ''
         env:
           GITHUB_TOKEN: ${{ steps.scheduler-token.outputs.token }}
+          SCHEDULER_RUN_ID: ${{ inputs.scheduler_run_id }}
+          SCHEDULER_COMMIT: ${{ inputs.scheduler_commit }}
         run: |
           set -euo pipefail
           python3 scripts/ci/pciehost/verify_linux_release_run.py \
             --repository "sima-neat/scheduler" \
-            --run-id "${{ inputs.scheduler_run_id }}" \
-            --expected-commit "${{ inputs.scheduler_commit }}" \
+            --run-id "${SCHEDULER_RUN_ID}" \
+            --expected-commit "${SCHEDULER_COMMIT}" \
             --workflow-name "Scheduler" \
             --workflow-path ".github/workflows/ci.yml" \
             --required-reusable-workflow "sima-neat/scheduler/.github/workflows/pcie-host.yml" \
@@ -808,13 +810,15 @@ jobs:
         if: inputs.scheduler_run_id != ''
         env:
           GITHUB_TOKEN: ${{ steps.scheduler-token.outputs.token }}
+          SCHEDULER_RUN_ID: ${{ inputs.scheduler_run_id }}
+          SCHEDULER_COMMIT: ${{ inputs.scheduler_commit }}
         shell: bash
         run: |
           set -euo pipefail
           python3 scripts/ci/pciehost/verify_linux_release_run.py \
             --repository "sima-neat/scheduler" \
-            --run-id "${{ inputs.scheduler_run_id }}" \
-            --expected-commit "${{ inputs.scheduler_commit }}" \
+            --run-id "${SCHEDULER_RUN_ID}" \
+            --expected-commit "${SCHEDULER_COMMIT}" \
             --workflow-name "Scheduler" \
             --workflow-path ".github/workflows/ci.yml" \
             --required-reusable-workflow "sima-neat/scheduler/.github/workflows/pcie-host.yml" \

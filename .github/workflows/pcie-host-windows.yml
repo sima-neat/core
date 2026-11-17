@@ -162,42 +162,55 @@ jobs:
         with:
           persist-credentials: false
       - name: Validate dependency and admission selectors
+        env:
+          LINUX_CURRENT_RUN: ${{ inputs.linux_current_run }}
+          SCHEDULER_RUN_ID: ${{ inputs.scheduler_run_id }}
+          SCHEDULER_COMMIT: ${{ inputs.scheduler_commit }}
+          SIMA_CLI_RUN_ID: ${{ inputs.sima_cli_run_id }}
+          SIMA_CLI_COMMIT: ${{ inputs.sima_cli_commit }}
+          LINUX_RUN_ID: ${{ inputs.linux_run_id }}
+          REQUIRE_UPGRADE: ${{ inputs.require_upgrade }}
+          UPGRADE_BASE_RUN_ID: ${{ inputs.upgrade_base_run_id }}
+          UPGRADE_BASE_COMMIT: ${{ inputs.upgrade_base_commit }}
+          FIRST_RELEASE_UPGRADE_EXEMPTION: ${{ inputs.first_release_upgrade_exemption }}
+          FIRST_RELEASE_UPGRADE_EXEMPTION_REASON: ${{ inputs.first_release_upgrade_exemption_reason }}
+          VALIDATION_ONLY: ${{ inputs.validation_only }}
         run: |
-          if [[ "${{ inputs.linux_current_run }}" == "true" && "${GITHUB_WORKFLOW}" != "Vulcan CI" ]]; then
+          if [[ "${LINUX_CURRENT_RUN}" == "true" && "${GITHUB_WORKFLOW}" != "Vulcan CI" ]]; then
             echo "Same-run Linux admission is reserved for the Vulcan CI caller." >&2
             exit 1
           fi
-          if { [[ -n "${{ inputs.scheduler_run_id }}" ]] && [[ -z "${{ inputs.scheduler_commit }}" ]]; } ||
-             { [[ -z "${{ inputs.scheduler_run_id }}" ]] && [[ -n "${{ inputs.scheduler_commit }}" ]]; }; then
+          if { [[ -n "${SCHEDULER_RUN_ID}" ]] && [[ -z "${SCHEDULER_COMMIT}" ]]; } ||
+             { [[ -z "${SCHEDULER_RUN_ID}" ]] && [[ -n "${SCHEDULER_COMMIT}" ]]; }; then
             echo "scheduler_run_id and scheduler_commit must be supplied together." >&2
             exit 1
           fi
-          if { [[ -n "${{ inputs.sima_cli_run_id }}" ]] && [[ -z "${{ inputs.sima_cli_commit }}" ]]; } ||
-             { [[ -z "${{ inputs.sima_cli_run_id }}" ]] && [[ -n "${{ inputs.sima_cli_commit }}" ]]; }; then
+          if { [[ -n "${SIMA_CLI_RUN_ID}" ]] && [[ -z "${SIMA_CLI_COMMIT}" ]]; } ||
+             { [[ -z "${SIMA_CLI_RUN_ID}" ]] && [[ -n "${SIMA_CLI_COMMIT}" ]]; }; then
             echo "sima_cli_run_id and sima_cli_commit must be supplied together." >&2
             exit 1
           fi
-          if [[ "${{ inputs.linux_current_run }}" == "true" && -n "${{ inputs.linux_run_id }}" ]]; then
+          if [[ "${LINUX_CURRENT_RUN}" == "true" && -n "${LINUX_RUN_ID}" ]]; then
             echo "linux_current_run and linux_run_id are mutually exclusive." >&2
             exit 1
           fi
-          if [[ "${{ inputs.require_upgrade }}" != "true" && ( -n "${{ inputs.upgrade_base_run_id }}" || -n "${{ inputs.upgrade_base_commit }}" ) ]]; then
+          if [[ "${REQUIRE_UPGRADE}" != "true" && ( -n "${UPGRADE_BASE_RUN_ID}" || -n "${UPGRADE_BASE_COMMIT}" ) ]]; then
             echo "Upgrade baseline inputs require require_upgrade=true." >&2
             exit 1
           fi
-          if [[ "${{ inputs.require_upgrade }}" == "true" && "${{ inputs.first_release_upgrade_exemption }}" == "true" ]]; then
+          if [[ "${REQUIRE_UPGRADE}" == "true" && "${FIRST_RELEASE_UPGRADE_EXEMPTION}" == "true" ]]; then
             echo "A real upgrade gate and the first-release exemption are mutually exclusive." >&2
             exit 1
           fi
-          if [[ "${{ inputs.first_release_upgrade_exemption }}" != "true" && -n "${{ inputs.first_release_upgrade_exemption_reason }}" ]]; then
+          if [[ "${FIRST_RELEASE_UPGRADE_EXEMPTION}" != "true" && -n "${FIRST_RELEASE_UPGRADE_EXEMPTION_REASON}" ]]; then
             echo "An exemption reason requires first_release_upgrade_exemption=true." >&2
             exit 1
           fi
-          if [[ "${{ inputs.validation_only }}" != "true" && "${{ inputs.require_upgrade }}" != "true" && "${{ inputs.first_release_upgrade_exemption }}" != "true" ]]; then
+          if [[ "${VALIDATION_ONLY}" != "true" && "${REQUIRE_UPGRADE}" != "true" && "${FIRST_RELEASE_UPGRADE_EXEMPTION}" != "true" ]]; then
             echo "Publishing requires a real upgrade gate or an explicit first-release exemption." >&2
             exit 1
           fi
-          if [[ "${{ inputs.first_release_upgrade_exemption }}" == "true" && -z "${{ inputs.first_release_upgrade_exemption_reason }}" ]]; then
+          if [[ "${FIRST_RELEASE_UPGRADE_EXEMPTION}" == "true" && -z "${FIRST_RELEASE_UPGRADE_EXEMPTION_REASON}" ]]; then
             echo "The first-release upgrade exemption requires a non-empty reason." >&2
             exit 1
           fi
@@ -218,14 +231,15 @@ jobs:
         if: inputs.linux_current_run != true
         env:
           GITHUB_TOKEN: ${{ github.token }}
+          LINUX_RUN_ID: ${{ inputs.linux_run_id }}
         run: |
-          if [[ ! "${{ inputs.linux_run_id }}" =~ ^[1-9][0-9]*$ ]]; then
+          if [[ ! "${LINUX_RUN_ID}" =~ ^[1-9][0-9]*$ ]]; then
             echo "Windows qualification requires a numeric linux_run_id." >&2
             exit 1
           fi
           python3 scripts/ci/pciehost/verify_linux_release_run.py \
             --repository "${GITHUB_REPOSITORY}" \
-            --run-id "${{ inputs.linux_run_id }}" \
+            --run-id "${LINUX_RUN_ID}" \
             --expected-commit "${GITHUB_SHA}" \
             --output "${RUNNER_TEMP}/linux-release-admission.json"
       - name: Admit this caller's qualified Linux candidate
@@ -244,37 +258,41 @@ jobs:
         if: inputs.sima_cli_run_id != ''
         env:
           GITHUB_TOKEN: ${{ steps.dependency-token.outputs.token }}
+          SIMA_CLI_RUN_ID: ${{ inputs.sima_cli_run_id }}
+          SIMA_CLI_COMMIT: ${{ inputs.sima_cli_commit }}
         run: |
-          if [[ ! "${{ inputs.sima_cli_run_id }}" =~ ^[1-9][0-9]*$ ]]; then
+          if [[ ! "${SIMA_CLI_RUN_ID}" =~ ^[1-9][0-9]*$ ]]; then
             echo "sima_cli_run_id must be numeric." >&2
             exit 1
           fi
-          if [[ ! "${{ inputs.sima_cli_commit }}" =~ ^[0-9a-f]{40}$ ]]; then
+          if [[ ! "${SIMA_CLI_COMMIT}" =~ ^[0-9a-f]{40}$ ]]; then
             echo "sima_cli_commit must be a full lowercase commit." >&2
             exit 1
           fi
           python3 scripts/ci/pciehost/verify_linux_release_run.py \
             --repository "sima-neat/sima-cli" \
-            --run-id "${{ inputs.sima_cli_run_id }}" \
-            --expected-commit "${{ inputs.sima_cli_commit }}" \
+            --run-id "${SIMA_CLI_RUN_ID}" \
+            --expected-commit "${SIMA_CLI_COMMIT}" \
             --output "${RUNNER_TEMP}/sima-cli-release-admission.json"
       - name: Admit exact successful Scheduler Windows run
         if: inputs.scheduler_run_id != ''
         env:
           GITHUB_TOKEN: ${{ steps.dependency-token.outputs.token }}
+          SCHEDULER_RUN_ID: ${{ inputs.scheduler_run_id }}
+          SCHEDULER_COMMIT: ${{ inputs.scheduler_commit }}
         run: |
-          if [[ ! "${{ inputs.scheduler_run_id }}" =~ ^[1-9][0-9]*$ ]]; then
+          if [[ ! "${SCHEDULER_RUN_ID}" =~ ^[1-9][0-9]*$ ]]; then
             echo "scheduler_run_id must be numeric." >&2
             exit 1
           fi
-          if [[ ! "${{ inputs.scheduler_commit }}" =~ ^[0-9a-f]{40}$ ]]; then
+          if [[ ! "${SCHEDULER_COMMIT}" =~ ^[0-9a-f]{40}$ ]]; then
             echo "scheduler_commit must be a full lowercase commit." >&2
             exit 1
           fi
           python3 scripts/ci/pciehost/verify_linux_release_run.py \
             --repository "sima-neat/scheduler" \
-            --run-id "${{ inputs.scheduler_run_id }}" \
-            --expected-commit "${{ inputs.scheduler_commit }}" \
+            --run-id "${SCHEDULER_RUN_ID}" \
+            --expected-commit "${SCHEDULER_COMMIT}" \
             --workflow-name "Scheduler" \
             --workflow-path ".github/workflows/ci.yml" \
             --required-reusable-workflow "sima-neat/scheduler/.github/workflows/pcie-host-windows.yml" \
@@ -287,23 +305,25 @@ jobs:
         if: inputs.require_upgrade == true
         env:
           GITHUB_TOKEN: ${{ github.token }}
+          UPGRADE_BASE_RUN_ID: ${{ inputs.upgrade_base_run_id }}
+          UPGRADE_BASE_COMMIT: ${{ inputs.upgrade_base_commit }}
         run: |
-          if [[ ! "${{ inputs.upgrade_base_run_id }}" =~ ^[1-9][0-9]*$ ]]; then
+          if [[ ! "${UPGRADE_BASE_RUN_ID}" =~ ^[1-9][0-9]*$ ]]; then
             echo "The formal upgrade gate requires a numeric upgrade_base_run_id." >&2
             exit 1
           fi
-          if [[ ! "${{ inputs.upgrade_base_commit }}" =~ ^[0-9a-f]{40}$ ]]; then
+          if [[ ! "${UPGRADE_BASE_COMMIT}" =~ ^[0-9a-f]{40}$ ]]; then
             echo "The formal upgrade gate requires a full lowercase upgrade_base_commit." >&2
             exit 1
           fi
-          if [[ "${{ inputs.upgrade_base_commit }}" == "${GITHUB_SHA}" ]]; then
+          if [[ "${UPGRADE_BASE_COMMIT}" == "${GITHUB_SHA}" ]]; then
             echo "Windows upgrade baseline must differ from the release candidate." >&2
             exit 1
           fi
           python3 scripts/ci/pciehost/verify_linux_release_run.py \
             --repository "${GITHUB_REPOSITORY}" \
-            --run-id "${{ inputs.upgrade_base_run_id }}" \
-            --expected-commit "${{ inputs.upgrade_base_commit }}" \
+            --run-id "${UPGRADE_BASE_RUN_ID}" \
+            --expected-commit "${UPGRADE_BASE_COMMIT}" \
             --workflow-name "Core native Windows PCIe host" \
             --workflow-path ".github/workflows/pcie-host-windows.yml" \
             --output "${RUNNER_TEMP}/windows-upgrade-base-admission.json"
@@ -455,6 +475,8 @@ jobs:
         env:
           SOURCE_BRANCH: ${{ github.head_ref || github.ref_name }}
           SIMA_CLI_CHECK_FOR_UPDATE: "0"
+          SCHEDULER_COMMIT: ${{ inputs.scheduler_commit }}
+          SIMA_CLI_COMMIT: ${{ inputs.sima_cli_commit }}
         run: |
           $ErrorActionPreference = "Stop"
           if (-not (Get-Command sima-cli -ErrorAction SilentlyContinue)) {
@@ -469,13 +491,13 @@ jobs:
           if (Test-Path -LiteralPath "$env:RUNNER_TEMP\scheduler-windows-override") {
             $arguments += @(
               "--scheduler-candidate", "$env:RUNNER_TEMP\scheduler-windows-override",
-              "--scheduler-commit", "${{ inputs.scheduler_commit }}"
+              "--scheduler-commit", "$env:SCHEDULER_COMMIT"
             )
           }
           if (Test-Path -LiteralPath "$env:RUNNER_TEMP\sima-cli-override") {
             $arguments += @(
               "--sima-cli-candidate", "$env:RUNNER_TEMP\sima-cli-override",
-              "--sima-cli-commit", "${{ inputs.sima_cli_commit }}"
+              "--sima-cli-commit", "$env:SIMA_CLI_COMMIT"
             )
           }
           & python @arguments
@@ -522,6 +544,7 @@ jobs:
         shell: powershell
         env:
           SOURCE_BRANCH: ${{ github.head_ref || github.ref_name }}
+          REQUIRE_SIGNATURES: ${{ inputs.require_signatures }}
         run: |
           $ErrorActionPreference = "Stop"
           $selection = Get-Content -Raw "$env:RUNNER_TEMP\core-windows-dependencies\selection.json" | ConvertFrom-Json
@@ -565,7 +588,7 @@ jobs:
           foreach ($directory in $env:SIMA_WINDOWS_DEPENDENCY_RUNTIME_PATH.Split(";")) {
             if ($directory) { $arguments += @("--dependency-runtime-dir", $directory) }
           }
-          if ("${{ inputs.require_signatures }}" -eq "true") {
+          if ("$env:REQUIRE_SIGNATURES" -eq "true") {
             if (-not $env:SIMA_WINDOWS_SIGNING_CERTIFICATE_SHA1) {
               throw "Signed packages require SIMA_WINDOWS_SIGNING_CERTIFICATE_SHA1"
             }
@@ -678,12 +701,16 @@ jobs:
         shell: powershell
         env:
           QUALIFIER_CARD_SUDO_PASSWORD: ${{ secrets.DEVKIT_PASSWORD }}
+          VALIDATION_ONLY: ${{ inputs.validation_only }}
+          INCLUDE_GENAI: ${{ inputs.include_genai }}
+          REQUIRE_UPGRADE: ${{ inputs.require_upgrade }}
+          UPGRADE_BASE_COMMIT: ${{ inputs.upgrade_base_commit }}
         run: |
           $ErrorActionPreference = "Stop"
           $cardSudoPassword = $env:QUALIFIER_CARD_SUDO_PASSWORD
           Remove-Item Env:QUALIFIER_CARD_SUDO_PASSWORD -ErrorAction SilentlyContinue
           $selection = Get-Content -Raw "$env:RUNNER_TEMP\core-windows-dependencies\selection.json" | ConvertFrom-Json
-          if ("${{ inputs.validation_only }}" -ne "true" -and "${{ inputs.include_genai }}" -ne "true") {
+          if ("$env:VALIDATION_ONLY" -ne "true" -and "$env:INCLUDE_GENAI" -ne "true") {
             throw "Customer release requires the complete Windows GenAI hardware matrix"
           }
           foreach ($name in @(
@@ -702,7 +729,7 @@ jobs:
           )) {
             if (-not (Get-Item "env:$name").Value) { throw "Required hardware variable is unset: $name" }
           }
-          if ("${{ inputs.include_genai }}" -eq "true") {
+          if ("$env:INCLUDE_GENAI" -eq "true") {
             foreach ($name in @(
               "SIMAPCIE_GENAI_MODELS_PATH",
               "SIMAPCIE_GENAI_TEST_ASSETS"
@@ -737,13 +764,13 @@ jobs:
             "--work", "$env:RUNNER_TEMP\core-windows-hardware",
             "--evidence", "$env:RUNNER_TEMP\core-windows-hardware-evidence"
           )
-          if ("${{ inputs.include_genai }}" -eq "true") {
+          if ("$env:INCLUDE_GENAI" -eq "true") {
             $arguments += "--include-genai"
           }
-          if ("${{ inputs.require_upgrade }}" -eq "true") {
+          if ("$env:REQUIRE_UPGRADE" -eq "true") {
             $arguments += @(
               "--upgrade-base-candidate", "$env:RUNNER_TEMP\core-windows-upgrade-base",
-              "--expected-upgrade-base-commit", "${{ inputs.upgrade_base_commit }}"
+              "--expected-upgrade-base-commit", "$env:UPGRADE_BASE_COMMIT"
             )
           }
           if ($env:SIMA_WINDOWS_CMAKE_PREFIX_PATH) {
@@ -792,6 +819,10 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "Windows hardware recovery failed: $LASTEXITCODE" }
       - name: Enforce release admission
         shell: powershell
+        env:
+          VALIDATION_ONLY: ${{ inputs.validation_only }}
+          REQUIRE_UPGRADE: ${{ inputs.require_upgrade }}
+          REQUIRE_SIGNATURES: ${{ inputs.require_signatures }}
         run: |
           $ErrorActionPreference = "Stop"
           $arguments = @(
@@ -802,13 +833,13 @@ jobs:
             "--expected-commit", $env:GITHUB_SHA,
             "--output", "$env:RUNNER_TEMP\core-windows-hardware-evidence\release-admission.json"
           )
-          if ("${{ inputs.validation_only }}" -ne "true") {
+          if ("$env:VALIDATION_ONLY" -ne "true") {
             $arguments += "--require-genai"
           }
-          if ("${{ inputs.require_upgrade }}" -eq "true") {
+          if ("$env:REQUIRE_UPGRADE" -eq "true") {
             $arguments += "--require-release"
           }
-          if ("${{ inputs.require_signatures }}" -eq "true") {
+          if ("$env:REQUIRE_SIGNATURES" -eq "true") {
             $arguments += "--require-signatures"
           }
           & python @arguments

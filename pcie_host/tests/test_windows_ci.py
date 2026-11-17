@@ -619,7 +619,7 @@ class WindowsCiContracts(unittest.TestCase):
     self.assertIn("--require-signatures", source)
     self.assertIn('$arguments += "--require-genai"', source)
     self.assertIn('$arguments += "--require-release"', source)
-    self.assertIn('if ("${{ inputs.require_signatures }}" -eq "true")', source)
+    self.assertIn('if ("$env:REQUIRE_SIGNATURES" -eq "true")', source)
     self.assertIn("Recover card and native installation", source)
     self.assertIn("if: always()", source)
     self.assertIn("upgrade_base_run_id", source)
@@ -659,6 +659,24 @@ class WindowsCiContracts(unittest.TestCase):
         2,
     )
     self.assertEqual(source.count("shell: powershell"), 6)
+
+  def test_workflow_run_bodies_receive_inputs_only_through_env(self):
+    # Expression text is substituted into the script before the shell parses
+    # it, so an input such as $(...) would execute on the runner.
+    lines = WORKFLOW.read_text(encoding="utf-8").splitlines()
+    leaks = []
+    for index, line in enumerate(lines):
+      match = re.match(r"^(\s*)(?:- )?run: ?(.*)$", line)
+      if not match:
+        continue
+      indent = len(match.group(1))
+      body = [match.group(2)]
+      for following in lines[index + 1:]:
+        if following.strip() and len(following) - len(following.lstrip()) <= indent:
+          break
+        body.append(following)
+      leaks += [(index + 1, text.strip()) for text in body if "${{ inputs." in text]
+    self.assertEqual(leaks, [])
 
   def test_main_ci_requires_windows_acceptance_before_promotion(self):
     source = MAIN_WORKFLOW.read_text(encoding="utf-8")
