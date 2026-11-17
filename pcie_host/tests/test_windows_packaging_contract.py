@@ -1,8 +1,12 @@
 #!/usr/bin/env python3
 """Keep the native Windows package owned by Windows Installer."""
 
+import os
 from pathlib import Path
 import re
+import shutil
+import subprocess
+import tempfile
 import unittest
 
 
@@ -12,6 +16,13 @@ WINDOWS_PRODUCER = ROOT.parent / "scripts" / "ci" / "pciehost" / "build_windows.
 ROLLBACK_FIXTURE = (
     ROOT.parent / "scripts" / "ci" / "pciehost" / "windows_msi_rollback_fixture"
 )
+SETUP_SCRIPT = ROOT / "scripts" / "windows" / "pcie-setup.ps1"
+FIXTURE_KEY = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGZpeHR1cmUta2V5LW1hdGVyaWFsLW9ubHk= user@host"
+
+
+def setup_enrolment_command():
+  source = SETUP_SCRIPT.read_text(encoding="utf-8")
+  return re.search(r"(?ms)^  \$remoteScript = @'\n(.*?)\n'@$", source)[1]
 
 
 class WindowsPackagingContract(unittest.TestCase):
@@ -107,6 +118,44 @@ class WindowsPackagingContract(unittest.TestCase):
     self.assertIn('install_root / "bin" / "pcie-setup.cmd"', producer)
     self.assertIn('"-Hosts", "10.0.0.2", "-DryRun"', producer)
     self.assertIn('"neat-pcie-application-builder" / "playbook.yml"', producer)
+
+  def test_setup_sends_only_the_public_key_on_standard_input(self):
+    source = SETUP_SCRIPT.read_text(encoding="utf-8")
+    self.assertRegex(
+        source,
+        r"\n    \$publicKey \| & \$ssh -p \$Port -o ConnectTimeout=10 "
+        r"-o StrictHostKeyChecking=yes `\n"
+        r"        -o \"UserKnownHostsFile=\$knownHostsPath\" \$target \$remoteScript\n")
+    self.assertIn('$remoteScript = $remoteScript.Replace("`r", "")', source)
+    # Windows PowerShell passes embedded double quotes to ssh.exe unescaped.
+    self.assertNotIn('"', setup_enrolment_command())
+
+  @unittest.skipIf(os.name == "nt", "card enrolment command runs in a POSIX shell; executed on Linux")
+  def test_setup_enrolment_command_appends_exactly_one_public_key_line(self):
+    command = setup_enrolment_command()
+    for shell in ("sh", "bash"):
+      executable = shutil.which(shell)
+      self.assertIsNotNone(executable, shell)
+      with self.subTest(shell=shell), tempfile.TemporaryDirectory() as home:
+        def enrol(stdin):
+          return subprocess.run(
+              [executable, "-c", command], input=stdin, capture_output=True, text=True,
+              check=False, env={**os.environ, "HOME": home})
+
+        authorized_keys = Path(home) / ".ssh" / "authorized_keys"
+        for _ in range(2):
+          # PowerShell terminates the piped string with CRLF.
+          result = enrol(FIXTURE_KEY + "\r\n")
+          self.assertEqual(result.returncode, 0, result.stderr)
+          self.assertEqual(authorized_keys.read_text(encoding="utf-8"), FIXTURE_KEY + "\n")
+        self.assertEqual(authorized_keys.stat().st_mode & 0o777, 0o600)
+        self.assertEqual(authorized_keys.parent.stat().st_mode & 0o777, 0o700)
+        for invalid in ("", "umask 077\n", "ssh-ed25519 not-base64!\n", "ssh-ed25519\n"):
+          result = enrol(invalid)
+          self.assertNotEqual(result.returncode, 0, invalid)
+          self.assertEqual(authorized_keys.read_text(encoding="utf-8"), FIXTURE_KEY + "\n")
+        self.assertEqual(sorted(path.name for path in authorized_keys.parent.iterdir()),
+                         ["authorized_keys"])
 
   def test_setup_drains_redirected_process_output_while_command_runs(self):
     setup_script = (ROOT / "scripts/windows/pcie-setup.ps1").read_text(

@@ -284,24 +284,32 @@ foreach ($cardHost in $targets) {
   }
 
   $publicKey = (Get-Content -LiteralPath $publicKeyPath -Raw).Trim()
+  # Only the key travels on stdin; PowerShell may end it with CRLF. The script is
+  # the remote command, so it must not contain double quotes (Windows PowerShell
+  # does not escape them in native arguments).
   $remoteScript = @'
-IFS= read -r key
 umask 077
-mkdir -p "$HOME/.ssh"
-touch "$HOME/.ssh/authorized_keys"
-if ! grep -qxF "$key" "$HOME/.ssh/authorized_keys"; then
-  printf '%s\n' "$key" >> "$HOME/.ssh/authorized_keys"
+mkdir -p ~/.ssh && cd ~/.ssh && touch authorized_keys || exit 1
+head -n1 | tr -d '\r' > .neat-pcie-key || exit 1
+if grep -Eqx '(ssh-(ed25519|rsa)|ecdsa-sha2-nistp(256|384|521)|sk-(ssh-ed25519|ecdsa-sha2-nistp256)@openssh[.]com) [A-Za-z0-9+/]+={0,3}( .*)?' .neat-pcie-key; then
+  grep -qxFf .neat-pcie-key authorized_keys || cat .neat-pcie-key >> authorized_keys
+  status=$?
+else
+  echo 'The enrolment input is not one OpenSSH public key line.' >&2
+  status=1
 fi
-chmod 700 "$HOME/.ssh"
-chmod 600 "$HOME/.ssh/authorized_keys"
+rm -f .neat-pcie-key
+chmod 700 . && chmod 600 authorized_keys || status=1
+exit $status
 '@
-  $payload = $publicKey + "`n" + $remoteScript
+  # A CRLF checkout of this file would otherwise end every remote line with CR.
+  $remoteScript = $remoteScript.Replace("`r", "")
   Write-Host "Enter the card password when OpenSSH prompts. The password is not stored."
   $savedErrorPreference = $ErrorActionPreference
   try {
     $ErrorActionPreference = "Continue"
-    $payload | & $ssh -p $Port -o ConnectTimeout=10 -o StrictHostKeyChecking=yes `
-        -o "UserKnownHostsFile=$knownHostsPath" $target "sh -s"
+    $publicKey | & $ssh -p $Port -o ConnectTimeout=10 -o StrictHostKeyChecking=yes `
+        -o "UserKnownHostsFile=$knownHostsPath" $target $remoteScript
     $enrollExitCode = $LASTEXITCODE
   }
   finally {
