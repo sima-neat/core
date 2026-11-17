@@ -8,6 +8,7 @@ import sys
 import textwrap
 
 import pytest
+import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW = ROOT / '.github/workflows/vulcan-ci.yml'
@@ -47,6 +48,21 @@ def test_dependency_dag_and_publication_gate():
     assert "== 'fuzz' || needs.code-hygiene.result == 'success'" in gate
     assert 'publish-vulcan-artifacts' in needs('plan-devkit-tests')
     assert {'plan-devkit-tests', 'test-devkit-shard'} <= set(needs('test-devkit'))
+
+
+def test_container_steps_with_bash_syntax_declare_bash():
+    # A container job's default shell is sh, which rejects pipefail and [[.
+    unsafe = []
+    for path in sorted(WORKFLOW.parent.glob('*.yml')):
+        for name, body in yaml.safe_load(path.read_text())['jobs'].items():
+            if 'container' not in body:
+                continue
+            default = body.get('defaults', {}).get('run', {}).get('shell')
+            for step in body.get('steps', []):
+                script = step.get('run', '')
+                if ('pipefail' in script or '[[' in script) and step.get('shell', default) != 'bash':
+                    unsafe.append((path.name, name, step.get('name')))
+    assert unsafe == []
 
 
 def test_hygiene_uses_vulcan_native_ubuntu_arm64_runner():
