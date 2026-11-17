@@ -32,6 +32,9 @@ assert SPEC.loader
 SPEC.loader.exec_module(MODULE)
 from windows_candidate import (  # noqa: E402
     dependency_identity, require_junit_cases, sha256, validate_candidate)
+from windows_hardware_assets import (  # noqa: E402
+    GENAI_ASSETS, VISION_ASSETS, asset_manifest_sha256, create_asset_manifest,
+    normalize_asset_manifest, verify_asset_manifest)
 from qualify_windows_hardware import (  # noqa: E402
     _windows_openssh_batch_line,
     ExclusiveLock, RemoteExclusiveLock, activate_card_candidate,
@@ -91,6 +94,50 @@ def normalized_link_target(path):
   if os.name == "nt" and target.startswith("\\\\?\\"):
     target = target[4:]
   return os.path.normcase(os.path.normpath(target))
+
+
+def fixture_asset_manifest(include_genai=False):
+  manifest = {
+      "schema_version": 1,
+      "revision": "windows-pcie-fixture-r1",
+      "include_genai": include_genai,
+      "vision": {
+          name: {"kind": "file", "sha256": f"{index + 1:x}" * 64, "size": index + 10}
+          for index, name in enumerate(VISION_ASSETS)
+      },
+      "genai": {},
+  }
+  if include_genai:
+    manifest["genai"] = {
+        name: {
+            "kind": "directory",
+            "source_revision": {"repository": "fixture", "revision": f"r{index + 1}"},
+            "files": [{
+                "path": f"model-{index + 1}.bin",
+                "sha256": f"{index + 6:x}" * 64,
+                "size": index + 20,
+            }],
+        }
+        for index, name in enumerate(GENAI_ASSETS)
+    }
+  return normalize_asset_manifest(manifest)
+
+
+def fixture_asset_environment(root, include_genai=False):
+  root.mkdir(parents=True, exist_ok=True)
+  environment = {}
+  for index, name in enumerate(VISION_ASSETS):
+    path = root / f"vision-{index}.bin"
+    path.write_bytes(f"vision-{index}".encode("ascii"))
+    environment[name] = str(path.resolve())
+  if include_genai:
+    for index, name in enumerate(GENAI_ASSETS):
+      path = root / f"genai-{index}"
+      (path / "nested").mkdir(parents=True)
+      (path / "z.bin").write_bytes(f"z-{index}".encode("ascii"))
+      (path / "nested" / "a.bin").write_bytes(f"a-{index}".encode("ascii"))
+      environment[name] = str(path.resolve())
+  return environment
 
 
 class WindowsCiContracts(unittest.TestCase):
@@ -495,6 +542,10 @@ class WindowsCiContracts(unittest.TestCase):
     self.assertIn("name: neat-core-dist", source)
     self.assertIn("--card-candidate", source)
     self.assertIn("--expected-card-commit", source)
+    self.assertIn("SIMA_WINDOWS_PCIE_ASSET_MANIFEST", source)
+    self.assertIn("SIMA_WINDOWS_PCIE_GENAI_ASSET_MANIFEST", source)
+    self.assertIn("SIMA_WINDOWS_PCIE_VISION_ASSET_MANIFEST", source)
+    self.assertEqual(source.count('"--asset-manifest"'), 2)
     hardware_job = source.split("  hardware:\n", 1)[1]
     hardware_env = hardware_job.split("    steps:\n", 1)[0]
     self.assertNotIn("SIMAPCIE_CARD_SUDO_PASSWORD", hardware_env)
@@ -763,6 +814,97 @@ class WindowsCiContracts(unittest.TestCase):
       del environment["SIMAPCIE_GENAI_MEDIA_DIRECTORY"]
       with self.assertRaisesRegex(RuntimeError, "as a pair"):
         HARDWARE.require_assets(environment, True)
+
+  def test_hardware_asset_manifest_is_deterministic_for_vision_and_genai(self):
+    with tempfile.TemporaryDirectory() as directory:
+      root = Path(directory)
+      vision_environment = fixture_asset_environment(root)
+      vision = create_asset_manifest(
+          vision_environment, False, "vision-assets-r7",
+          {"SIMAPCIE_YOLOV8_MODEL": {"repository": "model-zoo", "revision": "abc123"}})
+      self.assertFalse(vision["include_genai"])
+      self.assertEqual(vision["genai"], {})
+      self.assertEqual(
+          list(vision["vision"]), sorted(VISION_ASSETS))
+
+      genai_environment = fixture_asset_environment(root / "with-genai", True)
+      genai = create_asset_manifest(
+          genai_environment, True, "complete-assets-r9",
+          {name: {"repository": "genai-assets", "revision": f"rev-{index}"}
+           for index, name in enumerate(GENAI_ASSETS)})
+      repeated = create_asset_manifest(
+          genai_environment, True, "complete-assets-r9",
+          {name: {"revision": f"rev-{index}", "repository": "genai-assets"}
+           for index, name in reversed(tuple(enumerate(GENAI_ASSETS)))})
+      self.assertEqual(genai, repeated)
+      self.assertEqual(
+          [item["path"] for item in genai["genai"][GENAI_ASSETS[0]]["files"]],
+          ["nested/a.bin", "z.bin"])
+      self.assertEqual(
+          genai["genai"][GENAI_ASSETS[0]]["source_revision"]["revision"],
+          "rev-0")
+
+  def test_hardware_asset_manifest_detects_changed_files_and_directory_mutation(self):
+    with tempfile.TemporaryDirectory() as directory:
+      root = Path(directory)
+      environment = fixture_asset_environment(root, True)
+      manifest = create_asset_manifest(environment, True, "assets-r1")
+      path = root / "asset-manifest.json"
+      path.write_text(json.dumps(manifest), encoding="utf-8")
+      self.assertEqual(verify_asset_manifest(path, environment, True), manifest)
+
+      Path(environment["SIMAPCIE_YOLOV8_MODEL"]).write_bytes(b"changed!")
+      with self.assertRaisesRegex(ValueError, "differ from the admitted"):
+        verify_asset_manifest(path, environment, True)
+
+      environment = fixture_asset_environment(root / "replacement", True)
+      manifest = create_asset_manifest(environment, True, "assets-r2")
+      path.write_text(json.dumps(manifest), encoding="utf-8")
+      models = Path(environment["SIMAPCIE_GENAI_MODELS_PATH"])
+      (models / "new-model.bin").write_bytes(b"new")
+      with self.assertRaisesRegex(ValueError, "differ from the admitted"):
+        verify_asset_manifest(path, environment, True)
+
+  def test_hardware_asset_manifest_rejects_links_escape_and_case_ambiguity(self):
+    with tempfile.TemporaryDirectory() as directory:
+      root = Path(directory)
+      environment = fixture_asset_environment(root, True)
+      models = Path(environment["SIMAPCIE_GENAI_MODELS_PATH"])
+      link = models / "linked.bin"
+      try:
+        link.symlink_to(models / "z.bin")
+      except OSError as error:
+        self.skipTest(f"symlink fixture unavailable: {error}")
+      with self.assertRaisesRegex(ValueError, "link or reparse point"):
+        create_asset_manifest(environment, True, "assets-r1")
+      link.unlink()
+
+      (models / "CASE.bin").write_bytes(b"upper")
+      (models / "case.bin").write_bytes(b"lower")
+      with self.assertRaisesRegex(ValueError, "case-ambiguous"):
+        create_asset_manifest(environment, True, "assets-r1")
+
+      invalid = fixture_asset_manifest(include_genai=True)
+      invalid["genai"][GENAI_ASSETS[0]]["files"][0]["path"] = "../escape.bin"
+      with self.assertRaisesRegex(ValueError, "unsafe or non-canonical"):
+        normalize_asset_manifest(invalid)
+      invalid = fixture_asset_manifest(include_genai=True)
+      duplicate = dict(invalid["genai"][GENAI_ASSETS[0]]["files"][0])
+      invalid["genai"][GENAI_ASSETS[0]]["files"].append(duplicate)
+      with self.assertRaisesRegex(ValueError, "duplicate or case-ambiguous"):
+        normalize_asset_manifest(invalid)
+      invalid = fixture_asset_manifest(include_genai=True)
+      duplicate = dict(invalid["genai"][GENAI_ASSETS[0]]["files"][0])
+      duplicate["path"] = duplicate["path"].upper()
+      invalid["genai"][GENAI_ASSETS[0]]["files"].append(duplicate)
+      with self.assertRaisesRegex(ValueError, "case-ambiguous"):
+        normalize_asset_manifest(invalid)
+
+  def test_hardware_asset_manifest_is_verified_before_local_card_lock(self):
+    source = (SCRIPT_DIR / "qualify_windows_hardware.py").read_text(encoding="utf-8")
+    self.assertLess(
+        source.index("asset_manifest = verify_asset_manifest("),
+        source.index("with ExclusiveLock(args.lock_file"))
 
   def test_standard_user_wrapper_uses_json_inputs_and_clears_media_overrides(self):
     wrapper = standard_user_wrapper()
@@ -1133,7 +1275,16 @@ class WindowsCiContracts(unittest.TestCase):
     }), encoding="utf-8")
     qualification = root.parent / f"{root.name}-qualification.json"
     self.addCleanup(qualification.unlink, missing_ok=True)
+    asset_manifest_path = qualification.with_name("hardware-asset-manifest.json")
+    self.addCleanup(asset_manifest_path.unlink, missing_ok=True)
+    asset_manifest = fixture_asset_manifest()
+    asset_manifest_path.write_text(
+        json.dumps(asset_manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     qualification.write_text(json.dumps({
+        "assets": {
+            "identity_sha256": asset_manifest_sha256(asset_manifest),
+            "manifest": asset_manifest,
+        },
         "candidate": {"core_commit": commit, "resources": resources},
         "card_baseline": {
             "firmware": "modalix-cvu-fw",
@@ -1324,6 +1475,13 @@ class WindowsCiContracts(unittest.TestCase):
     value["genai_admission"] = {
         name: "PASS" for name in sorted(cpp_tests | python_tests)
     }
+    asset_manifest = fixture_asset_manifest(include_genai=True)
+    qualification.with_name("hardware-asset-manifest.json").write_text(
+        json.dumps(asset_manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    value["assets"] = {
+        "identity_sha256": asset_manifest_sha256(asset_manifest),
+        "manifest": asset_manifest,
+    }
     qualification.write_text(json.dumps(value), encoding="utf-8")
     return value
 
@@ -1341,6 +1499,33 @@ class WindowsCiContracts(unittest.TestCase):
       candidate.core_msi.write_bytes(b"changed")
       with self.assertRaisesRegex(ValueError, "checksum differs"):
         validate_candidate(root)
+
+  def test_release_gate_requires_exact_external_asset_manifest(self):
+    with tempfile.TemporaryDirectory() as directory:
+      root = Path(directory)
+      commit, _, qualification = self.windows_candidate(root)
+      value = json.loads(qualification.read_text(encoding="utf-8"))
+      value["assets"]["manifest"]["vision"][VISION_ASSETS[0]]["size"] += 1
+      qualification.write_text(json.dumps(value), encoding="utf-8")
+      with self.assertRaisesRegex(ValueError, "different hardware asset manifest"):
+        verify(root, qualification, commit, False)
+
+    with tempfile.TemporaryDirectory() as directory:
+      root = Path(directory)
+      commit, _, qualification = self.windows_candidate(root)
+      external = qualification.with_name("hardware-asset-manifest.json")
+      value = json.loads(external.read_text(encoding="utf-8"))
+      value["revision"] = "unexpected-revision"
+      external.write_text(json.dumps(value), encoding="utf-8")
+      with self.assertRaisesRegex(ValueError, "different hardware asset manifest"):
+        verify(root, qualification, commit, False)
+
+  def test_genai_release_requires_genai_asset_manifest_scope(self):
+    with tempfile.TemporaryDirectory() as directory:
+      root = Path(directory)
+      commit, _, qualification = self.windows_candidate(root)
+      with self.assertRaisesRegex(ValueError, "does not admit GenAI assets"):
+        verify(root, qualification, commit, False, require_genai=True)
 
   def test_release_gate_rejects_native_skip_receipt(self):
     with tempfile.TemporaryDirectory() as directory:
@@ -2182,6 +2367,13 @@ install() {
     with tempfile.TemporaryDirectory() as directory:
       root = Path(directory)
       commit, _, qualification = self.windows_candidate(root)
+      value = self.enable_genai_qualification(qualification)
+      value["tests"]["cpp"] = [
+          name for name in value["tests"]["cpp"] if not name.startswith("test_genai_")]
+      value["tests"]["python"] = [
+          name for name in value["tests"]["python"] if not name.startswith("test_genai_")]
+      value.pop("genai_admission")
+      qualification.write_text(json.dumps(value), encoding="utf-8")
       with self.assertRaisesRegex(ValueError, "complete Windows GenAI matrix"):
         verify(root, qualification, commit, True, True)
 
@@ -2205,13 +2397,7 @@ install() {
     with tempfile.TemporaryDirectory() as directory:
       root = Path(directory)
       commit, _, qualification = self.windows_candidate(root)
-      value = json.loads(qualification.read_text(encoding="utf-8"))
-      value["tests"]["cpp"].extend(sorted(cpp_tests))
-      value["tests"]["python"].extend(sorted(python_tests))
-      value["genai_admission"] = {
-          name: "PASS" for name in sorted(cpp_tests | python_tests)
-      }
-      qualification.write_text(json.dumps(value), encoding="utf-8")
+      value = self.enable_genai_qualification(qualification)
       admission = verify(root, qualification, commit, True, True)
       self.assertTrue(admission["genai_qualified"])
 

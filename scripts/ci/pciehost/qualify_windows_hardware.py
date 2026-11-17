@@ -34,6 +34,7 @@ import zipfile
 
 from windows_candidate import (
     dependency_identity, msi_version, require_junit_cases, sha256, validate_candidate)
+from windows_hardware_assets import asset_manifest_sha256, verify_asset_manifest
 
 
 PASS_CODES = {0}
@@ -2240,6 +2241,9 @@ def qualify(args: argparse.Namespace) -> None:
   dependency_cohort = verify_dependency_cohort(
       candidate, args.platform_runtime, args.gstreamer_root,
       args.dependency_runtime_dir)
+  asset_environment = os.environ.copy()
+  asset_manifest = verify_asset_manifest(
+      args.asset_manifest, asset_environment, args.include_genai)
 
   install_root = Path(os.environ["ProgramFiles"]) / "SimaPCIeHost"
   if install_root.exists():
@@ -2250,6 +2254,10 @@ def qualify(args: argparse.Namespace) -> None:
           "core_commit": candidate.core_commit,
           "resources": candidate.resources,
           "scheduler_commit": candidate.receipt.get("scheduler_source_commit"),
+      },
+      "assets": {
+          "identity_sha256": asset_manifest_sha256(asset_manifest),
+          "manifest": asset_manifest,
       },
       "sima_cli": cli_identity,
       "cleanup": {},
@@ -2549,6 +2557,10 @@ def qualify(args: argparse.Namespace) -> None:
           mode: parse_performance_log(evidence / f"cpp-test_tensor_{mode}.log", mode)
           for mode in ("latency", "throughput")
       }
+      final_asset_manifest = verify_asset_manifest(
+          args.asset_manifest, asset_environment, args.include_genai)
+      if final_asset_manifest != asset_manifest:
+        raise RuntimeError("hardware asset manifest identity changed during qualification")
       if upgrade_base is not None:
         rollback_removal = {
             "core": remove_msi(
@@ -2722,6 +2734,7 @@ def qualify(args: argparse.Namespace) -> None:
 def main() -> None:
   parser = argparse.ArgumentParser(description=__doc__)
   parser.add_argument("--candidate", type=Path, required=True)
+  parser.add_argument("--asset-manifest", type=Path, required=True)
   parser.add_argument("--card-candidate", type=Path, required=True)
   parser.add_argument("--card-host", required=True)
   parser.add_argument(

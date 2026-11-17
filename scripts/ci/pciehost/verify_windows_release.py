@@ -11,6 +11,7 @@ from pathlib import PureWindowsPath
 import re
 
 from windows_candidate import dependency_identity, msi_version, sha256, validate_candidate
+from windows_hardware_assets import asset_manifest_sha256, read_asset_manifest
 
 
 def read_object(path: Path, description: str) -> dict:
@@ -124,7 +125,8 @@ def verify_msi_transaction_rollback(candidate_root: Path) -> dict:
 
 def verify(candidate_dir: Path, qualification_path: Path, expected_commit: str,
            require_signatures: bool, require_genai: bool = False,
-           require_release: bool = False) -> dict:
+           require_release: bool = False,
+           asset_manifest_path: Path | None = None) -> dict:
   candidate = validate_candidate(candidate_dir)
   if candidate.core_commit != expected_commit:
     raise ValueError(
@@ -134,6 +136,18 @@ def verify(candidate_dir: Path, qualification_path: Path, expected_commit: str,
   qualification = read_object(qualification_path, "hardware qualification")
   if qualification.get("result") != "PASS":
     raise ValueError("hardware qualification did not pass")
+  expected_asset_manifest = read_asset_manifest(
+      asset_manifest_path
+      if asset_manifest_path is not None
+      else qualification_path.with_name("hardware-asset-manifest.json"))
+  expected_asset_identity = {
+      "identity_sha256": asset_manifest_sha256(expected_asset_manifest),
+      "manifest": expected_asset_manifest,
+  }
+  if qualification.get("assets") != expected_asset_identity:
+    raise ValueError("hardware qualification used a different hardware asset manifest")
+  if require_genai and not expected_asset_manifest["include_genai"]:
+    raise ValueError("release qualification asset manifest does not admit GenAI assets")
   host = qualification.get("host")
   security = host.get("windows_security") if isinstance(host, dict) else None
   required_security = {
@@ -431,6 +445,7 @@ def verify(candidate_dir: Path, qualification_path: Path, expected_commit: str,
   return {
       "core_commit": candidate.core_commit,
       "hardware_qualified": True,
+      "asset_manifest_sha256": expected_asset_identity["identity_sha256"],
       "host_security_recorded": True,
       "path_qualified": True,
       "customer_install_qualified": True,
@@ -447,6 +462,7 @@ def verify(candidate_dir: Path, qualification_path: Path, expected_commit: str,
 def main() -> None:
   parser = argparse.ArgumentParser(description=__doc__)
   parser.add_argument("--candidate", type=Path, required=True)
+  parser.add_argument("--asset-manifest", type=Path, required=True)
   parser.add_argument("--expected-commit", required=True)
   parser.add_argument("--qualification", type=Path, required=True)
   parser.add_argument("--require-genai", action="store_true")
@@ -457,7 +473,8 @@ def main() -> None:
   args = parser.parse_args()
   result = verify(
       args.candidate, args.qualification, args.expected_commit,
-      args.require_signatures, args.require_genai, args.require_release)
+      args.require_signatures, args.require_genai, args.require_release,
+      args.asset_manifest)
   args.output.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 

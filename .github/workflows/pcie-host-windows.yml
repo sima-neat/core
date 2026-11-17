@@ -127,6 +127,7 @@ jobs:
           scripts/ci/pciehost/sdk_build_identity.py
           scripts/ci/pciehost/verify_linux_release_run.py
           scripts/ci/pciehost/verify_windows_release.py
+          scripts/ci/pciehost/windows_hardware_assets.py
           scripts/ci/pciehost/windows_candidate.py
       - run: git diff --check
   linux_release:
@@ -531,6 +532,9 @@ jobs:
       GSTREAMER_ROOT_X86_64: ${{ vars.GSTREAMER_ROOT_X86_64 }}
       SIMA_WINDOWS_CMAKE_PREFIX_PATH: ${{ vars.SIMA_WINDOWS_CMAKE_PREFIX_PATH }}
       SIMA_WINDOWS_DEPENDENCY_RUNTIME_PATH: ${{ vars.SIMA_WINDOWS_DEPENDENCY_RUNTIME_PATH }}
+      SIMA_WINDOWS_PCIE_ASSET_MANIFEST: >-
+        ${{ inputs.include_genai && vars.SIMA_WINDOWS_PCIE_GENAI_ASSET_MANIFEST ||
+            vars.SIMA_WINDOWS_PCIE_VISION_ASSET_MANIFEST }}
       SIMA_WINDOWS_PLATFORM_RUNTIME_DIR: ${{ vars.SIMA_WINDOWS_PLATFORM_RUNTIME_DIR }}
       SIMA_WINDOWS_PYTHON_WHEELHOUSE: ${{ vars.SIMA_WINDOWS_PYTHON_WHEELHOUSE }}
       SIMAPCIE_BOXDECODE_IMAGE: ${{ vars.SIMA_WINDOWS_PCIE_BOXDECODE_IMAGE }}
@@ -599,6 +603,7 @@ jobs:
           foreach ($name in @(
             "GSTREAMER_ROOT_X86_64",
             "SIMA_WINDOWS_DEPENDENCY_RUNTIME_PATH",
+            "SIMA_WINDOWS_PCIE_ASSET_MANIFEST",
             "SIMA_WINDOWS_PLATFORM_RUNTIME_DIR",
             "SIMA_WINDOWS_PYTHON_WHEELHOUSE",
             "SIMAPCIE_CARD_HOST",
@@ -628,6 +633,7 @@ jobs:
           }
           $arguments = @(
             "scripts/ci/pciehost/qualify_windows_hardware.py",
+            "--asset-manifest", $env:SIMA_WINDOWS_PCIE_ASSET_MANIFEST,
             "--candidate", "$env:RUNNER_TEMP\core-windows-candidate",
             "--card-candidate", "$env:RUNNER_TEMP\core-card-candidate",
             "--card-host", $env:SIMAPCIE_CARD_HOST,
@@ -704,6 +710,7 @@ jobs:
           $ErrorActionPreference = "Stop"
           $arguments = @(
             "scripts/ci/pciehost/verify_windows_release.py",
+            "--asset-manifest", $env:SIMA_WINDOWS_PCIE_ASSET_MANIFEST,
             "--candidate", "$env:RUNNER_TEMP\core-windows-candidate",
             "--qualification", "$env:RUNNER_TEMP\core-windows-hardware-evidence\hardware-qualification.json",
             "--expected-commit", $env:GITHUB_SHA,
