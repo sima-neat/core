@@ -134,6 +134,7 @@ jobs:
         with:
           persist-credentials: false
       - run: python3 pcie_host/tests/test_windows_ci.py
+      - run: python3 pcie_host/tests/test_verify_linux_release_run.py
       - run: >-
           python3 -m py_compile
           scripts/ci/pciehost/acquire_windows_dependencies.py
@@ -274,8 +275,13 @@ jobs:
             --repository "sima-neat/scheduler" \
             --run-id "${{ inputs.scheduler_run_id }}" \
             --expected-commit "${{ inputs.scheduler_commit }}" \
-            --workflow-name "Scheduler native Windows PCIe host" \
-            --workflow-path ".github/workflows/pcie-host-windows.yml" \
+            --workflow-name "Scheduler" \
+            --workflow-path ".github/workflows/ci.yml" \
+            --required-reusable-workflow "sima-neat/scheduler/.github/workflows/pcie-host-windows.yml" \
+            --required-job "Build, test, and publish native Windows PCIe profile / contracts" \
+            --required-job "Build, test, and publish native Windows PCIe profile / Native Windows amd64" \
+            --required-job "Verify Scheduler build and Vulcan publication" \
+            --required-artifact "scheduler-native-windows-amd64" \
             --output "${RUNNER_TEMP}/scheduler-release-admission.json"
       - name: Admit exact successful Windows upgrade baseline
         if: inputs.require_upgrade == true

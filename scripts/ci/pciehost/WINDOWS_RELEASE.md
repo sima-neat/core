@@ -143,8 +143,24 @@ By default that dispatch resolves published Scheduler and sima-cli revisions.
 During initial bootstrap, or when intentionally testing unpublished producer
 changes, supply `scheduler_run_id` with `scheduler_commit`, or `sima_cli_run_id`
 with `sima_cli_commit`. Each pair is admitted against its source workflow before
-the artifact is used. Do not upload replacement files or mix a run ID with a
-different commit.
+the artifact is used. The Scheduler selector names the successful root
+`.github/workflows/ci.yml` run: that run invokes the reusable native-Windows job
+and owns its retained artifact under the same run ID. This avoids depending on a
+standalone workflow that cannot be dispatched from a feature ref until the
+workflow already exists on Scheduler's default branch. Do not upload replacement
+files or mix a run ID with a different commit.
+
+Bootstrap with an exact-source `workflow_dispatch` of Scheduler's root workflow
+on the feature branch without entering Scheduler publication lanes:
+
+```text
+gh workflow run ci.yml --repo sima-neat/scheduler \
+  --ref <scheduler-feature-ref> -f validation_only=true
+```
+
+Core admits that run only when its referenced Windows
+workflow, contracts job, native Windows job, final aggregate, and retained
+artifact all match the selected full Scheduler commit and run attempt.
 
 Validation runs do not publish. `require_signatures` defaults to `false` in both
 Windows workflows, while checksums, immutable manifests, exact producer identity,

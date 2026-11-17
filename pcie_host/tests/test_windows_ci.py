@@ -560,14 +560,31 @@ class WindowsCiContracts(unittest.TestCase):
     self.assertIn("scheduler_run_id", source)
     self.assertIn("scheduler_commit", source)
     self.assertIn("--expected-scheduler-commit", source)
-    self.assertIn('"Scheduler native Windows PCIe host"', source)
-    self.assertIn('".github/workflows/pcie-host-windows.yml"', source)
+    # The reusable Windows workflow cannot be dispatched from a feature ref
+    # before it exists on the default branch. Admit the Scheduler root run,
+    # which owns the reusable job and the retained artifact under one run ID.
+    self.assertIn('--workflow-name "Scheduler"', source)
+    self.assertIn('--workflow-path ".github/workflows/ci.yml"', source)
+    self.assertNotIn('--workflow-name "Scheduler native Windows PCIe host"', source)
+    self.assertIn(
+        '--required-reusable-workflow '
+        '"sima-neat/scheduler/.github/workflows/pcie-host-windows.yml"', source)
+    self.assertIn(
+        '--required-job "Build, test, and publish native Windows PCIe profile / contracts"',
+        source)
+    self.assertIn(
+        '--required-job '
+        '"Build, test, and publish native Windows PCIe profile / Native Windows amd64"',
+        source)
+    self.assertIn('--required-job "Verify Scheduler build and Vulcan publication"', source)
+    self.assertIn('--required-artifact "scheduler-native-windows-amd64"', source)
     self.assertIn("repository: sima-neat/scheduler", source)
     self.assertIn("scheduler-native-windows-amd64", source)
     self.assertIn("pcie-windows-build", source)
     self.assertIn("pcie-windows-hardware", source)
     self.assertNotIn("windows-latest", source)
     self.assertIn("scripts/ci/pciehost/build_windows.py", source)
+    self.assertIn("python3 pcie_host/tests/test_verify_linux_release_run.py", source)
     self.assertIn("scripts/ci/pciehost/qualify_windows_hardware.py", source)
     self.assertIn("scripts/ci/pciehost/cleanup_windows_hardware.py", source)
     self.assertIn("needs: [hardware, linux_release]", source)
