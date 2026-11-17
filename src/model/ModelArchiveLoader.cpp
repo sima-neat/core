@@ -109,6 +109,25 @@ const char* null_redirect() {
 #endif
 }
 
+// cmd.exe runs a bare "tar" from the current directory before PATH. Name the bsdtar Windows
+// ships in System32 when its path needs no quoting for cmd.exe; otherwise use PATH.
+std::string tar_program() {
+#ifdef _WIN32
+  wchar_t directory[MAX_PATH];
+  const UINT length = ::GetSystemDirectoryW(directory, MAX_PATH);
+  if (length > 0 && length < MAX_PATH) {
+    const fs::path candidate = fs::path(directory) / L"tar.exe";
+    const std::u8string text = candidate.u8string();
+    std::error_code ec;
+    if (fs::is_regular_file(candidate, ec) &&
+        text.find_first_of(u8" \t\"%&()[]{}^=;!'+,`~<>|") == std::u8string::npos) {
+      return {text.begin(), text.end()};
+    }
+  }
+#endif
+  return "tar";
+}
+
 // Windows tar reads its arguments in the ANSI code page, so cmd.exe opens the archive as
 // standard input and tar never sees the path.
 std::string tar_archive_operand(const std::string& tar_path) {
@@ -250,7 +269,7 @@ std::vector<std::string> tar_list_verbose(const std::string& tar_path) {
   // fields. Keep numeric owners for deterministic parsing across localized
   // account names.
   const std::string cmd =
-      std::string("tar --numeric-owner -tvf ") + tar_archive_operand(tar_path) + null_redirect();
+      tar_program() + " --numeric-owner -tvf " + tar_archive_operand(tar_path) + null_redirect();
 #else
   const std::string cmd = std::string("tar --numeric-owner --full-time -tvf ") +
                           tar_archive_operand(tar_path) + null_redirect();
@@ -657,7 +676,7 @@ json parse_json_entry_strict(const std::vector<std::uint8_t>& bytes, const std::
 
 std::vector<std::uint8_t> read_tar_entry(const std::string& tar_path,
                                          const std::string& raw_entry_path, std::size_t max_bytes) {
-  const std::string cmd = std::string("tar -xOf ") + tar_archive_operand(tar_path) + " -- " +
+  const std::string cmd = tar_program() + " -xOf " + tar_archive_operand(tar_path) + " -- " +
                           shell_quote(raw_entry_path) + null_redirect();
 
   FILE* pipe = open_read_pipe(cmd);
@@ -1162,7 +1181,7 @@ ArchiveSnapshot::~ArchiveSnapshot() {
 std::uint64_t stream_tar_entry_to_file(const std::string& tar_path,
                                        const std::string& raw_entry_path, const fs::path& out_path,
                                        std::size_t max_bytes) {
-  const std::string cmd = std::string("tar -xOf ") + tar_archive_operand(tar_path) + " -- " +
+  const std::string cmd = tar_program() + " -xOf " + tar_archive_operand(tar_path) + " -- " +
                           shell_quote(raw_entry_path) + null_redirect();
 
   FILE* pipe = open_read_pipe(cmd);

@@ -11,6 +11,7 @@
 #include <thread>
 
 #ifdef _WIN32
+#include <fstream>
 #include <optional>
 
 #define NOMINMAX
@@ -141,6 +142,22 @@ void test_child_environment_omits_openssh_fd_state(const std::string& executable
               child.output);
   require(environment_variable(openssh_fd_state) == "AAAAAAICAgA=",
           "runner must not change the parent process environment");
+}
+
+// OpenSSH outside System32\OpenSSH (e.g. C:\Program Files\OpenSSH) is found through PATH and
+// returned as a full path; a bare name would make CreateProcessW use the current directory.
+void test_open_ssh_executable_searches_path() {
+  pcie_internal::ScopedTempDirectory directory("sima-neat-pcie-path-test");
+  const auto tool = directory.path() / "sima-neat-path-probe.exe";
+  std::ofstream(tool).put('\0');
+  const auto path = "relative;" + pcie_internal::host_path_string(directory.path());
+  const ScopedEnvironmentVariable scoped_path("PATH", path.c_str());
+  require(pcie_internal::open_ssh_executable("sima-neat-path-probe") ==
+              pcie_internal::host_path_string(tool),
+          "OpenSSH lookup did not return the full PATH match");
+  require(pcie_internal::open_ssh_executable("sima-neat-missing-probe") ==
+              "sima-neat-missing-probe.exe",
+          "OpenSSH lookup changed the not-found result");
 }
 #endif
 
@@ -281,6 +298,7 @@ int main(const int argc, char** argv) {
     test_command_runner(argv[0]);
 #ifdef _WIN32
     test_child_environment_omits_openssh_fd_state(argv[0]);
+    test_open_ssh_executable_searches_path();
 #endif
     const std::string first =
         pcie_internal::RemoteRuntime::unique_remote_upload_path("/first/model.tar.gz");

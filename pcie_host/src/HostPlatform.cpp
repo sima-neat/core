@@ -142,15 +142,29 @@ std::string open_ssh_executable(const char* command) {
     throw std::invalid_argument("OpenSSH command must not be empty");
   }
 #ifdef _WIN32
+  const auto executable = std::filesystem::path(command).wstring() + L".exe";
   wchar_t system_directory[MAX_PATH];
   const UINT length = GetSystemDirectoryW(system_directory, MAX_PATH);
   if (length > 0 && length < MAX_PATH) {
-    const auto candidate = std::filesystem::path(system_directory) / L"OpenSSH" /
-                           (std::filesystem::path(command).wstring() + L".exe");
+    const auto candidate = std::filesystem::path(system_directory) / L"OpenSSH" / executable;
     std::error_code ec;
     if (std::filesystem::is_regular_file(candidate, ec)) {
       return host_path_string(candidate);
     }
+  }
+  // CreateProcessW resolves a bare application name against the current directory, never
+  // PATH, so search PATH's absolute entries here (e.g. C:\Program Files\OpenSSH).
+  const DWORD size = GetEnvironmentVariableW(L"PATH", nullptr, 0);
+  std::wstring path_list(size, L'\0');
+  path_list.resize(size ? GetEnvironmentVariableW(L"PATH", path_list.data(), size) : 0);
+  for (std::size_t begin = 0; begin <= path_list.size();) {
+    const auto end = std::min(path_list.find(L';', begin), path_list.size());
+    const auto candidate = std::filesystem::path(path_list.substr(begin, end - begin)) / executable;
+    std::error_code ec;
+    if (candidate.is_absolute() && std::filesystem::is_regular_file(candidate, ec)) {
+      return host_path_string(candidate);
+    }
+    begin = end + 1;
   }
   return std::string(command) + ".exe";
 #else

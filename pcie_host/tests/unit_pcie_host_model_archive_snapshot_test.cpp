@@ -163,6 +163,34 @@ void test_loader_extracts_under_unicode_directory() {
           "loader did not extract the model binary under a Unicode directory");
 }
 
+// cmd.exe would run a tar.bat from the current directory before the tar Windows ships.
+void test_loader_ignores_tar_in_current_directory() {
+#ifdef _WIN32
+  pcie_internal::ScopedTempDirectory temp("sima-neat-pcie-snapshot-test");
+  write_file(temp.path() / "tar.bat", "@exit /b 7\r\n");
+  const fs::path archive = temp.path() / "model.tar.gz";
+  write_file(archive, gzip(tar_member("etc/model_mpk.json", "{}") +
+                           tar_member("share/model.elf", "elf") + std::string(1024, '\0')));
+  const fs::path previous = fs::current_path();
+  fs::current_path(temp.path());
+  try {
+    loader::ModelArchiveLoaderOptions options;
+    options.staging_base = pcie_internal::host_path_string(temp.path());
+    options.check_output_free_space = false;
+    const auto extracted = loader::ModelArchiveLoader::extract(
+        pcie_internal::host_path_string(archive),
+        pcie_internal::host_path_string(temp.path() / "out"), options);
+    fs::current_path(previous);
+    require(read_file(pcie_internal::host_path_from_string(extracted.package_root) / "etc" /
+                      "model_mpk.json") == "{}",
+            "loader did not extract with a tar.bat in the current directory");
+  } catch (...) {
+    fs::current_path(previous);
+    throw;
+  }
+#endif
+}
+
 void test_non_tar_gz_source_is_rejected_before_snapshot() {
 #ifdef _WIN32
   pcie_internal::ScopedTempDirectory temp("sima-neat-pcie-snapshot-test");
@@ -188,6 +216,7 @@ int main() {
     test_spaces_and_unicode_source_path_use_safe_snapshot_name();
     test_non_tar_gz_source_is_rejected_before_snapshot();
     test_loader_extracts_under_unicode_directory();
+    test_loader_ignores_tar_in_current_directory();
     std::cout << "[PASS] model archive snapshot\n";
     return 0;
   } catch (const std::exception& error) {
