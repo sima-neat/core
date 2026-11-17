@@ -439,8 +439,9 @@ def test_baseline_resolution_pulls_only_digest_and_checks_provenance(tmp_path, r
            ci.baseline_identity(role, ci.baseline_dependencies(baseline_record(), role)))
     digest = config['card']['digest'] if role == 'card' else 'sha256:'+'b'*64
     local_id = 'sha256:'+'c'*64
+    recipe = config['card'].get('recipe_sha256', config['recipe_sha256']) if role == 'card' else config['recipe_sha256']
     labels = {'ai.sima.offline.'+name: value for name, value in
-              [('inputs', key), ('recipe', config['recipe_sha256']), ('role', role)]}
+              [('inputs', key), ('recipe', recipe), ('role', role)]}
     if fault == 'labels':
         labels['ai.sima.offline.inputs'] = 'd'*64
     info = {'Architecture': 'amd64' if fault == 'architecture' else 'arm64',
@@ -457,6 +458,7 @@ def test_baseline_resolution_pulls_only_digest_and_checks_provenance(tmp_path, r
             evidence = json.loads((tmp_path/'baseline-images.json').read_text())
             assert evidence[role]['image'] == config['repository']+'@'+digest
             assert evidence[role]['inputs_sha256'] == key
+            assert evidence[role]['recipe_sha256'] == recipe
         assert command.call_args_list[0].args == ('docker', 'pull', config['repository']+'@'+digest)
         if role == 'card':
             manifest.assert_not_called()
@@ -477,7 +479,8 @@ def test_card_image_pin_is_independent_of_packages_under_test(tmp_path):
     config = ci.baseline_config()
     info = {'Architecture': 'arm64', 'Id': config['card']['digest'], 'Config': {'Labels': {
         'ai.sima.offline.inputs': config['card']['inputs_sha256'],
-        'ai.sima.offline.recipe': config['recipe_sha256'], 'ai.sima.offline.role': 'card'}}}
+        'ai.sima.offline.recipe': config['card'].get('recipe_sha256', config['recipe_sha256']),
+        'ai.sima.offline.role': 'card'}}}
     with patch.object(ci.subprocess, 'run') as manifest, \
          patch.object(ci, 'run', side_effect=['', json.dumps([info])]*2) as docker:
         for sha in ('a'*40, 'b'*40):
@@ -489,7 +492,7 @@ def test_card_image_pin_is_independent_of_packages_under_test(tmp_path):
         manifest.assert_not_called()
 
 
-@pytest.mark.parametrize('field,value', [('digest', 'latest'), ('inputs_sha256', 'invalid')])
+@pytest.mark.parametrize('field,value', [('digest', 'latest'), ('inputs_sha256', 'invalid'), ('recipe_sha256', 'invalid')])
 def test_invalid_card_pin_is_rejected_before_docker(tmp_path, field, value):
     config = ci.baseline_config()
     config['card'][field] = value

@@ -5,9 +5,10 @@
   "card": {
     "os_id": "elxr",
     "os_version": "26.04",
-    "digest": "sha256:5d8cabc0fea5ebb84a088e734453a1d890faf35a04960ebf3b57c4df07f42691",
-    "inputs_sha256": "aa63eff590245edb4a5b67bec87c2d26b682511e2c28dca083b68511a03404f7",
-    "source_sha": "e1eddd462e1d09062fae637581e2121ce1c2bf71",
-    "validation_run_id": 40576835084
+    "digest": "sha256:842552c4b3fd4d668a6e52641ad73cbad1f153ae226f3f6146e80d1497b77792",
+    "inputs_sha256": "5bd2fff65d2868f045318dfe65ae2ed88fc924b749ae04717dbc7a852d15ceb5",
+    "recipe_sha256": "253ab53ed4a95dd43df6d0817f32d254439401f6d36381d18dd01acb482781bb",
+    "factory_release": "3.0.1_release_master_B2798",
+    "source_sha": "182baa170721a34f561f164eb91a915245eb9bfc"
   }
 }

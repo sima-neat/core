@@ -173,12 +173,16 @@ def baseline_identity(role, dependencies):
 
 def pull_baseline(args, role, record):
     config = baseline_config()
+    recipe = config['recipe_sha256']
     if role == 'card':
         # The test environment changes with Platform requirements, not with
         # every rebuilt Scheduler/Runner/Kernels package under test.
-        digest, key = config['card']['digest'], config['card']['inputs_sha256']
+        card = config['card']
+        digest, key = card['digest'], card['inputs_sha256']
+        recipe = card.get('recipe_sha256', recipe)
         if (not re.fullmatch(r'sha256:[0-9a-f]{64}', digest)
-                or not re.fullmatch(r'[0-9a-f]{64}', key)):
+                or not re.fullmatch(r'[0-9a-f]{64}', key)
+                or not re.fullmatch(r'[0-9a-f]{64}', recipe)):
             raise ValueError('invalid pinned card baseline identity')
     else:
         key = baseline_identity(role, baseline_dependencies(record, role))
@@ -197,7 +201,7 @@ def pull_baseline(args, role, record):
     info = json.loads(run('docker', 'image', 'inspect', image))[0]
     labels = info.get('Config', {}).get('Labels', {}) or {}
     if any(labels.get('ai.sima.offline.'+name) != value for name, value in
-           [('inputs', key), ('recipe', config['recipe_sha256']), ('role', role)]):
+           [('inputs', key), ('recipe', recipe), ('role', role)]):
         raise ValueError('published baseline provenance differs: '+role)
     if info['Architecture'] != ('arm64' if role == 'card' else role.split('-')[1]):
         raise ValueError('published baseline architecture differs: '+role)
@@ -205,7 +209,7 @@ def pull_baseline(args, role, record):
     path = args.work/'baseline-images.json'
     evidence = json.loads(path.read_text()) if path.exists() else {}
     evidence[role] = {'image': image, 'local_id': local_id, 'inputs_sha256': key,
-                      'recipe_sha256': config['recipe_sha256']}
+                      'recipe_sha256': recipe}
     path.write_text(json.dumps(evidence, indent=2)+'\n')
     return local_id
 
