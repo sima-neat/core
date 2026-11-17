@@ -319,6 +319,135 @@ if ($versions.Count -ne 1 -or -not $versions[0]) { exit 4 }
   return actual
 
 
+def windows_platform_state_snapshot(log: Path) -> dict:
+  """Record stable Platform service and present-device identity.
+
+  Process IDs, service control capabilities, and other transition-dependent
+  fields are deliberately omitted because the qualifier restarts the service.
+  The service registry values are configuration, so they must survive exactly.
+  Driver signer fields are identity only; Platform certificate trust remains
+  an externally owned release-policy gate.
+  """
+  script = r"""
+$ErrorActionPreference = 'Stop'
+$serviceName = 'SiMaMlaDaemon'
+$services = @(Get-CimInstance Win32_Service -Filter "Name='$serviceName'")
+if ($services.Count -ne 1) { throw 'SiMaMlaDaemon service is not unique' }
+$service = $services[0]
+$serviceKey = Get-ItemProperty `
+  -LiteralPath "HKLM:\SYSTEM\CurrentControlSet\Services\$serviceName" `
+  -ErrorAction Stop
+$registry = [ordered]@{}
+@($serviceKey.PSObject.Properties | Where-Object {
+  $_.Name -notlike 'PS*'
+} | Sort-Object Name) | ForEach-Object {
+  $registry[$_.Name] = $_.Value
+}
+
+$deviceNames = @('SiMa.ai MLA Device', 'SiMa.ai Virtual Ethernet Adapter')
+$present = @(Get-PnpDevice -PresentOnly -ErrorAction Stop | Where-Object {
+  $_.FriendlyName -in $deviceNames
+})
+foreach ($name in $deviceNames) {
+  if (@($present | Where-Object { $_.FriendlyName -eq $name }).Count -lt 1) {
+    throw "No present $name was found"
+  }
+}
+$signed = @(Get-CimInstance Win32_PnPSignedDriver -ErrorAction Stop)
+$devices = @($present | Sort-Object InstanceId | ForEach-Object {
+  $device = $_
+  $drivers = @($signed | Where-Object { $_.DeviceID -eq $device.InstanceId })
+  if ($drivers.Count -ne 1) {
+    throw "Present Platform device has no unique signed driver: $($device.InstanceId)"
+  }
+  $driver = $drivers[0]
+  [ordered]@{
+    class = [string]$device.Class
+    driver_inf = [string]$driver.InfName
+    driver_provider = [string]$driver.DriverProviderName
+    driver_signer = [string]$driver.Signer
+    driver_version = [string]$driver.DriverVersion
+    friendly_name = [string]$device.FriendlyName
+    instance_id = [string]$device.InstanceId
+    is_signed = [bool]$driver.IsSigned
+    manufacturer = [string]$driver.Manufacturer
+    status = [string]$device.Status
+  }
+})
+
+[ordered]@{
+  pnp_devices = $devices
+  service = [ordered]@{
+    configuration = $registry
+    display_name = [string]$service.DisplayName
+    name = [string]$service.Name
+    path_name = [string]$service.PathName
+    service_type = [string]$service.ServiceType
+    start_mode = [string]$service.StartMode
+    start_name = [string]$service.StartName
+    state = [string]$service.State
+  }
+} | ConvertTo-Json -Depth 12 -Compress
+"""
+  command = [
+      require_powershell(), "-NoLogo", "-NoProfile", "-NonInteractive",
+      "-Command", script,
+  ]
+  result = subprocess.run(
+      command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+      timeout=60, check=False)
+  log.write_text(
+      f"returncode={result.returncode}\nstdout={result.stdout}\nstderr={result.stderr}",
+      encoding="utf-8", errors="replace")
+  if result.returncode != 0:
+    raise RuntimeError(f"could not record Windows Platform state; see {log}")
+  try:
+    value = json.loads(result.stdout)
+  except json.JSONDecodeError as error:
+    raise RuntimeError(f"Windows Platform state was not valid JSON; see {log}") from error
+  service_keys = {
+      "configuration", "display_name", "name", "path_name", "service_type",
+      "start_mode", "start_name", "state",
+  }
+  device_keys = {
+      "class", "driver_inf", "driver_provider", "driver_signer", "driver_version",
+      "friendly_name", "instance_id", "is_signed", "manufacturer", "status",
+  }
+  service = value.get("service") if isinstance(value, dict) else None
+  devices = value.get("pnp_devices") if isinstance(value, dict) else None
+  if (not isinstance(value, dict) or set(value) != {"pnp_devices", "service"}
+      or not isinstance(service, dict)
+      or set(service) != service_keys or service["name"] != "SiMaMlaDaemon"
+      or not isinstance(service["configuration"], dict)
+      or not service["configuration"] or not service["path_name"]
+      or not service["start_mode"] or not service["start_name"]
+      or service["state"] != "Running"
+      or not isinstance(devices, list) or not devices):
+    raise RuntimeError(f"Windows Platform state was incomplete; see {log}")
+  names = {"SiMa.ai MLA Device", "SiMa.ai Virtual Ethernet Adapter"}
+  if (any(not isinstance(device, dict) for device in devices)
+      or {device.get("friendly_name") for device in devices} != names
+      or len({str(device.get("instance_id", "")).lower() for device in devices})
+      != len(devices)):
+    raise RuntimeError(f"Windows Platform PnP identity was incomplete; see {log}")
+  for device in devices:
+    if (not isinstance(device, dict) or set(device) != device_keys
+        or not device["instance_id"] or not device["driver_version"]
+        or not device["driver_inf"] or not device["driver_provider"]
+        or not isinstance(device["driver_signer"], str)
+        or not isinstance(device["is_signed"], bool)
+        or device["status"] != "OK"):
+      raise RuntimeError(f"Windows Platform PnP identity was invalid; see {log}")
+  return value
+
+
+def require_restored_windows_host_state(baseline: dict, final: dict) -> None:
+  if final != baseline:
+    raise RuntimeError(
+        "Windows Platform/GStreamer/runtime dependencies, Platform PnP identity, "
+        "or SiMaMlaDaemon configuration/state changed during qualification")
+
+
 def windows_security_snapshot(log: Path) -> dict:
   script = r"""
 $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
@@ -618,6 +747,33 @@ def customer_process_environment(
       str(windows / "System32" / "WindowsPowerShell" / "v1.0"),
       str(windows / "System32" / "OpenSSH"),
   ))
+  return environment
+
+
+def isolated_sima_cli_environment(customer_home: Path, wheelhouse: Path,
+                                  work: Path) -> dict[str, str]:
+  """Confine sima-cli receipts, managed Python, and agent skills to this run."""
+  home = customer_home.resolve()
+  disposable = work.resolve()
+  if not home.is_relative_to(disposable):
+    raise ValueError("sima-cli customer profile must be inside the disposable work tree")
+  environment = os.environ.copy()
+  environment.pop("PYTHONPATH", None)
+  environment.update({
+      "CLAUDE_HOME": str(home / ".claude"),
+      "CODEX_HOME": str(home / ".codex"),
+      "HOME": str(home),
+      "PIP_CACHE_DIR": str(home / ".cache" / "pip"),
+      "PIP_FIND_LINKS": str(wheelhouse),
+      "PIP_NO_INDEX": "1",
+      "SIMA_CLI_CHECK_FOR_UPDATE": "0",
+      "SIMA_CLI_HOME": str(home / ".sima-cli"),
+      "USERPROFILE": str(home),
+  })
+  # SkillManager honors CODEX_HOME/CLAUDE_HOME and stores its registry beneath
+  # SIMA_CLI_HOME. Since all three are descendants of the removed work tree,
+  # final work-tree removal proves the qualifier leaves no customer-skill or
+  # sima-cli receipt state in the runner's real profile.
   return environment
 
 
@@ -2284,9 +2440,14 @@ def qualify(args: argparse.Namespace) -> None:
 
   result["host"]["windows_security"] = windows_security_snapshot(
       evidence / "windows-security-state.log")
-
   remote_lock_token = secrets.token_hex(16)
   with ExclusiveLock(args.lock_file, remote_lock_token) as card_lock:
+    host_state_baseline = {
+        "dependencies": dependency_cohort,
+        "platform": windows_platform_state_snapshot(
+            evidence / "windows-platform-baseline.log"),
+    }
+    result["host_state_baseline"] = host_state_baseline
     result["card_network_baseline"] = windows_card_network_identity(
         args.card_host, evidence / "card-network-baseline.log")
     remote_lock = RemoteExclusiveLock(args, args.remote_lock_path, remote_lock_token)
@@ -2359,13 +2520,8 @@ def qualify(args: argparse.Namespace) -> None:
       if not cli.is_file():
         raise RuntimeError(f"exact sima-cli candidate installed no console entry point: {cli}")
 
-      cli_environment = os.environ.copy()
-      cli_environment.pop("PYTHONPATH", None)
-      cli_environment["PIP_NO_INDEX"] = "1"
-      cli_environment["PIP_FIND_LINKS"] = str(wheelhouse)
-      cli_environment["SIMA_CLI_CHECK_FOR_UPDATE"] = "0"
-      cli_environment["USERPROFILE"] = str(customer_home)
-      cli_environment["HOME"] = str(customer_home)
+      cli_environment = isolated_sima_cli_environment(
+          customer_home, wheelhouse, work)
       native_download_root = work / "native customer downloads with spaces"
       target = "core/pciehost/windows/amd64@3.0"
       if upgrade_base is not None:
@@ -2702,6 +2858,19 @@ def qualify(args: argparse.Namespace) -> None:
       except BaseException as error:
         cleanup_errors.append(str(error))
       try:
+        host_state_final = {
+            "dependencies": verify_dependency_cohort(
+                candidate, args.platform_runtime, args.gstreamer_root,
+                args.dependency_runtime_dir),
+            "platform": windows_platform_state_snapshot(
+                evidence / "windows-platform-final.log"),
+        }
+        result["host_state_final"] = host_state_final
+        require_restored_windows_host_state(host_state_baseline, host_state_final)
+        result["cleanup"]["host_state"] = "PASS"
+      except BaseException as error:
+        cleanup_errors.append(str(error))
+      try:
         shutil.rmtree(work)
       except FileNotFoundError:
         pass
@@ -2711,6 +2880,7 @@ def qualify(args: argparse.Namespace) -> None:
         cleanup_errors.append(f"hardware work directory remained after cleanup: {work}")
       else:
         result["cleanup"]["work"] = "PASS"
+        result["cleanup"]["customer_state"] = "PASS"
       if not cleanup_errors:
         try:
           remote_lock.release(evidence / "card-lock-release.log")

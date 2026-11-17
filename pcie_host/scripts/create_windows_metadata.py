@@ -4,6 +4,7 @@
 import argparse
 import hashlib
 import json
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -21,6 +22,10 @@ def metadata(msi: Path, wheel: Path, version: str, branch: str, commit: str,
              platform_version: str = None, gstreamer_version: str = None) -> dict:
   if not platform_version or not gstreamer_version:
     raise ValueError("Windows metadata requires exact Platform and GStreamer versions")
+  if (scheduler_msi is not None
+      and (not isinstance(scheduler_version, str)
+           or not re.fullmatch(r"[0-9]+(?:[.][0-9]+){2}", scheduler_version))):
+    raise ValueError("Scheduler MSI requires its exact numeric package version")
   resources = []
   installation = {
       "type": "windows-msi",
@@ -131,7 +136,7 @@ def metadata(msi: Path, wheel: Path, version: str, branch: str, commit: str,
         {
             "owner": "scheduler",
             "msi": scheduler_msi.name,
-            "version": scheduler_version or version,
+            "version": scheduler_version,
         },
         {"owner": "core", "msi": msi.name, "version": version},
     ]

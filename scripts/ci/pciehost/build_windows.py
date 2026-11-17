@@ -132,6 +132,10 @@ def verify_scheduler_candidate(directory: Path, expected_commit: str) -> tuple[d
     raise ValueError(
         f"Scheduler candidate commit {metadata.get('commit')!r} is not the selected "
         f"commit {expected_commit!r}")
+  package_version = metadata.get("package-version")
+  if (not isinstance(package_version, str)
+      or not re.fullmatch(r"[0-9]+(?:[.][0-9]+){2}", package_version)):
+    raise ValueError("Scheduler candidate has no Windows MSI package version")
   resources = metadata.get("resources")
   checksums = metadata.get("resources-checksum")
   if (not isinstance(resources, list) or not resources
@@ -966,7 +970,7 @@ def build(args: argparse.Namespace) -> None:
         "assert c.media_serve_root == 'data'",
     ], env=import_environment, cwd=Path(os.environ["TEMP"]))
 
-    scheduler_version = str(scheduler_metadata.get("version", ""))
+    scheduler_version = scheduler_metadata["package-version"]
     gstreamer_match = re.search(
         r"(?m)^gst-inspect-1[.]0 version ([0-9]+(?:[.][0-9]+){2})$",
         producer_dependencies["gstreamer"]["version_output"])

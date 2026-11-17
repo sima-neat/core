@@ -100,7 +100,7 @@ class WindowsMetadataTests(unittest.TestCase):
       scheduler.write_bytes(b"s" * 1024 * 1024)
       core.write_bytes(b"c" * 1024 * 1024)
       result = MODULE.metadata(
-          core, None, "0.6.1", "develop", "a" * 40, scheduler, "0.6.1",
+          core, None, "0.6.2", "develop", "a" * 40, scheduler, "0.6.1",
           "3.0.0.2", "1.28.6")
 
     self.assertEqual(result["resources"], [scheduler.name, core.name])
@@ -108,9 +108,27 @@ class WindowsMetadataTests(unittest.TestCase):
         [package["owner"] for package in result["installation"]["native-packages"]],
         ["scheduler", "core"],
     )
+    self.assertEqual(
+        [package["version"] for package in result["installation"]["native-packages"]],
+        ["0.6.1", "0.6.2"],
+    )
     self.assertNotIn("msi", result["installation"])
     self.assertEqual(set(result["resources-checksum"]), {scheduler.name, core.name})
     self.assertEqual(result["size"], {"download": "2MB", "install": "2MB"})
+
+  def test_scheduler_cohort_rejects_missing_or_artifact_selector_version(self):
+    with tempfile.TemporaryDirectory() as temporary:
+      root = Path(temporary)
+      scheduler = root / "scheduler.msi"
+      core = root / "core.msi"
+      scheduler.write_bytes(b"scheduler")
+      core.write_bytes(b"core")
+      for version in (None, "abcdef123456", "0.6"):
+        with self.subTest(version=version), self.assertRaisesRegex(
+            ValueError, "exact numeric package version"):
+          MODULE.metadata(
+              core, None, "0.6.2", "develop", "a" * 40,
+              scheduler, version, "3.0.0.2", "1.28.6")
 
 
 if __name__ == "__main__":

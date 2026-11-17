@@ -183,18 +183,38 @@ def verify(candidate_dir: Path, qualification_path: Path, expected_commit: str,
       or native_tests.get("errors") != 0
       or native_tests.get("junit_sha256") != sha256(candidate.root / "native-tests.xml")):
     raise ValueError("Windows native qualification was not an exact zero-skip pass")
-  if qualification.get("dependencies") != dependency_identity(
-      candidate.root, require_dependency_runtime=True):
+  expected_dependencies = dependency_identity(
+      candidate.root, require_dependency_runtime=True)
+  if qualification.get("dependencies") != expected_dependencies:
     raise ValueError("hardware qualification used a different runtime dependency cohort")
   cleanup = qualification.get("cleanup")
   if not isinstance(cleanup, dict) or cleanup.get("errors") != []:
     raise ValueError("hardware qualification did not prove clean removal")
   expected_cleanup = {
       "card_candidate": "PASS", "core_msi": "PASS", "python": "PASS",
-      "remote_lock": "PASS", "scheduler_msi": "PASS",
+      "customer_state": "PASS", "host_state": "PASS", "remote_lock": "PASS",
+      "scheduler_msi": "PASS", "work": "PASS",
   }
   if any(cleanup.get(name) != value for name, value in expected_cleanup.items()):
     raise ValueError("hardware qualification did not remove every customer-owned component")
+  host_baseline = qualification.get("host_state_baseline")
+  host_final = qualification.get("host_state_final")
+  if (not isinstance(host_baseline, dict) or host_baseline != host_final
+      or set(host_baseline) != {"dependencies", "platform"}
+      or host_baseline.get("dependencies") != expected_dependencies):
+    raise ValueError("hardware qualification did not preserve its Windows host baseline")
+  host_platform = host_baseline.get("platform")
+  service = host_platform.get("service") if isinstance(host_platform, dict) else None
+  devices = host_platform.get("pnp_devices") if isinstance(host_platform, dict) else None
+  required_devices = {"SiMa.ai MLA Device", "SiMa.ai Virtual Ethernet Adapter"}
+  if (not isinstance(service, dict) or service.get("name") != "SiMaMlaDaemon"
+      or service.get("state") != "Running"
+      or not isinstance(service.get("configuration"), dict)
+      or not service["configuration"] or not isinstance(devices, list) or not devices
+      or any(not isinstance(device, dict) for device in devices)
+      or {device.get("friendly_name") for device in devices} != required_devices
+      or any(device.get("status") != "OK" for device in devices)):
+    raise ValueError("hardware qualification recorded an invalid Windows host baseline")
   customer_install = qualification.get("customer_install")
   if (not isinstance(customer_install, dict)
       or customer_install.get("command") != "core/pciehost/windows/amd64@3.0"

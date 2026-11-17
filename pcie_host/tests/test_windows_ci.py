@@ -42,8 +42,10 @@ from qualify_windows_hardware import (  # noqa: E402
     card_candidate_paths, card_snapshot, card_stage_cleanup_command,
     card_management_addresses,
     create_standard_user_python, customer_process_environment, load_upgrade_base,
+    isolated_sima_cli_environment,
     parse_performance_log, require_powershell as require_hardware_powershell,
     prepare_openssh_secret_directory,
+    require_restored_windows_host_state,
     recover_windows_platform_device, remove_installed_tutorial_facade,
     remove_qualification_tree,
     restore_card_candidate, run_captured_to_file, run_sudo_remote,
@@ -52,7 +54,7 @@ from qualify_windows_hardware import (  # noqa: E402
     stage_invalid_wheel_registry, stage_local_registry, stage_path_fixtures,
     standard_user_wrapper, stress_queues, validate_card_candidate,
     verify_customer_process_activation,
-    windows_card_network_identity)
+    windows_card_network_identity, windows_platform_state_snapshot)
 from standard_user_genai import (  # noqa: E402
     prove_writable_sentinel, read_serve_mapping, run as run_standard_user_genai)
 from verify_linux_release_run import verify_run as verify_linux_run  # noqa: E402
@@ -468,6 +470,7 @@ class WindowsCiContracts(unittest.TestCase):
         "artifact": {"architecture": "amd64", "profile": "pcie-host-windows"},
         "commit": "a" * 40,
         "installation": {"msi": msi.name, "type": "windows-msi"},
+        "package-version": "0.6.1",
         "repository": "sima-neat/scheduler",
         "resources": sorted(resources),
         "resources-checksum": resources,
@@ -482,6 +485,23 @@ class WindowsCiContracts(unittest.TestCase):
       metadata, actual = MODULE.verify_scheduler_candidate(root, "a" * 40)
       self.assertEqual(actual, expected)
       self.assertEqual(metadata["commit"], "a" * 40)
+      self.assertEqual(metadata["package-version"], "0.6.1")
+
+  def test_scheduler_candidate_requires_distinct_msi_package_version(self):
+    with tempfile.TemporaryDirectory() as directory:
+      root = Path(directory)
+      self.scheduler_candidate(root)
+      metadata_path = root / "metadata.json"
+      metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+      for value in (None, "a" * 12, "0.6"):
+        with self.subTest(value=value):
+          if value is None:
+            metadata.pop("package-version", None)
+          else:
+            metadata["package-version"] = value
+          metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
+          with self.assertRaisesRegex(ValueError, "MSI package version"):
+            MODULE.verify_scheduler_candidate(root, "a" * 40)
 
   def test_scheduler_candidate_rejects_changed_msi(self):
     with tempfile.TemporaryDirectory() as directory:
@@ -775,6 +795,95 @@ class WindowsCiContracts(unittest.TestCase):
         windows_card_network_identity(
             "10.0.0.2", Path(directory) / "network.log")
 
+  def test_windows_platform_snapshot_records_stable_service_and_present_pnp_identity(self):
+    service = {
+        "configuration": {
+            "DelayedAutoStart": 0,
+            "FailureActions": [128, 81, 1, 0],
+            "ImagePath": r'"C:\Program Files\SiMa\simaai_mla_daemon.exe" --service',
+            "ObjectName": "LocalSystem",
+            "Start": 2,
+            "Type": 16,
+        },
+        "display_name": "SiMa.ai MLA Daemon",
+        "name": "SiMaMlaDaemon",
+        "path_name": r'"C:\Program Files\SiMa\simaai_mla_daemon.exe" --service',
+        "service_type": "Own Process",
+        "start_mode": "Auto",
+        "start_name": "LocalSystem",
+        "state": "Running",
+    }
+    devices = []
+    for name, instance, device_class in (
+        ("SiMa.ai MLA Device", r"PCI\VEN_1F06&DEV_3123\4&1", "System"),
+        ("SiMa.ai Virtual Ethernet Adapter", r"ROOT\SIMA_VETH\0000", "Net"),
+    ):
+      devices.append({
+          "class": device_class,
+          "driver_inf": "oem42.inf",
+          "driver_provider": "SiMa.ai",
+          "driver_signer": "SiMa.ai Corporation",
+          "driver_version": "3.0.0.2",
+          "friendly_name": name,
+          "instance_id": instance,
+          "is_signed": True,
+          "manufacturer": "SiMa.ai",
+          "status": "OK",
+      })
+    snapshot = {"pnp_devices": devices, "service": service}
+    completed = subprocess.CompletedProcess([], 0, json.dumps(snapshot), "")
+    with tempfile.TemporaryDirectory() as directory, mock.patch(
+        "qualify_windows_hardware.require_powershell", return_value="powershell.exe"
+    ), mock.patch(
+        "qualify_windows_hardware.subprocess.run", return_value=completed
+    ) as run:
+      result = windows_platform_state_snapshot(
+          Path(directory) / "windows-platform-state.log")
+
+    self.assertEqual(result, snapshot)
+    powershell = run.call_args.args[0][-1]
+    self.assertIn("Get-PnpDevice -PresentOnly", powershell)
+    self.assertNotIn("ProcessId", powershell)
+    require_restored_windows_host_state(snapshot, dict(snapshot))
+    changed = json.loads(json.dumps(snapshot))
+    changed["service"]["configuration"]["Start"] = 3
+    with self.assertRaisesRegex(RuntimeError, "configuration/state changed"):
+      require_restored_windows_host_state(snapshot, changed)
+
+  def test_windows_platform_snapshot_rejects_non_present_driver_state(self):
+    snapshot = {
+        "pnp_devices": [
+            {
+                "class": "System", "driver_inf": "oem42.inf",
+                "driver_provider": "SiMa.ai", "driver_signer": "SiMa.ai",
+                "driver_version": "3.0.0.2", "friendly_name": "SiMa.ai MLA Device",
+                "instance_id": r"PCI\VEN_1F06&DEV_3123\4&1", "is_signed": True,
+                "manufacturer": "SiMa.ai", "status": "Error",
+            },
+            {
+                "class": "Net", "driver_inf": "oem43.inf",
+                "driver_provider": "SiMa.ai", "driver_signer": "SiMa.ai",
+                "driver_version": "3.0.0.2",
+                "friendly_name": "SiMa.ai Virtual Ethernet Adapter",
+                "instance_id": r"ROOT\SIMA_VETH\0000", "is_signed": True,
+                "manufacturer": "SiMa.ai", "status": "OK",
+            },
+        ],
+        "service": {
+            "configuration": {"ImagePath": "daemon.exe", "Start": 2},
+            "display_name": "SiMa.ai MLA Daemon", "name": "SiMaMlaDaemon",
+            "path_name": "daemon.exe", "service_type": "Own Process",
+            "start_mode": "Auto", "start_name": "LocalSystem", "state": "Running",
+        },
+    }
+    completed = subprocess.CompletedProcess([], 0, json.dumps(snapshot), "")
+    with tempfile.TemporaryDirectory() as directory, mock.patch(
+        "qualify_windows_hardware.require_powershell", return_value="powershell.exe"
+    ), mock.patch(
+        "qualify_windows_hardware.subprocess.run", return_value=completed
+    ), self.assertRaisesRegex(RuntimeError, "PnP identity was invalid"):
+      windows_platform_state_snapshot(Path(directory) / "platform.log")
+
   def test_signature_path_avoids_powershell_command_line_quoting(self):
     path = Path("C:/Program Files/SimaPCIeHost/bin/plugin.dll")
     output = '{"status":"NotSigned","message":"","thumbprint":null,' \
@@ -876,7 +985,7 @@ class WindowsCiContracts(unittest.TestCase):
     self.assertIn('current=$(cat \\"$remoteproc/firmware\\")', source)
     self.assertNotIn('read -r current < \\"$remoteproc/firmware\\"', source)
     self.assertIn("stdin=subprocess.DEVNULL", source)
-    self.assertIn('cli_environment["SIMA_CLI_CHECK_FOR_UPDATE"] = "0"', source)
+    self.assertIn("isolated_sima_cli_environment(", source)
     self.assertIn('evidence / "card-candidate-dependencies.log"', source)
     cleanup = (SCRIPT_DIR / "cleanup_windows_hardware.py").read_text(encoding="utf-8")
     self.assertIn("hardware work directory remained after recovery", cleanup)
@@ -1093,6 +1202,26 @@ class WindowsCiContracts(unittest.TestCase):
         "SIMA_WINDOWS_DEPENDENCY_RUNTIME_PATH", "SIMA_WINDOWS_PLATFORM_RUNTIME_DIR",
     ):
       self.assertNotIn(name, environment)
+
+  def test_sima_cli_receipts_and_customer_skills_are_confined_to_disposable_profile(self):
+    with tempfile.TemporaryDirectory() as directory:
+      work = Path(directory) / "work"
+      home = work / "customer home"
+      wheelhouse = Path(directory) / "wheelhouse"
+      with mock.patch.dict(os.environ, {
+          "CLAUDE_HOME": r"C:\real-profile\.claude",
+          "CODEX_HOME": r"C:\real-profile\.codex",
+          "PYTHONPATH": r"C:\producer",
+          "SIMA_CLI_HOME": r"C:\real-profile\.sima-cli",
+      }, clear=True):
+        environment = isolated_sima_cli_environment(home, wheelhouse, work)
+      self.assertNotIn("PYTHONPATH", environment)
+      for name in ("CLAUDE_HOME", "CODEX_HOME", "SIMA_CLI_HOME", "PIP_CACHE_DIR"):
+        self.assertTrue(Path(environment[name]).is_relative_to(work.resolve()))
+      self.assertEqual(environment["USERPROFILE"], str(home.resolve()))
+      self.assertEqual(environment["HOME"], str(home.resolve()))
+      with self.assertRaisesRegex(ValueError, "inside the disposable work tree"):
+        isolated_sima_cli_environment(work.parent / "outside", wheelhouse, work)
 
   def test_standard_user_python_is_fresh_and_installs_exact_candidate(self):
     with tempfile.TemporaryDirectory() as directory:
@@ -1323,6 +1452,29 @@ class WindowsCiContracts(unittest.TestCase):
         "files": [{"name": "opencv_world500.dll", "sha256": "9" * 64}],
     }]
     dependencies.write_text(json.dumps(dependency_data), encoding="utf-8")
+    qualified_dependencies = dependency_identity(
+        root, require_dependency_runtime=True)
+    platform_host_state = {
+        "pnp_devices": [
+            {
+                "driver_version": "3.0.0.2",
+                "friendly_name": "SiMa.ai MLA Device",
+                "instance_id": r"PCI\VEN_1F06&DEV_3123\4&1",
+                "status": "OK",
+            },
+            {
+                "driver_version": "3.0.0.2",
+                "friendly_name": "SiMa.ai Virtual Ethernet Adapter",
+                "instance_id": r"ROOT\SIMA_VETH\0000",
+                "status": "OK",
+            },
+        ],
+        "service": {
+            "configuration": {"ImagePath": "simaai_mla_daemon.exe", "Start": 2},
+            "name": "SiMaMlaDaemon",
+            "state": "Running",
+        },
+    }
     core_signatures = root / "windows-signatures.json"
     core_signatures.write_text(json.dumps({
         "certificate_sha1": "A" * 40 if signed else "",
@@ -1429,8 +1581,8 @@ class WindowsCiContracts(unittest.TestCase):
         },
         "cleanup": {
             "card_candidate": "PASS", "core_msi": "PASS", "errors": [],
-            "python": "PASS", "remote_lock": "PASS",
-            "scheduler_msi": "PASS"},
+            "customer_state": "PASS", "host_state": "PASS", "python": "PASS",
+            "remote_lock": "PASS", "scheduler_msi": "PASS", "work": "PASS"},
         "customer_install": {
             "command": "core/pciehost/windows/amd64@3.0",
             "download_path_with_spaces": r"C:\customer downloads\candidate",
@@ -1483,21 +1635,14 @@ class WindowsCiContracts(unittest.TestCase):
             "directory": r"C:\ProgramData\SiMa\PCIe GenAI media",
             "serve_root": "data",
         },
-        "dependencies": {
-            "platform_version": "3.0.0.2",
-            "gstreamer": {
-                "pkg_config_sha256": "e" * 64,
-                "runtime_dlls": [
-                    {"name": "gstreamer-1.0-0.dll", "sha256": "f" * 64},
-                ],
-                "version_output": "gst-inspect version 1.26.0",
-            },
-            "platform_runtime_dlls": [
-                {"name": "sima-platform.dll", "sha256": "d" * 64},
-            ],
-            "dependency_runtime": [[
-                {"name": "opencv_world500.dll", "sha256": "9" * 64},
-            ]],
+        "dependencies": qualified_dependencies,
+        "host_state_baseline": {
+            "dependencies": qualified_dependencies,
+            "platform": platform_host_state,
+        },
+        "host_state_final": {
+            "dependencies": qualified_dependencies,
+            "platform": platform_host_state,
         },
         "path_fixtures": {
             "SIMAPCIE_YOLOV8_MODEL": r"C:\qualification assets\model.tar.gz",
@@ -2446,6 +2591,16 @@ install() {
       value["dependencies"]["platform_runtime_dlls"][0]["sha256"] = "0" * 64
       qualification.write_text(json.dumps(value), encoding="utf-8")
       with self.assertRaisesRegex(ValueError, "different runtime dependency cohort"):
+        verify(root, qualification, commit, True)
+
+  def test_release_gate_rejects_changed_windows_host_baseline(self):
+    with tempfile.TemporaryDirectory() as directory:
+      root = Path(directory)
+      commit, _, qualification = self.windows_candidate(root)
+      value = json.loads(qualification.read_text(encoding="utf-8"))
+      value["host_state_final"]["platform"]["service"]["configuration"]["Start"] = 3
+      qualification.write_text(json.dumps(value), encoding="utf-8")
+      with self.assertRaisesRegex(ValueError, "Windows host baseline"):
         verify(root, qualification, commit, True)
 
   def test_release_gate_rejects_unsigned_scheduler_payload(self):
