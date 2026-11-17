@@ -25,11 +25,9 @@ This file defines baseline quality expectations for automated and human contribu
 
 ## Documentation updates
 
-When behavior or public API changes:
-
-- Update `docs/develop-apps/contribute/start-here/architecture.md` if architecture/contracts changed.
-- Update user-facing docs for workflow/configuration changes.
-- Update examples if API usage changed.
+Follow the [documentation policy](docs/develop-apps/contribute/start-here/coding_standard.md#documentation-obligations).
+Do not add documentation solely because a bug fix, diagnostic, or internal refactor changes behavior.
+Update examples when API usage changes.
 
 For official documentation:
 
@@ -86,7 +84,7 @@ In short: MPK inference contract constrains preproc output, not preproc input.
 A change is ready when:
 
 - Relevant tests were added/updated and pass.
-- Docs are updated for user-visible changes.
+- Documentation impact follows the documentation policy above.
 - API compatibility impact was assessed and documented.
 
 ## Source-first local builds

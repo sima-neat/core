@@ -43,6 +43,8 @@
 
 ## Run
 
+若 DevKit 沒有 NVMe，請在執行 `llima pull` 前將 `LLIMA_MODELS_PATH` 設為可寫入的目錄，並以該目錄取代下方的 `/media/nvme/llima/models`。
+
 在 Modalix DevKit 上，使用 LLiMa CLI 從 Hugging Face 下載 LFM2-VL 1.6B VLM：
 
 ```bash
