@@ -8,6 +8,7 @@ import getpass
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
@@ -94,6 +95,20 @@ def normalized_link_target(path):
   if os.name == "nt" and target.startswith("\\\\?\\"):
     target = target[4:]
   return os.path.normcase(os.path.normpath(target))
+
+
+def evaluate_actions_expression(expression, values):
+  """Evaluate the boolean subset used by the workflow admission contracts."""
+  expression = expression.strip()
+  if expression.startswith("${{") and expression.endswith("}}"):
+    expression = expression[3:-2].strip()
+  for token, value in sorted(
+      values.items(), key=lambda item: len(item[0]), reverse=True):
+    expression = expression.replace(token, repr(value))
+  expression = expression.replace("true", "True").replace("false", "False")
+  expression = expression.replace("&&", " and ").replace("||", " or ")
+  expression = re.sub(r"!(?!=)", " not ", expression)
+  return bool(eval(expression, {"__builtins__": {}}, {}))
 
 
 def fixture_asset_manifest(include_genai=False):
@@ -589,6 +604,91 @@ class WindowsCiContracts(unittest.TestCase):
     self.assertIn("test-pciehost-windows:", source)
     self.assertIn("uses: ./.github/workflows/pcie-host-windows.yml", source)
     self.assertIn("needs.test-pciehost-windows.result == 'success'", source)
+
+  def test_main_ci_forces_non_release_windows_runs_to_validation_only(self):
+    source = MAIN_WORKFLOW.read_text(encoding="utf-8")
+    job = source.split("  test-pciehost-windows:\n", 1)[1].split(
+        "  promote-latest-tag:", 1)[0]
+    admission = job.split("    with:\n", 1)[0]
+    self.assertNotIn("refs/heads/develop", admission)
+    self.assertNotIn("refs/tags/v", admission)
+    expression = re.search(r"(?m)^      validation_only: (.+)$", job).group(1)
+    cases = (
+        ("pull_request", "refs/pull/42/merge", False, True),
+        ("push", "refs/heads/feature/windows", False, True),
+        ("push", "refs/heads/v0.7.0", False, True),
+        ("push", "refs/tags/nightly", False, True),
+        ("workflow_dispatch", "refs/heads/feature/windows", False, True),
+        ("workflow_call", "refs/heads/feature/windows", False, True),
+        ("workflow_call", "refs/heads/develop", False, True),
+        ("push", "refs/heads/develop", False, False),
+        ("workflow_dispatch", "refs/heads/develop", False, False),
+        ("push", "refs/tags/v0.7.0", False, False),
+        ("workflow_dispatch", "refs/tags/v0.7.0-rc.1", False, False),
+        ("push", "refs/heads/develop", True, True),
+    )
+    for event, ref, requested_validation, expected_validation in cases:
+      with self.subTest(event=event, ref=ref, validation=requested_validation):
+        values = {
+            "startsWith(github.ref, 'refs/tags/v')": ref.startswith("refs/tags/v"),
+            "github.event_name": event,
+            "github.ref": ref,
+            "inputs.validation_only": requested_validation,
+        }
+        self.assertEqual(
+            evaluate_actions_expression(expression, values), expected_validation)
+
+  def test_windows_publisher_independently_requires_final_release_context(self):
+    source = WORKFLOW.read_text(encoding="utf-8")
+    publish = source.split("  publish:\n", 1)[1]
+    expression = re.search(r"(?m)^    if: (.+)$", publish).group(1)
+    cases = (
+        ("sima-neat/core", "pull_request", "refs/pull/42/merge",
+         False, "success", "success", False),
+        ("sima-neat/core", "push", "refs/heads/feature/windows",
+         False, "success", "success", False),
+        ("sima-neat/core", "push", "refs/heads/v0.7.0",
+         False, "success", "success", False),
+        ("sima-neat/core", "push", "refs/tags/nightly",
+         False, "success", "success", False),
+        ("fork/core", "push", "refs/heads/develop",
+         False, "success", "success", False),
+        ("sima-neat/core", "workflow_dispatch", "refs/heads/feature/windows",
+         False, "success", "success", False),
+        ("sima-neat/core", "workflow_call", "refs/heads/feature/windows",
+         False, "success", "success", False),
+        ("sima-neat/core", "workflow_call", "refs/heads/develop",
+         False, "success", "success", False),
+        ("sima-neat/core", "push", "refs/heads/develop",
+         False, "success", "success", True),
+        ("sima-neat/core", "workflow_dispatch", "refs/heads/develop",
+         False, "success", "success", True),
+        ("sima-neat/core", "push", "refs/tags/v0.7.0",
+         False, "success", "success", True),
+        ("sima-neat/core", "workflow_dispatch", "refs/tags/v0.7.0-rc.1",
+         False, "success", "success", True),
+        ("sima-neat/core", "push", "refs/heads/develop",
+         True, "success", "success", False),
+        ("sima-neat/core", "push", "refs/heads/develop",
+         False, "failure", "success", False),
+        ("sima-neat/core", "push", "refs/heads/develop",
+         False, "success", "failure", False),
+    )
+    for repository, event, ref, validation, hardware, linux, expected in cases:
+      with self.subTest(repository=repository, event=event, ref=ref, validation=validation,
+                        hardware=hardware, linux=linux):
+        values = {
+            "startsWith(github.ref, 'refs/tags/v')": ref.startswith("refs/tags/v"),
+            "github.repository": repository,
+            "github.event_name": event,
+            "github.ref": ref,
+            "inputs.validation_only": validation,
+            "needs.hardware.result": hardware,
+            "needs.linux_release.result": linux,
+        }
+        self.assertEqual(evaluate_actions_expression(expression, values), expected)
+    self.assertIn("needs: [hardware, linux_release]", publish)
+    self.assertIn('source_branch: "3.0"', publish)
 
   def test_producer_accepts_inbox_windows_powershell(self):
     def which(name):

@@ -2164,7 +2164,7 @@ jobs:
     with:
       linux_current_run: true
       include_genai: true
-      validation_only: ${{ inputs.validation_only || false }}
+      validation_only: ${{ inputs.validation_only || !((github.event_name == 'push' || github.event_name == 'workflow_dispatch') && (github.ref == 'refs/heads/develop' || startsWith(github.ref, 'refs/tags/v'))) }}
       require_signatures: false
     secrets: inherit
 
