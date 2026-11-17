@@ -135,8 +135,8 @@ std::string RemoteRuntime::pid_path(const int queue) const {
 
 std::string RemoteRuntime::unique_remote_upload_path(const std::string& local_path) {
   static std::atomic<std::uint64_t> sequence{0};
-  const fs::path local(local_path);
-  const std::string filename = local.filename().string();
+  const fs::path local = host_path_from_string(local_path);
+  const std::string filename = host_path_string(local.filename());
   if (filename.empty()) {
     throw std::invalid_argument("local upload path must have a filename");
   }
@@ -268,7 +268,7 @@ void RemoteRuntime::run_or_throw(const std::vector<std::string>& args, const int
 }
 
 std::string RemoteRuntime::upload_file(const std::string& local_path) const {
-  const fs::path local(local_path);
+  const fs::path local = host_path_from_string(local_path);
   if (!fs::exists(local)) {
     throw std::runtime_error("local file does not exist: " + local_path);
   }
@@ -280,9 +280,9 @@ std::string RemoteRuntime::upload_file(const std::string& local_path) const {
     run_or_throw(mkdir_cmd, kCommandTimeoutSec, "remote mkdir");
   }
 
-  const std::string remote_path = unique_remote_upload_path(absolute_local.string());
+  const std::string remote_path = unique_remote_upload_path(host_path_string(absolute_local));
   std::vector<std::string> scp_cmd = scp_base();
-  scp_cmd.push_back(absolute_local.string());
+  scp_cmd.push_back(host_path_string(absolute_local));
   scp_cmd.push_back(endpoint() + ":" + remote_path);
   run_or_throw(scp_cmd, kCommandTimeoutSec + 30, "scp upload");
   return remote_path;
