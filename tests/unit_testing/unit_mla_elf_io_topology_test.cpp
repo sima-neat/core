@@ -293,8 +293,9 @@ void test_unindexed_sections_are_rejected() {
     MlaElfIoTopology topology;
     check(!read_mla_elf_io_topology(path, &topology) && !topology.valid,
           "unindexed: persistent I/O section without an index is rejected");
-    check(topology.error.find("'" + unindexed + "' has no input/output index") != std::string::npos,
-          "unindexed: diagnostic names the section");
+    check(topology.error == "This model package uses an older format. Recompile the model with "
+                            "the latest SiMa.ai Model Compiler.",
+          "unindexed: diagnostic tells the customer how to recompile");
     std::filesystem::remove(path);
   }
 }
@@ -467,9 +468,8 @@ void test_unindexed_efficientsam3_fixture_is_rejected() {
   MlaElfIoTopology topology;
   check(!read_mla_elf_io_topology(path, &topology) && !topology.valid,
         "efficientsam3: old unindexed compiled model requires recompilation");
-  check(topology.error.find(text) != std::string::npos &&
-            topology.error.find("recompile the model") != std::string::npos,
-        "efficientsam3: diagnostic identifies the section and migration");
+  check(topology.error.find("Recompile the model") != std::string::npos,
+        "efficientsam3: diagnostic requests recompilation");
   std::filesystem::remove(path);
 }
 

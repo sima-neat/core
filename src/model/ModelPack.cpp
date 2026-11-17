@@ -3624,6 +3624,9 @@ void ModelPack::ensure_dmabuf_execution_plan() const {
   auto compiled = pipeline_internal::try_compile_dmabuf_plan(*mpk_package_);
   execution_admission_ = compiled.report;
   if (!compiled.eligible()) {
+    if (compiled.report.code == pipeline_internal::DmabufEligibilityCode::ElfTopologyUnreadable) {
+      throw std::runtime_error(compiled.report.detail);
+    }
     throw std::runtime_error(std::string("ModelPack: dmabuf-plan admission failed [") +
                              pipeline_internal::dmabuf_eligibility_code_name(compiled.report.code) +
                              "] at " +

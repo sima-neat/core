@@ -1,11 +1,13 @@
 #define SIMA_NEAT_INTERNAL 1
 #include "pipeline/internal/sima/MlaElfIoTopology.h"
+#include "pipeline/internal/EnvUtil.h"
 
 #include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
 #include <cctype>
+#include <cstdio>
 #include <cstring>
 #include <fstream>
 #include <ios>
@@ -383,9 +385,11 @@ bool read_mla_elf_io_topology(const std::filesystem::path& elf_path, MlaElfIoTop
       continue;
     }
     if (is_unindexed_io_section(name)) {
-      out->error = "elf-io-topology: I/O section '" + name +
-                   "' has no input/output index; recompile the model with a Model Compiler that "
-                   "names I/O sections input_<i>/output_<i>";
+      out->error = "This model package uses an older format. Recompile the model with the latest "
+                   "SiMa.ai Model Compiler.";
+      if (env_bool("SIMA_MPK_CONTRACT_DEBUG", false)) {
+        std::fprintf(stderr, "MLA section '%s' has no input/output index.\n", name.c_str());
+      }
       return false;
     }
   }
