@@ -61,34 +61,54 @@ class SchedulerRunCandidate(unittest.TestCase):
                 ('wrong-commit', 'identity differs'),
                 ('missing', 'undeclared resources'),
                 ('undeclared', 'undeclared resources'),
-                ('tampered', 'resource changed')):
+                ('tampered', 'resource changed'),
+                ('same-size-tampered', 'resource changed'),
+                ('symlink', 'invalid or excessive entries'),
+                ('qualified', 'identity differs'),
+                ('component', 'identity differs'),
+                ('schema_version', 'identity differs')):
             with self.subTest(mutation=mutation), tempfile.TemporaryDirectory() as temp:
                 root = Path(temp); candidate = self.candidate(root)
-                if mutation == 'wrong-commit':
+                identity = {'wrong-commit': ('source_commit', 'b' * 40), 'qualified': ('qualified', True),
+                            'component': ('component', 'runner'), 'schema_version': ('schema_version', 2)}
+                if mutation in identity:
                     data = json.loads((candidate / 'candidate.json').read_text())
-                    data['source_commit'] = 'b' * 40
+                    data[identity[mutation][0]] = identity[mutation][1]
                     (candidate / 'candidate.json').write_text(json.dumps(data))
                 elif mutation == 'missing':
                     (candidate / 'scheduler.deb').unlink()
                 elif mutation == 'undeclared':
                     (candidate / 'extra').write_text('not admitted')
+                elif mutation == 'same-size-tampered':
+                    (candidate / 'scheduler.deb').write_bytes(b'EXACT downloaded package')
+                elif mutation == 'symlink':
+                    # Identical bytes outside the candidate: only the link itself is wrong.
+                    outside = root / 'outside.deb'
+                    outside.write_bytes((candidate / 'scheduler.deb').read_bytes())
+                    (candidate / 'scheduler.deb').unlink()
+                    (candidate / 'scheduler.deb').symlink_to(outside)
                 else:
                     (candidate / 'scheduler.deb').write_text('changed')
                 with self.assertRaisesRegex(ValueError, error):
                     client_acquisition.stage_run_candidate(
                         candidate, root / 'staged', self.commit, 'feature/windows')
+                self.assertFalse((root / 'staged').exists())
 
     def test_exact_actions_candidate_enforces_resource_and_size_bounds(self):
-        with tempfile.TemporaryDirectory() as temp:
-            root = Path(temp); candidate = self.candidate(root)
-            with patch.object(client_acquisition, 'MAX_CANDIDATE_BYTES', 1), \
-                 patch.object(client_acquisition, 'digest') as hasher, \
-                 patch.object(client_acquisition.shutil, 'copy2') as copier:
-                with self.assertRaisesRegex(ValueError, 'size bound'):
-                    client_acquisition.stage_run_candidate(
-                        candidate, root / 'staged', self.commit, 'feature/windows')
-                hasher.assert_not_called()
-                copier.assert_not_called()
+        for bound, value, error in (
+                ('MAX_CANDIDATE_BYTES', 1, 'size bound'),
+                ('MAX_RESOURCE_BYTES', 1, 'size bound'),
+                ('MAX_CANDIDATE_RESOURCES', 2, 'invalid or excessive entries')):
+            with self.subTest(bound=bound), tempfile.TemporaryDirectory() as temp:
+                root = Path(temp); candidate = self.candidate(root)
+                with patch.object(client_acquisition, bound, value), \
+                     patch.object(client_acquisition, 'digest') as hasher, \
+                     patch.object(client_acquisition.shutil, 'copy2') as copier:
+                    with self.assertRaisesRegex(ValueError, error):
+                        client_acquisition.stage_run_candidate(
+                            candidate, root / 'staged', self.commit, 'feature/windows')
+                    hasher.assert_not_called()
+                    copier.assert_not_called()
 
 
 class PublicationInventory(unittest.TestCase):

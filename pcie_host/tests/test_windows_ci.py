@@ -899,7 +899,8 @@ class WindowsCiContracts(unittest.TestCase):
             "github.event_name": event,
             "github.ref": ref,
             "inputs.validation_only": validation,
-            "inputs.require_upgrade": expected,
+            # Keep the upgrade term open so each row isolates its own term.
+            "inputs.require_upgrade": True,
             "inputs.first_release_upgrade_exemption": False,
             "needs.hardware.result": hardware,
             "needs.linux_release.result": linux,
