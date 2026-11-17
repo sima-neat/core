@@ -11,15 +11,21 @@ SiMa.ai Neat Library のリリースノート。
 
 ### 互換性に影響する変更 {#v062-breaking}
 
-- Neat Library の C++ ABI は 9（`libsima_neat.so.9`）になりました。`ResizeOptions`、`ResizeSpec`、`PreprocessOptions`、`PreprocOptions`、`NormalizationOptions`、`Model::Options` にフィールドが追加されました。対応するヘッダーとランタイムパッケージで C++ アプリケーション、プラグイン、Python バインディングを再ビルドしてください。ABI 6 のバイナリを再利用したり、互換性シンボリックリンクを追加したりしないでください。
+- Neat Library の C++ ABI は 7（`libsima_neat.so.7`）になりました。`ResizeOptions`、`ResizeSpec`、`PreprocessOptions`、`PreprocOptions`、`NormalizationOptions`、`Model::Options` にフィールドが追加されました。対応するヘッダーとランタイムパッケージで C++ アプリケーション、プラグイン、Python バインディングを再ビルドしてください。ABI 6 のバイナリ（0.6.0 および 0.6.1）を再利用したり、互換性シンボリックリンクを追加したりしないでください。
 
 ### セマンティックセグメンテーション {#v062-segmentation}
 
 - 新しい `ResizeArgMax` ノードと `Model::Options::semantic_segmentation` オプションは、EV74 上でセグメンテーションのスコアをデコードします。デコードはクラスごとのスコアを指定サイズへバイリニアでリサイズし、スコアが最大となる最初のクラスを返します。これは SegFormer の `interpolate` と `argmax` による後処理と一致します。パディングされた MLA 出力をその場で読み取り、INT8 スコアを逆量子化せずに比較します。モデルはスコアの代わりにクラスマップを返します。この演算を含む EV74 ファームウェアが必要です。[セマンティックセグメンテーションのデコード](/reference/semantic_segmentation_decode)を参照してください。
 
+### Segment Anything のマスク {#v062-segment-anything}
+
+- 新しい `BoxDecodeType` の値は、MobileSAM、EdgeTAM、EfficientSAM、EfficientSAM3 を元画像サイズのマスクにデコードします。`EdgeTamSeg` はマスクを返し、`EdgeTamTrack` はトラッキング用にデコーダーの生出力も返します。[Segment Anything のマスク](/reference/boxdecode_decode_types#segment-anything-masks)を参照してください。
+
 ### 前処理 {#v062-preproc}
 
-- 中央クロップは最終的な MPK 寸法での切り出し前に、任意の `preprocess.resize.shorter_side` を指定できるようになりました。完全なリサイズのフィルター範囲を保持し、逆変換を公開します。ABI 9 と対応するカーネルファームウェアで再ビルドし、古いバイナリを混在させないでください。
+- 中央クロップは最終的な MPK 寸法での切り出し前に、任意の `preprocess.resize.shorter_side` を指定できるようになりました。完全なリサイズのフィルター範囲を保持し、逆変換を公開します。ABI 7 と対応するカーネルファームウェアで再ビルドし、古いバイナリを混在させないでください。
+
+- `preprocess.resize.placement = LetterboxPlacement.TopLeft` は、MobileSAM が想定するとおり、レターボックス処理した画像をキャンバスの原点に置き、パディングをすべて右と下に配置します。検出用の BoxDecode プロファイルは公開されたアフィン変換でボックスを変換し、ポーズ、セグメンテーション、提案のプロファイルは中央以外のレターボックスを拒否します。[Preproc](/reference/nodes/preproc)を参照してください。
 
 - Model の前処理と単独の Resize は `ResizeInterpolation` を共有します。新しいコードではサンプラー文字列の代わりに `preprocess.resize.interpolation = ResizeInterpolation.BilinearAntialiased` を使ってください。従来の `scaling_type` 文字列は互換性を維持し、矛盾する既定値以外の文字列は拒否されます。
 
@@ -27,10 +33,25 @@ SiMa.ai Neat Library のリリースノート。
 
 ## 0.6.1 {#v061}
 
-- ホストからデバイスへのテンソル転送では、容量に上限のあるキャッシュを使用して DMA バッファーを再利用します。
-- 対象のモデルパックは型付きの MLA 出力ビューを返し、コンパイル済みの入力バッチ全体を検証します。
-- アプリケーションが入力を供給する非同期実行は、アイドル状態から再開できます。出力取得の待機時間に上限を設定した場合、タイムアウトで待機は終了しますが、実行は継続します。
-- Neat Library は C++ ABI 6（`libsima_neat.so.6`）を使用します。
+0.6.1 は 0.6.0 の不具合を修正し、ABI 6（`libsima_neat.so.6`）を維持します。0.6.0 向けにビルドしたアプリケーションは、再ビルドせずに実行できます。
+
+### 修正 {#v061-fixes}
+
+- ホストからデバイスへの転送は、ライブ入力をブロックすることなく、プールされた DMA バッファーを再び再利用します。プロセス全体の DMA 転送キャッシュには上限があります。キャッシュからの削除によって、使用中のテンソルが解放されることはありません。
+- 未処理の作業がない非同期実行はタイムアウトしなくなり、入力が届くと再開します。`Run::run()` と `Model::run()` は、呼び出しごとの `timeout_ms` に従って出力を待ちます。`-1` は `Run::pull(-1)` と同様に無制限に待ちます。`RunOptions::input_timeout_ms` は、入力モードの `Graph::run()` と、シードを渡すビルドの事前検証に適用されます。
+- `Model` はネイティブ MLA の入力バッチ全体を検証します。
+- パック済みの出力を持つ MLA のみのモデルは、型付きの出力ビューを保持します。
+- モデルによって管理されるルートは、従来の YOLOv6 パックなど、グラフ内でデコードされる YOLO ヘッドを受け付けます。これらには `BoxDecodeType::Yolo` を使ってください。
+- 実行レポートはネイティブの BoxDecode 設定を保持します。
+- H.265 エンコーダーは、サポートしていないレベル 4.2 を拒否します。
+- ビデオ送信側は入力を 3840×2160 に制限しなくなりました。ただし、寸法は引き続き正の偶数である必要があります。
+- オフラインの PCIe ホストバンドルは、依存関係の入力が変わると再ビルドされ、アーカイブ名にはチェックサムのサフィックスが付きます。
+
+### ドキュメント {#v061-docs}
+
+- H.264 デコードの入力は、8 ビット、4:2:0、プログレッシブである必要があります。High 10、High 4:2:2、インターレースのビットストリームはサポートされていません。
+- SDK ホストには Docker Engine 20.10.10 以降が必要です。
+- Model ガイドに、`preprocess.enable = Off` が無効にする内容と、残る MPK アダプターを記載しました。
 
 ## 0.6.0
 
@@ -72,7 +93,7 @@ SiMa.ai Neat Library のリリースノート。
 
 | リリース | C++ ABI | 互換性のある Palette SDK | 備考 |
 |---|---|---|---|
-| 0.6.2 | 9 | 3.0.0.2 | [Neat Library 0.6.2](https://github.com/sima-neat/core/releases/tag/v0.6.2) |
+| 0.6.2 | 7 | 3.0.0.2 | [Neat Library 0.6.2](https://github.com/sima-neat/core/releases/tag/v0.6.2) |
 | 0.6.1 | 6 | 3.0.0.1 | [Neat Library 0.6.1](https://github.com/sima-neat/core/releases/tag/v0.6.1) |
 | 0.6.0 | 6 | 3.0.0.0 | [Neat Library 0.6.0](https://github.com/sima-neat/core/releases/tag/v0.6.0) |
 | 0.5.0 | 5 | 2.1.3.1 | [Neat Library 0.5.0](https://github.com/sima-neat/core/releases/tag/v0.5.0) |

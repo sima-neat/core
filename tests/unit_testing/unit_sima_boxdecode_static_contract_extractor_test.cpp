@@ -3,13 +3,319 @@
 #include "pipeline/internal/sima/stagesemantics/BoxDecodeStageSemantics.h"
 #include "pipeline/internal/sima/StaticSpecBuilders.h"
 #include "pipeline/Tensor.h"
+#include "asset_utils.h"
+#include "sam_decoder_fixtures.h"
 #include "test_main.h"
 #include "test_utils.h"
 
+#include <nlohmann/json.hpp>
+
 #include <array>
+#include <fstream>
+#include <sstream>
+
+namespace {
+void sam_mask_static_contract() {
+  using namespace simaai::neat;
+  using namespace simaai::neat::pipeline_internal::sima;
+  std::string error;
+  const auto int8 =
+      load_mpk_contract_from_json(sam_test::kMobileSamDecoderMpk, "sam_decoder_mpk.json", &error);
+  require(int8.has_value(), "SAM decoder fixture must parse: " + error);
+  // Without a SAM decode type the [1,16] IoU vector keeps the generic rank-2 reading.
+  require(!resolve_model_managed_boxdecode_route_flags_from_mpk(*int8, nullptr, &error),
+          "generic BoxDecode routing must not reinterpret rank-2 heads");
+  auto bf16_json = nlohmann::json::parse(sam_test::kMobileSamDecoderMpk);
+  auto& plugins = bf16_json["plugins"];
+  for (auto it = plugins.begin(); it != plugins.end();) {
+    const std::string name = (*it)["name"];
+    if (name.rfind("dequantize", 0) == 0) {
+      it = plugins.erase(it);
+      continue;
+    }
+    for (auto* nodes : {&(*it)["input_nodes"], &(*it)["output_nodes"]})
+      for (auto& node : *nodes)
+        node["size"] = node["size"].get<int>() * 2;
+    if (name == "MLA_0_ofm_unpack_transform")
+      (*it)["config_params"]["params"]["tensor_types"] = {"bfloat16", "bfloat16"};
+    if (name == "PassThrough") {
+      (*it)["input_nodes"] = {
+          {{"name", "slice_MLA_0/tuple_get_item_0_slice_transform"}, {"size", 524288}},
+          {{"name", "slice_MLA_0/tuple_get_item_1_slice_transform"}, {"size", 8}}};
+      (*it)["output_nodes"][0]["size"] = 524288;
+      (*it)["output_nodes"][1]["size"] = 8;
+    }
+    ++it;
+  }
+  const auto bf16 = load_mpk_contract_from_json(bf16_json.dump(), "sam_bf16_mpk.json", &error);
+  require(bf16.has_value(), "SAM BF16 decoder fixture must parse: " + error);
+  for (const bool quantized : {true, false}) {
+    const auto& mpk = quantized ? *int8 : *bf16;
+    const std::int64_t scalar = quantized ? 1 : 2;
+    // MobileSAM's own type, and the SAM2-style types whose decoders share its
+    // four-channel prompt-decoder outputs.
+    for (const auto type : {BoxDecodeType::MobileSam, BoxDecodeType::EdgeTamSeg,
+                            BoxDecodeType::EdgeTamTrack, BoxDecodeType::EfficientSam3}) {
+      const auto flags =
+          resolve_model_managed_boxdecode_route_flags_from_mpk(mpk, nullptr, &error, type);
+      require(flags && flags->quant_needed == quantized && !flags->tess_needed,
+              "SAM prompt-decoder route flags: " + error);
+      auto contract = build_boxdecode_static_contract_from_mpk(mpk, *flags, nullptr, &error, type);
+      require(contract && contract->tensors.size() == 2,
+              "SAM prompt-decoder MPK contract: " + error);
+      const auto& logits = contract->tensors[0];
+      const auto& iou = contract->tensors[1];
+      require(logits.role == BoxDecodeTensorRole::SamMaskLogits &&
+                  iou.role == BoxDecodeTensorRole::SamIouPredictions,
+              "SAM prompt-decoder heads must be bound by geometry");
+      require(logits.source_storage_kind == BoxDecodeSourceStorageKind::DenseHwcPhysical &&
+                  logits.input_shape == std::vector<int>({256, 256, 16}) &&
+                  logits.slice_shape == std::vector<int>({256, 256, 4}) &&
+                  logits.source_segment_name == "MLA_0" && logits.source_byte_offset == 0,
+              "mask logits must keep the packed MLA carrier and its 4-of-16 channel slice");
+      require(iou.source_storage_kind == BoxDecodeSourceStorageKind::DenseHwcPhysical &&
+                  iou.input_shape == std::vector<int>({1, 1, 16}) &&
+                  iou.slice_shape == std::vector<int>({1, 1, 4}) &&
+                  iou.source_segment_name == "MLA_0" && iou.source_byte_offset == 1048576 * scalar,
+              "IoU predictions must be one pixel of four channels after the masks");
+      if (quantized)
+        require(contract->dq_scale ==
+                        std::vector<double>({2.1094489005250545, 251.50381076556937}) &&
+                    contract->dq_zp == std::vector<std::int64_t>({70, -128}),
+                "SAM prompt-decoder ports must keep their own quantization");
+      contract->decode_type = type;
+      const auto finalized = stagesemantics::finalize_boxdecode_static_contract(
+          *contract, type, std::nullopt, flags, BoxDecodeTypeOption::Auto, 0., 0., 0, 0, {});
+      require(finalized.topk == 1 && finalized.num_classes == 4 &&
+                  finalized.score_activation == BoxDecodeScoreActivation::Identity,
+              "a SAM prompt decoder publishes one detection over four masks");
+      const auto compiled = stagesemantics::build_boxdecode_compiled_contract(finalized);
+      require(compiled.payload.tensor_roles ==
+                      std::vector<BoxDecodeTensorRole>({BoxDecodeTensorRole::SamMaskLogits,
+                                                        BoxDecodeTensorRole::SamIouPredictions}) &&
+                  compiled.payload.topk == 1 && compiled.payload.num_classes == 4,
+              "compiled SAM prompt-decoder contract lost its roles");
+      bool rejected = false;
+      try {
+        (void)stagesemantics::finalize_boxdecode_static_contract(
+            *contract, type, std::nullopt, flags, BoxDecodeTypeOption::Auto, 0., 0., 4, 0, {});
+      } catch (const std::invalid_argument&) {
+        rejected = true;
+      }
+      require(rejected, "a SAM prompt decoder must reject top_k above one");
+    }
+  }
+  // Binding is positional by geometry, so either port order works; ambiguity fails.
+  BoxDecodeStaticContract manual;
+  manual.decode_type = BoxDecodeType::MobileSam;
+  for (const auto& shape : {std::vector<int>{1, 4, 1}, std::vector<int>{64, 64, 4}}) {
+    BoxDecodeTensorStaticContract tensor;
+    tensor.input_shape = tensor.slice_shape = shape;
+    tensor.layout = "HWC";
+    tensor.data_type = "FP32";
+    tensor.source_storage_kind = BoxDecodeSourceStorageKind::DenseHwcPhysical;
+    manual.tensors.push_back(tensor);
+  }
+  require(bind_sam_tensor_roles(&manual, &error) &&
+              manual.tensors[0].role == BoxDecodeTensorRole::SamIouPredictions &&
+              manual.tensors[0].input_shape == std::vector<int>({1, 1, 4}) &&
+              manual.tensors[1].role == BoxDecodeTensorRole::SamMaskLogits,
+          "a compact [1,4,1] IoU vector before the logits must bind: " + error);
+  auto ambiguous = manual;
+  ambiguous.tensors[0] = ambiguous.tensors[1];
+  require(!bind_sam_tensor_roles(&ambiguous, &error) &&
+              error.find("more than one") != std::string::npos,
+          "two mask-logit candidates must be rejected");
+  auto missing = manual;
+  missing.tensors[0].input_shape = missing.tensors[0].slice_shape = {1, 1, 5};
+  require(!bind_sam_tensor_roles(&missing, &error), "a five-value IoU head must be rejected");
+}
+
+// The deployed SAM decoders in sima-neat/models, extracted, bound and
+// finalized as a Model route does it, each with its model's decode type.
+void sam_family_static_contracts() {
+  using namespace simaai::neat;
+  using namespace simaai::neat::pipeline_internal::sima;
+  std::string error;
+  std::ifstream seed(sima_test::test_model_archive_fixture_root_path() / "strict-seeds" /
+                     "efficientsam3_mpk.json");
+  std::stringstream esam3_text;
+  esam3_text << seed.rdbuf();
+  struct Member {
+    const char* name;
+    std::string json;
+    BoxDecodeType type;
+    std::vector<BoxDecodeTensorRole> roles;
+    std::vector<std::vector<int>> used; // Logical HWC extent of each bound input.
+    int classes;
+    int topk;
+    // Physical HWC carrier each head is read from: the padded MLA buffer, not
+    // the extent its slice plugin publishes.
+    std::vector<std::vector<int>> carriers;
+  };
+  const auto L = BoxDecodeTensorRole::SamMaskLogits;
+  const auto I = BoxDecodeTensorRole::SamIouPredictions;
+  const std::vector<Member> members = {
+      {"MobileSAM",
+       sam_test::kMobileSamDecoderMpk,
+       BoxDecodeType::MobileSam,
+       {L, I},
+       {{256, 256, 4}, {1, 1, 4}},
+       4,
+       0,
+       {{256, 256, 16}, {1, 1, 16}}},
+      {"EdgeTAM",
+       sam_test::edgetam_decoder_mpk(),
+       BoxDecodeType::EdgeTamSeg,
+       {L, I, BoxDecodeTensorRole::SamObjectScore, BoxDecodeTensorRole::Unknown},
+       {{256, 256, 4}, {1, 1, 4}, {1, 1, 1}, {1, 4, 256}},
+       4,
+       0,
+       {{256, 256, 8}, {1, 1, 8}, {1, 1, 8}, {1, 4, 256}}},
+      {"EfficientSAM",
+       sam_test::efficientsam_decoder_mpk(),
+       BoxDecodeType::EfficientSam,
+       {I, L},
+       {{1, 1, 3}, {256, 256, 3}},
+       3,
+       0,
+       {{1, 1, 16}, {256, 256, 16}}},
+      // EfficientSAM3's outputs choose its route: a three-token prompt decoder
+      // binds as interactive, the concept image model as concept.
+      {"EfficientSAM3 interactive",
+       sam_test::efficientsam_decoder_mpk(),
+       BoxDecodeType::EfficientSam3,
+       {I, L},
+       {{1, 1, 3}, {256, 256, 3}},
+       3,
+       0,
+       {{1, 1, 16}, {256, 256, 16}}},
+      {"EfficientSAM3 concept",
+       esam3_text.str(),
+       BoxDecodeType::EfficientSam3,
+       {BoxDecodeTensorRole::SamConceptDetections, L},
+       {{1, 200, 6}, {192, 192, 200}},
+       1,
+       100,
+       // The detections carrier is the MLA's [1,200,8] BF16 buffer; AFE names its
+       // slice "slice_MLA_0_unpack/tuple_get_item_0_slice_transform", which is a
+       // slice, not an unpack, so the carrier is not the sliced [1,200,6].
+       {{1, 200, 8}, {192, 192, 200}}}};
+  for (const auto& m : members) {
+    const auto mpk = load_mpk_contract_from_json(m.json, std::string(m.name) + ".json", &error);
+    require(mpk.has_value(), std::string(m.name) + " fixture must parse: " + error);
+    const auto flags =
+        resolve_model_managed_boxdecode_route_flags_from_mpk(*mpk, nullptr, &error, m.type);
+    require(flags.has_value(), std::string(m.name) + " route flags: " + error);
+    auto contract = build_boxdecode_static_contract_from_mpk(*mpk, *flags, nullptr, &error, m.type);
+    require(contract && contract->tensors.size() == m.roles.size(),
+            std::string(m.name) + " MPK contract: " + error);
+    for (std::size_t i = 0; i < m.roles.size(); ++i) {
+      const auto& tensor = contract->tensors[i];
+      const auto& shape = tensor.slice_shape.size() == 3U ? tensor.slice_shape : tensor.input_shape;
+      require(tensor.role == m.roles[i] && shape == m.used[i],
+              std::string(m.name) + " head " + std::to_string(i) +
+                  " must be bound by position and shape");
+      require(tensor.input_shape == m.carriers[i],
+              std::string(m.name) + " head " + std::to_string(i) +
+                  " must be read from its physical MLA carrier");
+      // ... and bind a segment the MLA stage publishes, not the name of a
+      // plugin BoxDecode replaces (EfficientSAM3: MLA_0_0, not the slice).
+      bool published = false;
+      for (const auto& plugin : mpk->plugins)
+        if (plugin.processor == "MLA")
+          for (const auto& output : plugin.output_tensors)
+            published = published || output.name == tensor.source_segment_name;
+      require(published, std::string(m.name) + " head " + std::to_string(i) + " binds '" +
+                             tensor.source_segment_name + "', which no MLA output publishes");
+    }
+    contract->decode_type = m.type;
+    const auto finalized = stagesemantics::finalize_boxdecode_static_contract(
+        *contract, m.type, std::nullopt, flags, BoxDecodeTypeOption::Auto, 0., 0., m.topk, 0, {});
+    require(finalized.num_classes == m.classes && finalized.topk == (m.topk ? m.topk : 1) &&
+                finalized.score_activation == BoxDecodeScoreActivation::Identity,
+            std::string(m.name) + " finalized classes or capacity");
+    const auto compiled = stagesemantics::build_boxdecode_compiled_contract(finalized);
+    require(compiled.payload.tensor_roles == m.roles && compiled.payload.num_classes == m.classes,
+            std::string(m.name) + " compiled contract lost its roles");
+    // The kernel port is the carrier with its row pitch, narrowed to the used extent.
+    for (std::size_t i = 0; i < m.roles.size(); ++i) {
+      const auto& carrier = m.carriers[i];
+      require(compiled.runtime_contract.logical_inputs[i].shape ==
+                      std::vector<std::int64_t>(carrier.begin(), carrier.end()) &&
+                  compiled.payload.slice_shapes[i].sizes[2] == m.used[i][2],
+              std::string(m.name) + " head " + std::to_string(i) +
+                  " lost its carrier pitch in the compiled contract");
+    }
+  }
+  // A decoder that is not the named model's fails before admission: the
+  // three-channel EfficientSAM decoder is not MobileSAM or EdgeTAM, and the
+  // four-channel MobileSAM decoder is not EfficientSAM.
+  const auto esam =
+      load_mpk_contract_from_json(sam_test::efficientsam_decoder_mpk(), "esam.json", &error);
+  const auto mobile =
+      load_mpk_contract_from_json(sam_test::kMobileSamDecoderMpk, "mobilesam.json", &error);
+  struct Mismatch {
+    const MpkContract* mpk;
+    BoxDecodeType type;
+    const char* message;
+  };
+  for (const auto& m :
+       {Mismatch{&*esam, BoxDecodeType::MobileSam,
+                 "MobileSAM decoders export 1 or 4 mask channels; this one has 3"},
+        Mismatch{&*esam, BoxDecodeType::EdgeTamTrack,
+                 "EdgeTAM decoders export 1 or 4 mask channels; this one has 3"},
+        Mismatch{&*mobile, BoxDecodeType::EfficientSam,
+                 "EfficientSAM decoders export 1 or 3 mask channels; this one has 4"}}) {
+    const auto flags =
+        resolve_model_managed_boxdecode_route_flags_from_mpk(*m.mpk, nullptr, &error, m.type);
+    auto contract =
+        build_boxdecode_static_contract_from_mpk(*m.mpk, *flags, nullptr, &error, m.type);
+    require(contract.has_value(), "a SAM prompt decoder binds under any SAM type: " + error);
+    contract->decode_type = m.type;
+    bool rejected = false;
+    try {
+      (void)stagesemantics::finalize_boxdecode_static_contract(
+          *contract, m.type, std::nullopt, flags, BoxDecodeTypeOption::Auto, 0., 0., 0, 0, {});
+    } catch (const std::invalid_argument& e) {
+      rejected = std::string(e.what()).find(m.message) != std::string::npos;
+    }
+    require(rejected, std::string("a decoder of another model must be rejected: ") + m.message);
+  }
+  // A concept image model is not a prompt decoder of the other models.
+  {
+    const auto concept_text = esam3_text.str();
+    const auto concept_mpk = load_mpk_contract_from_json(concept_text, "esam3.json", &error);
+    const auto flags = resolve_model_managed_boxdecode_route_flags_from_mpk(
+        *concept_mpk, nullptr, &error, BoxDecodeType::MobileSam);
+    require(!flags || !build_boxdecode_static_contract_from_mpk(*concept_mpk, *flags, nullptr,
+                                                                &error, BoxDecodeType::MobileSam),
+            "a concept image model must not bind as a MobileSAM prompt decoder");
+  }
+  // An EfficientSAM3 concept image model needs an explicit capacity of at most Q queries.
+  const auto concept_mpk = load_mpk_contract_from_json(esam3_text.str(), "esam3.json", &error);
+  const auto concept_flags = resolve_model_managed_boxdecode_route_flags_from_mpk(
+      *concept_mpk, nullptr, &error, BoxDecodeType::EfficientSam3);
+  auto concept_contract = build_boxdecode_static_contract_from_mpk(
+      *concept_mpk, *concept_flags, nullptr, &error, BoxDecodeType::EfficientSam3);
+  for (const int topk : {0, 201}) {
+    bool rejected = false;
+    try {
+      (void)stagesemantics::finalize_boxdecode_static_contract(
+          *concept_contract, BoxDecodeType::EfficientSam3, std::nullopt, concept_flags,
+          BoxDecodeTypeOption::Auto, 0., 0., topk, 0, {});
+    } catch (const std::invalid_argument& e) {
+      rejected = std::string(e.what()).find("top_k") != std::string::npos;
+    }
+    require(rejected, "an EfficientSAM3 concept model must reject top_k outside 1..Q");
+  }
+}
+} // namespace
 
 RUN_TEST(
     "unit_sima_boxdecode_static_contract_extractor_test", ([] {
+      sam_mask_static_contract();
+      sam_family_static_contracts();
       using namespace simaai::neat::pipeline_internal::sima;
       using namespace simaai::neat::pipeline_internal::sima::plugin_contracts;
 

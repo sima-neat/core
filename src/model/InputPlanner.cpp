@@ -59,6 +59,8 @@ bool has_non_default_simple_preprocess(const PreprocessOptions& p) {
     return true;
   if (p.preset != NormalizePreset::None)
     return true;
+  if (p.resize.placement != LetterboxPlacement::Center)
+    return true;
   if (p.resize.enable != AutoFlag::Auto || p.resize.width > 0 || p.resize.height > 0)
     return true;
   if (p.color_convert.enable != AutoFlag::Auto ||
@@ -784,6 +786,14 @@ PreprocessPlannerResult plan_preprocess(const Model::Options& options,
   }
 
   effective.resize.scaling_type = resolve_resize_scaling_type(effective.resize);
+  // Only a letterbox has padding to place; a Resize transform carries the same spec.
+  if (effective.resize.placement != LetterboxPlacement::Center &&
+      effective.resize.placement != LetterboxPlacement::TopLeft)
+    throw std::invalid_argument("preprocess.resize.placement is invalid");
+  if (effective.resize.placement != LetterboxPlacement::Center &&
+      effective.resize.mode != ResizeMode::Letterbox)
+    throw std::invalid_argument(
+        "preprocess.resize.placement TopLeft requires ResizeMode.Letterbox");
 
   // MPK input_range describes the numeric domain expected at model ingress; it is
   // metadata, not an instruction to enable CVU preproc normalization.  Keep
@@ -859,6 +869,9 @@ PreprocessPlannerResult plan_preprocess(const Model::Options& options,
     quant_enabled = false;
     tess_enabled = false;
   }
+  if (effective.resize.placement != LetterboxPlacement::Center && !resize_enabled)
+    throw std::invalid_argument("preprocess.resize.placement TopLeft requires an enabled "
+                                "letterbox resize (preprocess.resize.enable=On or a target size)");
 
   if (normalize_enabled) {
     enforce_normalize_stats(effective.normalize, fixed_arithmetic);

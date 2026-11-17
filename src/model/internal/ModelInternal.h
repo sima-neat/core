@@ -12,6 +12,8 @@
 #include "nodes/io/Input.h"
 
 #include <memory>
+#include <optional>
+#include <utility>
 #include <vector>
 
 namespace simaai::neat {
@@ -76,6 +78,11 @@ struct ModelAccess {
   // Complete value identity for stage reuse; computed once when the Model is constructed.
   static const std::string& stage_cache_identity(const Model& model);
   static bool stage_cache_has_dynamic_boxdecode_geometry(const Model& model);
+  // The original image size a runner of this Model is fixed to: the inputs' published
+  // preprocess size when the route ends in a Segment Anything BoxDecode, whose masks have
+  // that size. nullopt for any other route, or when no input publishes the size.
+  static std::optional<std::pair<int, int>> fixed_boxdecode_original_size(const Model& model,
+                                                                          const TensorList& inputs);
   static std::string source_path(const Model& model);
   static Run& run(Model::Runner& runner);
   static const Run& run(const Model::Runner& runner);
@@ -168,6 +175,11 @@ PreprocessRuntimeMeta resolve_benchmark_preprocess_meta(const Tensor& tensor,
                                                         const ResolvedPreprocessPlan& plan,
                                                         const PreprocessContractFlags& flags,
                                                         const BenchmarkOptions& options);
+
+// Segment Anything decoder inputs carry the model's encoder geometry: MobileSAM's top-left
+// letterbox on 1024, a stretch to 1024 (EdgeTAM, EfficientSAM) or 1008 (EfficientSAM3).
+PreprocessRuntimeMeta sam_benchmark_preprocess_meta(BoxDecodeType decode_type, int source_width,
+                                                    int source_height);
 
 // Internal serializer shared with cache-compatibility regression tests. Advanced execution
 // overlays are resolved before serialization; diagnostic verbosity is intentionally excluded.

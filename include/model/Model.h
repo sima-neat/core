@@ -460,6 +460,20 @@ public:
     /// Preferred jargon-free execution surface (folded into the legacy fields above at Graph
     /// build time). All-unset by default, so it is a no-op unless a field is set.
     AdvancedExecutionOptions advanced_execution;
+
+    /**
+     * @brief Segment Anything decoders: return several candidate masks' best, or the single answer.
+     *
+     * Mirrors upstream `predict(multimask_output=...)`. `true` (default) keeps the multimask
+     * candidate with the best predicted IoU, as for one click. `false` keeps the single-mask
+     * answer, as for a box or several points: mask 0 for MobileSAM, and for EdgeTAM and a
+     * four-mask EfficientSAM3 decoder mask 0 when it is stable (SAM2 rule), otherwise the best
+     * candidate. EfficientSAM, three-mask EfficientSAM3 decoders and EfficientSAM3 concept
+     * detection have no single-mask answer and reject `false`. Only Segment Anything decode
+     * types (`MobileSam`, `EdgeTamSeg`, `EdgeTamTrack`, `EfficientSam`, `EfficientSam3`) accept
+     * `false`.
+     */
+    bool multimask_output = true;
   };
 
   /**

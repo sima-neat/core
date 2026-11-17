@@ -16,7 +16,10 @@ enum class BoxDecodeWireFormat {
   MasksPose,
   RcnnProposals,
   FeaturePointsV1,
-  LegacyFeaturePointsV0
+  LegacyFeaturePointsV0,
+  // SegmentationMasksHeaderV1 prefix (header, records, padding). The fifth
+  // input spec describes masks the producer writes in place after the prefix.
+  MasksV1
 };
 struct BoxDecodePublication {
   ::simaai::scheduler::client::KernelExecutable executable;

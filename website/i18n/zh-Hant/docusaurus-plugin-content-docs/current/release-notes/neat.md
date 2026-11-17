@@ -11,15 +11,21 @@ SiMa.ai Neat Library 的版本資訊。
 
 ### 重大變更 {#v062-breaking}
 
-- Neat Library 的 C++ ABI 現在是 9（`libsima_neat.so.9`）。`ResizeOptions`、`ResizeSpec`、`PreprocessOptions`、`PreprocOptions`、`NormalizationOptions` 和 `Model::Options` 新增了欄位。請使用相符的標頭及執行階段套件，重新建置 C++ 應用程式、外掛程式與 Python 繫結；不要重用 ABI 6 二進位檔，也不要新增相容性符號連結。
+- Neat Library 的 C++ ABI 現在是 7（`libsima_neat.so.7`）。`ResizeOptions`、`ResizeSpec`、`PreprocessOptions`、`PreprocOptions`、`NormalizationOptions` 和 `Model::Options` 新增了欄位。請使用相符的標頭及執行階段套件，重新建置 C++ 應用程式、外掛程式與 Python 繫結；不要重用 ABI 6 二進位檔（0.6.0 與 0.6.1），也不要新增相容性符號連結。
 
 ### 語意分割 {#v062-segmentation}
 
 - 新的 `ResizeArgMax` 節點與 `Model::Options::semantic_segmentation` 選項會在 EV74 上解碼分割分數。解碼會將各類別分數以雙線性方式縮放至所選尺寸，並傳回分數最大的第一個類別，與 SegFormer 的 `interpolate` 和 `argmax` 後處理一致。它會就地讀取有填補的 MLA 輸出，並在不反量化的情況下比較 INT8 分數。模型接著會傳回類別圖而非分數。需要包含此運算的 EV74 韌體。請參閱[語意分割解碼](/reference/semantic_segmentation_decode)。
 
+### Segment Anything 遮罩 {#v062-segment-anything}
+
+- 新的 `BoxDecodeType` 值會將 MobileSAM、EdgeTAM、EfficientSAM 與 EfficientSAM3 解碼為原始影像大小的遮罩。`EdgeTamSeg` 傳回遮罩，`EdgeTamTrack` 還會傳回供追蹤使用的解碼器原始輸出。請參閱 [Segment Anything 遮罩](/reference/boxdecode_decode_types#segment-anything-masks)。
+
 ### 前處理 {#v062-preproc}
 
-- 中央裁切現在接受選用的 `preprocess.resize.shorter_side`，再裁切至最終 MPK 尺寸。裁切會保留完整縮放的濾波範圍並發佈反向轉換。請使用 ABI 9 與相符的核心韌體重新建置，不要混用舊版二進位檔。
+- 中央裁切現在接受選用的 `preprocess.resize.shorter_side`，再裁切至最終 MPK 尺寸。裁切會保留完整縮放的濾波範圍並發佈反向轉換。請使用 ABI 7 與相符的核心韌體重新建置，不要混用舊版二進位檔。
+
+- `preprocess.resize.placement = LetterboxPlacement.TopLeft` 會如 MobileSAM 所預期，將信箱式調整後的影像放在畫布原點，所有填補都放在右側與下方。偵測用的 BoxDecode 設定檔會透過公布的仿射轉換對應邊界框；姿態、分割與提案設定檔會拒絕非置中的信箱式調整。請參閱 [Preproc](/reference/nodes/preproc)。
 
 - Model 前處理與獨立的 Resize 共用 `ResizeInterpolation`。新程式碼請使用 `preprocess.resize.interpolation = ResizeInterpolation.BilinearAntialiased`，而非取樣器字串。既有 `scaling_type` 字串仍相容；與其衝突的非預設字串會被拒絕。
 
@@ -27,10 +33,25 @@ SiMa.ai Neat Library 的版本資訊。
 
 ## 0.6.1 {#v061}
 
-- 從主機傳輸張量至裝置時，透過容量有限的快取重複使用 DMA 緩衝區。
-- 受影響的模型套件會傳回具資料型別的 MLA 輸出檢視，並驗證完整的已編譯輸入批次。
-- 由應用程式提供輸入的非同步執行可在閒置後恢復。等候擷取輸出逾時時，會結束等候，執行仍會繼續。
-- Neat Library 使用 C++ ABI 6（`libsima_neat.so.6`）。
+0.6.1 修正 0.6.0 的問題，並維持 ABI 6（`libsima_neat.so.6`）：為 0.6.0 建置的應用程式無須重新建置即可執行。
+
+### 修正 {#v061-fixes}
+
+- 主機到裝置的傳輸再次重用集區中的 DMA 緩衝區，且不會阻塞即時輸入；整個處理程序的 DMA 傳輸快取也有上限。從快取逐出時，絕不會釋放仍在使用中的張量。
+- 沒有未完成工作的非同步執行不再逾時，並會在輸入抵達時繼續。`Run::run()` 與 `Model::run()` 依各次呼叫的 `timeout_ms` 等待輸出；`-1` 表示無限等待，與 `Run::pull(-1)` 相同。`RunOptions::input_timeout_ms` 適用於輸入模式的 `Graph::run()` 與帶初始輸入的建置預檢。
+- `Model` 會驗證完整的原生 MLA 輸入批次。
+- 具有封裝輸出的僅 MLA 模型會保留其具型別的輸出檢視。
+- 模型管理的路線接受在圖中解碼的 YOLO 頭部，例如舊版 YOLOv6 封裝：請對其使用 `BoxDecodeType::Yolo`。
+- 執行報告會保留原生 BoxDecode 設定。
+- H.265 編碼器會拒絕其不支援的層級 4.2。
+- 視訊傳送器不再將輸入限制為 3840×2160；尺寸仍必須為正偶數。
+- 離線 PCIe 主機套件組合會在其相依性輸入變更時重新建置，其封存檔名稱會帶有校驗和後綴。
+
+### 說明檔案 {#v061-docs}
+
+- H.264 解碼輸入必須為 8 位元、4:2:0 與漸進式；不支援 High 10、High 4:2:2 和交錯式位元串流。
+- SDK 主機需要 Docker Engine 20.10.10 或更新版本。
+- Model 指南說明 `preprocess.enable = Off` 會停用哪些項目，以及哪些 MPK 轉接器會保留。
 
 ## 0.6.0
 
@@ -72,7 +93,7 @@ SiMa.ai Neat Library 的版本資訊。
 
 | 版本 | C++ ABI | 相容的 Palette SDK | 備註 |
 |---|---|---|---|
-| 0.6.2 | 9 | 3.0.0.2 | [Neat Library 0.6.2](https://github.com/sima-neat/core/releases/tag/v0.6.2) |
+| 0.6.2 | 7 | 3.0.0.2 | [Neat Library 0.6.2](https://github.com/sima-neat/core/releases/tag/v0.6.2) |
 | 0.6.1 | 6 | 3.0.0.1 | [Neat Library 0.6.1](https://github.com/sima-neat/core/releases/tag/v0.6.1) |
 | 0.6.0 | 6 | 3.0.0.0 | [Neat Library 0.6.0](https://github.com/sima-neat/core/releases/tag/v0.6.0) |
 | 0.5.0 | 5 | 2.1.3.1 | [Neat Library 0.5.0](https://github.com/sima-neat/core/releases/tag/v0.5.0) |

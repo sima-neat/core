@@ -771,6 +771,8 @@ void write_resize_json(std::ostream& oss, const ResizeSpec& spec) {
       << "\"height\":" << spec.height << "," << "\"mode\":" << enum_int(spec.mode) << ","
       << "\"pad_value\":" << spec.pad_value << "," << "\"scaling_type\":\""
       << json_escape(spec.scaling_type) << "\"";
+  if (spec.placement != LetterboxPlacement::Center)
+    oss << ",\"placement\":" << enum_int(spec.placement);
   if (spec.interpolation)
     oss << ",\"interpolation\":" << enum_int(*spec.interpolation);
   if (spec.shorter_side)
@@ -789,6 +791,10 @@ ResizeSpec parse_resize_json(const JsonValue::JsonObject& obj) {
     throw std::invalid_argument("preprocess.resize.mode is invalid");
   spec.pad_value = int_field(obj, "pad_value", spec.pad_value);
   spec.scaling_type = string_field(obj, "scaling_type", spec.scaling_type);
+  spec.placement = static_cast<LetterboxPlacement>(
+      strict_enum_field(obj, "placement", enum_int(spec.placement)));
+  if (spec.placement != LetterboxPlacement::Center && spec.placement != LetterboxPlacement::TopLeft)
+    throw std::invalid_argument("preprocess.resize.placement is invalid");
   if (const auto* value = object_field(obj, "interpolation");
       value && value->type != JsonValue::Type::Null) {
     spec.interpolation =
@@ -1159,7 +1165,11 @@ void write_model_options_json(std::ostream& oss, const Model::Options& opt) {
   write_processmla_options_json(oss, opt.processmla);
   oss << ",\"prepared_runner\":";
   write_prepared_runner_options_json(oss, opt.prepared_runner);
-  oss << ",\"async_queue_depth\":" << opt.async_queue_depth << "}";
+  oss << ",\"async_queue_depth\":" << opt.async_queue_depth;
+  // Written only when set, so existing graphs keep their established text.
+  if (!opt.multimask_output)
+    oss << ",\"multimask_output\":false";
+  oss << "}";
 }
 
 std::string model_options_json_string(const Model::Options& opt) {
@@ -1219,6 +1229,11 @@ Model::Options parse_model_options_json(const JsonValue::JsonObject& obj) {
   if (const JsonValue* v = object_field(obj, "boxdecode_resize_mode");
       v && v->type == JsonValue::Type::Number) {
     opt.boxdecode_resize_mode = static_cast<ResizeMode>(static_cast<int>(v->num));
+  }
+  if (const JsonValue* v = object_field(obj, "multimask_output")) {
+    if (v->type != JsonValue::Type::Bool)
+      throw std::invalid_argument("model_options.multimask_output must be a boolean");
+    opt.multimask_output = v->b;
   }
   opt.upstream_name = string_field(obj, "upstream_name", opt.upstream_name);
   opt.name_suffix = string_field(obj, "name_suffix", opt.name_suffix);
