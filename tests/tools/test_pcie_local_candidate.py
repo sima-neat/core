@@ -12,22 +12,33 @@ module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
 
 
+COMMIT = 'a' * 40
+IDENTITY = (COMMIT, 'ubuntu24', 'amd64')
+
+
 @pytest.fixture
 def candidate(tmp_path):
     source = tmp_path/'source'
     source.mkdir()
-    payload = b'not executable; fixture producer resource'
-    (source/'native_artifacts.py').write_bytes(payload)
-    metadata = {'repository': 'sima-neat/scheduler', 'commit': 'a'*40, 'branch': 'topic',
-                'resources': ['native_artifacts.py'],
-                'resources-checksum': {'native_artifacts.py': hashlib.sha256(payload).hexdigest()}}
+    resources = {
+        'host-candidate.json': json.dumps({
+            'schema_version': 2, 'profile': 'pcie-host', 'distro': 'ubuntu24',
+            'architecture': 'amd64', 'source_commit': COMMIT}).encode(),
+        'native_artifacts.py': b'not executable; fixture producer resource'}
+    for name, payload in resources.items():
+        (source/name).write_bytes(payload)
+    metadata = {'repository': 'sima-neat/scheduler', 'commit': COMMIT, 'branch': 'topic',
+                'artifact': {'profile': 'pcie-host', 'distro': 'ubuntu24', 'architecture': 'amd64'},
+                'resources': list(resources),
+                'resources-checksum': {name: hashlib.sha256(payload).hexdigest()
+                                       for name, payload in resources.items()}}
     (source/'metadata.json').write_text(json.dumps(metadata))
     return source, metadata, tmp_path/'copy'
 
 
 def test_local_candidate_copies_verified_bytes_and_keeps_identity(candidate):
     source, metadata, dest = candidate
-    assert module.local_candidate(source, dest) == metadata
+    assert module.local_candidate(source, dest, *IDENTITY) == metadata
     assert (dest/'native_artifacts.py').read_bytes() == (source/'native_artifacts.py').read_bytes()
 
 
@@ -45,11 +56,11 @@ def test_bad_local_candidate_is_rejected_before_staging(candidate, failure):
     elif failure == 'extra':
         metadata['resources'].append('missing.py')
     else:
-        metadata['resources'] = ['../native_artifacts.py']
-        metadata['resources-checksum'] = {'../native_artifacts.py': '0'*64}
+        metadata['resources'].append('../native_artifacts.py')
+        metadata['resources-checksum']['../native_artifacts.py'] = '0'*64
     (source/'metadata.json').write_text(json.dumps(metadata))
     with pytest.raises(ValueError):
-        module.local_candidate(source, dest)
+        module.local_candidate(source, dest, *IDENTITY)
     assert not dest.exists()
 
 
@@ -62,5 +73,5 @@ def test_local_rebuild_during_copy_is_rejected_before_helper_import(candidate, m
         return copy(path, destination)
 
     monkeypatch.setattr(module.shutil, 'copy2', rebuild_and_copy)
-    with pytest.raises(ValueError, match='Staged Scheduler resource changed: native_artifacts.py'):
-        module.local_candidate(source, dest)
+    with pytest.raises(ValueError, match='Staged Scheduler resource changed: host-candidate.json'):
+        module.local_candidate(source, dest, *IDENTITY)
