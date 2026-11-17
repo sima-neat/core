@@ -210,8 +210,6 @@ opt.preprocess.resize.placement = pyneat.LetterboxPlacement.TopLeft
 
 ### Колір, нормалізація, квантування та теселяція.
 
-`normalize.enable=Auto` вмикає нормалізацію, якщо задано явні статистичні параметри (`has_explicit_stats=true`) або пресет. Інакше він перетворюється на `Off`; маршрути попередньої обробки зображень повідомляють про це в `Model::resolved_preprocess_plan().warnings`. Для нормалізації задайте `normalize.enable=On` і середнє значення та стандартне відхилення, використані під час навчання, або виберіть `preprocess.preset`. Для необроблених пікселів явно задайте `normalize.enable=Off`. Поле MPK `input_range` містить спостережені під час калібрування крайні значення й не використовується для виведення нормалізації.
-
 | Параметр | Значення |
 | --- | --- |
 | `opt.preprocess.color_convert.input_format` | Підказка щодо формату вхідного зображення: `RGB`, `BGR`, `GRAY8`, `NV12`, `NV16`, `I420` або `Auto`. |

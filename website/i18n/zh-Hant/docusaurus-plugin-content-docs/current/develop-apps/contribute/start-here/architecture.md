@@ -327,12 +327,6 @@ input Sample/Tensor
 
 ---
 
-### 影像正規化原則
-
-MPK 的 `input_range` 記錄校準時觀測到的最小值與最大值，並未定義正規化方法。規劃器不會從這個欄位推導平均值與標準差，也不會因此啟用正規化。
-
-在影像前處理路徑中，未明確設定的 `preprocess.normalize.enable=Auto` 會解析為 `Off`，並在 `Model::resolved_preprocess_plan().warnings` 中加入提示。明確指定的 `On`/`Off`、`has_explicit_stats` 與 `preprocess.preset` 會保留既有行為，包括轉換清單的優先順序。自動正規化需要明確的前處理中繼資料。
-
 ### 公開執行計畫
 
 `Model::execution_plan(...)` 會傳回以相同引數呼叫 `build(...)` 時將執行的內容：依管線順序列出模型的圖節點、每個節點的執行位置（`A65`、`EV74` 或 `MLA`），以及節點之間邊上的張量。它會在關閉啟動預檢的情況下呼叫 `build(...)`，讀取建置在配置與發布中繼資料規劃後記錄於 `DiagCtx` 的計畫，然後關閉管線，因此需要與 `build(...)` 相同的裝置。這是公開的診斷檢視，與下文所述的內部 `ModelExecutionPlan` 不同。其 JSON 合約為 `schemas/execution_plan_v1.schema.json`；`schema_version` 只會在變更破壞現有讀取端時才會改變。 記憶體摘要只計算每個自有配置一次，並標示為 `CMA`、`DMS`、`HostCpu` 或 `Mixed`；明確的 DMS 回退政策會以首選堆積表示。

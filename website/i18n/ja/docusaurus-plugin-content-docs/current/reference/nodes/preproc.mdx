@@ -210,8 +210,6 @@ opt.preprocess.resize.placement = pyneat.LetterboxPlacement.TopLeft
 
 ### 色、正規化、量子化、およびテッセレーション
 
-`normalize.enable=Auto` は、明示的な統計値（`has_explicit_stats=true`）またはプリセットが指定されている場合に正規化を有効にします。それ以外の場合は `Off` に解決され、画像前処理ルートでは `Model::resolved_preprocess_plan().warnings` に案内が表示されます。正規化するには、`normalize.enable=On` と学習時の平均値・標準偏差を設定するか、`preprocess.preset` を選択します。生の画素値を使用するには、`normalize.enable=Off` を明示的に設定します。MPK の `input_range` はキャリブレーションで観測された最小値と最大値を格納しており、正規化の推定には使用されません。
-
 | オプション | 意味 |
 | --- | --- |
 | `opt.preprocess.color_convert.input_format` | 入力フォーマットのヒント：`RGB`、`BGR`、`GRAY8`、`NV12`、`NV16`、`I420`、または`Auto`。|

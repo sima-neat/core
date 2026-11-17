@@ -210,8 +210,6 @@ opt.preprocess.resize.placement = pyneat.LetterboxPlacement.TopLeft
 
 ### 色彩、正規化、量化和鑲嵌
 
-若已指定明確的統計值（`has_explicit_stats=true`）或預設組態，`normalize.enable=Auto` 會啟用正規化；否則會解析為 `Off`，影像前處理路徑會在 `Model::resolved_preprocess_plan().warnings` 中回報此決定。若要正規化，請設定 `normalize.enable=On` 以及訓練時使用的平均值與標準差，或選擇 `preprocess.preset`。若要使用原始像素，請明確設定 `normalize.enable=Off`。MPK 的 `input_range` 包含校準時觀測到的最小值與最大值，不用於推導正規化。
-
 | 選項 | 意義 |
 | --- | --- |
 | `opt.preprocess.color_convert.input_format` | 來源格式提示：`RGB`、`BGR`、`GRAY8`、`NV12`、`NV16`、`I420` 或 `Auto`。|

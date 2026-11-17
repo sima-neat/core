@@ -210,8 +210,6 @@ The output tensor's `semantic.preprocess` metadata records the actual pads and t
 
 ### Color, normalization, quantization, and tessellation
 
-`normalize.enable=Auto` enables normalization when explicit statistics (`has_explicit_stats=true`) or a preset supplies it. Otherwise it resolves to `Off`; image-preprocessing routes report this in `Model::resolved_preprocess_plan().warnings`. To normalize, set `normalize.enable=On` and the mean/stddev used during training, or select `preprocess.preset`. Set `normalize.enable=Off` explicitly for raw pixels. MPK `input_range` contains observed calibration extrema and is not used to infer normalization.
-
 | Option | Meaning |
 | --- | --- |
 | `opt.preprocess.color_convert.input_format` | Source format hint: `RGB`, `BGR`, `GRAY8`, `NV12`, `NV16`, `I420`, or `Auto`. |

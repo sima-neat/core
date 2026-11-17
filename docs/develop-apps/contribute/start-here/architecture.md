@@ -432,12 +432,6 @@ Preprocessing and postprocessing are explicit framework stages/options. A format
 required preprocessing metadata, unavailable selected hardware transport, invalid model archive or MPK contract, or caps negotiation
 failure should surface as an actionable structured error rather than a hidden runtime correction.
 
-### Image normalization policy
-
-MPK `input_range` records observed calibration extrema; it does not define a normalization recipe. The planner does not derive mean/stddev or enable normalization from that field.
-
-For an image-preprocessing route, unconfigured `preprocess.normalize.enable=Auto` resolves to `Off` and adds an advisory to `Model::resolved_preprocess_plan().warnings`. Explicit `On`/`Off`, `has_explicit_stats`, and `preprocess.preset` keep their existing behavior, including transform-list precedence. Automatic normalization requires explicit preprocessing metadata.
-
 ### Public execution plan
 
 `Model::execution_plan(...)` returns what `build(...)` with the same arguments runs: the Model's

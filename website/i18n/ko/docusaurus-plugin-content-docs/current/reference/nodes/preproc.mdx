@@ -211,8 +211,6 @@ opt.preprocess.resize.placement = pyneat.LetterboxPlacement.TopLeft
 
 ### 색상, 정규화, 양자화, 테셀레이션
 
-`normalize.enable=Auto`는 명시적인 통계 값(`has_explicit_stats=true`)이나 프리셋이 지정되면 정규화를 활성화합니다. 그렇지 않으면 `Off`로 결정되며 이미지 전처리 경로는 이를 `Model::resolved_preprocess_plan().warnings`에 보고합니다. 정규화를 적용하려면 `normalize.enable=On`과 학습에 사용한 평균 및 표준 편차를 설정하거나 `preprocess.preset`을 선택합니다. 원시 픽셀 값을 사용하려면 `normalize.enable=Off`를 명시적으로 설정합니다. MPK의 `input_range`에는 보정 중 관측된 최솟값과 최댓값이 들어 있으며 정규화 추론에는 사용되지 않습니다.
-
 | 옵션 | 의미 |
 | --- | --- |
 | `opt.preprocess.color_convert.input_format` | 소스 형식 힌트: `RGB`, `BGR`, `GRAY8`, `NV12`, `NV16`, `I420` 또는 `Auto`. |
