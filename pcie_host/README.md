@@ -498,8 +498,10 @@ a checksum-valid but invalid-wheel pip failure after native installation,
 automatic managed-environment recovery with the real wheel, and a repeated
 matching install through the documented `sima-cli neat install` command. It
 deletes and repairs one Core-owned and one Scheduler-owned file through
-Windows Installer, records the Windows version, elevation, Smart App Control, and
-effective AppLocker visibility without changing policy, rechecks plugin discovery,
+Windows Installer, records the Windows version, elevation, Smart App Control,
+effective AppLocker visibility, and driver-signing policy (Secure Boot, boot
+test-signing and integrity-check options, WDAC and HVCI enforcement) without
+changing policy, rechecks plugin discovery,
 rejects a Platform runtime or GStreamer dependency that differs from the producer,
 and then runs the public C++ and Python
 vision suites, kills a card worker and a local client in separate bounded fault

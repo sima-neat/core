@@ -462,11 +462,57 @@ $appLocker = 'unavailable'
 try {
   $appLocker = @((Get-AppLockerPolicy -Effective -ErrorAction Stop).RuleCollections).Count
 } catch {}
+# Driver-signing policy is recorded, not gated; a query that fails or needs
+# elevation records "unknown: <reason>".
+$driverSigning = [ordered]@{}
+try {
+  $driverSigning.secure_boot = [bool](Confirm-SecureBootUEFI -ErrorAction Stop)
+} catch {
+  $driverSigning.secure_boot = "unknown: $($_.Exception.Message)"
+}
+$bcdOutput = & "$env:SystemRoot\System32\bcdedit.exe" /enum '{current}' 2>&1
+$bcdExit = $LASTEXITCODE
+$bcdLines = @($bcdOutput | ForEach-Object { "$_" })
+foreach ($pair in @(('test_signing', 'testsigning'),
+                    ('no_integrity_checks', 'nointegritychecks'))) {
+  $match = $bcdLines | Select-String -Pattern "^$($pair[1])\s+(\S+)" | Select-Object -First 1
+  $driverSigning[$pair[0]] = if ($bcdExit -ne 0) {
+    "unknown: bcdedit exited ${bcdExit}: $(($bcdLines -join ' ').Trim())"
+  } elseif (-not $match) {
+    $false
+  } elseif ($match.Matches[0].Groups[1].Value -eq 'Yes') {
+    $true
+  } elseif ($match.Matches[0].Groups[1].Value -eq 'No') {
+    $false
+  } else {
+    "unknown: bcdedit reported $($match.Line.Trim())"
+  }
+}
+try {
+  $deviceGuard = Get-CimInstance -Namespace 'root\Microsoft\Windows\DeviceGuard' `
+    -ClassName Win32_DeviceGuard -ErrorAction Stop
+  $policyStates = @{ 0 = 'off'; 1 = 'audit'; 2 = 'enforced' }
+  foreach ($pair in @(('wdac_kernel_policy', 'CodeIntegrityPolicyEnforcementStatus'),
+                      ('wdac_user_mode_policy', 'UsermodeCodeIntegrityPolicyEnforcementStatus'))) {
+    $status = $deviceGuard.($pair[1])
+    $driverSigning[$pair[0]] = if ($null -ne $status -and $policyStates.ContainsKey([int]$status)) {
+      $policyStates[[int]$status]
+    } else {
+      "unknown: $($pair[1]) is '$status'"
+    }
+  }
+  $driverSigning.hvci_running = @($deviceGuard.SecurityServicesRunning) -contains 2
+} catch {
+  foreach ($name in 'wdac_kernel_policy', 'wdac_user_mode_policy', 'hvci_running') {
+    $driverSigning[$name] = "unknown: $($_.Exception.Message)"
+  }
+}
 [pscustomobject]@{
   account = $identity.Name
   architecture = $os.OSArchitecture
   build_number = $os.BuildNumber
   caption = $os.Caption
+  driver_signing = $driverSigning
   is_administrator = $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
   product_type = $os.ProductType
   smart_app_control_state = $smartAppControl
@@ -487,10 +533,17 @@ try {
   except json.JSONDecodeError as error:
     raise RuntimeError(f"Windows security state was not valid JSON; see {log}") from error
   required = {
-      "account", "architecture", "build_number", "caption", "is_administrator",
-      "product_type", "smart_app_control_state", "applocker_rule_collections", "version",
+      "account", "architecture", "build_number", "caption", "driver_signing",
+      "is_administrator", "product_type", "smart_app_control_state",
+      "applocker_rule_collections", "version",
   }
-  if not isinstance(value, dict) or set(value) != required:
+  driver_signing = {
+      "secure_boot", "test_signing", "no_integrity_checks", "wdac_kernel_policy",
+      "wdac_user_mode_policy", "hvci_running",
+  }
+  if (not isinstance(value, dict) or set(value) != required
+      or not isinstance(value["driver_signing"], dict)
+      or set(value["driver_signing"]) != driver_signing):
     raise RuntimeError(f"Windows security state was incomplete; see {log}")
   try:
     build_number = int(value["build_number"])

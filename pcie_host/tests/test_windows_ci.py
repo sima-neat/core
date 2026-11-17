@@ -1358,6 +1358,42 @@ class WindowsCiContracts(unittest.TestCase):
         windows_card_network_identity(
             "10.0.0.2", Path(directory) / "network.log")
 
+  def test_windows_security_snapshot_records_driver_signing_policy(self):
+    security = {
+        "account": r"RUNNER\ci",
+        "applocker_rule_collections": "unavailable",
+        "architecture": "64-bit",
+        "build_number": "26100",
+        "caption": "Microsoft Windows 11 Pro",
+        "driver_signing": {
+            "hvci_running": True,
+            "no_integrity_checks": False,
+            "secure_boot": "unknown: Cmdlet not supported on this platform: 0xC0000002",
+            "test_signing": "unknown: bcdedit exited 1: Access is denied.",
+            "wdac_kernel_policy": "off",
+            "wdac_user_mode_policy": "audit",
+        },
+        "is_administrator": False,
+        "product_type": 1,
+        "smart_app_control_state": None,
+        "version": "10.0.26100",
+    }
+    with tempfile.TemporaryDirectory() as directory:
+      log = Path(directory) / "security.log"
+      completed = subprocess.CompletedProcess([], 0, json.dumps(security), "")
+      with mock.patch("qualify_windows_hardware.subprocess.run", return_value=completed) as run:
+        self.assertEqual(HARDWARE.windows_security_snapshot(log), security)
+      script = run.call_args.args[0][-1]
+      for query in ("Confirm-SecureBootUEFI", "/enum '{current}'", "testsigning",
+                    "nointegritychecks", r"root\Microsoft\Windows\DeviceGuard",
+                    "Win32_DeviceGuard", "SecurityServicesRunning"):
+        self.assertIn(query, script)
+      del security["driver_signing"]["hvci_running"]
+      completed = subprocess.CompletedProcess([], 0, json.dumps(security), "")
+      with mock.patch("qualify_windows_hardware.subprocess.run", return_value=completed), \
+          self.assertRaisesRegex(RuntimeError, "security state was incomplete"):
+        HARDWARE.windows_security_snapshot(log)
+
   def test_windows_platform_snapshot_records_stable_service_and_present_pnp_identity(self):
     service = {
         "configuration": {
@@ -2239,6 +2275,14 @@ class WindowsCiContracts(unittest.TestCase):
             "architecture": "64-bit",
             "build_number": "26100",
             "caption": "Microsoft Windows 11 Enterprise",
+            "driver_signing": {
+                "hvci_running": True,
+                "no_integrity_checks": False,
+                "secure_boot": True,
+                "test_signing": False,
+                "wdac_kernel_policy": "off",
+                "wdac_user_mode_policy": "off",
+            },
             "is_administrator": True,
             "product_type": 1,
             "smart_app_control_state": None,
