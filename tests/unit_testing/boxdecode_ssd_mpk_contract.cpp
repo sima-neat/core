@@ -143,10 +143,11 @@ void check_one(const std::string& model, bool integer, bool permuted = false,
             name + ": unexpected authoritative root extent at " + std::to_string(i));
 
   const auto extracted = extract(mpk, integer, name);
-  require(ps::uses_source_multiclass_ssd_policy(
-              semantics::build_boxdecode_compiled_contract(extracted).payload),
-          name + ": real MPK must select the shared source numerical policy");
-  require(extracted.ssd_recipe_id == golden.recipe_id && extracted.tensors.size() == 12,
+  // The 91-class signature of a supported recipe selects the source numerical
+  // policy; unit_boxdecode_kernel_recipe_test executes both policies.
+  const auto payload = semantics::build_boxdecode_compiled_contract(extracted).payload;
+  require(payload.decode_type == BoxDecodeType::Ssd && payload.num_classes == 91 &&
+              extracted.ssd_recipe_id == golden.recipe_id && extracted.tensors.size() == 12,
           name + ": wrong resolved SSD signature");
 
   // The compiler's slice names contain "unpack", but their typed kernel is
@@ -388,11 +389,12 @@ void check_one(const std::string& model, bool integer, bool permuted = false,
 } // namespace
 
 void check_ssd_mpk_carrier_contracts() {
-  for (const auto* model : {"ssd_mobilenet_v1", "ssd_mobilenet_v2"})
-    for (const bool integer : {false, true})
-      check_one(model, integer);
+  // MobileNet V1 (TF300) and V3 (TorchVision320) in BF16 and INT8. V2 shares
+  // V1's graph and storage layout, so V1 also carries the offset/permutation cases.
+  for (const bool integer : {false, true})
+    check_one("ssd_mobilenet_v1", integer);
   check_one("ssd_mobilenet_v1", true, true);
-  check_one("ssd_mobilenet_v2", false, true, 64);
+  check_one("ssd_mobilenet_v1", false, true, 64);
   for (const bool integer : {false, true})
     check_one("ssd_mobilenet_v3", integer, false, 0, kTv320Golden);
 }
@@ -492,8 +494,8 @@ void check_ssd_model_carrier_contract_case(const std::string& archive, BoxDecode
   require(published.allocations.size() == 1 && published.outputs.size() == 12 &&
               consumed.inputs.size() == 12,
           "real SSD Model must pack twelve MLA roots into one published allocation");
-  require(ps::uses_source_multiclass_ssd_policy(contract.payload),
-          "authentic SSD Model must select the source numerical policy");
+  require(contract.payload.decode_type == BoxDecodeType::Ssd && contract.payload.num_classes == 91,
+          "authentic SSD Model must resolve the 91-class source signature");
   const auto& golden = carrier_golden(contract.payload.ssd_recipe_id);
   const bool integer = consumer->logical_inputs.front().dtype == "INT8";
   const auto& bytes = integer ? golden.int8_bytes : golden.bf16_bytes;

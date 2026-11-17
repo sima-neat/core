@@ -716,14 +716,12 @@ Advanced tensor-contract rules:
   invalid selection is rejected at build time. Leave it unset to use the profile
   default.
 
-For SSD-Mobile-300-v1 and SSDlite-Mobile-320-v1 with exactly 91 encoded classes,
-`BoxDecodeType::Ssd` retains foreground anchor/class pairs and applies classwise
-floating-point NMS before publishing the existing INT32 BBOX format. MobileNet
-V1 and V2 share the TF300 decoding contract; the TorchVision V3 export uses the
-separate SSDlite320 contract. SSDlite considers up to 300 threshold-qualified
-candidates per class before NMS. Other prepared SSD signatures and class counts
-retain their existing numerical policy. No additional public decoder type is
-needed. Custom priors or box-coder scales are not inferred from tensor shapes.
+  **91-class MobileNet exports.** With exactly 91 encoded classes, SSD-Mobile-300-v1
+  (MobileNet V1 and V2) and SSDlite-Mobile-320-v1 (TorchVision MobileNet V3) decode
+  as the source models do: every foreground anchor/class pair is kept and NMS runs
+  per class in floating point (SSDlite keeps up to 300 candidates per class before
+  NMS). The output is the same BBOX payload. Other SSD profiles and class counts
+  keep their existing behavior.
 - `Detr` infers class channels from the maximum head depth and requires a valid
   class dimension.
 - `EffDet` and `Centernet` use their model-family contracts; do

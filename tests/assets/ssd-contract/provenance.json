@@ -22,22 +22,6 @@
       "profile": "w8a8"
     },
     {
-      "path": "ssd_mobilenet_v2-w16a16-mpk.json",
-      "sha256": "c16b3d101ce6adaf1df9de63ed31c39a2a7594156dfe753d704803f185e4a53c",
-      "archive_sha256": "1905b94005b8787de30f74b1464affa914cf875d83eb6d27dcc18debdf911e90",
-      "archive_size_bytes": 26527890,
-      "model_id": "ssd_mobilenet_v2",
-      "profile": "w16a16"
-    },
-    {
-      "path": "ssd_mobilenet_v2-w8a8-mpk.json",
-      "sha256": "fc3f9004d027129b7b973d9a1edf42b1d80287745779a271c51698e62475c900",
-      "archive_sha256": "fce4846b6fcaf94f0f5962ebf807f2c40e8f17e2881edfb808e176d559995568",
-      "archive_size_bytes": 12910941,
-      "model_id": "ssd_mobilenet_v2",
-      "profile": "w8a8"
-    },
-    {
       "path": "ssd_mobilenet_v3-w16a16-mpk.json",
       "sha256": "76fb84af4bef42345207cc8e4d33a049334b042ca7aa8a44af050caafd37faa7",
       "archive_sha256": "ade7e02ec8f80ccdee21778edf67ccbe94c0c6ef7f5a28bf6e9c16780211a264",
@@ -60,5 +44,5 @@
       "compilation_campaign": "ssd-finish-20261030-r1"
     }
   ],
-  "fixture_provenance_note": "Top-level catalog_revision and compiled_source_revision retain the original V1/V2 provenance. V3 entries identify their separate Model Compiler 3.0.0 compilation campaign and immutable archive/member digests."
+  "fixture_provenance_note": "Top-level catalog_revision and compiled_source_revision are the original V1 provenance. V3 entries identify their separate Model Compiler 3.0.0 compilation campaign and immutable archive/member digests. V2 shares V1's TF300 graph and storage layout, so V1 covers it."
 }

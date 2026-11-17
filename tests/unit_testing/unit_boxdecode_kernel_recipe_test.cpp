@@ -508,18 +508,6 @@ void families() {
       input(ssd, fixture.dims[i], fixture.dims[i], fixture.anchors[i] * 4);
     for (std::size_t i = 0; i < fixture.dims.size(); ++i)
       input(ssd, fixture.dims[i], fixture.dims[i], fixture.anchors[i] * fixture.classes);
-    const bool source_policy = fixture.id == stagesemantics::SsdRecipeId::SsdMobile300V1 ||
-                               fixture.id == stagesemantics::SsdRecipeId::SsdLiteMobile320V1;
-    require(uses_source_multiclass_ssd_policy(ssd.payload) == source_policy,
-            "SSD source policy selected the wrong prepared signature");
-    auto different_classes = ssd.payload;
-    different_classes.num_classes = 81;
-    require(!uses_source_multiclass_ssd_policy(different_classes),
-            "non-91-class SSD must preserve the legacy policy");
-    auto other_family = ssd.payload;
-    other_family.decode_type = BoxDecodeType::YoloV26;
-    require(!uses_source_multiclass_ssd_policy(other_family),
-            "SSD recipe fields must not alter another family");
     const auto compiled =
         check(ssd, {fixture.side, fixture.side, fixture.side, fixture.side, ResizeMode::Stretch});
     const auto native =
@@ -1222,6 +1210,84 @@ struct HostStorage final {
     std::memcpy(static_cast<std::byte*>(memory.get()) + element * 4, &value, 4);
   }
 };
+// The 91-class SSD-Mobile-300-v1 and SSDlite-Mobile-320-v1 signatures decode as
+// their source models do: every foreground anchor/class pair, NMS per class.
+// Other signatures keep one class per anchor. One anchor whose two foreground
+// classes both pass the threshold tells the two policies apart.
+std::int32_t ssd_policy_detections(stagesemantics::SsdRecipeId id, int side,
+                                   const std::array<int, 6>& dims,
+                                   const std::array<int, 6>& anchors) {
+  constexpr int classes = 91;
+  auto request = source(BoxDecodeType::Ssd, classes);
+  request.payload.ssd_recipe_id = id;
+  for (std::size_t i = 0; i < dims.size(); ++i)
+    input(request, dims[i], dims[i], anchors[i] * 4);
+  for (std::size_t i = 0; i < dims.size(); ++i)
+    input(request, dims[i], dims[i], anchors[i] * classes);
+  const auto prepared = check(request, {side, side, side, side, ResizeMode::Stretch});
+  const auto& members = prepared.compiled.recipe->members;
+  require(prepared.decode_member == 0, "SSD decode must read the stage inputs directly");
+  const auto& numerical = members[prepared.decode_member].executable;
+  const auto& publication = members.back().executable;
+  const auto description = inspect(numerical);
+  std::vector<std::shared_ptr<HostStorage>> inputs, outputs;
+  std::vector<c::ConstBytes> in, public_inputs;
+  std::vector<c::MutableBytes> out;
+  for (const auto& req : description.input_requirements()) {
+    inputs.push_back(std::make_shared<HostStorage>(req.storage_bytes));
+    in.push_back({static_cast<const std::byte*>(inputs.back()->memory.get()), req.storage_bytes});
+  }
+  // Box offsets 0 decode to the priors. BF16 logits: -10 everywhere, then
+  // classes 1 and 2 of the first anchor of the first cell at 5 and 4.
+  const auto set_bf16 = [](HostStorage& storage, std::size_t element, float value) {
+    std::uint32_t bits = 0;
+    std::memcpy(&bits, &value, 4);
+    const auto upper = static_cast<std::uint16_t>(bits >> 16);
+    std::memcpy(static_cast<std::byte*>(storage.memory.get()) + element * 2, &upper, 2);
+  };
+  for (std::size_t head = 0; head < dims.size(); ++head) {
+    auto& scores = *inputs[dims.size() + head];
+    const std::size_t elements =
+        std::size_t(dims[head]) * std::size_t(dims[head]) * std::size_t(anchors[head] * classes);
+    require(scores.size >= elements * 2, "SSD score head is smaller than its dense extent");
+    for (std::size_t e = 0; e < elements; ++e)
+      set_bf16(scores, e, -10.f);
+  }
+  set_bf16(*inputs[dims.size()], 1, 5.f);
+  set_bf16(*inputs[dims.size()], 2, 4.f);
+  for (const auto& req : description.output_requirements()) {
+    outputs.push_back(std::make_shared<HostStorage>(req.storage_bytes));
+    auto* data = static_cast<std::byte*>(outputs.back()->memory.get());
+    out.push_back({data, req.storage_bytes});
+    public_inputs.push_back({data, req.storage_bytes});
+  }
+  test::OperationProbe executor, publisher;
+  require(!executor.prepare(numerical) && !publisher.prepare(publication),
+          "SSD numerical/publication preparation failed");
+  const auto status = executor.execute_host(executor.operation(), in, out);
+  require(!status, status ? status->message.c_str() : "SSD checked numerical execution failed");
+  const auto wire_bytes = inspect(publication).output_requirements()[0].storage_bytes;
+  HostStorage wire(wire_bytes);
+  const std::array<c::MutableBytes, 1> published{
+      {{static_cast<std::byte*>(wire.memory.get()), wire_bytes}}};
+  require(!publisher.execute_host(publisher.operation(), public_inputs, published),
+          "SSD publication failed");
+  const auto count = wire.read<std::int32_t>(0);
+  for (std::int32_t row = 1; row < count; ++row)
+    require(wire.read<std::int32_t>(4 + row * 24 + 20) != wire.read<std::int32_t>(4 + 20),
+            "SSD published one class twice for a single anchor");
+  return count;
+}
+void ssd_source_policy_execution() {
+  using stagesemantics::SsdRecipeId;
+  require(ssd_policy_detections(SsdRecipeId::SsdMobile300V1, 300, {19, 10, 5, 3, 2, 1},
+                                {3, 6, 6, 6, 6, 6}) == 2,
+          "91-class SSD-Mobile-300-v1 must keep both foreground classes of one anchor");
+  require(ssd_policy_detections(SsdRecipeId::SsdMobile320V1, 320, {20, 10, 5, 3, 2, 1},
+                                {3, 6, 6, 6, 6, 6}) == 1,
+          "SSD-Mobile-320-v1 must keep its one-class-per-anchor policy");
+}
+
 void detr_numerical_publication(bool crop = false) {
   auto request = source(BoxDecodeType::Detr, 2);
   request.payload.topk = 2;
@@ -3019,6 +3085,11 @@ int main(int argc, char** argv) {
       std::cout << "YOLO26_OBB_SOURCE_GEOMETRY_PASS\n";
       return 0;
     }
+    if (argc == 2 && std::string(argv[1]) == "--ssd-source-policy-execution") {
+      ssd_source_policy_execution();
+      std::cout << "SSD_SOURCE_POLICY_EXECUTION_PASS\n";
+      return 0;
+    }
     simaai::neat::gst_init_once();
     check_ssd_mpk_carrier_contracts();
     dfl_oriented_contract_and_execution();
@@ -3035,6 +3106,7 @@ int main(int argc, char** argv) {
     query_source_dtypes();
     detr_numerical_publication();
     detr_numerical_publication(true);
+    ssd_source_policy_execution();
     detr_padded_numerical_publication();
     focal_numerical_publication();
     focal_numerical_publication(true);

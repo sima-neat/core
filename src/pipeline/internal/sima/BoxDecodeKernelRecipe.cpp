@@ -422,14 +422,16 @@ const QuantStaticSpec& quantization(const LogicalInputStaticSpec& input) {
     invalid("INT8 heads require positive finite per-tensor quantization and an INT8 zero point");
   return *input.quant;
 }
-} // namespace
 
+// Source numerical policy for the two verified 91-class export contracts.
+// Other prepared SSD signatures retain their existing provider policy.
 bool uses_source_multiclass_ssd_policy(const BoxDecodeStagePayload& payload) {
   using stagesemantics::SsdRecipeId;
   return payload.decode_type == BoxDecodeType::Ssd && payload.num_classes == 91 &&
          (payload.ssd_recipe_id == SsdRecipeId::SsdMobile300V1 ||
           payload.ssd_recipe_id == SsdRecipeId::SsdLiteMobile320V1);
 }
+} // namespace
 
 bool boxdecode_supports_detection_transform(BoxDecodeType type) {
   switch (type) {
