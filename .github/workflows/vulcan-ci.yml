@@ -34,6 +34,26 @@ on:
         required: false
         default: "auto"
         type: string
+      scheduler_run_id:
+        description: "Exact Scheduler Windows Actions run for an unpublished candidate"
+        required: false
+        default: ""
+        type: string
+      scheduler_commit:
+        description: "Full Scheduler commit selected by scheduler_run_id"
+        required: false
+        default: ""
+        type: string
+      sima_cli_run_id:
+        description: "Exact sima-cli Actions run for an unpublished candidate"
+        required: false
+        default: ""
+        type: string
+      sima_cli_commit:
+        description: "Full sima-cli commit selected by sima_cli_run_id"
+        required: false
+        default: ""
+        type: string
   workflow_dispatch:
     inputs:
       offline_publish:
@@ -82,6 +102,26 @@ on:
           - auto
           - develop
           - main
+      scheduler_run_id:
+        description: "Exact Scheduler Windows Actions run for an unpublished candidate"
+        required: false
+        default: ""
+        type: string
+      scheduler_commit:
+        description: "Full Scheduler commit selected by scheduler_run_id"
+        required: false
+        default: ""
+        type: string
+      sima_cli_run_id:
+        description: "Exact sima-cli Actions run for an unpublished candidate"
+        required: false
+        default: ""
+        type: string
+      sima_cli_commit:
+        description: "Full sima-cli commit selected by sima_cli_run_id"
+        required: false
+        default: ""
+        type: string
 
 permissions:
   actions: write
@@ -97,6 +137,37 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 jobs:
+  validate-windows-cohort-selectors:
+    name: Validate exact Windows dependency selectors
+    runs-on: ubuntu-latest
+    env:
+      SCHEDULER_RUN_ID: ${{ inputs.scheduler_run_id || '' }}
+      SCHEDULER_COMMIT: ${{ inputs.scheduler_commit || '' }}
+      SIMA_CLI_RUN_ID: ${{ inputs.sima_cli_run_id || '' }}
+      SIMA_CLI_COMMIT: ${{ inputs.sima_cli_commit || '' }}
+    steps:
+      - name: Require paired immutable candidate selectors
+        shell: bash
+        run: |
+          set -euo pipefail
+          validate_selector() {
+            local label="$1" run_id="$2" commit="$3"
+            if [[ -n "$run_id" && -z "$commit" ]] || [[ -z "$run_id" && -n "$commit" ]]; then
+              echo "$label run ID and commit must be supplied together." >&2
+              return 1
+            fi
+            if [[ -n "$run_id" && ! "$run_id" =~ ^[1-9][0-9]*$ ]]; then
+              echo "$label run ID must be a positive integer." >&2
+              return 1
+            fi
+            if [[ -n "$commit" && ! "$commit" =~ ^[0-9a-f]{40}$ ]]; then
+              echo "$label commit must be a full lowercase Git commit." >&2
+              return 1
+            fi
+          }
+          validate_selector "Scheduler" "$SCHEDULER_RUN_ID" "$SCHEDULER_COMMIT"
+          validate_selector "sima-cli" "$SIMA_CLI_RUN_ID" "$SIMA_CLI_COMMIT"
+
   validate-offline:
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.offline_source_run_id != '' }}
     uses: ./.github/workflows/pcie-offline.yml
@@ -583,8 +654,9 @@ jobs:
 
   publish-vulcan-artifacts:
     name: Publish to Vulcan
-    if: ${{ always() && !inputs.validation_only && needs.build.result == 'success' && needs.build-tooling-tests.result == 'success' && ((inputs.build_mode || 'standard') == 'fuzz' || needs.code-hygiene.result == 'success') }}
+    if: ${{ always() && !inputs.validation_only && needs.validate-windows-cohort-selectors.result == 'success' && needs.build.result == 'success' && needs.build-tooling-tests.result == 'success' && ((inputs.build_mode || 'standard') == 'fuzz' || needs.code-hygiene.result == 'success') }}
     needs:
+      - validate-windows-cohort-selectors
       - build-tooling-tests
       - resolve-vulcan-config
       - build
@@ -860,8 +932,9 @@ jobs:
 
   publish-pciehost-package:
     name: Publish PCIe Host Package Metadata
-    if: ${{ !inputs.validation_only && (inputs.build_mode || 'standard') == 'standard' && (github.ref_type == 'branch' || github.ref_type == 'tag') }}
+    if: ${{ needs.validate-windows-cohort-selectors.result == 'success' && !inputs.validation_only && (inputs.build_mode || 'standard') == 'standard' && (github.ref_type == 'branch' || github.ref_type == 'tag') }}
     needs:
+      - validate-windows-cohort-selectors
       - build-tooling-tests
       - resolve-vulcan-config
       - build-pciehost-packages
@@ -2148,8 +2221,9 @@ jobs:
 
   test-pciehost-windows:
     name: Build and qualify Windows PCIe host
-    if: ${{ always() && !inputs.offline_source_run_id && (inputs.build_mode || 'standard') == 'standard' && needs.detect-changes.outputs.docs_only != 'true' && needs.build.result == 'success' && needs.build-pcie-card-qualification-dependencies.result == 'success' && needs.build-pciehost-packages.result == 'success' && needs.test-devkit.result == 'success' && needs.test-pciehost-hardware.result == 'success' }}
+    if: ${{ always() && needs.validate-windows-cohort-selectors.result == 'success' && !inputs.offline_source_run_id && (inputs.build_mode || 'standard') == 'standard' && needs.detect-changes.outputs.docs_only != 'true' && needs.build.result == 'success' && needs.build-pcie-card-qualification-dependencies.result == 'success' && needs.build-pciehost-packages.result == 'success' && needs.test-devkit.result == 'success' && needs.test-pciehost-hardware.result == 'success' }}
     needs:
+      - validate-windows-cohort-selectors
       - detect-changes
       - build
       - build-pcie-card-qualification-dependencies
@@ -2162,6 +2236,10 @@ jobs:
       id-token: write
     uses: ./.github/workflows/pcie-host-windows.yml
     with:
+      scheduler_run_id: ${{ inputs.scheduler_run_id || '' }}
+      scheduler_commit: ${{ inputs.scheduler_commit || '' }}
+      sima_cli_run_id: ${{ inputs.sima_cli_run_id || '' }}
+      sima_cli_commit: ${{ inputs.sima_cli_commit || '' }}
       linux_current_run: true
       include_genai: true
       validation_only: ${{ inputs.validation_only || !((github.event_name == 'push' || github.event_name == 'workflow_dispatch') && (github.ref == 'refs/heads/develop' || startsWith(github.ref, 'refs/tags/v'))) }}
@@ -2170,8 +2248,9 @@ jobs:
 
   promote-latest-tag:
     name: Promote Latest Tag
-    if: ${{ always() && !inputs.validation_only && (github.ref_type == 'branch' || github.ref_type == 'tag') && (inputs.build_mode || 'standard') == 'standard' && needs.detect-changes.outputs.docs_only != 'true' && needs.test-devkit.result == 'success' && needs.publish-pciehost-package.result == 'success' && (needs.test-pciehost-hardware.result == 'success' || needs.test-pciehost-hardware.result == 'skipped') && needs.test-pciehost-windows.result == 'success' }}
+    if: ${{ always() && needs.validate-windows-cohort-selectors.result == 'success' && !inputs.validation_only && (github.ref_type == 'branch' || github.ref_type == 'tag') && (inputs.build_mode || 'standard') == 'standard' && needs.detect-changes.outputs.docs_only != 'true' && needs.test-devkit.result == 'success' && needs.publish-pciehost-package.result == 'success' && (needs.test-pciehost-hardware.result == 'success' || needs.test-pciehost-hardware.result == 'skipped') && needs.test-pciehost-windows.result == 'success' }}
     needs:
+      - validate-windows-cohort-selectors
       - detect-changes
       - resolve-vulcan-config
       - publish-pciehost-package
@@ -2192,6 +2271,7 @@ jobs:
     # Call from this branch: workflow_run requires a listener on the default branch.
     if: ${{ always() && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && (github.ref == 'refs/heads/develop' || startsWith(github.ref, 'refs/tags/v')) && !inputs.validation_only && !inputs.offline_source_run_id && (inputs.build_mode || 'standard') == 'standard' && !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled') && needs.documentation-localization.result == 'success' && needs.code-hygiene.result == 'success' && needs.promote-latest-tag.result == 'success' }}
     needs:
+      - validate-windows-cohort-selectors
       - build-tooling-tests
       - documentation-localization
       - resolve-vulcan-config
@@ -2221,6 +2301,7 @@ jobs:
     name: Verify validation-only Core run
     if: ${{ always() && inputs.validation_only }}
     needs:
+      - validate-windows-cohort-selectors
       - build-tooling-tests
       - documentation-localization
       - resolve-vulcan-config

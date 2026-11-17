@@ -13,6 +13,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import textwrap
 from types import SimpleNamespace
 import unittest
 from unittest import mock
@@ -647,6 +648,80 @@ class WindowsCiContracts(unittest.TestCase):
     self.assertIn("test-pciehost-windows:", source)
     self.assertIn("uses: ./.github/workflows/pcie-host-windows.yml", source)
     self.assertIn("needs.test-pciehost-windows.result == 'success'", source)
+
+  def test_main_ci_exposes_and_forwards_exact_windows_dependency_selectors(self):
+    source = MAIN_WORKFLOW.read_text(encoding="utf-8")
+    call_inputs = source.split("  workflow_call:\n", 1)[1].split(
+        "  workflow_dispatch:\n", 1)[0]
+    dispatch_inputs = source.split("  workflow_dispatch:\n", 1)[1].split(
+        "\npermissions:", 1)[0]
+    for name in (
+        "scheduler_run_id", "scheduler_commit", "sima_cli_run_id", "sima_cli_commit"):
+      with self.subTest(input=name):
+        expected = f"      {name}:\n"
+        self.assertIn(expected, call_inputs)
+        self.assertIn(expected, dispatch_inputs)
+
+    job = source.split("  test-pciehost-windows:\n", 1)[1].split(
+        "  promote-latest-tag:", 1)[0]
+    self.assertIn("- validate-windows-cohort-selectors", job)
+    self.assertIn("needs.validate-windows-cohort-selectors.result == 'success'", job)
+    for name in (
+        "scheduler_run_id", "scheduler_commit", "sima_cli_run_id", "sima_cli_commit"):
+      with self.subTest(forwarded=name):
+        self.assertIn(f"      {name}: ${{{{ inputs.{name} || '' }}}}\n", job)
+
+    for gated_job in (
+        "publish-vulcan-artifacts",
+        "publish-pciehost-package",
+        "promote-latest-tag",
+        "publish-offline-develop",
+        "validation-complete",
+    ):
+      with self.subTest(gated_job=gated_job):
+        match = re.search(
+            rf"(?ms)^  {re.escape(gated_job)}:\n(.*?)(?=^  [\w-]+:\n|\Z)", source)
+        self.assertIsNotNone(match)
+        self.assertIn("- validate-windows-cohort-selectors", match[1])
+        if gated_job in (
+            "publish-vulcan-artifacts", "publish-pciehost-package", "promote-latest-tag"):
+          self.assertIn(
+              "needs.validate-windows-cohort-selectors.result == 'success'", match[1])
+
+  def test_main_ci_exact_windows_dependency_selectors_fail_closed(self):
+    source = MAIN_WORKFLOW.read_text(encoding="utf-8")
+    job = source.split("  validate-windows-cohort-selectors:\n", 1)[1].split(
+        "\n  validate-offline:", 1)[0]
+    script = textwrap.dedent(job.split("        run: |\n", 1)[1])
+    bash = shutil.which("bash")
+    self.assertIsNotNone(bash)
+
+    def validate(scheduler_run="", scheduler_commit="", cli_run="", cli_commit=""):
+      environment = os.environ.copy()
+      environment.update({
+          "SCHEDULER_RUN_ID": scheduler_run,
+          "SCHEDULER_COMMIT": scheduler_commit,
+          "SIMA_CLI_RUN_ID": cli_run,
+          "SIMA_CLI_COMMIT": cli_commit,
+      })
+      return subprocess.run(
+          [bash, "-c", script], capture_output=True, text=True, check=False,
+          env=environment)
+
+    self.assertEqual(validate().returncode, 0)
+    self.assertEqual(validate("41", "a" * 40, "82", "b" * 40).returncode, 0)
+    invalid = (
+        ("41", "", "", "", "supplied together"),
+        ("", "a" * 40, "", "", "supplied together"),
+        ("0", "a" * 40, "", "", "positive integer"),
+        ("41", "A" * 40, "", "", "full lowercase"),
+        ("", "", "82", "short", "full lowercase"),
+    )
+    for scheduler_run, scheduler_commit, cli_run, cli_commit, error in invalid:
+      with self.subTest(error=error):
+        result = validate(scheduler_run, scheduler_commit, cli_run, cli_commit)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(error, result.stderr)
 
   def test_main_ci_forces_non_release_windows_runs_to_validation_only(self):
     source = MAIN_WORKFLOW.read_text(encoding="utf-8")

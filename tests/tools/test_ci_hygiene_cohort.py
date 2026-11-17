@@ -83,6 +83,7 @@ def test_core_publication_requires_tooling_success_in_every_build_mode(mode, out
                            job('publish-vulcan-artifacts'))[1]
     values = {
         'always()': True, 'inputs.validation_only': validation_only,
+        'needs.validate-windows-cohort-selectors.result': 'success',
         'needs.build.result': 'success', 'needs.build-tooling-tests.result': outcome,
         'inputs.build_mode': mode,
         'needs.code-hygiene.result': 'skipped' if mode == 'fuzz' else 'success',
