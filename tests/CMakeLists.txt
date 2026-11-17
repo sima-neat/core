@@ -792,6 +792,19 @@ if (SIMANEAT_DATAFLOW_SOURCE_DIR AND
   set_property(TEST unit_dataflow_mla_route_test APPEND PROPERTY LABELS "unit;dataflow")
 endif()
 
+# A model package's whole route (H1): Input -> Model::preprocess() -> inference() -> postprocess()
+# -> Output with the kernel stages on the A65, on both backends in one process, public API only.
+# It needs the MLA and a compiled model package (--model-package or SIMA_TEST_MODEL_PACKAGE; it
+# downloads nothing), so it is a long test that skips without one. No row runs a kernel on the
+# EV74.
+if (SIMANEAT_DATAFLOW_SOURCE_DIR AND
+    NOT unit_dataflow_model_route_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  add_pipeline_test_long(unit_dataflow_model_route_test
+    ${CMAKE_CURRENT_SOURCE_DIR}/unit_testing/unit_dataflow_model_route_test.cpp)
+  set_tests_properties(unit_dataflow_model_route_test PROPERTIES TIMEOUT 300)
+  set_property(TEST unit_dataflow_model_route_test APPEND PROPERTY LABELS "unit;dataflow")
+endif()
+
 # The delivery-mode flag is cached; exercise the same contract in separate processes.
 if (TARGET unit_inputstream_idle_resume_test)
   set_tests_properties(unit_inputstream_idle_resume_test PROPERTIES

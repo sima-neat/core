@@ -42,7 +42,7 @@ struct DataflowFieldBinding {
 // A leaf binds a TensorSpec; a record (an item of several tensors: TensorList, TensorSet, a
 // positional Tensor::record) a RecordSchema with positional field names "0", "1", ... and one
 // DataflowFieldBinding per field.
-struct DataflowPulledTensor; // DataflowMlaRoute.h
+struct DataflowPulledTensor; // DataflowModelRoute.h
 
 struct DataflowInputBinding {
   enum class Planes { None, Nv12, I420 };

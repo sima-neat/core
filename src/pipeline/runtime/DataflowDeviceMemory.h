@@ -69,6 +69,17 @@ void pulled_tensors(const DataflowInputBinding& binding,
                     const pipeline_internal::StreamNames& streams, bool owned, df::Message message,
                     TensorList& out);
 
+// The CPU's view of the device tensors pushed into an input whose consumer reads through the
+// CPU's address (a model route whose first stage is an A65 kernel, H1). A tensor pushed again is
+// given the mapping it had, so the operator knows its buffer again (a wrapped Block is known by
+// its address, descriptor, offset and holder) and nothing is mapped or admitted per frame. The
+// mapping is Core's own read-only mmap of the tensor's DMA-BUF, not a map of its GStreamer
+// memory: it lives as long as an operator keeps the buffer, and a held GstMemory map would refuse
+// the application's next write map of the same tensor. An entry does not keep its mapping alive
+// (whoever holds the Block does); a dead one is replaced.
+class CpuWraps;
+std::shared_ptr<CpuWraps> make_cpu_wraps();
+
 // Push. The Block that backs a slot of a device port (`port`: Ev74 or Dms0) with the DMA-BUF of
 // `t`, whose layout is a whole slot's (dataflow_wrap_layout). True when all of these hold, and a
 // copy into the slot otherwise:
@@ -88,8 +99,12 @@ void pulled_tensors(const DataflowInputBinding& binding,
 // TensorBuffer, as a host wrap's, kept until the message's last drop. On a port of bounded shape
 // the runtime wants the CPU address: one read map of the storage, whose address must be aligned
 // too, kept with the storage until the message's last drop.
+// With `cpu` (a route whose first operator reads through the CPU's address) the Block also
+// carries the address of the tensor's first byte in a mapping from `cpu` (CpuWraps), whatever the
+// port's shape; its holder is that mapping, which keeps the tensor's TensorBuffer.
 bool wrap_tensor(const Tensor& t, const df::PortSpec& port, std::size_t slot_bytes,
-                 std::uintptr_t align_mask, df::Block& out, bool any_device_memory = false);
+                 std::uintptr_t align_mask, df::Block& out, bool any_device_memory = false,
+                 CpuWraps* cpu = nullptr);
 
 // Pull. The storage of the tensor of `message`, whose `block` (Message::block) has a descriptor:
 //   - a wrap (the Block has a holder): the pushed tensor's storage itself (D14), with the pushed

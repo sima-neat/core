@@ -80,7 +80,7 @@ public:
 
 #pragma GCC visibility push(hidden)
 
-struct DataflowMlaStage; // DataflowMlaRoute.h
+struct DataflowModelRoute; // DataflowModelRoute.h
 
 // One public Output of the graph: one Fetch, fed by one link from its Input's Feed (H0 plan 3.4,
 // 3.6; H0c: each Output's own depth and drop policy).
@@ -97,9 +97,9 @@ struct DataflowOutputConfig {
 };
 
 // One public Input of the graph: one Feed with one link per Output it feeds (a fan-out when there
-// are several), one Session of its own (H0c: each input binds by its own first push). On an
-// MLA-only model route (H1) the Feed's one link goes to the MLA operator, whose output link feeds
-// the route's one Fetch.
+// are several), one Session of its own (H0c: each input binds by its own first push). On a model
+// route (H1) the Feed's one link goes to the first stage's operator, and the last one's output
+// link feeds the route's one Fetch.
 struct DataflowInputConfig {
   InputOptions input; ///< the public Input's options, resolved as compile_public_graph does
   std::vector<std::string> names; ///< its public names (Graph::inputs()), sorted
@@ -107,9 +107,9 @@ struct DataflowInputConfig {
   std::uint32_t feed_loans = 1;   ///< Feed::Options::loans: 2 when Run::alloc can hold a slot
   std::vector<std::size_t>
       outputs; ///< the Outputs it feeds (DataflowRunConfig::outputs), link order
-  /// A model route (H1): the MLA stage between this Input and its one Output (Feed -> MlaOp ->
-  /// Fetch). Null: the Input feeds its Outputs directly.
-  std::shared_ptr<const DataflowMlaStage> mla;
+  /// A model route (H1): the model's stages between this Input and its one Output (Feed -> one
+  /// operator per stage -> Fetch). Null: the Input feeds its Outputs directly.
+  std::shared_ptr<const DataflowModelRoute> model;
 };
 
 // What DataflowGraphCompiler decided for a qualifying graph of public Inputs and Outputs, each

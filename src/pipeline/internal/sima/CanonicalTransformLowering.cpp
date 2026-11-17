@@ -336,6 +336,10 @@ rt::Result<std::shared_ptr<KernelStageRecipe>> check_transform_stage(const Stage
         member.outputs.push_back(
             {i, batch * output_span + slice * output_stride, gs::TensorStagePortSource::Output});
         members.push_back(std::move(member));
+        recipe->requests.push_back({std::string(family->canonical),
+                                    {transform.input},
+                                    {transform.output},
+                                    transform.parameters});
       }
     }
   }

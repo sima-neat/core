@@ -563,6 +563,15 @@ if (SIMANEAT_DATAFLOW_SOURCE_DIR)
   if (NOT TARGET SimaRunner::mla)
     find_package(SimaRunner CONFIG QUIET COMPONENTS mla)
   endif()
+  # The kernel operator (H1): the runtime builds soc::KernelOp into dataflow::soc where the
+  # Runner's Executor (SimaRunner::runtime, SimaRunner::request_preparation) and the Kernels
+  # package (SimaKernels::request, which the Runner's package finds: -DSimaKernels_DIR=<kernels
+  # package>/usr/lib/cmake/SimaKernels in a development tree) are found too. Looked for here so
+  # that Core knows whether the operator is in the build. Not found: dataflow::soc is the MLA
+  # operator alone, and a model route with kernel stages stays on GStreamer.
+  if (TARGET SimaRunner::mla AND NOT TARGET SimaRunner::request_preparation)
+    find_package(SimaRunner CONFIG QUIET COMPONENTS request_preparation)
+  endif()
   simaneat_add_dataflow_runtime("${SIMANEAT_DATAFLOW_SOURCE_DIR}")
   set_target_properties(dataflow_core PROPERTIES
     CXX_VISIBILITY_PRESET hidden
@@ -608,6 +617,17 @@ if (SIMANEAT_DATAFLOW_SOURCE_DIR)
     target_sources(sima_neat_static PRIVATE $<TARGET_OBJECTS:dataflow_soc>)
     target_link_libraries(sima_neat PRIVATE SimaRunner::mla)
     target_compile_definitions(sima_neat_objects PRIVATE SIMANEAT_WITH_DATAFLOW_SOC=1)
+    # soc::KernelOp is in dataflow::soc under the runtime's own condition. Its headers are the
+    # Runner's and the Kernels' static packages; nothing of either is linked here: every symbol
+    # the operator's objects need is exported by libsimaai_runtime_gstreamer.so of the same
+    # Scheduler cohort (SimaScheduler::frontend, already libsima_neat.so's dependency), which
+    # carries the Runner's Executor and the Kernels the GStreamer stages run. So a kernel stage
+    # on Dataflow runs the same kernel code as on GStreamer, and libsima_neat.so gains no
+    # dependency and no second copy of either library.
+    if (TARGET SimaRunner::request_preparation AND TARGET SimaRunner::runtime AND
+        TARGET SimaKernels::request)
+      target_compile_definitions(sima_neat_objects PRIVATE SIMANEAT_WITH_DATAFLOW_SOC_KERNELS=1)
+    endif()
   endif()
 endif()
 

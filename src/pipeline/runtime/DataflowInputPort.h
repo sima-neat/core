@@ -181,8 +181,9 @@ public:
     /// DMA-BUF (dataflow_device::pulled_sample, pulled_tensors). Fixed at bind.
     bool device = false;
     /// A model route (H1): the Feed's only consumer is the MLA, which reads a DMA-BUF of either
-    /// device heap, so a wrap takes an EV74 or an MLA tensor whatever the port's own kind (as
-    /// GStreamer's input of the route does). Fixed at bind.
+    /// device heap, or an A65 kernel, which reads either through the CPU's address; so a wrap
+    /// takes an EV74 or an MLA tensor whatever the port's own kind (as GStreamer's input of the
+    /// route does). Fixed at bind.
     bool any_device_memory = false;
     std::size_t slot_bytes = 0;
     std::uintptr_t wrap_mask = 0;
@@ -194,6 +195,10 @@ public:
     /// full (FR14); kNoRefusal otherwise (still_full; a device input: device_full).
     static constexpr std::uint64_t kNoRefusal = ~std::uint64_t{0};
     std::atomic<std::uint64_t> full_at{kNoRefusal};
+    /// A model route whose first stage is an A65 kernel (H1): a wrap carries the CPU's address of
+    /// the tensor's bytes, from this cache of the tensors pushed so far
+    /// (DataflowDeviceMemory.h). Null on every other route. Fixed at bind.
+    std::shared_ptr<dataflow_device::CpuWraps> cpu_wraps;
   };
 
 private:
@@ -236,9 +241,9 @@ private:
   std::atomic<bool> closed_{false};
   DataflowValidatedLeaf validated_;
   DataflowValidatedLeaf validated_device_; ///< a device input: of a device tensor (GstSample)
-  /// A model route (H1): the loaded MLA model of the input's stage (DataflowMlaRoute.h), for this
-  /// Run's one operator. Null otherwise.
-  std::shared_ptr<void> mla_model_;
+  /// A model route (H1): the loaded model and the checked kernels of the input's stages
+  /// (DataflowModelRoute.h), for this Run's operators. Null otherwise.
+  std::shared_ptr<void> model_;
 };
 
 // The backing of a Run::alloc Tensor on this backend: the loan of one slot of the input's pool.
@@ -322,9 +327,10 @@ inline DataflowPushOutcome DataflowInputPort::publish(Bound& b, std::span<const 
     // A device port (H0b) takes device memory only: the tensor's own DMA-BUF.
     df::Block wrap;
     wrapped = wrappable &&
-              (device_port ? dataflow_device::wrap_tensor(first, b.binding.spec, b.slot_bytes,
-                                                          b.wrap_mask, wrap, b.any_device_memory)
-                           : dataflow_codec::wrap_block(first, b.slot_bytes, b.wrap_mask, wrap));
+              (device_port
+                   ? dataflow_device::wrap_tensor(first, b.binding.spec, b.slot_bytes, b.wrap_mask,
+                                                  wrap, b.any_device_memory, b.cpu_wraps.get())
+                   : dataflow_codec::wrap_block(first, b.slot_bytes, b.wrap_mask, wrap));
     const df::Acquire mode = block ? df::Acquire::Block : df::Acquire::Fail;
     df::Result<df::WriteLoan> allocated =
         b.session.alloc(b.feed, mode, df::kNoDeadline, wrapped ? &wrap : nullptr);

@@ -11,14 +11,19 @@
 #include "pipeline/internal/SimaaiGstCompat.h"
 #include "pipeline/internal/TensorTransfer.h"
 #include "pipeline/runtime/DataflowInputPort.h"
-#include "pipeline/runtime/DataflowMlaRoute.h"
+#include "pipeline/runtime/DataflowModelRoute.h"
 #include "pipeline/runtime/DataflowTensorCodec.h"
 
 #include <gst/allocators/gstdmabuf.h>
 #include <gst/allocators/gstfdmemory.h>
 #include <gst/gst.h>
 
+#include <sys/mman.h>
+#include <unistd.h>
+
+#include <array>
 #include <mutex>
+#include <optional>
 #include <span>
 #include <typeinfo>
 #include <utility>
@@ -123,8 +128,67 @@ std::shared_ptr<TensorBuffer> slot_storage(const df::Message& message, const df:
 
 } // namespace
 
+// One read-only mapping per pushed tensor, found again by the tensor's storage and byte offset.
+// Sixteen tensors in rotation are served without a map; a seventeenth replaces the oldest entry.
+class CpuWraps {
+public:
+  // The mapping of `slot_bytes` at `fd_offset` of the DMA-BUF `fd`, which is `storage`'s, with
+  // the tensor's first byte in `data`; null when the kernel gives none.
+  [[gnu::noinline]] std::shared_ptr<WrapHold> get(const std::shared_ptr<TensorBuffer>& storage,
+                                                  std::int64_t byte_offset, int fd,
+                                                  std::size_t fd_offset, std::size_t slot_bytes,
+                                                  std::byte*& data) {
+    static const std::size_t page = static_cast<std::size_t>(::sysconf(_SC_PAGESIZE));
+    const std::size_t lead = fd_offset % page;
+    std::lock_guard<std::mutex> lock(mu_);
+    for (Entry& entry : entries_) {
+      if (entry.storage == storage.get() && entry.byte_offset == byte_offset &&
+          entry.bytes == slot_bytes) {
+        if (std::shared_ptr<WrapHold> hold = entry.hold.lock()) {
+          data = static_cast<std::byte*>(hold->mapping.data) + lead;
+          return hold;
+        }
+      }
+    }
+    const std::size_t length = lead + slot_bytes;
+    void* const base =
+        ::mmap(nullptr, length, PROT_READ, MAP_SHARED, fd, static_cast<off_t>(fd_offset - lead));
+    if (base == MAP_FAILED) {
+      return nullptr;
+    }
+    auto hold = std::make_shared<WrapHold>();
+    hold->storage = storage;
+    hold->byte_offset = byte_offset;
+    hold->mapping.data = base;
+    hold->mapping.size_bytes = length;
+    hold->mapping.unmap = [base, length] { ::munmap(base, length); };
+    Entry& entry = entries_[next_++ % entries_.size()];
+    entry.storage = storage.get();
+    entry.byte_offset = byte_offset;
+    entry.bytes = slot_bytes;
+    entry.hold = hold;
+    data = static_cast<std::byte*>(base) + lead;
+    return hold;
+  }
+
+private:
+  struct Entry {
+    const TensorBuffer* storage = nullptr; ///< compared only while `hold` lives, which keeps it
+    std::int64_t byte_offset = 0;
+    std::size_t bytes = 0;
+    std::weak_ptr<WrapHold> hold;
+  };
+  std::mutex mu_;
+  std::array<Entry, 16> entries_;
+  std::size_t next_ = 0;
+};
+
+std::shared_ptr<CpuWraps> make_cpu_wraps() {
+  return std::make_shared<CpuWraps>();
+}
+
 bool wrap_tensor(const Tensor& t, const df::PortSpec& port_spec, std::size_t slot_bytes,
-                 std::uintptr_t align_mask, df::Block& out, bool any_device_memory) {
+                 std::uintptr_t align_mask, df::Block& out, bool any_device_memory, CpuWraps* cpu) {
   const df::MemoryKind port = port_spec.memory;
   if (port == df::MemoryKind::Host || !t.storage || t.storage->kind != StorageKind::GstSample ||
       !t.storage->holder || t.byte_offset < 0) {
@@ -153,6 +217,22 @@ bool wrap_tensor(const Tensor& t, const df::PortSpec& port_spec, std::size_t slo
   out.fd = fd;
   out.fd_offset = static_cast<std::size_t>(memory_offset) + offset;
   out.kind = port;
+  if (cpu) {
+    // The first operator reads through the CPU's address: the tensor's own mapping (CpuWraps).
+    // A DMA-BUF maps at a page, so the address is aligned as the offset is.
+    if ((out.fd_offset & align_mask) != 0U) {
+      return false;
+    }
+    std::byte* data = nullptr;
+    std::shared_ptr<WrapHold> hold =
+        cpu->get(t.storage, t.byte_offset, fd, out.fd_offset, slot_bytes, data);
+    if (!hold) {
+      return false;
+    }
+    out.data = data;
+    out.holder = std::move(hold);
+    return true;
+  }
   const df::TensorSpec* const spec = std::get_if<df::TensorSpec>(&port_spec.payload);
   if (spec && spec->shape.fixed()) {
     // By the descriptor alone: nothing is mapped. The alignment asked of the CPU address is asked
@@ -215,9 +295,39 @@ std::shared_ptr<TensorBuffer> pulled_storage(const df::Message& message, const d
   return slot_storage(message, block);
 }
 
+namespace {
+
+// H1: on a model route whose first stage is a kernel, a tensor without the leading unit axes of
+// the stage's tensor is pushed as that tensor (GStreamer takes both): a view of the same storage
+// with the stage's shape, pushed in its place. nullopt when `item` is not such a tensor (the push
+// goes on with it and refuses it). Out of line and cold, so that a push of the stage's own shape,
+// and every push on every other route, neither builds nor destroys a Tensor for it.
+[[gnu::noinline, gnu::cold]] std::optional<DataflowPushOutcome>
+push_as_stage_tensor(DataflowInputPort& port, const DataflowModelRoute& route,
+                     std::span<const Tensor> item, const Stamp& proposal, bool block,
+                     const char* where, bool commit_allocation, std::int64_t pushed_seq,
+                     bool may_wrap) {
+  Tensor view;
+  if (&dataflow_model_input_view(route, item.front(), view) != &view) {
+    return std::nullopt;
+  }
+  return push(port, std::span<const Tensor>(&view, 1), proposal, block, where, commit_allocation,
+              pushed_seq, may_wrap);
+}
+
+} // namespace
+
 DataflowPushOutcome push(DataflowInputPort& port, std::span<const Tensor> item,
                          const Stamp& proposal, bool block, const char* where,
                          bool commit_allocation, std::int64_t pushed_seq, bool may_wrap) {
+  if (const DataflowModelRoute* const route = port.config().model.get();
+      route && route->kernel_input && item.size() == 1U &&
+      item.front().shape.size() != route->input_shape.size()) [[unlikely]] {
+    if (std::optional<DataflowPushOutcome> outcome = push_as_stage_tensor(
+            port, *route, item, proposal, block, where, commit_allocation, pushed_seq, may_wrap)) {
+      return *outcome;
+    }
+  }
   if (!block) {
     if (const df::Status refusal = port.device_still_full(item, pushed_seq)) {
       return {DataflowPushOutcome::Stage::Alloc, *refusal};
@@ -320,8 +430,8 @@ Sample pulled_sample(const DataflowInputBinding& binding,
     out.payload_type = PayloadType::Tensor;
     out.payload_tag = pulled->format;
     out.format = pulled->format;
-    out.stream_label = pulled->stage_key;
-    out.segment_name = pulled->stage_key;
+    out.stream_label = pulled->sample_label;
+    out.segment_name = pulled->sample_label;
     out.output_index = pulled->route.logical_index;
     out.logical_output_index = pulled->route.logical_index;
     out.route_slot = pulled->route.route_slot;

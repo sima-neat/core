@@ -15,6 +15,17 @@ namespace simaai::neat::pipeline_internal::sima {
 struct KernelStageRecipe {
   ::simaai::scheduler::client::Hardware target = ::simaai::scheduler::client::Hardware::A65;
   std::vector<::simaai::scheduler::client::TensorStageMember> members;
+  // The request Core's lowering gave the Kernels package (check_kernel) for each member's
+  // executable: the operation's name, its tensors and its parameters. Parallel to `members`
+  // where the lowering records it (the canonical transforms), empty otherwise. Cold and
+  // inspection only: an executable does not give its request back, and a backend that makes its
+  // own kernel object for the stage (Dataflow: soc::Kernel) makes it from this same request.
+  struct Request {
+    std::string operation;
+    std::vector<::simaai::scheduler::client::TensorSpec> inputs, outputs;
+    std::vector<::simaai::scheduler::client::Parameter> parameters;
+  };
+  std::vector<Request> requests;
   using Resolver = ::simaai::scheduler::client::VariantResolver;
   struct ResolverFactory {
     std::size_t member = 0;
