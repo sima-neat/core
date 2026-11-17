@@ -7,6 +7,31 @@ sidebar_position: 3
 
 Release notes for the SiMa.ai Neat Library.
 
+## 0.6.2 {#v062}
+
+### Breaking changes {#v062-breaking}
+
+- The Neat Library C++ ABI is now 9 (`libsima_neat.so.9`). `ResizeOptions`, `ResizeSpec`, `PreprocessOptions`, `PreprocOptions`, `NormalizationOptions` and `Model::Options` gained fields. Rebuild C++ applications, plugins and Python bindings with matching headers and runtime packages; do not reuse ABI 6 binaries or add compatibility symlinks.
+
+### Semantic segmentation {#v062-segmentation}
+
+- New `ResizeArgMax` node and `Model::Options::semantic_segmentation` option decode segmentation scores on the EV74. The decode bilinearly resizes per-class scores to the chosen size and returns the first class with the largest score, matching SegFormer's `interpolate` and `argmax` postprocessing. It reads padded MLA outputs in place and compares INT8 scores without dequantization. The model then returns the class map instead of the scores. Requires EV74 firmware that includes the operation. See [Semantic segmentation decode](/reference/semantic_segmentation_decode).
+
+### Preprocessing {#v062-preproc}
+
+- Center crop now accepts an optional `preprocess.resize.shorter_side` before the final MPK-sized crop. Cropping retains full-resize sampling support and publishes its inverse transform. Rebuild against ABI 9 and the matching kernel firmware; do not mix earlier binaries.
+
+- Model preprocessing and standalone Resize share `ResizeInterpolation`. Use `preprocess.resize.interpolation = ResizeInterpolation.BilinearAntialiased` instead of a sampler string in new code. Existing `scaling_type` strings remain compatible; conflicting nondefault strings are rejected.
+
+- Existing preprocessing options now accept antialiased bilinear resize, an explicit source rescale factor, color-conversion placement and floating-conversion policy. On the fixed source-arithmetic path, mean and standard-deviation fields retain the original mean and divisor rather than a folded affine transform. BF16 defaults to legacy truncation; nearest-even is opt-in. FP16 uses nearest-even. Precise INT8 quantization requires the original source step consistent with the model's multiplier; the multiplier cannot reconstruct that step. Absent new options preserve the existing path. See [Preproc](/reference/nodes/preproc).
+
+## 0.6.1 {#v061}
+
+- Host-to-device tensor transfers reuse DMA buffers through a bounded cache.
+- Affected model packs return typed MLA output views and validate the complete compiled input batch.
+- Application-fed asynchronous runs can resume after an idle period. A finite pull timeout ends the wait while the run stays active.
+- Neat Library uses C++ ABI 6 (`libsima_neat.so.6`).
+
 ## 0.6.0
 
 ### Breaking changes
