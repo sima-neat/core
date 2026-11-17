@@ -255,6 +255,17 @@ def run_shell_generator(f, phase):
                SYSROOT=str(f["sysroot"]), ELXR_TARGET_PYTHON_INCLUDE_DIR=str(f["include"]),
                ELXR_SDK_RELEASE_FILE=str(f["host_release"]), NEAT_PACKAGE_NAME="sima-neat",
                NEAT_VULCAN_ENV="dev", NEAT_LLIMA_RESOLVED_REF="main:abc", NEAT_BACKEND_DIR=str(backend))
+    if "sdk_verification" in f:
+        env["NEAT_SDK_VERIFICATION_JSON"] = str(f["sdk_verification"])
+        env["CXX"] = str(f["compiler"])
+        original = f["sdk_verification"].with_suffix(".original.json")
+        original.write_text(f["sdk_verification"].read_text())
+        coordinator = f["repo"] / "tools/build_dependencies.py"
+        coordinator.parent.mkdir(parents=True, exist_ok=True)
+        coordinator.write_text("import pathlib,sys\n"
+                               "assert sys.argv[1] == 'verify-sdk'\n"
+                               f"pathlib.Path({str(f['build'] / 'verify-sdk-ran')!r}).touch()\n"
+                               f"print(pathlib.Path({str(original)!r}).read_text())\n")
     text = ('set -euo pipefail\ncompute_neat_package_version() { echo 0.6.0; }\n'
             'compute_neat_platform_version() { echo 3.0.0; }\n' + script[start:end] +
             f'\ngenerate_package_buildinfo_json {phase}\necho CONSUMER_REACHED\n')
@@ -460,3 +471,75 @@ def test_link_sysroot_override_is_not_silently_ignored(selected, tmp_path, profi
         assert result.returncode != 0
         assert ("Link-only sysroot is unsupported" if profile == "link-only" else
                 "Separate compile/link sysroots are unsupported") in result.stderr
+
+
+def sdk_verification(f, version="3.0.0"):
+    target = subprocess.check_output([str(f["compiler"]), "-dumpmachine"], text=True).strip()
+    value = {"build_platform": {"elxr_version": "3.0.0_master_B2499",
+                                "sysroot_version": version, "target": target},
+             "sysroot": str(f["sysroot"]), "compiler": {"target": target}}
+    path = f["output"].parent / "sdk-verification.json"
+    path.write_text(json.dumps(value))
+    return path, value
+
+
+@pytest.mark.parametrize("version", ["3.0.0", "3.0.0~git202610070120.ea3713d-1926", "3.0.0~pre2499"])
+def test_sdk_platform_is_preserved_in_final_installed_metadata(selected, version):
+    path, value = sdk_verification(selected, version)
+    data = success(selected, "--sdk-verification-json", path)
+    assert data["build_platform"] == value["build_platform"]
+    # The older build-host label is deliberately unrelated to the active target.
+    assert data["compatibility"]["host_sdk"]["elxr"] == "2.1.2"
+
+
+@pytest.mark.parametrize("defect,diagnostic", [
+    ("non-object", "lacks build_platform"),
+    ("missing-identity", "rebuild the selected Scheduler/Runner"),
+    ("extra-field", "lacks build_platform"),
+    ("bad-firmware", "invalid elxr_version"),
+    ("bad-version", "invalid sysroot_version"),
+    ("bad-target", "invalid target"),
+    ("missing-compiler", "verification compiler target differs"),
+    ("wrong-sysroot", "Configured sysroot differs"),
+    ("wrong-compiler", "Configured compiler target differs"),
+    ("conflicting-target", "verification compiler target differs"),
+])
+def test_sdk_verification_rejects_unmatched_final_build(selected, tmp_path, defect, diagnostic):
+    path, value = sdk_verification(selected)
+    if defect == "non-object":
+        value = []
+    elif defect == "missing-identity":
+        del value["build_platform"]
+    elif defect == "extra-field":
+        value["build_platform"]["archive_sha256"] = "obsolete"
+    elif defect == "bad-firmware":
+        value["build_platform"]["elxr_version"] = "3.0.0"
+    elif defect == "bad-version":
+        value["build_platform"]["sysroot_version"] = "invalid version"
+    elif defect == "bad-target":
+        value["build_platform"]["target"] = "invalid target"
+    elif defect == "missing-compiler":
+        del value["compiler"]
+    elif defect == "wrong-sysroot":
+        value["sysroot"] = str(tmp_path)
+    elif defect == "wrong-compiler":
+        value["build_platform"]["target"] = value["compiler"]["target"] = "other-target"
+    else:
+        value["compiler"]["target"] = "conflicting-target"
+    path.write_text(json.dumps(value))
+    result = invoke(selected, "--sdk-verification-json", path)
+    assert result.returncode != 0
+    assert diagnostic in result.stderr
+    assert not selected["output"].exists()
+
+
+def test_actual_shell_propagates_and_refreshes_platform_identity(selected):
+    path, value = sdk_verification(selected)
+    selected["sdk_verification"] = path
+    provisional = run_shell_generator(selected, "provisional")
+    assert provisional.returncode == 0, provisional.stderr
+    assert not (selected["build"] / "verify-sdk-ran").exists()
+    final = run_shell_generator(selected, "final")
+    assert final.returncode == 0, final.stderr
+    assert (selected["build"] / "verify-sdk-ran").exists()
+    assert json.loads(selected["output"].read_text())["build_platform"] == value["build_platform"]

@@ -46,9 +46,11 @@ A release is blocked unless all conditions below are true:
    - `package-version` and `platform-version` updated in `deps/manifest.json` when required
    - `modelzoo-version` explicitly selects the validated Model Zoo release when it differs from
      `platform-version`; if omitted, Model Zoo resolution defaults to `platform-version`
-   - `abi-version` in `deps/manifest.json` is incremented whenever a public C++ type layout or
-     exported binary contract changes incompatibly; all C++ applications and Python bindings are
-     rebuilt against that ABI
+   - `abi-version` in `deps/manifest.json` is incremented only when a public C++ type layout or
+     exported binary contract changes incompatibly and `develop` still uses the same ABI version
+     as `main`. If `develop` already has a higher ABI version for the upcoming release, keep it
+     for further unreleased ABI breaks. Rebuild all C++ applications and Python bindings against
+     matching headers and libraries after incompatible changes.
    - release notes prepared in the release/tag body
 
 No "known crashers" list is allowed in release flow. Any crash regression blocks release until fixed.

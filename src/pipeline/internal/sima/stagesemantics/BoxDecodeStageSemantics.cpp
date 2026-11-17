@@ -703,7 +703,44 @@ int detr_foreground_classes(std::int64_t first_depth, std::int64_t second_depth)
   return scores > 1 && scores <= std::numeric_limits<int>::max() ? int(scores - 1) : 0;
 }
 
+// A SAM prompt decoder publishes exactly one detection: an unset cap means one.
+// An EfficientSAM3 concept image model publishes up to top_k of its Q queries;
+// the cap must be explicit.
+int resolve_sam_topk(BoxDecodeType type, bool concept_model, int topk, int queries,
+                     const char* context) {
+  const std::string prefix = std::string(context ? context : "BoxDecode") + " " +
+                             box_decode_type_sam_model_name(type) + " ";
+  if (concept_model) {
+    if (topk < 1 || (queries > 0 && topk > queries))
+      throw std::invalid_argument(prefix + "concept detection keeps up to top_k of its " +
+                                  std::to_string(queries) + " queries; set top_k to 1.." +
+                                  std::to_string(queries));
+    return topk;
+  }
+  if (topk != 0 && topk != 1)
+    throw std::invalid_argument(prefix + "publishes exactly one mask; top_k must be 0 or 1");
+  return 1;
+}
+
+// Mask channels each model's decoder exports: MobileSAM and EdgeTAM tokens
+// 0..3, EfficientSAM its three multimask tokens, EfficientSAM3 either; a
+// single-mask export has one.
+void validate_sam_mask_count(BoxDecodeType type, int masks, const char* context) {
+  if (box_decode_type_sam_exports_masks(type, masks))
+    return;
+  throw std::invalid_argument(std::string(context ? context : "BoxDecode") + " " +
+                              box_decode_type_sam_model_name(type) + " decoders export " +
+                              box_decode_type_sam_mask_counts(type) +
+                              " mask channels; this one has " + std::to_string(masks) +
+                              ". Use the decode type of the model that produced it");
+}
+
 int infer_boxdecode_num_classes_from_contract(const BoxDecodeStaticContract& contract) {
+  if (box_decode_type_is_sam(contract.decode_type)) {
+    // One class per SAM mask (the class is the chosen mask index); one for concepts.
+    auto bound = contract;
+    return bind_sam_tensor_roles(&bound, nullptr) ? bound.num_classes : 0;
+  }
   if (contract.decode_type == BoxDecodeType::DetrFocal) {
     const auto channels = [](const BoxDecodeTensorStaticContract& tensor) {
       const auto& shape = tensor.source_storage_kind == BoxDecodeSourceStorageKind::DenseHwcPhysical
@@ -800,6 +837,15 @@ int infer_boxdecode_num_classes_from_contract(const BoxDecodeStaticContract& con
 
 int resolve_boxdecode_num_classes(const BoxDecodeStaticContract& contract, int user_num_classes,
                                   const char* context) {
+  if (box_decode_type_is_sam(contract.decode_type)) {
+    const int classes = infer_boxdecode_num_classes_from_contract(contract);
+    if (classes > 0 && user_num_classes > 0 && user_num_classes != classes)
+      throw std::invalid_argument(std::string(context ? context : "BoxDecode") + " " +
+                                  box_decode_type_token(contract.decode_type) + " has " +
+                                  std::to_string(classes) + " class(es); num_classes must be " +
+                                  std::to_string(classes) + " or 0");
+    return classes > 0 ? classes : user_num_classes;
+  }
   if (contract.decode_type == BoxDecodeType::Detr) {
     const int classes = infer_boxdecode_num_classes_from_contract(contract);
     if (!classes || (user_num_classes > 0 && user_num_classes != classes))
@@ -1464,6 +1510,26 @@ BoxDecodeStaticContract finalize_boxdecode_static_contract(
   apply_raw_yolov6_yolox_static_contract_overrides(&finalized);
   apply_yolox_seg_pose_static_contract_overrides(&finalized);
   apply_ssd_static_contract_overrides(&finalized);
+  if (box_decode_type_is_sam(finalized.decode_type)) {
+    // MPK extraction binds SAM roles; sample and upstream contracts bind here.
+    if (std::none_of(finalized.tensors.begin(), finalized.tensors.end(), [](const auto& tensor) {
+          return tensor.role == BoxDecodeTensorRole::SamMaskLogits;
+        })) {
+      std::string error;
+      if (!bind_sam_tensor_roles(&finalized, &error))
+        throw std::invalid_argument("BoxDecode: " + error);
+    }
+    int queries = 0;
+    for (const auto& tensor : finalized.tensors)
+      if (tensor.role == BoxDecodeTensorRole::SamConceptDetections)
+        queries = tensor.input_shape.size() == 3U ? tensor.input_shape[1] : 0;
+    if (queries == 0)
+      validate_sam_mask_count(finalized.decode_type,
+                              infer_boxdecode_num_classes_from_contract(finalized), "BoxDecode");
+    finalized.topk =
+        resolve_sam_topk(finalized.decode_type, queries > 0, finalized.topk, queries, "BoxDecode");
+    finalized.score_activation = BoxDecodeScoreActivation::Identity;
+  }
   if (finalized.decode_type == BoxDecodeType::SuperPoint) {
     finalize_superpoint_contract(&finalized, "BoxDecode");
     finalize_superpoint_decode_controls(finalized.superpoint.profile, finalized.nms_iou_threshold,
@@ -1522,6 +1588,10 @@ CompiledBoxDecodeContract build_boxdecode_compiled_contract_from_subset(
         compiled.payload.score_activation != BoxDecodeScoreActivation::Sigmoid)
       throw std::invalid_argument("focal query decoding requires class logits and sigmoid");
     compiled.payload.score_activation = BoxDecodeScoreActivation::Sigmoid;
+  }
+  if (box_decode_type_is_sam(compiled.payload.decode_type)) {
+    // IoU predictions and concept scores are published as-is; no class activation.
+    compiled.payload.score_activation = BoxDecodeScoreActivation::Identity;
   }
   if (compiled.payload.decode_type == BoxDecodeType::Detr) {
     validate_model_managed_boxdecode_option_override(
@@ -1614,6 +1684,58 @@ CompiledBoxDecodeContract build_boxdecode_compiled_contract_from_subset(
     if (!classes || (compiled.payload.num_classes > 0 && compiled.payload.num_classes != classes))
       throw std::invalid_argument("classic DETR requires the complete foreground class count");
     compiled.payload.num_classes = classes;
+  }
+  if (box_decode_type_is_sam(compiled.payload.decode_type)) {
+    const auto& roles = subset.tensor_roles;
+    const auto role_count = [&](BoxDecodeTensorRole role) {
+      return std::count(roles.begin(), roles.end(), role);
+    };
+    // An EfficientSAM3 concept image model binds detections; prompt decoders bind IoU.
+    const bool is_concept = role_count(BoxDecodeTensorRole::SamConceptDetections) > 0;
+    const std::string model = box_decode_type_sam_model_name(compiled.payload.decode_type);
+    if (roles.size() != subset.logical_inputs.size() ||
+        role_count(BoxDecodeTensorRole::SamMaskLogits) != 1 ||
+        (is_concept ? role_count(BoxDecodeTensorRole::SamConceptDetections) != 1
+                    : role_count(BoxDecodeTensorRole::SamIouPredictions) != 1 ||
+                          role_count(BoxDecodeTensorRole::SamObjectScore) > 1))
+      throw std::invalid_argument(
+          "boxdecode compiled " + model +
+          (is_concept ? " concept contract requires exactly one detections and one mask-logit "
+                        "input role"
+                      : " contract requires exactly one mask-logit and one IoU-prediction input "
+                        "role, and at most one object score"));
+    // Logical depth of a role: dense carriers expose their slice, packed ones their shape.
+    const auto depth = [&](BoxDecodeTensorRole role, bool width) -> int {
+      const auto i =
+          static_cast<std::size_t>(std::find(roles.begin(), roles.end(), role) - roles.begin());
+      const auto& logical = subset.logical_inputs[i];
+      const bool chw = logical.layout == "CHW" || logical.layout == "NCHW";
+      std::vector<std::int64_t> shape(logical.shape.begin(), logical.shape.end());
+      if (subset.tensor_storage_kind[i] ==
+              static_cast<int>(BoxDecodeSourceStorageKind::DenseHwcPhysical) &&
+          i < subset.slice_shapes.size() && subset.slice_shapes[i].rank >= 3) {
+        // Element reads: the packed descriptor's array has no aligned address.
+        shape.clear();
+        for (std::uint32_t d = 0; d < subset.slice_shapes[i].rank; ++d)
+          shape.push_back(subset.slice_shapes[i].sizes[d]);
+      }
+      if (shape.size() < 3)
+        return 0;
+      const auto rank = shape.size();
+      return static_cast<int>(width ? shape[rank - (chw ? 1 : 2)]
+                                    : shape[chw ? rank - 3 : rank - 1]);
+    };
+    const int classes = is_concept ? 1 : depth(BoxDecodeTensorRole::SamMaskLogits, false);
+    if (!is_concept)
+      validate_sam_mask_count(compiled.payload.decode_type, classes, "BoxDecode");
+    if (compiled.payload.num_classes > 0 && compiled.payload.num_classes != classes)
+      throw std::invalid_argument(model + " has " + std::to_string(classes) +
+                                  " class(es); num_classes must be " + std::to_string(classes) +
+                                  " or 0");
+    compiled.payload.num_classes = classes;
+    compiled.payload.topk = resolve_sam_topk(
+        compiled.payload.decode_type, is_concept, compiled.payload.topk,
+        is_concept ? depth(BoxDecodeTensorRole::SamConceptDetections, true) : 0, "BoxDecode");
   }
   if (compiled.payload.decode_type == BoxDecodeType::DetrFocal &&
       compiled.payload.num_classes <= 0 && subset.slice_shapes.size() == 2) {
