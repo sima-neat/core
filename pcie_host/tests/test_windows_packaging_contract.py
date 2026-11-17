@@ -125,7 +125,7 @@ class WindowsPackagingContract(unittest.TestCase):
         source,
         r"\n    \$publicKey \| & \$ssh -p \$Port -o ConnectTimeout=10 "
         r"-o StrictHostKeyChecking=yes `\n"
-        r"        -o \"UserKnownHostsFile=\$knownHostsPath\" \$target \$remoteScript\n")
+        r"        -o \$knownHostsOption \$target \$remoteScript\n")
     self.assertIn('$remoteScript = $remoteScript.Replace("`r", "")', source)
     # Windows PowerShell passes embedded double quotes to ssh.exe unescaped.
     self.assertNotIn('"', setup_enrolment_command())
@@ -156,6 +156,18 @@ class WindowsPackagingContract(unittest.TestCase):
           self.assertEqual(authorized_keys.read_text(encoding="utf-8"), FIXTURE_KEY + "\n")
         self.assertEqual(sorted(path.name for path in authorized_keys.parent.iterdir()),
                          ["authorized_keys"])
+
+  def test_setup_passes_known_hosts_paths_with_spaces_intact(self):
+    source = SETUP_SCRIPT.read_text(encoding="utf-8")
+    # OpenSSH splits -o values at whitespace but expands ${VAR} afterwards, so a
+    # profile such as C:\Users\Jane Doe must reach ssh.exe through the environment.
+    self.assertIn("$env:SIMA_NEAT_PCIE_KNOWN_HOSTS = $knownHostsPath", source)
+    self.assertIn("$knownHostsOption = 'UserKnownHostsFile=${SIMA_NEAT_PCIE_KNOWN_HOSTS}'",
+                  source)
+    self.assertEqual(source.count('"-o", $KnownHostsOption') +
+                     source.count('"-o", $knownHostsOption') +
+                     source.count("-o $knownHostsOption"), 3)
+    self.assertNotRegex(source, r"UserKnownHostsFile=\$(?!{)")
 
   def test_setup_drains_redirected_process_output_while_command_runs(self):
     setup_script = (ROOT / "scripts/windows/pcie-setup.ps1").read_text(

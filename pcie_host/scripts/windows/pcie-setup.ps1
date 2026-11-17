@@ -115,14 +115,14 @@ function Test-KeyAccess {
   param(
     [string]$Ssh,
     [string]$PrivateKey,
-    [string]$KnownHosts,
+    [string]$KnownHostsOption,
     [string]$Target
   )
 
   $result = Invoke-BoundedCommand -Executable $Ssh -Arguments @(
     "-i", $PrivateKey, "-p", "$Port", "-o", "BatchMode=yes",
     "-o", "ConnectTimeout=5", "-o", "StrictHostKeyChecking=yes",
-    "-o", "UserKnownHostsFile=$KnownHosts", $Target, "true"
+    "-o", $KnownHostsOption, $Target, "true"
   )
   return -not $result.TimedOut -and $result.ExitCode -eq 0
 }
@@ -179,6 +179,11 @@ $Key = [System.IO.Path]::GetFullPath($Key)
 $sshDirectory = Split-Path -Parent $Key
 $publicKeyPath = "$Key.pub"
 $knownHostsPath = Join-Path $sshDirectory "known_hosts"
+# OpenSSH splits -o values at whitespace, so a profile such as C:\Users\Jane Doe
+# would name two files. It expands ${VAR} after splitting, so pass the path
+# through the environment instead.
+$env:SIMA_NEAT_PCIE_KNOWN_HOSTS = $knownHostsPath
+$knownHostsOption = 'UserKnownHostsFile=${SIMA_NEAT_PCIE_KNOWN_HOSTS}'
 
 Write-Host "SiMa Neat PCIe SSH provisioning"
 Write-Host "User: $User"
@@ -248,7 +253,7 @@ foreach ($cardHost in $targets) {
     $bootstrapResult = Invoke-BoundedCommand -Executable $ssh -Arguments @(
       "-i", $Key, "-p", "$Port", "-o", "BatchMode=yes",
       "-o", "ConnectTimeout=5", "-o", "StrictHostKeyChecking=accept-new",
-      "-o", "UserKnownHostsFile=$knownHostsPath", $target, "true"
+      "-o", $knownHostsOption, $target, "true"
     )
     $keyAccessChecked = $true
     $keyAccessVerified = (
@@ -271,7 +276,8 @@ foreach ($cardHost in $targets) {
 
   if ($keyAccessVerified -or (
       -not $keyAccessChecked -and
-      (Test-KeyAccess -Ssh $ssh -PrivateKey $Key -KnownHosts $knownHostsPath -Target $target))) {
+      (Test-KeyAccess -Ssh $ssh -PrivateKey $Key -KnownHostsOption $knownHostsOption `
+          -Target $target))) {
     Write-Host "Already provisioned."
     $success += 1
     continue
@@ -309,7 +315,7 @@ exit $status
   try {
     $ErrorActionPreference = "Continue"
     $publicKey | & $ssh -p $Port -o ConnectTimeout=10 -o StrictHostKeyChecking=yes `
-        -o "UserKnownHostsFile=$knownHostsPath" $target $remoteScript
+        -o $knownHostsOption $target $remoteScript
     $enrollExitCode = $LASTEXITCODE
   }
   finally {
@@ -321,7 +327,8 @@ exit $status
     continue
   }
 
-  if (Test-KeyAccess -Ssh $ssh -PrivateKey $Key -KnownHosts $knownHostsPath -Target $target) {
+  if (Test-KeyAccess -Ssh $ssh -PrivateKey $Key -KnownHostsOption $knownHostsOption `
+      -Target $target) {
     Write-Host "Provisioned and verified."
     $success += 1
   }
