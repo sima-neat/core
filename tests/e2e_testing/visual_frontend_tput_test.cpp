@@ -267,6 +267,12 @@ struct CpuFeature {
   int score = 0;
 };
 
+struct CpuFeatureSelection {
+  int columns = 1;
+  int rows = 1;
+  int minimum_distance = 0;
+};
+
 bool operator==(const CpuFeature& a, const CpuFeature& b) {
   return a.x == b.x && a.y == b.y && a.score == b.score;
 }
@@ -405,6 +411,109 @@ std::vector<CpuFeature> cpu_fast_reference(const std::vector<std::uint8_t>& imag
   return features;
 }
 
+// Independent scalar oracle: full FAST/NMS candidates, comparison sorting and
+// all-pairs spacing, not the provider's score-map/counting/spatial-bin algorithm.
+// Cell quotas are applied before spacing; sparse cells and suppressed points do
+// not donate/refill quota. Explicit 1x1/distance 0 still selects strongest-first.
+std::vector<CpuFeature> cpu_select_features(std::vector<CpuFeature> candidates, int width,
+                                            int height, int capacity,
+                                            CpuFeatureSelection selection) {
+  require(width > 0 && height > 0 && capacity > 0 && selection.columns > 0 &&
+              selection.columns <= width && selection.rows > 0 && selection.rows <= height &&
+              selection.minimum_distance >= 0 && selection.minimum_distance <= 65535,
+          "CPU feature selection requires valid geometry, capacity and grid");
+  std::sort(candidates.begin(), candidates.end(), [](const CpuFeature& a, const CpuFeature& b) {
+    if (a.score != b.score)
+      return a.score > b.score;
+    if (a.y != b.y)
+      return a.y < b.y;
+    return a.x < b.x;
+  });
+  const auto cells = std::int64_t(selection.columns) * selection.rows;
+  std::vector<int> used(static_cast<std::size_t>(cells), 0);
+  std::vector<CpuFeature> frontier;
+  for (const auto& candidate : candidates) {
+    require(candidate.x >= 0 && candidate.x < width && candidate.y >= 0 && candidate.y < height,
+            "CPU feature selection candidate outside image");
+    const auto cell = (std::int64_t(candidate.y) * selection.rows / height) * selection.columns +
+                      std::int64_t(candidate.x) * selection.columns / width;
+    const auto quota = capacity / cells + (cell < capacity % cells ? 1 : 0);
+    if (used[static_cast<std::size_t>(cell)] < quota) {
+      ++used[static_cast<std::size_t>(cell)];
+      frontier.push_back(candidate);
+    }
+  }
+  std::vector<CpuFeature> selected;
+  const auto distance_squared =
+      std::int64_t(selection.minimum_distance) * selection.minimum_distance;
+  for (const auto& candidate : frontier) {
+    const bool too_close = std::any_of(selected.begin(), selected.end(), [&](const auto& previous) {
+      const auto dx = std::int64_t(candidate.x) - previous.x;
+      const auto dy = std::int64_t(candidate.y) - previous.y;
+      return dx * dx + dy * dy < distance_squared;
+    });
+    if (!too_close)
+      selected.push_back(candidate);
+  }
+  return selected;
+}
+
+void validate_selected_features(const std::vector<CpuFeature>& actual,
+                                const std::vector<CpuFeature>& expected, const std::string& label) {
+  require(actual.size() == expected.size(),
+          label + ": CPU FAST selected count mismatch expected=" + std::to_string(expected.size()) +
+              " actual=" + std::to_string(actual.size()));
+  for (std::size_t i = 0; i < expected.size(); ++i) {
+    require(actual[i] == expected[i],
+            label + ": CPU FAST selected feature mismatch index=" + std::to_string(i) +
+                " expected=" + feature_string(expected[i]) +
+                " actual=" + feature_string(actual[i]));
+  }
+}
+
+void verify_cpu_feature_selection_reference() {
+  const auto check = [](std::vector<CpuFeature> candidates, int width, int height, int capacity,
+                        CpuFeatureSelection selection, std::vector<CpuFeature> expected,
+                        const char* label) {
+    require(cpu_select_features(std::move(candidates), width, height, capacity, selection) ==
+                expected,
+            std::string("CPU feature selection literal: ") + label);
+  };
+  check({{8, 4, 90}, {3, 3, 100}, {2, 3, 100}, {1, 4, 100}}, 20, 10, 8, {1, 1, 0},
+        {{2, 3, 100}, {3, 3, 100}, {1, 4, 100}, {8, 4, 90}}, "strongest and raster ties");
+  check({{0, 0, 90}, {3, 4, 80}, {1, 1, 70}}, 10, 10, 8, {1, 1, 5}, {{0, 0, 90}, {3, 4, 80}},
+        "strict Euclidean boundary");
+  check({{0, 0, 90}, {1, 0, 100}, {4, 0, 80}, {7, 0, 70}, {8, 0, 60}, {10, 0, 50}}, 11, 7, 4,
+        {3, 1, 0}, {{1, 0, 100}, {0, 0, 90}, {4, 0, 80}, {8, 0, 60}},
+        "uneven cells and remainder quotas");
+  check({{1, 1, 70}, {6, 1, 80}, {1, 6, 100}, {6, 6, 90}}, 10, 10, 2, {2, 2, 0},
+        {{6, 1, 80}, {1, 1, 70}}, "capacity smaller than cell count");
+  check({{1, 1, 100}, {2, 1, 90}, {8, 1, 80}}, 10, 10, 2, {1, 1, 3}, {{1, 1, 100}},
+        "no refill after spacing");
+  check({{4, 1, 100}, {5, 1, 90}, {9, 1, 80}}, 10, 10, 2, {2, 1, 3}, {{4, 1, 100}},
+        "cross-cell spacing and no quota borrowing");
+  check({{1, 1, 100}, {2, 2, 90}, {3, 3, 80}}, 10, 10, 4, {2, 1, 0}, {{1, 1, 100}, {2, 2, 90}},
+        "sparse cells do not donate quota");
+  const std::vector<CpuFeature> raw{{4, 1, 90}, {5, 1, 100}, {14, 1, 80}};
+  const std::vector<CpuFeature> expected{{5, 1, 100}, {14, 1, 80}};
+  validate_selected_features(cpu_select_features(raw, 20, 10, 8, {1, 1, 3}), expected,
+                             "literal selected output");
+  const auto reject = [&](const std::vector<CpuFeature>& wrong, const char* label) {
+    bool rejected = false;
+    try {
+      validate_selected_features(wrong, expected, label);
+    } catch (const std::runtime_error&) {
+      rejected = true;
+    }
+    require(rejected, std::string("CPU feature golden accepted ") + label);
+  };
+  reject(raw, "omitted selection");
+  reject(cpu_select_features(raw, 20, 10, 8, {1, 1, 0}), "bypassed spacing");
+  reject({expected[1], expected[0]}, "reordered output");
+  reject({expected[0]}, "wrong count");
+  reject({{5, 1, 99}, expected[1]}, "wrong score");
+}
+
 const std::array<int, kBriefTests * 4>& brief_pattern() {
   static const std::array<int, kBriefTests * 4> pattern = [] {
     std::array<int, kBriefTests * 4> out{};
@@ -452,6 +561,8 @@ std::array<std::int32_t, kBriefWords> cpu_brief_descriptor(const std::vector<std
   return descriptor;
 }
 
+// This mirrors the kernel for integration parity, including its search/status
+// limitations. Tracking quality and border behavior need independent accuracy cases.
 struct CpuKltReference {
   std::vector<float> points;
   std::vector<std::int32_t> status;
@@ -680,6 +791,7 @@ struct BenchCase {
   int batch_size = 1;
   int max_features = 0;
   int fast_threshold = 30;
+  CpuFeatureSelection feature_selection;
   int descriptor_words = kBriefWords;
   int cpu_feature_input_index = 0;
   int cpu_feature_emit_radius = kFastRadius;
@@ -953,8 +1065,11 @@ void prepare_cpu_fast_golden(BenchCase* c, int input_index, int emit_radius,
   for (int b = 0; b < batches; ++b) {
     const auto image =
         input_image_batch(*c, input_index, b, c->name + ": CPU FAST reference input");
-    c->cpu_feature_refs.push_back(cpu_fast_reference(image, input_width(*c), input_height(*c),
-                                                     c->fast_threshold, emit_radius));
+    auto candidates = cpu_fast_reference(image, input_width(*c), input_height(*c),
+                                         c->fast_threshold, emit_radius);
+    c->cpu_feature_refs.push_back(cpu_select_features(std::move(candidates), input_width(*c),
+                                                      input_height(*c), c->max_features,
+                                                      c->feature_selection));
   }
 }
 
@@ -970,38 +1085,9 @@ void validate_cpu_fast_golden(const BenchCase& c, const simaai::neat::Tensor& te
   for (int b = 0; b < batches; ++b) {
     const auto ev_features = read_feature_list_batch_values(values, b, max_features, label);
     const auto& cpu_features = c.cpu_feature_refs[static_cast<std::size_t>(b)];
-    if (cpu_features.size() <= static_cast<std::size_t>(max_features)) {
-      require(ev_features.size() == cpu_features.size(),
-              label + ": CPU FAST count mismatch batch=" + std::to_string(b) +
-                  " expected=" + std::to_string(cpu_features.size()) +
-                  " actual=" + std::to_string(ev_features.size()));
-    } else {
-      require(ev_features.size() <= static_cast<std::size_t>(max_features),
-              label + ": EV feature count exceeds max_features in saturated CPU case");
-      require(!ev_features.empty(),
-              label + ": CPU FAST found features but EV returned none in saturated case batch=" +
-                  std::to_string(b));
-    }
-
-    std::vector<bool> matched(cpu_features.size(), false);
-    for (const auto& ev_feature : ev_features) {
-      bool found = false;
-      for (std::size_t i = 0; i < cpu_features.size(); ++i) {
-        if (!matched[i] && cpu_features[i] == ev_feature) {
-          matched[i] = true;
-          found = true;
-          break;
-        }
-      }
-      require(found, label + ": EV feature not present in CPU FAST reference batch=" +
-                         std::to_string(b) + " feature=" + feature_string(ev_feature));
-    }
-    if (cpu_features.size() <= static_cast<std::size_t>(max_features)) {
-      for (std::size_t i = 0; i < matched.size(); ++i) {
-        require(matched[i], label + ": CPU FAST feature missing from EV output batch=" +
-                                std::to_string(b) + " feature=" + feature_string(cpu_features[i]));
-      }
-    }
+    // Selection is deterministic even when raw candidates exceed capacity.
+    // Compare the complete ordered list, not any subset of valid raw corners.
+    validate_selected_features(ev_features, cpu_features, label + ": batch=" + std::to_string(b));
   }
 }
 
@@ -1041,8 +1127,8 @@ void validate_cpu_descriptor_golden(const BenchCase& c, const simaai::neat::Tens
   }
 }
 
-void prepare_cpu_klt_golden(BenchCase* c) {
-  require(c != nullptr, "prepare_cpu_klt_golden requires a case");
+void prepare_cpu_klt_parity(BenchCase* c) {
+  require(c != nullptr, "prepare_cpu_klt_parity requires a case");
   c->cpu_klt_golden = env_flag("SIMA_VISUAL_TPUT_CPU_GOLDEN", true) &&
                       env_flag("SIMA_VISUAL_TPUT_CPU_KLT_GOLDEN", true);
   c->cpu_klt_refs.clear();
@@ -1062,7 +1148,7 @@ void prepare_cpu_klt_golden(BenchCase* c) {
   }
 }
 
-void validate_cpu_klt_golden(const BenchCase& c, const simaai::neat::Tensor& points_tensor,
+void validate_cpu_klt_parity(const BenchCase& c, const simaai::neat::Tensor& points_tensor,
                              const simaai::neat::Tensor& status_tensor, const std::string& label) {
   if (!c.cpu_klt_golden) {
     return;
@@ -1111,7 +1197,7 @@ void validate_cpu_klt_golden(const BenchCase& c, const simaai::neat::Tensor& poi
     }
   }
   if (env_flag("SIMA_VISUAL_TPUT_KLT_REQUIRE_TRACKED", true)) {
-    require(tracked_total > 0, label + ": CPU KLT golden did not track any points");
+    require(tracked_total > 0, label + ": KLT parity reference did not track any points");
   }
 }
 
@@ -1187,7 +1273,7 @@ void validate_semantic_payload(const BenchCase& c, const simaai::neat::TensorLis
         require(value >= 0, c.name + ": status must be non-negative, got " + std::to_string(value));
       }
     }
-    validate_cpu_klt_golden(c, outputs.at(0), outputs.at(1), c.name + ": KLT CPU golden");
+    validate_cpu_klt_parity(c, outputs.at(0), outputs.at(1), c.name + ": KLT algorithm parity");
     if (c.klt_detect_new_features != 0) {
       require(outputs.size() == 3U,
               c.name + ": detect_new_features=1 should publish output_features");
@@ -1392,6 +1478,7 @@ BenchCase make_grider_fast_case(int width, int height, int batch_size, int max_f
   c.batch_size = batch_size;
   c.max_features = max_features;
   c.fast_threshold = opt.threshold;
+  c.feature_selection = {opt.grid_x, opt.grid_y, opt.min_px_dist};
   c.input_names = {opt.input_name};
   c.inputs = {make_u8_batch_tensor(width, height, batch_size, opt.input_name, 0, 0, 23)};
   c.node = simaai::neat::nodes::GriderFast(opt);
@@ -1428,6 +1515,7 @@ BenchCase make_track_descriptor_case(int width, int height, int batch_size, int 
   c.batch_size = batch_size;
   c.max_features = max_features;
   c.fast_threshold = opt.threshold;
+  c.feature_selection = {opt.grid_x, opt.grid_y, opt.min_px_dist};
   c.descriptor_words = opt.descriptor_words;
   c.input_names = {opt.input_name};
   c.inputs = {make_u8_batch_tensor(width, height, batch_size, opt.input_name, 0, 0, 37)};
@@ -1479,6 +1567,7 @@ BenchCase make_track_klt_case(int width, int height, int batch_size, int num_poi
   c.batch_size = batch_size;
   c.max_features = max_features;
   c.fast_threshold = opt.fast_threshold;
+  c.feature_selection = {opt.grid_x, opt.grid_y, opt.min_px_dist};
   c.klt_num_points = num_points;
   c.klt_win_half = opt.win_half;
   c.klt_max_iters = opt.max_iters;
@@ -1502,7 +1591,7 @@ BenchCase make_track_klt_case(int width, int height, int batch_size, int num_poi
     prepare_cpu_fast_golden(&c, /*input_index=*/1, kFastRadius, /*validate_descriptors=*/false);
   }
   c.klt_detect_new_features = detect_new_features;
-  prepare_cpu_klt_golden(&c);
+  prepare_cpu_klt_parity(&c);
   return c;
 }
 
@@ -1687,8 +1776,9 @@ bool run_case(const BenchCase& c, int warmup, int iterations, int timeout_ms, in
 
 int main() {
   try {
-    require(simaai::neat::element_exists("neatprocesscvu"),
-            "Missing SIMA processcvu plugin (neatprocesscvu).");
+    verify_cpu_feature_selection_reference();
+    require(simaai::neat::element_exists("neatkernelrunner"),
+            "Missing SIMA processcvu plugin (neatkernelrunner).");
 
     const int warmup = env_int_local("SIMA_VISUAL_TPUT_WARMUP", 2);
     const int iterations = env_int_local("SIMA_VISUAL_TPUT_ITERS", 20);

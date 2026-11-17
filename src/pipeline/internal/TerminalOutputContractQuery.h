@@ -39,6 +39,9 @@ struct PublicOutputEndpointSelector {
 
 StagePublicationRole classify_stage_for_publication(const sima::StageStaticSpec& stage);
 
+bool stage_public_outputs_match_endpoint(const sima::StageStaticSpec& stage,
+                                         const PublicOutputEndpointSelector& endpoint);
+
 const sima::StageStaticSpec*
 find_terminal_real_producer_for_endpoint(const sima::SimaPluginStaticManifest& manifest,
                                          const PublicOutputEndpointSelector& endpoint = {},

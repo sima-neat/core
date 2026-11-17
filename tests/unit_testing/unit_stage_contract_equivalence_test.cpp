@@ -50,7 +50,26 @@ RUN_TEST(
       require(manifest_opt->stages.size() == 1U, "manifest should contain one stage");
 
       const auto rendered_info = rendered_stage_query::preproc_output_info_from_nodes(nodes);
+      require(compiled.stages.size() == 1U && compiled.stages.front().processcvu.has_value(),
+              "equivalence fixture must contain the selected compiled Preproc contract");
+      const auto readonly_info = rendered_stage_query::preproc_output_info_from_compiled_contract(
+          *compiled.stages.front().processcvu);
       const auto& stage = manifest_opt->stages.front();
+      require(readonly_info.primary_output_name == rendered_info.primary_output_name &&
+                  readonly_info.primary_route_slot == rendered_info.primary_route_slot &&
+                  readonly_info.output_memory_order == rendered_info.output_memory_order &&
+                  readonly_info.transport_kind == rendered_info.transport_kind &&
+                  readonly_info.semantic_kind == rendered_info.semantic_kind &&
+                  readonly_info.output_dtype == rendered_info.output_dtype &&
+                  readonly_info.logical_layout == rendered_info.logical_layout &&
+                  readonly_info.logical_dims.width == rendered_info.logical_dims.width &&
+                  readonly_info.logical_dims.height == rendered_info.logical_dims.height &&
+                  readonly_info.logical_dims.depth == rendered_info.logical_dims.depth &&
+                  readonly_info.roi_slot_bytes == rendered_info.roi_slot_bytes &&
+                  readonly_info.roi_member_shape == rendered_info.roi_member_shape &&
+                  readonly_info.roi_member_strides_bytes == rendered_info.roi_member_strides_bytes,
+              "read-only compiled projection must equal the existing rendered Preproc wire facts");
+
       require(rendered_info.primary_output_name == stage.processcvu.primary_output_name,
               "stage helper and rendered manifest should agree on primary output");
       require(rendered_info.primary_route_slot == 0,

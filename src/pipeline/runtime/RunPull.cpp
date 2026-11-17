@@ -23,6 +23,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
+#include <iostream>
 #include <optional>
 #include <sstream>
 #include <stdexcept>
@@ -62,12 +63,44 @@ bool attach_public_holder_loan_or_error(runtime::RunCore& core, Sample& sample,
         oss << ": " << err;
       }
       oss << " (sample_requires=" << required << " holder" << (required == 1 ? "" : "s")
-          << ", credit_limit=" << gate->credit_limit() << ", in_flight=" << gate->inflight() << ")";
+          << ", credit_limit=" << gate->credit_limit() << ", in_flight=" << gate->inflight()
+          << ", output_window=" << core.pipeline.stream_opt.holder_loan_sample_window << ")";
       *message = oss.str();
     }
     return false;
   }
   return true;
+}
+
+// Reports once per stall when exhausted loan credits keep a queued output from being
+// delivered. Logging only: the pull keeps waiting or timing out exactly as before.
+void warn_if_loan_stalled(runtime::LoanStall& stall, std::chrono::steady_clock::duration warn_after,
+                          const std::string& message) {
+  const auto now = std::chrono::steady_clock::now();
+  if (!stall.since) {
+    stall.since = now;
+    return;
+  }
+  const auto stalled_for = now - *stall.since;
+  if (stall.warned || stalled_for < warn_after) {
+    return;
+  }
+  stall.warned = true;
+  std::cerr << "[WARN] " << message << " (no output delivered for "
+            << std::chrono::duration_cast<std::chrono::milliseconds>(stalled_for).count()
+            << " ms). Unreleased outputs are queued downstream or held by the app; to hold "
+               "more, raise RunOptions.queue_depth or use OutputMemory::Owned.\n";
+}
+
+void warn_if_graph_output_loan_stalled(runtime::RunCore& core, simaai::neat::graph::NodeId node,
+                                       const std::string& message) {
+  std::lock_guard<std::mutex> lock(core.graph_loan_stall_mu);
+  warn_if_loan_stalled(core.graph_loan_stalls[node], core.pipeline.loan_stall_warn_after, message);
+}
+
+void clear_graph_output_loan_stall(runtime::RunCore& core, simaai::neat::graph::NodeId node) {
+  std::lock_guard<std::mutex> lock(core.graph_loan_stall_mu);
+  core.graph_loan_stalls.erase(node);
 }
 
 constexpr auto kPullWaitPollQuantum = std::chrono::milliseconds(50);
@@ -128,9 +161,17 @@ PullStatus pull_graph_output_with_public_loan(runtime::RunCore& core,
 
     std::string loan_error;
     if (attach_public_holder_loan_or_error(core, queued->sample, &loan_error)) {
+      clear_graph_output_loan_stall(core, node_id);
       out = std::move(queued->sample);
       (void)core.graph_release_sink_restore_reservation(node_id);
-      pipeline_internal::release_realtime_frame_credits_for_sample(out, "graph-sink-pull");
+      try {
+        core.graph_finish_sink_pull(out);
+      } catch (const std::exception& e) {
+        out = Sample{};
+        pipeline_internal::error_util::set_pull_error(err, error_codes::kRuntimePull,
+                                                      label + ": " + e.what());
+        return PullStatus::Error;
+      }
       return PullStatus::Ok;
     }
 
@@ -143,6 +184,7 @@ PullStatus pull_graph_output_with_public_loan(runtime::RunCore& core,
           err, error_codes::kRuntimePull, message + " (failed to restore graph output queue)");
       return PullStatus::Error;
     }
+    warn_if_graph_output_loan_stalled(core, node_id, message);
     if (timeout_ms == 0) {
       pipeline_internal::error_util::set_pull_error(err, error_codes::kRuntimePull, message);
       return PullStatus::Timeout;
@@ -476,7 +518,8 @@ bool runtime::RunCore::attach_public_output_loan(Sample& sample, std::string* er
   return attach_public_holder_loan_or_error(*this, sample, err);
 }
 
-PullStatus runtime::RunCore::pull(int timeout_ms, Sample& out, PullError* err) {
+PullStatus runtime::RunCore::pull(int timeout_ms, Sample& out, PullError* err,
+                                  bool acquire_output_loan) {
   const auto pull_started_at = std::chrono::steady_clock::now();
   pipeline_internal::error_util::set_pull_error(err, "", "");
   const auto set_terminal_error = [&](const std::string& code, const std::string& message) {
@@ -668,11 +711,14 @@ PullStatus runtime::RunCore::pull(int timeout_ms, Sample& out, PullError* err) {
 
   while (!st->pipeline.out_queue.empty()) {
     std::string loan_error;
-    if (!attach_public_holder_loan_or_error(*st, st->pipeline.out_queue.front(), &loan_error)) {
+    if (acquire_output_loan &&
+        !attach_public_holder_loan_or_error(*st, st->pipeline.out_queue.front(), &loan_error)) {
+      const std::string& segment = st->pipeline.loan_stall_label;
       const std::string message =
-          "Run::pull: " +
+          "Run::pull" + (segment.empty() ? std::string() : " (" + segment + ")") + ": " +
           (loan_error.empty() ? std::string("zero-copy output loan unavailable") : loan_error) +
           "; release older zero-copy outputs and retry";
+      warn_if_loan_stalled(st->pipeline.loan_stall, st->pipeline.loan_stall_warn_after, message);
 
       const std::string loop_err = last_error();
       if (!loop_err.empty()) {
@@ -702,6 +748,7 @@ PullStatus runtime::RunCore::pull(int timeout_ms, Sample& out, PullError* err) {
     }
     out = std::move(st->pipeline.out_queue.front());
     st->pipeline.out_queue.pop_front();
+    st->pipeline.loan_stall = {};
     st->outputs_pulled.fetch_add(1, std::memory_order_relaxed);
     {
       const auto now = std::chrono::steady_clock::now();
@@ -1028,6 +1075,13 @@ void Run::enqueue_run_images(const std::vector<cv::Mat>& inputs) {
       throw_push_returned_false("Run::run", last_error());
     }
     return;
+  }
+  if (st->pipeline.input_route_processor) {
+    st->pipeline.input_route_processor->validate_images(inputs, "Run::run");
+  } else {
+    for (const auto& input : inputs)
+      validate_public_input(input, *st->pipeline.tensor_input_opt_for_cv, st->pipeline.stream_opt,
+                            "Run::run");
   }
   TensorList tensors;
   tensors.reserve(inputs.size());

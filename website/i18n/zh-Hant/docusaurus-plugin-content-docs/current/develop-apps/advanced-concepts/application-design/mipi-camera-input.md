@@ -227,14 +227,14 @@ route.advanced_execution.postprocess_target = "EV74"
 
 | 模式 | 何時使用 | 行為 |
 |---|---|---|
-| 嚴格的零拷貝 | 您的 `libcamerasrc` 公開 `external-buffer-mode`，且記憶體庫支援 DMA-BUF 匯出。 | Neat 需要直接將資料擷取到其下游 DMA-BUF 儲存區中，如果來源無法提供，則會失敗。 |
-| 自適應回退（明確選擇） | 您需要與無法匯出裝置緩衝區的相機堆疊相容。 | Neat 接受作業系統/libcamera 緩衝區，將其複製到池化的 SiMaAI 記憶體中，以便進行 CVU/MLA 傳遞，並且在來源已經提供 SiMaAI 緩衝區時，直接傳遞這些緩衝區。 |
+| 嚴格的零拷貝 | 您的 `libcamerasrc` 將每個影格以單一 DMA-BUF 傳遞（一般情況）。 | Neat 會將相機的 DMA-BUF 轉送至加速器階段，如果某個影格需要複製，則會失敗。 |
+| 自適應回退（明確選擇） | 您需要與影格並非各自為單一 DMA-BUF 的相機堆疊相容。 | Neat 會將此類影格複製到 CMA DMA-BUF 中，以便進行 CVU/MLA 傳遞，並且仍會直接轉送屬於單一 DMA-BUF 的影格。 |
 
-嚴格的零拷貝是框架的預設設定。它需要一個公開通用 `external-buffer-mode` 屬性的 `libcamerasrc`，以及一個支援 DMA-BUF 匯出的記憶體庫。僅將 `camera.allow_cpu_fallback = true` 設定為明確的相容性選項。回退複製是通往加速器管線的橋樑；它不是允許將 CPU 顏色轉換或縮放新增到熱路徑中的許可。
+嚴格的零拷貝是框架的預設設定。Neat 從不擁有相機的記憶體：任何實體連續的 DMA-BUF 都是有效的 EV74 輸入，且當其來自 CMA 堆積或相機的連續擷取分配器（`videobuf2_dma_contig`）時，Neat 的 EV74 准入檢查會予以接受，因此不需要任何 `libcamerasrc` 屬性。僅將 `camera.allow_cpu_fallback = true` 設定為明確的相容性選項。回退複製是通往加速器管線的橋樑；它不是允許將 CPU 顏色轉換或縮放新增到熱路徑中的許可。
 
-在兩種模式下，Neat 都在相機功能設定之後，以及任何佇列之前，立即放置其私有記憶體橋接器。該橋接器透過 `GST_QUERY_ALLOCATION` 提出一個標準緩衝區儲存區。該儲存區會從一個打包的 SiMaAI 分配中分配經過驗證的平面佈局，並為每個平面匯出一個 DMA-BUF。`libcamerasrc` 將這些 DMA-BUF 匯入到 ISP 擷取佇列中；擷取後，橋接器會解開相同的打包分配，以便進行下游處理。這是正常路徑，而不是回退複製路徑。
+在兩種模式下，Neat 都在相機功能設定之後，以及任何佇列之前，立即放置其私有記憶體橋接器。該橋接器透過 `GST_QUERY_ALLOCATION` 要求來源附加 `GstVideoMeta`，並將各平面在單一 DMA-BUF 中緊密相連的每個影格作為單一記憶體轉送，同時保留相機的緩衝區，直到每個消費端都已釋放它。這是正常路徑，而不是回退複製路徑。
 
-應用程式擁有 ISP 輸出保留策略。將 `capture_buffer_count` 參數保留給 `nodes::CameraInputWithCaptureBuffers()` 或 `pyneat.nodes.camera_input()`，設定為 `0`，以使用相機的預設值，或者在時間編碼器或非同步 ML 圖形需要更長時間保留影格時，要求更大的最小值。作用中的相機管線會驗證其自身的限制；Neat's 提供者最多支援 128 個。此計數與私有的 CSI 到 ISP RAW 傳輸環以及 `queue_depth` 分開，後者僅控制 Neat's 作用中的 GStreamer 佇列。當前影格比完整性更重要時，使用洩漏佇列；當每個影格都必須保留時，使用下游反壓。在相容性複製模式下，橋接器的私有儲存區會按需增長，因此它不會在洩漏佇列可以丟棄過時影格之前發生阻塞。
+應用程式擁有 ISP 輸出保留策略。將 `capture_buffer_count` 參數保留給 `nodes::CameraInputWithCaptureBuffers()` 或 `pyneat.nodes.camera_input()`，設定為 `0`，以使用相機的預設值，或者在時間編碼器或非同步 ML 圖形需要更長時間保留影格時，要求更大的最小值。在 Platform 3.0 上，`libcamerasrc` 沒有 `buffer-count`，因此請在該平台上將其保持為 `0`（請參閱 [CameraInput 參考](/reference/nodes/camera-input)）。作用中的相機管線會驗證其自身的限制；Neat's 提供者最多支援 128 個。此計數與私有的 CSI 到 ISP RAW 傳輸環以及 `queue_depth` 分開，後者僅控制 Neat's 作用中的 GStreamer 佇列。當前影格比完整性更重要時，使用洩漏佇列；當每個影格都必須保留時，使用下游反壓。在相容性複製模式下，橋接器的私有儲存區會按需增長，最多 128 個緩衝區，因此它不會在洩漏佇列可以丟棄過時影格之前發生阻塞。
 
 ## 將預處理保留在 CVU/EV74 上
 
@@ -253,7 +253,7 @@ route.advanced_execution.postprocess_target = "EV74"
 | 沒有顯示相機 | 確認選取的 `.dtbo`、線纜方向、重新啟動電源以及核心/libcamera 日誌。 |
 | 缺少 `libcamerasrc` | 安裝與 DevKit 建置相符的 Neat/runtime 相機影像或相機套件。 |
 | `misconfig.media_caps` 或 `not-negotiated` | 使用 `gst-launch-1.0` 驗證確切的 `format,width,height,framerate`。嘗試使用已知的受支援模式，例如 `NV12 1920x1080@30`。 |
-| 嚴格的零拷貝失敗 | 設定 `allow_cpu_fallback = true`，或使用公開 SiMaAI 零拷貝屬性的相機堆疊。 |
+| 嚴格的零拷貝失敗 | 設定 `allow_cpu_fallback = true`，或使用將每個影格以單一 DMA-BUF 傳遞的相機堆疊。 |
 | 輸出色彩看起來不正確 | 確認畫面是否被解釋為 `NV12`，而不是 RGB/BGR。如果直接從 `libcamerasrc` 產生的 JPEG 也是不正確的，請在除錯 Neat 之前除錯相機 ISP/調整。 |
 | 吞吐量低 | 移除 CPU 影像轉換/縮放，持續拉取，並使用優先考慮即時性的即時來源佇列原則。 |
 

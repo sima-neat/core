@@ -235,7 +235,9 @@ private:
   ErrorFn error_;
   CompleteFn complete_;
   mutable std::mutex mu_;
-  std::condition_variable cv_;
+  // Credit releases can outlive the link after downstream teardown is deferred.
+  // Retain only their wake target, not the link or its RunCore.
+  const std::shared_ptr<std::condition_variable> cv_ = std::make_shared<std::condition_variable>();
   std::unordered_map<std::string, Pending> pending_;
   std::unordered_map<std::string, pipeline_internal::RealtimeFrameCreditLanePtr> credit_lanes_;
   pipeline_internal::RealtimeFrameCreditLanePtr global_credit_lane_;

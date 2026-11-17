@@ -9,8 +9,9 @@
  * Core performs no decode arithmetic - the box/mask/keypoint math lives in the a65
  * backend - so what is verifiable here is everything that decides how the backend will
  * read those heads: class count, layout, activation, dtype and the pose-class gate.
- * Numeric decode output is covered against a byte-layout reference by
- * unit_detection_types_boxdecode_payloads_test.
+ * This test does not qualify numerical execution. The recipe tests exercise native
+ * admission; Kernels tests own numerical oracles. Payload parsing is independently
+ * checked by unit_detection_types_boxdecode_payloads_test.
  *
  * Needs no model pack or dispatcher, so it must fail rather than skip.
  */
@@ -76,6 +77,8 @@ BoxDecodeStaticContract build_contract(const Case& c) {
   BoxDecodeStaticContract contract;
   contract.decode_type = BoxDecodeType::YoloXSegPose;
   contract.pose_classes = c.pose_classes;
+  contract.input_dtype = c.dtype;
+  contract.quant_needed = c.dtype == "INT8";
 
   auto add = [&](const std::string& name, int h, int w, int depth) {
     BoxDecodeTensorStaticContract t;
@@ -124,6 +127,13 @@ BoxDecodeStaticContract build_contract(const Case& c) {
   }
   for (const auto& tensor : contract.tensors) {
     contract.tensor_names.push_back(tensor.logical_name);
+    if (contract.quant_needed) {
+      // An INT8 source must author quantization for every logical port. Merely
+      // changing the dtype of an otherwise floating fixture is not a valid
+      // quantized contract.
+      contract.dq_scale.push_back(8.0);
+      contract.dq_zp.push_back(-3);
+    }
   }
   return contract;
 }
@@ -192,6 +202,15 @@ void check(const Case& c) {
           label + "compiled pose-class gate mismatch");
   require(compiled.payload.slice_shapes.size() == contract.tensors.size(),
           label + "compiled payload must carry one slice shape per head");
+  if (c.dtype == "INT8") {
+    for (const auto& logical : compiled.runtime_contract.logical_inputs) {
+      require(logical.quant.has_value() &&
+                  logical.quant->granularity == QuantGranularity::PerTensor &&
+                  logical.quant->axis == -1 && logical.quant->scales == std::vector<double>{8.0} &&
+                  logical.quant->zero_points == std::vector<std::int64_t>{-3},
+              label + "compiled quantization must retain every authored INT8 port's facts");
+    }
+  }
 }
 
 } // namespace
@@ -207,9 +226,15 @@ RUN_TEST(
       cases.push_back(
           {.name = "head-major/generic", .role_major = false, .descriptive_names = false});
 
-      // Supported MLA dtypes and source storage kinds.
-      for (const char* dtype : {"BF16", "INT8", "FP32", "UINT8"}) {
+      // Public supported input dtypes; numerical admission is covered by recipe tests.
+      for (const char* dtype : {"BF16", "INT8", "FP32"}) {
         cases.push_back({.name = std::string("dtype/") + dtype, .dtype = dtype});
+      }
+      for (const bool managed : {false, true}) {
+        cases.push_back({.name = "unsupported/uint8",
+                         .model_managed = managed,
+                         .dtype = "UINT8",
+                         .expect_error = "does not support UINT8"});
       }
       cases.push_back(
           {.name = "storage/packed-cblock", .storage = BoxDecodeSourceStorageKind::PackedCBlock});
@@ -318,7 +343,11 @@ RUN_TEST(
                        .expect_error = "must lie in [0, 36)"});
 
       for (const auto& c : cases) {
-        check(c);
+        try {
+          check(c);
+        } catch (const std::exception& error) {
+          throw std::runtime_error("[" + c.name + "] " + error.what());
+        }
       }
       std::printf("[yolox-seg-pose-matrix] %zu cases OK\n", cases.size());
     }));

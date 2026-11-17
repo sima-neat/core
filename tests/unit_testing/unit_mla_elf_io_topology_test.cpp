@@ -4,11 +4,14 @@
 // Three scenarios:
 //   1. Multi-IFM .elf — sections data.ifm.persistent.input_NN/...
 //   2. Monolithic .elf — sections data.ifm.b0 / data.ofm.b0
-//   3. Inconsistent .elf — both monolithic and placeholder sections present;
-//      parser must accept and prefer placeholders, surfacing a warning.
+//   3. Mixed .elf — a bare data.{ifm,ofm}.b0 beside placeholder sections is
+//      one more placeholder port when its position is unambiguous, and a
+//      layout conflict otherwise.
 
 #define SIMA_NEAT_INTERNAL 1
 #include "pipeline/internal/sima/MlaElfIoTopology.h"
+#include "pipeline/internal/sima/static_contract/MpkDecoder.h"
+#include "model_archive_fixture_utils.h"
 
 #include <cassert>
 #include <cstdint>
@@ -296,6 +299,42 @@ void test_unindexed_sections_are_rejected() {
   }
 }
 
+void test_bare_section_beside_indexed_sections() {
+  using namespace simaai::neat::pipeline_internal::sima;
+  const std::string ifm = "data.ifm.persistent.input_0/MLA_0/input.b0";
+  const std::string output_0 = "data.ofm.persistent.output_0/MLA_0/a.b0";
+  const std::string output_1 = "data.ofm.persistent.output_1/MLA_0/b.b0";
+  for (const bool bare_first : {false, true}) {
+    const std::vector<std::string> names =
+        bare_first ? std::vector<std::string>{ifm, "data.ofm.b0", output_1}
+                   : std::vector<std::string>{ifm, output_0, "data.ofm.b0"};
+    const auto path = write_minimal_elf("bare_indexed", names);
+    MlaElfIoTopology topology;
+    check(read_mla_elf_io_topology(path, &topology), "bare indexed: topology parses");
+    std::filesystem::remove(path);
+    check(reconcile_mla_elf_io_topology_strict(topology, 1U, 2U).ok,
+          "bare indexed: fills exactly one missing output index");
+    const std::vector<std::string> outputs =
+        bare_first ? std::vector<std::string>{"data.ofm.b0", output_1}
+                   : std::vector<std::string>{output_0, "data.ofm.b0"};
+    check(topology.ofm_symbol_names == outputs, "bare indexed: output order is preserved");
+    check(topology.ofm_slots.front().logical_index == 0U &&
+              topology.ofm_slots.back().logical_index == 1U,
+          "bare indexed: physical slots retain their logical tensor indices");
+  }
+  for (const auto& names :
+       {std::vector<std::string>{ifm, output_1, "data.ofm.b0"},
+        std::vector<std::string>{ifm, "data.ofm.b0", "data.ofm.persistent.output_2/MLA_0/c.b0"}}) {
+    const auto path = write_minimal_elf("bare_indexed_conflict", names);
+    MlaElfIoTopology topology;
+    check(read_mla_elf_io_topology(path, &topology), "bare indexed: conflicting topology parses");
+    std::filesystem::remove(path);
+    check(validate_mla_elf_io_topology_strict(topology).code ==
+              MlaElfIoTopologyError::ConflictingOfmLayouts,
+          "bare indexed: ambiguous positions remain rejected");
+  }
+}
+
 void test_strict_validation_and_reconciliation() {
   using namespace simaai::neat::pipeline_internal::sima;
 
@@ -326,9 +365,9 @@ void test_strict_validation_and_reconciliation() {
         "strict missing extent: zero QMLA extent rejected");
   std::filesystem::remove(missing_extent_path);
 
-  const auto conflict_path = write_minimal_elf(
-      "strict_conflict",
-      {"data.ifm.b0", "data.ifm.persistent.input_00/MLA_0/placeholder_0_0.b0", "data.ofm.b0"});
+  const auto conflict_path =
+      write_minimal_elf("strict_conflict", {"data.ifm.persistent.input_01/MLA_0/placeholder_1_0.b0",
+                                            "data.ifm.b0", "data.ofm.b0"});
   MlaElfIoTopology conflict;
   check(read_mla_elf_io_topology(conflict_path, &conflict),
         "strict conflict: permissive parser remains compatible");
@@ -405,6 +444,35 @@ void test_batch_slots_preserve_physical_order() {
 
 } // namespace
 
+// EfficientSAM3 image model compiled by Model Compiler 3.0: the detections
+// output has no persistent section name, the masks output does. The ELF is
+// synthesized with the compiled stage's exact I/O section names, extents and
+// header order; the MPK is the compiler's unmodified mpk.json.
+void test_unindexed_efficientsam3_fixture_is_rejected() {
+  using namespace simaai::neat::pipeline_internal::sima;
+  const auto manifest =
+      sima_test::test_model_archive_fixture_root_path() / "strict-seeds" / "efficientsam3_mpk.json";
+  std::error_code ec;
+  check(std::filesystem::file_size(manifest, ec) == 9734U && !ec &&
+            sima_test::fixture_file_sha256(manifest) ==
+                "8fef526843a31fea965b309a13b47060052295e7d336821f0c025a552ea6baad",
+        "efficientsam3: exact MPK fixture");
+
+  const std::string text = "data.ifm.persistent.MLA_0/placeholder_12_0.b0";
+  const std::string image = "data.ifm.persistent.MLA_0/placeholder_14_0.b0";
+  const std::string masks = "data.ofm.persistent.MLA_0/add_3728_output.b0";
+  const auto path = write_minimal_elf(
+      "efficientsam3", {"code.r0.c0", text, image, "data.ofm.b0", masks},
+      {{text, 8704U}, {image, 6096384U}, {"data.ofm.b0", 3200U}, {masks, 14745600U}});
+  MlaElfIoTopology topology;
+  check(!read_mla_elf_io_topology(path, &topology) && !topology.valid,
+        "efficientsam3: old unindexed compiled model requires recompilation");
+  check(topology.error.find(text) != std::string::npos &&
+            topology.error.find("recompile the model") != std::string::npos,
+        "efficientsam3: diagnostic identifies the section and migration");
+  std::filesystem::remove(path);
+}
+
 int main() {
   test_batch_slots_preserve_physical_order();
   test_multi_ifm_topology();
@@ -414,6 +482,8 @@ int main() {
   test_unknown_topology_fails_cleanly();
   test_missing_file_fails_cleanly();
   test_unindexed_sections_are_rejected();
+  test_bare_section_beside_indexed_sections();
+  test_unindexed_efficientsam3_fixture_is_rejected();
   test_strict_validation_and_reconciliation();
   std::cout << "unit_mla_elf_io_topology_test: PASS\n";
   return 0;

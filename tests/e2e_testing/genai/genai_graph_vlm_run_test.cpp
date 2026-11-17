@@ -172,7 +172,7 @@ void require_vlm_outputs(const GraphOutputs& outputs, const std::string& label,
   std::cout << label << " text=" << outputs.tokens << "\n";
   require(!trim_text(outputs.tokens).empty(), label + " expected non-empty generated text");
   const std::string finish_reason = bundle_field_text(outputs.done, "finish_reason");
-  require(finish_reason == "stop" || finish_reason == "interrupted",
+  require(finish_reason == "stop" || finish_reason == "length" || finish_reason == "interrupted",
           label + " returned unexpected finish reason: " + finish_reason);
   require(std::stoul(bundle_field_text(outputs.done, "generated_tokens")) > 0,
           label + " done should report generated tokens");

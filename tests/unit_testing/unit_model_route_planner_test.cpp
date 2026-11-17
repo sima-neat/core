@@ -640,6 +640,93 @@ std::filesystem::path repo_root() {
   return core_root().parent_path();
 }
 
+sima_test::ModelArchiveFixture make_packed_post_fixture(const int batch) {
+  using nlohmann::json;
+  constexpr int head_count = 6;
+  const auto tensor = [](const std::string& name, int bytes) {
+    return json{{"name", name}, {"size", bytes}};
+  };
+  json plugins = json::array();
+  const auto append = [&](const std::string& name, const std::string& kernel, json inputs,
+                          json outputs, json params) {
+    plugins.push_back({{"name", name},
+                       {"sequence", plugins.size() + 1U},
+                       {"processor", "EV74"},
+                       {"type", "sgpProcess"},
+                       {"config_params",
+                        {{"desired_batch_size", batch},
+                         {"actual_batch_size", batch},
+                         {"kernel", kernel},
+                         {"params", params}}},
+                       {"input_nodes", inputs},
+                       {"output_nodes", outputs}});
+  };
+  append("quant", "quantization_transform", {tensor("image", batch * 768)},
+         {tensor("quant", batch * 192)},
+         {{"channel_params", {{2.0, -3}}},
+          {"num_bits", 8},
+          {"rounding", "TONEAREST"},
+          {"output_data_type", "int8"},
+          {"input_shapes", {{batch, 4, 16, 3}}},
+          {"output_shapes", {{batch, 4, 16, 3}}}});
+  plugins.push_back({{"name", "mla"},
+                     {"sequence", 2},
+                     {"processor", "MLA"},
+                     {"type", "sgpProcess"},
+                     {"config_params",
+                      {{"desired_batch_size", batch},
+                       {"actual_batch_size", batch},
+                       {"number_of_quads_to_user", 4}}},
+                     {"input_nodes", {tensor("quant", batch * 192)}},
+                     {"output_nodes", {tensor("packed", batch * head_count * 64)}},
+                     {"resources", {{"executable", "packed.elf"}}}});
+  json heads = json::array(), types = json::array(), shapes = json::array();
+  json dequant_outputs = json::array(), public_outputs = json::array();
+  for (int head = 0; head < head_count; ++head) {
+    heads.push_back(tensor("head" + std::to_string(head), batch * 64));
+    types.push_back("int8");
+    shapes.push_back({batch, 2, 2, 16});
+    dequant_outputs.push_back(tensor("dequant" + std::to_string(head), batch * 64));
+    public_outputs.push_back(tensor("out" + std::to_string(head), batch * 64));
+  }
+  append("unpack", "unpack_transform", {tensor("packed", batch * head_count * 64)}, heads,
+         {{"tensor_types", types},
+          {"tensor_shapes", shapes},
+          {"input_shapes", {{batch, head_count * 64}}},
+          {"output_shapes", shapes}});
+  for (int head = 0; head < head_count; ++head) {
+    const std::string suffix = std::to_string(head);
+    append("slice" + suffix, "slice_transform", {tensor("head" + suffix, batch * 64)},
+           {tensor("slice" + suffix, batch * 16)},
+           {{"begin", {0, 0, 0, 0}},
+            {"end", {batch, 2, 2, 4}},
+            {"input_shape", {batch, 2, 2, 16}},
+            {"output_shape", {batch, 2, 2, 4}},
+            {"input_shapes", {{batch, 2, 2, 16}}},
+            {"output_shapes", {{batch, 2, 2, 4}}}});
+    append("dequant" + suffix, "dequantization_transform", {tensor("slice" + suffix, batch * 16)},
+           {tensor("dequant" + suffix, batch * 64)},
+           {{"channel_params", {{2.0, -3}}},
+            {"input_data_type", "int8"},
+            {"input_shapes", {{batch, 2, 2, 4}}},
+            {"output_shapes", {{batch, 2, 2, 4}}}});
+  }
+  append("publish", "pass_through", dequant_outputs, public_outputs, json::object());
+  const json manifest{{"name", "packed_post"},
+                      {"model_sdk_version", "3.0.0"},
+                      {"input_nodes", {tensor("image", batch * 768)}},
+                      {"plugins", plugins}};
+  auto fixture = sima_test::make_model_archive_fixture("packed_post_b" + std::to_string(batch),
+                                                       {{"etc/packed_mpk.json", manifest.dump()}});
+  const auto executable = std::filesystem::path(fixture.root_dir) / "share/packed.elf";
+  sima_test::write_topology_elf(executable, batch == 1 ? "data.ifm.b0" : "data.ifm", 192,
+                                batch == 1 ? "data.ofm.b0" : "data.ofm", head_count * 64, batch);
+  const auto command = "tar -czf " + sima_test::model_archive_shell_quote(fixture.tar_path) +
+                       " -C " + sima_test::model_archive_shell_quote(fixture.root_dir) + " .";
+  require(std::system(command.c_str()) == 0, "packed post fixture must include its topology ELF");
+  return fixture;
+}
+
 std::filesystem::path bf16_ev74_model_path() {
   return core_root() / "tmp" / "yolov8n_drive" / "yolov8n_A_BF16_W_INT8_mpk.tar.gz";
 }
@@ -677,8 +764,49 @@ RUN_TEST(
       static_assert(std::is_same_v<decltype(std::declval<const Model&>().postprocess()), Graph>);
 
       {
+        RouteCapability capability;
+        capability.ordered_pre_ops = {
+            OrderedRouteOp{.kind = OrderedRouteOp::Kind::Quant, .before_mla = true},
+            OrderedRouteOp{.kind = OrderedRouteOp::Kind::Tess, .before_mla = true}};
+        ModelSemantics semantics;
+        const auto authored = build_route_plan(Model::Options{}, semantics, &capability, nullptr);
+        require(authored.pre_chain == std::vector<SessionPreStageOp>{SessionPreStageOp::QuantTess},
+                "typed resize regression must start with the authored tensor pre-chain");
+        Model::Options options;
+        Transform resize;
+        resize.type = TransformType::Resize;
+        resize.resize.interpolation = ResizeInterpolation::Nearest;
+        options.preprocess.transforms.push_back(resize);
+        const auto planned = build_route_plan(options, semantics, &capability, nullptr);
+        require(planned.use_preproc && planned.pre_adapter == SessionPreAdapterKind::None &&
+                    planned.pre_chain ==
+                        std::vector<SessionPreStageOp>{SessionPreStageOp::Preproc} &&
+                    planned.pipeline_type == PipelineType::Preproc,
+                "typed transform sampler must replace rather than retain the tensor pre-chain");
+      }
+
+      for (const int batch : {1, 4}) {
+        const auto fixture = make_packed_post_fixture(batch);
+        Model::Options options;
+        options.preprocess.kind = InputKind::Tensor;
+        options.processcvu.post_run_target = "A65";
+        Model model(fixture.tar_path, options);
+        const auto post = ModelAccess::build_public_postprocess_nodes(model);
+        require(post.size() == 1U && post.front()->kind() == "Dequant",
+                "packed MLA output must expose unpacked heads through one dequant region");
+        const auto outputs = model.output_specs();
+        require(outputs.size() == 6U, "packed postprocess must retain every unpacked head");
+        for (const auto& output : outputs) {
+          require(output.shape == std::vector<int64_t>({batch, 2, 2, 4}),
+                  "packed postprocess must retain each head's shape and compiled batch");
+        }
+      }
+
+      {
         const auto fixture = make_bf16_mla_tess_fixture("model_route_bf16_mla_tess");
-        Model model(fixture.tar_path);
+        Model::Options options;
+        options.preprocess.enable = AutoFlag::Off;
+        Model model(fixture.tar_path, options);
 
         const auto pre = ModelAccess::build_public_preprocess_nodes(model);
         const auto post = ModelAccess::build_public_postprocess_nodes(model);
@@ -688,13 +816,13 @@ RUN_TEST(
         const std::string pre_kind = pre.front() ? pre.front()->kind() : "";
         const std::string post_kind = post.front() ? post.front()->kind() : "";
         require(pre_kind == "QuantTess",
-                "strict MPK route should select QuantTess preprocess stage");
+                "preprocess Off must preserve MPK-required Quant/Tess adapters");
         require(post_kind == "DetessDequant",
                 "strict MPK route should select DetessDequant postprocess stage");
 
         const TensorSpec in_spec = model.input_specs().front();
         require(!in_spec.dtypes.empty() && in_spec.dtypes[0] == TensorDType::Float32,
-                "strict MPK route input spec should expose FP32 host ingress dtype");
+                "preprocess Off must preserve the public FP32 input contract");
       }
 
       {
@@ -792,8 +920,13 @@ RUN_TEST(
             make_multi_ingress_cast_join_fixture("model_route_multi_ingress_cast_join");
         Model::Options opt;
         opt.preprocess.kind = InputKind::Tensor;
-        opt.preprocess.enable = AutoFlag::On;
+        opt.preprocess.enable = AutoFlag::Off;
         Model model(fixture.tar_path, opt);
+
+        for (const auto& input : model.input_specs()) {
+          require(input.dtypes == std::vector<TensorDType>{TensorDType::Float32},
+                  "preprocess Off must preserve FP32 inputs to the Cast adapters");
+        }
 
         const auto& pack = ModelAccess::pack(model);
         const PreprocessCapabilities capabilities = inspect_preprocess_capabilities(pack);

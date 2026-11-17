@@ -7,16 +7,71 @@ sidebar_position: 3
 
 SiMa.ai Neat Library의 릴리스 노트입니다.
 
-## 미출시
+## 0.6.2 {#v062}
+
+### 호환성에 영향을 주는 변경 {#v062-breaking}
+
+- Neat Library C++ ABI는 이제 7(`libsima_neat.so.7`)입니다. `ResizeOptions`, `ResizeSpec`, `PreprocessOptions`, `PreprocOptions`, `NormalizationOptions`, `Model::Options`에 필드가 추가되었습니다. 일치하는 헤더와 런타임 패키지로 C++ 애플리케이션, 플러그인, Python 바인딩을 다시 빌드하세요. ABI 6 바이너리(0.6.0 및 0.6.1)를 재사용하거나 호환성 심볼릭 링크를 추가하지 마세요.
+
+### 시맨틱 세그멘테이션 {#v062-segmentation}
+
+- 새 `ResizeArgMax` 노드와 `Model::Options::semantic_segmentation` 옵션은 EV74에서 세그멘테이션 점수를 디코딩합니다. 디코딩은 클래스별 점수를 선택한 크기로 쌍선형 크기 조정하고 점수가 가장 큰 첫 번째 클래스를 반환하며, SegFormer의 `interpolate` 및 `argmax` 후처리와 일치합니다. 패딩된 MLA 출력을 그 자리에서 읽고 INT8 점수를 역양자화 없이 비교합니다. 모델은 점수 대신 클래스 맵을 반환합니다. 이 연산을 포함하는 EV74 펌웨어가 필요합니다. [시맨틱 세그멘테이션 디코딩](/reference/semantic_segmentation_decode)을 참조하세요.
+
+### Segment Anything 마스크 {#v062-segment-anything}
+
+- 새 `BoxDecodeType` 값은 MobileSAM, EdgeTAM, EfficientSAM, EfficientSAM3을 원본 이미지 크기의 마스크로 디코딩합니다. `EdgeTamSeg`는 마스크를 반환하고, `EdgeTamTrack`은 추적을 위해 디코더의 원시 출력도 반환합니다. [Segment Anything 마스크](/reference/boxdecode_decode_types#segment-anything-masks)를 참조하세요.
+
+### 전처리 {#v062-preproc}
+
+- 중앙 자르기는 최종 MPK 크기로 자르기 전에 선택적 `preprocess.resize.shorter_side`를 지원합니다. 전체 크기 조정의 필터 범위를 유지하고 역변환을 게시합니다. ABI 7 및 일치하는 커널 펌웨어로 다시 빌드하고 이전 바이너리를 혼용하지 마세요.
+
+- `preprocess.resize.placement = LetterboxPlacement.TopLeft`는 MobileSAM이 기대하는 대로 레터박스 이미지를 캔버스 원점에 두고 모든 패딩을 오른쪽과 아래쪽에 배치합니다. 검출 BoxDecode 프로필은 게시된 아핀 변환으로 박스를 매핑하며, 포즈, 세그멘테이션, 제안 프로필은 중앙에 있지 않은 레터박스를 거부합니다. [Preproc](/reference/nodes/preproc)를 참조하세요.
+
+- Model 전처리와 독립형 Resize는 `ResizeInterpolation`을 공유합니다. 새 코드에서는 샘플러 문자열 대신 `preprocess.resize.interpolation = ResizeInterpolation.BilinearAntialiased`를 사용하세요. 기존 `scaling_type` 문자열의 호환성은 유지되며 충돌하는 기본값 이외의 문자열은 거부됩니다.
+
+- 기존 전처리 옵션에서 안티앨리어싱 이중선형 크기 조정, 명시적인 원본 재조정 계수, 색 변환 위치, 부동소수점 변환 정책을 지정할 수 있습니다. 고정 원본 산술 경로에서는 평균과 표준편차 필드가 합성된 아핀 변환 대신 원래 평균과 제수를 유지합니다. BF16은 기존 절삭이 기본이며 최근접 짝수 반올림은 명시적으로 선택합니다. FP16은 최근접 짝수 반올림을 사용합니다. 정밀 INT8 양자화에는 모델의 승수와 일치하는 원본 스텝이 필요하며, 승수로 이 스텝을 복원할 수 없습니다. 새 옵션을 지정하지 않으면 기존 경로를 유지합니다. [Preproc](/reference/nodes/preproc)를 참조하세요.
+
+## 0.6.1 {#v061}
+
+0.6.1은 0.6.0의 문제를 수정하며 ABI 6(`libsima_neat.so.6`)을 유지합니다. 0.6.0용으로 빌드한 애플리케이션은 다시 빌드하지 않고 실행됩니다.
+
+### 수정 사항 {#v061-fixes}
+
+- 호스트에서 디바이스로의 전송은 라이브 입력을 막지 않고 풀링된 DMA 버퍼를 다시 재사용하며, 프로세스 전체의 DMA 전송 캐시는 크기가 제한됩니다. 캐시에서 제거할 때 아직 사용 중인 텐서는 절대 해제하지 않습니다.
+- 처리 중인 작업이 없는 비동기 실행은 더 이상 시간 초과되지 않으며, 입력이 도착하면 재개됩니다. `Run::run()`과 `Model::run()`은 호출별 `timeout_ms`에 따라 출력을 기다립니다. `Run::pull(-1)`과 마찬가지로 `-1`은 무제한으로 기다립니다. `RunOptions::input_timeout_ms`는 입력 모드 `Graph::run()`과 시드 기반 빌드 사전 검증에 적용됩니다.
+- `Model`은 네이티브 MLA 입력 배치 전체를 검증합니다.
+- 패킹된 출력을 가진 MLA 전용 모델은 타입이 지정된 출력 뷰를 유지합니다.
+- 모델에서 관리하는 경로는 레거시 YOLOv6 팩처럼 그래프 안에서 디코딩되는 YOLO 헤드를 허용합니다. 이러한 헤드에는 `BoxDecodeType::Yolo`를 사용하세요.
+- 실행 보고서는 네이티브 BoxDecode 설정을 유지합니다.
+- H.265 인코더는 지원하지 않는 레벨 4.2를 거부합니다.
+- 비디오 송신기는 더 이상 입력을 3840×2160으로 제한하지 않습니다. 단, 크기는 여전히 양의 짝수여야 합니다.
+- 오프라인 PCIe 호스트 번들은 종속성 입력이 바뀌면 다시 빌드되며, 아카이브 이름에 체크섬 접미사가 붙습니다.
+
+### 문서 {#v061-docs}
+
+- H.264 디코딩 입력은 8비트, 4:2:0, 프로그레시브여야 합니다. High 10, High 4:2:2 및 인터레이스 비트스트림은 지원되지 않습니다.
+- SDK 호스트에는 Docker Engine 20.10.10 이상이 필요합니다.
+- Model 가이드에 `preprocess.enable = Off`가 비활성화하는 항목과 남는 MPK 어댑터를 설명했습니다.
+
+## 0.6.0
 
 ### 호환성이 깨지는 변경 사항
 
+- 텐서 모드의 `Model::input_specs()`는 이제 크기 1인 배치 축(`[1,H,W,C]`)을 포함해 MPK에 정의된 랭크를 유지합니다. 시드 입력 없이 `build()`를 호출한 뒤에도 배치 1의 HWC 입력을 계속 허용합니다. `compiled_batch_size()`는 텐서 차원에서 추론하는 대신 MLA에 선언된 배치 크기를 읽습니다.
+
 - 모델 출력은 이제 중간 장치 형상 대신 MPK에 작성된 최종 논리 형상과 레이아웃을 제공합니다. 예를 들어 ResNet-50의 배치 평탄화 출력은 4차원 HWC 형상 대신 `[1, 1000]` 형상과 알 수 없는 논리 레이아웃을 가집니다. Float32 텐서 형식은 `FP32` 대신 `EVXX_FLOAT32`일 수 있습니다. 값은 텐서의 dtype과 형상으로 해석하며 백엔드 형식 태그에서 논리 축을 추론하지 않습니다.
-- Neat Library C++ ABI는 이제 버전 6이며, 공유 라이브러리의 SONAME은 `libsima_neat.so.6`입니다. 텐서는 이제 특징 추출기의 의미 메타데이터를 포함하고, 공개 GenAI 요청/결과 유형은 ASR 작업, 언어 및 프로브 메타데이터를 포함하며, `GraphLinkOptions`에는 실시간 허용 한도가 포함됩니다. C++ 애플리케이션과 플러그인을 다시 빌드하고 해당 Core 런타임 및 개발 패키지를 설치합니다.
+- Neat Library C++ ABI는 이제 버전 6이며, 공유 라이브러리의 SONAME은 `libsima_neat.so.6`입니다. 텐서는 이제 특징 추출기의 의미 메타데이터를 포함하고, 공개 GenAI 요청/결과 유형은 ASR 작업, 언어 및 프로브 메타데이터를 포함하며, `GraphLinkOptions`에는 실시간 허용 한도가 포함되며, `BenchmarkOptions`와 `BenchmarkReport`에 필드가 추가되었습니다. C++ 애플리케이션과 플러그인을 다시 빌드하고 해당 Core 런타임 및 개발 패키지를 설치합니다. `SimaArgMaxOptions`에 `axis`와 `keepdims`가 추가되었으며, `SimaArgMax` 클래스 레이아웃도 변경되었습니다.
 - 실시간 그래프 구성은 이제 `GraphLinkOptions`, `Graph::connect()` 및 `Graph::build()`를 사용합니다. 미리보기 API인 `RealtimeGraphLinkOptions`, `connect_realtime()`, `build_fused_realtime_sources()` / `build_fused_realtime_source()` 및 `RealtimeEveryFrameByStream`은 제거되었습니다. `realtime_every_frame_by_stream`을 포함하는 저장된 그래프는 지원되는 정책으로 다시 생성해야 합니다. 자세한 내용은 [라이브 프래그먼트 연결](/develop-apps/development-workflow/graph/#connect-live-fragments)을 참조하십시오.
+
+- 패키지 버전은 **0.6.0**입니다. `Model::Options`와 `BoxDecodeOptions`에 `yolox_seg_pose.pose_classes`가 추가되었으며, 이러한 공개 레이아웃 추가에는 ABI 6을 사용하는 구성 요소가 필요합니다. ABI 호환성 심볼릭 링크를 사용하지 마십시오. `GraphOptions`에는 `kernel_runner_a65_workers`가 추가되었습니다. 0.6.0으로 업데이트할 때는 일치하는 런타임 및 개발 패키지에 맞춰 애플리케이션, 플러그인, Python 확장을 다시 빌드하십시오. 둘 다 ABI 6을 사용한다는 이유만으로 프리뷰 바이너리와 정식 릴리스 패키지를 혼합하지 마십시오.
 
 ### 런타임 변경 사항
 
+- `Model::benchmark()`는 전력 레일을 직접 샘플링하는 대신 [Sentinel](/tools/sentinel/)에서 보드 텔레메트리를 읽습니다. 이제 지연 시간 패스와 처리량 패스는 각각 `num_samples`개의 입력을 측정하고 최소 `BenchmarkOptions::min_duration_ms`(기본값 10초)가 경과할 때까지 실행되므로, 전력 및 온도 측정값이 여러 Sentinel 샘플에 걸쳐 수집됩니다. 이전의 입력 개수 기반 측정을 사용하려면 `min_duration_ms`를 0으로 설정하십시오. `BenchmarkReport`에는 `latency_p50_ms`, `latency_p95_ms`, `latency_p99_ms`, `peak_power_watts`, `throughput_samples`, `throughput_duration_ms`, 그리고 레일 전력, 다이 및 보드 온도, 전체 및 코어별 CPU 사용률, MLA·EV74 메모리와 보드 전체 Linux 메모리를 포함하는 `telemetry`가 추가되었습니다. `avg_power_watts`와 `energy_joules`의 의미는 그대로이며, `energy_joules`는 `num_samples`개 입력에 대한 에너지입니다. Sentinel을 사용할 수 없는 경우에도 지연 시간과 FPS는 보고되며, `telemetry.status`에 그 이유가 표시됩니다. DevKit 설치 프로그램은 `sima-cli neat install sentinel`로 Sentinel을 설치하며, 실행 중인 버전이 최신 프로덕션 빌드가 아니면 업그레이드합니다. 자세한 내용은 [모델 실행 측정](/develop-apps/development-workflow/model#power-and-board-telemetry)을 참조하십시오.
+- `enable_board_power()`로 활성화하는 Run 전력 텔레메트리도 Sentinel에서 읽습니다. Core가 더 이상 I2C 전력 모니터를 열지 않으므로 같은 레일에 대한 Sentinel의 읽기와 간섭하지 않으며, 설치 프로그램도 더 이상 `sima`를 `i2c` 그룹에 추가하지 않습니다. Sentinel은 2초마다 샘플링하므로 약 2초보다 짧은 측정 창에는 전력 샘플이 없을 수 있습니다. 레일 이름은 `mla`처럼 Sentinel 메트릭 이름을 따르며 전력만 보고합니다. `sample_interval_ms`, `PowerMonitorProfile`, 기본 제공 레일 테이블, `PowerRailConfig`의 I2C 필드, `enable_modalix_som_power()`, `enable_modalix_dvt_power()`, `modalix_som_power_monitor_options()` / `modalix_dvt_power_monitor_options()`는 더 이상 사용되지 않으며 무시됩니다.
+- `TelemetryMonitor`는 C++ 및 Python에서 `start()`와 `stop()` 사이의 보드 전력, 온도, CPU 사용률, 메모리를 Sentinel에서 기록합니다. `read()`는 지금까지의 요약을 반환하며, `Telemetry`는 YAML로 출력되고 YAML 또는 JSON으로 저장됩니다. `Model::benchmark()`는 `BenchmarkReport::telemetry`에 이를 사용합니다. `PowerMonitor`, `read_power_snapshot()`, `RunOptions::enable_board_power()`, `RunOptions::power_monitor`, `MeasureOptions::include_power`는 더 이상 사용되지 않고 `TelemetryMonitor`로 대체되며, 계속 동작합니다. 자세한 내용은 [보드 텔레메트리 기록](/develop-apps/development-workflow/model#record-board-telemetry)을 참조하십시오.
+- `BenchmarkOptions::inputs`를 사용하면 합성 입력 대신 직접 준비한 텐서로 `Model::benchmark()`를 실행할 수 있으며, `BenchmarkReport::input`에 사용된 입력이 기록됩니다. [직접 준비한 입력으로 측정](/develop-apps/development-workflow/model#measure-with-your-own-inputs)을 참조하십시오.
+- 플러그인 지연 시간은 더 이상 사용되지 않으며 제거될 예정입니다. 대상은 `MeasureOptions::include_plugin_latency` 및 `plugin_latency_source`, `BenchmarkOptions::include_plugin_latency`, `start_measurement(bool)`, `Model::benchmark(int, bool)` / `Model::benchmark(bool)`입니다. 대신 `start_measurement()`와 `benchmark(num_samples)`를 사용하세요.
 - 하드웨어 디코딩은 직접 코덱 세션과 DMA-BUF 출력을 사용합니다. Core는 더 이상 디코더 데몬 승인 임대나 `SIMA_DECODER_ADMISSION_REQUIRE`를 사용하지 않습니다. 디코더 풀 및 튜닝 옵션은 유지됩니다.
 - C++ 및 Python에서 `SimaDecode` 및 `RtspDecodedInput`을 통해 기본 H.265/HEVC 디코딩을 사용할 수 있습니다. `RtspEncodedInput`는 디코딩하지 않고 파싱된 H.265 액세스 유닛을 제공합니다. H.265 입력은 HEVC Main 프로필, 8비트, 4:2:0을 사용해야 합니다. 코덱 선택기는 `H265` 및 `HEVC`를 모두 허용합니다. H.264 선택기는 `AVC`도 허용합니다. `FormatTag` / `pyneat.Format`은 인코딩된 그래프 경계에서 동일한 별칭을 허용하며, 여전히 `H264` 및 `H265`로 직렬화됩니다.
 - `VideoSender`은 `VideoSenderOptions::Passthrough(codec)` / `pyneat.VideoSenderOptions.passthrough(codec)`를 통해 재인코딩 없이 UDP를 통해 RTP로 인코딩된 H.264 또는 H.265를 전달합니다. H.265는 기본적으로 RTP 페이로드 유형 98을 사용하고, H.264는 96을 유지합니다. `H264RtpUdpFromEncoded()`은 `Passthrough(RtspCodec::H264)`로 대체되어 더 이상 사용되지 않습니다.
@@ -30,16 +85,21 @@ SiMa.ai Neat Library의 릴리스 노트입니다.
 
 ### 그래프 구성 및 검증
 
+- 새 `SimaVoxelize`, `SimaPillarScatter`, `SimaBEVPoolPlan`, `SimaBEVPool` 노드는 PointPillars와 BEVFusion의 커널 라이브러리 LiDAR 연산과 카메라-BEV 연산을 INT8 또는 BF16 텐서로 A65 또는 EV74에서 실행합니다. 각 노드는 선택한 대상에서 실행되며 대체 실행은 없습니다. [LiDAR 및 BEV 커널 노드](/reference/lidar_bev_kernel_nodes)를 참조하세요.
 - 기본 공개 `Input`이 한 모델의 이미지 입력에 직접 연결되면 선언된 이미지 형식을 상속합니다. 명시적 입력 옵션은 계속 기준이며 모호한 연결에는 명시적 옵션이 필요합니다. 페이로드 복사 없이 샘플 해석만 변경됩니다.
 - 그래프 구성은 이제 하나의 노드 객체를 하나의 논리적 정점으로 처리합니다. 중복 삽입 및 겹치는 조각 가져오기는 원자적으로 실패하며, 반복적인 `connect()` 호출은 기존 노드를 재사용하여 분기 처리를 수행합니다.
 - 이제 모든 구체화된 파이프라인 세그먼트는 `build()` 중에 최종 GStreamer 이름을 검증합니다. 명시적인 `validate()` 호출은 필요하지 않습니다. 중복되거나 누락된 이름은 `misconfig.pipeline_shape`와 함께 실패하며, 잘린 파이프라인을 생성하지 않습니다.
 - 사용자 지정 프래그먼트는 이제 모든 명시적 이름을 보고하고, 선언과 함께 이름이 지정된 패드 참조도 변환합니다. 이름 충돌은 자동으로 이름을 바꾸는 대신 거부됩니다.
 
-| 릴리스 | 호환되는 Neat SDK | 참고 사항 |
-| --- | --- | --- |
-| 0.4.0 | 2.1.3.0 | [Neat Library 0.4.0](https://github.com/sima-neat/core/releases/tag/v0.4.0) |
-| 0.3.0 | 2.1.2.3 | [Neat Library 0.3.0](https://github.com/sima-neat/core/releases/tag/v0.3.0) |
-| 0.2.2 | 2.1.2.2 | [Neat Library 0.2.2](https://github.com/sima-neat/core/releases/tag/v0.2.2) |
-| 0.2.1 | 2.1.2.1 | [Neat Library 0.2.1](https://github.com/sima-neat/core/releases/tag/v0.2.1) |
-| 0.2.0 | 2.1.2 | [Neat Library 0.2.0](https://github.com/sima-neat/core/releases/tag/v0.2.0) |
-| 0.1.0 | 2.0.0 | [Neat Library 0.1.0](https://github.com/sima-neat/core/releases/tag/v0.1.0) |
+| 릴리스 | C++ ABI | 호환되는 Palette SDK | 참고 사항 |
+| --- | --- | --- | --- |
+| 0.6.2 | 7 | 3.0.0.2 | [Neat Library 0.6.2](https://github.com/sima-neat/core/releases/tag/v0.6.2) |
+| 0.6.1 | 6 | 3.0.0.1 | [Neat Library 0.6.1](https://github.com/sima-neat/core/releases/tag/v0.6.1) |
+| 0.6.0 | 6 | 3.0.0.0 | [Neat Library 0.6.0](https://github.com/sima-neat/core/releases/tag/v0.6.0) |
+| 0.5.0 | 5 | 2.1.3.1 | [Neat Library 0.5.0](https://github.com/sima-neat/core/releases/tag/v0.5.0) |
+| 0.4.0 | 4 | 2.1.3.0 | [Neat Library 0.4.0](https://github.com/sima-neat/core/releases/tag/v0.4.0) |
+| 0.3.0 | 3 | 2.1.2.3 | [Neat Library 0.3.0](https://github.com/sima-neat/core/releases/tag/v0.3.0) |
+| 0.2.2 | 2 | 2.1.2.2 | [Neat Library 0.2.2](https://github.com/sima-neat/core/releases/tag/v0.2.2) |
+| 0.2.1 | 2 | 2.1.2.1 | [Neat Library 0.2.1](https://github.com/sima-neat/core/releases/tag/v0.2.1) |
+| 0.2.0 | 2 | 2.1.2 | [Neat Library 0.2.0](https://github.com/sima-neat/core/releases/tag/v0.2.0) |
+| 0.1.0 | 2 | 2.0.0 | [Neat Library 0.1.0](https://github.com/sima-neat/core/releases/tag/v0.1.0) |

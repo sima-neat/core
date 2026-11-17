@@ -62,6 +62,11 @@ std::size_t expected_byte_size(const OutputSpec& spec) {
     return 0;
 
   if (spec.media_type == "video/x-raw") {
+    if (spec.format == "NV16") {
+      if (spec.width & 1)
+        return 0;
+      return static_cast<std::size_t>(spec.width) * static_cast<std::size_t>(spec.height) * 2;
+    }
     if (spec.format == "NV12" || spec.format == "I420") {
       if ((spec.width & 1) || (spec.height & 1))
         return 0;

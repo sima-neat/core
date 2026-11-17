@@ -5,7 +5,10 @@
 
 #include "pipeline/internal/sima/stagesemantics/ProcessCvuStageSemantics.h"
 
+#include "nodes/sima/PreprocMath.h"
+
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -28,6 +31,10 @@ struct CompiledProcessCvuRuntimeConfig {
   int win_half = -1;
   int max_iters = -1;
   int max_level = -1;
+  bool publish_error = false;
+  float error_threshold = -1.0f;
+  float min_eig_threshold = 0.0f;
+  bool require_convergence = false;
   int detect_new_features = -1;
   int fast_threshold = -1;
   int debug = 0;
@@ -64,8 +71,8 @@ struct CompiledProcessCvuRuntimeConfig {
   bool has_q_zp = false;
   std::int64_t q_zp = 0;
 
-  std::vector<sima_ev_tensor_desc> input_tensors;
-  std::vector<sima_ev_tensor_desc> output_tensors;
+  std::vector<AuthoredTensorDescriptor> input_tensors;
+  std::vector<AuthoredTensorDescriptor> output_tensors;
   std::vector<double> q_scale_list;
   std::vector<std::int64_t> q_zp_list;
   std::vector<double> dq_scale_list;
@@ -85,6 +92,19 @@ struct CompiledProcessCvuRuntimeConfig {
 
   std::vector<float> channel_mean = {0.0f, 0.0f, 0.0f};
   std::vector<float> channel_stddev = {1.0f, 1.0f, 1.0f};
+
+  /// Original FP32 multiplier before resize. Presence selects fixed source arithmetic;
+  /// normalize.mean/stddev then mean a post-resize subtraction/division, with no implied /255.
+  /// Explicit geometry; absent retains legacy aspect_ratio/scaled dimensions.
+  std::optional<ResizeMode> resize_mode;
+  std::optional<int> shorter_side;
+  std::optional<float> rescale_factor;
+  /// Original positive FP32 INT8 step, never reconstructed from a reciprocal.
+  /// Model routes require agreement with the MPK quantizer; zero point stays model-owned.
+  std::optional<float> quantization_step;
+  PreprocColorConversionPlacement color_conversion_placement =
+      PreprocColorConversionPlacement::AfterResize;
+  PreprocFloatingConversion floating_conversion = PreprocFloatingConversion::Legacy;
 
   std::string input_img_type;
   std::string output_img_type;

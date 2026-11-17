@@ -8,8 +8,6 @@
 #include <utility>
 
 RUN_TEST("graph_migration_phase1_graph_api_surface_test", [] {
-  static_assert(std::is_same_v<simaai::neat::GraphOptions, simaai::neat::GraphOptions>);
-  static_assert(std::is_same_v<simaai::neat::Graph, simaai::neat::Graph>);
   static_assert(std::is_same_v<decltype(std::declval<simaai::neat::Graph&>().add(
                                    std::declval<const simaai::neat::Model&>())),
                                simaai::neat::Graph&>);

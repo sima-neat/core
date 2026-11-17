@@ -9,7 +9,6 @@
 #include "pipeline/internal/sima/MpkContract.h"
 #include "pipeline/internal/sima/RouteGraph.h"
 #include "pipeline/internal/sima/static_contract/ModelExecutionPlan.h"
-#include "pipeline/internal/sima/static_contract/FrameSlotArenaPlan.h"
 #include "pipeline/internal/sima/static_contract/PhysicalExecutionPlan.h"
 #include "pipeline/internal/DmabufEligibility.h"
 #include "pipeline/internal/sima/static_contract/MpkDecoder.h"
@@ -22,9 +21,11 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <filesystem>
 #include <iosfwd>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <utility>
 #include <vector>
@@ -39,6 +40,27 @@ struct ContractCompileInput;
 
 namespace simaai::neat::internal {
 
+// A unique extraction directory whose held lock identifies its owner across PID namespaces.
+class ModelPackProcessRoot {
+public:
+  static bool prepare_base(const std::filesystem::path& base, bool collect_stale,
+                           std::string* reason = nullptr);
+  explicit ModelPackProcessRoot(const std::filesystem::path& base);
+  ~ModelPackProcessRoot();
+  ModelPackProcessRoot(const ModelPackProcessRoot&) = delete;
+  ModelPackProcessRoot& operator=(const ModelPackProcessRoot&) = delete;
+
+  const std::filesystem::path& path() const {
+    return path_;
+  }
+  void preserve();
+
+private:
+  std::filesystem::path path_;
+  int lock_fd_ = -1;
+  bool preserved_ = false;
+};
+
 /// NVMe model-store candidates parsed from `/proc/mounts` content, in file order. Separated from
 /// the file read so the mount-option filtering is testable without a real NVMe device.
 std::vector<std::string> nvme_model_bases_from_mounts(std::istream& mounts);
@@ -48,13 +70,40 @@ std::vector<std::string> nvme_model_bases_from_mounts(std::istream& mounts);
 std::string modelpack_storage_label(const std::string& path);
 
 struct ModelFragmentCompileContext;
-struct ModelFragmentPlanSource;
-std::shared_ptr<const ModelFragmentCompileContext>
-prepare_model_fragment_contracts(const std::vector<std::shared_ptr<Node>>& nodes,
-                                 std::string* error);
+struct ModelFragmentPlanSource {
+  pipeline_internal::sima::static_contract::ModelExecutionPlan execution;
+  pipeline_internal::sima::static_contract::PhysicalExecutionPlan physical;
+  std::optional<pipeline_internal::sima::MpkContract> mpk;
+  std::string digest;
+};
 
-bool apply_model_fragment_contract_context(const Node& node, const ContractCompileInput& input,
-                                           CompiledNodeContract* compiled, std::string* error);
+// Build-local provenance for selected invocations. Storage is finalized once
+// into the stage-local FrameLayouts; this table holds no cached placement.
+struct ModelStorageScopes {
+  struct StageOrigin {
+    std::size_t compile_stage_index = 0;
+    std::vector<pipeline_internal::sima::static_contract::PhysicalCommandId> commands;
+  };
+  struct Scope {
+    std::shared_ptr<const ModelFragmentPlanSource> source;
+    std::vector<StageOrigin> stages;
+    std::vector<pipeline_internal::sima::static_contract::ValueId> imported_inputs;
+    std::vector<pipeline_internal::sima::static_contract::ValueId> published_outputs;
+    std::vector<pipeline_internal::sima::static_contract::ValueId> detached_roots;
+  };
+  std::vector<Scope> scopes;
+};
+std::shared_ptr<const ModelFragmentCompileContext>
+make_model_fragment_semantic_context(const std::vector<std::shared_ptr<Node>>& nodes);
+
+std::shared_ptr<const ModelStorageScopes>
+make_model_storage_scopes(const std::vector<std::shared_ptr<Node>>& nodes,
+                          const std::vector<CompiledNodeContract>& contracts,
+                          std::span<const std::size_t> node_contract_indices);
+std::shared_ptr<const ModelStorageScopes>
+append_model_storage_scopes(const std::shared_ptr<const ModelStorageScopes>& destination,
+                            const std::shared_ptr<const ModelStorageScopes>& source,
+                            std::size_t compile_stage_offset);
 
 enum class PipelineType : std::uint8_t { Preproc, Quant, Tess, QuantTess, CastTess, Cast };
 
@@ -110,6 +159,10 @@ struct ExecutionPlan {
   std::vector<ExecutionStage> post;
 };
 
+// Select the same terminal route as inference, retaining exact MPK identities.
+std::vector<std::size_t> select_mla_profile_plugins(const std::vector<ExecutionStage>& stages,
+                                                    const InferenceTerminalPolicy& policy);
+
 struct ModelFragment {
   std::string gst;
   std::vector<std::string> elements;
@@ -126,6 +179,27 @@ struct ModelFragment {
   };
   std::vector<StageFacts> stage_facts;
 };
+
+// Owning read-only view of the exact selected fragments. Entries remain aligned
+// with the queried nodes; a non-fragment node has an empty entry. This preserves
+// the distinction between an ingress MLA and a transform before an internal MLA.
+struct SelectedModelFragmentStageFacts {
+  std::vector<std::span<const ModelFragment::StageFacts>> stage_facts;
+
+private:
+  std::shared_ptr<const ModelFragmentCompileContext> context_;
+  std::vector<std::shared_ptr<Node>> nodes_;
+  friend std::optional<SelectedModelFragmentStageFacts>
+  selected_model_fragment_stage_facts(const std::vector<std::shared_ptr<Node>>& nodes,
+                                      std::string* error);
+};
+
+// Reuses immutable selected-route metadata. It never invokes
+// NodeContractProvider, applies contracts, or prepares a native executable.
+// A successful result can contain no fragments; nullopt denotes a projection error.
+std::optional<SelectedModelFragmentStageFacts>
+selected_model_fragment_stage_facts(const std::vector<std::shared_ptr<Node>>& nodes,
+                                    std::string* error = nullptr);
 
 /**
  * @brief Load model packs and expose stage fragments as reusable node lists.
@@ -173,8 +247,10 @@ public:
 
   // Descriptive MPK projection; independent of physical execution admission.
   ExecutionPlan semantic_execution_plan() const;
-  // Executable projection; always backed by the admitted physical and arena plans.
+  // Executable projection; backed by immutable admitted physical execution facts.
   ExecutionPlan execution_plan() const;
+  // Exact MPK identities in the resolved inference prefix, for offline diagnostics.
+  std::vector<std::size_t> mla_profile_plugin_indices() const;
   // Default naming is descriptive; explicit terminal selectors admit the executable plan.
   std::string infer_output_name() const;
   std::vector<ModelFragment::StageFacts> stage_facts_for_model_stage(ModelStage stage) const;
@@ -212,9 +288,9 @@ public:
     return execution_admission_;
   }
 
-  const std::string& execution_plan_digest() const {
+  const std::string& model_source_digest() const {
     prepare_for_execution();
-    return execution_plan_digest_;
+    return dmabuf_fragment_source_->digest;
   }
 
   ModelPack clone_with_buffers(int num_buffers_cvu, int num_buffers_mla) const;
@@ -254,10 +330,9 @@ private:
   void init(const std::string& tar_gz);
   void init_from_config(const std::string& tar_gz, Config cfg);
   void ensure_dmabuf_execution_plan() const;
-  std::vector<ModelFragment::StageFacts> build_stage_facts(
-      const std::vector<ExecutionStage>& stages,
-      const std::optional<CompiledProcessCvuContract>& upstream_handoff_contract = std::nullopt,
-      ModelStage stage_context = ModelStage::Full) const;
+  std::vector<ModelFragment::StageFacts>
+  build_stage_facts(const std::vector<ExecutionStage>& stages,
+                    ModelStage stage_context = ModelStage::Full) const;
 
   std::string etc_dir_;
   std::string logical_package_name_;
@@ -265,16 +340,8 @@ private:
   PipelineType pipeline_type_ = PipelineType::Preproc;
   std::optional<simaai::neat::pipeline_internal::sima::MpkContract> mpk_contract_;
   std::optional<simaai::neat::pipeline_internal::sima::static_contract::MpkPackage> mpk_package_;
-  mutable std::optional<simaai::neat::pipeline_internal::sima::static_contract::ModelExecutionPlan>
-      dmabuf_plan_execution_plan_;
-  mutable std::optional<simaai::neat::pipeline_internal::sima::static_contract::FrameSlotArenaPlan>
-      dmabuf_frame_arena_plan_;
-  mutable std::optional<
-      simaai::neat::pipeline_internal::sima::static_contract::PhysicalExecutionPlan>
-      dmabuf_physical_execution_plan_;
   mutable std::shared_ptr<const ModelFragmentPlanSource> dmabuf_fragment_source_;
   mutable pipeline_internal::DmabufEligibilityReport execution_admission_;
-  mutable std::string execution_plan_digest_;
   mutable std::optional<simaai::neat::pipeline_internal::sima::RouteGraph> route_graph_;
   std::optional<pipeline_internal::sima::ModelManagedRouteFlags> model_managed_route_flags_;
   std::vector<ExecutionStageKind> model_managed_post_kinds_;

@@ -33,6 +33,11 @@ bool buffer_has_only_dmabuf_memory(GstBuffer* buffer);
 bool holder_has_dmabuf_memory(const std::shared_ptr<void>& holder);
 bool tensor_has_dmabuf_memory(const Tensor& tensor);
 bool sample_has_dmabuf_memory(const Sample& sample);
+// Selected payload authority; never reclassifies host storage as DMA.
+bool tensor_has_certified_terminal_host_memory(const Tensor& tensor);
+bool tensor_has_framework_output_memory(const Tensor& tensor);
+bool sample_has_only_framework_output_memory(const Sample& sample);
+bool sample_has_certified_terminal_host_memory(const Sample& sample);
 bool sample_has_device_gstsample_holder(const Sample& sample);
 void attach_holder_release_to_sample(const Sample& sample, std::function<void()> on_release);
 void mark_sample_producer_stream_lifetime(Sample& sample, std::shared_ptr<void> lifetime_token);

@@ -135,12 +135,11 @@ opt.preprocess.preset = pyneat.NormalizePreset.COCO_YOLO
 ### 10. `No channel available (all candidate channel opens failed)`
 
 :::info 原因
-EV74ディスパッチャーは、ロードされたファームウェアが実装していないカーネルのスケジュールを試みました。これは通常、`neat-runtime`と`neat-ev74-firmware`が**同じビルドではない**（内部ハッシュが一致しない）ためです。たとえば、部分的なアップデートが原因で発生します。
+実行リクエストが互換性のある EV74 チャネルを開けませんでした。考えられる原因の一つは、部分的な更新による Scheduler、Runner、Kernels、またはファームウェアのパッケージ一式の不一致です。
 :::
 
 :::tip 修正
-一致する`neat-*`セット（同じハッシュ値）をまとめてインストールし、ランタイムとファームウェアが同じハッシュ値を報告することを確認してください。[互換性 → バージョンが一致するセット](/getting-started/compatibility#the-version-matched-set-firmware--runtime)を参照してください。
-*(このメッセージはEV74ディスパッチャーから送信されます。)*
+[Neat Library のインストールまたは更新](/getting-started/neat-library/install-or-update/)に従って、選択された Scheduler 依存関係と Core の完全なバンドルをインストールしてください。無関係なコンポーネントの Git ハッシュを比較したり、個別のファームウェアパッケージを強制的にインストールしたりするのではなく、[ランタイムパッケージの組み合わせ](/reference/diagnostics/#keep-core-and-scheduler-packages-matched)を確認してください。
 :::
 
 ### 11. `frame=N rtsp_timeout`
@@ -153,14 +152,14 @@ RTSPプルのタイムアウトが発生しました。URLが間違っている�
 RTSP URLにアクセス可能であり、ストリームが正常に再生されていることを確認してください。また、使用されているトランスポートプロトコル（TCPまたはUDP）も確認してください。[RTSPストリームを再生する](/tutorials/consume-rtsp-stream)を参照してください。
 :::
 
-### 12. `CameraInput strict zero-copy requires external-buffer-mode`
+### 12. `Camera buffer is not one forwardable DMA-BUF and copying is disabled`
 
 :::info 原因
-`CameraInputOptions::allow_cpu_fallback` はデフォルトで false に設定されているため、Neat は、最初から最後まで SiMaAI/デバイスのゼロコピーサポートを必要とします。`libcamerasrc` が汎用的な `external-buffer-mode` プロパティを公開していないか、インストールされているメモリライブラリが、その割り当てを DMA-BUF としてエクスポートできない可能性があります。
+`CameraInputOptions::allow_cpu_fallback` はデフォルトで false に設定されているため、Neat はカメラ自身の DMA-BUF をそのまま転送し、コピーは一切行いません。カメラスタックが、各プレーンが連続して並んだ 1 つの DMA-BUF ではないフレーム（たとえば fd ごとに 1 つのプレーン、または DMA-BUF ではないメモリ）を渡しました。
 :::
 
 :::tip 修正
-一貫性のあるカメラとメモリパッケージがインストールされている場合は、厳密なゼロコピーを維持してください。DMA-BUFエクスポートのないカメラスタックで実行する必要がある場合は、互換ブリッジを明示的に選択してください。
+プラットフォームの `libcamera` パッケージを使用し、厳密なゼロコピーを維持してください。各フレームを 1 つの DMA-BUF として渡さないカメラスタックで実行する必要がある場合は、互換コピーを明示的に選択してください。
 
 <CodeTabs>
 <CodeTab label="C++" lang="cpp">
@@ -181,7 +180,7 @@ camera.allow_cpu_fallback = True
 </CodeTab>
 </CodeTabs>
 
-アダプティブモードでは、下流のCVU/MLAステージにSiMaAIメモリが引き続き割り当てられます。データは、アップストリームカメラバッファがEV74によってまだ使用されていない場合にのみ、カメラブリッジでコピーされます。
+アダプティブモードでも、下流のCVU/MLAステージには引き続きDMA-BUFが渡されます。コピーは、カメラフレームが、各プレーンが連続して並んだ1つのDMA-BUFではない場合にのみ、CMA DMA-BUFに対して行われます。
 :::
 
 ### 13. `misconfig.media_caps … libcamerasrc … not-negotiated (-4)`
@@ -232,7 +231,7 @@ python3 share/sima-neat/tutorials/023_run_mipi_camera_model/run_mipi_camera_mode
   --pull-timeout-ms 15000 --print-backend
 </ShellCommand>
 
-フォールバックが有効になっている場合、プロセスのパスには、`libcamerasrc`、`neatcamerabridge`、`neatprocesscvu`、`neatprocessmla`、および`appsink`を含める必要があります。BoxDecodeルートの場合、`--decode`トークンと閾値がモデルアーカイブと一致することを確認してください。
+フォールバックが有効になっている場合、プロセスのパスには、`libcamerasrc`、`neatcamerabridge`、`neatkernelrunner`、`neatprocessmla`、および`appsink`を含める必要があります。BoxDecodeルートの場合、`--decode`トークンと閾値がモデルアーカイブと一致することを確認してください。
 :::
 
 ### 16. グラフの処理速度が遅い、またはライブフレームが途中で失われる。

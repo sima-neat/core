@@ -9,6 +9,16 @@ slug: /develop-apps/contribute/release-checklist
 
 This document is the authoritative release gate policy.
 
+## Rolling documentation versions
+
+Update `website/release-data/current.json` once for the release, after updating
+`deps/manifest.json`. Run `npm --prefix website run sync:release-readmes` and commit
+the generated concrete README command. Run `npm --prefix website run check:releases`
+and `./build.sh --doc` to validate tokens, historical exceptions, localization,
+and rendered commands. Maintain the compatibility page manually with concrete versions. Keep historical
+release notes pinned. Release-data-only changes do not require translation or source-hash updates.
+Field ownership and token rules are documented in `website/release-data/README.md`.
+
 ## Release-Blocking Conditions
 
 A release is blocked unless all conditions below are true:
@@ -36,10 +46,11 @@ A release is blocked unless all conditions below are true:
    - `package-version` and `platform-version` updated in `deps/manifest.json` when required
    - `modelzoo-version` explicitly selects the validated Model Zoo release when it differs from
      `platform-version`; if omitted, Model Zoo resolution defaults to `platform-version`
-   - `abi-version` in `deps/manifest.json` is incremented whenever a public C++ type layout or
-     exported binary contract changes incompatibly; all C++ applications and Python bindings are
-     rebuilt against that ABI
-   - `CHANGELOG.md` has `## [x.y.z]` entry
+   - `abi-version` in `deps/manifest.json` is incremented only when a public C++ type layout or
+     exported binary contract changes incompatibly and `develop` still uses the same ABI version
+     as `main`. If `develop` already has a higher ABI version for the upcoming release, keep it
+     for further unreleased ABI breaks. Rebuild all C++ applications and Python bindings against
+     matching headers and libraries after incompatible changes.
    - release notes prepared in the release/tag body
 
 No "known crashers" list is allowed in release flow. Any crash regression blocks release until fixed.

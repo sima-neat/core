@@ -7,6 +7,7 @@
 #include "nodes/sima/SimaDecode.h"
 #include "pipeline/Graph.h"
 #include "test_utils.h"
+#include "owned_output_test_utils.h"
 
 #include <array>
 #include <cstdint>
@@ -187,8 +188,7 @@ FrameSignature make_signature(const simaai::neat::Sample& sample, const std::str
   require(tensors.size() == 1U, context + ": expected one decoded tensor");
   const simaai::neat::Tensor& tensor = tensors.front();
   require(tensor.storage != nullptr, context + ": decoded tensor has no storage");
-  require(tensor.storage->kind == simaai::neat::StorageKind::CpuOwned,
-          context + ": decoded tensor is not stored in owned CPU memory");
+  (void)sima_test::require_owned_output(sample, context);
   require(tensor.dtype == simaai::neat::TensorDType::UInt8,
           context + ": decoded tensor is not UInt8");
   require(tensor.width() == kWidth, context + ": decoded width mismatch");
@@ -216,9 +216,11 @@ FrameSignature make_signature(const simaai::neat::Sample& sample, const std::str
   return {contract.str(), fnv1a64(bytes)};
 }
 
-std::vector<FrameSignature> decode_once(const TuningCase& tuning,
-                                        const std::vector<simaai::neat::Sample>& access_units,
-                                        int run_index) {
+std::vector<FrameSignature> decode_once_live(const TuningCase& tuning,
+                                             const std::vector<simaai::neat::Sample>& access_units,
+                                             int run_index,
+                                             sima_test::OwnedOutputEvidence& evidence,
+                                             std::vector<simaai::neat::Sample>& retained) {
   simaai::neat::Graph graph = make_decode_graph(tuning, access_units.front());
   simaai::neat::RunOptions options;
   options.overflow_policy = simaai::neat::OverflowPolicy::Block;
@@ -252,7 +254,10 @@ std::vector<FrameSignature> decode_once(const TuningCase& tuning,
     for (std::size_t frame = 0; frame < access_units.size(); ++frame) {
       const std::string context = std::string(tuning.name) + " run " + std::to_string(run_index) +
                                   " frame " + std::to_string(frame);
-      signatures.push_back(make_signature(pull_or_throw(run, context), context));
+      auto sample = pull_or_throw(run, context);
+      signatures.push_back(make_signature(sample, context));
+      evidence.verify(sample, context);
+      retained.push_back(std::move(sample));
     }
   } catch (...) {
     consumer_error = std::current_exception();
@@ -281,6 +286,32 @@ std::vector<FrameSignature> decode_once(const TuningCase& tuning,
   if (consumer_error) {
     std::rethrow_exception(consumer_error);
   }
+  return signatures;
+}
+
+std::vector<FrameSignature> decode_once(const TuningCase& tuning,
+                                        const std::vector<simaai::neat::Sample>& access_units,
+                                        int run_index) {
+  sima_test::OwnedOutputEvidence evidence;
+  std::vector<simaai::neat::Sample> retained;
+  retained.reserve(access_units.size());
+  const auto signatures = decode_once_live(tuning, access_units, run_index, evidence, retained);
+  // The stopped Run and producer Graph are destroyed before checking root-memory
+  // death. Retain every independent output across that ownership barrier.
+  evidence.detach();
+  const std::string context = std::string(tuning.name) + " run " + std::to_string(run_index);
+  evidence.require_released(access_units.size(), context);
+  for (std::size_t frame = 0; frame < retained.size(); ++frame) {
+    const auto after =
+        make_signature(retained[frame], context + " retained frame " + std::to_string(frame));
+    require(after.contract == signatures[frame].contract &&
+                after.payload_hash == signatures[frame].payload_hash,
+            context + ": retained NV12 payload/metadata changed after producer stop/destruction");
+  }
+  sima_test::require_explicit_host_copy(retained.front(), context);
+  std::cout << "[OK] " << context
+            << ": independent DMA Owned bytes, producer release and "
+               "post-stop NV12 hashes verified\n";
   return signatures;
 }
 

@@ -7,16 +7,71 @@ sidebar_position: 3
 
 SiMa.ai Neat Library 的版本資訊。
 
-## 尚未發布
+## 0.6.2 {#v062}
+
+### 重大變更 {#v062-breaking}
+
+- Neat Library 的 C++ ABI 現在是 7（`libsima_neat.so.7`）。`ResizeOptions`、`ResizeSpec`、`PreprocessOptions`、`PreprocOptions`、`NormalizationOptions` 和 `Model::Options` 新增了欄位。請使用相符的標頭及執行階段套件，重新建置 C++ 應用程式、外掛程式與 Python 繫結；不要重用 ABI 6 二進位檔（0.6.0 與 0.6.1），也不要新增相容性符號連結。
+
+### 語意分割 {#v062-segmentation}
+
+- 新的 `ResizeArgMax` 節點與 `Model::Options::semantic_segmentation` 選項會在 EV74 上解碼分割分數。解碼會將各類別分數以雙線性方式縮放至所選尺寸，並傳回分數最大的第一個類別，與 SegFormer 的 `interpolate` 和 `argmax` 後處理一致。它會就地讀取有填補的 MLA 輸出，並在不反量化的情況下比較 INT8 分數。模型接著會傳回類別圖而非分數。需要包含此運算的 EV74 韌體。請參閱[語意分割解碼](/reference/semantic_segmentation_decode)。
+
+### Segment Anything 遮罩 {#v062-segment-anything}
+
+- 新的 `BoxDecodeType` 值會將 MobileSAM、EdgeTAM、EfficientSAM 與 EfficientSAM3 解碼為原始影像大小的遮罩。`EdgeTamSeg` 傳回遮罩，`EdgeTamTrack` 還會傳回供追蹤使用的解碼器原始輸出。請參閱 [Segment Anything 遮罩](/reference/boxdecode_decode_types#segment-anything-masks)。
+
+### 前處理 {#v062-preproc}
+
+- 中央裁切現在接受選用的 `preprocess.resize.shorter_side`，再裁切至最終 MPK 尺寸。裁切會保留完整縮放的濾波範圍並發佈反向轉換。請使用 ABI 7 與相符的核心韌體重新建置，不要混用舊版二進位檔。
+
+- `preprocess.resize.placement = LetterboxPlacement.TopLeft` 會如 MobileSAM 所預期，將信箱式調整後的影像放在畫布原點，所有填補都放在右側與下方。偵測用的 BoxDecode 設定檔會透過公布的仿射轉換對應邊界框；姿態、分割與提案設定檔會拒絕非置中的信箱式調整。請參閱 [Preproc](/reference/nodes/preproc)。
+
+- Model 前處理與獨立的 Resize 共用 `ResizeInterpolation`。新程式碼請使用 `preprocess.resize.interpolation = ResizeInterpolation.BilinearAntialiased`，而非取樣器字串。既有 `scaling_type` 字串仍相容；與其衝突的非預設字串會被拒絕。
+
+- 既有前處理選項現在可指定抗鋸齒雙線性縮放、明確的原始重新縮放係數、色彩轉換位置，以及浮點轉換原則。在固定原始算術路徑中，平均值和標準差欄位保留原始平均值及除數，而不是折疊後的仿射轉換。BF16 預設維持既有截斷方式，最接近偶數捨入須明確啟用。FP16 使用最接近偶數捨入。精確 INT8 量化需要與模型乘數一致的原始步長；無法從乘數重建該步長。未指定新選項時，維持既有路徑。請參閱 [Preproc](/reference/nodes/preproc)。
+
+## 0.6.1 {#v061}
+
+0.6.1 修正 0.6.0 的問題，並維持 ABI 6（`libsima_neat.so.6`）：為 0.6.0 建置的應用程式無須重新建置即可執行。
+
+### 修正 {#v061-fixes}
+
+- 主機到裝置的傳輸再次重用集區中的 DMA 緩衝區，且不會阻塞即時輸入；整個處理程序的 DMA 傳輸快取也有上限。從快取逐出時，絕不會釋放仍在使用中的張量。
+- 沒有未完成工作的非同步執行不再逾時，並會在輸入抵達時繼續。`Run::run()` 與 `Model::run()` 依各次呼叫的 `timeout_ms` 等待輸出；`-1` 表示無限等待，與 `Run::pull(-1)` 相同。`RunOptions::input_timeout_ms` 適用於輸入模式的 `Graph::run()` 與帶初始輸入的建置預檢。
+- `Model` 會驗證完整的原生 MLA 輸入批次。
+- 具有封裝輸出的僅 MLA 模型會保留其具型別的輸出檢視。
+- 模型管理的路線接受在圖中解碼的 YOLO 頭部，例如舊版 YOLOv6 封裝：請對其使用 `BoxDecodeType::Yolo`。
+- 執行報告會保留原生 BoxDecode 設定。
+- H.265 編碼器會拒絕其不支援的層級 4.2。
+- 視訊傳送器不再將輸入限制為 3840×2160；尺寸仍必須為正偶數。
+- 離線 PCIe 主機套件組合會在其相依性輸入變更時重新建置，其封存檔名稱會帶有校驗和後綴。
+
+### 說明檔案 {#v061-docs}
+
+- H.264 解碼輸入必須為 8 位元、4:2:0 與漸進式；不支援 High 10、High 4:2:2 和交錯式位元串流。
+- SDK 主機需要 Docker Engine 20.10.10 或更新版本。
+- Model 指南說明 `preprocess.enable = Off` 會停用哪些項目，以及哪些 MPK 轉接器會保留。
+
+## 0.6.0
 
 ### 破壞性變更
 
+- 張量模式的 `Model::input_specs()` 現在保留 MPK 定義的秩，包括單元素批次軸（`[1,H,W,C]`）。批次為 1 的 HWC 輸入仍受支援，包括未提供初始輸入而呼叫 `build()` 之後。`compiled_batch_size()` 讀取 MLA 宣告的批次大小，不再從張量維度推斷。
+
 - 模型輸出現在呈現 MPK 中定義的最終邏輯形狀與佈局，而非中間裝置形狀。例如，ResNet-50 的批次展平輸出形狀為 `[1, 1000]`，邏輯佈局未知，而不是四維 HWC 形狀。其 Float32 張量格式可能是 `EVXX_FLOAT32` 而非 `FP32`。請依張量的 dtype 與形狀解讀數值，不要從後端格式標籤推斷邏輯軸。
-- Neat Library 的 C++ ABI 現在為 6，共用函式庫 SONAME 為 `libsima_neat.so.6`。張量現在攜帶特徵擷取器語意中繼資料，公開的 GenAI 請求／結果型別攜帶 ASR 任務、語言與探測中繼資料，而 `GraphLinkOptions` 包含即時接納限制。請重新建置 C++ 應用程式與外掛程式，並安裝相符的 Core 執行階段與開發套件。
+- Neat Library 的 C++ ABI 現在為 6，共用函式庫 SONAME 為 `libsima_neat.so.6`。張量現在攜帶特徵擷取器語意中繼資料，公開的 GenAI 請求／結果型別攜帶 ASR 任務、語言與探測中繼資料，`GraphLinkOptions` 包含即時接納限制，而 `BenchmarkOptions` 與 `BenchmarkReport` 新增了欄位。請重新建置 C++ 應用程式與外掛程式，並安裝相符的 Core 執行階段與開發套件。 `SimaArgMaxOptions` 新增了 `axis` 與 `keepdims`，`SimaArgMax` 的類別佈局也已變更。
 - 即時圖組合現在使用 `GraphLinkOptions`、`Graph::connect()` 和 `Graph::build()`。預覽版 API `RealtimeGraphLinkOptions`、`connect_realtime()`、`build_fused_realtime_sources()` / `build_fused_realtime_source()` 和 `RealtimeEveryFrameByStream` 已移除。包含 `realtime_every_frame_by_stream` 的已儲存圖必須使用受支援的原則重新建立；請參閱[連接即時片段](/develop-apps/development-workflow/graph/#connect-live-fragments)。
+
+- 套件版本為 **0.6.0**。`Model::Options` 與 `BoxDecodeOptions` 現在包含 `yolox_seg_pose.pose_classes`；這些公開佈局新增欄位需要 ABI 6 使用元件。不要使用 ABI 相容性符號連結。`GraphOptions` 現在包含 `kernel_runner_a65_workers`。更新至 0.6.0 時，請使用相符的執行階段與開發套件重新建置應用程式、外掛程式及 Python 擴充模組。不要僅因兩者都使用 ABI 6，就混用預覽版二進位檔與正式版本套件。
 
 ### 執行階段變更
 
+- `Model::benchmark()` 會從 [Sentinel](/tools/sentinel/) 讀取板子遙測資料，而不再自行取樣電源軌功耗。延遲階段與吞吐量階段現在都會持續執行，直到各自測量了 `num_samples` 個輸入且至少已經過 `BenchmarkOptions::min_duration_ms`（預設為 10 秒），讓功耗與溫度讀數涵蓋多個 Sentinel 樣本。若要使用先前以輸入數量為準的計時方式，請將 `min_duration_ms` 設為 0。`BenchmarkReport` 新增 `latency_p50_ms`、`latency_p95_ms`、`latency_p99_ms`、`peak_power_watts`、`throughput_samples`、`throughput_duration_ms`，以及包含電源軌功耗、晶粒與板子溫度、整體與各核心的 CPU 使用率，以及 MLA、EV74 記憶體與整塊板子的 Linux 記憶體的 `telemetry`。`avg_power_watts` 與 `energy_joules` 的意義不變；`energy_joules` 為 `num_samples` 個輸入的能耗。Sentinel 無法使用時，仍會回報延遲與 FPS，並由 `telemetry.status` 說明原因。DevKit 安裝程式會透過 `sima-cli neat install sentinel` 安裝 Sentinel；若執行中的版本不是最新的正式版建置，則會將其升級。請參閱[測量模型執行效能](/develop-apps/development-workflow/model#power-and-board-telemetry)。
+- 以 `enable_board_power()` 啟用的 Run 電力遙測也改從 Sentinel 讀取。Core 不再開啟 I2C 電源監測器，因此其讀取不再干擾 Sentinel 對相同電源軌的讀取，安裝程式也不再將 `sima` 加入 `i2c` 群組。Sentinel 每 2 秒取樣一次，因此短於約 2 秒的測量視窗可能沒有電力樣本。電源軌以 Sentinel 的指標命名，例如 `mla`，且只回報功耗。`sample_interval_ms`、`PowerMonitorProfile`、內建電源軌表、`PowerRailConfig` 的 I2C 欄位、`enable_modalix_som_power()`、`enable_modalix_dvt_power()`，以及 `modalix_som_power_monitor_options()` / `modalix_dvt_power_monitor_options()` 均已棄用並會被忽略。
+- `TelemetryMonitor` 會在 `start()` 與 `stop()` 之間從 Sentinel 記錄板子功耗、溫度、CPU 使用率與記憶體，C++ 與 Python 皆可使用。`read()` 會傳回目前為止的摘要，而 `Telemetry` 會以 YAML 格式列印，並可儲存為 YAML 或 JSON。`Model::benchmark()` 使用它產生 `BenchmarkReport::telemetry`。`PowerMonitor`、`read_power_snapshot()`、`RunOptions::enable_board_power()`、`RunOptions::power_monitor` 與 `MeasureOptions::include_power` 已棄用，請改用 `TelemetryMonitor`；這些 API 仍可繼續運作。請參閱[記錄板子遙測](/develop-apps/development-workflow/model#record-board-telemetry)。
+- `BenchmarkOptions::inputs` 可讓 `Model::benchmark()` 改用您自己的張量而非合成輸入執行，`BenchmarkReport::input` 會記錄使用了哪一種。請參閱[使用自己的輸入進行測量](/develop-apps/development-workflow/model#measure-with-your-own-inputs)。
+- 外掛程式延遲已棄用，並將被移除。涵蓋 `MeasureOptions::include_plugin_latency` 與 `plugin_latency_source`、`BenchmarkOptions::include_plugin_latency`、`start_measurement(bool)`，以及 `Model::benchmark(int, bool)` / `Model::benchmark(bool)`。請改用 `start_measurement()` 與 `benchmark(num_samples)`。
 - 硬體解碼使用直接編解碼器工作階段與 DMA-BUF 輸出。Core 不再使用解碼器常駐程式接納租約或 `SIMA_DECODER_ADMISSION_REQUIRE`。解碼器集區與調校選項仍可使用。
 - C++ 和 Python 可透過 `SimaDecode` 與 `RtspDecodedInput` 使用原生 H.265/HEVC 解碼。`RtspEncodedInput` 無需解碼即可提供已剖析的 H.265 存取單元。H.265 輸入必須使用 HEVC Main 設定檔、8 位元、4:2:0。編解碼器選擇器接受 `H265` 和 `HEVC`；H.264 選擇器也接受 `AVC`。`FormatTag` / `pyneat.Format` 在編碼資料的圖邊界接受相同別名，並仍序列化為 `H264` 和 `H265`。
 - `VideoSender` 透過 `VideoSenderOptions::Passthrough(codec)` / `pyneat.VideoSenderOptions.passthrough(codec)`，將已編碼的 H.264 或 H.265 以 RTP over UDP 轉送，全程不重新編碼。H.265 預設使用 RTP 負載類型 98；H.264 維持 96。`H264RtpUdpFromEncoded()` 已棄用，請改用 `Passthrough(RtspCodec::H264)`。
@@ -30,16 +85,21 @@ SiMa.ai Neat Library 的版本資訊。
 
 ### 圖的建構與驗證
 
+- 新的 `SimaVoxelize`、`SimaPillarScatter`、`SimaBEVPoolPlan` 與 `SimaBEVPool` 節點會以 INT8 或 BF16 張量在 A65 或 EV74 上執行 PointPillars 與 BEVFusion 的核心函式庫 LiDAR 運算以及相機轉 BEV 運算。每個節點都在您選擇的目標上執行，不會退回其他目標。請參閱 [LiDAR 與 BEV 核心節點](/reference/lidar_bev_kernel_nodes)。
 - 預設的公開 `Input` 直接連接至單一模型影像輸入時，現在會繼承其宣告的影像格式。明確的輸入選項仍具決定權；有歧義的連接必須使用明確選項。這會改變樣本的解讀方式，而不新增負載複製。
 - 圖組合現在會將一個節點物件視為一個邏輯頂點。重複插入與重疊的片段匯入會以不可分割的方式失敗，而重複呼叫 `connect()` 時會重複使用既有節點進行扇出。
 - 每個具體化的管線區段現在都會在 `build()` 期間驗證最終的 GStreamer 名稱，不需另外明確呼叫 `validate()`。名稱重複或遺漏時會以 `misconfig.pipeline_shape` 失敗，而不會產生截斷的管線。
 - 自訂片段現在會報告所有明確名稱，並連同宣告一起轉換具名 pad 參照。名稱衝突會直接遭到拒絕，不會自動重新命名。
 
-| 版本 | 相容的 Neat SDK | 備註 |
-|---|---|---|
-| 0.4.0 | 2.1.3.0 | [Neat Library 0.4.0](https://github.com/sima-neat/core/releases/tag/v0.4.0) |
-| 0.3.0 | 2.1.2.3 | [Neat Library 0.3.0](https://github.com/sima-neat/core/releases/tag/v0.3.0) |
-| 0.2.2 | 2.1.2.2 | [Neat Library 0.2.2](https://github.com/sima-neat/core/releases/tag/v0.2.2) |
-| 0.2.1 | 2.1.2.1 | [Neat Library 0.2.1](https://github.com/sima-neat/core/releases/tag/v0.2.1) |
-| 0.2.0 | 2.1.2 | [Neat Library 0.2.0](https://github.com/sima-neat/core/releases/tag/v0.2.0) |
-| 0.1.0 | 2.0.0 | [Neat Library 0.1.0](https://github.com/sima-neat/core/releases/tag/v0.1.0) |
+| 版本 | C++ ABI | 相容的 Palette SDK | 備註 |
+|---|---|---|---|
+| 0.6.2 | 7 | 3.0.0.2 | [Neat Library 0.6.2](https://github.com/sima-neat/core/releases/tag/v0.6.2) |
+| 0.6.1 | 6 | 3.0.0.1 | [Neat Library 0.6.1](https://github.com/sima-neat/core/releases/tag/v0.6.1) |
+| 0.6.0 | 6 | 3.0.0.0 | [Neat Library 0.6.0](https://github.com/sima-neat/core/releases/tag/v0.6.0) |
+| 0.5.0 | 5 | 2.1.3.1 | [Neat Library 0.5.0](https://github.com/sima-neat/core/releases/tag/v0.5.0) |
+| 0.4.0 | 4 | 2.1.3.0 | [Neat Library 0.4.0](https://github.com/sima-neat/core/releases/tag/v0.4.0) |
+| 0.3.0 | 3 | 2.1.2.3 | [Neat Library 0.3.0](https://github.com/sima-neat/core/releases/tag/v0.3.0) |
+| 0.2.2 | 2 | 2.1.2.2 | [Neat Library 0.2.2](https://github.com/sima-neat/core/releases/tag/v0.2.2) |
+| 0.2.1 | 2 | 2.1.2.1 | [Neat Library 0.2.1](https://github.com/sima-neat/core/releases/tag/v0.2.1) |
+| 0.2.0 | 2 | 2.1.2 | [Neat Library 0.2.0](https://github.com/sima-neat/core/releases/tag/v0.2.0) |
+| 0.1.0 | 2 | 2.0.0 | [Neat Library 0.1.0](https://github.com/sima-neat/core/releases/tag/v0.1.0) |

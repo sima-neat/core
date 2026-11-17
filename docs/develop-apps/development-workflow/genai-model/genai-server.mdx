@@ -152,6 +152,8 @@ For VLM requests, an OpenAI chat `image_url` content part must contain a base64
 data URI such as `data:image/jpeg;base64,...`. Image decoding requires a Neat
 build with OpenCV support.
 
+Prompts that leave no room in the compiled context return `context_length_exceeded` (HTTP 400, or an SSE error if streaming has begun). Reaching the context or output-token limit returns `finish_reason: "length"`; normal completion returns `"stop"`. Conversation history is preserved.
+
 ## Ollama-compatible requests
 
 Use `/api/chat` for message history or `/api/generate` for a prompt:

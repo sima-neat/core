@@ -207,7 +207,8 @@ void test_mixed_dmabuf_metadata_selected_memory() {
     gst_sample_unref(init);
     const Mapping write = storage->map(MapMode::Write);
     require(write.data && write.size_bytes >= 64U, "mixed metadata DMA initialization failed");
-    std::memset(write.data, 0x6D, write.size_bytes);
+    for (std::size_t i = 0; i < write.size_bytes; ++i)
+      static_cast<uint8_t*>(write.data)[i] = static_cast<uint8_t>(0x6D + i);
   }
   GstBuffer* mixed = gst_buffer_new_allocate(nullptr, 64U, nullptr);
   gst_buffer_memset(mixed, 0U, 0xA1, 64U);
@@ -234,10 +235,23 @@ void test_mixed_dmabuf_metadata_selected_memory() {
   require(internal::tensor_has_dmabuf_memory(restored) && restored.route.memory_index == 1 &&
               restored.byte_offset == 8,
           "metadata restoration lost selected DMA memory or logical offset");
-  const Mapping mapped = restored.map_read();
-  require(mapped.data && mapped.size_bytes == 56U &&
-              static_cast<const uint8_t*>(mapped.data)[0] == 0x6D,
-          "metadata restoration mapped or merged the CPU carrier instead of selected DMA");
+  {
+    const Mapping mapped = restored.map_read();
+    require(mapped.data, "metadata restoration could not map selected DMA memory");
+    require(mapped.size_bytes == 56U,
+            "public selected-memory mapping lost its remaining-tail compatibility extent");
+    require(static_cast<const uint8_t*>(mapped.data)[0] == 0x75 &&
+                static_cast<const uint8_t*>(mapped.data)[55] == 0xAC,
+            "metadata restoration selected the wrong carrier or applied its offset twice");
+  }
+  {
+    const Mapping mapped = internal::map_dense_tensor_read(restored);
+    require(mapped.data && mapped.size_bytes == 32U,
+            "internal selected-memory READ lost its checked logical extent");
+    require(static_cast<const uint8_t*>(mapped.data)[0] == 0x75 &&
+                static_cast<const uint8_t*>(mapped.data)[31] == 0x94,
+            "internal selected-memory READ changed carrier coordinates");
+  }
   GstBuffer* envelope = internal::buffer_from_tensor_holder(restored.storage->holder);
   require(envelope && gst_buffer_n_memory(envelope) == 2U &&
               sima_test::dmabuf_span(gst_buffer_peek_memory(envelope, 1U)) == expected_span,

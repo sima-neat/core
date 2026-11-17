@@ -233,7 +233,7 @@ build_processcvu_runtime_config(const json& cfg, ProcessCvuRuntimeConfigOptions 
           "build_processcvu_runtime_config: could not synthesize typed input tensor" +
           (error_detail.empty() ? std::string() : std::string(": ") + error_detail));
     }
-    runtime.input_tensors.push_back(desc);
+    runtime.input_tensors.emplace_back(desc, runtime.input_dtype);
   }
   runtime.output_tensors.reserve(runtime.output_shapes.size());
   for (const auto& shape : runtime.output_shapes) {
@@ -258,7 +258,7 @@ build_processcvu_runtime_config(const json& cfg, ProcessCvuRuntimeConfigOptions 
           "build_processcvu_runtime_config: could not synthesize typed output tensor" +
           (error_detail.empty() ? std::string() : std::string(": ") + error_detail));
     }
-    runtime.output_tensors.push_back(desc);
+    runtime.output_tensors.emplace_back(desc, runtime.output_dtype);
   }
 
   if (options.include_q_fields) {

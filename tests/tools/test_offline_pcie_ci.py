@@ -1,0 +1,715 @@
+"""Admission and publication failure contracts for offline CI."""
+import importlib.util
+from pathlib import Path
+import sys
+from types import SimpleNamespace
+from unittest.mock import patch
+
+import pytest
+
+HERE = Path(__file__).resolve().parents[2] / 'pcie_host/scripts/offline'
+
+def load(name):
+    spec = importlib.util.spec_from_file_location('offline_' + name, HERE / (name + '.py'))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+with patch.dict(sys.modules, {'assemble': load('assemble')}):
+    ci = load('ci')
+resolver = load('resolve_run')
+SHA = 'a' * 40
+INPUTS = {'host': 'b' * 64, 'card': 'c' * 64}
+
+
+def source(ref='develop', event='push'):
+    return dict(repository={'full_name': 'sima-neat/core'},
+                head_repository={'full_name': 'sima-neat/core'},
+                path='.github/workflows/vulcan-ci.yml', event=event,
+                status='completed', conclusion='success', head_sha=SHA,
+                head_branch=ref, id=123)
+
+
+def jobs():
+    return [dict(name=n, conclusion='success') for n in (
+        'Publish PCIe Host Package Metadata', 'Publish to Vulcan / Publish Vulcan artifacts')]
+
+
+@pytest.mark.parametrize('ref', ['develop', 'main', 'release-0.6'])
+@pytest.mark.parametrize('event', ['push', 'workflow_dispatch'])
+def test_allowed_branch(ref, event):
+    assert resolver.eligible(source(ref, event), jobs())['sha'] == SHA
+
+
+@pytest.mark.parametrize('event', ['push', 'workflow_dispatch'])
+def test_tag_requires_exact_commit(event):
+    assert resolver.eligible(source('v0.6', event), jobs()) is None
+    assert resolver.eligible(source('v0.6', event), jobs(), 'd' * 40) is None
+    assert resolver.eligible(source('v0.6', event), jobs(), SHA)
+
+
+def test_tag_listener_skips_gated_publication_but_preserves_older_tags_and_manual_retry():
+    run = source('v0.6.0')
+    assert resolver.eligible(run, jobs(), SHA, skip_gated_publication=True)
+    published = jobs() + [dict(
+        name='Publish develop and release offline bundles / Publish all offline metadata',
+        conclusion='success')]
+    assert resolver.eligible(run, published, SHA, skip_gated_publication=True) is None
+    assert resolver.eligible(run, published, SHA)
+    published[-1]['conclusion'] = 'skipped'
+    assert resolver.eligible(run, published, SHA, skip_gated_publication=True)
+
+
+@pytest.mark.parametrize('field,value', [
+    ('repository', {'full_name': 'fork/core'}),
+    ('head_repository', {'full_name': 'fork/core'}), ('event', 'pull_request'),
+    ('event', 'workflow_call'), ('event', 'schedule'),
+    ('conclusion', 'failure'), ('status', 'in_progress'),
+    ('path', '.github/workflows/other.yml'), ('head_branch', 'develop\nenabled=true'),
+])
+@pytest.mark.parametrize('event', ['push', 'workflow_dispatch'])
+def test_untrusted_or_incomplete_run_rejected(field, value, event):
+    run = source(event=event)
+    run[field] = value
+    assert resolver.eligible(run, jobs()) is None
+
+
+@pytest.mark.parametrize('event', ['push', 'workflow_dispatch'])
+def test_skipped_or_missing_publications_rejected(event):
+    assert resolver.eligible(source(event=event), []) is None
+    rows = jobs()
+    rows[0]['conclusion'] = 'skipped'
+    assert resolver.eligible(source(event=event), rows) is None
+
+
+def metadata():
+    return {'commit': SHA, 'branch': 'develop', 'resources': [ci.assemble.ARCHIVE_NAME],
+            'resources-checksum': {ci.assemble.ARCHIVE_NAME: 'd' * 64},
+            'artifact': {'distro': 'ubuntu22', 'arches': ['amd64'], 'type': 'offline',
+                         'package_path': 'pciehost/ubuntu22/amd64'},
+            'installation': {'script': ''}, 'source_metadata_sha256': INPUTS}
+
+
+def test_offline_metadata_identity_and_source_drift():
+    ci.offline_identity(metadata(), SHA, 'develop', 'ubuntu22', 'amd64', INPUTS)
+    with pytest.raises(ValueError):
+        ci.offline_identity(metadata(), SHA, 'develop', 'ubuntu22', 'amd64', {})
+    data = metadata()
+    data['installation']['script'] = 'install.sh'
+    with pytest.raises(ValueError):
+        ci.offline_identity(data, SHA, 'develop', 'ubuntu22', 'amd64', INPUTS)
+
+
+@pytest.mark.parametrize('name', ['../payload', '/payload', 'a/b', 'bad\nname'])
+def test_unsafe_resource_rejected(name):
+    data = metadata()
+    data['resources'] = [name]
+    data['resources-checksum'] = {name: 'd' * 64}
+    with pytest.raises(ValueError):
+        ci.metadata_identity(data, SHA, 'develop', 'ubuntu22', 'amd64')
+
+
+def test_tuple_and_ref_paths():
+    assert ci.prefix('release/v1', SHA, 'ubuntu24', 'arm64') == 'core/release%2Fv1/aaaaaaaaaaaa/pciehost/ubuntu24/arm64'
+    with pytest.raises(ValueError):
+        ci.prefix('develop', SHA, 'ubuntu20', 'amd64')
+
+
+def test_missing_last_tuple_publishes_nothing(tmp_path):
+    args = SimpleNamespace(work=tmp_path/'publish', ref='develop', sha=SHA,
+                           bucket='bucket', kms='', distribution='')
+    with patch.object(ci, 'source_metadata', return_value=({}, {}, INPUTS)), \
+         patch.object(ci, 'existing', side_effect=[{'metadata-offline.json': tmp_path/'metadata-offline.json.pending'}] * 3 + [None]), \
+         patch.object(ci, 'put') as put:
+        with pytest.raises(ValueError, match='missing validated'):
+            ci.publish(args)
+        put.assert_not_called()
+
+
+def test_completed_publication_not_replaced(tmp_path):
+    args = SimpleNamespace(work=tmp_path/'publish', ref='develop', sha=SHA,
+                           bucket='bucket', kms='', distribution='')
+    with patch.object(ci, 'source_metadata', return_value=({}, {}, INPUTS)), \
+         patch.object(ci, 'existing', return_value={'metadata-offline.json': tmp_path/'metadata-offline.json'}), \
+         patch.object(ci, 'put') as put:
+        ci.publish(args)
+        put.assert_not_called()
+
+
+def test_local_image_ids_are_immutable():
+    assert ci.assemble.image('sha256:' + 'a' * 64)
+    with pytest.raises(ValueError):
+        ci.assemble.image('ubuntu:24.04')
+
+
+def test_optional_metadata_does_not_hide_access_denied(tmp_path):
+    result = SimpleNamespace(returncode=1, stderr='An error occurred (AccessDenied)')
+    with patch.object(ci.subprocess, 'run', return_value=result):
+        with pytest.raises(RuntimeError, match='AccessDenied'):
+            ci.download('bucket', 'key', tmp_path/'meta', optional=True)
+    result.stderr = 'An error occurred (NoSuchKey)'
+    with patch.object(ci.subprocess, 'run', return_value=result):
+        assert ci.download('bucket', 'key', tmp_path/'meta', optional=True) is False
+
+
+def test_uploaded_checksum_required():
+    with patch.object(ci, 'run', return_value='{}'):
+        with pytest.raises(ValueError, match='checksum'):
+            ci.verify_uploaded('bucket', 'key', 'a' * 64)
+
+
+def test_final_metadata_write_is_conditional(tmp_path):
+    path = tmp_path/'metadata.json.pending'
+    path.write_text('{}')
+    with patch.object(ci, 'run') as run, patch.object(ci, 'verify_uploaded'):
+        ci.put('bucket', 'offline/metadata.json', path, 'kms-key', immutable=True)
+        command = run.call_args.args
+        assert command[command.index('--if-none-match') + 1] == '*'
+        assert '--checksum-sha256' in command
+        assert command[command.index('--content-type') + 1] == 'application/json'
+
+
+def test_shared_card_publication_version_identity():
+    data = metadata()
+    del data['commit'], data['branch']
+    data['version'] = '0.6.0+develop.' + SHA[:12]
+    ci.metadata_identity(data, SHA, 'develop')
+    data['version'] = '0.6.0+develop.' + 'b' * 12
+    with pytest.raises(ValueError, match='selected CI'):
+        ci.metadata_identity(data, SHA, 'develop')
+
+
+@pytest.mark.parametrize('ref', ['v0.6.0', 'v0.7.0-rc.1'])
+def test_shared_card_release_version_uses_commit_scoped_publication(ref):
+    data = metadata()
+    del data['commit'], data['branch']
+    data['version'] = ref[1:]
+    ci.metadata_identity(data, SHA, ref)
+    for field, value in [('commit', 'b' * 40), ('branch', 'develop'),
+                         ('version', '0.5.0')]:
+        with pytest.raises(ValueError, match='selected CI'):
+            ci.metadata_identity({**data, field: value}, SHA, ref)
+
+
+@pytest.mark.parametrize('ref', ['develop', 'release-0.6', 'nightly', '0.6.0'])
+def test_plain_release_version_cannot_identify_branch_publication(ref):
+    data = metadata()
+    del data['commit'], data['branch']
+    data['version'] = '0.6.0'
+    with pytest.raises(ValueError, match='selected CI'):
+        ci.metadata_identity(data, SHA, ref)
+
+
+@pytest.mark.parametrize('core', [False, True])
+def test_release_source_metadata_is_read_from_selected_commit_key(tmp_path, core):
+    import json
+    args = SimpleNamespace(ref='v0.6.0', sha=SHA, bucket='bucket',
+                           distro='ubuntu22', arch='amd64', core=core)
+    card = metadata()
+    del card['commit'], card['branch']
+    card['version'] = '0.6.0'
+    host = metadata()
+    host['branch'] = args.ref
+
+    def download(bucket, key, path):
+        expected = ci.prefix(args.ref, SHA)
+        assert key.startswith(expected + '/')
+        assert key.endswith('/metadata.json')
+        data = host if '/pciehost/' in key else card
+        path.write_text(json.dumps(data))
+
+    with patch.object(ci, 'download', side_effect=download):
+        records, paths, inputs = ci.source_metadata(args, tmp_path)
+    expected_roles = {'card'} if core else {'card', 'host'}
+    assert set(records) == set(paths) == set(inputs) == expected_roles
+    assert records['card'] == card
+
+
+@pytest.mark.parametrize('event', ['push', 'workflow_dispatch'])
+def test_validation_branch_opt_in_does_not_admit_other_branches_or_forks(event):
+    ref = 'codex/offline-pcie-discovery'
+    assert resolver.eligible(source(ref, event), jobs()) is None
+    assert resolver.eligible(source(ref, event), jobs(), validation_ref=ref)
+    assert resolver.eligible(source('other', event), jobs(), validation_ref=ref) is None
+    run = source(ref, event)
+    run['head_repository'] = {'full_name': 'fork/core'}
+    assert resolver.eligible(run, jobs(), validation_ref=ref) is None
+
+
+def test_validation_build_does_not_reuse_or_publish(tmp_path):
+    import json
+    host = tmp_path/'host'
+    card = tmp_path/'card'
+    host.mkdir()
+    card.mkdir()
+    for name in ('platform_provider.py', 'platform-source.json'):
+        (host/name).write_text('fixture')
+    args = SimpleNamespace(work=tmp_path/'work', ref='develop', sha=SHA,
+                           bucket='bucket', distro='ubuntu24', arch='amd64',
+                           installer_revision=SHA, run_id=123, validation_only=True)
+
+    def download(bucket, key, path):
+        path.write_text('fixture')
+
+    def assemble(spec, root):
+        assert set(spec['targets']) == {'host', 'card'}
+        assert spec['targets']['card']['image'] == 'sha256:' + 'd' * 64
+        (root.parent/ci.assemble.METADATA_NAME).write_text('{}')
+        (root.parent/ci.assemble.ARCHIVE_NAME).write_text('validated bundle')
+
+    records = {role: {'resources-checksum': {}} for role in ('host', 'card')}
+    paths = {'host': ('host-key', host), 'card': ('card-key', card)}
+    with patch.object(ci, 'source_metadata', return_value=(records, paths, INPUTS)), \
+         patch.object(ci, 'pull_baseline', return_value='sha256:' + 'd' * 64) as pull, \
+         patch.object(ci, 'existing') as existing, patch.object(ci, 'put') as put, \
+         patch.object(ci, 'download', side_effect=download), \
+         patch.object(ci.assemble, 'verify_publication'), \
+         patch.object(ci.assemble, 'assemble', side_effect=assemble) as build:
+        ci.build(args)
+        existing.assert_not_called()
+        put.assert_not_called()
+        build.assert_called_once()
+        assert [call.args[1] for call in pull.call_args_list] == ['ubuntu24-amd64', 'card']
+    assert (args.work/ci.assemble.ARCHIVE_NAME).is_file()
+
+
+@pytest.mark.parametrize('status', ['queued', 'in_progress', 'waiting', 'pending'])
+def test_validation_can_use_ready_publications_while_other_tests_run(status):
+    run = source('codex/offline-pcie-discovery')
+    run.update(status=status, conclusion=None)
+    assert resolver.eligible(run, jobs()) is None
+    assert resolver.eligible(run, jobs(), validation_ref=run['head_branch'])
+    assert resolver.eligible(run, [], validation_ref=run['head_branch']) is None
+    run.update(status='completed', conclusion='failure')
+    assert resolver.eligible(run, jobs(), validation_ref=run['head_branch']) is None
+
+
+def test_manual_publication_is_opt_in_and_reuses_the_validated_matrix():
+    import yaml
+    workflows = HERE.parents[2]/'.github/workflows'
+    caller = yaml.safe_load((workflows/'vulcan-ci.yml').read_text())
+    inputs = caller[True]['workflow_dispatch']['inputs']
+    assert inputs['offline_publish']['default'] is False
+    call = caller['jobs']['validate-offline']
+    assert call['with']['validation_only'] == '${{ !inputs.offline_publish }}'
+    assert call['with']['publish_branch'] == '${{ inputs.offline_publish || false }}'
+    worker = yaml.safe_load((workflows/'pcie-offline.yml').read_text())
+    assert worker['jobs']['publish']['needs'] == ['source', 'config', 'build', 'build-core']
+    assert worker['jobs']['publish']['if'] == '${{ !inputs.validation_only }}'
+    matrix = worker['jobs']['build']['strategy']['matrix']['include']
+    assert {(r['distro'], r['arch']) for r in matrix} == set(ci.TUPLES)
+
+
+def test_offline_assembly_uses_vulcan_native_pools_without_changing_target_matrix():
+    import yaml
+    worker = yaml.safe_load((HERE.parents[2]/'.github/workflows/pcie-offline.yml').read_text())
+    pool = 'vulcan-${{ needs.config.outputs.vulcan_env }}'
+    build = worker['jobs']['build']
+    assert build['runs-on'] == ['self-hosted', 'linux', '${{ matrix.arch }}', pool, 'ubuntu', 'default']
+    assert worker['jobs']['build-core']['runs-on'] == ['self-hosted', 'linux', 'arm64', pool, 'ubuntu', 'default']
+    assert {(row['distro'], row['arch']) for row in build['strategy']['matrix']['include']} == set(ci.TUPLES)
+    qemu = next(step for step in build['steps'] if step.get('uses') == 'docker/setup-qemu-action@v3')
+    assert qemu['if'] == "${{ matrix.arch == 'amd64' }}"
+
+
+def test_cloudfront_invalidation_encodes_s3_branch_keys(tmp_path):
+    args = SimpleNamespace(work=tmp_path/'publish', ref='codex/offline', sha=SHA,
+                           bucket='bucket', kms='', distribution='distribution')
+    with patch.object(ci, 'source_metadata', return_value=({}, {}, INPUTS)),          patch.object(ci, 'existing', return_value={'metadata-offline.json': tmp_path/'metadata-offline.json'}),          patch.object(ci, 'run') as run:
+        ci.publish(args)
+        assert '/core/codex%252Foffline/aaaaaaaaaaaa/pciehost/ubuntu24/amd64/metadata-offline.json' in run.call_args.args
+
+
+@pytest.mark.parametrize('event,ref,mode,validation,manual_source,failed,cancelled,promoted,expected', [
+    ('push', 'refs/heads/develop', 'standard', False, '', False, False, True, True),
+    ('push', 'refs/tags/v0.6.0', 'standard', False, '', False, False, True, True),
+    ('push', 'refs/tags/v0.7.0-rc.1', 'standard', False, '', False, False, True, True),
+    ('push', 'refs/heads/v0.6.0', 'standard', False, '', False, False, True, False),
+    ('push', 'refs/tags/nightly', 'standard', False, '', False, False, True, False),
+    ('workflow_dispatch', 'refs/tags/v0.6.0', 'standard', False, '', False, False, True, True),
+    ('workflow_dispatch', 'refs/tags/v0.6.0', 'standard', True, '', False, False, True, False),
+    ('workflow_dispatch', 'refs/tags/v0.6.0', 'fuzz', False, '', False, False, True, False),
+    ('workflow_dispatch', 'refs/tags/v0.6.0', 'standard', False, '123', False, False, True, False),
+    ('workflow_dispatch', 'refs/tags/v0.6.0', 'standard', False, '', True, False, True, False),
+    ('workflow_dispatch', 'refs/tags/v0.6.0', 'standard', False, '', False, True, True, False),
+    ('workflow_dispatch', 'refs/tags/v0.6.0', 'standard', False, '', False, False, False, False),
+    ('push', 'refs/tags/v0.6.0', 'standard', True, '', False, False, True, False),
+    ('push', 'refs/tags/v0.6.0', 'standard', False, '', True, False, True, False),
+    ('push', 'refs/tags/v0.6.0', 'standard', False, '', False, True, True, False),
+    ('push', 'refs/tags/v0.6.0', 'standard', False, '', False, False, False, False),
+    ('pull_request', 'refs/heads/develop', 'standard', False, '', False, False, True, False),
+    ('workflow_dispatch', 'refs/heads/develop', 'standard', False, '', False, False, True, True),
+    ('workflow_dispatch', 'refs/heads/main', 'standard', False, '', False, False, True, False),
+    ('push', 'refs/heads/main', 'standard', False, '', False, False, True, False),
+    ('push', 'refs/heads/develop', 'fuzz', False, '', False, False, True, False),
+    ('push', 'refs/heads/develop', 'standard', True, '', False, False, True, False),
+    ('push', 'refs/heads/develop', 'standard', False, '123', False, False, True, False),
+    ('push', 'refs/heads/develop', 'standard', False, '', True, False, True, False),
+    ('push', 'refs/heads/develop', 'standard', False, '', False, True, True, False),
+    ('push', 'refs/heads/develop', 'standard', False, '', False, False, False, False),
+])
+def test_automatic_develop_and_release_publication_gate(event, ref, mode, validation, manual_source,
+                                           failed, cancelled, promoted, expected):
+    import yaml
+    caller = yaml.safe_load((HERE.parents[2]/'.github/workflows/vulcan-ci.yml').read_text())
+    job = caller['jobs']['publish-offline-develop']
+    # Evaluate the actual workflow gate with representative GitHub contexts.
+    expression = job['if'][3:-2].strip()
+    values = {
+        "startsWith(github.ref, 'refs/tags/v')": ref.startswith('refs/tags/v'),
+        'always()': True, 'github.event_name': event, 'github.ref': ref,
+        'inputs.validation_only': validation, 'inputs.offline_source_run_id': manual_source,
+        'inputs.build_mode': mode, "contains(needs.*.result, 'failure')": failed,
+        "contains(needs.*.result, 'cancelled')": cancelled,
+        'needs.documentation-localization.result': 'success',
+        'needs.code-hygiene.result': 'success',
+        'needs.promote-latest-tag.result': 'success' if promoted else 'skipped',
+    }
+    for key, value in values.items():
+        expression = expression.replace(key, repr(value))
+    expression = expression.replace('&&', ' and ').replace('||', ' or ').replace('!', ' not ')
+    assert bool(eval(expression, {'__builtins__': {}}, {})) is expected
+    assert job['uses'] == './.github/workflows/pcie-offline.yml'
+    assert job['with'] == {'source_run_id': "${{ format('{0}', github.run_id) }}",
+                           'publish_branch': True, 'validation_only': False}
+    # Every standard job gates automatic publication, including optional hardware.
+    standard_jobs = set(caller['jobs']) - {'validate-offline', 'publish-offline-develop', 'validation-complete'}
+    assert set(job['needs']) == standard_jobs
+
+
+def test_completed_run_listener_does_not_duplicate_develop_publication():
+    import yaml
+    worker = yaml.safe_load((HERE.parents[2]/'.github/workflows/pcie-offline.yml').read_text())
+    assert "github.event.workflow_run.head_branch != 'develop'" in worker['jobs']['source']['if']
+
+
+@pytest.mark.parametrize('event,skip', [('workflow_run', True), ('push', False),
+                                       ('workflow_dispatch', False)])
+def test_only_completed_run_listener_requests_duplicate_suppression(event, skip):
+    import os
+    import subprocess
+    import yaml
+    worker = yaml.safe_load((HERE.parents[2]/'.github/workflows/pcie-offline.yml').read_text())
+    script = worker['jobs']['source']['steps'][-1]['run']
+    result = subprocess.run(['bash', '-c', 'python3() { printf "%s\\n" "$@"; };\n' + script],
+                            env={**os.environ, 'GITHUB_EVENT_NAME': event,
+                                 'VALIDATION_ONLY': 'false', 'PUBLISH_BRANCH': 'false',
+                                 'SOURCE_RUN': '123', 'GITHUB_REF_NAME': 'v0.6.0'},
+                            text=True, capture_output=True, check=True)
+    assert ('--skip-gated-publication' in result.stdout.splitlines()) is skip
+    assert worker['jobs']['publish']['name'] == 'Publish all offline metadata'
+
+
+def test_host_baseline_keys_track_only_platform_inputs():
+    checksums = {name: 'a'*64 for name in (
+        'platform_provider.py', 'platform-source.json', 'sima-neat-core.deb')}
+    record = {'resources-checksum': checksums}
+    first = ci.baseline_identity('ubuntu24-arm64', ci.baseline_dependencies(record, 'ubuntu24-arm64'))
+    checksums['sima-neat-core.deb'] = 'b'*64
+    assert ci.baseline_identity('ubuntu24-arm64', ci.baseline_dependencies(record, 'ubuntu24-arm64')) == first
+    checksums['platform-source.json'] = 'b'*64
+    assert ci.baseline_identity('ubuntu24-arm64', ci.baseline_dependencies(record, 'ubuntu24-arm64')) != first
+    with pytest.raises(ValueError, match='lacks baseline provenance'):
+        ci.baseline_dependencies({'resources-checksum': {}}, 'ubuntu24-arm64')
+
+
+def test_core_consumes_registry_images_without_a_baseline_producer():
+    import yaml
+    workflow = yaml.safe_load((HERE.parents[2]/'.github/workflows/pcie-offline.yml').read_text())
+    assert 'prepare-card' not in workflow['jobs']
+    assert 'actions/cache' not in (HERE.parents[2]/'.github/workflows/pcie-offline.yml').read_text()
+    source = (HERE/'ci.py').read_text()
+    assert "run('docker', 'build'" not in source
+    assert "run('docker', 'push'" not in source
+    assert not list(HERE.glob('*.Dockerfile'))
+
+
+def baseline_record():
+    return {'resources-checksum': {name: 'a'*64 for name in (
+        'platform_provider.py', 'platform-source.json')}}
+
+
+@pytest.mark.parametrize('role', ['card', 'ubuntu24-arm64'])
+@pytest.mark.parametrize('fault', [None, 'labels', 'architecture'])
+def test_baseline_resolution_pulls_only_digest_and_checks_provenance(tmp_path, role, fault):
+    import json
+    args = SimpleNamespace(sha=SHA, work=tmp_path)
+    (tmp_path/'manifest.json').write_text('{"platform-version":"3.0.0"}')
+    config = ci.baseline_config()
+    key = (config['legacy_card']['inputs_sha256'] if role == 'card' else
+           ci.baseline_identity(role, ci.baseline_dependencies(baseline_record(), role)))
+    digest = config['legacy_card']['digest'] if role == 'card' else 'sha256:'+'b'*64
+    local_id = 'sha256:'+'c'*64
+    labels = {'ai.sima.offline.'+name: value for name, value in
+              [('inputs', key), ('recipe', config['recipe_sha256']), ('role', role)]}
+    if fault == 'labels':
+        labels['ai.sima.offline.inputs'] = 'd'*64
+    info = {'Architecture': 'amd64' if fault == 'architecture' else 'arm64',
+            'Config': {'Labels': labels}, 'Id': local_id}
+    result = SimpleNamespace(returncode=0, stdout=json.dumps({'Descriptor': {'digest': digest}}))
+    with patch.object(ci.subprocess, 'run', return_value=result) as manifest, \
+         patch.object(ci, 'run', side_effect=['', json.dumps([info])]) as command:
+        if fault:
+            with pytest.raises(ValueError, match='provenance|architecture'):
+                ci.pull_baseline(args, role, baseline_record(), tmp_path)
+            assert not (tmp_path/'baseline-images.json').exists()
+        else:
+            assert ci.pull_baseline(args, role, baseline_record(), tmp_path) == local_id
+            evidence = json.loads((tmp_path/'baseline-images.json').read_text())
+            assert evidence[role]['image'] == config['repository']+'@'+digest
+            assert evidence[role]['inputs_sha256'] == key
+        assert command.call_args_list[0].args == ('docker', 'pull', config['repository']+'@'+digest)
+        if role == 'card':
+            manifest.assert_not_called()
+        else:
+            manifest.assert_called_once()
+
+
+def test_missing_host_baseline_fails_without_local_build(tmp_path):
+    result = SimpleNamespace(returncode=1, stderr='manifest unknown')
+    with patch.object(ci.subprocess, 'run', return_value=result), patch.object(ci, 'run') as docker:
+        with pytest.raises(RuntimeError, match='Publish matching images with Vulcan'):
+            ci.pull_baseline(SimpleNamespace(sha=SHA, work=tmp_path), 'ubuntu24-arm64', baseline_record())
+        docker.assert_not_called()
+
+
+def test_card_image_pin_is_independent_of_packages_under_test(tmp_path):
+    import json
+    config = ci.baseline_config()
+    (tmp_path/'manifest.json').write_text('{"platform-version":"3.0.0"}')
+    info = {'Architecture': 'arm64', 'Id': config['legacy_card']['digest'], 'Config': {'Labels': {
+        'ai.sima.offline.inputs': config['legacy_card']['inputs_sha256'],
+        'ai.sima.offline.recipe': config['recipe_sha256'], 'ai.sima.offline.role': 'card'}}}
+    with patch.object(ci.subprocess, 'run') as manifest, \
+         patch.object(ci, 'run', side_effect=['', json.dumps([info])]*2) as docker:
+        for sha in ('a'*40, 'b'*40):
+            record = {'resources-checksum': {name: sha for name in (
+                'simaai-scheduler.deb', 'resolved-deps-manifest.json', 'scheduler_platform_admission.py')}}
+            assert ci.pull_baseline(SimpleNamespace(sha=sha, work=tmp_path), 'card', record, tmp_path) == config['legacy_card']['digest']
+        pulls = [call.args for call in docker.call_args_list if call.args[:2] == ('docker', 'pull')]
+        assert pulls == [('docker', 'pull', config['repository']+'@'+config['legacy_card']['digest'])]*2
+        manifest.assert_not_called()
+
+
+@pytest.mark.parametrize('field,value', [('digest', 'latest'), ('inputs_sha256', 'invalid')])
+def test_invalid_legacy_card_pin_is_rejected_before_docker(tmp_path, field, value):
+    config = ci.baseline_config()
+    config['legacy_card'][field] = value
+    (tmp_path/'manifest.json').write_text('{"platform-version":"3.0.0"}')
+    with patch.object(ci, 'baseline_config', return_value=config), patch.object(ci, 'run') as docker:
+        with pytest.raises(ValueError, match='invalid legacy card baseline'):
+            ci.pull_baseline(SimpleNamespace(sha=SHA, work=tmp_path), 'card', {}, tmp_path)
+        docker.assert_not_called()
+
+
+def official_card_fixture(root):
+    import json
+    (root/'manifest.json').write_text('{"platform-version":"3.0.1"}')
+    policy = {'sysroot_version': '3.0.1', 'elxr_version': '3.0.1_master_B2796'}
+    (root/'resolved-deps-manifest.json').write_text(json.dumps({
+        'scheduler': {'buildinfo': {'build_platform': policy}}}))
+    return {'schema': 1, 'role': 'card', 'architecture': 'arm64', 'os_id': 'elxr', 'os_version': '26.04',
+            'sysroot_version': '3.0.1', 'sdk_firmware': '3.0.1_master_B2796',
+            'devkit_firmware': '3.0.1_master_B2798',
+            'image': ci.baseline_config()['repository']+'@sha256:'+'b'*64,
+            'inputs_sha256': 'c'*64, 'recipe_sha256': 'd'*64}
+
+
+def test_official_card_pulls_qualified_digest_and_records_receipt(tmp_path):
+    import json
+    receipt = official_card_fixture(tmp_path)
+    args = SimpleNamespace(bucket='artifact-bucket', work=tmp_path)
+
+    def fetch(bucket, key, path, optional):
+        assert (bucket, key, optional) == (
+            args.bucket, 'core/offline-card-baseline-v1-3.0.1-3.0.1_master_B2796.json', True)
+        path.write_text(json.dumps(receipt))
+        return True
+
+    image_id = 'sha256:'+'e'*64
+    info = {'Id': image_id, 'Architecture': 'arm64', 'Config': {'Labels': {
+        'ai.sima.offline.inputs': 'c'*64, 'ai.sima.offline.recipe': 'd'*64, 'ai.sima.offline.role': 'card'}}}
+    with patch.object(ci, 'download', side_effect=fetch), \
+         patch.object(ci, 'run', side_effect=['', json.dumps([info])]) as docker:
+        assert ci.pull_baseline(args, 'card', {}, tmp_path) == image_id
+    assert docker.call_args_list[0].args == ('docker', 'pull', receipt['image'])
+    evidence = json.loads((tmp_path/'baseline-images.json').read_text())['card']
+    assert evidence['receipt_sha256'] == ci.assemble.sha(tmp_path/'qualified-card-baseline.json')
+    assert evidence['devkit_firmware'] == receipt['devkit_firmware']
+
+
+@pytest.mark.parametrize('fault', ['missing', 'wrong-sdk', 'mutable-image'])
+def test_unqualified_official_card_never_falls_back_to_legacy(tmp_path, fault):
+    import json
+    receipt = official_card_fixture(tmp_path)
+    if fault == 'wrong-sdk':
+        receipt['sdk_firmware'] = '3.0.1_master_B2780'
+    elif fault == 'mutable-image':
+        receipt['image'] = ci.baseline_config()['repository']+':latest'
+
+    def fetch(bucket, key, path, optional):
+        if fault == 'missing':
+            return False
+        path.write_text(json.dumps(receipt))
+        return True
+
+    with patch.object(ci, 'download', side_effect=fetch), patch.object(ci, 'run') as docker:
+        with pytest.raises(ValueError, match='qualified card baseline'):
+            ci.pull_baseline(SimpleNamespace(bucket='bucket', work=tmp_path), 'card', {}, tmp_path)
+    docker.assert_not_called()
+
+
+@pytest.mark.parametrize('core', [False, True])
+def test_republished_inputs_rebuild_and_promote_staged_metadata(tmp_path, core):
+    import json
+    args = SimpleNamespace(core=core, ref='develop', sha=SHA, bucket='bucket',
+                           distro='ubuntu22', arch='amd64')
+    inputs = {'card': 'c'*64} if core else INPUTS
+    old_inputs = {**inputs, 'card': 'e'*64}
+    names = ci.metadata_names(args)
+    objects = {}
+    for filename in names:
+        if core:
+            name = ci.assemble.CORE_ARCHIVE_NAME
+            resources = {name: 'd'*64}
+            if filename == 'metadata.json':
+                resources['sima-neat-1-Linux-extras.tar.gz'] = 'f'*64
+            data = {'version': '0.6.0+develop.'+SHA[:12], 'resources': list(resources),
+                    'resources-checksum': resources, 'installation': {'script': ''},
+                    'artifact': {'type': 'offline', 'repository': 'core',
+                                 'package_path': 'offline', 'distro': 'elxr26', 'arches': ['arm64']}}
+        else:
+            data = metadata()
+        data['source_metadata_sha256'] = old_inputs
+        objects[ci.artifact_prefix(args)+'/'+filename] = json.dumps(data)
+
+    def download(bucket, key, path, optional=False):
+        if key not in objects:
+            return False
+        path.write_text(objects[key])
+        return True
+
+    with patch.object(ci, 'download', side_effect=download), patch.object(ci, 'verify_uploaded') as verify:
+        # Previously published metadata is structurally valid but has older LLiMa inputs.
+        assert ci.existing(args, tmp_path, inputs) is None
+        verify.assert_not_called()
+        # A staged generation is eligible only after it matches current inputs.
+        for filename in names:
+            data = json.loads(objects[ci.artifact_prefix(args)+'/'+filename])
+            data['source_metadata_sha256'] = inputs
+            data['resources'] = [ci.resource_name(name, digest)
+                                 for name, digest in data['resources-checksum'].items()]
+            data['resources-checksum'] = {ci.resource_name(name, digest): digest
+                                          for name, digest in data['resources-checksum'].items()}
+            objects[ci.staging_prefix(args, inputs)+'/'+filename] = json.dumps(data)
+        ready = ci.existing(args, tmp_path, inputs)
+        assert set(ready) == set(names)
+        assert all(path.name.endswith('.pending') for path in ready.values())
+        assert verify.call_count == (3 if core else 1)
+        # Old downloaded metadata still names its original bytes.
+        assert json.loads(objects[ci.artifact_prefix(args)+'/'+names[0]])['source_metadata_sha256'] == old_inputs
+
+
+def test_changed_inputs_do_not_hide_invalid_publication(tmp_path):
+    import json
+    args = SimpleNamespace(core=False, ref='develop', sha=SHA, bucket='bucket',
+                           distro='ubuntu22', arch='amd64')
+    data = metadata()
+    data['source_metadata_sha256'] = {**INPUTS, 'card': 'e'*64}
+    data['installation']['script'] = 'unexpected.sh'
+    def download(bucket, key, path, optional=False):
+        path.write_text(json.dumps(data))
+        return True
+    with patch.object(ci, 'download', side_effect=download):
+        with pytest.raises(ValueError, match='differs'):
+            ci.existing(args, tmp_path, INPUTS)
+
+
+def test_generation_staging_isolated_when_dependency_changes():
+    args = SimpleNamespace(core=False, ref='develop', sha=SHA, distro='ubuntu22', arch='amd64')
+    assert ci.staging_prefix(args, INPUTS) != ci.staging_prefix(args, {**INPUTS, 'card': 'e'*64})
+    assert ci.staging_prefix(args, INPUTS) == ci.staging_prefix(args, dict(reversed(list(INPUTS.items()))))
+
+
+def test_promotion_replaces_metadata_only_after_rechecking_sources(tmp_path):
+    args = SimpleNamespace(work=tmp_path/'publish', ref='develop', sha=SHA,
+                           bucket='bucket', kms='', distribution='')
+    def existing(args, work, inputs):
+        return {name: work/(name+'.pending') for name in ci.metadata_names(args)}
+    with patch.object(ci, 'source_metadata', return_value=({}, {}, INPUTS)) as source, \
+         patch.object(ci, 'existing', side_effect=existing), patch.object(ci, 'put') as put:
+        ci.publish(args)
+    assert source.call_count == 10
+    assert put.call_count == 6
+    assert all(not call.kwargs.get('immutable', False) for call in put.call_args_list)
+
+
+def test_online_republication_during_promotion_publishes_nothing(tmp_path):
+    args = SimpleNamespace(work=tmp_path/'publish', ref='develop', sha=SHA,
+                           bucket='bucket', kms='', distribution='')
+    changed = {**INPUTS, 'card': 'e'*64}
+    def source(args, work):
+        return {}, {}, changed if work.name.startswith('source-recheck') else INPUTS
+    with patch.object(ci, 'source_metadata', side_effect=source), \
+         patch.object(ci, 'existing', return_value={'metadata-offline.json': tmp_path/'metadata-offline.json.pending'}), \
+         patch.object(ci, 'put') as put:
+        with pytest.raises(ValueError, match='changed before offline promotion'):
+            ci.publish(args)
+        put.assert_not_called()
+
+
+def test_matching_publication_with_corrupt_archive_still_fails(tmp_path):
+    import json
+    args = SimpleNamespace(core=False, ref='develop', sha=SHA, bucket='bucket',
+                           distro='ubuntu22', arch='amd64')
+    def download(bucket, key, path, optional=False):
+        path.write_text(json.dumps(metadata()))
+        return True
+    with patch.object(ci, 'download', side_effect=download), \
+         patch.object(ci, 'verify_uploaded', side_effect=ValueError('uploaded object checksum differs')):
+        with pytest.raises(ValueError, match='checksum'):
+            ci.existing(args, tmp_path, INPUTS)
+
+
+def test_different_card_snapshots_across_variants_publish_nothing(tmp_path):
+    args = SimpleNamespace(work=tmp_path/'publish', ref='develop', sha=SHA,
+                           bucket='bucket', kms='', distribution='')
+    def source(args, work):
+        return {}, {}, {**INPUTS, 'card': 'e'*64} if args.core else INPUTS
+    with patch.object(ci, 'source_metadata', side_effect=source), \
+         patch.object(ci, 'existing', return_value={'metadata-offline.json': tmp_path/'metadata-offline.json.pending'}), \
+         patch.object(ci, 'put') as put:
+        with pytest.raises(ValueError, match='changed across offline variants'):
+            ci.publish(args)
+        put.assert_not_called()
+
+
+@pytest.mark.parametrize('name,expected', [
+    ('neat-core-offline-installer.tar.gz', 'neat-core-offline-installer-abcdef01.tar.gz'),
+    ('neat-pcie-offline-installer.tar.gz', 'neat-pcie-offline-installer-abcdef01.tar.gz'),
+    ('sima-neat-0.6.0-Linux-extras.tar.gz', 'sima-neat-0.6.0-Linux-extras-abcdef01.tar.gz'),
+])
+def test_resource_name_has_short_hash_before_archive_extension(name, expected):
+    assert ci.resource_name(name, 'abcdef012345' + '0'*52) == expected
+
+
+def test_resource_upload_does_not_overwrite_short_hash_collision(tmp_path):
+    import subprocess
+    path = tmp_path/'bundle.tar.gz'
+    path.write_bytes(b'new bundle')
+    with patch.object(ci, 'put', side_effect=subprocess.CalledProcessError(1, 'aws')) as put, \
+         patch.object(ci, 'verify_uploaded', side_effect=ValueError('uploaded object checksum differs')) as verify:
+        with pytest.raises(ValueError, match='checksum differs'):
+            ci.put_resource('bucket', 'bundle-short.tar.gz', path, '')
+    assert put.call_args.kwargs == {'immutable': True}
+    verify.assert_called_once_with('bucket', 'bundle-short.tar.gz', ci.assemble.sha(path))
+
+
+def test_resource_upload_reuses_existing_full_digest(tmp_path):
+    import subprocess
+    path = tmp_path/'bundle.tar.gz'
+    path.write_bytes(b'same bundle')
+    with patch.object(ci, 'put', side_effect=subprocess.CalledProcessError(1, 'aws')), \
+         patch.object(ci, 'verify_uploaded') as verify:
+        ci.put_resource('bucket', 'bundle-short.tar.gz', path, '')
+    verify.assert_called_once_with('bucket', 'bundle-short.tar.gz', ci.assemble.sha(path))

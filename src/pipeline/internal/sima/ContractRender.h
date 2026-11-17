@@ -25,6 +25,13 @@
 
 namespace simaai::neat {
 
+// Read-only metadata projection of an already compiled stage. These functions
+// do not resolve an execution target, prepare kernels, or change arena placement.
+pipeline_internal::sima::StageStaticSpec
+project_processcvu_stage_contract(const CompiledProcessCvuContract& compiled);
+pipeline_internal::sima::StageStaticSpec
+project_mla_stage_contract(const CompiledMlaContract& compiled);
+
 /**
  * @brief Render a `SimaPluginStaticManifest` from a fully compiled pipeline contract set.
  *

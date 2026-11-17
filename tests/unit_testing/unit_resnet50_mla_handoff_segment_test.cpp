@@ -5,9 +5,11 @@
 #include "nodes/groups/ModelGroups.h"
 #include "pipeline/internal/contract/ContractCompiler.h"
 #include "pipeline/internal/sima/CompiledProcessCvuContractQuery.h"
-#include "pipeline/internal/sima/static_contract/FrameSlotArenaPlan.h"
+#include "pipeline/internal/sima/ContractRender.h"
+#include "pipeline/internal/sima/StageMemoryPolicy.h"
 #include "test_main.h"
 
+#include <algorithm>
 #include <cstdlib>
 #include <cstdint>
 #include <filesystem>
@@ -128,15 +130,21 @@ RUN_TEST(
       require(mla_runtime.input_bindings.front().source_segment_name == handoff->segment_name,
               "ResNet50 MLA input must bind the exact typed preproc segment; aliases must not "
               "replace the compiler-authored transform name");
-      using pipeline_internal::sima::FrameArenaRole;
-      namespace sc = pipeline_internal::sima::static_contract;
-      require(mla_runtime.frame_arena_role == FrameArenaRole::ReuseInput &&
-                  mla_runtime.frame_arena_storage_domain == sc::ArenaStorageDomain::Cma &&
-                  (mla_runtime.frame_arena_required_device_access &
-                   static_cast<std::uint32_t>(sc::ArenaDeviceAccess::Ev74)) != 0U,
-              "ResNet50 MLA-to-graph227 must retain the shared EV-visible CMA arena; terminal "
-              "inference rendering must not detach an MLA output that still has an exact CVU "
-              "consumer in the physical DAG");
+      namespace client = simaai::scheduler::client;
+      auto manifest = render_manifest_from_compiled_contracts(compiled, {}, &diagnostics);
+      require(manifest && diagnostics.errors.empty(), "ResNet50 MLA-only route must render");
+      pipeline_internal::sima::finalize_pipeline_storage(*manifest);
+      const auto final_mla =
+          std::find_if(manifest->stages.begin(), manifest->stages.end(),
+                       [](const auto& stage) { return bool(stage.mla_program); });
+      require(final_mla != manifest->stages.end() && final_mla->frame_layout &&
+                  !final_mla->frame_layout->outputs.empty(),
+              "ResNet50 selected MLA route must finalize its owned output");
+      const auto& layout = *final_mla->frame_layout;
+      const auto& span = layout.outputs.front().span;
+      require(layout.allocations.at(span.allocation_index).policy ==
+                  client::AllocationPolicy::RequireDms,
+              "MLA-only output must use DMS when its EV74 egress is not selected");
       // The canonical handoff alias (output_tessellated_image) is no longer
       // surfaced verbatim in the MLA bindings/inputs; the bindings now carry the
       // upstream MPK transform name. The canonical handoff alias is still used

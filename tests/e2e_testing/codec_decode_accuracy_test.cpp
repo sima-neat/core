@@ -109,7 +109,8 @@ void run_case(const std::string& name, std::vector<Sample> frames,
   const std::size_t frame_bytes = static_cast<std::size_t>(width * height * 3 / 2);
   require(reference.size() >= frames.size() * frame_bytes, "short software reference");
   for (std::size_t i = 0; i < frames.size(); ++i) {
-    frames[i].frame_id = static_cast<int64_t>(i);
+    // Source identity is not decode/presentation order; zero is an explicit valid ID.
+    frames[i].frame_id = i == 0 ? 0 : 1009 + static_cast<int64_t>(i) * 37;
     frames[i].stream_id = name;
     frames[i].attributes["fixture-frame"] = std::to_string(i);
   }
@@ -155,8 +156,7 @@ void run_case(const std::string& name, std::vector<Sample> frames,
       require(out.dts_ns == expected.dts_ns && out.duration_ns == expected.duration_ns,
               "frame timing changed");
       require(out.stream_id == expected.stream_id, "stream identity changed");
-      // Ordinary decoder output uses presentation-order IDs; attributes retain source identity.
-      require(out.frame_id == static_cast<int64_t>(i), "decoder output sequence changed");
+      require(out.frame_id == expected.frame_id, "decoder source frame identity changed");
       require(out.attributes == expected.attributes, "frame attributes shifted");
       auto pixels = visible_pixels(out, i420, width, height);
       int max_error = 0;

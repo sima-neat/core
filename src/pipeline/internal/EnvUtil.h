@@ -163,7 +163,6 @@ inline const DebugProfileRule* debug_profile_rule(const char* key) {
       {"SIMA_GST_STAGE_TIMINGS", "gst", 1},
       {"SIMA_INPUTSTREAM_ALLOC_DEBUG", "inputstream", 1},
       {"SIMA_INPUTSTREAM_DEBUG", "inputstream", 1},
-      {"SIMA_INPUTSTREAM_DOT_ON_TIMEOUT", "inputstream", 2},
       {"SIMA_INPUTSTREAM_EOS_DEBUG", "inputstream", 1},
       {"SIMA_INPUTSTREAM_HOLDER_DEBUG", "inputstream", 1},
       {"SIMA_INPUTSTREAM_META_DEBUG", "inputstream", 1},
@@ -392,6 +391,17 @@ inline bool env_truthy(const char* key) {
     return false;
   }
   return true;
+}
+
+// Trace knobs read on every frame are resolved once per process, like InputStreamDebugFlags.
+inline bool sample_timing_debug_enabled() {
+  static const bool enabled = env_bool("SIMA_SAMPLE_TIMING_DEBUG", false);
+  return enabled;
+}
+
+inline bool preproc_meta_trace_enabled() {
+  static const bool enabled = env_bool("SIMA_PREPROC_META_TRACE", false);
+  return enabled;
 }
 
 inline bool multi_io_bundled_appsrc_enabled() {

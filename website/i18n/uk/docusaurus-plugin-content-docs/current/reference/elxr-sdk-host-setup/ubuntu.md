@@ -1,15 +1,15 @@
 ---
 title: "Нотатки щодо хоста Ubuntu."
-description: "Підготуйте хост Ubuntu для Neat SDK та DevKit-Sync."
+description: "Підготуйте хост Ubuntu для Palette SDK та DevKit-Sync."
 sidebar_position: 1
 ---
 
-Використовуйте цей посібник, якщо ваша хост-машина працює під управлінням Ubuntu, і ви хочете запустити Neat, середовище розробки (Neat SDK) з DevKit-Sync.
+Використовуйте цей посібник, якщо ваша хост-машина працює під управлінням Ubuntu, і ви хочете запустити Palette SDK з DevKit-Sync.
 
 ## Необхідні умови.
 
 - Ubuntu 22.04 або 24.04, використовується як хост.
-- Docker Engine встановлено та працює.
+- Docker Engine версії %%dependency.docker.minimum%% або новішої встановлено та працює. Перевірте версію командою `docker --version`.
 - `sima-cli` встановлено на хості.
 - Modalix і DevKit повинні бути доступні в одній мережі.
 
@@ -81,4 +81,4 @@ sudo nmcli connection up "<connection-name>"
 
 ## Наступний крок.
 
-Поверніться до [Neat SDK](/getting-started/dev-environment/) і продовжуйте встановлення/налаштування.
+Поверніться до [Palette SDK](/getting-started/dev-environment/) і продовжуйте встановлення/налаштування.

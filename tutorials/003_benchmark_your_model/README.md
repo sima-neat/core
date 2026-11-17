@@ -29,9 +29,9 @@ Start with the same compiled `.tar.gz` archive used by the earlier model tutoria
 
 ### Run the benchmark {#step-run-benchmark}
 
-Call `benchmark(samples)`. The API warms up the async model runner, measures an async push/pull window, prints a summary to stdout, and returns the same headline values in a `BenchmarkReport`.
+Call `benchmark(samples)`. The API warms up the model, measures single-flight latency, then measures throughput in a separate async push/pull pass, prints a summary to stdout, and returns the same headline values in a `BenchmarkReport`.
 
-The sample count is the number of measured synthetic inputs. Use a larger number for steadier throughput and power numbers; use a smaller number when you only want a quick smoke check.
+Each pass runs until it has measured at least `samples` inputs and 10 seconds have passed, so the throughput pass's power and temperature readings cover several samples. Set `BenchmarkOptions::min_duration_ms` to change that floor, or to 0 for a quick smoke check that stops each pass after `samples` inputs.
 
 Detection models whose route ends in BoxDecode can also use `BenchmarkOptions`. Set
 `original_width`, `original_height`, and `resize_mode` to describe the source-image geometry that
@@ -53,9 +53,74 @@ benchmark geometry takes precedence over deprecated BoxDecode geometry in `Model
 
 ### Read the report {#step-read-report}
 
-The returned report keeps only the headline fields most users need: average end-to-end latency in milliseconds, throughput in frames per second, average board power in watts when available, and measured energy in joules when available.
+The returned report starts with the headline fields most users need: average end-to-end latency in milliseconds, throughput in frames per second, average and peak SoM power in watts, and the energy in joules needed to process `samples` inputs. `throughput_duration_ms` reports how long the throughput pass ran.
 
-Power telemetry depends on board support. If the runtime cannot sample power rails on the current target, the benchmark still reports latency and throughput and leaves the power fields at zero.
+Power comes from Sentinel, the board telemetry daemon that the Neat installer sets up. `report.telemetry` also carries rail power, die and board temperatures, CPU utilization, and MLA memory for the throughput pass; see [Measure model execution](/develop-apps/development-workflow/model#power-and-board-telemetry) for each field. If Sentinel is not running, the benchmark still reports latency and throughput, leaves the power fields at zero, and sets `report.telemetry.status` to the reason.
+
+### Advanced: MLA layer and stage stats {#step-read-mla-stats}
+
+Two opt-in options run `mla-rt` after the benchmark to time the compiled MLA code. Both are
+disabled by default and need an idle devkit with no other MLA workloads. Add
+`--include-mla-layer-stats` or `--include-mla-stage-stats` to either tutorial command, or enable them
+through the API:
+
+```cpp
+simaai::neat::BenchmarkOptions options;
+options.include_mla_layer_stats = true;
+options.include_mla_stage_stats = true;
+auto report = model.benchmark(options);
+```
+
+```python
+options = pyneat.BenchmarkOptions()
+options.include_mla_layer_stats = True
+options.include_mla_stage_stats = True
+report = model.benchmark(options)
+```
+
+Read `report.mla_layer_stats.layers` for each compiled MLA layer's zero-based `stage_index`, `name`,
+and `latency_us`: the hardware run time from one profiling pass that runs that layer on its own.
+Zero-time no-op entries are retained. Layer latencies do not add up to the stage latency or the
+headline latency.
+
+Read `report.mla_stage_stats.stages` for each MLA stage's `stage_index` and `latency_us`: the mean
+hardware time of 200 uninterrupted runs of that stage. Stage latency includes MLA computation
+and the program's DRAM reads and writes. It excludes model loading, host and EV74 processing,
+and pipeline overhead.
+
+If `mla-rt` is missing, fails, or times out, `benchmark()` still returns the headline measurements,
+leaves the list empty, and sets `report.mla_layer_stats.status` or `report.mla_stage_stats.status`
+to the reason. Each status is `"not requested"` or `"ok"` otherwise. After an `mla-rt` run fails,
+times out, or crashes, MLA may still hold unfinished work, so later profiling in the same process
+is skipped with that reason. Keep the devkit idle until MLA recovery is verified.
+
+MLA layer stats follows the selected terminal policy: it measures only the MLA stages in the selected
+inference route, and each keeps its `stage_index` in the full model.
+
+### Save the report {#step-save-report}
+
+Call `report.save(path)` to write the complete report as YAML or JSON, including MLA layer and
+stage stats when requested:
+
+```cpp
+auto path = report.save("results/model/yolo_benchmark.yaml");
+auto json_path = report.save("results/model/yolo_benchmark.json");
+```
+
+```python
+path = report.save("results/model/yolo_benchmark.yaml")
+json_path = report.save("results/model/yolo_benchmark.json")
+```
+
+The `.json` extension selects JSON; `.yaml` and all other endings use YAML. The filename is preserved.
+
+Give a file path including the filename. Missing parent directories are created, an existing
+file is replaced, and the written path is returned. Saving is explicit; `benchmark()` does
+not create a report file automatically.
+
+For either tutorial command, append `--report results/model/yolo_benchmark.yaml`. Combine
+it with `--include-mla-layer-stats` or `--include-mla-stage-stats` to save the headline measurements
+together with the MLA timings.
 
 ## Run
 
@@ -75,8 +140,8 @@ python3 share/sima-neat/tutorials/003_benchmark_your_model/benchmark_your_model.
 
 **C++ (build from source):**
 ```bash
-./build.sh --target tutorial_003_benchmark_your_model
-./build/tutorials-standalone/tutorial_003_benchmark_your_model \
+./build.sh --all --no-doc
+./build/tutorials/tutorial_003_benchmark_your_model \
   --model /tmp/resnet_50.tar.gz --samples 100
 ```
 
@@ -86,14 +151,27 @@ Expected output (exact numbers depend on the model, board, and current load; the
 NEAT Benchmark
 Input: synthetic
 Samples: 100
-Latency:      12.4 ms
-FPS:          80.6
-Power avg:    2.3 W
-Energy:       2.8 J
-report_latency_ms=12.4
-report_fps=80.6
-report_avg_power_watts=2.3
-report_energy_joules=2.8
+Compiled batch: 1
+Measurement detail: e2e+throughput-only
+Latency: 1.97 ms
+FPS:     1457.04 inferences/s
+Batch throughput: 1457.04 batches/s
+Throughput window: 30.09 s, 43849 inputs
+Power:         13.19 W avg, 13.81 W peak (SoM)
+MLA power:     3.05 W avg, 3.25 W max
+Energy:        0.91 J for 100 inputs
+Die temp:      46.34 °C avg, 47.56 °C max
+CPU usage:     12.38 % avg, 13.22 % max
+MLA memory:    29.65 MiB
+Linux memory:  682.88 MiB avg, 697.41 MiB max
+Telemetry:     Sentinel main:766066b74f49, 15 samples
+report_latency_ms=1.96852
+report_fps=1457.04
+report_avg_power_watts=13.1875
+report_energy_joules=0.905085
+report_peak_power_watts=13.8125
+report_throughput_duration_ms=30094.5
+report_telemetry_status=ok
 [OK] 003_benchmark_your_model
 ```
 
@@ -108,5 +186,6 @@ For application performance, benchmark the real pipeline too. Synthetic model in
 `Model::benchmark()` requires concrete `input_specs()` dimensions. If an input shape is dynamic or non-concrete, the benchmark fails clearly instead of guessing a shape.
 
 ## Source Files
+
 - C++: `tutorials/003_benchmark_your_model/benchmark_your_model.cpp`
 - Python: `tutorials/003_benchmark_your_model/benchmark_your_model.py`

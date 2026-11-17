@@ -3,6 +3,7 @@ import pytest
 import pyneat as pn
 
 
+@pytest.mark.torch_interop
 def test_tensor_torch_roundtrip_cpu():
   torch = pytest.importorskip("torch")
 

@@ -1,16 +1,16 @@
 ---
 title: Ubuntu Host Notes
-description: Prepare an Ubuntu host for Neat SDK and DevKit-Sync
+description: Prepare an Ubuntu host for Palette SDK and DevKit-Sync
 sidebar_position: 1
 ---
 
-Use this guide when your host machine is Ubuntu and you want to run Neat
-Development Environment (referred to as Neat SDK) with DevKit-Sync.
+Use this guide when your host machine is Ubuntu and you want to run Palette SDK
+with DevKit-Sync.
 
 ## Prerequisites
 
 - Ubuntu 22.04 or 24.04 host.
-- Docker Engine installed and working.
+- Docker Engine %%dependency.docker.minimum%% or later, installed and working. Check the version with `docker --version`.
 - `sima-cli` installed on the host.
 - Modalix DevKit reachable on the same network.
 
@@ -89,4 +89,4 @@ host NFS export created by `sima-cli sdk setup --devkit`.
 
 ## Next step
 
-Return to [Neat SDK](/getting-started/dev-environment/) and continue with install/setup.
+Return to [Palette SDK](/getting-started/dev-environment/) and continue with install/setup.

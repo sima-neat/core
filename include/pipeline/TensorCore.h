@@ -74,14 +74,16 @@ struct Device {
  * Determines the framework's strategy for `map()` and lifetime management. `CpuOwned` is the
  * default — framework allocated, framework frees. `CpuExternal` wraps a foreign pointer
  * (cv::Mat data, NumPy array, mmap'd file). `GstSample` carries a reference to a GStreamer
- * buffer pool sample. `DeviceHandle` lives in accelerator memory (e.g., MLA scratchpad) and
+ * sample. That sample may retain a producer pool loan (`Auto`/`ZeroCopy`) or own an independent
+ * system-memory copy (`Owned`); the storage kind alone does not distinguish them.
+ * `DeviceHandle` lives in accelerator memory (e.g., MLA scratchpad) and
  * requires an explicit transfer for CPU access.
  * @ingroup tensors
  */
 enum class StorageKind {
   CpuOwned = 0, ///< Framework allocated; freed when the storage refcount hits zero.
   CpuExternal,  ///< Wraps a foreign pointer; lifetime tracked via `holder`.
-  GstSample,    ///< References a GStreamer pool sample; refcounted via GStreamer.
+  GstSample,    ///< Refcounted GStreamer carrier, either borrowed or independently allocated.
   DeviceHandle, ///< Lives in accelerator memory; CPU access requires an explicit transfer.
   Unknown,
 };
@@ -145,6 +147,7 @@ struct ImageSpec {
     NV12,    ///< 4:2:0 chroma with interleaved UV plane (camera-native on most chips).
     I420,    ///< 4:2:0 chroma with separate U and V planes.
     UNKNOWN,
+    NV16 = 6, ///< 4:2:2 chroma with a full-height interleaved UV plane.
   };
 
   PixelFormat format = PixelFormat::UNKNOWN; ///< Pixel format of the image data.
@@ -249,6 +252,10 @@ struct QuantSpec {
 struct TessSpec {
   std::vector<int64_t> slice_shape; ///< Per-axis tile dimensions.
   std::string format; ///< Tessellation format token (specific to the MLA hardware revision).
+  // Explicit checked storage description. Empty axes/zero bytes retain legacy
+  // format-only annotations, which do not prove a non-dense physical layout.
+  std::vector<int64_t> axes;     ///< D/H/W/C logical axes; -1 is an absent unit axis.
+  std::size_t storage_bytes = 0; ///< Exact tiled payload extent, including tile padding.
 
   /// Replace the slice shape (move-friendly).
   void set_slice_shape(std::vector<int64_t> shape) {
@@ -318,8 +325,8 @@ struct PreprocessAffine {
  * downstream BoxDecode (and any user code) uses these fields to map model-space coordinates
  * (e.g., detected boxes in 640×640) back to original image coordinates.
  *
- * The `affine_*` fields encode the full 2×3 affine transform from original image coordinates
- * to model input coordinates; invert this matrix to map detections back to the source frame.
+ * The `affine_*` fields encode the full 2×3 affine transform from model input coordinates
+ * to original image coordinates, matching preprocess publication and ROI affine metadata.
  * @ingroup tensors
  */
 struct PreprocessRuntimeMeta {
@@ -350,10 +357,10 @@ struct PreprocessRuntimeMeta {
   double affine_m10 = 0.0;      ///< 2×3 affine matrix element (row 1, col 0): y shear.
   double affine_m11 = 1.0;      ///< 2×3 affine matrix element (row 1, col 1): y scale.
   double affine_m12 = 0.0;      ///< 2×3 affine matrix element (row 1, col 2): y translation.
-  double affine_scale_x = 1.0;  ///< Scalar X scale factor from original to model coordinates.
-  double affine_scale_y = 1.0;  ///< Scalar Y scale factor from original to model coordinates.
-  double affine_offset_x = 0.0; ///< Scalar X offset (typically pad_left) in model coordinates.
-  double affine_offset_y = 0.0; ///< Scalar Y offset (typically pad_top) in model coordinates.
+  double affine_scale_x = 1.0;  ///< Scalar X scale factor from model to original coordinates.
+  double affine_scale_y = 1.0;  ///< Scalar Y scale factor from model to original coordinates.
+  double affine_offset_x = 0.0; ///< Scalar X offset in original-image coordinates.
+  double affine_offset_y = 0.0; ///< Scalar Y offset in original-image coordinates.
 
   bool roi_list_enabled = false; ///< True when runtime ROI-list metadata is intentionally present.
   std::vector<PreprocessRoi> rois; ///< Runtime ROI windows in output-slot order.
@@ -619,8 +626,8 @@ struct TensorRouteMeta {
   int logical_index = -1;           ///< Logical output index (user-facing).
   int backend_output_index = -1;    ///< Backend output index (per-stage; may differ from logical).
   int route_slot = -1;              ///< Internal route-graph slot ID.
-  int physical_index = -1;          ///< Physical memory index for packed outputs.
-  int memory_index = -1;            ///< Underlying memory pool index.
+  int physical_index = -1;          ///< Physical output index in the producing stage's contract.
+  int memory_index = -1;            ///< Memory selector in the current transport envelope.
   int64_t physical_byte_offset = 0; ///< Byte offset within the physical allocation.
   std::string name;                 ///< Logical (user-facing) name of this output tensor.
   std::string backend_name;         ///< Backend (kernel-side) name of this output.
@@ -678,7 +685,13 @@ struct Tensor {
   bool read_only = true;   ///< If true, framework refuses mutable `data_ptr<T>()` access.
   TensorRouteMeta route{}; ///< Routing metadata (output identity in multi-output models).
 
-  /// True iff this tensor is single-plane (no composite plane records).
+  /// True when an explicit physical tile description requires detessellation.
+  /// `is_dense()` continues to mean single-plane, not numerical storage order.
+  bool has_tiled_storage() const {
+    return semantic.tess && semantic.tess->storage_bytes != 0;
+  }
+
+  /// True iff this tensor is single-plane.
   bool is_dense() const {
     return planes.empty();
   }
@@ -699,6 +712,8 @@ struct Tensor {
 
   /// True iff strides describe a compact row-major layout with no internal padding.
   bool is_contiguous() const {
+    if (has_tiled_storage())
+      return false;
     if (shape.empty())
       return true;
     if (strides_bytes.empty())
@@ -737,7 +752,10 @@ struct Tensor {
     return *found;
   }
 
-  /// Map the underlying storage for access (delegates to `storage->map`).
+  /// Map this tensor for access, retaining its storage/producer loan. The
+  /// selected storage mapping applies byte_offset once; its accessible extent
+  /// may include trailing backing bytes. Custom mapping callbacks and existing
+  /// named-segment view bounds remain authoritative.
   Mapping map(MapMode mode) const;
 
   /// Convenience: map for read-only access.
@@ -748,7 +766,7 @@ struct Tensor {
   Mapping map_write() const {
     return map(MapMode::Write);
   }
-  /// Map a view of just this tensor's bytes (respecting `byte_offset`/strides).
+  /// Compatibility alias for map(); this does not narrow the mapping to shape.
   Mapping view(MapMode mode = MapMode::Read) const;
   /// Convenience: read-only `view`.
   Mapping view_read() const {
@@ -868,6 +886,9 @@ private:
     }
     if (!is_dense()) {
       throw std::runtime_error("Tensor::data_ptr: tensor is composite");
+    }
+    if (has_tiled_storage()) {
+      throw std::runtime_error("Tensor::data_ptr: tiled storage requires explicit detessellation");
     }
     if (!is_contiguous()) {
       throw std::runtime_error("Tensor::data_ptr: call cpu().contiguous() first");

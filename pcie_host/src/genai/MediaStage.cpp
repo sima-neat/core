@@ -127,6 +127,7 @@ Json MediaStage::encode(const GenerationRequest& r) {
             {"messages", Json::array()},
             {"max_new_tokens", r.max_new_tokens},
             {"enable_thinking", r.enable_thinking},
+            {"reasoning_effort", r.reasoning_effort},
             {"language", r.language},
             {"asr_task", r.asr_task == ASRTask::Translate ? "translate" : "transcribe"},
             {"tools", r.tools},

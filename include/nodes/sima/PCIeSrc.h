@@ -58,6 +58,10 @@ public:
   InputRole input_role() const override {
     return InputRole::Source;
   }
+  /// Live: frames arrive in real time.
+  bool is_live_source() const override {
+    return true;
+  }
   /// Whether the Node negotiates static or dynamic caps.
   NodeCapsBehavior caps_behavior() const override {
     return NodeCapsBehavior::Dynamic;

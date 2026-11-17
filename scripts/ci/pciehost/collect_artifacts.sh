@@ -38,8 +38,10 @@ if [[ "${#last_logs[@]}" -gt 0 ]]; then
   cp "${last_logs[0]}" "${ARTIFACT_DIR}/host/LastTest.log" || true
 fi
 
-run_card "gst-inspect-neatpciesrc.txt" gst-inspect-1.0 neatpciesrc
-run_card "gst-inspect-neatpciesink.txt" gst-inspect-1.0 neatpciesink
+run_card "gst-inspect-neatpciesrc.txt" env -u GST_PLUGIN_PATH \
+  GST_PLUGIN_PATH_1_0=/usr/lib/aarch64-linux-gnu/neat/gst-plugins gst-inspect-1.0 neatpciesrc
+run_card "gst-inspect-neatpciesink.txt" env -u GST_PLUGIN_PATH \
+  GST_PLUGIN_PATH_1_0=/usr/lib/aarch64-linux-gnu/neat/gst-plugins gst-inspect-1.0 neatpciesink
 run_card "pcie-pipeline-builder-version.txt" bash -lc "command -v pcie-pipeline-builder; pcie-pipeline-builder --help | head -n 80"
 
 queues="${QUEUE} ${STRESS_QUEUES}"

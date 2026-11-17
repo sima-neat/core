@@ -44,6 +44,7 @@ RUN_TEST(
         BuildResult build;
         build.pipeline_string = std::move(launch);
         build.diag = std::make_shared<DiagCtx>();
+        session_build_prepare_stage_contracts(build, "parse-audit-test");
         return session_build_parse_pipeline_or_throw(build, "parse-audit-test");
       };
 

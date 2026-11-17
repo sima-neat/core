@@ -1,10 +1,10 @@
 ---
-title: "Neat SDK"
-description: "迅速かつ効率的なエージェント対応の Neat アプリケーション開発のために、Neat SDK をセットアップしてください。"
+title: "Palette SDK"
+description: "迅速かつ効率的なエージェント対応の Neat アプリケーション開発のために、Palette SDK をセットアップしてください。"
 sidebar_position: 1
 ---
 
-Neat 開発環境（Neat SDK と呼ばれる）は、大規模な Neat アプリケーションを構築し、Modalix DevKit 上で検証するための、推奨されるホスト側のワークスペースです。これには、ビルドツール、モデルツール、ハードウェア接続、およびエージェントが使用できるソースコードが含まれており、これらすべてがコンテナ化されたワークフローに統合されています。
+Palette SDK は、大規模な Neat アプリケーションを構築し、Modalix DevKit 上で検証するための、推奨されるホスト側のワークスペースです。これには、ビルドツール、モデルツール、ハードウェア接続、およびエージェントが使用できるソースコードが含まれており、これらすべてがコンテナ化されたワークフローに統合されています。
 
 SDKは、以下の3つの場所を接続します。
 
@@ -21,7 +21,7 @@ DevKit Sync は、それらの場所を共有の `/workspace` で接続するた
 :::tip SDKのみを使用した、問題なく動作する状態
 SDKをインストールし、DevKitとペアリングしていない場合は、次の2つのステップのみを実行します。
 
-[環境をインストールします。](/getting-started/dev-environment/install-the-environment/)、
+[SDK のインストール](/getting-started/dev-environment/install-the-environment/)、
 次に[モデルを構築する](/compile-a-model/)を実行します。モデルのコンパイルは、SDK内で完全に実行されます。SDKを構成し、DevKit Syncを実行し、Model Compilerをインストールします（これはセットアップ中に提供されます）。また、Neat LibraryとPyNeatのページはオプションであり、必要に応じて、またはDevKitとペアリングした後にアクセスしてください。
 :::
 
@@ -30,9 +30,9 @@ SDKをインストールし、DevKitとペアリングしていない場合は�
     <h2>SDK に関する話題</h2>
     <p>SDKをインストールし、必要に応じて設定を変更したり、Model Compilerをインストールしたり、ペアになったDevKitを使用したりする場合は、オプションの構成項目を使用してください。</p>
     <ul class="overview-link-list">
-      <li><a class="overview-link-card" href="/getting-started/dev-environment/install-the-environment/"><strong>環境をインストールします。</strong><span>お使いの DevKit ソフトウェアのバージョンに合った SDK パッケージをインストールして設定してください。</span></a></li>
+      <li><a class="overview-link-card" href="/getting-started/dev-environment/install-the-environment/"><strong>SDK のインストール</strong><span>お使いの DevKit ソフトウェアのバージョンに合った SDK パッケージをインストールして設定してください。</span></a></li>
       <li><a class="overview-link-card" href="/getting-started/dev-environment/devkit-sync/"><strong>DevKit Sync</strong><span>ワークスペースの共有、ペアリングの更新、rsyncによる代替処理について理解する。 <code>dk</code> コマンドの実行。</span></a></li>
-      <li><a class="overview-link-card" href="/getting-started/dev-environment/offline-installation/"><strong>オフラインでのインストール</strong><span>ネットワーク環境が制限された環境向けに、SDKとModel Compilerパッケージをダウンロードしてください。</span></a></li>
+      <li><a class="overview-link-card" href="/getting-started/dev-environment/offline-installation/"><strong>オフラインでのインストール</strong><span>オフラインでのインストール用に、SDK と Model Compiler パッケージをダウンロードしてください。</span></a></li>
     </ul>
   </section>
 </div>
@@ -73,24 +73,24 @@ LLiMa を使用して GenAI モデルをコンパイルする場合、基本的�
 | Docker Engine を介した Ubuntu 22.04 および 24.04 | `x86_64` | はい | はい |
 | WSL および Docker Engine を介した Windows 11 | `x86_64` | はい | はい |
 | Docker Engine を介した Ubuntu 22.04 および 24.04 | `arm64` | はい | Model Compiler 2.1.2 以降 |
-| Colima を介した macOS 15.5 以降 | `arm64` | はい | Model Compiler 2.1.2 以降。Neat SDK の中にインストールしてください。 |
+| Colima を介した macOS 15.5 以降 | `arm64` | はい | Model Compiler 2.1.2 以降。Palette SDK の中にインストールしてください。 |
 
 :::note アーキテクチャ名
 `arm64`と`aarch64`は、同じ64ビットArmアーキテクチャです。macOSでは`arm64`として、Linuxでは`aarch64`として報告されます。同様に、`x86_64`と`amd64`も同じアーキテクチャです。ホスト（またはSDK内）で`uname -m`を実行して、どちらのアーキテクチャを使用しているかを確認してください。Model Compilerのインストールコマンドでは、`arm64`と`amd64`を使用します。詳細は、[Model Compiler をインストールしてください。](/getting-started/dev-environment/install-model-compiler/)を参照してください。
 :::
 
 :::note 特定のバージョンをインストールする
-標準インストールでは、現在サポートされているデフォルト設定が適用されます。`release-2.1`チャンネルは、[環境をインストールします。](/getting-started/dev-environment/install-the-environment/)ページで常に最新の2.1パッチリリースを追跡します。特定のSDK、Neat Library、またはModel Compilerバージョンを固定するには、[互換性ガイド](/getting-started/compatibility/)を参照してください。
+標準インストールでは、現在サポートされているデフォルト設定が適用されます。`%%release.sdk_channel%%`チャンネルは、[SDK のインストール](/getting-started/dev-environment/install-the-environment/)ページで常に最新の%%release.sdk_series%%パッチリリースを追跡します。特定のSDK、Neat Library、またはModel Compilerバージョンを固定するには、[互換性ガイド](/getting-started/compatibility/)を参照してください。
 :::
 
 ## SDKに含まれるツール
 
 SDK は、ペアになった DevKit 用のアプリケーションを開発する際に、[Neat Library](/getting-started/neat-library/) をインストールおよび更新するのに最適な場所です。
 
-ターミナル、VS Code、または Neat Insight を備えたブラウザから SDK にアクセスするには、[環境をインストールします。](/getting-started/dev-environment/install-the-environment/#access-the-sdk) を参照してください。
+ターミナル、VS Code、または Neat Insight を備えたブラウザから SDK にアクセスするには、[SDK のインストール](/getting-started/dev-environment/install-the-environment/#access-the-sdk) を参照してください。
 
 SDK のセットアップ中に、`sima-cli` が、対応する Model Compiler を自動的にインストールするように促します。モデルを自分でコンパイルまたは量子化する場合は、インストールしてください。事前にコンパイルされたモデルパッケージのみを使用する場合は、インストールをスキップできます。コンパイラのセットアップと使用方法については、[モデルを構築する](/compile-a-model/) を参照してください。
 
 ## 次のステップ
 
-まず、[環境をインストールします。](/getting-started/dev-environment/install-the-environment/) から始めましょう。
+まず、[SDK のインストール](/getting-started/dev-environment/install-the-environment/) から始めましょう。

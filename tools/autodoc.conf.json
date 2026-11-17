@@ -202,6 +202,7 @@
     },
     {
       "key": "sentinel",
+      "category_keys": {"peripherals": "sentinel-peripherals"},
       "title": "Sentinel",
       "repo": "https://github.com/sima-neat/sentinel.git",
       "branch": "main",

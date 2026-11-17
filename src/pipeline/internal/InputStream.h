@@ -17,6 +17,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <vector>
 
 namespace cv {
 class Mat;
@@ -31,6 +32,7 @@ struct SampleTimingOverrides;
 
 namespace pipeline_internal {
 struct DiagCtx;
+class InputPublicationMeasurement;
 } // namespace pipeline_internal
 
 struct InputStreamOptions {
@@ -88,11 +90,13 @@ struct InputStreamOptions {
   int stability_frames = 2;
   std::size_t max_input_bytes = 0;
   bool copy_output = true;
-  // Auto retains standard DMA-BUF payloads; copy_output remains the fallback
-  // for other storage. Explicit Owned disables this intent.
-  bool preserve_dmabuf_output = false;
+  // Auto retains actual DMA-BUFs and certified framework terminal host pools.
+  // copy_output remains the fallback for other storage; Owned disables retention.
+  bool preserve_framework_output = false;
   bool copy_input = false;
-  bool prepare_output_cpu_visible = false;
+  // Copy compressed payloads instead of forwarding their GstSample holder. Set for
+  // network egress segments, which keep what they are handed; raw input is unaffected.
+  bool copy_encoded_input = false;
   int holder_loan_credits = 0;
   bool holder_loan_credits_auto = false;
   int holder_loan_sample_window = 1;
@@ -123,6 +127,8 @@ struct InputStreamOptions {
   ResolvedShapeLimits shape_limits{};
   ByteGuardOrigin byte_guard_origin = ByteGuardOrigin::Unset;
   bool allow_ingress_cvu_format_renegotiation = false;
+  // Canonical wire shape selected by a directly bound Model tensor ingress.
+  std::vector<std::int64_t> model_input_shape;
   std::optional<OutputTensorOverride> output_override;
   std::function<void(const InputDropInfo&)> on_input_drop;
 };
@@ -141,6 +147,8 @@ public:
   explicit operator bool() const noexcept;
   bool can_push() const noexcept;
   bool can_pull() const noexcept;
+  std::shared_ptr<pipeline_internal::InputPublicationMeasurement>
+  input_publication_measurement() noexcept;
 
   static InputStream create(GstElement* pipeline, GstElement* appsrc, GstElement* appsink,
                             const SampleSpec& spec, const InputOptions& src_opt,
@@ -172,7 +180,14 @@ public:
   InputStreamStats stats() const;
   std::string diagnostics_summary() const;
   std::shared_ptr<pipeline_internal::DiagCtx> diag_ctx() const;
+  // Finalized policy retained by the actual stream, not the caller's build
+  // options. Absence means no State; neither result certifies retirement.
+  std::optional<pipeline_internal::InputStreamTeardownPolicy>
+  effective_teardown_policy() const noexcept;
   GstElement* pipeline_handle() const;
+  // Owned reference (caller unrefs) taken under the teardown lock, or nullptr once stop() or
+  // close() has released the pipeline. Use this from threads that can race stop().
+  GstElement* acquire_pipeline_ref() const;
   void set_on_caps_change(std::function<void(const SampleSpec&, const SampleSpec&)> cb);
 
   void close();

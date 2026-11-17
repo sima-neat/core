@@ -113,6 +113,8 @@ graph.add(pyneat.nodes.queue(queue))
 
 `Run::pull(...)`는 출력 경계에서 다음 사용 가능한 `Sample`을 반환합니다.
 
+애플리케이션은 입력 제출을 잠시 멈췄다가 같은 `Run`에서 재개할 수 있으며, 출력이 없다는 이유만으로 실패하지 않습니다. 유한한 `pull()` 타임아웃은 해당 대기를 끝내지만 Run을 중지하지는 않습니다. `RunOptions::input_timeout_ms`는 입력 모드 `Graph::run()`과 지원되는 시드 기반 빌드 사전 검증의 출력 대기 시간을 제어합니다. `Run::run()`과 `Model::run()`은 호출별 제한 시간을 대신 사용하며, `pull(-1)`과 마찬가지로 `-1`은 무제한입니다. 처리 정지 감지가 필요한 애플리케이션은 진행 중인 작업에 기한을 설정해야 합니다.
+
 타임아웃과 EOS가 동일한 “샘플 없음” 경로를 공유할 수 있는 경우 편리한 오버로드를 사용하세요.
 
 ```cpp
@@ -149,7 +151,9 @@ case simaai::neat::PullStatus::Error:
 - 전체 푸시-출력 지연 시간 및 처리량
 - 푸시, 풀, 삭제된 샘플에 대한 런타임 카운터
 - `MeasureOptions`에서 요청할 경우 플러그인/커널 및 에지 타이밍
-- 실행 시 전력 모니터링이 활성화된 경우 선택적 전력 텔레메트리
+- 더 이상 사용되지 않는 `RunOptions::power_monitor`를 활성화한 경우 이 모니터가 측정한 전력
+
+같은 구간의 보드 전력, 온도, CPU 사용률, 메모리는 [`TelemetryMonitor`](/develop-apps/development-workflow/model#record-board-telemetry)로 기록합니다.
 
 측정되는 핵심 루프 외부에서 설정, 파일 다운로드, 프레임별 로깅 및 보고서 내보내기를 수행하되, 질문이 전체 애플리케이션 비용에 관한 것이라면 예외입니다.
 

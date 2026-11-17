@@ -8,10 +8,15 @@ const repoRoot = path.resolve(websiteRoot, "..");
 const locales = ["ko", "ja", "zh-Hant", "uk"];
 const categoryPrefix = "sidebar.docs.category.";
 const protectedLabels = new Set([
-  "API", "GenAI", "Insight", "Model Compiler API", "Neat Library", "Neat SDK",
-  "appzoo", "device", "mla", "modelzoo", "neat", "packages", "playbooks",
-  "pyneat", "sdk", "sima-cli",
+  "API", "GenAI", "Insight", "Model Compiler API", "Neat Library", "Palette SDK",
+  "Sentinel", "pyneat", "sima-cli",
 ]);
+// sima-cli command names keep their English spelling. Listed by key, because
+// a label such as `peripherals` can also name a category that needs translating.
+const protectedKeys = new Set(
+  ["appzoo", "device", "mla", "modelzoo", "neat", "packages", "peripherals", "playbooks", "sdk"]
+    .map((command) => `tools/sima-cli/${command}`),
+);
 const requiredLabels = new Set([
   "Advanced Concepts", "Application Design", "Build & Test", "Cameras & Streaming",
   "Compile a Model", "Contracts & Internals", "Contribute", "Data & Model Contracts",
@@ -82,8 +87,16 @@ for (const locale of locales) {
   }
   for (const [id, translation] of Object.entries(catalog)) {
     if (!id.startsWith(categoryPrefix)) continue;
-    const englishLabel = id.slice(categoryPrefix.length);
-    if (translation.message === englishLabel && !protectedLabels.has(englishLabel)) {
+    // Imported categories are keyed by path; the description names the label.
+    const englishLabel =
+      /^The label for category '(.*)' in sidebar /.exec(translation.description ?? "")?.[1] ??
+      id.slice(categoryPrefix.length);
+    const key = id.slice(categoryPrefix.length);
+    if (
+      translation.message === englishLabel &&
+      !protectedLabels.has(englishLabel) &&
+      !protectedKeys.has(key)
+    ) {
       failures.push(`${locale} sidebar category remains in English: ${englishLabel}`);
     }
   }

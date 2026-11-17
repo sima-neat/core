@@ -156,6 +156,18 @@ void check_rtp_jpeg_depacketize_node() {
   require(spec.format == "JPEG", "RTPJpegDepacketize format mismatch");
 }
 
+void check_drop_on_latency_default() {
+  require(simaai::neat::nodes::groups::RtspEncodedInputOptions{}.drop_on_latency,
+          "RtspEncodedInputOptions should drop on latency by default");
+  require(simaai::neat::nodes::groups::RtspDecodedInputOptions{}.drop_on_latency,
+          "RtspDecodedInputOptions should drop on latency by default");
+  require_contains(simaai::neat::nodes::RTSPInput("rtsp://example.local/live")->backend_fragment(0),
+                   "drop-on-latency=true", "RTSPInput should drop on latency by default");
+  require_not_contains(simaai::neat::nodes::RTSPInput("rtsp://example.local/live", 200, true, false)
+                           ->backend_fragment(0),
+                       "drop-on-latency", "RTSPInput should allow disabling drop-on-latency");
+}
+
 void check_h264_encoded_group() {
   static_assert(static_cast<int>(simaai::neat::nodes::groups::RtspCodec::H264) == 0);
   static_assert(simaai::neat::nodes::groups::RtspCodec::AVC ==
@@ -838,6 +850,7 @@ void check_invalid_codec_errors() {
 int main() {
   try {
     check_rtp_jpeg_depacketize_node();
+    check_drop_on_latency_default();
     check_h264_encoded_group();
     check_h264_auto_caps_fixup();
     check_h264_explicit_fallback_caps_without_probe();

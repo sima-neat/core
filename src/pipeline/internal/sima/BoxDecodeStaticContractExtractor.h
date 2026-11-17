@@ -68,8 +68,25 @@ struct BoxDecodeTensorStaticContract {
   std::uint64_t source_size_bytes = 0;  ///< Size in bytes within the source physical buffer.
   BoxDecodeSourceStorageKind source_storage_kind =
       BoxDecodeSourceStorageKind::Unknown; ///< Source byte layout for kernel access.
-  BoxDecodeTensorRole role = BoxDecodeTensorRole::Unknown; ///< Semantic SuperPoint tensor role.
+  BoxDecodeTensorRole role =
+      BoxDecodeTensorRole::Unknown; ///< SuperPoint/Segment Anything tensor role.
+  /// Explicit linear byte strides in input_shape axis order; empty for packed storage.
+  std::vector<std::int64_t> stride_bytes;
 };
+
+/// Canonical linear HWC storage facts. Computes addressed span, not allocation capacity.
+struct BoxDecodeLinearStorage {
+  std::vector<std::int64_t> stride_bytes;
+  std::uint64_t span_bytes = 0;
+};
+
+/// Normalize declared logical axes/strides without touching or copying the payload.
+/// Empty strides mean compact row-major in the supplied shape, as for public Tensor.
+/// Numerical layout support and nonoverlap remain Kernels admission responsibilities.
+std::optional<BoxDecodeLinearStorage>
+boxdecode_linear_storage(const std::vector<std::int64_t>& shape,
+                         const std::vector<std::int64_t>& stride_bytes, const std::string& layout,
+                         std::size_t scalar_bytes);
 
 /// Description of one physical input buffer feeding the box-decode stage.
 struct BoxDecodePhysicalInputStaticContract {
@@ -144,6 +161,14 @@ struct ModelManagedRouteFlags {
       false; ///< Registered terminal consumes its tensor transforms from producer memory.
 };
 
+/// Segment Anything head binding by position and shape, never by name. Prompt decoders: the mask
+/// logits are the input with H,W > 1 and C = 1, 3 or 4 used channels; the IoU predictions are the
+/// next input with exactly C values; a later single value is the object score; other inputs keep
+/// role Unknown and are not decoded. An EfficientSam3 concept image model: detections [1,Q,6] and
+/// logits [h,w,Q], recognized by those outputs. Compact
+/// vectors are relabeled to one pixel of C channels. Sets roles, Identity scores and num_classes.
+bool bind_sam_tensor_roles(BoxDecodeStaticContract* contract, std::string* error_message);
+
 /// Derive the model-managed route flags from a fully-built `BoxDecodeStaticContract`.
 ModelManagedRouteFlags
 model_route_flags_from_boxdecode_contract(const BoxDecodeStaticContract& contract);
@@ -164,11 +189,14 @@ reconcile_exact_boxdecode_route_flags(const ModelManagedRouteFlags& planner_flag
  * @param terminal_stage Exact authored terminal stage for a model-owned route, or null for an
  *                       external/synthesized BoxDecode whose selected lineages end at true leaves.
  * @param error_message  Optional out-parameter populated on failure.
+ * @param requested_decode_type Decode family requested by the Model. Segment Anything types
+ *                       read rank-2 `[1, K]` vectors as one pixel of K channels.
  * @return Resolved flags, or `std::nullopt` if the MPK lacks the required metadata.
  */
 std::optional<ModelManagedRouteFlags> resolve_model_managed_boxdecode_route_flags_from_mpk(
     const MpkContract& contract, const MpkPluginIoContract* terminal_stage = nullptr,
-    std::string* error_message = nullptr);
+    std::string* error_message = nullptr,
+    BoxDecodeType requested_decode_type = BoxDecodeType::Unspecified);
 
 /// Build a box-decode static contract from an MPK with auto-detected terminal stage.
 std::optional<BoxDecodeStaticContract>
@@ -179,7 +207,8 @@ build_boxdecode_static_contract_from_mpk(const MpkContract& contract,
 /// Build a box-decode static contract from an MPK with an explicit terminal stage.
 std::optional<BoxDecodeStaticContract> build_boxdecode_static_contract_from_mpk(
     const MpkContract& contract, const ModelManagedRouteFlags& route_flags,
-    const MpkPluginIoContract* terminal_stage, std::string* error_message);
+    const MpkPluginIoContract* terminal_stage, std::string* error_message,
+    BoxDecodeType requested_decode_type = BoxDecodeType::Unspecified);
 
 /// Build a box-decode static contract from a raw `TensorList` plus optional input contract.
 std::optional<BoxDecodeStaticContract> build_boxdecode_static_contract_from_tensors(

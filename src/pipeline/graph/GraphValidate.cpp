@@ -202,6 +202,7 @@ GraphReport Graph::validate(const ValidateOptions& opt) const {
 
   GstElement* pipeline = nullptr;
   try {
+    session_build_prepare_stage_contracts(br, "Graph::validate");
     pipeline = session_build_parse_pipeline_or_throw(br, "Graph::validate");
   } catch (const NeatError& e) {
     GraphReport failure = e.report();
@@ -362,6 +363,7 @@ GraphReport Graph::validate(const ValidateOptions& opt, const cv::Mat& input) co
 
   GstElement* pipeline = nullptr;
   try {
+    session_build_prepare_stage_contracts(br, "Graph::validate(input)");
     pipeline = session_build_parse_pipeline_or_throw(br, "Graph::validate(input)");
   } catch (const NeatError& e) {
     GraphReport failure = e.report();

@@ -27,11 +27,15 @@
 <g id="code1" class="fanim" opacity="0">
 <text x="76" y="212" class="fsans fcap">STEP 2 · Run benchmark</text>
 <text x="76" y="248" class="fmono fln">1</text>
-<text x="104" y="248" class="fmono fcode" xml:space="preserve">report = model.benchmark(args.samples)</text>
+<text x="104" y="248" class="fmono fcode" xml:space="preserve">options = pyneat.BenchmarkOptions()</text>
 <text x="76" y="274" class="fmono fln">2</text>
-<text x="104" y="274" class="fmono fcode" xml:space="preserve">if report.latency_ms &lt;= 0 or report.fps &lt;=…</text>
+<text x="104" y="274" class="fmono fcode" xml:space="preserve">options.num_samples = args.samples</text>
 <text x="76" y="300" class="fmono fln">3</text>
-<text x="104" y="300" class="fmono fcode" xml:space="preserve">  raise RuntimeError(&quot;benchmark produced no…</text>
+<text x="104" y="300" class="fmono fcode" xml:space="preserve">options.include_mla_layer_stats = args.incl…</text>
+<text x="76" y="326" class="fmono fln">4</text>
+<text x="104" y="326" class="fmono fcode" xml:space="preserve">options.include_mla_stage_stats = args.incl…</text>
+<text x="76" y="352" class="fmono fln">5</text>
+<text x="104" y="352" class="fmono fcode" xml:space="preserve">report = model.benchmark(options)</text>
 </g>
 <g id="code2" class="fanim" opacity="0">
 <text x="76" y="212" class="fsans fcap">STEP 3 · Read report</text>
@@ -43,6 +47,28 @@
 <text x="104" y="300" class="fmono fcode" xml:space="preserve">print(f&quot;report_avg_power_watts={report.avg_…</text>
 <text x="76" y="326" class="fmono fln">4</text>
 <text x="104" y="326" class="fmono fcode" xml:space="preserve">print(f&quot;report_energy_joules={report.energy…</text>
+<text x="76" y="352" class="fmono fln">5</text>
+<text x="104" y="352" class="fmono fcode" xml:space="preserve">print(f&quot;report_peak_power_watts={report.pea…</text>
+</g>
+<g id="code3" class="fanim" opacity="0">
+<text x="76" y="212" class="fsans fcap">STEP 4 · Read mla stats</text>
+<text x="76" y="248" class="fmono fln">1</text>
+<text x="104" y="248" class="fmono fcode" xml:space="preserve">if options.include_mla_layer_stats:</text>
+<text x="76" y="274" class="fmono fln">2</text>
+<text x="104" y="274" class="fmono fcode" xml:space="preserve">  print(f&quot;mla_layer_stats.status={report.ml…</text>
+<text x="76" y="300" class="fmono fln">3</text>
+<text x="104" y="300" class="fmono fcode" xml:space="preserve">  for layer in report.mla_layer_stats.layer…</text>
+<text x="76" y="326" class="fmono fln">4</text>
+<text x="104" y="326" class="fmono fcode" xml:space="preserve">    print(f&quot;  stage_index={layer.stage_inde…</text>
+<text x="76" y="352" class="fmono fln">5</text>
+<text x="104" y="352" class="fmono fcode" xml:space="preserve">if options.include_mla_stage_stats:</text>
+</g>
+<g id="code4" class="fanim" opacity="0">
+<text x="76" y="212" class="fsans fcap">STEP 5 · Save report</text>
+<text x="76" y="248" class="fmono fln">1</text>
+<text x="104" y="248" class="fmono fcode" xml:space="preserve">if args.report is not None:</text>
+<text x="76" y="274" class="fmono fln">2</text>
+<text x="104" y="274" class="fmono fcode" xml:space="preserve">  print(f&quot;report_path={report.save(args.rep…</text>
 </g>
 </g>
 <g filter="url(#fsh)">
@@ -51,30 +77,48 @@
 <rect x="592" y="158" width="160" height="38" rx="19" fill="url(#fgreen)"/><text x="672" y="183" class="fsans ftag" font-size="14" text-anchor="middle">Walkthrough</text>
 </g>
 <g id="node0" class="fanim" opacity="1">
-<rect x="600" y="250" width="184" height="86" rx="18" fill="#F3FBF7" stroke="#9CD5B2"/>
-<text x="692" y="272" class="fsans fdim" font-size="12" text-anchor="middle">Step 1</text>
-<text x="692" y="298" class="fsans fnl" font-size="15" text-anchor="middle">Load model</text>
+<rect x="600" y="250" width="96" height="86" rx="18" fill="#F3FBF7" stroke="#9CD5B2"/>
+<text x="648" y="272" class="fsans fdim" font-size="12" text-anchor="middle">Step 1</text>
+<text x="648" y="299" class="fsans fnl" font-size="11.5" text-anchor="middle"><tspan x="648" dy="0">Load</tspan><tspan x="648" dy="14">model</tspan></text>
 </g>
 <g id="ring0" class="fanim" opacity="1">
-<rect x="596" y="246" width="192" height="94" rx="22" fill="none" stroke="#2A9C4F" stroke-width="3"/>
+<rect x="596" y="246" width="104" height="94" rx="22" fill="none" stroke="#2A9C4F" stroke-width="3"/>
 </g>
 <g id="node1" class="fanim" opacity="0">
-<line x1="788" y1="293" x2="814" y2="293" stroke="#2A9C4F" stroke-width="3" stroke-linecap="round" marker-end="url(#farr)"/>
-<rect x="820" y="250" width="184" height="86" rx="18" fill="#F3FBF7" stroke="#9CD5B2"/>
-<text x="912" y="272" class="fsans fdim" font-size="12" text-anchor="middle">Step 2</text>
-<text x="912" y="298" class="fsans fnl" font-size="15" text-anchor="middle">Run benchmark</text>
+<line x1="700" y1="293" x2="726" y2="293" stroke="#2A9C4F" stroke-width="3" stroke-linecap="round" marker-end="url(#farr)"/>
+<rect x="732" y="250" width="96" height="86" rx="18" fill="#F3FBF7" stroke="#9CD5B2"/>
+<text x="780" y="272" class="fsans fdim" font-size="12" text-anchor="middle">Step 2</text>
+<text x="780" y="299" class="fsans fnl" font-size="11.5" text-anchor="middle"><tspan x="780" dy="0">Run</tspan><tspan x="780" dy="14">benchmark</tspan></text>
 </g>
 <g id="ring1" class="fanim" opacity="0">
-<rect x="816" y="246" width="192" height="94" rx="22" fill="none" stroke="#2A9C4F" stroke-width="3"/>
+<rect x="728" y="246" width="104" height="94" rx="22" fill="none" stroke="#2A9C4F" stroke-width="3"/>
 </g>
 <g id="node2" class="fanim" opacity="0">
-<line x1="1008" y1="293" x2="1034" y2="293" stroke="#2A9C4F" stroke-width="3" stroke-linecap="round" marker-end="url(#farr)"/>
-<rect x="1040" y="250" width="184" height="86" rx="18" fill="#F8F6FF" stroke="#B8B0DC"/>
-<text x="1132" y="272" class="fsans fdim" font-size="12" text-anchor="middle">Step 3</text>
-<text x="1132" y="298" class="fsans fnl" font-size="15" text-anchor="middle">Read report</text>
+<line x1="832" y1="293" x2="858" y2="293" stroke="#2A9C4F" stroke-width="3" stroke-linecap="round" marker-end="url(#farr)"/>
+<rect x="864" y="250" width="96" height="86" rx="18" fill="#F3FBF7" stroke="#9CD5B2"/>
+<text x="912" y="272" class="fsans fdim" font-size="12" text-anchor="middle">Step 3</text>
+<text x="912" y="299" class="fsans fnl" font-size="11.5" text-anchor="middle"><tspan x="912" dy="0">Read</tspan><tspan x="912" dy="14">report</tspan></text>
 </g>
 <g id="ring2" class="fanim" opacity="0">
-<rect x="1036" y="246" width="192" height="94" rx="22" fill="none" stroke="#2A9C4F" stroke-width="3"/>
+<rect x="860" y="246" width="104" height="94" rx="22" fill="none" stroke="#2A9C4F" stroke-width="3"/>
+</g>
+<g id="node3" class="fanim" opacity="0">
+<line x1="964" y1="293" x2="990" y2="293" stroke="#2A9C4F" stroke-width="3" stroke-linecap="round" marker-end="url(#farr)"/>
+<rect x="996" y="250" width="96" height="86" rx="18" fill="#F3FBF7" stroke="#9CD5B2"/>
+<text x="1044" y="272" class="fsans fdim" font-size="12" text-anchor="middle">Step 4</text>
+<text x="1044" y="299" class="fsans fnl" font-size="11.5" text-anchor="middle"><tspan x="1044" dy="0">Read mla</tspan><tspan x="1044" dy="14">stats</tspan></text>
+</g>
+<g id="ring3" class="fanim" opacity="0">
+<rect x="992" y="246" width="104" height="94" rx="22" fill="none" stroke="#2A9C4F" stroke-width="3"/>
+</g>
+<g id="node4" class="fanim" opacity="0">
+<line x1="1096" y1="293" x2="1122" y2="293" stroke="#2A9C4F" stroke-width="3" stroke-linecap="round" marker-end="url(#farr)"/>
+<rect x="1128" y="250" width="96" height="86" rx="18" fill="#F8F6FF" stroke="#B8B0DC"/>
+<text x="1176" y="272" class="fsans fdim" font-size="12" text-anchor="middle">Step 5</text>
+<text x="1176" y="299" class="fsans fnl" font-size="11.5" text-anchor="middle"><tspan x="1176" dy="0">Save</tspan><tspan x="1176" dy="14">report</tspan></text>
+</g>
+<g id="ring4" class="fanim" opacity="0">
+<rect x="1124" y="246" width="104" height="94" rx="22" fill="none" stroke="#2A9C4F" stroke-width="3"/>
 </g>
 </g>
 <g id="popup" class="fanim" opacity="0">
@@ -83,7 +127,7 @@
 </g>
 <script type="text/ecmascript"><![CDATA[
 (function(){
-  var n=3, i=0, t=null, anchors=["load-model", "run-benchmark", "read-report"];
+  var n=5, i=0, t=null, anchors=["load-model", "run-benchmark", "read-report", "read-mla-stats", "save-report"];
   function el(id){return document.getElementById(id);}
   function paint(a){
     for(var k=0;k<n;k++){

@@ -1465,7 +1465,7 @@ simaai::neat::Tensor move_e2e_input_tensor_to_ev74_if_enabled(simaai::neat::Tens
   }
   std::vector<simaai::neat::Segment> segments{{"ifm0", bytes}};
   return simaai::neat::pipeline_internal::transfer_to_device(
-      input, {simaai::neat::DeviceType::SIMA_CVU, 0}, &segments, nullptr);
+      input, {simaai::neat::DeviceType::SIMA_CVU, 0}, &segments);
 }
 
 simaai::neat::Tensor build_canonical_preprocessed_input(const cv::Mat& img_bgr,
@@ -5080,11 +5080,8 @@ int main(int argc, char** argv) {
     if (!simaai::neat::element_exists("neatprocessmla")) {
       return skip_long_test("missing NEAT MLA plugin (neatprocessmla)");
     }
-    if (!simaai::neat::element_exists("neatprocesscvu")) {
-      return skip_long_test("missing NEAT CVU plugin (neatprocesscvu)");
-    }
-    if (!simaai::neat::element_exists("neatobjectdecode")) {
-      return skip_long_test("missing NEAT objectdecode plugin (neatobjectdecode)");
+    if (!simaai::neat::element_exists("neatkernelrunner")) {
+      return skip_long_test("missing NEAT kernel runner (neatkernelrunner)");
     }
 
     fs::path root = find_repo_root(fs::current_path());

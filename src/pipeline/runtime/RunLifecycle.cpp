@@ -350,10 +350,12 @@ void runtime::RunCore::close() {
         oss << "queue2 depth=" << queue2_depth << "\n";
       }
 
-      int num_cvu = run_internal::parse_num_buffers_for(pipeline, "neatprocesscvu");
+      if (pipeline.find("neatkernelrunner") != std::string::npos) {
+        oss << "numerical_backend=neatkernelrunner (prepared capacity)\n";
+      }
       int num_mla = run_internal::parse_num_buffers_for(pipeline, "neatprocessmla");
-      if (num_cvu > 0 || num_mla > 0) {
-        oss << "num_buffers_cvu=" << num_cvu << " num_buffers_mla=" << num_mla << "\n";
+      if (num_mla > 0) {
+        oss << "num_buffers_mla=" << num_mla << "\n";
       }
 
       RunStats run_stats;

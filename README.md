@@ -115,3 +115,13 @@ tar -xzf ./sima-neat-*-Linux-extras.tar.gz -C "${HOME}/sima-neat-extras"
 
 Full documentation, guides, and API references are published [here](https://developer.sima.ai/software).
 Contributor and agent quality guidance is documented in `AGENTS.md` at the repository root.
+
+### Build related repositories together
+
+From the Core checkout, `./build.sh --all --install` delegates dependency
+preparation to Scheduler, then builds Core against the installed Scheduler
+frontend. Scheduler prepares the matching Kernels, Runner and Codecs providers.
+Local source and package selections support mixed-source development; CI uses
+`tools/ci/acquire_scheduler.py` for explicit published dependency acquisition.
+See `docs/develop-apps/contribute/build-test/local-dependencies.md` for details.
+Use `./build.sh --doc` to generate documentation without runtime providers.

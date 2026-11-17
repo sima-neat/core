@@ -1,6 +1,7 @@
 #include "pipeline/Graph.h"
 #include "model/Model.h"
 #include "nodes/common/Output.h"
+#include "nodes/sima/SimaArgMax.h"
 #include "gst/GstHelpers.h"
 #include "model/internal/ModelInternal.h"
 #include "pipeline/internal/RenderedMlaContractQuery.h"
@@ -127,7 +128,7 @@ static void add_mla_terminal_argmax_route(simaai::neat::Graph& graph,
   require(!infer.describe_backend(false).empty(),
           "argmax: model.inference() returned an empty Graph");
   graph.add(infer);
-  graph.custom("neatargmax name=neatargmax_1 axis=-1 keepdims=false num-threads=0 silent=true");
+  graph.add(simaai::neat::nodes::SimaArgMax());
   graph.add(simaai::neat::nodes::Output());
 }
 
@@ -172,7 +173,7 @@ static int top1_from_scores(const std::vector<float>& scores, const std::string&
   // than the best possible top-1 reduction.  Real application code commonly
   // materializes class indices for top-k display/thresholding, so use a stable
   // index sort here.  The argmax route replaces this CPU postprocess with the
-  // pipeline neatargmax stage, so include this work in the measured baseline.
+  // pipeline ArgMax stage, so include this work in the measured baseline.
   std::vector<int> indices(scores.size());
   std::iota(indices.begin(), indices.end(), 0);
   std::stable_sort(indices.begin(), indices.end(), [&](int a, int b) {
@@ -264,8 +265,8 @@ static BenchResult run_bench(simaai::neat::Graph& graph, const cv::Mat& rgb, int
 int main(int argc, char** argv) {
   try {
     try {
-      if (!simaai::neat::element_exists("neatargmax")) {
-        return skip_long_test("missing neatargmax plugin");
+      if (!simaai::neat::element_exists("neatkernelrunner")) {
+        return skip_long_test("missing neatkernelrunner plugin");
       }
     } catch (const std::exception& e) {
       const std::string msg = e.what();
@@ -400,8 +401,9 @@ int main(int argc, char** argv) {
     const bool argmax_has_mla = argmax_pipeline.find("neatprocessmla") != std::string::npos ||
                                 argmax_pipeline.find("processmla") != std::string::npos;
     require(argmax_has_mla, "argmax pipeline missing MLA stage");
-    require(argmax_pipeline.find("neatargmax") != std::string::npos,
-            "argmax pipeline missing neatargmax stage");
+    require(argmax_pipeline.find("_argmax") != std::string::npos &&
+                argmax_pipeline.find("neatargmax ") == std::string::npos,
+            "argmax pipeline must use the public native-kernel Node");
 
     const BenchResult baseline =
         run_bench(baseline_graph, rgb, warmup, iters, "baseline", [](const auto& t) {

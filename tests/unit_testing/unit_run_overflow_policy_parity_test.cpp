@@ -4,6 +4,8 @@
 #include "model/Model.h"
 #include "nodes/common/Output.h"
 #include "nodes/io/Input.h"
+#include "pipeline/ErrorCodes.h"
+#include "pipeline/NeatError.h"
 #include "pipeline/Run.h"
 #include "pipeline/runtime/RunInternal.h"
 #include "pipeline/runtime/RunCore.h"
@@ -13,9 +15,13 @@
 
 #include <opencv2/core.hpp>
 
+#include <chrono>
 #include <cstdint>
+#include <cstring>
 #include <future>
 #include <mutex>
+#include <thread>
+#include <vector>
 
 namespace {
 
@@ -157,19 +163,92 @@ void require_policy_parity(simaai::neat::OverflowPolicy policy, bool expect_back
   }
 }
 
+simaai::neat::Sample make_tensor_pair(int id) {
+  using namespace simaai::neat;
+  Sample sample;
+  sample.kind = SampleKind::TensorSet;
+  sample.payload_type = PayloadType::Tensor;
+  sample.media_type = "application/vnd.simaai.tensor";
+  sample.frame_id = id;
+  sample.stream_id = "stream0";
+  sample.pts_ns = id * 1000;
+  for (int i = 0; i < 2; ++i) {
+    Tensor tensor =
+        Tensor::from_vector(std::vector<float>{float(id), float(i)}, {2}, TensorMemory::CPU);
+    tensor.route.physical_index = 0;
+    tensor.route.memory_index = i;
+    sample.tensors.push_back(std::move(tensor));
+  }
+  return sample;
+}
+
+simaai::neat::Run make_tensor_pair_run(const simaai::neat::Sample& seed,
+                                       simaai::neat::OverflowPolicy policy) {
+  using namespace simaai::neat;
+  InputOptions input;
+  input.payload_type = PayloadType::Tensor;
+  input.format = FormatTag::FP32;
+  input.memory_policy = InputMemoryPolicy::SystemMemory;
+  Graph graph;
+  graph.add(nodes::Input(input));
+  graph.add(nodes::Output(OutputOptions::EveryFrame(8)));
+  RunOptions options;
+  options.queue_depth = 1;
+  options.overflow_policy = policy;
+  options.advanced.copy_input = true;
+  return graph.build(Sample{seed}, options);
+}
+
+void require_tensor_pair(const simaai::neat::TensorList& output, int id) {
+  using namespace simaai::neat;
+  require(output.size() == 2, "tensor-media graph must forward both members");
+  for (std::size_t i = 0; i < output.size(); ++i) {
+    require(output[i].dtype == TensorDType::Float32 && output[i].shape == std::vector<int64_t>{2},
+            "tensor-media graph changed member type or shape");
+    auto mapping = output[i].map_read();
+    float values[2]{};
+    require(mapping.data && mapping.size_bytes >= sizeof(values), "tensor output is truncated");
+    std::memcpy(values, mapping.data, sizeof(values));
+    require(values[0] == float(id) && values[1] == float(i),
+            "tensor-media graph changed member contents or order");
+  }
+}
+
 void runner_try_push_preserves_policy_and_ownership(simaai::neat::OverflowPolicy policy,
                                                     bool tensor_list) {
   using namespace simaai::neat;
-  const Tensor seed = make_color_tensor(64, 48, ImageSpec::PixelFormat::RGB, 0x4A);
-  Run run = make_async_rgb_run_with_policy(seed, policy);
+  const Sample seed = make_tensor_pair(7);
+  Run run = make_tensor_pair_run(seed, policy);
   auto core = std::const_pointer_cast<runtime::RunCore>(run_internal::core(run));
   Model::Runner runner(std::move(run));
-  require(runner.try_push(TensorList{seed}), "Runner warmup must accept input");
-  require(!runner.pull(2000).empty(), "Runner must forward input to output");
+  auto submit = [&](const Sample& sample) {
+    return tensor_list ? runner.try_push(sample.tensors) : runner.try_push(sample);
+  };
+  // Unlike the old RGB fixture, these inputs obey the actual downstream contract.
+  require(submit(seed), "Runner warmup must accept the tensor pair");
+  require_tensor_pair(runner.pull(2000).tensors, 7);
+
+  Sample incompatible = make_tensor_pair(8);
+  incompatible.tensors.front() =
+      Tensor::from_vector(std::vector<std::uint8_t>{8, 0}, {2}, TensorMemory::CPU);
+  const auto before_invalid = core->inputs_enqueued.load();
+  bool rejected = false;
+  try {
+    (void)submit(incompatible);
+  } catch (const NeatError& error) {
+    require(error.report().error_code == error_codes::kInputShape,
+            "incompatible tensor media must have a structured shape rejection");
+    rejected = true;
+  }
+  require(rejected && core->inputs_enqueued.load() == before_invalid &&
+              core->inputs_dropped.load() == 0,
+          "incompatible media must not enter or consume the queue");
+  require(submit(make_tensor_pair(8)), "Runner must accept valid input after media rejection");
+  require_tensor_pair(runner.pull(2000).tensors, 8);
 
   // Park the worker after dequeue so queue occupancy cannot race the assertions.
   std::unique_lock timing_lock(core->latency_mu);
-  require(runner.try_push(TensorList{seed}), "Runner gate input must be accepted");
+  require(submit(seed), "Runner gate input must be accepted");
   const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
   bool parked = false;
   while (std::chrono::steady_clock::now() < deadline) {
@@ -183,31 +262,13 @@ void runner_try_push_preserves_policy_and_ownership(simaai::neat::OverflowPolicy
   }
   require(parked, "Runner input worker must reach the gate");
 
-  auto make_pair = [](int id) {
-    Sample sample;
-    sample.kind = SampleKind::TensorSet;
-    sample.frame_id = id;
-    sample.stream_id = "stream0";
-    sample.pts_ns = id * 1000;
-    for (int i = 0; i < 2; ++i) {
-      Tensor tensor =
-          Tensor::from_vector(std::vector<float>{float(id), float(i)}, {2}, TensorMemory::CPU);
-      tensor.route.physical_index = 0;
-      tensor.route.memory_index = i;
-      sample.tensors.push_back(std::move(tensor));
-    }
-    return sample;
-  };
-  auto submit = [&](const Sample& sample) {
-    return tensor_list ? runner.try_push(sample.tensors) : runner.try_push(sample);
-  };
-  Sample old = make_pair(1);
+  Sample old = make_tensor_pair(1);
   std::weak_ptr<TensorBuffer> old_storage = old.tensors[0].storage;
   require(submit(old), "Runner must accept the first pending pair");
   old = {};
   require(!old_storage.expired(), "Queued input must retain its storage");
 
-  Sample latest = make_pair(2);
+  Sample latest = make_tensor_pair(2);
   auto pending = std::async(std::launch::async, [&] { return submit(latest); });
   const bool returned = pending.wait_for(std::chrono::seconds(1)) == std::future_status::ready;
   if (!returned)
@@ -237,7 +298,8 @@ void runner_try_push_preserves_policy_and_ownership(simaai::neat::OverflowPolicy
                   queued.pts_ns == (replaces ? 2000 : 1000),
               "Sample identity must stay attached to its pair");
     }
-    // These pairs test admission, not the RGB fixture's downstream media contract.
+    // Release the inspected pending sample explicitly; actual graph traversal was
+    // verified above before parking the worker for deterministic queue assertions.
     core->pipeline.in_queue.clear();
   }
   runner.close_input();

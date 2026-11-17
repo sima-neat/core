@@ -67,6 +67,9 @@ struct Accounting {
   int payload_type;
   std::vector<std::int64_t> submitted;
   RtpHeader first{}; // Written before the first release of sent_packets; immutable afterward.
+  // neatjpegudpsink packetizes inside the sink: no src pad to count, so the first received
+  // packet anchors SSRC/sequence/timestamp and the sink's counters are read after the run.
+  bool sink_sends = false;
   std::mutex error_mutex, callback_mutex;
 
   void fail(const std::string& message) {
@@ -136,13 +139,16 @@ struct Accounting {
     ++sent_packets;
   }
   void received(const std::string& packet) {
-    require(sent_packets.load() != 0, "received RTP before this sender emitted a packet");
+    require(sink_sends || sent_packets.load() != 0,
+            "received RTP before this sender emitted a packet");
     const auto h =
         header(reinterpret_cast<const unsigned char*>(packet.data()), packet.size(), payload_type);
+    if (sink_sends && received_packets == 0)
+      first = h;
     require(h.ssrc == first.ssrc &&
                 h.sequence == std::uint16_t(first.sequence + received_packets.load()),
             "RTP receiver packet loss, duplication or reordering");
-    require(received_packets < sent_packets && rtp_id(h) == output.load(),
+    require((sink_sends || received_packets < sent_packets) && rtp_id(h) == output.load(),
             "RTP receiver frame mismatch");
     ++received_packets;
     if (h.marker)

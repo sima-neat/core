@@ -384,7 +384,6 @@ void bind_genai(nb::module_& parent) {
       .def_rw("ssh_key", &g::ConnectionOptions::ssh_key)
       .def_rw("media_serve_root", &g::ConnectionOptions::media_serve_root)
       .def_rw("media_directory", &g::ConnectionOptions::media_directory)
-      .def_rw("card_receive_directory", &g::ConnectionOptions::card_receive_directory)
       .def_rw("startup_timeout_ms", &g::ConnectionOptions::startup_timeout_ms)
       .def_rw("request_timeout_ms", &g::ConnectionOptions::request_timeout_ms);
   nb::class_<g::ChatMessage>(m, "ChatMessage")
@@ -432,6 +431,7 @@ void bind_genai(nb::module_& parent) {
       .def_rw("asr_task", &g::GenerationRequest::asr_task)
       .def_rw("max_new_tokens", &g::GenerationRequest::max_new_tokens)
       .def_rw("enable_thinking", &g::GenerationRequest::enable_thinking)
+      .def_rw("reasoning_effort", &g::GenerationRequest::reasoning_effort)
       .def_prop_rw(
           "tools", [](const g::GenerationRequest& r) { return genai_json(r.tools); },
           [](g::GenerationRequest& r, nb::handle x) { r.tools = genai_json(x); })

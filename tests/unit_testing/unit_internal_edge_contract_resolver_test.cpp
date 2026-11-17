@@ -1,9 +1,9 @@
 #include "pipeline/internal/sima/InternalEdgeContractResolver.h"
-#include "pipeline/internal/sima/PreparedRuntimeBuild.h"
+#include "pipeline/internal/sima/StageRecipePreparation.h"
 #include "pipeline/internal/sima/StaticSpecBuilders.h"
 #include "pipeline/internal/sima/TensorSemanticsUtil.h"
 
-#include <cassert>
+#include <stdexcept>
 #include <cstdint>
 #include <gst/gst.h>
 #include <optional>
@@ -16,6 +16,11 @@ using namespace simaai::neat::pipeline_internal::sima::edgecontract;
 using namespace simaai::neat::pipeline_internal::sima::specbuilders;
 
 namespace {
+void check(bool condition, const char* expression) {
+  if (!condition)
+    throw std::runtime_error(expression);
+}
+#define CHECK(...) check((__VA_ARGS__), #__VA_ARGS__)
 
 PhysicalBufferStaticSpec physical(int index, std::uint64_t size, const std::string& segment) {
   return build_physical_buffer_static_spec(index, index, size, DeviceKind::Evxx, segment);
@@ -55,9 +60,9 @@ sima_ev_tensor_desc dense_desc(std::vector<int> shape, const std::string& dtype,
                                const std::string& layout) {
   sima_ev_tensor_desc desc{};
   std::string error;
-  assert(tensorsemantics::build_dense_tensor_desc(shape, dtype, layout, &desc, &error,
-                                                  "missing output", "bad rank", "bad dim",
-                                                  "bad dtype", "bad stride"));
+  CHECK(tensorsemantics::build_dense_tensor_desc(shape, dtype, layout, &desc, &error,
+                                                 "missing output", "bad rank", "bad dim",
+                                                 "bad dtype", "bad stride"));
   return desc;
 }
 
@@ -99,17 +104,17 @@ void direct_edge_resolves_without_view_contract() {
   std::string error;
   const auto resolved = resolve_edge_contract_for_binding(manifest, 1U, 0U, &error);
 
-  assert(resolved.has_value());
-  assert(error.empty());
-  assert(resolved->producer_stage_index == 0U);
-  assert(resolved->consumer_stage_index == 1U);
-  assert(resolved->binding_index == 0U);
-  assert(resolved->producer_stage->logical_stage_id == "producer");
-  assert(resolved->consumer_stage->logical_stage_id == "consumer");
-  assert(resolved->producer_logical_output->logical_index == 0);
-  assert(resolved->consumer_logical_input->logical_index == 0);
-  assert(resolved->producer_physical_output->physical_index == 0);
-  assert(!resolved->consumer_requires_view_contract);
+  CHECK(resolved.has_value());
+  CHECK(error.empty());
+  CHECK(resolved->producer_stage_index == 0U);
+  CHECK(resolved->consumer_stage_index == 1U);
+  CHECK(resolved->binding_index == 0U);
+  CHECK(resolved->producer_stage->logical_stage_id == "producer");
+  CHECK(resolved->consumer_stage->logical_stage_id == "consumer");
+  CHECK(resolved->producer_logical_output->logical_index == 0);
+  CHECK(resolved->consumer_logical_input->logical_index == 0);
+  CHECK(resolved->producer_physical_output->physical_index == 0);
+  CHECK(!resolved->consumer_requires_view_contract);
 }
 
 void slice_view_edge_resolves_as_consumer_side_view_contract() {
@@ -127,12 +132,12 @@ void slice_view_edge_resolves_as_consumer_side_view_contract() {
   std::string error;
   const auto resolved = resolve_edge_contract_for_binding(manifest, 1U, 0U, &error);
 
-  assert(resolved.has_value());
-  assert(error.empty());
-  assert(resolved->producer_logical_output->shape == std::vector<std::int64_t>{16});
-  assert(resolved->consumer_logical_input->shape == std::vector<std::int64_t>{4});
-  assert(resolved->binding->src_physical_byte_offset == 4);
-  assert(resolved->consumer_requires_view_contract);
+  CHECK(resolved.has_value());
+  CHECK(error.empty());
+  CHECK(resolved->producer_logical_output->shape == std::vector<std::int64_t>{16});
+  CHECK(resolved->consumer_logical_input->shape == std::vector<std::int64_t>{4});
+  CHECK(resolved->binding->src_physical_byte_offset == 4);
+  CHECK(resolved->consumer_requires_view_contract);
 }
 
 void branched_multi_output_edge_selects_requested_output_slot() {
@@ -161,13 +166,13 @@ void branched_multi_output_edge_selects_requested_output_slot() {
   std::string error;
   const auto resolved = resolve_edge_contract_for_binding(manifest, 1U, 0U, &error);
 
-  assert(resolved.has_value());
-  assert(error.empty());
-  assert(resolved->producer_logical_output->logical_index == 1);
-  assert(resolved->producer_logical_output->output_slot == 1);
-  assert(resolved->producer_physical_output->physical_index == 1);
-  assert(resolved->producer_physical_output->segment_name == "head1");
-  assert(!resolved->consumer_requires_view_contract);
+  CHECK(resolved.has_value());
+  CHECK(error.empty());
+  CHECK(resolved->producer_logical_output->logical_index == 1);
+  CHECK(resolved->producer_logical_output->output_slot == 1);
+  CHECK(resolved->producer_physical_output->physical_index == 1);
+  CHECK(resolved->producer_physical_output->segment_name == "head1");
+  CHECK(!resolved->consumer_requires_view_contract);
 }
 
 void missing_producer_fails_closed_with_error() {
@@ -183,8 +188,8 @@ void missing_producer_fails_closed_with_error() {
   std::string error;
   const auto resolved = resolve_edge_contract_for_binding(manifest, 1U, 0U, &error);
 
-  assert(!resolved.has_value());
-  assert(!error.empty());
+  CHECK(!resolved.has_value());
+  CHECK(!error.empty());
 }
 
 void all_consumer_edges_resolve_together() {
@@ -192,10 +197,10 @@ void all_consumer_edges_resolve_together() {
   std::string error;
   const auto resolved = resolve_consumer_edge_contracts(manifest, 1U, &error);
 
-  assert(error.empty());
-  assert(resolved.size() == 1U);
-  assert(resolved[0].producer_stage_index == 0U);
-  assert(resolved[0].binding_index == 0U);
+  CHECK(error.empty());
+  CHECK(resolved.size() == 1U);
+  CHECK(resolved[0].producer_stage_index == 0U);
+  CHECK(resolved[0].binding_index == 0U);
 }
 
 SimaPluginStaticManifest processcvu_routing_manifest(InputBindingStaticSpec binding,
@@ -225,8 +230,8 @@ SimaPluginStaticManifest processcvu_routing_manifest(InputBindingStaticSpec bind
   consumer.processcvu.output_dtype = "INT32";
   consumer.processcvu.out_dtype = "INT32";
   const auto input_shape = view_input ? std::vector<int>{1, 1, 1} : std::vector<int>{1, 4, 1};
-  consumer.processcvu.input_tensors = {dense_desc(input_shape, "INT32", "HWC")};
-  consumer.processcvu.output_tensors = {dense_desc(input_shape, "INT32", "HWC")};
+  consumer.processcvu.input_tensors = {{dense_desc(input_shape, "INT32", "HWC"), "INT32"}};
+  consumer.processcvu.output_tensors = {{dense_desc(input_shape, "INT32", "HWC"), "INT32"}};
   const std::uint64_t input_size = view_input ? 4U : 16U;
   const std::int64_t input_offset = view_input ? 4 : 0;
   consumer.physical_inputs.push_back(physical(0, input_size, "consumer_head1"));
@@ -246,84 +251,100 @@ SimaPluginStaticManifest processcvu_routing_manifest(InputBindingStaticSpec bind
   return manifest;
 }
 
-simaai::gst::CvuInputMemoryBinding
-single_prepared_processcvu_input_binding(SimaPluginStaticManifest manifest) {
+struct CompletedInput {
+  InputBindingStaticSpec binding;
+  std::vector<std::int64_t> shape;
+  std::int64_t physical_base = 0;
+};
+CompletedInput single_completed_kernel_input_binding(SimaPluginStaticManifest manifest) {
   ensure_gst_ready();
-  std::string error;
-  const auto prepared = build_prepared_runtime_context(nullptr, manifest, std::nullopt, {}, {},
-                                                       simaai::neat::NameTransform{}, &error);
-
-  assert(prepared.has_value() && error.empty());
-  assert(prepared->stages.size() == 1U);
-  assert(prepared->stages[0].processcvu.has_value());
-  const auto& input_bindings = prepared->stages[0].processcvu->routing_contract.input_bindings;
-  assert(input_bindings.size() == 1U);
-  return input_bindings[0];
+  const auto failure = complete_kernel_input_routes(&manifest, 1);
+  CHECK(!failure);
+  const auto& stage = manifest.stages[1];
+  CHECK(stage.input_bindings.size() == 1U);
+  CHECK(stage.logical_inputs.size() == 1U);
+  // Route normalization is deliberately separate from numerical admission:
+  // explicit contradictory overrides below are metadata precedence fixtures.
+  // They must remain explicit, not be silently rewritten into executable views.
+  return {stage.input_bindings.front(), stage.logical_inputs.front().shape,
+          stage.physical_inputs.front().source_byte_offset};
 }
 
-void prepared_runtime_processcvu_routing_uses_manifest_edge_resolution() {
-  const auto input_binding = single_prepared_processcvu_input_binding(processcvu_routing_manifest(
+void canonical_route_completion_processcvu_routing_uses_manifest_edge_resolution() {
+  const auto input_binding = single_completed_kernel_input_binding(processcvu_routing_manifest(
       binding_to_producer(0, "branching_producer", 1, 1, 1, "head1", 16U), false));
 
-  assert(input_binding.source_logical_index == 1);
-  assert(input_binding.source_output_slot == 1);
-  assert(input_binding.source_physical_index == 1);
-  assert(input_binding.source_size_bytes == 16U);
-  assert(input_binding.source_byte_offset == 0);
-  assert(input_binding.segment_name == "head1");
-  assert(input_binding.shape == std::vector<std::int64_t>({1, 4, 1}));
+  CHECK(input_binding.binding.src_logical_output_index == 1);
+  CHECK(input_binding.binding.src_output_slot == 1);
+  CHECK(input_binding.binding.src_physical_output_index == 1);
+  CHECK(input_binding.binding.src_physical_size_bytes == 16U);
+  CHECK(input_binding.binding.src_physical_byte_offset == 0);
+  CHECK(input_binding.binding.source_segment_name == "head1");
+  CHECK(input_binding.shape == std::vector<std::int64_t>({1, 4, 1}));
 }
 
-void prepared_runtime_fills_missing_source_fields_from_resolved_edge() {
-  const auto input_binding = single_prepared_processcvu_input_binding(processcvu_routing_manifest(
+void canonical_route_completion_fills_missing_source_fields_from_resolved_edge() {
+  const auto input_binding = single_completed_kernel_input_binding(processcvu_routing_manifest(
       binding_to_producer(0, "branching_producer", -1, 1, -1, "", 0U), false));
 
-  assert(input_binding.source_logical_index == 1);
-  assert(input_binding.source_output_slot == 1);
-  assert(input_binding.source_physical_index == 1);
-  assert(input_binding.source_size_bytes == 16U);
-  assert(input_binding.source_byte_offset == 0);
-  assert(input_binding.segment_name == "head1");
+  CHECK(input_binding.binding.src_logical_output_index == 1);
+  CHECK(input_binding.binding.src_output_slot == 1);
+  CHECK(input_binding.binding.src_physical_output_index == 1);
+  CHECK(input_binding.binding.src_physical_size_bytes == 16U);
+  CHECK(input_binding.binding.src_physical_byte_offset == 0);
+  CHECK(input_binding.binding.source_segment_name == "head1");
 }
 
-void prepared_runtime_keeps_explicit_source_fields_when_edge_resolves() {
-  const auto input_binding = single_prepared_processcvu_input_binding(processcvu_routing_manifest(
+void canonical_route_completion_keeps_explicit_source_fields_when_edge_resolves() {
+  const auto input_binding = single_completed_kernel_input_binding(processcvu_routing_manifest(
       binding_to_producer(0, "branching_producer", 7, 1, 9, "explicit_parent", 123U, 5), false));
 
-  assert(input_binding.source_logical_index == 7);
-  assert(input_binding.source_output_slot == 1);
-  assert(input_binding.source_physical_index == 9);
-  assert(input_binding.source_size_bytes == 123U);
-  assert(input_binding.source_byte_offset == 5);
-  assert(input_binding.segment_name == "explicit_parent");
+  CHECK(input_binding.binding.src_logical_output_index == 7);
+  CHECK(input_binding.binding.src_output_slot == 1);
+  CHECK(input_binding.binding.src_physical_output_index == 9);
+  CHECK(input_binding.binding.src_physical_size_bytes == 123U);
+  CHECK(input_binding.binding.src_physical_byte_offset == 5);
+  CHECK(input_binding.binding.source_segment_name == "explicit_parent");
 }
 
-void prepared_runtime_keeps_explicit_zero_offset_when_source_fields_are_complete() {
-  const auto input_binding = single_prepared_processcvu_input_binding(processcvu_routing_manifest(
+void canonical_route_completion_keeps_explicit_zero_offset_when_source_fields_are_complete() {
+  const auto input_binding = single_completed_kernel_input_binding(processcvu_routing_manifest(
       binding_to_producer(0, "branching_producer", 1, 1, 1, "explicit_parent", 16U, 0), true));
 
-  assert(input_binding.source_logical_index == 1);
-  assert(input_binding.source_output_slot == 1);
-  assert(input_binding.source_physical_index == 1);
-  assert(input_binding.source_size_bytes == 16U);
-  assert(input_binding.source_byte_offset == 0);
-  assert(input_binding.segment_name == "explicit_parent");
+  CHECK(input_binding.binding.src_logical_output_index == 1);
+  CHECK(input_binding.binding.src_output_slot == 1);
+  CHECK(input_binding.binding.src_physical_output_index == 1);
+  CHECK(input_binding.binding.src_physical_size_bytes == 16U);
+  CHECK(input_binding.binding.src_physical_byte_offset == 0);
+  CHECK(input_binding.binding.source_segment_name == "explicit_parent");
 }
 
-void prepared_runtime_view_edge_fills_source_offset_from_consumer_view() {
-  const auto input_binding = single_prepared_processcvu_input_binding(processcvu_routing_manifest(
+void canonical_route_completion_view_edge_fills_source_offset_from_consumer_view() {
+  const auto input_binding = single_completed_kernel_input_binding(processcvu_routing_manifest(
       binding_to_producer(0, "branching_producer", -1, 1, -1, "", 0U), true));
 
-  assert(input_binding.source_logical_index == 1);
-  assert(input_binding.source_output_slot == 1);
-  assert(input_binding.source_physical_index == 1);
-  assert(input_binding.source_size_bytes == 16U);
-  assert(input_binding.source_byte_offset == 4);
-  assert(input_binding.segment_name == "head1");
-  assert(input_binding.shape == std::vector<std::int64_t>({1, 1, 1}));
+  CHECK(input_binding.binding.src_logical_output_index == 1);
+  CHECK(input_binding.binding.src_output_slot == 1);
+  CHECK(input_binding.binding.src_physical_output_index == 1);
+  CHECK(input_binding.binding.src_physical_size_bytes == 16U);
+  CHECK(input_binding.binding.src_physical_byte_offset == 4);
+  CHECK(input_binding.binding.source_segment_name == "head1");
+  CHECK(input_binding.shape == std::vector<std::int64_t>({1, 1, 1}));
 }
 
-void prepared_runtime_fixed_transform_uses_complete_manifest_without_graph_overlay() {
+void canonical_route_completion_keeps_physical_base_separate() {
+  auto manifest = processcvu_routing_manifest(
+      binding_to_producer(0, "branching_producer", -1, 1, -1, "", 0U), false);
+  manifest.stages[1].physical_inputs.front().source_byte_offset = 64;
+  const auto input_binding = single_completed_kernel_input_binding(std::move(manifest));
+  CHECK(input_binding.binding.src_physical_output_index == 1);
+  CHECK(input_binding.binding.src_physical_size_bytes == 16);
+  CHECK(input_binding.binding.src_physical_byte_offset == 0);
+  CHECK(input_binding.physical_base == 64);
+  CHECK(input_binding.physical_base + input_binding.binding.src_physical_byte_offset == 64);
+}
+
+void canonical_route_completion_fixed_transform_uses_complete_manifest_without_graph_overlay() {
   auto manifest = processcvu_routing_manifest(
       binding_to_producer(0, "branching_producer", 1, 1, 1, "head1", 16U), false);
   auto& transform = manifest.stages[1];
@@ -334,10 +355,10 @@ void prepared_runtime_fixed_transform_uses_complete_manifest_without_graph_overl
   // A physical execution stage is already a complete, Core-authored contract.
   // It must not be coupled back to an MPK graph-node name (which can differ
   // after cohorting/name sanitization) merely to prepare the fixed CVU op.
-  const auto input_binding = single_prepared_processcvu_input_binding(std::move(manifest));
-  assert(input_binding.source_logical_index == 1);
-  assert(input_binding.source_physical_index == 1);
-  assert(input_binding.segment_name == "head1");
+  const auto input_binding = single_completed_kernel_input_binding(std::move(manifest));
+  CHECK(input_binding.binding.src_logical_output_index == 1);
+  CHECK(input_binding.binding.src_physical_output_index == 1);
+  CHECK(input_binding.binding.source_segment_name == "head1");
 }
 
 } // namespace
@@ -348,11 +369,12 @@ int main() {
   branched_multi_output_edge_selects_requested_output_slot();
   missing_producer_fails_closed_with_error();
   all_consumer_edges_resolve_together();
-  prepared_runtime_processcvu_routing_uses_manifest_edge_resolution();
-  prepared_runtime_fills_missing_source_fields_from_resolved_edge();
-  prepared_runtime_keeps_explicit_source_fields_when_edge_resolves();
-  prepared_runtime_keeps_explicit_zero_offset_when_source_fields_are_complete();
-  prepared_runtime_view_edge_fills_source_offset_from_consumer_view();
-  prepared_runtime_fixed_transform_uses_complete_manifest_without_graph_overlay();
+  canonical_route_completion_processcvu_routing_uses_manifest_edge_resolution();
+  canonical_route_completion_fills_missing_source_fields_from_resolved_edge();
+  canonical_route_completion_keeps_explicit_source_fields_when_edge_resolves();
+  canonical_route_completion_keeps_explicit_zero_offset_when_source_fields_are_complete();
+  canonical_route_completion_view_edge_fills_source_offset_from_consumer_view();
+  canonical_route_completion_keeps_physical_base_separate();
+  canonical_route_completion_fixed_transform_uses_complete_manifest_without_graph_overlay();
   return 0;
 }

@@ -56,7 +56,7 @@ bool dims_from_logical_output_local(const LogicalTensorStaticSpec& logical, int*
     return false;
   }
   const std::string layout = lower_copy_local(logical.layout);
-  if (layout == "chw" && dims.size() == 3U) {
+  if ((layout == "chw" || layout == "nchw") && dims.size() == 3U) {
     *out_c = to_non_negative_int_local(dims[0]);
     *out_h = to_non_negative_int_local(dims[1]);
     *out_w = to_non_negative_int_local(dims[2]);
@@ -244,12 +244,12 @@ bool tensor_name_explicitly_declares_score_semantics_local(
 
 bool decode_type_is_yolov8_family_local(BoxDecodeType decode_type) {
   return decode_type == BoxDecodeType::YoloV8 || decode_type == BoxDecodeType::YoloV8Seg ||
-         decode_type == BoxDecodeType::YoloV8Pose;
+         decode_type == BoxDecodeType::YoloV8Pose || decode_type == BoxDecodeType::YoloV8Obb;
 }
 
 bool decode_type_is_yolov26_family_local(BoxDecodeType decode_type) {
   return decode_type == BoxDecodeType::YoloV26 || decode_type == BoxDecodeType::YoloV26Pose ||
-         decode_type == BoxDecodeType::YoloV26Seg;
+         decode_type == BoxDecodeType::YoloV26Seg || decode_type == BoxDecodeType::YoloV26Obb;
 }
 
 bool decode_type_is_raw_yolov6_yolox_family_local(BoxDecodeType decode_type) {
@@ -314,6 +314,18 @@ void apply_raw_yolov6_yolox_contract_overrides_local(BoxDecodeStaticContract* co
 void maybe_infer_score_activation_from_boxdecode_contract_local(BoxDecodeStaticContract* contract) {
   if (!contract || contract->score_activation != BoxDecodeScoreActivation::Unknown ||
       box_decode_type_is_ssd_family(contract->decode_type)) {
+    return;
+  }
+  if (contract->decode_type == BoxDecodeType::Detr) {
+    // A logit endpoint does not distinguish sigmoid from classwise softmax.
+    // Classic DETR fixes that choice independently of export endpoint names.
+    contract->score_activation = BoxDecodeScoreActivation::Softmax;
+    return;
+  }
+  if (contract->decode_type == BoxDecodeType::RcnnStage1 ||
+      contract->decode_type == BoxDecodeType::DetrFocal) {
+    // RPN objectness and focal query scores are independent sigmoid logits.
+    contract->score_activation = BoxDecodeScoreActivation::Sigmoid;
     return;
   }
   bool saw_prob_tensor = false;
@@ -770,6 +782,15 @@ maybe_infer_float_yolov8_score_activation_from_sample_values_local(
 std::optional<BoxDecodeScoreActivation> resolve_boxdecode_score_activation_from_sample_local(
     const TensorList& tensors, BoxDecodeType decode_type,
     const std::optional<InputContract>& input_contract, std::string* error_message) {
+  if (decode_type == BoxDecodeType::Detr)
+    return BoxDecodeScoreActivation::Softmax;
+  if (decode_type == BoxDecodeType::RcnnStage1 || decode_type == BoxDecodeType::DetrFocal)
+    return BoxDecodeScoreActivation::Sigmoid;
+  if (decode_type == BoxDecodeType::SuperPoint) {
+    // Detector-logit normalization is part of the explicit SuperPoint profile,
+    // not a BoxDecode class-score activation inferred from tensor names.
+    return BoxDecodeScoreActivation::Unknown;
+  }
   if (box_decode_type_is_ssd_family(decode_type)) {
     // SSD score domains are fixed by the selected geometry recipe. Tensor names
     // are routing labels and must not override that recipe's activation.
@@ -793,8 +814,9 @@ std::optional<BoxDecodeScoreActivation> resolve_boxdecode_score_activation_from_
   if (saw_logit_tensor) {
     return BoxDecodeScoreActivation::Sigmoid;
   }
-  if (decode_type_is_yolov8_family_local(decode_type) ||
-      decode_type_is_yolov26_family_local(decode_type)) {
+  if (!box_decode_type_is_oriented(decode_type) &&
+      (decode_type_is_yolov8_family_local(decode_type) ||
+       decode_type_is_yolov26_family_local(decode_type))) {
     if (const auto inferred = maybe_infer_float_yolov8_score_activation_from_sample_values_local(
             tensors, input_contract);
         inferred.has_value()) {
@@ -988,6 +1010,20 @@ bool dims_from_mpk_shape_for_input_nhwc_local(const std::vector<std::int64_t>& r
   return true;
 }
 
+// Segment Anything IoU predictions are a [1, K] vector of K channels at one pixel. The
+// generic rank-2 reading ([H, W] with one channel) stays unchanged elsewhere.
+bool dims_from_mpk_shape_local(const std::vector<std::int64_t>& raw_shape, int* out_h, int* out_w,
+                               int* out_c, bool vector_heads) {
+  if (vector_heads && raw_shape.size() == 2U && raw_shape[0] == 1 && raw_shape[1] > 0 &&
+      raw_shape[1] <= std::numeric_limits<int>::max() && out_h && out_w && out_c) {
+    *out_h = 1;
+    *out_w = 1;
+    *out_c = static_cast<int>(raw_shape[1]);
+    return true;
+  }
+  return dims_from_mpk_shape_for_input_nhwc_local(raw_shape, out_h, out_w, out_c);
+}
+
 bool dims_from_mpk_tess_slice_shape_local(const std::vector<std::int64_t>& slice_shape, int* out_h,
                                           int* out_w, int* out_c) {
   if (!out_h || !out_w || !out_c) {
@@ -1135,6 +1171,7 @@ enum class BoxDecodeTensorRoleLocal {
   Unknown = 0,
   Regression,
   Score,
+  Angle,
 };
 
 enum class BoxDecodeScoreDomainLocal {
@@ -1166,6 +1203,8 @@ synthesize_boxdecode_tensor_name_from_lineage_local(const BoxDecodeTensorLineage
     return {};
   }
   switch (facts.role) {
+  case BoxDecodeTensorRoleLocal::Angle:
+    return "angle_" + std::to_string(*facts.head_index);
   case BoxDecodeTensorRoleLocal::Regression:
     return "bbox_" + std::to_string(*facts.head_index);
   case BoxDecodeTensorRoleLocal::Score:
@@ -1525,7 +1564,8 @@ bool slice_begin_is_zero_or_empty_local(const MpkPluginIoContract& stage) {
 }
 
 bool logical_slice_hwc_from_stage_local(const MpkPluginIoContract& stage,
-                                        std::array<int, 3>* out_hwc, std::string* error_message) {
+                                        std::array<int, 3>* out_hwc, std::string* error_message,
+                                        bool vector_heads = false) {
   if (!out_hwc) {
     return false;
   }
@@ -1547,7 +1587,7 @@ bool logical_slice_hwc_from_stage_local(const MpkPluginIoContract& stage,
   int h = 0;
   int w = 0;
   int c = 0;
-  if (!dims_from_mpk_shape_for_input_nhwc_local(declared_shape, &h, &w, &c)) {
+  if (!dims_from_mpk_shape_local(declared_shape, &h, &w, &c, vector_heads)) {
     set_error(error_message, "boxdecode dense slice has an invalid declared output shape");
     return false;
   }
@@ -1565,7 +1605,7 @@ bool logical_slice_hwc_from_stage_local(const MpkPluginIoContract& stage,
     int extent_h = 0;
     int extent_w = 0;
     int extent_c = 0;
-    if (!dims_from_mpk_shape_for_input_nhwc_local(extent, &extent_h, &extent_w, &extent_c) ||
+    if (!dims_from_mpk_shape_local(extent, &extent_h, &extent_w, &extent_c, vector_heads) ||
         extent_h != h || extent_w != w || extent_c != c) {
       set_error(error_message,
                 "boxdecode dense slice output shape conflicts with its begin/end extent");
@@ -1592,7 +1632,8 @@ std::string tensor_dtype_token_local(const MpkTensorContract* tensor) {
 bool dense_hwc_source_fact_from_mpk_tensor_local(const MpkTensorContract* tensor,
                                                  std::array<int, 3>* out_hwc,
                                                  std::uint64_t* out_size_bytes,
-                                                 std::string* out_dtype) {
+                                                 std::string* out_dtype,
+                                                 bool vector_heads = false) {
   if (!tensor || !out_hwc) {
     return false;
   }
@@ -1610,13 +1651,14 @@ bool dense_hwc_source_fact_from_mpk_tensor_local(const MpkTensorContract* tensor
 
   auto try_shape = [&](const std::vector<std::int64_t>& shape, std::array<int, 3>* hwc,
                        std::uint64_t* size_bytes) -> bool {
-    if (shape.size() < 3U || !hwc || !size_bytes) {
+    if ((shape.size() < 3U && !(vector_heads && shape.size() == 2U)) || !hwc || !size_bytes) {
       return false;
     }
     int h = 0;
     int w = 0;
     int c = 0;
-    if (!dims_from_mpk_shape_for_input_nhwc_local(shape, &h, &w, &c)) {
+    if (!dims_from_mpk_shape_local(shape, &h, &w, &c, vector_heads) ||
+        (shape.size() == 2U && h * w != 1)) {
       return false;
     }
     const auto expected = static_cast<std::uint64_t>(h) * static_cast<std::uint64_t>(w) *
@@ -1778,6 +1820,8 @@ std::optional<int> parse_head_index_after_token_local(const std::string& raw_nam
 
 std::optional<std::pair<BoxDecodeTensorRoleLocal, int>>
 classify_boxdecode_tensor_semantics_from_name_local(const std::string& raw_name) {
+  if (const auto idx = parse_head_index_after_token_local(raw_name, "angle_"))
+    return std::make_pair(BoxDecodeTensorRoleLocal::Angle, *idx);
   if (const auto idx = parse_head_index_after_token_local(raw_name, "class_prob_")) {
     return std::make_pair(BoxDecodeTensorRoleLocal::Score, *idx);
   }
@@ -1977,7 +2021,7 @@ std::optional<BoxDecodeTensorLineageFactsLocal> collect_boxdecode_tensor_lineage
     const std::unordered_map<std::uint64_t, std::vector<const MpkContractEdge*>>& outgoing_edges,
     std::size_t source_plugin_index, int source_output_index,
     std::optional<std::size_t> terminal_plugin_index, int expected_terminal_input_index,
-    std::size_t terminal_pos, std::string* error_message) {
+    std::size_t terminal_pos, std::string* error_message, bool vector_heads = false) {
   BoxDecodeTensorLineageFactsLocal facts;
   auto inspect_stage_io = [&](const MpkPluginIoContract& stage,
                               const MpkTensorContract* input_tensor,
@@ -1987,7 +2031,8 @@ std::optional<BoxDecodeTensorLineageFactsLocal> collect_boxdecode_tensor_lineage
       std::array<int, 3> hwc{};
       std::uint64_t size_bytes = 0U;
       std::string dtype;
-      if (!dense_hwc_source_fact_from_mpk_tensor_local(tensor, &hwc, &size_bytes, &dtype)) {
+      if (!dense_hwc_source_fact_from_mpk_tensor_local(tensor, &hwc, &size_bytes, &dtype,
+                                                       vector_heads)) {
         return true;
       }
 
@@ -2109,8 +2154,18 @@ std::optional<BoxDecodeTensorLineageFactsLocal> collect_boxdecode_tensor_lineage
     }
 
     const std::string stage_token = lower_copy_local(stage_identity_token_local(stage));
-    const bool unpack_stage = stage_token.find("unpack") != std::string::npos;
-    const bool slice_stage = stage_token.find("slice") != std::string::npos;
+    // The kernel names the transform when it says slice or unpack. AFE names a
+    // slice of an unpacked tuple item "slice_<mla>_unpack/tuple_get_item_N_slice_transform":
+    // that stage is a slice of the dense MLA carrier, not an unpack whose output
+    // is the carrier. The plugin name decides only when the kernel does not.
+    const std::string kernel_token = lower_copy_local(stage.kernel);
+    const bool kernel_slice = kernel_token.find("slice") != std::string::npos;
+    const bool kernel_unpack = kernel_token.find("unpack") != std::string::npos;
+    const bool kernel_names_role = kernel_slice || kernel_unpack;
+    const bool unpack_stage =
+        kernel_names_role ? kernel_unpack : stage_token.find("unpack") != std::string::npos;
+    const bool slice_stage =
+        kernel_names_role ? kernel_slice : stage_token.find("slice") != std::string::npos;
     const bool value_only_stage =
         !stage_is_detess_like_local(stage) &&
         (stage_is_dequant_like_local(stage) || stage_token.find("cast") != std::string::npos);
@@ -2145,7 +2200,7 @@ std::optional<BoxDecodeTensorLineageFactsLocal> collect_boxdecode_tensor_lineage
           !stage.slice_shape.empty() || !stage.out_shape_raw.empty() || !stage.slice_end.empty();
       bool has_logical_slice = false;
       if (has_stage_slice_geometry) {
-        if (!logical_slice_hwc_from_stage_local(stage, &slice_hwc, error_message)) {
+        if (!logical_slice_hwc_from_stage_local(stage, &slice_hwc, error_message, vector_heads)) {
           return std::nullopt;
         }
         has_logical_slice = true;
@@ -2153,7 +2208,7 @@ std::optional<BoxDecodeTensorLineageFactsLocal> collect_boxdecode_tensor_lineage
         std::uint64_t ignored_size = 0U;
         std::string ignored_dtype;
         has_logical_slice = dense_hwc_source_fact_from_mpk_tensor_local(
-            output_tensor, &slice_hwc, &ignored_size, &ignored_dtype);
+            output_tensor, &slice_hwc, &ignored_size, &ignored_dtype, vector_heads);
       }
       if (has_logical_slice) {
         if (facts.dense_source_hwc.has_value()) {
@@ -2370,6 +2425,8 @@ int boxdecode_role_sort_order_local(BoxDecodeTensorRoleLocal role) {
     return 0;
   case BoxDecodeTensorRoleLocal::Score:
     return 1;
+  case BoxDecodeTensorRoleLocal::Angle:
+    return 2;
   case BoxDecodeTensorRoleLocal::Unknown:
   default:
     return 2;
@@ -2808,7 +2865,7 @@ BoxDecodeType selected_boxdecode_decode_type_local(const MpkContract& contract,
     if (const auto parsed_type = parse_box_decode_type_token(boxdecode_stage->decode_type);
         parsed_type.has_value() &&
         (box_decode_type_is_ssd_family(*parsed_type) || *parsed_type == BoxDecodeType::SuperPoint ||
-         *parsed_type == BoxDecodeType::YoloV5)) {
+         *parsed_type == BoxDecodeType::YoloV5 || box_decode_type_is_sam(*parsed_type))) {
       return *parsed_type;
     }
   }
@@ -2872,6 +2929,49 @@ void set_error(std::string* error_message, const std::string& message) {
 
 } // namespace
 
+std::optional<BoxDecodeLinearStorage>
+boxdecode_linear_storage(const std::vector<std::int64_t>& shape,
+                         const std::vector<std::int64_t>& authored, const std::string& layout,
+                         std::size_t scalar_bytes) {
+  if (scalar_bytes == 0 || scalar_bytes > 8 || shape.size() < 2 || shape.size() > 4 ||
+      (shape.size() == 4 && shape.front() != 1) ||
+      (!authored.empty() && authored.size() != shape.size()))
+    return std::nullopt;
+  std::vector<std::int64_t> strides = authored;
+  if (strides.empty()) {
+    strides.resize(shape.size());
+    std::uint64_t next = scalar_bytes;
+    for (std::size_t i = shape.size(); i-- > 0;) {
+      if (shape[i] < 1 || next > std::uint64_t(INT64_MAX) / std::uint64_t(shape[i]))
+        return std::nullopt;
+      strides[i] = static_cast<std::int64_t>(next);
+      next *= static_cast<std::uint64_t>(shape[i]);
+    }
+  }
+  std::uint64_t span = scalar_bytes;
+  for (std::size_t i = 0; i < shape.size(); ++i) {
+    if (shape[i] < 1 || strides[i] < 0 || strides[i] % scalar_bytes != 0 ||
+        (shape[i] > 1 && strides[i] == 0))
+      return std::nullopt;
+    const auto steps = static_cast<std::uint64_t>(shape[i] - 1);
+    const auto stride = static_cast<std::uint64_t>(strides[i]);
+    if (steps && stride > (std::uint64_t(INT64_MAX) - span) / steps)
+      return std::nullopt;
+    span += steps * stride;
+  }
+  if (shape.size() == 4)
+    strides.erase(strides.begin());
+  const auto token = lower_copy_local(layout);
+  if (strides.size() == 2) {
+    strides.push_back(static_cast<std::int64_t>(scalar_bytes));
+  } else if (token == "chw" || token == "nchw") {
+    strides = {strides[1], strides[2], strides[0]};
+  } else if (token != "hwc" && token != "nhwc" && !token.empty()) {
+    return std::nullopt;
+  }
+  return BoxDecodeLinearStorage{std::move(strides), span};
+}
+
 ModelManagedRouteFlags
 model_route_flags_from_boxdecode_contract(const BoxDecodeStaticContract& contract) {
   ModelManagedRouteFlags flags;
@@ -2906,10 +3006,9 @@ reconcile_exact_boxdecode_route_flags(const ModelManagedRouteFlags& planner_flag
   return out;
 }
 
-std::optional<ModelManagedRouteFlags>
-resolve_model_managed_boxdecode_route_flags_from_mpk(const MpkContract& contract,
-                                                     const MpkPluginIoContract* terminal_stage,
-                                                     std::string* error_message) {
+std::optional<ModelManagedRouteFlags> resolve_model_managed_boxdecode_route_flags_from_mpk(
+    const MpkContract& contract, const MpkPluginIoContract* terminal_stage,
+    std::string* error_message, BoxDecodeType requested_decode_type) {
   set_error(error_message, {});
   const auto positions = mla_and_terminal_positions(contract, terminal_stage, error_message);
   if (!positions.has_value()) {
@@ -2937,10 +3036,12 @@ resolve_model_managed_boxdecode_route_flags_from_mpk(const MpkContract& contract
   }
   const auto execution_positions = build_execution_positions_local(ordered);
   const auto outgoing_edges = build_outgoing_edges_local(contract);
+  const auto authored_decode_type = selected_boxdecode_decode_type_local(contract, terminal_stage);
+  const bool vector_heads =
+      box_decode_type_is_sam(requested_decode_type) || box_decode_type_is_sam(authored_decode_type);
   const auto selection = select_boxdecode_lineages_local(
       contract, *mla_stage, *mla_index, logical_outputs, execution_positions, mla_pos, terminal_pos,
-      selected_boxdecode_decode_type_local(contract, terminal_stage), terminal_stage == nullptr,
-      error_message);
+      authored_decode_type, terminal_stage == nullptr, error_message);
   if (!selection.has_value()) {
     return std::nullopt;
   }
@@ -2973,7 +3074,7 @@ resolve_model_managed_boxdecode_route_flags_from_mpk(const MpkContract& contract
     const auto facts = collect_boxdecode_tensor_lineage_facts_local(
         contract, execution_positions, outgoing_edges, selection->roots[i].first,
         selection->roots[i].second, terminal_plugin_index, terminal_inputs[i], terminal_pos,
-        error_message);
+        error_message, vector_heads);
     if (!facts.has_value()) {
       return std::nullopt;
     }
@@ -3062,6 +3163,175 @@ resolve_model_managed_boxdecode_route_flags_from_mpk(const MpkContract& contract
   return flags;
 }
 
+namespace {
+// Used extents in HWC order: dense storage exposes its logical slice.
+std::array<int, 3> sam_used_hwc_local(const BoxDecodeTensorStaticContract& tensor) {
+  const bool packed = tensor.source_storage_kind == BoxDecodeSourceStorageKind::PackedCBlock ||
+                      tensor.source_storage_kind == BoxDecodeSourceStorageKind::PackedHwcC16;
+  const auto& shape =
+      !packed && tensor.slice_shape.size() == 3U ? tensor.slice_shape : tensor.input_shape;
+  if (shape.size() != 3U)
+    return {0, 0, 0};
+  if (tensor.layout == "CHW" || tensor.layout == "NCHW")
+    return {shape[1], shape[2], shape[0]};
+  return {shape[0], shape[1], shape[2]};
+}
+
+std::int64_t sam_used_values_local(const BoxDecodeTensorStaticContract& tensor) {
+  const auto [h, w, c] = sam_used_hwc_local(tensor);
+  return std::int64_t(h) * w * c;
+}
+
+// A compact HWC vector stored as one row or column holds the same contiguous
+// values as one pixel of that many channels; relabel only that storage.
+bool relabel_sam_vector_local(BoxDecodeTensorStaticContract* tensor, int values) {
+  if (sam_used_hwc_local(*tensor) == std::array<int, 3>{1, 1, values})
+    return true;
+  const int elem = dtype_size_bytes_local(tensor->data_type);
+  const bool compact =
+      tensor->layout != "CHW" && tensor->layout != "NCHW" &&
+      tensor->source_storage_kind == BoxDecodeSourceStorageKind::DenseHwcPhysical &&
+      (tensor->slice_shape.empty() || tensor->slice_shape == tensor->input_shape);
+  const bool contiguous =
+      tensor->stride_bytes.empty() ||
+      (tensor->input_shape == std::vector<int>{1, values, 1} && tensor->stride_bytes[1] == elem) ||
+      (tensor->input_shape == std::vector<int>{values, 1, 1} && tensor->stride_bytes[0] == elem);
+  if (!compact || elem <= 0 || !contiguous)
+    return false;
+  tensor->input_shape = {1, 1, values};
+  tensor->slice_shape = {1, 1, values};
+  if (!tensor->stride_bytes.empty())
+    tensor->stride_bytes = {std::int64_t(values) * elem, std::int64_t(values) * elem, elem};
+  return true;
+}
+
+bool bind_sam_concept_tensor_roles_local(BoxDecodeStaticContract* contract,
+                                         std::string* error_message) {
+  // SAM3 concept heads: detections [Q,6] (canvas xyxy, score, unused) and
+  // query-innermost mask logits [h,w,Q]. Q links them; order does not matter.
+  int detections = -1;
+  for (std::size_t i = 0; i < contract->tensors.size(); ++i) {
+    const auto [h, w, c] = sam_used_hwc_local(contract->tensors[i]);
+    if (c == 6 && h == 1 && w > 1) {
+      if (detections >= 0) {
+        set_error(error_message,
+                  "boxdecode EfficientSAM3 concept has more than one detections candidate");
+        return false;
+      }
+      detections = static_cast<int>(i);
+    }
+  }
+  if (detections < 0) {
+    set_error(error_message, "boxdecode EfficientSAM3 concept requires detections [Q,6]");
+    return false;
+  }
+  const int queries = sam_used_hwc_local(contract->tensors[std::size_t(detections)])[1];
+  int logits = -1;
+  for (std::size_t i = 0; i < contract->tensors.size(); ++i) {
+    const auto [h, w, c] = sam_used_hwc_local(contract->tensors[i]);
+    if (int(i) != detections && h > 1 && w > 1 && c == queries) {
+      if (logits >= 0) {
+        set_error(error_message,
+                  "boxdecode EfficientSAM3 concept has more than one mask-logit candidate");
+        return false;
+      }
+      logits = static_cast<int>(i);
+    }
+  }
+  if (logits < 0) {
+    set_error(error_message,
+              "boxdecode EfficientSAM3 concept requires mask logits [h,w,Q] with Q = " +
+                  std::to_string(queries) + " channels, one per detection query");
+    return false;
+  }
+  contract->tensors[std::size_t(detections)].role = BoxDecodeTensorRole::SamConceptDetections;
+  contract->tensors[std::size_t(logits)].role = BoxDecodeTensorRole::SamMaskLogits;
+  contract->score_activation = BoxDecodeScoreActivation::Identity;
+  contract->decode_type_option = BoxDecodeTypeOption::Auto;
+  contract->num_classes = 1;
+  return true;
+}
+} // namespace
+
+bool bind_sam_tensor_roles(BoxDecodeStaticContract* contract, std::string* error_message) {
+  if (!contract) {
+    set_error(error_message, "boxdecode Segment Anything binding requires a contract");
+    return false;
+  }
+  for (auto& tensor : contract->tensors)
+    tensor.role = BoxDecodeTensorRole::Unknown;
+  // EfficientSAM3 ships a concept image model (detections and per-query
+  // logits) and an interactive prompt decoder; its outputs say which one.
+  if (contract->decode_type == BoxDecodeType::EfficientSam3) {
+    auto concept_contract = *contract;
+    if (bind_sam_concept_tensor_roles_local(&concept_contract, nullptr)) {
+      *contract = std::move(concept_contract);
+      return true;
+    }
+  }
+  const std::string model =
+      std::string("boxdecode ") + box_decode_type_sam_model_name(contract->decode_type);
+  // Prompt decoder heads, by position and shape, never by name: the logits
+  // are the one output with H,W > 1 and C = 1, 3 or 4 masks; the IoU is the
+  // next output with exactly C values; an output with one value after it is
+  // the object score. Other outputs (EdgeTAM object pointers) are not heads.
+  int logits = -1;
+  for (std::size_t i = 0; i < contract->tensors.size(); ++i) {
+    const auto [h, w, c] = sam_used_hwc_local(contract->tensors[i]);
+    if (h > 1 && w > 1 && (c == 1 || c == 3 || c == 4)) {
+      if (logits >= 0) {
+        set_error(error_message, model + " has more than one mask-logit candidate");
+        return false;
+      }
+      logits = static_cast<int>(i);
+    }
+  }
+  if (logits < 0) {
+    set_error(error_message,
+              model + " requires mask logits [H,W,C] with H,W > 1 and C = 1, 3 or 4 masks");
+    return false;
+  }
+  const int masks = sam_used_hwc_local(contract->tensors[std::size_t(logits)])[2];
+  int iou = -1;
+  int object = -1;
+  for (std::size_t i = 0; i < contract->tensors.size(); ++i) {
+    if (int(i) == logits)
+      continue;
+    const auto values = sam_used_values_local(contract->tensors[i]);
+    if (iou < 0 && values == masks) {
+      iou = static_cast<int>(i);
+    } else if (iou >= 0 && object < 0 && values == 1) {
+      object = static_cast<int>(i);
+    } else if (values == masks || values == 1) {
+      set_error(error_message, model + " has more than one IoU or object-score candidate");
+      return false;
+    }
+  }
+  if (iou < 0) {
+    set_error(error_message, model + " requires IoU predictions with exactly " +
+                                 std::to_string(masks) + " values, one per mask");
+    return false;
+  }
+  if (!relabel_sam_vector_local(&contract->tensors[std::size_t(iou)], masks)) {
+    set_error(error_message,
+              model + " IoU predictions must be one pixel of C channels or a compact vector");
+    return false;
+  }
+  if (object >= 0 && !relabel_sam_vector_local(&contract->tensors[std::size_t(object)], 1)) {
+    set_error(error_message, model + " object score must be one compact value");
+    return false;
+  }
+  contract->tensors[std::size_t(logits)].role = BoxDecodeTensorRole::SamMaskLogits;
+  contract->tensors[std::size_t(iou)].role = BoxDecodeTensorRole::SamIouPredictions;
+  if (object >= 0)
+    contract->tensors[std::size_t(object)].role = BoxDecodeTensorRole::SamObjectScore;
+  // The IoU is published as-is: no class activation, layout option or NMS.
+  contract->score_activation = BoxDecodeScoreActivation::Identity;
+  contract->decode_type_option = BoxDecodeTypeOption::Auto;
+  contract->num_classes = masks;
+  return true;
+}
+
 std::optional<BoxDecodeStaticContract>
 build_boxdecode_static_contract_from_mpk(const MpkContract& contract,
                                          const ModelManagedRouteFlags& route_flags,
@@ -3071,7 +3341,8 @@ build_boxdecode_static_contract_from_mpk(const MpkContract& contract,
 
 std::optional<BoxDecodeStaticContract> build_boxdecode_static_contract_from_mpk(
     const MpkContract& contract, const ModelManagedRouteFlags& route_flags,
-    const MpkPluginIoContract* terminal_stage, std::string* error_message) {
+    const MpkPluginIoContract* terminal_stage, std::string* error_message,
+    BoxDecodeType requested_decode_type) {
   auto fail = [&](std::string message) -> std::optional<BoxDecodeStaticContract> {
     set_error(error_message, message);
     return std::nullopt;
@@ -3101,6 +3372,7 @@ std::optional<BoxDecodeStaticContract> build_boxdecode_static_contract_from_mpk(
   }
 
   BoxDecodeStaticContract out;
+  out.decode_type = requested_decode_type;
   out.score_activation = BoxDecodeScoreActivation::Unknown;
   // Source an explicitly authored decode type from the MPK BoxDecode stage. Prefer the explicit
   // terminal stage; otherwise fall back to the BoxDecode plugin in the chain.
@@ -3114,10 +3386,15 @@ std::optional<BoxDecodeStaticContract> build_boxdecode_static_contract_from_mpk(
     }
   }
   if (boxdecode_stage) {
+    if (const auto declared = parse_box_decode_type_token(boxdecode_stage->decode_type);
+        declared && !box_decode_type_matches_requested_contract(*declared, requested_decode_type))
+      return fail("boxdecode requested family conflicts with the MPK decoder contract");
     if (const auto parsed_type = parse_box_decode_type_token(boxdecode_stage->decode_type);
         parsed_type.has_value() &&
         (box_decode_type_is_ssd_family(*parsed_type) || *parsed_type == BoxDecodeType::SuperPoint ||
-         *parsed_type == BoxDecodeType::YoloV5 || *parsed_type == BoxDecodeType::YoloXSegPose)) {
+         *parsed_type == BoxDecodeType::YoloV5 || *parsed_type == BoxDecodeType::YoloXSegPose ||
+         *parsed_type == BoxDecodeType::Detr || *parsed_type == BoxDecodeType::DetrFocal ||
+         box_decode_type_is_sam(*parsed_type))) {
       out.decode_type = *parsed_type;
     }
     if (const auto parsed_option =
@@ -3223,6 +3500,13 @@ std::optional<BoxDecodeStaticContract> build_boxdecode_static_contract_from_mpk(
   const bool preserve_raw_packed_parent_source =
       terminal_stage == nullptr && selected_lineages->preserve_raw_packed_parent_source &&
       mla_stage->output_tensors.size() == 1U;
+  // Several MLA outputs and no unpack plugin (EfficientSAM3: detections in MLA_0_0, sliced by
+  // "slice_MLA_0_unpack/tuple_get_item_0_slice_transform"; logits in MLA_0_1): a head binds the
+  // MLA output segment the MLA stage publishes, not the name of the plugin BoxDecode replaces,
+  // which no stage publishes in this route.
+  const bool direct_multi_output_parent_source = terminal_stage == nullptr &&
+                                                 !explicit_unpack_boundary &&
+                                                 mla_stage->output_tensors.size() > 1U;
   const auto terminal_plugin_index = effective_terminal_plugin_index;
   if (boxdecode_stage && (!terminal_plugin_index.has_value() ||
                           boxdecode_stage->input_tensors.size() != logical_outputs.size())) {
@@ -3245,7 +3529,8 @@ std::optional<BoxDecodeStaticContract> build_boxdecode_static_contract_from_mpk(
     int h = 0;
     int w = 0;
     int c = 0;
-    if (!dims_from_mpk_shape_for_input_nhwc_local(logical_shape, &h, &w, &c)) {
+    if (!dims_from_mpk_shape_local(logical_shape, &h, &w, &c,
+                                   box_decode_type_is_sam(out.decode_type))) {
       return fail("boxdecode model-managed contract requires explicit upstream tensor geometry");
     }
     const std::string entry_dtype = normalize_mpk_dtype_token_local(
@@ -3321,7 +3606,8 @@ std::optional<BoxDecodeStaticContract> build_boxdecode_static_contract_from_mpk(
     if (source_byte_offset == 0 && tensor.byte_offset > 0) {
       source_byte_offset = tensor.byte_offset;
     }
-    if ((preserve_raw_packed_parent_source || explicit_unpack_boundary) &&
+    if ((preserve_raw_packed_parent_source || explicit_unpack_boundary ||
+         direct_multi_output_parent_source) &&
         !source_parent_segment_name.empty()) {
       entry.source_segment_name = source_parent_segment_name;
     } else {
@@ -3336,7 +3622,8 @@ std::optional<BoxDecodeStaticContract> build_boxdecode_static_contract_from_mpk(
     out.tensors.push_back(std::move(entry));
     out.tensor_names.push_back(out.tensors.back().logical_name);
     BoxDecodePhysicalInputStaticContract physical_input;
-    if ((preserve_raw_packed_parent_source || explicit_unpack_boundary) &&
+    if ((preserve_raw_packed_parent_source || explicit_unpack_boundary ||
+         direct_multi_output_parent_source) &&
         !source_parent_segment_name.empty()) {
       physical_input.name = source_parent_segment_name;
     }
@@ -3366,7 +3653,7 @@ std::optional<BoxDecodeStaticContract> build_boxdecode_static_contract_from_mpk(
     const auto facts = collect_boxdecode_tensor_lineage_facts_local(
         contract, execution_positions, outgoing_edges, lineage_roots[i].first,
         lineage_roots[i].second, terminal_plugin_index, terminal_inputs[i], effective_terminal_pos,
-        error_message);
+        error_message, box_decode_type_is_sam(out.decode_type));
     if (!facts.has_value()) {
       return std::nullopt;
     }
@@ -3693,6 +3980,15 @@ std::optional<BoxDecodeStaticContract> build_boxdecode_static_contract_from_mpk(
     }
   }
 
+  if (box_decode_type_is_sam(out.decode_type)) {
+    // SAM MPKs pack or cast their heads behind unpack/slice/cast plugins; the
+    // names carry no role. Bind them by position and geometry instead.
+    if (!bind_sam_tensor_roles(&out, error_message)) {
+      return std::nullopt;
+    }
+    return out;
+  }
+
   const bool grouped_geometry = contract_looks_grouped_by_role_yolov8_local(out);
   bool grouped_lineage_evidence = false;
   bool grouped_lineage_conflict = false;
@@ -3878,7 +4174,8 @@ std::optional<BoxDecodeStaticContract> build_boxdecode_static_contract_from_comp
     entry.input_shape = {h, w, c};
     entry.slice_shape = {h, w, c};
     entry.data_type = dtype;
-    entry.layout = logical.layout;
+    // input_shape is canonical HWC, independently of upstream logical axes.
+    entry.layout = "HWC";
     entry.logical_name = !logical.logical_name.empty() ? logical.logical_name : tensor_name;
     entry.backend_name = !logical.backend_name.empty() ? logical.backend_name : tensor_name;
     entry.source_segment_name = !logical.segment_name.empty() ? logical.segment_name : tensor_name;
@@ -3893,6 +4190,16 @@ std::optional<BoxDecodeStaticContract> build_boxdecode_static_contract_from_comp
     if (overrides.source_storage_kind.has_value()) {
       entry.source_storage_kind = *overrides.source_storage_kind;
     }
+    if ((entry.source_storage_kind == BoxDecodeSourceStorageKind::DenseHwcPhysical ||
+         entry.source_storage_kind == BoxDecodeSourceStorageKind::Unknown) &&
+        !logical.stride_bytes.empty()) {
+      const auto linear = boxdecode_linear_storage(logical.shape, logical.stride_bytes,
+                                                   logical.layout, dtype_size_bytes_local(dtype));
+      if (!linear)
+        return fail("boxdecode upstream linear strides have invalid geometry at tensor index " +
+                    std::to_string(i));
+      entry.stride_bytes = linear->stride_bytes;
+    }
     out.tensors.push_back(entry);
     out.tensor_names.push_back(entry.logical_name);
 
@@ -3903,11 +4210,21 @@ std::optional<BoxDecodeStaticContract> build_boxdecode_static_contract_from_comp
     physical.size_bytes = entry.source_size_bytes;
     out.physical_inputs.push_back(std::move(physical));
 
+    const bool needs_quant = box_decode_type_uses_per_port_dtype(decode_type)
+                                 ? dtype_is_quantized_like_local(dtype)
+                                 : out.quant_needed;
+    if (box_decode_type_uses_per_port_dtype(decode_type)) {
+      out.quant_needed = out.quant_needed || needs_quant;
+      if (needs_quant && logical.quant &&
+          (logical.quant->granularity != QuantGranularity::PerTensor || logical.quant->axis != -1 ||
+           logical.quant->scales.size() != 1 || logical.quant->zero_points.size() != 1))
+        return fail("BoxDecode requires one authored per-tensor quantization value per INT8 port");
+    }
     if (logical.quant.has_value() && !logical.quant->scales.empty() &&
         !logical.quant->zero_points.empty()) {
       out.dq_scale.push_back(logical.quant->scales.front());
       out.dq_zp.push_back(logical.quant->zero_points.front());
-    } else if (!out.quant_needed) {
+    } else if (!needs_quant) {
       out.dq_scale.push_back(1.0);
       out.dq_zp.push_back(0);
     } else {
@@ -3964,7 +4281,11 @@ build_boxdecode_static_contract_from_sample(const Sample& sample, BoxDecodeType 
     const std::string tensor_name = tensor_name_from_sample_local(tensors[i], i);
     // Standalone boxdecode samples can carry stale tess lineage after detess/dequant boundaries.
     // Keep the tess route only when the published sample still looks like a raw MLA head export.
-    if (sample_tensor_semantics_require_tess_local(tensors[i], tensor_name, input_dtype,
+    const auto tensor_dtype =
+        box_decode_type_uses_per_port_dtype(decode_type)
+            ? normalize_mpk_dtype_token_local(dtype_token_from_tensor_local(tensors[i].dtype))
+            : input_dtype;
+    if (sample_tensor_semantics_require_tess_local(tensors[i], tensor_name, tensor_dtype,
                                                    input_contract)) {
       out.tess_needed = true;
       break;
@@ -3997,14 +4318,14 @@ build_boxdecode_static_contract_from_sample(const Sample& sample, BoxDecodeType 
 
     const std::string tensor_name = tensor_name_from_sample_local(tensor, i);
     const std::string dtype =
-        input_dtype.empty()
+        box_decode_type_uses_per_port_dtype(decode_type) || input_dtype.empty()
             ? normalize_mpk_dtype_token_local(dtype_token_from_tensor_local(tensor.dtype))
             : input_dtype;
     if (dtype.empty()) {
       return fail("boxdecode inferred contract requires explicit tensor dtype for tensor index " +
                   std::to_string(i));
     }
-    const std::uint64_t tensor_bytes = dense_tensor_bytes_local(tensor, dtype);
+    std::uint64_t tensor_bytes = dense_tensor_bytes_local(tensor, dtype);
     if (tensor_bytes == 0U) {
       return fail("boxdecode inferred contract requires non-zero tensor span for tensor index " +
                   std::to_string(i));
@@ -4014,8 +4335,8 @@ build_boxdecode_static_contract_from_sample(const Sample& sample, BoxDecodeType 
     entry.input_shape = {h, w, c};
     entry.slice_shape = {h, w, c};
     entry.data_type = dtype;
-    entry.layout =
-        layout_token_from_tensor_layout_local(resolve_tensor_layout_local(tensor, input_contract));
+    // The extractor has already normalized input_shape to HWC above.
+    entry.layout = "HWC";
     entry.logical_name = tensor_name;
     entry.backend_name = tensor_name;
     entry.source_segment_name = tensor_name;
@@ -4029,13 +4350,26 @@ build_boxdecode_static_contract_from_sample(const Sample& sample, BoxDecodeType 
     entry.source_size_bytes = tensor_bytes;
     // Unlike the compiled-upstream path, from_sample has the actual tensor layout. Source storage
     // follows the (sample-derived or overridden) tess decision so it always agrees with
-    // tess_needed: tessellated heads are channel-block packed, dense heads are physically
-    // contiguous HWC. An explicit caller override still wins.
+    // tess_needed: tessellated heads are channel-block packed; linear heads retain
+    // the sample's actual strides independently of their logical axis order.
+    // An explicit caller override still wins.
     if (overrides.source_storage_kind.has_value()) {
       entry.source_storage_kind = *overrides.source_storage_kind;
     } else {
       entry.source_storage_kind = out.tess_needed ? BoxDecodeSourceStorageKind::PackedCBlock
                                                   : BoxDecodeSourceStorageKind::DenseHwcPhysical;
+    }
+    if (entry.source_storage_kind == BoxDecodeSourceStorageKind::DenseHwcPhysical) {
+      const auto linear =
+          boxdecode_linear_storage(tensor.shape, tensor.strides_bytes,
+                                   layout_token_from_tensor_layout_local(
+                                       resolve_tensor_layout_local(tensor, input_contract)),
+                                   dtype_size_bytes_local(dtype));
+      if (!linear)
+        return fail("boxdecode sample linear strides have invalid geometry at tensor index " +
+                    std::to_string(i));
+      entry.stride_bytes = linear->stride_bytes;
+      entry.source_size_bytes = tensor_bytes = linear->span_bytes;
     }
     out.tensors.push_back(entry);
     out.tensor_names.push_back(tensor_name);
@@ -4047,6 +4381,20 @@ build_boxdecode_static_contract_from_sample(const Sample& sample, BoxDecodeType 
     physical.size_bytes = entry.source_size_bytes;
     out.physical_inputs.push_back(std::move(physical));
 
+    const bool needs_quant = box_decode_type_uses_per_port_dtype(decode_type)
+                                 ? dtype_is_quantized_like_local(dtype)
+                                 : out.quant_needed;
+    if (box_decode_type_uses_per_port_dtype(decode_type)) {
+      out.quant_needed = out.quant_needed || needs_quant;
+      if (needs_quant && tensor.semantic.quant &&
+          (tensor.semantic.quant->axis != -1 || tensor.semantic.quant->scales.size() > 1 ||
+           tensor.semantic.quant->zero_points.size() > 1 ||
+           tensor.semantic.quant->scales.empty() != tensor.semantic.quant->zero_points.empty()))
+        return fail("BoxDecode requires one authored per-tensor quantization value per INT8 port");
+    }
+    // Scalar QuantSpec.scale has multiplier semantics; it must not be copied
+    // into this legacy authored-vector divisor contract without conversion.
+    // An explicit InputContract q_scale/q_zp remains an authoritative fallback.
     if (tensor.semantic.quant.has_value() && !tensor.semantic.quant->scales.empty() &&
         !tensor.semantic.quant->zero_points.empty()) {
       out.dq_scale.push_back(tensor.semantic.quant->scales.front());
@@ -4055,7 +4403,7 @@ build_boxdecode_static_contract_from_sample(const Sample& sample, BoxDecodeType 
                input_contract->q_zp.has_value()) {
       out.dq_scale.push_back(*input_contract->q_scale);
       out.dq_zp.push_back(*input_contract->q_zp);
-    } else if (!out.quant_needed) {
+    } else if (!needs_quant) {
       out.dq_scale.push_back(1.0);
       out.dq_zp.push_back(0);
     } else {

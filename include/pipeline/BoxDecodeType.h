@@ -32,6 +32,8 @@ namespace simaai::neat {
  * `YoloV26` uses decoupled 4-channel raw l/t/r/b bbox heads paired with class heads.
  * `YoloV26Seg` uses the same raw l/t/r/b bbox heads, class-score heads,
  * 32-channel mask-coefficient heads, and a trailing mask prototype.
+ * `YoloV26Obb` uses three grouped distance, class-logit and raw-radian angle heads.
+ * It emits BBOX_OBB_V1 with FP32 rotated geometry, without per-frame NMS.
  * `YoloV26Pose` uses the same raw l/t/r/b bbox heads, 1-channel pose scores,
  * and 51-channel keypoint heads.
  * `Ssd` selects one of four prepared SSD contracts (not a generic SSD decoder), resolved from the
@@ -51,13 +53,31 @@ namespace simaai::neat {
  * contiguous prefix selection; both SSD-Mobile recipes and SSDlite-Mobile-320 require the exact
  * encoded class count.
  *
+ * `MobileSam`, `EdgeTamSeg`, `EdgeTamTrack`, `EfficientSam` and `EfficientSam3` decode the
+ * Segment Anything models of those names. A prompt decoder's mask logits (H,W > 1, C = 1, 3 or 4
+ * masks), C IoU predictions and an optional object score become exactly one detection whose mask
+ * has the original image size. `Model::Options::multimask_output` mirrors upstream
+ * `predict(multimask_output=...)`: `true` keeps the multimask channel with the best IoU, `false`
+ * the single-mask answer (mask 0 for MobileSAM; the SAM2 stability rule for EdgeTAM and an
+ * EfficientSAM3 four-mask decoder; EfficientSAM has no single-mask token). An object score of 0
+ * or below empties the mask. An `EfficientSam3` concept image model (detections and per-query
+ * logits) keeps up to `top_k` queries above the score threshold, each with its own mask. The
+ * canvas, original size and resize come from the inputs' `semantic.preprocess`: MobileSAM needs
+ * a top-left letterbox, the others a stretch. The output is a versioned masks payload
+ * (`SegmentationMasksHeaderV1`). A prompt decoder's record box spans the mask pixels (x and y of
+ * the first pixel, width and height in pixels) and is all zero for an empty mask; concept boxes
+ * come from the detection head. `EdgeTamSeg` returns only that payload. `EdgeTamTrack` returns
+ * the payload first, then the mask decoder's own outputs in MPK order, exactly as the same Model
+ * without BoxDecode returns them, from the same run: EdgeTAM tracking keeps the object pointer
+ * and the chosen mask's low-resolution logits for its memory.
+ *
  * @ingroup pipeline
  */
 enum class BoxDecodeType : std::int32_t {
   // Internal sentinel; runtime decode requires a concrete value.
   Unspecified = 0, ///< Sentinel: no decode family selected (fails fast at runtime).
-  // YOLO-family (generic token).
-  Yolo = 1,         ///< Generic YOLO family token.
+  // YOLO family.
+  Yolo = 1,         ///< Decoded cx/cy/w/h heads in model pixels.
   YoloV5 = 2,       ///< Standard-anchor YOLOv5 detection with three raw packed heads.
   YoloV5Seg = 3,    ///< YOLOv5 segmentation.
   YoloV7 = 4,       ///< YOLOv7 detection.
@@ -80,7 +100,15 @@ enum class BoxDecodeType : std::int32_t {
   YoloX = 21,       ///< YOLOX raw xywh heads with separate objectness and class logits.
   Ssd = 22, ///< SSD family token, resolved internally to an exact supported prepared signature.
   SuperPoint = 23,   ///< SuperPoint detector-logit and descriptor-grid postprocessing.
+  YoloV26Obb = 25,   ///< YOLO26 oriented boxes: raw radians, grouped FP32 heads, no NMS.
   YoloXSegPose = 24, ///< YOLOX packed export carrying box, mask and keypoint heads together.
+  YoloV8Obb = 26,    ///< YOLOv8/YOLO11 oriented boxes: DFL and angle logits, rotated Fast-NMS.
+  DetrFocal = 27,  ///< Normalized cxcywh + class logits; sigmoid global query/class top-K, no NMS.
+  MobileSam = 28,  ///< MobileSAM prompt decoder (top-left letterbox).
+  EdgeTamSeg = 29, ///< EdgeTAM mask decoder, with its object score gate (stretch): the mask.
+  EfficientSam = 30,  ///< EfficientSAM prompt decoder: three multimask tokens (stretch).
+  EfficientSam3 = 31, ///< EfficientSAM3 prompt decoder or concept image model (stretch).
+  EdgeTamTrack = 32,  ///< `EdgeTamSeg`, then the decoder's raw outputs for tracking.
 };
 
 /**
@@ -168,6 +196,10 @@ constexpr const char* box_decode_type_token(BoxDecodeType type) {
     return "yolo26-pose";
   case BoxDecodeType::YoloV26Seg:
     return "yolo26-seg";
+  case BoxDecodeType::YoloV8Obb:
+    return "yolov8-obb";
+  case BoxDecodeType::YoloV26Obb:
+    return "yolo26-obb";
   case BoxDecodeType::YoloV6:
     return "yolov6";
   case BoxDecodeType::YoloX:
@@ -180,6 +212,18 @@ constexpr const char* box_decode_type_token(BoxDecodeType type) {
     return "yolox-seg-pose";
   case BoxDecodeType::Detr:
     return "detr";
+  case BoxDecodeType::DetrFocal:
+    return "detr-focal";
+  case BoxDecodeType::MobileSam:
+    return "mobilesam";
+  case BoxDecodeType::EdgeTamSeg:
+    return "edgetam-seg";
+  case BoxDecodeType::EdgeTamTrack:
+    return "edgetam-track";
+  case BoxDecodeType::EfficientSam:
+    return "efficientsam";
+  case BoxDecodeType::EfficientSam3:
+    return "efficientsam3";
   case BoxDecodeType::EffDet:
     return "effdet";
   case BoxDecodeType::RcnnStage1:
@@ -238,6 +282,8 @@ constexpr bool box_decode_type_is_yolo_family(BoxDecodeType type) {
   case BoxDecodeType::YoloV26:
   case BoxDecodeType::YoloV26Pose:
   case BoxDecodeType::YoloV26Seg:
+  case BoxDecodeType::YoloV26Obb:
+  case BoxDecodeType::YoloV8Obb:
   case BoxDecodeType::YoloV6:
   case BoxDecodeType::YoloX:
   case BoxDecodeType::YoloXSegPose:
@@ -245,6 +291,12 @@ constexpr bool box_decode_type_is_yolo_family(BoxDecodeType type) {
   case BoxDecodeType::Ssd:
   case BoxDecodeType::SuperPoint:
   case BoxDecodeType::Detr:
+  case BoxDecodeType::DetrFocal:
+  case BoxDecodeType::MobileSam:
+  case BoxDecodeType::EdgeTamSeg:
+  case BoxDecodeType::EdgeTamTrack:
+  case BoxDecodeType::EfficientSam:
+  case BoxDecodeType::EfficientSam3:
   case BoxDecodeType::EffDet:
   case BoxDecodeType::RcnnStage1:
   case BoxDecodeType::Centernet:
@@ -252,6 +304,11 @@ constexpr bool box_decode_type_is_yolo_family(BoxDecodeType type) {
   default:
     return false;
   }
+}
+
+/// @brief True iff @p type produces oriented floating-point boxes.
+constexpr bool box_decode_type_is_oriented(BoxDecodeType type) {
+  return type == BoxDecodeType::YoloV26Obb || type == BoxDecodeType::YoloV8Obb;
 }
 
 /// @brief True iff @p type selects the SSD decode family.
@@ -269,6 +326,11 @@ constexpr bool box_decode_type_is_segmentation(BoxDecodeType type) {
   case BoxDecodeType::YoloV10Seg:
   case BoxDecodeType::YoloV26Seg:
   case BoxDecodeType::YoloXSegPose:
+  case BoxDecodeType::MobileSam:
+  case BoxDecodeType::EdgeTamSeg:
+  case BoxDecodeType::EdgeTamTrack:
+  case BoxDecodeType::EfficientSam:
+  case BoxDecodeType::EfficientSam3:
     return true;
   case BoxDecodeType::Yolo:
   case BoxDecodeType::YoloV5:
@@ -284,6 +346,7 @@ constexpr bool box_decode_type_is_segmentation(BoxDecodeType type) {
   case BoxDecodeType::Ssd:
   case BoxDecodeType::SuperPoint:
   case BoxDecodeType::Detr:
+  case BoxDecodeType::DetrFocal:
   case BoxDecodeType::EffDet:
   case BoxDecodeType::RcnnStage1:
   case BoxDecodeType::Centernet:
@@ -320,6 +383,12 @@ constexpr bool box_decode_type_is_pose(BoxDecodeType type) {
   case BoxDecodeType::Ssd:
   case BoxDecodeType::SuperPoint:
   case BoxDecodeType::Detr:
+  case BoxDecodeType::DetrFocal:
+  case BoxDecodeType::MobileSam:
+  case BoxDecodeType::EdgeTamSeg:
+  case BoxDecodeType::EdgeTamTrack:
+  case BoxDecodeType::EfficientSam:
+  case BoxDecodeType::EfficientSam3:
   case BoxDecodeType::EffDet:
   case BoxDecodeType::RcnnStage1:
   case BoxDecodeType::Centernet:
@@ -344,6 +413,12 @@ constexpr const char* box_decode_type_contract_summary(BoxDecodeType type) {
     return "YOLOv5 contract: exactly three raw packed P3/P4/P5 heads in stride-8/16/32 "
            "order, each depth=3*(num_classes+5), using standard YOLOv5 anchors and sigmoid "
            "box/objectness/class logits.";
+  case BoxDecodeType::YoloV8Obb:
+    return "YOLOv8/YOLO11-OBB: nine grouped tensors, three DFL(64), class(C), angle-logit(1) "
+           "heads at strides 8/16/32; sigmoid classes, rotated Fast-NMS, uniform affine.";
+  case BoxDecodeType::YoloV26Obb:
+    return "YOLO26-OBB: nine grouped FP32 tensors, three bbox(4), class(C), angle(1) "
+           "heads at strides 8/16/32; raw radians, two-stage top-K, no NMS, uniform affine.";
   case BoxDecodeType::YoloV26:
     return "YOLO26 tensor contract: grouped raw l/t/r/b bbox heads (4 channels) paired "
            "with repeated class-score heads (>4 channels).";
@@ -383,9 +458,24 @@ constexpr const char* box_decode_type_contract_summary(BoxDecodeType type) {
   case BoxDecodeType::YoloV9Seg:
   case BoxDecodeType::YoloV10Seg:
     return "YOLO-seg contract: same class-depth rules as YOLO plus segmentation decode path.";
+  case BoxDecodeType::DetrFocal:
+    return "Focal-query contract: [normalized cxcywh, class logits], depths 4 and num_classes, "
+           "same query grid; sigmoid global pair top-K, no background or NMS, stretch resize. "
+           "Published BBOX coordinates are clipped and rounded to integer pixels.";
   case BoxDecodeType::Detr:
-    return "DETR contract: class channels inferred from max depth across heads; max depth must be "
-           ">4.";
+    return "DETR contract: four box logits and N+1 class logits on one query grid; "
+           "background-aware softmax, N foreground classes, stretch resize, no NMS.";
+  case BoxDecodeType::MobileSam:
+  case BoxDecodeType::EdgeTamSeg:
+  case BoxDecodeType::EdgeTamTrack:
+  case BoxDecodeType::EfficientSam:
+  case BoxDecodeType::EfficientSam3:
+    return "Segment Anything contract: prompt-decoder mask logits [h,w,C] (C = 1, 3 or 4), C IoU "
+           "predictions and an optional object score give one detection, the chosen mask at "
+           "original image size with its tight box and IoU; multimask_output picks the best "
+           "multimask IoU or the single-mask answer. An EfficientSAM3 concept image model "
+           "(detections [Q,6], logits [h,w,Q]) gives up to top_k masks. MobileSAM needs a "
+           "top-left letterbox, the others a stretch, read from semantic.preprocess.";
   case BoxDecodeType::EffDet:
   case BoxDecodeType::RcnnStage1:
   case BoxDecodeType::Centernet:

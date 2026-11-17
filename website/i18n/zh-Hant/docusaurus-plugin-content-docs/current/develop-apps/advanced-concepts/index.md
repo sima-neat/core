@@ -16,6 +16,7 @@ slug: /develop-apps/advanced-concepts/
     <ul class="overview-link-list">
       <li><a class="overview-link-card" href="/develop-apps/advanced-concepts/graphs/"><strong>圖</strong><span>建立模型、節點、具名輸入和輸出、分支，以及執行流程。</span></a></li>
       <li><a class="overview-link-card" href="/develop-apps/advanced-concepts/mipi-camera-input/"><strong>使用 MIPI 相機</strong><span>使用 libcamera 輸入和 CVU 預處理，建立一個由原始資料所擁有的相機到模型的圖。</span></a></li>
+      <li><a class="overview-link-card" href="/develop-apps/advanced-concepts/usb-camera-input/"><strong>使用 USB 攝影機</strong><span>依穩定 ID 讀取 UVC MJPEG 網路攝影機，就地解碼或轉送其 JPEG。</span></a></li>
       <li><a class="overview-link-card" href="/develop-apps/advanced-concepts/video_sender/"><strong>傳送影片</strong><span>透過 H.264 RTP/UDP，將 Neat 應用程式的視訊輸出串流傳輸。</span></a></li>
       <li><a class="overview-link-card" href="/develop-apps/advanced-concepts/metadata_sender/"><strong>傳送 JSON 中繼資料</strong><span>透過 UDP JSON 格式發布結構化的應用程式中繼資料。</span></a></li>
     </ul>

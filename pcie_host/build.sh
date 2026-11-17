@@ -7,6 +7,12 @@ CORE_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 source "${SCRIPT_DIR}/scripts/host-platform.sh"
 cd "${SCRIPT_DIR}"
 
+# Reject the retired unverified header override before dependency installation.
+if [[ -n "${SIMAPCIE_SVC_INCLUDE_DIR:-}" ]]; then
+  echo "ERROR: SIMAPCIE_SVC_INCLUDE_DIR is no longer accepted. Install Scheduler's pcie_service_headers component using a reviewed SIMA_SCHEDULER_PCIE_SERVICE_HEADERS_DEB (or explicit legacy header cohort), then set SimaScheduler_DIR to that installed host profile." >&2
+  exit 2
+fi
+
 BUILD_DIR="build"
 BUILD_TYPE="Release"
 BUILD_TESTS="OFF"
@@ -14,22 +20,19 @@ BUILD_PYTHON="OFF"
 BUILD_EXAMPLES="OFF"
 BUILD_TUTORIALS="ON"
 CLEAN_BUILD="OFF"
+INSTALL_DEPS_ONLY="OFF"
+SKIP_DEPS="OFF"
+BUILD_JOBS="${CMAKE_BUILD_PARALLEL_LEVEL:-2}"
 MAKE_DEB="ON"
 PACKAGE_DIR="${SCRIPT_DIR}/dist"
 INSTALLER_SOURCE="${SCRIPT_DIR}/scripts/install_pciehost.sh"
 INSTALLER_STAGE="${PACKAGE_DIR}/install_pciehost.sh"
-PLUGIN_NAME="libgstneatpciehost.so"
-TENSOR_META_HEADER="gst/SimaTensorSetMetaAbi.h"
 DEPS_MANIFEST="${SIMAPCIE_DEPS_MANIFEST:-${CORE_ROOT}/deps/manifest.json}"
-ARTIFACT_REPOSITORY="${SIMAPCIE_PCIE_HOST_ARTIFACT_REPOSITORY:-internals}"
-ARTIFACT_MANIFEST_KEY="internals"
-VULCAN_ENV="${SIMAPCIE_VULCAN_ENV:-${NEAT_VULCAN_ENV:-production}}"
-VULCAN_BASE_URL="${SIMAPCIE_VULCAN_BASE_URL:-${NEAT_VULCAN_BASE_URL:-}}"
-ARTIFACT_REQUESTED_REF=""
-ARTIFACT_RESOLVED_REF=""
-ARTIFACT_SNAP_POLICY="OFF"
-ARTIFACT_SNAP_TAG_POLICY="OFF"
 SIMAPCIE_PYTHON_EXECUTABLE="${SIMAPCIE_PYTHON_EXECUTABLE:-}"
+SCHEDULER_SPEC=""
+SCHEDULER_CANDIDATE=""
+SCHEDULER_ENVIRONMENT="production"
+SCHEDULER_SELECTION=""
 
 usage() {
   cat <<'EOF'
@@ -41,7 +44,13 @@ Options:
   --with-tests        Build unit and hardware tests
   --with-examples     Build PCIe host C++ examples
   --python            Build Python bindings and package a Python wheel
+  --install-deps-only  Install native build prerequisites, then exit without building
+  --skip-deps         Verify preinstalled prerequisites without running APT
+  --jobs <count>      Parallel build jobs (default: CMAKE_BUILD_PARALLEL_LEVEL or 2)
   --no-deb            Skip DEB package generation
+  --scheduler-spec <sha|latest> Override the manifest's Scheduler revision
+  --scheduler-environment <name> Publication environment (default: production)
+  --scheduler-candidate <dir> Trusted local Scheduler producer output (no download)
   --build-dir <dir>   Build directory (default: build)
   --debug             Build type Debug (default: Release)
   -h, --help          Show this help
@@ -107,6 +116,20 @@ install_build_deps() {
     )
   fi
 
+  # Match the native profiles before making any package changes.
+  source /etc/os-release
+  [[ "$ID" == ubuntu && ( "$VERSION_ID" == 22.04 || "$VERSION_ID" == 24.04 ) ]]
+  if [[ "${SKIP_DEPS}" == "ON" ]]; then
+    local package status
+    for package in "${packages[@]}"; do
+      status="$(dpkg-query -W -f='${Status}' "${package}" 2>/dev/null || true)"
+      if [[ "${status}" != "install ok installed" ]]; then
+        echo "ERROR: --skip-deps requires installed package ${package}; rebuild the dependency image or run without --skip-deps." >&2
+        return 1
+      fi
+    done
+    return
+  fi
   run_privileged apt-get update
   run_privileged apt-get install -y --no-install-recommends "${packages[@]}"
 }
@@ -136,6 +159,19 @@ while [[ $# -gt 0 ]]; do
       BUILD_PYTHON="ON"
       shift
       ;;
+    --install-deps-only)
+      INSTALL_DEPS_ONLY="ON"
+      shift
+      ;;
+    --skip-deps)
+      SKIP_DEPS="ON"
+      shift
+      ;;
+    --jobs)
+      BUILD_JOBS="${2:-}"
+      [[ "${BUILD_JOBS}" =~ ^[1-9][0-9]*$ ]] || { echo "ERROR: --jobs requires a positive integer" >&2; exit 2; }
+      shift 2
+      ;;
     --no-deb)
       MAKE_DEB="OFF"
       shift
@@ -146,6 +182,16 @@ while [[ $# -gt 0 ]]; do
         echo "ERROR: --build-dir requires a value" >&2
         exit 1
       fi
+      shift 2
+      ;;
+    --scheduler-spec|--scheduler-environment|--scheduler-candidate)
+      option="$1"
+      [[ -n "${2:-}" ]] || { echo "ERROR: $option requires a value" >&2; exit 2; }
+      case "$option" in
+        --scheduler-spec) SCHEDULER_SPEC="$2" ;;
+        --scheduler-environment) SCHEDULER_ENVIRONMENT="$2" ;;
+        --scheduler-candidate) SCHEDULER_CANDIDATE="$2" ;;
+      esac
       shift 2
       ;;
     --debug)
@@ -164,115 +210,20 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+[[ "${BUILD_JOBS}" =~ ^[1-9][0-9]*$ ]] || { echo "ERROR: CMAKE_BUILD_PARALLEL_LEVEL must be a positive integer" >&2; exit 2; }
+
+# Refuse inherited SDK flags rather than silently mixing host and target ABIs.
+for name in CC CXX CFLAGS CXXFLAGS CPPFLAGS LDFLAGS CMAKE_TOOLCHAIN_FILE PKG_CONFIG_SYSROOT_DIR PKG_CONFIG_LIBDIR PKG_CONFIG_PATH CMAKE_LIBRARY_PATH CMAKE_INCLUDE_PATH CMAKE_PREFIX_PATH CMAKE_FIND_ROOT_PATH LIBRARY_PATH CPATH C_INCLUDE_PATH CPLUS_INCLUDE_PATH; do
+  [[ -z "${!name:-}" ]] || { echo "ERROR: native PCIe build requires clean host environment ($name is set)" >&2; exit 2; }
+done
 install_build_deps
-
-manifest_dependency_spec() {
-  local key="$1"
-  local file="$2"
-  python3 - "${key}" "${file}" <<'PY'
-import json
-import sys
-from pathlib import Path
-
-key = sys.argv[1]
-manifest_path = Path(sys.argv[2])
-data = json.loads(manifest_path.read_text(encoding="utf-8"))
-if key not in data:
-    raise SystemExit(f"ERROR: {manifest_path} must define '{key}'.")
-
-value = data[key]
-if isinstance(value, str):
-    print("__SNAP__" if not value.strip() else value.strip())
-    raise SystemExit(0)
-
-if isinstance(value, dict):
-    policy = str(value.get("policy", "")).strip().lower()
-    if policy == "snap":
-        print("__SNAP__")
-        raise SystemExit(0)
-    if policy:
-        raise SystemExit(f"ERROR: unsupported {key}.policy in {manifest_path}: {policy!r}")
-
-    spec = str(value.get("spec", "")).strip()
-    branch = str(value.get("branch", value.get("ref", ""))).strip()
-    if branch:
-        print(f"{branch}:{spec or 'latest'}")
-        raise SystemExit(0)
-
-raise SystemExit(
-    f"ERROR: {manifest_path} field '{key}' must be a string, "
-    "or an object with {'policy':'snap'} or {'branch':'...', 'spec':'...'}."
-)
-PY
-}
+if [[ "${INSTALL_DEPS_ONLY}" == "ON" ]]; then
+  echo "Native PCIe host build prerequisites are ready; no PCIe package or device installation requested."
+  exit 0
+fi
 
 current_core_branch() {
-  if [[ -n "${GITHUB_HEAD_REF:-}" ]]; then
-    printf '%s\n' "${GITHUB_HEAD_REF}"
-    return 0
-  fi
-  if [[ -n "${GITHUB_REF_NAME:-}" ]]; then
-    printf '%s\n' "${GITHUB_REF_NAME}"
-    return 0
-  fi
-  if command -v git >/dev/null 2>&1 &&
-     git -C "${CORE_ROOT}" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-    git -C "${CORE_ROOT}" rev-parse --abbrev-ref HEAD 2>/dev/null
-    return 0
-  fi
-  printf '\n'
-}
-
-current_core_tag() {
-  if [[ "${GITHUB_REF_TYPE:-}" == "tag" && -n "${GITHUB_REF_NAME:-}" ]]; then
-    printf '%s\n' "${GITHUB_REF_NAME}"
-    return 0
-  fi
-  if command -v git >/dev/null 2>&1 &&
-     git -C "${CORE_ROOT}" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-    git -C "${CORE_ROOT}" describe --tags --exact-match HEAD 2>/dev/null || true
-    return 0
-  fi
-  printf '\n'
-}
-
-resolve_artifact_ref() {
-  ARTIFACT_SNAP_POLICY="OFF"
-  ARTIFACT_SNAP_TAG_POLICY="OFF"
-
-  if [[ ! -f "${DEPS_MANIFEST}" ]]; then
-    echo "ERROR: missing dependency manifest: ${DEPS_MANIFEST}" >&2
-    return 1
-  fi
-
-  local manifest_spec
-  if ! manifest_spec="$(manifest_dependency_spec "${ARTIFACT_MANIFEST_KEY}" "${DEPS_MANIFEST}")"; then
-    return 1
-  fi
-
-  local branch spec tag
-  if [[ "${manifest_spec}" == "__SNAP__" ]]; then
-    ARTIFACT_SNAP_POLICY="ON"
-    tag="$(current_core_tag)"
-    if [[ -n "${tag}" ]]; then
-      ARTIFACT_SNAP_TAG_POLICY="ON"
-      branch="${tag}"
-    else
-      branch="$(current_core_branch)"
-      if [[ -z "${branch}" || "${branch}" == "HEAD" ]]; then
-        echo "Could not determine current branch for PCIe host artifact snap; using develop." >&2
-        branch="develop"
-      fi
-    fi
-  elif [[ "${manifest_spec}" == *":"* ]]; then
-    branch="${manifest_spec%%:*}"
-    spec="${manifest_spec#*:}"
-  else
-    branch="${manifest_spec}"
-  fi
-  spec="${spec:-latest}"
-
-  ARTIFACT_REQUESTED_REF="${branch}:${spec}"
+  printf '%s\n' "${GITHUB_HEAD_REF:-${GITHUB_REF_NAME:-$(git -C "$CORE_ROOT" branch --show-current)}}"
 }
 
 detect_multiarch() {
@@ -333,74 +284,7 @@ resolve_python_executable() {
   command -v python3
 }
 
-artifact_available() {
-  [[ -f "${PLUGIN_SOURCE}" && -f "${HEADER_SOURCE}" ]]
-}
 
-install_artifact_from_vulcan_ref() {
-  local ref_spec="$1"
-  local ref="${ref_spec%%:*}"
-  local spec="${ref_spec#*:}"
-  local target="${ARTIFACT_REPOSITORY}/pcie-host/${HOST_DISTRO}/${HOST_MULTIARCH}@${ref}:${spec}"
-  local install_dir="${SCRIPT_DIR}/artifacts"
-  local sima_cli_args=(neat install --env "${VULCAN_ENV}" -d "${install_dir}")
-
-  if [[ -n "${VULCAN_BASE_URL}" ]]; then
-    sima_cli_args+=(--base-url "${VULCAN_BASE_URL}")
-  fi
-  sima_cli_args+=("${target}")
-
-  mkdir -p "${install_dir}"
-  rm -rf \
-    "${install_dir}/${HOST_MULTIARCH}" \
-    "${install_dir}/pcie-host-artifact-${HOST_MULTIARCH}" \
-    "${install_dir}/pcie-host-artifact-${HOST_MULTIARCH}.tar.gz"
-
-  echo "Installing PCIe host artifact ${target} from Vulcan env ${VULCAN_ENV}..."
-  if ! sima-cli "${sima_cli_args[@]}"; then
-    return 1
-  fi
-
-  if ! artifact_available; then
-    echo "ERROR: installed PCIe host artifact is incomplete under artifacts/${HOST_MULTIARCH}" >&2
-    echo "       expected ${PLUGIN_SOURCE}" >&2
-    echo "       expected ${HEADER_SOURCE}" >&2
-    return 1
-  fi
-
-  ARTIFACT_RESOLVED_REF="${ref}:${spec}"
-}
-
-ensure_artifact_downloaded() {
-  if ! command -v sima-cli >/dev/null 2>&1; then
-    echo "ERROR: sima-cli is required to install PCIe host artifacts." >&2
-    echo "       Install sima-cli before running this build." >&2
-    exit 1
-  fi
-
-  if ! resolve_artifact_ref; then
-    exit 1
-  fi
-
-  local requested_ref="${ARTIFACT_REQUESTED_REF}"
-  if install_artifact_from_vulcan_ref "${requested_ref}"; then
-    echo "Using PCIe host artifact ${ARTIFACT_RESOLVED_REF}."
-    return 0
-  fi
-
-  if [[ "${ARTIFACT_SNAP_POLICY}" == "ON" &&
-        "${ARTIFACT_SNAP_TAG_POLICY}" != "ON" &&
-        "${requested_ref}" != "develop:latest" ]]; then
-    echo "No PCIe host artifact found for '${requested_ref}'; retrying develop:latest." >&2
-    if install_artifact_from_vulcan_ref "develop:latest"; then
-      echo "Using PCIe host artifact ${ARTIFACT_RESOLVED_REF}."
-      return 0
-    fi
-  fi
-
-  echo "ERROR: failed to install PCIe host artifact for ${requested_ref}" >&2
-  exit 1
-}
 
 generate_package_metadata() {
   mkdir -p "${PACKAGE_DIR}"
@@ -470,7 +354,10 @@ extras_tars = sorted(package_dir.glob(f"sima-pcie-host-*-Linux-{deb_arch}-extras
 wheels = sorted(package_dir.glob("pyneatpcie-*.whl"))
 installer = package_dir / "install_pciehost.sh"
 
-full_paths = runtime_debs + dev_debs + extras_tars + wheels
+selection = json.loads((package_dir / "scheduler-native-selection.json").read_text())
+native_paths = [package_dir / name for name in selection["resources"]]
+full_paths = runtime_debs + dev_debs + extras_tars + wheels + native_paths + [
+    package_dir / "scheduler-native-selection.json", package_dir / "pcie_delivery.py"]
 if installer.is_file():
     full_paths.append(installer)
 
@@ -626,17 +513,12 @@ case "${BUILD_DIR}" in
     BUILD_DIR_ABS="${SCRIPT_DIR}/${BUILD_DIR}"
     ;;
 esac
-PLUGIN_SOURCE="${SCRIPT_DIR}/artifacts/${HOST_MULTIARCH}/${PLUGIN_NAME}"
-HEADER_SOURCE="${SCRIPT_DIR}/artifacts/${HOST_MULTIARCH}/include/${TENSOR_META_HEADER}"
-PLUGIN_STAGE_DIR="${BUILD_DIR_ABS}/artifacts/neatpciehost/${HOST_MULTIARCH}"
-PLUGIN_STAGE="${PLUGIN_STAGE_DIR}/${PLUGIN_NAME}"
-INCLUDE_STAGE_DIR="${BUILD_DIR_ABS}/artifacts/neatpciehost/${HOST_MULTIARCH}/include"
-HEADER_STAGE="${INCLUDE_STAGE_DIR}/${TENSOR_META_HEADER}"
 
 echo "========================================"
 echo " SiMa NEAT PCIe host build configuration"
 echo "========================================"
 echo "Build type      : ${BUILD_TYPE}"
+echo "Build jobs      : ${BUILD_JOBS}"
 echo "Build tests     : ${BUILD_TESTS}"
 echo "Build Python    : ${BUILD_PYTHON}"
 echo "Build examples  : ${BUILD_EXAMPLES}"
@@ -652,12 +534,6 @@ echo "Package version : ${PACKAGE_VERSION}"
 if [[ "${BUILD_PYTHON}" == "ON" ]]; then
   echo "Python exe      : ${PYTHON_EXECUTABLE}"
 fi
-echo "Artifact repo   : ${ARTIFACT_REPOSITORY}"
-echo "Vulcan env      : ${VULCAN_ENV}"
-echo "Plugin source   : ${PLUGIN_SOURCE}"
-echo "Plugin stage    : ${PLUGIN_STAGE}"
-echo "Header source   : ${HEADER_SOURCE}"
-echo "Header stage    : ${HEADER_STAGE}"
 echo "========================================"
 echo
 
@@ -666,44 +542,26 @@ if [[ "${CLEAN_BUILD}" == "ON" ]]; then
   rm -rf "${BUILD_DIR}"
 fi
 
-ensure_artifact_downloaded
-
-if [[ -f "${PLUGIN_SOURCE}" ]]; then
-  mkdir -p "${PLUGIN_STAGE_DIR}"
-  cp -f "${PLUGIN_SOURCE}" "${PLUGIN_STAGE}"
-elif [[ "${MAKE_DEB}" == "ON" ]]; then
-  echo "ERROR: missing neatpciehost plugin artifact: ${PLUGIN_SOURCE}" >&2
-  echo "       expected layout: artifacts/${HOST_MULTIARCH}/${PLUGIN_NAME}" >&2
-  exit 1
-else
-  echo "WARN: missing neatpciehost plugin artifact: ${PLUGIN_SOURCE}" >&2
-  PLUGIN_STAGE=""
-fi
-
-if [[ -f "${HEADER_SOURCE}" ]]; then
-  mkdir -p "$(dirname "${HEADER_STAGE}")"
-  cp -f "${HEADER_SOURCE}" "${HEADER_STAGE}"
-else
-  echo "ERROR: missing neatpciehost tensor metadata ABI header: ${HEADER_SOURCE}" >&2
-  echo "       expected layout: artifacts/${HOST_MULTIARCH}/include/${TENSOR_META_HEADER}" >&2
-  exit 1
-fi
-
+# Core acquires Scheduler's native publication under deps/manifest.json policy.
+# An explicitly installed local component remains usable for a no-DEB build.
 GENAI_CMAKE_ARGS=()
-if [[ -n "${SIMAPCIE_SVC_INCLUDE_DIR:-}" ]]; then
-  GENAI_CMAKE_ARGS+=("-DSIMAPCIE_SVC_INCLUDE_DIR=${SIMAPCIE_SVC_INCLUDE_DIR}")
+if [[ "$MAKE_DEB" == OFF && -n "${SimaScheduler_DIR:-}" ]]; then
+  GENAI_CMAKE_ARGS+=("-DSimaScheduler_DIR=${SimaScheduler_DIR}")
 else
-  for header in simaai_svc.h simaai_svc_proto.h; do
-    source_header="${SCRIPT_DIR}/artifacts/${HOST_MULTIARCH}/include/simaai/${header}"
-    if [[ ! -f "${source_header}" ]]; then
-      echo "ERROR: PCIe host artifact lacks GenAI service header: ${source_header}" >&2
-      echo "       Update the Internals PCIe host artifact to a matching GenAI build." >&2
-      exit 1
-    fi
-    mkdir -p "${INCLUDE_STAGE_DIR}/simaai"
-    cp -f "${source_header}" "${INCLUDE_STAGE_DIR}/simaai/${header}"
-  done
-  GENAI_CMAKE_ARGS+=("-DSIMAPCIE_SVC_INCLUDE_DIR=${INCLUDE_STAGE_DIR}/simaai")
+  native_root="$(mktemp -d "${TMPDIR:-/tmp}/core-native-scheduler.XXXXXX")"
+  scheduler_spec_args=()
+  if [[ -n "$SCHEDULER_SPEC" ]]; then scheduler_spec_args+=(--spec "$SCHEDULER_SPEC"); fi
+  if [[ -n "$SCHEDULER_CANDIDATE" ]]; then scheduler_spec_args+=(--candidate "$SCHEDULER_CANDIDATE"); fi
+  python3 scripts/acquire_scheduler.py --branch "$(current_core_branch)" \
+    "${scheduler_spec_args[@]}" --environment "$SCHEDULER_ENVIRONMENT" \
+    --distro "$HOST_DISTRO" --arch "$DEB_ARCH" --output "$native_root/selected"
+  SCHEDULER_SELECTION="$native_root/selected/selection.json"
+  # Acquisition privately extracts prebuilt Scheduler packages and service
+  # headers. Core does not build the Platform library or install a PCIe driver.
+  scheduler_dir="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["scheduler_dir"])' "$SCHEDULER_SELECTION")"
+  native_version="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["package_version"])' "$SCHEDULER_SELECTION")"
+  GENAI_CMAKE_ARGS+=("-DSimaScheduler_DIR=${scheduler_dir}"
+                    "-DSIMAPCIE_SCHEDULER_PACKAGE_VERSION=${native_version}")
 fi
 cmake -S . -B "${BUILD_DIR}" \
   -DCMAKE_BUILD_TYPE="${BUILD_TYPE}" \
@@ -714,20 +572,21 @@ cmake -S . -B "${BUILD_DIR}" \
   -DSIMAPCIE_BUILD_TUTORIALS="${BUILD_TUTORIALS}" \
   -DSIMAPCIE_BUILD_PYTHON="${BUILD_PYTHON}" \
   -DPython_EXECUTABLE="${PYTHON_EXECUTABLE}" \
-  -DSIMAPCIE_NEATPCIEHOST_PLUGIN="${PLUGIN_STAGE}" \
-  -DSIMAPCIE_NEATPCIEHOST_INCLUDE_DIR="${INCLUDE_STAGE_DIR}" \
   "${GENAI_CMAKE_ARGS[@]}"
 
-cmake --build "${BUILD_DIR}" -j 2
+cmake --build "${BUILD_DIR}" --parallel "${BUILD_JOBS}"
 
 if [[ "${MAKE_DEB}" == "ON" ]]; then
   echo
   echo "Building DEB packages..."
   mkdir -p "${PACKAGE_DIR}"
   cpack --config "${BUILD_DIR}/CPackConfig.cmake" -G DEB -B "${PACKAGE_DIR}"
+  python3 scripts/pcie_delivery.py compose --selection "$SCHEDULER_SELECTION" --output "$PACKAGE_DIR"
+  python3 scripts/pcie_delivery.py verify --directory "$PACKAGE_DIR"
 fi
 
 if [[ -f "${INSTALLER_SOURCE}" ]]; then
+  mkdir -p "${PACKAGE_DIR}"
   cp -f "${INSTALLER_SOURCE}" "${INSTALLER_STAGE}"
   chmod 0755 "${INSTALLER_STAGE}"
 fi
@@ -789,7 +648,7 @@ if [[ "${BUILD_PYTHON}" == "ON" ]]; then
   sha256sum "${wheel_path}" > "${wheel_path}.sha256"
 fi
 
-generate_package_metadata
+if [[ "$MAKE_DEB" == ON ]]; then generate_package_metadata; fi
 
 echo
 echo "========================================"

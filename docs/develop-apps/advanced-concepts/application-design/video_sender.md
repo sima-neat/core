@@ -17,7 +17,7 @@ Use `VideoSender` when a Graph should send video to an external receiver. `Video
 | H.265 | `SimaEncodeType::H265` | `RtspCodec::H265` | 98 |
 | MJPEG | `SimaEncodeType::MJPEG` | `RtspCodec::MJPEG` | 26 |
 
-Insight's RTP/WebRTC viewer supports H.264 and H.265. MJPEG output requires a compatible RTP/JPEG receiver; it is not supported by that viewer.
+Insight's RTP/WebRTC viewer supports H.264 and H.265, and MJPEG (RTP/JPEG, payload type 26) in releases after v0.0.8. With Insight v0.0.8 or earlier, MJPEG output needs another RTP/JPEG receiver.
 
 If the receiver runs behind container port remapping, pass the mapped host and a matching `video_port_base` from the app.
 
@@ -115,6 +115,8 @@ parses, packetizes, and sends the stream without re-encoding.
 | MJPEG | `Passthrough(RtspCodec::MJPEG)` | `passthrough(pyneat.RtspCodec.MJPEG)` | 26 |
 
 Passthrough creates no encoder. The caller's codec selection must match the encoded input; encoder settings do not apply.
+
+MJPEG, raw or passthrough, sends through `neatjpegudpsink` when the installed Scheduler provides it. That one sink reads each frame's JPEG headers, builds the RTP/JPEG packets and sends them over UDP, with no `jpegparse` in front of it when the input caps carry width and height (a USB camera, the encoder, an `Input` with sized caps). An input whose caps may lack dimensions, such as HTTP multipart MJPEG or an `Input` with `image/jpeg` caps only, keeps `jpegparse` in front of the sink. With an older Scheduler, Neat keeps `jpegparse`, `rtpjpegpay` and `udpsink`. The host, port, payload type, `sync` and `async` settings are the same for both.
 
 When an RTSP source feeds both this sender and a `SimaDecode`, the default `async=false` lets Core render the sender behind a GStreamer `tee` in the source pipeline, so the source, sender, and decoder start, stop, and fail together. Set `async=true` (`async_` in Python) to keep them in separate pipelines.
 

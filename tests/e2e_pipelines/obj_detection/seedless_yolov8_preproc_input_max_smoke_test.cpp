@@ -92,12 +92,12 @@ void check_model(const std::filesystem::path& model_path, bool explicit_input_ma
   std::cout << "[pcie-preproc-max] backend:\n" << backend << "\n";
 
   require_contains(backend, "neatpciesrc", "PCIe-style graph must start with neatpciesrc");
-  require_contains(backend, "neatprocesscvu", "PCIe-style graph must include processcvu");
+  require_contains(backend, "neatkernelrunner", "PCIe-style graph must include processcvu");
   require_contains(backend, "neatprocessmla", "PCIe-style graph must include processmla");
   require_contains(backend, "neatpciesink", "PCIe-style graph must end with neatpciesink");
 
   const std::size_t src_pos = backend.find("neatpciesrc");
-  const std::size_t cvu_pos = backend.find("neatprocesscvu");
+  const std::size_t cvu_pos = backend.find("neatkernelrunner");
   const std::size_t mla_pos = backend.find("neatprocessmla");
   const std::size_t sink_pos = backend.find("neatpciesink");
   require_true(src_pos < cvu_pos && cvu_pos < mla_pos && mla_pos < sink_pos,
@@ -118,7 +118,7 @@ int main(int argc, char** argv) {
 
     simaai::neat::gst_init_once();
     if (!simaai::neat::element_exists("neatpciesrc") ||
-        !simaai::neat::element_exists("neatprocesscvu") ||
+        !simaai::neat::element_exists("neatkernelrunner") ||
         !simaai::neat::element_exists("neatprocessmla") ||
         !simaai::neat::element_exists("neatpciesink")) {
       return skip_long_test("missing PCIe/model GStreamer plugins");

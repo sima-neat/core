@@ -74,6 +74,10 @@ std::optional<BoxDecodeType> parse_box_decode_type_token(std::string_view token)
   if (lower == "yolov8") {
     return BoxDecodeType::YoloV8;
   }
+  if (lower == "yolov8-obb" || lower == "yolo8-obb" || lower == "yolo11-obb" ||
+      lower == "yolov11-obb") {
+    return BoxDecodeType::YoloV8Obb;
+  }
   if (lower == "yolov8-seg") {
     return BoxDecodeType::YoloV8Seg;
   }
@@ -98,6 +102,9 @@ std::optional<BoxDecodeType> parse_box_decode_type_token(std::string_view token)
   if (lower == "yolo26-pose" || lower == "yolov26-pose") {
     return BoxDecodeType::YoloV26Pose;
   }
+  if (lower == "yolo26-obb" || lower == "yolov26-obb") {
+    return BoxDecodeType::YoloV26Obb;
+  }
   if (lower == "yolo26-seg" || lower == "yolov26-seg") {
     return BoxDecodeType::YoloV26Seg;
   }
@@ -115,6 +122,24 @@ std::optional<BoxDecodeType> parse_box_decode_type_token(std::string_view token)
   }
   if (lower == "yolox-seg-pose" || lower == "yolox_seg_pose") {
     return BoxDecodeType::YoloXSegPose;
+  }
+  if (lower == "detr-focal" || lower == "detr_focal") {
+    return BoxDecodeType::DetrFocal;
+  }
+  if (lower == "mobilesam" || lower == "mobile-sam") {
+    return BoxDecodeType::MobileSam;
+  }
+  if (lower == "edgetam-seg" || lower == "edgetam_seg") {
+    return BoxDecodeType::EdgeTamSeg;
+  }
+  if (lower == "edgetam-track" || lower == "edgetam_track") {
+    return BoxDecodeType::EdgeTamTrack;
+  }
+  if (lower == "efficientsam" || lower == "efficient-sam") {
+    return BoxDecodeType::EfficientSam;
+  }
+  if (lower == "efficientsam3" || lower == "efficient-sam3") {
+    return BoxDecodeType::EfficientSam3;
   }
   if (lower == "detr") {
     return BoxDecodeType::Detr;
@@ -161,6 +186,51 @@ std::optional<SuperPointOutputFormat> parse_superpoint_output_format_token(std::
     return SuperPointOutputFormat::LegacyA65InterleavedV0;
   }
   return std::nullopt;
+}
+
+bool box_decode_type_uses_per_port_dtype(BoxDecodeType type) {
+  return type == BoxDecodeType::SuperPoint || type == BoxDecodeType::YoloXSegPose ||
+         type == BoxDecodeType::Detr || type == BoxDecodeType::DetrFocal ||
+         box_decode_type_is_oriented(type) || box_decode_type_is_sam(type);
+}
+
+bool box_decode_type_is_sam(BoxDecodeType type) {
+  return type == BoxDecodeType::MobileSam || type == BoxDecodeType::EdgeTamSeg ||
+         type == BoxDecodeType::EdgeTamTrack || type == BoxDecodeType::EfficientSam ||
+         type == BoxDecodeType::EfficientSam3;
+}
+
+const char* box_decode_type_sam_model_name(BoxDecodeType type) {
+  switch (type) {
+  case BoxDecodeType::MobileSam:
+    return "MobileSAM";
+  case BoxDecodeType::EdgeTamSeg:
+  case BoxDecodeType::EdgeTamTrack:
+    return "EdgeTAM";
+  case BoxDecodeType::EfficientSam:
+    return "EfficientSAM";
+  case BoxDecodeType::EfficientSam3:
+    return "EfficientSAM3";
+  default:
+    return "Segment Anything";
+  }
+}
+
+bool box_decode_type_sam_exports_masks(BoxDecodeType type, int masks) {
+  return masks == 1 || (masks == 4 && type != BoxDecodeType::EfficientSam) ||
+         (masks == 3 &&
+          (type == BoxDecodeType::EfficientSam || type == BoxDecodeType::EfficientSam3));
+}
+
+const char* box_decode_type_sam_mask_counts(BoxDecodeType type) {
+  switch (type) {
+  case BoxDecodeType::EfficientSam:
+    return "1 or 3";
+  case BoxDecodeType::EfficientSam3:
+    return "1, 3 or 4";
+  default:
+    return "1 or 4";
+  }
 }
 
 bool is_box_decode_type_specified(BoxDecodeType type) {

@@ -63,24 +63,20 @@ asan_ubsan_tests=(
   unit_gst_data_adapter_edge_test
   unit_node_metadata_sender_test
   unit_video_sender_test
-  unit_node_udp_output_fragment_test
+  unit_transport_output_nodes_test
   unit_nodes_test
   unit_outputspec_test
-  unit_pipeline_build_wiring_test
+  unit_pipeline_internal_build_test
+  unit_graph_naming_transform_test
   unit_model_infer_output_name_test
   unit_model_input_spec_contract_test
   unit_model_output_spec_contract_test
   unit_model_metadata_test
   unit_model_stage_fragments_test
-  unit_run_holder_api_test
-  unit_run_pull_variants_api_test
-  unit_run_try_push_api_test
-  unit_run_api_variants_test
+  unit_run_api_matrix_test
   unit_graph_io_contract_test
-  unit_graph_io_contract_test
-  unit_graph_naming_transform_test
   unit_simaai_guard_test
-  unit_stageconfig_mla_info_test
+  unit_stage_metadata_query_test
   unit_tensor_conversion_policy_test
   unit_tensor_image_mapping_test
   caps_negotiation_matrix_regression_test
@@ -98,9 +94,7 @@ tsan_tests=(
   unit_builder_test
   unit_contracts_test
   unit_graph_strict_sync_store_test
-  unit_run_try_push_api_test
-  unit_run_holder_api_test
-  unit_run_api_variants_test
+  unit_run_api_matrix_test
   unit_graph_naming_transform_test
   graph_validate_report_regression_test
   graph_naming_pipeline_integration_test
@@ -179,6 +173,8 @@ fi
 
 #echo "[sanitizer-gate] running Modalix preflight..."
 #ctest --test-dir "${PREFLIGHT_DIR}" --output-on-failure -R "^unit_modalix_contract_preflight_test$" --no-tests=error
+
+python3 tools/ci/verify_ctest_exact_selection.py --test-dir "${TEST_DIR}" --regex "${regex}"
 
 echo "[sanitizer-gate] running tests..."
 ctest --test-dir "${TEST_DIR}" --output-on-failure --no-tests=error -R "${regex}"

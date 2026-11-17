@@ -1,6 +1,9 @@
 #include "pipeline/internal/TerminalOutputContractQuery.h"
 
+#include <gstsimaaitensorbuffer_meta.h>
+
 #include "pipeline/internal/TensorMath.h"
+#include "pipeline/internal/sima/KernelStageRecipe.h"
 
 #include <algorithm>
 #include <cctype>
@@ -205,12 +208,6 @@ const PhysicalBufferStaticSpec* physical_for_logical(const StageStaticSpec& stag
   return nullptr;
 }
 
-bool logical_name_looks_like_boundary_view(const LogicalTensorStaticSpec& logical) {
-  return is_boundary_view_token(logical.logical_name) ||
-         is_boundary_view_token(logical.backend_name) ||
-         is_boundary_view_token(logical.segment_name);
-}
-
 bool logical_outputs_are_producer_local(const StageStaticSpec& stage) {
   if (stage.logical_outputs.empty() || stage.physical_outputs.empty()) {
     return false;
@@ -236,15 +233,6 @@ bool logical_outputs_are_producer_local(const StageStaticSpec& stage) {
     }
     const auto offset = static_cast<std::uint64_t>(logical.byte_offset);
     if (offset > physical->size_bytes || span > physical->size_bytes - offset) {
-      return false;
-    }
-
-    // A boundary/view name on a non-view terminal producer is evidence that a
-    // downstream edge contract leaked into public publication.  Do not use it
-    // as the user-visible terminal contract; synthesize the raw producer bytes
-    // instead.
-    if (logical_name_looks_like_boundary_view(logical) &&
-        classify_stage_for_publication(stage) != StagePublicationRole::BoundaryView) {
       return false;
     }
 
@@ -389,6 +377,22 @@ bool logical_to_override_entry(const StageStaticSpec& stage, const LogicalTensor
                     ? logical.logical_name
                     : (!logical.backend_name.empty() ? logical.backend_name : "output");
   entry->segment_name = !logical.segment_name.empty() ? logical.segment_name : entry->name;
+  if (stage.tensor_publication && stage.tensor_publication->contract) {
+    const auto& outputs = stage.tensor_publication->contract->logical_outputs;
+    const auto published = std::find_if(outputs.begin(), outputs.end(), [&](const auto& output) {
+      return output.logical_index == logical.logical_index;
+    });
+    if (published == outputs.end()) {
+      if (error_message)
+        *error_message = "terminal output has no finalized publication route";
+      return false;
+    }
+    // Semantic views remain producer-local. The checked publication carries
+    // their final allocation index and offset after shared carrier packing.
+    entry->memory_index = published->memory_index;
+    entry->byte_offset = published->byte_offset;
+    entry->segment_name = published->segment_name;
+  }
   return true;
 }
 
@@ -454,18 +458,8 @@ bool physical_matches_endpoint(const PhysicalBufferStaticSpec& physical,
 
 bool stage_outputs_match_endpoint(const StageStaticSpec& stage,
                                   const PublicOutputEndpointSelector& endpoint) {
-  if (!endpoint_has_output_selector(endpoint)) {
+  if (stage_public_outputs_match_endpoint(stage, endpoint)) {
     return true;
-  }
-  for (const auto& route : stage.output_order) {
-    if (route_matches_endpoint(route, endpoint)) {
-      return true;
-    }
-  }
-  for (const auto& logical : stage.logical_outputs) {
-    if (logical_matches_endpoint(logical, endpoint)) {
-      return true;
-    }
   }
   for (const auto& physical : stage.physical_outputs) {
     if (physical_matches_endpoint(physical, endpoint)) {
@@ -543,6 +537,24 @@ bool filter_publication_stage_for_endpoint(StageStaticSpec* publication,
 }
 
 } // namespace
+
+bool stage_public_outputs_match_endpoint(const sima::StageStaticSpec& stage,
+                                         const PublicOutputEndpointSelector& endpoint) {
+  if (!endpoint_has_output_selector(endpoint)) {
+    return true;
+  }
+  for (const auto& route : stage.output_order) {
+    if (route_matches_endpoint(route, endpoint)) {
+      return true;
+    }
+  }
+  for (const auto& logical : stage.logical_outputs) {
+    if (logical_matches_endpoint(logical, endpoint)) {
+      return true;
+    }
+  }
+  return false;
+}
 
 StagePublicationRole classify_stage_for_publication(const sima::StageStaticSpec& stage) {
   if (!stage_has_publishable_outputs(stage)) {
@@ -817,6 +829,15 @@ std::optional<OutputTensorOverride> build_output_override_from_manifest(
     }
     return std::nullopt;
   }
+  // Image planes are checked numerical routes within one semantic image, not
+  // independent public tensors. The admitted raw caps and GstVideoMeta retain
+  // their complete layout authority; a tensor override would discard it and
+  // split multi-plane images. This is an intentional absence, not a failed
+  // terminal lookup that may fall back to an upstream producer.
+  if (terminal->image_publication) {
+    return std::nullopt;
+  }
+
   std::string validation_error;
   if (!validate_publication_stage_strict(publication, &validation_error)) {
     if (failure_reason) {

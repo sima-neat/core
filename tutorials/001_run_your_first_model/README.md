@@ -103,8 +103,10 @@ Then verify:
 
 Extraction/runtime placement knobs:
 - `SIMA_MPK_EXTRACT_ROOT=<dir>` sets the base extract directory.
-- `SIMA_MPK_CLEANUP_EXTRACTED=0` preserves extracted `proc_*` model data after process exit.
-- `SIMA_MPK_EXTRACT_GC_STALE_PROC=0` disables dead-`proc_*` cleanup on startup.
+- `SIMA_MPK_CLEANUP_EXTRACTED=0` preserves extracted `proc_run_*` model data after process exit.
+- `SIMA_MPK_EXTRACT_GC_STALE_PROC=0` disables lock-based cleanup of abandoned `proc_run_*` directories on startup.
+
+Remove legacy `proc_<pid>` roots manually once unused.
 
 #### ResNet50
 

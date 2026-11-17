@@ -18,7 +18,6 @@
 #include "internal/InputStream.h"
 #include "internal/InputStreamUtil.h"
 #include "pipeline/internal/Diagnostics.h"
-#include "pipeline/internal/DispatcherRecovery.h"
 #include "pipeline/internal/GstDiagnosticsUtil.h"
 #include "gst/internal/GstLaunchBindings.h"
 #include "pipeline/internal/SimaaiGuard.h"

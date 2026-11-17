@@ -50,6 +50,7 @@ int main(int argc, char** argv) {
     options.original_width = 1280;
     options.original_height = 720;
     options.resize_mode = simaai::neat::ResizeMode::Letterbox;
+    options.min_duration_ms = 0; // This test checks the BoxDecode route, not steady-state timing.
 
     const simaai::neat::BenchmarkReport report = model.benchmark(options);
     std::cout << "[boxdecode_benchmark] latency_ms=" << report.latency_ms << "\n";

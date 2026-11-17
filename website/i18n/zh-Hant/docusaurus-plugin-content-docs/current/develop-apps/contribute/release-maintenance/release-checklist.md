@@ -9,6 +9,10 @@ slug: /develop-apps/contribute/release-checklist
 
 本文檔是正式的發布閘道策略。
 
+## 最新文件版本
+
+更新 `deps/manifest.json` 後，針對此版本更新一次 `website/release-data/current.json`。執行 `npm --prefix website run sync:release-readmes`，並提交產生的含具體版本號碼的 README 命令。執行 `npm --prefix website run check:releases` 和 `./build.sh --doc`，以驗證權杖、歷史版本例外、在地化及轉譯後的命令。相容性頁面使用具體版本號碼，並以手動方式維護。歷史版本資訊中的版本必須保持固定。僅變更版本資料時，不需要更新翻譯或來源雜湊。欄位管理責任和權杖規則記載於 `website/release-data/README.md`。
+
 ## 阻止發布的條件
 
 除非滿足以下所有條件，否則將阻止發布：
@@ -35,8 +39,10 @@ slug: /develop-apps/contribute/release-checklist
    - `project(SimaNeat VERSION x.y.z)` 在 `CMakeLists.txt` 中更新
    - `package-version` 和 `platform-version` 在 `deps/manifest.json` 中更新（如果需要）
    - `modelzoo-version` 顯式選擇經過驗證的 Model Zoo 發布版本，當其與 `platform-version` 不同時；如果省略，Model Zoo 解析將預設為 `platform-version`
-   - `abi-version` 在 `deps/manifest.json` 中，每當公共 C++ 類型佈局或導出二進制合約以不兼容的方式更改時，都會遞增；所有 C++ 應用程式和 Python 綁定都會針對該 ABI 進行重新建置
-   - `CHANGELOG.md` 具有 `## [x.y.z]` 條目
+   - 只有在公開 C++ 型別佈局或匯出的二進位契約發生不相容變更，且 `develop` 仍使用與 `main` 相同的 ABI 版本時，
+     才遞增 `deps/manifest.json` 中的 `abi-version`。如果 `develop` 已有供下次發布使用的較高 ABI 版本，
+     後續尚未發布的 ABI 不相容變更應沿用該版本。發生不相容變更後，請使用相符的標頭與程式庫，
+     重新建置所有 C++ 應用程式與 Python 綁定。
    - 在發布/標籤主體中準備了版本資訊。
 
 在發布流程中不允許存在「已知崩潰」列表。任何崩潰回歸都會阻止發布，直到修復為止。

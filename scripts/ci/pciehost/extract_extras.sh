@@ -6,8 +6,13 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/common.sh"
 sanitize_path
 
+search_roots=("${PACKAGE_DIR}")
+if [[ -z "${SIMAPCIE_LOCAL_HOST_DIST:-}" ]]; then
+  search_roots+=("${WORKSPACE}")
+fi
+
 mapfile -t extras_archives < <(
-  find "${PACKAGE_DIR}" "${WORKSPACE}" -type f \
+  find "${search_roots[@]}" -type f \
     -name 'sima-pcie-host-*-Linux-amd64-extras.tar.gz' \
     -printf '%T@ %p\n' 2>/dev/null \
     | sort -nr \

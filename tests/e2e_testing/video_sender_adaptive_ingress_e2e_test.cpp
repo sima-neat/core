@@ -13,7 +13,7 @@
 
 #include <gst/app/gstappsink.h>
 #include <gst/app/gstappsrc.h>
-#include "simaai/neat/internal/dmabuf/DmaBufVideo.h"
+#include <simaai/scheduler/client/dma_memory.h>
 
 #include <gst/gst.h>
 #include <gst/video/video.h>
@@ -496,7 +496,7 @@ Tensor tensor_from_frame(const RawFrame& frame, int row_padding, bool use_dmabuf
   const MappedPlaneLayout destination_layout =
       tight_layout(frame.format, frame.width, frame.height, row_padding);
 
-  namespace dma = simaai::neat::internal::dmabuf;
+  namespace dma = simaai::scheduler::client::dma;
   GstBuffer* buffer =
       use_dmabuf ? dma::allocateDmaBufBuffer(dma::HeapKind::Cma, destination_layout.total_bytes)
                  : gst_buffer_new_allocate(nullptr, destination_layout.total_bytes, nullptr);
@@ -1059,7 +1059,7 @@ GstBuffer* make_decoder_padded_buffer(const RawFrame& frame, bool use_dmabuf) {
     require(plane_end(destination, plane) <= destination.total_bytes,
             "decoder-style destination plane exceeds its allocation");
   }
-  namespace dma = simaai::neat::internal::dmabuf;
+  namespace dma = simaai::scheduler::client::dma;
   GstBuffer* buffer = use_dmabuf
                           ? dma::allocateDmaBufBuffer(dma::HeapKind::Cma, destination.total_bytes)
                           : gst_buffer_new_allocate(nullptr, destination.total_bytes, nullptr);
@@ -1246,7 +1246,7 @@ void require_selected_path(const simaai::neat::Graph& graph, const RawScenario& 
 }
 
 void verify_dma_ingress_boundary() {
-  namespace dma = simaai::neat::internal::dmabuf;
+  namespace dma = simaai::scheduler::client::dma;
   const std::string context = "encoder ingress ownership";
   GstVideoInfo visible, storage;
   gst_video_info_init(&visible);

@@ -10,14 +10,13 @@ prompts you for it. Use this page as a reference for how DevKit Sync works, or
 when you want to change the SDK pairing to a different DevKit later.
 :::
 
-DevKit Sync connects the Neat Development Environment (referred to as Neat SDK)
-with a Modalix DevKit on the same network. It exposes one shared workspace
-across the host, Neat SDK container, and DevKit, and it provides the `dk` helper
-for running SDK-built commands on hardware.
+DevKit Sync connects the Palette SDK with a Modalix DevKit on the same network. It
+exposes one shared workspace across the host, Palette SDK container, and DevKit,
+and it provides the `dk` helper for running SDK-built commands on hardware.
 
 ![Host-Container-DevKit workspace mapping](../../images/elxr-sdk-workspaces.svg)
 
-The same workspace is mounted into the Neat SDK container
+The same workspace is mounted into the Palette SDK container
 and the DevKit as `/workspace`, so build artifacts, logs, traces, and model
 files are visible from each environment.
 
@@ -32,7 +31,7 @@ sima-cli sdk setup --devkit {devkit-ip}
 
 During setup:
 
-- Select the installed `sdk:v2.1-latest` image if more than one SDK image is present.
+- Select the installed Palette SDK %%release.sdk%% image if more than one SDK image is present.
 - Accept the default `/workspace` DevKit mount path unless you need a different
   path.
 - Enter the host admin password when prompted for NFS server setup on the host.
@@ -65,11 +64,11 @@ dk status
 
 ## Update the Pairing from the SDK
 
-Use this flow when the Neat SDK is already installed and you
+Use this flow when the Palette SDK is already installed and you
 need to pair a different DevKit or update the pairing after your DevKit IP
 address changed.
 
-From inside the Neat SDK container, run:
+From inside the Palette SDK container, run:
 
 <ShellCommand prompt="sdk">
 source devkit.sh {devkit-ip}
@@ -85,14 +84,14 @@ source devkit.sh 192.168.91.221
 
 ## Configure SDK Without DevKit Sync
 
-If the DevKit is not reachable from the Neat SDK host, you can still configure
+If the DevKit is not reachable from the Palette SDK host, you can still configure
 the SDK workspace without pairing:
 
 <ShellCommand prompt="host">
 sima-cli sdk setup
 </ShellCommand>
 
-You can still build binaries in the Neat SDK container, but you must transfer
+You can still build binaries in the Palette SDK container, but you must transfer
 them to the DevKit manually for testing. Make sure the DevKit is running a
 compatible Neat Library version.
 
@@ -101,14 +100,14 @@ compatible Neat Library version.
 DevKit Sync connects three environments:
 
 1. Host
-2. Neat SDK container
+2. Palette SDK container
 3. DevKit
 
 `sima-cli sdk setup --devkit {devkit-ip}` configures NFS so the same workspace is
 available in all three environments:
 
 - The host workspace folder is exported through host NFS.
-- The folder is mounted into the Neat SDK container as
+- The folder is mounted into the Palette SDK container as
   `/workspace`.
 - The same content appears on the DevKit as `/workspace` through NFS.
 - The mounted folder name defaults to `/workspace` and can be changed during
@@ -116,7 +115,7 @@ available in all three environments:
 
 This setup provides a direct workflow for build artifacts:
 
-- Artifacts produced in the Neat SDK are immediately visible
+- Artifacts produced in the Palette SDK are immediately visible
   on the DevKit without a separate deploy step.
 - Agents can access logs, outputs, traces, and other interim files generated
   while the app runs on the DevKit.

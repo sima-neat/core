@@ -21,8 +21,6 @@ def connection():
   result.card_id = int(os.environ.get("SIMAPCIE_CARD_ID", "0"))
   result.user = os.environ.get("SIMAPCIE_USER", "sima")
   result.ssh_key = os.environ.get("SIMAPCIE_SSH_KEY", "")
-  result.card_receive_directory = os.environ.get(
-      "SIMAPCIE_GENAI_RECEIVE_ROOT", str(result.card_receive_directory))
   result.startup_timeout_ms = int(os.environ.get("SIMAPCIE_READINESS_TIMEOUT_MS", "180000"))
   result.request_timeout_ms = int(os.environ.get("SIMAPCIE_GENAI_REQUEST_TIMEOUT_MS", "120000"))
   return result
@@ -32,7 +30,7 @@ def _model(kind):
   defaults = {
       "llm": ("TEXT", "Qwen2.5-0.5B-Instruct-Autoround-a16w4"),
       "vlm": ("VLM", "LFM2.5-VL-450M-Autoround-a16w4"),
-      "asr": ("ASR", "whisper-small-a16w8-layered-encoder"),
+      "asr": ("ASR", "whisper-small-a16w8"),
   }
   variable, name = defaults[kind]
   root = Path(os.environ.get("SIMAPCIE_GENAI_MODELS_PATH", Path.home() / "workspace/models_genai"))

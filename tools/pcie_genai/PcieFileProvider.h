@@ -101,8 +101,7 @@ private:
         [&](int timeout) { return service_.receive(timeout); }, cancelled_);
     if (!bytes)
       return false;
-    if (!std::filesystem::is_regular_file(path) || std::filesystem::file_size(path) != *bytes)
-      throw std::runtime_error("Model asset transfer size mismatch: " + name);
+    validate_received_asset(path, *bytes, name);
     return true;
   }
   void prepare(const std::filesystem::path& path) {

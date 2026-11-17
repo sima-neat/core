@@ -131,8 +131,7 @@ json power_status_json(const PowerSummary& power, bool export_requested, bool mo
   j["scope"] = std::string(scope);
   j["available"] = status == "collected" || status == "collected_with_errors";
   j["attribution"] = "graph_level_only";
-  j["note"] =
-      "Power is board/SOM rail telemetry. DVT board readings may be unavailable or unreliable.";
+  j["note"] = "Power is board rail telemetry from Sentinel, which samples every 2 s.";
   return j;
 }
 
@@ -177,8 +176,7 @@ json output_materialization_json(const RunOptions& opt) {
     break;
   case OutputMemory::ZeroCopy:
     mode = "zero-copy";
-    semantics = opt.advanced.prepare_output_cpu_visible ? "lazy_zero_copy_cpu_visible_prepared"
-                                                        : "lazy_zero_copy";
+    semantics = "lazy_zero_copy";
     break;
   case OutputMemory::Auto:
     mode = "auto";

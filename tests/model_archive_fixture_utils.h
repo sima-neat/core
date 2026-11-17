@@ -18,6 +18,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -79,10 +80,11 @@ inline void write_binary_file(const fs::path& path, const std::vector<unsigned c
             static_cast<std::streamsize>(bytes.size()));
 }
 
-// Synthetic topology evidence for plan/render tests, not a hardware-executable program.
-inline void write_topology_elf(const std::filesystem::path& path, const std::string& ifm_name,
-                               const std::uint64_t ifm_extent, const std::string& ofm_name,
-                               const std::uint64_t ofm_extent) {
+// Synthetic topology evidence for plan/render tests, not a hardware-executable program:
+// one 16-byte {extent, 1} tensor section per (section name, extent), in order.
+inline void
+write_topology_elf_sections(const std::filesystem::path& path,
+                            const std::vector<std::pair<std::string, std::uint64_t>>& tensors) {
   struct Elf64Header {
     std::uint8_t ident[16]{};
     std::uint16_t type = 0;
@@ -122,8 +124,9 @@ inline void write_topology_elf(const std::filesystem::path& path, const std::str
     return offset;
   };
   const auto shstrtab_name = append_name(".shstrtab");
-  const auto ifm_name_offset = append_name(ifm_name);
-  const auto ofm_name_offset = append_name(ofm_name);
+  std::vector<std::uint32_t> tensor_names;
+  for (const auto& tensor : tensors)
+    tensor_names.push_back(append_name(tensor.first));
   const std::uint64_t names_offset = sizeof(Elf64Header);
   const std::uint64_t sections_offset = (names_offset + names.size() + 7U) & ~std::uint64_t{7U};
 
@@ -141,27 +144,31 @@ inline void write_topology_elf(const std::filesystem::path& path, const std::str
   header.section_header_offset = sections_offset;
   header.header_size = sizeof(Elf64Header);
   header.section_header_size = sizeof(Elf64SectionHeader);
-  header.section_header_count = 4U;
+  header.section_header_count = 2U + tensor_names.size();
   header.section_name_table_index = 1U;
 
-  std::vector<Elf64SectionHeader> sections(4U);
+  std::vector<Elf64SectionHeader> sections(header.section_header_count);
   sections[1].name = shstrtab_name;
   sections[1].type = 3U;
   sections[1].offset = names_offset;
   sections[1].size = names.size();
   sections[1].alignment = 1U;
-  sections[2].name = ifm_name_offset;
-  sections[2].type = 0x71ba0002U;
-  sections[2].offset = sections_offset + sections.size() * sizeof(sections.front());
-  sections[2].size = 16U;
-  sections[3].name = ofm_name_offset;
-  sections[3].type = 0x71ba0002U;
-  sections[3].offset = sections[2].offset + 16U;
-  sections[3].size = 16U;
+  for (std::size_t index = 0; index < tensor_names.size(); ++index) {
+    auto& section = sections[2U + index];
+    section.name = tensor_names[index];
+    section.type = 0x71ba0002U;
+    section.offset = sections_offset + sections.size() * sizeof(sections.front()) + index * 16U;
+    section.size = 16U;
+  }
 
+  // The executable's directory (share/, or a subdirectory the MPK names) may not
+  // exist yet in a fresh fixture root, whatever the working directory is.
+  std::error_code directory_error;
+  std::filesystem::create_directories(path.parent_path(), directory_error);
   std::ofstream output(path, std::ios::binary | std::ios::trunc);
   if (!output.is_open()) {
-    throw std::runtime_error("failed to create synthetic MLA ELF");
+    throw std::runtime_error("failed to create synthetic MLA ELF " + path.string() +
+                             (directory_error ? ": " + directory_error.message() : ""));
   }
   output.write(reinterpret_cast<const char*>(&header), sizeof(header));
   output.write(names.data(), static_cast<std::streamsize>(names.size()));
@@ -170,12 +177,53 @@ inline void write_topology_elf(const std::filesystem::path& path, const std::str
   output.write(padding.data(), static_cast<std::streamsize>(padding.size()));
   output.write(reinterpret_cast<const char*>(sections.data()),
                static_cast<std::streamsize>(sections.size() * sizeof(sections.front())));
-  const std::array<std::uint64_t, 2U> ifm_header{ifm_extent, 1U};
-  const std::array<std::uint64_t, 2U> ofm_header{ofm_extent, 1U};
-  output.write(reinterpret_cast<const char*>(ifm_header.data()), 16);
-  output.write(reinterpret_cast<const char*>(ofm_header.data()), 16);
+  for (const auto& tensor : tensors) {
+    const std::array<std::uint64_t, 2U> tensor_header{tensor.second, 1U};
+    output.write(reinterpret_cast<const char*>(tensor_header.data()), 16);
+  }
   if (!output.good()) {
     throw std::runtime_error("failed to write synthetic MLA ELF");
+  }
+}
+
+inline void write_topology_elf(const std::filesystem::path& path, const std::string& ifm_name,
+                               const std::uint64_t ifm_extent, const std::string& ofm_name,
+                               const std::uint64_t ofm_extent, const unsigned batch_size = 1U) {
+  std::vector<std::pair<std::string, std::uint64_t>> tensors;
+  for (const auto& [name, extent] :
+       {std::pair{ifm_name, ifm_extent}, std::pair{ofm_name, ofm_extent}}) {
+    for (unsigned batch = 0; batch < batch_size; ++batch) {
+      tensors.emplace_back(batch_size == 1U ? name : name + ".b" + std::to_string(batch), extent);
+    }
+  }
+  write_topology_elf_sections(path, tensors);
+}
+
+// Topology evidence for every MLA plugin of an MPK, as the compiler names its
+// ports: one monolithic data.ifm.b0/data.ofm.b0 section for a single port, or
+// data.ifm.persistent.input_N/<stage>/... and data.ofm.persistent.output_N/<stage>/...
+// in node order, each with the node's byte size.
+inline void write_mpk_topology_elfs(const fs::path& package_root, const std::string& mpk_json) {
+  const auto contract = nlohmann::json::parse(mpk_json);
+  for (const auto& plugin : contract.at("plugins")) {
+    if (plugin.value("processor", std::string{}) != "MLA")
+      continue;
+    const std::string stage = plugin.at("name").get<std::string>();
+    std::vector<std::pair<std::string, std::uint64_t>> tensors;
+    for (const auto& [nodes, single, prefix] :
+         {std::tuple{&plugin.at("input_nodes"), "data.ifm.b0", "data.ifm.persistent.input_"},
+          std::tuple{&plugin.at("output_nodes"), "data.ofm.b0", "data.ofm.persistent.output_"}}) {
+      for (std::size_t i = 0; i < nodes->size(); ++i) {
+        const auto& node = (*nodes)[i];
+        tensors.emplace_back(nodes->size() == 1U ? std::string(single)
+                                                 : prefix + std::to_string(i) + "/" + stage + "/" +
+                                                       node.at("name").get<std::string>() + ".b0",
+                             node.at("size").get<std::uint64_t>());
+      }
+    }
+    write_topology_elf_sections(package_root / "share" /
+                                    plugin.at("resources").at("executable").get<std::string>(),
+                                tensors);
   }
 }
 

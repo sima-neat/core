@@ -60,14 +60,6 @@ void set_string_property_if_present(GObject* object, const char* name, const std
   }
 }
 
-bool get_bool_property_if_present(GObject* object, const char* name, gboolean* value) {
-  if (!value || !object_has_property(object, name)) {
-    return false;
-  }
-  g_object_get(object, name, value, nullptr);
-  return true;
-}
-
 int parse_public_node_id(const GraphNodeMetrics& node) {
   for (const std::string& public_id : node.public_node_ids) {
     if (public_id.size() < 2 || public_id[0] != 'p') {
@@ -94,7 +86,8 @@ std::string sanitize_instance_token(std::string value) {
 
 std::string make_plugin_instance_id(std::uint64_t run_id_hash, std::uint64_t graph_id_hash,
                                     std::size_t segment_id, graph::NodeId runtime_node_id,
-                                    const std::string& element_name) {
+                                    const std::string& element_name,
+                                    std::uint64_t measurement_epoch) {
   std::ostringstream os;
   os << "r" << std::hex << run_id_hash << ".g" << graph_id_hash << std::dec << ".s" << segment_id
      << ".n";
@@ -104,11 +97,15 @@ std::string make_plugin_instance_id(std::uint64_t run_id_hash, std::uint64_t gra
     os << static_cast<std::size_t>(runtime_node_id);
   }
   os << "." << sanitize_instance_token(element_name);
+  if (measurement_epoch != 0)
+    os << ".m" << measurement_epoch;
   return os.str();
 }
 
 void apply_to_pipeline(GstElement* pipeline, const std::vector<const GraphNodeMetrics*>& nodes,
-                       std::uint64_t run_id_hash, std::uint64_t graph_id_hash, bool enable) {
+                       std::uint64_t run_id_hash, std::uint64_t graph_id_hash, bool enable,
+                       std::uint64_t measurement_epoch,
+                       std::vector<std::string>* configured_instances) {
   if (!pipeline || !GST_IS_BIN(pipeline)) {
     return;
   }
@@ -133,7 +130,8 @@ void apply_to_pipeline(GstElement* pipeline, const std::vector<const GraphNodeMe
         continue;
       }
       GObject* object = G_OBJECT(element);
-      set_bool_property_if_present(object, "trace-enabled", enable ? TRUE : FALSE);
+      // Enable commits a complete immutable adapter session. Never expose partial identity.
+      set_bool_property_if_present(object, "trace-enabled", FALSE);
       if (enable) {
         const guint segment_id = static_cast<guint>(
             std::min<std::size_t>(node->pipeline_segment_id, static_cast<std::size_t>(G_MAXUINT)));
@@ -144,13 +142,16 @@ void apply_to_pipeline(GstElement* pipeline, const std::vector<const GraphNodeMe
         const gint public_node_id = static_cast<gint>(parse_public_node_id(*node));
         const std::string instance_id =
             make_plugin_instance_id(run_id_hash, graph_id_hash, node->pipeline_segment_id,
-                                    node->runtime_node_id, element_name);
+                                    node->runtime_node_id, element_name, measurement_epoch);
         set_uint64_property_if_present(object, "trace-run-id-hash", run_id_hash);
         set_uint64_property_if_present(object, "trace-graph-id-hash", graph_id_hash);
         set_uint_property_if_present(object, "trace-segment-id", segment_id);
         set_int_property_if_present(object, "trace-runtime-node-id", runtime_node_id);
         set_int_property_if_present(object, "trace-public-node-id", public_node_id);
         set_string_property_if_present(object, "trace-plugin-instance-id", instance_id);
+        set_bool_property_if_present(object, "trace-enabled", TRUE);
+        if (configured_instances && object_has_property(object, "trace-enabled"))
+          configured_instances->push_back(instance_id);
       }
       gst_object_unref(element);
     }
@@ -159,7 +160,8 @@ void apply_to_pipeline(GstElement* pipeline, const std::vector<const GraphNodeMe
 
 void apply_to_trace_capable_fallback(GstElement* pipeline, std::size_t pipeline_segment_id,
                                      std::uint64_t run_id_hash, std::uint64_t graph_id_hash,
-                                     bool enable) {
+                                     bool enable, std::uint64_t measurement_epoch,
+                                     std::vector<std::string>* configured_instances) {
   if (!pipeline || !GST_IS_BIN(pipeline)) {
     return;
   }
@@ -179,13 +181,17 @@ void apply_to_trace_capable_fallback(GstElement* pipeline, std::size_t pipeline_
         GstElement* element = GST_ELEMENT(object_value);
         GObject* object = G_OBJECT(element);
         if (object_has_property(object, "trace-enabled")) {
-          gboolean already_enabled = FALSE;
-          const bool had_enabled =
-              get_bool_property_if_present(object, "trace-enabled", &already_enabled);
-          // Node-attributed application above is more specific.  Do not overwrite its
-          // runtime-node identity while enabling, but always disable trace-capable plugins.
-          if (!enable || !had_enabled || !already_enabled) {
-            set_bool_property_if_present(object, "trace-enabled", enable ? TRUE : FALSE);
+          gchar* current_id = nullptr;
+          if (object_has_property(object, "trace-plugin-instance-id"))
+            g_object_get(object, "trace-plugin-instance-id", &current_id, nullptr);
+          const bool already_configured =
+              configured_instances && current_id &&
+              std::find(configured_instances->begin(), configured_instances->end(), current_id) !=
+                  configured_instances->end();
+          g_free(current_id);
+          // Preserve node attribution installed in this pass, not a previous session's enable.
+          if (!enable || !already_configured) {
+            set_bool_property_if_present(object, "trace-enabled", FALSE);
             if (enable) {
               const std::string element_name = GST_ELEMENT_NAME(element)
                                                    ? std::string(GST_ELEMENT_NAME(element))
@@ -194,13 +200,16 @@ void apply_to_trace_capable_fallback(GstElement* pipeline, std::size_t pipeline_
                   std::min<std::size_t>(pipeline_segment_id, static_cast<std::size_t>(G_MAXUINT)));
               const std::string instance_id =
                   make_plugin_instance_id(run_id_hash, graph_id_hash, pipeline_segment_id,
-                                          graph::kInvalidNode, element_name);
+                                          graph::kInvalidNode, element_name, measurement_epoch);
               set_uint64_property_if_present(object, "trace-run-id-hash", run_id_hash);
               set_uint64_property_if_present(object, "trace-graph-id-hash", graph_id_hash);
               set_uint_property_if_present(object, "trace-segment-id", segment_id);
               set_int_property_if_present(object, "trace-runtime-node-id", -1);
               set_int_property_if_present(object, "trace-public-node-id", -1);
               set_string_property_if_present(object, "trace-plugin-instance-id", instance_id);
+              set_bool_property_if_present(object, "trace-enabled", TRUE);
+              if (configured_instances)
+                configured_instances->push_back(instance_id);
             }
           }
         }
@@ -222,20 +231,41 @@ void apply_to_trace_capable_fallback(GstElement* pipeline, std::size_t pipeline_
 
 } // namespace
 
+void configure_lttng_trace_pipeline(GstElement* pipeline,
+                                    const std::vector<const GraphNodeMetrics*>& nodes,
+                                    std::size_t segment_id, std::uint64_t run_id_hash,
+                                    std::uint64_t graph_id_hash, bool enable,
+                                    std::uint64_t measurement_epoch,
+                                    std::vector<std::string>* configured_instances) {
+  std::vector<std::string> local_instances;
+  if (!configured_instances)
+    configured_instances = &local_instances;
+  apply_to_pipeline(pipeline, nodes, run_id_hash, graph_id_hash, enable, measurement_epoch,
+                    configured_instances);
+  apply_to_trace_capable_fallback(pipeline, segment_id, run_id_hash, graph_id_hash, enable,
+                                  measurement_epoch, configured_instances);
+}
+
 void apply_lttng_trace_identity(const Run& run, const std::vector<GraphNodeMetrics>& nodes,
                                 std::uint64_t run_id_hash, std::uint64_t graph_id_hash, bool enable,
-                                bool enable_message_events) {
+                                bool enable_message_events, std::uint64_t measurement_epoch,
+                                std::vector<std::string>* configured_instances) {
   apply_lttng_trace_identity(run_internal::core(run), nodes, run_id_hash, graph_id_hash, enable,
-                             enable_message_events);
+                             enable_message_events, measurement_epoch, configured_instances);
 }
 
 void apply_lttng_trace_identity(const std::shared_ptr<const runtime::RunCore>& core,
                                 const std::vector<GraphNodeMetrics>& nodes,
                                 std::uint64_t run_id_hash, std::uint64_t graph_id_hash, bool enable,
-                                bool enable_message_events) {
+                                bool enable_message_events, std::uint64_t measurement_epoch,
+                                std::vector<std::string>* configured_instances) {
   if (!core) {
     return;
   }
+  std::vector<std::string> local_instances;
+  if (!configured_instances)
+    configured_instances = &local_instances;
+  configured_instances->clear();
 
   if (!core->graph_execution_) {
     std::vector<const GraphNodeMetrics*> linear_nodes;
@@ -244,15 +274,16 @@ void apply_lttng_trace_identity(const std::shared_ptr<const runtime::RunCore>& c
       linear_nodes.push_back(&node);
     }
     GstElement* pipeline = core->pipeline.stream.pipeline_handle();
-    apply_to_pipeline(pipeline, linear_nodes, run_id_hash, graph_id_hash, enable);
-    apply_to_trace_capable_fallback(pipeline, 0U, run_id_hash, graph_id_hash, enable);
+    configure_lttng_trace_pipeline(pipeline, linear_nodes, 0U, run_id_hash, graph_id_hash, enable,
+                                   measurement_epoch, configured_instances);
     return;
   }
 
   auto& execution = const_cast<runtime::ExecutionGraphRuntime&>(core->graph_execution());
-  execution.message_trace_enabled.store(enable && enable_message_events, std::memory_order_release);
+  execution.message_trace_enabled.store(false, std::memory_order_release);
   execution.trace_run_id_hash.store(enable ? run_id_hash : 0, std::memory_order_relaxed);
   execution.trace_graph_id_hash.store(enable ? graph_id_hash : 0, std::memory_order_relaxed);
+  execution.message_trace_enabled.store(enable && enable_message_events, std::memory_order_release);
   std::unordered_map<std::size_t, std::vector<const GraphNodeMetrics*>> nodes_by_segment;
   for (const GraphNodeMetrics& node : nodes) {
     nodes_by_segment[node.pipeline_segment_id].push_back(&node);
@@ -262,15 +293,11 @@ void apply_lttng_trace_identity(const std::shared_ptr<const runtime::RunCore>& c
       continue;
     }
     const auto it = nodes_by_segment.find(pipe->seg.id);
-    if (it == nodes_by_segment.end()) {
-      apply_to_trace_capable_fallback(pipe->run_core->pipeline.stream.pipeline_handle(),
-                                      pipe->seg.id, run_id_hash, graph_id_hash, enable);
-      continue;
-    }
-    apply_to_pipeline(pipe->run_core->pipeline.stream.pipeline_handle(), it->second, run_id_hash,
-                      graph_id_hash, enable);
-    apply_to_trace_capable_fallback(pipe->run_core->pipeline.stream.pipeline_handle(), pipe->seg.id,
-                                    run_id_hash, graph_id_hash, enable);
+    static const std::vector<const GraphNodeMetrics*> no_nodes;
+    configure_lttng_trace_pipeline(pipe->run_core->pipeline.stream.pipeline_handle(),
+                                   it == nodes_by_segment.end() ? no_nodes : it->second,
+                                   pipe->seg.id, run_id_hash, graph_id_hash, enable,
+                                   measurement_epoch, configured_instances);
   }
 }
 

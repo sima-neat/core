@@ -3,13 +3,14 @@
  * @ingroup nodes_sima
  * @brief `SimaArgMax` Node — postprocess argmax over a tensor (classification).
  *
- * Runs on the EV74. Reads a classification tensor (after dequant/cast) and emits the
- * top class index per sample. Place after `Detess`/`DetessDequant`/`DetessCast` at the
- * tail of a classification pipeline.
+ * Runs on A65 through the generic kernel runner. Reads a classification tensor (after dequant/cast)
+ * and emits the top class index per sample. Place after `Detess`/`DetessDequant`/`DetessCast` at
+ * the tail of a classification pipeline.
  */
 #pragma once
 
 #include "builder/Node.h"
+#include "builder/NodeContractProvider.h"
 #include "builder/OutputSpec.h"
 
 #include <memory>
@@ -24,19 +25,21 @@ namespace simaai::neat {
  * @ingroup nodes_sima
  */
 struct SimaArgMaxOptions {
-  std::string config_path;     ///< Optional path to an external argmax config JSON.
-  int sima_allocator_type = 2; ///< SiMa DMA allocator selector (board-specific; default `2`).
-  bool silent = true;          ///< If true, suppress element-level diagnostic logging.
-  bool emit_signals = false;   ///< Enable GStreamer signal emission for buffer hand-off.
-  bool transmit = false; ///< If true, transmit results downstream via the element's transport.
+  std::string config_path;     ///< Retired JSON configuration; must be empty.
+  int sima_allocator_type = 2; ///< Compatibility field: use 0 or 2; allocation belongs to Runtime.
+  bool silent = true;          ///< Retained source-compatible diagnostic option.
+  bool emit_signals = false;   ///< Retired transport option; must remain false.
+  bool transmit = false;       ///< Retired transport option; must remain false.
+  int axis = -1;               ///< Reduction axis; negative values count from the trailing axis.
+  bool keepdims = false;       ///< Retain the reduced axis with extent one.
 };
 
 /**
- * @brief EV74 postprocess Node that emits the top-class index from a classification tensor.
+ * @brief A65 postprocess Node that emits the top-class index from a classification tensor.
  *
  * @ingroup nodes_sima
  */
-class SimaArgMax final : public Node, public OutputSpecProvider {
+class SimaArgMax final : public Node, public OutputSpecProvider, public NodeContractProvider {
 public:
   /// Construct with optional `SimaArgMaxOptions`.
   explicit SimaArgMax(SimaArgMaxOptions opt = {});
@@ -61,17 +64,17 @@ public:
   /// Negotiated downstream caps produced by this Node.
   OutputSpec output_spec(const OutputSpec& input) const override;
 
+  NodeContractDefinition contract_definition() const override;
+  bool compile_node_contract(const ContractCompileInput&, CompiledNodeContract*,
+                             std::string* error) const override;
+
   /// Inspect the Node's options.
   const SimaArgMaxOptions& options() const {
     return opt_;
   }
 
 private:
-  struct ConfigHolder;
-
   SimaArgMaxOptions opt_;
-  std::shared_ptr<ConfigHolder> config_holder_;
-  std::string config_path_;
 };
 
 } // namespace simaai::neat

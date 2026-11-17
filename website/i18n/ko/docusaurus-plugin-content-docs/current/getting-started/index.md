@@ -1,27 +1,27 @@
 ---
-title: "Palette Neat"
+title: "Palette SDK"
 sidebar_position: 1
 ---
 
-# Palette Neat
+# Palette SDK
 
-Palette Neat는 Modalix에서 AI 애플리케이션을 구축하기 위한 SiMa.ai 소프트웨어 개발
+Palette SDK는 Modalix에서 AI 애플리케이션을 구축하기 위한 SiMa.ai 소프트웨어 개발
 도구 모음입니다. 개발 환경, 런타임 라이브러리, 모델 도구 및 DevKit 검증 워크플로를
 포함합니다. 이 구성 요소들은 모델 준비부터 애플리케이션 구축, Modalix 하드웨어에서의
 결과 검증까지 전체 개발 과정을 지원합니다.
 
-이 개요에서 Palette Neat의 주요 구성 요소를 살펴보고 설정, 모델 준비 또는
+이 개요에서 Palette SDK의 주요 구성 요소를 살펴보고 설정, 모델 준비 또는
 애플리케이션 개발에 적합한 경로를 선택할 수 있습니다.
 
-![Neat SDK, Neat Library, Model Compiler, LLiMa 및 Modalix DevKit으로 구성된 Palette Neat 소프트웨어 스택](@site/../docs/images/neat-software-stack-animated.svg)
+![Palette SDK, Neat Library, Model Compiler, LLiMa 및 Modalix DevKit으로 구성된 Palette SDK 소프트웨어 스택](@site/../docs/images/neat-software-stack-animated.svg)
 
 <div class="overview-section-label">개발자 여정</div>
 
-:::tip Palette Neat를 처음 사용하는 경우
-Palette Neat로 애플리케이션을 개발하는 방법은 두 가지입니다.
+:::tip Palette SDK를 처음 사용하는 경우
+Palette SDK로 애플리케이션을 개발하는 방법은 두 가지입니다.
 
 - 모델을 컴파일하거나 대규모 C++ 코드를 크로스 컴파일할 계획처럼 더 높은 성능의
-  개발 환경이 필요하면 **[Neat SDK 사용](/getting-started/dev-environment/)**을 선택하세요.
+  개발 환경이 필요하면 **[Palette SDK 사용](/getting-started/dev-environment/)**을 선택하세요.
 - 특히 모델 컴파일 작업을 하지 않으며 개발 환경의 구성 요소를 줄이고 싶다면
   **[DevKit에서 직접 개발](/getting-started/neat-library/)**을 선택하세요.
 
@@ -42,7 +42,7 @@ PyNeat 설정은 DevKit을 연결할 때까지 건너뛸 수 있는 선택 단�
 | 프롬프트 | 실행 위치 |
 | --- | --- |
 | `host$` | SDK 외부의 사용자 머신에서. |
-| `sdk$` | Neat SDK 컨테이너 셸 안에서. |
+| `sdk$` | Palette SDK 컨테이너 셸 안에서. |
 | `devkit$` | Modalix DevKit에서. |
 | `pcie-host$` | Modalix PCIe 카드가 장착된 호스트 머신에서. |
 
@@ -51,9 +51,9 @@ PyNeat 설정은 DevKit을 연결할 때까지 건너뛸 수 있는 선택 단�
 <div class="overview-link-columns">
   <section class="overview-link-panel overview-link-panel-start">
     <h2>시작하기</h2>
-    <p>로컬 개발과 하드웨어 검증을 위해 호스트 머신, Neat SDK 및 DevKit을 준비합니다.</p>
+    <p>로컬 개발과 하드웨어 검증을 위해 호스트 머신, Palette SDK 및 DevKit을 준비합니다.</p>
     <ul class="overview-link-list">
-      <li><a class="overview-link-card" href="/getting-started/dev-environment/"><strong>Neat SDK</strong><span>고성능 호스트 기반 워크플로, 모델 컴파일, C++ 빌드 및 DevKit 검증에 SDK를 사용합니다.</span></a></li>
+      <li><a class="overview-link-card" href="/getting-started/dev-environment/"><strong>Palette SDK</strong><span>고성능 호스트 기반 워크플로, 모델 컴파일, C++ 빌드 및 DevKit 검증에 SDK를 사용합니다.</span></a></li>
       <li><a class="overview-link-card" href="/getting-started/neat-library/"><strong>Neat Library</strong><span>DevKit에서 더 간단하게 애플리케이션을 프로토타이핑하려면 런타임과 PyNeat를 직접 설치합니다.</span></a></li>
       <li><a class="overview-link-card" href="/getting-started/compatibility/"><strong>호환성 가이드</strong><span>지원되는 버전 조합을 확인하는 참조 가이드입니다.</span></a></li>
     </ul>

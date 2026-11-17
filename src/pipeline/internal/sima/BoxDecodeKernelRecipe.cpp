@@ -1,0 +1,1206 @@
+#include "pipeline/internal/sima/BoxDecodeKernelRecipe.h"
+#include "pipeline/DetectionTypes.h"
+#include "pipeline/internal/sima/BoxDecodePublication.h"
+#include "pipeline/internal/sima/BoxDecodeTypeUtils.h"
+#include "pipeline/FeatureTypes.h"
+#include "pipeline/internal/sima/KernelStageRecipe.h"
+#include "pipeline/internal/sima/StaticSpecBuilders.h"
+#include "pipeline/internal/sima/stagesemantics/SsdDecodeContract.h"
+
+#include <simaai/scheduler/client/host_task.h>
+#include <simaai/scheduler/client/kernel.h>
+#include <algorithm>
+#include <array>
+#include <cmath>
+#include <cstring>
+#include <limits>
+#include <memory>
+#include <optional>
+#include <span>
+#include <stdexcept>
+
+namespace simaai::neat::pipeline_internal::sima {
+namespace {
+namespace k = ::simaai::scheduler::client;
+namespace rt = ::simaai::scheduler::client;
+namespace gs = ::simaai::scheduler::client;
+namespace scheduler = ::simaai::scheduler::client;
+namespace specs = specbuilders;
+[[noreturn]] void invalid(const std::string& message) {
+  throw std::invalid_argument("BoxDecode kernel recipe: " + message);
+}
+template <class T> T checked(rt::Result<T> value) {
+  if (auto* error = std::get_if<rt::Error>(&value))
+    invalid(std::string(error->field) + ": " + error->message);
+  return std::get<T>(std::move(value));
+}
+k::DType dtype(const std::string& value) {
+  if (value == "FP32" || value == "FLOAT32")
+    return k::DType::Float32;
+  if (value == "BF16" || value == "BFLOAT16")
+    return k::DType::BFloat16;
+  if (value == "INT8")
+    return k::DType::Int8;
+  invalid("unsupported head dtype '" + value + "'");
+}
+const char* dtype_name(k::DType type) {
+  switch (type) {
+  case k::DType::Float32:
+    return "FP32";
+  case k::DType::BFloat16:
+    return "BF16";
+  case k::DType::Int8:
+    return "INT8";
+  case k::DType::UInt8:
+    return "UINT8";
+  case k::DType::Int32:
+    return "INT32";
+  default:
+    invalid("unsupported result dtype");
+  }
+}
+std::size_t scalar_bytes(k::DType type) {
+  if (type == k::DType::Int8 || type == k::DType::UInt8)
+    return 1;
+  if (type == k::DType::BFloat16)
+    return 2;
+  return 4;
+}
+std::size_t dense_bytes(const k::TensorSpec& tensor) {
+  std::size_t bytes = scalar_bytes(tensor.dtype);
+  for (auto dimension : tensor.shape) {
+    if (dimension <= 0 || static_cast<std::uint64_t>(dimension) > SIZE_MAX / bytes)
+      invalid("tensor byte extent overflows");
+    bytes *= static_cast<std::size_t>(dimension);
+  }
+  return bytes;
+}
+std::array<std::int64_t, 3> hwc(std::span<const std::int64_t> shape, const std::string& layout,
+                                bool bounded = true) {
+  if (shape.size() < 3 || shape.size() > 6)
+    invalid("head rank must be 3..6");
+  if (bounded)
+    for (std::size_t i = 0; i + 3 < shape.size(); ++i)
+      if (shape[i] != 1)
+        invalid("head outer dimensions must be singleton");
+  const auto n = shape.size();
+  std::array<std::int64_t, 3> result{shape[n - 3], shape[n - 2], shape[n - 1]};
+  if (layout == "CHW" || layout == "NCHW")
+    result = {shape[n - 2], shape[n - 1], shape[n - 3]};
+  else if (layout != "HWC" && layout != "NHWC")
+    invalid("head layout must explicitly identify HWC axes");
+  for (auto value : result)
+    if ((bounded ? value <= 0 : value < 0) || (bounded && value > 32767))
+      invalid("head extent outside supported range");
+  return result;
+}
+std::array<std::int64_t, 3> slice_hwc(const BoxDecodeStagePayload& payload, std::size_t input,
+                                      const LogicalInputStaticSpec& logical) {
+  if (input >= payload.slice_shapes.size())
+    invalid("missing explicit head slice shape");
+  const auto& slice = payload.slice_shapes[input];
+  if (slice.rank > SIMA_EV_MAX_RANK)
+    invalid("slice rank exceeds contract bound");
+  std::array<std::int64_t, SIMA_EV_MAX_RANK> dimensions{};
+  for (std::size_t i = 0; i < slice.rank; ++i)
+    dimensions[i] = slice.sizes[i];
+  // Slice shapes are already canonical HWC in the BoxDecode payload.
+  return hwc({dimensions.data(), slice.rank}, "HWC");
+}
+struct Input {
+  k::TensorSpec tensor;
+  gs::TensorStagePort port;
+  std::vector<std::size_t> dependencies;
+};
+// A same-dtype raw output is a byte copy of the checked input view into the
+// dense published tensor: no numerical conversion, so Core publishes it.
+struct RawCopyPlan {
+  std::array<std::int64_t, 3> shape{}, strides{};
+  std::size_t scalar = 0, input_span = 0, output_bytes = 0;
+};
+k::HostStatus copy_raw_output(const void* payload, k::HostBuffers buffers) {
+  const auto& plan = *static_cast<const RawCopyPlan*>(payload);
+  const auto input = buffers.input(0);
+  const auto output = buffers.output(0);
+  if (!input.data || input.size_bytes < plan.input_span || !output.data ||
+      output.size_bytes < plan.output_bytes)
+    return k::HostError{k::ProviderErrorCode::BufferTooSmall, "raw_output",
+                        "raw output buffers are smaller than the checked view"};
+  const auto row = static_cast<std::size_t>(plan.shape[2]) * plan.scalar;
+  const bool packed_pixel = plan.strides[2] == static_cast<std::int64_t>(plan.scalar);
+  auto* target = output.data;
+  for (std::int64_t h = 0; h < plan.shape[0]; ++h)
+    for (std::int64_t w = 0; w < plan.shape[1]; ++w) {
+      const auto* pixel = input.data + h * plan.strides[0] + w * plan.strides[1];
+      if (packed_pixel) {
+        std::memcpy(target, pixel, row);
+        target += row;
+      } else {
+        for (std::int64_t c = 0; c < plan.shape[2]; ++c, target += plan.scalar)
+          std::memcpy(target, pixel + c * plan.strides[2], plan.scalar);
+      }
+    }
+  return std::nullopt;
+}
+k::KernelExecutable raw_copy_task(const k::TensorSpec& input, const k::TensorSpec& output) {
+  auto plan = std::make_shared<RawCopyPlan>();
+  plan->scalar = scalar_bytes(input.dtype);
+  if (input.shape.size() != 3)
+    invalid("raw output copy requires an HWC view");
+  std::copy(input.shape.begin(), input.shape.end(), plan->shape.begin());
+  if (const auto* strided = std::get_if<k::Strided>(&input.layout))
+    std::copy_n(strided->strides_bytes.begin(), 3, plan->strides.begin());
+  else if (std::holds_alternative<k::Contiguous>(input.layout))
+    plan->strides = {plan->shape[1] * plan->shape[2] * static_cast<std::int64_t>(plan->scalar),
+                     plan->shape[2] * static_cast<std::int64_t>(plan->scalar),
+                     static_cast<std::int64_t>(plan->scalar)};
+  else
+    invalid("raw output copy requires a linear input view");
+  plan->input_span = plan->scalar;
+  for (std::size_t axis = 0; axis < 3; ++axis) {
+    if (plan->strides[axis] < 0)
+      invalid("raw output copy requires nonnegative strides");
+    plan->input_span += static_cast<std::size_t>((plan->shape[axis] - 1) * plan->strides[axis]);
+  }
+  plan->output_bytes = dense_bytes(output);
+  const std::array<k::TensorRequirements, 1> inputs{{{plan->input_span, plan->scalar}}};
+  const std::array<k::TensorRequirements, 1> outputs{{{plan->output_bytes, plan->scalar}}};
+  k::HostTaskRequest request;
+  request.inputs = std::span(&input, 1);
+  request.outputs = std::span(&output, 1);
+  request.input_requirements = inputs;
+  request.output_requirements = outputs;
+  request.elements = plan->output_bytes / plan->scalar;
+  request.payload = std::shared_ptr<const RawCopyPlan>(std::move(plan));
+  request.callback = &copy_raw_output;
+  auto checked = k::make_host_task(request);
+  if (const auto* error = std::get_if<k::Error>(&checked))
+    invalid(std::string("raw output copy: ") + error->message);
+  return std::get<k::KernelExecutable>(std::move(checked));
+}
+// The published raw tensor over a checked HWC view: the same non-unit
+// dimensions in order, so only unit axes are added or dropped (for example
+// [256,256,4] published as [1,256,256,4], or [1,1,4] as [1,4]). Unit axes take
+// the dense stride; they address nothing.
+std::optional<k::TensorSpec> published_view(const k::TensorSpec& view,
+                                            std::span<const std::int64_t> shape) {
+  const auto width = static_cast<std::int64_t>(scalar_bytes(view.dtype));
+  std::array<std::int64_t, 3> strides{};
+  if (const auto* strided = std::get_if<k::Strided>(&view.layout))
+    std::copy_n(strided->strides_bytes.begin(), 3, strides.begin());
+  else if (std::holds_alternative<k::Contiguous>(view.layout) && view.shape.size() == 3)
+    strides = {view.shape[1] * view.shape[2] * width, view.shape[2] * width, width};
+  else
+    return std::nullopt;
+  if (view.shape.size() != 3 || shape.size() > 6)
+    return std::nullopt;
+  k::Strided layout;
+  std::size_t axis = 0;
+  for (std::size_t i = 0; i < shape.size(); ++i) {
+    if (shape[i] == 1)
+      continue;
+    while (axis < 3 && view.shape[axis] == 1)
+      ++axis;
+    if (axis == 3 || view.shape[axis] != shape[i])
+      return std::nullopt;
+    layout.strides_bytes[i] = strides[axis++];
+  }
+  while (axis < 3 && view.shape[axis] == 1)
+    ++axis;
+  if (axis != 3)
+    return std::nullopt;
+  bool dense = true;
+  std::int64_t span = width;
+  for (std::size_t i = shape.size(); i-- > 0;) {
+    if (shape[i] == 1)
+      layout.strides_bytes[i] = span;
+    else if (layout.strides_bytes[i] != span)
+      dense = false;
+    span *= shape[i];
+  }
+  k::TensorSpec spec{std::vector<std::int64_t>(shape.begin(), shape.end()), view.dtype};
+  if (!dense)
+    spec.layout = layout;
+  return spec;
+}
+struct Builder {
+  CompiledKernelContract compiled;
+  std::shared_ptr<KernelStageRecipe> recipe = std::make_shared<KernelStageRecipe>();
+  std::size_t next_output = 1;
+  gs::TensorStagePort scratch(const k::TensorSpec& tensor,
+                              const k::TensorRequirements& requirements) {
+    const auto index = next_output++;
+    const auto bytes = requirements.storage_bytes;
+    if (bytes != dense_bytes(tensor))
+      invalid("private output projection differs from checked storage");
+    const auto name = "kernel_private_" + std::to_string(index);
+    const std::vector<std::int64_t> shape(tensor.shape.begin(), tensor.shape.end());
+    recipe->private_outputs.push_back(specs::build_logical_output_static_spec(
+        static_cast<int>(index), static_cast<int>(index), static_cast<int>(index),
+        static_cast<int>(index), static_cast<int>(index), shape, dtype_name(tensor.dtype), "", name,
+        name, name, 0, bytes));
+    recipe->private_buffers.push_back(specs::build_physical_buffer_static_spec(
+        static_cast<int>(index), static_cast<int>(index), bytes, DeviceKind::Cpu, name));
+    return {index, 0, gs::TensorStagePortSource::Output};
+  }
+  void detess(Input& input, const k::TensorSpec& output) {
+    auto executable =
+        scheduler::check_kernel({"detess", k::Target::A65, {&input.tensor, 1}, {&output, 1}, {}});
+    if (auto* error = std::get_if<rt::Error>(&executable))
+      invalid(std::string(error->field) + ": " + error->message);
+    const auto inspection =
+        checked(scheduler::inspect_kernel(std::get<rt::KernelExecutable>(executable)));
+    auto port = scratch(inspection.outputs().front(), inspection.output_requirements().front());
+    const auto member = recipe->members.size();
+    recipe->members.push_back({std::get<rt::KernelExecutable>(std::move(executable)),
+                               {input.port},
+                               {port},
+                               input.dependencies,
+                               {}});
+    input = {output, port, {member}};
+  }
+  void to_fp32(Input& input, std::span<const k::Parameter> parameters) {
+    if (input.tensor.dtype == k::DType::Float32)
+      return;
+    const auto operation = input.tensor.dtype == k::DType::Int8 ? "dequant" : "cast";
+    const k::TensorSpec output{input.tensor.shape, k::DType::Float32};
+    auto executable = checked(scheduler::check_kernel(
+        {operation, k::Target::A65, {&input.tensor, 1}, {&output, 1}, parameters}));
+    const auto inspection = checked(scheduler::inspect_kernel(executable));
+    auto port = scratch(inspection.outputs().front(), inspection.output_requirements().front());
+    const auto member = recipe->members.size();
+    recipe->members.push_back(
+        {std::move(executable), {input.port}, {port}, input.dependencies, {}});
+    input = {output, port, {member}};
+  }
+  Input input(const CompiledBoxDecodeContract& source, std::size_t index, int logical_channels,
+              bool box_operation) {
+    auto& logical = compiled.runtime_contract.logical_inputs.at(index);
+    const auto shape = hwc(logical.shape, logical.layout);
+    if (logical_channels <= 0 || logical_channels > shape[2])
+      invalid("logical channel count exceeds source storage");
+    if (logical.byte_offset < 0)
+      invalid("negative head byte offset");
+    logical.backend_input_index = static_cast<int>(index);
+    Input in{{std::vector<std::int64_t>(shape.begin(), shape.end()), dtype(logical.dtype)},
+             {index, 0},
+             {}};
+    const auto kind = source.payload.tensor_storage_kind.at(index);
+    if (kind == 0)
+      in.tensor.layout = k::MlaCBlocked{slice_hwc(source.payload, index, logical)};
+    else if (kind == 2) {
+      const auto tile = slice_hwc(source.payload, index, logical);
+      in.tensor.layout = k::MlaTiled{
+          {-1, 0, 1, 2}, {1, tile[0], tile[1], tile[2]}, k::MlaTiled::Channels::PadTo16};
+    } else if (kind != 1)
+      invalid("unknown explicit source storage kind");
+    // Storage kind 1 is linear storage, not MLA-tiled. Logical layout locates
+    // H/W/C axes; explicit byte strides remain authoritative, including planar
+    // FP32 views. An absent stride vector retains the established physical-HWC
+    // storage contract rather than inferring a new layout from the axis names.
+    if (kind == 1 && !logical.stride_bytes.empty()) {
+      if (logical.stride_bytes.size() != logical.shape.size())
+        invalid("head stride rank does not match shape");
+      const auto stride = hwc(logical.stride_bytes, logical.layout, false);
+      const auto width = static_cast<std::int64_t>(scalar_bytes(in.tensor.dtype));
+      const std::array<std::int64_t, 3> contiguous{shape[1] * shape[2] * width, shape[2] * width,
+                                                   width};
+      if (stride != contiguous) {
+        k::Strided layout;
+        std::copy(stride.begin(), stride.end(), layout.strides_bytes.begin());
+        in.tensor.layout = layout;
+      }
+    }
+    // BoxDecode needs explicit detessellation of pixel-major MLA storage;
+    // SuperPoint consumes it natively. Neither format aliases C-block bytes.
+    if (kind == 2 && box_operation) {
+      const k::TensorSpec output{in.tensor.shape, in.tensor.dtype};
+      detess(in, output);
+    }
+    // Preserve native FP32. A compulsory BF16 cast changes threshold/NMS decisions;
+    // Kernels owns admission of the exact dtype and physical layout.
+    auto narrowed = shape;
+    narrowed[2] = logical_channels;
+    in.tensor.shape.assign(narrowed.begin(), narrowed.end());
+    if (std::holds_alternative<k::Contiguous>(in.tensor.layout) && shape[2] != logical_channels) {
+      const auto width = static_cast<std::int64_t>(scalar_bytes(in.tensor.dtype));
+      k::Strided strided;
+      strided.strides_bytes = {shape[1] * shape[2] * width, shape[2] * width, width};
+      in.tensor.layout = strided;
+    }
+    return in;
+  }
+};
+std::string_view profile(BoxDecodeType type) {
+  switch (type) {
+  case BoxDecodeType::YoloV26:
+  case BoxDecodeType::YoloV26Pose:
+  case BoxDecodeType::YoloV26Seg:
+    return "yolo26_v1";
+  case BoxDecodeType::YoloV8Obb:
+    return "yolo_dfl_obb_v1";
+  case BoxDecodeType::YoloV26Obb:
+    return "yolo26_obb_v1";
+  case BoxDecodeType::YoloV5:
+  case BoxDecodeType::YoloV5Seg:
+    return "yolov5_v1";
+  case BoxDecodeType::YoloV7:
+  case BoxDecodeType::YoloV7Seg:
+    return "yolov7_v1";
+  case BoxDecodeType::YoloV8:
+  case BoxDecodeType::YoloV8Pose:
+  case BoxDecodeType::YoloV8Seg:
+  case BoxDecodeType::YoloV9:
+  case BoxDecodeType::YoloV9Seg:
+  case BoxDecodeType::YoloV10:
+  case BoxDecodeType::YoloV10Seg:
+    return "yolo_dfl_v1";
+  case BoxDecodeType::YoloV6:
+    return "yolov6_v1";
+  case BoxDecodeType::YoloX:
+    return "yolox_v1";
+  case BoxDecodeType::YoloXSegPose:
+    return "yolox_seg_pose_v1";
+  case BoxDecodeType::Yolo:
+    return "decoded_v1";
+  case BoxDecodeType::EffDet:
+    return "efficientdet_v1";
+  case BoxDecodeType::Detr:
+    return "detr_v1";
+  case BoxDecodeType::DetrFocal:
+    return "detr_focal";
+  case BoxDecodeType::Centernet:
+    return "centernet_v1";
+  case BoxDecodeType::Ssd:
+    return "ssd_v1";
+  case BoxDecodeType::RcnnStage1:
+    return "rcnn_proposals_v1";
+  default:
+    invalid("decode profile is unspecified");
+  }
+}
+std::string_view task(BoxDecodeType type) {
+  switch (type) {
+  case BoxDecodeType::YoloXSegPose:
+    return "segmentation_pose";
+  case BoxDecodeType::YoloV26Pose:
+  case BoxDecodeType::YoloV8Pose:
+    return "pose";
+  case BoxDecodeType::YoloV26Seg:
+  case BoxDecodeType::YoloV5Seg:
+  case BoxDecodeType::YoloV7Seg:
+  case BoxDecodeType::YoloV8Seg:
+  case BoxDecodeType::YoloV9Seg:
+  case BoxDecodeType::YoloV10Seg:
+    return "segmentation";
+  default:
+    return "detection";
+  }
+}
+bool grouped(BoxDecodeTypeOption option) {
+  switch (option) {
+  case BoxDecodeTypeOption::GroupedByRole:
+  case BoxDecodeTypeOption::GroupedByRoleProbability:
+  case BoxDecodeTypeOption::GroupedByRoleLogit:
+  case BoxDecodeTypeOption::Split3Grouped:
+    return true;
+  case BoxDecodeTypeOption::InterleavedByHead:
+  case BoxDecodeTypeOption::InterleavedByHeadProbability:
+  case BoxDecodeTypeOption::InterleavedByHeadLogit:
+  case BoxDecodeTypeOption::Split3Interleaved:
+  case BoxDecodeTypeOption::PackedPerHead:
+    return false;
+  default:
+    invalid("head grouping must be resolved before numerical preparation");
+  }
+}
+const QuantStaticSpec& quantization(const LogicalInputStaticSpec& input) {
+  if (!input.quant || input.quant->granularity != QuantGranularity::PerTensor ||
+      input.quant->scales.size() != 1 || input.quant->zero_points.size() != 1 ||
+      !std::isfinite(input.quant->scales[0]) || input.quant->scales[0] <= 0 ||
+      input.quant->zero_points[0] < -128 || input.quant->zero_points[0] > 127)
+    invalid("INT8 heads require positive finite per-tensor quantization and an INT8 zero point");
+  return *input.quant;
+}
+} // namespace
+
+bool boxdecode_supports_detection_transform(BoxDecodeType type) {
+  switch (type) {
+  case BoxDecodeType::YoloV26:
+  case BoxDecodeType::YoloV5:
+  case BoxDecodeType::YoloV7:
+  case BoxDecodeType::YoloV8:
+  case BoxDecodeType::YoloV9:
+  case BoxDecodeType::YoloV10:
+  case BoxDecodeType::YoloV6:
+  case BoxDecodeType::YoloX:
+  case BoxDecodeType::Yolo:
+  case BoxDecodeType::EffDet:
+  case BoxDecodeType::Detr:
+  case BoxDecodeType::DetrFocal:
+  case BoxDecodeType::Centernet:
+  case BoxDecodeType::Ssd:
+    return true;
+  default:
+    return false;
+  }
+}
+
+ResizeMode sam_required_resize(BoxDecodeType type) {
+  return type == BoxDecodeType::MobileSam ? ResizeMode::Letterbox : ResizeMode::Stretch;
+}
+
+SamMaskSelection resolve_sam_mask_selection(BoxDecodeType type, int masks, bool multimask_output) {
+  const std::string model = box_decode_type_sam_model_name(type);
+  if (!box_decode_type_is_sam(type))
+    throw std::invalid_argument(
+        "BoxDecode kernel recipe: " + std::string(box_decode_type_token(type)) +
+        " is not a Segment Anything decode type");
+  // A single-mask export has only the answer to give.
+  if (masks == 1)
+    return {"fixed", 0, 1};
+  if (!box_decode_type_sam_exports_masks(type, masks))
+    throw std::invalid_argument("BoxDecode kernel recipe: " + model + " decoders export " +
+                                box_decode_type_sam_mask_counts(type) +
+                                " mask channels; this one has " + std::to_string(masks) +
+                                "; use the decode type of the model that produced this decoder");
+  const bool four = masks == 4, three = masks == 3;
+  // Channels 1..3 of four (token 0 is the single-mask answer), or EfficientSAM's
+  // three multimask tokens at channels 0..2.
+  const int first = four ? 1 : 0;
+  if (multimask_output)
+    return {"best_iou", first, 3};
+  if (three)
+    throw std::invalid_argument(
+        "BoxDecode kernel recipe: " + model +
+        (type == BoxDecodeType::EfficientSam
+             ? " exports no single-mask token"
+             : " decoder with three mask channels exports no single-mask token") +
+        "; leave multimask_output true");
+  // SAM (MobileSAM) answers with mask 0; SAM2-style decoders (EdgeTAM,
+  // EfficientSAM3) keep mask 0 only when it is stable, else the best of 1..3.
+  if (type == BoxDecodeType::MobileSam)
+    return {"fixed", 0, 1};
+  return {"stability", 1, 3};
+}
+
+BoxDecodeKernelRecipeResult prepare_boxdecode_kernel(const CompiledBoxDecodeContract& source,
+                                                     const BoxDecodeGeometryOptions& geometry) {
+  const auto& p = source.payload;
+  const auto count = source.runtime_contract.logical_inputs.size();
+  if (!count || p.tensor_storage_kind.size() != count)
+    invalid("input/storage contract count mismatch");
+  if (geometry.model_width <= 0 || geometry.model_height <= 0 || geometry.original_width <= 0 ||
+      geometry.original_height <= 0)
+    invalid("model and original image geometry must be resolved");
+  if (geometry.resize == ResizeMode::Crop && p.decode_type != BoxDecodeType::SuperPoint &&
+      !((p.decode_type == BoxDecodeType::YoloXSegPose ||
+         box_decode_type_is_oriented(p.decode_type) ||
+         boxdecode_supports_detection_transform(p.decode_type)) &&
+        geometry.model_to_original))
+    invalid("crop geometry is not supported by the numerical recipe");
+  if (p.topk == 0)
+    invalid("top_k is unresolved: set a positive output capacity for standalone bounding-box "
+            "decoding, or inherit a positive Model capacity with a model-bound node");
+  if (p.topk < 0 || p.topk > 65536)
+    invalid("top_k output capacity must be 1..65536");
+  const int max_classes = p.decode_type == BoxDecodeType::DetrFocal ? 1024 : 336;
+  if (p.decode_type != BoxDecodeType::SuperPoint &&
+      (p.num_classes < 1 || p.num_classes > max_classes))
+    invalid(p.decode_type == BoxDecodeType::DetrFocal
+                ? "focal class count must be 1..1024 before profile-specific validation"
+                : "class count must be 1..336 before profile-specific validation");
+  if (!p.raw_outputs.empty() && p.raw_outputs.size() != count)
+    invalid("raw outputs must correspond one to one with the inputs");
+  Builder build;
+  // Public outputs: the BoxDecode tensor, then the raw outputs; private
+  // intermediate tensors are numbered after them.
+  build.next_output = 1 + p.raw_outputs.size();
+  build.compiled.runtime_contract = source.runtime_contract;
+  auto& runtime = build.compiled.runtime_contract;
+  runtime.plugin_kind = "kernel";
+  std::vector<Input> inputs;
+  std::vector<k::TensorSpec> outputs;
+  k::KernelExecutable numerical;
+  BoxDecodeWireFormat wire = BoxDecodeWireFormat::Boxes;
+  if (p.decode_type == BoxDecodeType::SuperPoint) {
+    if (count != 2 || p.tensor_roles.size() != 2)
+      invalid("SuperPoint requires two explicit tensor roles");
+    if (const auto error = validate_superpoint_static_metadata(p.superpoint, true))
+      invalid(*error);
+    const auto detector = std::find(p.tensor_roles.begin(), p.tensor_roles.end(),
+                                    BoxDecodeTensorRole::DetectorLogits);
+    const auto descriptor = std::find(p.tensor_roles.begin(), p.tensor_roles.end(),
+                                      BoxDecodeTensorRole::DescriptorGrid);
+    if (detector == p.tensor_roles.end() || descriptor == p.tensor_roles.end() ||
+        detector == descriptor)
+      invalid("SuperPoint roles are incomplete");
+    const std::array indices{static_cast<std::size_t>(detector - p.tensor_roles.begin()),
+                             static_cast<std::size_t>(descriptor - p.tensor_roles.begin())};
+    std::string_view selected_profile;
+    switch (p.superpoint.profile) {
+    case SuperPointProfile::A65V1:
+      selected_profile = "a65_v1";
+      break;
+    case SuperPointProfile::LightGlueV1:
+      selected_profile = "lightglue_v1";
+      break;
+    case SuperPointProfile::MagicLeapDemoV1:
+      selected_profile = "magicleap_demo_v1";
+      break;
+    default:
+      invalid("SuperPoint profile is unresolved or unsupported");
+    }
+    if (p.superpoint.cell_stride != 8 || p.superpoint.descriptor_stride != 8)
+      invalid("SuperPoint requires the supported stride-eight contract");
+    std::vector<k::Parameter> parameters{
+        {"profile", selected_profile},
+        {"model_input_size", k::ParameterArray{geometry.model_width, geometry.model_height}},
+        {"topk_capacity", p.topk},
+        {"detection_threshold", static_cast<float>(p.detection_threshold)},
+        {"nms_radius", p.superpoint.nms_radius},
+        {"border_margin", p.superpoint.border_margin}};
+    for (std::size_t role = 0; role < 2; ++role) {
+      inputs.push_back(
+          build.input(source, indices[role], role == 0 ? 65 : p.superpoint.descriptor_dim, false));
+      if (inputs.back().tensor.dtype == k::DType::Int8) {
+        const auto& q = quantization(runtime.logical_inputs[indices[role]]);
+        const std::string prefix =
+            role == 0 ? "detector_quantization_" : "descriptor_quantization_";
+        parameters.push_back({prefix + "scale", q.scales[0]});
+        parameters.push_back({prefix + "zero_point", q.zero_points[0]});
+        parameters.push_back({prefix + "reciprocal", true});
+      }
+    }
+    k::DType descriptors;
+    switch (p.superpoint.descriptor_output_dtype) {
+    case TensorDType::Int8:
+      descriptors = k::DType::Int8;
+      break;
+    case TensorDType::BFloat16:
+      descriptors = k::DType::BFloat16;
+      break;
+    case TensorDType::Float32:
+      descriptors = k::DType::Float32;
+      break;
+    default:
+      invalid("unsupported descriptor output dtype");
+    }
+    outputs = {{{p.topk, 2}, k::DType::Float32},
+               {{p.topk}, k::DType::Float32},
+               {{p.topk, p.superpoint.descriptor_dim}, descriptors},
+               {{1}, k::DType::Int32}};
+    const std::array tensors{inputs[0].tensor, inputs[1].tensor};
+    numerical = checked(
+        scheduler::check_kernel({"superpoint", k::Target::A65, tensors, outputs, parameters}));
+    wire = p.superpoint.output_format == SuperPointOutputFormat::FeaturePointsV1
+               ? BoxDecodeWireFormat::FeaturePointsV1
+               : BoxDecodeWireFormat::LegacyFeaturePointsV0;
+  } else if (box_decode_type_is_sam(p.decode_type)) {
+    // Segment Anything: heads are bound by role in the static contract, never
+    // by YOLO head arity; inputs without a role (EdgeTAM object pointers) are
+    // not decoded. Selection, resampling and the sign test are the kernel's;
+    // geometry is the admitted top-left letterbox or stretch, fixed per plan.
+    // An EfficientSAM3 concept image model is recognized by its detections.
+    const bool is_concept = std::count(p.tensor_roles.begin(), p.tensor_roles.end(),
+                                       BoxDecodeTensorRole::SamConceptDetections) > 0;
+    const std::string family =
+        std::string(box_decode_type_sam_model_name(p.decode_type)) + (is_concept ? " concept" : "");
+    if (p.tensor_roles.size() != count)
+      invalid(family + " requires one role per input");
+    const auto find_role = [&](BoxDecodeTensorRole role) -> std::optional<std::size_t> {
+      if (std::count(p.tensor_roles.begin(), p.tensor_roles.end(), role) != 1)
+        return std::nullopt;
+      return static_cast<std::size_t>(
+          std::find(p.tensor_roles.begin(), p.tensor_roles.end(), role) - p.tensor_roles.begin());
+    };
+    const auto logits = find_role(BoxDecodeTensorRole::SamMaskLogits);
+    const auto second = find_role(is_concept ? BoxDecodeTensorRole::SamConceptDetections
+                                             : BoxDecodeTensorRole::SamIouPredictions);
+    const auto object = is_concept ? std::nullopt : find_role(BoxDecodeTensorRole::SamObjectScore);
+    if (!logits || !second ||
+        (!is_concept && std::count(p.tensor_roles.begin(), p.tensor_roles.end(),
+                                   BoxDecodeTensorRole::SamObjectScore) > 1))
+      invalid(family + " tensor roles are incomplete");
+    // MobileSAM was trained on a top-left letterbox; the others stretch.
+    const auto required = sam_required_resize(p.decode_type);
+    if (geometry.model_to_original || geometry.resize != required)
+      invalid(family + " requires a " +
+              (required == ResizeMode::Letterbox ? "top-left letterbox" : "stretch") +
+              " without an explicit transform");
+    if (geometry.model_width != geometry.model_height)
+      invalid(family + " requires a square model canvas");
+    if (std::int64_t(geometry.original_width) * geometry.original_height >
+        std::numeric_limits<std::int32_t>::max())
+      invalid(family + " mask exceeds INT32_MAX bytes");
+    // Logical channels: dense carriers expose their slice, packed ones their shape.
+    const auto depth = [&](std::size_t index) {
+      const auto& input = runtime.logical_inputs[index];
+      return p.tensor_storage_kind[index] == 1 ? slice_hwc(p, index, input)[2]
+                                               : hwc(input.shape, input.layout)[2];
+    };
+    k::ParameterRecords quantization_parameters;
+    const auto add_input = [&](std::size_t index, std::int64_t channels) {
+      inputs.push_back(build.input(source, index, static_cast<int>(channels), true));
+      if (inputs.back().tensor.dtype == k::DType::Int8) {
+        // Dtypes are per port. Pass the dequantization scale, as for YOLO.
+        const auto& q = quantization(runtime.logical_inputs[index]);
+        quantization_parameters.push_back(
+            {{"input", inputs.size() - 1},
+             {"dequant_scale", 1.0F / static_cast<float>(q.scales[0])},
+             {"zero_point", static_cast<std::int32_t>(q.zero_points[0])}});
+      }
+    };
+    std::vector<k::Parameter> parameters{
+        {"profile", is_concept ? "sam_concept" : "sam_mask"},
+        {"model_input_size", k::ParameterArray{geometry.model_width, geometry.model_height}},
+        {"original_image_size",
+         k::ParameterArray{geometry.original_width, geometry.original_height}},
+        {"resize", geometry.resize == ResizeMode::Stretch ? "stretch" : "top_left_letterbox"}};
+    int capacity = 1;
+    if (is_concept) {
+      // Detections [1,Q,6] (canvas xyxy, score, unused) and logits [h,w,Q].
+      const auto queries =
+          hwc(runtime.logical_inputs[*second].shape, runtime.logical_inputs[*second].layout)[1];
+      if (depth(*second) != 6 || depth(*logits) != queries)
+        invalid(family + " requires detections [Q,6] and mask logits with Q channels");
+      if (p.topk < 1 || p.topk > queries)
+        invalid(family + " top_k must be 1..Q (" + std::to_string(queries) + ")");
+      if (!p.multimask_output)
+        invalid(family + " detection has no multimask choice; leave multimask_output true");
+      capacity = p.topk;
+      add_input(*second, 6);
+      add_input(*logits, queries);
+      if (inputs[0].tensor.shape != std::vector<std::int64_t>{1, queries, 6})
+        invalid(family + " detections must be one row of Q six-value records");
+      // As for sam_mask, boxes_input names the mask logits and scores_input
+      // the scored records; ports keep the contract order (detections first).
+      k::ParameterRecords heads;
+      heads.push_back({{"boxes_input", std::size_t{1}}, {"scores_input", std::size_t{0}}});
+      parameters.insert(parameters.end(),
+                        {{"num_classes", 1},
+                         {"max_detections", capacity},
+                         {"detection_threshold", static_cast<float>(p.detection_threshold)},
+                         {"heads", std::move(heads)},
+                         {"quantization", std::move(quantization_parameters)},
+                         {"sam_threshold_inclusive", false}});
+    } else {
+      // One prompt: logits [h,w,C], IoU [1,1,C] and an optional object score.
+      const auto masks = depth(*logits);
+      // Model::Options::multimask_output, mapped per model and channel count.
+      const auto choice =
+          resolve_sam_mask_selection(p.decode_type, static_cast<int>(masks), p.multimask_output);
+      if (p.topk != 1 || p.num_classes != masks)
+        invalid(family + " publishes one detection over its C masks (top_k 1, num_classes C)");
+      if (p.nms_iou_threshold != 0)
+        invalid(family + " applies no NMS; leave nms_iou_threshold at zero");
+      add_input(*logits, masks);
+      add_input(*second, masks);
+      if (object)
+        add_input(*object, 1);
+      if (inputs[1].tensor.shape != std::vector<std::int64_t>{1, 1, masks} ||
+          (object && inputs[2].tensor.shape != std::vector<std::int64_t>{1, 1, 1}))
+        invalid(family + " IoU predictions must be one pixel of C channels and the object score "
+                         "one value");
+      const std::string_view selection = choice.mode;
+      k::ParameterRecords heads;
+      k::ParameterRecord head{{"boxes_input", std::size_t{0}}, {"scores_input", std::size_t{1}}};
+      if (object)
+        head.push_back({"extra_input", std::size_t{2}});
+      heads.push_back(std::move(head));
+      parameters.insert(parameters.end(),
+                        {{"num_classes", masks},
+                         {"max_detections", 1},
+                         {"detection_threshold", static_cast<float>(p.detection_threshold)},
+                         {"heads", std::move(heads)},
+                         {"quantization", std::move(quantization_parameters)},
+                         {"sam_mask_selection", selection},
+                         {"sam_mask_first", std::int64_t{choice.first}}});
+      if (selection != "fixed")
+        parameters.push_back({"sam_mask_count", std::int64_t{choice.count}});
+      if (selection == "stability") {
+        // SAM2 `_dynamic_multimask_via_stability` defaults.
+        parameters.push_back({"sam_stability_channel", std::int64_t{0}});
+        parameters.push_back({"sam_stability_delta", 0.05F});
+        parameters.push_back({"sam_stability_threshold", 0.98F});
+      }
+      // The object score gate follows upstream: present score, gate on.
+      parameters.push_back({"sam_object_score_gate", object.has_value()});
+      parameters.push_back({"sam_threshold_inclusive", false});
+      // Low-resolution hole/sprinkle cleanup is not a Core option: off.
+      parameters.push_back({"sam_hole_max_area", std::int64_t{0}});
+      parameters.push_back({"sam_sprinkle_max_area", std::int64_t{0}});
+    }
+    outputs = {{{capacity, 4}, k::DType::Int32},
+               {{capacity}, k::DType::Float32},
+               {{capacity}, k::DType::Int32},
+               {{1}, k::DType::Int32},
+               {{capacity, geometry.original_height, geometry.original_width}, k::DType::UInt8}};
+    std::vector<k::TensorSpec> tensors;
+    for (const auto& in : inputs)
+      tensors.push_back(in.tensor);
+    numerical = checked(
+        scheduler::check_kernel({"boxdecode", k::Target::A65, tensors, outputs, parameters}));
+    wire = BoxDecodeWireFormat::MasksV1;
+  } else {
+    const auto selected_profile = profile(p.decode_type);
+    const auto selected_task = task(p.decode_type);
+    int model_width = geometry.model_width, model_height = geometry.model_height;
+    const bool rcnn = selected_profile == "rcnn_proposals_v1";
+    const bool oriented = box_decode_type_is_oriented(p.decode_type);
+    const bool dfl = selected_profile == "yolo_dfl_v1" || selected_profile == "yolo_dfl_obb_v1";
+    if (oriented) {
+      const auto option = p.decode_type_option.value_or(BoxDecodeTypeOption::Auto);
+      if (count != 9 || p.num_classes > 256 ||
+          (p.decode_type == BoxDecodeType::YoloV26Obb && p.nms_iou_threshold != 0) ||
+          p.score_activation != BoxDecodeScoreActivation::Sigmoid ||
+          (option != BoxDecodeTypeOption::Auto && option != BoxDecodeTypeOption::GroupedByRole &&
+           option != BoxDecodeTypeOption::GroupedByRoleLogit) ||
+          !p.pose_classes.empty())
+        invalid("Oriented YOLO requires nine grouped raw heads and sigmoid classes; YOLO26 "
+                "requires NMS zero");
+      if (!geometry.model_to_original)
+        invalid("Oriented YOLO requires an explicit uniform model-to-original transform");
+      const auto& t = *geometry.model_to_original;
+      if (std::any_of(t.begin(), t.end(), [](float v) { return !std::isfinite(v); }) || t[0] <= 0 ||
+          t[0] != t[1])
+        invalid("Oriented YOLO transform must be finite, positive and uniform");
+    }
+    if (rcnn && p.topk > 16384)
+      invalid("RCNN topk is per level and must not exceed 16384");
+    const int capacity = rcnn ? 4 * p.topk : p.topk;
+    std::string_view score_activation;
+    switch (p.score_activation) {
+    case BoxDecodeScoreActivation::Identity:
+      score_activation = "identity";
+      break;
+    case BoxDecodeScoreActivation::Sigmoid:
+      score_activation = "sigmoid";
+      break;
+    case BoxDecodeScoreActivation::Softmax:
+      score_activation = "softmax";
+      break;
+    default:
+      invalid("score activation must be resolved");
+    }
+    const bool combined = selected_profile == "yolov5_v1" || selected_profile == "yolov7_v1";
+    const bool ssd = selected_profile == "ssd_v1";
+    const bool decoded = selected_profile == "decoded_v1";
+    const bool x = selected_profile == "yolox_v1";
+    const bool center = selected_profile == "centernet_v1";
+    const bool auxiliary = selected_task != "detection";
+    const bool seg_pose = selected_task == "segmentation_pose";
+    const bool masks = selected_task == "segmentation" || seg_pose;
+    int keypoints = 17;
+    const auto option = p.decode_type_option.value_or(BoxDecodeTypeOption::Auto);
+    if (selected_profile == "detr_focal" && option != BoxDecodeTypeOption::Auto &&
+        option != BoxDecodeTypeOption::InterleavedByHead &&
+        option != BoxDecodeTypeOption::InterleavedByHeadLogit &&
+        option != BoxDecodeTypeOption::GroupedByRole &&
+        option != BoxDecodeTypeOption::GroupedByRoleLogit)
+      invalid("focal queries require a two-tensor logit head layout");
+    const bool split_extents = decoded && (option == BoxDecodeTypeOption::Split3Interleaved ||
+                                           option == BoxDecodeTypeOption::Split3Grouped);
+    const std::size_t per_head = (combined ? 1 : 2) +
+                                 (x || center || split_extents || oriented ? 1 : 0) +
+                                 (auxiliary ? 1 : 0) + (seg_pose ? 1 : 0);
+    if (count < (masks ? 1U : 0U) || (count - (masks ? 1 : 0)) % per_head)
+      invalid("head arity does not match profile/task");
+    const std::size_t heads = (count - (masks ? 1 : 0)) / per_head;
+    bool by_role = ssd || oriented;
+    if (!ssd && !combined && heads > 1) {
+      if (option != BoxDecodeTypeOption::Auto)
+        by_role = grouped(option);
+      else {
+        // Preserve the legacy static Auto grouping rule, using authored tensor
+        // geometry only. Kernel admission checks every resulting role/shape.
+        const auto depth = [&](std::size_t i) {
+          return hwc(runtime.logical_inputs[i].shape, runtime.logical_inputs[i].layout)[2];
+        };
+        by_role = true;
+        for (std::size_t i = 1; i < heads; ++i)
+          by_role = by_role && depth(i) == depth(0);
+      }
+    }
+    auto port = [&](std::size_t head, std::size_t role) {
+      return by_role ? role * heads + head : head * per_head + role;
+    };
+    const auto logical_depth = [&](std::size_t index) {
+      const auto& input = runtime.logical_inputs[index];
+      // Dense carriers may have channel padding; packed slice depth is a tile,
+      // not the logical tensor depth.
+      return p.tensor_storage_kind[index] == 1 ? slice_hwc(p, index, input)[2]
+                                               : hwc(input.shape, input.layout)[2];
+    };
+    std::vector<int> channels(count);
+    const stagesemantics::SsdRecipeDescriptor* ssd_descriptor = nullptr;
+    std::string_view ssd_recipe = "none";
+    int decoded_anchors = 1;
+    bool decoded_objectness = false;
+    k::ParameterRecords head_parameters, quantization_parameters;
+    std::size_t first_scores_input = 0;
+    if (ssd) {
+      switch (p.ssd_recipe_id) {
+      case stagesemantics::SsdRecipeId::Ssd300V1:
+        ssd_recipe = "ssd300";
+        break;
+      case stagesemantics::SsdRecipeId::SsdMobile300V1:
+        ssd_recipe = "mobilenet300";
+        break;
+      case stagesemantics::SsdRecipeId::SsdMobile320V1:
+        ssd_recipe = "mobilenet320";
+        break;
+      case stagesemantics::SsdRecipeId::SsdLiteMobile320V1:
+        ssd_recipe = "torchvision_lite320";
+        break;
+      default:
+        invalid("SSD recipe is unresolved");
+      }
+      ssd_descriptor = stagesemantics::find_ssd_recipe_descriptor(p.ssd_recipe_id);
+      if (!ssd_descriptor || heads != ssd_descriptor->ordered_levels.size())
+        invalid("SSD head count does not match the selected recipe");
+    }
+    for (std::size_t h = 0; h < heads; ++h) {
+      std::size_t boxes = port(h, 0), scores = combined ? boxes : port(h, x ? 2 : 1);
+      std::optional<std::size_t> extra;
+      int anchors = (combined || rcnn)                      ? 3
+                    : selected_profile == "efficientdet_v1" ? 9
+                    : ssd ? ssd_descriptor->ordered_levels[h].localization_channels / 4
+                          : 1;
+      if (oriented)
+        extra = port(h, 2);
+      else if (center) {
+        scores = port(h, 0);
+        boxes = port(h, 1);
+        extra = port(h, 2);
+      } else if (x)
+        extra = port(h, 1);
+      else if (split_extents)
+        extra = port(h, 1);
+      if (decoded) {
+        const auto c =
+            hwc(runtime.logical_inputs[boxes].shape, runtime.logical_inputs[boxes].layout)[2];
+        const int coordinate_channels = split_extents ? 2 : 4;
+        if (c != coordinate_channels && c != coordinate_channels * 3) {
+          scores = port(h, 0);
+          boxes = port(h, 1);
+          if (split_extents)
+            extra = port(h, 2);
+        } else
+          scores = port(h, per_head - 1);
+        const auto box_channels =
+            hwc(runtime.logical_inputs[boxes].shape, runtime.logical_inputs[boxes].layout)[2];
+        anchors = static_cast<int>(box_channels) / coordinate_channels;
+        const auto score_channels =
+            hwc(runtime.logical_inputs[scores].shape, runtime.logical_inputs[scores].layout)[2];
+        const bool objectness = score_channels != anchors * p.num_classes;
+        if (h && (decoded_anchors != anchors || decoded_objectness != objectness))
+          invalid("decoded head options disagree");
+        decoded_anchors = anchors;
+        decoded_objectness = objectness;
+      }
+      if (selected_profile == "detr_v1") {
+        if (logical_depth(boxes) != 4)
+          std::swap(boxes, scores);
+      }
+      if (selected_profile == "detr_focal" &&
+          (count != 2 || logical_depth(boxes) != 4 || logical_depth(scores) != p.num_classes))
+        invalid(
+            "focal queries require exactly [normalized cxcywh, class logits] without background");
+      channels[boxes] = combined ? 3 * (p.num_classes + 5)
+                        : center ? 2
+                        : dfl    ? 64
+                                 : (split_extents ? 2 : 4) * anchors;
+      if (!combined)
+        channels[scores] =
+            ssd ? ssd_descriptor->ordered_levels[h].confidence_channels
+            : selected_profile == "detr_v1"
+                ? p.num_classes + 1
+                : anchors * (p.num_classes + (seg_pose || (decoded && decoded_objectness) ? 1 : 0));
+      if (extra)
+        channels[*extra] = (x || oriented) ? 1 : center ? 2 : 2 * anchors;
+      std::optional<std::size_t> aux;
+      if (auxiliary) {
+        aux = port(h, seg_pose ? 2 : per_head - 1);
+        channels[*aux] = masks ? 32 * anchors : 51;
+      }
+      k::ParameterRecord head{{"boxes_input", boxes}, {"scores_input", scores}};
+      if (extra)
+        head.push_back({"extra_input", *extra});
+      if (aux)
+        head.push_back({"auxiliary_input", *aux});
+      if (seg_pose) {
+        const auto keypoints_input = port(h, 3);
+        // Logical depth, never padded carrier channels, determines P.
+        if (logical_depth(boxes) != 4 || logical_depth(scores) != p.num_classes + 1 ||
+            logical_depth(*aux) != 32)
+          invalid("combined logical roles require 4 box channels, packed objectness+classes and 32 "
+                  "mask coefficients");
+        const auto point_channels = logical_depth(keypoints_input);
+        if (point_channels < 3 || point_channels > 51 || point_channels % 3)
+          invalid("combined keypoint head requires 1..17 logical triplets");
+        const auto points = static_cast<int>(point_channels / 3);
+        if (h && points != keypoints)
+          invalid("combined keypoint counts disagree across heads");
+        keypoints = points;
+        channels[keypoints_input] = static_cast<int>(point_channels);
+        head.push_back({"keypoints_input", keypoints_input});
+      }
+      head_parameters.push_back(std::move(head));
+      if (h == 0)
+        first_scores_input = scores;
+    }
+    if (center) {
+      // The legacy CenterNet contract decodes directly in score-grid units.
+      // Keep that coordinate frame to preserve its intermediate rounding.
+      const auto grid = hwc(runtime.logical_inputs[first_scores_input].shape,
+                            runtime.logical_inputs[first_scores_input].layout);
+      model_width = static_cast<int>(grid[1]);
+      model_height = static_cast<int>(grid[0]);
+    }
+    if (masks) {
+      if (seg_pose && logical_depth(count - 1) != 32)
+        invalid("combined mask basis requires 32 logical channels");
+      channels.back() = 32;
+    }
+    for (std::size_t i = 0; i < count; ++i) {
+      if (oriented && logical_depth(i) != channels[i])
+        invalid("Oriented YOLO requires exact logical role depths");
+      inputs.push_back(build.input(source, i, channels[i], true));
+      if (inputs.back().tensor.dtype == k::DType::Int8) {
+        const auto& q = quantization(runtime.logical_inputs[i]);
+        // Existing compiler contracts carry the quantization divisor. Preserve
+        // the historical FP32 reciprocal, not an FP64 reciprocal rounded later.
+        const float scale = 1.0F / static_cast<float>(q.scales[0]);
+        const auto zero_point = static_cast<std::int32_t>(q.zero_points[0]);
+        // The named profile owns exact dtype-aware reads. Preserve the
+        // checked source view and convert only values the numerical recipe
+        // actually uses, rather than materializing whole FP32 head tensors.
+        quantization_parameters.push_back(
+            {{"input", i}, {"dequant_scale", scale}, {"zero_point", zero_point}});
+      }
+    }
+
+    outputs = {
+        {{capacity, oriented ? 5 : 4}, (rcnn || oriented) ? k::DType::Float32 : k::DType::Int32},
+        {{capacity}, k::DType::Float32},
+        {{capacity}, k::DType::Int32},
+        {{1}, k::DType::Int32}};
+    if (oriented)
+      wire = BoxDecodeWireFormat::OrientedBoxesV1;
+    if (rcnn) {
+      outputs.push_back({{capacity}, k::DType::Int32});
+      wire = BoxDecodeWireFormat::RcnnProposals;
+    }
+    if (selected_task == "pose") {
+      outputs.push_back({{p.topk, 17, 3}, k::DType::Float32});
+      wire = BoxDecodeWireFormat::Pose;
+    }
+    if (masks) {
+      outputs.push_back({{p.topk, 160, 160}, k::DType::UInt8});
+      wire = BoxDecodeWireFormat::Masks;
+    }
+    if (seg_pose) {
+      outputs.push_back({{p.topk, keypoints, 3}, k::DType::Float32});
+      wire = BoxDecodeWireFormat::MasksPose;
+    }
+    std::vector<k::TensorSpec> tensors;
+    for (const auto& in : inputs)
+      tensors.push_back(in.tensor);
+    // An explicit affine is authoritative. Crop is metadata policy, not a new
+    // numerical recipe's legacy fallback mapping (DETR/SSD require Stretch).
+    const auto numerical_resize = geometry.resize == ResizeMode::Crop
+                                      ? default_boxdecode_resize_mode(p.decode_type)
+                                      : geometry.resize;
+    std::vector<k::Parameter> parameters{
+        {"profile", selected_profile},
+        {"task", selected_task},
+        {"model_input_size", k::ParameterArray{model_width, model_height}},
+        {"original_image_size",
+         k::ParameterArray{geometry.original_width, geometry.original_height}},
+        {"resize",
+         !oriented && numerical_resize == ResizeMode::Stretch ? "stretch" : "centered_letterbox"},
+        {"num_classes", p.num_classes},
+        {"max_detections", capacity},
+        {"rcnn_per_level_topk", rcnn ? p.topk : 0},
+        {"detection_threshold", static_cast<float>(p.detection_threshold)},
+        {"nms_iou_threshold", static_cast<float>(p.nms_iou_threshold)},
+        {"score_activation", score_activation},
+        {"ssd_recipe", ssd_recipe},
+        {"decoded_anchors_per_cell", decoded_anchors},
+        {"decoded_objectness", decoded_objectness},
+        {"decoded_split_extents", split_extents},
+        {"heads", std::move(head_parameters)},
+        {"quantization", std::move(quantization_parameters)}};
+    if (masks)
+      parameters.push_back({"mask_basis_input", count - 1});
+    if (seg_pose) {
+      parameters.push_back({"keypoints", keypoints});
+      k::ParameterArray pose_classes;
+      for (const auto value : p.pose_classes)
+        pose_classes.emplace_back(value);
+      parameters.push_back({"pose_classes", std::move(pose_classes)});
+    }
+    if (geometry.model_to_original) {
+      if (!seg_pose && !oriented && !boxdecode_supports_detection_transform(p.decode_type))
+        invalid("explicit affine is unsupported by this BoxDecode profile/task");
+      const auto& t = *geometry.model_to_original;
+      parameters.push_back({"model_to_original", k::ParameterArray{t[0], t[1], t[2], t[3]}});
+    }
+    numerical = checked(
+        scheduler::check_kernel({"boxdecode", k::Target::A65, tensors, outputs, parameters}));
+  }
+  gs::TensorStageMember decode;
+  decode.executable = std::move(numerical);
+  for (const auto& input : inputs) {
+    decode.inputs.push_back(input.port);
+    decode.dependencies.insert(decode.dependencies.end(), input.dependencies.begin(),
+                               input.dependencies.end());
+  }
+  std::sort(decode.dependencies.begin(), decode.dependencies.end());
+  decode.dependencies.erase(std::unique(decode.dependencies.begin(), decode.dependencies.end()),
+                            decode.dependencies.end());
+  const auto inspection = checked(scheduler::inspect_kernel(decode.executable));
+  if (inspection.outputs().size() != outputs.size())
+    invalid("provider result arity differs from the requested output contract");
+  for (std::size_t i = 0; i < outputs.size(); ++i)
+    if (inspection.outputs()[i].dtype != outputs[i].dtype ||
+        inspection.outputs()[i].shape != outputs[i].shape ||
+        !std::holds_alternative<k::Contiguous>(inspection.outputs()[i].layout))
+      invalid("provider result differs from the requested canonical output contract");
+  // YOLO26 masks are already complete bytes, including ROI complements and
+  // unused capacity. Write them into the public wire suffix directly. The
+  // dependent ordinary Boxes serializer writes only its disjoint prefix; it
+  // never borrows a mask input or needs an input/output alias exception.
+  // Segment Anything masks (every byte written per run) follow the V1 header prefix.
+  const bool sam_masks = wire == BoxDecodeWireFormat::MasksV1;
+  const bool direct_masks = sam_masks || (p.decode_type == BoxDecodeType::YoloV26Seg &&
+                                          wire == BoxDecodeWireFormat::Masks);
+  const bool boxes_prefix = direct_masks && !sam_masks;
+  const auto publication = prepare_boxdecode_publication(
+      boxes_prefix ? BoxDecodeWireFormat::Boxes : wire,
+      std::span<const k::TensorSpec>(outputs).first(boxes_prefix ? 4 : outputs.size()));
+  std::size_t wire_bytes = publication.bytes;
+  if (direct_masks) {
+    const auto mask_bytes = inspection.output_requirements()[4].storage_bytes;
+    if (mask_bytes > static_cast<std::size_t>(INT64_MAX) - wire_bytes)
+      invalid("mask wire extent overflows");
+    wire_bytes += mask_bytes;
+  }
+  for (std::size_t i = 0; i < inspection.outputs().size(); ++i) {
+    if (direct_masks && i == 4)
+      decode.outputs.push_back({0, publication.bytes, gs::TensorStagePortSource::Output});
+    else
+      decode.outputs.push_back(
+          build.scratch(inspection.outputs()[i], inspection.output_requirements()[i]));
+  }
+  const auto decode_member = build.recipe->members.size();
+  auto publication_inputs = decode.outputs;
+  if (direct_masks)
+    publication_inputs.resize(4);
+  build.recipe->members.push_back(std::move(decode));
+  build.recipe->members.push_back(
+      {publication.executable, std::move(publication_inputs), {{0, 0}}, {decode_member}, {}});
+  // BoxDecodeType::EdgeTamTrack: each input also becomes public
+  // output 1 + i, exactly as the route without BoxDecode returns it. These
+  // members read stage inputs only, so they never wait for the decode, and
+  // the stage keeps its inputs until every member has finished.
+  std::vector<k::TensorRequirements> raw_requirements;
+  for (std::size_t i = 0; i < p.raw_outputs.size(); ++i) {
+    const auto& raw = p.raw_outputs[i];
+    const auto& logical = runtime.logical_inputs[i];
+    if (logical.layout == "CHW" || logical.layout == "NCHW")
+      invalid("raw output '" + raw.name + "' requires an HWC input view");
+    const auto channels = p.tensor_storage_kind[i] == 1 ? slice_hwc(p, i, logical)[2]
+                                                        : hwc(logical.shape, logical.layout)[2];
+    auto in = build.input(source, i, static_cast<int>(channels), true);
+    if (std::holds_alternative<k::MlaCBlocked>(in.tensor.layout))
+      invalid("raw output '" + raw.name + "' from an MLA C-blocked carrier is not supported");
+    // The member writes exactly the published tensor: its checked output has
+    // the raw output's own shape (with the batch axis the route without
+    // BoxDecode publishes), and a conversion reads the same-shaped view.
+    const k::TensorSpec dense{raw.shape, dtype(raw.dtype)};
+    std::int64_t published = 1, viewed = 1;
+    for (const auto dimension : raw.shape)
+      published = dimension > 0 && published <= INT64_MAX / dimension ? published * dimension : -1;
+    for (const auto dimension : in.tensor.shape)
+      viewed *= dimension;
+    if (published != viewed)
+      invalid("raw output '" + raw.name + "' does not have the extent of BoxDecode input " +
+              std::to_string(i));
+    const auto source_view = published_view(in.tensor, raw.shape);
+    if (!source_view)
+      invalid("raw output '" + raw.name + "' is not BoxDecode input " + std::to_string(i) +
+              " with unit axes added or removed");
+    k::KernelExecutable executable;
+    if (in.tensor.dtype == dense.dtype) {
+      executable = raw_copy_task(in.tensor, dense);
+    } else if (in.tensor.dtype == k::DType::Int8 && dense.dtype == k::DType::Float32) {
+      // The canonical Dequant lowering: the reciprocal of the authored scale.
+      const auto& q = quantization(logical);
+      const std::array<k::Parameter, 2> parameters{
+          {{"scale", 1.0F / static_cast<float>(q.scales[0])},
+           {"zero_point", static_cast<std::int32_t>(q.zero_points[0])}}};
+      executable = checked(scheduler::check_kernel(
+          {"dequant", k::Target::A65, {&*source_view, 1}, {&dense, 1}, parameters}));
+    } else if (in.tensor.dtype == k::DType::BFloat16 && dense.dtype == k::DType::Float32) {
+      executable = checked(
+          scheduler::check_kernel({"cast", k::Target::A65, {&*source_view, 1}, {&dense, 1}, {}}));
+    } else {
+      invalid("raw output '" + raw.name + "' needs an unsupported " + dtype_name(in.tensor.dtype) +
+              " to " + raw.dtype + " conversion");
+    }
+    const auto inspection = checked(scheduler::inspect_kernel(executable));
+    if (inspection.outputs().size() != 1 || inspection.outputs()[0].shape != dense.shape ||
+        inspection.outputs()[0].dtype != dense.dtype ||
+        !std::holds_alternative<k::Contiguous>(inspection.outputs()[0].layout) ||
+        inspection.output_requirements()[0].storage_bytes != dense_bytes(dense))
+      invalid("raw output '" + raw.name + "' differs from its requested dense tensor");
+    raw_requirements.push_back(inspection.output_requirements()[0]);
+    build.recipe->members.push_back({std::move(executable),
+                                     {in.port},
+                                     {{1 + i, 0, gs::TensorStagePortSource::Output}},
+                                     in.dependencies,
+                                     {}});
+  }
+  const auto name = runtime.logical_outputs.empty() ? std::string("boxdecode")
+                                                    : runtime.logical_outputs.front().logical_name;
+  runtime.physical_outputs = {
+      specs::build_physical_buffer_static_spec(0, 0, wire_bytes, DeviceKind::Cpu, name)};
+  runtime.logical_outputs = {specs::build_logical_output_static_spec(
+      0, 0, 0, 0, 0, {static_cast<std::int64_t>(wire_bytes)}, "UINT8", "", name, name, name, 0,
+      wire_bytes)};
+  if (direct_masks)
+    runtime.logical_outputs.front().publication_relation = PublicationViewRelation::PackedStorage;
+  runtime.output_order = {specs::build_output_route_static_spec(0, 0, 0, name, name)};
+  for (std::size_t i = 0; i < p.raw_outputs.size(); ++i) {
+    const auto& raw = p.raw_outputs[i];
+    const auto index = static_cast<int>(1 + i);
+    const auto bytes = raw_requirements[i].storage_bytes;
+    runtime.physical_outputs.push_back(
+        specs::build_physical_buffer_static_spec(index, index, bytes, DeviceKind::Cpu, raw.name, -1,
+                                                 0, raw_requirements[i].alignment_bytes));
+    runtime.logical_outputs.push_back(specs::build_logical_output_static_spec(
+        index, index, index, index, index, raw.shape, raw.dtype, "", raw.name, raw.name, raw.name,
+        0, bytes));
+    runtime.output_order.push_back(
+        specs::build_output_route_static_spec(index, index, index, raw.name, raw.name));
+  }
+  auto metrics = std::make_shared<gs::StageMetrics>();
+  metrics->phase = "Exec";
+  metrics->component = "boxdecode_stage_wall_v2";
+  // The backend includes the dependent wire publication, not only the numerical decode.
+  metrics->regions.push_back(
+      {"Run", "boxdecode_backend_wall_v2", decode_member, decode_member + 1});
+  build.recipe->metrics = std::move(metrics);
+  build.recipe->boxdecode_settings = KernelStageRecipe::BoxDecodeSettings{
+      p.decode_type, p.num_classes, p.detection_threshold, p.nms_iou_threshold, p.topk};
+  build.recipe->output_format =
+      wire == BoxDecodeWireFormat::FeaturePointsV1         ? kFeatureFormatPointsV1
+      : wire == BoxDecodeWireFormat::LegacyFeaturePointsV0 ? kFeatureFormatLegacyA65V0
+      : wire == BoxDecodeWireFormat::OrientedBoxesV1       ? kDetectionFormatBboxObbV1
+                                                           : kDetectionFormatBbox;
+  build.compiled.recipe = std::move(build.recipe);
+  return {std::move(build.compiled), decode_member};
+}
+} // namespace simaai::neat::pipeline_internal::sima

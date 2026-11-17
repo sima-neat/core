@@ -7,7 +7,7 @@ sidebar_position: 20
 Use this reference only for SDK releases that require a separate image pull and
 setup command. This applies to SDK 2.0.0, SDK 2.1.2.0, and SDK 2.1.2.1. Newer
 SDK releases use the simplified package install flow documented in
-[Install the Environment](/getting-started/dev-environment/install-the-environment/).
+[Install the SDK](/getting-started/dev-environment/install-the-environment/).
 
 The legacy SDK installation has two steps:
 

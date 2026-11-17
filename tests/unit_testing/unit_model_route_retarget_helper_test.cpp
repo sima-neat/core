@@ -8,6 +8,7 @@
 #include "pipeline/graph/internal/GraphBuildInternal.h"
 #include "test_main.h"
 
+#include <algorithm>
 #include <filesystem>
 
 namespace {
@@ -162,17 +163,27 @@ RUN_TEST(
           *effective, BoxDecodeType::YoloV8Seg, 0.25, 0.45, 100, "retarget_boxdecode", std::nullopt,
           std::nullopt, 1920, 1080, 640, 640, ResizeMode::Stretch);
       const auto* asserted_before = dynamic_cast<const SimaBoxDecode*>(asserted_boxdecode.get());
-      require(asserted_before != nullptr && asserted_before->backend_fragment(0).find(
-                                                "resize-mode=stretch") != std::string::npos,
-              "manual post node should emit its explicit resize assertion");
+      require(asserted_before != nullptr, "manual post must remain a BoxDecode Node");
       const auto retargeted = asserted_before->retargeted_for_model_internal(*effective);
       const auto* asserted_after = dynamic_cast<const SimaBoxDecode*>(retargeted.get());
-      require(asserted_after != nullptr && asserted_after->backend_fragment(0).find(
-                                               "resize-mode=stretch") != std::string::npos,
-              "model retarget must preserve an explicit resize assertion");
-      require(asserted_after->backend_fragment(0).find("model-width=640") != std::string::npos &&
-                  asserted_after->backend_fragment(0).find("model-height=640") != std::string::npos,
-              "model retarget must preserve explicit model dimensions");
+      require(asserted_after != nullptr, "retarget must preserve the BoxDecode Node");
+      // These are Node options, not serialized GStreamer properties. Compare
+      // both Nodes to the request so two equally wrong values cannot pass.
+      for (const auto* node : {asserted_before, asserted_after}) {
+        require(node->original_width_internal() == 1920 && node->original_height_internal() == 1080,
+                "retarget must preserve explicit original image dimensions");
+        require(node->model_width_internal() == 640 && node->model_height_internal() == 640,
+                "retarget must preserve explicit model dimensions");
+        require(node->resize_mode_override_internal() == ResizeMode::Stretch,
+                "retarget must preserve the explicit stretch assertion");
+        require(node->detection_threshold_internal() == 0.25 &&
+                    node->nms_iou_threshold_internal() == 0.45 && node->top_k_internal() == 100,
+                "retarget must preserve detection options");
+        const auto meta = node->preprocess_meta_requirement();
+        require(!meta || std::find(meta->required_fields.begin(), meta->required_fields.end(),
+                                   "preproc_resize_mode") == meta->required_fields.end(),
+                "explicit resize provenance must not require per-frame resize metadata");
+      }
 
       // Cover the route that exposed the product bug: the Model already selected BoxDecode,
       // so no post-kind retarget was needed, but its infer fragment still rendered the MPK

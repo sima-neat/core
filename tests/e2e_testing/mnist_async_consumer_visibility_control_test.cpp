@@ -414,7 +414,7 @@ int main(int argc, char** argv) {
       return skip_long_test("set SIMA_RUN_MNIST_ASYNC_CONSUMER_CONTROL=1 or pass --run");
     }
     simaai::neat::gst_init_once();
-    if (!simaai::neat::element_exists("neatprocesscvu") ||
+    if (!simaai::neat::element_exists("neatkernelrunner") ||
         !simaai::neat::element_exists("neatprocessmla")) {
       return skip_long_test("missing SimaAI plugins");
     }

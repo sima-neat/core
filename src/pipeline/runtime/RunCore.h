@@ -186,8 +186,11 @@ struct RunCore : std::enable_shared_from_this<RunCore> {
   void close();
 
   bool push_samples(const Sample& msgs, bool block = true);
+  // Graph edges carry one sample, including a joined multi-input bundle.
+  bool push_pipeline_sample(const Sample& sample, bool block = true);
   bool push_named_samples(std::string_view input_name, const Sample& msgs, bool block = true);
-  PullStatus pull(int timeout_ms, Sample& out, PullError* err = nullptr);
+  PullStatus pull(int timeout_ms, Sample& out, PullError* err = nullptr,
+                  bool acquire_output_loan = true);
   PullStatus pull_named_output(std::string_view output_name, int timeout_ms, Sample& out,
                                PullError* err = nullptr);
   std::optional<Sample> pull_optional(int timeout_ms = -1);
@@ -253,6 +256,8 @@ struct RunCore : std::enable_shared_from_this<RunCore> {
                                          RuntimeSinkQueueMsg&& msg);
   bool graph_release_sink_restore_reservation(simaai::neat::graph::NodeId node_id);
   std::optional<Sample> graph_pull(simaai::neat::graph::NodeId node_id, int timeout_ms);
+  // Releases realtime credits and applies Owned copying to a sample leaving a graph sink.
+  void graph_finish_sink_pull(Sample& sample);
 
   RunOptions opt;
   RunMode mode = RunMode::Async;
@@ -271,6 +276,9 @@ struct RunCore : std::enable_shared_from_this<RunCore> {
   GraphRuntimeOptions graph_options;
   PushSamplePolicy push_sample_policy = PushSamplePolicy::PublicCompatibility;
   pipeline_internal::HolderLoanGatePtr holder_loan_gate;
+  // Loan stalls of public graph outputs, by output node.
+  std::mutex graph_loan_stall_mu;
+  std::unordered_map<simaai::neat::graph::NodeId, LoanStall> graph_loan_stalls;
   std::shared_ptr<simaai::neat::graph::GraphRunStats> graph_stats;
 
   std::uint64_t latency_count = 0;
@@ -307,7 +315,10 @@ struct RunCore : std::enable_shared_from_this<RunCore> {
   std::string error;
   std::optional<PullError> terminal_error_detail;
   std::string diag_sysinfo;
-  std::unique_ptr<PowerMonitor> power_monitor;
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+  std::unique_ptr<PowerMonitor> power_monitor; // Deprecated RunOptions::power_monitor.
+#pragma GCC diagnostic pop
   std::shared_ptr<void> graph_verbose_guard;
   std::atomic<bool> graph_output_rate_reported{false};
   std::atomic<bool> graph_sched_reported{false};

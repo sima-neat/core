@@ -335,6 +335,11 @@ bool LttngMetricsCollector::stop_and_destroy(std::string* err) {
 }
 
 LttngParseResult LttngMetricsCollector::parse(std::string* err) const {
+  return parse(PluginTraceSelection{}, err);
+}
+
+LttngParseResult LttngMetricsCollector::parse(const PluginTraceSelection& selection,
+                                              std::string* err) const {
   int exit_code = -1;
   const std::string text =
       read_command_output({"babeltrace2", "--color=never", "--no-delta", "--clock-seconds",
@@ -350,7 +355,7 @@ LttngParseResult LttngMetricsCollector::parse(std::string* err) const {
   }
   LttngParseResult parsed =
       parse_lttng_trace_text(text, trace_context_.run_id_hash, trace_context_.graph_id_hash,
-                             opt_.enable_pipeline_fallback);
+                             opt_.enable_pipeline_fallback, selection);
   parsed.trace_dir = trace_dir_;
   return parsed;
 }

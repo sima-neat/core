@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <cctype>
 #include <cstring>
@@ -317,6 +318,10 @@ bool read_mla_elf_io_topology(const std::filesystem::path& elf_path, MlaElfIoTop
 
   // Walk every section name and classify.
   std::size_t recognized = 0U;
+  std::size_t ifm_tensors_seen = 0U;
+  std::size_t ofm_tensors_seen = 0U;
+  std::size_t bare_ifm_position = 0U;
+  std::size_t bare_ofm_position = 0U;
   for (const auto& s : sections) {
     const std::string name = section_name_at(shstrtab, s.sh_name);
     if (name.empty()) {
@@ -336,6 +341,7 @@ bool read_mla_elf_io_topology(const std::filesystem::path& elf_path, MlaElfIoTop
     if (name == kMonolithicIfmName) {
       out->monolithic_ifm = true;
       out->monolithic_ifm_extent_bytes = has_extent ? extent : 0U;
+      bare_ifm_position = ifm_tensors_seen;
       if (!has_extent) {
         append_warning(&out->error, "IFM section lacks a non-zero QMLA SHT_DATA extent");
       }
@@ -345,6 +351,7 @@ bool read_mla_elf_io_topology(const std::filesystem::path& elf_path, MlaElfIoTop
     if (name == kMonolithicOfmName) {
       out->monolithic_ofm = true;
       out->monolithic_ofm_extent_bytes = has_extent ? extent : 0U;
+      bare_ofm_position = ofm_tensors_seen;
       if (!has_extent) {
         append_warning(&out->error, "OFM section lacks a non-zero QMLA SHT_DATA extent");
       }
@@ -359,6 +366,7 @@ bool read_mla_elf_io_topology(const std::filesystem::path& elf_path, MlaElfIoTop
       if (!has_extent) {
         append_warning(&out->error, "IFM section '" + name + "' lacks a QMLA extent");
       }
+      ++ifm_tensors_seen;
       ++recognized;
       continue;
     }
@@ -370,6 +378,7 @@ bool read_mla_elf_io_topology(const std::filesystem::path& elf_path, MlaElfIoTop
       if (!has_extent) {
         append_warning(&out->error, "OFM section '" + name + "' lacks a QMLA extent");
       }
+      ++ofm_tensors_seen;
       ++recognized;
       continue;
     }
@@ -381,15 +390,48 @@ bool read_mla_elf_io_topology(const std::filesystem::path& elf_path, MlaElfIoTop
     }
   }
 
-  // Slots hold only monolithic or indexed sections, so the name carries the tensor index.
-  const auto identify_slots = [](auto& slots, const char* monolithic, auto parse_index) {
+  // A bare section beside indexed ports can fill only the single unclaimed index at its
+  // existing ELF encounter position. Preserve this layout without matching tensor sizes.
+  const auto admit_bare_section = [](bool* monolithic, std::uint64_t* monolithic_extent,
+                                     const char* bare_name, const std::size_t position, auto* names,
+                                     auto* extents) {
+    if (!*monolithic || names->empty()) {
+      return;
+    }
+    const auto unclaimed = std::find(names->begin(), names->end(), std::string{});
+    const auto index = static_cast<std::size_t>(unclaimed - names->begin());
+    if (index != position || std::count(names->begin(), names->end(), std::string{}) > 1) {
+      return;
+    }
+    if (unclaimed == names->end()) {
+      names->push_back(bare_name);
+      extents->push_back(*monolithic_extent);
+    } else {
+      *unclaimed = bare_name;
+      (*extents)[index] = *monolithic_extent;
+    }
+    *monolithic = false;
+    *monolithic_extent = 0U;
+  };
+  admit_bare_section(&out->monolithic_ifm, &out->monolithic_ifm_extent_bytes, kMonolithicIfmName,
+                     bare_ifm_position, &out->ifm_symbol_names, &out->ifm_extent_bytes);
+  admit_bare_section(&out->monolithic_ofm, &out->monolithic_ofm_extent_bytes, kMonolithicOfmName,
+                     bare_ofm_position, &out->ofm_symbol_names, &out->ofm_extent_bytes);
+
+  const auto identify_slots = [](auto& slots, const auto& names, const char* monolithic,
+                                 auto parse_index) {
     for (auto& slot : slots) {
       const auto base = batch_section(slot.symbol)->first;
-      slot.logical_index = base == monolithic ? 0U : *parse_index(base);
+      slot.logical_index = base == monolithic
+                               ? static_cast<std::size_t>(
+                                     std::find(names.begin(), names.end(), base) - names.begin())
+                               : *parse_index(base);
     }
   };
-  identify_slots(out->ifm_slots, kMonolithicIfmName, parse_ifm_section_index);
-  identify_slots(out->ofm_slots, kMonolithicOfmName, parse_ofm_section_index);
+  identify_slots(out->ifm_slots, out->ifm_symbol_names, kMonolithicIfmName,
+                 parse_ifm_section_index);
+  identify_slots(out->ofm_slots, out->ofm_symbol_names, kMonolithicOfmName,
+                 parse_ofm_section_index);
 
   if (recognized == 0U) {
     out->error = "elf-io-topology: no IFM/OFM sections recognized";

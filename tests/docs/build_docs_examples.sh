@@ -130,6 +130,17 @@ fi
 
 mkdir -p "${BUILD_ROOT}"
 
+if [[ "${ENVIRONMENT}" == "devkit" ]]; then
+  echo "[docs-examples] checking native development headers"
+  preflight_build="${BUILD_ROOT}/devkit/native-prerequisites"
+  if ! cmake -S "${EXAMPLES_DIR}/native-prerequisites" -B "${preflight_build}" \
+      -DCMAKE_BUILD_TYPE=Release ||
+      ! cmake --build "${preflight_build}" --clean-first -j"${CMAKE_BUILD_PARALLEL_LEVEL:-3}"; then
+    echo "[docs-examples] PREPARATION_BLOCKED: native C++/pthread/Linux UAPI headers are incomplete or incompatible; repair the platform development packages." >&2
+    exit 1
+  fi
+fi
+
 for example in "${examples[@]}"; do
   source_dir="${EXAMPLES_DIR}/${example}"
   build_dir="${BUILD_ROOT}/${ENVIRONMENT}/${example}"

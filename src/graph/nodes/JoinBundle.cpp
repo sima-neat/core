@@ -217,6 +217,8 @@ void JoinBundle::on_input(StageMsg&& msg, std::vector<StageOutMsg>& out) {
       continue;
     Sample field = std::move(it->second);
     field.stream_label = name;
+    // A bundle is owned only when every field is; a borrowed field still holds producer storage.
+    bundle.owned = bundle.owned && field.owned;
     bundle.fields.emplace_back(std::move(field));
   }
 

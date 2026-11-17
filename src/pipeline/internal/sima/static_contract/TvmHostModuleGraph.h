@@ -19,7 +19,7 @@ struct TvmHostModuleGraph {
   std::vector<HostTensorTypeSpec> input_types;
   std::vector<HostTensorTypeSpec> output_types;
   // Per output, -1 means a real graph-executor materialization. Otherwise the
-  // graph proves an exact __nop alias of the indexed input.
+  // graph proves an argument-only identity or exact __nop alias of the indexed input.
   std::vector<std::int32_t> output_alias_input;
 };
 

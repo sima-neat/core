@@ -7,9 +7,9 @@
     "message": "시작하기",
     "description": "The label for category 'Getting Started' in sidebar 'docs'"
   },
-  "sidebar.docs.category.Neat SDK": {
-    "message": "Neat SDK",
-    "description": "The label for category 'Neat SDK' in sidebar 'docs'"
+  "sidebar.docs.category.Palette SDK": {
+    "message": "Palette SDK",
+    "description": "The label for category 'Palette SDK' in sidebar 'docs'"
   },
   "sidebar.docs.category.Neat Library": {
     "message": "Neat 라이브러리",
@@ -111,41 +111,41 @@
     "message": "sima-cli",
     "description": "The label for category 'sima-cli' in sidebar 'docs'"
   },
-  "sidebar.docs.category.appzoo": {
+  "sidebar.docs.category.tools/sima-cli/appzoo": {
     "message": "appzoo",
     "description": "The label for category 'appzoo' in sidebar 'docs'"
   },
-  "sidebar.docs.category.device": {
+  "sidebar.docs.category.tools/sima-cli/device": {
     "message": "device",
     "description": "The label for category 'device' in sidebar 'docs'"
   },
-  "sidebar.docs.category.mla": {
+  "sidebar.docs.category.tools/sima-cli/mla": {
     "message": "mla",
     "description": "The label for category 'mla' in sidebar 'docs'"
   },
-  "sidebar.docs.category.modelzoo": {
+  "sidebar.docs.category.tools/sima-cli/modelzoo": {
     "message": "modelzoo",
     "description": "The label for category 'modelzoo' in sidebar 'docs'"
   },
-  "sidebar.docs.category.neat": {
+  "sidebar.docs.category.tools/sima-cli/neat": {
     "message": "neat",
     "description": "The label for category 'neat' in sidebar 'docs'"
   },
-  "sidebar.docs.category.packages": {
+  "sidebar.docs.category.tools/sima-cli/packages": {
     "message": "packages",
     "description": "The label for category 'packages' in sidebar 'docs'"
   },
-  "sidebar.docs.category.playbooks": {
+  "sidebar.docs.category.tools/sima-cli/playbooks": {
     "message": "playbooks",
     "description": "The label for category 'playbooks' in sidebar 'docs'"
   },
-  "sidebar.docs.category.sdk": {
+  "sidebar.docs.category.tools/sima-cli/sdk": {
     "message": "sdk",
     "description": "The label for category 'sdk' in sidebar 'docs'"
   },
-  "sidebar.docs.category.Neat SDK Networking Setup": {
-    "message": "Neat SDK 네트워크 설정",
-    "description": "The label for category 'Neat SDK Networking Setup' in sidebar 'docs'"
+  "sidebar.docs.category.tools/sima-cli/sdk-networking": {
+    "message": "Palette SDK 네트워크 설정",
+    "description": "The label for category 'Palette SDK Networking Setup' in sidebar 'docs'"
   },
   "sidebar.docs.category.Insight": {
     "message": "Insight",
@@ -255,27 +255,27 @@
     "message": "Model Compiler API",
     "description": "The label for category 'Model Compiler API' in sidebar 'docs'"
   },
-  "sidebar.docs.category.Compilation": {
+  "sidebar.docs.category.reference/model-sdk-api/compilation": {
     "message": "컴파일",
     "description": "The label for category 'Compilation' in sidebar 'docs'"
   },
-  "sidebar.docs.category.Model Lifecycle": {
+  "sidebar.docs.category.reference/model-sdk-api/model-lifecycle": {
     "message": "모델 수명 주기",
     "description": "The label for category 'Model Lifecycle' in sidebar 'docs'"
   },
-  "sidebar.docs.category.Versioned Public APIs": {
+  "sidebar.docs.category.reference/model-sdk-api/versioned-public-apis": {
     "message": "버전이 지정된 공개 API",
     "description": "The label for category 'Versioned Public APIs' in sidebar 'docs'"
   },
-  "sidebar.docs.category.Execution & Analysis": {
+  "sidebar.docs.category.reference/model-sdk-api/execution-analysis": {
     "message": "실행 및 분석",
     "description": "The label for category 'Execution & Analysis' in sidebar 'docs'"
   },
-  "sidebar.docs.category.Transforms": {
+  "sidebar.docs.category.reference/model-sdk-api/transforms": {
     "message": "변환",
     "description": "The label for category 'Transforms' in sidebar 'docs'"
   },
-  "sidebar.docs.category.Types & Error Handling": {
+  "sidebar.docs.category.reference/model-sdk-api/types-error-handling": {
     "message": "형식 및 오류 처리",
     "description": "The label for category 'Types & Error Handling' in sidebar 'docs'"
   },
@@ -290,5 +290,25 @@
   "sidebar.docs.category.Release Notes": {
     "message": "릴리스 노트",
     "description": "The label for category 'Release Notes' in sidebar 'docs'"
+  },
+  "sidebar.docs.category.tools/sima-cli/peripherals": {
+    "message": "peripherals",
+    "description": "The label for category 'peripherals' in sidebar 'docs'"
+  },
+  "sidebar.docs.category.tools/sima-cli/guides": {
+    "message": "가이드",
+    "description": "The label for category 'guides' in sidebar 'docs'"
+  },
+  "sidebar.docs.category.Sentinel": {
+    "message": "Sentinel",
+    "description": "The label for category 'Sentinel' in sidebar 'docs'"
+  },
+  "sidebar.docs.category.tools/sentinel/panels": {
+    "message": "패널",
+    "description": "The label for category 'panels' in sidebar 'docs'"
+  },
+  "sidebar.docs.category.tools/sentinel/peripherals": {
+    "message": "주변 장치",
+    "description": "The label for category 'peripherals' in sidebar 'docs'"
   }
 }

@@ -14,7 +14,7 @@ mdx:
 
 第一次執行刻意保持精簡：建立一個小型應用程式，確認能解析標頭或匯入項目並成功建置，再於 DevKit 上執行，以確認執行階段有所回應。完成後，請繼續前往[執行應用程式](./run_an_app)，在小型 Graph 應用程式中執行實際模型。
 
-:::note Neat SDK 必要條件
+:::note Palette SDK 必要條件
 若要直接從 SDK 內部在 DevKit 上執行命令（例如 `dk build/sima_neat_hello` 或 `dk hello_neat.py`），必須先設定 DevKit 配對。
 
 **必要設定：** [DevKit Sync](/getting-started/dev-environment/devkit-sync/)
@@ -63,7 +63,7 @@ dk hello_neat.py
 </ShellCommand>
 
 :::note Python 執行階段位置
-即使您從 Neat SDK 容器內執行 Neat 安裝程式，`pyneat` 仍會安裝在 DevKit 執行階段一側。
+即使您從 Palette SDK 容器內執行 Neat 安裝程式，`pyneat` 仍會安裝在 DevKit 執行階段一側。
 
 執行 `dk hello_neat.py` 時，`dk` 會使用已配對 DevKit 上的 `pyneat` 環境執行指令碼。
 :::

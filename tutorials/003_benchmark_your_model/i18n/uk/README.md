@@ -29,9 +29,9 @@
 
 ### Запустіть тестування {#step-run-benchmark}
 
-Викличте `benchmark(samples)`. API запускає асинхронний запуск моделі, вимірює асинхронне вікно передачі/отримання, виводить зведену інформацію в stdout і повертає ті самі основні значення у `BenchmarkReport`.
+Викличте `benchmark(samples)`. API прогріває модель, вимірює затримку, подаючи вхідні дані по одному (single-flight), потім вимірює пропускну здатність в окремому асинхронному проході передачі/отримання (push/pull), виводить зведену інформацію в stdout і повертає ті самі основні значення у `BenchmarkReport`.
 
-Кількість зразків — це кількість виміряних синтетичних вхідних даних. Використовуйте більше число для більш стабільних показників пропускної здатності та споживання енергії; використовуйте менше число, якщо вам потрібна лише швидка перевірка.
+Кожен прохід триває, доки не виміряє щонайменше `samples` вхідних даних і не мине 10 секунд, тож показники потужності й температури проходу пропускної здатності охоплюють кілька зразків. Задайте `BenchmarkOptions::min_duration_ms`, щоб змінити цей мінімум, або встановіть 0 для швидкої перевірки, у якій кожен прохід зупиняється після `samples` вхідних даних.
 
 Моделі виявлення, маршрут яких закінчується на BoxDecode, також можуть використовувати `BenchmarkOptions`. Встановіть `original_width`, `original_height` і `resize_mode`, щоб описати геометрію вихідного зображення, яку
 BoxDecode використовує під час відображення виявлень з координат моделі. Синтетичний тензор залишається
@@ -51,9 +51,55 @@ Python надає доступ до тих самих полів через `pyn
 
 ### Ознайомтеся зі звітом {#step-read-report}
 
-У звіті, що повертається, зберігаються лише основні поля, які потрібні більшості користувачів: середня затримка від кінця до кінця в мілісекундах, пропускна здатність у кадрах за секунду, середня потужність плати у ватах (за наявності даних) та виміряна енергія в джоулях (за наявності даних).
+Звіт, що повертається, починається з основних полів, які потрібні більшості користувачів: середня затримка від кінця до кінця в мілісекундах, пропускна здатність у кадрах за секунду, середня й пікова потужність SoM у ватах та енергія в джоулях, потрібна для обробки `samples` вхідних даних. `throughput_duration_ms` показує, скільки тривав прохід вимірювання пропускної здатності.
 
-Телеметрія живлення залежить від підтримки плати. Якщо середовище виконання не може збирати дані про напругу живлення на поточній цільовій платформі, тест все одно надає інформацію про затримку та пропускну здатність, а поля, що стосуються живлення, встановлюються на нуль.
+Дані про потужність надходять від Sentinel — демона телеметрії плати, який налаштовує інсталятор Neat. `report.telemetry` також містить потужність шин живлення, температури кристала й плати, завантаження CPU та пам’ять MLA для проходу вимірювання пропускної здатності; опис кожного поля див. у розділі [Вимірювання виконання моделі](/develop-apps/development-workflow/model#power-and-board-telemetry). Якщо Sentinel не запущено, тест усе одно надає інформацію про затримку та пропускну здатність, залишає поля потужності нульовими та записує причину в `report.telemetry.status`.
+
+### Розширені можливості: статистика шарів і стадій MLA {#step-read-mla-stats}
+
+Дві необов’язкові опції запускають `mla-rt` після бенчмарку, щоб виміряти час скомпільованого коду MLA. Обидві типово вимкнені й потребують незайнятого devkit без інших навантажень MLA. Додайте `--include-mla-layer-stats` або `--include-mla-stage-stats` до будь-якої команди прикладу або ввімкніть їх через API:
+
+```cpp
+simaai::neat::BenchmarkOptions options;
+options.include_mla_layer_stats = true;
+options.include_mla_stage_stats = true;
+auto report = model.benchmark(options);
+```
+
+```python
+options = pyneat.BenchmarkOptions()
+options.include_mla_layer_stats = True
+options.include_mla_stage_stats = True
+report = model.benchmark(options)
+```
+
+У `report.mla_layer_stats.layers` доступні `stage_index` із нульовою нумерацією, `name` і `latency_us` для кожного скомпільованого шару MLA: апаратний час виконання з одного проходу профілювання, який запускає лише цей шар. Зберігаються також no-op записи з нульовим часом. Сума затримок шарів не дорівнює ні затримці стадії, ні загальній затримці.
+
+У `report.mla_stage_stats.stages` доступні `stage_index` і `latency_us` для кожної стадії MLA: середній апаратний час 200 безперервних запусків цієї стадії. Затримка стадії містить обчислення MLA та читання й записи DRAM програми. Вона не враховує завантаження моделі, обробку на хості та EV74 і накладні витрати конвеєра.
+
+Якщо `mla-rt` відсутній, завершується з помилкою або перевищує час очікування, `benchmark()` однаково повертає основні вимірювання, залишає список порожнім і записує причину в `report.mla_layer_stats.status` або `report.mla_stage_stats.status`. В інших випадках кожен статус має значення `"not requested"` або `"ok"`. Після запуску `mla-rt`, який завершився з помилкою, перевищив час очікування або аварійно завершився, MLA може ще мати незавершену роботу, тому подальше профілювання в тому самому процесі пропускається з цією причиною. Тримайте DevKit вільним, доки відновлення MLA не буде перевірено.
+
+Статистика шарів MLA враховує вибрану термінальну політику: вона вимірює лише стадії MLA у вибраному маршруті інференсу, і кожна зберігає свій `stage_index` у повній моделі.
+
+### Збереження звіту {#step-save-report}
+
+Викличте `report.save(path)`, щоб записати повний звіт у YAML або JSON, включно зі статистикою шарів і стадій MLA, якщо її запитано:
+
+```cpp
+auto path = report.save("results/model/yolo_benchmark.yaml");
+auto json_path = report.save("results/model/yolo_benchmark.json");
+```
+
+```python
+path = report.save("results/model/yolo_benchmark.yaml")
+json_path = report.save("results/model/yolo_benchmark.json")
+```
+
+Розширення `.json` вибирає JSON; `.yaml` та всі інші закінчення використовують YAML. Ім’я файлу зберігається.
+
+Укажіть шлях разом з іменем файлу. Відсутні батьківські каталоги створюються, наявний файл замінюється, а метод повертає шлях записаного файлу. Збереження виконується явно; `benchmark()` не створює файл звіту автоматично.
+
+До будь-якої команди прикладу додайте `--report results/model/yolo_benchmark.yaml`. Поєднайте з `--include-mla-layer-stats` або `--include-mla-stage-stats`, щоб зберегти основні вимірювання разом із часом виконання MLA.
 
 ## Run
 
@@ -73,8 +119,8 @@ python3 share/sima-neat/tutorials/003_benchmark_your_model/benchmark_your_model.
 
 **C++ (build from source):**
 ```bash
-./build.sh --target tutorial_003_benchmark_your_model
-./build/tutorials-standalone/tutorial_003_benchmark_your_model \
+./build.sh --all --no-doc
+./build/tutorials/tutorial_003_benchmark_your_model \
   --model /tmp/resnet_50.tar.gz --samples 100
 ```
 
@@ -84,14 +130,27 @@ python3 share/sima-neat/tutorials/003_benchmark_your_model/benchmark_your_model.
 NEAT Benchmark
 Input: synthetic
 Samples: 100
-Latency:      12.4 ms
-FPS:          80.6
-Power avg:    2.3 W
-Energy:       2.8 J
-report_latency_ms=12.4
-report_fps=80.6
-report_avg_power_watts=2.3
-report_energy_joules=2.8
+Compiled batch: 1
+Measurement detail: e2e+throughput-only
+Latency: 1.97 ms
+FPS:     1457.04 inferences/s
+Batch throughput: 1457.04 batches/s
+Throughput window: 30.09 s, 43849 inputs
+Power:         13.19 W avg, 13.81 W peak (SoM)
+MLA power:     3.05 W avg, 3.25 W max
+Energy:        0.91 J for 100 inputs
+Die temp:      46.34 °C avg, 47.56 °C max
+CPU usage:     12.38 % avg, 13.22 % max
+MLA memory:    29.65 MiB
+Linux memory:  682.88 MiB avg, 697.41 MiB max
+Telemetry:     Sentinel main:766066b74f49, 15 samples
+report_latency_ms=1.96852
+report_fps=1457.04
+report_avg_power_watts=13.1875
+report_energy_joules=0.905085
+report_peak_power_watts=13.8125
+report_throughput_duration_ms=30094.5
+report_telemetry_status=ok
 [OK] 003_benchmark_your_model
 ```
 
@@ -106,5 +165,6 @@ report_energy_joules=2.8
 `Model::benchmark()` вимагає конкретних розмірів `input_specs()`. Якщо форма вхідних даних є динамічною або не конкретною, тест чітко покаже помилку, замість того, щоб намагатися вгадати форму.
 
 ## Файли коду
+
 - C++: `tutorials/003_benchmark_your_model/benchmark_your_model.cpp`
 - Python: `tutorials/003_benchmark_your_model/benchmark_your_model.py`

@@ -37,6 +37,27 @@ def test_tensor_from_dlpack_generic():
   np.testing.assert_array_equal(out, arr)
 
 
+@pytest.mark.parametrize("dtype", [np.int32, np.float32, np.float64])
+@pytest.mark.parametrize("copy", [False, True])
+def test_rank_zero_dlpack_copy_and_lifetime(dtype, copy):
+  source = np.array(37, dtype=dtype)
+  tensor = pn.Tensor.from_dlpack(source, copy=copy, memory=pn.TensorMemory.CPU)
+  cloned = tensor.clone()
+  expected = source.tobytes()
+  assert bytes(tensor.copy_dense_bytes_tight()) == expected
+  assert bytes(tensor.copy_payload_bytes()) == expected
+  assert bytes(cloned.copy_dense_bytes_tight()) == expected
+  source[...] = 91
+  assert tensor.to_numpy(copy=False).shape == ()
+  assert tensor.to_numpy(copy=False).item() == (37 if copy else 91)
+  exported = cloned.to_numpy(copy=False)
+  del tensor, cloned, source
+  gc.collect()
+  assert exported.shape == ()
+  assert exported.dtype == dtype
+  assert exported.item() == 37
+
+
 @pytest.mark.parametrize("memory", [pn.TensorMemory.CPU, pn.TensorMemory.A65,
                                    pn.TensorMemory.EV74, pn.TensorMemory.MLA])
 def test_tensor_copy_placement_isolates_strided_source(memory):
@@ -78,3 +99,34 @@ def test_concurrent_device_import_and_export_keep_owners():
 
   with ThreadPoolExecutor(max_workers=4) as executor:
     list(executor.map(roundtrip, range(4)))
+
+
+def test_explicit_tiled_storage_rejects_dense_exports():
+  stored = np.arange(32, dtype=np.uint8).reshape(1, 1, 2, 16)
+  tensor = pn.Tensor.from_numpy(stored, copy=False, memory=pn.TensorMemory.CPU)
+  tess = pn.TessSpec()
+  tess.format = "MLA_TILED_UINT8_PAD16"
+  tess.slice_shape = [1, 1, 1, 16]
+  tess.axes = [0, 1, 2, 3]
+  tess.storage_bytes = stored.nbytes
+  semantic = tensor.semantic
+  semantic.tess = tess
+  tensor.semantic = semantic
+
+  assert tensor.has_tiled_storage()
+  assert not tensor.is_contiguous()
+  for export in (tensor.__dlpack__, tensor.contiguous,
+                 tensor.copy_dense_bytes_tight, lambda: tensor.to_numpy(copy=False)):
+    with pytest.raises(RuntimeError, match="tiled storage"):
+      export()
+  clone = tensor.clone()
+  assert clone.has_tiled_storage()
+  assert clone.semantic.tess.axes == tess.axes
+  assert bytes(clone.copy_payload_bytes()) == stored.tobytes()
+
+  # Historical dtype-format annotations alone are not physical tile metadata.
+  tess.storage_bytes = 0
+  semantic.tess = tess
+  tensor.semantic = semantic
+  assert not tensor.has_tiled_storage()
+  np.testing.assert_array_equal(tensor.to_numpy(copy=False), stored)

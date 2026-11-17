@@ -4,8 +4,8 @@
   "version": "0.0.0",
   "scripts": {
     "start": "docusaurus start",
-    "test": "node --test src/components/ShellCommand/*.test.mjs",
-    "prebuild": "npm run test && npm run check:i18n-complete && npm run check:i18n-navigation && npm run check:analytics",
+    "test": "node --test src/components/ShellCommand/*.test.mjs release-data/*.test.mjs",
+    "prebuild": "npm run check:releases && npm run test && npm run check:i18n-complete && npm run check:i18n-navigation && npm run check:analytics",
     "build": "NO_UPDATE_NOTIFIER=1 docusaurus build",
     "check:i18n": "sima-i18n check --config ../sima-i18n.config.json && node scripts/check-i18n-catalogs.js",
     "check:i18n-complete": "sima-i18n check --config ../sima-i18n.config.json --require-complete && node scripts/check-i18n-catalogs.js",
@@ -16,7 +16,9 @@
     "translate:i18n-tutorials": "sima-i18n translate --config ../sima-i18n.tutorials.json",
     "gen-api-docs": "node scripts/clean-insight-api-docs.js && docusaurus gen-api-docs insight && node scripts/configure-insight-api-category.js",
     "serve": "docusaurus serve",
-    "swizzle": "docusaurus swizzle"
+    "swizzle": "docusaurus swizzle",
+    "check:releases": "node scripts/check-release-docs.js",
+    "sync:release-readmes": "node scripts/check-release-docs.js --write-readmes"
   },
   "dependencies": {
     "@docusaurus/core": "3.10.2",
@@ -36,5 +38,9 @@
   },
   "engines": {
     "node": ">=22.12.0"
+  },
+  "devDependencies": {
+    "@mdx-js/mdx": "3.1.1",
+    "remark-gfm": "4.0.1"
   }
 }

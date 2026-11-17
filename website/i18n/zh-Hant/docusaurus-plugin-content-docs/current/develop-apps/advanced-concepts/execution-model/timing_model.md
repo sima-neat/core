@@ -113,6 +113,8 @@ graph.add(pyneat.nodes.queue(queue))
 
 `Run::pull(...)` 從輸出邊界傳回下一個可用的 `Sample`。
 
+應用程式可以暫停提交輸入，之後繼續使用同一個 `Run`；僅因沒有輸出並不會使其失敗。有限的 `pull()` 逾時會結束該次等待，但不會停止 Run。`RunOptions::input_timeout_ms` 控制輸入模式 `Graph::run()` 和支援的帶初始輸入建置預檢的輸出等待時間。`Run::run()` 和 `Model::run()` 則使用各次呼叫的逾時；`-1` 表示無限等待，與 `pull(-1)` 相同。需要偵測停滯的應用程式應為尚未完成的工作設定期限。
+
 當逾時和 EOS 可以共享相同的「無樣本」路徑時，請使用方便的超載：
 
 ```cpp
@@ -149,7 +151,9 @@ case simaai::neat::PullStatus::Error:
 - 端到端推送至輸出延遲和吞吐量；
 - 推送、拉取和丟棄樣本的執行階段計數器；
 - 在 `MeasureOptions` 中請求時，外掛程式/核心和邊緣計時；
-- 當執行期間啟用電源監測時，可選的電源遙測。
+- 來自已棄用的 `RunOptions::power_monitor` 的功耗（啟用時）。
+
+使用 [`TelemetryMonitor`](/develop-apps/development-workflow/model#record-board-telemetry) 在同一個視窗內記錄板子功耗、溫度、CPU 使用率與記憶體。
 
 除非問題是端到端應用程式成本，否則將設定、檔案下載、每幀記錄和報告匯出放在測量的熱迴圈之外。
 

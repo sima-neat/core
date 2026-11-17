@@ -46,6 +46,34 @@ RUN_TEST(
       }
 
       {
+        const std::string launch =
+            "filesrc location=/tmp/!queue ! application/x-test,field=(string)\"a\\!b\" ! "
+            "queue ! fakesink";
+        const auto analysis = analyze(launch);
+        require(analysis.complete && analysis.links.size() == 2U,
+                "opaque assignment/caps punctuation must not create extra links");
+        require(launch.substr(analysis.links[0].begin,
+                              analysis.links[0].end - analysis.links[0].begin) ==
+                    "! application/x-test,field=(string)\"a\\!b\" !",
+                "a caps link includes its entire body and both delimiters");
+        require(launch.substr(analysis.links[1].begin,
+                              analysis.links[1].end - analysis.links[1].begin) == "!",
+                "ordinary link span must be exact");
+        for (const auto literal :
+             {"identity name='source ! queue", "identity name=\"source ! queue"}) {
+          const auto unmatched = analyze(literal);
+          require(unmatched.complete && unmatched.links.size() == 1U,
+                  "literal unmatched quotes must not hide a link token");
+        }
+      }
+
+      for (const std::string path : {"/tmp/!queue", "https://host/!queue", "\\!queue"}) {
+        const auto analysis = analyze("filesrc location=" + path + " ! fakesink");
+        require(analysis.complete && analysis.links.size() == 1U,
+                "an unquoted assignment link character must remain part of its value");
+      }
+
+      {
         const Analysis unmatched_single = analyze("identity name='source ! fakesink");
         const auto single_names = explicit_name_bindings(unmatched_single);
         require(unmatched_single.complete && single_names.size() == 1U &&
@@ -255,6 +283,18 @@ RUN_TEST(
             input.push_back(kAlphabet[generator() % (sizeof(kAlphabet) - 1U)]);
           }
           const Analysis analysis = analyze(input);
+          std::size_t previous_link_end = 0U;
+          for (const auto& link : analysis.links) {
+            require(previous_link_end <= link.begin && link.begin < link.end &&
+                        link.end <= input.size(),
+                    "lexical links must remain ordered, nonempty and within the input");
+            for (const auto& assignment : analysis.assignments) {
+              require(link.end <= assignment.token_span.begin ||
+                          link.begin >= assignment.token_span.end,
+                      "lexical links must never overlap an assignment token");
+            }
+            previous_link_end = link.end;
+          }
           for (const auto& assignment : analysis.assignments) {
             require(assignment.token_span.begin <= assignment.value_span.begin &&
                         assignment.value_span.end <= assignment.token_span.end &&

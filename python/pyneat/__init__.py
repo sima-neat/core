@@ -68,15 +68,15 @@ def _configure_neat_runtime_environment():
   runtime_dirs = [
       path
       for path in directories
-      if (path / "libprocesscvu_testhooks.so").exists()
+      if (path / "libsimaai_runtime_gstreamer.so").exists()
+      or (path / "libneatdmabufmemory.so").exists()
       or (path / "libneattensorbufferfast.so").exists()
-      or (path / "libneatpreparedruntimebridge.so").exists()
       or (path / "libsimaaimem.so").exists()
   ]
   plugin_candidates = [
       path
       for path in directories
-      if (path / "libgstneatprocesscvu.so").exists()
+      if (path / "libgstneatkernelrunner.so").exists()
       or (path / "libgstneatallocator.so").exists()
       or (path / "libgstneattensorbuffer.so").exists()
   ]
@@ -87,7 +87,7 @@ def _configure_neat_runtime_environment():
 
   # GStreamer plugin discovery may spawn gst-plugin-scanner. That helper is a
   # separate process, so ctypes preloads in this process are not enough for
-  # plugin-local runtime dependencies like libprocesscvu_testhooks.so. Export
+  # plugin-local Runtime dependencies. Export
   # the NEAT runtime/plugin paths before _pyneat_core can initialize GStreamer.
   _prepend_env_path("LD_LIBRARY_PATH", [*runtime_dirs, *plugin_dirs])
   _prepend_env_path("GST_PLUGIN_PATH", plugin_dirs)
@@ -102,13 +102,10 @@ def _preload_neat_runtime_libraries():
   names = (
       "libgstsimaaimeta.so",
       "libsimaaimem.so",
-      "libprocesscvu_testhooks.so",
       "libneattensorbufferfast.so",
       "libgstneatallocator.so",
       "libgstneatbufferpool.so",
       "libgstneattensorbuffer.so",
-      "libneatpreparedruntimebridge.so",
-      "libneatprocessmlaruntime.so",
   )
   directories = _existing_library_dirs()
   for name in names:

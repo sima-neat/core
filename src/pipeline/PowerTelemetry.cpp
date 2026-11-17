@@ -1,27 +1,23 @@
 #include "pipeline/PowerTelemetry.h"
 
 #include "pipeline/internal/PowerTelemetryInternal.h"
+#include "pipeline/internal/SentinelClient.h"
 
-#include <linux/i2c-dev.h>
-#include <linux/i2c.h>
-#include <sys/ioctl.h>
-#include <unistd.h>
+#include <nlohmann/json.hpp>
 
 #include <algorithm>
 #include <atomic>
-#include <cerrno>
 #include <cctype>
 #include <chrono>
-#include <cmath>
 #include <condition_variable>
 #include <cstdio>
-#include <cstring>
-#include <fcntl.h>
+#include <exception>
 #include <iomanip>
-#include <limits>
+#include <iostream>
 #include <mutex>
 #include <optional>
 #include <sstream>
+#include <string_view>
 #include <thread>
 #include <utility>
 
@@ -29,12 +25,10 @@ namespace simaai::neat {
 
 namespace {
 
-constexpr std::uint8_t kPageReg = 0x00;
-constexpr std::uint8_t kPoutReg = 0x96;
+using nlohmann::json;
 
-double scale_raw(std::uint8_t raw, int exponent) {
-  return static_cast<double>(raw) * std::ldexp(1.0, exponent);
-}
+/// Sentinel samples every 2 s; polling twice as often adds each sample within 1 s.
+constexpr std::chrono::seconds kSentinelPollInterval{1};
 
 std::string hex_byte(std::uint8_t value) {
   std::ostringstream oss;
@@ -98,30 +92,39 @@ std::optional<std::string> read_device_tree_model() {
   return data;
 }
 
-PowerMonitorProfile detect_profile_from_model_text(const std::string& model) {
-  const std::string normalized = lowercase_ascii(model);
-  if (normalized.find("modalix dvt") != std::string::npos) {
-    return PowerMonitorProfile::ModalixDvt;
+/// Rail name of a Sentinel metric key such as `power_rail_mla_watts`; empty for other keys.
+std::string sentinel_rail_name(std::string_view key) {
+  constexpr std::string_view kPrefix = "power_rail_";
+  constexpr std::string_view kSuffix = "_watts";
+  if (key.size() <= kPrefix.size() + kSuffix.size() || key.substr(0, kPrefix.size()) != kPrefix ||
+      key.substr(key.size() - kSuffix.size()) != kSuffix) {
+    return {};
   }
-  if (normalized.find("modalix som") != std::string::npos) {
-    return PowerMonitorProfile::ModalixSom;
-  }
-  return PowerMonitorProfile::ModalixSom;
+  return std::string(key.substr(kPrefix.size(), key.size() - kPrefix.size() - kSuffix.size()));
 }
 
-std::vector<PowerRailConfig> modalix_dvt_power_rails_impl() {
-  // Modalix DVT PMBus access has proven fragile when probing the full PMIC set
-  // or when reading multiple telemetry registers per page.  The stable board
-  // path verified on DVT is the single page-0 POUT byte read from PMIC 0x4d on
-  // mux bus 4: raw register 0x96 scaled by 2^-2 watts.
-  return {{"DVT PMIC 0x4d page0", 4, 0x4d, 0x00, -8, -3, -2}};
-}
-
-std::vector<PowerRailConfig> resolved_power_rails(const PowerMonitorOptions& options) {
-  if (!options.rails.empty()) {
-    return options.rails;
+/// Rail power readings of one sample from Sentinel's `GET /v1/samples/latest`.
+PowerSnapshot power_snapshot_from_sentinel_sample(const json& sample) {
+  PowerSnapshot snapshot;
+  snapshot.timestamp = std::chrono::steady_clock::now();
+  const json values = sample.value("values", json::object());
+  for (const auto& [key, value] : values.items()) {
+    PowerRailReading reading;
+    reading.config.name = sentinel_rail_name(key);
+    if (reading.config.name.empty()) {
+      continue;
+    }
+    if (value.is_number()) {
+      reading.power_w.available = true;
+      reading.power_w.value = value.get<double>();
+      snapshot.total_watts += reading.power_w.value;
+      ++snapshot.rails_with_power;
+    } else {
+      reading.power_w.error = "Sentinel has no reading";
+    }
+    snapshot.rails.push_back(std::move(reading));
   }
-  return power_rails_for_profile(options.profile);
+  return snapshot;
 }
 
 struct FieldAgg {
@@ -164,155 +167,10 @@ struct FieldAgg {
 
 struct RailAgg {
   PowerRailConfig config;
-  FieldAgg voltage_v;
-  FieldAgg current_a;
   FieldAgg power_w;
-
-  explicit RailAgg(PowerRailConfig c) : config(std::move(c)) {}
 };
 
 } // namespace
-
-namespace pipeline_internal {
-
-namespace {
-
-class NativePowerI2cBackend final : public PowerI2cBackend {
-public:
-  bool set_page(int bus, std::uint8_t addr, std::uint8_t page, std::string& error) override {
-    const int fd = open_device(bus, addr, error);
-    if (fd < 0)
-      return false;
-    const bool ok = smbus_write_byte_data(fd, kPageReg, page, error);
-    if (!ok) {
-      error = "i2c write page " + hex_byte(page) + " failed: " + error;
-    }
-    ::close(fd);
-    return ok;
-  }
-
-  bool read_register(int bus, std::uint8_t addr, std::uint8_t reg, std::uint8_t& value,
-                     std::string& error) override {
-    const int fd = open_device(bus, addr, error);
-    if (fd < 0)
-      return false;
-    const bool read_ok = smbus_read_byte_data(fd, reg, value, error);
-    if (!read_ok) {
-      error = "i2c read register " + hex_byte(reg) + " failed: " + error;
-    }
-    ::close(fd);
-    return read_ok;
-  }
-
-private:
-  union SmbusData {
-    __u8 byte;
-    __u16 word;
-    __u8 block[I2C_SMBUS_BLOCK_MAX + 2];
-  };
-
-  static int smbus_access(int fd, char read_write, std::uint8_t command, int size,
-                          SmbusData* data) {
-    struct i2c_smbus_ioctl_data args {};
-    args.read_write = read_write;
-    args.command = command;
-    args.size = size;
-    args.data = reinterpret_cast<union i2c_smbus_data*>(data);
-    return ::ioctl(fd, I2C_SMBUS, &args);
-  }
-
-  static bool smbus_write_byte_data(int fd, std::uint8_t reg, std::uint8_t value,
-                                    std::string& error) {
-    SmbusData data{};
-    data.byte = value;
-    if (smbus_access(fd, I2C_SMBUS_WRITE, reg, I2C_SMBUS_BYTE_DATA, &data) < 0) {
-      error = std::strerror(errno);
-      return false;
-    }
-    return true;
-  }
-
-  static bool smbus_read_byte_data(int fd, std::uint8_t reg, std::uint8_t& value,
-                                   std::string& error) {
-    SmbusData data{};
-    if (smbus_access(fd, I2C_SMBUS_READ, reg, I2C_SMBUS_BYTE_DATA, &data) < 0) {
-      error = std::strerror(errno);
-      return false;
-    }
-    value = data.byte;
-    return true;
-  }
-
-  static int open_device(int bus, std::uint8_t addr, std::string& error) {
-    const std::string path = "/dev/i2c-" + std::to_string(bus);
-    const int fd = ::open(path.c_str(), O_RDWR | O_CLOEXEC);
-    if (fd < 0) {
-      error = "open " + path + " failed: " + std::strerror(errno);
-      return -1;
-    }
-    if (::ioctl(fd, I2C_SLAVE, static_cast<int>(addr)) < 0) {
-      error = "I2C_SLAVE " + hex_byte(addr) + " failed: " + std::strerror(errno);
-      ::close(fd);
-      return -1;
-    }
-    return fd;
-  }
-};
-
-} // namespace
-
-std::shared_ptr<PowerI2cBackend> make_native_power_i2c_backend() {
-  return std::make_shared<NativePowerI2cBackend>();
-}
-
-PowerSnapshot read_power_snapshot_with_backend(const PowerMonitorOptions& options,
-                                               const std::shared_ptr<PowerI2cBackend>& backend) {
-  PowerSnapshot snapshot;
-  snapshot.timestamp = std::chrono::steady_clock::now();
-  if (!backend)
-    return snapshot;
-
-  std::vector<PowerRailConfig> rails = options.rails;
-  if (rails.empty()) {
-    rails = resolved_power_rails(options);
-  }
-  snapshot.rails.reserve(rails.size());
-
-  for (const auto& rail : rails) {
-    PowerRailReading reading;
-    reading.config = rail;
-
-    std::string error;
-    if (!backend->set_page(rail.i2c_bus, rail.i2c_addr, rail.page, error)) {
-      const std::string detail = "set page failed for " + rail.name + ": " + error;
-      reading.voltage_v.error = detail;
-      reading.current_a.error = detail;
-      reading.power_w.error = detail;
-      snapshot.rails.push_back(std::move(reading));
-      continue;
-    }
-
-    std::uint8_t raw = 0;
-    std::string reg_error;
-    if (!backend->read_register(rail.i2c_bus, rail.i2c_addr, kPoutReg, raw, reg_error)) {
-      reading.power_w.error = reg_error;
-      snapshot.rails.push_back(std::move(reading));
-      continue;
-    }
-    reading.power_w.available = true;
-    reading.power_w.raw = raw;
-    reading.power_w.value = scale_raw(raw, rail.pout_exponent);
-    if (reading.power_w.available) {
-      snapshot.total_watts += reading.power_w.value;
-      ++snapshot.rails_with_power;
-    }
-    snapshot.rails.push_back(std::move(reading));
-  }
-
-  return snapshot;
-}
-
-} // namespace pipeline_internal
 
 std::vector<PowerRailConfig> default_modalix_som_power_rails() {
   return {
@@ -328,15 +186,15 @@ std::vector<PowerRailConfig> default_modalix_som_power_rails() {
 }
 
 std::vector<PowerRailConfig> default_modalix_dvt_power_rails() {
-  return modalix_dvt_power_rails_impl();
+  return {{"DVT PMIC 0x4d page0", 4, 0x4d, 0x00, -8, -3, -2}};
 }
 
 PowerMonitorProfile detect_default_power_monitor_profile() {
   const auto model = read_device_tree_model();
-  if (!model) {
-    return PowerMonitorProfile::ModalixSom;
+  if (model && lowercase_ascii(*model).find("modalix dvt") != std::string::npos) {
+    return PowerMonitorProfile::ModalixDvt;
   }
-  return detect_profile_from_model_text(*model);
+  return PowerMonitorProfile::ModalixSom;
 }
 
 std::string power_monitor_profile_name(PowerMonitorProfile profile) {
@@ -353,6 +211,8 @@ std::string power_monitor_profile_name(PowerMonitorProfile profile) {
   return "unknown";
 }
 
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
 std::vector<PowerRailConfig> power_rails_for_profile(PowerMonitorProfile profile) {
   switch (profile) {
   case PowerMonitorProfile::Auto:
@@ -366,16 +226,14 @@ std::vector<PowerRailConfig> power_rails_for_profile(PowerMonitorProfile profile
   }
   return {};
 }
+#pragma GCC diagnostic pop
 
 PowerMonitorOptions board_power_monitor_options(int sample_interval_ms,
                                                 PowerMonitorProfile profile) {
   PowerMonitorOptions options;
   options.enabled = true;
   options.sample_interval_ms = std::max(1, sample_interval_ms);
-  const PowerMonitorProfile resolved =
-      (profile == PowerMonitorProfile::Auto) ? detect_default_power_monitor_profile() : profile;
-  options.profile = resolved;
-  options.rails = power_rails_for_profile(resolved);
+  options.profile = profile;
   return options;
 }
 
@@ -387,23 +245,17 @@ PowerMonitorOptions modalix_dvt_power_monitor_options(int sample_interval_ms) {
   return board_power_monitor_options(sample_interval_ms, PowerMonitorProfile::ModalixDvt);
 }
 
-PowerSnapshot read_power_snapshot(const PowerMonitorOptions& options) {
-  return pipeline_internal::read_power_snapshot_with_backend(
-      options, pipeline_internal::make_native_power_i2c_backend());
+PowerSnapshot read_power_snapshot(const PowerMonitorOptions& /*options*/) {
+  return power_snapshot_from_sentinel_sample(pipeline_internal::SentinelClient().latest_sample());
 }
 
+// The deprecated PowerMonitor's own implementation.
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
 class PowerMonitor::Impl {
 public:
-  explicit Impl(PowerMonitorOptions options)
-      : options_(std::move(options)), backend_(pipeline_internal::make_native_power_i2c_backend()) {
-    if (options_.rails.empty()) {
-      options_.rails = resolved_power_rails(options_);
-    }
-    rail_aggs_.reserve(options_.rails.size());
-    for (const auto& rail : options_.rails) {
-      rail_aggs_.emplace_back(rail);
-    }
-  }
+  Impl(PowerMonitorOptions options, pipeline_internal::SentinelClient sentinel)
+      : options_(std::move(options)), sentinel_(std::move(sentinel)) {}
 
   ~Impl() {
     stop();
@@ -415,10 +267,15 @@ public:
     bool expected = false;
     if (!running_.compare_exchange_strong(expected, true))
       return;
+    // Sentinel's current sample predates the interval; only later samples are added.
+    const std::optional<json> baseline = read_latest_sample();
     {
       std::lock_guard<std::mutex> lock(mu_);
       start_time_ = std::chrono::steady_clock::now();
       end_time_ = {};
+      if (baseline) {
+        last_timestamp_ = baseline->value("timestamp", "");
+      }
     }
     worker_ = std::thread([this]() { run_loop(); });
   }
@@ -431,6 +288,7 @@ public:
     if (worker_.joinable()) {
       worker_.join();
     }
+    sample_once();
     std::lock_guard<std::mutex> lock(mu_);
     end_time_ = std::chrono::steady_clock::now();
   }
@@ -438,14 +296,27 @@ public:
   void sample_once() {
     if (!options_.enabled)
       return;
-    const PowerSnapshot snapshot =
-        pipeline_internal::read_power_snapshot_with_backend(options_, backend_);
+    // One fetch at a time, so a slower fetch cannot replace a newer accepted timestamp and let
+    // that sample be counted again.
+    std::lock_guard<std::mutex> sample_lock(sample_mu_);
+    const std::optional<json> sample = read_latest_sample();
+    if (!sample) {
+      return;
+    }
+    const std::string timestamp = sample->value("timestamp", "");
     std::lock_guard<std::mutex> lock(mu_);
-    if (samples_ == 0 && start_time_ == std::chrono::steady_clock::time_point{}) {
+    if (timestamp == last_timestamp_) {
+      return;
+    }
+    last_timestamp_ = timestamp;
+    const PowerSnapshot snapshot = power_snapshot_from_sentinel_sample(*sample);
+    if (start_time_ == std::chrono::steady_clock::time_point{}) {
       start_time_ = snapshot.timestamp;
     }
+    if (!running_.load()) {
+      end_time_ = snapshot.timestamp;
+    }
     add_snapshot_locked(snapshot);
-    end_time_ = snapshot.timestamp;
   }
 
   PowerSummary summary() const {
@@ -469,8 +340,6 @@ public:
     for (const auto& agg : rail_aggs_) {
       PowerRailSummary rail;
       rail.config = agg.config;
-      rail.voltage_v = agg.voltage_v.summary();
-      rail.current_a = agg.current_a.summary();
       rail.power_w = agg.power_w.summary();
       out.rails.push_back(std::move(rail));
     }
@@ -482,13 +351,24 @@ public:
   }
 
 private:
+  /// Sentinel's latest sample; warns once and returns nothing when Sentinel cannot be read.
+  std::optional<json> read_latest_sample() {
+    try {
+      return sentinel_.latest_sample();
+    } catch (const std::exception& e) {
+      if (!warned_.exchange(true)) {
+        std::cerr << "[WARN] Power telemetry is unavailable: " << e.what() << "\n";
+      }
+      return std::nullopt;
+    }
+  }
+
   void run_loop() {
-    sample_once();
-    const int interval = std::max(1, options_.sample_interval_ms);
     while (running_.load()) {
-      std::unique_lock<std::mutex> lock(wait_mu_);
-      cv_.wait_for(lock, std::chrono::milliseconds(interval),
-                   [this]() { return !running_.load(); });
+      {
+        std::unique_lock<std::mutex> lock(wait_mu_);
+        cv_.wait_for(lock, kSentinelPollInterval, [this]() { return !running_.load(); });
+      }
       if (!running_.load())
         break;
       sample_once();
@@ -508,23 +388,29 @@ private:
       total_sum_watts_ += snapshot.total_watts;
       ++total_samples_;
     }
-    const std::size_t n = std::min(rail_aggs_.size(), snapshot.rails.size());
-    for (std::size_t i = 0; i < n; ++i) {
-      rail_aggs_[i].voltage_v.add(snapshot.rails[i].voltage_v);
-      rail_aggs_[i].current_a.add(snapshot.rails[i].current_a);
-      rail_aggs_[i].power_w.add(snapshot.rails[i].power_w);
+    for (const PowerRailReading& reading : snapshot.rails) {
+      auto agg = std::find_if(rail_aggs_.begin(), rail_aggs_.end(), [&](const RailAgg& rail) {
+        return rail.config.name == reading.config.name;
+      });
+      if (agg == rail_aggs_.end()) {
+        agg = rail_aggs_.insert(rail_aggs_.end(), RailAgg{reading.config, {}});
+      }
+      agg->power_w.add(reading.power_w);
     }
   }
 
   PowerMonitorOptions options_;
-  std::shared_ptr<pipeline_internal::PowerI2cBackend> backend_;
+  pipeline_internal::SentinelClient sentinel_;
   mutable std::mutex mu_;
+  std::mutex sample_mu_;
   std::mutex wait_mu_;
   std::condition_variable cv_;
   std::thread worker_;
   std::atomic<bool> running_{false};
+  std::atomic<bool> warned_{false};
   std::chrono::steady_clock::time_point start_time_{};
   std::chrono::steady_clock::time_point end_time_{};
+  std::string last_timestamp_;
   std::uint64_t samples_ = 0;
   std::uint64_t total_samples_ = 0;
   double total_sum_watts_ = 0.0;
@@ -534,11 +420,19 @@ private:
 };
 
 PowerMonitor::PowerMonitor(PowerMonitorOptions options)
-    : impl_(std::make_unique<Impl>(std::move(options))) {}
+    : impl_(std::make_unique<Impl>(std::move(options), pipeline_internal::SentinelClient())) {}
 
 PowerMonitor::~PowerMonitor() = default;
 PowerMonitor::PowerMonitor(PowerMonitor&&) noexcept = default;
 PowerMonitor& PowerMonitor::operator=(PowerMonitor&&) noexcept = default;
+
+PowerMonitor internal::PowerMonitorAccess::make(PowerMonitorOptions options,
+                                                std::string sentinel_socket_path) {
+  PowerMonitor monitor;
+  monitor.impl_ = std::make_unique<PowerMonitor::Impl>(
+      std::move(options), pipeline_internal::SentinelClient(std::move(sentinel_socket_path)));
+  return monitor;
+}
 
 void PowerMonitor::start() {
   if (impl_)
@@ -562,6 +456,7 @@ PowerSummary PowerMonitor::summary() const {
 bool PowerMonitor::running() const {
   return impl_ && impl_->running();
 }
+#pragma GCC diagnostic pop
 
 std::string format_power_summary(const PowerSummary& summary) {
   if (!summary.enabled) {

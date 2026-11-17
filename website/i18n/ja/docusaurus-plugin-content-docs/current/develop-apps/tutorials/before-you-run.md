@@ -23,7 +23,7 @@ PCIeチュートリアルは、SDKコンテナ内またはカード上で直接�
 [Neat Library がインストールされました。](/getting-started/neat-library/install-or-update/)がインストールされていることを確認し、チュートリアルのバンドルを配置したいディレクトリから次のコマンドを実行します。
 
 <ShellCommand prompt="sdk|devkit">
-sima-cli neat install core -t extras
+sima-cli neat install core@v%%release.core%% -t extras
 cd sima-neat-*-Linux-extras
 </ShellCommand>
 
@@ -43,14 +43,14 @@ python3 -c "import pyneat; print('pyneat ready')"
 **Ubuntu 22.04:**
 
 <ShellCommand prompt="pcie-host">
-sima-cli neat install core/pciehost/ubuntu22/amd64 -t extras
+sima-cli neat install core/pciehost/ubuntu22/amd64@v%%release.core%% -t extras
 cd sima-pcie-host-*-Linux-amd64-extras
 </ShellCommand>
 
 **Ubuntu 24.04：**
 
 <ShellCommand prompt="pcie-host">
-sima-cli neat install core/pciehost/ubuntu24/amd64 -t extras
+sima-cli neat install core/pciehost/ubuntu24/amd64@v%%release.core%% -t extras
 cd sima-pcie-host-*-Linux-amd64-extras
 </ShellCommand>
 

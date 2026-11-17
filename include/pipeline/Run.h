@@ -74,8 +74,8 @@ MeasureScope start_measurement_on_core(std::shared_ptr<runtime::RunCore> core,
  * @ingroup pipeline
  */
 enum class RunPreset {
-  Realtime, ///< Low-latency; small queues; KeepLatest overflow; single-input CVU stages
-            ///< queue at most 20 ms of live-source input.
+  Realtime, ///< Low-latency; small queues; KeepLatest overflow. Preserves existing
+            ///< Gst queue time limits; configure media-time limits explicitly.
   Balanced, ///< Default; moderate queues; Block overflow.
   Reliable, ///< Lossless; deeper queues; Block overflow.
 };
@@ -83,12 +83,16 @@ enum class RunPreset {
 /**
  * @brief How output `Tensor`s relate to the underlying GStreamer buffers.
  *
- * `Auto` retains standard DMA-BUF output storage in both sync and async runs;
- * other storage follows the preset/mode policy. `ZeroCopy` explicitly shares
- * producer storage. Neither path copies DMA payloads to relieve queue pressure.
+ * `Auto` retains standard DMA-BUF output storage and certified framework CPU-only
+ * terminal output pools in both sync and async runs. Other storage follows the
+ * preset/mode policy. `ZeroCopy` explicitly shares producer storage. Retained
+ * framework payloads are not copied to relieve queue pressure.
  * Retained tensors and their mappings hold producer-buffer loans; release them
  * to allow the pool to progress. `Owned` explicitly copies into independent
- * framework-owned storage. An explicit owned environment override also applies
+ * framework-owned system memory, without retaining the producer pool loan or
+ * using device (CMA) memory. Explicit CPU conversion remains available through
+ * Tensor::cpu().
+ * An explicit owned environment override also applies
  * to `Auto`, but never overrides an explicit per-run choice.
  * @ingroup pipeline
  */
@@ -106,16 +110,11 @@ struct RunAdvancedOptions {
   int sync_num_buffers_override =
       -1; ///< Override the appsrc `num-buffers` for sync-mode runs (-1 = auto).
   /**
-   * @brief Prepare zero-copy Gst/SiMa outputs for CPU reads on the InputStream worker.
+   * @brief Reserved compatibility hint for output CPU visibility.
    *
-   * When enabled for a zero-copy output Run, cached SiMa-backed tensors are made
-   * CPU-visible before they are placed in the Run output queue. This does not
-   * clone or copy tensor payloads; it only performs cache visibility maintenance
-   * when producer metadata says a CPU reader could observe stale data.
-   *
-   * Keep this disabled for Graph-internal forwarding paths where an appsink is
-   * used only as transport to another device-facing Graph. Tensor::map(Read)
-   * remains the correctness fallback for all outputs.
+   * Runtime now acquires CPU visibility as part of each retained Tensor/GstMemory
+   * mapping. No separate eager synchronization is performed, regardless of this
+   * field. Keeping the field preserves the Run options layout for existing callers.
    */
   bool prepare_output_cpu_visible = false;
 };
@@ -134,7 +133,7 @@ struct RunAutoExportOptions {
   std::string path;  ///< Empty disables build-time export.
   std::string label; ///< Optional label; empty uses the exporter default.
   bool include_metrics = true;
-  bool include_power = true;
+  bool include_power = true;              ///< @deprecated Use `TelemetryMonitor`.
   bool include_node_metrics = true;       ///< Include node-level latency rows.
   bool include_plugin_metrics = true;     ///< Include plugin/kernel latency rows when available.
   bool include_empty_node_metrics = true; ///< Keep attributed node rows even before samples arrive.
@@ -171,10 +170,11 @@ struct RunOptions {
   OutputMemory output_memory =
       OutputMemory::Auto; ///< Whether output tensors are zero-copy or owned.
   /**
-   * @brief Default pull timeout for `build()`/`run()` input-mode paths, in milliseconds.
+   * @brief Output-wait timeout for input-mode `Graph::run()` and supported seeded build preflight.
    *
-   * `-1` keeps framework defaults (and legacy env-var fallback). Override per-call by
-   * passing an explicit `timeout_ms` to the relevant `pull()` or `run()` overload.
+   * In milliseconds; `-1` selects framework defaults (and legacy env-var fallback).
+   * `Run::run()` and `Model::run()` use their per-call `timeout_ms` instead; `-1` means
+   * unlimited, as in `Run::pull(-1)`.
    */
   int input_timeout_ms = -1;
   /**
@@ -191,52 +191,44 @@ struct RunOptions {
    * `pull()`.
    */
   bool startup_preflight = true;
-  RunAdvancedOptions advanced{};       ///< Advanced tuning (rarely needed).
-  PowerMonitorOptions power_monitor{}; ///< Optional board rail power telemetry.
-  RunAutoExportOptions run_export{};   ///< Optional build-time Run/graph JSON export.
+  RunAdvancedOptions advanced{}; ///< Advanced tuning (rarely needed).
+  /// Optional board power telemetry from Sentinel.
+  /// @deprecated Use `TelemetryMonitor` around the measured work.
+  PowerMonitorOptions power_monitor{};
+  RunAutoExportOptions run_export{}; ///< Optional build-time Run/graph JSON export.
   /// Backward-compatible spelling for the previous graph-run export field.
   RunAutoExportOptions graph_run_export{};
 
   /**
-   * @brief Enable board power monitoring using built-in auto-detect.
+   * @brief Enable board power monitoring, read from Sentinel.
    *
-   * This is the preferred no-env path for capturing latency, throughput, and power
-   * together from any Run.
+   * `sample_interval_ms` is deprecated and ignored.
+   * @deprecated Use `TelemetryMonitor` around the measured work; it also records
+   * temperatures, CPU usage, and memory.
    */
+  [[deprecated("Use TelemetryMonitor")]]
   RunOptions& enable_board_power(int sample_interval_ms = 100) {
     power_monitor = board_power_monitor_options(sample_interval_ms);
     return *this;
   }
 
-  /**
-   * @brief Enable default Modalix SOM PMIC rail power monitoring for this Run.
-   *
-   * Prefer `enable_board_power()` unless you need to force the SOM profile:
-   *
-   * @code
-   * RunOptions opt;
-   * opt.enable_board_power();
-   * auto run = graph.build(inputs, opt);
-   * auto scope = run.start_measurement();
-   * // push/pull workload
-   * auto report = scope.stop();
-   * @endcode
-   */
+  /// Same as `enable_board_power()`.
+  [[deprecated("Use TelemetryMonitor")]]
   RunOptions& enable_modalix_som_power(int sample_interval_ms = 100) {
-    power_monitor = modalix_som_power_monitor_options(sample_interval_ms);
+    power_monitor = board_power_monitor_options(sample_interval_ms);
     return *this;
   }
 
-  /**
-   * @brief Enable the built-in Modalix DVT PMIC table for this Run.
-   */
+  /// Same as `enable_board_power()`.
+  [[deprecated("Use TelemetryMonitor")]]
   RunOptions& enable_modalix_dvt_power(int sample_interval_ms = 100) {
-    power_monitor = modalix_dvt_power_monitor_options(sample_interval_ms);
+    power_monitor = board_power_monitor_options(sample_interval_ms);
     return *this;
   }
 
   /**
    * @brief Disable power monitoring after it was enabled/configured.
+   * @deprecated Use `TelemetryMonitor`.
    */
   RunOptions& disable_power_monitor() {
     power_monitor = PowerMonitorOptions{};
@@ -290,16 +282,15 @@ enum class MetricsTraceSource {
  *
  * Default construction is the production-safe/customer path: public E2E latency and throughput
  * only.  It does not start plugin tracing, message tracing, graph queue probes, or measurement-
- * local power monitoring.  Set `include_plugin_latency=true` only when you intentionally want
- * deeper per-plugin/kernel profiling.
+ * local power monitoring.
  */
 struct MeasureOptions {
   int duration_ms = 10000; ///< Timed measurement window.
   int warmup_ms = 1000;    ///< Warmup window excluded from latency/metrics results.
   int timeout_ms = 5000;   ///< Per-output pull timeout.
-  /// Capture per-plugin/kernel execution latency through the LTTng metrics collector.
+  /// Deprecated: capture per-plugin execution latency through LTTng. It will be removed.
   bool include_plugin_latency = false;
-  /// Backend used for plugin execution latency.
+  /// Deprecated with `include_plugin_latency`: backend used for plugin execution latency.
   MetricsTraceSource plugin_latency_source = MetricsTraceSource::Lttng;
   /// Include low-overhead inter-plugin/edge/queue diagnostics in the report.
   bool include_edge_latency = false;
@@ -311,7 +302,9 @@ struct MeasureOptions {
   bool retain_metrics_trace = false;
   /// Optional parent/output directory for retained or temporary metrics traces.
   std::string metrics_trace_dir;
-  bool include_power = false; ///< Include power telemetry when enabled on the Run.
+  /// Include power telemetry when enabled on the Run.
+  /// @deprecated Use `TelemetryMonitor` around the measured window.
+  bool include_power = false;
 
   /// Optional report metadata.  Model-owned wrappers/examples can fill these in so the
   /// standardized report is informative without custom formatting code.
@@ -538,7 +531,7 @@ struct MeasureReport {
 
   std::uint64_t graph_sample_timing_unkeyed = 0;
   std::uint64_t graph_sample_timing_misses = 0;
-  PowerSummary power{};
+  PowerSummary power{}; ///< @deprecated Use `TelemetryMonitor` around the measured window.
 
   /// Render a compact customer-facing terminal report.
   std::string to_text() const;
@@ -725,7 +718,8 @@ public:
 
   /// Start observing a caller-owned push/pull interval without consuming outputs.
   MeasureScope start_measurement(const MeasureOptions& opt = {});
-  /// Convenience overload: false = E2E latency/throughput only, true = include plugin latency.
+  /// Deprecated: use `start_measurement()`. True also collects plugin latency.
+  [[deprecated("Plugin latency is deprecated and will be removed")]]
   MeasureScope start_measurement(bool include_plugin_latency);
   /// Returns the most recent runtime error string (empty if no error occurred).
   std::string last_error() const;

@@ -6,9 +6,27 @@ sidebar_position: 6
 
 # BoxDecode 解碼類型
 
-`nodes::SimaBoxDecode` 將原始的檢測頭張量轉換為檢測結果。它在模型推論之後執行，應用所選模型系列的解碼數學公式，過濾掉低信度框，執行非最大值抑制 (NMS)，並輸出一個張量有效載荷，該有效載荷以解碼後的框開始。檢測模型可以將該有效載荷解析為框；姿勢和分割模型也可以解析在框之後的關鍵點或遮罩。
+`nodes::SimaBoxDecode` 將原始偵測頭張量轉換為偵測結果。它在模型推論後執行，套用所選模型系列的解碼運算並篩選偵測結果。NMS 與輸出編碼取決於所選系列。偵測模型可將酬載解析為方框；姿勢與分割模型也可解析方框之後的關鍵點或遮罩。
 
 對於一般的模型套件使用，建議使用 `Model` 感知的建構函式。模型封存檔提供了解碼器所需的張量順序、佈局、量化、類別數量、調整大小的中繼資料和分數域提示。您的應用程式通常只需要選擇解碼系列和過濾閾值。
+
+## 執行階段後端
+
+BoxDecode 與 SuperPoint 透過 `neatkernelrunner` 使用已檢查的 Kernels 執行物件。
+既有的偵測與特徵輸出格式保持不變。YOLO26 旋轉框解碼使用獨立的版本化格式。直接張量輸入請使用共用 CMA 張量
+（`TensorMemory::EV74`），即使解碼在 A65 執行也一樣：此記憶體選擇提供的是
+DMA-BUF 傳輸，而非執行目標。
+
+RCNN 第 1 階段使用核心擁有的逐層 top-K 契約：先全域 NMS，再於每個模型面積層級
+保留最多 `top_k` 個候選項。輸出是提案線路格式，而非一般 BBOX 格式：共四組，
+每組包含一個 INT32 計數與 `top_k` 筆六 FP16 記錄（`score, 0, x1, y1, x2, y2`）。
+座標轉換保留小數幾何資訊，直到最終序列化。請將其用作第二階段提案輸入，
+不要搭配 `decode_bbox_tensor()` 使用。不會載入舊版外掛程式。
+
+具有填補、交錯排列的 INT8、BF16 與 FP32 SuperPoint 輸出頭使用原生密集讀取器及
+明確像素步幅。填補區不參與偵測器歸約與描述子取樣，不需要 Cast 階段或具體化。
+INT8 埠保留各自設定的量化資訊。原生 MLA 平鋪輸出頭保留其宣告的實體佈局；
+絕不將密集純量重新標成 MLA 位元組平面。
 
 ## 快速入門
 
@@ -41,7 +59,7 @@ opt.top_k = 100;
 | `decode_type` | 模型系列/標頭格式，例如 `BoxDecodeType::YoloV8` 或 `BoxDecodeType::YoloX`。必填。|
 | `detection_threshold` | 為了保留檢測結果，所需的最低分數。請使用適合模型的數值，例如 `0.25`。|
 | `nms_iou_threshold` | 非最大值抑制中使用的 IoU 閾值。設為 `0` 時會保留模型封裝的值；若未封裝任何值，YOLO26 會略過 NMS，其他解碼器會抑制所有重疊的方框。請設定適合模型的值，例如 `0.45`。|
-| `top_k` | 保留的最多檢測數量。`0` 使用後端/模型的預設值。|
+| `top_k` | 最大輸出數量。原始邊界框解碼需要明確的正值上限。綁定模型的節點中，`0` 繼承已解析的 Model 上限。SuperPoint 在 `0` 時使用其設定組合預設值。 |
 | `original_width`, `original_height` | 使用原始幾何建構函時，用於座標映射的原始影像大小。|
 | `model_width`、`model_height` | 用於覆寫模型輸入大小。在使用 `Model` 建構函式時，這會更改空間解碼參數，而非已封裝的張量合約。|
 | `resize_mode_override` | 僅在沒有上游 `Preproc` 階段寫入調整大小的元資料，且您需要明確指定拉伸/信箱/裁剪行為時使用。|
@@ -56,12 +74,214 @@ opt.top_k = 100;
 | 模型任務 | C++ 輔助程式 | Python 輔助程式 | 解碼後的張量 |
 | --- | --- | --- | --- |
 | 偵測 | `decode_bbox(...)` | `pyneat.decode_bbox(...)` | `[N, 6]` float32 框：`x1, y1, x2, y2, score, class_id` |
+| 旋轉物件偵測 | `decode_obb(...)` | `pyneat.decode_obb(...)` | 具有自身儲存空間的幾何資料 `[N, 5]` float32（`cx, cy, width, height, angle_radians`）、分數 `[N]` float32、類別 ID `[N]` int32 |
 | 姿勢 | `decode_pose(...)` | `pyneat.decode_pose(...)` | 方框 `[N, 6]` 和關鍵點 `[N, 17, 3]` float32：`x, y, visibility` |
 | 分割 | `decode_segmentation(...)` | `pyneat.decode_segmentation(...)` | 方塊 `[N, 6]` float32，以及遮罩 `[N, 160, 160]` uint8 |
 | 分割 + 姿態 | `decode_segmentation_pose(...)` | `pyneat.decode_segmentation_pose(...)` | 邊界框 `[N, 6]` float32、遮罩 `[N, 160, 160]` uint8、關鍵點 `[N, 17, 3]` float32 |
+| Segment Anything | `decode_segmentation(...)` | `pyneat.decode_segmentation(...)` | 邊界框 `[N, 6]` float32，以及原始影像大小的遮罩 `[N, H, W]` uint8；提示解碼器的 N 為 1 |
 | SuperPoint | `decode_superpoint(...)` | `pyneat.decode_superpoint(...)` | 關鍵點 `[N,2]`，分數 `[N]`，描述子 `[N,D]` |
 
-偵測顯示圖可以將結果傳送到 `SimaRender`。如果應用程式碼只需要框選結果，則可以繼續使用 `decode_bbox(...)` 處理 BoxDecode 的輸出。
+軸對齊偵測結果的顯示圖可將結果傳給 `SimaRender`。`decode_bbox(...)` 僅適用於既有的方框前置格式；此函式與 `SimaRender` 都不接受旋轉框。
+
+## 信箱式放置位置 {#letterbox-placement}
+
+未置中的信箱式調整（例如 `LetterboxPlacement::TopLeft`，請參閱 [Preproc 調整大小](/reference/nodes/preproc#resize-and-aspect-ratio)）受偵測設定檔支援，這些設定檔會使用每個影格的模型座標到原始影像座標仿射轉換來對應邊界框：YOLO 偵測系列、已解碼的 YOLO、EfficientDet、DETR、DetrFocal、CenterNet 與 SSD。姿勢、分割與 RCNN 提議設定檔會拒絕這種調整，而不是傳回偏移的結果。置中的信箱式調整會維持其對應方式。Segment Anything 類型有各自的要求；請參閱 [Segment Anything 規則](#segment-anything-rules)。
+
+## 傳統 DETR {#classic-detr}
+
+對於同一查詢網格上的四通道方框 logits，以及最後一個通道為背景的類別 logits，請選擇 `Detr`。將 `decode_type_option` 保持為 `Auto`：配方會選擇 Softmax，不依賴張量名稱。背景會參與分母計算，但不計入前景類別數，也不會被選為輸出。方框座標會套用 sigmoid；此解碼器不適用於已正規化的 focal-loss 方框。
+
+請使用 Stretch 與正值 `top_k`。解碼器不套用 NMS，並透過前處理中繼資料還原原始影格座標。明確指定機率值的配置或衝突的分數啟用函數會遭拒絕。
+
+```python
+options = pyneat.ModelOptions()
+options.decode_type = pyneat.BoxDecodeType.Detr
+options.preprocess.resize.mode = pyneat.ResizeMode.Stretch
+options.top_k = 100
+options.score_threshold = 0.7
+```
+
+## Focal loss 查詢偵測器
+
+對依序排列的兩個張量使用 `BoxDecodeType::DetrFocal`（Python：`pyneat.BoxDecodeType.DetrFocal`，權杖 `detr-focal`）：深度4的正規化 `cx,cy,width,height` 座標，接著是深度N的獨立類別logits。查詢軸與資料型別必須相符；N為1–1024。支援FP32、BF16及具有明確量化資訊的INT8儲存格式。
+
+此設定檔僅對類別logits套用sigmoid，並從所有查詢／類別配對中選取全域前K名。同一查詢可產生多個類別。沒有背景類別、方框sigmoid、逐查詢argmax、NMS或小面積篩選。設定正數 `top_k`；若不篩選top-K，設定 `detection_threshold=0`；`nms_iou_threshold=0` 為必要值。使用Stretch及實際的影像／模型尺寸。
+
+既有 `BBOX` 輸出會將方框裁切至影像邊界，並將XYWH座標四捨五入為整數。`decode_bbox` 將這些座標顯示為浮點數，但不會還原次像素精度。與未裁切的浮點參考比較時，請分別衡量此表示方式對準確度的影響。傳統 `BoxDecodeType::Detr` 維持不變：它需要方框logits及包含背景類別的softmax分數，而非這些張量。
+
+在Python中使用 `decode_bbox(..., strict=True)`，即可保留四捨五入後面積為零的列，而不套用預設的退化方框篩選。
+
+Python raw-geometry 多載對應 C++ 工廠，適合自行提供頭部張量。密集 FP32 頭部應保留模型的完整輸出介面轉換，並明確宣告實際儲存格式。請勿在原始 MLA 輸出截斷流程，或將含填補的位元組重新標示為密集張量。
+
+```python
+node = pyneat.nodes.sima_box_decode(
+    pyneat.BoxDecodeType.DetrFocal,
+    original_width=1280, original_height=720,
+    model_width=640, model_height=640,
+    detection_threshold=0.0, nms_iou_threshold=0.0, top_k=300,
+    decode_type_option=pyneat.BoxDecodeTypeOption.InterleavedByHeadLogit,
+    source_storage=pyneat.BoxDecodeSourceStorage.DenseHwc,
+    detess=False, dequant=False,
+    resize_mode=pyneat.ResizeMode.Stretch,
+)
+```
+
+有限反向尺寸會由既有端點裁切轉為零面積 BBOX 記錄，保留入選配對及分數。非有限座標或 logits 仍會在發布前失敗。
+
+## Segment Anything 遮罩 {#segment-anything-masks}
+
+每個 Segment Anything 模型都有自己的解碼類型。在提示解碼器上，BoxDecode 會將一次解碼器執行轉成一筆偵測：原始影像大小的所選遮罩、緊貼該遮罩的邊界框，以及預測的 IoU。在 EfficientSAM3 概念影像模型上，它會將一次執行轉成最多 `top_k` 筆偵測，每筆都有自己的遮罩。
+
+| 模型 | `decode_type`（權杖） | 接收影像之 Model 的前處理 | 解碼器選項 |
+| --- | --- | --- | --- |
+| MobileSAM | `MobileSam`（`mobilesam`） | 編碼器：`resize.mode=Letterbox`、`resize.placement=TopLeft`、1024×1024、`pad_value=116`；`preset=ImageNet` | `multimask_output` |
+| EdgeTAM | 遮罩使用 `EdgeTamSeg`（`edgetam-seg`）；追蹤使用 `EdgeTamTrack`（`edgetam-track`） | 影像編碼器：`resize.mode=Stretch`、1024×1024、無填補；`preset=ImageNet` | `multimask_output` |
+| EfficientSAM-T / -S | `EfficientSam`（`efficientsam`） | 編碼器：`resize.mode=Stretch`、1024×1024、無填補；不使用預設集，`normalize.enable=On`（數值 0–1；編碼器會自行正規化） | `multimask_output` 保持 true |
+| EfficientSAM3 互動式 | `EfficientSam3`（`efficientsam3`） | 影像編碼器：`resize.mode=Stretch`、1008×1008、無填補；`normalize.enable=On`，`normalize.mean` 與 `normalize.stddev` 為 (0.5, 0.5, 0.5) | `multimask_output` |
+| EfficientSAM3 概念 | `EfficientSam3`（`efficientsam3`） | 概念影像模型本身，走張量路線：應用程式將影像拉伸到 1008×1008、縮放到 [−1, 1]，並附上 `resize_mode="stretch"` 的 `semantic.preprocess` | `top_k`、`score_threshold` |
+
+Python 使用相同的名稱：`pyneat.BoxDecodeType.MobileSam`、`EdgeTamSeg`、`EdgeTamTrack`、`EfficientSam` 與 `EfficientSam3`。MobileSAM 在正規化之後以 0 填補，相當於 ImageNet 的平均像素（124、116、104）；`pad_value=116` 是其近似值。遮罩永遠不會覆蓋填補區域。當 EfficientSAM3 Model 的輸出是偵測 `[Q, 6]` 與 Q 個通道的遮罩 logit 時，它被視為概念影像模型，否則視為提示解碼器。各模型的完整工作流程請參閱 [sima-neat/models](https://github.com/sima-neat/models) 中該模型的 README，例如 [EdgeTAM README](https://github.com/sima-neat/models/tree/develop/models/edgetam)。
+
+`Model::Options::multimask_output`（Python：`ModelOptions.multimask_output`）對應上游的 `predict(multimask_output=...)`。單次點擊有歧義，請保持 `true`；使用方框或多個點時設為 `false`。
+
+| `decode_type` | `multimask_output=true`（預設） | `multimask_output=false` |
+| --- | --- | --- |
+| `MobileSam` | 遮罩 1–3 中預測 IoU 最佳者 | 遮罩 0 |
+| `EdgeTamSeg`、`EdgeTamTrack` | 遮罩 1–3 中預測 IoU 最佳者 | 遮罩 0 穩定時取遮罩 0，否則取遮罩 1–3 中最佳者 |
+| `EfficientSam` | 遮罩 0–2 中預測 IoU 最佳者 | 拒絕：EfficientSAM 沒有匯出單一遮罩權杖 |
+| `EfficientSam3` 提示解碼器 | 四個遮罩時取遮罩 1–3、三個遮罩時取遮罩 0–2 中預測 IoU 最佳者 | 四個遮罩：與 EdgeTAM 相同。三個遮罩：拒絕 |
+| `EfficientSam3` 概念 | 分數高於 `score_threshold` 的最多 `top_k` 個查詢 | 拒絕：概念偵測沒有多遮罩選擇 |
+
+- 與 SAM2 相同，當遮罩 0 中高於 −0.05 的 logit 至少有 98% 也高於 0.05 時，遮罩 0 即為穩定。
+- 以單一遮罩通道匯出的解碼器，無論設定哪個值都使用該遮罩。
+- 其他解碼類型會拒絕 `multimask_output=false`。此選擇屬於各個 `Model`：兩個解碼器 Model 可以使用同一個 MPK。
+
+### 各輸出的意義 {#segment-anything-outputs}
+
+BoxDecode 張量使用[具版本的遮罩酬載](#versioned-masks-payload)。`decode_segmentation` 會傳回邊界框 `[N, 6]` 與遮罩 `[N, H, W]`：
+
+- **邊界框。** 以原始影像像素表示的 `x1, y1, x2, y2`。提示解碼器的邊界框是緊貼遮罩像素的邊界框：`x2` 與 `y2` 指向遮罩最後一欄與最後一列的下一個位置，因此 `x2 - x1` 即遮罩的寬度。概念偵測的邊界框來自偵測頭，縮放到原始影像且不裁切。
+- **分數。** 所選遮罩的預測 IoU，或概念查詢的分數。
+- **類別。** 所選的遮罩通道（上表中的索引），概念查詢則為 0。
+- **遮罩。** `uint8`；重新取樣到原始影像大小的 logit 大於 0 的位置為 255，其餘為 0。
+- **數量。** 提示解碼器一律為 1：空遮罩的邊界框全為 0，但保留其分數與類別。與上游相同，EdgeTAM 的物件分數為 0 或以下時，遮罩為空。概念模型依分數由高到低（同分時依查詢索引）傳回保留的查詢。
+
+`EdgeTamSeg` 與其他所有 Segment Anything 類型只傳回 BoxDecode 張量。使用 `EdgeTamTrack` 時，解碼器本身的輸出會接在其後；請參閱[EdgeTAM 追蹤](#edgetam-tracking)。
+
+`SimaRender` 不會繪製這些遮罩：它只繪製無標頭的分割酬載，其遮罩小於影格。請根據 `decode_segmentation` 的結果繪製 Segment Anything 遮罩。
+
+### 規則 {#segment-anything-rules}
+
+- **解碼器輸出。** 提示解碼器會匯出遮罩 logit（遮罩數量與指定模型相同：1、3 或 4）、每個遮罩一個預測 IoU，EdgeTAM 另有物件分數；接受 INT8、BF16 與 FP32 輸出。概念影像模型會匯出偵測 `[Q, 6]` 與每個查詢的遮罩 logit。
+- **選項。** 提示解碼器：`top_k` 請保持為 0 或 1，`nms_iou_threshold` 保持為 0；`score_threshold` 必須小於 1，除此之外會被忽略；`num_classes` 為遮罩數量或 0。概念影像模型：將 `top_k` 設為 1..Q。
+- **影像幾何。** 畫布、原始影像大小與調整大小方式取自解碼器輸入的 `tensor.semantic.preprocess`，且必須與上表相符；否則建構會失敗並指出要修改的設定。請以 `.cvu()` 將編碼器的輸出傳給解碼器，並以 `build(inputs)` 或 `execution_plan(inputs)` 從輸入建構提示解碼器。在概念影像模型的張量路線上，請將這些資訊附加到其像素張量上。
+- **整張影像，只調整一次大小。** 調整大小前的裁切或 ROI 會被拒絕，解碼器無法重現的縮放尺寸也會被拒絕。MobileSAM 請在前處理影像的 Model 上以 `resize.placement=TopLeft` 進行信箱式調整（其四捨五入方式與 Segment Anything 相同），而不要使用獨立的 `Preproc` 節點。自行附加的資訊必須包含仿射變換：`affine_m00` = 原始寬度 / 縮放後寬度，`affine_m11` = 原始高度 / 縮放後高度。
+- **每個 runner 一種影像大小。** 遮罩具有原始影像的大小，因此建構好的 runner 只服務一種大小。`Model::run` 會為新的大小建構另一個 runner；串流圖會拒絕其他大小的影格。
+
+### 編碼器與解碼器 {#segment-anything-example}
+
+以下以 MobileSAM 為例；其他模型請使用上表中該模型的編碼器設定與解碼類型。
+
+```python
+encoder_options = pyneat.ModelOptions()
+encoder_options.preprocess.resize.mode = pyneat.ResizeMode.Letterbox
+encoder_options.preprocess.resize.placement = pyneat.LetterboxPlacement.TopLeft
+encoder_options.preprocess.resize.pad_value = 116
+encoder_options.preprocess.preset = pyneat.NormalizePreset.ImageNet
+encoder = pyneat.Model("/path/to/mobile_sam_image_encoder_mpk.tar.gz", encoder_options)
+
+options = pyneat.ModelOptions()
+options.decode_type = pyneat.BoxDecodeType.MobileSam
+options.multimask_output = False  # a box prompt; keep True for one click
+decoder = pyneat.Model("/path/to/mobile_sam_prompt_decoder_mpk.tar.gz", options)
+
+embeddings = encoder.run([image])[0]
+# .cvu() keeps the encoder's preprocess metadata on the embeddings.
+outputs = decoder.run([embeddings.cvu(), point_encoding, point_types])
+result = pyneat.decode_segmentation(outputs)[0]
+box = result.boxes.to_numpy()[0]  # x1, y1, x2, y2, IoU, mask index
+mask = result.masks.to_numpy()[0]  # uint8 [H, W], 0 or 255
+```
+
+### EdgeTAM 追蹤 {#edgetam-tracking}
+
+EdgeTAM 的記憶體編碼器與記憶體庫需要所選遮罩的低解析度 logit 及其物件指標，而 BoxDecode 不會解碼它們。`EdgeTamTrack` 會傳回 BoxDecode 張量，接著傳回同一次執行的解碼器輸出，與同一個 Model 在沒有 BoxDecode 時傳回的完全相同：`mask_logits` `[1, 256, 256, 4]`、`iou_scores` `[1, 4]`、`object_score_logits` `[1, 1]` 與 `object_pointers` `[1, 4, 256]`，皆為 float32。每個輸出在每個影格需要一次轉換。只解碼第一個張量；原始張量不帶偵測標籤。若模型在沒有 BoxDecode 時的路線無法傳回這些張量，則會拒絕 `EdgeTamTrack`。
+
+- 偵測的類別即所選平面：記憶體編碼器使用 `mask_logits[0, :, :, class]`，並依模型 README 的說明放大到 1024×1024。
+- 兩個以上的點組成的提示請設定 `multimask_output=False`；單次點擊與追蹤中的影格請保持 `True`。無論哪個規則，類別都會指出其選擇的平面。
+- 記憶體庫在 `multimask_output=True` 時使用 `object_pointers[0, class]`；為 `False` 時使用 `object_pointers[0, 0]`。即使穩定性備援從平面 1–3 選出遮罩，SAM 2 仍保留單一遮罩的指標。
+- 物件分數為 0 或以下時，遮罩與其邊界框為空，但類別仍指出所選平面。請對傳給記憶體編碼器的 logit 套用 README 的物件分數規則。
+
+```python
+options = pyneat.ModelOptions()
+options.decode_type = pyneat.BoxDecodeType.EdgeTamTrack
+decoder = pyneat.Model("/path/to/edgetam_mask_decoder_mpk.tar.gz", options)
+
+outputs = decoder.run(decoder_inputs)
+result = pyneat.decode_segmentation(outputs[:1])[0]
+plane = int(result.boxes.to_numpy()[0, 5])
+logits = outputs[1].to_numpy()[0, :, :, plane]  # [256, 256] low-resolution logits
+pointer = outputs[4].to_numpy()[0, plane if options.multimask_output else 0]  # [256]
+```
+
+### EfficientSAM3 概念 {#efficientsam3-concept}
+
+```python
+options = pyneat.ModelOptions()
+options.decode_type = pyneat.BoxDecodeType.EfficientSam3
+options.top_k = 20
+options.score_threshold = 0.5
+options.preprocess.kind = pyneat.InputKind.Tensor  # two inputs: pixels and packed text
+model = pyneat.Model("/path/to/efficientsam3_image_model_mpk.tar.gz", options)
+
+# Stretch to 1008x1008 and scale to [-1, 1], as SAM 3 does, and record that geometry.
+stretched = cv2.resize(rgb, (1008, 1008), interpolation=cv2.INTER_LINEAR)
+pixels = pyneat.Tensor.from_numpy(stretched.astype(np.float32) / 127.5 - 1, copy=True,
+                                  layout=pyneat.TensorLayout.HWC)
+facts = pyneat.PreprocessRuntimeMeta()
+facts.resize_mode = "stretch"
+facts.original_width, facts.original_height = rgb.shape[1], rgb.shape[0]
+facts.resized_width = facts.resized_height = 1008
+facts.affine_m00 = facts.original_width / 1008  # model-to-original scale
+facts.affine_m11 = facts.original_height / 1008
+semantic = pixels.semantic
+semantic.preprocess = facts
+pixels.semantic = semantic
+
+outputs = model.run([pixels, packed_text])
+result = pyneat.decode_segmentation(outputs)[0]
+boxes = result.boxes.to_numpy()  # [N, 6]: x1, y1, x2, y2, score, 0
+masks = result.masks.to_numpy()  # uint8 [N, H, W]
+```
+
+## YOLOv8 與 YOLO11 旋轉邊界框 {#yolov8-oriented-boxes}
+
+選取 `BoxDecodeType::YoloV8Obb`（Python：`pyneat.BoxDecodeType.YoloV8Obb`；代碼 `yolov8-obb` 或 `yolo11-obb`）。提供九個依角色分組的 INT8、BF16 或 FP32 頭：三個 64 通道 DFL 邊界框頭、三個類別 logit 頭，以及三個角度 logit 頭，各組依步幅 8、16、32 排列。完整類別數由類別頭推導。
+
+BoxDecode 會套用 DFL、類別 sigmoid、`(sigmoid(angle)-0.25)*pi`，以及使用 `nms_iou_threshold` 的各類別旋轉 Fast-NMS。輸入必須為原始 logit。幾何資訊與 `BBOX_OBB_V1` 輸出遵循下方的 YOLO26 契約，並使用相同的 `decode_obb` 輔助函式。
+
+## YOLO26 旋轉框 {#yolo26-oriented-boxes}
+
+明確選取 `BoxDecodeType::YoloV26Obb`（Python：`pyneat.BoxDecodeType.YoloV26Obb`，代碼 `yolo26-obb`）。此設定檔接收九個 FP32、BF16 或 INT8 頭，依角色分組為三個四通道距離頭、三個類別 logit 頭，以及三個單通道原始角度頭，各組步幅為 8、16、32。所有頭的完整類別數（1–256）必須一致。`Auto`、`GroupedByRole` 與 `GroupedByRoleLogit` 會選用此分組佈局；機率值類別頭與交錯佈局會遭到拒絕。
+
+INT8 頭需要正且有限的逐張量量化中繼資料與 INT8 零點。BF16 和 FP32 頭不使用整數量化中繼資料。
+
+使用正值 `top_k` 與 `nms_iou_threshold = 0`。此設定檔對類別 logit 套用 sigmoid，以最高啟用分數選出錨點，再選出錨點/類別配對。分數相同時保留第一階段排名與類別順序。分數門檻採嚴格不等式（`score > detection_threshold`）。原始角度已是弧度，解碼器不會再套用 sigmoid 或正規化其範圍。
+
+前處理中繼資料必須提供明確且有限的模型座標到原圖座標轉換，X/Y 縮放係數須為正且相等，並且不得包含剪切。即使圖塊與模型尺寸相同，也必須明確提供恆等轉換。若缺少轉換或轉換為非等向性，此設定檔會拒絕，而不會近似旋轉矩形。它保留帶正負號的有限寬度/高度，不會裁切至影像邊界。進行分塊 DOTA 評估時，每個圖塊使用恆等轉換，再由應用程式還原圖塊偏移並執行跨圖塊多邊形抑制。
+
+在來源驅動的圖中，Core 會從已驗證的上游 Preproc 契約推導初始準備用的幾何資訊。這只是準備用的初始值：每個影格仍須提供有限、正值且等比例的仿射轉換，以及與模型相符的畫布尺寸。缺少影格轉換時會回報錯誤，不會退回恆等轉換。
+
+輸出標記為 `BBOX_OBB_V1`：32 位元組版本化標頭後接 `top_k` 筆 32 位元組記錄。未使用的記錄為零。`decode_obb_tensor(tensor)` 驗證單一載體；`decode_obb(tensors)` 為每個載體傳回一個具型別的結果。兩者都會複製到具有自身儲存空間的 CPU 張量；類別 ID 維持 INT32。例如：
+
+```python
+result = pyneat.decode_obb(outputs)[0]
+geometry = result.geometry.to_numpy()  # cx, cy, width, height, angle_radians
+scores = result.scores.to_numpy()
+class_ids = result.class_ids.to_numpy()
+```
+
+此格式刻意不作為前置 BBOX 的擴充。請使用具型別的輔助函式，而非 `decode_bbox`、分割/姿勢解析器或軸對齊方框的繪製器。
 
 ## 超級點
 
@@ -169,6 +389,10 @@ offset  size  content
 
 使用 `decode_segmentation_pose(...)` 取得邊界框、遮罩及關鍵點。各張量的第 `i` 列代表同一次偵測。若只需邊界框，請使用 `decode_bbox(...)` 或 `BoxDecodeResults(...)`。
 
+組合解碼器也接受舊式 `BBOX` 標籤。不支援同時繪製遮罩與姿態。
+不要將組合緩衝區傳給 `poseyolo`：該繪製器預期方框後緊接關鍵點，
+但組合負載在該位置儲存的是遮罩。
+
 每次偵測有 17 個關鍵點槽位。後端會將未使用的槽位及被 `pose_classes` 排除之類別的關鍵點設為零。輔助函式會原樣複製這些值。
 
 由於通道 0 儲存物件性，Core 以類別頭深度減一推算 `num_classes`。例如，30 個通道表示 29 個類別。明確指定的 `num_classes` 必須一致。
@@ -188,6 +412,10 @@ options.yolox_seg_pose.pose_classes = [0, 5]
 - 空的 `BoxDecodeOptions` 清單會繼承模型設定。未設定清單時，每個類別都會產生關鍵點。
 - ID 必須唯一且位於 `[0, num_classes)` 範圍內。此選項僅支援 `YoloXSegPose`。
 
+### 版本化遮罩酬載 {#versioned-masks-payload}
+
+不是 160×160 的遮罩（例如 Segment Anything 的輸出）會使用版本化標頭，而不是開頭的數量。其版面配置為 `pipeline/DetectionTypes.h` 中的 [`SegmentationMasksHeaderV1`](/reference/cppapi/structs/simaai-neat-segmentationmasksheaderv1)：先是標頭，接著是 `RawBox` 記錄，然後每筆記錄一個 `uint8` 遮罩，值為 0 或 255。請使用 `decode_segmentation` 讀取，它會傳回邊界框與遮罩，並拒絕格式錯誤的標頭或範圍。張量仍帶有 `BBOX` 標籤，且 `decode_segmentation` 與 `decode_bbox` 依魔術值辨識此酬載，因此既有的分割酬載不受影響。`SimaRender` 不接受此酬載。
+
 ## 當 `model.run` 傳回原始的標題時
 
 某些模型路徑會從 `model.run(...)` 傳回原始的特徵圖頭，而不是傳回已解碼的 `BBOX` 張量。這並不是表示執行失敗。這表示模型已執行，但該路徑在您讀取輸出時並沒有包含「框解碼」步驟。
@@ -203,7 +431,10 @@ options.yolox_seg_pose.pose_classes = [0, 5]
 
 ## 覆寫合約
 
-模型封存檔可以提供解碼類型、閾值、`top_k` 以及來源幾何體的預設值。只有在您傳遞非空或正值時，執行階段參數才會覆寫這些預設值。
+MPK 提供張量契約與解碼系列資訊。請在 `ModelOptions` 中設定篩選控制項。
+對於 `SimaBoxDecode(Model, ...)` 節點，正值篩選引數會覆寫已解析的 Model 控制項；
+零值引數則繼承它們。`ModelOptions.score_threshold = 0.0` 是真正的零分數門檻，
+不是要求還原封裝內的閾值。
 
 | 執行階段參數 | 傳遞的值 | 行為 |
 | --- | --- | --- |
@@ -211,12 +442,20 @@ options.yolox_seg_pose.pose_classes = [0, 5]
 | `decode_type` | 具體類型 | 覆寫本次運行的解碼規則。|
 | `original_width` / `original_height` | `0` | 保留封裝後的幾何資訊或上游預處理的元資料。|
 | `original_width` / `original_height` | 必須是正整數 | 用於覆寫原始尺寸，以便進行座標映射。|
-| `detection_threshold` / `score_threshold` | `0.0` | 保留封裝後的閾值。|
-| `detection_threshold` / `score_threshold` | `> 0.0` | 覆蓋分數門檻。|
-| `nms_iou_threshold` | `0.0` | 保留封裝後的 NMS IoU。|
-| `nms_iou_threshold` | `> 0.0` | 覆寫非最大值抑制（NMS）的交集比率（IoU）。|
-| `top_k` | `0` | 保留已封裝的 Top-K 結果。|
-| `top_k` | `> 0` | 覆寫保留的最大檢測數量。|
+| 綁定模型的節點 `detection_threshold` | `0.0` | 繼承已解析的 Model 分數門檻。 |
+| 綁定模型的節點 `detection_threshold` | `> 0.0` | 覆寫分數門檻。 |
+| 綁定模型的節點 `nms_iou_threshold` | `0.0` | 繼承已解析的 Model NMS IoU。 |
+| 綁定模型的節點 `nms_iou_threshold` | `> 0.0` | 覆寫 NMS IoU。 |
+| 綁定模型的節點 `top_k` | `0` | 繼承已解析的 Model 輸出上限。 |
+| 綁定模型的節點 `top_k` | `> 0` | 覆寫保留的最大偵測數量。 |
+
+邊界框解碼需要解析出正值 `top_k`；零不代表要求無界的輸出儲存空間。
+對於未綁定 `Model` 的原始輸出頭，請在建置圖前設定 `top_k`。
+綁定模型的節點可將自身 `top_k` 保持為零，以繼承正值 Model 上限。
+這些控制項不會改變獨立的結果讀取輔助函式：它們的 `top_k=0` 表示對已受限制的
+輸出不再加設上限。零分數門檻允許零分數，但不會略過幾何驗證、背景排除、NMS 或輸出上限。
+NMS IoU 為零時，YOLO26 略過 NMS。其他啟用 NMS 的 YOLO 與 SSD 設定組合仍會
+套用量化 IoU 抑制。正值 YOLO26 閾值會啟用 NMS。
 
 `num_classes` 會比較呼叫端設定的值與從 MPK 張量契約推導出的類別數量：
 
@@ -234,7 +473,7 @@ options.yolox_seg_pose.pose_classes = [0, 5]
 
 | API 列舉 | 後端權杖 | 典型的模型系列 |
 | --- | --- | --- |
-| `BoxDecodeType::Yolo` | `yolo` | 通用 YOLO 樣式的檢測頭 |
+| `BoxDecodeType::Yolo` | `yolo` | 以模型像素為單位的已解碼 `cx,cy,w,h` |
 | `BoxDecodeType::YoloV5` | `yolov5` | YOLOv5 偵測 |
 | `BoxDecodeType::YoloV5Seg` | `yolov5-seg` | YOLOv5 分割 |
 | `BoxDecodeType::YoloV7` | `yolov7` | YOLOv7 偵測 |
@@ -249,22 +488,27 @@ options.yolox_seg_pose.pose_classes = [0, 5]
 | `BoxDecodeType::YoloV26` | `yolo26` | YOLO26 偵測 |
 | `BoxDecodeType::YoloV26Pose` | `yolo26-pose` | YOLO26 姿勢 |
 | `BoxDecodeType::YoloV26Seg` | `yolo26-seg` | YOLO26 分割 |
+| `BoxDecodeType::YoloV26Obb` | `yolo26-obb` | YOLO26 旋轉物件偵測 (`BBOX_OBB_V1`) |
 | `BoxDecodeType::YoloV6` | `yolov6` | YOLOv6 偵測 |
 | `BoxDecodeType::YoloX` | `yolox` | YOLOX 偵測 |
 | `BoxDecodeType::YoloXSegPose` | `yolox-seg-pose` | 同時包含邊界框、遮罩及關鍵點頭的 YOLOX 封裝匯出 |
 | `BoxDecodeType::Ssd` | `ssd` | 精確選擇已準備好的 SSD300、SSD-Mobile-300、SSD-Mobile-320 或 SSDlite-Mobile-320 合約，並從已排序的磁碟頭幾何結構中選取。 |
 | `BoxDecodeType::SuperPoint` | `superpoint` | SuperPoint 檢測器和描述符後處理 |
 | `BoxDecodeType::Detr` | `detr` | DETR 樣式的變壓器檢測 |
+| `BoxDecodeType::MobileSam` | `mobilesam` | MobileSAM 提示解碼器（左上角放置的信箱式調整） |
+| `BoxDecodeType::EdgeTamSeg` | `edgetam-seg` | EdgeTAM 遮罩解碼器，含物件分數（拉伸） |
+| `BoxDecodeType::EdgeTamTrack` | `edgetam-track` | `EdgeTamSeg`，之後接著供追蹤使用的解碼器原始輸出 |
+| `BoxDecodeType::EfficientSam` | `efficientsam` | EfficientSAM 提示解碼器，三個多遮罩權杖（拉伸） |
+| `BoxDecodeType::EfficientSam3` | `efficientsam3` | EfficientSAM3 提示解碼器，或每個保留的查詢一個遮罩的概念影像模型（拉伸） |
 | `BoxDecodeType::EffDet` | `effdet` | EfficientDet 偵測 |
-| `BoxDecodeType::RcnnStage1` | `rcnn-stage1` R-CNN 提案階段 | |
+| `BoxDecodeType::RcnnStage1` | `rcnn-stage1` | 五個有序 RPN 輸出頭；全域 NMS 後按面積層級套用 top-K |
 | `BoxDecodeType::Centernet` | `centernet` | CenterNet 偵測 |
 
 `BoxDecodeType::Unspecified` 是一個未設定的標記，會在執行階段之前就發生錯誤。SSD 處方識別碼是一個內部核心合約（`ssd300-v1`、`ssd-mobile-300-v1`、`ssd-mobile-320-v1` 或 `ssdlite-mobile-320-v1`），而不是另一個公開的解碼類型或後端標記。核心會在降低之前解析它，而已安裝的物件解碼器會繼續接收其支援的 `ssd` 系列標記，並從已經驗證的磁碟頭幾何形狀中選擇對應的固定實作。
 
 ## 選擇合適的類型
 
-- 如果您使用的是 SiMa 提供的或 SiMa 編譯的模型套件，請選擇與模型系列相符的 `BoxDecodeType`，並將 `decode_type_option` 保持為 `Auto`。
-- 如果您的偵測結果遺漏，或者所有分數都異常偏低，請先確認解碼模型是否與匯出的模型頭相符。YOLOX、YOLOv6 和 YOLO26 使用原始/邏輯樣式的模型頭，不應像僅使用機率值的 YOLO 模型頭一樣進行處理。
+- 請依匯出的模型頭契約選擇：`YoloV6` 接受原始 l/t/r/b 距離與類別 logits。對於在圖內解碼邊界框的 YOLOv6 模型封存檔，請使用 `Yolo`；若輸出依 `[bbox_0..2, class_prob_0..2]` 分組，請設定 `decode_type_option=GroupedByRoleProbability`，並將 `num_classes` 設為訓練時的類別數。
 - 如果方塊的位置或大小比例顯示不正確，請檢查影像調整大小的策略。僅在您的圖表沒有上游 `Preproc` 階段來寫入調整大小的中繼資料時，才使用 `resize_mode_override`。
 - 如果您正在製作自訂的模型套件，請務必確保封存檔準確地描述了檢測頭：張量順序、邏輯形狀、實際儲存方式、dtype/量化、分數範圍、類別數量，以及任何切片輸出。應用程式程式碼不應需要針對這些細節進行調整。
 
@@ -306,8 +550,7 @@ options.yolox_seg_pose.pose_classes = [0, 5]
 **`num_classes` 協議。**編碼的類別數量始終從置信度頭的深度（`conf_depth / priors-per-cell`，包括索引 0 處的背景）推導得出。SSD300-v1 允許使用連續的前綴選擇，例如準備好的 81 到 8 的路徑；其他三個設定檔需要準確的編碼計數。如果選擇無效，則會在建置時被拒絕。如果要使用設定檔的預設值，請將其設置為未設定。
 - `Detr` 會根據最大頭部深度推斷出類別通道，並且需要一個有效的。
   類別：維度。
-- `EffDet`、`RcnnStage1` 和 `Centernet` 都使用它們的模型系列合約；請執行。
-  不要將它們路由到 YOLO 解碼類型。
+- `EffDet` 與 `Centernet` 使用各自模型系列的契約；不要將它們路由至 YOLO 解碼類型。
 - `*-seg` 解碼類型會產生帶有框線的輸出，以及特定任務的遮罩資料。
 
 如果自訂模型套件與任何完整的排序簽章都不相符，請準備一個新的、明確支援的設定檔，而不是降低比對器的準確度。
@@ -339,4 +582,26 @@ masks = seg.masks.to_numpy()
 
 ## 升級
 
-新選項會改變 C++ 物件佈局。Core 使用 ABI 6、`libsima_neat.so.6`。請使用相符的標頭與函式庫，重新建置 C++ 應用程式、外掛程式及 Python 繫結。請勿透過相容性符號連結將 ABI 5 二進位檔連接至 ABI 6。
+先前的 BoxDecode 選項引入了 ABI 6。目前的來源運算選項需要 ABI 7 (`libsima_neat.so.7`)。請以相符的標頭與函式庫重新建置 C++ 應用程式、外掛程式及 Python 繫結；不要透過相容性符號連結載入 ABI 5 或 6 二進位檔。
+
+
+### 組合 YOLOX 輸入准入
+
+`YoloXSegPose` 接受 BF16 與 INT8 輸出頭，或儲存在連續或正值、不重疊步幅空間中的
+原生 FP32 輸出頭（包括平面式 CHW 檢視）。FP32 位址與步幅必須四位元組對齊；
+不接受通道分塊 FP32 與 UINT8。不會加入隱含、有損的 FP32 轉換。
+原型具有自己的 dtype 與逐張量 INT8 量化；每個偵測輸出頭的角色仍須採用一致 dtype。
+Core 保留這些逐埠資訊供 Kernels 准入使用，而不會將第一個輸出頭的 dtype 或量化
+套用到所有埠。三個偵測層級在兩軸的步幅分別為 8、16 與 32。
+模型寬度與高度必須是 32 的倍數，但不必相等。原型維持 160×160×32，
+不會隨模型尺寸暗中調整大小。
+
+偏心填補或裁切座標請使用前處理中繼資料。仿射轉換將**模型映射到原始**座標；
+此組合設定不支援剪切、旋轉與 ROI 清單。裁切在準備階段需要權威性的仿射中繼資料。
+這是針對外部已前處理張量的解碼器契約，不是替 `Model` 前處理新增裁切產生功能。
+少於 17 個關鍵點的模型仍發布固定的 17 槽位公開線路格式，未使用槽位設為零。
+
+
+## 裁切座標映射 {#crop-coordinate-mapping}
+
+模型管理的 Crop 會將實際影像反向轉換提供給支援的偵測設定檔，包括傳統 DETR、DetrFocal 及一般 YOLO 偵測。選取與 NMS 保持在模型座標中，再將接受的框映射並裁切至原始影像範圍。缺少或衝突的轉換中繼資料會明確失敗。這不會啟用遮罩、姿態、RCNN 提案或 SSD multiclass 的新裁切組合。既有旋轉框設定檔仍要求兩軸縮放比例相同；整數縮放尺寸可能導致比例不同。

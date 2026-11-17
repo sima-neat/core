@@ -14,12 +14,19 @@ RUN_TEST("unit_route_plan_detess_adapter_test", ([] {
              compiled->runtime_contract.plugin_kind = "processcvu";
              options.compiled_contract = compiled;
              const Detess node(options);
-             require(node.contract_definition().plugin_kind == "processcvu" &&
-                         node.backend_fragment(0).find("neatprocesscvu name=") == 0U,
-                     "model-managed Detess preserves its physical CVU renderer");
+             require(
+                 node.contract_definition().plugin_kind == "processcvu" &&
+                     node.backend_fragment(0) == "neatkernelrunner name=n0_detess",
+                 "model-managed Detess preserves its semantic contract with canonical renderer");
              const Detess standalone;
-             require(standalone.contract_definition().plugin_kind == "neatdetess",
-                     "standalone Detess retains its existing renderer");
+             require(standalone.contract_definition().plugin_kind == "neatdetess" &&
+                         standalone.backend_fragment(7) == "neatkernelrunner name=n7_detess",
+                     "standalone Detess keeps its semantic label and canonical renderer");
+             options.element_name = "explicit_detess";
+             const Detess named(options);
+             require(named.backend_fragment(9) == "neatkernelrunner name=explicit_detess" &&
+                         named.element_names(9) == std::vector<std::string>{"explicit_detess"},
+                     "explicit Detess names remain stable with canonical rendering");
            }
 
            {

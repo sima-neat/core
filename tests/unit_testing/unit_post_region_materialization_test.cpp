@@ -190,10 +190,8 @@ RUN_TEST(
                 "packed post regression should preserve every named output view for " +
                     model_path.filename().string());
         const auto& runtime = compiled.stages.front().processcvu->runtime_contract;
-        require(runtime.logical_outputs.size() ==
-                        static_cast<std::size_t>(expected_num_in_tensor) &&
-                    runtime.frame_arena_role == pipeline_internal::sima::FrameArenaRole::ReuseInput,
-                "packed post regression must retain all outputs in the imported frame arena for " +
+        require(runtime.logical_outputs.size() == static_cast<std::size_t>(expected_num_in_tensor),
+                "packed post regression must retain all semantic outputs for " +
                     model_path.filename().string());
         require(payload.num_in_tensor == expected_num_in_tensor,
                 "packed post regression should preserve semantic tensor count for " +
@@ -263,9 +261,6 @@ RUN_TEST(
         require(upstream.logical_outputs.size() == 6U && runtime.logical_inputs.size() == 6U &&
                     runtime.physical_inputs.size() == 6U && runtime.input_bindings.size() == 6U,
                 label + " must retain six exact MLA-to-CVU views for " + model_name);
-        require(runtime.frame_arena_role == pipeline_internal::sima::FrameArenaRole::ReuseInput &&
-                    runtime.frame_arena_size_bytes == upstream.frame_arena_size_bytes,
-                label + " must import the existing MLA frame arena for " + model_name);
 
         std::vector<std::int64_t> view_offsets;
         for (std::size_t i = 0; i < 6U; ++i) {
@@ -286,8 +281,11 @@ RUN_TEST(
                   label + " must preserve the exact upstream logical tensor for " + model_name);
           require(logical.physical_index == static_cast<int>(i) && logical.byte_offset == 0 &&
                       physical.physical_index == static_cast<int>(i) &&
-                      physical.source_byte_offset == expected_offset,
-                  label + " must preserve the independently composed MLA arena view offset for " +
+                      physical.source_byte_offset == expected_offset &&
+                      physical.model_carrier_id == carrier.model_carrier_id,
+                  label +
+                      " must preserve the independently composed MLA carrier-relative view offset "
+                      "for " +
                       model_name);
           require(!physical.segment_name.empty() && logical.segment_name == physical.segment_name &&
                       binding.source_segment_name == physical.segment_name,
@@ -298,7 +296,7 @@ RUN_TEST(
                   binding.src_logical_output_index == static_cast<int>(i) &&
                   binding.src_output_slot == static_cast<int>(i) && binding.sink_pad_index == 0 &&
                   physical.address_source ==
-                      pipeline_internal::sima::PhysicalAddressSource::FrameArenaSpan &&
+                      pipeline_internal::sima::PhysicalAddressSource::FrameSpan &&
                   physical.source_physical_index == 0 && binding.src_physical_output_index == 0 &&
                   binding.src_physical_byte_offset == 0 &&
                   binding.src_physical_size_bytes == physical.size_bytes,

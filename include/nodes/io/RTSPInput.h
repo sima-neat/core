@@ -28,7 +28,7 @@ namespace simaai::neat {
 class RTSPInput final : public Node {
 public:
   /// Construct with an RTSP URL plus optional jitter-buffer / transport tuning.
-  RTSPInput(std::string url, int latency_ms = 200, bool tcp = true, bool drop_on_latency = false,
+  RTSPInput(std::string url, int latency_ms = 200, bool tcp = true, bool drop_on_latency = true,
             std::string buffer_mode = "");
 
   /// Type label for this Node kind.
@@ -42,6 +42,10 @@ public:
   /// Role this Node plays as a stream source.
   InputRole input_role() const override {
     return InputRole::Source;
+  }
+  /// Live: frames arrive in real time.
+  bool is_live_source() const override {
+    return true;
   }
   /// Whether the Node negotiates static or dynamic caps.
   NodeCapsBehavior caps_behavior() const override {
@@ -78,7 +82,7 @@ private:
   std::string url_;
   int latency_ms_ = 200;
   bool tcp_ = true;
-  bool drop_on_latency_ = false;
+  bool drop_on_latency_ = true;
   std::string buffer_mode_;
 };
 
@@ -87,6 +91,6 @@ private:
 namespace simaai::neat::nodes {
 /// Convenience factory for an `RTSPInput` Node.
 std::shared_ptr<simaai::neat::Node> RTSPInput(std::string url, int latency_ms = 200,
-                                              bool tcp = true, bool drop_on_latency = false,
+                                              bool tcp = true, bool drop_on_latency = true,
                                               std::string buffer_mode = "");
 } // namespace simaai::neat::nodes

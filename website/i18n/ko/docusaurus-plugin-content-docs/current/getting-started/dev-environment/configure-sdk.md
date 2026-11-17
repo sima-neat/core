@@ -1,13 +1,13 @@
 ---
 title: "SDK 구성"
-description: "설치 후에는 Neat SDK 작업 공간, DevKit 페어링 또는 설정 옵션을 변경하십시오."
+description: "설치 후에는 Palette SDK 작업 공간, DevKit 페어링 또는 설정 옵션을 변경하십시오."
 sidebar_position: 4
 ---
 
 :::tip SDK 설정을 변경할 때만 여기서부터 시작하세요.
 SDK 설치 명령어는 이미 SDK 이미지를 다운로드하고 설정을 완료합니다. 작업 공간 위치, DevKit 페어링, SDK 확장 또는 기타 설정 옵션과 같이 SDK 설정을 변경해야 하는 경우 이 페이지를 사용하세요.
 
-기존의 Neat SDK 컨테이너를 구성해야 할 때 `sima-cli sdk setup`을 직접 실행합니다.
+기존의 Palette SDK 컨테이너를 구성해야 할 때 `sima-cli sdk setup`을 직접 실행합니다.
 
 ## DevKit 페어링을 사용하여 구성
 

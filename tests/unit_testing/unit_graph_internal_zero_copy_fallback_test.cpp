@@ -7,30 +7,40 @@
 #include "pipeline/graph/internal/GraphBuildInternal.h"
 #include "pipeline/runtime/RunInternal.h"
 #include "graph/internal/GraphRunState.h"
+#include "graph/nodes/JoinBundle.h"
 #include "dmabuf_test_utils.h"
+#include "owned_output_test_utils.h"
 #include "pipeline/internal/RealtimeFrameCredit.h"
 #include "pipeline/internal/SampleUtil.h"
 #include "pipeline/internal/TensorUtil.h"
 #include "pipeline/Graph.h"
+#include "pipeline/TensorAdapters.h"
 #include "pipeline/runtime/ExecutionGraphPlan.h"
 #include "pipeline/runtime/EdgeRouter.h"
 #include "pipeline/runtime/RunCore.h"
 #include "test_main.h"
 #include "test_utils.h"
 #include "nodes/common/Output.h"
+#include "nodes/common/Queue.h"
+#include "nodes/common/Caps.h"
 #include "graphs/Fragments.h"
 #include "nodes/io/CameraInput.h"
 #include "nodes/io/HttpSource.h"
 #include "nodes/io/Input.h"
 
 #include <gst/gst.h>
+#include <simaai/scheduler/client/frame_layout.h>
 
+#include <algorithm>
 #include <chrono>
 #include <condition_variable>
 #include <cstdlib>
+#include <cstring>
+#include <iostream>
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -105,6 +115,16 @@ private:
   std::optional<std::string> prior_;
 };
 
+void set_retention_layout(simaai::neat::pipeline_internal::sima::StageStaticSpec& stage,
+                          simaai::scheduler::client::FrameOwnership ownership,
+                          simaai::scheduler::client::AllocationPolicy policy =
+                              simaai::scheduler::client::AllocationPolicy::RequireCma) {
+  auto layout = std::make_shared<simaai::scheduler::client::FrameLayout>();
+  layout->ownership = ownership;
+  layout->allocations.push_back({4096U, 0U, policy});
+  stage.frame_layout = std::move(layout);
+}
+
 // Six logical edges are six regions of one retained native frame, not six
 // independently budgeted output carriers. Names deliberately do not identify
 // the allocation role; the container node name is not needed by this policy.
@@ -113,20 +133,18 @@ simaai::neat::BuildResult make_retention_build() {
   namespace sima = pipeline_internal::sima;
   BuildResult build;
   build.appsink_name = "mysink";
-  build.pipeline_string = "appsrc name=input ! neatprocesscvu name=actual_preproc num-buffers=1 ! "
+  build.pipeline_string = "appsrc name=input ! neatkernelrunner name=actual_preproc ! "
                           "neatprocessmla name=actual_mla num-buffers=1 multi-pipeline=false ! "
-                          "neatprocesscvu name=actual_detess num-buffers=1 ! "
+                          "neatkernelrunner name=actual_detess ! "
                           "identity name=adapter ! queue max-size-buffers=1 ! appsink name=mysink";
-  build.rendered_manifest.emplace();
+  build.prepared_manifest.emplace();
   for (int i = 0; i < 3; ++i) {
     sima::StageStaticSpec stage;
     stage.element_name = i == 0 ? "actual_preproc" : i == 1 ? "actual_mla" : "actual_detess";
     stage.logical_stage_id = "logical_" + std::to_string(i);
     stage.plugin_kind = i == 1 ? "neatprocessmla" : "neatprocesscvu";
-    stage.frame_arena_size_bytes = 4096U;
-    stage.frame_arena_role =
-        i == 0 ? sima::FrameArenaRole::Allocate : sima::FrameArenaRole::ReuseInput;
-    stage.frame_arena_provenance = sima::static_contract::ArenaAllocationProvenance::CoreAllocated;
+    set_retention_layout(stage, i == 0 ? simaai::scheduler::client::FrameOwnership::Allocate
+                                       : simaai::scheduler::client::FrameOwnership::ReuseInput);
     for (int head = 0; head < 6; ++head) {
       sima::PhysicalBufferStaticSpec physical;
       physical.physical_index = head;
@@ -144,6 +162,7 @@ simaai::neat::BuildResult make_retention_build() {
         input.physical_index = head;
         stage.logical_inputs.push_back(input);
         sima::InputBindingStaticSpec binding;
+        binding.sink_pad_index = 0;
         binding.local_logical_input_index = head;
         binding.src_stage_index = i - 1;
         binding.src_stage_id = "logical_" + std::to_string(i - 1);
@@ -152,7 +171,7 @@ simaai::neat::BuildResult make_retention_build() {
         stage.input_bindings.push_back(binding);
       }
     }
-    build.rendered_manifest->stages.push_back(std::move(stage));
+    build.prepared_manifest->stages.push_back(std::move(stage));
   }
   return build;
 }
@@ -162,7 +181,7 @@ simaai::neat::BuildResult make_retention_build() {
 // regions. Local source physical ordinals are not global producer identities.
 simaai::neat::BuildResult make_value_bound_retention_build() {
   auto build = make_retention_build();
-  auto& stages = build.rendered_manifest->stages;
+  auto& stages = build.prepared_manifest->stages;
   auto& preproc = stages[0];
   preproc.logical_outputs.resize(1U);
   preproc.physical_outputs.resize(1U);
@@ -202,11 +221,19 @@ simaai::neat::BuildResult make_value_bound_retention_build() {
 void require_native_retention_pool_policy() {
   using namespace simaai::neat;
   namespace sima = pipeline_internal::sima;
-  const auto check = [](const std::string& pipeline, const std::string& owner, int depth = 1,
-                        int floor = 2) {
+  namespace client = simaai::scheduler::client;
+  const auto check = [](const BuildResult& build, const std::string& pipeline,
+                        const std::string& owner, int depth = 1, int floor = 2) {
     std::size_t floors = 0U;
+    bool runtime_owner = false;
     for (const auto& element : sima::parse_pipeline_elements(pipeline)) {
-      if (element.plugin == "neatprocesscvu" || element.plugin == "neatprocessmla") {
+      if (element.plugin == "neatkernelrunner") {
+        require(element.fragment.find("num-buffers=") == std::string::npos &&
+                    element.fragment.find("output-pool-min-buffers=") == std::string::npos,
+                "Runtime pool budgets must not become unsupported element properties");
+        runtime_owner = runtime_owner || element.element_name == owner;
+      }
+      if (element.plugin == "neatprocessmla") {
         require(element.fragment.find("num-buffers=" + std::to_string(depth)) != std::string::npos,
                 "retention storage must not change execution depth or trigger sync prefill");
       }
@@ -218,11 +245,16 @@ void require_native_retention_pool_policy() {
                 "only the exact typed Allocate owner should receive a pool-only floor");
       }
     }
-    require(floors == (owner.empty() ? 0U : 1U), "one cached carrier must be budgeted only once");
+    require(floors == (owner.empty() || runtime_owner ? 0U : 1U),
+            "one cached carrier must be budgeted only once");
+    if (runtime_owner) {
+      require(build.kernel_runner_output_pool_capacity == static_cast<std::size_t>(floor),
+              "exact Runtime Allocate owner must retain its typed pool floor");
+    }
     require(pipeline.find("max-size-buffers=1") != std::string::npos,
             "retention policy must preserve the serial queue limit");
   };
-  const auto reject = [](const BuildResult& build, const std::string& reason) {
+  const auto reject = [](BuildResult& build, const std::string& reason) {
     bool failed = false;
     try {
       (void)session_build_clamp_sync_build_result(build, 1);
@@ -233,9 +265,9 @@ void require_native_retention_pool_policy() {
   };
 
   auto value_bound = make_value_bound_retention_build();
-  check(session_build_clamp_sync_build_result(value_bound, -1), "actual_preproc");
+  check(value_bound, session_build_clamp_sync_build_result(value_bound, -1), "actual_preproc");
   auto mixed = make_value_bound_retention_build();
-  auto& mixed_stage = mixed.rendered_manifest->stages.back();
+  auto& mixed_stage = mixed.prepared_manifest->stages.back();
   auto external_physical = mixed_stage.physical_inputs.front();
   external_physical.physical_index = 6;
   external_physical.address_source = sima::PhysicalAddressSource::RuntimePhysicalBinding;
@@ -250,14 +282,14 @@ void require_native_retention_pool_policy() {
   external_binding.cm_input_name = "external_tensor";
   external_binding.source_segment_name = "external_tensor";
   mixed_stage.input_bindings.push_back(external_binding);
-  check(session_build_clamp_sync_build_result(mixed, -1), "actual_preproc");
+  check(mixed, session_build_clamp_sync_build_result(mixed, -1), "actual_preproc");
   auto caps_bound = make_value_bound_retention_build();
   caps_bound.pipeline_string.insert(caps_bound.pipeline_string.find("identity name=adapter"),
                                     "video/x-raw(memory:DMABuf),format=(string)BGR ! ");
-  check(session_build_clamp_sync_build_result(caps_bound, -1), "actual_preproc");
+  check(caps_bound, session_build_clamp_sync_build_result(caps_bound, -1), "actual_preproc");
   std::string edge_error;
   const auto edges = sima::edgecontract::resolve_consumer_edge_contracts_exact(
-      *value_bound.rendered_manifest, 2U, &edge_error);
+      *value_bound.prepared_manifest, 2U, &edge_error);
   require(edge_error.empty() && edges.size() == 6U,
           "authored head identities must resolve six selector-free packed-parent edges");
   for (std::size_t head = 0; head < edges.size(); ++head) {
@@ -265,108 +297,113 @@ void require_native_retention_pool_policy() {
         edges[head].producer_stage_index == 1U &&
             edges[head].producer_logical_output->logical_index == static_cast<int>(head) &&
             edges[head].producer_physical_output->physical_index == 0 &&
-            edges[head].binding == &value_bound.rendered_manifest->stages[2].input_bindings[head],
+            edges[head].binding == &value_bound.prepared_manifest->stages[2].input_bindings[head],
         "exact producer resolution must preserve each logical head, backing parent and binding");
   }
-  std::swap(value_bound.rendered_manifest->stages[0], value_bound.rendered_manifest->stages[2]);
-  check(session_build_clamp_sync_build_result(value_bound, -1), "actual_preproc");
+  std::swap(value_bound.prepared_manifest->stages[0], value_bound.prepared_manifest->stages[2]);
+  check(value_bound, session_build_clamp_sync_build_result(value_bound, -1), "actual_preproc");
   value_bound = make_value_bound_retention_build();
-  value_bound.rendered_manifest->stages[0].logical_outputs[0].logical_name =
+  value_bound.prepared_manifest->stages[0].logical_outputs[0].logical_name =
       "MLA_0_ofm_unpack_transform_0";
   reject(value_bound, "ambiguous authored producer value");
   value_bound = make_value_bound_retention_build();
-  value_bound.rendered_manifest->stages[2].input_bindings[0].cm_input_name = "missing_value";
+  value_bound.prepared_manifest->stages[2].input_bindings[0].cm_input_name = "missing_value";
   reject(value_bound, "no producer for authored value");
 
   auto build = make_retention_build();
   const auto clamped = session_build_clamp_sync_build_result(build, 1);
-  check(clamped, "actual_preproc");
+  check(build, clamped, "actual_preproc");
   build.pipeline_string = clamped;
   require(session_build_clamp_sync_build_result(build, 1) == clamped,
           "retention floor and both legacy clamp exclusions must be idempotent");
-  build.pipeline_string.replace(build.pipeline_string.find("output-pool-min-buffers=2"),
-                                std::string("output-pool-min-buffers=2").size(),
-                                "output-pool-min-buffers=7");
-  check(session_build_clamp_sync_build_result(build, 1), "actual_preproc", 1, 7);
+  build.kernel_runner_output_pool_capacity = 7;
+  build.kernel_runner_output_pool_minimum = 7;
+  check(build, session_build_clamp_sync_build_result(build, 1), "actual_preproc", 1, 7);
   build = make_retention_build();
-  check(session_build_clamp_sync_build_result(build, 4), "", 4);
-  build.rendered_manifest->stages[2].input_bindings[0].src_stage_index = 0;
-  build.rendered_manifest->stages[2].input_bindings[0].src_stage_id = "logical_0";
-  check(session_build_clamp_sync_build_result(build, 1), "actual_preproc");
+  check(build, session_build_clamp_sync_build_result(build, 4), "", 4);
+  build.prepared_manifest->stages[2].input_bindings[0].src_stage_index = 0;
+  build.prepared_manifest->stages[2].input_bindings[0].src_stage_id = "logical_0";
+  check(build, session_build_clamp_sync_build_result(build, 1), "actual_preproc");
 
   build = make_retention_build();
   build.name_transform.prefix = "branch_";
   build.appsink_name = "branch_mysink";
   build.pipeline_string =
-      "appsrc name=branch_input ! neatprocesscvu name=branch_actual_preproc num-buffers=1 ! "
+      "appsrc name=branch_input ! neatkernelrunner name=branch_actual_preproc ! "
       "neatprocessmla name=branch_actual_mla num-buffers=1 ! "
-      "neatprocesscvu name=branch_actual_detess num-buffers=1 ! "
+      "neatkernelrunner name=branch_actual_detess ! "
       "identity name=adapter ! queue max-size-buffers=1 ! appsink name=branch_mysink";
-  check(session_build_clamp_sync_build_result(build, 1), "branch_actual_preproc");
+  for (auto& stage : build.prepared_manifest->stages) {
+    stage.element_name = apply_name_transform(build.name_transform, stage.element_name);
+    stage.logical_stage_id = apply_name_transform(build.name_transform, stage.logical_stage_id);
+    for (auto& binding : stage.input_bindings)
+      binding.src_stage_id = apply_name_transform(build.name_transform, binding.src_stage_id);
+  }
+  check(build, session_build_clamp_sync_build_result(build, 1), "branch_actual_preproc");
 
   build = make_retention_build();
-  build.rendered_manifest->stages[1].frame_arena_role = sima::FrameArenaRole::Allocate;
-  check(session_build_clamp_sync_build_result(build, 1), "actual_mla");
-  build.rendered_manifest->stages[2].frame_arena_role = sima::FrameArenaRole::Allocate;
-  check(session_build_clamp_sync_build_result(build, 1), "actual_detess");
-  build.pipeline_string = "appsrc name=input ! neatprocesscvu name=actual_preproc num-buffers=1 ! "
+  set_retention_layout(build.prepared_manifest->stages[1], client::FrameOwnership::Allocate);
+  check(build, session_build_clamp_sync_build_result(build, 1), "actual_mla");
+  set_retention_layout(build.prepared_manifest->stages[2], client::FrameOwnership::Allocate);
+  check(build, session_build_clamp_sync_build_result(build, 1), "actual_detess");
+  build.pipeline_string = "appsrc name=input ! neatkernelrunner name=actual_preproc ! "
                           "neatprocessmla name=actual_mla num-buffers=1 ! "
                           "queue max-size-buffers=1 ! appsink name=mysink";
-  build.rendered_manifest->stages.pop_back();
-  check(session_build_clamp_sync_build_result(build, 1), "actual_mla");
+  build.prepared_manifest->stages.pop_back();
+  check(build, session_build_clamp_sync_build_result(build, 1), "actual_mla");
 
   build = make_retention_build();
-  build.rendered_manifest->stages[0].frame_arena_role = sima::FrameArenaRole::ReuseInput;
-  build.rendered_manifest->stages[0].frame_arena_provenance =
-      sima::static_contract::ArenaAllocationProvenance::ExternalAdopted;
-  check(session_build_clamp_sync_build_result(build, 1), "");
-  build.rendered_manifest->stages[0].input_bindings.push_back(
+  set_retention_layout(build.prepared_manifest->stages[0], client::FrameOwnership::ReuseInput,
+                       client::AllocationPolicy::PreserveImported);
+  check(build, session_build_clamp_sync_build_result(build, 1), "");
+  build.prepared_manifest->stages[0].input_bindings.push_back(
       sima::InputBindingStaticSpec{.cm_input_name = "external_value"});
-  check(session_build_clamp_sync_build_result(build, 1), "");
+  check(build, session_build_clamp_sync_build_result(build, 1), "");
 
   build = make_retention_build();
-  build.pipeline_string =
-      "appsrc name=input ! neatprocessmla name=actual_mla num-buffers=1 ! "
-      "neatprocesscvu name=actual_detess num-buffers=1 ! queue max-size-buffers=1 ! "
-      "appsink name=mysink";
-  build.rendered_manifest->stages.erase(build.rendered_manifest->stages.begin());
-  build.rendered_manifest->stages[0].frame_arena_role = sima::FrameArenaRole::ReuseInput;
-  build.rendered_manifest->stages[0].input_bindings[0].src_stage_index = -1;
-  build.rendered_manifest->stages[0].input_bindings[0].src_stage_id.clear();
-  for (auto& binding : build.rendered_manifest->stages[1].input_bindings) {
+  build.pipeline_string = "appsrc name=input ! neatprocessmla name=actual_mla num-buffers=1 ! "
+                          "neatkernelrunner name=actual_detess ! queue max-size-buffers=1 ! "
+                          "appsink name=mysink";
+  build.prepared_manifest->stages.erase(build.prepared_manifest->stages.begin());
+  set_retention_layout(build.prepared_manifest->stages[0], client::FrameOwnership::ReuseInput);
+  build.prepared_manifest->stages[0].input_bindings[0].src_stage_index = -1;
+  build.prepared_manifest->stages[0].input_bindings[0].src_stage_id.clear();
+  for (auto& binding : build.prepared_manifest->stages[1].input_bindings) {
     binding.src_stage_index = 0;
     binding.src_stage_id = "logical_1";
   }
-  check(session_build_clamp_sync_build_result(build, 1), "");
+  check(build, session_build_clamp_sync_build_result(build, 1), "");
 
   build = make_retention_build();
-  build.rendered_manifest->stages[2].input_bindings[0].src_stage_index = -1;
-  build.rendered_manifest->stages[2].input_bindings[0].src_stage_id.clear();
+  build.prepared_manifest->stages[2].input_bindings[0].src_stage_index = -1;
+  build.prepared_manifest->stages[2].input_bindings[0].src_stage_id.clear();
   reject(build, "omits an explicit producer");
   build = make_retention_build();
-  build.rendered_manifest->stages[2].input_bindings[0].src_stage_id = "logical_0";
+  build.prepared_manifest->stages[2].input_bindings[0].src_stage_id = "logical_0";
   reject(build, "conflicting producer");
   build = make_retention_build();
-  build.rendered_manifest->stages[0].logical_stage_id = "logical_1";
+  build.prepared_manifest->stages[0].logical_stage_id = "logical_1";
   reject(build, "ambiguous producer");
   build = make_retention_build();
-  build.rendered_manifest->stages[0].element_name = "actual_mla";
+  build.prepared_manifest->stages[0].element_name = "actual_mla";
   reject(build, "duplicate typed element");
   build = make_retention_build();
   build.pipeline_string.insert(0, "identity name=actual_preproc ! ");
   reject(build, "not uniquely rendered");
   build = make_retention_build();
-  for (auto& binding : build.rendered_manifest->stages[1].input_bindings) {
+  for (auto& binding : build.prepared_manifest->stages[1].input_bindings) {
     binding.src_stage_index = 2;
     binding.src_stage_id = "logical_2";
   }
   reject(build, "cycle at stage");
   build = make_retention_build();
-  build.rendered_manifest->stages[1].frame_arena_role = sima::FrameArenaRole::Allocate;
-  auto& split_binding = build.rendered_manifest->stages[2].input_bindings[0];
+  set_retention_layout(build.prepared_manifest->stages[1], client::FrameOwnership::Allocate);
+  auto& split_binding = build.prepared_manifest->stages[2].input_bindings[0];
   split_binding.src_stage_index = 0;
   split_binding.src_stage_id = "logical_0";
   reject(build, "different carrier origins");
+  split_binding.sink_pad_index = 1;
+  check(build, session_build_clamp_sync_build_result(build, 1), "actual_mla");
   build = make_retention_build();
   build.pipeline_string += " ! appsink name=second_sink";
   reject(build, "expected exactly");
@@ -389,11 +426,45 @@ void require_native_retention_pool_policy() {
               materialized.find("output-pool-min-buffers=") == std::string::npos,
           "unrelated native topology must not reject a non-native terminal materializer");
   build = make_retention_build();
-  build.rendered_manifest.reset();
-  const auto legacy = session_build_clamp_sync_build_result(build, 1);
-  require(legacy.find("actual_detess num-buffers=2") != std::string::npos &&
-              legacy.find("output-pool-min-buffers=") == std::string::npos,
-          "untyped routes must retain the existing legacy terminal behavior");
+  build.prepared_manifest.reset();
+  const auto untyped = session_build_clamp_sync_build_result(build, 1);
+  for (const auto& element : sima::parse_pipeline_elements(untyped)) {
+    if (element.plugin == "neatkernelrunner") {
+      require(element.fragment.find("num-buffers=") == std::string::npos &&
+                  element.fragment.find("output-pool-min-buffers=") == std::string::npos,
+              "untyped runner must not acquire legacy execution properties");
+    }
+  }
+  require(build.kernel_runner_capacity == 1 && build.kernel_runner_output_pool_capacity == 2,
+          "untyped routes must retain only the baseline synchronous budget");
+}
+
+void require_shared_arena_budget() {
+  using namespace simaai::neat;
+  ScopedEnv output_default("SIMA_OUTPUT_MEMORY_DEFAULT", nullptr);
+  for (const int depth : {1, 4, 8}) {
+    RunOptions options;
+    options.queue_depth = depth;
+    BuildResult build;
+    session_build_initialize_kernel_runner_budget(&build, nullptr);
+    const auto base_pool_capacity = build.kernel_runner_output_pool_capacity;
+    auto stream = session_build_make_stream_options(options, RunMode::Async);
+    session_build_reserve_kernel_runner_outputs(build, stream);
+    require(build.kernel_runner_capacity == 4,
+            "retained arenas must not increase execution concurrency");
+    require(build.kernel_runner_output_pool_capacity == static_cast<std::size_t>(depth + 7),
+            "source and input graphs must reserve the same retained arena window");
+    build.kernel_runner_output_pool_capacity += 2;
+    session_build_reserve_kernel_runner_outputs(build, stream);
+    require(build.kernel_runner_output_pool_capacity == static_cast<std::size_t>(depth + 9),
+            "retention budgeting must preserve a larger explicit pool");
+    build.kernel_runner_output_pool_capacity = base_pool_capacity;
+    options.output_memory = OutputMemory::Owned;
+    stream = session_build_make_stream_options(options, RunMode::Async);
+    session_build_reserve_kernel_runner_outputs(build, stream);
+    require(build.kernel_runner_output_pool_capacity == base_pool_capacity,
+            "owned output must not reserve zero-copy retention slots");
+  }
 }
 
 void require_output_policy_matrix() {
@@ -412,6 +483,15 @@ void require_output_policy_matrix() {
           require(resolved.output_memory == memory,
                   "build resolution must preserve caller output-memory intent");
           auto stream = session_build_make_stream_options(resolved, mode);
+          for (const bool reserved : {false, true}) {
+            auto no_op = resolved;
+            no_op.advanced.prepare_output_cpu_visible = reserved;
+            const auto unchanged = session_build_make_stream_options(no_op, mode);
+            require(unchanged.copy_output == stream.copy_output &&
+                        unchanged.preserve_framework_output == stream.preserve_framework_output &&
+                        unchanged.holder_loan_credits == stream.holder_loan_credits,
+                    "reserved CPU-visibility option must not change output memory policy");
+          }
           const bool auto_owned = override && std::string(override) == "owned";
           const bool auto_zero_copy = override && std::string(override) == "zerocopy";
           const bool preserve_dma = memory == OutputMemory::Auto && !auto_owned;
@@ -419,7 +499,7 @@ void require_output_policy_matrix() {
                                  (memory == OutputMemory::Auto && !auto_owned &&
                                   (auto_zero_copy || (mode != RunMode::Sync &&
                                                       resolved.preset != RunPreset::Reliable)));
-          require(stream.preserve_dmabuf_output == preserve_dma,
+          require(stream.preserve_framework_output == preserve_dma,
                   "Auto must retain DMA unless the caller deliberately selects owned output");
           require(stream.copy_output == !zero_copy,
                   "ordinary CPU and legacy output must keep their preset/mode copy policy");
@@ -441,7 +521,7 @@ void require_output_policy_matrix() {
     start.graph_options = runtime::graph_runtime_options_from_run_options(options);
     auto core = runtime::RunCore::start(runtime::ExecutionGraphPlan{}, std::move(start));
     require(core->pipeline.stream_opt.copy_output &&
-                core->pipeline.stream_opt.preserve_dmabuf_output && core->holder_loan_gate &&
+                core->pipeline.stream_opt.preserve_framework_output && core->holder_loan_gate &&
                 core->holder_loan_gate->enabled(),
             "graph Auto must retain a loan gate even when ordinary output defaults to owned");
     core->stop();
@@ -673,13 +753,463 @@ simaai::neat::Sample make_device_gst_sample_with_external_ref(GstSample** extern
   return out;
 }
 
+void require_child_holder_window_uses_parent_policy() {
+  using namespace simaai::neat;
+  ScopedEnv synchronous_teardown("SIMA_GST_TEARDOWN_DEFER_NO_FLUSH", "0");
+  ScopedEnv no_async_teardown("SIMA_GST_TEARDOWN_ASYNC", "0");
+  for (const bool source : {false, true}) {
+    for (const std::size_t edge_queue : {1U, 3U, 12U}) {
+      Graph graph;
+      if (source) {
+        graph.add(nodes::Custom("videotestsrc num-buffers=1 pattern=black ! "
+                                "video/x-raw,format=RGB,width=32,height=24,framerate=30/1",
+                                InputRole::Source));
+      } else {
+        graph.add(nodes::Input("image"));
+      }
+      graph.add(nodes::Output("output", OutputOptions::EveryFrame(3)));
+      RunOptions options;
+      options.queue_depth = 3;
+      const auto seed =
+          sample_from_tensors({make_color_tensor(32, 24, ImageSpec::PixelFormat::RGB, 0x29)});
+      auto plan = runtime::compile_public_graph(graph, options,
+                                                source ? std::nullopt : std::optional{seed});
+      require(plan.pipeline_segments.size() == 1, "holder policy fixture requires one segment");
+      const std::string segment_label =
+          "graph segment " + std::to_string(plan.pipeline_segments.front().id);
+      // Exercise the actual graph-owned source and seeded child startup paths,
+      // not start_pipeline_segment called with hand-authored child options.
+      plan.linear_compat = false;
+      plan.pipeline_segments.front().boundary.graph_internal_output = true;
+      runtime::RunCoreStartOptions start;
+      start.run_options = options;
+      start.graph_options = runtime::graph_runtime_options_from_run_options(options);
+      start.graph_options.edge_queue = edge_queue;
+      start.mode = RunMode::Async;
+      start.allow_startup_preflight = false;
+      if (!source)
+        start.seed = seed;
+      auto parent = runtime::RunCore::start(std::move(plan), std::move(start));
+      require(parent->graph_execution_ && parent->graph_execution().pipelines.size() == 1,
+              "holder policy fixture bypassed graph startup");
+      const auto child = parent->graph_execution().pipelines.front()->run_core;
+      require(child != nullptr, "graph did not publish its constructed child");
+      const auto& stream = child->pipeline.stream_opt;
+      require(stream.holder_loan_credits_auto && !stream.copy_output,
+              "internal fixture did not select retained transport");
+      const auto expected = static_cast<int>(std::max(std::size_t{5}, edge_queue));
+      require(stream.holder_loan_sample_window == expected &&
+                  stream.holder_loan_credits ==
+                      expected * std::max(1, stream.holder_loan_per_sample_arity),
+              "child used the default edge queue instead of its parent's retention policy");
+      require(child->pipeline.loan_stall_label == segment_label,
+              "loan-stall reports must name the source and seeded segment alike");
+      parent->close();
+      require(child->closed.load(), "parent did not normally close its child");
+    }
+  }
+}
+
+void require_terminal_transport_defers_public_loans() {
+  using namespace simaai::neat;
+  Graph graph;
+  graph.add(nodes::Input("image"));
+  graph.add(nodes::Output("output", OutputOptions::EveryFrame(1)));
+  RunOptions options;
+  options.queue_depth = 1;
+  options.output_memory = OutputMemory::ZeroCopy;
+  const auto seed =
+      sample_from_tensors({make_color_tensor(32, 24, ImageSpec::PixelFormat::RGB, 0x29)});
+  auto plan = runtime::compile_public_graph(graph, options, seed);
+  plan.linear_compat = false;
+  runtime::RunCoreStartOptions start;
+  start.run_options = options;
+  start.graph_options = runtime::graph_runtime_options_from_run_options(options);
+  start.mode = RunMode::Async;
+  start.allow_startup_preflight = false;
+  start.seed = seed;
+  auto parent = runtime::RunCore::start(std::move(plan), std::move(start));
+  const auto child = parent->graph_execution().pipelines.front()->run_core;
+  std::vector<Sample> retained;
+  std::vector<PullStatus> statuses;
+  for (const int id : {1, 2}) {
+    // Inject at the native pipeline's output boundary; the real graph worker
+    // must forward each result while the application retains its predecessor.
+    {
+      std::lock_guard lock(child->pipeline.out_mu);
+      child->pipeline.out_queue.push_back(make_legacy_device_gst_sample(id));
+    }
+    child->pipeline.out_cv.notify_all();
+    Sample output;
+    PullError error;
+    statuses.push_back(parent->pull_named_output("output", 1000, output, &error));
+    retained.push_back(std::move(output));
+  }
+  const int child_loans = child->holder_loan_gate->inflight();
+  const int public_loans = parent->holder_loan_gate->inflight();
+  parent->close();
+  require(std::all_of(statuses.begin(), statuses.end(),
+                      [](PullStatus status) { return status == PullStatus::Ok; }),
+          "terminal forwarding must progress while an earlier public output is retained");
+  require(child_loans == 0 && public_loans == 2,
+          "the actual graph worker must defer terminal loan admission to the public pull");
+}
+
+// Starts an Owned graph whose source segment also feeds a second branch, so the segment
+// forwards zero-copy samples and Owned must copy them at the public pull.
+std::shared_ptr<simaai::neat::runtime::RunCore> start_owned_branching_graph() {
+  using namespace simaai::neat;
+  gst_init(nullptr, nullptr);
+  Graph source("source");
+  source.add(nodes::Input("image"));
+  source.add(nodes::Queue());
+  Graph frames("frames");
+  frames.add(nodes::Output("frames", OutputOptions::EveryFrame(1)));
+  Graph other("other");
+  other.add(nodes::Output("other", OutputOptions::Latest()));
+  Graph graph;
+  graph.connect(source, frames);
+  graph.connect(source, other);
+  RunOptions options;
+  options.queue_depth = 1;
+  options.output_memory = OutputMemory::Owned;
+  const auto seed =
+      sample_from_tensors({make_color_tensor(32, 24, ImageSpec::PixelFormat::RGB, 0x29)});
+  auto plan = runtime::compile_public_graph(graph, options, seed);
+  runtime::RunCoreStartOptions start;
+  start.run_options = options;
+  start.graph_options = runtime::graph_runtime_options_from_run_options(options);
+  start.mode = RunMode::Async;
+  start.allow_startup_preflight = false;
+  start.seed = seed;
+  return runtime::RunCore::start(std::move(plan), std::move(start));
+}
+
+// A zero-copy segment's appsink emits borrowed samples that reference its CMA buffer.
+simaai::neat::Sample borrowed_cma_sample(int frame_id) {
+  GstBuffer* buffer = sima_test::allocate_cma_dmabuf(64);
+  auto sample = sample_from_buffer(buffer);
+  gst_buffer_unref(buffer);
+  sample.frame_id = frame_id;
+  sample.owned = false;
+  return sample;
+}
+
+// The producer frame is CMA DMA-BUF; an Owned copy is system memory.
+bool holds_system_memory_copy(const simaai::neat::Tensor& tensor) {
+  GstBuffer* buffer = simaai::neat::pipeline_internal::buffer_from_tensor_holder(
+      tensor.storage ? tensor.storage->holder : nullptr);
+  const bool copied = buffer && gst_buffer_n_memory(buffer) == 1 &&
+                      sima_test::is_system_memory(gst_buffer_peek_memory(buffer, 0));
+  if (buffer) {
+    gst_buffer_unref(buffer);
+  }
+  return copied;
+}
+
+// A decoder-like segment feeding a branch is forced to zero-copy transport, so Owned must copy
+// at the public pull. Otherwise each retained output keeps the segment's loan and the source stops.
+void require_owned_internal_output_releases_producer_loans() {
+  using namespace simaai::neat;
+  auto parent = start_owned_branching_graph();
+  std::shared_ptr<runtime::RunCore> producer;
+  for (const auto& pipe : parent->graph_execution().pipelines) {
+    if (pipe && pipe->seg.boundary.graph_internal_output) {
+      producer = pipe->run_core;
+    }
+  }
+  require(producer && producer->holder_loan_gate,
+          "the branching segment must forward zero-copy outputs under a loan gate");
+
+  const int retained_count = producer->holder_loan_gate->credit_limit() + 2;
+  std::vector<Sample> retained;
+  for (int id = 0; id < retained_count; ++id) {
+    auto produced = borrowed_cma_sample(id);
+    {
+      std::lock_guard lock(producer->pipeline.out_mu);
+      producer->pipeline.out_queue.push_back(std::move(produced));
+    }
+    producer->pipeline.out_cv.notify_all();
+    Sample output;
+    PullError error;
+    const PullStatus status = parent->pull_named_output("frames", 1000, output, &error);
+    if (status != PullStatus::Ok) {
+      parent->close();
+      require(false, "Owned output " + std::to_string(id) +
+                         " stalled while earlier outputs were retained: " + error.message);
+    }
+    require(output.owned && holds_system_memory_copy(output.tensors.front()),
+            "Owned output must be an independent copy");
+    retained.push_back(std::move(output));
+  }
+  // The other branch's Latest queue still holds the newest frame; drain it before counting.
+  for (Sample dropped; parent->pull_named_output("other", 0, dropped, nullptr) == PullStatus::Ok;) {
+  }
+  const int producer_loans = producer->holder_loan_gate->inflight();
+  parent->close();
+  require(producer_loans == 0, "retained Owned outputs must not hold producer loans");
+}
+
+// The public pull must find borrowed producer buffers wherever a sample keeps them: in the
+// fields of a Combine bundle, under an outer Bundle that keeps the default owned flag, and in
+// a single-Tensor sample. An output that is already an Owned copy is not copied again.
+void require_owned_pull_copies_every_borrowed_tensor() {
+  using namespace simaai::neat;
+  auto parent = start_owned_branching_graph();
+
+  graph::nodes::JoinBundleOptions join_options;
+  join_options.inputs = {"left", "right"};
+  graph::nodes::JoinBundle join(join_options);
+  graph::StagePorts ports;
+  ports.in = {{"left", 0}, {"right", 1}};
+  ports.out = {{"bundle", 2}};
+  join.set_ports(ports);
+  std::vector<graph::StageOutMsg> joined;
+  join.on_input(graph::StageMsg{0, borrowed_cma_sample(7)}, joined);
+  join.on_input(graph::StageMsg{1, borrowed_cma_sample(7)}, joined);
+  require(joined.size() == 1 && !joined.front().sample.owned,
+          "Combine must not mark a bundle of borrowed fields as owned");
+
+  // make_bundle_sample() leaves the outer Bundle's owned flag at its default.
+  Sample nested;
+  nested.kind = SampleKind::Bundle;
+  nested.fields.push_back(std::move(joined.front().sample));
+  parent->graph_finish_sink_pull(nested);
+  const Sample& bundle = nested.fields.front();
+  require(bundle.owned && bundle.fields.size() == 2 &&
+              holds_system_memory_copy(bundle.fields[0].tensors.front()) &&
+              holds_system_memory_copy(bundle.fields[1].tensors.front()),
+          "Owned must copy every borrowed field of a nested Combine bundle");
+
+  Sample single = pipeline_internal::collapse_single_tensor_sample(borrowed_cma_sample(8));
+  require(single.kind == SampleKind::Tensor, "fixture must be a single-Tensor sample");
+  parent->graph_finish_sink_pull(single);
+  require(single.owned && holds_system_memory_copy(*single.tensor),
+          "Owned must copy a borrowed single-Tensor sample");
+
+  const auto copy = single.tensor->storage;
+  parent->graph_finish_sink_pull(single);
+  parent->close();
+  require(single.tensor->storage == copy, "Owned must not copy an output that is already a copy");
+}
+
+// Public helpers mark app-built samples owned without copying them. Owned must still copy an
+// app-wrapped pool buffer and a device tensor; only its own copy passes through unchanged.
+void require_owned_pull_copies_app_wrapped_storage() {
+  using namespace simaai::neat;
+  auto parent = start_owned_branching_graph();
+
+  GstBufferPool* pool = gst_buffer_pool_new();
+  GstStructure* config = gst_buffer_pool_get_config(pool);
+  gst_buffer_pool_config_set_params(config, nullptr, 64, 1, 1);
+  require(gst_buffer_pool_set_config(pool, config) && gst_buffer_pool_set_active(pool, TRUE),
+          "one-buffer test pool should start");
+  GstBuffer* buffer = nullptr;
+  require(gst_buffer_pool_acquire_buffer(pool, &buffer, nullptr) == GST_FLOW_OK,
+          "test pool should lend its buffer");
+  GstCaps* caps = gst_caps_from_string("video/x-raw,format=GRAY8,width=8,height=8");
+  GstSample* gst_sample = gst_sample_new(buffer, caps, nullptr, nullptr);
+  gst_caps_unref(caps);
+  gst_buffer_unref(buffer);
+  Sample wrapped = make_tensor_sample("frame", from_gst_sample(gst_sample));
+  gst_sample_unref(gst_sample);
+  require(wrapped.owned, "public helpers mark an app-wrapped sample owned");
+  parent->graph_finish_sink_pull(wrapped);
+  require(pipeline_internal::tensor_is_owned_copy(wrapped.tensors.front()),
+          "Owned must copy an app-wrapped pool buffer");
+  GstBufferPoolAcquireParams params{};
+  params.flags = GST_BUFFER_POOL_ACQUIRE_FLAG_DONTWAIT;
+  GstBuffer* returned = nullptr;
+  require(gst_buffer_pool_acquire_buffer(pool, &returned, &params) == GST_FLOW_OK,
+          "Owned output must give the app's pool buffer back");
+  gst_buffer_unref(returned);
+  gst_buffer_pool_set_active(pool, FALSE);
+  gst_object_unref(pool);
+
+  Sample device = make_tensor_sample(
+      "frame", Tensor::from_vector(std::vector<float>{1, 2, 3, 4}, std::vector<std::int64_t>{4}));
+  require(device.owned && device.tensors.front().device.type != DeviceType::CPU,
+          "fixture must be an owned device tensor");
+  parent->graph_finish_sink_pull(device);
+  const Tensor& copied = device.tensors.front();
+  require(copied.device.type == DeviceType::CPU && holds_system_memory_copy(copied),
+          "Owned must copy a device tensor into system memory");
+
+  const auto copy = copied.storage;
+  parent->graph_finish_sink_pull(device);
+  parent->close();
+  require(device.tensors.front().storage == copy,
+          "Owned must recognize its own copy and leave it unchanged");
+}
+
+// Owned outputs are CPU memory. A graph whose input must be device-visible, as
+// Preproc, Quant, Tess and model fragments require, rejects them until
+// Tensor::to() copies them to the device.
+void require_owned_output_reenters_device_input_through_to() {
+  using namespace simaai::neat;
+  const std::vector<std::int64_t> shape{2, 3};
+  const std::vector<float> values{1, 2, 3, 4, 5, 6};
+  const auto build = [&](InputMemoryPolicy memory, OutputMemory output_memory) {
+    InputOptions input;
+    input.payload_type = PayloadType::Tensor;
+    input.memory_policy = memory;
+    Graph graph;
+    graph.add(nodes::Input(input));
+    graph.add(nodes::Output(OutputOptions::EveryFrame(4)));
+    RunOptions options;
+    options.output_memory = output_memory;
+    return graph.build(TensorList{Tensor::from_vector(values, shape)}, options);
+  };
+
+  auto producer = build(InputMemoryPolicy::SystemMemory, OutputMemory::Owned);
+  require(producer.push(TensorList{Tensor::from_vector(values, shape, TensorMemory::CPU)}),
+          "Owned producer push");
+  const auto produced = producer.pull(5000);
+  producer.close();
+  require(produced && produced->owned && produced->tensors.size() == 1 &&
+              produced->tensors[0].device.type == DeviceType::CPU,
+          "producer must publish one Owned CPU tensor");
+  const Tensor owned = produced->tensors[0];
+
+  auto rejecting = build(InputMemoryPolicy::Ev74, OutputMemory::Auto);
+  std::string error = "accepted";
+  try {
+    if (!rejecting.push(TensorList{owned})) {
+      error = "push returned false";
+    } else if (!rejecting.pull(2000)) {
+      error = "no output and no error";
+    }
+  } catch (const std::exception& failure) {
+    error = failure.what();
+  }
+  rejecting.close();
+  require(error.find("device-visible") != std::string::npos,
+          "device-visible input must reject an Owned CPU tensor, got: " + error);
+
+  auto accepting = build(InputMemoryPolicy::Ev74, OutputMemory::Auto);
+  require(accepting.push(TensorList{owned.to({DeviceType::SIMA_CVU, 0})}),
+          "device-visible input must accept an Owned tensor copied with Tensor::to");
+  const auto delivered = accepting.pull(5000);
+  accepting.close();
+  require(delivered && delivered->tensors.size() == 1, "device-visible graph produced no output");
+  const auto bytes = delivered->tensors[0].copy_dense_bytes_tight();
+  require(bytes.size() == values.size() * sizeof(float) &&
+              std::memcmp(bytes.data(), values.data(), bytes.size()) == 0,
+          "Tensor::to changed the Owned payload");
+}
+
+struct CapturedStderr {
+  std::ostringstream text;
+  std::streambuf* previous = std::cerr.rdbuf(text.rdbuf());
+  ~CapturedStderr() {
+    std::cerr.rdbuf(previous);
+  }
+  int count(const std::string& needle) const {
+    const std::string all = text.str();
+    int found = 0;
+    for (auto at = all.find(needle); at != std::string::npos; at = all.find(needle, at + 1)) {
+      ++found;
+    }
+    return found;
+  }
+};
+
+void require_loan_stall_warns_once_per_stall() {
+  using namespace simaai::neat;
+  const std::string warning =
+      "[WARN] Run::pull (graph segment 3): zero-copy output loan credits exhausted";
+  const std::string limits = "(sample_requires=1 holder, credit_limit=1, in_flight=1, "
+                             "output_window=1); release older zero-copy outputs and retry";
+  const std::string remedy = "to hold more, raise RunOptions.queue_depth or use "
+                             "OutputMemory::Owned.";
+
+  auto core = std::make_shared<runtime::RunCore>();
+  core->pipeline.supports_pull = true;
+  core->pipeline.loan_stall_warn_after = std::chrono::milliseconds(100);
+  core->pipeline.loan_stall_label = "graph segment 3";
+  core->pipeline.stream_opt.holder_loan_sample_window = 1;
+  core->holder_loan_gate = std::make_shared<pipeline_internal::HolderLoanGate>(1);
+  for (const int id : {1, 2, 3}) {
+    core->pipeline.out_queue.push_back(make_legacy_device_gst_sample(id));
+  }
+  CapturedStderr captured;
+  PullError error;
+  Sample held;
+  require(core->pull(0, held, &error) == PullStatus::Ok, "first output must take the only loan");
+
+  Sample blocked;
+  require(core->pull(300, blocked, &error) == PullStatus::Timeout &&
+              core->pipeline.out_queue.size() == 2U,
+          "a loan stall must keep timing out without consuming the queued output");
+  require(captured.count(warning) == 1, "a loan stall past the threshold must warn once");
+  require(captured.count(limits) == 1 && captured.count(remedy) == 1,
+          "the loan-stall warning must report the gate's limits and how to raise them");
+  require(core->pull(300, blocked, &error) == PullStatus::Timeout && captured.count(warning) == 1,
+          "a continuing loan stall must not warn again");
+
+  held = Sample{};
+  require(core->pull(1000, held, &error) == PullStatus::Ok,
+          "releasing the held output must let the stalled pull recover");
+  require(core->pull(300, blocked, &error) == PullStatus::Timeout && captured.count(warning) == 2,
+          "a new loan stall after recovery must warn again");
+}
+
+void require_graph_output_loan_stall_warns_once_per_stall() {
+  using namespace simaai::neat;
+  const std::string warning = "[WARN] Run::pull: zero-copy output loan credits exhausted";
+  constexpr graph::NodeId kSinkNode = 7;
+
+  auto core = std::make_shared<runtime::RunCore>();
+  core->graph_execution_ = std::make_unique<runtime::ExecutionGraphRuntime>();
+  runtime::Endpoint endpoint;
+  endpoint.kind = runtime::Endpoint::Kind::GraphSink;
+  endpoint.node = kSinkNode;
+  core->graph_execution_->plan.default_output = endpoint;
+  auto sink = std::make_shared<runtime::GraphSinkQueue>();
+  core->graph_execution_->sinks[kSinkNode] = sink;
+  core->pipeline.loan_stall_warn_after = std::chrono::milliseconds(100);
+  // ZeroCopy output: the app keeps the loaned sample instead of an owned copy.
+  core->pipeline.stream_opt.copy_output = false;
+  core->holder_loan_gate = std::make_shared<pipeline_internal::HolderLoanGate>(1);
+  for (const int id : {1, 2, 3}) {
+    sink->push(runtime::RuntimeSinkQueueMsg{make_legacy_device_gst_sample(id)});
+  }
+  CapturedStderr captured;
+  PullError error;
+  Sample held;
+  require(core->pull(0, held, &error) == PullStatus::Ok && core->holder_loan_gate->inflight() == 1,
+          "first graph output must take the only loan");
+
+  Sample blocked;
+  require(core->pull(300, blocked, &error) == PullStatus::Timeout && sink->size() == 2U,
+          "a graph output loan stall must keep timing out without consuming the queued output");
+  require(captured.count(warning) == 1, "a graph output loan stall must warn once");
+  require(core->pull(300, blocked, &error) == PullStatus::Timeout && captured.count(warning) == 1,
+          "a continuing graph output loan stall must not warn again");
+
+  held = Sample{};
+  require(core->pull(1000, held, &error) == PullStatus::Ok,
+          "releasing the held graph output must let the stalled pull recover");
+  require(core->pull(300, blocked, &error) == PullStatus::Timeout && captured.count(warning) == 2,
+          "a new graph output loan stall after recovery must warn again");
+}
+
 } // namespace
 
 RUN_TEST(
     "unit_graph_internal_zero_copy_fallback_test", ([] {
       require_native_retention_pool_policy();
+      require_child_holder_window_uses_parent_policy();
+      require_terminal_transport_defers_public_loans();
+      require_shared_arena_budget();
       require_output_policy_matrix();
       require_dmabuf_loans_and_pressure_preserve_storage();
+      require_loan_stall_warns_once_per_stall();
+      require_graph_output_loan_stall_warns_once_per_stall();
+      require_owned_internal_output_releases_producer_loans();
+      require_owned_pull_copies_every_borrowed_tensor();
+      require_owned_pull_copies_app_wrapped_storage();
+      require_owned_output_reenters_device_input_through_to();
       require_device_preferred_input_ownership();
       require_cpu_admissible_input_preserves_dmabuf_images();
       {
@@ -816,8 +1346,16 @@ RUN_TEST(
                 "interruptible push should preserve the item after a queue-inspecting predicate");
       }
 
+      auto terminal_first = make_legacy_device_gst_sample(3);
+      auto terminal_second = make_legacy_device_gst_sample(4);
+      auto terminal_lifetime = std::make_shared<int>(0);
+      simaai::neat::pipeline_internal::mark_sample_producer_stream_lifetime(terminal_first,
+                                                                            terminal_lifetime);
+
       constexpr simaai::neat::graph::NodeId kSinkNode = 7;
       auto graph_core = std::make_shared<simaai::neat::runtime::RunCore>();
+      // Loan transfer is ZeroCopy behavior, which a default async Realtime Run resolves to.
+      graph_core->pipeline.stream_opt.copy_output = false;
       graph_core->graph_execution_ =
           std::make_unique<simaai::neat::runtime::ExecutionGraphRuntime>();
       simaai::neat::runtime::Endpoint endpoint;
@@ -829,15 +1367,20 @@ RUN_TEST(
       graph_core->holder_loan_gate =
           std::make_shared<simaai::neat::pipeline_internal::HolderLoanGate>(1);
       graph_core->graph_execution_->sinks[kSinkNode]->push(
-          simaai::neat::runtime::RuntimeSinkQueueMsg{make_legacy_device_gst_sample(3)});
+          simaai::neat::runtime::RuntimeSinkQueueMsg{std::move(terminal_first)});
       graph_core->graph_execution_->sinks[kSinkNode]->push(
-          simaai::neat::runtime::RuntimeSinkQueueMsg{make_legacy_device_gst_sample(4)});
+          simaai::neat::runtime::RuntimeSinkQueueMsg{std::move(terminal_second)});
 
       simaai::neat::Sample graph_first;
       require(graph_core->pull(0, graph_first, &err) == simaai::neat::PullStatus::Ok,
               "first graph output should acquire the only holder loan");
       require(graph_core->graph_execution_->sinks[kSinkNode]->size() == 1U,
               "first graph pull should remove exactly one queued output");
+      require(graph_core->holder_loan_gate->inflight() == 1,
+              "outer public pull must acquire the loan deferred by terminal transport");
+      terminal_lifetime.reset();
+      require(simaai::neat::pipeline_internal::sample_has_transferable_zero_copy_loan(graph_first),
+              "deferred public admission must retain producer ownership for cross-run transfer");
 
       simaai::neat::Sample graph_blocked;
       const auto graph_blocked_status = graph_core->pull(0, graph_blocked, &err);
@@ -847,6 +1390,11 @@ RUN_TEST(
               "graph loan exhaustion must restore the queued output for retry");
       require(graph_blocked.tensors.empty() && !graph_blocked.tensor.has_value(),
               "graph loan exhaustion must not publish an unloaned sample");
+      auto retained_graph_first = graph_first;
+      graph_first = simaai::neat::Sample{};
+      require(graph_core->pull(0, graph_blocked, &err) == simaai::neat::PullStatus::Timeout,
+              "a retained public copy must keep its loan until the last owner releases it");
+      graph_first = std::move(retained_graph_first);
 
       {
         GstSample* external_sample = nullptr;

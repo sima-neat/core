@@ -10,6 +10,7 @@ def test_connection_address_override():
   assert connection.card_id == 0
   assert connection.card_host == ""
   assert connection.user == "sima"
+  assert not hasattr(connection, "card_receive_directory")
   connection.user = "root"
   assert connection.user == "root"
   connection.card_id = 1
@@ -26,6 +27,19 @@ def test_explicit_request_values():
   assert request.prompt == "Describe this image"
   assert request.max_new_tokens == 32
   assert len(request.images) == 1
+
+
+@pytest.mark.parametrize("effort", ["low", "medium", "high"])
+@pytest.mark.parametrize("thinking", [False, True])
+def test_reasoning_effort(effort, thinking):
+  request = genai.GenerationRequest()
+  assert request.reasoning_effort == "low"
+  request.reasoning_effort = effort
+  request.enable_thinking = thinking
+  assert request.reasoning_effort == effort
+  assert request.enable_thinking is thinking
+  with pytest.raises(TypeError):
+    request.reasoning_effort = 3
 
 
 def test_in_memory_vlm_images():

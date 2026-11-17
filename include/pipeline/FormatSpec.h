@@ -60,6 +60,7 @@ enum class FormatTag {
   EVXX_FLOAT32,  ///< EV-side alias for FP32.
   EVXX_INT8,     ///< EV-side alias for INT8.
   EVXX_BFLOAT16, ///< EV-side alias for BF16.
+  NV16,          ///< YUV 4:2:2, full-height Y and interleaved UV planes.
 };
 
 /// @brief Stable, canonical string token for @p tag (empty string for `Auto`).
@@ -75,6 +76,8 @@ inline const char* format_tag_name(FormatTag tag) {
     return "GRAY8";
   case FormatTag::NV12:
     return "NV12";
+  case FormatTag::NV16:
+    return "NV16";
   case FormatTag::I420:
     return "I420";
   case FormatTag::YUYV:
@@ -213,6 +216,8 @@ inline FormatTag format_tag_from_string(const std::string& value) {
     return FormatTag::BGR;
   if (up == "GRAY" || up == "GRAY8")
     return FormatTag::GRAY8;
+  if (up == "NV16")
+    return FormatTag::NV16;
   if (up == "NV12")
     return FormatTag::NV12;
   if (up == "I420" || up == "YUV420")
@@ -259,7 +264,8 @@ inline FormatTag format_tag_from_string(const std::string& value) {
 /// @brief True iff @p tag names a raw (uncompressed) video format.
 inline bool is_raw_video_format(FormatTag tag) {
   return tag == FormatTag::RGB || tag == FormatTag::BGR || tag == FormatTag::GRAY8 ||
-         tag == FormatTag::NV12 || tag == FormatTag::I420 || tag == FormatTag::YUYV;
+         tag == FormatTag::NV12 || tag == FormatTag::NV16 || tag == FormatTag::I420 ||
+         tag == FormatTag::YUYV;
 }
 
 /// @brief True iff @p tag names a tensor payload (MLA, BBOX, ARGMAX, dtype kinds, EVXX aliases).

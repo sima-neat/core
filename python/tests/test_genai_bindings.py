@@ -17,7 +17,7 @@ _LLIMA_MODELS_PATH_ENV = "LLIMA_MODELS_PATH"
 _DEFAULT_LLIMA_MODELS_PATH = Path("/media/nvme/llima/models")
 _DEFAULT_TEXT_MODEL = "Qwen2.5-0.5B-Instruct-Autoround-a16w4"
 _DEFAULT_VLM_MODEL = "LFM2.5-VL-450M-Autoround-a16w4"
-_DEFAULT_ASR_MODEL = "whisper-small-a16w8-layered-encoder"
+_DEFAULT_ASR_MODEL = "whisper-small-a16w8"
 _VLM_PROMPT = "Describe this image in a short phrase."
 _PROMPT = "What is the capital of Germany?"
 _EXPECTED_TEXT = "The capital of Germany is Berlin."
@@ -232,7 +232,7 @@ def _make_request():
 
 
 def _assert_finish_reason(value):
-  assert value in ("stop", "interrupted")
+  assert value in ("stop", "length", "interrupted")
 
 
 def _assert_asr_metadata(result, expected_language="en"):
@@ -638,6 +638,14 @@ def test_genai_language_graph_node_generation_and_errors():
       invalid.tensor = pyneat.Tensor()
       invalid.port_name = "prompt"
       invalid.stream_label = "prompt"
+      with pytest.raises(pyneat.NeatError, match="missing storage") as excinfo:
+        streaming_run.push("prompt", [invalid])
+      assert excinfo.value.error_code == "misconfig.input_shape"
+
+      # Reach the node's text validation with valid storage, as in the C++ test.
+      invalid.tensor = pyneat.Tensor.from_numpy(
+          np.array([ord("x")], dtype=np.uint8), copy=True, memory=pyneat.TensorMemory.CPU
+      )
       assert streaming_run.push("prompt", [invalid])
       _, _, error, _ = _pull_public_language_outputs(streaming_run, stop_on_error=True)
       assert error

@@ -18,6 +18,9 @@ struct BoxDecodeOptions {
   BoxDecodeType decode_type;
   double detection_threshold = 0.0;
   double nms_iou_threshold = 0.0;
+  /// Maximum output count. Bounding-box decoding requires a positive resolved cap:
+  /// zero is unspecified for raw heads, or inherits the Model cap on model-bound nodes.
+  /// SuperPoint resolves zero to its profile default.
   int top_k = 0;
   SuperPointOptions superpoint;
   YoloXSegPoseOptions yolox_seg_pose;

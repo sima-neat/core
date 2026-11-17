@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -88,6 +89,58 @@ class LocalizedRecordTests(unittest.TestCase):
                 records[0]["route"],
                 "/software/ja/tutorials/run-your-first-model",
             )
+
+
+class ReleaseRecordTests(unittest.TestCase):
+    def test_resolves_dependency_only_sources(self) -> None:
+        snapshot = json.loads((CORE_ROOT / "website/release-data/current.json").read_text())
+        minimum = snapshot["dependencies"]["docker"]["minimum"]["value"]
+        sources = {"windows.md": "Docker %%dependency.docker.minimum%% or later.", "plain.md": "Plain text."}
+        self.assertEqual(MODULE.resolve_release_sources(sources), {
+            "windows.md": f"Docker {minimum} or later.", "plain.md": "Plain text.",
+        })
+        for token in ("%%dependency.missing.minimum%%", "%%dependency.docker.minimum%"):
+            with self.subTest(token=token):
+                with self.assertRaisesRegex(RuntimeError, r"windows.md:1:.*dependency"):
+                    MODULE.resolve_release_sources({"windows.md": token})
+
+    def test_resolves_versions_in_all_locales_before_parsing_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            docs = root / "docs"
+            roots = [docs] + [root / "i18n" / locale / MODULE.I18N_DOCS_SUBDIR for locale in ["ko", "ja", "zh-Hant", "uk"]]
+            source = (
+                "---\nslug: /sdk-%%release.sdk%%\n---\n"
+                "# Neat SDK %%release.sdk%%\n"
+                "Install `sdk@%%release.sdk_channel%%`; series %%release.sdk_series%%. "
+                "Core %%release.core%%; compiler %%release.model_compiler%%. Minimum SDK 2.1.3.0.\n"
+            )
+            for doc_root in roots:
+                doc_root.mkdir(parents=True)
+                (doc_root / "index.md").write_text(source, encoding="utf-8")
+            records, _ = MODULE.generate_records(docs, "https://developer.sima.ai", MODULE.DEFAULT_MAX_RECORD_BYTES, root / "i18n")
+            snapshot = json.loads((CORE_ROOT / "website/release-data/current.json").read_text())
+            values = {key: item["value"] for key, item in snapshot["releases"].items()}
+            self.assertEqual({record["language"] for record in records}, {"en", "ko", "ja", "zh-Hant", "uk"})
+            for record in records:
+                self.assertNotIn("%release", json.dumps(record))
+                self.assertEqual(record["title"], f"Neat SDK {values['sdk']}")
+                self.assertIn(f"sdk@{values['sdk_channel']}", record["content"])
+                self.assertIn(f"series {values['sdk_series']}", record["content"])
+                self.assertIn(f"Core {values['core']}", record["content"])
+                self.assertIn("Minimum SDK 2.1.3.0", record["content"])
+                self.assertTrue(record["url"].endswith(f"/sdk-{values['sdk']}"))
+            self.assertEqual((docs / "index.md").read_text(encoding="utf-8"), source)
+
+    def test_invalid_tokens_fail_before_fenced_content_is_removed(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            docs = Path(directory)
+            page = docs / "index.md"
+            for token in ("%%release.missing%%", "%%release.sdk%"):
+                with self.subTest(token=token):
+                    page.write_text(f"# SDK\nVisible prose.\n```bash\n{token}\n```\n", encoding="utf-8")
+                    with self.assertRaisesRegex(RuntimeError, r"index.md:4:.*release"):
+                        MODULE.generate_records(docs, "https://developer.sima.ai", MODULE.DEFAULT_MAX_RECORD_BYTES)
 
 
 if __name__ == "__main__":

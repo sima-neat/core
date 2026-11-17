@@ -15,7 +15,10 @@
  */
 #pragma once
 
+#include "nodes/sima/PreprocMath.h"
+
 #include <array>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -43,14 +46,6 @@ enum class InputKind {
   Tensor = 2, ///< Already-shaped tensor; preprocess is mostly a pass-through.
 };
 
-/// How the resize stage maps non-matching input dimensions to the model's input shape.
-/// @ingroup model
-enum class ResizeMode {
-  Stretch = 0,   ///< Anisotropic scale to fit; aspect ratio not preserved.
-  Letterbox = 1, ///< Scale to fit while preserving aspect; pad the rest with `pad_value`.
-  Crop = 2,      ///< Center-crop to the target shape after isotropic scale.
-};
-
 /// Color format hint for the color-convert stage.
 /// @ingroup model
 enum class PreprocessColorFormat {
@@ -60,6 +55,7 @@ enum class PreprocessColorFormat {
   GRAY8 = 3, ///< 8-bit single-channel grayscale.
   NV12 = 4,  ///< Y plane + interleaved UV plane (semi-planar 4:2:0).
   I420 = 5,  ///< Y, U, V planes (planar 4:2:0).
+  NV16 = 6,  ///< Y plane + interleaved UV plane (semi-planar 4:2:2).
 };
 
 /// Common normalize presets — convenient shorthand for famous mean/stddev pairs.
@@ -92,6 +88,15 @@ enum class TransformType {
   Tessellate = 5,    ///< MLA-tile reshuffle.
 };
 
+/// Where a letterbox places the resized image on the model canvas.
+/// @ingroup model
+enum class LetterboxPlacement {
+  Center = 0, ///< Split the padding evenly between both sides of each axis (YOLO convention).
+  /// Image at the canvas origin; all padding on the right and bottom. The shorter side rounds to
+  /// the nearest pixel, as Segment Anything resizes (a centered letterbox rounds it up).
+  TopLeft = 1,
+};
+
 /// Resize / letterbox / crop parameters.
 /// @ingroup model
 struct ResizeSpec {
@@ -100,7 +105,16 @@ struct ResizeSpec {
   int height = 0;                          ///< Target height (px). `0` = inferred from contract.
   ResizeMode mode = ResizeMode::Letterbox; ///< How to handle aspect-ratio mismatch.
   int pad_value = 114; ///< Pad fill value when `mode == Letterbox` (default 114, YOLO convention).
-  std::string scaling_type = "BILINEAR"; ///< Sampler kind: `"BILINEAR"`, `"NEAREST"`, etc.
+  /// Legacy compatibility spelling. Prefer interpolation for new code.
+  std::string scaling_type = "BILINEAR";
+  /// Typed sampler; omitted retains scaling_type and its legacy Bilinear default.
+  /// When set, the legacy default is ignored; a conflicting nondefault string is rejected.
+  std::optional<ResizeInterpolation> interpolation;
+  /// Resize the shorter source axis before center cropping. Crop only; absent means cover.
+  std::optional<int> shorter_side;
+  /// Image placement on the canvas. Valid only with `mode == Letterbox`. Last, so existing
+  /// positional initializers keep their meaning.
+  LetterboxPlacement placement = LetterboxPlacement::Center;
 };
 
 /// Color-format conversion parameters.
@@ -231,7 +245,8 @@ struct Transform {
  */
 struct PreprocessOptions {
   InputKind kind = InputKind::Auto; ///< Whether inputs are images or pre-shaped tensors.
-  AutoFlag enable = AutoFlag::Auto; ///< Master switch — set `Off` to skip preprocess entirely.
+  AutoFlag enable = AutoFlag::Auto; ///< Legacy preprocessing control; `Off` retains MPK-required
+                                    ///< adapters and does not select MLA-only execution.
 
   int input_max_width = 0;  ///< Input-width capacity; `0` uses the image default (1920 px).
   int input_max_height = 0; ///< Input-height capacity; `0` uses the image default (1080 px).
@@ -248,6 +263,17 @@ struct PreprocessOptions {
                                      ///< per-stage specs above.
   NormalizePreset preset =
       NormalizePreset::None; ///< If non-`None`, supplies `mean`/`stddev` defaults.
+
+  /// Original FP32 source multiplier (RGB/Gray before resize; YUV after its decode boundary).
+  /// Presence selects fixed source arithmetic;
+  /// normalize.mean/stddev then mean a post-resize subtraction/division, with no implied /255.
+  std::optional<float> rescale_factor;
+  /// Original positive FP32 INT8 step, never reconstructed from a reciprocal.
+  /// Model routes require agreement with the MPK quantizer; zero point stays model-owned.
+  std::optional<float> quantization_step;
+  PreprocColorConversionPlacement color_conversion_placement =
+      PreprocColorConversionPlacement::AfterResize;
+  PreprocFloatingConversion floating_conversion = PreprocFloatingConversion::Legacy;
 };
 
 /**

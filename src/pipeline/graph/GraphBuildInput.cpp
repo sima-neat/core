@@ -1,9 +1,11 @@
+#include "nodes/sima/internal/ImageTransformPolicy.h"
 /**
  * @file SessionBuildInput.cpp
  * @brief Graph input-mode build/run methods.
  */
 
 #include "GraphDetail.h"
+#include "pipeline/internal/sima/SchedulerStageIntegration.h"
 #include "internal/GraphBuildInternal.h"
 #include "pipeline/internal/RtpJpegEndMarker.h"
 #include "pipeline/internal/UxLogging.h"
@@ -29,7 +31,7 @@
 #include "pipeline/internal/InputSpecCapabilities.h"
 #include "pipeline/internal/InputPolicy.h"
 #include "pipeline/internal/PublicInputContract.h"
-#include "pipeline/internal/RenderedMlaContractQuery.h"
+#include "pipeline/internal/SelectedStageBoundary.h"
 #include "pipeline/internal/InputRouteProcessor.h"
 #include "pipeline/internal/SampleUtil.h"
 #include "pipeline/internal/sima/ContractRender.h"
@@ -44,6 +46,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <cctype>
+#include <climits>
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
@@ -65,7 +68,6 @@ InputOptions input_opts_from_spec(const OutputSpec& spec, bool complete);
 namespace simaai::neat {
 
 namespace {
-namespace rendered_stage_query = pipeline_internal::rendered_stage_query;
 
 bool run_options_equal_for_cache_local(const RunOptions& a, const RunOptions& b);
 std::string dtype_token_from_tensor(const Tensor& tensor);
@@ -179,6 +181,8 @@ TensorList tensor_list_from_mats(const std::vector<cv::Mat>& inputs, const Input
   TensorList out;
   out.reserve(inputs.size());
   const InputOptions normalized = pipeline_internal::normalize_shape_bounds(opt);
+  for (const auto& input : inputs)
+    validate_public_input(input, normalized, InputStreamOptions{}, where);
   for (const auto& input : inputs) {
     out.emplace_back(tensor_from_cv_mat(input, normalized, where));
   }
@@ -223,6 +227,13 @@ TensorList tensor_list_from_mats_for_connected_default(const std::vector<cv::Mat
     throw std::runtime_error(std::string(where ? where : "Graph::build(inputs)") +
                              ": empty image list");
   }
+  if (segment.boundary_hints && segment.boundary_hints->input_route_processor) {
+    segment.boundary_hints->input_route_processor->validate_images(inputs, where);
+  } else {
+    for (std::size_t i = 0; i < inputs.size(); ++i)
+      validate_public_input(inputs[i], runtime::pipeline_segment_declared_ingress(segment, i),
+                            segment.stream_options, where);
+  }
   TensorList out;
   out.reserve(inputs.size());
   for (std::size_t i = 0; i < inputs.size(); ++i) {
@@ -249,6 +260,9 @@ Sample connected_seed_from_tensors(const runtime::ExecutionGraphPlan& plan,
   if (auto route = connected_default_route_processor(segment, std::move(fallback_route))) {
     return route->seed_tensors(inputs, where);
   }
+  if (segment.public_input_contract)
+    pipeline_internal::validate_ordered_public_input(*segment.public_input_contract,
+                                                     sample_from_tensors(inputs));
   if (auto opt = connected_default_ingress_input(segment)) {
     return pipeline_internal::sample_from_tensors_for_input(inputs, *opt);
   }
@@ -289,6 +303,9 @@ Sample connected_seed_from_samples(const runtime::ExecutionGraphPlan& plan, cons
   if (auto route = connected_default_route_processor(segment, std::move(fallback_route))) {
     return route->seed_samples(inputs, where);
   }
+  if (segment.public_input_contract)
+    pipeline_internal::validate_ordered_public_input(*segment.public_input_contract,
+                                                     inputs.front());
   return inputs.front();
 }
 
@@ -457,24 +474,12 @@ bool is_default_run_options(const RunOptions& opt) {
   return run_options_equal_for_cache_local(opt, d) && !opt.on_input_drop;
 }
 
-bool resolve_prepare_output_cpu_visible(const RunOptions& opt, bool zero_copy) {
-  if (!zero_copy) {
-    return false;
-  }
-  const char* env = std::getenv("SIMA_PREPARE_OUTPUT_CPU_VISIBLE");
-  if (env && *env) {
-    return env_bool("SIMA_PREPARE_OUTPUT_CPU_VISIBLE", false);
-  }
-  return opt.advanced.prepare_output_cpu_visible;
-}
-
 // Resolved public-output memory policy. Single authority consulted by the
 // public-boundary stream-option builder so every entry point (Model::build,
 // Graph::build/source) agrees on output storage kind.
 struct OutputMemoryResolution {
-  bool zero_copy;           ///< non-DMA outputs share backing GstSample
-  bool preserve_dmabuf;     ///< Auto retains actual standard DMA-BUF storage
-  bool prepare_cpu_visible; ///< issue cache-visibility maintenance for CPU readers
+  bool zero_copy;          ///< non-DMA outputs share backing GstSample
+  bool preserve_framework; ///< Auto retains actual standard DMA-BUF storage
 };
 
 // THE definition of what Auto/ZeroCopy/Owned mean for a public output.
@@ -492,7 +497,7 @@ struct OutputMemoryResolution {
 // stay ZeroCopy to preserve packed tensor topology and must NOT be routed here.
 OutputMemoryResolution resolve_output_memory(const RunOptions& opt, RunMode mode) {
   bool zero_copy;
-  bool preserve_dmabuf = false;
+  bool preserve_framework = false;
   switch (opt.output_memory) {
   case OutputMemory::ZeroCopy:
     zero_copy = true;
@@ -501,21 +506,20 @@ OutputMemoryResolution resolve_output_memory(const RunOptions& opt, RunMode mode
     zero_copy = false;
     break;
   case OutputMemory::Auto:
-    preserve_dmabuf = true;
+    preserve_framework = true;
     zero_copy = preset_default_zero_copy(opt.preset) && (mode != RunMode::Sync);
     if (const char* raw = std::getenv("SIMA_OUTPUT_MEMORY_DEFAULT"); raw && *raw) {
       const std::string value(raw);
       if (value == "owned") {
         zero_copy = false;
-        preserve_dmabuf = false;
+        preserve_framework = false;
       } else if (value == "zerocopy") {
         zero_copy = true;
       }
     }
     break;
   }
-  return {zero_copy, preserve_dmabuf,
-          resolve_prepare_output_cpu_visible(opt, zero_copy || preserve_dmabuf)};
+  return {zero_copy, preserve_framework};
 }
 
 int resolved_input_timeout_ms(const RunOptions& opt) {
@@ -672,6 +676,8 @@ std::string format_token_from_tensor(const Tensor& tensor) {
       return "GRAY8";
     case ImageSpec::PixelFormat::NV12:
       return "NV12";
+    case ImageSpec::PixelFormat::NV16:
+      return "NV16";
     case ImageSpec::PixelFormat::I420:
       return "I420";
     case ImageSpec::PixelFormat::UNKNOWN:
@@ -843,6 +849,8 @@ void maybe_compile_build_result_contracts(BuildResult* build_result,
   spec.width = ingress_spec.width;
   spec.height = ingress_spec.height;
   spec.depth = ingress_spec.depth;
+  spec.fps_num = ingress_spec.fps_n;
+  spec.fps_den = ingress_spec.fps_d;
   compile_input.ingress.ingress_spec = spec;
   compile_input.ingress.ingress_sample = ingress_sample;
   session_build_compile_contracts(build_result, *nodes, compile_input, where, nodes);
@@ -907,26 +915,13 @@ void validate_inference_only_ingress_or_throw(const std::vector<std::shared_ptr<
   if (!immediate_next || immediate_next->kind() != "ModelFragment") {
     return;
   }
-  // Resolve the rendered MLA-input contract from the actual ModelFragment.
-  const auto& first = first_effective_downstream_node(nodes);
-  if (!first || first->kind() != "ModelFragment") {
+  const auto direct_mla_input = pipeline_internal::direct_model_mla_input_info(nodes);
+  if (!direct_mla_input) {
+    // The selected fragment starts with a transform, not MLA. Its actual
+    // application ingress is admitted by the seeded compiler below.
     return;
   }
-
-  const std::vector<std::shared_ptr<Node>> first_nodes{first};
-  const auto first_manifest = rendered_stage_query::rendered_manifest_from_nodes(
-      first_nodes, "GraphBuildInput.ingress_guard");
-  if (!first_manifest.has_value() || first_manifest->stages.empty() ||
-      first_manifest->stages.front().payload_kind !=
-          pipeline_internal::sima::StagePayloadKind::ProcessMla) {
-    // ModelFragment is a container, not an assertion that its first command is
-    // MLA.  A strict compiler-authored schedule may begin with Quant, Cast,
-    // Tess, or A65 and legitimately consume an application-boundary tensor
-    // whose size differs from the later MLA IFM.  The child-stage manifest is
-    // the exact authority for that distinction.
-    return;
-  }
-  const auto mla_input = rendered_stage_query::mla_input_tensor_info_from_nodes(first_nodes);
+  const auto& mla_input = *direct_mla_input;
   if (mla_input.span_size_bytes <= 0) {
     return;
   }
@@ -1009,13 +1004,16 @@ void maybe_apply_public_terminal_output_override(const BuildResult& build_result
                                                  const std::vector<std::shared_ptr<Node>>& nodes,
                                                  InputStreamOptions& stream_opt,
                                                  const char* where) {
-  if (!stream_opt.public_output_contract || !build_result.rendered_manifest.has_value()) {
+  if (!stream_opt.public_output_contract || !build_result.prepared_manifest.has_value()) {
     return;
   }
-  const auto endpoint = public_output_endpoint_selector_local(nodes);
+  auto endpoint = public_output_endpoint_selector_local(nodes);
+  if (!endpoint.terminal_stage_key.empty())
+    endpoint.terminal_stage_key =
+        apply_name_transform(build_result.name_transform, endpoint.terminal_stage_key);
   std::string error;
   auto override = build_public_terminal_output_override_with_fallback(
-      *build_result.rendered_manifest, endpoint, &error);
+      *build_result.prepared_manifest, endpoint, &error);
   if (override.has_value()) {
     stream_opt.output_override = std::move(*override);
   } else if (detess_override_debug_enabled()) {
@@ -1036,9 +1034,8 @@ InputStreamOptions make_stream_options(const RunOptions& opt, RunMode mode) {
   stream_opt.stability_frames = preset_default_stability_frames(opt.preset);
   stream_opt.max_input_bytes = opt.advanced.max_input_bytes;
   stream_opt.copy_output = !output_mem.zero_copy;
-  stream_opt.preserve_dmabuf_output = output_mem.preserve_dmabuf;
-  stream_opt.prepare_output_cpu_visible = output_mem.prepare_cpu_visible;
-  if (output_mem.zero_copy || output_mem.preserve_dmabuf) {
+  stream_opt.preserve_framework_output = output_mem.preserve_framework;
+  if (output_mem.zero_copy || output_mem.preserve_framework) {
     stream_opt.holder_loan_sample_window = std::max(3, queue_depth + 2);
     stream_opt.holder_loan_credits = stream_opt.holder_loan_sample_window;
     stream_opt.holder_loan_credits_auto = true;
@@ -1070,7 +1067,7 @@ InputStreamOptions make_stream_options(const RunOptions& opt, RunMode mode) {
 
 void finalize_public_zero_copy_holder_loan_credits(InputStreamOptions& stream_opt) {
   if (!stream_opt.holder_loan_credits_auto ||
-      (stream_opt.copy_output && !stream_opt.preserve_dmabuf_output) ||
+      (stream_opt.copy_output && !stream_opt.preserve_framework_output) ||
       !stream_opt.public_output_contract) {
     return;
   }
@@ -1215,7 +1212,8 @@ bool is_supported_raw_ingress_format(std::string fmt) {
     fmt = "GRAY8";
   if (fmt == "IYUV")
     fmt = "I420";
-  return fmt == "RGB" || fmt == "BGR" || fmt == "GRAY8" || fmt == "NV12" || fmt == "I420";
+  return fmt == "RGB" || fmt == "BGR" || fmt == "GRAY8" || fmt == "NV12" || fmt == "NV16" ||
+         fmt == "I420";
 }
 
 int raw_depth_for_format(std::string fmt) {
@@ -1307,6 +1305,8 @@ bool detect_allow_ingress_format_renegotiation(const std::vector<std::shared_ptr
   }
   if (!dynamic_preproc)
     return false;
+  if (internal::ImageTransformAccess::policy(*dynamic_preproc))
+    return false; // Typed image frontends fix the input format for the run.
 
   const auto& pre_opt = dynamic_preproc->options();
   if (pre_opt.output_width() <= 0 || pre_opt.output_height() <= 0 ||
@@ -1401,9 +1401,6 @@ RunOptions resolve_build_opt(RunMode mode, const RunOptions& opt) {
     }
     if (out.advanced.sync_num_buffers_override == defaults.advanced.sync_num_buffers_override) {
       out.advanced.sync_num_buffers_override = sync_defaults.advanced.sync_num_buffers_override;
-    }
-    if (out.advanced.prepare_output_cpu_visible == defaults.advanced.prepare_output_cpu_visible) {
-      out.advanced.prepare_output_cpu_visible = sync_defaults.advanced.prepare_output_cpu_visible;
     }
   }
   if (out.queue_depth == defaults.queue_depth) {
@@ -1586,7 +1583,7 @@ std::string parse_named_element_for_error(const std::string& pipeline, const std
 }
 
 std::string infer_error_node_name(const std::string& pipeline) {
-  for (const char* element : {"neatdecoder", "neatencoder", "neatprocesscvu", "neatprocessmla",
+  for (const char* element : {"neatdecoder", "neatencoder", "neatkernelrunner", "neatprocessmla",
                               "neatobjectdecode", "neatdequant", "neatdetess"}) {
     const std::string name = parse_named_element_for_error(pipeline, element);
     if (!name.empty())
@@ -1598,7 +1595,7 @@ std::string infer_error_node_name(const std::string& pipeline) {
 std::string summarize_pipeline_stage_chain(const std::string& pipeline) {
   // List neat stage instance names in pipeline order. A preflight *timeout*
   // posts no per-element bus error, so infer_error_node_name() can only return
-  // the first stage *type* present (e.g. neatprocesscvu -> "cast_1") and never
+  // the first stage *type* present (e.g. neatkernelrunner -> "cast_1") and never
   // the stage that actually stalled. Emitting the whole chain shows every
   // candidate stage instead of mis-blaming the first one.
   std::string chain;
@@ -1664,8 +1661,9 @@ std::string summarize_pipeline_stage_chain(const std::string& pipeline) {
     note << "\nHint: inspect node configuration/caps and upstream bus diagnostics.";
   }
   rep.repro_note = note.str();
-  throw NeatError(session_build_decorate_with_error_code(rep.error_code, rep.repro_note),
-                  std::move(rep));
+  const std::string message =
+      session_build_decorate_with_error_code(rep.error_code, rep.repro_note);
+  throw NeatError(message, std::move(rep));
 }
 
 std::string single_sample_preflight_unsupported_reason(const std::string& pipeline,
@@ -1676,14 +1674,14 @@ std::string single_sample_preflight_unsupported_reason(const std::string& pipeli
   }
 
   const bool has_async_hardware_stage = (lower.find("neatprocessmla") != std::string::npos ||
-                                         lower.find("neatprocesscvu") != std::string::npos) &&
+                                         lower.find("neatkernelrunner") != std::string::npos) &&
                                         lower.find("async=true") != std::string::npos;
   // A hidden build-time preflight frame must not be sent through a zero-copy
   // async hardware stage that owns only one output pool slot.  Even if the
   // appsink sample is pulled and unref'd, there is no generic GStreamer
   // barrier proving the plugin-side buffer pool slot has been returned before
   // the public first frame is pushed.
-  if ((!opt.copy_output || opt.preserve_dmabuf_output) && has_async_hardware_stage &&
+  if ((!opt.copy_output || opt.preserve_framework_output) && has_async_hardware_stage &&
       max_num_buffers_in_pipeline_local(lower) == 1) {
     return "hardware zero-copy pipeline uses an async stage with a single output buffer";
   }
@@ -1844,8 +1842,8 @@ InputStream run_input_stream_internal_typed(const std::vector<std::shared_ptr<No
   require_input_appsrc(nodes, "Graph::build(input)", &src_node);
   const InputOptions normalized_input_opt =
       pipeline_internal::normalize_shape_bounds(src_node->options());
-  const SampleSpec seed_spec =
-      infer_input_spec(normalized_input_opt, sample, "Graph::build(input)");
+  SampleSpec seed_spec = infer_input_spec(normalized_input_opt, sample, "Graph::build(input)");
+  project_model_input_spec(seed_spec, opt.model_input_shape);
   InputOptions seeded_input_opt =
       pipeline_internal::complete_input_options_from_seed_spec(src_node->options(), seed_spec);
   std::vector<std::shared_ptr<Node>> build_nodes =
@@ -1865,14 +1863,37 @@ InputStream run_input_stream_internal_typed(const std::vector<std::shared_ptr<No
 
   BuildResult br = build_pipeline_full(build_nodes, insert_boundaries, "mysink", insert_queue2,
                                        name_transform, &sess_opt);
+  if (graph_build_internal::explicit_public_terminal_output(opt, build_nodes)) {
+    br.terminal_host_endpoint = public_output_endpoint_selector_local(build_nodes);
+  }
   maybe_compile_build_result_contracts(
       &br, &build_nodes, sess_opt, input_contract_from_input(sample), seed_spec,
       contract_compile_sample_from_input(sample), "Graph::build(input)");
   InputStreamOptions stream_opt = opt;
+  // Execution and output ownership are independent: a completed frame may
+  // remain retained by the application after its execution slot is reusable.
+  br.kernel_runner_capacity =
+      sync_mode ? 1U : session_build_kernel_runner_capacity(sess_opt.async_queue_depth);
+  const bool legacy_observer = env_bool("SIMA_GST_FLOW_DEBUG", false) ||
+                               env_bool("SIMA_GST_BOUNDARY_PROBES", false) ||
+                               env_bool("SIMA_GST_DETESS_INPUT_DEBUG", false) ||
+                               env_bool("SIMA_GST_DETESS_OUTPUT_DEBUG", false) ||
+                               env_bool("SIMA_GST_APPSINK_BUFFER_DEBUG", false) ||
+                               env_bool("SIMA_GST_ALL_BUFFER_DEBUG", false) ||
+                               env_bool("SIMA_GST_BOXDECODE_BUFFER_DEBUG", false) ||
+                               !env_str("SIMA_GST_ELEMENT_BUFFER_DEBUG", "").empty();
+  br.kernel_runner_compact =
+      !insert_boundaries && !legacy_observer && env_bool("SIMA_CORE_COMPACT_METADATA", false);
+
+  if (sync_mode) {
+    session_build_clamp_sync_kernel_runner_capacity(br);
+  }
+  session_build_prepare_stage_contracts(br, "Graph::build(input)");
   if (has_sink) {
     maybe_apply_public_terminal_output_override(br, build_nodes, stream_opt, "Graph::build(input)");
   }
   finalize_public_zero_copy_holder_loan_credits(stream_opt);
+  session_build_reserve_kernel_runner_outputs(br, stream_opt);
   if (sync_mode) {
     br.pipeline_string = session_build_clamp_sync_build_result(br, sync_num_buffers_override);
     br.diag->pipeline_string = br.pipeline_string;
@@ -1967,8 +1988,11 @@ InputStream run_input_stream_internal_typed(const std::vector<std::shared_ptr<No
       detect_dynamic_capability(nodes, src_opt, spec, stream_opt.shape_policy);
   stream_opt.allow_ingress_cvu_format_renegotiation = detect_allow_ingress_format_renegotiation(
       nodes, src_opt, spec, stream_opt.shape_policy, stream_opt.dynamic_capability);
-  if (sync_mode &&
-      stream_opt.dynamic_capability != InputStreamOptions::DynamicCapability::StaticOnly) {
+  // Dynamic preprocessing accepts each image without waiting for a second size match.
+  if (stream_opt.dynamic_capability ==
+          InputStreamOptions::DynamicCapability::IngressDynamicCvuOnly ||
+      (sync_mode &&
+       stream_opt.dynamic_capability != InputStreamOptions::DynamicCapability::StaticOnly)) {
     stream_opt.stability_frames = 1;
   }
   stream_opt.require_device_visible_input = memory.require_device_visible_input;
@@ -2208,10 +2232,12 @@ bool is_run_timeout_exception(const std::exception& e) {
          msg.find("timeout waiting for output") != std::string_view::npos;
 }
 
-template <typename InputT>
-Sample run_sync_prefill_typed(Run& runner, const InputT& input, int timeout_ms, int count,
+template <typename CachePtrT, typename InputT>
+Sample run_sync_prefill_typed(CachePtrT& run_cache, const InputT& input, int timeout_ms, int count,
                               bool allow_startup_lag) {
+  Run& runner = run_cache->runner;
   Sample out;
+  bool timed_out = false;
   bool saw_output = false;
   std::string last_timeout;
   int startup_lag_budget = allow_startup_lag ? std::max(1, count * 3) : 0;
@@ -2225,6 +2251,7 @@ Sample run_sync_prefill_typed(Run& runner, const InputT& input, int timeout_ms, 
       if (!is_run_timeout_exception(e)) {
         throw;
       }
+      timed_out = true;
       last_timeout = e.what();
     }
 
@@ -2257,22 +2284,13 @@ Sample run_sync_prefill_typed(Run& runner, const InputT& input, int timeout_ms, 
                                              "Inspect the attached GraphReport diagnostics.");
   }
 
+  if (timed_out) {
+    // Prefill may succeed with other submissions still unresolved.
+    run_cache.reset();
+  } else {
+    run_cache->sync_prefill_warmed = true;
+  }
   return out;
-}
-
-Sample run_sync_prefill(Run& runner, const cv::Mat& input, int timeout_ms, int count,
-                        bool allow_startup_lag) {
-  return run_sync_prefill_typed(runner, input, timeout_ms, count, allow_startup_lag);
-}
-
-Sample run_sync_prefill(Run& runner, const simaai::neat::Tensor& input, int timeout_ms, int count,
-                        bool allow_startup_lag) {
-  return run_sync_prefill_typed(runner, input, timeout_ms, count, allow_startup_lag);
-}
-
-Sample run_sync_prefill(Run& runner, const Sample& input, int timeout_ms, int count,
-                        bool allow_startup_lag) {
-  return run_sync_prefill_typed(runner, input, timeout_ms, count, allow_startup_lag);
 }
 
 bool run_options_equal_for_cache_local(const RunOptions& a, const RunOptions& b) {
@@ -2299,7 +2317,6 @@ bool run_options_equal_for_cache_local(const RunOptions& a, const RunOptions& b)
          a.advanced.copy_input == b.advanced.copy_input &&
          a.advanced.max_input_bytes == b.advanced.max_input_bytes &&
          a.advanced.sync_num_buffers_override == b.advanced.sync_num_buffers_override &&
-         a.advanced.prepare_output_cpu_visible == b.advanced.prepare_output_cpu_visible &&
          rail_options_equal(a.power_monitor, b.power_monitor);
 }
 
@@ -2404,15 +2421,18 @@ Sample run_sync_cached_input(const std::vector<std::shared_ptr<Node>>& nodes,
           run_cache ? static_cast<void*>(std::addressof(run_cache->runner)) : nullptr, max_buffers,
           timeout_ms, run_cache && run_cache->sync_prefill_warmed ? 1 : 0);
     }
-    if (max_buffers > 1) {
-      const bool allow_startup_lag = !run_cache->sync_prefill_warmed;
-      Sample out =
-          run_sync_prefill(run_cache->runner, input, timeout_ms, max_buffers, allow_startup_lag);
+    try {
+      if (max_buffers > 1) {
+        const bool allow_startup_lag = !run_cache->sync_prefill_warmed;
+        return run_sync_prefill_typed(run_cache, input, timeout_ms, max_buffers, allow_startup_lag);
+      }
       run_cache->sync_prefill_warmed = true;
-      return out;
+      return run_sync_once_typed(run_cache->runner, input, timeout_ms);
+    } catch (...) {
+      // A failed call may still produce output; it must not satisfy the next call.
+      run_cache.reset();
+      throw;
     }
-    run_cache->sync_prefill_warmed = true;
-    return run_sync_once_typed(run_cache->runner, input, timeout_ms);
   };
 
   try {
@@ -2469,6 +2489,21 @@ Sample run_sync_cached_input(const std::vector<std::shared_ptr<Node>>& nodes,
 } // namespace
 
 namespace session_test {
+
+Sample run_sync_prefill_for_test(Run& runner, const Tensor& input, int timeout_ms, int count,
+                                 bool warmed) {
+  struct Cache {
+    Run runner;
+    bool sync_prefill_warmed = false;
+  };
+  auto cache = std::make_unique<Cache>();
+  cache->runner = std::move(runner);
+  Sample output = run_sync_prefill_typed(cache, input, timeout_ms, count, !warmed);
+  if (cache) {
+    runner = std::move(cache->runner);
+  }
+  return output;
+}
 
 std::vector<std::string> sync_cache_rebuild_events_for_test(bool fail_build) {
   struct Probe {
@@ -2915,6 +2950,40 @@ InputStreamOptions session_build_make_stream_options(const RunOptions& opt, RunM
 
 void session_build_finalize_public_zero_copy_holder_loan_credits(InputStreamOptions& stream_opt) {
   finalize_public_zero_copy_holder_loan_credits(stream_opt);
+}
+
+void session_build_tune_internal_zero_copy_holder_window(InputStreamOptions& stream_opt,
+                                                         std::size_t edge_queue,
+                                                         bool graph_internal_output) {
+  if (!graph_internal_output || !stream_opt.holder_loan_credits_auto ||
+      (stream_opt.copy_output && !stream_opt.preserve_framework_output)) {
+    return;
+  }
+  if (edge_queue == 0) {
+    edge_queue = 256;
+  }
+  const int edge_window =
+      static_cast<int>(std::min<std::size_t>(edge_queue, static_cast<std::size_t>(INT_MAX)));
+  stream_opt.holder_loan_sample_window =
+      std::max(stream_opt.holder_loan_sample_window, std::max(1, edge_window));
+  stream_opt.holder_loan_credits =
+      stream_opt.holder_loan_sample_window * std::max(1, stream_opt.holder_loan_per_sample_arity);
+}
+
+void session_build_reserve_kernel_runner_outputs(BuildResult& build,
+                                                 const InputStreamOptions& stream_opt) {
+  // Source-driven graphs also retain arenas downstream, even without an appsink.
+  // Reserve the same bounded frame window without increasing execution slots.
+  const auto retained_samples =
+      stream_opt.copy_output && !stream_opt.preserve_framework_output
+          ? 0U
+          : static_cast<std::size_t>(std::max(1, stream_opt.holder_loan_sample_window));
+  auto output_budget = pipeline_internal::sima::kernel_runner_output_pool_capacity(
+      build.kernel_runner_capacity, retained_samples);
+  if (const auto* error = std::get_if<simaai::scheduler::client::Error>(&output_budget))
+    throw std::runtime_error("Graph::build: " + error->field + ": " + error->message);
+  build.kernel_runner_output_pool_capacity =
+      std::max(build.kernel_runner_output_pool_capacity, std::get<std::size_t>(output_budget));
 }
 
 void session_build_maybe_enable_rtsp_appsink_drop(InputStreamOptions& stream_opt,

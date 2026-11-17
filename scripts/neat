@@ -36,16 +36,22 @@ ENV_LABEL=""
 SYSROOT_PATH=""
 SDK_VERSION=""
 DEVKIT_BUILD_VERSION=""
+PCIE_STATUS_FILE=""
+PCIE_STATUS_HELPER=""
 CORE_VERSION=""
 CORE_DETAIL=""
 CORE_CHANNEL=""
 CORE_TAG=""
 CORE_CHANNEL_ASSUMED=0
 PYNEAT_VERSION=""
+PYNEAT_VERSION_STATE="missing"
 RUNTIME_VERSION=""
 GST_PLUGINS_VERSION=""
+RUNNER_VERSION=""
+SCHEDULER_VERSION=""
 LLIMA_VERSION=""
 INSIGHT_VERSION=""
+INSIGHT_VERSION_STATE="missing"
 INSIGHT_CHANNEL=""
 INSIGHT_TAG=""
 INSIGHT_CHANNEL_ASSUMED=0
@@ -96,6 +102,8 @@ Environment:
   NEAT_MODEL_COMPILER_DIR  Model Compiler extension directory (default: /sdk-extensions/model-compiler)
   SIMA_CLI_BIN             sima-cli executable path/name override
   SYSROOT                  SDK sysroot path (default: /opt/toolchain/aarch64/modalix)
+  NEAT_PCIE_SSH_USER       PCIe card SSH user (default: sima)
+  NEAT_PCIE_SSH_KEY        PCIe card SSH key (default: ~/.ssh/sima_neat_pcie_ed25519)
   NO_COLOR                 Disable color when set
 EOF
 }
@@ -345,13 +353,75 @@ version_from_wheel() {
   python3 -c 'import re,sys; m=re.match(r"^[A-Za-z0-9_.]+-(.+?)-(?:py\d|cp\d)", sys.argv[1]); print(m.group(1) if m else "")' "${filename}" 2>/dev/null || true
 }
 
-version_from_pip_show() {
-  local pip_bin="$1"
+discover_distribution_version() {
+  local venv_dir="$1"
   local package="$2"
-  if [[ ! -x "${pip_bin}" ]]; then
+  local version_var="$3"
+  local state_var="$4"
+  local probe_bin=""
+  local probe_output=""
+  local probe_version=""
+  local probe_rc=0
+  local probe_reason=""
+
+  printf -v "${version_var}" '%s' ""
+  printf -v "${state_var}" '%s' "missing"
+  if [[ -x "${venv_dir}/bin/python" ]]; then
+    probe_bin="${venv_dir}/bin/python"
+  elif [[ -x "${venv_dir}/bin/python3" ]]; then
+    probe_bin="${venv_dir}/bin/python3"
+  fi
+
+  if [[ -n "${probe_bin}" ]]; then
+    # Query the selected environment, not pip's possibly stale interpreter;
+    # isolated mode excludes ambient PYTHONPATH and user-site distributions.
+    if probe_output="$("${probe_bin}" -I - "${package}" 2>&1 <<'PY'
+import importlib.metadata as metadata
+import sys
+
+try:
+    version = metadata.version(sys.argv[1])
+except metadata.PackageNotFoundError:
+    print("missing")
+else:
+    print("installed\t" + version)
+PY
+)"; then
+      case "${probe_output}" in
+        missing) return 0 ;;
+        installed$'\t'*) probe_version="${probe_output#*$'\t'}" ;;
+        *) probe_reason="malformed metadata response" ;;
+      esac
+    else
+      probe_rc=$?
+      probe_reason="metadata query failed (exit ${probe_rc})"
+    fi
+  elif [[ -x "${venv_dir}/bin/pip3" ]]; then
+    probe_bin="${venv_dir}/bin/pip3"
+    if probe_output="$("${probe_bin}" show "${package}" 2>&1)"; then
+      if ! probe_version="$(printf '%s\n' "${probe_output}" | awk -F': ' '
+        $1 == "Version" { count++; version = $2 }
+        END { if (count == 1 && version != "") print version; else exit 1 }
+      ')"; then
+        probe_reason="malformed pip show response"
+      fi
+    else
+      probe_rc=$?
+      # pip exit codes do not distinguish absence from a broken provider.
+      probe_reason="pip show failed (exit ${probe_rc})"
+    fi
+  else
     return 0
   fi
-  "${pip_bin}" show "${package}" 2>/dev/null | awk -F': ' '$1 == "Version" { print $2 }'
+
+  if [[ -z "${probe_reason}" && -n "${probe_version}" && "${probe_version}" != *[$'\t\r\n ']* ]]; then
+    printf -v "${version_var}" '%s' "${probe_version}"
+    printf -v "${state_var}" '%s' "installed"
+    return 0
+  fi
+  printf -v "${state_var}" '%s' "unknown"
+  printf 'neat: cannot determine %s version using %s: %s%s\n' \
+    "${package}" "${probe_bin}" "${probe_reason:-invalid version}" "${probe_output:+: ${probe_output}}" >&2
 }
 
 setup_color() {
@@ -376,7 +446,7 @@ setup_color() {
 status_color() {
   case "$1" in
     ok|current|installed) printf '%s' "${GREEN}" ;;
-    update|missing|warning|assumed) printf '%s' "${YELLOW}" ;;
+    update|missing|unknown|warning|assumed) printf '%s' "${YELLOW}" ;;
     error) printf '%s' "${RED}" ;;
     *) printf '%s' "${BLUE}" ;;
   esac
@@ -403,7 +473,11 @@ print_component() {
   local color
   color="$(status_color "${state}")"
   if [[ -z "${version}" ]]; then
-    version="not installed"
+    if [[ "${state}" == "unknown" ]]; then
+      version="unknown"
+    else
+      version="not installed"
+    fi
   fi
   printf '  %s%-22s%s %s%-18s%s %s\n' "${BOLD}" "${name}" "${RESET}" "${color}" "${version}" "${RESET}" "${detail}"
 }
@@ -456,14 +530,19 @@ detect_env_mode() {
     ENV_LABEL="Neat SDK"
     return 0
   fi
-  if [[ -n "${SYSROOT:-}" && -d "${SYSROOT}" ]]; then
-    ENV_MODE="elxr-sdk"
-    ENV_LABEL="Neat SDK"
-    return 0
-  fi
   if [[ -f "${BUILDINFO_FILE}" ]] && grep -qE '^MACHINE[[:space:]]*=[[:space:]]*modalix' "${BUILDINFO_FILE}"; then
     ENV_MODE="modalix-board"
     ENV_LABEL="Modalix DevKit"
+    return 0
+  fi
+  if have_cmd dpkg-query && [[ "$(dpkg-query -W -f='${db:Status-Status}' sima-pcie-host 2>/dev/null || true)" == "installed" ]]; then
+    ENV_MODE="pcie-host"
+    ENV_LABEL="Ubuntu PCIe host"
+    return 0
+  fi
+  if [[ -n "${SYSROOT:-}" && -d "${SYSROOT}" ]]; then
+    ENV_MODE="elxr-sdk"
+    ENV_LABEL="Neat SDK"
     return 0
   fi
   ENV_MODE="modalix-board"
@@ -505,6 +584,27 @@ infer_channel_and_tag() {
   printf -v "${tag_var}" '%s' "${tag}"
 }
 
+sdk_deb_version() {
+  local cache_dir="$1"
+  local package="$2"
+  local file metadata name version
+  local result=""
+  have_cmd dpkg-deb || return 0
+  # Split artifacts have stable filenames without versions. Read their actual
+  # control identity; filenames are not authoritative package metadata.
+  while IFS= read -r -d '' file; do
+    metadata="$(dpkg-deb --show --showformat='${Package}\t${Version}' "${file}" 2>/dev/null)" || continue
+    IFS=$'\t' read -r name version <<< "${metadata}"
+    [[ "${name}" == "${package}" && -n "${version}" ]] || continue
+    if [[ -n "${result}" && "${result}" != "${version}" ]]; then
+      printf 'neat: conflicting cached versions of %s\n' "${package}" >&2
+      return 0
+    fi
+    result="${version}"
+  done < <(find "${cache_dir}" -maxdepth 1 -type f -name '*.deb' -print0 | sort -z)
+  printf '%s' "${result}"
+}
+
 discover_sdk_components() {
   local cache_dir="${SYSROOT_PATH}/neat-install-packages"
   local core_file=""
@@ -514,6 +614,8 @@ discover_sdk_components() {
   local file
 
   if [[ -d "${cache_dir}" ]]; then
+    RUNNER_VERSION="$(sdk_deb_version "${cache_dir}" simaai-runner)"
+    SCHEDULER_VERSION="$(sdk_deb_version "${cache_dir}" simaai-scheduler)"
     core_file="$(find "${cache_dir}" -maxdepth 1 -type f -name 'sima-neat-*-Linux-core.deb' | sort | tail -n1 || true)"
     dev_file="$(find "${cache_dir}" -maxdepth 1 -type f -name 'sima-neat-*-Linux-dev.deb' | sort | tail -n1 || true)"
     if [[ -n "${core_file}" ]]; then
@@ -582,12 +684,10 @@ discover_devkit_components() {
   fi
   RUNTIME_VERSION="$(dpkg_version neat-runtime)"
   GST_PLUGINS_VERSION="$(dpkg_version neat-gst-plugins)"
+  RUNNER_VERSION="$(dpkg_version simaai-runner)"
+  SCHEDULER_VERSION="$(dpkg_version simaai-scheduler)"
   LLIMA_VERSION="$(dpkg_version sima-lmm-core)"
-  if [[ -x "${HOME}/pyneat/bin/pip3" ]]; then
-    PYNEAT_VERSION="$(version_from_pip_show "${HOME}/pyneat/bin/pip3" pyneat)"
-  elif [[ -x "${HOME}/pyneat/bin/python" ]]; then
-    PYNEAT_VERSION="$("${HOME}/pyneat/bin/python" -m pip show pyneat 2>/dev/null | awk -F': ' '$1 == "Version" { print $2 }')"
-  fi
+  discover_distribution_version "${HOME}/pyneat" pyneat PYNEAT_VERSION PYNEAT_VERSION_STATE
 }
 
 discover_core_package_buildinfo() {
@@ -631,11 +731,7 @@ discover_insight() {
     INSIGHT_VENV_DIR="${HOME}/.simaai/neat-insight/venv"
   fi
 
-  if [[ -x "${INSIGHT_VENV_DIR}/bin/pip3" ]]; then
-    INSIGHT_VERSION="$(version_from_pip_show "${INSIGHT_VENV_DIR}/bin/pip3" neat-insight)"
-  elif [[ -x "${INSIGHT_VENV_DIR}/bin/python" ]]; then
-    INSIGHT_VERSION="$("${INSIGHT_VENV_DIR}/bin/python" -m pip show neat-insight 2>/dev/null | awk -F': ' '$1 == "Version" { print $2 }')"
-  fi
+  discover_distribution_version "${INSIGHT_VENV_DIR}" neat-insight INSIGHT_VERSION INSIGHT_VERSION_STATE
 
   if have_cmd insight-admin; then
     status_output="$(insight-admin status 2>/dev/null || true)"
@@ -740,7 +836,11 @@ discover_model_compiler() {
 }
 
 discover_all() {
+  local include_insight="${1:-1}"
   detect_env_mode
+  if [[ "${ENV_MODE}" == "pcie-host" ]]; then
+    return 0
+  fi
   if [[ "${ENV_MODE}" == "elxr-sdk" ]]; then
     discover_sdk_version
     discover_sdk_components
@@ -748,13 +848,17 @@ discover_all() {
     discover_devkit_build_version
     discover_devkit_components
   fi
-  discover_insight
+  if [[ "${include_insight}" -eq 1 ]]; then
+    discover_insight
+  fi
   discover_model_compiler
   discover_core_package_buildinfo
   if [[ -z "${CORE_CHANNEL}" || -z "${CORE_TAG}" ]]; then
     infer_channel_and_tag "${CORE_VERSION}" "main" CORE_CHANNEL CORE_TAG CORE_CHANNEL_ASSUMED
   fi
-  infer_channel_and_tag "${INSIGHT_VERSION}" "main" INSIGHT_CHANNEL INSIGHT_TAG INSIGHT_CHANNEL_ASSUMED
+  if [[ "${include_insight}" -eq 1 ]]; then
+    infer_channel_and_tag "${INSIGHT_VERSION}" "main" INSIGHT_CHANNEL INSIGHT_TAG INSIGHT_CHANNEL_ASSUMED
+  fi
 }
 
 resolve_core_latest() {
@@ -881,15 +985,62 @@ format_insight_service_state() {
   printf 'status=%s%s%s' "${state_color}" "${INSIGHT_SERVICE_STATE}" "${RESET}"
 }
 
+resolve_code_ui_access() {
+  CODE_UI_BACKEND=openvscode
+  CODE_UI_AUTH=token
+  CODE_UI_PASSWORD=""
+  CODE_UI_TOKEN="${OPENVSCODE_SERVER_TOKEN:-}"
+  CODE_UI_PORT="${OPENVSCODE_SERVER_HTTPS_PORT:-}"
+  CODE_UI_WORKSPACE="${OPENVSCODE_WORKSPACE:-/workspace}"
+  CODE_UI_LOCAL_URL=""
+  CODE_UI_REMOTE_URL=""
+  local without_auth="${OPENVSCODE_SERVER_WITHOUT_TOKEN:-0}"
+  local query="" network_host="${NFS_SERVER_HOST_IP:-${CONTAINER_HOST_IP:-}}"
+  local mapped_port=""
+
+  # New CLIs pass both environment contracts, even to legacy images. Detect
+  # the installed server rather than inferring the backend from the password.
+  if [[ -x "${CODE_SERVER_DIR:-/opt/code-server}/bin/code-server" ]]; then
+    CODE_UI_BACKEND=code-server
+    CODE_UI_AUTH=password
+    CODE_UI_TOKEN=""
+    CODE_UI_PASSWORD="${CODE_SERVER_PASSWORD:-${OPENVSCODE_SERVER_TOKEN:-}}"
+    CODE_UI_PORT="${CODE_SERVER_HTTPS_PORT:-${OPENVSCODE_SERVER_HTTPS_PORT:-10000}}"
+    CODE_UI_WORKSPACE="${CODE_SERVER_WORKSPACE:-${OPENVSCODE_WORKSPACE:-/workspace}}"
+    without_auth="${CODE_SERVER_WITHOUT_PASSWORD:-${OPENVSCODE_SERVER_WITHOUT_TOKEN:-0}}"
+  fi
+  if [[ "${without_auth}" == "1" && ( "${CODE_UI_BACKEND}" == code-server || -z "${CODE_UI_TOKEN}" ) ]]; then
+    CODE_UI_AUTH=none
+    CODE_UI_PASSWORD=""
+    CODE_UI_TOKEN=""
+  fi
+  if [[ -z "${CODE_UI_PORT}" || "${ENV_MODE}" != "elxr-sdk" ]]; then
+    return 0
+  fi
+  mapped_port="$(json_file_field "${PORT_MAP_FILE}" codeUIHttps.host)"
+  CODE_UI_PORT="${mapped_port:-${CODE_UI_PORT}}"
+  if [[ "${CODE_UI_AUTH}" == token ]]; then
+    [[ -n "${CODE_UI_TOKEN}" ]] || return 0
+    query="?tkn=${CODE_UI_TOKEN}"
+  fi
+  if [[ -n "${CODE_UI_WORKSPACE}" ]]; then
+    if [[ -n "${query}" ]]; then
+      query="${query}&folder=${CODE_UI_WORKSPACE}"
+    else
+      query="?folder=${CODE_UI_WORKSPACE}"
+    fi
+  fi
+  CODE_UI_LOCAL_URL="https://127.0.0.1:${CODE_UI_PORT}/${query}"
+  if [[ -n "${network_host}" && "${network_host}" != 127.0.0.1 ]]; then
+    CODE_UI_REMOTE_URL="https://${network_host}:${CODE_UI_PORT}/${query}"
+  fi
+}
+
 print_web_access_urls() {
   local insight_web_ui_port="$1"
   local network_host="${NFS_SERVER_HOST_IP:-${CONTAINER_HOST_IP:-}}"
-  local vscode_port="${OPENVSCODE_SERVER_HTTPS_PORT:-}"
-  local vscode_token="${OPENVSCODE_SERVER_TOKEN:-}"
-  local vscode_workspace="${OPENVSCODE_WORKSPACE:-/workspace}"
-  local vscode_query=""
-
-  if [[ -z "${insight_web_ui_port}" && -z "${vscode_port}" ]]; then
+  resolve_code_ui_access
+  if [[ -z "${insight_web_ui_port}" && -z "${CODE_UI_PORT}" ]]; then
     return 0
   fi
 
@@ -905,28 +1056,23 @@ print_web_access_urls() {
     fi
   fi
 
-  if [[ -n "${vscode_port}" ]]; then
-    if [[ -n "${vscode_token}" ]]; then
-      vscode_query="?tkn=${vscode_token}"
-    elif [[ "${OPENVSCODE_SERVER_WITHOUT_TOKEN:-0}" != "1" ]]; then
-      printf '  %s%-18s%s %sOPENVSCODE_SERVER_TOKEN is not available in this shell%s\n' \
-        "${BOLD}" "VS Code" "${RESET}" "${YELLOW}" "${RESET}"
-      return 0
+  if [[ -n "${CODE_UI_LOCAL_URL}" ]]; then
+    print_colored_kv "VS Code (local)" "${CODE_UI_LOCAL_URL}" "${GREEN}"
+    if [[ -n "${CODE_UI_REMOTE_URL}" ]]; then
+      print_colored_kv "VS Code (remote)" "${CODE_UI_REMOTE_URL}" "${GREEN}"
     fi
-    if [[ -n "${vscode_workspace}" ]]; then
-      if [[ -n "${vscode_query}" ]]; then
-        vscode_query="${vscode_query}&folder=${vscode_workspace}"
+    if [[ "${CODE_UI_AUTH}" == password ]]; then
+      if [[ -n "${CODE_UI_PASSWORD}" ]]; then
+        print_colored_kv "VS Code password" "${CODE_UI_PASSWORD}" "${GREEN}"
+        printf '  Enter this password when prompted by code-server.\n'
       else
-        vscode_query="?folder=${vscode_workspace}"
+        printf '  CODE_SERVER_PASSWORD is not available in this shell.\n'
       fi
-    fi
-    print_colored_kv "VS Code (local)" "https://127.0.0.1:${vscode_port}/${vscode_query}" "${GREEN}"
-    if [[ -n "${network_host}" && "${network_host}" != "127.0.0.1" ]]; then
-      print_colored_kv "VS Code (remote)" "https://${network_host}:${vscode_port}/${vscode_query}" "${GREEN}"
-    fi
-    if [[ -n "${vscode_token}" ]]; then
+    elif [[ "${CODE_UI_AUTH}" == token ]]; then
       printf '  %sVS Code URLs contain an access token; do not share them.%s\n' "${DIM}" "${RESET}"
     fi
+  elif [[ -n "${CODE_UI_PORT}" ]]; then
+    printf '  OPENVSCODE_SERVER_TOKEN is not available in this shell\n'
   fi
 }
 
@@ -1016,7 +1162,7 @@ print_status_json() {
   if ! have_cmd python3; then
     die "--json requires python3"
   fi
-  if [[ "${STATUS_OFFLINE}" -eq 0 ]]; then
+  if [[ "${STATUS_OFFLINE}" -eq 0 && "${ENV_MODE}" != "pcie-host" ]]; then
     if resolve_updates; then
       if [[ -n "${UPDATE_FAILURES}" ]]; then
         update_check_status="partial"
@@ -1028,7 +1174,14 @@ print_status_json() {
     fi
   fi
 
+  resolve_code_ui_access
   env \
+    NEAT_JSON_PCIE_STATUS_FILE="${PCIE_STATUS_FILE}" \
+    NEAT_JSON_CODE_UI_BACKEND="${CODE_UI_BACKEND}" \
+    NEAT_JSON_CODE_UI_AUTH="${CODE_UI_AUTH}" \
+    NEAT_JSON_CODE_UI_PASSWORD="${CODE_UI_PASSWORD}" \
+    NEAT_JSON_CODE_UI_LOCAL_URL="${CODE_UI_LOCAL_URL}" \
+    NEAT_JSON_CODE_UI_REMOTE_URL="${CODE_UI_REMOTE_URL}" \
     NEAT_JSON_ENV_MODE="${ENV_MODE}" \
     NEAT_JSON_ENV_LABEL="${ENV_LABEL}" \
     NEAT_JSON_SYSROOT="${SYSROOT_PATH}" \
@@ -1053,6 +1206,8 @@ print_status_json() {
     NEAT_JSON_PYNEAT_VERSION="${PYNEAT_VERSION}" \
     NEAT_JSON_RUNTIME_VERSION="${RUNTIME_VERSION}" \
     NEAT_JSON_GST_PLUGINS_VERSION="${GST_PLUGINS_VERSION}" \
+    NEAT_JSON_RUNNER_VERSION="${RUNNER_VERSION}" \
+    NEAT_JSON_SCHEDULER_VERSION="${SCHEDULER_VERSION}" \
     NEAT_JSON_LLIMA_VERSION="${LLIMA_VERSION}" \
     NEAT_JSON_INSIGHT_VERSION="${INSIGHT_VERSION}" \
     NEAT_JSON_INSIGHT_CHANNEL="${INSIGHT_CHANNEL}" \
@@ -1223,6 +1378,14 @@ payload = {
             "name": "neat-gst-plugins",
             "version": optional(env("NEAT_JSON_GST_PLUGINS_VERSION")),
         },
+        "runner": {
+            "name": "simaai-runner",
+            "version": optional(env("NEAT_JSON_RUNNER_VERSION")),
+        },
+        "scheduler": {
+            "name": "simaai-scheduler",
+            "version": optional(env("NEAT_JSON_SCHEDULER_VERSION")),
+        },
         "llima": {
             "name": "neat-llima",
             "version": optional(env("NEAT_JSON_LLIMA_VERSION")),
@@ -1252,8 +1415,23 @@ payload = {
         "venv": optional(env("NEAT_JSON_INSIGHT_VENV_DIR")),
         "webUiUrl": insight_web_ui_url,
     },
+    "codeUI": {
+        "backend": env("NEAT_JSON_CODE_UI_BACKEND"),
+        "auth": env("NEAT_JSON_CODE_UI_AUTH"),
+        "password": optional(env("NEAT_JSON_CODE_UI_PASSWORD")),
+        "localUrl": optional(env("NEAT_JSON_CODE_UI_LOCAL_URL")),
+        "remoteUrl": optional(env("NEAT_JSON_CODE_UI_REMOTE_URL")),
+    } if env("NEAT_JSON_CODE_UI_LOCAL_URL") else None,
     "exposedPorts": ports,
 }
+
+pcie_file = env("NEAT_JSON_PCIE_STATUS_FILE")
+if pcie_file:
+    payload["pcie"] = json.loads(Path(pcie_file).read_text())
+    for key, name in (("pcieHost", "sima-pcie-host"), ("pcieScheduler", "simaai-scheduler-pcie-host")):
+        package = payload["pcie"]["host"]["packages"].get(name, {})
+        payload["components"][key] = {"name": name, "version": package.get("version")}
+    payload["components"]["pyneatpcie"] = {"name": "PyNeatPCIe", **payload["pcie"]["host"]["python"].get("pyneatpcie", {"version": None})}
 update_failures = [
     line for line in env("NEAT_JSON_UPDATE_FAILURES").splitlines() if line.strip()
 ]
@@ -1269,6 +1447,8 @@ print_status() {
   local insight_detail=""
   local core_state="installed"
   local insight_state="installed"
+  local pyneat_state="$([[ -n "${PYNEAT_VERSION}" ]] && echo installed || echo "${PYNEAT_VERSION_STATE}")"
+  local pyneat_detail=""
   local model_detail=""
 
   printf '%sNeat Environment%s\n' "${BOLD}" "${RESET}"
@@ -1313,14 +1493,31 @@ print_status() {
   fi
   insight_detail="${insight_detail} $(format_insight_service_state)"
   [[ -n "${INSIGHT_VENV_DIR}" ]] && insight_detail="${insight_detail} venv=${INSIGHT_VENV_DIR}"
+  if [[ "${PYNEAT_VERSION_STATE}" == "unknown" ]]; then
+    pyneat_detail="version unavailable"
+  fi
+  if [[ -z "${INSIGHT_VERSION}" ]]; then
+    insight_state="${INSIGHT_VERSION_STATE}"
+    [[ "${insight_state}" == "unknown" ]] && insight_detail="${insight_detail} version unavailable"
+  fi
 
   printf '%sComponents%s\n' "${BOLD}" "${RESET}"
   print_component "Neat core" "${CORE_VERSION}" "${core_detail:-${CORE_DETAIL}}" "$([[ -n "${CORE_VERSION}" ]] && echo "${core_state}" || echo missing)"
-  print_component "PyNeat" "${PYNEAT_VERSION}" "" "$([[ -n "${PYNEAT_VERSION}" ]] && echo installed || echo missing)"
-  print_component "neat-runtime" "${RUNTIME_VERSION}" "" "$([[ -n "${RUNTIME_VERSION}" ]] && echo installed || echo missing)"
-  print_component "neat-gst-plugins" "${GST_PLUGINS_VERSION}" "" "$([[ -n "${GST_PLUGINS_VERSION}" ]] && echo installed || echo missing)"
+  print_component "PyNeat" "${PYNEAT_VERSION}" "${pyneat_detail}" "${pyneat_state}"
+  if [[ -n "${RUNNER_VERSION}" || -n "${SCHEDULER_VERSION}" ]]; then
+    print_component "simaai-runner" "${RUNNER_VERSION}" "" "$([[ -n "${RUNNER_VERSION}" ]] && echo installed || echo missing)"
+    print_component "simaai-scheduler" "${SCHEDULER_VERSION}" "" "$([[ -n "${SCHEDULER_VERSION}" ]] && echo installed || echo missing)"
+  fi
+  # A split installation does not require retired roles. Still report legacy
+  # packages when present, including during a mixed/coexisting installation.
+  if [[ -n "${RUNTIME_VERSION}" || ( -z "${RUNNER_VERSION}" && -z "${SCHEDULER_VERSION}" ) ]]; then
+    print_component "neat-runtime" "${RUNTIME_VERSION}" "" "$([[ -n "${RUNTIME_VERSION}" ]] && echo installed || echo missing)"
+  fi
+  if [[ -n "${GST_PLUGINS_VERSION}" || ( -z "${RUNNER_VERSION}" && -z "${SCHEDULER_VERSION}" ) ]]; then
+    print_component "neat-gst-plugins" "${GST_PLUGINS_VERSION}" "" "$([[ -n "${GST_PLUGINS_VERSION}" ]] && echo installed || echo missing)"
+  fi
   print_component "neat-llima" "${LLIMA_VERSION}" "" "$([[ -n "${LLIMA_VERSION}" ]] && echo installed || echo missing)"
-  print_component "neat-insight" "${INSIGHT_VERSION}" "${insight_detail}" "$([[ -n "${INSIGHT_VERSION}" ]] && echo "${insight_state}" || echo missing)"
+  print_component "neat-insight" "${INSIGHT_VERSION}" "${insight_detail}" "${insight_state}"
 
   if [[ "${MODEL_COMPILER_AVAILABLE}" -eq 1 ]]; then
     model_detail="${MODEL_COMPILER_DETAIL}"
@@ -1483,7 +1680,7 @@ print_update_plan() {
 
 run_update() {
   STATUS_OFFLINE=0
-  discover_all
+  discover_all "${UPDATE_INSIGHT}"
   reset_update_failures
   if [[ "${UPDATE_CORE}" -eq 1 ]] && ! resolve_core_latest; then
     die "unable to resolve latest Neat core artifact$(update_failure_suffix)"
@@ -1603,13 +1800,27 @@ main() {
   case "${command}" in
     status)
       discover_all
+      if [[ "${ENV_MODE}" == "pcie-host" ]]; then
+        local script_dir
+        script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+        PCIE_STATUS_HELPER="${script_dir}/neat_pcie_status.py"
+        [[ -f "${PCIE_STATUS_HELPER}" ]] || PCIE_STATUS_HELPER="${script_dir}/../share/sima-pcie-host/neat_pcie_status.py"
+        [[ -f "${PCIE_STATUS_HELPER}" ]] || die "PCIe status helper is missing; reinstall sima-pcie-host"
+        PCIE_STATUS_FILE="$(mktemp)"
+        trap 'rm -f "${PCIE_STATUS_FILE}"' EXIT
+        python3 -B "${PCIE_STATUS_HELPER}" > "${PCIE_STATUS_FILE}"
+      fi
       if [[ "${OUTPUT_JSON}" -eq 1 ]]; then
         print_status_json
+      elif [[ "${ENV_MODE}" == "pcie-host" ]]; then
+        python3 -B "${PCIE_STATUS_HELPER}" --render < "${PCIE_STATUS_FILE}"
       else
         print_status
       fi
       ;;
     update)
+      detect_env_mode
+      [[ "${ENV_MODE}" != "pcie-host" ]] || die "PCIe host updates use sima-cli neat install core/pciehost/<distro>/<arch>@<ref>; neat update does not update cards"
       run_update
       ;;
   esac

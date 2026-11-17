@@ -130,8 +130,8 @@ void validate_output(const simaai::neat::TensorList& outputs) {
 
 int run_child(int socket) {
   try {
-    require(simaai::neat::element_exists("neatprocesscvu"),
-            "Missing SIMA preproc plugin (neatprocesscvu)");
+    require(simaai::neat::element_exists("neatkernelrunner"),
+            "Missing SIMA preproc plugin (neatkernelrunner)");
 
     cv::Mat image(720, 1280, CV_8UC3, cv::Scalar(64, 128, 192));
     if (!image.isContinuous()) {

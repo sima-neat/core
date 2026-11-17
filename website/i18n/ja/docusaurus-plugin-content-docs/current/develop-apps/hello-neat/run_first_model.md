@@ -30,7 +30,7 @@ sidebar_position: 2
 2. **モデルをダウンロードします:**
 
     <ShellCommand prompt="sdk|devkit">
-    sima-cli modelzoo -v 2.0.0 get yolo_v8s
+    sima-cli modelzoo -v 2.1.3 get yolo_v8s
     </ShellCommand>
 
     :::note sima-cli モデルのダウンロード

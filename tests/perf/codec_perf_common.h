@@ -24,6 +24,7 @@
 #include <cstdint>
 #include <exception>
 #include <filesystem>
+#include <functional>
 #include <iomanip>
 #include <iostream>
 #include <optional>
@@ -151,8 +152,14 @@ inline std::string h265_parser_fragment() {
          "alignment=(string)au\"";
 }
 
-inline std::vector<EncodedFrame> extract_video_access_units(simaai::neat::SimaDecodeType type,
-                                                            int max_frames) {
+// Called once while the preparation parser still exists, never during timing.
+using AccessUnitObserver =
+    std::function<void(const simaai::neat::Run&, const std::filesystem::path&,
+                       const std::vector<EncodedFrame>&, const std::vector<std::string>&)>;
+
+inline std::vector<EncodedFrame>
+extract_video_access_units(simaai::neat::SimaDecodeType type, int max_frames,
+                           const AccessUnitObserver& observe = {}) {
   namespace fs = std::filesystem;
   const bool is_h264 = type == simaai::neat::SimaDecodeType::H264;
   const fs::path fixture = is_h264 ? h264_fixture_path() : h265_fixture_path();
@@ -182,6 +189,9 @@ inline std::vector<EncodedFrame> extract_video_access_units(simaai::neat::SimaDe
 
   std::vector<EncodedFrame> frames;
   frames.reserve(static_cast<std::size_t>(max_frames));
+  std::vector<std::string> emitted_caps;
+  if (observe)
+    emitted_caps.reserve(static_cast<std::size_t>(max_frames));
   while (static_cast<int>(frames.size()) < max_frames) {
     simaai::neat::Sample sample;
     simaai::neat::PullError error;
@@ -207,6 +217,8 @@ inline std::vector<EncodedFrame> extract_video_access_units(simaai::neat::SimaDe
     if (bytes.empty()) {
       throw std::runtime_error(codec + " fixture extraction produced empty AU");
     }
+    if (observe)
+      emitted_caps.push_back(sample.caps_string);
     std::string caps = sample.caps_string;
     if (caps.empty()) {
       caps = is_h264 ? "video/x-h264,parsed=(boolean)true,stream-format=(string)byte-stream,"
@@ -217,6 +229,8 @@ inline std::vector<EncodedFrame> extract_video_access_units(simaai::neat::SimaDe
     frames.push_back({std::move(bytes), std::move(caps)});
   }
 
+  if (observe)
+    observe(run, fixture, frames, emitted_caps);
   run.stop();
   if (frames.empty()) {
     throw std::runtime_error(codec + " fixture extraction produced no access units");

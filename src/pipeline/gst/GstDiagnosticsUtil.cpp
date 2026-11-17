@@ -48,7 +48,8 @@ const char* state_name(GstState s) {
 }
 
 void log_appsink_pull_state(GstElement* appsink, GstSample* sample, const char* tag) {
-  if (!env_bool("SIMA_APPSINK_PULL_DEBUG", false))
+  static const bool enabled = env_bool("SIMA_APPSINK_PULL_DEBUG", false);
+  if (!enabled)
     return;
   if (!appsink || !sample)
     return;
@@ -73,7 +74,8 @@ void log_appsink_pull_state(GstElement* appsink, GstSample* sample, const char* 
 }
 
 void log_appsink_last_sample(GstElement* appsink, const char* tag) {
-  if (!env_bool("SIMA_APPSINK_LAST_SAMPLE_DEBUG", false))
+  static const bool enabled = env_bool("SIMA_APPSINK_LAST_SAMPLE_DEBUG", false);
+  if (!enabled)
     return;
   if (!appsink)
     return;
@@ -769,8 +771,9 @@ void throw_if_bus_error(GstElement* pipeline, const std::shared_ptr<DiagCtx>& di
   rep.error_code = diagnostic.error_code;
   rep.repro_note =
       render_diagnostic_body(diagnostic, ux::should_emit_gstreamer_for_current_context());
-  throw NeatError(pipeline_internal::error_util::decorate_error(rep.error_code, rep.repro_note),
-                  std::move(rep));
+  const std::string message =
+      pipeline_internal::error_util::decorate_error(rep.error_code, rep.repro_note);
+  throw NeatError(message, std::move(rep));
 }
 
 std::optional<GstSample*> try_pull_sample_sliced(GstElement* pipeline, GstElement* appsink,
@@ -780,7 +783,8 @@ std::optional<GstSample*> try_pull_sample_sliced(GstElement* pipeline, GstElemen
   if (!pipeline || !appsink)
     return std::nullopt;
 
-  const int slice_ms = std::max(10, std::atoi(env_str("SIMA_GST_POLL_SLICE_MS", "200").c_str()));
+  static const int slice_ms =
+      std::max(10, std::atoi(env_str("SIMA_GST_POLL_SLICE_MS", "200").c_str()));
 
   const bool infinite = (timeout_ms < 0);
   int remaining = timeout_ms;

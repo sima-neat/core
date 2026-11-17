@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "source": {
+    "repository": "sima-neat/core",
+    "commit": "0fbe72665c2aadaa741fdbfd6c792770df9af57d",
+    "run": 39277161550,
+    "metadata_url": "https://artifacts.neat.sima.ai/core/develop/0fbe72665c2a/metadata-extras.json"
+  },
+  "archive": {
+    "url": "https://artifacts.neat.sima.ai/core/develop/0fbe72665c2a/sima-neat-0.6.0%2Bdevelop.0fbe72665c2a-Linux-extras.tar.gz",
+    "size": 23879381,
+    "sha256": "3d9316120be0c50fc1c637901103e3ab02f86bd3e3f5911f7d22bad5bdfa7b86"
+  },
+  "members": {
+    "h264_1280x720_30fps_no_sei.h264": {
+      "path": "lib/sima-neat/test-assets/codec-perf/h264_1280x720_30fps_no_sei.h264",
+      "size": 62724,
+      "sha256": "726e6cb0c3ced9436d634093dea3c0a2fd05e8f3cdfcf75cda557dae6b33cfe3"
+    },
+    "h264_no_b.nv12": {
+      "path": "lib/sima-neat/test-assets/codec-perf/h264_no_b.nv12",
+      "size": 16588800,
+      "sha256": "ff266f8a80b750e91666db4416ce917abf8ff2e405f847868e60cc9b429469b9"
+    },
+    "h265_1280x720_30fps_no_sei.h265": {
+      "path": "lib/sima-neat/test-assets/codec-perf/h265_1280x720_30fps_no_sei.h265",
+      "size": 15027,
+      "sha256": "56ddc3651cbd5198eafcc350b5af2f5a247b64a038c69d8bbc09020bcf8264af"
+    },
+    "h265_no_b.nv12": {
+      "path": "lib/sima-neat/test-assets/codec-perf/h265_no_b.nv12",
+      "size": 16588800,
+      "sha256": "8bc8e8065448eb8bc9ab0b2c86b036e88901b44f84062d759bb2f53bcdc29074"
+    }
+  }
+}

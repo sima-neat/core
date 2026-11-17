@@ -99,7 +99,8 @@ OutputSpec H264Decode::output_spec(const OutputSpec& input) const {
     out.fps_num = input.fps_num;
     out.fps_den = (input.fps_den > 0) ? input.fps_den : 1;
   }
-  out.layout = (out.format == "NV12" || out.format == "I420") ? "Planar" : "HWC";
+  out.layout =
+      (out.format == "NV12" || out.format == "NV16" || out.format == "I420") ? "Planar" : "HWC";
   out.dtype = "UInt8";
   out.memory = raw_output_ ? "SimaAI" : "SystemMemory";
   out.certainty = SpecCertainty::Hint;

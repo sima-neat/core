@@ -11,7 +11,6 @@
 
 #include "GraphDetail.h"
 
-#include "nodes/io/HttpSource.h"
 #include "pipeline/graph/internal/GraphTestHooks.h"
 
 #include <algorithm>
@@ -32,18 +31,7 @@ std::string automatic_realtime_stream_id(std::size_t from, std::size_t to,
 }
 
 bool node_is_live_source(const Node* node) {
-  if (!node || node->input_role() != InputRole::Source) {
-    return false;
-  }
-  const std::string kind = node->kind();
-  if (kind == "RTSPInput" || kind == "CameraInput" || kind == "PCIeSrc") {
-    return true;
-  }
-  if (kind == "HttpSource") {
-    const auto* http = dynamic_cast<const HttpSource*>(node);
-    return http && http->options().is_live;
-  }
-  return false;
+  return node && node->input_role() == InputRole::Source && node->is_live_source();
 }
 
 bool vertex_is_live_source_context(const auto& graph, std::size_t vertex) {

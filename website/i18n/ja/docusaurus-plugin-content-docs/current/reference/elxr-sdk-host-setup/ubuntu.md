@@ -1,15 +1,15 @@
 ---
 title: "Ubuntu ホストに関する注意事項"
-description: "Ubuntuのホストを、Neat SDKとDevKit-Sync用に準備します。"
+description: "Ubuntuのホストを、Palette SDKとDevKit-Sync用に準備します。"
 sidebar_position: 1
 ---
 
-ホストマシンが Ubuntu で、Neat を実行したい場合は、このガイドを参照してください。開発環境（Neat SDK と呼ばれる）と DevKit-Sync を使用します。
+ホストマシンが Ubuntu で、DevKit-Sync を使用して Palette SDK を実行したい場合は、このガイドを参照してください。
 
 ## 前提条件
 
 - Ubuntu 22.04または24.04のホスト。
-- Docker Engine がインストールされ、正常に動作しています。
+- Docker Engine %%dependency.docker.minimum%% 以降がインストールされ、正常に動作しています。バージョンは `docker --version` で確認できます。
 - ホストに`sima-cli`がインストールされました。
 - ModalixとDevKitは、同じネットワーク上でアクセス可能です。
 
@@ -81,4 +81,4 @@ Ubuntuのファイアウォールルールが有効になっている場合は�
 
 ## 次のステップ
 
-[Neat SDK](/getting-started/dev-environment/)に戻り、インストール/設定を続行してください。
+[Palette SDK](/getting-started/dev-environment/)に戻り、インストール/設定を続行してください。

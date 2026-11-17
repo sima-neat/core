@@ -46,8 +46,8 @@ RUN_TEST(
                     "test_output_shape_rank_invalid", "test_output_shape_dim_invalid",
                     "test_output_dtype_invalid", "test_output_stride_output_missing"),
                 "dequant runtime test should synthesize typed output tensor");
-        runtime.input_tensors = {input_desc};
-        runtime.output_tensors = {output_desc};
+        runtime.input_tensors = {{input_desc, runtime.input_dtype}};
+        runtime.output_tensors = {{output_desc, runtime.output_dtype}};
         runtime.runtime_output_logical_layout_list = {"HWC"};
       }
       runtime.has_q_scale = true;

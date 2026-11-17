@@ -1,7 +1,10 @@
 #include "nodes/sima/Preproc.h"
+#include "nodes/sima/internal/ImageTransformPolicy.h"
+#include "nodes/sima/internal/ResizeInterpolation.h"
 
 #include "builder/InputContractConfigurable.h"
 #include "model/internal/ModelInternal.h"
+#include "model/internal/ModelRouteRetarget.h"
 #include "model/internal/ModelManagedPreprocEnvelope.h"
 #include "model/internal/ModelPack.h"
 #include "gst/GstHelpers.h"
@@ -15,6 +18,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -32,7 +36,19 @@ using json = nlohmann::json;
 struct Preproc::PreprocConfigHolder {
   json config;
   bool has_config = false;
+  std::shared_ptr<const internal::ImageTransformPolicy> image_transform;
 };
+
+const internal::ImageTransformPolicy* internal::ImageTransformAccess::policy(const Preproc& node) {
+  return node.config_holder_ ? node.config_holder_->image_transform.get() : nullptr;
+}
+void internal::ImageTransformAccess::set_policy(
+    Preproc& node, std::shared_ptr<const internal::ImageTransformPolicy> policy) {
+  if (!node.config_holder_ || node.config_holder_->has_config ||
+      node.config_holder_->image_transform)
+    throw std::logic_error("Image transform policy must be installed once before materialization");
+  node.config_holder_->image_transform = std::move(policy);
+}
 
 namespace {
 
@@ -135,7 +151,16 @@ void canonicalize_quantized_output_defaults(PreprocOptions* opt) {
     return;
   }
   if (!opt->q_scale.has_value()) {
-    opt->q_scale = 1.0;
+    if (opt->quantization_step) {
+      const float step = *opt->quantization_step;
+      if (!std::isfinite(step) || step <= 0)
+        throw std::invalid_argument("Preproc quantization_step must be finite and positive");
+      // Populate the existing transport metadata from the authored source
+      // step, not the other way round. Execution still receives that step.
+      opt->q_scale = float(1.0f / step);
+    } else {
+      opt->q_scale = 1.0;
+    }
   }
   if (!opt->q_zp.has_value()) {
     opt->q_zp = 0;
@@ -220,6 +245,9 @@ std::string canonical_preproc_output_dtype_or_throw(const std::string& raw_token
   }
   if (token == "EVXX_BFLOAT16" || token == "BFLOAT16" || token == "BF16") {
     return "EVXX_BFLOAT16";
+  }
+  if (token == "FP16" || token == "FLOAT16" || token == "EVXX_FLOAT16") {
+    return "FP16";
   }
   throw std::runtime_error("Preproc: unsupported output_dtype token '" + raw_token + "'");
 }
@@ -369,6 +397,18 @@ json build_preproc_json(const PreprocOptions& opt) {
   j["q_scale"] = opt.q_scale.value_or(1.0);
   j["channel_mean"] = json::array({mean3[0], mean3[1], mean3[2]});
   j["channel_stddev"] = json::array({std3[0], std3[1], std3[2]});
+  if (opt.resize_mode)
+    j["resize_mode"] = static_cast<int>(*opt.resize_mode);
+  if (opt.shorter_side)
+    j["shorter_side"] = *opt.shorter_side;
+  if (opt.rescale_factor)
+    j["rescale_factor"] = *opt.rescale_factor;
+  if (opt.quantization_step)
+    j["quantization_step"] = *opt.quantization_step;
+  if (opt.color_conversion_placement != PreprocColorConversionPlacement::AfterResize)
+    j["color_conversion_placement"] = static_cast<int>(opt.color_conversion_placement);
+  if (opt.floating_conversion != PreprocFloatingConversion::Legacy)
+    j["floating_conversion"] = static_cast<int>(opt.floating_conversion);
 
   j["input_img_type"] = in_fmt;
   j["output_img_type"] = out_fmt;
@@ -537,8 +577,58 @@ void Preproc::materialize_config_from_input_contract(const InputContract& contra
     throw std::runtime_error(oss.str());
   }
 
+  if (const auto* policy = internal::ImageTransformAccess::policy(*this)) {
+    if (contract.media_type != "video/x-raw" ||
+        (!contract.dtype.empty() && upper_copy(contract.dtype) != "UINT8"))
+      throw std::invalid_argument("Image transforms require UInt8 raw-video input");
+    auto format = upper_copy(contract.format);
+    if (format == "GRAY")
+      format = "GRAY8";
+    if (format != "RGB" && format != "BGR" && format != "GRAY8" && format != "GRAY" &&
+        format != "NV12" && format != "I420" && format != "NV16")
+      throw std::invalid_argument("Image transform: unsupported raw-image format");
+    if ((policy->max_input_width > 0 && contract.width > policy->max_input_width) ||
+        (policy->max_input_height > 0 && contract.height > policy->max_input_height))
+      throw std::invalid_argument("Resize input exceeds its authored capacity envelope");
+    if (config_holder_->has_config && opt_.input_img_type != format)
+      throw std::invalid_argument(
+          "Image transform input format is fixed per run; reprepare the graph");
+    if (!policy->dynamic_input() && config_holder_->has_config &&
+        (opt_.input_width() != contract.width || opt_.input_height() != contract.height ||
+         opt_.input_img_type != format))
+      throw std::invalid_argument(
+          "ColorConvert/Normalization geometry and format are fixed per run; reprepare the graph");
+    if (policy->mode == internal::ImageTransformMode::Normalization && format != "RGB" &&
+        format != "BGR" && format != "GRAY8" && format != "GRAY")
+      throw std::invalid_argument("Normalization requires RGB/BGR/GRAY8; use ColorConvert first");
+    if (policy->mode == internal::ImageTransformMode::Resize ||
+        policy->mode == internal::ImageTransformMode::Normalization)
+      opt_.output_img_type = format;
+    if (!policy->dynamic_input()) {
+      opt_.set_output_shape({contract.height, contract.width, channels_from_format(format, 0)});
+      opt_.scaled_width = contract.width;
+      opt_.scaled_height = contract.height;
+    }
+    opt_.set_output_shape(
+        {opt_.output_height(), opt_.output_width(), channels_from_format(opt_.output_img_type, 0)});
+    const bool yuv_output = opt_.output_img_type == "NV12" || opt_.output_img_type == "I420" ||
+                            opt_.output_img_type == "NV16";
+    if (yuv_output && opt_.pad_value != 0)
+      throw std::invalid_argument("YUV image padding uses yuv_padding; pad_value must remain zero");
+    if (!yuv_output && (policy->color.range != ImageYuvRange::Full ||
+                        policy->color.input_siting !=
+                            std::array{ImageChromaSiting::Centered, ImageChromaSiting::Centered} ||
+                        policy->color.output_siting !=
+                            std::array{ImageChromaSiting::Centered, ImageChromaSiting::Centered}))
+      throw std::invalid_argument(
+          "RGB/GRAY output supports only legacy full-range centered YUV interpretation");
+    if (policy->surface == ImageSurfaceLayout::EncoderNv12 && opt_.output_img_type != "NV12")
+      throw std::invalid_argument("EncoderNv12 surface requires NV12 output");
+  }
   opt_.set_input_shape(compact_shape({contract.height, contract.width, 0}));
-  const std::string contract_format = upper_copy(contract.format);
+  std::string contract_format = upper_copy(contract.format);
+  if (internal::ImageTransformAccess::policy(*this) && contract_format == "GRAY")
+    contract_format = "GRAY8";
   if (!opt_.model_managed_contract || opt_.input_img_type.empty()) {
     opt_.input_img_type = contract_format;
   }
@@ -637,8 +727,11 @@ NodeContractDefinition Preproc::contract_definition() const {
   ContractPortSpec output;
   output.port_id = opt_.single_output_handoff ? resolved_preproc_primary_output_name(opt_)
                                               : std::string("preproc_outputs");
-  output.media_type = "video/x-raw";
-  output.format = upper_copy(opt_.output_img_type);
+  output.media_type = internal::ImageTransformAccess::policy(*this) &&
+                              !internal::ImageTransformAccess::policy(*this)->raw_output()
+                          ? "application/vnd.simaai.tensor"
+                          : "video/x-raw";
+  output.format = output.media_type == "video/x-raw" ? upper_copy(opt_.output_img_type) : "BF16";
   output.dtype = upper_copy(opt_.output_dtype);
   output.layout = layout_from_format(opt_.output_img_type, opt_.output_channels());
   def.outputs.push_back(std::move(output));
@@ -669,12 +762,34 @@ bool Preproc::compile_node_contract(const ContractCompileInput& input, CompiledN
     // observable state intact, but compile the immutable processcvu envelope from the model's
     // declared source capacity so the first frame cannot shrink later admissible geometry.
     PreprocOptions compile_opt = internal::model_managed_preproc_static_envelope_options(opt_);
-    const auto compiled = compile_opt.compiled_contract
-                              ? *compile_opt.compiled_contract
-                              : pipeline_internal::sima::stagesemantics::
-                                    build_processcvu_compiled_contract_from_options(compile_opt);
-    return pipeline_internal::sima::stagesemantics::build_processcvu_node_contract(
-        kind(), element_name, element_name, contract_definition(), compiled, out, err);
+    if (config_holder_ && config_holder_->image_transform) {
+      const auto& p = *config_holder_->image_transform;
+      if (p.dynamic_input()) {
+        if (p.max_input_width > 0)
+          compile_opt.input_shape[1] = p.max_input_width;
+        if (p.max_input_height > 0)
+          compile_opt.input_shape[0] = p.max_input_height;
+      }
+    }
+    namespace semantics = pipeline_internal::sima::stagesemantics;
+    const auto compiled =
+        config_holder_ && config_holder_->image_transform
+            ? semantics::build_image_transform_compiled_contract_from_options(
+                  compile_opt, config_holder_->image_transform)
+        : compile_opt.compiled_contract
+            ? *compile_opt.compiled_contract
+            : semantics::build_processcvu_compiled_contract_from_options(compile_opt);
+    if (!pipeline_internal::sima::stagesemantics::build_processcvu_node_contract(
+            kind(), element_name, element_name, contract_definition(), compiled, out, err)) {
+      return false;
+    }
+    // A model already owns its async/sync window. Preserve that current node
+    // policy separately from the reusable numerical contract and graph queues.
+    out->native_execution_capacity.reset();
+    if (opt_.model_managed_contract && opt_.num_buffers_locked) {
+      out->native_execution_capacity = static_cast<std::size_t>(opt_.num_buffers);
+    }
+    return true;
   } catch (const std::exception& ex) {
     if (err) {
       *err = ex.what();
@@ -691,6 +806,8 @@ void Preproc::apply_compiled_contract(const CompiledNodeContract& contract, std:
     return;
   }
   const auto& payload = contract.processcvu->payload;
+  if (payload.image_transform)
+    return;
   if (!payload.input_shapes.empty()) {
     opt_.input_shape = payload.input_shapes[0];
   }
@@ -722,24 +839,17 @@ void Preproc::apply_compiled_contract(const CompiledNodeContract& contract, std:
 
 std::string Preproc::backend_fragment(int node_index) const {
   std::ostringstream ss;
-  require_element("neatprocesscvu", "Preproc::backend_fragment");
-  const char* factory = "neatprocesscvu";
+  require_element("neatkernelrunner", "Preproc::backend_fragment");
+  const char* factory = "neatkernelrunner";
   const std::string name = opt_.element_name.empty()
                                ? ("n" + std::to_string(node_index) + "_preproc")
                                : opt_.element_name;
-  const std::string stage_id = opt_.model_managed_contract ? name : std::string();
   if ((!config_holder_ || !config_holder_->has_config) && !opt_.model_managed_contract) {
     throw std::runtime_error(
         "Preproc: standalone preproc requires actual input contract before pipeline build. "
         "Build with input so width/height/format can be derived from the upstream input.");
   }
   ss << factory << " name=" << name;
-  if (!stage_id.empty()) {
-    ss << " stage-id=" << stage_id;
-  }
-  if (opt_.num_buffers > 0) {
-    ss << " num-buffers=" << opt_.num_buffers;
-  }
   return ss.str();
 }
 
@@ -754,6 +864,7 @@ OutputSpec Preproc::output_spec(const OutputSpec& input) const {
     InputContract contract;
     contract.media_type = input.media_type;
     contract.format = input.format;
+    contract.dtype = input.dtype;
     contract.width = input.width;
     contract.height = input.height;
     contract.depth = input.depth;
@@ -764,15 +875,25 @@ OutputSpec Preproc::output_spec(const OutputSpec& input) const {
         "Preproc::output_spec: model-managed preproc requires explicit output geometry.");
   }
   OutputSpec out;
-  out.media_type = "video/x-raw";
-  out.format = upper_copy(opt_.output_img_type);
+  const auto* image_policy = internal::ImageTransformAccess::policy(*this);
+  const bool tensor_output = image_policy && !image_policy->raw_output();
+  out.media_type = tensor_output ? "application/vnd.simaai.tensor" : "video/x-raw";
+  out.format = tensor_output ? "BF16" : upper_copy(opt_.output_img_type);
   out.width = (opt_.output_width() > 0) ? opt_.output_width() : opt_.input_width();
   out.height = (opt_.output_height() > 0) ? opt_.output_height() : opt_.input_height();
   out.depth =
       (opt_.output_channels() > 0) ? opt_.output_channels() : channels_from_format(out.format, 3);
-  out.layout = (out.format == "GRAY" || out.format == "GRAY8") ? "HW" : "HWC";
-  out.dtype = "UInt8";
-  if (upper_copy(opt_.next_cpu) == "APU") {
+  out.layout = (opt_.output_img_type == "GRAY" || opt_.output_img_type == "GRAY8") ? "HW" : "HWC";
+  if (image_policy && image_policy->raw_output() &&
+      (out.format == "NV12" || out.format == "NV16" || out.format == "I420")) {
+    out.layout = "Planar";
+  }
+  out.dtype = tensor_output ? "BFloat16" : "UInt8";
+  if (image_policy) {
+    out.fps_num = input.fps_num;
+    out.fps_den = input.fps_den;
+    out.memory = "SimaAI";
+  } else if (upper_copy(opt_.next_cpu) == "APU") {
     out.memory = "SystemMemory";
   } else if (!input.memory.empty()) {
     out.memory = input.memory;
@@ -780,7 +901,7 @@ OutputSpec Preproc::output_spec(const OutputSpec& input) const {
     out.memory = "SimaAI";
   }
   out.certainty = SpecCertainty::Derived;
-  out.note = "neatprocesscvu";
+  out.note = "neatkernelrunner";
   out.byte_size = expected_byte_size(out);
   return out;
 }
@@ -794,6 +915,119 @@ const nlohmann::json* Preproc::config_json() const {
 } // namespace simaai::neat
 
 namespace simaai::neat::nodes {
+
+namespace {
+PreprocOptions image_options(const std::string& name) {
+  PreprocOptions result;
+  result.normalize = false;
+  result.tessellate = false;
+  result.aspect_ratio = false;
+  result.dynamic_input_dims = false;
+  result.output_dtype = "UINT8";
+  result.output_img_type.clear();
+  result.scaling_type = "NO_SCALING";
+  result.element_name = name;
+  return result;
+}
+const char* image_format_name(ImageFormat format) {
+  switch (format) {
+  case ImageFormat::RGB:
+    return "RGB";
+  case ImageFormat::BGR:
+    return "BGR";
+  case ImageFormat::GRAY8:
+    return "GRAY8";
+  case ImageFormat::NV12:
+    return "NV12";
+  case ImageFormat::I420:
+    return "I420";
+  case ImageFormat::NV16:
+    return "NV16";
+  }
+  throw std::invalid_argument("ColorConvert: invalid output format");
+}
+std::shared_ptr<Node> image_node(PreprocOptions options, internal::ImageTransformPolicy policy) {
+  if ((policy.color.matrix != ImageColorMatrix::Bt601 &&
+       policy.color.matrix != ImageColorMatrix::Bt709) ||
+      (policy.color.range != ImageYuvRange::Full && policy.color.range != ImageYuvRange::Limited) ||
+      (policy.surface != ImageSurfaceLayout::Native &&
+       policy.surface != ImageSurfaceLayout::EncoderNv12))
+    throw std::invalid_argument("Image transform: invalid color or surface policy");
+  for (const auto siting : {policy.color.input_siting[0], policy.color.input_siting[1],
+                            policy.color.output_siting[0], policy.color.output_siting[1]})
+    if (siting != ImageChromaSiting::Centered && siting != ImageChromaSiting::Cosited)
+      throw std::invalid_argument("Image transform: invalid chroma siting");
+  auto node = std::make_shared<simaai::neat::Preproc>(std::move(options));
+  internal::ImageTransformAccess::set_policy(
+      *node, std::make_shared<const internal::ImageTransformPolicy>(std::move(policy)));
+  return node;
+}
+} // namespace
+
+std::shared_ptr<Node> Resize(ResizeOptions options) {
+  if (options.width <= 0 || options.height <= 0 || options.max_input_width < 0 ||
+      options.max_input_height < 0 ||
+      (options.fit != ResizeFit::Stretch && options.fit != ResizeFit::Contain &&
+       options.fit != ResizeFit::Cover) ||
+      options.pad_value < 0 || options.pad_value > 255)
+    throw std::invalid_argument(
+        "Resize requires positive output dimensions and valid bounds/padding");
+  if (options.shorter_side && (options.fit != ResizeFit::Cover || *options.shorter_side <= 0 ||
+                               *options.shorter_side > 4096))
+    throw std::invalid_argument("Resize shorter_side requires Cover and a size in 1..4096");
+  auto opt = image_options(options.element_name);
+  if (options.fit == ResizeFit::Cover)
+    opt.resize_mode = ResizeMode::Crop;
+  opt.shorter_side = options.shorter_side;
+  opt.output_shape = {options.height, options.width, 3};
+  opt.scaled_width = options.width;
+  opt.scaled_height = options.height;
+  opt.dynamic_input_dims = true;
+  opt.aspect_ratio = options.fit == ResizeFit::Contain;
+  opt.pad_value = options.pad_value;
+  const auto* interpolation = internal::resize_interpolation_token(options.interpolation);
+  if (!interpolation)
+    throw std::invalid_argument("Resize: invalid interpolation");
+  opt.scaling_type = interpolation;
+  internal::ImageTransformPolicy policy;
+  policy.mode = internal::ImageTransformMode::Resize;
+  policy.color = options.color;
+  policy.surface = options.surface;
+  policy.max_input_width = options.max_input_width;
+  policy.max_input_height = options.max_input_height;
+  policy.yuv_padding = options.yuv_padding;
+  return image_node(std::move(opt), std::move(policy));
+}
+
+std::shared_ptr<Node> ColorConvert(ColorConvertOptions options) {
+  auto opt = image_options(options.element_name);
+  opt.output_img_type = image_format_name(options.output_format);
+  internal::ImageTransformPolicy policy;
+  policy.mode = internal::ImageTransformMode::ColorConvert;
+  policy.color = options.color;
+  policy.surface = options.surface;
+  return image_node(std::move(opt), std::move(policy));
+}
+
+std::shared_ptr<Node> Normalization(NormalizationOptions options) {
+  for (std::size_t i = 0; i < options.mean.size(); ++i)
+    if (!std::isfinite(options.mean[i]) || !std::isfinite(options.stddev[i]) ||
+        (options.rescale_factor ? options.stddev[i] == 0 : options.stddev[i] <= 0))
+      throw std::invalid_argument(
+          options.rescale_factor
+              ? "Normalization requires finite means and nonzero finite source divisors"
+              : "Normalization requires finite means and positive finite standard deviations");
+  auto opt = image_options(options.element_name);
+  opt.normalize = true;
+  opt.output_dtype = "BF16";
+  opt.channel_mean.assign(options.mean.begin(), options.mean.end());
+  opt.channel_stddev.assign(options.stddev.begin(), options.stddev.end());
+  opt.rescale_factor = options.rescale_factor;
+  opt.floating_conversion = options.floating_conversion;
+  internal::ImageTransformPolicy policy;
+  policy.mode = internal::ImageTransformMode::Normalization;
+  return image_node(std::move(opt), std::move(policy));
+}
 
 std::shared_ptr<simaai::neat::Node> Preproc(PreprocOptions opt) {
   return std::make_shared<simaai::neat::Preproc>(std::move(opt));

@@ -72,3 +72,10 @@ def test_graph_builds_with_advanced_execution():
   graph.add(pyneat.nodes.input())
   graph.add(pyneat.nodes.output())
   assert isinstance(graph.describe_backend(), str)
+
+
+def test_graph_kernel_runner_worker_budget():
+  options = pyneat.GraphOptions()
+  assert options.kernel_runner_a65_workers == 2
+  options.kernel_runner_a65_workers = 1
+  assert options.kernel_runner_a65_workers == 1

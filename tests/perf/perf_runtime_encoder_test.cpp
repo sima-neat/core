@@ -1,7 +1,10 @@
 #include "encoder_perf_common.h"
 #include "codec_perf_common.h"
+#include "codec_fixture_diagnostics.h"
+#include "gst/GstHelpers.h"
 #include "nodes/common/Output.h"
 #include "nodes/groups/VideoSender.h"
+#include "nodes/io/internal/JpegRtpUdpSink.h"
 #include "nodes/sima/H264EncodeSima.h"
 #include "nodes/sima/SimaEncode.h"
 
@@ -80,8 +83,16 @@ groups::RtspCodec sender_codec(const Config& c) {
 int payload_type(const Config& c) {
   return c.codec == "h264" ? 96 : c.codec == "h265" ? 98 : 26;
 }
+// VideoSender's MJPEG composition follows the registry: neatjpegudpsink when present.
+bool sink_sends(const Config& c) {
+  return c.sender() && c.codec == "mjpeg" &&
+         neat::element_exists(neat::internal::kJpegRtpUdpSinkFactory);
+}
 std::string payloader(const Config& c) {
-  return c.codec == "h264" ? "rtph264pay" : c.codec == "h265" ? "rtph265pay" : "rtpjpegpay";
+  return c.codec == "h264"   ? "rtph264pay"
+         : c.codec == "h265" ? "rtph265pay"
+         : sink_sends(c)     ? neat::internal::kJpegRtpUdpSinkFactory
+                             : "rtpjpegpay";
 }
 
 // Same static-blocks-v1 pixels as the native encoder workload. Preparing and
@@ -120,9 +131,24 @@ std::vector<neat::Sample> inputs(const Config& c) {
     config.fps = ep::kInputFps;
     // Keep the whole prepared one-second sequence. It starts at an IDR and
     // cycles only at the fixture boundary; never repeat a random dependent AU.
-    const auto frames = c.codec == "mjpeg"  ? sima_codec_perf::make_mjpeg_frames(config)
-                        : c.codec == "h264" ? sima_codec_perf::extract_h264_access_units(30)
-                                            : sima_codec_perf::extract_h265_access_units(30);
+    const auto observe = [&](const neat::Run& run, const std::filesystem::path& fixture,
+                             const std::vector<sima_codec_perf::EncodedFrame>& frames,
+                             const std::vector<std::string>& emitted_caps) {
+      namespace diagnostics = sima_codec_diagnostics;
+      std::unique_ptr<GstElement, decltype(&gst_object_unref)> parser(
+          ep::find_factory(run, c.codec + "parse"), gst_object_unref);
+      const json record = {{"schema", 1},
+                           {"source", diagnostics::file_identity(fixture)},
+                           {"parser", diagnostics::parser_identity(parser.get())},
+                           {"au_count", frames.size()},
+                           {"access_units", diagnostics::access_units(frames, emitted_caps)}};
+      std::cerr << "encoder_input_diagnostics=" << record.dump() << '\n';
+    };
+    const auto frames = c.codec == "mjpeg" ? sima_codec_perf::make_mjpeg_frames(config)
+                                           : sima_codec_perf::extract_video_access_units(
+                                                 c.codec == "h264" ? neat::SimaDecodeType::H264
+                                                                   : neat::SimaDecodeType::H265,
+                                                 30, observe);
     require(c.codec == "mjpeg" || frames.size() == 30,
             "prepared codec fixture must contain 30 AUs");
     return sima_codec_perf::make_sample_sequence(frames, config, static_cast<int>(frames.size()));
@@ -283,6 +309,7 @@ json execute(const Config& c) {
   auto run = graph.build(neat::Sample{prepared.front()}, options);
   const double startup = ep::seconds(build_start, ep::now_ns()) * 1000;
   ep::Accounting state(payload_type(c));
+  state.sink_sends = sink_sends(c);
   using Element = std::unique_ptr<GstElement, decltype(&gst_object_unref)>;
   Element encoder(c.passthrough() ? nullptr : ep::find_factory(run, "neatencoder"),
                   gst_object_unref);
@@ -291,7 +318,7 @@ json execute(const Config& c) {
   ep::PadCounter completed(c.passthrough() ? pay.get() : encoder.get(),
                            c.passthrough() ? "sink" : "src", state, false);
   std::unique_ptr<ep::PadCounter> packets;
-  if (pay)
+  if (pay && !state.sink_sends)
     packets = std::make_unique<ep::PadCounter>(pay.get(), "src", state, true);
   std::atomic<bool> stop{false};
   bool eos = false;
@@ -419,6 +446,12 @@ json execute(const Config& c) {
   }
   if (producer.joinable())
     producer.join();
+  if (state.sink_sends) {
+    guint64 frames = 0, packets_sent = 0;
+    g_object_get(pay.get(), "frames-sent", &frames, "packets-sent", &packets_sent, nullptr);
+    state.sent_frames = frames;
+    state.sent_packets = packets_sent;
+  }
   if (!c.capture.empty()) {
     std::ofstream file(c.capture, std::ios::binary);
     for (const auto& bytes : state.reference)

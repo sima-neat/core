@@ -85,11 +85,13 @@ graph.add(pyneat.groups.video_input(vopt))
 | 파일에서 프레임 읽기 | `nodes::FileInput(...)` 더하기 디코딩 노드, 또는 `nodes::groups::VideoInputGroup(...)` | `pyneat.nodes.file_input(...)` 더하기 디코딩 노드, 또는 `pyneat.groups.video_input(...)` |
 | 소스로 단일 이미지 읽기 | `nodes::StillImageInput(...)` | `pyneat.nodes.still_image_input(...)` |
 | MIPI/libcamera 카메라 읽기 | `nodes::CameraInput(...)` | `pyneat.nodes.camera_input(...)` |
+| USB(UVC) MJPEG 카메라 읽기 | `nodes::UsbCameraInput(...)` | `pyneat.nodes.usb_camera_input(...)` |
 | RTSP 스트림 읽기 | `nodes::RTSPInput(...)`, `nodes::groups::RtspEncodedInput(...)`, 또는 `nodes::groups::RtspDecodedInput(...)` | `pyneat.nodes.rtsp_input(...)`, `pyneat.groups.rtsp_encoded_input(...)`, 또는 `pyneat.groups.rtsp_decoded_input(...)` |
 | HTTP 멀티파트 MJPEG 읽기 | `nodes::groups::HttpMjpegDecodedInput(...)`, 또는 `nodes::HttpSource(...)`, `MultipartJpegDemux()`, `JpegParse()` (수동 프레임 구성) | `pyneat.groups.http_mjpeg_decoded_input(...)`, 또는 `pyneat.nodes.http_source(...)`, `pyneat.nodes.multipart_jpeg_demux()`, `pyneat.nodes.jpeg_parse()` |
 | 이미지 디코딩 | `nodes::ImageDecode()` 또는 `nodes::JpegDecode()` | `pyneat.nodes.image_decode()` 또는 `pyneat.nodes.jpeg_decode()` |
 | 원시 비디오 인코딩 | `nodes::SimaEncode(SimaEncodeOptions{...})` | `pyneat.nodes.sima_encode(options)` |
 | 인코딩된 비디오 디코딩 | `nodes::SimaDecode(SimaDecodeOptions{...})` | `pyneat.nodes.sima_decode(options)` |
+| MJPEG 카메라 프레임 디코딩 (4:2:0 또는 4:2:2) | `usb_camera_info(...).decoded_format`을 `nodes::SimaDecode(...)`의 `out_format`으로 사용, 모델 입력 형식을 같게 설정 | `pyneat.usb_camera_info(...).decoded_format`을 `pyneat.nodes.sima_decode(...)`의 `out_format`으로 사용, 모델 입력 형식을 같게 설정 |
 | 비디오 크기 조정 또는 속도 제한 | `nodes::VideoScale()`, `VideoRate()`, `ImageFreeze()` | `pyneat.nodes.video_scale()`, `video_rate()`, `image_freeze()` |
 | 재사용 가능한 이미지 입력 경로 구축 | `nodes::groups::ImageInputGroup(...)` | `pyneat.groups.image_input(...)` |
 | 재사용 가능한 비디오 입력 경로 구축 | `nodes::groups::VideoInputGroup(...)` | `pyneat.groups.video_input(...)` |
@@ -97,6 +99,10 @@ graph.add(pyneat.groups.video_input(vopt))
 | 메타데이터 출력 | `MetadataSender` | `pyneat.MetadataSender` |
 | 감지 결과 렌더링 | `nodes::SimaRender(...)` | `pyneat.nodes.sima_render(...)` |
 | 로짓을 클래스 인덱스로 변환 | `nodes::SimaArgMax(...)` | `pyneat.nodes.sima_argmax(...)` |
+| 세그멘테이션 점수를 크기 조정하여 클래스 맵으로 변환 | `nodes::ResizeArgMax(ResizeArgMaxOptions{...})` | `pyneat.nodes.resize_argmax(options)` |
+| LiDAR 스윕을 필러로 복셀화 | `nodes::SimaVoxelize(SimaVoxelizeOptions{...})` | `pyneat.nodes.sima_voxelize(options)` |
+| 필러 특징을 BEV 캔버스에 분산 | `nodes::SimaPillarScatter(SimaPillarScatterOptions{...})` | `pyneat.nodes.sima_pillar_scatter(options)` |
+| 카메라 특징을 BEV 격자로 풀링 | `nodes::SimaBEVPoolPlan(...)` 및 `nodes::SimaBEVPool(...)` | `pyneat.nodes.sima_bev_pool_plan(options)` 및 `pyneat.nodes.sima_bev_pool(options)` |
 
 테스트된 조각을 원할 때 그룹을 사용하고, 명시적인 토폴로지가 필요할 때 개별 노드를 사용하세요. 중복된 출력을 통해 토폴로지를 숨기는 대신 `Graph`와 같은 도우미(예: `graphs::Branch(...)` 및 `graphs::Combine(...)`)를 사용하여 팬아웃 및 팬인을 수행하세요.
 
@@ -122,6 +128,8 @@ graph.add(pyneat.groups.video_input(vopt))
 | MJPEG 프레임 스트림 | `SimaDecodeType::MJPEG` | HTTP 멀티파트 디멀티플렉스 + `JpegParse()`, 또는 RTSP JPEG 디패킷화 + `JpegParse()` |
 
 별칭은 동일한 디코더 경로를 선택합니다. `H264`는 `AVC`와 같고, `H265`는 `HEVC`와 같습니다. 동일한 별칭은 C++ 및 Python에서 `RtspCodec` 및 `FormatTag`를 통해 사용할 수 있습니다.
+
+H.264 입력은 8비트, 4:2:0 크로마와 프로그레시브 프레임을 사용해야 합니다. High 10, High 4:2:2 및 인터레이스 비트스트림은 지원되지 않습니다.
 
 H.265 입력은 8비트, 4:2:0 크로마를 사용하는 HEVC Main 프로필을 사용해야 합니다. 직접 기본 스트림 입력은 파싱되고, Annex-B 바이트 스트림이며, 액세스 단위가 정렬되어야 합니다. 해당 매개변수 세트(VPS, SPS 및 PPS)는 해당 매개변수에 의존하는 프레임이 도달하기 전에 디코더에 도달해야 합니다. `RtspEncodedInput`는 RTSP 경로에 대한 RTP 디패킷화 및 H.265 파싱을 처리합니다. Main 10, 10비트, 4:2:2 및 모노크롬 4:0:0 비트스트림은 지원되지 않습니다. 회색조 콘텐츠의 경우, Y 평면에 회색조 이미지가 포함되고 U 및 V 샘플은 중립 값 128을 사용하는 8비트 4:2:0 스트림을 인코딩하세요.
 
@@ -153,6 +161,61 @@ H.265 디코더는 `codec_name=hevc`, `profile=Main` 및 `pix_fmt=yuv420p`를 �
 `nodes::JpegDecode()` 및 `pyneat.nodes.jpeg_decode()`는 별도의 CPU/GStreamer JPEG 디코딩 노드입니다. 간단한 CPU 이미지 파이프라인에 사용합니다. 모델 전처리기 전에 기본 MJPEG 비디오 디코딩에는 사용하지 마십시오.
 
 RTSP의 경우 소스 형식이 표준일 때 코덱을 인식하는 그룹을 사용하는 것이 좋습니다. H.264는 기본값으로 유지됩니다. H.265 또는 HEVC를 명시적으로 선택합니다.
+
+### MJPEG 카메라 디코딩
+
+USB 카메라는 4:2:0 또는 4:2:2 색 샘플링으로 MJPEG를 보내며, 대부분은 4:2:2를 사용합니다. 제로 카피 출력에서는 디코더가 스트림 고유의 샘플링으로만 쓸 수 있으므로, 그래프를 빌드하기 전에 이를 알아야 합니다. USB 카메라의 경우 `usb_camera_info(...)`가 이를 `decoded_format`으로 알려 주므로, 그 값을 디코더의 `out_format`으로 사용하세요. 다른 MJPEG 소스에서는 4:2:0이면 `NV12`, 4:2:2이면 `NV16`으로 `out_format`을 설정하세요. 모델은 NV16을 직접 읽습니다. 모델의 전처리 입력 형식을 같은 값으로 설정하면 4:2:2 프레임이 변환 단계 없이 모델에 전달됩니다.
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+#include "neat.h"
+
+// camera: your UsbCameraInputOptions; also pass info to UsbCameraInput(camera, info).
+const simaai::neat::UsbCameraInfo info = simaai::neat::usb_camera_info(camera);
+simaai::neat::SimaDecodeOptions decode;
+decode.type = simaai::neat::SimaDecodeType::MJPEG;
+decode.out_format = info.decoded_format;  // NV12 or NV16
+decode.dec_width = 1920;
+decode.dec_height = 1080;
+decode.dec_fps = 30;
+decode.raw_output = true;  // zero-copy: the decoder writes the camera's own sampling
+graph.add(simaai::neat::nodes::JpegParse());
+graph.add(simaai::neat::nodes::SimaDecode(decode));
+
+simaai::neat::Model::Options model_options;
+model_options.preprocess.color_convert.input_format =
+    decode.out_format == simaai::neat::FormatTag::NV16 ? simaai::neat::PreprocessColorFormat::NV16
+                                                       : simaai::neat::PreprocessColorFormat::NV12;
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+import pyneat
+
+# camera: your UsbCameraInputOptions; also pass info to usb_camera_input(camera, info).
+info = pyneat.usb_camera_info(camera)
+decode = pyneat.SimaDecodeOptions()
+decode.type = pyneat.SimaDecodeType.MJPEG
+decode.out_format = info.decoded_format  # NV12 or NV16
+decode.dec_width, decode.dec_height, decode.dec_fps = 1920, 1080, 30
+decode.raw_output = True  # zero-copy: the decoder writes the camera's own sampling
+graph.add(pyneat.nodes.jpeg_parse())
+graph.add(pyneat.nodes.sima_decode(decode))
+
+model_options = pyneat.ModelOptions()
+model_options.preprocess.color_convert.input_format = (
+    pyneat.PreprocessColorFormat.NV16 if decode.out_format == pyneat.Format.NV16
+    else pyneat.PreprocessColorFormat.NV12)
+```
+
+</CodeTab>
+</CodeTabs>
+
+`HttpMjpegDecodedInput(...)`와 `RtspDecodedInput(...)`는 여전히 디코더에 NV12를 요청하므로 4:2:0 MJPEG 스트림만 지원합니다.
 
 ### RTSP 입력을 인코딩된 상태로 유지
 
@@ -541,7 +604,7 @@ def push_h265_access_unit(run: pyneat.Run, data: bytes) -> None:
 
 ### 샘플 출력
 
-소비자가 전체 [`Sample`](/develop-apps/development-workflow/core_types#sample) (페이로드와 스트림/프레임/타임스탬프 메타데이터 포함)을 필요로 할 때 `nodes::Output`을 사용하십시오.
+소비자가 전체 [`Sample`](/develop-apps/development-workflow/core_types#use-sample-for-metadata) (페이로드와 스트림/프레임/타임스탬프 메타데이터 포함)을 필요로 할 때 `nodes::Output`을 사용하십시오.
 
 풀 동작이 중요할 때 `OutputOptions`을 사용하십시오.
 
@@ -657,7 +720,7 @@ encode.quality = 80
 graph.add(pyneat.nodes.sima_encode(encode))
 ```
 
-인코딩을 시작할 때 입력 프레임에서 해상도를 가져오며 크기를 조정하지 않습니다. 다른 해상도를 인코딩하려면 새 실행을 시작합니다. 입력 크기는 양의 짝수여야 하며 최대 3840x2160입니다. `nodes::SimaEncode()`와 `pyneat.nodes.sima_encode()`는 기본 H.264 설정을 사용합니다. 인코더 옵션에 입력 크기를 반복해서 지정하지 않습니다. `fps`는 스트림 주기와 속도 제어를 설정하며 입력 제출 속도를 조절하지 않습니다. H.264/H.265는 `bitrate_kbps`(기본 4000), `rate_control`(`vbr` 또는 `cbr`), `profile`, `level`(기본 `4.0`), `gop_length`, 별도의 `idr_interval`을 지원합니다. H.264 기본 프로파일은 `baseline`이며 H.265는 `main`을 지원합니다. 스트림에 필요하면 런타임이 요청한 레벨을 높이고 실제 적용 설정을 보고합니다. GOP가 0이거나 미설정이면 FPS를 사용하고 IDR이 0이거나 미설정이면 FPS의 3배를 사용합니다. GOP 1은 모두 인트라 프레임입니다. B 프레임 인코딩은 제공하지 않습니다.
+인코딩을 시작할 때 입력 프레임에서 해상도를 가져오며 크기를 조정하지 않습니다. 다른 해상도를 인코딩하려면 새 실행을 시작합니다. 입력 크기는 양의 짝수여야 합니다. `nodes::SimaEncode()`와 `pyneat.nodes.sima_encode()`는 기본 H.264 설정을 사용합니다. 인코더 옵션에 입력 크기를 반복해서 지정하지 않습니다. `fps`는 스트림 주기와 속도 제어를 설정하며 입력 제출 속도를 조절하지 않습니다. H.264/H.265는 `bitrate_kbps`(기본 4000), `rate_control`(`vbr` 또는 `cbr`), `profile`, `level`(기본 `4.0`), `gop_length`, 별도의 `idr_interval`을 지원합니다. H.264 기본 프로파일은 `baseline`이며 H.265는 `main`을 지원합니다. 스트림에 필요하면 런타임이 요청한 레벨을 높이고 실제 적용 설정을 보고합니다. GOP가 0이거나 미설정이면 FPS를 사용하고 IDR이 0이거나 미설정이면 FPS의 3배를 사용합니다. GOP 1은 모두 인트라 프레임입니다. B 프레임 인코딩은 제공하지 않습니다.
 
 코덱별 옵션은 처음에는 미설정입니다. MJPEG는 1~100의 `quality`(기본 80)를 받으며 명시적으로 지정된 비디오 전용 설정을 거부합니다. 반대로 H.264/H.265는 `quality`를 거부합니다. `num_buffers`는 인코딩 출력 버퍼 1~20개를 선택하며 `-1`은 네이티브 기본값인 4개를 유지합니다. 생산자 입력 메모리 크기는 설정하지 않습니다. 이 API는 네이티브 4:2:2와 고비트 심도 인코딩을 지원하지 않습니다.
 

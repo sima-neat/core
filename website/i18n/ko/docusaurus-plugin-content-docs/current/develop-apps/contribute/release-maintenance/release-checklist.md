@@ -9,6 +9,10 @@ slug: /develop-apps/contribute/release-checklist
 
 본 문서는 공식적인 릴리스 게이트 정책입니다.
 
+## 최신 문서 버전
+
+`deps/manifest.json`을 업데이트한 후 릴리스에 맞게 `website/release-data/current.json`을 한 번 업데이트합니다. `npm --prefix website run sync:release-readmes`를 실행하고 구체적인 버전이 포함된 생성된 README 명령을 커밋합니다. `npm --prefix website run check:releases`와 `./build.sh --doc`를 실행하여 토큰, 과거 버전 예외, 현지화 및 렌더링된 명령을 검증합니다. 호환성 페이지는 구체적인 버전을 사용하여 수동으로 관리합니다. 과거 릴리스 노트의 버전은 고정합니다. 릴리스 데이터만 변경할 때는 번역이나 소스 해시를 업데이트할 필요가 없습니다. 필드별 관리 책임과 토큰 규칙은 `website/release-data/README.md`에 설명되어 있습니다.
+
 ## 릴리스 차단 조건
 
 아래의 모든 조건이 충족되지 않으면 릴리스가 차단됩니다.
@@ -35,8 +39,10 @@ slug: /develop-apps/contribute/release-checklist
    - `project(SimaNeat VERSION x.y.z)`가 `CMakeLists.txt`에 업데이트되었습니다.
    - `package-version` 및 `platform-version`가 필요한 경우 `deps/manifest.json`에 업데이트되었습니다.
    - `modelzoo-version`이 검증된 Model Zoo 릴리스를 명시적으로 선택하며, `platform-version`과 다를 경우에만 해당됩니다. 생략하면 Model Zoo 해결은 기본적으로 `platform-version`으로 설정됩니다.
-   - `abi-version`이 `deps/manifest.json`에 있으며, 공개 C++ 유형 레이아웃 또는 내보낸 바이너리 계약이 호환되지 않게 변경될 때마다 증가합니다. 모든 C++ 애플리케이션 및 Python 바인딩은 해당 ABI를 사용하여 다시 빌드됩니다.
-   - `CHANGELOG.md`에 `## [x.y.z]` 항목이 있습니다.
+   - `deps/manifest.json`의 `abi-version`은 공개 C++ 유형 레이아웃 또는 내보낸 바이너리 계약에 호환되지 않는 변경이 있고,
+     `develop`이 여전히 `main`과 같은 ABI 버전을 사용하는 경우에만 증가시킵니다.
+     `develop`에 다음 릴리스를 위한 더 높은 ABI 버전이 이미 있으면, 릴리스 전의 추가적인 ABI 비호환 변경에도 그 버전을 유지합니다.
+     호환되지 않는 변경 후에는 일치하는 헤더와 라이브러리를 사용하여 모든 C++ 애플리케이션과 Python 바인딩을 다시 빌드합니다.
    - 릴리스/태그 본문에 릴리스 노트가 준비되었습니다.
 
 릴리스 흐름에서 "알려진 충돌 목록"은 허용되지 않습니다. 모든 충돌 회귀는 수정될 때까지 릴리스를 차단합니다.

@@ -7,16 +7,71 @@ sidebar_position: 3
 
 SiMa.ai Neat Library のリリースノート。
 
-## 未リリース
+## 0.6.2 {#v062}
+
+### 互換性に影響する変更 {#v062-breaking}
+
+- Neat Library の C++ ABI は 7（`libsima_neat.so.7`）になりました。`ResizeOptions`、`ResizeSpec`、`PreprocessOptions`、`PreprocOptions`、`NormalizationOptions`、`Model::Options` にフィールドが追加されました。対応するヘッダーとランタイムパッケージで C++ アプリケーション、プラグイン、Python バインディングを再ビルドしてください。ABI 6 のバイナリ（0.6.0 および 0.6.1）を再利用したり、互換性シンボリックリンクを追加したりしないでください。
+
+### セマンティックセグメンテーション {#v062-segmentation}
+
+- 新しい `ResizeArgMax` ノードと `Model::Options::semantic_segmentation` オプションは、EV74 上でセグメンテーションのスコアをデコードします。デコードはクラスごとのスコアを指定サイズへバイリニアでリサイズし、スコアが最大となる最初のクラスを返します。これは SegFormer の `interpolate` と `argmax` による後処理と一致します。パディングされた MLA 出力をその場で読み取り、INT8 スコアを逆量子化せずに比較します。モデルはスコアの代わりにクラスマップを返します。この演算を含む EV74 ファームウェアが必要です。[セマンティックセグメンテーションのデコード](/reference/semantic_segmentation_decode)を参照してください。
+
+### Segment Anything のマスク {#v062-segment-anything}
+
+- 新しい `BoxDecodeType` の値は、MobileSAM、EdgeTAM、EfficientSAM、EfficientSAM3 を元画像サイズのマスクにデコードします。`EdgeTamSeg` はマスクを返し、`EdgeTamTrack` はトラッキング用にデコーダーの生出力も返します。[Segment Anything のマスク](/reference/boxdecode_decode_types#segment-anything-masks)を参照してください。
+
+### 前処理 {#v062-preproc}
+
+- 中央クロップは最終的な MPK 寸法での切り出し前に、任意の `preprocess.resize.shorter_side` を指定できるようになりました。完全なリサイズのフィルター範囲を保持し、逆変換を公開します。ABI 7 と対応するカーネルファームウェアで再ビルドし、古いバイナリを混在させないでください。
+
+- `preprocess.resize.placement = LetterboxPlacement.TopLeft` は、MobileSAM が想定するとおり、レターボックス処理した画像をキャンバスの原点に置き、パディングをすべて右と下に配置します。検出用の BoxDecode プロファイルは公開されたアフィン変換でボックスを変換し、ポーズ、セグメンテーション、提案のプロファイルは中央以外のレターボックスを拒否します。[Preproc](/reference/nodes/preproc)を参照してください。
+
+- Model の前処理と単独の Resize は `ResizeInterpolation` を共有します。新しいコードではサンプラー文字列の代わりに `preprocess.resize.interpolation = ResizeInterpolation.BilinearAntialiased` を使ってください。従来の `scaling_type` 文字列は互換性を維持し、矛盾する既定値以外の文字列は拒否されます。
+
+- 既存の前処理オプションで、アンチエイリアス付きバイリニアリサイズ、明示的な元のリスケール係数、色変換の位置、浮動小数点変換方針を指定できます。固定の元算術経路では、平均と標準偏差のフィールドは合成済みアフィン変換ではなく、元の平均と除数を保持します。BF16 は従来の切り捨てが既定で、最近接偶数丸めは明示的に指定します。FP16 は最近接偶数丸めを使います。精密な INT8 量子化には、モデルの乗数と整合する元のステップが必要です。乗数からそのステップを復元することはできません。新しいオプションを指定しなければ既存の経路を維持します。[Preproc](/reference/nodes/preproc) を参照してください。
+
+## 0.6.1 {#v061}
+
+0.6.1 は 0.6.0 の不具合を修正し、ABI 6（`libsima_neat.so.6`）を維持します。0.6.0 向けにビルドしたアプリケーションは、再ビルドせずに実行できます。
+
+### 修正 {#v061-fixes}
+
+- ホストからデバイスへの転送は、ライブ入力をブロックすることなく、プールされた DMA バッファーを再び再利用します。プロセス全体の DMA 転送キャッシュには上限があります。キャッシュからの削除によって、使用中のテンソルが解放されることはありません。
+- 未処理の作業がない非同期実行はタイムアウトしなくなり、入力が届くと再開します。`Run::run()` と `Model::run()` は、呼び出しごとの `timeout_ms` に従って出力を待ちます。`-1` は `Run::pull(-1)` と同様に無制限に待ちます。`RunOptions::input_timeout_ms` は、入力モードの `Graph::run()` と、シードを渡すビルドの事前検証に適用されます。
+- `Model` はネイティブ MLA の入力バッチ全体を検証します。
+- パック済みの出力を持つ MLA のみのモデルは、型付きの出力ビューを保持します。
+- モデルによって管理されるルートは、従来の YOLOv6 パックなど、グラフ内でデコードされる YOLO ヘッドを受け付けます。これらには `BoxDecodeType::Yolo` を使ってください。
+- 実行レポートはネイティブの BoxDecode 設定を保持します。
+- H.265 エンコーダーは、サポートしていないレベル 4.2 を拒否します。
+- ビデオ送信側は入力を 3840×2160 に制限しなくなりました。ただし、寸法は引き続き正の偶数である必要があります。
+- オフラインの PCIe ホストバンドルは、依存関係の入力が変わると再ビルドされ、アーカイブ名にはチェックサムのサフィックスが付きます。
+
+### ドキュメント {#v061-docs}
+
+- H.264 デコードの入力は、8 ビット、4:2:0、プログレッシブである必要があります。High 10、High 4:2:2、インターレースのビットストリームはサポートされていません。
+- SDK ホストには Docker Engine 20.10.10 以降が必要です。
+- Model ガイドに、`preprocess.enable = Off` が無効にする内容と、残る MPK アダプターを記載しました。
+
+## 0.6.0
 
 ### 互換性のない変更
 
+- テンソルモードの `Model::input_specs()` は、サイズ 1 のバッチ軸（`[1,H,W,C]`）を含め、MPK に記述されたランクを保持するようになりました。シード入力なしの `build()` の後も、バッチ 1 の HWC 入力を引き続き受け付けます。`compiled_batch_size()` はテンソル次元から推測せず、MLA に宣言されたバッチサイズを読み取ります。
+
 - モデル出力は、デバイス側の中間形状ではなく、MPK に記述された最終的な論理形状とレイアウトを公開します。たとえば、ResNet-50 のバッチ平坦化出力は、4 次元 HWC 形状ではなく、形状 `[1, 1000]` で論理レイアウトは不明です。Float32 テンソルの形式は `FP32` ではなく `EVXX_FLOAT32` の場合があります。値の解釈にはテンソルのデータ型と形状を使用し、バックエンドの形式タグから論理軸を推定しないでください。
-- Neat Library の C++ ABI は 6、共有ライブラリの SONAME は `libsima_neat.so.6` です。Tensor は特徴抽出器の意味メタデータを保持し、公開 GenAI リクエスト／結果型は ASR タスク、言語、プローブのメタデータを保持します。`GraphLinkOptions` にはリアルタイム受け入れの制限が含まれます。C++ アプリケーションとプラグインを再ビルドし、対応する Core のランタイムと開発パッケージをインストールしてください。
+- Neat Library の C++ ABI は 6、共有ライブラリの SONAME は `libsima_neat.so.6` です。Tensor は特徴抽出器の意味メタデータを保持し、公開 GenAI リクエスト／結果型は ASR タスク、言語、プローブのメタデータを保持します。`GraphLinkOptions` にはリアルタイム受け入れの制限が含まれ、`BenchmarkOptions` と `BenchmarkReport` にはフィールドが追加されました。C++ アプリケーションとプラグインを再ビルドし、対応する Core のランタイムと開発パッケージをインストールしてください。 `SimaArgMaxOptions` に `axis` と `keepdims` が追加され、`SimaArgMax` のクラスレイアウトも変更されました。
 - リアルタイムのグラフ合成では、`GraphLinkOptions`、`Graph::connect()`、および`Graph::build()`が使用されます。プレビュー用の`RealtimeGraphLinkOptions`、`connect_realtime()`、`build_fused_realtime_sources()`/ `build_fused_realtime_source()`、および`RealtimeEveryFrameByStream` APIは削除されました。`realtime_every_frame_by_stream`を含む保存されたグラフは、サポートされているポリシーを使用して再作成する必要があります。詳細は[ライブフラグメントを接続する](/develop-apps/development-workflow/graph/#connect-live-fragments)を参照してください。
+
+- パッケージバージョンは **0.6.0** です。`Model::Options` と `BoxDecodeOptions` に `yolox_seg_pose.pose_classes` が追加されました。この公開レイアウトの追加には ABI 6 のコンシューマーが必要です。ABI 互換性のためのシンボリックリンクは使わないでください。`GraphOptions` には `kernel_runner_a65_workers` が追加されました。0.6.0 に更新する際は、対応するランタイムおよび開発パッケージに対して、アプリケーション、プラグイン、Python 拡張を再ビルドしてください。どちらも ABI 6 を使っているという理由だけで、プレビューのバイナリとリリースパッケージを混在させないでください。
 
 ### ランタイムの変更
 
+- `Model::benchmark()` は、電力レールを自身でサンプリングする代わりに、[Sentinel](/tools/sentinel/) からボードのテレメトリを読み取ります。レイテンシ測定パスとスループット測定パスは、それぞれ `num_samples` 個の入力を測定し、かつ `BenchmarkOptions::min_duration_ms`（デフォルトは 10 秒）以上が経過するまで実行されるようになったため、電力と温度の値は複数の Sentinel サンプルにわたって取得されます。従来の入力数ベースの計測にするには、`min_duration_ms` を 0 に設定してください。`BenchmarkReport` には、`latency_p50_ms`、`latency_p95_ms`、`latency_p99_ms`、`peak_power_watts`、`throughput_samples`、`throughput_duration_ms`、および、レール電力、ダイとボードの温度、CPU 使用率（全体とコアごと）、MLA・EV74 のメモリとボード全体の Linux メモリを含む `telemetry` が追加されました。`avg_power_watts` と `energy_joules` の意味は変わりません。`energy_joules` は `num_samples` 個の入力に対するエネルギーです。Sentinel を利用できない場合でもレイテンシーと FPS は報告され、`telemetry.status` にその理由が示されます。DevKit インストーラーは、`sima-cli neat install sentinel` で Sentinel をインストールします。実行中のバージョンが最新の本番ビルドでない場合はアップグレードします。詳細は[モデルの実行を測定する](/develop-apps/development-workflow/model#power-and-board-telemetry)を参照してください。
+- `enable_board_power()` で有効にする Run の電力テレメトリも Sentinel から読み取るようになりました。Core は I2C の電力モニターを開かなくなったため、同じレールに対する Sentinel の読み取りと干渉しなくなり、インストーラーも `sima` を `i2c` グループに追加しなくなりました。Sentinel は 2 秒ごとにサンプリングするため、約 2 秒より短い測定ウィンドウでは電力サンプルが得られない場合があります。レールは `mla` のように Sentinel のメトリクス名で命名され、電力のみを報告します。`sample_interval_ms`、`PowerMonitorProfile`、組み込みのレールテーブル、`PowerRailConfig` の I2C フィールド、`enable_modalix_som_power()`、`enable_modalix_dvt_power()`、および `modalix_som_power_monitor_options()` / `modalix_dvt_power_monitor_options()` は非推奨となり、無視されます。
+- `TelemetryMonitor` は、C++ と Python で、`start()` から `stop()` までの間のボードの電力、温度、CPU 使用率、メモリを Sentinel から記録します。`read()` はその時点までのサマリーを返し、`Telemetry` は YAML として出力でき、YAML または JSON として保存できます。`Model::benchmark()` は `BenchmarkReport::telemetry` にこれを使用します。`PowerMonitor`、`read_power_snapshot()`、`RunOptions::enable_board_power()`、`RunOptions::power_monitor`、および `MeasureOptions::include_power` は非推奨となり、`TelemetryMonitor` に置き換えられましたが、引き続き動作します。詳細は[ボードのテレメトリを記録する](/develop-apps/development-workflow/model#record-board-telemetry)を参照してください。
+- `BenchmarkOptions::inputs` を使うと、合成入力の代わりに独自のテンソルで `Model::benchmark()` を実行でき、`BenchmarkReport::input` にどちらを使用したかが記録されます。詳細は[独自の入力で測定する](/develop-apps/development-workflow/model#measure-with-your-own-inputs)を参照してください。
+- プラグインレイテンシは非推奨となり、今後削除されます。対象は `MeasureOptions::include_plugin_latency` と `plugin_latency_source`、`BenchmarkOptions::include_plugin_latency`、`start_measurement(bool)`、および `Model::benchmark(int, bool)` / `Model::benchmark(bool)` です。代わりに `start_measurement()` と `benchmark(num_samples)` を使用してください。
 - ハードウェアデコードは、直接のコーデックセッションと DMA-BUF 出力を使用します。Core はデコーダーデーモンの受け入れリースと `SIMA_DECODER_ADMISSION_REQUIRE` を使用しなくなりました。デコーダーのプールとチューニングのオプションは引き続き利用できます。
 - C++およびPythonでは、`SimaDecode`と`RtspDecodedInput`を通じて、ネイティブのH.265/HEVCデコードが利用可能です。`RtspEncodedInput`は、デコードせずに解析されたH.265アクセスユニットを提供します。H.265入力は、HEVC Mainプロファイル、8ビット、4:2:0を使用する必要があります。コーデックセレクターは、`H265`と`HEVC`の両方をサポートします。H.264セレクターも`AVC`をサポートします。`FormatTag` / `pyneat.Format`は、エンコードされたグラフの境界で同じエイリアスを受け入れ、`H264`と`H265`としてシリアライズします。
 - `VideoSender`は、エンコードされたH.264またはH.265を、`VideoSenderOptions::Passthrough(codec)` / `pyneat.VideoSenderOptions.passthrough(codec)`を通じて再エンコードせずに、UDP経由のRTPとして転送します。H.265はデフォルトでRTPペイロードタイプ98を使用します。H.264は96を維持します。`H264RtpUdpFromEncoded()`は、`Passthrough(RtspCodec::H264)`に置き換えられ、非推奨となりました。
@@ -30,16 +85,21 @@ SiMa.ai Neat Library のリリースノート。
 
 ### グラフの作成と検証
 
+- 新しい `SimaVoxelize`、`SimaPillarScatter`、`SimaBEVPoolPlan`、`SimaBEVPool` ノードは、PointPillars と BEVFusion のカーネルライブラリによる LiDAR 演算とカメラから BEV への演算を、INT8 または BF16 のテンソルで A65 または EV74 上で実行します。各ノードは選択したターゲット上で実行され、フォールバックはありません。[LiDAR と BEV のカーネルノード](/reference/lidar_bev_kernel_nodes)を参照してください。
 - 1 つのモデル画像入力に直接接続されたデフォルトの公開 `Input` は、その入力が宣言する画像形式を継承します。明示的な入力オプションが優先されます。曖昧な接続には明示的なオプションが必要です。これはサンプルの解釈を変更しますが、ペイロードのコピーは追加しません。
 - グラフの構成において、現在は1つのノードオブジェクトを1つの論理的な頂点として扱います。重複した挿入や重複するフラグメントのインポートはアトミックに失敗し、繰り返し行われる `connect()` 呼び出しでは、既存のノードを再利用してファンアウトを行います。
 - 実体化されたパイプラインセグメントは、`build()` の際に最終的な GStreamer 名を検証するようになりました。明示的な `validate()` 呼び出しは不要です。重複または欠落した名前は、切り捨てられたパイプラインを生成する代わりに、`misconfig.pipeline_shape` でエラーとなります。
 - カスタムフラグメントは、現在はすべての明示的な名前と、名前付きパッド参照を宣言とともに報告します。名前の衝突が発生した場合、自動的に名前が変更されるのではなく、拒否されます。
 
-| リリース | 互換性のある Neat SDK | 備考 |
-|---|---|---|
-| 0.4.0 | 2.1.3.0 | [Neat Library 0.4.0](https://github.com/sima-neat/core/releases/tag/v0.4.0) |
-| 0.3.0 | 2.1.2.3 | [Neat Library 0.3.0](https://github.com/sima-neat/core/releases/tag/v0.3.0) |
-| 0.2.2 | 2.1.2.2 | [Neat Library 0.2.2](https://github.com/sima-neat/core/releases/tag/v0.2.2) |
-| 0.2.1 | 2.1.2.1 | [Neat Library 0.2.1](https://github.com/sima-neat/core/releases/tag/v0.2.1) |
-| 0.2.0 | 2.1.2 | [Neat Library 0.2.0](https://github.com/sima-neat/core/releases/tag/v0.2.0) |
-| 0.1.0 | 2.0.0 | [Neat Library 0.1.0](https://github.com/sima-neat/core/releases/tag/v0.1.0) |
+| リリース | C++ ABI | 互換性のある Palette SDK | 備考 |
+|---|---|---|---|
+| 0.6.2 | 7 | 3.0.0.2 | [Neat Library 0.6.2](https://github.com/sima-neat/core/releases/tag/v0.6.2) |
+| 0.6.1 | 6 | 3.0.0.1 | [Neat Library 0.6.1](https://github.com/sima-neat/core/releases/tag/v0.6.1) |
+| 0.6.0 | 6 | 3.0.0.0 | [Neat Library 0.6.0](https://github.com/sima-neat/core/releases/tag/v0.6.0) |
+| 0.5.0 | 5 | 2.1.3.1 | [Neat Library 0.5.0](https://github.com/sima-neat/core/releases/tag/v0.5.0) |
+| 0.4.0 | 4 | 2.1.3.0 | [Neat Library 0.4.0](https://github.com/sima-neat/core/releases/tag/v0.4.0) |
+| 0.3.0 | 3 | 2.1.2.3 | [Neat Library 0.3.0](https://github.com/sima-neat/core/releases/tag/v0.3.0) |
+| 0.2.2 | 2 | 2.1.2.2 | [Neat Library 0.2.2](https://github.com/sima-neat/core/releases/tag/v0.2.2) |
+| 0.2.1 | 2 | 2.1.2.1 | [Neat Library 0.2.1](https://github.com/sima-neat/core/releases/tag/v0.2.1) |
+| 0.2.0 | 2 | 2.1.2 | [Neat Library 0.2.0](https://github.com/sima-neat/core/releases/tag/v0.2.0) |
+| 0.1.0 | 2 | 2.0.0 | [Neat Library 0.1.0](https://github.com/sima-neat/core/releases/tag/v0.1.0) |

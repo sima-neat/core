@@ -21,11 +21,14 @@
 #include "model/PreprocessPlan.h"
 #include "nodes/io/Input.h"
 #include "pipeline/BoxDecodeType.h"
+#include "pipeline/ExecutionPlan.h"
 #include "pipeline/SuperPointTypes.h"
 #include "pipeline/YoloXSegPoseTypes.h"
 #include "pipeline/Run.h"
+#include "pipeline/TelemetryMonitor.h"
 #include "pipeline/TensorSpec.h"
 
+#include <filesystem>
 #include <cstddef>
 #include <array>
 #include <cstdint>
@@ -52,38 +55,141 @@ class Graph;
 using TensorSpec = TensorConstraint;
 
 /**
- * @brief Headline result returned by `Model::benchmark()`.
+ * @brief Hardware latency of one compiled MLA layer or segment.
  *
- * The benchmark uses deterministic synthetic inputs generated from `Model::input_specs()`.
- * `latency_ms` is measured with a warmed-up single-flight push/pull loop. `fps` means logical
- * inferences per second from a separate async throughput run (for batched models this is
- * batches/sec multiplied by the compiled batch size). Power fields are populated when board power
- * telemetry is available during the throughput run.
+ * `stage_index` identifies the containing executable stage in model execution order (zero-based,
+ * including A65 stages), not archive file order. `name` describes a compiler-generated MLA
+ * operation, which may fuse or split ONNX operators. `latency_us` is the hardware `run_time`
+ * counter from one profiling pass that runs the layer on its own; layer latencies do not add up
+ * to the stage latency. Zero-time no-op entries are retained.
  */
-struct BenchmarkReport {
-  double latency_ms = 0.0;
-  double fps = 0.0;
-  double avg_power_watts = 0.0;
-  double energy_joules = 0.0;
+struct MlaLayer {
+  std::size_t stage_index = 0;
+  std::string name;
+  double latency_us = 0.0;
+};
+
+/// @brief MLA layer latencies from `BenchmarkOptions::include_mla_layer_stats`.
+struct MlaLayerStats {
+  /// "not requested", "ok", or why MLA layer stats were not collected.
+  std::string status = "not requested";
+  std::vector<MlaLayer> layers{}; ///< Empty unless `status` is "ok".
 };
 
 /**
- * @brief Options for `Model::benchmark()` synthetic inputs and measurement.
+ * @brief Hardware latency of one compiled MLA stage, run uninterrupted.
+ *
+ * `latency_us` is the mean MLA execution time of 200 back-to-back runs of the stage's ELF,
+ * measured by mla-rt with 1 us resolution. `stage_index` uses the same numbering as
+ * `MlaLayer::stage_index`.
+ */
+struct MlaStage {
+  std::size_t stage_index = 0;
+  double latency_us = 0.0;
+};
+
+/// @brief MLA stage latencies from `BenchmarkOptions::include_mla_stage_stats`.
+struct MlaStageStats {
+  /// "not requested", "ok", or why MLA stage stats were not collected.
+  std::string status = "not requested";
+  std::vector<MlaStage> stages{}; ///< Empty unless `status` is "ok".
+};
+
+/**
+ * @brief Headline result returned by `Model::benchmark()`.
+ *
+ * The benchmark pushes `BenchmarkOptions::inputs` for every sample, or deterministic synthetic
+ * inputs generated from `Model::input_specs()` when none are given; `input` names which.
+ * `latency_ms` is measured with a warmed-up single-flight push/pull loop; `latency_p50_ms`,
+ * `latency_p95_ms`, and `latency_p99_ms` are percentiles of the same loop. `fps` means logical
+ * inferences per second from a separate async throughput pass (for batched models this is
+ * batches/sec multiplied by the compiled batch size). Each pass runs until it has measured at
+ * least `num_samples` inputs and `min_duration_ms` has elapsed.
+ *
+ * Power and board telemetry come from the Sentinel daemon, recorded by a `TelemetryMonitor`
+ * around the throughput pass. Its sample window is armed after measurement starts
+ * and sealed after the last required output, before measurement stops. Preparation,
+ * worker teardown and final reads are outside the timer. Invalid UTC timestamps or
+ * detected clock discontinuities make benchmark telemetry unavailable, without
+ * changing standalone monitor cache-order recovery. When Sentinel is unavailable,
+ * the power fields are zero and `telemetry.status` names the reason.
+ */
+struct BenchmarkReport {
+  double latency_ms = 0.0;
+  double latency_p50_ms = 0.0;
+  double latency_p95_ms = 0.0;
+  double latency_p99_ms = 0.0;
+  double fps = 0.0;
+  double avg_power_watts = 0.0; ///< Estimated mean SoM power over the throughput window.
+  /// Estimated energy to process `num_samples` inputs: `avg_power_watts` multiplied by the
+  /// time the measured throughput needs for `num_samples` inputs.
+  double energy_joules = 0.0;
+  double peak_power_watts = 0.0;       ///< Estimated highest SoM power sample in the window.
+  int throughput_samples = 0;          ///< Inputs measured by the throughput pass.
+  double throughput_duration_ms = 0.0; ///< Length of the throughput window.
+  Telemetry telemetry;                 ///< Board telemetry for the throughput window.
+  MlaLayerStats mla_layer_stats;       ///< Per-layer MLA latency, when requested.
+  MlaStageStats mla_stage_stats;       ///< Per-stage MLA latency, when requested.
+  std::string input; ///< Measured inputs: "provided" (`BenchmarkOptions::inputs`) or "synthetic".
+
+  /**
+   * @brief Write the complete report as YAML or JSON to the exact destination filename.
+   *
+   * A `.json` extension selects JSON; `.yaml` and all other endings select YAML.
+   * Creates missing parent directories and atomically replaces an existing file. Returns
+   * `file_path` unchanged. Throws on invalid/non-finite values or filesystem/write failures.
+   * Saving is explicit: `benchmark()` does not create a report file automatically.
+   */
+  std::filesystem::path save(const std::filesystem::path& file_path) const;
+};
+
+/**
+ * @brief Options for `Model::benchmark()` inputs and measurement.
+ *
+ * Set `inputs` to measure with real data, such as an image read with OpenCV. Without it, the
+ * benchmark generates deterministic synthetic inputs from `Model::input_specs()`.
  *
  * BoxDecode routes need source-image geometry to map detections from model coordinates back to
  * source coordinates. Set `original_width` and `original_height` together to benchmark a specific
  * source geometry. When they are omitted, the benchmark infers geometry from the resolved
  * preprocess and model ingress contracts, preserving the behavior of `benchmark(num_samples)`.
+ * Image preprocessing routes allocate the synthetic image at that source geometry; a provided
+ * image supplies its own geometry, so the original size must be omitted or match it. A provided
+ * tensor that already carries `Tensor::semantic.preprocess` keeps it, as `run()` does, and the
+ * original size and `resize_mode` do not apply to it. Tensor
+ * routes (including cast/quantize) retain the model input shape; the source geometry is used
+ * only for BoxDecode metadata.
  * Per-run benchmark geometry takes precedence over deprecated model-construction BoxDecode hints.
  */
 struct BenchmarkOptions {
-  int num_samples = 100; ///< Number of measured synthetic inputs; must be greater than zero.
-  std::optional<int> original_width;  ///< Synthetic source-image width, in pixels.
-  std::optional<int> original_height; ///< Synthetic source-image height, in pixels.
+  int num_samples = 100;              ///< Number of measured inputs; must be greater than zero.
+  std::optional<int> original_width;  ///< Source-image width, in pixels.
+  std::optional<int> original_height; ///< Source-image height, in pixels.
   /// Resize policy used to map the source geometry to the model input. When omitted, use the
   /// resolved preprocess policy, or stretch when the model route has no resize stage.
   std::optional<ResizeMode> resize_mode;
-  bool include_plugin_latency = false; ///< Include per-plugin latency collection.
+  bool include_plugin_latency = false; ///< Deprecated: plugin latency will be removed.
+  /// Minimum length of each pass, latency and throughput, in milliseconds; must be zero or
+  /// greater. Each pass continues past `num_samples` inputs until this much time has elapsed, so
+  /// both passes follow the same rule and the throughput pass's power and temperature readings
+  /// cover several telemetry samples. Set it to 0 to stop each pass after `num_samples` inputs.
+  int min_duration_ms = 10000;
+  /// Advanced: measure each compiled MLA layer's hardware latency with mla-rt after the
+  /// benchmark. Default off. Requires mla-rt with the MIP-to-kernel handoff fix in PATH and an
+  /// idle devkit with no other active MLA workloads. Only MLA stages in the selected inference
+  /// route are measured. A failure leaves the measurements intact and names the reason in
+  /// `BenchmarkReport::mla_layer_stats.status`.
+  bool include_mla_layer_stats = false;
+  /// Advanced: measure each MLA stage's uninterrupted hardware latency with mla-rt after the
+  /// benchmark. Default off. Requires mla-rt in PATH and an idle devkit with no other active
+  /// MLA workloads. A failure leaves the measurements intact and names the reason in
+  /// `BenchmarkReport::mla_stage_stats.status`.
+  bool include_mla_stage_stats = false;
+  /// Inputs pushed for every sample: one tensor per model input, in `input_specs()` order, as
+  /// `run()` takes them. Empty selects synthetic inputs. Inputs whose count, shape or data type
+  /// does not match the model throw `NeatError` with error code `misconfig.input_shape` before the
+  /// benchmark starts; a color format the route cannot convert fails when the pipeline is built.
+  TensorList inputs;
 };
 
 /**
@@ -193,6 +299,31 @@ public:
   };
 
   /**
+   * @brief Semantic-segmentation decode of a model's class scores (SegFormer-style).
+   *
+   * When enabled, a `ResizeArgMax` Node on the EV74 replaces the model's dequantize or cast
+   * postprocess. It reads the MLA class scores in place, including channel padding that the
+   * MPK's slice stage drops, resizes them bilinearly to the output size and returns the first
+   * class with the largest score at each pixel. The model then outputs one `[N, H, W]` class
+   * map: UINT8 for at most 256 classes, otherwise INT32.
+   *
+   * The `Model` constructor throws `std::invalid_argument`, rather than silently returning
+   * scores, when the model has no postprocess or one that does more than dequantize or cast,
+   * when `inference_terminal` stops before the postprocess, when `decode_type` is set, or when
+   * only one of the output dimensions is set. Decode any other model's scores with
+   * `nodes::ResizeArgMax` in a `Graph`.
+   */
+  struct SemanticSegmentationOptions {
+    bool enable = false; ///< Replace the dequantize/cast postprocess with the class-map decode.
+    /// Class-map width. Leave `output_width` and `output_height` both `0` for the model input
+    /// size, or set both to the camera frame size to label every source pixel.
+    int output_width = 0;
+    int output_height = 0; ///< Class-map height; see `output_width`.
+    /// False (default): half-pixel centers, as PyTorch and Hugging Face `interpolate` use.
+    bool align_corners = false;
+  };
+
+  /**
    * @brief Where the inference pipeline should terminate.
    *
    * Most pipelines run preprocess → MLA → postprocess. This policy lets advanced users stop
@@ -262,11 +393,13 @@ public:
      */
     BoxDecodeType decode_type = BoxDecodeType::Unspecified;
     BoxDecodeTypeOption decode_type_option = BoxDecodeTypeOption::Auto;
-    float score_threshold = 0.0f; ///< BoxDecode score threshold; 0 keeps all candidates.
-    /// BoxDecode IoU threshold for non-max suppression. `0` keeps the model's packaged value;
-    /// when none is packaged, YOLO26 skips NMS and other decoders suppress every overlapping box.
+    /// BoxDecode score threshold. Zero permits zero-valued scores; NMS and top-K still apply.
+    float score_threshold = 0.0f;
+    /// BoxDecode NMS IoU threshold. Zero skips YOLO26 NMS; other NMS profiles still suppress.
     float nms_iou_threshold = 0.0f;
-    int top_k = 0; ///< BoxDecode top-K cap; 0 means no cap.
+    /// BoxDecode output cap. Bounding-box routes require a positive resolved value;
+    /// SuperPoint resolves zero to its profile default. Unused by other model routes.
+    int top_k = 0;
     SuperPointOptions
         superpoint; ///< SuperPoint profile/output options when decode_type is SuperPoint.
     /// Number of classes produced by detection heads. Set this for detection MPKs whose raw
@@ -274,6 +407,8 @@ public:
     /// `0` keeps legacy inference / MPK-provided metadata.
     int num_classes = 0;
     YoloXSegPoseOptions yolox_seg_pose; ///< YOLOX segmentation/pose-specific settings.
+    /// Semantic-segmentation class-map decode; replaces the dequantize/cast postprocess.
+    SemanticSegmentationOptions semantic_segmentation;
     /// Original-image width hint for BoxDecode coordinate inversion.
     /// @deprecated BoxDecode original image size is now read from preprocess metadata. Kept for
     /// transition.
@@ -325,6 +460,20 @@ public:
     /// Preferred jargon-free execution surface (folded into the legacy fields above at Graph
     /// build time). All-unset by default, so it is a no-op unless a field is set.
     AdvancedExecutionOptions advanced_execution;
+
+    /**
+     * @brief Segment Anything decoders: return several candidate masks' best, or the single answer.
+     *
+     * Mirrors upstream `predict(multimask_output=...)`. `true` (default) keeps the multimask
+     * candidate with the best predicted IoU, as for one click. `false` keeps the single-mask
+     * answer, as for a box or several points: mask 0 for MobileSAM, and for EdgeTAM and a
+     * four-mask EfficientSAM3 decoder mask 0 when it is stable (SAM2 rule), otherwise the best
+     * candidate. EfficientSAM, three-mask EfficientSAM3 decoders and EfficientSAM3 concept
+     * detection have no single-mask answer and reject `false`. Only Segment Anything decode
+     * types (`MobileSam`, `EdgeTamSeg`, `EdgeTamTrack`, `EfficientSam`, `EfficientSam3`) accept
+     * `false`.
+     */
+    bool multimask_output = true;
   };
 
   /**
@@ -438,7 +587,9 @@ public:
   simaai::neat::Graph graph(RouteOptions opt) const;
 
   // ── Introspection ────────────────────────────────────────────────────────────────────────
-  /// Returns the expected input tensor specs (one per ingress port for multi-input models).
+  /// Returns one spec per ingress port. Tensor shapes retain the MPK-authored rank,
+  /// including a singleton batch axis; batch-one HWC shorthand remains accepted.
+  /// Image preprocessing inputs describe the dynamic image contract instead.
   std::vector<TensorSpec> input_specs() const;
   /// Returns the produced output tensor specs (multiple for multi-head models).
   std::vector<TensorSpec> output_specs() const;
@@ -446,8 +597,8 @@ public:
    * @brief Returns the batch size the model was compiled with.
    *
    * Defaults to 1 when the model is not batched. Callers that drive multiple logical inferences
-   * per push/pull cycle should use this to size their input batches. The same value is prepended
-   * to `input_specs()[i].shape` when batch > 1.
+   * per push/pull cycle should use this to size their input batches. Tensor `input_specs()`
+   * already include any MPK-authored batch axis, including batch one.
    */
   int compiled_batch_size() const;
   /// Returns the full resolved preprocess plan (intent-driven; richer than
@@ -551,7 +702,8 @@ public:
 
     /// Start observing caller-owned push/pull code without consuming outputs.
     simaai::neat::MeasureScope start_measurement(const simaai::neat::MeasureOptions& opt = {});
-    /// Convenience overload: false = E2E latency/throughput only, true = include plugin latency.
+    /// Deprecated: use `start_measurement()`. True also collects plugin latency.
+    [[deprecated("Plugin latency is deprecated and will be removed")]]
     simaai::neat::MeasureScope start_measurement(bool include_plugin_latency);
     /// Close input (sends EOS) and release the underlying Run.
     void close();
@@ -613,6 +765,40 @@ public:
                const simaai::neat::RunOptions& run_opt = default_run_options());
 #endif
 
+  /**
+   * @brief Describe what the matching `build(...)` executes.
+   *
+   * Builds the Model with the same arguments and startup preflight off, reads the plan that build
+   * recorded, and closes the pipeline. The plan lists the Model's nodes (preprocessing,
+   * quantization, EV74/A65 kernels, MLA), where each one runs, and the tensors between them.
+   * @throws NeatError on the errors `build(...)` raises.
+   */
+  simaai::neat::ExecutionPlan execution_plan();
+  /// Execution plan of `build(opt)`.
+  simaai::neat::ExecutionPlan execution_plan(const RouteOptions& opt);
+  /// Execution plan of `build(run_opt)`.
+  simaai::neat::ExecutionPlan execution_plan(const simaai::neat::RunOptions& run_opt);
+  /// Execution plan of `build(opt, run_opt)`.
+  simaai::neat::ExecutionPlan execution_plan(const RouteOptions& opt,
+                                             const simaai::neat::RunOptions& run_opt);
+  /// Execution plan of `build(inputs, opt, run_opt)` for `Tensor` inputs.
+  simaai::neat::ExecutionPlan
+  execution_plan(const simaai::neat::TensorList& inputs,
+                 const RouteOptions& opt = default_route_options(),
+                 const simaai::neat::RunOptions& run_opt = default_run_options());
+  /// Execution plan of `build(inputs, opt, run_opt)` for `Sample` inputs.
+  simaai::neat::ExecutionPlan
+  execution_plan(const simaai::neat::Sample& inputs,
+                 const RouteOptions& opt = default_route_options(),
+                 const simaai::neat::RunOptions& run_opt = default_run_options());
+#if defined(SIMA_WITH_OPENCV)
+  /// Execution plan of `build(inputs, opt, run_opt)` for `cv::Mat` inputs.
+  simaai::neat::ExecutionPlan
+  execution_plan(const std::vector<cv::Mat>& inputs,
+                 const RouteOptions& opt = default_route_options(),
+                 const simaai::neat::RunOptions& run_opt = default_run_options());
+#endif
+
   // ── One-shot execution (synchronous) ─────────────────────────────────────────────────────
   /**
    * @brief One-shot-style inference for the simplest applications.
@@ -635,14 +821,22 @@ public:
 #endif
 
   /**
-   * @brief Run a small synthetic benchmark for simple model execution.
+   * @brief Run a small benchmark for simple model execution.
    *
-   * Generates deterministic synthetic input tensors from `input_specs()`, runs a fixed warmup,
-   * measures single-flight latency and async logical-inference throughput separately, prints a
-   * compact summary, and returns headline metrics.
+   * Uses `BenchmarkOptions::inputs`, or generates deterministic synthetic input tensors from
+   * `input_specs()` when none are given, runs a fixed warmup,
+   * measures single-flight latency and async logical-inference throughput separately, records
+   * board telemetry through Sentinel during the throughput pass, prints a compact summary, and
+   * returns headline metrics. Each pass lasts at least `BenchmarkOptions::min_duration_ms`
+   * (10 s by default).
    */
   BenchmarkReport benchmark(const BenchmarkOptions& options);
-  BenchmarkReport benchmark(int num_samples = 100, bool include_plugin_latency = false);
+  BenchmarkReport benchmark(int num_samples = 100);
+  /// Deprecated: use `benchmark(num_samples)`. True also collects plugin latency.
+  [[deprecated("Plugin latency is deprecated and will be removed")]]
+  BenchmarkReport benchmark(int num_samples, bool include_plugin_latency);
+  /// Deprecated: use `benchmark()`. True also collects plugin latency.
+  [[deprecated("Plugin latency is deprecated and will be removed")]]
   BenchmarkReport benchmark(bool include_plugin_latency);
 
 private:

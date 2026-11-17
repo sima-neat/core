@@ -107,7 +107,7 @@ bool QuantTess::compile_node_contract(const ContractCompileInput& input, Compile
     }
     node_helpers::ProcessCvuRuntimeConfigOptions runtime_options;
     runtime_options.graph_family = "quantizetessellate";
-    runtime_options.graph_id = 226;
+
     runtime_options.input_dtype_default = "FP32";
     runtime_options.output_dtype_default = "EVXX_INT8";
     runtime_options.set_tessellate = true;
@@ -135,14 +135,11 @@ void QuantTess::apply_compiled_contract(const CompiledNodeContract&, std::string
 
 std::string QuantTess::backend_fragment(int node_index) const {
   std::ostringstream ss;
-  require_element("neatprocesscvu", "QuantTess::backend_fragment");
+  require_element("neatkernelrunner", "QuantTess::backend_fragment");
   const std::string name = opt_.element_name.empty()
                                ? ("n" + std::to_string(node_index) + "_quanttess")
                                : opt_.element_name;
-  ss << "neatprocesscvu name=" << name << " stage-id=" << name;
-  if (opt_.num_buffers > 0) {
-    ss << " num-buffers=" << opt_.num_buffers;
-  }
+  ss << "neatkernelrunner name=" << name;
   return ss.str();
 }
 

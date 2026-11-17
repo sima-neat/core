@@ -24,7 +24,7 @@ OutputSpec from_caps(const std::string& format, int width, int height, int fps,
     out.layout = "HWC";
   if (out.format == "GRAY8")
     out.layout = "HW";
-  if (out.format == "NV12" || out.format == "I420")
+  if (out.format == "NV12" || out.format == "NV16" || out.format == "I420")
     out.layout = "Planar";
   out.certainty = certainty;
   out.note = note ? note : "";
@@ -43,6 +43,12 @@ OutputSpec with_fps(OutputSpec out, int fps, const char* note) {
 
 OutputSpec apply_raw_caps(OutputSpec out, const simaai::neat::FormatSpec& format, int width,
                           int height, int fps, simaai::neat::CapsMemory memory, const char* note) {
+  // A changed spatial contract invalidates the decoder's cached estimate.
+  // Preserve existing hints for no-op caps and cadence/memory-only overrides.
+  if ((!format.empty() && format.str() != out.format) || (width > 0 && width != out.width) ||
+      (height > 0 && height != out.height)) {
+    out.byte_size = 0;
+  }
   out.media_type = "video/x-raw";
   if (!format.empty())
     out.format = format;
@@ -61,7 +67,7 @@ OutputSpec apply_raw_caps(OutputSpec out, const simaai::neat::FormatSpec& format
     out.layout = "HWC";
   if (out.format == "GRAY8")
     out.layout = "HW";
-  if (out.format == "NV12" || out.format == "I420")
+  if (out.format == "NV12" || out.format == "NV16" || out.format == "I420")
     out.layout = "Planar";
   out.certainty = SpecCertainty::Derived;
   if (note)

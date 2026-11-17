@@ -22,8 +22,6 @@ struct ConnectionOptions {
   std::string ssh_key;
   std::string media_serve_root = "data";
   std::filesystem::path media_directory = "/srv/simaai/data";
-  /// Card-side temporary asset directory; must match the platform receive location.
-  std::filesystem::path card_receive_directory = "/srv/simaai/incoming";
   int startup_timeout_ms = 900000;
   int request_timeout_ms = 900000;
 };
@@ -51,6 +49,9 @@ struct GenerationRequest {
   bool enable_thinking = false;
   Json tools = Json::array();
   Json tool_choice = nullptr;
+  /// How much the model reasons: `low`, `medium` or `high`. Independent of
+  /// `enable_thinking`, which controls whether reasoning is returned.
+  std::string reasoning_effort = "low";
 };
 
 namespace internal {

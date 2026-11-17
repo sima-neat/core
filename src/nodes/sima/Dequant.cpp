@@ -57,7 +57,7 @@ Dequant::Dequant(DequantOptions opt) : opt_(std::move(opt)) {
   }
   if (!opt_.compiled_contract && !opt_.processcvu_compiled_contract &&
       (!opt_.q_scale.has_value() || !opt_.q_zp.has_value())) {
-    throw std::runtime_error("Dequant: standalone neatdequant requires explicit q_scale and q_zp.");
+    throw std::runtime_error("Dequant: standalone Dequant requires explicit q_scale and q_zp.");
   }
   config_holder_ = init_config_holder(opt_);
 }
@@ -135,27 +135,13 @@ void Dequant::apply_compiled_contract(const CompiledNodeContract&, std::string* 
 }
 
 std::string Dequant::backend_fragment(int node_index) const {
-  std::ostringstream ss;
-  const bool processcvu = opt_.processcvu_compiled_contract != nullptr;
-  const bool standalone = !opt_.compiled_contract && !processcvu;
-  const char* backend = processcvu ? "neatprocesscvu" : "neatdequant";
-  require_element(backend, "Dequant::backend_fragment");
-
   const std::string name = opt_.element_name.empty()
                                ? ("n" + std::to_string(node_index) + "_dequant")
                                : opt_.element_name;
-  const std::string stage_id = opt_.stage_id.empty() ? name : opt_.stage_id;
-
-  ss << backend << " name=" << name;
-  if (!standalone) {
-    ss << " stage-id=" << stage_id;
-    if (processcvu && opt_.num_buffers > 0) {
-      ss << " num-buffers=" << opt_.num_buffers;
-    }
-  } else {
-    ss << " q-scale=" << *opt_.q_scale << " q-zp=" << *opt_.q_zp;
-  }
-  return ss.str();
+  require_element("neatkernelrunner", "Dequant::backend_fragment");
+  // Both authored forms lower to one checked typed stage at graph construction.
+  // Quantization is not serialized into element properties or decoded per frame.
+  return "neatkernelrunner name=" + name;
 }
 
 std::vector<std::string> Dequant::element_names(int node_index) const {

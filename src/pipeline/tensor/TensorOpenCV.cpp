@@ -25,6 +25,7 @@
 #include "pipeline/TensorOpenCV.h"
 #include "pipeline/internal/TensorMath.h"
 #include "pipeline/internal/TensorTransfer.h"
+#include "pipeline/internal/TensorUtil.h"
 
 #if defined(SIMA_WITH_OPENCV)
 #include <opencv2/imgproc.hpp>
@@ -255,13 +256,11 @@ Tensor from_cv_mat(const cv::Mat& mat, ImageSpec::PixelFormat fmt, TensorMemory 
   std::vector<Segment> segments{{"ifm0", bytes}};
   if (memory == TensorMemory::EV74) {
     return pipeline_internal::transfer_to_device(cpu_view, Device{DeviceType::SIMA_CVU, 0},
-                                                 &segments,
-                                                 /*required_segment_names=*/nullptr);
+                                                 &segments);
   }
   if (memory == TensorMemory::MLA) {
     return pipeline_internal::transfer_to_device(cpu_view, Device{DeviceType::SIMA_MLA, 0},
-                                                 &segments,
-                                                 /*required_segment_names=*/nullptr);
+                                                 &segments);
   }
   throw std::invalid_argument("from_cv_mat: unsupported TensorMemory placement");
 }
@@ -313,7 +312,7 @@ std::optional<CvMatView> Tensor::map_cv_mat_view(ImageSpec::PixelFormat desired)
       return std::nullopt;
   }
 
-  Mapping mapping = map_read();
+  Mapping mapping = pipeline_internal::map_dense_tensor_read(*this);
   if (!mapping.data)
     return std::nullopt;
 

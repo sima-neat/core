@@ -840,7 +840,7 @@ int main(int argc, char** argv) {
   try {
     using namespace simaai::neat;
 
-    require(element_exists("neatprocesscvu"), "missing NEAT CVU plugin (neatprocesscvu)");
+    require(element_exists("neatkernelrunner"), "missing NEAT CVU plugin (neatkernelrunner)");
     const BenchOptions opt = parse_args(argc, argv);
     for (const auto& c : selected_cases(opt)) {
       run_case(c, opt);

@@ -6,6 +6,8 @@
 #include "pipeline/internal/contract/CompiledNodeContractQuery.h"
 #include "pipeline/internal/contract/ContractFacts.h"
 #include "pipeline/internal/sima/StaticSpecBuilders.h"
+#include "pipeline/internal/sima/TensorSemanticsUtil.h"
+#include "pipeline/internal/sima/stagesemantics/ProcessCvuRuntimeConfigAdapterInternal.h"
 #include "pipeline/internal/sima/stagesemantics/ProcessCvuStageSemantics.h"
 #include "pipeline/internal/sima/stagesemantics/TransportStageSemantics.h"
 
@@ -13,6 +15,7 @@
 #include <cctype>
 #include <cstdint>
 #include <optional>
+#include <limits>
 #include <sstream>
 #include <string>
 
@@ -88,6 +91,10 @@ bool scale_byte_count_local(std::int64_t in_value, std::size_t in_elem_bytes,
   if (!out_value || in_elem_bytes == 0U || out_elem_bytes == 0U || in_value < 0) {
     return false;
   }
+  if (in_value >
+      std::numeric_limits<std::int64_t>::max() / static_cast<std::int64_t>(out_elem_bytes)) {
+    return false;
+  }
   const std::int64_t numerator = in_value * static_cast<std::int64_t>(out_elem_bytes);
   if (numerator % static_cast<std::int64_t>(in_elem_bytes) != 0) {
     return false;
@@ -99,6 +106,9 @@ bool scale_byte_count_local(std::int64_t in_value, std::size_t in_elem_bytes,
 bool scale_size_bytes_local(std::uint64_t in_value, std::size_t in_elem_bytes,
                             std::size_t out_elem_bytes, std::uint64_t* out_value) {
   if (!out_value || in_elem_bytes == 0U || out_elem_bytes == 0U) {
+    return false;
+  }
+  if (in_value > std::numeric_limits<std::uint64_t>::max() / out_elem_bytes) {
     return false;
   }
   const std::uint64_t numerator = in_value * static_cast<std::uint64_t>(out_elem_bytes);
@@ -138,6 +148,7 @@ bool transform_logical_output_for_cast(const pipeline_internal::sima::LogicalTen
     return false;
   }
   out->dtype = cast_output_dtype_local(direction);
+  out->dtype_source = pipeline_internal::sima::DTypeSource::InternalContract;
   out->byte_offset = scaled_offset;
   out->size_bytes = scaled_size;
   for (auto& stride : out->stride_bytes) {
@@ -622,6 +633,7 @@ CompiledRuntimeContract build_cast_runtime_contract_from_sample_local(const Samp
     input_logical.byte_offset = input_byte_offset;
     input_logical.size_bytes = input_logical_size;
     input_logical.dtype = input_dtype;
+    input_logical.dtype_source = pipeline_internal::sima::DTypeSource::TypedObject;
     input_logical.layout = layout;
     input_logical.logical_name = logical_name;
     input_logical.backend_name = backend_name;
@@ -655,6 +667,7 @@ CompiledRuntimeContract build_cast_runtime_contract_from_sample_local(const Samp
       stride = scaled_stride;
     }
     logical.dtype = cast_output_dtype_local(direction);
+    logical.dtype_source = pipeline_internal::sima::DTypeSource::InternalContract;
     logical.layout = layout;
     logical.logical_name = logical_name;
     logical.backend_name = backend_name;
@@ -704,15 +717,13 @@ CompiledRuntimeContract build_cast_runtime_contract_from_sample_local(const Samp
 Cast::Cast(CastOptions opt) : opt_(std::move(opt)) {}
 
 std::string Cast::backend_fragment(int node_index) const {
-  require_element("neatprocesscvu", "Cast::backend_fragment");
+  require_element("neatkernelrunner", "Cast::backend_fragment");
   const std::string name =
       opt_.element_name.empty() ? ("n" + std::to_string(node_index) + "_cast") : opt_.element_name;
-  const std::string stage_id = default_logical_stage_id_local(*this, name);
   std::ostringstream ss;
-  ss << "neatprocesscvu name=" << name << " stage-id=" << stage_id;
-  if (opt_.num_buffers > 0) {
-    ss << " num-buffers=" << opt_.num_buffers;
-  }
+  // Stage identity and capacity travel through the typed Runtime context, not
+  // legacy GObject properties.
+  ss << "neatkernelrunner name=" << name;
   return ss.str();
 }
 
@@ -808,6 +819,116 @@ bool Cast::compile_node_contract(const ContractCompileInput& input, CompiledNode
     pipeline_internal::sima::stagesemantics::TransportCanonicalFacts facts;
     facts.plugin_kind = "cast";
     facts.kernel_kind = "cast";
+    // Standalone Cast is executed by processcvu too. Retain its transport
+    // identity/routing but supply the same checked graph-221 payload used by
+    // model-managed Cast, rather than a metadata-only CastPreparedStage.
+    namespace semantics = pipeline_internal::sima::stagesemantics;
+    semantics::CompiledProcessCvuRuntimeConfig cvu;
+    cvu.graph_family = cvu.graph_name = "cast";
+
+    cvu.input_dtype = opt_.direction == CastDirection::Fp32ToBf16 ? "FP32" : "BF16";
+    cvu.output_dtype = cvu.out_dtype = cast_output_dtype_local(opt_.direction);
+    const auto append = [&](const auto& tensor, auto& tensors, auto& shapes) {
+      std::vector<int> shape;
+      for (const auto dimension : tensor.shape) {
+        if (dimension <= 0 || dimension > std::numeric_limits<int>::max()) {
+          throw std::invalid_argument("Cast: descriptor dimension is outside int range");
+        }
+        shape.push_back(static_cast<int>(dimension));
+      }
+      sima_ev_tensor_desc descriptor{};
+      std::string error;
+      if (!pipeline_internal::sima::tensorsemantics::build_dense_tensor_desc(
+              shape, tensor.dtype, tensor.layout, &descriptor, &error, "Cast: missing descriptor",
+              "Cast: invalid rank", "Cast: invalid dimension", "Cast: invalid dtype",
+              "Cast: missing strides")) {
+        throw std::invalid_argument(error);
+      }
+      if (tensor.byte_offset < 0 ||
+          (!tensor.stride_bytes.empty() && tensor.stride_bytes.size() != shape.size())) {
+        throw std::invalid_argument("Cast: invalid descriptor offset/stride rank");
+      }
+      descriptor.storage.addr = static_cast<std::uint64_t>(tensor.byte_offset);
+      for (std::size_t axis = 0; axis < tensor.stride_bytes.size(); ++axis) {
+        if (tensor.stride_bytes[axis] <= 0) {
+          throw std::invalid_argument("Cast: nonpositive descriptor stride");
+        }
+        descriptor.layout.strided.strides_bytes[axis] = tensor.stride_bytes[axis];
+      }
+      tensors.emplace_back(descriptor, tensor.dtype);
+      shapes.push_back(std::move(shape));
+    };
+    try {
+      const auto append_checked = [&](const auto& tensor, auto& physicals, auto& tensors,
+                                      auto& shapes) {
+        append(tensor, tensors, shapes);
+        const auto& descriptor = tensors.back().descriptor();
+        std::uint64_t span = runtime_dtype_bytes_local(tensor.dtype);
+        for (std::size_t axis = 0; axis < tensor.shape.size(); ++axis) {
+          const auto count = static_cast<std::uint64_t>(tensor.shape[axis] - 1);
+          const auto stride = descriptor.layout.strided.strides_bytes[axis];
+          if (count && stride > (std::numeric_limits<std::uint64_t>::max() - span) / count)
+            throw std::invalid_argument("Cast: strided span overflows");
+          span += count * stride;
+        }
+        const auto offset = static_cast<std::uint64_t>(tensor.byte_offset);
+        if (offset > std::numeric_limits<std::uint64_t>::max() - span)
+          throw std::invalid_argument("Cast: addressed extent overflows");
+        auto physical = std::find_if(physicals.begin(), physicals.end(), [&](const auto& value) {
+          return value.physical_index == tensor.physical_index;
+        });
+        if (physical == physicals.end())
+          throw std::invalid_argument("Cast: tensor has no physical carrier");
+        physical->size_bytes = std::max(physical->size_bytes, offset + span);
+      };
+      for (const auto& tensor : runtime.logical_inputs)
+        append_checked(tensor, runtime.physical_inputs, cvu.input_tensors, cvu.input_shapes);
+      for (const auto& tensor : runtime.logical_outputs)
+        append_checked(tensor, runtime.physical_outputs, cvu.output_tensors, cvu.output_shapes);
+      if (runtime.input_bindings.empty()) {
+        for (const auto& tensor : runtime.logical_inputs) {
+          const auto physical = std::find_if(
+              runtime.physical_inputs.begin(), runtime.physical_inputs.end(),
+              [&](const auto& value) { return value.physical_index == tensor.physical_index; });
+          runtime.input_bindings.push_back(
+              pipeline_internal::sima::specbuilders::build_input_binding_static_spec(
+                  0, tensor.logical_index, physical->segment_name, tensor.segment_name,
+                  tensor.logical_index, tensor.logical_index, tensor.physical_index,
+                  physical->size_bytes, 0, true));
+        }
+      }
+      for (const auto& physical : runtime.physical_inputs)
+        cvu.physical_input_names.push_back(physical.segment_name);
+      for (const auto& physical : runtime.physical_outputs)
+        cvu.physical_output_names.push_back(physical.segment_name);
+      cvu.default_input_name = cvu.physical_input_names.front();
+      cvu.runtime_input_names = cvu.physical_input_names;
+      cvu.runtime_output_names = cvu.physical_output_names;
+      for (std::size_t i = 0; i < runtime.logical_outputs.size(); ++i)
+        cvu.published_output_names.push_back(
+            tensor_name_from_logical_output_local(runtime.logical_outputs[i], i));
+      cvu.primary_output_name = cvu.published_output_names.front();
+      cvu.primary_output_transport_kind =
+          pipeline_internal::sima::ProcessCvuOutputTransportKind::Dense;
+      cvu.primary_output_semantic_kind =
+          pipeline_internal::sima::ProcessCvuOutputSemanticKind::Tensor;
+      for (const auto& physical : runtime.physical_outputs) {
+        const auto logical = std::find_if(
+            runtime.logical_outputs.begin(), runtime.logical_outputs.end(),
+            [&](const auto& tensor) { return tensor.physical_index == physical.physical_index; });
+        if (logical == runtime.logical_outputs.end())
+          throw std::invalid_argument("Cast: physical output lacks a logical tensor");
+        cvu.runtime_output_logical_shapes.emplace_back(logical->shape.begin(),
+                                                       logical->shape.end());
+      }
+      facts.payload_kind = pipeline_internal::sima::StagePayloadKind::ProcessCvu;
+      facts.processcvu_payload =
+          semantics::build_processcvu_payload_from_runtime_config_internal(cvu);
+    } catch (const std::exception& exception) {
+      if (err)
+        *err = exception.what();
+      return false;
+    }
     facts.runtime_contract = std::move(runtime);
     const auto compiled =
         pipeline_internal::sima::stagesemantics::build_transport_compiled_contract_from_facts(

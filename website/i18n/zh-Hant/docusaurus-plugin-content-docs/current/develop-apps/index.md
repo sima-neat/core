@@ -82,11 +82,10 @@ Modalix 將應用程式核心、視覺處理、機器學習加速、視訊引擎
 
 ## 請描述您的應用程式。 <span className="agentic-heading-highlight">一位具備 Neat 技能的代理人會開發它。</span>
 
-SiMa.ai Neat 透過內建的技能，支援即開即用的代理應用程式開發。 Neat 開發環境（以下簡稱為） Neat SDK)。這些技能讓程式碼代理程式能夠理解如何使用公開的 Python 和 C++ API，遵循既定的應用程式模式，並與其他程式碼協同運作。 Modalix 開發與驗證
-工作流程。
+SiMa.ai 和 Neat 透過 Palette SDK 內建的技能，支援即開即用的代理應用程式開發。這些技能讓程式碼代理程式能夠使用公開的 Python 和 C++ API，遵循既定的應用程式模式，並在 Modalix 開發與驗證工作流程中作業。
 
 建議的代理路徑可以建立一個應用程式，並在配對的
-Modalix DevKit，檢查結果和診斷資訊，並最佳化實作方式。傳統的開發方式仍然是一種平行途徑，可透過相同的 API 進行直接控制。這兩種方式都能產生標準且可檢查的 SiMa.ai Neat 應用程式，因此您可以檢閱或修改代理程式開發的程式碼，並隨著應用程式的發展，在兩種工作流程之間切換。請參閱 [設定 Neat SDK](/getting-started/dev-environment/)，以促進具主動性的發展。
+Modalix DevKit，檢查結果和診斷資訊，並最佳化實作方式。傳統的開發方式仍然是一種平行途徑，可透過相同的 API 進行直接控制。這兩種方式都能產生標準且可檢查的 SiMa.ai Neat 應用程式，因此您可以檢閱或修改代理程式開發的程式碼，並隨著應用程式的發展，在兩種工作流程之間切換。請參閱 [設定 Palette SDK](/getting-started/dev-environment/)，以促進具主動性的發展。
 
 <div className="overview-workflow-image agentic-visual-desktop">
 
@@ -104,9 +103,9 @@ Modalix DevKit，檢查結果和診斷資訊，並最佳化實作方式。傳統
 
 在建立應用程式之前，請完成「開始使用」設定：
 
-- **針對部署模型進行安裝** — 對於 Modalix DevKit，請在 Neat SDK 中或直接在裝置上安裝 Neat Library。對於 PCIe 協同處理，請在主機機器上安裝 `core/pciehost`，並在 Modalix PCIe 卡上安裝相容的 Neat Library。
+- **針對部署模型進行安裝** — 對於 Modalix DevKit，請在 Palette SDK 中或直接在裝置上安裝 Neat Library。對於 PCIe 協同處理，請在主機機器上安裝 `core/pciehost`，並在 Modalix PCIe 卡上安裝相容的 Neat Library。
 - **模型成品** — 使用來自 Model Zoo 的預先編譯模型，或將您自己的模型編譯成 Modalix 格式的檔案。
-- **執行階段目標** — 在 DevKit 上執行原生應用程式，或在主機機器上直接建立並執行協同處理應用程式。在 Neat SDK 中跨編譯原生 C++ 應用程式時，請配對並同步 DevKit。
+- **執行階段目標** — 在 DevKit 上執行原生應用程式，或在主機機器上直接建立並執行協同處理應用程式。在 Palette SDK 中跨編譯原生 C++ 應用程式時，請配對並同步 DevKit。
 
 「Hello Neat！」頁面可幫助您執行第一個推論，開發流程頁面更詳細地說明了主要概念，而教學課程則展示了如何將這些概念應用於實際應用程式模式。
 

@@ -83,7 +83,10 @@ int main() {
     std::vector<sima_perf::Clock::time_point> push_timestamps(static_cast<std::size_t>(iterations),
                                                               sima_perf::Clock::now());
 
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
     simaai::neat::PowerMonitor power_monitor(sima_perf::power_options_from_env());
+#pragma GCC diagnostic pop
     power_monitor.start();
     const auto run_t0 = sima_perf::Clock::now();
     for (int i = 0; i < iterations; ++i) {

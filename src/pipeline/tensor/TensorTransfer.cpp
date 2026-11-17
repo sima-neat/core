@@ -22,31 +22,40 @@
  *
  * Segment semantics:
  *  - If required_segments is provided, it is used as the destination segment layout.
- *  - Else if required_segment_names is provided, we reuse the segment layout from src.storage
- *    and validate the required names exist.
- *  - Else if src.storage already has segment layout, reuse it.
- *  - Else allocate a single default segment: {"tensor", payload_bytes}.
+ *  - Else allocate one segment for the selected payload: {"tensor", payload_bytes}.
  *
  */
 
 #include "pipeline/internal/TensorTransfer.h"
 
 #include "pipeline/internal/GstDataAdapter.h"
+#include "pipeline/internal/InputStreamUtil.h"
 #include "pipeline/internal/SimaaiGstCompat.h"
 #include "pipeline/internal/TensorUtil.h"
 #include "pipeline/internal/TensorMath.h"
 #include "gst/GstInit.h"
-#include "simaai/neat/internal/dmabuf/DmaBufPool.h"
+#include <simaai/scheduler/client/dma_memory.h>
 
 #include <gst/gst.h>
+#include <gstsimaaitensorbuffer_meta.h>
 
+#include <algorithm>
+#include <array>
+#include <cerrno>
 #include <cstdint>
 #include <cstring>
+#include <iterator>
+#include <list>
 #include <memory>
+#include <mutex>
+#include <new>
 #include <stdexcept>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <vector>
+
+#include <unistd.h>
 
 namespace simaai::neat::pipeline_internal {
 namespace {
@@ -60,6 +69,164 @@ using simaai::neat::Segment;
 using simaai::neat::Storage;
 using simaai::neat::StorageKind;
 using simaai::neat::Tensor;
+
+namespace dma = ::simaai::scheduler::client::dma;
+
+// One allocation per pool makes capacity accounting independent of the number
+// of outstanding tensors. Evicted pools stop caching, but their borrowed buffer
+// remains valid until its final GStreamer reference is released.
+class TransferBufferCache {
+  static constexpr std::size_t max_bytes = 256U * 1024U * 1024U;
+  static constexpr std::size_t max_pools = 128U;
+  // Nearby crop sizes share storage without charging six almost-identical
+  // allocations against the byte budget. Logical spans stay exact.
+  static constexpr std::size_t class_quantum = 64U * 1024U;
+  struct Retire {
+    void operator()(GstBufferPool* pool) const {
+      if (pool) {
+        gst_buffer_pool_set_active(pool, FALSE);
+        gst_object_unref(pool);
+      }
+    }
+  };
+  using Pool = std::unique_ptr<GstBufferPool, Retire>;
+  struct Entry {
+    dma::HeapKind heap;
+    std::size_t capacity;
+    Pool pool;
+  };
+  std::mutex mutex_;
+  std::list<Entry> pools_; // Most recently acquired first; shared across heaps.
+  std::size_t capacity_ = 0;
+
+  static GstBuffer* take(GstBufferPool* pool) {
+    GstBufferPoolAcquireParams params{};
+    params.flags = GST_BUFFER_POOL_ACQUIRE_FLAG_DONTWAIT;
+    GstBuffer* buffer = nullptr;
+    if (gst_buffer_pool_acquire_buffer(pool, &buffer, &params) != GST_FLOW_OK)
+      gst_clear_buffer(&buffer);
+    return buffer;
+  }
+
+  GstBuffer* reuse(dma::HeapKind heap, std::size_t capacity) {
+    struct Unref {
+      void operator()(GstBufferPool* pool) const {
+        gst_object_unref(pool);
+      }
+    };
+    // Borrow GObject references, not cache owners: eviction can still deactivate
+    // and drain these pools immediately while another transfer inspects them.
+    std::array<std::unique_ptr<GstBufferPool, Unref>, max_pools> candidates;
+    std::size_t count = 0;
+    {
+      std::lock_guard lock(mutex_);
+      for (const auto& entry : pools_)
+        if (entry.heap == heap && entry.capacity == capacity)
+          candidates[count++].reset(GST_BUFFER_POOL(gst_object_ref(entry.pool.get())));
+    }
+    for (std::size_t i = 0; i < count; ++i) {
+      // Never wait for a caller to release an earlier tensor. Even a replacement
+      // allocation after Scheduler retires a slot runs outside the cache lock.
+      if (auto* buffer = take(candidates[i].get())) {
+        std::lock_guard lock(mutex_);
+        const auto it = std::find_if(pools_.begin(), pools_.end(), [&](const Entry& entry) {
+          return entry.pool.get() == candidates[i].get();
+        });
+        if (it != pools_.end())
+          pools_.splice(pools_.begin(), pools_, it);
+        return buffer;
+      }
+    }
+    return nullptr;
+  }
+
+  bool clear() {
+    std::list<Entry> retired;
+    {
+      std::lock_guard lock(mutex_);
+      retired.splice(retired.begin(), pools_);
+      capacity_ = 0;
+    }
+    // Deactivate/free outside the cache lock. Each pool has at most one buffer:
+    // either idle and released here, or borrowed and released on final return.
+    return !retired.empty();
+  }
+
+public:
+  GstBuffer* acquire(dma::HeapKind heap, std::size_t bytes, dma::Error* error) {
+    const auto page = static_cast<std::size_t>(::getpagesize());
+    const auto quantum = bytes <= class_quantum ? page : std::max(page, class_quantum);
+    const bool cacheable = bytes > 0 && bytes <= max_bytes;
+    const auto capacity = cacheable ? ((bytes + quantum - 1) / quantum) * quantum : 0;
+    if (cacheable) {
+      if (auto* buffer = reuse(heap, capacity)) {
+        *error = {};
+        return buffer;
+      }
+    }
+    Pool created;
+    GstBuffer* buffer = nullptr;
+    for (int attempt = 0; attempt < 2; ++attempt) {
+      if (cacheable) {
+        // Allocate outside the cache lock; finite one-slot pools also work with
+        // Scheduler versions that do not support max_buffers=0.
+        created = Pool(dma::createDmaBufPool(heap, capacity, 1U, 1U, {}, error));
+        if (created) {
+          buffer = take(created.get());
+          if (!buffer)
+            *error = {EIO, "acquire transfer buffer"};
+        }
+      } else {
+        buffer = dma::allocateDmaBufBuffer(heap, bytes, {}, error);
+      }
+      if (buffer)
+        break;
+      // A racing transfer may have published a usable slot while allocation
+      // failed. Preserve that fast recovery before draining the idle cache.
+      if (auto* available = reuse(heap, capacity)) {
+        *error = {};
+        return available;
+      }
+      if (attempt != 0 || error->code != ENOMEM || !clear())
+        return nullptr;
+    }
+    if (!buffer)
+      return nullptr;
+    std::unique_ptr<GstBuffer, decltype(&gst_buffer_unref)> lease(buffer, gst_buffer_unref);
+    if (created) {
+      std::list<Entry> staged;
+      try {
+        staged.push_front({heap, capacity, std::move(created)});
+      } catch (const std::bad_alloc&) {
+        // Cache admission is optional: the borrowed slot remains valid after
+        // its pool is retired, and is freed on final return instead of cached.
+        *error = {};
+        return lease.release();
+      }
+      std::list<Entry> retired;
+      {
+        std::lock_guard lock(mutex_);
+        // Publish only after borrowing the new slot, so another thread cannot
+        // take it first. Count loaned slots too: this conservatively bounds all
+        // retained cache capacity, including the eventual concurrency high-water.
+        pools_.splice(pools_.begin(), staged);
+        capacity_ += capacity;
+        while (capacity_ > max_bytes || pools_.size() > max_pools) {
+          auto oldest = std::prev(pools_.end());
+          capacity_ -= oldest->capacity;
+          retired.splice(retired.end(), pools_, oldest);
+        }
+      }
+    }
+    *error = {};
+    return lease.release();
+  }
+};
+
+GstBuffer* acquire_transfer_buffer(dma::HeapKind heap, std::size_t bytes, dma::Error* error) {
+  static TransferBufferCache cache;
+  return cache.acquire(heap, bytes, error);
+}
 
 //==============================================================================
 // Composite packing helpers
@@ -259,6 +426,8 @@ std::vector<Plane> contiguous_planes(const Tensor& src, std::size_t elem) {
  * For other composite tensors, returns packed plane bytes (throws if metadata invalid).
  */
 std::size_t compute_payload_bytes_strict(const Tensor& src) {
+  if (src.has_tiled_storage())
+    return src.semantic.tess->storage_bytes;
   // Prefer explicit NV12/I420 requirements (do not rely on plane shapes if not present).
   if (src.is_nv12()) {
     const std::size_t bytes = src.nv12_required_bytes();
@@ -297,6 +466,8 @@ std::size_t compute_payload_bytes_strict(const Tensor& src) {
 bool copy_tensor_payload(const Tensor& src, uint8_t* dst, std::size_t dst_size) {
   if (!dst)
     return false;
+  if (src.has_tiled_storage())
+    return src.copy_payload_bytes_to(dst, dst_size);
 
   if (src.is_nv12()) {
     return src.copy_nv12_contiguous_to(dst, dst_size);
@@ -335,51 +506,11 @@ std::size_t segment_total_bytes(const std::vector<Segment>& segments) {
   return total;
 }
 
-bool segments_contain_names(const std::vector<Segment>& segments,
-                            const std::vector<std::string>& names) {
-  for (const auto& required : names) {
-    bool found = false;
-    for (const auto& seg : segments) {
-      if (seg.name == required) {
-        found = true;
-        break;
-      }
-    }
-    if (!found)
-      return false;
-  }
-  return true;
-}
-
-std::vector<Segment> resolve_segments(const Tensor& src,
-                                      const std::vector<Segment>* required_segments,
-                                      const std::vector<std::string>* required_names,
+std::vector<Segment> resolve_segments(const std::vector<Segment>* required_segments,
                                       std::size_t payload_bytes) {
-  std::vector<Segment> segments;
-
-  if (required_segments && !required_segments->empty()) {
-    segments = *required_segments;
-  } else if (required_names && !required_names->empty()) {
-    if (!src.storage || src.storage->sima_segments.empty()) {
-      throw std::runtime_error("transfer: required segment names but no segment layout");
-    }
-    segments = src.storage->sima_segments;
-  } else if (src.storage && !src.storage->sima_segments.empty()) {
-    segments = src.storage->sima_segments;
-  }
-
-  if (segments.empty()) {
-    Segment seg;
-    seg.name = "tensor";
-    seg.size_bytes = payload_bytes;
-    segments.push_back(std::move(seg));
-  }
-
-  if (required_names && !required_names->empty()) {
-    if (!segments_contain_names(segments, *required_names)) {
-      throw std::runtime_error("transfer: missing required segments");
-    }
-  }
+  std::vector<Segment> segments = required_segments ? *required_segments : std::vector<Segment>{};
+  if (segments.empty())
+    segments.push_back({"tensor", payload_bytes});
 
   const std::size_t total = segment_total_bytes(segments);
   if (payload_bytes == 0 || total < payload_bytes) {
@@ -410,15 +541,82 @@ std::uint64_t target_flags_from_device(const Device& target) {
   return 0;
 }
 
-/** Copy “lightweight” buffer metadata/timestamps/flags from src to dst when available. */
-void copy_gst_metadata(GstBuffer* dst, GstBuffer* src) {
-  if (!dst || !src)
-    return;
-  const GstBufferCopyFlags flags = static_cast<GstBufferCopyFlags>(
-      GST_BUFFER_COPY_METADATA | GST_BUFFER_COPY_TIMESTAMPS | GST_BUFFER_COPY_FLAGS);
-  gst_buffer_copy_into(dst, src, flags, 0, -1);
-  copy_custom_meta(dst, src, "GstSimaMeta");
-  copy_custom_meta(dst, src, "GstSimaSampleMeta");
+// A new allocation must not inherit producer bindings, layout or parent-buffer loans.
+bool copy_gst_metadata(GstBuffer* dst, GstBuffer* src, std::string* error) {
+  const auto flags =
+      static_cast<GstBufferCopyFlags>(GST_BUFFER_COPY_TIMESTAMPS | GST_BUFFER_COPY_FLAGS);
+  if (!gst_buffer_copy_into(dst, src, flags, 0, -1)) {
+    *error = "failed to copy buffer timing";
+    return false;
+  }
+  try {
+    using namespace simaai::gst;
+    const auto* frame = tensor_buffer_frame_metadata(src, error);
+    if (!error->empty()) {
+      *error = "compact frame metadata: " + *error;
+      return false;
+    }
+    auto* legacy = gst_buffer_get_custom_meta(src, "GstSimaMeta");
+    if (!frame && !legacy)
+      return true;
+    auto* metadata = gst_buffer_add_custom_meta(dst, "GstSimaMeta");
+    if (!metadata) {
+      *error = "failed to copy frame metadata";
+      return false;
+    }
+    auto* fields = gst_custom_meta_get_structure(metadata);
+    if (frame) {
+      gst_structure_set(fields, "frame-id", G_TYPE_INT64, gint64(frame->frame_id), "stream-id",
+                        G_TYPE_STRING, frame->stream_id.c_str(), "timestamp", G_TYPE_UINT64,
+                        guint64(frame->timestamp), nullptr);
+      if (frame->input_sequence)
+        gst_structure_set(fields, "input-seq", G_TYPE_INT64, gint64(*frame->input_sequence),
+                          nullptr);
+      if (frame->original_sequence)
+        gst_structure_set(fields, "orig-input-seq", G_TYPE_INT64, gint64(*frame->original_sequence),
+                          nullptr);
+      tensor_buffer_write_preprocess_facts(fields, frame->preprocess, true);
+    } else {
+      auto* source_fields = gst_custom_meta_get_structure(legacy);
+      for (const auto* name : {"frame-id", "input-seq", "orig-input-seq", "stream-id",
+                               "orig-stream-id", "timestamp", "attributes"}) {
+        if (const auto* value = gst_structure_get_value(source_fields, name))
+          gst_structure_set_value(fields, name, value);
+      }
+      const auto preprocess = read_simaai_preprocess_meta(src);
+      if (preprocess && !write_simaai_preprocess_meta(dst, *preprocess)) {
+        *error = "failed to write preprocessing metadata";
+        return false;
+      }
+    }
+    // Source timing is independent of the producing stage's frame and allocation IDs.
+    TensorBufferSourceValues source;
+    if (!tensor_buffer_read_source_values(src, &source, error))
+      return false;
+    using Values = TensorBufferSourceValues;
+    for (const auto& [flag, name] : {std::pair{Values::FrameIdValid, "sample-frame-id-valid"},
+                                     {Values::PtsValid, "sample-pts-valid"},
+                                     {Values::DtsValid, "sample-dts-valid"},
+                                     {Values::DurationValid, "sample-duration-valid"}}) {
+      if (source.has(flag))
+        gst_structure_set(fields, name, G_TYPE_BOOLEAN, gboolean(source.is_valid(flag)), nullptr);
+    }
+    if (source.has(Values::FrameId))
+      gst_structure_set(fields, "sample-frame-id", G_TYPE_INT64, gint64(source.frame_id), nullptr);
+    for (const auto& [flag, name, value] :
+         {std::tuple{Values::Pts, "sample-pts-ns", source.pts_ns},
+          {Values::Dts, "sample-dts-ns", source.dts_ns},
+          {Values::Duration, "sample-duration-ns", source.duration_ns},
+          {Values::Offset, "sample-offset", source.offset},
+          {Values::OffsetEnd, "sample-offset-end", source.offset_end}}) {
+      if (source.has(flag))
+        gst_structure_set(fields, name, G_TYPE_UINT64, guint64(value), nullptr);
+    }
+    return true;
+  } catch (const std::exception& exception) {
+    *error = exception.what();
+  }
+  return false;
 }
 
 /**
@@ -445,9 +643,12 @@ Tensor finalize_transfer_tensor(const Tensor& src, const std::shared_ptr<Storage
   out.device = storage->device;
   out.read_only = false;
   out.byte_offset = 0;
+  out.route.memory_index = 0;
+  out.route.physical_byte_offset = 0;
 
   // Dense: ensure contiguous strides.
-  out.strides_bytes = contiguous_strides(out.shape, elem);
+  out.strides_bytes =
+      src.has_tiled_storage() ? std::vector<int64_t>{} : contiguous_strides(out.shape, elem);
 
   // Composite: ensure plane layout matches packed payload copy.
   if (out.is_composite()) {
@@ -475,67 +676,77 @@ std::shared_ptr<Storage> make_driver_dmabuf_storage(GstSample* sample, const Dev
 }
 
 Tensor transfer_to_driver_dmabuf(const Tensor& src, const Device& target,
-                                 std::uint64_t target_flags, const std::vector<Segment>& segments) {
-  using internal::dmabuf::CpuAccess;
-  using internal::dmabuf::DmaBufView;
-  using internal::dmabuf::Error;
-  using internal::dmabuf::HeapKind;
+                                 std::uint64_t target_flags, const std::vector<Segment>& segments,
+                                 std::size_t payload_bytes) {
+  using ::simaai::scheduler::client::dma::CpuAccess;
+  using ::simaai::scheduler::client::dma::DmaBufView;
+  using ::simaai::scheduler::client::dma::Error;
+  using ::simaai::scheduler::client::dma::HeapKind;
+  using OwnedBuffer = std::unique_ptr<GstBuffer, decltype(&gst_buffer_unref)>;
+  using OwnedSample = std::unique_ptr<GstSample, decltype(&gst_sample_unref)>;
 
   const std::size_t allocation_bytes = segment_total_bytes(segments);
   const HeapKind heap = target.type == DeviceType::SIMA_MLA ? HeapKind::MlaDms : HeapKind::Cma;
   Error error;
-  GstBuffer* dst = internal::dmabuf::allocateDmaBufBuffer(heap, allocation_bytes, {}, &error);
+  OwnedBuffer dst(acquire_transfer_buffer(heap, allocation_bytes, &error), gst_buffer_unref);
   if (!dst) {
     throw std::runtime_error("transfer: standard DMA-BUF allocation failed: " + error.message());
   }
 
-  auto view =
-      DmaBufView::fromGstMemory(gst_buffer_peek_memory(dst, 0U), 0U, allocation_bytes, &error);
+  auto view = DmaBufView::fromGstMemory(gst_buffer_peek_memory(dst.get(), 0U), 0U,
+                                        gst_buffer_get_size(dst.get()), &error);
   if (!view) {
-    gst_buffer_unref(dst);
     throw std::runtime_error("transfer: standard DMA-BUF view failed: " + error.message());
   }
   auto mapping = view->map(CpuAccess::Write, &error);
   if (!mapping) {
-    gst_buffer_unref(dst);
     throw std::runtime_error("transfer: standard DMA-BUF map failed: " + error.message());
   }
 
-  bool copied = false;
-  try {
-    copied = copy_tensor_payload(src, static_cast<std::uint8_t*>(mapping->data()), mapping->size());
-  } catch (...) {
-    (void)mapping->finish();
-    gst_buffer_unref(dst);
-    throw;
-  }
+  const bool copied =
+      copy_tensor_payload(src, static_cast<std::uint8_t*>(mapping->data()), mapping->size());
   if (!copied) {
-    (void)mapping->finish();
-    gst_buffer_unref(dst);
     throw std::runtime_error("transfer: standard DMA-BUF payload copy failed");
   }
+  // Preserve freshly allocated padding when reusing a larger carrier.
+  if (allocation_bytes > payload_bytes) {
+    std::memset(static_cast<std::uint8_t*>(mapping->data()) + payload_bytes, 0,
+                allocation_bytes - payload_bytes);
+  }
   if (!mapping->finish(&error)) {
-    gst_buffer_unref(dst);
     throw std::runtime_error("transfer: standard DMA-BUF CPU sync failed: " + error.message());
+  }
+
+  // Reuse one write-access plan for the full private capacity, regardless of
+  // logical length. Release its owners before resizing so GstMemory stays
+  // writable and no child memory/producer lease is substituted.
+  mapping.reset();
+  view.reset();
+  if (gst_buffer_get_size(dst.get()) != allocation_bytes)
+    gst_buffer_resize(dst.get(), 0, static_cast<gssize>(allocation_bytes));
+  if (gst_buffer_get_size(dst.get()) != allocation_bytes) {
+    throw std::runtime_error("transfer: resize DMA-BUF to requested carrier span failed");
   }
 
   if (src.storage && src.storage->kind == StorageKind::GstSample) {
     std::string holder_error;
-    GstBuffer* src_buffer = buffer_from_holder_if_gstsample(src, &holder_error);
+    OwnedBuffer src_buffer(buffer_from_holder_if_gstsample(src, &holder_error), gst_buffer_unref);
     if (src_buffer) {
-      copy_gst_metadata(dst, src_buffer);
-      gst_buffer_unref(src_buffer);
+      std::string metadata_error;
+      const bool copied_metadata = copy_gst_metadata(dst.get(), src_buffer.get(), &metadata_error);
+      if (!copied_metadata) {
+        throw std::runtime_error("transfer: " + metadata_error);
+      }
     }
   }
 
-  GstSample* sample = gst_sample_new(dst, nullptr, nullptr, nullptr);
+  OwnedSample sample(gst_sample_new(dst.get(), nullptr, nullptr, nullptr), gst_sample_unref);
   if (!sample) {
-    gst_buffer_unref(dst);
     throw std::runtime_error("transfer: failed to wrap standard DMA-BUF sample");
   }
-  gst_buffer_unref(dst);
-  auto storage = make_driver_dmabuf_storage(sample, target, target_flags);
-  gst_sample_unref(sample);
+  dst.reset();
+  auto storage = make_driver_dmabuf_storage(sample.get(), target, target_flags);
+  sample.reset();
   if (!storage) {
     throw std::runtime_error("transfer: failed to create standard DMA-BUF storage");
   }
@@ -549,8 +760,7 @@ Tensor transfer_to_driver_dmabuf(const Tensor& src, const Device& target,
 //==============================================================================
 
 Tensor transfer_to_device(const Tensor& src, const Device& target,
-                          const std::vector<Segment>* required_segments,
-                          const std::vector<std::string>* required_segment_names) {
+                          const std::vector<Segment>* required_segments) {
   const std::uint64_t target_flags = target_flags_from_device(target);
   if (target_flags == 0) {
     throw std::runtime_error("transfer: unsupported target device");
@@ -580,10 +790,9 @@ Tensor transfer_to_device(const Tensor& src, const Device& target,
     throw std::runtime_error("transfer: unknown payload size");
   }
 
-  const std::vector<Segment> segments =
-      resolve_segments(src, required_segments, required_segment_names, payload_bytes);
+  const std::vector<Segment> segments = resolve_segments(required_segments, payload_bytes);
 
-  return transfer_to_driver_dmabuf(src, target, target_flags, segments);
+  return transfer_to_driver_dmabuf(src, target, target_flags, segments, payload_bytes);
 }
 
 Tensor transfer_to_cpu(const Tensor& src) {

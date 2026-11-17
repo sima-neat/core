@@ -3,8 +3,6 @@
 #error "Internal header. Not part of the public API."
 #endif
 
-#include "pipeline/internal/sima/SimaPluginStaticManifest.h"
-
 #include <gst/gst.h>
 
 #include <cstddef>
@@ -17,8 +15,12 @@
 
 namespace simaai::neat {
 struct GraphOptions;
+struct BuildResult;
+struct OutputSpec;
 struct GraphLinkOptions;
 class Node;
+class Run;
+struct Tensor;
 struct Sample;
 struct InputOptions;
 namespace pipeline_internal {
@@ -32,6 +34,11 @@ struct ExecutionGraphPlan;
 
 namespace simaai::neat::session_test {
 
+BuildResult compile_fused_realtime_contracts_for_test(
+    const std::vector<std::shared_ptr<Node>>& consumer_nodes,
+    const std::vector<std::vector<std::shared_ptr<Node>>>& branch_nodes,
+    const GraphOptions& options, const OutputSpec& ingress_spec);
+
 std::string export_graph_topology_for_test(const runtime::ExecutionGraphPlan& plan);
 
 enum class CompositionFailurePoint {
@@ -39,6 +46,8 @@ enum class CompositionFailurePoint {
   PipelineVertexAppended,
   EndpointEdgesReplaced,
   BeforeConnectionEdgeAppend,
+  PipelineBeforeManifest,
+  PipelinePrepared,
 };
 
 // Deterministic exception injection for strong-guarantee composition tests. The hook is internal,
@@ -48,10 +57,10 @@ void arm_composition_failure_for_test(CompositionFailurePoint point,
 void clear_composition_failure_for_test() noexcept;
 void maybe_throw_composition_failure_for_test(CompositionFailurePoint point);
 
-void reset_rendered_manifests();
-std::vector<pipeline_internal::sima::SimaPluginStaticManifest> get_rendered_manifests();
-void record_rendered_manifest(const pipeline_internal::sima::SimaPluginStaticManifest& manifest);
 std::vector<std::string> sync_cache_rebuild_events_for_test(bool fail_build);
+Sample run_sync_prefill_for_test(Run& runner, const Tensor& input, int timeout_ms, int count,
+                                 bool warmed = false);
+
 pipeline_internal::InputMemoryResolution
 resolve_input_memory_for_test(const InputOptions& options,
                               const std::vector<std::shared_ptr<Node>>& nodes);

@@ -33,6 +33,22 @@ class ScenarioSpec:
 SKIP_RETURN_CODE = 77
 
 
+def hardware_runner():
+    if not os.environ.get("SIMA_HARDWARE_SUPERVISOR_SOCKET"):
+        raise RuntimeError("Explicit guarded hardware supervisor socket required")
+    # Source and installed extras have different roots, but both ship the same
+    # reviewed supervisor module. Never resolve it from arbitrary PYTHONPATH.
+    for root in (THIS_DIR.parents[2] / "tools", THIS_DIR.parents[1] / "tools"):
+        path = root / "hardware_test_supervisor.py"
+        if path.is_file():
+            import importlib.util
+            spec = importlib.util.spec_from_file_location("neat_hardware_supervisor", path)
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            return module.run_owned
+    raise RuntimeError("Installed hardware-test supervisor module is missing")
+
+
 STANDARD_SCENARIOS: tuple[ScenarioSpec, ...] = (
     ScenarioSpec("runtime_session_sync_rgb", "perf_runtime_graph_sync_rgb_test"),
     ScenarioSpec("runtime_session_async_rgb", "perf_runtime_graph_async_rgb_test"),
@@ -341,7 +357,24 @@ def run_encoder_scenario(
                 command += ["--median-fps", repr(median_fps)]
             record = {"phase": phase, "command": command}
             metadata["runs"].append(record)
-            proc = run_cmd(command, cwd=repo_root, timeout_sec=max(timeout_sec, 300), env=env)
+            # Normal CI uses develop's subprocess path. An explicitly supplied
+            # socket opts into qualification ownership and must never fall back.
+            if "SIMA_HARDWARE_SUPERVISOR_SOCKET" in os.environ:
+                owned = hardware_runner()(command=command, cwd=repo_root, env=env,
+                                          deadline_sec=max(timeout_sec, 300))
+                record["supervisor"] = owned
+                proc = subprocess.CompletedProcess(command, owned.get("returncode"),
+                                                   owned.get("stdout", ""), owned.get("stderr", ""))
+                if owned["status"] != "completed" or owned.get("retirement_proven") is not True:
+                    (artifacts / f"{phase}.stdout.json").write_text(proc.stdout or "", encoding="utf-8")
+                    (artifacts / f"{phase}.stderr.log").write_text(proc.stderr or "", encoding="utf-8")
+                    metadata["hardware_fail_stop"] = True
+                    metadata["supervisor"] = owned
+                    return finish(schema.FailureClass.ENV_BROKEN,
+                                  schema.ReasonCode.ENV_TIMEOUT if owned["status"] == "timeout"
+                                  else schema.ReasonCode.ENV_RUNTIME_CRASH)
+            else:
+                proc = run_cmd(command, cwd=repo_root, timeout_sec=max(timeout_sec, 300), env=env)
             record["exit_code"] = proc.returncode
             (artifacts / f"{phase}.stdout.json").write_text(proc.stdout or "", encoding="utf-8")
             (artifacts / f"{phase}.stderr.log").write_text(proc.stderr or "", encoding="utf-8")
@@ -389,7 +422,8 @@ def run_encoder_scenario(
     except (schema.SchemaError, ValueError, KeyError, TypeError) as error:
         metadata["error"] = str(error)
         return finish(schema.FailureClass.HARNESS_ERROR, schema.ReasonCode.HARNESS_SCHEMA_INVALID)
-    except OSError as error:
+    except (OSError, RuntimeError) as error:
+        metadata["hardware_fail_stop"] = True
         metadata["error"] = str(error)
         return finish(schema.FailureClass.ENV_BROKEN, schema.ReasonCode.ENV_RUNTIME_CRASH)
 
@@ -429,6 +463,72 @@ def run_scenario(
             repo_root=repo_root, executable_dir=executable_dir, results_dir=results_dir,
             profile=profile, spec=spec, baseline=baseline, timeout_sec=timeout_sec,
         )
+    # Keep complete scenario output, not just the JSON result's diagnostic tails.
+    # Unique directories preserve earlier attempts when the results directory is reused.
+    log_root = results_dir / "scenario-logs"
+    log_root.mkdir(parents=True, exist_ok=True)
+    log_dir = Path(tempfile.mkdtemp(prefix=f"{spec.scenario_id}-", dir=log_root)).resolve()
+    capture: dict[str, Any] = {}
+    trace_environment = {
+        key: os.environ[key]
+        for key in ("SIMA_NEAT_METRICS_RETAIN_TRACE", "SIMA_NEAT_METRICS_TRACE_DIR")
+        if key in os.environ
+    }
+    diagnostic = (trace_environment.get("SIMA_NEAT_METRICS_RETAIN_TRACE") in ("1", "true")
+                  or bool(trace_environment.get("SIMA_NEAT_METRICS_TRACE_DIR"))
+                  or iterations_override is not None)
+    invocation = {
+        "command": [str(executable_dir / spec.target), *spec.args],
+        "cwd": str(repo_root),
+        "iterations": iterations_override if iterations_override is not None else baseline.iterations,
+        "timeout_sec": timeout_sec,
+        "trace_environment": trace_environment,
+        "purpose": "diagnostic" if diagnostic else "baseline_comparison",
+    }
+    # Deliberately do not dump the environment: it can contain authentication tokens.
+    (log_dir / "invocation.json").write_text(json.dumps(invocation, indent=2) + "\n", encoding="utf-8")
+    result = _run_scenario(
+        repo_root=repo_root, executable_dir=executable_dir, results_dir=results_dir,
+        profile=profile, spec=spec, baseline=baseline, timeout_sec=timeout_sec,
+        iterations_override=iterations_override, capture=capture,
+    )
+    for stream in ("stdout", "stderr"):
+        output = capture.get(stream) or ""
+        if isinstance(output, bytes):  # TimeoutExpired may carry bytes despite text=True.
+            (log_dir / f"{stream}.log").write_bytes(output)
+        else:
+            (log_dir / f"{stream}.log").write_text(output, encoding="utf-8")
+    capture.pop("stdout", None)
+    capture.pop("stderr", None)
+    (log_dir / "outcome.json").write_text(json.dumps({
+        **capture, "status": result.status.value,
+        "reason_code": result.reason_code.value if result.reason_code else None,
+    }, indent=2) + "\n", encoding="utf-8")
+    result.run_meta["artifacts"] = {
+        "directory": str(log_dir),
+        "stdout": str(log_dir / "stdout.log"),
+        "stderr": str(log_dir / "stderr.log"),
+        "invocation": str(log_dir / "invocation.json"),
+        "outcome": str(log_dir / "outcome.json"),
+    }
+    result.run_meta["execution_purpose"] = invocation["purpose"]
+    # Actual trace identity remains in measure_report.plugin_latency.trace_dir.
+    # A requested directory is not proof that tracing succeeded or was retained.
+    return result
+
+
+def _run_scenario(
+    *,
+    repo_root: Path,
+    executable_dir: Path,
+    results_dir: Path,
+    profile: schema.PerfProfile,
+    spec: ScenarioSpec,
+    baseline: schema.ScenarioBaseline,
+    timeout_sec: int,
+    iterations_override: int | None,
+    capture: dict[str, Any],
+) -> schema.PerfResult:
     exe_path = executable_dir / spec.target
     if not exe_path.exists():
         return build_result(
@@ -446,8 +546,34 @@ def run_scenario(
     env["SIMA_PERF_ITERS"] = str(scenario_iters)
 
     try:
-        proc = run_cmd([str(exe_path), *spec.args], cwd=repo_root, timeout_sec=timeout_sec, env=env)
-    except subprocess.TimeoutExpired:
+        # Use the same direct execution on every architecture unless guarded
+        # qualification was explicitly requested, including an invalid socket.
+        if "SIMA_HARDWARE_SUPERVISOR_SOCKET" in os.environ:
+            owned = hardware_runner()(command=[str(exe_path), *spec.args], cwd=repo_root, env=env,
+                                      deadline_sec=timeout_sec)
+            capture.update(stdout=owned.get("stdout", ""), stderr=owned.get("stderr", ""),
+                           returncode=owned.get("returncode"), supervisor_status=owned["status"],
+                           retirement_proven=owned.get("retirement_proven"))
+            if owned["status"] != "completed" or owned.get("retirement_proven") is not True:
+                timed_out = owned["status"] == "timeout"
+                return build_result(
+                    scenario_id=spec.scenario_id, modalix_profile_id=profile.modalix_profile_id,
+                    status=schema.ResultStatus.FAIL, failure_class=schema.FailureClass.ENV_BROKEN,
+                    reason_code=schema.ReasonCode.ENV_TIMEOUT if timed_out else schema.ReasonCode.ENV_RUNTIME_CRASH,
+                    metrics=dict(schema.DEFAULT_EMPTY_METRICS),
+                    run_meta={"phase": "run", "executable": str(exe_path), "timeout_sec": timeout_sec,
+                              "hardware_fail_stop": True, "supervisor": owned})
+            proc = subprocess.CompletedProcess([str(exe_path), *spec.args], owned["returncode"], owned["stdout"], owned["stderr"])
+        else:
+            proc = run_cmd([str(exe_path), *spec.args], cwd=repo_root, timeout_sec=timeout_sec, env=env)
+    except (RuntimeError, OSError, ValueError) as exc:
+        return build_result(
+            scenario_id=spec.scenario_id, modalix_profile_id=profile.modalix_profile_id,
+            status=schema.ResultStatus.FAIL, failure_class=schema.FailureClass.ENV_BROKEN,
+            reason_code=schema.ReasonCode.ENV_RUNTIME_CRASH, metrics=dict(schema.DEFAULT_EMPTY_METRICS),
+            run_meta={"phase": "run", "error": str(exc), "hardware_fail_stop": True})
+    except subprocess.TimeoutExpired as exc:
+        capture.update(stdout=exc.stdout, stderr=exc.stderr, timed_out=True)
         return build_result(
             scenario_id=spec.scenario_id,
             modalix_profile_id=profile.modalix_profile_id,
@@ -458,6 +584,7 @@ def run_scenario(
             run_meta={"phase": "run", "executable": str(exe_path), "timeout_sec": timeout_sec},
         )
 
+    capture.update(stdout=proc.stdout, stderr=proc.stderr, returncode=proc.returncode)
     combined_output = (proc.stdout or "") + "\n" + (proc.stderr or "")
     if proc.returncode == SKIP_RETURN_CODE and spec.allow_skip:
         return build_result(
@@ -831,6 +958,16 @@ def main() -> int:
         )
         write_result(results_dir, result)
         all_results.append(result)
+        if result.run_meta.get("hardware_fail_stop"):
+            # These scenarios were NOT RUN, not accepted skips or fabricated
+            # metric results. The matrix cannot qualify after unknown retirement.
+            remaining = [item.scenario_id for item in selected_scenarios[len(all_results):]]
+            (results_dir / "hardware-fail-stop-summary.json").write_text(json.dumps({
+                "status": "FAIL_STOP", "failed_scenario": spec.scenario_id,
+                "not_run_scenarios": remaining, "owner_retirement_unknown": True,
+            }, sort_keys=True) + "\n")
+            print_summary(all_results)
+            return 1
 
     print_summary(all_results)
 

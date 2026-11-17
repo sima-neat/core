@@ -69,13 +69,13 @@ bool rejects(const BoxDecodeStaticContract& contract,
 } // namespace
 
 RUN_TEST("unit_boxdecode_pose_class_gate_test", ([] {
-           // An empty gate must stay empty: the backend reads a present-but-empty list as
-           // "no class is pose-bearing" and would zero every keypoint record.
+           // An empty gate means every class is pose-bearing in the canonical request.
            const auto ungated = finalize(make_contract({}));
            require(ungated.num_classes == kExpectedClasses, "the fixture must resolve 36 classes");
            require(ungated.pose_classes.empty(), "an unset gate must not become a populated list");
 
-           // A valid gate survives finalization, sorted and deduplicated to a canonical form.
+           // A valid gate survives finalization, sorted into canonical order (duplicates are
+           // rejected).
            const auto gated = finalize(make_contract({7, 0, 3}));
            require((gated.pose_classes == std::vector<int>{0, 3, 7}),
                    "a valid gate must be carried through sorted");

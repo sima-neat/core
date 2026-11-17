@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1440 760" role="img" aria-labelledby="title desc">
-  <title id="title">Palette Neat software stack</title>
-  <desc id="desc">Palette Neat includes the Neat SDK, Neat Library, Model Compiler, LLiMa, and Modalix DevKit. The SDK path supports host-based model compilation, C++ builds, and DevKit validation. The direct DevKit path supports fewer moving parts for Python and PyNeat development.</desc>
+  <title id="title">Palette SDK software stack</title>
+  <desc id="desc">Palette SDK includes the development environment, Neat Library, Model Compiler, LLiMa, and Modalix DevKit. The SDK path supports host-based model compilation, C++ builds, and DevKit validation. The direct DevKit path supports fewer moving parts for Python and PyNeat development.</desc>
   <defs>
     <linearGradient id="sdkGradient" x1="0" y1="0" x2="1" y2="1">
       <stop offset="0" stop-color="#4E8BDA"/>
@@ -122,7 +122,7 @@
   <rect class="sdk-frame" x="104" y="228" width="564" height="466" rx="18" fill="none" stroke="var(--sdk-border)" stroke-width="2.5"/>
   <g class="inner">
     <rect x="272" y="204" width="230" height="48" rx="24" fill="url(#sdkGradient)" filter="url(#nodeShadow)"/>
-    <text x="364" y="235" class="sans label" text-anchor="middle">Neat SDK</text>
+    <text x="364" y="235" class="sans label" text-anchor="middle">Palette SDK</text>
     <text x="450" y="235" class="sans small" text-anchor="middle">(container)</text>
   </g>
 

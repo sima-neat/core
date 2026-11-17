@@ -40,7 +40,7 @@ sidebar_position: 9
 | `build.property_invalid` | 某個元素的屬性未知或無效 | 請使用 `gst-inspect-1.0` 檢查屬性名稱和值 |
 | `runtime.pull` | 由於沒有更明確的根本原因，因此拉取操作失敗。| 請檢查隨附的報告以及第一個上游錯誤。|
 | `runtime.element_failed` | 某個階段在執行階段失敗，但沒有更明確的對應關係 | 請修正報告中出現問題的階段及其上游輸入 |
-| `runtime.output_timeout` | 在設定的逾時時間內，沒有收到任何輸出 | 請檢查資料流程或增加預期的逾時時間 |
+| `runtime.output_timeout` | 核心未在觀察逾時期限內完成 | 保留相關緩衝區，直到執行完成或裝置復原經過驗證 |
 | `runtime.unexpected_eos` | 管線在達到預期結束之前就結束了，導致缺少必要的輸出 | 請檢查是否過早達到來源的結束，並確保提供足夠的輸入 |
 | `io.parse` | JSON 或階段設定解析/結構驗證失敗 | 驗證設定語法和必要欄位 |
 | `io.open` | 圖形檔案儲存/載入時，開啟/讀取/寫入失敗 | 請檢查路徑是否存在、權限是否正確，以及儲存裝置的健康狀況 |
@@ -133,18 +133,20 @@ SIMA_NEAT_VERBOSE_TOPICS=gstreamer \
 對於吞吐量／延遲／功耗報告，建議使用圖表執行結果的 JSON 匯出格式：
 
 ```cpp
-RunOptions opt;
-opt.enable_board_power();        // graph-level power when supported by the board/SOM
-Run run = graph.build(opt);
+Run run = graph.build(RunOptions{});
 
-// run your normal push/pull loop inside a measurement window, then:
-auto report = run.start_measurement().stop();
-std::cout << report.to_text();
+TelemetryMonitor telemetry_monitor; // board power, temperatures, CPU usage, and memory
+telemetry_monitor.start();
+auto scope = run.start_measurement();
+// run your normal push/pull loop here, then:
+auto report = scope.stop();
+Telemetry telemetry = telemetry_monitor.stop();
+std::cout << report.to_text() << telemetry;
 ```
 
 匯出的內容會明確指定範圍：
 
-- `run.graph_metrics.throughput_fps` 和 `run.graph_metrics.power` 是圖層級的標題。
+- `run.graph_metrics.throughput_fps` 是圖層級的標題。`run.graph_metrics.power` 僅由已棄用的 `RunOptions::enable_board_power()` 填入；請改用 `TelemetryMonitor`。
 - `run.node_metrics[]` 僅包含節點/外掛程式的延遲資訊；節點/外掛程式的耗電量資訊則刻意省略。
 - `latency_semantics` 和 `aggregation` 告訴您，這些值是代表整個執行期間的資料，還是代表特定時間窗口內的增量變化。
 - `plugin_metrics_unattributed[]` 會保留無法明確對應到單一節點的「核心/外掛」資料列。
@@ -171,15 +173,10 @@ std::cout << report.to_text();
 
 若驅動程式回報完成狀態不明，請持續保留其 DMA 緩衝區與原始集區借用權。關閉檔案描述元、停止應用程式或重新啟動服務，都不能證明硬體已停止存取記憶體。請收集失敗報告，並在重試前使用平台核准的復原程序。
 
-### 維持 Core 與 Internals 配對
+### 維持 Core 與 Scheduler 套件相符 {#keep-core-and-scheduler-packages-matched}
 
-建置與安裝 Core 時，請使用相符的 B1157 Internals 套件。Core 會分別檢查執行階段設定檔、核心原始碼版本與 SDK sysroot 收據，而不是只看公開 C++ ABI 版本。即使公開 ABI 相同，較舊的套件也不能作為相容替代品。
+請將 Core 與該 Core 版本選定的 Scheduler 套件組一起安裝。Scheduler 管理相符的 Runner、Kernels、Codecs 和韌體相依套件。僅公開 C++ ABI 相同，並不能確保執行階段相容。
 
-安裝程式在變更套件前，會檢查套件組中 `neat-runtime` 的設定檔與相符的
-`neat-gst-plugins` 版本。平台檢查覆寫不會繞過執行階段配對。若檢查失敗，請取得相符的套件組；不要取代其收據或強制安裝較舊的執行階段。
+請使用 `build.sh` 選定的已發布相依套件，或以 `--scheduler PATH` 提供完整且相符的 Scheduler DEB 套件組。請參閱[本機相依套件](/develop-apps/contribute/build-test/local-dependencies/)。
 
-在板上安裝前，請停止使用 CVU 或硬體編解碼器的應用程式。完整安裝程式會在所有套件安裝完成後啟用已暫存的 EV74 韌體；若這些裝置仍開啟，則拒絕重設 EV74。設定
-`NEAT_INSTALLER_ACTIVATE_FIRMWARE_ON_BOARD=OFF` 可讓韌體維持暫存狀態，
-稍後再以
-`sudo /usr/libexec/sima-neat-firmware/install.sh --activate`
-啟用。
+更新板子時，請依照[安裝或更新 Neat Library](/getting-started/neat-library/install-or-update/)安裝完整的 Core 套件組。選定的 Scheduler 安裝程式會驗證套件組並管理韌體啟用。如果驗證失敗，請取得相符的 Core/Scheduler 套件組；不要取代安裝記錄，也不要強制安裝個別不相容的執行階段或韌體套件。

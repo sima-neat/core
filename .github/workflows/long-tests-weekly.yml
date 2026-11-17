@@ -47,4 +47,5 @@ jobs:
     with:
       build_mode: standard
       run_long_tests: true
+      validation_only: true
     secrets: inherit

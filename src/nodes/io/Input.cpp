@@ -160,7 +160,7 @@ OutputSpec Input::output_spec(const OutputSpec& input) const {
       out.layout = "HW";
       if (out.depth <= 0)
         out.depth = 1;
-    } else if (out.format == "NV12" || out.format == "I420") {
+    } else if (out.format == "NV12" || out.format == "NV16" || out.format == "I420") {
       out.layout = "Planar";
     }
   } else if (out.media_type == "application/vnd.simaai.tensor") {

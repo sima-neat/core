@@ -65,7 +65,7 @@ void RemoteSession::start(const std::string& target_directory, const std::string
       "set -eu; umask 077; d=\"$HOME/.cache/neat-genai/" + id_ +
       "\"; mkdir -p \"$HOME/.cache/neat-genai\"; mkdir \"$d\"; "
       "nohup /usr/bin/neat-pcie-genai-worker " +
-      q(id_) + " " + q(options_.card_receive_directory.string()) + " " +
+      q(id_) + " " + q("/tmp") + " " +
       q(std::to_string(std::max(options_.startup_timeout_ms, options_.request_timeout_ms))) + " " +
       q(target_directory) + " " + q(draft_directory) +
       " >\"$d/worker.log\" 2>&1 </dev/null & p=$!; echo \"$p\" >\"$d/pid\"; "

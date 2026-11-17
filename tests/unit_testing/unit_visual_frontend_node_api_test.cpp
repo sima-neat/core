@@ -3,6 +3,7 @@
 #include "test_utils.h"
 
 #include <iostream>
+#include <limits>
 #include <memory>
 #include <stdexcept>
 #include <string>
@@ -28,7 +29,8 @@ void test_feature_histogram_public_api() {
   const std::string summary = opt.summary();
   require_contains(summary, "FeatureHistogramOptions", "summary should name the options type");
   require_contains(summary, "graph=feature_histogram", "summary should name graph");
-  require_contains(summary, "graph_id=235", "summary should expose graph id for diagnostics");
+  require(summary.find("graph_id=") == std::string::npos,
+          "semantic diagnostics must not expose a Core-owned numerical kernel identity");
   require_contains(summary, "input_shape=[2,240,320]", "summary should expose logical input shape");
   require_contains(summary, "output_shape=[2,256]", "summary should expose logical output shape");
 
@@ -55,7 +57,8 @@ void test_grider_fast_public_api() {
   const std::string summary = opt.summary();
   require_contains(summary, "GriderFastOptions", "summary should name the options type");
   require_contains(summary, "graph=grider_fast", "summary should name graph");
-  require_contains(summary, "graph_id=236", "summary should expose graph id for diagnostics");
+  require(summary.find("graph_id=") == std::string::npos,
+          "semantic diagnostics must not expose a Core-owned numerical kernel identity");
   require_contains(summary, "feature_shape=[2,193]", "summary should expose feature shape");
 
   simaai::neat::GriderFast node(opt);
@@ -80,7 +83,8 @@ void test_track_descriptor_public_api() {
   const std::string summary = opt.summary();
   require_contains(summary, "TrackDescriptorOptions", "summary should name the options type");
   require_contains(summary, "graph=track_descriptor", "summary should name graph");
-  require_contains(summary, "graph_id=237", "summary should expose graph id for diagnostics");
+  require(summary.find("graph_id=") == std::string::npos,
+          "semantic diagnostics must not expose a Core-owned numerical kernel identity");
   require_contains(summary, "feature_shape=[2,193]", "summary should expose feature shape");
   require_contains(summary, "descriptor_shape=[2,64,8]", "summary should expose descriptor shape");
 
@@ -108,7 +112,8 @@ void test_track_klt_public_api() {
   const std::string no_detect_summary = opt.summary();
   require_contains(no_detect_summary, "TrackKLTOptions", "summary should name the options type");
   require_contains(no_detect_summary, "graph=track_klt", "summary should name graph");
-  require_contains(no_detect_summary, "graph_id=238", "summary should expose graph id");
+  require(no_detect_summary.find("graph_id=") == std::string::npos,
+          "semantic diagnostics must not expose a Core-owned numerical kernel identity");
   require_contains(no_detect_summary, "input_points_shape=[2,32,2]",
                    "summary should expose input point shape");
   require_contains(no_detect_summary, "published_feature_shape=<disabled>",
@@ -138,6 +143,69 @@ void test_track_klt_public_api() {
   require(factory && factory->kind() == "TrackKLT", "TrackKLT factory mismatch");
 }
 
+void test_track_klt_quality_api() {
+  using simaai::neat::TrackKLT;
+  simaai::neat::TrackKLTOptions opt;
+  opt.width = 320;
+  opt.height = 240;
+  opt.num_points = 32;
+  require(!opt.publish_error && opt.error_threshold == -1.0f && opt.min_eig_threshold == 0.0f &&
+              !opt.require_convergence,
+          "quality defaults must retain the legacy output/filter contract");
+  for (const bool detect : {false, true}) {
+    for (const bool publish : {false, true}) {
+      opt.detect_new_features = detect;
+      opt.publish_error = publish;
+      opt.error_threshold = 12.5f;
+      opt.min_eig_threshold = 0.00001f;
+      opt.require_convergence = true;
+      opt.output_error_name = "photometric_residual";
+      const auto def = TrackKLT(opt).contract_definition();
+      require(def.outputs.size() == 2U + std::size_t(detect) + std::size_t(publish),
+              "quality/detection output arity");
+      require_port(def.outputs[0], "output_points", "quality points slot");
+      require_port(def.outputs[1], "output_status", "quality status slot");
+      if (detect)
+        require_port(def.outputs[2], "output_features", "quality must not steal detector slot");
+      if (publish)
+        require_port(def.outputs.back(), "photometric_residual", "appended error slot");
+      require_contains(opt.summary(), "error_threshold=12.5", "quality summary threshold");
+      require_contains(opt.summary(), "require_convergence=1", "quality summary convergence");
+    }
+  }
+  const auto rejected = [](const auto& invalid, const std::string& field) {
+    bool failed = false;
+    try {
+      (void)TrackKLT(invalid).contract_definition();
+    } catch (const std::runtime_error& error) {
+      failed = std::string(error.what()).find(field) != std::string::npos;
+    }
+    require(failed, "invalid quality parameter must identify " + field);
+  };
+  for (const float value : {-2.0f, -0.5f, 256.0f, std::numeric_limits<float>::infinity(),
+                            std::numeric_limits<float>::quiet_NaN()}) {
+    auto bad = opt;
+    bad.error_threshold = value;
+    rejected(bad, "error_threshold");
+  }
+  for (const float value :
+       {-0.01f, std::numeric_limits<float>::infinity(), std::numeric_limits<float>::quiet_NaN()}) {
+    auto bad = opt;
+    bad.min_eig_threshold = value;
+    rejected(bad, "min_eig_threshold");
+  }
+  auto bad = opt;
+  bad.output_error_name.clear();
+  rejected(bad, "output_error_name");
+  bad.output_error_name = bad.output_status_name;
+  rejected(bad, "distinct");
+  for (const float boundary : {-1.0f, 0.0f, 255.0f}) {
+    auto valid = opt;
+    valid.error_threshold = boundary;
+    (void)TrackKLT(valid).contract_definition();
+  }
+}
+
 } // namespace
 
 int main() {
@@ -146,6 +214,7 @@ int main() {
     test_grider_fast_public_api();
     test_track_descriptor_public_api();
     test_track_klt_public_api();
+    test_track_klt_quality_api();
     std::cout << "[OK] unit_visual_frontend_node_api_test passed\n";
     return 0;
   } catch (const std::exception& e) {

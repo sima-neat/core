@@ -17,39 +17,19 @@ slug: /develop-apps/contribute/build
 `build.sh` は、アクティブな環境を自動的に検出します。
 
 - Modalix DevKit のネイティブ環境
-- Neat SDK 環境（クロスコンパイル）
+- Palette SDK 環境（クロスコンパイル）
 
 どちらの環境でも、同じ `build.sh` コマンドを実行できます。
 
 ### クロスコンパイルの前提条件
 
-クロスコンパイルは、DevKit 上で直接ビルドするよりも通常は高速ですが、その後、ビルドされたアーティファクトを DevKit に転送する必要があります。クロスコンパイルには、Neat SDK が必要です。
-
-まず、ホストマシンに `sima-cli` をインストールし、次に SDK をインストールします。
+クロスコンパイルには Palette SDK を使用します。[SDK のインストール](/getting-started/dev-environment/install-the-environment/)に従って、対応する Ubuntu、Windows/WSL、または macOS ホストに設定し、SDK シェルを開いてください。
 
 ```bash
-curl -fsSL https://artifacts.neat.sima.ai/sima-cli/linux-mac.sh | bash
-sima-cli install sdk
+sima-cli sdk neat
 ```
 
-`sima-cli` から指示があったら、SDKオプションを選択してください。
-
-次に、SDKを起動します。
-
-```bash
-sima-cli sdk elxr
-```
-
-次に、SDK内に`sima-cli`をインストールし、その後、SDKのパッチをインストールします。
-
-```bash
-curl -fsSL https://artifacts.neat.sima.ai/sima-cli/linux-mac.sh | bash
-source ~/.bash_profile
-sima-cli install tools/sdk-patch
-```
-
-- SDK のインストールは、Windows および Ubuntu でサポートされています。
-- Modalix DevKit 上でネイティブにビルドする場合、SDK のインストール/パッチ手順は不要です。
+SDK にはツールチェーンと `sima-cli` が含まれます。Core の `build.sh` は対応する Scheduler と LLiMa の依存関係を準備します。[ローカル依存関係](/develop-apps/contribute/build-test/local-dependencies/)を参照してください。ペアリング済みの SDK では、`./build.sh --install` が対応するアーティファクトを DevKit にもデプロイします。DevKit 上のネイティブビルドには SDK は不要です。
 
 ## ビルドオプション
 
@@ -60,7 +40,7 @@ sima-cli install tools/sdk-patch
 - `--python`: 選択したターゲットに加えて、Python バインディング (`pyneat`) をビルドします。
 - `--install-neat-internals`, `--install-deps`: ビルド前に、依存関係のアーティファクトをダウンロードしてインストールします。
 - `--doc`: ドキュメントのみをビルドします。
-- `--install`: ビルド/パッケージング後、生成されたアーティファクトを現在の環境にインストールします。ペアリングされた Neat SDK モードでは、これはペアリングされた DevKit 上にも対応するアーティファクトをデプロイおよびインストールします。
+- `--install`: ビルド/パッケージング後、生成されたアーティファクトを現在の環境にインストールします。ペアリングされた Palette SDK モードでは、これはペアリングされた DevKit 上にも対応するアーティファクトをデプロイおよびインストールします。
 - `--no-dist`: ディストリビューションパッケージングをスキップします。
 - `--clean`: 構成前に `build/` を削除します。
 - `--no-doc`: ドキュメントのビルドをスキップします（`--all` を使用している場合でも）。
@@ -186,3 +166,5 @@ cmake -LA -B build      # include advanced
 ```
 
 最上位の `CMakeLists.txt` は、オプション名の定義元となります。
+
+Core は選択した Scheduler パッケージのレシートからファームウェアと正確な sysroot を継承し、ファームウェアを別途宣言しません。レシートのプラットフォームと SDK チャネルは Core と一致する必要があります。CI はこのポリシーをビルド成果物に保存し、フォールバックせずに完全一致する DevKit を選択します。LLiMa のインストール前に、公開されたファームウェア、プラットフォーム、SDK チャネルを Scheduler と比較し、選択した DEB が同じ公開成果物に属することを検証します。LLiMa は正確な sysroot レシートを公開しないため、この確認は宣言されたファームウェアの互換性を示し、sysroot インベントリの同一性は証明しません。ローカルの `--llima PATH` には、core/dev/cli DEB、`llima-package-manifest.json`、`metadata.json` を含む LLiMa 配布物のルートを指定してください。証拠が不足または不一致の場合、ビルドは停止します。Core の再ビルド前に Kernels → Runner → Scheduler と、一致する LLiMa を再ビルドして公開してください。

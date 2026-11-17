@@ -1,21 +1,21 @@
 ---
 title: Neat Library
-description: Install or update the SiMa.ai Neat Library on a DevKit or inside the Neat SDK
+description: Install or update the SiMa.ai Neat Library on a DevKit or inside the Palette SDK
 sidebar_position: 1
 ---
 
 The Neat Library is the C++ and Python API for running models and building
 applications for Modalix.
 
-:::tip Using the Neat SDK? You can skip this section
-The Neat SDK container comes with the Neat Library installed, and pairing a
+:::tip Using the Palette SDK? You can skip this section
+The Palette SDK container comes with the Neat Library installed, and pairing a
 DevKit during setup also installs the matching Neat Library and bundled PyNeat
-environment on the DevKit automatically. If you installed the Neat SDK — whether
+environment on the DevKit automatically. If you installed the Palette SDK — whether
 or not you paired a DevKit — you already have the Neat Library and can skip this
 section to get started.
 
 Use this section only when you want to update the Neat Library independently of
-the SDK, or set it up directly on a DevKit or bare host without the Neat SDK.
+the SDK, or set it up directly on a DevKit or bare host without the Palette SDK.
 :::
 
 You can update the Neat Library independently when you need a newer compatible

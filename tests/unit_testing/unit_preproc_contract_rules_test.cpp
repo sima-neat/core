@@ -1,3 +1,4 @@
+#include <simaai/scheduler/client/frame_layout.h>
 #include "model/Model.h"
 #ifdef SIMA_NEAT_INTERNAL
 #include "model/internal/ModelInternal.h"
@@ -8,17 +9,27 @@
 #include "pipeline/internal/contract/ContractCompiler.h"
 #include "pipeline/internal/sima/CompiledProcessCvuContractQuery.h"
 #include "pipeline/internal/sima/ContractRender.h"
+#include "pipeline/internal/sima/StageRecipePreparation.h"
+#include "pipeline/internal/sima/StageMemoryPolicy.h"
+#ifdef SIMA_NEAT_INTERNAL
+#include "pipeline/internal/sima/PreprocFrameAdapter.h"
+#include <gstsimaaitensorbuffer_meta.h>
+#endif
 #include "gst/GstInit.h"
 #include "gst/SimaPluginStaticManifestAbi.h"
 #include "test_main.h"
 #include "test_utils.h"
 
+#include <cstdint>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include <gst/gst.h>
@@ -57,7 +68,8 @@ std::vector<int> model_managed_preproc_max_input_shape(const simaai::neat::Prepr
   return {};
 }
 
-sima_test::ModelArchiveFixture make_preproc_fixture(const std::string& tag) {
+// The MLA input canvas is canvas x canvas (640 unless a test needs another size).
+sima_test::ModelArchiveFixture make_preproc_fixture(const std::string& tag, int canvas = 640) {
   const auto fixture = sima_test::make_model_archive_fixture(tag,
                                                              {
                                                                  {"etc/test_model_mpk.json",
@@ -183,11 +195,29 @@ sima_test::ModelArchiveFixture make_preproc_fixture(const std::string& tag) {
 })json"},
                                                              },
                                                              false);
+  // Another canvas rescales the 640x640x3 shapes and their FP32/BF16 byte sizes.
+  for (const char* name : {"etc/test_model_mpk.json", "etc/0_preproc.json"}) {
+    if (canvas == 640)
+      continue;
+    const auto path = std::filesystem::path(fixture.root_dir) / name;
+    std::ifstream in(path);
+    std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    in.close();
+    const std::pair<std::string, std::string> sizes[] = {
+        {"4915200", std::to_string(canvas * canvas * 12)},
+        {"2457600", std::to_string(canvas * canvas * 6)},
+        {"640", std::to_string(canvas)}};
+    for (const auto& [from, to] : sizes)
+      for (auto at = text.find(from); at != std::string::npos; at = text.find(from, at + to.size()))
+        text.replace(at, from.size(), to);
+    std::ofstream(path, std::ios::trunc) << text;
+  }
   // Image preprocessing comes from Model::Options; the MPK describes its tensor target.
   // Planning needs the declared MLA topology, not an executable MLA program.
   const auto share = std::filesystem::path(fixture.root_dir) / "share";
   std::filesystem::create_directories(share);
-  sima_test::write_topology_elf(share / "stage0.elf", "data.ifm.b0", 2457600U, "data.ofm.b0",
+  sima_test::write_topology_elf(share / "stage0.elf", "data.ifm.b0",
+                                static_cast<std::uint64_t>(canvas) * canvas * 6U, "data.ofm.b0",
                                 76800U);
   const std::string archive = "tar -czf " + sima_test::model_archive_shell_quote(fixture.tar_path) +
                               " -C " + sima_test::model_archive_shell_quote(fixture.root_dir) +
@@ -367,8 +397,7 @@ RUN_TEST(
                 "model must retain its admitted preproc contract");
         const auto admitted = opt.compiled_contract;
         const auto original_source = admitted->runtime_contract.physical_inputs.front().size_bytes;
-        const auto original_arena = admitted->runtime_contract.frame_arena_size_bytes;
-        const auto original_output = admitted->payload.output_tensors.front();
+        const auto original_output = admitted->payload.output_tensors.front().descriptor();
         const auto original_logical = admitted->runtime_contract.logical_outputs.front();
         const auto slot_bytes = admitted->runtime_contract.physical_outputs.front().size_bytes;
         bool source_count_threw = false;
@@ -381,21 +410,25 @@ RUN_TEST(
         require(source_count_threw, "ROI source batch must respect the firmware's 50-image limit");
         gst_init_once();
         for (const int capacity : {1, 2, 3}) {
+          auto inherited = *admitted;
+          inherited.runtime_contract.allocation_policy =
+              simaai::scheduler::client::AllocationPolicy::PreferDmsThenCma;
           auto invocation = pipeline_internal::sima::specialize_preproc_roi_contract(
-              *admitted, 2, 48, 64, 3, capacity);
-          require(invocation.payload.batch_size == capacity &&
-                      invocation.payload.input_shapes.front() == std::vector<int>({48, 64, 3}) &&
-                      invocation.payload.input_tensors.front().shape.sizes[0] == 2 &&
-                      invocation.payload.input_tensors.front().shape.axis_semantics[0] ==
-                          SIMA_EV_AXIS_N,
-                  "ROI source N must be independent of output R and public HWC options");
+              inherited, 2, 48, 64, 3, capacity);
+          require(
+              invocation.payload.batch_size == capacity &&
+                  invocation.payload.input_shapes.front() == std::vector<int>({48, 64, 3}) &&
+                  invocation.payload.input_tensors.front().descriptor().shape.sizes[0] == 2 &&
+                  invocation.payload.input_tensors.front().descriptor().shape.axis_semantics[0] ==
+                      SIMA_EV_AXIS_N,
+              "ROI source N must be independent of output R and public HWC options");
           require(invocation.runtime_contract.physical_inputs.front().size_bytes == 18432U &&
                       invocation.runtime_contract.logical_inputs.front().size_bytes == 18432U &&
                       invocation.runtime_contract.input_bindings.front().src_physical_size_bytes ==
                           18432U,
                   "ROI source descriptor and binding must cover both source frames");
-          require(std::memcmp(&invocation.payload.output_tensors.front(), &original_output,
-                              sizeof(original_output)) == 0,
+          require(std::memcmp(&invocation.payload.output_tensors.front().descriptor(),
+                              &original_output, sizeof(original_output)) == 0,
                   "ROI specialization must preserve every one-member output descriptor byte");
           require(invocation.runtime_contract.physical_outputs.front().size_bytes ==
                           slot_bytes * capacity &&
@@ -409,8 +442,8 @@ RUN_TEST(
                       invocation.payload.q_zp == admitted->payload.q_zp,
                   "ROI carrier batching must preserve exact slot span, identities and qparams");
           require(!invocation.physical_command_role && !invocation.payload.dmabuf_plan_contract &&
-                      invocation.runtime_contract.frame_arena_size_bytes == 0U,
-                  "ROI invocation must discard only stale model arena placement facts");
+                      !invocation.runtime_contract.allocation_policy,
+                  "ROI invocation must obtain its own storage after executor resolution");
           auto roi_opt = opt;
           roi_opt.batch_size = capacity;
           roi_opt.compiled_contract =
@@ -419,51 +452,34 @@ RUN_TEST(
           const auto roi_compiled =
               compile_node_contracts(std::vector<std::shared_ptr<Node>>{nodes::Preproc(roi_opt)},
                                      ContractCompileInput{}, &roi_diagnostics);
-          const auto roi_manifest = render_manifest_from_compiled_contracts(
+          auto roi_manifest = render_manifest_from_compiled_contracts(
               roi_compiled, ContractCompileInput{}, &roi_diagnostics);
           require(
               roi_diagnostics.errors.empty() && roi_manifest && roi_manifest->stages.size() == 1U,
               "specialized immutable preproc must compile/render without options reconstruction");
-          const auto& rendered = roi_manifest->stages.front();
-          require(
-              rendered.frame_arena_role == pipeline_internal::sima::FrameArenaRole::Allocate &&
-                  rendered.frame_arena_size_bytes == ((slot_bytes * capacity + 4095U) & ~4095ULL) &&
-                  rendered.physical_outputs.front().source_byte_offset == 0 &&
-                  rendered.frame_arena_storage_domain ==
-                      pipeline_internal::sima::static_contract::ArenaStorageDomain::Cma &&
-                  rendered.frame_arena_escape_policy == pipeline_internal::sima::static_contract::
-                                                            ArenaEscapePolicy::CpuMappablePublic,
-              "ROI standalone arena must reuse aligned Allocate/CMA/public authoring policy");
-          std::unique_ptr<GstElement, decltype(&gst_object_unref)> pipeline(
-              gst_pipeline_new("roi_contract"), &gst_object_unref);
-          std::string attach_error;
-          require(pipeline && pipeline_internal::sima::attach_manifest_context(
-                                  pipeline.get(), *roi_manifest, &attach_error),
-                  "ROI ABI projection failed: " + attach_error);
-          std::unique_ptr<GstContext, decltype(&gst_context_unref)> context(
-              gst_element_get_context(pipeline.get(), SIMA_PLUGIN_STATIC_MANIFEST_CONTEXT_TYPE),
-              &gst_context_unref);
-          require(context != nullptr, "ROI manifest context must be retained");
-          const auto* accessor = sima_plugin_manifest_context_accessor(context.get());
-          const auto* abi = accessor ? sima_plugin_manifest_stage_by_element_name(
-                                           accessor, rendered.element_name.c_str())
-                                     : nullptr;
-          require(abi && abi->logical_inputs_len == 1U && abi->logical_outputs_len == 1U &&
-                      abi->logical_inputs[0].axis_semantics[0] == SIMA_EV_AXIS_N &&
-                      abi->logical_outputs[0].axis_semantics[0] == SIMA_EV_AXIS_N &&
-                      abi->payload.processcvu.input_tensors[0].shape.sizes[0] == 2 &&
-                      abi->payload.processcvu.output_tensors[0].storage.nbytes ==
-                          original_output.storage.nbytes,
-                  "ROI ABI projection must preserve source/batch axes and one-member output span");
+          namespace ps = pipeline_internal::sima;
+          const auto prepared = ps::prepare_kernel_stage_recipes(&*roi_manifest, {}, {}, {}, {});
+          require(!prepared, prepared ? prepared->message : "");
+          ps::finalize_pipeline_storage(*roi_manifest);
+          require(!ps::finalize_stage_publications(&*roi_manifest), "ROI publication finalization");
+          const auto& layout = roi_manifest->stages.front().frame_layout;
+          namespace c = simaai::scheduler::client;
+          require(layout && layout->ownership == c::FrameOwnership::Allocate &&
+                      layout->allocations.size() == 1 &&
+                      layout->allocations.front().policy == c::AllocationPolicy::RequireCma &&
+                      layout->allocations.front().size_bytes >= slot_bytes * capacity &&
+                      layout->outputs.size() == 1 &&
+                      layout->outputs.front().span.byte_offset == 0 &&
+                      layout->outputs.front().span.size_bytes == slot_bytes * capacity,
+                  "ROI final layout must own CMA and preserve exact batched output capacity");
         }
         require(admitted == opt.compiled_contract &&
                     admitted->runtime_contract.physical_inputs.front().size_bytes ==
                         original_source &&
-                    admitted->runtime_contract.frame_arena_size_bytes == original_arena &&
                     admitted->runtime_contract.logical_outputs.front().shape ==
                         original_logical.shape &&
-                    std::memcmp(&admitted->payload.output_tensors.front(), &original_output,
-                                sizeof(original_output)) == 0,
+                    std::memcmp(&admitted->payload.output_tensors.front().descriptor(),
+                                &original_output, sizeof(original_output)) == 0,
                 "ROI invocation must not mutate the shared model contract");
 
         // Explicit batch layouts do not reinterpret unqualified volume descriptors.
@@ -561,7 +577,7 @@ RUN_TEST(
                     std::vector<std::int64_t>({1080, 1920, 3}),
             "compiled Preproc logical input must retain capacity after a smaller seed is bound");
 
-        const auto manifest =
+        auto manifest =
             render_manifest_from_compiled_contracts(compiled, ContractCompileInput{}, &diagnostics);
         require(diagnostics.errors.empty() && manifest.has_value() && manifest->stages.size() == 1U,
                 "model-managed Preproc capacity contract must render without diagnostics");
@@ -573,21 +589,9 @@ RUN_TEST(
                     rendered_stage.processcvu.input_shapes.front() ==
                         std::vector<int>({1080, 1920, 3}),
                 "rendered Preproc static contract must expose the full dynamic input capacity");
-        require(rendered_stage.processcvu.dmabuf_plan_contract &&
-                    rendered_stage.processcvu.graph_id == 200 &&
-                    rendered_stage.processcvu.descriptor_abi_id != 0U &&
-                    rendered_stage.frame_arena_role ==
-                        pipeline_internal::sima::FrameArenaRole::Allocate &&
-                    rendered_stage.frame_arena_storage_domain ==
-                        pipeline_internal::sima::static_contract::ArenaStorageDomain::Cma &&
-                    rendered_stage.frame_arena_provenance ==
-                        pipeline_internal::sima::static_contract::ArenaAllocationProvenance::
-                            CoreAllocated &&
-                    (rendered_stage.frame_arena_required_device_access &
-                     static_cast<std::uint32_t>(
-                         pipeline_internal::sima::static_contract::ArenaDeviceAccess::Ev74)) !=
-                        0U &&
-                    rendered_stage.frame_arena_size_bytes > 0U &&
+        require(rendered_stage.processcvu.dmabuf_plan_contract ==
+                        processcvu.payload.dmabuf_plan_contract &&
+                    rendered_stage.processcvu.graph_name == "preproc" &&
                     rendered_stage.input_bindings.size() == 1U &&
                     rendered_stage.physical_inputs.size() == 1U &&
                     rendered_stage.physical_inputs.front().size_bytes > 0U &&
@@ -596,7 +600,7 @@ RUN_TEST(
                     rendered_stage.logical_outputs.front().backend_output_index >= 0 &&
                     rendered_stage.logical_outputs.front().physical_index ==
                         rendered_stage.physical_outputs.front().physical_index,
-                "model-managed Preproc must carry one compiler-proved direct CVU arena contract");
+                "rendering must preserve inherited Preproc facts without creating final storage");
         const auto& input_binding = rendered_stage.input_bindings.front();
         const auto& physical_input = rendered_stage.physical_inputs.front();
         const auto& logical_input = rendered_stage.logical_inputs.front();
@@ -616,16 +620,31 @@ RUN_TEST(
                 logical_input.backend_input_index == 0 && logical_input.physical_index == 0 &&
                 logical_input.byte_offset == 0,
             "model-managed Preproc must bind the sole external DMA-BUF without a producer stage");
-        for (const auto& output : rendered_stage.physical_outputs) {
-          require(output.size_bytes > 0U && output.required_alignment_bytes > 0U &&
-                      output.source_byte_offset >= 0 &&
+        namespace ps = pipeline_internal::sima;
+        const auto prepared = ps::prepare_kernel_stage_recipes(&*manifest, {}, {}, {}, {});
+        require(!prepared, prepared ? prepared->field + ": " + prepared->message : "");
+        ps::finalize_pipeline_storage(*manifest);
+        require(!ps::finalize_stage_publications(&*manifest), "Preproc publication finalization");
+        const auto& finalized_stage = manifest->stages.front();
+        const auto& layout = finalized_stage.frame_layout;
+        namespace c = simaai::scheduler::client;
+        require(layout && layout->ownership == c::FrameOwnership::Allocate &&
+                    layout->allocations.size() == 1U &&
+                    layout->allocations.front().policy == c::AllocationPolicy::RequireCma &&
+                    (layout->allocations.front().required_device_access & c::kAccessEv74) != 0U &&
+                    layout->outputs.size() == 1U,
+                "checked Preproc must receive one CMA allocation for its selected output");
+        const auto& span = layout->outputs.front().span;
+        require(span.allocation_index == 0U && span.size_bytes > 0U &&
+                    span.byte_offset <= layout->allocations.front().size_bytes &&
+                    span.size_bytes <= layout->allocations.front().size_bytes - span.byte_offset,
+                "final Preproc carrier must fit its allocation");
+        for (const auto& output : finalized_stage.physical_outputs)
+          require(output.required_alignment_bytes > 0U && output.source_byte_offset >= 0 &&
                       static_cast<std::uint64_t>(output.source_byte_offset) %
                               output.required_alignment_bytes ==
-                          0U &&
-                      static_cast<std::uint64_t>(output.source_byte_offset) + output.size_bytes <=
-                          rendered_stage.frame_arena_size_bytes,
-                  "standalone Preproc output must be bounded and aligned inside its arena");
-        }
+                          0U,
+                  "final Preproc carrier must satisfy its checked alignment");
 
         InputContract capacity_contract = seed_contract;
         capacity_contract.width = 1920;
@@ -830,8 +849,11 @@ RUN_TEST(
                 "standalone Preproc must derive input width/height from actual upstream input");
         require(node.options().input_img_type == "BGR",
                 "standalone Preproc must derive input format from actual upstream input");
+        require_contains(frag, "neatkernelrunner name=", "Preproc must use Runtime by default");
+        require_not_contains(frag,
+                             "num-buffers=", "runner does not accept legacy buffer properties");
         require_not_contains(
-            frag, "stage-id=", "standalone Preproc fragment must not opt into manifest routing");
+            frag, "stage-id=", "Preproc identity travels through the typed Runtime context");
         require_not_contains(
             frag, "config=", "standalone Preproc fragment must not emit a legacy config path");
       }
@@ -923,5 +945,141 @@ RUN_TEST(
         require((*cfg).value("q_scale", 0.0) == 0.5,
                 "standalone Preproc should serialize explicit q_scale");
         require((*cfg).value("q_zp", 0) == -9, "standalone Preproc should serialize explicit q_zp");
+      }
+
+      // An existing positional ResizeSpec initializer keeps its meaning; placement is appended.
+      {
+        const ResizeSpec legacy{AutoFlag::On, 640, 480, ResizeMode::Letterbox, 114, "BILINEAR"};
+        require(legacy.scaling_type == "BILINEAR" && legacy.pad_value == 114 &&
+                    legacy.placement == LetterboxPlacement::Center && !legacy.interpolation &&
+                    !legacy.shorter_side,
+                "positional ResizeSpec initializer changed meaning");
+      }
+
+      // ResizeSpec placement reaches the frame adapter through the model route:
+      // a 1280x720 source on the 640x640 canvas lands at the origin only for TopLeft.
+      {
+        const auto fixture = make_preproc_fixture("preproc_letterbox_placement");
+        for (const auto placement : {LetterboxPlacement::Center, LetterboxPlacement::TopLeft}) {
+          Model::Options model_opt;
+          model_opt.preprocess.kind = InputKind::Image;
+          model_opt.preprocess.enable = AutoFlag::On;
+          model_opt.preprocess.input_max_width = 1280;
+          model_opt.preprocess.input_max_height = 720;
+          model_opt.preprocess.color_convert.input_format = PreprocessColorFormat::RGB;
+          model_opt.preprocess.resize.enable = AutoFlag::On;
+          model_opt.preprocess.resize.mode = ResizeMode::Letterbox;
+          model_opt.preprocess.resize.pad_value = 116;
+          model_opt.preprocess.resize.placement = placement;
+          Model model(fixture.tar_path, model_opt);
+          PreprocOptions opt(model);
+          const bool top_left = placement == LetterboxPlacement::TopLeft;
+          require(opt.aspect_ratio && opt.padding_type == (top_left ? "TOPLEFT" : "CENTER") &&
+                      opt.pad_value == 116,
+                  "model letterbox placement did not reach PreprocOptions");
+#ifdef SIMA_NEAT_INTERNAL
+          require(opt.compiled_contract != nullptr &&
+                      opt.compiled_contract->payload.padding_type == opt.padding_type,
+                  "admitted Preproc contract lost the letterbox placement");
+          using Adapter = pipeline_internal::sima::kernel_lowering::PreprocFrameAdapter;
+          auto policy = opt.compiled_contract->payload;
+          if (policy.resolved_exec_backend.empty())
+            policy.resolved_exec_backend = "EVXX";
+          auto checked = Adapter::check_policy(policy);
+          require(std::holds_alternative<std::shared_ptr<const Adapter::CheckedPolicy>>(checked),
+                  "frame adapter rejected the model letterbox placement");
+          auto frozen = Adapter::checked_initial_preprocess_facts(
+              std::get<std::shared_ptr<const Adapter::CheckedPolicy>>(std::move(checked)));
+          require(std::holds_alternative<::simaai::gst::TensorBufferPreprocessFactsOwner>(frozen),
+                  "frame adapter could not publish initial letterbox facts");
+          const auto* facts = ::simaai::gst::tensor_buffer_preprocess_facts(
+              std::get<::simaai::gst::TensorBufferPreprocessFactsOwner>(frozen));
+          require(facts && facts->original_width == 1280 && facts->original_height == 720 &&
+                      facts->placed[2] == 640 && facts->placed[3] == 360 && facts->placed[0] == 0 &&
+                      facts->placed[1] == (top_left ? 0 : 140) && facts->affine[0] == 2.0 &&
+                      facts->affine[4] == 2.0 && facts->affine[2] == 0.0 &&
+                      facts->affine[5] == (top_left ? 0.0 : -280.0),
+                  "letterbox placement published the wrong rectangle or affine");
+#endif
+        }
+      }
+
+      // A Model's top-left letterbox rounds the shorter side to the nearest pixel, as Segment
+      // Anything and its BoxDecode crop do: int(side * 1024 / longest + 0.5) in double. A
+      // centered letterbox keeps the legacy upward rounding (683.2 becomes 684).
+      {
+        const auto fixture = make_preproc_fixture("preproc_letterbox_rounding", 1024);
+        struct Case {
+          int width, height;
+          LetterboxPlacement placement;
+          std::int64_t scaled_width, scaled_height, pad_left, pad_top, pad_right, pad_bottom;
+        };
+        constexpr auto top_left = LetterboxPlacement::TopLeft;
+        constexpr auto center = LetterboxPlacement::Center;
+        for (const auto& c : std::vector<Case>{{640, 427, top_left, 1024, 683, 0, 0, 0, 341},
+                                               {427, 640, top_left, 683, 1024, 0, 0, 341, 0},
+                                               {1280, 720, top_left, 1024, 576, 0, 0, 0, 448},
+                                               {1001, 667, top_left, 1024, 682, 0, 0, 0, 342},
+                                               {667, 1001, top_left, 682, 1024, 0, 0, 342, 0},
+                                               {1920, 1081, top_left, 1024, 577, 0, 0, 0, 447},
+                                               {640, 427, center, 1024, 684, 0, 170, 0, 170},
+                                               {427, 640, center, 684, 1024, 170, 0, 170, 0},
+                                               {1001, 667, center, 1024, 683, 0, 170, 0, 171}}) {
+          Model::Options model_opt;
+          model_opt.preprocess.kind = InputKind::Image;
+          model_opt.preprocess.enable = AutoFlag::On;
+          model_opt.preprocess.input_max_width = c.width;
+          model_opt.preprocess.input_max_height = c.height;
+          model_opt.preprocess.color_convert.input_format = PreprocessColorFormat::RGB;
+          model_opt.preprocess.resize.enable = AutoFlag::On;
+          model_opt.preprocess.resize.mode = ResizeMode::Letterbox;
+          model_opt.preprocess.resize.pad_value = 116;
+          model_opt.preprocess.resize.placement = c.placement;
+          Model model(fixture.tar_path, model_opt);
+          PreprocOptions opt(model);
+          const std::string label = std::to_string(c.width) + "x" + std::to_string(c.height) +
+                                    (c.placement == top_left ? " top-left" : " centered");
+          require(opt.padding_type == (c.placement == top_left ? "TOPLEFT" : "CENTER"),
+                  label + ": model letterbox placement did not reach PreprocOptions");
+#ifdef SIMA_NEAT_INTERNAL
+          require(opt.compiled_contract != nullptr &&
+                      opt.compiled_contract->payload.letterbox_nearest_extent ==
+                          (c.placement == top_left),
+                  label + ": only the Model's top-left letterbox rounds to the nearest pixel");
+          using Adapter = pipeline_internal::sima::kernel_lowering::PreprocFrameAdapter;
+          auto policy = opt.compiled_contract->payload;
+          if (policy.resolved_exec_backend.empty())
+            policy.resolved_exec_backend = "EVXX";
+          auto checked = Adapter::check_policy(policy);
+          require(std::holds_alternative<std::shared_ptr<const Adapter::CheckedPolicy>>(checked),
+                  label + ": frame adapter rejected the model letterbox");
+          auto frozen = Adapter::checked_initial_preprocess_facts(
+              std::get<std::shared_ptr<const Adapter::CheckedPolicy>>(std::move(checked)));
+          require(std::holds_alternative<::simaai::gst::TensorBufferPreprocessFactsOwner>(frozen),
+                  label + ": frame adapter could not publish initial letterbox facts");
+          const auto* facts = ::simaai::gst::tensor_buffer_preprocess_facts(
+              std::get<::simaai::gst::TensorBufferPreprocessFactsOwner>(frozen));
+          require(facts != nullptr && facts->original_width == c.width &&
+                      facts->original_height == c.height && facts->resized_width == 1024 &&
+                      facts->resized_height == 1024,
+                  label + ": letterbox facts lost the source or canvas size");
+          const auto pad_right = facts->resized_width - facts->placed[0] - facts->placed[2];
+          const auto pad_bottom = facts->resized_height - facts->placed[1] - facts->placed[3];
+          require(facts->placed[0] == c.pad_left && facts->placed[1] == c.pad_top &&
+                      facts->placed[2] == c.scaled_width && facts->placed[3] == c.scaled_height &&
+                      pad_right == c.pad_right && pad_bottom == c.pad_bottom,
+                  label + ": letterbox published " + std::to_string(facts->placed[2]) + "x" +
+                      std::to_string(facts->placed[3]) + " at (" +
+                      std::to_string(facts->placed[0]) + ", " + std::to_string(facts->placed[1]) +
+                      "), expected " + std::to_string(c.scaled_width) + "x" +
+                      std::to_string(c.scaled_height) + " at (" + std::to_string(c.pad_left) +
+                      ", " + std::to_string(c.pad_top) + ")");
+          require(facts->affine[0] == double(c.width) / double(c.scaled_width) &&
+                      facts->affine[4] == double(c.height) / double(c.scaled_height) &&
+                      facts->affine[2] == -double(c.pad_left) * facts->affine[0] &&
+                      facts->affine[5] == -double(c.pad_top) * facts->affine[4],
+                  label + ": letterbox affine does not map the placed image to the source");
+#endif
+        }
       }
     }));

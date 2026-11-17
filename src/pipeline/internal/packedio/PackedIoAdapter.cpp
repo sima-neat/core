@@ -359,7 +359,7 @@ selectors_for_logical_inputs(const CompiledRuntimeContract& contract) {
 }
 
 bool prepare_physical_inputs(const CompiledRuntimeContract& contract,
-                             const simaai::gst::TensorBufferView& upstream_view,
+                             const simaai::scheduler::client::TensorBufferView& upstream_view,
                              std::vector<std::uint8_t>* out_bytes, std::string* err) {
   if (!out_bytes) {
     if (err) {
@@ -370,12 +370,12 @@ bool prepare_physical_inputs(const CompiledRuntimeContract& contract,
   if (!validate_packed_contract(contract, err)) {
     return false;
   }
-  return simaai::gst::tensor_buffer_materialize(
+  return simaai::scheduler::client::tensor_buffer_materialize(
       upstream_view, selectors_for_logical_inputs(contract), out_bytes, err);
 }
 
 bool publish_logical_outputs(const CompiledRuntimeContract& contract, const std::string& stage_key,
-                             simaai::gst::TensorBufferView* out, std::string* err) {
+                             simaai::scheduler::client::TensorBufferView* out, std::string* err) {
   if (!out) {
     if (err) {
       *err = "packed output publication requires output view";
@@ -386,18 +386,9 @@ bool publish_logical_outputs(const CompiledRuntimeContract& contract, const std:
     return false;
   }
 
-  out->stage_key = stage_key;
-  out->segments.clear();
-  out->tensors.clear();
-  out->segments.reserve(contract.physical_outputs.size());
-  out->tensors.reserve(contract.logical_outputs.size());
-
-  for (const auto& physical : contract.physical_outputs) {
-    simaai::gst::TensorBufferSegmentView segment;
-    segment.name = physical.segment_name;
-    segment.size_bytes = static_cast<std::size_t>(physical.size_bytes);
-    out->segments.push_back(std::move(segment));
-  }
+  out->reset(stage_key, contract.physical_outputs.size(), contract.logical_outputs.size());
+  for (const auto& physical : contract.physical_outputs)
+    out->append_segment(physical.segment_name, static_cast<std::size_t>(physical.size_bytes));
   for (const auto& logical : contract.logical_outputs) {
     simaai::gst::TensorBufferTensorView tensor;
     tensor.logical_index = logical.logical_index;
@@ -416,7 +407,7 @@ bool publish_logical_outputs(const CompiledRuntimeContract& contract, const std:
         physical_span_bytes_for_tensor(tensor.shape, tensor.stride_bytes, tensor.size_bytes);
     tensor.dtype = SIMA_TENSOR_SET_DTYPE_UNKNOWN_V1;
     tensor.layout = SIMA_TENSOR_SET_LAYOUT_UNKNOWN_V1;
-    out->tensors.push_back(std::move(tensor));
+    out->append_tensor(std::move(tensor));
   }
   return true;
 }

@@ -344,24 +344,28 @@ if [[ -n "${PYTHON_WHEEL_PATH}" ]]; then
   PYTHON_WHEEL_PATH="$(absolute_path "${PYTHON_WHEEL_PATH}")"
 fi
 
-apt_install_opts=(install -y --reinstall --allow-downgrades)
+apt_install_opts=(install -y --no-install-recommends --allow-downgrades)
 python_apt_dependencies=()
 if [[ "${INSTALL_PYTHON}" == "ON" ]]; then
   python_apt_dependencies=(python3-venv)
 fi
 
-echo "Installing ${DEB_PATH}"
-if [[ "${RUNTIME_ONLY}" != "ON" && -n "${DEV_DEB_PATH}" ]]; then
-  echo "Installing ${DEV_DEB_PATH}"
-  run_sudo apt "${apt_install_opts[@]}" "${DEB_PATH}" "${DEV_DEB_PATH}" \
-    "${python_apt_dependencies[@]}"
-else
-  if [[ "${RUNTIME_ONLY}" != "ON" ]]; then
-    echo "WARN: no sima-pcie-host-dev DEB found; installing runtime package only" >&2
-  fi
-  run_sudo apt "${apt_install_opts[@]}" "${DEB_PATH}" "${python_apt_dependencies[@]}"
+# Validate the composed ownership/version/architecture closure BEFORE apt. The
+# runtime-only path omits both development packages. Platform must already be
+# provisioned by its official installer and is never part of this transaction.
+closure_args=(install-list --directory "$SCRIPT_DIR" --runtime "$DEB_PATH")
+if [[ "$RUNTIME_ONLY" == ON ]]; then
+  closure_args+=(--runtime-only)
+elif [[ -n "$DEV_DEB_PATH" ]]; then
+  closure_args+=(--development "$DEV_DEB_PATH")
 fi
-
+for dependency in "${python_apt_dependencies[@]}"; do
+  closure_args+=(--extra-dependency "$dependency")
+done
+package_list="$(python3 "$SCRIPT_DIR/pcie_delivery.py" "${closure_args[@]}")"
+mapfile -t native_packages <<< "$package_list"
+[[ ${#native_packages[@]} -ge 2 ]] || { echo "ERROR: incomplete native package closure" >&2; exit 1; }
+run_sudo apt-get "${apt_install_opts[@]}" "${native_packages[@]}" "${python_apt_dependencies[@]}"
 if command -v gst-inspect-1.0 >/dev/null 2>&1; then
   gst-inspect-1.0 neatpciehost >/dev/null 2>&1 || true
 fi

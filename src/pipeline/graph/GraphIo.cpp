@@ -27,6 +27,7 @@
 #include "pipeline/internal/TensorUtil.h"
 #include "model/Model.h"
 #include "model/internal/ModelInternal.h"
+#include "model/internal/InputPlanner.h"
 #include "builder/Node.h"
 #include "builder/OutputSpec.h"
 #include "builder/GraphPrinter.h"
@@ -61,6 +62,7 @@
 #include <atomic>
 #include <chrono>
 #include <cmath>
+#include <limits>
 #include <cstddef>
 #include <cstdint>
 #include <cctype>
@@ -70,6 +72,7 @@
 #include <functional>
 #include <fstream>
 #include <iterator>
+#include <iomanip>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -106,8 +109,9 @@ namespace {
   }
 
   GraphReport rep = pipeline_internal::error_util::make_report(code, oss.str());
-  throw NeatError(pipeline_internal::error_util::decorate_error(rep.error_code, rep.repro_note),
-                  std::move(rep));
+  const std::string message =
+      pipeline_internal::error_util::decorate_error(rep.error_code, rep.repro_note);
+  throw NeatError(message, std::move(rep));
 }
 
 struct JsonValue {
@@ -502,6 +506,17 @@ int int_field(const JsonValue::JsonObject& obj, const char* key, int fallback = 
   return value && value->type == JsonValue::Type::Number ? static_cast<int>(value->num) : fallback;
 }
 
+int strict_enum_field(const JsonValue::JsonObject& obj, const char* key, int fallback) {
+  const auto* value = object_field(obj, key);
+  if (!value || value->type == JsonValue::Type::Null)
+    return fallback;
+  if (value->type != JsonValue::Type::Number || !std::isfinite(value->num) ||
+      std::trunc(value->num) != value->num || value->num < std::numeric_limits<int>::min() ||
+      value->num > std::numeric_limits<int>::max())
+    throw std::invalid_argument(std::string(key) + " requires an integer enum value");
+  return static_cast<int>(value->num);
+}
+
 double double_field(const JsonValue::JsonObject& obj, const char* key, double fallback = 0.0) {
   const JsonValue* value = object_field(obj, key);
   return value && value->type == JsonValue::Type::Number ? value->num : fallback;
@@ -755,7 +770,14 @@ void write_resize_json(std::ostream& oss, const ResizeSpec& spec) {
   oss << "{\"enable\":" << enum_int(spec.enable) << "," << "\"width\":" << spec.width << ","
       << "\"height\":" << spec.height << "," << "\"mode\":" << enum_int(spec.mode) << ","
       << "\"pad_value\":" << spec.pad_value << "," << "\"scaling_type\":\""
-      << json_escape(spec.scaling_type) << "\"}";
+      << json_escape(spec.scaling_type) << "\"";
+  if (spec.placement != LetterboxPlacement::Center)
+    oss << ",\"placement\":" << enum_int(spec.placement);
+  if (spec.interpolation)
+    oss << ",\"interpolation\":" << enum_int(*spec.interpolation);
+  if (spec.shorter_side)
+    oss << ",\"shorter_side\":" << *spec.shorter_side;
+  oss << "}";
 }
 
 ResizeSpec parse_resize_json(const JsonValue::JsonObject& obj) {
@@ -763,9 +785,29 @@ ResizeSpec parse_resize_json(const JsonValue::JsonObject& obj) {
   spec.enable = static_cast<AutoFlag>(int_field(obj, "enable", enum_int(spec.enable)));
   spec.width = int_field(obj, "width", spec.width);
   spec.height = int_field(obj, "height", spec.height);
-  spec.mode = static_cast<ResizeMode>(int_field(obj, "mode", enum_int(spec.mode)));
+  spec.mode = static_cast<ResizeMode>(strict_enum_field(obj, "mode", enum_int(spec.mode)));
+  if (spec.mode != ResizeMode::Stretch && spec.mode != ResizeMode::Letterbox &&
+      spec.mode != ResizeMode::Crop)
+    throw std::invalid_argument("preprocess.resize.mode is invalid");
   spec.pad_value = int_field(obj, "pad_value", spec.pad_value);
   spec.scaling_type = string_field(obj, "scaling_type", spec.scaling_type);
+  spec.placement = static_cast<LetterboxPlacement>(
+      strict_enum_field(obj, "placement", enum_int(spec.placement)));
+  if (spec.placement != LetterboxPlacement::Center && spec.placement != LetterboxPlacement::TopLeft)
+    throw std::invalid_argument("preprocess.resize.placement is invalid");
+  if (const auto* value = object_field(obj, "interpolation");
+      value && value->type != JsonValue::Type::Null) {
+    spec.interpolation =
+        static_cast<ResizeInterpolation>(strict_enum_field(obj, "interpolation", 0));
+    (void)internal::resolve_resize_scaling_type(spec);
+  }
+  if (const auto* value = object_field(obj, "shorter_side");
+      value && value->type != JsonValue::Type::Null) {
+    spec.shorter_side = strict_enum_field(obj, "shorter_side", 0);
+    if (*spec.shorter_side <= 0 || *spec.shorter_side > 4096 || spec.mode != ResizeMode::Crop)
+      throw std::invalid_argument(
+          "preprocess.resize.shorter_side requires Crop and a size in 1..4096");
+  }
   return spec;
 }
 
@@ -890,6 +932,11 @@ Transform parse_transform_json(const JsonValue::JsonObject& obj) {
 }
 
 void write_preprocess_options_json(std::ostream& oss, const PreprocessOptions& opt) {
+  const auto previous_precision = oss.precision();
+  if (opt.rescale_factor || opt.quantization_step ||
+      opt.color_conversion_placement != PreprocColorConversionPlacement::AfterResize ||
+      opt.floating_conversion != PreprocFloatingConversion::Legacy)
+    oss << std::setprecision(std::numeric_limits<float>::max_digits10);
   oss << "{\"kind\":" << enum_int(opt.kind) << "," << "\"enable\":" << enum_int(opt.enable) << ","
       << "\"input_max_width\":" << opt.input_max_width << ","
       << "\"input_max_height\":" << opt.input_max_height << ","
@@ -912,7 +959,17 @@ void write_preprocess_options_json(std::ostream& oss, const PreprocessOptions& o
     }
     write_transform_json(oss, opt.transforms[i]);
   }
-  oss << "],\"preset\":" << enum_int(opt.preset) << "}";
+  oss << "],\"preset\":" << enum_int(opt.preset);
+  if (opt.rescale_factor)
+    oss << ",\"rescale_factor\":" << *opt.rescale_factor;
+  if (opt.quantization_step)
+    oss << ",\"quantization_step\":" << *opt.quantization_step;
+  if (opt.color_conversion_placement != PreprocColorConversionPlacement::AfterResize)
+    oss << ",\"color_conversion_placement\":" << enum_int(opt.color_conversion_placement);
+  if (opt.floating_conversion != PreprocFloatingConversion::Legacy)
+    oss << ",\"floating_conversion\":" << enum_int(opt.floating_conversion);
+  oss << "}";
+  oss.precision(previous_precision);
 }
 
 PreprocessOptions parse_preprocess_options_json(const JsonValue::JsonObject& obj) {
@@ -956,6 +1013,24 @@ PreprocessOptions parse_preprocess_options_json(const JsonValue::JsonObject& obj
     }
   }
   opt.preset = static_cast<NormalizePreset>(int_field(obj, "preset", enum_int(opt.preset)));
+  const auto source_float = [&](const char* key) -> std::optional<float> {
+    const auto* value = object_field(obj, key);
+    if (!value || value->type == JsonValue::Type::Null)
+      return std::nullopt;
+    if (value->type != JsonValue::Type::Number || !std::isfinite(value->num) ||
+        std::abs(value->num) > std::numeric_limits<float>::max())
+      throw std::invalid_argument(std::string(key) + " requires a finite FP32 coefficient");
+    return static_cast<float>(value->num);
+  };
+  opt.rescale_factor = source_float("rescale_factor");
+  opt.quantization_step = source_float("quantization_step");
+  const int placement = strict_enum_field(obj, "color_conversion_placement", 0);
+  const int conversion = strict_enum_field(obj, "floating_conversion", 0);
+  if (placement < 0 || placement > 1 || conversion < 0 || conversion > 1)
+    throw std::invalid_argument(
+        "invalid preprocessing color_conversion_placement or floating_conversion");
+  opt.color_conversion_placement = static_cast<PreprocColorConversionPlacement>(placement);
+  opt.floating_conversion = static_cast<PreprocFloatingConversion>(conversion);
   return opt;
 }
 
@@ -1090,7 +1165,11 @@ void write_model_options_json(std::ostream& oss, const Model::Options& opt) {
   write_processmla_options_json(oss, opt.processmla);
   oss << ",\"prepared_runner\":";
   write_prepared_runner_options_json(oss, opt.prepared_runner);
-  oss << ",\"async_queue_depth\":" << opt.async_queue_depth << "}";
+  oss << ",\"async_queue_depth\":" << opt.async_queue_depth;
+  // Written only when set, so existing graphs keep their established text.
+  if (!opt.multimask_output)
+    oss << ",\"multimask_output\":false";
+  oss << "}";
 }
 
 std::string model_options_json_string(const Model::Options& opt) {
@@ -1125,17 +1204,22 @@ Model::Options parse_model_options_json(const JsonValue::JsonObject& obj) {
         int_field(*v->obj, "output_format", enum_int(opt.superpoint.output_format)));
   }
   const JsonValue* pose_classes = object_field(obj, "pose_classes");
-  if (const JsonValue* nested = object_field(obj, "yolox_seg_pose");
-      nested && nested->type == JsonValue::Type::Object && nested->obj) {
+  if (const JsonValue* nested = object_field(obj, "yolox_seg_pose")) {
+    if (nested->type != JsonValue::Type::Object || !nested->obj)
+      throw std::invalid_argument("model_options.yolox_seg_pose must be an object");
     pose_classes = object_field(*nested->obj, "pose_classes");
   }
-  if (const JsonValue* v = pose_classes; v && v->type == JsonValue::Type::Array && v->arr) {
-    opt.yolox_seg_pose.pose_classes.clear();
+  if (const JsonValue* v = pose_classes) {
+    if (v->type != JsonValue::Type::Array || !v->arr)
+      throw std::invalid_argument("model_options.yolox_seg_pose.pose_classes must be an array");
     opt.yolox_seg_pose.pose_classes.reserve(v->arr->size());
     for (const JsonValue& entry : *v->arr) {
-      if (entry.type == JsonValue::Type::Number) {
-        opt.yolox_seg_pose.pose_classes.push_back(static_cast<int>(entry.num));
-      }
+      if (entry.type != JsonValue::Type::Number || !std::isfinite(entry.num) ||
+          entry.num != std::trunc(entry.num) || entry.num < 0 ||
+          entry.num > std::numeric_limits<int>::max())
+        throw std::invalid_argument("model_options.yolox_seg_pose.pose_classes requires "
+                                    "non-negative integer class IDs");
+      opt.yolox_seg_pose.pose_classes.push_back(static_cast<int>(entry.num));
     }
   }
   opt.boxdecode_original_width =
@@ -1145,6 +1229,11 @@ Model::Options parse_model_options_json(const JsonValue::JsonObject& obj) {
   if (const JsonValue* v = object_field(obj, "boxdecode_resize_mode");
       v && v->type == JsonValue::Type::Number) {
     opt.boxdecode_resize_mode = static_cast<ResizeMode>(static_cast<int>(v->num));
+  }
+  if (const JsonValue* v = object_field(obj, "multimask_output")) {
+    if (v->type != JsonValue::Type::Bool)
+      throw std::invalid_argument("model_options.multimask_output must be a boolean");
+    opt.multimask_output = v->b;
   }
   opt.upstream_name = string_field(obj, "upstream_name", opt.upstream_name);
   opt.name_suffix = string_field(obj, "name_suffix", opt.name_suffix);

@@ -178,8 +178,8 @@ int main() {
   try {
     using namespace simaai::neat;
 
-    require(simaai::neat::element_exists("neatprocesscvu"),
-            "Missing SIMA preproc plugin (neatprocesscvu).");
+    require(simaai::neat::element_exists("neatkernelrunner"),
+            "Missing SIMA preproc plugin (neatkernelrunner).");
 
     fs::path root = find_repo_root();
     fs::path assets_dir = root / "tests" / "assets" / "preproc_dynamic";

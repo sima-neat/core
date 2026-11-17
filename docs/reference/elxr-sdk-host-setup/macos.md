@@ -1,11 +1,11 @@
 ---
 title: macOS Host Notes
-description: Prepare a macOS host for Neat SDK and DevKit-Sync
+description: Prepare a macOS host for Palette SDK and DevKit-Sync
 sidebar_position: 3
 ---
 
-Use this guide when your host machine is macOS and you want to run Neat
-Development Environment (referred to as Neat SDK) with DevKit-Sync.
+Use this guide when your host machine is macOS and you want to run Palette SDK with
+DevKit-Sync.
 
 ## Prerequisites
 
@@ -142,4 +142,4 @@ macOS UDP forwarding path.
 
 ## Next step
 
-Return to [Neat SDK](/getting-started/dev-environment/) and continue with install/setup.
+Return to [Palette SDK](/getting-started/dev-environment/) and continue with install/setup.
