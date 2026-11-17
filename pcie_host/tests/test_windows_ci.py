@@ -662,7 +662,8 @@ class WindowsCiContracts(unittest.TestCase):
 
   def test_workflow_run_bodies_receive_inputs_only_through_env(self):
     # Expression text is substituted into the script before the shell parses
-    # it, so an input such as $(...) would execute on the runner.
+    # it, so an input such as $(...) would execute on the runner. Reject every
+    # expression, whatever its spacing or context.
     lines = WORKFLOW.read_text(encoding="utf-8").splitlines()
     leaks = []
     for index, line in enumerate(lines):
@@ -675,7 +676,7 @@ class WindowsCiContracts(unittest.TestCase):
         if following.strip() and len(following) - len(following.lstrip()) <= indent:
           break
         body.append(following)
-      leaks += [(index + 1, text.strip()) for text in body if "${{ inputs." in text]
+      leaks += [(index + 1, text.strip()) for text in body if "${{" in text]
     self.assertEqual(leaks, [])
 
   def test_main_ci_requires_windows_acceptance_before_promotion_only_when_enabled(self):
