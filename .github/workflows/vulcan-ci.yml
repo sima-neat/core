@@ -399,6 +399,7 @@ jobs:
 
       - name: Admit exact Scheduler analysis candidate
         if: inputs.scheduler_run_id != ''
+        id: scheduler-admission
         env:
           GITHUB_TOKEN: ${{ steps.scheduler-token.outputs.token }}
           SCHEDULER_RUN_ID: ${{ inputs.scheduler_run_id }}
@@ -417,12 +418,17 @@ jobs:
             --required-job "Verify Scheduler build and Vulcan publication" \
             --required-artifact "scheduler-candidate" \
             --output "${RUNNER_TEMP}/scheduler-analysis-admission.json"
+          artifact_id=$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["artifact"]["id"])' \
+            "${RUNNER_TEMP}/scheduler-analysis-admission.json")
+          echo "artifact_id=${artifact_id}" >> "${GITHUB_OUTPUT}"
 
       - name: Download exact Scheduler analysis candidate
         if: inputs.scheduler_run_id != ''
         uses: actions/download-artifact@v4
         with:
-          name: scheduler-candidate
+          # The admitted ID, not the name: a Scheduler re-run cannot substitute other bytes.
+          artifact-ids: ${{ steps.scheduler-admission.outputs.artifact_id }}
+          merge-multiple: true
           path: ${{ runner.temp }}/scheduler-analysis-candidate
           repository: sima-neat/scheduler
           run-id: ${{ inputs.scheduler_run_id }}
@@ -809,6 +815,7 @@ jobs:
 
       - name: Admit exact native Scheduler candidate
         if: inputs.scheduler_run_id != ''
+        id: scheduler-admission
         env:
           GITHUB_TOKEN: ${{ steps.scheduler-token.outputs.token }}
           SCHEDULER_RUN_ID: ${{ inputs.scheduler_run_id }}
@@ -827,12 +834,17 @@ jobs:
             --required-job "Verify Scheduler build and Vulcan publication" \
             --required-artifact "scheduler-native-${{ matrix.distro }}-${{ matrix.deb_arch }}" \
             --output "${RUNNER_TEMP}/scheduler-native-admission.json"
+          artifact_id=$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["artifact"]["id"])' \
+            "${RUNNER_TEMP}/scheduler-native-admission.json")
+          echo "artifact_id=${artifact_id}" >> "${GITHUB_OUTPUT}"
 
       - name: Download exact native Scheduler candidate
         if: inputs.scheduler_run_id != ''
         uses: actions/download-artifact@v4
         with:
-          name: scheduler-native-${{ matrix.distro }}-${{ matrix.deb_arch }}
+          # The admitted ID, not the name: a Scheduler re-run cannot substitute other bytes.
+          artifact-ids: ${{ steps.scheduler-admission.outputs.artifact_id }}
+          merge-multiple: true
           path: ${{ runner.temp }}/scheduler-native-candidate
           repository: sima-neat/scheduler
           run-id: ${{ inputs.scheduler_run_id }}

@@ -228,6 +228,12 @@ class WindowsOpenSshHop:
     return self.returncode
 
 
+def workflow_step(body, name):
+  """Return one step of a workflow job, from its name to the next step or job."""
+  step = body.split(f"      - name: {name}\n", 1)[1]
+  return re.split(r"(?m)^      - |^  [\w-]+:\n", step, maxsplit=1)[0]
+
+
 def evaluate_actions_expression(expression, values):
   """Evaluate the boolean subset used by the workflow admission contracts."""
   expression = expression.strip()
@@ -968,13 +974,11 @@ class WindowsCiContracts(unittest.TestCase):
       self.assertIn('--required-job "Verify Scheduler build and Vulcan publication"', body)
 
     self.assertIn('--required-artifact "scheduler-candidate"', hygiene)
-    self.assertIn('name: scheduler-candidate', hygiene)
     self.assertIn('--candidate "${RUNNER_TEMP}/scheduler-analysis-candidate"', hygiene)
     self.assertIn('--commit "${SCHEDULER_COMMIT}"', hygiene)
 
     artifact = 'scheduler-native-${{ matrix.distro }}-${{ matrix.deb_arch }}'
     self.assertIn(f'--required-artifact "{artifact}"', packages)
-    self.assertIn(f'name: {artifact}', packages)
     self.assertIn(
         '--scheduler-candidate "${RUNNER_TEMP}/scheduler-native-candidate"', packages)
     self.assertIn('--scheduler-commit "${SCHEDULER_COMMIT}"', packages)
@@ -985,6 +989,67 @@ class WindowsCiContracts(unittest.TestCase):
       self.assertIn("- validate-windows-cohort-selectors", body)
       self.assertIn(
           "needs.validate-windows-cohort-selectors.result == 'success'", body)
+
+  @unittest.skipIf(os.name == "nt", WORKFLOW_BASH_SKIP)
+  def test_scheduler_downloads_use_the_admitted_artifact_id(self):
+    # Downloading by name and run would accept bytes uploaded after admission.
+    main = MAIN_WORKFLOW.read_text(encoding="utf-8")
+    windows = WORKFLOW.read_text(encoding="utf-8")
+    linux_release = windows.split("  linux_release:\n", 1)[1].split("  card_candidate:\n", 1)[0]
+    dependencies = windows.split("  dependencies:\n", 1)[1].split("  native:\n", 1)[0]
+    self.assertIn(
+        "    outputs:\n"
+        "      scheduler_artifact_id: ${{ steps.scheduler-admission.outputs.artifact_id }}\n",
+        linux_release)
+    self.assertIn("needs: [contracts, linux_release]", dependencies)
+    step_id = "${{ steps.scheduler-admission.outputs.artifact_id }}"
+    cases = (
+        (main.split("  code-hygiene:\n", 1)[1],
+         "Admit exact Scheduler analysis candidate", "scheduler-analysis-admission.json",
+         main.split("  code-hygiene:\n", 1)[1],
+         "Download exact Scheduler analysis candidate", step_id),
+        (main.split("  build-pciehost-packages:\n", 1)[1],
+         "Admit exact native Scheduler candidate", "scheduler-native-admission.json",
+         main.split("  build-pciehost-packages:\n", 1)[1],
+         "Download exact native Scheduler candidate", step_id),
+        (linux_release, "Admit exact successful Scheduler Windows run",
+         "scheduler-release-admission.json", dependencies,
+         "Download unpublished Scheduler override",
+         "${{ needs.linux_release.outputs.scheduler_artifact_id }}"),
+    )
+    bash = shutil.which("bash")
+    self.assertIsNotNone(bash)
+    for admit_job, admit_name, receipt, download_job, download_name, artifact_id in cases:
+      with self.subTest(download=download_name):
+        admission = workflow_step(admit_job, admit_name)
+        download = workflow_step(download_job, download_name)
+        self.assertIn("        id: scheduler-admission\n", admission)
+        self.assertIn("uses: actions/download-artifact@v4", download)
+        self.assertIn(f"          artifact-ids: {artifact_id}\n", download)
+        self.assertIn("          merge-multiple: true\n", download)
+        self.assertNotRegex(download, r"(?m)^          (name|pattern):")
+        self.assertEqual(re.search(r"(?m)^        if: (.+)$", download)[1],
+                         re.search(r"(?m)^        if: (.+)$", admission)[1])
+        # The step publishes exactly the ID its admission receipt recorded.
+        script = textwrap.dedent(admission.split("        run: |\n", 1)[1])
+        script = script[script.index("artifact_id=$("):]
+        with tempfile.TemporaryDirectory() as temporary:
+          Path(temporary, receipt).write_text(
+              json.dumps({"artifact": {"id": 4242, "digest": "sha256:" + "0" * 64}}),
+              encoding="utf-8")
+          output = Path(temporary, "github-output")
+          environment = os.environ.copy()
+          environment.update({"RUNNER_TEMP": temporary, "GITHUB_OUTPUT": str(output)})
+          result = subprocess.run(
+              [bash, "-e", "-c", script], capture_output=True, text=True, check=False,
+              env=environment)
+          self.assertEqual(result.returncode, 0, result.stderr)
+          self.assertEqual(output.read_text(encoding="utf-8"), "artifact_id=4242\n")
+          Path(temporary, receipt).write_text("{}", encoding="utf-8")
+          result = subprocess.run(
+              [bash, "-e", "-c", script], capture_output=True, text=True, check=False,
+              env=environment)
+          self.assertNotEqual(result.returncode, 0)
 
   def test_scheduler_actions_artifacts_are_bounded_before_use(self):
     verifier = (ROOT / "scripts/ci/pciehost/verify_linux_release_run.py").read_text(

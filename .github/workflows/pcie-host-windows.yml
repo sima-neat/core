@@ -157,6 +157,8 @@ jobs:
     permissions:
       actions: read
       contents: read
+    outputs:
+      scheduler_artifact_id: ${{ steps.scheduler-admission.outputs.artifact_id }}
     steps:
       - uses: actions/checkout@v5
         with:
@@ -276,6 +278,7 @@ jobs:
             --output "${RUNNER_TEMP}/sima-cli-release-admission.json"
       - name: Admit exact successful Scheduler Windows run
         if: inputs.scheduler_run_id != ''
+        id: scheduler-admission
         env:
           GITHUB_TOKEN: ${{ steps.dependency-token.outputs.token }}
           SCHEDULER_RUN_ID: ${{ inputs.scheduler_run_id }}
@@ -301,6 +304,9 @@ jobs:
             --required-job "Verify Scheduler build and Vulcan publication" \
             --required-artifact "scheduler-native-windows-amd64" \
             --output "${RUNNER_TEMP}/scheduler-release-admission.json"
+          artifact_id=$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["artifact"]["id"])' \
+            "${RUNNER_TEMP}/scheduler-release-admission.json")
+          echo "artifact_id=${artifact_id}" >> "${GITHUB_OUTPUT}"
       - name: Admit exact successful Windows upgrade baseline
         if: inputs.require_upgrade == true
         env:
@@ -456,7 +462,9 @@ jobs:
         if: inputs.scheduler_run_id != ''
         uses: actions/download-artifact@v4
         with:
-          name: scheduler-native-windows-amd64
+          # The admitted ID, not the name: a Scheduler re-run cannot substitute other bytes.
+          artifact-ids: ${{ needs.linux_release.outputs.scheduler_artifact_id }}
+          merge-multiple: true
           path: ${{ runner.temp }}/scheduler-windows-override
           repository: sima-neat/scheduler
           run-id: ${{ inputs.scheduler_run_id }}
