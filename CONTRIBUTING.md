@@ -103,7 +103,8 @@ case for features; redact secrets and customer data from examples and logs.
   - test evidence,
   - docs impact,
   - migration impact.
-- If public behavior changes, update docs in the same PR.
+- Follow the [documentation policy](docs/develop-apps/contribute/start-here/coding_standard.md#documentation-obligations);
+  `No docs update needed` is valid when existing guidance remains accurate and no new concept or workflow needs explanation.
 
 ## API Deprecation Process
 

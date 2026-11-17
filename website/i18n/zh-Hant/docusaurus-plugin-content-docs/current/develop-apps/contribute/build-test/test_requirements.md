@@ -100,8 +100,7 @@ slug: /develop-apps/contribute/test_requirements
 
 - 新增/更新的測試與變更的行為相符。
 - 既有的相關測試仍然通過。
-- 已更新使用者可見行為的說明檔案。
-- API/架構變更已反映在 [架構](/develop-apps/contribute/architecture) 中。
+- 對說明文件的影響符合[文件更新原則](/develop-apps/contribute/coding_standard)。
 - 公開 API 變更符合 [程式碼規範](/develop-apps/contribute/coding_standard) 中 API 相容性原則。
 
 ## 必要覆蓋範圍與功能設定組合
