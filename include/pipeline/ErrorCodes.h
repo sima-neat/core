@@ -67,7 +67,7 @@ inline constexpr const char* kPropertyInvalid = "build.property_invalid";
 inline constexpr const char* kRuntimePull = "runtime.pull";
 /// A pipeline element stopped processing for a reason that has no more-specific classification.
 inline constexpr const char* kRuntimeElementFailed = "runtime.element_failed";
-/// No output arrived before the configured wait expired.
+/// A kernel did not complete within its observation timeout; this does not establish retirement.
 inline constexpr const char* kOutputTimeout = "runtime.output_timeout";
 /// The pipeline reached EOS before a required output was produced.
 inline constexpr const char* kUnexpectedEos = "runtime.unexpected_eos";

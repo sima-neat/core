@@ -9,6 +9,7 @@
     "docs/getting-started/dev-environment/offline-installation.md",
     "docs/getting-started/dev-environment/index.md",
     "docs/reference/elxr-sdk-host-setup/windows.md",
+    "docs/reference/elxr-sdk-host-setup/ubuntu.md",
     "docs/develop-apps/tutorials/before-you-run.md"
   ],
   "literalExceptions": [

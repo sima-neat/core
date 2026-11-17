@@ -10,6 +10,7 @@
 #include "pipeline/internal/sima/ContractRender.h"
 #include "pipeline/internal/sima/TensorSemanticsUtil.h"
 
+#include <algorithm>
 #include <cctype>
 #include <functional>
 #include <initializer_list>
@@ -516,6 +517,20 @@ mla_input_tensor_info_from_manifest(const sima::SimaPluginStaticManifest& manife
     info.span_size_bytes = static_cast<int64_t>(physical.size_bytes);
     if (!physical.segment_name.empty()) {
       info.segment_name = physical.segment_name;
+    }
+    if (stage->processmla.batch_size > 1 && physical.model_carrier_id) {
+      // The public tensor owns the carrier; MLA ports describe its per-image views.
+      auto end = info.span_byte_offset + info.span_size_bytes;
+      for (const auto& input : stage->physical_inputs) {
+        if (input.model_carrier_id == physical.model_carrier_id) {
+          info.span_byte_offset = std::min(info.span_byte_offset, input.source_byte_offset);
+          end = std::max(end, input.source_byte_offset + static_cast<int64_t>(input.size_bytes));
+        }
+      }
+      info.span_size_bytes = end - info.span_byte_offset;
+      if (!info.logical_shape.empty()) {
+        info.logical_shape.front() = stage->processmla.batch_size;
+      }
     }
   }
 

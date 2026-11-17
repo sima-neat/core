@@ -532,7 +532,7 @@ def provider_fixture(tmp_path, architecture='arm64'):
     base_controls = fixture(root)
     actual_control = verifier.control
 
-    def package(name, arch='arm64', version='1'):
+    def package(name, arch='arm64', version='1', payload_suffix=''):
         source = tmp_path / ('producer-' + name)
         (source / 'DEBIAN').mkdir(parents=True, exist_ok=True)
         (source / 'DEBIAN/control').write_text(
@@ -540,7 +540,7 @@ def provider_fixture(tmp_path, architecture='arm64'):
             'Maintainer: Fixture <fixture@example.invalid>\nDescription: provider control fixture\n')
         payload = source / 'usr/share' / name
         payload.mkdir(parents=True, exist_ok=True)
-        (payload / 'identity').write_text(name + ':' + version)
+        (payload / 'identity').write_text(name + ':' + version + payload_suffix)
         target = root / (name + '.deb')
         subprocess.run(['dpkg-deb', '--build', '--root-owner-group', str(source), str(target)],
                        check=True, capture_output=True)
@@ -654,10 +654,10 @@ def test_required_firmware_distribution_cannot_be_incomplete_or_substituted(tmp_
     (lambda r, p: (r / 'fixture-renderer-dev.deb').unlink(), 'provider control'),
     (lambda r, p: p('fixture-backend', version='2'), 'provider control'),
     (lambda r, p: p('fixture-backend', arch='amd64'), 'architecture'),
-    (lambda r, p: (r / 'fixture-backend.deb').write_bytes((r / 'fixture-backend.deb').read_bytes() + b'changed'), 'archive differs'),
+    (lambda r, p: p('fixture-backend', payload_suffix=':changed'), 'archive differs'),
     (lambda r, p: p('fixture-unrecorded'), 'Foreign DEB'),
     (lambda r, p: shutil.copy2(r / 'fixture-backend.deb', r / 'fixture-duplicate.deb'), 'Duplicate DEB package role'),
-    (lambda r, p: (r / 'fixture-renderer.deb').write_bytes((r / 'fixture-renderer.deb').read_bytes() + b'changed'), 'archive differs'),
+    (lambda r, p: p('fixture-renderer', payload_suffix=':changed'), 'archive differs'),
 ])
 def test_rejects_unconsumed_or_changed_provider_archives(tmp_path, mutation, diagnostic):
     root, controls, package = provider_fixture(tmp_path)
@@ -1915,7 +1915,7 @@ remove_installed_local_deb_packages
     ('lib64', 'lib/x86_64-linux-gnu/neat/runtime', 'lib/x86_64-linux-gnu/neat/gst-plugins'),
     ('lib/core', 'support/runtime', 'plugins/frontend'),
 ])
-@pytest.mark.parametrize('legacy_abi', ['5', '7'])
+@pytest.mark.parametrize('legacy_abi', ['5', 'previous', 'next'])
 def test_actual_core_install_rpath_is_relative_and_shared_only(tmp_path, libdir, runtime_dir, plugin_dir, legacy_abi):
     """Compile the production target properties; static clients own their path.
 
@@ -1927,8 +1927,13 @@ def test_actual_core_install_rpath_is_relative_and_shared_only(tmp_path, libdir,
     manifest = json.loads((ROOT / 'deps/manifest.json').read_text())
     abi = manifest['abi-version']
     platform_version = manifest['platform-version']
-    # Released Core 0.5.0 uses ABI 5. ABI 6 is the unreleased 0.6.0 line;
-    # older same-ABI previews still require rebuilt consumers, not loader isolation.
+    # Preserve the released ABI5 witness and both adjacent incompatible SONAMEs.
+    # Read the current ABI from the manifest, so future bumps cannot turn the
+    # negative fixture into a same-ABI provider.
+    if legacy_abi == 'previous':
+        legacy_abi = str(int(abi) - 1)
+    elif legacy_abi == 'next':
+        legacy_abi = str(int(abi) + 1)
     assert int(abi) > 5
     assert legacy_abi != abi
     properties = re.search(r'set_target_properties\(sima_neat PROPERTIES.*?\n\)',

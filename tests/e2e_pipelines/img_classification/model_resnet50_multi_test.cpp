@@ -16,6 +16,7 @@
 #include <iostream>
 #include <numeric>
 #include <string>
+#include <type_traits>
 #include <vector>
 
 namespace fs = std::filesystem;
@@ -213,6 +214,47 @@ int main(int argc, char** argv) {
     auto first_out = model1.run(std::vector<cv::Mat>{rgb});
     auto first_scores = scores_from_tensor(require_tensor(first_out, "first"), "first");
     check_top1(first_scores, expected_id, min_prob, "first");
+
+    // A late result for a timed-out black image must never satisfy the next goldfish call.
+    const cv::Mat black(rgb.size(), rgb.type(), cv::Scalar::all(0));
+    const auto black_scores = scores_from_tensor(
+        require_tensor(model1.run(std::vector<cv::Mat>{black}), "black"), "black");
+    require(std::max_element(black_scores.begin(), black_scores.end()) - black_scores.begin() !=
+                expected_id,
+            "Timeout regression requires distinguishable model outputs");
+    const auto check_timeout_recovery = [&](const auto& first, const auto& second) {
+      bool timed_out = false;
+      try {
+        (void)model1.run(first, 0);
+      } catch (const std::exception& error) {
+        require_contains(error.what(), "status=Timeout", "Expected a model pull timeout");
+        timed_out = true;
+      }
+      require(timed_out, "Nonblocking model run unexpectedly completed");
+      const auto recovered = model1.run(second, 10000);
+      const auto tensors = [&]() {
+        if constexpr (std::is_same_v<std::decay_t<decltype(recovered)>, simaai::neat::Sample>)
+          return tensors_from_sample(recovered);
+        else
+          return recovered;
+      }();
+      check_top1(scores_from_tensor(require_tensor(tensors, "recovered"), "recovered"), expected_id,
+                 min_prob, "recovered");
+    };
+    check_timeout_recovery(std::vector<cv::Mat>{black}, std::vector<cv::Mat>{rgb});
+    const auto black_tensor = simaai::neat::Tensor::from_cv_mat(
+        black, simaai::neat::ImageSpec::PixelFormat::RGB, simaai::neat::TensorMemory::EV74);
+    const auto rgb_tensor = simaai::neat::Tensor::from_cv_mat(
+        rgb, simaai::neat::ImageSpec::PixelFormat::RGB, simaai::neat::TensorMemory::EV74);
+    check_timeout_recovery(simaai::neat::TensorList{black_tensor},
+                           simaai::neat::TensorList{rgb_tensor});
+    simaai::neat::Sample black_sample;
+    black_sample.kind = simaai::neat::SampleKind::Tensor;
+    black_sample.tensor = black_tensor;
+    simaai::neat::Sample rgb_sample;
+    rgb_sample.kind = simaai::neat::SampleKind::Tensor;
+    rgb_sample.tensor = rgb_tensor;
+    check_timeout_recovery(simaai::neat::Sample{black_sample}, simaai::neat::Sample{rgb_sample});
 
     std::cerr << "[stage] model2 init (parallel)\n";
     simaai::neat::Model::Options model2_opt;

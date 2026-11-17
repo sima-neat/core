@@ -16,6 +16,14 @@ enum class BoxDecodeTensorRole : int {
   Unknown = 0,
   DetectorLogits = 1,
   DescriptorGrid = 2,
+  // Segment Anything prompt decoder: low-resolution mask logits and
+  // their IoU predictions, bound by geometry in the static contract.
+  SamMaskLogits = 3,
+  SamIouPredictions = 4,
+  // Optional SAM2/EdgeTAM object score (one value) and SAM3 concept detections [Q,6]. A concept
+  // model's mask logits [h,w,Q] use SamMaskLogits.
+  SamObjectScore = 5,
+  SamConceptDetections = 6,
 };
 
 struct SuperPointStaticContract {

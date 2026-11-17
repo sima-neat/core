@@ -102,7 +102,7 @@ The same values are available in both language APIs:
 | --- | --- | --- |
 | `runtime.pull` | A pull operation fails without a more specific code. | Inspect the attached report and the first upstream error. |
 | `runtime.element_failed` | A pipeline stage stops without a more specific classification. | Correct the reported stage configuration and its upstream input. |
-| `runtime.output_timeout` | No output arrives before the configured wait expires. | Verify source flow and back-pressure, or adjust the timeout when the wait is expected. |
+| `runtime.output_timeout` | A kernel does not complete within its observation timeout. | Retain affected buffers until completion or verified device recovery. |
 | `runtime.unexpected_eos` | The pipeline reaches EOS before producing a required output. | Check the input for premature EOS and confirm that enough input was supplied. |
 
 ## I/O failures

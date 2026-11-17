@@ -5,7 +5,10 @@
 
 #include "pipeline/internal/sima/stagesemantics/ProcessCvuStageSemantics.h"
 
+#include "nodes/sima/PreprocMath.h"
+
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -89,6 +92,19 @@ struct CompiledProcessCvuRuntimeConfig {
 
   std::vector<float> channel_mean = {0.0f, 0.0f, 0.0f};
   std::vector<float> channel_stddev = {1.0f, 1.0f, 1.0f};
+
+  /// Original FP32 multiplier before resize. Presence selects fixed source arithmetic;
+  /// normalize.mean/stddev then mean a post-resize subtraction/division, with no implied /255.
+  /// Explicit geometry; absent retains legacy aspect_ratio/scaled dimensions.
+  std::optional<ResizeMode> resize_mode;
+  std::optional<int> shorter_side;
+  std::optional<float> rescale_factor;
+  /// Original positive FP32 INT8 step, never reconstructed from a reciprocal.
+  /// Model routes require agreement with the MPK quantizer; zero point stays model-owned.
+  std::optional<float> quantization_step;
+  PreprocColorConversionPlacement color_conversion_placement =
+      PreprocColorConversionPlacement::AfterResize;
+  PreprocFloatingConversion floating_conversion = PreprocFloatingConversion::Legacy;
 
   std::string input_img_type;
   std::string output_img_type;

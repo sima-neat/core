@@ -483,7 +483,7 @@ packages, use the `extras` metadata variant:
 <!-- release-command:start -->
 
 ```bash
-sima-cli neat install core/pciehost/ubuntu24/amd64@v0.6.0 -t extras
+sima-cli neat install core/pciehost/ubuntu24/amd64@v0.6.1 -t extras
 ```
 
 <!-- release-command:end -->

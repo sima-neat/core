@@ -1,4 +1,5 @@
 #include "pipeline/DetectionTypes.h"
+#include "pipeline/GraphOptions.h"
 #include "pipeline/TensorCore.h"
 #include "test_main.h"
 #include "test_utils.h"
@@ -100,6 +101,36 @@ std::vector<uint8_t> make_segmentation_payload(uint32_t count, std::size_t capac
     for (std::size_t i = 0; i < mask_bytes; ++i) {
       mask[i] = static_cast<uint8_t>((box + i) & 0xffU);
     }
+  }
+  return out;
+}
+
+// SegmentationMasksHeaderV1 payload: header, `capacity` records, 16-byte alignment,
+// then `capacity` H x W masks. Slot i's mask is filled with (i + 1) * 3.
+std::vector<uint8_t> make_masks_v1_payload(uint32_t count, uint32_t capacity, uint32_t height,
+                                           uint32_t width) {
+  simaai::neat::SegmentationMasksHeaderV1 header;
+  header.count = count;
+  header.capacity = capacity;
+  header.mask_height = height;
+  header.mask_width = width;
+  header.mask_stride = height * width;
+  header.masks_offset = (48U + capacity * 24U + 15U) / 16U * 16U;
+  header.total_bytes = header.masks_offset + capacity * header.mask_stride;
+  std::vector<uint8_t> out(header.total_bytes, 0);
+  std::memcpy(out.data(), &header, sizeof(header));
+  for (uint32_t slot = 0; slot < capacity; ++slot) {
+    // Slot 0 is an empty mask: an all-zero box that keeps its score and index.
+    const RawBox box = slot == 0 ? RawBox{.score = 0.875f, .cls = 3}
+                                 : RawBox{.x = int32_t(10 * slot),
+                                          .y = int32_t(20 * slot),
+                                          .w = 5,
+                                          .h = 6,
+                                          .score = 0.5f,
+                                          .cls = int32_t(slot)};
+    std::memcpy(out.data() + 48 + slot * 24, &box, sizeof(box));
+    std::memset(out.data() + header.masks_offset + slot * header.mask_stride,
+                static_cast<int>((slot + 1) * 3), header.mask_stride);
   }
   return out;
 }
@@ -500,4 +531,94 @@ RUN_TEST(
               "top_k must cap the decoded row count");
       require(capped.masks.copy_payload_bytes()[sp_mask_bytes] == 2,
               "a top_k-capped decode must keep the capacity-derived mask stride");
+
+      // ---- versioned masks payload (Segment Anything) ----
+
+      // Regression: the headerless 160x160 payload keeps its exact decoded bytes.
+      {
+        const auto legacy = decode_segmentation_tensor(
+            make_wire_tensor(make_segmentation_payload(2, 2), kDetectionFormatBbox));
+        const std::vector<float> legacy_boxes = tensor_float_values(legacy.boxes);
+        const std::vector<uint8_t> legacy_masks = legacy.masks.copy_payload_bytes();
+        require(legacy.masks.shape == std::vector<int64_t>({2, 160, 160}) &&
+                    legacy_boxes ==
+                        std::vector<float>({5, 6, 12, 14, .25f, 9, 15, 16, 32, 34, .5f, 10}) &&
+                    legacy_masks.size() == 2U * 25600U && legacy_masks[1] == 1 &&
+                    legacy_masks[25600] == 1 && legacy_masks[25600 + 255] == 0,
+                "headerless 160x160 segmentation decoding changed");
+      }
+      for (const std::string& tag :
+           {std::string(kDetectionFormatBbox), std::string(kDetectionFormatBboxSegmentation)}) {
+        const Tensor v1 = make_wire_tensor(make_masks_v1_payload(2, 3, 720, 1280), tag);
+        const auto decoded = decode_segmentation(TensorList{v1}).front();
+        require(decoded.boxes.shape == std::vector<int64_t>({2, kDecodedBoxColumns}) &&
+                    decoded.masks.shape == std::vector<int64_t>({2, 720, 1280}) &&
+                    decoded.masks.strides_bytes == std::vector<int64_t>({720 * 1280, 1280, 1}),
+                "V1 masks must decode at their declared extent");
+        const std::vector<float> v1_boxes = tensor_float_values(decoded.boxes);
+        require(v1_boxes == std::vector<float>({0, 0, 0, 0, .875f, 3, 10, 20, 15, 26, .5f, 1}),
+                "V1 records (including an empty-mask record) mismatch");
+        const std::vector<uint8_t> v1_masks = decoded.masks.copy_payload_bytes();
+        require(v1_masks.front() == 3 && v1_masks[720 * 1280 - 1] == 3 &&
+                    v1_masks[720 * 1280] == 6 && v1_masks.back() == 6,
+                "V1 mask base or stride is wrong");
+        const auto as_boxes = decode_bbox(TensorList{v1}).front();
+        require(as_boxes.shape == std::vector<int64_t>({2, kDecodedBoxColumns}),
+                "decode_bbox must read V1 records, not the magic as a count");
+        require(decode_segmentation(TensorList{v1}, 0, 0, 1).front().masks.shape ==
+                        std::vector<int64_t>({1, 720, 1280}) &&
+                    throws_with([&]() { (void)decode_segmentation(TensorList{v1}, 0, 0, 1, true); },
+                                "exceeds"),
+                "V1 top_k must cap non-strict and reject strict decoding");
+        require(throws_with([&]() { (void)decode_pose(TensorList{v1}); }, "no keypoints") ||
+                    throws_with([&]() { (void)decode_pose(TensorList{v1}); }, "format"),
+                "pose decoding of a masks payload must fail");
+      }
+      for (int fault = 0; fault < 5; ++fault) {
+        auto bad = make_masks_v1_payload(1, 1, 4, 4);
+        simaai::neat::SegmentationMasksHeaderV1 header;
+        std::memcpy(&header, bad.data(), sizeof(header));
+        if (fault == 0)
+          bad.pop_back();
+        else if (fault == 1)
+          header.version = 2;
+        else if (fault == 2)
+          header.count = 2;
+        else if (fault == 3)
+          header.masks_offset = 72;
+        else
+          header.mask_stride = 15;
+        if (fault != 0)
+          std::memcpy(bad.data(), &header, sizeof(header));
+        bool rejected = false;
+        try {
+          (void)decode_segmentation_tensor(make_wire_tensor(bad, kDetectionFormatBbox));
+        } catch (const std::invalid_argument&) {
+          rejected = true;
+        }
+        require(rejected, "malformed V1 masks payload was accepted");
+      }
+      {
+        // BoxDecodeType::EdgeTamTrack: the BoxDecode tensor comes first
+        // in a BBOX set and alone takes the detection tag; raw tensors keep none.
+        auto wire = make_wire_tensor(make_masks_v1_payload(1, 1, 4, 6), "");
+        wire.semantic.detection.reset();
+        Tensor raw;
+        raw.storage = make_cpu_owned_storage(4 * 256 * 256 * 4);
+        raw.dtype = TensorDType::Float32;
+        raw.shape = {1, 256, 256, 4};
+        raw.device = {DeviceType::CPU, 0};
+        Sample sample = sample_from_tensors(TensorList{wire, raw});
+        sample.payload_tag = kDetectionFormatBbox;
+        tag_detection_format_in_sample(sample);
+        require(read_detection_format(sample.tensors[0]) == kDetectionFormatBbox &&
+                    read_detection_format(sample.tensors[1]).empty(),
+                "only the decoded tensor of a BBOX set may carry the detection tag");
+        Sample raw_first = sample_from_tensors(TensorList{raw, wire});
+        raw_first.payload_tag = kDetectionFormatBbox;
+        tag_detection_format_in_sample(raw_first);
+        require(read_detection_format(raw_first.tensors[0]).empty() &&
+                    read_detection_format(raw_first.tensors[1]).empty(),
+                "a set without a decoded first tensor stays untagged");
+      }
     }));
