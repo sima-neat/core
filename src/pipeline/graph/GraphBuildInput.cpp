@@ -1648,18 +1648,25 @@ std::string summarize_pipeline_stage_chain(const std::string& pipeline) {
   throw NeatError(message, std::move(rep));
 }
 
-std::string single_sample_preflight_unsupported_reason(const std::string& pipeline,
+std::string single_sample_preflight_unsupported_reason(GstElement* parsed_pipeline,
+                                                       const std::string& pipeline,
                                                        const InputStreamOptions& opt) {
   const std::string lower = lower_copy(pipeline);
   if (lower.find("neatencoder") != std::string::npos) {
     return "pipeline contains neatencoder";
   }
 
-  if (lower.find("neatdecoder") != std::string::npos &&
-      (lower.find(" dec-type=h264") != std::string::npos ||
-       lower.find(" dec-type=h265") != std::string::npos)) {
+  g_autoptr(GstIterator) decoders =
+      gst_bin_iterate_all_by_element_factory_name(GST_BIN(parsed_pipeline), "neatdecoder");
+  g_auto(GValue) decoder = G_VALUE_INIT;
+  const auto is_buffered_video = [](gconstpointer item, gconstpointer) -> gint {
+    g_autofree gchar* type = nullptr;
+    g_object_get(g_value_get_object(static_cast<const GValue*>(item)), "dec-type", &type, nullptr);
+    // GstIterator matches when the comparator returns zero.
+    return g_strcmp0(type, "h264") != 0 && g_strcmp0(type, "h265") != 0;
+  };
+  if (decoders && gst_iterator_find_custom(decoders, is_buffered_video, &decoder, nullptr))
     return "video decoder can require multiple access units before producing a frame";
-  }
 
   const bool has_async_hardware_stage = (lower.find("neatprocessmla") != std::string::npos ||
                                          lower.find("neatkernelrunner") != std::string::npos) &&
@@ -2122,7 +2129,7 @@ InputStream run_input_stream_internal_typed(const std::vector<std::shared_ptr<No
   const int max_buffers = max_num_buffers_in_pipeline_local(last_pipeline);
   const bool want_preflight = resolve_startup_preflight(opt);
   const std::string pipeline_preflight_unsupported_reason =
-      single_sample_preflight_unsupported_reason(last_pipeline, stream_opt);
+      single_sample_preflight_unsupported_reason(pipeline, last_pipeline, stream_opt);
   const bool pipeline_preflight_supported = pipeline_preflight_unsupported_reason.empty();
   const bool input_preflight_supported = supports_single_sample_preflight_input(sample);
   const bool preflight_supported = pipeline_preflight_supported && input_preflight_supported;

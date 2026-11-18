@@ -104,7 +104,8 @@ std::vector<std::uint8_t> visible_pixels(const Sample& sample, bool i420, int wi
 
 void run_case(const std::string& name, std::vector<Sample> frames,
               const std::vector<std::uint8_t>& reference, SimaDecodeOptions decode,
-              OutputMemory memory, int width, int height, int fps) {
+              OutputMemory memory, int width, int height, int fps,
+              const char* custom_decoder = nullptr) {
   const bool i420 = decode.out_format == FormatTag::I420;
   const std::size_t frame_bytes = static_cast<std::size_t>(width * height * 3 / 2);
   require(reference.size() >= frames.size() * frame_bytes, "short software reference");
@@ -130,7 +131,10 @@ void run_case(const std::string& name, std::vector<Sample> frames,
   decode.dec_width = width;
   decode.dec_height = height;
   decode.dec_fps = fps;
-  graph.add(nodes::SimaDecode(decode));
+  if (custom_decoder)
+    graph.custom(custom_decoder);
+  else
+    graph.add(nodes::SimaDecode(decode));
   graph.add(nodes::Output(OutputOptions::EveryFrame(2)));
   RunOptions options;
   options.output_memory = memory;
@@ -201,6 +205,13 @@ int main() {
                read_bytes(root / (name + "_ipb.nv12")), options,
                codec == SimaDecodeType::H264 ? OutputMemory::ZeroCopy : OutputMemory::Owned, 160,
                96, 10);
+      if (codec == SimaDecodeType::H264) {
+        for (const auto* decoder : {"neatdecoder", "neatdecoder dec-type=\"H264\""}) {
+          run_case(decoder, load_access_units(root / "h264_ipb.mp4", codec, true),
+                   read_bytes(root / "h264_ipb.nv12"), options, OutputMemory::Owned, 160, 96, 10,
+                   decoder);
+        }
+      }
       const auto no_b = codec == SimaDecodeType::H264
                             ? sima_test::test_codec_perf_h264_fixture_path()
                             : sima_test::test_codec_perf_h265_fixture_path();
