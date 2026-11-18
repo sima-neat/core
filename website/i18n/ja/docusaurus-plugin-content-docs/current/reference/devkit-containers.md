@@ -10,17 +10,42 @@ sidebar_position: 11
 
 ## アクセラレータへのアクセス {#accelerators}
 
-Neat アプリケーションはコンテナ内で MLA を使用できます。コンテナには次のものが必要です。
+Neat アプリケーションはコンテナ内で MLA を使用できます。カーネルドライバとファームウェアは DevKit が提供します。コンテナには、必要なデバイスへのアクセス、互換性のある Neat Library とプラットフォームのランタイムライブラリ、およびコンテナ内のプラットフォーム検出をサポートする Neat Library バージョンが必要です。
 
-- Docker の `--device` オプションで渡す `/dev/mla`、`/dev/cvu`、`/dev/dma_heap/linux,cma` などの必要なデバイスへのアクセス。
-- イメージに同梱するか DevKit からマウントした、互換性のある Neat ライブラリ、GStreamer プラグイン、およびプラットフォームのユーザー空間ライブラリ。
-- 互換性のある DevKit プラットフォームと、コンテナ内のプラットフォーム検出をサポートする Neat Core バージョン。アプリケーションはランタイムの ABI と一致する必要があります。
+DevKit のライブラリを再利用する場合は、DevKit にインストールされたものと同じ Neat Library バージョンに対してアプリケーションのバイナリをビルドしてください。以下の読み取り専用マウントにより、そのインストール、GStreamer プラグイン、システムライブラリ、およびツールを利用できます。ベースイメージを変更するだけでは、互換性のあるアクセラレータランタイムは提供されません。
 
-最新の DevKit では、`--user UID:GID` を指定して DevKit ユーザーの UID と GID でワークロードを実行し、マッピングしたデバイスへのアクセス権を確保します。Docker へのアクセスを設定した後は、MLA デバイスへのアクセスにアプリケーションの `sudo` や `--privileged` は不要です。現在の公式ランチャーでは、セキュリティ制限を解除するオプションも使用していません。Docker のインストールやホスト設定に必要な管理者権限と、アプリケーションのデバイス権限は別です。
+### DevKit のライブラリを再利用する {#host-runtime}
 
-カーネルドライバとファームウェアは引き続き DevKit が提供します。デバイスを渡すだけでは、任意の Ubuntu イメージでアクセラレータを使用できるようにはなりません。DSP ワークロードには独自の互換ランタイムとデバイス設定が必要です。このガイドは、任意のコンテナイメージでの DSP サポートを保証するものではありません。
+以下の起動方法では、公式の[Docker での並列アプリケーションの例](https://github.com/sima-neat/apps/tree/develop/examples/docker/parallel-apps)と同じデバイスと読み取り専用マウントを使用します。アプリケーションのバイナリ、設定、およびモデルファイルを含む ARM64 イメージが DevKit 上にあることを前提としています。`neat-app:latest` をそのイメージ名に置き換え、DevKit 上で次のコマンドを実行します。
 
-デバイスとライブラリの完全な設定は、公式の[Docker での並列アプリケーションの例](https://github.com/sima-neat/apps/tree/develop/examples/docker/parallel-apps)を参照してください。選択した例とプラットフォームバージョンの前提条件に従ってください。
+<ShellCommand prompt="devkit">
+docker run --rm \
+  --user "$(id -u):$(id -g)" \
+  --network host \
+  --stop-signal SIGINT \
+  --device /dev/mla \
+  --device /dev/cvu \
+  --device /dev/dma_heap/linux,cma \
+  --device /dev/dma_heap/simaai,dms \
+  --device /dev/allegroDecodeIP \
+  --device /dev/allegroIP \
+  --mount type=bind,src=/usr,dst=/usr,readonly \
+  --mount type=bind,src=/bin,dst=/bin,readonly \
+  --mount type=bind,src=/lib,dst=/lib,readonly \
+  --mount type=bind,src=/etc/ld.so.cache,dst=/etc/ld.so.cache,readonly \
+  --mount type=bind,src=/etc/alternatives,dst=/etc/alternatives,readonly \
+  --tmpfs /tmp:mode=1777 \
+  --env HOME=/tmp \
+  neat-app:latest
+</ShellCommand>
+
+デバイスマッピングは、MLA（`/dev/mla`）とそのヒープ（`/dev/dma_heap/simaai,dms`）、CVU（`/dev/cvu`）と CMA ヒープ（`/dev/dma_heap/linux,cma`）、ビデオデコーダ（`/dev/allegroDecodeIP`）およびエンコーダ（`/dev/allegroIP`）を提供します。ワークロードに必要なデバイスを選択してください。
+
+Neat はモデルアーカイブを `/tmp` に展開するため、書き込み可能である必要があります。`--tmpfs /tmp:mode=1777` は書き込み可能な一時ストレージを提供し、`--env HOME=/tmp` はアプリケーションに書き込み可能なホームディレクトリを提供します。この一時ストレージ内のファイルはコンテナとともに削除されます。
+
+プラットフォームを更新し、Docker へのアクセスを設定した後は、DevKit ユーザーの UID と GID でワークロードを実行します。この例では、アプリケーションの `sudo`、`--privileged`、およびセキュリティ制限を解除するオプションは不要です。Docker のインストールやホスト設定に必要な管理者権限と、アプリケーションのデバイス権限は別です。
+
+DSP ワークロードにも、対応するデバイスマッピングと互換性のあるランタイムライブラリが必要です。アクセラレータの利用可否はコンテナ化自体では決まらず、必要な設定はワークロードとプラットフォームのランタイムによって異なります。選択したプラットフォームと Neat Library バージョンに対応する例の前提条件に従ってください。
 
 ## DevKit への Docker のインストール {#install}
 

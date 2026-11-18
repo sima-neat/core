@@ -12,30 +12,66 @@ platform version 3.0. For the overview and the end-to-end workflow, start with
 
 ## Accelerator Access {#accelerators}
 
-Neat applications can use the MLA inside a container. The container must have:
+Neat applications can use the MLA inside a container. The DevKit provides the
+kernel drivers and firmware. The container needs access to the required devices,
+compatible Neat Library and platform runtime libraries, and a Neat Library version
+that supports container platform detection.
 
-- Access to the required devices, such as `/dev/mla`, `/dev/cvu`, and
-  `/dev/dma_heap/linux,cma`, passed with Docker's `--device` option.
-- Compatible Neat libraries, GStreamer plugins, and platform user-space
-  libraries, either packaged in the image or mounted from the DevKit.
-- A compatible DevKit platform and a Neat Core version that supports container
-  platform detection. The application must match the runtime's ABI.
+When reusing the DevKit's libraries, build the application binary against the
+same Neat Library version installed on the DevKit. The read-only mounts below
+expose that installation, its GStreamer plugins, system libraries, and tools.
+A different base image alone does not supply a compatible accelerator runtime.
 
-On an up-to-date DevKit, run the workload with the DevKit user's UID and GID
-using `--user UID:GID`, with permission to access the mapped devices. Once Docker
-access is configured, MLA device access does not require application `sudo` or
-`--privileged`. The current first-party launcher also uses no unconfined security
-overrides. Administrator access for installing Docker and configuring the host is
-separate from application device permissions.
+### Reuse the DevKit's Libraries {#host-runtime}
 
-The DevKit still provides the kernel drivers and firmware. Passing devices alone
-does not make an arbitrary Ubuntu image accelerator-ready. DSP workloads require
-their own compatible runtime and device configuration; this guide does not
-establish DSP support for arbitrary container images.
-
-For a complete device and library configuration, see the first-party
+The following launch uses the devices and read-only mounts from the first-party
 [Parallel Apps in Docker example](https://github.com/sima-neat/apps/tree/develop/examples/docker/parallel-apps).
-Use the prerequisites for the selected example and platform version.
+It assumes an ARM64 image containing your application binary, configuration, and
+model files is already on the DevKit. Replace `neat-app:latest` with that image's
+name and run this command on the DevKit:
+
+<ShellCommand prompt="devkit">
+docker run --rm \
+  --user "$(id -u):$(id -g)" \
+  --network host \
+  --stop-signal SIGINT \
+  --device /dev/mla \
+  --device /dev/cvu \
+  --device /dev/dma_heap/linux,cma \
+  --device /dev/dma_heap/simaai,dms \
+  --device /dev/allegroDecodeIP \
+  --device /dev/allegroIP \
+  --mount type=bind,src=/usr,dst=/usr,readonly \
+  --mount type=bind,src=/bin,dst=/bin,readonly \
+  --mount type=bind,src=/lib,dst=/lib,readonly \
+  --mount type=bind,src=/etc/ld.so.cache,dst=/etc/ld.so.cache,readonly \
+  --mount type=bind,src=/etc/alternatives,dst=/etc/alternatives,readonly \
+  --tmpfs /tmp:mode=1777 \
+  --env HOME=/tmp \
+  neat-app:latest
+</ShellCommand>
+
+The device mappings provide the MLA (`/dev/mla`) and its heap
+(`/dev/dma_heap/simaai,dms`), the CVU (`/dev/cvu`) and CMA heap
+(`/dev/dma_heap/linux,cma`), and the video decoder (`/dev/allegroDecodeIP`) and
+encoder (`/dev/allegroIP`). Select the devices required by your workload.
+
+Neat unpacks model archives in `/tmp`, so it must be writable.
+`--tmpfs /tmp:mode=1777` provides writable temporary storage, and `--env HOME=/tmp`
+gives the application a writable home directory. Files in this temporary storage
+are removed with the container.
+
+With an up-to-date platform and Docker access configured, the workload runs as
+the DevKit user's UID and GID. Application `sudo`, `--privileged`, and unconfined
+security overrides are not needed for this example. Administrator access for
+installing Docker and configuring the host is separate from application device
+permissions.
+
+DSP workloads likewise require their own device mappings and compatible runtime
+libraries. Containerization itself does not determine accelerator availability;
+the required configuration depends on the workload and platform runtime.
+Follow the example's prerequisites for your selected platform and Neat Library
+version.
 
 ## Install Docker on the DevKit {#install}
 

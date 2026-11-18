@@ -11,17 +11,42 @@ sidebar_position: 11
 
 ## 가속기 액세스 {#accelerators}
 
-Neat 애플리케이션은 컨테이너 내에서 MLA를 사용할 수 있습니다. 컨테이너에는 다음이 필요합니다.
+Neat 애플리케이션은 컨테이너 내에서 MLA를 사용할 수 있습니다. DevKit은 커널 드라이버와 펌웨어를 제공합니다. 컨테이너에는 필수 장치에 대한 액세스, 호환되는 Neat Library 및 플랫폼 런타임 라이브러리, 컨테이너 플랫폼 감지를 지원하는 Neat Library 버전이 필요합니다.
 
-- Docker의 `--device` 옵션으로 전달하는 `/dev/mla`, `/dev/cvu`, `/dev/dma_heap/linux,cma` 등의 필수 장치에 대한 액세스.
-- 이미지에 포함하거나 DevKit에서 마운트한 호환 Neat 라이브러리, GStreamer 플러그인 및 플랫폼 사용자 공간 라이브러리.
-- 호환되는 DevKit 플랫폼과 컨테이너 플랫폼 감지를 지원하는 Neat Core 버전. 애플리케이션은 런타임의 ABI와 일치해야 합니다.
+DevKit의 라이브러리를 재사용할 때는 DevKit에 설치된 것과 동일한 Neat Library 버전을 사용하여 애플리케이션 바이너리를 빌드하십시오. 아래의 읽기 전용 마운트는 해당 설치와 GStreamer 플러그인, 시스템 라이브러리 및 도구를 제공합니다. 기본 이미지를 변경하는 것만으로 호환 가속기 런타임이 제공되지는 않습니다.
 
-최신 DevKit에서는 `--user UID:GID`를 사용하여 DevKit 사용자의 UID 및 GID로 워크로드를 실행하고 매핑된 장치에 대한 액세스 권한을 확보하십시오. Docker 액세스가 설정되면 MLA 장치 액세스를 위해 애플리케이션에 `sudo` 또는 `--privileged`가 필요하지 않습니다. 현재 공식 실행기는 보안 제한을 해제하는 옵션도 사용하지 않습니다. Docker 설치 및 호스트 설정을 위한 관리자 액세스는 애플리케이션의 장치 권한과 별개입니다.
+### DevKit 라이브러리 재사용 {#host-runtime}
 
-커널 드라이버와 펌웨어는 여전히 DevKit에서 제공합니다. 장치를 전달하는 것만으로 임의의 Ubuntu 이미지에서 가속기를 사용할 수 있는 것은 아닙니다. DSP 워크로드에는 별도의 호환 런타임과 장치 설정이 필요하며, 이 가이드는 임의의 컨테이너 이미지에서 DSP 지원을 보장하지 않습니다.
+다음 실행 방식은 공식 [Docker 병렬 앱 예제](https://github.com/sima-neat/apps/tree/develop/examples/docker/parallel-apps)의 장치와 읽기 전용 마운트를 사용합니다. 애플리케이션 바이너리, 설정 및 모델 파일이 포함된 ARM64 이미지가 이미 DevKit에 있다고 가정합니다. `neat-app:latest`를 해당 이미지 이름으로 바꾸고 DevKit에서 다음 명령을 실행하십시오.
 
-전체 장치 및 라이브러리 설정은 공식 [Docker 병렬 앱 예제](https://github.com/sima-neat/apps/tree/develop/examples/docker/parallel-apps)를 참조하십시오. 선택한 예제 및 플랫폼 버전의 사전 요구 사항을 따르십시오.
+<ShellCommand prompt="devkit">
+docker run --rm \
+  --user "$(id -u):$(id -g)" \
+  --network host \
+  --stop-signal SIGINT \
+  --device /dev/mla \
+  --device /dev/cvu \
+  --device /dev/dma_heap/linux,cma \
+  --device /dev/dma_heap/simaai,dms \
+  --device /dev/allegroDecodeIP \
+  --device /dev/allegroIP \
+  --mount type=bind,src=/usr,dst=/usr,readonly \
+  --mount type=bind,src=/bin,dst=/bin,readonly \
+  --mount type=bind,src=/lib,dst=/lib,readonly \
+  --mount type=bind,src=/etc/ld.so.cache,dst=/etc/ld.so.cache,readonly \
+  --mount type=bind,src=/etc/alternatives,dst=/etc/alternatives,readonly \
+  --tmpfs /tmp:mode=1777 \
+  --env HOME=/tmp \
+  neat-app:latest
+</ShellCommand>
+
+장치 매핑은 MLA(`/dev/mla`) 및 해당 힙(`/dev/dma_heap/simaai,dms`), CVU(`/dev/cvu`) 및 CMA 힙(`/dev/dma_heap/linux,cma`), 비디오 디코더(`/dev/allegroDecodeIP`) 및 인코더(`/dev/allegroIP`)를 제공합니다. 워크로드에 필요한 장치를 선택하십시오.
+
+Neat는 `/tmp`에 모델 아카이브를 풀기 때문에 해당 경로에 쓸 수 있어야 합니다. `--tmpfs /tmp:mode=1777`은 쓰기 가능한 임시 스토리지를 제공하고 `--env HOME=/tmp`는 애플리케이션에 쓰기 가능한 홈 디렉터리를 제공합니다. 이 임시 스토리지의 파일은 컨테이너와 함께 제거됩니다.
+
+최신 플랫폼에서 Docker 액세스를 설정하면 워크로드는 DevKit 사용자의 UID 및 GID로 실행됩니다. 이 예제에는 애플리케이션의 `sudo`, `--privileged` 또는 보안 제한을 해제하는 옵션이 필요하지 않습니다. Docker 설치 및 호스트 설정을 위한 관리자 액세스는 애플리케이션의 장치 권한과 별개입니다.
+
+DSP 워크로드도 해당 장치 매핑과 호환 런타임 라이브러리가 필요합니다. 컨테이너화 자체가 가속기 사용 가능 여부를 결정하지 않으며, 필요한 설정은 워크로드와 플랫폼 런타임에 따라 달라집니다. 선택한 플랫폼 및 Neat Library 버전에 대한 예제의 사전 요구 사항을 따르십시오.
 
 ## DevKit에 Docker 설치 {#install}
 

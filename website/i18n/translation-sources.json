@@ -98,7 +98,7 @@
     "docs/tools/model-compiler.md": "efe3cfcf3b8f2f4df4eb21a287e2cf29ea8c93330f388c94aea9aa23999543fc",
     "docs/tools/model-zoo.md": "27e099290917960f3b189964697e96d1b616d65ae5eaa6b92eab435a96d18626",
     "docs/getting-started/dev-environment/containerized-apps.md": "96e30ad8ef289cde179643d4b459d635ffce7a2e0f6007f765a378606d4ff467",
-    "docs/reference/devkit-containers.md": "27583a9244fcd5f7131ae6c8cb98861eb44d78dd80a1139d20f14cb877a6b936",
+    "docs/reference/devkit-containers.md": "04626a6ce7940a98f978908199ced1202a8fd5a7f19797fe9f5efe69aecb9b34",
     "docs/tools/model-browser.md": "c1379f8f3b89386e6ab51691de17a2bfdf13e2b93a36926db600f9a7807cf810"
   },
   "ko": {
@@ -200,7 +200,7 @@
     "docs/tools/model-compiler.md": "efe3cfcf3b8f2f4df4eb21a287e2cf29ea8c93330f388c94aea9aa23999543fc",
     "docs/tools/model-zoo.md": "27e099290917960f3b189964697e96d1b616d65ae5eaa6b92eab435a96d18626",
     "docs/getting-started/dev-environment/containerized-apps.md": "96e30ad8ef289cde179643d4b459d635ffce7a2e0f6007f765a378606d4ff467",
-    "docs/reference/devkit-containers.md": "27583a9244fcd5f7131ae6c8cb98861eb44d78dd80a1139d20f14cb877a6b936",
+    "docs/reference/devkit-containers.md": "04626a6ce7940a98f978908199ced1202a8fd5a7f19797fe9f5efe69aecb9b34",
     "docs/tools/model-browser.md": "c1379f8f3b89386e6ab51691de17a2bfdf13e2b93a36926db600f9a7807cf810"
   },
   "uk": {
@@ -302,7 +302,7 @@
     "docs/tools/model-compiler.md": "efe3cfcf3b8f2f4df4eb21a287e2cf29ea8c93330f388c94aea9aa23999543fc",
     "docs/tools/model-zoo.md": "27e099290917960f3b189964697e96d1b616d65ae5eaa6b92eab435a96d18626",
     "docs/getting-started/dev-environment/containerized-apps.md": "96e30ad8ef289cde179643d4b459d635ffce7a2e0f6007f765a378606d4ff467",
-    "docs/reference/devkit-containers.md": "27583a9244fcd5f7131ae6c8cb98861eb44d78dd80a1139d20f14cb877a6b936",
+    "docs/reference/devkit-containers.md": "04626a6ce7940a98f978908199ced1202a8fd5a7f19797fe9f5efe69aecb9b34",
     "docs/tools/model-browser.md": "c1379f8f3b89386e6ab51691de17a2bfdf13e2b93a36926db600f9a7807cf810"
   },
   "zh-Hant": {
@@ -404,7 +404,7 @@
     "docs/tools/model-compiler.md": "efe3cfcf3b8f2f4df4eb21a287e2cf29ea8c93330f388c94aea9aa23999543fc",
     "docs/tools/model-zoo.md": "27e099290917960f3b189964697e96d1b616d65ae5eaa6b92eab435a96d18626",
     "docs/getting-started/dev-environment/containerized-apps.md": "96e30ad8ef289cde179643d4b459d635ffce7a2e0f6007f765a378606d4ff467",
-    "docs/reference/devkit-containers.md": "27583a9244fcd5f7131ae6c8cb98861eb44d78dd80a1139d20f14cb877a6b936",
+    "docs/reference/devkit-containers.md": "04626a6ce7940a98f978908199ced1202a8fd5a7f19797fe9f5efe69aecb9b34",
     "docs/tools/model-browser.md": "c1379f8f3b89386e6ab51691de17a2bfdf13e2b93a36926db600f9a7807cf810"
   }
 }

@@ -11,17 +11,42 @@ sidebar_position: 11
 
 ## 存取加速器 {#accelerators}
 
-Neat 應用程式可以在容器內使用 MLA。容器必須具備：
+Neat 應用程式可以在容器內使用 MLA。核心驅動程式與韌體由 DevKit 提供。容器需要必要裝置的存取權、相容的 Neat Library 與平台執行階段函式庫，以及支援容器平台偵測的 Neat Library 版本。
 
-- 透過 Docker 的 `--device` 選項傳入必要裝置的存取權，例如 `/dev/mla`、`/dev/cvu` 和 `/dev/dma_heap/linux,cma`。
-- 相容的 Neat 函式庫、GStreamer 外掛程式與平台使用者空間函式庫，可封裝於映像檔或從 DevKit 掛載。
-- 相容的 DevKit 平台，以及支援容器平台偵測的 Neat Core 版本。應用程式必須符合執行階段的 ABI。
+重複使用 DevKit 的函式庫時，請使用與 DevKit 上安裝的 Neat Library 相同版本來建置應用程式二進位檔。以下唯讀掛載可提供該安裝、GStreamer 外掛程式、系統函式庫與工具。僅變更基礎映像檔不會提供相容的加速器執行階段。
 
-在已更新的 DevKit 上，請使用 `--user UID:GID`，以 DevKit 使用者的 UID 與 GID 執行工作負載，並確保具備所映射裝置的存取權。設定 Docker 存取權後，存取 MLA 裝置不需要應用程式使用 `sudo` 或 `--privileged`。目前的官方啟動程式也不使用解除安全限制的選項。安裝 Docker 與設定主機所需的管理員權限，與應用程式的裝置權限是不同的。
+### 重複使用 DevKit 的函式庫 {#host-runtime}
 
-核心驅動程式與韌體仍由 DevKit 提供。僅傳入裝置並不會讓任意 Ubuntu 映像檔具備使用加速器的能力。DSP 工作負載需要各自相容的執行階段與裝置設定；本指南未確立任意容器映像檔對 DSP 的支援。
+以下啟動方式使用官方 [Docker 平行應用程式範例](https://github.com/sima-neat/apps/tree/develop/examples/docker/parallel-apps)中的裝置與唯讀掛載。此方式假設 DevKit 上已有包含應用程式二進位檔、設定與模型檔案的 ARM64 映像檔。請將 `neat-app:latest` 替換為該映像檔名稱，並在 DevKit 上執行以下指令：
 
-完整的裝置與函式庫設定請參閱官方的 [Docker 平行應用程式範例](https://github.com/sima-neat/apps/tree/develop/examples/docker/parallel-apps)。請遵循所選範例與平台版本的必要條件。
+<ShellCommand prompt="devkit">
+docker run --rm \
+  --user "$(id -u):$(id -g)" \
+  --network host \
+  --stop-signal SIGINT \
+  --device /dev/mla \
+  --device /dev/cvu \
+  --device /dev/dma_heap/linux,cma \
+  --device /dev/dma_heap/simaai,dms \
+  --device /dev/allegroDecodeIP \
+  --device /dev/allegroIP \
+  --mount type=bind,src=/usr,dst=/usr,readonly \
+  --mount type=bind,src=/bin,dst=/bin,readonly \
+  --mount type=bind,src=/lib,dst=/lib,readonly \
+  --mount type=bind,src=/etc/ld.so.cache,dst=/etc/ld.so.cache,readonly \
+  --mount type=bind,src=/etc/alternatives,dst=/etc/alternatives,readonly \
+  --tmpfs /tmp:mode=1777 \
+  --env HOME=/tmp \
+  neat-app:latest
+</ShellCommand>
+
+裝置映射提供 MLA（`/dev/mla`）及其堆積（`/dev/dma_heap/simaai,dms`）、CVU（`/dev/cvu`）與 CMA 堆積（`/dev/dma_heap/linux,cma`），以及視訊解碼器（`/dev/allegroDecodeIP`）與編碼器（`/dev/allegroIP`）。請選擇工作負載需要的裝置。
+
+Neat 會在 `/tmp` 解壓縮模型封存檔，因此該目錄必須可寫入。`--tmpfs /tmp:mode=1777` 提供可寫入的暫存儲存空間，`--env HOME=/tmp` 則提供可寫入的應用程式家目錄。此暫存空間中的檔案會隨容器移除。
+
+在已更新的平台上設定 Docker 存取權後，工作負載會以 DevKit 使用者的 UID 與 GID 執行。此範例不需要應用程式使用 `sudo`、`--privileged` 或解除安全限制的選項。安裝 Docker 與設定主機所需的管理員權限，與應用程式的裝置權限是不同的。
+
+DSP 工作負載同樣需要對應的裝置映射與相容的執行階段函式庫。容器化本身不決定加速器是否可用；所需設定取決於工作負載與平台執行階段。請遵循所選平台與 Neat Library 版本的範例必要條件。
 
 ## 在 DevKit 上安裝 Docker {#install}
 
