@@ -1,3 +1,4 @@
+#include "pipeline/NeatError.h"
 #include "pipeline/TensorAdapters.h"
 #include "pipeline/internal/TensorTransfer.h"
 #include "pipeline/internal/InputStreamUtil.h"
@@ -504,6 +505,19 @@ int main() {
       require(memory.has_value() &&
                   memory->knownHeapKind() == simaai::scheduler::client::dma::HeapKind::MlaDms,
               "Auto tensor ingress must allocate from the resolved DMS heap");
+
+      input_options.pool_min_buffers = 3;
+      input_options.pool_max_buffers = 2;
+      try {
+        decltype(pool) unused_pool;
+        auto* invalid = simaai::neat::allocate_input_buffer(4096U, input_options, unused_pool);
+        if (invalid)
+          gst_buffer_unref(invalid);
+        throw std::runtime_error("invalid DMA pool limits were accepted");
+      } catch (const simaai::neat::NeatError& error) {
+        require(error.report().error_code == "misconfig.option_out_of_range",
+                "DMA pool range must report an option error");
+      }
     }
 
     auto cpu_storage = simaai::neat::make_cpu_owned_storage(96);
