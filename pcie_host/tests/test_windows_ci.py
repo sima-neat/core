@@ -3696,11 +3696,13 @@ install() {
       with self.assertRaisesRegex(ValueError, "Platform 3.0 card baseline"):
         verify(root, qualification, commit, True)
       value["card_final"]["platform_sha256"] = value["card_baseline"]["platform_sha256"]
-      value["card_baseline"]["platform_release"] = "2.1.3_B4837"
-      value["card_final"]["platform_release"] = "2.1.3_B4837"
-      qualification.write_text(json.dumps(value), encoding="utf-8")
-      with self.assertRaisesRegex(ValueError, "Platform 3.0 card baseline"):
-        verify(root, qualification, commit, True)
+      for release in ("2.1.3_B4837", "2.3.0_B1", "1.3.0"):
+        value["card_baseline"]["platform_release"] = release
+        value["card_final"]["platform_release"] = release
+        qualification.write_text(json.dumps(value), encoding="utf-8")
+        with self.subTest(release=release), self.assertRaisesRegex(
+            ValueError, "Platform 3.0 card baseline"):
+          verify(root, qualification, commit, True)
 
   def test_release_gate_requires_a_stable_card_network_adapter(self):
     with tempfile.TemporaryDirectory() as directory:
@@ -3864,16 +3866,17 @@ install() {
       self.assertEqual(active["worker_sha256"], "3" * 64)
       self.assertEqual(active["genai_worker_sha256"], "4" * 64)
 
-      def write_old_snapshot(command, log, **kwargs):
-        write_snapshot(command, log, **kwargs)
-        text = log.read_text(encoding="utf-8").replace(
-            "3.0.0_master_B2501", "2.1.3_B4837")
-        log.write_text(text, encoding="utf-8")
+      for release in ("2.1.3_B4837", "2.3.0_B1", "1.3.0"):
 
-      with mock.patch(
-          "qualify_windows_hardware.run_logged", side_effect=write_old_snapshot):
-        with self.assertRaisesRegex(RuntimeError, "not running Modalix Platform 3.0"):
-          card_snapshot(args, root, "old-platform")
+        def write_old_snapshot(command, log, **kwargs):
+          write_snapshot(command, log, **kwargs)
+          text = log.read_text(encoding="utf-8").replace("3.0.0_master_B2501", release)
+          log.write_text(text, encoding="utf-8")
+
+        with self.subTest(release=release), mock.patch(
+            "qualify_windows_hardware.run_logged", side_effect=write_old_snapshot):
+          with self.assertRaisesRegex(RuntimeError, "not running Modalix Platform 3.0"):
+            card_snapshot(args, root, "old-platform")
 
   def test_hardware_path_fixtures_use_a_directory_with_spaces(self):
     with tempfile.TemporaryDirectory() as directory:

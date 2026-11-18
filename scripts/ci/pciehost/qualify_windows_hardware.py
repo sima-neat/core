@@ -1862,7 +1862,7 @@ def card_snapshot(args: argparse.Namespace, evidence: Path, label: str, *,
     raise RuntimeError(f"card {label} snapshot is incomplete; see {log}")
   if values["machine"] != "aarch64":
     raise RuntimeError(f"card has unexpected architecture: {values['machine']}")
-  if not re.search(r"(?:^|[_ .-])3[.]0(?:[._-]|$)", values["platform_release"]):
+  if not re.search(r"(?:^|[_ -])3[.]0(?:[._-]|$)", values["platform_release"]):
     raise RuntimeError(
         f"card is not running Modalix Platform 3.0: {values['platform_release']}")
   if (runtime_path and values["runtime_sha256"].lower()

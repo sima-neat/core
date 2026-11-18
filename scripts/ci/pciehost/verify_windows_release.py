@@ -304,7 +304,7 @@ def verify(candidate_dir: Path, qualification_path: Path, expected_commit: str,
       or any(baseline_card[name] != final_card[name] for name in card_identity)
       or baseline_card.get("machine") != "aarch64"
       or not re.search(
-          r"(?:^|[_ .-])3[.]0(?:[._-]|$)", str(baseline_card.get("platform_release", "")))
+          r"(?:^|[_ -])3[.]0(?:[._-]|$)", str(baseline_card.get("platform_release", "")))
       or final_card.get("workers") != "0" or final_card.get("genai_workers") != "0"):
     raise ValueError("hardware qualification did not preserve its Platform 3.0 card baseline")
   card_candidate = qualification.get("card_candidate")
