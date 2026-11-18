@@ -16,6 +16,7 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <initializer_list>
 #include <iostream>
 #include <stdexcept>
 #include <string>
@@ -204,6 +205,341 @@ void request_text_completion(int port) {
   require(trim_text(text) == kExpectedText, "server text completion returned unexpected text");
 }
 
+// For requests the server must reject: checks the status and returns the error object,
+// putting the status and body in the message when either is not what was expected.
+Json parse_error_response(const httplib::Result& result, int expected_status,
+                          const std::string& label) {
+  require(static_cast<bool>(result),
+          label + ": request failed" + (result ? "" : ": " + httplib::to_string(result.error())));
+  const std::string seen = "HTTP " + std::to_string(result->status) + ": " + result->body;
+  require(result->status == expected_status,
+          label + ": expected HTTP " + std::to_string(expected_status) + ", got " + seen);
+  const Json body = Json::parse(result->body, nullptr, false);
+  require(!body.is_discarded() && body.contains("error") && body.at("error").is_object(),
+          label + ": expected an error object, got " + seen);
+  return body.at("error");
+}
+
+Json post_chat(int port, const Json& request, const std::string& label) {
+  auto client = make_client(port);
+  return parse_response(client.Post("/v1/chat/completions", request.dump(), "application/json"),
+                        "POST /v1/chat/completions " + label);
+}
+
+// The fields of an OpenAI chat completion that clients read before the generated text.
+void require_chat_completion_shape(const Json& body, const std::string& label) {
+  require(body.at("object") == "chat.completion", label + ": object should be chat.completion");
+  require(body.at("model") == "llm", label + ": model should echo the requested model");
+  require(body.at("id").is_string() && !body.at("id").get<std::string>().empty(),
+          label + ": id should be a non-empty string");
+  require(body.at("created").is_number_integer(), label + ": created should be an integer");
+  const Json& choice = body.at("choices").at(0);
+  require(choice.at("index") == 0, label + ": first choice should have index 0");
+  require(choice.at("message").at("role") == "assistant",
+          label + ": message role should be assistant");
+  require(choice.at("finish_reason").is_string(), label + ": finish_reason should be a string");
+}
+
+const Json& weather_and_time_tools() {
+  static const Json tools = Json::array({
+      {{"type", "function"},
+       {"function",
+        {{"name", "get_time"},
+         {"description", "Get the current local time for a city"},
+         {"parameters",
+          {{"type", "object"},
+           {"properties", {{"city", {{"type", "string"}}}}},
+           {"required", Json::array({"city"})}}}}}},
+      {{"type", "function"},
+       {"function",
+        {{"name", "get_weather"},
+         {"description", "Get the current weather for a city"},
+         {"parameters",
+          {{"type", "object"},
+           {"properties",
+            {{"city", {{"type", "string"}}},
+             {"unit", {{"type", "string"}, {"enum", Json::array({"celsius", "fahrenheit"})}}}}},
+           {"required", Json::array({"city"})}}}}}},
+  });
+  return tools;
+}
+
+const Json* find_tool(const Json& tools, const std::string& name) {
+  for (const Json& tool : tools) {
+    if (tool.at("function").at("name") == name) {
+      return &tool;
+    }
+  }
+  return nullptr;
+}
+
+bool is_one_of(const Json& value, std::initializer_list<const char*> allowed) {
+  for (const char* candidate : allowed) {
+    if (value == candidate) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// Which tool the model calls, if any, is up to the model. What the server guarantees is a
+// consistent answer, checked here against the paths that build it:
+// - chat_message_response sends content null with tool calls, and the text otherwise;
+// - VisionLanguageModel sets finish_reason to tool_calls or stop, and length takes
+//   precedence when the token limit is reached;
+// - llima's try_parse_tool_calls keeps only declared tool names and object arguments,
+//   and the server passes its id, type and arguments string through unchanged.
+// A malformed call the parser can't read comes back as text and passes here; that path
+// needs a fixed-output parser test in llima.
+void require_tool_calls_or_text(const Json& choice, const Json& tools, const std::string& label) {
+  const Json& message = choice.at("message");
+  const bool has_calls = message.contains("tool_calls") && !message.at("tool_calls").empty();
+  if (!has_calls) {
+    require(is_one_of(choice.at("finish_reason"), {"stop", "length"}),
+            label + ": without tool calls finish_reason should be stop or length");
+    require(message.at("content").is_string(),
+            label + ": without tool calls content should be a string");
+    return;
+  }
+  require(is_one_of(choice.at("finish_reason"), {"tool_calls", "length"}),
+          label + ": with tool calls finish_reason should be tool_calls or length");
+  require(message.at("content").is_null(), label + ": with tool calls content should be null");
+  for (const Json& call : message.at("tool_calls")) {
+    require(call.at("type") == "function", label + ": tool call type should be function");
+    require(call.at("id").is_string() && !call.at("id").get<std::string>().empty(),
+            label + ": tool call id should be a non-empty string");
+    const std::string name = call.at("function").at("name").get<std::string>();
+    require(find_tool(tools, name) != nullptr,
+            label + ": tool call names an undeclared tool: " + name);
+    // OpenAI sends the arguments as a JSON string, not as an object.
+    require(call.at("function").at("arguments").is_string(),
+            label + ": tool call arguments should be a JSON string");
+    const Json arguments =
+        Json::parse(call.at("function").at("arguments").get<std::string>(), nullptr, false);
+    require(arguments.is_object(), label + ": tool call arguments should parse to an object");
+  }
+}
+
+// Integration scenario pinned to the CI text model (kDefaultTextModelName). The server
+// ignores sampling parameters and llima decodes greedily, so the answer is stable for a
+// given model and llima build: the weather question must come back as get_weather for Paris.
+// get_weather is declared second, so a server that kept only the first tool would fail. The
+// consistency checks below accept a text answer, so without this one a server that stopped
+// passing tools to the model, or a parser that stopped reading calls, would still pass.
+// Revisit the expectation when the CI text model or llima's decoding changes. main() runs
+// this only when the default text model is selected.
+void request_pinned_weather_tool_call(int port) {
+  const std::string label = "pinned weather tool call";
+  const Json body = post_chat(
+      port,
+      {{"model", "llm"},
+       {"stream", false},
+       {"max_tokens", 96},
+       {"tools", weather_and_time_tools()},
+       {"messages",
+        Json::array({{{"role", "user"}, {"content", "What's the weather in Paris in celsius?"}}})}},
+      label);
+  require_chat_completion_shape(body, label);
+  const Json& choice = body.at("choices").at(0);
+  std::cout << "GENAI_SERVER_PINNED_TOOL_CALL message=" << choice.at("message").dump() << "\n";
+  require_tool_calls_or_text(choice, weather_and_time_tools(), label);
+  const Json& message = choice.at("message");
+  require(message.contains("tool_calls") && !message.at("tool_calls").empty(),
+          label + ": the CI model should answer with a tool call");
+  bool called_weather_for_paris = false;
+  for (const Json& call : message.at("tool_calls")) {
+    if (call.at("function").at("name") != "get_weather") {
+      continue;
+    }
+    const Json arguments =
+        Json::parse(call.at("function").at("arguments").get<std::string>(), nullptr, false);
+    require(arguments.is_object() && arguments.contains("city") && arguments.at("city").is_string(),
+            label + ": get_weather should have a string city argument, got " + call.dump());
+    std::string city = arguments.at("city").get<std::string>();
+    for (char& ch : city) {
+      ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+    }
+    called_weather_for_paris = called_weather_for_paris || city == "paris";
+  }
+  require(called_weather_for_paris, label +
+                                        ": the CI model should call get_weather for Paris, got " +
+                                        message.at("tool_calls").dump());
+}
+
+void request_with_tools(int port) {
+  // A time question and a question that needs no tool; the weather question is the pinned
+  // scenario above. The model may or may not call a tool for each; every answer must be
+  // consistent with the declared tools.
+  for (const char* question :
+       {"What time is it in Paris right now?", "Say hello in French, one word."}) {
+    const std::string label = std::string("tools: ") + question;
+    const Json body =
+        post_chat(port,
+                  {{"model", "llm"},
+                   {"stream", false},
+                   {"max_tokens", 96},
+                   {"tools", weather_and_time_tools()},
+                   {"messages", Json::array({{{"role", "user"}, {"content", question}}})}},
+                  label);
+    require_chat_completion_shape(body, label);
+    const Json& choice = body.at("choices").at(0);
+    std::cout << "GENAI_SERVER_TOOLS question=" << question
+              << " finish_reason=" << choice.at("finish_reason").get<std::string>()
+              << " message=" << choice.at("message").dump() << "\n";
+    require_tool_calls_or_text(choice, weather_and_time_tools(), label);
+  }
+}
+
+void request_tool_choice_none(int port) {
+  // With tool_choice "none" the server does not parse tool calls (tool_calls_enabled is
+  // false), so the answer can't contain any. This does not show whether the tool
+  // descriptions reached the model.
+  const std::string label = "tool_choice none";
+  const Json body = post_chat(
+      port,
+      {{"model", "llm"},
+       {"stream", false},
+       {"max_tokens", 96},
+       {"tools", weather_and_time_tools()},
+       {"tool_choice", "none"},
+       {"messages",
+        Json::array({{{"role", "user"}, {"content", "What's the weather in Paris in celsius?"}}})}},
+      label);
+  require_chat_completion_shape(body, label);
+  const Json& choice = body.at("choices").at(0);
+  require(!choice.at("message").contains("tool_calls"),
+          label + ": the answer should not contain tool calls");
+  require(choice.at("message").at("content").is_string(), label + ": content should be a string");
+  require(is_one_of(choice.at("finish_reason"), {"stop", "length"}),
+          label + ": finish_reason should be stop or length");
+}
+
+void reject_invalid_tool_options(int port) {
+  // apply_tool_options validates these before generation and answers 400.
+  const std::vector<std::pair<Json, std::string>> requests = {
+      {{{"model", "llm"},
+        {"messages", Json::array({{{"role", "user"}, {"content", "Hello"}}})},
+        {"tools", "get_weather"}},
+       "tools must be an array"},
+      {{{"model", "llm"},
+        {"messages", Json::array({{{"role", "user"}, {"content", "Hello"}}})},
+        {"tools", weather_and_time_tools()},
+        {"tool_choice", "required"}},
+       "Only tool_choice 'auto' or 'none' is supported"},
+  };
+  for (const auto& [request, expected_message] : requests) {
+    const std::string label = "invalid tool options (" + expected_message + ")";
+    auto client = make_client(port);
+    const Json error = parse_error_response(
+        client.Post("/v1/chat/completions", request.dump(), "application/json"), 400, label);
+    require(error.value("type", Json()) == "invalid_request_error",
+            label + ": error type should be invalid_request_error, got " + error.dump());
+    require(error.value("message", Json()) == expected_message,
+            label + ": unexpected error message, got " + error.dump());
+  }
+}
+
+void request_multi_turn(int port) {
+  // The server must accept a history with an assistant turn and answer it like any request.
+  // This checks that the request is accepted and answered, not what the model remembers.
+  // The non-empty answer depends on the model; the server does not guarantee it.
+  const Json body = post_chat(
+      port,
+      {{"model", "llm"},
+       {"stream", false},
+       {"max_tokens", 96},
+       {"messages", Json::array({{{"role", "user"}, {"content", "My name is Alice. Remember it."}},
+                                 {{"role", "assistant"}, {"content", "Got it, Alice."}},
+                                 {{"role", "user"},
+                                  {"content", "What is my name? Reply with the name only."}}})}},
+      "multi-turn");
+  require_chat_completion_shape(body, "multi-turn");
+  const std::string text = body.at("choices").at(0).at("message").at("content").get<std::string>();
+  std::cout << "GENAI_SERVER_MULTI_TURN text=" << text << "\n";
+  require(!trim_text(text).empty(), "multi-turn: expected a text answer");
+}
+
+void reject_unknown_model(int port) {
+  auto client = make_client(port);
+  const Json request = {{"model", "no-such-model"},
+                        {"messages", Json::array({{{"role", "user"}, {"content", "Hello"}}})}};
+  const Json error =
+      parse_error_response(client.Post("/v1/chat/completions", request.dump(), "application/json"),
+                           404, "unknown model");
+  require(error.value("type", Json()) == "invalid_request_error",
+          "unknown model: error type should be invalid_request_error, got " + error.dump());
+  require(error.value("message", Json()).is_string(),
+          "unknown model: error message should be a string, got " + error.dump());
+  require_contains(error.at("message").get<std::string>(), "no-such-model",
+                   "unknown model: error message should name the model");
+}
+
+void request_streamed_chunks(int port) {
+  auto client = make_client(port);
+  const Json request = {
+      {"model", "llm"},
+      {"stream", true},
+      {"max_tokens", 8},
+      {"messages",
+       Json::array({{{"role", "user"}, {"content", "What is the capital of Germany?"}}})}};
+  const auto response = client.Post("/v1/chat/completions", request.dump(), "application/json");
+  require(static_cast<bool>(response),
+          "streamed chat completion request failed: " + httplib::to_string(response.error()));
+  require(response->status == 200, "streamed chat completion returned HTTP " +
+                                       std::to_string(response->status) + ": " + response->body);
+  std::vector<Json> chunks;
+  bool done = false;
+  std::size_t start = 0;
+  const std::string& body = response->body;
+  while (start < body.size()) {
+    std::size_t end = body.find('\n', start);
+    if (end == std::string::npos) {
+      end = body.size();
+    }
+    const std::string line = trim_text(body.substr(start, end - start));
+    start = end + 1;
+    if (line.rfind("data:", 0) != 0) {
+      continue;
+    }
+    const std::string payload = trim_text(line.substr(5));
+    if (payload == "[DONE]") {
+      done = true;
+      break;
+    }
+    Json chunk = Json::parse(payload, nullptr, false);
+    require(!chunk.is_discarded(), "stream chunk is not valid JSON: " + payload);
+    // A generation error arrives as its own chunk under HTTP 200.
+    require(!chunk.contains("error"), "stream returned an error chunk: " + payload);
+    chunks.push_back(std::move(chunk));
+  }
+  require(done, "stream should end with data: [DONE]");
+  require(!chunks.empty(), "stream should send at least one chunk before [DONE]");
+  const std::string id = chunks.front().at("id").get<std::string>();
+  std::string streamed_text;
+  for (std::size_t i = 0; i < chunks.size(); ++i) {
+    const Json& chunk = chunks.at(i);
+    require(chunk.at("object") == "chat.completion.chunk",
+            "stream chunks should have object chat.completion.chunk");
+    require(chunk.at("id") == id, "every chunk of one stream should carry the same id");
+    // chat_chunk sets finish_reason null on content chunks and only the final chunk ends it.
+    const Json& finish_reason = chunk.at("choices").at(0).at("finish_reason");
+    const Json& delta = chunk.at("choices").at(0).value("delta", Json::object());
+    if (delta.contains("content") && delta.at("content").is_string()) {
+      streamed_text += delta.at("content").get<std::string>();
+    }
+    if (i + 1 < chunks.size()) {
+      require(finish_reason.is_null(), "only the last stream chunk should carry finish_reason");
+    } else {
+      require(is_one_of(finish_reason, {"stop", "length"}),
+              "the last stream chunk should finish with stop or length");
+    }
+  }
+  std::cout << "GENAI_SERVER_STREAM text=" << streamed_text << "\n";
+  // Non-empty text depends on the model; the server only forwards what the model emits.
+  require(!trim_text(streamed_text).empty(),
+          "the stream should carry generated text, got body: " + body);
+}
+
 void check_context_limits(int port, const fs::path& model_dir) {
   const auto config = Json::parse(read_file(model_dir / "devkit/vlm_config.json"));
   const auto window = config.at("pipeline_cfg").at("max_num_tokens").get<std::size_t>();
@@ -372,8 +708,23 @@ int main(int argc, char** argv) {
 
     require_model_list_contains(port);
     reject_unsupported_thinking(port);
+    reject_unknown_model(port);
+    reject_invalid_tool_options(port);
     validate_lora_requests(port);
     request_text_completion(port);
+    request_streamed_chunks(port);
+    // The pinned scenario expects the answer of the default text model. With another model
+    // selected through SIMA_TEST_LLIMA_TEXT_MODEL the scenario is not run; the remaining new
+    // checks need only a model that answers with text.
+    if (text_model_dir.filename() == simaai::neat::test::kDefaultTextModelName) {
+      request_pinned_weather_tool_call(port);
+    } else {
+      std::cout << "GENAI_SERVER_PINNED_TOOL_CALL not run: text model "
+                << text_model_dir.filename().string() << " is not the default\n";
+    }
+    request_with_tools(port);
+    request_tool_choice_none(port);
+    request_multi_turn(port);
     check_context_limits(port, text_model_dir);
     request_image_completion(port, image_path);
     request_audio(port, audio_path, "/v1/audio/transcriptions", "transcribe", kExpectedAsrText,
