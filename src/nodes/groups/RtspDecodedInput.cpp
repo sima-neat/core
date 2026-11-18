@@ -1,4 +1,5 @@
 #include "nodes/groups/RtspDecodedInput.h"
+#include "contracts/ConfigurationError.h"
 
 #include "nodes/common/Caps.h"
 #include "nodes/common/VideoConvert.h"
@@ -119,7 +120,8 @@ simaai::neat::Graph RtspDecodedInput(const RtspDecodedInputOptions& opt) {
   const int mjpeg_dec_h = mjpeg_dec_height(opt);
   if (opt.codec == RtspCodec::H264 && opt.decoder_raw_output && !use_auto_caps &&
       (h264_dec_w <= 0 || h264_dec_h <= 0 || source_fps <= 0)) {
-    throw std::runtime_error("RtspDecodedInput: decoder_raw_output requires h264 width/height/fps");
+    contracts::throw_invalid_caps(
+        "RtspDecodedInput: decoder_raw_output requires h264 width/height/fps");
   }
 
   simaai::neat::SimaDecodeOptions dec;

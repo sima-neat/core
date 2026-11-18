@@ -1316,6 +1316,54 @@ def _yolo_model_with_boxdecode():
   return pyneat.Model(str(_strict_yolo_model_path()), opt)
 
 
+@pytest.mark.parametrize("field,value,reason", [
+    ("model_managed_contract", True, "q_scale and q_zp"),
+    ("num_buffers_locked", True, "num_buffers must be"),
+    ("single_output_handoff", False, "single_output_handoff"),
+])
+def test_invalid_preproc_contract_has_error_code(field, value, reason):
+  options = pyneat.PreprocOptions()
+  options.tessellate = False
+  options.input_img_type = "RGB"
+  options.output_dtype = "EVXX_INT8"
+  options.input_shape, options.output_shape = [480, 640, 3], [640, 640, 3]
+  options.scaled_width = options.scaled_height = 640
+  setattr(options, field, value)
+  frame = pyneat.Tensor.from_numpy(np.zeros((480, 640, 3), dtype=np.uint8), copy=True,
+                                   image_format=pyneat.PixelFormat.RGB, memory=pyneat.TensorMemory.EV74)
+  with pytest.raises(pyneat.NeatError, match=reason) as error:
+    graph = pyneat.Graph()
+    graph.add(pyneat.nodes.input("in"))
+    graph.add(pyneat.nodes.preproc(options))
+    graph.add(pyneat.nodes.output("out"))
+    graph.build([frame])
+  assert error.value.error_code == "misconfig.option_out_of_range"
+
+
+def test_incompatible_decoder_is_rejected_at_model_load():
+  options = pyneat.ModelOptions()
+  options.decode_type = pyneat.BoxDecodeType.Detr
+  with pytest.raises(pyneat.NeatError) as error:
+    pyneat.Model(str(_strict_yolo_model_path()), options)
+  assert error.value.error_code == "misconfig.pipeline_shape"
+
+
+@pytest.mark.parametrize("decoded,raw", [(False, False), (True, False), (True, True)])
+def test_missing_explicit_rtsp_caps_has_error_code(decoded, raw):
+  if decoded:
+    options = pyneat.RtspDecodedInputOptions()
+    options.decoder_raw_output = raw
+    factory = pyneat.groups.rtsp_decoded_input
+  else:
+    options = pyneat.RtspEncodedInputOptions()
+    factory = pyneat.groups.rtsp_encoded_input
+  options.url = "rtsp://127.0.0.1/stream"
+  options.auto_caps_from_stream = False
+  with pytest.raises(pyneat.NeatError) as error:
+    factory(options)
+  assert error.value.error_code == "misconfig.caps"
+
+
 def test_graph_describe_backend_includes_preproc_stage():
   model = _resnet_model_with_preproc()
   pre = pyneat.PreprocOptions(model)

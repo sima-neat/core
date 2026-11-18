@@ -4278,7 +4278,8 @@ internal::PreprocessPlannerResult build_preprocess_plan(const std::string& tar_g
         internal::build_route_plan(raw, model_semantics, &capability, &capability_pack);
     if (raw_plan.boxdecode_selected || !raw_plan.include_post_stage ||
         raw_plan.selected_post_kind == internal::PostRouteStageKind::BoxDecode)
-      throw std::runtime_error(
+      throw_model_error(
+          error_codes::kPipelineShape,
           "BoxDecodeType::EdgeTamTrack: this model's route without BoxDecode does not return its "
           "output tensors through a postprocess stage, so there are no raw outputs to return "
           "next to the BoxDecode tensor; use EdgeTamSeg for the mask alone");
@@ -4519,6 +4520,7 @@ struct Model::Impl {
   internal::PreprocessPlannerResult preprocess_plan;
   internal::ModelPack pack;
   mutable std::optional<internal::ModelPack> sync_pack;
+  std::optional<CompiledBoxDecodeContract> boxdecode_contract;
   std::string model_id;
   std::string stage_cache_identity;
 
@@ -4763,6 +4765,19 @@ Model::Model(const std::string& model_path) : Model(model_path, Options{}) {}
 
 Model::Model(const std::string& model_path, const Options& opt) {
   impl_ = std::make_unique<Impl>(model_path, opt);
+  if (opt.decode_type != BoxDecodeType::Unspecified &&
+      impl_->preprocess_plan.session_route_plan.boxdecode_selected) {
+    try {
+      impl_->boxdecode_contract =
+          internal::ModelAccess::build_boxdecode_stage_contract(*this, false);
+    } catch (const NeatError&) {
+      throw;
+    } catch (const std::invalid_argument& error) {
+      throw_model_error(error_codes::kPipelineShape, error.what());
+    } catch (const std::runtime_error& error) {
+      throw_model_error(error_codes::kPipelineShape, error.what());
+    }
+  }
 }
 
 Model::Model(Model&&) noexcept = default;
@@ -8360,6 +8375,8 @@ CompiledBoxDecodeContract finish_model_boxdecode_contract(CompiledBoxDecodeContr
 
 CompiledBoxDecodeContract ModelAccess::build_boxdecode_stage_contract(const Model& model,
                                                                       bool sync) {
+  if (!sync && model.impl_->boxdecode_contract)
+    return *model.impl_->boxdecode_contract;
   require_model_managed_stage(model, StageNodeKind::BoxDecode, "SimaBoxDecode(Model)");
   const auto& pack = sync ? model.impl_->pack_for_sync() : model.impl_->pack;
   const auto& opt = model.impl_->options;

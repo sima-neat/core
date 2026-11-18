@@ -1,4 +1,5 @@
 #include "nodes/sima/Preproc.h"
+#include "contracts/ConfigurationError.h"
 #include "nodes/sima/internal/ImageTransformPolicy.h"
 #include "nodes/sima/internal/ResizeInterpolation.h"
 
@@ -132,7 +133,7 @@ void require_supported_single_output_handoff(const PreprocOptions& opt) {
   if (opt.single_output_handoff) {
     return;
   }
-  throw std::runtime_error(
+  contracts::throw_invalid_option(
       "Preproc dual-output contract is currently unsupported; use single_output_handoff=true.");
 }
 
@@ -141,8 +142,8 @@ void require_quantized_output_params(const PreprocOptions& opt, const char* wher
     return;
   }
   if (!opt.q_scale.has_value() || !opt.q_zp.has_value()) {
-    throw std::runtime_error(std::string("Preproc: ") + (where ? where : "strict contract") +
-                             " requires explicit q_scale and q_zp for quantized output.");
+    contracts::throw_invalid_option(std::string("Preproc: ") + (where ? where : "strict contract") +
+                                    " requires explicit q_scale and q_zp for quantized output.");
   }
 }
 
@@ -478,10 +479,11 @@ json build_preproc_json(const PreprocOptions& opt) {
 Preproc::Preproc(PreprocOptions opt) : opt_(std::move(opt)) {
   if (opt_.num_buffers_locked) {
     if (opt_.num_buffers != opt_.num_buffers_model) {
-      throw std::runtime_error("Preproc: num_buffers override is not allowed; must match model.");
+      contracts::throw_invalid_option(
+          "Preproc: num_buffers override is not allowed; must match model.");
     }
     if (opt_.num_buffers != 4 && opt_.num_buffers != 1) {
-      throw std::runtime_error(
+      contracts::throw_invalid_option(
           "Preproc: num_buffers must be 4 (async) or 1 (sync) for model pipelines.");
     }
   }
