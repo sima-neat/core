@@ -228,10 +228,15 @@ def test_graph_ambiguous_default_diagnostic_python():
 
 @pytest.mark.parametrize("shape,axes", [((1, 8, 8, 4), "NHWC"), ((8, 8, 4), "HWC"),
                                        ((1, 8, 8, 4), "")])
-def test_standalone_dequant_from_graph_input(shape, axes):
+@pytest.mark.parametrize("with_quant_metadata", [False, True])
+def test_standalone_dequant_from_graph_input(shape, axes, with_quant_metadata):
     _require_phase3_runtime()
     values = np.arange(np.prod(shape), dtype=np.int8).reshape(shape)
     tensor = pyneat.Tensor.from_numpy(values, copy=True, memory=pyneat.TensorMemory.EV74)
+    if with_quant_metadata:
+        quant = pyneat.QuantSpec()
+        quant.scale, quant.zero_point = 0.05, 3
+        tensor.semantic.quant = quant
     if axes:
         tensor.axis_semantics = [getattr(pyneat.TensorAxisSemantic, axis) for axis in axes]
     options = pyneat.DequantOptions()

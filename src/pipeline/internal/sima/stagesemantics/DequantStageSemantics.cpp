@@ -345,6 +345,10 @@ compile_standalone_dequant(const ContractCompileInput& input, const DequantCanon
     if (!specbuilders::build_dense_ingress_runtime_contract(*input.ingress.ingress_sample, &ingress,
                                                             error))
       return std::nullopt;
+    // Standalone options use a quantization multiplier, while Tensor metadata carries
+    // the real-value scale. Preserve the node's explicit scale and zero point.
+    for (auto& output : ingress.logical_outputs)
+      output.quant = facts.input_quant;
     upstream = &ingress;
   }
   if (!upstream || upstream->logical_outputs.empty())
