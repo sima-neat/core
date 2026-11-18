@@ -152,6 +152,13 @@ RUN_TEST(
         return nlohmann::json::parse(read_text(linear_path)).at("nodes").at(0).at("input_options");
       };
       const auto original_input = saved_input();
+      for (const char* key : {"roi_source_width", "enabled", "axis_perm", "rois"}) {
+        auto invalid = nlohmann::json::parse(read_text(linear_path));
+        invalid["nodes"][0]["input_options"]["preprocess_meta"][key] = "invalid";
+        const auto path = tmp_json_path("invalid_preproc_geometry.json");
+        write_text(path, invalid.dump());
+        require_neat_error([&] { (void)Graph::load(path); }, error_codes::kIoParse, key);
+      }
       const auto& meta = original_input.at("preprocess_meta");
       require(original_input.at("max_bytes") == stream_input.max_bytes &&
                   meta.at("enabled") == true && meta.at("target_width") == 320 &&
