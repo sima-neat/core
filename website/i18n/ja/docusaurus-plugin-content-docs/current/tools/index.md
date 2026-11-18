@@ -5,7 +5,7 @@ sidebar_position: 0
 
 # ツール
 
-Neat と併用する SiMa.ai ツールには、`sima-cli` コマンドライン、Insight、Sentinel、Model Zoo があります。SDK のセットアップについては、[Palette SDK](/getting-started/dev-environment/)を参照してください。
+Neat と併用する SiMa.ai ツールには、`sima-cli` コマンドライン、Model Browser、Insight、Sentinel があります。SDK のセットアップについては、[Palette SDK](/getting-started/dev-environment/)を参照してください。
 
 これらのツールを使用して、ソフトウェアのインストール、モデルアーティファクトの取得、アプリケーション動作の確認、および一般的な DevKit ワークフローの管理を行います。
 
@@ -15,7 +15,8 @@ Neat と併用する SiMa.ai ツールには、`sima-cli` コマンドライン�
     <p>ソフトウェアをインストールし、モデルアーティファクトを取得し、アプリケーションの動作を確認し、一般的な DevKit ワークフローを管理します。</p>
     <ul class="overview-link-list">
       <li><a class="overview-link-card" href="/tools/sima-cli/"><strong>sima-cli</strong><span>パッケージのインストールと更新、SDK 環境の管理、モデルアーティファクトへのアクセス、および DevKit の操作を行います。</span></a></li>
-      <li><a class="overview-link-card" href="/tools/model-zoo/"><strong>Model Zoo</strong><span>Neat および GenAI ワークフロー向けのコンパイル済み・量子化済みモデルアーティファクトを使用します。</span></a></li>
+      <li><a class="overview-link-card" href="/tools/model-browser/"><strong>Model Browser</strong><span>Modalix 向けにコンパイルおよび測定されたモデルを検索、比較、ダウンロード、再現します。</span></a></li>
+      <li><a class="overview-link-card" href="/tools/model-zoo/"><strong>Model Zoo</strong><span>非推奨です。Model Browser を使用してください。</span></a></li>
       <li><a class="overview-link-card" href="/tools/insight/"><strong>Insight</strong><span>ブラウザから、作業スペースのファイル、メディアソース、ストリーム配信、およびアプリケーションの出力を確認します。</span></a></li>
       <li><a class="overview-link-card" href="/tools/sentinel/"><strong>Sentinel</strong><span>DevKit の電力、温度、CPU、メモリ、ストレージ、およびネットワークの動作状況を監視し、ワークロードの実行結果を記録して比較します。</span></a></li>
     </ul>

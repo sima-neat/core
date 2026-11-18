@@ -5,6 +5,10 @@ sidebar_position: 5
 
 # Model Zoo
 
+:::warning 非推奨
+Model Zoo は非推奨です。Modalix 向けのモデルの検索、比較、ダウンロードには [Model Browser](/tools/model-browser/) を使用してください。
+:::
+
 Model Zoo は、事前にコンパイルおよび量子化されたモデルをまとめたコレクションであり、SiMa デバイスで実行可能な状態になっています。
 
 次のような場合に利用してください。

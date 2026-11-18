@@ -7,23 +7,51 @@ sidebar_position: 3
 
 Release notes for the SiMa.ai Neat Library.
 
-## 0.6.1 (unreleased) {#v061}
+## 0.6.2 {#v062}
 
-### Breaking changes {#v061-breaking}
+### Breaking changes {#v062-breaking}
 
-- The Neat Library C++ ABI is now 9 (`libsima_neat.so.9`). `ResizeOptions`, `ResizeSpec`, `PreprocessOptions`, `PreprocOptions`, `NormalizationOptions` and `Model::Options` gained fields. Rebuild C++ applications, plugins and Python bindings with matching headers and runtime packages; do not reuse ABI 6 binaries or add compatibility symlinks.
+- The Neat Library C++ ABI is now 7 (`libsima_neat.so.7`). `ResizeOptions`, `ResizeSpec`, `PreprocessOptions`, `PreprocOptions`, `NormalizationOptions` and `Model::Options` gained fields. Rebuild C++ applications, plugins and Python bindings with matching headers and runtime packages; do not reuse ABI 6 binaries (0.6.0 and 0.6.1) or add compatibility symlinks.
 
-### Semantic segmentation {#v061-segmentation}
+### Semantic segmentation {#v062-segmentation}
 
 - New `ResizeArgMax` node and `Model::Options::semantic_segmentation` option decode segmentation scores on the EV74. The decode bilinearly resizes per-class scores to the chosen size and returns the first class with the largest score, matching SegFormer's `interpolate` and `argmax` postprocessing. It reads padded MLA outputs in place and compares INT8 scores without dequantization. The model then returns the class map instead of the scores. Requires EV74 firmware that includes the operation. See [Semantic segmentation decode](/reference/semantic_segmentation_decode).
 
-### Preprocessing {#v061-preproc}
+### Segment Anything masks {#v062-segment-anything}
 
-- Center crop now accepts an optional `preprocess.resize.shorter_side` before the final MPK-sized crop. Cropping retains full-resize sampling support and publishes its inverse transform. Rebuild against ABI 9 and the matching kernel firmware; do not mix earlier binaries.
+- New `BoxDecodeType` values decode MobileSAM, EdgeTAM, EfficientSAM and EfficientSAM3 into masks at the original image size. `EdgeTamSeg` returns the mask, and `EdgeTamTrack` also returns the decoder's raw outputs for tracking. See [Segment Anything masks](/reference/boxdecode_decode_types#segment-anything-masks).
+
+### Preprocessing {#v062-preproc}
+
+- Center crop now accepts an optional `preprocess.resize.shorter_side` before the final MPK-sized crop. Cropping retains full-resize sampling support and publishes its inverse transform. Rebuild against ABI 7 and the matching kernel firmware; do not mix earlier binaries.
+
+- `preprocess.resize.placement = LetterboxPlacement.TopLeft` places a letterboxed image at the canvas origin with all padding on the right and bottom, as MobileSAM expects. Detection BoxDecode profiles map boxes through the published affine; pose, segmentation and proposal profiles reject a non-centered letterbox. See [Preproc](/reference/nodes/preproc).
 
 - Model preprocessing and standalone Resize share `ResizeInterpolation`. Use `preprocess.resize.interpolation = ResizeInterpolation.BilinearAntialiased` instead of a sampler string in new code. Existing `scaling_type` strings remain compatible; conflicting nondefault strings are rejected.
 
 - Existing preprocessing options now accept antialiased bilinear resize, an explicit source rescale factor, color-conversion placement and floating-conversion policy. On the fixed source-arithmetic path, mean and standard-deviation fields retain the original mean and divisor rather than a folded affine transform. BF16 defaults to legacy truncation; nearest-even is opt-in. FP16 uses nearest-even. Precise INT8 quantization requires the original source step consistent with the model's multiplier; the multiplier cannot reconstruct that step. Absent new options preserve the existing path. See [Preproc](/reference/nodes/preproc).
+
+## 0.6.1 {#v061}
+
+0.6.1 fixes 0.6.0 and keeps ABI 6 (`libsima_neat.so.6`): applications built for 0.6.0 run without a rebuild.
+
+### Fixes {#v061-fixes}
+
+- Host-to-device transfers reuse pooled DMA buffers again without blocking live inputs, and the process-wide DMA transfer cache is bounded. Eviction never frees a tensor that is still in use.
+- An asynchronous run with no work outstanding no longer times out, and it resumes when input arrives. `Run::run()` and `Model::run()` wait for output according to their per-call `timeout_ms`; `-1` waits without limit, as `Run::pull(-1)` does. `RunOptions::input_timeout_ms` applies to input-mode `Graph::run()` and seeded build preflight.
+- `Model` validates the complete native MLA input batch.
+- MLA-only models with packed outputs keep their typed output views.
+- Model-managed routes accept YOLO heads decoded in the graph, such as legacy YOLOv6 packs: use `BoxDecodeType::Yolo` for them.
+- Execution reports keep the native BoxDecode settings.
+- The H.265 encoder rejects level 4.2, which it does not support.
+- The video sender no longer limits input to 3840×2160; dimensions must still be positive and even.
+- Offline PCIe host bundles are rebuilt when their dependency inputs change, and their archive names carry a checksum suffix.
+
+### Documentation {#v061-docs}
+
+- H.264 decode input must be 8-bit, 4:2:0 and progressive; High 10, High 4:2:2 and interlaced bitstreams are not supported.
+- The SDK host needs Docker Engine 20.10.10 or later.
+- The Model guide states what `preprocess.enable = Off` disables and which MPK adapters remain.
 
 ## 0.6.0
 
@@ -153,14 +181,15 @@ Release notes for the SiMa.ai Neat Library.
 - Custom fragments now report all explicit names and transform named-pad references together with
   declarations. Name collisions are rejected rather than auto-renamed.
 
-| Release | Compatible Palette SDK | Notes |
-| --- | --- | --- |
-| 0.6.1 | 3.0.0.1 | [Neat Library 0.6.1](https://github.com/sima-neat/core/releases/tag/v0.6.1) |
-| 0.6.0 | 3.0.0.0 | [Neat Library 0.6.0](https://github.com/sima-neat/core/releases/tag/v0.6.0) |
-| 0.5.0 | 2.1.3.1 | [Neat Library 0.5.0](https://github.com/sima-neat/core/releases/tag/v0.5.0) |
-| 0.4.0 | 2.1.3.0 | [Neat Library 0.4.0](https://github.com/sima-neat/core/releases/tag/v0.4.0) |
-| 0.3.0 | 2.1.2.3 | [Neat Library 0.3.0](https://github.com/sima-neat/core/releases/tag/v0.3.0) |
-| 0.2.2 | 2.1.2.2 | [Neat Library 0.2.2](https://github.com/sima-neat/core/releases/tag/v0.2.2) |
-| 0.2.1 | 2.1.2.1 | [Neat Library 0.2.1](https://github.com/sima-neat/core/releases/tag/v0.2.1) |
-| 0.2.0 | 2.1.2 | [Neat Library 0.2.0](https://github.com/sima-neat/core/releases/tag/v0.2.0) |
-| 0.1.0 | 2.0.0 | [Neat Library 0.1.0](https://github.com/sima-neat/core/releases/tag/v0.1.0) |
+| Release | C++ ABI | Compatible Palette SDK | Notes |
+| --- | --- | --- | --- |
+| 0.6.2 | 7 | 3.0.0.2 | [Neat Library 0.6.2](https://github.com/sima-neat/core/releases/tag/v0.6.2) |
+| 0.6.1 | 6 | 3.0.0.1 | [Neat Library 0.6.1](https://github.com/sima-neat/core/releases/tag/v0.6.1) |
+| 0.6.0 | 6 | 3.0.0.0 | [Neat Library 0.6.0](https://github.com/sima-neat/core/releases/tag/v0.6.0) |
+| 0.5.0 | 5 | 2.1.3.1 | [Neat Library 0.5.0](https://github.com/sima-neat/core/releases/tag/v0.5.0) |
+| 0.4.0 | 4 | 2.1.3.0 | [Neat Library 0.4.0](https://github.com/sima-neat/core/releases/tag/v0.4.0) |
+| 0.3.0 | 3 | 2.1.2.3 | [Neat Library 0.3.0](https://github.com/sima-neat/core/releases/tag/v0.3.0) |
+| 0.2.2 | 2 | 2.1.2.2 | [Neat Library 0.2.2](https://github.com/sima-neat/core/releases/tag/v0.2.2) |
+| 0.2.1 | 2 | 2.1.2.1 | [Neat Library 0.2.1](https://github.com/sima-neat/core/releases/tag/v0.2.1) |
+| 0.2.0 | 2 | 2.1.2 | [Neat Library 0.2.0](https://github.com/sima-neat/core/releases/tag/v0.2.0) |
+| 0.1.0 | 2 | 2.0.0 | [Neat Library 0.1.0](https://github.com/sima-neat/core/releases/tag/v0.1.0) |

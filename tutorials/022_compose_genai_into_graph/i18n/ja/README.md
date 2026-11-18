@@ -43,6 +43,8 @@ bundleは、検出されたソース言語を報告し、利用可能な場合�
 
 ## Run
 
+NVMe がない DevKit では、`llima pull` の前に `LLIMA_MODELS_PATH` に書き込み可能なディレクトリを設定し、以下の `/media/nvme/llima/models` の代わりにそのディレクトリを使用してください。
+
 ～において Modalix DevKitLFM2-VL 1.6B VLMをダウンロードしてください。 Hugging Face を使用して LLiMa CLI：
 
 ```bash
