@@ -1302,7 +1302,7 @@ Sample sample_batch_from_python_input(const nb::object& input) {
 void reject_single_tensor_or_sample(const nb::object& input, const char* where) {
   if (nb::isinstance<Sample>(input)) {
     throw std::runtime_error(std::string(where) +
-                             " expects Sample; pass [sample] instead of a single Sample");
+                             " expects a list or tuple of Samples; pass [sample]");
   }
   if (nb::isinstance<Tensor>(input)) {
     throw std::runtime_error(std::string(where) +

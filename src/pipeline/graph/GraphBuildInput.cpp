@@ -1655,6 +1655,12 @@ std::string single_sample_preflight_unsupported_reason(const std::string& pipeli
     return "pipeline contains neatencoder";
   }
 
+  if (lower.find("neatdecoder") != std::string::npos &&
+      (lower.find(" dec-type=h264") != std::string::npos ||
+       lower.find(" dec-type=h265") != std::string::npos)) {
+    return "video decoder can require multiple access units before producing a frame";
+  }
+
   const bool has_async_hardware_stage = (lower.find("neatprocessmla") != std::string::npos ||
                                          lower.find("neatkernelrunner") != std::string::npos) &&
                                         lower.find("async=true") != std::string::npos;
