@@ -3643,6 +3643,11 @@ install() {
         lock.retain()
         lock.release_on_exit()
       self.assertFalse(path.exists())
+    # A fixed concurrency group would cancel the older of two queued runs; the
+    # single runner and this lock already serialise them.
+    hardware = WORKFLOW.read_text(encoding="utf-8").split("  hardware:\n", 1)[1].split(
+        "  publish:", 1)[0]
+    self.assertNotIn("concurrency:", hardware)
 
   def test_card_side_lock_is_owned_and_released_by_token(self):
     with tempfile.TemporaryDirectory() as directory:

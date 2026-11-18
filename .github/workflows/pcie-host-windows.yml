@@ -652,9 +652,6 @@ jobs:
     name: Direct-card Windows acceptance
     needs: [native, linux_release, card_candidate]
     if: needs.native.result == 'success' && needs.linux_release.result == 'success' && needs.card_candidate.result == 'success'
-    concurrency:
-      group: core-windows-pcie-hardware-card0
-      cancel-in-progress: false
     environment: production
     runs-on: [self-hosted, Windows, X64, pcie-windows-hardware, default]
     timeout-minutes: 180
