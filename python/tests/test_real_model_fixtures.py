@@ -548,7 +548,10 @@ def _assert_overlay_changed(path: Path, image: np.ndarray) -> None:
 def test_resnet_real_fixture_run_preserves_stable_classification_contract(monkeypatch, seeded):
   monkeypatch.setenv("SIMA_INPUTSTREAM_PREFLIGHT_RUN", "1")
   model = _image_input_model(_env_path("SIMA_RESNET50_TAR"))
-  image = _decode_rgb_image(_fixture_image_path(Path("test.jpg")))
+  # Same image and class as tutorial 026 (top1=208). test.jpg has no confident ResNet-50
+  # class, so its top-1 differs between ResNet-50 builds.
+  labrador = Path("pcie_host/tutorials/assets/labrador.jpg")
+  image = _decode_rgb_image(_fixture_image_path(labrador))
 
   input_tensor = _rgb_tensor(image)
   runner = model.build([input_tensor]) if seeded else model.build()
@@ -579,7 +582,7 @@ def test_resnet_real_fixture_run_preserves_stable_classification_contract(monkey
   assert all(summary["payload_tag"] == "EVXX_FLOAT32" for summary in summaries)
   assert all(summary["format"] == "EVXX_FLOAT32" for summary in summaries)
   assert all(summary["media_type"] == "application/vnd.simaai.tensor" for summary in summaries)
-  assert [summary["argmax"] for summary in summaries] == [839, 839, 839]
+  assert [summary["argmax"] for summary in summaries] == [208, 208, 208]
 
 
 def test_real_fixture_paths_resolve():
