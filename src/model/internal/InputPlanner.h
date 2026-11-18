@@ -7,7 +7,6 @@
 #include "model/internal/ModelPack.h"
 #include "model/internal/RoutePlanner.h"
 
-#include <array>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -75,9 +74,6 @@ struct PreprocessCapabilities {
   GraphFamilyCapabilities tess;
   GraphFamilyCapabilities quanttess;
   PreprocessGraphFamily tensor_auto_family = PreprocessGraphFamily::Disabled;
-  bool has_model_input_normalization = false;
-  std::array<float, 3> model_input_mean = {0.0f, 0.0f, 0.0f};
-  std::array<float, 3> model_input_stddev = {1.0f, 1.0f, 1.0f};
 };
 
 struct PreprocessPlannerResult {
@@ -99,6 +95,8 @@ struct PreprocessPlannerResult {
   int modelpack_max_width = 0;
   int modelpack_max_height = 0;
   int modelpack_max_depth = 0;
+  // Effective Auto intent, retained for diagnostics after image-route selection.
+  bool normalize_auto_without_config = false;
   bool normalize = false;
   std::vector<float> mean;
   std::vector<float> stddev;
