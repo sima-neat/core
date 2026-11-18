@@ -1754,6 +1754,16 @@ class WindowsCiContracts(unittest.TestCase):
     self.assertIn("($wrapperArguments -join '') + '\"'", command)
     self.assertIn("-gt 1024", command)
 
+  def test_standard_user_step_rejects_a_base_python_standard_users_cannot_read(self):
+    source = (SCRIPT_DIR / "qualify_windows_hardware.py").read_text(encoding="utf-8")
+    self.assertIn("Join-Path $env:SIMA_STANDARD_USER_PYTHON_ROOT 'pyvenv.cfg'", source)
+    self.assertIn("Where-Object { $_ -match '^\\s*home\\s*=' }", source)
+    self.assertIn("$standardUserSids = 'S-1-1-0', 'S-1-5-4', 'S-1-5-11', 'S-1-5-32-545'", source)
+    self.assertIn("(Get-Acl -LiteralPath $pythonHome).GetAccessRules(", source)
+    self.assertIn("$_.FileSystemRights.HasFlag($readAndExecute)", source)
+    self.assertIn("with a Python installed for all users", source)
+    self.assertLess(source.index("if (-not $pythonReadable)"), source.index("New-LocalUser"))
+
   def test_standard_user_child_gets_and_returns_session_window_access(self):
     source = (SCRIPT_DIR / "qualify_windows_hardware.py").read_text(encoding="utf-8")
     for name in ("GetProcessWindowStation", "GetThreadDesktop", "OpenWindowStation",

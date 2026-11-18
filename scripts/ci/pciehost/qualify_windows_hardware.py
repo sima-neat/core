@@ -988,6 +988,24 @@ def verify_standard_user_process_activation(install_root: Path, wheel: Path,
     raise
   script = r"""
 $ErrorActionPreference = 'Stop'
+# The disposable environment's launcher runs the base Python named by pyvenv.cfg "home".
+$pythonHomeLine = Get-Content -LiteralPath (
+    Join-Path $env:SIMA_STANDARD_USER_PYTHON_ROOT 'pyvenv.cfg') |
+  Where-Object { $_ -match '^\s*home\s*=' } | Select-Object -First 1
+$pythonHome = ($pythonHomeLine -split '=', 2)[1].Trim()
+$readAndExecute = [Security.AccessControl.FileSystemRights]::ReadAndExecute
+$standardUserSids = 'S-1-1-0', 'S-1-5-4', 'S-1-5-11', 'S-1-5-32-545'
+$pythonReadable = @((Get-Acl -LiteralPath $pythonHome).GetAccessRules(
+    $true, $true, [Security.Principal.SecurityIdentifier]) | Where-Object {
+  $_.AccessControlType -eq 'Allow' -and
+  -not $_.PropagationFlags.HasFlag([Security.AccessControl.PropagationFlags]::InheritOnly) -and
+  $_.FileSystemRights.HasFlag($readAndExecute) -and
+  $standardUserSids -contains $_.IdentityReference.Value
+}).Count -ne 0
+if (-not $pythonReadable) {
+  throw ("standard users cannot read the base Python at $pythonHome; run the qualifier " +
+    'with a Python installed for all users, for example under Program Files')
+}
 $name = 'sna-' + $PID
 $profilePath = Join-Path $env:SystemDrive "Users\$name"
 $bytes = New-Object byte[] 32
