@@ -1488,7 +1488,10 @@ std::string Graph::describe(const GraphPrinter::Options& opt) const {
 
 void Graph::save(const std::string& path) const {
   if (composition_ &&
-      (!composition_->is_linear() || has_any_model_fragment_provenance(composition_->fragments))) {
+      (!composition_->is_linear() || has_any_model_fragment_provenance(composition_->fragments) ||
+       std::any_of(composition_->vertices.begin(), composition_->vertices.end(), [](const auto& n) {
+         return dynamic_cast<const Input*>(n.get()) || dynamic_cast<const Output*>(n.get());
+       }))) {
     if (composition_->has_runtime_vertices()) {
       throw std::runtime_error(
           "Graph::save does not serialize runtime-stage Graph fragments yet; rebuild this Graph "
@@ -1499,6 +1502,8 @@ void Graph::save(const std::string& path) const {
     std::ostringstream oss;
     oss << "{\n  \"version\": 2,\n";
     oss << "  \"graph_name\":\"" << json_escape(endpoint_name_) << "\",\n";
+    oss << "  \"element_name_prefix\":\"" << json_escape(opt_.element_name_prefix) << "\",\n";
+    oss << "  \"element_name_suffix\":\"" << json_escape(opt_.element_name_suffix) << "\",\n";
     oss << "  \"nodes\": [\n";
 
     const NameTransform name_transform = make_name_transform(opt_);
@@ -1697,8 +1702,8 @@ Graph Graph::load(const std::string& path) {
     }
 
     Graph graph(string_field(*root.obj, "graph_name"));
-    graph.opt_.element_name_prefix.clear();
-    graph.opt_.element_name_suffix.clear();
+    graph.opt_.element_name_prefix = string_field(*root.obj, "element_name_prefix");
+    graph.opt_.element_name_suffix = string_field(*root.obj, "element_name_suffix");
 
     const auto& nodes = *it_nodes->second.arr;
     graph.composition_->vertices.reserve(nodes.size());

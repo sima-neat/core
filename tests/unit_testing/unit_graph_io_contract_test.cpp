@@ -120,7 +120,15 @@ RUN_TEST(
 
       Graph stream_source("stream_source");
       stream_source.add(nodes::Input("image"));
-      stream_source.add(nodes::Output("frame"));
+      stream_source.add(nodes::Output("frame", OutputOptions::EveryFrame(7)));
+      const auto linear_path = tmp_json_path("linear_endpoints.json");
+      stream_source.save(linear_path);
+      auto loaded_source = Graph::load(linear_path);
+      require(loaded_source.inputs() == stream_source.inputs() &&
+                  loaded_source.outputs() == stream_source.outputs(),
+              "linear graph round trip must preserve public endpoints");
+      require(loaded_source.describe_backend(false) == stream_source.describe_backend(false),
+              "linear graph round trip must preserve element names and endpoint options");
       Graph stream_sink("stream_sink");
       stream_sink.add(nodes::Input("frame"));
       stream_sink.add(nodes::Output("classes"));
