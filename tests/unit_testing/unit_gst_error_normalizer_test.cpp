@@ -261,7 +261,8 @@ RUN_TEST(
         url.details["source-identity"] = "bad-url";
         const auto invalid = classify_gst_error(url);
         require_code(invalid, error_codes::kIoOpen);
-        require_contains(render_diagnostic_body(invalid, false), "bad-url", "HTTP URL identity");
+        require(render_diagnostic_body(invalid, false).find("bad-url") == std::string::npos,
+                "malformed locations must not be echoed");
         auto soup = raw_error("souphttpsrc", "gst-stream-error-quark", GST_STREAM_ERROR_FAILED,
                               "Internal data stream error.");
         soup.debug = "streaming stopped, reason error (-5)";
@@ -272,7 +273,13 @@ RUN_TEST(
         auto response = raw_error("souphttpsrc", "gst-resource-error-quark",
                                   GST_RESOURCE_ERROR_OPEN_READ, "Gone");
         response.details["http-status-code"] = "410";
+        response.details["source-identity"] =
+            "https://user:secret@camera.test:8443/private?x-vendor=opaque";
         const auto gone = classify_gst_error(response);
+        const auto body = render_diagnostic_body(gone, false);
+        require_contains(body, "https://camera.test:8443", "HTTP endpoint");
+        for (const char* hidden : {"user", "secret", "private", "x-vendor", "opaque"})
+          require(body.find(hidden) == std::string::npos, "HTTP endpoint leaked private URL data");
         require_contains(render_diagnostic_body(gone, false), "HTTP status: 410",
                          "HTTP error response");
         require(diagnostic_priority(gone) > diagnostic_priority(fallback),

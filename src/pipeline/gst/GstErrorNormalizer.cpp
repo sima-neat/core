@@ -1321,6 +1321,24 @@ std::string sanitize_gst_diagnostic_text(std::string text) {
 }
 
 NormalizedDiagnostic classify_gst_error(RawGstError raw) {
+  if (raw.factory_name == "souphttpsrc") {
+    for (const char* key : {"source-identity", "source_identity", "location", "uri"}) {
+      auto it = raw.details.find(key);
+      if (it == raw.details.end())
+        continue;
+      g_autoptr(GUri) uri = g_uri_parse(it->second.c_str(), G_URI_FLAGS_NONE, nullptr);
+      const char* host = uri ? g_uri_get_host(uri) : nullptr;
+      const char* scheme = uri ? g_uri_get_scheme(uri) : nullptr;
+      if (host && *host && scheme &&
+          (!g_ascii_strcasecmp(scheme, "http") || !g_ascii_strcasecmp(scheme, "https"))) {
+        g_autofree gchar* endpoint = g_uri_join(G_URI_FLAGS_NONE, scheme, nullptr, host,
+                                                g_uri_get_port(uri), "", nullptr, nullptr);
+        it->second = endpoint;
+      } else {
+        it->second.clear();
+      }
+    }
+  }
   const std::string text = combined_raw(raw);
   const std::string diagnostic_id =
       find_detail(raw, {"neat-diagnostic-id", "neat_diagnostic_id", "diagnostic_id"}).value_or("");
