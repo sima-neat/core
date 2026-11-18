@@ -543,8 +543,14 @@ RtspServerHandle Graph::run_rtsp(const RtspServerOptions& opt) {
           return;
         }
 
-        g_signal_connect(src, "need-data", G_CALLBACK(appsrc_need_data), pc);
-        g_signal_connect(src, "enough-data", G_CALLBACK(appsrc_enough_data), pc);
+        const auto release_push_ctx =
+            +[](gpointer data, GClosure*) { push_ctx_unref(static_cast<PushCtx*>(data)); };
+        push_ctx_ref(pc);
+        g_signal_connect_data(src, "need-data", G_CALLBACK(appsrc_need_data), pc, release_push_ctx,
+                              G_CONNECT_DEFAULT);
+        push_ctx_ref(pc);
+        g_signal_connect_data(src, "enough-data", G_CALLBACK(appsrc_enough_data), pc,
+                              release_push_ctx, G_CONNECT_DEFAULT);
 
         const int period_ms = std::max(1, 1000 / pc->fps);
         pc->timer = g_timeout_source_new(period_ms);

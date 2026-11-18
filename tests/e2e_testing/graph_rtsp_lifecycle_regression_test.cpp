@@ -1,5 +1,8 @@
 #include "asset_utils.h"
 #include "nodes/io/StillImageInput.h"
+#include "nodes/sima/SimaEncode.h"
+#include "nodes/sima/H264Parse.h"
+#include "nodes/sima/H264Packetize.h"
 #include "pipeline/ErrorCodes.h"
 #include "pipeline/NeatError.h"
 #include "pipeline/Graph.h"
@@ -62,6 +65,11 @@ RUN_TEST("graph_rtsp_lifecycle_regression_test", ([] {
            auto make_rtsp_graph = [&]() {
              Graph s;
              s.add(nodes::StillImageInput(image.string(), 640, 480, 640, 480, 10));
+             SimaEncodeOptions encode;
+             encode.fps = 10;
+             s.add(nodes::SimaEncode(encode));
+             s.add(nodes::H264Parse(1));
+             s.add(nodes::H264Packetize(96, 1));
              return s;
            };
 
