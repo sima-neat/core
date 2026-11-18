@@ -30,10 +30,9 @@
 //   refused          a frame of another size than the Run was built for, and a frame with ROI
 //                    metadata, fail their push with misconfig.input_shape and the Run goes on.
 //   declined         what stays off this backend at the build: a build that does not say the
-//                    frame's size (explicit Dataflow fails; under RunBackend::Auto with
-//                    SIMA_NEAT_BACKEND=dataflow the Run is GStreamer's and takes two sizes), an
-//                    NV12 input, and the model's whole route (its MLA stage publishes several
-//                    tensors).
+//                    frame's size and an NV12 input (explicit Dataflow fails); under
+//                    RunBackend::Auto with SIMA_NEAT_BACKEND=dataflow a graph it declines (a
+//                    standalone BoxDecode node behind the model's stages) is GStreamer's.
 //   lifecycle        close_input drains what was pushed; Runs one after the other give the same
 //                    bytes.
 // On a board whose EV74 runs the stock firmware every Dataflow build of the route must be refused
@@ -42,6 +41,7 @@
 #include "model/Model.h"
 #include "nodes/common/Output.h"
 #include "nodes/io/Input.h"
+#include "nodes/sima/SimaBoxDecode.h"
 #include "pipeline/ErrorCodes.h"
 #include "pipeline/Graph.h"
 #include "pipeline/NeatError.h"
@@ -123,17 +123,13 @@ Model::Options model_options(PreprocessColorFormat format = PreprocessColorForma
   return o;
 }
 
-Graph graph(const Model& model, const InputOptions* in = nullptr, bool whole = false) {
+Graph graph(const Model& model, const InputOptions* in = nullptr) {
   OutputOptions out;
   out.max_buffers = 4;
   out.sync = false;
   Graph g;
   g.add(in ? nodes::Input(*in) : nodes::Input());
   g.add(model.preprocess());
-  if (whole) {
-    g.add(model.inference());
-    g.add(model.postprocess());
-  }
   g.add(nodes::Output(out));
   return g;
 }
@@ -495,7 +491,6 @@ void declined(const Model& model, const std::string& archive) {
   };
   fails(graph(model), false, "the frame's size is not known at the build",
         "no seed, no declaration");
-  fails(graph(model, nullptr, true), true, "MLA stage", "the model's whole route");
   {
     // The model told its frames are NV12 (two planes): whatever the seed, the stage is declined.
     const Model nv12(archive, model_options(PreprocessColorFormat::NV12));
@@ -516,16 +511,26 @@ void declined(const Model& model, const std::string& archive) {
     require(!built, "declined: a GRAY8 seed does not build on the Dataflow backend");
   }
   // Under RunBackend::Auto with SIMA_NEAT_BACKEND=dataflow a declined build is GStreamer's: the
-  // model's whole route runs there and gives its one detection tensor.
+  // model's stages with a standalone BoxDecode node behind them (not a Model stage, so not a
+  // route this backend takes) run there and give their one detection tensor.
   ::setenv("SIMA_NEAT_BACKEND", "dataflow", 1);
   {
-    Graph g = graph(model, nullptr, true);
+    OutputOptions out;
+    out.max_buffers = 4;
+    out.sync = false;
+    Graph g;
+    g.add(nodes::Input());
+    g.add(model.preprocess());
+    g.add(model.inference());
+    g.add(nodes::SimaBoxDecode(model, BoxDecodeType::YoloV8, 0.49, 0.5, 100));
+    g.add(nodes::Output(out));
     Run run = g.build(inputs[0], on(RunBackend::Auto));
     require(run.push(inputs[1]), "declined: push on the fallback");
-    Result<TensorList> out = run.pull(std::chrono::milliseconds(30000));
-    require(static_cast<bool>(out) && out->size() == 1U &&
-                out->front().semantic.detection.has_value(),
-            "declined: the whole route under Auto runs on GStreamer and gives its detections");
+    Result<TensorList> pulled = run.pull(std::chrono::milliseconds(30000));
+    require(static_cast<bool>(pulled) && pulled->size() == 1U &&
+                pulled->front().semantic.detection.has_value(),
+            "declined: a graph Dataflow declines runs on GStreamer under Auto and gives its "
+            "detections");
     run.close();
   }
   ::unsetenv("SIMA_NEAT_BACKEND");

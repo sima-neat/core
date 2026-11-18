@@ -140,6 +140,16 @@ void attach_boxdecode_geometry_resolver(KernelStageRecipe& recipe, std::size_t m
                                         BoxDecodeGeometryOptions options,
                                         bool original_size_from_metadata,
                                         bool require_resize_metadata) {
+  if (recipe.boxdecode_program) {
+    // The same authority for a backend that asks once (boxdecode_request_for_frames).
+    auto& program = *recipe.boxdecode_program;
+    program.size_from_frame = original_size_from_metadata;
+    program.resize_required = require_resize_metadata;
+    program.complete_geometry = options.complete_geometry;
+    program.resize = options.resize == ResizeMode::Stretch ? "stretch"
+                     : options.resize == ResizeMode::Crop  ? "crop"
+                                                           : "letterbox";
+  }
   if (!original_size_from_metadata && !require_resize_metadata && !options.complete_geometry)
     return;
   const auto& member = recipe.members.at(member_index);
@@ -273,5 +283,36 @@ void attach_boxdecode_geometry_resolver(KernelStageRecipe& recipe, std::size_t m
            return operation;
          };
        }});
+}
+rt::Result<KernelStageRecipe::Request> boxdecode_request_for_frames(const KernelStageRecipe& recipe,
+                                                                    int original_width,
+                                                                    int original_height,
+                                                                    std::string_view resize_mode) {
+  if (!recipe.boxdecode_program)
+    return invalid("the stage has no numerical BoxDecode request");
+  const auto& program = *recipe.boxdecode_program;
+  if (program.complete_geometry)
+    return invalid("a complete-geometry profile takes each frame's preprocess affine");
+  // The resolver's order: the resize mode first, then who says the size.
+  if (program.resize_required && resize_mode.empty())
+    return invalid("required resize-mode metadata is missing");
+  if (!resize_mode.empty() && resize_mode != program.resize)
+    return invalid("preprocess resize mode differs from the checked decode geometry");
+  auto request = program.request;
+  // Explicit image dimensions retain their established precedence.
+  if (!program.size_from_frame)
+    return request;
+  if (original_width == 0 && original_height == 0)
+    return invalid("original image dimensions require preprocess metadata");
+  if (original_width < 1 || original_width > 1048576 || original_height < 1 ||
+      original_height > 1048576)
+    return invalid("original image dimensions are missing or invalid");
+  const auto size = std::find_if(request.parameters.begin(), request.parameters.end(),
+                                 [](const auto& p) { return p.name == "original_image_size"; });
+  if (size == request.parameters.end())
+    return invalid("the numerical request states no original image size");
+  // The value the "image_size" variant carries for such a frame.
+  size->value = rt::ParameterArray{original_width, original_height};
+  return request;
 }
 } // namespace simaai::neat::pipeline_internal::sima

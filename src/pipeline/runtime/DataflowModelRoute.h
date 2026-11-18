@@ -9,10 +9,10 @@
 // operator per stage:
 //   - Model::inference() of an MLA-only model: the MLA stage alone. A model writes one output
 //     buffer. The tensors it publishes in that buffer may be several, each at its byte offset (the
-//     heads of a detection model): then the MLA stage is the route's last, and a pull returns
-//     them as GStreamer's does, a TensorList of views of the one pulled message. A model of
-//     several output buffers, and a stage behind an MLA stage of several tensors, are declined
-//     at the plan and stay on GStreamer;
+//     heads of a detection model): when the MLA stage is the route's last, a pull returns them
+//     as GStreamer's does, a TensorList of views of the one pulled message. A model of several
+//     output buffers, and a stage other than BoxDecode behind an MLA stage of several tensors,
+//     are declined at the plan and stay on GStreamer;
 //   - Model::preprocess(), inference(), postprocess() of a model package whose pre and post stages
 //     are canonical transforms (quanttess, detessdequant, ...), each on the A65 or on the EV74 as
 //     the Graph places it (GraphOptions::processcvu.pre_run_target / post_run_target,
@@ -26,6 +26,17 @@
 //     policy (PreprocFrameAdapter::checked_fixed_frame). A frame of another size is refused at
 //     the push; a build that does not say the size, an NV12 or other planar input, an image
 //     frontend and a batched (ROI) stage are declined at the plan and stay on GStreamer.
+//   - Model::postprocess() of a detection model (BoxDecode) behind the MLA stage, at the route's
+//     end: the Kernels package's "boxdecode" on the A65 as one kernel operator whose inputs are
+//     the heads, views at their byte offsets of the MLA's one output buffer (one port, no join),
+//     and whose outputs (boxes, scores, classes, count) are views of one small buffer; behind it
+//     a Core operator on the Worker writes the BBOX wire from them with the stage's own
+//     serializer (BoxDecodePublication.cpp), which GStreamer runs as the stage's host task. The
+//     kernel is made once, for the frames the route's image preproc is planned for
+//     (boxdecode_request_for_frames: what GStreamer's per-frame resolver selects for such a
+//     frame). First version: YOLOv8 detection with C-blocked heads; the other decode families,
+//     pose, segmentation and oriented boxes, tiled heads (detess members) and a route without
+//     the image preproc in front are declined at the plan and stay on GStreamer.
 // Here: what the route's stages are, read from what Core compiles and lowers for the same nodes on
 // GStreamer (the rendered stage manifest and its checked kernel recipes), and what the input's
 // port does with them: load the model and make the kernels, check the input's binding against
@@ -45,6 +56,7 @@
 #include "pipeline/TensorCore.h"
 #include "pipeline/internal/DataflowRuntime.h"
 
+#include <simaai/scheduler/client/host_task.h>
 #include <simaai/scheduler/client/parameters.h>
 #include <simaai/scheduler/client/tensor.h>
 
@@ -84,7 +96,10 @@ struct DataflowPulledTensor {
   /// What the route's image preproc publishes with every frame (Semantic::preprocess of the
   /// pulled tensor), a constant of the frame size the route was built for. Unset: no such stage.
   std::optional<PreprocessRuntimeMeta> preprocess;
-  /// `tess` or `preprocess` is set: the pull calls apply_dataflow_frame_semantics.
+  /// A detection stage's wire (BoxDecode): Semantic::detection of the pulled tensor, beside the
+  /// legacy TessSpec that carries the same `format`. Unset: no such stage.
+  std::optional<DetectionSpec> detection;
+  /// `tess`, `preprocess` or `detection` is set: the pull calls apply_dataflow_frame_semantics.
   bool frame_semantics = false;
   /// The stage's further published tensors, in its logical order, each one a view at its own
   /// `byte_offset` of the same output buffer: the pull returns this tensor and then these, all
@@ -103,10 +118,10 @@ struct DataflowPulledTensor {
   std::string sample_label;
 };
 
-// One stage of the route: a model on the MLA, or one kernel of the Kernels package on the A65 or
-// on the EV74.
+// One stage of the route, one operator: a model on the MLA, one kernel of the Kernels package on
+// the A65 or on the EV74, or Core's BoxDecode wire serializer behind the BoxDecode kernel.
 struct DataflowModelStage {
-  enum class Kind { Mla, Kernel };
+  enum class Kind { Mla, Kernel, Wire };
   Kind kind = Kind::Mla;
   std::string key;                ///< the stage's name (messages, the operator's name)
   std::uint64_t input_bytes = 0;  ///< its one input buffer
@@ -121,6 +136,22 @@ struct DataflowModelStage {
   std::string operation;
   ::simaai::scheduler::client::TensorSpec input, output;
   std::vector<::simaai::scheduler::client::Parameter> parameters;
+  // Kernel, BoxDecode: a side whose tensors are views of the port's one buffer
+  // (soc::KernelOp::Options::Packing): every tensor of the side in the kernel's order, with where
+  // it lies in the `input_bytes` or `output_bytes` of the port. `input` or `output` is then not
+  // read. Empty: the side is its one tensor.
+  // Wire: `packed_inputs` are the kernel's outputs in its input buffer (offset and bytes).
+  struct View {
+    ::simaai::scheduler::client::TensorSpec tensor;
+    std::size_t offset = 0, bytes = 0;
+  };
+  std::vector<View> packed_inputs, packed_outputs;
+  // Wire: the stage's serializer (KernelStageRecipe::BoxDecodeProgram), which writes the
+  // `output_bytes` of the wire from the kernel's outputs.
+  std::shared_ptr<const void> wire;
+  ::simaai::scheduler::client::HostStatus (*write)(
+      const void* wire, std::span<const ::simaai::scheduler::client::ConstBytes> inputs,
+      ::simaai::scheduler::client::MutableBytes output) = nullptr;
 };
 
 // The route's stages in execution order, and its two ends.
@@ -160,7 +191,7 @@ plan_dataflow_model_route(const std::vector<std::shared_ptr<Node>>& route,
                           std::span<const Tensor> seed, std::string* why);
 
 // What one Run's operators are made with: the loaded model (soc::MlaModel) of an MLA stage and
-// the checked kernel (soc::Kernel) of a kernel stage, one per stage. Throws NeatError when the
+// the checked kernel (soc::Kernel) of a kernel stage, one per such stage. Throws NeatError when the
 // MLA refuses the model or the Kernels package the request.
 std::shared_ptr<void> load_dataflow_model_route(const DataflowModelRoute& route, const char* where);
 
@@ -186,8 +217,9 @@ std::vector<std::uint32_t> add_dataflow_model_ops(pipeline_internal::df::Net& ne
                                                   const pipeline_internal::df::PortSpec& input,
                                                   pipeline_internal::df::PortSpec& output);
 
-// The pulled tensor's Semantic behind an image preproc stage (`pulled.frame_semantics`): the tiled
-// output's storage description in Semantic::tess and the frame's facts in Semantic::preprocess.
+// The pulled tensor's Semantic behind an image preproc stage or a BoxDecode stage
+// (`pulled.frame_semantics`): the tiled output's storage description in Semantic::tess, the
+// frame's facts in Semantic::preprocess, the wire's format in Semantic::detection.
 void apply_dataflow_frame_semantics(const DataflowPulledTensor& pulled, Tensor& tensor);
 
 // The tensors of a pulled message on a route whose output is `pulled.beyond_leaf`, appended to

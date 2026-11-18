@@ -3,8 +3,12 @@
 #error "Internal header. Not part of the public API."
 #endif
 
+#include <cstddef>
+#include <memory>
 #include <optional>
+#include <span>
 #include <string>
+#include <simaai/scheduler/client/host_task.h>
 #include <simaai/scheduler/client/stage.h>
 #include <simaai/scheduler/client/metrics.h>
 #include "pipeline/internal/sima/SimaPluginStaticManifest.h"
@@ -59,6 +63,30 @@ struct KernelStageRecipe {
     int topk = 0;
   };
   std::optional<BoxDecodeSettings> boxdecode_settings;
+  // BoxDecode only: the stage for a backend that does not hand `members` to the Scheduler as a
+  // program (Dataflow: its own kernel object, made once for the frames its input is bound to, and
+  // Core's wire serializer as an operator behind it). Cold and inspection only, as `requests`
+  // (which stays empty for this stage: its last member is Core's host task, not a kernel).
+  struct BoxDecodeProgram {
+    std::size_t member = 0; ///< the numerical member in `members`
+    /// Its check_kernel request, at the cold seed's geometry (prepare_boxdecode_kernel).
+    Request request;
+    std::string profile, task; ///< the request's decode profile and task
+    // Who says the image geometry, as attach_boxdecode_geometry_resolver installed it: the
+    // original size comes with each frame's preprocess facts (the "image_size" variant), the
+    // frame must state its resize mode, the profile takes each frame's affine as well.
+    bool size_from_frame = false, resize_required = false, complete_geometry = false;
+    std::string resize; ///< the checked decode geometry's resize mode, as preprocess facts name it
+    // Core's wire serializer (BoxDecodePublication.cpp), the function the stage's host task
+    // calls: `inputs` are the numerical member's outputs in its order, `output` the wire of
+    // `wire_bytes`. Null where the wire is not written from all of the member's outputs.
+    std::shared_ptr<const void> wire;
+    ::simaai::scheduler::client::HostStatus (*write)(
+        const void* wire, std::span<const ::simaai::scheduler::client::ConstBytes> inputs,
+        ::simaai::scheduler::client::MutableBytes output) = nullptr;
+    std::size_t wire_bytes = 0;
+  };
+  std::optional<BoxDecodeProgram> boxdecode_program;
 };
 // Transfer immutable factories into a fresh request. Scheduler instantiates them
 // only after validating the entire stopped cohort and resource budgets.

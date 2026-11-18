@@ -334,6 +334,7 @@ BoxDecodeKernelRecipeResult prepare_boxdecode_kernel(const CompiledBoxDecodeCont
   std::vector<k::TensorSpec> outputs;
   k::KernelExecutable numerical;
   BoxDecodeWireFormat wire = BoxDecodeWireFormat::Boxes;
+  std::optional<KernelStageRecipe::BoxDecodeProgram> program;
   if (p.decode_type == BoxDecodeType::SuperPoint) {
     if (count != 2 || p.tensor_roles.size() != 2)
       invalid("SuperPoint requires two explicit tensor roles");
@@ -702,6 +703,13 @@ BoxDecodeKernelRecipeResult prepare_boxdecode_kernel(const CompiledBoxDecodeCont
     }
     numerical = checked(
         scheduler::check_kernel({"boxdecode", k::Target::A65, tensors, outputs, parameters}));
+    program.emplace();
+    program->request = {"boxdecode", tensors, outputs, parameters};
+    program->profile = selected_profile;
+    program->task = selected_task;
+    program->resize = geometry.resize == ResizeMode::Stretch ? "stretch"
+                      : geometry.resize == ResizeMode::Crop  ? "crop"
+                                                             : "letterbox";
   }
   gs::TensorStageMember decode;
   decode.executable = std::move(numerical);
@@ -748,6 +756,15 @@ BoxDecodeKernelRecipeResult prepare_boxdecode_kernel(const CompiledBoxDecodeCont
   auto publication_inputs = decode.outputs;
   if (direct_masks)
     publication_inputs.resize(4);
+  if (program) {
+    program->member = decode_member;
+    if (!direct_masks) {
+      program->wire = publication.plan;
+      program->write = publication.write;
+      program->wire_bytes = publication.bytes;
+    }
+    build.recipe->boxdecode_program = std::move(program);
+  }
   build.recipe->members.push_back(std::move(decode));
   build.recipe->members.push_back(
       {publication.executable, std::move(publication_inputs), {{0, 0}}, {decode_member}, {}});

@@ -5,6 +5,10 @@
 
 #include <simaai/scheduler/client/host_task.h>
 
+#include <cstddef>
+#include <memory>
+#include <span>
+
 namespace simaai::neat::pipeline_internal::sima {
 
 // Core's application wire formats, not numerical kernel output layouts.
@@ -18,10 +22,19 @@ enum class BoxDecodeWireFormat {
   FeaturePointsV1,
   LegacyFeaturePointsV0
 };
+// The serializer as a plain call: `plan` is BoxDecodePublication::plan, `inputs` the numerical
+// kernel's outputs in its order, `output` the wire. What the host task's callback runs.
+using BoxDecodeWireWriter = ::simaai::scheduler::client::HostStatus (*)(
+    const void* plan, std::span<const ::simaai::scheduler::client::ConstBytes> inputs,
+    ::simaai::scheduler::client::MutableBytes output);
 struct BoxDecodePublication {
   ::simaai::scheduler::client::KernelExecutable executable;
   ::simaai::scheduler::client::TensorSpec output;
   std::size_t bytes = 0;
+  // The same serializer for a backend that runs it outside a Scheduler program: no allocation,
+  // no state beyond the immutable plan.
+  std::shared_ptr<const void> plan;
+  BoxDecodeWireWriter write = nullptr;
 };
 
 // Cold, checked Core-owned serializer, scheduled as an ordinary dependent A65

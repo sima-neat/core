@@ -29,8 +29,8 @@
 //   preprocess       the second graph through both backends, compared as `inference` is, with
 //                    every field of Semantic::preprocess on every tensor. On a board whose EV74
 //                    runs the stock firmware: the build is refused, naming the firmware.
-//   declined         the model's whole route (its BoxDecode stage reads the MLA's tensors) is
-//                    refused by explicit Dataflow with a text that says so.
+// (The model's whole route, BoxDecode behind this MLA stage, is
+// unit_dataflow_boxdecode_route_test's.)
 
 #include "model/Model.h"
 #include "nodes/common/Output.h"
@@ -182,15 +182,12 @@ struct Inference {
   }
 };
 
-// The second graph: the image preproc in front of the MLA; with `whole`, BoxDecode behind it.
-Graph image_graph(const Model& model, bool whole = false) {
+// The second graph: the image preproc in front of the MLA.
+Graph image_graph(const Model& model) {
   Graph g;
   g.add(nodes::Input());
   g.add(model.preprocess());
   g.add(model.inference());
-  if (whole) {
-    g.add(model.postprocess());
-  }
   g.add(output());
   return g;
 }
@@ -589,24 +586,6 @@ void preprocess(const Model& model) {
   }
 }
 
-void declined(const Model& model) {
-  const std::vector<TensorList> inputs = frames_of(1280, 720);
-  try {
-    Graph g = image_graph(model, /*whole=*/true);
-    (void)g.build(inputs[0], on(RunBackend::Dataflow));
-  } catch (const NeatError& error) {
-    require(error.report().error_code == error_codes::kPipelineShape,
-            std::string("declined: a build error: ") + error.what());
-    if (ev74_runs_kernels_firmware()) {
-      require_contains(error.what(), "a stage behind an MLA stage of several tensors",
-                       std::string("declined: ") + error.what());
-    }
-    std::cout << "[declined] " << error.what() << "\n";
-    return;
-  }
-  throw std::runtime_error("declined: the model's whole route built on the Dataflow backend");
-}
-
 } // namespace
 
 int main(int argc, char** argv) {
@@ -642,6 +621,5 @@ int main(int argc, char** argv) {
     }
     const Model model(archive, image_options());
     row("preprocess", [&] { preprocess(model); });
-    row("declined", [&] { declined(model); });
   });
 }

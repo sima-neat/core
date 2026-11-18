@@ -79,18 +79,14 @@ bool overlaps(const void* a, std::size_t na, const void* b, std::size_t nb) {
   const auto aa = reinterpret_cast<std::uintptr_t>(a), bb = reinterpret_cast<std::uintptr_t>(b);
   return aa <= bb ? bb - aa < na : aa - bb < nb;
 }
-k::HostStatus publish(const WirePlan& plan, k::HostBuffers buffers) {
-  if (buffers.input_count() != plan.inputs.size() || buffers.input_count() > 6 ||
-      buffers.output_count() != 1)
+// The wire from the numerical kernel's outputs. Shared by the host task below and by a backend
+// that calls the serializer itself (BoxDecodePublication::write).
+k::HostStatus write_wire(const WirePlan& plan, std::span<const k::ConstBytes> inputs,
+                         k::MutableBytes target) {
+  const auto input_count = inputs.size();
+  if (input_count != plan.inputs.size() || input_count > 6)
     return k::HostError{k::ProviderErrorCode::InvalidArity, "ports",
                         "wire publication port count changed"};
-  // Resolve the borrowed port descriptors once. The packing loops remain
-  // local arithmetic and loads/stores, not a DSO call per scalar or row.
-  std::array<k::ConstBytes, 6> inputs{};
-  const auto input_count = buffers.input_count();
-  for (std::size_t i = 0; i < input_count; ++i)
-    inputs[i] = buffers.input(i);
-  const auto target = buffers.output(0);
   if (!target.data || target.size_bytes < plan.bytes)
     return k::HostError{k::ProviderErrorCode::BufferTooSmall, "output",
                         "wire publication output is too small"};
@@ -258,6 +254,19 @@ k::HostStatus publish(const WirePlan& plan, k::HostBuffers buffers) {
   }
   return {};
 }
+k::HostStatus publish(const WirePlan& plan, k::HostBuffers buffers) {
+  if (buffers.input_count() != plan.inputs.size() || buffers.input_count() > 6 ||
+      buffers.output_count() != 1)
+    return k::HostError{k::ProviderErrorCode::InvalidArity, "ports",
+                        "wire publication port count changed"};
+  // Resolve the borrowed port descriptors once. The packing loops remain
+  // local arithmetic and loads/stores, not a DSO call per scalar or row.
+  std::array<k::ConstBytes, 6> inputs{};
+  const auto input_count = buffers.input_count();
+  for (std::size_t i = 0; i < input_count; ++i)
+    inputs[i] = buffers.input(i);
+  return write_wire(plan, {inputs.data(), input_count}, buffers.output(0));
+}
 } // namespace
 
 BoxDecodePublication prepare_boxdecode_publication(BoxDecodeWireFormat format,
@@ -375,13 +384,18 @@ BoxDecodePublication prepare_boxdecode_publication(BoxDecodeWireFormat format,
   request.input_requirements = plan->inputs;
   request.output_requirements = requirements;
   request.elements = bytes;
-  request.payload = std::shared_ptr<const WirePlan>(std::move(plan));
+  const std::shared_ptr<const WirePlan> frozen = std::move(plan);
+  request.payload = frozen;
   request.callback = +[](const void* payload, k::HostBuffers buffers) -> k::HostStatus {
     return publish(*static_cast<const WirePlan*>(payload), buffers);
   };
   auto checked = k::make_host_task(request);
   if (const auto* error = std::get_if<k::Error>(&checked))
     throw std::invalid_argument(error->message);
-  return {std::get<k::KernelExecutable>(std::move(checked)), output, bytes};
+  return {std::get<k::KernelExecutable>(std::move(checked)), output, bytes, frozen,
+          +[](const void* payload, std::span<const k::ConstBytes> inputs,
+              k::MutableBytes target) -> k::HostStatus {
+            return write_wire(*static_cast<const WirePlan*>(payload), inputs, target);
+          }};
 }
 } // namespace simaai::neat::pipeline_internal::sima

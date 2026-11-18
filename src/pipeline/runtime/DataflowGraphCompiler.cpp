@@ -169,6 +169,12 @@ Qualification qualify(const DataflowGraphView& view) {
                (node->kind() == "ModelFragment" || view.model_stage[vertex])) {
       kind[vertex] = Kind::Fragment;
       fragments.push_back(vertex);
+    } else if (node->kind() == "SimaBoxDecode") {
+      q.reason = "node " + node_text(*node) +
+                 " is a standalone BoxDecode node, which is not supported on Dataflow yet: there "
+                 "BoxDecode runs as the model's own stage, Model::postprocess() behind "
+                 "Model::inference()";
+      return q;
     } else {
       q.reason = "node " + node_text(*node) + " is not supported before H1";
       return q;
