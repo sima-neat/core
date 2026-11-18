@@ -50,96 +50,17 @@ DevKit에 Docker를 설정할지 물으면 `y`로 응답하십시오. 질문을 
 
 ### DevKit에서 수동 설치 {#install-manual}
 
-Palette SDK 없이 직접 관리하는 DevKit에 Docker를 새로 설치할 때 이 방법을 사용하십시오. 관리자 액세스가 필요합니다. 기존 설치가 있다면 설정을 보존하고 SDK 설정 경로를 사용하십시오. 아래 모든 명령은 SSH 또는 시리얼 콘솔을 통해 DevKit에서 실행합니다. `sudo`가 비밀번호를 묻습니다. 단계가 실패하면 중지하고 문제 해결 전에 9단계에 따라 패키지 미러를 복원하십시오. 다음 단계로 진행하지 마십시오.
-
-#### 1. eLxr 패키지 미러 목록 옮겨 두기
-
-9단계에서 원래 위치로 되돌립니다.
+Palette SDK를 사용할 수 없는 경우 SDK의 독립 실행형 설치 프로그램을 사용하십시오. 직접 관리하는 ARM64 Modalix DevKit에서 인터넷 연결과 sudo 액세스가 있는 사용자 계정이 필요합니다. SSH 또는 시리얼 콘솔을 통해 아래에 고정된 SDK 리비전의 설치 프로그램을 다운로드하고 일반 사용자로 실행합니다.
 
 <ShellCommand prompt="devkit">
-sudo mkdir -p /root/apt-disabled
-sudo mv /etc/apt/sources.list.d/0000mirror.list /root/apt-disabled/
+curl --fail --location --output install-devkit-docker.sh \
+  https://raw.githubusercontent.com/sima-neat/sdk/73c284873a2cbea70a688f9aa90f0b9b34be54e0/scripts/devkit-container-remote.sh
+bash install-devkit-docker.sh install
 </ShellCommand>
 
-#### 2. Docker 데이터를 /data에 저장
+독립 실행형 `install` 모드는 필요할 때 sudo 비밀번호를 묻습니다. 스토리지 설정과 eLxr 패키지 미러 복원을 포함하여 `dk container setup`과 동일한 Docker 설정 및 중단 복구 절차를 사용합니다. 기존 Docker 설정은 보존됩니다. 중단되면 같은 명령을 다시 실행하십시오.
 
-<ShellCommand prompt="devkit">
-sudo mkdir -p /etc/docker /data/docker
-echo '{"data-root": "/data/docker", "firewall-backend": "nftables"}' | sudo tee /etc/docker/daemon.json
-</ShellCommand>
-
-#### 3. IP 포워딩 켜기
-
-<ShellCommand prompt="devkit">
-printf 'net.ipv4.ip_forward=1\nnet.ipv6.conf.all.forwarding=1\n' | sudo tee /etc/sysctl.d/99-docker-forward.conf
-sudo sysctl --system
-</ShellCommand>
-
-#### 4. Docker 패키지 저장소 추가
-
-<ShellCommand prompt="devkit">
-sudo install -m 0755 -d /etc/apt/keyrings
-sudo curl -fsSL https://download.docker.com/linux/debian/gpg -o /etc/apt/keyrings/docker.asc
-sudo chmod a+r /etc/apt/keyrings/docker.asc
-echo 'deb [arch=arm64 signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/debian trixie stable' | sudo tee /etc/apt/sources.list.d/docker.list
-</ShellCommand>
-
-#### 5. Docker 설치
-
-<ShellCommand prompt="devkit">
-sudo apt-get update
-sudo apt-get install -y docker-ce docker-ce-cli containerd.io
-</ShellCommand>
-
-#### 6. containerd 데이터를 /data로 이동
-
-<ShellCommand prompt="devkit">
-sudo systemctl stop docker.socket docker containerd
-sudo sh -eu <<'SH'
-if mountpoint -q /var/lib/containerd; then
-  echo '/var/lib/containerd is already mounted; stop and inspect its storage.' >&2
-  exit 1
-fi
-mkdir -p /var/lib/containerd /data/containerd
-if [ -n "$(find /data/containerd -mindepth 1 -maxdepth 1 -print -quit)" ]; then
-  echo '/data/containerd is not empty; stop and inspect it before migrating.' >&2
-  exit 1
-fi
-cp -a /var/lib/containerd/. /data/containerd/
-diff -qr /var/lib/containerd /data/containerd
-SH
-</ShellCommand>
-
-복사 및 비교가 성공한 경우에만 계속하십시오. 원본 데이터는 바인드 마운트로 가려지기 전까지 `/var/lib/containerd`에 남습니다. 설정 중에는 삭제하지 마십시오. 복사가 실패하면 서비스를 중지한 상태로 유지하고 재시도 전에 두 디렉터리를 확인하십시오.
-
-#### 7. 부팅할 때마다 /data/containerd 마운트
-
-<ShellCommand prompt="devkit">
-sudo grep -Fqx '/data/containerd /var/lib/containerd none bind 0 0' /etc/fstab ||
-  echo '/data/containerd /var/lib/containerd none bind 0 0' | sudo tee -a /etc/fstab
-sudo mount /var/lib/containerd
-</ShellCommand>
-
-#### 8. 서비스 시작
-
-<ShellCommand prompt="devkit">
-sudo systemctl enable containerd docker
-sudo systemctl restart containerd docker
-</ShellCommand>
-
-#### 9. eLxr 패키지 미러 목록 되돌리기
-
-<ShellCommand prompt="devkit">
-sudo mv /root/apt-disabled/0000mirror.list /etc/apt/sources.list.d/
-</ShellCommand>
-
-#### 10. 사용자를 docker 그룹에 추가
-
-<ShellCommand prompt="devkit">
-sudo usermod -aG docker "$USER"
-</ShellCommand>
-
-그룹 변경 사항을 적용하려면 로그아웃했다가 다시 로그인하십시오.
+로그아웃한 뒤 다시 로그인하여 Docker 그룹 멤버십을 활성화하고 [설치를 확인](#check)하십시오.
 
 ## dk container 명령 {#dk-container}
 

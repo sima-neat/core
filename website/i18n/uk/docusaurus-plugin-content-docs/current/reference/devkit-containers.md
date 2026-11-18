@@ -53,96 +53,17 @@ dk container setup
 
 ### Ручне встановлення на DevKit {#install-manual}
 
-Використовуйте цей спосіб для нового встановлення Docker на DevKit, яким ви керуєте самостійно, без Palette SDK. Потрібен доступ адміністратора. Для наявного встановлення збережіть конфігурацію та скористайтеся налаштуванням через SDK. Виконайте всі команди нижче на DevKit через SSH або послідовну консоль. `sudo` запитає пароль. Якщо крок завершився помилкою, зупиніться й перед усуненням несправностей відновіть дзеркало пакетів за кроком 9; не переходьте до наступного кроку.
-
-#### 1. Тимчасово приберіть список дзеркал пакетів eLxr
-
-Ви повернете його на кроці 9.
+Якщо Palette SDK недоступний, скористайтеся автономним інсталятором SDK. На ARM64 Modalix DevKit, яким ви керуєте самостійно, потрібні доступ до Інтернету й обліковий запис із доступом до sudo. Через SSH або послідовну консоль завантажте інсталятор із зафіксованої нижче ревізії SDK та запустіть його як звичайний користувач:
 
 <ShellCommand prompt="devkit">
-sudo mkdir -p /root/apt-disabled
-sudo mv /etc/apt/sources.list.d/0000mirror.list /root/apt-disabled/
+curl --fail --location --output install-devkit-docker.sh \
+  https://raw.githubusercontent.com/sima-neat/sdk/73c284873a2cbea70a688f9aa90f0b9b34be54e0/scripts/devkit-container-remote.sh
+bash install-devkit-docker.sh install
 </ShellCommand>
 
-#### 2. Зберігайте дані Docker у /data
+Автономний режим `install` запитує пароль sudo за потреби. Він використовує те саме налаштування Docker і відновлення після переривання, що й `dk container setup`, зокрема конфігурацію сховища та відновлення дзеркала пакетів eLxr. Наявна конфігурація Docker зберігається. Якщо встановлення перервано, повторіть ту саму команду.
 
-<ShellCommand prompt="devkit">
-sudo mkdir -p /etc/docker /data/docker
-echo '{"data-root": "/data/docker", "firewall-backend": "nftables"}' | sudo tee /etc/docker/daemon.json
-</ShellCommand>
-
-#### 3. Увімкніть переадресацію IP
-
-<ShellCommand prompt="devkit">
-printf 'net.ipv4.ip_forward=1\nnet.ipv6.conf.all.forwarding=1\n' | sudo tee /etc/sysctl.d/99-docker-forward.conf
-sudo sysctl --system
-</ShellCommand>
-
-#### 4. Додайте репозиторій пакетів Docker
-
-<ShellCommand prompt="devkit">
-sudo install -m 0755 -d /etc/apt/keyrings
-sudo curl -fsSL https://download.docker.com/linux/debian/gpg -o /etc/apt/keyrings/docker.asc
-sudo chmod a+r /etc/apt/keyrings/docker.asc
-echo 'deb [arch=arm64 signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/debian trixie stable' | sudo tee /etc/apt/sources.list.d/docker.list
-</ShellCommand>
-
-#### 5. Встановіть Docker
-
-<ShellCommand prompt="devkit">
-sudo apt-get update
-sudo apt-get install -y docker-ce docker-ce-cli containerd.io
-</ShellCommand>
-
-#### 6. Перенесіть дані containerd до /data
-
-<ShellCommand prompt="devkit">
-sudo systemctl stop docker.socket docker containerd
-sudo sh -eu <<'SH'
-if mountpoint -q /var/lib/containerd; then
-  echo '/var/lib/containerd is already mounted; stop and inspect its storage.' >&2
-  exit 1
-fi
-mkdir -p /var/lib/containerd /data/containerd
-if [ -n "$(find /data/containerd -mindepth 1 -maxdepth 1 -print -quit)" ]; then
-  echo '/data/containerd is not empty; stop and inspect it before migrating.' >&2
-  exit 1
-fi
-cp -a /var/lib/containerd/. /data/containerd/
-diff -qr /var/lib/containerd /data/containerd
-SH
-</ShellCommand>
-
-Продовжуйте лише після успішного копіювання та порівняння. Початкові дані залишаються в `/var/lib/containerd`, доки їх не приховає bind-монтування; не видаляйте їх під час налаштування. Якщо копіювання не вдалося, залиште служби зупиненими та перевірте обидва каталоги перед повторною спробою.
-
-#### 7. Монтуйте /data/containerd під час кожного завантаження
-
-<ShellCommand prompt="devkit">
-sudo grep -Fqx '/data/containerd /var/lib/containerd none bind 0 0' /etc/fstab ||
-  echo '/data/containerd /var/lib/containerd none bind 0 0' | sudo tee -a /etc/fstab
-sudo mount /var/lib/containerd
-</ShellCommand>
-
-#### 8. Запустіть служби
-
-<ShellCommand prompt="devkit">
-sudo systemctl enable containerd docker
-sudo systemctl restart containerd docker
-</ShellCommand>
-
-#### 9. Поверніть список дзеркал пакетів eLxr
-
-<ShellCommand prompt="devkit">
-sudo mv /root/apt-disabled/0000mirror.list /etc/apt/sources.list.d/
-</ShellCommand>
-
-#### 10. Додайте свого користувача до групи docker
-
-<ShellCommand prompt="devkit">
-sudo usermod -aG docker "$USER"
-</ShellCommand>
-
-Вийдіть із системи й увійдіть знову, щоб зміна групи набула чинності.
+Вийдіть із системи й увійдіть знову, щоб активувати членство в групі Docker, а потім [перевірте встановлення](#check).
 
 ## Команди dk container {#dk-container}
 

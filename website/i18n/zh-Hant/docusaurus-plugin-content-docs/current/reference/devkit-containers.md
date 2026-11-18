@@ -50,96 +50,17 @@ dk container setup
 
 ### 在 DevKit 上手動安裝 {#install-manual}
 
-未使用 Palette SDK，且要在自行管理的 DevKit 上全新安裝 Docker 時，請使用此方式。需要管理員存取權。若已有安裝，請保留其設定，改用 SDK 設定流程。以下所有指令均透過 SSH 或序列主控台在 DevKit 上執行。`sudo` 會要求輸入密碼。若某步驟失敗，請停止，並在疑難排解前依步驟 9 還原套件鏡像清單；不要繼續下一步。
-
-#### 1. 暫時移開 eLxr 套件鏡像清單
-
-您會在步驟 9 將其放回。
+無法使用 Palette SDK 時，請使用 SDK 的獨立安裝程式。在自行管理的 ARM64 Modalix DevKit 上，您需要網際網路連線，以及具備 sudo 存取權的使用者帳戶。透過 SSH 或序列主控台，從下方固定的 SDK 修訂版本下載安裝程式，並以一般使用者身分執行：
 
 <ShellCommand prompt="devkit">
-sudo mkdir -p /root/apt-disabled
-sudo mv /etc/apt/sources.list.d/0000mirror.list /root/apt-disabled/
+curl --fail --location --output install-devkit-docker.sh \
+  https://raw.githubusercontent.com/sima-neat/sdk/73c284873a2cbea70a688f9aa90f0b9b34be54e0/scripts/devkit-container-remote.sh
+bash install-devkit-docker.sh install
 </ShellCommand>
 
-#### 2. 將 Docker 的資料保存在 /data
+獨立的 `install` 模式會在需要時要求輸入 sudo 密碼。它使用與 `dk container setup` 相同的 Docker 設定與中斷復原流程，包括儲存空間設定及還原 eLxr 套件鏡像清單。現有的 Docker 設定會保留。若安裝中斷，請重新執行相同指令。
 
-<ShellCommand prompt="devkit">
-sudo mkdir -p /etc/docker /data/docker
-echo '{"data-root": "/data/docker", "firewall-backend": "nftables"}' | sudo tee /etc/docker/daemon.json
-</ShellCommand>
-
-#### 3. 開啟 IP 轉送
-
-<ShellCommand prompt="devkit">
-printf 'net.ipv4.ip_forward=1\nnet.ipv6.conf.all.forwarding=1\n' | sudo tee /etc/sysctl.d/99-docker-forward.conf
-sudo sysctl --system
-</ShellCommand>
-
-#### 4. 新增 Docker 的套件庫
-
-<ShellCommand prompt="devkit">
-sudo install -m 0755 -d /etc/apt/keyrings
-sudo curl -fsSL https://download.docker.com/linux/debian/gpg -o /etc/apt/keyrings/docker.asc
-sudo chmod a+r /etc/apt/keyrings/docker.asc
-echo 'deb [arch=arm64 signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/debian trixie stable' | sudo tee /etc/apt/sources.list.d/docker.list
-</ShellCommand>
-
-#### 5. 安裝 Docker
-
-<ShellCommand prompt="devkit">
-sudo apt-get update
-sudo apt-get install -y docker-ce docker-ce-cli containerd.io
-</ShellCommand>
-
-#### 6. 將 containerd 的資料移至 /data
-
-<ShellCommand prompt="devkit">
-sudo systemctl stop docker.socket docker containerd
-sudo sh -eu <<'SH'
-if mountpoint -q /var/lib/containerd; then
-  echo '/var/lib/containerd is already mounted; stop and inspect its storage.' >&2
-  exit 1
-fi
-mkdir -p /var/lib/containerd /data/containerd
-if [ -n "$(find /data/containerd -mindepth 1 -maxdepth 1 -print -quit)" ]; then
-  echo '/data/containerd is not empty; stop and inspect it before migrating.' >&2
-  exit 1
-fi
-cp -a /var/lib/containerd/. /data/containerd/
-diff -qr /var/lib/containerd /data/containerd
-SH
-</ShellCommand>
-
-只有在複製與比較成功後才可繼續。原始資料會保留在 `/var/lib/containerd`，直到被繫結掛載隱藏；請勿在設定期間刪除。如果複製失敗，請讓服務保持停止，並在重試前檢查兩個目錄。
-
-#### 7. 每次開機時掛載 /data/containerd
-
-<ShellCommand prompt="devkit">
-sudo grep -Fqx '/data/containerd /var/lib/containerd none bind 0 0' /etc/fstab ||
-  echo '/data/containerd /var/lib/containerd none bind 0 0' | sudo tee -a /etc/fstab
-sudo mount /var/lib/containerd
-</ShellCommand>
-
-#### 8. 啟動服務
-
-<ShellCommand prompt="devkit">
-sudo systemctl enable containerd docker
-sudo systemctl restart containerd docker
-</ShellCommand>
-
-#### 9. 放回 eLxr 套件鏡像清單
-
-<ShellCommand prompt="devkit">
-sudo mv /root/apt-disabled/0000mirror.list /etc/apt/sources.list.d/
-</ShellCommand>
-
-#### 10. 將您的使用者加入 docker 群組
-
-<ShellCommand prompt="devkit">
-sudo usermod -aG docker "$USER"
-</ShellCommand>
-
-請登出後再重新登入，群組變更才會生效。
+請登出再重新登入，以啟用 Docker 群組成員資格，然後[檢查安裝](#check)。
 
 ## dk container 指令 {#dk-container}
 

@@ -77,104 +77,24 @@ to install Docker when it is missing.
 
 ### Manual Installation on the DevKit {#install-manual}
 
-Use this method for a fresh Docker installation on a personally administered
-DevKit without the Palette SDK. It requires administrator access. For an existing
-installation, preserve its configuration and use the SDK setup path instead.
-Run all commands below on the DevKit, through SSH or the serial console. `sudo`
-asks for your password. If a step fails, stop and restore the package mirror as
-shown in step 9 before troubleshooting; do not continue to the next step.
-
-#### 1. Move the eLxr Package Mirror List Aside
-
-You put it back in step 9.
+Use the SDK's standalone installer when the Palette SDK is not available. On a
+personally administered ARM64 Modalix DevKit, you need Internet access and a user
+account with sudo access. Through SSH or the serial console, download the
+installer from the pinned SDK revision below and run it as your normal user:
 
 <ShellCommand prompt="devkit">
-sudo mkdir -p /root/apt-disabled
-sudo mv /etc/apt/sources.list.d/0000mirror.list /root/apt-disabled/
+curl --fail --location --output install-devkit-docker.sh \
+  https://raw.githubusercontent.com/sima-neat/sdk/73c284873a2cbea70a688f9aa90f0b9b34be54e0/scripts/devkit-container-remote.sh
+bash install-devkit-docker.sh install
 </ShellCommand>
 
-#### 2. Keep Docker's Data in /data
+The standalone `install` mode prompts for your sudo password when needed. It
+uses the same Docker setup and interruption recovery as `dk container setup`,
+including storage configuration and restoring the eLxr package mirror. Existing
+Docker configuration is preserved. If interrupted, rerun the same command.
 
-<ShellCommand prompt="devkit">
-sudo mkdir -p /etc/docker /data/docker
-echo '{"data-root": "/data/docker", "firewall-backend": "nftables"}' | sudo tee /etc/docker/daemon.json
-</ShellCommand>
-
-#### 3. Turn On IP Forwarding
-
-<ShellCommand prompt="devkit">
-printf 'net.ipv4.ip_forward=1\nnet.ipv6.conf.all.forwarding=1\n' | sudo tee /etc/sysctl.d/99-docker-forward.conf
-sudo sysctl --system
-</ShellCommand>
-
-#### 4. Add Docker's Package Repository
-
-<ShellCommand prompt="devkit">
-sudo install -m 0755 -d /etc/apt/keyrings
-sudo curl -fsSL https://download.docker.com/linux/debian/gpg -o /etc/apt/keyrings/docker.asc
-sudo chmod a+r /etc/apt/keyrings/docker.asc
-echo 'deb [arch=arm64 signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/debian trixie stable' | sudo tee /etc/apt/sources.list.d/docker.list
-</ShellCommand>
-
-#### 5. Install Docker
-
-<ShellCommand prompt="devkit">
-sudo apt-get update
-sudo apt-get install -y docker-ce docker-ce-cli containerd.io
-</ShellCommand>
-
-#### 6. Move containerd's Data to /data
-
-<ShellCommand prompt="devkit">
-sudo systemctl stop docker.socket docker containerd
-sudo sh -eu <<'SH'
-if mountpoint -q /var/lib/containerd; then
-  echo '/var/lib/containerd is already mounted; stop and inspect its storage.' >&2
-  exit 1
-fi
-mkdir -p /var/lib/containerd /data/containerd
-if [ -n "$(find /data/containerd -mindepth 1 -maxdepth 1 -print -quit)" ]; then
-  echo '/data/containerd is not empty; stop and inspect it before migrating.' >&2
-  exit 1
-fi
-cp -a /var/lib/containerd/. /data/containerd/
-diff -qr /var/lib/containerd /data/containerd
-SH
-</ShellCommand>
-
-Continue only if the copy and comparison succeed. The original data remains in
-`/var/lib/containerd` until the bind mount hides it; do not delete it during
-setup. If the copy fails, keep the services stopped and inspect both directories
-before retrying.
-
-#### 7. Mount /data/containerd at Every Boot
-
-<ShellCommand prompt="devkit">
-sudo grep -Fqx '/data/containerd /var/lib/containerd none bind 0 0' /etc/fstab ||
-  echo '/data/containerd /var/lib/containerd none bind 0 0' | sudo tee -a /etc/fstab
-sudo mount /var/lib/containerd
-</ShellCommand>
-
-#### 8. Start the Services
-
-<ShellCommand prompt="devkit">
-sudo systemctl enable containerd docker
-sudo systemctl restart containerd docker
-</ShellCommand>
-
-#### 9. Put the eLxr Package Mirror List Back
-
-<ShellCommand prompt="devkit">
-sudo mv /root/apt-disabled/0000mirror.list /etc/apt/sources.list.d/
-</ShellCommand>
-
-#### 10. Add Your User to the docker Group
-
-<ShellCommand prompt="devkit">
-sudo usermod -aG docker "$USER"
-</ShellCommand>
-
-Log out and log in again for the group change to take effect.
+Log out and log in again to activate Docker group membership, then
+[check the installation](#check).
 
 ## dk container Commands {#dk-container}
 
