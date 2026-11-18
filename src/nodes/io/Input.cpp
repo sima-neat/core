@@ -1,6 +1,8 @@
 #include "nodes/io/Input.h"
 
+#include "pipeline/ErrorCodes.h"
 #include "pipeline/internal/CapsStringUtil.h"
+#include "pipeline/internal/ErrorUtil.h"
 
 #include <sstream>
 #include <string>
@@ -74,12 +76,27 @@ std::string build_caps_string(const InputOptions& opt) {
 
 } // namespace
 
-Input::Input(InputOptions opt) : opt_(std::move(opt)) {}
+Input::Input(InputOptions opt) : Input({}, std::move(opt)) {}
 
 Input::Input(std::string name) : endpoint_name_(std::move(name)) {}
 
 Input::Input(std::string name, InputOptions opt)
-    : opt_(std::move(opt)), endpoint_name_(std::move(name)) {}
+    : opt_(std::move(opt)), endpoint_name_(std::move(name)) {
+  using pipeline_internal::error_util::throw_session_error;
+  if (opt_.fps_n < 0 || opt_.fps_d <= 0) {
+    throw_session_error(error_codes::kOptionOutOfRange,
+                        "InputOptions requires fps_n >= 0 and fps_d > 0");
+  }
+  if (opt_.pool_min_buffers < 0 || opt_.pool_max_buffers < 0) {
+    throw_session_error(error_codes::kOptionOutOfRange,
+                        "InputOptions.pool_min_buffers and pool_max_buffers must be >= 0");
+  }
+  if (!opt_.caps_override.empty() && !pipeline_internal::valid_input_caps(opt_.caps_override)) {
+    throw_session_error(error_codes::kCaps,
+                        "Invalid InputOptions.caps_override: " + opt_.caps_override, {},
+                        "Provide GStreamer caps with a media type such as video/x-raw.");
+  }
+}
 
 std::string Input::caps_string() const {
   return build_caps_string(opt_);

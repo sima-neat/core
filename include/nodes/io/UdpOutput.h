@@ -40,7 +40,7 @@ struct UdpOutputOptions {
 class UdpOutput final : public Node {
 public:
   /// Construct with destination + sync options.
-  explicit UdpOutput(UdpOutputOptions opt) : opt_(std::move(opt)) {}
+  explicit UdpOutput(UdpOutputOptions opt);
 
   /// Type label for this Node kind.
   std::string kind() const override {

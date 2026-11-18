@@ -49,6 +49,22 @@ std::string caps_media_type(std::string_view caps) {
   return media ? std::string(media) : std::string();
 }
 
+bool valid_input_caps(const std::string& caps) {
+  gst_init_once();
+  GstCapsPtr parsed(gst_caps_from_string(caps.c_str()));
+  if (!parsed) {
+    return false;
+  }
+  for (guint i = 0; i < gst_caps_get_size(parsed.get()); ++i) {
+    const std::string_view name = gst_structure_get_name(gst_caps_get_structure(parsed.get(), i));
+    const auto slash = name.find('/');
+    if (slash == std::string_view::npos || slash + 1 == name.size()) {
+      return false;
+    }
+  }
+  return true;
+}
+
 PayloadType payload_type_from_caps_string(std::string_view caps) {
   const std::string media = caps_media_type(caps);
   const PayloadType from_media = payload_type_from_media_type(media);

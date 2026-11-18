@@ -27,18 +27,10 @@ RUN_TEST(
 
       // misconfig.caps: invalid caps_override should be rejected with the offending value.
       {
-        Graph invalid_caps;
         InputOptions src_opt;
-        src_opt.payload_type = simaai::neat::PayloadType::Image;
-        src_opt.format = simaai::neat::FormatTag::RGB;
-        src_opt.memory_policy = simaai::neat::InputMemoryPolicy::SystemMemory;
         src_opt.caps_override = "video/x-raw,format=(string";
-        invalid_caps.add(nodes::Input(src_opt));
-        invalid_caps.add(nodes::Output(OutputOptions::Latest()));
-
-        require_neat_error(
-            [&]() { (void)invalid_caps.build_seeded_internal(TensorList{seed}, RunMode::Sync); },
-            error_codes::kCaps, "misconfig.caps", "invalid caps_override");
+        require_neat_error([&]() { (void)nodes::Input(src_opt); }, error_codes::kCaps,
+                           "caps_override", src_opt.caps_override);
       }
 
       // misconfig.input_shape: malformed input tensor should carry input-shape taxonomy.
