@@ -21,6 +21,13 @@ Neat applications can use the MLA inside a container. The container must have:
 - A compatible DevKit platform and a Neat Core version that supports container
   platform detection. The application must match the runtime's ABI.
 
+On an up-to-date DevKit, run the workload with the DevKit user's UID and GID
+using `--user UID:GID`, with permission to access the mapped devices. Once Docker
+access is configured, MLA device access does not require application `sudo` or
+`--privileged`. The current first-party launcher also uses no unconfined security
+overrides. Administrator access for installing Docker and configuring the host is
+separate from application device permissions.
+
 The DevKit still provides the kernel drivers and firmware. Passing devices alone
 does not make an arbitrary Ubuntu image accelerator-ready. DSP workloads require
 their own compatible runtime and device configuration; this guide does not

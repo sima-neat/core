@@ -17,6 +17,8 @@ Neat 應用程式可以在容器內使用 MLA。容器必須具備：
 - 相容的 Neat 函式庫、GStreamer 外掛程式與平台使用者空間函式庫，可封裝於映像檔或從 DevKit 掛載。
 - 相容的 DevKit 平台，以及支援容器平台偵測的 Neat Core 版本。應用程式必須符合執行階段的 ABI。
 
+在已更新的 DevKit 上，請使用 `--user UID:GID`，以 DevKit 使用者的 UID 與 GID 執行工作負載，並確保具備所映射裝置的存取權。設定 Docker 存取權後，存取 MLA 裝置不需要應用程式使用 `sudo` 或 `--privileged`。目前的官方啟動程式也不使用解除安全限制的選項。安裝 Docker 與設定主機所需的管理員權限，與應用程式的裝置權限是不同的。
+
 核心驅動程式與韌體仍由 DevKit 提供。僅傳入裝置並不會讓任意 Ubuntu 映像檔具備使用加速器的能力。DSP 工作負載需要各自相容的執行階段與裝置設定；本指南未確立任意容器映像檔對 DSP 的支援。
 
 完整的裝置與函式庫設定請參閱官方的 [Docker 平行應用程式範例](https://github.com/sima-neat/apps/tree/develop/examples/docker/parallel-apps)。請遵循所選範例與平台版本的必要條件。
