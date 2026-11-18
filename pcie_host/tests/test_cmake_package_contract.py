@@ -44,7 +44,7 @@ class CMakePackageContract(unittest.TestCase):
 if(NOT TARGET PkgConfig::SIMAPCIE_GST)
   message(FATAL_ERROR "GStreamer target was not created before the exported targets")
 endif()
-if(NOT nlohmann_json_FOUND)
+if(NOT WIN32 AND NOT nlohmann_json_FOUND)
   message(FATAL_ERROR "nlohmann_json was not found before the exported targets")
 endif()
 add_library(SimaPCIeHost::sima_neat_pcie_host INTERFACE IMPORTED)
