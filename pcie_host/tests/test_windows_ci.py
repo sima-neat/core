@@ -2292,10 +2292,9 @@ class WindowsCiContracts(unittest.TestCase):
         "repository": "sima-neat/core",
         "scheduler_source_commit": "d" * 40,
     }), encoding="utf-8")
-    qualification = root.parent / f"{root.name}-qualification.json"
-    self.addCleanup(qualification.unlink, missing_ok=True)
+    qualification = Path(tempfile.mkdtemp()) / "qualification.json"
+    self.addCleanup(shutil.rmtree, qualification.parent)
     asset_manifest_path = qualification.with_name("hardware-asset-manifest.json")
-    self.addCleanup(asset_manifest_path.unlink, missing_ok=True)
     asset_manifest = fixture_asset_manifest()
     asset_manifest_path.write_text(
         json.dumps(asset_manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
