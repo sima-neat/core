@@ -105,6 +105,7 @@ def normalized_link_target(path):
 
 WINDOWS_OPENSSH_HOP_SKIP = (
     "replays the Windows OpenSSH hop into a bash card shell; runs on Linux")
+WINDOWS_CMD_SKIP = "runs a batch wrapper under cmd.exe; executed on Windows"
 FIXTURE_SUDO = """\
 #!/bin/sh
 # sudo -n reports FIXTURE_SUDO_N_STATUS; sudo -S checks the piped secret.
@@ -1732,10 +1733,53 @@ class WindowsCiContracts(unittest.TestCase):
     wrapper = standard_user_wrapper()
     self.assertIn('set "SIMAPCIE_GENAI_MEDIA_DIRECTORY="', wrapper)
     self.assertIn('set "SIMAPCIE_GENAI_MEDIA_SERVE_ROOT="', wrapper)
-    self.assertIn('"%SIMA_STANDARD_USER_PAYLOAD%"', wrapper)
-    self.assertIn('"%SIMA_STANDARD_USER_RECEIPT%"', wrapper)
+    self.assertIn('call "%~1" > "%~2" 2>&1', wrapper)
+    self.assertIn('call "%~3" "%~4" "%~5" "%~6" "%~7" >> "%~2" 2>&1', wrapper)
+    self.assertNotIn("%SIMA_", wrapper)
     self.assertNotIn("C:\\", wrapper)
     self.assertNotIn("{", wrapper)
+
+  def test_standard_user_wrapper_paths_are_passed_on_the_command_line(self):
+    # CreateProcessWithLogonW gives the child the new user's environment, not ours.
+    source = (SCRIPT_DIR / "qualify_windows_hardware.py").read_text(encoding="utf-8")
+    block = source[source.index("$wrapperArguments = foreach"):
+                   source.index("$exitCode = [SimaStandardUserProcess]::Run(")]
+    listed, command = block.split("$arguments =")
+    self.assertEqual(re.findall(r"\$env:(SIMA_STANDARD_USER_\w+)", listed), [
+        "SIMA_STANDARD_USER_DOCTOR", "SIMA_STANDARD_USER_RUN_LOG",
+        "SIMA_STANDARD_USER_RUNNER", "SIMA_STANDARD_USER_PYTHON",
+        "SIMA_STANDARD_USER_DRIVER", "SIMA_STANDARD_USER_PAYLOAD",
+        "SIMA_STANDARD_USER_RECEIPT"])
+    self.assertIn("""'/d /c ""' + $env:SIMA_STANDARD_USER_WRAPPER + '"'""", command)
+    self.assertIn("($wrapperArguments -join '') + '\"'", command)
+    self.assertIn("-gt 1024", command)
+
+  @unittest.skipUnless(os.name == "nt", WINDOWS_CMD_SKIP)
+  def test_standard_user_wrapper_runs_from_arguments_without_inherited_variables(self):
+    with tempfile.TemporaryDirectory() as directory:
+      root = Path(directory) / "standard user work"
+      root.mkdir()
+      doctor = root / "doctor stub.cmd"
+      doctor.write_text("@echo off\necho doctor PASS\nexit /b 0\n", encoding="ascii")
+      runner = root / "runner stub.cmd"
+      runner.write_text("@echo off\necho runner %*\nexit /b 0\n", encoding="ascii")
+      wrapper = root / "standard-user-activation.cmd"
+      wrapper.write_text(standard_user_wrapper(), encoding="utf-8")
+      run_log = root / "standard-user-activation.log"
+      python, driver, payload, receipt = (
+          root / "python.exe", root / "driver.py", root / "payload.json",
+          root / "receipt.json")
+      paths = [doctor, run_log, runner, python, driver, payload, receipt]
+      command_processor = Path(os.environ["SystemRoot"]) / "System32" / "cmd.exe"
+      command = (f'"{command_processor}" /d /c ""{wrapper}"'
+                 + "".join(f' "{path}"' for path in paths) + '"')
+      result = subprocess.run(
+          command, env={"SystemRoot": os.environ["SystemRoot"]}, cwd=root,
+          check=False)
+      log = run_log.read_text(encoding="utf-8", errors="replace")
+      self.assertEqual(result.returncode, 0, log)
+      self.assertIn("doctor PASS", log)
+      self.assertIn(f'runner "{python}" "{driver}" "{payload}" "{receipt}"', log)
 
   def test_standard_user_platform_config_binding_is_deterministic(self):
     with tempfile.TemporaryDirectory() as directory:

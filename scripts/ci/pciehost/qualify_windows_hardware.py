@@ -884,17 +884,19 @@ def remove_qualification_tree(path: Path, description: str) -> None:
 
 
 def standard_user_wrapper() -> str:
-  """Return a static wrapper; all paths and child inputs stay out of batch text."""
+  """Return a static wrapper; all paths and child inputs stay out of batch text.
+
+  The paths arrive as arguments: the child gets the new user's environment, not ours.
+  Order: doctor, run log, runner, Python, driver, payload, receipt.
+  """
   return (
       "@echo off\n"
       "setlocal\n"
       "set \"SIMAPCIE_GENAI_MEDIA_DIRECTORY=\"\n"
       "set \"SIMAPCIE_GENAI_MEDIA_SERVE_ROOT=\"\n"
-      "call \"%SIMA_STANDARD_USER_DOCTOR%\" > \"%SIMA_STANDARD_USER_RUN_LOG%\" 2>&1\n"
+      "call \"%~1\" > \"%~2\" 2>&1\n"
       "if errorlevel 1 exit /b 98\n"
-      "call \"%SIMA_STANDARD_USER_RUNNER%\" \"%SIMA_STANDARD_USER_PYTHON%\" "
-      "\"%SIMA_STANDARD_USER_DRIVER%\" \"%SIMA_STANDARD_USER_PAYLOAD%\" "
-      "\"%SIMA_STANDARD_USER_RECEIPT%\" >> \"%SIMA_STANDARD_USER_RUN_LOG%\" 2>&1\n"
+      "call \"%~3\" \"%~4\" \"%~5\" \"%~6\" \"%~7\" >> \"%~2\" 2>&1\n"
       "if errorlevel 1 exit /b 99\n"
       "exit /b 0\n"
   )
@@ -1069,7 +1071,17 @@ public static class SimaStandardUserProcess {
   }
 }
 '@
-  $arguments = '/d /c ""' + $env:SIMA_STANDARD_USER_WRAPPER + '""'
+  $wrapperArguments = foreach ($path in @(
+      $env:SIMA_STANDARD_USER_DOCTOR, $env:SIMA_STANDARD_USER_RUN_LOG,
+      $env:SIMA_STANDARD_USER_RUNNER, $env:SIMA_STANDARD_USER_PYTHON,
+      $env:SIMA_STANDARD_USER_DRIVER, $env:SIMA_STANDARD_USER_PAYLOAD,
+      $env:SIMA_STANDARD_USER_RECEIPT)) { ' "' + $path + '"' }
+  $arguments = '/d /c ""' + $env:SIMA_STANDARD_USER_WRAPPER + '"' +
+    ($wrapperArguments -join '') + '"'
+  if ($env:ComSpec.Length + 3 + $arguments.Length -gt 1024) {
+    throw ('standard-user command line exceeds the 1024 characters ' +
+      'CreateProcessWithLogonW accepts; use a shorter work directory')
+  }
   $timeoutMilliseconds = [uint32]([uint64]$env:SIMA_STANDARD_USER_TIMEOUT_SECONDS * 1000)
   $exitCode = [SimaStandardUserProcess]::Run(
     $name, $env:COMPUTERNAME, $plain, $env:ComSpec, $arguments,
