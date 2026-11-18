@@ -21,7 +21,7 @@
 
 ### 실행 옵션 구성 {#step-configure-run-options}
 
-`RunOptions`는 로드 하에서 비동기 동작이 결정되는 곳입니다. `queue_depth` (런타임이 수락하는 미처리 샘플의 수), `overflow_policy` (해당 큐가 가득 찰 때 발생하는 일 — `Block`, `KeepLatest`, 또는 `DropIncoming`), `output_memory = Owned` (반환된 텐서가 자체 데이터를 소유하므로 추출 후에도 유지됨)를 설정합니다. 그런 다음 `build()`를 사용하여 그래프를 `Async` 모드로 빌드합니다. 이렇게 하면 독립적인 프로듀서 및 컨슈머 측면을 갖춘 실행이 가능합니다.
+`queue_depth`로 각 큐의 용량을 설정하고 `overflow_policy`로 입력 큐가 가득 찼을 때의 `try_push(...)` 동작을 설정합니다. `output_memory = Owned`에서는 꺼낸 텐서가 자체 데이터를 소유합니다. `build()`를 호출하여 비동기 실행을 시작합니다.
 
 **C++:** 오버플로 정책은 `--drop`에서 `simaai::neat::OverflowPolicy::{Block,KeepLatest,DropIncoming}`로 파싱됩니다. `graph.build(input, opt)`는 실행 핸들을 반환합니다.
 
@@ -29,7 +29,7 @@
 
 ### 워크로드를 푸시하고 추출 {#step-push-workload}
 
-여기에서 큐 정책이 적용됩니다. `try_push(...)`를 좁은 루프에서 호출합니다. 이는 샘플이 수락되었는지 여부를 반환하는 비차단 푸시이므로 `DropIncoming`/`KeepLatest` 하에서 큐가 가득 찬 경우 거부된 푸시로 나타나므로 중단되는 대신 진행됩니다. 버스트 후에는 더 이상 입력이 없음을 알리기 위해 `close_input()`를 호출한 다음, 비어 있을 때까지 `pull(...)` 루프를 사용하여 컨슈머 측면을 추출합니다. `try_push`와 `close_input`를 함께 사용하고 추출 루프를 추가하는 것은 표준 비차단 비동기 패턴입니다.
+`try_push(...)`로 샘플을 연속 제출한 뒤 `close_input()`을 호출하고 출력이 닫힐 때까지 `pull(...)`로 꺼냅니다. `KeepLatest`에서는 제출에 성공해도 대기 중인 이전 샘플이 교체될 수 있습니다.
 
 ### 측정 보고서 읽기 {#step-read-measurement}
 
@@ -87,7 +87,7 @@ renegotiations=0
 
 ### 오버플로 정책(`RunOptions::overflow_policy`)
 
-- `Block`: 정확성을 위해 가장 안전합니다. 큐가 가득 차면 프로듀서가 대기합니다.
+- `Block`은 큐가 가득 차면 `false`를 반환합니다. 샘플을 보존하려면 다시 시도하세요.
 - `DropIncoming`: 큐에 있는 작업을 유지하고, 큐가 가득 차면 들어오는 샘플을 삭제합니다.
 - `KeepLatest`: 가장 최신의 프레임을 선호하고, 가장 오래된 큐에 있는 샘플을 삭제합니다.
 

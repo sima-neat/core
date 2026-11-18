@@ -379,7 +379,8 @@ MPK 資訊清單使用 `MpkDecoder`。`MpkDecoder::load` 是唯一的資訊清�
 歧義、缺少槽位或證據衝突都是模型載入錯誤；附屬 JSON、子字串比對、
 環境狀態與執行階段緩衝區都不是證據。
 
-當對應關係沒有歧義時，Core 可以核對不同的輸入與輸出緩衝區順序，包括批次輸入與輸出。
+Core 依據名稱中的索引（`input_<i>`、`output_<i>`、`qmla_ifm_<i>`、`afe_direct_input_<i>` 或 `afe_mla_output_<i>`）繫結每個 MLA 輸入與輸出區段：區段 `<i>` 承載 MPK MLA 張量 `<i>`，包括批次中的每個樣本。
+若 ELF 的持久 I/O 區段沒有索引，模型載入會失敗；請使用會寫入索引區段的 Model Compiler 重新編譯模型。
 應用程式保留模型的公開張量名稱、順序與樣本順序。
 
 具有一般空間儲存配置的單輸入、批次一模型，可以使用自動輸入通道填補。
@@ -965,9 +966,9 @@ graph.add(simaai::neat::nodes::Output());
 
 `Run` 擁有輸入/輸出佇列和一個輸入執行緒：
 
-* `push(...)` 將輸入排入佇列（根據 `RunOptions::overflow_policy` 進行阻塞或丟棄）
+* `push(...)` 會等待輸入佇列出現空位，再將樣本加入佇列
 * `pull(...)` 從應用程式接收器中取出 `Sample` 輸出
-* `try_push(...)` 是非阻塞的（如果佇列已滿，則傳回 false）
+* 輸入佇列已滿時，`try_push(...)` 會立即套用 `RunOptions::overflow_policy`
 
 閒置的 `Run` 仍可繼續使用；操作期限限制的是等待時間，而非提交輸入之間的暫停。
 

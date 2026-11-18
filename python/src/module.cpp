@@ -1478,7 +1478,8 @@ NB_MODULE(_pyneat_core, m) {
   nb::enum_<simaai::neat::OverflowPolicy>(m, "OverflowPolicy")
       .value("Block", simaai::neat::OverflowPolicy::Block)
       .value("KeepLatest", simaai::neat::OverflowPolicy::KeepLatest)
-      .value("DropIncoming", simaai::neat::OverflowPolicy::DropIncoming);
+      .value("DropIncoming", simaai::neat::OverflowPolicy::DropIncoming)
+      .value("Auto", simaai::neat::OverflowPolicy::Auto);
 
   nb::class_<simaai::neat::QueueOptions>(m, "QueueOptions")
       .def(nb::init<>())

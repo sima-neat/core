@@ -49,6 +49,11 @@ namespace simaai::neat {
  * class-confidence heads (depth = num_classes * priors-per-cell), and require a stretch
  * preprocessing resize; any other head set, model frame or resize is rejected.
  *
+ * For SSD-Mobile-300 and SSDlite-Mobile-320 with 91 encoded classes, foreground
+ * anchor/class pairs use classwise floating-point NMS before INT32 BBOX publication.
+ * MobileNet V1/V2 share the former contract; TorchVision V3 uses the latter.
+ * Other prepared SSD signatures and class counts retain their numerical policy.
+ *
  * SSD `num_classes` is always derived from the confidence-head depth. The SSD300 recipe permits a
  * contiguous prefix selection; both SSD-Mobile recipes and SSDlite-Mobile-320 require the exact
  * encoded class count.

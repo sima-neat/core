@@ -685,18 +685,14 @@ bool build_cvu_dense_desc_with_geometry(const ValueSpec& value, const TensorShap
   const auto shape = cvu_shape_from_tensor(logical_shape);
   const auto dtype = cvu_dtype(value, fallback_dtype);
   std::string detail;
-  const bool valid =
-      tensorsemantics::normalize_layout_token(logical_layout).empty()
-          ? tensorsemantics::build_generic_dense_tensor_desc(
-                shape, dtype, descriptor, &detail, "missing tensor descriptor",
-                "invalid tensor rank", "invalid tensor dimension", "invalid tensor dtype",
-                "invalid tensor stride")
-          : tensorsemantics::build_dense_tensor_desc(
-                shape, dtype, logical_layout, descriptor, &detail, "missing tensor descriptor",
-                "invalid tensor rank", "invalid tensor dimension", "invalid tensor dtype",
-                "invalid tensor stride");
-  if (!valid) {
+  if (!tensorsemantics::build_generic_dense_tensor_desc(
+          shape, dtype, descriptor, &detail, "missing tensor descriptor", "invalid tensor rank",
+          "invalid tensor dimension", "invalid tensor dtype", "invalid tensor stride")) {
     return fail(error, "ProcessCVU could not author dense tensor descriptor: " + detail);
+  }
+  if (!tensorsemantics::normalize_layout_token(logical_layout).empty()) {
+    tensorsemantics::fill_axis_semantics_from_shape_layout(shape, logical_layout,
+                                                           descriptor->shape.axis_semantics);
   }
 
   // A tensor descriptor describes the exact addressed view, not every byte in
@@ -1450,11 +1446,7 @@ bool apply_dmabuf_plan_contract_projection(const ModelExecutionPlan& plan,
 
   const auto original_logical_outputs = contract->logical_outputs;
   const auto original_output_count = contract->dispatcher_physical_outputs.size();
-  const auto reordered = [](const auto& ports) {
-    return std::any_of(ports.begin(), ports.end(),
-                       [](const auto& port) { return port.port_index != port.logical_index(); });
-  };
-  if (batch_count > 1U || reordered(inputs) || reordered(outputs)) {
+  if (batch_count > 1U) {
     const auto expand_physical = [&](const auto& ports, const auto& original) {
       std::vector<PhysicalBufferStaticSpec> expanded;
       expanded.reserve(ports.size());
@@ -1462,9 +1454,7 @@ bool apply_dmabuf_plan_contract_projection(const ModelExecutionPlan& plan,
         auto physical = original[port.logical_index()];
         physical.physical_index = static_cast<int>(port.port_index);
         physical.allocator_index = physical.physical_index;
-        if (batch_count > 1U) {
-          physical.segment_name += ".batch." + std::to_string(port.batch_index);
-        }
+        physical.segment_name += ".batch." + std::to_string(port.batch_index);
         expanded.push_back(std::move(physical));
       }
       return expanded;
@@ -1479,19 +1469,16 @@ bool apply_dmabuf_plan_contract_projection(const ModelExecutionPlan& plan,
             return value.tensor_index == static_cast<int>(port.logical_index());
           });
       const auto* value = plan.value(port.value_id);
-      if (found == contract->logical_inputs.end() || !value ||
-          (batch_count > 1U && !value->logical_shape) ||
+      if (found == contract->logical_inputs.end() || !value || !value->logical_shape ||
           port.physical_extent_bytes >
               static_cast<std::uint64_t>(std::numeric_limits<int>::max())) {
         return fail(error, "MLA sample has no exact logical input descriptor");
       }
       auto logical = *found;
       logical.tensor_index = static_cast<int>(port.port_index);
-      if (batch_count > 1U) {
-        logical.shape = *value->logical_shape;
-        logical.shape.front() = 1;
-        logical.max_stride = static_cast<int>(port.physical_extent_bytes);
-      }
+      logical.shape = *value->logical_shape;
+      logical.shape.front() = 1;
+      logical.max_stride = static_cast<int>(port.physical_extent_bytes);
       logical_inputs.push_back(std::move(logical));
     }
     contract->logical_inputs = std::move(logical_inputs);
