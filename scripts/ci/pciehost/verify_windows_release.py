@@ -213,7 +213,8 @@ def verify(candidate_dir: Path, qualification_path: Path, expected_commit: str,
       or not isinstance(service.get("configuration"), dict)
       or not service["configuration"] or not isinstance(devices, list) or not devices
       or any(not isinstance(device, dict) for device in devices)
-      or {device.get("friendly_name") for device in devices} != required_devices
+      or {re.sub(r" #[0-9]+$", "", str(device.get("friendly_name")))
+          for device in devices} != required_devices
       or any(device.get("status") != "OK" for device in devices)):
     raise ValueError("hardware qualification recorded an invalid Windows host baseline")
   customer_install = qualification.get("customer_install")

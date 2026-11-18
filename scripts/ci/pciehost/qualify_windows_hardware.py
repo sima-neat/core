@@ -345,11 +345,13 @@ $registry = [ordered]@{}
 }
 
 $deviceNames = @('SiMa.ai MLA Device', 'SiMa.ai Virtual Ethernet Adapter')
+# Windows appends " #N" to a repeated adapter name, as the route binding accepts.
 $present = @(Get-PnpDevice -PresentOnly -ErrorAction Stop | Where-Object {
-  $_.FriendlyName -in $deviceNames
+  ($_.FriendlyName -replace ' #[0-9]+$', '') -in $deviceNames
 })
 foreach ($name in $deviceNames) {
-  if (@($present | Where-Object { $_.FriendlyName -eq $name }).Count -lt 1) {
+  if (@($present | Where-Object {
+      ($_.FriendlyName -replace ' #[0-9]+$', '') -eq $name }).Count -lt 1) {
     throw "No present $name was found"
   }
 }
@@ -426,7 +428,8 @@ $devices = @($present | Sort-Object InstanceId | ForEach-Object {
     raise RuntimeError(f"Windows Platform state was incomplete; see {log}")
   names = {"SiMa.ai MLA Device", "SiMa.ai Virtual Ethernet Adapter"}
   if (any(not isinstance(device, dict) for device in devices)
-      or {device.get("friendly_name") for device in devices} != names
+      or {re.sub(r" #[0-9]+$", "", str(device.get("friendly_name")))
+          for device in devices} != names
       or len({str(device.get("instance_id", "")).lower() for device in devices})
       != len(devices)):
     raise RuntimeError(f"Windows Platform PnP identity was incomplete; see {log}")

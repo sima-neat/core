@@ -1527,7 +1527,7 @@ class WindowsCiContracts(unittest.TestCase):
     devices = []
     for name, instance, device_class in (
         ("SiMa.ai MLA Device", r"PCI\VEN_1F06&DEV_3123\4&1", "System"),
-        ("SiMa.ai Virtual Ethernet Adapter", r"ROOT\SIMA_VETH\0000", "Net"),
+        ("SiMa.ai Virtual Ethernet Adapter #2", r"ROOT\SIMA_VETH\0000", "Net"),
     ):
       devices.append({
           "class": device_class,
@@ -1554,6 +1554,7 @@ class WindowsCiContracts(unittest.TestCase):
     self.assertEqual(result, snapshot)
     powershell = run.call_args.args[0][-1]
     self.assertIn("Get-PnpDevice -PresentOnly", powershell)
+    self.assertEqual(powershell.count("($_.FriendlyName -replace ' #[0-9]+$', '')"), 2)
     self.assertNotIn("ProcessId", powershell)
     require_restored_windows_host_state(snapshot, dict(snapshot))
     changed = json.loads(json.dumps(snapshot))
@@ -2625,6 +2626,18 @@ class WindowsCiContracts(unittest.TestCase):
       receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
       with self.assertRaisesRegex(ValueError, "zero-skip pass"):
         verify(root, qualification, commit, False)
+
+  def test_release_gate_accepts_a_numbered_platform_adapter(self):
+    with tempfile.TemporaryDirectory() as directory:
+      root = Path(directory)
+      commit, _, qualification = self.windows_candidate(root)
+
+      def number_adapter(value):
+        for state in ("host_state_baseline", "host_state_final"):
+          value[state]["platform"]["pnp_devices"][1]["friendly_name"] += " #2"
+
+      self.rewrite_json(qualification, number_adapter)
+      self.assertTrue(verify(root, qualification, commit, True)["hardware_qualified"])
 
   def test_release_gate_binds_qualification_to_the_workflow_candidate(self):
     self.assert_release_rejected("is not workflow commit", expected_commit="0" * 40)
