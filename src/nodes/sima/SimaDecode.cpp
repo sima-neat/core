@@ -2,12 +2,16 @@
 #include "nodes/sima/internal/JpegOutputFormat.h"
 
 #include "gst/GstHelpers.h"
+#include "pipeline/ErrorCodes.h"
+#include "pipeline/NeatError.h"
 
+#include <array>
 #include <cstddef>
 #include <memory>
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -56,6 +60,53 @@ void require_raw_output_format_supported(const SimaDecodeOptions& opt) {
   }
   throw std::invalid_argument(
       "SimaDecode: raw_output supports only NV12 or I420 (or NV16 for JPEG/MJPEG)");
+}
+
+bool ascii_iequals(std::string_view value, std::string_view lower_token) {
+  if (value.size() != lower_token.size()) {
+    return false;
+  }
+  for (std::size_t i = 0; i < value.size(); ++i) {
+    char c = value[i];
+    if (c >= 'A' && c <= 'Z') {
+      c = static_cast<char>(c - 'A' + 'a');
+    }
+    if (c != lower_token[i]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// Mirrors the presets and aliases accepted by the `neatdecoder` `decoder-tuning` property.
+constexpr std::array<std::string_view, 9> kAcceptedDecoderTunings = {
+    "auto",
+    "default",
+    "low-memory",
+    "low_memory",
+    "memory",
+    "throughput-low-latency",
+    "throughput_low_latency",
+    "throughput",
+    "low-latency-throughput",
+};
+
+void require_decoder_tuning_supported(const SimaDecodeOptions& opt) {
+  if (opt.decoder_tuning.empty()) {
+    return;
+  }
+  for (const std::string_view token : kAcceptedDecoderTunings) {
+    if (ascii_iequals(opt.decoder_tuning, token)) {
+      return;
+    }
+  }
+  const std::string note = "SimaDecode: decoder_tuning '" + opt.decoder_tuning +
+                           "' is not supported; use auto, default, low-memory or "
+                           "throughput-low-latency, or leave it empty for the decoder default";
+  GraphReport rep;
+  rep.error_code = error_codes::kOptionOutOfRange;
+  rep.repro_note = note;
+  throw NeatError("[" + std::string(error_codes::kOptionOutOfRange) + "] " + note, std::move(rep));
 }
 
 void append_decoder_properties(std::ostringstream& ss, const SimaDecodeOptions& opt) {
@@ -130,7 +181,9 @@ FormatTag internal::jpeg_output_format(std::span<const std::uint8_t> jpeg) {
   throw std::invalid_argument("jpeg_output_format: no 3-component frame header before scan data");
 }
 
-SimaDecode::SimaDecode(SimaDecodeOptions opt) : opt_(std::move(opt)) {}
+SimaDecode::SimaDecode(SimaDecodeOptions opt) : opt_(std::move(opt)) {
+  require_decoder_tuning_supported(opt_);
+}
 
 std::string SimaDecode::backend_fragment(int node_index) const {
   require_tensordecoder("SimaDecode::backend_fragment");

@@ -185,6 +185,9 @@ the decoder policy.
 Leave `decoder_tuning` empty to keep the plugin default. Explicit values, including
 `default` and `auto`, are forwarded to the plugin alongside `memory_opt` and buffer
 count overrides so the decoder can apply its tuning precedence.
+Accepted values are `auto`, `default`, `low-memory`, and `throughput-low-latency`
+(case-insensitive); any other non-empty value makes `SimaDecode` and
+`RtspDecodedInput` refuse at creation with `misconfig.option_out_of_range`.
 `throughput-low-latency` disables decoded-picture reordering and uses command
 depth one through 720p, or two for larger frames. Use it only for
 streams encoded without B-frames; leave tuning unset for general streams.

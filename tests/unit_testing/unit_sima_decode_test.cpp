@@ -206,6 +206,17 @@ void check_decoder_controls() {
                    "I420 must select decoder conversion");
 }
 
+void check_decoder_tuning_spelling_is_forwarded_verbatim() {
+  simaai::neat::SimaDecodeOptions options;
+  for (const auto* tuning : {"Auto", "LOW-MEMORY", "low_memory", "memory", "throughput_low_latency",
+                             "throughput", "low-latency-throughput"}) {
+    options.decoder_tuning = tuning;
+    const auto fragment = simaai::neat::SimaDecode(options).backend_fragment(0);
+    require_contains(fragment, std::string("decoder-tuning=") + tuning,
+                     "tuning must be forwarded with its original spelling");
+  }
+}
+
 void check_invalid_options() {
   simaai::neat::SimaDecodeOptions invalid_codec;
   invalid_codec.type = static_cast<simaai::neat::SimaDecodeType>(999);
@@ -331,6 +342,7 @@ int main() {
     check_jpeg_raw_output_options();
     check_mjpeg_system_memory_output();
     check_decoder_controls();
+    check_decoder_tuning_spelling_is_forwarded_verbatim();
     check_invalid_options();
     check_mjpeg_native_nv16();
     check_h264_decode_wrapper_compatibility();
