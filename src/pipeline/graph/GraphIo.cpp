@@ -60,6 +60,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <charconv>
 #include <chrono>
 #include <cmath>
 #include <limits>
@@ -130,7 +131,7 @@ struct JsonValue {
   Type type = Type::Null;
   bool b = false;
   double num = 0.0;
-  std::string str;
+  std::string str; // String value or original number token for exact integer reads.
   std::unique_ptr<JsonArray> arr;
   std::unique_ptr<JsonObject> obj;
 
@@ -369,11 +370,11 @@ private:
         fail_here("invalid number: expected exponent digits");
       }
     }
-    const std::string num = s_.substr(start, pos_ - start);
+    v.str = s_.substr(start, pos_ - start);
     try {
-      v.num = std::stod(num);
+      v.num = std::stod(v.str);
     } catch (const std::exception&) {
-      fail_at(start, "invalid numeric token '" + num + "'");
+      fail_at(start, "invalid numeric token '" + v.str + "'");
     }
     return v;
   }
@@ -504,6 +505,19 @@ std::string string_field(const JsonValue::JsonObject& obj, const char* key,
 int int_field(const JsonValue::JsonObject& obj, const char* key, int fallback = 0) {
   const JsonValue* value = object_field(obj, key);
   return value && value->type == JsonValue::Type::Number ? static_cast<int>(value->num) : fallback;
+}
+
+std::uint64_t uint64_field(const JsonValue::JsonObject& obj, const char* key,
+                           std::uint64_t fallback) {
+  const auto* field = object_field(obj, key);
+  if (!field)
+    return fallback;
+  std::uint64_t value = 0;
+  const char* end = field->str.data() + field->str.size();
+  const auto [ptr, ec] = std::from_chars(field->str.data(), end, value);
+  if (field->type != JsonValue::Type::Number || ec != std::errc{} || ptr != end)
+    throw std::invalid_argument(std::string(key) + " requires an unsigned 64-bit integer");
+  return value;
 }
 
 int strict_enum_field(const JsonValue::JsonObject& obj, const char* key, int fallback) {
@@ -670,6 +684,81 @@ CombinePolicy parse_combine_policy(const std::string& value) {
   return CombinePolicy::None;
 }
 
+void write_int_vector_json(std::ostream& oss, const std::vector<int>& values) {
+  oss << "[";
+  for (std::size_t i = 0; i < values.size(); ++i) {
+    if (i) {
+      oss << ",";
+    }
+    oss << values[i];
+  }
+  oss << "]";
+}
+
+void write_preprocess_meta_json(std::ostream& oss, const PreprocessMetaTemplate& meta) {
+  oss << "{\"enabled\":" << (meta.enabled ? "true" : "false")
+      << ",\"target_width\":" << meta.target_width << ",\"target_height\":" << meta.target_height
+      << ",\"scaled_width\":" << meta.scaled_width << ",\"scaled_height\":" << meta.scaled_height
+      << ",\"resize_mode\":\"" << json_escape(meta.resize_mode)
+      << "\",\"pad_value\":" << meta.pad_value << ",\"color_in\":\"" << json_escape(meta.color_in)
+      << "\",\"color_out\":\"" << json_escape(meta.color_out) << "\",\"axis_perm\":";
+  write_int_vector_json(oss, meta.axis_perm);
+  oss << ",\"normalize\":" << (meta.normalize ? "true" : "false")
+      << ",\"quantize\":" << (meta.quantize ? "true" : "false")
+      << ",\"tessellate\":" << (meta.tessellate ? "true" : "false")
+      << ",\"roi_list_enabled\":" << (meta.roi_list_enabled ? "true" : "false")
+      << ",\"roi_input_batch_size\":" << meta.roi_input_batch_size
+      << ",\"roi_source_width\":" << meta.roi_source_width
+      << ",\"roi_source_height\":" << meta.roi_source_height
+      << ",\"roi_source_stride_bytes\":" << meta.roi_source_stride_bytes
+      << ",\"roi_pad_value\":" << meta.roi_pad_value << ",\"rois\":[";
+  for (std::size_t i = 0; i < meta.rois.size(); ++i) {
+    const auto& roi = meta.rois[i];
+    if (i)
+      oss << ",";
+    oss << "{\"batch_index\":" << roi.batch_index << ",\"x\":" << roi.x << ",\"y\":" << roi.y
+        << ",\"width\":" << roi.width << ",\"height\":" << roi.height << "}";
+  }
+  oss << "]}";
+}
+
+PreprocessMetaTemplate parse_preprocess_meta(const JsonValue::JsonObject& obj) {
+  PreprocessMetaTemplate meta;
+  meta.enabled = bool_field(obj, "enabled");
+  meta.target_width = int_field(obj, "target_width");
+  meta.target_height = int_field(obj, "target_height");
+  meta.scaled_width = int_field(obj, "scaled_width");
+  meta.scaled_height = int_field(obj, "scaled_height");
+  meta.resize_mode = string_field(obj, "resize_mode", meta.resize_mode);
+  meta.pad_value = int_field(obj, "pad_value");
+  meta.color_in = string_field(obj, "color_in");
+  meta.color_out = string_field(obj, "color_out");
+  meta.axis_perm = int_array_field(obj, "axis_perm");
+  meta.normalize = bool_field(obj, "normalize");
+  meta.quantize = bool_field(obj, "quantize");
+  meta.tessellate = bool_field(obj, "tessellate");
+  meta.roi_list_enabled = bool_field(obj, "roi_list_enabled");
+  meta.roi_input_batch_size = int_field(obj, "roi_input_batch_size");
+  meta.roi_source_width = int_field(obj, "roi_source_width");
+  meta.roi_source_height = int_field(obj, "roi_source_height");
+  meta.roi_source_stride_bytes = int_field(obj, "roi_source_stride_bytes");
+  meta.roi_pad_value = int_field(obj, "roi_pad_value");
+  if (const auto* rois = object_field(obj, "rois")) {
+    if (!rois->arr)
+      throw std::invalid_argument("preprocess_meta.rois requires an array");
+    for (const auto& roi : *rois->arr) {
+      if (!roi.obj)
+        throw std::invalid_argument("preprocess_meta.rois requires ROI objects");
+      meta.rois.push_back({.batch_index = int_field(*roi.obj, "batch_index"),
+                           .x = int_field(*roi.obj, "x"),
+                           .y = int_field(*roi.obj, "y"),
+                           .width = int_field(*roi.obj, "width"),
+                           .height = int_field(*roi.obj, "height")});
+    }
+  }
+  return meta;
+}
+
 void write_input_options_json(std::ostream& oss, const InputOptions& opt) {
   oss << "{\"payload_type\":" << static_cast<int>(opt.payload_type) << "," << "\"format\":\""
       << json_escape(opt.format.str()) << "\"," << "\"width\":" << opt.width << ","
@@ -685,7 +774,12 @@ void write_input_options_json(std::ostream& oss, const InputOptions& opt) {
       << "\"memory_policy\":" << static_cast<int>(effective_input_memory_policy(opt)) << ","
       << "\"pool_min_buffers\":" << opt.pool_min_buffers << ","
       << "\"pool_max_buffers\":" << opt.pool_max_buffers << "," << "\"buffer_name\":\""
-      << json_escape(opt.buffer_name) << "\"}";
+      << json_escape(opt.buffer_name) << '"';
+  if (opt.preprocess_meta) {
+    oss << ",\"preprocess_meta\":";
+    write_preprocess_meta_json(oss, *opt.preprocess_meta);
+  }
+  oss << "}";
 }
 
 InputOptions parse_input_options(const JsonValue::JsonObject& obj) {
@@ -710,7 +804,13 @@ InputOptions parse_input_options(const JsonValue::JsonObject& obj) {
   opt.do_timestamp = bool_field(obj, "do_timestamp", opt.do_timestamp);
   opt.block = bool_field(obj, "block", opt.block);
   opt.stream_type = int_field(obj, "stream_type", opt.stream_type);
-  opt.max_bytes = static_cast<std::uint64_t>(int_field(obj, "max_bytes", 0));
+  opt.max_bytes = uint64_field(obj, "max_bytes", opt.max_bytes);
+  if (const auto* meta = object_field(obj, "preprocess_meta");
+      meta && meta->type != JsonValue::Type::Null) {
+    if (!meta->obj)
+      throw std::invalid_argument("preprocess_meta requires an object");
+    opt.preprocess_meta = parse_preprocess_meta(*meta->obj);
+  }
   const JsonValue* memory_policy_value = object_field(obj, "memory_policy");
   if (const JsonValue* deprecated_pool = object_field(obj, "use_simaai_pool")) {
     warn_deprecated_use_simaai_pool_json_once();
@@ -749,17 +849,6 @@ OutputOptions parse_output_options(const JsonValue::JsonObject& obj) {
 
 template <typename EnumT> int enum_int(EnumT value) {
   return static_cast<int>(value);
-}
-
-void write_int_vector_json(std::ostream& oss, const std::vector<int>& values) {
-  oss << "[";
-  for (std::size_t i = 0; i < values.size(); ++i) {
-    if (i) {
-      oss << ",";
-    }
-    oss << values[i];
-  }
-  oss << "]";
 }
 
 void write_float3_json(std::ostream& oss, const std::array<float, 3>& values) {
