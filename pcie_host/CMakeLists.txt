@@ -150,6 +150,11 @@ target_include_directories(sima_neat_pcie_host
 target_link_libraries(sima_neat_pcie_host PUBLIC
   $<BUILD_INTERFACE:nlohmann_json::nlohmann_json>
   PRIVATE SimaScheduler::pcie_host)
+if(NOT WIN32)
+  # Installed genai/GenAIValueTypes.h includes nlohmann/json.hpp; Windows ships that header.
+  target_link_libraries(sima_neat_pcie_host PUBLIC
+    $<INSTALL_INTERFACE:nlohmann_json::nlohmann_json>)
+endif()
 target_link_libraries(sima_neat_pcie_host PRIVATE
   PkgConfig::SIMAPCIE_GST
   Threads::Threads

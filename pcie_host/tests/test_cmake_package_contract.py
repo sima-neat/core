@@ -14,7 +14,10 @@ class CMakePackageContract(unittest.TestCase):
   def test_export_dependencies_exist_before_targets_are_loaded(self):
     template = (ROOT / "cmake/SimaPCIeHostConfig.cmake.in").read_text(encoding="utf-8")
     self.assertIn("PkgConfig::SIMAPCIE_GST", (ROOT / "CMakeLists.txt").read_text())
-    self.assertNotIn("find_dependency(nlohmann_json", template)
+    # Installed GenAI headers include nlohmann/json.hpp; only Windows ships a copy.
+    self.assertIn("if(NOT WIN32)\n  find_dependency(nlohmann_json REQUIRED)", template)
+    self.assertIn("$<INSTALL_INTERFACE:nlohmann_json::nlohmann_json>",
+                  (ROOT / "CMakeLists.txt").read_text())
     self.assertLess(
         template.index("pkg_check_modules(SIMAPCIE_GST"),
         template.index('include("${CMAKE_CURRENT_LIST_DIR}/SimaPCIeHostTargets.cmake")'),
@@ -24,10 +27,12 @@ class CMakePackageContract(unittest.TestCase):
       root = Path(temporary)
       package = root / "package"
       scheduler = root / "scheduler"
+      json = root / "nlohmann_json"
       source = root / "consumer"
-      package.mkdir()
-      scheduler.mkdir()
-      source.mkdir()
+      for directory in (package, scheduler, json, source):
+        directory.mkdir()
+      (json / "nlohmann_jsonConfig.cmake").write_text(
+          "set(nlohmann_json_FOUND TRUE)\n", encoding="utf-8")
 
       config = template.replace("@PACKAGE_INIT@", "")
       config = config.replace(
@@ -38,6 +43,9 @@ class CMakePackageContract(unittest.TestCase):
           """
 if(NOT TARGET PkgConfig::SIMAPCIE_GST)
   message(FATAL_ERROR "GStreamer target was not created before the exported targets")
+endif()
+if(NOT nlohmann_json_FOUND)
+  message(FATAL_ERROR "nlohmann_json was not found before the exported targets")
 endif()
 add_library(SimaPCIeHost::sima_neat_pcie_host INTERFACE IMPORTED)
 """,
@@ -70,6 +78,7 @@ find_package(SimaPCIeHost REQUIRED CONFIG)
               str(root / "build"),
               "-DSimaPCIeHost_DIR=" + str(package),
               "-DSimaScheduler_DIR=" + str(scheduler),
+              "-Dnlohmann_json_DIR=" + str(json),
           ],
           text=True,
           capture_output=True,
