@@ -324,8 +324,10 @@ public:
 };
 ```
 
-The constructor parses the local model archive, validates representable options,
-and caches model information. It does not touch the card. Metadata uses the
+The constructor parses the local model archive, validates representable options
+and `connection.card_env`, and caches model information. It does not touch the
+card. A malformed `card_env` now throws from the constructor; earlier releases
+reported it from `build()`. Metadata uses the
 logical full-model tensor contract, commonly `FP32` when quant/cast and
 dequant/postcast stages are present. `build(...)` performs model upload, card
 runtime startup, readiness wait, and local host channel setup.
