@@ -120,7 +120,7 @@ RUN_TEST(
 
       GraphOptions naming;
       naming.element_name_prefix = "camera.";
-      naming.element_name_suffix = ".view";
+      naming.element_name_suffix = "2.view";
       Graph stream_source("stream_source", naming);
       stream_source.add(nodes::Input("image"));
       stream_source.custom("identity name=step");

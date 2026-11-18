@@ -243,7 +243,7 @@ inline std::string trim_copy(std::string_view sv) {
   return std::string(sv.substr(start, end - start));
 }
 
-inline std::string sanitize_name(std::string_view sv, const char* empty_default = "dbg") {
+inline std::string sanitize_name_chars(std::string_view sv) {
   std::string out;
   out.reserve(sv.size());
   for (char c : sv) {
@@ -251,6 +251,11 @@ inline std::string sanitize_name(std::string_view sv, const char* empty_default 
                     (c == '_' || c == '-');
     out.push_back(ok ? c : '_');
   }
+  return out;
+}
+
+inline std::string sanitize_name(std::string_view sv, const char* empty_default = "dbg") {
+  std::string out = sanitize_name_chars(sv);
   if (out.empty())
     out = empty_default ? empty_default : "dbg";
   if (!out.empty() && (out[0] >= '0' && out[0] <= '9'))

@@ -106,14 +106,13 @@ std::string apply_name_transform(const NameTransform& t, const std::string& name
   if (is_rtsp_payloader_name(name))
     return name;
   std::string out = name;
-  if (!t.prefix.empty() && out.rfind(t.prefix, 0) != 0) {
+  if (!t.prefix.empty() && !out.starts_with(t.prefix) &&
+      !out.starts_with(sanitize_name(t.prefix))) {
     out = t.prefix + out;
   }
-  if (!t.suffix.empty()) {
-    if (out.size() < t.suffix.size() ||
-        out.compare(out.size() - t.suffix.size(), t.suffix.size(), t.suffix) != 0) {
-      out += t.suffix;
-    }
+  if (!t.suffix.empty() && !out.ends_with(t.suffix) &&
+      !out.ends_with(pipeline_internal::sanitize_name_chars(t.suffix))) {
+    out += t.suffix;
   }
   return sanitize_name(out);
 }

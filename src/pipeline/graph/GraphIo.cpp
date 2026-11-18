@@ -1506,6 +1506,7 @@ void Graph::save(const std::string& path) const {
     oss << "  \"element_name_suffix\":\"" << json_escape(opt_.element_name_suffix) << "\",\n";
     oss << "  \"nodes\": [\n";
 
+    const NameTransform name_transform = make_name_transform(opt_);
     for (std::size_t i = 0; i < composition_->vertices.size(); ++i) {
       const auto& n = composition_->vertices[i];
       if (i) {
@@ -1513,8 +1514,7 @@ void Graph::save(const std::string& path) const {
       }
       const std::string kind = n ? n->kind() : "<null>";
       const std::string label = n ? n->user_label() : "";
-      // The graph stores its name transform separately and applies it when rendering.
-      NodeFragment frag = make_node_fragment(n, static_cast<int>(i), {});
+      NodeFragment frag = make_node_fragment(n, static_cast<int>(i), name_transform);
 
       oss << "    {\"kind\":\"" << json_escape(kind) << "\"," << "\"label\":\""
           << json_escape(label) << "\",";
