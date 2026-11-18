@@ -1783,6 +1783,15 @@ class RemoteExclusiveLock:
       raise RuntimeError(f"card-side PCIe lock is already held or unavailable; see {log}")
     self.acquired = True
 
+  def may_hold_after_failed_acquire(self, log: Path) -> bool:
+    """SSH can disconnect after the card stores the token; unknown means held."""
+    if self.conflicted:
+      return False
+    try:
+      return self.owner(log) == self.token
+    except RuntimeError:
+      return True
+
   def release(self, log: Path) -> None:
     remote = (
         f"set -eu; lock={self.path}; token={self.token}; "
@@ -2636,9 +2645,7 @@ def qualify(args: argparse.Namespace) -> None:
     try:
       remote_lock.acquire(evidence / "card-lock-acquire.log")
     except BaseException:
-      # SSH can disconnect after the remote mkdir succeeds. Retain our token for
-      # recovery unless the remote command explicitly reported lock contention.
-      if not remote_lock.conflicted:
+      if remote_lock.may_hold_after_failed_acquire(evidence / "card-lock-acquire-owner.log"):
         card_lock.retain()
       raise
     card_lock.retain()

@@ -3778,6 +3778,19 @@ install() {
           "qualify_windows_hardware.run_captured_to_file", return_value=owner):
         self.assertEqual(remote_lock.owner(root / "owner.log"), token)
 
+      # After a failed acquire, retain the local lock only if the card may hold our token.
+      for conflicted, probe, held in (
+          (False, subprocess.CompletedProcess([], 0, "owner=\n"), False),
+          (False, subprocess.CompletedProcess([], 0, f"owner={'b' * 32}\n"), False),
+          (False, subprocess.CompletedProcess([], 0, f"owner={token}\n"), True),
+          (False, subprocess.CompletedProcess([], 255, ""), True),
+          (True, subprocess.CompletedProcess([], 0, f"owner={'b' * 32}\n"), False),
+      ):
+        with self.subTest(conflicted=conflicted, probe=probe.stdout, code=probe.returncode), \
+            mock.patch("qualify_windows_hardware.run_captured_to_file", return_value=probe):
+          remote_lock.conflicted = conflicted
+          self.assertIs(remote_lock.may_hold_after_failed_acquire(root / "probe.log"), held)
+
   def test_card_ssh_capture_uses_a_file_instead_of_a_pipe(self):
     with tempfile.TemporaryDirectory() as directory:
       log = Path(directory) / "ssh.log"
