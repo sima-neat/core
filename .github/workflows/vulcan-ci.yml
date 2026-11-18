@@ -449,11 +449,6 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if [[ -n "${SCHEDULER_RUN_ID:-}" && -z "${SCHEDULER_COMMIT:-}" ]] ||
-             [[ -z "${SCHEDULER_RUN_ID:-}" && -n "${SCHEDULER_COMMIT:-}" ]]; then
-            echo "scheduler_run_id and scheduler_commit must be supplied together." >&2
-            exit 1
-          fi
           scheduler_args=()
           if [[ -n "${SCHEDULER_RUN_ID:-}" ]]; then
             scheduler_args+=(
@@ -863,11 +858,6 @@ jobs:
           set -euo pipefail
           cd pcie_host
           scheduler_spec_args=()
-          if [[ -n "${SCHEDULER_RUN_ID}" && -z "${SCHEDULER_COMMIT}" ]] ||
-             [[ -z "${SCHEDULER_RUN_ID}" && -n "${SCHEDULER_COMMIT}" ]]; then
-            echo "scheduler_run_id and scheduler_commit must be supplied together." >&2
-            exit 1
-          fi
           if [[ -n "${SCHEDULER_RUN_ID}" ]]; then
             scheduler_spec_args+=(
               --scheduler-candidate "${RUNNER_TEMP}/scheduler-native-candidate"

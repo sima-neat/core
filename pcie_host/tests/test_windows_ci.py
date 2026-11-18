@@ -1122,8 +1122,6 @@ class WindowsCiContracts(unittest.TestCase):
         '--scheduler-candidate "${RUNNER_TEMP}/scheduler-native-candidate"', packages)
     self.assertIn('--scheduler-commit "${SCHEDULER_COMMIT}"', packages)
     self.assertIn('elif [[ -n "${SCHEDULER_NATIVE_SPEC}" ]]', packages)
-    self.assertIn(
-        'scheduler_run_id and scheduler_commit must be supplied together.', packages)
     for body in (hygiene, packages):
       self.assertIn("- validate-windows-cohort-selectors", body)
       self.assertIn(

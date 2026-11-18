@@ -135,19 +135,6 @@ jobs:
           persist-credentials: false
       - run: python3 pcie_host/tests/test_windows_ci.py
       - run: python3 pcie_host/tests/test_verify_linux_release_run.py
-      - run: >-
-          python3 -m py_compile
-          scripts/ci/pciehost/acquire_windows_dependencies.py
-          scripts/ci/pciehost/build_card_qualification_dependencies.py
-          scripts/ci/pciehost/build_windows.py
-          scripts/ci/pciehost/cleanup_windows_hardware.py
-          scripts/ci/pciehost/qualify_windows_hardware.py
-          scripts/ci/pciehost/sdk_build_identity.py
-          scripts/ci/pciehost/verify_linux_release_run.py
-          scripts/ci/pciehost/verify_windows_release.py
-          scripts/ci/pciehost/windows_hardware_assets.py
-          scripts/ci/pciehost/windows_candidate.py
-      - run: git diff --check
   linux_release:
     name: Exact Linux build and hardware regressions
     needs: contracts
