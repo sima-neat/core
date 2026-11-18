@@ -997,6 +997,7 @@ $rng.Dispose()
 $plain = [Convert]::ToBase64String($bytes) + 'aA1!'
 $secure = ConvertTo-SecureString $plain -AsPlainText -Force
 $created = $false
+$windowAccessGranted = $false
 try {
   $user = New-LocalUser -Name $name -Password $secure -AccountNeverExpires `
     -PasswordNeverExpires -UserMayNotChangePassword
@@ -1020,6 +1021,8 @@ try {
 using System;
 using System.ComponentModel;
 using System.Runtime.InteropServices;
+using System.Security.AccessControl;
+using System.Security.Principal;
 using System.Text;
 public static class SimaStandardUserProcess {
   [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
@@ -1047,6 +1050,76 @@ public static class SimaStandardUserProcess {
   [DllImport("kernel32.dll", SetLastError = true)] static extern bool TerminateProcess(
     IntPtr process, uint exitCode);
   [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr handle);
+  [DllImport("kernel32.dll")] static extern uint GetCurrentThreadId();
+  [DllImport("user32.dll", SetLastError = true)] static extern IntPtr GetProcessWindowStation();
+  [DllImport("user32.dll", SetLastError = true)] static extern IntPtr GetThreadDesktop(
+    uint threadId);
+  [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+  static extern bool GetUserObjectInformation(IntPtr handle, int index, StringBuilder name,
+    uint length, out uint needed);
+  [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+  static extern IntPtr OpenWindowStation(string name, bool inherit, uint access);
+  [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+  static extern IntPtr OpenDesktop(string name, uint flags, bool inherit, uint access);
+  [DllImport("user32.dll")] static extern bool CloseWindowStation(IntPtr handle);
+  [DllImport("user32.dll")] static extern bool CloseDesktop(IntPtr handle);
+  [DllImport("user32.dll", SetLastError = true)] static extern bool GetUserObjectSecurity(
+    IntPtr handle, ref uint information, byte[] descriptor, uint length, out uint needed);
+  [DllImport("user32.dll", SetLastError = true)] static extern bool SetUserObjectSecurity(
+    IntPtr handle, ref uint information, byte[] descriptor);
+  static void Fail(string action) {
+    int error = Marshal.GetLastWin32Error();
+    throw new Win32Exception(error, "could not " + action + " for the standard-user child: " +
+      "Win32 error " + error + ": " + new Win32Exception(error).Message);
+  }
+  static string ObjectName(IntPtr handle) {
+    var name = new StringBuilder(256);
+    uint needed;
+    if (handle == IntPtr.Zero || !GetUserObjectInformation(handle, 2, name, 512, out needed))
+      Fail("name this session's window station or desktop");
+    return name.ToString();
+  }
+  // Removes any ACE for the user, then adds one allow ACE when rights is non-zero.
+  static void SetAccess(IntPtr handle, SecurityIdentifier user, int rights) {
+    uint information = 4, needed;  // DACL_SECURITY_INFORMATION
+    GetUserObjectSecurity(handle, ref information, null, 0, out needed);
+    var bytes = new byte[needed];
+    if (needed == 0 || !GetUserObjectSecurity(handle, ref information, bytes, needed, out needed))
+      Fail("read a window object's DACL");
+    var descriptor = new RawSecurityDescriptor(bytes, 0);
+    var acl = descriptor.DiscretionaryAcl;
+    if (acl == null) return;  // a null DACL already admits every user
+    for (int i = acl.Count - 1; i >= 0; i--) {
+      var ace = acl[i] as KnownAce;
+      if (ace != null && ace.SecurityIdentifier == user) acl.RemoveAce(i);
+    }
+    if (rights != 0) acl.InsertAce(acl.Count, new CommonAce(
+      AceFlags.None, AceQualifier.AccessAllowed, rights, user, false, null));
+    descriptor.DiscretionaryAcl = acl;
+    bytes = new byte[descriptor.BinaryLength];
+    descriptor.GetBinaryForm(bytes, 0);
+    if (!SetUserObjectSecurity(handle, ref information, bytes))
+      Fail("write a window object's DACL");
+  }
+  // The child inherits this window station and desktop. In session 0 they admit only the
+  // caller, so user32 cannot initialise in the child (0xC0000142). The rights are the
+  // specific rights of Microsoft's WINSTA_ALL and DESKTOP_ALL plus READ_CONTROL, without
+  // DELETE, WRITE_DAC or WRITE_OWNER.
+  static void SetSessionWindowAccess(string sid, bool grant) {
+    var user = new SecurityIdentifier(sid);
+    const uint access = 0x00060000;  // READ_CONTROL | WRITE_DAC
+    var station = OpenWindowStation(ObjectName(GetProcessWindowStation()), false, access);
+    if (station == IntPtr.Zero) Fail("open this session's window station");
+    try { SetAccess(station, user, grant ? 0x0002037F : 0); }
+    finally { CloseWindowStation(station); }
+    var desktop = OpenDesktop(
+      ObjectName(GetThreadDesktop(GetCurrentThreadId())), 0, false, access);
+    if (desktop == IntPtr.Zero) Fail("open this session's desktop");
+    try { SetAccess(desktop, user, grant ? 0x000201FF : 0); }
+    finally { CloseDesktop(desktop); }
+  }
+  public static void GrantSessionWindowAccess(string sid) { SetSessionWindowAccess(sid, true); }
+  public static void RevokeSessionWindowAccess(string sid) { SetSessionWindowAccess(sid, false); }
   public static uint Run(string user, string domain, string password, string application,
                          string arguments, string currentDirectory, uint timeoutMilliseconds) {
     var startup = new StartupInfo(); startup.cb = Marshal.SizeOf(startup);
@@ -1071,6 +1144,8 @@ public static class SimaStandardUserProcess {
   }
 }
 '@
+  $windowAccessGranted = $true
+  [SimaStandardUserProcess]::GrantSessionWindowAccess([string]$user.SID)
   $wrapperArguments = foreach ($path in @(
       $env:SIMA_STANDARD_USER_DOCTOR, $env:SIMA_STANDARD_USER_RUN_LOG,
       $env:SIMA_STANDARD_USER_RUNNER, $env:SIMA_STANDARD_USER_PYTHON,
@@ -1102,6 +1177,10 @@ public static class SimaStandardUserProcess {
 } finally {
   if ($created) {
     $cleanupErrors = [Collections.Generic.List[string]]::new()
+    if ($windowAccessGranted) {
+      try { [SimaStandardUserProcess]::RevokeSessionWindowAccess([string]$user.SID) }
+      catch { $cleanupErrors.Add("window access removal failed: $($_.Exception.Message)") }
+    }
     $profileWaitDeadline = [DateTime]::UtcNow.AddSeconds(5)
     do {
       $profile = Get-CimInstance Win32_UserProfile -ErrorAction SilentlyContinue |

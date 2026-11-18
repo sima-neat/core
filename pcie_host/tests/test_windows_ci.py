@@ -1754,6 +1754,27 @@ class WindowsCiContracts(unittest.TestCase):
     self.assertIn("($wrapperArguments -join '') + '\"'", command)
     self.assertIn("-gt 1024", command)
 
+  def test_standard_user_child_gets_and_returns_session_window_access(self):
+    source = (SCRIPT_DIR / "qualify_windows_hardware.py").read_text(encoding="utf-8")
+    for name in ("GetProcessWindowStation", "GetThreadDesktop", "OpenWindowStation",
+                 "OpenDesktop", "GetUserObjectSecurity", "SetUserObjectSecurity"):
+      self.assertIn(f" {name}(", source)
+    self.assertIn("ref uint information, byte[] descriptor", source)
+    self.assertIn("const uint access = 0x00060000;  // READ_CONTROL | WRITE_DAC", source)
+    self.assertIn("if (acl == null) return;", source)
+    self.assertIn("grant ? 0x0002037F : 0", source)
+    self.assertIn("grant ? 0x000201FF : 0", source)
+    self.assertIn('"Win32 error " + error', source)
+    grant = "[SimaStandardUserProcess]::GrantSessionWindowAccess([string]$user.SID)"
+    self.assertLess(source.index("$created = $true"), source.index("$windowAccessGranted = $true"))
+    self.assertLess(source.index("$windowAccessGranted = $true"), source.index(grant))
+    self.assertLess(
+        source.index(grant), source.index("$exitCode = [SimaStandardUserProcess]::Run("))
+    cleanup = source[source.index("} finally {\n  if ($created) {"):]
+    self.assertLess(
+        cleanup.index("[SimaStandardUserProcess]::RevokeSessionWindowAccess([string]$user.SID)"),
+        cleanup.index("Remove-LocalUser -Name $name"))
+
   @unittest.skipUnless(os.name == "nt", WINDOWS_CMD_SKIP)
   def test_standard_user_wrapper_runs_from_arguments_without_inherited_variables(self):
     with tempfile.TemporaryDirectory() as directory:
