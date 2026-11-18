@@ -29,7 +29,7 @@ sidebar_position: 7
 | SDK 容器 | 您使用 `docker buildx` 建置 ARM64 映像檔，並將其推送到本機登錄。 |
 | DevKit | `dk container deploy` 會從本機登錄下載映像檔，並使用 Docker 啟動它。 |
 
-在自行管理的 DevKit 上，第一次執行 `dk container` 指令時會視需要提示安裝 Docker。在由管理員管理的 DevKit 上，請先要求管理員啟用 Docker，再使用這些指令。
+尚未安裝 Docker 時，第一次執行 `dk container` 指令會提示安裝。
 
 ## 開始之前
 
@@ -51,7 +51,7 @@ sima-cli sdk setup --devkit {devkit-ip}
 </ShellCommand>
 
 當設定程序詢問 **Set up a local container registry so the DevKit can download
-images built in the SDK?** 時，請回答 `y`。在自行管理的 DevKit 上，配對會設定安裝 Docker 所需的免密碼 `sudo` 存取權。由管理員管理的 DevKit 會使用現有的存取原則與 Docker 安裝；配對不會授予不受限制的 `sudo` 權限。接著開啟新的 SDK 殼層：
+images built in the SDK?** 時，請回答 `y`。配對會設定安裝 Docker 所需的免密碼 `sudo` 存取權。接著開啟新的 SDK 殼層：
 
 <ShellCommand prompt="host">
 sima-cli sdk neat
@@ -67,7 +67,7 @@ sima-cli sdk neat
 dk container setup
 </ShellCommand>
 
-當詢問是否要在 DevKit 上設定 Docker 時，請回答 `y`。如果 Docker 已可正常運作，此指令會重複使用現有安裝。在由管理員管理的 DevKit 上，指令會使用管理員提供的 Docker 服務並設定登錄存取權。安裝變更內容請參閱[在 DevKit 上安裝 Docker](/reference/devkit-containers/#install)。
+當詢問是否要在 DevKit 上設定 Docker 時，請回答 `y`。如果 Docker 已可正常運作，此指令會重複使用現有安裝。安裝變更內容請參閱[在 DevKit 上安裝 Docker](/reference/devkit-containers/#install)。
 
 ### 3. 建置並推送映像檔
 

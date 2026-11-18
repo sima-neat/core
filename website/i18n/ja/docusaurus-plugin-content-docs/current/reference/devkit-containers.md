@@ -24,7 +24,7 @@ Neat アプリケーションはコンテナ内で MLA を使用できます。�
 
 ## DevKit への Docker のインストール {#install}
 
-個人で管理する DevKit では、Palette SDK から、または手動で Docker をインストールします。管理者が管理する DevKit では、Docker を有効にするよう管理者に依頼してください。自分で Docker をインストールまたは置換せず、提供されたサービスで `dk container` を使用します。以下のいずれかの方法で新規インストールすると、次の処理が行われます。
+Palette SDK またはスタンドアロンインストーラーで Docker をインストールします。以下のいずれかの方法で新規インストールすると、次の処理が行われます。
 
 - Docker の Debian `trixie` リポジトリから、ARM64 向けの Docker CE (`docker-ce`、`docker-ce-cli`、および `containerd.io`) をインストールします。
 - Docker のデータを `/data/docker` に、containerd のデータを `/data/containerd` に保存し、イメージでルートファイルシステムがいっぱいにならないようにします。
@@ -36,19 +36,19 @@ Neat アプリケーションはコンテナ内で MLA を使用できます。�
 
 ### Palette SDK から {#install-sdk}
 
-まず、`sima-cli sdk setup --devkit {devkit-ip}` で DevKit をペアリングします。個人で管理する DevKit では、インストール用にパスワードなしの `sudo` が設定されます。管理者が管理する DevKit では、既存のアクセスポリシーと提供された Docker サービスを使用します。その後、SDK シェルで次を実行します。
+まず、`sima-cli sdk setup --devkit {devkit-ip}` で DevKit をペアリングします。ペアリングにより、インストールに必要なパスワードなしの `sudo` アクセスが設定されます。その後、SDK シェルで次を実行します。
 
 <ShellCommand prompt="sdk">
 dk container setup
 </ShellCommand>
 
-DevKit に Docker を設定するかどうか尋ねられたら、`y` と答えます。質問を省略するには、`dk container setup --yes` を実行します。Docker がすでに動作している場合は再利用します。管理者が管理する DevKit では、無制限の `sudo` 権限を付与せずに、提供されたサービスを通じてレジストリアクセスを設定します。SDK によるインストールが中断された場合は、コマンドを再実行すると再開されます。
+DevKit に Docker を設定するかどうか尋ねられたら、`y` と答えます。質問を省略するには、`dk container setup --yes` を実行します。Docker がすでに動作している場合は再利用します。インストールが中断された場合は、コマンドを再実行すると再開されます。
 
-個人で管理する DevKit では、他の `dk container` コマンドも Docker がない場合にインストールを提案します。
+他の `dk container` コマンドも、Docker がない場合にインストールを提案します。
 
 ### DevKit 上での手動インストール {#install-manual}
 
-Palette SDK を利用できない場合は、SDK のスタンドアロンインストーラーを使用します。個人で管理する ARM64 Modalix DevKit では、インターネット接続と sudo を使用できるユーザーアカウントが必要です。SSH またはシリアルコンソールから、SDK リポジトリのインストーラーをダウンロードし、通常のユーザーとして実行します。
+Palette SDK を利用できない場合は、SDK のスタンドアロンインストーラーを使用します。ARM64 Modalix DevKit では、インターネット接続と sudo を使用できるユーザーアカウントが必要です。SSH またはシリアルコンソールから、SDK リポジトリのインストーラーをダウンロードし、通常のユーザーとして実行します。
 
 <ShellCommand prompt="devkit">
 curl --fail --location --output install-devkit-docker.sh \
@@ -138,7 +138,7 @@ docker image prune -a
 | メッセージ | 対処方法 |
 | --- | --- |
 | `The local container registry is not configured for this SDK shell.` | ホスト上で `sima-cli sdk setup --devkit {devkit-ip}` を実行し、コンテナレジストリに関する質問に `y` と答えてから、新しい SDK シェルを開きます。 |
-| `Docker installation requires passwordless sudo` | 個人で管理する DevKit では、`sima-cli sdk setup --devkit {devkit-ip}` で再度ペアリングするか、Docker を[手動](#install-manual)でインストールします。管理者が管理する DevKit では、Docker を有効にするよう管理者に依頼してください。 |
+| `Docker installation requires passwordless sudo` | `sima-cli sdk setup --devkit {devkit-ip}` で再度ペアリングするか、[スタンドアロンインストーラー](#install-manual)を使用してください。 |
 | `Image ... is for amd64, not ARM64.` | `docker buildx build --platform linux/arm64 ... --push` でイメージを再ビルドします。 |
 | `Image ... is not available on the DevKit.` | まず `dk container deploy` または `dk container pull` を使用してダウンロードします。 |
 | DevKit 上での `permission denied while trying to connect to the Docker daemon socket` | Docker のセットアップ後にいったんログアウトしてから再度ログインし、ユーザーが `docker` グループに含まれるようにします。 |

@@ -37,9 +37,7 @@ The workflow uses the same three places as the rest of the Palette SDK:
 | SDK container | You build an ARM64 image with `docker buildx` and push it to the local registry. |
 | DevKit | `dk container deploy` downloads the image from the local registry and starts it with Docker. |
 
-On a personally administered DevKit, the first `dk container` command offers to
-install Docker if needed. On an administrator-managed DevKit, ask the
-administrator to enable Docker before using these commands.
+The first `dk container` command offers to install Docker if it is missing.
 
 ## Before You Start
 
@@ -63,11 +61,8 @@ sima-cli sdk setup --devkit {devkit-ip}
 </ShellCommand>
 
 When setup asks **Set up a local container registry so the DevKit can download
-images built in the SDK?**, answer `y`. On a personally administered DevKit,
-pairing configures the passwordless `sudo` access needed to install Docker.
-Administrator-managed DevKits use their existing access policy and Docker
-installation; pairing does not grant unrestricted `sudo`. Then open a new SDK
-shell:
+images built in the SDK?**, answer `y`. Pairing configures the passwordless
+`sudo` access needed to install Docker. Then open a new SDK shell:
 
 <ShellCommand prompt="host">
 sima-cli sdk neat
@@ -85,9 +80,7 @@ dk container setup
 </ShellCommand>
 
 Answer `y` when it asks to set up Docker on the DevKit. If Docker already works
-on the DevKit, the command reuses it. On an administrator-managed DevKit, it
-uses the administrator-provided Docker service and configures registry access.
-For what the installation changes, see
+on the DevKit, the command reuses it. For what the installation changes, see
 [Install Docker on the DevKit](/reference/devkit-containers/#install).
 
 ### 3. Build and Push an Image

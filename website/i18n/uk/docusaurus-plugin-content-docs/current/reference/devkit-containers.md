@@ -26,7 +26,7 @@ sidebar_position: 11
 
 ## Встановлення Docker на DevKit {#install}
 
-На DevKit, яким ви керуєте самостійно, встановіть Docker із Palette SDK або вручну. На DevKit під керуванням адміністратора попросіть його ввімкнути Docker; використовуйте `dk container` із наданою службою замість самостійного встановлення чи заміни Docker. Нове встановлення будь-яким із наведених нижче способів:
+Встановіть Docker із Palette SDK або за допомогою автономного інсталятора. Нове встановлення будь-яким із наведених нижче способів:
 
 - Встановлюють Docker CE (`docker-ce`, `docker-ce-cli` і `containerd.io`) для
   ARM64 з Debian-репозиторію Docker `trixie`.
@@ -41,19 +41,19 @@ sidebar_position: 11
 
 ### З Palette SDK {#install-sdk}
 
-Спочатку створіть пару DevKit за допомогою `sima-cli sdk setup --devkit {devkit-ip}`. На DevKit, яким ви керуєте самостійно, це налаштовує `sudo` без пароля для встановлення. DevKit під керуванням адміністратора зберігає свою політику доступу й використовує надану службу Docker. Потім в оболонці SDK виконайте:
+Спочатку створіть пару DevKit за допомогою `sima-cli sdk setup --devkit {devkit-ip}`. Це налаштовує доступ до `sudo` без пароля, потрібний для встановлення. Потім в оболонці SDK виконайте:
 
 <ShellCommand prompt="sdk">
 dk container setup
 </ShellCommand>
 
-Дайте відповідь `y` на пропозицію налаштувати Docker на DevKit. Щоб пропустити запитання, виконайте `dk container setup --yes`. Якщо Docker уже працює, команда використає його повторно. На DevKit під керуванням адміністратора вона налаштовує доступ до реєстру через надану службу без необмеженого `sudo`. Якщо встановлення під керуванням SDK перервано, повторіть команду, щоб продовжити.
+Дайте відповідь `y` на пропозицію налаштувати Docker на DevKit. Щоб пропустити запитання, виконайте `dk container setup --yes`. Якщо Docker уже працює, команда використає його повторно. Якщо встановлення перервано, повторіть команду, щоб продовжити.
 
-На DevKit, яким ви керуєте самостійно, інші команди `dk container` також пропонують встановити Docker, якщо його немає.
+Інші команди `dk container` також пропонують встановити Docker, якщо його немає.
 
 ### Ручне встановлення на DevKit {#install-manual}
 
-Якщо Palette SDK недоступний, скористайтеся автономним інсталятором SDK. На ARM64 Modalix DevKit, яким ви керуєте самостійно, потрібні доступ до Інтернету й обліковий запис із доступом до sudo. Через SSH або послідовну консоль завантажте інсталятор із репозиторію SDK та запустіть його як звичайний користувач:
+Якщо Palette SDK недоступний, скористайтеся автономним інсталятором SDK. На ARM64 Modalix DevKit, потрібні доступ до Інтернету й обліковий запис із доступом до sudo. Через SSH або послідовну консоль завантажте інсталятор із репозиторію SDK та запустіть його як звичайний користувач:
 
 <ShellCommand prompt="devkit">
 curl --fail --location --output install-devkit-docker.sh \
@@ -158,7 +158,7 @@ docker image prune -a
 | Повідомлення | Виправлення |
 | --- | --- |
 | `The local container registry is not configured for this SDK shell.` | Виконайте на хості `sima-cli sdk setup --devkit {devkit-ip}`, дайте відповідь `y` на запитання про реєстр контейнерів, а потім відкрийте нову оболонку SDK. |
-| `Docker installation requires passwordless sudo` | На DevKit, яким ви керуєте самостійно, повторно створіть пару за допомогою `sima-cli sdk setup --devkit {devkit-ip}` або встановіть Docker [вручну](#install-manual). На DevKit під керуванням адміністратора попросіть його ввімкнути Docker. |
+| `Docker installation requires passwordless sudo` | Повторно створіть пару за допомогою `sima-cli sdk setup --devkit {devkit-ip}` або скористайтеся [автономним інсталятором](#install-manual). |
 | `Image ... is for amd64, not ARM64.` | Перезберіть образ за допомогою `docker buildx build --platform linux/arm64 ... --push`. |
 | `Image ... is not available on the DevKit.` | Спочатку завантажте його за допомогою `dk container deploy` або `dk container pull`. |
 | `permission denied while trying to connect to the Docker daemon socket` на DevKit | Після налаштування Docker вийдіть із системи й увійдіть знову, щоб ваш користувач опинився в групі `docker`. |

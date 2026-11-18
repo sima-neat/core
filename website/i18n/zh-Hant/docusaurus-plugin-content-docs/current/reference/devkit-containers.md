@@ -25,7 +25,7 @@ Neat 應用程式可以在容器內使用 MLA。容器必須具備：
 
 ## 在 DevKit 上安裝 Docker {#install}
 
-在自行管理的 DevKit 上，可從 Palette SDK 或手動安裝 Docker。在由管理員管理的 DevKit 上，請要求管理員啟用 Docker，並透過提供的服務使用 `dk container`，而不要自行安裝或取代 Docker。使用以下任一方式全新安裝時會：
+請透過 Palette SDK 或獨立安裝程式安裝 Docker。使用以下任一方式全新安裝時會：
 
 - 從 Docker 的 Debian `trixie` 套件庫安裝 ARM64 版的 Docker CE（`docker-ce`、`docker-ce-cli` 和 `containerd.io`）。
 - 將 Docker 的資料存放在 `/data/docker`，並將 containerd 的資料存放在
@@ -38,19 +38,19 @@ Neat 應用程式可以在容器內使用 MLA。容器必須具備：
 
 ### 從 Palette SDK 安裝 {#install-sdk}
 
-請先使用 `sima-cli sdk setup --devkit {devkit-ip}` 配對 DevKit。對於自行管理的 DevKit，配對會設定安裝所需的免密碼 `sudo`。由管理員管理的 DevKit 會保留現有存取原則，並使用提供的 Docker 服務。接著在 SDK 殼層中執行：
+請先使用 `sima-cli sdk setup --devkit {devkit-ip}` 配對 DevKit。配對會設定安裝所需的免密碼 `sudo` 存取權。接著在 SDK 殼層中執行：
 
 <ShellCommand prompt="sdk">
 dk container setup
 </ShellCommand>
 
-詢問是否在 DevKit 上設定 Docker 時，請回答 `y`。若要略過問題，請執行 `dk container setup --yes`。如果 Docker 已可正常運作，指令會重複使用現有安裝。在由管理員管理的 DevKit 上，指令會透過提供的服務設定登錄存取權，而不授予不受限制的 `sudo` 權限。如果 SDK 管理的安裝中斷，請重新執行指令以繼續。
+詢問是否在 DevKit 上設定 Docker 時，請回答 `y`。若要略過問題，請執行 `dk container setup --yes`。如果 Docker 已可正常運作，指令會重複使用現有安裝。如果安裝中斷，請重新執行指令以繼續。
 
-在自行管理的 DevKit 上，其他 `dk container` 指令也會在尚未安裝 Docker 時提示安裝。
+其他 `dk container` 指令也會在尚未安裝 Docker 時提示安裝。
 
 ### 在 DevKit 上手動安裝 {#install-manual}
 
-無法使用 Palette SDK 時，請使用 SDK 的獨立安裝程式。在自行管理的 ARM64 Modalix DevKit 上，您需要網際網路連線，以及具備 sudo 存取權的使用者帳戶。透過 SSH 或序列主控台，從 SDK 儲存庫下載安裝程式，並以一般使用者身分執行：
+無法使用 Palette SDK 時，請使用 SDK 的獨立安裝程式。在ARM64 Modalix DevKit 上，您需要網際網路連線，以及具備 sudo 存取權的使用者帳戶。透過 SSH 或序列主控台，從 SDK 儲存庫下載安裝程式，並以一般使用者身分執行：
 
 <ShellCommand prompt="devkit">
 curl --fail --location --output install-devkit-docker.sh \
@@ -143,7 +143,7 @@ docker image prune -a
 | 訊息 | 解決方法 |
 | --- | --- |
 | `The local container registry is not configured for this SDK shell.` | 在主機上執行 `sima-cli sdk setup --devkit {devkit-ip}`，對容器登錄問題回答 `y`，然後開啟新的 SDK 殼層。 |
-| `Docker installation requires passwordless sudo` | 在自行管理的 DevKit 上，請使用 `sima-cli sdk setup --devkit {devkit-ip}` 重新配對，或[手動](#install-manual)安裝 Docker。在由管理員管理的 DevKit 上，請要求管理員啟用 Docker。 |
+| `Docker installation requires passwordless sudo` | 請使用 `sima-cli sdk setup --devkit {devkit-ip}` 重新配對，或使用[獨立安裝程式](#install-manual)。 |
 | `Image ... is for amd64, not ARM64.` | 使用 `docker buildx build --platform linux/arm64 ... --push` 重新建置映像檔。 |
 | `Image ... is not available on the DevKit.` | 先使用 `dk container deploy` 或 `dk container pull` 下載映像檔。 |
 | `permission denied while trying to connect to the Docker daemon socket`（在 DevKit 上） | 設定 Docker 後請登出再重新登入，讓您的使用者加入 `docker` 群組。 |

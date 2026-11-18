@@ -39,10 +39,8 @@ Use the prerequisites for the selected example and platform version.
 
 ## Install Docker on the DevKit {#install}
 
-On a personally administered DevKit, install Docker from the Palette SDK or
-manually. On an administrator-managed DevKit, ask the administrator to enable Docker;
-use `dk container` with the provided service instead of installing or replacing
-Docker yourself. A fresh installation using either method below will:
+Install Docker from the Palette SDK or with the standalone installer. A fresh
+installation using either method below will:
 
 - Install Docker CE (`docker-ce`, `docker-ce-cli`, and `containerd.io`) for
   ARM64 from Docker's Debian `trixie` repository.
@@ -58,9 +56,8 @@ Both need Internet access on the DevKit.
 ### From the Palette SDK {#install-sdk}
 
 Pair the DevKit with `sima-cli sdk setup --devkit {devkit-ip}` first. Pairing
-configures passwordless `sudo` for installation on personally administered
-DevKits. Administrator-managed DevKits retain their access policy and use the
-provided Docker service. Then, in the SDK shell, run:
+configures the passwordless `sudo` access needed for installation. Then, in the
+SDK shell, run:
 
 <ShellCommand prompt="sdk">
 dk container setup
@@ -68,17 +65,15 @@ dk container setup
 
 Answer `y` when it asks to set up Docker on the DevKit. To skip the question,
 run `dk container setup --yes`. If Docker already works on the DevKit, the
-command reuses it. On administrator-managed DevKits, it configures registry
-access through the provided service without granting unrestricted `sudo`. If an
-SDK-managed installation is interrupted, run the command again; it resumes.
+command reuses it. If an installation is interrupted, run the command again;
+it resumes.
 
-On personally administered DevKits, other `dk container` commands also offer
-to install Docker when it is missing.
+Other `dk container` commands also offer to install Docker when it is missing.
 
 ### Manual Installation on the DevKit {#install-manual}
 
 Use the SDK's standalone installer when the Palette SDK is not available. On a
-personally administered ARM64 Modalix DevKit, you need Internet access and a user
+ARM64 Modalix DevKit, you need Internet access and a user
 account with sudo access. Through SSH or the serial console, download the
 installer from the SDK repository and run it as your normal user:
 
@@ -192,7 +187,7 @@ docker image prune -a
 | Message | Fix |
 | --- | --- |
 | `The local container registry is not configured for this SDK shell.` | Run `sima-cli sdk setup --devkit {devkit-ip}` on the host, answer `y` to the container registry question, then open a new SDK shell. |
-| `Docker installation requires passwordless sudo` | On a personally administered DevKit, pair again with `sima-cli sdk setup --devkit {devkit-ip}`, or install Docker [manually](#install-manual). On an administrator-managed DevKit, ask the administrator to enable Docker. |
+| `Docker installation requires passwordless sudo` | Pair again with `sima-cli sdk setup --devkit {devkit-ip}`, or use the [standalone installer](#install-manual). |
 | `Image ... is for amd64, not ARM64.` | Rebuild the image with `docker buildx build --platform linux/arm64 ... --push`. |
 | `Image ... is not available on the DevKit.` | Use `dk container deploy` or `dk container pull` to download it first. |
 | `permission denied while trying to connect to the Docker daemon socket` on the DevKit | Log out and log in again after Docker setup, so that your user is in the `docker` group. |

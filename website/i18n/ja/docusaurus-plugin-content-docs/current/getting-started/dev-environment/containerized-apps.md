@@ -28,7 +28,7 @@ DevKit の Arm CPU 上で動作するソフトウェアには、コンテナを�
 | SDK コンテナ | `docker buildx` で ARM64 イメージをビルドし、ローカルレジストリにプッシュします。 |
 | DevKit | `dk container deploy` がローカルレジストリからイメージをダウンロードし、Docker で起動します。 |
 
-個人で管理する DevKit では、必要に応じて最初の `dk container` コマンドが Docker のインストールを提案します。管理者が管理する DevKit では、これらのコマンドを使用する前に、Docker を有効にするよう管理者に依頼してください。
+Docker がない場合、最初の `dk container` コマンドがインストールを提案します。
 
 ## 始める前に
 
@@ -50,7 +50,7 @@ sima-cli sdk setup --devkit {devkit-ip}
 </ShellCommand>
 
 セットアップで **Set up a local container registry so the DevKit can download
-images built in the SDK?** と尋ねられたら、`y` と答えます。個人で管理する DevKit では、ペアリングにより Docker のインストールに必要なパスワードなしの `sudo` アクセスが設定されます。管理者が管理する DevKit では、既存のアクセスポリシーと Docker インストールを使用し、ペアリングによって無制限の `sudo` 権限は付与されません。その後、新しい SDK シェルを開きます。
+images built in the SDK?** と尋ねられたら、`y` と答えます。ペアリングにより、Docker のインストールに必要なパスワードなしの `sudo` アクセスが設定されます。その後、新しい SDK シェルを開きます。
 
 <ShellCommand prompt="host">
 sima-cli sdk neat
@@ -66,7 +66,7 @@ SDK シェルで、次を実行します。
 dk container setup
 </ShellCommand>
 
-DevKit に Docker を設定するかどうか尋ねられたら、`y` と答えます。Docker がすでに動作している場合、コマンドはそれを再利用します。管理者が管理する DevKit では、管理者が提供する Docker サービスを使用してレジストリアクセスを設定します。インストールによる変更内容は、[DevKit への Docker のインストール](/reference/devkit-containers/#install)を参照してください。
+DevKit に Docker を設定するかどうか尋ねられたら、`y` と答えます。Docker がすでに動作している場合、コマンドはそれを再利用します。インストールによる変更内容は、[DevKit への Docker のインストール](/reference/devkit-containers/#install)を参照してください。
 
 ### 3. イメージをビルドしてプッシュする
 
