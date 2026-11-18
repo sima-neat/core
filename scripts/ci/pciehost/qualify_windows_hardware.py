@@ -599,6 +599,7 @@ def _windows_openssh_batch_line(argv: list[str], output: Path, *,
   powershell_arguments = ",".join(
       "'" + value.replace("'", "''") + "'" for value in argv)
   powershell = (
+      "$env:c28fc6f98a2c44abbbd89d6a3037d0d9_POSIX_FD_STATE=$null;"
       f"$argv=@({powershell_arguments});$exe=$argv[0];"
       "[string[]]$rest=$argv[1..($argv.Length-1)];"
       "& $exe @rest;exit $LASTEXITCODE"
@@ -662,8 +663,9 @@ def run_windows_openssh(command: list[object], log: Path, *,
 
   Inside a non-terminal Windows OpenSSH server session, ssh.exe/scp.exe inherit
   c28fc6f98a2c44abbbd89d6a3037d0d9_POSIX_FD_STATE, treat a synchronous pipe as
-  overlapped, and block after writing to it.  The batch wrapper redirects them
-  to ordinary files, where those writes complete.
+  overlapped, and block once a write to it cannot complete at once.  The
+  PowerShell relay re-pipes their output, so it drops that inherited state
+  first; the batch wrapper then writes the relayed output to an ordinary file.
   """
   argv = [str(value) for value in command]
   relayed = argv

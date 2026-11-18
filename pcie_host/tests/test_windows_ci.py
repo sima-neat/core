@@ -398,6 +398,16 @@ class WindowsCiContracts(unittest.TestCase):
     self.assertIn(r'< "C:\secret input"', piped)
     self.assertNotIn("fixture-secret", piped)
 
+  def test_windows_openssh_relay_drops_inherited_fd_state_before_running_ssh(self):
+    # PowerShell relays ssh.exe output through a pipe; with the server session's
+    # inherited fd state, ssh.exe blocks once that pipe fills (a few KB of output).
+    line = _windows_openssh_batch_line(["ssh.exe", "card", "true"], Path(r"C:\card.log"))
+    encoded = line.split("-EncodedCommand ", 1)[1].split(" > ", 1)[0]
+    decoded = base64.b64decode(encoded).decode("utf-16le")
+    cleared = decoded.find("$env:c28fc6f98a2c44abbbd89d6a3037d0d9_POSIX_FD_STATE=$null;")
+    self.assertGreaterEqual(cleared, 0)
+    self.assertLess(cleared, decoded.index("& $exe @rest"))
+
   def test_same_run_linux_admission_is_not_a_manual_dispatch_override(self):
     workflow = WORKFLOW.read_text(encoding="utf-8")
     dispatch = workflow.split("  workflow_dispatch:\n", 1)[1].split("\npermissions:", 1)[0]
