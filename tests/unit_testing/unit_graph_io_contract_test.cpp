@@ -159,6 +159,12 @@ RUN_TEST(
         write_text(path, invalid.dump());
         require_neat_error([&] { (void)Graph::load(path); }, error_codes::kIoParse, key);
       }
+      auto invalid_roi = nlohmann::json::parse(read_text(linear_path));
+      invalid_roi["nodes"][0]["input_options"]["preprocess_meta"]["rois"][0]["width"] = "wide";
+      const auto invalid_path = tmp_json_path("invalid_roi_width.json");
+      write_text(invalid_path, invalid_roi.dump());
+      require_neat_error([&] { (void)Graph::load(invalid_path); }, error_codes::kIoParse,
+                         "rois[0].width");
       const auto& meta = original_input.at("preprocess_meta");
       require(original_input.at("max_bytes") == stream_input.max_bytes &&
                   meta.at("enabled") == true && meta.at("target_width") == 320 &&

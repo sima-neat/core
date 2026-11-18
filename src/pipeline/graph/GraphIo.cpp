@@ -733,9 +733,9 @@ int checked_json_integer(const JsonValue& v, const std::string& field) {
 
 PreprocessMetaTemplate parse_preprocess_meta(const JsonValue::JsonObject& obj) {
   PreprocessMetaTemplate meta;
-  const auto number = [&](const JsonValue::JsonObject& fields, const char* key, int fallback = 0) {
-    const auto* v = object_field(fields, key);
-    return v ? checked_json_integer(*v, std::string("preprocess_meta.") + key) : fallback;
+  const auto number = [&](const char* key) {
+    const auto* v = object_field(obj, key);
+    return v ? checked_json_integer(*v, std::string("preprocess_meta.") + key) : 0;
   };
   for (const char* key : {"enabled", "normalize", "quantize", "tessellate", "roi_list_enabled"}) {
     if (const auto* v = object_field(obj, key); v && v->type != JsonValue::Type::Bool)
@@ -746,12 +746,12 @@ PreprocessMetaTemplate parse_preprocess_meta(const JsonValue::JsonObject& obj) {
       throw std::invalid_argument(std::string("preprocess_meta.") + key + " requires a string");
   }
   meta.enabled = bool_field(obj, "enabled");
-  meta.target_width = number(obj, "target_width");
-  meta.target_height = number(obj, "target_height");
-  meta.scaled_width = number(obj, "scaled_width");
-  meta.scaled_height = number(obj, "scaled_height");
+  meta.target_width = number("target_width");
+  meta.target_height = number("target_height");
+  meta.scaled_width = number("scaled_width");
+  meta.scaled_height = number("scaled_height");
   meta.resize_mode = string_field(obj, "resize_mode", meta.resize_mode);
-  meta.pad_value = number(obj, "pad_value");
+  meta.pad_value = number("pad_value");
   meta.color_in = string_field(obj, "color_in");
   meta.color_out = string_field(obj, "color_out");
   if (const auto* axes = object_field(obj, "axis_perm")) {
@@ -764,27 +764,31 @@ PreprocessMetaTemplate parse_preprocess_meta(const JsonValue::JsonObject& obj) {
   meta.quantize = bool_field(obj, "quantize");
   meta.tessellate = bool_field(obj, "tessellate");
   meta.roi_list_enabled = bool_field(obj, "roi_list_enabled");
-  meta.roi_input_batch_size = number(obj, "roi_input_batch_size");
-  meta.roi_source_width = number(obj, "roi_source_width");
-  meta.roi_source_height = number(obj, "roi_source_height");
-  meta.roi_source_stride_bytes = number(obj, "roi_source_stride_bytes");
-  meta.roi_pad_value = number(obj, "roi_pad_value");
+  meta.roi_input_batch_size = number("roi_input_batch_size");
+  meta.roi_source_width = number("roi_source_width");
+  meta.roi_source_height = number("roi_source_height");
+  meta.roi_source_stride_bytes = number("roi_source_stride_bytes");
+  meta.roi_pad_value = number("roi_pad_value");
   if (const auto* rois = object_field(obj, "rois")) {
     if (!rois->arr)
       throw std::invalid_argument("preprocess_meta.rois requires an array");
     for (const auto& roi : *rois->arr) {
       if (!roi.obj)
         throw std::invalid_argument("preprocess_meta.rois requires ROI objects");
-      for (const char* key : {"width", "height"}) {
-        if (!object_field(*roi.obj, key) || number(*roi.obj, key) <= 0)
-          throw std::invalid_argument(std::string("preprocess_meta.rois.") + key +
-                                      " must be positive");
-      }
-      meta.rois.push_back({.batch_index = number(*roi.obj, "batch_index"),
-                           .x = number(*roi.obj, "x"),
-                           .y = number(*roi.obj, "y"),
-                           .width = number(*roi.obj, "width"),
-                           .height = number(*roi.obj, "height")});
+      const auto roi_number = [&](const char* key, bool positive = false) {
+        const std::string field =
+            "preprocess_meta.rois[" + std::to_string(meta.rois.size()) + "]." + key;
+        const auto* v = object_field(*roi.obj, key);
+        const int value = v ? checked_json_integer(*v, field) : 0;
+        if (positive && value <= 0)
+          throw std::invalid_argument(field + " must be positive");
+        return value;
+      };
+      meta.rois.push_back({.batch_index = roi_number("batch_index"),
+                           .x = roi_number("x"),
+                           .y = roi_number("y"),
+                           .width = roi_number("width", true),
+                           .height = roi_number("height", true)});
     }
   }
   return meta;
