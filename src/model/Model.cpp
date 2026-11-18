@@ -113,7 +113,7 @@ void validate_requested_boxdecode_contract_type(BoxDecodeType contract_type,
       << ", mpk_contract=" << (contract_token.empty() ? "unspecified" : contract_token)
       << "). Use the matching BoxDecodeType for this model, or leave the default Model route as "
          "raw tensors and attach an explicit compatible postprocess stage.";
-  throw std::runtime_error(oss.str());
+  throw_model_error(error_codes::kPipelineShape, oss.str());
 }
 
 void apply_model_superpoint_options(pipeline_internal::sima::BoxDecodeStagePayload* payload,
@@ -4520,7 +4520,6 @@ struct Model::Impl {
   internal::PreprocessPlannerResult preprocess_plan;
   internal::ModelPack pack;
   mutable std::optional<internal::ModelPack> sync_pack;
-  std::optional<CompiledBoxDecodeContract> derived_boxdecode_contract;
   std::string model_id;
   std::string stage_cache_identity;
 
@@ -4765,17 +4764,30 @@ Model::Model(const std::string& model_path) : Model(model_path, Options{}) {}
 
 Model::Model(const std::string& model_path, const Options& opt) {
   impl_ = std::make_unique<Impl>(model_path, opt);
-  if (opt.decode_type != BoxDecodeType::Unspecified &&
-      impl_->preprocess_plan.session_route_plan.boxdecode_selected) {
-    try {
-      impl_->derived_boxdecode_contract =
-          internal::ModelAccess::derive_boxdecode_stage_contract(*this);
-    } catch (const NeatError&) {
-      throw;
-    } catch (const std::invalid_argument& error) {
-      throw_model_error(error_codes::kPipelineShape, error.what());
-    } catch (const std::runtime_error& error) {
-      throw_model_error(error_codes::kPipelineShape, error.what());
+  if (opt.decode_type == BoxDecodeType::Unspecified ||
+      !impl_->preprocess_plan.session_route_plan.boxdecode_selected)
+    return;
+
+  const auto& pack = impl_->pack;
+  if (const auto* terminal = pack.semantic_boxdecode_terminal()) {
+    if (const auto declared =
+            pipeline_internal::sima::parse_box_decode_type_token(terminal->decode_type))
+      validate_requested_boxdecode_contract_type(*declared, opt.decode_type, "Model");
+    return;
+  }
+
+  // Classic DETR takes two logical heads. A terminal pass-through publishes
+  // its inputs individually, so this mismatch needs no physical carrier plan.
+  if (opt.decode_type == BoxDecodeType::Detr && pack.mpk_contract()) {
+    const auto& mpk = *pack.mpk_contract();
+    const auto order = pipeline_internal::sima::plugins_in_execution_order(mpk);
+    if (!order.empty()) {
+      const auto& output = mpk.plugins[order.back()];
+      if (output.kernel == "pass_through" && output.input_tensors.size() > 2 &&
+          output.input_tensors.size() == output.output_tensors.size())
+        throw_model_error(error_codes::kPipelineShape,
+                          "Classic DETR requires two logical heads; the MPK exports " +
+                              std::to_string(output.output_tensors.size()) + ".");
     }
   }
 }
@@ -8422,14 +8434,6 @@ CompiledBoxDecodeContract ModelAccess::build_boxdecode_stage_contract(const Mode
                                            model.impl_->preprocess_plan.session_route_plan);
   }
 
-  if (model.impl_->derived_boxdecode_contract)
-    return *model.impl_->derived_boxdecode_contract;
-  return derive_boxdecode_stage_contract(model);
-}
-
-CompiledBoxDecodeContract ModelAccess::derive_boxdecode_stage_contract(const Model& model) {
-  const auto& pack = model.impl_->pack;
-  const auto& opt = model.impl_->options;
   if (!pipeline_internal::sima::is_box_decode_type_specified(opt.decode_type)) {
     throw std::runtime_error(
         "Model-managed boxdecode stage requires a canonical compiled contract. The MPK did not "

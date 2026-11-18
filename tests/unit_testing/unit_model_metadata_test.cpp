@@ -1,5 +1,6 @@
 #include "model/Model.h"
 #include "pipeline/Graph.h"
+#include "pipeline/ErrorCodes.h"
 #include "model_archive_fixture_utils.h"
 #include "pipeline/NeatError.h"
 #include "test_main.h"
@@ -137,6 +138,9 @@ RUN_TEST(
         const Model model(fixture.tar_path, options);
         require(!model.output_specs().empty(),
                 "the authored BoxDecode terminal must be inspectable");
+        options.decode_type = BoxDecodeType::Detr;
+        require_neat_error([&] { Model mismatch(fixture.tar_path, options); },
+                           error_codes::kPipelineShape, "does not match");
       }
 
       {
