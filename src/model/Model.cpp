@@ -8447,10 +8447,11 @@ CompiledBoxDecodeContract ModelAccess::derive_boxdecode_stage_contract(const Mod
     throw std::runtime_error(
         "Model-managed boxdecode derivation requires the resolved route to select BoxDecode");
   }
+  const auto* terminal = pack.semantic_boxdecode_terminal();
   std::string exact_route_error;
   auto exact_route_flags =
       pipeline_internal::sima::resolve_model_managed_boxdecode_route_flags_from_mpk(
-          *mpk, nullptr, &exact_route_error, opt.decode_type);
+          *mpk, terminal, &exact_route_error, opt.decode_type);
   if (!exact_route_flags.has_value()) {
     throw std::runtime_error(
         "Model-managed external boxdecode route facts could not be derived from exact MPK "
@@ -8463,7 +8464,7 @@ CompiledBoxDecodeContract ModelAccess::derive_boxdecode_stage_contract(const Mod
 
   std::string contract_error;
   auto contract = pipeline_internal::sima::build_boxdecode_static_contract_from_mpk(
-      *mpk, *route_flags, nullptr, &contract_error,
+      *mpk, *route_flags, terminal, &contract_error,
       (opt.decode_type == BoxDecodeType::Detr || opt.decode_type == BoxDecodeType::DetrFocal ||
        pipeline_internal::sima::box_decode_type_is_sam(opt.decode_type))
           ? opt.decode_type

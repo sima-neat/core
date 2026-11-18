@@ -247,6 +247,7 @@ public:
 
   // Descriptive MPK projection; independent of physical execution admission.
   ExecutionPlan semantic_execution_plan() const;
+  const pipeline_internal::sima::MpkPluginIoContract* semantic_boxdecode_terminal() const;
   // Executable projection; backed by immutable admitted physical execution facts.
   ExecutionPlan execution_plan() const;
   // Exact MPK identities in the resolved inference prefix, for offline diagnostics.

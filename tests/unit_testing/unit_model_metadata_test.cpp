@@ -123,6 +123,23 @@ RUN_TEST(
       }
 
       {
+        const auto [filename, text] = sima_test::strict_contract_json_entry_from_modelzoo();
+        auto mpk = nlohmann::json::parse(text);
+        auto& terminal = mpk.at("plugins").back();
+        terminal["name"] = "objectdecode_terminal";
+        terminal["processor"] = "A65";
+        terminal["config_params"]["kernel"] = "boxdecode";
+        terminal["config_params"]["params"] = {{"decode_type", "yolov8-seg"}};
+        const auto fixture = sima_test::make_model_archive_fixture(
+            "model_metadata_authored_decoder", {{filename, mpk.dump()}}, true);
+        Model::Options options;
+        options.decode_type = BoxDecodeType::YoloV8Seg;
+        const Model model(fixture.tar_path, options);
+        require(!model.output_specs().empty(),
+                "the authored BoxDecode terminal must be inspectable");
+      }
+
+      {
         const auto fixture = make_metadata_fixture("model_metadata_missing", false);
         Model model(fixture.tar_path);
         const auto meta = model.metadata();

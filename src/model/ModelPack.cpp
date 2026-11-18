@@ -3674,6 +3674,14 @@ ExecutionPlan ModelPack::semantic_execution_plan() const {
       *mpk_contract_, pipeline_type_, model_managed_route_flags_, model_managed_post_kinds_);
 }
 
+const pipeline_internal::sima::MpkPluginIoContract* ModelPack::semantic_boxdecode_terminal() const {
+  for (const auto& stage : semantic_execution_plan().post) {
+    if (stage.kind == ExecutionStageKind::BoxDecode)
+      return find_mpk_stage_for_execution_stage(mpk_contract_, stage);
+  }
+  return nullptr;
+}
+
 ExecutionPlan ModelPack::execution_plan() const {
   prepare_for_execution();
   return build_execution_plan_from_model_plan(dmabuf_fragment_source_->execution,
