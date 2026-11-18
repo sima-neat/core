@@ -52,17 +52,12 @@ std::string caps_media_type(std::string_view caps) {
 bool valid_input_caps(const std::string& caps) {
   gst_init_once();
   GstCapsPtr parsed(gst_caps_from_string(caps.c_str()));
-  if (!parsed) {
+  if (!parsed || !gst_caps_is_fixed(parsed.get())) {
     return false;
   }
-  for (guint i = 0; i < gst_caps_get_size(parsed.get()); ++i) {
-    const std::string_view name = gst_structure_get_name(gst_caps_get_structure(parsed.get(), i));
-    const auto slash = name.find('/');
-    if (slash == std::string_view::npos || slash + 1 == name.size()) {
-      return false;
-    }
-  }
-  return true;
+  const std::string_view name = gst_structure_get_name(gst_caps_get_structure(parsed.get(), 0));
+  const auto slash = name.find('/');
+  return slash != std::string_view::npos && slash != 0 && slash + 1 < name.size();
 }
 
 PayloadType payload_type_from_caps_string(std::string_view caps) {

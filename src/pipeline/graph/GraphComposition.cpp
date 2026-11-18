@@ -19,8 +19,6 @@
 #include "pipeline/internal/CapsStringUtil.h"
 #include "pipeline/internal/ErrorUtil.h"
 
-#include <netdb.h>
-
 #include <algorithm>
 #include <sstream>
 #include <stdexcept>
@@ -48,7 +46,7 @@ void validate_endpoint_options(const Node& node) {
     if (!opt.caps_override.empty() && !pipeline_internal::valid_input_caps(opt.caps_override)) {
       throw_session_error(error_codes::kCaps,
                           "Invalid InputOptions.caps_override: " + opt.caps_override, {},
-                          "Provide GStreamer caps with a media type such as video/x-raw.");
+                          "Provide fixed GStreamer caps with one media type such as video/x-raw.");
     }
   } else if (const auto* output = dynamic_cast<const Output*>(&node)) {
     if (output->options().max_buffers < 0) {
@@ -59,16 +57,9 @@ void validate_endpoint_options(const Node& node) {
     if (opt.port < 1 || opt.port > 65535) {
       throw_session_error(error_codes::kOptionOutOfRange, "UdpOutput.port must be in [1, 65535]");
     }
-    addrinfo hints{};
-    hints.ai_socktype = SOCK_DGRAM;
-    addrinfo* address = nullptr;
-    const int status = getaddrinfo(opt.host.c_str(), nullptr, &hints, &address);
-    if (status != 0) {
-      throw_session_error(error_codes::kOptionOutOfRange,
-                          "UdpOutput.host '" + opt.host +
-                              "' must resolve to a UDP destination: " + gai_strerror(status));
+    if (opt.host.empty()) {
+      throw_session_error(error_codes::kOptionOutOfRange, "UdpOutput.host must not be empty");
     }
-    freeaddrinfo(address);
   }
 }
 
