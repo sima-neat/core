@@ -17,6 +17,7 @@ import tempfile
 import textwrap
 from types import SimpleNamespace
 import unittest
+from urllib.parse import quote, unquote
 from unittest import mock
 import zipfile
 
@@ -4027,10 +4028,18 @@ class HostedWindowsBuildContracts(unittest.TestCase):
     for entry in manifest["files"]:
       with self.subTest(input=entry["name"]):
         self.assertRegex(entry["url"], r"^https://[^\s?#]+$")
-        self.assertTrue(entry["url"].endswith("/" + entry["name"]))
+        self.assertEqual(unquote(entry["url"].rsplit("/", 1)[1]), entry["name"])
         self.assertRegex(entry["sha256"], r"^[0-9a-f]{64}$")
     wheels = {entry["name"] for entry in manifest["files"] if entry["use"] == "sima-cli"}
-    self.assertIn(f"sima_cli-{manifest['sima_cli_version']}-py3-none-any.whl", wheels)
+    cli_wheel = f"sima_cli-{manifest['sima_cli_version']}-py3-none-any.whl"
+    self.assertIn(cli_wheel, wheels)
+    # The bootstrap CLI is a Vulcan sima-cli publication, as on Linux, pinned to the
+    # first build that reads MSI-style Windows package metadata.
+    cli_url = next(entry["url"] for entry in manifest["files"] if entry["name"] == cli_wheel)
+    branch, _, commit = manifest["sima_cli_publication"].removeprefix("sima-cli@").partition(":")
+    self.assertEqual(
+        cli_url.rsplit("/", 1)[0],
+        f"https://artifacts.neat.sima.ai/sima-cli/{quote(quote(branch, safe=''), safe='')}/{commit}")
     self.assertIn("colorama-0.4.6-py2.py3-none-any.whl", wheels)
     self.assertTrue(any(name.startswith("numpy-") and "cp314-win_amd64" in name.replace(
         "cp314-cp314", "cp314") for name in (

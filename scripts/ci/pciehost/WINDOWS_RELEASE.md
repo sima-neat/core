@@ -18,6 +18,14 @@ HTTPS URL pinned in `windows_build_inputs.json` and checks its SHA-256 with
 Python wheelhouse, and the bootstrap sima-cli with its dependencies. CPython
 3.14.7 comes from `actions/setup-python`, pinned by commit.
 
+As on Linux, the bootstrap sima-cli comes from a sima-cli publication on the
+approved artifact endpoint. Released sima-cli cannot read the MSI-style
+`installation` metadata of Scheduler's Windows profile ("Missing 'script'"), so
+the wheel is pinned to the first build that can (`sima_cli_publication` in
+`windows_build_inputs.json`, sima-cli PR 396). After that change merges, re-pin
+the wheel URL and SHA-256 to the merged publication, and later to the sima-cli
+release that contains it.
+
 As on Linux, the build downloads no Platform files and needs no Platform
 installation. Core takes the Platform service headers (`simaai_svc.h`,
 `simaai_svc_proto.h`) from the installed Scheduler package's

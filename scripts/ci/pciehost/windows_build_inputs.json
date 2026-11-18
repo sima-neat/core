@@ -1,6 +1,7 @@
 {
   "schema_version": 1,
-  "sima_cli_version": "2.1.23",
+  "sima_cli_version": "2.1.23+codex.1074.windows.msi.install.559480168a42",
+  "sima_cli_publication": "sima-cli@codex/1074-windows-msi-install:559480168a42",
   "files": [
     {
       "use": "gstreamer",
@@ -232,9 +233,9 @@
     },
     {
       "use": "sima-cli",
-      "name": "sima_cli-2.1.23-py3-none-any.whl",
-      "url": "https://files.pythonhosted.org/packages/32/af/d26bcf8d4050f7f58948f265bca6680055afd51fcc6797ce3fa009a557ae/sima_cli-2.1.23-py3-none-any.whl",
-      "sha256": "0e743fd590df3f8638e1aa015cab63ec107a211923cbc8da7fe2a09b5a93f852"
+      "name": "sima_cli-2.1.23+codex.1074.windows.msi.install.559480168a42-py3-none-any.whl",
+      "url": "https://artifacts.neat.sima.ai/sima-cli/codex%252F1074-windows-msi-install/559480168a42/sima_cli-2.1.23%2Bcodex.1074.windows.msi.install.559480168a42-py3-none-any.whl",
+      "sha256": "1df0a223d32bd464626bf55cded76f35cc5f457f12c8c16633c27f52e55db866"
     },
     {
       "use": "sima-cli",
