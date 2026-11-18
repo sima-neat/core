@@ -77,7 +77,7 @@ find_package(SimaNeat REQUIRED CONFIG)
 ### 5. `failed to read image: <path>`
 
 :::info Причина
-OpenCV (`cv2.imread` / `cv::imread`) повернув null: файл не існує, недоступний для читання або не є зображенням, яке можна декодувати.
+OpenCV (`cv2.imread` / `cv::imread`) повернув null: файлу не існує, він недоступний для читання або не є зображенням, яке можна декодувати.
 :::
 
 :::tip Виправлення
@@ -240,20 +240,20 @@ python3 share/sima-neat/tutorials/023_run_mipi_camera_model/run_mipi_camera_mode
 ### 16. Низька пропускна здатність графа або втрата кадрів у потоці реального часу
 
 :::info Причина
-Граф перебуває під зворотним тиском (backpressure). Типові причини: цикл pull, який не встигає, вихідні зразки, які утримуються надто довго, журналювання під час обробки кожного кадру, політика черги, що не відповідає джерелу, або живий потік без явної політики відкидання / свіжості.
+Граф перебуває під зворотним тиском (backpressure). Типові причини: цикл pull, який не встигає, вихідні зразки, які утримуються надто довго, журналювання під час обробки кожного кадру, політика черги, що не відповідає джерелу, або потік у реальному часі без явної політики відкидання / свіжості.
 :::
 
 :::tip Виправлення
 Повторно використовуйте той самий екземпляр `Run`, а потім явно задайте політику середовища виконання:
 
-- Використовуйте `RunPreset::Realtime` / `pyneat.RunPreset.Realtime` для живих входів, де важлива свіжість.
+- Використовуйте `RunPreset::Realtime` / `pyneat.RunPreset.Realtime` для входів у реальному часі, де важлива свіжість.
 - Використовуйте `RunPreset::Reliable` / `pyneat.RunPreset.Reliable` для пакетної або файлової обробки, де важливий кожен вхід.
 - Використовуйте `try_push(...)`, коли застосунок не повинен блокуватися на заповненій черзі.
 - Задайте `on_input_drop`, щоб підраховувати відкидання за `stream_id`, `frame_id`, `port_name` і причиною.
 - Забирайте дані безперервно. Заповнена вихідна черга може гальмувати весь граф.
 - Звільняйте або копіюйте виходи, перш ніж подавати нові дані, якщо застосунок може утримувати буфери, що належать середовищу виконання.
 
-Для багатопотокових графів зберігайте `stream_id` і `frame_id` та перевіряйте кількість виходів для кожного потоку. Сумарний FPS може приховати один потік, якому бракує даних. Див. [Запуск графа → Оптимізуйте пропускну здатність, не вдаючись до самообману](/develop-apps/development-workflow/pipeline#tune-throughput-without-lying-to-yourself).
+Для графів із кількома потоками даних зберігайте `stream_id` і `frame_id` та перевіряйте кількість виходів для кожного потоку. Сумарний FPS може приховати один потік, якому бракує даних. Див. [Запуск графа → Оптимізуйте пропускну здатність, не вдаючись до самообману](/develop-apps/development-workflow/pipeline#tune-throughput-without-lying-to-yourself).
 :::
 
 ### 17. `unknown input/output name`, `no unambiguous default input` або `no unambiguous default output`
@@ -338,7 +338,7 @@ case simaai::neat::PullStatus::Error:
 :::
 
 :::tip Виправлення
-Загорніть його: `model.run([tensor])`, `run.push([tensor])`, `graph.build([tensor])`.
+Передайте його у списку: `model.run([tensor])`, `run.push([tensor])`, `graph.build([tensor])`.
 :::
 
 ### 21. `image-mode Tensor input requires explicit image format metadata`
@@ -387,7 +387,7 @@ case simaai::neat::PullStatus::Error:
 - інформацію про версію/збірку Neat: Python `pyneat.build_info()` або C++ `sima_neat_version()`, `sima_neat_platform_version()` і `sima_neat_abi_version()`;
 - назву артефакту моделі, шлях до моделі та те, як її отримано;
 - найменший фрагмент коду, який можна запустити і який відтворює збій;
-- форму, dtype, розкладку, формат пікселів і сімейство корисного навантаження входу, а також те, чи дані в граф подає застосунок (app-pushed), чи джерело належить самому графу (source-owned);
+- форму, dtype, розкладку, формат пікселів і сімейство корисних даних входу, а також те, чи дані в граф подає застосунок (app-pushed), чи джерело належить самому графу (source-owned);
 - імена кінцевих точок із `run.input_names()` і `run.output_names()`;
 - JSON `GraphReport` з `graph.validate()` або `NeatError::report()`;
 - JSON експорту запуску з `run.save_json(...)` або C++ `save_run_json(...)` після того, як через Run пройшли зразки;
@@ -402,7 +402,7 @@ case simaai::neat::PullStatus::Error:
 - `bus`;
 - `repro_gst_launch` і `repro_env`;
 - `dot_paths` і `caps_dump`;
-- `boundaries` / `BoundaryFlowStats`, якщо є проби на межах;
+- `boundaries` / `BoundaryFlowStats`, якщо є зонди на межах;
 - `build_adaptation` для збоїв `build(input, ...)` з початковим входом;
 - JSON експорту запуску для лічильників і метрик після виконання.
 

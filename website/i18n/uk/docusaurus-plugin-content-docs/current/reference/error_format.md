@@ -15,7 +15,7 @@ sidebar_position: 8
 - Розбір і перевірка конфігурації: `GST_RESOURCE_ERROR_SETTINGS`
 - Відсутній файл: `GST_RESOURCE_ERROR_NOT_FOUND`
 - Диспетчер недоступний: `GST_RESOURCE_ERROR_BUSY`; використовуйте
-  `GST_RESOURCE_ERROR_NOT_FOUND` лише разом з діагностичним ідентифікатором, що стосується диспетчера,
+  `GST_RESOURCE_ERROR_NOT_FOUND` лише разом з ідентифікатором діагностики, що стосується диспетчера,
   або зі структурованим полем із даними про диспетчер
 - Збої виділення пам’яті: `GST_RESOURCE_ERROR_NO_SPACE_LEFT`
 - Помилки caps і їхнього узгодження: `GST_STREAM_ERROR_FORMAT`
@@ -40,11 +40,11 @@ sidebar_position: 8
 - `allocator`
 - `dispatcher-error`
 
-Помилки, коли вхід перевищує обмеження попередньої обробки, також надають поля `actual-width`, `actual-height`, `actual-stride`,
+Помилки через перевищення обмежень входу попередньої обробки також містять поля `actual-width`, `actual-height`, `actual-stride`,
 `maximum-width`, `maximum-height`, `maximum-stride`, `resize-width`, `resize-height`,
 `required-bytes`, `allocated-bytes` і `input-format`.
 
-Помилки контракту вхідних даних також надають поля `input-name`, `segment-name`, `required-bytes`, `actual-bytes`,
+Помилки контракту вхідних даних також містять поля `input-name`, `segment-name`, `required-bytes`, `actual-bytes`,
 `expected-shape`, `expected-layout`, `expected-dtype`, `received-shape`, `received-layout` і
 `received-dtype`. Поля розкладки уточнюють порядок вимірів для таких форм, як `[3, 224, 224]` (`CHW`) і
 `[224, 224, 3]` (`HWC`).
