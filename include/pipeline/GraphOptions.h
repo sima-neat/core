@@ -194,8 +194,7 @@ struct VerboseOptions {
 struct RtspServerOptions {
   std::string mount =
       "image";     ///< RTSP path component (e.g., `"image"` → `rtsp://host:port/image`).
-  int port =
-      8554; ///< RTSP server TCP port. Use 0 to select a free port and read it from the handle URL.
+  int port = 8554; ///< TCP port. Set 0 to bind a free port and read it from the handle URL.
   /**
    * @brief Optional RTP/RTCP UDP port range.
    *
