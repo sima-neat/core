@@ -442,23 +442,10 @@ int preset_default_queue_depth(RunPreset preset) {
   return 4;
 }
 
-OverflowPolicy preset_default_overflow_policy(RunPreset preset) {
-  switch (preset) {
-  case RunPreset::Realtime:
-    return OverflowPolicy::KeepLatest;
-  case RunPreset::Balanced:
-    return OverflowPolicy::Block;
-  case RunPreset::Reliable:
-    return OverflowPolicy::Block;
-  }
-  return OverflowPolicy::Block;
-}
-
 RunOptions sync_run_defaults() {
   RunOptions opt;
   opt.preset = RunPreset::Reliable;
   opt.queue_depth = 1;
-  opt.overflow_policy = OverflowPolicy::Block;
   opt.output_memory = OutputMemory::Auto;
   opt.advanced.copy_input = false;
   opt.advanced.max_input_bytes = 0;
@@ -1029,7 +1016,7 @@ InputStreamOptions make_stream_options(const RunOptions& opt, RunMode mode) {
   // reversible env override). See resolve_output_memory().
   const OutputMemoryResolution output_mem = resolve_output_memory(opt, mode);
   stream_opt.appsink_sync = false;
-  stream_opt.appsink_drop = (opt.overflow_policy != OverflowPolicy::Block);
+  stream_opt.appsink_drop = runtime::resolve_overflow_policy(opt) != OverflowPolicy::Block;
   stream_opt.appsink_max_buffers = queue_depth;
   stream_opt.stability_frames = preset_default_stability_frames(opt.preset);
   stream_opt.max_input_bytes = opt.advanced.max_input_bytes;
@@ -1387,9 +1374,6 @@ RunOptions resolve_build_opt(RunMode mode, const RunOptions& opt) {
     if (out.queue_depth == defaults.queue_depth) {
       out.queue_depth = sync_defaults.queue_depth;
     }
-    if (out.overflow_policy == defaults.overflow_policy) {
-      out.overflow_policy = sync_defaults.overflow_policy;
-    }
     if (out.output_memory == defaults.output_memory) {
       out.output_memory = sync_defaults.output_memory;
     }
@@ -1406,9 +1390,7 @@ RunOptions resolve_build_opt(RunMode mode, const RunOptions& opt) {
   if (out.queue_depth == defaults.queue_depth) {
     out.queue_depth = preset_default_queue_depth(out.preset);
   }
-  if (out.overflow_policy == defaults.overflow_policy) {
-    out.overflow_policy = preset_default_overflow_policy(out.preset);
-  }
+  out.overflow_policy = runtime::resolve_overflow_policy(out);
   return out;
 }
 
@@ -2718,7 +2700,8 @@ Run Graph::build_seeded_internal(const std::vector<cv::Mat>& inputs, RunMode mod
     runtime::RunCoreStartOptions start_opt;
     start_opt.run_options = opt;
     start_opt.mode = mode;
-    start_opt.graph_options = runtime::graph_runtime_options_from_run_options(opt, opt_.verbose);
+    start_opt.graph_options =
+        runtime::graph_runtime_options_from_run_options(opt, opt_.verbose, mode);
     start_opt.seed = std::move(seed);
     start_opt.guard = guard_;
     start_opt.input_route_processor = input_route_processor_;
@@ -2748,7 +2731,8 @@ Run Graph::build_seeded_internal(const std::vector<cv::Mat>& inputs, RunMode mod
   runtime::RunCoreStartOptions start_opt;
   start_opt.run_options = opt;
   start_opt.mode = mode;
-  start_opt.graph_options = runtime::graph_runtime_options_from_run_options(opt, opt_.verbose);
+  start_opt.graph_options =
+      runtime::graph_runtime_options_from_run_options(opt, opt_.verbose, mode);
   start_opt.seed = std::move(seed);
   start_opt.guard = guard_;
   start_opt.input_route_processor = input_route_processor_;
@@ -2780,7 +2764,8 @@ Run Graph::build_seeded_internal(const TensorList& inputs, RunMode mode, const R
     runtime::RunCoreStartOptions start_opt;
     start_opt.run_options = opt;
     start_opt.mode = mode;
-    start_opt.graph_options = runtime::graph_runtime_options_from_run_options(opt, opt_.verbose);
+    start_opt.graph_options =
+        runtime::graph_runtime_options_from_run_options(opt, opt_.verbose, mode);
     start_opt.seed = std::move(seed);
     start_opt.guard = guard_;
     start_opt.input_route_processor = input_route_processor_;
@@ -2806,7 +2791,8 @@ Run Graph::build_seeded_internal(const TensorList& inputs, RunMode mode, const R
   runtime::RunCoreStartOptions start_opt;
   start_opt.run_options = opt;
   start_opt.mode = mode;
-  start_opt.graph_options = runtime::graph_runtime_options_from_run_options(opt, opt_.verbose);
+  start_opt.graph_options =
+      runtime::graph_runtime_options_from_run_options(opt, opt_.verbose, mode);
   start_opt.seed = std::move(seed);
   start_opt.guard = guard_;
   start_opt.input_route_processor = input_route_processor_;
@@ -2838,7 +2824,8 @@ Run Graph::build_seeded_internal(const Sample& inputs, RunMode mode, const RunOp
     runtime::RunCoreStartOptions start_opt;
     start_opt.run_options = opt;
     start_opt.mode = mode;
-    start_opt.graph_options = runtime::graph_runtime_options_from_run_options(opt, opt_.verbose);
+    start_opt.graph_options =
+        runtime::graph_runtime_options_from_run_options(opt, opt_.verbose, mode);
     start_opt.seed = std::move(seed);
     start_opt.guard = guard_;
     start_opt.input_route_processor = input_route_processor_;
@@ -2858,7 +2845,8 @@ Run Graph::build_seeded_internal(const Sample& inputs, RunMode mode, const RunOp
   runtime::RunCoreStartOptions start_opt;
   start_opt.run_options = opt;
   start_opt.mode = mode;
-  start_opt.graph_options = runtime::graph_runtime_options_from_run_options(opt, opt_.verbose);
+  start_opt.graph_options =
+      runtime::graph_runtime_options_from_run_options(opt, opt_.verbose, mode);
   start_opt.seed = std::move(seed);
   start_opt.guard = guard_;
   start_opt.input_route_processor = input_route_processor_;

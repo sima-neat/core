@@ -966,9 +966,9 @@ graph.add(simaai::neat::nodes::Output());
 
 `Run` 擁有輸入/輸出佇列和一個輸入執行緒：
 
-* `push(...)` 將輸入排入佇列（根據 `RunOptions::overflow_policy` 進行阻塞或丟棄）
+* `push(...)` 會等待輸入佇列出現空位，再將樣本加入佇列
 * `pull(...)` 從應用程式接收器中取出 `Sample` 輸出
-* `try_push(...)` 是非阻塞的（如果佇列已滿，則傳回 false）
+* 輸入佇列已滿時，`try_push(...)` 會立即套用 `RunOptions::overflow_policy`
 
 閒置的 `Run` 仍可繼續使用；操作期限限制的是等待時間，而非提交輸入之間的暫停。
 
