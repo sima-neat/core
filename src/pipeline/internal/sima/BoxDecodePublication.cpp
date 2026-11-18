@@ -33,6 +33,7 @@ struct WirePlan {
   std::size_t pose_points = 0, pose_input = 0;
   std::vector<k::TensorRequirements> inputs;
   FeaturePointsHeaderV1 feature_header;
+  SegmentationMasksHeaderV1 masks_header;
 };
 std::size_t checked_add(std::size_t a, std::size_t b) {
   if (b > std::numeric_limits<std::size_t>::max() - a)
@@ -139,6 +140,21 @@ k::HostStatus publish(const WirePlan& plan, k::HostBuffers buffers) {
       std::memcpy(row, inputs[0].data + i * 20, 20);
       std::memcpy(row + 20, inputs[1].data + i * 4, 4);
       std::memcpy(row + 24, inputs[2].data + i * 4, 4);
+    }
+    return {};
+  }
+  if (plan.format == BoxDecodeWireFormat::MasksV1) {
+    // Masks are already written in place after this prefix. Publish the
+    // header and records; clear unused records and the alignment padding.
+    auto header = plan.masks_header;
+    header.count = static_cast<std::uint32_t>(n);
+    std::memset(output, 0, plan.bytes);
+    store(output, header);
+    for (std::size_t i = 0; i < n; ++i) {
+      auto* row = output + header.records_offset + i * 24;
+      std::memcpy(row, inputs[0].data + i * 16, 16);
+      std::memcpy(row + 16, inputs[1].data + i * 4, 4);
+      std::memcpy(row + 20, inputs[2].data + i * 4, 4);
     }
     return {};
   }
@@ -270,12 +286,15 @@ BoxDecodePublication prepare_boxdecode_publication(BoxDecodeWireFormat format,
   const bool pose = format == BoxDecodeWireFormat::Pose || combined;
   const bool masks = format == BoxDecodeWireFormat::Masks || combined;
   const bool auxiliary = rcnn || pose || masks;
-  if ((!features && !auxiliary && !oriented && format != BoxDecodeWireFormat::Boxes) ||
-      inputs.size() != (combined    ? 6u
-                        : auxiliary ? 5u
-                                    : 4u) ||
+  const bool masks_v1 = format == BoxDecodeWireFormat::MasksV1;
+  if ((!features && !auxiliary && !oriented && !masks_v1 && format != BoxDecodeWireFormat::Boxes) ||
+      inputs.size() != (combined                ? 6u
+                        : auxiliary || masks_v1 ? 5u
+                                                : 4u) ||
       inputs[0].shape.size() != 2)
     throw std::invalid_argument("BoxDecode wire format or port count is invalid");
+  // MasksV1 serializes only the prefix; its fifth spec is never a task input.
+  const auto host_inputs = masks_v1 ? inputs.first(4) : inputs;
   const auto capacity = inputs[0].shape[0];
   if (capacity < 1 || capacity > 65536)
     throw std::invalid_argument("BoxDecode wire capacity must be 1..65536");
@@ -346,6 +365,25 @@ BoxDecodePublication prepare_boxdecode_publication(BoxDecodeWireFormat format,
       require_spec(inputs[4], k::DType::UInt8, {capacity, shape[1], shape[2]});
       plan->auxiliary_row = checked_mul(shape[1], shape[2]);
     }
+    if (masks_v1) {
+      const auto shape = inputs[4].shape;
+      if (shape.size() != 3 || shape[1] < 1 || shape[2] < 1)
+        throw std::invalid_argument("BoxDecode V1 masks must have positive shape [K,H,W]");
+      require_spec(inputs[4], k::DType::UInt8, {capacity, shape[1], shape[2]});
+      auto& h = plan->masks_header;
+      const auto mask_bytes = checked_mul(shape[1], shape[2]);
+      const auto masks_offset = aligned16(checked_add(sizeof(h), checked_mul(plan->capacity, 24)));
+      const auto total = checked_add(masks_offset, checked_mul(plan->capacity, mask_bytes));
+      if (total > UINT32_MAX)
+        throw std::invalid_argument("BoxDecode V1 masks exceed the uint32 header extent");
+      h.total_bytes = static_cast<std::uint32_t>(total);
+      h.capacity = static_cast<std::uint32_t>(capacity);
+      h.mask_height = static_cast<std::uint32_t>(shape[1]);
+      h.mask_width = static_cast<std::uint32_t>(shape[2]);
+      h.masks_offset = static_cast<std::uint32_t>(masks_offset);
+      h.mask_stride = static_cast<std::uint32_t>(mask_bytes);
+      plan->bytes = masks_offset;
+    }
     if (oriented) {
       plan->bytes = checked_add(32, checked_mul(plan->capacity, 32));
     } else if (rcnn) {
@@ -353,12 +391,12 @@ BoxDecodePublication prepare_boxdecode_publication(BoxDecodeWireFormat format,
         throw std::invalid_argument("RCNN wire capacity must be four times per-level top-K");
       require_spec(inputs[4], k::DType::Int32, {capacity});
       plan->bytes = checked_mul(4, checked_add(4, checked_mul(plan->capacity / 4, 12)));
-    } else
+    } else if (!masks_v1)
       plan->bytes = checked_add(
           4, checked_mul(plan->capacity,
                          checked_add(checked_add(24, plan->auxiliary_row), pose ? 204 : 0)));
   }
-  for (const auto& input : inputs) {
+  for (const auto& input : host_inputs) {
     auto bytes = scalar_bytes(input.dtype);
     for (const auto dim : input.shape)
       bytes = checked_mul(bytes, dim);
@@ -370,7 +408,7 @@ BoxDecodePublication prepare_boxdecode_publication(BoxDecodeWireFormat format,
   const std::array<k::TensorRequirements, 1> requirements{{{plan->bytes, 1}}};
   const auto bytes = plan->bytes;
   k::HostTaskRequest request;
-  request.inputs = inputs;
+  request.inputs = host_inputs;
   request.outputs = std::span(&output, 1);
   request.input_requirements = plan->inputs;
   request.output_requirements = requirements;

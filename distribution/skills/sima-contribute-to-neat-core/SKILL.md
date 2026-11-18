@@ -67,6 +67,7 @@ Prefer the repo entrypoints when feasible:
 
 ```bash
 ./build.sh --all
+# For documentation changes:
 ./build.sh --doc
 ```
 
@@ -86,7 +87,6 @@ If a check cannot run because hardware, model archives, `pyneat`, or DevKit fixt
 ## Done Criteria
 
 - Relevant tests pass or documented blockers are explicit.
-- Docs/tutorials/examples are updated for user-visible behavior.
+- Documentation impact follows the Coding Standard's documentation policy, including `No docs update needed` when appropriate.
 - API compatibility impact is assessed.
-- Architecture docs are updated if contracts, module responsibilities, or runtime semantics changed.
 - The final response calls out changed files, validation, skipped checks, and residual risk.

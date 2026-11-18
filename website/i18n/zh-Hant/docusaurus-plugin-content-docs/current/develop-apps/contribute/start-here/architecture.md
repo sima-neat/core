@@ -379,7 +379,8 @@ MPK 資訊清單使用 `MpkDecoder`。`MpkDecoder::load` 是唯一的資訊清�
 歧義、缺少槽位或證據衝突都是模型載入錯誤；附屬 JSON、子字串比對、
 環境狀態與執行階段緩衝區都不是證據。
 
-當對應關係沒有歧義時，Core 可以核對不同的輸入與輸出緩衝區順序，包括批次輸入與輸出。
+Core 依據名稱中的索引（`input_<i>`、`output_<i>`、`qmla_ifm_<i>`、`afe_direct_input_<i>` 或 `afe_mla_output_<i>`）繫結每個 MLA 輸入與輸出區段：區段 `<i>` 承載 MPK MLA 張量 `<i>`，包括批次中的每個樣本。
+若 ELF 的持久 I/O 區段沒有索引，模型載入會失敗；請使用會寫入索引區段的 Model Compiler 重新編譯模型。
 應用程式保留模型的公開張量名稱、順序與樣本順序。
 
 具有一般空間儲存配置的單輸入、批次一模型，可以使用自動輸入通道填補。
@@ -1705,3 +1706,7 @@ JSON 中的每個 Python 項目會新增 `installations` 陣列。每筆記錄�
 ## 裁切幾何的權責 {#crop-geometry-ownership}
 
 Core 根據實際來源尺寸，計算並檢查 Crop 的虛擬縮放尺寸與中央視窗偏移量。Kernels 保留原始來源的濾波範圍，直接計算該視窗，不插入中間影像或 CPU 裁切。最終尺寸仍由 MPK 決定。Preproc 發佈實際的模型至原始影像邊緣座標仿射轉換，並與半像素取樣中心座標區分。支援的偵測配方會在模型空間選取後使用此權威資訊；缺少或衝突的幾何資訊將被拒絕。
+
+## SDK 平台建置識別資訊 {#sdk-platform-build-identity}
+
+Core 會將作用中目標 SDK 的 `elxr_version`、完整 `sysroot_version` 與編譯器 `target` 記錄為 `build_platform`。Scheduler 會將相同識別資訊與 Runner 及自身的建置記錄比對。Core 在編譯後重新驗證，並在產生安裝中繼資料前檢查最終 CMake sysroot 與編譯器目標。平台程式庫由選定的 SDK 提供，不會為來源檢查而下載平台 DEB。NEAT 套件完整性檢查及獨立的目標驗證仍然必要。遷移缺少識別資訊的產生端記錄時，請依 Runner、Scheduler、Core 的順序重新建置。

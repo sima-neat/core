@@ -59,6 +59,8 @@ bool has_non_default_simple_preprocess(const PreprocessOptions& p) {
     return true;
   if (p.preset != NormalizePreset::None)
     return true;
+  if (p.resize.placement != LetterboxPlacement::Center)
+    return true;
   if (p.resize.enable != AutoFlag::Auto || p.resize.width > 0 || p.resize.height > 0)
     return true;
   if (p.color_convert.enable != AutoFlag::Auto ||
@@ -108,35 +110,6 @@ bool resolve_step_enabled(AutoFlag flag, bool default_when_auto) {
   if (flag == AutoFlag::Off)
     return false;
   return default_when_auto;
-}
-
-bool derive_unit_pixel_normalization_from_input_range(const std::vector<double>& input_range,
-                                                      std::array<float, 3>* mean,
-                                                      std::array<float, 3>* stddev) {
-  if (input_range.size() < 2U || !mean || !stddev) {
-    return false;
-  }
-  const double lo = input_range[0];
-  const double hi = input_range[1];
-  if (!std::isfinite(lo) || !std::isfinite(hi) || hi <= lo) {
-    return false;
-  }
-
-  // MPK input_range describes the tensor domain at the model ingress.  For image
-  // preproc, the CVU preproc graph implements:
-  //   normalized = (pixel / 255 - mean) / stddev
-  // Therefore pixel=0 maps to -mean/stddev and pixel=255 maps to
-  // (1-mean)/stddev.  Solve these two equations to recover the stats.
-  const double derived_stddev = 1.0 / (hi - lo);
-  const double derived_mean = -lo * derived_stddev;
-  if (!std::isfinite(derived_mean) || !std::isfinite(derived_stddev) || derived_mean < 0.0 ||
-      derived_mean > 1.0 || derived_stddev <= 0.0 || derived_stddev > 1.0) {
-    return false;
-  }
-
-  mean->fill(static_cast<float>(derived_mean));
-  stddev->fill(static_cast<float>(derived_stddev));
-  return true;
 }
 
 void apply_preset(PreprocessOptions* p) {
@@ -540,13 +513,6 @@ PreprocessCapabilities inspect_preprocess_capabilities(const ModelPack& pack) {
         " Ensure the model pack includes an mpk.json manifest with plugin IO contracts.");
   }
   const auto& contract = *maybe_contract;
-  for (const auto& ingress : contract.ingress_tensors) {
-    if (derive_unit_pixel_normalization_from_input_range(ingress.input_range, &out.model_input_mean,
-                                                         &out.model_input_stddev)) {
-      out.has_model_input_normalization = true;
-      break;
-    }
-  }
   const auto* mla_stage = pipeline_internal::sima::get_first_mla_stage_io_contract(contract);
   if (!mla_stage) {
     throw std::runtime_error(
@@ -784,11 +750,17 @@ PreprocessPlannerResult plan_preprocess(const Model::Options& options,
   }
 
   effective.resize.scaling_type = resolve_resize_scaling_type(effective.resize);
+  // Only a letterbox has padding to place; a Resize transform carries the same spec.
+  if (effective.resize.placement != LetterboxPlacement::Center &&
+      effective.resize.placement != LetterboxPlacement::TopLeft)
+    throw std::invalid_argument("preprocess.resize.placement is invalid");
+  if (effective.resize.placement != LetterboxPlacement::Center &&
+      effective.resize.mode != ResizeMode::Letterbox)
+    throw std::invalid_argument(
+        "preprocess.resize.placement TopLeft requires ResizeMode.Letterbox");
 
-  // MPK input_range describes the numeric domain expected at model ingress; it is
-  // metadata, not an instruction to enable CVU preproc normalization.  Keep
-  // normalization user-driven: explicit mean/stddev or a preset may supply
-  // stats, but input_range alone must not flip normalize from Auto to On.
+  // MPK input_range contains observed calibration extrema, not a preprocessing
+  // recipe. Only explicit settings or a preset can enable normalization.
 
   validate_layout_convert_spec(effective.layout_convert);
 
@@ -814,6 +786,9 @@ PreprocessPlannerResult plan_preprocess(const Model::Options& options,
                                              effective.preset == NormalizePreset::COCO_YOLO;
   bool normalize_enabled =
       resolve_step_enabled(effective.normalize.enable, normalize_requested_or_preset);
+  out.normalize_auto_without_config = effective.enable != AutoFlag::Off &&
+                                      effective.normalize.enable == AutoFlag::Auto &&
+                                      !normalize_requested_or_preset;
 
   InputKind kind = effective.kind;
   if (kind == InputKind::Auto) {
@@ -859,6 +834,9 @@ PreprocessPlannerResult plan_preprocess(const Model::Options& options,
     quant_enabled = false;
     tess_enabled = false;
   }
+  if (effective.resize.placement != LetterboxPlacement::Center && !resize_enabled)
+    throw std::invalid_argument("preprocess.resize.placement TopLeft requires an enabled "
+                                "letterbox resize (preprocess.resize.enable=On or a target size)");
 
   if (normalize_enabled) {
     enforce_normalize_stats(effective.normalize, fixed_arithmetic);

@@ -103,8 +103,7 @@ PR을 열거나 병합하기 전에 다음 사항을 확인하십시오.
 
 - 추가/업데이트된 테스트가 변경된 동작과 일치하는지 확인합니다.
 - 기존 관련 테스트가 여전히 통과하는지 확인합니다.
-- 사용자에게 보이는 동작에 맞게 문서를 업데이트합니다.
-- API/아키텍처 변경 사항이 [아키텍처](/develop-apps/contribute/architecture)에 반영되었는지 확인합니다.
+- 문서에 미치는 영향은 [문서 업데이트 정책](/develop-apps/contribute/coding_standard)에 따라 평가합니다.
 - 공개 API 변경 사항이 [코딩 표준](/develop-apps/contribute/coding_standard)의 API 호환성 정책을 준수하는지 확인합니다.
 
 ## 필수 적용 범위 및 기능 프로파일

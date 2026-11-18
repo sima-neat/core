@@ -138,6 +138,7 @@ Set detection decode options when the route should return decoded boxes, pose re
 | `nms_iou_threshold` | The decode path should apply non-max suppression. | `0`; keep the model's packaged value. When none is packaged, YOLO26 skips NMS and other decoders suppress every overlapping box. |
 | `top_k` | You want a hard cap on detections per output. | `0`; no top-K cap. |
 | `num_classes` | The class-head depth cannot be inferred reliably, such as a single-class YOLO split head. | `0`; use MPK metadata or legacy inference. |
+| `multimask_output` | A Segment Anything prompt decoder should return the single-mask answer, as for a box or several points. Only the Segment Anything decode types accept `false`. | `true`; keep the candidate mask with the best predicted IoU, as for one click. See [Segment Anything masks](/reference/boxdecode_decode_types#segment-anything-masks). |
 
 For most YOLO-style models, start with `decode_type`, `score_threshold`, `nms_iou_threshold`, and `top_k`. Add `num_classes` only when the model contract needs help. Keep `decode_type_option` on `Auto` unless the tensor ordering is known to require a specific selector.
 
@@ -206,7 +207,7 @@ The legacy `preprocess.enable = Off` setting does not select MLA-only execution 
 | Choose image or tensor input | `preprocess.kind` |
 | Legacy preprocessing control (required MPK adapters remain) | `preprocess.enable` |
 | Bound dynamic image input | `preprocess.input_max_width`, `preprocess.input_max_height`, `preprocess.input_max_depth` |
-| Resize, crop, or letterbox | `preprocess.resize` |
+| Resize, crop, or letterbox (centered or top-left) | `preprocess.resize`, `preprocess.resize.placement` |
 | Convert RGB, BGR, NV12, I420, or grayscale | `preprocess.color_convert` |
 | Convert HWC, CHW, or another axis order | `preprocess.layout_convert` |
 | Apply mean/std normalization | `preprocess.normalize` or `preprocess.preset` |

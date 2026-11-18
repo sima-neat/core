@@ -171,15 +171,50 @@ def baseline_identity(role, dependencies):
         sort_keys=True, separators=(',', ':')).encode()).hexdigest()
 
 
-def pull_baseline(args, role, record):
+def card_baseline(args, config, publication):
+    platform = json.loads((publication/'manifest.json').read_text())['platform-version'].split('+', 1)[0]
+    card = config['card']
+    legacy = config.get('legacy_card', {})
+    if platform == legacy.get('platform_version'):
+        digest, key = legacy['digest'], legacy['inputs_sha256']
+        if not re.fullmatch(r'sha256:[0-9a-f]{64}', digest) or not re.fullmatch(r'[0-9a-f]{64}', key):
+            raise ValueError('invalid legacy card baseline pin')
+        return config['repository']+'@'+digest, key, config['recipe_sha256'], {}
+
+    selected = json.loads((publication/'resolved-deps-manifest.json').read_text())
+    policy = selected['scheduler']['buildinfo']['build_platform']
+    version, sdk = policy['sysroot_version'], policy['elxr_version']
+    if (not re.fullmatch(r'3\.0\.[0-9]+', platform)
+            or not re.fullmatch(re.escape(platform) + r'(?:[-+][0-9A-Za-z.+-]+)?', version)
+            or not re.fullmatch(re.escape(platform) + r'_master_B[1-9][0-9]*', sdk)):
+        raise ValueError('official offline card baseline requires an exact Scheduler SDK release identity')
+    object_key = f'core/offline-card-baseline-v1-{version}-{sdk}.json'
+    path = args.work/'qualified-card-baseline.json'
+    if not download(args.bucket, object_key, path, optional=True):
+        raise ValueError(f'No qualified card baseline for sysroot {version} ({sdk}). '
+                         'Run Vulcan Build reusable Ubuntu images with offline_sysroot_version and offline_source_sha.')
+    receipt = json.loads(path.read_text())
+    expected = {'schema': 1, 'role': 'card', 'architecture': 'arm64', 'os_id': card['os_id'],
+                'os_version': card['os_version'], 'sysroot_version': version, 'sdk_firmware': sdk}
+    if any(receipt.get(key) != value for key, value in expected.items()):
+        raise ValueError('qualified card baseline receipt does not match the selected SDK')
+    image, key, recipe = (receipt.get(name, '') for name in ('image', 'inputs_sha256', 'recipe_sha256'))
+    if (not re.fullmatch(re.escape(config['repository']) + r'@sha256:[0-9a-f]{64}', image)
+            or not re.fullmatch(r'[0-9a-f]{64}', key) or not re.fullmatch(r'[0-9a-f]{64}', recipe)
+            or not re.fullmatch(re.escape(platform) + r'_master_B[1-9][0-9]*', receipt.get('devkit_firmware', ''))):
+        raise ValueError('invalid qualified card baseline provenance')
+    return image, key, recipe, {
+        'receipt_key': object_key, 'receipt_sha256': assemble.sha(path),
+        'sysroot_version': version, 'sdk_firmware': sdk, 'devkit_firmware': receipt['devkit_firmware'],
+    }
+
+
+def pull_baseline(args, role, record, publication=None):
     config = baseline_config()
+    recipe = config['recipe_sha256']
+    provenance = {}
     if role == 'card':
-        # The test environment changes with Platform requirements, not with
-        # every rebuilt Scheduler/Runner/Kernels package under test.
-        digest, key = config['card']['digest'], config['card']['inputs_sha256']
-        if (not re.fullmatch(r'sha256:[0-9a-f]{64}', digest)
-                or not re.fullmatch(r'[0-9a-f]{64}', key)):
-            raise ValueError('invalid pinned card baseline identity')
+        image, key, recipe, provenance = card_baseline(args, config, publication)
     else:
         key = baseline_identity(role, baseline_dependencies(record, role))
         tag = config['repository']+':offline-'+role+'-'+key
@@ -191,13 +226,13 @@ def pull_baseline(args, role, record):
         digest = manifest.get('Descriptor', {}).get('digest') if isinstance(manifest, dict) else None
         if not re.fullmatch(r'sha256:[0-9a-f]{64}', digest or ''):
             raise ValueError('baseline must be a single-platform manifest with a digest')
-    image = config['repository']+'@'+digest
+        image = config['repository']+'@'+digest
     print('Pulling Vulcan clean baseline: '+image, flush=True)
     run('docker', 'pull', image)
     info = json.loads(run('docker', 'image', 'inspect', image))[0]
     labels = info.get('Config', {}).get('Labels', {}) or {}
     if any(labels.get('ai.sima.offline.'+name) != value for name, value in
-           [('inputs', key), ('recipe', config['recipe_sha256']), ('role', role)]):
+           [('inputs', key), ('recipe', recipe), ('role', role)]):
         raise ValueError('published baseline provenance differs: '+role)
     if info['Architecture'] != ('arm64' if role == 'card' else role.split('-')[1]):
         raise ValueError('published baseline architecture differs: '+role)
@@ -205,7 +240,7 @@ def pull_baseline(args, role, record):
     path = args.work/'baseline-images.json'
     evidence = json.loads(path.read_text()) if path.exists() else {}
     evidence[role] = {'image': image, 'local_id': local_id, 'inputs_sha256': key,
-                      'recipe_sha256': config['recipe_sha256']}
+                      'recipe_sha256': recipe, **provenance}
     path.write_text(json.dumps(evidence, indent=2)+'\n')
     return local_id
 
@@ -290,7 +325,7 @@ def build(args):
         if not (host/'platform_provider.py').is_file() or any(host.glob('simaai-pcie-host*.deb')):
             raise ValueError('Rebuild Core with the corrected Scheduler native producer; Platform provisioning must remain separate.')
         host_image = pull_baseline(args, args.distro+'-'+args.arch, records['host'])
-    card_image = pull_baseline(args, 'card', records['card'])
+    card_image = pull_baseline(args, 'card', records['card'], paths['card'][1])
     card = baseline_config()['card']
     spec = {'installer_revision': args.installer_revision, 'targets': {}}
     if is_core(args):

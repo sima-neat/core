@@ -78,9 +78,14 @@ opt.top_k = 100;
 | 姿勢 | `decode_pose(...)` | `pyneat.decode_pose(...)` | 方框 `[N, 6]` 和關鍵點 `[N, 17, 3]` float32：`x, y, visibility` |
 | 分割 | `decode_segmentation(...)` | `pyneat.decode_segmentation(...)` | 方塊 `[N, 6]` float32，以及遮罩 `[N, 160, 160]` uint8 |
 | 分割 + 姿態 | `decode_segmentation_pose(...)` | `pyneat.decode_segmentation_pose(...)` | 邊界框 `[N, 6]` float32、遮罩 `[N, 160, 160]` uint8、關鍵點 `[N, 17, 3]` float32 |
+| Segment Anything | `decode_segmentation(...)` | `pyneat.decode_segmentation(...)` | 邊界框 `[N, 6]` float32，以及原始影像大小的遮罩 `[N, H, W]` uint8；提示解碼器的 N 為 1 |
 | SuperPoint | `decode_superpoint(...)` | `pyneat.decode_superpoint(...)` | 關鍵點 `[N,2]`，分數 `[N]`，描述子 `[N,D]` |
 
 軸對齊偵測結果的顯示圖可將結果傳給 `SimaRender`。`decode_bbox(...)` 僅適用於既有的方框前置格式；此函式與 `SimaRender` 都不接受旋轉框。
+
+## 信箱式放置位置 {#letterbox-placement}
+
+未置中的信箱式調整（例如 `LetterboxPlacement::TopLeft`，請參閱 [Preproc 調整大小](/reference/nodes/preproc#resize-and-aspect-ratio)）受偵測設定檔支援，這些設定檔會使用每個影格的模型座標到原始影像座標仿射轉換來對應邊界框：YOLO 偵測系列、已解碼的 YOLO、EfficientDet、DETR、DetrFocal、CenterNet 與 SSD。姿勢、分割與 RCNN 提議設定檔會拒絕這種調整，而不是傳回偏移的結果。置中的信箱式調整會維持其對應方式。Segment Anything 類型有各自的要求；請參閱 [Segment Anything 規則](#segment-anything-rules)。
 
 ## 傳統 DETR {#classic-detr}
 
@@ -122,6 +127,132 @@ node = pyneat.nodes.sima_box_decode(
 ```
 
 有限反向尺寸會由既有端點裁切轉為零面積 BBOX 記錄，保留入選配對及分數。非有限座標或 logits 仍會在發布前失敗。
+
+## Segment Anything 遮罩 {#segment-anything-masks}
+
+每個 Segment Anything 模型都有自己的解碼類型。在提示解碼器上，BoxDecode 會將一次解碼器執行轉成一筆偵測：原始影像大小的所選遮罩、緊貼該遮罩的邊界框，以及預測的 IoU。在 EfficientSAM3 概念影像模型上，它會將一次執行轉成最多 `top_k` 筆偵測，每筆都有自己的遮罩。
+
+| 模型 | `decode_type`（權杖） | 接收影像之 Model 的前處理 | 解碼器選項 |
+| --- | --- | --- | --- |
+| MobileSAM | `MobileSam`（`mobilesam`） | 編碼器：`resize.mode=Letterbox`、`resize.placement=TopLeft`、1024×1024、`pad_value=116`；`preset=ImageNet` | `multimask_output` |
+| EdgeTAM | 遮罩使用 `EdgeTamSeg`（`edgetam-seg`）；追蹤使用 `EdgeTamTrack`（`edgetam-track`） | 影像編碼器：`resize.mode=Stretch`、1024×1024、無填補；`preset=ImageNet` | `multimask_output` |
+| EfficientSAM-T / -S | `EfficientSam`（`efficientsam`） | 編碼器：`resize.mode=Stretch`、1024×1024、無填補；不使用預設集，`normalize.enable=On`（數值 0–1；編碼器會自行正規化） | `multimask_output` 保持 true |
+| EfficientSAM3 互動式 | `EfficientSam3`（`efficientsam3`） | 影像編碼器：`resize.mode=Stretch`、1008×1008、無填補；`normalize.enable=On`，`normalize.mean` 與 `normalize.stddev` 為 (0.5, 0.5, 0.5) | `multimask_output` |
+| EfficientSAM3 概念 | `EfficientSam3`（`efficientsam3`） | 概念影像模型本身，走張量路線：應用程式將影像拉伸到 1008×1008、縮放到 [−1, 1]，並附上 `resize_mode="stretch"` 的 `semantic.preprocess` | `top_k`、`score_threshold` |
+
+Python 使用相同的名稱：`pyneat.BoxDecodeType.MobileSam`、`EdgeTamSeg`、`EdgeTamTrack`、`EfficientSam` 與 `EfficientSam3`。MobileSAM 在正規化之後以 0 填補，相當於 ImageNet 的平均像素（124、116、104）；`pad_value=116` 是其近似值。遮罩永遠不會覆蓋填補區域。當 EfficientSAM3 Model 的輸出是偵測 `[Q, 6]` 與 Q 個通道的遮罩 logit 時，它被視為概念影像模型，否則視為提示解碼器。各模型的完整工作流程請參閱 [sima-neat/models](https://github.com/sima-neat/models) 中該模型的 README，例如 [EdgeTAM README](https://github.com/sima-neat/models/tree/develop/models/edgetam)。
+
+`Model::Options::multimask_output`（Python：`ModelOptions.multimask_output`）對應上游的 `predict(multimask_output=...)`。單次點擊有歧義，請保持 `true`；使用方框或多個點時設為 `false`。
+
+| `decode_type` | `multimask_output=true`（預設） | `multimask_output=false` |
+| --- | --- | --- |
+| `MobileSam` | 遮罩 1–3 中預測 IoU 最佳者 | 遮罩 0 |
+| `EdgeTamSeg`、`EdgeTamTrack` | 遮罩 1–3 中預測 IoU 最佳者 | 遮罩 0 穩定時取遮罩 0，否則取遮罩 1–3 中最佳者 |
+| `EfficientSam` | 遮罩 0–2 中預測 IoU 最佳者 | 拒絕：EfficientSAM 沒有匯出單一遮罩權杖 |
+| `EfficientSam3` 提示解碼器 | 四個遮罩時取遮罩 1–3、三個遮罩時取遮罩 0–2 中預測 IoU 最佳者 | 四個遮罩：與 EdgeTAM 相同。三個遮罩：拒絕 |
+| `EfficientSam3` 概念 | 分數高於 `score_threshold` 的最多 `top_k` 個查詢 | 拒絕：概念偵測沒有多遮罩選擇 |
+
+- 與 SAM2 相同，當遮罩 0 中高於 −0.05 的 logit 至少有 98% 也高於 0.05 時，遮罩 0 即為穩定。
+- 以單一遮罩通道匯出的解碼器，無論設定哪個值都使用該遮罩。
+- 其他解碼類型會拒絕 `multimask_output=false`。此選擇屬於各個 `Model`：兩個解碼器 Model 可以使用同一個 MPK。
+
+### 各輸出的意義 {#segment-anything-outputs}
+
+BoxDecode 張量使用[具版本的遮罩酬載](#versioned-masks-payload)。`decode_segmentation` 會傳回邊界框 `[N, 6]` 與遮罩 `[N, H, W]`：
+
+- **邊界框。** 以原始影像像素表示的 `x1, y1, x2, y2`。提示解碼器的邊界框是緊貼遮罩像素的邊界框：`x2` 與 `y2` 指向遮罩最後一欄與最後一列的下一個位置，因此 `x2 - x1` 即遮罩的寬度。概念偵測的邊界框來自偵測頭，縮放到原始影像且不裁切。
+- **分數。** 所選遮罩的預測 IoU，或概念查詢的分數。
+- **類別。** 所選的遮罩通道（上表中的索引），概念查詢則為 0。
+- **遮罩。** `uint8`；重新取樣到原始影像大小的 logit 大於 0 的位置為 255，其餘為 0。
+- **數量。** 提示解碼器一律為 1：空遮罩的邊界框全為 0，但保留其分數與類別。與上游相同，EdgeTAM 的物件分數為 0 或以下時，遮罩為空。概念模型依分數由高到低（同分時依查詢索引）傳回保留的查詢。
+
+`EdgeTamSeg` 與其他所有 Segment Anything 類型只傳回 BoxDecode 張量。使用 `EdgeTamTrack` 時，解碼器本身的輸出會接在其後；請參閱[EdgeTAM 追蹤](#edgetam-tracking)。
+
+`SimaRender` 不會繪製這些遮罩：它只繪製無標頭的分割酬載，其遮罩小於影格。請根據 `decode_segmentation` 的結果繪製 Segment Anything 遮罩。
+
+### 規則 {#segment-anything-rules}
+
+- **解碼器輸出。** 提示解碼器會匯出遮罩 logit（遮罩數量與指定模型相同：1、3 或 4）、每個遮罩一個預測 IoU，EdgeTAM 另有物件分數；接受 INT8、BF16 與 FP32 輸出。概念影像模型會匯出偵測 `[Q, 6]` 與每個查詢的遮罩 logit。
+- **選項。** 提示解碼器：`top_k` 請保持為 0 或 1，`nms_iou_threshold` 保持為 0；`score_threshold` 必須小於 1，除此之外會被忽略；`num_classes` 為遮罩數量或 0。概念影像模型：將 `top_k` 設為 1..Q。
+- **影像幾何。** 畫布、原始影像大小與調整大小方式取自解碼器輸入的 `tensor.semantic.preprocess`，且必須與上表相符；否則建構會失敗並指出要修改的設定。請以 `.cvu()` 將編碼器的輸出傳給解碼器，並以 `build(inputs)` 或 `execution_plan(inputs)` 從輸入建構提示解碼器。在概念影像模型的張量路線上，請將這些資訊附加到其像素張量上。
+- **整張影像，只調整一次大小。** 調整大小前的裁切或 ROI 會被拒絕，解碼器無法重現的縮放尺寸也會被拒絕。MobileSAM 請在前處理影像的 Model 上以 `resize.placement=TopLeft` 進行信箱式調整（其四捨五入方式與 Segment Anything 相同），而不要使用獨立的 `Preproc` 節點。自行附加的資訊必須包含仿射變換：`affine_m00` = 原始寬度 / 縮放後寬度，`affine_m11` = 原始高度 / 縮放後高度。
+- **每個 runner 一種影像大小。** 遮罩具有原始影像的大小，因此建構好的 runner 只服務一種大小。`Model::run` 會為新的大小建構另一個 runner；串流圖會拒絕其他大小的影格。
+
+### 編碼器與解碼器 {#segment-anything-example}
+
+以下以 MobileSAM 為例；其他模型請使用上表中該模型的編碼器設定與解碼類型。
+
+```python
+encoder_options = pyneat.ModelOptions()
+encoder_options.preprocess.resize.mode = pyneat.ResizeMode.Letterbox
+encoder_options.preprocess.resize.placement = pyneat.LetterboxPlacement.TopLeft
+encoder_options.preprocess.resize.pad_value = 116
+encoder_options.preprocess.preset = pyneat.NormalizePreset.ImageNet
+encoder = pyneat.Model("/path/to/mobile_sam_image_encoder_mpk.tar.gz", encoder_options)
+
+options = pyneat.ModelOptions()
+options.decode_type = pyneat.BoxDecodeType.MobileSam
+options.multimask_output = False  # a box prompt; keep True for one click
+decoder = pyneat.Model("/path/to/mobile_sam_prompt_decoder_mpk.tar.gz", options)
+
+embeddings = encoder.run([image])[0]
+# .cvu() keeps the encoder's preprocess metadata on the embeddings.
+outputs = decoder.run([embeddings.cvu(), point_encoding, point_types])
+result = pyneat.decode_segmentation(outputs)[0]
+box = result.boxes.to_numpy()[0]  # x1, y1, x2, y2, IoU, mask index
+mask = result.masks.to_numpy()[0]  # uint8 [H, W], 0 or 255
+```
+
+### EdgeTAM 追蹤 {#edgetam-tracking}
+
+EdgeTAM 的記憶體編碼器與記憶體庫需要所選遮罩的低解析度 logit 及其物件指標，而 BoxDecode 不會解碼它們。`EdgeTamTrack` 會傳回 BoxDecode 張量，接著傳回同一次執行的解碼器輸出，與同一個 Model 在沒有 BoxDecode 時傳回的完全相同：`mask_logits` `[1, 256, 256, 4]`、`iou_scores` `[1, 4]`、`object_score_logits` `[1, 1]` 與 `object_pointers` `[1, 4, 256]`，皆為 float32。每個輸出在每個影格需要一次轉換。只解碼第一個張量；原始張量不帶偵測標籤。若模型在沒有 BoxDecode 時的路線無法傳回這些張量，則會拒絕 `EdgeTamTrack`。
+
+- 偵測的類別即所選平面：記憶體編碼器使用 `mask_logits[0, :, :, class]`，並依模型 README 的說明放大到 1024×1024。
+- 兩個以上的點組成的提示請設定 `multimask_output=False`；單次點擊與追蹤中的影格請保持 `True`。無論哪個規則，類別都會指出其選擇的平面。
+- 記憶體庫在 `multimask_output=True` 時使用 `object_pointers[0, class]`；為 `False` 時使用 `object_pointers[0, 0]`。即使穩定性備援從平面 1–3 選出遮罩，SAM 2 仍保留單一遮罩的指標。
+- 物件分數為 0 或以下時，遮罩與其邊界框為空，但類別仍指出所選平面。請對傳給記憶體編碼器的 logit 套用 README 的物件分數規則。
+
+```python
+options = pyneat.ModelOptions()
+options.decode_type = pyneat.BoxDecodeType.EdgeTamTrack
+decoder = pyneat.Model("/path/to/edgetam_mask_decoder_mpk.tar.gz", options)
+
+outputs = decoder.run(decoder_inputs)
+result = pyneat.decode_segmentation(outputs[:1])[0]
+plane = int(result.boxes.to_numpy()[0, 5])
+logits = outputs[1].to_numpy()[0, :, :, plane]  # [256, 256] low-resolution logits
+pointer = outputs[4].to_numpy()[0, plane if options.multimask_output else 0]  # [256]
+```
+
+### EfficientSAM3 概念 {#efficientsam3-concept}
+
+```python
+options = pyneat.ModelOptions()
+options.decode_type = pyneat.BoxDecodeType.EfficientSam3
+options.top_k = 20
+options.score_threshold = 0.5
+options.preprocess.kind = pyneat.InputKind.Tensor  # two inputs: pixels and packed text
+model = pyneat.Model("/path/to/efficientsam3_image_model_mpk.tar.gz", options)
+
+# Stretch to 1008x1008 and scale to [-1, 1], as SAM 3 does, and record that geometry.
+stretched = cv2.resize(rgb, (1008, 1008), interpolation=cv2.INTER_LINEAR)
+pixels = pyneat.Tensor.from_numpy(stretched.astype(np.float32) / 127.5 - 1, copy=True,
+                                  layout=pyneat.TensorLayout.HWC)
+facts = pyneat.PreprocessRuntimeMeta()
+facts.resize_mode = "stretch"
+facts.original_width, facts.original_height = rgb.shape[1], rgb.shape[0]
+facts.resized_width = facts.resized_height = 1008
+facts.affine_m00 = facts.original_width / 1008  # model-to-original scale
+facts.affine_m11 = facts.original_height / 1008
+semantic = pixels.semantic
+semantic.preprocess = facts
+pixels.semantic = semantic
+
+outputs = model.run([pixels, packed_text])
+result = pyneat.decode_segmentation(outputs)[0]
+boxes = result.boxes.to_numpy()  # [N, 6]: x1, y1, x2, y2, score, 0
+masks = result.masks.to_numpy()  # uint8 [N, H, W]
+```
 
 ## YOLOv8 與 YOLO11 旋轉邊界框 {#yolov8-oriented-boxes}
 
@@ -281,6 +412,10 @@ options.yolox_seg_pose.pose_classes = [0, 5]
 - 空的 `BoxDecodeOptions` 清單會繼承模型設定。未設定清單時，每個類別都會產生關鍵點。
 - ID 必須唯一且位於 `[0, num_classes)` 範圍內。此選項僅支援 `YoloXSegPose`。
 
+### 版本化遮罩酬載 {#versioned-masks-payload}
+
+不是 160×160 的遮罩（例如 Segment Anything 的輸出）會使用版本化標頭，而不是開頭的數量。其版面配置為 `pipeline/DetectionTypes.h` 中的 [`SegmentationMasksHeaderV1`](/reference/cppapi/structs/simaai-neat-segmentationmasksheaderv1)：先是標頭，接著是 `RawBox` 記錄，然後每筆記錄一個 `uint8` 遮罩，值為 0 或 255。請使用 `decode_segmentation` 讀取，它會傳回邊界框與遮罩，並拒絕格式錯誤的標頭或範圍。張量仍帶有 `BBOX` 標籤，且 `decode_segmentation` 與 `decode_bbox` 依魔術值辨識此酬載，因此既有的分割酬載不受影響。`SimaRender` 不接受此酬載。
+
 ## 當 `model.run` 傳回原始的標題時
 
 某些模型路徑會從 `model.run(...)` 傳回原始的特徵圖頭，而不是傳回已解碼的 `BBOX` 張量。這並不是表示執行失敗。這表示模型已執行，但該路徑在您讀取輸出時並沒有包含「框解碼」步驟。
@@ -360,6 +495,11 @@ NMS IoU 為零時，YOLO26 略過 NMS。其他啟用 NMS 的 YOLO 與 SSD 設定
 | `BoxDecodeType::Ssd` | `ssd` | 精確選擇已準備好的 SSD300、SSD-Mobile-300、SSD-Mobile-320 或 SSDlite-Mobile-320 合約，並從已排序的磁碟頭幾何結構中選取。 |
 | `BoxDecodeType::SuperPoint` | `superpoint` | SuperPoint 檢測器和描述符後處理 |
 | `BoxDecodeType::Detr` | `detr` | DETR 樣式的變壓器檢測 |
+| `BoxDecodeType::MobileSam` | `mobilesam` | MobileSAM 提示解碼器（左上角放置的信箱式調整） |
+| `BoxDecodeType::EdgeTamSeg` | `edgetam-seg` | EdgeTAM 遮罩解碼器，含物件分數（拉伸） |
+| `BoxDecodeType::EdgeTamTrack` | `edgetam-track` | `EdgeTamSeg`，之後接著供追蹤使用的解碼器原始輸出 |
+| `BoxDecodeType::EfficientSam` | `efficientsam` | EfficientSAM 提示解碼器，三個多遮罩權杖（拉伸） |
+| `BoxDecodeType::EfficientSam3` | `efficientsam3` | EfficientSAM3 提示解碼器，或每個保留的查詢一個遮罩的概念影像模型（拉伸） |
 | `BoxDecodeType::EffDet` | `effdet` | EfficientDet 偵測 |
 | `BoxDecodeType::RcnnStage1` | `rcnn-stage1` | 五個有序 RPN 輸出頭；全域 NMS 後按面積層級套用 top-K |
 | `BoxDecodeType::Centernet` | `centernet` | CenterNet 偵測 |
@@ -442,7 +582,7 @@ masks = seg.masks.to_numpy()
 
 ## 升級
 
-先前的 BoxDecode 選項引入了 ABI 6。目前的來源運算選項需要 ABI 8 (`libsima_neat.so.8`)。請以相符的標頭與函式庫重新建置 C++ 應用程式、外掛程式及 Python 繫結；不要透過相容性符號連結載入 ABI 5/6/7 二進位檔。
+先前的 BoxDecode 選項引入了 ABI 6。目前的來源運算選項需要 ABI 7 (`libsima_neat.so.7`)。請以相符的標頭與函式庫重新建置 C++ 應用程式、外掛程式及 Python 繫結；不要透過相容性符號連結載入 ABI 5 或 6 二進位檔。
 
 
 ### 組合 YOLOX 輸入准入

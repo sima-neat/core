@@ -2549,6 +2549,8 @@ private:
             child_input.upstream_preprocess =
                 last_preprocess_contract(stages, input.upstream_preprocess);
             auto geometry = boxdecode_model_geometry();
+            if (si::box_decode_type_is_sam(compiled_stage.boxdecode->payload.decode_type))
+              geometry = {}; // The SAM canvas comes from the published preprocess facts.
             std::optional<ResizeMode> resize;
             if (model_lineage_ && model_lineage_->base_options.preprocess.enable != AutoFlag::Off &&
                 model_lineage_->base_options.preprocess.resize.enable != AutoFlag::Off) {
@@ -3622,6 +3624,9 @@ void ModelPack::ensure_dmabuf_execution_plan() const {
   auto compiled = pipeline_internal::try_compile_dmabuf_plan(*mpk_package_);
   execution_admission_ = compiled.report;
   if (!compiled.eligible()) {
+    if (compiled.report.code == pipeline_internal::DmabufEligibilityCode::ElfTopologyUnreadable) {
+      throw std::runtime_error(compiled.report.detail);
+    }
     throw std::runtime_error(std::string("ModelPack: dmabuf-plan admission failed [") +
                              pipeline_internal::dmabuf_eligibility_code_name(compiled.report.code) +
                              "] at " +

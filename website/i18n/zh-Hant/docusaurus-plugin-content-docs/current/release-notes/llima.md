@@ -7,8 +7,9 @@ sidebar_position: 7
 
 LLiMa 的版本資訊，這是 SiMa.ai GenAI 模型編譯器。
 
-| 版本 | 相容的 Palette SDK | 備註 |
+| 版本 | 相容的 eLxr Platform / Palette SDK | 備註 |
 | --- | --- | --- |
+| 0.6.2 | eLxr Platform 3.0.1 | [LLiMa 0.6.2](https://github.com/sima-neat/llima/releases/tag/v0.6.2) |
 | 0.6.1 | 3.0.0.1 | [LLiMa 0.6.1](https://github.com/sima-neat/llima/releases/tag/v0.6.1) |
 | 0.4.0 | 2.1.3.0 | [LLiMa 0.4.0](https://github.com/sima-neat/llima/releases/tag/v0.4.0) |
 | 0.3.0 | 2.1.2.3 | [LLiMa 0.3.0](https://github.com/sima-neat/llima/releases/tag/v0.3.0) |
