@@ -1927,6 +1927,24 @@ def test_udp_destination_accepts_resolvable_host(host):
     run.close()
 
 
+def test_udp_resolution_uses_the_typed_sink():
+  options = pyneat.UdpOutputOptions()
+  options.host = "127.0.0.1"
+  input_options = pyneat.InputOptions()
+  input_options.caps_override = "application/octet-stream"
+  graph = pyneat.Graph()
+  graph.add(pyneat.nodes.input("in", input_options))
+  graph.add(pyneat.nodes.custom(
+      'tee name=split ! queue ! udpsink host=127.0.0.1 clients="" async=false split. ! queue'))
+  graph.add(pyneat.nodes.udp_output(options))
+  frame = pyneat.Tensor.from_numpy(np.zeros((4, 4), dtype=np.uint8), copy=True)
+  run = graph.build([frame])
+  try:
+    assert run.push([frame])
+  finally:
+    run.close()
+
+
 def test_graph_error_in_python_exposes_structured_fields():
   graph = pyneat.Graph()
   tensor = pyneat.Tensor.from_numpy(
