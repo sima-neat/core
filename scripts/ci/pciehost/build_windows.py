@@ -37,6 +37,8 @@ ROLLBACK_FIXTURE_PRODUCT_CODE = "{5C5FB61E-7355-4B72-87FD-5FDD4CC2715B}"
 ROLLBACK_FIXTURE_REGISTRY_KEY = r"Software\SiMa.ai\NeatPcieRollbackFixture"
 ROLLBACK_FIXTURE_OBSERVATION = (
     "SiMaNeatMsiRollbackObserved-5C5FB61E-7355-4B72-87FD-5FDD4CC2715B.txt")
+# Scheduler's installed record of the Platform it was built against.
+SCHEDULER_PLATFORM_RECORD = Path("share") / "SimaScheduler" / "host" / "platform-windows.json"
 
 
 def run(command: list[object], *, env: dict[str, str] | None = None,
@@ -580,11 +582,6 @@ def build(args: argparse.Namespace) -> None:
   scheduler_identity = scheduler_msi_identity(
       scheduler_msi, scheduler_metadata["package-version"])
   scheduler_dependencies = dependency_identity(args.scheduler_candidate)
-  platform_include = require_directory(
-      args.platform_include, "Platform service include directory")
-  require_file(platform_include / "simaai_svc.h", "Platform service header")
-  require_file(platform_include / "simaai_svc_proto.h", "Platform service protocol header")
-  require_file(platform_include / "simapcie.h", "Platform PCIe header")
   gstreamer_root = require_directory(args.gstreamer_root, "GStreamer MSVC root")
   gstreamer_bin = require_directory(gstreamer_root / "bin", "GStreamer binary directory")
   gstreamer_dlls = sorted(
@@ -595,10 +592,8 @@ def build(args: argparse.Namespace) -> None:
       gstreamer_root / "lib" / "pkgconfig", "GStreamer pkg-config directory")
   gst_inspect = require_file(gstreamer_bin / "gst-inspect-1.0.exe", "gst-inspect")
   pkg_config = require_file(gstreamer_bin / "pkg-config.exe", "GStreamer pkg-config")
-  platform_runtime = require_directory(args.platform_runtime, "Platform runtime directory")
-  platform_dlls = sorted(platform_runtime.glob("*.dll"), key=lambda path: path.name.lower())
-  if not platform_dlls:
-    raise ValueError(f"Platform runtime directory contains no DLLs: {platform_runtime}")
+  # Like Linux, the build host has no Platform installation and records no
+  # Platform files; Scheduler's receipt names the Platform version it targets.
   producer_dependencies = {
       "platform_version": scheduler_dependencies["platform_version"],
       "gstreamer": {
@@ -608,13 +603,9 @@ def build(args: argparse.Namespace) -> None:
           ],
           "version_output": run([gst_inspect, "--version"], capture=True),
       },
-      "platform_runtime_dlls": [
-          {"name": path.name, "sha256": sha256(path)} for path in platform_dlls
-      ],
   }
-  if producer_dependencies != scheduler_dependencies:
-    raise ValueError(
-        "Core and Scheduler Windows producers use different Platform/GStreamer dependencies")
+  if producer_dependencies["gstreamer"] != scheduler_dependencies["gstreamer"]:
+    raise ValueError("Core and Scheduler Windows producers use different GStreamer dependencies")
   wheelhouse = require_directory(args.python_wheelhouse, "Python dependency wheelhouse")
   wheelhouse_wheels = sorted(wheelhouse.glob("*.whl"))
   if not wheelhouse_wheels:
@@ -668,8 +659,7 @@ def build(args: argparse.Namespace) -> None:
   environment = os.environ.copy()
   environment["PKG_CONFIG"] = str(pkg_config)
   environment["PKG_CONFIG_PATH"] = str(pkgconfig_dir)
-  environment["PATH"] = os.pathsep.join(
-      (str(gstreamer_bin), str(platform_runtime), environment["PATH"]))
+  environment["PATH"] = os.pathsep.join((str(gstreamer_bin), environment["PATH"]))
 
   scheduler_installed = False
   core_installed = False
@@ -692,6 +682,13 @@ def build(args: argparse.Namespace) -> None:
     scheduler_owned = file_inventory(install_root)
     if not scheduler_owned:
       raise ValueError("Scheduler MSI installed no files")
+    # Hardware qualification checks the card PC's Platform DLLs against this record.
+    platform_record = output / "scheduler-platform-windows.json"
+    shutil.copy2(require_file(install_root / SCHEDULER_PLATFORM_RECORD,
+                              "installed Scheduler Platform record"), platform_record)
+    if (json.loads(platform_record.read_text(encoding="utf-8")).get("platform_version")
+        != scheduler_dependencies["platform_version"]):
+      raise ValueError("Scheduler Platform record and receipt name different Platform versions")
 
     prefixes = [install_root, gstreamer_root, *dependency_prefixes]
     prefix_path = ";".join(str(path) for path in prefixes)
@@ -712,7 +709,6 @@ def build(args: argparse.Namespace) -> None:
         "-DSimaScheduler_DIR=" + str(scheduler_config),
         "-DSIMAPCIE_SCHEDULER_PACKAGE_VERSION=" + scheduler_identity["version"],
         "-DSIMAPCIE_SCHEDULER_WIX_UPGRADE_CODE=" + scheduler_identity["upgrade_code"],
-        "-DSIMAPCIE_PLATFORM_SERVICE_INCLUDE_DIR=" + str(platform_include),
         "-DSIMAPCIE_BUILD_TESTS=ON",
         "-DSIMAPCIE_BUILD_HARDWARE_TESTS=ON",
         "-DSIMAPCIE_BUILD_PYTHON=ON",
@@ -806,7 +802,6 @@ def build(args: argparse.Namespace) -> None:
         run([binary], env=consumer_environment)
 
     check_consumer(relocated, "relocated")
-    run([gst_inspect, plugin], env=environment)
 
     cpack_output = work / "cpack"
     run([cpack, "--config", build_dir / "CPackConfig.cmake", "-G", "WIX",
@@ -858,16 +853,13 @@ def build(args: argparse.Namespace) -> None:
     ):
       require_file(required, "installed Core MSI payload")
     check_consumer(install_root, "installed")
-    run([gst_inspect, plugin], env=environment)
 
     rollback_receipt = qualify_failed_msi_transaction(
         rollback_fixture_msi, scheduler_msi, core_msi, install_root,
         common_application_data(powershell), output / "msi-transaction-rollback.log")
     check_consumer(install_root, "after-failed-msi-transaction")
-    run([gst_inspect, plugin], env=environment)
     rollback_receipt["preserved_cohort"].update({
         "installed_consumer": "PASS",
-        "plugin_discovery": "PASS",
     })
     write_json(output / "msi-transaction-rollback.json", rollback_receipt)
 
@@ -886,10 +878,8 @@ def build(args: argparse.Namespace) -> None:
         str(windows_root / "System32" / "WindowsPowerShell" / "v1.0"),
         str(windows_root / "System32" / "OpenSSH"),
     ))
-    run([
-        "cmd.exe", "/d", "/c",
-        install_root / "bin" / "sima-pcie-host-doctor.cmd",
-    ], env=activation_environment)
+    # The doctor and plug-in discovery need an installed Platform; hardware
+    # qualification runs them on the card PC, as Linux tests Platform only there.
     run([
         "cmd.exe", "/d", "/c",
         install_root / "bin" / "pcie-setup.cmd",
@@ -937,7 +927,6 @@ def build(args: argparse.Namespace) -> None:
     if after_repeat != before_repeat:
       raise ValueError("ordered cohort repeat installation changed its file inventory")
     check_consumer(install_root, "repeat-installed")
-    run([gst_inspect, plugin], env=environment)
 
     run([python, "-m", "venv", venv], env=environment)
     customer_python = venv / "Scripts" / "python.exe"
@@ -1007,8 +996,6 @@ def build(args: argparse.Namespace) -> None:
         "core_msi_remove": "PENDING_CLEANUP",
         "hardware_qualified": False,
         "installed_consumer": "PASS",
-        "plugin_load": "PASS",
-        "process_activation": "PASS",
         "python_import": "PASS",
         "relocated_consumer": "PASS",
         "repeat_install": "PASS",
@@ -1035,18 +1022,7 @@ def build(args: argparse.Namespace) -> None:
             "version_output": run(
                 [gst_inspect, "--version"], env=environment, capture=True),
         },
-        "platform": {
-            "version": producer_dependencies["platform_version"],
-            "runtime_directory": str(platform_runtime),
-            "runtime_dlls": [
-                {
-                    "name": path.name,
-                    "sha256": sha256(path),
-                    "signature": authenticode_status(path, powershell),
-                }
-                for path in platform_dlls
-            ],
-        },
+        "platform": {"version": producer_dependencies["platform_version"]},
     })
     write_json(output / "host-candidate.json", {
         "architecture": "amd64",
@@ -1077,6 +1053,7 @@ def build(args: argparse.Namespace) -> None:
                 output / "scheduler-windows-signatures.json"),
             "scheduler-windows-dependencies.json": sha256(
                 output / "scheduler-windows-dependencies.json"),
+            "scheduler-platform-windows.json": sha256(platform_record),
             "native-tests.xml": sha256(native_junit),
             "msi-transaction-rollback.json": sha256(
                 output / "msi-transaction-rollback.json"),
@@ -1142,8 +1119,6 @@ def main() -> None:
   parser.add_argument("--gstreamer-root", type=Path, required=True)
   parser.add_argument("--jobs", type=int, default=4)
   parser.add_argument("--output", type=Path, required=True)
-  parser.add_argument("--platform-runtime", type=Path, required=True)
-  parser.add_argument("--platform-include", type=Path, required=True)
   parser.add_argument("--python-wheelhouse", type=Path, required=True)
   parser.add_argument("--scheduler-candidate", type=Path, required=True)
   parser.add_argument("--require-signatures", action="store_true")

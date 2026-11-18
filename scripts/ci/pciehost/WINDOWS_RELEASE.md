@@ -7,20 +7,33 @@ a developer machine after a workflow starts.
 
 ## Runner setup
 
-`pcie-windows-build` is the shared native producer. It needs MSVC x64, CMake,
-Ninja, WiX v3, CPython 3.14 x64, GStreamer, the Platform development/runtime
-package, and an offline Python wheelhouse. Configure these repository or
-environment variables:
+The Windows build runs on GitHub-hosted `windows-2025` runners (Windows Server
+2025 x64; GitHub offers no x64 Windows 11 image): the `Build PCIe Host windows
+amd64` entry of Vulcan CI's PCIe host package matrix, and the `dependencies`
+and `native` jobs of `pcie-host-windows.yml`. The image supplies MSVC x64 and
+CMake/Ninja. `provision_windows_build.ps1` downloads every other input from the
+HTTPS URL pinned in `windows_build_inputs.json` and checks its SHA-256 with
+`Get-FileHash` before use: GStreamer 1.28.6 MSVC (runtime, development files,
+`pkg-config` and zlib), OpenCV 5.0.0, nlohmann/json 3.11.3, WiX 3.14.1, the
+Python wheelhouse, and the bootstrap sima-cli with its dependencies. CPython
+3.14.7 comes from `actions/setup-python`, pinned by commit.
 
-- Scheduler: `GSTREAMER_ROOT_X86_64`, `SIMA_WINDOWS_PLATFORM_INCLUDE_DIR`,
-  `SIMA_WINDOWS_PLATFORM_LIBRARY`, `SIMA_WINDOWS_PLATFORM_RUNTIME_DIR`, and
-  `SIMA_WINDOWS_PLATFORM_VERSION`;
-- Core: `GSTREAMER_ROOT_X86_64`, `SIMA_WINDOWS_CMAKE_PREFIX_PATH`,
-  `SIMA_WINDOWS_DEPENDENCY_RUNTIME_PATH`, `SIMA_WINDOWS_PLATFORM_INCLUDE_DIR`,
-  `SIMA_WINDOWS_PLATFORM_RUNTIME_DIR`, and `SIMA_WINDOWS_PYTHON_WHEELHOUSE`;
-- signed runs: `SIMA_WINDOWS_SIGNING_CERTIFICATE_SHA1`,
-  `SIMA_WINDOWS_SIGNING_MACHINE_STORE`, and
-  `SIMA_WINDOWS_SIGNING_TIMESTAMP_URL`.
+As on Linux, the build downloads no Platform files and needs no Platform
+installation. Core takes the Platform service headers (`simaai_svc.h`,
+`simaai_svc_proto.h`) from the installed Scheduler package's
+`pcie_service_headers` CMake component. Core loads `SiMaPCIe.dll` only at run
+time, and its CTest suite uses a test-only fake. Checks that load the Scheduler
+plug-in or need the Platform service (`gst-inspect-1.0` of `gstneatpciehost`,
+`sima-pcie-host-doctor.cmd`) run in hardware qualification, on the card PC.
+The build records only the Platform version from Scheduler's receipt, and
+carries Scheduler's installed Platform record to the hardware job.
+The Windows build needs Scheduler's published Windows profile for the selected
+branch, or `develop` when that branch is unpublished. Without it, dependency
+resolution fails.
+
+Signed runs also need `SIMA_WINDOWS_SIGNING_CERTIFICATE_SHA1`,
+`SIMA_WINDOWS_SIGNING_MACHINE_STORE`, and `SIMA_WINDOWS_SIGNING_TIMESTAMP_URL`,
+and a signing certificate the runner can use.
 
 `pcie-windows-hardware` must be a Windows 11 x64 client workstation with the
 supported Platform package and a directly attached Modalix card. It uses the
@@ -49,9 +62,13 @@ and `SIMA_WINDOWS_DEPENDENCY_RUNTIME_PATH` must include the matching directory
 that contains its runtime DLLs. The current qualified input is the official
 OpenCV 5.0.0 x64 package (SHA-256
 `9c6c1fcea58acdf06edba13148b2246e00c2658143fa51e61ecd370db8c39f63`).
-Scheduler, Core, and hardware must resolve the same GStreamer identity, exact
-Platform runtime DLL hashes, and exact additional runtime DLL hashes; the
-workflows reject a mixed dependency cohort. The card does not need a preinstalled
+Scheduler, Core, and hardware must resolve the same GStreamer identity and
+exact additional runtime DLL hashes; the workflows reject a mixed dependency
+cohort. Every Windows Platform build reports the same version, so the hardware
+job also requires the card PC's installed Platform runtime to hold exactly the
+DLLs that Scheduler's installed Platform record
+(`share/SimaScheduler/host/platform-windows.json`, carried in the candidate as
+`scheduler-platform-windows.json`) names, byte for byte. The card does not need a preinstalled
 tensor worker. Core CI separately builds a private ARM64 qualification-dependency
 bundle from the same immutable SDK image; that bundle is not part of
 `neat-core-dist` and is never published as a customer package. The Windows
@@ -68,7 +85,14 @@ revision. It publishes the Windows profile at
 `scheduler/<branch>/<commit>/pcie-host-windows-amd64` and advances Scheduler's
 branch `latest` tag only after the DevKit and every native profile pass.
 
-Vulcan CI runs the Windows lane only when the repository variable
+Vulcan CI builds, tests, and retains the Windows cohort on every standard
+build, in the `windows amd64` entry of its PCIe host package matrix, as the
+artifact `core-pciehost-windows-amd64-build`. It does not publish that build:
+Windows packages are published only by the qualified release dispatch below. A
+failed Windows build fails the matrix, which blocks package metadata, branch
+`latest` promotion, and validation-only runs.
+
+Vulcan CI runs the self-hosted hardware lane only when the repository variable
 `ENABLE_WINDOWS_PCIE_CI` is `true` and Vulcan CI is the top-level workflow
 (not when another workflow calls it); otherwise it skips the lane, and branch
 `latest` promotion and validation-only runs accept that skip.
@@ -77,7 +101,7 @@ Core's main `Vulcan CI` calls the Windows workflow after the same Core revision
 has passed its Linux build, DevKit, and PCIe-card gates. The Windows lane:
 
 1. follows Core's Scheduler snap policy and resolves the immutable Windows
-   profile through the runner's existing bootstrap `sima-cli`;
+   profile through the pinned bootstrap `sima-cli`;
 2. resolves an immutable published sima-cli candidate for the customer-flow
    test and independently verifies both publication manifests and resources;
 3. builds the ordered Scheduler/Core/wheel cohort;
@@ -128,7 +152,7 @@ after `InstallFiles`), records that both are present, then returns a failure
 through Windows Installer. The gate requires exit code 1603, removal of
 the fixture directory, registry key/value, and product registration, and an unchanged
 Scheduler/Core file inventory and product state. It reruns the installed C++
-consumer and Scheduler plug-in discovery afterward. The fixture MSI is kept only
+consumer afterward. The fixture MSI is kept only
 in the workflow's temporary build directory; it is not part of the customer
 candidate. `msi-transaction-rollback.json` and its checksum-bound verbose log are
 the release evidence for this gate.
@@ -286,8 +310,9 @@ and retains evidence for both cohorts.
 
 Set `require_signatures=true` in Scheduler and Core only when delivery policy
 requires Authenticode. The optional gate requires the certificate, RFC 3161
-timestamp service, complete Scheduler/Core signature receipts, and accepted Platform DLL
-signatures. Signing is additional provenance; it does not replace tests.
+timestamp service, and complete Scheduler/Core signature receipts. Platform DLLs
+are the Platform installer's and are not part of this gate. Signing is
+additional provenance; it does not replace tests.
 
 Wheel installation failure deliberately preserves successful native MSI work so
 the customer can retry the Python step. This is not a transaction that rolls all

@@ -754,11 +754,13 @@ jobs:
       - detect-changes
       - resolve-vulcan-config
     environment: ${{ needs.resolve-vulcan-config.outputs.vulcan_env }}
-    runs-on: [self-hosted, linux, "${{ matrix.deb_arch }}", "vulcan-${{ needs.resolve-vulcan-config.outputs.vulcan_env }}", ubuntu, default]
-    timeout-minutes: 40
-    container:
-      # Dockerfile SHA-256 from Vulcan; publish all four images before enabling.
-      image: 069171140053.dkr.ecr.us-west-2.amazonaws.com/vulcan/ubuntu-build:${{ matrix.distro }}-${{ matrix.deb_arch }}-media-463e7eb999e953b18069904b81b378ebd6d6b1a7bc4a5641a12c279d72e711b0
+    # Ubuntu packages build on Vulcan runners in their media image; the Windows
+    # MSI cohort builds on a GitHub-hosted image, without a container.
+    runs-on: ${{ matrix.distro == 'windows' && 'windows-2025' || fromJSON(format('["self-hosted","linux","{0}","vulcan-{1}","ubuntu","default"]', matrix.deb_arch, needs.resolve-vulcan-config.outputs.vulcan_env)) }}
+    timeout-minutes: ${{ matrix.distro == 'windows' && 90 || 40 }}
+    # Dockerfile SHA-256 from Vulcan; publish all four images before enabling.
+    # An empty container string runs the Windows entry directly on its runner.
+    container: ${{ matrix.distro != 'windows' && format('069171140053.dkr.ecr.us-west-2.amazonaws.com/vulcan/ubuntu-build:{0}-{1}-media-463e7eb999e953b18069904b81b378ebd6d6b1a7bc4a5641a12c279d72e711b0', matrix.distro, matrix.deb_arch) || '' }}
     strategy:
       fail-fast: false
       matrix:
@@ -775,6 +777,8 @@ jobs:
           - distro: ubuntu24
             deb_arch: arm64
             ubuntu_version: "24.04"
+          - distro: windows
+            deb_arch: amd64
 
     steps:
       - name: Checkout code
@@ -784,6 +788,7 @@ jobs:
           fetch-depth: 0
 
       - name: Verify native dependency image
+        if: ${{ matrix.distro != 'windows' }}
         shell: bash
         env:
           EXPECTED_UBUNTU: ${{ matrix.ubuntu_version }}
@@ -798,6 +803,7 @@ jobs:
           ./pcie_host/build.sh --all --skip-deps --install-deps-only
 
       - name: Install sima-cli
+        if: ${{ matrix.distro != 'windows' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -818,7 +824,7 @@ jobs:
           permission-contents: read
 
       - name: Admit exact native Scheduler candidate
-        if: inputs.scheduler_run_id != ''
+        if: inputs.scheduler_run_id != '' && matrix.distro != 'windows'
         id: scheduler-admission
         env:
           GITHUB_TOKEN: ${{ steps.scheduler-token.outputs.token }}
@@ -843,7 +849,7 @@ jobs:
           echo "artifact_id=${artifact_id}" >> "${GITHUB_OUTPUT}"
 
       - name: Download exact native Scheduler candidate
-        if: inputs.scheduler_run_id != ''
+        if: inputs.scheduler_run_id != '' && matrix.distro != 'windows'
         uses: actions/download-artifact@v4
         with:
           # The admitted ID, not the name: a Scheduler re-run cannot substitute other bytes.
@@ -855,6 +861,7 @@ jobs:
           github-token: ${{ steps.scheduler-token.outputs.token }}
 
       - name: Build PCIe host Debian packages
+        if: ${{ matrix.distro != 'windows' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -877,12 +884,14 @@ jobs:
           NEAT_VULCAN_ENV: ${{ needs.resolve-vulcan-config.outputs.vulcan_env }}
 
       - name: Run PCIe host unit tests
+        if: ${{ matrix.distro != 'windows' }}
         shell: bash
         run: |
           set -euo pipefail
           ctest --test-dir pcie_host/build --output-on-failure --no-tests=error
 
       - name: Verify PCIe host Debian packages
+        if: ${{ matrix.distro != 'windows' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -941,6 +950,7 @@ jobs:
           DEB_ARCH: ${{ matrix.deb_arch }}
 
       - name: Smoke test staged PCIe host packages and wheel
+        if: ${{ matrix.distro != 'windows' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -985,7 +995,7 @@ jobs:
           PY
 
       - name: Retain this run's PCIe host candidate
-        if: ${{ inputs.validation_only }}
+        if: ${{ inputs.validation_only && matrix.distro != 'windows' }}
         uses: actions/upload-artifact@v6
         with:
           name: core-pciehost-${{ matrix.distro }}-${{ matrix.deb_arch }}
@@ -993,8 +1003,123 @@ jobs:
           if-no-files-found: error
           retention-days: 3
 
+      # Windows: qualified releases publish only through pcie-host-windows.yml.
+      # A branch publication here would claim the release's tag path unqualified.
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        if: ${{ matrix.distro == 'windows' }}
+        with:
+          python-version: 3.14.7
+
+      - name: Provision pinned Windows producer inputs
+        if: ${{ matrix.distro == 'windows' }}
+        shell: pwsh
+        run: |
+          & ./scripts/ci/pciehost/provision_windows_build.ps1 -Component build, sima-cli -Root "$env:RUNNER_TEMP\windows-inputs"
+
+      - name: Admit exact Windows Scheduler candidate
+        if: inputs.scheduler_run_id != '' && matrix.distro == 'windows'
+        id: windows-scheduler-admission
+        env:
+          GITHUB_TOKEN: ${{ steps.scheduler-token.outputs.token }}
+          SCHEDULER_RUN_ID: ${{ inputs.scheduler_run_id }}
+          SCHEDULER_COMMIT: ${{ inputs.scheduler_commit }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/ci/pciehost/verify_linux_release_run.py \
+            --repository "sima-neat/scheduler" \
+            --run-id "${SCHEDULER_RUN_ID}" \
+            --expected-commit "${SCHEDULER_COMMIT}" \
+            --workflow-name "Scheduler" \
+            --workflow-path ".github/workflows/ci.yml" \
+            --required-reusable-workflow "sima-neat/scheduler/.github/workflows/pcie-host-windows.yml" \
+            --required-job "Build, test, and publish native Windows PCIe profile / contracts" \
+            --required-job "Build, test, and publish native Windows PCIe profile / Native Windows amd64" \
+            --required-job "Verify Scheduler build and Vulcan publication" \
+            --required-artifact "scheduler-native-windows-amd64" \
+            --output "${RUNNER_TEMP}/scheduler-windows-admission.json"
+          artifact_id=$(python -c 'import json, sys; print(json.load(open(sys.argv[1]))["artifact"]["id"])' \
+            "${RUNNER_TEMP}/scheduler-windows-admission.json")
+          echo "artifact_id=${artifact_id}" >> "${GITHUB_OUTPUT}"
+
+      - name: Download exact Windows Scheduler candidate
+        if: inputs.scheduler_run_id != '' && matrix.distro == 'windows'
+        uses: actions/download-artifact@v4
+        with:
+          # The admitted ID, not the name: a Scheduler re-run cannot substitute other bytes.
+          artifact-ids: ${{ steps.windows-scheduler-admission.outputs.artifact_id }}
+          merge-multiple: true
+          path: ${{ runner.temp }}/scheduler-windows-candidate
+          repository: sima-neat/scheduler
+          run-id: ${{ inputs.scheduler_run_id }}
+          github-token: ${{ steps.scheduler-token.outputs.token }}
+
+      - name: Resolve the Windows dependency cohort
+        if: ${{ matrix.distro == 'windows' }}
+        shell: powershell
+        env:
+          SOURCE_BRANCH: ${{ github.head_ref || github.ref_name }}
+          SIMA_CLI_CHECK_FOR_UPDATE: "0"
+          SCHEDULER_COMMIT: ${{ inputs.scheduler_commit || '' }}
+          NEAT_VULCAN_ENV: ${{ needs.resolve-vulcan-config.outputs.vulcan_env }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $arguments = @(
+            "scripts/ci/pciehost/acquire_windows_dependencies.py",
+            "--cli", $env:SIMA_CLI,
+            "--branch", $env:SOURCE_BRANCH,
+            "--environment", $env:NEAT_VULCAN_ENV,
+            "--output", "$env:RUNNER_TEMP\core-windows-dependencies"
+          )
+          if (Test-Path -LiteralPath "$env:RUNNER_TEMP\scheduler-windows-candidate") {
+            $arguments += @(
+              "--scheduler-candidate", "$env:RUNNER_TEMP\scheduler-windows-candidate",
+              "--scheduler-commit", "$env:SCHEDULER_COMMIT"
+            )
+          }
+          & python @arguments
+          if ($LASTEXITCODE -ne 0) { throw "Windows dependency resolution failed: $LASTEXITCODE" }
+
+      - name: Build, test, package, install, and remove the Windows cohort
+        if: ${{ matrix.distro == 'windows' }}
+        shell: powershell
+        env:
+          SOURCE_BRANCH: ${{ github.head_ref || github.ref_name }}
+          REQUIRE_SIGNATURES: "false"
+          SIMA_WINDOWS_SHORT_WORK_ROOT: C:\nr\c-${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          & ./scripts/ci/pciehost/run_windows_build.ps1 `
+            -Dependencies "$env:RUNNER_TEMP\core-windows-dependencies" `
+            -Output "$env:RUNNER_TEMP\core-windows-dist"
+
+      - name: Retain this run's Windows PCIe host cohort
+        if: ${{ always() && matrix.distro == 'windows' }}
+        uses: actions/upload-artifact@v6
+        with:
+          name: core-pciehost-windows-amd64-build
+          path: |
+            ${{ runner.temp }}/core-windows-dist/*
+            ${{ runner.temp }}/core-windows-dependencies/selection.json
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Remove short Windows producer work root
+        if: ${{ always() && matrix.distro == 'windows' }}
+        shell: powershell
+        env:
+          SIMA_WINDOWS_SHORT_WORK_ROOT: C:\nr\c-${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          if (-not $env:SIMA_WINDOWS_SHORT_WORK_ROOT.StartsWith("C:\nr\c-")) {
+            throw "Refusing to remove an unexpected Windows producer work root"
+          }
+          if (Test-Path -LiteralPath $env:SIMA_WINDOWS_SHORT_WORK_ROOT) {
+            Remove-Item -LiteralPath $env:SIMA_WINDOWS_SHORT_WORK_ROOT -Recurse -Force
+          }
+
       - name: Configure AWS credentials
-        if: ${{ !inputs.validation_only }}
+        if: ${{ !inputs.validation_only && matrix.distro != 'windows' }}
         uses: aws-actions/configure-aws-credentials@v6
         with:
           aws-region: ${{ needs.resolve-vulcan-config.outputs.aws_region }}
@@ -1002,7 +1127,7 @@ jobs:
           role-session-name: pciehost-${{ matrix.distro }}-${{ matrix.deb_arch }}-${{ github.run_id }}
 
       - name: Publish PCIe host Debian packages
-        if: ${{ !inputs.validation_only }}
+        if: ${{ !inputs.validation_only && matrix.distro != 'windows' }}
         shell: bash
         run: |
           set -euo pipefail

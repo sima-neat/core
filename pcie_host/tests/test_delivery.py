@@ -567,9 +567,13 @@ GENAI_CMAKE_ARGS=()
         self.assertIn('NativePackageGuard.cmake', source)
         self.assertIn('set(CMAKE_CXX_STANDARD 20)', source)
         self.assertIn('set(CMAKE_CXX_STANDARD_REQUIRED ON)', source)
-        self.assertIn('if(WIN32)\n  set(SIMAPCIE_SCHEDULER_CONFIG_COMPONENTS pcie_host)', source)
+        # Windows takes the Platform service headers from Scheduler, exactly like Linux.
         self.assertIn(
-            'set(SIMAPCIE_SCHEDULER_CONFIG_COMPONENTS pcie_host pcie_service_headers)', source)
+            '\nset(SIMAPCIE_SCHEDULER_CONFIG_COMPONENTS pcie_host pcie_service_headers)\n', source)
+        self.assertIn(
+            '\nfind_package(SimaScheduler CONFIG REQUIRED COMPONENTS pcie_host pcie_service_headers)\n',
+            source)
+        self.assertNotIn('SIMAPCIE_PLATFORM_SERVICE', source)
         self.assertIn('@SIMAPCIE_SCHEDULER_CONFIG_COMPONENTS@', config)
         self.assertIn('pkg_check_modules(SIMAPCIE_GST REQUIRED IMPORTED_TARGET GLOBAL', config)
         self.assertNotIn('libstdc++6 (>= 14)', source)

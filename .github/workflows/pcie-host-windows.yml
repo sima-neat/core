@@ -411,8 +411,7 @@ jobs:
     name: Resolve immutable Windows dependency cohort
     needs: [contracts, linux_release]
     if: needs.contracts.result == 'success' && needs.linux_release.result == 'success'
-    environment: production
-    runs-on: [self-hosted, Windows, X64, pcie-windows-build, default]
+    runs-on: windows-2025
     timeout-minutes: 30
     permissions:
       contents: read
@@ -422,6 +421,13 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 0
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: 3.14.7
+      - name: Provision pinned bootstrap sima-cli
+        shell: pwsh
+        run: |
+          & ./scripts/ci/pciehost/provision_windows_build.ps1 -Component sima-cli -Root "$env:RUNNER_TEMP\windows-inputs"
       - name: Mint read-only dependency run token
         if: inputs.scheduler_run_id != '' || inputs.sima_cli_run_id != ''
         id: app-token
@@ -464,11 +470,9 @@ jobs:
           SIMA_CLI_COMMIT: ${{ inputs.sima_cli_commit }}
         run: |
           $ErrorActionPreference = "Stop"
-          if (-not (Get-Command sima-cli -ErrorAction SilentlyContinue)) {
-            throw "The Windows build runner requires the supported bootstrap sima-cli"
-          }
           $arguments = @(
             "scripts/ci/pciehost/acquire_windows_dependencies.py",
+            "--cli", $env:SIMA_CLI,
             "--branch", $env:SOURCE_BRANCH,
             "--environment", "production",
             "--output", "$env:RUNNER_TEMP\core-windows-dependencies"
@@ -498,20 +502,13 @@ jobs:
     name: Native Windows amd64 cohort
     needs: [dependencies, linux_release]
     if: needs.dependencies.result == 'success' && needs.linux_release.result == 'success' && github.repository == 'sima-neat/core'
-    environment: production
-    runs-on: [self-hosted, Windows, X64, pcie-windows-build, default]
-    timeout-minutes: 75
+    runs-on: windows-2025
+    timeout-minutes: 90
     permissions:
       contents: read
       actions: read
     env:
-      GSTREAMER_ROOT_X86_64: ${{ vars.GSTREAMER_ROOT_X86_64 }}
       SIMA_WINDOWS_SHORT_WORK_ROOT: C:\nr\c-${{ github.run_id }}-${{ github.run_attempt }}
-      SIMA_WINDOWS_CMAKE_PREFIX_PATH: ${{ vars.SIMA_WINDOWS_CMAKE_PREFIX_PATH }}
-      SIMA_WINDOWS_DEPENDENCY_RUNTIME_PATH: ${{ vars.SIMA_WINDOWS_DEPENDENCY_RUNTIME_PATH }}
-      SIMA_WINDOWS_PLATFORM_INCLUDE_DIR: ${{ vars.SIMA_WINDOWS_PLATFORM_INCLUDE_DIR }}
-      SIMA_WINDOWS_PLATFORM_RUNTIME_DIR: ${{ vars.SIMA_WINDOWS_PLATFORM_RUNTIME_DIR }}
-      SIMA_WINDOWS_PYTHON_WHEELHOUSE: ${{ vars.SIMA_WINDOWS_PYTHON_WHEELHOUSE }}
       SIMA_WINDOWS_SIGNING_CERTIFICATE_SHA1: ${{ vars.SIMA_WINDOWS_SIGNING_CERTIFICATE_SHA1 }}
       SIMA_WINDOWS_SIGNING_MACHINE_STORE: ${{ vars.SIMA_WINDOWS_SIGNING_MACHINE_STORE }}
       SIMA_WINDOWS_SIGNING_TIMESTAMP_URL: ${{ vars.SIMA_WINDOWS_SIGNING_TIMESTAMP_URL }}
@@ -530,6 +527,13 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 0
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: 3.14.7
+      - name: Provision pinned Windows producer inputs
+        shell: pwsh
+        run: |
+          & ./scripts/ci/pciehost/provision_windows_build.ps1 -Component build -Root "$env:RUNNER_TEMP\windows-inputs"
       - name: Download exact Windows dependency cohort
         uses: actions/download-artifact@v4
         with:
@@ -542,64 +546,9 @@ jobs:
           REQUIRE_SIGNATURES: ${{ inputs.require_signatures }}
         run: |
           $ErrorActionPreference = "Stop"
-          $selection = Get-Content -Raw "$env:RUNNER_TEMP\core-windows-dependencies\selection.json" | ConvertFrom-Json
-          $vswhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"
-          $installation = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
-          if (-not $installation) { throw "Visual Studio x64 C++ tools are unavailable" }
-          Import-Module (Join-Path $installation "Common7\Tools\Microsoft.VisualStudio.DevShell.dll")
-          Enter-VsDevShell -VsInstallPath $installation -SkipAutomaticLocation -DevCmdArguments "-arch=x64 -host_arch=x64"
-          foreach ($name in @(
-            "GSTREAMER_ROOT_X86_64",
-            "SIMA_WINDOWS_DEPENDENCY_RUNTIME_PATH",
-            "SIMA_WINDOWS_PLATFORM_INCLUDE_DIR",
-            "SIMA_WINDOWS_PLATFORM_RUNTIME_DIR",
-            "SIMA_WINDOWS_PYTHON_WHEELHOUSE"
-          )) {
-            if (-not (Get-Item "env:$name").Value) { throw "Required producer variable is unset: $name" }
-          }
-          if (-not $env:SIMA_WINDOWS_SHORT_WORK_ROOT.StartsWith("C:\nr\c-")) {
-            throw "Windows producer work root must be a run-owned directory below C:\nr"
-          }
-          if (Test-Path -LiteralPath $env:SIMA_WINDOWS_SHORT_WORK_ROOT) {
-            Remove-Item -LiteralPath $env:SIMA_WINDOWS_SHORT_WORK_ROOT -Recurse -Force
-          }
-          $arguments = @(
-            "scripts/ci/pciehost/build_windows.py",
-            "--branch", $env:SOURCE_BRANCH,
-            "--expected-scheduler-commit", $selection.scheduler.commit,
-            "--gstreamer-root", $env:GSTREAMER_ROOT_X86_64,
-            "--platform-runtime", $env:SIMA_WINDOWS_PLATFORM_RUNTIME_DIR,
-            "--platform-include", $env:SIMA_WINDOWS_PLATFORM_INCLUDE_DIR,
-            "--python-wheelhouse", $env:SIMA_WINDOWS_PYTHON_WHEELHOUSE,
-            "--scheduler-candidate", "$env:RUNNER_TEMP\core-windows-dependencies\scheduler",
-            "--work", $env:SIMA_WINDOWS_SHORT_WORK_ROOT,
-            "--output", "$env:RUNNER_TEMP\core-windows-dist"
-          )
-          if ($env:SIMA_WINDOWS_CMAKE_PREFIX_PATH) {
-            foreach ($prefix in $env:SIMA_WINDOWS_CMAKE_PREFIX_PATH.Split(";")) {
-              if ($prefix) { $arguments += @("--dependency-prefix", $prefix) }
-            }
-          }
-          foreach ($directory in $env:SIMA_WINDOWS_DEPENDENCY_RUNTIME_PATH.Split(";")) {
-            if ($directory) { $arguments += @("--dependency-runtime-dir", $directory) }
-          }
-          if ("$env:REQUIRE_SIGNATURES" -eq "true") {
-            if (-not $env:SIMA_WINDOWS_SIGNING_CERTIFICATE_SHA1) {
-              throw "Signed packages require SIMA_WINDOWS_SIGNING_CERTIFICATE_SHA1"
-            }
-            $arguments += @(
-              "--require-signatures",
-              "--signing-certificate-sha1", $env:SIMA_WINDOWS_SIGNING_CERTIFICATE_SHA1
-            )
-            if ($env:SIMA_WINDOWS_SIGNING_TIMESTAMP_URL) {
-              $arguments += @("--signing-timestamp-url", $env:SIMA_WINDOWS_SIGNING_TIMESTAMP_URL)
-            }
-            if ($env:SIMA_WINDOWS_SIGNING_MACHINE_STORE -eq "true") {
-              $arguments += "--signing-machine-store"
-            }
-          }
-          & python @arguments
-          if ($LASTEXITCODE -ne 0) { throw "Windows Core producer failed: $LASTEXITCODE" }
+          & ./scripts/ci/pciehost/run_windows_build.ps1 `
+            -Dependencies "$env:RUNNER_TEMP\core-windows-dependencies" `
+            -Output "$env:RUNNER_TEMP\core-windows-dist"
       - name: Retain Core Windows cohort and evidence
         if: always()
         uses: actions/upload-artifact@v6

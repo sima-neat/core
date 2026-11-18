@@ -11,7 +11,8 @@ from pathlib import PureWindowsPath
 import re
 
 from windows_candidate import _read_json as read_object
-from windows_candidate import dependency_identity, msi_version, sha256, validate_candidate
+from windows_candidate import (
+    dependency_identity, msi_version, scheduler_platform_runtime, sha256, validate_candidate)
 from windows_release import customer_target, release_tag
 from windows_hardware_assets import asset_manifest_sha256, read_asset_manifest
 
@@ -37,30 +38,6 @@ def verify_signature_receipt(receipt: dict, description: str,
     if wrong_publishers:
       raise ValueError(f"{description} has an unexpected signer: {wrong_publishers}")
   return [str(record["path"]) for record in records]
-
-
-def verify_platform_signatures(candidate_root: Path) -> list[str]:
-  dependencies = read_object(
-      candidate_root / "windows-dependencies.json", "Windows dependency receipt")
-  platform = dependencies.get("platform")
-  runtime_dlls = platform.get("runtime_dlls") if isinstance(platform, dict) else None
-  if not isinstance(runtime_dlls, list) or not runtime_dlls:
-    raise ValueError("Windows dependency receipt has no Platform runtime DLLs")
-  invalid = []
-  verified = []
-  for item in runtime_dlls:
-    if not isinstance(item, dict) or not item.get("name"):
-      invalid.append("<invalid record>")
-      continue
-    signature = item.get("signature")
-    if (not isinstance(signature, dict) or signature.get("status") != "Valid"
-        or not signature.get("thumbprint") or not signature.get("timestamp_thumbprint")):
-      invalid.append(str(item["name"]))
-      continue
-    verified.append(str(item["name"]))
-  if invalid:
-    raise ValueError(f"Platform runtime has invalid or untimestamped signatures: {invalid}")
-  return verified
 
 
 def verify_msi_transaction_rollback(candidate_root: Path) -> dict:
@@ -93,8 +70,7 @@ def verify_msi_transaction_rollback(candidate_root: Path) -> dict:
   if (not isinstance(cohort, dict)
       or cohort.get("file_inventory") != "PASS"
       or not re.fullmatch(r"[0-9a-f]{64}", str(cohort.get("file_inventory_sha256", "")))
-      or cohort.get("installed_consumer") != "PASS"
-      or cohort.get("plugin_discovery") != "PASS"):
+      or cohort.get("installed_consumer") != "PASS"):
     raise ValueError("failed MSI transaction did not preserve the installed cohort")
   product_codes = set()
   for owner in ("scheduler", "core"):
@@ -180,6 +156,8 @@ def verify(candidate_dir: Path, qualification_path: Path, expected_commit: str,
       candidate.root, require_dependency_runtime=True)
   if qualification.get("dependencies") != expected_dependencies:
     raise ValueError("hardware qualification used a different runtime dependency cohort")
+  if qualification.get("platform_runtime") != scheduler_platform_runtime(candidate.root):
+    raise ValueError("hardware qualification used a different Platform runtime")
   cleanup = qualification.get("cleanup")
   if not isinstance(cleanup, dict) or cleanup.get("errors") != []:
     raise ValueError("hardware qualification did not prove clean removal")
@@ -438,7 +416,7 @@ def verify(candidate_dir: Path, qualification_path: Path, expected_commit: str,
     raise ValueError("signature receipt has no records")
   invalid = [record.get("path") for record in records
              if not isinstance(record, dict) or record.get("status") != "Valid"]
-  dependency_signatures = {"platform": [], "scheduler": []}
+  dependency_signatures = {"scheduler": []}
   if require_signatures:
     if not signatures.get("release_required"):
       raise ValueError("candidate was not built in signed release mode")
@@ -455,7 +433,6 @@ def verify(candidate_dir: Path, qualification_path: Path, expected_commit: str,
       raise ValueError("Scheduler candidate uses a different trusted publisher")
     dependency_signatures["scheduler"] = verify_signature_receipt(
         scheduler_signatures, "Scheduler candidate", expected_thumbprint)
-    dependency_signatures["platform"] = verify_platform_signatures(candidate.root)
 
   return {
       "core_commit": candidate.core_commit,

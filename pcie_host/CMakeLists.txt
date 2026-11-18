@@ -52,20 +52,11 @@ get_filename_component(SIMA_NEAT_CORE_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/.." ABSO
 
 find_package(PkgConfig REQUIRED)
 find_package(Threads REQUIRED)
+find_package(SimaScheduler CONFIG REQUIRED COMPONENTS pcie_host pcie_service_headers)
 if(WIN32)
-  find_package(SimaScheduler CONFIG REQUIRED COMPONENTS pcie_host)
-  if(NOT SIMAPCIE_PLATFORM_SERVICE_INCLUDE_DIR)
-    message(FATAL_ERROR
-      "SIMAPCIE_PLATFORM_SERVICE_INCLUDE_DIR must name the supported Windows "
-      "Platform SDK include directory")
-  endif()
-  find_path(SIMAPCIE_PLATFORM_SERVICE_HEADER_DIR simaai_svc.h
-    PATHS "${SIMAPCIE_PLATFORM_SERVICE_INCLUDE_DIR}"
-    NO_DEFAULT_PATH REQUIRED)
   set(SIMAPCIE_GENAI_SERVICE_SOURCE
     ${SIMA_NEAT_CORE_ROOT}/shared/pcie_genai/ServiceWindows.cpp)
 else()
-  find_package(SimaScheduler CONFIG REQUIRED COMPONENTS pcie_host pcie_service_headers)
   set(SIMAPCIE_GENAI_SERVICE_SOURCE
     ${SIMA_NEAT_CORE_ROOT}/shared/pcie_genai/Service.cpp)
 endif()
@@ -127,16 +118,10 @@ add_library(sima_neat_pcie_host STATIC
 target_compile_definitions(sima_neat_pcie_host PRIVATE SIMA_NEAT_INTERNAL=1)
 target_include_directories(sima_neat_pcie_host PRIVATE
   ${SIMA_NEAT_CORE_ROOT}/shared/pcie_genai)
-if(WIN32)
-  target_include_directories(sima_neat_pcie_host PRIVATE
-    ${SIMAPCIE_PLATFORM_SERVICE_HEADER_DIR})
-endif()
 target_include_directories(sima_neat_pcie_host PUBLIC $<BUILD_INTERFACE:${SIMA_NEAT_CORE_ROOT}/include>)
 target_link_libraries(sima_neat_pcie_host PRIVATE ${CMAKE_DL_LIBS})
-if(NOT WIN32)
-  target_link_libraries(sima_neat_pcie_host PRIVATE
-    SimaScheduler::pcie_service_headers)
-endif()
+target_link_libraries(sima_neat_pcie_host PRIVATE
+  SimaScheduler::pcie_service_headers)
 target_include_directories(sima_neat_pcie_host
   PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
@@ -249,11 +234,7 @@ set(SimaPCIeHost_INSTALL_CMAKEDIR
   ${CMAKE_INSTALL_LIBDIR}/cmake/SimaPCIeHost
 )
 
-if(WIN32)
-  set(SIMAPCIE_SCHEDULER_CONFIG_COMPONENTS pcie_host)
-else()
-  set(SIMAPCIE_SCHEDULER_CONFIG_COMPONENTS pcie_host pcie_service_headers)
-endif()
+set(SIMAPCIE_SCHEDULER_CONFIG_COMPONENTS pcie_host pcie_service_headers)
 
 configure_package_config_file(
   ${CMAKE_CURRENT_SOURCE_DIR}/cmake/SimaPCIeHostConfig.cmake.in
@@ -318,10 +299,8 @@ if (SIMAPCIE_BUILD_TESTS)
   endif()
   add_library(fake_genai_service SHARED ${SIMAPCIE_FAKE_GENAI_SERVICE_SOURCE})
   target_link_libraries(fake_genai_service PRIVATE
-    nlohmann_json::nlohmann_json Threads::Threads)
+    nlohmann_json::nlohmann_json Threads::Threads SimaScheduler::pcie_service_headers)
   if(WIN32)
-    target_include_directories(fake_genai_service PRIVATE
-      ${SIMAPCIE_PLATFORM_SERVICE_HEADER_DIR})
     set_target_properties(fake_genai_service PROPERTIES
       OUTPUT_NAME SiMaPCIe
       PREFIX ""
@@ -329,7 +308,6 @@ if (SIMAPCIE_BUILD_TESTS)
       RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/fake-genai-service
       ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/fake-genai-service)
   else()
-    target_link_libraries(fake_genai_service PRIVATE SimaScheduler::pcie_service_headers)
     set_target_properties(fake_genai_service PROPERTIES OUTPUT_NAME simaaipcie
       LIBRARY_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/fake-genai-service)
   endif()
@@ -338,13 +316,8 @@ if (SIMAPCIE_BUILD_TESTS)
     tests/unit_pcie_host_genai_service_test.cpp)
   target_include_directories(unit_pcie_host_genai_service_test PRIVATE
     ${SIMA_NEAT_CORE_ROOT}/shared/pcie_genai)
-  if(WIN32)
-    target_include_directories(unit_pcie_host_genai_service_test PRIVATE
-      ${SIMAPCIE_PLATFORM_SERVICE_HEADER_DIR})
-  else()
-    target_link_libraries(unit_pcie_host_genai_service_test PRIVATE
-      SimaScheduler::pcie_service_headers)
-  endif()
+  target_link_libraries(unit_pcie_host_genai_service_test PRIVATE
+    SimaScheduler::pcie_service_headers)
   target_link_libraries(unit_pcie_host_genai_service_test PRIVATE
     sima_neat_pcie_host fake_genai_service)
   if(WIN32)

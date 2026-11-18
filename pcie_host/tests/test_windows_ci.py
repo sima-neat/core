@@ -828,7 +828,9 @@ class WindowsCiContracts(unittest.TestCase):
     self.assertIn("set(CPACK_WIX_CANDLE_EXTRA_FLAGS", packaging)
 
   def test_workflow_uses_exact_scheduler_artifact_and_restricted_runner(self):
-    source = WORKFLOW.read_text(encoding="utf-8")
+    workflow = WORKFLOW.read_text(encoding="utf-8")
+    producer = (SCRIPT_DIR / "run_windows_build.ps1").read_text(encoding="utf-8")
+    source = workflow + producer
     self.assertIn("  pull_request:\n", source)
     self.assertIn("if: github.event_name != 'pull_request'", source)
     self.assertIn("github.repository == 'sima-neat/core'", source)
@@ -854,7 +856,7 @@ class WindowsCiContracts(unittest.TestCase):
     self.assertIn('--required-job "Verify Scheduler build and Vulcan publication"', source)
     self.assertIn('--required-artifact "scheduler-native-windows-amd64"', source)
     self.assertIn("repository: sima-neat/scheduler", source)
-    self.assertIn("pcie-windows-build", source)
+    self.assertNotIn("pcie-windows-build", source)
     self.assertIn("pcie-windows-hardware", source)
     self.assertNotIn("windows-latest", source)
     self.assertIn("scripts/ci/pciehost/build_windows.py", source)
@@ -894,7 +896,7 @@ class WindowsCiContracts(unittest.TestCase):
     self.assertIn("if: always()", source)
     self.assertNotIn("upgrade_base_run_id", source)
     self.assertIn("SIMA_WINDOWS_DEPENDENCY_RUNTIME_PATH", source)
-    self.assertIn("SIMA_WINDOWS_PLATFORM_INCLUDE_DIR", source)
+    self.assertNotIn("SIMA_WINDOWS_PLATFORM_INCLUDE_DIR", source)
     self.assertIn("--dependency-runtime-dir", source)
     self.assertIn("scripts/ci/pciehost/acquire_windows_dependencies.py", source)
     self.assertIn("core-pciehost-windows-dependencies", source)
@@ -911,17 +913,18 @@ class WindowsCiContracts(unittest.TestCase):
         r"SIMA_WINDOWS_SHORT_WORK_ROOT: C:\nr\c-${{ github.run_id }}-${{ github.run_attempt }}",
         source,
     )
-    native_job = source.split("  native:\n", 1)[1].split("  hardware:\n", 1)[0]
-    self.assertIn('"--work", $env:SIMA_WINDOWS_SHORT_WORK_ROOT', native_job)
+    native_job = workflow.split("  native:\n", 1)[1].split("  hardware:\n", 1)[0]
+    self.assertIn("& ./scripts/ci/pciehost/run_windows_build.ps1", native_job)
+    self.assertIn('"--work", $env:SIMA_WINDOWS_SHORT_WORK_ROOT', producer)
     self.assertIn("Remove short Windows producer work root", native_job)
     self.assertEqual(
-        native_job.count(
+        (native_job + producer).count(
             "Remove-Item -LiteralPath $env:SIMA_WINDOWS_SHORT_WORK_ROOT -Recurse -Force"
         ),
         2,
     )
-    self.assertEqual(source.count("shell: powershell"), 8)
-    hardware_job = source.split("  hardware:\n", 1)[1].split("  publish:\n", 1)[0]
+    self.assertEqual(workflow.count("shell: powershell"), 8)
+    hardware_job = workflow.split("  hardware:\n", 1)[1].split("  publish:\n", 1)[0]
     for job in (native_job, hardware_job):
       # MSI install/remove needs an elevated token; fail before checkout, not mid-build.
       steps = job.split("    steps:\n", 1)[1]
@@ -2313,21 +2316,16 @@ class WindowsCiContracts(unittest.TestCase):
             ],
             "version_output": "gst-inspect version 1.26.0",
         },
-        "platform": {
-            "version": "3.0.0.2",
-            "runtime_dlls": [{
-                "name": "sima-platform.dll",
-                "sha256": "d" * 64,
-                "signature": {
-                    "status": "Valid" if signed else "NotSigned",
-                    "timestamp_thumbprint": "C" * 40 if signed else None,
-                    "thumbprint": "D" * 40 if signed else None,
-                },
-            }],
-        },
+        "platform": {"version": "3.0.0.2"},
     }
     scheduler_dependencies = root / "scheduler-windows-dependencies.json"
     scheduler_dependencies.write_text(json.dumps(dependency_data), encoding="utf-8")
+    # Scheduler's installed Platform record names the DLLs the card PC must hold.
+    platform_record = root / "scheduler-platform-windows.json"
+    platform_record.write_text(json.dumps({
+        "platform_version": "3.0.0.2",
+        "runtime_dlls": {"sima-platform.dll": "d" * 64},
+    }), encoding="utf-8")
     dependency_data["dependency_runtime"] = [{
         "files": [{"name": "opencv_world500.dll", "sha256": "9" * 64}],
     }]
@@ -2400,6 +2398,7 @@ class WindowsCiContracts(unittest.TestCase):
             scheduler_signatures.name: sha256(scheduler_signatures),
             dependencies.name: sha256(dependencies),
             scheduler_dependencies.name: sha256(scheduler_dependencies),
+            platform_record.name: sha256(platform_record),
             core_signatures.name: sha256(core_signatures),
         },
         "repository": "sima-neat/core",
@@ -2502,6 +2501,7 @@ class WindowsCiContracts(unittest.TestCase):
             "serve_root": "data",
         },
         "dependencies": qualified_dependencies,
+        "platform_runtime": [{"name": "sima-platform.dll", "sha256": "d" * 64}],
         "host_state_baseline": {
             "dependencies": qualified_dependencies,
             "platform": platform_host_state,
@@ -2628,7 +2628,7 @@ class WindowsCiContracts(unittest.TestCase):
       self.assertTrue(admission["hardware_qualified"])
       self.assertTrue(admission["host_security_recorded"])
       self.assertTrue(admission["signatures_valid"])
-      self.assertEqual(admission["dependency_signatures"]["platform"], ["sima-platform.dll"])
+      self.assertEqual(set(admission["dependency_signatures"]), {"scheduler"})
       candidate.core_msi.write_bytes(b"changed")
       with self.assertRaisesRegex(ValueError, "checksum differs"):
         validate_candidate(root)
@@ -3341,9 +3341,9 @@ install() {
       root = Path(directory)
       self.windows_candidate(root)
       identity = dependency_identity(root)
-      self.assertEqual(
-          identity["platform_runtime_dlls"],
-          [{"name": "sima-platform.dll", "sha256": "d" * 64}])
+      # As on Linux, the Platform is identified by version, not by its files.
+      self.assertEqual(identity["platform_version"], "3.0.0.2")
+      self.assertNotIn("platform_runtime_dlls", identity)
       self.assertEqual(
           identity["gstreamer"]["runtime_dlls"],
           [{"name": "gstreamer-1.0-0.dll", "sha256": "f" * 64}])
@@ -3526,16 +3526,17 @@ install() {
             ValueError, "newer than the baseline"):
           load_upgrade_base(candidate, published.root, baseline_commit)
 
-  def test_release_gate_rejects_unsigned_platform_dependency(self):
+  def test_release_gate_rejects_a_different_card_pc_platform_runtime(self):
     self.assert_release_rejected(
-        "Platform runtime has invalid", lambda dependencies: dependencies["platform"][
-            "runtime_dlls"][0]["signature"].update(status="NotSigned"),
-        candidate_file="windows-dependencies.json")
+        "different Platform runtime",
+        lambda value: value["platform_runtime"][0].update(sha256="0" * 64))
+    self.assert_release_rejected(
+        "different Platform runtime", lambda value: value.pop("platform_runtime"))
 
   def test_release_gate_rejects_changed_hardware_dependency_cohort(self):
     self.assert_release_rejected(
         "different runtime dependency cohort",
-        lambda value: value["dependencies"]["platform_runtime_dlls"][0].update(sha256="0" * 64))
+        lambda value: value["dependencies"]["gstreamer"]["runtime_dlls"][0].update(sha256="0" * 64))
 
   def test_release_gate_rejects_changed_windows_host_baseline(self):
     self.assert_release_rejected(
@@ -3938,6 +3939,190 @@ install() {
     self.assertEqual(output, ["GENAI_FAULT_READY", "GENAI_FAULT_OBSERVED: injected"])
     self.assertEqual(model.stream.call_count, 2)
     model.close.assert_called_once()
+
+
+
+class HostedWindowsBuildContracts(unittest.TestCase):
+  """The Windows build runs on GitHub-hosted runners; card testing stays self-hosted."""
+
+  INPUTS = SCRIPT_DIR / "windows_build_inputs.json"
+  PROVISION = SCRIPT_DIR / "provision_windows_build.ps1"
+  PUBLISH_CONDITION = (
+      "github.repository == 'sima-neat/core' && (github.event_name == 'push' || "
+      "github.event_name == 'workflow_dispatch') && startsWith(github.ref, 'refs/tags/v') && "
+      "inputs.validation_only != true && (inputs.require_upgrade == true || "
+      "inputs.first_release_upgrade_exemption == true) && needs.hardware.result == 'success' && "
+      "needs.linux_release.result == 'success'")
+
+  def setUp(self):
+    self.windows = WORKFLOW.read_text(encoding="utf-8")
+    self.main = MAIN_WORKFLOW.read_text(encoding="utf-8")
+    self.matrix = workflow_job(self.main, "build-pciehost-packages")
+
+  def matrix_steps(self):
+    steps = self.matrix.split("    steps:\n", 1)[1]
+    return re.split(r"(?m)^(?=      - )", steps)[1:]
+
+  def test_build_jobs_run_on_hosted_windows_without_the_production_environment(self):
+    for name in ("dependencies", "native"):
+      with self.subTest(job=name):
+        job = workflow_job(self.windows, name)
+        self.assertIn("    runs-on: windows-2025\n", job)
+        self.assertNotRegex(job, r"(?m)^    environment:")
+        # Producer inputs come from pinned provisioning, not runner-specific variables.
+        self.assertNotRegex(job, r"vars[.](GSTREAMER|SIMA_WINDOWS_(PLATFORM|CMAKE|DEPENDENCY|PYTHON))")
+    self.assertIn(
+        "    runs-on: ${{ matrix.distro == 'windows' && 'windows-2025' || fromJSON(", self.matrix)
+    self.assertIn("          - distro: windows\n            deb_arch: amd64\n", self.matrix)
+    self.assertIn("    container: ${{ matrix.distro != 'windows' && format(", self.matrix)
+    self.assertIn("matrix.deb_arch) || '' }}\n", self.matrix)
+    self.assertIn("    environment: ${{ needs.resolve-vulcan-config.outputs.vulcan_env }}\n",
+                  workflow_job(self.windows, "publish"))
+
+  def test_hardware_lane_stays_self_hosted_and_opt_in(self):
+    hardware = workflow_job(self.windows, "hardware")
+    self.assertIn("    runs-on: [self-hosted, Windows, X64, pcie-windows-hardware, default]\n",
+                  hardware)
+    self.assertIn("    environment: production\n", hardware)
+    self.assertIn("needs.native.result == 'success'", job_condition(self.windows, "hardware"))
+    for gated in ("build-pcie-card-qualification-dependencies", "test-pciehost-windows"):
+      self.assertIn("vars.ENABLE_WINDOWS_PCIE_CI == 'true'", job_condition(self.main, gated))
+
+  def test_publication_gating_is_unchanged(self):
+    self.assertEqual(job_condition(self.windows, "publish"), self.PUBLISH_CONDITION)
+    for name in ("Configure AWS credentials", "Publish PCIe host Debian packages",
+                 "Retain this run's PCIe host candidate"):
+      with self.subTest(step=name):
+        self.assertIn("matrix.distro != 'windows'", workflow_step(self.matrix, name))
+    windows_steps = [step for step in self.matrix_steps()
+                     if "matrix.distro == 'windows'" in step]
+    self.assertTrue(windows_steps)
+    for step in windows_steps:
+      self.assertNotIn("aws ", step)
+      self.assertNotIn("configure-aws-credentials", step)
+
+  def test_ubuntu_steps_exclude_only_the_windows_entry(self):
+    shared = ("Checkout code", "Mint read-only Scheduler run token")
+    for step in self.matrix_steps():
+      name = re.match(r"      - (?:name: (.+)|uses: (.+))\n", step)
+      label = name[1] or name[2]
+      condition = re.search(r"(?m)^        if: (.+)$", step)
+      condition = condition[1] if condition else ""
+      with self.subTest(step=label):
+        if label in shared:
+          self.assertNotIn("matrix.distro", condition)
+        elif "matrix.distro != 'windows'" in condition:
+          self.assertNotIn("matrix.distro == 'windows'", condition)
+        else:
+          self.assertIn("matrix.distro == 'windows'", condition)
+        self.assertNotIn("continue-on-error", step)
+
+  def test_every_pinned_input_is_hash_verified_before_use(self):
+    manifest = json.loads(self.INPUTS.read_text(encoding="utf-8"))
+    names = [entry["name"] for entry in manifest["files"]]
+    self.assertEqual(len(names), len(set(names)))
+    self.assertEqual(
+        {entry["use"] for entry in manifest["files"]},
+        {"gstreamer", "opencv", "nlohmann-json", "wix", "wheelhouse", "sima-cli"})
+    for entry in manifest["files"]:
+      with self.subTest(input=entry["name"]):
+        self.assertRegex(entry["url"], r"^https://[^\s?#]+$")
+        self.assertTrue(entry["url"].endswith("/" + entry["name"]))
+        self.assertRegex(entry["sha256"], r"^[0-9a-f]{64}$")
+    wheels = {entry["name"] for entry in manifest["files"] if entry["use"] == "sima-cli"}
+    self.assertIn(f"sima_cli-{manifest['sima_cli_version']}-py3-none-any.whl", wheels)
+    self.assertIn("colorama-0.4.6-py2.py3-none-any.whl", wheels)
+    self.assertTrue(any(name.startswith("numpy-") and "cp314-win_amd64" in name.replace(
+        "cp314-cp314", "cp314") for name in (
+            entry["name"] for entry in manifest["files"] if entry["use"] == "wheelhouse")))
+
+    script = self.PROVISION.read_text(encoding="utf-8")
+    # One download helper, which compares Get-FileHash with the pin before returning.
+    self.assertEqual(script.count("Invoke-WebRequest"), 1)
+    helper = script.split("function Get-PinnedFile", 1)[1].split("\n}\n", 1)[0]
+    self.assertIn("Get-FileHash -Algorithm SHA256", helper)
+    self.assertIn("-ne $Sha256) { throw", helper)
+    self.assertEqual(script.count("Get-PinnedFile "), 1)  # every manifest entry
+    self.assertIn('"--no-index", "--find-links"', script)
+    for forbidden in ("curl", "wget", "Start-BitsTransfer", "WebClient", "pip download"):
+      self.assertNotIn(forbidden, script)
+
+    hosted = [workflow_job(self.windows, "dependencies"), workflow_job(self.windows, "native"),
+              *(step for step in self.matrix_steps()
+                if "matrix.distro != 'windows'" not in step)]
+    for body in hosted:
+      for forbidden in ("Invoke-WebRequest", "curl ", "install_sima_cli_main.sh"):
+        self.assertNotIn(forbidden, body)
+      for action in re.findall(r"uses: (actions/setup-python@\S+)", body):
+        self.assertRegex(action, r"@[0-9a-f]{40}$")
+
+  def test_platform_inputs_come_only_from_the_scheduler_package(self):
+    # As on Linux: no Platform download, installation, or file hashes on the build host.
+    producer = SCRIPT.read_text(encoding="utf-8")
+    scripts = "".join((SCRIPT_DIR / name).read_text(encoding="utf-8") for name in (
+        "provision_windows_build.ps1", "run_windows_build.ps1"))
+    hosted = "".join((workflow_job(self.windows, "dependencies"),
+                      workflow_job(self.windows, "native"), self.matrix, scripts))
+    for forbidden in ("SIMA_WINDOWS_PLATFORM", "PLATFORM_SDK", "PLACEHOLDER"):
+      self.assertNotIn(forbidden, hosted)
+    for forbidden in ("PLATFORM_SDK", "PLACEHOLDER"):
+      self.assertNotIn(forbidden, self.windows + self.main)
+    for forbidden in ('"--platform-include"', '"--platform-runtime"', "platform_runtime",
+                      "[gst_inspect, plugin]"):
+      self.assertNotIn(forbidden, producer)
+    # The doctor needs the Platform service; hardware qualification runs it.
+    self.assertNotRegex(producer, r'"/c",\s*install_root / "bin" / "sima-pcie-host-doctor.cmd"')
+    self.assertIn('"platform": {"version": producer_dependencies["platform_version"]}', producer)
+    # The record of the Platform Scheduler was built against travels, checksum-bound,
+    # from the installed Scheduler package to the card PC's check.
+    self.assertIn(
+        'Path("share") / "SimaScheduler" / "host" / "platform-windows.json"', producer)
+    self.assertIn('"scheduler-platform-windows.json": sha256(platform_record)', producer)
+    self.assertIn('"scheduler-platform-windows.json",',
+                  (SCRIPT_DIR / "windows_candidate.py").read_text(encoding="utf-8"))
+    # The card PC holds the real Platform; the hardware job still names it.
+    self.assertIn('"--platform-runtime", $env:SIMA_WINDOWS_PLATFORM_RUNTIME_DIR',
+                  workflow_job(self.windows, "hardware"))
+
+  def test_card_pc_platform_runtime_matches_scheduler_record(self):
+    with tempfile.TemporaryDirectory() as directory:
+      root = Path(directory)
+      candidate_root = root / "candidate"
+      runtime = root / "Platform runtime"
+      candidate_root.mkdir()
+      runtime.mkdir()
+      (runtime / "SiMaPCIe.dll").write_bytes(b"platform")
+      (runtime / "SiMaCpp.dll").write_bytes(b"not built against")
+      expected = [{"name": "SiMaPCIe.dll", "sha256": sha256(runtime / "SiMaPCIe.dll")}]
+      (candidate_root / "scheduler-platform-windows.json").write_text(json.dumps({
+          "platform_version": "3.0.0.2",
+          "runtime_dlls": {item["name"]: item["sha256"] for item in expected}}),
+          encoding="utf-8")
+      candidate = SimpleNamespace(root=candidate_root)
+      self.assertEqual(HARDWARE.verify_platform_runtime(candidate, runtime), expected)
+      (runtime / "SiMaPCIe.dll").write_bytes(b"another Platform build")
+      with self.assertRaisesRegex(RuntimeError, "differs from the DLLs Scheduler"):
+        HARDWARE.verify_platform_runtime(candidate, runtime)
+      (runtime / "SiMaPCIe.dll").unlink()
+      with self.assertRaisesRegex(RuntimeError, "differs from the DLLs Scheduler"):
+        HARDWARE.verify_platform_runtime(candidate, runtime)
+      (candidate_root / "scheduler-platform-windows.json").write_text(
+          json.dumps({"platform_version": "3.0.0.2"}), encoding="utf-8")
+      with self.assertRaisesRegex(ValueError, "no Platform runtime DLLs"):
+        HARDWARE.verify_platform_runtime(candidate, runtime)
+
+  def test_windows_build_failure_fails_promotion_and_validation(self):
+    # A failed Windows entry fails the matrix job, which publication metadata,
+    # promotion, and the validation-only gate all require to succeed.
+    self.assertNotIn("continue-on-error", self.matrix)
+    self.assertIn("      - build-pciehost-packages\n", workflow_job(self.main, "publish-pciehost-package"))
+    self.assertIn("needs.publish-pciehost-package.result == 'success'",
+                  job_condition(self.main, "promote-latest-tag"))
+    validation = workflow_job(self.main, "validation-complete")
+    self.assertIn("      - build-pciehost-packages\n", validation)
+    skipped = re.findall(r"skipped(?: \|)?= \{([^}]*)\}", validation)
+    self.assertTrue(skipped)
+    self.assertTrue(all("build-pciehost-packages" not in names for names in skipped))
 
 
 if __name__ == "__main__":

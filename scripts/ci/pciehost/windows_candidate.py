@@ -86,15 +86,13 @@ def _dll_inventory(items: list, label: str) -> list[dict[str, str]]:
 def dependency_identity(directory: Path, *, require_dependency_runtime: bool = False) -> dict:
   root = directory.resolve(strict=True)
   receipt = _read_json(root / "windows-dependencies.json", "Windows dependency receipt")
+  # As on Linux, the Platform is identified by version only; its files are
+  # the Platform installer's, not part of the Core or Scheduler cohort.
   platform = receipt.get("platform")
-  runtime_dlls = platform.get("runtime_dlls") if isinstance(platform, dict) else None
   platform_version = platform.get("version") if isinstance(platform, dict) else None
   if (not isinstance(platform_version, str)
       or not re.fullmatch(r"[0-9]+(?:[.][0-9]+){2,3}", platform_version)):
     raise ValueError("Windows dependency receipt has no exact Platform version")
-  if not isinstance(runtime_dlls, list) or not runtime_dlls:
-    raise ValueError("Windows dependency receipt has no Platform runtime DLLs")
-  dlls = _dll_inventory(runtime_dlls, "Platform runtime")
 
   gstreamer = receipt.get("gstreamer")
   version_output = gstreamer.get("version_output") if isinstance(gstreamer, dict) else None
@@ -111,7 +109,6 @@ def dependency_identity(directory: Path, *, require_dependency_runtime: bool = F
           "runtime_dlls": _dll_inventory(gstreamer_dlls, "GStreamer runtime"),
           "version_output": version_output,
       },
-      "platform_runtime_dlls": dlls,
   }
   runtime_cohorts = receipt.get("dependency_runtime")
   if runtime_cohorts is None and not require_dependency_runtime:
@@ -126,6 +123,19 @@ def dependency_identity(directory: Path, *, require_dependency_runtime: bool = F
     normalized_cohorts.append(_dll_inventory(files, "additional runtime"))
   identity["dependency_runtime"] = normalized_cohorts
   return identity
+
+
+def scheduler_platform_runtime(directory: Path) -> list[dict[str, str]]:
+  """Return the Platform runtime DLLs named by Scheduler's installed Platform record."""
+  record = _read_json(
+      directory.resolve(strict=True) / "scheduler-platform-windows.json",
+      "Scheduler Windows Platform record")
+  runtime_dlls = record.get("runtime_dlls")
+  if not isinstance(runtime_dlls, dict) or not runtime_dlls:
+    raise ValueError("Scheduler Windows Platform record has no Platform runtime DLLs")
+  return _dll_inventory(
+      [{"name": name, "sha256": digest} for name, digest in runtime_dlls.items()],
+      "Scheduler Platform runtime")
 
 
 def _read_json(path: Path, description: str) -> dict:
@@ -288,6 +298,7 @@ def validate_candidate(directory: Path) -> WindowsCandidate:
   required_qualification_resources = {
       "msi-transaction-rollback.json",
       "msi-transaction-rollback.log",
+      "scheduler-platform-windows.json",
       "scheduler-windows-signatures.json",
       "scheduler-windows-dependencies.json",
       "windows-dependencies.json",

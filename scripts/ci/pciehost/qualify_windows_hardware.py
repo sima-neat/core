@@ -33,7 +33,8 @@ import time
 import zipfile
 
 from windows_candidate import (
-    dependency_identity, msi_version, require_junit_cases, sha256, validate_candidate,
+    dependency_identity, msi_version, require_junit_cases, scheduler_platform_runtime, sha256,
+    validate_candidate,
     validate_published_package, write_json)
 from windows_hardware_assets import asset_manifest_sha256, verify_asset_manifest
 from windows_release import (
@@ -255,10 +256,9 @@ def require_fresh_directory(path: Path, description: str) -> Path:
   return resolved
 
 
-def verify_dependency_cohort(candidate, platform_runtime: Path, gstreamer_root: Path,
+def verify_dependency_cohort(candidate, gstreamer_root: Path,
                              dependency_runtime_dirs: list[Path]) -> dict:
   expected = dependency_identity(candidate.root, require_dependency_runtime=True)
-  platform_root = platform_runtime.resolve(strict=True)
   gstreamer = gstreamer_root.resolve(strict=True)
   pkg_config = gstreamer / "bin" / "pkg-config.exe"
   gst_inspect = gstreamer / "bin" / "gst-inspect-1.0.exe"
@@ -298,10 +298,6 @@ if ($versions.Count -ne 1 -or -not $versions[0]) { exit 4 }
           ],
           "version_output": result.stdout.strip(),
       },
-      "platform_runtime_dlls": [
-          {"name": path.name, "sha256": sha256(path)}
-          for path in sorted(platform_root.glob("*.dll"), key=lambda path: path.name.lower())
-      ],
       "dependency_runtime": [],
   }
   for value in dependency_runtime_dirs:
@@ -315,6 +311,26 @@ if ($versions.Count -ne 1 -or -not $versions[0]) { exit 4 }
   if actual != expected:
     raise RuntimeError(
         "hardware runner runtime dependencies differ from the built candidate")
+  return actual
+
+
+def verify_platform_runtime(candidate, platform_runtime: Path) -> list[dict]:
+  """Require the installed Platform DLLs that Scheduler was built against.
+
+  Linux checks the Platform version. Windows Platform builds all report one
+  version, so the card PC compares the exact DLLs that Scheduler's installed
+  Platform record names.
+  """
+  expected = scheduler_platform_runtime(candidate.root)
+  root = platform_runtime.resolve(strict=True)
+  actual = [
+      {"name": item["name"],
+       "sha256": sha256(root / item["name"]) if (root / item["name"]).is_file() else None}
+      for item in expected
+  ]
+  if actual != expected:
+    raise RuntimeError(
+        "installed Platform runtime differs from the DLLs Scheduler was built against")
   return actual
 
 
@@ -2548,8 +2564,8 @@ def qualify(args: argparse.Namespace) -> None:
   cli_wheel = sima_cli_wheel(args.sima_cli_candidate)
   cli_identity = sima_cli_identity(cli_wheel, args.expected_sima_cli_commit)
   dependency_cohort = verify_dependency_cohort(
-      candidate, args.platform_runtime, args.gstreamer_root,
-      args.dependency_runtime_dir)
+      candidate, args.gstreamer_root, args.dependency_runtime_dir)
+  platform_runtime = verify_platform_runtime(candidate, args.platform_runtime)
   asset_environment = os.environ.copy()
   asset_manifest = verify_asset_manifest(
       args.asset_manifest, asset_environment, args.include_genai)
@@ -2581,6 +2597,7 @@ def qualify(args: argparse.Namespace) -> None:
           "python": platform.python_version(),
       },
       "dependencies": dependency_cohort,
+      "platform_runtime": platform_runtime,
       "tests": {"cpp": [], "python": []},
   }
   venv = work / "venv"
@@ -2977,8 +2994,7 @@ def qualify(args: argparse.Namespace) -> None:
       try:
         host_state_final = {
             "dependencies": verify_dependency_cohort(
-                candidate, args.platform_runtime, args.gstreamer_root,
-                args.dependency_runtime_dir),
+                candidate, args.gstreamer_root, args.dependency_runtime_dir),
             "platform": windows_platform_state_snapshot(
                 evidence / "windows-platform-final.log"),
         }
