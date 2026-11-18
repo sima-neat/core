@@ -21,25 +21,25 @@
     },
     {
       "path": "website/i18n/ko/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
-      "line": "이 유틸리티는 로컬 `10.0.N.1` 관리 링크에서 카드 주소를 검색합니다. 자동 검색을 사용할 수 없으면 `-Hosts 10.0.0.2`를 전달하세요. 공개 키가 아직 등록되지 않은 경우에만 OpenSSH가 카드 암호를 요청하며, 암호는 저장되지 않습니다.",
+      "line": "이 유틸리티는 로컬 `10.0.N.1` 관리 링크에서 카드 주소를 검색합니다. 자동 검색을 사용할 수 없으면 `-Hosts 10.0.0.2`를 전달하세요. 공개 키가 아직 등록되지 않은 경우에만 OpenSSH가 카드 암호를 요청하며, 암호는 저장되지 않습니다. `.cmd` 래퍼는 자체 PowerShell 프로세스에서만 설치된 이 스크립트의 실행을 허용하며, 사용자 또는 컴퓨터의 실행 정책은 변경하지 않습니다.",
       "count": 1,
       "reason": "Network address example, not a release version"
     },
     {
       "path": "website/i18n/ja/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
-      "line": "このユーティリティは、ローカルの`10.0.N.1`管理リンクからカードのアドレスを検出します。自動検出できない場合は、`-Hosts 10.0.0.2`を指定してください。公開鍵がまだ登録されていない場合にのみOpenSSHがカードのパスワードを要求し、パスワードは保存されません。",
+      "line": "このユーティリティは、ローカルの`10.0.N.1`管理リンクからカードのアドレスを検出します。自動検出できない場合は、`-Hosts 10.0.0.2`を指定してください。公開鍵がまだ登録されていない場合にのみOpenSSHがカードのパスワードを要求し、パスワードは保存されません。`.cmd`ラッパーは、自身のPowerShellプロセスに限ってこのインストール済みスクリプトの実行を許可し、ユーザーやマシンの実行ポリシーは変更しません。",
       "count": 1,
       "reason": "Network address example, not a release version"
     },
     {
       "path": "website/i18n/zh-Hant/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
-      "line": "此工具會從本機的 `10.0.N.1` 管理連線探索卡片位址。若無法自動探索，請傳入 `-Hosts 10.0.0.2`。只有在公開金鑰尚未註冊時，OpenSSH 才會提示輸入卡片密碼；工具不會儲存該密碼。",
+      "line": "此工具會從本機的 `10.0.N.1` 管理連線探索卡片位址。若無法自動探索，請傳入 `-Hosts 10.0.0.2`。只有在公開金鑰尚未註冊時，OpenSSH 才會提示輸入卡片密碼；工具不會儲存該密碼。`.cmd` 包裝指令碼只會在其自身的 PowerShell 程序中允許執行此已安裝的指令碼，不會變更使用者或電腦的執行原則。",
       "count": 1,
       "reason": "Network address example, not a release version"
     },
     {
       "path": "website/i18n/uk/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
-      "line": "Програма знаходить адресу карти через локальне з'єднання керування `10.0.N.1`. Якщо автоматичне виявлення недоступне, передайте `-Hosts 10.0.0.2`. OpenSSH запитує пароль карти лише тоді, коли відкритий ключ ще не зареєстровано, і не зберігає цей пароль.",
+      "line": "Програма знаходить адресу карти через локальне з'єднання керування `10.0.N.1`. Якщо автоматичне виявлення недоступне, передайте `-Hosts 10.0.0.2`. OpenSSH запитує пароль карти лише тоді, коли відкритий ключ ще не зареєстровано, і не зберігає цей пароль. Обгортка `.cmd` дозволяє виконувати цей встановлений сценарій лише у власному процесі PowerShell; вона не змінює політику виконання для користувача чи комп’ютера.",
       "count": 1,
       "reason": "Network address example, not a release version"
     },
