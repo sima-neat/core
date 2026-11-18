@@ -1,6 +1,5 @@
 #include "nodes/io/HttpSource.h"
 
-#include <limits>
 #include <memory>
 #include <sstream>
 #include <stdexcept>
@@ -18,11 +17,9 @@ HttpSource::HttpSource(HttpSourceOptions opt) : opt_(std::move(opt)) {
 
 std::string HttpSource::backend_fragment(int node_index) const {
   const std::string el = "n" + std::to_string(node_index) + "_souphttpsrc";
-  // souphttpsrc 1.26 checks the retry limit before the first request, even for -1.
-  const int retries = opt_.retries == -1 ? std::numeric_limits<int>::max() : opt_.retries;
   std::ostringstream ss;
   ss << "souphttpsrc name=" << el << " location=\"" << opt_.location << "\""
-     << " timeout=" << opt_.timeout_seconds << " retries=" << retries
+     << " timeout=" << opt_.timeout_seconds << " retries=" << opt_.retries
      << " is-live=" << (opt_.is_live ? "true" : "false")
      << " do-timestamp=" << (opt_.do_timestamp ? "true" : "false")
      << " ssl-strict=" << (opt_.ssl_strict ? "true" : "false");
