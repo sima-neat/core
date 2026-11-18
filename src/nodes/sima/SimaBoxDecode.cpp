@@ -11,7 +11,7 @@
 #include "pipeline/internal/sima/BoxDecodeStaticContractExtractor.h"
 #include "pipeline/internal/sima/BoxDecodeTypeUtils.h"
 #include "pipeline/internal/sima/BoxDecodeKernelAdmission.h"
-#include "pipeline/internal/sima/BoxDecodeKernelRecipe.h"
+#include "contracts/BoxDecodeWireFormat.h"
 #include "pipeline/DetectionTypes.h"
 #include "pipeline/internal/sima/stagesemantics/BoxDecodeStageSemantics.h"
 #include "pipeline/internal/sima/stagesemantics/SsdDecodeContract.h"
@@ -1396,8 +1396,8 @@ OutputSpec SimaBoxDecode::output_spec(const OutputSpec& input) const {
     const auto feature_format = opt_->compiled_contract
                                     ? opt_->compiled_contract->payload.superpoint.output_format
                                     : opt_->superpoint.output_format;
-    out.format =
-        pipeline_internal::sima::boxdecode_output_format(opt_->decode_type, feature_format);
+    out.format = contracts::boxdecode_output_format(
+        contracts::boxdecode_wire_hint(opt_->decode_type, feature_format));
   } else {
     out.format = kDetectionFormatBbox;
   }

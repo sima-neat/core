@@ -433,19 +433,6 @@ bool uses_source_multiclass_ssd_policy(const BoxDecodeStagePayload& payload) {
 }
 } // namespace
 
-const char* boxdecode_output_format(BoxDecodeType type, SuperPointOutputFormat feature_format) {
-  if (type == BoxDecodeType::SuperPoint)
-    return feature_format == SuperPointOutputFormat::LegacyA65InterleavedV0
-               ? kFeatureFormatLegacyA65V0
-               : kFeatureFormatPointsV1;
-  if (box_decode_type_is_oriented(type))
-    return kDetectionFormatBboxObbV1;
-  if (box_decode_type_is_segmentation(type))
-    return box_decode_type_is_pose(type) ? kDetectionFormatBboxSegmentationPose
-                                         : kDetectionFormatBboxSegmentation;
-  return box_decode_type_is_pose(type) ? kDetectionFormatBboxPose : kDetectionFormatBbox;
-}
-
 bool boxdecode_supports_detection_transform(BoxDecodeType type) {
   switch (type) {
   case BoxDecodeType::YoloV26:
@@ -1218,7 +1205,7 @@ BoxDecodeKernelRecipeResult prepare_boxdecode_kernel(const CompiledBoxDecodeCont
   build.recipe->metrics = std::move(metrics);
   build.recipe->boxdecode_settings = KernelStageRecipe::BoxDecodeSettings{
       p.decode_type, p.num_classes, p.detection_threshold, p.nms_iou_threshold, p.topk};
-  build.recipe->output_format = boxdecode_output_format(p.decode_type, p.superpoint.output_format);
+  build.recipe->output_format = contracts::boxdecode_output_format(wire);
   build.compiled.recipe = std::move(build.recipe);
   return {std::move(build.compiled), decode_member};
 }

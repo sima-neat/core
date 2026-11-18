@@ -9,7 +9,6 @@
 #include "pipeline/internal/contract/PluginCompiledContracts.h"
 
 namespace simaai::neat::pipeline_internal::sima {
-const char* boxdecode_output_format(BoxDecodeType type, SuperPointOutputFormat feature_format);
 
 // Nominal geometry belongs to the admitted decode recipe, even for identity
 // model-shaped input with no resize operation. Explicit provenance still wins.

@@ -60,7 +60,8 @@ struct BoxDecodeResult {
 /// List form used by public stage APIs; even single-image decode results travel as a list.
 using BoxDecodeResultList = std::vector<BoxDecodeResult>;
 
-/// Canonical detection-format token for BoxDecode bounding-box payloads.
+/// Callers matching literal "BBOX" select plain boxes. Match the specialized tags below
+/// for outputs carrying keypoints, instance masks or oriented boxes.
 inline constexpr char kDetectionFormatBbox[] = "BBOX";
 /// Canonical detection-format token for BoxDecode pose payloads.
 inline constexpr char kDetectionFormatBboxPose[] = "BBOX_POSE";
