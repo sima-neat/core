@@ -145,6 +145,25 @@ RUN_TEST(
           require_contains(error.what(), "Graph::run_rtsp()", "still-image run guidance");
         }
 
+        auto saved = image_path;
+        saved.replace_extension(".json");
+        source.save(saved.string());
+        Graph restored = Graph::load(saved.string());
+        std::filesystem::remove(saved);
+        for (bool rtsp : {false, true}) {
+          try {
+            if (rtsp)
+              (void)restored.run_rtsp({});
+            else
+              (void)restored.build();
+            throw std::runtime_error("accepted a saved still-image fragment");
+          } catch (const NeatError& error) {
+            require(error.report().error_code == error_codes::kPipelineShape,
+                    "saved still-image failure should report the pipeline shape");
+            require_contains(error.what(), "image path", "saved still-image recovery");
+          }
+        }
+
         Graph graph;
         graph.add(nodes::StillImageInput(image_path.string(), 8, 8, 8, 8, 5));
         graph.custom("identity name=rtsp_h264_capsfix ! rtph264pay name=pay0");
