@@ -2385,6 +2385,8 @@ static void check_rtsp_video_sdp(GstElement* src, GstSDPMessage* sdp, gpointer d
     const auto* media = gst_sdp_message_get_media(sdp, i);
     if (g_strcmp0(gst_sdp_media_get_media(media), "video") != 0)
       continue;
+    if (gst_sdp_media_formats_len(media) == 0)
+      return;
     for (guint j = 0; j < gst_sdp_media_formats_len(media); ++j) {
       const char* format = gst_sdp_media_get_format(media, j);
       guint64 payload;
@@ -2407,14 +2409,14 @@ static void check_rtsp_video_sdp(GstElement* src, GstSDPMessage* sdp, gpointer d
       offered += std::string(codec) + " payload_type=" + format;
     }
   }
-  if (!offered.empty()) {
-    const auto want = std::string(requested.codec) + " payload_type=" +
-                      (requested.payload > 0 ? std::to_string(requested.payload) : "any");
-    GST_ELEMENT_ERROR_WITH_DETAILS(
-        src, CORE, NEGOTIATION, ("No matching RTSP video stream"), (nullptr),
-        ("neat-diagnostic-id", G_TYPE_STRING, "rtsp.video_caps_mismatch", "requested",
-         G_TYPE_STRING, want.c_str(), "offered", G_TYPE_STRING, offered.c_str(), nullptr));
-  }
+  if (offered.empty())
+    offered = "no video streams";
+  const auto want = std::string(requested.codec) + " payload_type=" +
+                    (requested.payload > 0 ? std::to_string(requested.payload) : "any");
+  GST_ELEMENT_ERROR_WITH_DETAILS(
+      src, CORE, NEGOTIATION, ("No matching RTSP video stream"), (nullptr),
+      ("neat-diagnostic-id", G_TYPE_STRING, "rtsp.video_caps_mismatch", "requested", G_TYPE_STRING,
+       want.c_str(), "offered", G_TYPE_STRING, offered.c_str(), nullptr));
 }
 
 static void attach_rtsp_diagnostics(GstElement* pipeline,

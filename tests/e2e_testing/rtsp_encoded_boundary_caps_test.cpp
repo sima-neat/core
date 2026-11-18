@@ -8,6 +8,7 @@
 #include "pipeline/ErrorCodes.h"
 #include "test_utils.h"
 
+#include <gst/rtsp-server/rtsp-server.h>
 #include <chrono>
 #include <cstdlib>
 #include <iostream>
@@ -84,11 +85,40 @@ simaai::neat::Sample pull_one_encoded_sample(simaai::neat::Run& run, int timeout
   throw std::runtime_error("RTSP encoded source did not produce a sample before timeout");
 }
 
+void check_audio_only_offer() {
+  using namespace simaai::neat;
+  g_autoptr(GMainContext) context = g_main_context_new();
+  g_autoptr(GstRTSPServer) server = gst_rtsp_server_new();
+  gst_rtsp_server_set_address(server, "127.0.0.1");
+  gst_rtsp_server_set_service(server, "0");
+  g_autoptr(GstRTSPMountPoints) mounts = gst_rtsp_server_get_mount_points(server);
+  auto* factory = gst_rtsp_media_factory_new();
+  gst_rtsp_media_factory_set_launch(
+      factory, "( audiotestsrc is-live=true ! alawenc ! rtppcmapay name=pay0 pt=8 )");
+  gst_rtsp_mount_points_add_factory(mounts, "/audio", factory);
+  require(gst_rtsp_server_attach(server, context) != 0, "could not bind audio RTSP fixture");
+  std::jthread worker([&](std::stop_token stop) {
+    std::stop_callback wake(stop, [&] { g_main_context_wakeup(context); });
+    while (!stop.stop_requested())
+      g_main_context_iteration(context, TRUE);
+  });
+
+  Graph graph;
+  const auto url =
+      "rtsp://127.0.0.1:" + std::to_string(gst_rtsp_server_get_bound_port(server)) + "/audio";
+  graph.add(nodes::RTSPInput(url, 200, true));
+  graph.add(nodes::H264Depacketize(96, 1));
+  graph.add(nodes::Output());
+  require_neat_error([&] { (void)graph.build(); }, error_codes::kMediaCaps, "H264 payload_type=96",
+                     "Offered: no video streams");
+}
+
 } // namespace
 
 int main() {
   try {
     simaai::neat::gst_init_once();
+    check_audio_only_offer();
     const std::string rtsp_url = first_rtsp_url_from_env();
     if (rtsp_url.empty()) {
       std::cout << "[SKIP] set SIMANEAT_TEST_RTSP_H264_URL or "
