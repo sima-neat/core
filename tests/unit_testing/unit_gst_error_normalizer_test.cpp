@@ -256,6 +256,31 @@ RUN_TEST(
       }
 
       {
+        auto url = raw_error("souphttpsrc", "gst-resource-error-quark",
+                             GST_RESOURCE_ERROR_OPEN_READ, "Error parsing URL.");
+        url.details["source-identity"] = "bad-url";
+        const auto invalid = classify_gst_error(url);
+        require_code(invalid, error_codes::kIoOpen);
+        require_contains(render_diagnostic_body(invalid, false), "bad-url", "HTTP URL identity");
+        auto soup = raw_error("souphttpsrc", "gst-stream-error-quark", GST_STREAM_ERROR_FAILED,
+                              "Internal data stream error.");
+        soup.debug = "streaming stopped, reason error (-5)";
+        const auto fallback = classify_gst_error(soup);
+        require_code(fallback, error_codes::kIoOpen);
+        require(diagnostic_priority(invalid) > diagnostic_priority(fallback),
+                "the malformed URL must outrank the generic source failure");
+        auto demux = raw_error("multipartdemux", "gst-stream-error-quark", GST_STREAM_ERROR_DEMUX,
+                               "Could not demultiplex stream.");
+        demux.debug = "Boundary not found in the multipart header";
+        const auto boundary = classify_gst_error(demux);
+        require_code(boundary, error_codes::kMediaFormat);
+        require_contains(render_diagnostic_body(boundary, false), "multipart_boundary",
+                         "boundary setting");
+        require(diagnostic_priority(boundary) > diagnostic_priority(fallback),
+                "demux failures must outrank propagated source failures");
+      }
+
+      {
         RawGstError raw =
             raw_error("neatprocesscvu", "gst-stream-error-quark", GST_STREAM_ERROR_FAILED,
                       "input envelope violation actual_w=1920 actual_h=1080 "

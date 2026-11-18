@@ -1239,11 +1239,17 @@ RawGstError parse_gst_error_message(GstMessage* message) {
         const char* factory_name = gst_plugin_feature_get_name(GST_PLUGIN_FEATURE(factory));
         out.factory_name = factory_name ? factory_name : "";
       }
-      if (out.factory_name == "filesrc" || out.factory_name == "rtspsrc") {
+      if (out.factory_name == "filesrc" || out.factory_name == "rtspsrc" ||
+          out.factory_name == "souphttpsrc") {
         const std::string location =
             readable_string_property(G_OBJECT(GST_MESSAGE_SRC(message)), "location");
         if (!location.empty())
           out.details.emplace("source-identity", location);
+      } else if (out.factory_name == "multipartdemux") {
+        std::string boundary =
+            readable_string_property(G_OBJECT(GST_MESSAGE_SRC(message)), "boundary");
+        if (!boundary.empty())
+          out.details.emplace("boundary", std::move(boundary));
       } else if (out.factory_name == "libcamerasrc") {
         std::string camera =
             readable_string_property(G_OBJECT(GST_MESSAGE_SRC(message)), "camera-name");
@@ -1381,6 +1387,36 @@ NormalizedDiagnostic classify_gst_error(RawGstError raw) {
   if (raw.domain_name == "gst-resource-error-quark" &&
       raw.code == GST_RESOURCE_ERROR_NOT_AUTHORIZED && remote_source(raw)) {
     return authentication_failed(std::move(raw));
+  }
+  if (raw.factory_name == "souphttpsrc") {
+    const bool invalid_url = raw.domain_name == "gst-resource-error-quark" &&
+                             raw.code == GST_RESOURCE_ERROR_OPEN_READ &&
+                             contains_ci(raw.message, "error parsing url");
+    const bool stream_stopped = raw.domain_name == "gst-stream-error-quark" &&
+                                raw.code == GST_STREAM_ERROR_FAILED &&
+                                contains_ci(raw.debug, "streaming stopped, reason error");
+    if (invalid_url || stream_stopped) {
+      auto out = base(std::move(raw), error_codes::kIoOpen,
+                      invalid_url ? "http.invalid_url" : "http.read_failed",
+                      invalid_url ? "The HTTP source URL is invalid."
+                                  : "The HTTP stream could not be read.");
+      add_fact(out, "Source", find_detail(out.raw, {"source-identity"}).value_or(""));
+      out.actions = {invalid_url
+                         ? "Set the source URL to a complete http:// or https:// address."
+                         : "Check the URL, port, and HTTP server availability from the DevKit."};
+      return out;
+    }
+  }
+  if (raw.factory_name == "multipartdemux" && raw.domain_name == "gst-stream-error-quark" &&
+      raw.code == GST_STREAM_ERROR_DEMUX &&
+      contains_ci(raw.debug, "Boundary not found in the multipart header")) {
+    auto out = base(std::move(raw), error_codes::kMediaFormat, "http.multipart_boundary",
+                    "The multipart boundary does not match the JPEG stream.");
+    add_fact(out, "Boundary", find_detail(out.raw, {"boundary"}).value_or(""));
+    out.actions = {
+        "Check the server's multipart Content-Type and delimiters. Leave multipart_boundary empty "
+        "for automatic detection or set it to the server's boundary."};
+    return out;
   }
   if (raw.factory_name == "rtspsrc" &&
       (contains_ci(text, "failed to connect") || contains_ci(text, "could not open resource"))) {
@@ -1586,6 +1622,10 @@ int diagnostic_priority(const NormalizedDiagnostic& diagnostic) {
           .has_value()) {
     return 200;
   }
+
+  // A generic flow failure propagated to the source must yield to a specific stage error.
+  if (diagnostic.diagnostic_id == "http.read_failed")
+    return 20;
 
   if (diagnostic.error_code.rfind("resource.", 0) == 0 ||
       diagnostic.error_code.rfind("io.", 0) == 0 || diagnostic.error_code.rfind("codec.", 0) == 0 ||

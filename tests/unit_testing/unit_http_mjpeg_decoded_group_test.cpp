@@ -19,6 +19,7 @@
 
 #include <functional>
 #include <iostream>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <stdexcept>
@@ -148,6 +149,9 @@ int main() {
     source.location = opt.url;
     source.timeout_seconds = opt.timeout_seconds;
     source.retries = opt.retries;
+    require_contains(simaai::neat::HttpSource(source).backend_fragment(0),
+                     "retries=" + std::to_string(std::numeric_limits<int>::max()),
+                     "unlimited retries must allow the initial souphttpsrc request");
     source.is_live = opt.is_live;
     source.do_timestamp = opt.do_timestamp;
     source.user_agent = opt.user_agent;
