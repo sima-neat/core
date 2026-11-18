@@ -32,7 +32,7 @@ namespace simaai::neat::nodes::groups {
 struct HttpMjpegDecodedInputOptions {
   std::string url;                ///< HTTP/HTTPS multipart MJPEG URL to consume.
   int timeout_seconds = 15;       ///< Blocking HTTP I/O timeout in seconds; `0` disables timeout.
-  int retries = 3;                ///< Maximum HTTP retries before failing; `-1` means infinite.
+  int retries = 3;                ///< Retry count. Use -1 for the provider maximum.
   bool is_live = true;            ///< Mark the HTTP source as live.
   bool do_timestamp = true;       ///< Timestamp outgoing source buffers with stream time.
   std::string user_agent;         ///< Optional HTTP User-Agent override.

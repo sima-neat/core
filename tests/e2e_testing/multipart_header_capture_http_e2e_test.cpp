@@ -13,6 +13,8 @@
  */
 #include "gst/GstHelpers.h"
 #include "gst/GstInit.h"
+#include "nodes/io/HttpSource.h"
+#include <chrono>
 #include "gst/GstSampleAttributes.h"
 
 #include "test_main.h"
@@ -30,6 +32,7 @@
 #include <cstdint>
 #include <cstring>
 #include <map>
+#include <limits>
 #include <string>
 #include <thread>
 #include <vector>
@@ -96,10 +99,10 @@ std::string build_part(int index) {
   return out;
 }
 
-/// Finite single-connection HTTP server. Serves one multipart response and exits.
+/// Returns the requested number of transient failures before serving the multipart stream.
 class MjpegServer {
 public:
-  bool start() {
+  bool start(unsigned transient_failures = 0) {
     listen_fd_ = ::socket(AF_INET, SOCK_STREAM, 0);
     if (listen_fd_ < 0) {
       return false;
@@ -122,7 +125,8 @@ public:
     if (::listen(listen_fd_, 1) != 0) {
       return false;
     }
-    worker_ = std::thread([this] { serve(); });
+    worker_ =
+        std::thread([this, fd = listen_fd_, transient_failures] { serve(fd, transient_failures); });
     return true;
   }
 
@@ -148,9 +152,24 @@ public:
     return port_;
   }
 
+  unsigned retries_served() const {
+    return retries_served_.load();
+  }
+
 private:
-  void serve() {
-    const int fd = ::accept(listen_fd_, nullptr, nullptr);
+  void serve(int listener, unsigned failures) {
+    for (unsigned i = 0; i < failures && !stopping_; ++i) {
+      const int client = ::accept(listener, nullptr, nullptr);
+      if (client < 0)
+        return;
+      char request[2048];
+      (void)::recv(client, request, sizeof(request), 0);
+      constexpr char response[] = "HTTP/1.0 503 Service Unavailable\r\nContent-Length: 0\r\n\r\n";
+      (void)::send(client, response, sizeof(response) - 1, MSG_NOSIGNAL);
+      ::close(client);
+      ++retries_served_;
+    }
+    const int fd = ::accept(listener, nullptr, nullptr);
     if (fd < 0) {
       return;
     }
@@ -186,6 +205,7 @@ private:
   int listen_fd_ = -1;
   int port_ = 0;
   std::atomic<bool> stopping_{false};
+  std::atomic<unsigned> retries_served_{0};
   std::thread worker_;
 };
 
@@ -251,6 +271,14 @@ void verify_branch(const std::vector<Frame>& frames, const std::string& label) {
   }
 }
 
+std::string http_fragment(const MjpegServer& server) {
+  simaai::neat::HttpSourceOptions options;
+  options.location = "http://127.0.0.1:" + std::to_string(server.port()) + "/stream";
+  options.retries = -1;
+  options.is_live = false;
+  return simaai::neat::HttpSource(options).backend_fragment(0);
+}
+
 void test_http_multipart_capture_through_branches() {
   simaai::neat::gst_init_once();
   require(simaai::neat::element_exists("souphttpsrc"), "souphttpsrc must be available");
@@ -258,13 +286,12 @@ void test_http_multipart_capture_through_branches() {
           "neatmultipartjpegdemux must be registered");
 
   MjpegServer server;
-  require(server.start(), "localhost MJPEG server must start on an ephemeral port");
+  require(server.start(4), "localhost MJPEG server must start on an ephemeral port");
 
   // Asymmetric branch delay: the slow branch holds each buffer long enough that the fast
   // branch is several frames ahead, which is where cross-branch aliasing would show up.
   const std::string launch =
-      "souphttpsrc location=http://127.0.0.1:" + std::to_string(server.port()) +
-      "/stream is-live=false ! neatmultipartjpegdemux boundary=" + std::string(kBoundary) +
+      http_fragment(server) + " ! neatmultipartjpegdemux boundary=" + std::string(kBoundary) +
       " capture-headers=\"image-index,image-time\" ! tee name=t "
       "t. ! queue max-size-buffers=64 ! appsink name=fast sync=false max-buffers=64 "
       "t. ! queue max-size-buffers=64 ! identity sleep-time=15000 ! appsink name=slow "
@@ -309,5 +336,21 @@ void test_http_multipart_capture_through_branches() {
 
 } // namespace
 
-RUN_TEST("multipart_header_capture_http_e2e",
-         [] { test_http_multipart_capture_through_branches(); })
+RUN_TEST("multipart_header_capture_http_e2e", ([] {
+           test_http_multipart_capture_through_branches();
+
+           MjpegServer server;
+           require(server.start(std::numeric_limits<unsigned>::max()), "retry server startup");
+           const std::string launch = http_fragment(server) + " ! fakesink";
+           g_autoptr(GstElement) pipe = gst_parse_launch(launch.c_str(), nullptr);
+           require(pipe != nullptr, "HTTP retry pipeline");
+           gst_element_set_state(pipe, GST_STATE_PLAYING);
+           const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(8);
+           while (server.retries_served() < 2 && std::chrono::steady_clock::now() < deadline)
+             std::this_thread::sleep_for(std::chrono::milliseconds(10));
+           const auto start = std::chrono::steady_clock::now();
+           gst_element_set_state(pipe, GST_STATE_NULL);
+           require(server.retries_served() >= 2, "HTTP source must retry a transient failure");
+           require(std::chrono::steady_clock::now() - start < std::chrono::seconds(3),
+                   "stopping an HTTP source must cancel retries");
+         }))
