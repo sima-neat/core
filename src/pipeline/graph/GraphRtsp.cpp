@@ -15,6 +15,8 @@
 #include "gst/GstHelpers.h"
 
 #include "pipeline/NeatError.h"
+#include "pipeline/ErrorCodes.h"
+#include "pipeline/internal/ErrorUtil.h"
 #include "pipeline/GraphReport.h"
 #include "internal/InputStream.h"
 #include "internal/InputStreamUtil.h"
@@ -56,6 +58,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <functional>
+#include <future>
 #include <fstream>
 #include <iterator>
 #include <memory>
@@ -80,7 +83,6 @@ using simaai::neat::pipeline_internal::DiagCtx;
 // =====================================================================================
 
 struct RtspServerImpl {
-  std::string url;
   std::string mount_path;
   std::string appsrc_name;
   int port = 8554;
@@ -90,7 +92,6 @@ struct RtspServerImpl {
   std::thread th;
   std::atomic<bool> running{false};
   std::atomic<bool> stop_requested{false};
-  std::atomic<GMainLoop*> loop{nullptr};
   std::atomic<bool> thread_done{false};
 
   int enc_w = 0;
@@ -384,13 +385,9 @@ void RtspServerHandle::stop() {
     std::fprintf(stderr, "[STOP] RtspServerHandle::stop begin\n");
   }
   if (rtsp_debug_enabled()) {
-    std::fprintf(stderr, "[rtsp] stop: running=%d loop=%p\n", impl->running.load() ? 1 : 0,
-                 static_cast<void*>(impl->loop.load()));
+    std::fprintf(stderr, "[rtsp] stop: running=%d\n", impl->running.load() ? 1 : 0);
   }
   impl->stop_requested.store(true);
-  if (auto* loop = impl->loop.load(std::memory_order_acquire)) {
-    g_main_loop_quit(loop);
-  }
   g_main_context_wakeup(g_main_context_default());
 
   const int stop_timeout_ms =
@@ -427,6 +424,9 @@ void RtspServerHandle::stop() {
 }
 
 RtspServerHandle Graph::run_rtsp(const RtspServerOptions& opt) {
+  if (opt.port < 0 || opt.port > 65535)
+    pipeline_internal::error_util::throw_session_error(
+        error_codes::kOptionOutOfRange, "RtspServerOptions.port must be in [0, 65535].");
   gst_init_once();
 
   const auto nodes = linear_nodes_snapshot("Graph::run_rtsp");
@@ -495,7 +495,6 @@ RtspServerHandle Graph::run_rtsp(const RtspServerOptions& opt) {
   impl->rtp_port_base = opt.rtp_port_base;
   impl->rtp_port_count = opt.rtp_port_count;
   impl->mount_path = ensure_mount_path(opt.mount);
-  impl->url = make_rtsp_url(opt.port, opt.mount);
   impl->appsrc_name = apply_name_transform(name_transform, "mysrc");
   impl->enc_w = src_img->enc_w();
   impl->enc_h = src_img->enc_h();
@@ -504,11 +503,13 @@ RtspServerHandle Graph::run_rtsp(const RtspServerOptions& opt) {
   impl->guard = guard;
 
   RtspServerHandle handle;
-  handle.url_ = impl->url;
   handle.impl_ = new RtspImplPtr(impl_sp);
   handle.guard_ = std::move(guard);
 
-  impl->th = std::thread([impl_sp, launch = last_pipeline_]() {
+  std::promise<int> startup;
+  auto bound_port = startup.get_future();
+  impl->th = std::thread([impl_sp, launch = last_pipeline_,
+                          startup = std::move(startup)]() mutable {
     auto* impl = impl_sp.get();
     struct DoneGuard {
       std::atomic<bool>& flag;
@@ -634,39 +635,19 @@ RtspServerHandle Graph::run_rtsp(const RtspServerOptions& opt) {
     gst_rtsp_mount_points_add_factory(mounts, impl->mount_path.c_str(), factory);
     g_object_unref(mounts);
 
-    if (gst_rtsp_server_attach(server, nullptr) == 0) {
-      if (rtsp_debug_enabled()) {
-        std::fprintf(stderr, "[rtsp] attach failed\n");
-      }
+    const guint source = gst_rtsp_server_attach(server, nullptr);
+    if (!source) {
       g_object_unref(server);
+      startup.set_value(-1);
       return;
     }
 
-    if (impl->stop_requested.load()) {
-      if (rtsp_debug_enabled()) {
-        std::fprintf(stderr, "[rtsp] stop requested before loop\n");
-      }
-      g_object_unref(server);
-      return;
-    }
-
-    GMainLoop* loop = g_main_loop_new(nullptr, FALSE);
-    impl->loop.store(loop, std::memory_order_release);
-    if (impl->stop_requested.load()) {
-      if (rtsp_debug_enabled()) {
-        std::fprintf(stderr, "[rtsp] stop requested after loop init\n");
-      }
-      g_main_loop_unref(loop);
-      impl->loop.store(nullptr, std::memory_order_release);
-      g_object_unref(server);
-      return;
-    }
     impl->running.store(true);
-    g_main_loop_run(loop);
-
+    startup.set_value(gst_rtsp_server_get_bound_port(server));
+    while (!impl->stop_requested.load())
+      g_main_context_iteration(nullptr, TRUE);
     impl->running.store(false);
-    g_main_loop_unref(loop);
-    impl->loop.store(nullptr, std::memory_order_release);
+    g_source_remove(source);
 
     if (rtsp_debug_enabled()) {
       std::fprintf(stderr, "[rtsp] thread exit\n");
@@ -674,7 +655,13 @@ RtspServerHandle Graph::run_rtsp(const RtspServerOptions& opt) {
     g_object_unref(server);
   });
 
-  std::this_thread::sleep_for(std::chrono::milliseconds(250));
+  const int port = bound_port.get();
+  if (port <= 0)
+    pipeline_internal::error_util::throw_session_error(
+        error_codes::kIoOpen,
+        "Could not bind the RTSP server to port " + std::to_string(opt.port) + ".", {},
+        "Check whether the port is occupied or requires additional privileges.");
+  handle.url_ = make_rtsp_url(port, opt.mount);
   return handle;
 }
 

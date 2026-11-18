@@ -1,5 +1,7 @@
 #include "asset_utils.h"
 #include "nodes/io/StillImageInput.h"
+#include "pipeline/ErrorCodes.h"
+#include "pipeline/NeatError.h"
 #include "pipeline/Graph.h"
 #include "runtime_test_utils.h"
 #include "test_main.h"
@@ -101,31 +103,18 @@ RUN_TEST("graph_rtsp_lifecycle_regression_test", ([] {
              o2.mount = "conflict_b";
              o2.port = conflict_port;
 
-             RtspServerHandle h1;
-             RtspServerHandle h2;
-
-             try {
-               h1 = s1.run_rtsp(o1);
-               h2 = s2.run_rtsp(o2);
-             } catch (const std::exception& e) {
-               if (runtime_missing_rtsp_elements(e.what())) {
-                 throw std::runtime_error(std::string("RTSP runtime unavailable: ") + e.what());
-               }
-               throw;
-             }
-
-             std::this_thread::sleep_for(std::chrono::milliseconds(450));
-             if (!h1.running()) {
-               h1.stop();
-               h2.stop();
-               throw std::runtime_error(
-                   "RTSP server failed to start on primary port; cannot validate conflict path");
-             }
-             require(
-                 !h2.running(),
-                 "Graph::run_rtsp conflict: second server on occupied port should not be running");
-
-             h2.stop();
+             auto h1 = s1.run_rtsp(o1);
+             require(h1.running(), "the listening server must be ready on return");
+             require_neat_error([&] { (void)s2.run_rtsp(o2); }, error_codes::kIoOpen,
+                                std::to_string(conflict_port));
+             o2.port = 65536;
+             require_neat_error([&] { (void)s2.run_rtsp(o2); }, error_codes::kOptionOutOfRange,
+                                "port");
+             o2.port = 0;
+             auto ephemeral = s2.run_rtsp(o2);
+             require(ephemeral.running() && ephemeral.url().find(":0/") == std::string::npos,
+                     "an ephemeral RTSP server must publish the bound port");
+             ephemeral.stop();
              h1.stop();
            }
          }));
