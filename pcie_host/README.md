@@ -322,9 +322,9 @@ Drain all results submitted with `push(...)` before calling `run(...)`.
 `running()` reports only whether the model is in its successfully built
 lifecycle state. It does not probe host transport or remote pipeline health.
 
-During bring-up, `build()` keeps an internal five-second stabilization delay
-after the card status reaches `ready`, allowing the card-side pipeline to finish
-settling before host traffic starts. This is not exposed as a public option.
+`build()` returns as soon as the card status reaches `ready`, which the card
+reports once its pipeline is armed for PCIe input. The first `push(...)` sends
+data only after the card acknowledges the input caps.
 
 `close()` sends `SIGTERM` to the card-side builder and waits briefly for a clean
 exit. It does not send `SIGKILL`; if the remote process ignores `SIGTERM`, the

@@ -8,7 +8,6 @@
 #include "RuntimeModelAccess.h"
 
 #include <cerrno>
-#include <chrono>
 #include <cstdlib>
 #include <cstring>
 #include <exception>
@@ -16,7 +15,6 @@
 #include <fstream>
 #include <mutex>
 #include <stdexcept>
-#include <thread>
 #include <utility>
 #include <vector>
 #include <unistd.h>
@@ -25,10 +23,6 @@ namespace fs = std::filesystem;
 
 namespace simaai::neat::pcie {
 namespace {
-
-// The card publishes ready before every pipeline worker is guaranteed to accept traffic.
-// Preserve the established delay until readiness represents complete pipeline stabilization.
-constexpr auto kPostReadyStabilizationDelay = std::chrono::seconds(5);
 
 std::string write_temp_model_options(const std::string& contents) {
   std::string tmpl = (fs::temp_directory_path() / "sima-neat-pcie-options-XXXXXX.json").string();
@@ -165,7 +159,7 @@ public:
       if (!status.output_buffer_bytes)
         throw std::runtime_error(
             "card builder did not report output_buffer_bytes; install matching Core packages");
-      std::this_thread::sleep_for(kPostReadyStabilizationDelay);
+      // No settle delay: the first push sends DATA only after the card acknowledges its CAPS.
       channel_.configure(facts_, connection_.queue, connection_.card_id, connection_.max_inflight,
                          model_options.has_boxdecode || facts_.has_boxdecode,
                          status.output_buffer_bytes);
