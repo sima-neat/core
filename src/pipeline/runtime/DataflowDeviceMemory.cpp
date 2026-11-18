@@ -387,9 +387,8 @@ std::shared_ptr<TensorBuffer> leaf_storage(bool owned, const df::Message& messag
   return codec::owned_copy({static_cast<const std::byte*>(mapping.data) + first, size});
 }
 
-// H1: the leaf of a model route's pulled message, the stage's published tensor over `storage`
-// (the output buffer, from `byte_offset`), as InputStreamPull.cpp's apply_tensor_set_descriptor
-// leaves a GStreamer Run's.
+} // namespace
+
 void fill_stage_leaf(Tensor& tensor, const DataflowPulledTensor& pulled,
                      std::shared_ptr<TensorBuffer> storage, std::int64_t byte_offset) {
   if (storage->kind == StorageKind::GstSample) {
@@ -412,14 +411,7 @@ void fill_stage_leaf(Tensor& tensor, const DataflowPulledTensor& pulled,
   tensor.route = pulled.route;
   tensor.semantic.quant = pulled.quant;
   tensor.semantic.tess.emplace().format = pulled.format;
-  if (pulled.frame_semantics) [[unlikely]] {
-    // Behind an image preproc: the tiled tensor's storage description and the frame's preprocess
-    // facts (DataflowModelRoute.cpp, so that this unit's code for every other route is as it was).
-    apply_dataflow_frame_semantics(pulled, tensor);
-  }
 }
-
-} // namespace
 
 Sample pulled_sample(const DataflowInputBinding& binding,
                      const pipeline_internal::StreamNames& streams, bool owned, df::Message message,
@@ -442,7 +434,13 @@ Sample pulled_sample(const DataflowInputBinding& binding,
     out.route_slot = pulled->route.route_slot;
     std::int64_t offset = 0;
     std::shared_ptr<TensorBuffer> storage = leaf_storage(owned, message, offset);
-    fill_stage_leaf(out.tensors.emplace_back(), *pulled, std::move(storage), offset);
+    if (pulled->beyond_leaf) [[unlikely]] {
+      // Behind an image preproc, or several tensors in the stage's one buffer
+      // (DataflowModelRoute.cpp, so that this unit's code for every other route is as it was).
+      fill_dataflow_stage_tensors(*pulled, storage, offset, nullptr, out.tensors);
+    } else {
+      fill_stage_leaf(out.tensors.emplace_back(), *pulled, std::move(storage), offset);
+    }
     pipeline_internal::apply_pulled_stamp(stamp, out);
     return out;
   }
@@ -474,12 +472,18 @@ void pulled_tensors(const DataflowInputBinding& binding,
   std::int64_t offset = 0;
   std::shared_ptr<TensorBuffer> storage = leaf_storage(owned, message, offset);
   out.clear();
-  Tensor& leaf = out.emplace_back();
-  if (binding.pulled) {
-    fill_stage_leaf(leaf, *binding.pulled, std::move(storage), offset);
-  } else {
-    codec::fill_leaf(leaf, binding, message.extent(), std::move(storage), offset);
+  if (const DataflowPulledTensor* const pulled = binding.pulled) {
+    if (pulled->beyond_leaf) [[unlikely]] {
+      fill_dataflow_stage_tensors(*pulled, storage, offset, envelope, out);
+      return;
+    }
+    Tensor& leaf = out.emplace_back();
+    fill_stage_leaf(leaf, *pulled, std::move(storage), offset);
+    leaf.envelope = std::move(envelope);
+    return;
   }
+  Tensor& leaf = out.emplace_back();
+  codec::fill_leaf(leaf, binding, message.extent(), std::move(storage), offset);
   leaf.envelope = std::move(envelope);
 }
 

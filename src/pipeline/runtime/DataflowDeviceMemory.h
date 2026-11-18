@@ -31,6 +31,7 @@ namespace simaai::neat::runtime {
 class DataflowInputPort;
 struct DataflowInputBinding;
 struct DataflowPushOutcome;
+struct DataflowPulledTensor;
 
 namespace dataflow_device {
 
@@ -68,6 +69,15 @@ Sample pulled_sample(const DataflowInputBinding& binding,
 void pulled_tensors(const DataflowInputBinding& binding,
                     const pipeline_internal::StreamNames& streams, bool owned, df::Message message,
                     TensorList& out);
+
+// H1: one tensor of a model route's pulled message, the stage's published tensor `pulled` over
+// `storage` (the stage's output buffer, from `byte_offset`), as InputStreamPull.cpp's
+// apply_tensor_set_descriptor leaves a GStreamer Run's: the one dense leaf of a route whose last
+// stage publishes one tensor. What a route publishes beyond that (DataflowPulledTensor::
+// beyond_leaf: an image preproc's frame semantics, several tensors in one buffer) is
+// fill_dataflow_stage_tensors' (DataflowModelRoute.h), which fills each tensor with this.
+void fill_stage_leaf(Tensor& tensor, const DataflowPulledTensor& pulled,
+                     std::shared_ptr<TensorBuffer> storage, std::int64_t byte_offset);
 
 // The CPU's view of the device tensors pushed into an input whose consumer reads through the
 // CPU's address (a model route whose first stage is an A65 kernel, H1). A tensor pushed again is

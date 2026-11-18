@@ -7,7 +7,12 @@
 // Output. GStreamer builds it as appsrc ! [neatkernelrunner !] neatprocessmla [! neatkernelrunner]
 // ! appsink; here it is Feed -> [soc::KernelOp ->] soc::MlaOp [-> soc::KernelOp] -> Fetch, one
 // operator per stage:
-//   - Model::inference() of an MLA-only model: the MLA stage alone;
+//   - Model::inference() of an MLA-only model: the MLA stage alone. A model writes one output
+//     buffer. The tensors it publishes in that buffer may be several, each at its byte offset (the
+//     heads of a detection model): then the MLA stage is the route's last, and a pull returns
+//     them as GStreamer's does, a TensorList of views of the one pulled message. A model of
+//     several output buffers, and a stage behind an MLA stage of several tensors, are declined
+//     at the plan and stay on GStreamer;
 //   - Model::preprocess(), inference(), postprocess() of a model package whose pre and post stages
 //     are canonical transforms (quanttess, detessdequant, ...), each on the A65 or on the EV74 as
 //     the Graph places it (GraphOptions::processcvu.pre_run_target / post_run_target,
@@ -56,9 +61,11 @@ namespace simaai::neat::runtime {
 
 struct DataflowInputBinding;
 
-// The tensor of a pulled message on a route whose Fetch does not carry the Feed's spec: the last
-// stage's one published output, a view of `size_bytes` at `byte_offset` of that stage's output
-// buffer.
+// A tensor of a pulled message on a route whose Fetch does not carry the Feed's spec: a published
+// output of the last stage, a view of `size_bytes` at `byte_offset` of that stage's one output
+// buffer. The route's DataflowModelRoute::output is the stage's first published tensor; a stage
+// that publishes several in its buffer (an MLA model with several heads) lists the others in
+// `packed`.
 struct DataflowPulledTensor {
   TensorDType dtype = TensorDType::UInt8;
   TensorLayout layout = TensorLayout::Unknown;
@@ -79,6 +86,17 @@ struct DataflowPulledTensor {
   std::optional<PreprocessRuntimeMeta> preprocess;
   /// `tess` or `preprocess` is set: the pull calls apply_dataflow_frame_semantics.
   bool frame_semantics = false;
+  /// The stage's further published tensors, in its logical order, each one a view at its own
+  /// `byte_offset` of the same output buffer: the pull returns this tensor and then these, all
+  /// over the one pulled message (one storage, which every one of them keeps alive). Without a
+  /// `format`, as GStreamer's generic tensor-set caps leave them: no TessSpec on the tensors, no
+  /// tag on the Sample. Empty: the stage publishes one tensor. (`packed` of a listed tensor is
+  /// not read.)
+  std::vector<DataflowPulledTensor> packed;
+  /// `frame_semantics`, or `packed` is not empty: the pull builds its tensors out of line
+  /// (fill_dataflow_stage_tensors). The one flag a pull reads on its way to the one dense tensor
+  /// of every other route; set once, when the route is planned.
+  bool beyond_leaf = false;
   std::string stage_key; ///< the stage's name
   /// Sample::stream_label and segment_name: the stage's name for an MLA stage, the stage's
   /// published output name for a kernel stage (TensorStagePublication::output_name).
@@ -171,6 +189,19 @@ std::vector<std::uint32_t> add_dataflow_model_ops(pipeline_internal::df::Net& ne
 // The pulled tensor's Semantic behind an image preproc stage (`pulled.frame_semantics`): the tiled
 // output's storage description in Semantic::tess and the frame's facts in Semantic::preprocess.
 void apply_dataflow_frame_semantics(const DataflowPulledTensor& pulled, Tensor& tensor);
+
+// The tensors of a pulled message on a route whose output is `pulled.beyond_leaf`, appended to
+// `out`: the stage's first published tensor and then each of `pulled.packed`, in the stage's
+// order, every one a view at its own byte offset of the same `storage` (the pulled message's
+// output buffer from `byte_offset`: its slot's DMA-BUF, or with OutputMemory::Owned one CPU copy
+// of it), with its frame semantics. The tensors share `storage`, and so the message: the slot
+// returns to its pool when the last of them, or of their copies, is dropped. `envelope` is the
+// list's one envelope (null in a Sample). The list is reserved once, for all of them.
+void fill_dataflow_stage_tensors(const DataflowPulledTensor& pulled,
+                                 const std::shared_ptr<TensorBuffer>& storage,
+                                 std::int64_t byte_offset,
+                                 const std::shared_ptr<const TensorEnvelope>& envelope,
+                                 TensorList& out);
 
 // Before a push into a route whose first stage is the image preproc (`route.frame_input`) of a
 // tensor that is not the validated frame: throws NeatError (misconfig.input_shape) for a frame of

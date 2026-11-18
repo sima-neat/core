@@ -11,6 +11,7 @@
 #include "pipeline/internal/sima/KernelStageRecipe.h"
 #include "pipeline/internal/sima/PreprocFrameAdapter.h"
 #include "pipeline/internal/sima/StageRecipePreparation.h"
+#include "pipeline/runtime/DataflowDeviceMemory.h"
 #include "pipeline/runtime/DataflowInputBinding.h"
 
 #include <simaai/scheduler/client/kernel.h>
@@ -293,9 +294,13 @@ void describe_pulled(const si::StageStaticSpec& stage, const si::LogicalTensorSt
   }
 }
 
-// One MLA stage of the manifest as a route stage; "" or why this backend cannot carry it.
-std::string plan_mla_stage(const si::StageStaticSpec& stage, bool first, bool last,
-                           DataflowModelRoute& route) {
+// One MLA stage of the manifest as a route stage; "" or why this backend cannot carry it. `next`
+// is the stage behind it, null when the MLA stage is the route's last. The model writes one output
+// buffer; the tensors it publishes in that buffer may be several, each at its byte offset (a
+// detection model's heads), and then the route ends here: the pull returns them as a list.
+std::string plan_mla_stage(const si::StageStaticSpec& stage, bool first,
+                           const si::StageStaticSpec* next, DataflowModelRoute& route) {
+  const bool last = next == nullptr;
   const si::ProcessMlaStagePayload& mla = stage.processmla;
   if (mla.model_path.empty()) {
     return "the MLA stage names no model file";
@@ -310,31 +315,63 @@ std::string plan_mla_stage(const si::StageStaticSpec& stage, bool first, bool la
            std::to_string(stage.logical_inputs.size()) +
            " tensors) is not supported on Dataflow yet: the runtime has no join";
   }
-  if (stage.physical_outputs.size() != 1U || stage.logical_outputs.size() != 1U) {
+  const std::size_t tensors = stage.logical_outputs.size();
+  if (stage.physical_outputs.size() != 1U || tensors == 0U) {
     return "an MLA stage of " + std::to_string(stage.physical_outputs.size()) +
-           " output buffers (" + std::to_string(stage.logical_outputs.size()) +
-           " tensors) is not supported on Dataflow yet";
+           " output buffers (" + std::to_string(tensors) +
+           " tensors) is not supported on Dataflow yet: a model that writes one output buffer "
+           "runs (its tensors may be several, each at its offset of that buffer); several output "
+           "buffers need a join in the runtime";
+  }
+  if (tensors > 1U && !last) {
+    return "MLA stage " + stage_key_of(stage) + " publishes " + std::to_string(tensors) +
+           " tensors in its one output buffer and stage " + stage_key_of(*next) + " (" +
+           stage_kind_text(*next) +
+           ") reads them: a stage behind an MLA stage of several tensors is not supported on "
+           "Dataflow yet (such a model runs when Model::inference() is the route's last stage: "
+           "the pull returns the tensors)";
   }
   const si::LogicalInputStaticSpec& in = stage.logical_inputs.front();
   const si::LogicalTensorStaticSpec& out = stage.logical_outputs.front();
   const si::PhysicalBufferStaticSpec& in_buffer = stage.physical_inputs.front();
   const si::PhysicalBufferStaticSpec& out_buffer = stage.physical_outputs.front();
   const std::optional<TensorDType> in_dtype = dtype_of(in.dtype);
-  const std::optional<TensorDType> out_dtype = dtype_of(out.dtype);
-  if (!in_dtype || !out_dtype) {
-    return "the MLA stage's dtype '" + (in_dtype ? out.dtype : in.dtype) +
-           "' has no Dataflow dtype";
+  if (!in_dtype) {
+    return "the MLA stage's dtype '" + in.dtype + "' has no Dataflow dtype";
   }
   if (in.materialization_kind != si::TensorMaterializationKind::Direct || in.byte_offset != 0 ||
       in_buffer.size_bytes == 0U || in_buffer.source_byte_offset != 0) {
     return "the MLA stage's input is not one whole buffer (a repacked or offset view), "
            "which is not supported on Dataflow yet";
   }
-  if (out.byte_offset < 0 || out.size_bytes == 0U || out_buffer.size_bytes == 0U ||
-      static_cast<std::uint64_t>(out.byte_offset) > out_buffer.size_bytes ||
-      out.size_bytes > out_buffer.size_bytes - static_cast<std::uint64_t>(out.byte_offset) ||
-      out.shape.empty()) {
-    return "the MLA stage's published output does not lie in its output buffer";
+  for (std::size_t i = 0; i < tensors; ++i) {
+    // Each published tensor: a view of the one output buffer, in the stage's logical order (the
+    // order GStreamer's tensor-set descriptor lists them in and its pull returns them in).
+    const si::LogicalTensorStaticSpec& tensor = stage.logical_outputs[i];
+    const std::string which =
+        tensors == 1U ? std::string("the MLA stage's published output")
+                      : "the MLA stage's published tensor " + std::to_string(i) + " of " +
+                            std::to_string(tensors) + " (" + tensor.logical_name + ")";
+    if (!dtype_of(tensor.dtype)) {
+      return "the MLA stage's dtype '" + tensor.dtype + "' has no Dataflow dtype";
+    }
+    if (tensor.byte_offset < 0 || tensor.size_bytes == 0U || out_buffer.size_bytes == 0U ||
+        static_cast<std::uint64_t>(tensor.byte_offset) > out_buffer.size_bytes ||
+        tensor.size_bytes >
+            out_buffer.size_bytes - static_cast<std::uint64_t>(tensor.byte_offset) ||
+        tensor.shape.empty()) {
+      return which + " does not lie in its output buffer";
+    }
+    if (tensors > 1U && (tensor.physical_index > 0 || tensor.logical_index != static_cast<int>(i) ||
+                         (i < stage.output_order.size() &&
+                          (stage.output_order[i].logical_output_index != static_cast<int>(i) ||
+                           stage.output_order[i].output_slot != static_cast<int>(i))))) {
+      return which +
+             " is not published in the stage's logical order from its one output buffer "
+             "(logical index " +
+             std::to_string(tensor.logical_index) + ", buffer " +
+             std::to_string(tensor.physical_index) + "), which is not supported on Dataflow yet";
+    }
   }
   DataflowModelStage planned;
   planned.kind = DataflowModelStage::Kind::Mla;
@@ -348,17 +385,41 @@ std::string plan_mla_stage(const si::StageStaticSpec& stage, bool first, bool la
     route.input_shape = in.shape;
   }
   if (last) {
-    describe_pulled(stage, out, *out_dtype, route.output);
-    route.output.format = caps_format_of(out.dtype);
+    describe_pulled(stage, out, *dtype_of(out.dtype), route.output);
     route.output.sample_label = route.output.stage_key;
+    if (tensors == 1U) {
+      route.output.format = caps_format_of(out.dtype);
+    } else {
+      // Several tensors: the stage's caps are the generic tensor-set's, without a format
+      // (StageRecipePreparation.cpp build_kernel_stage_publication), so a GStreamer pull leaves
+      // no TessSpec on the tensors and no tag on the Sample. Each further tensor is described as
+      // the first is, and carries what an image preproc in front of the MLA publishes with every
+      // frame, as the first does.
+      route.output.format.clear();
+      route.output.packed.clear();
+      route.output.packed.reserve(tensors - 1U);
+      for (std::size_t i = 1; i < tensors; ++i) {
+        const si::LogicalTensorStaticSpec& tensor = stage.logical_outputs[i];
+        DataflowPulledTensor& more = route.output.packed.emplace_back();
+        describe_pulled(stage, tensor, *dtype_of(tensor.dtype), more);
+        more.preprocess = route.output.preprocess;
+        more.frame_semantics = route.output.frame_semantics;
+      }
+    }
   }
   route.text += std::string(route.text.empty() ? "" : " -> ") + "MLA stage " + planned.key +
                 " (depth " + std::to_string(planned.depth) + "): input " + in.dtype + " " +
-                dims_text(in.shape) + " in " + std::to_string(planned.input_bytes) +
-                " bytes, output " + out.dtype + " " + dims_text(out.shape) + " (" + out.layout +
-                ") " + std::to_string(out.size_bytes) + " bytes at " +
-                std::to_string(out.byte_offset) + " of " + std::to_string(planned.output_bytes) +
-                (out.quant ? ", quantized" : "");
+                dims_text(in.shape) + " in " + std::to_string(planned.input_bytes) + " bytes, ";
+  for (std::size_t i = 0; i < tensors; ++i) {
+    const si::LogicalTensorStaticSpec& tensor = stage.logical_outputs[i];
+    route.text += (i == 0U ? (tensors == 1U ? std::string("output ")
+                                            : std::to_string(tensors) + " outputs in one buffer: ")
+                           : std::string("; ")) +
+                  tensor.dtype + " " + dims_text(tensor.shape) + " (" + tensor.layout + ") " +
+                  std::to_string(tensor.size_bytes) + " bytes at " +
+                  std::to_string(tensor.byte_offset) + (tensor.quant ? ", quantized" : "");
+  }
+  route.text += " of " + std::to_string(planned.output_bytes);
   route.stages.push_back(std::move(planned));
   return {};
 }
@@ -804,7 +865,7 @@ plan_dataflow_model_route(const std::vector<std::shared_ptr<Node>>& route,
     std::string reason;
     if (stage.payload_kind == si::StagePayloadKind::ProcessMla) {
       ++mla_stages;
-      reason = plan_mla_stage(stage, first, last, *planned);
+      reason = plan_mla_stage(stage, first, last ? nullptr : &manifest->stages[i + 1U], *planned);
     } else if (stage.native_kernel) {
       if (!first && planned->stages.back().kind == DataflowModelStage::Kind::Kernel) {
         reason = "two kernel stages in a row (" + kinds + ") are not supported on Dataflow yet";
@@ -837,6 +898,7 @@ plan_dataflow_model_route(const std::vector<std::shared_ptr<Node>>& route,
                      ": not one whole buffer handed on, which is not supported on Dataflow yet");
     }
   }
+  planned->output.beyond_leaf = planned->output.frame_semantics || !planned->output.packed.empty();
   return planned;
 }
 
@@ -919,6 +981,31 @@ void apply_dataflow_frame_semantics(const DataflowPulledTensor& pulled, Tensor& 
   }
   if (pulled.preprocess) {
     tensor.semantic.preprocess = pulled.preprocess;
+  }
+}
+
+[[gnu::cold]] void
+fill_dataflow_stage_tensors(const DataflowPulledTensor& pulled,
+                            const std::shared_ptr<TensorBuffer>& storage, std::int64_t byte_offset,
+                            const std::shared_ptr<const TensorEnvelope>& envelope,
+                            TensorList& out) {
+  const auto fill = [&](const DataflowPulledTensor& one) {
+    Tensor& tensor = out.emplace_back();
+    dataflow_device::fill_stage_leaf(tensor, one, storage, byte_offset);
+    if (one.format.empty()) {
+      // No format in the stage's caps (several tensors, or a tiled one whose description follows):
+      // GStreamer's pull leaves no TessSpec for it.
+      tensor.semantic.tess.reset();
+    }
+    if (one.frame_semantics) {
+      apply_dataflow_frame_semantics(one, tensor);
+    }
+    tensor.envelope = envelope;
+  };
+  out.reserve(out.size() + 1U + pulled.packed.size());
+  fill(pulled);
+  for (const DataflowPulledTensor& more : pulled.packed) {
+    fill(more);
   }
 }
 
