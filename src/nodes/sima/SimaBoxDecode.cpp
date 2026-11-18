@@ -1,6 +1,9 @@
 #include "nodes/sima/SimaBoxDecode.h"
 
 #include "gst/GstHelpers.h"
+#include "pipeline/NeatError.h"
+#include "pipeline/ErrorCodes.h"
+#include "pipeline/internal/ErrorUtil.h"
 #include "builder/InputContractConfigurable.h"
 #include "model/internal/ModelInternal.h"
 #include "model/internal/ModelPack.h"
@@ -913,10 +916,12 @@ SimaBoxDecode::SimaBoxDecode(const simaai::neat::Model& model, BoxDecodeType dec
     effective_route_flags.quant_needed = compiled_contract.payload.quant_needed;
     effective_route_flags.quant_contract_required =
         compiled_contract.payload.quant_contract_required;
-  } catch (const std::exception& e) {
-    throw std::runtime_error(
-        "SimaBoxDecode(Model): failed to issue model-managed boxdecode contract: " +
-        std::string(e.what()));
+  } catch (const NeatError&) {
+    throw;
+  } catch (const std::runtime_error& e) {
+    pipeline_internal::error_util::throw_session_error(error_codes::kPipelineShape, e.what());
+  } catch (const std::invalid_argument& e) {
+    pipeline_internal::error_util::throw_session_error(error_codes::kPipelineShape, e.what());
   }
   if (decode_type != BoxDecodeType::Unspecified) {
     validate_requested_boxdecode_contract_type_local(compiled_contract.payload.decode_type,

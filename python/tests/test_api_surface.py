@@ -1348,6 +1348,33 @@ def test_model_managed_preproc_requires_input_contract():
   assert error.value.error_code == "misconfig.option_out_of_range"
 
 
+def test_infer_only_skips_unused_physical_decoder_contract():
+  options = pyneat.ModelOptions()
+  options.decode_type = pyneat.BoxDecodeType.YoloV8
+  options.num_classes = 37  # Different from the fixture's 80-class export.
+  options.preprocess.kind = pyneat.InputKind.Image
+  options.preprocess.enable = pyneat.AutoFlag.On
+  options.preprocess.resize.enable = pyneat.AutoFlag.On
+  options.preprocess.normalize.enable = pyneat.AutoFlag.On
+  model = pyneat.Model(str(_strict_yolo_model_path()), options)
+  frame = pyneat.Tensor.from_numpy(np.zeros((640, 640, 3), dtype=np.uint8), copy=True,
+                                   image_format=pyneat.PixelFormat.RGB, memory=pyneat.TensorMemory.EV74)
+  graph = pyneat.Graph()
+  graph.add(pyneat.nodes.input(model.input_appsrc_options(False)))
+  graph.add_graph(model.preprocess())
+  graph.add_graph(model.inference())
+  graph.add(pyneat.nodes.output())
+  run = graph.build([frame])
+  try:
+    assert run.push([frame])
+    assert run.pull(timeout_ms=10000) is not None
+  finally:
+    run.close()
+  with pytest.raises(pyneat.NeatError) as failure:
+    model.run([frame], timeout_ms=10000)
+  assert failure.value.error_code == "misconfig.pipeline_shape"
+
+
 def test_incompatible_decoder_is_rejected_at_model_load():
   options = pyneat.ModelOptions()
   options.decode_type = pyneat.BoxDecodeType.Detr
