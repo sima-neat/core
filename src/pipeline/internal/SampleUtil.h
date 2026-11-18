@@ -22,7 +22,8 @@ std::shared_ptr<void> make_sample_holder_from_bundle(const Sample& bundle, std::
 Sample canonicalize_tensor_transport_sample(const Sample& sample);
 Sample sample_from_tensors_for_input(const TensorList& tensors, const InputOptions& opt);
 Sample collapse_single_tensor_sample(Sample sample);
-void attach_tensor_set_meta_from_tensors(GstBuffer* buffer, const TensorList& tensors);
+bool attach_tensor_set_meta_from_tensors(GstBuffer* buffer, const TensorList& tensors,
+                                         std::string* error = nullptr);
 
 bool sample_has_device_gstsample_producer_lifetime(const Sample& sample,
                                                    bool require_expired = false);

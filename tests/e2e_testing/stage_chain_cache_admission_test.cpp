@@ -237,6 +237,17 @@ RUN_TEST(
           ++frame;
         }
         require(inference_compiles <= 1, "moving ROI sequence retained per-coordinate stages");
+        const std::vector<PreprocessRoi> pair{
+            {0, image.cols / 2, 0, image.cols / 2, image.rows / 2},
+            {0, 0, 0, image.cols / 2, image.rows / 2}};
+        const auto crops = stages::Preproc({image}, model, pair);
+        require(crops.size() == pair.size(), "preprocessing lost a requested ROI");
+        const Sample last = sample_from_tensors({crops.back()});
+        const Sample heads = mla_only ? stages::MLA(last, model) : stages::Infer(last, model);
+        require(heads.tensors.size() == first_roi_outputs.size(), "batched ROI lost model heads");
+        for (std::size_t i = 0; i < heads.tensors.size(); ++i)
+          require(heads.tensors[i].copy_payload_bytes() == first_roi_outputs[i],
+                  "inference on the second ROI differs from the same crop processed alone");
         std::cout << "[stage-cache] route=" << (mla_only ? "MLA" : "Infer")
                   << " moving_roi_frames=" << frame
                   << " inference_stage_compiles=" << inference_compiles << '\n';

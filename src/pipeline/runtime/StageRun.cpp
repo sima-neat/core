@@ -1039,6 +1039,21 @@ const Tensor& resolve_preproc_selected_tensor(const Sample& sample, const Prepro
                            info.primary_output_name + "'");
 }
 
+Tensor own_preproc_output(const Tensor& tensor) {
+  // Release the cached producer's buffer while keeping the result usable by Infer and MLA.
+  auto owned = pipeline_internal::transfer_to_device(tensor, {DeviceType::SIMA_CVU, 0}, nullptr);
+  auto* buffer = gst_sample_get_buffer(static_cast<GstSample*>(owned.storage->holder.get()));
+  std::string error;
+  if (!pipeline_internal::attach_tensor_set_meta_from_tensors(buffer, {owned}, &error)) {
+    throw std::runtime_error("Preproc: " + error);
+  }
+  if (owned.semantic.preprocess &&
+      !write_simaai_preprocess_meta(buffer, *owned.semantic.preprocess)) {
+    throw std::runtime_error("Preproc: failed to publish preprocess metadata");
+  }
+  return owned;
+}
+
 TensorDims mla_output_dims_from_shape(const std::vector<int64_t>& shape) {
   TensorDims dims;
   if (shape.size() >= 3U) {
@@ -2445,7 +2460,6 @@ simaai::neat::Sample PreprocSample(const cv::Mat& input, const simaai::neat::Mod
 
   auto build_runner = [&]() {
     RunOptions opt = stage_run_defaults();
-    opt.output_memory = OutputMemory::Owned;
     Graph p;
     p.add(simaai::neat::nodes::Input(src_opt));
     for (const auto& node : group) {
@@ -2489,7 +2503,7 @@ simaai::neat::Sample PreprocSample(const cv::Mat& input, const simaai::neat::Mod
   }
   tensor = require_supported_tessellated_dtype(std::move(tensor), "Preproc");
 
-  out = sample_from_tensors(TensorList{std::move(tensor)});
+  out = sample_from_tensors(TensorList{own_preproc_output(tensor)});
   out.payload_type = PayloadType::Tensor;
   out.media_type = "application/vnd.simaai.tensor";
   out.format = format_from_tensor(out.tensors.front());
@@ -2577,7 +2591,6 @@ TensorList PreprocRoiList(const std::vector<cv::Mat>& inputs, const simaai::neat
 
   auto runner = get_or_build(key, [&]() {
     RunOptions opt = stage_run_defaults();
-    opt.output_memory = OutputMemory::Owned;
     auto input_node = simaai::neat::nodes::Input(src_opt);
     auto output_node = simaai::neat::nodes::Output();
     Graph p;
@@ -2617,6 +2630,9 @@ TensorList PreprocRoiList(const std::vector<cv::Mat>& inputs, const simaai::neat
 
   TensorList split =
       split_preproc_roi_output_impl(batched, *output_meta, roi_capacity, preproc_info);
+  for (auto& tensor : split) {
+    tensor = own_preproc_output(tensor);
+  }
   if (stage_debug_enabled()) {
     std::fprintf(stderr, "[stage][preproc-roi] split valid=%zu capacity=%d output=%s\n",
                  split.size(), roi_capacity,
