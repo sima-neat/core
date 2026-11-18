@@ -34,7 +34,7 @@ import zipfile
 
 from windows_candidate import (
     dependency_identity, msi_version, require_junit_cases, sha256, validate_candidate,
-    write_json)
+    validate_published_package, write_json)
 from windows_hardware_assets import asset_manifest_sha256, verify_asset_manifest
 from windows_release import (
     customer_target, latest_tag_key, package_prefix, release_tag, short_commit)
@@ -1399,7 +1399,8 @@ def stage_invalid_wheel_registry(candidate, root: Path) -> Path:
 def load_upgrade_base(candidate, directory: Path | None, expected_commit: str):
   if directory is None:
     return None
-  upgrade_base = validate_candidate(directory)
+  # The baseline is the prior release as published, which carries no CI receipt.
+  upgrade_base = validate_published_package(directory)
   if upgrade_base.core_commit != expected_commit:
     raise ValueError(
         "upgrade baseline commit does not match --expected-upgrade-base-commit")

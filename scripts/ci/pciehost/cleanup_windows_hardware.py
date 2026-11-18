@@ -16,7 +16,7 @@ from qualify_windows_hardware import (
     RemoteExclusiveLock, card_candidate_paths, remove_installed_tutorial_facade,
     restart_windows_platform_service, restore_card_candidate, run_captured_to_file, ssh_command,
     stop_card_workers)
-from windows_candidate import validate_candidate
+from windows_candidate import validate_candidate, validate_published_package
 
 
 def _lock_field(path: Path, pattern: str) -> str | None:
@@ -81,7 +81,7 @@ def cleanup(args: argparse.Namespace) -> None:
   if sys.platform != "win32":
     raise RuntimeError("Windows PCIe cleanup must run on Windows")
   candidate = validate_candidate(args.candidate)
-  upgrade_base = (validate_candidate(args.upgrade_base_candidate)
+  upgrade_base = (validate_published_package(args.upgrade_base_candidate)
                   if args.upgrade_base_candidate is not None else None)
   evidence = args.evidence.resolve()
   evidence.mkdir(parents=True, exist_ok=True)

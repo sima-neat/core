@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Name, list and verify a published Windows PCIe-host release.
+"""Name, list, verify and fetch a published Windows PCIe-host release.
 
-The publisher and the hardware qualifier's local registry use these helpers,
-so they share the layout sima-cli resolves for
+The publisher, the hardware qualifier's local registry and the upgrade
+baseline use these helpers, so they share the layout sima-cli resolves for
 ``core/pciehost/windows/amd64@<tag>``: ``core/<tag>/latest.tag`` names the
 12-character commit and ``core/<tag>/<commit12>/pciehost/windows/amd64/`` holds
 ``metadata.json`` and its resources, as for the Ubuntu host packages.
@@ -18,6 +18,7 @@ import subprocess
 import sys
 from typing import Callable
 from urllib.parse import quote
+from urllib.request import urlopen
 
 from windows_candidate import msi_version, validate_published_package
 
@@ -114,6 +115,13 @@ def fetch_release(read: Callable[[str], bytes], ref: str, commit: str, output: P
   return package
 
 
+def https_reader(base_url: str) -> Callable[[str], bytes]:
+  def read(key: str) -> bytes:
+    with urlopen(f"{base_url.rstrip('/')}/{key}", timeout=300) as response:
+      return response.read()
+  return read
+
+
 def s3_reader(bucket: str) -> Callable[[str], bytes]:
   def read(key: str) -> bytes:
     result = subprocess.run(["aws", "s3", "cp", f"s3://{bucket}/{key}", "-"],
@@ -140,6 +148,11 @@ def main() -> None:
     command.add_argument("--candidate", type=Path, required=True)
     if name == "verify-upload":
       command.add_argument("--output", type=Path, required=True)
+  fetch = commands.add_parser("fetch", help="download and verify a published release")
+  fetch.add_argument("--base-url", required=True)
+  fetch.add_argument("--ref", required=True)
+  fetch.add_argument("--commit", required=True)
+  fetch.add_argument("--output", type=Path, required=True)
   args = parser.parse_args()
 
   if args.command == "release-ref":
@@ -150,6 +163,10 @@ def main() -> None:
         s3_reader(args.bucket), args.ref, args.commit, args.candidate)
     # First line: destination prefix; then one source file per line.
     print("\n".join([prefix, *map(str, files)]))
+  elif args.command == "fetch":
+    package = fetch_release(https_reader(args.base_url), args.ref, args.commit, args.output)
+    print(json.dumps({"commit": package.core_commit, "resources": package.resources,
+                      "version": package.metadata["version"]}, sort_keys=True))
   else:
     expected = validate_published_package(args.candidate, allow_unlisted=True)
     package = fetch_release(s3_reader(args.bucket), args.ref, args.commit, args.output,

@@ -113,7 +113,7 @@ def run_windows_preflight(**inputs):
   environment = os.environ.copy()
   environment.update({name: "" for name in (
       "SCHEDULER_RUN_ID", "SCHEDULER_COMMIT", "SIMA_CLI_RUN_ID", "SIMA_CLI_COMMIT",
-      "LINUX_RUN_ID", "REQUIRE_UPGRADE", "UPGRADE_BASE_RUN_ID", "UPGRADE_BASE_COMMIT",
+      "LINUX_RUN_ID", "REQUIRE_UPGRADE", "UPGRADE_BASE_TAG",
       "FIRST_RELEASE_UPGRADE_EXEMPTION", "FIRST_RELEASE_UPGRADE_EXEMPTION_REASON")})
   environment.update({"GITHUB_WORKFLOW": "Core native Windows PCIe host",
                       "LINUX_CURRENT_RUN": "false", **inputs})
@@ -519,7 +519,7 @@ class WindowsCiContracts(unittest.TestCase):
     self.assertIn("core-pcie-card-qualification-dependencies", prepare)
     self.assertIn("core-pcie-card-qualification-candidate", prepare)
     hardware = workflow.split("  hardware:\n", 1)[1].split("  publish:", 1)[0]
-    self.assertIn("needs: [native, linux_release, card_candidate]", hardware)
+    self.assertIn("needs: [native, linux_release, card_candidate, resolve-vulcan-config]", hardware)
     self.assertIn("core-pcie-card-qualification-candidate", hardware)
     self.assertNotIn("name: neat-core-dist", hardware)
 
@@ -892,12 +892,7 @@ class WindowsCiContracts(unittest.TestCase):
     self.assertIn('$arguments += "--require-release"', source)
     self.assertIn('if ("$env:REQUIRE_SIGNATURES" -eq "true")', source)
     self.assertIn("if: always()", source)
-    self.assertIn("upgrade_base_run_id", source)
-    self.assertIn("upgrade_base_commit", source)
-    self.assertIn("Admit exact successful Windows upgrade baseline", source)
-    self.assertIn('"Core native Windows PCIe host"', source)
-    self.assertIn("core-windows-upgrade-base", source)
-    self.assertIn("--expected-upgrade-base-commit", source)
+    self.assertNotIn("upgrade_base_run_id", source)
     self.assertIn("SIMA_WINDOWS_DEPENDENCY_RUNTIME_PATH", source)
     self.assertIn("SIMA_WINDOWS_PLATFORM_INCLUDE_DIR", source)
     self.assertIn("--dependency-runtime-dir", source)
@@ -1284,7 +1279,9 @@ class WindowsCiContracts(unittest.TestCase):
         ({"SIMA_CLI_COMMIT": "b" * 40}, "sima_cli_run_id and sima_cli_commit"),
         ({"GITHUB_WORKFLOW": "Vulcan CI", "LINUX_CURRENT_RUN": "true", "LINUX_RUN_ID": "7"},
          "mutually exclusive"),
-        ({"UPGRADE_BASE_RUN_ID": "9"}, "require require_upgrade=true"),
+        ({"UPGRADE_BASE_TAG": "v0.6.1"}, "require require_upgrade=true"),
+        ({"REQUIRE_UPGRADE": "true"}, "requires upgrade_base_tag"),
+        ({"REQUIRE_UPGRADE": "true", "UPGRADE_BASE_TAG": "41"}, "requires upgrade_base_tag"),
         ({"REQUIRE_UPGRADE": "true", **exemption}, "first-release exemption are mutually"),
         ({"FIRST_RELEASE_UPGRADE_EXEMPTION_REASON": "why"}, "reason requires"),
         ({"VALIDATION_ONLY": "false"}, "Publishing requires a real upgrade gate"),
@@ -3479,33 +3476,52 @@ install() {
         "different executable", lambda value: value["customer_install"]["standard_user"].update(
             real_genai_executable_sha256="0" * 64), genai=True, require_signatures=False)
 
-  def test_upgrade_baseline_must_name_a_different_package_version(self):
+  def test_upgrade_baseline_is_the_prior_release_as_published(self):
     with tempfile.TemporaryDirectory() as directory:
       root = Path(directory)
       candidate_root = root / "candidate"
       baseline_root = root / "baseline"
       candidate_root.mkdir()
       baseline_root.mkdir()
-      candidate_commit, _, _ = self.windows_candidate(
-          candidate_root, commit="c" * 40, version="0.6.2")
+      self.windows_candidate(candidate_root, commit="c" * 40, version="0.6.2")
       baseline_commit, _, _ = self.windows_candidate(
           baseline_root, commit="b" * 40, version="0.6.1")
       candidate = validate_candidate(candidate_root)
-      baseline = load_upgrade_base(candidate, baseline_root, baseline_commit)
+      # The registry holds only what the publisher uploads: no receipts.
+      registry = root / "published"
+      stage_local_registry(validate_candidate(baseline_root), registry)
+      with HARDWARE.local_registry(registry) as url:
+        published = RELEASE.fetch_release(
+            RELEASE.https_reader(url), "v0.6.1", baseline_commit, root / "fetched")
+        with self.assertRaisesRegex(ValueError, "not release commit aaaaaaaaaaaa"):
+          RELEASE.fetch_release(
+              RELEASE.https_reader(url), "v0.6.1", "a" * 40, root / "wrong-commit")
+        with self.assertRaisesRegex(OSError, "404"):
+          RELEASE.fetch_release(
+              RELEASE.https_reader(url), "v0.6.0", baseline_commit, root / "missing")
+        package = registry / RELEASE.package_prefix("v0.6.1", baseline_commit)
+        (package / "core.msi").write_bytes(b"changed after publication")
+        with self.assertRaisesRegex(ValueError, "checksum differs: core.msi"):
+          RELEASE.fetch_release(
+              RELEASE.https_reader(url), "v0.6.1", baseline_commit, root / "tampered")
+      self.assertFalse((published.root / "host-candidate.json").exists())
+      baseline = load_upgrade_base(candidate, published.root, baseline_commit)
       self.assertEqual(baseline.core_commit, baseline_commit)
-      self.assertNotEqual(candidate_commit, baseline_commit)
+      self.assertEqual(HARDWARE.customer_install_target(baseline),
+                       "core/pciehost/windows/amd64@v0.6.1")
       with self.assertRaisesRegex(ValueError, "does not match"):
-        load_upgrade_base(candidate, baseline_root, "a" * 40)
-      baseline.metadata["version"] = candidate.metadata["version"]
-      (baseline_root / "metadata.json").write_text(
-          json.dumps(baseline.metadata), encoding="utf-8")
-      with self.assertRaisesRegex(ValueError, "newer than the baseline"):
-        load_upgrade_base(candidate, baseline_root, baseline_commit)
-      baseline.metadata["version"] = "0.6.3"
-      (baseline_root / "metadata.json").write_text(
-          json.dumps(baseline.metadata), encoding="utf-8")
-      with self.assertRaisesRegex(ValueError, "newer than the baseline"):
-        load_upgrade_base(candidate, baseline_root, baseline_commit)
+        load_upgrade_base(candidate, published.root, "a" * 40)
+      (published.root / "notes.txt").write_text("unlisted")
+      with self.assertRaisesRegex(ValueError, "uninventoried"):
+        load_upgrade_base(candidate, published.root, baseline_commit)
+      (published.root / "notes.txt").unlink()
+      for version in (candidate.metadata["version"], "0.6.3"):
+        baseline.metadata["version"] = version
+        (published.root / "metadata.json").write_text(
+            json.dumps(baseline.metadata), encoding="utf-8")
+        with self.subTest(version=version), self.assertRaisesRegex(
+            ValueError, "newer than the baseline"):
+          load_upgrade_base(candidate, published.root, baseline_commit)
 
   def test_release_gate_rejects_unsigned_platform_dependency(self):
     self.assert_release_rejected(

@@ -29,12 +29,8 @@ on:
         description: Use this caller run's already-qualified Linux/card candidate
         type: boolean
         default: false
-      upgrade_base_run_id:
-        description: Earlier successful Core Windows run used as the release upgrade baseline
-        type: string
-        default: ''
-      upgrade_base_commit:
-        description: Full Core commit selected by upgrade_base_run_id
+      upgrade_base_tag:
+        description: Prior Neat release tag whose published Windows release is the upgrade baseline
         type: string
         default: ''
       require_upgrade:
@@ -88,12 +84,8 @@ on:
         type: string
         required: false
         default: ''
-      upgrade_base_run_id:
-        description: Earlier successful Core Windows run used as the release upgrade baseline
-        type: string
-        default: ''
-      upgrade_base_commit:
-        description: Full Core commit selected by upgrade_base_run_id
+      upgrade_base_tag:
+        description: Prior Neat release tag whose published Windows release is the upgrade baseline
         type: string
         default: ''
       require_upgrade:
@@ -168,8 +160,7 @@ jobs:
           SIMA_CLI_COMMIT: ${{ inputs.sima_cli_commit }}
           LINUX_RUN_ID: ${{ inputs.linux_run_id }}
           REQUIRE_UPGRADE: ${{ inputs.require_upgrade }}
-          UPGRADE_BASE_RUN_ID: ${{ inputs.upgrade_base_run_id }}
-          UPGRADE_BASE_COMMIT: ${{ inputs.upgrade_base_commit }}
+          UPGRADE_BASE_TAG: ${{ inputs.upgrade_base_tag }}
           FIRST_RELEASE_UPGRADE_EXEMPTION: ${{ inputs.first_release_upgrade_exemption }}
           FIRST_RELEASE_UPGRADE_EXEMPTION_REASON: ${{ inputs.first_release_upgrade_exemption_reason }}
           VALIDATION_ONLY: ${{ inputs.validation_only }}
@@ -198,7 +189,7 @@ jobs:
             echo "linux_current_run and linux_run_id are mutually exclusive." >&2
             exit 1
           fi
-          if [[ "${REQUIRE_UPGRADE}" != "true" && ( -n "${UPGRADE_BASE_RUN_ID}" || -n "${UPGRADE_BASE_COMMIT}" ) ]]; then
+          if [[ "${REQUIRE_UPGRADE}" != "true" && -n "${UPGRADE_BASE_TAG}" ]]; then
             echo "Upgrade baseline inputs require require_upgrade=true." >&2
             exit 1
           fi
@@ -216,6 +207,10 @@ jobs:
           fi
           if [[ "${FIRST_RELEASE_UPGRADE_EXEMPTION}" == "true" && -z "${FIRST_RELEASE_UPGRADE_EXEMPTION_REASON}" ]]; then
             echo "The first-release upgrade exemption requires a non-empty reason." >&2
+            exit 1
+          fi
+          if [[ "${REQUIRE_UPGRADE}" == "true" && ! "${UPGRADE_BASE_TAG}" =~ ^v[0-9]+[.][0-9]+[.][0-9]+$ ]]; then
+            echo "The formal upgrade gate requires upgrade_base_tag, a prior release tag such as v0.7.0." >&2
             exit 1
           fi
       - name: Require the Neat release tag before building a publication
@@ -316,32 +311,6 @@ jobs:
           artifact_id=$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["artifact"]["id"])' \
             "${RUNNER_TEMP}/scheduler-release-admission.json")
           echo "artifact_id=${artifact_id}" >> "${GITHUB_OUTPUT}"
-      - name: Admit exact successful Windows upgrade baseline
-        if: inputs.require_upgrade == true
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-          UPGRADE_BASE_RUN_ID: ${{ inputs.upgrade_base_run_id }}
-          UPGRADE_BASE_COMMIT: ${{ inputs.upgrade_base_commit }}
-        run: |
-          if [[ ! "${UPGRADE_BASE_RUN_ID}" =~ ^[1-9][0-9]*$ ]]; then
-            echo "The formal upgrade gate requires a numeric upgrade_base_run_id." >&2
-            exit 1
-          fi
-          if [[ ! "${UPGRADE_BASE_COMMIT}" =~ ^[0-9a-f]{40}$ ]]; then
-            echo "The formal upgrade gate requires a full lowercase upgrade_base_commit." >&2
-            exit 1
-          fi
-          if [[ "${UPGRADE_BASE_COMMIT}" == "${GITHUB_SHA}" ]]; then
-            echo "Windows upgrade baseline must differ from the release candidate." >&2
-            exit 1
-          fi
-          python3 scripts/ci/pciehost/verify_linux_release_run.py \
-            --repository "${GITHUB_REPOSITORY}" \
-            --run-id "${UPGRADE_BASE_RUN_ID}" \
-            --expected-commit "${UPGRADE_BASE_COMMIT}" \
-            --workflow-name "Core native Windows PCIe host" \
-            --workflow-path ".github/workflows/pcie-host-windows.yml" \
-            --output "${RUNNER_TEMP}/windows-upgrade-base-admission.json"
       - name: Record first-release upgrade exemption
         if: inputs.first_release_upgrade_exemption == true
         env:
@@ -378,7 +347,6 @@ jobs:
             ${{ runner.temp }}/linux-release-admission.json
             ${{ runner.temp }}/scheduler-release-admission.json
             ${{ runner.temp }}/sima-cli-release-admission.json
-            ${{ runner.temp }}/windows-upgrade-base-admission.json
             ${{ runner.temp }}/windows-upgrade-exemption.json
           if-no-files-found: error
           retention-days: 14
@@ -653,8 +621,8 @@ jobs:
           }
   hardware:
     name: Direct-card Windows acceptance
-    needs: [native, linux_release, card_candidate]
-    if: needs.native.result == 'success' && needs.linux_release.result == 'success' && needs.card_candidate.result == 'success'
+    needs: [native, linux_release, card_candidate, resolve-vulcan-config]
+    if: needs.native.result == 'success' && needs.linux_release.result == 'success' && needs.card_candidate.result == 'success' && needs.resolve-vulcan-config.result == 'success'
     environment: production
     runs-on: [self-hosted, Windows, X64, pcie-windows-hardware, default]
     timeout-minutes: 180
@@ -722,15 +690,6 @@ jobs:
         with:
           name: core-pcie-card-qualification-candidate
           path: ${{ runner.temp }}/core-card-candidate
-      - name: Download exact Windows upgrade baseline
-        if: inputs.require_upgrade == true
-        uses: actions/download-artifact@v4
-        with:
-          name: core-pciehost-windows-amd64
-          path: ${{ runner.temp }}/core-windows-upgrade-base
-          repository: ${{ github.repository }}
-          run-id: ${{ inputs.upgrade_base_run_id }}
-          github-token: ${{ github.token }}
       - name: Install, test both APIs, and remove exact cohort
         shell: powershell
         env:
@@ -738,7 +697,8 @@ jobs:
           VALIDATION_ONLY: ${{ inputs.validation_only }}
           INCLUDE_GENAI: ${{ inputs.include_genai }}
           REQUIRE_UPGRADE: ${{ inputs.require_upgrade }}
-          UPGRADE_BASE_COMMIT: ${{ inputs.upgrade_base_commit }}
+          UPGRADE_BASE_TAG: ${{ inputs.upgrade_base_tag }}
+          ARTIFACT_BASE_URL: ${{ needs.resolve-vulcan-config.outputs.artifact_base_url }}
         run: |
           $ErrorActionPreference = "Stop"
           $cardSudoPassword = $env:QUALIFIER_CARD_SUDO_PASSWORD
@@ -802,9 +762,18 @@ jobs:
             $arguments += "--include-genai"
           }
           if ("$env:REQUIRE_UPGRADE" -eq "true") {
+            # The prior release as customers download it, not a run's expiring artifact.
+            $baseCommit = & git rev-parse --verify --quiet "refs/tags/$env:UPGRADE_BASE_TAG^{commit}"
+            if ($LASTEXITCODE -ne 0 -or -not $baseCommit) {
+              throw "Upgrade baseline tag is not in this repository: $env:UPGRADE_BASE_TAG"
+            }
+            & python scripts/ci/pciehost/windows_release.py fetch `
+              --base-url $env:ARTIFACT_BASE_URL --ref $env:UPGRADE_BASE_TAG `
+              --commit $baseCommit --output "$env:RUNNER_TEMP\core-windows-upgrade-base"
+            if ($LASTEXITCODE -ne 0) { throw "Published upgrade baseline fetch failed: $LASTEXITCODE" }
             $arguments += @(
               "--upgrade-base-candidate", "$env:RUNNER_TEMP\core-windows-upgrade-base",
-              "--expected-upgrade-base-commit", "$env:UPGRADE_BASE_COMMIT"
+              "--expected-upgrade-base-commit", $baseCommit
             )
           }
           if ($env:SIMA_WINDOWS_CMAKE_PREFIX_PATH) {
