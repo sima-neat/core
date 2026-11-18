@@ -269,6 +269,14 @@ RUN_TEST(
         require_code(fallback, error_codes::kIoOpen);
         require(diagnostic_priority(invalid) > diagnostic_priority(fallback),
                 "the malformed URL must outrank the generic source failure");
+        auto response = raw_error("souphttpsrc", "gst-resource-error-quark",
+                                  GST_RESOURCE_ERROR_OPEN_READ, "Gone");
+        response.details["http-status-code"] = "410";
+        const auto gone = classify_gst_error(response);
+        require_contains(render_diagnostic_body(gone, false), "HTTP status: 410",
+                         "HTTP error response");
+        require(diagnostic_priority(gone) > diagnostic_priority(fallback),
+                "server replies must outrank generic HTTP stream failures");
         auto demux = raw_error("multipartdemux", "gst-stream-error-quark", GST_STREAM_ERROR_DEMUX,
                                "Could not demultiplex stream.");
         demux.debug = "Boundary not found in the multipart header";

@@ -921,6 +921,8 @@ NormalizedDiagnostic authentication_failed(RawGstError raw) {
            "The remote source rejected the supplied credentials.");
   add_fact(out, "Source",
            find_detail(out.raw, {"source-identity", "source_identity", "location"}).value_or(""));
+  if (const auto status = find_structured_detail(out.raw, {"http-status-code"}))
+    add_fact(out, "HTTP status", *status);
   out.actions = {
       "Verify the username, password, token, or other credentials configured for the source.",
       "Confirm that the account is allowed to access the requested stream or resource.",
@@ -1389,6 +1391,18 @@ NormalizedDiagnostic classify_gst_error(RawGstError raw) {
     return authentication_failed(std::move(raw));
   }
   if (raw.factory_name == "souphttpsrc") {
+    if (raw.domain_name == "gst-resource-error-quark") {
+      const auto status = find_integer(raw, {"http-status-code"});
+      if (status && *status >= 400 && *status <= 599) {
+        auto out = base(std::move(raw), error_codes::kIoOpen, "http.error_response",
+                        "The HTTP server returned an error response.");
+        add_fact(out, "HTTP status", std::to_string(*status));
+        add_fact(out, "Source", find_detail(out.raw, {"source-identity"}).value_or(""));
+        out.actions = {*status >= 500 ? "Check the server and retry the request."
+                                      : "Check the requested URL and the server's response."};
+        return out;
+      }
+    }
     const bool invalid_url = raw.domain_name == "gst-resource-error-quark" &&
                              raw.code == GST_RESOURCE_ERROR_OPEN_READ &&
                              contains_ci(raw.message, "error parsing url");
