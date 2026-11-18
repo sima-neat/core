@@ -244,15 +244,18 @@ void test_remote_runtime_paths() {
   require(runtime.status_path(3) == "/home/sima/neat/run/q3.status",
           "custom remote status path was not retained");
 
-  simaai::neat::pcie::ConnectionOptions invalid;
-  invalid.card_env = "SIMA_NEAT_PCIE_RUN_DIR=relative/path";
-  bool rejected = false;
-  try {
-    (void)pcie_internal::RemoteRuntime(invalid);
-  } catch (const std::invalid_argument&) {
-    rejected = true;
+  for (const std::string card_env : {"SIMA_NEAT_PCIE_RUN_DIR=relative/path",
+                                     "SIMA_NEAT_PCIE_HELPER_PATH=/opt/neat/bin/worker"}) {
+    simaai::neat::pcie::ConnectionOptions invalid;
+    invalid.card_env = card_env;
+    bool rejected = false;
+    try {
+      (void)pcie_internal::RemoteRuntime(invalid);
+    } catch (const std::invalid_argument&) {
+      rejected = true;
+    }
+    require(rejected, "invalid remote runtime path was accepted: " + card_env);
   }
-  require(rejected, "relative remote runtime path was accepted");
 }
 
 bool has_ssh_option(const std::vector<std::string>& command, const std::string& option) {

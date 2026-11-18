@@ -101,7 +101,12 @@ RemoteRuntime::RemoteRuntime(ConnectionOptions connection) : connection_(std::mo
   validate_endpoint_component(connection_.user, "user", false);
   validate_endpoint_component(connection_.card_host, "card_host", true);
   const auto card_env = parse_card_environment(connection_.card_env);
-  (void)card_environment_path_or(card_env, kHelperPathEnv, kRemoteHelper);
+  const std::string helper = card_environment_path_or(card_env, kHelperPathEnv, kRemoteHelper);
+  // Card-side liveness checks match the worker by this file name.
+  if (helper.substr(helper.rfind('/') + 1) != "pcie-pipeline-builder") {
+    throw std::invalid_argument(std::string(kHelperPathEnv) +
+                                " must name a pcie-pipeline-builder executable");
+  }
   (void)card_environment_path_or(card_env, kRunDirEnv, kRemoteRunDir);
   (void)card_environment_path_or(card_env, kLogDirEnv, kRemoteLogDir);
 }
