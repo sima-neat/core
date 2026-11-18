@@ -6,6 +6,9 @@
 #include "nodes/groups/ModelGroups.h"
 #include "nodes/sima/SimaBoxDecode.h"
 #include "pipeline/BoxDecodeType.h"
+#include "nodes/io/Input.h"
+#include "nodes/common/Output.h"
+#include "pipeline/Graph.h"
 #include "pipeline/internal/contract/ContractCompiler.h"
 #include "pipeline/internal/contract/CompiledNodeContractQuery.h"
 #include "pipeline/internal/sima/ContractRender.h"
@@ -425,6 +428,20 @@ RUN_TEST(
 
       nodes.push_back(
           simaai::neat::nodes::SimaBoxDecode(model, BoxDecodeType::YoloV8Seg, 0.25, 0.45, 100));
+
+      Graph manual;
+      manual.add(simaai::neat::nodes::Input("in"));
+      for (const auto& node : nodes)
+        manual.add(node);
+      manual.add(nodes.back());
+      manual.add(simaai::neat::nodes::Output("out"));
+      try {
+        manual.save(fixture.root_dir + "/ambiguous-route.json");
+        throw std::runtime_error("save accepted conflicting manual post nodes");
+      } catch (const std::runtime_error& error) {
+        require(std::string(error.what()).find("multiple manual post nodes") != std::string::npos,
+                "typed graph save must use the canonical manual route planner");
+      }
 
       pipeline_internal::sima::ManifestBuildDiagnostics diagnostics;
       const auto compiled = compile_node_contracts(nodes, ContractCompileInput{}, &diagnostics);
