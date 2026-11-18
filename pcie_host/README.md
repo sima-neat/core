@@ -415,51 +415,25 @@ against is already installed; repair, modify and uninstall are not blocked.
 Python remains a separate wheel owned by the
 application's Python environment. The initial wheel supports CPython 3.14 x64;
 other Python minors are not part of the first qualified Windows configuration.
-The customer installs the complete cohort with one command:
-
-```powershell
-sima-cli neat install core/pciehost/windows/amd64@3.0
-```
-
-The CLI creates or reuses `%USERPROFILE%\pyneatpcie` and installs the wheel
-there automatically. It verifies every artifact checksum and checks OpenSSH,
-the Platform service, GStreamer, and the compatible Python installation before
-starting either installer. It installs the Scheduler MSI and then the Core MSI,
-runs the installed host doctor, syncs the package-matched customer skill, and
-invokes pip through the managed environment. Repeating the command uses Windows
-Installer's upgrade/repair behavior and skips the pip step when the requested
-`pyneatpcie` version already imports successfully. Use
-`--python-executable <path>` to select another environment or `--native-only`
-to install only the native C++ cohort.
-
-Provision passwordless card SSH once after installation. The Windows utility
-mirrors `pcie-setup.sh`, but uses Windows OpenSSH and streams the public key to
-the remote shell because Windows does not provide `ssh-copy-id`:
-
-```powershell
-& "C:\Program Files\SimaPCIeHost\bin\pcie-setup.cmd"
-# If management-address discovery is unavailable:
-& "C:\Program Files\SimaPCIeHost\bin\pcie-setup.cmd" -Hosts 10.0.0.2
-```
-
-OpenSSH prompts interactively only when the key is not already enrolled. Do not
-put the card password in a command argument. The `.cmd` wrapper uses a
-process-scoped PowerShell execution-policy override for this installed unsigned
-script; it does not persistently change user or machine policy.
+Customers install the complete cohort with one command,
+`sima-cli neat install core/pciehost/windows/amd64@v<Neat version>`, once a
+release that ships Windows binaries is published. The customer page,
+[Install PCIe Host](../docs/getting-started/neat-library/pcie-host.mdx), covers
+prerequisites, installation, card SSH enrollment, verification and
+troubleshooting; keep customer instructions there rather than here.
 
 The MSIs do not redistribute Platform or third-party binaries. A supported host
 therefore also needs the qualified Platform runtime, GStreamer MSVC development
 installation, and the CMake packages required by the exported static C++ target
 (including zlib and nlohmann JSON). CI currently supplies those roots explicitly;
-that runner setup is not a customer installation contract. Do not publish the
-selector until a clean-host install or process-scoped activation path proves that
+that runner setup is not a customer installation contract. Do not publish a
+release until a clean-host install or process-scoped activation path proves that
 ordinary C++ and Python processes find the same qualified dependency cohort
 without relying on a developer shell or a machine-wide PATH mutation.
 
-In current sima-cli syntax, `@3.0` selects the artifact branch named `3.0`; it is
-not inferred from `platform-version`. Production delivery must create and promote
-that channel, or the documented command must use the exact Core release-tag form
-already used by the Linux PCIe packages.
+The Windows release uses the Neat release tag and layout of the Ubuntu host
+packages: `core/v<version>/<commit12>/pciehost/windows/amd64/`, found through
+`core/v<version>/latest.tag`.
 
 Build the MSI from a configured native Windows build directory with `cpack`.
 `cpack` fails unless that build was configured with the selected Scheduler

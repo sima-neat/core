@@ -222,32 +222,64 @@ qualify the Windows cohort and gate branch `latest` promotion on that
 qualification, but never publish it:
 a push cannot supply the upgrade baseline or first-release exemption that
 publication requires. Windows packages are published only by a direct
-`pcie-host-windows.yml` dispatch from `develop` or a `v*` tag with
-`validation_only=false` and either `require_upgrade=true` (below) or, for the
-first Windows release only, `first_release_upgrade_exemption=true` with a
-non-empty `first_release_upgrade_exemption_reason`. Every publishing dispatch
-also needs `linux_run_id=<same-commit-core-vulcan-run-id>` and
+`pcie-host-windows.yml` dispatch from the Neat release tag `v<package-version>`
+(the `package-version` in `deps/manifest.json`) with `validation_only=false`
+and either `require_upgrade=true` (below) or, for the first Windows release
+only, `first_release_upgrade_exemption=true` with a non-empty
+`first_release_upgrade_exemption_reason`. A publishing dispatch from any other
+ref fails in the admission job, before anything is built. Every publishing
+dispatch also needs `linux_run_id=<same-commit-core-vulcan-run-id>` and
 `include_genai=true`; without `include_genai=true` the run fails only at the
 hardware step. Publication is rejected unless
 the Windows 11 customer-install, direct-card, complete GenAI, and cleanup evidence
 passes. Core publishes only the bytes that passed; it does not rebuild them.
 
+The publish job uploads `metadata.json`, its resources and their checksum files
+to `core/<tag>/<commit12>/pciehost/windows/amd64/`, the layout of the Ubuntu
+host packages, with the same credentials and KMS encryption.
+`scripts/ci/pciehost/windows_release.py` owns that layout; the qualifier's local
+registry and the upgrade baseline use the same helper. The job requires
+`core/<tag>/latest.tag` to name this commit already. Vulcan CI's
+`promote-latest-tag` writes it when the tag's Linux release passes, so run the
+Windows dispatch after that run. `metadata.json` is uploaded last, after every
+uploaded file is read back and compared with the qualified candidate. Customers
+then install with:
+
+```text
+sima-cli neat install core/pciehost/windows/amd64@v<package-version>
+```
+
+Before the first production publication, rehearse against staging. The Vulcan
+environment comes from the `VULCAN_ENV` variable, as for the Ubuntu packages, so
+the rehearsal is a release-tag dispatch while that variable selects `staging`,
+after the same tag's Linux release has promoted `latest.tag` in staging. Then,
+on a clean Windows 11 host, run the customer command against staging and
+confirm that both MSIs and the wheel download and install:
+
+```text
+sima-cli neat install core/pciehost/windows/amd64@v<package-version> --env staging
+```
+
 Cross-version upgrade is a formal release check rather than a cost paid by every
-branch commit. To run it against an earlier qualified Windows cohort, dispatch
-the Windows workflow with:
+branch commit. To run it against the previous published Windows release,
+dispatch the Windows workflow with:
 
 ```text
 gh workflow run pcie-host-windows.yml --repo sima-neat/core \
-  --ref <core-ref> \
+  --ref v<package-version> \
   -f linux_run_id=<same-commit-core-vulcan-run-id> \
   -f require_upgrade=true \
-  -f upgrade_base_run_id=<earlier-core-windows-run-id> \
-  -f upgrade_base_commit=<full-earlier-core-commit> \
+  -f upgrade_base_tag=v<previous-windows-release> \
   -f include_genai=true \
   -f validation_only=false
 ```
 
-The baseline must have a lower Core package version and different package bytes.
+The hardware job resolves the baseline tag's commit from the repository and
+downloads that release's `metadata.json` and resources from its published path,
+checking `latest.tag` and every SHA-256. The baseline therefore does not expire
+with an Actions artifact. A published release carries no CI receipts; its own
+release gate checked them before publication. The baseline must have a lower
+Core package version and different package bytes.
 The qualifier installs it through the same customer command, upgrades to the
 candidate, repeats repair, plug-in discovery, API, fault-recovery, and cleanup,
 and retains evidence for both cohorts.
