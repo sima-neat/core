@@ -118,8 +118,12 @@ RUN_TEST(
               io_case("legacy_simaai_pool_not_reserialized",
                       "deprecated input pool flag should not be reserialized"));
 
-      Graph stream_source("stream_source");
+      GraphOptions naming;
+      naming.element_name_prefix = "camera.";
+      naming.element_name_suffix = ".view";
+      Graph stream_source("stream_source", naming);
       stream_source.add(nodes::Input("image"));
+      stream_source.custom("identity name=step");
       stream_source.add(nodes::Output("frame", OutputOptions::EveryFrame(7)));
       const auto linear_path = tmp_json_path("linear_endpoints.json");
       stream_source.save(linear_path);
@@ -129,6 +133,10 @@ RUN_TEST(
               "linear graph round trip must preserve public endpoints");
       require(loaded_source.describe_backend(false) == stream_source.describe_backend(false),
               "linear graph round trip must preserve element names and endpoint options");
+      loaded_source.save(linear_path);
+      require(Graph::load(linear_path).describe_backend(false) ==
+                  stream_source.describe_backend(false),
+              "repeated graph round trips must preserve element names");
       Graph stream_sink("stream_sink");
       stream_sink.add(nodes::Input("frame"));
       stream_sink.add(nodes::Output("classes"));
