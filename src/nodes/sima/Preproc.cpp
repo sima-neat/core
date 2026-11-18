@@ -510,7 +510,8 @@ Preproc::Preproc(PreprocOptions opt) : opt_(std::move(opt)) {
         "Preproc: model-managed preproc requires explicit output/scaled geometry.");
   }
   if (opt_.output_dtype.empty()) {
-    contracts::throw_invalid_option("Preproc: model-managed preproc requires explicit output_dtype.");
+    contracts::throw_invalid_option(
+        "Preproc: model-managed preproc requires explicit output_dtype.");
   }
   if (opt_.input_channels() <= 0) {
     opt_.set_input_shape(compact_shape(
