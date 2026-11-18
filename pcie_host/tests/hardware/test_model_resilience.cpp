@@ -24,6 +24,13 @@ namespace {
 
 using namespace std::chrono_literals;
 
+// Only the Windows lane tolerates a card that finishes inside the one-millisecond host wait.
+#ifdef _WIN32
+constexpr bool kFastCompletionTolerated = true;
+#else
+constexpr bool kFastCompletionTolerated = false;
+#endif
+
 std::string env_or_default(const char* name, const char* fallback) {
   if (const char* value = std::getenv(name)) {
     if (*value != '\0') {
@@ -407,8 +414,7 @@ void test_timeout_and_backpressure(pcie::Model& model, const pcie::ModelInfo& in
     require(late_outputs.has_value(), "timed-out synchronous result could not be drained");
     validate_outputs(*late_outputs, info.outputs);
   } else {
-    // A fast card may complete before the host begins its one-millisecond wait.
-    // Validate that result instead of requiring hardware to miss a wall-clock deadline.
+    require(kFastCompletionTolerated, "one-millisecond synchronous run unexpectedly completed");
     require(immediate_outputs.has_value(), "synchronous run completed without outputs");
     validate_outputs(*immediate_outputs, info.outputs);
     std::cout << "[observation] one-millisecond synchronous run completed\n";
@@ -432,10 +438,9 @@ void test_timeout_and_backpressure(pcie::Model& model, const pcie::ModelInfo& in
                 std::future_status::ready,
             "second push did not resume when transport capacity became available");
   } else {
+    require(kFastCompletionTolerated, "second push did not block at max_inflight=1");
     require(initial_status == std::future_status::ready,
             "second push entered an unexpected future state");
-    // A fast card may complete the first request and release the in-flight slot before the
-    // host observes the second push. The two results below still verify that both requests ran.
     std::cout << "[observation] first request completed before backpressure was observed\n";
   }
   require(second_push.get(), "second backpressure push returned false");
