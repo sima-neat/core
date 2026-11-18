@@ -27,51 +27,20 @@ def metadata(msi: Path, wheel: Path, version: str, branch: str, commit: str,
            or not re.fullmatch(r"[0-9]+(?:[.][0-9]+){2}", scheduler_version))):
     raise ValueError("Scheduler MSI requires its exact numeric package version")
   resources = []
+  openssh = "Install the Windows OpenSSH Client optional feature and reopen the terminal."
   installation = {
       "type": "windows-msi",
       "prerequisites": [
-          {
-              "name": "Windows OpenSSH client",
-              "type": "executable",
-              "value": "ssh.exe",
-              "guidance": (
-                  "Install the Windows OpenSSH Client optional feature and reopen the terminal."
-              ),
-          },
-          {
-              "name": "Windows OpenSSH secure-copy client",
-              "type": "executable",
-              "value": "scp.exe",
-              "guidance": (
-                  "Install the Windows OpenSSH Client optional feature and reopen the terminal."
-              ),
-          },
-          {
-              "name": "Windows OpenSSH key generator",
-              "type": "executable",
-              "value": "ssh-keygen.exe",
-              "guidance": (
-                  "Install the Windows OpenSSH Client optional feature and reopen the terminal."
-              ),
-          },
-          {
-              "name": "SiMa Platform MLA driver",
-              "type": "windows-pnp-driver",
-              "value": "SiMa.ai MLA Device",
-              "version": platform_version,
-              "guidance": (
-                  f"Install SiMa Platform Windows package {platform_version}."
-              ),
-          },
-          {
-              "name": "SiMa Platform virtual Ethernet driver",
-              "type": "windows-pnp-driver",
-              "value": "SiMa.ai Virtual Ethernet Adapter",
-              "version": platform_version,
-              "guidance": (
-                  f"Install SiMa Platform Windows package {platform_version}."
-              ),
-          },
+          *({"name": name, "type": "executable", "value": value, "guidance": openssh}
+            for name, value in (("Windows OpenSSH client", "ssh.exe"),
+                                ("Windows OpenSSH secure-copy client", "scp.exe"),
+                                ("Windows OpenSSH key generator", "ssh-keygen.exe"))),
+          *({"name": name, "type": "windows-pnp-driver", "value": value,
+             "version": platform_version,
+             "guidance": f"Install SiMa Platform Windows package {platform_version}."}
+            for name, value in (
+                ("SiMa Platform MLA driver", "SiMa.ai MLA Device"),
+                ("SiMa Platform virtual Ethernet driver", "SiMa.ai Virtual Ethernet Adapter"))),
           {
               "name": "SiMa Platform PCIe service",
               "type": "windows-service",
