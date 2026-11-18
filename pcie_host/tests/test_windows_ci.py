@@ -1438,7 +1438,7 @@ class WindowsCiContracts(unittest.TestCase):
           "10.0.4.2", Path(directory) / "network.log")
 
     self.assertEqual(result, identity)
-    self.assertNotIn("10.0.4.2", run.call_args.args[0])
+    self.assertNotIn("10.0.4.2", " ".join(map(str, run.call_args.args[0])))
     self.assertEqual(run.call_args.kwargs["env"]["SIMA_PCIE_CARD_HOST"], "10.0.4.2")
     self.assertEqual(run.call_args.kwargs["env"]["SIMA_PCIE_LOCAL_ADDRESS"], "10.0.4.1")
     self.assertIn(
@@ -1603,7 +1603,7 @@ class WindowsCiContracts(unittest.TestCase):
       MODULE.authenticode_status(path, "powershell.exe")
     command = run.call_args.args[0]
     environment = run.call_args.kwargs["env"]
-    self.assertNotIn(str(path), command)
+    self.assertNotIn(str(path), " ".join(map(str, command)))
     self.assertEqual(environment["SIMA_WINDOWS_SIGNATURE_PATH"], str(path))
 
   def test_producer_records_runtime_inputs_and_repeat_installation(self):
