@@ -168,6 +168,24 @@ class WindowsPackagingContract(unittest.TestCase):
         self.assertEqual(sorted(path.name for path in authorized_keys.parent.iterdir()),
                          ["authorized_keys"])
 
+  def test_setup_tells_the_user_how_to_enrol_the_key_without_a_password(self):
+    source = SETUP_SCRIPT.read_text(encoding="utf-8")
+    help_text = source.split("function Write-ManualEnrollmentHelp {", 1)[1].split("\n}\n", 1)[0]
+    self.assertIn("$PublicKeyPath to ~/.ssh/authorized_keys for $Target", help_text)
+    self.assertIn("serial", help_text)
+    self.assertIn(
+        "echo '$publicKey' >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys",
+        help_text)
+    call = "    Write-ManualEnrollmentHelp -Target $target -PublicKeyPath $publicKeyPath\n"
+    for failure in (
+        'Write-Warning "Skipped: the key is not enrolled and non-interactive mode cannot prompt."\n',
+        'Write-Warning "Public-key enrollment failed for $target."\n',
+    ):
+      with self.subTest(failure=failure):
+        self.assertIn(failure + call + "    $", source)
+    # The script never handles the card password itself.
+    self.assertNotRegex(source, r"(?i)Read-Host|SecureString|sshpass")
+
   def test_setup_passes_known_hosts_paths_with_spaces_intact(self):
     source = SETUP_SCRIPT.read_text(encoding="utf-8")
     # OpenSSH splits -o values at whitespace but expands ${VAR} afterwards, so a

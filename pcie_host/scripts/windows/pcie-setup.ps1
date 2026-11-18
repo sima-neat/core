@@ -127,6 +127,20 @@ function Test-KeyAccess {
   return -not $result.TimedOut -and $result.ExitCode -eq 0
 }
 
+function Write-ManualEnrollmentHelp {
+  param(
+    [string]$Target,
+    [string]$PublicKeyPath
+  )
+
+  $publicKey = (Get-Content -LiteralPath $PublicKeyPath -Raw).Trim()
+  Write-Host "If the card does not accept password login, add the public key in"
+  Write-Host "$PublicKeyPath to ~/.ssh/authorized_keys for $Target yourself, then run"
+  Write-Host "pcie-setup again. From a shell on the card signed in as that user (the serial"
+  Write-Host "console, or SSH from a machine that already has access), run:"
+  Write-Host "  mkdir -p ~/.ssh && chmod 700 ~/.ssh && echo '$publicKey' >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys"
+}
+
 if ($User -notmatch '^[A-Za-z0-9._-]+$') {
   throw "Invalid remote user '$User'."
 }
@@ -287,6 +301,7 @@ foreach ($cardHost in $targets) {
 
   if ($NonInteractive) {
     Write-Warning "Skipped: the key is not enrolled and non-interactive mode cannot prompt."
+    Write-ManualEnrollmentHelp -Target $target -PublicKeyPath $publicKeyPath
     $skipped += 1
     continue
   }
@@ -325,6 +340,7 @@ exit $status
   }
   if ($enrollExitCode -ne 0) {
     Write-Warning "Public-key enrollment failed for $target."
+    Write-ManualEnrollmentHelp -Target $target -PublicKeyPath $publicKeyPath
     $failed += 1
     continue
   }
