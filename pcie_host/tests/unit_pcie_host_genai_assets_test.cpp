@@ -2,6 +2,7 @@
 #include <atomic>
 #include <cerrno>
 #include <chrono>
+#include <cstdlib>
 #include <fstream>
 #include <iostream>
 #include <thread>
@@ -11,6 +12,10 @@ void test_genai_receive_root(const char*);
 int test_genai_copies();
 void test_genai_put_error(int);
 void test_genai_block_put(bool);
+void test_genai_pause_put(bool);
+bool test_genai_put_paused();
+bool test_genai_put_waiting();
+int test_genai_open_clients();
 }
 namespace wire = simaai::neat::pcie::genai::wire;
 namespace internal = simaai::neat::pcie::genai::internal;
@@ -18,6 +23,28 @@ namespace {
 void require(bool value, const char* message) {
   if (!value)
     throw std::runtime_error(message);
+}
+template <class Ready> bool wait_until(Ready ready, std::chrono::milliseconds timeout) {
+  const auto deadline = std::chrono::steady_clock::now() + timeout;
+  while (!ready() && std::chrono::steady_clock::now() < deadline)
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+  return ready();
+}
+// A hung close() cannot be joined, so report it and exit instead of waiting for ctest.
+template <class During>
+void close_within(internal::ModelAssets& assets, std::chrono::milliseconds bound, During during,
+                  const char* message) {
+  std::atomic<bool> closed{false};
+  std::thread closer([&] {
+    assets.close();
+    closed = true;
+  });
+  during();
+  if (!wait_until([&] { return closed.load(); }, bound)) {
+    std::cerr << message << '\n';
+    std::_Exit(1);
+  }
+  closer.join();
 }
 struct Directory {
   std::filesystem::path path;
@@ -135,10 +162,9 @@ int main() {
     auto blocked = wire::envelope(session, 8, "asset");
     blocked["name"] = "layer.bin";
     worker.send(wire::asset_tag(session, false), blocked.dump());
-    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
-    while (test_genai_copies() != 6 && std::chrono::steady_clock::now() < deadline)
-      std::this_thread::sleep_for(std::chrono::milliseconds(5));
-    require(test_genai_copies() == 6, "Reach blocked transfer");
+    // copies counts entry into put(); wait until its read is pending instead.
+    require(wait_until(test_genai_put_waiting, std::chrono::seconds(2)) && test_genai_copies() == 6,
+            "Reach blocked transfer");
     const auto started = std::chrono::steady_clock::now();
     assets.close();
     require(std::chrono::steady_clock::now() - started < std::chrono::seconds(1),
@@ -146,6 +172,47 @@ int main() {
     assets.close();
     assets.check();
     test_genai_block_put(false);
+    auto send_asset = [&](const std::string& id) {
+      auto asset = wire::envelope(id, 1, "asset");
+      asset["name"] = "layer.bin";
+      worker.send(wire::asset_tag(id, false), asset.dump());
+    };
+    {
+      // Windows cancels only pending I/O: close() before put() starts waiting
+      // must interrupt again once it does.
+      const std::string late(24, 'c');
+      internal::ModelAssets paused(model, late, 0);
+      test_genai_block_put(true);
+      test_genai_pause_put(true);
+      send_asset(late);
+      require(wait_until(test_genai_put_paused, std::chrono::seconds(2)),
+              "Pause before the transfer waits");
+      close_within(
+          paused, std::chrono::seconds(1),
+          [] {
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            test_genai_pause_put(false);
+          },
+          "Close interrupts a transfer that starts waiting after close begins");
+      paused.check();
+      test_genai_block_put(false);
+    }
+    const int clients = test_genai_open_clients();
+    {
+      const std::string stuck(24, 'd');
+      internal::ModelAssets ignored(model, stuck, 0);
+      test_genai_pause_put(true);
+      send_asset(stuck);
+      require(wait_until(test_genai_put_paused, std::chrono::seconds(2)),
+              "Pause a transfer that ignores interruption");
+      close_within(
+          ignored, std::chrono::seconds(4), [] {},
+          "Close leaks a transfer that ignores interruption instead of hanging");
+    }
+    test_genai_pause_put(false);
+    require(
+        wait_until([&] { return test_genai_open_clients() == clients; }, std::chrono::seconds(2)),
+        "Leaked worker releases its service once the transfer returns");
     std::cout << "GenAI on-demand assets: PASS\n";
     return 0;
   } catch (const std::exception& e) {

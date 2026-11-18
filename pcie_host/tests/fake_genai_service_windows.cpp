@@ -6,12 +6,14 @@
 #include <algorithm>
 #include <atomic>
 #include <cerrno>
+#include <chrono>
 #include <cstring>
 #include <deque>
 #include <filesystem>
 #include <mutex>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <vector>
 
 #define NOMINMAX
@@ -29,7 +31,7 @@ std::mutex mutex;
 std::vector<simaai_svc*> clients;
 std::filesystem::path receive_root;
 std::atomic<int> copies{0}, put_error{0};
-std::atomic<bool> block_put{false};
+std::atomic<bool> block_put{false}, pause_put{false}, put_paused{false}, put_waiting{false};
 std::atomic<unsigned long> pipe_sequence{0};
 
 int windows_error() {
@@ -72,7 +74,7 @@ bool make_pipe(simaai_svc& client) {
   return true;
 }
 
-int wait_for_signal(simaai_svc* client, int timeout_ms) {
+int wait_for_signal(simaai_svc* client, int timeout_ms, std::atomic<bool>* pending = nullptr) {
   OVERLAPPED operation{};
   operation.hEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
   if (!operation.hEvent)
@@ -88,6 +90,8 @@ int wait_for_signal(simaai_svc* client, int timeout_ms) {
     CloseHandle(operation.hEvent);
     return windows_error();
   }
+  if (pending)
+    *pending = true;
   const DWORD timeout = timeout_ms < 0 ? INFINITE : static_cast<DWORD>(timeout_ms);
   const DWORD waited = WaitForSingleObject(operation.hEvent, timeout);
   if (waited == WAIT_TIMEOUT) {
@@ -125,6 +129,21 @@ void test_genai_put_error(int error) {
 }
 void test_genai_block_put(bool block) {
   block_put = block;
+}
+// Holds put() before its read is pending, the window a one-shot CancelIoEx misses.
+void test_genai_pause_put(bool pause) {
+  pause_put = pause;
+}
+bool test_genai_put_paused() {
+  return put_paused;
+}
+// True once a blocked put() has a read pending that CancelIoEx can cancel.
+bool test_genai_put_waiting() {
+  return put_waiting;
+}
+int test_genai_open_clients() {
+  std::lock_guard lock(mutex);
+  return static_cast<int>(clients.size());
 }
 int simaai_svc_open_card(uint32_t, simaai_svc** out) {
   auto* client = new simaai_svc;
@@ -196,9 +215,15 @@ int simaai_svc_get_file(simaai_svc*, const char*, const char*, const char*,
 }
 int simaai_svc_put_file(simaai_svc* client, const char* source, const char* root,
                         const char* destination, const simaai_svc_xfer_opts*, simaai_svc_xfer*) {
+  while (pause_put) {
+    put_paused = true;
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  }
+  put_paused = false;
+  put_waiting = false;
   ++copies;
   if (block_put) {
-    const int result = wait_for_signal(client, -1);
+    const int result = wait_for_signal(client, -1, &put_waiting);
     if (result)
       return result;
   }
