@@ -19,11 +19,11 @@ void require(const bool condition, const char* message) {
 
 int main() {
   try {
-    const auto host_eos = clean_stop_status(CleanStopReason::HostEndOfStream);
-    require(host_eos.final_state == std::string_view("exited"),
-            "host-requested EOS must be recorded as a clean exit");
-    require(host_eos.stopping_message == std::string_view("host requested end of stream"),
-            "host-requested EOS must remain distinguishable from a signal");
+    const auto eos = clean_stop_status(CleanStopReason::EndOfStream);
+    require(eos.final_state == std::string_view("exited"),
+            "end of stream must be recorded as a clean exit");
+    require(eos.stopping_message == std::string_view("pipeline reached end of stream"),
+            "end of stream must remain distinguishable from a signal");
 
     const auto signal = clean_stop_status(CleanStopReason::Signal);
     require(signal.final_state == std::string_view("exited"),

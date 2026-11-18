@@ -916,7 +916,7 @@ public:
       }
       if (type == GST_MESSAGE_EOS) {
         gst_message_unref(msg);
-        return CleanStopReason::HostEndOfStream;
+        return CleanStopReason::EndOfStream;
       }
       gst_message_unref(msg);
     }

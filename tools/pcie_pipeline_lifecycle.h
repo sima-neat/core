@@ -6,7 +6,7 @@ namespace simaai::neat::pcie_builder {
 
 enum class CleanStopReason {
   Signal,
-  HostEndOfStream,
+  EndOfStream,
 };
 
 struct CleanStopStatus {
@@ -16,11 +16,11 @@ struct CleanStopStatus {
 };
 
 constexpr CleanStopStatus clean_stop_status(const CleanStopReason reason) noexcept {
-  if (reason == CleanStopReason::HostEndOfStream) {
+  if (reason == CleanStopReason::EndOfStream) {
     return {
-        .stopping_message = "host requested end of stream",
+        .stopping_message = "pipeline reached end of stream",
         .final_state = "exited",
-        .final_message = "pipeline stopped after host EOS",
+        .final_message = "pipeline stopped after end of stream",
     };
   }
   return {

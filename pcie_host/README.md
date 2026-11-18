@@ -347,6 +347,11 @@ settling before host traffic starts. This is not exposed as a public option.
 exit. It does not send `SIGKILL`; if the remote process ignores `SIGTERM`, the
 PID file remains and the queue stays visibly busy for diagnosis.
 
+When the card pipeline reaches end of stream, the card-side builder records
+state `exited` with message `pipeline stopped after end of stream` and exits
+with status 0. Earlier releases recorded state `failed` with error `gst_state`
+and exited with status 1.
+
 ### Minimal Tensor Example
 
 ```cpp
