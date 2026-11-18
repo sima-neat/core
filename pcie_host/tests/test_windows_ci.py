@@ -1736,6 +1736,8 @@ class WindowsCiContracts(unittest.TestCase):
     self.assertIn('call "%~1" > "%~2" 2>&1', wrapper)
     self.assertIn('call "%~3" "%~4" "%~5" "%~6" "%~7" >> "%~2" 2>&1', wrapper)
     self.assertNotIn("%SIMA_", wrapper)
+    self.assertNotIn("if errorlevel", wrapper)
+    self.assertEqual(wrapper.count('if not "%errorlevel%"=="0" exit /b'), 2)
     self.assertNotIn("C:\\", wrapper)
     self.assertNotIn("{", wrapper)
 
@@ -1791,7 +1793,6 @@ class WindowsCiContracts(unittest.TestCase):
       root = Path(directory) / "standard user work"
       root.mkdir()
       doctor = root / "doctor stub.cmd"
-      doctor.write_text("@echo off\necho doctor PASS\nexit /b 0\n", encoding="ascii")
       runner = root / "runner stub.cmd"
       runner.write_text("@echo off\necho runner %*\nexit /b 0\n", encoding="ascii")
       wrapper = root / "standard-user-activation.cmd"
@@ -1804,13 +1805,19 @@ class WindowsCiContracts(unittest.TestCase):
       command_processor = Path(os.environ["SystemRoot"]) / "System32" / "cmd.exe"
       command = (f'"{command_processor}" /d /c ""{wrapper}"'
                  + "".join(f' "{path}"' for path in paths) + '"')
-      result = subprocess.run(
-          command, env={"SystemRoot": os.environ["SystemRoot"]}, cwd=root,
-          check=False)
-      log = run_log.read_text(encoding="utf-8", errors="replace")
-      self.assertEqual(result.returncode, 0, log)
-      self.assertIn("doctor PASS", log)
-      self.assertIn(f'runner "{python}" "{driver}" "{payload}" "{receipt}"', log)
+      # -1073741502 is 0xC0000142, the exit code of a program whose DLLs failed to load.
+      for doctor_exit, expected in ((0, 0), (-1073741502, 98)):
+        with self.subTest(doctor_exit=doctor_exit):
+          doctor.write_text(
+              f"@echo off\necho doctor ran\nexit /b {doctor_exit}\n", encoding="ascii")
+          result = subprocess.run(
+              command, env={"SystemRoot": os.environ["SystemRoot"]}, cwd=root,
+              check=False)
+          log = run_log.read_text(encoding="utf-8", errors="replace")
+          self.assertEqual(result.returncode, expected, log)
+          self.assertIn("doctor ran", log)
+          if expected == 0:
+            self.assertIn(f'runner "{python}" "{driver}" "{payload}" "{receipt}"', log)
 
   def test_standard_user_platform_config_binding_is_deterministic(self):
     with tempfile.TemporaryDirectory() as directory:

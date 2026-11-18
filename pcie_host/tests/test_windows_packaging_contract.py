@@ -119,6 +119,17 @@ class WindowsPackagingContract(unittest.TestCase):
     self.assertIn('"-Hosts", "10.0.0.2", "-DryRun"', producer)
     self.assertIn('"neat-pcie-application-builder" / "playbook.yml"', producer)
 
+  def test_windows_scripts_treat_negative_exit_codes_as_failure(self):
+    # "if errorlevel 1" is false for crash codes such as 0xC0000142 (-1073741502).
+    scripts = sorted((ROOT / "scripts" / "windows").glob("*.cmd"))
+    self.assertTrue(scripts)
+    for script in scripts:
+      with self.subTest(script=script.name):
+        self.assertNotRegex(script.read_text(encoding="utf-8"),
+                            r"(?im)^\s*if\s+(not\s+)?errorlevel\s+\d")
+    doctor = (ROOT / "scripts/windows/sima-pcie-host-doctor.cmd").read_text(encoding="utf-8")
+    self.assertEqual(doctor.count('if not "%errorlevel%"=="0" ('), 3)
+
   def test_setup_sends_only_the_public_key_on_standard_input(self):
     source = SETUP_SCRIPT.read_text(encoding="utf-8")
     self.assertRegex(

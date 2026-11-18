@@ -895,9 +895,9 @@ def standard_user_wrapper() -> str:
       "set \"SIMAPCIE_GENAI_MEDIA_DIRECTORY=\"\n"
       "set \"SIMAPCIE_GENAI_MEDIA_SERVE_ROOT=\"\n"
       "call \"%~1\" > \"%~2\" 2>&1\n"
-      "if errorlevel 1 exit /b 98\n"
+      "if not \"%errorlevel%\"==\"0\" exit /b 98\n"
       "call \"%~3\" \"%~4\" \"%~5\" \"%~6\" \"%~7\" >> \"%~2\" 2>&1\n"
-      "if errorlevel 1 exit /b 99\n"
+      "if not \"%errorlevel%\"==\"0\" exit /b 99\n"
       "exit /b 0\n"
   )
 
