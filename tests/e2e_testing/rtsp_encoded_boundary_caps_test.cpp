@@ -5,6 +5,7 @@
 #include "nodes/io/RTSPInput.h"
 #include "nodes/rtp/H264Depacketize.h"
 #include "pipeline/Graph.h"
+#include "pipeline/ErrorCodes.h"
 #include "test_utils.h"
 
 #include <chrono>
@@ -101,6 +102,17 @@ int main() {
     require(simaai::neat::element_exists("h264parse"), "missing GStreamer element: h264parse");
     require(simaai::neat::element_exists("appsrc"), "missing GStreamer element: appsrc");
     require(simaai::neat::element_exists("appsink"), "missing GStreamer element: appsink");
+
+    for (int payload : {1, 128}) {
+      using namespace simaai::neat;
+      Graph mismatched;
+      mismatched.add(nodes::RTSPInput(rtsp_url, 200, true));
+      mismatched.add(nodes::H264Depacketize(payload));
+      mismatched.add(nodes::Output());
+      require_neat_error([&] { (void)mismatched.build(); },
+                         payload == 1 ? error_codes::kMediaCaps : error_codes::kOptionOutOfRange,
+                         "payload_type", payload == 1 ? "H264 payload_type=96" : "128");
+    }
 
     simaai::neat::Graph source;
     source.add(simaai::neat::nodes::RTSPInput(rtsp_url, /*latency_ms=*/200, /*tcp=*/true));

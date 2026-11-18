@@ -10,6 +10,8 @@
 #include "nodes/common/EncodedCapsFixup.h"
 #include "nodes/io/RTSPInput.h"
 #include "nodes/rtp/H264CapsFixup.h"
+#include "nodes/rtp/H264Depacketize.h"
+#include "nodes/rtp/H265Depacketize.h"
 #include "nodes/rtp/RTPJpegDepacketize.h"
 #include "pipeline/ErrorCodes.h"
 #include "pipeline/NeatError.h"
@@ -2361,10 +2363,65 @@ static void rtsp_pad_removed(GstElement* src, GstPad* pad, gpointer /*user_data*
   rtsp_log_stats(src, ctx, "pad-removed");
 }
 
-static void attach_rtsp_debug(GstElement* pipeline, const std::vector<std::shared_ptr<Node>>& nodes,
-                              const NameTransform& name_transform,
-                              const std::vector<int>* node_indices = nullptr) {
-  if (!pipeline || !rtsp_stats_debug_enabled())
+struct RtspVideoFilter {
+  const char* codec;
+  int payload;
+};
+
+static std::optional<RtspVideoFilter> rtsp_video_filter(const Node* node) {
+  if (auto* h264 = dynamic_cast<const H264Depacketize*>(node))
+    return RtspVideoFilter{"H264", h264->payload_type()};
+  if (auto* h265 = dynamic_cast<const H265Depacketize*>(node))
+    return RtspVideoFilter{"H265", h265->payload_type()};
+  if (auto* jpeg = dynamic_cast<const RTPJpegDepacketize*>(node))
+    return RtspVideoFilter{"JPEG", jpeg->payload_type()};
+  return std::nullopt;
+}
+
+static void check_rtsp_video_sdp(GstElement* src, GstSDPMessage* sdp, gpointer data) {
+  const auto& requested = *static_cast<const RtspVideoFilter*>(data);
+  std::string offered;
+  for (guint i = 0; i < gst_sdp_message_medias_len(sdp); ++i) {
+    const auto* media = gst_sdp_message_get_media(sdp, i);
+    if (g_strcmp0(gst_sdp_media_get_media(media), "video") != 0)
+      continue;
+    for (guint j = 0; j < gst_sdp_media_formats_len(media); ++j) {
+      const char* format = gst_sdp_media_get_format(media, j);
+      guint64 payload;
+      if (!format || !g_ascii_string_to_unsigned(format, 10, 0, 127, &payload, nullptr))
+        return;
+      g_autoptr(GstCaps) caps = gst_sdp_media_get_caps_from_media(media, static_cast<int>(payload));
+      if (!caps || !gst_caps_get_size(caps))
+        return;
+      const char* codec =
+          gst_structure_get_string(gst_caps_get_structure(caps, 0), "encoding-name");
+      if (!codec && payload == 26)
+        codec = "JPEG";
+      if (!codec || !*codec)
+        return;
+      if (g_ascii_strcasecmp(codec, requested.codec) == 0 &&
+          (requested.payload <= 0 || static_cast<int>(payload) == requested.payload))
+        return;
+      if (!offered.empty())
+        offered += ", ";
+      offered += std::string(codec) + " payload_type=" + format;
+    }
+  }
+  if (!offered.empty()) {
+    const auto want = std::string(requested.codec) + " payload_type=" +
+                      (requested.payload > 0 ? std::to_string(requested.payload) : "any");
+    GST_ELEMENT_ERROR_WITH_DETAILS(
+        src, CORE, NEGOTIATION, ("No matching RTSP video stream"), (nullptr),
+        ("neat-diagnostic-id", G_TYPE_STRING, "rtsp.video_caps_mismatch", "requested",
+         G_TYPE_STRING, want.c_str(), "offered", G_TYPE_STRING, offered.c_str(), nullptr));
+  }
+}
+
+static void attach_rtsp_diagnostics(GstElement* pipeline,
+                                    const std::vector<std::shared_ptr<Node>>& nodes,
+                                    const NameTransform& name_transform,
+                                    const std::vector<int>* node_indices = nullptr) {
+  if (!pipeline)
     return;
   for (size_t i = 0; i < nodes.size(); ++i) {
     const auto* rtsp = dynamic_cast<const RTSPInput*>(nodes[i].get());
@@ -2375,9 +2432,29 @@ static void attach_rtsp_debug(GstElement* pipeline, const std::vector<std::share
         apply_name_transform(name_transform, nodes[i]->element_names(rendered_index));
     if (names.empty())
       continue;
+    std::size_t downstream = i + 1;
+    while (downstream < nodes.size() && nodes[downstream] && nodes[downstream]->kind() == "Queue")
+      ++downstream;
+    auto filter =
+        downstream < nodes.size() ? rtsp_video_filter(nodes[downstream].get()) : std::nullopt;
+    if (filter && filter->payload > 127)
+      session_build_throw_session_error_simple(
+          error_codes::kOptionOutOfRange,
+          "RTSP payload_type " + std::to_string(filter->payload) + " exceeds 127.", {}, {});
+    if (!filter && !rtsp_stats_debug_enabled())
+      continue;
     GstElement* rtspsrc = gst_bin_get_by_name(GST_BIN(pipeline), names[0].c_str());
     if (!rtspsrc)
       continue;
+    if (filter) {
+      g_signal_connect_data(
+          rtspsrc, "on-sdp", G_CALLBACK(check_rtsp_video_sdp), new RtspVideoFilter(*filter),
+          [](gpointer p, GClosure*) { delete static_cast<RtspVideoFilter*>(p); }, GConnectFlags(0));
+    }
+    if (!rtsp_stats_debug_enabled()) {
+      gst_object_unref(rtspsrc);
+      continue;
+    }
     RtspDebugCtx* ctx = ensure_rtsp_debug_ctx(rtspsrc, names[0]);
     (void)ctx;
     g_signal_connect(rtspsrc, "pad-added", G_CALLBACK(rtsp_pad_added), nullptr);
@@ -2694,11 +2771,11 @@ void session_build_validate_explicit_launch_names_or_throw(
   }
 }
 
-void session_build_attach_rtsp_debug(GstElement* pipeline,
-                                     const std::vector<std::shared_ptr<Node>>& nodes,
-                                     const NameTransform& name_transform,
-                                     const std::vector<int>* node_indices) {
-  attach_rtsp_debug(pipeline, nodes, name_transform, node_indices);
+void session_build_attach_rtsp_diagnostics(GstElement* pipeline,
+                                           const std::vector<std::shared_ptr<Node>>& nodes,
+                                           const NameTransform& name_transform,
+                                           const std::vector<int>* node_indices) {
+  attach_rtsp_diagnostics(pipeline, nodes, name_transform, node_indices);
 }
 
 void session_build_attach_h264_caps_fixups(GstElement* pipeline,
