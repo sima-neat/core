@@ -3747,11 +3747,8 @@ Run Graph::build_source_internal_(const RunOptions& opt) {
 
   progress.step("Building graph...");
   if (composition_) {
-    for (const auto& vertex : composition_->vertices) {
-      if (rtsp_still_image(vertex.pipeline_node.get(), "Graph::build"))
-        throw_session_error_simple(error_codes::kPipelineShape,
-                                   "Graph::build: StillImageInput requires Graph::run_rtsp().");
-    }
+    for (const auto& vertex : composition_->vertices)
+      enforce_still_image_source_mode(vertex.pipeline_node.get(), "Graph::build");
   }
   runtime::ExecutionGraphPlan plan = runtime::compile_public_graph(*this, opt, std::nullopt);
   if (plan.linear_compat) {

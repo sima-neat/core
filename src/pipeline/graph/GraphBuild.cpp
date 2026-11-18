@@ -3575,7 +3575,7 @@ static bool has_input_role(const std::vector<std::shared_ptr<Node>>& nodes, Inpu
   return false;
 }
 
-const StillImageInput* rtsp_still_image(const Node* node, const std::string& where) {
+static const StillImageInput* rtsp_still_image(const Node* node, const std::string& where) {
   if (!node || node->kind() != "StillImageInput")
     return nullptr;
   if (const auto* image = dynamic_cast<const StillImageInput*>(node))
@@ -3593,12 +3593,16 @@ const StillImageInput* find_rtsp_still_image(const std::vector<std::shared_ptr<N
   return nullptr;
 }
 
-void enforce_source_run_mode(const std::vector<std::shared_ptr<Node>>& nodes,
-                             const std::string& where) {
-  if (find_rtsp_still_image(nodes, where)) {
+void enforce_still_image_source_mode(const Node* node, const std::string& where) {
+  if (rtsp_still_image(node, where))
     throw_session_error_simple(error_codes::kPipelineShape,
                                where + ": StillImageInput requires Graph::run_rtsp().");
-  }
+}
+
+void enforce_source_run_mode(const std::vector<std::shared_ptr<Node>>& nodes,
+                             const std::string& where) {
+  for (const auto& node : nodes)
+    enforce_still_image_source_mode(node.get(), where);
   if (has_input_role(nodes, InputRole::Push)) {
     throw_session_error_simple(error_codes::kPipelineShape,
                                where + ": Input is present; use run(input) for push pipelines.");

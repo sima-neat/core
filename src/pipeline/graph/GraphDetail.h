@@ -476,7 +476,7 @@ void enforce_sink_last_if_present(const std::vector<std::shared_ptr<Node>>& node
                                   const std::string& where);
 
 class StillImageInput;
-const StillImageInput* rtsp_still_image(const Node* node, const std::string& where);
+void enforce_still_image_source_mode(const Node* node, const std::string& where);
 const StillImageInput* find_rtsp_still_image(const std::vector<std::shared_ptr<Node>>& nodes,
                                              const std::string& where);
 
