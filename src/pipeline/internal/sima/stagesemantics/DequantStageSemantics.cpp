@@ -1,5 +1,7 @@
 #include "pipeline/internal/sima/stagesemantics/DequantStageSemantics.h"
 
+#include "pipeline/internal/contract/ContractFacts.h"
+#include "pipeline/internal/contract/CompiledNodeContractQuery.h"
 #include "pipeline/internal/sima/StaticSpecBuilders.h"
 #include "pipeline/internal/sima/stagesemantics/ProcessCvuStageSemantics.h"
 
@@ -332,6 +334,28 @@ CompiledDequantContract build_dequant_compiled_contract_from_upstream(
     err->clear();
   }
   return compiled;
+}
+
+std::optional<CompiledDequantContract>
+compile_standalone_dequant(const ContractCompileInput& input, const DequantCanonicalFacts& facts,
+                           std::string* error) {
+  const auto* upstream = compiled_runtime_contract_from_stage(input.immediate_upstream);
+  CompiledRuntimeContract ingress;
+  if (!upstream && input.ingress.ingress_sample) {
+    if (!specbuilders::build_dense_ingress_runtime_contract(*input.ingress.ingress_sample, &ingress,
+                                                            error))
+      return std::nullopt;
+    upstream = &ingress;
+  }
+  if (!upstream || upstream->logical_outputs.empty())
+    return build_dequant_compiled_contract_from_facts(facts);
+  std::string reason;
+  auto result = build_dequant_compiled_contract_from_upstream(*upstream, facts, &reason);
+  if (reason.empty())
+    return result;
+  if (error)
+    *error = std::move(reason);
+  return std::nullopt;
 }
 
 bool build_dequant_node_contract(const std::string& node_kind, const std::string& plugin_kind,
