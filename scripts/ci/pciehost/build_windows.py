@@ -374,20 +374,6 @@ def msi_product_state(product_code: str) -> int:
   return int(installer.MsiQueryProductStateW(product_code))
 
 
-def registry_sentinel_exists() -> bool:
-  if sys.platform != "win32":
-    raise ValueError("registry inspection requires Windows")
-  import winreg  # pylint: disable=import-outside-toplevel
-  try:
-    with winreg.OpenKey(
-        winreg.HKEY_LOCAL_MACHINE, ROLLBACK_FIXTURE_REGISTRY_KEY, 0,
-        winreg.KEY_READ | winreg.KEY_WOW64_64KEY) as key:
-      value, value_type = winreg.QueryValueEx(key, "Sentinel")
-      return value_type == winreg.REG_SZ and value == "owned-by-windows-installer"
-  except FileNotFoundError:
-    return False
-
-
 def registry_fixture_key_exists() -> bool:
   if sys.platform != "win32":
     raise ValueError("registry inspection requires Windows")
@@ -505,7 +491,7 @@ def qualify_failed_msi_transaction(
       failures.append("deferred failure probe did not observe the MSI-owned file and registry")
     if fixture_root.exists() or sentinel.exists():
       failures.append("Windows Installer rollback left the fixture install directory")
-    if registry_sentinel_exists() or registry_fixture_key_exists():
+    if registry_fixture_key_exists():
       failures.append("Windows Installer rollback left the fixture registry key or value")
     if product_states_after["fixture"] != MSI_INSTALLSTATE_UNKNOWN:
       failures.append("Windows Installer rollback left the fixture product registered")
@@ -748,22 +734,20 @@ def build(args: argparse.Namespace) -> None:
          "--output-junit", native_junit], env=environment)
     native_test_summary = require_junit_cases(native_junit, set(test_names))
 
-    for component in ("Runtime", "Development", "PcieHostTutorials"):
-      run([cmake, "--install", build_dir, "--config", "Release", "--prefix", stage,
-           "--component", component], env=environment)
-    run([cmake, "--install", build_dir, "--config", "Release", "--prefix", python_stage,
-         "--component", "PcieHostPython"], env=environment)
+    def install_components() -> None:
+      for prefix, component in ((stage, "Runtime"), (stage, "Development"),
+                                (stage, "PcieHostTutorials"), (python_stage, "PcieHostPython")):
+        run([cmake, "--install", build_dir, "--config", "Release", "--prefix", prefix,
+             "--component", component], env=environment)
+
+    install_components()
     if args.signing_certificate_sha1:
       signtool = require_program("signtool.exe")
       sign_files(
           build_sources_for_installed(build_dir, [stage, python_stage]),
           signtool, args.signing_certificate_sha1,
           args.signing_timestamp_url, args.signing_machine_store)
-      for component in ("Runtime", "Development", "PcieHostTutorials"):
-        run([cmake, "--install", build_dir, "--config", "Release", "--prefix", stage,
-             "--component", component], env=environment)
-      run([cmake, "--install", build_dir, "--config", "Release", "--prefix", python_stage,
-           "--component", "PcieHostPython"], env=environment)
+      install_components()
     elif args.require_signatures:
       raise RuntimeError("release mode requires a Windows signing certificate")
     stage.rename(relocated)
@@ -945,12 +929,10 @@ def build(args: argparse.Namespace) -> None:
     })
 
     before_repeat = file_inventory(install_root)
-    scheduler_repeat_code = msi_transaction(
-        scheduler_msi, "i", output / "scheduler-msi-repeat-install.log")
-    require_no_restart(scheduler_repeat_code, "Scheduler MSI repeat installation")
-    core_repeat_code = msi_transaction(
-        core_msi, "i", output / "core-msi-repeat-install.log")
-    require_no_restart(core_repeat_code, "Core MSI repeat installation")
+    for owner, msi in (("Scheduler", scheduler_msi), ("Core", core_msi)):
+      require_no_restart(
+          msi_transaction(msi, "i", output / f"{owner.lower()}-msi-repeat-install.log"),
+          f"{owner} MSI repeat installation")
     after_repeat = file_inventory(install_root)
     if after_repeat != before_repeat:
       raise ValueError("ordered cohort repeat installation changed its file inventory")

@@ -406,7 +406,6 @@ class WindowsCiContracts(unittest.TestCase):
 
       with mock.patch.object(MODULE, "msi_product_code", side_effect=product_codes.get), \
            mock.patch.object(MODULE, "msi_product_state", side_effect=product_state), \
-           mock.patch.object(MODULE, "registry_sentinel_exists", return_value=False), \
            mock.patch.object(MODULE, "registry_fixture_key_exists", return_value=False), \
            mock.patch.object(MODULE.subprocess, "run", side_effect=failed_install):
         receipt = MODULE.qualify_failed_msi_transaction(
