@@ -738,30 +738,25 @@ def run_windows_openssh(command: list[object], log: Path, *,
   return subprocess.CompletedProcess(argv, process.returncode, captured, None)
 
 
+def _run_to_log(argv: list[str], log: Path, env: dict[str, str] | None,
+                cwd: Path | None, timeout: int) -> int:
+  with log.open("w", encoding="utf-8", errors="replace") as output:
+    output.write("+ " + subprocess.list2cmdline(argv) + "\n")
+    output.flush()
+    return subprocess.run(
+        argv, cwd=cwd, env=env, stdin=subprocess.DEVNULL, stdout=output,
+        stderr=subprocess.STDOUT, text=True, timeout=timeout, check=False).returncode
+
+
 def run_logged(command: list[object], log: Path, *, env: dict[str, str] | None = None,
                cwd: Path | None = None, timeout: int = 3600) -> None:
   argv = [str(value) for value in command]
   if Path(argv[0]).name.lower() in {"scp.exe", "ssh.exe"}:
-    result = run_windows_openssh(argv, log, env=env, cwd=cwd, timeout=timeout)
-    if result.returncode not in PASS_CODES:
-      raise RuntimeError(f"command failed with {result.returncode}; see {log}")
-    return
-  with log.open("w", encoding="utf-8", errors="replace") as output:
-    output.write("+ " + subprocess.list2cmdline(argv) + "\n")
-    output.flush()
-    result = subprocess.run(
-        argv,
-        cwd=cwd,
-        env=env,
-        stdin=subprocess.DEVNULL,
-        stdout=output,
-        stderr=subprocess.STDOUT,
-        text=True,
-        timeout=timeout,
-        check=False,
-    )
-  if result.returncode not in PASS_CODES:
-    raise RuntimeError(f"command failed with {result.returncode}; see {log}")
+    returncode = run_windows_openssh(argv, log, env=env, cwd=cwd, timeout=timeout).returncode
+  else:
+    returncode = _run_to_log(argv, log, env, cwd, timeout)
+  if returncode not in PASS_CODES:
+    raise RuntimeError(f"command failed with {returncode}; see {log}")
 
 
 def imports_pyneatpcie(python: Path) -> bool:
@@ -773,24 +768,10 @@ def imports_pyneatpcie(python: Path) -> bool:
 def run_expected_failure(command: list[object], log: Path,
                          *, env: dict[str, str] | None = None,
                          cwd: Path | None = None, timeout: int = 3600) -> int:
-  argv = [str(value) for value in command]
-  with log.open("w", encoding="utf-8", errors="replace") as output:
-    output.write("+ " + subprocess.list2cmdline(argv) + "\n")
-    output.flush()
-    result = subprocess.run(
-        argv,
-        cwd=cwd,
-        env=env,
-        stdin=subprocess.DEVNULL,
-        stdout=output,
-        stderr=subprocess.STDOUT,
-        text=True,
-        timeout=timeout,
-        check=False,
-    )
-  if result.returncode in PASS_CODES:
+  returncode = _run_to_log([str(value) for value in command], log, env, cwd, timeout)
+  if returncode in PASS_CODES:
     raise RuntimeError(f"command unexpectedly succeeded; see {log}")
-  return result.returncode
+  return returncode
 
 
 def customer_process_environment(
@@ -1894,37 +1875,30 @@ def stop_card_workers(args: argparse.Namespace, evidence: Path) -> None:
   terminate_card_workers(args, evidence / "card-worker-cleanup.log")
 
 
-def restart_windows_platform_service(log: Path) -> None:
+def _control_platform_service(cmdlet: str, status: str, failure: str, settle: str,
+                              log: Path) -> None:
   command = (
       "$service = Get-Service -Name 'SiMaMlaDaemon' -ErrorAction Stop; "
-      "Restart-Service -InputObject $service -Force -ErrorAction Stop; "
+      f"{cmdlet} -InputObject $service -Force -ErrorAction Stop; "
       "$service.WaitForStatus("
-      "[System.ServiceProcess.ServiceControllerStatus]::Running, "
+      f"[System.ServiceProcess.ServiceControllerStatus]::{status}, "
       "[TimeSpan]::FromSeconds(30)); "
       "if ($service.Status -ne "
-      "[System.ServiceProcess.ServiceControllerStatus]::Running) { "
-      "throw 'SiMaMlaDaemon did not return to running state' }; "
-      "Start-Sleep -Seconds 2"
+      f"[System.ServiceProcess.ServiceControllerStatus]::{status}) {{ "
+      f"throw 'SiMaMlaDaemon did not {failure}' }}{settle}"
   )
   run_logged(
       [require_powershell(), "-NoLogo", "-NoProfile", "-NonInteractive",
        "-Command", command], log, timeout=60)
+
+
+def restart_windows_platform_service(log: Path) -> None:
+  _control_platform_service(
+      "Restart-Service", "Running", "return to running state", "; Start-Sleep -Seconds 2", log)
 
 
 def stop_windows_platform_service(log: Path) -> None:
-  command = (
-      "$service = Get-Service -Name 'SiMaMlaDaemon' -ErrorAction Stop; "
-      "Stop-Service -InputObject $service -Force -ErrorAction Stop; "
-      "$service.WaitForStatus("
-      "[System.ServiceProcess.ServiceControllerStatus]::Stopped, "
-      "[TimeSpan]::FromSeconds(30)); "
-      "if ($service.Status -ne "
-      "[System.ServiceProcess.ServiceControllerStatus]::Stopped) { "
-      "throw 'SiMaMlaDaemon did not reach stopped state' }"
-  )
-  run_logged(
-      [require_powershell(), "-NoLogo", "-NoProfile", "-NonInteractive",
-       "-Command", command], log, timeout=60)
+  _control_platform_service("Stop-Service", "Stopped", "reach stopped state", "", log)
 
 
 def recover_windows_platform_device(platform_runtime: Path, log: Path) -> None:
@@ -1972,11 +1946,9 @@ Start-Sleep -Seconds 2
        "-Command", command], log, env=environment, timeout=120)
 
 
-def wait_for_no_card_workers(args: argparse.Namespace, log: Path, timeout: int) -> None:
-  remote = (
-      "printf 'workers='; "
-      "pgrep -fc '(^|/)[p]cie-pipeline-builder([[:space:]]|$)' || true"
-  )
+def _wait_for_no_card_process(args: argparse.Namespace, log: Path, timeout: int,
+                              label: str, process: str, description: str) -> None:
+  remote = f"printf '{label}='; pgrep -fc '(^|/)[{process[0]}]{process[1:]}([[:space:]]|$)' || true"
   deadline = time.monotonic() + timeout
   attempt = log.with_name(log.name + ".attempt")
   with log.open("w", encoding="utf-8", errors="replace") as output:
@@ -1986,39 +1958,24 @@ def wait_for_no_card_workers(args: argparse.Namespace, log: Path, timeout: int) 
             ssh_command(args, remote), attempt, timeout=30)
         output.write(f"returncode={result.returncode} {result.stdout.strip()}\n")
         output.flush()
-        match = re.search(r"workers=(\d+)", result.stdout)
-        if result.returncode == 0 and match and int(match.group(1)) == 0:
-          return
-        if time.monotonic() >= deadline:
-          raise RuntimeError(f"card worker did not stop within {timeout} seconds; see {log}")
-        time.sleep(1)
-    finally:
-      attempt.unlink(missing_ok=True)
-
-
-def wait_for_no_genai_workers(args: argparse.Namespace, log: Path, timeout: int) -> None:
-  remote = (
-      "printf 'genai_workers='; "
-      "pgrep -fc '(^|/)[n]eat-pcie-genai-worker([[:space:]]|$)' || true"
-  )
-  deadline = time.monotonic() + timeout
-  attempt = log.with_name(log.name + ".attempt")
-  with log.open("w", encoding="utf-8", errors="replace") as output:
-    try:
-      while True:
-        result = run_captured_to_file(
-            ssh_command(args, remote), attempt, timeout=30)
-        output.write(f"returncode={result.returncode} {result.stdout.strip()}\n")
-        output.flush()
-        match = re.search(r"genai_workers=(\d+)", result.stdout)
+        match = re.search(rf"{label}=(\d+)", result.stdout)
         if result.returncode == 0 and match and int(match.group(1)) == 0:
           return
         if time.monotonic() >= deadline:
           raise RuntimeError(
-              f"card GenAI worker did not stop within {timeout} seconds; see {log}")
+              f"card {description} did not stop within {timeout} seconds; see {log}")
         time.sleep(1)
     finally:
       attempt.unlink(missing_ok=True)
+
+
+def wait_for_no_card_workers(args: argparse.Namespace, log: Path, timeout: int) -> None:
+  _wait_for_no_card_process(args, log, timeout, "workers", "pcie-pipeline-builder", "worker")
+
+
+def wait_for_no_genai_workers(args: argparse.Namespace, log: Path, timeout: int) -> None:
+  _wait_for_no_card_process(
+      args, log, timeout, "genai_workers", "neat-pcie-genai-worker", "GenAI worker")
 
 
 def wait_for_card_ssh(args: argparse.Namespace, log: Path, timeout: int) -> None:
@@ -2062,6 +2019,27 @@ def wait_for_log(process: subprocess.Popen, log: Path, marker: str, timeout: int
     time.sleep(0.2)
 
 
+def launch_until_marker(command: list[object], log: Path, cwd: Path,
+                        environment: dict[str, str], marker: str, timeout: int
+                        ) -> tuple[subprocess.Popen, object, Path]:
+  """Start a logged fault-injection client and wait until it reports readiness."""
+  argv = [str(value) for value in command]
+  stream = log.open("w", encoding="utf-8", errors="replace")
+  stream.write("+ " + subprocess.list2cmdline(argv) + "\n")
+  stream.flush()
+  process = subprocess.Popen(
+      argv, cwd=cwd, env=environment, stdout=stream, stderr=subprocess.STDOUT, text=True)
+  try:
+    wait_for_log(process, log, marker, timeout)
+  except BaseException:
+    if process.poll() is None:
+      process.kill()
+    process.wait(timeout=30)
+    stream.close()
+    raise
+  return process, stream, log
+
+
 def run_fault_recovery_tests(args: argparse.Namespace, test_root: Path, evidence: Path,
                              environment: dict[str, str]) -> list[str]:
   blocker = test_root / "test_queue_blocker.exe"
@@ -2070,25 +2048,12 @@ def run_fault_recovery_tests(args: argparse.Namespace, test_root: Path, evidence
 
   def launch(label: str, *, terminate_on_pull_timeout: bool = False
              ) -> tuple[subprocess.Popen, object, Path]:
-    log = evidence / f"cpp-{label}.log"
-    stream = log.open("w", encoding="utf-8", errors="replace")
     command = [blocker, "--iterations", "0"]
     if terminate_on_pull_timeout:
       command.append("--terminate-on-pull-timeout")
-    stream.write("+ " + subprocess.list2cmdline([str(value) for value in command]) + "\n")
-    stream.flush()
-    process = subprocess.Popen(
-        [str(value) for value in command], cwd=test_root, env=environment,
-        stdout=stream, stderr=subprocess.STDOUT, text=True)
-    try:
-      wait_for_log(process, log, "queue is now occupied", 300)
-    except BaseException:
-      if process.poll() is None:
-        process.kill()
-      process.wait(timeout=30)
-      stream.close()
-      raise
-    return process, stream, log
+    return launch_until_marker(
+        command, evidence / f"cpp-{label}.log", test_root, environment,
+        "queue is now occupied", 300)
 
   process, stream, log = launch(
       "test_worker_loss_recovery", terminate_on_pull_timeout=True)
@@ -2152,23 +2117,9 @@ def run_genai_fault_recovery_tests(
   completed = []
 
   def launch(label: str) -> tuple[subprocess.Popen, object, Path]:
-    log = evidence / f"python-{label}.log"
-    stream = log.open("w", encoding="utf-8", errors="replace")
-    command = [python, client, "wait-for-failure"]
-    stream.write("+ " + subprocess.list2cmdline([str(value) for value in command]) + "\n")
-    stream.flush()
-    process = subprocess.Popen(
-        [str(value) for value in command], cwd=args.source_root, env=environment,
-        stdout=stream, stderr=subprocess.STDOUT, text=True)
-    try:
-      wait_for_log(process, log, "GENAI_FAULT_READY", 900)
-    except BaseException:
-      if process.poll() is None:
-        process.kill()
-      process.wait(timeout=30)
-      stream.close()
-      raise
-    return process, stream, log
+    return launch_until_marker(
+        [python, client, "wait-for-failure"], evidence / f"python-{label}.log",
+        args.source_root, environment, "GENAI_FAULT_READY", 900)
 
   def require_observed_failure(
       process: subprocess.Popen, stream, log: Path, label: str) -> None:

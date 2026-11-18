@@ -1687,7 +1687,10 @@ class WindowsCiContracts(unittest.TestCase):
     self.assertIn("Stop-Service -InputObject $service", source)
     self.assertIn('evidence / "card-candidate-platform-start.log"', source)
     self.assertIn('evidence / "card-stock-platform-recovery.log"', source)
-    self.assertIn("Restart-Service -InputObject $service", source)
+    with mock.patch.object(HARDWARE, "require_powershell", return_value="powershell.exe"), \
+        mock.patch.object(HARDWARE, "run_logged") as run:
+      HARDWARE.restart_windows_platform_service(Path("restart.log"))
+    self.assertIn("Restart-Service -InputObject $service", run.call_args.args[0][-1])
     self.assertIn("process.kill()", source)
     self.assertIn('"/fa"', source)
     self.assertIn('"gst-inspect-1.0.exe"', source)
