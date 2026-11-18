@@ -23,7 +23,6 @@
 #endif
 
 #include <algorithm>
-#include <array>
 #include <cctype>
 #include <cstdio>
 #include <optional>
@@ -184,48 +183,6 @@ std::string parameters_text(const std::vector<client::Parameter>& parameters) {
 const char* target_text(client::Hardware target) {
   return target == client::Hardware::A65 ? "A65" : "EV74";
 }
-
-#if defined(SIMANEAT_WITH_DATAFLOW_SOC_KERNELS)
-// One attribute of a remoteproc, without its trailing newline; "" when it cannot be read.
-std::string remoteproc_attribute(int index, const char* attribute) {
-  char path[96];
-  std::snprintf(path, sizeof path, "/sys/class/remoteproc/remoteproc%d/%s", index, attribute);
-  std::array<char, 96> text{};
-  std::size_t size = 0;
-  if (std::FILE* const file = std::fopen(path, "re")) {
-    size = std::fread(text.data(), 1, text.size() - 1U, file);
-    std::fclose(file);
-  }
-  while (size > 0U && (text[size - 1U] == '\n' || text[size - 1U] == ' ')) {
-    --size;
-  }
-  return std::string(text.data(), size);
-}
-
-// What the EV74 runs: "" when it is the firmware whose entries the Kernels package's EV74 kernels
-// are (the remoteproc named "ev74", running "sima-neat-native-cvu-fw": the image the
-// simaai-kernels-firmware package selects), otherwise what was found instead. It is the runtime's
-// own condition (soc::KernelOp refuses the EV74 target at instantiate, before it opens the device,
-// with Unsupported), read here because an input may be bound, and its Session instantiated, only
-// by its first push: by then the Run is on this backend and cannot go back to GStreamer. Two
-// small files of sysfs, read at the plan of a route with an EV74 kernel stage; nothing is opened
-// on the device.
-std::string ev74_firmware_obstacle() {
-  for (int i = 0; i < 16; ++i) {
-    if (remoteproc_attribute(i, "name") != "ev74") {
-      continue;
-    }
-    const std::string state = remoteproc_attribute(i, "state");
-    const std::string firmware = remoteproc_attribute(i, "firmware");
-    if (state == "running" && firmware == "sima-neat-native-cvu-fw") {
-      return {};
-    }
-    return "the EV74 is " + (state.empty() ? std::string("unreadable") : state) +
-           " with firmware '" + firmware + "'";
-  }
-  return "no remoteproc named ev74";
-}
-#endif
 
 // The caps format token of a kernel stage's output (StageRecipePreparation.cpp
 // processcvu_caps_format_from_dtype_local): what a GStreamer pull leaves in TessSpec::format and
@@ -412,7 +369,11 @@ std::string plan_kernel_stage(const si::StageStaticSpec& stage, bool first, bool
     // A board whose EV74 runs the stock firmware keeps the route on GStreamer, as before this
     // backend ran a kernel on the EV74 at all. Never the A65 kernel in the EV74's place: the
     // placement is the Graph's (ProcessCvuRunTargetPolicy.cpp), not this backend's.
-    if (const std::string obstacle = ev74_firmware_obstacle(); !obstacle.empty()) {
+    // The runtime's own condition (soc::KernelOp refuses the EV74 target on it at instantiate),
+    // asked here because an input may be bound, and its Session instantiated, only by its first
+    // push: by then the Run is on this backend and cannot go back to GStreamer. Cold: sysfs is
+    // read; nothing is opened on the device.
+    if (std::string obstacle; !df::soc::ev74_runs_kernels_firmware(&obstacle)) {
       return name + " is placed on the EV74 (processcvu run target requested '" +
              stage.processcvu.requested_run_target + "', resolved '" +
              stage.processcvu.resolved_exec_backend +
