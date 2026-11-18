@@ -4776,18 +4776,38 @@ Model::Model(const std::string& model_path, const Options& opt) {
     return;
   }
 
-  // Classic DETR takes two logical heads. A terminal pass-through publishes
-  // its inputs individually, so this mismatch needs no physical carrier plan.
-  if (opt.decode_type == BoxDecodeType::Detr && pack.mpk_contract()) {
-    const auto& mpk = *pack.mpk_contract();
-    const auto order = pipeline_internal::sima::plugins_in_execution_order(mpk);
-    if (!order.empty()) {
-      const auto& output = mpk.plugins[order.back()];
-      if (output.kernel == "pass_through" && output.input_tensors.size() > 2 &&
-          output.input_tensors.size() == output.output_tensors.size())
+  if (!pack.mpk_contract() ||
+      (opt.decode_type != BoxDecodeType::Detr && opt.decode_type != BoxDecodeType::YoloV8))
+    return;
+  const auto& mpk = *pack.mpk_contract();
+  std::unordered_set<std::size_t> producers;
+  for (const auto& edge : mpk.edges)
+    producers.insert(edge.src_plugin_index);
+  // A single terminal pass-through explicitly publishes its logical heads in order.
+  if (producers.size() + 1 != mpk.plugins.size())
+    return;
+  for (std::size_t i = 0; i < mpk.plugins.size(); ++i) {
+    const auto& output = mpk.plugins[i];
+    if (producers.contains(i) || output.kernel != "pass_through" ||
+        output.input_tensors.size() != output.output_tensors.size())
+      continue;
+    const auto& heads = output.input_tensors;
+    if (opt.decode_type == BoxDecodeType::Detr && heads.size() > 2)
+      throw_model_error(error_codes::kPipelineShape,
+                        "Classic DETR BoxDecode requires two logical heads.");
+    if (opt.decode_type == BoxDecodeType::YoloV8 && heads.size() == 10) {
+      // Accept arbitrary export names; only the complete authored segmentation
+      // signature proves that the plain detection decoder is incompatible.
+      constexpr std::array<std::string_view, 10> mask_heads{
+          "bbox_0",       "bbox_1",       "bbox_2",       "class_prob_0", "class_prob_1",
+          "class_prob_2", "mask_coeff_0", "mask_coeff_1", "mask_coeff_2", "mask"};
+      if (std::equal(heads.begin(), heads.end(), mask_heads.begin(),
+                     [](const auto& head, std::string_view name) {
+                       const auto pos = head.name.rfind('/');
+                       return std::string_view(head.name).substr(pos + 1) == name;
+                     }))
         throw_model_error(error_codes::kPipelineShape,
-                          "Classic DETR requires two logical heads; the MPK exports " +
-                              std::to_string(output.output_tensors.size()) + ".");
+                          "YOLOv8 BoxDecode cannot consume the MPK's instance-segmentation heads.");
     }
   }
 }
