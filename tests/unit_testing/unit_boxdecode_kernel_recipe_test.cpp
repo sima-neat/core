@@ -2171,6 +2171,7 @@ void crop_source_geometry() {
       // The MLA-like upstream head carrier is distinct from graph ingress,
       // which contains the image and its older preprocessing provenance.
       CompiledNodeContract head_producer;
+      head_producer.logical_stage_id = "detr_head_producer";
       head_producer.kernel.emplace();
       head_producer.kernel->runtime_contract.physical_outputs =
           heads.runtime_contract.physical_inputs;
@@ -2319,6 +2320,7 @@ void composed_frontend_detection_geometry() {
         heads.payload.topk = 2;
         heads.payload.detection_threshold = .6;
         CompiledNodeContract head_producer;
+        head_producer.logical_stage_id = "detr_head_producer";
         head_producer.kernel.emplace();
         head_producer.kernel->runtime_contract.physical_outputs =
             heads.runtime_contract.physical_inputs;
