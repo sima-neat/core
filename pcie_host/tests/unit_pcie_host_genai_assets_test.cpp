@@ -1,4 +1,5 @@
 #include "genai/ModelAssets.h"
+#include "HostPlatform.h"
 #include <atomic>
 #include <cerrno>
 #include <chrono>
@@ -19,6 +20,7 @@ int test_genai_open_clients();
 }
 namespace wire = simaai::neat::pcie::genai::wire;
 namespace internal = simaai::neat::pcie::genai::internal;
+namespace host = simaai::neat::pcie::internal;
 namespace {
 void require(bool value, const char* message) {
   if (!value)
@@ -213,6 +215,27 @@ int main() {
     require(
         wait_until([&] { return test_genai_open_clients() == clients; }, std::chrono::seconds(2)),
         "Leaked worker releases its service once the transfer returns");
+    {
+      // GenAIModel receives UTF-8 names; a non-ASCII root must reach the upload intact.
+      const auto tokyo = directory.path / std::filesystem::path(u8"\u6771\u4eac"); // 東京
+      std::filesystem::create_directory(tokyo);
+      std::ofstream(tokyo / "layer.bin") << "weights";
+      const auto root =
+          internal::host_model_path(host::host_path_from_string(host::host_path_string(tokyo)));
+      const std::string unicode(24, 'e');
+      internal::ModelAssets unicode_assets(root, unicode, 0);
+      wire::Service replies(0);
+      replies.subscribe(wire::asset_tag(unicode, true));
+      require(
+          wire::request_asset(
+              unicode, 1, "layer.bin", 2000,
+              [&](const std::string& text) { replies.send(wire::asset_tag(unicode, false), text); },
+              [&](int ms) { return replies.receive(ms); }, [] { return false; }) == 7,
+          "Upload an asset under a non-ASCII model directory");
+      std::ifstream uploaded(recv / "neat-genai" / unicode / "model/layer.bin");
+      require(std::string((std::istreambuf_iterator<char>(uploaded)), {}) == "weights",
+              "Non-ASCII model asset contents");
+    }
     std::cout << "GenAI on-demand assets: PASS\n";
     return 0;
   } catch (const std::exception& e) {

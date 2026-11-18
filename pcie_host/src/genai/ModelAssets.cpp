@@ -1,4 +1,5 @@
 #include "genai/ModelAssets.h"
+#include "HostPlatform.h"
 #include <chrono>
 
 namespace simaai::neat::pcie::genai::internal {
@@ -9,7 +10,7 @@ std::filesystem::path host_model_path(const std::filesystem::path& model) {
   const auto path = std::filesystem::canonical(model, error);
   if (error || !std::filesystem::is_directory(path))
     throw std::invalid_argument("Model path must name an existing host directory: " +
-                                model.string());
+                                pcie::internal::host_path_string(model));
   return path;
 }
 std::optional<std::filesystem::path> model_asset_path(const std::filesystem::path& model,
@@ -89,7 +90,8 @@ void ModelAssets::State::receive() {
             if (stop_)
               break;
             reply["bytes"] = std::filesystem::file_size(*source);
-            service_.put(source->string(), "neat-genai/" + session_ + "/model/" + name);
+            service_.put(pcie::internal::host_path_string(*source),
+                         "neat-genai/" + session_ + "/model/" + name);
           }
         } catch (const std::exception& e) {
           reply["error"] = std::string(e.what()).substr(0, 4096);
