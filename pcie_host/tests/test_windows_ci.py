@@ -68,6 +68,7 @@ import prepare_card_qualification_candidate as CARD_PREP  # noqa: E402
 import build_card_qualification_dependencies as CARD_DEPS  # noqa: E402
 import cleanup_windows_hardware as RECOVERY  # noqa: E402
 import acquire_windows_dependencies as WINDOWS_DEPENDENCIES  # noqa: E402
+import windows_release as RELEASE  # noqa: E402
 import standard_user_genai as STANDARD_USER_GENAI  # noqa: E402
 from genai_admission_contract import (  # noqa: E402
     is_bounded_competing_session_rejection, is_injected_transport_failure)
@@ -2342,7 +2343,7 @@ class WindowsCiContracts(unittest.TestCase):
             "customer_state": "PASS", "host_state": "PASS", "python": "PASS",
             "remote_lock": "PASS", "scheduler_msi": "PASS", "work": "PASS"},
         "customer_install": {
-            "command": "core/pciehost/windows/amd64@3.0",
+            "command": f"core/pciehost/windows/amd64@v{version}",
             "download_path_with_spaces": r"C:\customer downloads\candidate",
             "missing_wheel": {"exit_code": 1, "status": "PASS"},
             "native_only": "PASS",
@@ -2524,6 +2525,14 @@ class WindowsCiContracts(unittest.TestCase):
       candidate.core_msi.write_bytes(b"changed")
       with self.assertRaisesRegex(ValueError, "checksum differs"):
         validate_candidate(root)
+
+  def test_release_gate_requires_the_release_tag_install_command(self):
+    for command in ("core/pciehost/windows/amd64@3.0", "core/pciehost/windows/amd64@v0.6.1",
+                    "core/pciehost/windows/amd64@develop"):
+      with self.subTest(command=command):
+        self.assert_release_rejected(
+            "repeated customer CLI flow",
+            lambda value: value["customer_install"].update(command=command))
 
   def test_release_gate_requires_exact_external_asset_manifest(self):
     with tempfile.TemporaryDirectory() as directory:
@@ -3702,10 +3711,15 @@ install() {
       candidate = validate_candidate(candidate_root)
       registry = root / "registry"
       package = stage_local_registry(candidate, registry)
+      # sima-cli resolves @v0.6.2 through core/v0.6.2/latest.tag to the
+      # 12-character commit directory that the publisher writes.
       self.assertEqual(
-          (registry / "core" / "3.0" / "latest.tag").read_text().strip(),
-          candidate.core_commit)
-      self.assertTrue((package / "metadata.json").is_file())
+          (registry / "core" / "v0.6.2" / "latest.tag").read_text(), "cccccccccccc\n")
+      self.assertEqual(
+          package, registry / "core" / "v0.6.2" / "cccccccccccc" / "pciehost" / "windows"
+          / "amd64")
+      self.assertEqual(HARDWARE.customer_install_target(candidate),
+                       "core/pciehost/windows/amd64@v0.6.2")
       self.assertEqual(
           {path.name for path in package.iterdir()},
           {"metadata.json", *candidate.resources})
@@ -3719,6 +3733,23 @@ install() {
       self.assertEqual(
           invalid_metadata["resources-checksum"][candidate.wheel.name],
           sha256(invalid_wheel))
+
+  def test_windows_release_layout_is_the_cli_and_ubuntu_layout(self):
+    commit = "0123456789ab" + "c" * 28
+    self.assertEqual(RELEASE.release_tag("0.7.0"), "v0.7.0")
+    self.assertEqual(RELEASE.customer_target("v0.7.0"), "core/pciehost/windows/amd64@v0.7.0")
+    self.assertEqual(RELEASE.latest_tag_key("v0.7.0"), "core/v0.7.0/latest.tag")
+    self.assertEqual(RELEASE.package_prefix("v0.7.0", commit),
+                     "core/v0.7.0/0123456789ab/pciehost/windows/amd64")
+    # Ubuntu and sima-cli quote the whole ref, so a branch is one path segment.
+    self.assertEqual(RELEASE.package_prefix("codex/x y", commit),
+                     "core/codex%2Fx%20y/0123456789ab/pciehost/windows/amd64")
+    for invalid in ("0123456789ab", "C" * 40, ""):
+      with self.subTest(commit=invalid), self.assertRaisesRegex(ValueError, "full lowercase"):
+        RELEASE.package_prefix("v0.7.0", invalid)
+    for version in ("0.7", "0.7.0-rc.1", "3.0"):
+      with self.subTest(version=version), self.assertRaisesRegex(ValueError, "major.minor.patch"):
+        RELEASE.release_tag(version)
 
   def test_linux_release_gate_binds_success_to_exact_commit(self):
     repository = "sima-neat/core"

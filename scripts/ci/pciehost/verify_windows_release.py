@@ -12,6 +12,7 @@ import re
 
 from windows_candidate import _read_json as read_object
 from windows_candidate import dependency_identity, msi_version, sha256, validate_candidate
+from windows_release import customer_target, release_tag
 from windows_hardware_assets import asset_manifest_sha256, read_asset_manifest
 
 
@@ -210,7 +211,8 @@ def verify(candidate_dir: Path, qualification_path: Path, expected_commit: str,
     raise ValueError("hardware qualification recorded an invalid Windows host baseline")
   customer_install = qualification.get("customer_install")
   if (not isinstance(customer_install, dict)
-      or customer_install.get("command") != "core/pciehost/windows/amd64@3.0"
+      or customer_install.get("command") != customer_target(
+          release_tag(candidate.metadata.get("version")))
       or customer_install.get("native_only") != "PASS"
       or customer_install.get("recovery") != "PASS"
       or customer_install.get("repeat") != "PASS"

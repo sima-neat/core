@@ -92,7 +92,8 @@ class WindowsPackagingContract(unittest.TestCase):
     self.assertEqual(condition.text, "Installed OR SIMA_SCHEDULER_MATCHED")
     message = condition.get("Message")
     self.assertIn("simaai-scheduler-pcie-host $(var.SimaSchedulerVersion)", message)
-    self.assertIn("sima-cli neat install core/pciehost/windows/amd64@<channel>", message)
+    self.assertIn(
+        "sima-cli neat install core/pciehost/windows/amd64@v$(var.CPACK_PACKAGE_VERSION)", message)
     # Launch-condition messages are formatted text; brackets would expand.
     self.assertNotRegex(message, r"[\[\]]")
 

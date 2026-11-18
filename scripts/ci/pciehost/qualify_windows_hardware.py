@@ -36,6 +36,8 @@ from windows_candidate import (
     dependency_identity, msi_version, require_junit_cases, sha256, validate_candidate,
     write_json)
 from windows_hardware_assets import asset_manifest_sha256, verify_asset_manifest
+from windows_release import (
+    customer_target, latest_tag_key, package_prefix, release_tag, short_commit)
 
 
 PASS_CODES = {0}
@@ -1365,15 +1367,20 @@ def sima_cli_identity(wheel: Path, expected_commit: str) -> dict[str, str]:
   return {"commit": expected_commit, "sha256": sha256(wheel), "version": version}
 
 
+def customer_install_target(candidate) -> str:
+  return customer_target(release_tag(candidate.metadata["version"]))
+
+
 def stage_local_registry(candidate, root: Path) -> Path:
-  package = root / "core" / "3.0" / candidate.core_commit / "pciehost" / "windows" / "amd64"
+  """Lay the candidate out exactly as the publisher does under its release tag."""
+  tag = release_tag(candidate.metadata["version"])
+  package = root / package_prefix(tag, candidate.core_commit)
   package.mkdir(parents=True)
   shutil.copy2(candidate.root / "metadata.json", package / "metadata.json")
   for name in candidate.resources:
     shutil.copy2(candidate.root / name, package / name)
-  latest = root / "core" / "3.0" / "latest.tag"
-  latest.parent.mkdir(parents=True, exist_ok=True)
-  latest.write_text(candidate.core_commit + "\n", encoding="ascii")
+  (root / latest_tag_key(tag)).write_text(
+      short_commit(candidate.core_commit) + "\n", encoding="ascii")
   return package
 
 
@@ -2663,11 +2670,12 @@ def qualify(args: argparse.Namespace) -> None:
       cli_environment = isolated_sima_cli_environment(
           customer_home, wheelhouse, work)
       native_download_root = work / "native customer downloads with spaces"
-      target = "core/pciehost/windows/amd64@3.0"
+      target = customer_install_target(candidate)
 
-      def sima_cli_install(registry_url, download_root, log, *options, run=run_logged):
+      def sima_cli_install(registry_url, download_root, log, *options, run=run_logged,
+                           install_target=target):
         return run(
-            [cli, "neat", "--base-url", registry_url, "install", target,
+            [cli, "neat", "--base-url", registry_url, "install", install_target,
              "--install-dir", download_root, *options],
             evidence / log, env=cli_environment, cwd=work, timeout=1800)
 
@@ -2676,7 +2684,8 @@ def qualify(args: argparse.Namespace) -> None:
         stage_local_registry(upgrade_base, upgrade_registry_root)
         with local_registry(upgrade_registry_root) as registry_url:
           sima_cli_install(
-              registry_url, native_download_root, "sima-cli-upgrade-baseline-install.log")
+              registry_url, native_download_root, "sima-cli-upgrade-baseline-install.log",
+              install_target=customer_install_target(upgrade_base))
         if not install_root.is_dir():
           raise RuntimeError("sima-cli installed no native upgrade baseline")
 

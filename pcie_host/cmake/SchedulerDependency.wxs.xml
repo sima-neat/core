@@ -17,6 +17,6 @@
           Maximum="$(var.SimaSchedulerVersion)"
           IncludeMaximum="yes"/>
     </Upgrade>
-    <Condition Message="This package requires simaai-scheduler-pcie-host $(var.SimaSchedulerVersion), which is not installed. Install both packages with: sima-cli neat install core/pciehost/windows/amd64@&lt;channel&gt;">Installed OR SIMA_SCHEDULER_MATCHED</Condition>
+    <Condition Message="This package requires simaai-scheduler-pcie-host $(var.SimaSchedulerVersion), which is not installed. Install both packages with: sima-cli neat install core/pciehost/windows/amd64@v$(var.CPACK_PACKAGE_VERSION)">Installed OR SIMA_SCHEDULER_MATCHED</Condition>
   </CPackWiXFragment>
 </CPackWiXPatch>
