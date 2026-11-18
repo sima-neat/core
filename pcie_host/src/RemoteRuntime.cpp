@@ -239,7 +239,7 @@ std::vector<std::string> RemoteRuntime::ssh_base() const {
   if (const auto identity = default_identity_file(); identity.has_value()) {
     cmd.insert(cmd.end(), {"-i", *identity});
   }
-  cmd.insert(cmd.end(), {"-o", "StrictHostKeyChecking=yes"});
+  cmd.insert(cmd.end(), {"-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes"});
   cmd.insert(cmd.end(), {"-o", "ConnectTimeout=" + std::to_string(kConnectTimeoutSec)});
   cmd.push_back(endpoint());
   return cmd;
@@ -252,7 +252,7 @@ std::vector<std::string> RemoteRuntime::scp_base() const {
   if (const auto identity = default_identity_file(); identity.has_value()) {
     cmd.insert(cmd.end(), {"-i", *identity});
   }
-  cmd.insert(cmd.end(), {"-o", "StrictHostKeyChecking=yes"});
+  cmd.insert(cmd.end(), {"-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes"});
   cmd.insert(cmd.end(), {"-o", "ConnectTimeout=" + std::to_string(kConnectTimeoutSec)});
   return cmd;
 }

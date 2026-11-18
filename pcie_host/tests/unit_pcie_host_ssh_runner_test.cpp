@@ -269,6 +269,9 @@ void test_remote_transport_requires_known_host_keys() {
   require(has_ssh_option(runtime.ssh_base(), "StrictHostKeyChecking=yes") &&
               has_ssh_option(runtime.scp_base(), "StrictHostKeyChecking=yes"),
           "tensor ssh and scp must refuse an unknown card host key");
+  require(has_ssh_option(runtime.ssh_base(), "BatchMode=yes") &&
+              has_ssh_option(runtime.scp_base(), "BatchMode=yes"),
+          "tensor ssh and scp must fail instead of waiting on a hidden prompt");
 }
 
 } // namespace
