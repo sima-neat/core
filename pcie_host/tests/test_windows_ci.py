@@ -3,6 +3,7 @@
 
 import base64
 import contextlib
+from functools import partial
 import importlib.util
 import getpass
 import json
@@ -96,6 +97,73 @@ def run_posix(command):
       check=False, env=environment)
 
 
+def workflow_job(source, name):
+  return re.search(rf"(?ms)^  {re.escape(name)}:\n(.*?)(?=^  [\w-]+:\n|\Z)", source)[1]
+
+
+def job_condition(source, name):
+  return re.search(r"(?m)^    if: (.+)$", workflow_job(source, name))[1]
+
+
+def run_windows_preflight(**inputs):
+  step = WORKFLOW.read_text(encoding="utf-8").split(
+      "- name: Validate dependency and admission selectors\n", 1)[1]
+  script = textwrap.dedent(step.split("        run: |\n", 1)[1].split("\n      - name:", 1)[0])
+  environment = os.environ.copy()
+  environment.update({name: "" for name in (
+      "SCHEDULER_RUN_ID", "SCHEDULER_COMMIT", "SIMA_CLI_RUN_ID", "SIMA_CLI_COMMIT",
+      "LINUX_RUN_ID", "REQUIRE_UPGRADE", "UPGRADE_BASE_RUN_ID", "UPGRADE_BASE_COMMIT",
+      "FIRST_RELEASE_UPGRADE_EXEMPTION", "FIRST_RELEASE_UPGRADE_EXEMPTION_REASON")})
+  environment.update({"GITHUB_WORKFLOW": "Core native Windows PCIe host",
+                      "LINUX_CURRENT_RUN": "false", **inputs})
+  return subprocess.run([shutil.which("bash"), "-e", "-c", script], capture_output=True,
+                        text=True, check=False, env=environment)
+
+
+def fixture_platform_snapshot():
+  service = {
+      "configuration": {
+          "DelayedAutoStart": 0,
+          "FailureActions": [128, 81, 1, 0],
+          "ImagePath": r'"C:\Program Files\SiMa\simaai_mla_daemon.exe" --service',
+          "ObjectName": "LocalSystem",
+          "Start": 2,
+          "Type": 16,
+      },
+      "display_name": "SiMa.ai MLA Daemon",
+      "name": "SiMaMlaDaemon",
+      "path_name": r'"C:\Program Files\SiMa\simaai_mla_daemon.exe" --service',
+      "service_type": "Own Process",
+      "start_mode": "Auto",
+      "start_name": "LocalSystem",
+      "state": "Running",
+  }
+  devices = []
+  for name, instance, device_class in (
+      ("SiMa.ai MLA Device", r"PCI\VEN_1F06&DEV_3123\4&1", "System"),
+      ("SiMa.ai Virtual Ethernet Adapter #2", r"ROOT\SIMA_VETH\0000", "Net"),
+  ):
+    devices.append({
+        "class": device_class,
+        "driver_inf": "oem42.inf",
+        "driver_provider": "SiMa.ai",
+        "driver_signer": "SiMa.ai Corporation",
+        "driver_version": "3.0.0.2",
+        "friendly_name": name,
+        "instance_id": instance,
+        "is_signed": True,
+        "manufacturer": "SiMa.ai",
+        "status": "OK",
+    })
+  return {"pnp_devices": devices, "service": service}
+
+
+def card_args(directory, **options):
+  key = directory / "id_ed25519"
+  key.write_text("fixture", encoding="ascii")
+  return SimpleNamespace(card_host="10.0.0.2", card_user="sima", ssh_key=key, **options)
+
+
 def normalized_link_target(path):
   target = os.readlink(path)
   if os.name == "nt" and target.startswith("\\\\?\\"):
@@ -106,6 +174,17 @@ def normalized_link_target(path):
 WINDOWS_OPENSSH_HOP_SKIP = (
     "replays the Windows OpenSSH hop into a bash card shell; runs on Linux")
 WINDOWS_CMD_SKIP = "runs a batch wrapper under cmd.exe; executed on Windows"
+GENAI_CPP_CASES = frozenset({"test_genai_llm_run", "test_genai_vlm_run", "test_genai_asr_run"})
+GENAI_PYTHON_CASES = frozenset({
+    "test_genai_asr_file_pcm_translation_and_stream",
+    "test_genai_bounded_cancellation_soak_and_context_cleanup",
+    "test_genai_competing_sessions_are_isolated",
+    "test_genai_llm_run_stream_history_and_cancel",
+    "test_genai_request_timeout_and_restart_after_failure",
+    "test_genai_restart_after_service_loss", "test_genai_restart_after_worker_loss",
+    "test_genai_service_loss_recovery", "test_genai_vlm_run_and_stream",
+    "test_genai_worker_loss_recovery", "test_genai_workers_drained",
+})
 FIXTURE_SUDO = """\
 #!/bin/sh
 # sudo -n reports FIXTURE_SUDO_N_STATUS; sudo -S checks the piped secret.
@@ -885,13 +964,9 @@ class WindowsCiContracts(unittest.TestCase):
 
   def test_main_ci_requires_windows_acceptance_before_promotion_only_when_enabled(self):
     source = MAIN_WORKFLOW.read_text(encoding="utf-8")
+    job, condition = partial(workflow_job, source), partial(job_condition, source)
     self.assertIn("uses: ./.github/workflows/pcie-host-windows.yml", source)
 
-    def job(name):
-      return re.search(rf"(?ms)^  {re.escape(name)}:\n(.*?)(?=^  [\w-]+:\n|\Z)", source)[1]
-
-    def condition(name):
-      return re.search(r"(?m)^    if: (.+)$", job(name))[1]
 
     gate = textwrap.dedent(job("validation-complete").split(
         "          python3 - <<'PYGATE'\n", 1)[1].split("\n          PYGATE", 1)[0])
@@ -950,14 +1025,10 @@ class WindowsCiContracts(unittest.TestCase):
     # A called workflow sees the top-level caller's name, which the Windows
     # preflight rejects for same-run Linux admission.
     source = MAIN_WORKFLOW.read_text(encoding="utf-8")
+    job, condition = partial(workflow_job, source), partial(job_condition, source)
     self.assertEqual(re.search(r"(?m)^name: (.+)$", source)[1], "Vulcan CI")
     self.assertIn('"${GITHUB_WORKFLOW}" != "Vulcan CI"', WORKFLOW.read_text(encoding="utf-8"))
 
-    def job(name):
-      return re.search(rf"(?ms)^  {re.escape(name)}:\n(.*?)(?=^  [\w-]+:\n|\Z)", source)[1]
-
-    def condition(name):
-      return re.search(r"(?m)^    if: (.+)$", job(name))[1]
 
     callers = {}
     for path in sorted(MAIN_WORKFLOW.parent.glob("*.yml")):
@@ -1187,11 +1258,6 @@ class WindowsCiContracts(unittest.TestCase):
 
   @unittest.skipIf(os.name == "nt", WORKFLOW_BASH_SKIP)
   def test_windows_preflight_rejects_selectors_on_publishing_runs(self):
-    workflow = WORKFLOW.read_text(encoding="utf-8")
-    step = workflow.split("- name: Validate dependency and admission selectors\n", 1)[1]
-    script = textwrap.dedent(step.split("        run: |\n", 1)[1].split("\n      - name:", 1)[0])
-    bash = shutil.which("bash")
-    self.assertIsNotNone(bash)
     # The documented direct dispatches: validation, and first-release publication.
     validation = {"VALIDATION_ONLY": "true"}
     publishing = {
@@ -1212,18 +1278,7 @@ class WindowsCiContracts(unittest.TestCase):
     )
     for selectors, mode, accepted in cases:
       with self.subTest(selectors=sorted(selectors), validation_only=mode["VALIDATION_ONLY"]):
-        environment = os.environ.copy()
-        for name in ("LINUX_CURRENT_RUN", "SCHEDULER_RUN_ID", "SCHEDULER_COMMIT",
-                     "SIMA_CLI_RUN_ID", "SIMA_CLI_COMMIT", "LINUX_RUN_ID", "REQUIRE_UPGRADE",
-                     "UPGRADE_BASE_RUN_ID", "UPGRADE_BASE_COMMIT",
-                     "FIRST_RELEASE_UPGRADE_EXEMPTION",
-                     "FIRST_RELEASE_UPGRADE_EXEMPTION_REASON"):
-          environment[name] = ""
-        environment.update({"GITHUB_WORKFLOW": "Core native Windows PCIe host",
-                            "LINUX_CURRENT_RUN": "false", **selectors, **mode})
-        result = subprocess.run(
-            [bash, "-e", "-c", script], capture_output=True, text=True, check=False,
-            env=environment)
+        result = run_windows_preflight(**selectors, **mode)
         if accepted:
           self.assertEqual(result.returncode, 0, result.stderr)
         else:
@@ -1232,9 +1287,6 @@ class WindowsCiContracts(unittest.TestCase):
 
   @unittest.skipIf(os.name == "nt", WORKFLOW_BASH_SKIP)
   def test_windows_preflight_rejects_each_invalid_input_combination(self):
-    workflow = WORKFLOW.read_text(encoding="utf-8")
-    step = workflow.split("- name: Validate dependency and admission selectors\n", 1)[1]
-    script = textwrap.dedent(step.split("        run: |\n", 1)[1].split("\n      - name:", 1)[0])
     exemption = {"FIRST_RELEASE_UPGRADE_EXEMPTION": "true",
                  "FIRST_RELEASE_UPGRADE_EXEMPTION_REASON": "first Windows release"}
     cases = (
@@ -1249,20 +1301,9 @@ class WindowsCiContracts(unittest.TestCase):
         ({"VALIDATION_ONLY": "false"}, "Publishing requires a real upgrade gate"),
         ({"FIRST_RELEASE_UPGRADE_EXEMPTION": "true"}, "requires a non-empty reason"),
     )
-    for overrides, error in cases:
+    for inputs, error in cases:
       with self.subTest(error=error):
-        environment = os.environ.copy()
-        for name in ("LINUX_CURRENT_RUN", "SCHEDULER_RUN_ID", "SCHEDULER_COMMIT",
-                     "SIMA_CLI_RUN_ID", "SIMA_CLI_COMMIT", "LINUX_RUN_ID", "REQUIRE_UPGRADE",
-                     "UPGRADE_BASE_RUN_ID", "UPGRADE_BASE_COMMIT",
-                     "FIRST_RELEASE_UPGRADE_EXEMPTION",
-                     "FIRST_RELEASE_UPGRADE_EXEMPTION_REASON"):
-          environment[name] = ""
-        environment.update({"GITHUB_WORKFLOW": "Core native Windows PCIe host",
-                            "VALIDATION_ONLY": "true", **overrides})
-        result = subprocess.run(
-            [shutil.which("bash"), "-e", "-c", script], capture_output=True, text=True,
-            check=False, env=environment)
+        result = run_windows_preflight(**{"VALIDATION_ONLY": "true", **inputs})
         self.assertNotEqual(result.returncode, 0)
         self.assertIn(error, result.stderr)
 
@@ -1507,41 +1548,7 @@ class WindowsCiContracts(unittest.TestCase):
         HARDWARE.windows_security_snapshot(log)
 
   def test_windows_platform_snapshot_records_stable_service_and_present_pnp_identity(self):
-    service = {
-        "configuration": {
-            "DelayedAutoStart": 0,
-            "FailureActions": [128, 81, 1, 0],
-            "ImagePath": r'"C:\Program Files\SiMa\simaai_mla_daemon.exe" --service',
-            "ObjectName": "LocalSystem",
-            "Start": 2,
-            "Type": 16,
-        },
-        "display_name": "SiMa.ai MLA Daemon",
-        "name": "SiMaMlaDaemon",
-        "path_name": r'"C:\Program Files\SiMa\simaai_mla_daemon.exe" --service',
-        "service_type": "Own Process",
-        "start_mode": "Auto",
-        "start_name": "LocalSystem",
-        "state": "Running",
-    }
-    devices = []
-    for name, instance, device_class in (
-        ("SiMa.ai MLA Device", r"PCI\VEN_1F06&DEV_3123\4&1", "System"),
-        ("SiMa.ai Virtual Ethernet Adapter #2", r"ROOT\SIMA_VETH\0000", "Net"),
-    ):
-      devices.append({
-          "class": device_class,
-          "driver_inf": "oem42.inf",
-          "driver_provider": "SiMa.ai",
-          "driver_signer": "SiMa.ai Corporation",
-          "driver_version": "3.0.0.2",
-          "friendly_name": name,
-          "instance_id": instance,
-          "is_signed": True,
-          "manufacturer": "SiMa.ai",
-          "status": "OK",
-      })
-    snapshot = {"pnp_devices": devices, "service": service}
+    snapshot = fixture_platform_snapshot()
     completed = subprocess.CompletedProcess([], 0, json.dumps(snapshot), "")
     with tempfile.TemporaryDirectory() as directory, mock.patch(
         "qualify_windows_hardware.require_powershell", return_value="powershell.exe"
@@ -1563,31 +1570,8 @@ class WindowsCiContracts(unittest.TestCase):
       require_restored_windows_host_state(snapshot, changed)
 
   def test_windows_platform_snapshot_rejects_non_present_driver_state(self):
-    snapshot = {
-        "pnp_devices": [
-            {
-                "class": "System", "driver_inf": "oem42.inf",
-                "driver_provider": "SiMa.ai", "driver_signer": "SiMa.ai",
-                "driver_version": "3.0.0.2", "friendly_name": "SiMa.ai MLA Device",
-                "instance_id": r"PCI\VEN_1F06&DEV_3123\4&1", "is_signed": True,
-                "manufacturer": "SiMa.ai", "status": "Error",
-            },
-            {
-                "class": "Net", "driver_inf": "oem43.inf",
-                "driver_provider": "SiMa.ai", "driver_signer": "SiMa.ai",
-                "driver_version": "3.0.0.2",
-                "friendly_name": "SiMa.ai Virtual Ethernet Adapter",
-                "instance_id": r"ROOT\SIMA_VETH\0000", "is_signed": True,
-                "manufacturer": "SiMa.ai", "status": "OK",
-            },
-        ],
-        "service": {
-            "configuration": {"ImagePath": "daemon.exe", "Start": 2},
-            "display_name": "SiMa.ai MLA Daemon", "name": "SiMaMlaDaemon",
-            "path_name": "daemon.exe", "service_type": "Own Process",
-            "start_mode": "Auto", "start_name": "LocalSystem", "state": "Running",
-        },
-    }
+    snapshot = fixture_platform_snapshot()
+    snapshot["pnp_devices"][0]["status"] = "Error"
     completed = subprocess.CompletedProcess([], 0, json.dumps(snapshot), "")
     with tempfile.TemporaryDirectory() as directory, mock.patch(
         "qualify_windows_hardware.require_powershell", return_value="powershell.exe"
@@ -2344,29 +2328,31 @@ class WindowsCiContracts(unittest.TestCase):
     asset_manifest = fixture_asset_manifest()
     asset_manifest_path.write_text(
         json.dumps(asset_manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    card = {
+        "firmware": "modalix-cvu-fw",
+        "genai_workers": "0",
+        "machine": "aarch64",
+        "platform_release": "3.0.0_master_B2501",
+        "platform_sha256": "1" * 64,
+        "remoteproc_state": "running",
+        "workers": "0",
+    }
+    network = {
+        "card_host": "10.0.0.2",
+        "interface_description": "SiMa.ai Virtual Ethernet Adapter",
+        "interface_guid": "11111111-2222-3333-4444-555555555555",
+        "interface_index": 7,
+        "local_address": "10.0.0.1",
+        "pnp_device_id": r"ROOT\SIMA_VETH\0000",
+    }
     qualification.write_text(json.dumps({
         "assets": {
             "identity_sha256": asset_manifest_sha256(asset_manifest),
             "manifest": asset_manifest,
         },
         "candidate": {"core_commit": commit, "resources": resources},
-        "card_baseline": {
-            "firmware": "modalix-cvu-fw",
-            "genai_workers": "0",
-            "machine": "aarch64",
-            "platform_release": "3.0.0_master_B2501",
-            "platform_sha256": "1" * 64,
-            "remoteproc_state": "running",
-            "workers": "0",
-        },
-        "card_network_baseline": {
-            "card_host": "10.0.0.2",
-            "interface_description": "SiMa.ai Virtual Ethernet Adapter",
-            "interface_guid": "11111111-2222-3333-4444-555555555555",
-            "interface_index": 7,
-            "local_address": "10.0.0.1",
-            "pnp_device_id": r"ROOT\SIMA_VETH\0000",
-        },
+        "card_baseline": card,
+        "card_network_baseline": network,
         "card_candidate": {
             "core_commit": commit,
             "firmware": "neat-pcie-card0-" + "4" * 32,
@@ -2374,23 +2360,8 @@ class WindowsCiContracts(unittest.TestCase):
             "runtime_sha256": "2" * 64,
             "worker_sha256": "3" * 64,
         },
-        "card_final": {
-            "firmware": "modalix-cvu-fw",
-            "genai_workers": "0",
-            "machine": "aarch64",
-            "platform_release": "3.0.0_master_B2501",
-            "platform_sha256": "1" * 64,
-            "remoteproc_state": "running",
-            "workers": "0",
-        },
-        "card_network_final": {
-            "card_host": "10.0.0.2",
-            "interface_description": "SiMa.ai Virtual Ethernet Adapter",
-            "interface_guid": "11111111-2222-3333-4444-555555555555",
-            "interface_index": 7,
-            "local_address": "10.0.0.1",
-            "pnp_device_id": r"ROOT\SIMA_VETH\0000",
-        },
+        "card_final": card,
+        "card_network_final": network,
         "cleanup": {
             "card_candidate": "PASS", "core_msi": "PASS", "errors": [],
             "customer_state": "PASS", "host_state": "PASS", "python": "PASS",
@@ -2521,24 +2492,11 @@ class WindowsCiContracts(unittest.TestCase):
     return commit, resources, qualification
 
   def enable_genai_qualification(self, qualification: Path) -> dict:
-    cpp_tests = {
-        "test_genai_llm_run", "test_genai_vlm_run", "test_genai_asr_run",
-    }
-    python_tests = {
-        "test_genai_asr_file_pcm_translation_and_stream",
-        "test_genai_bounded_cancellation_soak_and_context_cleanup",
-        "test_genai_competing_sessions_are_isolated",
-        "test_genai_llm_run_stream_history_and_cancel",
-        "test_genai_request_timeout_and_restart_after_failure",
-        "test_genai_workers_drained", "test_genai_restart_after_service_loss",
-        "test_genai_restart_after_worker_loss", "test_genai_service_loss_recovery",
-        "test_genai_vlm_run_and_stream", "test_genai_worker_loss_recovery",
-    }
     value = json.loads(qualification.read_text(encoding="utf-8"))
-    value["tests"]["cpp"].extend(sorted(cpp_tests))
-    value["tests"]["python"].extend(sorted(python_tests))
+    value["tests"]["cpp"].extend(sorted(GENAI_CPP_CASES))
+    value["tests"]["python"].extend(sorted(GENAI_PYTHON_CASES))
     value["genai_admission"] = {
-        name: "PASS" for name in sorted(cpp_tests | python_tests)
+        name: "PASS" for name in sorted(GENAI_CPP_CASES | GENAI_PYTHON_CASES)
     }
     asset_manifest = fixture_asset_manifest(include_genai=True)
     qualification.with_name("hardware-asset-manifest.json").write_text(
@@ -2854,11 +2812,7 @@ class WindowsCiContracts(unittest.TestCase):
   def test_card_sudo_secret_stays_off_command_line_and_log(self):
     with tempfile.TemporaryDirectory() as directory:
       root = Path(directory)
-      key = root / "id_ed25519"
-      key.write_text("fixture", encoding="ascii")
-      args = SimpleNamespace(
-          card_host="10.0.0.2", card_sudo_password_env="CARD_TEST_SECRET",
-          card_user="sima", ssh_key=key, work=root / "work")
+      args = card_args(root, card_sudo_password_env="CARD_TEST_SECRET", work=root / "work")
       completed = subprocess.CompletedProcess([], 0, "")
       log = root / "sudo.log"
 
@@ -2928,11 +2882,8 @@ class WindowsCiContracts(unittest.TestCase):
   def test_card_sudo_stdin_secret_is_reused_from_process_memory(self):
     with tempfile.TemporaryDirectory() as directory:
       root = Path(directory)
-      key = root / "id_ed25519"
-      key.write_text("fixture", encoding="ascii")
-      args = SimpleNamespace(
-          card_host="10.0.0.2", card_sudo_password_stdin=True,
-          card_sudo_password_value="fixture-secret", card_user="sima", ssh_key=key,
+      args = card_args(
+          root, card_sudo_password_stdin=True, card_sudo_password_value="fixture-secret",
           work=root / "work")
       completed = subprocess.CompletedProcess([], 0, "")
       with mock.patch(
@@ -2962,11 +2913,8 @@ class WindowsCiContracts(unittest.TestCase):
       self.assertNotIn("fixture-secret", log.read_text(encoding="utf-8"))
 
   def windows_hop_args(self, root):
-    key = root / "id_ed25519"
-    key.write_text("fixture", encoding="ascii")
-    return SimpleNamespace(
-        card_host="10.0.0.2", card_user="sima", ssh_key=key,
-        card_sudo_password_stdin=True, card_sudo_password_value="fixture-secret",
+    return card_args(
+        root, card_sudo_password_stdin=True, card_sudo_password_value="fixture-secret",
         remote_lock_path="/tmp/neat-pcie-card0.lock", work=root / "work")
 
   @unittest.skipIf(os.name == "nt", WINDOWS_OPENSSH_HOP_SKIP)
@@ -3037,10 +2985,7 @@ class WindowsCiContracts(unittest.TestCase):
           "version": "0.6.2+develop." + commit[:12],
       }), encoding="utf-8")
       candidate = validate_card_candidate(root, commit)
-      key = root / "id_ed25519"
-      key.write_text("fixture", encoding="ascii")
-      args = SimpleNamespace(
-          card_host="10.0.0.2", card_user="sima", include_genai=False, ssh_key=key)
+      args = card_args(root, include_genai=False)
       evidence = root / "evidence"
       evidence.mkdir()
 
@@ -3071,10 +3016,7 @@ class WindowsCiContracts(unittest.TestCase):
           "version": "0.6.2+develop." + commit[:12],
       }), encoding="utf-8")
       candidate = validate_card_candidate(root, commit)
-      key = root / "id_ed25519"
-      key.write_text("fixture", encoding="ascii")
-      args = SimpleNamespace(
-          card_host="10.0.0.2", card_user="sima", include_genai=True, ssh_key=key)
+      args = card_args(root, include_genai=True)
       evidence = root / "evidence"
       evidence.mkdir()
 
@@ -3099,11 +3041,7 @@ class WindowsCiContracts(unittest.TestCase):
       evidence = Path(directory)
       token = "6" * 32
       staged = card_candidate_paths(token)
-      key = evidence / "id_ed25519"
-      key.write_text("fixture", encoding="ascii")
-      args = SimpleNamespace(
-          card_host="10.0.0.2", card_user="sima", ssh_key=key,
-          remote_lock_path="/tmp/neat-pcie-card0.lock")
+      args = card_args(evidence, remote_lock_path="/tmp/neat-pcie-card0.lock")
       with mock.patch("qualify_windows_hardware.run_logged") as logged, \
           mock.patch("qualify_windows_hardware.run_sudo_remote") as privileged:
         activate_card_candidate(args, staged, "modalix-cvu-fw", evidence)
@@ -3134,11 +3072,7 @@ class WindowsCiContracts(unittest.TestCase):
     with tempfile.TemporaryDirectory() as directory:
       evidence = Path(directory)
       token = "7" * 32
-      key = evidence / "id_ed25519"
-      key.write_text("fixture", encoding="ascii")
-      args = SimpleNamespace(
-          card_host="10.0.0.2", card_user="sima", ssh_key=key,
-          remote_lock_path="/tmp/neat-pcie-card0.lock")
+      args = card_args(evidence, remote_lock_path="/tmp/neat-pcie-card0.lock")
       with mock.patch("qualify_windows_hardware.run_logged") as logged:
         restore_card_candidate(args, token, evidence)
       recovery = logged.call_args_list[0].args[0][-1]
@@ -3519,22 +3453,6 @@ install() {
     self.assert_release_rejected("complete Windows GenAI matrix", drop_genai, genai=True)
 
   def test_release_gate_requires_genai_failure_recovery_and_cleanup_matrix(self):
-    cpp_tests = {
-        "test_genai_llm_run", "test_genai_vlm_run", "test_genai_asr_run",
-    }
-    python_tests = {
-        "test_genai_asr_file_pcm_translation_and_stream",
-        "test_genai_bounded_cancellation_soak_and_context_cleanup",
-        "test_genai_competing_sessions_are_isolated",
-        "test_genai_llm_run_stream_history_and_cancel",
-        "test_genai_request_timeout_and_restart_after_failure",
-        "test_genai_workers_drained",
-        "test_genai_restart_after_service_loss",
-        "test_genai_restart_after_worker_loss",
-        "test_genai_service_loss_recovery",
-        "test_genai_vlm_run_and_stream",
-        "test_genai_worker_loss_recovery",
-    }
     with tempfile.TemporaryDirectory() as directory:
       root = Path(directory)
       commit, _, qualification = self.windows_candidate(root)
@@ -3549,7 +3467,7 @@ install() {
       changed["genai_media"] = value["genai_media"]
       qualification.write_text(json.dumps(changed), encoding="utf-8")
 
-      for missing in sorted(python_tests):
+      for missing in sorted(GENAI_PYTHON_CASES):
         with self.subTest(missing=missing):
           changed = json.loads(qualification.read_text(encoding="utf-8"))
           changed["tests"]["python"].remove(missing)
@@ -3661,9 +3579,7 @@ install() {
   def test_card_side_lock_is_owned_and_released_by_token(self):
     with tempfile.TemporaryDirectory() as directory:
       root = Path(directory)
-      key = root / "id_ed25519"
-      key.write_text("fixture", encoding="ascii")
-      args = SimpleNamespace(card_host="10.0.0.2", card_user="sima", ssh_key=key)
+      args = card_args(root)
       token = "a" * 32
       remote_lock = RemoteExclusiveLock(args, "/tmp/neat-pcie-card0.lock", token)
       completed = subprocess.CompletedProcess([], 0, "")
@@ -3713,14 +3629,7 @@ install() {
   def test_card_snapshot_records_platform_3_build_identity(self):
     with tempfile.TemporaryDirectory() as directory:
       root = Path(directory)
-      key = root / "id_ed25519"
-      key.write_text("fixture", encoding="ascii")
-      args = SimpleNamespace(
-          card_host="10.0.0.2",
-          card_user="sima",
-          include_genai=False,
-          ssh_key=key,
-      )
+      args = card_args(root, include_genai=False)
 
       def write_snapshot(command, log, **_kwargs):
         text = (
