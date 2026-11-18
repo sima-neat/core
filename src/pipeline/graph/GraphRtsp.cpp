@@ -89,6 +89,8 @@ struct RtspServerImpl {
   int rtp_port_base = -1;
   int rtp_port_count = 0;
 
+  std::unique_ptr<GMainContext, decltype(&g_main_context_unref)> context{g_main_context_new(),
+                                                                         g_main_context_unref};
   std::thread th;
   std::atomic<bool> running{false};
   std::atomic<bool> stop_requested{false};
@@ -104,7 +106,7 @@ struct RtspServerImpl {
 struct PushCtx {
   GstElement* appsrc = nullptr;
   std::mutex appsrc_mu;
-  guint timer_id = 0;
+  GSource* timer = nullptr;
 
   int w = 0, h = 0, fps = 30;
   guint64 frame_count = 0;
@@ -118,6 +120,8 @@ struct PushCtx {
   GstBuffer* source_buffer = nullptr;
 
   ~PushCtx() {
+    if (timer)
+      g_source_unref(timer);
     gst_clear_buffer(&source_buffer);
     if (converter)
       gst_video_converter_free(converter);
@@ -240,7 +244,6 @@ static gboolean push_frame_cb(gpointer user_data) {
     return G_SOURCE_REMOVE;
   push_ctx_ref(pc);
   if (pc->stopped.load()) {
-    pc->timer_id = 0;
     push_ctx_unref(pc);
     return G_SOURCE_REMOVE;
   }
@@ -249,7 +252,6 @@ static gboolean push_frame_cb(gpointer user_data) {
     return G_SOURCE_CONTINUE;
   }
   if (!pc->nv12 || pc->nv12->empty()) {
-    pc->timer_id = 0;
     push_ctx_unref(pc);
     return G_SOURCE_REMOVE;
   }
@@ -258,14 +260,12 @@ static gboolean push_frame_cb(gpointer user_data) {
   const size_t uv_sz = y_sz / 2;
   const size_t total = y_sz + uv_sz;
   if (pc->nv12->size() != total) {
-    pc->timer_id = 0;
     push_ctx_unref(pc);
     return G_SOURCE_REMOVE;
   }
 
   GstElement* appsrc = push_ctx_ref_appsrc(pc);
   if (!appsrc) {
-    pc->timer_id = 0;
     push_ctx_unref(pc);
     return G_SOURCE_REMOVE;
   }
@@ -290,7 +290,6 @@ static gboolean push_frame_cb(gpointer user_data) {
                         ("%s", error.message().c_str()));
     }
     gst_clear_buffer(&buf);
-    pc->timer_id = 0;
     gst_object_unref(appsrc);
     push_ctx_unref(pc);
     return G_SOURCE_REMOVE;
@@ -320,7 +319,6 @@ static gboolean push_frame_cb(gpointer user_data) {
                  gst_flow_get_name(fr), pc->frame_count);
   }
   pc->stopped.store(true);
-  pc->timer_id = 0;
   push_ctx_unref(pc);
   return G_SOURCE_REMOVE;
 }
@@ -332,10 +330,8 @@ static void media_unprepared_cb(GstRTSPMedia*, gpointer user_data) {
 
   push_ctx_ref(pc);
   pc->stopped.store(true);
-  if (pc->timer_id) {
-    g_source_remove(pc->timer_id);
-    pc->timer_id = 0;
-  }
+  if (pc->timer)
+    g_source_destroy(pc->timer);
 
   if (GstElement* src = push_ctx_take_appsrc(pc)) {
     g_signal_handlers_disconnect_by_data(src, pc);
@@ -388,7 +384,7 @@ void RtspServerHandle::stop() {
     std::fprintf(stderr, "[rtsp] stop: running=%d\n", impl->running.load() ? 1 : 0);
   }
   impl->stop_requested.store(true);
-  g_main_context_wakeup(g_main_context_default());
+  g_main_context_wakeup(impl->context.get());
 
   const int stop_timeout_ms =
       std::max(0, simaai::neat::pipeline_internal::env_int("SIMA_RTSP_STOP_TIMEOUT_MS", 2000));
@@ -624,8 +620,12 @@ RtspServerHandle Graph::run_rtsp(const RtspServerOptions& opt) {
           g_signal_connect(src, "enough-data", G_CALLBACK(appsrc_enough_data), pc);
 
           const int period_ms = std::max(1, 1000 / pc->fps);
+          pc->timer = g_timeout_source_new(period_ms);
+          push_ctx_ref(pc);
+          g_source_set_callback(pc->timer, push_frame_cb, pc,
+                                [](gpointer data) { push_ctx_unref(static_cast<PushCtx*>(data)); });
+          g_source_attach(pc->timer, impl->context.get());
           g_signal_connect(media, "unprepared", G_CALLBACK(media_unprepared_cb), pc);
-          pc->timer_id = g_timeout_add(period_ms, push_frame_cb, pc);
 
           gst_object_unref(src);
           gst_object_unref(top);
@@ -635,8 +635,9 @@ RtspServerHandle Graph::run_rtsp(const RtspServerOptions& opt) {
     gst_rtsp_mount_points_add_factory(mounts, impl->mount_path.c_str(), factory);
     g_object_unref(mounts);
 
-    const guint source = gst_rtsp_server_attach(server, nullptr);
-    if (!source) {
+    g_autoptr(GError) bind_error = nullptr;
+    g_autoptr(GSource) listener = gst_rtsp_server_create_source(server, nullptr, &bind_error);
+    if (!listener || !g_source_attach(listener, impl->context.get())) {
       g_object_unref(server);
       startup.set_value(-1);
       return;
@@ -645,9 +646,9 @@ RtspServerHandle Graph::run_rtsp(const RtspServerOptions& opt) {
     impl->running.store(true);
     startup.set_value(gst_rtsp_server_get_bound_port(server));
     while (!impl->stop_requested.load())
-      g_main_context_iteration(nullptr, TRUE);
+      g_main_context_iteration(impl->context.get(), TRUE);
     impl->running.store(false);
-    g_source_remove(source);
+    g_source_destroy(listener);
 
     if (rtsp_debug_enabled()) {
       std::fprintf(stderr, "[rtsp] thread exit\n");

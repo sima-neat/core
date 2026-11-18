@@ -114,7 +114,11 @@ RUN_TEST("graph_rtsp_lifecycle_regression_test", ([] {
              auto ephemeral = s2.run_rtsp(o2);
              require(ephemeral.running() && ephemeral.url().find(":0/") == std::string::npos,
                      "an ephemeral RTSP server must publish the bound port");
-             ephemeral.stop();
+             auto third = s2.run_rtsp(o2);
              h1.stop();
+             auto rebound = s1.run_rtsp(o1);
+             require(rebound.running(), "an idle worker must release its own listener on stop");
+             third.stop();
+             ephemeral.stop();
            }
          }));
