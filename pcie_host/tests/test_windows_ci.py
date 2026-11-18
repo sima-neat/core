@@ -2613,11 +2613,8 @@ class WindowsCiContracts(unittest.TestCase):
         verify(root, qualification, commit, False)
 
   def test_genai_release_requires_genai_asset_manifest_scope(self):
-    with tempfile.TemporaryDirectory() as directory:
-      root = Path(directory)
-      commit, _, qualification = self.windows_candidate(root)
-      with self.assertRaisesRegex(ValueError, "does not admit GenAI assets"):
-        verify(root, qualification, commit, False, require_genai=True)
+    self.assert_release_rejected(
+        "does not admit GenAI assets", require_signatures=False, require_genai=True)
 
   def test_release_gate_rejects_native_skip_receipt(self):
     with tempfile.TemporaryDirectory() as directory:
@@ -2849,14 +2846,10 @@ class WindowsCiContracts(unittest.TestCase):
           self.assertIn(name, listing)
 
   def test_release_rejects_incomplete_card_candidate_identity(self):
-    with tempfile.TemporaryDirectory() as directory:
-      root = Path(directory)
-      commit, _resources, qualification = self.windows_candidate(root)
-      receipt = json.loads(qualification.read_text(encoding="utf-8"))
-      receipt["card_candidate"]["firmware"] = "neat-pcie-card0-"
-      qualification.write_text(json.dumps(receipt), encoding="utf-8")
-      with self.assertRaisesRegex(ValueError, "exact Linux card candidate"):
-        verify(root, qualification, commit, False)
+    self.assert_release_rejected(
+        "exact Linux card candidate",
+        lambda value: value["card_candidate"].update(firmware="neat-pcie-card0-"),
+        require_signatures=False)
 
   def test_card_sudo_secret_stays_off_command_line_and_log(self):
     with tempfile.TemporaryDirectory() as directory:
@@ -3370,14 +3363,9 @@ install() {
         verify(root, qualification, commit, False, require_release=True)
 
   def test_release_gate_requires_real_package_rollback_and_reupgrade(self):
-    with tempfile.TemporaryDirectory() as directory:
-      root = Path(directory)
-      commit, _, qualification = self.windows_candidate(root)
-      value = json.loads(qualification.read_text(encoding="utf-8"))
-      del value["customer_install"]["rollback"]
-      qualification.write_text(json.dumps(value), encoding="utf-8")
-      with self.assertRaisesRegex(ValueError, "roll back and re-upgrade"):
-        verify(root, qualification, commit, False, require_release=True)
+    self.assert_release_rejected(
+        "roll back and re-upgrade", lambda value: value["customer_install"].pop("rollback"),
+        require_signatures=False, require_release=True)
 
   def test_release_gate_requires_failed_msi_transaction_rollback(self):
     with tempfile.TemporaryDirectory() as directory:
@@ -3393,19 +3381,10 @@ install() {
         ("preserved_cohort", "file_inventory", "FAIL", "preserve the installed cohort"),
     )
     for section, key, replacement, message in mutations:
-      with self.subTest(section=section, key=key), tempfile.TemporaryDirectory() as directory:
-        root = Path(directory)
-        commit, _, qualification = self.windows_candidate(root)
-        receipt_path = root / "msi-transaction-rollback.json"
-        receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
-        receipt[section][key] = replacement
-        receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
-        host_path = root / "host-candidate.json"
-        host = json.loads(host_path.read_text(encoding="utf-8"))
-        host["qualification_resources"][receipt_path.name] = sha256(receipt_path)
-        host_path.write_text(json.dumps(host), encoding="utf-8")
-        with self.assertRaisesRegex(ValueError, message):
-          verify(root, qualification, commit, False)
+      with self.subTest(section=section, key=key):
+        self.assert_release_rejected(
+            message, lambda receipt: receipt[section].update({key: replacement}),
+            candidate_file="msi-transaction-rollback.json", require_signatures=False)
 
   def test_release_gate_binds_failed_msi_transaction_log(self):
     with tempfile.TemporaryDirectory() as directory:
@@ -3421,39 +3400,21 @@ install() {
         verify(root, qualification, commit, False)
 
   def test_release_gate_requires_partial_wheel_failure_recovery(self):
-    with tempfile.TemporaryDirectory() as directory:
-      root = Path(directory)
-      commit, _, qualification = self.windows_candidate(root)
-      value = json.loads(qualification.read_text(encoding="utf-8"))
-      del value["customer_install"]["wheel_failure"]
-      qualification.write_text(json.dumps(value), encoding="utf-8")
-      with self.assertRaisesRegex(ValueError, "native success, wheel failure, and retry"):
-        verify(root, qualification, commit, True)
+    self.assert_release_rejected(
+        "native success, wheel failure, and retry",
+        lambda value: value["customer_install"].pop("wheel_failure"))
 
   def test_release_gate_requires_customer_process_activation(self):
-    with tempfile.TemporaryDirectory() as directory:
-      root = Path(directory)
-      commit, _, qualification = self.windows_candidate(root)
-      value = json.loads(qualification.read_text(encoding="utf-8"))
-      del value["customer_install"]["process_activation"]
-      qualification.write_text(json.dumps(value), encoding="utf-8")
-      with self.assertRaisesRegex(ValueError, "standard-user process activation"):
-        verify(root, qualification, commit, True)
+    self.assert_release_rejected(
+        "standard-user process activation",
+        lambda value: value["customer_install"].pop("process_activation"))
 
   def test_release_gate_requires_non_administrator_process_activation(self):
-    with tempfile.TemporaryDirectory() as directory:
-      root = Path(directory)
-      commit, _, qualification = self.windows_candidate(root)
-      value = json.loads(qualification.read_text(encoding="utf-8"))
-      value["customer_install"]["standard_user"]["is_administrator"] = True
-      qualification.write_text(json.dumps(value), encoding="utf-8")
-      with self.assertRaisesRegex(ValueError, "standard-user process activation"):
-        verify(root, qualification, commit, True)
-      value["customer_install"]["standard_user"]["is_administrator"] = False
-      value["customer_install"]["standard_user"]["process_is_administrator"] = True
-      qualification.write_text(json.dumps(value), encoding="utf-8")
-      with self.assertRaisesRegex(ValueError, "standard-user process activation"):
-        verify(root, qualification, commit, True)
+    for field in ("is_administrator", "process_is_administrator"):
+      with self.subTest(field=field):
+        self.assert_release_rejected(
+            "standard-user process activation",
+            lambda value: value["customer_install"]["standard_user"].update({field: True}))
 
   def test_genai_release_rejects_custom_or_admin_only_standard_user_false_passes(self):
     with tempfile.TemporaryDirectory() as directory:
@@ -3494,15 +3455,9 @@ install() {
       self.assertTrue(result["genai_qualified"])
 
   def test_genai_release_binds_standard_user_run_to_candidate_executable(self):
-    with tempfile.TemporaryDirectory() as directory:
-      root = Path(directory)
-      commit, _, qualification = self.windows_candidate(root)
-      value = self.enable_genai_qualification(qualification)
-      value["customer_install"]["standard_user"][
-          "real_genai_executable_sha256"] = "0" * 64
-      qualification.write_text(json.dumps(value), encoding="utf-8")
-      with self.assertRaisesRegex(ValueError, "different executable"):
-        verify(root, qualification, commit, False, require_genai=True)
+    self.assert_release_rejected(
+        "different executable", lambda value: value["customer_install"]["standard_user"].update(
+            real_genai_executable_sha256="0" * 64), genai=True, require_signatures=False)
 
   def test_upgrade_baseline_must_name_a_different_package_version(self):
     with tempfile.TemporaryDirectory() as directory:
@@ -3533,68 +3488,35 @@ install() {
         load_upgrade_base(candidate, baseline_root, baseline_commit)
 
   def test_release_gate_rejects_unsigned_platform_dependency(self):
-    with tempfile.TemporaryDirectory() as directory:
-      root = Path(directory)
-      commit, _, qualification = self.windows_candidate(root)
-      dependencies_path = root / "windows-dependencies.json"
-      dependencies = json.loads(dependencies_path.read_text(encoding="utf-8"))
-      dependencies["platform"]["runtime_dlls"][0]["signature"]["status"] = "NotSigned"
-      dependencies_path.write_text(json.dumps(dependencies), encoding="utf-8")
-      receipt_path = root / "host-candidate.json"
-      receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
-      receipt["qualification_resources"][dependencies_path.name] = sha256(dependencies_path)
-      receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
-      with self.assertRaisesRegex(ValueError, "Platform runtime has invalid"):
-        verify(root, qualification, commit, True)
+    self.assert_release_rejected(
+        "Platform runtime has invalid", lambda dependencies: dependencies["platform"][
+            "runtime_dlls"][0]["signature"].update(status="NotSigned"),
+        candidate_file="windows-dependencies.json")
 
   def test_release_gate_rejects_changed_hardware_dependency_cohort(self):
-    with tempfile.TemporaryDirectory() as directory:
-      root = Path(directory)
-      commit, _, qualification = self.windows_candidate(root)
-      value = json.loads(qualification.read_text(encoding="utf-8"))
-      value["dependencies"]["platform_runtime_dlls"][0]["sha256"] = "0" * 64
-      qualification.write_text(json.dumps(value), encoding="utf-8")
-      with self.assertRaisesRegex(ValueError, "different runtime dependency cohort"):
-        verify(root, qualification, commit, True)
+    self.assert_release_rejected(
+        "different runtime dependency cohort",
+        lambda value: value["dependencies"]["platform_runtime_dlls"][0].update(sha256="0" * 64))
 
   def test_release_gate_rejects_changed_windows_host_baseline(self):
-    with tempfile.TemporaryDirectory() as directory:
-      root = Path(directory)
-      commit, _, qualification = self.windows_candidate(root)
-      value = json.loads(qualification.read_text(encoding="utf-8"))
-      value["host_state_final"]["platform"]["service"]["configuration"]["Start"] = 3
-      qualification.write_text(json.dumps(value), encoding="utf-8")
-      with self.assertRaisesRegex(ValueError, "Windows host baseline"):
-        verify(root, qualification, commit, True)
+    self.assert_release_rejected(
+        "Windows host baseline", lambda value: value["host_state_final"]["platform"]["service"][
+            "configuration"].update(Start=3))
 
   def test_release_gate_rejects_unsigned_scheduler_payload(self):
-    with tempfile.TemporaryDirectory() as directory:
-      root = Path(directory)
-      commit, _, qualification = self.windows_candidate(root)
-      scheduler_path = root / "scheduler-windows-signatures.json"
-      scheduler = json.loads(scheduler_path.read_text(encoding="utf-8"))
-      scheduler["release_required"] = False
-      scheduler_path.write_text(json.dumps(scheduler), encoding="utf-8")
-      receipt_path = root / "host-candidate.json"
-      receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
-      receipt["qualification_resources"][scheduler_path.name] = sha256(scheduler_path)
-      receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
-      with self.assertRaisesRegex(ValueError, "Scheduler candidate was not built"):
-        verify(root, qualification, commit, True)
+    self.assert_release_rejected(
+        "Scheduler candidate was not built",
+        lambda scheduler: scheduler.update(release_required=False),
+        candidate_file="scheduler-windows-signatures.json")
 
   def test_release_gate_rejects_missing_genai_matrix(self):
-    with tempfile.TemporaryDirectory() as directory:
-      root = Path(directory)
-      commit, _, qualification = self.windows_candidate(root)
-      value = self.enable_genai_qualification(qualification)
-      value["tests"]["cpp"] = [
-          name for name in value["tests"]["cpp"] if not name.startswith("test_genai_")]
-      value["tests"]["python"] = [
-          name for name in value["tests"]["python"] if not name.startswith("test_genai_")]
+    def drop_genai(value):
+      for language in ("cpp", "python"):
+        value["tests"][language] = [
+            name for name in value["tests"][language] if not name.startswith("test_genai_")]
       value.pop("genai_admission")
-      qualification.write_text(json.dumps(value), encoding="utf-8")
-      with self.assertRaisesRegex(ValueError, "complete Windows GenAI matrix"):
-        verify(root, qualification, commit, True, True)
+
+    self.assert_release_rejected("complete Windows GenAI matrix", drop_genai, genai=True)
 
   def test_release_gate_requires_genai_failure_recovery_and_cleanup_matrix(self):
     cpp_tests = {
@@ -3644,89 +3566,49 @@ install() {
         verify(root, qualification, commit, True, True)
 
   def test_release_gate_enforces_linux_performance_thresholds(self):
-    with tempfile.TemporaryDirectory() as directory:
-      root = Path(directory)
-      commit, _, qualification = self.windows_candidate(root)
-      value = json.loads(qualification.read_text(encoding="utf-8"))
+    def miss_thresholds(value):
       value["performance"]["latency"]["mean_ms"] = 12.1
       value["performance"]["throughput"]["fps"] = 439.9
-      qualification.write_text(json.dumps(value), encoding="utf-8")
-      with self.assertRaisesRegex(ValueError, "Linux PCIe performance gate"):
-        verify(root, qualification, commit, False)
+
+    self.assert_release_rejected(
+        "Linux PCIe performance gate", miss_thresholds, require_signatures=False)
 
   def test_release_gate_rejects_incomplete_vision_matrix(self):
-    with tempfile.TemporaryDirectory() as directory:
-      root = Path(directory)
-      commit, _, qualification = self.windows_candidate(root)
-      value = json.loads(qualification.read_text(encoding="utf-8"))
-      value["tests"]["cpp"].remove("test_tensor_parallel_queues")
-      qualification.write_text(json.dumps(value), encoding="utf-8")
-      with self.assertRaisesRegex(ValueError, "missing required vision cases"):
-        verify(root, qualification, commit, True)
+    self.assert_release_rejected(
+        "missing required vision cases",
+        lambda value: value["tests"]["cpp"].remove("test_tensor_parallel_queues"))
 
   def test_release_gate_rejects_incomplete_installed_tutorial_matrix(self):
-    with tempfile.TemporaryDirectory() as directory:
-      root = Path(directory)
-      commit, _, qualification = self.windows_candidate(root)
-      value = json.loads(qualification.read_text(encoding="utf-8"))
-      value["tests"]["tutorial"]["python"].remove("run_image_boxdecode")
-      qualification.write_text(json.dumps(value), encoding="utf-8")
-      with self.assertRaisesRegex(ValueError, "installed C[+][+] and Python tutorials"):
-        verify(root, qualification, commit, True)
+    self.assert_release_rejected(
+        "installed C[+][+] and Python tutorials",
+        lambda value: value["tests"]["tutorial"]["python"].remove("run_image_boxdecode"))
 
   def test_release_gate_rejects_server_or_unsupported_python(self):
-    with tempfile.TemporaryDirectory() as directory:
-      root = Path(directory)
-      commit, _, qualification = self.windows_candidate(root)
-      value = json.loads(qualification.read_text(encoding="utf-8"))
-      value["host"]["windows_security"]["product_type"] = 3
-      qualification.write_text(json.dumps(value), encoding="utf-8")
-      with self.assertRaisesRegex(ValueError, "Windows 11 x64 workstation"):
-        verify(root, qualification, commit, True)
-      value["host"]["windows_security"]["product_type"] = 1
-      value["host"]["python"] = "3.13.9"
-      qualification.write_text(json.dumps(value), encoding="utf-8")
-      with self.assertRaisesRegex(ValueError, "supported CPython 3.14 ABI"):
-        verify(root, qualification, commit, True)
+    self.assert_release_rejected(
+        "Windows 11 x64 workstation",
+        lambda value: value["host"]["windows_security"].update(product_type=3))
+    self.assert_release_rejected(
+        "supported CPython 3.14 ABI", lambda value: value["host"].update(python="3.13.9"))
 
   def test_release_gate_requires_unchanged_platform_3_card(self):
-    with tempfile.TemporaryDirectory() as directory:
-      root = Path(directory)
-      commit, _, qualification = self.windows_candidate(root)
-      value = json.loads(qualification.read_text(encoding="utf-8"))
-      value["card_final"]["platform_sha256"] = "0" * 64
-      qualification.write_text(json.dumps(value), encoding="utf-8")
-      with self.assertRaisesRegex(ValueError, "Platform 3.0 card baseline"):
-        verify(root, qualification, commit, True)
-      value["card_final"]["platform_sha256"] = value["card_baseline"]["platform_sha256"]
-      for release in ("2.1.3_B4837", "2.3.0_B1", "1.3.0"):
-        value["card_baseline"]["platform_release"] = release
-        value["card_final"]["platform_release"] = release
-        qualification.write_text(json.dumps(value), encoding="utf-8")
-        with self.subTest(release=release), self.assertRaisesRegex(
-            ValueError, "Platform 3.0 card baseline"):
-          verify(root, qualification, commit, True)
+    self.assert_release_rejected(
+        "Platform 3.0 card baseline",
+        lambda value: value["card_final"].update(platform_sha256="0" * 64))
+    for release in ("2.1.3_B4837", "2.3.0_B1", "1.3.0"):
+      with self.subTest(release=release):
+        self.assert_release_rejected("Platform 3.0 card baseline", lambda value: [
+            value[card].update(platform_release=release)
+            for card in ("card_baseline", "card_final")])
 
   def test_release_gate_requires_a_stable_card_network_adapter(self):
-    with tempfile.TemporaryDirectory() as directory:
-      root = Path(directory)
-      commit, _, qualification = self.windows_candidate(root)
-      value = json.loads(qualification.read_text(encoding="utf-8"))
-      value["card_network_final"]["interface_guid"] = (
-          "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
-      qualification.write_text(json.dumps(value), encoding="utf-8")
-      with self.assertRaisesRegex(ValueError, "stable Windows adapter"):
-        verify(root, qualification, commit, True)
+    self.assert_release_rejected(
+        "stable Windows adapter", lambda value: value["card_network_final"].update(
+            interface_guid="aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"))
 
   def test_release_gate_requires_structured_performance_evidence(self):
-    with tempfile.TemporaryDirectory() as directory:
-      root = Path(directory)
-      commit, _, qualification = self.windows_candidate(root)
-      value = json.loads(qualification.read_text(encoding="utf-8"))
-      value["performance"]["throughput"]["fps"] = 0
-      qualification.write_text(json.dumps(value), encoding="utf-8")
-      with self.assertRaisesRegex(ValueError, "valid performance measurements"):
-        verify(root, qualification, commit, True)
+    self.assert_release_rejected(
+        "valid performance measurements",
+        lambda value: value["performance"]["throughput"].update(fps=0))
 
   def test_producer_retains_cpp_hardware_extras_and_signature_receipt(self):
     source = SCRIPT.read_text(encoding="utf-8")
