@@ -70,9 +70,10 @@ def card_stage_owned(args: argparse.Namespace, token: str, evidence: Path) -> bo
   )
   result = run_captured_to_file(
       ssh_command(args, command), evidence / "recovery-stage-owner.log", timeout=30)
-  if result.returncode != 0 or result.stdout not in {"owned", "absent"}:
+  owner = result.stdout.strip()
+  if result.returncode != 0 or owner not in {"owned", "absent"}:
     raise RuntimeError("private card stage ownership is unknown; retaining recovery state")
-  return result.stdout == "owned"
+  return owner == "owned"
 
 
 def cleanup(args: argparse.Namespace) -> None:

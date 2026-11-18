@@ -531,6 +531,7 @@ class WindowsCiContracts(unittest.TestCase):
     with tempfile.TemporaryDirectory() as directory:
       evidence = Path(directory)
       for code, output, expected in ((0, "owned", True), (0, "absent", False),
+                                     (0, "owned\r\n", True), (0, "absent\r\n", False),
                                      (1, "", None), (0, "unexpected", None)):
         with self.subTest(code=code, output=output), \
             mock.patch.object(RECOVERY, "ssh_command", side_effect=lambda _args, cmd: [cmd]), \
