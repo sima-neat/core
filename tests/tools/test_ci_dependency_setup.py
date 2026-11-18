@@ -127,7 +127,9 @@ else: raise AssertionError('unexpected coordinator command: ' + command)
     env_script = tmp_path / 'env.sh'; env_script.write_text('export CXX=cross-g++-14\n')
     script = (ROOT / 'scripts/ci/prepare_scheduler_sdk.sh').read_text()
     script = script.replace('/opt/bin/simaai-init-build-env', str(env_script))
-    script = script.replace('tools/ci/scheduler_sdk_policy.py', str(ROOT / 'tools/ci/scheduler_sdk_policy.py'))
+    policy_cli = ROOT / 'tools/ci/scheduler_sdk_policy.py'
+    script = script.replace('tools/ci/scheduler_sdk_policy.py',
+                            f'"{policy_cli}" --core-manifest deps/manifest.json')
     script = script.replace('[[ $(id -u) == 0 ]]', '[[ 0 == 0 ]]')
     (tmp_path / 'deps').mkdir()
     (tmp_path / 'deps/manifest.json').write_text(json.dumps({'platform-version': '3.0.0', 'sdk': {'channel': 'develop'}}))
@@ -170,7 +172,13 @@ def test_invalid_scheduler_receipt_stops_before_sdk_mutation(tmp_path, version):
               'elxr_version': '3.0.0_master_B2372', 'sysroot-version': version}
     (tools / 'build_dependencies.py').write_text('print(' + repr(json.dumps(policy)) + ')\n')
     script = (ROOT / 'scripts/ci/prepare_scheduler_sdk.sh').read_text()
-    script = script.replace('tools/ci/scheduler_sdk_policy.py', str(ROOT / 'tools/ci/scheduler_sdk_policy.py'))
+    policy_cli = ROOT / 'tools/ci/scheduler_sdk_policy.py'
+    script = script.replace('tools/ci/scheduler_sdk_policy.py',
+                            f'"{policy_cli}" --core-manifest deps/manifest.json')
+    (tmp_path / 'deps').mkdir()
+    (tmp_path / 'deps/manifest.json').write_text(json.dumps({
+        'platform-version': policy['platform-version'], 'sdk': policy['sdk'],
+    }))
     marker = tmp_path / 'mutation'
     script = script.replace('sysroot update', f'touch {marker}; false')
     result = subprocess.run(['/bin/bash', '-c', script, 'policy-test', str(tmp_path / 'cache')],
