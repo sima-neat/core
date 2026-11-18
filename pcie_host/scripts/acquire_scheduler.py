@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """Acquire only Scheduler's immutable native profile, never the device cohort."""
 import argparse
-import hashlib
 import importlib.util
 import json
 from pathlib import Path
@@ -11,6 +10,7 @@ import sys
 
 CORE = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(CORE / 'tools/ci'))
+from published_artifact import digest as file_digest
 from scheduler_dependency import acquire_scheduler
 
 
@@ -18,14 +18,6 @@ MAX_RESOURCES = 256
 MAX_RESOURCE_BYTES = 1024 * 1024 * 1024
 MAX_CANDIDATE_BYTES = 2 * 1024 * 1024 * 1024
 MAX_METADATA_BYTES = 1024 * 1024
-
-
-def file_digest(path):
-    result = hashlib.sha256()
-    with Path(path).open('rb') as stream:
-        for block in iter(lambda: stream.read(1024 * 1024), b''):
-            result.update(block)
-    return result.hexdigest()
 
 
 def local_candidate(source, destination, expected_commit, distro, arch):

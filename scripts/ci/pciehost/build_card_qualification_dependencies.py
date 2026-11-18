@@ -11,7 +11,7 @@ import shutil
 import subprocess
 import tempfile
 
-from sdk_build_identity import validate_identity
+from sdk_build_identity import IMAGE_ID, validate_identity
 from windows_candidate import sha256, write_json
 
 
@@ -23,14 +23,11 @@ REQUIRED_LIBRARIES = (
     "libfmt.so.10",
     "libfftw3.so.3",
 )
-IMAGE_IDENTITY = re.compile(
-    r"(?:[a-z0-9][a-z0-9._/-]*@)?sha256:[0-9a-f]{64}")
 
 
 def image_digest(identity: str) -> str:
-  if not IMAGE_IDENTITY.fullmatch(identity):
-    raise ValueError(
-        "SDK image identity must be an immutable sha256 image ID or repository digest")
+  if not IMAGE_ID.fullmatch(identity):
+    raise ValueError("SDK image identity must be an immutable sha256 image ID")
   return identity.rsplit("sha256:", 1)[1]
 
 
@@ -76,11 +73,7 @@ def copy_library(sysroot: Path, package: Path, name: str) -> dict[str, str]:
     shutil.copy2(resolved, destination)
   link = destination_directory / name
   if link != destination:
-    if link.exists() or link.is_symlink():
-      if not link.is_symlink() or os.readlink(link) != destination.name:
-        raise ValueError(f"conflicting SDK library link: {link}")
-    else:
-      link.symlink_to(destination.name)
+    link.symlink_to(destination.name)
   return {
       "file": resolved.name,
       "sha256": sha256(resolved),
@@ -117,6 +110,15 @@ def build(sysroot: Path, sdk_release: Path, build_identity: Path, output: Path,
     raise ValueError(f"output directory must be absent or empty: {output}")
   output.mkdir(parents=True, exist_ok=True)
 
+  identity = {
+      "architecture": "arm64",
+      "core_commit": core_commit,
+      "purpose": "private non-installing Windows PCIe card qualification",
+      "schema_version": 1,
+      "sdk_build_identity_sha256": sha256(build_identity),
+      "sdk_release_sha256": sha256(sdk_release),
+      "source_image": source_image,
+  }
   package_name = "sima-pcie-card-qualification-dependencies"
   version = f"0+sdk.{digest[:12]}"
   archive = output / f"{package_name}_{version}_arm64.deb"
@@ -130,17 +132,7 @@ def build(sysroot: Path, sdk_release: Path, build_identity: Path, output: Path,
     provenance_directory = (
         package / "usr/share/sima-pcie-card-qualification-dependencies")
     provenance_directory.mkdir(parents=True)
-    provenance = {
-        "architecture": "arm64",
-        "core_commit": core_commit,
-        "libraries": libraries,
-        "purpose": "private non-installing Windows PCIe card qualification",
-        "schema_version": 1,
-        "sdk_build_identity_sha256": sha256(build_identity),
-        "sdk_release_sha256": sha256(sdk_release),
-        "source_image": source_image,
-    }
-    write_json(provenance_directory / "provenance.json", provenance)
+    write_json(provenance_directory / "provenance.json", {**identity, "libraries": libraries})
     (control / "control").write_text(
         f"Package: {package_name}\n"
         f"Version: {version}\n"
@@ -163,17 +155,8 @@ def build(sysroot: Path, sdk_release: Path, build_identity: Path, output: Path,
           f"dpkg-deb failed to build the qualification dependency bundle: "
           f"{result.stderr.strip()}")
 
-  receipt = {
-      "architecture": "arm64",
-      "core_commit": core_commit,
-      "packages": [{"file": archive.name, "sha256": sha256(archive)}],
-      "purpose": "private non-installing Windows PCIe card qualification",
-      "schema_version": 1,
-      "sdk_build_identity_sha256": sha256(build_identity),
-      "sdk_release_sha256": sha256(sdk_release),
-      "source_image": source_image,
-  }
-  write_json(output / "card-qualification-dependencies.json", receipt)
+  write_json(output / "card-qualification-dependencies.json",
+             {**identity, "packages": [{"file": archive.name, "sha256": sha256(archive)}]})
   return archive
 
 
