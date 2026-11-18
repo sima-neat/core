@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Windows counterpart of the DEB's exact Scheduler Depends. A first installation
+  of the Core MSI requires the Scheduler MSI it was built against; repair, modify
+  and uninstall set Installed and are never blocked. WiX v3 sequences
+  FindRelatedProducts (25) before LaunchConditions (100) in both the UI and
+  execute sequences. The packaging build passes both variables to candle.
+-->
+<CPackWiXPatch>
+  <CPackWiXFragment Id="#PRODUCT">
+    <Upgrade Id="$(var.SimaSchedulerUpgradeCode)">
+      <UpgradeVersion
+          OnlyDetect="yes"
+          Property="SIMA_SCHEDULER_MATCHED"
+          Minimum="$(var.SimaSchedulerVersion)"
+          IncludeMinimum="yes"
+          Maximum="$(var.SimaSchedulerVersion)"
+          IncludeMaximum="yes"/>
+    </Upgrade>
+    <Condition Message="This package requires simaai-scheduler-pcie-host $(var.SimaSchedulerVersion), which is not installed. Install both packages with: sima-cli neat install core/pciehost/windows/amd64@&lt;channel&gt;">Installed OR SIMA_SCHEDULER_MATCHED</Condition>
+  </CPackWiXFragment>
+</CPackWiXPatch>

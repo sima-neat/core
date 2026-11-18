@@ -8,6 +8,7 @@ import shutil
 import subprocess
 import tempfile
 import unittest
+from xml.etree import ElementTree
 
 
 PACKAGING = Path(__file__).parents[1] / "cmake" / "PackagingWindows.cmake"
@@ -55,6 +56,41 @@ class WindowsPackagingContract(unittest.TestCase):
         match.group(1),
         r"^[0-9A-F]{8}(?:-[0-9A-F]{4}){3}-[0-9A-F]{12}$",
     )
+
+  def test_msi_first_install_requires_exact_scheduler_msi(self):
+    source = PACKAGING.read_text(encoding="utf-8")
+    self.assertIn(
+        'set(CPACK_WIX_PATCH_FILE "${CMAKE_CURRENT_LIST_DIR}/SchedulerDependency.wxs.xml")',
+        source)
+    self.assertIn('"-dSimaSchedulerVersion=${SIMAPCIE_SCHEDULER_PACKAGE_VERSION}"', source)
+    self.assertIn('"-dSimaSchedulerUpgradeCode=${SIMAPCIE_SCHEDULER_WIX_UPGRADE_CODE}"', source)
+    # Packaging without both values fails in cpack, as the DEB path does.
+    self.assertIn("Native Core packaging requires its selected Scheduler MSI", source)
+    self.assertIn("set(CPACK_PROJECT_CONFIG_FILE", source)
+
+    patch = ElementTree.parse(PACKAGING.parent / "SchedulerDependency.wxs.xml").getroot()
+    self.assertEqual(patch.tag, "CPackWiXPatch")
+    (fragment,) = patch
+    self.assertEqual(fragment.get("Id"), "#PRODUCT")
+    upgrade = fragment.find("Upgrade")
+    self.assertEqual(upgrade.get("Id"), "$(var.SimaSchedulerUpgradeCode)")
+    (version,) = upgrade
+    self.assertEqual(version.attrib, {
+        "OnlyDetect": "yes",
+        "Property": "SIMA_SCHEDULER_MATCHED",
+        "Minimum": "$(var.SimaSchedulerVersion)",
+        "IncludeMinimum": "yes",
+        "Maximum": "$(var.SimaSchedulerVersion)",
+        "IncludeMaximum": "yes",
+    })
+    (condition,) = fragment.findall("Condition")
+    # Installed keeps repair, modify and uninstall available.
+    self.assertEqual(condition.text, "Installed OR SIMA_SCHEDULER_MATCHED")
+    message = condition.get("Message")
+    self.assertIn("simaai-scheduler-pcie-host $(var.SimaSchedulerVersion)", message)
+    self.assertIn("sima-cli neat install core/pciehost/windows/amd64@<channel>", message)
+    # Launch-condition messages are formatted text; brackets would expand.
+    self.assertNotRegex(message, r"[\[\]]")
 
   def test_msi_installs_process_scoped_activation_tools(self):
     cmake = (ROOT / "CMakeLists.txt").read_text(encoding="utf-8")

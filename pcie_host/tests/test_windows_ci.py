@@ -696,6 +696,58 @@ class WindowsCiContracts(unittest.TestCase):
       with self.assertRaisesRegex(ValueError, "zero-skip pass"):
         MODULE.verify_scheduler_candidate(root, "a" * 40)
 
+  def test_scheduler_msi_identity_is_read_from_the_msi(self):
+    msi = Path("scheduler.msi")
+    properties = {
+        "UpgradeCode": "{4043eb4e-3e8c-48cc-8bec-56ecb5ee245a}",
+        "ProductVersion": "0.6.2",
+    }
+    with mock.patch.object(MODULE, "msi_property",
+                           side_effect=lambda path, name: properties[name]) as read:
+      identity = MODULE.scheduler_msi_identity(msi, "0.6.2")
+    self.assertEqual(identity, {
+        "upgrade_code": "{4043EB4E-3E8C-48CC-8BEC-56ECB5EE245A}",
+        "version": "0.6.2",
+    })
+    self.assertEqual({call.args for call in read.call_args_list},
+                     {(msi, "UpgradeCode"), (msi, "ProductVersion")})
+
+  def test_scheduler_msi_identity_fails_when_unreadable_or_different(self):
+    valid = {"UpgradeCode": "{4043EB4E-3E8C-48CC-8BEC-56ECB5EE245A}",
+             "ProductVersion": "0.6.2"}
+    for name, value, error in (
+        ("UpgradeCode", "", "invalid UpgradeCode"),
+        ("UpgradeCode", "4043EB4E-3E8C-48CC-8BEC-56ECB5EE245A", "invalid UpgradeCode"),
+        ("ProductVersion", "0.6.3", "is not its package version"),
+        ("ProductVersion", "0.6.2.0", "is not its package version"),
+    ):
+      properties = {**valid, name: value}
+      with self.subTest(name=name, value=value), \
+           mock.patch.object(MODULE, "msi_property",
+                             side_effect=lambda _path, key, values=properties: values[key]):
+        with self.assertRaisesRegex(ValueError, error):
+          MODULE.scheduler_msi_identity(Path("scheduler.msi"), "0.6.2")
+    with mock.patch.object(MODULE, "msi_property",
+                           side_effect=RuntimeError("MSI has no UpgradeCode row")):
+      with self.assertRaisesRegex(RuntimeError, "no UpgradeCode row"):
+        MODULE.scheduler_msi_identity(Path("scheduler.msi"), "0.6.2")
+
+  def test_producer_passes_scheduler_msi_identity_to_wix(self):
+    source = SCRIPT.read_text(encoding="utf-8")
+    build = source.split("def build(", 1)[1]
+    read = build.index(
+        'scheduler_msi_identity(\n      scheduler_msi, scheduler_metadata["package-version"])')
+    configure = build.index('"-DSimaScheduler_DIR=" + str(scheduler_config)')
+    self.assertLess(read, configure)
+    self.assertIn(
+        '"-DSIMAPCIE_SCHEDULER_PACKAGE_VERSION=" + scheduler_identity["version"]', build)
+    self.assertIn(
+        '"-DSIMAPCIE_SCHEDULER_WIX_UPGRADE_CODE=" + scheduler_identity["upgrade_code"]',
+        build)
+    packaging = (ROOT / "pcie_host" / "cmake" / "PackagingWindows.cmake").read_text(
+        encoding="utf-8")
+    self.assertIn("set(CPACK_WIX_CANDLE_EXTRA_FLAGS", packaging)
+
   def test_workflow_uses_exact_scheduler_artifact_and_restricted_runner(self):
     source = WORKFLOW.read_text(encoding="utf-8")
     self.assertIn("  pull_request:\n", source)

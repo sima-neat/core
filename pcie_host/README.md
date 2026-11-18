@@ -396,7 +396,11 @@ Neither build acquires the device Scheduler profile, Runner, Kernels or Codecs.
 The native Windows build produces a Core-owned WiX v3 MSI. Scheduler produces a
 separate MSI for its channel and `neatpciehost` plugin. Release metadata pins the
 two packages as one ordered native cohort, while Windows Installer retains file
-ownership for each producer. Python remains a separate wheel owned by the
+ownership for each producer. Like the Linux package's exact Scheduler
+dependency, the Core MSI refuses a first installation (exit code 1603) unless
+the Scheduler MSI with the exact UpgradeCode and ProductVersion it was built
+against is already installed; repair, modify and uninstall are not blocked.
+Python remains a separate wheel owned by the
 application's Python environment. The initial wheel supports CPython 3.14 x64;
 other Python minors are not part of the first qualified Windows configuration.
 The customer installs the complete cohort with one command:
@@ -446,6 +450,9 @@ that channel, or the documented command must use the exact Core release-tag form
 already used by the Linux PCIe packages.
 
 Build the MSI from a configured native Windows build directory with `cpack`.
+`cpack` fails unless that build was configured with the selected Scheduler
+MSI's `ProductVersion` as `SIMAPCIE_SCHEDULER_PACKAGE_VERSION` and its braced
+`UpgradeCode` as `SIMAPCIE_SCHEDULER_WIX_UPGRADE_CODE`.
 Use `scripts/create_windows_metadata.py` to create the matching sima-cli
 metadata for the MSI and optional wheel. The default per-machine destination is
 `C:\Program Files\SimaPCIeHost`; a packaging test can set
@@ -473,8 +480,11 @@ GStreamer, Platform runtime, CMake dependencies and a pinned Python dependency
 wheelhouse.
 
 `scripts/ci/pciehost/build_windows.py` verifies every Scheduler resource against
-its published metadata, installs that MSI, builds Core and the Python extension,
-runs the non-hardware CTest suite, and verifies all generated PE files are x64.
+its published metadata, reads the Scheduler MSI's `UpgradeCode` and
+`ProductVersion` (which must equal its metadata `package-version`) for the Core
+MSI's Scheduler launch condition, installs that MSI, builds Core and the Python
+extension, runs the non-hardware CTest suite, and verifies all generated PE files
+are x64.
 Before building, it requires its Platform runtime DLL hashes and GStreamer
 identity to match Scheduler's retained dependency receipt.
 It then tests a relocated CMake consumer, creates the Core MSI and wheel, installs

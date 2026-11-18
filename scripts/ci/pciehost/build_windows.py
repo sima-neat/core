@@ -31,6 +31,7 @@ EXPECTED_MACHINE = "AMD64"
 SUPPORTED_PYTHON = (3, 14)
 MSI_INSTALLSTATE_UNKNOWN = -1
 MSI_INSTALLSTATE_DEFAULT = 5
+MSI_GUID = r"\{[0-9A-F]{8}(?:-[0-9A-F]{4}){3}-[0-9A-F]{12}\}"
 ROLLBACK_FIXTURE_PRODUCT_CODE = "{5C5FB61E-7355-4B72-87FD-5FDD4CC2715B}"
 ROLLBACK_FIXTURE_REGISTRY_KEY = r"Software\SiMa.ai\NeatPcieRollbackFixture"
 ROLLBACK_FIXTURE_OBSERVATION = (
@@ -301,8 +302,8 @@ def inventory_digest(inventory: dict[str, str]) -> str:
   return hashlib.sha256(encoded).hexdigest()
 
 
-def msi_product_code(msi: Path) -> str:
-  """Read ProductCode through the Windows Installer database API."""
+def msi_property(msi: Path, name: str) -> str:
+  """Read one Property table value through the Windows Installer database API."""
   if sys.platform != "win32":
     raise ValueError("MSI database inspection requires Windows")
   installer = ctypes.WinDLL("msi", use_last_error=True)
@@ -332,7 +333,7 @@ def msi_product_code(msi: Path) -> str:
     if status != 0:
       raise RuntimeError(f"MsiOpenDatabaseW failed for {msi}: {status}")
     handles.append(database.value)
-    query = "SELECT `Value` FROM `Property` WHERE `Property`='ProductCode'"
+    query = f"SELECT `Value` FROM `Property` WHERE `Property`='{name}'"
     status = installer.MsiDatabaseOpenViewW(database, query, ctypes.byref(view))
     if status != 0:
       raise RuntimeError(f"MsiDatabaseOpenViewW failed for {msi}: {status}")
@@ -342,21 +343,37 @@ def msi_product_code(msi: Path) -> str:
       raise RuntimeError(f"MsiViewExecute failed for {msi}: {status}")
     status = installer.MsiViewFetch(view, ctypes.byref(record))
     if status != 0:
-      raise RuntimeError(f"MSI has no ProductCode row: {msi}: {status}")
+      raise RuntimeError(f"MSI has no {name} row: {msi}: {status}")
     handles.append(record.value)
     capacity = ctypes.c_uint(64)
     value = ctypes.create_unicode_buffer(capacity.value + 1)
     status = installer.MsiRecordGetStringW(record, 1, value, ctypes.byref(capacity))
     if status != 0:
       raise RuntimeError(f"MsiRecordGetStringW failed for {msi}: {status}")
-    product_code = value.value.upper()
-    if not re.fullmatch(
-        r"\{[0-9A-F]{8}(?:-[0-9A-F]{4}){3}-[0-9A-F]{12}\}", product_code):
-      raise RuntimeError(f"MSI has an invalid ProductCode: {msi}: {product_code!r}")
-    return product_code
+    return value.value
   finally:
     for handle in reversed(handles):
       installer.MsiCloseHandle(handle)
+
+
+def msi_product_code(msi: Path) -> str:
+  product_code = msi_property(msi, "ProductCode").upper()
+  if not re.fullmatch(MSI_GUID, product_code):
+    raise RuntimeError(f"MSI has an invalid ProductCode: {msi}: {product_code!r}")
+  return product_code
+
+
+def scheduler_msi_identity(msi: Path, package_version: str) -> dict[str, str]:
+  """Read the identity the Core MSI's launch condition pins from Scheduler's MSI."""
+  upgrade_code = msi_property(msi, "UpgradeCode").upper()
+  if not re.fullmatch(MSI_GUID, upgrade_code):
+    raise ValueError(f"Scheduler MSI has an invalid UpgradeCode: {msi}: {upgrade_code!r}")
+  version = msi_property(msi, "ProductVersion")
+  if version != package_version:
+    raise ValueError(
+        f"Scheduler MSI ProductVersion {version!r} is not its package version "
+        f"{package_version!r}: {msi}")
+  return {"upgrade_code": upgrade_code, "version": version}
 
 
 def msi_product_state(product_code: str) -> int:
@@ -585,6 +602,8 @@ def build(args: argparse.Namespace) -> None:
 
   scheduler_metadata, scheduler_msi = verify_scheduler_candidate(
       args.scheduler_candidate, args.expected_scheduler_commit)
+  scheduler_identity = scheduler_msi_identity(
+      scheduler_msi, scheduler_metadata["package-version"])
   scheduler_dependencies = dependency_identity(args.scheduler_candidate)
   platform_include = require_directory(
       args.platform_include, "Platform service include directory")
@@ -716,6 +735,8 @@ def build(args: argparse.Namespace) -> None:
         "-DCMAKE_INSTALL_PREFIX=" + str(stage),
         "-DCMAKE_PREFIX_PATH=" + prefix_path,
         "-DSimaScheduler_DIR=" + str(scheduler_config),
+        "-DSIMAPCIE_SCHEDULER_PACKAGE_VERSION=" + scheduler_identity["version"],
+        "-DSIMAPCIE_SCHEDULER_WIX_UPGRADE_CODE=" + scheduler_identity["upgrade_code"],
         "-DSIMAPCIE_PLATFORM_SERVICE_INCLUDE_DIR=" + str(platform_include),
         "-DSIMAPCIE_BUILD_TESTS=ON",
         "-DSIMAPCIE_BUILD_HARDWARE_TESTS=ON",

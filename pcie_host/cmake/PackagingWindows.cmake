@@ -25,4 +25,24 @@ set(CPACK_COMPONENT_DEVELOPMENT_DISPLAY_NAME "SiMa PCIe host development files")
 set(CPACK_COMPONENT_DEVELOPMENT_DEPENDS Runtime)
 set(CPACK_COMPONENT_PCIEHOSTTUTORIALS_DISPLAY_NAME "SiMa PCIe host tutorials")
 set(CPACK_COMPONENT_PCIEHOSTTUTORIALS_DEPENDS Runtime)
+
+# Like the DEB's exact Scheduler Depends, the MSI refuses a first installation
+# unless the exact Scheduler MSI is installed. build_windows.py reads both
+# values from the selected Scheduler MSI's Property table.
+set(SIMAPCIE_SCHEDULER_PACKAGE_VERSION "" CACHE STRING
+  "Exact selected native Scheduler MSI ProductVersion")
+set(SIMAPCIE_SCHEDULER_WIX_UPGRADE_CODE "" CACHE STRING
+  "UpgradeCode of the selected native Scheduler MSI")
+set(_native_package_guard
+  "message(FATAL_ERROR \"Native Core packaging requires its selected Scheduler MSI version and UpgradeCode\")")
+if(SIMAPCIE_SCHEDULER_PACKAGE_VERSION MATCHES "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+    AND SIMAPCIE_SCHEDULER_WIX_UPGRADE_CODE MATCHES "^{[0-9A-F-]+}$")
+  set(CPACK_WIX_CANDLE_EXTRA_FLAGS
+    "-dSimaSchedulerVersion=${SIMAPCIE_SCHEDULER_PACKAGE_VERSION}"
+    "-dSimaSchedulerUpgradeCode=${SIMAPCIE_SCHEDULER_WIX_UPGRADE_CODE}")
+  set(_native_package_guard "")
+endif()
+file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/NativePackageGuard.cmake" "${_native_package_guard}\n")
+set(CPACK_PROJECT_CONFIG_FILE "${CMAKE_CURRENT_BINARY_DIR}/NativePackageGuard.cmake")
+set(CPACK_WIX_PATCH_FILE "${CMAKE_CURRENT_LIST_DIR}/SchedulerDependency.wxs.xml")
 include(CPack)
