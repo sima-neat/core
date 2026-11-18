@@ -748,13 +748,16 @@ void throw_if_bus_error(GstElement* pipeline, const std::shared_ptr<DiagCtx>& di
     const GstMessageType type = GST_MESSAGE_TYPE(msg);
     RawGstError raw = parse_gst_error_message(msg);
     const std::string source = raw.source_name.empty() ? "<unknown>" : raw.source_name;
+    NormalizedDiagnostic candidate = classify_gst_error(std::move(raw));
     if (diag) {
-      diag->push_bus(gst_message_type_get_name(type), source,
-                     sanitize_gst_diagnostic_text(gst_message_to_string(msg)));
+      // souphttpsrc embeds the entire request and redirect URIs in its debug message.
+      const auto detail = candidate.raw.factory_name == "souphttpsrc"
+                              ? render_diagnostic_body(candidate, false)
+                              : sanitize_gst_diagnostic_text(gst_message_to_string(msg));
+      diag->push_bus(gst_message_type_get_name(type), source, detail);
     }
     gst_message_unref(msg);
 
-    NormalizedDiagnostic candidate = classify_gst_error(std::move(raw));
     const int priority = diagnostic_priority(candidate);
     if (!primary.has_value() || priority > primary_priority) {
       primary = std::move(candidate);
