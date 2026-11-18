@@ -158,7 +158,10 @@ public:
     } catch (...) {
       const std::exception_ptr build_error = std::current_exception();
       state_ = State::Failed;
-      channel_.stop();
+      try {
+        channel_.stop();
+      } catch (...) {
+      }
       if (remote_started_) {
         try {
           stop_remote_locked();
@@ -363,7 +366,14 @@ private:
   void close_locked() {
     reset_submission_state_locked();
     channel_.request_stop();
-    channel_.stop();
+    // A failed channel stop must not leave the card worker running; stop it regardless and
+    // leave the model failed so a later close() or build() retries the channel stop.
+    std::exception_ptr channel_stop_error;
+    try {
+      channel_.stop();
+    } catch (...) {
+      channel_stop_error = std::current_exception();
+    }
     if (state_ == State::Ready || state_ == State::Starting || state_ == State::Failed ||
         state_ == State::Stopping) {
       state_ = State::Stopping;
@@ -376,12 +386,15 @@ private:
         }
       }
       if (remote_stop_error) {
-        std::rethrow_exception(remote_stop_error);
+        std::rethrow_exception(channel_stop_error ? channel_stop_error : remote_stop_error);
       }
-      state_ = State::Exited;
+      state_ = channel_stop_error ? State::Failed : State::Exited;
     }
     if (!remote_started_ && !remote_uploads_may_be_in_use_) {
-      cleanup_remote_uploads_locked(true);
+      cleanup_remote_uploads_locked(!channel_stop_error);
+    }
+    if (channel_stop_error) {
+      std::rethrow_exception(channel_stop_error);
     }
   }
 

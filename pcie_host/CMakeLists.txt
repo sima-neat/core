@@ -451,6 +451,18 @@ if (SIMAPCIE_BUILD_TESTS)
   )
   target_link_libraries(unit_pcie_host_lifecycle_test PRIVATE sima_neat_pcie_host)
 
+  # Builds Model.cpp against the test's fake channel and card runner instead of the library.
+  add_executable(unit_pcie_host_model_teardown_test
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/Model.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/unit_pcie_host_model_teardown_test.cpp
+  )
+  target_include_directories(unit_pcie_host_model_teardown_test PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${SIMA_NEAT_CORE_ROOT}/include
+  )
+  target_link_libraries(unit_pcie_host_model_teardown_test PRIVATE PkgConfig::SIMAPCIE_GST)
+
   add_executable(unit_pcie_pipeline_lifecycle_test
     ${SIMA_NEAT_CORE_ROOT}/tests/unit_testing/unit_pcie_pipeline_lifecycle_test.cpp
   )
@@ -505,6 +517,7 @@ if (SIMAPCIE_BUILD_TESTS)
   add_test(NAME unit_pcie_host_model_archive_snapshot_test
     COMMAND unit_pcie_host_model_archive_snapshot_test)
   add_test(NAME unit_pcie_host_lifecycle_test COMMAND unit_pcie_host_lifecycle_test)
+  add_test(NAME unit_pcie_host_model_teardown_test COMMAND unit_pcie_host_model_teardown_test)
   add_test(NAME unit_pcie_pipeline_lifecycle_test COMMAND unit_pcie_pipeline_lifecycle_test)
   add_test(NAME unit_pcie_host_runtime_test COMMAND unit_pcie_host_runtime_test)
   add_test(NAME unit_pcie_host_ssh_runner_test COMMAND unit_pcie_host_ssh_runner_test)
