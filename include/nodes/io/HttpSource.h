@@ -21,8 +21,7 @@ namespace simaai::neat {
 struct HttpSourceOptions {
   std::string location;      ///< HTTP/HTTPS URL to read from.
   int timeout_seconds = 15;  ///< Blocking I/O timeout in seconds; `0` disables timeout.
-  int retries =
-      3; ///< Maximum retries before failing; `-1` uses the provider’s maximum retry count.
+  int retries = 3;           ///< Retry count. Use -1 for the provider maximum.
   bool is_live = false;      ///< If true, mark the source as live.
   bool do_timestamp = false; ///< If true, timestamp outgoing buffers with stream time.
   std::string user_agent;    ///< Optional HTTP User-Agent override.
