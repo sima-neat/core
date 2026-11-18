@@ -69,13 +69,13 @@ GENAI_ADMISSION_TESTS = {
     "test_genai_llm_run",
     "test_genai_llm_run_stream_history_and_cancel",
     "test_genai_request_timeout_and_restart_after_failure",
-    "test_genai_resource_cleanup",
     "test_genai_restart_after_service_loss",
     "test_genai_restart_after_worker_loss",
     "test_genai_service_loss_recovery",
     "test_genai_vlm_run",
     "test_genai_vlm_run_and_stream",
     "test_genai_worker_loss_recovery",
+    "test_genai_workers_drained",
 }
 SUPPORTED_PYTHON = (3, 14)
 STANDARD_USER_GENAI_ENVIRONMENT = {
@@ -2462,7 +2462,7 @@ def run_python_tests(args: argparse.Namespace, python: Path, evidence: Path,
         args, python, evidence, environment))
     wait_for_no_genai_workers(
         args, evidence / "genai-release-resource-cleanup.log", 120)
-    completed.append("test_genai_resource_cleanup")
+    completed.append("test_genai_workers_drained")
   return completed
 
 

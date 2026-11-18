@@ -1639,7 +1639,7 @@ class WindowsCiContracts(unittest.TestCase):
     self.assertIn('stop_windows_platform_service(evidence / "genai-service-loss-injection.log")',
                   source)
     self.assertIn('evidence / "genai-worker-loss-injection.log"', source)
-    self.assertIn('completed.append("test_genai_resource_cleanup")', source)
+    self.assertIn('completed.append("test_genai_workers_drained")', source)
     self.assertIn('command.extend(["--iterations", "10", "--interval-ms", "0"])', source)
     self.assertIn('completed.append("test_worker_loss_recovery")', source)
     self.assertIn('completed.append("test_client_process_death_recovery")', source)
@@ -2527,7 +2527,7 @@ class WindowsCiContracts(unittest.TestCase):
         "test_genai_competing_sessions_are_isolated",
         "test_genai_llm_run_stream_history_and_cancel",
         "test_genai_request_timeout_and_restart_after_failure",
-        "test_genai_resource_cleanup", "test_genai_restart_after_service_loss",
+        "test_genai_workers_drained", "test_genai_restart_after_service_loss",
         "test_genai_restart_after_worker_loss", "test_genai_service_loss_recovery",
         "test_genai_vlm_run_and_stream", "test_genai_worker_loss_recovery",
     }
@@ -3603,7 +3603,7 @@ install() {
         "test_genai_competing_sessions_are_isolated",
         "test_genai_llm_run_stream_history_and_cancel",
         "test_genai_request_timeout_and_restart_after_failure",
-        "test_genai_resource_cleanup",
+        "test_genai_workers_drained",
         "test_genai_restart_after_service_loss",
         "test_genai_restart_after_worker_loss",
         "test_genai_service_loss_recovery",
