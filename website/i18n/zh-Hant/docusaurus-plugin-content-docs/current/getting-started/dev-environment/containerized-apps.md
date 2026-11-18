@@ -15,9 +15,8 @@ sidebar_position: 7
 - 為其他 Linux 發行版（例如 Ubuntu）建置的應用程式。例如，針對與 eLxr 可用版本不同之 ROS 2 版本所建置的 ROS 2 應用程式。
 - 需要同一函式庫不同版本的多個應用程式。
 
-:::warning 容器無法使用 MLA 或 DSP
-不支援從容器（包括 Ubuntu 容器）使用 MLA 或 DSP。容器中的應用程式只會在 DevKit 的 Arm CPU 上執行。使用 MLA 或 DSP 的 Neat 應用程式，請直接在 DevKit 上執行，如
-[Neat Library](/getting-started/neat-library/) 所示。
+:::note 存取加速器需要設定
+只要具備必要的裝置節點與相容的執行階段函式庫，Neat 應用程式就能從容器使用 MLA。一般 Ubuntu 映像檔不提供這些相依項目。需求請參閱[存取加速器](/reference/devkit-containers/#accelerators)。
 :::
 
 ## 運作方式
@@ -30,7 +29,7 @@ sidebar_position: 7
 | SDK 容器 | 您使用 `docker buildx` 建置 ARM64 映像檔，並將其推送到本機登錄。 |
 | DevKit | `dk container deploy` 會從本機登錄下載映像檔，並使用 Docker 啟動它。 |
 
-DevKit 出廠時未內建 Docker。第一次執行 `dk container` 指令時，會提示您安裝 Docker。
+在自行管理的 DevKit 上，第一次執行 `dk container` 指令時會視需要提示安裝 Docker。在由管理員管理的 DevKit 上，請先要求管理員啟用 Docker，再使用這些指令。
 
 ## 開始之前
 
@@ -52,7 +51,7 @@ sima-cli sdk setup --devkit {devkit-ip}
 </ShellCommand>
 
 當設定程序詢問 **Set up a local container registry so the DevKit can download
-images built in the SDK?** 時，請回答 `y`。配對也會讓 DevKit 使用者取得免密碼的 `sudo` 權限，這是安裝 Docker 所需要的。接著開啟新的 SDK 殼層：
+images built in the SDK?** 時，請回答 `y`。在自行管理的 DevKit 上，配對會設定安裝 Docker 所需的免密碼 `sudo` 存取權。由管理員管理的 DevKit 會使用現有的存取原則與 Docker 安裝；配對不會授予不受限制的 `sudo` 權限。接著開啟新的 SDK 殼層：
 
 <ShellCommand prompt="host">
 sima-cli sdk neat
@@ -68,19 +67,15 @@ sima-cli sdk neat
 dk container setup
 </ShellCommand>
 
-當系統詢問是否要在 DevKit 上設定 Docker 時，請回答 `y`。如果 DevKit 上的 Docker 已可正常運作，此指令會保留現有安裝。完成時，會顯示 `Docker is
-ready on the DevKit`。關於安裝會變更哪些項目，請參閱
-[在 DevKit 上安裝 Docker](/reference/devkit-containers/#install)。
+當詢問是否要在 DevKit 上設定 Docker 時，請回答 `y`。如果 Docker 已可正常運作，此指令會重複使用現有安裝。在由管理員管理的 DevKit 上，指令會使用管理員提供的 Docker 服務並設定登錄存取權。安裝變更內容請參閱[在 DevKit 上安裝 Docker](/reference/devkit-containers/#install)。
 
 ### 3. 建置並推送映像檔
 
-為您的應用程式建立一個包含 `Dockerfile` 的目錄。例如，一個在 Ubuntu 24.04 上執行殼層指令碼的
-`Dockerfile`：
+為應用程式建立包含 `Dockerfile` 的目錄。例如，下列 `Dockerfile` 會在 Ubuntu 24.04 上印出訊息：
 
 ```dockerfile
 FROM ubuntu:24.04
-COPY hello.sh /usr/local/bin/hello.sh
-CMD ["sh", "/usr/local/bin/hello.sh"]
+CMD ["sh", "-c", "echo Hello from the DevKit"]
 ```
 
 在 SDK 殼層中，從該目錄建置 ARM64 映像檔，並將其推送到本機登錄：
@@ -102,13 +97,14 @@ dk container deploy my-app:latest --detach --name my-app
 
 映像檔名稱中不需要包含登錄位址，`dk` 會自動加上。映像檔名稱之後的選項為 `docker run` 選項。
 
-查看容器的輸出，然後停止並移除它：
+此範例會在印出訊息後結束。讀取輸出並移除已停止的容器：
 
 <ShellCommand prompt="sdk">
 dk container logs my-app --follow
-dk container stop my-app
 dk container remove my-app
 </ShellCommand>
+
+對於長時間執行的應用程式，請使用 `dk container logs my-app --follow` 監看輸出，並在移除前使用 `dk container stop my-app` 停止容器。
 
 ## 後續步驟
 

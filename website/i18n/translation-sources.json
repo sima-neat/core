@@ -97,8 +97,8 @@
     "docs/tools/index.md": "0289b5c7a071019a88ebc830e93f594be455dbd1d1af47d6ed78f1492d492525",
     "docs/tools/model-compiler.md": "efe3cfcf3b8f2f4df4eb21a287e2cf29ea8c93330f388c94aea9aa23999543fc",
     "docs/tools/model-zoo.md": "974e24f8d3aa03fb88b39c1a7a7b7127b1883e33de314ed2b2e2fca4cd0faafb",
-    "docs/getting-started/dev-environment/containerized-apps.md": "50552f7b2243bca505b1f68cedec14c48002d3860cdb97081267bdcab61d0a7b",
-    "docs/reference/devkit-containers.md": "f981fd91eb0d06edee857e96682d83cc7cc04645f938474d3cab6d3161f9c758"
+    "docs/getting-started/dev-environment/containerized-apps.md": "713b1f23b6d52eee7666736c3048641614cf3ac208031553ae4dbc6b785d4502",
+    "docs/reference/devkit-containers.md": "d73ce63f7a12b451e68c17eaebcb9eec7bce85c1bb02cef5876f535b0b2e739b"
   },
   "ko": {
     "docs/develop-apps/advanced-concepts/application-design/graphs.md": "478b1a3b5dc8114a93cd4fce28faedd82567d21eeb485d2c09fd9b06f72295b9",
@@ -198,8 +198,8 @@
     "docs/tools/index.md": "0289b5c7a071019a88ebc830e93f594be455dbd1d1af47d6ed78f1492d492525",
     "docs/tools/model-compiler.md": "efe3cfcf3b8f2f4df4eb21a287e2cf29ea8c93330f388c94aea9aa23999543fc",
     "docs/tools/model-zoo.md": "974e24f8d3aa03fb88b39c1a7a7b7127b1883e33de314ed2b2e2fca4cd0faafb",
-    "docs/getting-started/dev-environment/containerized-apps.md": "50552f7b2243bca505b1f68cedec14c48002d3860cdb97081267bdcab61d0a7b",
-    "docs/reference/devkit-containers.md": "f981fd91eb0d06edee857e96682d83cc7cc04645f938474d3cab6d3161f9c758"
+    "docs/getting-started/dev-environment/containerized-apps.md": "713b1f23b6d52eee7666736c3048641614cf3ac208031553ae4dbc6b785d4502",
+    "docs/reference/devkit-containers.md": "d73ce63f7a12b451e68c17eaebcb9eec7bce85c1bb02cef5876f535b0b2e739b"
   },
   "uk": {
     "docs/develop-apps/advanced-concepts/application-design/graphs.md": "478b1a3b5dc8114a93cd4fce28faedd82567d21eeb485d2c09fd9b06f72295b9",
@@ -299,8 +299,8 @@
     "docs/tools/index.md": "0289b5c7a071019a88ebc830e93f594be455dbd1d1af47d6ed78f1492d492525",
     "docs/tools/model-compiler.md": "efe3cfcf3b8f2f4df4eb21a287e2cf29ea8c93330f388c94aea9aa23999543fc",
     "docs/tools/model-zoo.md": "974e24f8d3aa03fb88b39c1a7a7b7127b1883e33de314ed2b2e2fca4cd0faafb",
-    "docs/getting-started/dev-environment/containerized-apps.md": "50552f7b2243bca505b1f68cedec14c48002d3860cdb97081267bdcab61d0a7b",
-    "docs/reference/devkit-containers.md": "f981fd91eb0d06edee857e96682d83cc7cc04645f938474d3cab6d3161f9c758"
+    "docs/getting-started/dev-environment/containerized-apps.md": "713b1f23b6d52eee7666736c3048641614cf3ac208031553ae4dbc6b785d4502",
+    "docs/reference/devkit-containers.md": "d73ce63f7a12b451e68c17eaebcb9eec7bce85c1bb02cef5876f535b0b2e739b"
   },
   "zh-Hant": {
     "docs/develop-apps/advanced-concepts/application-design/graphs.md": "478b1a3b5dc8114a93cd4fce28faedd82567d21eeb485d2c09fd9b06f72295b9",
@@ -400,7 +400,7 @@
     "docs/tools/index.md": "0289b5c7a071019a88ebc830e93f594be455dbd1d1af47d6ed78f1492d492525",
     "docs/tools/model-compiler.md": "efe3cfcf3b8f2f4df4eb21a287e2cf29ea8c93330f388c94aea9aa23999543fc",
     "docs/tools/model-zoo.md": "974e24f8d3aa03fb88b39c1a7a7b7127b1883e33de314ed2b2e2fca4cd0faafb",
-    "docs/getting-started/dev-environment/containerized-apps.md": "50552f7b2243bca505b1f68cedec14c48002d3860cdb97081267bdcab61d0a7b",
-    "docs/reference/devkit-containers.md": "f981fd91eb0d06edee857e96682d83cc7cc04645f938474d3cab6d3161f9c758"
+    "docs/getting-started/dev-environment/containerized-apps.md": "713b1f23b6d52eee7666736c3048641614cf3ac208031553ae4dbc6b785d4502",
+    "docs/reference/devkit-containers.md": "d73ce63f7a12b451e68c17eaebcb9eec7bce85c1bb02cef5876f535b0b2e739b"
   }
 }

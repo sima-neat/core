@@ -10,16 +10,32 @@ This page is the reference for running containers on a Modalix DevKit with
 platform version 3.0. For the overview and the end-to-end workflow, start with
 [Develop Containerized Apps](/getting-started/dev-environment/containerized-apps/).
 
-:::warning Containers cannot use the MLA or DSP
-Using the MLA or the DSP from a container, including an Ubuntu container, is not
-supported. Applications in a container run on the DevKit's Arm CPUs only. Run
-Neat applications that use the MLA or the DSP directly on the DevKit.
-:::
+## Accelerator Access {#accelerators}
+
+Neat applications can use the MLA inside a container. The container must have:
+
+- Access to the required devices, such as `/dev/mla`, `/dev/cvu`, and
+  `/dev/dma_heap/linux,cma`, passed with Docker's `--device` option.
+- Compatible Neat libraries, GStreamer plugins, and platform user-space
+  libraries, either packaged in the image or mounted from the DevKit.
+- A compatible DevKit platform and a Neat Core version that supports container
+  platform detection. The application must match the runtime's ABI.
+
+The DevKit still provides the kernel drivers and firmware. Passing devices alone
+does not make an arbitrary Ubuntu image accelerator-ready. DSP workloads require
+their own compatible runtime and device configuration; this guide does not
+establish DSP support for arbitrary container images.
+
+For a complete device and library configuration, see the first-party
+[Parallel Apps in Docker example](https://github.com/sima-neat/apps/tree/develop/examples/docker/parallel-apps).
+Use the prerequisites for the selected example and platform version.
 
 ## Install Docker on the DevKit {#install}
 
-The DevKit does not ship with Docker. Install it from the Palette SDK, or by
-hand on the DevKit. Both methods:
+On a personally administered DevKit, install Docker from the Palette SDK or by
+hand. On an administrator-managed DevKit, ask the administrator to enable Docker;
+use `dk container` with the provided service instead of installing or replacing
+Docker yourself. A fresh installation using either method below will:
 
 - Install Docker CE (`docker-ce`, `docker-ce-cli`, and `containerd.io`) for
   ARM64 from Docker's Debian `trixie` repository.
@@ -35,8 +51,9 @@ Both need Internet access on the DevKit.
 ### From the Palette SDK {#install-sdk}
 
 Pair the DevKit with `sima-cli sdk setup --devkit {devkit-ip}` first. Pairing
-gives the DevKit user passwordless `sudo`, which the installation needs. Then,
-in the SDK shell, run:
+configures passwordless `sudo` for installation on personally administered
+DevKits. Administrator-managed DevKits retain their access policy and use the
+provided Docker service. Then, in the SDK shell, run:
 
 <ShellCommand prompt="sdk">
 dk container setup
@@ -44,16 +61,21 @@ dk container setup
 
 Answer `y` when it asks to set up Docker on the DevKit. To skip the question,
 run `dk container setup --yes`. If Docker already works on the DevKit, the
-command keeps it. If the installation is interrupted, run the command again; it
-resumes.
+command reuses it. On administrator-managed DevKits, it configures registry
+access through the provided service without granting unrestricted `sudo`. If an
+SDK-managed installation is interrupted, run the command again; it resumes.
 
-Any other `dk container` command also offers to install Docker when it is
-missing.
+On personally administered DevKits, other `dk container` commands also offer
+to install Docker when it is missing.
 
 ### By Hand on the DevKit {#install-manual}
 
-Use this method if you do not use the Palette SDK. Run all commands below on
-the DevKit, through SSH or the serial console. `sudo` asks for your password.
+Use this method for a fresh Docker installation on a personally administered
+DevKit without the Palette SDK. It requires administrator access. For an existing
+installation, preserve its configuration and use the SDK setup path instead.
+Run all commands below on the DevKit, through SSH or the serial console. `sudo`
+asks for your password. If a step fails, stop and restore the package mirror as
+shown in step 9 before troubleshooting; do not continue to the next step.
 
 #### 1. Move the eLxr Package Mirror List Aside
 
@@ -98,14 +120,31 @@ sudo apt-get install -y docker-ce docker-ce-cli containerd.io
 
 <ShellCommand prompt="devkit">
 sudo systemctl stop docker.socket docker containerd
-sudo mkdir -p /data/containerd
-sudo sh -c 'mv /var/lib/containerd/* /data/containerd/ 2>/dev/null; true'
+sudo sh -eu <<'SH'
+if mountpoint -q /var/lib/containerd; then
+  echo '/var/lib/containerd is already mounted; stop and inspect its storage.' >&2
+  exit 1
+fi
+mkdir -p /var/lib/containerd /data/containerd
+if [ -n "$(find /data/containerd -mindepth 1 -maxdepth 1 -print -quit)" ]; then
+  echo '/data/containerd is not empty; stop and inspect it before migrating.' >&2
+  exit 1
+fi
+cp -a /var/lib/containerd/. /data/containerd/
+diff -qr /var/lib/containerd /data/containerd
+SH
 </ShellCommand>
+
+Continue only if the copy and comparison succeed. The original data remains in
+`/var/lib/containerd` until the bind mount hides it; do not delete it during
+setup. If the copy fails, keep the services stopped and inspect both directories
+before retrying.
 
 #### 7. Mount /data/containerd at Every Boot
 
 <ShellCommand prompt="devkit">
-echo '/data/containerd /var/lib/containerd none bind 0 0' | sudo tee -a /etc/fstab
+sudo grep -Fqx '/data/containerd /var/lib/containerd none bind 0 0' /etc/fstab ||
+  echo '/data/containerd /var/lib/containerd none bind 0 0' | sudo tee -a /etc/fstab
 sudo mount /var/lib/containerd
 </ShellCommand>
 
@@ -188,10 +227,9 @@ To ship an application on Ubuntu, start its `Dockerfile` with
 `dk container run ubuntu:24.04` does not work, because `dk` looks for the image
 in the local registry.
 
-:::warning No MLA or DSP in Ubuntu
-An application in an Ubuntu container cannot use the MLA or the DSP. Use Ubuntu
-containers for software that runs on the Arm CPUs only.
-:::
+The Ubuntu commands above demonstrate CPU execution only. For Neat accelerator
+workloads, follow [Accelerator Access](#accelerators); changing the base image
+alone does not supply the required devices and runtime libraries.
 
 ## Check the Installation {#check}
 
@@ -227,7 +265,7 @@ docker image prune -a
 | Message | Fix |
 | --- | --- |
 | `The local container registry is not configured for this SDK shell.` | Run `sima-cli sdk setup --devkit {devkit-ip}` on the host, answer `y` to the container registry question, then open a new SDK shell. |
-| `Docker installation requires passwordless sudo` | Pair the DevKit again with `sima-cli sdk setup --devkit {devkit-ip}`, or install Docker [by hand](#install-manual). |
+| `Docker installation requires passwordless sudo` | On a personally administered DevKit, pair again with `sima-cli sdk setup --devkit {devkit-ip}`, or install Docker [by hand](#install-manual). On an administrator-managed DevKit, ask the administrator to enable Docker. |
 | `Image ... is for amd64, not ARM64.` | Rebuild the image with `docker buildx build --platform linux/arm64 ... --push`. |
 | `Image ... is not available on the DevKit.` | Use `dk container deploy` or `dk container pull` to download it first. |
 | `permission denied while trying to connect to the Docker daemon socket` on the DevKit | Log out and log in again after Docker setup, so that your user is in the `docker` group. |

@@ -15,8 +15,8 @@ DevKit의 Arm CPU에서 실행되는 소프트웨어에 컨테이너를 사용�
 - Ubuntu와 같은 다른 Linux 배포판용으로 빌드된 애플리케이션. 예를 들어 eLxr에서 사용할 수 있는 ROS 2 릴리스와 다른 ROS 2 릴리스용으로 빌드된 ROS 2 애플리케이션.
 - 같은 라이브러리의 서로 다른 버전이 필요한 여러 애플리케이션.
 
-:::warning 컨테이너에서는 MLA 또는 DSP를 사용할 수 없습니다
-Ubuntu 컨테이너를 포함하여 컨테이너에서 MLA 또는 DSP를 사용하는 것은 지원되지 않습니다. 컨테이너의 애플리케이션은 DevKit의 Arm CPU에서만 실행됩니다. MLA 또는 DSP를 사용하는 Neat 애플리케이션은 [Neat Library](/getting-started/neat-library/)에 설명된 대로 DevKit에서 직접 실행하십시오.
+:::note 가속기 액세스에는 설정이 필요합니다
+필요한 장치 노드와 호환되는 런타임 라이브러리가 있으면 Neat 애플리케이션은 컨테이너에서 MLA를 사용할 수 있습니다. 일반 Ubuntu 이미지에는 이러한 종속성이 없습니다. 요구 사항은 [가속기 액세스](/reference/devkit-containers/#accelerators)를 참조하십시오.
 :::
 
 ## 작동 방식
@@ -29,7 +29,7 @@ Ubuntu 컨테이너를 포함하여 컨테이너에서 MLA 또는 DSP를 사용�
 | SDK 컨테이너 | `docker buildx`로 ARM64 이미지를 빌드하고 로컬 레지스트리에 푸시합니다. |
 | DevKit | `dk container deploy`가 로컬 레지스트리에서 이미지를 다운로드하고 Docker로 시작합니다. |
 
-DevKit에는 Docker가 기본 제공되지 않습니다. 처음 실행하는 `dk container` 명령이 Docker 설치를 제안합니다.
+직접 관리하는 DevKit에서는 첫 번째 `dk container` 명령이 필요에 따라 Docker 설치를 제안합니다. 관리자가 관리하는 DevKit에서는 명령을 사용하기 전에 관리자에게 Docker 활성화를 요청하십시오.
 
 ## 시작하기 전에
 
@@ -51,7 +51,7 @@ sima-cli sdk setup --devkit {devkit-ip}
 </ShellCommand>
 
 설정 중에 **Set up a local container registry so the DevKit can download
-images built in the SDK?** 질문이 표시되면 `y`로 응답하십시오. 페어링하면 DevKit 사용자에게 비밀번호 없는 `sudo` 권한도 부여되며, Docker 설치에 이 권한이 필요합니다. 그런 다음 새 SDK 셸을 엽니다.
+images built in the SDK?** 질문이 표시되면 `y`로 응답하십시오. 직접 관리하는 DevKit에서는 페어링이 Docker 설치에 필요한 비밀번호 없는 `sudo` 액세스를 설정합니다. 관리자가 관리하는 DevKit에서는 기존 액세스 정책과 Docker 설치를 사용하며 페어링으로 무제한 `sudo` 권한이 부여되지 않습니다. 그런 다음 새 SDK 셸을 엽니다.
 
 <ShellCommand prompt="host">
 sima-cli sdk neat
@@ -67,19 +67,15 @@ SDK 셸에서 다음을 실행합니다.
 dk container setup
 </ShellCommand>
 
-DevKit에 Docker를 설정할지 묻는 메시지가 표시되면 `y`로 응답하십시오. DevKit에서 Docker가 이미 작동하고 있으면 명령은 기존 설치를 유지합니다. 완료되면 `Docker is
-ready on the DevKit`를 출력합니다. 설치로 변경되는 내용은
-[DevKit에 Docker 설치](/reference/devkit-containers/#install)를 참조하십시오.
+DevKit에 Docker를 설정할지 물으면 `y`로 응답하십시오. Docker가 이미 작동하면 명령이 이를 재사용합니다. 관리자가 관리하는 DevKit에서는 관리자가 제공하는 Docker 서비스를 사용하여 레지스트리 액세스를 설정합니다. 설치로 변경되는 내용은 [DevKit에 Docker 설치](/reference/devkit-containers/#install)를 참조하십시오.
 
 ### 3. 이미지 빌드 및 푸시
 
-애플리케이션용 `Dockerfile`이 들어 있는 디렉터리를 만듭니다. 예를 들어 다음은 Ubuntu 24.04에서 셸 스크립트를 실행하는
-`Dockerfile`입니다.
+애플리케이션용 `Dockerfile`이 있는 디렉터리를 만듭니다. 예를 들어 다음 `Dockerfile`은 Ubuntu 24.04에서 메시지를 출력합니다.
 
 ```dockerfile
 FROM ubuntu:24.04
-COPY hello.sh /usr/local/bin/hello.sh
-CMD ["sh", "/usr/local/bin/hello.sh"]
+CMD ["sh", "-c", "echo Hello from the DevKit"]
 ```
 
 SDK 셸의 해당 디렉터리에서 ARM64용 이미지를 빌드하고 로컬 레지스트리에 푸시합니다.
@@ -101,13 +97,14 @@ dk container deploy my-app:latest --detach --name my-app
 
 이미지 이름에 레지스트리 주소를 넣을 필요는 없습니다. `dk`가 주소를 추가합니다. 이미지 이름 뒤의 옵션은 `docker run` 옵션입니다.
 
-컨테이너의 출력을 확인한 다음 컨테이너를 중지하고 제거합니다.
+이 예제는 메시지를 출력한 후 종료됩니다. 출력을 확인하고 중지된 컨테이너를 제거합니다.
 
 <ShellCommand prompt="sdk">
 dk container logs my-app --follow
-dk container stop my-app
 dk container remove my-app
 </ShellCommand>
+
+장시간 실행되는 애플리케이션은 `dk container logs my-app --follow`로 출력을 확인하고 제거하기 전에 `dk container stop my-app`으로 중지하십시오.
 
 ## 다음 단계
 

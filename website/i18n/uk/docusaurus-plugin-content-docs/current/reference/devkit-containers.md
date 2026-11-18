@@ -10,16 +10,21 @@ sidebar_position: 11
 версією платформи 3.0. Огляд і повний робочий процес наведено в розділі
 [Розробка контейнеризованих застосунків](/getting-started/dev-environment/containerized-apps/).
 
-:::warning Контейнери не можуть використовувати MLA або DSP
-Використання MLA або DSP з контейнера, зокрема з контейнера Ubuntu, не
-підтримується. Застосунки в контейнері працюють лише на Arm-процесорах DevKit.
-Запускайте застосунки Neat, які використовують MLA або DSP, безпосередньо на DevKit.
-:::
+## Доступ до прискорювача {#accelerators}
+
+Застосунки Neat можуть використовувати MLA в контейнері. Контейнер повинен мати:
+
+- Доступ до потрібних пристроїв, наприклад `/dev/mla`, `/dev/cvu` і `/dev/dma_heap/linux,cma`, переданих за допомогою параметра Docker `--device`.
+- Сумісні бібліотеки Neat, плагіни GStreamer та бібліотеки користувацького простору платформи, упаковані в образ або змонтовані з DevKit.
+- Сумісну платформу DevKit і версію Neat Core, яка підтримує визначення платформи в контейнері. Застосунок має відповідати ABI середовища виконання.
+
+Драйвери ядра та мікропрограму й надалі надає DevKit. Саме лише передавання пристроїв не робить довільний образ Ubuntu готовим до використання прискорювача. Навантаження DSP потребують власного сумісного середовища виконання та налаштування пристроїв; цей посібник не встановлює підтримку DSP для довільних образів контейнерів.
+
+Повну конфігурацію пристроїв і бібліотек наведено в офіційному [прикладі паралельних застосунків у Docker](https://github.com/sima-neat/apps/tree/develop/examples/docker/parallel-apps). Дотримуйтеся передумов для вибраного прикладу та версії платформи.
 
 ## Встановлення Docker на DevKit {#install}
 
-DevKit постачається без Docker. Встановіть його з Palette SDK або вручну на
-DevKit. Обидва способи:
+На DevKit, яким ви керуєте самостійно, встановіть Docker із Palette SDK або вручну. На DevKit під керуванням адміністратора попросіть його ввімкнути Docker; використовуйте `dk container` із наданою службою замість самостійного встановлення чи заміни Docker. Нове встановлення будь-яким із наведених нижче способів:
 
 - Встановлюють Docker CE (`docker-ce`, `docker-ce-cli` і `containerd.io`) для
   ARM64 з Debian-репозиторію Docker `trixie`.
@@ -34,26 +39,19 @@ DevKit. Обидва способи:
 
 ### З Palette SDK {#install-sdk}
 
-Спочатку створіть пару DevKit за допомогою `sima-cli sdk setup --devkit {devkit-ip}`. Створення пари
-надає користувачеві DevKit `sudo` без пароля, що потрібно для встановлення. Потім
-в оболонці SDK виконайте:
+Спочатку створіть пару DevKit за допомогою `sima-cli sdk setup --devkit {devkit-ip}`. На DevKit, яким ви керуєте самостійно, це налаштовує `sudo` без пароля для встановлення. DevKit під керуванням адміністратора зберігає свою політику доступу й використовує надану службу Docker. Потім в оболонці SDK виконайте:
 
 <ShellCommand prompt="sdk">
 dk container setup
 </ShellCommand>
 
-Дайте відповідь `y`, коли команда запропонує налаштувати Docker на DevKit. Щоб пропустити запитання,
-виконайте `dk container setup --yes`. Якщо Docker уже працює на DevKit, команда
-залишить його без змін. Якщо встановлення перервано, виконайте команду ще раз: вона
-продовжить роботу.
+Дайте відповідь `y` на пропозицію налаштувати Docker на DevKit. Щоб пропустити запитання, виконайте `dk container setup --yes`. Якщо Docker уже працює, команда використає його повторно. На DevKit під керуванням адміністратора вона налаштовує доступ до реєстру через надану службу без необмеженого `sudo`. Якщо встановлення під керуванням SDK перервано, повторіть команду, щоб продовжити.
 
-Будь-яка інша команда `dk container` також пропонує встановити Docker, якщо його
-немає.
+На DevKit, яким ви керуєте самостійно, інші команди `dk container` також пропонують встановити Docker, якщо його немає.
 
 ### Вручну на DevKit {#install-manual}
 
-Використовуйте цей спосіб, якщо ви не працюєте з Palette SDK. Виконайте всі наведені нижче команди на
-DevKit через SSH або послідовну консоль. `sudo` запитає ваш пароль.
+Використовуйте цей спосіб для нового встановлення Docker на DevKit, яким ви керуєте самостійно, без Palette SDK. Потрібен доступ адміністратора. Для наявного встановлення збережіть конфігурацію та скористайтеся налаштуванням через SDK. Виконайте всі команди нижче на DevKit через SSH або послідовну консоль. `sudo` запитає пароль. Якщо крок завершився помилкою, зупиніться й перед усуненням несправностей відновіть дзеркало пакетів за кроком 9; не переходьте до наступного кроку.
 
 #### 1. Тимчасово приберіть список дзеркал пакетів eLxr
 
@@ -98,14 +96,28 @@ sudo apt-get install -y docker-ce docker-ce-cli containerd.io
 
 <ShellCommand prompt="devkit">
 sudo systemctl stop docker.socket docker containerd
-sudo mkdir -p /data/containerd
-sudo sh -c 'mv /var/lib/containerd/* /data/containerd/ 2>/dev/null; true'
+sudo sh -eu <<'SH'
+if mountpoint -q /var/lib/containerd; then
+  echo '/var/lib/containerd is already mounted; stop and inspect its storage.' >&2
+  exit 1
+fi
+mkdir -p /var/lib/containerd /data/containerd
+if [ -n "$(find /data/containerd -mindepth 1 -maxdepth 1 -print -quit)" ]; then
+  echo '/data/containerd is not empty; stop and inspect it before migrating.' >&2
+  exit 1
+fi
+cp -a /var/lib/containerd/. /data/containerd/
+diff -qr /var/lib/containerd /data/containerd
+SH
 </ShellCommand>
+
+Продовжуйте лише після успішного копіювання та порівняння. Початкові дані залишаються в `/var/lib/containerd`, доки їх не приховає bind-монтування; не видаляйте їх під час налаштування. Якщо копіювання не вдалося, залиште служби зупиненими та перевірте обидва каталоги перед повторною спробою.
 
 #### 7. Монтуйте /data/containerd під час кожного завантаження
 
 <ShellCommand prompt="devkit">
-echo '/data/containerd /var/lib/containerd none bind 0 0' | sudo tee -a /etc/fstab
+sudo grep -Fqx '/data/containerd /var/lib/containerd none bind 0 0' /etc/fstab ||
+  echo '/data/containerd /var/lib/containerd none bind 0 0' | sudo tee -a /etc/fstab
 sudo mount /var/lib/containerd
 </ShellCommand>
 
@@ -187,10 +199,7 @@ docker run --rm ubuntu:24.04 cat /etc/os-release
 Команда `dk container run ubuntu:24.04` не працює, тому що `dk` шукає образ
 у локальному реєстрі.
 
-:::warning Немає MLA або DSP в Ubuntu
-Застосунок у контейнері Ubuntu не може використовувати MLA або DSP. Використовуйте контейнери
-Ubuntu лише для програмного забезпечення, яке працює на Arm-процесорах.
-:::
+Наведені вище команди Ubuntu демонструють лише виконання на CPU. Для навантажень Neat із прискорювачем дотримуйтеся розділу [Доступ до прискорювача](#accelerators); сама лише зміна базового образу не забезпечує потрібних пристроїв і бібліотек середовища виконання.
 
 ## Перевірка встановлення {#check}
 
@@ -226,7 +235,7 @@ docker image prune -a
 | Повідомлення | Виправлення |
 | --- | --- |
 | `The local container registry is not configured for this SDK shell.` | Виконайте на хості `sima-cli sdk setup --devkit {devkit-ip}`, дайте відповідь `y` на запитання про реєстр контейнерів, а потім відкрийте нову оболонку SDK. |
-| `Docker installation requires passwordless sudo` | Повторно створіть пару DevKit за допомогою `sima-cli sdk setup --devkit {devkit-ip}` або встановіть Docker [вручну](#install-manual). |
+| `Docker installation requires passwordless sudo` | На DevKit, яким ви керуєте самостійно, повторно створіть пару за допомогою `sima-cli sdk setup --devkit {devkit-ip}` або встановіть Docker [вручну](#install-manual). На DevKit під керуванням адміністратора попросіть його ввімкнути Docker. |
 | `Image ... is for amd64, not ARM64.` | Перезберіть образ за допомогою `docker buildx build --platform linux/arm64 ... --push`. |
 | `Image ... is not available on the DevKit.` | Спочатку завантажте його за допомогою `dk container deploy` або `dk container pull`. |
 | `permission denied while trying to connect to the Docker daemon socket` на DevKit | Після налаштування Docker вийдіть із системи й увійдіть знову, щоб ваш користувач опинився в групі `docker`. |

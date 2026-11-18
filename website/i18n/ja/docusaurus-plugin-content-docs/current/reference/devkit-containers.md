@@ -8,13 +8,21 @@ sidebar_position: 11
 
 このページは、プラットフォームバージョン 3.0 の Modalix DevKit でコンテナを実行するためのリファレンスです。概要とエンドツーエンドのワークフローについては、まず [コンテナ化されたアプリケーションの開発](/getting-started/dev-environment/containerized-apps/) を参照してください。
 
-:::warning コンテナからは MLA と DSP を使用できません
-Ubuntu コンテナを含め、コンテナから MLA や DSP を使用することはサポートされていません。コンテナ内のアプリケーションは、DevKit の Arm CPU 上でのみ動作します。MLA や DSP を使用する Neat アプリケーションは、DevKit 上で直接実行してください。
-:::
+## アクセラレータへのアクセス {#accelerators}
+
+Neat アプリケーションはコンテナ内で MLA を使用できます。コンテナには次のものが必要です。
+
+- Docker の `--device` オプションで渡す `/dev/mla`、`/dev/cvu`、`/dev/dma_heap/linux,cma` などの必要なデバイスへのアクセス。
+- イメージに同梱するか DevKit からマウントした、互換性のある Neat ライブラリ、GStreamer プラグイン、およびプラットフォームのユーザー空間ライブラリ。
+- 互換性のある DevKit プラットフォームと、コンテナ内のプラットフォーム検出をサポートする Neat Core バージョン。アプリケーションはランタイムの ABI と一致する必要があります。
+
+カーネルドライバとファームウェアは引き続き DevKit が提供します。デバイスを渡すだけでは、任意の Ubuntu イメージでアクセラレータを使用できるようにはなりません。DSP ワークロードには独自の互換ランタイムとデバイス設定が必要です。このガイドは、任意のコンテナイメージでの DSP サポートを保証するものではありません。
+
+デバイスとライブラリの完全な設定は、公式の[Docker での並列アプリケーションの例](https://github.com/sima-neat/apps/tree/develop/examples/docker/parallel-apps)を参照してください。選択した例とプラットフォームバージョンの前提条件に従ってください。
 
 ## DevKit への Docker のインストール {#install}
 
-DevKit には Docker が同梱されていません。Palette SDK からインストールするか、DevKit 上で手動でインストールします。どちらの方法でも、次の処理を行います。
+個人で管理する DevKit では、Palette SDK から、または手動で Docker をインストールします。管理者が管理する DevKit では、Docker を有効にするよう管理者に依頼してください。自分で Docker をインストールまたは置換せず、提供されたサービスで `dk container` を使用します。以下のいずれかの方法で新規インストールすると、次の処理が行われます。
 
 - Docker の Debian `trixie` リポジトリから、ARM64 向けの Docker CE (`docker-ce`、`docker-ce-cli`、および `containerd.io`) をインストールします。
 - Docker のデータを `/data/docker` に、containerd のデータを `/data/containerd` に保存し、イメージでルートファイルシステムがいっぱいにならないようにします。
@@ -26,19 +34,19 @@ DevKit には Docker が同梱されていません。Palette SDK からイン�
 
 ### Palette SDK から {#install-sdk}
 
-まず、`sima-cli sdk setup --devkit {devkit-ip}` で DevKit をペアリングします。ペアリングにより、DevKit ユーザーにはパスワードなしの `sudo` が付与されます。これはインストールに必要です。その後、SDK シェルで次を実行します。
+まず、`sima-cli sdk setup --devkit {devkit-ip}` で DevKit をペアリングします。個人で管理する DevKit では、インストール用にパスワードなしの `sudo` が設定されます。管理者が管理する DevKit では、既存のアクセスポリシーと提供された Docker サービスを使用します。その後、SDK シェルで次を実行します。
 
 <ShellCommand prompt="sdk">
 dk container setup
 </ShellCommand>
 
-DevKit に Docker を設定するかどうか尋ねられたら、`y` と答えます。この質問を省略するには、`dk container setup --yes` を実行します。DevKit 上で Docker がすでに動作している場合、コマンドはそれをそのまま使用します。インストールが中断された場合は、コマンドを再度実行してください。続きから再開されます。
+DevKit に Docker を設定するかどうか尋ねられたら、`y` と答えます。質問を省略するには、`dk container setup --yes` を実行します。Docker がすでに動作している場合は再利用します。管理者が管理する DevKit では、無制限の `sudo` 権限を付与せずに、提供されたサービスを通じてレジストリアクセスを設定します。SDK によるインストールが中断された場合は、コマンドを再実行すると再開されます。
 
-他の `dk container` コマンドも、Docker がない場合はインストールを提案します。
+個人で管理する DevKit では、他の `dk container` コマンドも Docker がない場合にインストールを提案します。
 
 ### DevKit 上で手動で {#install-manual}
 
-Palette SDK を使用しない場合は、この方法を使用します。以下のコマンドはすべて、SSH またはシリアルコンソールを介して DevKit 上で実行します。`sudo` はパスワードを要求します。
+Palette SDK を使わず、個人で管理する DevKit に Docker を新規インストールする場合は、この方法を使用します。管理者権限が必要です。既存のインストールでは設定を保持し、SDK のセットアップを使用してください。以下のすべてのコマンドを SSH またはシリアルコンソールから DevKit 上で実行します。`sudo` はパスワードを要求します。手順が失敗した場合は停止し、トラブルシューティングの前に手順 9 のとおりパッケージミラーを復元してください。次の手順には進まないでください。
 
 #### 1. eLxr パッケージミラーリストを一時的に移動する
 
@@ -83,14 +91,28 @@ sudo apt-get install -y docker-ce docker-ce-cli containerd.io
 
 <ShellCommand prompt="devkit">
 sudo systemctl stop docker.socket docker containerd
-sudo mkdir -p /data/containerd
-sudo sh -c 'mv /var/lib/containerd/* /data/containerd/ 2>/dev/null; true'
+sudo sh -eu <<'SH'
+if mountpoint -q /var/lib/containerd; then
+  echo '/var/lib/containerd is already mounted; stop and inspect its storage.' >&2
+  exit 1
+fi
+mkdir -p /var/lib/containerd /data/containerd
+if [ -n "$(find /data/containerd -mindepth 1 -maxdepth 1 -print -quit)" ]; then
+  echo '/data/containerd is not empty; stop and inspect it before migrating.' >&2
+  exit 1
+fi
+cp -a /var/lib/containerd/. /data/containerd/
+diff -qr /var/lib/containerd /data/containerd
+SH
 </ShellCommand>
+
+コピーと比較が成功した場合のみ続行してください。元のデータは、バインドマウントで隠れるまで `/var/lib/containerd` に残ります。セットアップ中は削除しないでください。コピーに失敗した場合はサービスを停止したままにし、再試行する前に両方のディレクトリを確認してください。
 
 #### 7. 起動時に毎回 /data/containerd をマウントする
 
 <ShellCommand prompt="devkit">
-echo '/data/containerd /var/lib/containerd none bind 0 0' | sudo tee -a /etc/fstab
+sudo grep -Fqx '/data/containerd /var/lib/containerd none bind 0 0' /etc/fstab ||
+  echo '/data/containerd /var/lib/containerd none bind 0 0' | sudo tee -a /etc/fstab
 sudo mount /var/lib/containerd
 </ShellCommand>
 
@@ -158,9 +180,7 @@ docker run --rm ubuntu:24.04 cat /etc/os-release
 
 Ubuntu 上でアプリケーションを配布するには、その `Dockerfile` を `FROM ubuntu:<release>` で始め、[コンテナ化されたアプリケーションの開発](/getting-started/dev-environment/containerized-apps/) に示すとおり、SDK からビルドしてデプロイします。`dk container run ubuntu:24.04` は動作しません。`dk` はローカルレジストリ内でイメージを探すためです。
 
-:::warning Ubuntu では MLA と DSP を使用できません
-Ubuntu コンテナ内のアプリケーションは、MLA や DSP を使用できません。Ubuntu コンテナは、Arm CPU 上でのみ動作するソフトウェアに使用してください。
-:::
+上記の Ubuntu コマンドは CPU での実行のみを示します。Neat のアクセラレータワークロードでは、[アクセラレータへのアクセス](#accelerators)に従ってください。ベースイメージを変更するだけでは、必要なデバイスとランタイムライブラリは提供されません。
 
 ## インストールの確認 {#check}
 
@@ -195,7 +215,7 @@ docker image prune -a
 | メッセージ | 対処方法 |
 | --- | --- |
 | `The local container registry is not configured for this SDK shell.` | ホスト上で `sima-cli sdk setup --devkit {devkit-ip}` を実行し、コンテナレジストリに関する質問に `y` と答えてから、新しい SDK シェルを開きます。 |
-| `Docker installation requires passwordless sudo` | `sima-cli sdk setup --devkit {devkit-ip}` で DevKit を再度ペアリングするか、Docker を[手動で](#install-manual)インストールします。 |
+| `Docker installation requires passwordless sudo` | 個人で管理する DevKit では、`sima-cli sdk setup --devkit {devkit-ip}` で再度ペアリングするか、Docker を[手動](#install-manual)でインストールします。管理者が管理する DevKit では、Docker を有効にするよう管理者に依頼してください。 |
 | `Image ... is for amd64, not ARM64.` | `docker buildx build --platform linux/arm64 ... --push` でイメージを再ビルドします。 |
 | `Image ... is not available on the DevKit.` | まず `dk container deploy` または `dk container pull` を使用してダウンロードします。 |
 | DevKit 上での `permission denied while trying to connect to the Docker daemon socket` | Docker のセットアップ後にいったんログアウトしてから再度ログインし、ユーザーが `docker` グループに含まれるようにします。 |

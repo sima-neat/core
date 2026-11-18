@@ -9,13 +9,21 @@ sidebar_position: 11
 本頁是在平台版本 3.0 的 Modalix DevKit 上執行容器的參考資料。若要了解概觀和端對端工作流程，請從
 [開發容器化應用程式](/getting-started/dev-environment/containerized-apps/) 開始。
 
-:::warning 容器無法使用 MLA 或 DSP
-不支援從容器（包括 Ubuntu 容器）使用 MLA 或 DSP。容器中的應用程式只會在 DevKit 的 Arm CPU 上執行。使用 MLA 或 DSP 的 Neat 應用程式，請直接在 DevKit 上執行。
-:::
+## 存取加速器 {#accelerators}
+
+Neat 應用程式可以在容器內使用 MLA。容器必須具備：
+
+- 透過 Docker 的 `--device` 選項傳入必要裝置的存取權，例如 `/dev/mla`、`/dev/cvu` 和 `/dev/dma_heap/linux,cma`。
+- 相容的 Neat 函式庫、GStreamer 外掛程式與平台使用者空間函式庫，可封裝於映像檔或從 DevKit 掛載。
+- 相容的 DevKit 平台，以及支援容器平台偵測的 Neat Core 版本。應用程式必須符合執行階段的 ABI。
+
+核心驅動程式與韌體仍由 DevKit 提供。僅傳入裝置並不會讓任意 Ubuntu 映像檔具備使用加速器的能力。DSP 工作負載需要各自相容的執行階段與裝置設定；本指南未確立任意容器映像檔對 DSP 的支援。
+
+完整的裝置與函式庫設定請參閱官方的 [Docker 平行應用程式範例](https://github.com/sima-neat/apps/tree/develop/examples/docker/parallel-apps)。請遵循所選範例與平台版本的必要條件。
 
 ## 在 DevKit 上安裝 Docker {#install}
 
-DevKit 出廠時未內建 Docker。您可以從 Palette SDK 安裝，或在 DevKit 上手動安裝。兩種方法都會：
+在自行管理的 DevKit 上，可從 Palette SDK 或手動安裝 Docker。在由管理員管理的 DevKit 上，請要求管理員啟用 Docker，並透過提供的服務使用 `dk container`，而不要自行安裝或取代 Docker。使用以下任一方式全新安裝時會：
 
 - 從 Docker 的 Debian `trixie` 套件庫安裝 ARM64 版的 Docker CE（`docker-ce`、`docker-ce-cli` 和 `containerd.io`）。
 - 將 Docker 的資料存放在 `/data/docker`，並將 containerd 的資料存放在
@@ -28,19 +36,19 @@ DevKit 出廠時未內建 Docker。您可以從 Palette SDK 安裝，或在 DevK
 
 ### 從 Palette SDK 安裝 {#install-sdk}
 
-請先使用 `sima-cli sdk setup --devkit {devkit-ip}` 配對 DevKit。配對會讓 DevKit 使用者取得免密碼的 `sudo` 權限，這是安裝所需要的。接著在 SDK 殼層中執行：
+請先使用 `sima-cli sdk setup --devkit {devkit-ip}` 配對 DevKit。對於自行管理的 DevKit，配對會設定安裝所需的免密碼 `sudo`。由管理員管理的 DevKit 會保留現有存取原則，並使用提供的 Docker 服務。接著在 SDK 殼層中執行：
 
 <ShellCommand prompt="sdk">
 dk container setup
 </ShellCommand>
 
-當系統詢問是否要在 DevKit 上設定 Docker 時，請回答 `y`。若要略過此問題，請執行 `dk container setup --yes`。如果 DevKit 上的 Docker 已可正常運作，此指令會保留現有安裝。如果安裝中斷，請再次執行此指令，它會從中斷處繼續。
+詢問是否在 DevKit 上設定 Docker 時，請回答 `y`。若要略過問題，請執行 `dk container setup --yes`。如果 Docker 已可正常運作，指令會重複使用現有安裝。在由管理員管理的 DevKit 上，指令會透過提供的服務設定登錄存取權，而不授予不受限制的 `sudo` 權限。如果 SDK 管理的安裝中斷，請重新執行指令以繼續。
 
-當 Docker 尚未安裝時，任何其他 `dk container` 指令也會提示您安裝 Docker。
+在自行管理的 DevKit 上，其他 `dk container` 指令也會在尚未安裝 Docker 時提示安裝。
 
 ### 在 DevKit 上手動安裝 {#install-manual}
 
-如果您不使用 Palette SDK，請使用此方法。以下所有指令都在 DevKit 上執行，透過 SSH 或序列主控台皆可。`sudo` 會要求您輸入密碼。
+未使用 Palette SDK，且要在自行管理的 DevKit 上全新安裝 Docker 時，請使用此方式。需要管理員存取權。若已有安裝，請保留其設定，改用 SDK 設定流程。以下所有指令均透過 SSH 或序列主控台在 DevKit 上執行。`sudo` 會要求輸入密碼。若某步驟失敗，請停止，並在疑難排解前依步驟 9 還原套件鏡像清單；不要繼續下一步。
 
 #### 1. 暫時移開 eLxr 套件鏡像清單
 
@@ -85,14 +93,28 @@ sudo apt-get install -y docker-ce docker-ce-cli containerd.io
 
 <ShellCommand prompt="devkit">
 sudo systemctl stop docker.socket docker containerd
-sudo mkdir -p /data/containerd
-sudo sh -c 'mv /var/lib/containerd/* /data/containerd/ 2>/dev/null; true'
+sudo sh -eu <<'SH'
+if mountpoint -q /var/lib/containerd; then
+  echo '/var/lib/containerd is already mounted; stop and inspect its storage.' >&2
+  exit 1
+fi
+mkdir -p /var/lib/containerd /data/containerd
+if [ -n "$(find /data/containerd -mindepth 1 -maxdepth 1 -print -quit)" ]; then
+  echo '/data/containerd is not empty; stop and inspect it before migrating.' >&2
+  exit 1
+fi
+cp -a /var/lib/containerd/. /data/containerd/
+diff -qr /var/lib/containerd /data/containerd
+SH
 </ShellCommand>
+
+只有在複製與比較成功後才可繼續。原始資料會保留在 `/var/lib/containerd`，直到被繫結掛載隱藏；請勿在設定期間刪除。如果複製失敗，請讓服務保持停止，並在重試前檢查兩個目錄。
 
 #### 7. 每次開機時掛載 /data/containerd
 
 <ShellCommand prompt="devkit">
-echo '/data/containerd /var/lib/containerd none bind 0 0' | sudo tee -a /etc/fstab
+sudo grep -Fqx '/data/containerd /var/lib/containerd none bind 0 0' /etc/fstab ||
+  echo '/data/containerd /var/lib/containerd none bind 0 0' | sudo tee -a /etc/fstab
 sudo mount /var/lib/containerd
 </ShellCommand>
 
@@ -163,9 +185,7 @@ docker run --rm ubuntu:24.04 cat /etc/os-release
 [開發容器化應用程式](/getting-started/dev-environment/containerized-apps/) 所示，從 SDK 建置並部署。
 `dk container run ubuntu:24.04` 無法運作，因為 `dk` 會在本機登錄中尋找映像檔。
 
-:::warning Ubuntu 中無法使用 MLA 或 DSP
-Ubuntu 容器中的應用程式無法使用 MLA 或 DSP。請僅將 Ubuntu 容器用於在 Arm CPU 上執行的軟體。
-:::
+上述 Ubuntu 指令僅示範 CPU 執行。若要執行 Neat 加速器工作負載，請遵循[存取加速器](#accelerators)；僅變更基礎映像檔不會提供必要的裝置與執行階段函式庫。
 
 ## 檢查安裝 {#check}
 
@@ -200,7 +220,7 @@ docker image prune -a
 | 訊息 | 解決方法 |
 | --- | --- |
 | `The local container registry is not configured for this SDK shell.` | 在主機上執行 `sima-cli sdk setup --devkit {devkit-ip}`，對容器登錄問題回答 `y`，然後開啟新的 SDK 殼層。 |
-| `Docker installation requires passwordless sudo` | 使用 `sima-cli sdk setup --devkit {devkit-ip}` 重新配對 DevKit，或[手動](#install-manual)安裝 Docker。 |
+| `Docker installation requires passwordless sudo` | 在自行管理的 DevKit 上，請使用 `sima-cli sdk setup --devkit {devkit-ip}` 重新配對，或[手動](#install-manual)安裝 Docker。在由管理員管理的 DevKit 上，請要求管理員啟用 Docker。 |
 | `Image ... is for amd64, not ARM64.` | 使用 `docker buildx build --platform linux/arm64 ... --push` 重新建置映像檔。 |
 | `Image ... is not available on the DevKit.` | 先使用 `dk container deploy` 或 `dk container pull` 下載映像檔。 |
 | `permission denied while trying to connect to the Docker daemon socket`（在 DevKit 上） | 設定 Docker 後請登出再重新登入，讓您的使用者加入 `docker` 群組。 |

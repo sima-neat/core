@@ -14,8 +14,8 @@ DevKit の Arm CPU 上で動作するソフトウェアには、コンテナを�
 - Ubuntu など、別の Linux ディストリビューション向けにビルドされたアプリケーション。たとえば、eLxr で利用できるものとは異なる ROS 2 リリース向けにビルドされた ROS 2 アプリケーション。
 - 同じライブラリの異なるバージョンを必要とする複数のアプリケーション。
 
-:::warning コンテナからは MLA と DSP を使用できません
-Ubuntu コンテナを含め、コンテナから MLA や DSP を使用することはサポートされていません。コンテナ内のアプリケーションは、DevKit の Arm CPU 上でのみ動作します。MLA や DSP を使用する Neat アプリケーションは、[Neat Library](/getting-started/neat-library/) に示すとおり、DevKit 上で直接実行してください。
+:::note アクセラレータへのアクセスには設定が必要です
+必要なデバイスノードと互換性のあるランタイムライブラリが利用できれば、Neat アプリケーションはコンテナから MLA を使用できます。通常の Ubuntu イメージには、これらの依存関係は含まれていません。要件は[アクセラレータへのアクセス](/reference/devkit-containers/#accelerators)を参照してください。
 :::
 
 ## 仕組み
@@ -28,7 +28,7 @@ Ubuntu コンテナを含め、コンテナから MLA や DSP を使用するこ
 | SDK コンテナ | `docker buildx` で ARM64 イメージをビルドし、ローカルレジストリにプッシュします。 |
 | DevKit | `dk container deploy` がローカルレジストリからイメージをダウンロードし、Docker で起動します。 |
 
-DevKit には Docker が同梱されていません。最初に `dk container` コマンドを実行すると、Docker のインストールが提案されます。
+個人で管理する DevKit では、必要に応じて最初の `dk container` コマンドが Docker のインストールを提案します。管理者が管理する DevKit では、これらのコマンドを使用する前に、Docker を有効にするよう管理者に依頼してください。
 
 ## 始める前に
 
@@ -50,7 +50,7 @@ sima-cli sdk setup --devkit {devkit-ip}
 </ShellCommand>
 
 セットアップで **Set up a local container registry so the DevKit can download
-images built in the SDK?** と尋ねられたら、`y` と答えます。ペアリングにより、DevKit ユーザーにはパスワードなしの `sudo` も付与されます。これは Docker のインストールに必要です。その後、新しい SDK シェルを開きます。
+images built in the SDK?** と尋ねられたら、`y` と答えます。個人で管理する DevKit では、ペアリングにより Docker のインストールに必要なパスワードなしの `sudo` アクセスが設定されます。管理者が管理する DevKit では、既存のアクセスポリシーと Docker インストールを使用し、ペアリングによって無制限の `sudo` 権限は付与されません。その後、新しい SDK シェルを開きます。
 
 <ShellCommand prompt="host">
 sima-cli sdk neat
@@ -66,17 +66,15 @@ SDK シェルで、次を実行します。
 dk container setup
 </ShellCommand>
 
-DevKit に Docker を設定するかどうか尋ねられたら、`y` と答えます。DevKit 上で Docker がすでに動作している場合、コマンドはそれをそのまま使用します。完了すると、`Docker is
-ready on the DevKit` と表示されます。インストールによる変更内容については、[DevKit への Docker のインストール](/reference/devkit-containers/#install) を参照してください。
+DevKit に Docker を設定するかどうか尋ねられたら、`y` と答えます。Docker がすでに動作している場合、コマンドはそれを再利用します。管理者が管理する DevKit では、管理者が提供する Docker サービスを使用してレジストリアクセスを設定します。インストールによる変更内容は、[DevKit への Docker のインストール](/reference/devkit-containers/#install)を参照してください。
 
 ### 3. イメージをビルドしてプッシュする
 
-アプリケーション用の `Dockerfile` を含むディレクトリを作成します。たとえば、Ubuntu 24.04 上でシェルスクリプトを実行する `Dockerfile` は次のとおりです。
+アプリケーション用の `Dockerfile` を含むディレクトリを作成します。たとえば、Ubuntu 24.04 上でメッセージを表示する `Dockerfile` は次のとおりです。
 
 ```dockerfile
 FROM ubuntu:24.04
-COPY hello.sh /usr/local/bin/hello.sh
-CMD ["sh", "/usr/local/bin/hello.sh"]
+CMD ["sh", "-c", "echo Hello from the DevKit"]
 ```
 
 SDK シェルで、そのディレクトリから ARM64 向けにイメージをビルドし、ローカルレジストリにプッシュします。
@@ -97,13 +95,14 @@ dk container deploy my-app:latest --detach --name my-app
 
 イメージ名にレジストリのアドレスを含める必要はありません。`dk` が追加します。イメージ名の後のオプションは `docker run` のオプションです。
 
-コンテナの出力を確認してから、コンテナを停止して削除します。
+この例はメッセージを表示した後に終了します。出力を確認して、停止したコンテナを削除します。
 
 <ShellCommand prompt="sdk">
 dk container logs my-app --follow
-dk container stop my-app
 dk container remove my-app
 </ShellCommand>
+
+長時間実行するアプリケーションでは、`dk container logs my-app --follow` で出力を監視し、削除する前に `dk container stop my-app` で停止します。
 
 ## 次のステップ
 
