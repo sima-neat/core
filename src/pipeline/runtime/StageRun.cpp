@@ -2446,22 +2446,12 @@ simaai::neat::Sample PreprocSample(const cv::Mat& input, const simaai::neat::Mod
   auto build_runner = [&]() {
     RunOptions opt = stage_run_defaults();
     opt.output_memory = OutputMemory::Owned;
-    auto input_node = simaai::neat::nodes::Input(src_opt);
-    auto output_node = simaai::neat::nodes::Output();
-    std::vector<std::shared_ptr<Node>> nodes;
-    nodes.reserve(group.size() + 2);
-    nodes.push_back(input_node);
-    for (const auto& node : group) {
-      nodes.push_back(node);
-    }
-    nodes.push_back(output_node);
-
     Graph p;
-    p.add(input_node);
+    p.add(simaai::neat::nodes::Input(src_opt));
     for (const auto& node : group) {
       p.add(node);
     }
-    p.add(output_node);
+    p.add(simaai::neat::nodes::Output());
     return p.build_seeded_internal(std::vector<cv::Mat>{input}, RunMode::Sync, opt);
   };
 
@@ -2478,7 +2468,6 @@ simaai::neat::Sample PreprocSample(const cv::Mat& input, const simaai::neat::Mod
   tensor = resolve_preproc_selected_tensor(out, preproc_info);
   log_stage_tensor_holder_state("Preproc: selected logical view", tensor);
   apply_preproc_output_override(tensor, preproc_info);
-  const std::string pre_fmt = upper_copy(format_from_tensor(tensor));
   if (stage_debug_enabled()) {
     const std::shared_ptr<void> out_holder = pipeline_internal::holder_from_tensor(tensor);
     if (out_holder) {
