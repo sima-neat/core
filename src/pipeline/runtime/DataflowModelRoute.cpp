@@ -6,8 +6,10 @@
 #include "pipeline/ErrorCodes.h"
 #include "pipeline/internal/DataflowErrorMap.h"
 #include "pipeline/internal/ErrorUtil.h"
+#include "pipeline/internal/InputStreamUtil.h"
 #include "pipeline/internal/RenderedMlaContractQuery.h"
 #include "pipeline/internal/sima/KernelStageRecipe.h"
+#include "pipeline/internal/sima/PreprocFrameAdapter.h"
 #include "pipeline/internal/sima/StageRecipePreparation.h"
 #include "pipeline/runtime/DataflowInputBinding.h"
 
@@ -23,9 +25,11 @@
 #endif
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <cstdio>
 #include <optional>
+#include <span>
 #include <type_traits>
 #include <utility>
 #include <variant>
@@ -151,28 +155,38 @@ std::optional<TensorDType> dtype_of(client::DType dtype) {
   }
 }
 
+std::string scalar_text(const client::ParameterScalar& scalar) {
+  return std::visit(
+      [](const auto& value) -> std::string {
+        using T = std::decay_t<decltype(value)>;
+        if constexpr (std::is_same_v<T, std::string>) {
+          return value;
+        } else if constexpr (std::is_same_v<T, bool>) {
+          return value ? "true" : "false";
+        } else if constexpr (std::is_same_v<T, double>) {
+          char text[40];
+          std::snprintf(text, sizeof text, "%.17g", value);
+          return text;
+        } else {
+          return std::to_string(value);
+        }
+      },
+      scalar.value);
+}
+
 // A kernel request's parameters as text, for the [NEAT] trace: "name=value, ...".
 std::string parameters_text(const std::vector<client::Parameter>& parameters) {
   std::string out;
   for (const client::Parameter& parameter : parameters) {
     out += (out.empty() ? "" : ", ") + parameter.name + "=";
     if (const auto* scalar = std::get_if<client::ParameterScalar>(&parameter.value.value)) {
-      out += std::visit(
-          [](const auto& value) -> std::string {
-            using T = std::decay_t<decltype(value)>;
-            if constexpr (std::is_same_v<T, std::string>) {
-              return value;
-            } else if constexpr (std::is_same_v<T, bool>) {
-              return value ? "true" : "false";
-            } else if constexpr (std::is_same_v<T, double>) {
-              char text[40];
-              std::snprintf(text, sizeof text, "%.17g", value);
-              return text;
-            } else {
-              return std::to_string(value);
-            }
-          },
-          scalar->value);
+      out += scalar_text(*scalar);
+    } else if (const auto* array = std::get_if<client::ParameterArray>(&parameter.value.value)) {
+      out += "[";
+      for (std::size_t i = 0; i < array->size(); ++i) {
+        out += (i == 0 ? "" : ",") + scalar_text((*array)[i]);
+      }
+      out += "]";
     } else {
       out += "(...)";
     }
@@ -349,9 +363,235 @@ std::string plan_mla_stage(const si::StageStaticSpec& stage, bool first, bool la
   return {};
 }
 
+#if defined(SIMANEAT_WITH_DATAFLOW_SOC_KERNELS)
+
+// The frame an image stage is planned for: what the build says of the input's size.
+struct PlannedFrame {
+  std::int64_t width = 0, height = 0, channels = 0;
+  std::string from; ///< "the seed" or "the Input's declaration", for messages
+};
+
+// The size of the frames the input will carry, from the build's seed or, without one, from the
+// Input's declaration (InputOptions::shape with every axis fixed, or width and height). "" and
+// `frame` set, or why the build does not say it.
+std::string planned_frame(const InputOptions& declared, std::span<const Tensor> seed,
+                          PlannedFrame& frame) {
+  const auto of_shape = [&frame](const std::vector<std::int64_t>& shape) {
+    const std::size_t lead = shape.size() == 4U && shape[0] == 1 ? 1U : 0U;
+    if (shape.size() != 3U + lead) {
+      return false;
+    }
+    frame.height = shape[lead];
+    frame.width = shape[lead + 1U];
+    frame.channels = shape[lead + 2U];
+    return frame.height > 0 && frame.width > 0 && frame.channels > 0;
+  };
+  if (!seed.empty()) {
+    frame.from = "the seed";
+    if (seed.size() != 1U || seed.front().is_composite()) {
+      return "the seed is a planar image or several tensors (NV12, I420): a planar input is not "
+             "supported on Dataflow yet";
+    }
+    const Tensor& tensor = seed.front();
+    if (tensor.dtype != TensorDType::UInt8 || !tensor.is_dense() ||
+        tensor.layout != TensorLayout::HWC || !of_shape(tensor.shape)) {
+      return "the seed is not a packed UInt8 image of shape [height, width, channels] (or with a "
+             "batch axis of 1 in front)";
+    }
+    if (!tensor.is_contiguous()) {
+      return "the seed's rows are padded (its row stride is not width x channels): a per-frame "
+             "row stride is not supported on Dataflow yet";
+    }
+    return {};
+  }
+  frame.from = "the Input's declaration";
+  if (!declared.shape.empty()) {
+    if (declared.dtype != TensorDType::UInt8 || !of_shape(declared.shape)) {
+      return "the Input's declared shape does not fix a UInt8 frame [height, width, channels]: "
+             "the frame's size is not known at the build";
+    }
+    return {};
+  }
+  if (declared.width > 0 && declared.height > 0) {
+    frame.width = declared.width;
+    frame.height = declared.height;
+    return {};
+  }
+  return "the frame's size is not known at the build (no seed, and the Input declares neither a "
+         "fixed shape nor width and height): the Dataflow backend runs this stage at one frame "
+         "size, and a size that may change with each push is not supported on it yet";
+}
+
+// The image preproc stage (the Kernels package's "preproc", which GStreamer runs through a frame
+// adapter) as one kernel at the frame size the build says; "" or why this backend cannot carry
+// it. The request, the published tensor's description and the preprocess facts all come from the
+// stage's own checked policy (PreprocFrameAdapter), by the functions the adapter runs for a frame
+// of that geometry.
+std::string plan_frame_stage(const si::StageStaticSpec& stage, const std::string& name, bool first,
+                             bool last, const InputOptions& declared, std::span<const Tensor> seed,
+                             DataflowModelRoute& route) {
+  using Adapter = si::kernel_lowering::PreprocFrameAdapter;
+  const si::KernelStageRecipe& recipe = *stage.native_kernel;
+  const si::ProcessCvuStagePayload& payload = stage.processcvu;
+  if (!recipe.frame_adapter_factory || payload.graph_name != "preproc" || !first) {
+    return name + " is an image stage with per-frame geometry, which is not supported on "
+                  "Dataflow yet";
+  }
+  if (payload.image_transform || recipe.image_publication || stage.image_publication) {
+    return name + " is an image frontend (it publishes image planes), which is not supported on "
+                  "Dataflow yet";
+  }
+  const std::string format = upper(payload.input_img_type);
+  if (format != "RGB" && format != "BGR") {
+    return name + " reads " + (format.empty() ? std::string("an unnamed format") : format) +
+           " frames: only packed RGB and BGR frames are supported on Dataflow yet (NV12, I420 "
+           "and NV16 are several planes; the kernel operator takes one input)";
+  }
+  if (payload.batch_size != 1) {
+    return name + " has a batch of " + std::to_string(payload.batch_size) +
+           " (an ROI list or a batched model), which is not supported on Dataflow yet";
+  }
+  if (recipe.members.size() != 1U || recipe.members.front().outputs.size() != 1U ||
+      !recipe.resolver_factories.empty() || !recipe.constant_data.empty() ||
+      !recipe.private_buffers.empty() || !recipe.private_outputs.empty() ||
+      stage.logical_outputs.size() != 1U) {
+    return name + " has several outputs, variants, constants or private buffers, which is not "
+                  "supported on Dataflow yet";
+  }
+  PlannedFrame frame;
+  if (const std::string why = planned_frame(declared, seed, frame); !why.empty()) {
+    return name + ": " + why;
+  }
+  auto checked = Adapter::check_policy(payload);
+  if (const auto* error = std::get_if<client::Error>(&checked)) {
+    return name + ": the stage's image policy does not check: " + error->field + ": " +
+           error->message;
+  }
+  // Row pitch: the packed frame's own (a slot of the input's pool holds exactly the frame).
+  const std::int64_t channels = frame.channels > 0 ? frame.channels : 3;
+  auto fixed = Adapter::checked_fixed_frame(
+      std::get<std::shared_ptr<const Adapter::CheckedPolicy>>(std::move(checked)),
+      static_cast<std::size_t>(frame.width), static_cast<std::size_t>(frame.height),
+      static_cast<std::size_t>(frame.width * channels));
+  if (const auto* error = std::get_if<client::Error>(&fixed)) {
+    return name + ": a " + std::to_string(frame.width) + "x" + std::to_string(frame.height) +
+           " frame (" + frame.from + ") is not one the stage takes: " + error->field + ": " +
+           error->message;
+  }
+  Adapter::FixedFrame& request = std::get<Adapter::FixedFrame>(fixed);
+  if (request.inputs.size() != 1U || request.outputs.size() != 1U ||
+      request.inputs.front().shape.size() != 4U) {
+    return name + ": the frame's kernel request has several tensors";
+  }
+  if (frame.channels > 0 && request.inputs.front().shape[3] != frame.channels) {
+    return name + ": " + frame.from + " has " + std::to_string(frame.channels) +
+           " channels where the model's " + format + " input has " +
+           std::to_string(request.inputs.front().shape[3]);
+  }
+  auto inspected = client::inspect_kernel(request.executable);
+  if (const auto* error = std::get_if<client::Error>(&inspected)) {
+    return name + ": the Kernels package gave no contract: " + error->message;
+  }
+  const client::KernelInspection& contract = std::get<client::KernelInspection>(inspected);
+  if (contract.input_requirements().size() != 1U || contract.output_requirements().size() != 1U ||
+      contract.workspace().storage_bytes != 0U || contract.requires_host_tasks() ||
+      contract.input_extent(0).mode != client::InputExtentMode::Fixed) {
+    return name + ": the frame's kernel needs a workspace, host tasks or a varying input extent, "
+                  "which is not supported on Dataflow yet";
+  }
+  const std::optional<TensorDType> in_dtype = dtype_of(request.inputs.front().dtype);
+  const std::optional<TensorDType> out_dtype = dtype_of(request.outputs.front().dtype);
+  const simaai::gst::TensorBufferPreprocessFacts* const facts =
+      simaai::gst::tensor_buffer_preprocess_facts(request.facts);
+  if (!in_dtype || !out_dtype || !facts) {
+    return name + ": the frame's kernel request has no Core dtype or no preprocess facts";
+  }
+  DataflowModelStage planned;
+  planned.kind = DataflowModelStage::Kind::Kernel;
+  planned.key = stage_key_of(stage);
+  planned.ev74 = true;
+  planned.operation = "preproc";
+  planned.input = request.inputs.front();
+  planned.output = request.outputs.front();
+  planned.parameters = std::move(request.parameters);
+  planned.input_bytes = contract.input_requirements().front().storage_bytes;
+  planned.output_bytes = contract.output_requirements().front().storage_bytes;
+  route.input_bytes = planned.input_bytes;
+  route.input_dtype = *in_dtype;
+  route.input_shape = planned.input.shape;
+  route.kernel_input = true;
+  route.ev74_input = true;
+  route.frame_input = true;
+  try {
+    // What GStreamer's pull leaves on every tensor behind this stage, for this frame size.
+    route.output.preprocess = preprocess_from_compact_facts(*facts);
+    route.output.frame_semantics = true;
+  } catch (const std::exception& error) {
+    return name + ": " + error.what();
+  }
+  const si::LogicalTensorStaticSpec& out = stage.logical_outputs.front();
+  if (last) {
+    const std::optional<TensorDType> published = dtype_of(out.dtype);
+    if (!published || *published != *out_dtype) {
+      return name + ": the published tensor's dtype '" + out.dtype + "' is not the kernel's";
+    }
+    if (out.byte_offset != 0 || out.shape.empty() ||
+        (out.size_bytes != 0U && out.size_bytes != planned.output_bytes)) {
+      return name + ": the published output (" + std::to_string(out.size_bytes) + " bytes at " +
+             std::to_string(out.byte_offset) + ") is not the kernel's whole output buffer of " +
+             std::to_string(planned.output_bytes) + " bytes";
+    }
+    describe_pulled(stage, out, *out_dtype, route.output);
+    route.output.sample_label =
+        payload.primary_output_name.empty() ? route.output.stage_key : payload.primary_output_name;
+    if (const auto* tiled = std::get_if<client::MlaTiled>(&planned.output.layout)) {
+      // The publication of a tiled tensor as its packed storage (StageRecipePreparation.cpp
+      // apply_kernel_publication_views): no caps format, the checked tile description, and no
+      // strides on the pulled tensor whatever the manifest's logical output states (a tiled
+      // tensor is read through its storage).
+      const char* const dtype = planned.output.dtype == client::DType::BFloat16 ? "BF16"
+                                : planned.output.dtype == client::DType::Int8   ? "INT8"
+                                : planned.output.dtype == client::DType::UInt8  ? "UINT8"
+                                                                                : nullptr;
+      if (!dtype || out.publication_relation != si::PublicationViewRelation::PackedStorage) {
+        return name +
+               " publishes its tiled output as another view than its packed storage "
+               "(publication relation " +
+               std::to_string(static_cast<int>(out.publication_relation)) +
+               "), which is not supported on Dataflow yet";
+      }
+      TessSpec tess;
+      tess.format =
+          std::string("MLA_TILED_") + dtype +
+          (tiled->channels == client::MlaTiled::Channels::Compact ? "_COMPACT" : "_PAD16");
+      tess.slice_shape.assign(tiled->tile_shape.begin(), tiled->tile_shape.end());
+      tess.axes.assign(tiled->axes.begin(), tiled->axes.end());
+      tess.storage_bytes = planned.output_bytes;
+      route.output.tess = std::move(tess);
+      route.output.format.clear();
+      route.output.strides_bytes.clear();
+    } else {
+      route.output.format = kernel_caps_format_of(out.dtype, payload.output_dtype);
+    }
+  }
+  route.text +=
+      "kernel stage " + planned.key + " (preproc on the EV74 for " + std::to_string(frame.width) +
+      "x" + std::to_string(frame.height) + " " + format + " frames, " + frame.from + "; " +
+      parameters_text(planned.parameters) + "): " + std::to_string(planned.input_bytes) + " -> " +
+      std::to_string(planned.output_bytes) + " bytes" +
+      (last ? ", output " + out.dtype + " " + dims_text(out.shape) + " " +
+                  std::to_string(out.size_bytes) + " bytes at " + std::to_string(out.byte_offset)
+            : std::string());
+  route.stages.push_back(std::move(planned));
+  return {};
+}
+
+#endif // SIMANEAT_WITH_DATAFLOW_SOC_KERNELS
+
 // One kernel stage of the manifest (its checked recipe, as prepare_kernel_stage_recipes left it)
 // as a route stage; "" or why this backend cannot carry it on this step.
 std::string plan_kernel_stage(const si::StageStaticSpec& stage, bool first, bool last,
+                              const InputOptions& declared, std::span<const Tensor> seed,
                               DataflowModelRoute& route) {
   const si::KernelStageRecipe& recipe = *stage.native_kernel;
   const std::string key = stage_key_of(stage);
@@ -360,6 +600,8 @@ std::string plan_kernel_stage(const si::StageStaticSpec& stage, bool first, bool
   (void)recipe;
   (void)first;
   (void)last;
+  (void)declared;
+  (void)seed;
   (void)route;
   return name + ": this build of libsima_neat has no kernel operator (dataflow::soc was built "
                 "without the Runner's Executor and the Kernels package)";
@@ -383,8 +625,7 @@ std::string plan_kernel_stage(const si::StageStaticSpec& stage, bool first, bool
     }
   }
   if (recipe.frame_adapter_factory || recipe.image_publication || stage.image_publication) {
-    return name + " is an image stage with per-frame geometry, which is not supported on "
-                  "Dataflow yet";
+    return plan_frame_stage(stage, name, first, last, declared, seed, route);
   }
   if (recipe.members.size() != 1U) {
     return name + " runs " + std::to_string(recipe.members.size()) +
@@ -502,7 +743,8 @@ std::string plan_kernel_stage(const si::StageStaticSpec& stage, bool first, bool
 
 std::shared_ptr<const DataflowModelRoute>
 plan_dataflow_model_route(const std::vector<std::shared_ptr<Node>>& route,
-                          const GraphOptions& options, std::string* why) {
+                          const GraphOptions& options, const InputOptions& declared,
+                          std::span<const Tensor> seed, std::string* why) {
   const auto decline = [why](std::string reason) {
     *why = std::move(reason);
     return nullptr;
@@ -567,7 +809,7 @@ plan_dataflow_model_route(const std::vector<std::shared_ptr<Node>>& route,
       if (!first && planned->stages.back().kind == DataflowModelStage::Kind::Kernel) {
         reason = "two kernel stages in a row (" + kinds + ") are not supported on Dataflow yet";
       } else {
-        reason = plan_kernel_stage(stage, first, last, *planned);
+        reason = plan_kernel_stage(stage, first, last, declared, seed, *planned);
       }
     } else {
       reason = "stage " + stage_key_of(stage) + " (" + stage_kind_text(stage) +
@@ -578,7 +820,10 @@ plan_dataflow_model_route(const std::vector<std::shared_ptr<Node>>& route,
                      kinds + "): " + reason);
     }
   }
-  if (mla_stages != 1U) {
+  // Exactly one MLA stage, or the image preproc alone (Model::preprocess() between the Input and
+  // the Output).
+  if (mla_stages != 1U &&
+      !(mla_stages == 0U && planned->frame_input && planned->stages.size() == 1U)) {
     return decline("a model route of " + std::to_string(manifest->stages.size()) + " stages (" +
                    kinds + ") with " + std::to_string(mla_stages) +
                    " MLA stages is not supported on Dataflow yet: exactly one runs");
@@ -611,8 +856,35 @@ std::string bind_dataflow_model_input(const DataflowModelRoute& route,
   if (binding.dtype != route.input_dtype) {
     return "dtype differs from " + input + "; " + expected;
   }
-  // A bounded axis (InputOptions::max_*) is fixed at its bound: the model's input has one size.
-  if (const std::string why = fix_dataflow_binding_at_bound(binding); !why.empty()) {
+  if (route.frame_input) {
+    // In front of the image preproc the port is the frame the route was built for (the kernel's
+    // tensor), wherever in the declaration's bounds that is: the item's shape must admit it,
+    // with or without the kernel's leading batch axis.
+    auto* spec = std::get_if<df::TensorSpec>(&binding.spec.payload);
+    const std::vector<std::int64_t>& want = route.input_shape;
+    bool fits = spec && std::holds_alternative<df::Dense>(spec->layout) && spec->shape.rank != 0 &&
+                spec->shape.rank <= want.size();
+    const std::size_t lead = fits ? want.size() - spec->shape.rank : 0U;
+    for (std::size_t i = 0; fits && i < want.size(); ++i) {
+      fits = i < lead ? want[i] == 1 : spec->shape.dims[i - lead].contains(want[i]);
+    }
+    if (!fits) {
+      return "a tensor that is not a frame of the size the Run was built for; " + expected;
+    }
+    spec->shape.rank = static_cast<std::uint8_t>(want.size());
+    for (std::size_t i = 0; i < want.size(); ++i) {
+      spec->shape.dims[i] = df::Dim(want[i]);
+    }
+    if (const df::Status status = df::validate(binding.spec)) {
+      return std::string("the input's spec is not valid: ") + status->message;
+    }
+    binding.rank = want.size();
+    std::array<char, df::kDescribeMax> text{};
+    df::Writer writer{std::span<char>(text)};
+    df::describe(binding.spec, writer);
+    binding.text = std::string(writer.view());
+  } else if (const std::string why = fix_dataflow_binding_at_bound(binding); !why.empty()) {
+    // A bounded axis (InputOptions::max_*) is fixed at its bound: the model's input has one size.
     return why;
   }
   if (df::slot_bytes(binding.spec) != route.input_bytes) {
@@ -639,6 +911,44 @@ std::string bind_dataflow_model_input(const DataflowModelRoute& route,
   }
   binding.pulled = &route.output;
   return {};
+}
+
+void apply_dataflow_frame_semantics(const DataflowPulledTensor& pulled, Tensor& tensor) {
+  if (pulled.tess) {
+    tensor.semantic.tess = pulled.tess;
+  }
+  if (pulled.preprocess) {
+    tensor.semantic.preprocess = pulled.preprocess;
+  }
+}
+
+void refuse_dataflow_frame(const DataflowModelRoute& route, const Tensor& tensor,
+                           const char* where) {
+  if (tensor.semantic.preprocess && tensor.semantic.preprocess->has_roi_list()) {
+    pipeline_internal::error_util::throw_session_error(
+        error_codes::kInputShape,
+        std::string(where) +
+            ": a frame with ROI metadata (Semantic::preprocess with an ROI or an ROI list) in "
+            "front of the image preproc stage is not supported on the Dataflow backend yet; build "
+            "this Run with RunBackend::GStreamer");
+  }
+  const std::vector<std::int64_t>& want = route.input_shape;
+  const std::size_t rank = tensor.shape.size();
+  if (tensor.is_composite() || want.size() != 4U || (rank != 3U && rank != 4U) ||
+      (rank == 4U && tensor.shape[0] != 1)) {
+    return;
+  }
+  const std::size_t lead = rank - 3U;
+  if (tensor.shape[lead] != want[1] || tensor.shape[lead + 1U] != want[2]) {
+    pipeline_internal::error_util::throw_session_error(
+        error_codes::kInputShape,
+        std::string(where) + ": a frame of " + std::to_string(tensor.shape[lead + 1U]) + "x" +
+            std::to_string(tensor.shape[lead]) + " where the Run was built for " +
+            std::to_string(want[2]) + "x" + std::to_string(want[1]) +
+            ": on the Dataflow backend the image preproc stage runs at the frame size the input "
+            "had at the build (its seed or its declaration); a size that changes between pushes "
+            "needs RunBackend::GStreamer");
+  }
 }
 
 const Tensor& dataflow_model_input_view(const DataflowModelRoute& route, const Tensor& tensor,

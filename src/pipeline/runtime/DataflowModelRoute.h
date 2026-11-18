@@ -13,6 +13,14 @@
 //     the Graph places it (GraphOptions::processcvu.pre_run_target / post_run_target,
 //     ProcessCvuRunTargetPolicy.cpp). A stage on the EV74 is taken only where the EV74 runs the
 //     Kernels firmware; on a board with the stock firmware the route is declined at the plan.
+//   - Model::preprocess() of a model whose pre stage is the image preproc (the Kernels package's
+//     "preproc", EV74 only: resize, colour, normalize, quantize and tessellate a packed RGB or BGR
+//     frame), alone or in front of the stages above. GStreamer runs it through a frame adapter
+//     that gives the kernel each frame's geometry; here it is one kernel at one frame size, the
+//     size the input has at the build (its seed, or its declaration), made from the same checked
+//     policy (PreprocFrameAdapter::checked_fixed_frame). A frame of another size is refused at
+//     the push; a build that does not say the size, an NV12 or other planar input, an image
+//     frontend and a batched (ROI) stage are declined at the plan and stay on GStreamer.
 // Here: what the route's stages are, read from what Core compiles and lowers for the same nodes on
 // GStreamer (the rendered stage manifest and its checked kernel recipes), and what the input's
 // port does with them: load the model and make the kernels, check the input's binding against
@@ -27,6 +35,7 @@
 // Without it the compiler does not recognise the route and nothing here is called.
 
 #include "builder/Node.h"
+#include "nodes/io/Input.h"
 #include "pipeline/GraphOptions.h"
 #include "pipeline/TensorCore.h"
 #include "pipeline/internal/DataflowRuntime.h"
@@ -37,6 +46,7 @@
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -58,7 +68,17 @@ struct DataflowPulledTensor {
   std::uint64_t size_bytes = 0;
   TensorRouteMeta route; ///< as GStreamer's tensor-set descriptor fills it
   std::optional<QuantSpec> quant;
-  std::string format;    ///< the caps format token of the output ("EVXX_INT8", "EVXX_FLOAT32")
+  std::string format; ///< the caps format token of the output ("EVXX_INT8", "EVXX_FLOAT32")
+  /// A tiled output published as its packed storage (the image preproc's tensor in front of the
+  /// MLA): the checked storage description GStreamer's publication gives it (the tile shape, the
+  /// axes, the storage bytes), with `format` empty and no strides. Unset: a dense output, whose
+  /// TessSpec is `format` alone.
+  std::optional<TessSpec> tess;
+  /// What the route's image preproc publishes with every frame (Semantic::preprocess of the
+  /// pulled tensor), a constant of the frame size the route was built for. Unset: no such stage.
+  std::optional<PreprocessRuntimeMeta> preprocess;
+  /// `tess` or `preprocess` is set: the pull calls apply_dataflow_frame_semantics.
+  bool frame_semantics = false;
   std::string stage_key; ///< the stage's name
   /// Sample::stream_label and segment_name: the stage's name for an MLA stage, the stage's
   /// published output name for a kernel stage (TensorStagePublication::output_name).
@@ -100,6 +120,11 @@ struct DataflowModelRoute {
   /// wrapped by its descriptor alone, and a TensorMemory::MLA tensor (the DMS heap) is copied into
   /// a slot, never handed on under the port's kind.
   bool ev74_input = false;
+  /// The first stage is the image preproc, planned for one frame size: `input_shape` is that
+  /// frame as the kernel takes it ([1, height, width, channels]), which the input's port is
+  /// fixed at whatever its declaration's bounds allow; a pushed frame of another size, or with
+  /// ROI metadata, is refused.
+  bool frame_input = false;
   DataflowPulledTensor output;
   std::string text; ///< one line, for the [NEAT] trace and messages
 };
@@ -109,19 +134,22 @@ bool dataflow_has_model_route() noexcept;
 
 // The stages of `route` (the nodes of GStreamer's segment: the Input, the model's stage nodes, the
 // Output), compiled with `options` as GStreamer's build compiles them, when every stage is one
-// this backend can carry; null with `why` otherwise.
+// this backend can carry; null with `why` otherwise. `declared` (the Input's options) and `seed`
+// (the build's seed, or empty) are what says the frame size of an image preproc stage.
 std::shared_ptr<const DataflowModelRoute>
 plan_dataflow_model_route(const std::vector<std::shared_ptr<Node>>& route,
-                          const GraphOptions& options, std::string* why);
+                          const GraphOptions& options, const InputOptions& declared,
+                          std::span<const Tensor> seed, std::string* why);
 
 // What one Run's operators are made with: the loaded model (soc::MlaModel) of an MLA stage and
 // the checked kernel (soc::Kernel) of a kernel stage, one per stage. Throws NeatError when the
 // MLA refuses the model or the Kernels package the request.
 std::shared_ptr<void> load_dataflow_model_route(const DataflowModelRoute& route, const char* where);
 
-// Brings the input's `binding` to what the first stage takes: its shape fixed at its bound,
-// device memory, the stage's dtype and exactly its input bytes; and gives it the route's pulled
-// tensor. "" when it fits; otherwise why it does not.
+// Brings the input's `binding` to what the first stage takes: its shape fixed at its bound (at
+// the route's frame, in front of an image preproc), device memory, the stage's dtype and exactly
+// its input bytes; and gives it the route's pulled tensor. "" when it fits; otherwise why it does
+// not.
 std::string bind_dataflow_model_input(const DataflowModelRoute& route,
                                       DataflowInputBinding& binding);
 
@@ -139,6 +167,17 @@ std::vector<std::uint32_t> add_dataflow_model_ops(pipeline_internal::df::Net& ne
                                                   const std::shared_ptr<void>& loaded,
                                                   const pipeline_internal::df::PortSpec& input,
                                                   pipeline_internal::df::PortSpec& output);
+
+// The pulled tensor's Semantic behind an image preproc stage (`pulled.frame_semantics`): the tiled
+// output's storage description in Semantic::tess and the frame's facts in Semantic::preprocess.
+void apply_dataflow_frame_semantics(const DataflowPulledTensor& pulled, Tensor& tensor);
+
+// Before a push into a route whose first stage is the image preproc (`route.frame_input`) of a
+// tensor that is not the validated frame: throws NeatError (misconfig.input_shape) for a frame of
+// another size than the route was built for, and for one that carries ROI metadata, each with what
+// to do instead; returns for anything else (the binding's own check says what is wrong with it).
+void refuse_dataflow_frame(const DataflowModelRoute& route, const Tensor& tensor,
+                           const char* where);
 
 #pragma GCC visibility pop
 

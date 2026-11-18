@@ -440,7 +440,8 @@ const char* policy_text(OverflowPolicy policy) {
 
 // The Run's configuration; `why` set when this graph's options are what Dataflow cannot carry.
 DataflowRunConfig derive_config(const Graph& graph, const DataflowGraphView& view,
-                                const Qualification& q, const RunOptions& opt, std::string* why) {
+                                const Qualification& q, const RunOptions& opt,
+                                std::span<const Tensor> seed, std::string* why) {
   DataflowRunConfig config;
   const std::vector<std::string> listed_inputs = graph.inputs();
   const std::vector<std::string> listed_outputs = graph.outputs();
@@ -545,7 +546,7 @@ DataflowRunConfig derive_config(const Graph& graph, const DataflowGraphView& vie
       // H1: the model's stages, from the contracts GStreamer's build compiles and lowers for the
       // same nodes under the same Graph options. The input's pool is where GStreamer puts it:
       // Dms0 in front of a model fragment (Auto), or as declared.
-      input.model = plan_dataflow_model_route(route, view.options, why);
+      input.model = plan_dataflow_model_route(route, view.options, input.input, seed, why);
       if (!input.model) {
         return config;
       }
@@ -661,7 +662,7 @@ std::optional<DataflowRunConfig> plan_dataflow_run(const Graph& graph, const Run
                        "seed");
   }
   std::string reason;
-  DataflowRunConfig config = derive_config(graph, view, q, opt, &reason);
+  DataflowRunConfig config = derive_config(graph, view, q, opt, seed.tensors, &reason);
   if (!reason.empty()) {
     return decline(error_codes::kPipelineShape, reason);
   }

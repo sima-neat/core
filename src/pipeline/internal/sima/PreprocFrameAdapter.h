@@ -32,6 +32,22 @@ public:
   // This cold query opens no session and retains no frame or adapter state.
   static rt::Result<simaai::gst::TensorBufferPreprocessFactsOwner>
       checked_initial_preprocess_facts(std::shared_ptr<const CheckedPolicy>);
+  // The stage as one kernel request at one packed frame geometry, for a backend that runs it
+  // without a frame adapter (Dataflow, at a size fixed when the input binds): the request the
+  // geometry variant gives the Kernels package for such a frame (bind's cold path with no ROI
+  // metadata and no video meta: the same input_specs, static_parameters, parameters and
+  // prepare_publication), checked, with the facts published with every frame of it. `row_stride`
+  // is the frame's row pitch in bytes (a packed format only: one plane). Cold; opens no session
+  // and retains no frame or adapter state.
+  struct FixedFrame {
+    std::vector<rt::TensorSpec> inputs, outputs;
+    std::vector<rt::Parameter> parameters;
+    rt::KernelExecutable executable;
+    simaai::gst::TensorBufferPreprocessFactsOwner facts;
+  };
+  static rt::Result<FixedFrame> checked_fixed_frame(std::shared_ptr<const CheckedPolicy>,
+                                                    std::size_t width, std::size_t height,
+                                                    std::size_t row_stride);
   // Check the complete initial image recipe before opening the graph's device.
   static rt::Result<std::shared_ptr<PreprocFrameAdapter>>
       check(std::shared_ptr<const ProcessCvuStagePayload>);

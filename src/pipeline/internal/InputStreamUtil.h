@@ -21,6 +21,10 @@
 
 #include <gst/gst.h>
 
+namespace simaai::gst {
+struct TensorBufferPreprocessFacts; // gstsimaaitensorbuffer_meta.h
+} // namespace simaai::gst
+
 namespace cv {
 class Mat;
 } // namespace cv
@@ -306,6 +310,11 @@ bool write_simaai_preprocess_meta(GstBuffer* buffer, const PreprocessRuntimeMeta
 // plugin-authored geometry/affine/flag fields.
 bool merge_simaai_preprocess_axis_perm(GstBuffer* buffer, const std::vector<int>& axis_perm);
 std::optional<PreprocessRuntimeMeta> read_simaai_preprocess_meta(GstBuffer* buffer);
+// The published preprocess facts of a frame as the pull leaves them on a tensor
+// (read_simaai_preprocess_meta's reading of a buffer's compact facts). Throws std::runtime_error
+// for facts outside Core's integer range.
+PreprocessRuntimeMeta
+preprocess_from_compact_facts(const simaai::gst::TensorBufferPreprocessFacts& facts);
 bool has_simaai_preprocess_meta(GstBuffer* buffer);
 bool copy_simaai_preprocess_meta(GstBuffer* dst, GstBuffer* src, std::string* err = nullptr);
 std::optional<std::string>

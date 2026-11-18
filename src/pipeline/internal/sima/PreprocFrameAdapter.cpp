@@ -660,6 +660,61 @@ PreprocFrameAdapter::instantiate(std::shared_ptr<const CheckedPolicy> policy) {
   return result;
 }
 
+rt::Result<PreprocFrameAdapter::FixedFrame>
+PreprocFrameAdapter::checked_fixed_frame(std::shared_ptr<const CheckedPolicy> policy,
+                                         std::size_t width, std::size_t height,
+                                         std::size_t row_stride) {
+  if (!policy || !policy->initial_executable)
+    return invalid("preproc.policy", "checked immutable image policy is required");
+  PreprocFrameAdapter adapter(std::move(policy));
+  const auto& checked = *adapter.policy_;
+  if (planes(checked.envelope.format) != 1 || checked.image_publication ||
+      checked.prepared->image_transform)
+    return invalid("input.format", "a fixed frame request is one packed plane into one tensor");
+  if (std::size_t(checked.prepared->batch_size) != checked.initial_geometry.batch)
+    return invalid("input.batch", "a fixed frame request has no ROI capacity");
+  auto described = describe_geometry(checked.initial_geometry, width, height);
+  if (auto* error = std::get_if<Error>(&described))
+    return *error;
+  auto geometry = std::get<Geometry>(described);
+  if (row_stride != geometry.strides[0]) {
+    // bind's row pitch override.
+    if (height == 0 || row_stride < width * channels(geometry.format) ||
+        row_stride > SIZE_MAX / height)
+      return invalid("input.stride", "source row span is invalid");
+    geometry.strides[0] = row_stride;
+    geometry.frame_bytes = row_stride * height;
+  }
+  FixedFrame frame;
+  auto specs = adapter.input_specs(geometry);
+  if (auto* error = std::get_if<Error>(&specs))
+    return *error;
+  frame.inputs = std::get<std::vector<TensorSpec>>(std::move(specs));
+  frame.outputs = checked.outputs;
+  auto constants = adapter.static_parameters();
+  if (auto* error = std::get_if<Error>(&constants))
+    return *error;
+  frame.parameters = std::get<std::vector<Parameter>>(std::move(constants));
+  auto params = adapter.parameters(geometry, nullptr);
+  if (auto* error = std::get_if<Error>(&params))
+    return *error;
+  constexpr std::array names{"source_roi", "source_rois", "destination", "padding"};
+  auto& values = std::get<GeometryParameters>(params);
+  for (std::size_t i = 0; i < values.size(); ++i)
+    if (values[i])
+      frame.parameters.push_back({names[i], std::move(*values[i])});
+  auto request = ::simaai::scheduler::client::check_kernel(
+      {"preproc", Hardware::EV74, frame.inputs, frame.outputs, frame.parameters});
+  if (auto* error = std::get_if<Error>(&request))
+    return *error;
+  frame.executable = std::get<KernelExecutable>(std::move(request));
+  auto facts = adapter.prepare_publication(geometry, frame.executable, nullptr);
+  if (auto* error = std::get_if<Error>(&facts))
+    return *error;
+  frame.facts = std::get<Publication>(std::move(facts));
+  return frame;
+}
+
 rt::Result<std::shared_ptr<PreprocFrameAdapter>>
 PreprocFrameAdapter::check(std::shared_ptr<const ProcessCvuStagePayload> prepared) {
   auto checked = check_policy(std::move(prepared));

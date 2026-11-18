@@ -3193,7 +3193,6 @@ bool merge_simaai_preprocess_axis_perm(GstBuffer* buffer, const std::vector<int>
 #endif
 }
 
-namespace {
 PreprocessRuntimeMeta
 preprocess_from_compact_facts(const simaai::gst::TensorBufferPreprocessFacts& facts) {
   auto integer = [](std::int64_t value) {
@@ -3268,7 +3267,6 @@ preprocess_from_compact_facts(const simaai::gst::TensorBufferPreprocessFacts& fa
   }
   return meta;
 }
-} // namespace
 
 std::optional<PreprocessRuntimeMeta> read_simaai_preprocess_meta(GstBuffer* buffer) {
 #if SIMA_HAS_SIMAAI_POOL

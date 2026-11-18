@@ -412,6 +412,11 @@ void fill_stage_leaf(Tensor& tensor, const DataflowPulledTensor& pulled,
   tensor.route = pulled.route;
   tensor.semantic.quant = pulled.quant;
   tensor.semantic.tess.emplace().format = pulled.format;
+  if (pulled.frame_semantics) [[unlikely]] {
+    // Behind an image preproc: the tiled tensor's storage description and the frame's preprocess
+    // facts (DataflowModelRoute.cpp, so that this unit's code for every other route is as it was).
+    apply_dataflow_frame_semantics(pulled, tensor);
+  }
 }
 
 } // namespace
@@ -490,6 +495,11 @@ const DataflowLeafGeometry* DataflowInputPort::device_known(std::span<const Tens
                                                             const char* where) const {
   const DataflowLeafGeometry* const known = validated_device_.find_device(item);
   if (!known) {
+    if (config_.model && config_.model->frame_input && item.size() == 1U) {
+      // H1: in front of the image preproc, a tensor that is not the validated frame: another
+      // size or ROI metadata is refused here, with what to do instead.
+      refuse_dataflow_frame(*config_.model, item.front(), where);
+    }
     return validated_.find(item);
   }
   dataflow_device::enforce_transferable(item, where);
