@@ -861,7 +861,6 @@ class WindowsCiContracts(unittest.TestCase):
     self.assertIn("python3 pcie_host/tests/test_verify_linux_release_run.py", source)
     self.assertIn("scripts/ci/pciehost/qualify_windows_hardware.py", source)
     self.assertIn("scripts/ci/pciehost/cleanup_windows_hardware.py", source)
-    self.assertIn("needs: [hardware, linux_release]", source)
     self.assertIn("linux_run_id", source)
     self.assertIn("Download this run's exact Linux candidate", source)
     self.assertIn("Download prior run's exact Linux candidate", source)
@@ -901,7 +900,6 @@ class WindowsCiContracts(unittest.TestCase):
     self.assertIn("--expected-upgrade-base-commit", source)
     self.assertIn("SIMA_WINDOWS_DEPENDENCY_RUNTIME_PATH", source)
     self.assertIn("SIMA_WINDOWS_PLATFORM_INCLUDE_DIR", source)
-    self.assertIn('source_branch: "3.0"', source)
     self.assertIn("--dependency-runtime-dir", source)
     self.assertIn("scripts/ci/pciehost/acquire_windows_dependencies.py", source)
     self.assertIn("core-pciehost-windows-dependencies", source)
@@ -1369,10 +1367,11 @@ class WindowsCiContracts(unittest.TestCase):
          False, "success", "success", False),
         ("sima-neat/core", "workflow_call", "refs/heads/develop",
          False, "success", "success", False),
+        # Only a Neat release tag publishes; a branch has no customer selector.
         ("sima-neat/core", "push", "refs/heads/develop",
-         False, "success", "success", True),
+         False, "success", "success", False),
         ("sima-neat/core", "workflow_dispatch", "refs/heads/develop",
-         False, "success", "success", True),
+         False, "success", "success", False),
         ("sima-neat/core", "push", "refs/tags/v0.7.0",
          False, "success", "success", True),
         ("sima-neat/core", "workflow_dispatch", "refs/tags/v0.7.0-rc.1",
@@ -1401,10 +1400,10 @@ class WindowsCiContracts(unittest.TestCase):
         }
         self.assertEqual(evaluate_actions_expression(expression, values), expected)
     first_release_values = {
-        "startsWith(github.ref, 'refs/tags/v')": False,
+        "startsWith(github.ref, 'refs/tags/v')": True,
         "github.repository": "sima-neat/core",
         "github.event_name": "workflow_dispatch",
-        "github.ref": "refs/heads/develop",
+        "github.ref": "refs/tags/v0.7.0",
         "inputs.validation_only": False,
         "inputs.require_upgrade": False,
         "inputs.first_release_upgrade_exemption": True,
@@ -1414,8 +1413,116 @@ class WindowsCiContracts(unittest.TestCase):
     self.assertTrue(evaluate_actions_expression(expression, first_release_values))
     first_release_values["inputs.first_release_upgrade_exemption"] = False
     self.assertFalse(evaluate_actions_expression(expression, first_release_values))
-    self.assertIn("needs: [hardware, linux_release]", publish)
-    self.assertIn('source_branch: "3.0"', publish)
+
+  @unittest.skipIf(os.name == "nt", WORKFLOW_BASH_SKIP)
+  def test_publishing_run_is_rejected_before_building_unless_on_its_release_tag(self):
+    source = WORKFLOW.read_text(encoding="utf-8")
+    linux_release = source.split("  linux_release:\n", 1)[1].split("  card_candidate:\n", 1)[0]
+    step = workflow_step(linux_release, "Require the Neat release tag before building a publication")
+    self.assertIn("if: inputs.validation_only != true", step)
+    script = textwrap.dedent(step.split("        run: |\n", 1)[1])
+    version = json.loads((ROOT / "deps" / "manifest.json").read_text())["package-version"]
+    for ref_type, ref_name, accepted in (
+        ("tag", f"v{version}", True),
+        ("branch", "develop", False),
+        ("branch", f"v{version}", False),
+        ("tag", "v0.0.1", False),
+        ("tag", "nightly", False),
+    ):
+      with self.subTest(ref_type=ref_type, ref_name=ref_name):
+        result = subprocess.run(
+            [shutil.which("bash"), "-c", script], cwd=ROOT, capture_output=True, text=True,
+            env={**os.environ, "GITHUB_REF_TYPE": ref_type, "GITHUB_REF_NAME": ref_name})
+        self.assertEqual(result.returncode == 0, accepted, result.stderr)
+        if not accepted:
+          self.assertIn(f"requires the release tag v{version}", result.stderr)
+
+  def test_publication_plan_publishes_only_customer_files_under_the_tag(self):
+    with tempfile.TemporaryDirectory() as directory:
+      root = Path(directory)
+      commit, resources, _ = self.windows_candidate(root)
+      (root / "core.msi.sha256").write_text(resources["core.msi"] + "  core.msi\n")
+      bucket = {"core/v0.6.2/latest.tag": b"cccccccccccc\n"}
+      prefix, files = RELEASE.publication_plan(bucket.__getitem__, "v0.6.2", commit, root)
+      self.assertEqual(prefix, "core/v0.6.2/cccccccccccc/pciehost/windows/amd64")
+      # Receipts and qualification evidence stay in the Actions artifact.
+      self.assertEqual([path.name for path in files],
+                       [*resources, "core.msi.sha256", "metadata.json"])
+      for ref, error in (("develop", "requires the release tag v0.6.2"),
+                         ("v0.6.1", "requires the release tag v0.6.2")):
+        with self.subTest(ref=ref), self.assertRaisesRegex(ValueError, error):
+          RELEASE.publication_plan(bucket.__getitem__, ref, commit, root)
+      with self.assertRaisesRegex(ValueError, "not d{40}"):
+        RELEASE.publication_plan(bucket.__getitem__, "v0.6.2", "d" * 40, root)
+      # The Linux release of the tag must already have promoted this commit.
+      bucket["core/v0.6.2/latest.tag"] = b"aaaaaaaaaaaa\n"
+      with self.assertRaisesRegex(ValueError, "not release commit cccccccccccc"):
+        RELEASE.publication_plan(bucket.__getitem__, "v0.6.2", commit, root)
+
+  @unittest.skipIf(os.name == "nt", WORKFLOW_BASH_SKIP)
+  def test_publish_step_writes_the_layout_the_qualifier_stages(self):
+    source = WORKFLOW.read_text(encoding="utf-8")
+    publish = source.split("  publish:\n", 1)[1]
+    script = textwrap.dedent(
+        workflow_step(publish, "Publish Windows release files").split("        run: |\n", 1)[1])
+    with tempfile.TemporaryDirectory() as directory:
+      root = Path(directory)
+      candidate_root = root / "runner" / "core-windows-candidate"
+      candidate_root.mkdir(parents=True)
+      commit, _, _ = self.windows_candidate(candidate_root)
+      tools = root / "bin"
+      tools.mkdir()
+      (tools / "aws").write_text(textwrap.dedent("""\
+          #!/bin/bash
+          set -e
+          echo "$*" >> "$FAKE_S3.log"
+          [[ "$1 $2" == "s3 cp" ]] || exit 0
+          if [[ "$3" == s3://* ]]; then cat "$FAKE_S3/${3#s3://*/}"; exit; fi
+          mkdir -p "$(dirname "$FAKE_S3/${4#s3://*/}")"
+          cp "$3" "$FAKE_S3/${4#s3://*/}"
+          """))
+      (tools / "aws").chmod(0o755)
+      bucket = root / "bucket"
+      environment = {
+          **os.environ, "PATH": f"{tools}{os.pathsep}{os.environ['PATH']}",
+          "FAKE_S3": str(bucket), "ARTIFACT_BUCKET": "neat-artifacts",
+          "CLOUDFRONT_DISTRIBUTION_ID": "E123", "REF_NAME": "v0.6.2",
+          "SSE_KMS_KEY_ID": "", "GITHUB_SHA": commit, "RUNNER_TEMP": str(root / "runner"),
+      }
+
+      def publish():
+        return subprocess.run([shutil.which("bash"), "-c", script], cwd=ROOT,
+                              capture_output=True, text=True, env=environment)
+
+      result = publish()
+      self.assertNotEqual(result.returncode, 0)
+      self.assertIn("core/v0.6.2/latest.tag", result.stderr)
+      self.assertFalse(bucket.exists())
+
+      (bucket / "core" / "v0.6.2").mkdir(parents=True)
+      (bucket / "core" / "v0.6.2" / "latest.tag").write_text("cccccccccccc\n")
+      result = publish()
+      self.assertEqual(result.returncode, 0, result.stderr)
+      candidate = validate_candidate(candidate_root)
+      staged = root / "qualifier registry"
+      stage_local_registry(candidate, staged)
+      published = {path.relative_to(bucket).as_posix() for path in bucket.rglob("*")
+                   if path.is_file()}
+      self.assertEqual(
+          published - {f"{RELEASE.package_prefix('v0.6.2', commit)}/metadata.json.pending"},
+          {path.relative_to(staged).as_posix() for path in staged.rglob("*") if path.is_file()})
+      log = Path(f"{bucket}.log").read_text()
+      self.assertIn("--sse aws:kms", log)
+      self.assertIn(
+          "cloudfront create-invalidation --distribution-id E123 "
+          "--paths /core/v0.6.2/cccccccccccc/pciehost/windows/amd64/*", log)
+      # metadata.json is exposed last, after the uploaded bytes were verified.
+      self.assertTrue(log.splitlines()[-2].endswith(
+          "s3://neat-artifacts/core/v0.6.2/cccccccccccc/pciehost/windows/amd64/metadata.json "
+          "--content-type application/json --sse aws:kms"))
+      fetched = RELEASE.fetch_release(
+          lambda key: (bucket / key).read_bytes(), "v0.6.2", commit, root / "fetched")
+      self.assertEqual(fetched.resources, candidate.resources)
 
   def test_producer_and_qualifier_accept_inbox_windows_powershell(self):
     inbox = "C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe"

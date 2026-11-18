@@ -181,13 +181,7 @@ class WindowsCandidate:
     return str(self.metadata["commit"])
 
 
-def validate_candidate(directory: Path) -> WindowsCandidate:
-  root = directory.resolve(strict=True)
-  if not root.is_dir():
-    raise ValueError(f"candidate is not a directory: {root}")
-
-  metadata = _read_json(root / "metadata.json", "candidate metadata")
-  receipt = _read_json(root / "host-candidate.json", "host candidate receipt")
+def _require_package_identity(metadata: dict) -> None:
   if metadata.get("name") != "gh:sima-neat/core/pciehost/windows/amd64":
     raise ValueError("candidate metadata has the wrong package name")
   if metadata.get("repository") != "sima-neat/core":
@@ -195,6 +189,90 @@ def validate_candidate(directory: Path) -> WindowsCandidate:
   artifact = metadata.get("artifact")
   if not isinstance(artifact, dict) or artifact.get("package_path") != "pciehost/windows/amd64":
     raise ValueError("candidate metadata has the wrong artifact profile")
+
+
+def _package(root: Path, metadata: dict, receipt: dict,
+             extra_files: set[str] | None) -> WindowsCandidate:
+  """Validate the customer files; ``extra_files=None`` admits unlisted files."""
+  resource_names = metadata.get("resources")
+  resources = metadata.get("resources-checksum")
+  if (not isinstance(resource_names, list) or not resource_names
+      or not isinstance(resources, dict) or set(resource_names) != set(resources)):
+    raise ValueError("candidate resource inventory is incomplete")
+  for name, expected in resources.items():
+    if not isinstance(name, str) or Path(name).name != name:
+      raise ValueError(f"invalid candidate resource name: {name!r}")
+    if not isinstance(expected, str) or len(expected) != 64:
+      raise ValueError(f"invalid candidate checksum: {name}")
+    path = root / name
+    if not path.is_file() or path.is_symlink():
+      raise ValueError(f"candidate resource is missing or unsafe: {name}")
+    if sha256(path) != expected.lower():
+      raise ValueError(f"candidate resource checksum differs: {name}")
+
+  if extra_files is not None:
+    _reject_uninventoried_entries(root, {
+        "metadata.json",
+        *extra_files,
+        *resources,
+        *(f"{name}.sha256" for name in resources),
+    })
+
+  installation = metadata.get("installation")
+  if not isinstance(installation, dict) or installation.get("type") != "windows-msi":
+    raise ValueError("candidate installation is not windows-msi")
+  packages = installation.get("native-packages")
+  if not isinstance(packages, list) or [item.get("owner") for item in packages] != [
+      "scheduler", "core"]:
+    raise ValueError("candidate native package order must be Scheduler then Core")
+  msi_names = [item.get("msi") for item in packages]
+  if any(name not in resources or not str(name).lower().endswith(".msi") for name in msi_names):
+    raise ValueError("candidate native package metadata does not select two MSI resources")
+
+  python_package = installation.get("python")
+  if not isinstance(python_package, dict):
+    raise ValueError("candidate has no Python installation record")
+  wheel_name = python_package.get("wheel")
+  if wheel_name not in resources or not str(wheel_name).lower().endswith(".whl"):
+    raise ValueError("candidate Python metadata does not select a wheel resource")
+
+  return WindowsCandidate(
+      root=root,
+      metadata=metadata,
+      receipt=receipt,
+      scheduler_msi=root / msi_names[0],
+      core_msi=root / msi_names[1],
+      wheel=root / wheel_name,
+      resources={str(name): str(digest).lower() for name, digest in resources.items()},
+  )
+
+
+def validate_published_package(directory: Path, *,
+                               allow_unlisted: bool = False) -> WindowsCandidate:
+  """Validate what sima-cli downloads: metadata.json and its checksummed resources.
+
+  A published release carries no CI receipt; its qualification evidence was
+  checked by the release gate before publication.
+  """
+  root = directory.resolve(strict=True)
+  if not root.is_dir():
+    raise ValueError(f"published package is not a directory: {root}")
+  metadata = _read_json(root / "metadata.json", "published package metadata")
+  _require_package_identity(metadata)
+  if not re.fullmatch(r"[0-9a-f]{40}", str(metadata.get("commit", ""))):
+    raise ValueError("published package metadata has no full Core commit")
+  msi_version(metadata.get("version"))
+  return _package(root, metadata, {}, None if allow_unlisted else set())
+
+
+def validate_candidate(directory: Path) -> WindowsCandidate:
+  root = directory.resolve(strict=True)
+  if not root.is_dir():
+    raise ValueError(f"candidate is not a directory: {root}")
+
+  metadata = _read_json(root / "metadata.json", "candidate metadata")
+  receipt = _read_json(root / "host-candidate.json", "host candidate receipt")
+  _require_package_identity(metadata)
   if receipt.get("repository") != "sima-neat/core":
     raise ValueError("candidate receipt has the wrong repository")
   if receipt.get("profile") != "pciehost/windows/amd64":
@@ -232,56 +310,5 @@ def validate_candidate(directory: Path) -> WindowsCandidate:
     if sha256(path) != expected:
       raise ValueError(f"candidate qualification resource checksum differs: {name}")
 
-  resource_names = metadata.get("resources")
-  resources = metadata.get("resources-checksum")
-  if (not isinstance(resource_names, list) or not resource_names
-      or not isinstance(resources, dict) or set(resource_names) != set(resources)):
-    raise ValueError("candidate resource inventory is incomplete")
-  for name, expected in resources.items():
-    if not isinstance(name, str) or Path(name).name != name:
-      raise ValueError(f"invalid candidate resource name: {name!r}")
-    if not isinstance(expected, str) or len(expected) != 64:
-      raise ValueError(f"invalid candidate checksum: {name}")
-    path = root / name
-    if not path.is_file() or path.is_symlink():
-      raise ValueError(f"candidate resource is missing or unsafe: {name}")
-    if sha256(path) != expected.lower():
-      raise ValueError(f"candidate resource checksum differs: {name}")
-
-  allowed_files = {
-      "host-candidate.json",
-      "metadata.json",
-      *_OPTIONAL_EVIDENCE_FILES,
-      *resources,
-      *qualification_resources,
-      *(f"{name}.sha256" for name in resources),
-  }
-  _reject_uninventoried_entries(root, allowed_files)
-
-  installation = metadata.get("installation")
-  if not isinstance(installation, dict) or installation.get("type") != "windows-msi":
-    raise ValueError("candidate installation is not windows-msi")
-  packages = installation.get("native-packages")
-  if not isinstance(packages, list) or [item.get("owner") for item in packages] != [
-      "scheduler", "core"]:
-    raise ValueError("candidate native package order must be Scheduler then Core")
-  msi_names = [item.get("msi") for item in packages]
-  if any(name not in resources or not str(name).lower().endswith(".msi") for name in msi_names):
-    raise ValueError("candidate native package metadata does not select two MSI resources")
-
-  python_package = installation.get("python")
-  if not isinstance(python_package, dict):
-    raise ValueError("candidate has no Python installation record")
-  wheel_name = python_package.get("wheel")
-  if wheel_name not in resources or not str(wheel_name).lower().endswith(".whl"):
-    raise ValueError("candidate Python metadata does not select a wheel resource")
-
-  return WindowsCandidate(
-      root=root,
-      metadata=metadata,
-      receipt=receipt,
-      scheduler_msi=root / msi_names[0],
-      core_msi=root / msi_names[1],
-      wheel=root / wheel_name,
-      resources={str(name): str(digest).lower() for name, digest in resources.items()},
-  )
+  return _package(root, metadata, receipt, {
+      "host-candidate.json", *_OPTIONAL_EVIDENCE_FILES, *qualification_resources})

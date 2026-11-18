@@ -127,6 +127,15 @@ concurrency:
   group: core-native-windows-pcie-${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 jobs:
+  resolve-vulcan-config:
+    name: Resolve Vulcan Config
+    if: github.event_name != 'pull_request'
+    permissions:
+      contents: read
+      id-token: write
+    uses: sima-neat/.github/.github/workflows/vulcan-resolve-config.yml@main
+    with:
+      vulcan_env: ${{ vars.VULCAN_ENV || 'production' }}
   contracts:
     runs-on: ubuntu-24.04
     steps:
@@ -209,6 +218,13 @@ jobs:
             echo "The first-release upgrade exemption requires a non-empty reason." >&2
             exit 1
           fi
+      - name: Require the Neat release tag before building a publication
+        if: inputs.validation_only != true
+        run: |
+          python3 scripts/ci/pciehost/windows_release.py release-ref \
+            --ref-type "${GITHUB_REF_TYPE}" \
+            --ref-name "${GITHUB_REF_NAME}" \
+            --manifest deps/manifest.json
       - name: Mint read-only dependency run token
         if: inputs.scheduler_run_id != '' || inputs.sima_cli_run_id != ''
         id: dependency-token
@@ -871,23 +887,69 @@ jobs:
           if-no-files-found: error
           retention-days: 14
   publish:
-    name: Publish qualified Windows cohort to core/3.0
-    needs: [hardware, linux_release]
-    if: github.repository == 'sima-neat/core' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && (github.ref == 'refs/heads/develop' || startsWith(github.ref, 'refs/tags/v')) && inputs.validation_only != true && (inputs.require_upgrade == true || inputs.first_release_upgrade_exemption == true) && needs.hardware.result == 'success' && needs.linux_release.result == 'success'
+    name: Publish qualified Windows release under its Neat tag
+    needs: [hardware, linux_release, resolve-vulcan-config]
+    if: github.repository == 'sima-neat/core' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && startsWith(github.ref, 'refs/tags/v') && inputs.validation_only != true && (inputs.require_upgrade == true || inputs.first_release_upgrade_exemption == true) && needs.hardware.result == 'success' && needs.linux_release.result == 'success'
+    environment: ${{ needs.resolve-vulcan-config.outputs.vulcan_env }}
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
-      actions: write
       id-token: write
-    uses: sima-neat/.github/.github/workflows/vulcan-publish-artifacts.yml@58c7dc729d9e995631578cfc33643613d81d44a4
-    with:
-      environment_name: production
-      artifact_namespace: core
-      # The customer selector is a Platform compatibility channel, not the
-      # implementation branch name. The exact commit remains immutable below.
-      source_branch: "3.0"
-      source_commit: ${{ github.sha }}
-      artifact_folder: pciehost/windows/amd64
-      artifact_pattern: core-pciehost-windows-amd64
-      artifact_glob: '*'
-      publish_manifest: true
-      cleanup_github_artifacts: false
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - name: Download qualified Windows release
+        uses: actions/download-artifact@v4
+        with:
+          name: core-pciehost-windows-amd64
+          path: ${{ runner.temp }}/core-windows-candidate
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          aws-region: ${{ needs.resolve-vulcan-config.outputs.aws_region }}
+          role-to-assume: ${{ needs.resolve-vulcan-config.outputs.artifact_publisher_role_arn }}
+          role-session-name: pciehost-windows-amd64-${{ github.run_id }}
+      - name: Publish Windows release files
+        shell: bash
+        env:
+          ARTIFACT_BUCKET: ${{ needs.resolve-vulcan-config.outputs.artifact_bucket }}
+          CLOUDFRONT_DISTRIBUTION_ID: ${{ needs.resolve-vulcan-config.outputs.artifact_cloudfront_distribution_id }}
+          REF_NAME: ${{ github.ref_name }}
+          SSE_KMS_KEY_ID: ${{ needs.resolve-vulcan-config.outputs.artifact_kms_key_id }}
+        run: |
+          set -euo pipefail
+          candidate="${RUNNER_TEMP}/core-windows-candidate"
+          # Same layout and latest.tag as the Ubuntu host packages of this tag.
+          plan="$(python3 scripts/ci/pciehost/windows_release.py publication \
+            --bucket "${ARTIFACT_BUCKET}" --ref "${REF_NAME}" --commit "${GITHUB_SHA}" \
+            --candidate "${candidate}")"
+          mapfile -t paths <<< "${plan}"
+          prefix="${paths[0]}"
+          s3_args=(--sse aws:kms)
+          if [[ -n "${SSE_KMS_KEY_ID:-}" ]]; then
+            s3_args+=(--sse-kms-key-id "${SSE_KMS_KEY_ID}")
+          fi
+          for path in "${paths[@]:1}"; do
+            name="$(basename "${path}")"
+            # Metadata becomes visible only after the uploaded files are verified.
+            case "${name}" in metadata.json) name="${name}.pending" ;; esac
+            case "${name}" in
+              *.msi) content_type="application/x-msi" ;;
+              *.sha256) content_type="text/plain" ;;
+              *.json.pending) content_type="application/json" ;;
+              *) content_type="application/octet-stream" ;;
+            esac
+            aws s3 cp "${path}" "s3://${ARTIFACT_BUCKET}/${prefix}/${name}" \
+              --content-type "${content_type}" "${s3_args[@]}"
+          done
+          python3 scripts/ci/pciehost/windows_release.py verify-upload \
+            --bucket "${ARTIFACT_BUCKET}" --ref "${REF_NAME}" --commit "${GITHUB_SHA}" \
+            --candidate "${candidate}" --output "${RUNNER_TEMP}/core-windows-published"
+          aws s3 cp "${candidate}/metadata.json" "s3://${ARTIFACT_BUCKET}/${prefix}/metadata.json" \
+            --content-type application/json "${s3_args[@]}"
+          if [[ -n "${CLOUDFRONT_DISTRIBUTION_ID:-}" ]]; then
+            aws cloudfront create-invalidation \
+              --distribution-id "${CLOUDFRONT_DISTRIBUTION_ID}" --paths "/${prefix}/*"
+          fi
+          echo "Published s3://${ARTIFACT_BUCKET}/${prefix}/"
