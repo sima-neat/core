@@ -138,7 +138,9 @@ $requiredCommands = @(
 )
 $commands = @{}
 foreach ($name in $requiredCommands) {
-  $command = Get-Command $name -CommandType Application -ErrorAction SilentlyContinue
+  # PATH can hold more than one OpenSSH; use the first match, as the shell would.
+  $command = Get-Command $name -CommandType Application -ErrorAction SilentlyContinue |
+    Select-Object -First 1
   if ($null -eq $command) {
     throw "$name was not found. Install the Windows OpenSSH Client optional feature."
   }

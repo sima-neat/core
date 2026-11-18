@@ -180,6 +180,15 @@ class WindowsPackagingContract(unittest.TestCase):
                      source.count("-o $knownHostsOption"), 3)
     self.assertNotRegex(source, r"UserKnownHostsFile=\$(?!{)")
 
+  def test_setup_uses_one_openssh_when_path_holds_several(self):
+    source = SETUP_SCRIPT.read_text(encoding="utf-8")
+    # Get-Command returns every match; a PC with both the in-box and the
+    # Program Files OpenSSH would otherwise store an array as the command.
+    self.assertRegex(
+        source,
+        r"Get-Command \$name -CommandType Application -ErrorAction SilentlyContinue \|\s*"
+        r"Select-Object -First 1")
+
   def test_setup_drains_redirected_process_output_while_command_runs(self):
     setup_script = (ROOT / "scripts/windows/pcie-setup.ps1").read_text(
         encoding="utf-8"
