@@ -188,6 +188,13 @@ void test_host_platform() {
               unicode_path,
           "host path conversion did not preserve a UTF-8 path");
 #ifdef _WIN32
+  require(pcie_internal::same_host_path("c:\\Media Root", "C:\\media root"),
+          "Windows path comparison must ignore case");
+#else
+  require(!pcie_internal::same_host_path("/media/root", "/Media/Root"),
+          "POSIX path comparison must keep case");
+#endif
+#ifdef _WIN32
   const auto ssh = pcie_internal::open_ssh_executable("ssh");
   require(ssh.size() >= std::string("ssh.exe").size() &&
               ssh.substr(ssh.size() - std::string("ssh.exe").size()) == "ssh.exe",

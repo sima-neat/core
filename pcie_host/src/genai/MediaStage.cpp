@@ -1,4 +1,5 @@
 #include "genai/MediaStage.h"
+#include "HostPlatform.h"
 #include "Protocol.h"
 #include <cstring>
 #include <fstream>
@@ -39,12 +40,13 @@ void MediaStage::prepare() {
     throw std::runtime_error(configuration + " is missing or is not a directory; repair " +
                              platform_daemon_configuration +
                              " and ensure its configured media directory exists");
-  if (canonical_root != root_)
+  if (!pcie::internal::same_host_path(canonical_root, root_))
     throw std::runtime_error(configuration + " is noncanonical or traverses a symlink; update " +
                              platform_daemon_configuration +
                              " to use the exact directory without symlinks");
   std::filesystem::create_directories(directory_.parent_path());
-  if (std::filesystem::canonical(directory_.parent_path()) != directory_.parent_path())
+  if (!pcie::internal::same_host_path(std::filesystem::canonical(directory_.parent_path()),
+                                      directory_.parent_path()))
     throw std::runtime_error("Media staging path contains a symlink");
 #ifndef _WIN32
   chmod(directory_.parent_path().c_str(), 0700);

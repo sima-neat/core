@@ -137,6 +137,15 @@ std::string host_path_string(const std::filesystem::path& path) {
 #endif
 }
 
+bool same_host_path(const std::filesystem::path& left, const std::filesystem::path& right) {
+#ifdef _WIN32
+  // Windows paths compare case-insensitively; canonical() returns the on-disk case.
+  return CompareStringOrdinal(left.c_str(), -1, right.c_str(), -1, TRUE) == CSTR_EQUAL;
+#else
+  return left == right;
+#endif
+}
+
 std::string open_ssh_executable(const char* command) {
   if (!command || !*command) {
     throw std::invalid_argument("OpenSSH command must not be empty");
