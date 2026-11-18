@@ -452,8 +452,20 @@ RUN_TEST(
                 run_api_case("after_stop_try_push", "Run::try_push should fail after stop"));
       }
 
-      // Holder-specific matrix on a fresh run.
       {
+        Run run = make_async_rgb_run_with_copy_input(seed);
+        require(run.can_push() && run.push(TensorList{seed}), "open input should accept a frame");
+        run.close_input();
+        require(!run.can_push() && run.can_pull(), "queued output must survive input close");
+        require(!run.push(TensorList{seed}), "closed input must refuse new frames");
+        require_contains(run.last_error(), "input is closed", "late push should explain refusal");
+        require(run.pull(1000).has_value(), "late push diagnostic must allow output drain");
+        require(!run.pull(1000).has_value() && !run.can_pull(),
+                "drained output must stop advertising more samples");
+      }
+
+      {
+        // Holder-specific matrix on a fresh run.
         Run holder_run = make_async_rgb_run_with_copy_input(seed, 1);
 
         require(holder_run.push(TensorList{seed}),

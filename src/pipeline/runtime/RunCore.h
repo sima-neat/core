@@ -313,6 +313,7 @@ struct RunCore : std::enable_shared_from_this<RunCore> {
   std::atomic<std::int64_t> next_public_graph_input_seq{0};
 
   std::string error;
+  std::atomic<bool> push_refused_after_close{false};
   std::optional<PullError> terminal_error_detail;
   std::string diag_sysinfo;
 #pragma GCC diagnostic push

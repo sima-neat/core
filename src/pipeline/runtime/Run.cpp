@@ -2,10 +2,12 @@
 #include "RunInternal.h"
 
 #include "internal/InputStream.h"
+#include "pipeline/ErrorCodes.h"
 #include "pipeline/RunExport.h"
 #include "pipeline/NeatError.h"
 #include "pipeline/internal/Diagnostics.h"
 #include "pipeline/internal/EnvUtil.h"
+#include "pipeline/internal/ErrorUtil.h"
 #include "pipeline/internal/RealtimeFrameCredit.h"
 #include "pipeline/internal/OutputQueueMemory.h"
 #include "pipeline/internal/TensorMath.h"
@@ -643,16 +645,24 @@ bool runtime::RunCore::valid() const noexcept {
 
 bool runtime::RunCore::can_push() const {
   if (graph_execution_) {
-    return graph_execution_->plan.default_input.has_value();
+    return graph_execution_->plan.default_input.has_value() && !graph_public_input_closed() &&
+           !graph_stop_requested();
   }
-  return pipeline.supports_push;
+  return pipeline.supports_push && !pipeline.input_closed && !stop_requested;
 }
 
 bool runtime::RunCore::can_pull() const {
   if (graph_execution_) {
-    return graph_execution_->plan.default_output.has_value();
+    const auto& output = graph_execution_->plan.default_output;
+    if (!output)
+      return false;
+    const auto sink = graph_execution_->sinks.find(output->node);
+    return sink != graph_execution_->sinks.end() && sink->second && !sink->second->drained();
   }
-  return pipeline.supports_pull;
+  std::lock_guard<std::mutex> lock(pipeline.out_mu);
+  return pipeline.supports_pull &&
+         (!pipeline.out_queue.empty() ||
+          (!stop_requested && !pipeline.stream.reached_eos() && pipeline.stream.running()));
 }
 
 bool runtime::RunCore::running() const {
@@ -755,7 +765,13 @@ bool Run::running() const {
 }
 
 std::string Run::last_error() const {
-  return core_ ? core_->last_error() : std::string{};
+  if (!core_)
+    return {};
+  auto error = core_->last_error();
+  if (error.empty() && core_->push_refused_after_close)
+    return pipeline_internal::error_util::decorate_error(error_codes::kRuntimePull,
+                                                         "Run::push: input is closed");
+  return error;
 }
 
 } // namespace simaai::neat

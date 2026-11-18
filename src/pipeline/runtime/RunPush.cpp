@@ -294,6 +294,7 @@ bool push_graph_samples_to_endpoint(runtime::RunCore& core, const runtime::Endpo
       pipeline_internal::validate_ordered_public_input(*segment->public_input_contract, msg);
   }
   if (!core.graph_begin_public_push()) {
+    core.push_refused_after_close = true;
     return false;
   }
   struct PublicPushGuard {
@@ -334,6 +335,8 @@ bool push_graph_samples_to_endpoint(runtime::RunCore& core, const runtime::Endpo
     if (!core.graph_push(endpoint.node, endpoint.port,
                          endpoint.port != simaai::neat::graph::kInvalidPort, stamped,
                          graph_router_options_for_push(core, block))) {
+      if (core.graph_public_input_closed())
+        core.push_refused_after_close = true;
       return false;
     }
     core.inputs_enqueued.fetch_add(1, std::memory_order_relaxed);
@@ -438,9 +441,10 @@ InputQueueAdmission admit_input_queue_locked(runtime::RunCore& core,
   return {true, max, ""};
 }
 
-void maybe_log_push_rejection(const runtime::RunCore& core,
-                              const runtime::PipelineSegmentRuntime& segment,
-                              const InputQueueAdmission& admission) {
+void record_push_rejection(runtime::RunCore& core, const runtime::PipelineSegmentRuntime& segment,
+                           const InputQueueAdmission& admission) {
+  if (segment.input_closed)
+    core.push_refused_after_close = true;
   if (!push_return_debug_enabled() || admission.accepted || !admission.reason ||
       !admission.reason[0]) {
     return;
@@ -464,7 +468,7 @@ bool push_mat_to_core(runtime::RunCore& core, const cv::Mat& input, bool block) 
     std::unique_lock<std::mutex> lock(st->pipeline.in_mu);
     const InputQueueAdmission admission = admit_input_queue_locked(*st, st->pipeline, lock, block);
     if (!admission.accepted) {
-      maybe_log_push_rejection(*st, st->pipeline, admission);
+      record_push_rejection(*st, st->pipeline, admission);
       return false;
     }
 
@@ -519,7 +523,7 @@ bool push_message_to_core(runtime::RunCore& core, const Sample& msg, bool block)
       t_admit = std::chrono::steady_clock::now();
     }
     if (!admission.accepted) {
-      maybe_log_push_rejection(*st, st->pipeline, admission);
+      record_push_rejection(*st, st->pipeline, admission);
       return false;
     }
 
@@ -623,7 +627,7 @@ bool Run::push_impl(const cv::Mat& input, bool block) {
     std::unique_lock<std::mutex> lock(st->pipeline.in_mu);
     const InputQueueAdmission admission = admit_input_queue_locked(*st, st->pipeline, lock, block);
     if (!admission.accepted) {
-      maybe_log_push_rejection(*st, st->pipeline, admission);
+      record_push_rejection(*st, st->pipeline, admission);
       return false;
     }
 
@@ -659,7 +663,7 @@ bool Run::push_impl(const simaai::neat::Tensor& input, bool block) {
     std::unique_lock<std::mutex> lock(st->pipeline.in_mu);
     const InputQueueAdmission admission = admit_input_queue_locked(*st, st->pipeline, lock, block);
     if (!admission.accepted) {
-      maybe_log_push_rejection(*st, st->pipeline, admission);
+      record_push_rejection(*st, st->pipeline, admission);
       return false;
     }
 
@@ -703,7 +707,7 @@ bool Run::push_holder_impl(const std::shared_ptr<void>& holder, bool block) {
     std::unique_lock<std::mutex> lock(st->pipeline.in_mu);
     const InputQueueAdmission admission = admit_input_queue_locked(*st, st->pipeline, lock, block);
     if (!admission.accepted) {
-      maybe_log_push_rejection(*st, st->pipeline, admission);
+      record_push_rejection(*st, st->pipeline, admission);
       return false;
     }
 
