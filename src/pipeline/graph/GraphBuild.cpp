@@ -3575,17 +3575,21 @@ static bool has_input_role(const std::vector<std::shared_ptr<Node>>& nodes, Inpu
   return false;
 }
 
+const StillImageInput* rtsp_still_image(const Node* node, const std::string& where) {
+  if (!node || node->kind() != "StillImageInput")
+    return nullptr;
+  if (const auto* image = dynamic_cast<const StillImageInput*>(node))
+    return image;
+  throw_session_error_simple(error_codes::kPipelineShape,
+                             where + ": recreate the saved StillImageInput from its image path "
+                                     "before calling Graph::run_rtsp().");
+}
+
 const StillImageInput* find_rtsp_still_image(const std::vector<std::shared_ptr<Node>>& nodes,
                                              const std::string& where) {
-  for (const auto& node : nodes) {
-    if (!node || node->kind() != "StillImageInput")
-      continue;
-    if (const auto* image = dynamic_cast<const StillImageInput*>(node.get()))
+  for (const auto& node : nodes)
+    if (const auto* image = rtsp_still_image(node.get(), where))
       return image;
-    throw_session_error_simple(error_codes::kPipelineShape,
-                               where + ": recreate the saved StillImageInput from its image path "
-                                       "before calling Graph::run_rtsp().");
-  }
   return nullptr;
 }
 
