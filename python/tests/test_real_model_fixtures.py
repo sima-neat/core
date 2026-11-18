@@ -77,6 +77,9 @@ def _resolve_fixture_image(rel_path: Path) -> Path | None:
     installed_candidate = root / "lib" / "sima-neat" / rel_path
     if installed_candidate.is_file():
       return installed_candidate
+    test_asset = root / "test-assets" / rel_path
+    if test_asset.is_file():
+      return test_asset
 
   return None
 

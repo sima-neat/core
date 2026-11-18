@@ -238,12 +238,12 @@ def test_cvu_atom_from_model_constructors_registered():
       continue  # stage not in this model's route — overload exists and validated correctly
     except TypeError as exc:  # pragma: no cover - registration regression guard
       raise AssertionError(f"{opt_cls.__name__}(Model) overload not registered: {exc}")
-    if opt_cls is pyneat.DequantOptions:
-      import pytest
-
+    try:
+      node = factory(opt)
+    except RuntimeError as exc:
       # Known bug sima-neat/core#1422: DequantOptions(Model) sets no q_scale/q_zp.
-      # This fails once #1422 is fixed; then delete this branch.
-      with pytest.raises(RuntimeError, match="q_scale"):
-        factory(opt)
-      continue
-    assert isinstance(factory(opt), pyneat.Node)
+      # Delete this branch once #1422 is fixed.
+      if opt_cls is pyneat.DequantOptions and "q_scale" in str(exc):
+        continue
+      raise
+    assert isinstance(node, pyneat.Node)
