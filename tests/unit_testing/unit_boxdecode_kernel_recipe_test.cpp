@@ -163,8 +163,11 @@ BoxDecodeKernelRecipeResult check(const CompiledBoxDecodeContract& s,
   auto r = prepare_boxdecode_kernel(s, geometry);
   const auto& recipe = *r.compiled.recipe;
   const auto expected_format =
-      box_decode_type_is_oriented(s.payload.decode_type)   ? kDetectionFormatBboxObbV1
-      : s.payload.decode_type != BoxDecodeType::SuperPoint ? kDetectionFormatBbox
+      box_decode_type_is_oriented(s.payload.decode_type)     ? kDetectionFormatBboxObbV1
+      : s.payload.decode_type == BoxDecodeType::YoloXSegPose ? kDetectionFormatBboxSegmentationPose
+      : box_decode_type_is_pose(s.payload.decode_type)       ? kDetectionFormatBboxPose
+      : box_decode_type_is_segmentation(s.payload.decode_type) ? kDetectionFormatBboxSegmentation
+      : s.payload.decode_type != BoxDecodeType::SuperPoint     ? kDetectionFormatBbox
       : s.payload.superpoint.output_format == SuperPointOutputFormat::LegacyA65InterleavedV0
           ? kFeatureFormatLegacyA65V0
           : kFeatureFormatPointsV1;
@@ -835,7 +838,7 @@ void sam_recipe() {
     const auto r = check(s, {c.side, c.side, 1280, 720, c.resize});
     const auto& recipe = *r.compiled.recipe;
     const auto& decode = recipe.members[r.decode_member];
-    require(recipe.output_format == kDetectionFormatBbox && recipe.members.size() == 2,
+    require(recipe.output_format == kDetectionFormatBboxSegmentation && recipe.members.size() == 2,
             "Segment Anything keeps the segmentation tag and one publication member");
     require(decode.outputs.size() == 5 && decode.outputs[4].tensor == 0 &&
                 decode.outputs[4].byte_offset == 80 &&
@@ -998,7 +1001,7 @@ void boxdecode_raw_outputs() {
   const auto raw = edgetam_raw_outputs();
   require(runtime.logical_outputs.size() == 5 && runtime.physical_outputs.size() == 5 &&
               runtime.output_order.size() == 5 && recipe.members.size() == 6 &&
-              recipe.output_format == kDetectionFormatBbox,
+              recipe.output_format == kDetectionFormatBboxSegmentation,
           "raw outputs must follow the BoxDecode tensor, one member each");
   require(runtime.logical_outputs[0].dtype == "UINT8" &&
               runtime.logical_outputs[0].shape.size() == 1,
