@@ -235,6 +235,8 @@ int main() {
     SimaDecodeOptions options;
     options.type = SimaDecodeType::MJPEG;
     options.out_format = FormatTag::I420;
+    run_case("mjpeg-negotiated-i420", jpeg, reference, options, OutputMemory::Owned, 160, 96, 10,
+             "neatdecoder dec-fmt=YUV420P zero-copy-output=false");
     run_case("mjpeg-422-i420", std::move(jpeg), reference, options, OutputMemory::Owned, 160, 96,
              10);
     return 0;
