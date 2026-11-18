@@ -58,7 +58,6 @@
 #include <cstdlib>
 #include <cstring>
 #include <functional>
-#include <future>
 #include <fstream>
 #include <iterator>
 #include <memory>
@@ -85,7 +84,6 @@ using simaai::neat::pipeline_internal::DiagCtx;
 struct RtspServerImpl {
   std::string mount_path;
   std::string appsrc_name;
-  int port = 8554;
   int rtp_port_base = -1;
   int rtp_port_count = 0;
 
@@ -487,7 +485,6 @@ RtspServerHandle Graph::run_rtsp(const RtspServerOptions& opt) {
 
   auto impl_sp = std::make_shared<RtspServerImpl>();
   auto* impl = impl_sp.get();
-  impl->port = opt.port;
   impl->rtp_port_base = opt.rtp_port_base;
   impl->rtp_port_count = opt.rtp_port_count;
   impl->mount_path = ensure_mount_path(opt.mount);
@@ -498,171 +495,153 @@ RtspServerHandle Graph::run_rtsp(const RtspServerOptions& opt) {
   impl->nv12_enc = src_img->nv12_enc();
   impl->guard = guard;
 
+  g_autoptr(GstRTSPServer) server = gst_rtsp_server_new();
+  gst_rtsp_server_set_service(server, std::to_string(opt.port).c_str());
+  GstRTSPMountPoints* mounts = gst_rtsp_server_get_mount_points(server);
+  GstRTSPMediaFactory* factory = gst_rtsp_media_factory_new();
+  gst_rtsp_media_factory_set_launch(factory, last_pipeline_.c_str());
+  gst_rtsp_media_factory_set_shared(factory, FALSE);
+
+  if (impl->rtp_port_base > 0 && impl->rtp_port_count > 0) {
+    const int min_port = impl->rtp_port_base;
+    const int max_port = impl->rtp_port_base + impl->rtp_port_count - 1;
+    if (min_port > 0 && max_port <= 65535 && min_port <= max_port) {
+      GstRTSPAddressPool* pool = gst_rtsp_address_pool_new();
+      const gboolean added = gst_rtsp_address_pool_add_range(pool, "0.0.0.0", "0.0.0.0",
+                                                             static_cast<guint16>(min_port),
+                                                             static_cast<guint16>(max_port), 0);
+      if (added) {
+        gst_rtsp_media_factory_set_address_pool(factory, pool);
+        if (rtsp_debug_enabled()) {
+          std::fprintf(stderr, "[rtsp] rtp-port-range=%d-%d\n", min_port, max_port);
+        }
+      } else if (rtsp_debug_enabled()) {
+        std::fprintf(stderr, "[rtsp] failed to set rtp-port-range=%d-%d\n", min_port, max_port);
+      }
+      g_object_unref(pool);
+    } else if (rtsp_debug_enabled()) {
+      std::fprintf(stderr, "[rtsp] invalid rtp-port-range=%d+%d\n", impl->rtp_port_base,
+                   impl->rtp_port_count);
+    }
+  }
+
+  g_signal_connect(
+      factory, "media-configure",
+      G_CALLBACK(+[](GstRTSPMediaFactory*, GstRTSPMedia* media, gpointer user_data) {
+        auto* impl = reinterpret_cast<RtspServerImpl*>(user_data);
+        if (!impl)
+          return;
+
+        GstElement* top = gst_rtsp_media_get_element(media);
+        if (!top)
+          return;
+
+        GstElement* src = gst_bin_get_by_name_recurse_up(GST_BIN(top), impl->appsrc_name.c_str());
+        if (!src) {
+          gst_object_unref(top);
+          return;
+        }
+
+        GstCaps* caps =
+            gst_caps_new_simple("video/x-raw", "format", G_TYPE_STRING, "NV12", "width", G_TYPE_INT,
+                                impl->enc_w, "height", G_TYPE_INT, impl->enc_h, "framerate",
+                                GST_TYPE_FRACTION, impl->fps, 1, nullptr);
+        gst_app_src_set_caps(GST_APP_SRC(src), caps);
+        gst_caps_unref(caps);
+
+        g_object_set(G_OBJECT(src), "is-live", TRUE, "format", GST_FORMAT_TIME, "do-timestamp",
+                     FALSE, "block", FALSE, nullptr);
+
+        auto* pc = new PushCtx();
+        pc->appsrc = (GstElement*)gst_object_ref(src);
+        pc->w = impl->enc_w;
+        pc->h = impl->enc_h;
+        pc->fps = impl->fps;
+        pc->nv12 = impl->nv12_enc;
+        pc->frame_duration_ns = gst_util_uint64_scale_int(GST_SECOND, 1, pc->fps);
+        ::simaai::scheduler::client::dma::Error error;
+        gst_video_info_init(&pc->source_info);
+        const bool valid_surface =
+            gst_video_info_set_format(&pc->source_info, GST_VIDEO_FORMAT_NV12, pc->w, pc->h) &&
+            ::simaai::scheduler::client::dma::encoderInputInfo(pc->source_info, &pc->surface_info,
+                                                               &error);
+        if (valid_surface) {
+          // StillImageInput owns tight NV12, independent of GstVideoInfo's
+          // generic four-byte row rounding for arbitrary even widths.
+          pc->source_info.stride[0] = pc->w;
+          pc->source_info.stride[1] = pc->w;
+          pc->source_info.offset[1] = static_cast<gsize>(pc->w) * pc->h;
+          pc->source_info.size = pc->source_info.offset[1] * 3 / 2;
+          pc->converter = gst_video_converter_new(&pc->source_info, &pc->surface_info, nullptr);
+          pc->surface_pool = ::simaai::scheduler::client::dma::createEncoderInputPool(
+              pc->surface_info, 2, 30, &error);
+          if (pc->nv12) {
+            // The shared image vector owns these immutable source bytes.
+            // Only final DMA surfaces are ever submitted to appsrc.
+            pc->source_buffer = gst_buffer_new_wrapped_full(GST_MEMORY_FLAG_READONLY,
+                                                            pc->nv12->data(), pc->nv12->size(), 0,
+                                                            pc->nv12->size(), nullptr, nullptr);
+          }
+        }
+        if (!pc->converter || !pc->surface_pool || !pc->source_buffer) {
+          GST_ELEMENT_ERROR(src, RESOURCE, OPEN_WRITE,
+                            ("Cannot initialize RTSP encoder DMA surfaces"),
+                            ("%s", error.message().c_str()));
+          gst_object_unref(push_ctx_take_appsrc(pc));
+          delete pc;
+          gst_object_unref(src);
+          gst_object_unref(top);
+          return;
+        }
+
+        g_signal_connect(src, "need-data", G_CALLBACK(appsrc_need_data), pc);
+        g_signal_connect(src, "enough-data", G_CALLBACK(appsrc_enough_data), pc);
+
+        const int period_ms = std::max(1, 1000 / pc->fps);
+        pc->timer = g_timeout_source_new(period_ms);
+        push_ctx_ref(pc);
+        g_source_set_callback(pc->timer, push_frame_cb, pc,
+                              [](gpointer data) { push_ctx_unref(static_cast<PushCtx*>(data)); });
+        g_source_attach(pc->timer, impl->context.get());
+        g_signal_connect(media, "unprepared", G_CALLBACK(media_unprepared_cb), pc);
+
+        gst_object_unref(src);
+        gst_object_unref(top);
+      }),
+      impl);
+
+  gst_rtsp_mount_points_add_factory(mounts, impl->mount_path.c_str(), factory);
+  g_object_unref(mounts);
+
+  g_autoptr(GError) bind_error = nullptr;
+  std::unique_ptr<GSource, decltype(&g_source_unref)> listener{
+      gst_rtsp_server_create_source(server, nullptr, &bind_error), g_source_unref};
+  if (!listener || !g_source_attach(listener.get(), impl->context.get())) {
+    std::string message = "Could not bind the RTSP server to port " + std::to_string(opt.port);
+    if (bind_error)
+      message += ": " + std::string(bind_error->message);
+    pipeline_internal::error_util::throw_session_error(
+        error_codes::kIoOpen, message, {},
+        "Check whether the port is occupied or requires additional privileges.");
+  }
+
   RtspServerHandle handle;
   handle.impl_ = new RtspImplPtr(impl_sp);
   handle.guard_ = std::move(guard);
-
-  std::promise<int> startup;
-  auto bound_port = startup.get_future();
-  impl->th = std::thread([impl_sp, launch = last_pipeline_,
-                          startup = std::move(startup)]() mutable {
-    auto* impl = impl_sp.get();
-    struct DoneGuard {
-      std::atomic<bool>& flag;
-      ~DoneGuard() {
-        flag.store(true);
-      }
-    } done_guard{impl->thread_done};
-    if (rtsp_debug_enabled()) {
-      std::fprintf(stderr, "[rtsp] thread start (port=%d)\n", impl->port);
-    }
-    GstRTSPServer* server = gst_rtsp_server_new();
-    gst_rtsp_server_set_service(server, std::to_string(impl->port).c_str());
-
-    GstRTSPMountPoints* mounts = gst_rtsp_server_get_mount_points(server);
-    GstRTSPMediaFactory* factory = gst_rtsp_media_factory_new();
-    gst_rtsp_media_factory_set_launch(factory, launch.c_str());
-    gst_rtsp_media_factory_set_shared(factory, FALSE);
-
-    if (impl->rtp_port_base > 0 && impl->rtp_port_count > 0) {
-      const int min_port = impl->rtp_port_base;
-      const int max_port = impl->rtp_port_base + impl->rtp_port_count - 1;
-      if (min_port > 0 && max_port <= 65535 && min_port <= max_port) {
-        GstRTSPAddressPool* pool = gst_rtsp_address_pool_new();
-        const gboolean added = gst_rtsp_address_pool_add_range(pool, "0.0.0.0", "0.0.0.0",
-                                                               static_cast<guint16>(min_port),
-                                                               static_cast<guint16>(max_port), 0);
-        if (added) {
-          gst_rtsp_media_factory_set_address_pool(factory, pool);
-          if (rtsp_debug_enabled()) {
-            std::fprintf(stderr, "[rtsp] rtp-port-range=%d-%d\n", min_port, max_port);
-          }
-        } else if (rtsp_debug_enabled()) {
-          std::fprintf(stderr, "[rtsp] failed to set rtp-port-range=%d-%d\n", min_port, max_port);
-        }
-        g_object_unref(pool);
-      } else if (rtsp_debug_enabled()) {
-        std::fprintf(stderr, "[rtsp] invalid rtp-port-range=%d+%d\n", impl->rtp_port_base,
-                     impl->rtp_port_count);
-      }
-    }
-
-    g_signal_connect(
-        factory, "media-configure",
-        G_CALLBACK(+[](GstRTSPMediaFactory*, GstRTSPMedia* media, gpointer user_data) {
-          auto* impl = reinterpret_cast<RtspServerImpl*>(user_data);
-          if (!impl)
-            return;
-
-          GstElement* top = gst_rtsp_media_get_element(media);
-          if (!top)
-            return;
-
-          GstElement* src = gst_bin_get_by_name_recurse_up(GST_BIN(top), impl->appsrc_name.c_str());
-          if (!src) {
-            gst_object_unref(top);
-            return;
-          }
-
-          GstCaps* caps =
-              gst_caps_new_simple("video/x-raw", "format", G_TYPE_STRING, "NV12", "width",
-                                  G_TYPE_INT, impl->enc_w, "height", G_TYPE_INT, impl->enc_h,
-                                  "framerate", GST_TYPE_FRACTION, impl->fps, 1, nullptr);
-          gst_app_src_set_caps(GST_APP_SRC(src), caps);
-          gst_caps_unref(caps);
-
-          g_object_set(G_OBJECT(src), "is-live", TRUE, "format", GST_FORMAT_TIME, "do-timestamp",
-                       FALSE, "block", FALSE, nullptr);
-
-          auto* pc = new PushCtx();
-          pc->appsrc = (GstElement*)gst_object_ref(src);
-          pc->w = impl->enc_w;
-          pc->h = impl->enc_h;
-          pc->fps = impl->fps;
-          pc->nv12 = impl->nv12_enc;
-          pc->frame_duration_ns = gst_util_uint64_scale_int(GST_SECOND, 1, pc->fps);
-          ::simaai::scheduler::client::dma::Error error;
-          gst_video_info_init(&pc->source_info);
-          const bool valid_surface =
-              gst_video_info_set_format(&pc->source_info, GST_VIDEO_FORMAT_NV12, pc->w, pc->h) &&
-              ::simaai::scheduler::client::dma::encoderInputInfo(pc->source_info, &pc->surface_info,
-                                                                 &error);
-          if (valid_surface) {
-            // StillImageInput owns tight NV12, independent of GstVideoInfo's
-            // generic four-byte row rounding for arbitrary even widths.
-            pc->source_info.stride[0] = pc->w;
-            pc->source_info.stride[1] = pc->w;
-            pc->source_info.offset[1] = static_cast<gsize>(pc->w) * pc->h;
-            pc->source_info.size = pc->source_info.offset[1] * 3 / 2;
-            pc->converter = gst_video_converter_new(&pc->source_info, &pc->surface_info, nullptr);
-            pc->surface_pool = ::simaai::scheduler::client::dma::createEncoderInputPool(
-                pc->surface_info, 2, 30, &error);
-            if (pc->nv12) {
-              // The shared image vector owns these immutable source bytes.
-              // Only final DMA surfaces are ever submitted to appsrc.
-              pc->source_buffer = gst_buffer_new_wrapped_full(GST_MEMORY_FLAG_READONLY,
-                                                              pc->nv12->data(), pc->nv12->size(), 0,
-                                                              pc->nv12->size(), nullptr, nullptr);
-            }
-          }
-          if (!pc->converter || !pc->surface_pool || !pc->source_buffer) {
-            GST_ELEMENT_ERROR(src, RESOURCE, OPEN_WRITE,
-                              ("Cannot initialize RTSP encoder DMA surfaces"),
-                              ("%s", error.message().c_str()));
-            gst_object_unref(push_ctx_take_appsrc(pc));
-            delete pc;
-            gst_object_unref(src);
-            gst_object_unref(top);
-            return;
-          }
-
-          g_signal_connect(src, "need-data", G_CALLBACK(appsrc_need_data), pc);
-          g_signal_connect(src, "enough-data", G_CALLBACK(appsrc_enough_data), pc);
-
-          const int period_ms = std::max(1, 1000 / pc->fps);
-          pc->timer = g_timeout_source_new(period_ms);
-          push_ctx_ref(pc);
-          g_source_set_callback(pc->timer, push_frame_cb, pc,
-                                [](gpointer data) { push_ctx_unref(static_cast<PushCtx*>(data)); });
-          g_source_attach(pc->timer, impl->context.get());
-          g_signal_connect(media, "unprepared", G_CALLBACK(media_unprepared_cb), pc);
-
-          gst_object_unref(src);
-          gst_object_unref(top);
-        }),
-        impl);
-
-    gst_rtsp_mount_points_add_factory(mounts, impl->mount_path.c_str(), factory);
-    g_object_unref(mounts);
-
-    g_autoptr(GError) bind_error = nullptr;
-    g_autoptr(GSource) listener = gst_rtsp_server_create_source(server, nullptr, &bind_error);
-    if (!listener || !g_source_attach(listener, impl->context.get())) {
-      g_object_unref(server);
-      startup.set_value(-1);
-      return;
-    }
-
-    impl->running.store(true);
-    startup.set_value(gst_rtsp_server_get_bound_port(server));
-    while (!impl->stop_requested.load())
-      g_main_context_iteration(impl->context.get(), TRUE);
-    impl->running.store(false);
-    g_source_destroy(listener);
-
-    if (rtsp_debug_enabled()) {
-      std::fprintf(stderr, "[rtsp] thread exit\n");
-    }
-    g_object_unref(server);
-  });
-
-  const int port = bound_port.get();
-  if (port <= 0)
-    pipeline_internal::error_util::throw_session_error(
-        error_codes::kIoOpen,
-        "Could not bind the RTSP server to port " + std::to_string(opt.port) + ".", {},
-        "Check whether the port is occupied or requires additional privileges.");
+  const int port = gst_rtsp_server_get_bound_port(server);
   handle.url_ = make_rtsp_url(port, opt.mount);
+  if (rtsp_debug_enabled())
+    std::fprintf(stderr, "[rtsp] starting server on port %d\n", port);
+  impl->running.store(true);
+  impl->th = std::thread([impl_sp, listener = std::move(listener)] {
+    while (!impl_sp->stop_requested.load())
+      g_main_context_iteration(impl_sp->context.get(), TRUE);
+    impl_sp->running.store(false);
+    g_source_destroy(listener.get());
+    if (rtsp_debug_enabled())
+      std::fprintf(stderr, "[rtsp] thread exit\n");
+    impl_sp->thread_done.store(true);
+  });
   return handle;
 }
 
