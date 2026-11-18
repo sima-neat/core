@@ -141,8 +141,7 @@ void run_case(const std::string& name, std::vector<Sample> frames,
   options.overflow_policy = OverflowPolicy::Block;
   options.queue_depth = 4;
   // A single AU cannot emit reordered video. Build with preflight enabled and push the full stream.
-  options.startup_preflight =
-      decode.type == SimaDecodeType::H264 || decode.type == SimaDecodeType::H265;
+  options.startup_preflight = true;
   auto run = graph.build(Sample{frames.front()}, options);
   auto producer = std::async(std::launch::async, [&] {
     for (const auto& frame : frames) {

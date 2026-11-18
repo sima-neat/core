@@ -1662,6 +1662,8 @@ std::string single_sample_preflight_unsupported_reason(GstElement* parsed_pipeli
   const auto is_buffered_video = [](gconstpointer item, gconstpointer) -> gint {
     g_autofree gchar* type = nullptr;
     g_object_get(g_value_get_object(static_cast<const GValue*>(item)), "dec-type", &type, nullptr);
+    // Before negotiation a bare decoder reports H264. Skip the speculative single-frame
+    // probe in that case; the first real buffer still negotiates its actual codec.
     // GstIterator matches when the comparator returns zero.
     return g_strcmp0(type, "h264") != 0 && g_strcmp0(type, "h265") != 0;
   };
