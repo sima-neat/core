@@ -1849,14 +1849,14 @@ def test_invalid_input_options(field, value):
   options = pyneat.InputOptions()
   setattr(options, field, value)
   with pytest.raises(pyneat.NeatError, match=field):
-    pyneat.nodes.input("in", options)
+    pyneat.Graph().add(pyneat.nodes.input("in", options))
 
 
 def test_run_and_output_queue_limits():
   out = pyneat.OutputOptions()
   out.max_buffers = -1
   with pytest.raises(pyneat.NeatError, match="max_buffers"):
-    pyneat.nodes.output("out", out)
+    pyneat.Graph().add(pyneat.nodes.output("out", out))
   out.max_buffers = 0
   graph = pyneat.Graph()
   graph.add(pyneat.nodes.input("in"))
@@ -1883,7 +1883,7 @@ def test_invalid_udp_destination(host, port, field):
   udp = pyneat.UdpOutputOptions()
   udp.host, udp.port = host, port
   with pytest.raises(pyneat.NeatError, match=field):
-    pyneat.nodes.udp_output(udp)
+    pyneat.Graph().add(pyneat.nodes.udp_output(udp))
   group = pyneat.UdpH264OutputGroupOptions()
   group.udp_host, group.udp_port = host, port
   with pytest.raises(pyneat.NeatError, match=field):

@@ -80,9 +80,10 @@ public:
   /// Construct with a public Graph output endpoint name.
   explicit Output(std::string name) : endpoint_name_(std::move(name)) {}
   /// Construct with explicit options.
-  explicit Output(OutputOptions opt) : Output({}, std::move(opt)) {}
+  explicit Output(OutputOptions opt) : opt_(std::move(opt)) {}
   /// Construct with a public Graph output endpoint name and explicit options.
-  Output(std::string name, OutputOptions opt);
+  Output(std::string name, OutputOptions opt)
+      : opt_(std::move(opt)), endpoint_name_(std::move(name)) {}
 
   /// Inspect the Node's options.
   const OutputOptions& options() const {

@@ -29,7 +29,7 @@ RUN_TEST(
       {
         InputOptions src_opt;
         src_opt.caps_override = "video/x-raw,format=(string";
-        require_neat_error([&]() { (void)nodes::Input(src_opt); }, error_codes::kCaps,
+        require_neat_error([&]() { Graph{}.add(nodes::Input(src_opt)); }, error_codes::kCaps,
                            "caps_override", src_opt.caps_override);
       }
 
