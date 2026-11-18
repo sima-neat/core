@@ -235,7 +235,8 @@ def test_standalone_dequant_from_graph_input(shape, axes, with_quant_metadata):
     tensor = pyneat.Tensor.from_numpy(values, copy=True, memory=pyneat.TensorMemory.EV74)
     if with_quant_metadata:
         quant = pyneat.QuantSpec()
-        quant.scale, quant.zero_point = 0.05, 3
+        # The node explicitly requests (x - 3) / 20, even when ingress metadata differs.
+        quant.scale, quant.zero_point = 0.25, -7
         tensor.semantic.quant = quant
     if axes:
         tensor.axis_semantics = [getattr(pyneat.TensorAxisSemantic, axis) for axis in axes]
