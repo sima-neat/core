@@ -761,6 +761,12 @@ def run_logged(command: list[object], log: Path, *, env: dict[str, str] | None =
     raise RuntimeError(f"command failed with {result.returncode}; see {log}")
 
 
+def imports_pyneatpcie(python: Path) -> bool:
+  return subprocess.run(
+      [python, "-c", "import pyneatpcie"], stdout=subprocess.DEVNULL,
+      stderr=subprocess.DEVNULL, check=False).returncode == 0
+
+
 def run_expected_failure(command: list[object], log: Path,
                          *, env: dict[str, str] | None = None,
                          cwd: Path | None = None, timeout: int = 3600) -> int:
@@ -2740,9 +2746,9 @@ def qualify(args: argparse.Namespace) -> None:
             env=cli_environment, cwd=work, timeout=1800)
       if not install_root.is_dir():
         raise RuntimeError("sima-cli native-only flow installed no native cohort")
-      if subprocess.run(
-          [python, "-c", "import pyneatpcie"], stdout=subprocess.DEVNULL,
-          stderr=subprocess.DEVNULL, check=False).returncode == 0:
+      # Without --python-executable the CLI installs into its managed environment.
+      if imports_pyneatpcie(python) or (
+          managed_python.is_file() and imports_pyneatpcie(managed_python)):
         raise RuntimeError("native-only sima-cli flow unexpectedly installed pyneatpcie")
 
       missing_registry_root = work / "missing wheel registry with spaces"
@@ -2760,9 +2766,7 @@ def qualify(args: argparse.Namespace) -> None:
             env=cli_environment, cwd=work, timeout=1800)
       if not install_root.is_dir():
         raise RuntimeError("missing-wheel failure removed the successful native installation")
-      if subprocess.run(
-          [python, "-c", "import pyneatpcie"], stdout=subprocess.DEVNULL,
-          stderr=subprocess.DEVNULL, check=False).returncode == 0:
+      if imports_pyneatpcie(python):
         raise RuntimeError("missing-wheel flow reported failure after installing pyneatpcie")
 
       invalid_wheel_registry_root = work / "invalid wheel registry with spaces"
@@ -2779,9 +2783,7 @@ def qualify(args: argparse.Namespace) -> None:
             env=cli_environment, cwd=work, timeout=1800)
       if not install_root.is_dir():
         raise RuntimeError("wheel-install failure removed the successful native installation")
-      if subprocess.run(
-          [python, "-c", "import pyneatpcie"], stdout=subprocess.DEVNULL,
-          stderr=subprocess.DEVNULL, check=False).returncode == 0:
+      if imports_pyneatpcie(python):
         raise RuntimeError("invalid-wheel flow reported failure after installing pyneatpcie")
 
       registry_root = work / "complete registry with spaces"
