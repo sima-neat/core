@@ -4520,7 +4520,7 @@ struct Model::Impl {
   internal::PreprocessPlannerResult preprocess_plan;
   internal::ModelPack pack;
   mutable std::optional<internal::ModelPack> sync_pack;
-  std::optional<CompiledBoxDecodeContract> boxdecode_contract;
+  std::optional<CompiledBoxDecodeContract> derived_boxdecode_contract;
   std::string model_id;
   std::string stage_cache_identity;
 
@@ -4768,8 +4768,8 @@ Model::Model(const std::string& model_path, const Options& opt) {
   if (opt.decode_type != BoxDecodeType::Unspecified &&
       impl_->preprocess_plan.session_route_plan.boxdecode_selected) {
     try {
-      impl_->boxdecode_contract =
-          internal::ModelAccess::build_boxdecode_stage_contract(*this, false);
+      impl_->derived_boxdecode_contract =
+          internal::ModelAccess::derive_boxdecode_stage_contract(*this);
     } catch (const NeatError&) {
       throw;
     } catch (const std::invalid_argument& error) {
@@ -8375,8 +8375,6 @@ CompiledBoxDecodeContract finish_model_boxdecode_contract(CompiledBoxDecodeContr
 
 CompiledBoxDecodeContract ModelAccess::build_boxdecode_stage_contract(const Model& model,
                                                                       bool sync) {
-  if (!sync && model.impl_->boxdecode_contract)
-    return *model.impl_->boxdecode_contract;
   require_model_managed_stage(model, StageNodeKind::BoxDecode, "SimaBoxDecode(Model)");
   const auto& pack = sync ? model.impl_->pack_for_sync() : model.impl_->pack;
   const auto& opt = model.impl_->options;
@@ -8424,6 +8422,14 @@ CompiledBoxDecodeContract ModelAccess::build_boxdecode_stage_contract(const Mode
                                            model.impl_->preprocess_plan.session_route_plan);
   }
 
+  if (model.impl_->derived_boxdecode_contract)
+    return *model.impl_->derived_boxdecode_contract;
+  return derive_boxdecode_stage_contract(model);
+}
+
+CompiledBoxDecodeContract ModelAccess::derive_boxdecode_stage_contract(const Model& model) {
+  const auto& pack = model.impl_->pack;
+  const auto& opt = model.impl_->options;
   if (!pipeline_internal::sima::is_box_decode_type_specified(opt.decode_type)) {
     throw std::runtime_error(
         "Model-managed boxdecode stage requires a canonical compiled contract. The MPK did not "

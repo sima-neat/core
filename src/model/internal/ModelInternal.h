@@ -109,6 +109,7 @@ struct ModelAccess {
   static DetessOptions build_detess_stage_options(const Model& model, bool sync);
   static DetessCastOptions build_detesscast_stage_options(const Model& model, bool sync);
   static DetessDequantOptions build_detessdequant_stage_options(const Model& model, bool sync);
+  static CompiledBoxDecodeContract derive_boxdecode_stage_contract(const Model& model);
   static CompiledBoxDecodeContract build_boxdecode_stage_contract(const Model& model, bool sync);
   static std::vector<std::shared_ptr<Node>> build_public_preprocess_nodes(const Model& model);
   static std::vector<std::shared_ptr<Node>> build_public_inference_nodes(const Model& model);

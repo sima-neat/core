@@ -103,16 +103,23 @@ RUN_TEST(
                     output_specs.front().shape == std::vector<int64_t>({1, 80, 80, 64}) &&
                     output_specs.front().dtypes == std::vector<TensorDType>{TensorDType::Float32},
                 "selected postprocess metadata must retain exact MPK outputs without artifacts");
-        bool admission_rejected = false;
-        try {
-          (void)model.graph();
-        } catch (const std::exception& error) {
-          admission_rejected = true;
-          require_contains(std::string(error.what()), "missing-mla-executable",
-                           "execution admission must still fail closed without the MLA ELF");
+        Model::Options options;
+        options.decode_type = BoxDecodeType::YoloV8Seg;
+        Model decoded(fixture.tar_path, options);
+        require(decoded.metadata().at("model_name") == "unit-meta" &&
+                    !decoded.input_specs().empty() && !decoded.output_specs().empty(),
+                "selecting a compatible decoder must still permit metadata-only inspection");
+        for (auto* inspected : {&model, &decoded}) {
+          bool admission_rejected = false;
+          try {
+            (void)inspected->graph();
+          } catch (const std::exception& error) {
+            admission_rejected = true;
+            require_contains(error.what(), "missing-mla-executable",
+                             "execution admission must fail without the MLA executable");
+          }
+          require(admission_rejected, "metadata inspection must preserve graph admission");
         }
-        require(admission_rejected,
-                "metadata-only construction must not make a missing MLA ELF executable");
       }
 
       {
