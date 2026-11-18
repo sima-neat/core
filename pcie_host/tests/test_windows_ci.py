@@ -3741,6 +3741,47 @@ install() {
     with self.assertRaisesRegex(ValueError, "head_sha"):
       verify_linux_run(changed, repository, 42, commit)
 
+  def test_genai_fault_client_keeps_streaming_until_the_fault_lands(self):
+    # A short answer used to finish before a service stop took effect.
+    class Fault(RuntimeError):
+      pass
+
+    class Stream:
+      def __init__(self, chunks):
+        self.chunks = list(chunks)
+
+      def next(self):
+        item = self.chunks.pop(0)
+        if isinstance(item, Exception):
+          raise item
+        return item
+
+    token = SimpleNamespace(is_final=False)
+    streams = [Stream([token, token, None]), Stream([token, Fault("injected")])]
+    model = mock.Mock()
+    model.stream.side_effect = lambda _request: streams.pop(0)
+    genai = SimpleNamespace(GenAIModel=mock.Mock(return_value=model),
+                            GenerationRequest=SimpleNamespace,
+                            ConnectionOptions=SimpleNamespace)
+    stubs = {
+        "pyneatpcie": SimpleNamespace(genai=genai),
+        "genai_admission_contract": SimpleNamespace(
+            is_injected_transport_failure=lambda error: isinstance(error, Fault)),
+    }
+    path = ROOT / "pcie_host" / "python" / "tests" / "genai_fault_client.py"
+    spec = importlib.util.spec_from_file_location("genai_fault_client", path)
+    client = importlib.util.module_from_spec(spec)
+    with mock.patch.dict(sys.modules, stubs):
+      spec.loader.exec_module(client)
+    output = []
+    with mock.patch.object(client, "model_path", return_value="model"), \
+         mock.patch.object(client, "connection", return_value=None), \
+         mock.patch("builtins.print", lambda *args, **_: output.append(args[0])):
+      client.wait_for_injected_failure()
+    self.assertEqual(output, ["GENAI_FAULT_READY", "GENAI_FAULT_OBSERVED: injected"])
+    self.assertEqual(model.stream.call_count, 2)
+    model.close.assert_called_once()
+
 
 if __name__ == "__main__":
   unittest.main()

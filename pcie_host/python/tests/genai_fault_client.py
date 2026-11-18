@@ -3,6 +3,7 @@
 
 import argparse
 import os
+import time
 from pathlib import Path
 
 from pyneatpcie import genai
@@ -41,23 +42,34 @@ def request(prompt, max_new_tokens):
   return value
 
 
+FAULT_WINDOW_SECONDS = 120
+
+
 def wait_for_injected_failure():
   model = genai.GenAIModel(model_path(), connection())
   try:
-    stream = model.stream(request("Count from one to one thousand.", 2048))
-    first = stream.next()
-    if first is None or first.is_final:
-      raise RuntimeError("Fault client did not establish an active GenAI stream")
-    print("GENAI_FAULT_READY", flush=True)
-    try:
-      while stream.next() is not None:
-        pass
-    except RuntimeError as error:
-      if not is_injected_transport_failure(error):
-        raise RuntimeError(
-            f"GenAI fault client observed an unrelated failure: {error}") from error
-      print(f"GENAI_FAULT_OBSERVED: {error}", flush=True)
-      return
+    # A short answer can finish before the injected fault lands, so keep a
+    # stream active until the fault is observed or the window closes.
+    deadline = time.monotonic() + FAULT_WINDOW_SECONDS
+    ready = False
+    while time.monotonic() < deadline:
+      stream = model.stream(request("Count from one to one thousand.", 2048))
+      try:
+        first = stream.next()
+        if first is not None and not first.is_final:
+          if not ready:
+            print("GENAI_FAULT_READY", flush=True)
+            ready = True
+          while stream.next() is not None:
+            pass
+      except RuntimeError as error:
+        if not ready or not is_injected_transport_failure(error):
+          raise RuntimeError(
+              f"GenAI fault client observed an unrelated failure: {error}") from error
+        print(f"GENAI_FAULT_OBSERVED: {error}", flush=True)
+        return
+      if not ready:
+        raise RuntimeError("Fault client did not establish an active GenAI stream")
     raise RuntimeError("GenAI stream completed instead of observing the injected fault")
   finally:
     model.close()
