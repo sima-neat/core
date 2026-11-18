@@ -196,6 +196,8 @@ jobs:
           "${test_venv}/bin/python" -m pytest -q --durations=25 \
             python/tests/test_neat_cli.py \
             python/tests/test_neat_pcie_status.py \
+            python/tests/test_model_fixture_helpers.py \
+            tests/test_prepare_model_browser_fixture.py \
             tests/test_build_pyneat_wheel.py \
             tests/test_resolve_compiler_cache.py \
             tests/tools/test_internals_package_boundary.py \
@@ -1618,6 +1620,15 @@ jobs:
             printf 'SIMA_NEAT_TUTORIAL_MODEL_YOLO=%s\n' "${YOLO_TAR}"
           } >> "${GITHUB_ENV}"
 
+      - name: Prepare ResNet-50 from the Model Browser
+        if: ${{ contains(fromJSON(matrix.tasks), 'python-tutorials') }}
+        timeout-minutes: 15
+        run: |
+          MODEL_DIR="$(mktemp -d "${RUNNER_TEMP:-/tmp}/model-browser.XXXXXX")"
+          RESNET_MPK="$(python3 scripts/ci/prepare_model_browser_fixture.py \
+            --id resnet_50 --variant w8a8 --output "${MODEL_DIR}")"
+          printf 'SIMA_RESNET50_TAR=%s\n' "${RESNET_MPK}" >> "${GITHUB_ENV}"
+
       - name: Run Python pytest from installed extras
         if: ${{ contains(fromJSON(matrix.tasks), 'python-tutorials') }}
         env:
@@ -1641,7 +1652,7 @@ jobs:
           export SIMA_GST_REGISTRY_DIR="$(cat _work/gst_registry_dir.txt)"
           export SIMA_NEAT_TUTORIAL_REQUIRE_RUNTIME=1
           export SIMA_GRAPH_PHASE3_PY_RUNTIME=1
-          export SIMA_RESNET50_TAR="${SIMA_NEAT_TUTORIAL_MODEL_RESNET:?Tutorial model preparation required}"
+          : "${SIMA_RESNET50_TAR:?Model Browser ResNet-50 preparation required}"
           test -s "${SIMA_RESNET50_TAR}"
           PYTHON_MARKS=()
           case "${NEAT_CI_PYTHON_PROFILE}" in
