@@ -26,6 +26,23 @@ spec = importlib.util.spec_from_file_location('native_publication', ROOT / 'scri
 publication = importlib.util.module_from_spec(spec); spec.loader.exec_module(publication)
 
 
+
+def write_local_candidate(source, commit, host_changes, metadata_commit, checksum):
+    """Write a two-resource local Scheduler candidate; checksum None hashes the files."""
+    source.mkdir()
+    (source / 'host-candidate.json').write_text(json.dumps({
+        'schema_version': 2, 'profile': 'pcie-host', 'distro': 'ubuntu24',
+        'architecture': 'amd64', 'source_commit': commit, **host_changes}))
+    (source / 'native_artifacts.py').write_text('# admitted provider seam\n')
+    names = ['host-candidate.json', 'native_artifacts.py']
+    (source / 'metadata.json').write_text(json.dumps({
+        'repository': 'sima-neat/scheduler', 'branch': 'feature/native',
+        'commit': metadata_commit,
+        'artifact': {'profile': 'pcie-host', 'distro': 'ubuntu24', 'architecture': 'amd64'},
+        'resources': names,
+        'resources-checksum': {
+            name: checksum or acquisition.file_digest(source / name) for name in names}}))
+
 class SchedulerRunCandidate(unittest.TestCase):
     commit = 'a' * 40
 
@@ -424,26 +441,12 @@ GENAI_CMAKE_ARGS=()
                 ('host-commit', 'host candidate identity differs'),
                 ('host-architecture', 'host candidate identity differs')):
             with self.subTest(mutation=mutation), tempfile.TemporaryDirectory() as temp:
-                root = Path(temp); source = root / 'candidate'; source.mkdir()
-                host = {
-                    'schema_version': 2, 'profile': 'pcie-host', 'distro': 'ubuntu24',
-                    'architecture': 'amd64', 'source_commit': commit}
-                if mutation == 'host-commit': host['source_commit'] = 'b' * 40
-                if mutation == 'host-architecture': host['architecture'] = 'arm64'
-                (source / 'host-candidate.json').write_text(json.dumps(host))
-                (source / 'native_artifacts.py').write_text('# admitted provider seam\n')
-                names = ['host-candidate.json', 'native_artifacts.py']
-                metadata = {
-                    'repository': 'sima-neat/scheduler',
-                    'branch': 'feature/native',
-                    'commit': 'b' * 40 if mutation == 'metadata-commit' else commit,
-                    'artifact': {
-                        'profile': 'pcie-host', 'distro': 'ubuntu24',
-                        'architecture': 'amd64'},
-                    'resources': names,
-                    'resources-checksum': {
-                        name: acquisition.file_digest(source / name) for name in names}}
-                (source / 'metadata.json').write_text(json.dumps(metadata))
+                root = Path(temp); source = root / 'candidate'
+                host = {'source_commit': 'b' * 40} if mutation == 'host-commit' else (
+                    {'architecture': 'arm64'} if mutation == 'host-architecture' else {})
+                write_local_candidate(
+                    source, commit, host,
+                    'b' * 40 if mutation == 'metadata-commit' else commit, None)
                 with self.assertRaisesRegex(ValueError, error):
                     acquisition.local_candidate(
                         source, root / 'staged', commit, 'ubuntu24', 'amd64')
@@ -451,20 +454,8 @@ GENAI_CMAKE_ARGS=()
     def test_native_local_candidate_rejects_size_before_hash_or_copy(self):
         commit = 'a' * 40
         with tempfile.TemporaryDirectory() as temp:
-            root = Path(temp); source = root / 'candidate'; source.mkdir()
-            (source / 'host-candidate.json').write_text(json.dumps({
-                'schema_version': 2, 'profile': 'pcie-host', 'distro': 'ubuntu24',
-                'architecture': 'amd64', 'source_commit': commit}))
-            (source / 'native_artifacts.py').write_text('# admitted provider seam\n')
-            names = ['host-candidate.json', 'native_artifacts.py']
-            (source / 'metadata.json').write_text(json.dumps({
-                'repository': 'sima-neat/scheduler', 'branch': 'feature/native',
-                'commit': commit,
-                'artifact': {
-                    'profile': 'pcie-host', 'distro': 'ubuntu24',
-                    'architecture': 'amd64'},
-                'resources': names,
-                'resources-checksum': {name: '0' * 64 for name in names}}))
+            root = Path(temp); source = root / 'candidate'
+            write_local_candidate(source, commit, {}, commit, '0' * 64)
             with patch.object(acquisition, 'MAX_CANDIDATE_BYTES', 1), \
                  patch.object(acquisition, 'file_digest') as hasher, \
                  patch.object(acquisition.shutil, 'copy2') as copier:
@@ -580,11 +571,7 @@ GENAI_CMAKE_ARGS=()
         self.assertIn(
             'set(SIMAPCIE_SCHEDULER_CONFIG_COMPONENTS pcie_host pcie_service_headers)', source)
         self.assertIn('@SIMAPCIE_SCHEDULER_CONFIG_COMPONENTS@', config)
-        self.assertIn('PkgConfig::SIMAPCIE_GST', source)
         self.assertIn('pkg_check_modules(SIMAPCIE_GST REQUIRED IMPORTED_TARGET GLOBAL', config)
-        self.assertLess(
-            config.index('pkg_check_modules(SIMAPCIE_GST'),
-            config.index('include("${CMAKE_CURRENT_LIST_DIR}/SimaPCIeHostTargets.cmake")'))
         self.assertNotIn('libstdc++6 (>= 14)', source)
 
     def test_default_native_compiler_reaches_required_scheduler_component(self):

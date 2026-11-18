@@ -21,6 +21,10 @@ SETUP_SCRIPT = ROOT / "scripts" / "windows" / "pcie-setup.ps1"
 FIXTURE_KEY = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGZpeHR1cmUta2V5LW1hdGVyaWFsLW9ubHk= user@host"
 
 
+def read_source(path):
+  return (ROOT / path).read_text(encoding="utf-8")
+
+
 def setup_enrolment_command():
   source = SETUP_SCRIPT.read_text(encoding="utf-8")
   return re.search(r"(?ms)^  \$remoteScript = @'\n(.*?)\n'@$", source)[1]
@@ -93,7 +97,7 @@ class WindowsPackagingContract(unittest.TestCase):
     self.assertNotRegex(message, r"[\[\]]")
 
   def test_msi_installs_process_scoped_activation_tools(self):
-    cmake = (ROOT / "CMakeLists.txt").read_text(encoding="utf-8")
+    cmake = read_source("CMakeLists.txt")
     self.assertIn("scripts/windows/sima-pcie-host-env.cmd", cmake)
     self.assertIn("scripts/windows/sima-pcie-host-run.cmd", cmake)
     self.assertIn("scripts/windows/sima-pcie-host-doctor.cmd", cmake)
@@ -105,9 +109,7 @@ class WindowsPackagingContract(unittest.TestCase):
     self.assertIn("skills/neat-pcie-application-builder/playbook.yml", cmake)
     self.assertIn("skills/neat-pcie-application-builder/targets/", cmake)
 
-    environment = (ROOT / "scripts/windows/sima-pcie-host-env.cmd").read_text(
-        encoding="utf-8"
-    )
+    environment = read_source("scripts/windows/sima-pcie-host-env.cmd")
     self.assertIn("SIMA_WINDOWS_PLATFORM_RUNTIME_DIR", environment)
     self.assertIn('findstr.exe /C:"BINARY_PATH_NAME"', environment)
     self.assertNotIn('findstr.exe /B /C:"        BINARY_PATH_NAME"', environment)
@@ -131,18 +133,12 @@ class WindowsPackagingContract(unittest.TestCase):
     self.assertIn("Services\\SiMaMlaDaemon", python_bootstrap)
     self.assertNotIn(r"C:\simaai\build", python_bootstrap)
 
-    doctor = (ROOT / "scripts/windows/sima-pcie-host-doctor.cmd").read_text(
-        encoding="utf-8"
-    )
+    doctor = read_source("scripts/windows/sima-pcie-host-doctor.cmd")
     self.assertIn("SiMaMlaDaemon", doctor)
     self.assertIn("gst-inspect-1.0.exe", doctor)
 
-    setup_wrapper = (ROOT / "scripts/windows/pcie-setup.cmd").read_text(
-        encoding="utf-8"
-    )
-    setup_script = (ROOT / "scripts/windows/pcie-setup.ps1").read_text(
-        encoding="utf-8"
-    )
+    setup_wrapper = read_source("scripts/windows/pcie-setup.cmd")
+    setup_script = read_source("scripts/windows/pcie-setup.ps1")
     self.assertIn("pcie-setup.ps1", setup_wrapper)
     self.assertIn("ExecutionPolicy Bypass", setup_wrapper)
     self.assertNotIn("Set-ExecutionPolicy", setup_wrapper)
@@ -165,7 +161,7 @@ class WindowsPackagingContract(unittest.TestCase):
       with self.subTest(script=script.name):
         self.assertNotRegex(script.read_text(encoding="utf-8"),
                             r"(?im)^\s*if\s+(not\s+)?errorlevel\s+\d")
-    doctor = (ROOT / "scripts/windows/sima-pcie-host-doctor.cmd").read_text(encoding="utf-8")
+    doctor = read_source("scripts/windows/sima-pcie-host-doctor.cmd")
     self.assertEqual(doctor.count('if not "%errorlevel%"=="0" ('), 3)
 
   def test_setup_sends_only_the_public_key_on_standard_input(self):
@@ -246,9 +242,7 @@ class WindowsPackagingContract(unittest.TestCase):
         r"Select-Object -First 1")
 
   def test_setup_drains_redirected_process_output_while_command_runs(self):
-    setup_script = (ROOT / "scripts/windows/pcie-setup.ps1").read_text(
-        encoding="utf-8"
-    )
+    setup_script = read_source("scripts/windows/pcie-setup.ps1")
     bounded_command = setup_script.split(
         "function Invoke-BoundedCommand {", 1
     )[1].split("function Test-KeyAccess {", 1)[0]
@@ -306,8 +300,7 @@ class WindowsPackagingContract(unittest.TestCase):
     self.assertIn("return ERROR_INSTALL_FAILURE", probe)
     self.assertIn("qualify_failed_msi_transaction", producer)
     self.assertIn('"msi-transaction-rollback.json"', producer)
-    self.assertNotIn("windows_msi_rollback_fixture", (ROOT / "CMakeLists.txt").read_text(
-        encoding="utf-8"))
+    self.assertNotIn("windows_msi_rollback_fixture", read_source("CMakeLists.txt"))
 
   def test_installed_package_smoke_covers_genai_cpp_and_python_apis(self):
     producer = WINDOWS_PRODUCER.read_text(encoding="utf-8")
@@ -340,7 +333,7 @@ class WindowsPackagingContract(unittest.TestCase):
     media_stage = (ROOT / "src" / "genai" / "MediaStage.cpp").read_text(
         encoding="utf-8"
     )
-    cmake = (ROOT / "CMakeLists.txt").read_text(encoding="utf-8")
+    cmake = read_source("CMakeLists.txt")
     consumer = (ROOT / "tests" / "installed_genai_consumer" / "main.cpp").read_text(
         encoding="utf-8"
     )
