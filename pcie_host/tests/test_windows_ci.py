@@ -1231,6 +1231,42 @@ class WindowsCiContracts(unittest.TestCase):
           self.assertIn("run selectors require validation_only=true", result.stderr)
 
   @unittest.skipIf(os.name == "nt", WORKFLOW_BASH_SKIP)
+  def test_windows_preflight_rejects_each_invalid_input_combination(self):
+    workflow = WORKFLOW.read_text(encoding="utf-8")
+    step = workflow.split("- name: Validate dependency and admission selectors\n", 1)[1]
+    script = textwrap.dedent(step.split("        run: |\n", 1)[1].split("\n      - name:", 1)[0])
+    exemption = {"FIRST_RELEASE_UPGRADE_EXEMPTION": "true",
+                 "FIRST_RELEASE_UPGRADE_EXEMPTION_REASON": "first Windows release"}
+    cases = (
+        ({"LINUX_CURRENT_RUN": "true"}, "reserved for the Vulcan CI caller"),
+        ({"SCHEDULER_RUN_ID": "41"}, "scheduler_run_id and scheduler_commit"),
+        ({"SIMA_CLI_COMMIT": "b" * 40}, "sima_cli_run_id and sima_cli_commit"),
+        ({"GITHUB_WORKFLOW": "Vulcan CI", "LINUX_CURRENT_RUN": "true", "LINUX_RUN_ID": "7"},
+         "mutually exclusive"),
+        ({"UPGRADE_BASE_RUN_ID": "9"}, "require require_upgrade=true"),
+        ({"REQUIRE_UPGRADE": "true", **exemption}, "first-release exemption are mutually"),
+        ({"FIRST_RELEASE_UPGRADE_EXEMPTION_REASON": "why"}, "reason requires"),
+        ({"VALIDATION_ONLY": "false"}, "Publishing requires a real upgrade gate"),
+        ({"FIRST_RELEASE_UPGRADE_EXEMPTION": "true"}, "requires a non-empty reason"),
+    )
+    for overrides, error in cases:
+      with self.subTest(error=error):
+        environment = os.environ.copy()
+        for name in ("LINUX_CURRENT_RUN", "SCHEDULER_RUN_ID", "SCHEDULER_COMMIT",
+                     "SIMA_CLI_RUN_ID", "SIMA_CLI_COMMIT", "LINUX_RUN_ID", "REQUIRE_UPGRADE",
+                     "UPGRADE_BASE_RUN_ID", "UPGRADE_BASE_COMMIT",
+                     "FIRST_RELEASE_UPGRADE_EXEMPTION",
+                     "FIRST_RELEASE_UPGRADE_EXEMPTION_REASON"):
+          environment[name] = ""
+        environment.update({"GITHUB_WORKFLOW": "Core native Windows PCIe host",
+                            "VALIDATION_ONLY": "true", **overrides})
+        result = subprocess.run(
+            [shutil.which("bash"), "-e", "-c", script], capture_output=True, text=True,
+            check=False, env=environment)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(error, result.stderr)
+
+  @unittest.skipIf(os.name == "nt", WORKFLOW_BASH_SKIP)
   def test_main_ci_windows_runs_are_validation_only_and_pass_preflight(self):
     # A push cannot supply an upgrade baseline or first-release exemption, so
     # Vulcan CI validates Windows and only a direct dispatch can publish it.
@@ -2504,6 +2540,33 @@ class WindowsCiContracts(unittest.TestCase):
     qualification.write_text(json.dumps(value), encoding="utf-8")
     return value
 
+  def rewrite_json(self, path: Path, mutate) -> None:
+    value = json.loads(path.read_text(encoding="utf-8"))
+    mutate(value)
+    path.write_text(json.dumps(value), encoding="utf-8")
+
+  def rewrite_candidate_json(self, root: Path, name: str, mutate) -> None:
+    path = root / name
+    self.rewrite_json(path, mutate)
+    self.rewrite_json(root / "host-candidate.json", lambda host: host[
+        "qualification_resources"].update({name: sha256(path)}))
+
+  def assert_release_rejected(self, message, mutate=None, *, candidate_file=None,
+                              expected_commit=None, genai=False, require_signatures=True,
+                              **gates):
+    with tempfile.TemporaryDirectory() as directory:
+      root = Path(directory)
+      commit, _, qualification = self.windows_candidate(root)
+      if genai:
+        self.enable_genai_qualification(qualification)
+        gates["require_genai"] = True
+      if candidate_file:
+        self.rewrite_candidate_json(root, candidate_file, mutate)
+      elif mutate:
+        self.rewrite_json(qualification, mutate)
+      with self.assertRaisesRegex(ValueError, message):
+        verify(root, qualification, expected_commit or commit, require_signatures, **gates)
+
   def test_candidate_and_release_gate_bind_exact_bytes(self):
     with tempfile.TemporaryDirectory() as directory:
       root = Path(directory)
@@ -2556,6 +2619,47 @@ class WindowsCiContracts(unittest.TestCase):
       receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
       with self.assertRaisesRegex(ValueError, "zero-skip pass"):
         verify(root, qualification, commit, False)
+
+  def test_release_gate_binds_qualification_to_the_workflow_candidate(self):
+    self.assert_release_rejected("is not workflow commit", expected_commit="0" * 40)
+    self.assert_release_rejected(
+        "different Core commit", lambda value: value["candidate"].update(core_commit="0" * 40))
+    self.assert_release_rejected(
+        "different package bytes", lambda value: value["candidate"]["resources"].popitem())
+
+  def test_release_gate_rejects_each_unproven_qualification_record(self):
+    rows = (
+        ("hardware qualification did not pass", lambda value: value.update(result="FAIL")),
+        ("Windows 11 x64 workstation",
+         lambda value: value["host"]["windows_security"].update(build_number="19045")),
+        ("did not prove clean removal", lambda value: value["cleanup"].update(errors=["left"])),
+        ("every customer-owned component", lambda value: value["cleanup"].update(work="FAIL")),
+        ("Platform 3.0 card baseline", lambda value: value["card_final"].update(workers="1")),
+        ("Linux PCIe performance gate",
+         lambda value: value["performance"]["latency"].update(count=2999)),
+        ("Linux PCIe performance gate",
+         lambda value: value["performance"]["throughput"].update(frames=2999)),
+        ("Linux PCIe performance gate",
+         lambda value: value["performance"]["latency"].update(mean_ms=12.1)),
+        ("Linux PCIe performance gate",
+         lambda value: value["performance"]["throughput"].update(fps=439.9)),
+    )
+    for index, (message, mutate) in enumerate(rows):
+      with self.subTest(row=index, message=message):
+        self.assert_release_rejected(message, mutate)
+    with self.subTest(record="rollback receipt status"):
+      self.assert_release_rejected(
+          "MSI failed-transaction rollback gate", lambda receipt: receipt.update(status="FAIL"),
+          candidate_file="msi-transaction-rollback.json")
+    with self.subTest(record="Scheduler publisher"):
+      self.assert_release_rejected(
+          "different trusted publisher",
+          lambda receipt: receipt.update(certificate_sha1="E" * 40),
+          candidate_file="scheduler-windows-signatures.json")
+    with self.subTest(record="GenAI worker"):
+      self.assert_release_rejected(
+          "exact Linux GenAI worker",
+          lambda value: value["card_candidate"].update(genai_worker_sha256=""), genai=True)
 
   def test_card_candidate_binds_exact_linux_payload(self):
     with tempfile.TemporaryDirectory() as directory:
