@@ -7,6 +7,7 @@
 #include "test_main.h"
 #include "test_utils.h"
 
+#include <gst/app/gstappsink.h>
 #include <chrono>
 #include <filesystem>
 #include <string>
@@ -84,7 +85,22 @@ RUN_TEST("graph_rtsp_lifecycle_regression_test", ([] {
              std::this_thread::sleep_for(std::chrono::milliseconds(350));
              require(h.running(), "Graph::run_rtsp lifecycle: server did not enter running state");
 
+             const std::string launch = "rtspsrc protocols=tcp latency=0 location=" + h.url() +
+                                        " ! rtph264depay ! appsink name=frames sync=false";
+             g_autoptr(GstElement) client = gst_parse_launch(launch.c_str(), nullptr);
+             require(client != nullptr, "could not create the loopback client");
+             g_autoptr(GstElement) sink = gst_bin_get_by_name(GST_BIN(client), "frames");
+             gst_element_set_state(client, GST_STATE_PLAYING);
+             g_autoptr(GstSample) frame =
+                 gst_app_sink_try_pull_sample(GST_APP_SINK(sink), 10 * GST_SECOND);
+             require(frame != nullptr, "client must receive media before stopping the server");
              h.stop();
+             g_autoptr(GstBus) bus = gst_element_get_bus(client);
+             g_autoptr(GstMessage) terminal = gst_bus_timed_pop_filtered(
+                 bus, 10 * GST_SECOND,
+                 static_cast<GstMessageType>(GST_MESSAGE_EOS | GST_MESSAGE_ERROR));
+             gst_element_set_state(client, GST_STATE_NULL);
+             require(terminal != nullptr, "active client did not observe server shutdown");
              h.stop();
              require(!h.running(), "Graph::run_rtsp lifecycle: handle should be stopped");
            }

@@ -92,7 +92,6 @@ struct RtspServerImpl {
   std::thread th;
   std::atomic<bool> running{false};
   std::atomic<bool> stop_requested{false};
-  std::atomic<bool> thread_done{false};
 
   int enc_w = 0;
   int enc_h = 0;
@@ -132,7 +131,6 @@ struct PushCtx {
   std::atomic<bool> stopped{false};
   std::atomic<bool> need_data{true};
   std::atomic<int> refs{1};
-  std::atomic<bool> initial_released{false};
 };
 
 using RtspImplPtr = std::shared_ptr<RtspServerImpl>;
@@ -176,27 +174,6 @@ static void push_ctx_unref(PushCtx* pc) {
     return;
   if (pc->refs.fetch_sub(1, std::memory_order_acq_rel) == 1) {
     delete pc;
-  }
-}
-
-static void push_ctx_release_initial(PushCtx* pc) {
-  if (!pc)
-    return;
-  if (!pc->initial_released.exchange(true)) {
-    push_ctx_unref(pc);
-  }
-}
-
-static void push_ctx_unref_with_initial_release(PushCtx* pc) {
-  if (!pc)
-    return;
-  const bool release_initial = !pc->initial_released.exchange(true);
-  int drops = release_initial ? 2 : 1;
-  while (drops-- > 0) {
-    if (pc->refs.fetch_sub(1, std::memory_order_acq_rel) == 1) {
-      delete pc;
-      return;
-    }
   }
 }
 
@@ -321,12 +298,7 @@ static gboolean push_frame_cb(gpointer user_data) {
   return G_SOURCE_REMOVE;
 }
 
-static void media_unprepared_cb(GstRTSPMedia*, gpointer user_data) {
-  auto* pc = reinterpret_cast<PushCtx*>(user_data);
-  if (!pc)
-    return;
-
-  push_ctx_ref(pc);
+static void stop_media_push(PushCtx* pc) {
   pc->stopped.store(true);
   if (pc->timer)
     g_source_destroy(pc->timer);
@@ -335,8 +307,6 @@ static void media_unprepared_cb(GstRTSPMedia*, gpointer user_data) {
     g_signal_handlers_disconnect_by_data(src, pc);
     gst_object_unref(src);
   }
-
-  push_ctx_unref_with_initial_release(pc);
 }
 
 // RtspServerHandle implementation
@@ -384,33 +354,12 @@ void RtspServerHandle::stop() {
   impl->stop_requested.store(true);
   g_main_context_wakeup(impl->context.get());
 
-  const int stop_timeout_ms =
-      std::max(0, simaai::neat::pipeline_internal::env_int("SIMA_RTSP_STOP_TIMEOUT_MS", 2000));
-  if (impl->th.joinable()) {
-    if (stop_timeout_ms > 0) {
-      const auto deadline =
-          std::chrono::steady_clock::now() + std::chrono::milliseconds(stop_timeout_ms);
-      while (!impl->thread_done.load(std::memory_order_relaxed)) {
-        if (std::chrono::steady_clock::now() >= deadline)
-          break;
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
-      }
-    }
-    if (impl->thread_done.load(std::memory_order_relaxed)) {
-      impl->th.join();
-    } else {
-      if (rtsp_debug_enabled()) {
-        std::fprintf(stderr, "[rtsp] stop: thread did not exit within %dms; detaching\n",
-                     stop_timeout_ms);
-      }
-      impl->th.detach();
-    }
-  }
+  if (impl->th.joinable())
+    impl->th.join();
 
   delete holder;
   impl_ = nullptr;
 
-  std::this_thread::sleep_for(std::chrono::milliseconds(250));
   guard_.reset();
   if (stop_trace_enabled()) {
     std::fprintf(stderr, "[STOP] RtspServerHandle::stop end\n");
@@ -525,11 +474,11 @@ RtspServerHandle Graph::run_rtsp(const RtspServerOptions& opt) {
     }
   }
 
-  g_signal_connect(
+  g_signal_connect_data(
       factory, "media-configure",
       G_CALLBACK(+[](GstRTSPMediaFactory*, GstRTSPMedia* media, gpointer user_data) {
-        auto* impl = reinterpret_cast<RtspServerImpl*>(user_data);
-        if (!impl)
+        const auto& impl = *static_cast<RtspImplPtr*>(user_data);
+        if (impl->stop_requested.load())
           return;
 
         GstElement* top = gst_rtsp_media_get_element(media);
@@ -603,12 +552,23 @@ RtspServerHandle Graph::run_rtsp(const RtspServerOptions& opt) {
         g_source_set_callback(pc->timer, push_frame_cb, pc,
                               [](gpointer data) { push_ctx_unref(static_cast<PushCtx*>(data)); });
         g_source_attach(pc->timer, impl->context.get());
-        g_signal_connect(media, "unprepared", G_CALLBACK(media_unprepared_cb), pc);
+        g_signal_connect_data(
+            media, "unprepared", G_CALLBACK(+[](GstRTSPMedia*, gpointer data) {
+              stop_media_push(static_cast<PushCtx*>(data));
+            }),
+            pc,
+            [](gpointer data, GClosure*) {
+              auto* ctx = static_cast<PushCtx*>(data);
+              stop_media_push(ctx);
+              push_ctx_unref(ctx);
+            },
+            G_CONNECT_DEFAULT);
 
         gst_object_unref(src);
         gst_object_unref(top);
       }),
-      impl);
+      new RtspImplPtr(impl_sp),
+      [](gpointer data, GClosure*) { delete static_cast<RtspImplPtr*>(data); }, G_CONNECT_DEFAULT);
 
   gst_rtsp_mount_points_add_factory(mounts, impl->mount_path.c_str(), factory);
   g_object_unref(mounts);
@@ -633,14 +593,25 @@ RtspServerHandle Graph::run_rtsp(const RtspServerOptions& opt) {
   if (rtsp_debug_enabled())
     std::fprintf(stderr, "[rtsp] starting server on port %d\n", port);
   impl->running.store(true);
-  impl->th = std::thread([impl_sp, listener = std::move(listener)] {
+  impl->th = std::thread([impl_sp, listener = std::move(listener),
+                          server = std::unique_ptr<GstRTSPServer, decltype(&g_object_unref)>(
+                              g_steal_pointer(&server), g_object_unref)] {
     while (!impl_sp->stop_requested.load())
       g_main_context_iteration(impl_sp->context.get(), TRUE);
     impl_sp->running.store(false);
     g_source_destroy(listener.get());
+    // Request references under the server lock and close the clients after it is released.
+    GList* clients = gst_rtsp_server_client_filter(server.get(), nullptr, nullptr);
+    for (GList* item = clients; item; item = item->next)
+      gst_rtsp_client_close(GST_RTSP_CLIENT(item->data));
+    g_list_free_full(clients, g_object_unref);
+    g_autoptr(GstRTSPSessionPool) sessions = gst_rtsp_server_get_session_pool(server.get());
+    gst_rtsp_session_pool_filter(
+        sessions,
+        +[](GstRTSPSessionPool*, GstRTSPSession*, gpointer) { return GST_RTSP_FILTER_REMOVE; },
+        nullptr);
     if (rtsp_debug_enabled())
       std::fprintf(stderr, "[rtsp] thread exit\n");
-    impl_sp->thread_done.store(true);
   });
   return handle;
 }
