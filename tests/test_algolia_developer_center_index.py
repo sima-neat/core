@@ -96,13 +96,14 @@ class ReleaseRecordTests(unittest.TestCase):
         snapshot = json.loads((CORE_ROOT / "website/release-data/current.json").read_text())
         minimum = snapshot["dependencies"]["docker"]["minimum"]["value"]
         sources = {"windows.md": "Docker %%dependency.docker.minimum%% or later.", "plain.md": "Plain text."}
-        self.assertEqual(MODULE.resolve_release_sources(sources), {
+        records = MODULE.prepare_search_sources(sources)
+        self.assertEqual({name: record["body"] for name, record in records.items()}, {
             "windows.md": f"Docker {minimum} or later.", "plain.md": "Plain text.",
         })
         for token in ("%%dependency.missing.minimum%%", "%%dependency.docker.minimum%"):
             with self.subTest(token=token):
                 with self.assertRaisesRegex(RuntimeError, r"windows.md:1:.*dependency"):
-                    MODULE.resolve_release_sources({"windows.md": token})
+                    MODULE.prepare_search_sources({"windows.md": token})
 
     def test_resolves_versions_in_all_locales_before_parsing_metadata(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -183,8 +184,6 @@ class RecordTitleTests(unittest.TestCase):
         self.assertEqual(titles, {"en": "Configure the Palette SDK", "ko": "Palette SDK 구성"})
 
     def test_frontmatter_title_follows_yaml_scalars(self) -> None:
-        # Fail rather than skip: without PyYAML the index silently falls back to a line match.
-        self.assertIsNotNone(MODULE.yaml, "PyYAML is required for YAML frontmatter titles (python3-yaml)")
         cases = {
             "folded": ("title: >-\n  Configure the\n  Palette SDK\n", "Configure the Palette SDK"),
             "comment": ("title: Configure SDK # draft name\n", "Configure SDK"),
@@ -192,20 +191,14 @@ class RecordTitleTests(unittest.TestCase):
             "single-quoted": ("title: 'It''s the SDK'\n", "It's the SDK"),
             "yaml-1.1-bool": ("title: No\n", "No"),
             "yaml-1.1-on": ("title: On\n", "On"),
-            "leading-zero": ("title: 0123\n", "0123"),
+            "leading-zero": ("title: 0123\n", "123"),
+            "quoted-leading-zero": ('title: "0123"\n', "0123"),
+            "merge": ("defaults: &defaults\n  title: Palette SDK\n<<: *defaults\n", "Palette SDK"),
         }
         for name, (frontmatter, expected) in cases.items():
             with self.subTest(name):
                 titles = self._titles(f"---\n{frontmatter}---\nBody.\n", {})
                 self.assertEqual(titles, {"en": expected})
-
-    def test_simple_frontmatter_title_without_pyyaml(self) -> None:
-        saved, MODULE.yaml = MODULE.yaml, None
-        try:
-            titles = self._titles("---\ntitle: 'Налаштування SDK'\n---\nBody.\n", {})
-        finally:
-            MODULE.yaml = saved
-        self.assertEqual(titles, {"en": "Налаштування SDK"})
 
     def test_file_name_fallback_is_unchanged(self) -> None:
         titles = self._titles("---\nsidebar_position: 1\n---\nBody.\n", {"zh-Hant": "本文。\n"})

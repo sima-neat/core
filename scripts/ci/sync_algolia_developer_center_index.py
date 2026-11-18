@@ -15,19 +15,6 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
-try:  # PyYAML reads quoting, folding and comments the way Docusaurus does; optional so CI never breaks.
-    import yaml
-except ImportError:  # pragma: no cover - exercised only where PyYAML is absent
-    yaml = None
-
-if yaml is not None:
-
-    class TextLoader(yaml.SafeLoader):
-        """Read every plain scalar as text, so `title: No` stays "No" instead of YAML 1.1 False."""
-
-    TextLoader.yaml_implicit_resolvers = {}
-
-
 SOURCE = "software"
 DEFAULT_LOCALE = "en"
 I18N_DOCS_SUBDIR = Path("docusaurus-plugin-content-docs/current")
@@ -60,48 +47,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--generate-only", action="store_true", help="Only generate records; do not upload.")
     parser.add_argument("--sync", action="store_true", help="Upload records and remove stale records for this source.")
     return parser.parse_args()
-
-
-def strip_frontmatter(text: str) -> str:
-    if text.startswith("---\n"):
-        end = text.find("\n---\n", 4)
-        if end != -1:
-            return text[end + 5 :]
-    return text
-
-
-def frontmatter_block(text: str) -> str | None:
-    if not text.startswith("---\n"):
-        return None
-    end = text.find("\n---\n", 4)
-    if end == -1:
-        return None
-    return text[4:end]
-
-
-def frontmatter_value(text: str, key: str) -> str | None:
-    frontmatter = frontmatter_block(text)
-    if frontmatter is None:
-        return None
-    if yaml is not None:
-        try:
-            data = yaml.load(frontmatter, Loader=TextLoader)  # noqa: S506 - SafeLoader subclass
-        except yaml.YAMLError:
-            data = None
-        if isinstance(data, dict):
-            value = data.get(key)
-            if value is None:
-                return None
-            return str(value).strip() or None
-    # Without PyYAML, or for frontmatter that is not valid YAML, read a simple `key: value` line.
-    match = re.search(rf"^{re.escape(key)}:\s*(.+?)\s*$", frontmatter, re.MULTILINE)
-    if not match:
-        return None
-    return match.group(1).strip().strip("'\"") or None
-
-
-def frontmatter_slug(text: str) -> str | None:
-    return frontmatter_value(text, "slug")
 
 
 def clean_markdown(text: str) -> str:
@@ -214,26 +159,19 @@ def localized_doc_roots(docs_dir: Path, i18n_dir: Path | None) -> list[tuple[str
     return roots
 
 
-def resolve_release_sources(sources: dict[str, str]) -> dict[str, str]:
-    """Use the site's validated resolver before parsing searchable Markdown.
-
-    Batch token-bearing documents per locale so indexing does not spawn a
-    process per page. Plain Markdown keeps its existing Python-only path.
-    """
-    selected = {name: text for name, text in sources.items() if re.search(r"%{1,2}(?:release|dependency)\b", text, re.I)}
-    if not selected:
-        return sources
+def prepare_search_sources(sources: dict[str, str]) -> dict[str, dict[str, str]]:
+    """Resolve release tokens and read YAML frontmatter in one Node process per locale."""
     resolver = Path(__file__).resolve().parents[2] / "website/scripts/resolve-release-sources.js"
     try:
         result = subprocess.run(
-            ["node", str(resolver)], input=json.dumps(selected), text=True,
+            ["node", str(resolver)], input=json.dumps(sources), text=True,
             capture_output=True, timeout=30, check=False,
         )
     except FileNotFoundError as exc:
-        raise RuntimeError("Node.js is required to resolve release tokens for search indexing") from exc
+        raise RuntimeError("Node.js is required to prepare search records") from exc
     if result.returncode:
-        raise RuntimeError(f"Release token resolution failed: {result.stderr.strip()}")
-    return {**sources, **json.loads(result.stdout)}
+        raise RuntimeError(f"Search document preparation failed: {result.stderr.strip()}")
+    return json.loads(result.stdout)
 
 
 def generate_records(
@@ -255,23 +193,23 @@ def generate_records(
             if path.is_file() and path.name not in EXCLUDES and path.suffix.lower() in EXTENSIONS
             and not any(part in SKIP_PARTS for part in path.relative_to(language_docs_dir).parts)
         ]
-        sources = resolve_release_sources({str(path): path.read_text(encoding="utf-8") for path in paths})
+        sources = prepare_search_sources({str(path): path.read_text(encoding="utf-8") for path in paths})
         for path in paths:
-            source_text = sources[str(path)]
-            raw = strip_frontmatter(source_text)
+            source = sources[str(path)]
+            raw = source["body"]
             body = clean_markdown(raw)
             if not body:
                 continue
 
             rel = path.relative_to(language_docs_dir).as_posix()
-            title = title_from_markdown(path, raw, frontmatter_value(source_text, "title"))
+            title = title_from_markdown(path, raw, source.get("title"))
             section = section_for_path(path, language_docs_dir)
             url = route_for_path(
                 path,
                 language_docs_dir,
                 site_base_url,
                 language,
-                frontmatter_slug(source_text),
+                source.get("slug"),
             )
             route = urllib.parse.urlparse(url).path or "/software"
             record_key = f"{language}:{rel}"
