@@ -6,6 +6,7 @@
 #include "test_utils.h"
 
 #include <iostream>
+#include <limits>
 #include <stdexcept>
 
 int main() {
@@ -24,7 +25,9 @@ int main() {
     require_contains(http->backend_fragment(9), "location=\"http://example.local/mjpeg\"",
                      "HttpSource location mismatch");
     require_contains(http->backend_fragment(9), "timeout=7", "HttpSource timeout mismatch");
-    require_contains(http->backend_fragment(9), "retries=-1", "HttpSource retries mismatch");
+    require_contains(http->backend_fragment(9),
+                     "retries=" + std::to_string(std::numeric_limits<int>::max()),
+                     "HttpSource unlimited retries mismatch");
     require_contains(http->backend_fragment(9), "is-live=true", "HttpSource live flag mismatch");
     require_contains(http->backend_fragment(9), "do-timestamp=true",
                      "HttpSource timestamp flag mismatch");
