@@ -820,7 +820,10 @@ def isolated_sima_cli_environment(customer_home: Path, wheelhouse: Path,
   if not home.is_relative_to(disposable):
     raise ValueError("sima-cli customer profile must be inside the disposable work tree")
   environment = os.environ.copy()
-  environment.pop("PYTHONPATH", None)
+  # The installed doctor must find Platform from its service, as on a customer host.
+  for name in list(environment):
+    if name.upper() in {"PYTHONPATH", "SIMA_WINDOWS_PLATFORM_RUNTIME_DIR"}:
+      environment.pop(name)
   environment.update({
       "CLAUDE_HOME": str(home / ".claude"),
       "CODEX_HOME": str(home / ".codex"),

@@ -2091,9 +2091,12 @@ class WindowsCiContracts(unittest.TestCase):
           "CODEX_HOME": r"C:\real-profile\.codex",
           "PYTHONPATH": r"C:\producer",
           "SIMA_CLI_HOME": r"C:\real-profile\.sima-cli",
+          "SIMA_WINDOWS_PLATFORM_RUNTIME_DIR": r"C:\simaai",
       }, clear=True):
         environment = isolated_sima_cli_environment(home, wheelhouse, work)
       self.assertNotIn("PYTHONPATH", environment)
+      # sima-cli runs the installed doctor, which must locate Platform unaided.
+      self.assertNotIn("SIMA_WINDOWS_PLATFORM_RUNTIME_DIR", environment)
       for name in ("CLAUDE_HOME", "CODEX_HOME", "SIMA_CLI_HOME", "PIP_CACHE_DIR"):
         self.assertTrue(Path(environment[name]).is_relative_to(work.resolve()))
       self.assertEqual(environment["USERPROFILE"], str(home.resolve()))
