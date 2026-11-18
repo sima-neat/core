@@ -101,41 +101,26 @@ RemoteRuntime::RemoteRuntime(ConnectionOptions connection) : connection_(std::mo
   validate_endpoint_component(connection_.user, "user", false);
   validate_endpoint_component(connection_.card_host, "card_host", true);
   const auto card_env = parse_card_environment(connection_.card_env);
-  const std::string helper = card_environment_path_or(card_env, kHelperPathEnv, kRemoteHelper);
+  helper_path_ = card_environment_path_or(card_env, kHelperPathEnv, kRemoteHelper);
   // Card-side liveness checks match the worker by this file name.
-  if (helper.substr(helper.rfind('/') + 1) != "pcie-pipeline-builder") {
+  if (helper_path_.substr(helper_path_.rfind('/') + 1) != "pcie-pipeline-builder") {
     throw std::invalid_argument(std::string(kHelperPathEnv) +
                                 " must name a pcie-pipeline-builder executable");
   }
-  (void)card_environment_path_or(card_env, kRunDirEnv, kRemoteRunDir);
-  (void)card_environment_path_or(card_env, kLogDirEnv, kRemoteLogDir);
+  run_dir_ = card_environment_path_or(card_env, kRunDirEnv, kRemoteRunDir);
+  log_dir_ = card_environment_path_or(card_env, kLogDirEnv, kRemoteLogDir);
 }
 
 std::string RemoteRuntime::endpoint() const {
   return connection_.user + "@" + derive_card_host(connection_);
 }
 
-std::string RemoteRuntime::helper_path() const {
-  return card_environment_path_or(parse_card_environment(connection_.card_env), kHelperPathEnv,
-                                  kRemoteHelper);
-}
-
-std::string RemoteRuntime::run_dir() const {
-  return card_environment_path_or(parse_card_environment(connection_.card_env), kRunDirEnv,
-                                  kRemoteRunDir);
-}
-
-std::string RemoteRuntime::log_dir() const {
-  return card_environment_path_or(parse_card_environment(connection_.card_env), kLogDirEnv,
-                                  kRemoteLogDir);
-}
-
 std::string RemoteRuntime::status_path(const int queue) const {
-  return run_dir() + "/q" + std::to_string(queue) + ".status";
+  return run_dir_ + "/q" + std::to_string(queue) + ".status";
 }
 
 std::string RemoteRuntime::pid_path(const int queue) const {
-  return run_dir() + "/q" + std::to_string(queue) + ".pid";
+  return run_dir_ + "/q" + std::to_string(queue) + ".pid";
 }
 
 std::string RemoteRuntime::unique_remote_upload_path(const std::string& local_path) {
@@ -295,9 +280,9 @@ std::string RemoteRuntime::upload_file(const std::string& local_path) const {
 
 int RemoteRuntime::start(const int queue, const std::string& remote_model_path,
                          const std::optional<std::string>& remote_model_options_path) const {
-  const std::string helper = helper_path();
-  const std::string resolved_run_dir = run_dir();
-  const std::string resolved_log_dir = log_dir();
+  const std::string& helper = helper_path_;
+  const std::string& resolved_run_dir = run_dir_;
+  const std::string& resolved_log_dir = log_dir_;
   const std::string start_lock_path =
       resolved_run_dir + "/q" + std::to_string(queue) + ".start.lock";
   std::ostringstream ss;
@@ -494,7 +479,7 @@ void RemoteRuntime::stop_process(const int expected_pid,
   std::ostringstream ss;
   ss << "pid=" << expected_pid << "; " << "kill -0 \"$pid\" >/dev/null 2>&1 || exit 0; "
      << "command=$(tr '\\0' '\\n' < \"/proc/$pid/cmdline\" 2>/dev/null | head -n1); "
-     << "[ \"$command\" = " << SshRunner::shell_escape(helper_path())
+     << "[ \"$command\" = " << SshRunner::shell_escape(helper_path_)
      << " ] || { echo unexpected_process; exit 19; }; "
      << "tr '\\0' '\\n' < \"/proc/$pid/cmdline\" 2>/dev/null | grep -Fx -- "
      << SshRunner::shell_escape(expected_model_path)

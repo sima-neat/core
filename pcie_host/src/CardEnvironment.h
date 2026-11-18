@@ -1,6 +1,5 @@
 #pragma once
 
-#include <algorithm>
 #include <cctype>
 #include <optional>
 #include <sstream>
@@ -37,13 +36,6 @@ inline std::vector<std::string> parse_card_environment(const std::string& raw) {
   return result;
 }
 
-inline bool card_environment_contains(const std::vector<std::string>& environment,
-                                      const std::string& name) {
-  const std::string prefix = name + "=";
-  return std::any_of(environment.begin(), environment.end(),
-                     [&prefix](const std::string& entry) { return entry.rfind(prefix, 0) == 0; });
-}
-
 inline std::optional<std::string>
 card_environment_value(const std::vector<std::string>& environment, const std::string& name) {
   const std::string prefix = name + "=";
@@ -54,6 +46,11 @@ card_environment_value(const std::vector<std::string>& environment, const std::s
     }
   }
   return value;
+}
+
+inline bool card_environment_contains(const std::vector<std::string>& environment,
+                                      const std::string& name) {
+  return card_environment_value(environment, name).has_value();
 }
 
 inline std::string card_environment_path_or(const std::vector<std::string>& environment,
