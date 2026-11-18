@@ -40,6 +40,15 @@ class WindowsRuntimeTests(unittest.TestCase):
     self.assertEqual(
         conflict, [("simapcie.dll", Path(directory) / "other" / "simapcie.dll")])
 
+  def test_unrelated_dll_loaded_from_elsewhere_is_accepted(self):
+    with tempfile.TemporaryDirectory() as directory:
+      approved = Path(directory) / "approved"
+      approved.mkdir()
+      (approved / "libssl-3-x64.dll").write_bytes(b"fixture")
+
+      self.assertEqual(RUNTIME.find_loaded_dll_conflicts(
+          [approved], lambda name: Path(directory) / "conda" / name), [])
+
   def test_admission_reports_the_conflicting_module_and_recovery(self):
     with tempfile.TemporaryDirectory() as directory:
       approved = Path(directory) / "approved"

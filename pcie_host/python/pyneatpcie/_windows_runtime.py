@@ -66,15 +66,23 @@ def runtime_directories(package_dir, environ=None, service_directory=None):
   return result
 
 
+# DLLs this package binds to. Other DLLs in the GStreamer bin directory, such as
+# OpenSSL or zlib, may already be loaded from another installation.
+REQUIRED_DLLS = frozenset({
+    "simapcie.dll", "simaai_scheduler_pcie_host.dll", "gstreamer-1.0-0.dll",
+    "gstapp-1.0-0.dll", "glib-2.0-0.dll", "gobject-2.0-0.dll",
+})
+
+
 def find_loaded_dll_conflicts(directories, loaded_path):
-  """Return approved DLL names that are already loaded from another location."""
+  """Return required DLL names that are already loaded from another location."""
   approved = {}
   for directory in directories:
     if not directory.is_dir():
       continue
     for path in directory.glob("*.dll"):
-      approved.setdefault(path.name.casefold(), set()).add(
-          _normalized_path(path))
+      if path.name.casefold() in REQUIRED_DLLS:
+        approved.setdefault(path.name.casefold(), set()).add(_normalized_path(path))
 
   conflicts = []
   for name, paths in sorted(approved.items()):
