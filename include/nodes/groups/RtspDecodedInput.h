@@ -90,12 +90,8 @@ struct RtspDecodedInputOptions {
   int video_rate_fps = -1; ///< FPS requested from `videorate`; `-1` = use the resolved source FPS.
 
   int decoder_input_buffers = -1;  ///< Decoder input buffer count override; `-1` = element default.
-  std::string decoder_tuning;      ///< Optional native decoder tuning; same presets as
-                                   ///< `SimaDecodeOptions::decoder_tuning` ("auto", "default",
-                                   ///< "low-memory", "throughput-low-latency", ASCII
-                                   ///< case-insensitive). Empty = decoder default (property
-                                   ///< omitted). Other values make `RtspDecodedInput()` throw
-                                   ///< `NeatError` (`misconfig.option_out_of_range`).
+  std::string decoder_tuning;      ///< Optional native decoder tuning; accepted values and
+                                   ///< errors as for `SimaDecodeOptions::decoder_tuning`.
   bool decoder_memory_opt = false; ///< If true, enable the decoder memory-optimized path.
 };
 

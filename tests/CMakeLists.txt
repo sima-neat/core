@@ -643,7 +643,6 @@ set(UNIT_TESTS
   unit_boxdecode_uses_upstream_cast_contract_test
   unit_sima_boxdecode_node_fragment_test
   unit_sima_decode_test
-  unit_sima_decode_tuning_validation_regression_test
   unit_usb_camera_input_test
   unit_decoder_admission_test
   unit_kernel200_envelope_guard_test

@@ -5,6 +5,9 @@
 #include "pipeline/ErrorCodes.h"
 #include "pipeline/NeatError.h"
 
+#include <glib.h>
+
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <memory>
@@ -62,23 +65,7 @@ void require_raw_output_format_supported(const SimaDecodeOptions& opt) {
       "SimaDecode: raw_output supports only NV12 or I420 (or NV16 for JPEG/MJPEG)");
 }
 
-bool ascii_iequals(std::string_view value, std::string_view lower_token) {
-  if (value.size() != lower_token.size()) {
-    return false;
-  }
-  for (std::size_t i = 0; i < value.size(); ++i) {
-    char c = value[i];
-    if (c >= 'A' && c <= 'Z') {
-      c = static_cast<char>(c - 'A' + 'a');
-    }
-    if (c != lower_token[i]) {
-      return false;
-    }
-  }
-  return true;
-}
-
-// Mirrors the presets and aliases accepted by the `neatdecoder` `decoder-tuning` property.
+// Presets and aliases accepted by the `neatdecoder` `decoder-tuning` property, in lower case.
 constexpr std::array<std::string_view, 9> kAcceptedDecoderTunings = {
     "auto",
     "default",
@@ -91,14 +78,24 @@ constexpr std::array<std::string_view, 9> kAcceptedDecoderTunings = {
     "low-latency-throughput",
 };
 
+// Matching ignores ASCII case and surrounding whitespace, as the decoder does; the caller's
+// original spelling is what gets forwarded.
 void require_decoder_tuning_supported(const SimaDecodeOptions& opt) {
   if (opt.decoder_tuning.empty()) {
     return;
   }
-  for (const std::string_view token : kAcceptedDecoderTunings) {
-    if (ascii_iequals(opt.decoder_tuning, token)) {
-      return;
-    }
+  std::string_view trimmed = opt.decoder_tuning;
+  while (!trimmed.empty() && g_ascii_isspace(trimmed.front())) {
+    trimmed.remove_prefix(1);
+  }
+  while (!trimmed.empty() && g_ascii_isspace(trimmed.back())) {
+    trimmed.remove_suffix(1);
+  }
+  std::string lowered(trimmed);
+  std::transform(lowered.begin(), lowered.end(), lowered.begin(), g_ascii_tolower);
+  if (std::find(kAcceptedDecoderTunings.begin(), kAcceptedDecoderTunings.end(), lowered) !=
+      kAcceptedDecoderTunings.end()) {
+    return;
   }
   const std::string note = "SimaDecode: decoder_tuning '" + opt.decoder_tuning +
                            "' is not supported; use auto, default, low-memory or "

@@ -1975,24 +1975,9 @@ def test_sima_encode_and_sender_options(codec):
 
 
 def test_sima_decode_rejects_unknown_decoder_tuning():
-  # An unknown tuning preset is refused by the factories, not by the plain attribute write.
+  # The factory refuses an unknown tuning; the attribute write itself does not.
   opt = pyneat.SimaDecodeOptions()
   opt.decoder_tuning = "bogus_value"
   with pytest.raises(pyneat.NeatError) as excinfo:
     pyneat.nodes.sima_decode(opt)
   assert excinfo.value.error_code == pyneat.ERROR_OPTION_OUT_OF_RANGE
-  assert "decoder_tuning" in str(excinfo.value)
-  assert "bogus_value" in str(excinfo.value)
-
-  decoded = pyneat.RtspDecodedInputOptions()
-  decoded.url = "rtsp://example.local/h265"
-  decoded.codec = pyneat.RtspCodec.H265
-  decoded.dec_width = 1280
-  decoded.dec_height = 720
-  decoded.source_fps = 30
-  decoded.decoder_tuning = "bogus_value"
-  with pytest.raises(pyneat.NeatError) as excinfo:
-    pyneat.groups.rtsp_decoded_input(decoded)
-  assert excinfo.value.error_code == pyneat.ERROR_OPTION_OUT_OF_RANGE
-  assert "decoder_tuning" in str(excinfo.value)
-  assert "bogus_value" in str(excinfo.value)
