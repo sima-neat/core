@@ -15,7 +15,9 @@
 #include <atomic>
 #include <chrono>
 #include <cctype>
+#include <cinttypes>
 #include <cstdint>
+#include <cstdio>
 #include <filesystem>
 #include <fstream>
 #include <limits>
@@ -23,6 +25,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <random>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -37,6 +40,20 @@ std::uint64_t unix_time_s() {
   return static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::seconds>(
                                         std::chrono::system_clock::now().time_since_epoch())
                                         .count());
+}
+
+// OpenAI-style response id: a per-process random salt plus a monotonic counter, so ids never
+// repeat within one server and are very unlikely to repeat across restarts.
+std::string make_completion_id(const char* prefix) {
+  static const std::uint64_t process_salt = [] {
+    std::random_device rd;
+    return (static_cast<std::uint64_t>(rd()) << 32) ^ static_cast<std::uint64_t>(rd());
+  }();
+  static std::atomic<std::uint64_t> counter{0};
+  const std::uint64_t sequence = counter.fetch_add(1, std::memory_order_relaxed);
+  char suffix[33];
+  std::snprintf(suffix, sizeof(suffix), "%016" PRIx64 "%016" PRIx64, process_salt, sequence);
+  return std::string(prefix) + suffix;
 }
 
 nlohmann::json parse_json_body(const httplib::Request& req) {
@@ -368,13 +385,14 @@ Json openai_tool_calls_to_ollama(const Json& tool_calls) {
   return out;
 }
 
-std::string completion_chunk(const std::string& model_name, const std::string& text,
+std::string completion_chunk(const std::string& model_name, const std::string& completion_id,
+                             std::uint64_t created, const std::string& text,
                              const std::optional<std::string>& finish_reason = std::nullopt,
                              const std::optional<GenerationMetrics>& metrics = std::nullopt) {
   nlohmann::json chunk;
-  chunk["id"] = "cmpl-" + std::to_string(unix_time_s());
+  chunk["id"] = completion_id;
   chunk["object"] = "text_completion";
-  chunk["created"] = unix_time_s();
+  chunk["created"] = created;
   chunk["model"] = model_name;
   if (metrics.has_value()) {
     if (metrics->time_to_first_token_s > 0.0) {
@@ -1202,7 +1220,7 @@ struct GenAIServer::Impl {
       } else {
         const auto result = model->run(request);
         const nlohmann::json message = chat_message_response(result);
-        set_json(res, {{"id", "chatcmpl-" + std::to_string(unix_time_s())},
+        set_json(res, {{"id", make_completion_id("chatcmpl-")},
                        {"object", "chat.completion"},
                        {"created", unix_time_s()},
                        {"model", model_name},
@@ -1248,7 +1266,7 @@ struct GenAIServer::Impl {
         handle_completion_stream(res, model_name, std::move(model), std::move(request));
       } else {
         const auto result = model->run(request);
-        set_json(res, {{"id", "cmpl-" + std::to_string(unix_time_s())},
+        set_json(res, {{"id", make_completion_id("cmpl-")},
                        {"object", "text_completion"},
                        {"created", unix_time_s()},
                        {"model", model_name},
@@ -1382,7 +1400,7 @@ struct GenAIServer::Impl {
          request = std::move(request)](std::size_t, httplib::DataSink& sink) mutable {
           try {
             const auto created = unix_time_s();
-            const auto completion_id = "chatcmpl-" + std::to_string(created);
+            const auto completion_id = make_completion_id("chatcmpl-");
             ActiveStreamRegistration active_stream{*this, model_name};
             auto stream = model->stream(request);
             active_stream.attach(stream);
@@ -1432,23 +1450,26 @@ struct GenAIServer::Impl {
         [this, model_name = std::move(model_name), model = std::move(model),
          request = std::move(request)](std::size_t, httplib::DataSink& sink) mutable {
           try {
+            const auto created = unix_time_s();
+            const auto completion_id = make_completion_id("cmpl-");
             ActiveStreamRegistration active_stream{*this, model_name};
             auto stream = model->stream(request);
             active_stream.attach(stream);
             for (auto sample = stream.next(); sample.has_value(); sample = stream.next()) {
               if (sample->is_final) {
                 const auto final_chunk =
-                    completion_chunk(model_name, "", choice_finish_reason(sample->finish_reason),
-                                     sample->metrics) +
+                    completion_chunk(model_name, completion_id, created, "",
+                                     choice_finish_reason(sample->finish_reason), sample->metrics) +
                     "data: [DONE]\n\n";
                 write_sink(sink, final_chunk);
                 sink.done();
                 return true;
               }
-              write_sink(sink,
-                         completion_chunk(model_name, sample->text, std::nullopt, sample->metrics));
+              write_sink(sink, completion_chunk(model_name, completion_id, created, sample->text,
+                                                std::nullopt, sample->metrics));
             }
-            write_sink(sink, completion_chunk(model_name, "", "stop") + "data: [DONE]\n\n");
+            write_sink(sink, completion_chunk(model_name, completion_id, created, "", "stop") +
+                                 "data: [DONE]\n\n");
           } catch (const std::exception& e) {
             const auto error = generation_error(e);
             write_sink(sink, "data: " + error.dump() + "\n\ndata: [DONE]\n\n");

@@ -29,6 +29,12 @@
 #include <simaai/scheduler/client/kernel.h>
 #include <algorithm>
 #include <array>
+#include <atomic>
+#include <cstdio>
+#include <cstdlib>
+#include <cerrno>
+#include <sys/wait.h>
+#include <unistd.h>
 #include <bit>
 #include <cmath>
 #include <cstring>
@@ -39,7 +45,75 @@
 
 namespace test = simaai::scheduler::testing;
 namespace c = simaai::scheduler::client;
+void check_ssd_mpk_carrier_contracts();
+void check_ssd_model_carrier_contract(const std::string& archive);
 namespace {
+std::atomic<bool> ssd_artifact_completed{false};
+
+// A dependency may terminate the process without returning through main. An
+// exit status of zero is not evidence that both artifact routes were checked.
+void require_ssd_artifact_completion() noexcept {
+  if (ssd_artifact_completed.load(std::memory_order_acquire))
+    return;
+  constexpr char message[] = "SSD_ARTIFACT_INCOMPLETE_EXIT_REJECTED\n";
+  (void)std::fwrite(message, 1, sizeof(message) - 1, stderr);
+  (void)std::fflush(stderr);
+  std::_Exit(EXIT_FAILURE);
+}
+
+void arm_ssd_artifact_completion_guard() {
+  if (std::atexit(require_ssd_artifact_completion) != 0)
+    throw std::runtime_error("could not register SSD artifact completion guard");
+}
+
+void check_ssd_artifact_completion_guard(const char* executable) {
+  int descriptors[2];
+  if (::pipe(descriptors) != 0)
+    throw std::runtime_error("completion guard pipe failed");
+  const auto child = ::fork();
+  if (child < 0) {
+    ::close(descriptors[0]);
+    ::close(descriptors[1]);
+    throw std::runtime_error("completion guard fork failed");
+  }
+  if (child == 0) {
+    ::close(descriptors[0]);
+    if (::dup2(descriptors[1], STDERR_FILENO) < 0)
+      ::_exit(127);
+    ::close(descriptors[1]);
+    ::execl(executable, executable, "--ssd-completion-guard-negative", nullptr);
+    ::_exit(127);
+  }
+  ::close(descriptors[1]);
+  std::string diagnostic;
+  bool oversized = false;
+  char bytes[512];
+  ssize_t count;
+  while ((count = ::read(descriptors[0], bytes, sizeof(bytes))) != 0) {
+    if (count < 0) {
+      if (errno == EINTR)
+        continue;
+      break;
+    }
+    if (diagnostic.size() + std::size_t(count) <= 16384)
+      diagnostic.append(bytes, std::size_t(count));
+    else
+      oversized = true;
+  }
+  const auto read_error = count < 0;
+  ::close(descriptors[0]);
+  int status = 0;
+  pid_t waited;
+  do {
+    waited = ::waitpid(child, &status, 0);
+  } while (waited < 0 && errno == EINTR);
+  if (read_error || oversized || waited != child || !WIFEXITED(status) ||
+      WEXITSTATUS(status) != EXIT_FAILURE ||
+      diagnostic.find("SSD_ARTIFACT_INCOMPLETE_EXIT_REJECTED\n") == std::string::npos)
+    throw std::runtime_error("premature zero exit was not rejected with its completion diagnostic");
+  std::cout << "SSD_ARTIFACT_COMPLETION_GUARD_NEGATIVE_PASS\n";
+}
+
 c::KernelInspection inspect(const c::KernelExecutable& value) {
   auto result = c::inspect_kernel(value);
   if (const auto* error = std::get_if<c::Error>(&result))
@@ -1136,6 +1210,84 @@ struct HostStorage final {
     std::memcpy(static_cast<std::byte*>(memory.get()) + element * 4, &value, 4);
   }
 };
+// The 91-class SSD-Mobile-300-v1 and SSDlite-Mobile-320-v1 signatures decode as
+// their source models do: every foreground anchor/class pair, NMS per class.
+// Other signatures keep one class per anchor. One anchor whose two foreground
+// classes both pass the threshold tells the two policies apart.
+std::int32_t ssd_policy_detections(stagesemantics::SsdRecipeId id, int side,
+                                   const std::array<int, 6>& dims,
+                                   const std::array<int, 6>& anchors) {
+  constexpr int classes = 91;
+  auto request = source(BoxDecodeType::Ssd, classes);
+  request.payload.ssd_recipe_id = id;
+  for (std::size_t i = 0; i < dims.size(); ++i)
+    input(request, dims[i], dims[i], anchors[i] * 4);
+  for (std::size_t i = 0; i < dims.size(); ++i)
+    input(request, dims[i], dims[i], anchors[i] * classes);
+  const auto prepared = check(request, {side, side, side, side, ResizeMode::Stretch});
+  const auto& members = prepared.compiled.recipe->members;
+  require(prepared.decode_member == 0, "SSD decode must read the stage inputs directly");
+  const auto& numerical = members[prepared.decode_member].executable;
+  const auto& publication = members.back().executable;
+  const auto description = inspect(numerical);
+  std::vector<std::shared_ptr<HostStorage>> inputs, outputs;
+  std::vector<c::ConstBytes> in, public_inputs;
+  std::vector<c::MutableBytes> out;
+  for (const auto& req : description.input_requirements()) {
+    inputs.push_back(std::make_shared<HostStorage>(req.storage_bytes));
+    in.push_back({static_cast<const std::byte*>(inputs.back()->memory.get()), req.storage_bytes});
+  }
+  // Box offsets 0 decode to the priors. BF16 logits: -10 everywhere, then
+  // classes 1 and 2 of the first anchor of the first cell at 5 and 4.
+  const auto set_bf16 = [](HostStorage& storage, std::size_t element, float value) {
+    std::uint32_t bits = 0;
+    std::memcpy(&bits, &value, 4);
+    const auto upper = static_cast<std::uint16_t>(bits >> 16);
+    std::memcpy(static_cast<std::byte*>(storage.memory.get()) + element * 2, &upper, 2);
+  };
+  for (std::size_t head = 0; head < dims.size(); ++head) {
+    auto& scores = *inputs[dims.size() + head];
+    const std::size_t elements =
+        std::size_t(dims[head]) * std::size_t(dims[head]) * std::size_t(anchors[head] * classes);
+    require(scores.size >= elements * 2, "SSD score head is smaller than its dense extent");
+    for (std::size_t e = 0; e < elements; ++e)
+      set_bf16(scores, e, -10.f);
+  }
+  set_bf16(*inputs[dims.size()], 1, 5.f);
+  set_bf16(*inputs[dims.size()], 2, 4.f);
+  for (const auto& req : description.output_requirements()) {
+    outputs.push_back(std::make_shared<HostStorage>(req.storage_bytes));
+    auto* data = static_cast<std::byte*>(outputs.back()->memory.get());
+    out.push_back({data, req.storage_bytes});
+    public_inputs.push_back({data, req.storage_bytes});
+  }
+  test::OperationProbe executor, publisher;
+  require(!executor.prepare(numerical) && !publisher.prepare(publication),
+          "SSD numerical/publication preparation failed");
+  const auto status = executor.execute_host(executor.operation(), in, out);
+  require(!status, status ? status->message.c_str() : "SSD checked numerical execution failed");
+  const auto wire_bytes = inspect(publication).output_requirements()[0].storage_bytes;
+  HostStorage wire(wire_bytes);
+  const std::array<c::MutableBytes, 1> published{
+      {{static_cast<std::byte*>(wire.memory.get()), wire_bytes}}};
+  require(!publisher.execute_host(publisher.operation(), public_inputs, published),
+          "SSD publication failed");
+  const auto count = wire.read<std::int32_t>(0);
+  for (std::int32_t row = 1; row < count; ++row)
+    require(wire.read<std::int32_t>(4 + row * 24 + 20) != wire.read<std::int32_t>(4 + 20),
+            "SSD published one class twice for a single anchor");
+  return count;
+}
+void ssd_source_policy_execution() {
+  using stagesemantics::SsdRecipeId;
+  require(ssd_policy_detections(SsdRecipeId::SsdMobile300V1, 300, {19, 10, 5, 3, 2, 1},
+                                {3, 6, 6, 6, 6, 6}) == 2,
+          "91-class SSD-Mobile-300-v1 must keep both foreground classes of one anchor");
+  require(ssd_policy_detections(SsdRecipeId::SsdMobile320V1, 320, {20, 10, 5, 3, 2, 1},
+                                {3, 6, 6, 6, 6, 6}) == 1,
+          "SSD-Mobile-320-v1 must keep its one-class-per-anchor policy");
+}
+
 void detr_numerical_publication(bool crop = false) {
   auto request = source(BoxDecodeType::Detr, 2);
   request.payload.topk = 2;
@@ -1610,6 +1762,7 @@ void combined_execution(bool planar, int ingress_route = 0, bool gaps = false) {
   if (ingress_route) {
     TensorList tensors;
     CompiledNodeContract upstream;
+    upstream.element_name = upstream.logical_stage_id = "strided_head_producer";
     upstream.kernel.emplace();
     for (std::size_t i = 0; i < grouped.size(); ++i) {
       const auto& original = authored_inputs[grouped[i]];
@@ -2018,6 +2171,7 @@ void crop_source_geometry() {
       // The MLA-like upstream head carrier is distinct from graph ingress,
       // which contains the image and its older preprocessing provenance.
       CompiledNodeContract head_producer;
+      head_producer.logical_stage_id = "detr_head_producer";
       head_producer.kernel.emplace();
       head_producer.kernel->runtime_contract.physical_outputs =
           heads.runtime_contract.physical_inputs;
@@ -2166,6 +2320,7 @@ void composed_frontend_detection_geometry() {
         heads.payload.topk = 2;
         heads.payload.detection_threshold = .6;
         CompiledNodeContract head_producer;
+        head_producer.logical_stage_id = "detr_head_producer";
         head_producer.kernel.emplace();
         head_producer.kernel->runtime_contract.physical_outputs =
             heads.runtime_contract.physical_inputs;
@@ -2868,6 +3023,27 @@ void linear_metadata_contracts() {
 } // namespace
 int main(int argc, char** argv) {
   try {
+    if (argc == 2 && std::string(argv[1]) == "--ssd-completion-guard-test") {
+      check_ssd_artifact_completion_guard(argv[0]);
+      return 0;
+    }
+    if (argc == 2 && std::string(argv[1]) == "--ssd-completion-guard-negative") {
+      arm_ssd_artifact_completion_guard();
+      std::exit(EXIT_SUCCESS); // Must be converted to failure by the guard.
+    }
+    if (argc == 3 && std::string(argv[1]) == "--ssd-model-carrier-contract") {
+      arm_ssd_artifact_completion_guard();
+      simaai::neat::gst_init_once();
+      check_ssd_model_carrier_contract(argv[2]);
+      ssd_artifact_completed.store(true, std::memory_order_release);
+      return 0;
+    }
+    if (argc == 2 && std::string(argv[1]) == "--ssd-mpk-carrier-contract") {
+      gst_init(nullptr, nullptr);
+      check_ssd_mpk_carrier_contracts();
+      std::cout << "SSD_MPK_CARRIER_CONTRACT_PASS\n";
+      return 0;
+    }
     // Pure cold numerical recipe admission: no plugin init, Tensor allocation,
     // executable invocation, Graph/Model build, or accelerator/device access.
     if (argc == 2 && std::string(argv[1]) == "--yolo26-seg-identity-resize-contract") {
@@ -2911,7 +3087,13 @@ int main(int argc, char** argv) {
       std::cout << "YOLO26_OBB_SOURCE_GEOMETRY_PASS\n";
       return 0;
     }
+    if (argc == 2 && std::string(argv[1]) == "--ssd-source-policy-execution") {
+      ssd_source_policy_execution();
+      std::cout << "SSD_SOURCE_POLICY_EXECUTION_PASS\n";
+      return 0;
+    }
     simaai::neat::gst_init_once();
+    check_ssd_mpk_carrier_contracts();
     dfl_oriented_contract_and_execution();
     oriented_publication_sample_bridge(BoxDecodeType::YoloV8Obb);
     oriented_source_geometry(BoxDecodeType::YoloV8Obb);
@@ -2926,6 +3108,7 @@ int main(int argc, char** argv) {
     query_source_dtypes();
     detr_numerical_publication();
     detr_numerical_publication(true);
+    ssd_source_policy_execution();
     detr_padded_numerical_publication();
     focal_numerical_publication();
     focal_numerical_publication(true);

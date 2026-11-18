@@ -92,8 +92,7 @@ slug: /develop-apps/contribute/test_requirements
 
 - 追加/更新されたテストは、変更された動作仕様に対応しています。
 - 既存の関連テストはすべて正常に完了します。
-- ユーザーが直接操作する際の動作に関するドキュメントが更新されました。
-- API/アーキテクチャの変更は、[アーキテクチャ](/develop-apps/contribute/architecture)に反映されます。
+- ドキュメントへの影響は、[ドキュメント更新ポリシー](/develop-apps/contribute/coding_standard)に従って評価します。
 - 公開 API の変更は、[コーディング規約](/develop-apps/contribute/coding_standard) に記載されている API 互換性ポリシーに準拠します。
 
 ## 必須カバレッジと機能プロファイル

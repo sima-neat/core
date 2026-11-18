@@ -41,6 +41,8 @@ curl http://<modalix-ip>:9998/v1/models
 
 ## Run
 
+NVMe가 없는 DevKit에서는 `llima pull` 전에 `LLIMA_MODELS_PATH`를 쓰기 가능한 디렉터리로 설정하고, 아래의 `/media/nvme/llima/models` 대신 해당 디렉터리를 사용하세요.
+
 Modalix DevKit에서 Hugging Face에서 LLM, VLM 및 ASR 모델을 LLiMa CLI를 사용하여 다운로드합니다.
 
 ```bash
