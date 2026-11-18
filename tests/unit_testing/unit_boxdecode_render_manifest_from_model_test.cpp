@@ -433,7 +433,8 @@ RUN_TEST(
       manual.add(simaai::neat::nodes::Input("in"));
       for (const auto& node : nodes)
         manual.add(node);
-      manual.add(nodes.back());
+      manual.add(
+          simaai::neat::nodes::SimaBoxDecode(model, BoxDecodeType::YoloV8Seg, 0.25, 0.45, 100));
       manual.add(simaai::neat::nodes::Output("out"));
       try {
         manual.save(fixture.root_dir + "/ambiguous-route.json");
