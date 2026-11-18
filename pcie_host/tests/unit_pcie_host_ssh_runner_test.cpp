@@ -70,7 +70,7 @@ void test_detached_child_redirections() {
           "detached worker must not inherit the SSH channel stdin");
   require(redirections.find(">/dev/null 2>&1") != std::string::npos,
           "detached worker must not inherit the SSH channel output streams");
-  require(redirections.find('&') != std::string::npos,
+  require(redirections.find(" & ") != std::string::npos,
           "detached worker must be launched in the background");
 }
 
