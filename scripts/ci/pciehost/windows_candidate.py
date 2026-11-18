@@ -70,6 +70,19 @@ def require_junit_cases(path: Path, expected: set[str]) -> dict[str, int]:
   return {"tests": len(cases), "skipped": 0, "failures": 0, "errors": 0}
 
 
+def _dll_inventory(items: list, label: str) -> list[dict[str, str]]:
+  dlls = []
+  for item in items:
+    if (not isinstance(item, dict) or not isinstance(item.get("name"), str)
+        or Path(item["name"]).name != item["name"]
+        or not re.fullmatch(r"[0-9a-f]{64}", str(item.get("sha256", "")))):
+      raise ValueError(f"Windows dependency receipt has an invalid {label} DLL")
+    dlls.append({"name": item["name"], "sha256": item["sha256"]})
+  if len({item["name"].lower() for item in dlls}) != len(dlls):
+    raise ValueError(f"Windows dependency receipt has duplicate {label} DLLs")
+  return sorted(dlls, key=lambda item: item["name"].lower())
+
+
 def dependency_identity(directory: Path, *, require_dependency_runtime: bool = False) -> dict:
   root = directory.resolve(strict=True)
   receipt = _read_json(root / "windows-dependencies.json", "Windows dependency receipt")
@@ -81,15 +94,7 @@ def dependency_identity(directory: Path, *, require_dependency_runtime: bool = F
     raise ValueError("Windows dependency receipt has no exact Platform version")
   if not isinstance(runtime_dlls, list) or not runtime_dlls:
     raise ValueError("Windows dependency receipt has no Platform runtime DLLs")
-  dlls = []
-  for item in runtime_dlls:
-    if (not isinstance(item, dict) or not isinstance(item.get("name"), str)
-        or Path(item["name"]).name != item["name"]
-        or not re.fullmatch(r"[0-9a-f]{64}", str(item.get("sha256", "")))):
-      raise ValueError("Windows dependency receipt has an invalid Platform runtime DLL")
-    dlls.append({"name": item["name"], "sha256": item["sha256"]})
-  if len({item["name"].lower() for item in dlls}) != len(dlls):
-    raise ValueError("Windows dependency receipt has duplicate Platform runtime DLLs")
+  dlls = _dll_inventory(runtime_dlls, "Platform runtime")
 
   gstreamer = receipt.get("gstreamer")
   version_output = gstreamer.get("version_output") if isinstance(gstreamer, dict) else None
@@ -99,26 +104,14 @@ def dependency_identity(directory: Path, *, require_dependency_runtime: bool = F
       or not re.fullmatch(r"[0-9a-f]{64}", str(pkg_config_sha256 or ""))
       or not isinstance(gstreamer_dlls, list) or not gstreamer_dlls):
     raise ValueError("Windows dependency receipt has an invalid GStreamer identity")
-  normalized_gstreamer_dlls = []
-  for item in gstreamer_dlls:
-    if (not isinstance(item, dict) or not isinstance(item.get("name"), str)
-        or Path(item["name"]).name != item["name"]
-        or not re.fullmatch(r"[0-9a-f]{64}", str(item.get("sha256", "")))):
-      raise ValueError("Windows dependency receipt has an invalid GStreamer runtime DLL")
-    normalized_gstreamer_dlls.append(
-        {"name": item["name"], "sha256": item["sha256"]})
-  if (len({item["name"].lower() for item in normalized_gstreamer_dlls})
-      != len(normalized_gstreamer_dlls)):
-    raise ValueError("Windows dependency receipt has duplicate GStreamer runtime DLLs")
   identity = {
       "platform_version": platform_version,
       "gstreamer": {
           "pkg_config_sha256": pkg_config_sha256,
-          "runtime_dlls": sorted(
-              normalized_gstreamer_dlls, key=lambda item: item["name"].lower()),
+          "runtime_dlls": _dll_inventory(gstreamer_dlls, "GStreamer runtime"),
           "version_output": version_output,
       },
-      "platform_runtime_dlls": sorted(dlls, key=lambda item: item["name"].lower()),
+      "platform_runtime_dlls": dlls,
   }
   runtime_cohorts = receipt.get("dependency_runtime")
   if runtime_cohorts is None and not require_dependency_runtime:
@@ -130,16 +123,7 @@ def dependency_identity(directory: Path, *, require_dependency_runtime: bool = F
     files = cohort.get("files") if isinstance(cohort, dict) else None
     if not isinstance(files, list) or not files:
       raise ValueError("Windows dependency receipt has an invalid runtime DLL cohort")
-    normalized = []
-    for item in files:
-      if (not isinstance(item, dict) or not isinstance(item.get("name"), str)
-          or Path(item["name"]).name != item["name"]
-          or not re.fullmatch(r"[0-9a-f]{64}", str(item.get("sha256", "")))):
-        raise ValueError("Windows dependency receipt has an invalid additional runtime DLL")
-      normalized.append({"name": item["name"], "sha256": item["sha256"]})
-    if len({item["name"].lower() for item in normalized}) != len(normalized):
-      raise ValueError("Windows dependency receipt has duplicate additional runtime DLLs")
-    normalized_cohorts.append(sorted(normalized, key=lambda item: item["name"].lower()))
+    normalized_cohorts.append(_dll_inventory(files, "additional runtime"))
   identity["dependency_runtime"] = normalized_cohorts
   return identity
 
