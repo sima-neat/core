@@ -32,6 +32,7 @@ class DataflowInputPort;
 struct DataflowInputBinding;
 struct DataflowPushOutcome;
 struct DataflowPulledTensor;
+struct DataflowModelRoute;
 
 namespace dataflow_device {
 
@@ -48,6 +49,32 @@ namespace df = pipeline_internal::df;
 DataflowPushOutcome push(DataflowInputPort& port, std::span<const Tensor> item,
                          const Stamp& proposal, bool block, const char* where,
                          bool commit_allocation, std::int64_t pushed_seq, bool may_wrap);
+
+// H1: a push of one tensor into a model route whose frames change size (`route.frames`), which
+// dataflow_device::push hands every such push (DataflowFrameInput.cpp). The frame's geometry is
+// stated in the stamp's user word, which the route's stages and the pull read
+// (dataflow_frame_word); a frame the route cannot run is refused before anything is asked of the
+// Session. Then the device push as for any input: GStreamer's guard, the checks, the slot (the
+// frame's own DMA-BUF when it is in EV74 memory, whatever its size), the publish. An NV12 frame
+// goes to the port's own push of planes (DataflowInputPort::device_push_planes).
+DataflowPushOutcome push_frame(DataflowInputPort& port, const DataflowModelRoute& route,
+                               const Tensor& frame, const Stamp& proposal, bool block,
+                               const char* where, bool commit_allocation, std::int64_t pushed_seq,
+                               bool may_wrap);
+
+// H1, such a route's wrap (DataflowFrameInput.cpp), in wrap_tensor's place in its push: the
+// Block that backs a slot of the route's bounded Ev74 port with the DMA-BUF of the frame `t`,
+// whatever the frame's size up to the port's (dataflow_wrap_layout: dense, rows not padded). It
+// is wrap_tensor's Block for a tensor of the frame's own bytes (the same conditions on the
+// storage and on the alignment), with the CPU's address of its first byte, which the runtime
+// asks of a wrap into a bounded port: Core's own read-only mapping of the frame's bytes, found
+// again in `wraps` (make_frame_wraps: one per bound input) when the tensor is pushed again. Its
+// size is the frame's, which the push's extent is held against; nothing is copied, and nothing
+// is cleaned (an EV74 tensor's writer made its bytes visible when its map ended). The holder is
+// the mapping, which keeps the tensor's TensorBuffer.
+std::shared_ptr<void> make_frame_wraps();
+bool wrap_frame(const Tensor& t, std::size_t slot_bytes, std::uintptr_t align_mask, df::Block& out,
+                void* wraps);
 
 // Core's cross-Run rule (DataflowInputPort::enforce_transferable) for the tensors of one item,
 // asked of every push into a device input that skips the other checks for a device tensor of a

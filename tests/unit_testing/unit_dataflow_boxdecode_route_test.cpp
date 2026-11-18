@@ -26,13 +26,12 @@
 //   owned            OutputMemory::Owned: the same tensor over a CPU copy.
 //   held             a pulled wire kept while the Run produces more frames than it has output
 //                    buffers, and after the Run is closed, does not change.
-//   refused          a frame of another size than the Run was built for is refused at the push
-//                    with a text that says so, and the Run goes on.
+//   refused          with an Input that declares the frame's size, a frame of another size is
+//                    refused at the push with a text that says so, and the Run goes on.
 //   automatic        RunBackend::Auto with SIMA_NEAT_BACKEND=dataflow gives the same wire.
-//   declined         what stays off this backend at the build: a build that does not say the
-//                    frame's size, the route without the image preproc in front (the decode's
-//                    image geometry would come with each frame), and a standalone SimaBoxDecode
-//                    node in the place of Model::postprocess().
+//   declined         what stays off this backend at the build: the route without the image
+//                    preproc in front (the decode's image geometry would come with each frame),
+//                    and a standalone SimaBoxDecode node in the place of Model::postprocess().
 // On a board whose EV74 runs the stock firmware every row but `declined` is one check: the build
 // is refused, naming the firmware.
 
@@ -541,7 +540,19 @@ void held(const Model& model, const std::vector<TensorList>& inputs) {
 void refused(const Model& model, const std::vector<TensorList>& inputs) {
   const std::vector<Frame> expected =
       run_frames(model, inputs, on(RunBackend::Dataflow), 1, "refused");
-  Graph g = route_graph(model);
+  // The Input declares the frame's size: the route's kernels are made once, for that size (a
+  // seed alone fixes none since step Y4: unit_dataflow_frame_route_test).
+  InputOptions in;
+  in.payload_type = PayloadType::Image;
+  in.format = FormatTag::BGR;
+  in.width = kWidth;
+  in.height = kHeight;
+  Graph g;
+  g.add(nodes::Input(in));
+  g.add(model.preprocess());
+  g.add(model.inference());
+  g.add(model.postprocess());
+  g.add(output());
   Run run = g.build(inputs[0], on(RunBackend::Dataflow));
   bool threw = false;
   try {
@@ -572,17 +583,6 @@ void automatic(const Model& model, const std::vector<TensorList>& inputs) {
 
 void declined(const std::string& archive, const Model& model,
               const std::vector<TensorList>& inputs) {
-  try {
-    Graph g = route_graph(model);
-    (void)g.build(on(RunBackend::Dataflow));
-    throw std::runtime_error("declined: a build that does not say the frame's size built");
-  } catch (const NeatError& error) {
-    require(error.report().error_code == error_codes::kPipelineShape,
-            std::string("declined: a build error: ") + error.what());
-    require_contains(error.what(), "the frame's size is not known at the build",
-                     std::string("declined: ") + error.what());
-    std::cout << "[declined] no seed, no declaration: " << error.what() << "\n";
-  }
   // The MLA and BoxDecode without the image preproc: no stage fixes the image the boxes are
   // decoded for. The input is the MLA's tessellated INT8 tensor, as the MLA-only model takes it.
   Model::Options alone;

@@ -6,6 +6,7 @@
 #include "pipeline/runtime/DataflowInputBinding.h"
 
 #include "pipeline/internal/SampleProjection.h"
+#include "pipeline/runtime/DataflowModelRoute.h"
 
 #include <algorithm>
 #include <array>
@@ -634,6 +635,10 @@ void DataflowValidatedLeaf::remember(const Tensor& tensor, bool wrappable) {
 // A device port (H0b: memory Ev74 or Dms0) takes device memory only: the tensor's storage is a
 // GstSample's (a TensorMemory::EV74 or MLA tensor; dataflow_device::wrap_tensor checks that it is
 // one DMA-BUF of the port's kind), laid out by the same rule. A CPU tensor is copied into the slot.
+// A model route whose frames change size (H1: the binding's pulled tensor has the frames'
+// table) has a bounded device port that takes every frame as it is: a dense, contiguous frame
+// below the bound, held in memory of its own size, is wrapped too (the runtime's wrap shorter
+// than a bounded port's bound, storage/block.h).
 bool dataflow_wrap_layout(const DataflowInputBinding& binding, std::size_t slot_bytes,
                           const Tensor& t) {
   if (binding.is_record() || slot_bytes == 0U || !t.storage || t.byte_offset < 0 ||
@@ -647,6 +652,17 @@ bool dataflow_wrap_layout(const DataflowInputBinding& binding, std::size_t slot_
     return false;
   }
   const auto offset = static_cast<std::size_t>(t.byte_offset);
+  if (binding.pulled && binding.pulled->frames &&
+      binding.planes == DataflowInputBinding::Planes::None) {
+    if (!t.is_dense() || t.shape.empty() ||
+        !(t.strides_bytes.empty() || t.strides_bytes.size() == t.shape.size()) ||
+        !t.is_contiguous()) {
+      return false;
+    }
+    const std::size_t bytes = t.dense_bytes_tight();
+    return bytes != 0U && bytes <= slot_bytes && offset <= t.storage->size_bytes &&
+           t.storage->size_bytes - offset >= bytes;
+  }
   if (offset > t.storage->size_bytes || t.storage->size_bytes - offset < slot_bytes) {
     return false;
   }

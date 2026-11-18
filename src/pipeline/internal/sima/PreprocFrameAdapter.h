@@ -37,8 +37,10 @@ public:
   // geometry variant gives the Kernels package for such a frame (bind's cold path with no ROI
   // metadata and no video meta: the same input_specs, static_parameters, parameters and
   // prepare_publication), checked, with the facts published with every frame of it. `row_stride`
-  // is the frame's row pitch in bytes (a packed format only: one plane). Cold; opens no session
-  // and retains no frame or adapter state.
+  // is the frame's row pitch in bytes: of the one plane of a packed format, or of both planes of
+  // an NV12 frame whose chroma plane follows its luma plane at once (the frame as one buffer of
+  // row_stride x height x 3 / 2 bytes). Cold; opens no session and retains no frame or adapter
+  // state.
   struct FixedFrame {
     std::vector<rt::TensorSpec> inputs, outputs;
     std::vector<rt::Parameter> parameters;
@@ -48,6 +50,9 @@ public:
   static rt::Result<FixedFrame> checked_fixed_frame(std::shared_ptr<const CheckedPolicy>,
                                                     std::size_t width, std::size_t height,
                                                     std::size_t row_stride);
+  // The capacity envelope of the checked policy: the largest frame the stage takes (width,
+  // height), which input_specs holds every frame against.
+  static std::pair<std::size_t, std::size_t> checked_envelope(const CheckedPolicy&);
   // Check the complete initial image recipe before opening the graph's device.
   static rt::Result<std::shared_ptr<PreprocFrameAdapter>>
       check(std::shared_ptr<const ProcessCvuStagePayload>);

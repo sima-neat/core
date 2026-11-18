@@ -668,16 +668,28 @@ PreprocFrameAdapter::checked_fixed_frame(std::shared_ptr<const CheckedPolicy> po
     return invalid("preproc.policy", "checked immutable image policy is required");
   PreprocFrameAdapter adapter(std::move(policy));
   const auto& checked = *adapter.policy_;
-  if (planes(checked.envelope.format) != 1 || checked.image_publication ||
+  const bool nv12 = checked.envelope.format == GST_VIDEO_FORMAT_NV12;
+  if ((planes(checked.envelope.format) != 1 && !nv12) || checked.image_publication ||
       checked.prepared->image_transform)
-    return invalid("input.format", "a fixed frame request is one packed plane into one tensor");
+    return invalid("input.format",
+                   "a fixed frame request is one packed plane, or an NV12 frame, into one tensor");
   if (std::size_t(checked.prepared->batch_size) != checked.initial_geometry.batch)
     return invalid("input.batch", "a fixed frame request has no ROI capacity");
   auto described = describe_geometry(checked.initial_geometry, width, height);
   if (auto* error = std::get_if<Error>(&described))
     return *error;
   auto geometry = std::get<Geometry>(described);
-  if (row_stride != geometry.strides[0]) {
+  if (nv12) {
+    // bind's plane overrides for a frame held as one buffer: both planes at the luma's row
+    // pitch, the chroma plane behind the luma's rows.
+    if (height == 0 || (width & 1U) != 0U || (height & 1U) != 0U || row_stride < width ||
+        row_stride > SIZE_MAX / height / 2U)
+      return invalid("input.stride", "source row span is invalid");
+    geometry.strides[0] = geometry.strides[1] = row_stride;
+    geometry.offsets[0] = 0;
+    geometry.offsets[1] = row_stride * height;
+    geometry.frame_bytes = row_stride * height + row_stride * (height / 2U);
+  } else if (row_stride != geometry.strides[0]) {
     // bind's row pitch override.
     if (height == 0 || row_stride < width * channels(geometry.format) ||
         row_stride > SIZE_MAX / height)
@@ -713,6 +725,11 @@ PreprocFrameAdapter::checked_fixed_frame(std::shared_ptr<const CheckedPolicy> po
     return *error;
   frame.facts = std::get<Publication>(std::move(facts));
   return frame;
+}
+
+std::pair<std::size_t, std::size_t>
+PreprocFrameAdapter::checked_envelope(const CheckedPolicy& policy) {
+  return {policy.envelope.width, policy.envelope.height};
 }
 
 rt::Result<std::shared_ptr<PreprocFrameAdapter>>

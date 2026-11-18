@@ -307,6 +307,10 @@ push_as_stage_tensor(DataflowInputPort& port, const DataflowModelRoute& route,
                      std::span<const Tensor> item, const Stamp& proposal, bool block,
                      const char* where, bool commit_allocation, std::int64_t pushed_seq,
                      bool may_wrap) {
+  if (route.frames) {
+    return push_frame(port, route, item.front(), proposal, block, where, commit_allocation,
+                      pushed_seq, may_wrap);
+  }
   Tensor view;
   if (&dataflow_model_input_view(route, item.front(), view) != &view) {
     return std::nullopt;
@@ -437,7 +441,7 @@ Sample pulled_sample(const DataflowInputBinding& binding,
     if (pulled->beyond_leaf) [[unlikely]] {
       // Behind an image preproc, or several tensors in the stage's one buffer
       // (DataflowModelRoute.cpp, so that this unit's code for every other route is as it was).
-      fill_dataflow_stage_tensors(*pulled, storage, offset, nullptr, out.tensors);
+      fill_dataflow_stage_tensors(*pulled, storage, message, nullptr, out.tensors);
     } else {
       fill_stage_leaf(out.tensors.emplace_back(), *pulled, std::move(storage), offset);
     }
@@ -474,7 +478,7 @@ void pulled_tensors(const DataflowInputBinding& binding,
   out.clear();
   if (const DataflowPulledTensor* const pulled = binding.pulled) {
     if (pulled->beyond_leaf) [[unlikely]] {
-      fill_dataflow_stage_tensors(*pulled, storage, offset, envelope, out);
+      fill_dataflow_stage_tensors(*pulled, storage, message, envelope, out);
       return;
     }
     Tensor& leaf = out.emplace_back();

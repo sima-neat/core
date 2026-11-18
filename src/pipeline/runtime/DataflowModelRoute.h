@@ -19,24 +19,41 @@
 //     ProcessCvuRunTargetPolicy.cpp). A stage on the EV74 is taken only where the EV74 runs the
 //     Kernels firmware; on a board with the stock firmware the route is declined at the plan.
 //   - Model::preprocess() of a model whose pre stage is the image preproc (the Kernels package's
-//     "preproc", EV74 only: resize, colour, normalize, quantize and tessellate a packed RGB or BGR
-//     frame), alone or in front of the stages above. GStreamer runs it through a frame adapter
-//     that gives the kernel each frame's geometry; here it is one kernel at one frame size, the
-//     size the input has at the build (its seed, or its declaration), made from the same checked
-//     policy (PreprocFrameAdapter::checked_fixed_frame). A frame of another size is refused at
-//     the push; a build that does not say the size, an NV12 or other planar input, an image
-//     frontend and a batched (ROI) stage are declined at the plan and stay on GStreamer.
+//     "preproc", EV74 only: resize, colour, normalize, quantize and tessellate a packed RGB or
+//     BGR frame, or an NV12 one), alone or in front of the stages above. GStreamer runs it
+//     through a frame adapter that gives the kernel each frame's geometry; here the request for
+//     a frame size is made from the same checked policy (PreprocFrameAdapter::
+//     checked_fixed_frame), in one of two ways:
+//       - the Input declares the frame's size (InputOptions::shape with every axis fixed, or
+//         width and height): one kernel at that size, the port the frame. A frame of another
+//         size is refused at the push;
+//       - it does not: the port is bounded by the Input's capacity as GStreamer resolves it
+//         (InputOptions::max_width / max_height, else the seed's size; the stage's capacity
+//         envelope when the build says nothing, and never above it), the
+//         operator keeps a kernel per frame size (soc::KernelOp::Options::Variants) and every
+//         frame is run by its own (DataflowFrames, below). A packed frame in EV74 memory is
+//         wrapped whatever its size (the runtime takes a wrap shorter than a bounded port's
+//         bound). A frame above the bound is refused at the push, with GStreamer's capacity
+//         error below the envelope.
+//     An NV12 frame is one port of bytes, the two planes views of it at fixed offsets
+//     (soc::KernelOp::Options::Packing): a frame of the port's size, its chroma plane behind its
+//     luma plane, is wrapped; a smaller one is copied to those offsets. I420 and the other planar
+//     formats, an image frontend and a batched (ROI) stage are declined at the plan and stay on
+//     GStreamer; a frame with ROI metadata or an upstream stage's preprocess metadata is refused
+//     at the push.
 //   - Model::postprocess() of a detection model (BoxDecode) behind the MLA stage, at the route's
 //     end: the Kernels package's "boxdecode" on the A65 as one kernel operator whose inputs are
 //     the heads, views at their byte offsets of the MLA's one output buffer (one port, no join),
 //     and whose outputs (boxes, scores, classes, count) are views of one small buffer; behind it
 //     a Core operator on the Worker writes the BBOX wire from them with the stage's own
 //     serializer (BoxDecodePublication.cpp), which GStreamer runs as the stage's host task. The
-//     kernel is made once, for the frames the route's image preproc is planned for
+//     kernel is made for the frames the route's image preproc is planned for
 //     (boxdecode_request_for_frames: what GStreamer's per-frame resolver selects for such a
-//     frame). First version: YOLOv8 detection with C-blocked heads; the other decode families,
-//     pose, segmentation and oriented boxes, tiled heads (detess members) and a route without
-//     the image preproc in front are declined at the plan and stay on GStreamer.
+//     frame): once when the frame size is declared, otherwise one per frame size, selected by
+//     the stamp's user word (DataflowFrames). First version: YOLOv8 detection with C-blocked heads;
+//     the other decode families, pose, segmentation and oriented boxes, tiled heads (detess
+//     members) and a route without the image preproc in front are declined at the plan and stay on
+//     GStreamer.
 // Here: what the route's stages are, read from what Core compiles and lowers for the same nodes on
 // GStreamer (the rendered stage manifest and its checked kernel recipes), and what the input's
 // port does with them: load the model and make the kernels, check the input's binding against
@@ -73,6 +90,14 @@ namespace simaai::neat::runtime {
 
 struct DataflowInputBinding;
 
+// The frames of a route whose image preproc takes a size that changes between pushes: Core's
+// side table from the push to the stages and to the pull. The push states a frame's geometry in
+// its stamp's user word (dataflow_frame_word), which the runtime carries through every operator
+// untouched; the table, keyed by that word, holds what Core derives from the geometry: the
+// preproc and BoxDecode kernels for it and the preprocess facts the pull publishes. Defined in
+// DataflowModelRoute.cpp.
+struct DataflowFrames;
+
 // A tensor of a pulled message on a route whose Fetch does not carry the Feed's spec: a published
 // output of the last stage, a view of `size_bytes` at `byte_offset` of that stage's one output
 // buffer. The route's DataflowModelRoute::output is the stage's first published tensor; a stage
@@ -101,6 +126,10 @@ struct DataflowPulledTensor {
   std::optional<DetectionSpec> detection;
   /// `tess`, `preprocess` or `detection` is set: the pull calls apply_dataflow_frame_semantics.
   bool frame_semantics = false;
+  /// The route's frames have a size that changes between pushes: `preprocess` above is the
+  /// port's bound's, and the pull publishes each frame's own from this table by the pulled
+  /// message's stamp. The route owns it. Null: one frame size.
+  const DataflowFrames* frames = nullptr;
   /// The stage's further published tensors, in its logical order, each one a view at its own
   /// `byte_offset` of the same output buffer: the pull returns this tensor and then these, all
   /// over the one pulled message (one storage, which every one of them keeps alive). Without a
@@ -174,6 +203,16 @@ struct DataflowModelRoute {
   /// fixed at whatever its declaration's bounds allow; a pushed frame of another size, or with
   /// ROI metadata, is refused.
   bool frame_input = false;
+  /// `frame_input`, and the build declares no frame size: the frames' table. `frame_shape` is
+  /// then the port's bound ([1, max height, max width, channels]; an NV12 route: the byte port,
+  /// [bytes]) and `input_shape` is EMPTY, so that every push of one tensor leaves the device
+  /// push's fast path where it leaves it for a tensor without the stage's batch axis
+  /// (dataflow_device::push), and takes the frames' own push. Null: one frame size.
+  std::shared_ptr<DataflowFrames> frames;
+  std::vector<std::int64_t> frame_shape;
+  /// `frames`, and the frames are NV12: the port is one buffer of bytes with the planes at
+  /// fixed offsets, and a pushed frame is brought to it by dataflow_planar_frame.
+  bool planar_input = false;
   DataflowPulledTensor output;
   std::string text; ///< one line, for the [NEAT] trace and messages
 };
@@ -224,14 +263,17 @@ void apply_dataflow_frame_semantics(const DataflowPulledTensor& pulled, Tensor& 
 
 // The tensors of a pulled message on a route whose output is `pulled.beyond_leaf`, appended to
 // `out`: the stage's first published tensor and then each of `pulled.packed`, in the stage's
-// order, every one a view at its own byte offset of the same `storage` (the pulled message's
-// output buffer from `byte_offset`: its slot's DMA-BUF, or with OutputMemory::Owned one CPU copy
-// of it), with its frame semantics. The tensors share `storage`, and so the message: the slot
-// returns to its pool when the last of them, or of their copies, is dropped. `envelope` is the
-// list's one envelope (null in a Sample). The list is reserved once, for all of them.
+// order, every one a view at its own byte offset of the same `storage` (the output buffer of
+// the pulled `message`, from its first byte: a model route's last stage writes a slot of its
+// own pool, so its slot's DMA-BUF, or with OutputMemory::Owned one CPU copy of it), with its
+// frame semantics: the route's, and on a route whose frames change size (`pulled.frames`) the
+// preprocess facts of the frame the message's stamp names. The tensors share `storage`, and so
+// the message: the slot returns to its pool when the last of them, or of their copies, is
+// dropped. `envelope` is the list's one envelope (null in a Sample). The list is reserved once,
+// for all of them.
 void fill_dataflow_stage_tensors(const DataflowPulledTensor& pulled,
                                  const std::shared_ptr<TensorBuffer>& storage,
-                                 std::int64_t byte_offset,
+                                 const pipeline_internal::df::Message& message,
                                  const std::shared_ptr<const TensorEnvelope>& envelope,
                                  TensorList& out);
 
@@ -241,6 +283,29 @@ void fill_dataflow_stage_tensors(const DataflowPulledTensor& pulled,
 // to do instead; returns for anything else (the binding's own check says what is wrong with it).
 void refuse_dataflow_frame(const DataflowModelRoute& route, const Tensor& tensor,
                            const char* where);
+
+// A route whose frames change size (`route.frames`), before a push of `tensor`: the stamp's
+// user word that states the frame's geometry to the route's stages and to the pull. Throws
+// NeatError (misconfig.input_shape), each with what to do instead, for a frame the route cannot
+// run: one above the port's bound, of another format or layout than the route's frames, with
+// ROI metadata or an upstream stage's preprocess metadata, or one whose kernel request the
+// Kernels package refuses. So that nothing the Worker is later asked for can fail, the first
+// frame of a size makes that size's kernels here, on the pushing thread (cold: about a
+// millisecond); a frame of a size the table holds costs a compare. Never 0.
+std::uint64_t dataflow_frame_word(const DataflowModelRoute& route, const Tensor& tensor,
+                                  const char* where);
+
+// A route of NV12 frames (`route.planar_input`): whether `tensor` (a frame dataflow_frame_word
+// passed) is the port's bytes as it is: its size the port's, the luma plane at the tensor's
+// first byte, the chroma plane behind the luma's rows, rows not padded. Then the push backs the
+// slot with the tensor's own DMA-BUF; otherwise it copies the planes to the port's offsets
+// (copy_dataflow_planar_frame).
+bool dataflow_planar_frame_wraps(const DataflowModelRoute& route, const Tensor& tensor);
+
+// The planes of the NV12 `tensor`, rows tight, into `slot` (a slot of the route's byte port) at
+// the port's plane offsets. False when the tensor's planes cannot be read.
+bool copy_dataflow_planar_frame(const DataflowModelRoute& route, const Tensor& tensor,
+                                std::span<std::byte> slot);
 
 #pragma GCC visibility pop
 

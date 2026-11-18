@@ -845,6 +845,19 @@ if (SIMANEAT_DATAFLOW_SOURCE_DIR AND
   set_property(TEST unit_dataflow_boxdecode_route_test APPEND PROPERTY LABELS "unit;dataflow")
 endif()
 
+# Frames of a size that changes between pushes, and NV12 frames, on the Dataflow backend (H1,
+# step Y4): the routes of a detection model with the image preproc in front, against GStreamer
+# for the same pushes. Needs the EV74 on the Kernels firmware and a compiled YOLOv8 detection
+# package (--model-package, SIMA_TEST_BOXDECODE_MODEL_PACKAGE or SIMA_YOLO_TAR; it downloads
+# nothing), so it is a long test that skips without one.
+if (SIMANEAT_DATAFLOW_SOURCE_DIR AND
+    NOT unit_dataflow_frame_route_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  add_pipeline_test_long(unit_dataflow_frame_route_test
+    ${CMAKE_CURRENT_SOURCE_DIR}/unit_testing/unit_dataflow_frame_route_test.cpp)
+  set_tests_properties(unit_dataflow_frame_route_test PROPERTIES TIMEOUT 600)
+  set_property(TEST unit_dataflow_frame_route_test APPEND PROPERTY LABELS "unit;dataflow")
+endif()
+
 # The delivery-mode flag is cached; exercise the same contract in separate processes.
 if (TARGET unit_inputstream_idle_resume_test)
   set_tests_properties(unit_inputstream_idle_resume_test PROPERTIES

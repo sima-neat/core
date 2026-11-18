@@ -257,6 +257,11 @@ DataflowInputPort::Bound* DataflowInputPort::bind_locked(DataflowInputBinding bi
   if (config_.model && config_.model->kernel_input && !ev74_first) {
     b->cpu_wraps = dataflow_device::make_cpu_wraps();
   }
+  if (config_.model && config_.model->frames && !config_.model->planar_input) {
+    // In front of an image preproc whose frames change size the port is bounded, and the runtime
+    // takes a wrap into a bounded port only with the CPU's address of its bytes.
+    b->frame_wraps = dataflow_device::make_frame_wraps();
+  }
   if (const df::Status status = b->session.start()) {
     pipeline_internal::throw_dataflow_error(*status, "Graph::build");
   }

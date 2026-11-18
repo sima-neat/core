@@ -30,7 +30,7 @@
 //   refused          a frame of another size than the Run was built for, and a frame with ROI
 //                    metadata, fail their push with misconfig.input_shape and the Run goes on.
 //   declined         what stays off this backend at the build: a build that does not say the
-//                    frame's size and an NV12 input (explicit Dataflow fails); under
+//                    frame the stage reads and an I420 input (explicit Dataflow fails); under
 //                    RunBackend::Auto with SIMA_NEAT_BACKEND=dataflow a graph it declines (a
 //                    standalone BoxDecode node behind the model's stages) is GStreamer's.
 //   lifecycle        close_input drains what was pushed; Runs one after the other give the same
@@ -444,7 +444,14 @@ void input_contract(const Model& model) {
 void refused(const Model& model) {
   const std::vector<TensorList> inputs = frames_of(1280, 720);
   const std::vector<std::vector<std::uint8_t>> expected = outputs(model, inputs, nullptr, true);
-  Graph g = graph(model);
+  // The Input declares the frame's size: one kernel at that size (a seed alone fixes none since
+  // step Y4: unit_dataflow_frame_route_test).
+  InputOptions in;
+  in.payload_type = PayloadType::Image;
+  in.format = FormatTag::BGR;
+  in.width = 1280;
+  in.height = 720;
+  Graph g = graph(model, &in);
   Run run = g.build(inputs[0], on(RunBackend::Dataflow));
   const auto fails = [&](const TensorList& item, const char* text, const char* what) {
     try {
@@ -489,12 +496,15 @@ void declined(const Model& model, const std::string& archive) {
     }
     throw std::runtime_error(std::string("declined: ") + what + " built on the Dataflow backend");
   };
-  fails(graph(model), false, "the frame's size is not known at the build",
-        "no seed, no declaration");
   {
-    // The model told its frames are NV12 (two planes): whatever the seed, the stage is declined.
+    // The model told its frames are I420 (three planes): whatever the seed, the stage is
+    // declined. (NV12 frames, and a build that does not say the frame's size, run since step
+    // Y4: unit_dataflow_frame_route_test.)
+    const Model i420(archive, model_options(PreprocessColorFormat::I420));
+    fails(graph(i420), true, "only packed RGB and BGR frames and NV12 frames", "an I420 input");
+    // An NV12 model with a packed seed: the seed is not a frame the stage reads.
     const Model nv12(archive, model_options(PreprocessColorFormat::NV12));
-    fails(graph(nv12), true, "only packed RGB and BGR frames", "an NV12 input");
+    fails(graph(nv12), true, "the seed is not an NV12 frame", "a BGR seed for an NV12 model");
   }
   {
     // A seed that is not a packed three-channel frame.
