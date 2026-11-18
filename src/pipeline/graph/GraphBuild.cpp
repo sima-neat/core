@@ -52,6 +52,7 @@
 #include "builder/OutputSpec.h"
 #include "pipeline/Tensor.h"
 #include "nodes/io/Input.h"
+#include "nodes/io/StillImageInput.h"
 #include "nodes/sima/Preproc.h"
 #include "nodes/common/Output.h"
 
@@ -3576,6 +3577,12 @@ static bool has_input_role(const std::vector<std::shared_ptr<Node>>& nodes, Inpu
 
 void enforce_source_run_mode(const std::vector<std::shared_ptr<Node>>& nodes,
                              const std::string& where) {
+  for (const auto& node : nodes) {
+    if (dynamic_cast<const StillImageInput*>(node.get())) {
+      throw_session_error_simple(error_codes::kPipelineShape,
+                                 where + ": StillImageInput requires Graph::run_rtsp().");
+    }
+  }
   if (has_input_role(nodes, InputRole::Push)) {
     throw_session_error_simple(error_codes::kPipelineShape,
                                where + ": Input is present; use run(input) for push pipelines.");

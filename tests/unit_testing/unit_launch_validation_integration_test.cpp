@@ -133,6 +133,18 @@ RUN_TEST(
             ("neat_rtsp_name_collision_" + std::to_string(::getpid()) + ".jpg");
         require(cv::imwrite(image_path.string(), input), "failed to create RTSP image fixture");
 
+        Graph source;
+        source.add(nodes::StillImageInput(image_path.string(), 8, 8, 8, 8, 5));
+        source.add(nodes::Output("out"));
+        try {
+          (void)source.build();
+          throw std::runtime_error("ordinary build accepted an RTSP-only still image");
+        } catch (const NeatError& error) {
+          require(error.report().error_code == error_codes::kPipelineShape,
+                  "still-image build should report the pipeline shape");
+          require_contains(error.what(), "Graph::run_rtsp()", "still-image run guidance");
+        }
+
         Graph graph;
         graph.add(nodes::StillImageInput(image_path.string(), 8, 8, 8, 8, 5));
         graph.custom("identity name=rtsp_h264_capsfix ! rtph264pay name=pay0");

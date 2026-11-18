@@ -4299,7 +4299,8 @@ NB_MODULE(_pyneat_core, m) {
             simaai::neat::StillImageInput::FramesPerSecond{fps});
       },
       "image_path"_a, "content_width"_a, "content_height"_a, "encode_width"_a, "encode_height"_a,
-      "fps"_a = 30);
+      "fps"_a = 30,
+      "Load a still image for Graph.run_rtsp() to stream at the configured frame rate.");
   // SimaRender (S6): render bbox overlays onto a frame — the render stage UdpOutputGroupG needs, so
   // binding it here keeps the overlay→UDP power reachable while that group stays deferred.
   nodes_mod.def("sima_render", &simaai::neat::nodes::SimaRender,
