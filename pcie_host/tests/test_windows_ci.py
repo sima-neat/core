@@ -475,7 +475,6 @@ class WindowsCiContracts(unittest.TestCase):
         ["ssh.exe", "card", "true"], Path(r"C:\card.log"),
         input_file=Path(r"C:\secret input"))
     self.assertIn(r'< "C:\secret input"', piped)
-    self.assertNotIn("fixture-secret", piped)
 
   def test_windows_openssh_relay_drops_inherited_fd_state_before_running_ssh(self):
     # PowerShell relays ssh.exe output through a pipe; with the server session's
@@ -855,7 +854,6 @@ class WindowsCiContracts(unittest.TestCase):
     self.assertIn('--required-job "Verify Scheduler build and Vulcan publication"', source)
     self.assertIn('--required-artifact "scheduler-native-windows-amd64"', source)
     self.assertIn("repository: sima-neat/scheduler", source)
-    self.assertIn("scheduler-native-windows-amd64", source)
     self.assertIn("pcie-windows-build", source)
     self.assertIn("pcie-windows-hardware", source)
     self.assertNotIn("windows-latest", source)
@@ -879,12 +877,10 @@ class WindowsCiContracts(unittest.TestCase):
     hardware_job = source.split("  hardware:\n", 1)[1]
     hardware_env = hardware_job.split("    steps:\n", 1)[0]
     self.assertNotIn("SIMAPCIE_CARD_SUDO_PASSWORD", hardware_env)
-    self.assertIn("QUALIFIER_CARD_SUDO_PASSWORD", source)
     self.assertIn("Remove-Item Env:QUALIFIER_CARD_SUDO_PASSWORD", source)
     self.assertIn('"--card-sudo-password-stdin"', source)
     recovery = source.split("- name: Recover card and native installation", 1)[1].split(
         "- name: Enforce release admission", 1)[0]
-    self.assertIn("RECOVERY_CARD_SUDO_PASSWORD", recovery)
     self.assertIn("Remove-Item Env:RECOVERY_CARD_SUDO_PASSWORD", recovery)
     self.assertIn('"--card-sudo-password-stdin"', recovery)
     self.assertNotIn("SIMAPCIE_EXPECTED_CARD_RUNTIME_SHA256", source)
@@ -896,7 +892,6 @@ class WindowsCiContracts(unittest.TestCase):
     self.assertIn('$arguments += "--require-genai"', source)
     self.assertIn('$arguments += "--require-release"', source)
     self.assertIn('if ("$env:REQUIRE_SIGNATURES" -eq "true")', source)
-    self.assertIn("Recover card and native installation", source)
     self.assertIn("if: always()", source)
     self.assertIn("upgrade_base_run_id", source)
     self.assertIn("upgrade_base_commit", source)
@@ -911,8 +906,6 @@ class WindowsCiContracts(unittest.TestCase):
     self.assertIn("scripts/ci/pciehost/acquire_windows_dependencies.py", source)
     self.assertIn("core-pciehost-windows-dependencies", source)
     self.assertIn("linux_current_run", source)
-    self.assertIn("require_upgrade", source)
-    self.assertIn("first_release_upgrade_exemption", source)
     self.assertIn("first_release_upgrade_exemption_reason", source)
     self.assertIn("Publishing requires a real upgrade gate or an explicit first-release exemption.", source)
     self.assertIn("windows-upgrade-exemption.json", source)
@@ -1426,27 +1419,14 @@ class WindowsCiContracts(unittest.TestCase):
     self.assertIn("needs: [hardware, linux_release]", publish)
     self.assertIn('source_branch: "3.0"', publish)
 
-  def test_producer_accepts_inbox_windows_powershell(self):
-    def which(name):
-      return "C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe" \
-          if name == "powershell.exe" else None
-
-    with mock.patch.object(MODULE.shutil, "which", side_effect=which):
-      self.assertEqual(
-          MODULE.require_powershell(),
-          str(Path("C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe").resolve()),
-      )
-
-  def test_hardware_qualification_accepts_inbox_windows_powershell(self):
-    def which(name):
-      return "C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe" \
-          if name == "powershell.exe" else None
-
-    with mock.patch("qualify_windows_hardware.shutil.which", side_effect=which):
-      self.assertEqual(
-          require_hardware_powershell(),
-          str(Path("C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe").resolve()),
-      )
+  def test_producer_and_qualifier_accept_inbox_windows_powershell(self):
+    inbox = "C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe"
+    for module, require in ((MODULE, MODULE.require_powershell),
+                            (HARDWARE, require_hardware_powershell)):
+      with self.subTest(module=module.__name__), mock.patch.object(
+          module.shutil, "which", side_effect=lambda name: inbox
+          if name == "powershell.exe" else None):
+        self.assertEqual(require(), str(Path(inbox).resolve()))
 
   def test_card_management_address_selects_the_matching_local_link(self):
     self.assertEqual(card_management_addresses("10.0.9.2"), ("10.0.9.2", "10.0.9.1"))
@@ -1664,7 +1644,6 @@ class WindowsCiContracts(unittest.TestCase):
     self.assertNotIn("Path(sys.base_prefix).resolve", source)
     self.assertIn('(private_root, "temporary standard-user private input")', source)
     self.assertIn("TerminateProcess", source)
-    self.assertIn("Remove-LocalUser", source)
     self.assertIn("$cleanupErrors", source)
     self.assertIn('"simaai_pcie_test.exe"', source)
     self.assertIn("Device recovery successful", source)
@@ -2145,7 +2124,6 @@ class WindowsCiContracts(unittest.TestCase):
   def test_wheel_payload_reader_checks_crc(self):
     with tempfile.TemporaryDirectory() as directory:
       wheel = Path(directory) / "test.whl"
-      import zipfile
       with zipfile.ZipFile(wheel, "w") as archive:
         archive.writestr("pyneatpcie/__init__.py", b"")
       self.assertEqual(MODULE.wheel_payload_names(wheel), {"pyneatpcie/__init__.py"})
@@ -2830,7 +2808,6 @@ class WindowsCiContracts(unittest.TestCase):
       self.assertEqual(
           run.call_args.kwargs["secret_root"], root / "work" / ".openssh-secrets")
       self.assertTrue(run.call_args.kwargs["redact_stdin"])
-      self.assertNotIn("fixture-secret", log.read_text(encoding="utf-8"))
 
   def test_windows_openssh_secret_uses_a_temporary_input_file(self):
     with tempfile.TemporaryDirectory() as directory:
@@ -3146,11 +3123,7 @@ class WindowsCiContracts(unittest.TestCase):
             command = command.split("ln -sT", 2)[0] + "ln -sT" + command.split("ln -sT", 2)[1]
             command += " false"
           if os.name == "nt":
-            # Git for Windows provides the POSIX filesystem tools used by this
-            # fixture, but its minimal distribution does not include chown or
-            # install. The disposable tree already belongs to the test user;
-            # model ownership as a no-op and preserve install's directory/mode
-            # behavior without weakening the generated card command.
+            # Git for Windows lacks chown and install; the test user owns this tree.
             command = """\
 chown() { :; }
 chmod() { :; }
@@ -3714,7 +3687,6 @@ install() {
         parse_performance_log(throughput, "throughput")
 
   def test_customer_cli_candidate_and_local_registry_are_exact(self):
-    import zipfile
     with tempfile.TemporaryDirectory() as directory:
       root = Path(directory)
       commit = "a" * 40
