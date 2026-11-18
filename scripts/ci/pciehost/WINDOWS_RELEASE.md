@@ -89,6 +89,24 @@ has passed its Linux build, DevKit, and PCIe-card gates. The Windows lane:
    the lane is enabled its success is required before Core can advance its
    branch `latest` tag.
 
+The producer, `scripts/ci/pciehost/build_windows.py`, verifies every Scheduler
+resource against its published metadata and requires the Scheduler MSI's
+`ProductVersion` to equal its metadata `package-version`. It builds Core and the
+Python extension, runs the non-hardware CTest suite, verifies that every
+generated PE file is x64, tests a relocated CMake consumer, installs and repeats
+the ordered Scheduler-to-Core MSI cohort, imports the wheel from a fresh virtual
+environment using only the pinned wheelhouse, and fails if cleanup leaves the
+shared installation root behind.
+
+The hardware qualifier serves the candidate from disposable loopback registries
+and runs the documented `sima-cli neat install` command for a native-only
+install, a missing-wheel download failure, a checksum-valid but invalid wheel
+after native installation, managed-environment recovery with the real wheel,
+and a repeated install. It records the Windows version, elevation, Smart App
+Control, effective AppLocker visibility and driver-signing policy (Secure Boot,
+boot test-signing and integrity-check options, WDAC and HVCI enforcement)
+without changing policy, and removes Python, Core and Scheduler in reverse order.
+
 This is the normal validation path. It does not require maintainers to copy workflow
 run IDs between repositories. Scheduler follows Core's branch/snap policy;
 sima-cli resolves from its supported `main` channel.
@@ -235,8 +253,8 @@ candidate, repeats repair, plug-in discovery, API, fault-recovery, and cleanup,
 and retains evidence for both cohorts.
 
 Set `require_signatures=true` in Scheduler and Core only when delivery policy
-requires Authenticode. The optional gate requires the certificate, timestamp
-service, complete Scheduler/Core signature receipts, and accepted Platform DLL
+requires Authenticode. The optional gate requires the certificate, RFC 3161
+timestamp service, complete Scheduler/Core signature receipts, and accepted Platform DLL
 signatures. Signing is additional provenance; it does not replace tests.
 
 Wheel installation failure deliberately preserves successful native MSI work so

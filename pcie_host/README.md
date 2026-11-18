@@ -479,105 +479,10 @@ The Platform driver, host DLLs and daemon remain a separate Platform prerequisit
 
 ### Windows package CI
 
-The Windows producer is `.github/workflows/pcie-host-windows.yml`. Normal Core CI
-uses the same Scheduler policy as Linux: it tries the current Core branch, falls
-back to `develop` only when the published branch index proves the branch is
-absent, resolves the branch's immutable revision once, and verifies the publisher
-manifest and resource hashes. It resolves and records an immutable published
-sima-cli candidate from the supported `main` channel in the same way. Explicit
-workflow run IDs are available only
-for qualifying unpublished Scheduler or sima-cli candidates. The restricted
-`pcie-windows-build` runner supplies the supported MSVC, WiX v3,
-GStreamer, Platform runtime, CMake dependencies and a pinned Python dependency
-wheelhouse.
-
-`scripts/ci/pciehost/build_windows.py` verifies every Scheduler resource against
-its published metadata, reads the Scheduler MSI's `UpgradeCode` and
-`ProductVersion` (which must equal its metadata `package-version`) for the Core
-MSI's Scheduler launch condition, installs that MSI, builds Core and the Python
-extension, runs the non-hardware CTest suite, and verifies all generated PE files
-are x64.
-Before building, it requires its Platform runtime DLL hashes and GStreamer
-identity to match Scheduler's retained dependency receipt.
-It then tests a relocated CMake consumer, creates the Core MSI and wheel, installs
-the exact Core MSI, builds an installed consumer, loads the genuine Scheduler
-plug-in, repeats the ordered Scheduler-to-Core MSI installation, and imports the
-wheel from a fresh virtual environment using only the pinned wheelhouse. Cleanup
-removes the wheel, Core MSI and Scheduler MSI and fails if their shared
-installation root remains. The retained dependency receipt hashes the Platform
-runtime DLLs and records the GStreamer and CMake dependency inputs used by Core.
-
-The retained `core-pciehost-windows-amd64` artifact is the complete ordered
-cohort: Scheduler MSI, Core MSI, optional `pyneatpcie` wheel, C++ hardware test
-extras, checksum metadata, producer receipts and installer logs. A separate
-`pcie-windows-hardware` Windows 11 runner consumes those exact bytes locally. It
-holds matching runner/card locks and admits the exact same-commit Linux Core
-artifact. Inside those locks it privately stages that artifact's firmware and
-tensor and GenAI workers, installs the exact published `sima-cli` candidate
-recorded in the dependency cohort, exposes the release through disposable loopback
-registries, and exercises native-only install, a missing-wheel download failure,
-a checksum-valid but invalid-wheel pip failure after native installation,
-automatic managed-environment recovery with the real wheel, and a repeated
-matching install through the documented `sima-cli neat install` command. It
-deletes and repairs one Core-owned and one Scheduler-owned file through
-Windows Installer, records the Windows version, elevation, Smart App Control,
-effective AppLocker visibility, and driver-signing policy (Secure Boot, boot
-test-signing and integrity-check options, WDAC and HVCI enforcement) without
-changing policy, rechecks plugin discovery,
-rejects a Platform runtime or GStreamer dependency that differs from the producer,
-and then runs the public C++ and Python
-vision suites, kills a card worker and a local client in separate bounded fault
-tests, proves the affected queue can be reopened after each failure, and removes
-Python, Core and Scheduler in reverse order. It restores the stock card firmware
-and removes the private Linux payload before releasing either lock. Latency and
-throughput logs are converted to structured positive, finite measurements in the
-retained evidence. The Windows lane uses the same 100-frame warmup, 3,000-frame
-measurement, 12 ms maximum mean latency, and 440 FPS minimum throughput gates as
-the Linux PCIe lane. Native CTest and Python JUnit receipts must contain the exact
-expected case sets with zero skips, failures, or errors. Release admission
-requires the same resource checksums, no remaining card worker, and a clean
-install root. A standalone validation may omit GenAI for a shorter diagnostic
-run. Customer publication requires the complete C++ and Python GenAI matrix. In
-the normal path the Windows lane is called by Core's main
-Vulcan workflow after the same-revision Linux build, DevKit, and PCIe-card gates;
-the Windows lane consumes that run's exact card payload and runs validation-only.
-Windows qualification success is required before Core advances its branch
-`latest` tag, so Linux regressions and dependency validation cannot be bypassed.
-Vulcan CI runs this lane only when the repository variable
-`ENABLE_WINDOWS_PCIE_CI` is `true` and Vulcan CI is not called by another
-workflow; otherwise the lane is skipped and does not gate `latest`.
-Windows packages are published only by a standalone `pcie-host-windows.yml`
-dispatch from `develop` or a `v*` tag, which must identify a prior successful
-Linux run for the same Core commit.
-
-Formal release qualification sets `require_upgrade=true` and selects an earlier
-successful Core Windows workflow by run ID and full commit.
-The hardware runner installs that cohort first through the same `sima-cli`
-command, then installs the release candidate over it. The two cohorts must have
-increasing Core package versions and different package bytes. This cross-version
-test is not repeated for every branch promotion, matching Linux policy; repeat
-install, repair, failure recovery, and clean removal remain mandatory on every
-Windows publishing run. Only the first Windows PCIe release may proceed without
-that prior-release baseline, and only when the publishing workflow explicitly
-sets `first_release_upgrade_exemption=true` with a non-empty
-`first_release_upgrade_exemption_reason`. CI retains that exemption as an
-admission receipt; leaving both selectors unset cannot publish.
-
-The hardware runner's pinned offline wheelhouse must contain the dependencies
-of both `pyneatpcie` and the selected `sima-cli` wheel. This keeps the acceptance
-transaction independent of PyPI while still exercising the real customer CLI.
-The maintainer sequence, runner inputs, workflow commands, retained evidence,
-and recovery procedure are documented in
-[`scripts/ci/pciehost/WINDOWS_RELEASE.md`](../scripts/ci/pciehost/WINDOWS_RELEASE.md).
-
-Checksums, immutable publisher manifests, exact producer commits, and hardware
-qualification are mandatory. Authenticode is an optional policy gate: when
-`require_signatures=true`, Scheduler and Core sign their shipped EXE, DLL, PYD,
-and MSI files with a runner-provisioned certificate and RFC 3161 timestamp, and
-CI verifies the signature receipts plus the separately supplied Platform runtime
-DLL signatures. Unsigned Neat user-space packages may be published when company
-policy permits them; the installer never bypasses Windows application-control
-policy. Platform owns signing of its driver and other Platform deliverables.
+Vulcan CI runs the Windows lane only when the repository variable
+`ENABLE_WINDOWS_PCIE_CI` is `true`. The Windows producer, hardware
+qualification, publishing and recovery procedure are documented for maintainers
+in [`scripts/ci/pciehost/WINDOWS_RELEASE.md`](../scripts/ci/pciehost/WINDOWS_RELEASE.md).
 
 `build.sh` follows the Scheduler policy in Core's `deps/manifest.json`, in the
 `production` publication environment by default. Branch `snap` first tries
