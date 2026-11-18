@@ -1646,6 +1646,10 @@ class WindowsCiContracts(unittest.TestCase):
     self.assertIn('["--min-throughput-fps", "440"]', source)
     self.assertIn('"--warmup", "100", "--iterations", "3000"', source)
     self.assertIn('command.append("--terminate-on-pull-timeout")', source)
+    self.assertIn('if returncode != 1 or "pull timed out; terminating the fault-injection client"',
+                  source)
+    self.assertIn("pull timed out; terminating the fault-injection client",
+                  (ROOT / "pcie_host/tests/hardware/test_queue_blocker.cpp").read_text())
     self.assertIn('evidence / "client-process-death-worker-cleanup.log"', source)
     self.assertIn('evidence / "client-process-death-platform-recovery.log"', source)
     self.assertIn('evidence / "client-process-death-card-readiness.log"', source)

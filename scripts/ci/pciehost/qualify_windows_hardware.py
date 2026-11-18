@@ -2087,7 +2087,7 @@ def run_fault_recovery_tests(args: argparse.Namespace, test_root: Path, evidence
       raise
     return process, stream, log
 
-  process, stream, _ = launch(
+  process, stream, log = launch(
       "test_worker_loss_recovery", terminate_on_pull_timeout=True)
   try:
     remote = (
@@ -2107,6 +2107,10 @@ def run_fault_recovery_tests(args: argparse.Namespace, test_root: Path, evidence
       process.kill()
       process.wait(timeout=30)
     stream.close()
+  # Only the bounded pull timeout proves recovery; any other exit may be a crash.
+  if returncode != 1 or "pull timed out; terminating the fault-injection client" not in \
+      log.read_text(encoding="utf-8", errors="replace"):
+    raise RuntimeError(f"client did not exit through its pull timeout after worker loss; see {log}")
   wait_for_no_card_workers(args, evidence / "card-worker-loss-drain.log", 120)
   run_logged(
       [recovery, "--sync-iterations", "1", "--iterations", "0"],
