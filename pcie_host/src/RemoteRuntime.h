@@ -65,14 +65,14 @@ public:
   static bool start_failure_cleanup_safe(int exit_code, bool timed_out);
   static std::string child_cleanup_shell_function();
   static std::string detached_child_redirections();
+  std::vector<std::string> ssh_base() const;
+  std::vector<std::string> scp_base() const;
 
 private:
   ConnectionOptions connection_;
 
   std::string run_dir() const;
   std::string log_dir() const;
-  std::vector<std::string> ssh_base() const;
-  std::vector<std::string> scp_base() const;
   void run_or_throw(const std::vector<std::string>& args, int timeout_sec,
                     const std::string& context) const;
 };

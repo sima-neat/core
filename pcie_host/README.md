@@ -157,6 +157,10 @@ PCIe model APIs use passwordless SSH. If `~/.ssh/sima_neat_pcie_ed25519` exists,
 the PCIe host automatically passes it to `ssh`/`scp`; otherwise it falls back to
 the user's normal SSH configuration.
 
+Model `ssh`/`scp` calls use `StrictHostKeyChecking=yes`, so the card host key
+must already be in `known_hosts`. Earlier releases accepted an unknown key on
+first use; run `pcie-setup.sh` (`pcie-setup.cmd` on Windows) once to record it.
+
 ### ConnectionOptions
 
 Configures SSH/SCP access to the card.

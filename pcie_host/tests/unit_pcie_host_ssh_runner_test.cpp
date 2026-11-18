@@ -9,6 +9,7 @@
 #include <stdexcept>
 #include <string_view>
 #include <thread>
+#include <vector>
 
 #ifdef _WIN32
 #include <fstream>
@@ -254,6 +255,22 @@ void test_remote_runtime_paths() {
   require(rejected, "relative remote runtime path was accepted");
 }
 
+bool has_ssh_option(const std::vector<std::string>& command, const std::string& option) {
+  for (std::size_t index = 1; index < command.size(); ++index) {
+    if (command[index - 1] == "-o" && command[index] == option) {
+      return true;
+    }
+  }
+  return false;
+}
+
+void test_remote_transport_requires_known_host_keys() {
+  const pcie_internal::RemoteRuntime runtime(simaai::neat::pcie::ConnectionOptions{});
+  require(has_ssh_option(runtime.ssh_base(), "StrictHostKeyChecking=yes") &&
+              has_ssh_option(runtime.scp_base(), "StrictHostKeyChecking=yes"),
+          "tensor ssh and scp must refuse an unknown card host key");
+}
+
 } // namespace
 
 int main(const int argc, char** argv) {
@@ -351,6 +368,7 @@ int main(const int argc, char** argv) {
     test_detached_child_redirections();
     test_start_failure_cleanup_classification();
     test_remote_runtime_paths();
+    test_remote_transport_requires_known_host_keys();
     std::cout << "[PASS] ssh runner\n";
     return 0;
   } catch (const std::exception& e) {
