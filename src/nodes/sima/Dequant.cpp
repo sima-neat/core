@@ -5,6 +5,7 @@
 #include "pipeline/internal/contract/CompiledNodeContractQuery.h"
 #include "model/internal/ModelInternal.h"
 #include "model/internal/ModelPack.h"
+#include "pipeline/internal/sima/StaticSpecBuilders.h"
 #include "pipeline/internal/sima/stagesemantics/DequantStageSemantics.h"
 #include "pipeline/internal/sima/stagesemantics/ProcessCvuStageSemantics.h"
 
@@ -109,9 +110,15 @@ bool Dequant::compile_node_contract(const ContractCompileInput& compile_input,
     }
     auto compiled =
         pipeline_internal::sima::stagesemantics::build_dequant_compiled_contract_from_facts(facts);
-    if (const auto* upstream =
-            compiled_runtime_contract_from_stage(compile_input.immediate_upstream);
-        upstream && !upstream->logical_outputs.empty()) {
+    const auto* upstream = compiled_runtime_contract_from_stage(compile_input.immediate_upstream);
+    CompiledRuntimeContract ingress;
+    if (!upstream && compile_input.ingress.ingress_sample) {
+      if (!pipeline_internal::sima::specbuilders::build_dense_ingress_runtime_contract(
+              *compile_input.ingress.ingress_sample, &ingress, err))
+        return false;
+      upstream = &ingress;
+    }
+    if (upstream && !upstream->logical_outputs.empty()) {
       compiled =
           pipeline_internal::sima::stagesemantics::build_dequant_compiled_contract_from_upstream(
               *upstream, facts, err);

@@ -4149,7 +4149,8 @@ NB_MODULE(_pyneat_core, m) {
           .def_rw("element_name", &simaai::neat::DequantOptions::element_name)
           .def_rw("stage_id", &simaai::neat::DequantOptions::stage_id)
           .def_rw("model_managed", &simaai::neat::DequantOptions::model_managed)
-          .def_rw("q_scale", &simaai::neat::DequantOptions::q_scale)
+          .def_rw("q_scale", &simaai::neat::DequantOptions::q_scale,
+                  "Positive quantization multiplier. FP32 output is (INT8 input - q_zp) / q_scale.")
           .def_rw("q_zp", &simaai::neat::DequantOptions::q_zp)
           .def_rw("num_buffers", &simaai::neat::DequantOptions::num_buffers)
           .def_rw("num_buffers_model", &simaai::neat::DequantOptions::num_buffers_model)
