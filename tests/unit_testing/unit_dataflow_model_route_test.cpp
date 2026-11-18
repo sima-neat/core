@@ -38,6 +38,11 @@
 //                    GStreamer's guard message; a tensor of another dtype or size is refused.
 //   reuse            what applications do with their input tensors: one tensor rewritten in place
 //                    between pushes; a new tensor for every frame (300 of them).
+//   held             what the Run keeps alive of pushed tensors the application let go of: of 96
+//                    new tensors pushed once each, never more than the first operator's bound
+//                    (sixteen of the input's size, the runtime's held_buffers) and one in flight;
+//                    all of them gone once the Run is closed. Under the default placement and
+//                    with both kernel stages on the A65.
 //   lifecycle        a pull before any push times out; try_push; close_input drains what was
 //                    pushed and then closes; a push after it is refused; stop twice.
 //   in_flight        a Run destroyed with frames queued, in the kernels and on the MLA; then a
@@ -57,8 +62,8 @@
 //                    field and every byte of 64 frames against GStreamer's with both stages on
 //                    the A65; then, under each placement, the rows input_contract (a
 //                    TensorMemory::MLA tensor in front of a kernel on the EV74 is copied, with
-//                    the output of the same bytes in EV74 memory), reuse, lifecycle, in_flight,
-//                    recreate, owned, alloc and policies.
+//                    the output of the same bytes in EV74 memory), reuse, held, lifecycle,
+//                    in_flight, recreate, owned, alloc and policies.
 
 #include "model/Model.h"
 #include "nodes/common/Output.h"
@@ -81,6 +86,7 @@
 #include <fstream>
 #include <functional>
 #include <iostream>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -676,6 +682,42 @@ void reuse(const Route& route) {
   run.close();
 }
 
+// ---- held --------------------------------------------------------------------------------------
+
+// The Run wraps a pushed device tensor and its first operator keeps the wrap's holder, which is
+// the tensor's storage, with the device's admission of it. That memory is the EV74's or the MLA's
+// heap, so what a Run keeps of tensors the application dropped is bounded in bytes: here, sixteen
+// tensors of the model's input.
+void held(const Route& route) {
+  constexpr int kFrames = 96;
+  constexpr std::size_t kKeep = 16;
+  Graph g = route.graph(route.input());
+  Run run = g.build({route.tensor(0)}, on(RunBackend::Dataflow));
+  std::vector<std::weak_ptr<TensorBuffer>> pushed;
+  std::size_t most = 0;
+  std::size_t last = 0;
+  for (int i = 0; i < kFrames; ++i) {
+    {
+      Tensor tensor = route.tensor(static_cast<unsigned>(i % kPatterns));
+      pushed.emplace_back(tensor.storage);
+      require(run.push({tensor}), "held: push a new tensor");
+    }
+    (void)pull_ok(run, "held");
+    last = static_cast<std::size_t>(std::count_if(
+        pushed.begin(), pushed.end(), [](const auto& storage) { return !storage.expired(); }));
+    most = std::max(most, last);
+  }
+  std::cout << "[held] " << kFrames << " new tensors of " << route.elements * sizeof(float)
+            << " bytes pushed once each: at most " << most << " kept alive at once ("
+            << most * route.elements * sizeof(float) << " bytes), " << last << " after the last\n";
+  require(most <= kKeep + 1U, "held: the Run keeps at most sixteen pushed tensors and the one in "
+                              "flight alive");
+  run.close();
+  const auto alive = std::count_if(pushed.begin(), pushed.end(),
+                                   [](const auto& storage) { return !storage.expired(); });
+  require(alive == 0, "held: a closed Run keeps no pushed tensor alive");
+}
+
 // ---- lifecycle ---------------------------------------------------------------------------------
 
 void lifecycle(const Route& route) {
@@ -975,6 +1017,7 @@ void on_ev74(const Route& route, bool ev74) {
     placement() = p.options;
     input_contract(route);
     reuse(route);
+    held(route);
     lifecycle(route);
     in_flight(route);
     recreate(route);
@@ -1032,6 +1075,7 @@ int main(int argc, char** argv) {
     row("partial", [&] { partial(route, archive); });
     row("input_contract", [&] { input_contract(route); });
     row("reuse", [&] { reuse(route); });
+    row("held", [&] { held(route); });
     row("lifecycle", [&] { lifecycle(route); });
     row("in_flight", [&] { in_flight(route); });
     row("recreate", [&] { recreate(route); });
