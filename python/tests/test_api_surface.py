@@ -1340,6 +1340,14 @@ def test_invalid_preproc_contract_has_error_code(field, value, reason):
   assert error.value.error_code == "misconfig.option_out_of_range"
 
 
+def test_model_managed_preproc_requires_input_contract():
+  options = pyneat.PreprocOptions()
+  options.model_managed_contract = True
+  with pytest.raises(pyneat.NeatError, match="input contract") as error:
+    pyneat.nodes.preproc(options)
+  assert error.value.error_code == "misconfig.option_out_of_range"
+
+
 def test_incompatible_decoder_is_rejected_at_model_load():
   options = pyneat.ModelOptions()
   options.decode_type = pyneat.BoxDecodeType.Detr

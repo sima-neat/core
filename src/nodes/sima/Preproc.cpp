@@ -503,14 +503,14 @@ Preproc::Preproc(PreprocOptions opt) : opt_(std::move(opt)) {
   }
 
   if (!opt_.has_input_shape() || opt_.input_img_type.empty()) {
-    throw std::runtime_error("Preproc: invalid model-managed input contract");
+    contracts::throw_invalid_option("Preproc: invalid model-managed input contract");
   }
   if (!opt_.has_output_shape() || opt_.scaled_width <= 0 || opt_.scaled_height <= 0) {
-    throw std::runtime_error(
+    contracts::throw_invalid_option(
         "Preproc: model-managed preproc requires explicit output/scaled geometry.");
   }
   if (opt_.output_dtype.empty()) {
-    throw std::runtime_error("Preproc: model-managed preproc requires explicit output_dtype.");
+    contracts::throw_invalid_option("Preproc: model-managed preproc requires explicit output_dtype.");
   }
   if (opt_.input_channels() <= 0) {
     opt_.set_input_shape(compact_shape(
@@ -526,7 +526,7 @@ Preproc::Preproc(PreprocOptions opt) : opt_(std::move(opt)) {
   }
   if (opt_.tessellate) {
     if (!opt_.has_slice_shape()) {
-      throw std::runtime_error("Preproc: tessellate=true requires explicit slice_shape.");
+      contracts::throw_invalid_option("Preproc: tessellate=true requires explicit slice_shape.");
     }
   } else if (tile_geometry_present(opt_)) {
     warn_preproc_option("tile geometry was provided while tessellate=false; it will be ignored.");
