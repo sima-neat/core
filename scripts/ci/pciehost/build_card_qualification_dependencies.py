@@ -4,8 +4,6 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
-import json
 import os
 from pathlib import Path
 import re
@@ -14,6 +12,7 @@ import subprocess
 import tempfile
 
 from sdk_build_identity import validate_identity
+from windows_candidate import sha256, write_json
 
 
 LIBRARY_DIRECTORY = Path("usr/lib/aarch64-linux-gnu")
@@ -26,19 +25,6 @@ REQUIRED_LIBRARIES = (
 )
 IMAGE_IDENTITY = re.compile(
     r"(?:[a-z0-9][a-z0-9._/-]*@)?sha256:[0-9a-f]{64}")
-
-
-def sha256(path: Path) -> str:
-  digest = hashlib.sha256()
-  with path.open("rb") as source:
-    for chunk in iter(lambda: source.read(1024 * 1024), b""):
-      digest.update(chunk)
-  return digest.hexdigest()
-
-
-def write_json(path: Path, value: object) -> None:
-  path.write_text(
-      json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
 def image_digest(identity: str) -> str:

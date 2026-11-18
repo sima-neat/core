@@ -22,7 +22,8 @@ import sys
 import tempfile
 import zipfile
 
-from windows_candidate import dependency_identity, require_junit_cases, validate_candidate
+from windows_candidate import (
+    dependency_identity, require_junit_cases, sha256, validate_candidate, write_json)
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -36,18 +37,6 @@ ROLLBACK_FIXTURE_PRODUCT_CODE = "{5C5FB61E-7355-4B72-87FD-5FDD4CC2715B}"
 ROLLBACK_FIXTURE_REGISTRY_KEY = r"Software\SiMa.ai\NeatPcieRollbackFixture"
 ROLLBACK_FIXTURE_OBSERVATION = (
     "SiMaNeatMsiRollbackObserved-5C5FB61E-7355-4B72-87FD-5FDD4CC2715B.txt")
-
-
-def sha256(path: Path) -> str:
-  digest = hashlib.sha256()
-  with path.open("rb") as source:
-    for chunk in iter(lambda: source.read(1024 * 1024), b""):
-      digest.update(chunk)
-  return digest.hexdigest()
-
-
-def write_json(path: Path, value: object) -> None:
-  path.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
 def run(command: list[object], *, env: dict[str, str] | None = None,

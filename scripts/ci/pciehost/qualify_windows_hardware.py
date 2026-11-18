@@ -33,7 +33,8 @@ import time
 import zipfile
 
 from windows_candidate import (
-    dependency_identity, msi_version, require_junit_cases, sha256, validate_candidate)
+    dependency_identity, msi_version, require_junit_cases, sha256, validate_candidate,
+    write_json)
 from windows_hardware_assets import asset_manifest_sha256, verify_asset_manifest
 
 
@@ -133,10 +134,6 @@ def validate_card_candidate(directory: Path, expected_commit: str) -> CardCandid
   if not packages:
     raise ValueError("card candidate contains no Debian runtime packages")
   return CardCandidate(root, metadata, tuple(sorted(packages)), dict(resources))
-
-
-def write_json(path: Path, value: object) -> None:
-  path.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
 def require_windows() -> None:

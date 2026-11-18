@@ -10,18 +10,9 @@ from pathlib import Path
 from pathlib import PureWindowsPath
 import re
 
+from windows_candidate import _read_json as read_object
 from windows_candidate import dependency_identity, msi_version, sha256, validate_candidate
 from windows_hardware_assets import asset_manifest_sha256, read_asset_manifest
-
-
-def read_object(path: Path, description: str) -> dict:
-  try:
-    value = json.loads(path.read_text(encoding="utf-8"))
-  except (OSError, json.JSONDecodeError) as error:
-    raise ValueError(f"invalid {description}: {path}: {error}") from error
-  if not isinstance(value, dict):
-    raise ValueError(f"{description} must be a JSON object")
-  return value
 
 
 def verify_signature_receipt(receipt: dict, description: str,

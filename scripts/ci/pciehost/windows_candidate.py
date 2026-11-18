@@ -33,6 +33,10 @@ def sha256(path: Path) -> str:
   return digest.hexdigest()
 
 
+def write_json(path: Path, value: object) -> None:
+  path.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
 def msi_version(value: object) -> tuple[int, int, int]:
   match = re.fullmatch(r"([0-9]+)[.]([0-9]+)[.]([0-9]+)", str(value))
   if not match:
