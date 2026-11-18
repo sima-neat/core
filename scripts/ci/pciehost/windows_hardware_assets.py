@@ -35,10 +35,7 @@ def _object_without_duplicate_keys(pairs: list[tuple[str, object]]) -> dict:
 
 
 def _read_manifest(path: Path) -> dict:
-  try:
-    status = _absolute_non_link_status(path, "hardware asset manifest")
-  except OSError as error:
-    raise ValueError(f"hardware asset manifest is unavailable: {path}: {error}") from error
+  status = _available_status(path, "hardware asset manifest")
   if not stat.S_ISREG(status.st_mode):
     raise ValueError(f"hardware asset manifest is not a regular file: {path}")
   try:
@@ -205,6 +202,13 @@ def _absolute_non_link_status(path: Path, description: str) -> os.stat_result:
   return status
 
 
+def _available_status(path: Path, description: str) -> os.stat_result:
+  try:
+    return _absolute_non_link_status(path, description)
+  except OSError as error:
+    raise ValueError(f"{description} is unavailable: {path}: {error}") from error
+
+
 def _stable_file_identity(path: Path, status: os.stat_result, description: str) -> dict:
   flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0)
   try:
@@ -234,20 +238,14 @@ def _stable_file_identity(path: Path, status: os.stat_result, description: str) 
 
 
 def _regular_file_identity(path: Path, description: str) -> dict:
-  try:
-    status = _absolute_non_link_status(path, description)
-  except OSError as error:
-    raise ValueError(f"{description} is unavailable: {path}: {error}") from error
+  status = _available_status(path, description)
   if not stat.S_ISREG(status.st_mode):
     raise ValueError(f"{description} must be a regular non-link file: {path}")
   return {"kind": "file", **_stable_file_identity(path, status, description)}
 
 
 def _directory_file_inventory(root: Path, description: str) -> list[dict]:
-  try:
-    root_status = _absolute_non_link_status(root, description)
-  except OSError as error:
-    raise ValueError(f"{description} is unavailable: {root}: {error}") from error
+  root_status = _available_status(root, description)
   if not stat.S_ISDIR(root_status.st_mode):
     raise ValueError(f"{description} must be a regular non-link directory: {root}")
 

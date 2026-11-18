@@ -19,20 +19,21 @@ from qualify_windows_hardware import (
 from windows_candidate import validate_candidate
 
 
-def stale_lock_pid(path: Path) -> int | None:
+def _lock_field(path: Path, pattern: str) -> str | None:
   try:
-    match = re.search(r"\bpid=(\d+)\b", path.read_text(encoding="utf-8"))
-  except OSError:
-    return None
-  return int(match.group(1)) if match else None
-
-
-def stale_lock_remote_token(path: Path) -> str | None:
-  try:
-    match = re.search(r"\bremote_token=([0-9a-f]{32})\b", path.read_text(encoding="utf-8"))
+    match = re.search(pattern, path.read_text(encoding="utf-8"))
   except OSError:
     return None
   return match.group(1) if match else None
+
+
+def stale_lock_pid(path: Path) -> int | None:
+  pid = _lock_field(path, r"\bpid=(\d+)\b")
+  return int(pid) if pid else None
+
+
+def stale_lock_remote_token(path: Path) -> str | None:
+  return _lock_field(path, r"\bremote_token=([0-9a-f]{32})\b")
 
 
 def process_is_running(pid: int) -> bool:
@@ -160,9 +161,8 @@ def cleanup(args: argparse.Namespace) -> None:
     results["lock"] = "retained for operator recovery"
   else:
     try:
-      if remote_token is not None:
-        remote_lock.release(evidence / "recovery-card-lock-release.log")
-        results["remote_lock"] = "released"
+      remote_lock.release(evidence / "recovery-card-lock-release.log")
+      results["remote_lock"] = "released"
       recover_stale_lock(args.lock_file.resolve())
       results["lock"] = "released"
     except BaseException as error:

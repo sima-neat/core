@@ -830,10 +830,7 @@ def isolated_sima_cli_environment(customer_home: Path, wheelhouse: Path,
       "SIMA_CLI_HOME": str(home / ".sima-cli"),
       "USERPROFILE": str(home),
   })
-  # SkillManager honors CODEX_HOME/CLAUDE_HOME and stores its registry beneath
-  # SIMA_CLI_HOME. Since all three are descendants of the removed work tree,
-  # final work-tree removal proves the qualifier leaves no customer-skill or
-  # sima-cli receipt state in the runner's real profile.
+  # Skill and sima-cli state live under the work tree, so its removal proves none remains.
   return environment
 
 
@@ -1432,30 +1429,23 @@ def _validate_remote_path(path: str) -> str:
   return path
 
 
-def ssh_command(args: argparse.Namespace, remote: str) -> list[str]:
+def _openssh_options(args: argparse.Namespace) -> list[str]:
   return [
-      "ssh.exe",
       "-i", str(args.ssh_key.resolve(strict=True)),
       "-o", "BatchMode=yes",
       "-o", "IdentitiesOnly=yes",
       "-o", "StrictHostKeyChecking=yes",
       "-o", "ConnectTimeout=10",
-      f"{args.card_user}@{args.card_host}",
-      remote,
   ]
+
+
+def ssh_command(args: argparse.Namespace, remote: str) -> list[str]:
+  return ["ssh.exe", *_openssh_options(args), f"{args.card_user}@{args.card_host}", remote]
 
 
 def scp_command(args: argparse.Namespace, sources: tuple[Path, ...], destination: str) -> list[str]:
-  return [
-      "scp.exe",
-      "-i", str(args.ssh_key.resolve(strict=True)),
-      "-o", "BatchMode=yes",
-      "-o", "IdentitiesOnly=yes",
-      "-o", "StrictHostKeyChecking=yes",
-      "-o", "ConnectTimeout=10",
-      *(str(path) for path in sources),
-      f"{args.card_user}@{args.card_host}:{destination}",
-  ]
+  return ["scp.exe", *_openssh_options(args), *(str(path) for path in sources),
+          f"{args.card_user}@{args.card_host}:{destination}"]
 
 
 def card_candidate_paths(token: str) -> dict[str, str]:
@@ -2942,7 +2932,6 @@ def qualify(args: argparse.Namespace) -> None:
                 msi, evidence / f"upgrade-base-{owner}-msi-uninstall.log")
           except BaseException as error:
             cleanup_errors.append(str(error))
-      shutil.rmtree(venv, ignore_errors=True)
       if install_root.exists():
         cleanup_errors.append(f"cohort left files after removal: {install_root}")
       try:
