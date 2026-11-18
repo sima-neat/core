@@ -1358,7 +1358,7 @@ void write_model_fragments_json(std::ostream& oss,
 }
 
 // Node wrapper used for load() when only the fragment is available.
-class ConfiguredNode final : public Node {
+class ConfiguredNode final : public Node, public SerializedElementNames {
 public:
   ConfiguredNode(std::string kind, std::string label, std::string fragment,
                  std::vector<std::string> elements)
@@ -1763,6 +1763,10 @@ Graph Graph::load(const std::string& path) {
         node = std::make_shared<ConfiguredNode>(kind, label, fragment, std::move(elements));
       }
 
+      if (auto* saved = dynamic_cast<SerializedElementNames*>(node.get());
+          saved && object_field(nobj, "elements")) {
+        saved->applied_name_transform = make_name_transform(graph.opt_);
+      }
       graph.composition_->append_unlinked_pipeline_vertex(node, "Graph::load");
       graph.groups_.push_back(Graph::GroupMeta{
           .start = idx,

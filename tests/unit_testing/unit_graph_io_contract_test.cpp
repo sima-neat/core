@@ -124,18 +124,21 @@ RUN_TEST(
       Graph stream_source("stream_source", naming);
       stream_source.add(nodes::Input("image"));
       stream_source.custom("identity name=step");
+      stream_source.custom("identity name=camera_step");
       stream_source.add(nodes::Output("frame", OutputOptions::EveryFrame(7)));
+      const auto original_backend = stream_source.describe_backend(false);
+      require_contains(original_backend, "name=camera_step2_view", "raw element name");
+      require_contains(original_backend, "name=camera_camera_step2_view", "distinct prefixed name");
       const auto linear_path = tmp_json_path("linear_endpoints.json");
       stream_source.save(linear_path);
       auto loaded_source = Graph::load(linear_path);
       require(loaded_source.inputs() == stream_source.inputs() &&
                   loaded_source.outputs() == stream_source.outputs(),
               "linear graph round trip must preserve public endpoints");
-      require(loaded_source.describe_backend(false) == stream_source.describe_backend(false),
+      require(loaded_source.describe_backend(false) == original_backend,
               "linear graph round trip must preserve element names and endpoint options");
       loaded_source.save(linear_path);
-      require(Graph::load(linear_path).describe_backend(false) ==
-                  stream_source.describe_backend(false),
+      require(Graph::load(linear_path).describe_backend(false) == original_backend,
               "repeated graph round trips must preserve element names");
       Graph stream_sink("stream_sink");
       stream_sink.add(nodes::Input("frame"));
