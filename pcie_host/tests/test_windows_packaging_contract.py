@@ -111,8 +111,10 @@ class WindowsPackagingContract(unittest.TestCase):
     self.assertIn("SIMA_WINDOWS_PLATFORM_RUNTIME_DIR", environment)
     self.assertIn('findstr.exe /C:"BINARY_PATH_NAME"', environment)
     self.assertNotIn('findstr.exe /B /C:"        BINARY_PATH_NAME"', environment)
-    self.assertIn('do for %%J in ("%%~I") do set "SIMA_WINDOWS_PLATFORM_RUNTIME_DIR=%%~dpJ"',
-                  environment)
+    # A Platform path with spaces is one quoted item after "BINARY_PATH_NAME :".
+    self.assertIn('for /f "tokens=2,*" %%I in', environment)
+    self.assertIn('do for %%K in (%%J) do if not defined SIMA_WINDOWS_PLATFORM_RUNTIME_DIR '
+                  'set "SIMA_WINDOWS_PLATFORM_RUNTIME_DIR=%%~dpK"', environment)
     self.assertNotIn("_SIMAPCIE_PLATFORM_EXE", environment)
     self.assertIn("GSTREAMER_ROOT_X86_64", environment)
     self.assertIn("CMAKE_PREFIX_PATH", environment)

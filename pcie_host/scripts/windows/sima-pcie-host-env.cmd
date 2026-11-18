@@ -16,7 +16,7 @@ if not exist "%GSTREAMER_ROOT_X86_64%\bin\gstreamer-1.0-0.dll" (
 if not defined SIMA_WINDOWS_PLATFORM_RUNTIME_DIR (
   rem Do not depend on sc.exe's indentation; it differs between Windows builds.
   rem Expand for-loop variables directly; percent variables are expanded before this block runs.
-  for /f "tokens=3" %%I in ('sc.exe qc SiMaMlaDaemon 2^>nul ^| findstr.exe /C:"BINARY_PATH_NAME"') do for %%J in ("%%~I") do set "SIMA_WINDOWS_PLATFORM_RUNTIME_DIR=%%~dpJ"
+  for /f "tokens=2,*" %%I in ('sc.exe qc SiMaMlaDaemon 2^>nul ^| findstr.exe /C:"BINARY_PATH_NAME"') do for %%K in (%%J) do if not defined SIMA_WINDOWS_PLATFORM_RUNTIME_DIR set "SIMA_WINDOWS_PLATFORM_RUNTIME_DIR=%%~dpK"
 )
 if not exist "%SIMA_WINDOWS_PLATFORM_RUNTIME_DIR%\SiMaPCIe.dll" (
   1>&2 echo Neat PCIe host: the SiMa Platform runtime was not found at "%SIMA_WINDOWS_PLATFORM_RUNTIME_DIR%".
