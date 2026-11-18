@@ -663,7 +663,7 @@ jobs:
 
   build-pcie-card-qualification-dependencies:
     name: Build private PCIe card qualification dependencies
-    if: ${{ !inputs.offline_source_run_id && (inputs.build_mode || 'standard') == 'standard' && needs.detect-changes.outputs.docs_only != 'true' && needs.build.result == 'success' }}
+    if: ${{ vars.ENABLE_WINDOWS_PCIE_CI == 'true' && github.workflow == 'Vulcan CI' && !inputs.offline_source_run_id && (inputs.build_mode || 'standard') == 'standard' && needs.detect-changes.outputs.docs_only != 'true' && needs.build.result == 'success' }}
     needs:
       - resolve-vulcan-config
       - detect-changes
@@ -2473,7 +2473,7 @@ jobs:
           results = json.loads(os.environ['RESULTS'])
           skipped = {'publish-vulcan-artifacts', 'publish-pciehost-package', 'promote-latest-tag'}
           if os.environ['WINDOWS_PCIE_CI'] != 'true':
-              skipped.add('test-pciehost-windows')
+              skipped |= {'build-pcie-card-qualification-dependencies', 'test-pciehost-windows'}
           bad = {name: value['result'] for name, value in results.items()
                  if value['result'] != ('skipped' if name in skipped else 'success')}
           if bad:

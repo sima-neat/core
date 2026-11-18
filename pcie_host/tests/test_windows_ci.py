@@ -915,6 +915,9 @@ class WindowsCiContracts(unittest.TestCase):
                 "build-pcie-card-qualification-dependencies", "build-pciehost-packages",
                 "test-devkit", "publish-pciehost-package"):
               context[f"needs.{upstream}.result"] = "success"
+            self.assertEqual(evaluate_actions_expression(
+                condition("build-pcie-card-qualification-dependencies"), context),
+                variable == "true")
             runs = evaluate_actions_expression(condition("test-pciehost-windows"), context)
             self.assertEqual(runs, variable == "true" and hardware == "success")
             context["needs.test-pciehost-windows.result"] = outcome if runs else "skipped"
@@ -929,6 +932,8 @@ class WindowsCiContracts(unittest.TestCase):
               results[name]["result"] = "skipped"
             results["test-pciehost-windows"]["result"] = context[
                 "needs.test-pciehost-windows.result"]
+            if variable != "true":
+              results["build-pcie-card-qualification-dependencies"]["result"] = "skipped"
             environment = {
                 "RESULTS": json.dumps(results), "BUILD_MODE": "standard",
                 "WINDOWS_PCIE_CI": str(evaluate_actions_expression(gate_flag, context)).lower(),
@@ -979,8 +984,8 @@ class WindowsCiContracts(unittest.TestCase):
             "test-devkit", "test-pciehost-hardware", "publish-pciehost-package"):
           context[f"needs.{upstream}.result"] = "success"
         called = workflow_name != "Vulcan CI"
-        self.assertEqual(
-            evaluate_actions_expression(condition("test-pciehost-windows"), context), not called)
+        for gated in ("build-pcie-card-qualification-dependencies", "test-pciehost-windows"):
+          self.assertEqual(evaluate_actions_expression(condition(gated), context), not called)
         context["needs.test-pciehost-windows.result"] = "skipped"
         self.assertEqual(
             evaluate_actions_expression(condition("promote-latest-tag"), context), called)
