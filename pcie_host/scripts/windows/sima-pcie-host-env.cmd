@@ -1,6 +1,5 @@
 @echo off
-rem Configure the current cmd.exe process for the installed Neat PCIe host SDK.
-rem This script does not modify machine or user environment variables.
+rem Configure only this cmd.exe process for the installed Neat PCIe host SDK.
 
 for %%I in ("%~dp0..") do set "SIMA_PCIE_HOST_ROOT=%%~fI"
 
@@ -14,8 +13,7 @@ if not exist "%GSTREAMER_ROOT_X86_64%\bin\gstreamer-1.0-0.dll" (
 )
 
 if not defined SIMA_WINDOWS_PLATFORM_RUNTIME_DIR (
-  rem Do not depend on sc.exe's indentation; it differs between Windows builds.
-  rem Expand for-loop variables directly; percent variables are expanded before this block runs.
+  rem sc.exe indentation varies by Windows build; the path may be quoted and contain spaces.
   for /f "tokens=2,*" %%I in ('sc.exe qc SiMaMlaDaemon 2^>nul ^| findstr.exe /C:"BINARY_PATH_NAME"') do for %%K in (%%J) do if not defined SIMA_WINDOWS_PLATFORM_RUNTIME_DIR set "SIMA_WINDOWS_PLATFORM_RUNTIME_DIR=%%~dpK"
 )
 if not exist "%SIMA_WINDOWS_PLATFORM_RUNTIME_DIR%\SiMaPCIe.dll" (

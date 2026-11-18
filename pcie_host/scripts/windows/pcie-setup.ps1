@@ -195,9 +195,7 @@ $Key = [System.IO.Path]::GetFullPath($Key)
 $sshDirectory = Split-Path -Parent $Key
 $publicKeyPath = "$Key.pub"
 $knownHostsPath = Join-Path $sshDirectory "known_hosts"
-# OpenSSH splits -o values at whitespace, so a profile such as C:\Users\Jane Doe
-# would name two files. It expands ${VAR} after splitting, so pass the path
-# through the environment instead.
+# OpenSSH splits -o values at spaces before expanding ${VAR}, so pass the path that way.
 $env:SIMA_NEAT_PCIE_KNOWN_HOSTS = $knownHostsPath
 $knownHostsOption = 'UserKnownHostsFile=${SIMA_NEAT_PCIE_KNOWN_HOSTS}'
 
@@ -263,9 +261,7 @@ foreach ($cardHost in $targets) {
     $ErrorActionPreference = $savedErrorPreference
   }
   if ($findExitCode -ne 0) {
-    # Windows ssh-keyscan can hang against the card SSH server. Use OpenSSH's
-    # bounded trust-on-first-use path instead. This may fail authentication;
-    # its purpose is to record a first-seen host key while rejecting changes.
+    # ssh-keyscan can hang here; a bounded accept-new login records the first-seen key.
     $bootstrapResult = Invoke-BoundedCommand -Executable $ssh -Arguments @(
       "-i", $Key, "-p", "$Port", "-o", "BatchMode=yes",
       "-o", "ConnectTimeout=5", "-o", "StrictHostKeyChecking=accept-new",
@@ -307,9 +303,8 @@ foreach ($cardHost in $targets) {
   }
 
   $publicKey = (Get-Content -LiteralPath $publicKeyPath -Raw).Trim()
-  # Only the key travels on stdin; PowerShell may end it with CRLF. The script is
-  # the remote command, so it must not contain double quotes (Windows PowerShell
-  # does not escape them in native arguments).
+  # Only the key (maybe CRLF-terminated) travels on stdin. Windows PowerShell does not
+  # escape double quotes in native arguments, so the remote script must not use them.
   $remoteScript = @'
 umask 077
 mkdir -p ~/.ssh && cd ~/.ssh && touch authorized_keys || exit 1
