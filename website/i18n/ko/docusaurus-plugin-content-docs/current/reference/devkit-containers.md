@@ -48,7 +48,7 @@ DevKit에 Docker를 설정할지 물으면 `y`로 응답하십시오. 질문을 
 
 직접 관리하는 DevKit에서는 다른 `dk container` 명령도 Docker가 없을 때 설치를 제안합니다.
 
-### DevKit에서 수동으로 설치 {#install-manual}
+### DevKit에서 수동 설치 {#install-manual}
 
 Palette SDK 없이 직접 관리하는 DevKit에 Docker를 새로 설치할 때 이 방법을 사용하십시오. 관리자 액세스가 필요합니다. 기존 설치가 있다면 설정을 보존하고 SDK 설정 경로를 사용하십시오. 아래 모든 명령은 SSH 또는 시리얼 콘솔을 통해 DevKit에서 실행합니다. `sudo`가 비밀번호를 묻습니다. 단계가 실패하면 중지하고 문제 해결 전에 9단계에 따라 패키지 미러를 복원하십시오. 다음 단계로 진행하지 마십시오.
 

@@ -39,8 +39,8 @@ Use the prerequisites for the selected example and platform version.
 
 ## Install Docker on the DevKit {#install}
 
-On a personally administered DevKit, install Docker from the Palette SDK or by
-hand. On an administrator-managed DevKit, ask the administrator to enable Docker;
+On a personally administered DevKit, install Docker from the Palette SDK or
+manually. On an administrator-managed DevKit, ask the administrator to enable Docker;
 use `dk container` with the provided service instead of installing or replacing
 Docker yourself. A fresh installation using either method below will:
 
@@ -75,7 +75,7 @@ SDK-managed installation is interrupted, run the command again; it resumes.
 On personally administered DevKits, other `dk container` commands also offer
 to install Docker when it is missing.
 
-### By Hand on the DevKit {#install-manual}
+### Manual Installation on the DevKit {#install-manual}
 
 Use this method for a fresh Docker installation on a personally administered
 DevKit without the Palette SDK. It requires administrator access. For an existing
@@ -272,7 +272,7 @@ docker image prune -a
 | Message | Fix |
 | --- | --- |
 | `The local container registry is not configured for this SDK shell.` | Run `sima-cli sdk setup --devkit {devkit-ip}` on the host, answer `y` to the container registry question, then open a new SDK shell. |
-| `Docker installation requires passwordless sudo` | On a personally administered DevKit, pair again with `sima-cli sdk setup --devkit {devkit-ip}`, or install Docker [by hand](#install-manual). On an administrator-managed DevKit, ask the administrator to enable Docker. |
+| `Docker installation requires passwordless sudo` | On a personally administered DevKit, pair again with `sima-cli sdk setup --devkit {devkit-ip}`, or install Docker [manually](#install-manual). On an administrator-managed DevKit, ask the administrator to enable Docker. |
 | `Image ... is for amd64, not ARM64.` | Rebuild the image with `docker buildx build --platform linux/arm64 ... --push`. |
 | `Image ... is not available on the DevKit.` | Use `dk container deploy` or `dk container pull` to download it first. |
 | `permission denied while trying to connect to the Docker daemon socket` on the DevKit | Log out and log in again after Docker setup, so that your user is in the `docker` group. |
