@@ -80,11 +80,11 @@ to install Docker when it is missing.
 Use the SDK's standalone installer when the Palette SDK is not available. On a
 personally administered ARM64 Modalix DevKit, you need Internet access and a user
 account with sudo access. Through SSH or the serial console, download the
-installer from the pinned SDK revision below and run it as your normal user:
+installer from the SDK repository and run it as your normal user:
 
 <ShellCommand prompt="devkit">
 curl --fail --location --output install-devkit-docker.sh \
-  https://raw.githubusercontent.com/sima-neat/sdk/73c284873a2cbea70a688f9aa90f0b9b34be54e0/scripts/devkit-container-remote.sh
+  https://raw.githubusercontent.com/sima-neat/sdk/main/scripts/install-devkit-docker.sh
 bash install-devkit-docker.sh install
 </ShellCommand>
 

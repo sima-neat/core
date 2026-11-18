@@ -50,11 +50,11 @@ dk container setup
 
 ### 在 DevKit 上手動安裝 {#install-manual}
 
-無法使用 Palette SDK 時，請使用 SDK 的獨立安裝程式。在自行管理的 ARM64 Modalix DevKit 上，您需要網際網路連線，以及具備 sudo 存取權的使用者帳戶。透過 SSH 或序列主控台，從下方固定的 SDK 修訂版本下載安裝程式，並以一般使用者身分執行：
+無法使用 Palette SDK 時，請使用 SDK 的獨立安裝程式。在自行管理的 ARM64 Modalix DevKit 上，您需要網際網路連線，以及具備 sudo 存取權的使用者帳戶。透過 SSH 或序列主控台，從 SDK 儲存庫下載安裝程式，並以一般使用者身分執行：
 
 <ShellCommand prompt="devkit">
 curl --fail --location --output install-devkit-docker.sh \
-  https://raw.githubusercontent.com/sima-neat/sdk/73c284873a2cbea70a688f9aa90f0b9b34be54e0/scripts/devkit-container-remote.sh
+  https://raw.githubusercontent.com/sima-neat/sdk/main/scripts/install-devkit-docker.sh
 bash install-devkit-docker.sh install
 </ShellCommand>
 

@@ -48,11 +48,11 @@ DevKit に Docker を設定するかどうか尋ねられたら、`y` と答え�
 
 ### DevKit 上での手動インストール {#install-manual}
 
-Palette SDK を利用できない場合は、SDK のスタンドアロンインストーラーを使用します。個人で管理する ARM64 Modalix DevKit では、インターネット接続と sudo を使用できるユーザーアカウントが必要です。SSH またはシリアルコンソールから、以下の固定された SDK リビジョンのインストーラーをダウンロードし、通常のユーザーとして実行します。
+Palette SDK を利用できない場合は、SDK のスタンドアロンインストーラーを使用します。個人で管理する ARM64 Modalix DevKit では、インターネット接続と sudo を使用できるユーザーアカウントが必要です。SSH またはシリアルコンソールから、SDK リポジトリのインストーラーをダウンロードし、通常のユーザーとして実行します。
 
 <ShellCommand prompt="devkit">
 curl --fail --location --output install-devkit-docker.sh \
-  https://raw.githubusercontent.com/sima-neat/sdk/73c284873a2cbea70a688f9aa90f0b9b34be54e0/scripts/devkit-container-remote.sh
+  https://raw.githubusercontent.com/sima-neat/sdk/main/scripts/install-devkit-docker.sh
 bash install-devkit-docker.sh install
 </ShellCommand>
 
