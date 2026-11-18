@@ -2726,31 +2726,28 @@ def qualify(args: argparse.Namespace) -> None:
           customer_home, wheelhouse, work)
       native_download_root = work / "native customer downloads with spaces"
       target = "core/pciehost/windows/amd64@3.0"
+
+      def sima_cli_install(registry_url, download_root, log, *options, run=run_logged):
+        return run(
+            [cli, "neat", "--base-url", registry_url, "install", target,
+             "--install-dir", download_root, *options],
+            evidence / log, env=cli_environment, cwd=work, timeout=1800)
+
       if upgrade_base is not None:
         upgrade_registry_root = work / "upgrade baseline registry with spaces"
         stage_local_registry(upgrade_base, upgrade_registry_root)
         with local_registry(upgrade_registry_root) as registry_url:
-          upgrade_base_command = [
-              cli, "neat", "--base-url", registry_url, "install", target,
-              "--install-dir", native_download_root,
-          ]
-          run_logged(
-              upgrade_base_command, evidence / "sima-cli-upgrade-baseline-install.log",
-              env=cli_environment, cwd=work, timeout=1800)
+          sima_cli_install(
+              registry_url, native_download_root, "sima-cli-upgrade-baseline-install.log")
         if not install_root.is_dir():
           raise RuntimeError("sima-cli installed no native upgrade baseline")
 
       native_registry_root = work / "native only registry with spaces"
       stage_local_registry(candidate, native_registry_root)
       with local_registry(native_registry_root) as registry_url:
-        native_command = [
-            cli, "neat", "--base-url", registry_url, "install", target,
-            "--install-dir", native_download_root,
-            "--native-only",
-        ]
-        run_logged(
-            native_command, evidence / "sima-cli-native-only-install.log",
-            env=cli_environment, cwd=work, timeout=1800)
+        sima_cli_install(
+            registry_url, native_download_root, "sima-cli-native-only-install.log",
+            "--native-only")
       if not install_root.is_dir():
         raise RuntimeError("sima-cli native-only flow installed no native cohort")
       # Without --python-executable the CLI installs into its managed environment.
@@ -2763,14 +2760,9 @@ def qualify(args: argparse.Namespace) -> None:
       (missing_package / candidate.wheel.name).unlink()
       missing_download_root = work / "missing wheel downloads with spaces"
       with local_registry(missing_registry_root) as registry_url:
-        missing_command = [
-            cli, "neat", "--base-url", registry_url, "install", target,
-            "--install-dir", missing_download_root,
-            "--python-executable", python,
-        ]
-        missing_code = run_expected_failure(
-            missing_command, evidence / "sima-cli-missing-wheel.log",
-            env=cli_environment, cwd=work, timeout=1800)
+        missing_code = sima_cli_install(
+            registry_url, missing_download_root, "sima-cli-missing-wheel.log",
+            "--python-executable", python, run=run_expected_failure)
       if not install_root.is_dir():
         raise RuntimeError("missing-wheel failure removed the successful native installation")
       if imports_pyneatpcie(python):
@@ -2780,14 +2772,9 @@ def qualify(args: argparse.Namespace) -> None:
       stage_invalid_wheel_registry(candidate, invalid_wheel_registry_root)
       invalid_wheel_download_root = work / "invalid wheel downloads with spaces"
       with local_registry(invalid_wheel_registry_root) as registry_url:
-        invalid_wheel_command = [
-            cli, "neat", "--base-url", registry_url, "install", target,
-            "--install-dir", invalid_wheel_download_root,
-            "--python-executable", python,
-        ]
-        invalid_wheel_code = run_expected_failure(
-            invalid_wheel_command, evidence / "sima-cli-invalid-wheel.log",
-            env=cli_environment, cwd=work, timeout=1800)
+        invalid_wheel_code = sima_cli_install(
+            registry_url, invalid_wheel_download_root, "sima-cli-invalid-wheel.log",
+            "--python-executable", python, run=run_expected_failure)
       if not install_root.is_dir():
         raise RuntimeError("wheel-install failure removed the successful native installation")
       if imports_pyneatpcie(python):
@@ -2797,16 +2784,9 @@ def qualify(args: argparse.Namespace) -> None:
       stage_local_registry(candidate, registry_root)
       recovery_download_root = work / "recovery downloads with spaces"
       with local_registry(registry_root) as registry_url:
-        command = [
-            cli, "neat", "--base-url", registry_url, "install", target,
-            "--install-dir", recovery_download_root,
-        ]
-        run_logged(
-            command, evidence / "sima-cli-customer-recovery-install.log",
-            env=cli_environment, cwd=work, timeout=1800)
-        run_logged(
-            command, evidence / "sima-cli-customer-repeat-install.log",
-            env=cli_environment, cwd=work, timeout=1800)
+        for log in ("sima-cli-customer-recovery-install.log",
+                    "sima-cli-customer-repeat-install.log"):
+          sima_cli_install(registry_url, recovery_download_root, log)
       if not managed_python.is_file():
         raise RuntimeError(
             "default sima-cli flow did not create the managed pyneatpcie environment")
@@ -2927,25 +2907,14 @@ def qualify(args: argparse.Namespace) -> None:
           raise RuntimeError("candidate installation remained before rollback")
         rollback_download_root = work / "rollback downloads with spaces"
         with local_registry(upgrade_registry_root) as registry_url:
-          rollback_command = [
-              cli, "neat", "--base-url", registry_url, "install", target,
-              "--install-dir", rollback_download_root,
-          ]
-          run_logged(
-              rollback_command, evidence / "sima-cli-rollback-baseline-install.log",
-              env=cli_environment, cwd=work, timeout=1800)
+          sima_cli_install(
+              registry_url, rollback_download_root, "sima-cli-rollback-baseline-install.log")
         rollback_baseline_evidence = evidence / "rollback-baseline"
         rollback_baseline_evidence.mkdir()
         verify_customer_process_activation(
             install_root, managed_python, rollback_baseline_evidence)
         with local_registry(registry_root) as registry_url:
-          reupgrade_command = [
-              cli, "neat", "--base-url", registry_url, "install", target,
-              "--install-dir", rollback_download_root,
-          ]
-          run_logged(
-              reupgrade_command, evidence / "sima-cli-rollback-reupgrade.log",
-              env=cli_environment, cwd=work, timeout=1800)
+          sima_cli_install(registry_url, rollback_download_root, "sima-cli-rollback-reupgrade.log")
         rollback_candidate_evidence = evidence / "rollback-candidate"
         rollback_candidate_evidence.mkdir()
         verify_customer_process_activation(

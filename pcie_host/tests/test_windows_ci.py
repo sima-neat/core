@@ -1626,8 +1626,8 @@ class WindowsCiContracts(unittest.TestCase):
     customer_recovery = source.split(
         'registry_root = work / "complete registry with spaces"', 1
     )[1].split('result["customer_install"]', 1)[0]
-    self.assertIn('"--native-only",', source)
-    native_only = source.split('"--native-only",', 1)[1].split("missing_registry_root", 1)[0]
+    self.assertIn('"--native-only")', source)
+    native_only = source.split('"--native-only")', 1)[1].split("missing_registry_root", 1)[0]
     self.assertIn("managed_python.is_file() and imports_pyneatpcie(managed_python)", native_only)
     self.assertIn("managed_python.is_file()", customer_recovery)
     self.assertNotIn('"--python-executable", python', customer_recovery)
