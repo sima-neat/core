@@ -233,6 +233,18 @@ class WindowsPackagingContract(unittest.TestCase):
                      source.count("-o $knownHostsOption"), 3)
     self.assertNotRegex(source, r"UserKnownHostsFile=\$(?!{)")
 
+  def test_setup_key_probes_offer_only_the_neat_key(self):
+    source = SETUP_SCRIPT.read_text(encoding="utf-8")
+    # A key held by ssh-agent that the card already accepts would otherwise
+    # report the Neat key as enrolled.
+    probes = re.findall(r'(?s)Invoke-BoundedCommand -Executable \$ssh -Arguments @\((.*?)\)',
+                        source, re.IGNORECASE)
+    self.assertEqual(len(probes), 2)
+    for probe in probes:
+      with self.subTest(probe=probe):
+        self.assertIn('"-i", ', probe)
+        self.assertIn('"-o", "IdentitiesOnly=yes"', probe)
+
   def test_setup_uses_one_openssh_when_path_holds_several(self):
     source = SETUP_SCRIPT.read_text(encoding="utf-8")
     # Get-Command returns every match; a PC with both the in-box and the

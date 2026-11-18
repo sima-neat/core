@@ -120,7 +120,7 @@ function Test-KeyAccess {
   )
 
   $result = Invoke-BoundedCommand -Executable $Ssh -Arguments @(
-    "-i", $PrivateKey, "-p", "$Port", "-o", "BatchMode=yes",
+    "-i", $PrivateKey, "-o", "IdentitiesOnly=yes", "-p", "$Port", "-o", "BatchMode=yes",
     "-o", "ConnectTimeout=5", "-o", "StrictHostKeyChecking=yes",
     "-o", $KnownHostsOption, $Target, "true"
   )
@@ -263,7 +263,7 @@ foreach ($cardHost in $targets) {
   if ($findExitCode -ne 0) {
     # ssh-keyscan can hang here; a bounded accept-new login records the first-seen key.
     $bootstrapResult = Invoke-BoundedCommand -Executable $ssh -Arguments @(
-      "-i", $Key, "-p", "$Port", "-o", "BatchMode=yes",
+      "-i", $Key, "-o", "IdentitiesOnly=yes", "-p", "$Port", "-o", "BatchMode=yes",
       "-o", "ConnectTimeout=5", "-o", "StrictHostKeyChecking=accept-new",
       "-o", $knownHostsOption, $target, "true"
     )
