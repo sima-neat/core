@@ -32,3 +32,14 @@ def test_ssd_model_options_are_mutable():
   assert opt.decode_type == pyneat.BoxDecodeType.Ssd
   assert opt.num_classes == 91
   assert opt.preprocess.resize.mode == pyneat.ResizeMode.Stretch
+
+
+def test_ssd_policy_uses_the_existing_family_and_stage_options():
+  # V1/V2 use one TF300 numerical contract; V3 uses its resolved TV320 recipe.
+  policy = pyneat.BoxDecodeType.Ssd
+  model = pyneat.ModelOptions()
+  model.decode_type = policy
+  model.num_classes = 91
+  stage = pyneat.BoxDecodeOptions(policy)
+  assert model.decode_type == stage.decode_type == policy
+  assert model.num_classes == 91

@@ -20,6 +20,9 @@
 #include "test_main.h"
 #include "test_utils.h"
 
+#include <nlohmann/json.hpp>
+
+#include <array>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
@@ -69,7 +72,10 @@ std::vector<int> model_managed_preproc_max_input_shape(const simaai::neat::Prepr
 }
 
 // The MLA input canvas is canvas x canvas (640 unless a test needs another size).
-sima_test::ModelArchiveFixture make_preproc_fixture(const std::string& tag, int canvas = 640) {
+sima_test::ModelArchiveFixture
+make_preproc_fixture(const std::string& tag, int canvas = 640,
+                     const nlohmann::json& input_range = nlohmann::json::array({0.0, 1.0}),
+                     bool mpk_image_preproc = false) {
   const auto fixture = sima_test::make_model_archive_fixture(tag,
                                                              {
                                                                  {"etc/test_model_mpk.json",
@@ -212,6 +218,21 @@ sima_test::ModelArchiveFixture make_preproc_fixture(const std::string& tag, int 
         text.replace(at, from.size(), to);
     std::ofstream(path, std::ios::trunc) << text;
   }
+  const auto mpk_path = std::filesystem::path(fixture.root_dir) / "etc/test_model_mpk.json";
+  std::ifstream mpk_input(mpk_path);
+  auto manifest = nlohmann::json::parse(mpk_input);
+  mpk_input.close();
+  if (input_range.is_null()) {
+    manifest["input_nodes"][0].erase("input_range");
+  } else {
+    manifest["input_nodes"][0]["input_range"] = input_range;
+  }
+  if (mpk_image_preproc) {
+    // This historical token is only for route-plan inspection. Executable-contract
+    // tests keep Cast -> MLA and let Model add its supported image preprocessing.
+    manifest["plugins"][0]["config_params"]["kernel"] = "preproc";
+  }
+  std::ofstream(mpk_path, std::ios::trunc) << manifest.dump();
   // Image preprocessing comes from Model::Options; the MPK describes its tensor target.
   // Planning needs the declared MLA topology, not an executable MLA program.
   const auto share = std::filesystem::path(fixture.root_dir) / "share";
@@ -332,6 +353,99 @@ std::vector<int> shape3(int h, int w, int c) {
 RUN_TEST(
     "unit_preproc_contract_rules_test", ([] {
       using namespace simaai::neat;
+
+      // Calibration extrema never specify a normalization recipe. In particular,
+      // [0.2, 0.8] may be observed after /255 without changing that preprocessing.
+      {
+        const auto check = [](const sima_test::ModelArchiveFixture& fixture,
+                              const Model::Options& options, bool normalize, bool advisory,
+                              const std::string& label) {
+          Model model(fixture.tar_path, options);
+          const auto plan = model.resolved_preprocess_plan();
+          require(plan.effective.normalize.enable == (normalize ? AutoFlag::On : AutoFlag::Off),
+                  label + ": normalization must follow explicit configuration only");
+          std::size_t advisories = 0;
+          for (const auto& warning : plan.warnings) {
+            if (warning.find("preprocess.normalize=Auto resolved Off") == std::string::npos)
+              continue;
+            ++advisories;
+            require_contains(warning, "preprocess.normalize.enable=On",
+                             label + ": diagnostic must explain explicit normalization");
+            require_contains(warning, "preprocess.preset",
+                             label + ": diagnostic must mention presets");
+          }
+          require(advisories == (advisory ? 1U : 0U),
+                  label + ": only unconfigured Auto on an image route needs one advisory");
+          return plan;
+        };
+        const nlohmann::json ranges[] = {
+            nlohmann::json::array({0.0, 1.0}), nlohmann::json::array({0.2, 0.8}),
+            nlohmann::json::array({-1.0, 1.0}), nlohmann::json::array({0.0, 255.0}), nullptr};
+        for (const auto& range : ranges) {
+          const auto fixture = make_preproc_fixture("normalize_observed_range", 640, range, true);
+          const auto plan = check(fixture, {}, false, true, "MPK image route " + range.dump());
+          require(plan.requested.normalize.enable == AutoFlag::Auto,
+                  "the public Auto option must be preserved");
+          require(plan.effective.normalize.mean == std::array{0.0f, 0.0f, 0.0f} &&
+                      plan.effective.normalize.stddev == std::array{1.0f, 1.0f, 1.0f},
+                  "observed extrema must not replace the default statistics");
+        }
+
+        const auto fixture = make_preproc_fixture("normalize_explicit_policy", 640,
+                                                  nlohmann::json::array({0.2, 0.8}));
+        Model::Options image;
+        image.preprocess.kind = InputKind::Image;
+        image.preprocess.enable = AutoFlag::On;
+        check(fixture, image, false, true, "explicit image route");
+        require(!PreprocOptions(Model(fixture.tar_path, image)).normalize,
+                "model-managed Preproc must keep unconfigured normalization Off");
+
+        auto options = image;
+        options.preprocess.normalize.enable = AutoFlag::Off;
+        check(fixture, options, false, false, "explicit Off");
+        options.preprocess.normalize.enable = AutoFlag::On;
+        options.preprocess.normalize.mean = {0.1f, 0.2f, 0.3f};
+        options.preprocess.normalize.stddev = {0.4f, 0.5f, 0.6f};
+        const auto explicit_plan = check(fixture, options, true, false, "explicit On");
+        require(explicit_plan.effective.normalize.mean == options.preprocess.normalize.mean &&
+                    explicit_plan.effective.normalize.stddev == options.preprocess.normalize.stddev,
+                "explicit On must preserve the authored statistics");
+        options.preprocess.normalize.enable = AutoFlag::Auto;
+        options.preprocess.normalize.has_explicit_stats = true;
+        check(fixture, options, true, false, "Auto with explicit statistics");
+
+        for (const auto preset : {NormalizePreset::ImageNet, NormalizePreset::COCO_YOLO}) {
+          options = image;
+          options.preprocess.preset = preset;
+          check(fixture, options, true, false, "preset normalization");
+        }
+
+        // The effective transform list owns intent, including an Auto-only list
+        // whose image route is selected from the MPK with InputKind::Auto.
+        const auto transform_fixture = make_preproc_fixture(
+            "normalize_transform_route", 640, nlohmann::json::array({0.2, 0.8}), true);
+        options = {};
+        options.preprocess.normalize.enable = AutoFlag::On;
+        Transform transform;
+        transform.type = TransformType::Normalize;
+        options.preprocess.transforms = {transform};
+        check(transform_fixture, options, false, true, "transform Auto overrides simple On");
+        options.preprocess.transforms[0].normalize.enable = AutoFlag::Off;
+        check(transform_fixture, options, false, false, "transform Off");
+        options.preprocess.transforms[0].normalize.enable = AutoFlag::On;
+        check(transform_fixture, options, true, false, "transform On");
+        options.preprocess.transforms[0].normalize.enable = AutoFlag::Auto;
+        options.preprocess.transforms[0].normalize.has_explicit_stats = true;
+        check(transform_fixture, options, true, false, "transform statistics");
+
+        const auto tensor_fixture = make_preproc_fixture("normalize_tensor_route");
+        options = {};
+        options.preprocess.kind = InputKind::Tensor;
+        check(tensor_fixture, options, false, false, "tensor route");
+        options.preprocess.enable = AutoFlag::Off;
+        check(make_infer_only_fixture("normalize_preprocessing_disabled"), options, false, false,
+              "preprocessing disabled");
+      }
 
       {
         const auto fixture = make_infer_only_fixture("preproc_contract_missing");

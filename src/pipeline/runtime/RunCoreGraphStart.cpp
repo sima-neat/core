@@ -382,13 +382,18 @@ void materialize_pipeline_runtimes(const std::shared_ptr<RunCore>& core) {
     runtime->run_options = core->graph_options.pipeline;
     if (seg.boundary.graph_internal_output) {
       runtime->run_options.output_memory = simaai::neat::OutputMemory::ZeroCopy;
+      if (core->graph_options.queue_public_input) {
+        runtime->run_options.overflow_policy = OverflowPolicy::Block;
+      }
     }
     runtime->seg.nodes = runtime->nodes;
     runtime->seg.route_options = runtime->route_options;
     runtime->seg.run_options = runtime->run_options;
     runtime->seg.materialized_node_attribution =
         make_materialized_node_attribution(seg, injected_input, injected_output);
-    runtime->transport.has_input = seg.boundary.needs_input;
+    runtime->transport.has_input =
+        seg.boundary.needs_input ||
+        (seg.boundary.direct_graph_source && core->graph_options.queue_public_input);
     runtime->transport.has_output = seg.boundary.needs_output;
     if (seg.boundary.direct_graph_source) {
       // A public Input-only fragment is a graph ingress endpoint, not executable
@@ -681,7 +686,7 @@ void initialize_completion_tracking(const std::shared_ptr<RunCore>& core) {
     const auto pipeline = execution.node_to_pipeline.find(endpoint.node);
     if (pipeline == execution.node_to_pipeline.end() ||
         pipeline->second >= execution.pipelines.size() || !execution.pipelines[pipeline->second] ||
-        execution.pipelines[pipeline->second]->seg.boundary.direct_graph_source) {
+        !execution.pipelines[pipeline->second]->transport.input_queue) {
       continue;
     }
     add_target_producer(DownstreamTarget{DownstreamTarget::Kind::PipelineInput, pipeline->second,
@@ -1259,6 +1264,18 @@ void start_pipeline_push_thread(const std::shared_ptr<RunCore>& core, std::size_
       atomic_add_max(pipe.transport.telemetry.push_thread_pop_wait_ns,
                      pipe.transport.telemetry.push_thread_pop_wait_max_ns,
                      elapsed_ns_since(pop_start));
+      if (pipe.seg.boundary.direct_graph_source) {
+        // Admission has already succeeded for all branches. Drain accepted inputs even after EOS.
+        try {
+          core->graph_dispatch_direct_input(pipe, graph::kInvalidPort, std::move(queued.sample),
+                                            core->graph_options.router_options(), false);
+        } catch (const NeatError& error) {
+          core->graph_request_stop(error);
+        } catch (const std::exception& error) {
+          core->graph_request_stop(error.what());
+        }
+        continue;
+      }
       auto& execution = core->graph_execution();
       if (graph_message_trace_enabled(&execution) && queued.edge_index != invalid_edge_index()) {
         const TraceGraphMessageArgs args =
@@ -1441,7 +1458,7 @@ void start_pipeline_threads(const std::shared_ptr<RunCore>& core) {
     build_source_pipeline_if_needed(core, rt);
     if (rt.transport.has_output) {
       start_pipeline_pull_thread(core, i);
-    } else if (rt.transport.has_input) {
+    } else if (rt.transport.has_input && !rt.seg.boundary.direct_graph_source) {
       start_sink_segment_bus_watch(core, i);
     }
     if (rt.transport.has_input) {
@@ -1559,6 +1576,22 @@ std::shared_ptr<RunCore> start_graph_plan(ExecutionGraphPlan plan, RunCoreStartO
 }
 
 } // namespace
+
+GraphRuntimeOptions graph_runtime_options_from_run_options(const RunOptions& opt,
+                                                           const VerboseOptions& verbose,
+                                                           RunMode mode) {
+  GraphRuntimeOptions out;
+  const auto resolved = session_build_resolve_build_opt(mode, opt);
+  out.edge_queue = static_cast<std::size_t>(std::max(0, resolved.queue_depth));
+  out.verbose = verbose;
+  out.queue_public_input = true;
+  out.pipeline = opt;
+  out.pipeline.overflow_policy = resolved.overflow_policy;
+  // One board monitor belongs to the graph and covers all its pipeline segments.
+  out.power_monitor = opt.power_monitor;
+  out.pipeline.power_monitor = PowerMonitorOptions{};
+  return out;
+}
 
 std::shared_ptr<RunCore> RunCore::start(ExecutionGraphPlan plan, RunCoreStartOptions opt) {
   gst_init_once();

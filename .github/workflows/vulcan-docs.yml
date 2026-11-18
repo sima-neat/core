@@ -180,8 +180,8 @@ jobs:
           npm exec --yes --package=linkinator@8.1.0 -- sh -c \
             'LINKINATOR_CLI="$(command -v linkinator)" node --test tests/docs/link_checker.test.mjs'
           python3 tests/test_autodoc.py
-          python3 tests/test_algolia_developer_center_index.py
           ./build.sh --doc
+          python3 tests/test_algolia_developer_center_index.py
 
           test -d website/build
           test -f website/build/index.html
