@@ -3,6 +3,8 @@
 #include "model/internal/ModelInternal.h"
 #include "model/internal/ModelPack.h"
 #include "nodes/sima/SimaBoxDecode.h"
+#include "pipeline/ErrorCodes.h"
+#include "pipeline/NeatError.h"
 #include "model_archive_fixture_utils.h"
 #include "test_main.h"
 #include "test_utils.h"
@@ -280,13 +282,12 @@ RUN_TEST(
 
       simaai::neat::Model::Options mismatched_opt = model_opt;
       mismatched_opt.decode_type = simaai::neat::BoxDecodeType::YoloV8;
-      simaai::neat::Model mismatched_model(tar_path, mismatched_opt);
       bool boxdecode_mismatch_rejected = false;
       try {
-        (void)simaai::neat::internal::ModelAccess::build_boxdecode_stage_contract(mismatched_model,
-                                                                                  false);
-      } catch (const std::exception&) {
-        boxdecode_mismatch_rejected = true;
+        simaai::neat::Model mismatched_model(tar_path, mismatched_opt);
+      } catch (const simaai::neat::NeatError& error) {
+        boxdecode_mismatch_rejected =
+            error.report().error_code == simaai::neat::error_codes::kPipelineShape;
       }
       require(boxdecode_mismatch_rejected,
               "explicit BoxDecode must reject a detection decoder for a segmentation MPK "
