@@ -213,6 +213,13 @@ RUN_TEST(
         require(pipeline && gst_element_send_event(pipeline, gst_event_new_eos()),
                 run_api_case("unexpected_eos_inject", "failed to inject premature EOS"));
 
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+        while (eos_run.can_push() && std::chrono::steady_clock::now() < deadline)
+          std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        require(!eos_run.can_push() && !eos_run.try_push(TensorList{seed}),
+                "EOS must close input admission before pull");
+        require_contains(eos_run.last_error(), "end of stream",
+                         "EOS must publish its reason before pull");
         Sample tmp;
         PullError err;
         const PullStatus status = pull_until_terminal(eos_run, tmp, err);

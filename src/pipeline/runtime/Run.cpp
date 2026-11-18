@@ -648,7 +648,8 @@ bool runtime::RunCore::can_push() const {
     return graph_execution_->plan.default_input.has_value() && !graph_public_input_closed() &&
            !graph_stop_requested();
   }
-  return pipeline.supports_push && !pipeline.input_closed && !stop_requested;
+  return pipeline.supports_push && !pipeline.input_closed && !stop_requested &&
+         !pipeline.stream.reached_eos();
 }
 
 bool runtime::RunCore::can_pull() const {

@@ -399,7 +399,7 @@ bool admit_input_queue_locked(runtime::RunCore& core, runtime::PipelineSegmentRu
                    static_cast<int>(core.opt.overflow_policy));
     return false;
   };
-  if (core.stop_requested.load()) {
+  if ((core.stop_requested.load() || segment.stream.reached_eos())) {
     return reject("stop_requested");
   }
   if (segment.input_closed) {
@@ -413,7 +413,7 @@ bool admit_input_queue_locked(runtime::RunCore& core, runtime::PipelineSegmentRu
   // try_push at graph ingress, which pushes with block=false).
   if (block) {
     segment.in_cv.wait(lock, [&]() {
-      return core.stop_requested.load() || segment.input_closed ||
+      return (core.stop_requested.load() || segment.stream.reached_eos()) || segment.input_closed ||
              !run_internal::queue_full(segment.in_queue, max);
     });
   } else if (core.opt.overflow_policy == OverflowPolicy::Block) {
@@ -434,7 +434,7 @@ bool admit_input_queue_locked(runtime::RunCore& core, runtime::PipelineSegmentRu
     }
   }
 
-  if (core.stop_requested.load()) {
+  if ((core.stop_requested.load() || segment.stream.reached_eos())) {
     return reject("stop_requested");
   }
   if (segment.input_closed) {

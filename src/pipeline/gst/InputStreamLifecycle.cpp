@@ -354,6 +354,26 @@ void InputStream::start(std::function<void(Sample)> on_output) {
             sink_eos = gst_app_sink_is_eos(GST_APP_SINK(st->appsink));
           }
           if (eos_seen || sink_eos) {
+            if (st->appsrc && !st->eos_sent.load() && !st->stop_requested.load() &&
+                !st->teardown_started.load()) {
+              GraphReport report = st->diag ? st->diag->snapshot_basic() : GraphReport{};
+              report.error_code = error_codes::kUnexpectedEos;
+              report.repro_note =
+                  "The push-backed pipeline reached end of stream before the application closed "
+                  "its "
+                  "input.\n\n"
+                  "Expected: The pipeline remains open until Run::close_input() is called.\n"
+                  "Received: End of stream while the input was still open.\n\n"
+                  "How to fix:\n"
+                  "- Check the source and upstream elements for a premature end-of-stream "
+                  "condition.\n"
+                  "- Keep the upstream pipeline open until the application has finished pushing "
+                  "input, "
+                  "then call Run::close_input().\n\n"
+                  "Diagnostic ID: runtime.unexpected_eos";
+              const auto note = report.repro_note;
+              set_stream_error(*st, error_codes::kUnexpectedEos, note, std::move(report));
+            }
             st->eos_seen.store(true);
             if (eos_debug_enabled()) {
               const char* pipeline_name =
