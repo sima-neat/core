@@ -3,7 +3,6 @@
 
 import argparse
 import json
-import os
 from pathlib import Path
 import shutil
 import stat
@@ -52,15 +51,6 @@ def extract_sima_cli_wheel(publication: Path, destination: Path) -> Path:
     with archive.open(wheel) as source, output.open("xb") as target:
       shutil.copyfileobj(source, target)
   return output
-
-
-def write_github_outputs(values: dict[str, str]) -> None:
-  output = os.environ.get("GITHUB_OUTPUT")
-  if not output:
-    return
-  with Path(output).open("a", encoding="utf-8") as stream:
-    for name, value in values.items():
-      stream.write(f"{name}={value}\n")
 
 
 def main() -> None:
@@ -118,22 +108,10 @@ def main() -> None:
   selection = {
       "schema_version": 1,
       "environment": args.environment,
-      "scheduler": {
-          "branch": scheduler_record["branch"],
-          "commit": scheduler_record["commit"],
-          "selector": scheduler_record["selector"],
-      },
-      "sima_cli": {
-          "branch": cli_record["branch"],
-          "commit": cli_record["commit"],
-          "selector": cli_record["selector"],
-      },
+      **{name: {key: record[key] for key in ("branch", "commit", "selector")}
+         for name, record in (("scheduler", scheduler_record), ("sima_cli", cli_record))},
   }
   (root / "selection.json").write_text(json.dumps(selection, indent=2) + "\n", encoding="utf-8")
-  write_github_outputs({
-      "scheduler_commit": selection["scheduler"]["commit"],
-      "sima_cli_commit": selection["sima_cli"]["commit"],
-  })
   print(json.dumps(selection, sort_keys=True))
 
 
