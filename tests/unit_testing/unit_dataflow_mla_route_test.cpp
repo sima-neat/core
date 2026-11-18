@@ -46,6 +46,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <fstream>
 #include <functional>
 #include <iostream>
 #include <string>
@@ -547,8 +548,30 @@ void declined(const Route& route, const std::string& archive) {
   g.add(full.preprocess());
   g.add(full.inference());
   g.add(nodes::Output());
+  // Since the model route takes kernel stages, this one (a quantize + tessellate stage placed on
+  // the EV74 by default) is declined only where the EV74 runs the stock firmware; on the Kernels
+  // firmware it builds (nothing is pushed, so nothing runs).
+  bool kernels_firmware = false;
+  for (int i = 0; i < 16; ++i) {
+    const std::string dir = "/sys/class/remoteproc/remoteproc" + std::to_string(i) + "/";
+    const auto read = [&dir](const char* name) {
+      std::ifstream file(dir + name);
+      std::string text;
+      std::getline(file, text);
+      return text;
+    };
+    if (read("name") == "ev74") {
+      kernels_firmware =
+          read("state") == "running" && read("firmware") == "sima-neat-native-cvu-fw";
+      break;
+    }
+  }
   try {
     (void)g.build(on(RunBackend::Dataflow));
+    if (kernels_firmware) {
+      std::cout << "[declined] the preprocess stage built: the EV74 runs the Kernels firmware\n";
+      return;
+    }
     throw std::runtime_error("declined: a preprocess stage built on the Dataflow backend");
   } catch (const NeatError& error) {
     require(error.report().error_code == error_codes::kPipelineShape,

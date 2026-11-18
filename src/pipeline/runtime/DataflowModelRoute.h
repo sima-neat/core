@@ -9,8 +9,10 @@
 // operator per stage:
 //   - Model::inference() of an MLA-only model: the MLA stage alone;
 //   - Model::preprocess(), inference(), postprocess() of a model package whose pre and post stages
-//     are canonical transforms (quanttess, detessdequant, ...) placed on the A65
-//     (GraphOptions::processcvu.pre_run_target / post_run_target, ProcessCvuRunTargetPolicy.cpp).
+//     are canonical transforms (quanttess, detessdequant, ...), each on the A65 or on the EV74 as
+//     the Graph places it (GraphOptions::processcvu.pre_run_target / post_run_target,
+//     ProcessCvuRunTargetPolicy.cpp). A stage on the EV74 is taken only where the EV74 runs the
+//     Kernels firmware; on a board with the stock firmware the route is declined at the plan.
 // Here: what the route's stages are, read from what Core compiles and lowers for the same nodes on
 // GStreamer (the rendered stage manifest and its checked kernel recipes), and what the input's
 // port does with them: load the model and make the kernels, check the input's binding against
@@ -63,7 +65,8 @@ struct DataflowPulledTensor {
   std::string sample_label;
 };
 
-// One stage of the route: a model on the MLA, or one kernel of the Kernels package on the A65.
+// One stage of the route: a model on the MLA, or one kernel of the Kernels package on the A65 or
+// on the EV74.
 struct DataflowModelStage {
   enum class Kind { Mla, Kernel };
   Kind kind = Kind::Mla;
@@ -73,8 +76,10 @@ struct DataflowModelStage {
   // Mla: the admitted MLA ELF, and how many jobs are out at once (MlaOp::Options::depth).
   std::string model_path;
   std::uint32_t depth = 2;
-  // Kernel: the request Core's lowering gave the Kernels package for this stage (the recipe's,
-  // KernelStageRecipe::Request): the operation's name, its two tensors, its parameters.
+  // Kernel: where it runs (the checked recipe's target), and the request Core's lowering gave the
+  // Kernels package for this stage (the recipe's, KernelStageRecipe::Request): the operation's
+  // name, its two tensors, its parameters.
+  bool ev74 = false;
   std::string operation;
   ::simaai::scheduler::client::TensorSpec input, output;
   std::vector<::simaai::scheduler::client::Parameter> parameters;
@@ -86,10 +91,15 @@ struct DataflowModelRoute {
   std::uint64_t input_bytes = 0; ///< the first stage's input buffer
   TensorDType input_dtype = TensorDType::UInt8;
   std::vector<std::int64_t> input_shape; ///< the first stage's logical input
-  /// The first stage is an A65 kernel: it reads its input through the CPU's address, so a pushed
-  /// device tensor is wrapped with one, and a tensor that differs from `input_shape` by leading
-  /// unit axes only is pushed as `input_shape` (GStreamer takes both).
+  /// The first stage is a kernel: a tensor that differs from `input_shape` by leading unit axes
+  /// only is pushed as `input_shape` (GStreamer takes both). On the A65 (`ev74_input` false) it
+  /// reads its input through the CPU's address, so a pushed device tensor is wrapped with one.
   bool kernel_input = false;
+  /// The first stage is a kernel on the EV74: it reads by descriptor and reaches linux,cma only.
+  /// The input's pool is Ev74 memory whatever was declared; a pushed TensorMemory::EV74 tensor is
+  /// wrapped by its descriptor alone, and a TensorMemory::MLA tensor (the DMS heap) is copied into
+  /// a slot, never handed on under the port's kind.
+  bool ev74_input = false;
   DataflowPulledTensor output;
   std::string text; ///< one line, for the [NEAT] trace and messages
 };

@@ -549,6 +549,11 @@ DataflowRunConfig derive_config(const Graph& graph, const DataflowGraphView& vie
       if (!input.model) {
         return config;
       }
+      if (input.model->ev74_input) {
+        // In front of a kernel on the EV74 the pool is linux,cma whatever was declared: the EV74
+        // reaches no other memory. A pushed tensor of the DMS heap is copied into a slot.
+        input.input.memory_policy = InputMemoryPolicy::Ev74;
+      }
       if (config.outputs[input.outputs.front()].terminal_drop) {
         *why = "OutputOptions::drop behind a model is not supported on Dataflow yet (the last "
                "operator's output link would drop, which Core does not count yet)";

@@ -3,8 +3,9 @@
 // with the kernel stages on the A65 (GraphOptions::processcvu.pre_run_target / post_run_target =
 // "A65"), built with RunOptions::backend = RunBackend::Dataflow (Feed -> KernelOp -> MlaOp ->
 // KernelOp -> Fetch) and, for the comparison rows, with RunBackend::GStreamer (appsrc !
-// neatkernelrunner ! neatprocessmla ! neatkernelrunner ! appsink) in the same process. No runtime
-// type is named.
+// neatkernelrunner ! neatprocessmla ! neatkernelrunner ! appsink) in the same process; and, on
+// the Dataflow backend only, with the kernel stages on the EV74 (row ev74). No runtime type is
+// named.
 //
 // It needs the MLA and a compiled model package: --model-package <X_mpk.tar.gz>, or
 // SIMA_TEST_MODEL_PACKAGE (SIMA_TEST_MLA_ONLY_MODEL is read too: the same archive serves both
@@ -12,8 +13,11 @@
 // that the package quantizes and tessellates, one MLA stage and one output that the package
 // detessellates and dequantizes; ResNet-50 INT8 is the one it was written with.
 //
-// No row places a kernel stage on the EV74: the rows that ask for one (declined) ask the
-// Dataflow backend explicitly, which refuses at the build before anything runs.
+// A kernel stage on the EV74 is only ever asked of the Dataflow backend, explicitly
+// (RunBackend::Dataflow: no fallback), and only run where the EV74 runs the Kernels firmware (the
+// remoteproc "ev74" running "sima-neat-native-cvu-fw", read here from sysfs). On a board with the
+// stock firmware the same builds must be refused at the build, before anything runs, and the
+// rows check that instead. GStreamer is never built with a kernel stage on the EV74 here.
 //
 // Rows:
 //   differential     the same inputs (4 images in rotation) through both backends: every pulled
@@ -44,9 +48,17 @@
 //                    there is what the first kernel reads.
 //   policies         try_push under KeepLatest and DropIncoming: what the input's queue lets
 //                    through runs through every stage.
-//   declined         what stays off this backend: a kernel stage placed on the EV74 (the default
-//                    placement of the pre stage, and an explicit one of the post stage) and
-//                    OutputOptions::drop behind a model: explicit Dataflow fails at the build.
+//   declined         what stays off this backend: OutputOptions::drop behind a model, and, on a
+//                    board whose EV74 runs the stock firmware, a kernel stage placed on the EV74
+//                    (the default placement of the pre stage, and an explicit one of the post
+//                    stage): explicit Dataflow fails at the build.
+//   ev74             the kernel stages on the EV74, four placements (the default one: pre on the
+//                    EV74, post on the A65; EV74 + A65 asked; A65 + EV74; both on the EV74): every
+//                    field and every byte of 64 frames against GStreamer's with both stages on
+//                    the A65; then, under each placement, the rows input_contract (a
+//                    TensorMemory::MLA tensor in front of a kernel on the EV74 is copied, with
+//                    the output of the same bytes in EV74 memory), reuse, lifecycle, in_flight,
+//                    recreate, owned, alloc and policies.
 
 #include "model/Model.h"
 #include "nodes/common/Output.h"
@@ -66,6 +78,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <fstream>
 #include <functional>
 #include <iostream>
 #include <string>
@@ -108,6 +121,42 @@ GraphOptions on_a65() {
   return o;
 }
 
+// Where the Dataflow-only rows place the two kernel stages (row ev74 moves it).
+GraphOptions& placement() {
+  static GraphOptions options = on_a65();
+  return options;
+}
+
+GraphOptions placed(const char* pre, const char* post) {
+  GraphOptions o;
+  if (pre) {
+    o.processcvu.pre_run_target = pre;
+  }
+  if (post) {
+    o.processcvu.post_run_target = post;
+  }
+  return o;
+}
+
+// The EV74 runs the firmware of the Kernels package: the remoteproc named "ev74" is running
+// "sima-neat-native-cvu-fw".
+bool ev74_runs_kernels_firmware() {
+  const auto read = [](const std::string& path) {
+    std::ifstream file(path);
+    std::string text;
+    std::getline(file, text);
+    return text;
+  };
+  for (int i = 0; i < 16; ++i) {
+    const std::string dir = "/sys/class/remoteproc/remoteproc" + std::to_string(i) + "/";
+    if (read(dir + "name") == "ev74") {
+      return read(dir + "state") == "running" &&
+             read(dir + "firmware") == "sima-neat-native-cvu-fw";
+    }
+  }
+  return false;
+}
+
 struct Route {
   Model model;
   std::vector<std::int64_t> shape; // the model's input, with its batch axis
@@ -136,7 +185,7 @@ struct Route {
   }
 
   Graph graph(const InputOptions& in, int max_buffers = 4, bool drop = false,
-              const GraphOptions& options = on_a65()) const {
+              const GraphOptions& options = placement()) const {
     OutputOptions out;
     out.max_buffers = max_buffers;
     out.drop = drop;
@@ -769,7 +818,7 @@ void alloc(const Route& route) {
   in.dtype = TensorDType::Float32;
   OutputOptions out;
   out.max_buffers = 4;
-  Graph g(on_a65());
+  Graph g(placement());
   g.add(nodes::Input("x", in));
   g.add(route.model.preprocess());
   g.add(route.model.inference());
@@ -850,7 +899,7 @@ void policies(const Route& route) {
   }
 }
 
-void declined(const Route& route) {
+void declined(const Route& route, bool ev74) {
   const TensorList seed{route.tensor(0)};
   const auto refused = [&](const GraphOptions& options, bool drop, const char* text,
                            const char* what) {
@@ -866,14 +915,77 @@ void declined(const Route& route) {
     }
     throw std::runtime_error(std::string("declined: ") + what + " built on the Dataflow backend");
   };
-  // The default placement puts the pre stage on the EV74.
-  refused(GraphOptions{}, false, "is placed on the EV74", "the default placement");
-  // The pre stage on the A65 and the post stage asked onto the EV74.
-  GraphOptions post_ev74 = on_a65();
-  post_ev74.processcvu.post_run_target = "EV74";
-  refused(post_ev74, false, "is placed on the EV74", "post_run_target EV74");
+  if (!ev74) {
+    // The EV74 runs the stock firmware: a kernel stage placed there keeps the route off this
+    // backend. The default placement puts the pre stage on the EV74.
+    refused(GraphOptions{}, false, "sima-neat-native-cvu-fw", "the default placement");
+    // The pre stage on the A65 and the post stage asked onto the EV74.
+    refused(placed("A65", "EV74"), false, "is placed on the EV74", "post_run_target EV74");
+    refused(placed("EV74", "EV74"), false, "is placed on the EV74", "both on the EV74");
+  }
   // OutputOptions::drop behind a model.
   refused(on_a65(), true, "OutputOptions::drop behind a model", "OutputOptions::drop");
+  if (ev74) {
+    refused(GraphOptions{}, true, "OutputOptions::drop behind a model",
+            "OutputOptions::drop, the default placement");
+  }
+}
+
+// ---- the kernel stages on the EV74 ---------------------------------------------------------
+
+void on_ev74(const Route& route, bool ev74) {
+  if (!ev74) {
+    std::cout << "[ev74] not run: the EV74 does not run the Kernels firmware (row declined "
+                 "checks that the route stays off the Dataflow backend)\n";
+    return;
+  }
+  struct Placement {
+    const char* name;
+    GraphOptions options;
+  };
+  const Placement placements[] = {{"default (pre EV74, post A65)", GraphOptions{}},
+                                  {"pre EV74, post A65", placed("EV74", "A65")},
+                                  {"pre A65, post EV74", placed("A65", "EV74")},
+                                  {"pre EV74, post EV74", placed("EV74", "EV74")}};
+  constexpr int kFrames = 64;
+  const std::vector<TensorList> inputs = images(route);
+  // The reference: GStreamer with both kernel stages on the A65.
+  const std::vector<Frame> gst = run_frames(route.graph(route.input(), 4, false, on_a65()), inputs,
+                                            RunBackend::GStreamer, kFrames);
+  for (const Placement& p : placements) {
+    const std::string row = std::string("ev74 ") + p.name;
+    compare(gst,
+            run_frames(route.graph(route.input(), 4, false, p.options), inputs,
+                       RunBackend::Dataflow, kFrames),
+            row.c_str());
+    // A TensorMemory::MLA tensor (the DMS heap) gives the output of the same bytes in EV74 memory,
+    // whatever the first stage's target: wrapped where the first stage reads either heap, copied
+    // into a slot of the input's pool in front of a kernel on the EV74.
+    {
+      Graph g = route.graph(route.input(), 4, false, p.options);
+      Run run = g.build(inputs[0], on(RunBackend::Dataflow));
+      for (int i = 0; i < 2 * kPatterns; ++i) {
+        const unsigned image_index = static_cast<unsigned>(i % kPatterns);
+        require(run.push({route.tensor(image_index, TensorMemory::MLA)}), row + ": push (MLA)");
+        require(bytes_of(pull_ok(run, row).front()) == gst[image_index].bytes,
+                row + ": a TensorMemory::MLA tensor gives the EV74 tensor's output");
+      }
+      run.close();
+    }
+    placement() = p.options;
+    input_contract(route);
+    reuse(route);
+    lifecycle(route);
+    in_flight(route);
+    recreate(route);
+    owned(route);
+    alloc(route);
+    policies(route);
+    placement() = on_a65();
+    std::cout << "[ev74] " << p.name
+              << ": differential, input_contract, reuse, lifecycle, in_flight, recreate, owned, "
+                 "alloc, policies ok\n";
+  }
 }
 
 } // namespace
@@ -912,6 +1024,9 @@ int main(int argc, char** argv) {
       body();
       std::cout << "[row] " << name << " ok\n";
     };
+    const bool ev74 = ev74_runs_kernels_firmware();
+    std::cout << "[ev74] the EV74 " << (ev74 ? "runs" : "does not run")
+              << " the Kernels firmware\n";
     row("differential", [&] { differential(route); });
     row("reference", [&] { reference(route, archive, dequant); });
     row("partial", [&] { partial(route, archive); });
@@ -923,6 +1038,7 @@ int main(int argc, char** argv) {
     row("owned", [&] { owned(route); });
     row("alloc", [&] { alloc(route); });
     row("policies", [&] { policies(route); });
-    row("declined", [&] { declined(route); });
+    row("declined", [&] { declined(route, ev74); });
+    row("ev74", [&] { on_ev74(route, ev74); });
   });
 }

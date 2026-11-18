@@ -250,8 +250,11 @@ DataflowInputPort::Bound* DataflowInputPort::bind_locked(DataflowInputBinding bi
     b->wraps = !run_.config.run.advanced.copy_input;
   }
   b->device = b->binding.spec.memory != df::MemoryKind::Host;
-  b->any_device_memory = static_cast<bool>(config_.model);
-  if (config_.model && config_.model->kernel_input) {
+  // H1: in front of a kernel on the EV74 a wrap is a tensor of the port's own kind (linux,cma)
+  // by its descriptor alone; a tensor of the other device heap is copied into a slot.
+  const bool ev74_first = config_.model && config_.model->ev74_input;
+  b->any_device_memory = config_.model && !ev74_first;
+  if (config_.model && config_.model->kernel_input && !ev74_first) {
     b->cpu_wraps = dataflow_device::make_cpu_wraps();
   }
   if (const df::Status status = b->session.start()) {

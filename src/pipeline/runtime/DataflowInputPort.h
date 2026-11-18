@@ -180,10 +180,11 @@ public:
     /// The port's memory is a device's (H0b): a pulled message's tensors are built from its
     /// DMA-BUF (dataflow_device::pulled_sample, pulled_tensors). Fixed at bind.
     bool device = false;
-    /// A model route (H1): the Feed's only consumer is the MLA, which reads a DMA-BUF of either
-    /// device heap, or an A65 kernel, which reads either through the CPU's address; so a wrap
-    /// takes an EV74 or an MLA tensor whatever the port's own kind (as GStreamer's input of the
-    /// route does). Fixed at bind.
+    /// A model route (H1) whose first stage is the MLA, which reads a DMA-BUF of either device
+    /// heap, or an A65 kernel, which reads either through the CPU's address: a wrap takes an EV74
+    /// or an MLA tensor whatever the port's own kind (as GStreamer's input of the route does).
+    /// False in front of a kernel on the EV74, which reaches linux,cma only: there a wrap is a
+    /// tensor of the port's kind, and any other is copied. Fixed at bind.
     bool any_device_memory = false;
     std::size_t slot_bytes = 0;
     std::uintptr_t wrap_mask = 0;

@@ -23,6 +23,7 @@
 #endif
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <cstdio>
 #include <optional>
@@ -183,6 +184,48 @@ std::string parameters_text(const std::vector<client::Parameter>& parameters) {
 const char* target_text(client::Hardware target) {
   return target == client::Hardware::A65 ? "A65" : "EV74";
 }
+
+#if defined(SIMANEAT_WITH_DATAFLOW_SOC_KERNELS)
+// One attribute of a remoteproc, without its trailing newline; "" when it cannot be read.
+std::string remoteproc_attribute(int index, const char* attribute) {
+  char path[96];
+  std::snprintf(path, sizeof path, "/sys/class/remoteproc/remoteproc%d/%s", index, attribute);
+  std::array<char, 96> text{};
+  std::size_t size = 0;
+  if (std::FILE* const file = std::fopen(path, "re")) {
+    size = std::fread(text.data(), 1, text.size() - 1U, file);
+    std::fclose(file);
+  }
+  while (size > 0U && (text[size - 1U] == '\n' || text[size - 1U] == ' ')) {
+    --size;
+  }
+  return std::string(text.data(), size);
+}
+
+// What the EV74 runs: "" when it is the firmware whose entries the Kernels package's EV74 kernels
+// are (the remoteproc named "ev74", running "sima-neat-native-cvu-fw": the image the
+// simaai-kernels-firmware package selects), otherwise what was found instead. It is the runtime's
+// own condition (soc::KernelOp refuses the EV74 target at instantiate, before it opens the device,
+// with Unsupported), read here because an input may be bound, and its Session instantiated, only
+// by its first push: by then the Run is on this backend and cannot go back to GStreamer. Two
+// small files of sysfs, read at the plan of a route with an EV74 kernel stage; nothing is opened
+// on the device.
+std::string ev74_firmware_obstacle() {
+  for (int i = 0; i < 16; ++i) {
+    if (remoteproc_attribute(i, "name") != "ev74") {
+      continue;
+    }
+    const std::string state = remoteproc_attribute(i, "state");
+    const std::string firmware = remoteproc_attribute(i, "firmware");
+    if (state == "running" && firmware == "sima-neat-native-cvu-fw") {
+      return {};
+    }
+    return "the EV74 is " + (state.empty() ? std::string("unreadable") : state) +
+           " with firmware '" + firmware + "'";
+  }
+  return "no remoteproc named ev74";
+}
+#endif
 
 // The caps format token of a kernel stage's output (StageRecipePreparation.cpp
 // processcvu_caps_format_from_dtype_local): what a GStreamer pull leaves in TessSpec::format and
@@ -364,11 +407,19 @@ std::string plan_kernel_stage(const si::StageStaticSpec& stage, bool first, bool
   return name + ": this build of libsima_neat has no kernel operator (dataflow::soc was built "
                 "without the Runner's Executor and the Kernels package)";
 #else
-  if (recipe.target != client::Hardware::A65) {
-    return name + " is placed on the EV74 (processcvu run target requested '" +
-           stage.processcvu.requested_run_target + "', resolved '" +
-           stage.processcvu.resolved_exec_backend +
-           "'): the Dataflow backend runs a kernel stage on the A65 only on this step";
+  const bool ev74 = recipe.target != client::Hardware::A65;
+  if (ev74) {
+    // A board whose EV74 runs the stock firmware keeps the route on GStreamer, as before this
+    // backend ran a kernel on the EV74 at all. Never the A65 kernel in the EV74's place: the
+    // placement is the Graph's (ProcessCvuRunTargetPolicy.cpp), not this backend's.
+    if (const std::string obstacle = ev74_firmware_obstacle(); !obstacle.empty()) {
+      return name + " is placed on the EV74 (processcvu run target requested '" +
+             stage.processcvu.requested_run_target + "', resolved '" +
+             stage.processcvu.resolved_exec_backend +
+             "'): the Dataflow backend runs an EV74 kernel stage on the Kernels firmware "
+             "(sima-neat-native-cvu-fw) only, and " +
+             obstacle;
+    }
   }
   if (recipe.frame_adapter_factory || recipe.image_publication || stage.image_publication) {
     return name + " is an image stage with per-frame geometry, which is not supported on "
@@ -436,6 +487,7 @@ std::string plan_kernel_stage(const si::StageStaticSpec& stage, bool first, bool
   DataflowModelStage planned;
   planned.kind = DataflowModelStage::Kind::Kernel;
   planned.key = key;
+  planned.ev74 = ev74;
   planned.operation = request.operation;
   planned.input = request.inputs.front();
   planned.output = request.outputs.front();
@@ -451,6 +503,7 @@ std::string plan_kernel_stage(const si::StageStaticSpec& stage, bool first, bool
     route.input_dtype = *in_dtype;
     route.input_shape = planned.input.shape;
     route.kernel_input = true;
+    route.ev74_input = ev74;
   }
   const si::LogicalTensorStaticSpec& out = stage.logical_outputs.front();
   if (last) {
@@ -472,7 +525,7 @@ std::string plan_kernel_stage(const si::StageStaticSpec& stage, bool first, bool
   }
   route.text +=
       std::string(route.text.empty() ? "" : " -> ") + "kernel stage " + key + " (" +
-      planned.operation + " on the A65" +
+      planned.operation + " on the " + target_text(recipe.target) +
       (planned.parameters.empty() ? std::string() : "; " + parameters_text(planned.parameters)) +
       "): " + std::to_string(planned.input_bytes) + " -> " + std::to_string(planned.output_bytes) +
       " bytes" +
@@ -603,6 +656,12 @@ std::string bind_dataflow_model_input(const DataflowModelRoute& route,
   }
   if (df::slot_bytes(binding.spec) != route.input_bytes) {
     return "a tensor of " + std::to_string(df::slot_bytes(binding.spec)) + " bytes; " + expected;
+  }
+  if (route.ev74_input && binding.spec.memory != df::MemoryKind::Ev74) {
+    // The compiler gives such an input an Ev74 pool whatever was declared
+    // (DataflowGraphCompiler.cpp).
+    return "an input outside EV74 memory in front of a kernel stage on the EV74, which reaches "
+           "linux,cma memory only";
   }
   if (route.kernel_input) {
     // The kernel's port is the kernel's tensor: the Feed's spec must be exactly it (the push
@@ -761,7 +820,8 @@ std::shared_ptr<df::soc::Kernel> make_kernel(const DataflowModelStage& stage, co
     parameters.push_back(runtime_parameter(parameter));
   }
   df::Result<std::shared_ptr<df::soc::Kernel>> made = df::soc::Kernel::make(
-      stage.operation, df::soc::Kernel::Target::A65, {&*input, 1}, {&*output, 1}, parameters);
+      stage.operation, stage.ev74 ? df::soc::Kernel::Target::Ev74 : df::soc::Kernel::Target::A65,
+      {&*input, 1}, {&*output, 1}, parameters);
   if (const df::Error* error = df::failure(made)) {
     pipeline_internal::throw_dataflow_error(
         *error, where, "kernel stage " + stage.key + " (" + stage.operation + ")");
@@ -854,12 +914,16 @@ std::vector<std::uint32_t> add_dataflow_model_ops(df::Net& net, const DataflowMo
       options.inputs = {carried};
       // The output port: the next kernel's tensor (the MLA's bytes, typed as the kernel reads
       // them), or, at the route's end, the MLA's output buffer as it is (bytes; the pulled tensor
-      // is a view of it, DataflowPulledTensor). In the MLA's own memory either way.
+      // is a view of it, DataflowPulledTensor). In the MLA's own memory, except in front of a
+      // kernel on the EV74, which reaches linux,cma only: there the MLA writes Ev74 memory (the
+      // kernel's own port spec) and the EV74 reads it by descriptor.
       carried = model->outputs().front();
 #if defined(SIMANEAT_WITH_DATAFLOW_SOC_KERNELS)
       if (!last) {
         carried = loaded->kernels[i + 1U]->inputs().front();
-        carried.memory = df::MemoryKind::Dms0;
+        if (!route.stages[i + 1U].ev74) {
+          carried.memory = df::MemoryKind::Dms0;
+        }
       }
 #endif
       options.outputs = {carried};
@@ -871,12 +935,19 @@ std::vector<std::uint32_t> add_dataflow_model_ops(df::Net& net, const DataflowMo
     // operator (or the Feed) publishes, and writes its output into device memory: the MLA takes
     // it by descriptor, and at the route's end Core's pull hands a DMA-BUF out, as GStreamer's
     // appsink does. The write epoch of that output is the runtime's (a job-written port).
+    // A kernel on the EV74 has its ports in Ev74 memory by itself (Options{}): it reads and
+    // writes by descriptor, and the Plan settles the Feed's or the MLA's port in front of it and
+    // the MLA's or the Fetch's behind it to that memory.
     const std::shared_ptr<df::soc::Kernel>& kernel = loaded->kernels[i];
     df::soc::KernelOp::Options options;
-    options.inputs = {carried.memory};
-    options.outputs = {df::MemoryKind::Dms0};
+    if (!stage.ev74) {
+      options.inputs = {carried.memory};
+      options.outputs = {df::MemoryKind::Dms0};
+    }
     carried = kernel->outputs().front();
-    carried.memory = df::MemoryKind::Dms0;
+    if (!stage.ev74) {
+      carried.memory = df::MemoryKind::Dms0;
+    }
     operators.push_back(net.add<df::soc::KernelOp>(stage.key, kernel, std::move(options)).index);
 #endif
     (void)last;
