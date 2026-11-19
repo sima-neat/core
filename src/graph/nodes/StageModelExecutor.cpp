@@ -3,6 +3,7 @@
 #include "model/Model.h"
 #include "pipeline/GraphOptions.h"
 #include "pipeline/internal/SampleUtil.h"
+#include "pipeline/internal/PreprocTensor.h"
 #include "pipeline/Tensor.h"
 #include "pipeline/TensorCore.h"
 
@@ -81,13 +82,9 @@ void StageModelExecutor::on_input(StageMsg&& msg, std::vector<StageOutMsg>& out)
                                std::to_string(current.width()) + "x" +
                                std::to_string(current.channels()) + "])");
     }
-    TensorList pre = simaai::neat::stages::Preproc(std::vector<cv::Mat>{view->mat}, *opt_.model);
-    if (pre.size() != 1) {
-      throw std::runtime_error("StageModelExecutor: preproc returned unexpected tensor count"
-                               " (expected=1, actual=" +
-                               std::to_string(pre.size()) + ")");
-    }
-    current = std::move(pre.front());
+    using stages::internal::PreprocOutput;
+    const auto output = opt_.do_mla ? PreprocOutput::ForImmediateMla : PreprocOutput::Retained;
+    current = stages::internal::preproc_tensor(view->mat, *opt_.model, output);
     current_sample = sample_from_tensors(TensorList{current});
     current_sample.payload_type = PayloadType::Tensor;
     current_sample.media_type = "application/vnd.simaai.tensor";

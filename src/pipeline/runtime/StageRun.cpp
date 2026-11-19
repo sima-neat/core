@@ -20,6 +20,7 @@
 #include "pipeline/internal/StageTensorWire.h"
 #include "pipeline/internal/StageInputCacheIdentity.h"
 #include "pipeline/internal/StageRunCache.h"
+#include "pipeline/internal/PreprocTensor.h"
 #include "pipeline/internal/SelectedStageBoundary.h"
 #include "pipeline/internal/sima/CompiledProcessCvuContractQuery.h"
 #include "pipeline/internal/sima/ContractRender.h"
@@ -1458,7 +1459,7 @@ clone_preproc_group_with_roi_capacity(const std::vector<std::shared_ptr<Node>>& 
   bool patched = false;
   for (const auto& node : group) {
     if (const auto* preproc = dynamic_cast<const simaai::neat::Preproc*>(node.get())) {
-      if (internal::ImageTransformAccess::policy(*preproc))
+      if (simaai::neat::internal::ImageTransformAccess::policy(*preproc))
         throw std::invalid_argument("Image frontends do not support model ROI-list cloning");
       PreprocOptions opt = preproc->options();
       if (!opt.compiled_contract) {
@@ -2420,8 +2421,7 @@ TensorList Tensors(const simaai::neat::Sample& sample) {
   return collect_tensors_from_sample(sample, "Tensors");
 }
 
-simaai::neat::Sample PreprocSample(const cv::Mat& input, const simaai::neat::Model& model,
-                                   const PreprocessRoi* runtime_roi = nullptr) {
+Tensor internal::preproc_tensor(const cv::Mat& input, const Model& model, PreprocOutput output) {
   InputOptions src_opt = appsrc_for_mat(input, model);
   auto group =
       simaai::neat::internal::ModelAccess::build_preprocess_nodes_for_input(model, src_opt, true);
@@ -2432,16 +2432,8 @@ simaai::neat::Sample PreprocSample(const cv::Mat& input, const simaai::neat::Mod
   const PreprocOutputInfo preproc_info = stage_preproc_output_info(group);
   const auto resolved_preproc = model.resolved_preprocess_plan();
   if (resolved_preproc.enabled) {
-    std::vector<PreprocessRoi> runtime_rois;
-    const std::vector<PreprocessRoi>* runtime_rois_ptr = nullptr;
-    if (runtime_roi != nullptr) {
-      PreprocessRoi local_roi = *runtime_roi;
-      local_roi.batch_index = 0;
-      runtime_rois = {local_roi};
-      runtime_rois_ptr = &runtime_rois;
-    }
     PreprocessMetaTemplate meta =
-        make_stage_preprocess_meta_template(input, model, preproc_info, src_opt, runtime_rois_ptr);
+        make_stage_preprocess_meta_template(input, model, preproc_info, src_opt, nullptr);
     if (stage_debug_enabled()) {
       std::fprintf(stderr,
                    "[stage][preproc-meta] source=route_contract quant=%d tess=%d "
@@ -2469,17 +2461,12 @@ simaai::neat::Sample PreprocSample(const cv::Mat& input, const simaai::neat::Mod
     return p.build_seeded_internal(std::vector<cv::Mat>{input}, RunMode::Sync, opt);
   };
 
-  // Runtime ROI is carried in the Input node's per-buffer metadata template today.
-  // Do not reuse a cached full-frame runner with stale ROI coordinates.
-  auto runner = runtime_roi != nullptr ? std::make_shared<Run>(build_runner())
-                                       : get_or_build(key, build_runner);
+  auto runner = get_or_build(key, build_runner);
 
   const int timeout_ms = default_timeout_ms();
   Sample out = sample_from_tensors(runner->run(std::vector<cv::Mat>{input}, timeout_ms));
   log_stage_output_sample("Preproc: output sample", out);
-  simaai::neat::Tensor tensor;
-  const std::string selected_output_name = preproc_info.primary_output_name;
-  tensor = resolve_preproc_selected_tensor(out, preproc_info);
+  Tensor tensor = resolve_preproc_selected_tensor(out, preproc_info);
   log_stage_tensor_holder_state("Preproc: selected logical view", tensor);
   apply_preproc_output_override(tensor, preproc_info);
   if (stage_debug_enabled()) {
@@ -2503,20 +2490,7 @@ simaai::neat::Sample PreprocSample(const cv::Mat& input, const simaai::neat::Mod
   }
   tensor = require_supported_tessellated_dtype(std::move(tensor), "Preproc");
 
-  out = sample_from_tensors(TensorList{own_preproc_output(tensor)});
-  out.payload_type = PayloadType::Tensor;
-  out.media_type = "application/vnd.simaai.tensor";
-  out.format = format_from_tensor(out.tensors.front());
-  out.segment_name = selected_output_name;
-  out.stream_label = selected_output_name;
-  if (!out.tensors.front().semantic.tess.has_value() ||
-      out.tensors.front().semantic.tess->format.empty()) {
-    out.payload_tag = out.format;
-  } else {
-    out.payload_tag = upper_copy(out.tensors.front().semantic.tess->format);
-  }
-  log_stage_output_sample("Preproc: selected output sample", out);
-  return out;
+  return output == PreprocOutput::Retained ? own_preproc_output(tensor) : std::move(tensor);
 }
 
 TensorList PreprocRoiList(const std::vector<cv::Mat>& inputs, const simaai::neat::Model& model,
@@ -2645,8 +2619,7 @@ TensorList Preproc(const std::vector<cv::Mat>& inputs, const simaai::neat::Model
   TensorList out;
   out.reserve(inputs.size());
   for (const auto& input : inputs) {
-    TensorList tensors = tensors_from_sample(PreprocSample(input, model), true);
-    out.insert(out.end(), tensors.begin(), tensors.end());
+    out.push_back(internal::preproc_tensor(input, model, internal::PreprocOutput::Retained));
   }
   return out;
 }

@@ -2,6 +2,7 @@
 #include "asset_utils.h"
 #include "pipeline/StageRun.h"
 #include "pipeline/internal/StageInputCacheIdentity.h"
+#include "pipeline/internal/PreprocTensor.h"
 #include "test_main.h"
 
 #include <nlohmann/json.hpp>
@@ -141,6 +142,15 @@ RUN_TEST(
 
       require(setenv("SIMA_GRAPH_BUILD_TIMING", "1", 1) == 0, "could not enable build diagnostic");
       Sample first = heads_for_image(image, model);
+      {
+        const auto loan = stages::internal::preproc_tensor(
+            image, model, stages::internal::PreprocOutput::ForImmediateMla);
+        const auto heads = stages::MLA(sample_from_tensors({loan}), model);
+        require(heads.tensors.size() == first.tensors.size(), "loaned Preproc lost MLA heads");
+        for (std::size_t i = 0; i < heads.tensors.size(); ++i)
+          require(heads.tensors[i].copy_payload_bytes() == first.tensors[i].copy_payload_bytes(),
+                  "loaned Preproc changed MLA output");
+      }
       const auto first_key = pi::stage_input_cache_identity(
           first, nullptr, pi::StageInputCacheGeometryPolicy::DynamicOriginalSize);
       require(first_key.has_value(), "actual typed producer output must permit safe stage reuse");
