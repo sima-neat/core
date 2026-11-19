@@ -69,7 +69,7 @@ def _is_sequence(value) -> bool:
 
 def _reject_single_tensor_or_sample(core, value, where: str) -> None:
   if isinstance(value, core.Sample):
-    raise TypeError(f"{where} expects a Sample; pass [sample] instead of a single Sample")
+    raise TypeError(f"{where} expects a list or tuple of Samples; pass [sample]")
   if isinstance(value, core.Tensor):
     raise TypeError(f"{where} expects a TensorList; pass [tensor] instead of a single Tensor")
 
@@ -152,7 +152,16 @@ def install_wrappers(core) -> None:
     )
 
   def tensor_to_numpy(self, copy: bool = False):
+    """Return a NumPy array. BF16 tensors always expand to an independent float32 array."""
     import numpy as np
+
+    # TODO: Remove this expansion once the DevKit uses NumPy 2.5.5+ and imports
+    # ml_dtypes 0.7.0+ to register BF16 with DLPack.
+    if self.dtype == core.TensorDType.BFloat16:
+      words = np.frombuffer(self.copy_dense_bytes_tight(), dtype=np.uint16)
+      bits = words.astype(np.uint32)
+      bits <<= 16
+      return bits.view(np.float32).reshape(self.shape)
 
     out = np.from_dlpack(self)
     if copy:

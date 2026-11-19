@@ -1314,7 +1314,7 @@ Sample sample_batch_from_python_input(const nb::object& input) {
 void reject_single_tensor_or_sample(const nb::object& input, const char* where) {
   if (nb::isinstance<Sample>(input)) {
     throw std::runtime_error(std::string(where) +
-                             " expects Sample; pass [sample] instead of a single Sample");
+                             " expects a list or tuple of Samples; pass [sample]");
   }
   if (nb::isinstance<Tensor>(input)) {
     throw std::runtime_error(std::string(where) +
@@ -3993,13 +3993,18 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("transmit", &simaai::neat::SimaRenderOptions::transmit);
   nb::class_<simaai::neat::SimaArgMaxOptions>(m, "SimaArgMaxOptions")
       .def(nb::init<>())
-      .def_rw("config_path", &simaai::neat::SimaArgMaxOptions::config_path)
-      .def_rw("sima_allocator_type", &simaai::neat::SimaArgMaxOptions::sima_allocator_type)
+      .def_rw("config_path", &simaai::neat::SimaArgMaxOptions::config_path,
+              "Deprecated. Leave empty. ArgMax uses axis and keepdims.")
+      .def_rw("sima_allocator_type", &simaai::neat::SimaArgMaxOptions::sima_allocator_type,
+              "Deprecated. The runtime chooses the allocator. Both 0 and 2 are accepted.")
       .def_rw("silent", &simaai::neat::SimaArgMaxOptions::silent)
-      .def_rw("emit_signals", &simaai::neat::SimaArgMaxOptions::emit_signals)
-      .def_rw("transmit", &simaai::neat::SimaArgMaxOptions::transmit)
-      .def_rw("axis", &simaai::neat::SimaArgMaxOptions::axis)
-      .def_rw("keepdims", &simaai::neat::SimaArgMaxOptions::keepdims);
+      .def_rw("emit_signals", &simaai::neat::SimaArgMaxOptions::emit_signals,
+              "Deprecated. Leave false.")
+      .def_rw("transmit", &simaai::neat::SimaArgMaxOptions::transmit, "Deprecated. Leave false.")
+      .def_rw("axis", &simaai::neat::SimaArgMaxOptions::axis,
+              "Reduction axis. Negative values count from the end.")
+      .def_rw("keepdims", &simaai::neat::SimaArgMaxOptions::keepdims,
+              "Retain the reduced axis with size one.");
   nb::class_<simaai::neat::ResizeArgMaxOptions>(m, "ResizeArgMaxOptions")
       .def(nb::init<>())
       .def_rw("output_width", &simaai::neat::ResizeArgMaxOptions::output_width)
@@ -4161,7 +4166,8 @@ NB_MODULE(_pyneat_core, m) {
           .def_rw("element_name", &simaai::neat::DequantOptions::element_name)
           .def_rw("stage_id", &simaai::neat::DequantOptions::stage_id)
           .def_rw("model_managed", &simaai::neat::DequantOptions::model_managed)
-          .def_rw("q_scale", &simaai::neat::DequantOptions::q_scale)
+          .def_rw("q_scale", &simaai::neat::DequantOptions::q_scale,
+                  "Positive quantization multiplier. FP32 output is (INT8 input - q_zp) / q_scale.")
           .def_rw("q_zp", &simaai::neat::DequantOptions::q_zp)
           .def_rw("num_buffers", &simaai::neat::DequantOptions::num_buffers)
           .def_rw("num_buffers_model", &simaai::neat::DequantOptions::num_buffers_model)
