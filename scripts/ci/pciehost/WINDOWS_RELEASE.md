@@ -56,7 +56,8 @@ Provision the host once before its first run:
    must pass the offline installer's preflight: eLxr 26.04 with `unshare`,
    `flock`, `timeout`, `python3`, `tar`, and `sha256sum`; a clean `dpkg --audit`;
    and free space on `/` and `/var/tmp` for the bundle. Its `sima` sudo password
-   is the `DEVKIT_PASSWORD` secret, as on Linux.
+   is the `DEVKIT_DEFAULT_PASSWORD_SIMA` organization secret, the 3.0 Modalix
+   `sima` sudo credential Kernels CI also uses.
 2. Register the runner with the organization's `create-gha-runner.bat`. Keep
    its default labels and enter `pcie` at its labels prompt.
 3. Log the runner service on as a local administrator account instead of the
@@ -79,7 +80,7 @@ the job matches any of them.
 The card job needs no repository variables, as on Linux. The card address is
 `10.0.0.2`. The job provisions `%USERPROFILE%\.ssh\sima_neat_pcie_ed25519` with
 `pcie-setup.ps1`. If the card does not accept the key yet, it enrolls it with
-the `DEVKIT_PASSWORD` secret, as `pcie-setup.sh` does on Linux. Windows
+the `DEVKIT_DEFAULT_PASSWORD_SIMA` secret, as `pcie-setup.sh` does on Linux. Windows
 OpenSSH cannot take a password non-interactively, so
 `enroll_windows_card_key.py` does that one step with paramiko from the build's
 wheelhouse. `prepare_windows_card_inputs.py` then resolves the rest in-job,
@@ -100,7 +101,7 @@ installed location. The Platform runtime comes from the `SiMaMlaDaemon`
 service path, as the installed `sima-pcie-host-env.cmd` finds it. The only
 optional variable is `SIMAPCIE_PCIEHOST_CARD_GST_DEBUG`, shared with Linux.
 
-The card sudo credential is the protected `DEVKIT_PASSWORD` secret. It reaches
+The card sudo credential is the protected `DEVKIT_DEFAULT_PASSWORD_SIMA` secret. It reaches
 the qualifier only on standard input, and is never placed in a command line or
 retained artifact. The production environment also supplies the read-only
 GitHub App credentials, used only when an unpublished Scheduler or sima-cli

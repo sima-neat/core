@@ -658,7 +658,7 @@ jobs:
       - name: Provision PCIe card SSH key
         shell: powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -Command ". '{0}'"
         env:
-          SIMAPCIE_SSH_PASSWORD: ${{ secrets.DEVKIT_PASSWORD }}
+          SIMAPCIE_SSH_PASSWORD: ${{ secrets.DEVKIT_DEFAULT_PASSWORD_SIMA }}
         run: |
           $ErrorActionPreference = "Stop"
           $key = Join-Path $env:USERPROFILE ".ssh\sima_neat_pcie_ed25519"
@@ -697,7 +697,7 @@ jobs:
       - name: Install, test both APIs, and remove exact cohort
         shell: powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -Command ". '{0}'"
         env:
-          QUALIFIER_CARD_SUDO_PASSWORD: ${{ secrets.DEVKIT_PASSWORD }}
+          QUALIFIER_CARD_SUDO_PASSWORD: ${{ secrets.DEVKIT_DEFAULT_PASSWORD_SIMA }}
           VALIDATION_ONLY: ${{ inputs.validation_only }}
           INCLUDE_GENAI: ${{ inputs.include_genai }}
           REQUIRE_UPGRADE: ${{ inputs.require_upgrade }}
@@ -778,14 +778,14 @@ jobs:
           foreach ($directory in $env:SIMA_WINDOWS_DEPENDENCY_RUNTIME_PATH.Split(";")) {
             if ($directory) { $arguments += @("--dependency-runtime-dir", $directory) }
           }
-          if (-not $cardSudoPassword) { throw "Required hardware secret is unset: DEVKIT_PASSWORD" }
+          if (-not $cardSudoPassword) { throw "Required hardware secret is unset: DEVKIT_DEFAULT_PASSWORD_SIMA" }
           $cardSudoPassword | & python @arguments
           if ($LASTEXITCODE -ne 0) { throw "Windows hardware qualification failed: $LASTEXITCODE" }
       - name: Recover card and native installation
         if: always()
         shell: powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -Command ". '{0}'"
         env:
-          RECOVERY_CARD_SUDO_PASSWORD: ${{ secrets.DEVKIT_PASSWORD }}
+          RECOVERY_CARD_SUDO_PASSWORD: ${{ secrets.DEVKIT_DEFAULT_PASSWORD_SIMA }}
         run: |
           $ErrorActionPreference = "Stop"
           $cardSudoPassword = $env:RECOVERY_CARD_SUDO_PASSWORD
@@ -806,7 +806,7 @@ jobs:
               "--upgrade-base-candidate", "$env:RUNNER_TEMP\core-windows-upgrade-base"
             )
           }
-          if (-not $cardSudoPassword) { throw "Required recovery secret is unset: DEVKIT_PASSWORD" }
+          if (-not $cardSudoPassword) { throw "Required recovery secret is unset: DEVKIT_DEFAULT_PASSWORD_SIMA" }
           $cardSudoPassword | & python @arguments
           if ($LASTEXITCODE -ne 0) { throw "Windows hardware recovery failed: $LASTEXITCODE" }
       - name: Enforce release admission
