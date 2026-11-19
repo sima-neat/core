@@ -43,8 +43,15 @@ struct SimaDecodeOptions {
   int dec_fps = -1;         ///< Decoded frame rate override; `-1` = upstream-defined.
   int num_buffers = -1;     ///< Output buffer pool size override; `-1` = element default.
   int input_buffers = -1;   ///< Decoder input buffer count override; `-1` = element default.
-  std::string decoder_tuning; ///< Optional native decoder tuning ("low-memory",
-                              ///< "throughput-low-latency", ...).
+  std::string decoder_tuning; ///< Optional native decoder tuning. Canonical presets: "auto",
+                              ///< "default", "low-memory" and "throughput-low-latency"; the
+                              ///< decoder's aliases ("low_memory", "memory", "throughput",
+                              ///< "throughput_low_latency", "low-latency-throughput") are also
+                              ///< accepted. Matching ignores ASCII case and surrounding
+                              ///< whitespace, and the value is forwarded as written. Empty =
+                              ///< decoder default (property omitted). Any other value makes
+                              ///< construction throw `NeatError` with
+                              ///< `misconfig.option_out_of_range`.
   bool memory_opt = false;    ///< If true, enable the decoder memory-optimized path.
 };
 

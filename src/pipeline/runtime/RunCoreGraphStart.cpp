@@ -1483,6 +1483,21 @@ void rollback_failed_graph_start(const std::shared_ptr<RunCore>& core, const Nea
   }
 }
 
+// A plan that does not consist of exactly one built segment reports an empty string.
+std::string single_segment_launch_string(const ExecutionGraphRuntime& execution) {
+  if (execution.pipelines.size() != 1) {
+    return {};
+  }
+  const auto& segment = execution.pipelines.front();
+  if (!segment) {
+    return {};
+  }
+  if (!segment->transport.built.load(std::memory_order_acquire)) {
+    return {};
+  }
+  return segment->last_pipeline;
+}
+
 std::shared_ptr<RunCore> start_graph_plan(ExecutionGraphPlan plan, RunCoreStartOptions opt) {
   const auto total_start = pipeline_internal::build_timing_now();
   if (opt.graph_options.push_timeout_ms < 0) {
@@ -1559,6 +1574,12 @@ std::shared_ptr<RunCore> start_graph_plan(ExecutionGraphPlan plan, RunCoreStartO
         "segments=" + std::to_string(execution.pipelines.size()) +
             " stages=" + std::to_string(execution.stages.size()) +
             " edges=" + std::to_string(execution.plan.edges.size()));
+
+    // Published only once the start has fully succeeded, so a failed start leaves the caller's
+    // value untouched.
+    if (opt.last_pipeline) {
+      *opt.last_pipeline = single_segment_launch_string(execution);
+    }
 
     return core;
   } catch (const NeatError& e) {

@@ -236,6 +236,9 @@ void failed_start_releases_runtime_guard(bool connected, bool realtime = false) 
   start_options.guard = std::make_shared<int>(0);
   start_options.graph_verbose_guard = start_options.guard;
   const std::weak_ptr<void> resource = start_options.guard;
+  const std::string previous_launch_string = "previous launch string";
+  std::string last_pipeline = previous_launch_string;
+  start_options.last_pipeline = &last_pipeline;
   start_options.after_pipeline_start_for_test = [] {
     throw std::runtime_error("injected failure after pipeline start");
   };
@@ -256,6 +259,9 @@ void failed_start_releases_runtime_guard(bool connected, bool realtime = false) 
             "startup rollback must preserve the same code and detail in its structured report");
   }
   require(threw, "startup failure injection did not throw");
+  require(last_pipeline == previous_launch_string,
+          "failed startup must leave the caller's last_pipeline unchanged; actual=" +
+              last_pipeline);
   require(wait_until([&] { return resource.expired(); }, std::chrono::seconds(3)),
           "failed startup did not release its runtime resource guard after teardown");
 }

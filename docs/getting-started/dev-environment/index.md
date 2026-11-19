@@ -45,6 +45,7 @@ only when you need them or once you pair a DevKit.
       <li><a class="overview-link-card" href="/getting-started/dev-environment/install-the-environment/"><strong>Install the SDK</strong><span>Install and set up the SDK package that matches your DevKit software version.</span></a></li>
       <li><a class="overview-link-card" href="/getting-started/dev-environment/devkit-sync/"><strong>DevKit Sync</strong><span>Understand workspace sharing, pairing updates, rsync fallback, and <code>dk</code> command execution.</span></a></li>
       <li><a class="overview-link-card" href="/getting-started/dev-environment/offline-installation/"><strong>Offline Installation</strong><span>Download SDK and Model Compiler packages for offline installation.</span></a></li>
+      <li><a class="overview-link-card" href="/getting-started/dev-environment/containerized-apps/"><strong>Develop Containerized Apps</strong><span>Build container images in the SDK and run them on the DevKit with <code>dk container</code>.</span></a></li>
     </ul>
   </section>
 </div>

@@ -676,6 +676,7 @@ set(UNIT_TESTS
   unit_image_transform_frontends_test
   unit_image_transform_render_test
   unit_plugin_failure_messages_test
+  unit_graph_last_pipeline_regression_test
 )
 
 if (SimaLMM_FOUND)
@@ -2935,6 +2936,11 @@ install(
 install(
   FILES "${CMAKE_SOURCE_DIR}/tests/images/people.jpg"
   DESTINATION share/sima-neat/test-assets/tests/images
+  COMPONENT extras
+)
+install(
+  FILES "${CMAKE_SOURCE_DIR}/pcie_host/tutorials/assets/labrador.jpg"
+  DESTINATION share/sima-neat/test-assets/pcie_host/tutorials/assets
   COMPONENT extras
 )
 install(

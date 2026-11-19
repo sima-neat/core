@@ -5,7 +5,6 @@
 #include "pipeline/internal/contract/CompiledKernelTensor.h"
 #include "pipeline/internal/sima/KernelTensorLayout.h"
 #include "pipeline/internal/contract/ContractFacts.h"
-#include "pipeline/internal/TensorBufferEnvelope.h"
 #include "pipeline/internal/sima/KernelStageRecipe.h"
 #include "pipeline/internal/sima/StaticSpecBuilders.h"
 #include "pipeline/internal/sima/CanonicalKernelLowering.h"
@@ -46,22 +45,13 @@ rt::DType kernel_dtype(std::string token) {
 CompiledRuntimeContract ingress_tensors(const Sample& sample) {
   const auto tensors = tensors_from_sample(sample, true);
   for (const auto& tensor : tensors) {
-    if (!tensor.storage || !tensor.storage->size_bytes || tensor.is_composite() ||
-        tensor.semantic.tess)
-      throw std::invalid_argument("SimaArgMax ingress requires typed single-plane tensors; "
-                                  "detessellate image/tile inputs first");
     if (tensor.dtype != TensorDType::UInt8 && tensor.dtype != TensorDType::Int8 &&
         tensor.dtype != TensorDType::BFloat16 && tensor.dtype != TensorDType::Float32)
       throw std::invalid_argument("SimaArgMax ingress supports INT8/UINT8/BF16/FP32");
   }
   std::string error;
-  const auto holder = pipeline_internal::sample_to_gst_envelope_holder(sample, &error);
-  pipeline_internal::TensorBufferView ingress;
   CompiledRuntimeContract result;
-  if (!holder ||
-      !pipeline_internal::tensor_buffer_descriptor_from_sample(
-          static_cast<GstSample*>(holder.get()), &ingress, &error) ||
-      !specs::build_ingress_runtime_contract(ingress, tensors, &result, &error))
+  if (!specs::build_dense_ingress_runtime_contract(sample, &result, &error))
     throw std::invalid_argument("SimaArgMax: cannot resolve ingress carriers: " + error);
   return result;
 }

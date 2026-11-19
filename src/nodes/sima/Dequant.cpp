@@ -2,7 +2,6 @@
 
 #include "gst/GstHelpers.h"
 #include "pipeline/internal/contract/ContractFacts.h"
-#include "pipeline/internal/contract/CompiledNodeContractQuery.h"
 #include "model/internal/ModelInternal.h"
 #include "model/internal/ModelPack.h"
 #include "pipeline/internal/sima/stagesemantics/DequantStageSemantics.h"
@@ -107,20 +106,12 @@ bool Dequant::compile_node_contract(const ContractCompileInput& compile_input,
       quant.zero_points = {*opt_.q_zp};
       facts.input_quant = std::move(quant);
     }
-    auto compiled =
-        pipeline_internal::sima::stagesemantics::build_dequant_compiled_contract_from_facts(facts);
-    if (const auto* upstream =
-            compiled_runtime_contract_from_stage(compile_input.immediate_upstream);
-        upstream && !upstream->logical_outputs.empty()) {
-      compiled =
-          pipeline_internal::sima::stagesemantics::build_dequant_compiled_contract_from_upstream(
-              *upstream, facts, err);
-      if (err && !err->empty()) {
-        return false;
-      }
-    }
+    const auto compiled = pipeline_internal::sima::stagesemantics::compile_standalone_dequant(
+        compile_input, facts, err);
+    if (!compiled)
+      return false;
     return pipeline_internal::sima::stagesemantics::build_dequant_node_contract(
-        kind(), "dequant", element_name, logical_stage_id, contract_definition(), compiled, out,
+        kind(), "dequant", element_name, logical_stage_id, contract_definition(), *compiled, out,
         err);
   }
   return pipeline_internal::sima::stagesemantics::build_dequant_node_contract(
