@@ -235,9 +235,10 @@ bool detection_format_is_pose(const std::string& format);
 /// True iff @p format names a BoxDecode segmentation wire format.
 bool detection_format_is_segmentation(const std::string& format);
 
-/// True iff @p format is any BoxDecode format whose leading payload is BBOX records.
+/// True iff @p format names a combined segmentation and pose wire format.
 bool detection_format_is_segmentation_pose(const std::string& format);
 
+/// True iff @p format names a wire format with leading axis-aligned BBOX records.
 bool detection_format_is_bbox_family(const std::string& format);
 
 /**
@@ -300,8 +301,10 @@ simaai::neat::Tensor boxes_to_tensor(const std::vector<Box>& boxes);
  * Positional, 1:1 — output `[i]` is the decode of input `[i]`. Each output is a dense CPU
  * `float32` tensor of shape `[num_detections, 6]` (columns `x1, y1, x2, y2, score, class_id`).
  *
- * Every input tensor must be BBOX-format (`semantic.detection.format == "BBOX"`); a tensor
- * that is not raises (no silent skip).
+ * Use `detection_format_is_bbox_family()` to select tagged inputs: plain detections,
+ * pose, instance segmentation, and combined segmentation/pose all carry axis-aligned
+ * boxes. Legacy untagged rank-one UInt8 inputs are also accepted. Use `decode_obb()`
+ * for oriented boxes.
  *
  * @param bbox_tensors The BBOX-format tensors (e.g. a model's run output).
  * @param img_w Optional source width to clamp coordinates to (0 = no clamp).

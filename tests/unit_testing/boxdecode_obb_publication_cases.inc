@@ -1,3 +1,84 @@
+auto prepare_detection_publication(CompiledBoxDecodeContract typed) {
+  using namespace simaai::neat::pipeline_internal;
+  for (std::size_t i = 0; i < typed.runtime_contract.logical_inputs.size(); ++i) {
+    const auto& logical = typed.runtime_contract.logical_inputs[i];
+    const auto span = logical.shape[0] * logical.shape[1] * logical.shape[2] * 4;
+    typed.runtime_contract.physical_inputs.push_back(
+        specbuilders::build_physical_buffer_static_spec(i, i, span, DeviceKind::Cpu, "head"));
+    typed.runtime_contract.input_bindings.push_back(
+        specbuilders::build_input_binding_static_spec(i, i, "head", "head"));
+  }
+  BoxDecodeGeometryOptions geometry{64, 64, 64, 64, ResizeMode::Letterbox};
+  if (box_decode_type_is_oriented(typed.payload.decode_type))
+    geometry.model_to_original = std::array<float, 4>{1, 1, 0, 0};
+  ContractCompileInput context;
+  CompiledNodeContract node;
+  node.element_name = node.logical_stage_id = "detection_publication";
+  node.node_kind = "SimaBoxDecode";
+  node.boxdecode = typed;
+  node.kernel = compile_boxdecode_kernel(*node.boxdecode, context, geometry);
+  node.boxdecode.reset(); // Same ownership transition as SimaBoxDecode/ModelPack.
+  CompiledPipelineContracts compiled;
+  compiled.stages.push_back(node);
+  compiled.fully_renderable = true;
+  ManifestBuildDiagnostics diagnostics;
+  auto manifest = render_manifest_from_compiled_contracts(compiled, context, &diagnostics);
+  require(manifest && manifest->stages.size() == 1 && diagnostics.errors.empty(),
+          "BoxDecode canonical kernel render failed");
+  auto prepared = prepare_kernel_stage_recipes(&*manifest, std::nullopt, {}, {}, {});
+  require(!prepared, "BoxDecode checked recipe preparation failed");
+  finalize_pipeline_storage(*manifest);
+  require(!finalize_stage_publications(&*manifest), "BoxDecode final publication failed");
+  return manifest->stages.front();
+}
+
+Sample materialize_detection_sample(InputStream::State& state, GstBuffer* buffer,
+                                   const c::TensorStagePublication& publication) {
+  using namespace simaai::neat::pipeline_internal;
+  std::string error;
+  simaai::gst::TensorBufferPreparedMetaTemplate metadata;
+  require(simaai::gst::tensor_buffer_prepare_meta_template_from_contract(*publication.contract,
+                         &metadata, &error),
+    error.c_str());
+  auto frozen = simaai::gst::tensor_buffer_freeze_publication(metadata, &error);
+  require(frozen &&
+        simaai::gst::tensor_buffer_attach_publication(buffer, frozen, &error),
+    error.c_str());
+  auto input = std::shared_ptr<GstSample>(
+      gst_sample_new(buffer, publication.output_caps.get(), nullptr, nullptr),
+      gst_sample_unref);
+  return decode_sample_from_inputstream_state(state, input.get(), "BoxDecode publication");
+}
+
+// Exercise the public tags after rendering and raw pull, using the same installed
+// recipe-test fixtures as the numerical decoder checks.
+void bbox_family_publication_sample() {
+  for (bool pose : {false, true}) {
+    auto typed = source(pose ? BoxDecodeType::YoloV8Pose : BoxDecodeType::YoloV8, 1);
+    for (int side : {8, 4, 2}) {
+      input(typed, side, side, 64, "FP32");
+      input(typed, side, side, 1, "FP32");
+      if (pose)
+        input(typed, side, side, 51, "FP32");
+    }
+    const auto stage = prepare_detection_publication(std::move(typed));
+    auto buffer = std::shared_ptr<GstBuffer>(gst_buffer_new(), gst_buffer_unref);
+    for (const auto& allocation : stage.frame_layout->allocations) {
+      auto* memory = gst_allocator_alloc(nullptr, allocation.size_bytes, nullptr);
+      require(memory, "detection fixture allocation failed");
+      gst_buffer_append_memory(buffer.get(), memory);
+    }
+    gst_buffer_memset(buffer.get(), 0, 0, gst_buffer_get_size(buffer.get()));
+    InputStream::State state;
+    state.lifetime_token = std::make_shared<int>(0);
+    const auto sample = materialize_detection_sample(state, buffer.get(), *stage.tensor_publication);
+    const auto* expected = pose ? kDetectionFormatBboxPose : kDetectionFormatBbox;
+    require(sample.format == expected && sample.payload_tag == expected && sample.tensors.size() == 1 &&
+                read_detection_format(sample.tensors.front()) == expected,
+            "published Sample and tensor must carry the admitted BoxDecode wire format");
+  }
+}
+
 // Exercise the real cold publication contract and InputStream materializer.
 // No Graph/MLA, firmware or DMA allocation: numerical wire bytes are an
 // independent fixture; existing recipe tests cover numerical serialization.
@@ -14,35 +95,7 @@ void oriented_publication_sample_bridge(BoxDecodeType type = BoxDecodeType::Yolo
   for (int channels : {type == BoxDecodeType::YoloV8Obb ? 64 : 4, 2, 1})
     for (int side : {8, 4, 2})
       input(typed, side, side, channels, "FP32");
-  for (std::size_t i = 0; i < typed.runtime_contract.logical_inputs.size(); ++i) {
-    const auto& logical = typed.runtime_contract.logical_inputs[i];
-    const auto span = logical.shape[0] * logical.shape[1] * logical.shape[2] * 4;
-    typed.runtime_contract.physical_inputs.push_back(
-        specbuilders::build_physical_buffer_static_spec(i, i, span, DeviceKind::Cpu, "head"));
-    typed.runtime_contract.input_bindings.push_back(
-        specbuilders::build_input_binding_static_spec(i, i, "head", "head"));
-  }
-  BoxDecodeGeometryOptions geometry{64, 64, 64, 64, ResizeMode::Letterbox};
-  geometry.model_to_original = std::array<float, 4>{1, 1, 0, 0};
-  ContractCompileInput context;
-  CompiledNodeContract node;
-  node.element_name = node.logical_stage_id = "obb_publication";
-  node.node_kind = "SimaBoxDecode";
-  node.boxdecode = typed;
-  node.kernel = compile_boxdecode_kernel(*node.boxdecode, context, geometry);
-  node.boxdecode.reset(); // Same ownership transition as SimaBoxDecode/ModelPack.
-  CompiledPipelineContracts compiled;
-  compiled.stages.push_back(node);
-  compiled.fully_renderable = true;
-  ManifestBuildDiagnostics diagnostics;
-  auto manifest = render_manifest_from_compiled_contracts(compiled, context, &diagnostics);
-  require(manifest && manifest->stages.size() == 1 && diagnostics.errors.empty(),
-          "OBB canonical kernel render failed");
-  auto prepared = prepare_kernel_stage_recipes(&*manifest, std::nullopt, {}, {}, {});
-  require(!prepared, "OBB checked recipe preparation failed");
-  finalize_pipeline_storage(*manifest);
-  require(!finalize_stage_publications(&*manifest), "OBB final publication failed");
-  const auto& stage = manifest->stages.front();
+  auto stage = prepare_detection_publication(std::move(typed));
   require(stage.payload_kind == StagePayloadKind::None && stage.native_kernel &&
               stage.native_kernel->output_format == kDetectionFormatBboxObbV1 &&
               stage.frame_layout && stage.tensor_publication,
@@ -110,18 +163,7 @@ void oriented_publication_sample_bridge(BoxDecodeType type = BoxDecodeType::Yolo
                 "OBB fixture selected span invalid");
         std::memcpy(mapped.data + selected.byte_offset, wire.data(), bytes);
         gst_memory_unmap(memory, &mapped);
-        simaai::gst::TensorBufferPreparedMetaTemplate metadata;
-        require(simaai::gst::tensor_buffer_prepare_meta_template_from_contract(public_contract,
-                                                                               &metadata, &error),
-                error.c_str());
-        auto frozen = simaai::gst::tensor_buffer_freeze_publication(metadata, &error);
-        require(frozen &&
-                    simaai::gst::tensor_buffer_attach_publication(buffer.get(), frozen, &error),
-                error.c_str());
-        auto input = std::shared_ptr<GstSample>(
-            gst_sample_new(buffer.get(), publication->output_caps.get(), nullptr, nullptr),
-            gst_sample_unref);
-        auto sample = decode_sample_from_inputstream_state(state, input.get(), "OBB publication");
+        auto sample = materialize_detection_sample(state, buffer.get(), *publication);
         require(sample.kind == SampleKind::TensorSet && sample.tensors.size() == 1,
                 "OBB publication did not materialize one public Tensor");
         // Raw pull exposes Sample.tensors without Run.run normalization. Decode

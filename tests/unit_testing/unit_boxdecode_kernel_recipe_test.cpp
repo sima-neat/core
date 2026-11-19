@@ -3098,6 +3098,7 @@ int main(int argc, char** argv) {
     simaai::neat::gst_init_once();
     check_ssd_mpk_carrier_contracts();
     dfl_oriented_contract_and_execution();
+    bbox_family_publication_sample();
     oriented_publication_sample_bridge(BoxDecodeType::YoloV8Obb);
     oriented_source_geometry(BoxDecodeType::YoloV8Obb);
     oriented_source_geometry();
