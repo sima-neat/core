@@ -1388,7 +1388,7 @@ void start_pipeline_push_thread(const std::shared_ptr<RunCore>& core, std::size_
                        static_cast<int>(::getpid()));
           std::raise(SIGSTOP);
         }
-        core->graph_request_stop_from_pipeline(pipe.run_core, "GraphRun: pipeline push failed");
+        core->graph_request_stop_from_pipeline(pipe.run_core, pipe.transport.has_output);
         return;
       }
       if (!pipe.transport.has_output) {

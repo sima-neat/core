@@ -579,6 +579,8 @@ PullStatus runtime::RunCore::pull(int timeout_ms, Sample& out, PullError* err,
     if (typed.has_value() && typed->report.has_value()) {
       if (err)
         *err = *typed;
+      if (typed->code == error_codes::kUnexpectedEos)
+        stop();
       return PullStatus::Error;
     }
     GraphReport rep = diag ? diag->snapshot_basic() : GraphReport{};

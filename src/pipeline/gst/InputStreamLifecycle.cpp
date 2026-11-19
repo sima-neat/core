@@ -131,11 +131,13 @@ bool InputStream::can_pull() const noexcept {
 }
 
 bool InputStream::running() const {
-  return state_ && state_->running.load();
+  const auto state = std::atomic_load_explicit(&state_, std::memory_order_acquire);
+  return state && state->running.load();
 }
 
 bool InputStream::reached_eos() const {
-  return state_ && state_->eos_seen.load();
+  const auto state = std::atomic_load_explicit(&state_, std::memory_order_acquire);
+  return state && state->eos_seen.load();
 }
 
 std::string InputStream::last_error() const {

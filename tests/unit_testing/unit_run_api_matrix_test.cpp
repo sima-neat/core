@@ -282,6 +282,9 @@ RUN_TEST(
                     ? status == PullStatus::Closed
                     : status == PullStatus::Error && err.code == error_codes::kUnexpectedEos,
                 "only the pull after the queued frame should report terminal status");
+        if (!close_input)
+          require(core->stop_started && core->pipeline.in_queue.empty(),
+                  "the unexpected-EOS pull must release the live Run's queued inputs");
       }
 
       // Once the application has closed its input, a lower output count is not evidence of a

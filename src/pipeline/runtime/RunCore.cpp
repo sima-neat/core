@@ -426,7 +426,7 @@ void RunCore::graph_request_stop(const NeatError& err) {
 }
 
 void RunCore::graph_request_stop_from_pipeline(const std::shared_ptr<RunCore>& pipeline_core,
-                                               std::string fallback_error) {
+                                               bool has_pull_worker) {
   // An appsrc flow failure can precede the terminal GStreamer bus message. Give the child
   // InputStream worker a bounded window to replace its reportless push placeholder with the
   // normalized, report-bearing bus error before stopping the parent graph.
@@ -435,10 +435,13 @@ void RunCore::graph_request_stop_from_pipeline(const std::shared_ptr<RunCore>& p
       pipeline_core ? pipeline_core->wait_for_report_bearing_error(kErrorSettleTimeout)
                     : std::nullopt;
   if (detail.has_value() && detail->report.has_value()) {
+    // The pull worker forwards the child's queued output before reporting unexpected EOS.
+    if (has_pull_worker && detail->code == error_codes::kUnexpectedEos)
+      return;
     graph_request_stop(*detail);
     return;
   }
-  graph_request_stop(fallback_error.empty() ? "GraphRun: pipeline push failed" : fallback_error);
+  graph_request_stop("GraphRun: pipeline push failed");
 }
 
 void RunCore::graph_target_producer_completed(const DownstreamTarget& target) {

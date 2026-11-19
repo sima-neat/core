@@ -211,7 +211,7 @@ struct RunCore : std::enable_shared_from_this<RunCore> {
   void graph_request_stop(PullError err);
   void graph_request_stop(const NeatError& err);
   void graph_request_stop_from_pipeline(const std::shared_ptr<RunCore>& pipeline_core,
-                                        std::string fallback_error);
+                                        bool has_pull_worker);
   void graph_pipeline_completed(std::size_t pipeline_index,
                                 std::optional<PullError> close_detail = std::nullopt);
   void graph_stage_worker_completed(std::size_t group_index);
