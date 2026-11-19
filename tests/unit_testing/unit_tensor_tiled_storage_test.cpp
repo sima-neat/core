@@ -155,6 +155,86 @@ void check_tiled_validation(const Tensor& valid) {
   legacy.semantic.tess->slice_shape = {-1};
   require(legacy.validate(nullptr), "legacy format-only annotations became strict tiled metadata");
 }
+
+// Dense (single-plane, non-tiled) geometry must lie inside the selected storage.
+Tensor make_dense_4x4(std::size_t storage_bytes = 16) {
+  Tensor t;
+  t.storage = make_cpu_owned_storage(storage_bytes);
+  t.dtype = TensorDType::UInt8;
+  t.shape = {4, 4};
+  t.strides_bytes = {4, 1};
+  t.device = {DeviceType::CPU, 0};
+  return t;
+}
+
+void rejects_dense_metadata(const Tensor& t, const char* why) {
+  std::string error;
+  require(!t.validate(&error) && !error.empty(), why);
+}
+
+void check_dense_extent_validation() {
+  constexpr int64_t kBig = int64_t{1} << 40;
+  require(make_dense_4x4().validate(nullptr), "in-bounds dense tensor rejected");
+
+  // Validation judges metadata only: it must reach the verdict without mapping the storage.
+  Tensor opaque = make_dense_4x4();
+  opaque.storage = std::make_shared<TensorBuffer>();
+  opaque.storage->size_bytes = 16;
+  opaque.storage->map_fn = [](MapMode) -> Mapping {
+    throw std::runtime_error("metadata validation must not map storage");
+  };
+  require(opaque.validate(nullptr), "in-bounds dense tensor rejected without mapping");
+  opaque.shape = {8, 8};
+  rejects_dense_metadata(opaque, "dense view larger than storage accepted without mapping");
+
+  Tensor t = make_dense_4x4();
+  t.byte_offset = 10;
+  rejects_dense_metadata(t, "dense view crossing the storage end accepted");
+  t.byte_offset = 16;
+  rejects_dense_metadata(t, "dense view starting at the storage end accepted");
+  t.byte_offset = std::numeric_limits<int64_t>::max();
+  rejects_dense_metadata(t, "overflowing dense byte offset accepted");
+  t = make_dense_4x4();
+  t.shape = {kBig, kBig};
+  t.strides_bytes = {kBig, 1};
+  rejects_dense_metadata(t, "overflowing dense extent accepted");
+  t = make_dense_4x4();
+  t.strides_bytes = {-4, 1};
+  rejects_dense_metadata(t, "negative stride reaching before the storage start accepted");
+  t.byte_offset = 12;
+  require(t.validate(nullptr), "negative stride staying inside the storage rejected");
+
+  // Rank-0 scalars are checked against their element size.
+  t = make_dense_4x4(8);
+  t.dtype = TensorDType::Int32;
+  t.shape.clear();
+  t.strides_bytes.clear();
+  t.byte_offset = 4;
+  require(t.validate(nullptr), "rank-0 scalar inside the storage rejected");
+  t.byte_offset = 6;
+  rejects_dense_metadata(t, "rank-0 scalar crossing the storage end accepted");
+
+  // Unknown storage size (0) skips the bounds comparison only.
+  Tensor unknown = make_dense_4x4();
+  unknown.storage = std::make_shared<TensorBuffer>();
+  unknown.shape = {8, 8};
+  require(unknown.validate(nullptr), "unknown storage size treated as a known empty buffer");
+  unknown.byte_offset = -1;
+  rejects_dense_metadata(unknown, "negative offset accepted on unknown-size storage");
+  unknown.byte_offset = 0;
+  unknown.shape = {2, 2, 4};
+  rejects_dense_metadata(unknown, "stride rank mismatch accepted on unknown-size storage");
+
+  // Opaque empty-shape carrier tagged with a tessellation format keeps its outcome.
+  Tensor carrier = make_dense_4x4(1);
+  carrier.dtype = TensorDType::Float32;
+  carrier.shape.clear();
+  carrier.strides_bytes.clear();
+  TessSpec carrier_tess;
+  carrier_tess.format = "BF16";
+  carrier.semantic.tess = carrier_tess;
+  require(carrier.validate(nullptr), "opaque tess carrier rejected");
+}
 } // namespace
 
 RUN_TEST("unit_tensor_tiled_storage_test", ([] {
@@ -360,4 +440,6 @@ RUN_TEST("unit_tensor_tiled_storage_test", ([] {
                    "legacy format-only tensor behavior changed");
            require(legacy.clone().copy_dense_bytes_tight() == legacy.copy_dense_bytes_tight(),
                    "legacy clone behavior changed");
+
+           check_dense_extent_validation();
          }));

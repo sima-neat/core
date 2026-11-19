@@ -700,6 +700,16 @@ PyObject* tensor_to_dlpack_capsule(const Tensor& input) {
     }
   }
 
+  if (!tensor.strides_bytes.empty() && tensor.strides_bytes.size() != tensor.shape.size())
+    throw std::runtime_error("__dlpack__: tensor strides rank differs from shape rank");
+  bool has_elements = true;
+  for (int64_t dim : tensor.shape) {
+    if (dim < 0)
+      throw std::runtime_error("__dlpack__: tensor shape has a negative dimension");
+    if (dim == 0)
+      has_elements = false;
+  }
+
   auto owner = std::make_unique<DlpackExportOwner>();
   owner->tensor = std::move(tensor);
   {
@@ -708,6 +718,11 @@ PyObject* tensor_to_dlpack_capsule(const Tensor& input) {
   }
   if (!owner->mapping.data)
     throw std::runtime_error("tensor mapping failed");
+  if (has_elements) {
+    const std::size_t span = span_bytes(owner->tensor.shape, owner->tensor.strides_bytes, elem);
+    if (span > owner->mapping.size_bytes)
+      throw std::runtime_error("__dlpack__: tensor view exceeds its storage mapping");
+  }
 
   owner->shape = owner->tensor.shape;
   owner->strides_elems.clear();

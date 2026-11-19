@@ -237,6 +237,70 @@ bool copy_dense_strided_to_contiguous(const uint8_t* src, std::size_t src_bytes,
   return true;
 }
 
+// Metadata-only check of the byte range a single-plane, non-tiled view addresses inside its bound
+// storage. Returns nullptr when the view is valid or the rule does not apply.
+const char* dense_storage_bounds_error(const Tensor& tensor) noexcept {
+  constexpr const char* kOverflow = "dense tensor byte extent overflows";
+  if (!tensor.storage || !tensor.is_dense() || tensor.has_tiled_storage())
+    return nullptr;
+  if (tensor.byte_offset < 0)
+    return "dense tensor byte_offset is negative";
+  // Opaque rank-unknown carriers are not judged beyond the offset.
+  if (tensor.shape.empty() && !pipeline_internal::is_bound_dense_scalar(tensor))
+    return nullptr;
+  if (!tensor.strides_bytes.empty() && tensor.strides_bytes.size() != tensor.shape.size())
+    return "dense tensor strides_bytes rank must match shape rank";
+
+  bool has_zero_dim = false;
+  for (const int64_t dim : tensor.shape) {
+    if (dim < 0)
+      return "dense tensor has a negative dimension";
+    if (dim == 0)
+      has_zero_dim = true;
+  }
+  if (has_zero_dim)
+    return nullptr;
+
+  const std::size_t elem = dtype_bytes(tensor.dtype);
+  if (elem == 0)
+    return nullptr;
+
+  const std::size_t kMax = static_cast<std::size_t>(std::numeric_limits<int64_t>::max());
+  std::size_t below = 0;
+  std::size_t above = elem;
+  if (tensor.strides_bytes.empty()) {
+    above = dense_size_bytes_checked(tensor.shape, elem);
+    if (above == 0)
+      return kOverflow;
+  } else {
+    for (std::size_t i = 0; i < tensor.shape.size(); ++i) {
+      const int64_t stride = tensor.strides_bytes[i];
+      // Magnitude without negating INT64_MIN.
+      const std::size_t mag = stride >= 0 ? static_cast<std::size_t>(stride)
+                                          : static_cast<std::size_t>(-(stride + 1)) + 1;
+      std::size_t term = 0;
+      if (!safe_mul(static_cast<std::size_t>(tensor.shape[i] - 1), mag, &term))
+        return kOverflow;
+      std::size_t& acc = stride < 0 ? below : above;
+      if (!safe_add(acc, term, &acc))
+        return kOverflow;
+    }
+  }
+  if (below > kMax || above > kMax)
+    return kOverflow;
+
+  const std::size_t off = static_cast<std::size_t>(tensor.byte_offset);
+  if (above > kMax - off)
+    return kOverflow;
+
+  const std::size_t size = tensor.storage->size_bytes;
+  if (size == 0)
+    return nullptr;
+  if (off < below || off > size || above > size - off)
+    return "dense tensor view exceeds storage bounds";
+  return nullptr;
+}
+
 } // namespace
 
 //==============================================================================
@@ -947,6 +1011,9 @@ bool Tensor::validate(std::string* err) const {
       return fail("byte_stream tensor layout must be Unknown");
     }
   }
+
+  if (const char* error = dense_storage_bounds_error(*this))
+    return fail(error);
 
   return true;
 }
