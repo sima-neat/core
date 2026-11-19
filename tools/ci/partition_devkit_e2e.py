@@ -8,6 +8,7 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+import tempfile
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -41,9 +42,16 @@ def main():
     regex = '^(' + '|'.join(re.escape(n) for n in selected) + ')$'
     # Required zero-skip accounting still discovers and validates the exact
     # partial selection and executes CTest with its original timeout/jobs/labels.
-    result = subprocess.run([sys.executable, str(ROOT / 'tools/ci/check_test_coverage.py'),
-                    '--profile', os.environ.get('COVERAGE_PROFILE', 'strict'),
-                    '--output-dir', str(coverage), '--', *command, '-R', regex])
+    env = os.environ.copy()
+    with tempfile.TemporaryDirectory(prefix='model-browser-yolo26n-', dir=env.get('RUNNER_TEMP')) as tmp:
+        if 'model_execution_plan_test' in selected and not env.get('SIMA_TEST_MLA_ONLY_MODEL'):
+            env['SIMA_TEST_MLA_ONLY_MODEL'] = subprocess.check_output(
+                [sys.executable, str(ROOT / 'scripts/ci/prepare_model_browser_fixture.py'),
+                 '--id', 'yolo26n', '--variant', 'w8a8', '--output', tmp], text=True,
+                timeout=900).strip()
+        result = subprocess.run([sys.executable, str(ROOT / 'tools/ci/check_test_coverage.py'),
+                    '--profile', env.get('COVERAGE_PROFILE', 'strict'),
+                    '--output-dir', str(coverage), '--', *command, '-R', regex], env=env)
     coverage.mkdir(parents=True, exist_ok=True)
     (coverage / 'e2e-partition.json').write_text(json.dumps(
         {'index': args.index, 'canonical': names, 'selected': selected}, indent=2) + '\n')
