@@ -1710,6 +1710,19 @@ void yuyv_color_and_storage_contract() {
   cfg->input_color = simaai::neat::ImageColorOptions{};
   cfg->input_color->matrix = simaai::neat::ImageColorMatrix::Bt709;
   cfg->input_color->range = simaai::neat::ImageYuvRange::Limited;
+  // Kernels admit neither antialiased sampling nor fixed source arithmetic for
+  // YUYV; cold admission must fail closed rather than pick another route.
+  for (int fault = 0; fault < 2; ++fault) {
+    auto bad = std::make_shared<core::ProcessCvuStagePayload>(*cfg);
+    if (fault == 0) {
+      bad->scaling_type = "BILINEAR_ANTIALIASED";
+    } else {
+      bad->scaling_type = "NEAREST";
+      bad->rescale_factor = 1.f / 255.f;
+    }
+    require(std::holds_alternative<rt::Error>(PreprocProbe::create(bad, options)),
+            "YUYV admitted a sampler or arithmetic option the kernel rejects");
+  }
   auto stage = take(PreprocProbe::create(cfg, options));
   auto* caps = gst_caps_from_string("video/x-raw,format=YUY2,width=6,height=3,framerate=30000/"
                                     "1001,colorimetry=bt709,chroma-site=jpeg");

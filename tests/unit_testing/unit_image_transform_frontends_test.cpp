@@ -358,6 +358,27 @@ void yuyv_input_boundary_chain() {
         render_manifest_from_compiled_contracts(compiled, compile_input, &diagnostics);
     require(manifest && manifest->stages.size() == 1 && diagnostics.errors.empty(),
             "packed Input conversion must render through the canonical path");
+    // Kernels reconstruct YUYV chroma only from centered siting; RGB output has
+    // no siting field, so a cosited request must not be silently reinterpreted.
+    for (const auto output : {ImageFormat::RGB, ImageFormat::NV12}) {
+      ColorConvertOptions cosited = convert;
+      cosited.output_format = output;
+      cosited.surface = ImageSurfaceLayout::Native;
+      cosited.color.output_siting = {ImageChromaSiting::Centered, ImageChromaSiting::Centered};
+      cosited.color.input_siting = {ImageChromaSiting::Cosited, ImageChromaSiting::Centered};
+      auto rejected = nodes::ColorConvert(cosited, "bt709");
+      InputContract contract;
+      contract.media_type = boundary.media_type;
+      contract.format = alias;
+      contract.dtype = boundary.dtype;
+      contract.width = boundary.width;
+      contract.height = boundary.height;
+      contract.depth = boundary.depth;
+      std::string error;
+      preproc(rejected).apply_input_contract(contract, &error);
+      require(error.find("centered input chroma") != std::string::npos,
+              "YUYV ColorConvert accepted cosited input chroma: " + error);
+    }
   }
   PreprocOptions explicit_options;
   explicit_options.input_img_type = "YUYV";

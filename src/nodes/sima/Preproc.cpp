@@ -614,6 +614,9 @@ void Preproc::materialize_config_from_input_contract(const InputContract& contra
           opt_.output_img_type != "BGR")))
       throw std::invalid_argument("YUYV supports ColorConvert to RGB/BGR/NV12; packed "
                                   "Resize/Normalization/output are unsupported");
+    if (format == "YUY2" && policy->color.input_siting != std::array{ImageChromaSiting::Centered,
+                                                                     ImageChromaSiting::Centered})
+      throw std::invalid_argument("YUYV ColorConvert requires centered input chroma siting");
     if ((policy->max_input_width > 0 && contract.width > policy->max_input_width) ||
         (policy->max_input_height > 0 && contract.height > policy->max_input_height))
       throw std::invalid_argument("Resize input exceeds its authored capacity envelope");
