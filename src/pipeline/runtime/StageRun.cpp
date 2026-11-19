@@ -1353,20 +1353,17 @@ struct StageKeyHash {
 constexpr std::size_t kRetainedStageRuns = 16;
 pipeline_internal::BoundedStageCache<StageKey, Run, StageKeyHash> g_cache(kRetainedStageRuns);
 
-InputOptions appsrc_for_mat(const cv::Mat& input, const Model& model) {
+InputOptions appsrc_for_mat(const cv::Mat& input, PreprocessColorFormat input_format) {
   InputOptions opt;
   opt.payload_type = PayloadType::Image;
   opt.width = input.cols;
   opt.height = input.rows;
   opt.depth = input.channels();
-  if (opt.depth == 1) {
-    opt.format = "GRAY8";
+  if (input_format == PreprocessColorFormat::Auto) {
+    opt.format = opt.depth == 1 ? "GRAY8" : "BGR";
   } else {
-    opt.format = "BGR";
+    opt.format = preprocess_color_format_to_format_spec(input_format);
   }
-  const auto requested = model.resolved_preprocess_plan().effective.color_convert.input_format;
-  if (requested != PreprocessColorFormat::Auto)
-    opt.format = preprocess_color_format_to_format_spec(requested);
   return opt;
 }
 
@@ -1388,28 +1385,25 @@ preprocess_meta_from_tensor_or_holder(const simaai::neat::Tensor& tensor) {
   return meta;
 }
 
-PreprocessMetaTemplate make_stage_preprocess_meta_template(
-    const cv::Mat& input, const simaai::neat::Model& model, const PreprocOutputInfo& preproc_info,
-    const InputOptions& src_opt, const std::vector<PreprocessRoi>* runtime_rois) {
-  const auto resolved_preproc = model.resolved_preprocess_plan();
+PreprocessMetaTemplate make_stage_preprocess_meta_template(const Model& model,
+                                                           const PreprocessOptions& effective,
+                                                           const PreprocOutputInfo& preproc_info,
+                                                           const InputOptions& src_opt) {
   const auto contract_flags = simaai::neat::internal::ModelAccess::preprocess_contract_flags(model);
 
   PreprocessMetaTemplate meta;
   meta.enabled = true;
   meta.quantize = contract_flags.quant_needed;
   meta.tessellate = contract_flags.tess_needed;
-  meta.normalize = resolved_preproc.effective.normalize.enable == AutoFlag::On;
+  meta.normalize = effective.normalize.enable == AutoFlag::On;
 
-  if (resolved_preproc.effective.resize.enable == AutoFlag::On) {
-    meta.target_width = resolved_preproc.effective.resize.width;
-    meta.target_height = resolved_preproc.effective.resize.height;
-    meta.scaled_width = (resolved_preproc.effective.resize.width > 0)
-                            ? resolved_preproc.effective.resize.width
-                            : preproc_info.logical_dims.width;
-    meta.scaled_height = (resolved_preproc.effective.resize.height > 0)
-                             ? resolved_preproc.effective.resize.height
-                             : preproc_info.logical_dims.height;
-    switch (resolved_preproc.effective.resize.mode) {
+  if (effective.resize.enable == AutoFlag::On) {
+    meta.target_width = effective.resize.width;
+    meta.target_height = effective.resize.height;
+    meta.scaled_width = meta.target_width > 0 ? meta.target_width : preproc_info.logical_dims.width;
+    meta.scaled_height =
+        meta.target_height > 0 ? meta.target_height : preproc_info.logical_dims.height;
+    switch (effective.resize.mode) {
     case ResizeMode::Stretch:
       meta.resize_mode = "stretch";
       break;
@@ -1420,30 +1414,17 @@ PreprocessMetaTemplate make_stage_preprocess_meta_template(
       meta.resize_mode = "crop";
       break;
     }
-    meta.pad_value = resolved_preproc.effective.resize.pad_value;
+    meta.pad_value = effective.resize.pad_value;
   } else {
     meta.resize_mode = "none";
   }
 
-  const auto out_fmt_spec = preprocess_color_format_to_format_spec(
-      resolved_preproc.effective.color_convert.output_format);
   meta.color_in = src_opt.format.str();
-  meta.color_out =
-      (resolved_preproc.effective.color_convert.output_format == PreprocessColorFormat::Auto)
-          ? std::string{}
-          : out_fmt_spec.str();
-  meta.axis_perm = resolved_preproc.effective.layout_convert.perm;
-
-  if (runtime_rois != nullptr) {
-    meta.roi_list_enabled = true;
-    meta.rois = *runtime_rois;
-    meta.roi_input_batch_size = 1;
-    meta.roi_source_width = input.cols;
-    meta.roi_source_height = input.rows;
-    meta.roi_source_stride_bytes = input.step[0] > 0 ? static_cast<int>(input.step[0])
-                                                     : input.cols * std::max(1, input.channels());
-    meta.roi_pad_value = meta.pad_value;
+  if (effective.color_convert.output_format != PreprocessColorFormat::Auto) {
+    meta.color_out =
+        preprocess_color_format_to_format_spec(effective.color_convert.output_format).str();
   }
+  meta.axis_perm = effective.layout_convert.perm;
   return meta;
 }
 
@@ -2422,7 +2403,9 @@ TensorList Tensors(const simaai::neat::Sample& sample) {
 }
 
 Tensor internal::preproc_tensor(const cv::Mat& input, const Model& model, PreprocOutput output) {
-  InputOptions src_opt = appsrc_for_mat(input, model);
+  const auto resolved_preproc = model.resolved_preprocess_plan();
+  InputOptions src_opt =
+      appsrc_for_mat(input, resolved_preproc.effective.color_convert.input_format);
   auto group =
       simaai::neat::internal::ModelAccess::build_preprocess_nodes_for_input(model, src_opt, true);
   src_opt.buffer_name = rendered_stage_query::primary_input_buffer_name_from_runtime_contract(
@@ -2430,10 +2413,9 @@ Tensor internal::preproc_tensor(const cv::Mat& input, const Model& model, Prepro
   log_stage_group_nodes("Preproc", group);
 
   const PreprocOutputInfo preproc_info = stage_preproc_output_info(group);
-  const auto resolved_preproc = model.resolved_preprocess_plan();
   if (resolved_preproc.enabled) {
-    PreprocessMetaTemplate meta =
-        make_stage_preprocess_meta_template(input, model, preproc_info, src_opt, nullptr);
+    PreprocessMetaTemplate meta = make_stage_preprocess_meta_template(
+        model, resolved_preproc.effective, preproc_info, src_opt);
     if (stage_debug_enabled()) {
       std::fprintf(stderr,
                    "[stage][preproc-meta] source=route_contract quant=%d tess=%d "
@@ -2501,7 +2483,9 @@ TensorList PreprocRoiList(const std::vector<cv::Mat>& inputs, const simaai::neat
   const PreprocSourceBatchGeometry source_geom =
       validate_preproc_roi_list_request(inputs, rois, "Preproc ROI-list");
 
-  InputOptions src_opt = appsrc_for_mat(inputs.front(), model);
+  const auto resolved_preproc = model.resolved_preprocess_plan();
+  InputOptions src_opt =
+      appsrc_for_mat(inputs.front(), resolved_preproc.effective.color_convert.input_format);
   auto base_group =
       simaai::neat::internal::ModelAccess::build_preprocess_nodes_for_input(model, src_opt, true);
   const int roi_capacity = static_cast<int>(rois.size());
@@ -2513,31 +2497,27 @@ TensorList PreprocRoiList(const std::vector<cv::Mat>& inputs, const simaai::neat
   log_stage_group_nodes("Preproc ROI-list", group);
 
   const PreprocOutputInfo preproc_info = stage_preproc_output_info(base_group);
-  const auto resolved_preproc = model.resolved_preprocess_plan();
   if (!resolved_preproc.enabled) {
     throw std::runtime_error("Preproc ROI-list: model has no enabled preprocess plan");
   }
 
-  PreprocessMetaTemplate base_meta =
-      make_stage_preprocess_meta_template(inputs.front(), model, preproc_info, src_opt, nullptr);
-  src_opt.preprocess_meta = base_meta;
+  src_opt.preprocess_meta =
+      make_stage_preprocess_meta_template(model, resolved_preproc.effective, preproc_info, src_opt);
   (void)preproc_source_batch_format(src_opt, source_geom, "Preproc ROI-list");
 
+  // Only the current input carries ROI coordinates. The cached runner uses src_opt.
   InputOptions roi_meta_opt = src_opt;
-  roi_meta_opt.preprocess_meta =
-      make_stage_preprocess_meta_template(inputs.front(), model, preproc_info, roi_meta_opt, &rois);
-  std::optional<PreprocessRuntimeMeta> runtime_meta = make_simaai_preprocess_meta_from_template(
+  auto& roi_meta = *roi_meta_opt.preprocess_meta;
+  roi_meta.roi_list_enabled = true;
+  roi_meta.rois = rois;
+  roi_meta.roi_input_batch_size = static_cast<int>(inputs.size());
+  roi_meta.roi_source_stride_bytes = static_cast<int>(source_geom.row_bytes);
+  roi_meta.roi_pad_value = roi_meta.pad_value;
+  const auto runtime_meta = make_simaai_preprocess_meta_from_template(
       roi_meta_opt, source_geom.width, source_geom.height);
   if (!runtime_meta.has_value()) {
     throw std::runtime_error("Preproc ROI-list: failed to build runtime ROI metadata");
   }
-  runtime_meta->roi_capacity = roi_capacity;
-  runtime_meta->roi_valid_count = roi_capacity;
-  runtime_meta->roi_input_count = roi_capacity;
-  runtime_meta->roi_input_batch_size = static_cast<int>(inputs.size());
-  runtime_meta->roi_source_width = source_geom.width;
-  runtime_meta->roi_source_height = source_geom.height;
-  runtime_meta->roi_source_stride_bytes = static_cast<int>(source_geom.row_bytes);
 
   auto make_stage_input = [&]() {
     simaai::neat::Tensor image =

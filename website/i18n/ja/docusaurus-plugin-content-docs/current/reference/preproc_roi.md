@@ -86,7 +86,6 @@ C++:
 
 ```cpp
 Model::Options opt;
-opt.preprocess.resize.enable = AutoFlag::On;
 opt.preprocess.resize.width = 640;
 opt.preprocess.resize.height = 640;
 opt.preprocess.resize.mode = ResizeMode::Letterbox;
@@ -105,7 +104,6 @@ Python：
 
 ```python
 opt = pyneat.ModelOptions()
-opt.preprocess.resize.enable = pyneat.AutoFlag.On
 opt.preprocess.resize.width = 640
 opt.preprocess.resize.height = 640
 opt.preprocess.resize.mode = pyneat.ResizeMode.Letterbox
