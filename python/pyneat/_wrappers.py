@@ -155,6 +155,8 @@ def install_wrappers(core) -> None:
     """Return a NumPy array. BF16 tensors always expand to an independent float32 array."""
     import numpy as np
 
+    # TODO: Remove this expansion once the DevKit uses NumPy 2.5.5+ and imports
+    # ml_dtypes 0.7.0+ to register BF16 with DLPack.
     if self.dtype == core.TensorDType.BFloat16:
       words = np.frombuffer(self.copy_dense_bytes_tight(), dtype=np.uint16)
       bits = words.astype(np.uint32)
