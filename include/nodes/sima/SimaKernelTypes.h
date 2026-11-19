@@ -3,9 +3,9 @@
  * @ingroup nodes_sima
  * @brief Shared option types for Nodes that run one SiMa kernels-library operation.
  *
- * `SimaVoxelize`, `SimaPillarScatter`, `SimaBEVPoolPlan` and `SimaBEVPool` each prepare one named
- * kernels-library request through the Scheduler client. They share the execution
- * target and the fused quantization parameters declared here.
+ * `SimaVoxelize`, `SimaPillarScatter`, `SimaBEVPoolPlan`, `SimaBEVPool` and `SimaCenterHeadDecode`
+ * each prepare one named kernels-library request through the Scheduler client. They share the
+ * execution target and the fused quantization parameters declared here.
  */
 #pragma once
 

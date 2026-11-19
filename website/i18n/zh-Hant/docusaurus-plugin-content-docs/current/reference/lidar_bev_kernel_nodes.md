@@ -1,13 +1,13 @@
 ---
 title: "LiDAR 與 BEV 核心節點"
-description: "以圖節點執行 SimaVoxelize、SimaPillarScatter、SimaBEVPoolPlan 與 SimaBEVPool 核心函式庫運算"
+description: "以圖節點執行 SimaVoxelize、SimaPillarScatter、SimaBEVPoolPlan、SimaBEVPool 與 SimaCenterHeadDecode 核心函式庫運算"
 sidebar_position: 8
 ---
 
 # LiDAR 與 BEV 核心節點
 
 `SimaVoxelize`、`SimaPillarScatter`、`SimaBEVPoolPlan` 與 `SimaBEVPool` 執行 PointPillars 與 BEVFusion
-中非 MLA 的階段。每個節點都在您選擇的目標上執行一個 SiMa 核心函式庫運算。節點絕不會
+中非 MLA 的階段。`SimaCenterHeadDecode` 將 CenterPoint 類模型的頭部輸出轉為 3D 方框。每個節點都在您選擇的目標上執行一個 SiMa 核心函式庫運算。節點絕不會
 退回其他目標執行，也不會為了改變配置而複製張量。若核心函式庫拒絕請求，圖的建置會失敗，
 並附上核心函式庫提供的原因。
 
@@ -17,6 +17,7 @@ sidebar_position: 8
 | `SimaPillarScatter` | 將柱體特徵轉為密集的 BEV 畫布 | A65、EV74 |
 | `SimaBEVPoolPlan` | 將相機校正資料轉為 BEV 池化計畫 | A65 |
 | `SimaBEVPool` | 將相機深度與上下文特徵轉為 BEV 網格 | A65、EV74 |
+| `SimaCenterHeadDecode` | 將 CenterHead 輸出轉為 3D 方框 | A65 |
 
 以下是放在應用程式內的圖建構片段。請在應用程式中實作 `read_sweep()`，
 傳回非空的 float 向量，依 x、y、z、時間偏移量的順序交錯排列，共 `4*N` 個值。
@@ -58,8 +59,8 @@ auto run = graph.build(TensorList{points, point_count});
 ```
 
 Python 提供相同的選項型別，以及 `pyneat.nodes.sima_voxelize`、
-`pyneat.nodes.sima_pillar_scatter`、`pyneat.nodes.sima_bev_pool_plan` 與
-`pyneat.nodes.sima_bev_pool` 工廠函式。
+`pyneat.nodes.sima_pillar_scatter`、`pyneat.nodes.sima_bev_pool_plan`、
+`pyneat.nodes.sima_bev_pool` 與 `pyneat.nodes.sima_centerhead_decode` 工廠函式。
 
 ## 輸入與輸出契約
 
@@ -72,6 +73,7 @@ Python 提供相同的選項型別，以及 `pyneat.nodes.sima_voxelize`、
 | `SimaPillarScatter` | INT8 或 BF16 `features` `[M,C]`；INT32 `coordinates` `[M,2]`；INT32 `count` `[1]` | 與 `features` 型別相同的 `canvas` `[1,H,W,C]` |
 | `SimaBEVPoolPlan` | FP32 `camera2lidar`、`camera_intrinsics` 與 `img_aug_matrix` `[N,4,4]`；FP32 `lidar_aug_matrix` `[4,4]` | UINT8 `plan` `[P]` |
 | `SimaBEVPool` | INT8 或 BF16 `depth`；型別相同的 `context`；UINT8 `plan` `[P]` | INT8 或 BF16 `bev` `[1,nZ*C,nX,nY]` |
+| `SimaCenterHeadDecode` | 兩到六個連接埠上的 FP32 或 BF16 頭部圖 | FP32 `boxes` `[K,9]` 或 `[K,7]`；FP32 `scores` `[K]`；INT32 `labels` `[K]`；INT32 `count` `[1]` |
 
 - **SimaVoxelize** 只讀取前 `point_count` 個點。`max_pillars`（`M`）與
   `max_points_per_pillar`（`T`）是固定容量，超出的點與柱體會被捨棄。未使用的列存放量化
@@ -90,6 +92,10 @@ Python 提供相同的選項型別，以及 `pyneat.nodes.sima_voxelize`、
   `[N,fH,fW,C]` 形式傳入。輸出會以帶有通道在後步幅的邏輯形狀 `[1,nZ*C,nX,nY]` 發布，
   因此其位元組為 NHWC `[1,nX,nY,nZ*C]`。`SimaBEVPoolStorage::Contiguous` 使用
   `[N,D,fH,fW]` 與 `[N,C,fH,fW]` 輸入以及密集輸出。
+- **SimaCenterHeadDecode** 依 `heatmap_input` 到 `vel_input` 放置各頭部。預設由三個連接埠分別存放熱圖；
+  reg、height、dim 與 vel；以及 rot。`K` 為 `tasks.size() * post_max_per_task`。`boxes` 存放底面中心的
+  x、y、z，以及 dx、dy、dz、yaw，使用 `velocity` 時另有 vx、vy。`labels` 是跨頭部任務計數的熱圖通道。
+  從 `count` 起的列皆為零。
 
 ### 邏輯軸與實體儲存順序
 
@@ -165,6 +171,113 @@ Scatter 用來填滿空格子的 `zero_point`。畫布保留這些值，並將�
 `SimaPillarScatter` 會複製特徵位元組而不重新量化，因此特徵必須已經使用讀取畫布的模型的輸入
 量化。`SimaBEVPool` 會以一個 `[N,...]` 張量接收所有相機。
 
+## 解碼 CenterHead 輸出
+
+`SimaCenterHeadDecode` 為 CenterPoint、BEVDet 等模型執行 mmdetection3d 的 CenterPoint 方框編碼器，並依頭部任務
+執行 NMS。緊接在 `model.inference()` 之後時，它會在 MLA 寫入的位置讀取 MLA 的 BF16 頭部圖，因此不會執行模型的後處理階段。
+
+此圖建構片段應放在您的應用程式中。這些值是 CenterPoint 的 nuScenes 設定。
+
+```cpp
+#include <neat.h>
+
+using namespace simaai::neat;
+
+Model model("centerpoint_mpk.tar.gz");
+
+const auto circle = [](int classes, float radius) {
+  SimaCenterHeadTask task;
+  task.classes = classes;
+  task.nms = SimaCenterHeadNms::Circle;
+  task.nms_radius = radius;
+  return task;
+};
+SimaCenterHeadDecodeOptions decode;
+decode.tasks = {circle(1, 4.0f), circle(2, 12.0f), circle(2, 10.0f),
+                circle(1, 1.0f), circle(2, 0.85f), circle(2, 0.175f)};
+decode.out_size_factor = 4;
+decode.voxel_size = {0.2f, 0.2f};
+decode.range_min = {-51.2f, -51.2f};
+decode.score_threshold = 0.1f;
+decode.top_k = 500;
+decode.post_max_per_task = 83;
+decode.post_center_range = {-61.2f, -61.2f, -10.0f, 61.2f, 61.2f, 10.0f};
+
+Graph graph;
+graph.add(nodes::Input());
+graph.add(model.inference());
+graph.add(nodes::SimaCenterHeadDecode(decode));
+graph.add(nodes::Output());
+```
+
+每個取出的 Sample 依序存放 `boxes`、`scores`、`labels` 與 `count`。請讀取前 `count` 列。`model.inference()`
+從 MLA 開始，因此圖的輸入必須已是 MLA 讀取的格式。節點的平行工作共用圖的 A65 工作執行緒
+（`GraphOptions.kernel_runner_a65_workers`）。
+
+### 頭部圖
+
+連接埠 `i` 即第 `i` 個上游張量。每個連接埠都是 FP32 或 BF16 通道在後的圖 `[H,W,C]` 或 `[1,H,W,C]`，且所有
+連接埠的 H 與 W 相同。
+
+- 熱圖獨佔一個連接埠，每個類別一個通道，依頭部任務的順序排列。
+- 其他每個連接埠存放一個或多個方框頭部，依頭部任務的順序排列。每個頭部任務的頭部順序為：reg（2 個通道：x 與 y
+  偏移）、height（1）、dim（3：dx、dy、dz 的對數）、rot（2：正弦與餘弦），使用 `velocity` 時另有 vel（2）。
+- 預設值適用於有三個輸出的模型：熱圖；reg、height、dim 與 vel；以及 rot。以 nuScenes 上的 CenterPoint 為例，
+  共有六個頭部任務與十個類別，三個輸出分別有 10、48 與 12 個通道。每個頭部各有一個輸出的模型，請依其輸出順序
+  設定 `heatmap_input` 到 `vel_input`。
+
+每個頭部任務與頭部的組合各有一個輸出的模型，輸出會超過六個。請在匯出模型時依頭部串接這些輸出。
+
+圖可為密集儲存，或格子與列之後有間隙的 BF16。在 `model.inference()` 之後，SDK 3.0 套件的 MLA 即以此方式發布頭部
+（每個格子填補到 16 個通道的 BF16），節點會就地讀取。方框不取決於頭部的儲存方式。
+
+MLA 輸出經量化或以圖塊儲存的套件，會在 `model.inference()` 之後發布整數，圖的建置會失敗並附上節點提供的原因。
+此時請以 `model.graph()` 取代 `model.inference()`。它會在 MLA 前後加入模型本身的轉換，因此圖接收模型的輸入，
+節點則取得 FP32 頭部圖。
+
+### 選項
+
+這些選項就是模型的 mmdetection3d 設定中的解碼設定。
+
+| 選項 | mmdetection3d 設定 |
+| --- | --- |
+| `tasks[i].classes` | 頭部任務 `i` 的 `class_names` 數量 |
+| `tasks[i].nms`, `tasks[i].nms_radius` | `test_cfg.nms_type = 'circle'`, `test_cfg.min_radius[i]` |
+| `tasks[i].nms`, `tasks[i].nms_iou_threshold` | `test_cfg.nms_type = 'rotate'`, `test_cfg.nms_thr` |
+| `nms_size_scale` | `test_cfg.nms_rescale_factor`，每個類別一個值 |
+| `out_size_factor`, `voxel_size` | `bbox_coder` 中的同名鍵 |
+| `range_min` | `bbox_coder.pc_range` 的 x 與 y 最小值 |
+| `score_threshold`, `top_k`, `post_center_range` | `bbox_coder` 的 `score_threshold`、`max_num` 與 `post_center_range` |
+| `post_max_per_task` | `test_cfg.post_max_size` |
+| `velocity` | 頭部具有 `vel` 分支 |
+
+每個頭部任務都要指明自己的 NMS。Circle NMS 與 mmdetection3d 相同，將兩個方框中心距離的平方直接與 `nms_radius`
+的值比較。Rotate NMS 將兩個旋轉方框的鳥瞰 IoU 與 `nms_iou_threshold` 比較。設定 `nms_size_scale` 時，每個熱圖通道
+一個值，circle 頭部任務的類別為 1。`labels` 是熱圖通道，因此第二個頭部任務的第一個類別緊接在第一個頭部任務的
+最後一個類別之後。
+
+在 Python 中，請將頭部任務的值傳給其建構函式，並指派整個串列。從選項物件讀出的串列是複本，因此對 `decode.tasks`
+進行 append 不會改變任何內容。
+
+```python
+import pyneat
+
+circle = pyneat.SimaCenterHeadNms.Circle
+decode = pyneat.SimaCenterHeadDecodeOptions()
+decode.tasks = [
+    pyneat.SimaCenterHeadTask(classes, circle, nms_radius=radius)
+    for classes, radius in [(1, 4.0), (2, 12.0), (2, 10.0), (1, 1.0), (2, 0.85), (2, 0.175)]
+]
+decode.out_size_factor = 4
+decode.voxel_size = [0.2, 0.2]
+decode.range_min = [-51.2, -51.2]
+decode.score_threshold = 0.1
+decode.top_k = 500
+decode.post_max_per_task = 83
+decode.post_center_range = [-61.2, -61.2, -10.0, 61.2, 61.2, 10.0]
+node = pyneat.nodes.sima_centerhead_decode(decode)
+```
+
 ## 計畫與狀態
 
 計畫只取決於校正資料與 `SimaBEVPoolPlanOptions`。設定 `cache_plan = true` 時，若某個影格的
@@ -181,6 +294,6 @@ EV74 在 A65 契約之外另有下列限制：
 
 - `SimaBEVPool` 需要通道數為 16 倍數的通道在後 `context`，以及通道在後的 `bev`。`V2`
   計畫還需要通道在後的 `depth`。
-- `SimaBEVPoolPlan` 只在 A65 上執行。
+- `SimaBEVPoolPlan` 與 `SimaCenterHeadDecode` 只在 A65 上執行。
 
 某個目標不支援的請求會在該目標上失敗。節點不會改為替您選擇其他目標。

@@ -1,13 +1,14 @@
 ---
 title: "LiDAR と BEV のカーネルノード"
-description: "SimaVoxelize、SimaPillarScatter、SimaBEVPoolPlan、SimaBEVPool のカーネルライブラリ演算をグラフノードとして実行する"
+description: "SimaVoxelize、SimaPillarScatter、SimaBEVPoolPlan、SimaBEVPool、SimaCenterHeadDecode のカーネルライブラリ演算をグラフノードとして実行する"
 sidebar_position: 8
 ---
 
 # LiDAR と BEV のカーネルノード
 
 `SimaVoxelize`、`SimaPillarScatter`、`SimaBEVPoolPlan`、`SimaBEVPool` は、PointPillars と BEVFusion の
-MLA 以外のステージを実行します。各ノードは、選択したターゲット上で SiMa カーネル
+MLA 以外のステージを実行します。`SimaCenterHeadDecode` は、CenterPoint 系モデルのヘッド出力を 3D ボックスに
+変換します。各ノードは、選択したターゲット上で SiMa カーネル
 ライブラリの演算を 1 つ実行します。ノードが別のターゲットへフォールバックしたり、
 レイアウトを変えるためにテンソルをコピーしたりすることはありません。カーネル
 ライブラリがリクエストを拒否した場合、グラフのビルドはカーネル側の理由とともに
@@ -19,6 +20,7 @@ MLA 以外のステージを実行します。各ノードは、選択したタ�
 | `SimaPillarScatter` | ピラー特徴量から密な BEV キャンバスへ | A65、EV74 |
 | `SimaBEVPoolPlan` | カメラキャリブレーションから BEV プーリングプランへ | A65 |
 | `SimaBEVPool` | カメラの深度特徴量とコンテキスト特徴量から BEV グリッドへ | A65、EV74 |
+| `SimaCenterHeadDecode` | CenterHead 出力から 3D ボックスへ | A65 |
 
 以下は、アプリケーション内に記述するグラフ構築のコード断片です。
 `read_sweep()` はアプリケーション側で実装し、x、y、z、時刻オフセットを交互に
@@ -62,7 +64,7 @@ auto run = graph.build(TensorList{points, point_count});
 
 Python では同じオプション型と、`pyneat.nodes.sima_voxelize`、
 `pyneat.nodes.sima_pillar_scatter`、`pyneat.nodes.sima_bev_pool_plan`、
-`pyneat.nodes.sima_bev_pool` のファクトリーを使用できます。
+`pyneat.nodes.sima_bev_pool`、`pyneat.nodes.sima_centerhead_decode` のファクトリーを使用できます。
 
 ## 入力と出力の契約
 
@@ -75,6 +77,7 @@ Python では同じオプション型と、`pyneat.nodes.sima_voxelize`、
 | `SimaPillarScatter` | INT8 または BF16 の `features` `[M,C]`、INT32 `coordinates` `[M,2]`、INT32 `count` `[1]` | `features` と同じ型の `canvas` `[1,H,W,C]` |
 | `SimaBEVPoolPlan` | FP32 `camera2lidar`、`camera_intrinsics`、`img_aug_matrix` `[N,4,4]`、FP32 `lidar_aug_matrix` `[4,4]` | UINT8 `plan` `[P]` |
 | `SimaBEVPool` | INT8 または BF16 の `depth`、同じ型の `context`、UINT8 `plan` `[P]` | INT8 または BF16 の `bev` `[1,nZ*C,nX,nY]` |
+| `SimaCenterHeadDecode` | 2～6 個のポート上の FP32 または BF16 ヘッドマップ | FP32 `boxes` `[K,9]` または `[K,7]`、FP32 `scores` `[K]`、INT32 `labels` `[K]`、INT32 `count` `[1]` |
 
 - **SimaVoxelize** は先頭の `point_count` 個の点だけを読み取ります。`max_pillars`（`M`）と
   `max_points_per_pillar`（`T`）は固定の容量で、それを超える点とピラーは破棄されます。
@@ -98,6 +101,11 @@ Python では同じオプション型と、`pyneat.nodes.sima_voxelize`、
   論理形状 `[1,nZ*C,nX,nY]` として公開されるため、そのバイトは NHWC
   `[1,nX,nY,nZ*C]` です。`SimaBEVPoolStorage::Contiguous` は `[N,D,fH,fW]` と
   `[N,C,fH,fW]` の入力と、密な出力を使用します。
+- **SimaCenterHeadDecode** は、`heatmap_input` から `vel_input` までの値でヘッドを配置します。デフォルトでは
+  3 つのポートが、ヒートマップ、reg・height・dim・vel、rot をそれぞれ保持します。`K` は
+  `tasks.size() * post_max_per_task` です。`boxes` は底面中心の x、y、z、dx、dy、dz、yaw を保持し、
+  `velocity` を使うと vx、vy も保持します。`labels` はヘッドタスク全体で数えたヒートマップチャネルです。
+  `count` 以降の行はゼロです。
 
 ### 論理軸と物理ストレージ
 
@@ -185,6 +193,119 @@ INT8 の Scatter 入力では、`[1,M,1,C]` のような形状を含め、特徴
 読むモデルの入力量子化をすでに使用している必要があります。`SimaBEVPool` はすべての
 カメラを 1 つの `[N,...]` テンソルで受け取ります。
 
+## CenterHead 出力をデコードする
+
+`SimaCenterHeadDecode` は、CenterPoint や BEVDet などのモデル向けに、mmdetection3d の CenterPoint ボックス
+コーダーとヘッドタスクごとの NMS を実行します。`model.inference()` の直後では MLA の BF16 ヘッドマップを
+MLA が書き込んだ場所で読むため、モデルのポストステージは実行されません。
+
+以下は、アプリケーション内に記述するグラフ構築のコード断片です。値は CenterPoint の nuScenes 構成です。
+
+```cpp
+#include <neat.h>
+
+using namespace simaai::neat;
+
+Model model("centerpoint_mpk.tar.gz");
+
+const auto circle = [](int classes, float radius) {
+  SimaCenterHeadTask task;
+  task.classes = classes;
+  task.nms = SimaCenterHeadNms::Circle;
+  task.nms_radius = radius;
+  return task;
+};
+SimaCenterHeadDecodeOptions decode;
+decode.tasks = {circle(1, 4.0f), circle(2, 12.0f), circle(2, 10.0f),
+                circle(1, 1.0f), circle(2, 0.85f), circle(2, 0.175f)};
+decode.out_size_factor = 4;
+decode.voxel_size = {0.2f, 0.2f};
+decode.range_min = {-51.2f, -51.2f};
+decode.score_threshold = 0.1f;
+decode.top_k = 500;
+decode.post_max_per_task = 83;
+decode.post_center_range = {-61.2f, -61.2f, -10.0f, 61.2f, 61.2f, 10.0f};
+
+Graph graph;
+graph.add(nodes::Input());
+graph.add(model.inference());
+graph.add(nodes::SimaCenterHeadDecode(decode));
+graph.add(nodes::Output());
+```
+
+pull した各 Sample は、`boxes`、`scores`、`labels`、`count` をこの順に保持します。先頭の `count` 行を読み取って
+ください。`model.inference()` は MLA から始まるため、グラフの入力はすでに MLA が読む形式である必要があります。
+ノードの並列処理は、グラフの A65 ワーカー（`GraphOptions.kernel_runner_a65_workers`）を共有します。
+
+### ヘッドマップ
+
+ポート `i` は `i` 番目の上流テンソルです。どのポートも FP32 または BF16 のチャネルラストのマップ `[H,W,C]` または
+`[1,H,W,C]` で、すべてのポートで H と W が同じです。
+
+- ヒートマップは専用のポートを持ち、クラスごとに 1 チャネルをヘッドタスクの順に保持します。
+- それ以外のポートは、1 つ以上のボックスヘッドをヘッドタスクの順に保持します。各ヘッドタスクのヘッドは、
+  reg（2 チャネル：x と y のオフセット）、height（1）、dim（3：dx、dy、dz の対数）、rot（2：サインとコサイン）、
+  `velocity` を使う場合は vel（2）の順に並びます。
+- デフォルトは、出力が 3 つのモデルに合います。ヒートマップ、reg・height・dim・vel、rot です。ヘッドタスクが 6 つで
+  クラスが 10 個の nuScenes 向け CenterPoint では、チャネル数は 10、48、12 です。ヘッドごとに出力が 1 つのモデル
+  では、`heatmap_input` から `vel_input` までをその出力の順に設定します。
+
+ヘッドタスクとヘッドの組ごとに出力が 1 つあるモデルは、出力が 6 つを超えます。モデルをエクスポートするときに、
+ヘッドごとに連結してください。
+
+マップは密なもの、またはセルと行の後に隙間のある BF16 です。`model.inference()` の後、SDK 3.0 のパッケージの MLA は
+ヘッドをこの形式（セルごとに 16 チャネルにパディングされた BF16）で公開し、ノードはそれをその場で読み取ります。
+ボックスはヘッドの格納方法に依存しません。
+
+MLA の出力が量子化されている、またはタイル化されているパッケージは、`model.inference()` の後に整数を公開し、
+グラフのビルドはノードが示す理由とともに失敗します。その場合は `model.inference()` の代わりに `model.graph()` を
+使ってください。これにより MLA の前後にモデル自身の変換が追加されるため、グラフはモデルの入力を受け取り、
+ノードは FP32 のヘッドマップを受け取ります。
+
+### オプション
+
+オプションは、モデルの mmdetection3d 設定にあるデコードの設定です。
+
+| オプション | mmdetection3d の設定 |
+| --- | --- |
+| `tasks[i].classes` | ヘッドタスク `i` の `class_names` の数 |
+| `tasks[i].nms`, `tasks[i].nms_radius` | `test_cfg.nms_type = 'circle'`, `test_cfg.min_radius[i]` |
+| `tasks[i].nms`, `tasks[i].nms_iou_threshold` | `test_cfg.nms_type = 'rotate'`, `test_cfg.nms_thr` |
+| `nms_size_scale` | `test_cfg.nms_rescale_factor`。クラスごとに 1 つの値 |
+| `out_size_factor`, `voxel_size` | `bbox_coder` の同名のキー |
+| `range_min` | `bbox_coder.pc_range` の x と y の最小値 |
+| `score_threshold`, `top_k`, `post_center_range` | `bbox_coder` の `score_threshold`、`max_num`、`post_center_range` |
+| `post_max_per_task` | `test_cfg.post_max_size` |
+| `velocity` | ヘッドに `vel` ブランチがある |
+
+どのヘッドタスクも NMS を明示します。circle NMS は、mmdetection3d と同じく、2 つのボックス中心間の距離の 2 乗を
+`nms_radius` の値そのものと比較します。rotate NMS は、回転した 2 つのボックスの鳥瞰図での IoU を
+`nms_iou_threshold` と比較します。`nms_size_scale` を設定する場合は、ヒートマップチャネルごとに値を 1 つ指定し、
+circle のヘッドタスクのクラスには 1 を指定します。`labels` はヒートマップチャネルなので、2 番目のヘッドタスクの
+最初のクラスは、1 番目のヘッドタスクの最後のクラスのすぐ次になります。
+
+Python では、ヘッドタスクの値をコンストラクターに渡し、リストは丸ごと代入します。オプションオブジェクトから
+読み取ったリストはコピーなので、`decode.tasks` に append しても何も変わりません。
+
+```python
+import pyneat
+
+circle = pyneat.SimaCenterHeadNms.Circle
+decode = pyneat.SimaCenterHeadDecodeOptions()
+decode.tasks = [
+    pyneat.SimaCenterHeadTask(classes, circle, nms_radius=radius)
+    for classes, radius in [(1, 4.0), (2, 12.0), (2, 10.0), (1, 1.0), (2, 0.85), (2, 0.175)]
+]
+decode.out_size_factor = 4
+decode.voxel_size = [0.2, 0.2]
+decode.range_min = [-51.2, -51.2]
+decode.score_threshold = 0.1
+decode.top_k = 500
+decode.post_max_per_task = 83
+decode.post_center_range = [-61.2, -61.2, -10.0, 61.2, 61.2, 10.0]
+node = pyneat.nodes.sima_centerhead_decode(decode)
+```
+
 ## プランと状態
 
 プランはキャリブレーションと `SimaBEVPoolPlanOptions` だけに依存します。
@@ -203,7 +324,7 @@ EV74 では、A65 の契約に次の制限が加わります。
 
 - `SimaBEVPool` は、チャネル数が 16 の倍数のチャネルラスト `context` と、チャネルラストの
   `bev` を必要とします。`V2` のプランでは、チャネルラストの `depth` も必要です。
-- `SimaBEVPoolPlan` は A65 上でのみ実行されます。
+- `SimaBEVPoolPlan` と `SimaCenterHeadDecode` は A65 上でのみ実行されます。
 
 あるターゲットがサポートしないリクエストは、そのターゲットで失敗します。ノードが
 代わりに別のターゲットを選ぶことはありません。

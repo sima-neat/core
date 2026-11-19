@@ -103,6 +103,7 @@ graph.add(pyneat.groups.video_input(vopt))
 | Вокселізувати прохід LiDAR у стовпці | `nodes::SimaVoxelize(SimaVoxelizeOptions{...})` | `pyneat.nodes.sima_voxelize(options)` |
 | Розподілити ознаки стовпців на полотно BEV | `nodes::SimaPillarScatter(SimaPillarScatterOptions{...})` | `pyneat.nodes.sima_pillar_scatter(options)` |
 | Об’єднати ознаки камер у сітку BEV | `nodes::SimaBEVPoolPlan(...)` і `nodes::SimaBEVPool(...)` | `pyneat.nodes.sima_bev_pool_plan(options)` і `pyneat.nodes.sima_bev_pool(options)` |
+| Декодувати виходи CenterHead у 3D-рамки | `nodes::SimaCenterHeadDecode(SimaCenterHeadDecodeOptions{...})` | `pyneat.nodes.sima_centerhead_decode(options)` |
 
 Використовуйте групи, коли вам потрібен перевірений фрагмент. Використовуйте окремі вузли, коли вам потрібна явна топологія. Використовуйте допоміжні функції `Graph`, такі як `graphs::Branch(...)` і `graphs::Combine(...)`, для розгалуження та зведення замість того, щоб приховувати топологію за дубльованими виходами.
 

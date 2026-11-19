@@ -1,13 +1,14 @@
 ---
 title: LiDAR and BEV kernel nodes
-description: Run the SimaVoxelize, SimaPillarScatter, SimaBEVPoolPlan, and SimaBEVPool kernels-library operations as graph nodes
+description: Run the SimaVoxelize, SimaPillarScatter, SimaBEVPoolPlan, SimaBEVPool, and SimaCenterHeadDecode kernels-library operations as graph nodes
 sidebar_position: 8
 ---
 
 # LiDAR and BEV kernel nodes
 
 `SimaVoxelize`, `SimaPillarScatter`, `SimaBEVPoolPlan`, and `SimaBEVPool` run the non-MLA stages
-of PointPillars and BEVFusion. Each node runs one SiMa kernels-library operation
+of PointPillars and BEVFusion. `SimaCenterHeadDecode` turns the head outputs of
+CenterPoint-style models into 3D boxes. Each node runs one SiMa kernels-library operation
 on the target you select. A node never falls back to another target or copies a
 tensor to change its layout. If the kernels library rejects a request, the graph
 build fails with the kernels' reason.
@@ -18,6 +19,7 @@ build fails with the kernels' reason.
 | `SimaPillarScatter` | Pillar features to the dense BEV canvas | A65, EV74 |
 | `SimaBEVPoolPlan` | Camera calibration to the BEV pooling plan | A65 |
 | `SimaBEVPool` | Camera depth and context features to the BEV grid | A65, EV74 |
+| `SimaCenterHeadDecode` | CenterHead outputs to 3D boxes | A65 |
 
 This graph-construction fragment belongs inside your application. Implement
 `read_sweep()` to return interleaved x, y, z and time-offset values: a nonempty
@@ -60,8 +62,8 @@ auto run = graph.build(TensorList{points, point_count});
 ```
 
 Python exposes the same option types and the `pyneat.nodes.sima_voxelize`,
-`pyneat.nodes.sima_pillar_scatter`, `pyneat.nodes.sima_bev_pool_plan`, and
-`pyneat.nodes.sima_bev_pool` factories.
+`pyneat.nodes.sima_pillar_scatter`, `pyneat.nodes.sima_bev_pool_plan`,
+`pyneat.nodes.sima_bev_pool`, and `pyneat.nodes.sima_centerhead_decode` factories.
 
 ## Input and output contracts
 
@@ -75,6 +77,7 @@ checked when the graph is built.
 | `SimaPillarScatter` | INT8 or BF16 `features` `[M,C]`; INT32 `coordinates` `[M,2]`; INT32 `count` `[1]` | `canvas` `[1,H,W,C]` of the same type as `features` |
 | `SimaBEVPoolPlan` | FP32 `camera2lidar`, `camera_intrinsics`, and `img_aug_matrix` `[N,4,4]`; FP32 `lidar_aug_matrix` `[4,4]` | UINT8 `plan` `[P]` |
 | `SimaBEVPool` | INT8 or BF16 `depth`; `context` of the same type; UINT8 `plan` `[P]` | INT8 or BF16 `bev` `[1,nZ*C,nX,nY]` |
+| `SimaCenterHeadDecode` | FP32 or BF16 head maps on two to six ports | FP32 `boxes` `[K,9]` or `[K,7]`; FP32 `scores` `[K]`; INT32 `labels` `[K]`; INT32 `count` `[1]` |
 
 - **SimaVoxelize** reads only the first `point_count` points. `max_pillars` (`M`) and
   `max_points_per_pillar` (`T`) are fixed capacities; points and pillars beyond them
@@ -98,6 +101,11 @@ checked when the graph is built.
   `[1,nZ*C,nX,nY]` with channels-last strides, so its bytes are NHWC
   `[1,nX,nY,nZ*C]`. `SimaBEVPoolStorage::Contiguous` uses `[N,D,fH,fW]` and
   `[N,C,fH,fW]` inputs and a dense output.
+- **SimaCenterHeadDecode** places the heads by `heatmap_input` to `vel_input`. By default
+  three ports hold the heatmap; reg, height, dim and vel; and rot. `K` is
+  `tasks.size() * post_max_per_task`. `boxes` hold x, y and z of the bottom centre, dx, dy,
+  dz, yaw and, with `velocity`, vx and vy. `labels` are heatmap channels, counted across
+  the head tasks. Rows from `count` on are zero.
 
 ### Logical axes and physical storage
 
@@ -188,6 +196,128 @@ graph together.
 must already use the input quantization of the model that reads the canvas.
 `SimaBEVPool` takes all cameras in one `[N,...]` tensor.
 
+## Decode CenterHead outputs
+
+`SimaCenterHeadDecode` is mmdetection3d's CenterPoint box coder followed by NMS per
+head task, for models such as CenterPoint and BEVDet. Directly after `model.inference()`
+it reads the MLA's BF16 head maps where the MLA wrote them, so the model's post stage does
+not run.
+
+This graph-construction fragment belongs inside your application. The values are
+CenterPoint's nuScenes configuration.
+
+```cpp
+#include <neat.h>
+
+using namespace simaai::neat;
+
+Model model("centerpoint_mpk.tar.gz");
+
+const auto circle = [](int classes, float radius) {
+  SimaCenterHeadTask task;
+  task.classes = classes;
+  task.nms = SimaCenterHeadNms::Circle;
+  task.nms_radius = radius;
+  return task;
+};
+SimaCenterHeadDecodeOptions decode;
+decode.tasks = {circle(1, 4.0f), circle(2, 12.0f), circle(2, 10.0f),
+                circle(1, 1.0f), circle(2, 0.85f), circle(2, 0.175f)};
+decode.out_size_factor = 4;
+decode.voxel_size = {0.2f, 0.2f};
+decode.range_min = {-51.2f, -51.2f};
+decode.score_threshold = 0.1f;
+decode.top_k = 500;
+decode.post_max_per_task = 83;
+decode.post_center_range = {-61.2f, -61.2f, -10.0f, 61.2f, 61.2f, 10.0f};
+
+Graph graph;
+graph.add(nodes::Input());
+graph.add(model.inference());
+graph.add(nodes::SimaCenterHeadDecode(decode));
+graph.add(nodes::Output());
+```
+
+Each pulled Sample holds `boxes`, `scores`, `labels` and `count`, in this order. Read the
+first `count` rows. `model.inference()` starts at the MLA, so the graph's input must already
+be in the format the MLA reads. The node's parallel work shares the graph's A65 workers
+(`GraphOptions.kernel_runner_a65_workers`).
+
+### Head maps
+
+Port `i` is the `i`-th upstream tensor. Every port is an FP32 or BF16 channels-last map
+`[H,W,C]` or `[1,H,W,C]`, and all ports have the same H and W.
+
+- The heatmap has a port of its own, with one channel per class, head task after head
+  task.
+- Every other port holds one or more box heads, head task after head task. Each head
+  task's heads come in this order: reg (2 channels: the x and y offsets), height (1), dim
+  (3: the logarithms of dx, dy and dz), rot (2: sine and cosine) and, with `velocity`,
+  vel (2).
+- The defaults fit a model with three outputs: the heatmap; reg, height, dim and vel; and
+  rot. For CenterPoint on nuScenes, with six head tasks and ten classes, they have 10, 48
+  and 12 channels. A model with one output per head sets `heatmap_input` to `vel_input`
+  to its own order.
+
+A model with one output per head task and head has more than six outputs. Concatenate
+them per head when you export the model.
+
+The maps are dense, or BF16 with gaps after cells and rows. After `model.inference()`,
+the MLA of an SDK 3.0 package publishes its heads that way, BF16 padded to 16 channels
+per cell, and the node reads them where they are. The boxes do not depend on how the
+heads are stored.
+
+A package whose MLA output is quantized or tiled publishes integers after
+`model.inference()`, and the graph build fails with the node's reason. Use
+`model.graph()` there instead of `model.inference()`. It adds the model's own
+conversions around the MLA, so the graph takes the model's input and the node gets FP32
+head maps.
+
+### Options
+
+The options are the decode settings of the model's mmdetection3d configuration.
+
+| Option | mmdetection3d configuration |
+| --- | --- |
+| `tasks[i].classes` | Number of `class_names` of head task `i` |
+| `tasks[i].nms`, `tasks[i].nms_radius` | `test_cfg.nms_type = 'circle'`, `test_cfg.min_radius[i]` |
+| `tasks[i].nms`, `tasks[i].nms_iou_threshold` | `test_cfg.nms_type = 'rotate'`, `test_cfg.nms_thr` |
+| `nms_size_scale` | `test_cfg.nms_rescale_factor`, as one value per class |
+| `out_size_factor`, `voxel_size` | The same keys of `bbox_coder` |
+| `range_min` | x and y minimum of `bbox_coder.pc_range` |
+| `score_threshold`, `top_k`, `post_center_range` | `score_threshold`, `max_num` and `post_center_range` of `bbox_coder` |
+| `post_max_per_task` | `test_cfg.post_max_size` |
+| `velocity` | The head has a `vel` branch |
+
+Every head task states its NMS. Circle NMS compares the squared distance of two box
+centres with `nms_radius` itself, as mmdetection3d does. Rotate NMS compares the
+bird's-eye-view IoU of two rotated boxes with `nms_iou_threshold`. When set,
+`nms_size_scale` has one value per heatmap channel, and 1 for the classes of circle head
+tasks. `labels` are heatmap channels, so the first class of the second head task follows
+the last class of the first.
+
+In Python, pass a head task's values to its constructor and assign whole lists. A list
+read from an options object is a copy, so appending to `decode.tasks` changes nothing.
+
+```python
+import pyneat
+
+circle = pyneat.SimaCenterHeadNms.Circle
+decode = pyneat.SimaCenterHeadDecodeOptions()
+decode.tasks = [
+    pyneat.SimaCenterHeadTask(classes, circle, nms_radius=radius)
+    for classes, radius in [(1, 4.0), (2, 12.0), (2, 10.0), (1, 1.0), (2, 0.85), (2, 0.175)]
+]
+decode.out_size_factor = 4
+decode.voxel_size = [0.2, 0.2]
+decode.range_min = [-51.2, -51.2]
+decode.score_threshold = 0.1
+decode.top_k = 500
+decode.post_max_per_task = 83
+decode.post_center_range = [-61.2, -61.2, -10.0, 61.2, 61.2, 10.0]
+node = pyneat.nodes.sima_centerhead_decode(decode)
+```
+
 ## Plans and state
 
 A plan depends only on the calibration and the `SimaBEVPoolPlanOptions`. With
@@ -206,7 +336,7 @@ EV74 adds restrictions to the A65 contract:
 
 - `SimaBEVPool` needs channels-last `context` with a multiple of 16 channels and a
   channels-last `bev`. A `V2` plan also needs channels-last `depth`.
-- `SimaBEVPoolPlan` runs on A65 only.
+- `SimaBEVPoolPlan` and `SimaCenterHeadDecode` run on A65 only.
 
 A request that one target does not support fails on that target. The node does
 not choose another target for you.
