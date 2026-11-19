@@ -1383,6 +1383,30 @@ def test_incompatible_decoder_is_rejected_at_model_load():
   assert error.value.error_code == "misconfig.pipeline_shape"
 
 
+def test_model_bound_node_rejects_incompatible_decoder():
+  model = _yolo_model_with_boxdecode()
+  with pytest.raises(pyneat.NeatError, match="does not match") as error:
+    pyneat.nodes.sima_box_decode(model, decode_type=pyneat.BoxDecodeType.Detr)
+  assert error.value.error_code == "misconfig.pipeline_shape"
+
+
+def test_inference_terminal_omits_incompatible_decoder():
+  options = pyneat.ModelOptions()
+  options.decode_type = pyneat.BoxDecodeType.Detr
+  options.inference_terminal.mla_only = True
+  options.preprocess.kind = pyneat.InputKind.Image
+  options.preprocess.enable = pyneat.AutoFlag.On
+  options.preprocess.resize.enable = pyneat.AutoFlag.On
+  options.preprocess.normalize.enable = pyneat.AutoFlag.On
+  model = pyneat.Model(str(_strict_yolo_model_path()), options)
+  frame = pyneat.Tensor.from_numpy(np.zeros((640, 640, 3), dtype=np.uint8), copy=True,
+                                   image_format=pyneat.PixelFormat.RGB, memory=pyneat.TensorMemory.EV74)
+  assert model.run([frame], timeout_ms=10000) is not None
+  with pytest.raises(pyneat.NeatError, match="DETR") as error:
+    model.postprocess()
+  assert error.value.error_code == "misconfig.pipeline_shape"
+
+
 @pytest.mark.parametrize("decoded,raw", [(False, False), (True, False), (True, True)])
 def test_missing_explicit_rtsp_caps_has_error_code(decoded, raw):
   if decoded:

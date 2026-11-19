@@ -13,6 +13,7 @@
 
 #include <memory>
 #include <optional>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -109,6 +110,9 @@ struct ModelAccess {
   static DetessOptions build_detess_stage_options(const Model& model, bool sync);
   static DetessCastOptions build_detesscast_stage_options(const Model& model, bool sync);
   static DetessDequantOptions build_detessdequant_stage_options(const Model& model, bool sync);
+  static void validate_requested_boxdecode_contract_type(BoxDecodeType contract_type,
+                                                         BoxDecodeType requested_type,
+                                                         std::string_view context);
   static CompiledBoxDecodeContract build_boxdecode_stage_contract(const Model& model, bool sync);
   static std::vector<std::shared_ptr<Node>> build_public_preprocess_nodes(const Model& model);
   static std::vector<std::shared_ptr<Node>> build_public_inference_nodes(const Model& model);

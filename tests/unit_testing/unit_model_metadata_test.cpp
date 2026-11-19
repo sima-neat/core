@@ -1,4 +1,5 @@
 #include "model/Model.h"
+#include "nodes/sima/SimaBoxDecode.h"
 #include "pipeline/Graph.h"
 #include "pipeline/ErrorCodes.h"
 #include "model_archive_fixture_utils.h"
@@ -110,6 +111,16 @@ RUN_TEST(
         require(decoded.metadata().at("model_name") == "unit-meta" &&
                     !decoded.input_specs().empty() && !decoded.output_specs().empty(),
                 "selecting a compatible decoder must still permit metadata-only inspection");
+        try {
+          (void)nodes::SimaBoxDecode(decoded, options.decode_type);
+          require(false, "model-bound BoxDecode must reject a missing executable");
+        } catch (const std::runtime_error& error) {
+          require_contains(error.what(), "missing-mla-executable",
+                           "preserve physical admission error");
+          const auto* structured = dynamic_cast<const NeatError*>(&error);
+          require(!structured || structured->report().error_code != error_codes::kPipelineShape,
+                  "a missing executable must not be reported as a decoder mismatch");
+        }
         for (auto* inspected : {&model, &decoded}) {
           bool admission_rejected = false;
           try {
