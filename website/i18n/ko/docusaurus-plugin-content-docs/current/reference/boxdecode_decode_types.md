@@ -414,7 +414,7 @@ options.yolox_seg_pose.pose_classes = [0, 5]
 
 ### 버전이 지정된 마스크 페이로드 {#versioned-masks-payload}
 
-Segment Anything 출력처럼 160×160이 아닌 마스크는 앞부분의 개수 대신 버전이 지정된 헤더를 사용합니다. 레이아웃은 `pipeline/DetectionTypes.h`의 [`SegmentationMasksHeaderV1`](/reference/cppapi/structs/simaai-neat-segmentationmasksheaderv1)이며, 헤더 뒤에 `RawBox` 레코드가 오고, 그 뒤에 레코드마다 하나의 `uint8` 마스크(값 0 또는 255)가 옵니다. `decode_segmentation`으로 읽으세요. 이 함수는 박스와 마스크를 반환하고 잘못된 헤더나 범위는 거부합니다. 텐서에는 `BBOX` 태그가 그대로 유지되며, `decode_segmentation`과 `decode_bbox`는 매직 값으로 페이로드를 인식하므로 기존 분할 페이로드는 변경되지 않습니다. `SimaRender`는 이 페이로드를 받지 않습니다.
+Segment Anything 출력처럼 160×160이 아닌 마스크는 앞부분의 개수 대신 버전이 지정된 헤더를 사용합니다. 레이아웃은 `pipeline/DetectionTypes.h`의 [`SegmentationMasksHeaderV1`](/reference/cppapi/structs/simaai-neat-segmentationmasksheaderv1)이며, 헤더 뒤에 `RawBox` 레코드가 오고, 그 뒤에 레코드마다 하나의 `uint8` 마스크(값 0 또는 255)가 옵니다. `decode_segmentation`으로 읽으세요. 이 함수는 박스와 마스크를 반환하고 잘못된 헤더나 범위는 거부합니다. 새 텐서에는 `BBOX_SEGMENTATION` 태그가 붙습니다. `decode_segmentation`과 `decode_bbox`는 마스크 헤더를 통해 이전 형식의 `BBOX` 텐서도 식별합니다. `SimaRender`는 이 페이로드를 받지 않습니다.
 
 ## `model.run`이 원본 헤더를 반환할 때
 

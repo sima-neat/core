@@ -414,7 +414,7 @@ options.yolox_seg_pose.pose_classes = [0, 5]
 
 ### 版本化遮罩酬載 {#versioned-masks-payload}
 
-不是 160×160 的遮罩（例如 Segment Anything 的輸出）會使用版本化標頭，而不是開頭的數量。其版面配置為 `pipeline/DetectionTypes.h` 中的 [`SegmentationMasksHeaderV1`](/reference/cppapi/structs/simaai-neat-segmentationmasksheaderv1)：先是標頭，接著是 `RawBox` 記錄，然後每筆記錄一個 `uint8` 遮罩，值為 0 或 255。請使用 `decode_segmentation` 讀取，它會傳回邊界框與遮罩，並拒絕格式錯誤的標頭或範圍。張量仍帶有 `BBOX` 標籤，且 `decode_segmentation` 與 `decode_bbox` 依魔術值辨識此酬載，因此既有的分割酬載不受影響。`SimaRender` 不接受此酬載。
+不是 160×160 的遮罩（例如 Segment Anything 的輸出）會使用版本化標頭，而不是開頭的數量。其版面配置為 `pipeline/DetectionTypes.h` 中的 [`SegmentationMasksHeaderV1`](/reference/cppapi/structs/simaai-neat-segmentationmasksheaderv1)：先是標頭，接著是 `RawBox` 記錄，然後每筆記錄一個 `uint8` 遮罩，值為 0 或 255。請使用 `decode_segmentation` 讀取，它會傳回邊界框與遮罩，並拒絕格式錯誤的標頭或範圍。新產生的張量帶有 `BBOX_SEGMENTATION` 標籤。`decode_segmentation` 和 `decode_bbox` 也能透過遮罩標頭辨識帶有 `BBOX` 標籤的舊版張量。`SimaRender` 不接受此酬載。
 
 ## 當 `model.run` 傳回原始的標題時
 

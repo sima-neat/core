@@ -402,7 +402,7 @@ options.yolox_seg_pose.pose_classes = [0, 5]
 
 ### Версійне корисне навантаження масок {#versioned-masks-payload}
 
-Маски, які не мають розміру 160×160, як-от вихід Segment Anything, використовують версійний заголовок замість початкової кількості. Його розмітка — [`SegmentationMasksHeaderV1`](/reference/cppapi/structs/simaai-neat-segmentationmasksheaderv1) у `pipeline/DetectionTypes.h`: заголовок, потім записи `RawBox`, потім одна маска `uint8` на запис зі значеннями 0 або 255. Читайте його за допомогою `decode_segmentation`, яка повертає рамки й маски та відхиляє неправильний заголовок або розмір. Тензор зберігає тег `BBOX`, а `decode_segmentation` і `decode_bbox` розпізнають корисне навантаження за магічним значенням, тому наявні навантаження сегментації не змінюються. `SimaRender` його не приймає.
+Маски, які не мають розміру 160×160, як-от вихід Segment Anything, використовують версійний заголовок замість початкової кількості. Його розмітка — [`SegmentationMasksHeaderV1`](/reference/cppapi/structs/simaai-neat-segmentationmasksheaderv1) у `pipeline/DetectionTypes.h`: заголовок, потім записи `RawBox`, потім одна маска `uint8` на запис зі значеннями 0 або 255. Читайте його за допомогою `decode_segmentation`, яка повертає рамки й маски та відхиляє неправильний заголовок або розмір. Нові тензори мають тег `BBOX_SEGMENTATION`. Функції `decode_segmentation` і `decode_bbox` також розпізнають старі тензори з тегом `BBOX` за заголовком маски. `SimaRender` його не приймає.
 
 ## Коли `model.run` повертає необроблені результати.
 
