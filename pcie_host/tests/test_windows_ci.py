@@ -833,6 +833,15 @@ class WindowsCiContracts(unittest.TestCase):
         encoding="utf-8")
     self.assertIn("set(CPACK_WIX_CANDLE_EXTRA_FLAGS", packaging)
 
+  def test_python_card_cases_count_only_passes(self):
+    with tempfile.TemporaryDirectory() as directory:
+      junit = Path(directory) / "python.xml"
+      junit.write_text(
+          '<testsuite><testcase name="ran"/><testcase name="skipped"><skipped/></testcase>'
+          '<testcase name="failed"><failure/></testcase>'
+          '<testcase name="broken"><error/></testcase></testsuite>', encoding="utf-8")
+      self.assertEqual(HARDWARE.passed_junit_cases(junit), {"ran"})
+
   def test_workflow_uses_exact_scheduler_artifact_and_restricted_runner(self):
     workflow = WORKFLOW.read_text(encoding="utf-8")
     producer = (SCRIPT_DIR / "run_windows_build.ps1").read_text(encoding="utf-8")
@@ -1823,10 +1832,14 @@ class WindowsCiContracts(unittest.TestCase):
     self.assertIn("managed_python.is_file() and imports_pyneatpcie(managed_python)", native_only)
     self.assertIn("managed_python.is_file()", customer_recovery)
     self.assertNotIn('"--python-executable", python', customer_recovery)
-    self.assertIn(
-        'require_junit_cases(evidence / "python-hardware.xml", set(BASE_PYTHON_TESTS))',
-        source)
-    self.assertIn('require_junit_cases(evidence / "python-genai.xml", genai_tests)', source)
+    # Like Linux's run_pytest.sh: the whole pyneatpcie folder in one run, with the
+    # hardware and GenAI cases required to pass rather than skip.
+    python_tests = source.split("def run_python_tests(", 1)[1].split("\ndef ", 1)[0]
+    self.assertIn('"pcie_host/python/tests"],', python_tests)
+    self.assertNotIn("test_hardware_smoke.py::", python_tests)
+    self.assertIn("required |= GENAI_PYTHON_TESTS", python_tests)
+    self.assertIn('raise RuntimeError(f"required Python hardware tests did not pass: {missing}")',
+                  python_tests)
     self.assertIn("run_genai_fault_recovery_tests(", source)
     self.assertIn('stop_windows_platform_service(evidence / "genai-service-loss-injection.log")',
                   source)

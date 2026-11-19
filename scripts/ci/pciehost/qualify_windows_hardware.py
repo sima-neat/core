@@ -29,10 +29,11 @@ import subprocess
 import sys
 import threading
 import time
+import xml.etree.ElementTree as ET
 import zipfile
 
 from windows_candidate import (
-    dependency_identity, msi_version, require_junit_cases, scheduler_platform_runtime, sha256,
+    dependency_identity, msi_version, scheduler_platform_runtime, sha256,
     validate_candidate,
     validate_published_package, write_json)
 from windows_hardware_assets import asset_manifest_sha256, verify_asset_manifest
@@ -64,6 +65,14 @@ BASE_PYTHON_TESTS = (
     "test_image_run_yolov8",
     "test_image_boxdecode_run_yolov8",
 )
+GENAI_PYTHON_TESTS = {
+    "test_genai_bounded_cancellation_soak_and_context_cleanup",
+    "test_genai_competing_sessions_are_isolated",
+    "test_genai_llm_run_stream_history_and_cancel",
+    "test_genai_request_timeout_and_restart_after_failure",
+    "test_genai_vlm_run_and_stream",
+    "test_genai_asr_file_pcm_translation_and_stream",
+}
 GENAI_ADMISSION_TESTS = {
     "test_genai_asr_file_pcm_translation_and_stream",
     "test_genai_asr_run",
@@ -2260,40 +2269,37 @@ def run_cpp_tests(args: argparse.Namespace, candidate_root: Path, evidence: Path
   return completed
 
 
+def passed_junit_cases(path: Path) -> set[str]:
+  """Return the passing case names; pytest's exit status already failed the run otherwise."""
+  try:
+    root = ET.parse(path).getroot()
+  except (OSError, ET.ParseError) as error:
+    raise ValueError(f"invalid JUnit evidence: {path}: {error}") from error
+  return {case.get("name", "") for case in root.iter("testcase")
+          if not any(case.find(tag) is not None for tag in ("skipped", "failure", "error"))}
+
+
 def run_python_tests(args: argparse.Namespace, python: Path, evidence: Path,
                      environment: dict[str, str]) -> list[str]:
-  tests = [
-      f"pcie_host/python/tests/test_hardware_smoke.py::{name}"
-      for name in BASE_PYTHON_TESTS
-  ]
+  # Run the whole pyneatpcie folder, as Linux's run_pytest.sh does, and still
+  # require the hardware and GenAI cases to have run and passed rather than skipped.
+  required = set(BASE_PYTHON_TESTS)
+  if args.include_genai:
+    required |= GENAI_PYTHON_TESTS
   run_logged(
-      [python, "-m", "pytest", "-vv", "--junitxml", evidence / "python-hardware.xml", *tests],
+      [python, "-m", "pytest", "-vv", "--junitxml", evidence / "python-hardware.xml",
+       "pcie_host/python/tests"],
       evidence / "python-hardware.log",
       env=environment,
       cwd=args.source_root,
-      timeout=args.test_timeout_seconds,
+      timeout=2 * args.test_timeout_seconds,
   )
-  require_junit_cases(evidence / "python-hardware.xml", set(BASE_PYTHON_TESTS))
-  completed = list(BASE_PYTHON_TESTS)
+  passed = passed_junit_cases(evidence / "python-hardware.xml")
+  missing = sorted(required - passed)
+  if missing:
+    raise RuntimeError(f"required Python hardware tests did not pass: {missing}")
+  completed = sorted(passed)
   if args.include_genai:
-    genai_tests = {
-        "test_genai_bounded_cancellation_soak_and_context_cleanup",
-        "test_genai_competing_sessions_are_isolated",
-        "test_genai_llm_run_stream_history_and_cancel",
-        "test_genai_request_timeout_and_restart_after_failure",
-        "test_genai_vlm_run_and_stream",
-        "test_genai_asr_file_pcm_translation_and_stream",
-    }
-    run_logged(
-        [python, "-m", "pytest", "-vv", "--junitxml", evidence / "python-genai.xml",
-         "pcie_host/python/tests/test_genai_hardware.py"],
-        evidence / "python-genai.log",
-        env=environment,
-        cwd=args.source_root,
-        timeout=args.test_timeout_seconds,
-    )
-    require_junit_cases(evidence / "python-genai.xml", genai_tests)
-    completed.extend(sorted(genai_tests))
     completed.extend(run_genai_fault_recovery_tests(
         args, python, evidence, environment))
     wait_for_no_genai_workers(
