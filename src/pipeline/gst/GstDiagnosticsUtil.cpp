@@ -6,6 +6,7 @@
 #include "pipeline/internal/TensorMath.h"
 #include "pipeline/internal/UxLogging.h"
 
+#include "gst/GstBusWatch.h"
 #include "pipeline/ErrorCodes.h"
 #include "pipeline/NeatError.h"
 
@@ -422,118 +423,6 @@ std::string gst_caps_to_string_safe(GstCaps* caps) {
   std::string out = s;
   g_free(s);
   return out;
-}
-
-std::string gst_structure_to_string_safe(const GstStructure* st) {
-  if (!st)
-    return "<null structure>";
-  gchar* s = gst_structure_to_string(st);
-  if (!s)
-    return "<structure_to_string failed>";
-  std::string out = s;
-  g_free(s);
-  return out;
-}
-
-std::string gst_message_to_string(GstMessage* msg) {
-  if (!msg)
-    return "<null message>";
-
-  std::ostringstream ss;
-  const GstMessageType t = GST_MESSAGE_TYPE(msg);
-  ss << gst_message_type_get_name(t);
-
-  const GstStructure* st = gst_message_get_structure(msg);
-  if (t == GST_MESSAGE_ELEMENT && st && gst_structure_has_name(st, "http-headers")) {
-    ss << " http-headers";
-    const auto origin = http_origin(gst_structure_get_string(st, "uri"));
-    if (!origin.empty())
-      ss << " origin=" << origin;
-    guint status = 0;
-    if (gst_structure_get_uint(st, "http-status-code", &status) && status >= 100 && status <= 599)
-      ss << " status=" << status;
-    return ss.str();
-  }
-
-  if (t == GST_MESSAGE_ERROR || t == GST_MESSAGE_WARNING || t == GST_MESSAGE_INFO) {
-    auto* source = GST_MESSAGE_SRC(msg);
-    auto* factory = GST_IS_ELEMENT(source) ? gst_element_get_factory(GST_ELEMENT(source)) : nullptr;
-    if (factory && g_strcmp0(GST_OBJECT_NAME(factory), "souphttpsrc") == 0) {
-      if (t == GST_MESSAGE_ERROR) {
-        const auto diagnostic = classify_gst_error(parse_gst_error_message(msg));
-        ss << ": " << diagnostic.title << " [" << diagnostic.diagnostic_id << "]";
-        for (const auto& fact : diagnostic.facts)
-          ss << " " << fact.label << "=" << fact.value;
-      }
-      return ss.str();
-    }
-  }
-
-  if (t == GST_MESSAGE_ERROR) {
-    GError* e = nullptr;
-    gchar* dbg = nullptr;
-    gst_message_parse_error(msg, &e, &dbg);
-    ss << ": " << (e ? e->message : "unknown");
-    if (dbg && *dbg)
-      ss << " | " << dbg;
-    if (e)
-      g_error_free(e);
-    if (dbg)
-      g_free(dbg);
-    return ss.str();
-  }
-  if (t == GST_MESSAGE_WARNING) {
-    GError* e = nullptr;
-    gchar* dbg = nullptr;
-    gst_message_parse_warning(msg, &e, &dbg);
-    ss << ": " << (e ? e->message : "unknown");
-    if (dbg && *dbg)
-      ss << " | " << dbg;
-    if (e)
-      g_error_free(e);
-    if (dbg)
-      g_free(dbg);
-    return ss.str();
-  }
-  if (t == GST_MESSAGE_INFO) {
-    GError* e = nullptr;
-    gchar* dbg = nullptr;
-    gst_message_parse_info(msg, &e, &dbg);
-    ss << ": " << (e ? e->message : "unknown");
-    if (dbg && *dbg)
-      ss << " | " << dbg;
-    if (e)
-      g_error_free(e);
-    if (dbg)
-      g_free(dbg);
-    return ss.str();
-  }
-  if (t == GST_MESSAGE_STATE_CHANGED) {
-    if (GST_MESSAGE_SRC(msg) && GST_IS_OBJECT(GST_MESSAGE_SRC(msg))) {
-      ss << " src=" << GST_OBJECT_NAME(GST_MESSAGE_SRC(msg));
-    }
-    GstState old_s, new_s, pend_s;
-    gst_message_parse_state_changed(msg, &old_s, &new_s, &pend_s);
-    ss << " " << state_name(old_s) << " -> " << state_name(new_s) << " (pending "
-       << state_name(pend_s) << ")";
-    return ss.str();
-  }
-  if (t == GST_MESSAGE_EOS) {
-    ss << " (EOS)";
-    return ss.str();
-  }
-  if (t == GST_MESSAGE_ASYNC_DONE) {
-    ss << " (ASYNC_DONE)";
-    return ss.str();
-  }
-  if (t == GST_MESSAGE_STREAM_START) {
-    ss << " (STREAM_START)";
-    return ss.str();
-  }
-
-  if (st)
-    ss << " " << gst_structure_to_string_safe(st);
-  return ss.str();
 }
 
 std::string caps_features_string(GstCaps* caps) {

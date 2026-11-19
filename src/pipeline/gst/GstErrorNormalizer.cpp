@@ -1,5 +1,6 @@
 #include "pipeline/internal/GstErrorNormalizer.h"
 
+#include "gst/internal/HttpDiagnostics.h"
 #include "pipeline/ErrorCodes.h"
 
 #include <algorithm>
@@ -115,7 +116,8 @@ std::size_t redact_secret_value(std::string& value, std::size_t begin, bool line
   }
   const std::size_t length = (end == std::string::npos ? value.size() : end) - content_begin;
   const std::string replacement =
-      use_http_origin ? http_origin(value.substr(content_begin, length).c_str()) : "<redacted>";
+      use_http_origin ? gst::http_origin(value.substr(content_begin, length).c_str())
+                      : "<redacted>";
   value.replace(content_begin, length, replacement);
   return content_begin + replacement.size();
 }
@@ -1332,18 +1334,6 @@ std::string sanitize_gst_diagnostic_text(std::string text) {
   return truncate(std::move(text), 16384);
 }
 
-std::string http_origin(const char* location) {
-  g_autoptr(GUri) uri = location ? g_uri_parse(location, G_URI_FLAGS_NONE, nullptr) : nullptr;
-  const char* host = uri ? g_uri_get_host(uri) : nullptr;
-  const char* scheme = uri ? g_uri_get_scheme(uri) : nullptr;
-  if (!host || !*host || !scheme ||
-      (g_ascii_strcasecmp(scheme, "http") && g_ascii_strcasecmp(scheme, "https")))
-    return {};
-  g_autofree gchar* origin = g_uri_join(G_URI_FLAGS_NONE, scheme, nullptr, host,
-                                        g_uri_get_port(uri), "", nullptr, nullptr);
-  return origin;
-}
-
 NormalizedDiagnostic classify_gst_error(RawGstError raw) {
   const std::string text = combined_raw(raw);
   if (raw.factory_name == "souphttpsrc") {
@@ -1354,7 +1344,7 @@ NormalizedDiagnostic classify_gst_error(RawGstError raw) {
                                 raw.code == GST_STREAM_ERROR_FAILED &&
                                 contains_ci(raw.debug, "streaming stopped, reason error");
 
-    const auto origin = http_origin(
+    const auto origin = gst::http_origin(
         find_structured_detail(raw, {"source-identity", "source_identity", "location", "uri"})
             .value_or("")
             .c_str());
