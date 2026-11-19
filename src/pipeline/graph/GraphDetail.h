@@ -1,4 +1,3 @@
-#include "pipeline/internal/RtspReconnect.h"
 /**
  * @file GraphDetail.h
  * @brief Internal helpers used by the split Graph compilation units.
@@ -23,6 +22,7 @@
 
 #include "internal/InputStreamUtil.h"
 #include "pipeline/internal/Diagnostics.h"
+#include "pipeline/internal/RtspReconnect.h"
 #include "pipeline/internal/PipelineBuild.h"
 #include "pipeline/internal/contract/CompiledNodeContract.h"
 #include "pipeline/internal/EnvUtil.h"
@@ -519,6 +519,7 @@ void configure_appsink_for_input(GstElement* appsink);
 BuildResult build_pipeline_full(const std::vector<std::shared_ptr<Node>>& nodes,
                                 bool insert_boundaries, const std::string& appsink_name,
                                 bool insert_queue2, const NameTransform& name_transform,
-                                const GraphOptions* sess_opt = nullptr);
+                                const GraphOptions* sess_opt = nullptr,
+                                const InputStreamOptions* source_output = nullptr);
 
 } // namespace simaai::neat

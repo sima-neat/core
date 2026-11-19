@@ -89,6 +89,8 @@ public:
   }
 
 private:
+  friend struct RtspSourceGroup;
+  std::weak_ptr<Node> encoded_group_end_;
   std::string url_;
   int latency_ms_ = 200;
   bool tcp_ = true;

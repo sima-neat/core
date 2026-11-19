@@ -9,6 +9,7 @@
 #include "nodes/rtp/H265Depacketize.h"
 #include "nodes/rtp/RTPJpegDepacketize.h"
 #include "nodes/groups/internal/RtspCodecMapping.h"
+#include "nodes/groups/internal/RtspSourceGroup.h"
 #include "pipeline/internal/SyncBuild.h"
 
 #include <memory>
@@ -149,6 +150,7 @@ simaai::neat::Graph RtspEncodedInput(const RtspEncodedInputOptions& opt) {
     throw std::invalid_argument("RtspEncodedInput: unsupported codec");
   }
 
+  RtspSourceGroup::bind(nodes);
   simaai::neat::Graph graph;
   for (auto& node : nodes) {
     graph.add(std::move(node));

@@ -52,6 +52,7 @@
 #include "builder/OutputSpec.h"
 #include "pipeline/Tensor.h"
 #include "nodes/io/Input.h"
+#include "nodes/groups/internal/RtspSourceGroup.h"
 #include "nodes/io/StillImageInput.h"
 #include "nodes/sima/Preproc.h"
 #include "nodes/common/Output.h"
@@ -868,6 +869,19 @@ static GstPadProbeReturn boundary_probe_cb(GstPad*, GstPadProbeInfo* info, gpoin
   return GST_PAD_PROBE_OK;
 }
 
+// Recovery bins are a Core implementation detail. Inspect their stages without
+// descending into the private elements owned by rtspsrc or other plugin bins.
+static bool next_diagnostic_element(GstIterator* it, GValue* item) {
+  while (gst_iterator_next(it, item) == GST_ITERATOR_OK) {
+    auto* element = GST_ELEMENT(g_value_get_object(item));
+    if (!pipeline_internal::is_rtsp_reconnect_bin(element))
+      return true;
+    gst_iterator_push(it, gst_bin_iterate_elements(GST_BIN(element)));
+    g_value_reset(item);
+  }
+  return false;
+}
+
 void attach_stage_timing_probes(GstElement* pipeline, const std::shared_ptr<DiagCtx>& diag,
                                 bool enable_from_options) {
   if (!pipeline || !diag)
@@ -880,7 +894,7 @@ void attach_stage_timing_probes(GstElement* pipeline, const std::shared_ptr<Diag
     return;
 
   GValue item = G_VALUE_INIT;
-  while (gst_iterator_next(it, &item) == GST_ITERATOR_OK) {
+  while (next_diagnostic_element(it, &item)) {
     GstElement* elem = GST_ELEMENT(g_value_get_object(&item));
     if (!elem) {
       g_value_reset(&item);
@@ -925,7 +939,7 @@ static void attach_element_probes(GstElement* pipeline, const std::shared_ptr<Di
     return;
 
   GValue item = G_VALUE_INIT;
-  while (gst_iterator_next(it, &item) == GST_ITERATOR_OK) {
+  while (next_diagnostic_element(it, &item)) {
     GstElement* elem = GST_ELEMENT(g_value_get_object(&item));
     if (!elem) {
       g_value_reset(&item);
@@ -3079,10 +3093,37 @@ void session_build_initialize_kernel_runner_budget(BuildResult* build,
       std::max(build->kernel_runner_capacity + 1U, build->kernel_runner_output_pool_minimum);
 }
 
+void RtspSourceGroup::render(std::ostream& stream, BuildResult& build, const Node& node,
+                             const NodeReport& report) const {
+  if (&node == source) {
+    auto& settings = build.rtsp_reconnect_sources.emplace_back();
+    settings.source_name = report.elements.front();
+    settings.bin_name = settings.source_name + "_reconnect";
+    settings.interval_sec = source->reconnect_interval_sec();
+    settings.attempts = source->reconnect_attempts();
+    build.framework_name_origins.push_back({.kind = LaunchNameOrigin::Kind::RtspHelper,
+                                            .name = settings.bin_name,
+                                            .role = "RTSP reconnect source"});
+    stream << "bin.( name=" << settings.bin_name << ' ';
+  }
+  stream << report.backend_fragment;
+  if (&node == last) {
+    auto& settings = build.rtsp_reconnect_sources.back();
+    settings.boundary_name = report.elements.back();
+    if (&node == source) {
+      // rtspsrc's dynamic pad may be absent at startup. Give the bin a static output.
+      settings.boundary_name = settings.source_name + "_output";
+      stream << " ! identity name=" << settings.boundary_name;
+    }
+    stream << " )";
+  }
+}
+
 BuildResult build_pipeline_full(const std::vector<std::shared_ptr<Node>>& nodes,
                                 bool insert_boundaries, const std::string& appsink_name,
                                 bool insert_queue2, const NameTransform& name_transform,
-                                const GraphOptions* sess_opt) {
+                                const GraphOptions* sess_opt,
+                                const InputStreamOptions* source_output) {
   const pipeline_internal::ScopedBuildTiming timing(
       "build_pipeline_full", "nodes=" + std::to_string(nodes.size()) +
                                  " insert_boundaries=" + std::to_string(insert_boundaries ? 1 : 0) +
@@ -3105,6 +3146,7 @@ BuildResult build_pipeline_full(const std::vector<std::shared_ptr<Node>>& nodes,
 
   std::ostringstream ss;
 
+  const auto group = source_output ? RtspSourceGroup(nodes) : RtspSourceGroup();
   br.diag->node_reports.reserve(nodes.size());
   if (insert_boundaries) {
     br.diag->boundaries.reserve(nodes.size() ? nodes.size() - 1 : 0);
@@ -3146,7 +3188,17 @@ BuildResult build_pipeline_full(const std::vector<std::shared_ptr<Node>>& nodes,
     nr.elements = frag.element_names;
     br.diag->node_reports.push_back(nr);
 
-    ss << nr.backend_fragment;
+    group.render(ss, br, *nodes[i], nr);
+    if (group.last == nodes[i].get() && !source_output->appsink_drop &&
+        source_output->appsink_max_buffers > 0 && nodes.back()->kind() == "Output") {
+      auto& settings = br.rtsp_reconnect_sources.back();
+      settings.handoff_name = settings.source_name + "_handoff";
+      br.framework_name_origins.push_back({.kind = LaunchNameOrigin::Kind::Queue,
+                                           .name = settings.handoff_name,
+                                           .role = "RTSP output handoff"});
+      ss << " ! queue name=" << settings.handoff_name
+         << " max-size-buffers=1 max-size-bytes=0 max-size-time=0";
+    }
 
     if (insert_boundaries && i + 1 < nodes.size()) {
       const std::string bname = apply_name_transform(name_transform, "sima_b" + std::to_string(i));

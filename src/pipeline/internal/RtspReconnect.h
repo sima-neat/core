@@ -51,14 +51,17 @@ struct RtspReconnectSource {
   std::shared_ptr<SourceEvents> events;
   std::string label;
   std::string bin_name;
+  std::size_t branch_index = 0;
   std::string source_name;
   std::string boundary_name;
+  std::string handoff_name;
   int interval_sec = 0;
   int attempts = -1;
   std::function<void(const PullError&)> on_exhausted;
   std::shared_ptr<std::atomic_bool> interrupt_encoded_push;
 };
 
+bool is_rtsp_reconnect_bin(GstElement* element);
 void attach_rtsp_reconnect(GstElement* pipeline, const std::vector<RtspReconnectSource>& sources);
 bool start_rtsp_reconnect(GstElement* pipeline);
 void stop_rtsp_reconnect(GstElement* pipeline);

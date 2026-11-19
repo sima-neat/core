@@ -21,11 +21,17 @@ GQuark controller_key() {
   return key;
 }
 
+GQuark source_bin_key() {
+  static const GQuark key = g_quark_from_static_string("neat-rtsp-source-bin");
+  return key;
+}
+
 class RtspReconnectController {
   struct Source {
     RtspReconnectSource settings;
     GstElement* bin = nullptr;
     GstElement* source = nullptr;
+    GstElement* handoff = nullptr;
     GstBus* message_bus = nullptr;
     GstPad* boundary = nullptr;
     GstPad* rtp_sink = nullptr;
@@ -81,6 +87,7 @@ class RtspReconnectController {
       gst_clear_object(&boundary);
       gst_clear_object(&rtp_sink);
       gst_clear_object(&output);
+      gst_clear_object(&handoff);
       gst_clear_object(&source);
       gst_clear_object(&bin);
     }
@@ -101,6 +108,13 @@ public:
       if (!slot->bin || !slot->source || !slot->boundary)
         throw std::runtime_error("RTSP reconnect: source boundary is missing for " +
                                  spec.source_name);
+      g_object_set_qdata(G_OBJECT(slot->bin), source_bin_key(), GINT_TO_POINTER(1));
+      if (!spec.handoff_name.empty()) {
+        slot->handoff = gst_bin_get_by_name(GST_BIN(pipeline), spec.handoff_name.c_str());
+        if (!slot->handoff)
+          throw std::runtime_error("RTSP reconnect: output handoff missing for " +
+                                   spec.source_name);
+      }
       gst_element_foreach_src_pad(
           slot->bin,
           +[](GstElement*, GstPad* pad, gpointer data) -> gboolean {
@@ -332,7 +346,14 @@ private:
 
   void reset(Source& slot, bool terminal) {
     gst_element_set_locked_state(slot.bin, TRUE);
+    // A lossless reader may hold the handoff's downstream task. Release only
+    // its private pending buffer so the old source task can finish its push.
+    // Setting the capacity wakes a producer already asleep on the full queue.
+    if (slot.handoff)
+      g_object_set(slot.handoff, "leaky", 2, "max-size-buffers", 1U, nullptr);
     gst_element_set_state(slot.bin, GST_STATE_NULL);
+    if (slot.handoff)
+      g_object_set(slot.handoff, "leaky", 0, nullptr);
     if (stopping_.load())
       return;
     if (terminal) {
@@ -381,6 +402,10 @@ RtspReconnectController* controller(GstElement* pipeline) {
                   : nullptr;
 }
 } // namespace
+
+bool is_rtsp_reconnect_bin(GstElement* element) {
+  return g_object_get_qdata(G_OBJECT(element), source_bin_key()) != nullptr;
+}
 
 void attach_rtsp_reconnect(GstElement* pipeline, const std::vector<RtspReconnectSource>& sources) {
   if (sources.empty())

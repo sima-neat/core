@@ -4,6 +4,7 @@
 #include "test_utils.h"
 #include "runtime_test_utils.h"
 #include "pipeline/ErrorCodes.h"
+#include "pipeline/runtime/RunCore.h"
 
 #include <gst/rtsp-server/rtsp-server.h>
 
@@ -32,14 +33,14 @@ public:
     g_main_context_unref(context);
   }
 
-  void start() {
+  void start(const char* pattern = "smpte") {
     server = gst_rtsp_server_new();
     gst_rtsp_server_set_service(server, std::to_string(port).c_str());
     GstRTSPMediaFactory* factory = gst_rtsp_media_factory_new();
-    gst_rtsp_media_factory_set_launch(
-        factory,
-        "( videotestsrc is-live=true ! video/x-raw,format=I420,width=160,height=120,framerate=20/1 "
-        "! valve name=gate ! jpegenc ! rtpjpegpay name=pay0 pt=26 )");
+    const std::string launch = std::string("( videotestsrc is-live=true pattern=") + pattern +
+                               " ! video/x-raw,format=I420,width=160,height=120,framerate=20/1 "
+                               "! valve name=gate ! jpegenc ! rtpjpegpay name=pay0 pt=26 )";
+    gst_rtsp_media_factory_set_launch(factory, launch.c_str());
     g_signal_connect(factory, "media-configure",
                      G_CALLBACK(+[](GstRTSPMediaFactory*, GstRTSPMedia* media, gpointer data) {
                        auto& self = *static_cast<Publisher*>(data);
@@ -109,7 +110,7 @@ Graph source(const Publisher& publisher, int timeout = 1, int attempts = -1) {
   return nodes::groups::RtspEncodedInput(options);
 }
 
-void frame(Run& run, const std::string& name, int timeout = 6000) {
+Sample frame(Run& run, const std::string& name, int timeout = 6000) {
   Sample sample;
   PullError error;
   const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout);
@@ -117,7 +118,7 @@ void frame(Run& run, const std::string& name, int timeout = 6000) {
     const auto status = run.pull(name, 100, sample, &error);
     if (status == PullStatus::Ok) {
       require(!sample.tensors.empty(), "RTSP output is empty");
-      return;
+      return sample;
     }
     require(status == PullStatus::Timeout, "RTSP output failed: " + error.message);
   }
@@ -157,6 +158,8 @@ void transition(Run& run, SourceStatus expected) {
 
 int main() {
   try {
+    setenv("SIMA_GST_STAGE_TIMINGS", "1", 1);
+    setenv("SIMA_GST_FLOW_DEBUG", "1", 1);
     simaai::neat::gst_init_once();
     Publisher healthy, failing;
     healthy.start();
@@ -245,6 +248,71 @@ int main() {
     require(failing.connections() == sessions, "monitor-only source attempted reconnect");
     watch.close();
     failing.stop();
+
+    std::cout << "phase=paused-reader-reconnect\n" << std::flush;
+    failing.start("black");
+    Graph paused;
+    paused.connect(source(failing).set_name("src7"),
+                   nodes::Output("frames", OutputOptions::EveryFrame(1)));
+    Run reader = paused.build();
+    const auto frame_size = [&] {
+      return frame(reader, "frames").tensors.front().map_read().size_bytes;
+    };
+    const auto black_size = frame_size();
+    std::this_thread::sleep_for(3s);
+    require(!reader.poll_source_event(), "healthy full output triggered reconnect");
+    const auto previous_sessions = failing.connections();
+    failing.stop();
+    transition(reader, SourceStatus::Reconnecting);
+    failing.start("snow");
+    const auto reconnect_deadline = std::chrono::steady_clock::now() + 6s;
+    while (failing.connections() == previous_sessions &&
+           std::chrono::steady_clock::now() < reconnect_deadline)
+      std::this_thread::sleep_for(20ms);
+    require(failing.connections() > previous_sessions, "reconnect waited for the reader");
+    require(frame_size() == black_size, "reset discarded the queued pre-loss frame");
+    const auto new_media_deadline = std::chrono::steady_clock::now() + 5s;
+    while (frame_size() == black_size)
+      require(std::chrono::steady_clock::now() < new_media_deadline,
+              "missing new publisher frames");
+    transition(reader, SourceStatus::Recovered);
+    reader.close();
+
+    std::cout << "phase=linear-diagnostics-and-closure\n" << std::flush;
+    Graph linear;
+    linear.add(source(failing, 0));
+    linear.add(nodes::Output());
+    Run direct = linear.build();
+    require(direct.pull(5000, ignored, &close_error) == PullStatus::Ok,
+            "linear source produced no frame");
+    const auto owner = run_internal::core(direct);
+    const auto diag = owner->diag_snapshot();
+    for (std::string_view name : {"rtpjpegdepay", "jpegparse"}) {
+      require(std::ranges::any_of(diag.stages,
+                                  [&](const auto& stage) {
+                                    return stage.stage_name.find(name) != std::string::npos;
+                                  }),
+              "missing RTSP stage timing: " + std::string(name));
+      require(std::ranges::any_of(diag.element_flows,
+                                  [&](const auto& flow) {
+                                    return flow.element_name.find(name) != std::string::npos &&
+                                           flow.out_buffers > 0;
+                                  }),
+              "missing RTSP element flow: " + std::string(name));
+    }
+    ignored = {};
+    failing.stop();
+    const auto close_deadline = std::chrono::steady_clock::now() + 5s;
+    PullStatus terminal;
+    do {
+      terminal = direct.pull(100, ignored, &close_error);
+    } while ((terminal == PullStatus::Ok || terminal == PullStatus::Timeout) &&
+             std::chrono::steady_clock::now() < close_deadline);
+    require(terminal == PullStatus::Closed &&
+                close_error.code == error_codes::kRtspConnectionFailed,
+            "linear source failed to report terminal camera loss");
+    g_autoptr(GstElement) remaining = owner->pipeline.stream.acquire_pipeline_ref();
+    require(!direct.running() && !remaining, "linear pipeline still held after Closed");
 
     std::cout << "phase=downstream-error\n" << std::flush;
     Graph broken;

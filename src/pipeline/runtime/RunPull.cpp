@@ -523,7 +523,7 @@ bool runtime::RunCore::attach_public_output_loan(Sample& sample, std::string* er
 }
 
 PullStatus runtime::RunCore::pull(int timeout_ms, Sample& out, PullError* err,
-                                  bool acquire_output_loan) {
+                                  bool acquire_output_loan, bool defer_source_stop) {
   const auto pull_started_at = std::chrono::steady_clock::now();
   pipeline_internal::error_util::set_pull_error(err, "", "");
   const auto set_terminal_error = [&](const std::string& code, const std::string& message) {
@@ -808,9 +808,9 @@ PullStatus runtime::RunCore::pull(int timeout_ms, Sample& out, PullError* err,
       if (auto detail = st->pipeline.stream.source_close_detail()) {
         if (err)
           *err = std::move(*detail);
-        // Publish source closure before potentially blocking teardown. The
-        // graph transport stops this child after forwarding completion.
-        return PullStatus::Closed;
+        // A graph transport publishes this closure before stopping its child.
+        if (defer_source_stop)
+          return PullStatus::Closed;
       } else {
         set_terminal_error(error_codes::kSourceEnded,
                            "Run::pull: input source reached end of stream");

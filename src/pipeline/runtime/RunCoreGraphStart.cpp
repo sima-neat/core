@@ -1138,7 +1138,8 @@ void start_pipeline_pull_thread(const std::shared_ptr<RunCore>& core, std::size_
         const PullStatus pull_status =
             pipe.run_core
                 ? pipe.run_core->pull(core->graph_options.pull_timeout_ms, sample, &pull_error,
-                                      pipe.seg.boundary.graph_internal_output)
+                                      pipe.seg.boundary.graph_internal_output,
+                                      /*defer_source_stop=*/true)
                 : PullStatus::Closed;
         pipe.transport.telemetry.pull_thread_pull_calls.fetch_add(1, std::memory_order_relaxed);
         atomic_add_max(pipe.transport.telemetry.pull_thread_pull_ns,
