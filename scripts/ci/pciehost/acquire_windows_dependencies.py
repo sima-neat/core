@@ -65,6 +65,7 @@ def main() -> None:
   parser.add_argument("--sima-cli-candidate", type=Path)
   parser.add_argument("--sima-cli-commit")
   parser.add_argument("--sima-cli-branch", default="main")
+  parser.add_argument("--sima-cli-spec", default="latest")
   args = parser.parse_args()
 
   for candidate, commit, label in (
@@ -101,7 +102,7 @@ def main() -> None:
   else:
     cli_publication = root / "sima-cli-publication"
     cli_record = acquire(
-        args.cli, "sima-cli", args.sima_cli_branch, "latest", args.environment,
+        args.cli, "sima-cli", args.sima_cli_branch, args.sima_cli_spec, args.environment,
         cli_publication)
     extract_sima_cli_wheel(cli_publication, cli)
 

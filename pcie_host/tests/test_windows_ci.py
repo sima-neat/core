@@ -863,8 +863,10 @@ class WindowsCiContracts(unittest.TestCase):
     self.assertIn('--required-job "Verify Scheduler build and Vulcan publication"', source)
     self.assertIn('--required-artifact "scheduler-native-windows-amd64"', source)
     self.assertIn("repository: sima-neat/scheduler", source)
-    self.assertNotIn("pcie-windows-build", source)
-    self.assertIn("pcie-windows-hardware", source)
+    # The org's runner script registers default labels only; the group selects the host.
+    for label in ("pcie-windows-build", "pcie-windows-hardware"):
+      self.assertNotIn(label, source)
+      self.assertNotIn(label, (ROOT / ".github" / "actionlint.yaml").read_text(encoding="utf-8"))
     self.assertNotIn("windows-latest", source)
     self.assertIn("scripts/ci/pciehost/build_windows.py", source)
     self.assertIn("python3 pcie_host/tests/test_verify_linux_release_run.py", source)
@@ -974,6 +976,8 @@ class WindowsCiContracts(unittest.TestCase):
             context = {
                 "always()": True,
                 "vars.ENABLE_WINDOWS_PCIE_CI": variable,
+                "github.event_name": "push",
+                "inputs.run_windows_pcie": False,
                 "github.workflow": "Vulcan CI",
                 "inputs.offline_source_run_id": "",
                 "inputs.validation_only": False,
@@ -1017,6 +1021,50 @@ class WindowsCiContracts(unittest.TestCase):
                 with self.assertRaisesRegex(SystemExit, "test-pciehost-windows"):
                   exec(compile(gate, str(MAIN_WORKFLOW), "exec"), {})
 
+  def test_manual_opt_in_runs_the_card_lane_like_the_repository_flag(self):
+    source = MAIN_WORKFLOW.read_text(encoding="utf-8")
+    job, condition = partial(workflow_job, source), partial(job_condition, source)
+    dispatch_inputs = source.split("  workflow_dispatch:\n", 1)[1].split("\npermissions:", 1)[0]
+    self.assertIn(
+        "      run_windows_pcie:\n"
+        '        description: "Run the Windows PCIe card lane on the self-hosted Windows '
+        'runner for this manual run"\n'
+        "        required: false\n        default: false\n        type: boolean\n",
+        dispatch_inputs)
+    gate_flag = re.search(r"(?m)^          WINDOWS_PCIE_CI: (.+)$", job("validation-complete"))[1]
+    for event in ("push", "workflow_dispatch"):
+      for variable in ("", "true"):
+        for opt_in in (False, True):
+          for outcome in ("success", "failure"):
+            with self.subTest(event=event, variable=variable, opt_in=opt_in, outcome=outcome):
+              # A push cannot carry the dispatch input; GitHub leaves it unset.
+              context = {
+                  "always()": True,
+                  "vars.ENABLE_WINDOWS_PCIE_CI": variable,
+                  "github.event_name": event,
+                  "inputs.run_windows_pcie": opt_in and event == "workflow_dispatch",
+                  "github.workflow": "Vulcan CI",
+                  "inputs.offline_source_run_id": "",
+                  "inputs.validation_only": False,
+                  "inputs.build_mode": "standard",
+                  "github.ref_type": "branch",
+                  "needs.detect-changes.outputs.docs_only": "false",
+              }
+              for upstream in (
+                  "validate-windows-cohort-selectors", "build",
+                  "build-pcie-card-qualification-dependencies", "build-pciehost-packages",
+                  "test-devkit", "test-pciehost-hardware", "publish-pciehost-package"):
+                context[f"needs.{upstream}.result"] = "success"
+              enabled = variable == "true" or (event == "workflow_dispatch" and opt_in)
+              for gated in ("build-pcie-card-qualification-dependencies", "test-pciehost-windows"):
+                self.assertEqual(evaluate_actions_expression(condition(gated), context), enabled)
+              self.assertEqual(evaluate_actions_expression(gate_flag, context), enabled)
+              context["needs.test-pciehost-windows.result"] = outcome if enabled else "skipped"
+              # An opted-in run must pass the card lane, exactly as with the flag on.
+              self.assertEqual(
+                  evaluate_actions_expression(condition("promote-latest-tag"), context),
+                  outcome == "success" or not enabled)
+
   def test_workflows_calling_main_ci_skip_the_windows_lane_and_accept_the_skip(self):
     # A called workflow sees the top-level caller's name, which the Windows
     # preflight rejects for same-run Linux admission.
@@ -1039,6 +1087,8 @@ class WindowsCiContracts(unittest.TestCase):
         context = {
             "always()": True,
             "vars.ENABLE_WINDOWS_PCIE_CI": "true",
+            "github.event_name": "push",
+            "inputs.run_windows_pcie": False,
             "github.workflow": workflow_name,
             "inputs.offline_source_run_id": "",
             "inputs.validation_only": False,
@@ -4085,8 +4135,11 @@ class HostedWindowsBuildContracts(unittest.TestCase):
 
   def test_hardware_lane_stays_self_hosted_and_opt_in(self):
     hardware = workflow_job(self.windows, "hardware")
-    self.assertIn("    runs-on: [self-hosted, Windows, X64, pcie-windows-hardware, default]\n",
+    self.assertIn("    runs-on:\n      group: pcie-hosts\n      labels: [self-hosted, Windows, X64]\n",
                   hardware)
+    elevation = workflow_step(hardware, "Require an elevated runner")
+    self.assertIn("sc.exe config <runner service>", elevation)
+    self.assertIn("obj= .\\<administrator> password= <password>", elevation)
     self.assertIn("    environment: production\n", hardware)
     self.assertIn("needs.native.result == 'success'", job_condition(self.windows, "hardware"))
     for gated in ("build-pcie-card-qualification-dependencies", "test-pciehost-windows"):
@@ -4249,6 +4302,19 @@ class HostedWindowsBuildContracts(unittest.TestCase):
     for name in ("Admit exact sima-cli candidate", "Download exact sima-cli candidate"):
       self.assertIn("if: inputs.sima_cli_run_id != '' && matrix.distro == 'windows'",
                     workflow_step(self.matrix, name))
+    # Without a selector, the card lane's customer CLI is the bootstrap's pinned
+    # publication; a direct (release) dispatch keeps sima-cli main.
+    self.assertIn('$arguments += @("--sima-cli-branch", $Matches[1], "--sima-cli-spec", $Matches[2])',
+                  resolve)
+    pattern = re.search(r"-notmatch '([^']+)'", resolve)[1]
+    publication = json.loads(
+        (SCRIPT_DIR / "windows_build_inputs.json").read_text(encoding="utf-8"))[
+            "sima_cli_publication"]
+    self.assertEqual(re.fullmatch(pattern, publication).groups(),
+                     ("codex/1074-windows-msi-install", "559480168a42"))
+    self.assertNotIn("--sima-cli-branch", workflow_job(self.windows, "dependencies"))
+    self.assertIn('parser.add_argument("--sima-cli-spec", default="latest")',
+                  (SCRIPT_DIR / "acquire_windows_dependencies.py").read_text(encoding="utf-8"))
 
   def test_receipt_records_the_hosted_toolchain(self):
     environment = {"VSCMD_VER": "17.14.4", "VCToolsVersion": "14.44.35207",

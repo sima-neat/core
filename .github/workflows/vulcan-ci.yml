@@ -122,6 +122,11 @@ on:
         required: false
         default: ""
         type: string
+      run_windows_pcie:
+        description: "Run the Windows PCIe card lane on the self-hosted Windows runner for this manual run"
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   actions: write
@@ -660,7 +665,7 @@ jobs:
 
   build-pcie-card-qualification-dependencies:
     name: Build private PCIe card qualification dependencies
-    if: ${{ vars.ENABLE_WINDOWS_PCIE_CI == 'true' && github.workflow == 'Vulcan CI' && !inputs.offline_source_run_id && (inputs.build_mode || 'standard') == 'standard' && needs.detect-changes.outputs.docs_only != 'true' && needs.build.result == 'success' }}
+    if: ${{ (vars.ENABLE_WINDOWS_PCIE_CI == 'true' || (github.event_name == 'workflow_dispatch' && inputs.run_windows_pcie)) && github.workflow == 'Vulcan CI' && !inputs.offline_source_run_id && (inputs.build_mode || 'standard') == 'standard' && needs.detect-changes.outputs.docs_only != 'true' && needs.build.result == 'success' }}
     needs:
       - resolve-vulcan-config
       - detect-changes
@@ -1121,6 +1126,14 @@ jobs:
               "--sima-cli-candidate", "$env:RUNNER_TEMP\sima-cli-override",
               "--sima-cli-commit", "$env:SIMA_CLI_COMMIT"
             )
+          } else {
+            # The card lane's customer CLI is the bootstrap's pinned publication: no
+            # released sima-cli reads MSI-style metadata yet. Releases keep main.
+            $pins = Get-Content -Raw scripts/ci/pciehost/windows_build_inputs.json | ConvertFrom-Json
+            if ($pins.sima_cli_publication -notmatch '^sima-cli@(.+):([0-9a-f]{12,40})$') {
+              throw "windows_build_inputs.json has no exact sima_cli_publication"
+            }
+            $arguments += @("--sima-cli-branch", $Matches[1], "--sima-cli-spec", $Matches[2])
           }
           & python @arguments
           if ($LASTEXITCODE -ne 0) { throw "Windows dependency resolution failed: $LASTEXITCODE" }
@@ -2559,9 +2572,10 @@ jobs:
 
   test-pciehost-windows:
     name: Build and qualify Windows PCIe host
-    # Opt-in until the Windows runners, variables and published dependencies exist.
+    # Opt-in until the Windows runners, variables and published dependencies exist:
+    # ENABLE_WINDOWS_PCIE_CI for every run, or run_windows_pcie for one manual run.
     # Callers of Vulcan CI cannot use same-run Linux admission (pcie-host-windows.yml).
-    if: ${{ always() && vars.ENABLE_WINDOWS_PCIE_CI == 'true' && github.workflow == 'Vulcan CI' && needs.validate-windows-cohort-selectors.result == 'success' && !inputs.offline_source_run_id && (inputs.build_mode || 'standard') == 'standard' && needs.detect-changes.outputs.docs_only != 'true' && needs.build.result == 'success' && needs.build-pcie-card-qualification-dependencies.result == 'success' && needs.build-pciehost-packages.result == 'success' && needs.test-devkit.result == 'success' && needs.test-pciehost-hardware.result == 'success' }}
+    if: ${{ always() && (vars.ENABLE_WINDOWS_PCIE_CI == 'true' || (github.event_name == 'workflow_dispatch' && inputs.run_windows_pcie)) && github.workflow == 'Vulcan CI' && needs.validate-windows-cohort-selectors.result == 'success' && !inputs.offline_source_run_id && (inputs.build_mode || 'standard') == 'standard' && needs.detect-changes.outputs.docs_only != 'true' && needs.build.result == 'success' && needs.build-pcie-card-qualification-dependencies.result == 'success' && needs.build-pciehost-packages.result == 'success' && needs.test-devkit.result == 'success' && needs.test-pciehost-hardware.result == 'success' }}
     needs:
       - validate-windows-cohort-selectors
       - detect-changes
@@ -2590,7 +2604,7 @@ jobs:
 
   promote-latest-tag:
     name: Promote Latest Tag
-    if: ${{ always() && needs.validate-windows-cohort-selectors.result == 'success' && !inputs.validation_only && (github.ref_type == 'branch' || github.ref_type == 'tag') && (inputs.build_mode || 'standard') == 'standard' && needs.detect-changes.outputs.docs_only != 'true' && needs.test-devkit.result == 'success' && needs.publish-pciehost-package.result == 'success' && (needs.test-pciehost-hardware.result == 'success' || needs.test-pciehost-hardware.result == 'skipped') && (needs.test-pciehost-windows.result == 'success' || (needs.test-pciehost-windows.result == 'skipped' && (vars.ENABLE_WINDOWS_PCIE_CI != 'true' || github.workflow != 'Vulcan CI'))) }}
+    if: ${{ always() && needs.validate-windows-cohort-selectors.result == 'success' && !inputs.validation_only && (github.ref_type == 'branch' || github.ref_type == 'tag') && (inputs.build_mode || 'standard') == 'standard' && needs.detect-changes.outputs.docs_only != 'true' && needs.test-devkit.result == 'success' && needs.publish-pciehost-package.result == 'success' && (needs.test-pciehost-hardware.result == 'success' || needs.test-pciehost-hardware.result == 'skipped') && (needs.test-pciehost-windows.result == 'success' || (needs.test-pciehost-windows.result == 'skipped' && ((vars.ENABLE_WINDOWS_PCIE_CI != 'true' && !(github.event_name == 'workflow_dispatch' && inputs.run_windows_pcie)) || github.workflow != 'Vulcan CI'))) }}
     needs:
       - validate-windows-cohort-selectors
       - detect-changes
@@ -2668,7 +2682,7 @@ jobs:
         env:
           RESULTS: ${{ toJSON(needs) }}
           BUILD_MODE: ${{ inputs.build_mode || 'standard' }}
-          WINDOWS_PCIE_CI: ${{ vars.ENABLE_WINDOWS_PCIE_CI == 'true' && github.workflow == 'Vulcan CI' }}
+          WINDOWS_PCIE_CI: ${{ (vars.ENABLE_WINDOWS_PCIE_CI == 'true' || (github.event_name == 'workflow_dispatch' && inputs.run_windows_pcie)) && github.workflow == 'Vulcan CI' }}
         run: |
           python3 - <<'PYGATE'
           import json, os

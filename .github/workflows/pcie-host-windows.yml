@@ -575,7 +575,11 @@ jobs:
     # A skipped native job would otherwise skip this one implicitly.
     if: ${{ !cancelled() && (needs.native.result == 'success' || (inputs.linux_current_run == true && needs.native.result == 'skipped')) && needs.linux_release.result == 'success' && needs.card_candidate.result == 'success' && needs.resolve-vulcan-config.result == 'success' }}
     environment: production
-    runs-on: [self-hosted, Windows, X64, pcie-windows-hardware, default]
+    # Registered by the org's create-gha-runner.bat in the PCIe hosts group,
+    # beside the Linux PCIe hosts, with its default labels.
+    runs-on:
+      group: pcie-hosts
+      labels: [self-hosted, Windows, X64]
     timeout-minutes: 180
     permissions:
       contents: read
@@ -620,7 +624,10 @@ jobs:
             [Security.Principal.WindowsIdentity]::GetCurrent())
           if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
             Write-Output ("::error::$env:USERDOMAIN\$env:USERNAME is not elevated. This job " +
-              "installs per-machine MSIs; run the runner service as an administrator.")
+              "installs per-machine MSIs and creates a temporary standard user. Log the " +
+              "runner service on as a local administrator: sc.exe config <runner service> " +
+              "obj= .\<administrator> password= <password>, then restart the service " +
+              "(scripts/ci/pciehost/WINDOWS_RELEASE.md, Runner setup).")
             exit 1
           }
       - uses: actions/checkout@v5

@@ -43,8 +43,31 @@ Signed runs also need `SIMA_WINDOWS_SIGNING_CERTIFICATE_SHA1`,
 `SIMA_WINDOWS_SIGNING_MACHINE_STORE`, and `SIMA_WINDOWS_SIGNING_TIMESTAMP_URL`,
 and a signing certificate the runner can use.
 
-`pcie-windows-hardware` must be a Windows 11 x64 client workstation with the
-supported Platform package and a directly attached Modalix card. It uses the
+The card runner must be a Windows 11 x64 client workstation with the
+supported Platform package and a directly attached Modalix card. Register it
+with the organization's `create-gha-runner.bat` in the `pcie-hosts` runner
+group, beside the Linux PCIe hosts, with the script's default labels
+`self-hosted`, `Windows`, and `X64`. The card job selects it by that group and
+those labels.
+
+Provision the host once before its first run:
+
+1. Install the supported Platform package, which provides the drivers and the
+   `SiMaMlaDaemon` service, and attach the card.
+2. Log the runner service on as a local administrator account instead of the
+   script's NETWORK SERVICE default, then restart it:
+
+   ```text
+   sc.exe config <runner service> obj= .\<administrator> password= <password>
+   sc.exe stop <runner service>
+   sc.exe start <runner service>
+   ```
+
+   The card job installs per-machine MSIs and creates a temporary standard
+   user, so it fails at its first step on an unelevated runner. Linux PCIe hosts
+   likewise need sudo for their runner user.
+
+It uses the
 same Core dependency variables plus the `SIMA_WINDOWS_PCIE_*` card address,
 SSH-key, model, media, and GenAI asset variables named in
 `.github/workflows/pcie-host-windows.yml`. Store the SSH private key on the
@@ -109,10 +132,41 @@ cannot pin as Linux pins its image digest. A failed Windows build fails the
 matrix, which blocks package metadata, branch `latest` promotion, and
 validation-only runs.
 
-Vulcan CI runs the self-hosted hardware lane only when the repository variable
-`ENABLE_WINDOWS_PCIE_CI` is `true` and Vulcan CI is the top-level workflow
-(not when another workflow calls it); otherwise it skips the lane, and branch
-`latest` promotion and validation-only runs accept that skip.
+Vulcan CI runs the self-hosted hardware lane only when Vulcan CI is the
+top-level workflow (not when another workflow calls it) and either the
+repository variable `ENABLE_WINDOWS_PCIE_CI` is `true` or a manual run ticks
+`run_windows_pcie` (see "Run the Windows card lane by hand" below). Otherwise
+it skips the lane, and branch `latest` promotion and validation-only runs
+accept that skip. A run that enables the lane either way requires it to pass.
+Without a `sima_cli_run_id` selector, the lane's customer-flow sima-cli is the
+publication that the bootstrap pins (`sima_cli_publication` in
+`windows_build_inputs.json`), because no released sima-cli reads the MSI-style
+metadata yet. A direct release dispatch still resolves sima-cli `main`.
+
+### Run the Windows card lane by hand
+
+Use this to test the card on the self-hosted Windows runner in `pcie-hosts`
+without enabling `ENABLE_WINDOWS_PCIE_CI` for every push:
+
+1. In GitHub, open sima-neat/core, then **Actions**, then **Vulcan CI**.
+2. Click **Run workflow** and select the branch to test.
+3. Tick **Run the Windows PCIe card lane on the self-hosted Windows runner
+   for this manual run**. Leave the other inputs at their defaults.
+4. Click **Run workflow**.
+
+From a shell:
+
+```text
+gh workflow run vulcan-ci.yml --repo sima-neat/core --ref <branch> \
+  -f run_windows_pcie=true
+```
+
+The run is a normal Vulcan CI run of that branch with the card lane added. It
+builds the Windows cohort once in the PCIe host matrix, then the card lane tests
+those bytes on the self-hosted runner after the Linux gates pass. It publishes
+and promotes as a push would, and promotion fails if the card lane fails.
+Add `-f validation_only=true` to test without publishing or promoting. A new
+push to the same branch cancels the run, as it does any branch run.
 
 Core's main `Vulcan CI` calls the Windows workflow after the same Core revision
 has passed its Linux build, DevKit, and PCIe-card gates. The Windows lane:
