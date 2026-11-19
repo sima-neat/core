@@ -24,6 +24,27 @@ RESNET50_TESTS = {
     'resnet50_modelpack_rtsp',
     'resnet50_neatargmax_test',
 }
+# CTest names that read SIMA_YOLO_TAR through sima_test::resolve_yolov8s_tar().
+YOLOV8S_TESTS = {
+    'core_scheduler_yolov8_render_integration_test',
+    'graphpipes_yolo_metadata_sender_16stream_test',
+    'model_execution_plan_test',
+    'model_seeded_input_capacity_defaults_test',
+    'model_seeded_input_capacity_oversize_height_test',
+    'model_seeded_input_capacity_oversize_width_test',
+    'model_seeded_input_capacity_sample_test',
+    'model_seeded_input_capacity_tensor_test',
+    'model_seeded_input_capacity_test',
+    'model_seeded_input_capacity_unseeded_test',
+    'seedless_yolov8_preproc_input_max_smoke_test',
+    'stage_chain_cache_admission_test',
+    'sync_yolov8_test',
+    'yolov8_boxdecode_model_benchmark_test',
+    'yolov8_dynamic_boxdecode_geometry_async_test',
+    'yolov8_dynamic_boxdecode_geometry_sync_test',
+    'yolov8_model_benchmark_metrics_test',
+    'yolov8_model_mla_stats_test',
+}
 
 
 def partition(names, weights):
@@ -58,7 +79,8 @@ def main():
     env = os.environ.copy()
     with tempfile.TemporaryDirectory(prefix='model-browser-', dir=env.get('RUNNER_TEMP')) as tmp:
         fixtures = [('SIMA_TEST_MLA_ONLY_MODEL', 'yolo26n', {'model_execution_plan_test'}),
-                    ('SIMA_RESNET50_TAR', 'resnet_50', RESNET50_TESTS)]
+                    ('SIMA_RESNET50_TAR', 'resnet_50', RESNET50_TESTS),
+                    ('SIMA_YOLO_TAR', 'yolov8s', YOLOV8S_TESTS)]
         for var, model_id, consumers in fixtures:
             if consumers & set(selected) and not env.get(var):
                 env[var] = subprocess.check_output(
