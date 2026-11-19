@@ -494,7 +494,7 @@ int main() {
       input_options.buffer_name = "ifm0";
       input_options.memory_policy = simaai::neat::InputMemoryPolicy::Auto;
       input_options.pool_min_buffers = 1;
-      input_options.pool_max_buffers = 1;
+      input_options.pool_max_buffers = 0; // Unbounded DMA pool.
       simaai::neat::InputBufferPoolGuard pool;
       std::unique_ptr<GstBuffer, decltype(&gst_buffer_unref)> buffer(
           simaai::neat::allocate_input_buffer(4096U, input_options, pool), gst_buffer_unref);
@@ -506,18 +506,22 @@ int main() {
                   memory->knownHeapKind() == simaai::scheduler::client::dma::HeapKind::MlaDms,
               "Auto tensor ingress must allocate from the resolved DMS heap");
 
-      input_options.pool_min_buffers = 3;
-      input_options.pool_max_buffers = 2;
-      try {
-        decltype(pool) unused_pool;
-        auto* invalid = simaai::neat::allocate_input_buffer(4096U, input_options, unused_pool);
-        if (invalid)
-          gst_buffer_unref(invalid);
-        throw std::runtime_error("invalid DMA pool limits were accepted");
-      } catch (const simaai::neat::NeatError& error) {
-        require(error.report().error_code == "misconfig.option_out_of_range",
-                "DMA pool range must report an option error");
-      }
+      const auto expect_invalid_pool = [&](int minimum, int maximum) {
+        input_options.pool_min_buffers = minimum;
+        input_options.pool_max_buffers = maximum;
+        try {
+          decltype(pool) unused_pool;
+          std::unique_ptr<GstBuffer, decltype(&gst_buffer_unref)> invalid(
+              simaai::neat::allocate_input_buffer(4096U, input_options, unused_pool),
+              gst_buffer_unref);
+          throw std::runtime_error("invalid DMA pool limits were accepted");
+        } catch (const simaai::neat::NeatError& error) {
+          require(error.report().error_code == "misconfig.option_out_of_range",
+                  "DMA pool range must report an option error");
+        }
+      };
+      expect_invalid_pool(3, 2);
+      expect_invalid_pool(0, 0);
     }
 
     auto cpu_storage = simaai::neat::make_cpu_owned_storage(96);

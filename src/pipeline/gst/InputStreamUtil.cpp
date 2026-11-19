@@ -2514,6 +2514,10 @@ GstBuffer* allocate_input_buffer(size_t bytes, const InputOptions& opt,
                               resolved.use_simaai_memory);
 
   if (resolved.use_simaai_memory) {
+    if (opt.pool_min_buffers <= 0)
+      pipeline_internal::error_util::throw_session_error(
+          error_codes::kOptionOutOfRange,
+          "InputOptions.pool_min_buffers must be positive for a DMA pool");
     if (opt.pool_max_buffers > 0 && opt.pool_min_buffers > opt.pool_max_buffers)
       pipeline_internal::error_util::throw_session_error(
           error_codes::kOptionOutOfRange, "InputOptions.pool_min_buffers exceeds pool_max_buffers");
