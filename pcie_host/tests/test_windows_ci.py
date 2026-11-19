@@ -4151,7 +4151,7 @@ class HostedWindowsBuildContracts(unittest.TestCase):
 
     # The card key: pcie-setup.ps1 as on Linux, password enrollment only when needed.
     ssh = workflow_step(hardware, "Provision PCIe card SSH key")
-    self.assertIn("SIMAPCIE_SSH_PASSWORD: ${{ secrets.DEVKIT_DEFAULT_PASSWORD_SIMA }}", ssh)
+    self.assertIn("SIMAPCIE_SSH_PASSWORD: ${{ secrets.DEVKIT_PASSWORD }}", ssh)
     self.assertIn('Join-Path $env:USERPROFILE ".ssh\\sima_neat_pcie_ed25519"', ssh)
     self.assertIn("NonInteractive = $true", ssh)
     self.assertIn("scripts/ci/pciehost/enroll_windows_card_key.py", ssh)
