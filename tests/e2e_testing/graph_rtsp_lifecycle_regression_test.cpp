@@ -1,4 +1,4 @@
-#include "asset_utils.h"
+#include "model_archive_test_utils.h"
 #include "nodes/io/StillImageInput.h"
 #include "nodes/sima/SimaEncode.h"
 #include "nodes/sima/H264Parse.h"
@@ -13,6 +13,9 @@
 #include <gst/app/gstappsink.h>
 #include <chrono>
 #include <filesystem>
+#include <future>
+#include <memory>
+#include <semaphore>
 #include <string>
 #include <thread>
 
@@ -39,6 +42,72 @@ void check_active_client_shutdown(simaai::neat::RtspServerHandle& h) {
       bus, 10 * GST_SECOND, static_cast<GstMessageType>(GST_MESSAGE_EOS | GST_MESSAGE_ERROR));
   gst_element_set_state(client, GST_STATE_NULL);
   require(terminal != nullptr, "active client did not observe server shutdown");
+}
+
+// Hold the first RTP buffer during DESCRIBE, before SETUP creates an RTSP session.
+struct Preroll {
+  std::binary_semaphore first_buffer{0}, resume{0}, unprepared{0};
+};
+
+void check_preparing_client_shutdown(simaai::neat::RtspServerHandle& handle,
+                                     bool hold_past_timeout) {
+  using namespace std::chrono_literals;
+  sima_test::ScopedEnvVar timeout("SIMA_RTSP_STOP_TIMEOUT_MS", hold_past_timeout ? "200" : "2000");
+  auto preroll = std::make_shared<Preroll>();
+  const guint signal = g_signal_lookup("media-configure", g_type_from_name("GstRTSPMediaFactory"));
+  require(signal != 0, "RTSP media factory signal missing");
+  g_signal_add_emission_hook(
+      signal, 0,
+      [](GSignalInvocationHint*, guint, const GValue* args, gpointer data) -> gboolean {
+        auto* media = g_value_get_object(&args[1]);
+        auto state = *static_cast<std::shared_ptr<Preroll>*>(data);
+        g_object_set_data_full(
+            G_OBJECT(media), "test-preroll", new std::shared_ptr<Preroll>(state),
+            [](gpointer p) { delete static_cast<std::shared_ptr<Preroll>*>(p); });
+        GstElement* element = nullptr;
+        g_object_get(media, "element", &element, nullptr);
+        g_autoptr(GstElement) root = element;
+        g_autoptr(GstElement) pay = gst_bin_get_by_name_recurse_up(GST_BIN(root), "pay0");
+        g_autoptr(GstPad) pad = gst_element_get_static_pad(pay, "sink");
+        gst_pad_add_probe(
+            pad, GST_PAD_PROBE_TYPE_BUFFER,
+            [](GstPad*, GstPadProbeInfo*, gpointer data) {
+              auto* state = static_cast<Preroll*>(data);
+              state->first_buffer.release();
+              state->resume.acquire();
+              return GST_PAD_PROBE_REMOVE;
+            },
+            state.get(), nullptr);
+        g_signal_connect(media, "unprepared", G_CALLBACK(+[](gpointer, gpointer data) {
+                           static_cast<Preroll*>(data)->unprepared.release();
+                         }),
+                         state.get());
+        return FALSE; // Observe only this client.
+      },
+      new std::shared_ptr<Preroll>(preroll),
+      [](gpointer p) { delete static_cast<std::shared_ptr<Preroll>*>(p); });
+
+  const std::string launch = "rtspsrc protocols=tcp latency=0 location=" + handle.url() +
+                             " ! rtph264depay ! fakesink sync=false";
+  g_autoptr(GstElement) client = gst_parse_launch(launch.c_str(), nullptr);
+  require(client != nullptr, "could not create the preroll client");
+  gst_element_set_state(client, GST_STATE_PLAYING);
+  const bool preparing = preroll->first_buffer.try_acquire_for(10s);
+  if (!preparing) {
+    preroll->resume.release();
+    gst_element_set_state(client, GST_STATE_NULL);
+    require(false, "client never started preparing media");
+  }
+  auto stopped = std::async(std::launch::async, [&] { handle.stop(); });
+  const bool returned =
+      stopped.wait_for(hold_past_timeout ? 2s : 100ms) == std::future_status::ready;
+  preroll->resume.release();
+  stopped.get();
+  const bool retired = hold_past_timeout ? preroll->unprepared.try_acquire_for(5s)
+                                         : preroll->unprepared.try_acquire();
+  gst_element_set_state(client, GST_STATE_NULL);
+  require(returned == hold_past_timeout, "preparing-client stop did not honor its timeout");
+  require(retired, "preparing media did not retire after the blocked buffer was released");
 }
 
 } // namespace
@@ -111,6 +180,10 @@ RUN_TEST("graph_rtsp_lifecycle_regression_test", ([] {
              require(h.running(), "Graph::run_rtsp lifecycle: server did not enter running state");
 
              check_active_client_shutdown(h);
+             for (bool hold_past_timeout : {false, true}) {
+               auto preparing = rtsp_graph.run_rtsp(opt);
+               check_preparing_client_shutdown(preparing, hold_past_timeout);
+             }
              h.stop();
              require(!h.running(), "Graph::run_rtsp lifecycle: handle should be stopped");
            }

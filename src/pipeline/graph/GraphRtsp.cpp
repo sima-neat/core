@@ -58,6 +58,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <functional>
+#include <future>
 #include <fstream>
 #include <iterator>
 #include <memory>
@@ -89,7 +90,10 @@ struct RtspServerImpl {
 
   std::unique_ptr<GMainContext, decltype(&g_main_context_unref)> context{g_main_context_new(),
                                                                          g_main_context_unref};
+  std::unique_ptr<GSource, decltype(&g_source_unref)> listener{nullptr, g_source_unref};
   std::thread th;
+  std::future<void> stopped;
+  std::atomic<unsigned> live_resources{0};
   std::atomic<bool> running{false};
   std::atomic<bool> stop_requested{false};
 
@@ -134,6 +138,16 @@ struct PushCtx {
 };
 
 using RtspImplPtr = std::shared_ptr<RtspServerImpl>;
+
+// A DESCRIBE request owns its preparing media before the client has a session.
+static void track_rtsp_resource(GObject* object, const RtspImplPtr& impl) {
+  ++impl->live_resources;
+  g_object_set_data_full(object, "neat-rtsp-retirement", new RtspImplPtr(impl), [](gpointer data) {
+    std::unique_ptr<RtspImplPtr> owner(static_cast<RtspImplPtr*>(data));
+    if (--(*owner)->live_resources == 0)
+      g_main_context_wakeup((*owner)->context.get());
+  });
+}
 
 static RtspImplPtr* rtsp_impl_holder(void* impl) {
   return reinterpret_cast<RtspImplPtr*>(impl);
@@ -351,11 +365,21 @@ void RtspServerHandle::stop() {
   if (rtsp_debug_enabled()) {
     std::fprintf(stderr, "[rtsp] stop: running=%d\n", impl->running.load() ? 1 : 0);
   }
+  if (impl->listener) {
+    g_source_destroy(impl->listener.get());
+    impl->listener.reset();
+  }
   impl->stop_requested.store(true);
   g_main_context_wakeup(impl->context.get());
 
-  if (impl->th.joinable())
-    impl->th.join();
+  if (impl->th.joinable()) {
+    const auto timeout = std::chrono::milliseconds(
+        std::max(0, pipeline_internal::env_int("SIMA_RTSP_STOP_TIMEOUT_MS", 2000)));
+    if (impl->stopped.wait_for(timeout) == std::future_status::ready)
+      impl->th.join();
+    else
+      impl->th.detach(); // The worker owns the context and device guard until retirement.
+  }
 
   delete holder;
   impl_ = nullptr;
@@ -475,11 +499,17 @@ RtspServerHandle Graph::run_rtsp(const RtspServerOptions& opt) {
   }
 
   g_signal_connect_data(
+      server, "client-connected",
+      G_CALLBACK(+[](GstRTSPServer*, GstRTSPClient* client, gpointer data) {
+        track_rtsp_resource(G_OBJECT(client), *static_cast<RtspImplPtr*>(data));
+      }),
+      new RtspImplPtr(impl_sp),
+      [](gpointer data, GClosure*) { delete static_cast<RtspImplPtr*>(data); }, G_CONNECT_DEFAULT);
+  g_signal_connect_data(
       factory, "media-configure",
       G_CALLBACK(+[](GstRTSPMediaFactory*, GstRTSPMedia* media, gpointer user_data) {
         const auto& impl = *static_cast<RtspImplPtr*>(user_data);
-        if (impl->stop_requested.load())
-          return;
+        track_rtsp_resource(G_OBJECT(media), impl);
 
         GstElement* top = gst_rtsp_media_get_element(media);
         if (!top)
@@ -599,13 +629,15 @@ RtspServerHandle Graph::run_rtsp(const RtspServerOptions& opt) {
   if (rtsp_debug_enabled())
     std::fprintf(stderr, "[rtsp] starting server on port %d\n", port);
   impl->running.store(true);
-  impl->th = std::thread([impl_sp, listener = std::move(listener),
+  impl->listener = std::move(listener);
+  std::promise<void> stopped;
+  impl->stopped = stopped.get_future();
+  impl->th = std::thread([impl_sp, stopped = std::move(stopped),
                           server = std::unique_ptr<GstRTSPServer, decltype(&g_object_unref)>(
-                              g_steal_pointer(&server), g_object_unref)] {
+                              g_steal_pointer(&server), g_object_unref)]() mutable {
     while (!impl_sp->stop_requested.load())
       g_main_context_iteration(impl_sp->context.get(), TRUE);
     impl_sp->running.store(false);
-    g_source_destroy(listener.get());
     // Request references under the server lock and close the clients after it is released.
     GList* clients = gst_rtsp_server_client_filter(server.get(), nullptr, nullptr);
     for (GList* item = clients; item; item = item->next)
@@ -616,6 +648,10 @@ RtspServerHandle Graph::run_rtsp(const RtspServerOptions& opt) {
         sessions,
         +[](GstRTSPSessionPool*, GstRTSPSession*, gpointer) { return GST_RTSP_FILTER_REMOVE; },
         nullptr);
+    // Keep dispatching frame timers while an accepted client is finishing preroll.
+    while (impl_sp->live_resources.load() != 0)
+      g_main_context_iteration(impl_sp->context.get(), TRUE);
+    stopped.set_value_at_thread_exit();
     if (rtsp_debug_enabled())
       std::fprintf(stderr, "[rtsp] thread exit\n");
   });
