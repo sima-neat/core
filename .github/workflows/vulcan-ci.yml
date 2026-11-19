@@ -1578,6 +1578,21 @@ jobs:
               raise SystemExit('Typed admission gate requires all three Core-owned registrations')
           PY_GATE
 
+      - name: Prepare Model Browser fixtures
+        if: ${{ contains(fromJSON(matrix.tasks), 'python-tutorials') }}
+        timeout-minutes: 15
+        run: |
+          MODEL_DIR="$(mktemp -d "${RUNNER_TEMP:-/tmp}/model-browser.XXXXXX")"
+          RESNET_MPK="$(python3 scripts/ci/prepare_model_browser_fixture.py \
+            --id resnet_50 --variant w8a8 --output "${MODEL_DIR}")"
+          YOLO_MPK="$(python3 scripts/ci/prepare_model_browser_fixture.py \
+            --id yolov8s --variant w8a8 --output "${MODEL_DIR}")"
+          {
+            printf 'SIMA_RESNET50_TAR=%s\n' "${RESNET_MPK}"
+            printf 'SIMA_NEAT_TUTORIAL_MODEL_RESNET=%s\n' "${RESNET_MPK}"
+            printf 'SIMA_NEAT_TUTORIAL_MODEL_YOLO=%s\n' "${YOLO_MPK}"
+          } >> "${GITHUB_ENV}"
+
       - name: Run Tutorial Tests
         if: ${{ contains(fromJSON(matrix.tasks), 'python-tutorials') }}
         run: |
@@ -1588,35 +1603,22 @@ jobs:
             echo "Expected extras layout: build.sh next to lib/ and share/ under ${EXTRAS_PREFIX}" >&2
             exit 1
           fi
-          TUTORIAL_MODEL_DIR="/tmp"
-          "${TUTORIALS_BUILD_SH}" --download-models-only --model-target-folder "${TUTORIAL_MODEL_DIR}"
-
           TUTORIALS_DIR="$(cat _work/extras_lib_dir.txt)/tutorials"
+          # The tutorial tests are registered with Model Zoo archive paths; point them at the
+          # Model Browser MPKs so run_with_modelzoo.sh finds the model and downloads nothing.
+          mapfile -t TUTORIAL_CTEST_FILES < <(find "${TUTORIALS_DIR}" -type f -name CTestTestfile.cmake)
+          sed -E -i \
+            -e "s|/[^\"[:space:]]*/resnet_50\\.tar\\.gz|${SIMA_NEAT_TUTORIAL_MODEL_RESNET}|g" \
+            -e "s|/[^\"[:space:]]*/yolo_v8s\\.tar\\.gz|${SIMA_NEAT_TUTORIAL_MODEL_YOLO}|g" \
+            "${TUTORIAL_CTEST_FILES[@]}"
+          for mpk in "${SIMA_NEAT_TUTORIAL_MODEL_RESNET}" "${SIMA_NEAT_TUTORIAL_MODEL_YOLO}"; do
+            grep -qF "${mpk}" "${TUTORIAL_CTEST_FILES[@]}" || { echo "No tutorial test uses ${mpk}" >&2; exit 1; }
+          done
           export SIMA_GST_REGISTRY_DIR="$(cat _work/gst_registry_dir.txt)"
           # Temporary external RTSP exclusions; remove under core#890.
           COVERAGE_DIR=_work/coverage/tutorials COVERAGE_PROFILE=required \
             bash scripts/ci/run_zero_skip_gate.sh ctest --test-dir "${TUTORIALS_DIR}" --output-on-failure \
             -E '^tutorial_018_consume_rtsp_stream(_h265)?$'
-
-          RESNET_TAR="${TUTORIAL_MODEL_DIR}/resnet_50.tar.gz"
-          YOLO_TAR="${TUTORIAL_MODEL_DIR}/yolo_v8s.tar.gz"
-          if [[ ! -s "${RESNET_TAR}" || ! -s "${YOLO_TAR}" ]]; then
-            echo "CTest did not produce expected tutorial model tarballs under ${TUTORIAL_MODEL_DIR}." >&2
-            exit 1
-          fi
-          {
-            printf 'SIMA_NEAT_TUTORIAL_MODEL_RESNET=%s\n' "${RESNET_TAR}"
-            printf 'SIMA_NEAT_TUTORIAL_MODEL_YOLO=%s\n' "${YOLO_TAR}"
-          } >> "${GITHUB_ENV}"
-
-      - name: Prepare ResNet-50 from the Model Browser
-        if: ${{ contains(fromJSON(matrix.tasks), 'python-tutorials') }}
-        timeout-minutes: 15
-        run: |
-          MODEL_DIR="$(mktemp -d "${RUNNER_TEMP:-/tmp}/model-browser.XXXXXX")"
-          RESNET_MPK="$(python3 scripts/ci/prepare_model_browser_fixture.py \
-            --id resnet_50 --variant w8a8 --output "${MODEL_DIR}")"
-          printf 'SIMA_RESNET50_TAR=%s\n' "${RESNET_MPK}" >> "${GITHUB_ENV}"
 
       - name: Run Python pytest from installed extras
         if: ${{ contains(fromJSON(matrix.tasks), 'python-tutorials') }}
