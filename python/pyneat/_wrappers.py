@@ -69,7 +69,7 @@ def _is_sequence(value) -> bool:
 
 def _reject_single_tensor_or_sample(core, value, where: str) -> None:
   if isinstance(value, core.Sample):
-    raise TypeError(f"{where} expects a Sample; pass [sample] instead of a single Sample")
+    raise TypeError(f"{where} expects a list or tuple of Samples; pass [sample]")
   if isinstance(value, core.Tensor):
     raise TypeError(f"{where} expects a TensorList; pass [tensor] instead of a single Tensor")
 
