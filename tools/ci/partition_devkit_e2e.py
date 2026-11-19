@@ -11,6 +11,19 @@ import sys
 import tempfile
 
 ROOT = Path(__file__).resolve().parents[2]
+# CTest names that read SIMA_RESNET50_TAR through sima_test::resolve_resnet50_tar().
+RESNET50_TESTS = {
+    'graph_migration_phase3_lazy_dynamic_spec_test',
+    'h265_decode_resnet50_e2e_test',
+    'h265_rtsp_resnet50_e2e_test',
+    'model_archive_load_e2e_test',
+    'model_resnet50_multi_test',
+    'model_unique_names_test',
+    'resnet50_modelpack_direct',
+    'resnet50_modelpack_jpeg',
+    'resnet50_modelpack_rtsp',
+    'resnet50_neatargmax_test',
+}
 
 
 def partition(names, weights):
@@ -43,12 +56,15 @@ def main():
     # Required zero-skip accounting still discovers and validates the exact
     # partial selection and executes CTest with its original timeout/jobs/labels.
     env = os.environ.copy()
-    with tempfile.TemporaryDirectory(prefix='model-browser-yolo26n-', dir=env.get('RUNNER_TEMP')) as tmp:
-        if 'model_execution_plan_test' in selected and not env.get('SIMA_TEST_MLA_ONLY_MODEL'):
-            env['SIMA_TEST_MLA_ONLY_MODEL'] = subprocess.check_output(
-                [sys.executable, str(ROOT / 'scripts/ci/prepare_model_browser_fixture.py'),
-                 '--id', 'yolo26n', '--variant', 'w8a8', '--output', tmp], text=True,
-                timeout=900).strip()
+    with tempfile.TemporaryDirectory(prefix='model-browser-', dir=env.get('RUNNER_TEMP')) as tmp:
+        fixtures = [('SIMA_TEST_MLA_ONLY_MODEL', 'yolo26n', {'model_execution_plan_test'}),
+                    ('SIMA_RESNET50_TAR', 'resnet_50', RESNET50_TESTS)]
+        for var, model_id, consumers in fixtures:
+            if consumers & set(selected) and not env.get(var):
+                env[var] = subprocess.check_output(
+                    [sys.executable, str(ROOT / 'scripts/ci/prepare_model_browser_fixture.py'),
+                     '--id', model_id, '--variant', 'w8a8', '--output', tmp], text=True,
+                    timeout=900).strip()
         result = subprocess.run([sys.executable, str(ROOT / 'tools/ci/check_test_coverage.py'),
                     '--profile', env.get('COVERAGE_PROFILE', 'strict'),
                     '--output-dir', str(coverage), '--', *command, '-R', regex], env=env)

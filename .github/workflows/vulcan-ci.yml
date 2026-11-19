@@ -1514,6 +1514,14 @@ jobs:
           export SIMA_GST_REGISTRY_DIR="$(cat _work/gst_registry_dir.txt)"
           echo "Using SIMA_MPK_EXTRACT_ROOT=${SIMA_MPK_EXTRACT_ROOT}"
           echo "Using SIMA_GST_REGISTRY_DIR=${SIMA_GST_REGISTRY_DIR}"
+          if [[ -z "${SIMA_RESNET50_TAR:-}" ]]; then
+            RESNET_DIR="$(mktemp -d "${RUNNER_TEMP:-/tmp}/model-browser-resnet.XXXXXX")"
+            SIMA_RESNET50_TAR="$(python3 scripts/ci/prepare_model_browser_fixture.py \
+              --id resnet_50 --variant w8a8 --output "${RESNET_DIR}")"
+            export SIMA_RESNET50_TAR
+          fi
+          # The performance matrix step loads the same archive in runtime_model_archive_load.
+          printf 'SIMA_RESNET50_TAR=%s\n' "${SIMA_RESNET50_TAR}" >> "${GITHUB_ENV}"
           COVERAGE_DIR=_work/coverage/perf bash scripts/ci/run_zero_skip_gate.sh \
             ctest --test-dir "${TEST_DIR}" \
             --label-regex "perf" \
