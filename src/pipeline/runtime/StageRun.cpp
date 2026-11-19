@@ -1353,16 +1353,19 @@ struct StageKeyHash {
 constexpr std::size_t kRetainedStageRuns = 16;
 pipeline_internal::BoundedStageCache<StageKey, Run, StageKeyHash> g_cache(kRetainedStageRuns);
 
-InputOptions appsrc_for_mat(const cv::Mat& input, PreprocessColorFormat input_format) {
+InputOptions appsrc_for_mat(const cv::Mat& input, PreprocessColorFormat input_format,
+                            ImageSpec::PixelFormat image_format = ImageSpec::PixelFormat::UNKNOWN) {
   InputOptions opt;
   opt.payload_type = PayloadType::Image;
   opt.width = input.cols;
   opt.height = input.rows;
   opt.depth = input.channels();
-  if (input_format == PreprocessColorFormat::Auto) {
-    opt.format = opt.depth == 1 ? "GRAY8" : "BGR";
-  } else {
+  if (input_format != PreprocessColorFormat::Auto) {
     opt.format = preprocess_color_format_to_format_spec(input_format);
+  } else if (image_format != ImageSpec::PixelFormat::UNKNOWN) {
+    opt.format = image_format_name(image_format);
+  } else {
+    opt.format = opt.depth == 1 ? "GRAY8" : "BGR";
   }
   return opt;
 }
@@ -2402,10 +2405,11 @@ TensorList Tensors(const simaai::neat::Sample& sample) {
   return collect_tensors_from_sample(sample, "Tensors");
 }
 
-Tensor internal::preproc_tensor(const cv::Mat& input, const Model& model, PreprocOutput output) {
+Tensor internal::preproc_tensor(const cv::Mat& input, const Model& model, PreprocOutput output,
+                                ImageSpec::PixelFormat image_format) {
   const auto resolved_preproc = model.resolved_preprocess_plan();
   InputOptions src_opt =
-      appsrc_for_mat(input, resolved_preproc.effective.color_convert.input_format);
+      appsrc_for_mat(input, resolved_preproc.effective.color_convert.input_format, image_format);
   auto group =
       simaai::neat::internal::ModelAccess::build_preprocess_nodes_for_input(model, src_opt, true);
   src_opt.buffer_name = rendered_stage_query::primary_input_buffer_name_from_runtime_contract(

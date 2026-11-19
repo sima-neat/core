@@ -84,7 +84,7 @@ void StageModelExecutor::on_input(StageMsg&& msg, std::vector<StageOutMsg>& out)
     }
     using stages::internal::PreprocOutput;
     const auto output = opt_.do_mla ? PreprocOutput::ForImmediateMla : PreprocOutput::Retained;
-    current = stages::internal::preproc_tensor(view->mat, *opt_.model, output);
+    current = stages::internal::preproc_tensor(view->mat, *opt_.model, output, fmt);
     current_sample = sample_from_tensors(TensorList{current});
     current_sample.payload_type = PayloadType::Tensor;
     current_sample.media_type = "application/vnd.simaai.tensor";

@@ -9,6 +9,7 @@ namespace simaai::neat::stages::internal {
 
 enum class PreprocOutput { Retained, ForImmediateMla };
 
-Tensor preproc_tensor(const cv::Mat& input, const Model& model, PreprocOutput output);
+Tensor preproc_tensor(const cv::Mat& input, const Model& model, PreprocOutput output,
+                      ImageSpec::PixelFormat image_format = ImageSpec::PixelFormat::UNKNOWN);
 
 } // namespace simaai::neat::stages::internal
