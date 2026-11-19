@@ -23,7 +23,7 @@ Most webcams send 4:2:2 JPEGs, which decode to NV16. `usb_camera_info()` reports
 
 - UVC cameras connected to a Modalix DevKit USB port, on Platform 3.0.
 - MJPEG capture with 4:2:0 or 4:2:2 chroma sampling.
-- YUYV capture with an even width, BT.601 or BT.709 color and full or limited range.
+- YUYV capture with an even width, BT.601 or BT.709 color and full or limited range, on Platform 3.0.1.
 - The exact width, height and frame rate the camera lists for the selected format. Neat does not scale or pick a nearby mode.
 
 H.264-only cameras, other raw formats such as NV12 or UYVY, depth or IR streams, and camera controls such as exposure are not part of this path.
