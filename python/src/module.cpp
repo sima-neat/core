@@ -3981,13 +3981,18 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("transmit", &simaai::neat::SimaRenderOptions::transmit);
   nb::class_<simaai::neat::SimaArgMaxOptions>(m, "SimaArgMaxOptions")
       .def(nb::init<>())
-      .def_rw("config_path", &simaai::neat::SimaArgMaxOptions::config_path)
-      .def_rw("sima_allocator_type", &simaai::neat::SimaArgMaxOptions::sima_allocator_type)
+      .def_rw("config_path", &simaai::neat::SimaArgMaxOptions::config_path,
+              "Deprecated. Leave empty. ArgMax uses axis and keepdims.")
+      .def_rw("sima_allocator_type", &simaai::neat::SimaArgMaxOptions::sima_allocator_type,
+              "Deprecated. The runtime chooses the allocator. Both 0 and 2 are accepted.")
       .def_rw("silent", &simaai::neat::SimaArgMaxOptions::silent)
-      .def_rw("emit_signals", &simaai::neat::SimaArgMaxOptions::emit_signals)
-      .def_rw("transmit", &simaai::neat::SimaArgMaxOptions::transmit)
-      .def_rw("axis", &simaai::neat::SimaArgMaxOptions::axis)
-      .def_rw("keepdims", &simaai::neat::SimaArgMaxOptions::keepdims);
+      .def_rw("emit_signals", &simaai::neat::SimaArgMaxOptions::emit_signals,
+              "Deprecated. Leave false.")
+      .def_rw("transmit", &simaai::neat::SimaArgMaxOptions::transmit, "Deprecated. Leave false.")
+      .def_rw("axis", &simaai::neat::SimaArgMaxOptions::axis,
+              "Reduction axis. Negative values count from the end.")
+      .def_rw("keepdims", &simaai::neat::SimaArgMaxOptions::keepdims,
+              "Retain the reduced axis with size one.");
   nb::class_<simaai::neat::ResizeArgMaxOptions>(m, "ResizeArgMaxOptions")
       .def(nb::init<>())
       .def_rw("output_width", &simaai::neat::ResizeArgMaxOptions::output_width)
