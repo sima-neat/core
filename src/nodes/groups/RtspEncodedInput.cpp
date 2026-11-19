@@ -1,4 +1,5 @@
 #include "nodes/groups/RtspEncodedInput.h"
+#include "contracts/ConfigurationError.h"
 
 #include "nodes/common/EncodedCapsFixup.h"
 #include "nodes/common/JpegParse.h"
@@ -67,9 +68,8 @@ ResolvedH264Caps resolve_h264_caps(const RtspEncodedInputOptions& opt) {
       out.height = opt.fallback_h264_height;
     }
     if (out.fps <= 0 || out.width <= 0 || out.height <= 0) {
-      throw std::runtime_error(
-          "RtspEncodedInput: H.264 explicit caps require width, height, and fps when "
-          "auto_caps_from_stream is false");
+      contracts::throw_invalid_caps("RTSP H.264 explicit caps require width, height, and fps when "
+                                    "auto_caps_from_stream is false");
     }
   }
 

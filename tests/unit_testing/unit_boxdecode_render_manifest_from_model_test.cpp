@@ -6,6 +6,7 @@
 #include "nodes/groups/ModelGroups.h"
 #include "nodes/sima/SimaBoxDecode.h"
 #include "pipeline/BoxDecodeType.h"
+#include "pipeline/ErrorCodes.h"
 #include "pipeline/internal/contract/ContractCompiler.h"
 #include "pipeline/internal/contract/CompiledNodeContractQuery.h"
 #include "pipeline/internal/sima/ContractRender.h"
@@ -365,16 +366,8 @@ RUN_TEST(
 
       Model::Options mismatched_opt = base_opt;
       mismatched_opt.decode_type = BoxDecodeType::YoloV8;
-      Model mismatched_model(tar_path, mismatched_opt);
-      bool boxdecode_mismatch_rejected = false;
-      try {
-        (void)simaai::neat::nodes::SimaBoxDecode(mismatched_model, BoxDecodeType::YoloV8, 0.25,
-                                                 0.45, 100);
-      } catch (const std::exception&) {
-        boxdecode_mismatch_rejected = true;
-      }
-      require(boxdecode_mismatch_rejected,
-              "explicit BoxDecode must reject a detection decoder for a segmentation MPK contract");
+      require_neat_error([&] { (void)Model(tar_path, mismatched_opt); },
+                         error_codes::kPipelineShape, "BoxDecode");
 
       Model::Options model_opt = base_opt;
       model_opt.decode_type = BoxDecodeType::YoloV8Seg;

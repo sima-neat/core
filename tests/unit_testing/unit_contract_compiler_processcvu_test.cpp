@@ -1,3 +1,4 @@
+#include "pipeline/ErrorCodes.h"
 #include "model/internal/ModelPack.h"
 #include "nodes/common/Output.h"
 #include "nodes/io/Input.h"
@@ -1124,15 +1125,9 @@ RUN_TEST(
       {
         auto unsupported = make_preproc_options();
         unsupported.single_output_handoff = false;
-        bool ctor_threw = false;
-        try {
-          simaai::neat::Preproc unsupported_node(unsupported);
-          (void)unsupported_node;
-        } catch (const std::runtime_error& ex) {
-          ctor_threw = std::string(ex.what()) == "Preproc dual-output contract is currently "
-                                                 "unsupported; use single_output_handoff=true.";
-        }
-        require(ctor_threw, "preproc construction should reject unsupported dual-output handoff");
+        require_neat_error([&] { (void)simaai::neat::Preproc(unsupported); },
+                           simaai::neat::error_codes::kOptionOutOfRange,
+                           "Preproc dual-output contract is currently unsupported");
 
         bool threw = false;
         try {

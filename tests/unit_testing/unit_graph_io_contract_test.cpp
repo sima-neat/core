@@ -1,4 +1,5 @@
 #include "model_archive_fixture_utils.h"
+#include "sam_decoder_fixtures.h"
 #include "pipeline/ErrorCodes.h"
 #include "pipeline/Graph.h"
 #include "nodes/common/Output.h"
@@ -426,11 +427,14 @@ RUN_TEST(
         require(rejected, "invalid shorter_side changed meaning during graph load");
       }
       // A SAM decoder's multimask_output survives save/load; true stays implicit.
+      const auto decoder = sima_test::make_model_archive_fixture(
+          "graph_io_edgetam_options",
+          {{"etc/edgetam_mask_decoder_mpk.json", sam_test::edgetam_decoder_mpk()}});
       for (const bool multimask : {true, false}) {
         auto sam = typed_options;
+        sam["model_fragments"][0]["source_path"] = decoder.tar_path;
         auto& model_options = sam["model_fragments"][0]["model_options"];
-        model_options["decode_type"] = static_cast<int>(BoxDecodeType::EdgeTamSeg);
-        model_options.erase("multimask_output");
+        model_options = {{"decode_type", static_cast<int>(BoxDecodeType::EdgeTamSeg)}};
         if (!multimask)
           model_options["multimask_output"] = false;
         const auto path = tmp_json_path("graph_io_multimask_output.json");

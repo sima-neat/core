@@ -1,5 +1,7 @@
 #include "model/Model.h"
+#include "nodes/sima/SimaBoxDecode.h"
 #include "pipeline/Graph.h"
+#include "pipeline/ErrorCodes.h"
 #include "model_archive_fixture_utils.h"
 #include "pipeline/NeatError.h"
 #include "test_main.h"
@@ -103,16 +105,53 @@ RUN_TEST(
                     output_specs.front().shape == std::vector<int64_t>({1, 80, 80, 64}) &&
                     output_specs.front().dtypes == std::vector<TensorDType>{TensorDType::Float32},
                 "selected postprocess metadata must retain exact MPK outputs without artifacts");
-        bool admission_rejected = false;
+        Model::Options options;
+        options.decode_type = BoxDecodeType::YoloV8Seg;
+        Model decoded(fixture.tar_path, options);
+        require(decoded.metadata().at("model_name") == "unit-meta" &&
+                    !decoded.input_specs().empty() && !decoded.output_specs().empty(),
+                "selecting a compatible decoder must still permit metadata-only inspection");
         try {
-          (void)model.graph();
-        } catch (const std::exception& error) {
-          admission_rejected = true;
-          require_contains(std::string(error.what()), "missing-mla-executable",
-                           "execution admission must still fail closed without the MLA ELF");
+          (void)nodes::SimaBoxDecode(decoded, options.decode_type);
+          require(false, "model-bound BoxDecode must reject a missing executable");
+        } catch (const std::runtime_error& error) {
+          require_contains(error.what(), "missing-mla-executable",
+                           "preserve physical admission error");
+          const auto* structured = dynamic_cast<const NeatError*>(&error);
+          require(!structured || structured->report().error_code != error_codes::kPipelineShape,
+                  "a missing executable must not be reported as a decoder mismatch");
         }
-        require(admission_rejected,
-                "metadata-only construction must not make a missing MLA ELF executable");
+        for (auto* inspected : {&model, &decoded}) {
+          bool admission_rejected = false;
+          try {
+            (void)inspected->graph();
+          } catch (const std::exception& error) {
+            admission_rejected = true;
+            require_contains(error.what(), "missing-mla-executable",
+                             "execution admission must fail without the MLA executable");
+          }
+          require(admission_rejected, "metadata inspection must preserve graph admission");
+        }
+      }
+
+      {
+        const auto [filename, text] = sima_test::strict_contract_json_entry_from_modelzoo();
+        auto mpk = nlohmann::json::parse(text);
+        auto& terminal = mpk.at("plugins").back();
+        terminal["name"] = "objectdecode_terminal";
+        terminal["processor"] = "A65";
+        terminal["config_params"]["kernel"] = "boxdecode";
+        terminal["config_params"]["params"] = {{"decode_type", "yolov8-seg"}};
+        const auto fixture = sima_test::make_model_archive_fixture(
+            "model_metadata_authored_decoder", {{filename, mpk.dump()}}, true);
+        Model::Options options;
+        options.decode_type = BoxDecodeType::YoloV8Seg;
+        const Model model(fixture.tar_path, options);
+        require(!model.output_specs().empty(),
+                "the authored BoxDecode terminal must be inspectable");
+        options.decode_type = BoxDecodeType::Detr;
+        require_neat_error([&] { Model mismatch(fixture.tar_path, options); },
+                           error_codes::kPipelineShape, "does not match");
       }
 
       {

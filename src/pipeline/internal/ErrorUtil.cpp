@@ -1,5 +1,7 @@
 #include "pipeline/internal/ErrorUtil.h"
 
+#include "contracts/ConfigurationError.h"
+
 #include "pipeline/ErrorCodes.h"
 #include "pipeline/internal/GstErrorNormalizer.h"
 
@@ -141,3 +143,15 @@ void set_pull_error(PullError* err, std::string code, std::string message,
 }
 
 } // namespace simaai::neat::pipeline_internal::error_util
+
+namespace simaai::neat::contracts {
+
+void throw_invalid_option(std::string_view message) {
+  pipeline_internal::error_util::throw_session_error(error_codes::kOptionOutOfRange, message);
+}
+
+void throw_invalid_caps(std::string_view message) {
+  pipeline_internal::error_util::throw_session_error(error_codes::kCaps, message);
+}
+
+} // namespace simaai::neat::contracts

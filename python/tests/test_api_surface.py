@@ -1316,6 +1316,113 @@ def _yolo_model_with_boxdecode():
   return pyneat.Model(str(_strict_yolo_model_path()), opt)
 
 
+@pytest.mark.parametrize("field,value,reason", [
+    ("model_managed_contract", True, "q_scale and q_zp"),
+    ("num_buffers_locked", True, "num_buffers must be"),
+    ("single_output_handoff", False, "single_output_handoff"),
+])
+def test_invalid_preproc_contract_has_error_code(field, value, reason):
+  options = pyneat.PreprocOptions()
+  options.tessellate = False
+  options.input_img_type = "RGB"
+  options.output_dtype = "EVXX_INT8"
+  options.input_shape, options.output_shape = [480, 640, 3], [640, 640, 3]
+  options.scaled_width = options.scaled_height = 640
+  setattr(options, field, value)
+  frame = pyneat.Tensor.from_numpy(np.zeros((480, 640, 3), dtype=np.uint8), copy=True,
+                                   image_format=pyneat.PixelFormat.RGB, memory=pyneat.TensorMemory.EV74)
+  with pytest.raises(pyneat.NeatError, match=reason) as error:
+    graph = pyneat.Graph()
+    graph.add(pyneat.nodes.input("in"))
+    graph.add(pyneat.nodes.preproc(options))
+    graph.add(pyneat.nodes.output("out"))
+    graph.build([frame])
+  assert error.value.error_code == "misconfig.option_out_of_range"
+
+
+def test_model_managed_preproc_requires_input_contract():
+  options = pyneat.PreprocOptions()
+  options.model_managed_contract = True
+  with pytest.raises(pyneat.NeatError, match="input contract") as error:
+    pyneat.nodes.preproc(options)
+  assert error.value.error_code == "misconfig.option_out_of_range"
+
+
+def test_infer_only_skips_unused_physical_decoder_contract():
+  options = pyneat.ModelOptions()
+  options.decode_type = pyneat.BoxDecodeType.YoloV8
+  options.num_classes = 37  # Different from the fixture's 80-class export.
+  options.preprocess.kind = pyneat.InputKind.Image
+  options.preprocess.enable = pyneat.AutoFlag.On
+  options.preprocess.resize.enable = pyneat.AutoFlag.On
+  options.preprocess.normalize.enable = pyneat.AutoFlag.On
+  model = pyneat.Model(str(_strict_yolo_model_path()), options)
+  frame = pyneat.Tensor.from_numpy(np.zeros((640, 640, 3), dtype=np.uint8), copy=True,
+                                   image_format=pyneat.PixelFormat.RGB, memory=pyneat.TensorMemory.EV74)
+  graph = pyneat.Graph()
+  graph.add(pyneat.nodes.input(model.input_appsrc_options(False)))
+  graph.add_graph(model.preprocess())
+  graph.add_graph(model.inference())
+  graph.add(pyneat.nodes.output())
+  run = graph.build([frame])
+  try:
+    assert run.push([frame])
+    assert run.pull(timeout_ms=10000) is not None
+  finally:
+    run.close()
+  with pytest.raises(pyneat.NeatError) as failure:
+    model.run([frame], timeout_ms=10000)
+  assert failure.value.error_code == "misconfig.pipeline_shape"
+
+
+def test_incompatible_decoder_is_rejected_at_model_load():
+  options = pyneat.ModelOptions()
+  options.decode_type = pyneat.BoxDecodeType.Detr
+  with pytest.raises(pyneat.NeatError) as error:
+    pyneat.Model(str(_strict_yolo_model_path()), options)
+  assert error.value.error_code == "misconfig.pipeline_shape"
+
+
+def test_model_bound_node_rejects_incompatible_decoder():
+  model = _yolo_model_with_boxdecode()
+  with pytest.raises(pyneat.NeatError, match="does not match") as error:
+    pyneat.nodes.sima_box_decode(model, decode_type=pyneat.BoxDecodeType.Detr)
+  assert error.value.error_code == "misconfig.pipeline_shape"
+
+
+def test_inference_terminal_omits_incompatible_decoder():
+  options = pyneat.ModelOptions()
+  options.decode_type = pyneat.BoxDecodeType.Detr
+  options.inference_terminal.mla_only = True
+  options.preprocess.kind = pyneat.InputKind.Image
+  options.preprocess.enable = pyneat.AutoFlag.On
+  options.preprocess.resize.enable = pyneat.AutoFlag.On
+  options.preprocess.normalize.enable = pyneat.AutoFlag.On
+  model = pyneat.Model(str(_strict_yolo_model_path()), options)
+  frame = pyneat.Tensor.from_numpy(np.zeros((640, 640, 3), dtype=np.uint8), copy=True,
+                                   image_format=pyneat.PixelFormat.RGB, memory=pyneat.TensorMemory.EV74)
+  assert model.run([frame], timeout_ms=10000) is not None
+  with pytest.raises(pyneat.NeatError, match="DETR") as error:
+    model.postprocess()
+  assert error.value.error_code == "misconfig.pipeline_shape"
+
+
+@pytest.mark.parametrize("decoded,raw", [(False, False), (True, False), (True, True)])
+def test_missing_explicit_rtsp_caps_has_error_code(decoded, raw):
+  if decoded:
+    options = pyneat.RtspDecodedInputOptions()
+    options.decoder_raw_output = raw
+    factory = pyneat.groups.rtsp_decoded_input
+  else:
+    options = pyneat.RtspEncodedInputOptions()
+    factory = pyneat.groups.rtsp_encoded_input
+  options.url = "rtsp://127.0.0.1/stream"
+  options.auto_caps_from_stream = False
+  with pytest.raises(pyneat.NeatError) as error:
+    factory(options)
+  assert error.value.error_code == "misconfig.caps"
+
+
 def test_graph_describe_backend_includes_preproc_stage():
   model = _resnet_model_with_preproc()
   pre = pyneat.PreprocOptions(model)

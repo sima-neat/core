@@ -103,26 +103,6 @@ source_storage_kind_from_public(BoxDecodeSourceStorage storage) {
   }
 }
 
-void validate_requested_boxdecode_contract_type_local(BoxDecodeType contract_type,
-                                                      BoxDecodeType requested_type,
-                                                      std::string_view context) {
-  using pipeline_internal::sima::box_decode_type_matches_requested_contract;
-  using pipeline_internal::sima::box_decode_type_token_string;
-  if (box_decode_type_matches_requested_contract(contract_type, requested_type)) {
-    return;
-  }
-  const std::string contract_token = box_decode_type_token_string(contract_type);
-  const std::string requested_token = box_decode_type_token_string(requested_type);
-  std::ostringstream oss;
-  oss << context
-      << ": requested BoxDecode decode_type does not match the MPK-derived tensor contract "
-      << "(requested=" << (requested_token.empty() ? "unspecified" : requested_token)
-      << ", mpk_contract=" << (contract_token.empty() ? "unspecified" : contract_token)
-      << "). Use the matching BoxDecodeType for this model, or leave the default Model route as "
-         "raw tensors and attach an explicit compatible postprocess stage.";
-  throw std::runtime_error(oss.str());
-}
-
 bool boxdecode_name_has_class_score_semantics_local(const std::string& raw_name) {
   const std::string name = lower_copy(raw_name);
   return name.find("class_prob") != std::string::npos ||
@@ -905,22 +885,14 @@ SimaBoxDecode::SimaBoxDecode(const simaai::neat::Model& model, BoxDecodeType dec
   auto effective_route_flags = resolved_route_flags;
   simaai::neat::internal::ModelAccess::require_model_managed_stage(
       model, simaai::neat::internal::StageNodeKind::BoxDecode, "SimaBoxDecode(Model)");
-  CompiledBoxDecodeContract compiled_contract;
-  try {
-    compiled_contract =
-        simaai::neat::internal::ModelAccess::build_boxdecode_stage_contract(model, false);
-    effective_route_flags.tess_needed = compiled_contract.payload.tess_needed;
-    effective_route_flags.quant_needed = compiled_contract.payload.quant_needed;
-    effective_route_flags.quant_contract_required =
-        compiled_contract.payload.quant_contract_required;
-  } catch (const std::exception& e) {
-    throw std::runtime_error(
-        "SimaBoxDecode(Model): failed to issue model-managed boxdecode contract: " +
-        std::string(e.what()));
-  }
+  auto compiled_contract =
+      simaai::neat::internal::ModelAccess::build_boxdecode_stage_contract(model, false);
+  effective_route_flags.tess_needed = compiled_contract.payload.tess_needed;
+  effective_route_flags.quant_needed = compiled_contract.payload.quant_needed;
+  effective_route_flags.quant_contract_required = compiled_contract.payload.quant_contract_required;
   if (decode_type != BoxDecodeType::Unspecified) {
-    validate_requested_boxdecode_contract_type_local(compiled_contract.payload.decode_type,
-                                                     decode_type, "SimaBoxDecode(Model)");
+    internal::ModelAccess::validate_requested_boxdecode_contract_type(
+        compiled_contract.payload.decode_type, decode_type, "SimaBoxDecode(Model)");
     if (decode_type != BoxDecodeType::Ssd) {
       compiled_contract.payload.decode_type = decode_type;
     }

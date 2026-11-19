@@ -96,9 +96,11 @@ namespace {
                                                                    /*pipeline_string=*/{}, hint);
 }
 
-void validate_requested_boxdecode_contract_type(BoxDecodeType contract_type,
-                                                BoxDecodeType requested_type,
-                                                std::string_view context) {
+} // namespace
+
+void internal::ModelAccess::validate_requested_boxdecode_contract_type(BoxDecodeType contract_type,
+                                                                       BoxDecodeType requested_type,
+                                                                       std::string_view context) {
   using pipeline_internal::sima::box_decode_type_matches_requested_contract;
   using pipeline_internal::sima::box_decode_type_token_string;
   if (box_decode_type_matches_requested_contract(contract_type, requested_type)) {
@@ -113,8 +115,10 @@ void validate_requested_boxdecode_contract_type(BoxDecodeType contract_type,
       << ", mpk_contract=" << (contract_token.empty() ? "unspecified" : contract_token)
       << "). Use the matching BoxDecodeType for this model, or leave the default Model route as "
          "raw tensors and attach an explicit compatible postprocess stage.";
-  throw std::runtime_error(oss.str());
+  throw_model_error(error_codes::kPipelineShape, oss.str());
 }
+
+namespace {
 
 void apply_model_superpoint_options(pipeline_internal::sima::BoxDecodeStagePayload* payload,
                                     const Model::Options& options, const char* context) {
@@ -4278,7 +4282,8 @@ internal::PreprocessPlannerResult build_preprocess_plan(const std::string& tar_g
         internal::build_route_plan(raw, model_semantics, &capability, &capability_pack);
     if (raw_plan.boxdecode_selected || !raw_plan.include_post_stage ||
         raw_plan.selected_post_kind == internal::PostRouteStageKind::BoxDecode)
-      throw std::runtime_error(
+      throw_model_error(
+          error_codes::kPipelineShape,
           "BoxDecodeType::EdgeTamTrack: this model's route without BoxDecode does not return its "
           "output tensors through a postprocess stage, so there are no raw outputs to return "
           "next to the BoxDecode tensor; use EdgeTamSeg for the mask alone");
@@ -4759,10 +4764,69 @@ struct Model::Impl {
   }
 };
 
+namespace {
+
+bool includes_postprocess(const internal::ModelPack& pack,
+                          const internal::SessionRoutePlan& route) {
+  return route.include_post_stage && !pack.has_terminal_policy();
+}
+
+void validate_boxdecode_selection(const internal::ModelPack& pack, BoxDecodeType requested) {
+  if (requested == BoxDecodeType::Unspecified)
+    return;
+  if (const auto* terminal = pack.semantic_boxdecode_terminal()) {
+    if (const auto declared =
+            pipeline_internal::sima::parse_box_decode_type_token(terminal->decode_type))
+      internal::ModelAccess::validate_requested_boxdecode_contract_type(*declared, requested,
+                                                                        "Model");
+    return;
+  }
+
+  if (!pack.mpk_contract() ||
+      (requested != BoxDecodeType::Detr && requested != BoxDecodeType::YoloV8))
+    return;
+  const auto& mpk = *pack.mpk_contract();
+  std::unordered_set<std::size_t> producers;
+  for (const auto& edge : mpk.edges)
+    producers.insert(edge.src_plugin_index);
+  // A single terminal pass-through explicitly publishes its logical heads in order.
+  if (producers.size() + 1 != mpk.plugins.size())
+    return;
+  for (std::size_t i = 0; i < mpk.plugins.size(); ++i) {
+    const auto& output = mpk.plugins[i];
+    if (producers.contains(i) || output.kernel != "pass_through" ||
+        output.input_tensors.size() != output.output_tensors.size())
+      continue;
+    const auto& heads = output.input_tensors;
+    if (requested == BoxDecodeType::Detr && heads.size() > 2)
+      throw_model_error(error_codes::kPipelineShape,
+                        "Classic DETR BoxDecode requires two logical heads.");
+    if (requested == BoxDecodeType::YoloV8 && heads.size() == 10) {
+      // Accept arbitrary export names; only the complete authored segmentation
+      // signature proves that the plain detection decoder is incompatible.
+      constexpr std::array<std::string_view, 10> mask_heads{
+          "bbox_0",       "bbox_1",       "bbox_2",       "class_prob_0", "class_prob_1",
+          "class_prob_2", "mask_coeff_0", "mask_coeff_1", "mask_coeff_2", "mask"};
+      if (std::equal(heads.begin(), heads.end(), mask_heads.begin(),
+                     [](const auto& head, std::string_view name) {
+                       const auto pos = head.name.rfind('/');
+                       return std::string_view(head.name).substr(pos + 1) == name;
+                     }))
+        throw_model_error(error_codes::kPipelineShape,
+                          "YOLOv8 BoxDecode cannot consume the MPK's instance-segmentation heads.");
+    }
+  }
+}
+
+} // namespace
+
 Model::Model(const std::string& model_path) : Model(model_path, Options{}) {}
 
-Model::Model(const std::string& model_path, const Options& opt) {
-  impl_ = std::make_unique<Impl>(model_path, opt);
+Model::Model(const std::string& model_path, const Options& opt)
+    : impl_(std::make_unique<Impl>(model_path, opt)) {
+  const auto& route = impl_->preprocess_plan.session_route_plan;
+  if (route.boxdecode_selected && includes_postprocess(impl_->pack, route))
+    validate_boxdecode_selection(impl_->pack, opt.decode_type);
 }
 
 Model::Model(Model&&) noexcept = default;
@@ -6477,8 +6541,7 @@ build_pipeline_nodes(const Model& model, const internal::ModelPack& pack, const 
   const bool tensor_mode = externalize_preprocess ? true : pipeline_requires_tensor_input(plan);
   const bool include_preprocess_stage =
       externalize_preprocess ? false : plan.session_route_plan.include_pre_stage;
-  const bool include_postprocess_stage =
-      plan.session_route_plan.include_post_stage && !pack.has_terminal_policy();
+  const bool include_postprocess_stage = includes_postprocess(pack, plan.session_route_plan);
   const std::string pre_name =
       include_preprocess_stage ? resolved_pre_stage_name(pack, plan) : std::string{};
 
@@ -8356,17 +8419,17 @@ CompiledBoxDecodeContract finish_model_boxdecode_contract(CompiledBoxDecodeContr
   apply_model_sam_options(&compiled.payload, options, "Model-managed boxdecode stage");
   return with_boxdecode_raw_outputs(std::move(compiled), plan);
 }
-} // namespace
 
-CompiledBoxDecodeContract ModelAccess::build_boxdecode_stage_contract(const Model& model,
-                                                                      bool sync) {
-  require_model_managed_stage(model, StageNodeKind::BoxDecode, "SimaBoxDecode(Model)");
-  const auto& pack = sync ? model.impl_->pack_for_sync() : model.impl_->pack;
-  const auto& opt = model.impl_->options;
-  if (auto compiled = try_model_managed_boxdecode_contract(pack); compiled.has_value()) {
-    validate_requested_boxdecode_contract_type(compiled->payload.decode_type, opt.decode_type,
-                                               "Model-managed boxdecode stage");
-    if (model.impl_->options.num_classes > 0) {
+CompiledBoxDecodeContract
+compile_selected_boxdecode_contract(std::optional<CompiledBoxDecodeContract> compiled,
+                                    const std::optional<pipeline_internal::sima::MpkContract>& mpk,
+                                    const pipeline_internal::sima::MpkPluginIoContract* terminal,
+                                    const Model::Options& opt,
+                                    const internal::PreprocessPlannerResult& plan) {
+  if (compiled) {
+    ModelAccess::validate_requested_boxdecode_contract_type(
+        compiled->payload.decode_type, opt.decode_type, "Model-managed boxdecode stage");
+    if (opt.num_classes > 0) {
       // The MPK depth is authoritative for SSD; the resolved profile decides whether an explicit
       // class count must match exactly or may select a contiguous prefix.
       const int encoded_num_classes =
@@ -8374,12 +8437,12 @@ CompiledBoxDecodeContract ModelAccess::build_boxdecode_stage_contract(const Mode
               compiled->payload.decode_type, compiled->payload.ssd_class_selection,
               compiled->payload.num_classes);
       pipeline_internal::sima::stagesemantics::validate_ssd_num_classes(
-          compiled->payload.decode_type, compiled->payload.ssd_recipe_id,
-          model.impl_->options.num_classes, encoded_num_classes, "Model-managed boxdecode stage");
+          compiled->payload.decode_type, compiled->payload.ssd_recipe_id, opt.num_classes,
+          encoded_num_classes, "Model-managed boxdecode stage");
       const int resolved_num_classes =
           pipeline_internal::sima::stagesemantics::resolve_boxdecode_num_classes_override(
-              compiled->payload.decode_type, compiled->payload.num_classes,
-              model.impl_->options.num_classes, "Model-managed BoxDecode");
+              compiled->payload.decode_type, compiled->payload.num_classes, opt.num_classes,
+              "Model-managed BoxDecode");
       if (compiled->payload.num_classes > 0 &&
           compiled->payload.num_classes != resolved_num_classes &&
           !box_decode_type_is_ssd_family(compiled->payload.decode_type)) {
@@ -8403,8 +8466,7 @@ CompiledBoxDecodeContract ModelAccess::build_boxdecode_stage_contract(const Mode
               compiled->payload.decode_type, opt.yolox_seg_pose.pose_classes,
               compiled->payload.num_classes, "Model-managed boxdecode stage");
     }
-    return finish_model_boxdecode_contract(std::move(*compiled), opt,
-                                           model.impl_->preprocess_plan.session_route_plan);
+    return finish_model_boxdecode_contract(std::move(*compiled), opt, plan.session_route_plan);
   }
 
   if (!pipeline_internal::sima::is_box_decode_type_specified(opt.decode_type)) {
@@ -8414,12 +8476,10 @@ CompiledBoxDecodeContract ModelAccess::build_boxdecode_stage_contract(const Mode
         "exported heads, such as YoloV8 for raw DFL or Yolo for decoded model-pixel cx/cy/w/h.");
   }
 
-  const auto& mpk = pack.mpk_contract();
   if (!mpk.has_value()) {
     throw std::runtime_error("Model-managed boxdecode derivation requires a parsed MPK contract");
   }
-  auto route_flags =
-      model_route_flags_for_boxdecode_stage(model.impl_->preprocess_plan.session_route_plan);
+  auto route_flags = model_route_flags_for_boxdecode_stage(plan.session_route_plan);
   if (!route_flags.has_value()) {
     throw std::runtime_error(
         "Model-managed boxdecode derivation requires the resolved route to select BoxDecode");
@@ -8427,32 +8487,34 @@ CompiledBoxDecodeContract ModelAccess::build_boxdecode_stage_contract(const Mode
   std::string exact_route_error;
   auto exact_route_flags =
       pipeline_internal::sima::resolve_model_managed_boxdecode_route_flags_from_mpk(
-          *mpk, nullptr, &exact_route_error, opt.decode_type);
+          *mpk, terminal, &exact_route_error, opt.decode_type);
   if (!exact_route_flags.has_value()) {
-    throw std::runtime_error(
+    throw_model_error(
+        error_codes::kPipelineShape,
         "Model-managed external boxdecode route facts could not be derived from exact MPK "
         "lineages: " +
-        (exact_route_error.empty() ? std::string("missing MPK/upstream route facts")
-                                   : exact_route_error));
+            (exact_route_error.empty() ? std::string("missing MPK/upstream route facts")
+                                       : exact_route_error));
   }
   *route_flags = pipeline_internal::sima::reconcile_exact_boxdecode_route_flags(*route_flags,
                                                                                 *exact_route_flags);
 
   std::string contract_error;
   auto contract = pipeline_internal::sima::build_boxdecode_static_contract_from_mpk(
-      *mpk, *route_flags, nullptr, &contract_error,
+      *mpk, *route_flags, terminal, &contract_error,
       (opt.decode_type == BoxDecodeType::Detr || opt.decode_type == BoxDecodeType::DetrFocal ||
        pipeline_internal::sima::box_decode_type_is_sam(opt.decode_type))
           ? opt.decode_type
           : BoxDecodeType::Unspecified);
   if (!contract.has_value()) {
-    throw std::runtime_error(
+    throw_model_error(
+        error_codes::kPipelineShape,
         "Model-managed boxdecode derivation failed to derive tensor contract from MPK: " +
-        (contract_error.empty() ? std::string("missing MPK/upstream facts") : contract_error));
+            (contract_error.empty() ? std::string("missing MPK/upstream facts") : contract_error));
   }
 
-  validate_requested_boxdecode_contract_type(contract->decode_type, opt.decode_type,
-                                             "Model-managed boxdecode derivation");
+  ModelAccess::validate_requested_boxdecode_contract_type(contract->decode_type, opt.decode_type,
+                                                          "Model-managed boxdecode derivation");
 
   contract->decode_type = opt.decode_type;
   contract->topk = opt.top_k;
@@ -8461,8 +8523,7 @@ CompiledBoxDecodeContract ModelAccess::build_boxdecode_stage_contract(const Mode
   contract->pose_classes = opt.yolox_seg_pose.pose_classes;
   contract->model_owned_flags = true;
   contract->quant_contract_required = route_flags->quant_contract_required;
-  contract->required_preprocess_meta_fields =
-      model.impl_->preprocess_plan.resolved_plan.meta_contract.required_fields;
+  contract->required_preprocess_meta_fields = plan.resolved_plan.meta_contract.required_fields;
   if (contract->decode_type == BoxDecodeType::SuperPoint) {
     pipeline_internal::sima::apply_superpoint_profile_override(&contract->superpoint,
                                                                opt.superpoint.profile);
@@ -8475,28 +8536,31 @@ CompiledBoxDecodeContract ModelAccess::build_boxdecode_stage_contract(const Mode
   auto finalized = pipeline_internal::sima::stagesemantics::finalize_boxdecode_static_contract(
       *contract, opt.decode_type, std::nullopt, route_flags, opt.decode_type_option,
       opt.score_threshold, opt.nms_iou_threshold, opt.top_k, opt.num_classes,
-      model.impl_->preprocess_plan.resolved_plan.meta_contract.required_fields);
+      plan.resolved_plan.meta_contract.required_fields);
   const int effective_num_classes = finalized.num_classes;
 
   if (boxdecode_type_expects_grouped_yolo_dfl_local(opt.decode_type)) {
     if (effective_num_classes <= 0) {
-      throw std::runtime_error(
+      throw_model_error(
+          error_codes::kPipelineShape,
           "YOLO BoxDecode fallback requires Model::Options.num_classes for split raw DFL heads "
           "(for the Anti-UAV one-class model, set opts.num_classes = 1).");
     }
     if (boxdecode_looks_interleaved_yolo_dfl_local(*contract, effective_num_classes)) {
-      throw std::runtime_error(
+      throw_model_error(
+          error_codes::kPipelineShape,
           "YOLO BoxDecode contract has interleaved raw DFL outputs. Expected grouped-by-role "
           "order [reg_p3, reg_p4, reg_p5, cls_p3, cls_p4, cls_p5], but observed [" +
-          boxdecode_tensor_order_summary_local(*contract) +
-          "]. Fix the ONNX graph surgery/export output order and recompile the MPK.");
+              boxdecode_tensor_order_summary_local(*contract) +
+              "]. Fix the ONNX graph surgery/export output order and recompile the MPK.");
     }
     if (!boxdecode_looks_grouped_yolo_dfl_local(*contract, effective_num_classes)) {
-      throw std::runtime_error(
+      throw_model_error(
+          error_codes::kPipelineShape,
           "YOLO BoxDecode fallback could not validate grouped-by-role raw DFL output order. "
           "Expected [reg_p3, reg_p4, reg_p5, cls_p3, cls_p4, cls_p5] with class depth equal to "
           "Model::Options.num_classes; observed [" +
-          boxdecode_tensor_order_summary_local(*contract) + "].");
+              boxdecode_tensor_order_summary_local(*contract) + "].");
     }
     // Grouped DFL describes tensor arrangement, not score domain.  Preserve
     // the domain inferred from semantic names/quantization (class_prob versus
@@ -8507,7 +8571,26 @@ CompiledBoxDecodeContract ModelAccess::build_boxdecode_stage_contract(const Mode
 
   return finish_model_boxdecode_contract(
       pipeline_internal::sima::stagesemantics::build_boxdecode_compiled_contract(finalized), opt,
-      model.impl_->preprocess_plan.session_route_plan);
+      plan.session_route_plan);
+}
+} // namespace
+
+CompiledBoxDecodeContract ModelAccess::build_boxdecode_stage_contract(const Model& model,
+                                                                      bool sync) {
+  require_model_managed_stage(model, StageNodeKind::BoxDecode, "SimaBoxDecode(Model)");
+  const auto& pack = sync ? model.impl_->pack_for_sync() : model.impl_->pack;
+  const auto& opt = model.impl_->options;
+  // A caller can explicitly bind BoxDecode even when the full route ends at MLA.
+  if (pack.has_terminal_policy())
+    validate_boxdecode_selection(pack, opt.decode_type);
+  auto compiled = try_model_managed_boxdecode_contract(pack);
+  try {
+    return compile_selected_boxdecode_contract(std::move(compiled), pack.mpk_contract(),
+                                               pack.semantic_boxdecode_terminal(), opt,
+                                               model.impl_->preprocess_plan);
+  } catch (const std::invalid_argument& error) {
+    throw_model_error(error_codes::kPipelineShape, error.what());
+  }
 }
 
 void ModelAccess::configure_session_input_route(simaai::neat::Graph& session, const Model& model,
