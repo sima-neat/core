@@ -27,6 +27,7 @@
 namespace simaai::neat {
 struct CompiledRuntimeContract;
 struct Tensor;
+struct Sample;
 namespace pipeline_internal {
 struct TensorBufferView;
 }
@@ -100,6 +101,10 @@ StageOutputRoute build_output_route_static_spec(int output_slot, int logical_out
 bool build_ingress_runtime_contract(const pipeline_internal::TensorBufferView& view,
                                     std::span<const Tensor> tensors, CompiledRuntimeContract* out,
                                     std::string* error);
+
+// Resolve current storage for a standalone node consuming single-plane tensor ingress.
+bool build_dense_ingress_runtime_contract(const Sample& sample, CompiledRuntimeContract* out,
+                                          std::string* error);
 
 // Add one checked direct input using the existing logical/physical/binding types.
 // required_bytes is the checked source view's physical footprint, not logical

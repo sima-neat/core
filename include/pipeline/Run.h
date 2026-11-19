@@ -186,7 +186,8 @@ struct RunOptions {
    * `Sample`. It catches payload-level failures (for example invalid encoded bitstreams or
    * caps that only the GStreamer element can reject) at build time instead of letting the first
    * failure surface asynchronously after a `Run` has already been returned. Seedless/source builds
-   * ignore this option.
+   * ignore this option. A decoder reporting H.264 or H.265 can require several frames, so
+   * Core skips the one-frame probe, including when the codec is still the element default.
    *
    * Set to `false` for latency-sensitive callers that only want the seed for caps/shape
    * adaptation and are prepared to observe first-sample errors through `Run::last_error()` or

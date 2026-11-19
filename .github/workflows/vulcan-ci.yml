@@ -1234,25 +1234,14 @@ jobs:
       - name: Prepare LightGlue NEAT-68 regression model
         run: |
           set -euo pipefail
-          MODEL_ROOT="${RUNNER_TEMP:-/tmp}/lg-${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-0}"
-          MODEL_SPEC="models/runtime_lightglue_superpoint_600@runtime-lightglue-neat68-v1:00d3bdc1f3b1"
-          # The restricted regression fixture is intentionally staging-only.
-          MODEL_VULCAN_ENV=stg
-          mkdir -p "${MODEL_ROOT}"
-          sima-cli neat install \
-            --env "${MODEL_VULCAN_ENV}" \
-            --install-dir "${MODEL_ROOT}" \
-            "${MODEL_SPEC}"
-
-          mapfile -t archives < <(find "${MODEL_ROOT}" -type f -name '*_mpk.tar.gz' | sort)
-          if [[ "${#archives[@]}" -ne 1 ]]; then
-            echo "Expected exactly one LightGlue MPK from ${MODEL_SPEC}, found ${#archives[@]}." >&2
-            find "${MODEL_ROOT}" -maxdepth 4 -type f -print >&2 || true
-            exit 1
-          fi
-          echo '0ceb6304167d3a5ca4e3e0bcf3bd873ace6966d8a35e73d790c4496019bae7af  '"${archives[0]}" | sha256sum --check --strict
-          echo "SIMA_TEST_LIGHTGLUE_MODEL=${archives[0]}" >> "${GITHUB_ENV}"
-          echo "Installed immutable LightGlue regression model: ${archives[0]}"
+          MODEL_DIR="$(mktemp -d "${RUNNER_TEMP:-/tmp}/lg-XXXXXXXX")"
+          MODEL_PATH="${MODEL_DIR}/quantized_lightglue_superpoint_600_mpk.tar.gz"
+          ARTIFACT_URL="https://models-registry.stg.neat.sima.ai/v1/runs/ef5cf65e-797c-409a-81e7-17cb49e62452/artifacts/mpk"
+          DOWNLOAD_URL="$(curl -fsS --retry 2 "${ARTIFACT_URL}" |
+            python3 -c 'import json, sys; print(json.load(sys.stdin)["artifact"]["download_url"])')"
+          curl -fsSL --retry 2 "${DOWNLOAD_URL}" -o "${MODEL_PATH}"
+          echo '0ceb6304167d3a5ca4e3e0bcf3bd873ace6966d8a35e73d790c4496019bae7af  '"${MODEL_PATH}" | sha256sum --check --strict
+          echo "SIMA_TEST_LIGHTGLUE_MODEL=${MODEL_PATH}" >> "${GITHUB_ENV}"
 
       - name: Build docs C++ examples from DevKit-installed package
         if: ${{ contains(fromJSON(matrix.tasks), 'fast') }}

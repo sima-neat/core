@@ -10,6 +10,10 @@
 
 #include <optional>
 
+namespace simaai::neat {
+struct ContractCompileInput;
+}
+
 namespace simaai::neat::pipeline_internal::sima::stagesemantics {
 
 struct DequantCanonicalFacts {
@@ -28,6 +32,10 @@ build_dequant_compiled_contract_from_facts(const DequantCanonicalFacts& facts);
 CompiledDequantContract
 build_dequant_compiled_contract_from_upstream(const CompiledRuntimeContract& upstream,
                                               const DequantCanonicalFacts& facts, std::string* err);
+
+std::optional<CompiledDequantContract>
+compile_standalone_dequant(const ContractCompileInput& input, const DequantCanonicalFacts& facts,
+                           std::string* error);
 
 bool build_dequant_node_contract(const std::string& node_kind, const std::string& plugin_kind,
                                  const std::string& element_name,
