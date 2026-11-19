@@ -346,6 +346,9 @@ void check_yuyv_pipeline() {
   require_throws<std::invalid_argument>(
       [&] { (void)simaai::neat::nodes::UsbCameraInput(opt, cached.camera); }, "capture info format",
       "raw info must not silently select legacy MJPEG capture");
+  require_throws<std::runtime_error>(
+      [&] { (void)simaai::neat::nodes::UsbCameraInput(opt, simaai::neat::UsbCameraInfo{}); },
+      "as its UsbCameraInfo says", "a default info keeps the MJPEG connection check");
   require_throws<std::invalid_argument>(
       [&] { (void)simaai::neat::nodes::UsbCameraInput(opt, cached); }, "capture info format",
       "MJPEG selection must reject raw capture info");

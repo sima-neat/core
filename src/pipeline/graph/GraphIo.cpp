@@ -42,6 +42,7 @@
 #include "nodes/sima/Cast.h"
 #include "nodes/sima/CastTess.h"
 #include "nodes/sima/Preproc.h"
+#include "nodes/sima/internal/ImageTransformPolicy.h"
 #include "nodes/sima/Quant.h"
 #include "nodes/sima/QuantTess.h"
 #include "nodes/sima/SimaBoxDecode.h"
@@ -539,6 +540,19 @@ double double_field(const JsonValue::JsonObject& obj, const char* key, double fa
 bool bool_field(const JsonValue::JsonObject& obj, const char* key, bool fallback = false) {
   const JsonValue* value = object_field(obj, key);
   return value && value->type == JsonValue::Type::Bool ? value->b : fallback;
+}
+
+// Graph JSON has no field for an explicit YUYV color interpretation; refuse to drop it.
+void reject_unsaved_source_color(const std::shared_ptr<Node>& node, const std::string& path) {
+  const auto* pre = dynamic_cast<const Preproc*>(node.get());
+  if (!pre)
+    return;
+  const auto* policy = internal::ImageTransformAccess::policy(*pre);
+  if (internal::ImageTransformAccess::input_color(*pre) || (policy && !policy->colorimetry.empty()))
+    throw_io_error(error_codes::kPipelineShape, "Graph::save", path,
+                   "Graph JSON does not store the explicit color of Preproc(options, color) or "
+                   "ColorConvert(options, colorimetry).",
+                   "Build this Graph in code from usb_camera_info(...) instead of saving it.");
 }
 
 void write_video_sender_raw_ingress_json(std::ostream& out, const Node* node) {
@@ -1621,6 +1635,10 @@ std::string Graph::describe(const GraphPrinter::Options& opt) const {
 }
 
 void Graph::save(const std::string& path) const {
+  if (composition_) {
+    for (const auto& vertex : composition_->vertices)
+      reject_unsaved_source_color(vertex.pipeline_node, path);
+  }
   if (composition_ &&
       (!composition_->is_linear() || has_any_model_fragment_provenance(composition_->fragments) ||
        std::any_of(composition_->vertices.begin(), composition_->vertices.end(), [](const auto& n) {

@@ -89,7 +89,7 @@ bool fraction_equal(std::uint32_t a_num, std::uint32_t a_den, std::uint32_t b_nu
   return std::uint64_t(a_num) * b_den == std::uint64_t(b_num) * a_den;
 }
 
-// True when the camera lists `width`x`height` at num/den fps for MJPEG; fills
+// True when the camera lists `width`x`height` at num/den fps for `fourcc`; fills
 // `modes` with what it does list, for the error message.
 bool mode_listed(int fd, std::uint32_t fourcc, std::uint32_t width, std::uint32_t height,
                  std::uint32_t num, std::uint32_t den, std::vector<std::string>* modes) {
@@ -127,16 +127,24 @@ bool mode_listed(int fd, std::uint32_t fourcc, std::uint32_t width, std::uint32_
     for (; (discrete || size_ok) && xioctl(fd, VIDIOC_ENUM_FRAMEINTERVALS, &ival) == 0;
          ++ival.index) {
       // A frame interval is the reciprocal of the frame rate.
+      bool listed_rate = false;
       if (ival.type == V4L2_FRMIVAL_TYPE_DISCRETE) {
         const auto& iv = ival.discrete;
         listed << (first ? "" : ",") << iv.denominator << '/' << iv.numerator;
-        found = found || (size_ok && interval_contains(ival, num, den));
+        listed_rate = fraction_equal(num, den, iv.denominator, iv.numerator);
       } else {
         const auto& s = ival.stepwise;
         listed << (first ? "" : ",") << s.max.denominator << '/' << s.max.numerator << "-"
                << s.min.denominator << '/' << s.min.numerator;
-        found = found || (size_ok && interval_contains(ival, num, den));
+        // Interval within [min, max]: compare den/num against each bound.
+        listed_rate =
+            std::uint64_t(den) * s.min.denominator >= std::uint64_t(num) * s.min.numerator &&
+            std::uint64_t(den) * s.max.denominator <= std::uint64_t(num) * s.max.numerator;
       }
+      // YUYV additionally requires an exact step; MJPEG keeps its in-range rule.
+      if (fourcc == V4L2_PIX_FMT_YUYV)
+        listed_rate = interval_contains(ival, num, den);
+      found = found || (size_ok && listed_rate);
       first = false;
       if (ival.type != V4L2_FRMIVAL_TYPE_DISCRETE)
         break;

@@ -1693,35 +1693,74 @@ void crop_geometry_dynamic_cache() {
       << "Crop exact window, actual-frame geometry, immutable cache and affine authority PASS\n";
 }
 
+// The kernel limits that the YUYV documentation names. Errors are pinned so the
+// documented fallback (MJPEG, or ColorConvert to RGB first) stays accurate.
+void rejects_with(const rt::Result<std::shared_ptr<PreprocProbe>>& result, std::string_view text,
+                  const std::string& label) {
+  const auto* error = std::get_if<rt::Error>(&result);
+  const auto detail = label + (error ? ": " + error->message : ": accepted");
+  require(error && error->message.find(text) != std::string::npos, detail.c_str());
+}
+
 void yuyv_color_and_storage_contract() {
   auto cfg = config();
-  cfg->input_img_type = "YUY2";
   auto desc = cfg->input_tensors[0].descriptor();
   desc.shape.sizes[0] = 3;
   desc.shape.sizes[1] = 6;
   desc.shape.sizes[2] = 2;
   desc.layout.strided.strides_bytes[0] = 12;
   desc.layout.strided.strides_bytes[1] = 2;
-  cfg->input_tensors[0] = cfg->input_tensors[0].with_geometry(desc);
+  simaai::neat::ImageColorOptions color;
+  color.matrix = simaai::neat::ImageColorMatrix::Bt709;
+  color.range = simaai::neat::ImageYuvRange::Limited;
+  const auto yuyv = [&](std::shared_ptr<core::ProcessCvuStagePayload> p) {
+    p->input_img_type = "YUY2";
+    p->input_tensors[0] = p->input_tensors[0].with_geometry(desc);
+    p->input_color = color;
+    return p;
+  };
   probe::Options options;
   options.capture = preproc_capture();
-  require(std::holds_alternative<rt::Error>(PreprocProbe::create(cfg, options)),
-          "YUYV must not implicitly assume input color");
-  cfg->input_color = simaai::neat::ImageColorOptions{};
-  cfg->input_color->matrix = simaai::neat::ImageColorMatrix::Bt709;
-  cfg->input_color->range = simaai::neat::ImageYuvRange::Limited;
-  // Kernels admit neither antialiased sampling nor fixed source arithmetic for
-  // YUYV; cold admission must fail closed rather than pick another route.
-  for (int fault = 0; fault < 2; ++fault) {
-    auto bad = std::make_shared<core::ProcessCvuStagePayload>(*cfg);
-    if (fault == 0) {
-      bad->scaling_type = "BILINEAR_ANTIALIASED";
-    } else {
-      bad->scaling_type = "NEAREST";
-      bad->rescale_factor = 1.f / 255.f;
-    }
-    require(std::holds_alternative<rt::Error>(PreprocProbe::create(bad, options)),
-            "YUYV admitted a sampler or arithmetic option the kernel rejects");
+  cfg = yuyv(cfg);
+  cfg->input_color.reset();
+  rejects_with(PreprocProbe::create(cfg, options), "YUYV requires explicit input color",
+               "YUYV must not implicitly assume input color");
+  cfg->input_color = color;
+  // Antialiased sampling, fixed source arithmetic and Crop are rejected for YUYV
+  // and admitted for the same model on RGB, the ColorConvert fallback.
+  constexpr float step = 1.f / 31.75f;
+  for (int fault = 0; fault < 7; ++fault) {
+    const auto apply = [&](std::shared_ptr<core::ProcessCvuStagePayload> p) {
+      if (fault == 0)
+        p->scaling_type = "BILINEAR_ANTIALIASED";
+      if (fault >= 1 && fault <= 5) {
+        p->scaling_type = "NEAREST"; // Fixed arithmetic samples with Nearest or antialiasing.
+        p->rescale_factor = 1.f / 255.f;
+      }
+      if (fault == 1)
+        p->normalize = 0;
+      if (fault == 3) {
+        p->quantization_step = step;
+        p->q_scale = 1.f / step;
+      }
+      if (fault == 4)
+        p->floating_conversion = simaai::neat::PreprocFloatingConversion::NearestEven;
+      if (fault == 5)
+        p->color_conversion_placement = simaai::neat::PreprocColorConversionPlacement::BeforeResize;
+      if (fault == 6) {
+        p->resize_mode = simaai::neat::ResizeMode::Crop;
+        p->shorter_side = 10;
+      }
+      return p;
+    };
+    const auto text = fault == 0   ? "YUYV input does not support antialiased sampling"
+                      : fault == 6 ? "crop currently requires RGB, BGR or Gray input"
+                                   : "FP32 transforms require supported RGB/Gray tensor output";
+    rejects_with(PreprocProbe::create(apply(yuyv(config(1, fault == 3))), options), text,
+                 "YUYV admitted kernel-unsupported preprocessing " + std::to_string(fault));
+    // Color conversion before resize applies only to YUV input; RGB needs none.
+    if (fault != 5)
+      (void)take(PreprocProbe::create(apply(config(1, fault == 3)), options));
   }
   auto stage = take(PreprocProbe::create(cfg, options));
   auto* caps = gst_caps_from_string("video/x-raw,format=YUY2,width=6,height=3,framerate=30000/"
@@ -1755,6 +1794,17 @@ void yuyv_color_and_storage_contract() {
               binding.inputs[0].length_bytes == 52,
           "YUYV active extent/offset lost");
   gst_buffer_unref(input);
+  auto* roi_input = frame(59);
+  auto* roi = gst_custom_meta_get_structure(gst_buffer_add_custom_meta(roi_input, "GstSimaMeta"));
+  gst_structure_set(roi, "preproc_roi_count", G_TYPE_INT, 1, nullptr);
+  set_list(roi, "preproc_roi_rects", {0, 0, 4, 2});
+  set_list(roi, "preproc_roi_batch_indices", {0});
+  probe::Binding roi_binding;
+  const auto roi_error = stage->bind(roi_input, storage, roi_binding, published);
+  require(roi_error &&
+              roi_error->message.find("ROI lists require RGB/BGR/Gray") != std::string::npos,
+          "YUYV accepted a runtime ROI list");
+  gst_buffer_unref(roi_input);
   input = frame(58);
   probe::Binding short_binding;
   require(stage->bind(input, Storage{}, short_binding, published).has_value(),

@@ -11,6 +11,7 @@
 #include "pipeline/TensorAdapters.h"
 #include "test_main.h"
 #include <gst/video/video.h>
+#include <filesystem>
 #include <memory>
 #include <utility>
 
@@ -358,6 +359,19 @@ void yuyv_input_boundary_chain() {
         render_manifest_from_compiled_contracts(compiled, compile_input, &diagnostics);
     require(manifest && manifest->stages.size() == 1 && diagnostics.errors.empty(),
             "packed Input conversion must render through the canonical path");
+    // Model preprocessing that YUYV input cannot use runs after a conversion to RGB.
+    ColorConvertOptions rgb;
+    rgb.output_format = ImageFormat::RGB;
+    rgb.color.matrix = convert.color.matrix;
+    rgb.color.range = convert.color.range;
+    auto rgb_convert = nodes::ColorConvert(rgb, "bt709");
+    require(preproc(rgb_convert).output_spec(boundary).format == "RGB", "YUYV to RGB output");
+    const auto rgb_compiled =
+        compile_node_contracts({source, rgb_convert}, compile_input, &diagnostics);
+    require(rgb_compiled.fully_renderable && diagnostics.errors.empty() &&
+                render_manifest_from_compiled_contracts(rgb_compiled, compile_input, &diagnostics),
+            "packed Input must convert to RGB for model preprocessing" +
+                (diagnostics.errors.empty() ? std::string{} : ": " + diagnostics.errors.front()));
     // Kernels reconstruct YUYV chroma only from centered siting; RGB output has
     // no siting field, so a cosited request must not be silently reinterpreted.
     for (const auto output : {ImageFormat::RGB, ImageFormat::NV12}) {
@@ -385,6 +399,25 @@ void yuyv_input_boundary_chain() {
   Preproc explicit_preproc(explicit_options);
   require(explicit_preproc.options().input_img_type == "YUY2",
           "explicit Preproc format must use the same normalization");
+  // Graph JSON cannot carry an explicit source color, so saving fails instead of dropping it.
+  ImageColorOptions camera_color;
+  camera_color.matrix = ImageColorMatrix::Bt709;
+  camera_color.range = ImageYuvRange::Limited;
+  ColorConvertOptions viewer;
+  viewer.output_format = ImageFormat::NV12;
+  viewer.color = camera_color;
+  for (const auto& node :
+       {nodes::ColorConvert(viewer, "bt709"), nodes::Preproc(explicit_options, camera_color)}) {
+    Graph graph("yuyv_save");
+    graph.add(node);
+    try {
+      graph.save((std::filesystem::temp_directory_path() / "yuyv_save.json").string());
+      require(false, "Graph::save dropped an explicit YUYV color");
+    } catch (const std::exception& e) {
+      require(std::string(e.what()).find("does not store the explicit color") != std::string::npos,
+              std::string("unexpected Graph::save error: ") + e.what());
+    }
+  }
 }
 
 void yuv_video_meta_envelopes() {

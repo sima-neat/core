@@ -202,7 +202,8 @@ std::shared_ptr<simaai::neat::Node> UsbCameraInput(simaai::neat::UsbCameraInputO
 std::shared_ptr<simaai::neat::Node> UsbCameraInput(simaai::neat::UsbCameraInputOptions opt,
                                                    const simaai::neat::UsbCameraInfo& info) {
   validate_options(opt);
-  validate_capture_info_format(UsbCameraFormat::MJPEG, info);
+  if (info.decoded_format == FormatTag::YUYV) // Other values keep the MJPEG behaviour.
+    validate_capture_info_format(UsbCameraFormat::MJPEG, info);
   return internal::uvc::camera_node(opt, internal::uvc::camera_from_info(opt.camera_name, info));
 }
 
