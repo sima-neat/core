@@ -940,6 +940,10 @@ class WindowsCiContracts(unittest.TestCase):
     )
     self.assertEqual(workflow.count("shell: powershell"), 11)
     hardware_job = workflow.split("  hardware:\n", 1)[1].split("  publish:\n", 1)[0]
+    # Self-hosted Windows keeps the default Restricted script policy, as customer PCs do;
+    # run every step like pcie-setup.cmd does instead of provisioning the host.
+    self.assertNotIn("        shell: powershell\n", hardware_job)
+    self.assertEqual(hardware_job.count("shell: powershell -NoLogo -NoProfile -ExecutionPolicy Bypass"), 7)
     for job in (native_job, hardware_job):
       # MSI install/remove needs an elevated token; fail before checkout, not mid-build.
       steps = job.split("    steps:\n", 1)[1]
