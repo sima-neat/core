@@ -1614,6 +1614,10 @@ jobs:
           for mpk in "${SIMA_NEAT_TUTORIAL_MODEL_RESNET}" "${SIMA_NEAT_TUTORIAL_MODEL_YOLO}"; do
             grep -qF "${mpk}" "${TUTORIAL_CTEST_FILES[@]}" || { echo "No tutorial test uses ${mpk}" >&2; exit 1; }
           done
+          if grep -Eq '/(resnet_50|yolo_v8s)\.tar\.gz' "${TUTORIAL_CTEST_FILES[@]}"; then
+            echo "A tutorial test still uses a Model Zoo archive path" >&2
+            exit 1
+          fi
           export SIMA_GST_REGISTRY_DIR="$(cat _work/gst_registry_dir.txt)"
           # Temporary external RTSP exclusions; remove under core#890.
           COVERAGE_DIR=_work/coverage/tutorials COVERAGE_PROFILE=required \
