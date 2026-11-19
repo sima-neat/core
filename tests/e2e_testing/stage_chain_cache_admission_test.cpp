@@ -93,36 +93,44 @@ Sample heads_for_image(const cv::Mat& image, const Model& model) {
   return infer;
 }
 
-void check_executor_image_format(const std::string& archive, const cv::Mat& bgr,
-                                 Model::Options options) {
+void check_executor_image_format(const std::string& archive, Model::Options options) {
   options.preprocess.kind = InputKind::Image;
   options.preprocess.enable = AutoFlag::On;
   options.preprocess.resize.enable = AutoFlag::On;
   options.preprocess.normalize.enable = AutoFlag::On;
   options.preprocess.color_convert.input_format = PreprocessColorFormat::Auto;
-  auto model = std::make_shared<Model>(archive, options);
+  const cv::Mat bgr(64, 64, CV_8UC3, cv::Scalar(17, 83, 211));
   cv::Mat rgb;
   cv::cvtColor(bgr, rgb, cv::COLOR_BGR2RGB);
   const auto rgb_input = Tensor::from_cv_mat(rgb, ImageSpec::PixelFormat::RGB, TensorMemory::EV74);
   const auto bgr_input = Tensor::from_cv_mat(bgr, ImageSpec::PixelFormat::BGR, TensorMemory::EV74);
 
+  Model reference(archive, options);
   Graph graph;
-  graph.add(nodes::Input(model->input_appsrc_options(false)));
-  graph.add(model->preprocess());
+  graph.add(nodes::Input(reference.input_appsrc_options(false)));
+  graph.add(reference.preprocess());
   graph.add(nodes::Output());
   const TensorList seed{rgb_input};
   const auto expected = graph.build(seed).run(seed, 10000).at(0).copy_payload_bytes();
 
-  graph::nodes::StageModelExecutor executor({.model = model, .do_mla = false});
-  for (const auto& image : {bgr_input, rgb_input}) {
-    std::vector<graph::StageOutMsg> outputs;
-    executor.on_input({.sample = sample_from_tensors({image})}, outputs);
-    require(outputs.size() == 1 && outputs[0].sample.tensor.has_value(),
-            "StageModelExecutor did not publish a single Preproc tensor");
-    require(outputs[0].sample.tensor->copy_payload_bytes() == expected,
-            image.image_format() == ImageSpec::PixelFormat::RGB
-                ? "RGB StageModelExecutor output differs from the typed graph"
-                : "BGR StageModelExecutor output differs from the typed graph");
+  for (const auto hint :
+       {PreprocessColorFormat::Auto, PreprocessColorFormat::RGB, PreprocessColorFormat::BGR}) {
+    options.preprocess.color_convert.input_format = hint;
+    auto model = std::make_shared<Model>(archive, options);
+    graph::nodes::StageModelExecutor executor({.model = model, .do_mla = false});
+    for (const auto& image : {bgr_input, rgb_input}) {
+      std::vector<graph::StageOutMsg> outputs;
+      executor.on_input({.sample = sample_from_tensors({image})}, outputs);
+      require(outputs.size() == 1 && outputs[0].sample.tensor.has_value(),
+              "StageModelExecutor did not publish a single Preproc tensor");
+      require(outputs[0].sample.tensor->copy_payload_bytes() == expected,
+              image.image_format() == ImageSpec::PixelFormat::RGB
+                  ? "RGB StageModelExecutor output differs from the typed graph"
+                  : "BGR StageModelExecutor output differs from the typed graph");
+    }
+    const cv::Mat& untagged = hint == PreprocessColorFormat::RGB ? rgb : bgr;
+    require(stages::Preproc({untagged}, *model).at(0).copy_payload_bytes() == expected,
+            "OpenCV Preproc did not honor the configured or default input format");
   }
 }
 
@@ -173,7 +181,7 @@ RUN_TEST(
       options.score_threshold = 0.25F;
       options.nms_iou_threshold = 0.5F;
       options.top_k = 100;
-      check_executor_image_format(archive, image, options);
+      check_executor_image_format(archive, options);
       Model model(archive, options);
 
       require(setenv("SIMA_GRAPH_BUILD_TIMING", "1", 1) == 0, "could not enable build diagnostic");

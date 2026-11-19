@@ -1360,10 +1360,10 @@ InputOptions appsrc_for_mat(const cv::Mat& input, PreprocessColorFormat input_fo
   opt.width = input.cols;
   opt.height = input.rows;
   opt.depth = input.channels();
-  if (input_format != PreprocessColorFormat::Auto) {
-    opt.format = preprocess_color_format_to_format_spec(input_format);
-  } else if (image_format != ImageSpec::PixelFormat::UNKNOWN) {
+  if (image_format != ImageSpec::PixelFormat::UNKNOWN) {
     opt.format = image_format_name(image_format);
+  } else if (input_format != PreprocessColorFormat::Auto) {
+    opt.format = preprocess_color_format_to_format_spec(input_format);
   } else {
     opt.format = opt.depth == 1 ? "GRAY8" : "BGR";
   }
