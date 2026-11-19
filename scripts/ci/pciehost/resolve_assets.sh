@@ -6,19 +6,29 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/common.sh"
 sanitize_path
 
+# Prints the extracted MPK path of one Model Browser package.
+model_browser_mpk() {
+  python3 "${WORKSPACE}/scripts/ci/prepare_model_browser_fixture.py" \
+    --id "$1" --variant "$2" --output "${WORK_DIR}/assets"
+}
+
+# An explicit model variable still wins over the Model Browser package.
+if [[ -z "${SIMAPCIE_YOLOV8_MODEL:-${SIMA_MODEL_TAR:-${SIMA_YOLO_TAR:-}}}" ]]; then
+  SIMAPCIE_YOLOV8_MODEL="$(model_browser_mpk yolov8s w8a8)"
+  export SIMAPCIE_YOLOV8_MODEL
+fi
+
 "${WORKSPACE}/pcie_host/scripts/resolve_hardware_test_assets.sh" \
   --workspace "${WORKSPACE}" \
   --extras-root "${EXTRAS_DIR}" \
   --cache-dir "${WORK_DIR}/assets" \
   --env-file "${ASSET_ENV_FILE}"
 
-# The Model Zoo yolo_v8s build tessellates on the CVU and cannot serve mla_only; yolo26n INT8 can.
-(cd "${WORK_DIR}/assets" && SIMA_CLI_CHECK_FOR_UPDATE=0 sima-cli download \
-  "https://docs.sima.ai/pkg_downloads/SDK2.1.3/models/modalix/yolo26-detection/yolo26n-det-int8-b1.tar.gz")
-echo "SIMAPCIE_MLA_ONLY_MODEL=${WORK_DIR}/assets/yolo26n-det-int8-b1.tar.gz" >>"${ASSET_ENV_FILE}"
-(cd "${WORK_DIR}/assets" && SIMA_CLI_CHECK_FOR_UPDATE=0 sima-cli download \
-  "https://docs.sima.ai/pkg_downloads/SDK2.1.3/models/modalix/yolo26-detection/yolo26n-det-bf16-mla_tess-b1.tar.gz")
-echo "SIMAPCIE_MLA_ONLY_BF16_MODEL=${WORK_DIR}/assets/yolo26n-det-bf16-mla_tess-b1.tar.gz" >>"${ASSET_ENV_FILE}"
+# The mla_only tests run one INT8 and one BF16 build.
+MLA_ONLY_MODEL="$(model_browser_mpk yolo26n w8a8)"
+MLA_ONLY_BF16_MODEL="$(model_browser_mpk yolo26n w16a16)"
+echo "SIMAPCIE_MLA_ONLY_MODEL=${MLA_ONLY_MODEL}" >>"${ASSET_ENV_FILE}"
+echo "SIMAPCIE_MLA_ONLY_BF16_MODEL=${MLA_ONLY_BF16_MODEL}" >>"${ASSET_ENV_FILE}"
 
 # shellcheck disable=SC1090
 source "${ASSET_ENV_FILE}"
