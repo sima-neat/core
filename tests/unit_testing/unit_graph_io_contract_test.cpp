@@ -165,6 +165,23 @@ RUN_TEST(
       write_text(invalid_path, invalid_roi.dump());
       require_neat_error([&] { (void)Graph::load(invalid_path); }, error_codes::kIoParse,
                          "rois[0].width");
+      Graph dormant_graph("dormant_rois");
+      InputOptions dormant_input;
+      dormant_input.preprocess_meta =
+          PreprocessMetaTemplate{.enabled = false, .roi_list_enabled = true, .rois = {{}}};
+      dormant_graph.add(nodes::Input("image", dormant_input));
+      dormant_graph.add(nodes::Output("frame"));
+      const auto dormant_path = tmp_json_path("disabled_preprocessing_rois.json");
+      dormant_graph.save(dormant_path);
+      auto saved_dormant = nlohmann::json::parse(read_text(dormant_path));
+      Graph::load(dormant_path).save(dormant_path);
+      require(nlohmann::json::parse(read_text(dormant_path)) == saved_dormant,
+              "disabled preprocessing must preserve a dormant default ROI");
+      saved_dormant["nodes"][0]["input_options"]["preprocess_meta"]["enabled"] = true;
+      write_text(dormant_path, saved_dormant.dump());
+      require_neat_error([&] { (void)Graph::load(dormant_path); }, error_codes::kIoParse,
+                         "rois[0].width");
+
       const auto& meta = original_input.at("preprocess_meta");
       require(original_input.at("max_bytes") == stream_input.max_bytes &&
                   meta.at("enabled") == true && meta.at("target_width") == 320 &&

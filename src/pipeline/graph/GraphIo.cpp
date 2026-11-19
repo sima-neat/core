@@ -787,8 +787,8 @@ PreprocessMetaTemplate parse_preprocess_meta(const JsonValue::JsonObject& obj) {
       meta.rois.push_back({.batch_index = roi_number("batch_index"),
                            .x = roi_number("x"),
                            .y = roi_number("y"),
-                           .width = roi_number("width", true),
-                           .height = roi_number("height", true)});
+                           .width = roi_number("width", meta.enabled),
+                           .height = roi_number("height", meta.enabled)});
     }
   }
   return meta;
