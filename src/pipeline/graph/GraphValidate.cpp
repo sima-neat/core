@@ -361,10 +361,11 @@ GraphReport Graph::validate(const ValidateOptions& opt, const cv::Mat& input) co
   rep.pipeline_string = pipeline_internal::redact_gst_credentials(br.pipeline_string);
   enforce_mla_pipeline_guard("Graph::validate(input)", br.pipeline_string, this);
 
-  GstElement* pipeline = nullptr;
+  InputBufferPoolGuard pool_guard;
+  pipeline_internal::GstPipelinePtr pipeline;
   try {
     session_build_prepare_stage_contracts(br, "Graph::validate(input)");
-    pipeline = session_build_parse_pipeline_or_throw(br, "Graph::validate(input)");
+    pipeline.reset(session_build_parse_pipeline_or_throw(br, "Graph::validate(input)"));
   } catch (const NeatError& e) {
     GraphReport failure = e.report();
     if (failure.error_code.empty()) {
@@ -392,33 +393,34 @@ GraphReport Graph::validate(const ValidateOptions& opt, const cv::Mat& input) co
     return rep;
   }
 
-  attach_boundary_probes(pipeline, br.diag);
-  attach_stage_timing_probes(pipeline, br.diag);
-  attach_element_timing_probes(pipeline, br.diag);
-  attach_element_flow_probes(pipeline, br.diag);
+  attach_boundary_probes(pipeline.get(), br.diag);
+  attach_stage_timing_probes(pipeline.get(), br.diag);
+  attach_element_timing_probes(pipeline.get(), br.diag);
+  attach_element_flow_probes(pipeline.get(), br.diag);
 
   if (opt.enforce_names) {
-    enforce_names_contract(pipeline, br);
+    enforce_names_contract(pipeline.get(), br);
   }
 
   const std::string appsink_name = apply_name_transform(name_transform, "mysink");
-  GstElement* sink = gst_bin_get_by_name(GST_BIN(pipeline), appsink_name.c_str());
+  pipeline_internal::GstSinkPtr sink(
+      gst_bin_get_by_name(GST_BIN(pipeline.get()), appsink_name.c_str()));
   if (!sink) {
-    maybe_dump_dot(pipeline, "validate_input_missing_mysink");
+    maybe_dump_dot(pipeline.get(), "validate_input_missing_mysink");
     rep.error_code = error_codes::kPipelineShape;
     rep.repro_note =
         format_validate_note("Graph::validate(input)", rep.error_code, "appsink not found",
                              "element='" + appsink_name + "' pipeline_snippet='" +
                                  pipeline_snippet(br.pipeline_string) + "'",
                              "Ensure Output() is the final node in this Graph.");
-    stop_and_unref(pipeline);
     return rep;
   }
 
-  configure_appsink_for_input(sink);
+  configure_appsink_for_input(sink.get());
 
   const std::string appsrc_name = apply_name_transform(name_transform, "mysrc");
-  GstElement* appsrc = gst_bin_get_by_name(GST_BIN(pipeline), appsrc_name.c_str());
+  pipeline_internal::GstSinkPtr appsrc(
+      gst_bin_get_by_name(GST_BIN(pipeline.get()), appsrc_name.c_str()));
   if (!appsrc) {
     rep.error_code = error_codes::kPipelineShape;
     rep.repro_note =
@@ -426,8 +428,6 @@ GraphReport Graph::validate(const ValidateOptions& opt, const cv::Mat& input) co
                              "element='" + appsrc_name + "' pipeline_snippet='" +
                                  pipeline_snippet(br.pipeline_string) + "'",
                              "Ensure Input() is the first node in this Graph.");
-    gst_object_unref(sink);
-    stop_and_unref(pipeline);
     return rep;
   }
 
@@ -436,13 +436,13 @@ GraphReport Graph::validate(const ValidateOptions& opt, const cv::Mat& input) co
   src_opt.max_bytes = resolve_appsrc_max_bytes(src_opt, spec);
 
   GstCaps* caps = caps_from_spec(spec);
-  gst_app_src_set_caps(GST_APP_SRC(appsrc), caps);
+  gst_app_src_set_caps(GST_APP_SRC(appsrc.get()), caps);
   gst_caps_unref(caps);
 
-  configure_appsrc(appsrc, src_opt);
+  configure_appsrc(appsrc.get(), src_opt);
 
   try {
-    set_state_or_throw(pipeline, GST_STATE_PAUSED, "Graph::validate(input)", br.diag);
+    set_state_or_throw(pipeline.get(), GST_STATE_PAUSED, "Graph::validate(input)", br.diag);
   } catch (const NeatError& e) {
     rep = e.report();
     if (rep.error_code.empty()) {
@@ -451,9 +451,6 @@ GraphReport Graph::validate(const ValidateOptions& opt, const cv::Mat& input) co
     rep.repro_note = format_validate_note(
         "Graph::validate(input)", rep.error_code, "failed to PAUSE/preroll", rep.repro_note,
         "Inspect bus diagnostics and offending caps negotiation near the first GST ERROR.");
-    gst_object_unref(appsrc);
-    gst_object_unref(sink);
-    stop_and_unref(pipeline);
     return rep;
   }
 
@@ -462,7 +459,6 @@ GraphReport Graph::validate(const ValidateOptions& opt, const cv::Mat& input) co
     contiguous = input.clone();
   }
 
-  InputBufferPoolGuard pool_guard;
   GstBuffer* buf = allocate_input_buffer(spec.required_bytes_actual, src_opt, pool_guard);
   if (!buf) {
     rep.error_code = error_codes::kInputShape;
@@ -470,9 +466,6 @@ GraphReport Graph::validate(const ValidateOptions& opt, const cv::Mat& input) co
         "Graph::validate(input)", rep.error_code, "failed to allocate GstBuffer",
         "required_bytes=" + std::to_string(spec.required_bytes_actual),
         "Increase max_input_bytes/pool sizing or reduce input resolution.");
-    gst_object_unref(appsrc);
-    gst_object_unref(sink);
-    stop_and_unref(pipeline);
     return rep;
   }
 
@@ -484,9 +477,6 @@ GraphReport Graph::validate(const ValidateOptions& opt, const cv::Mat& input) co
         format_validate_note("Graph::validate(input)", rep.error_code, "failed to map GstBuffer",
                              "required_bytes=" + std::to_string(spec.required_bytes_actual),
                              "Check allocator compatibility and GstBuffer memory type.");
-    gst_object_unref(appsrc);
-    gst_object_unref(sink);
-    stop_and_unref(pipeline);
     return rep;
   }
   const size_t contiguous_bytes =
@@ -502,9 +492,6 @@ GraphReport Graph::validate(const ValidateOptions& opt, const cv::Mat& input) co
     rep.repro_note = format_validate_note(
         "Graph::validate(input)", rep.error_code, "input frame smaller than required bytes",
         oss.str(), "Ensure InputOptions format/size match the provided cv::Mat.");
-    gst_object_unref(appsrc);
-    gst_object_unref(sink);
-    stop_and_unref(pipeline);
     return rep;
   }
   std::memcpy(mi.data, contiguous.data, spec.required_bytes_actual);
@@ -518,9 +505,6 @@ GraphReport Graph::validate(const ValidateOptions& opt, const cv::Mat& input) co
       rep.repro_note = format_validate_note(
           "Graph::validate(input)", rep.error_code, "failed to attach video meta",
           "detail='" + meta_err + "'", "Check video caps/format and plane layout compatibility.");
-      gst_object_unref(appsrc);
-      gst_object_unref(sink);
-      stop_and_unref(pipeline);
       return rep;
     }
     buf = meta_buf;
@@ -533,13 +517,10 @@ GraphReport Graph::validate(const ValidateOptions& opt, const cv::Mat& input) co
     rep.repro_note = format_validate_note(
         "Graph::validate(input)", rep.error_code, "failed to attach GstSimaMeta",
         "resolved_simaai_memory=true", "Verify SimaAI allocator/buffer-pool runtime availability.");
-    gst_object_unref(appsrc);
-    gst_object_unref(sink);
-    stop_and_unref(pipeline);
     return rep;
   }
 
-  const GstFlowReturn push_ret = gst_app_src_push_buffer(GST_APP_SRC(appsrc), buf);
+  const GstFlowReturn push_ret = gst_app_src_push_buffer(GST_APP_SRC(appsrc.get()), buf);
   if (push_ret != GST_FLOW_OK) {
     gst_buffer_unref(buf);
     const char* flow_name = gst_flow_get_name(push_ret);
@@ -553,20 +534,19 @@ GraphReport Graph::validate(const ValidateOptions& opt, const cv::Mat& input) co
     rep.error_code = error_codes::kCaps;
     rep.repro_note = format_validate_note("Graph::validate(input)", rep.error_code,
                                           "appsrc push failed", details.str(), hint);
-    gst_object_unref(appsrc);
-    gst_object_unref(sink);
-    stop_and_unref(pipeline);
     return rep;
   }
-  gst_app_src_end_of_stream(GST_APP_SRC(appsrc));
+  gst_app_src_end_of_stream(GST_APP_SRC(appsrc.get()));
 
   const int timeout_ms = resolve_validate_timeout_ms(opt, 10000);
 
   GstSample* sample = nullptr;
 #if GST_CHECK_VERSION(1, 10, 0)
-  sample = gst_app_sink_try_pull_preroll(GST_APP_SINK(sink), (guint64)timeout_ms * GST_MSECOND);
+  sample =
+      gst_app_sink_try_pull_preroll(GST_APP_SINK(sink.get()), (guint64)timeout_ms * GST_MSECOND);
 #else
-  sample = gst_app_sink_try_pull_sample(GST_APP_SINK(sink), (guint64)timeout_ms * GST_MSECOND);
+  sample =
+      gst_app_sink_try_pull_sample(GST_APP_SINK(sink.get()), (guint64)timeout_ms * GST_MSECOND);
 #endif
   if (sample)
     gst_sample_unref(sample);
@@ -577,9 +557,6 @@ GraphReport Graph::validate(const ValidateOptions& opt, const cv::Mat& input) co
                           : "validate(input): preroll timed out in PAUSED.";
   rep.error_code = sample ? "" : std::string(error_codes::kRuntimePull);
 
-  gst_object_unref(appsrc);
-  gst_object_unref(sink);
-  stop_and_unref(pipeline);
   return rep;
 }
 

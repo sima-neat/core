@@ -1,6 +1,7 @@
 #include <gstsimaaitensorbuffer_meta.h>
 #include "pipeline/ErrorCodes.h"
 #include "gst/GstInit.h"
+#include "nodes/io/Input.h"
 #include "pipeline/NeatError.h"
 #include "pipeline/graph/internal/GraphBuildInternal.h"
 #include "pipeline/graph/internal/GraphTestHooks.h"
@@ -10,6 +11,7 @@
 #include "test_utils.h"
 
 #include <gst/gst.h>
+#include <opencv2/core.hpp>
 #include <simaai/scheduler/client/kernel.h>
 
 #include <array>
@@ -66,6 +68,22 @@ void reset_observation() {
 
 void assert_closed() {
   require(created == 1 && finalized == 1, "every parsed probe must finalize on the cold exit");
+}
+
+void check_invalid_dma_pool_releases_validation_pipeline(int minimum, int maximum) {
+  reset_observation();
+  InputOptions options;
+  options.memory_policy = InputMemoryPolicy::Ev74;
+  options.pool_min_buffers = minimum;
+  options.pool_max_buffers = maximum;
+  Graph graph;
+  graph.add(nodes::Input(options));
+  // The unlinked probe finalizes when the validation pipeline releases its children.
+  graph.custom("appsink name=mysink coreownershipprobe name=ownership");
+  const cv::Mat frame(2, 2, CV_8UC3, cv::Scalar::all(0));
+  require_neat_error([&] { (void)graph.validate({}, frame); }, error_codes::kOptionOutOfRange,
+                     "pool_min_buffers");
+  assert_closed();
 }
 
 struct OriginalFactoryException final : std::runtime_error {
@@ -207,6 +225,8 @@ RUN_TEST("unit_graph_build_ownership_test", ([] {
            require(gst_element_register(nullptr, "coreownershipprobe", GST_RANK_NONE,
                                         ownership_probe_get_type()),
                    "ownership probe factory registration must succeed");
+           check_invalid_dma_pool_releases_validation_pipeline(0, 0);
+           check_invalid_dma_pool_releases_validation_pipeline(3, 2);
            const std::array points{session_test::CompositionFailurePoint::PipelineBeforeManifest,
                                    session_test::CompositionFailurePoint::PipelinePrepared};
            for (const auto point : points) {
