@@ -43,6 +43,7 @@ struct NormalizedDiagnostic {
 RawGstError parse_gst_error_message(GstMessage* message);
 /// Remove credentials without truncating report-facing pipeline or diagnostic text.
 std::string redact_gst_credentials(std::string text);
+std::string http_origin(const char* location);
 std::string sanitize_gst_diagnostic_text(std::string text);
 NormalizedDiagnostic classify_gst_error(RawGstError raw);
 NormalizedDiagnostic classify_gst_parse_error(const GError* error,

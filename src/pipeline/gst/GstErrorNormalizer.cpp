@@ -57,7 +57,8 @@ std::string value_to_string(const GValue* value) {
   return out;
 }
 
-std::size_t redact_secret_value(std::string& value, std::size_t begin, bool line_value) {
+std::size_t redact_secret_value(std::string& value, std::size_t begin, bool line_value,
+                                bool use_http_origin = false) {
   const auto skip_inline_space = [&]() {
     while (begin < value.size() && std::isspace(static_cast<unsigned char>(value[begin])) &&
            value[begin] != '\r' && value[begin] != '\n') {
@@ -109,11 +110,14 @@ std::size_t redact_secret_value(std::string& value, std::size_t begin, bool line
       ++candidate;
     }
   } else {
-    end = value.find_first_of(line_value ? "\r\n" : "&,; \t\r\n'\"", content_begin);
+    const char* delimiters = line_value ? "\r\n" : "&,; \t\r\n'\"";
+    end = value.find_first_of(use_http_origin ? " \t\r\n'\"" : delimiters, content_begin);
   }
-  value.replace(content_begin, (end == std::string::npos ? value.size() : end) - content_begin,
-                "<redacted>");
-  return content_begin + std::string("<redacted>").size();
+  const std::size_t length = (end == std::string::npos ? value.size() : end) - content_begin;
+  const std::string replacement =
+      use_http_origin ? http_origin(value.substr(content_begin, length).c_str()) : "<redacted>";
+  value.replace(content_begin, length, replacement);
+  return content_begin + replacement.size();
 }
 
 bool looks_like_basic_credentials(const std::string& value, std::size_t begin) {
@@ -222,6 +226,14 @@ std::optional<std::size_t> find_uri_authority_start(const std::string& value,
 }
 
 std::string redact_uri_credentials(std::string value) {
+  // The generated launch string is also exposed in the structured report and reproduction hint.
+  for (auto pos = value.find("souphttpsrc "); pos != std::string::npos;
+       pos = value.find("souphttpsrc ", pos)) {
+    pos += sizeof("souphttpsrc ") - 1;
+    const auto location = value.find(" location=", pos - 1);
+    if (location != std::string::npos && location < value.find(" ! ", pos))
+      pos = redact_secret_value(value, location + sizeof(" location=") - 1, false, true);
+  }
   std::size_t search_from = 0;
   while (true) {
     const std::optional<std::size_t> authority_start = find_uri_authority_start(value, search_from);
@@ -1320,26 +1332,69 @@ std::string sanitize_gst_diagnostic_text(std::string text) {
   return truncate(std::move(text), 16384);
 }
 
+std::string http_origin(const char* location) {
+  g_autoptr(GUri) uri = location ? g_uri_parse(location, G_URI_FLAGS_NONE, nullptr) : nullptr;
+  const char* host = uri ? g_uri_get_host(uri) : nullptr;
+  const char* scheme = uri ? g_uri_get_scheme(uri) : nullptr;
+  if (!host || !*host || !scheme ||
+      (g_ascii_strcasecmp(scheme, "http") && g_ascii_strcasecmp(scheme, "https")))
+    return {};
+  g_autofree gchar* origin = g_uri_join(G_URI_FLAGS_NONE, scheme, nullptr, host,
+                                        g_uri_get_port(uri), "", nullptr, nullptr);
+  return origin;
+}
+
 NormalizedDiagnostic classify_gst_error(RawGstError raw) {
+  const std::string text = combined_raw(raw);
   if (raw.factory_name == "souphttpsrc") {
-    for (const char* key : {"source-identity", "source_identity", "location", "uri"}) {
-      auto it = raw.details.find(key);
-      if (it == raw.details.end())
-        continue;
-      g_autoptr(GUri) uri = g_uri_parse(it->second.c_str(), G_URI_FLAGS_NONE, nullptr);
-      const char* host = uri ? g_uri_get_host(uri) : nullptr;
-      const char* scheme = uri ? g_uri_get_scheme(uri) : nullptr;
-      if (host && *host && scheme &&
-          (!g_ascii_strcasecmp(scheme, "http") || !g_ascii_strcasecmp(scheme, "https"))) {
-        g_autofree gchar* endpoint = g_uri_join(G_URI_FLAGS_NONE, scheme, nullptr, host,
-                                                g_uri_get_port(uri), "", nullptr, nullptr);
-        it->second = endpoint;
-      } else {
-        it->second.clear();
+    const bool invalid_url = raw.domain_name == "gst-resource-error-quark" &&
+                             raw.code == GST_RESOURCE_ERROR_OPEN_READ &&
+                             contains_ci(raw.message, "error parsing url");
+    const bool stream_stopped = raw.domain_name == "gst-stream-error-quark" &&
+                                raw.code == GST_STREAM_ERROR_FAILED &&
+                                contains_ci(raw.debug, "streaming stopped, reason error");
+
+    const auto origin = http_origin(
+        find_structured_detail(raw, {"source-identity", "source_identity", "location", "uri"})
+            .value_or("")
+            .c_str());
+    const auto status_text = find_structured_detail(raw, {"http-status-code"});
+    guint64 status = 0;
+    const bool valid_status = status_text && g_ascii_string_to_unsigned(status_text->c_str(), 10,
+                                                                        100, 599, &status, nullptr);
+    // Provider text and nested header structures may contain private request/redirect data.
+    raw.message.clear();
+    raw.debug.clear();
+    raw.details.clear();
+    if (!origin.empty())
+      raw.details.emplace("source-identity", origin);
+    if (valid_status)
+      raw.details.emplace("http-status-code", std::to_string(status));
+    if (raw.domain_name == "gst-resource-error-quark") {
+      if (raw.code == GST_RESOURCE_ERROR_NOT_AUTHORIZED)
+        return authentication_failed(std::move(raw));
+      if (valid_status && status >= 400) {
+        auto out = base(std::move(raw), error_codes::kIoOpen, "http.error_response",
+                        "The HTTP server returned an error response.");
+        add_fact(out, "HTTP status", std::to_string(status));
+        add_fact(out, "Source", origin);
+        out.actions = {status >= 500 ? "Check the server and retry the request."
+                                     : "Check the requested URL and the server's response."};
+        return out;
       }
     }
+    if (invalid_url || stream_stopped) {
+      auto out = base(std::move(raw), error_codes::kIoOpen,
+                      invalid_url ? "http.invalid_url" : "http.read_failed",
+                      invalid_url ? "The HTTP source URL is invalid."
+                                  : "The HTTP stream could not be read.");
+      add_fact(out, "Source", origin);
+      out.actions = {invalid_url
+                         ? "Set the source URL to a complete http:// or https:// address."
+                         : "Check the URL, port, and HTTP server availability from the DevKit."};
+      return out;
+    }
   }
-  const std::string text = combined_raw(raw);
   const std::string diagnostic_id =
       find_detail(raw, {"neat-diagnostic-id", "neat_diagnostic_id", "diagnostic_id"}).value_or("");
   const std::string reason =
@@ -1407,37 +1462,6 @@ NormalizedDiagnostic classify_gst_error(RawGstError raw) {
   if (raw.domain_name == "gst-resource-error-quark" &&
       raw.code == GST_RESOURCE_ERROR_NOT_AUTHORIZED && remote_source(raw)) {
     return authentication_failed(std::move(raw));
-  }
-  if (raw.factory_name == "souphttpsrc") {
-    if (raw.domain_name == "gst-resource-error-quark") {
-      const auto status = find_integer(raw, {"http-status-code"});
-      if (status && *status >= 400 && *status <= 599) {
-        auto out = base(std::move(raw), error_codes::kIoOpen, "http.error_response",
-                        "The HTTP server returned an error response.");
-        add_fact(out, "HTTP status", std::to_string(*status));
-        add_fact(out, "Source", find_detail(out.raw, {"source-identity"}).value_or(""));
-        out.actions = {*status >= 500 ? "Check the server and retry the request."
-                                      : "Check the requested URL and the server's response."};
-        return out;
-      }
-    }
-    const bool invalid_url = raw.domain_name == "gst-resource-error-quark" &&
-                             raw.code == GST_RESOURCE_ERROR_OPEN_READ &&
-                             contains_ci(raw.message, "error parsing url");
-    const bool stream_stopped = raw.domain_name == "gst-stream-error-quark" &&
-                                raw.code == GST_STREAM_ERROR_FAILED &&
-                                contains_ci(raw.debug, "streaming stopped, reason error");
-    if (invalid_url || stream_stopped) {
-      auto out = base(std::move(raw), error_codes::kIoOpen,
-                      invalid_url ? "http.invalid_url" : "http.read_failed",
-                      invalid_url ? "The HTTP source URL is invalid."
-                                  : "The HTTP stream could not be read.");
-      add_fact(out, "Source", find_detail(out.raw, {"source-identity"}).value_or(""));
-      out.actions = {invalid_url
-                         ? "Set the source URL to a complete http:// or https:// address."
-                         : "Check the URL, port, and HTTP server availability from the DevKit."};
-      return out;
-    }
   }
   if (raw.factory_name == "multipartdemux" && raw.domain_name == "gst-stream-error-quark" &&
       raw.code == GST_STREAM_ERROR_DEMUX &&

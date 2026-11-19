@@ -443,6 +443,32 @@ std::string gst_message_to_string(GstMessage* msg) {
   const GstMessageType t = GST_MESSAGE_TYPE(msg);
   ss << gst_message_type_get_name(t);
 
+  const GstStructure* st = gst_message_get_structure(msg);
+  if (t == GST_MESSAGE_ELEMENT && st && gst_structure_has_name(st, "http-headers")) {
+    ss << " http-headers";
+    const auto origin = http_origin(gst_structure_get_string(st, "uri"));
+    if (!origin.empty())
+      ss << " origin=" << origin;
+    guint status = 0;
+    if (gst_structure_get_uint(st, "http-status-code", &status) && status >= 100 && status <= 599)
+      ss << " status=" << status;
+    return ss.str();
+  }
+
+  if (t == GST_MESSAGE_ERROR || t == GST_MESSAGE_WARNING || t == GST_MESSAGE_INFO) {
+    auto* source = GST_MESSAGE_SRC(msg);
+    auto* factory = GST_IS_ELEMENT(source) ? gst_element_get_factory(GST_ELEMENT(source)) : nullptr;
+    if (factory && g_strcmp0(GST_OBJECT_NAME(factory), "souphttpsrc") == 0) {
+      if (t == GST_MESSAGE_ERROR) {
+        const auto diagnostic = classify_gst_error(parse_gst_error_message(msg));
+        ss << ": " << diagnostic.title << " [" << diagnostic.diagnostic_id << "]";
+        for (const auto& fact : diagnostic.facts)
+          ss << " " << fact.label << "=" << fact.value;
+      }
+      return ss.str();
+    }
+  }
+
   if (t == GST_MESSAGE_ERROR) {
     GError* e = nullptr;
     gchar* dbg = nullptr;
@@ -505,7 +531,6 @@ std::string gst_message_to_string(GstMessage* msg) {
     return ss.str();
   }
 
-  const GstStructure* st = gst_message_get_structure(msg);
   if (st)
     ss << " " << gst_structure_to_string_safe(st);
   return ss.str();

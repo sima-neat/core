@@ -2,12 +2,14 @@
 #define SIMA_NEAT_INTERNAL 1
 #endif
 
+#include "gst/GstBusWatch.h"
 #include "pipeline/ErrorCodes.h"
 #include "pipeline/NeatError.h"
 #include "pipeline/gst/InputStreamInternal.h"
 #include "pipeline/internal/Diagnostics.h"
 #include "pipeline/internal/ErrorUtil.h"
 #include "pipeline/internal/GstErrorNormalizer.h"
+#include "pipeline/internal/GstDiagnosticsUtil.h"
 #include "pipeline/runtime/RunCore.h"
 #include "test_main.h"
 #include "test_utils.h"
@@ -275,11 +277,44 @@ RUN_TEST(
         response.details["http-status-code"] = "410";
         response.details["source-identity"] =
             "https://user:secret@camera.test:8443/private?x-vendor=opaque";
+        response.message = "Gone: provider-private-reason";
+        response.debug = "redirected to https://example.test/private-redirect";
+        response.details["x-internal-route"] = "private-header";
         const auto gone = classify_gst_error(response);
         const auto body = render_diagnostic_body(gone, false);
         require_contains(body, "https://camera.test:8443", "HTTP endpoint");
-        for (const char* hidden : {"user", "secret", "private", "x-vendor", "opaque"})
-          require(body.find(hidden) == std::string::npos, "HTTP endpoint leaked private URL data");
+        for (const auto& rendered : {body, render_diagnostic_body(gone, true)})
+          for (const char* hidden : {"secret", "private", "x-vendor", "opaque", "x-internal-route"})
+            require(rendered.find(hidden) == std::string::npos,
+                    "HTTP diagnostic leaked private data");
+
+        // souphttpsrc posts headers separately from its error. Exercise the real bus history
+        // and report serialization, including the launch fragment copied into reproduction hints.
+        auto* pipeline = gst_pipeline_new("http");
+        auto diag = std::make_shared<DiagCtx>();
+        const auto& uri = response.details.at("source-identity");
+        diag->pipeline_string = "souphttpsrc name=http location=\"" + uri + "\" ! fakesink";
+        auto* headers = gst_structure_new("response-headers", "X-Camera", G_TYPE_STRING,
+                                          "private-header", nullptr);
+        auto* fields = gst_structure_new("http-headers", "uri", G_TYPE_STRING, uri.c_str(),
+                                         "http-status-code", G_TYPE_UINT, 410U, "redirection-uri",
+                                         G_TYPE_STRING, "https://example.test/private-redirect",
+                                         "response-headers", GST_TYPE_STRUCTURE, headers, nullptr);
+        gst_structure_free(headers);
+        auto* message = gst_message_new_element(GST_OBJECT(pipeline), fields);
+        const auto public_line = simaai::neat::gst_message_to_string(message);
+        require(gst_element_post_message(pipeline, message), "posting HTTP headers failed");
+        pipeline_internal::drain_bus(pipeline, diag);
+        gst_object_unref(pipeline);
+        const auto report = diag->snapshot_basic();
+        require(report.bus.size() == 1, "expected one HTTP headers message");
+        require_contains(report.bus.front().detail, "status=410",
+                         "missing HTTP status in bus history");
+        for (const auto& rendered : {public_line, report.bus.front().detail, report.to_json()}) {
+          require_contains(rendered, "https://camera.test:8443", "missing HTTP origin");
+          for (const char* hidden : {"user:", "secret", "private", "x-vendor", "opaque"})
+            require(rendered.find(hidden) == std::string::npos, "HTTP report leaked private data");
+        }
         require_contains(render_diagnostic_body(gone, false), "HTTP status: 410",
                          "HTTP error response");
         require(diagnostic_priority(gone) > diagnostic_priority(fallback),
@@ -459,6 +494,7 @@ RUN_TEST(
         RawGstError raw = raw_error("souphttpsrc", "gst-resource-error-quark",
                                     GST_RESOURCE_ERROR_NOT_AUTHORIZED, "Unauthorized");
         raw.details["location"] = "https://example.test/private-stream";
+        raw.details["http-status-code"] = "401";
         const NormalizedDiagnostic diagnostic = classify_gst_error(std::move(raw));
         require_code(diagnostic, error_codes::kIoOpen);
         require(diagnostic.diagnostic_id == "gstreamer.authentication_failed",
@@ -466,6 +502,7 @@ RUN_TEST(
         const std::string text = render_diagnostic_body(diagnostic, false);
         require_contains(text, "Verify the username, password, token",
                          "remote authorization failures should provide credential guidance");
+        require_contains(text, "HTTP status: 401", "HTTP authentication status");
         require(text.find("application user") == std::string::npos,
                 "remote authorization failures must not recommend local file permissions");
       }
