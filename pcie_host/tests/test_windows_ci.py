@@ -1493,7 +1493,7 @@ class WindowsCiContracts(unittest.TestCase):
       environment = {
           **os.environ, "PATH": f"{tools}{os.pathsep}{os.environ['PATH']}",
           "FAKE_S3": str(bucket), "ARTIFACT_BUCKET": "neat-artifacts",
-          "CLOUDFRONT_DISTRIBUTION_ID": "E123", "REF_NAME": "v0.6.2",
+          "CLOUDFRONT_DISTRIBUTION_ID": "E123", "REF_NAME": "v0.6.2", "REF_TYPE": "tag",
           "SSE_KMS_KEY_ID": "", "GITHUB_SHA": commit, "RUNNER_TEMP": str(root / "runner"),
       }
 
@@ -1530,6 +1530,62 @@ class WindowsCiContracts(unittest.TestCase):
       fetched = RELEASE.fetch_release(
           lambda key: (bucket / key).read_bytes(), "v0.6.2", commit, root / "fetched")
       self.assertEqual(fetched.resources, candidate.resources)
+
+  @unittest.skipIf(os.name == "nt", WORKFLOW_BASH_SKIP)
+  def test_branch_build_publishes_beside_the_branch_ubuntu_packages(self):
+    main = MAIN_WORKFLOW.read_text(encoding="utf-8")
+    publish = workflow_job(main, "publish-pciehost-package")
+    step = workflow_step(publish, "Publish Windows PCIe host packages")
+    self.assertIn("if: ${{ github.ref_type == 'branch' }}", step)
+    self.assertIn("REF_TYPE: branch", step)
+    self.assertIn("if: ${{ github.ref_type == 'branch' }}",
+                  workflow_step(publish, "Download this run's Windows PCIe host cohort"))
+    script = textwrap.dedent(step.split("        run: |\n", 1)[1])
+    with tempfile.TemporaryDirectory() as directory:
+      root = Path(directory)
+      candidate_root = root / "runner" / "core-windows-candidate"
+      candidate_root.mkdir(parents=True)
+      commit, _, _ = self.windows_candidate(candidate_root)
+      tools = root / "bin"
+      tools.mkdir()
+      (tools / "aws").write_text(textwrap.dedent("""\
+          #!/bin/bash
+          set -e
+          echo "$*" >> "$FAKE_S3.log"
+          [[ "$1 $2" == "s3 cp" ]] || exit 0
+          if [[ "$3" == s3://* ]]; then cat "$FAKE_S3/${3#s3://*/}"; exit; fi
+          mkdir -p "$(dirname "$FAKE_S3/${4#s3://*/}")"
+          cp "$3" "$FAKE_S3/${4#s3://*/}"
+          """))
+      (tools / "aws").chmod(0o755)
+      bucket = root / "bucket"
+      environment = {
+          **os.environ, "PATH": f"{tools}{os.pathsep}{os.environ['PATH']}",
+          "FAKE_S3": str(bucket), "ARTIFACT_BUCKET": "neat-artifacts",
+          "CLOUDFRONT_DISTRIBUTION_ID": "", "REF_NAME": "codex/1074-windows-pcie",
+          "REF_TYPE": "branch", "SSE_KMS_KEY_ID": "", "GITHUB_SHA": commit,
+          "RUNNER_TEMP": str(root / "runner"),
+      }
+      # No latest.tag yet: promote-latest-tag names the commit after the gates, as on Linux.
+      result = subprocess.run([shutil.which("bash"), "-c", script], cwd=ROOT,
+                              capture_output=True, text=True, env=environment)
+      self.assertEqual(result.returncode, 0, result.stderr)
+      prefix = "core/codex%2F1074-windows-pcie/cccccccccccc/pciehost/windows/amd64"
+      self.assertEqual(RELEASE.package_prefix("codex/1074-windows-pcie", commit), prefix)
+      published = {path.relative_to(bucket).as_posix() for path in bucket.rglob("*")
+                   if path.is_file()}
+      self.assertIn(f"{prefix}/metadata.json", published)
+      self.assertTrue(all(name.startswith(prefix + "/") for name in published))
+      self.assertTrue(Path(f"{bucket}.log").read_text().splitlines()[-1].endswith(
+          f"s3://neat-artifacts/{prefix}/metadata.json --content-type application/json "
+          "--sse aws:kms"))
+      fetched = RELEASE.fetch_release(
+          lambda key: (bucket / key).read_bytes(), "codex/1074-windows-pcie", commit,
+          root / "fetched", require_latest=False)
+      self.assertEqual(fetched.resources, validate_candidate(candidate_root).resources)
+      with self.assertRaisesRegex(ValueError, "branch or tag"):
+        RELEASE.publication_plan(
+            lambda key: b"", "develop", commit, candidate_root, ref_type="pull_request")
 
   def test_producer_and_qualifier_accept_inbox_windows_powershell(self):
     inbox = "C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe"
@@ -3739,6 +3795,46 @@ install() {
       self.assertNotIn("ssh.exe", completed.stdout)
       run.assert_called_once_with(["ssh.exe", "host", "true"], log, timeout=30)
 
+  @unittest.skipIf(os.name == "nt", WORKFLOW_BASH_SKIP)
+  def test_card_platform_check_applies_the_linux_card_lane_rule(self):
+    with tempfile.TemporaryDirectory() as directory:
+      root = Path(directory)
+      manifest = root / "manifest.json"
+      manifest.write_text(json.dumps({"platform-version": "3.0.1+B2798"}), encoding="utf-8")
+      self.assertEqual(HARDWARE.require_card_platform("3.0.1", manifest), "3.0.1")
+      with self.assertRaisesRegex(
+          RuntimeError, "platform 3.0.0 is incompatible with package platform 3.0.1"):
+        HARDWARE.require_card_platform("3.0.0", manifest)
+      with self.assertRaisesRegex(RuntimeError, "does not define DISTRO_VERSION"):
+        HARDWARE.require_card_platform("", manifest)
+      self.assertIn(
+          'require_card_platform(\n          baseline["platform_version"], '
+          'args.source_root / "deps" / "manifest.json")',
+          (SCRIPT_DIR / "qualify_windows_hardware.py").read_text(encoding="utf-8"))
+
+      # The card-side read is the Linux script's awk program.
+      args = card_args(root, include_genai=False)
+      commands = []
+      with mock.patch("qualify_windows_hardware.run_logged",
+                      side_effect=lambda command, *_a, **_k: commands.append(command[-1])
+                      or (_ for _ in ()).throw(RuntimeError("stop"))):
+        with self.assertRaisesRegex(RuntimeError, "stop"):
+          card_snapshot(args, root, "baseline")
+      read = re.search(r"printf 'platform_version='; (awk .*?/etc/buildinfo)", commands[0])[1]
+      linux = (ROOT / "scripts/ci/pciehost/check_card_compatibility.sh").read_text(
+          encoding="utf-8")
+      self.assertIn("DISTRO_VERSION[[:space:]]*", linux)
+      for text, expected in (("DISTRO_VERSION = 3.0.1\n", "3.0.1"),
+                             ("  DISTRO_VERSION=3.0.1 \nOTHER=1\n", "3.0.1"),
+                             ("SIMA_BUILD_VERSION=3.0.0_master\n", "")):
+        with self.subTest(buildinfo=text):
+          buildinfo = root / "buildinfo"
+          buildinfo.write_text(text, encoding="utf-8")
+          result = subprocess.run(
+              [shutil.which("bash"), "-c", read.replace("/etc/buildinfo", str(buildinfo))],
+              capture_output=True, text=True, check=True)
+          self.assertEqual(result.stdout.strip(), expected)
+
   def test_card_snapshot_records_platform_3_build_identity(self):
     with tempfile.TemporaryDirectory() as directory:
       root = Path(directory)
@@ -3747,7 +3843,7 @@ install() {
       def write_snapshot(command, log, **_kwargs):
         text = (
             "machine=aarch64\nplatform_release=3.0.0_master_B2501\n"
-            f"platform_sha256={'1' * 64}\nfirmware=modalix-cvu-fw\n"
+            f"platform_sha256={'1' * 64}\nplatform_version=3.0.1\nfirmware=modalix-cvu-fw\n"
             "remoteproc_state=running\nworkers=0\ngenai_workers=0\n")
         if "runtime_sha256" in command[-1]:
           text += f"runtime_sha256={'2' * 64}\nworker_sha256={'3' * 64}\n"
@@ -3760,6 +3856,7 @@ install() {
         snapshot = card_snapshot(args, root, "baseline")
       self.assertEqual(snapshot["platform_release"], "3.0.0_master_B2501")
       self.assertEqual(snapshot["platform_sha256"], "1" * 64)
+      self.assertEqual(snapshot["platform_version"], "3.0.1")
       with mock.patch(
           "qualify_windows_hardware.run_logged", side_effect=write_snapshot):
         active = card_snapshot(
@@ -4125,6 +4222,44 @@ class HostedWindowsBuildContracts(unittest.TestCase):
           json.dumps({"platform_version": "3.0.0.2"}), encoding="utf-8")
       with self.assertRaisesRegex(ValueError, "no Platform runtime DLLs"):
         HARDWARE.verify_platform_runtime(candidate, runtime)
+
+  def test_card_lane_reuses_the_matrix_cohort_from_vulcan_ci(self):
+    for name, path in (
+        ("core-pciehost-windows-dependencies", "${{ runner.temp }}/core-windows-dependencies"),
+        ("core-pciehost-windows-amd64", "${{ runner.temp }}/core-windows-dist/*")):
+      with self.subTest(artifact=name):
+        self.assertIn(f"          name: {name}\n          path: {path}\n", self.matrix)
+        self.assertIn(f"          name: {name}\n", workflow_job(self.windows, "hardware"))
+    self.assertIn("&& inputs.linux_current_run != true",
+                  job_condition(self.windows, "dependencies"))
+    self.assertIn("linux_current_run: true", workflow_job(self.main, "test-pciehost-windows"))
+    condition = job_condition(self.windows, "hardware")
+    upstream = {"needs.linux_release.result": "success", "needs.card_candidate.result": "success",
+                "needs.resolve-vulcan-config.result": "success", "cancelled()": False}
+    for current_run, native, runs in (
+        (True, "skipped", True), (False, "skipped", False), (False, "success", True),
+        (True, "failure", False), (False, "failure", False)):
+      with self.subTest(linux_current_run=current_run, native=native):
+        self.assertEqual(evaluate_actions_expression(condition, {
+            **upstream, "inputs.linux_current_run": current_run,
+            "needs.native.result": native}), runs)
+    # The matrix honours the same sima-cli selector the card lane would have.
+    resolve = workflow_step(self.matrix, "Resolve the Windows dependency cohort")
+    self.assertIn('"--sima-cli-candidate", "$env:RUNNER_TEMP\\sima-cli-override"', resolve)
+    for name in ("Admit exact sima-cli candidate", "Download exact sima-cli candidate"):
+      self.assertIn("if: inputs.sima_cli_run_id != '' && matrix.distro == 'windows'",
+                    workflow_step(self.matrix, name))
+
+  def test_receipt_records_the_hosted_toolchain(self):
+    environment = {"VSCMD_VER": "17.14.4", "VCToolsVersion": "14.44.35207",
+                   "WindowsSDKVersion": "10.0.26100.0\\", "ImageOS": "win25",
+                   "ImageVersion": "20261110.1"}
+    with mock.patch.dict(os.environ, environment, clear=False):
+      self.assertEqual(MODULE.toolchain_identity(), {
+          "visual_studio": "17.14.4", "msvc_tools": "14.44.35207",
+          "windows_sdk": "10.0.26100.0", "runner_image": "win25",
+          "runner_image_version": "20261110.1"})
+    self.assertIn("**toolchain_identity()", SCRIPT.read_text(encoding="utf-8"))
 
   def test_windows_build_failure_fails_promotion_and_validation(self):
     # A failed Windows entry fails the matrix job, which publication metadata,

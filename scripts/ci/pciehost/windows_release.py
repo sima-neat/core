@@ -66,19 +66,24 @@ def customer_target(ref: str) -> str:
 
 
 def publication_plan(read: Callable[[str], bytes], ref: str, commit: str,
-                     directory: Path) -> tuple[str, list[Path]]:
+                     directory: Path, *, ref_type: str = "tag") -> tuple[str, list[Path]]:
   """Return the upload prefix and files: resources first, metadata.json last.
 
-  Only what sima-cli downloads is published. ``read`` must already resolve
-  ``latest.tag`` to this commit: Vulcan CI promotes the tag channel after the
-  Linux release, and the Windows files join that same commit directory.
+  Only what sima-cli downloads is published. A branch build publishes beside
+  the branch's Ubuntu packages before promotion, as they do. A tag is published
+  only by the qualified release dispatch: ``read`` must already resolve its
+  ``latest.tag`` to this commit, because Vulcan CI promotes the tag channel
+  after the Linux release and the Windows files join that commit directory.
   """
   package = validate_published_package(directory, allow_unlisted=True)
-  require_release_ref("tag", ref, package.metadata["version"])
+  if ref_type == "tag":
+    require_release_ref("tag", ref, package.metadata["version"])
+  elif ref_type != "branch":
+    raise ValueError(f"Windows packages publish from a branch or tag, not {ref_type!r}")
   if package.core_commit != commit:
-    raise ValueError(f"qualified Windows release names commit {package.core_commit}, "
-                     f"not {commit}")
-  _require_latest(read, ref, commit)
+    raise ValueError(f"Windows package names commit {package.core_commit}, not {commit}")
+  if ref_type == "tag":
+    _require_latest(read, ref, commit)
   names = package.metadata["resources"]
   files = [package.root / name for name in names]
   files += [path for path in (package.root / f"{name}.sha256" for name in names)
@@ -94,11 +99,12 @@ def _require_latest(read: Callable[[str], bytes], ref: str, commit: str) -> None
 
 
 def fetch_release(read: Callable[[str], bytes], ref: str, commit: str, output: Path,
-                  *, metadata_name: str = "metadata.json"):
+                  *, metadata_name: str = "metadata.json", require_latest: bool = True):
   """Download one published release through ``read(key)`` and verify every byte."""
   output = Path(output)
   output.mkdir(parents=True, exist_ok=False)
-  _require_latest(read, ref, commit)
+  if require_latest:
+    _require_latest(read, ref, commit)
   prefix = package_prefix(ref, commit)
   (output / "metadata.json").write_bytes(read(f"{prefix}/{metadata_name}"))
   metadata = json.loads((output / "metadata.json").read_text(encoding="utf-8"))
@@ -143,6 +149,7 @@ def main() -> None:
   for name in ("publication", "verify-upload"):
     command = commands.add_parser(name)
     command.add_argument("--bucket", required=True)
+    command.add_argument("--ref-type", choices=("branch", "tag"), required=True)
     command.add_argument("--ref", required=True)
     command.add_argument("--commit", required=True)
     command.add_argument("--candidate", type=Path, required=True)
@@ -160,7 +167,7 @@ def main() -> None:
     print(require_release_ref(args.ref_type, args.ref_name, version))
   elif args.command == "publication":
     prefix, files = publication_plan(
-        s3_reader(args.bucket), args.ref, args.commit, args.candidate)
+        s3_reader(args.bucket), args.ref, args.commit, args.candidate, ref_type=args.ref_type)
     # First line: destination prefix; then one source file per line.
     print("\n".join([prefix, *map(str, files)]))
   elif args.command == "fetch":
@@ -170,7 +177,8 @@ def main() -> None:
   else:
     expected = validate_published_package(args.candidate, allow_unlisted=True)
     package = fetch_release(s3_reader(args.bucket), args.ref, args.commit, args.output,
-                            metadata_name="metadata.json.pending")
+                            metadata_name="metadata.json.pending",
+                            require_latest=args.ref_type == "tag")
     if package.metadata != expected.metadata:
       raise ValueError("uploaded Windows release differs from the qualified candidate")
     print(json.dumps({"status": "PASS_WINDOWS_PUBLISHED_RELEASE",

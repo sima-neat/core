@@ -161,6 +161,22 @@ def verify_scheduler_candidate(directory: Path, expected_commit: str) -> tuple[d
   return metadata, require_file(root / msi_name, "Scheduler MSI")
 
 
+def toolchain_identity() -> dict[str, str | None]:
+  """Record the MSVC toolchain and runner image a hosted build cannot pin.
+
+  Linux builds in a digest-pinned image. Record-only: no consumer checks it.
+  """
+  def value(name: str) -> str | None:
+    return os.environ.get(name, "").strip().rstrip("\\") or None
+  return {
+      "visual_studio": value("VSCMD_VER"),
+      "msvc_tools": value("VCToolsVersion"),
+      "windows_sdk": value("WindowsSDKVersion"),
+      "runner_image": value("ImageOS"),
+      "runner_image_version": value("ImageVersion"),
+  }
+
+
 def inspect_x64(path: Path, dumpbin: str) -> None:
   output = run([dumpbin, "/headers", path], capture=True)
   if not re.search(r"\b8664 machine \(x64\)", output, re.IGNORECASE):
@@ -1064,7 +1080,10 @@ def build(args: argparse.Namespace) -> None:
         },
         "repository": "sima-neat/core",
         "scheduler_source_commit": scheduler_metadata.get("commit"),
-        "toolchain": {"cmake": cmake, "ninja": ninja, "wix": os.environ["WIX"]},
+        "toolchain": {
+            "cmake": cmake, "ninja": ninja, "wix": os.environ["WIX"],
+            **toolchain_identity(),
+        },
     })
   finally:
     customer_python = venv / "Scripts" / "python.exe"

@@ -95,10 +95,19 @@ branch `latest` tag only after the DevKit and every native profile pass.
 
 Vulcan CI builds, tests, and retains the Windows cohort on every standard
 build, in the `windows amd64` entry of its PCIe host package matrix, as the
-artifact `core-pciehost-windows-amd64-build`. It does not publish that build:
-Windows packages are published only by the qualified release dispatch below. A
-failed Windows build fails the matrix, which blocks package metadata, branch
-`latest` promotion, and validation-only runs.
+artifacts `core-pciehost-windows-amd64` and `core-pciehost-windows-dependencies`.
+For a branch push, `publish-pciehost-package` publishes that cohort beside the
+branch's Ubuntu packages, at `core/<branch>/<commit12>/pciehost/windows/amd64/`
+with `metadata.json` last, so after promotion
+`sima-cli neat install core/pciehost/windows/amd64@<branch>` resolves as it does
+for Ubuntu. The publish runs on Ubuntu, from the artifact, because the hosted
+Windows runner has no Vulcan publisher role. A tag's Windows release is
+published only by the qualified release dispatch below, so the release path
+holds only bytes that passed the card. The build receipt records the Visual
+Studio, MSVC, Windows SDK, and runner image versions, which a hosted runner
+cannot pin as Linux pins its image digest. A failed Windows build fails the
+matrix, which blocks package metadata, branch `latest` promotion, and
+validation-only runs.
 
 Vulcan CI runs the self-hosted hardware lane only when the repository variable
 `ENABLE_WINDOWS_PCIE_CI` is `true` and Vulcan CI is the top-level workflow
@@ -112,9 +121,13 @@ has passed its Linux build, DevKit, and PCIe-card gates. The Windows lane:
    profile through the pinned bootstrap `sima-cli`;
 2. resolves an immutable published sima-cli candidate for the customer-flow
    test and independently verifies both publication manifests and resources;
-3. builds the ordered Scheduler/Core/wheel cohort;
+3. reuses the PCIe host matrix's cohort and dependency selection from the same
+   run (a direct dispatch builds its own);
 4. checksum-binds the same run's Linux payload to its private SDK dependency
-   bundle, then installs that candidate only in the card qualification sandbox;
+   bundle, requires the card's `/etc/buildinfo` `DISTRO_VERSION` to equal the
+   `platform-version` in `deps/manifest.json` (the Linux card lane's
+   `check_card_compatibility.sh` rule), then installs that candidate only in the
+   card qualification sandbox;
 5. runs the customer CLI, C++, Python, lifecycle, fault, performance, and GenAI
    acceptance; and
 6. publishes nothing: Vulcan CI calls it with `validation_only=true`, and while
@@ -251,9 +264,10 @@ not a manual-dispatch override.
 Normal branch and tag runs enter the Windows lane from Core's main CI with
 `include_genai=true` and `validation_only=true` when the lane is enabled. They
 qualify the Windows cohort and gate branch `latest` promotion on that
-qualification, but never publish it:
-a push cannot supply the upgrade baseline or first-release exemption that
-publication requires. Windows packages are published only by a direct
+qualification. The card lane never publishes. Branch pushes publish their
+matrix build to the branch channel, as described above, but a push cannot
+supply the upgrade baseline or first-release exemption that release
+publication requires. Windows release packages are published only by a direct
 `pcie-host-windows.yml` dispatch from the Neat release tag `v<package-version>`
 (the `package-version` in `deps/manifest.json`) with `validation_only=false`
 and either `require_upgrade=true` (below) or, for the first Windows release

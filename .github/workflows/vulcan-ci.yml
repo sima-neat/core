@@ -1003,8 +1003,8 @@ jobs:
           if-no-files-found: error
           retention-days: 3
 
-      # Windows: qualified releases publish only through pcie-host-windows.yml.
-      # A branch publication here would claim the release's tag path unqualified.
+      # Windows: publish-pciehost-package publishes branch builds from this run's
+      # artifact; tags are published only by the qualified release dispatch.
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         if: ${{ matrix.distro == 'windows' }}
         with:
@@ -1054,6 +1054,44 @@ jobs:
           run-id: ${{ inputs.scheduler_run_id }}
           github-token: ${{ steps.scheduler-token.outputs.token }}
 
+      - name: Mint read-only sima-cli run token
+        if: inputs.sima_cli_run_id != '' && matrix.distro == 'windows'
+        id: windows-sima-cli-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.NEAT_RELEASES_APP_ID }}
+          private-key: ${{ secrets.NEAT_RELEASES_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: sima-cli
+          permission-actions: read
+          permission-contents: read
+
+      # The hardware lane tests this cohort, including its sima-cli candidate.
+      - name: Admit exact sima-cli candidate
+        if: inputs.sima_cli_run_id != '' && matrix.distro == 'windows'
+        env:
+          GITHUB_TOKEN: ${{ steps.windows-sima-cli-token.outputs.token }}
+          SIMA_CLI_RUN_ID: ${{ inputs.sima_cli_run_id }}
+          SIMA_CLI_COMMIT: ${{ inputs.sima_cli_commit }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/ci/pciehost/verify_linux_release_run.py \
+            --repository "sima-neat/sima-cli" \
+            --run-id "${SIMA_CLI_RUN_ID}" \
+            --expected-commit "${SIMA_CLI_COMMIT}" \
+            --output "${RUNNER_TEMP}/sima-cli-admission.json"
+
+      - name: Download exact sima-cli candidate
+        if: inputs.sima_cli_run_id != '' && matrix.distro == 'windows'
+        uses: actions/download-artifact@v4
+        with:
+          name: sima-cli-dist
+          path: ${{ runner.temp }}/sima-cli-override
+          repository: sima-neat/sima-cli
+          run-id: ${{ inputs.sima_cli_run_id }}
+          github-token: ${{ steps.windows-sima-cli-token.outputs.token }}
+
       - name: Resolve the Windows dependency cohort
         if: ${{ matrix.distro == 'windows' }}
         shell: powershell
@@ -1061,6 +1099,7 @@ jobs:
           SOURCE_BRANCH: ${{ github.head_ref || github.ref_name }}
           SIMA_CLI_CHECK_FOR_UPDATE: "0"
           SCHEDULER_COMMIT: ${{ inputs.scheduler_commit || '' }}
+          SIMA_CLI_COMMIT: ${{ inputs.sima_cli_commit || '' }}
           NEAT_VULCAN_ENV: ${{ needs.resolve-vulcan-config.outputs.vulcan_env }}
         run: |
           $ErrorActionPreference = "Stop"
@@ -1077,6 +1116,12 @@ jobs:
               "--scheduler-commit", "$env:SCHEDULER_COMMIT"
             )
           }
+          if (Test-Path -LiteralPath "$env:RUNNER_TEMP\sima-cli-override") {
+            $arguments += @(
+              "--sima-cli-candidate", "$env:RUNNER_TEMP\sima-cli-override",
+              "--sima-cli-commit", "$env:SIMA_CLI_COMMIT"
+            )
+          }
           & python @arguments
           if ($LASTEXITCODE -ne 0) { throw "Windows dependency resolution failed: $LASTEXITCODE" }
 
@@ -1086,6 +1131,7 @@ jobs:
         env:
           SOURCE_BRANCH: ${{ github.head_ref || github.ref_name }}
           REQUIRE_SIGNATURES: "false"
+          PCIE_HOST_BUILD_JOBS: ${{ vars.PCIE_HOST_BUILD_JOBS }}
           SIMA_WINDOWS_SHORT_WORK_ROOT: C:\nr\c-${{ github.run_id }}-${{ github.run_attempt }}
         run: |
           $ErrorActionPreference = "Stop"
@@ -1093,14 +1139,23 @@ jobs:
             -Dependencies "$env:RUNNER_TEMP\core-windows-dependencies" `
             -Output "$env:RUNNER_TEMP\core-windows-dist"
 
+      # Same names as pcie-host-windows.yml's producer: publication and the
+      # hardware lane of this run consume these bytes instead of rebuilding.
+      - name: Retain this run's Windows dependency cohort
+        if: ${{ matrix.distro == 'windows' }}
+        uses: actions/upload-artifact@v6
+        with:
+          name: core-pciehost-windows-dependencies
+          path: ${{ runner.temp }}/core-windows-dependencies
+          if-no-files-found: error
+          retention-days: 7
+
       - name: Retain this run's Windows PCIe host cohort
         if: ${{ always() && matrix.distro == 'windows' }}
         uses: actions/upload-artifact@v6
         with:
-          name: core-pciehost-windows-amd64-build
-          path: |
-            ${{ runner.temp }}/core-windows-dist/*
-            ${{ runner.temp }}/core-windows-dependencies/selection.json
+          name: core-pciehost-windows-amd64
+          path: ${{ runner.temp }}/core-windows-dist/*
           if-no-files-found: error
           retention-days: 7
 
@@ -1244,6 +1299,29 @@ jobs:
           CLOUDFRONT_DISTRIBUTION_ID: ${{ needs.resolve-vulcan-config.outputs.artifact_cloudfront_distribution_id }}
           REF_NAME: ${{ github.ref_name }}
           SSE_KMS_KEY_ID: ${{ needs.resolve-vulcan-config.outputs.artifact_kms_key_id }}
+
+      # The GitHub-hosted Windows entry has no Vulcan publisher role; publish its
+      # artifact here. A tag's Windows release is published only after hardware
+      # qualification, by pcie-host-windows.yml.
+      - name: Download this run's Windows PCIe host cohort
+        if: ${{ github.ref_type == 'branch' }}
+        uses: actions/download-artifact@v4
+        with:
+          name: core-pciehost-windows-amd64
+          path: ${{ runner.temp }}/core-windows-candidate
+
+      - name: Publish Windows PCIe host packages
+        if: ${{ github.ref_type == 'branch' }}
+        shell: bash
+        env:
+          ARTIFACT_BUCKET: ${{ needs.resolve-vulcan-config.outputs.artifact_bucket }}
+          CLOUDFRONT_DISTRIBUTION_ID: ${{ needs.resolve-vulcan-config.outputs.artifact_cloudfront_distribution_id }}
+          REF_NAME: ${{ github.ref_name }}
+          REF_TYPE: branch
+          SSE_KMS_KEY_ID: ${{ needs.resolve-vulcan-config.outputs.artifact_kms_key_id }}
+        run: |
+          bash scripts/ci/pciehost/publish_windows.sh \
+            "${RUNNER_TEMP}/core-windows-candidate" "${RUNNER_TEMP}/core-windows-published"
 
   plan-devkit-tests:
     name: Plan adaptive Core DevKit fleet

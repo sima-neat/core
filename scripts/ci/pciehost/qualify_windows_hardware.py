@@ -1808,6 +1808,21 @@ class RemoteExclusiveLock:
     self.acquired = False
 
 
+def require_card_platform(platform_version: str, manifest: Path) -> str:
+  """Apply the Linux card lane's check: card DISTRO_VERSION equals Core's platform."""
+  declared = str(json.loads(manifest.read_text(encoding="utf-8")).get("platform-version", ""))
+  expected = declared.strip().split("+", 1)[0]
+  if not expected:
+    raise RuntimeError("deps/manifest.json does not define platform-version")
+  if not platform_version:
+    raise RuntimeError("PCIe card /etc/buildinfo does not define DISTRO_VERSION.")
+  if platform_version != expected:
+    raise RuntimeError(
+        f"PCIe card platform {platform_version} is incompatible with package platform "
+        f"{expected}.")
+  return expected
+
+
 def card_snapshot(args: argparse.Namespace, evidence: Path, label: str, *,
                   runtime_path: str = "", worker_path: str = "",
                   expected_runtime_sha256: str = "", expected_worker_sha256: str = "",
@@ -1827,6 +1842,10 @@ def card_snapshot(args: argparse.Namespace, evidence: Path, label: str, *,
       "printf 'platform_release='; sed -n 's/^SIMA_BUILD_VERSION[[:space:]]*=[[:space:]]*//p' "
       "/etc/buildinfo | head -n 1 | tr -d '\\r\\n'; printf '\\n'; "
       "printf 'platform_sha256='; sha256sum -- /etc/buildinfo | awk '{print $1}'; "
+      # DISTRO_VERSION is read exactly as scripts/ci/pciehost/check_card_compatibility.sh does.
+      "printf 'platform_version='; awk -F= '$1 ~ /^[[:space:]]*DISTRO_VERSION[[:space:]]*$/ "
+      "{ value=$2; sub(/^[[:space:]]+/, \"\", value); sub(/[[:space:]]+$/, \"\", value); "
+      "print value; exit }' /etc/buildinfo | tr -d '\\r\\n'; printf '\\n'; "
       + (f"printf 'runtime_sha256='; sha256sum -- {runtime_path} | awk '{{print $1}}'; "
          f"printf 'worker_sha256='; sha256sum -- {worker_path} | awk '{{print $1}}'; "
          if runtime_path else "") +
@@ -1843,11 +1862,12 @@ def card_snapshot(args: argparse.Namespace, evidence: Path, label: str, *,
   for line in log.read_text(encoding="utf-8", errors="replace").splitlines():
     if "=" in line and not line.startswith("+"):
       name, value = line.split("=", 1)
-      if name in {"machine", "platform_release", "platform_sha256", "runtime_sha256",
+      if name in {"machine", "platform_release", "platform_sha256", "platform_version",
+                  "runtime_sha256",
                   "worker_sha256", "genai_worker_sha256", "firmware", "remoteproc_state",
                   "workers", "genai_workers"}:
         values[name] = value.strip()
-  required = {"machine", "platform_release", "platform_sha256", "firmware",
+  required = {"machine", "platform_release", "platform_sha256", "platform_version", "firmware",
               "remoteproc_state", "workers", "genai_workers"}
   if runtime_path:
     required.update(("runtime_sha256", "worker_sha256"))
@@ -2636,6 +2656,8 @@ def qualify(args: argparse.Namespace) -> None:
     try:
       baseline = card_snapshot(args, evidence, "baseline")
       result["card_baseline"] = baseline
+      require_card_platform(
+          baseline["platform_version"], args.source_root / "deps" / "manifest.json")
       if baseline["workers"] != "0" or baseline["genai_workers"] != "0":
         raise RuntimeError("card had PCIe workers before qualification; refusing to disturb them")
 

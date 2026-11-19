@@ -410,7 +410,8 @@ jobs:
   dependencies:
     name: Resolve immutable Windows dependency cohort
     needs: [contracts, linux_release]
-    if: needs.contracts.result == 'success' && needs.linux_release.result == 'success'
+    # Vulcan CI's PCIe host matrix already built this commit's cohort in the same run.
+    if: needs.contracts.result == 'success' && needs.linux_release.result == 'success' && inputs.linux_current_run != true
     runs-on: windows-2025
     timeout-minutes: 30
     permissions:
@@ -571,7 +572,8 @@ jobs:
   hardware:
     name: Direct-card Windows acceptance
     needs: [native, linux_release, card_candidate, resolve-vulcan-config]
-    if: needs.native.result == 'success' && needs.linux_release.result == 'success' && needs.card_candidate.result == 'success' && needs.resolve-vulcan-config.result == 'success'
+    # A skipped native job would otherwise skip this one implicitly.
+    if: ${{ !cancelled() && (needs.native.result == 'success' || (inputs.linux_current_run == true && needs.native.result == 'skipped')) && needs.linux_release.result == 'success' && needs.card_candidate.result == 'success' && needs.resolve-vulcan-config.result == 'success' }}
     environment: production
     runs-on: [self-hosted, Windows, X64, pcie-windows-hardware, default]
     timeout-minutes: 180
@@ -834,40 +836,9 @@ jobs:
           ARTIFACT_BUCKET: ${{ needs.resolve-vulcan-config.outputs.artifact_bucket }}
           CLOUDFRONT_DISTRIBUTION_ID: ${{ needs.resolve-vulcan-config.outputs.artifact_cloudfront_distribution_id }}
           REF_NAME: ${{ github.ref_name }}
+          REF_TYPE: tag
           SSE_KMS_KEY_ID: ${{ needs.resolve-vulcan-config.outputs.artifact_kms_key_id }}
+        # Same layout and latest.tag as the Ubuntu host packages of this tag.
         run: |
-          set -euo pipefail
-          candidate="${RUNNER_TEMP}/core-windows-candidate"
-          # Same layout and latest.tag as the Ubuntu host packages of this tag.
-          plan="$(python3 scripts/ci/pciehost/windows_release.py publication \
-            --bucket "${ARTIFACT_BUCKET}" --ref "${REF_NAME}" --commit "${GITHUB_SHA}" \
-            --candidate "${candidate}")"
-          mapfile -t paths <<< "${plan}"
-          prefix="${paths[0]}"
-          s3_args=(--sse aws:kms)
-          if [[ -n "${SSE_KMS_KEY_ID:-}" ]]; then
-            s3_args+=(--sse-kms-key-id "${SSE_KMS_KEY_ID}")
-          fi
-          for path in "${paths[@]:1}"; do
-            name="$(basename "${path}")"
-            # Metadata becomes visible only after the uploaded files are verified.
-            case "${name}" in metadata.json) name="${name}.pending" ;; esac
-            case "${name}" in
-              *.msi) content_type="application/x-msi" ;;
-              *.sha256) content_type="text/plain" ;;
-              *.json.pending) content_type="application/json" ;;
-              *) content_type="application/octet-stream" ;;
-            esac
-            aws s3 cp "${path}" "s3://${ARTIFACT_BUCKET}/${prefix}/${name}" \
-              --content-type "${content_type}" "${s3_args[@]}"
-          done
-          python3 scripts/ci/pciehost/windows_release.py verify-upload \
-            --bucket "${ARTIFACT_BUCKET}" --ref "${REF_NAME}" --commit "${GITHUB_SHA}" \
-            --candidate "${candidate}" --output "${RUNNER_TEMP}/core-windows-published"
-          aws s3 cp "${candidate}/metadata.json" "s3://${ARTIFACT_BUCKET}/${prefix}/metadata.json" \
-            --content-type application/json "${s3_args[@]}"
-          if [[ -n "${CLOUDFRONT_DISTRIBUTION_ID:-}" ]]; then
-            aws cloudfront create-invalidation \
-              --distribution-id "${CLOUDFRONT_DISTRIBUTION_ID}" --paths "/${prefix}/*"
-          fi
-          echo "Published s3://${ARTIFACT_BUCKET}/${prefix}/"
+          bash scripts/ci/pciehost/publish_windows.sh \
+            "${RUNNER_TEMP}/core-windows-candidate" "${RUNNER_TEMP}/core-windows-published"

@@ -47,6 +47,9 @@ $arguments = @(
   "--work", $env:SIMA_WINDOWS_SHORT_WORK_ROOT,
   "--output", $Output
 )
+# Same knob and default as the Linux matrix entries: PCIE_HOST_BUILD_JOBS or all CPUs.
+$jobs = if ($env:PCIE_HOST_BUILD_JOBS) { $env:PCIE_HOST_BUILD_JOBS } else { $env:NUMBER_OF_PROCESSORS }
+if ($jobs) { $arguments += @("--jobs", $jobs) }
 if ($env:SIMA_WINDOWS_CMAKE_PREFIX_PATH) {
   foreach ($prefix in $env:SIMA_WINDOWS_CMAKE_PREFIX_PATH.Split(";")) {
     if ($prefix) { $arguments += @("--dependency-prefix", $prefix) }
