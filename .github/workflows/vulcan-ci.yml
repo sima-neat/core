@@ -196,6 +196,8 @@ jobs:
           "${test_venv}/bin/python" -m pytest -q --durations=25 \
             python/tests/test_neat_cli.py \
             python/tests/test_neat_pcie_status.py \
+            python/tests/test_model_fixture_helpers.py \
+            tests/test_prepare_model_browser_fixture.py \
             tests/test_build_pyneat_wheel.py \
             tests/test_resolve_compiler_cache.py \
             tests/tools/test_internals_package_boundary.py \
@@ -1232,25 +1234,14 @@ jobs:
       - name: Prepare LightGlue NEAT-68 regression model
         run: |
           set -euo pipefail
-          MODEL_ROOT="${RUNNER_TEMP:-/tmp}/lg-${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-0}"
-          MODEL_SPEC="models/runtime_lightglue_superpoint_600@runtime-lightglue-neat68-v1:00d3bdc1f3b1"
-          # The restricted regression fixture is intentionally staging-only.
-          MODEL_VULCAN_ENV=stg
-          mkdir -p "${MODEL_ROOT}"
-          sima-cli neat install \
-            --env "${MODEL_VULCAN_ENV}" \
-            --install-dir "${MODEL_ROOT}" \
-            "${MODEL_SPEC}"
-
-          mapfile -t archives < <(find "${MODEL_ROOT}" -type f -name '*_mpk.tar.gz' | sort)
-          if [[ "${#archives[@]}" -ne 1 ]]; then
-            echo "Expected exactly one LightGlue MPK from ${MODEL_SPEC}, found ${#archives[@]}." >&2
-            find "${MODEL_ROOT}" -maxdepth 4 -type f -print >&2 || true
-            exit 1
-          fi
-          echo '0ceb6304167d3a5ca4e3e0bcf3bd873ace6966d8a35e73d790c4496019bae7af  '"${archives[0]}" | sha256sum --check --strict
-          echo "SIMA_TEST_LIGHTGLUE_MODEL=${archives[0]}" >> "${GITHUB_ENV}"
-          echo "Installed immutable LightGlue regression model: ${archives[0]}"
+          MODEL_DIR="$(mktemp -d "${RUNNER_TEMP:-/tmp}/lg-XXXXXXXX")"
+          MODEL_PATH="${MODEL_DIR}/quantized_lightglue_superpoint_600_mpk.tar.gz"
+          ARTIFACT_URL="https://models-registry.stg.neat.sima.ai/v1/runs/ef5cf65e-797c-409a-81e7-17cb49e62452/artifacts/mpk"
+          DOWNLOAD_URL="$(curl -fsS --retry 2 "${ARTIFACT_URL}" |
+            python3 -c 'import json, sys; print(json.load(sys.stdin)["artifact"]["download_url"])')"
+          curl -fsSL --retry 2 "${DOWNLOAD_URL}" -o "${MODEL_PATH}"
+          echo '0ceb6304167d3a5ca4e3e0bcf3bd873ace6966d8a35e73d790c4496019bae7af  '"${MODEL_PATH}" | sha256sum --check --strict
+          echo "SIMA_TEST_LIGHTGLUE_MODEL=${MODEL_PATH}" >> "${GITHUB_ENV}"
 
       - name: Build docs C++ examples from DevKit-installed package
         if: ${{ contains(fromJSON(matrix.tasks), 'fast') }}
@@ -1618,6 +1609,15 @@ jobs:
             printf 'SIMA_NEAT_TUTORIAL_MODEL_YOLO=%s\n' "${YOLO_TAR}"
           } >> "${GITHUB_ENV}"
 
+      - name: Prepare ResNet-50 from the Model Browser
+        if: ${{ contains(fromJSON(matrix.tasks), 'python-tutorials') }}
+        timeout-minutes: 15
+        run: |
+          MODEL_DIR="$(mktemp -d "${RUNNER_TEMP:-/tmp}/model-browser.XXXXXX")"
+          RESNET_MPK="$(python3 scripts/ci/prepare_model_browser_fixture.py \
+            --id resnet_50 --variant w8a8 --output "${MODEL_DIR}")"
+          printf 'SIMA_RESNET50_TAR=%s\n' "${RESNET_MPK}" >> "${GITHUB_ENV}"
+
       - name: Run Python pytest from installed extras
         if: ${{ contains(fromJSON(matrix.tasks), 'python-tutorials') }}
         env:
@@ -1641,7 +1641,7 @@ jobs:
           export SIMA_GST_REGISTRY_DIR="$(cat _work/gst_registry_dir.txt)"
           export SIMA_NEAT_TUTORIAL_REQUIRE_RUNTIME=1
           export SIMA_GRAPH_PHASE3_PY_RUNTIME=1
-          export SIMA_RESNET50_TAR="${SIMA_NEAT_TUTORIAL_MODEL_RESNET:?Tutorial model preparation required}"
+          : "${SIMA_RESNET50_TAR:?Model Browser ResNet-50 preparation required}"
           test -s "${SIMA_RESNET50_TAR}"
           PYTHON_MARKS=()
           case "${NEAT_CI_PYTHON_PROFILE}" in
