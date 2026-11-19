@@ -835,7 +835,7 @@ class WindowsCiContracts(unittest.TestCase):
     # build_windows.py refuses these; hosted runners (actions/setup-python) export PKG_CONFIG_PATH.
     clear = producer.index('foreach ($name in @("CMAKE_TOOLCHAIN_FILE"')
     self.assertLess(producer.index("Enter-VsDevShell"), clear)
-    self.assertLess(clear, producer.index("build_windows.py"))
+    self.assertLess(clear, producer.index('"scripts/ci/pciehost/build_windows.py"'))
     for name in ("CMAKE_TOOLCHAIN_FILE", "CMAKE_GENERATOR_PLATFORM", "CMAKE_PREFIX_PATH", "PKG_CONFIG_PATH"):
       self.assertIn(f'"{name}"', producer[clear:clear + 200])
     self.assertIn("  pull_request:\n", source)
