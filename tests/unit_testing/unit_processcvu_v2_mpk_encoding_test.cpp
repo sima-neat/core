@@ -1,4 +1,5 @@
 #include <simaai/scheduler/client/tensor_buffer.h>
+#include "gst/GstInit.h"
 #include "support/processcvu_plan_fixture.h"
 #include "model/internal/ModelPack.h"
 #include "pipeline/internal/sima/ContractRender.h"
@@ -71,9 +72,9 @@ constexpr CBlockGeometry kLightGlueCBlock{1, 601, 601, 67};
 void ensure_gst_ready() {
   static bool ready = false;
   if (!ready) {
-    int argc = 0;
-    char** argv = nullptr;
-    gst_init(&argc, &argv);
+    // CTest runs this with GST_PLUGIN_SYSTEM_PATH_1_0 empty; Neat's init still adds the system
+    // plugin directories that hold appsrc and appsink.
+    simaai::neat::gst_init_once();
     require(simaai::gst::tensor_buffer_register_meta(), "canonical tensor metadata registration");
     ready = true;
   }
