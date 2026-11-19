@@ -17,6 +17,7 @@
 #include "pipeline/internal/OrderedPublicInputContract.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -178,7 +179,9 @@ enum class FusedEncodedOutputDispatchResult {
  * dropping Output remains non-blocking.
  */
 using FusedEncodedOutputDispatch = std::function<FusedEncodedOutputDispatchResult(
-    const FusedRealtimeIngressBranch::EncodedOutput&, Sample&&, std::string*)>;
+    const FusedRealtimeIngressBranch::EncodedOutput&, Sample&&, const std::atomic_bool*,
+    std::string*)>;
+using FusedEncodedOutputCloseDispatch = std::function<void(std::size_t branch, const PullError&)>;
 
 struct MaterializedNodeAttribution {
   enum class Role {

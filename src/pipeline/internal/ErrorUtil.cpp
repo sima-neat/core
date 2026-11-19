@@ -122,6 +122,7 @@ void set_pull_error(PullError* err, std::string code, std::string message,
   if (const auto existing_code = leading_framework_error_code(message); existing_code.has_value()) {
     code = *existing_code;
   }
+  err->source.clear();
   err->code = std::move(code);
 
   if (report.has_value()) {

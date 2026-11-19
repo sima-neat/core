@@ -686,6 +686,10 @@ public:
   /// Send EOS into the pipeline. Drain remaining outputs by continuing to pull until
   /// `PullStatus::Closed`.
   void close_input();
+  /// Return the next RTSP source transition, or no value when none is pending.
+  /// Retains the most recent 256 transitions across all sources.
+  std::optional<SourceEvent> poll_source_event();
+
   /**
    * @brief Pull the next output sample with a structured status return.
    * @param timeout_ms Wait up to this many ms; `-1` waits forever; `0` is non-blocking.

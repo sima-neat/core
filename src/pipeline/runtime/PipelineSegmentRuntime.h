@@ -155,6 +155,7 @@ struct PipelineSegmentRuntime {
     std::atomic<bool> pull_done{false};
     std::atomic<std::size_t> producers_remaining{0};
     std::atomic<bool> completion_started{false};
+    std::vector<std::size_t> closed_encoded_branches; // Guarded by mu.
     std::atomic<bool> completion_forwarded{false};
 
     std::mutex stream_mu;

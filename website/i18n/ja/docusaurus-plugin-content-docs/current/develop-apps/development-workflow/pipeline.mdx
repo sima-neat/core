@@ -1315,3 +1315,11 @@ except pyneat.NeatError as error:
 - [モデル](/develop-apps/development-workflow/model)
 - [テンソルとサンプル](/develop-apps/development-workflow/core_types)
 - [トラブルシューティング](/reference/troubleshooting)
+
+## RTSP カメラの切断検出と復旧
+
+各ソースグラフに `set_name()` で名前を付けます。Python の `run.pull_status("frame7", 200)` は `(status, sample, error)` を返します。`Timeout` は待ち時間内にフレームが届かなかったことを示します。`Closed` で `error.code == "io.rtsp_connection_failed"` の場合、`error.source` が切断されたカメラを示します。
+
+どちらの RTSP 入力オプションでも、`reconnect_interval_sec = 5` にするとメディアが 5 秒間届かない場合に再接続します。既定値はゼロで、切断が確認されるとそのソースだけが閉じます。`reconnect_attempts` は障害ごとの再試行回数です（既定値 `-1` は無制限）。間隔が正で回数がゼロの場合、無通信の期限に達するとソースが閉じます。
+
+再接続中も出力は開いたままです。`run.poll_source_event()` で `Reconnecting`、`Recovered`、終端状態の `Disconnected` を取得します。各イベントにはソースグラフ名が含まれ、キューが空なら `None` を返します。

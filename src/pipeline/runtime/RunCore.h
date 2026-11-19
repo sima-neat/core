@@ -4,6 +4,7 @@
 #endif
 
 #include "pipeline/internal/RunDiagnostics.h"
+#include "pipeline/internal/RtspReconnect.h"
 #include "ExecutionGraphRuntime.h"
 #include "EdgeRouter.h"
 #include "PipelineSegmentRuntime.h"
@@ -116,6 +117,7 @@ enum class PushSamplePolicy {
 };
 
 struct RunCoreStartOptions {
+  pipeline_internal::SourceMonitor source_monitor;
   RunOptions run_options{};
   RunMode mode = RunMode::Async;
   std::shared_ptr<const cv::Mat> image_seed;
@@ -131,6 +133,7 @@ struct RunCoreStartOptions {
   std::shared_ptr<void> graph_verbose_guard;
   PushSamplePolicy push_sample_policy = PushSamplePolicy::PublicCompatibility;
   FusedEncodedOutputDispatch fused_encoded_output_dispatch;
+  FusedEncodedOutputCloseDispatch fused_encoded_output_close;
   std::function<void()> after_pipeline_start_for_test;
 };
 
@@ -156,6 +159,7 @@ enum class InputStreamCloseState {
 };
 
 struct RunCore : std::enable_shared_from_this<RunCore> {
+  std::shared_ptr<pipeline_internal::SourceEvents> source_events;
   static std::shared_ptr<RunCore> start(ExecutionGraphPlan plan, RunCoreStartOptions opt);
   static std::shared_ptr<RunCore> create_graph_compat();
   static std::shared_ptr<RunCore> start_pipeline_segment(const PipelineSegmentPlan& segment,
@@ -212,6 +216,8 @@ struct RunCore : std::enable_shared_from_this<RunCore> {
   void graph_request_stop(const NeatError& err);
   void graph_request_stop_from_pipeline(const std::shared_ptr<RunCore>& pipeline_core,
                                         std::string fallback_error);
+  void graph_encoded_output_completed(PipelineSegmentRuntime& pipe, std::size_t branch,
+                                      const PullError* reason);
   void graph_pipeline_completed(std::size_t pipeline_index,
                                 std::optional<PullError> close_detail = std::nullopt);
   void graph_stage_worker_completed(std::size_t group_index);

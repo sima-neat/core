@@ -966,9 +966,21 @@ void build_source_pipeline_if_needed(const std::shared_ptr<RunCore>& core,
     start_opt.last_pipeline = &rt.last_pipeline;
     start_opt.push_sample_policy = PushSamplePolicy::PreserveSample;
     const std::weak_ptr<RunCore> weak_core = core;
+    const auto& labels = core->graph_execution().node_labels;
+    start_opt.source_monitor.events = core->source_events;
+    if (!rt.seg.node_ids.empty())
+      start_opt.source_monitor.label = labels.at(rt.seg.node_ids.front());
+    if (rt.seg.fused_realtime_ingress)
+      for (const auto& branch : rt.seg.fused_realtime_ingress->branches)
+        start_opt.source_monitor.branch_labels.push_back(labels.at(branch.source_node));
+    start_opt.fused_encoded_output_close = [weak_core, &rt](std::size_t branch,
+                                                            const PullError& reason) {
+      if (auto owner = weak_core.lock())
+        owner->graph_encoded_output_completed(rt, branch, &reason);
+    };
     start_opt.fused_encoded_output_dispatch =
         [weak_core](const FusedRealtimeIngressBranch::EncodedOutput& output, Sample&& sample,
-                    std::string* error) {
+                    const std::atomic_bool* interrupt, std::string* error) {
           const auto locked = weak_core.lock();
           if (!locked || locked->graph_stop_requested()) {
             if (error) {
@@ -989,8 +1001,10 @@ void build_source_pipeline_if_needed(const std::shared_ptr<RunCore>& core,
           // Preserve OutputOptions exactly: Latest replaces its oldest queued
           // AU without blocking, while EveryFrame applies backpressure until
           // Run::pull() makes room. Closing the queue wakes blocked producers.
-          const auto enqueue =
-              enqueue_fused_encoded_output(*sink->second, output.options, std::move(sample));
+          const auto enqueue = enqueue_fused_encoded_output(*sink->second, output.options,
+                                                            std::move(sample), interrupt);
+          if (enqueue == FusedEncodedOutputEnqueueResult::Interrupted)
+            return FusedEncodedOutputDispatchResult::Stopping;
           if (enqueue == FusedEncodedOutputEnqueueResult::Enqueued ||
               enqueue == FusedEncodedOutputEnqueueResult::ReplacedOldest ||
               enqueue == FusedEncodedOutputEnqueueResult::DroppedIncoming) {
@@ -1138,11 +1152,14 @@ void start_pipeline_pull_thread(const std::shared_ptr<RunCore>& core, std::size_
             return;
           }
           if (pull_status == PullStatus::Closed) {
+            const bool reconnect_exhausted = pull_error.code == error_codes::kRtspConnectionFailed;
             if (pipe.seg.boundary.source_like) {
               core->graph_pipeline_completed(i, std::move(pull_error));
             } else {
               core->graph_pipeline_completed(i);
             }
+            if (pipe.run_core && reconnect_exhausted)
+              pipe.run_core->stop();
             return;
           }
           if (simaai::neat::graph::graph_debug_enabled()) {
@@ -1508,6 +1525,7 @@ std::shared_ptr<RunCore> start_graph_plan(ExecutionGraphPlan plan, RunCoreStartO
   }
 
   auto core = RunCore::create_graph_compat();
+  core->source_events = std::make_shared<pipeline_internal::SourceEvents>();
   core->opt = opt.run_options;
   core->mode = opt.mode;
   core->graph_options = std::move(opt.graph_options);
@@ -1618,6 +1636,8 @@ std::shared_ptr<RunCore> RunCore::start(ExecutionGraphPlan plan, RunCoreStartOpt
   gst_init_once();
 
   if (is_simple_linear_plan(plan)) {
+    if (!plan.node_labels.empty())
+      opt.source_monitor.label = plan.node_labels.front();
     auto export_plan = std::make_unique<ExecutionGraphPlan>(plan);
     auto core = RunCore::start_pipeline_segment(plan.pipeline_segments.front(), std::move(opt));
     core->graph_export_plan_ = std::move(export_plan);

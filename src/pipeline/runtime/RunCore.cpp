@@ -593,6 +593,27 @@ void RunCore::graph_mark_downstream_close_provenance(simaai::neat::graph::NodeId
   execution.application_closed_sinks.insert(downstream_sinks.begin(), downstream_sinks.end());
 }
 
+void RunCore::graph_encoded_output_completed(PipelineSegmentRuntime& pipe, std::size_t branch,
+                                             const PullError* reason) {
+  const auto& output = pipe.seg.fused_realtime_ingress->branches[branch].encoded_output;
+  if (!output)
+    return;
+  // A branch can close ahead of its segment. Retire this producer once even
+  // when a second camera also feeds the same output.
+  {
+    std::lock_guard lock(pipe.transport.mu);
+    auto& closed = pipe.transport.closed_encoded_branches;
+    if (std::find(closed.begin(), closed.end(), branch) != closed.end())
+      return;
+    closed.push_back(branch);
+  }
+  if (reason)
+    graph_mark_downstream_close_provenance(output->sink_node, reason);
+  const auto sink = graph_execution_->sinks.find(output->sink_node);
+  if (sink != graph_execution_->sinks.end() && sink->second)
+    sink->second->producer_done();
+}
+
 void RunCore::graph_pipeline_completed(std::size_t pipeline_index,
                                        std::optional<PullError> close_detail) {
   if (!graph_execution_ || pipeline_index >= graph_execution_->pipelines.size() ||
@@ -620,18 +641,9 @@ void RunCore::graph_pipeline_completed(std::size_t pipeline_index,
   // Encoded Outputs fused into a source segment bypass the ordinary edge router, but the source
   // still owns their producer lifetime.
   if (pipe.seg.fused_realtime_ingress.has_value()) {
-    for (const auto& branch : pipe.seg.fused_realtime_ingress->branches) {
-      if (!branch.encoded_output.has_value()) {
-        continue;
-      }
-      if (close_detail.has_value()) {
-        graph_mark_downstream_close_provenance(branch.encoded_output->sink_node, &*close_detail);
-      }
-      const auto sink = graph_execution_->sinks.find(branch.encoded_output->sink_node);
-      if (sink != graph_execution_->sinks.end() && sink->second) {
-        sink->second->producer_done();
-      }
-    }
+    for (std::size_t branch = 0; branch < pipe.seg.fused_realtime_ingress->branches.size();
+         ++branch)
+      graph_encoded_output_completed(pipe, branch, close_detail ? &*close_detail : nullptr);
   }
 
   if (!pipe.seg.node_ids.empty()) {
@@ -1668,23 +1680,27 @@ std::shared_ptr<RunCore> RunCore::start_pipeline_segment(const PipelineSegmentPl
     }
     const auto source_start = pipeline_internal::build_timing_now();
     const bool public_output_contract = !segment.boundary.graph_internal_output;
+    if (!opt.source_monitor.events)
+      opt.source_monitor.events = std::make_shared<pipeline_internal::SourceEvents>();
     SourceStreamBuildContext source =
         segment.fused_realtime_ingress.has_value()
             ? session_build_fused_realtime_source_stream_internal(
                   *segment.fused_realtime_ingress, nodes, opt.guard, last_pipeline, route_options,
                   opt.run_options, opt.mode, opt.require_sink, public_output_contract,
                   opt.graph_options.edge_queue, "RunCore::start(plan/fused-realtime)",
-                  opt.fused_encoded_output_dispatch)
+                  opt.fused_encoded_output_dispatch, opt.fused_encoded_output_close,
+                  opt.source_monitor)
             : session_build_source_stream_internal(
                   nodes, opt.guard, last_pipeline, route_options, opt.run_options, opt.mode,
                   opt.require_sink, public_output_contract, opt.graph_options.edge_queue,
-                  "RunCore::start(plan/source)");
+                  "RunCore::start(plan/source)", opt.source_monitor);
     const auto source_us = pipeline_internal::build_timing_us(source_start);
     const auto start_single_start = pipeline_internal::build_timing_now();
     auto core = RunCore::start_single_pipeline(
         std::move(source.stream), source.merged_opt, source.stream_opt, opt.mode,
         opt.tensor_input_opt_for_cv, std::move(opt.input_route_processor),
         std::move(opt.after_pipeline_start_for_test));
+    core->source_events = opt.source_monitor.events;
     core->push_sample_policy = opt.push_sample_policy;
     core->pipeline.public_input_contract = public_contract;
     core->pipeline.loan_stall_label = "graph segment " + std::to_string(segment.id);

@@ -1374,6 +1374,20 @@ bool detection_decode_type_error_message(const std::string& msg) {
          msg.find("format mismatch") != std::string::npos;
 }
 
+template <typename... Args> nb::tuple pull_status(Run& run, Args... args) {
+  Sample sample;
+  PullError error;
+  PullStatus status;
+  {
+    nb::gil_scoped_release release;
+    status = run.pull(args..., sample, &error);
+  }
+  return nb::make_tuple(status, std::move(sample), std::move(error));
+}
+
+constexpr char pull_status_doc[] =
+    "Return (PullStatus, Sample, PullError); the sample is populated on Ok.";
+
 } // namespace
 
 NB_MODULE(_pyneat_core, m) {
@@ -1891,10 +1905,19 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("build_adaptation", &GraphReport::build_adaptation)
       .def("to_json", &GraphReport::to_json);
 
+  nb::enum_<simaai::neat::SourceStatus>(m, "SourceStatus")
+      .value("Reconnecting", simaai::neat::SourceStatus::Reconnecting)
+      .value("Recovered", simaai::neat::SourceStatus::Recovered)
+      .value("Disconnected", simaai::neat::SourceStatus::Disconnected);
+  nb::class_<simaai::neat::SourceEvent>(m, "SourceEvent")
+      .def_ro("source", &simaai::neat::SourceEvent::source)
+      .def_ro("status", &simaai::neat::SourceEvent::status);
+
   nb::class_<PullError>(m, "PullError")
       .def(nb::init<>())
       .def_rw("message", &PullError::message)
       .def_rw("code", &PullError::code)
+      .def_ro("source", &PullError::source)
       .def_rw("report", &PullError::report);
 
   // Per-frame attributes must behave like a live mapping, not a snapshot: users expect
@@ -2881,6 +2904,10 @@ NB_MODULE(_pyneat_core, m) {
           },
           "input"_a, "copy"_a = false, "layout"_a = nb::none(), "image_format"_a = nb::none())
       .def("close_input", &Run::close_input)
+      .def("poll_source_event", &Run::poll_source_event)
+      .def("pull_status", &pull_status<std::string, int>, "name"_a, "timeout_ms"_a = -1,
+           pull_status_doc)
+      .def("pull_status", &pull_status<int>, "timeout_ms"_a = -1, pull_status_doc)
       .def(
           "pull",
           [](Run& run, std::string name, int timeout_ms) { return run.pull(name, timeout_ms); },
@@ -3623,6 +3650,10 @@ NB_MODULE(_pyneat_core, m) {
   nb::class_<simaai::neat::nodes::groups::RtspEncodedInputOptions>(m, "RtspEncodedInputOptions")
       .def(nb::init<>())
       .def_rw("url", &simaai::neat::nodes::groups::RtspEncodedInputOptions::url)
+      .def_rw("reconnect_interval_sec",
+              &simaai::neat::nodes::groups::RtspEncodedInputOptions::reconnect_interval_sec)
+      .def_rw("reconnect_attempts",
+              &simaai::neat::nodes::groups::RtspEncodedInputOptions::reconnect_attempts)
       .def_rw("codec", &simaai::neat::nodes::groups::RtspEncodedInputOptions::codec)
       .def_rw("latency_ms", &simaai::neat::nodes::groups::RtspEncodedInputOptions::latency_ms)
       .def_rw("tcp", &simaai::neat::nodes::groups::RtspEncodedInputOptions::tcp)
@@ -3668,6 +3699,10 @@ NB_MODULE(_pyneat_core, m) {
   nb::class_<simaai::neat::nodes::groups::RtspDecodedInputOptions>(m, "RtspDecodedInputOptions")
       .def(nb::init<>())
       .def_rw("url", &simaai::neat::nodes::groups::RtspDecodedInputOptions::url)
+      .def_rw("reconnect_interval_sec",
+              &simaai::neat::nodes::groups::RtspDecodedInputOptions::reconnect_interval_sec)
+      .def_rw("reconnect_attempts",
+              &simaai::neat::nodes::groups::RtspDecodedInputOptions::reconnect_attempts)
       .def_rw("latency_ms", &simaai::neat::nodes::groups::RtspDecodedInputOptions::latency_ms)
       .def_rw("tcp", &simaai::neat::nodes::groups::RtspDecodedInputOptions::tcp)
       .def_rw("drop_on_latency",
@@ -4201,8 +4236,11 @@ NB_MODULE(_pyneat_core, m) {
                 static_cast<std::shared_ptr<simaai::neat::Node> (*)(simaai::neat::QueueOptions)>(
                     &simaai::neat::nodes::Queue),
                 "options"_a);
-  nodes_mod.def("rtsp_input", &simaai::neat::nodes::RTSPInput, "url"_a, "latency_ms"_a = 200,
-                "tcp"_a = true, "drop_on_latency"_a = true, "buffer_mode"_a = "");
+  nodes_mod.def("rtsp_input",
+                nb::overload_cast<std::string, int, bool, bool, std::string, int, int>(
+                    &simaai::neat::nodes::RTSPInput),
+                "url"_a, "latency_ms"_a = 200, "tcp"_a = true, "drop_on_latency"_a = true,
+                "buffer_mode"_a = "", "reconnect_interval_sec"_a = 0, "reconnect_attempts"_a = -1);
   nodes_mod.def("h264_depacketize", &simaai::neat::nodes::H264Depacketize, "payload_type"_a = 96,
                 "h264_parse_config_interval"_a = -1, "h264_fps"_a = -1, "h264_width"_a = -1,
                 "h264_height"_a = -1, "enforce_h264_caps"_a = true);
