@@ -93,11 +93,13 @@ static bool has_classifier_post(
   namespace query = simaai::neat::pipeline_internal::rendered_stage_query;
   for (std::size_t i = 0; i < manifest.stages.size(); ++i) {
     const auto& stage = manifest.stages[i];
-    const bool detessdequant =
-        stage.payload_kind == contract::StagePayloadKind::DetessDequant ||
-        (stage.payload_kind == contract::StagePayloadKind::ProcessCvu &&
-         stage.processcvu.graph_family_enum == contract::ProcessCvuGraphFamily::DetessDequant);
-    if (!detessdequant || i + 1U != manifest.stages.size() || stage.logical_outputs.size() != 1U ||
+    // Classifier postprocessing is DetessDequant or plain Dequant, depending on the model build.
+    const auto family = stage.processcvu.graph_family_enum;
+    const bool dequant = stage.payload_kind == contract::StagePayloadKind::DetessDequant ||
+                         (stage.payload_kind == contract::StagePayloadKind::ProcessCvu &&
+                          (family == contract::ProcessCvuGraphFamily::DetessDequant ||
+                           family == contract::ProcessCvuGraphFamily::Dequant));
+    if (!dequant || i + 1U != manifest.stages.size() || stage.logical_outputs.size() != 1U ||
         stage.input_bindings.size() != 1U) {
       continue;
     }
