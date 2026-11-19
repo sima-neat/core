@@ -501,8 +501,10 @@ class WindowsCiContracts(unittest.TestCase):
     caller = MAIN_WORKFLOW.read_text(encoding="utf-8")
     job = caller.split("  test-pciehost-windows:\n", 1)[1].split("  promote-latest-tag:", 1)[0]
     self.assertIn("linux_current_run: true", job)
-    self.assertIn("needs.test-devkit.result == 'success'", job)
-    self.assertIn("needs.test-pciehost-hardware.result == 'success'", job)
+    # The card lane runs beside Linux; same-run candidates are never published.
+    self.assertNotIn("test-devkit", job.split("    permissions:", 1)[0])
+    self.assertNotIn("test-pciehost-hardware", job.split("    permissions:", 1)[0])
+    self.assertIn("validation_only: true", job)
 
   def test_card_offline_bundle_is_assembled_from_this_run(self):
     caller = MAIN_WORKFLOW.read_text(encoding="utf-8")
@@ -1014,7 +1016,8 @@ class WindowsCiContracts(unittest.TestCase):
                 condition("build-pcie-card-offline-bundle"), context),
                 variable == "true")
             runs = evaluate_actions_expression(condition("test-pciehost-windows"), context)
-            self.assertEqual(runs, variable == "true" and hardware == "success")
+            # Independent of the Linux card result: both lanes run side by side.
+            self.assertEqual(runs, variable == "true")
             context["needs.test-pciehost-windows.result"] = outcome if runs else "skipped"
             self.assertEqual(
                 evaluate_actions_expression(condition("promote-latest-tag"), context),
@@ -1034,7 +1037,7 @@ class WindowsCiContracts(unittest.TestCase):
                 "WINDOWS_PCIE_CI": str(evaluate_actions_expression(gate_flag, context)).lower(),
             }
             with mock.patch.dict(os.environ, environment):
-              if hardware == "success" and outcome == "success" or variable != "true":
+              if outcome == "success" or variable != "true":
                 exec(compile(gate, str(MAIN_WORKFLOW), "exec"), {})
               else:
                 with self.assertRaisesRegex(SystemExit, "test-pciehost-windows"):

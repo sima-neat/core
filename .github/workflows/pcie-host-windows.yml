@@ -26,7 +26,7 @@ on:
         type: string
         default: ''
       linux_current_run:
-        description: Use this caller run's already-qualified Linux/card candidate
+        description: Validate this caller run's Linux/card candidate (never published)
         type: boolean
         default: false
       upgrade_base_tag:
@@ -248,7 +248,7 @@ jobs:
             --run-id "${LINUX_RUN_ID}" \
             --expected-commit "${GITHUB_SHA}" \
             --output "${RUNNER_TEMP}/linux-release-admission.json"
-      - name: Admit this caller's qualified Linux candidate
+      - name: Admit this caller's Linux candidate for validation
         if: inputs.linux_current_run == true
         run: |
           python3 - <<'PY'
@@ -258,7 +258,7 @@ jobs:
               json.dumps({'schema_version': 1, 'repository': os.environ['GITHUB_REPOSITORY'],
                           'run_id': int(os.environ['GITHUB_RUN_ID']),
                           'commit': os.environ['GITHUB_SHA'],
-                          'admission': 'qualified-by-caller-needs'}, indent=2) + '\n')
+                          'admission': 'same-run-validation'}, indent=2) + '\n')
           PY
       - name: Admit exact successful sima-cli run
         if: inputs.sima_cli_run_id != ''

@@ -2605,15 +2605,15 @@ jobs:
     # Opt-in until the Windows runners, variables and published dependencies exist:
     # ENABLE_WINDOWS_PCIE_CI for every run, or run_windows_pcie for one manual run.
     # Callers of Vulcan CI cannot use same-run Linux admission (pcie-host-windows.yml).
-    if: ${{ always() && (vars.ENABLE_WINDOWS_PCIE_CI == 'true' || (github.event_name == 'workflow_dispatch' && inputs.run_windows_pcie)) && github.workflow == 'Vulcan CI' && needs.validate-windows-cohort-selectors.result == 'success' && !inputs.offline_source_run_id && (inputs.build_mode || 'standard') == 'standard' && needs.detect-changes.outputs.docs_only != 'true' && needs.build.result == 'success' && needs.build-pcie-card-offline-bundle.result == 'success' && needs.build-pciehost-packages.result == 'success' && needs.test-devkit.result == 'success' && needs.test-pciehost-hardware.result == 'success' }}
+    # Runs beside the Linux card and DevKit tests: this call is validation-only, and a
+    # Windows release is admitted only from a fully successful prior run (linux_run_id).
+    if: ${{ always() && (vars.ENABLE_WINDOWS_PCIE_CI == 'true' || (github.event_name == 'workflow_dispatch' && inputs.run_windows_pcie)) && github.workflow == 'Vulcan CI' && needs.validate-windows-cohort-selectors.result == 'success' && !inputs.offline_source_run_id && (inputs.build_mode || 'standard') == 'standard' && needs.detect-changes.outputs.docs_only != 'true' && needs.build.result == 'success' && needs.build-pcie-card-offline-bundle.result == 'success' && needs.build-pciehost-packages.result == 'success' }}
     needs:
       - validate-windows-cohort-selectors
       - detect-changes
       - build
       - build-pcie-card-offline-bundle
       - build-pciehost-packages
-      - test-devkit
-      - test-pciehost-hardware
     permissions:
       actions: write
       contents: read
