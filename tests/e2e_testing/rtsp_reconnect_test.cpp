@@ -228,11 +228,17 @@ int main() {
 
     std::cout << "phase=status-only-timeout\n" << std::flush;
     failing.start();
-    Graph monitor;
-    monitor.connect(source(failing, 1, 0).set_name("src7"), nodes::Output("frame7"));
+    Graph monitor("warehouse");
+    monitor.add(source(failing, 1, 0).set_name("src7"));
+    monitor.add(nodes::Output("frame7", OutputOptions::EveryFrame(1)));
     Run watch = monitor.build();
     frame(watch, "frame7");
     const auto sessions = failing.connections();
+    // Fill the lossless output, then leave it full across several inactivity deadlines.
+    std::this_thread::sleep_for(5s);
+    require(!watch.poll_source_event(), "a paused reader was reported as a lost camera");
+    for (int i = 0; i < 10; ++i)
+      frame(watch, "frame7");
     failing.silence();
     closed(watch, "frame7", "src7");
     transition(watch, SourceStatus::Disconnected);

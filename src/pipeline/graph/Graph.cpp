@@ -1055,6 +1055,9 @@ std::pair<std::size_t, std::size_t> Graph::append_linear_fragment_(const Graph& 
         .user_named = named.user_named,
     });
   }
+  if (!fragment.name().empty() && !nodes.empty() && nodes.front()->kind() == "RTSPInput") {
+    composition_->named_fragments.push_back({start, end, fragment.name(), true});
+  }
   if (fragment.input_route_processor_) {
     if (input_route_processor_ && input_route_processor_ != fragment.input_route_processor_) {
       throw std::runtime_error(std::string(where ? where : "Graph::add") +

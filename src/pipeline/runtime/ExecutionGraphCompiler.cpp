@@ -28,6 +28,7 @@
 #include "pipeline/internal/SampleUtil.h"
 
 #include <algorithm>
+#include <ranges>
 #include <cctype>
 #include <cstdint>
 #include <functional>
@@ -1679,9 +1680,12 @@ void attach_public_graph_view(const View& view,
     return;
   }
 
-  // Runtime fragments may have generated names. Retain the camera name
-  // authored on the RTSP graph for source-local lifecycle reporting.
-  for (const auto& fragment : view.named_fragments) {
+  if (plan->linear_compat && !view.graph_name.empty() && !plan->node_labels.empty() &&
+      !view.vertices.empty() && view.vertices.front() &&
+      view.vertices.front()->kind() == "RTSPInput")
+    plan->node_labels.front() = view.graph_name;
+  // Wrappers follow their children in the fragment list. Apply the innermost camera name last.
+  for (const auto& fragment : std::views::reverse(view.named_fragments)) {
     if (!fragment.user_named || fragment.start >= runtime_node_for_vertex.size())
       continue;
     const auto& node = view.vertices[fragment.start];
@@ -1689,8 +1693,6 @@ void attach_public_graph_view(const View& view,
     if (node && node->kind() == "RTSPInput" && id < plan->node_labels.size())
       plan->node_labels[id] = fragment.name;
   }
-  if (plan->linear_compat && !view.graph_name.empty() && !plan->node_labels.empty())
-    plan->node_labels.front() = view.graph_name;
   plan->public_nodes.clear();
   plan->public_nodes.reserve(view.vertices.size());
   for (std::size_t i = 0; i < view.vertices.size(); ++i) {

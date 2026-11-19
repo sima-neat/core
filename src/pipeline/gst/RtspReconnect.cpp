@@ -16,11 +16,6 @@ namespace simaai::neat::pipeline_internal {
 namespace {
 using Clock = std::chrono::steady_clock;
 
-std::int64_t now_ns() {
-  return std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now().time_since_epoch())
-      .count();
-}
-
 GQuark controller_key() {
   static const GQuark key = g_quark_from_static_string("neat-rtsp-reconnect");
   return key;
@@ -38,15 +33,33 @@ class RtspReconnectController {
     gulong activity_probe = 0;
     gulong boundary_probe = 0;
     gulong pad_added = 0;
-    std::atomic<std::int64_t> last_data{0};
+    std::atomic<Clock::time_point> last_activity{};
     std::atomic<bool> awaiting_media{false};
-    std::atomic<bool> failed{false};
+    bool failed = false; // Protected by the controller mutex.
     std::atomic<bool> resetting{false};
     std::atomic<bool> exhausted{false};
-    std::atomic<bool> discontinuity{false};
     Clock::time_point next_attempt{};
-    bool outage = false;
     std::optional<PullError> close_error;
+    int retries = 0;
+    std::string reason;
+    RtspReconnectController* owner = nullptr;
+
+    Clock::time_point inactivity_deadline(Clock::time_point now, std::chrono::seconds interval) {
+      if (interval.count() == 0)
+        return Clock::time_point::max();
+      const auto due = last_activity.load() + interval;
+      if (now < due)
+        return due;
+      // A chain call holds this sink pad's stream lock until downstream accepts the packet.
+      // Give the reader another interval when it is applying backpressure.
+      if (!GST_PAD_STREAM_TRYLOCK(rtp_sink)) {
+        last_activity.store(now);
+        return now + interval;
+      }
+      GST_PAD_STREAM_UNLOCK(rtp_sink);
+      return last_activity.load() + interval;
+    }
+
     void notify(SourceStatus status) const {
       if (settings.events)
         settings.events->push({settings.label, status});
@@ -55,34 +68,21 @@ class RtspReconnectController {
       if (settings.interrupt_encoded_push)
         settings.interrupt_encoded_push->store(interrupted);
     }
-    int retries = 0;
-    std::string reason;
-    RtspReconnectController* owner = nullptr;
-
     ~Source() {
-      if (message_bus) {
+      if (message_bus)
         gst_bus_set_sync_handler(message_bus, forward_bin_message, bin, nullptr);
-        gst_object_unref(message_bus);
-      }
-      if (boundary) {
-        if (boundary_probe)
-          gst_pad_remove_probe(boundary, boundary_probe);
-        gst_object_unref(boundary);
-      }
-      if (rtp_sink) {
-        if (activity_probe)
-          gst_pad_remove_probe(rtp_sink, activity_probe);
-        gst_object_unref(rtp_sink);
-      }
-      if (output)
-        gst_object_unref(output);
-      if (source) {
-        if (pad_added)
-          g_signal_handler_disconnect(source, pad_added);
-        gst_object_unref(source);
-      }
-      if (bin)
-        gst_object_unref(bin);
+      if (boundary_probe)
+        gst_pad_remove_probe(boundary, boundary_probe);
+      if (activity_probe)
+        gst_pad_remove_probe(rtp_sink, activity_probe);
+      if (pad_added)
+        g_signal_handler_disconnect(source, pad_added);
+      gst_clear_object(&message_bus);
+      gst_clear_object(&boundary);
+      gst_clear_object(&rtp_sink);
+      gst_clear_object(&output);
+      gst_clear_object(&source);
+      gst_clear_object(&bin);
     }
   };
 
@@ -94,21 +94,20 @@ public:
       slot->owner = this;
       slot->bin = gst_bin_get_by_name(GST_BIN(pipeline), spec.bin_name.c_str());
       slot->source = gst_bin_get_by_name(GST_BIN(pipeline), spec.source_name.c_str());
-      GstElement* boundary = gst_bin_get_by_name(GST_BIN(pipeline), spec.boundary_name.c_str());
-      if (boundary) {
+      g_autoptr(GstElement) boundary =
+          gst_bin_get_by_name(GST_BIN(pipeline), spec.boundary_name.c_str());
+      if (boundary)
         slot->boundary = gst_element_get_static_pad(boundary, "src");
-        gst_object_unref(boundary);
-      }
       if (!slot->bin || !slot->source || !slot->boundary)
         throw std::runtime_error("RTSP reconnect: source boundary is missing for " +
                                  spec.source_name);
-      GstIterator* outputs = gst_element_iterate_src_pads(slot->bin);
-      GValue pad = G_VALUE_INIT;
-      if (gst_iterator_next(outputs, &pad) == GST_ITERATOR_OK) {
-        slot->output = GST_PAD(g_value_dup_object(&pad));
-        g_value_unset(&pad);
-      }
-      gst_iterator_free(outputs);
+      gst_element_foreach_src_pad(
+          slot->bin,
+          +[](GstElement*, GstPad* pad, gpointer data) -> gboolean {
+            static_cast<Source*>(data)->output = GST_PAD(gst_object_ref(pad));
+            return FALSE;
+          },
+          slot.get());
       if (!slot->output)
         throw std::runtime_error("RTSP reconnect: source bin has no output");
       // Async scheduling can insert a queue immediately after rtspsrc.
@@ -122,7 +121,8 @@ public:
             static_cast<GstPadProbeType>(GST_PAD_PROBE_TYPE_BUFFER |
                                          GST_PAD_PROBE_TYPE_BUFFER_LIST),
             +[](GstPad*, GstPadProbeInfo*, gpointer data) {
-              static_cast<Source*>(data)->last_data.store(now_ns(), std::memory_order_relaxed);
+              static_cast<Source*>(data)->last_activity.store(Clock::now(),
+                                                              std::memory_order_relaxed);
               return GST_PAD_PROBE_OK;
             },
             slot.get(), nullptr);
@@ -152,10 +152,10 @@ public:
     if (started_ || stopping_.load())
       return;
     started_ = true;
-    const auto now = now_ns();
+    const auto now = Clock::now();
     for (const auto& slot : sources_) {
-      slot->last_data.store(now);
-      if (slot->settings.interval_sec || slot->failed.load())
+      slot->last_activity.store(now);
+      if (slot->settings.interval_sec || slot->failed)
         ensure_worker();
     }
   }
@@ -203,15 +203,12 @@ private:
     if (GST_PAD_PROBE_INFO_TYPE(info) & GST_PAD_PROBE_TYPE_BUFFER) {
       if (slot.resetting.load())
         return GST_PAD_PROBE_DROP;
-      if (slot.discontinuity.exchange(false)) {
+      if (slot.awaiting_media.exchange(false)) {
         GstBuffer* buffer = gst_buffer_make_writable(GST_PAD_PROBE_INFO_BUFFER(info));
         GST_BUFFER_FLAG_SET(buffer, GST_BUFFER_FLAG_DISCONT);
         GST_PAD_PROBE_INFO_DATA(info) = buffer;
-      }
-      if (slot.awaiting_media.exchange(false)) {
         std::lock_guard lock(slot.owner->mutex_);
-        if (!slot.failed.load() && !slot.exhausted.load()) {
-          slot.outage = false;
+        if (!slot.failed && !slot.resetting.load() && !slot.exhausted.load()) {
           slot.retries = 0;
           slot.next_attempt = {};
           slot.notify(SourceStatus::Recovered);
@@ -251,36 +248,31 @@ private:
     const auto type = GST_MESSAGE_TYPE(message);
     if (!owner.stopping_.load() && (type == GST_MESSAGE_ERROR || type == GST_MESSAGE_WARNING) &&
         GST_MESSAGE_SRC(message) == GST_OBJECT(slot.source)) {
-      GError* error = nullptr;
-      gchar* debug = nullptr;
+      g_autoptr(GError) error = nullptr;
+      g_autofree gchar* debug = nullptr;
       if (type == GST_MESSAGE_ERROR)
         gst_message_parse_error(message, &error, nullptr);
       else
         gst_message_parse_warning(message, &error, &debug);
       const bool server_closed = debug && g_strstr_len(debug, -1, "server closed the connection");
-      g_free(debug);
       // rtspsrc reports a server EOF as RESOURCE/READ warning. Other
       // warnings (including UDP transport fallback) remain diagnostic.
       if (error && error->domain == GST_RESOURCE_ERROR &&
           ((server_closed && error->code == GST_RESOURCE_ERROR_READ) ||
            (type == GST_MESSAGE_ERROR && is_connection_error(error->code)))) {
-        const auto reason = sanitize_gst_diagnostic_text(error->message);
-        g_error_free(error);
-        owner.failure(slot, reason);
+        owner.failure(slot, sanitize_gst_diagnostic_text(error->message));
         gst_message_unref(message);
         return GST_BUS_DROP;
       }
-      if (error)
-        g_error_free(error);
     }
     return forward_bin_message(bus, message, slot.bin);
   }
 
   void failure(Source& source, std::string reason) {
     std::lock_guard<std::mutex> lock(mutex_);
-    if (stopping_.load() || source.exhausted.load() || source.resetting.load() ||
-        source.failed.exchange(true))
+    if (stopping_.load() || source.exhausted.load() || source.resetting.load() || source.failed)
       return;
+    source.failed = true;
     source.reason = std::move(reason);
     if (started_)
       ensure_worker();
@@ -299,17 +291,12 @@ private:
           continue;
         const auto interval = std::chrono::seconds(slot.settings.interval_sec);
         const auto now = Clock::now();
-        auto due =
-            interval.count()
-                ? Clock::time_point(std::chrono::nanoseconds(slot.last_data.load())) + interval
-                : Clock::time_point::max();
-        if (slot.failed.load())
-          due = slot.next_attempt;
+        const auto due = slot.failed ? slot.next_attempt : slot.inactivity_deadline(now, interval);
         if (now < due) {
           next = std::min(next, due);
           continue;
         }
-        if (!slot.failed.load())
+        if (!slot.failed)
           slot.reason = "no media received";
         const bool terminal = interval.count() == 0 || slot.retries == slot.settings.attempts;
         if (terminal) {
@@ -320,9 +307,8 @@ private:
           slot.exhausted.store(true);
           slot.notify(SourceStatus::Disconnected);
         } else {
-          if (!slot.outage)
+          if (slot.retries == 0)
             slot.notify(SourceStatus::Reconnecting);
-          slot.outage = true;
           slot.awaiting_media.store(false);
           slot.next_attempt = now + interval;
           ++slot.retries;
@@ -332,7 +318,7 @@ private:
         // EveryFrame tap leave the queue before waiting for that task.
         slot.interrupt_encoded_push(true);
         slot.resetting.store(true);
-        slot.failed.store(false);
+        slot.failed = false;
         lock.unlock(); // GStreamer can synchronously deliver messages during state changes.
         reset(slot, terminal);
         lock.lock();
@@ -352,21 +338,16 @@ private:
     if (terminal) {
       if (slot.settings.on_exhausted)
         slot.settings.on_exhausted(*slot.close_error);
-      GstPad* peer = gst_pad_get_peer(slot.output);
-      if (peer) {
-        // A sink that never prerolled can block EOS until teardown. Keep the
-        // recovery worker free so stop() can cancel and join it first.
-        GstElement* downstream = gst_pad_get_parent_element(peer);
-        if (downstream) {
-          gst_element_call_async(
-              downstream,
-              +[](GstElement*, gpointer pad) {
-                gst_pad_send_event(GST_PAD(pad), gst_event_new_eos());
-              },
-              gst_object_ref(peer), +[](gpointer pad) { gst_object_unref(pad); });
-          gst_object_unref(downstream);
-        }
-        gst_object_unref(peer);
+      g_autoptr(GstPad) peer = gst_pad_get_peer(slot.output);
+      g_autoptr(GstElement) downstream = peer ? gst_pad_get_parent_element(peer) : nullptr;
+      if (downstream) {
+        // EOS can wait for preroll. Keep the worker available to stop other sources.
+        gst_element_call_async(
+            downstream,
+            +[](GstElement*, gpointer pad) {
+              gst_pad_send_event(GST_PAD(pad), gst_event_new_eos());
+            },
+            g_steal_pointer(&peer), +[](gpointer pad) { gst_object_unref(pad); });
       }
       return;
     }
@@ -376,9 +357,8 @@ private:
         return;
       slot.interrupt_encoded_push(false);
     }
-    slot.last_data.store(now_ns());
+    slot.last_activity.store(Clock::now());
     slot.awaiting_media.store(true);
-    slot.discontinuity.store(true);
     slot.resetting.store(false);
     gst_element_set_state(slot.bin, GST_STATE_PLAYING);
     gst_element_set_locked_state(slot.bin, FALSE);

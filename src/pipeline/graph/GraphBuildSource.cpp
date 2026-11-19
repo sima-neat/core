@@ -144,7 +144,6 @@ void prepare_rtsp_reconnect(BuildResult& br, std::span<const std::shared_ptr<Nod
     });
     br.rtsp_reconnect_sources.push_back(std::move(settings));
   }
-  br.diag->pipeline_string = br.pipeline_string;
 }
 
 InputContract input_contract_from_fused_ingress_spec(const OutputSpec& spec);

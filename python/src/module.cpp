@@ -1374,6 +1374,20 @@ bool detection_decode_type_error_message(const std::string& msg) {
          msg.find("format mismatch") != std::string::npos;
 }
 
+template <typename... Args> nb::tuple pull_status(Run& run, Args... args) {
+  Sample sample;
+  PullError error;
+  PullStatus status;
+  {
+    nb::gil_scoped_release release;
+    status = run.pull(args..., sample, &error);
+  }
+  return nb::make_tuple(status, std::move(sample), std::move(error));
+}
+
+constexpr char pull_status_doc[] =
+    "Return (PullStatus, Sample, PullError); the sample is populated on Ok.";
+
 } // namespace
 
 NB_MODULE(_pyneat_core, m) {
@@ -2891,34 +2905,9 @@ NB_MODULE(_pyneat_core, m) {
           "input"_a, "copy"_a = false, "layout"_a = nb::none(), "image_format"_a = nb::none())
       .def("close_input", &Run::close_input)
       .def("poll_source_event", &Run::poll_source_event)
-      .def(
-          "pull_status",
-          [](Run& run, std::string name, int timeout_ms) {
-            Sample sample;
-            PullError error;
-            PullStatus status;
-            {
-              nb::gil_scoped_release release;
-              status = run.pull(name, timeout_ms, sample, &error);
-            }
-            return nb::make_tuple(status, std::move(sample), std::move(error));
-          },
-          "name"_a, "timeout_ms"_a = -1,
-          "Return (PullStatus, Sample, PullError); the sample is populated on Ok.")
-      .def(
-          "pull_status",
-          [](Run& run, int timeout_ms) {
-            Sample sample;
-            PullError error;
-            PullStatus status;
-            {
-              nb::gil_scoped_release release;
-              status = run.pull(timeout_ms, sample, &error);
-            }
-            return nb::make_tuple(status, std::move(sample), std::move(error));
-          },
-          "timeout_ms"_a = -1,
-          "Return (PullStatus, Sample, PullError); the sample is populated on Ok.")
+      .def("pull_status", &pull_status<std::string, int>, "name"_a, "timeout_ms"_a = -1,
+           pull_status_doc)
+      .def("pull_status", &pull_status<int>, "timeout_ms"_a = -1, pull_status_doc)
       .def(
           "pull",
           [](Run& run, std::string name, int timeout_ms) { return run.pull(name, timeout_ms); },
