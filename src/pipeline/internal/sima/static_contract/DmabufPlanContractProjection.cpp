@@ -685,18 +685,14 @@ bool build_cvu_dense_desc_with_geometry(const ValueSpec& value, const TensorShap
   const auto shape = cvu_shape_from_tensor(logical_shape);
   const auto dtype = cvu_dtype(value, fallback_dtype);
   std::string detail;
-  const bool valid =
-      tensorsemantics::normalize_layout_token(logical_layout).empty()
-          ? tensorsemantics::build_generic_dense_tensor_desc(
-                shape, dtype, descriptor, &detail, "missing tensor descriptor",
-                "invalid tensor rank", "invalid tensor dimension", "invalid tensor dtype",
-                "invalid tensor stride")
-          : tensorsemantics::build_dense_tensor_desc(
-                shape, dtype, logical_layout, descriptor, &detail, "missing tensor descriptor",
-                "invalid tensor rank", "invalid tensor dimension", "invalid tensor dtype",
-                "invalid tensor stride");
-  if (!valid) {
+  if (!tensorsemantics::build_generic_dense_tensor_desc(
+          shape, dtype, descriptor, &detail, "missing tensor descriptor", "invalid tensor rank",
+          "invalid tensor dimension", "invalid tensor dtype", "invalid tensor stride")) {
     return fail(error, "ProcessCVU could not author dense tensor descriptor: " + detail);
+  }
+  if (!tensorsemantics::normalize_layout_token(logical_layout).empty()) {
+    tensorsemantics::fill_axis_semantics_from_shape_layout(shape, logical_layout,
+                                                           descriptor->shape.axis_semantics);
   }
 
   // A tensor descriptor describes the exact addressed view, not every byte in

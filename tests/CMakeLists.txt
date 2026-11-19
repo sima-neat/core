@@ -2939,6 +2939,11 @@ install(
   COMPONENT extras
 )
 install(
+  FILES "${CMAKE_SOURCE_DIR}/pcie_host/tutorials/assets/labrador.jpg"
+  DESTINATION share/sima-neat/test-assets/pcie_host/tutorials/assets
+  COMPONENT extras
+)
+install(
   FILES "${CMAKE_SOURCE_DIR}/tests/assets/genai/audio.wav"
   DESTINATION share/sima-neat/test-assets/tests/assets/genai
   COMPONENT extras

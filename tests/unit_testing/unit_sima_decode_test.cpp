@@ -194,7 +194,12 @@ void check_decoder_controls() {
   }
   options.input_buffers = 2;
   options.num_buffers = 4;
-  for (const auto* tuning : {"default", "auto", "low-memory", "throughput-low-latency"}) {
+  // Canonical presets, decoder aliases, mixed case and surrounding whitespace are all accepted
+  // and forwarded with the caller's spelling.
+  for (const auto* tuning :
+       {"default", "auto", "low-memory", "throughput-low-latency", "Auto", "LOW-MEMORY",
+        "low_memory", "memory", "throughput_low_latency", "throughput", "low-latency-throughput",
+        " low-memory", "low-memory ", "low-memory\n"}) {
     options.decoder_tuning = tuning;
     const auto fragment = simaai::neat::SimaDecode(options).backend_fragment(0);
     require_contains(fragment, "dec-ip-cnt=2", "compressed input override missing");
@@ -204,6 +209,25 @@ void check_decoder_controls() {
   options.out_format = simaai::neat::FormatTag::I420;
   require_contains(simaai::neat::SimaDecode(options).backend_fragment(0), "zero-copy-output=false",
                    "I420 must select decoder conversion");
+}
+
+void check_unknown_decoder_tuning_is_refused() {
+  simaai::neat::SimaDecodeOptions options;
+  options.decoder_tuning = "bogus_value";
+  try {
+    simaai::neat::SimaDecode decode(options);
+  } catch (const simaai::neat::NeatError& e) {
+    require(e.report().error_code == "misconfig.option_out_of_range",
+            "unknown decoder_tuning must report misconfig.option_out_of_range");
+    const std::string what = e.what();
+    for (const auto* needle : {"decoder_tuning", "'bogus_value'", "auto", "default", "low-memory",
+                               "throughput-low-latency"}) {
+      require_contains(what, needle,
+                       "decoder_tuning refusal must name the field, value and presets");
+    }
+    return;
+  }
+  throw std::runtime_error("unknown decoder_tuning must be refused at construction");
 }
 
 void check_invalid_options() {
@@ -331,6 +355,7 @@ int main() {
     check_jpeg_raw_output_options();
     check_mjpeg_system_memory_output();
     check_decoder_controls();
+    check_unknown_decoder_tuning_is_refused();
     check_invalid_options();
     check_mjpeg_native_nv16();
     check_h264_decode_wrapper_compatibility();

@@ -42,7 +42,7 @@ struct DequantOptions {
   bool model_managed = false; ///< If true, the bound model owns scale/zp resolution.
 
   std::optional<double>
-      q_scale; ///< Per-tensor dequantization scale; required unless `model_managed`.
+      q_scale; ///< Positive quantization multiplier. FP32 output is `(input - q_zp) / q_scale`.
   std::optional<std::int64_t>
       q_zp; ///< Per-tensor dequantization zero-point; required unless `model_managed`.
   std::shared_ptr<const CompiledDequantContract>

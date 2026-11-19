@@ -90,6 +90,8 @@ array = outputs[0].to_numpy(copy=True)
 torch_tensor = outputs[0].to_torch(copy=True)
 ```
 
+Для тензора BF16 метод `to_numpy()` повертає незалежний масив `float32`, навіть за умови `copy=False`.
+
 Більшість програм, які запускаються вперше, не повинні вручну визначати розміщення пам’яті. Якщо це необхідно, Python надає доступ до `TensorMemory.Auto`, `CPU`, `A65`, `EV74` та `MLA` через аргумент `memory=`.
 
 Використовуйте `byte_format=` лише для тензорних даних у байтовому форматі. Не поєднуйте `byte_format=` з `image_format=`.
