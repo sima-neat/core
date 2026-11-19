@@ -269,8 +269,9 @@ RUN_TEST(
         pause.unlock();
 
         require(!run.can_push() && run.can_pull(), "queued output must remain readable after EOS");
-        require(close_input == run.last_error().empty(),
-                "only EOS before the application closes input is an error");
+        require_contains(run.last_error(),
+                         close_input ? "input is closed" : error_codes::kUnexpectedEos,
+                         "input rejection must distinguish explicit closure from premature EOS");
         Sample output;
         PullError err;
         require(run.pull(1000, output, &err) == PullStatus::Ok &&
