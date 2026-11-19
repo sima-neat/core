@@ -614,9 +614,6 @@ PcieModelFacts read_model_facts(const std::string& model_path, const ModelOption
   // The card admits only packages the strict decoder accepts.
   const auto decoded = sc::MpkDecoder{}.decode(loaded->package);
   if (!decoded) {
-    if (decoded.error && decoded.error->code == sc::MpkDecodeErrorCode::ElfTopologyInvalid) {
-      throw std::runtime_error(decoded.error->detail);
-    }
     throw std::runtime_error(
         "MPK is not admissible for execution: " +
         (decoded.error ? decoded.error->detail : std::string("strict decoder returned no plan")));

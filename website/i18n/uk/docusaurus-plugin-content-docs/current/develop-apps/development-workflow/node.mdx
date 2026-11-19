@@ -83,7 +83,7 @@ graph.add(pyneat.groups.video_input(vopt))
 | Застосунок надсилає тензори, зображення або зразки | `nodes::Input("name", options)` | `pyneat.nodes.input("name", options)` |
 | Застосунок отримує повний зразок | `nodes::Output("name", options)` | `pyneat.nodes.output("name", options)` |
 | Зчитати кадри з файлу | `nodes::FileInput(...)` плюс вузли декодування або `nodes::groups::VideoInputGroup(...)` | `pyneat.nodes.file_input(...)` плюс вузли декодування або `pyneat.groups.video_input(...)` |
-| Зчитати одне зображення як джерело | `nodes::StillImageInput(...)` | `pyneat.nodes.still_image_input(...)` |
+| Передати нерухоме зображення через `run_rtsp()` | `nodes::StillImageInput(...)` | `pyneat.nodes.still_image_input(...)` |
 | Зчитати дані з камери MIPI/libcamera | `nodes::CameraInput(...)` | `pyneat.nodes.camera_input(...)` |
 | Зчитати дані з камери USB (UVC) MJPEG | `nodes::UsbCameraInput(...)` | `pyneat.nodes.usb_camera_input(...)` |
 | Зчитати потік RTSP | `nodes::RTSPInput(...)`, `nodes::groups::RtspEncodedInput(...)` або `nodes::groups::RtspDecodedInput(...)` | `pyneat.nodes.rtsp_input(...)`, `pyneat.groups.rtsp_encoded_input(...)` або `pyneat.groups.rtsp_decoded_input(...)` |
