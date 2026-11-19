@@ -732,7 +732,7 @@ std::optional<GstSample*> try_pull_sample_sliced(GstElement* pipeline, GstElemen
                  cur_str.c_str(), allowed_str.c_str());
     if (diag && !diag->pipeline_string.empty()) {
       std::fprintf(stderr, "[DBG] %s: pipeline=%s\n", where ? where : "try_pull_sample_sliced",
-                   diag->pipeline_string.c_str());
+                   diag->redacted_pipeline_string().c_str());
     }
   };
 
