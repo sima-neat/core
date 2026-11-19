@@ -3595,8 +3595,11 @@ const StillImageInput* find_rtsp_still_image(const std::vector<std::shared_ptr<N
 
 void enforce_still_image_source_mode(const Node* node, const std::string& where) {
   if (rtsp_still_image(node, where))
-    throw_session_error_simple(error_codes::kPipelineShape,
-                               where + ": StillImageInput requires Graph::run_rtsp().");
+    throw_session_error_simple(
+        error_codes::kPipelineShape,
+        where + ": To process this image locally, use groups.image_input() "
+                "(C++: nodes::groups::ImageInputGroup). To serve it over RTSP, use "
+                "still_image_input() with an H.264 RTP output and Graph::run_rtsp().");
 }
 
 void enforce_source_run_mode(const std::vector<std::shared_ptr<Node>>& nodes,

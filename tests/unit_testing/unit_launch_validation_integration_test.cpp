@@ -142,6 +142,8 @@ RUN_TEST(
         } catch (const NeatError& error) {
           require(error.report().error_code == error_codes::kPipelineShape,
                   "still-image build should report the pipeline shape");
+          require_contains(error.what(), "groups.image_input()", "local image input guidance");
+          require_contains(error.what(), "H.264 RTP output", "still-image RTSP output guidance");
           require_contains(error.what(), "Graph::run_rtsp()", "still-image run guidance");
         }
 
