@@ -1055,6 +1055,7 @@ RUN_TEST(
         source_options.fallback_h264_width = 1280;
         source_options.fallback_h264_height = 720;
         auto source = simaai::neat::nodes::groups::RtspEncodedInput(source_options);
+        source.set_name("camera" + std::to_string(stream));
 
         simaai::neat::Graph decoder("decoder" + std::to_string(stream));
         simaai::neat::H264ParseOptions decoder_parser;
@@ -1127,6 +1128,8 @@ RUN_TEST(
                 "fused encoded branch must preserve its configured stream id");
         const std::string stream_suffix =
             branch.stream_id.substr(std::string("encoded_stream").size());
+        require(encoded_fanout_plan.node_labels.at(branch.source_node) == "camera" + stream_suffix,
+                "source events must identify the camera that feeds the fused decoder");
         require(branch.encoded_output->stream_id == "encoded_output_stream" + stream_suffix,
                 "fused encoded Output must preserve the source-to-Output edge stream id (got '" +
                     branch.encoded_output->stream_id + "')");

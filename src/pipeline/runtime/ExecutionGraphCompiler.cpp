@@ -2262,7 +2262,7 @@ void fuse_realtime_fan_in_segments(const graph::Graph& graph, ExecutionGraphPlan
         const auto pcie_match = match_pcie_decode_fusion_branch(*plan, segment_by_node, edge_index);
         if (pcie_match.has_value()) {
           const auto& decoder = plan->pipeline_segments[pcie_match->decoder_segment];
-          candidate.source_segment = pcie_match->decoder_segment;
+          candidate.source_segment = pcie_match->source_segment;
           candidate.consumed_segments = {pcie_match->source_segment, pcie_match->decoder_segment};
           candidate.consumed_edges = {pcie_match->source_edge, edge_index};
           candidate.nodes = decoder.nodes;
@@ -2278,7 +2278,7 @@ void fuse_realtime_fan_in_segments(const graph::Graph& graph, ExecutionGraphPlan
             break;
           }
           const auto& decoder = plan->pipeline_segments[encoded_match->decoder_segment];
-          candidate.source_segment = encoded_match->decoder_segment;
+          candidate.source_segment = encoded_match->source_segment;
           candidate.consumed_segments = {encoded_match->source_segment,
                                          encoded_match->decoder_segment,
                                          encoded_match->output_segment};
@@ -2399,7 +2399,7 @@ void fuse_realtime_fan_in_segments(const graph::Graph& graph, ExecutionGraphPlan
 
       FusedRealtimeIngressBranch branch;
       branch.edge_index = edge_index;
-      branch.source_node = edge.from;
+      branch.source_node = plan->pipeline_segments[candidate.source_segment].node_ids.front();
       branch.stream_id = (*effective_stream_ids)[ordinal];
       branch.shared_source_pad = std::move(candidate.shared_source_pad);
       branch.link_options = edge.link_options;

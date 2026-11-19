@@ -51,6 +51,10 @@ class RtspReconnectController {
       if (settings.events)
         settings.events->push({settings.label, status});
     }
+    void interrupt_encoded_push(bool interrupted) const {
+      if (settings.interrupt_encoded_push)
+        settings.interrupt_encoded_push->store(interrupted);
+    }
     int retries = 0;
     std::string reason;
     RtspReconnectController* owner = nullptr;
@@ -161,6 +165,8 @@ public:
     {
       std::lock_guard state_lock(mutex_);
       stopping_.store(true);
+      for (const auto& slot : sources_)
+        slot->interrupt_encoded_push(true);
     }
     cv_.notify_all();
     if (worker_.joinable())
@@ -322,6 +328,9 @@ private:
           ++slot.retries;
           next = std::min(next, slot.next_attempt);
         }
+        // The source state change joins its streaming task. Let a blocked
+        // EveryFrame tap leave the queue before waiting for that task.
+        slot.interrupt_encoded_push(true);
         slot.resetting.store(true);
         slot.failed.store(false);
         lock.unlock(); // GStreamer can synchronously deliver messages during state changes.
@@ -360,6 +369,12 @@ private:
         gst_object_unref(peer);
       }
       return;
+    }
+    {
+      std::lock_guard lock(mutex_);
+      if (stopping_.load())
+        return;
+      slot.interrupt_encoded_push(false);
     }
     slot.last_data.store(now_ns());
     slot.awaiting_media.store(true);

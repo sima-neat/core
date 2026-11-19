@@ -2010,6 +2010,7 @@ std::optional<std::size_t> parse_fused_branch_index_from_name(const std::string&
 struct FusedEncodedOutputProbeContext {
   runtime::FusedRealtimeIngressBranch::EncodedOutput output;
   runtime::FusedEncodedOutputDispatch dispatch;
+  std::shared_ptr<std::atomic_bool> interrupt;
   bool copy_output = false;
 };
 
@@ -2141,7 +2142,8 @@ GstPadProbeReturn fused_encoded_output_probe(GstPad* pad, GstPadProbeInfo* info,
     }
     Sample sample = make_fused_encoded_output_sample(buffer, caps, context->output.stream_id,
                                                      context->copy_output);
-    dispatch_result = context->dispatch(context->output, std::move(sample), &error);
+    dispatch_result =
+        context->dispatch(context->output, std::move(sample), context->interrupt.get(), &error);
   } catch (const std::exception& ex) {
     error = ex.what();
   } catch (...) {
@@ -2172,11 +2174,11 @@ GstPadProbeReturn fused_encoded_output_probe(GstPad* pad, GstPadProbeInfo* info,
   return GST_PAD_PROBE_DROP;
 }
 
-std::size_t attach_fused_encoded_output_probes(GstElement* pipeline,
-                                               const runtime::FusedRealtimeIngress& ingress,
-                                               const runtime::FusedEncodedOutputDispatch& dispatch,
-                                               bool copy_output,
-                                               const NameTransform& name_transform) {
+std::size_t attach_fused_encoded_output_probes(
+    GstElement* pipeline, const runtime::FusedRealtimeIngress& ingress,
+    const runtime::FusedEncodedOutputDispatch& dispatch, bool copy_output,
+    const NameTransform& name_transform,
+    std::span<const std::shared_ptr<std::atomic_bool>> interrupts = {}) {
   if (!pipeline) {
     return 0U;
   }
@@ -2213,8 +2215,9 @@ std::size_t attach_fused_encoded_output_probes(GstElement* pipeline,
       throw std::runtime_error("fused encoded Output tap '" + tap_name + "' has no src pad");
     }
 
-    auto* context =
-        new FusedEncodedOutputProbeContext{*branch.encoded_output, dispatch, copy_output};
+    auto* context = new FusedEncodedOutputProbeContext{
+        *branch.encoded_output, dispatch, interrupts.empty() ? nullptr : interrupts[branch_index],
+        copy_output};
     const gulong probe = gst_pad_add_probe(
         src, GST_PAD_PROBE_TYPE_BUFFER, fused_encoded_output_probe, context,
         +[](gpointer data) { delete static_cast<FusedEncodedOutputProbeContext*>(data); });
@@ -3335,7 +3338,7 @@ std::size_t attach_fused_encoded_output_probe_for_test(
   runtime::FusedEncodedOutputDispatch dispatch;
   if (observe) {
     dispatch = [observe](const runtime::FusedRealtimeIngressBranch::EncodedOutput&, Sample&& sample,
-                         std::string*) {
+                         const std::atomic_bool*, std::string*) {
       observe(sample);
       return runtime::FusedEncodedOutputDispatchResult::Delivered;
     };
@@ -3544,6 +3547,7 @@ SourceStreamBuildContext session_build_fused_realtime_source_stream_internal(
                                                         build_branch_nodes, branch_actual_indices,
                                                         name_transform, "mysink", sess_opt,
                                                         /*enable_terminal_loans=*/has_sink);
+  std::vector<std::shared_ptr<std::atomic_bool>> interrupts(build_branch_nodes.size());
   for (std::size_t i = 0; i < build_branch_nodes.size(); ++i) {
     const auto first_source = br.rtsp_reconnect_sources.size();
     auto prefix = std::span(build_branch_nodes[i]);
@@ -3553,10 +3557,18 @@ SourceStreamBuildContext session_build_fused_realtime_source_stream_internal(
                            i < monitor.branch_labels.size() ? monitor.branch_labels[i]
                                                             : ingress.branches[i].stream_id,
                            &branch_actual_indices[i]);
-    if (encoded_output_close && ingress.branches[i].encoded_output) {
-      for (auto j = first_source; j < br.rtsp_reconnect_sources.size(); ++j)
-        br.rtsp_reconnect_sources[j].on_exhausted =
-            [encoded_output_close, i](const PullError& error) { encoded_output_close(i, error); };
+    const auto& output = ingress.branches[i].encoded_output;
+    if (!output || first_source == br.rtsp_reconnect_sources.size())
+      continue;
+    if (!output->options.drop && output->options.max_buffers > 0)
+      interrupts[i] = std::make_shared<std::atomic_bool>(false);
+    for (auto j = first_source; j < br.rtsp_reconnect_sources.size(); ++j) {
+      auto& source = br.rtsp_reconnect_sources[j];
+      source.interrupt_encoded_push = interrupts[i];
+      if (encoded_output_close)
+        source.on_exhausted = [encoded_output_close, i](const PullError& error) {
+          encoded_output_close(i, error);
+        };
     }
   }
   maybe_compile_fused_realtime_contracts(&br, build_consumer_nodes, build_branch_nodes,
@@ -3603,7 +3615,7 @@ SourceStreamBuildContext session_build_fused_realtime_source_stream_internal(
   attach_fused_realtime_stage_counters(pipeline.get(), ingress);
   attach_fused_decoder_timing_probes(pipeline.get(), ingress);
   attach_fused_encoded_output_probes(pipeline.get(), ingress, encoded_output_dispatch,
-                                     stream_opt.copy_output, name_transform);
+                                     stream_opt.copy_output, name_transform, interrupts);
 
   for (std::size_t branch_index = 0; branch_index < build_branch_nodes.size(); ++branch_index) {
     std::vector<std::shared_ptr<Node>> logical = build_branch_nodes[branch_index];

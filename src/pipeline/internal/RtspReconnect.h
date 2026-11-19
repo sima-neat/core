@@ -5,6 +5,7 @@
 
 #include "pipeline/Run.h"
 
+#include <atomic>
 #include <deque>
 #include <functional>
 #include <mutex>
@@ -55,6 +56,7 @@ struct RtspReconnectSource {
   int interval_sec = 0;
   int attempts = -1;
   std::function<void(const PullError&)> on_exhausted;
+  std::shared_ptr<std::atomic_bool> interrupt_encoded_push;
 };
 
 void attach_rtsp_reconnect(GstElement* pipeline, const std::vector<RtspReconnectSource>& sources);

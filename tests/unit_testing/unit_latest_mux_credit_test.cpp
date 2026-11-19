@@ -23,6 +23,7 @@
 #include <cstdlib>
 #include <deque>
 #include <exception>
+#include <future>
 #include <iostream>
 #include <iterator>
 #include <memory>
@@ -424,6 +425,43 @@ void test_graph_scoped_encoded_output_owned_copy_releases_source() {
   const auto* payload_bytes = static_cast<const std::uint8_t*>(payload.data);
   require(std::equal(expected.begin(), expected.end(), payload_bytes),
           "owned encoded Output must remain valid independently of its source buffer");
+}
+
+void test_rtsp_reset_interrupts_only_its_encoded_producer() {
+  using namespace simaai::neat;
+  using namespace simaai::neat::runtime;
+  using namespace std::chrono_literals;
+  const auto options = OutputOptions::EveryFrame(1);
+  GraphSinkQueue queue(1);
+  std::atomic_bool camera_reset{false}, peer_reset{false};
+  auto push = [&](int id, const std::atomic_bool& interrupted) {
+    Sample sample;
+    sample.frame_id = id;
+    return enqueue_fused_encoded_output(queue, options, std::move(sample), &interrupted);
+  };
+  require(push(1, camera_reset) == FusedEncodedOutputEnqueueResult::Enqueued,
+          "fixture must fill the shared encoded output");
+  auto camera = std::async(std::launch::async, [&] { return push(2, camera_reset); });
+  auto peer = std::async(std::launch::async, [&] { return push(3, peer_reset); });
+  const bool full = camera.wait_for(20ms) == std::future_status::timeout;
+  camera_reset.store(true);
+  const bool interrupted = camera.wait_for(2s) == std::future_status::ready;
+  const bool peer_waits = peer.wait_for(0ms) == std::future_status::timeout;
+  // Bound failures too: close the queue before joining a producer that did not wake.
+  if (!interrupted)
+    queue.close();
+  RuntimeSinkQueueMsg retained;
+  const bool kept_first = queue.pop(retained, 0) && retained.sample.frame_id == 1;
+  if (peer.wait_for(2s) != std::future_status::ready)
+    queue.close();
+  require(full && interrupted && camera.get() == FusedEncodedOutputEnqueueResult::Interrupted,
+          "reset must release a blocked camera without an application pull");
+  require(peer_waits && kept_first && peer.get() == FusedEncodedOutputEnqueueResult::Enqueued &&
+              queue.pop(retained, 0) && retained.sample.frame_id == 3,
+          "reset must preserve queued samples and backpressure for the other camera");
+  camera_reset.store(false);
+  require(push(4, camera_reset) == FusedEncodedOutputEnqueueResult::Enqueued,
+          "the replacement RTSP session must be able to publish again");
 }
 
 void test_graph_scoped_encoded_output_queue_overflow_policy() {
@@ -1457,6 +1495,7 @@ int main() {
     test_graph_scoped_encoded_output_retains_au_and_timing_zero_copy();
     test_graph_scoped_encoded_output_owned_copy_releases_source();
     test_graph_scoped_encoded_output_queue_overflow_policy();
+    test_rtsp_reset_interrupts_only_its_encoded_producer();
     test_terminal_release_restores_original_pts();
     test_guarded_terminal_restore_is_in_place_and_authoritative();
     test_replacing_chain_uses_per_stream_fifo_timing();

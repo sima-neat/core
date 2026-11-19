@@ -57,6 +57,7 @@ enum class FusedEncodedOutputEnqueueResult {
   ReplacedOldest,
   DroppedIncoming,
   Overflow,
+  Interrupted,
   Closed,
 };
 
@@ -89,8 +90,6 @@ public:
 private:
   friend FusedEncodedOutputEnqueueResult
   enqueue_graph_sink_output(GraphSinkQueue&, const OutputOptions&, RuntimeSinkQueueMsg&&, int);
-  friend FusedEncodedOutputEnqueueResult
-  enqueue_fused_encoded_output(GraphSinkQueue&, const OutputOptions&, Sample&&);
   std::mutex latest_enqueue_mu_;
   bool has_output_options_ = false;
   OutputOptions output_options_{};
@@ -143,10 +142,16 @@ inline FusedEncodedOutputEnqueueResult enqueue_graph_sink_output(GraphSinkQueue&
 
 /** Queue policy used by graph-scoped encoded Outputs. */
 inline FusedEncodedOutputEnqueueResult
-enqueue_fused_encoded_output(GraphSinkQueue& queue, const OutputOptions& options, Sample&& sample) {
-  return enqueue_graph_sink_output(
-      queue, options,
-      RuntimeSinkQueueMsg{.sample = std::move(sample), .edge_index = invalid_edge_index()}, -1);
+enqueue_fused_encoded_output(GraphSinkQueue& queue, const OutputOptions& options, Sample&& sample,
+                             const std::atomic_bool* interrupt = nullptr) {
+  RuntimeSinkQueueMsg message{.sample = std::move(sample), .edge_index = invalid_edge_index()};
+  if (interrupt && !options.drop) {
+    if (queue.push_interruptible(std::move(message), -1, [interrupt] { return interrupt->load(); }))
+      return FusedEncodedOutputEnqueueResult::Enqueued;
+    return queue.closed() ? FusedEncodedOutputEnqueueResult::Closed
+                          : FusedEncodedOutputEnqueueResult::Interrupted;
+  }
+  return enqueue_graph_sink_output(queue, options, std::move(message), -1);
 }
 
 struct DownstreamTarget {

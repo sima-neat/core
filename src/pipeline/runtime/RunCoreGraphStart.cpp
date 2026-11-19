@@ -980,7 +980,7 @@ void build_source_pipeline_if_needed(const std::shared_ptr<RunCore>& core,
     };
     start_opt.fused_encoded_output_dispatch =
         [weak_core](const FusedRealtimeIngressBranch::EncodedOutput& output, Sample&& sample,
-                    std::string* error) {
+                    const std::atomic_bool* interrupt, std::string* error) {
           const auto locked = weak_core.lock();
           if (!locked || locked->graph_stop_requested()) {
             if (error) {
@@ -1001,8 +1001,10 @@ void build_source_pipeline_if_needed(const std::shared_ptr<RunCore>& core,
           // Preserve OutputOptions exactly: Latest replaces its oldest queued
           // AU without blocking, while EveryFrame applies backpressure until
           // Run::pull() makes room. Closing the queue wakes blocked producers.
-          const auto enqueue =
-              enqueue_fused_encoded_output(*sink->second, output.options, std::move(sample));
+          const auto enqueue = enqueue_fused_encoded_output(*sink->second, output.options,
+                                                            std::move(sample), interrupt);
+          if (enqueue == FusedEncodedOutputEnqueueResult::Interrupted)
+            return FusedEncodedOutputDispatchResult::Stopping;
           if (enqueue == FusedEncodedOutputEnqueueResult::Enqueued ||
               enqueue == FusedEncodedOutputEnqueueResult::ReplacedOldest ||
               enqueue == FusedEncodedOutputEnqueueResult::DroppedIncoming) {
