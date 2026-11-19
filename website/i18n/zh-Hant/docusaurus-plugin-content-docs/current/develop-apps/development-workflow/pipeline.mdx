@@ -1323,3 +1323,11 @@ except pyneat.NeatError as error:
 - [模型](/develop-apps/development-workflow/model)
 - [張量與樣本](/develop-apps/development-workflow/core_types)
 - [疑難排解](/reference/troubleshooting)
+
+## 偵測 RTSP 攝影機斷線並恢復連線
+
+請用 `set_name()` 為每個來源圖命名。在 Python 中，`run.pull_status("frame7", 200)` 會傳回 `(status, sample, error)`。`Timeout` 表示這次等候期間沒有收到影格。若狀態為 `Closed` 且 `error.code == "io.rtsp_connection_failed"`，`error.source` 會指出斷線的攝影機。
+
+兩種 RTSP 輸入選項都支援 `reconnect_interval_sec = 5`，表示連續五秒未收到媒體資料後嘗試重新連線。預設值為零，確認斷線時只會關閉該來源。`reconnect_attempts` 限制每次斷線的重試次數（預設值 `-1` 表示不限次數）。若間隔大於零且次數為零，等候媒體資料逾時就會關閉來源。
+
+重新連線期間，輸出會保持開啟。呼叫 `run.poll_source_event()` 可取得 `Reconnecting`、`Recovered` 或最終的 `Disconnected` 狀態變更。每個事件都帶有來源圖名稱；佇列為空時會傳回 `None`。

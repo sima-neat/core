@@ -1,3 +1,4 @@
+#include "pipeline/internal/RtspReconnect.h"
 /**
  * @file GraphDetail.h
  * @brief Internal helpers used by the split Graph compilation units.
@@ -369,6 +370,7 @@ std::string boundary_summary_local(const std::shared_ptr<DiagCtx>& diag);
  * This remains an implementation detail (not part of the public Graph API).
  */
 struct BuildResult {
+  std::vector<pipeline_internal::RtspReconnectSource> rtsp_reconnect_sources;
   std::string pipeline_string;
   std::shared_ptr<DiagCtx> diag;
   // Cold execution and output-retention budgets for native numerical stages.

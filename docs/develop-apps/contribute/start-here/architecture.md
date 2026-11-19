@@ -327,6 +327,7 @@ rebuilt binary consumers; existing source entry points remain available.
 - **Decode / ingest:** file or RTSP -> depay/demux/parse -> decode -> convert/caps -> appsink -> C++ consumer
 - **Validate:** build + parse + preroll (PAUSED) to catch negotiation issues early
 - **Serve RTSP:** push synthetic frames into an RTSP server pipeline using `appsrc`
+- Core monitors each RTSP source independently. A lost camera closes its own outputs after retries end. During recovery, Core restarts the RTSP transport and depay/parser stages for that camera and keeps the decoder, shared graph stages and other sources running.
 - **Image/video tensor adapter:** image/video/RTSP -> decode -> convert/scale -> `add_output_tensor(...)` -> `Run::pull_tensors()`
 - **Tutorials:** start at [Tutorials](/tutorials) for a runnable, ordered learning path
 

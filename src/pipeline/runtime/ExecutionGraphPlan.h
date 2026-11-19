@@ -179,6 +179,7 @@ enum class FusedEncodedOutputDispatchResult {
  */
 using FusedEncodedOutputDispatch = std::function<FusedEncodedOutputDispatchResult(
     const FusedRealtimeIngressBranch::EncodedOutput&, Sample&&, std::string*)>;
+using FusedEncodedOutputCloseDispatch = std::function<void(std::size_t branch, const PullError&)>;
 
 struct MaterializedNodeAttribution {
   enum class Role {

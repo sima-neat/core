@@ -489,6 +489,15 @@ struct PullError {
   std::string message; ///< Human-readable error string (often prefixed with `[code]`).
   std::string code;    ///< Canonical machine-triage code (see `pipeline/ErrorCodes.h`).
   std::optional<GraphReport> report; ///< Optional structured report for runtime/plugin failures.
+  std::string source;                ///< Graph source name for a source-local closure.
+};
+
+/// RTSP source transitions observed by a running graph.
+enum class SourceStatus { Reconnecting, Recovered, Disconnected };
+
+struct SourceEvent {
+  std::string source;
+  SourceStatus status;
 };
 
 /**

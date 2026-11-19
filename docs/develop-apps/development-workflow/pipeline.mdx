@@ -1338,3 +1338,11 @@ Fix correctness first. Then make it fast. Then prove which one you measured.
 - [Model](/develop-apps/development-workflow/model)
 - [Tensor and Sample](/develop-apps/development-workflow/core_types)
 - [Troubleshooting](/reference/troubleshooting)
+
+## Detect and recover a lost RTSP camera
+
+Name each source graph with `set_name()`. In Python, `run.pull_status("frame7", 200)` returns `(status, sample, error)`. `Timeout` means no frame arrived during that pull. `Closed` with `error.code == "io.rtsp_connection_failed"` identifies the lost camera in `error.source`.
+
+On either RTSP input options object, set `reconnect_interval_sec = 5` to retry after five seconds without media. The default is zero, so a confirmed disconnect closes only that source. `reconnect_attempts` limits retries per outage (default `-1`, unlimited). With a positive interval and zero attempts, inactivity closes the source immediately at the deadline.
+
+While reconnecting, the output stays open. Poll `run.poll_source_event()` for `Reconnecting`, `Recovered` or terminal `Disconnected` transitions. Each event carries the graph source name. An empty queue returns `None`.

@@ -1325,3 +1325,11 @@ except pyneat.NeatError as error:
 - [모델](/develop-apps/development-workflow/model)
 - [텐서 및 샘플](/develop-apps/development-workflow/core_types)
 - [문제 해결](/reference/troubleshooting)
+
+## RTSP 카메라 연결 끊김 감지와 복구
+
+각 소스 그래프에 `set_name()`으로 이름을 지정합니다. Python에서 `run.pull_status("frame7", 200)`는 `(status, sample, error)`를 반환합니다. `Timeout`은 해당 대기 시간 안에 프레임이 도착하지 않았음을 뜻합니다. `Closed`이고 `error.code == "io.rtsp_connection_failed"`이면 `error.source`가 끊긴 카메라를 알려 줍니다.
+
+두 RTSP 입력 옵션 모두 `reconnect_interval_sec = 5`로 설정하면 미디어가 5초 동안 도착하지 않을 때 재연결합니다. 기본값은 0이며 연결 끊김이 확인되면 해당 소스만 닫습니다. `reconnect_attempts`는 장애당 재시도 횟수입니다(기본값 `-1`은 무제한). 간격이 양수이고 횟수가 0이면 미디어 대기 시간이 만료될 때 소스를 닫습니다.
+
+재연결 중에는 출력을 열어 둡니다. `run.poll_source_event()`로 `Reconnecting`, `Recovered` 또는 최종 상태 `Disconnected`를 확인합니다. 이벤트에는 소스 그래프 이름이 들어 있으며 큐가 비면 `None`을 반환합니다.

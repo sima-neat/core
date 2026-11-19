@@ -93,6 +93,9 @@ struct RtspDecodedInputOptions {
   std::string decoder_tuning;      ///< Optional native decoder tuning; accepted values and
                                    ///< errors as for `SimaDecodeOptions::decoder_tuning`.
   bool decoder_memory_opt = false; ///< If true, enable the decoder memory-optimized path.
+  int reconnect_interval_sec =
+      0; ///< Seconds without media before retrying; zero disables automatic reconnect.
+  int reconnect_attempts = -1; ///< Retries per outage; -1 is unlimited, 0 only reports the loss.
 };
 
 /**

@@ -74,10 +74,12 @@ def main(argv: list[str]) -> int:
 
     # STEP pull-frames
     for i in range(args.frames):
-        frame_sample = run.pull(timeout_ms=5000)
-        if frame_sample is None or not frame_sample.tensors:
+        status, frame_sample, error = run.pull_status(timeout_ms=5000)
+        if status == pyneat.PullStatus.Timeout:
             print(f"frame={i} rtsp_timeout")
             break
+        if status != pyneat.PullStatus.Ok:
+            sys.exit(error.message)
         frame_tensor = frame_sample.tensors[0]
         print(f"frame={i} shape={list(frame_tensor.shape)}")
     # END STEP

@@ -491,6 +491,10 @@ std::string default_output_name(const runtime::RunCore& core) {
 
 } // namespace
 
+std::optional<SourceEvent> Run::poll_source_event() {
+  return core_ && core_->source_events ? core_->source_events->pop() : std::nullopt;
+}
+
 PullStatus Run::pull(int timeout_ms, Sample& out, PullError* err) {
   if (!core_) {
     pipeline_internal::error_util::set_pull_error(err, error_codes::kRuntimePull,
@@ -801,8 +805,16 @@ PullStatus runtime::RunCore::pull(int timeout_ms, Sample& out, PullError* err,
 
   if (is_done) {
     if (!st->pipeline.supports_push && st->pipeline.stream.reached_eos()) {
-      set_terminal_error(error_codes::kSourceEnded,
-                         "Run::pull: input source reached end of stream");
+      if (auto detail = st->pipeline.stream.source_close_detail()) {
+        if (err)
+          *err = std::move(*detail);
+        // Publish source closure before potentially blocking teardown. The
+        // graph transport stops this child after forwarding completion.
+        return PullStatus::Closed;
+      } else {
+        set_terminal_error(error_codes::kSourceEnded,
+                           "Run::pull: input source reached end of stream");
+      }
     } else {
       set_terminal_error(error_codes::kRuntimePull, "Run::pull: stream closed");
     }
