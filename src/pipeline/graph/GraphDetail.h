@@ -475,6 +475,11 @@ void enforce_caps_behavior(const std::vector<std::shared_ptr<Node>>& nodes,
 void enforce_sink_last_if_present(const std::vector<std::shared_ptr<Node>>& nodes,
                                   const std::string& where);
 
+class StillImageInput;
+void enforce_still_image_source_mode(const Node* node, const std::string& where);
+const StillImageInput* find_rtsp_still_image(const std::vector<std::shared_ptr<Node>>& nodes,
+                                             const std::string& where);
+
 /** Enforce that the node graph is valid for SOURCE run mode. */
 void enforce_source_run_mode(const std::vector<std::shared_ptr<Node>>& nodes,
                              const std::string& where);

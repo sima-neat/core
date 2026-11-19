@@ -1298,9 +1298,9 @@ uploaded per frame.
 
 `Run` owns input/output queues and an input thread:
 
-* `push(...)` enqueues inputs (blocking or dropping based on `RunOptions::overflow_policy`)
+* `push(...)` waits for input space and enqueues the sample
 * `pull(...)` dequeues `Sample` outputs from the appsink
-* `try_push(...)` is non-blocking (returns false if the queue is full)
+* `try_push(...)` applies `RunOptions::overflow_policy` immediately when the input queue is full
 
 An idle `Run` remains usable; operation deadlines bound waits, not pauses between submissions.
 

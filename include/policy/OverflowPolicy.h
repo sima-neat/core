@@ -17,6 +17,7 @@ enum class OverflowPolicy {
   Block = 0,    ///< Wait for space and preserve every item.
   KeepLatest,   ///< Drop the oldest queued item to make room.
   DropIncoming, ///< Drop the new item and preserve what is already queued.
+  Auto,         ///< Use the Run preset for input admission. Standalone queues block.
 };
 
 } // namespace simaai::neat

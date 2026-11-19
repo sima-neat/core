@@ -436,12 +436,7 @@ RtspServerHandle Graph::run_rtsp(const RtspServerOptions& opt) {
   require_element("rtph264pay", "Graph::run_rtsp");
   require_element("h264parse", "Graph::run_rtsp");
 
-  StillImageInput* src_img = nullptr;
-  for (auto& n : nodes) {
-    if (!src_img) {
-      src_img = dynamic_cast<StillImageInput*>(n.get());
-    }
-  }
+  const StillImageInput* src_img = find_rtsp_still_image(nodes, "Graph::run_rtsp");
   if (!src_img) {
     throw std::runtime_error("Graph::run_rtsp: missing StillImageInput node");
   }

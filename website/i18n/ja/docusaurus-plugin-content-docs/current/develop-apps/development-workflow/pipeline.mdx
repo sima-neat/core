@@ -281,7 +281,7 @@ preview = run.pull("preview", timeout_ms=2000)
 | 初期ビルドで、最初のサンプルにおけるエラーを早期に検出できるようにする。 | `startup_preflight = true` | シードされたビルドの整合性を維持します。最初のサンプルでエラーが発生し、後で`pull(...)`または`last_error()`を通じてそのエラーが明らかになる可能性がある場合にのみ、機能を無効にしてください。 |
 | ソースバッファーの有効期間は短い。 | `advanced.copy_input = true` | `push(...)` の後に消える可能性がある入力メモリを保護します。 |
 | 入力サイズには、制限を設ける必要があります。 | `advanced.max_input_bytes` | グラフにデータが入力される前に、サイズが大きすぎる入力は拒否されます。 |
-| テレメトリーデータの送信を停止する必要があります。 | `on_input_drop` | ストリームと理由別に、オーバーロードとサイズ制限によるドロップ数を集計します。 |
+| 入力のドロップを測定する | `inputs_dropped`、`on_input_drop` | カウンターはオーバーフローポリシーによるドロップ数を記録します。コールバックは入力形式の変更中に破棄したフレームを通知します。 |
 | ビルド時に証拠が必要になります。 | `run_export` | 実行が完了した時点で、実行のスナップショットを作成します。 |
 
 ### DMA-BUF 出力の保持と解放
@@ -469,14 +469,9 @@ run = graph.build([tensor])
 
 バックプレッシャーとは、アプリケーションが必要とする速度よりも遅く、グラフがデータを処理または出力できる状態を指します。
 
-以下のコントロールを意図的に使用してください。
-
-- `queue_depth` は、ランタイムのキューで処理を待機できる量を制御します。
-- `overflow_policy = Block` は、プロデューサーに逆圧を適用します。
-- `overflow_policy = KeepLatest` は、古いキューに入れられた入力を破棄することで、ライブストリームの鮮度を維持します。
-- `overflow_policy = DropIncoming` は、キューがいっぱいになると、新しい入力要求を拒否します。
-- `try_push(...)` は、処理をブロックする代わりに、`false` を返します。
-- `on_input_drop` は、破棄された入力に関する情報を、`InputDropInfo` のフィールド（例：`stream_id`、`frame_id`、`port_name`、`reason`）とともに報告します。
+- `queue_depth` は、この既定値を使う各キューの容量です。複数のキューや処理ステージが同時にフレームを保持できます。
+- `push()` は空きを待ちます。入力キューが満杯の場合、`try_push()` は `overflow_policy` を適用します。
+- `inputs_enqueued` は受理したサンプル数、`inputs_dropped` はポリシーによる破棄数です。`Block` で再試行可能な場合、どちらのカウンターも増えません。
 
 スレッド処理を行う場合、1つのプッシュスレッドと1つのプルスレッドを1つの`Run`に使用します。複数のスレッドから同時に同じ`Run`にプッシュすることは、アプリケーションがそれらの呼び出しをシリアル化する場合を除き、避けてください。
 
@@ -615,9 +610,7 @@ auto sample = simaai::neat::Sample::from_image(
 sample.stream_id = camera_id;
 sample.frame_id = frame_number++;
 
-if (!run.try_push("image", sample)) {
-  // Count local backpressure here. Runtime drops also flow through on_input_drop.
-}
+bool accepted = run.try_push("image", sample);
 ```
 
 </CodeTab>
@@ -1310,7 +1303,7 @@ except pyneat.NeatError as error:
 5. ゼロコピーまたはランタイムによって生成された出力を、必要以上に長く保持していませんか？
 6. キューの深さが浅すぎるとジッターの影響を受けやすいのか、それとも深すぎるとバックプレッシャーが顕在化してしまうのか？
 7. 過負荷に関する規定は明確に定められていますか？
-8. ドロップ数は、`on_input_drop` を通じて、またはローカルの `try_push(...)` の失敗によってカウントされますか？
+8. 測定レポートの `inputs_dropped` にポリシーによるドロップが記録されていますか？
 9. 予測されるすべての`stream_id`は、測定された時間枠内で出力を生成しますか？
 10. ログ記録、デコード処理、ファイル入出力、またはレポートのエクスポート処理が、処理速度が重要なループ（ホットループ）内で行われていますか？
 

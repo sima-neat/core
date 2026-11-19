@@ -77,37 +77,34 @@ struct GraphSampleTimingEvent {
   double timestamp_s = 0.0;
 };
 
+inline OverflowPolicy resolve_overflow_policy(const RunOptions& options) {
+  if (options.overflow_policy != OverflowPolicy::Auto)
+    return options.overflow_policy;
+  return options.preset == RunPreset::Realtime ? OverflowPolicy::KeepLatest : OverflowPolicy::Block;
+}
+
 struct GraphRuntimeOptions {
   std::size_t edge_queue = 256;
   int push_timeout_ms = 5000;
   int pull_timeout_ms = 50;
   VerboseOptions verbose;
   RunOptions pipeline;
+  bool queue_public_input = false;
   PowerMonitorOptions power_monitor;
 
   EdgeRouterOptions router_options() const {
     return EdgeRouterOptions{
         .edge_queue = edge_queue,
-        .push_timeout_ms = push_timeout_ms,
+        // Accepted public inputs wait for reliable handoffs until the run stops.
+        .push_timeout_ms = queue_public_input ? -1 : push_timeout_ms,
         .request_stop_on_backpressure = true,
     };
   }
 };
 
-inline GraphRuntimeOptions
-graph_runtime_options_from_run_options(const RunOptions& opt, const VerboseOptions& verbose = {}) {
-  GraphRuntimeOptions out;
-  out.edge_queue = opt.queue_depth > 0 ? static_cast<std::size_t>(opt.queue_depth) : 0U;
-  out.verbose = verbose;
-  out.pipeline = opt;
-  out.power_monitor = opt.power_monitor;
-  // Connected public Graph::build() uses RunOptions as the only customer-facing
-  // knob. Treat RunOptions::power_monitor as graph-level board telemetry and do
-  // not forward it to each materialized pipeline segment; otherwise a connected
-  // graph with N segments would start N+1 board monitors and double-count rails.
-  out.pipeline.power_monitor = PowerMonitorOptions{};
-  return out;
-}
+GraphRuntimeOptions graph_runtime_options_from_run_options(const RunOptions& opt,
+                                                           const VerboseOptions& verbose = {},
+                                                           RunMode mode = RunMode::Async);
 
 enum class PushSamplePolicy {
   // Public linear Run compatibility: image Samples may use the legacy cv::Mat ingress path
@@ -239,6 +236,9 @@ struct RunCore : std::enable_shared_from_this<RunCore> {
                                      Sample&& sample, std::size_t edge_index,
                                      const EdgeRouterOptions& options,
                                      bool cancel_on_public_input_close = false);
+  bool graph_dispatch_direct_input(const PipelineSegmentRuntime& pipe, graph::PortId port,
+                                   Sample sample, const EdgeRouterOptions& options,
+                                   bool cancel_on_public_input_close);
   bool graph_push(simaai::neat::graph::NodeId node_id, simaai::neat::graph::PortId port,
                   bool has_port, const Sample& sample, const EdgeRouterOptions& options);
   void record_graph_sample_entry(std::string_view endpoint, const Sample& sample,

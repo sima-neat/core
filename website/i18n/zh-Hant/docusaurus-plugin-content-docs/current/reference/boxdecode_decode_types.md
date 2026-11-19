@@ -548,6 +548,8 @@ NMS IoU 為零時，YOLO26 略過 NMS。其他啟用 NMS 的 YOLO 與 SSD 設定
 原始/獨立的 `SimaBoxDecode` 建置永遠不會發明調整大小模式。保留上游 `Preproc` 元資料要求，或者使用顯式原始重載來斷言外部執行的 `ResizeMode::Stretch`；Letterbox 和 Crop 將被拒絕。
 
 **`num_classes` 協議。**編碼的類別數量始終從置信度頭的深度（`conf_depth / priors-per-cell`，包括索引 0 處的背景）推導得出。SSD300-v1 允許使用連續的前綴選擇，例如準備好的 81 到 8 的路徑；其他三個設定檔需要準確的編碼計數。如果選擇無效，則會在建置時被拒絕。如果要使用設定檔的預設值，請將其設置為未設定。
+
+**91 類別的 MobileNet 匯出。**恰好含有 91 個編碼類別時，SSD-Mobile-300-v1（MobileNet V1 與 V2）和 SSDlite-Mobile-320-v1（TorchVision MobileNet V3）會以與來源模型相同的方式解碼：保留所有前景錨點與類別配對，並逐類別以浮點執行 NMS（SSDlite 在 NMS 前每個類別最多保留 300 個候選）。輸出為相同的 BBOX 酬載。其他 SSD 設定檔與類別數維持既有行為。
 - `Detr` 會根據最大頭部深度推斷出類別通道，並且需要一個有效的。
   類別：維度。
 - `EffDet` 與 `Centernet` 使用各自模型系列的契約；不要將它們路由至 YOLO 解碼類型。

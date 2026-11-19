@@ -1252,6 +1252,14 @@ RUN_TEST(
             simaai::neat::runtime::graph_runtime_options_from_run_options(run_opt);
         require(unbounded_graph_opt.edge_queue == 0U,
                 "queue_depth=0 should preserve the graph runtime's unbounded queue convention");
+
+        simaai::neat::RunOptions realtime;
+        realtime.preset = simaai::neat::RunPreset::Realtime;
+        const auto defaults =
+            simaai::neat::runtime::graph_runtime_options_from_run_options(realtime);
+        require(defaults.edge_queue == 2U &&
+                    defaults.pipeline.overflow_policy == simaai::neat::OverflowPolicy::KeepLatest,
+                "public graph input should inherit the realtime preset");
       }
 
       auto public_core = make_balanced_zero_copy_core(true);

@@ -80,11 +80,15 @@ Keep dependency rules strict:
 
 ## Documentation obligations
 
-When behavior changes:
+Update documentation when existing guidance becomes inaccurate or a change introduces a meaningful
+public API, architecture, contract, or user workflow change. Update the relevant existing page;
+update [Architecture](/develop-apps/contribute/architecture) only for changes to architecture or
+documented contracts.
 
-- Update [Architecture](/develop-apps/contribute/architecture).
-- Update user-facing guides if workflow or knobs changed.
-- Document new environment variables in reference docs.
+Bug fixes, diagnostics, and internal refactoring do not automatically require documentation changes.
+Keep implementation rationale in the PR or source comments, and validation evidence in the PR.
+Select `No docs update needed` when existing guidance remains accurate and no new concept or workflow
+needs explanation.
 
 ## PR quality bar
 
@@ -92,5 +96,5 @@ A contribution is ready when it includes:
 
 - Clear rationale in code and commit/PR message.
 - Tests for new behavior and regressions.
-- Updated docs for any user-visible change.
+- Documentation impact assessed under the policy above.
 - API compatibility assessment for public header changes (and full breaking-change process when applicable).

@@ -104,8 +104,7 @@ Before opening or merging a PR:
 
 - Added/updated tests match the behavioral surface changed.
 - Existing related tests still pass.
-- Docs are updated for user-visible behavior.
-- API/architecture changes are reflected in [Architecture](/develop-apps/contribute/architecture).
+- Documentation impact follows the [documentation policy](/develop-apps/contribute/coding_standard).
 - Public API changes comply with the API compatibility policy in [Coding Standard](/develop-apps/contribute/coding_standard).
 
 ## Required coverage and capability profiles
