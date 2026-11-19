@@ -44,18 +44,20 @@ Signed runs also need `SIMA_WINDOWS_SIGNING_CERTIFICATE_SHA1`,
 and a signing certificate the runner can use.
 
 The card runner must be a Windows 11 x64 client workstation with the
-supported Platform package and a directly attached Modalix card. Register it
-with the organization's `create-gha-runner.bat` in the `pcie-hosts` runner
-group, beside the Linux PCIe hosts, with the script's default labels
-`self-hosted`, `Windows`, and `X64`. The card job selects it by that group and
-those labels.
+supported Platform package and a directly attached Modalix card. Like the
+Linux card job, the Windows card job selects its runner by labels only:
+`self-hosted`, `Windows`, `X64`, and `pcie`.
 
 Provision the host once before its first run:
 
 1. Install the supported Platform package, which provides the drivers and the
-   `SiMaMlaDaemon` service, and attach the card.
-2. Log the runner service on as a local administrator account instead of the
-   script's NETWORK SERVICE default, then restart it:
+   `SiMaMlaDaemon` service. Attach the card, and install GStreamer 1.28.6 MSVC
+   and CPython 3.14 x64 for all users, as for a customer host.
+2. Register the runner with the organization's `create-gha-runner.bat`. Keep
+   its default labels and enter `pcie` at its labels prompt.
+3. Log the runner service on as a local administrator account instead of the
+   script's NETWORK SERVICE default. Grant that account "Log on as a service"
+   (Local Security Policy, User Rights Assignment), then restart the service:
 
    ```text
    sc.exe config <runner service> obj= .\<administrator> password= <password>
@@ -67,32 +69,51 @@ Provision the host once before its first run:
    user, so it fails at its first step on an unelevated runner. Linux PCIe hosts
    likewise need sudo for their runner user.
 
-It uses the
-same Core dependency variables plus the `SIMA_WINDOWS_PCIE_*` card address,
-SSH-key, model, media, and GenAI asset variables named in
-`.github/workflows/pcie-host-windows.yml`. Store the SSH private key on the
-runner and pass only its path. Store the card sudo credential as the protected
-`DEVKIT_PASSWORD` environment secret; it is sent only on standard input and is
-never placed in a command line or retained artifact. The production environment
-also supplies the read-only GitHub App credentials used only when an unpublished
-Scheduler or sima-cli Actions artifact is selected as a bootstrap override.
-Normal runs resolve publication manifests over the approved artifact endpoint.
-For optional custom-root coverage, configure
-`SIMA_WINDOWS_PCIE_GENAI_MEDIA_DIRECTORY` and
-`SIMA_WINDOWS_PCIE_GENAI_MEDIA_SERVE_ROOT` together from the installed Platform
-provider. Supplying only one fails qualification. Platform 3.0 defaults to
-`%ProgramData%\SiMa.ai\data` and the `data` root. Core resolves `%ProgramData%`
-through the Windows CommonApplicationData known folder, not from an environment
-variable. Release qualification always removes both overrides in a disposable
-non-administrator process, binds the installed default to the daemon's `[serve]`
-`data` mapping, proves create/write/remove access, and runs the candidate C++ ASR
-hardware test. Custom-root coverage cannot replace this default-root admission.
-Do not substitute Core's Linux `/srv/simaai/data` default.
-`SIMA_WINDOWS_CMAKE_PREFIX_PATH` must include the native OpenCV CMake package,
-and `SIMA_WINDOWS_DEPENDENCY_RUNTIME_PATH` must include the matching directory
-that contains its runtime DLLs. The current qualified input is the official
-OpenCV 5.0.0 x64 package (SHA-256
-`9c6c1fcea58acdf06edba13148b2246e00c2658143fa51e61ecd370db8c39f63`).
+Every self-hosted Windows runner labelled `pcie` must have a card attached:
+the job matches any of them.
+
+The card job needs no repository variables, as on Linux. The card address is
+`10.0.0.2`. The job provisions `%USERPROFILE%\.ssh\sima_neat_pcie_ed25519` with
+`pcie-setup.ps1`. If the card does not accept the key yet, it enrolls it with
+the `DEVKIT_PASSWORD` secret, as `pcie-setup.sh` does on Linux. Windows
+OpenSSH cannot take a password non-interactively, so
+`enroll_windows_card_key.py` does that one step with paramiko from the build's
+wheelhouse. `prepare_windows_card_inputs.py` then resolves the rest in-job,
+from the sources that Linux's `resolve_assets.sh` and
+`prepare_pcie_genai_models.sh` use:
+
+- the YOLOv8 model from the Model Zoo;
+- the MLA-only INT8 and BF16 models from docs.sima.ai;
+- the test image from its download URL;
+- the box-decode image and GenAI test fixtures from the checkout;
+- the GenAI models from Hugging Face, cached under
+  `%USERPROFILE%\workspace\models_genai`.
+
+It writes the hardware asset manifest from the files it resolved. The
+wheelhouse and OpenCV runtime DLLs come from the build's
+`core-pciehost-windows-card-inputs` artifact. GStreamer comes from its
+installed location. The Platform runtime comes from the `SiMaMlaDaemon`
+service path, as the installed `sima-pcie-host-env.cmd` finds it. The only
+optional variable is `SIMAPCIE_PCIEHOST_CARD_GST_DEBUG`, shared with Linux.
+
+The card sudo credential is the protected `DEVKIT_PASSWORD` secret. It reaches
+the qualifier only on standard input, and is never placed in a command line or
+retained artifact. The production environment also supplies the read-only
+GitHub App credentials, used only when an unpublished Scheduler or sima-cli
+Actions artifact is selected as a bootstrap override. Normal runs resolve
+publication manifests over the approved artifact endpoint.
+
+The qualifier still accepts `SIMAPCIE_GENAI_MEDIA_DIRECTORY` and
+`SIMAPCIE_GENAI_MEDIA_SERVE_ROOT`, together, for a custom media root; CI sets
+neither, as on Linux. Platform 3.0 defaults to `%ProgramData%\SiMa.ai\data`
+and the `data` root. Core resolves `%ProgramData%` through the Windows
+CommonApplicationData known folder, not from an environment variable. Release
+qualification always removes both overrides in a disposable non-administrator
+process, binds the installed default to the daemon's `[serve]` `data` mapping,
+proves create/write/remove access, and runs the candidate C++ ASR hardware
+test. Do not substitute Core's Linux `/srv/simaai/data` default.
+The current qualified OpenCV input is the official OpenCV 5.0.0 x64 package
+(SHA-256 `9c6c1fcea58acdf06edba13148b2246e00c2658143fa51e61ecd370db8c39f63`).
 Scheduler, Core, and hardware must resolve the same GStreamer identity and
 exact additional runtime DLL hashes; the workflows reject a mixed dependency
 cohort. Every Windows Platform build reports the same version, so the hardware
@@ -145,7 +166,7 @@ metadata yet. A direct release dispatch still resolves sima-cli `main`.
 
 ### Run the Windows card lane by hand
 
-Use this to test the card on the self-hosted Windows runner in `pcie-hosts`
+Use this to test the card on the self-hosted Windows runner labelled `pcie`
 without enabling `ENABLE_WINDOWS_PCIE_CI` for every push:
 
 1. In GitHub, open sima-neat/core, then **Actions**, then **Vulcan CI**.

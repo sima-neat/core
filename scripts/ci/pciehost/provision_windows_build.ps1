@@ -42,7 +42,10 @@ function Assert-Files([string] $Directory, [string[]] $Names) {
 $manifest = Get-Content -Raw -LiteralPath (Join-Path $PSScriptRoot "windows_build_inputs.json") |
   ConvertFrom-Json
 $uses = @()
-if ($Component -contains "build") { $uses += @("gstreamer", "opencv", "nlohmann-json", "wix", "wheelhouse") }
+# The wheelhouse also serves the card lane's customer flow, so it carries sima-cli's closure.
+if ($Component -contains "build") {
+  $uses += @("gstreamer", "opencv", "nlohmann-json", "wix", "wheelhouse", "sima-cli")
+}
 if ($Component -contains "sima-cli") { $uses += "sima-cli" }
 if (Test-Path -LiteralPath $Root) { throw "Provisioning root must be fresh: $Root" }
 $downloads = New-Item -ItemType Directory -Path (Join-Path $Root "downloads")
@@ -97,7 +100,9 @@ if ($Component -contains "build") {
   Assert-Files $wix @("candle.exe", "light.exe")
 
   $wheelhouse = New-Item -ItemType Directory -Path (Join-Path $Root "wheelhouse")
-  foreach ($wheel in $inputs["wheelhouse"]) { Copy-Item -LiteralPath $wheel -Destination $wheelhouse.FullName }
+  foreach ($wheel in @($inputs["wheelhouse"]) + @($inputs["sima-cli"])) {
+    Copy-Item -LiteralPath $wheel -Destination $wheelhouse.FullName
+  }
 
   $environment += @(
     "GSTREAMER_ROOT_X86_64=$gstreamer",

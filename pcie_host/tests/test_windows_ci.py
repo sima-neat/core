@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Contracts for the native Windows Core PCIe-host producer."""
 
+import ast
 import base64
 import contextlib
 from functools import partial
@@ -881,8 +882,9 @@ class WindowsCiContracts(unittest.TestCase):
     self.assertIn("--card-candidate", source)
     self.assertIn("--expected-card-commit", source)
     self.assertIn("SIMA_WINDOWS_PCIE_ASSET_MANIFEST", source)
-    self.assertIn("SIMA_WINDOWS_PCIE_GENAI_ASSET_MANIFEST", source)
-    self.assertIn("SIMA_WINDOWS_PCIE_VISION_ASSET_MANIFEST", source)
+    # The asset manifest is written in-job from the resolved assets, not a variable.
+    self.assertNotIn("SIMA_WINDOWS_PCIE_GENAI_ASSET_MANIFEST", source)
+    self.assertNotIn("SIMA_WINDOWS_PCIE_VISION_ASSET_MANIFEST", source)
     self.assertEqual(source.count('"--asset-manifest"'), 2)
     hardware_job = source.split("  hardware:\n", 1)[1]
     hardware_env = hardware_job.split("    steps:\n", 1)[0]
@@ -932,7 +934,7 @@ class WindowsCiContracts(unittest.TestCase):
         ),
         2,
     )
-    self.assertEqual(workflow.count("shell: powershell"), 8)
+    self.assertEqual(workflow.count("shell: powershell"), 11)
     hardware_job = workflow.split("  hardware:\n", 1)[1].split("  publish:\n", 1)[0]
     for job in (native_job, hardware_job):
       # MSI install/remove needs an elevated token; fail before checkout, not mid-build.
@@ -1845,10 +1847,10 @@ class WindowsCiContracts(unittest.TestCase):
     self.assertIn('"SIMAPCIE_GENAI_MEDIA_DIRECTORY"', source)
     self.assertIn('"SIMAPCIE_GENAI_MEDIA_SERVE_ROOT"', source)
     workflow = WORKFLOW.read_text(encoding="utf-8")
-    self.assertIn("SIMA_WINDOWS_PCIE_GENAI_MEDIA_DIRECTORY", workflow)
-    self.assertIn("SIMA_WINDOWS_PCIE_GENAI_MEDIA_SERVE_ROOT", workflow)
+    # Like Linux, CI sets no custom media root; the qualifier still honours the pair.
+    self.assertNotIn("SIMA_WINDOWS_PCIE_GENAI_MEDIA_DIRECTORY", workflow)
     self.assertIn("Required Windows GenAI variable is unset", workflow)
-    self.assertIn("media overrides require directory and service root as a pair", workflow)
+    self.assertIn("media overrides require directory and service root as a pair", source)
     self.assertIn(
         "install_root, candidate.wheel, wheelhouse, candidate.root, work, evidence", source)
     self.assertIn('[sys.executable, "-m", "venv", "--copies", portable_root]', source)
@@ -4135,8 +4137,10 @@ class HostedWindowsBuildContracts(unittest.TestCase):
 
   def test_hardware_lane_stays_self_hosted_and_opt_in(self):
     hardware = workflow_job(self.windows, "hardware")
-    self.assertIn("    runs-on:\n      group: pcie-hosts\n      labels: [self-hosted, Windows, X64]\n",
-                  hardware)
+    # Selected like the Linux card job (labels only, including pcie), not by group.
+    self.assertIn("    runs-on: [self-hosted, Windows, X64, pcie]\n", hardware)
+    self.assertIn("    - pcie\n", (ROOT / ".github" / "actionlint.yaml").read_text(
+        encoding="utf-8"))
     elevation = workflow_step(hardware, "Require an elevated runner")
     self.assertIn("sc.exe config <runner service>", elevation)
     self.assertIn("obj= .\\<administrator> password= <password>", elevation)
@@ -4315,6 +4319,128 @@ class HostedWindowsBuildContracts(unittest.TestCase):
     self.assertNotIn("--sima-cli-branch", workflow_job(self.windows, "dependencies"))
     self.assertIn('parser.add_argument("--sima-cli-spec", default="latest")',
                   (SCRIPT_DIR / "acquire_windows_dependencies.py").read_text(encoding="utf-8"))
+
+  def test_card_lane_needs_no_repository_variables(self):
+    hardware = workflow_job(self.windows, "hardware")
+    environment = hardware.split("    env:\n", 1)[1].split("    steps:\n", 1)[0]
+    # Like test-pciehost-hardware: a fixed card address and one optional debug variable.
+    self.assertEqual(re.findall(r"vars[.](\w+)", hardware), ["SIMAPCIE_PCIEHOST_CARD_GST_DEBUG"])
+    self.assertIn('      SIMAPCIE_CARD_HOST: "10.0.0.2"\n', environment)
+    self.assertNotRegex(hardware, r"SIMA_WINDOWS_PCIE_(SSH_KEY|CARD_HOST|YOLOV8|TEST_IMAGE)")
+    linux = workflow_job(self.main, "test-pciehost-hardware")
+    self.assertIn('      SIMAPCIE_CARD_HOST: "10.0.0.2"\n', linux)
+    self.assertIn("SIMAPCIE_CARD_GST_DEBUG: ${{ vars.SIMAPCIE_PCIEHOST_CARD_GST_DEBUG }}", linux)
+
+    # Inputs the build used travel as artifacts from either Windows producer.
+    for producer in (self.matrix, workflow_job(self.windows, "native")):
+      upload = workflow_step(producer, "Retain this run's Windows card inputs")
+      self.assertIn("name: core-pciehost-windows-card-inputs", upload)
+      self.assertIn("/windows-inputs/wheelhouse", upload)
+      self.assertIn("/windows-inputs/opencv/opencv/build/x64/vc16/bin/*.dll", upload)
+    self.assertIn("name: core-pciehost-windows-card-inputs", hardware)
+    manifest = json.loads((SCRIPT_DIR / "windows_build_inputs.json").read_text(encoding="utf-8"))
+    wheelhouse = {entry["name"].split("-", 1)[0].lower() for entry in manifest["files"]
+                  if entry["use"] == "wheelhouse"}
+    self.assertTrue({"numpy", "opencv_python", "pytest", "iniconfig", "pluggy",
+                     "pillow"} <= wheelhouse)
+    self.assertIn('"wheelhouse", "sima-cli")', self.PROVISION.read_text(encoding="utf-8"))
+
+    # The card key: pcie-setup.ps1 as on Linux, password enrollment only when needed.
+    ssh = workflow_step(hardware, "Provision PCIe card SSH key")
+    self.assertIn("SIMAPCIE_SSH_PASSWORD: ${{ secrets.DEVKIT_PASSWORD }}", ssh)
+    self.assertIn('Join-Path $env:USERPROFILE ".ssh\\sima_neat_pcie_ed25519"', ssh)
+    self.assertIn("NonInteractive = $true", ssh)
+    self.assertIn("scripts/ci/pciehost/enroll_windows_card_key.py", ssh)
+    self.assertIn("pcie-setup.ps1 @setup -Strict", ssh)
+    linux_ssh = workflow_step(linux, "Provision PCIe card SSH key")
+    self.assertIn('--key "${HOME}/.ssh/sima_neat_pcie_ed25519"', linux_ssh)
+    helper = (SCRIPT_DIR / "enroll_windows_card_key.py").read_text(encoding="utf-8")
+    remote = ast.literal_eval(re.search(r'REMOTE_SCRIPT = ("""[\s\S]*?""")', helper)[1])
+    setup = (ROOT / "pcie_host/scripts/windows/pcie-setup.ps1").read_text(encoding="utf-8")
+    expected = re.search(r"\$remoteScript = @'\r?\n([\s\S]*?)\r?\n'@", setup)[1]
+    self.assertEqual(remote, expected.replace("\r", "") + "\n")
+    self.assertIn("paramiko.RejectPolicy()", helper)
+
+  def test_card_inputs_mirror_the_linux_asset_sources(self):
+    spec = importlib.util.spec_from_file_location(
+        "prepare_windows_card_inputs", SCRIPT_DIR / "prepare_windows_card_inputs.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    resolve = (SCRIPT_DIR / "resolve_assets.sh").read_text(encoding="utf-8")
+    resolver = (ROOT / "pcie_host/scripts/resolve_hardware_test_assets.sh").read_text(
+        encoding="utf-8")
+    genai = (ROOT / "pcie_host/scripts/prepare_pcie_genai_models.sh").read_text(encoding="utf-8")
+    for url in module.MLA_ONLY_MODELS.values():
+      self.assertIn(f'"{url}"', resolve)
+    self.assertIn(module.TEST_IMAGE_URL, resolver)
+    self.assertIn(f"SIMAPCIE_YOLOV8_MODEL_NAME:-{module.YOLOV8_MODEL_NAME}", resolver)
+    self.assertIn('"${WORKSPACE}/tests/images/people.jpg"', resolver)
+    for name, repository, config, revision in module.GENAI_MODELS:
+      with self.subTest(model=name):
+        self.assertIn(name, genai)
+        self.assertIn(config, genai)
+        self.assertIn(repository.rsplit("/", 1)[0], genai)
+        if revision:
+          self.assertIn(revision, genai)
+    for name in module.GENAI_TEST_ASSETS:
+      self.assertTrue((ROOT / name).is_file(), name)
+
+    with tempfile.TemporaryDirectory() as directory:
+      root = Path(directory)
+      service = root / "Platform"
+      service.mkdir()
+      (service / "SiMaPCIe.dll").write_bytes(b"platform")
+      output = (f'        BINARY_PATH_NAME   : "{service}\\simaai_mla_daemon.exe" --service\n'
+                if os.name == "nt" else
+                f'        BINARY_PATH_NAME   : "{service}/simaai_mla_daemon.exe" --service\n')
+      with mock.patch.object(module.subprocess, "run", return_value=subprocess.CompletedProcess(
+          [], 0, output, "")):
+        self.assertEqual(module.installed_platform_runtime(), service)
+      with mock.patch.object(module.subprocess, "run", return_value=subprocess.CompletedProcess(
+          [], 1, "[SC] OpenService FAILED 1060\n", "")):
+        with self.assertRaisesRegex(RuntimeError, "SiMaMlaDaemon is not installed"):
+          module.installed_platform_runtime()
+
+      # The written environment names every input the qualifier requires, and the
+      # manifest inventories exactly those files.
+      inputs = root / "card inputs"
+      (inputs / "wheelhouse").mkdir(parents=True)
+      (inputs / "opencv/opencv/build/x64/vc16/bin").mkdir(parents=True)
+      cache = root / "cache"
+      cache.mkdir()
+      files = {name: cache / f"{name}.bin" for name in (
+          "SIMAPCIE_YOLOV8_MODEL", "SIMAPCIE_MLA_ONLY_MODEL", "SIMAPCIE_MLA_ONLY_BF16_MODEL",
+          "SIMAPCIE_TEST_IMAGE")}
+      for path in files.values():
+        path.write_bytes(path.name.encode())
+      gstreamer = root / "gstreamer"
+      gstreamer.mkdir()
+      env_file = root / "github-env"
+      argv = ["prepare", "--workspace", str(ROOT), "--card-inputs", str(inputs),
+              "--cache-dir", str(cache), "--genai-models", str(root / "models"),
+              "--sima-cli", "sima-cli", "--manifest", str(root / "assets.json"),
+              "--revision", "core-1-1", "--env-file", str(env_file)]
+      with mock.patch.object(module, "installed_platform_runtime", return_value=service), \
+          mock.patch.object(module, "resolve_yolov8",
+                            return_value=files["SIMAPCIE_YOLOV8_MODEL"]), \
+          mock.patch.object(module, "resolve_download",
+                            side_effect=lambda _cache, _cli, url: files[
+                                next(name for name, value in module.MLA_ONLY_MODELS.items()
+                                     if value == url)]), \
+          mock.patch.object(module, "resolve_test_image",
+                            return_value=files["SIMAPCIE_TEST_IMAGE"]), \
+          mock.patch.dict(os.environ, {"GSTREAMER_ROOT_X86_64": str(gstreamer)}), \
+          mock.patch.object(sys, "argv", argv):
+        module.main()
+      written = dict(line.split("=", 1) for line in env_file.read_text().splitlines())
+      self.assertEqual(written["SIMA_WINDOWS_PLATFORM_RUNTIME_DIR"], str(service))
+      self.assertEqual(written["SIMA_WINDOWS_PYTHON_WHEELHOUSE"], str(inputs.resolve() / "wheelhouse"))
+      self.assertEqual(written["SIMAPCIE_BOXDECODE_IMAGE"], str(ROOT / "tests/images/people.jpg"))
+      self.assertEqual(written["SIMA_WINDOWS_PCIE_ASSET_MANIFEST"],
+                       str((root / "assets.json").resolve()))
+      assets = json.loads((root / "assets.json").read_text(encoding="utf-8"))
+      self.assertFalse(assets["include_genai"])
+      self.assertEqual(set(assets["vision"]), set(VISION_ASSETS))
 
   def test_receipt_records_the_hosted_toolchain(self):
     environment = {"VSCMD_VER": "17.14.4", "VCToolsVersion": "14.44.35207",

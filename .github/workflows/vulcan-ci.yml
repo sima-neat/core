@@ -1163,6 +1163,18 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+      # The card lane's wheelhouse and OpenCV runtime, the bytes this build used.
+      - name: Retain this run's Windows card inputs
+        if: ${{ matrix.distro == 'windows' }}
+        uses: actions/upload-artifact@v6
+        with:
+          name: core-pciehost-windows-card-inputs
+          path: |
+            ${{ runner.temp }}/windows-inputs/wheelhouse
+            ${{ runner.temp }}/windows-inputs/opencv/opencv/build/x64/vc16/bin/*.dll
+          if-no-files-found: error
+          retention-days: 7
+
       - name: Retain this run's Windows PCIe host cohort
         if: ${{ always() && matrix.distro == 'windows' }}
         uses: actions/upload-artifact@v6

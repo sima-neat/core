@@ -550,6 +550,15 @@ jobs:
           & ./scripts/ci/pciehost/run_windows_build.ps1 `
             -Dependencies "$env:RUNNER_TEMP\core-windows-dependencies" `
             -Output "$env:RUNNER_TEMP\core-windows-dist"
+      - name: Retain this run's Windows card inputs
+        uses: actions/upload-artifact@v6
+        with:
+          name: core-pciehost-windows-card-inputs
+          path: |
+            ${{ runner.temp }}/windows-inputs/wheelhouse
+            ${{ runner.temp }}/windows-inputs/opencv/opencv/build/x64/vc16/bin/*.dll
+          if-no-files-found: error
+          retention-days: 7
       - name: Retain Core Windows cohort and evidence
         if: always()
         uses: actions/upload-artifact@v6
@@ -575,47 +584,27 @@ jobs:
     # A skipped native job would otherwise skip this one implicitly.
     if: ${{ !cancelled() && (needs.native.result == 'success' || (inputs.linux_current_run == true && needs.native.result == 'skipped')) && needs.linux_release.result == 'success' && needs.card_candidate.result == 'success' && needs.resolve-vulcan-config.result == 'success' }}
     environment: production
-    # Registered by the org's create-gha-runner.bat in the PCIe hosts group,
-    # beside the Linux PCIe hosts, with its default labels.
-    runs-on:
-      group: pcie-hosts
-      labels: [self-hosted, Windows, X64]
+    # Selected like the Linux card job: the runner's default labels plus pcie.
+    runs-on: [self-hosted, Windows, X64, pcie]
     timeout-minutes: 180
     permissions:
       contents: read
       actions: read
+    # As on Linux, the card address is fixed and every other input is resolved
+    # in-job; the card PC needs no repository variables.
     env:
-      GSTREAMER_ROOT_X86_64: ${{ vars.GSTREAMER_ROOT_X86_64 }}
-      SIMA_WINDOWS_CMAKE_PREFIX_PATH: ${{ vars.SIMA_WINDOWS_CMAKE_PREFIX_PATH }}
-      SIMA_WINDOWS_DEPENDENCY_RUNTIME_PATH: ${{ vars.SIMA_WINDOWS_DEPENDENCY_RUNTIME_PATH }}
-      SIMA_WINDOWS_PCIE_ASSET_MANIFEST: >-
-        ${{ inputs.include_genai && vars.SIMA_WINDOWS_PCIE_GENAI_ASSET_MANIFEST ||
-            vars.SIMA_WINDOWS_PCIE_VISION_ASSET_MANIFEST }}
-      SIMA_WINDOWS_PLATFORM_RUNTIME_DIR: ${{ vars.SIMA_WINDOWS_PLATFORM_RUNTIME_DIR }}
-      SIMA_WINDOWS_PYTHON_WHEELHOUSE: ${{ vars.SIMA_WINDOWS_PYTHON_WHEELHOUSE }}
-      SIMAPCIE_BOXDECODE_IMAGE: ${{ vars.SIMA_WINDOWS_PCIE_BOXDECODE_IMAGE }}
       SIMAPCIE_CARD_GST_DEBUG: ${{ vars.SIMAPCIE_PCIEHOST_CARD_GST_DEBUG }}
-      SIMAPCIE_CARD_HOST: ${{ vars.SIMA_WINDOWS_PCIE_CARD_HOST }}
+      SIMAPCIE_CARD_HOST: "10.0.0.2"
       SIMAPCIE_CARD_ID: "0"
-      SIMAPCIE_GENAI_MODELS_PATH: ${{ vars.SIMA_WINDOWS_PCIE_GENAI_MODELS_PATH }}
-      SIMAPCIE_GENAI_MEDIA_DIRECTORY: ${{ vars.SIMA_WINDOWS_PCIE_GENAI_MEDIA_DIRECTORY }}
-      SIMAPCIE_GENAI_MEDIA_SERVE_ROOT: ${{ vars.SIMA_WINDOWS_PCIE_GENAI_MEDIA_SERVE_ROOT }}
-      SIMAPCIE_GENAI_TEST_ASSETS: ${{ vars.SIMA_WINDOWS_PCIE_GENAI_TEST_ASSETS }}
       SIMAPCIE_LIFECYCLE_CYCLES: "10"
       SIMAPCIE_LIFETIME_ITERATIONS: "20"
-      SIMAPCIE_MLA_ONLY_BF16_MODEL: ${{ vars.SIMA_WINDOWS_PCIE_MLA_ONLY_BF16_MODEL }}
-      SIMAPCIE_MLA_ONLY_MODEL: ${{ vars.SIMA_WINDOWS_PCIE_MLA_ONLY_MODEL }}
       SIMAPCIE_PULL_TIMEOUT_MS: "30000"
       SIMAPCIE_READINESS_TIMEOUT_MS: "180000"
-      SIMAPCIE_SSH_KEY: ${{ vars.SIMA_WINDOWS_PCIE_SSH_KEY }}
       SIMAPCIE_STRESS_ITERATIONS: "1000"
       SIMAPCIE_STRESS_QUEUES: "0 1 2 3 4 5"
       SIMAPCIE_SYNC_ITERATIONS: "50"
-      SIMAPCIE_TEST_IMAGE: ${{ vars.SIMA_WINDOWS_PCIE_TEST_IMAGE }}
       SIMAPCIE_TEST_ITERATIONS: "1000"
-      SIMAPCIE_TEST_REQUIREMENTS: ${{ vars.SIMA_WINDOWS_PCIE_TEST_REQUIREMENTS }}
       SIMAPCIE_USER: "sima"
-      SIMAPCIE_YOLOV8_MODEL: ${{ vars.SIMA_WINDOWS_PCIE_YOLOV8_MODEL }}
     steps:
       - name: Require an elevated runner
         shell: powershell
@@ -648,6 +637,63 @@ jobs:
         with:
           name: core-pcie-card-qualification-candidate
           path: ${{ runner.temp }}/core-card-candidate
+      - name: Download the build's Windows card inputs
+        uses: actions/download-artifact@v4
+        with:
+          name: core-pciehost-windows-card-inputs
+          path: ${{ runner.temp }}/core-windows-card-inputs
+      - name: Install sima-cli
+        shell: powershell
+        run: |
+          $ErrorActionPreference = "Stop"
+          $venv = "$env:RUNNER_TEMP\card-sima-cli"
+          & python -m venv $venv
+          if ($LASTEXITCODE -ne 0) { throw "python -m venv failed: $LASTEXITCODE" }
+          $wheel = @(Get-ChildItem -LiteralPath "$env:RUNNER_TEMP\core-windows-dependencies\sima-cli" -Filter "sima_cli-*.whl")
+          if ($wheel.Count -ne 1) { throw "Expected one sima-cli candidate wheel" }
+          & "$venv\Scripts\python.exe" -m pip install --no-index --find-links `
+            "$env:RUNNER_TEMP\core-windows-card-inputs\wheelhouse" $wheel[0].FullName
+          if ($LASTEXITCODE -ne 0) { throw "sima-cli installation failed: $LASTEXITCODE" }
+          Add-Content -LiteralPath $env:GITHUB_ENV -Value "CARD_TOOLS_PYTHON=$venv\Scripts\python.exe"
+      - name: Provision PCIe card SSH key
+        shell: powershell
+        env:
+          SIMAPCIE_SSH_PASSWORD: ${{ secrets.DEVKIT_PASSWORD }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $key = Join-Path $env:USERPROFILE ".ssh\sima_neat_pcie_ed25519"
+          $setup = @{ User = $env:SIMAPCIE_USER; Key = $key; Hosts = @($env:SIMAPCIE_CARD_HOST);
+                      NonInteractive = $true }
+          # Records the host key and keeps an enrolled key, as pcie-setup.sh does.
+          & ./pcie_host/scripts/windows/pcie-setup.ps1 @setup
+          if ($LASTEXITCODE -ne 0) {
+            & $env:CARD_TOOLS_PYTHON scripts/ci/pciehost/enroll_windows_card_key.py `
+              --host $env:SIMAPCIE_CARD_HOST --user $env:SIMAPCIE_USER --key $key
+            if ($LASTEXITCODE -ne 0) { throw "PCIe card key enrollment failed: $LASTEXITCODE" }
+          }
+          & ./pcie_host/scripts/windows/pcie-setup.ps1 @setup -Strict
+          if ($LASTEXITCODE -ne 0) { throw "PCIe card SSH verification failed: $LASTEXITCODE" }
+          Add-Content -LiteralPath $env:GITHUB_ENV -Value "SIMAPCIE_SSH_KEY=$key"
+      - name: Resolve PCIe hardware test assets
+        shell: powershell
+        env:
+          INCLUDE_GENAI: ${{ inputs.include_genai }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $arguments = @(
+            "scripts/ci/pciehost/prepare_windows_card_inputs.py",
+            "--workspace", $env:GITHUB_WORKSPACE,
+            "--card-inputs", "$env:RUNNER_TEMP\core-windows-card-inputs",
+            "--cache-dir", (Join-Path $env:USERPROFILE ".sima\pciehost-assets"),
+            "--genai-models", (Join-Path $env:USERPROFILE "workspace\models_genai"),
+            "--sima-cli", (Join-Path (Split-Path $env:CARD_TOOLS_PYTHON) "sima-cli.exe"),
+            "--manifest", "$env:RUNNER_TEMP\core-windows-hardware-assets.json",
+            "--revision", "core-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT",
+            "--env-file", $env:GITHUB_ENV
+          )
+          if ("$env:INCLUDE_GENAI" -eq "true") { $arguments += "--include-genai" }
+          & $env:CARD_TOOLS_PYTHON @arguments
+          if ($LASTEXITCODE -ne 0) { throw "PCIe hardware test assets failed: $LASTEXITCODE" }
       - name: Install, test both APIs, and remove exact cohort
         shell: powershell
         env:
@@ -690,11 +736,6 @@ jobs:
                 throw "Required Windows GenAI variable is unset: $name"
               }
             }
-            $hasMediaDirectory = [bool]$env:SIMAPCIE_GENAI_MEDIA_DIRECTORY
-            $hasMediaServeRoot = [bool]$env:SIMAPCIE_GENAI_MEDIA_SERVE_ROOT
-            if ($hasMediaDirectory -ne $hasMediaServeRoot) {
-              throw "Windows GenAI media overrides require directory and service root as a pair"
-            }
           }
           $arguments = @(
             "scripts/ci/pciehost/qualify_windows_hardware.py",
@@ -734,18 +775,8 @@ jobs:
               "--expected-upgrade-base-commit", $baseCommit
             )
           }
-          if ($env:SIMA_WINDOWS_CMAKE_PREFIX_PATH) {
-            foreach ($prefix in $env:SIMA_WINDOWS_CMAKE_PREFIX_PATH.Split(";")) {
-              if ($prefix) { $arguments += @("--dependency-prefix", $prefix) }
-            }
-          }
           foreach ($directory in $env:SIMA_WINDOWS_DEPENDENCY_RUNTIME_PATH.Split(";")) {
             if ($directory) { $arguments += @("--dependency-runtime-dir", $directory) }
-          }
-          if ($env:SIMAPCIE_TEST_REQUIREMENTS) {
-            foreach ($requirement in $env:SIMAPCIE_TEST_REQUIREMENTS.Split(";")) {
-              if ($requirement) { $arguments += @("--test-requirement", $requirement) }
-            }
           }
           if (-not $cardSudoPassword) { throw "Required hardware secret is unset: DEVKIT_PASSWORD" }
           $cardSudoPassword | & python @arguments
