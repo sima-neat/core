@@ -64,9 +64,9 @@ struct CBlockGeometry {
 };
 // Three C16 blocks of six pixels in one tile; the last block is half padding.
 constexpr CBlockGeometry kSmallCBlock{2, 3, 33, 3};
-// The LightGlue score head. One 67-wide tile exceeds both the EV74 input
-// staging (32 KiB) and output staging (16K floats), so the kernel must split
-// the row; the model once produced no output at this shape.
+// The LightGlue score head. One 67-wide tile (40736 input bytes, 40267 output
+// floats) is larger than the EV74 kernel's local panels, so the kernel must
+// split it; the model once produced no output at this shape.
 constexpr CBlockGeometry kLightGlueCBlock{1, 601, 601, 67};
 
 void ensure_gst_ready() {
