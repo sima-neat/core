@@ -49,6 +49,7 @@
 #include <utility>
 #include <vector>
 
+#include <gst/rtp/gstrtppayloads.h>
 #include <gst/sdp/sdp.h>
 
 namespace simaai::neat {
@@ -2383,7 +2384,8 @@ static void check_rtsp_video_sdp(GstElement* src, GstSDPMessage* sdp, gpointer d
   std::string offered;
   for (guint i = 0; i < gst_sdp_message_medias_len(sdp); ++i) {
     const auto* media = gst_sdp_message_get_media(sdp, i);
-    if (g_strcmp0(gst_sdp_media_get_media(media), "video") != 0)
+    const char* media_type = gst_sdp_media_get_media(media);
+    if (!media_type || g_ascii_strcasecmp(media_type, "video") != 0)
       continue;
     if (gst_sdp_media_formats_len(media) == 0)
       return;
@@ -2397,8 +2399,11 @@ static void check_rtsp_video_sdp(GstElement* src, GstSDPMessage* sdp, gpointer d
         return;
       const char* codec =
           gst_structure_get_string(gst_caps_get_structure(caps, 0), "encoding-name");
-      if (!codec && payload == 26)
-        codec = "JPEG";
+      if (!codec && payload < 96) {
+        const auto* info = gst_rtp_payload_info_for_pt(static_cast<guint8>(payload));
+        if (info && g_strcmp0(info->media, "video") == 0)
+          codec = info->encoding_name;
+      }
       if (!codec || !*codec)
         return;
       if (g_ascii_strcasecmp(codec, requested.codec) == 0 &&
