@@ -10,6 +10,7 @@
 #include "test_main.h"
 #include "test_utils.h"
 
+#include <gst/app/gstappsrc.h>
 #include <gst/gst.h>
 #include <opencv2/core.hpp>
 #include <simaai/scheduler/client/kernel.h>
@@ -81,9 +82,37 @@ void check_invalid_dma_pool_releases_validation_pipeline(int minimum, int maximu
   // The unlinked probe finalizes when the validation pipeline releases its children.
   graph.custom("appsink name=mysink coreownershipprobe name=ownership");
   const cv::Mat frame(2, 2, CV_8UC3, cv::Scalar::all(0));
-  require_neat_error([&] { (void)graph.validate({}, frame); }, error_codes::kOptionOutOfRange,
-                     "pool_min_buffers");
+  const auto report = graph.validate({}, frame);
+  require(report.error_code == error_codes::kOptionOutOfRange,
+          "invalid DMA pool bounds must return the typed validation error");
+  require_contains(report.repro_note, "pool_min_buffers", "report must name the invalid field");
   assert_closed();
+}
+
+void check_rejected_validation_push() {
+  InputOptions options;
+  options.memory_policy = InputMemoryPolicy::SystemMemory;
+  Graph graph;
+  graph.add(nodes::Input(options));
+  graph.custom("appsink name=mysink");
+
+  // End the real appsrc before validation submits its first buffer.
+  const auto signal = g_signal_lookup("element-added", GST_TYPE_BIN);
+  const auto hook = g_signal_add_emission_hook(
+      signal, 0,
+      +[](GSignalInvocationHint*, guint, const GValue* args, gpointer) -> gboolean {
+        auto* child = g_value_get_object(&args[1]);
+        if (GST_IS_APP_SRC(child))
+          gst_app_src_end_of_stream(GST_APP_SRC(child));
+        return TRUE;
+      },
+      nullptr, nullptr);
+  const auto previous = g_log_set_fatal_mask("GStreamer", G_LOG_LEVEL_CRITICAL);
+  const auto report = graph.validate({}, cv::Mat(2, 2, CV_8UC3, cv::Scalar::all(0)));
+  g_log_set_fatal_mask("GStreamer", previous);
+  g_signal_remove_emission_hook(signal, hook);
+  require(report.error_code == error_codes::kCaps, "rejected push must return its flow diagnostic");
+  require_contains(report.repro_note, "eos", "appsrc must reject the transferred buffer with EOS");
 }
 
 struct OriginalFactoryException final : std::runtime_error {
@@ -227,6 +256,7 @@ RUN_TEST("unit_graph_build_ownership_test", ([] {
                    "ownership probe factory registration must succeed");
            check_invalid_dma_pool_releases_validation_pipeline(0, 0);
            check_invalid_dma_pool_releases_validation_pipeline(3, 2);
+           check_rejected_validation_push();
            const std::array points{session_test::CompositionFailurePoint::PipelineBeforeManifest,
                                    session_test::CompositionFailurePoint::PipelinePrepared};
            for (const auto point : points) {

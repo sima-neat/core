@@ -459,7 +459,14 @@ GraphReport Graph::validate(const ValidateOptions& opt, const cv::Mat& input) co
     contiguous = input.clone();
   }
 
-  GstBuffer* buf = allocate_input_buffer(spec.required_bytes_actual, src_opt, pool_guard);
+  GstBuffer* buf;
+  try {
+    buf = allocate_input_buffer(spec.required_bytes_actual, src_opt, pool_guard);
+  } catch (const NeatError& e) {
+    rep.error_code = e.report().error_code;
+    rep.repro_note = e.report().repro_note;
+    return rep;
+  }
   if (!buf) {
     rep.error_code = error_codes::kInputShape;
     rep.repro_note = format_validate_note(
@@ -522,7 +529,6 @@ GraphReport Graph::validate(const ValidateOptions& opt, const cv::Mat& input) co
 
   const GstFlowReturn push_ret = gst_app_src_push_buffer(GST_APP_SRC(appsrc.get()), buf);
   if (push_ret != GST_FLOW_OK) {
-    gst_buffer_unref(buf);
     const char* flow_name = gst_flow_get_name(push_ret);
     std::ostringstream details;
     details << "flow=" << static_cast<int>(push_ret) << ":"
