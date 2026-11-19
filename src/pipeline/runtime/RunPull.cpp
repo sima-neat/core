@@ -597,7 +597,18 @@ PullStatus runtime::RunCore::pull(int timeout_ms, Sample& out, PullError* err,
     return PullStatus::Error;
   };
 
-  const std::string early_err = last_error();
+  // Downstream EOS is reported after outputs the worker already published.
+  const auto error_before_queued_output = [&]() {
+    auto msg = last_error();
+    if (!msg.empty()) {
+      auto detail = last_error_detail();
+      if (detail && detail->code == error_codes::kUnexpectedEos)
+        msg.clear();
+    }
+    return msg;
+  };
+
+  const std::string early_err = error_before_queued_output();
   if (!early_err.empty()) {
     return handle_stream_error(early_err);
   }
@@ -720,7 +731,7 @@ PullStatus runtime::RunCore::pull(int timeout_ms, Sample& out, PullError* err,
           "; release older zero-copy outputs and retry";
       warn_if_loan_stalled(st->pipeline.loan_stall, st->pipeline.loan_stall_warn_after, message);
 
-      const std::string loop_err = last_error();
+      const std::string loop_err = error_before_queued_output();
       if (!loop_err.empty()) {
         lock.unlock();
         return handle_stream_error(loop_err);

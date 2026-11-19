@@ -486,7 +486,37 @@ std::shared_ptr<runtime::RunCore> runtime::RunCore::start_single_pipeline(
   };
 
   if (st->pipeline.supports_pull) {
-    st->pipeline.stream.start(on_output);
+    st->pipeline.stream.start(on_output, [st]() {
+      {
+        std::lock_guard<std::mutex> lock(st->pipeline.in_mu);
+        if (!st->pipeline.input_closed && !st->stop_requested) {
+          const auto diag = st->pipeline.stream.diag_ctx();
+          GraphReport report = diag ? diag->snapshot_basic() : GraphReport{};
+          report.error_code = error_codes::kUnexpectedEos;
+          report.repro_note =
+              "The push-backed pipeline reached end of stream before the application closed "
+              "its "
+              "input.\n\n"
+              "Expected: The pipeline remains open until Run::close_input() is called.\n"
+              "Received: End of stream while the input was still open.\n\n"
+              "How to fix:\n"
+              "- Check the source and upstream elements for a premature end-of-stream "
+              "condition.\n"
+              "- Keep the upstream pipeline open until the application has finished pushing "
+              "input, "
+              "then call Run::close_input().\n\n"
+              "Diagnostic ID: runtime.unexpected_eos";
+          PullError detail;
+          detail.code = report.error_code;
+          detail.message = report.repro_note;
+          detail.report = std::move(report);
+          st->set_terminal_error(std::move(detail));
+        }
+        st->stop_requested.store(true);
+      }
+      st->pipeline.in_cv.notify_all();
+      st->pipeline.out_cv.notify_all();
+    });
   }
 
   if (!st->pipeline.supports_push) {
@@ -510,7 +540,8 @@ std::shared_ptr<runtime::RunCore> runtime::RunCore::start_single_pipeline(
         st->set_terminal_error(*typed_error);
       } else {
         std::lock_guard<std::mutex> lock(st->error_mu);
-        st->error = e.what();
+        if (st->error.empty())
+          st->error = e.what();
       }
       st->stop_requested.store(true);
       st->pipeline.out_cv.notify_all();
