@@ -706,7 +706,7 @@ class WindowsCiContracts(unittest.TestCase):
 
   def test_scheduler_candidate_accepts_exact_inventory(self):
     with tempfile.TemporaryDirectory() as directory:
-      root = Path(directory)
+      root = Path(directory).resolve()
       expected = self.scheduler_candidate(root)
       metadata, actual = MODULE.verify_scheduler_candidate(root, "a" * 40)
       self.assertEqual(actual, expected)
@@ -2184,7 +2184,7 @@ class WindowsCiContracts(unittest.TestCase):
 
   def test_platform_device_recovery_uses_provisioned_vendor_tool(self):
     with tempfile.TemporaryDirectory() as directory:
-      root = Path(directory)
+      root = Path(directory).resolve()
       tool = root / "simaai_pcie_test.exe"
       tool.write_bytes(b"fixture")
       with mock.patch("qualify_windows_hardware.require_powershell",
@@ -2738,7 +2738,7 @@ class WindowsCiContracts(unittest.TestCase):
 
   def test_card_candidate_binds_exact_linux_payload(self):
     with tempfile.TemporaryDirectory() as directory:
-      root = Path(directory)
+      root = Path(directory).resolve()
       commit = "c" * 40
       package = root / "sima-neat-Linux-core.deb"
       package.write_bytes(b"card package")

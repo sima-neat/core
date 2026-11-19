@@ -15,8 +15,11 @@ std::filesystem::path host_model_path(const std::filesystem::path& model) {
 }
 std::optional<std::filesystem::path> model_asset_path(const std::filesystem::path& model,
                                                       const std::string& name) {
-  const auto path = std::filesystem::weakly_canonical(model / wire::relative_name(name));
-  const auto relative = path.lexically_relative(model);
+  // Compare canonical forms: Windows expands 8.3 short names (C:\Users\RUNNER~1) in one but not
+  // the other otherwise.
+  const auto root = std::filesystem::weakly_canonical(model);
+  const auto path = std::filesystem::weakly_canonical(root / wire::relative_name(name));
+  const auto relative = path.lexically_relative(root);
   if (relative.empty() || relative == "." || *relative.begin() == "..")
     throw std::invalid_argument("Model asset escapes its host directory: " + name);
   if (!std::filesystem::exists(path))
