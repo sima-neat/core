@@ -185,7 +185,7 @@ std::string InputStream::diagnostics_summary() const {
     return {};
   std::ostringstream oss;
   if (!state_->diag->pipeline_string.empty()) {
-    oss << "Pipeline:\n" << state_->diag->pipeline_string << "\n";
+    oss << "Pipeline:\n" << state_->diag->redacted_pipeline_string() << "\n";
   }
   const std::string boundary = pipeline_internal::boundary_summary(state_->diag);
   if (!boundary.empty())

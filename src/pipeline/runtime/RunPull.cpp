@@ -653,8 +653,9 @@ PullStatus runtime::RunCore::pull(int timeout_ms, Sample& out, PullError* err,
           if (diag) {
             std::ostringstream oss;
             oss << "[DIAG] pull_timeout Run::pull\n";
-            if (!diag->pipeline_string.empty()) {
-              oss << "Pipeline:\n" << diag->pipeline_string << "\n";
+            const auto launch = diag->redacted_pipeline_string();
+            if (!launch.empty()) {
+              oss << "Pipeline:\n" << launch << "\n";
             }
             const std::string boundary = pipeline_internal::boundary_summary(diag);
             if (!boundary.empty())
@@ -664,8 +665,8 @@ PullStatus runtime::RunCore::pull(int timeout_ms, Sample& out, PullError* err,
               oss << flow;
             std::fprintf(stderr, "%s", oss.str().c_str());
 
-            if (!diag->pipeline_string.empty()) {
-              const auto segs = parse_pipeline_segments(diag->pipeline_string);
+            if (!launch.empty()) {
+              const auto segs = parse_pipeline_segments(launch);
               for (const auto& seg : segs) {
                 const bool detess = is_detess_segment(seg);
                 const bool preproc = is_preproc_segment(seg);
