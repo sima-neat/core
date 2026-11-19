@@ -40,6 +40,7 @@ sidebar_position: 1
     <ul class="overview-link-list">
       <li><a class="overview-link-card" href="/reference/glossary/"><strong>Глосарій</strong><span>Перегляд термінів та абревіатур, що використовуються в документації.</span></a></li>
       <li><a class="overview-link-card" href="/reference/elxr-sdk-host-setup/ubuntu/"><strong>Налаштування хоста SDK</strong><span>Примітки щодо налаштування хоста для Ubuntu, macOS та Windows.</span></a></li>
+      <li><a class="overview-link-card" href="/reference/devkit-containers/"><strong>Контейнери DevKit</strong><span>Встановлення Docker на DevKit, команди <code>dk container</code> і контейнери Ubuntu.</span></a></li>
       <li><a class="overview-link-card" href="/reference/two-step-sdk-installation/"><strong>Двоетапна установка SDK</strong><span>Застарілий процес завантаження та налаштування образів для SDK 2.0.0, 2.1.2.0 та 2.1.2.1.</span></a></li>
     </ul>
   </section>
