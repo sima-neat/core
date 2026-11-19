@@ -28,7 +28,7 @@
     "description": "The label for category 'Hello Neat!' in sidebar 'docs'"
   },
   "sidebar.docs.category.Development Workflow": {
-    "message": "Робочий процес розробки",
+    "message": "Процес розробки",
     "description": "The label for category 'Development Workflow' in sidebar 'docs'"
   },
   "sidebar.docs.category.GenAI Model": {

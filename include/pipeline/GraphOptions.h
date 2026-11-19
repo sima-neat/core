@@ -827,6 +827,7 @@ inline std::string sample_media_type(const Sample& sample) {
 inline Sample make_tensor_sample(const std::string& port_name, simaai::neat::Tensor tensor) {
   Sample out;
   out.kind = SampleKind::TensorSet;
+  out.port_name = port_name;
   out.stream_label = port_name;
   out.tensors = TensorList{std::move(tensor)};
   out.payload_type = sample_payload_type(out);

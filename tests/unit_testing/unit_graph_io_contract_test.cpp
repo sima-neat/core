@@ -111,6 +111,8 @@ RUN_TEST(
           tmp_json_path("graph_io_legacy_simaai_pool_roundtrip.json");
       loaded_legacy_input.save(legacy_roundtrip_path);
       const std::string legacy_roundtrip_json = read_text(legacy_roundtrip_path);
+      require(legacy_roundtrip_json.find("\"preprocess_meta\"") == std::string::npos,
+              "an absent input template must stay absent");
       require_contains(legacy_roundtrip_json, "\"memory_policy\":3",
                        io_case("legacy_simaai_pool_memory_policy",
                                "legacy pool flag should convert to SystemMemory policy"));
@@ -118,9 +120,85 @@ RUN_TEST(
               io_case("legacy_simaai_pool_not_reserialized",
                       "deprecated input pool flag should not be reserialized"));
 
-      Graph stream_source("stream_source");
-      stream_source.add(nodes::Input("image"));
-      stream_source.add(nodes::Output("frame"));
+      GraphOptions naming;
+      naming.element_name_prefix = "camera.";
+      naming.element_name_suffix = "2.view";
+      Graph stream_source("stream_source", naming);
+      InputOptions stream_input;
+      stream_input.max_bytes = (std::uint64_t{1} << 53) + 1;
+      stream_input.preprocess_meta = PreprocessMetaTemplate{
+          .enabled = true,
+          .target_width = 320,
+          .target_height = 240,
+          .resize_mode = "fit",
+          .axis_perm = {2, 0, 1},
+          .roi_list_enabled = true,
+          .rois = {{.batch_index = 1, .x = -4, .y = 3, .width = 32, .height = 24}},
+          .roi_input_batch_size = 2,
+          .roi_source_width = 640,
+          .roi_source_height = 480,
+          .roi_source_stride_bytes = 1920,
+          .roi_pad_value = 114};
+      stream_source.add(nodes::Input("image", stream_input));
+      stream_source.custom("identity name=step");
+      stream_source.custom("identity name=camera_step");
+      stream_source.add(nodes::Output("frame", OutputOptions::EveryFrame(7)));
+      const auto original_backend = stream_source.describe_backend(false);
+      require_contains(original_backend, "name=camera_step2_view", "raw element name");
+      require_contains(original_backend, "name=camera_camera_step2_view", "distinct prefixed name");
+      const auto linear_path = tmp_json_path("linear_endpoints.json");
+      stream_source.save(linear_path);
+      auto saved_input = [&] {
+        return nlohmann::json::parse(read_text(linear_path)).at("nodes").at(0).at("input_options");
+      };
+      const auto original_input = saved_input();
+      for (const char* key : {"roi_source_width", "enabled", "axis_perm", "rois"}) {
+        auto invalid = nlohmann::json::parse(read_text(linear_path));
+        invalid["nodes"][0]["input_options"]["preprocess_meta"][key] = "invalid";
+        const auto path = tmp_json_path("invalid_preproc_geometry.json");
+        write_text(path, invalid.dump());
+        require_neat_error([&] { (void)Graph::load(path); }, error_codes::kIoParse, key);
+      }
+      auto invalid_roi = nlohmann::json::parse(read_text(linear_path));
+      invalid_roi["nodes"][0]["input_options"]["preprocess_meta"]["rois"][0]["width"] = "wide";
+      const auto invalid_path = tmp_json_path("invalid_roi_width.json");
+      write_text(invalid_path, invalid_roi.dump());
+      require_neat_error([&] { (void)Graph::load(invalid_path); }, error_codes::kIoParse,
+                         "rois[0].width");
+      Graph dormant_graph("dormant_rois");
+      InputOptions dormant_input;
+      dormant_input.preprocess_meta =
+          PreprocessMetaTemplate{.enabled = false, .roi_list_enabled = true, .rois = {{}}};
+      dormant_graph.add(nodes::Input("image", dormant_input));
+      dormant_graph.add(nodes::Output("frame"));
+      const auto dormant_path = tmp_json_path("disabled_preprocessing_rois.json");
+      dormant_graph.save(dormant_path);
+      auto saved_dormant = nlohmann::json::parse(read_text(dormant_path));
+      Graph::load(dormant_path).save(dormant_path);
+      require(nlohmann::json::parse(read_text(dormant_path)) == saved_dormant,
+              "disabled preprocessing must preserve a dormant default ROI");
+      saved_dormant["nodes"][0]["input_options"]["preprocess_meta"]["enabled"] = true;
+      write_text(dormant_path, saved_dormant.dump());
+      require_neat_error([&] { (void)Graph::load(dormant_path); }, error_codes::kIoParse,
+                         "rois[0].width");
+
+      const auto& meta = original_input.at("preprocess_meta");
+      require(original_input.at("max_bytes") == stream_input.max_bytes &&
+                  meta.at("enabled") == true && meta.at("target_width") == 320 &&
+                  meta.at("axis_perm") == std::vector<int>{2, 0, 1} &&
+                  meta.at("rois").at(0).at("x") == -4 && meta.at("roi_pad_value") == 114,
+              "input queue size and preprocessing template should be serialized");
+      auto loaded_source = Graph::load(linear_path);
+      require(loaded_source.inputs() == stream_source.inputs() &&
+                  loaded_source.outputs() == stream_source.outputs(),
+              "linear graph round trip must preserve public endpoints");
+      require(loaded_source.describe_backend(false) == original_backend,
+              "linear graph round trip must preserve element names and endpoint options");
+      loaded_source.save(linear_path);
+      require(saved_input() == original_input,
+              "input options must survive save/load with full integer precision");
+      require(Graph::load(linear_path).describe_backend(false) == original_backend,
+              "repeated graph round trips must preserve element names");
       Graph stream_sink("stream_sink");
       stream_sink.add(nodes::Input("frame"));
       stream_sink.add(nodes::Output("classes"));

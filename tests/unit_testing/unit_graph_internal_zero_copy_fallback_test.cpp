@@ -14,6 +14,7 @@
 #include "pipeline/internal/SampleUtil.h"
 #include "pipeline/internal/TensorUtil.h"
 #include "pipeline/Graph.h"
+#include "pipeline/ErrorCodes.h"
 #include "pipeline/TensorAdapters.h"
 #include "pipeline/runtime/ExecutionGraphPlan.h"
 #include "pipeline/runtime/EdgeRouter.h"
@@ -810,7 +811,7 @@ void require_child_holder_window_uses_parent_policy() {
   }
 }
 
-void require_terminal_transport_defers_public_loans() {
+std::shared_ptr<simaai::neat::runtime::RunCore> start_terminal_transport_graph() {
   using namespace simaai::neat;
   Graph graph;
   graph.add(nodes::Input("image"));
@@ -828,7 +829,12 @@ void require_terminal_transport_defers_public_loans() {
   start.mode = RunMode::Async;
   start.allow_startup_preflight = false;
   start.seed = seed;
-  auto parent = runtime::RunCore::start(std::move(plan), std::move(start));
+  return runtime::RunCore::start(std::move(plan), std::move(start));
+}
+
+void require_terminal_transport_defers_public_loans() {
+  using namespace simaai::neat;
+  auto parent = start_terminal_transport_graph();
   const auto child = parent->graph_execution().pipelines.front()->run_core;
   std::vector<Sample> retained;
   std::vector<PullStatus> statuses;
@@ -853,6 +859,41 @@ void require_terminal_transport_defers_public_loans() {
           "terminal forwarding must progress while an earlier public output is retained");
   require(child_loans == 0 && public_loans == 2,
           "the actual graph worker must defer terminal loan admission to the public pull");
+}
+
+void require_child_eos_drains_queued_output() {
+  using namespace simaai::neat;
+  const auto parent = start_terminal_transport_graph();
+  auto& pipe = *parent->graph_execution().pipelines.front();
+  const auto child = pipe.run_core;
+  {
+    // Make the push worker observe EOS while the pull worker still owes the parent this frame.
+    std::lock_guard lock(child->pipeline.out_mu);
+    child->pipeline.out_queue.push_back(make_legacy_device_gst_sample(42));
+    require(gst_element_send_event(child->pipeline.stream.pipeline_handle(), gst_event_new_eos()),
+            "failed to send EOS to child pipeline");
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (!child->stop_requested && std::chrono::steady_clock::now() < deadline)
+      std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    require(child->stop_requested, "child must observe EOS before the next push");
+    const auto input =
+        sample_from_tensors({make_color_tensor(32, 24, ImageSpec::PixelFormat::RGB, 0x29)});
+    require(parent->push_named_samples("image", input), "graph must admit the next input");
+    while (!pipe.transport.push_done && std::chrono::steady_clock::now() < deadline)
+      std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    require(pipe.transport.push_done, "child EOS must wake the graph push worker");
+  }
+  child->pipeline.out_cv.notify_all();
+  Sample output;
+  PullError error;
+  const auto first = parent->pull_named_output("output", 5000, output, &error);
+  const auto frame_id = output.frame_id;
+  const auto last = parent->pull_named_output("output", 5000, output, &error);
+  parent->close();
+  require(first == PullStatus::Ok && frame_id == 42,
+          "the graph must deliver the child's queued frame");
+  require(last == PullStatus::Error && error.code == error_codes::kUnexpectedEos,
+          "the next graph pull must report the child's unexpected EOS");
 }
 
 // Starts an Owned graph whose source segment also feeds a second branch, so the segment
@@ -1201,6 +1242,7 @@ RUN_TEST(
       require_native_retention_pool_policy();
       require_child_holder_window_uses_parent_policy();
       require_terminal_transport_defers_public_loans();
+      require_child_eos_drains_queued_output();
       require_shared_arena_budget();
       require_output_policy_matrix();
       require_dmabuf_loans_and_pressure_preserve_storage();

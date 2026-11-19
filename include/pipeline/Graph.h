@@ -407,6 +407,8 @@ public:
   }
 
   /// Returns the GStreamer launch string from the most recent `build()` call.
+  /// It is empty if the build has multiple pipeline segments or defers pipeline creation until
+  /// the first push.
   const std::string& last_pipeline() const {
     return last_pipeline_;
   }

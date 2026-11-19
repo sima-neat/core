@@ -31,6 +31,7 @@ SDK를 설치하고 DevKit와 페어링하지 않은 경우, 다음 두 단계�
       <li><a class="overview-link-card" href="/getting-started/dev-environment/install-the-environment/"><strong>SDK 설치</strong><span>사용 중인 DevKit 소프트웨어 버전에 맞는 SDK 패키지를 설치하고 설정합니다.</span></a></li>
       <li><a class="overview-link-card" href="/getting-started/dev-environment/devkit-sync/"><strong>DevKit Sync</strong><span>작업 공간 공유, 페어링 업데이트, rsync 백업 방식 등을 이해합니다. <code>dk</code> 명령어 실행.</span></a></li>
       <li><a class="overview-link-card" href="/getting-started/dev-environment/offline-installation/"><strong>오프라인 설치</strong><span>오프라인 설치를 위한 SDK 및 Model Compiler 패키지를 다운로드하세요.</span></a></li>
+      <li><a class="overview-link-card" href="/getting-started/dev-environment/containerized-apps/"><strong>컨테이너 애플리케이션 개발</strong><span>SDK에서 컨테이너 이미지를 빌드하고 <code>dk container</code>로 DevKit에서 실행합니다.</span></a></li>
     </ul>
   </section>
 </div>
