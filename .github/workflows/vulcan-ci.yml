@@ -1507,8 +1507,6 @@ jobs:
 
       - name: Run Perf and Throughput Tests (Isolated)
         if: ${{ contains(fromJSON(matrix.tasks), 'performance') }}
-        env:
-          SIMA_YOLOV8_VARIANTS_BASE_URL: https://docs.sima.ai/pkg_downloads/SDK2.0.0/models/modalix
         run: |
           set -x
           TEST_DIR="$(cat _work/extras_lib_dir.txt)/tests"

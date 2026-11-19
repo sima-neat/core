@@ -45,6 +45,16 @@ YOLOV8S_TESTS = {
     'yolov8_model_benchmark_metrics_test',
     'yolov8_model_mla_stats_test',
 }
+# CTest names that load every *.tar.gz in SIMA_YOLOV8_VARIANTS_DIR.
+YOLOV8N_VARIANT_TESTS = {
+    'graph_migration_legacy_preproc_yolov8_matrix_test',
+    'graph_migration_legacy_yolov8_variant_route_matrix_test',
+    'graph_migration_unified_preproc_yolov8_matrix_test',
+    'graph_migration_unified_yolov8_graph_model_composition_test',
+    'graph_migration_unified_yolov8_variant_route_matrix_test',
+    'preproc_yolov8_matrix_test',
+    'yolov8_variant_route_matrix_test',
+}
 
 
 def partition(names, weights):
@@ -56,6 +66,13 @@ def partition(names, weights):
         bins[i].append(name)
         costs[i] += weights.get(name, 10)
     return [sorted(b) for b in bins]
+
+
+def prepare_fixture(model_id, variant, output):
+    return subprocess.check_output(
+        [sys.executable, str(ROOT / 'scripts/ci/prepare_model_browser_fixture.py'),
+         '--id', model_id, '--variant', variant, '--output', str(output)], text=True,
+        timeout=900).strip()
 
 
 def main():
@@ -83,10 +100,13 @@ def main():
                     ('SIMA_YOLO_TAR', 'yolov8s', YOLOV8S_TESTS)]
         for var, model_id, consumers in fixtures:
             if consumers & set(selected) and not env.get(var):
-                env[var] = subprocess.check_output(
-                    [sys.executable, str(ROOT / 'scripts/ci/prepare_model_browser_fixture.py'),
-                     '--id', model_id, '--variant', 'w8a8', '--output', tmp], text=True,
-                    timeout=900).strip()
+                env[var] = prepare_fixture(model_id, 'w8a8', tmp)
+        # These tests load every MPK in the directory, so YOLOv8n gets one of its own.
+        variants_dir = Path(tmp, 'yolov8n-variants')
+        if YOLOV8N_VARIANT_TESTS & set(selected) and not env.get('SIMA_YOLOV8_VARIANTS_DIR'):
+            for variant in ('w8a8', 'w8a16', 'w16a16'):
+                prepare_fixture('yolov8n', variant, variants_dir)
+            env['SIMA_YOLOV8_VARIANTS_DIR'] = str(variants_dir)
         result = subprocess.run([sys.executable, str(ROOT / 'tools/ci/check_test_coverage.py'),
                     '--profile', env.get('COVERAGE_PROFILE', 'strict'),
                     '--output-dir', str(coverage), '--', *command, '-R', regex], env=env)
