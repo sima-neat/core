@@ -18,6 +18,10 @@ $installation = & $vswhere -latest -products * -requires Microsoft.VisualStudio.
 if (-not $installation) { throw "Visual Studio x64 C++ tools are unavailable" }
 Import-Module (Join-Path $installation "Common7\Tools\Microsoft.VisualStudio.DevShell.dll")
 Enter-VsDevShell -VsInstallPath $installation -SkipAutomaticLocation -DevCmdArguments "-arch=x64 -host_arch=x64"
+# Hosted images and actions/setup-python export these; the producer takes its prefixes explicitly.
+foreach ($name in @("CMAKE_TOOLCHAIN_FILE", "CMAKE_GENERATOR_PLATFORM", "CMAKE_PREFIX_PATH", "PKG_CONFIG_PATH")) {
+  Remove-Item -LiteralPath "env:$name" -ErrorAction SilentlyContinue
+}
 foreach ($name in @(
   "GSTREAMER_ROOT_X86_64",
   "SIMA_WINDOWS_DEPENDENCY_RUNTIME_PATH",

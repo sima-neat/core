@@ -832,6 +832,12 @@ class WindowsCiContracts(unittest.TestCase):
     workflow = WORKFLOW.read_text(encoding="utf-8")
     producer = (SCRIPT_DIR / "run_windows_build.ps1").read_text(encoding="utf-8")
     source = workflow + producer
+    # build_windows.py refuses these; hosted runners (actions/setup-python) export PKG_CONFIG_PATH.
+    clear = producer.index('foreach ($name in @("CMAKE_TOOLCHAIN_FILE"')
+    self.assertLess(producer.index("Enter-VsDevShell"), clear)
+    self.assertLess(clear, producer.index("build_windows.py"))
+    for name in ("CMAKE_TOOLCHAIN_FILE", "CMAKE_GENERATOR_PLATFORM", "CMAKE_PREFIX_PATH", "PKG_CONFIG_PATH"):
+      self.assertIn(f'"{name}"', producer[clear:clear + 200])
     self.assertIn("  pull_request:\n", source)
     self.assertIn("if: github.event_name != 'pull_request'", source)
     self.assertIn("github.repository == 'sima-neat/core'", source)
