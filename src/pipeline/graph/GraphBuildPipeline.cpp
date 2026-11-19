@@ -2397,8 +2397,14 @@ static void check_rtsp_video_sdp(GstElement* src, GstSDPMessage* sdp, gpointer d
       g_autoptr(GstCaps) caps = gst_sdp_media_get_caps_from_media(media, static_cast<int>(payload));
       if (!caps || !gst_caps_get_size(caps))
         return;
-      const char* codec =
-          gst_structure_get_string(gst_caps_get_structure(caps, 0), "encoding-name");
+      const GstStructure* offer = gst_caps_get_structure(caps, 0);
+      // RTPJpegDepacketize(26) selects static JPEG by payload and clock rate alone.
+      int clock_rate;
+      if (payload == GST_RTP_PAYLOAD_JPEG && requested.payload == GST_RTP_PAYLOAD_JPEG &&
+          g_str_equal(requested.codec, "JPEG") &&
+          gst_structure_get_int(offer, "clock-rate", &clock_rate) && clock_rate == 90000)
+        return;
+      const char* codec = gst_structure_get_string(offer, "encoding-name");
       if (!codec && payload < 96) {
         const auto* info = gst_rtp_payload_info_for_pt(static_cast<guint8>(payload));
         if (info && g_strcmp0(info->media, "video") == 0)

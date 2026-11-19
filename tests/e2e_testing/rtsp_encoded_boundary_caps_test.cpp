@@ -6,6 +6,7 @@
 #include "nodes/io/RTSPInput.h"
 #include "nodes/rtp/H264Depacketize.h"
 #include "nodes/rtp/H265Depacketize.h"
+#include "nodes/rtp/RTPJpegDepacketize.h"
 #include "pipeline/Graph.h"
 #include "pipeline/ErrorCodes.h"
 #include "test_utils.h"
@@ -87,8 +88,7 @@ simaai::neat::Sample pull_one_encoded_sample(simaai::neat::Run& run, int timeout
   throw std::runtime_error("RTSP encoded source did not produce a sample before timeout");
 }
 
-// The stream is H.264 so the mixed-case offer can play. The static H.263 offer
-// exercises DESCRIBE only: its mismatch must be reported before SETUP.
+// Only the H.263 offer is synthetic. Both H.264 and JPEG carry playable media.
 struct VideoOfferMedia {
   GstRTSPMedia parent;
 };
@@ -103,14 +103,18 @@ void video_offer_media_class_init(VideoOfferMediaClass* klass) {
       return FALSE;
     auto* media = &g_array_index(sdp->medias, GstSDPMedia, 0);
     gst_sdp_media_set_media(media, "Video");
-    if (g_object_get_data(G_OBJECT(self), "static-h263")) {
+    const bool jpeg = g_str_equal(gst_sdp_media_get_format(media, 0), "26");
+    if (g_object_get_data(G_OBJECT(self), "static-h263"))
       gst_sdp_media_replace_format(media, 0, "34");
-      for (guint i = gst_sdp_media_attributes_len(media); i > 0; --i) {
-        const auto* attr = gst_sdp_media_get_attribute(media, i - 1);
-        if (g_str_equal(attr->key, "rtpmap") || g_str_equal(attr->key, "fmtp"))
-          gst_sdp_media_remove_attribute(media, i - 1);
-      }
+    else if (!jpeg)
+      return TRUE;
+    for (guint i = gst_sdp_media_attributes_len(media); i > 0; --i) {
+      const auto* attr = gst_sdp_media_get_attribute(media, i - 1);
+      if (g_str_equal(attr->key, "rtpmap") || g_str_equal(attr->key, "fmtp"))
+        gst_sdp_media_remove_attribute(media, i - 1);
     }
+    if (jpeg)
+      gst_sdp_media_add_attribute(media, "rtpmap", "26 MJPEG/90000");
     return TRUE;
   };
 }
@@ -141,6 +145,11 @@ void check_loopback_offers() {
                    }),
                    nullptr);
   gst_rtsp_mount_points_add_factory(mounts, "/static", static_video);
+  auto* jpeg = gst_rtsp_media_factory_new();
+  gst_rtsp_media_factory_set_media_gtype(jpeg, video_offer_media_get_type());
+  gst_rtsp_media_factory_set_launch(jpeg, "( videotestsrc is-live=true ! video/x-raw,format=I420 "
+                                          "! jpegenc ! rtpjpegpay name=pay0 pt=26 )");
+  gst_rtsp_mount_points_add_factory(mounts, "/jpeg", jpeg);
   require(gst_rtsp_server_attach(server, context) != 0, "could not bind audio RTSP fixture");
   std::jthread worker([&](std::stop_token stop) {
     std::stop_callback wake(stop, [&] { g_main_context_wakeup(context); });
@@ -149,15 +158,14 @@ void check_loopback_offers() {
   });
 
   Graph graph;
-  const auto url =
-      "rtsp://127.0.0.1:" + std::to_string(gst_rtsp_server_get_bound_port(server)) + "/audio";
-  graph.add(nodes::RTSPInput(url, 200, true));
+  const auto base_url =
+      "rtsp://127.0.0.1:" + std::to_string(gst_rtsp_server_get_bound_port(server));
+  graph.add(nodes::RTSPInput(base_url + "/audio", 200, true));
   graph.add(nodes::H264Depacketize(96, 1));
   graph.add(nodes::Output());
   require_neat_error([&] { (void)graph.build(); }, error_codes::kMediaCaps, "H264 payload_type=96",
                      "Offered: no video streams");
-  const auto rtsp_url =
-      "rtsp://127.0.0.1:" + std::to_string(gst_rtsp_server_get_bound_port(server)) + "/video";
+  const auto rtsp_url = base_url + "/video";
   for (int payload : {1, 128}) {
     using namespace simaai::neat;
     Graph mismatched;
@@ -176,9 +184,7 @@ void check_loopback_offers() {
   require_neat_error([&] { (void)wrong_codec.build(); }, error_codes::kMediaCaps, "H265", "H264");
 
   Graph static_mismatch;
-  const auto static_url =
-      "rtsp://127.0.0.1:" + std::to_string(gst_rtsp_server_get_bound_port(server)) + "/static";
-  static_mismatch.add(nodes::RTSPInput(static_url, 200, true));
+  static_mismatch.add(nodes::RTSPInput(base_url + "/static", 200, true));
   static_mismatch.add(nodes::H264Depacketize(96));
   static_mismatch.add(nodes::Output());
   require_neat_error([&] { (void)static_mismatch.build(); }, error_codes::kMediaCaps,
@@ -190,6 +196,14 @@ void check_loopback_offers() {
   matching.add(nodes::Output());
   auto run = matching.build();
   require_contains(pull_one_encoded_sample(run, 8000).caps_string, "video/x-h264", "matching SDP");
+
+  Graph jpeg_graph;
+  jpeg_graph.add(nodes::RTSPInput(base_url + "/jpeg", 200, true));
+  jpeg_graph.add(nodes::RTPJpegDepacketize(26));
+  jpeg_graph.add(nodes::Output());
+  auto jpeg_run = jpeg_graph.build();
+  require_contains(pull_one_encoded_sample(jpeg_run, 8000).caps_string, "image/jpeg",
+                   "static JPEG advertised as MJPEG");
 }
 
 } // namespace
