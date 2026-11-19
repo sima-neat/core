@@ -41,6 +41,7 @@ sidebar_position: 1
     <ul class="overview-link-list">
       <li><a class="overview-link-card" href="/reference/glossary/"><strong>術語表</strong><span>查找檔案中使用的術語和縮寫。</span></a></li>
       <li><a class="overview-link-card" href="/reference/elxr-sdk-host-setup/ubuntu/"><strong>SDK 主機設定</strong><span>適用於 Ubuntu、macOS 和 Windows 的主機設定注意事項。</span></a></li>
+      <li><a class="overview-link-card" href="/reference/devkit-containers/"><strong>DevKit 容器</strong><span>在 DevKit 上安裝 Docker、<code>dk container</code> 指令，以及 Ubuntu 容器。</span></a></li>
       <li><a class="overview-link-card" href="/reference/two-step-sdk-installation/"><strong>兩步驟 SDK 安裝</strong><span>適用於 SDK 2.0.0、2.1.2.0 和 2.1.2.1 的舊版映像拉取和設定流程。</span></a></li>
     </ul>
   </section>

@@ -318,6 +318,23 @@ bool build_ingress_runtime_contract(const pipeline_internal::TensorBufferView& v
   return true;
 }
 
+bool build_dense_ingress_runtime_contract(const Sample& sample, CompiledRuntimeContract* out,
+                                          std::string* error) {
+  const auto tensors = tensors_from_sample(sample, true);
+  for (const auto& tensor : tensors)
+    if (!tensor.storage || !tensor.storage->size_bytes || tensor.is_composite() ||
+        tensor.semantic.tess)
+      return contract_error(
+          error,
+          "ingress requires typed single-plane tensors; detessellate image/tile inputs first");
+  const auto holder = pipeline_internal::sample_to_gst_envelope_holder(sample, error);
+  pipeline_internal::TensorBufferView view;
+  return holder &&
+         pipeline_internal::tensor_buffer_descriptor_from_sample(
+             static_cast<GstSample*>(holder.get()), &view, error) &&
+         build_ingress_runtime_contract(view, tensors, out, error);
+}
+
 bool append_direct_kernel_input(CompiledRuntimeContract* runtime,
                                 const LogicalTensorStaticSpec& source,
                                 const PhysicalBufferStaticSpec& physical, std::size_t input_index,

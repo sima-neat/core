@@ -1972,3 +1972,12 @@ def test_sima_encode_and_sender_options(codec):
     encode.quality = 80
     with pytest.raises(ValueError, match='quality'):
       pyneat.nodes.sima_encode(encode)
+
+
+def test_sima_decode_rejects_unknown_decoder_tuning():
+  # The factory refuses an unknown tuning; the attribute write itself does not.
+  opt = pyneat.SimaDecodeOptions()
+  opt.decoder_tuning = "bogus_value"
+  with pytest.raises(pyneat.NeatError) as excinfo:
+    pyneat.nodes.sima_decode(opt)
+  assert excinfo.value.error_code == pyneat.ERROR_OPTION_OUT_OF_RANGE
