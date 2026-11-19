@@ -90,6 +90,8 @@ array = outputs[0].to_numpy(copy=True)
 torch_tensor = outputs[0].to_torch(copy=True)
 ```
 
+對於 BF16 張量，即使設定 `copy=False`，`to_numpy()` 也會傳回獨立的 `float32` 陣列。
+
 大多數首次執行的程式碼不應手動選擇記憶體設定。如果需要，Python 會透過 `memory=` 參數公開 `TensorMemory.Auto`、`CPU`、`A65`、`EV74` 和 `MLA`。
 
 僅針對位元組格式的張量有效載體使用 `byte_format=`。請勿將 `byte_format=` 與 `image_format=` 結合使用。

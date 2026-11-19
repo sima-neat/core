@@ -40,6 +40,7 @@ sidebar_position: 1
     <ul class="overview-link-list">
       <li><a class="overview-link-card" href="/reference/glossary/"><strong>용어집</strong><span>문서 전체에서 사용되는 용어 및 약어 검색.</span></a></li>
       <li><a class="overview-link-card" href="/reference/elxr-sdk-host-setup/ubuntu/"><strong>SDK 호스트 설정</strong><span>Ubuntu, macOS 및 Windows용 호스트 설정 참고 사항.</span></a></li>
+      <li><a class="overview-link-card" href="/reference/devkit-containers/"><strong>DevKit 컨테이너</strong><span>DevKit에 Docker 설치, <code>dk container</code> 명령, Ubuntu 컨테이너.</span></a></li>
       <li><a class="overview-link-card" href="/reference/two-step-sdk-installation/"><strong>2단계 SDK 설치</strong><span>SDK 2.0.0, 2.1.2.0 및 2.1.2.1용 레거시 이미지 가져오기 및 설정 흐름.</span></a></li>
     </ul>
   </section>

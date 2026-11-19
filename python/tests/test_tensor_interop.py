@@ -19,6 +19,21 @@ def test_tensor_from_numpy_cpu_zero_copy_roundtrip():
   assert float(out2[0, 0]) == 123.0
 
 
+@pytest.mark.parametrize("copy", [False, True])
+def test_bfloat16_numpy_expansion(copy):
+  words = np.array([0x3f80, 0xc020, 0x8000, 0x7f80, 0x7fc1, 0x0001], dtype=np.uint16)
+  source = np.zeros((3, 4), dtype=np.uint16)
+  view = source[:, ::2]
+  view[:] = words.reshape(3, 2)
+  tensor = pn.Tensor.from_numpy(view, copy=False, memory=pn.TensorMemory.CPU)
+  tensor.dtype = pn.TensorDType.BFloat16
+  result = tensor.to_numpy(copy=copy)
+  assert result.dtype == np.float32
+  assert result.shape == view.shape
+  source.fill(0)
+  np.testing.assert_array_equal(result.view(np.uint32), (words.astype(np.uint32) << 16).reshape(3, 2))
+
+
 def test_tensor_from_numpy_copy_isolation():
   arr = np.arange(6, dtype=np.int32).reshape(2, 3)
   tensor = pn.Tensor.from_numpy(arr, copy=True)
