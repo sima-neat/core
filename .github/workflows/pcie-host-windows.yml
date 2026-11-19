@@ -697,7 +697,7 @@ jobs:
       - name: Install, test both APIs, and remove exact cohort
         shell: powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -Command ". '{0}'"
         env:
-          QUALIFIER_CARD_SUDO_PASSWORD: ${{ secrets.DEVKIT_PASSWORD }}
+          SIMAPCIE_CARD_SUDO_PASSWORD: ${{ secrets.DEVKIT_PASSWORD }}
           VALIDATION_ONLY: ${{ inputs.validation_only }}
           INCLUDE_GENAI: ${{ inputs.include_genai }}
           REQUIRE_UPGRADE: ${{ inputs.require_upgrade }}
@@ -705,8 +705,6 @@ jobs:
           ARTIFACT_BASE_URL: ${{ needs.resolve-vulcan-config.outputs.artifact_base_url }}
         run: |
           $ErrorActionPreference = "Stop"
-          $cardSudoPassword = $env:QUALIFIER_CARD_SUDO_PASSWORD
-          Remove-Item Env:QUALIFIER_CARD_SUDO_PASSWORD -ErrorAction SilentlyContinue
           $selection = Get-Content -Raw "$env:RUNNER_TEMP\core-windows-dependencies\selection.json" | ConvertFrom-Json
           if ("$env:VALIDATION_ONLY" -ne "true" -and "$env:INCLUDE_GENAI" -ne "true") {
             throw "Customer release requires the complete Windows GenAI hardware matrix"
@@ -753,7 +751,6 @@ jobs:
             "--sima-cli-candidate", "$env:RUNNER_TEMP\core-windows-dependencies\sima-cli",
             "--source-root", $env:GITHUB_WORKSPACE,
             "--ssh-key", $env:SIMAPCIE_SSH_KEY,
-            "--card-sudo-password-stdin",
             "--work", "$env:RUNNER_TEMP\core-windows-hardware",
             "--evidence", "$env:RUNNER_TEMP\core-windows-hardware-evidence"
           )
@@ -778,18 +775,16 @@ jobs:
           foreach ($directory in $env:SIMA_WINDOWS_DEPENDENCY_RUNTIME_PATH.Split(";")) {
             if ($directory) { $arguments += @("--dependency-runtime-dir", $directory) }
           }
-          if (-not $cardSudoPassword) { throw "Required hardware secret is unset: DEVKIT_PASSWORD" }
-          $cardSudoPassword | & python @arguments
+          if (-not $env:SIMAPCIE_CARD_SUDO_PASSWORD) { throw "Required hardware secret is unset: DEVKIT_PASSWORD" }
+          & python @arguments
           if ($LASTEXITCODE -ne 0) { throw "Windows hardware qualification failed: $LASTEXITCODE" }
       - name: Recover card and native installation
         if: always()
         shell: powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -Command ". '{0}'"
         env:
-          RECOVERY_CARD_SUDO_PASSWORD: ${{ secrets.DEVKIT_PASSWORD }}
+          SIMAPCIE_CARD_SUDO_PASSWORD: ${{ secrets.DEVKIT_PASSWORD }}
         run: |
           $ErrorActionPreference = "Stop"
-          $cardSudoPassword = $env:RECOVERY_CARD_SUDO_PASSWORD
-          Remove-Item Env:RECOVERY_CARD_SUDO_PASSWORD -ErrorAction SilentlyContinue
           $arguments = @(
             "scripts/ci/pciehost/cleanup_windows_hardware.py",
             "--candidate", "$env:RUNNER_TEMP\core-windows-candidate",
@@ -798,7 +793,6 @@ jobs:
             "--lock-file", "$env:USERPROFILE\.sima\locks\neat-pcie-card0.lock",
             "--remote-lock-path", "/tmp/neat-pcie-card0.lock",
             "--ssh-key", $env:SIMAPCIE_SSH_KEY,
-            "--card-sudo-password-stdin",
             "--work", "$env:RUNNER_TEMP\core-windows-hardware"
           )
           if (Test-Path -LiteralPath "$env:RUNNER_TEMP\core-windows-upgrade-base") {
@@ -806,8 +800,8 @@ jobs:
               "--upgrade-base-candidate", "$env:RUNNER_TEMP\core-windows-upgrade-base"
             )
           }
-          if (-not $cardSudoPassword) { throw "Required recovery secret is unset: DEVKIT_PASSWORD" }
-          $cardSudoPassword | & python @arguments
+          if (-not $env:SIMAPCIE_CARD_SUDO_PASSWORD) { throw "Required recovery secret is unset: DEVKIT_PASSWORD" }
+          & python @arguments
           if ($LASTEXITCODE -ne 0) { throw "Windows hardware recovery failed: $LASTEXITCODE" }
       - name: Enforce release admission
         shell: powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -Command ". '{0}'"

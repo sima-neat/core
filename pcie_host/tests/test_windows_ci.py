@@ -902,12 +902,12 @@ class WindowsCiContracts(unittest.TestCase):
     hardware_job = source.split("  hardware:\n", 1)[1]
     hardware_env = hardware_job.split("    steps:\n", 1)[0]
     self.assertNotIn("SIMAPCIE_CARD_SUDO_PASSWORD", hardware_env)
-    self.assertIn("Remove-Item Env:QUALIFIER_CARD_SUDO_PASSWORD", source)
-    self.assertIn('"--card-sudo-password-stdin"', source)
+    # Linux passes DEVKIT_PASSWORD as step environment; a PowerShell pipe to Python lost it.
+    self.assertNotIn("--card-sudo-password-stdin", source)
     recovery = source.split("- name: Recover card and native installation", 1)[1].split(
         "- name: Enforce release admission", 1)[0]
-    self.assertIn("Remove-Item Env:RECOVERY_CARD_SUDO_PASSWORD", recovery)
-    self.assertIn('"--card-sudo-password-stdin"', recovery)
+    for step in (source.split("- name: Install, test both APIs", 1)[1].split("- name:", 1)[0], recovery):
+      self.assertIn("SIMAPCIE_CARD_SUDO_PASSWORD: ${{ secrets.DEVKIT_PASSWORD }}", step)
     self.assertNotIn("SIMAPCIE_EXPECTED_CARD_RUNTIME_SHA256", source)
     self.assertNotIn("SIMAPCIE_EXPECTED_CARD_WORKER_SHA256", source)
     self.assertNotIn("SIMAPCIE_EXPECTED_CARD_GENAI_WORKER_SHA256", source)

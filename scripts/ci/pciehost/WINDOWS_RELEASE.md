@@ -100,9 +100,9 @@ installed location. The Platform runtime comes from the `SiMaMlaDaemon`
 service path, as the installed `sima-pcie-host-env.cmd` finds it. The only
 optional variable is `SIMAPCIE_PCIEHOST_CARD_GST_DEBUG`, shared with Linux.
 
-The card sudo credential is the protected `DEVKIT_PASSWORD` secret. It reaches
-the qualifier only on standard input, and is never placed in a command line or
-retained artifact. The production environment also supplies the read-only
+The card sudo credential is the protected `DEVKIT_PASSWORD` secret. As on
+Linux it is step environment (`SIMAPCIE_CARD_SUDO_PASSWORD`), and is never
+placed in a command line or retained artifact. The production environment also supplies the read-only
 GitHub App credentials, used only when an unpublished Scheduler or sima-cli
 Actions artifact is selected as a bootstrap override. Normal runs resolve
 publication manifests over the approved artifact endpoint.
