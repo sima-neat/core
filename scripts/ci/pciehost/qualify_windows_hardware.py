@@ -14,7 +14,6 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from functools import partial
-import hashlib
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 import ipaddress
 import json
@@ -84,7 +83,6 @@ GENAI_ADMISSION_TESTS = {
 SUPPORTED_PYTHON = (3, 14)
 STANDARD_USER_GENAI_ENVIRONMENT = {
     "PATH",
-    "SIMA_NEAT_PCIE_GENAI_CARD_ENV",
     "SIMA_PCIE_HOST_LIBRARY_PATH",
     "SIMAPCIE_CARD_HOST",
     "SIMAPCIE_CARD_ID",
@@ -97,46 +95,49 @@ STANDARD_USER_GENAI_ENVIRONMENT = {
 }
 
 
+CARD_BUNDLE_ARCHIVE = "neat-core-offline-installer.tar.gz"
+CARD_BUNDLE_ARTIFACT = {"type": "offline", "repository": "core", "package_path": "offline",
+                        "distro": "elxr26", "arches": ["arm64"]}
+# The Linux offline installer's card stage and deploy command (install.py).
+CARD_STAGE_PATTERN = r"/var/tmp/neat-offline-[A-Za-z0-9]{8}"
+CARD_INSTALL_LOCK = "/run/neat-offline-install.lock"
+CARD_DEPLOY = ("flock", "-n", CARD_INSTALL_LOCK, "unshare", "--net", "python3", "-B")
+CARD_RUNTIME_PACKAGES = (
+    "sima-neat", "sima-lmm-core", "simaai-scheduler", "simaai-runner",
+    "simaai-kernels-firmware")
+
+
 @dataclass(frozen=True)
-class CardCandidate:
-  root: Path
+class CardBundle:
+  archive: Path
+  sha256: str
   metadata: dict
-  packages: tuple[Path, ...]
-  resources: dict[str, str]
 
 
-def validate_card_candidate(directory: Path, expected_commit: str) -> CardCandidate:
-  """Validate the exact Linux Core payload that will run privately on the card."""
+def validate_card_bundle(directory: Path, expected_commit: str) -> CardBundle:
+  """Validate the standalone Core offline bundle that installs this commit on the card."""
   root = directory.resolve(strict=True)
-  metadata_path = root / "metadata-all.json"
   try:
-    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    metadata = json.loads((root / "metadata.json").read_text(encoding="utf-8"))
   except (OSError, json.JSONDecodeError) as error:
-    raise ValueError(f"card candidate has no valid metadata-all.json: {root}") from error
+    raise ValueError(f"card bundle has no valid offline metadata.json: {root}") from error
   if not isinstance(metadata, dict):
-    raise ValueError("card candidate metadata must be an object")
+    raise ValueError("card bundle metadata must be an object")
+  if (metadata.get("name") != "gh:sima-neat/core/offline"
+      or metadata.get("artifact") != CARD_BUNDLE_ARTIFACT):
+    raise ValueError("card bundle is not the standalone Core offline card bundle")
   if expected_commit[:12] not in str(metadata.get("version", "")):
-    raise ValueError("card candidate version is not tied to the selected Core commit")
-  resources = metadata.get("resources-checksum")
-  names = metadata.get("resources")
-  if (not isinstance(resources, dict) or not resources
-      or not isinstance(names, list) or set(names) != set(resources)):
-    raise ValueError("card candidate resource inventory is incomplete")
-  packages = []
-  for name, expected in resources.items():
-    if (not isinstance(name, str) or Path(name).name != name
-        or not re.fullmatch(r"[A-Za-z0-9._+%:-]+", name)):
-      raise ValueError(f"card candidate resource has an unsafe name: {name!r}")
-    if not isinstance(expected, str) or not re.fullmatch(r"[0-9a-f]{64}", expected):
-      raise ValueError(f"card candidate resource has an invalid checksum: {name}")
-    path = root / name
-    if path.is_symlink() or not path.is_file() or sha256(path) != expected:
-      raise ValueError(f"card candidate resource checksum differs: {name}")
-    if name.endswith(".deb"):
-      packages.append(path)
-  if not packages:
-    raise ValueError("card candidate contains no Debian runtime packages")
-  return CardCandidate(root, metadata, tuple(sorted(packages)), dict(resources))
+    raise ValueError("card bundle version is not tied to the selected Core commit")
+  if metadata.get("installer_revision") != expected_commit:
+    raise ValueError("card bundle installer revision is not the selected Core commit")
+  archive = root / CARD_BUNDLE_ARCHIVE
+  if archive.is_symlink() or not archive.is_file():
+    raise ValueError(f"card bundle archive is missing: {archive}")
+  digest = sha256(archive)
+  checksums = metadata.get("resources-checksum")
+  if not isinstance(checksums, dict) or checksums.get(CARD_BUNDLE_ARCHIVE) != digest:
+    raise ValueError("card bundle archive checksum differs from its metadata")
+  return CardBundle(archive, digest, metadata)
 
 
 def require_windows() -> None:
@@ -1475,25 +1476,6 @@ def scp_command(args: argparse.Namespace, sources: tuple[Path, ...], destination
           f"{args.card_user}@{args.card_host}:{destination}"]
 
 
-def card_candidate_paths(token: str) -> dict[str, str]:
-  if not re.fullmatch(r"[0-9a-f]{32}", token):
-    raise ValueError("card candidate token must be 128-bit lowercase hex")
-  stage = f"/tmp/neat-pcie-card0.{token}"
-  return {
-      "stage": stage,
-      "packages": f"{stage}/packages",
-      "root": f"{stage}/root",
-      "worker": f"{stage}/root/usr/bin/pcie-pipeline-builder",
-      "genai_worker": f"{stage}/root/usr/bin/neat-pcie-genai-worker",
-      "firmware_source": (
-          f"{stage}/root/usr/share/sima-neat-firmware/modalix-cvu-fw"),
-      "firmware_name": f"neat-pcie-card0-{token}",
-      "firmware_installed": f"/lib/firmware/neat-pcie-card0-{token}",
-      "run": f"{stage}/run",
-      "log": f"{stage}/log",
-  }
-
-
 def _card_sudo_password(args: argparse.Namespace) -> str:
   if getattr(args, "card_sudo_password_stdin", False):
     password = getattr(args, "card_sudo_password_value", "")
@@ -1526,218 +1508,98 @@ def run_sudo_remote(args: argparse.Namespace, remote: str, log: Path,
     raise RuntimeError(f"privileged card command failed with {result.returncode}; see {log}")
 
 
-def card_stage_cleanup_command(paths: dict[str, str], token: str) -> str:
-  """Only remove a private stage whose creation receipt matches this run."""
-  stage = shlex.quote(paths["stage"])
-  marker = shlex.quote(paths["stage"] + "/.qualification-owner")
-  return (
-      f"set -eu; if [ -e {stage} ] || [ -L {stage} ]; then "
-      f"test ! -L {stage}; test -f {marker}; test ! -L {marker}; "
-      f'test "$(cat {marker})" = {shlex.quote(token)}; rm -rf -- {stage}; fi'
-  )
+def _remote_output(log: Path) -> list[str]:
+  return [line.strip() for line in log.read_text(encoding="utf-8", errors="replace").splitlines()
+          if line.strip() and not line.startswith("+")]
 
 
-def stage_card_candidate(args: argparse.Namespace, candidate: CardCandidate, token: str,
-                         evidence: Path) -> dict[str, str]:
-  paths = card_candidate_paths(token)
-  library_paths = (
-      f"{paths['root']}/usr/lib",
-      f"{paths['root']}/usr/lib/aarch64-linux-gnu",
-      f"{paths['root']}/usr/lib/aarch64-linux-gnu/neat/runtime",
-      "/usr/lib/aarch64-linux-gnu",
-  )
-  plugin_paths = (
-      f"{paths['root']}/usr/lib/aarch64-linux-gnu/neat/gst-plugins",
-      "/usr/lib/aarch64-linux-gnu/gstreamer-1.0",
-  )
-  prepare = (
-      f"set -eu; umask 077; mkdir {paths['stage']}; "
-      f"printf '%s\\n' {token} > {paths['stage']}/.qualification-owner; "
-      f"mkdir {paths['packages']} {paths['root']} {paths['run']} {paths['log']}"
-  )
-  try:
-    run_logged(ssh_command(args, prepare), evidence / "card-candidate-prepare.log", timeout=30)
-    run_logged(
-        scp_command(args, candidate.packages, paths["packages"] + "/"),
-        evidence / "card-candidate-transfer.log", timeout=900)
-    extract = (
-        f"set -eu; for package in {paths['packages']}/*.deb; do "
-        f"dpkg-deb -x \"$package\" {paths['root']}; done; "
-        f"test -x {paths['worker']}; test -r {paths['firmware_source']}; "
-        f"printf 'worker_sha256='; sha256sum {paths['worker']} | awk '{{print $1}}'; "
-        f"printf 'runtime_sha256='; sha256sum {paths['firmware_source']} | awk '{{print $1}}'; "
-        + (f"test -x {paths['genai_worker']}; printf 'genai_worker_sha256='; "
-           f"sha256sum {paths['genai_worker']} | awk '{{print $1}}'"
-           if args.include_genai else "true")
-    )
-    log = evidence / "card-candidate-extract.log"
-    run_logged(ssh_command(args, extract), log, timeout=900)
-    values = {}
-    for line in log.read_text(encoding="utf-8", errors="replace").splitlines():
-      if "=" in line and not line.startswith("+"):
-        name, value = line.split("=", 1)
-        if name in {"runtime_sha256", "worker_sha256", "genai_worker_sha256"}:
-          values[name] = value.strip()
-    expected_receipt = {"runtime_sha256", "worker_sha256"}
-    if args.include_genai:
-      expected_receipt.add("genai_worker_sha256")
-    if set(values) != expected_receipt or any(
-        not re.fullmatch(r"[0-9a-f]{64}", value) for value in values.values()):
-      raise RuntimeError(f"card candidate extraction receipt is incomplete; see {log}")
-    library_path = ":".join(library_paths)
-    dependency_check = (
-        "set -eu; test -x /lib/ld-linux-aarch64.so.1; "
-        f"LD_LIBRARY_PATH={library_path} ldd {paths['worker']}; "
-        f"! LD_LIBRARY_PATH={library_path} ldd {paths['worker']} | grep -q 'not found'"
-    )
-    run_logged(
-        ssh_command(args, dependency_check),
-        evidence / "card-candidate-dependencies.log", timeout=60)
-  except BaseException as error:
+def card_runtime_packages(args: argparse.Namespace, evidence: Path, label: str) -> dict[str, str]:
+  log = evidence / f"card-runtime-packages-{label}.log"
+  run_logged(ssh_command(
+      args, "dpkg-query -W -f='${Package} ${Version}\\n' " + " ".join(CARD_RUNTIME_PACKAGES)),
+      log, timeout=30)
+  installed = dict(line.split(" ", 1) for line in _remote_output(log) if " " in line)
+  if set(installed) != set(CARD_RUNTIME_PACKAGES):
+    raise RuntimeError(f"card runtime packages are incomplete; see {log}")
+  return installed
+
+
+def card_deploy_command(stage: str, phase: str) -> str:
+  """install.py's card phase command, run through the card's own deploy.py."""
+  if not re.fullmatch(CARD_STAGE_PATTERN, stage) or phase not in {"preflight", "install", "verify"}:
+    raise ValueError("invalid offline card deployment request")
+  return " ".join(("timeout", "--kill-after=30", "1500", *CARD_DEPLOY,
+                   f"{stage}/neat-core-offline/deploy.py", "card", phase))
+
+
+def install_card_candidate(args: argparse.Namespace, bundle: CardBundle, evidence: Path,
+                           state: dict) -> dict[str, str]:
+  """Install the candidate as the Linux offline installer does (install.py stage/card).
+
+  ``state`` records the stage and whether the install phase began, for cleanup.
+  """
+  lock = _validate_remote_path(args.remote_lock_path)
+  free = evidence / "card-offline-space.log"
+  run_logged(ssh_command(
+      args, "python3 -c 'import shutil; print(shutil.disk_usage(\"/var/tmp\").free)'"),
+      free, timeout=30)
+  # The archive and its extracted tree; Linux streams the tree and needs twice its size.
+  if int(_remote_output(free)[-1]) < 3 * bundle.archive.stat().st_size:
+    raise RuntimeError("Insufficient card staging space")
+  created = evidence / "card-offline-stage.log"
+  run_logged(ssh_command(args, "umask 077; mktemp -d /var/tmp/neat-offline-XXXXXXXX"),
+             created, timeout=30)
+  stage = _remote_output(created)[-1]
+  if not re.fullmatch(CARD_STAGE_PATTERN, stage):
+    raise ValueError("Invalid remote staging path")
+  state["stage"] = stage
+  # Recovery finds the stage through the card lock this run owns.
+  run_logged(ssh_command(
+      args, f"set -eu; test -r {lock}/owner; umask 077; "
+            f"printf '%s\\n' {stage} > {lock}/offline_stage"),
+      evidence / "card-offline-stage-record.log", timeout=30)
+  # Windows adaptation: one archive by scp, not a tar stream on ssh stdin.
+  run_logged(scp_command(args, (bundle.archive,), stage + "/"),
+             evidence / "card-offline-transfer.log", timeout=1800)
+  run_logged(ssh_command(
+      args, f"set -eu; cd {stage}; "
+            f"test \"$(sha256sum {CARD_BUNDLE_ARCHIVE} | awk '{{print $1}}')\" = {bundle.sha256}; "
+            f"tar --no-same-owner -xzf {CARD_BUNDLE_ARCHIVE}; rm -f {CARD_BUNDLE_ARCHIVE}; "
+            "test -f neat-core-offline/deploy.py"),
+      evidence / "card-offline-extract.log", timeout=900)
+  for phase in ("preflight", "install", "verify"):
+    if phase == "install":
+      state["install_started"] = True
+    # Never retry a phase: it may already have changed packages.
+    run_sudo_remote(args, card_deploy_command(stage, phase),
+                    evidence / f"card-offline-{phase}.log", timeout=1620)
+  # scripts/ci/pciehost/verify_card_runtime.sh, verbatim.
+  run_logged(ssh_command(
+      args, "set -eu; export GST_PLUGIN_PATH_1_0=/usr/lib/aarch64-linux-gnu/neat/gst-plugins; "
+            "unset GST_PLUGIN_PATH; command -v pcie-pipeline-builder; "
+            "gst-inspect-1.0 neatpciesrc >/dev/null; gst-inspect-1.0 neatpciesink >/dev/null"),
+      evidence / "card-runtime-verify.log", timeout=120)
+  installed = card_runtime_packages(args, evidence, "candidate")
+  if args.expected_card_commit[:12] not in installed["sima-neat"]:
+    raise RuntimeError("card did not install the exact Core candidate")
+  return installed
+
+
+def remove_card_stage(args: argparse.Namespace, stage: str, evidence: Path, *,
+                      install_attempted: bool) -> None:
+  if not re.fullmatch(CARD_STAGE_PATTERN, stage):
+    raise ValueError("Invalid remote staging path")
+  lock = _validate_remote_path(args.remote_lock_path)
+  if install_attempted:
     try:
-      cleanup = run_captured_to_file(
-          ssh_command(args, card_stage_cleanup_command(paths, token)),
-          evidence / "card-candidate-stage-cleanup.log", timeout=60)
-      if cleanup.returncode != 0:
-        error.add_note(
-            "private card stage cleanup returned "
-            f"{cleanup.returncode}; see {evidence / 'card-candidate-stage-cleanup.log'}")
-    except BaseException as cleanup_error:
-      error.add_note(f"private card stage cleanup also failed: {cleanup_error}")
-    raise
-  values.update(paths)
-  values["card_env"] = " ".join((
-      f"SIMA_NEAT_PCIE_HELPER_PATH={paths['worker']}",
-      f"SIMA_NEAT_PCIE_RUN_DIR={paths['run']}",
-      f"SIMA_NEAT_PCIE_LOG_DIR={paths['log']}",
-      "LD_LIBRARY_PATH=" + ":".join(library_paths),
-      "GST_PLUGIN_PATH_1_0=" + ":".join(plugin_paths),
-  ))
-  values["genai_card_env"] = " ".join((
-      f"SIMA_NEAT_PCIE_GENAI_HELPER_PATH={paths['genai_worker']}",
-      "LD_LIBRARY_PATH=" + ":".join(library_paths),
-      "GST_PLUGIN_PATH_1_0=" + ":".join(plugin_paths),
-  ))
-  return values
-
-
-def activate_card_candidate(args: argparse.Namespace, staged: dict[str, str],
-                            baseline_firmware: str, evidence: Path) -> None:
-  if not re.fullmatch(r"[A-Za-z0-9._+-]+", baseline_firmware):
-    raise ValueError(f"card baseline firmware name is unsafe: {baseline_firmware!r}")
-  lock = _validate_remote_path(args.remote_lock_path)
-  remember = (
-      f"set -eu; test -r {lock}/owner; umask 077; "
-      f"printf '%s\\n' {shlex.quote(baseline_firmware)} > {lock}/baseline_firmware"
-  )
-  run_logged(
-      ssh_command(args, remember), evidence / "card-candidate-baseline-record.log", timeout=30)
-  remoteproc = "/sys/class/remoteproc/remoteproc1"
-  request = f"{staged['run']}/firmware-restore-request"
-  active = f"{staged['run']}/firmware-active"
-  restored = f"{staged['run']}/firmware-restored"
-  failure = f"{staged['run']}/firmware-broker-error"
-  broker_log = f"{staged['log']}/firmware-broker.log"
-  broker_source = f"{staged['run']}/firmware-broker.sh"
-  token = Path(staged["stage"]).name.rsplit(".", 1)[-1]
-  if not re.fullmatch(r"[0-9a-f]{32}", token):
-    raise ValueError("card candidate stage does not end in its lock token")
-  broker = (
-      "#!/bin/sh\n"
-      "set -eu\n"
-      f"source={staged['firmware_source']}; target={staged['firmware_installed']}; "
-      f"candidate={staged['firmware_name']}; baseline={shlex.quote(baseline_firmware)}; "
-      f"remoteproc={remoteproc}; request={request}; active={active}; restored={restored}; "
-      f"failure={failure}; token={token}\n"
-      "restore() { current=$(cat \"$remoteproc/firmware\"); "
-      "if [ \"$current\" = \"$candidate\" ]; then printf stop > \"$remoteproc/state\"; "
-      "printf '%s' \"$baseline\" > \"$remoteproc/firmware\"; "
-      "printf start > \"$remoteproc/state\"; "
-      "elif [ \"$current\" != \"$baseline\" ]; then return 75; fi; "
-      "grep -qx \"$baseline\" \"$remoteproc/firmware\"; "
-      "grep -qx running \"$remoteproc/state\"; rm -f \"$target\"; }; "
-      "failed() { status=$?; trap - EXIT HUP INT TERM; restore >/dev/null 2>&1 || true; "
-      "printf '%s\\n' \"$status\" > \"$failure\"; exit \"$status\"; }; "
-      "trap failed EXIT HUP INT TERM; test -r \"$source\"; test ! -e \"$target\"; "
-      "test ! -e \"$request\"; test ! -e \"$active\"; test ! -e \"$restored\"; "
-      "install -m 0644 \"$source\" \"$target\"; "
-      "printf stop > \"$remoteproc/state\"; printf '%s' \"$candidate\" > \"$remoteproc/firmware\"; "
-      "printf start > \"$remoteproc/state\"; grep -qx \"$candidate\" \"$remoteproc/firmware\"; "
-      "grep -qx running \"$remoteproc/state\"; printf '%s\\n' \"$candidate\" > \"$active\"; "
-      "remaining=10800; while [ ! -f \"$request\" ]; do "
-      "test \"$remaining\" -gt 0; remaining=$((remaining - 1)); sleep 1; done; "
-      "test \"$(cat \"$request\")\" = \"$token\"; restore; "
-      "printf '%s\\n' \"$baseline\" > \"$restored\"; trap - EXIT HUP INT TERM"
-  )
-  broker_sha256 = hashlib.sha256(broker.encode("utf-8")).hexdigest()
-  encoded_broker = base64.b64encode(broker.encode("utf-8")).decode("ascii")
-  stage_broker = (
-      f"set -eu; umask 077; test ! -e {broker_source}; "
-      f"printf '%s' {encoded_broker} | base64 -d > {broker_source}; "
-      f"chmod 0500 {broker_source}; "
-      f"test \"$(sha256sum {broker_source} | awk '{{print $1}}')\" = {broker_sha256}"
-  )
-  run_logged(
-      ssh_command(args, stage_broker), evidence / "card-candidate-broker-stage.log", timeout=30)
-  broker_root = f"/run/neat-pcie-card0-{token}-firmware-broker"
-  command = (
-      f"set -eu; test ! -e {request}; test ! -e {active}; test ! -e {failure}; "
-      f"test -f {broker_source}; test ! -L {broker_source}; "
-      f"test \"$(sha256sum {broker_source} | awk '{{print $1}}')\" = {broker_sha256}; "
-      f"broker_root={broker_root}; test ! -e \"$broker_root\"; "
-      f"install -m 0500 -o root -g root {broker_source} \"$broker_root\"; "
-      "trap 'rm -f \"$broker_root\"' EXIT; "
-      f"nohup \"$broker_root\" </dev/null > {broker_log} 2>&1 & pid=$!; "
-      "remaining=120; while [ ! -r " + active + " ]; do "
-      f"if [ -r {failure} ]; then cat {failure} >&2; exit 76; fi; "
-      "kill -0 \"$pid\" 2>/dev/null; test \"$remaining\" -gt 0; "
-      "remaining=$((remaining - 1)); sleep 1; done; "
-      f"test \"$(cat {active})\" = {staged['firmware_name']}"
-  )
-  run_sudo_remote(args, command, evidence / "card-candidate-activate.log")
-
-
-def restore_card_candidate(args: argparse.Namespace, token: str, evidence: Path) -> None:
-  paths = card_candidate_paths(token)
-  lock = _validate_remote_path(args.remote_lock_path)
-  remoteproc = "/sys/class/remoteproc/remoteproc1"
-  request = f"{paths['run']}/firmware-restore-request"
-  active = f"{paths['run']}/firmware-active"
-  restored = f"{paths['run']}/firmware-restored"
-  failure = f"{paths['run']}/firmware-broker-error"
-  request_restore = (
-      "set -eu; "
-      f"if [ -e {paths['stage']} ] || [ -L {paths['stage']} ]; then "
-      f"test ! -L {paths['stage']}; test -f {paths['stage']}/.qualification-owner; "
-      f"test ! -L {paths['stage']}/.qualification-owner; "
-      f"test \"$(cat {paths['stage']}/.qualification-owner)\" = {token}; "
-      f"if [ -r {lock}/baseline_firmware ]; then "
-      f"baseline=$(cat {lock}/baseline_firmware); "
-      "case \"$baseline\" in (*[!A-Za-z0-9._+-]*|'') exit 74;; esac; "
-      f"if [ -r {active} ] && [ ! -r {restored} ] && [ ! -r {failure} ]; then "
-      f"test ! -e {request}; printf '%s\\n' {token} > {request}; "
-      "remaining=180; while [ ! -r " + restored + " ]; do "
-      f"if [ -r {failure} ]; then break; fi; "
-      "test \"$remaining\" -gt 0; remaining=$((remaining - 1)); sleep 1; done; fi; "
-      f"if [ -r {restored} ]; then test \"$(cat {restored})\" = \"$baseline\"; fi; "
-      f"test ! -e {paths['firmware_installed']}; "
-      f"grep -qx \"$baseline\" {remoteproc}/firmware; "
-      f"grep -qx running {remoteproc}/state; "
-      f"else test ! -e {active}; test ! -e {restored}; test ! -e {failure}; "
-      f"test ! -e {paths['firmware_installed']}; fi; "
-      f"else test ! -e {lock}/baseline_firmware; "
-      f"test ! -e {paths['firmware_installed']}; fi"
-  )
-  run_logged(
-      ssh_command(args, request_restore),
-      evidence / "card-candidate-restore.log", timeout=240)
-  cleanup = (
-      card_stage_cleanup_command(paths, token) +
-      f"; rm -f -- {lock}/baseline_firmware; "
-      f"test ! -e {paths['stage']}"
-  )
-  run_logged(
-      ssh_command(args, cleanup), evidence / "card-candidate-files-cleanup.log", timeout=60)
+      run_sudo_remote(args, f"flock -n {CARD_INSTALL_LOCK} true",
+                      evidence / "card-offline-install-lock.log", timeout=60)
+    except RuntimeError as error:
+      raise RuntimeError(
+          "the card installer may still be running; its outcome is unknown, so the stage "
+          f"{stage} and both locks are retained") from error
+  run_sudo_remote(args, f"rm -rf -- {stage}; rm -f -- {lock}/offline_stage",
+                  evidence / "card-offline-stage-cleanup.log", timeout=120)
 
 
 class RemoteExclusiveLock:
@@ -1825,9 +1687,7 @@ def require_card_platform(platform_version: str, manifest: Path) -> str:
 
 def card_snapshot(args: argparse.Namespace, evidence: Path, label: str, *,
                   runtime_path: str = "", worker_path: str = "",
-                  expected_runtime_sha256: str = "", expected_worker_sha256: str = "",
-                  genai_worker_path: str = "", expected_genai_worker_sha256: str = "") \
-    -> dict[str, str]:
+                  genai_worker_path: str = "") -> dict[str, str]:
   if bool(runtime_path) != bool(worker_path):
     raise ValueError("card runtime and worker paths must be supplied together")
   if runtime_path:
@@ -1880,15 +1740,6 @@ def card_snapshot(args: argparse.Namespace, evidence: Path, label: str, *,
   if not re.search(r"(?:^|[_ -])3[.]0(?:[._-]|$)", values["platform_release"]):
     raise RuntimeError(
         f"card is not running Modalix Platform 3.0: {values['platform_release']}")
-  if (runtime_path and values["runtime_sha256"].lower()
-      != expected_runtime_sha256.lower()):
-    raise RuntimeError("card runtime checksum differs from the exact Linux candidate")
-  if (worker_path and values["worker_sha256"].lower()
-      != expected_worker_sha256.lower()):
-    raise RuntimeError("card tensor worker checksum differs from the exact Linux candidate")
-  if (genai_worker_path and values["genai_worker_sha256"].lower()
-      != expected_genai_worker_sha256.lower()):
-    raise RuntimeError("card GenAI worker checksum differs from the exact Linux candidate")
   if values["remoteproc_state"] != "running":
     raise RuntimeError(f"card remote processor is not running: {values['remoteproc_state']}")
   return values
@@ -2451,82 +2302,6 @@ def run_python_tests(args: argparse.Namespace, python: Path, evidence: Path,
   return completed
 
 
-def tutorial_facade_links(staged: dict[str, str]) -> dict[str, str]:
-  """Default tutorial paths point only at this locked candidate's private files."""
-  root = staged["root"] + "/tutorial-facade"
-  return {
-      "/usr/bin/pcie-pipeline-builder": root + "/worker",
-      "/run/sima-neat/pcie": root + "/run",
-      "/var/log/sima-neat/pcie": root + "/log",
-  }
-
-
-def stage_installed_tutorial_facade(args: argparse.Namespace,
-                                    staged: dict[str, str], evidence: Path) -> None:
-  root = staged["root"]
-  worker = staged["worker"]
-  library_path = ":".join((
-      f"{root}/usr/lib",
-      f"{root}/usr/lib/aarch64-linux-gnu",
-      f"{root}/usr/lib/aarch64-linux-gnu/neat/runtime",
-      "/usr/lib/aarch64-linux-gnu",
-  ))
-  plugin_path = ":".join((
-      f"{root}/usr/lib/aarch64-linux-gnu/neat/gst-plugins",
-      "/usr/lib/aarch64-linux-gnu/gstreamer-1.0",
-  ))
-  wrapper = "\n".join((
-      "#!/bin/sh",
-      "set -eu",
-      f"exec env LD_LIBRARY_PATH={shlex.quote(library_path)} "
-      f"GST_PLUGIN_PATH_1_0={shlex.quote(plugin_path)} "
-      f"{shlex.quote(worker)} \"$@\"",
-      "",
-  ))
-  links = tutorial_facade_links(staged)
-  private = shlex.quote(root + "/tutorial-facade")
-  owner = shlex.quote(args.card_user)
-  commands = ["set -eu"]
-  # Reject existing files, directories AND dangling links before any mutation.
-  for destination in links:
-    path = shlex.quote(destination)
-    parent = shlex.quote(str(PurePosixPath(destination).parent))
-    commands.extend((f"test ! -e {path}", f"test ! -L {path}",
-                     f"test ! -L {parent}"))
-  commands.extend((
-      f"mkdir {private}",
-      f"chown {owner}:{owner} {private}",
-      f"install -d -o {owner} -g {owner} -m 0700 {private}/run {private}/log",
-      f"printf %s {shlex.quote(wrapper)} > {private}/worker",
-      f"chmod 0755 {private}/worker",
-  ))
-  for index, (destination, target) in enumerate(links.items()):
-    parent = shlex.quote(str(PurePosixPath(destination).parent))
-    commands.append(
-        f"if [ ! -d {parent} ]; then mkdir {parent}; "
-        f"touch {private}/parent-{index}; fi")
-    # -T is essential: an existing directory must not receive a nested link.
-    commands.append(f"ln -sT {shlex.quote(target)} {shlex.quote(destination)}")
-  run_sudo_remote(args, "; ".join(commands), evidence / "tutorial-card-facade-stage.log")
-
-
-def remove_installed_tutorial_facade(args: argparse.Namespace, staged: dict[str, str],
-                                     log: Path) -> None:
-  """Reconcile even an uncertain stage without deleting an existing installation."""
-  private = shlex.quote(staged["root"] + "/tutorial-facade")
-  commands = ["set -eu"]
-  for index, (destination, target) in enumerate(tutorial_facade_links(staged).items()):
-    path = shlex.quote(destination)
-    commands.append(
-        f'if [ -L {path} ] && [ "$(readlink {path})" = {shlex.quote(target)} ]; '
-        f"then rm -- {path}; fi")
-    parent = shlex.quote(str(PurePosixPath(destination).parent))
-    commands.append(
-        f"if [ -f {private}/parent-{index} ]; then "
-        f"rmdir {parent}; rm -- {private}/parent-{index}; fi")
-  run_sudo_remote(args, "; ".join(commands), log)
-
-
 def run_customer_tutorials(args: argparse.Namespace, install_root: Path, python: Path,
                            work: Path, evidence: Path,
                            environment: dict[str, str]) -> dict[str, list[str]]:
@@ -2571,7 +2346,7 @@ def qualify(args: argparse.Namespace) -> None:
   if not args.dependency_runtime_dir:
     raise RuntimeError("hardware qualification requires dependency runtime directories")
   candidate = validate_candidate(args.candidate)
-  card_candidate = validate_card_candidate(args.card_candidate, args.expected_card_commit)
+  card_bundle = validate_card_bundle(args.card_candidate, args.expected_card_commit)
   if args.expected_card_commit != candidate.core_commit:
     raise ValueError("Windows and card candidates must name the same Core commit")
   upgrade_base = load_upgrade_base(
@@ -2648,11 +2423,8 @@ def qualify(args: argparse.Namespace) -> None:
         card_lock.retain()
       raise
     card_lock.retain()
-    staged_card: dict[str, str] | None = None
-    card_stage_attempted = False
-    card_stage_owned = False
-    firmware_activation_attempted = False
-    tutorial_facade_staged = False
+    card_state: dict = {}
+    card_install_attempted = False
     try:
       baseline = card_snapshot(args, evidence, "baseline")
       result["card_baseline"] = baseline
@@ -2661,25 +2433,18 @@ def qualify(args: argparse.Namespace) -> None:
       if baseline["workers"] != "0" or baseline["genai_workers"] != "0":
         raise RuntimeError("card had PCIe workers before qualification; refusing to disturb them")
 
-      card_stage_attempted = True
-      staged_card = stage_card_candidate(
-          args, card_candidate, remote_lock_token, evidence)
-      card_stage_owned = True
-      firmware_activation_attempted = True
-      activate_card_candidate(args, staged_card, baseline["firmware"], evidence)
+      card_install_attempted = True
+      installed = install_card_candidate(args, card_bundle, evidence, card_state)
+      # deploy.py card verify proved the installed versions; the hashes are evidence.
       active_card = card_snapshot(
           args, evidence, "candidate",
-          runtime_path=staged_card["firmware_installed"],
-          worker_path=staged_card["worker"],
-          expected_runtime_sha256=staged_card["runtime_sha256"],
-          expected_worker_sha256=staged_card["worker_sha256"],
-          genai_worker_path=staged_card["genai_worker"] if args.include_genai else "",
-          expected_genai_worker_sha256=(
-              staged_card.get("genai_worker_sha256", "") if args.include_genai else ""))
-      if active_card["firmware"] != staged_card["firmware_name"]:
-        raise RuntimeError("card did not select the exact Linux candidate firmware")
+          runtime_path="/usr/share/sima-neat-firmware/modalix-cvu-fw",
+          worker_path="/usr/bin/pcie-pipeline-builder",
+          genai_worker_path="/usr/bin/neat-pcie-genai-worker" if args.include_genai else "")
       result["card_candidate"] = {
           "core_commit": args.expected_card_commit,
+          "bundle_sha256": card_bundle.sha256,
+          "installed": installed,
           "firmware": active_card["firmware"],
           "runtime_sha256": active_card["runtime_sha256"],
           "worker_sha256": active_card["worker_sha256"],
@@ -2829,8 +2594,6 @@ def qualify(args: argparse.Namespace) -> None:
           "SIMAPCIE_CARD_HOST": args.card_host,
           "SIMAPCIE_USER": args.card_user,
           "SIMAPCIE_SSH_KEY": str(args.ssh_key.resolve()),
-          "SIMAPCIE_CARD_ENV": staged_card["card_env"],
-          "SIMA_NEAT_PCIE_GENAI_CARD_ENV": staged_card["genai_card_env"],
       })
       environment["PATH"] = os.pathsep.join((
           str(install_root / "bin"),
@@ -2860,13 +2623,8 @@ def qualify(args: argparse.Namespace) -> None:
           [python, "-c", "import pyneatpcie as p; assert p.Model and p.Runtime and p.Tensor"],
           evidence / "python-import.log", env=environment, cwd=work, timeout=60)
 
-      tutorial_facade_staged = True
-      stage_installed_tutorial_facade(args, staged_card, evidence)
       result["tests"]["tutorial"] = run_customer_tutorials(
           args, install_root, python, work, evidence, environment)
-      remove_installed_tutorial_facade(
-          args, staged_card, evidence / "tutorial-card-facade-cleanup.log")
-      tutorial_facade_staged = False
       result["tests"]["cpp"] = run_cpp_tests(args, candidate.root, evidence, environment)
       result["tests"]["python"] = run_python_tests(args, python, evidence, environment)
       if args.include_genai:
@@ -2924,30 +2682,24 @@ def qualify(args: argparse.Namespace) -> None:
           "type": type(error).__name__,
       }
     finally:
-      if firmware_activation_attempted:
+      # As on Linux, the card keeps the installed candidate; only the stage goes.
+      if card_install_attempted:
         try:
           stop_card_workers(args, evidence)
         except BaseException as error:
           cleanup_errors.append(str(error))
-      if tutorial_facade_staged:
+      if card_state.get("stage"):
         try:
-          remove_installed_tutorial_facade(
-              args, staged_card, evidence / "tutorial-card-facade-final-cleanup.log")
-          result["cleanup"]["tutorial_facade"] = "PASS"
+          remove_card_stage(args, card_state["stage"], evidence,
+                            install_attempted=card_state.get("install_started", False))
+          result["cleanup"]["card_stage"] = "PASS"
+          restart_windows_platform_service(
+              evidence / "card-stage-platform-recovery.log")
+          result["cleanup"]["platform_service"] = "PASS"
         except BaseException as error:
           cleanup_errors.append(str(error))
-      if card_stage_attempted and not cleanup_errors:
-        try:
-          restore_card_candidate(args, remote_lock_token, evidence)
-          result["cleanup"]["card_candidate"] = "PASS"
-          result["cleanup"]["card_stage_state"] = (
-              "owned" if card_stage_owned else "partial")
-          if firmware_activation_attempted:
-            restart_windows_platform_service(
-                evidence / "card-stock-platform-recovery.log")
-            result["cleanup"]["platform_service"] = "PASS"
-        except BaseException as error:
-          cleanup_errors.append(str(error))
+      elif card_install_attempted:
+        result["cleanup"]["card_stage"] = "PASS"
       python_environments = [
           (managed_python, "managed-python-uninstall.log"),
           (venv / "Scripts" / "python.exe", "override-python-uninstall.log"),
@@ -2990,13 +2742,16 @@ def qualify(args: argparse.Namespace) -> None:
         final = card_snapshot(args, evidence, "final")
         result["card_final"] = final
         baseline = result.get("card_baseline", {})
-        unchanged = ("platform_release", "platform_sha256", "firmware", "remoteproc_state")
-        expected_workers = "0" if firmware_activation_attempted else baseline.get("workers", "0")
+        unchanged = ("platform_release", "platform_sha256", "remoteproc_state")
+        expected_workers = "0" if card_install_attempted else baseline.get("workers", "0")
         expected_genai = (
-            "0" if firmware_activation_attempted else baseline.get("genai_workers", "0"))
+            "0" if card_install_attempted else baseline.get("genai_workers", "0"))
         if (final["workers"] != expected_workers or final["genai_workers"] != expected_genai
             or any(name in baseline and final.get(name) != baseline[name] for name in unchanged)):
-          cleanup_errors.append("card did not return to its qualified baseline")
+          cleanup_errors.append("card platform changed or workers remained")
+        if "card_candidate" in result:
+          # The card stays on the candidate, as a Linux card does.
+          result["card_final_packages"] = card_runtime_packages(args, evidence, "final")
       except BaseException as error:
         cleanup_errors.append(str(error))
       try:

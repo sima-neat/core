@@ -162,7 +162,7 @@ def verify(candidate_dir: Path, qualification_path: Path, expected_commit: str,
   if not isinstance(cleanup, dict) or cleanup.get("errors") != []:
     raise ValueError("hardware qualification did not prove clean removal")
   expected_cleanup = {
-      "card_candidate": "PASS", "core_msi": "PASS", "python": "PASS",
+      "card_stage": "PASS", "core_msi": "PASS", "python": "PASS",
       "customer_state": "PASS", "host_state": "PASS", "remote_lock": "PASS",
       "scheduler_msi": "PASS", "work": "PASS",
   }
@@ -267,7 +267,7 @@ def verify(candidate_dir: Path, qualification_path: Path, expected_commit: str,
           str(baseline_network.get("interface_description", "")))):
     raise ValueError("hardware qualification did not bind one stable Windows adapter to the card")
   card_identity = {
-      "machine", "platform_release", "platform_sha256", "firmware", "remoteproc_state",
+      "machine", "platform_release", "platform_sha256", "remoteproc_state",
   }
   if (not isinstance(baseline_card, dict) or not isinstance(final_card, dict)
       or not card_identity.issubset(baseline_card)
@@ -283,8 +283,9 @@ def verify(candidate_dir: Path, qualification_path: Path, expected_commit: str,
       or card_candidate.get("core_commit") != candidate.core_commit
       or not re.fullmatch(r"[0-9a-f]{64}", str(card_candidate.get("runtime_sha256", "")))
       or not re.fullmatch(r"[0-9a-f]{64}", str(card_candidate.get("worker_sha256", "")))
-      or not re.fullmatch(
-          r"neat-pcie-card0-[0-9a-f]{32}", str(card_candidate.get("firmware", "")))):
+      or not re.fullmatch(r"[0-9a-f]{64}", str(card_candidate.get("bundle_sha256", "")))
+      or not isinstance(card_candidate.get("installed"), dict)
+      or candidate.core_commit[:12] not in str(card_candidate["installed"].get("sima-neat", ""))):
     raise ValueError("hardware qualification did not use the exact Linux card candidate")
   tests = qualification.get("tests")
   if (not isinstance(tests, dict) or not tests.get("cpp") or not tests.get("python")):

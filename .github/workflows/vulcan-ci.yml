@@ -619,7 +619,6 @@ jobs:
           -e GITHUB_REF_NAME="${{ github.ref_name }}" \
           -e GITHUB_REF_TYPE="${{ github.ref_type }}" \
           -e GITHUB_SHA="${{ github.sha }}" \
-          -e SDK_IMAGE_ID="${sdk_image_id}" \
           -e NEAT_PACKAGE_NAME="gh:sima-neat/core" \
           -e NEAT_PACKAGE_DESCRIPTION="SiMa.ai Palette Neat" \
           -e NEAT_VULCAN_ENV="${neat_vulcan_env}" \
@@ -655,75 +654,87 @@ jobs:
                 --environment sdk \
                 --build-root /tmp/sima-neat-doc-examples-sdk
             fi
-            python3 scripts/ci/pciehost/sdk_build_identity.py record \
-              --source-image "${SDK_IMAGE_ID:?SDK image identity required}" \
-              --core-commit "${GITHUB_SHA:?GitHub source commit required}" \
-              --output dist/sdk-build-image.json
           '
 
       post_build_command: ls -lh dist
 
-  build-pcie-card-qualification-dependencies:
-    name: Build private PCIe card qualification dependencies
+  build-pcie-card-offline-bundle:
+    name: Assemble same-run Core offline card bundle
+    # The Windows card lane installs this run's candidate as Linux installs a
+    # card without internet: from the standalone Core offline bundle.
     if: ${{ (vars.ENABLE_WINDOWS_PCIE_CI == 'true' || (github.event_name == 'workflow_dispatch' && inputs.run_windows_pcie)) && github.workflow == 'Vulcan CI' && !inputs.offline_source_run_id && (inputs.build_mode || 'standard') == 'standard' && needs.detect-changes.outputs.docs_only != 'true' && needs.build.result == 'success' }}
     needs:
       - resolve-vulcan-config
       - detect-changes
       - build
-    runs-on:
-      - self-hosted
-      - linux
-      - arm64
-      - vulcan-${{ needs.resolve-vulcan-config.outputs.vulcan_env }}
-      - sdk-build
-      - ${{ needs.resolve-vulcan-config.outputs.sdk_cache }}
-      - ${{ needs.resolve-vulcan-config.outputs.capacity }}
+    environment: ${{ needs.resolve-vulcan-config.outputs.vulcan_env }}
+    runs-on: [self-hosted, linux, arm64, "vulcan-${{ needs.resolve-vulcan-config.outputs.vulcan_env }}", ubuntu, default]
+    timeout-minutes: 90
     permissions:
       actions: read
       contents: read
-      packages: read
+      id-token: write
     steps:
       - uses: actions/checkout@v5
         with:
           persist-credentials: false
-          fetch-depth: 0
-      - name: Download exact Core build identity
+      - name: Install publication client with conditional-write support
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends python3-venv
+          python3 -m venv "$RUNNER_TEMP/offline-aws"
+          "$RUNNER_TEMP/offline-aws/bin/pip" install awscli==1.42.49
+          echo "$RUNNER_TEMP/offline-aws/bin" >> "$GITHUB_PATH"
+      - name: Authenticate clean baseline images
+        run: |
+          # The AMI credential helper does not implement credential storage.
+          export DOCKER_CONFIG="$RUNNER_TEMP/offline-docker"
+          mkdir -p "$DOCKER_CONFIG"
+          echo "DOCKER_CONFIG=$DOCKER_CONFIG" >> "$GITHUB_ENV"
+          aws ecr get-login-password --region us-west-2 | docker login --username AWS --password-stdin 069171140053.dkr.ecr.us-west-2.amazonaws.com
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          aws-region: ${{ needs.resolve-vulcan-config.outputs.aws_region }}
+          role-to-assume: ${{ needs.resolve-vulcan-config.outputs.artifact_publisher_role_arn }}
+          role-session-name: offline-card-${{ github.run_id }}
+      - name: Download this run's Core candidate
         uses: actions/download-artifact@v4
         with:
           name: neat-core-dist
-          path: ${{ runner.temp }}/core-build
-      - name: Build immutable SDK dependency bundle
+          path: ${{ runner.temp }}/core-dist
+      - name: Collect, assemble, and validate the offline card bundle
+        env:
+          ARTIFACT_BUCKET: ${{ needs.resolve-vulcan-config.outputs.artifact_bucket }}
         shell: bash
         run: |
           set -euo pipefail
-          build_identity="${RUNNER_TEMP}/core-build/sdk-build-image.json"
-          source_image=$(python3 scripts/ci/pciehost/sdk_build_identity.py verify \
-            --identity "${build_identity}" --core-commit "${GITHUB_SHA}")
-          test "$(docker image inspect --format '{{.Id}}' "${source_image}")" = "${source_image}"
-          test "$(docker image inspect --format '{{.Architecture}}' "${source_image}")" = arm64
-          output="${RUNNER_TEMP}/core-pcie-card-qualification-dependencies"
-          install -d -m 0700 "${output}"
-          source_date_epoch=$(git show -s --format=%ct "${GITHUB_SHA}")
-          docker run --rm --pull=never --network=none \
-            --cpus=2 --memory=2g --pids-limit=128 \
-            --mount "type=bind,src=${GITHUB_WORKSPACE},dst=/workspace,readonly" \
-            --mount "type=bind,src=${RUNNER_TEMP}/core-build,dst=/core-build,readonly" \
-            --mount "type=bind,src=${output},dst=/output" \
-            --entrypoint python3 "${source_image}" \
-            /workspace/scripts/ci/pciehost/build_card_qualification_dependencies.py \
-              --sysroot /opt/toolchain/aarch64/modalix \
-              --sdk-release /etc/sdk-release \
-              --build-identity /core-build/sdk-build-image.json \
-              --output /output \
-              --source-image "${source_image}" \
-              --core-commit "${GITHUB_SHA}" \
-              --source-date-epoch "${source_date_epoch}"
-      - name: Retain private qualification dependency bundle
+          python3 -B pcie_host/scripts/offline/ci.py build --core --validation-only \
+            --local-core-dist "$RUNNER_TEMP/core-dist" \
+            --bucket "$ARTIFACT_BUCKET" \
+            --ref "$GITHUB_REF_NAME" --sha "$GITHUB_SHA" --run-id "$GITHUB_RUN_ID" \
+            --installer-revision "$GITHUB_SHA" \
+            --work "$RUNNER_TEMP/offline" 2>&1 | tee "$RUNNER_TEMP/offline-build.log"
+      # Names differ from publish-offline-develop's offline-bundle-core in the same run.
+      - name: Retain the offline card bundle
         uses: actions/upload-artifact@v6
         with:
-          name: core-pcie-card-qualification-dependencies
-          path: ${{ runner.temp }}/core-pcie-card-qualification-dependencies/*
+          name: core-pcie-card-offline-bundle
+          path: |
+            ${{ runner.temp }}/offline/neat-core-offline-installer.tar.gz
+            ${{ runner.temp }}/offline/metadata.json
           if-no-files-found: error
+          retention-days: 7
+      - name: Retain offline card bundle evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v6
+        with:
+          name: core-pcie-card-offline-evidence
+          path: |
+            ${{ runner.temp }}/offline-build.log
+            ${{ runner.temp }}/offline/baseline-images.json
+            ${{ runner.temp }}/offline/neat-core-offline/bundle.json
+            ${{ runner.temp }}/offline/neat-core-offline/card/dependencies.json
+          if-no-files-found: ignore
           retention-days: 7
 
   publish-vulcan-artifacts:
@@ -2587,12 +2598,12 @@ jobs:
     # Opt-in until the Windows runners, variables and published dependencies exist:
     # ENABLE_WINDOWS_PCIE_CI for every run, or run_windows_pcie for one manual run.
     # Callers of Vulcan CI cannot use same-run Linux admission (pcie-host-windows.yml).
-    if: ${{ always() && (vars.ENABLE_WINDOWS_PCIE_CI == 'true' || (github.event_name == 'workflow_dispatch' && inputs.run_windows_pcie)) && github.workflow == 'Vulcan CI' && needs.validate-windows-cohort-selectors.result == 'success' && !inputs.offline_source_run_id && (inputs.build_mode || 'standard') == 'standard' && needs.detect-changes.outputs.docs_only != 'true' && needs.build.result == 'success' && needs.build-pcie-card-qualification-dependencies.result == 'success' && needs.build-pciehost-packages.result == 'success' && needs.test-devkit.result == 'success' && needs.test-pciehost-hardware.result == 'success' }}
+    if: ${{ always() && (vars.ENABLE_WINDOWS_PCIE_CI == 'true' || (github.event_name == 'workflow_dispatch' && inputs.run_windows_pcie)) && github.workflow == 'Vulcan CI' && needs.validate-windows-cohort-selectors.result == 'success' && !inputs.offline_source_run_id && (inputs.build_mode || 'standard') == 'standard' && needs.detect-changes.outputs.docs_only != 'true' && needs.build.result == 'success' && needs.build-pcie-card-offline-bundle.result == 'success' && needs.build-pciehost-packages.result == 'success' && needs.test-devkit.result == 'success' && needs.test-pciehost-hardware.result == 'success' }}
     needs:
       - validate-windows-cohort-selectors
       - detect-changes
       - build
-      - build-pcie-card-qualification-dependencies
+      - build-pcie-card-offline-bundle
       - build-pciehost-packages
       - test-devkit
       - test-pciehost-hardware
@@ -2648,7 +2659,7 @@ jobs:
       - code-hygiene
       - resolve-test-runner
       - build
-      - build-pcie-card-qualification-dependencies
+      - build-pcie-card-offline-bundle
       - build-pciehost-packages
       - publish-vulcan-artifacts
       - publish-pciehost-package
@@ -2678,7 +2689,7 @@ jobs:
       - code-hygiene
       - resolve-test-runner
       - build
-      - build-pcie-card-qualification-dependencies
+      - build-pcie-card-offline-bundle
       - build-pciehost-packages
       - publish-vulcan-artifacts
       - publish-pciehost-package
@@ -2703,7 +2714,7 @@ jobs:
           results = json.loads(os.environ['RESULTS'])
           skipped = {'publish-vulcan-artifacts', 'publish-pciehost-package', 'promote-latest-tag'}
           if os.environ['WINDOWS_PCIE_CI'] != 'true':
-              skipped |= {'build-pcie-card-qualification-dependencies', 'test-pciehost-windows'}
+              skipped |= {'build-pcie-card-offline-bundle', 'test-pciehost-windows'}
           bad = {name: value['result'] for name, value in results.items()
                  if value['result'] != ('skipped' if name in skipped else 'success')}
           if bad:

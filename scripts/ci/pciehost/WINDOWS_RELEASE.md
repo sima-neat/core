@@ -52,7 +52,11 @@ Provision the host once before its first run:
 
 1. Install the supported Platform package, which provides the drivers and the
    `SiMaMlaDaemon` service. Attach the card, and install GStreamer 1.28.6 MSVC
-   and CPython 3.14 x64 for all users, as for a customer host.
+   and CPython 3.14 x64 for all users, as for a customer host. The card itself
+   must pass the offline installer's preflight: eLxr 26.04 with `unshare`,
+   `flock`, `timeout`, `python3`, `tar`, and `sha256sum`; a clean `dpkg --audit`;
+   and free space on `/` and `/var/tmp` for the bundle. Its `sima` sudo password
+   is the `DEVKIT_PASSWORD` secret, as on Linux.
 2. Register the runner with the organization's `create-gha-runner.bat`. Keep
    its default labels and enter `pcie` at its labels prompt.
 3. Log the runner service on as a local administrator account instead of the
@@ -120,15 +124,21 @@ cohort. Every Windows Platform build reports the same version, so the hardware
 job also requires the card PC's installed Platform runtime to hold exactly the
 DLLs that Scheduler's installed Platform record
 (`share/SimaScheduler/host/platform-windows.json`, carried in the candidate as
-`scheduler-platform-windows.json`) names, byte for byte. The card does not need a preinstalled
-tensor worker. Core CI separately builds a private ARM64 qualification-dependency
-bundle from the same immutable SDK image; that bundle is not part of
-`neat-core-dist` and is never published as a customer package. The Windows
-workflow verifies the SDK-image build receipt and checksum-binds the bundle to
-`neat-core-dist` from the admitted Linux run, extracts the combined Debian
-payload into an owned private directory, and
-temporarily selects its matching firmware. It restores the original firmware
-and removes the private card files before releasing the card lock.
+`scheduler-platform-windows.json`) names, byte for byte.
+
+The card has no internet access, so the lane installs the candidate the way the
+Linux offline installer installs a card without internet. Vulcan CI's
+`build-pcie-card-offline-bundle` assembles the standalone Core offline bundle
+from this run's `neat-core-dist` with `pcie_host/scripts/offline/ci.py`. The
+bundle holds the candidate's card packages and their apt closure against the
+qualified clean card image, validated with `--network=none`. `card_candidate`
+checks that the bundle was assembled from the admitted Linux candidate. On the
+card, the qualifier stages it under `/var/tmp/neat-offline-*` and runs the
+bundle's own `deploy.py card preflight`, `install`, and `verify`, the same
+installer lifecycle as `install.py` on Linux. It then checks the runtime as
+`verify_card_runtime.sh` does. The card keeps the installed candidate after
+the run, as a Linux card does. A direct release dispatch takes the bundle from
+the admitted Linux run.
 
 ## Normal CI path
 
@@ -198,11 +208,10 @@ has passed its Linux build, DevKit, and PCIe-card gates. The Windows lane:
    test and independently verifies both publication manifests and resources;
 3. reuses the PCIe host matrix's cohort and dependency selection from the same
    run (a direct dispatch builds its own);
-4. checksum-binds the same run's Linux payload to its private SDK dependency
-   bundle, requires the card's `/etc/buildinfo` `DISTRO_VERSION` to equal the
-   `platform-version` in `deps/manifest.json` (the Linux card lane's
-   `check_card_compatibility.sh` rule), then installs that candidate only in the
-   card qualification sandbox;
+4. binds the same run's offline card bundle to its Linux payload, and requires
+   the card's `/etc/buildinfo` `DISTRO_VERSION` to equal the `platform-version`
+   in `deps/manifest.json` (the Linux card lane's `check_card_compatibility.sh`
+   rule). It then installs that candidate on the card from the offline bundle;
 5. runs the customer CLI, C++, Python, lifecycle, fault, performance, and GenAI
    acceptance; and
 6. publishes nothing: Vulcan CI calls it with `validation_only=true`, and while
@@ -428,17 +437,19 @@ Retain these artifacts with the release record:
 - `core-pciehost-linux-admission-<run>-<attempt>`.
 
 The hardware workflow holds both a runner-local lock and an atomic card-side
-lock, then stops card workers, restores the original firmware, removes the
-private Linux card candidate, uninstalls the wheel and both MSI cohorts, removes
-its disposable downloads, compares the final card state with the baseline,
-including the exact Platform 3.0 `/etc/buildinfo` hash, and then releases both
-locks. Emergency cleanup only touches a retained card lock when its owner token
-matches the retained local record. Without an owned lock, it does not stop workers,
-uninstall MSIs or remove a work directory. Tutorial paths are temporary links to
-the private candidate, and cleanup only removes links pointing at that candidate.
-Pre-existing worker files, directories and dangling links cause staging to fail
-without deleting them. If cleanup fails, the lock
+lock. At the end it stops card workers, removes its `/var/tmp/neat-offline-*`
+staging directory, uninstalls the wheel and both MSI cohorts, and removes its
+disposable downloads. It compares the final card state with the baseline,
+including the exact Platform 3.0 `/etc/buildinfo` hash, then releases both
+locks. The card keeps the installed candidate, as on Linux. If the install
+phase began and the card installer still holds `/run/neat-offline-install.lock`,
+the outcome is unknown, so the stage and both locks are retained. As on Linux,
+a failed install is not rolled back: rerun the bundle or reflash the card.
+Emergency cleanup only touches a retained card lock when its owner token
+matches the retained local record. It finds the stage through the card lock's
+`offline_stage` record. Without an owned lock, it does not stop workers,
+uninstall MSIs or remove a work directory. If cleanup fails, the lock
 at `%USERPROFILE%\.sima\locks\neat-pcie-card0.lock` and its matching
 `/tmp/neat-pcie-card0.lock` card directory are deliberately retained. Do not
 delete either until the evidence logs have been reviewed and the runner,
-installation root, workers, firmware, and queues have been restored manually.
+installation root, workers, staging directory, and queues have been restored manually.

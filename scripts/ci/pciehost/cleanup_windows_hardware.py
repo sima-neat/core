@@ -13,9 +13,8 @@ import subprocess
 import sys
 
 from qualify_windows_hardware import (
-    RemoteExclusiveLock, card_candidate_paths, remove_installed_tutorial_facade,
-    restart_windows_platform_service, restore_card_candidate, run_captured_to_file, ssh_command,
-    stop_card_workers)
+    CARD_STAGE_PATTERN, RemoteExclusiveLock, _validate_remote_path, remove_card_stage,
+    restart_windows_platform_service, run_captured_to_file, ssh_command, stop_card_workers)
 from windows_candidate import validate_candidate, validate_published_package
 
 
@@ -61,20 +60,16 @@ def remove_msi(msi: Path, log: Path) -> int:
   return result.returncode
 
 
-def card_stage_owned(args: argparse.Namespace, token: str, evidence: Path) -> bool:
-  paths = card_candidate_paths(token)
-  command = (
-      f"set -eu; stage={paths['stage']}; "
-      'if [ ! -e "$stage" ] && [ ! -L "$stage" ]; then printf absent; '
-      'else test ! -L "$stage"; test -f "$stage/.qualification-owner"; '
-      f'test "$(cat "$stage/.qualification-owner")" = {token}; printf owned; fi'
-  )
+def recorded_card_stage(args: argparse.Namespace, evidence: Path) -> str | None:
+  """Return the offline staging directory recorded under the owned card lock."""
+  record = _validate_remote_path(args.remote_lock_path) + "/offline_stage"
+  command = f"set -eu; if [ -e {record} ]; then cat {record}; else printf absent; fi"
   result = run_captured_to_file(
-      ssh_command(args, command), evidence / "recovery-stage-owner.log", timeout=30)
-  owner = result.stdout.strip()
-  if result.returncode != 0 or owner not in {"owned", "absent"}:
-    raise RuntimeError("private card stage ownership is unknown; retaining recovery state")
-  return owner == "owned"
+      ssh_command(args, command), evidence / "recovery-stage-record.log", timeout=30)
+  stage = result.stdout.strip()
+  if result.returncode != 0 or not (stage == "absent" or re.fullmatch(CARD_STAGE_PATTERN, stage)):
+    raise RuntimeError("card offline stage is unknown; retaining recovery state")
+  return None if stage == "absent" else stage
 
 
 def cleanup(args: argparse.Namespace) -> None:
@@ -111,19 +106,18 @@ def cleanup(args: argparse.Namespace) -> None:
                    indent=2) + "\n", encoding="utf-8")
     return
 
-  staged = card_stage_owned(args, remote_token, evidence)
-  if staged:
+  stage = recorded_card_stage(args, evidence)
+  if stage:
     try:
       stop_card_workers(args, evidence)
       results["card_workers"] = "stopped"
     except BaseException as error:
       errors.append(str(error))
-  if staged and not errors:
+  if stage and not errors:
     try:
-      remove_installed_tutorial_facade(
-          args, card_candidate_paths(remote_token), evidence / "recovery-tutorial-facade.log")
-      restore_card_candidate(args, remote_token, evidence)
-      results["card_candidate"] = "restored"
+      # The install outcome is unknown here; an installer still holding its lock keeps both.
+      remove_card_stage(args, stage, evidence, install_attempted=True)
+      results["card_stage"] = "removed"
       restart_windows_platform_service(evidence / "recovery-platform-service.log")
       results["platform_service"] = "restarted"
     except BaseException as error:

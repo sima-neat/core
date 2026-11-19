@@ -351,7 +351,7 @@ jobs:
           if-no-files-found: error
           retention-days: 14
   card_candidate:
-    name: Prepare private card qualification candidate
+    name: Prepare the card's offline Core candidate
     needs: [contracts, linux_release]
     if: needs.contracts.result == 'success' && needs.linux_release.result == 'success'
     runs-on: ubuntu-24.04
@@ -377,30 +377,30 @@ jobs:
           repository: ${{ github.repository }}
           run-id: ${{ inputs.linux_run_id }}
           github-token: ${{ github.token }}
-      - name: Download this run's exact SDK dependency bundle
+      - name: Download this run's offline card bundle
         if: inputs.linux_current_run == true
         uses: actions/download-artifact@v4
         with:
-          name: core-pcie-card-qualification-dependencies
-          path: ${{ runner.temp }}/core-card-dependencies
-      - name: Download prior run's exact SDK dependency bundle
+          name: core-pcie-card-offline-bundle
+          path: ${{ runner.temp }}/core-card-bundle
+      - name: Download prior run's offline card bundle
         if: inputs.linux_current_run != true
         uses: actions/download-artifact@v4
         with:
-          name: core-pcie-card-qualification-dependencies
-          path: ${{ runner.temp }}/core-card-dependencies
+          name: core-pcie-card-offline-bundle
+          path: ${{ runner.temp }}/core-card-bundle
           repository: ${{ github.repository }}
           run-id: ${{ inputs.linux_run_id }}
           github-token: ${{ github.token }}
-      - name: Bind Core and SDK dependencies into one private candidate
+      - name: Bind the offline card bundle to the exact Linux candidate
         run: |
           set -euo pipefail
           python3 scripts/ci/pciehost/prepare_card_qualification_candidate.py \
             --source "${RUNNER_TEMP}/core-card-source" \
-            --dependencies "${RUNNER_TEMP}/core-card-dependencies" \
+            --bundle "${RUNNER_TEMP}/core-card-bundle" \
             --output "${RUNNER_TEMP}/core-card-candidate" \
             --expected-commit "${GITHUB_SHA}"
-      - name: Retain private card qualification candidate
+      - name: Retain the card qualification candidate
         uses: actions/upload-artifact@v6
         with:
           name: core-pcie-card-qualification-candidate
