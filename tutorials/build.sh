@@ -189,9 +189,10 @@ Options:
   --build-type <type>  CMake build type (default: Release)
   --clean              Remove build directory before configure
   --download-models-only
-                       Download tutorial models from Model Zoo and exit
+                       Download tutorial models from the Model Browser and exit
   --model-target-folder <path>
-                       Directory where Model Zoo downloads are written (default: /tmp)
+                       Directory where tutorial models are written as
+                       <model>.tar.gz, e.g. resnet_50.tar.gz (default: /tmp)
   --list-targets       List available tutorial targets and exit
   --simaneat-dir <dir> Path to directory containing SimaNeatConfig.cmake
   -j, --jobs <N>       Parallel build jobs (default: auto)
@@ -330,13 +331,10 @@ discover_cmake_prefix_paths() {
   done
 }
 
-manifest_path() {
+model_browser_helper() {
   local -a candidates=(
-    "${REPO_ROOT}/deps/manifest.json"
-    "${REPO_ROOT}/share/sima-neat/deps/manifest.json"
-    "${REPO_ROOT}/../deps/manifest.json"
-    "${SCRIPT_DIR}/deps/manifest.json"
-    "${SCRIPT_DIR}/../deps/manifest.json"
+    "${REPO_ROOT}/scripts/ci/prepare_model_browser_fixture.py"
+    "${REPO_ROOT}/share/sima-neat/scripts/ci/prepare_model_browser_fixture.py"
   )
 
   local candidate
@@ -349,55 +347,16 @@ manifest_path() {
   return 1
 }
 
-modelzoo_version() {
-  local manifest
-  if ! manifest="$(manifest_path)"; then
-    echo "build.sh: cannot locate deps/manifest.json for Model Zoo version" >&2
-    return 1
-  fi
-
-  local version
-  version="$(
-    sed -n 's/.*"modelzoo-version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "${manifest}" \
-      | head -n1
-  )"
-  if [[ -z "${version}" ]]; then
-    version="$(
-      sed -n 's/.*"platform-version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "${manifest}" \
-        | head -n1
-    )"
-  fi
-  if [[ -z "${version}" ]]; then
-    echo "build.sh: deps/manifest.json defines neither modelzoo-version nor platform-version: ${manifest}" >&2
-    return 1
-  fi
-  echo "${version}"
-}
-
-model_download_path() {
-  local model="$1"
-  local model_base="${model##*/}"
-  local model_dash="${model_base//_/-}"
-  local model_underscore="${model_base//-/_}"
-  local -a candidates=(
-    "${MODEL_TARGET_FOLDER}/tmp/${model_base}_mpk.tar.gz"
-    "${MODEL_TARGET_FOLDER}/tmp/${model_dash}_mpk.tar.gz"
-    "${MODEL_TARGET_FOLDER}/tmp/${model_underscore}_mpk.tar.gz"
-    "${MODEL_TARGET_FOLDER}/${model_base}_mpk.tar.gz"
-    "${MODEL_TARGET_FOLDER}/${model_dash}_mpk.tar.gz"
-    "${MODEL_TARGET_FOLDER}/${model_underscore}_mpk.tar.gz"
-    "${MODEL_TARGET_FOLDER}/tmp/${model_base}.tar.gz"
-    "${MODEL_TARGET_FOLDER}/${model_base}.tar.gz"
-  )
-
-  local candidate
-  for candidate in "${candidates[@]}"; do
-    if [[ -f "${candidate}" ]]; then
-      printf '%s/%s\n' "$(dirname "${candidate}")" "$(basename "${candidate}")"
-      return 0
-    fi
-  done
-  return 1
+# The Model Browser id and variant CI uses for each tutorial MODEL name.
+model_browser_package() {
+  case "$1" in
+    resnet_50) echo "resnet_50 w8a8" ;;
+    yolo_v8s) echo "yolov8s w8a8" ;;
+    *)
+      echo "build.sh: no Model Browser package for tutorial model $1" >&2
+      return 1
+      ;;
+  esac
 }
 
 download_models() {
@@ -458,11 +417,11 @@ download_models() {
   fi
 
   if [[ "${TARGET}" == "all" || "${TARGET}" == tutorial_019_* || "${TARGET}" == tutorial_020_* || "${TARGET}" == tutorial_021_* || "${TARGET}" == tutorial_022_* ]]; then
-    echo "Skipping GenAI tutorial model downloads: GenAI tutorials use LLiMa model directories and are not downloaded through Model Zoo. Use llima pull explicitly before running them."
+    echo "Skipping GenAI tutorial model downloads: GenAI tutorials use LLiMa model directories and are not downloaded by this script. Use llima pull explicitly before running them."
   fi
 
   if [[ "${#models[@]}" -eq 0 ]]; then
-    echo "No Model Zoo tutorial models to download."
+    echo "No tutorial models to download."
     return 0
   fi
 
@@ -481,8 +440,11 @@ EOF
     return 1
   fi
 
-  local version
-  version="$(modelzoo_version)"
+  local helper
+  if ! helper="$(model_browser_helper)"; then
+    echo "build.sh: cannot locate scripts/ci/prepare_model_browser_fixture.py under ${REPO_ROOT}" >&2
+    return 1
+  fi
 
   local -a unique_models=()
   local seen=" "
@@ -496,24 +458,24 @@ EOF
 
   mkdir -p "${MODEL_TARGET_FOLDER}"
 
-  echo "Downloading tutorial model(s) from Model Zoo ${version}: ${unique_models[*]}"
+  echo "Downloading tutorial model(s) from the Model Browser: ${unique_models[*]}"
   echo "Model download target folder: ${MODEL_TARGET_FOLDER}"
-  (
-    cd "${MODEL_TARGET_FOLDER}"
-    for model in "${unique_models[@]}"; do
-      if ! "${sima_cli}" modelzoo -v "${version}" get "${model}"; then
-        echo "Failed to download ${model} from Model Zoo ${version}" >&2
-        return 1
-      fi
-      local downloaded_path
-      if downloaded_path="$(model_download_path "${model}")"; then
-        echo "Downloaded ${model}: ${downloaded_path}"
-      else
-        echo "Model Zoo ${version} reported success for ${model}, but no tarball was found under ${MODEL_TARGET_FOLDER}" >&2
-        return 1
-      fi
-    done
-  )
+  local package model_id variant work mpk
+  for model in "${unique_models[@]}"; do
+    package="$(model_browser_package "${model}")"
+    read -r model_id variant <<< "${package}"
+    # Extract next to the target so the final mv is a rename on the same filesystem.
+    work="$(mktemp -d "${MODEL_TARGET_FOLDER}/.model-browser.XXXXXX")"
+    if ! mpk="$(python3 "${helper}" --id "${model_id}" --variant "${variant}" \
+        --output "${work}" --sima-cli "${sima_cli}")"; then
+      rm -rf "${work}"
+      echo "Failed to download ${model} (${model_id} ${variant}) from the Model Browser" >&2
+      return 1
+    fi
+    mv -f "${mpk}" "${MODEL_TARGET_FOLDER}/${model}.tar.gz"
+    rm -rf "${work}"
+    echo "Downloaded ${model}: ${MODEL_TARGET_FOLDER}/${model}.tar.gz"
+  done
 }
 
 if [[ "${DOWNLOAD_MODELS_ONLY}" == "ON" ]]; then
