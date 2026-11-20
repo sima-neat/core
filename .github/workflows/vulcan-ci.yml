@@ -1508,8 +1508,10 @@ jobs:
       - name: Prepare Model Browser fixtures
         if: ${{ contains(fromJSON(matrix.tasks), 'performance') || contains(fromJSON(matrix.tasks), 'python-tutorials') }}
         timeout-minutes: 15
+        env:
+          HAS_TUTORIALS: ${{ contains(fromJSON(matrix.tasks), 'python-tutorials') }}
         run: |
-          # Prepared once per job so the performance and tutorial suites test the same builds.
+          # Prepared once per job and shared by the performance and tutorial suites.
           # SIMA_RESNET50_TAR also feeds the performance matrix and the Python bindings pytest.
           MODEL_DIR="$(mktemp -d "${RUNNER_TEMP:-/tmp}/model-browser.XXXXXX")"
           RESNET_MPK="${SIMA_RESNET50_TAR:-}"
@@ -1517,13 +1519,16 @@ jobs:
             RESNET_MPK="$(python3 scripts/ci/prepare_model_browser_fixture.py \
               --id resnet_50 --variant w8a8 --output "${MODEL_DIR}")"
           fi
-          YOLO_MPK="$(python3 scripts/ci/prepare_model_browser_fixture.py \
-            --id yolov8s --variant w8a8 --output "${MODEL_DIR}")"
           {
             printf 'SIMA_RESNET50_TAR=%s\n' "${RESNET_MPK}"
             printf 'SIMA_NEAT_TUTORIAL_MODEL_RESNET=%s\n' "${RESNET_MPK}"
-            printf 'SIMA_NEAT_TUTORIAL_MODEL_YOLO=%s\n' "${YOLO_MPK}"
           } >> "${GITHUB_ENV}"
+          # A performance-only job uses a preset SIMA_YOLO_TAR and needs no YOLO download.
+          if [[ "${HAS_TUTORIALS}" == true || -z "${SIMA_YOLO_TAR:-}" ]]; then
+            YOLO_MPK="$(python3 scripts/ci/prepare_model_browser_fixture.py \
+              --id yolov8s --variant w8a8 --output "${MODEL_DIR}")"
+            printf 'SIMA_NEAT_TUTORIAL_MODEL_YOLO=%s\n' "${YOLO_MPK}" >> "${GITHUB_ENV}"
+          fi
 
       - name: Run Perf and Throughput Tests (Isolated)
         if: ${{ contains(fromJSON(matrix.tasks), 'performance') }}
@@ -1619,16 +1624,38 @@ jobs:
           # Model Browser MPKs so run_with_modelzoo.sh finds the model and downloads nothing.
           mapfile -t TUTORIAL_CTEST_FILES < <(find "${TUTORIALS_DIR}" -type f -name CTestTestfile.cmake)
           sed -E -i \
-            -e "s|/[^\"[:space:]]*/resnet_50\\.tar\\.gz|${SIMA_NEAT_TUTORIAL_MODEL_RESNET}|g" \
-            -e "s|/[^\"[:space:]]*/yolo_v8s\\.tar\\.gz|${SIMA_NEAT_TUTORIAL_MODEL_YOLO}|g" \
+            -e "s|/[^\"[:space:]]*/resnet_50\\.tar\\.gz|${SIMA_NEAT_TUTORIAL_MODEL_RESNET:?}|g" \
+            -e "s|/[^\"[:space:]]*/yolo_v8s\\.tar\\.gz|${SIMA_NEAT_TUTORIAL_MODEL_YOLO:?}|g" \
             "${TUTORIAL_CTEST_FILES[@]}"
-          for mpk in "${SIMA_NEAT_TUTORIAL_MODEL_RESNET}" "${SIMA_NEAT_TUTORIAL_MODEL_YOLO}"; do
-            grep -qF "${mpk}" "${TUTORIAL_CTEST_FILES[@]}" || { echo "No tutorial test uses ${mpk}" >&2; exit 1; }
-          done
-          if grep -Eq '/(resnet_50|yolo_v8s)\.tar\.gz' "${TUTORIAL_CTEST_FILES[@]}"; then
-            echo "A tutorial test still uses a Model Zoo archive path" >&2
-            exit 1
-          fi
+          # Check each model-backed registration rather than file names: a valid MPK may itself
+          # be called resnet_50.tar.gz.
+          python3 - "${SIMA_NEAT_TUTORIAL_MODEL_RESNET}" "${SIMA_NEAT_TUTORIAL_MODEL_YOLO}" \
+            "${TUTORIAL_CTEST_FILES[@]}" <<'PY'
+          import re
+          import sys
+
+          selected = {'resnet_50': sys.argv[1], 'yolo_v8s': sys.argv[2]}
+          used, problems = set(), []
+          for path in sys.argv[3:]:
+              for line in open(path, encoding='utf-8'):
+                  args = re.findall(r'"([^"]*)"', line)
+                  wrapper = [i for i, arg in enumerate(args) if arg.endswith('/run_with_modelzoo.sh')]
+                  if not line.lstrip().startswith('add_test(') or not wrapper:
+                      continue
+                  i = wrapper[0]
+                  name, archive = args[i + 1], args[i + 2]
+                  model = args[args.index('--model') + 1] if '--model' in args else None
+                  if name not in selected:
+                      problems.append(f'{path}: unexpected model {name}')
+                  elif archive != selected[name] or model != selected[name]:
+                      problems.append(f'{path}: {name} uses {archive} and --model {model}')
+                  used.add(name)
+          missing = sorted(set(selected) - used)
+          if missing:
+              problems.append('no tutorial test uses ' + ', '.join(missing))
+          if problems:
+              raise SystemExit('Tutorial model check failed:\n' + '\n'.join(problems))
+          PY
           export SIMA_GST_REGISTRY_DIR="$(cat _work/gst_registry_dir.txt)"
           # Temporary external RTSP exclusions; remove under core#890.
           COVERAGE_DIR=_work/coverage/tutorials COVERAGE_PROFILE=required \
