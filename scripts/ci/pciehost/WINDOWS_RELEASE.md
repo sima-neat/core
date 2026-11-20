@@ -452,9 +452,11 @@ the outcome is unknown, so the stage and both locks are retained. As on Linux,
 a failed install is not rolled back: rerun the bundle or reflash the card.
 Emergency cleanup only touches a retained card lock when its owner token
 matches the retained local record. It finds the stage through the card lock's
-`offline_stage` record. Without an owned lock, it does not stop workers,
-uninstall MSIs or remove a work directory. If cleanup fails, the lock
-at `%USERPROFILE%\.sima\locks\neat-pcie-card0.lock` and its matching
+`offline_stage` record. It also removes the temporary standard user, profile
+and Python that a cancelled or restarted run left. Without an owned lock, it
+does not stop workers, remove users, uninstall MSIs or remove a work directory.
+If cleanup fails, the lock at
+`%USERPROFILE%\.sima\locks\neat-pcie-card0.lock` and its matching
 `/tmp/neat-pcie-card0.lock` card directory are deliberately retained. Do not
 delete either until the evidence logs have been reviewed and the runner,
 installation root, workers, staging directory, and queues have been restored manually.

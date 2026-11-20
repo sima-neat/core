@@ -653,15 +653,47 @@ class WindowsCiContracts(unittest.TestCase):
           mock.patch.object(RECOVERY, "validate_candidate"), \
           mock.patch.object(RECOVERY, "RemoteExclusiveLock") as lock, \
           mock.patch.object(RECOVERY, "stop_card_workers") as stop, \
+          mock.patch.object(RECOVERY, "remove_standard_user_leftovers") as remove_user, \
           mock.patch.object(RECOVERY, "remove_msi") as remove, \
           mock.patch.object(RECOVERY.shutil, "rmtree") as remove_work:
         lock.return_value.owner.return_value = None
         RECOVERY.cleanup(args)
       stop.assert_not_called()
+      remove_user.assert_not_called()
       remove.assert_not_called()
       remove_work.assert_not_called()
       receipt = json.loads((args.evidence / "recovery-cleanup.json").read_text())
       self.assertEqual(receipt["errors"], [])
+
+  def test_recovery_under_a_dead_runs_lock_removes_its_standard_user(self):
+    token = "0db9418bd645b0e4daf1a17494779d23"
+    with tempfile.TemporaryDirectory() as directory:
+      root = Path(directory)
+      lock_file = root / "card.lock"
+      lock_file.write_text(f"pid=10080 started=now remote_token={token}\n", encoding="utf-8")
+      args = SimpleNamespace(candidate=root, upgrade_base_candidate=None,
+                             evidence=root / "evidence", lock_file=lock_file,
+                             remote_lock_path="/tmp/neat-pcie-card0.lock", work=root / "work")
+      with mock.patch.object(RECOVERY.sys, "platform", "win32"), \
+          mock.patch.dict(RECOVERY.os.environ, {"ProgramFiles": str(root / "absent")}), \
+          mock.patch.object(RECOVERY, "validate_candidate"), \
+          mock.patch.object(RECOVERY, "process_is_running", return_value=False), \
+          mock.patch.object(RECOVERY, "RemoteExclusiveLock") as lock, \
+          mock.patch.object(RECOVERY, "recorded_card_stage", return_value=None), \
+          mock.patch.object(RECOVERY, "remove_standard_user_leftovers") as remove_user, \
+          mock.patch.object(RECOVERY, "remove_msi", return_value=0):
+        lock.return_value.owner.return_value = token
+        RECOVERY.cleanup(args)
+      remove_user.assert_called_once_with(args.evidence / "recovery-standard-user.log")
+      receipt = json.loads((args.evidence / "recovery-cleanup.json").read_text())
+      self.assertEqual(receipt["errors"], [])
+      self.assertEqual(receipt["results"]["standard_user"], "removed")
+      self.assertFalse(lock_file.exists())
+    # The names verify_standard_user_process_activation creates.
+    source = (SCRIPT_DIR / "qualify_windows_hardware.py").read_text(encoding="utf-8")
+    self.assertIn("$name = 'sna-' + $PID", source)
+    self.assertIn("$_.Name -match '^sna-[0-9]+$'", source)
+    self.assertIn("-Filter 'SimaPCIeHostAcceptance-*'", source)
 
   def scheduler_candidate(self, root: Path) -> Path:
     msi = root / "scheduler.msi"
@@ -841,8 +873,52 @@ class WindowsCiContracts(unittest.TestCase):
       junit.write_text(
           '<testsuite><testcase name="ran"/><testcase name="skipped"><skipped/></testcase>'
           '<testcase name="failed"><failure/></testcase>'
-          '<testcase name="broken"><error/></testcase></testsuite>', encoding="utf-8")
-      self.assertEqual(HARDWARE.passed_junit_cases(junit), {"ran"})
+          '<testcase name="broken"><error/></testcase>'
+          # pytest names a parametrized test's cases name[parameter].
+          '<testcase name="both[a]"/><testcase name="both[b]"/>'
+          '<testcase name="one[a]"/><testcase name="one[b]"><skipped/></testcase></testsuite>',
+          encoding="utf-8")
+      self.assertEqual(HARDWARE.passed_junit_cases(junit), {"ran", "both"})
+
+  def test_fault_client_leftovers_are_removed_by_process_id(self):
+    with tempfile.TemporaryDirectory() as directory:
+      root = Path(directory)
+      # The snapshot names a card PC run left for client processes 5488 and 7332.
+      left = root / ("sima-neat-pcie-model-28984716daa5b400"
+                     "0000000000001570000000000000000000001acfd561da2c")
+      other = root / ("sima-neat-pcie-model-63ba4187e083da4a"
+                      "0000000000001ca4000000000000000000001ac2e71d21d4")
+      for snapshot in (left, other):
+        snapshot.mkdir()
+        (snapshot / "model.tar.gz").write_bytes(b"fixture")
+      commands = []
+      with mock.patch("qualify_windows_hardware.tempfile.gettempdir", return_value=directory), \
+           mock.patch("qualify_windows_hardware.run_logged",
+                      side_effect=lambda command, *_a, **_k: commands.append(command[-1])):
+        HARDWARE.remove_fault_client_leftovers(card_args(root), 5488, root / "log")
+      self.assertFalse(left.exists())
+      self.assertTrue(other.is_dir())
+      self.assertEqual(commands, ["rm -f -- /tmp/sima-neat-pcie-5488-*"])
+    # The names this relies on.
+    self.assertIn(
+        "token << std::hex << std::setfill('0') << std::setw(8) << random() << std::setw(8) "
+        "<< random()\n        << std::setw(16) << host_process_id()",
+        (ROOT / "pcie_host/src/HostPlatform.cpp").read_text(encoding="utf-8"))
+    self.assertIn(
+        'std::string(kRemoteModelDir) + "/sima-neat-pcie-" + std::to_string(host_process_id())',
+        (ROOT / "pcie_host/src/RemoteRuntime.cpp").read_text(encoding="utf-8"))
+    source = (SCRIPT_DIR / "qualify_windows_hardware.py").read_text(encoding="utf-8")
+    self.assertEqual(source.count("remove_fault_client_leftovers(\n      args, process.pid,"), 2)
+
+  def test_cleanup_error_does_not_mask_the_qualification_failure(self):
+    HARDWARE.raise_first_failure(None, [])
+    with self.assertRaisesRegex(RuntimeError, "^hardware cleanup failed: left; locked$"):
+      HARDWARE.raise_first_failure(None, ["left", "locked"])
+    failure = RuntimeError("command failed with 1; see tutorial.log")
+    with self.assertRaises(RuntimeError) as raised:
+      HARDWARE.raise_first_failure(failure, ["left"])
+    self.assertIs(raised.exception, failure)
+    self.assertEqual(failure.__notes__, ["hardware cleanup failed: left"])
 
   def test_workflow_uses_exact_scheduler_artifact_and_restricted_runner(self):
     workflow = WORKFLOW.read_text(encoding="utf-8")

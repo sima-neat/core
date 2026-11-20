@@ -27,6 +27,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import xml.etree.ElementTree as ET
@@ -1335,6 +1336,34 @@ public static class SimaStandardUserProcess {
   return receipt
 
 
+def remove_standard_user_leftovers(log: Path) -> None:
+  """Remove the temporary user, profile and Python of a qualifier that did not finish.
+
+  verify_standard_user_process_activation removes them itself; a cancelled job or a
+  restarted runner leaves them. Recovery calls this under the dead run's lock, so no
+  other run owns one.
+  """
+  script = r"""
+$ErrorActionPreference = 'Stop'
+$users = @(Get-LocalUser | Where-Object { $_.Name -match '^sna-[0-9]+$' })
+foreach ($user in $users) {
+  & taskkill.exe /F /FI "USERNAME eq $($user.Name)" | Out-Null
+}
+Get-CimInstance Win32_UserProfile |
+  Where-Object { (Split-Path -Leaf $_.LocalPath) -match '^sna-[0-9]+$' } |
+  ForEach-Object { Remove-CimInstance -InputObject $_; "removed profile $($_.LocalPath)" }
+foreach ($user in $users) {
+  Remove-LocalUser -InputObject $user
+  "removed user $($user.Name)"
+}
+Get-ChildItem -LiteralPath $env:ProgramData -Directory -Filter 'SimaPCIeHostAcceptance-*' |
+  ForEach-Object { Remove-Item -LiteralPath $_.FullName -Recurse -Force; "removed $($_.FullName)" }
+"""
+  run_logged(
+      ["powershell.exe", "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script],
+      log, timeout=300)
+
+
 def run_captured_to_file(command: list[object], log: Path, *,
                          timeout: int) -> subprocess.CompletedProcess[str]:
   """Capture Windows OpenSSH output through its batch-file workaround."""
@@ -1939,6 +1968,18 @@ def launch_until_marker(command: list[object], log: Path, cwd: Path,
   return process, stream, log
 
 
+def remove_fault_client_leftovers(args: argparse.Namespace, pid: int, log: Path) -> None:
+  """Remove what a client that ended without teardown leaves behind.
+
+  Its host model snapshot (HostPlatform.cpp temp_token) and its card upload
+  (RemoteRuntime::unique_remote_upload_path) are both named after its process ID.
+  """
+  for snapshot in Path(tempfile.gettempdir()).glob(
+      f"sima-neat-pcie-model-{'?' * 16}{pid:016x}*"):
+    shutil.rmtree(snapshot)
+  run_logged(ssh_command(args, f"rm -f -- /tmp/sima-neat-pcie-{pid}-*"), log, timeout=30)
+
+
 def run_fault_recovery_tests(args: argparse.Namespace, test_root: Path, evidence: Path,
                              environment: dict[str, str]) -> list[str]:
   blocker = test_root / "test_queue_blocker.exe"
@@ -1979,6 +2020,8 @@ def run_fault_recovery_tests(args: argparse.Namespace, test_root: Path, evidence
       log.read_text(encoding="utf-8", errors="replace"):
     raise RuntimeError(f"client did not exit through its pull timeout after worker loss; see {log}")
   wait_for_no_card_workers(args, evidence / "card-worker-loss-drain.log", 120)
+  remove_fault_client_leftovers(
+      args, process.pid, evidence / "card-worker-loss-leftovers.log")
   run_logged(
       [recovery, "--sync-iterations", "1", "--iterations", "0"],
       evidence / "cpp-test_worker_loss_queue_reuse.log", env=environment,
@@ -1996,6 +2039,8 @@ def run_fault_recovery_tests(args: argparse.Namespace, test_root: Path, evidence
     stream.close()
   terminate_card_workers(args, evidence / "client-process-death-worker-cleanup.log")
   wait_for_no_card_workers(args, evidence / "client-process-death-drain.log", 120)
+  remove_fault_client_leftovers(
+      args, process.pid, evidence / "client-process-death-leftovers.log")
   recover_windows_platform_device(
       args.platform_runtime,
       evidence / "client-process-death-platform-recovery.log")
@@ -2275,13 +2320,21 @@ def run_cpp_tests(args: argparse.Namespace, candidate_root: Path, evidence: Path
 
 
 def passed_junit_cases(path: Path) -> set[str]:
-  """Return the passing case names; pytest's exit status already failed the run otherwise."""
+  """Return the passing test names; pytest's exit status already failed the run otherwise.
+
+  pytest reports a parametrized test as one name[parameter] case per parameter; the
+  test passed when every one of them did.
+  """
   try:
     root = ET.parse(path).getroot()
   except (OSError, ET.ParseError) as error:
     raise ValueError(f"invalid JUnit evidence: {path}: {error}") from error
-  return {case.get("name", "") for case in root.iter("testcase")
-          if not any(case.find(tag) is not None for tag in ("skipped", "failure", "error"))}
+  outcomes: dict[str, bool] = {}
+  for case in root.iter("testcase"):
+    name = case.get("name", "").split("[", 1)[0]
+    passed = not any(case.find(tag) is not None for tag in ("skipped", "failure", "error"))
+    outcomes[name] = outcomes.get(name, True) and passed
+  return {name for name, passed in outcomes.items() if passed}
 
 
 def run_python_tests(args: argparse.Namespace, python: Path, evidence: Path,
@@ -2816,10 +2869,18 @@ def qualify(args: argparse.Namespace) -> None:
         card_lock.retain()
       write_json(evidence / "hardware-qualification.json", result)
 
-  if cleanup_errors:
-    raise RuntimeError("hardware cleanup failed: " + "; ".join(cleanup_errors))
+  raise_first_failure(failure, cleanup_errors)
+
+
+def raise_first_failure(failure: BaseException | None, cleanup_errors: list[str]) -> None:
+  """Raise the qualification failure itself; a cleanup error after it is its note."""
+  cleanup = "hardware cleanup failed: " + "; ".join(cleanup_errors)
   if failure is not None:
+    if cleanup_errors:
+      failure.add_note(cleanup)
     raise failure
+  if cleanup_errors:
+    raise RuntimeError(cleanup)
 
 
 def main() -> None:

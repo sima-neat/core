@@ -14,7 +14,8 @@ import sys
 
 from qualify_windows_hardware import (
     CARD_STAGE_PATTERN, RemoteExclusiveLock, _validate_remote_path, remove_card_stage,
-    restart_windows_platform_service, run_captured_to_file, ssh_command, stop_card_workers)
+    remove_standard_user_leftovers, restart_windows_platform_service, run_captured_to_file,
+    ssh_command, stop_card_workers)
 from windows_candidate import validate_candidate, validate_published_package
 
 
@@ -122,6 +123,11 @@ def cleanup(args: argparse.Namespace) -> None:
       results["platform_service"] = "restarted"
     except BaseException as error:
       errors.append(str(error))
+  try:
+    remove_standard_user_leftovers(evidence / "recovery-standard-user.log")
+    results["standard_user"] = "removed"
+  except BaseException as error:
+    errors.append(str(error))
   for owner, msi in (("core", candidate.core_msi), ("scheduler", candidate.scheduler_msi)):
     try:
       results[f"{owner}_msi"] = remove_msi(msi, evidence / f"recovery-{owner}-msi.log")
