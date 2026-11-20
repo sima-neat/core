@@ -102,6 +102,33 @@ const std::int8_t* int8_data(const pcie::Tensor& tensor) {
                                               tensor.byte_offset);
 }
 
+pcie::TensorDType dtype_from_name(const std::string& name) {
+  if (name == "INT8") {
+    return pcie::TensorDType::Int8;
+  }
+  if (name == "FP32" || name == "FLOAT32") {
+    return pcie::TensorDType::Float32;
+  }
+  throw std::runtime_error("unsupported output dtype in model contract: " + name);
+}
+
+void require_output_contract(const pcie::TensorList& outputs,
+                             const std::vector<pcie::TensorInfo>& specs) {
+  if (outputs.size() != specs.size()) {
+    throw std::runtime_error("expected " + std::to_string(specs.size()) + " outputs, received " +
+                             std::to_string(outputs.size()));
+  }
+  for (std::size_t index = 0; index < specs.size(); ++index) {
+    const auto& output = outputs[index];
+    const auto& spec = specs[index];
+    if (output.route.name != spec.name || output.dtype != dtype_from_name(spec.dtype) ||
+        output.shape != spec.shape || output.size_bytes != spec.size_bytes) {
+      throw std::runtime_error("output '" + spec.name +
+                               "' does not match its route, dtype, shape, or byte-size contract");
+    }
+  }
+}
+
 // Preprocessing of the reference model: one RGB HWC image with pixels in [0, 1]. Resize, BGR to
 // RGB, divide by 255, then quantize with the ingress parameters. Another model needs its own
 // recipe.
@@ -176,16 +203,19 @@ int main(int argc, char** argv) {
     model.build(kBuildTimeoutMs);
     const pcie::TensorList outputs = model.run(int8_inputs, kRunTimeoutMs);
     model.close();
+    require_output_contract(outputs, info.outputs);
     // END STEP
 
     // STEP dequantize-and-compare
     pcie::Model reference(args.model, {}, connection);
+    const pcie::ModelInfo reference_info = reference.info();
     reference.build(kBuildTimeoutMs);
     pcie::TensorList fp32_tensors;
     fp32_tensors.push_back(
         pcie::Tensor::from_vector(std::move(fp32_input), ingress.shape, ingress.name));
     const pcie::TensorList reference_outputs = reference.run(fp32_tensors, kRunTimeoutMs);
     reference.close();
+    require_output_contract(reference_outputs, reference_info.outputs);
 
     std::cout << "Dequantized MLA-only outputs vs the default route (error in scale units):\n";
     for (std::size_t index = 0; index < outputs.size(); ++index) {

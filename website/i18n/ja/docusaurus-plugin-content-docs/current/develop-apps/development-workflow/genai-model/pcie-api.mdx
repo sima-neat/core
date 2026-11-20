@@ -19,6 +19,8 @@ C++ では `simaai::neat::pcie::genai`、Python では `pyneatpcie.genai` を使
 - 接続されたカードが、インストール手順に従って設定されていることを確認してください。
 - ホスト上に LLiMa モデルディレクトリを準備してください。カード上のローカルパスではなく、絶対パスまたはアプリケーションの現在の作業ディレクトリからの相対パスを渡します。モデルを開いている間は、ファイルを読み取り可能な状態に保ち、変更しないでください。
 
+Windowsでは、対応するPlatformインストーラーがWindowsの既知のフォルダーであるCommonApplicationData配下に`data`サービスルートをプロビジョニングします。通常は`%ProgramData%\SiMa.ai\data`です。APIはこの既知のフォルダーを解決し、そのディレクトリをデフォルトで使用します。Platformデーモンの設定で`data`が別の場所にマッピングされている場合は、画像または音声のリクエストを送信する前に、`connection.media_directory`と`connection.media_serve_root`を公開されている組み合わせに設定してください。Linuxでは引き続き`/srv/simaai/data`を使用します。そのプロバイダー契約とC++およびPythonの完全なハードウェアマトリックスが認定されるまで、Windows GenAIはサポート対象の顧客構成ではありません。
+
 ## テキストリクエストを実行する
 
 この例では、アプリケーションの現在の作業ディレクトリ配下の `./models/` に `Qwen3-0.6B-Autoround-a16w4` が配置されていることを前提とします。

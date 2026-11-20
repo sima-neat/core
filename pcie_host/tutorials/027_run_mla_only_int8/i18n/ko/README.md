@@ -47,9 +47,7 @@ q = clamp(round(x / scale) + zero_point, -128, 127)
 
 이 튜토리얼은 MLA 입출력을 직접 처리하도록 컴파일된 Model Zoo의 YOLO26n INT8 아카이브를 실행합니다. 추출된 PCIe extras 루트에 다운로드하세요.
 
-```bash
-sima-cli download https://docs.sima.ai/pkg_downloads/SDK2.1.3/models/modalix/yolo26-detection/yolo26n-det-int8-b1.tar.gz
-```
+현재 Platform 3.0 Model Zoo 릴리스에 게시된 다운로드 URL을 사용하세요. 아티팩트 URL은 릴리스마다 다르므로 이전 Platform용 모델로 대체하지 마세요.
 
 다른 아카이브는 Model SDK의 `tessellate_parameters`에서 `enable_mla=True`를 지정하고, 모든 입력에 `HWC` DRAM 레이아웃을, 모든 출력에 `HWC16`을 지정하여 컴파일된 경우 조건을 충족합니다. Model Zoo의 `yolo_v8s` 빌드처럼 대신 CVU에서 테셀레이션을 수행하는 아카이브는 `mla_only`가 활성화되면 거부됩니다.
 

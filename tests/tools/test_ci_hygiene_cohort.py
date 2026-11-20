@@ -8,6 +8,7 @@ import sys
 import textwrap
 
 import pytest
+import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW = ROOT / '.github/workflows/vulcan-ci.yml'
@@ -49,13 +50,30 @@ def test_dependency_dag_and_publication_gate():
     assert {'plan-devkit-tests', 'test-devkit-shard'} <= set(needs('test-devkit'))
 
 
+def test_container_steps_with_bash_syntax_declare_bash():
+    # A container job's default shell is sh, which rejects pipefail and [[.
+    unsafe = []
+    for path in sorted(WORKFLOW.parent.glob('*.yml')):
+        for name, body in yaml.safe_load(path.read_text())['jobs'].items():
+            if 'container' not in body:
+                continue
+            default = body.get('defaults', {}).get('run', {}).get('shell')
+            for step in body.get('steps', []):
+                script = step.get('run', '')
+                if ('pipefail' in script or '[[' in script) and step.get('shell', default) != 'bash':
+                    unsafe.append((path.name, name, step.get('name')))
+    assert unsafe == []
+
+
 def test_hygiene_uses_vulcan_native_ubuntu_arm64_runner():
     body = job('code-hygiene')
     assert 'environment: ${{ needs.resolve-vulcan-config.outputs.vulcan_env }}' in body
     assert ('runs-on: [self-hosted, linux, arm64, '
             '"vulcan-${{ needs.resolve-vulcan-config.outputs.vulcan_env }}", ubuntu, default]') in body
     assert 'scripts/ci/install_code_hygiene_deps.sh' in body
-    assert needs('code-hygiene') == ['resolve-vulcan-config', 'detect-changes']
+    assert needs('code-hygiene') == [
+        'validate-windows-cohort-selectors', 'resolve-vulcan-config', 'detect-changes']
+    assert "needs.validate-windows-cohort-selectors.result == 'success'" in body
     assert 'vulcan/ubuntu-build:ubuntu24-arm64-media-' in body
     assert 'HYGIENE_REQUIRE_PREINSTALLED: "1"' in body
 
@@ -83,6 +101,7 @@ def test_core_publication_requires_tooling_success_in_every_build_mode(mode, out
                            job('publish-vulcan-artifacts'))[1]
     values = {
         'always()': True, 'inputs.validation_only': validation_only,
+        'needs.validate-windows-cohort-selectors.result': 'success',
         'needs.build.result': 'success', 'needs.build-tooling-tests.result': outcome,
         'inputs.build_mode': mode,
         'needs.code-hygiene.result': 'skipped' if mode == 'fuzz' else 'success',
@@ -102,6 +121,7 @@ def test_final_validation_requires_tooling_success(monkeypatch, outcome):
     results['build-tooling-tests']['result'] = outcome
     monkeypatch.setenv('RESULTS', json.dumps(results))
     monkeypatch.setenv('BUILD_MODE', 'standard')
+    monkeypatch.setenv('WINDOWS_PCIE_CI', 'true')
     script = textwrap.dedent(job('validation-complete').split(
         "          python3 - <<'PYGATE'\n", 1)[1].split('\n          PYGATE', 1)[0])
     if outcome == 'success':

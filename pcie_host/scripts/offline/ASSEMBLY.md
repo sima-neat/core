@@ -108,11 +108,19 @@ checks the native composition before dependency collection.
 
 For local qualification before a corrected Scheduler publication is available,
 build its native producer on Ubuntu 24.04 amd64, then select that trusted local
-output with `./build.sh --all --scheduler-candidate /absolute/path/to/scheduler-native-dist`
-(run from `pcie_host`). The input must be the complete producer output, including
-`metadata.json`. Every declared resource is checksum-verified before loading the
-producer helper; its verifier checks the distro, architecture, revision, package
-ownership, and dependencies. Local metadata checks integrity, not publisher
+output (run from `pcie_host`):
+
+```sh
+./build.sh --all \
+  --scheduler-candidate /absolute/path/to/scheduler-native-dist \
+  --scheduler-commit <full Scheduler commit of that build>
+```
+
+The input must be the complete producer output, including `metadata.json`, and
+`--scheduler-commit` must name the full lowercase commit it was built from.
+Every declared resource is checksum-verified before loading the producer helper;
+its verifier checks the distro, architecture, revision, package ownership, and
+dependencies. Local metadata checks integrity, not publisher
 authentication: use this option only for your own trusted producer build. Normal
 builds continue to use authenticated publications. Do not edit published DEBs or
 receipts to remove a dependency.

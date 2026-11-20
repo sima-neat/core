@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cerrno>
+#include <chrono>
 #include <cstring>
 #include <deque>
 #include <filesystem>
@@ -12,6 +13,7 @@
 #include <string>
 #include <string_view>
 #include <sys/socket.h>
+#include <thread>
 #include <unistd.h>
 #include <vector>
 
@@ -25,7 +27,7 @@ std::mutex mutex;
 std::vector<simaai_svc*> clients;
 std::filesystem::path receive_root;
 std::atomic<int> copies{0}, put_error{0};
-std::atomic<bool> block_put{false};
+std::atomic<bool> block_put{false}, pause_put{false}, put_paused{false}, put_waiting{false};
 std::atomic<bool> auto_reply{false};
 int deliver(simaai_svc* client, std::string message) {
   client->messages.push_back(std::move(message));
@@ -48,6 +50,21 @@ void test_genai_put_error(int error) {
 }
 void test_genai_block_put(bool block) {
   block_put = block;
+}
+// Holds put() before any interruptible wait, the window a one-shot interrupt misses.
+void test_genai_pause_put(bool pause) {
+  pause_put = pause;
+}
+bool test_genai_put_paused() {
+  return put_paused;
+}
+// True once a blocked put() waits where an interrupt can reach it.
+bool test_genai_put_waiting() {
+  return put_waiting;
+}
+int test_genai_open_clients() {
+  std::lock_guard lock(mutex);
+  return static_cast<int>(clients.size());
 }
 void test_genai_auto_reply(bool enabled) {
   auto_reply = enabled;
@@ -145,10 +162,18 @@ int simaai_svc_get_file(simaai_svc*, const char*, const char*, const char*,
 }
 int simaai_svc_put_file(simaai_svc* client, const char* source, const char* root,
                         const char* destination, const simaai_svc_xfer_opts*, simaai_svc_xfer*) {
+  while (pause_put) {
+    put_paused = true;
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  }
+  put_paused = false;
+  put_waiting = false;
   ++copies;
-  while (block_put)
+  while (block_put) {
+    put_waiting = true;
     if (disconnected(client, 10))
       return -ECONNRESET;
+  }
   if (put_error)
     return put_error;
   if (root != nullptr || !std::filesystem::path(source).is_absolute())

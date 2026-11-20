@@ -3,6 +3,7 @@
 #include "genai/MediaStage.h"
 #include "genai/ModelAssets.h"
 #include "genai/ModelDirectory.h"
+#include "HostPlatform.h"
 #include "Protocol.h"
 #include "Service.h"
 #include <atomic>
@@ -77,7 +78,7 @@ std::optional<TokenSample> GenerationStream::next() {
 
 struct GenAIModel::Impl {
   ConnectionOptions options;
-  std::string model;
+  std::filesystem::path model;
   simaai::neat::genai::internal::ModelDirectoryInfo model_layout;
   internal::RemoteSession remote;
   wire::Service service;
@@ -94,7 +95,8 @@ struct GenAIModel::Impl {
   Clock::time_point deadline;
 
   Impl(std::string name, ConnectionOptions connection)
-      : options(std::move(connection)), model(internal::host_model_path(name).string()),
+      : options(std::move(connection)),
+        model(internal::host_model_path(pcie::internal::host_path_from_string(name))),
         model_layout(simaai::neat::genai::internal::inspect_model_directory(model)),
         remote(options), service(options.card_id), assets(model, remote.id(), options.card_id) {
     service.subscribe(wire::tag(remote.id(), true));
@@ -320,7 +322,7 @@ bool GenAIModel::accepts_audio() const {
   return impl_->capabilities.at("audio");
 }
 std::string GenAIModel::model_id() const {
-  return impl_->model;
+  return pcie::internal::host_path_string(impl_->model);
 }
 GenerationStream GenAIModel::stream(const GenerationRequest& request) {
   if (!impl_)

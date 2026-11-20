@@ -54,6 +54,9 @@ public:
   RemoteStatus read_status(int queue, std::chrono::milliseconds timeout) const;
 
   std::string endpoint() const;
+  const std::string& helper_path() const {
+    return helper_path_;
+  }
   std::string status_path(int queue) const;
   std::string pid_path(int queue) const;
   void remove_upload(const std::string& remote_path) const;
@@ -63,12 +66,16 @@ public:
   static bool status_owner_matches(const RemoteStatus& status, int expected_pid);
   static bool start_failure_cleanup_safe(int exit_code, bool timed_out);
   static std::string child_cleanup_shell_function();
+  static std::string detached_child_redirections();
+  std::vector<std::string> ssh_base() const;
+  std::vector<std::string> scp_base() const;
 
 private:
   ConnectionOptions connection_;
+  std::string helper_path_;
+  std::string run_dir_;
+  std::string log_dir_;
 
-  std::vector<std::string> ssh_base() const;
-  std::vector<std::string> scp_base() const;
   void run_or_throw(const std::vector<std::string>& args, int timeout_sec,
                     const std::string& context) const;
 };

@@ -404,7 +404,7 @@ def test_tensor_latency_yolov8():
   runtime = None
   warmup = 100
   iterations = 3000
-  max_mean_latency_ms = 12.1
+  max_mean_latency_ms = float(_env("SIMAPCIE_PERF_MAX_MEAN_LATENCY_MS", "12.1"))
 
   try:
     runtime = pcie.Model(str(model), pcie.ModelOptions(), _connection())
@@ -441,7 +441,7 @@ def test_tensor_throughput_yolov8():
   runtime = None
   warmup = 100
   iterations = 3000
-  min_throughput_fps = 440.0
+  min_throughput_fps = float(_env("SIMAPCIE_PERF_MIN_THROUGHPUT_FPS", "440"))
 
   try:
     runtime = pcie.Model(str(model), pcie.ModelOptions(), _connection())

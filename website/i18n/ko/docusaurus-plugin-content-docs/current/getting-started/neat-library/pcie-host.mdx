@@ -4,7 +4,7 @@ description: "연결된 Modalix PCIe 카드에서 모델을 실행하려면 PCIe
 sidebar_position: 3
 ---
 
-이 페이지를 사용하여 Linux 시스템에 Neat PCIe 호스트 패키지를 설치하고, Modalix PCIe 카드에 연결합니다.
+이 페이지를 사용하여 Modalix PCIe 카드에 연결된 지원 대상 Linux 또는 Windows 시스템에 Neat PCIe 호스트 패키지를 설치합니다.
 
 Neat PCIe 호스트 패키지는 호스트 시스템에서 연결된 Modalix PCIe 카드로 입력을 보내고 추론 결과를 수신하기 위한 공동 처리 API를 제공합니다.
 
@@ -25,8 +25,9 @@ Neat PCIe 호스트 패키지는 다음으로 검증된 호스트 플랫폼을 �
 | --- | --- | --- |
 | 우분투 22.04 | x86_64 | 지원됨 |
 | 우분투 24.04 | x86_64 | 지원됨 |
+| Windows 11 | x86_64 | 네이티브 미리 보기; 아직 게시되지 않음 |
 
-Arm64 호스트 빌드는 아직 검증되지 않았습니다. Windows 11은 지원되지 않습니다.
+Arm64 호스트 빌드는 아직 검증되지 않았습니다. Windows 패키지에는 PCIe GenAI API가 포함되어 있지만, 일치하는 Platform 공급자와 전체 Windows C++ 및 Python GenAI 릴리스 매트릭스가 자격 검증을 통과할 때까지 지원 대상 고객 구성으로 제공되지 않습니다.
 
 ## 온라인 설치 필수 조건
 
@@ -79,19 +80,110 @@ python3 -c "import pyneatpcie; print('pyneatpcie ready')"
 gst-inspect-1.0 neatpciehost
 </ShellCommand>
 
+## Windows 11 네이티브 미리 보기 설치
+
+:::note 아직 사용할 수 없음
+Windows 패키지는 아직 게시되지 않았습니다. 자격 검증을 통과한 Windows 바이너리를 제공하는 첫 Neat 릴리스부터 Ubuntu 패키지와 같은 Neat 릴리스 태그로 게시됩니다. 그때부터 이 섹션에 설치 명령이 표시됩니다.
+:::
+
+Windows 미리 보기는 `pcie::Model` 비전 API의 네이티브 Visual Studio 빌드이며 `pcie::genai::GenAIModel`을 포함합니다. 위에서 설명한 대로 GenAI 릴리스에는 계속 자격 검증이 필요하며, API 설치만으로 Platform 전송 또는 카드 모델이 자격 검증을 통과하는 것은 아닙니다. 먼저 다음 필수 구성 요소를 설치하세요.
+
+- Neat 릴리스와 일치하는 SiMa Platform 3.0 Windows 패키지. PCIe 드라이버와 `SiMaMlaDaemon` 서비스를 제공합니다.
+- GStreamer 1.28.6 MSVC x64([GStreamer 다운로드 페이지](https://gstreamer.freedesktop.org/download/)의 `gstreamer-1.0-msvc-x86_64-1.28.6.exe`). C++ 애플리케이션용 개발 파일도 제공합니다.
+- [python.org](https://www.python.org/downloads/windows/)의 64비트 CPython 3.14. 모든 사용자용 또는 현재 사용자용으로 설치할 수 있습니다. 프리 스레드 빌드는 wheel을 로드할 수 없습니다.
+- 위의 필수 조건에서 설명한 `sima-cli`. 이전 버전의 `sima-cli`는 `Missing 'script' in 'installation'` 오류로 중지됩니다. 업데이트한 후 다시 시도하세요.
+
+그런 다음 `sima-cli neat install` 명령 하나로 일치하는 Scheduler MSI, Core MSI 및 `win_amd64` wheel을 하나의 코호트로 설치합니다. Windows는 두 MSI 패키지에 대해 관리자 승인을 한 번 요청합니다. 다운로드한 패키지와 Windows Installer 로그는 현재 디렉터리에 남습니다.
+
+CLI는 MSI를 실행하기 전에 Windows OpenSSH, Platform 서비스, GStreamer 및 호환되는 Python 설치를 확인합니다. `%USERPROFILE%\pyneatpcie` 환경을 생성하거나 재사용하고, 게시된 모든 체크섬을 확인한 뒤 Scheduler와 Core에 대해 Windows Installer를 실행합니다. 또한 설치된 호스트 진단을 실행하고 패키지와 일치하는 코딩 에이전트 스킬과 wheel을 설치합니다. 복구 또는 업그레이드가 필요하면 같은 명령을 다시 실행하세요. 다른 환경을 사용하려면 `--python-executable <path>`를, 네이티브 C++만 설치하려면 `--native-only`를 사용하세요. 네이티브 제거는 Windows Installer가, Python 패키지 제거는 pip가 관리합니다.
+
+설치 후 한 번 카드에 암호 없는 SSH를 구성합니다.
+
+```powershell
+& "C:\Program Files\SimaPCIeHost\bin\pcie-setup.cmd"
+```
+
+이 유틸리티는 로컬 `10.0.N.1` 관리 링크에서 카드 주소를 검색합니다. 자동 검색을 사용할 수 없으면 `-Hosts 10.0.0.2`를 전달하세요. 공개 키가 아직 등록되지 않은 경우에만 OpenSSH가 카드 암호를 요청하며, 암호는 저장되지 않습니다. `.cmd` 래퍼는 자체 PowerShell 프로세스에서만 설치된 이 스크립트의 실행을 허용하며, 사용자 또는 컴퓨터의 실행 정책은 변경하지 않습니다.
+
+Python 패키지는 확장 모듈을 가져오기 전에 기본 설치 루트와 기본 x64 GStreamer 위치에서 DLL을 검색합니다. 다른 설치 루트를 사용하려면 `SIMA_PCIE_HOST_LIBRARY_PATH`를 PCIe 호스트 및 GStreamer DLL이 있는 디렉터리로 설정하세요. 필요한 DLL이 승인된 위치가 아닌 다른 위치에서 이미 로드된 경우 가져오기가 실패합니다. 혼합된 런타임을 계속 사용하지 말고 설치 버전을 맞춘 뒤 새 프로세스를 시작하세요.
+
+소스 또는 빌드 트리 외부에서 설치된 wheel과 플러그인을 확인합니다.
+
+```powershell
+$venv = "$env:USERPROFILE\pyneatpcie"
+$root = "C:\Program Files\SimaPCIeHost"
+$gst = "C:\Program Files\gstreamer\1.0\msvc_x86_64\bin\gst-inspect-1.0.exe"
+$env:PATH = "$root\bin;$(Split-Path $gst);$env:PATH"
+Set-Location $env:TEMP
+& "$root\bin\sima-pcie-host-doctor.cmd"
+& "$venv\Scripts\python.exe" -m pip check
+& "$venv\Scripts\python.exe" -c "import pyneatpcie as p; print(p.__version__, p.Model)"
+& $gst "$root\bin\gstreamer-1.0\gstneatpciehost.dll"
+```
+
+### Windows에서 애플리케이션 실행
+
+[PCIe Co-Processing](/develop-apps/hello-neat/pcie/) 예제와 PCIe 튜토리얼은 Linux 명령을 보여 줍니다. Windows에서는 관리되는 환경의 인터프리터로 Python 프로그램을 실행하세요. 활성화는 필요하지 않으며, 기본 PowerShell 실행 정책은 `Activate.ps1`을 차단합니다.
+
+```powershell
+& "$env:USERPROFILE\pyneatpcie\Scripts\python.exe" pcie_host.py
+```
+
+C++ 애플리케이션에는 **Desktop development with C++** 워크로드가 포함된 Visual Studio 2026이 필요합니다. Visual Studio 2022를 포함한 이전 도구 집합은 설치된 정적 라이브러리를 링크할 수 없습니다. OpenCV를 사용하는 예제에는 [opencv.org](https://opencv.org/releases/)의 OpenCV 5.0.0 Windows 패키지도 필요합니다. 패키지는 Release 구성만 제공합니다. **x64 Native Tools Command Prompt for VS 2026**에서 빌드하고 실행하세요.
+
+```bat
+call "C:\Program Files\SimaPCIeHost\bin\sima-pcie-host-env.cmd"
+set "OpenCV_DIR=C:\opencv\build"
+cmake -S . -B build
+cmake --build build --config Release
+set "PATH=%OpenCV_DIR%\x64\vc16\bin;%PATH%"
+build\Release\pcie_host.exe
+```
+
+`C:\opencv\build`를 압축을 푼 OpenCV 패키지의 `build` 디렉터리로 바꾸세요. `sima-pcie-host-env.cmd`는 현재 명령 프롬프트만 변경합니다.
+
+호스트 패키지는 튜토리얼을 `C:\Program Files\SimaPCIeHost`에 설치하므로 Windows에서는 튜토리얼을 따로 다운로드할 필요가 없습니다. 튜토리얼 프로그램은 현재 디렉터리에서 모델 아카이브와 `share\sima-pcie-host\tutorials`를 읽습니다. 소스를 쓰기 가능한 디렉터리에 복사하고 [Tutorial Setup](/tutorials/before-you-run)에 나온 모델 아카이브를 추가한 다음 해당 디렉터리에서 프로그램을 실행하세요.
+
+```powershell
+$root = "C:\Program Files\SimaPCIeHost"
+New-Item -ItemType Directory -Force pcie-tutorials\share\sima-pcie-host | Out-Null
+Copy-Item -Recurse "$root\share\sima-pcie-host\tutorials" pcie-tutorials\share\sima-pcie-host\
+Set-Location pcie-tutorials
+& "$env:USERPROFILE\pyneatpcie\Scripts\python.exe" share\sima-pcie-host\tutorials\024_run_your_first_model_over_pcie\run_tensor_mode.py
+$env:PATH = "C:\opencv\build\x64\vc16\bin;$env:PATH"
+& "$root\bin\sima-pcie-host-run.cmd" "$root\lib\sima-pcie-host\tutorials\tutorial_024_run_tensor_mode.exe"
+```
+
+미리 빌드된 C++ 튜토리얼을 실행하려면 해당 OpenCV 패키지의 `opencv_world500.dll`이 `PATH`에 있어야 합니다. 없으면 Windows에서 DLL이 없다고 보고합니다.
+
+### Windows에서 제거
+
+```powershell
+sima-cli packages list
+sima-cli packages remove gh:sima-neat/core/pciehost/windows/amd64 --version <version> --yes
+& "$env:USERPROFILE\pyneatpcie\Scripts\python.exe" -m pip uninstall -y pyneatpcie
+sima-cli playbooks remove neat-pcie-application-builder --yes
+```
+
+`sima-cli packages list`에 표시되는 버전을 사용하세요. 이 명령은 한 번의 관리자 승인으로 Core를 제거한 다음 Scheduler를 제거합니다. Python 환경은 삭제하지 않습니다. 다른 애플리케이션에서 사용하지 않는다면 `%USERPROFILE%\pyneatpcie`를 삭제하세요.
+
 ## 문제 해결
 
-SSH 프로비저닝으로 카드를 자동으로 검색할 수 없는 경우, 먼저 호스트가 관리 주소에 접속할 수 있는지 확인하십시오.
+SSH 프로비저닝으로 카드를 자동으로 검색할 수 없는 경우, 호스트가 관리 주소에 접속할 수 있는지 확인한 다음 설치된 설정 유틸리티에 주소를 명시하여 실행합니다.
+
+Linux:
 
 <ShellCommand prompt="pcie-host">
 ping -c 1 10.0.0.2
-</ShellCommand>
-
-그런 다음 설치된 설정 유틸리티를 실행하고 주소를 명시적으로 지정합니다.
-
-<ShellCommand prompt="pcie-host">
 pcie-setup.sh --hosts "10.0.0.2"
 </ShellCommand>
+
+Windows에서는 PowerShell을 엽니다.
+
+```powershell
+Test-Connection -ComputerName 10.0.0.2 -Count 1
+& "C:\Program Files\SimaPCIeHost\bin\pcie-setup.cmd" -Hosts 10.0.0.2
+```
 
 패키지 설치 또는 런타임 시작에 실패하는 경우, PCIe 호스트 패키지와 카드에 설치된 Neat Library가 호환되는 버전인지 확인하십시오.
 

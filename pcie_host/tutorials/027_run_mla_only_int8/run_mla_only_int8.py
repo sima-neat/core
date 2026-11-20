@@ -51,6 +51,31 @@ def dequantize(codes: np.ndarray, scale: float, zero_point: int) -> np.ndarray:
     return (codes.astype(np.int32) - zero_point).astype(np.float32) * np.float32(scale)
 
 
+def require_output_contract(
+    outputs: list[pcie.Tensor], specs: list[pcie.TensorInfo]
+) -> None:
+    dtype_by_name = {
+        "INT8": pcie.TensorDType.Int8,
+        "FP32": pcie.TensorDType.Float32,
+        "FLOAT32": pcie.TensorDType.Float32,
+    }
+    if len(outputs) != len(specs):
+        raise RuntimeError(f"expected {len(specs)} outputs, received {len(outputs)}")
+    for output, spec in zip(outputs, specs):
+        expected_dtype = dtype_by_name.get(spec.dtype.upper())
+        if expected_dtype is None:
+            raise RuntimeError(f"unsupported output dtype in model contract: {spec.dtype}")
+        if (
+            output.route.name != spec.name
+            or output.dtype != expected_dtype
+            or output.shape != spec.shape
+            or output.size_bytes != spec.size_bytes
+        ):
+            raise RuntimeError(
+                f"output '{spec.name}' does not match its route, dtype, shape, or byte-size contract"
+            )
+
+
 def quantize_image(bgr: np.ndarray, spec: pcie.TensorInfo) -> np.ndarray:
     """Preprocessing of the reference model: one RGB HWC image with pixels in [0, 1].
 
@@ -108,14 +133,17 @@ def main() -> None:
         # STEP run-int8
         model.build(BUILD_TIMEOUT_MS)
         outputs = model.run(int8_inputs, RUN_TIMEOUT_MS)
+    require_output_contract(outputs, info.outputs)
     codes_by_head = {spec.name: output.to_numpy() for output, spec in zip(outputs, info.outputs)}
     # END STEP
 
     # STEP dequantize-and-compare
     with pcie.Model(str(model_path), connection=connection) as reference:
+        reference_info = reference.info()
         reference.build(BUILD_TIMEOUT_MS)
         fp32_tensor = pcie.Tensor.from_numpy(fp32_input, copy=True, route_name=ingress.name)
         reference_outputs = reference.run([fp32_tensor], RUN_TIMEOUT_MS)
+    require_output_contract(reference_outputs, reference_info.outputs)
 
     print("Dequantized MLA-only outputs vs the default route (error in scale units):")
     for card, spec in zip(reference_outputs, info.outputs):

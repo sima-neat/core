@@ -47,9 +47,7 @@ q = clamp(round(x / scale) + zero_point, -128, 127)
 
 本教學執行 Model Zoo 的 YOLO26n INT8 封存檔，它是為直接 MLA 輸入與輸出而編譯的。將它下載到解壓縮後的 PCIe extras 根目錄：
 
-```bash
-sima-cli download https://docs.sima.ai/pkg_downloads/SDK2.1.3/models/modalix/yolo26-detection/yolo26n-det-int8-b1.tar.gz
-```
+請使用目前 Platform 3.0 Model Zoo 版本所公布的下載網址。成品網址會隨版本而異，請勿改用先前 Platform 版本的模型。
 
 其他封存檔若以 Model SDK 的 `tessellate_parameters` 設定 `enable_mla=True`、每個輸入使用 `HWC` DRAM 版面配置、每個輸出使用 `HWC16` 編譯，也符合條件。改在 CVU 上進行鑲嵌的封存檔，例如 Model Zoo 的 `yolo_v8s` 建置，在啟用 `mla_only` 時會被拒絕：
 

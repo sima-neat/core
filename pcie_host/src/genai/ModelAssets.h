@@ -3,6 +3,7 @@
 #include "Protocol.h"
 #include <atomic>
 #include <exception>
+#include <memory>
 #include <mutex>
 #include <thread>
 
@@ -19,13 +20,8 @@ public:
   void check() const;
 
 private:
-  void receive();
-  std::filesystem::path model_;
-  std::string session_;
-  wire::Service service_;
-  std::atomic<bool> stop_{false};
+  struct State;
+  std::shared_ptr<State> state_;
   std::thread thread_;
-  mutable std::mutex mutex_;
-  std::exception_ptr error_;
 };
 } // namespace simaai::neat::pcie::genai::internal

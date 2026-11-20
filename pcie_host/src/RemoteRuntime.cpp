@@ -1,5 +1,7 @@
 #include "RemoteRuntime.h"
 
+#include "CardEnvironment.h"
+#include "HostPlatform.h"
 #include "SshRunner.h"
 
 #include <algorithm>
@@ -16,8 +18,6 @@
 #include <thread>
 #include <utility>
 
-#include <unistd.h>
-
 namespace fs = std::filesystem;
 
 namespace simaai::neat::pcie::internal {
@@ -28,20 +28,25 @@ constexpr int kConnectTimeoutSec = 10;
 constexpr int kCommandTimeoutSec = 30;
 constexpr const char* kRemoteModelDir = "/tmp";
 constexpr const char* kRemoteHelper = "/usr/bin/pcie-pipeline-builder";
+constexpr const char* kRemoteRunDir = "/run/sima-neat/pcie";
+constexpr const char* kRemoteLogDir = "/var/log/sima-neat/pcie";
 constexpr const char* kDefaultIdentityFile = ".ssh/sima_neat_pcie_ed25519";
 constexpr const char* kDefaultMlashmCtrlIoTimeout = "MLASHM_CTRL_IO_TIMEOUT_MS=5000";
+constexpr const char* kHelperPathEnv = "SIMA_NEAT_PCIE_HELPER_PATH";
+constexpr const char* kRunDirEnv = "SIMA_NEAT_PCIE_RUN_DIR";
+constexpr const char* kLogDirEnv = "SIMA_NEAT_PCIE_LOG_DIR";
 
 std::optional<std::string> default_identity_file() {
-  const char* home = std::getenv("HOME");
-  if (!home || !*home) {
+  const auto home = host_home_directory();
+  if (!home.has_value()) {
     return std::nullopt;
   }
-  std::filesystem::path path = std::filesystem::path(home) / kDefaultIdentityFile;
+  std::filesystem::path path = *home / kDefaultIdentityFile;
   std::error_code ec;
   if (!std::filesystem::exists(path, ec)) {
     return std::nullopt;
   }
-  return path.string();
+  return host_path_string(path);
 }
 
 std::string derive_card_host(const ConnectionOptions& opt) {
@@ -75,41 +80,6 @@ std::string json_string_or(const nlohmann::json& object, const char* key,
   return fallback;
 }
 
-std::string default_card_gst_debug_file(const int queue) {
-  return "/var/log/sima-neat/pcie/q" + std::to_string(queue) + ".gst.log";
-}
-
-bool is_env_name_char(const char ch) {
-  return std::isalnum(static_cast<unsigned char>(ch)) || ch == '_';
-}
-
-std::vector<std::string> split_card_env(const std::string& raw) {
-  std::vector<std::string> out;
-  std::istringstream stream(raw);
-  std::string token;
-  while (stream >> token) {
-    const std::size_t eq = token.find('=');
-    if (eq == std::string::npos || eq == 0) {
-      throw std::runtime_error("card_env entries must be NAME=VALUE assignments");
-    }
-    for (std::size_t i = 0; i < eq; ++i) {
-      const char ch = token[i];
-      if ((i == 0 && std::isdigit(static_cast<unsigned char>(ch))) || !is_env_name_char(ch)) {
-        throw std::runtime_error("card_env contains invalid environment variable name: " +
-                                 token.substr(0, eq));
-      }
-    }
-    out.push_back(std::move(token));
-  }
-  return out;
-}
-
-bool env_contains_name(const std::vector<std::string>& env, const std::string& name) {
-  const std::string prefix = name + "=";
-  return std::any_of(env.begin(), env.end(),
-                     [&prefix](const std::string& entry) { return entry.rfind(prefix, 0) == 0; });
-}
-
 void validate_endpoint_component(const std::string& value, const char* name,
                                  const bool allow_empty) {
   if (value.empty()) {
@@ -130,6 +100,15 @@ void validate_endpoint_component(const std::string& value, const char* name,
 RemoteRuntime::RemoteRuntime(ConnectionOptions connection) : connection_(std::move(connection)) {
   validate_endpoint_component(connection_.user, "user", false);
   validate_endpoint_component(connection_.card_host, "card_host", true);
+  const auto card_env = parse_card_environment(connection_.card_env);
+  helper_path_ = card_environment_path_or(card_env, kHelperPathEnv, kRemoteHelper);
+  // Card-side liveness checks match the worker by this file name.
+  if (helper_path_.substr(helper_path_.rfind('/') + 1) != "pcie-pipeline-builder") {
+    throw std::invalid_argument(std::string(kHelperPathEnv) +
+                                " must name a pcie-pipeline-builder executable");
+  }
+  run_dir_ = card_environment_path_or(card_env, kRunDirEnv, kRemoteRunDir);
+  log_dir_ = card_environment_path_or(card_env, kLogDirEnv, kRemoteLogDir);
 }
 
 std::string RemoteRuntime::endpoint() const {
@@ -137,23 +116,23 @@ std::string RemoteRuntime::endpoint() const {
 }
 
 std::string RemoteRuntime::status_path(const int queue) const {
-  return "/run/sima-neat/pcie/q" + std::to_string(queue) + ".status";
+  return run_dir_ + "/q" + std::to_string(queue) + ".status";
 }
 
 std::string RemoteRuntime::pid_path(const int queue) const {
-  return "/run/sima-neat/pcie/q" + std::to_string(queue) + ".pid";
+  return run_dir_ + "/q" + std::to_string(queue) + ".pid";
 }
 
 std::string RemoteRuntime::unique_remote_upload_path(const std::string& local_path) {
   static std::atomic<std::uint64_t> sequence{0};
-  const fs::path local(local_path);
-  const std::string filename = local.filename().string();
+  const fs::path local = host_path_from_string(local_path);
+  const std::string filename = host_path_string(local.filename());
   if (filename.empty()) {
     throw std::invalid_argument("local upload path must have a filename");
   }
   const auto timestamp = std::chrono::steady_clock::now().time_since_epoch().count();
-  return std::string(kRemoteModelDir) + "/sima-neat-pcie-" +
-         std::to_string(static_cast<long long>(getpid())) + "-" + std::to_string(timestamp) + "-" +
+  return std::string(kRemoteModelDir) + "/sima-neat-pcie-" + std::to_string(host_process_id()) +
+         "-" + std::to_string(timestamp) + "-" +
          std::to_string(sequence.fetch_add(1, std::memory_order_relaxed)) + "-" + filename;
 }
 
@@ -227,6 +206,13 @@ std::string RemoteRuntime::child_cleanup_shell_function() {
          "}; ";
 }
 
+std::string RemoteRuntime::detached_child_redirections() {
+  // Closing the lock descriptor is not sufficient to detach the worker from
+  // the SSH channel. An inherited stdin can keep the OpenSSH client alive after
+  // the launcher shell exits.
+  return " 9>&- </dev/null >/dev/null 2>&1 & ";
+}
+
 void RemoteRuntime::remove_upload(const std::string& remote_path) const {
   if (!is_managed_upload_path(remote_path)) {
     throw std::invalid_argument("refusing to remove unmanaged remote upload path: " + remote_path);
@@ -238,12 +224,12 @@ void RemoteRuntime::remove_upload(const std::string& remote_path) const {
 
 std::vector<std::string> RemoteRuntime::ssh_base() const {
   std::vector<std::string> cmd;
-  cmd.push_back("ssh");
+  cmd.push_back(open_ssh_executable("ssh"));
   cmd.insert(cmd.end(), {"-p", std::to_string(kSshPort)});
   if (const auto identity = default_identity_file(); identity.has_value()) {
     cmd.insert(cmd.end(), {"-i", *identity});
   }
-  cmd.insert(cmd.end(), {"-o", "StrictHostKeyChecking=accept-new"});
+  cmd.insert(cmd.end(), {"-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes"});
   cmd.insert(cmd.end(), {"-o", "ConnectTimeout=" + std::to_string(kConnectTimeoutSec)});
   cmd.push_back(endpoint());
   return cmd;
@@ -251,12 +237,12 @@ std::vector<std::string> RemoteRuntime::ssh_base() const {
 
 std::vector<std::string> RemoteRuntime::scp_base() const {
   std::vector<std::string> cmd;
-  cmd.push_back("scp");
+  cmd.push_back(open_ssh_executable("scp"));
   cmd.insert(cmd.end(), {"-P", std::to_string(kSshPort)});
   if (const auto identity = default_identity_file(); identity.has_value()) {
     cmd.insert(cmd.end(), {"-i", *identity});
   }
-  cmd.insert(cmd.end(), {"-o", "StrictHostKeyChecking=accept-new"});
+  cmd.insert(cmd.end(), {"-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes"});
   cmd.insert(cmd.end(), {"-o", "ConnectTimeout=" + std::to_string(kConnectTimeoutSec)});
   return cmd;
 }
@@ -265,14 +251,12 @@ void RemoteRuntime::run_or_throw(const std::vector<std::string>& args, const int
                                  const std::string& context) const {
   const CommandResult res = SshRunner::run(args, timeout_sec);
   if (res.timed_out || res.exit_code != 0) {
-    throw std::runtime_error(context + " failed (exit=" + std::to_string(res.exit_code) +
-                             ", timed_out=" + (res.timed_out ? "true" : "false") +
-                             "): " + res.output);
+    throw std::runtime_error(context + " failed " + SshRunner::failure_detail(args, res));
   }
 }
 
 std::string RemoteRuntime::upload_file(const std::string& local_path) const {
-  const fs::path local(local_path);
+  const fs::path local = host_path_from_string(local_path);
   if (!fs::exists(local)) {
     throw std::runtime_error("local file does not exist: " + local_path);
   }
@@ -284,9 +268,9 @@ std::string RemoteRuntime::upload_file(const std::string& local_path) const {
     run_or_throw(mkdir_cmd, kCommandTimeoutSec, "remote mkdir");
   }
 
-  const std::string remote_path = unique_remote_upload_path(absolute_local.string());
+  const std::string remote_path = unique_remote_upload_path(host_path_string(absolute_local));
   std::vector<std::string> scp_cmd = scp_base();
-  scp_cmd.push_back(absolute_local.string());
+  scp_cmd.push_back(host_path_string(absolute_local));
   scp_cmd.push_back(endpoint() + ":" + remote_path);
   run_or_throw(scp_cmd, kCommandTimeoutSec + 30, "scp upload");
   return remote_path;
@@ -294,13 +278,17 @@ std::string RemoteRuntime::upload_file(const std::string& local_path) const {
 
 int RemoteRuntime::start(const int queue, const std::string& remote_model_path,
                          const std::optional<std::string>& remote_model_options_path) const {
+  const std::string& helper = helper_path_;
+  const std::string& resolved_run_dir = run_dir_;
+  const std::string& resolved_log_dir = log_dir_;
   const std::string start_lock_path =
-      "/run/sima-neat/pcie/q" + std::to_string(queue) + ".start.lock";
+      resolved_run_dir + "/q" + std::to_string(queue) + ".start.lock";
   std::ostringstream ss;
-  ss << child_cleanup_shell_function() << "[ -x " << SshRunner::shell_escape(kRemoteHelper)
-     << " ] || { echo missing_builder; exit 10; }; "
-     << "[ -d /run/sima-neat/pcie ] || { echo missing_run_dir; exit 11; }; "
-     << "[ -d /var/log/sima-neat/pcie ] || { echo missing_log_dir; exit 12; }; "
+  ss << child_cleanup_shell_function() << "[ -x " << SshRunner::shell_escape(helper)
+     << " ] || { echo missing_builder; exit 10; }; " << "[ -d "
+     << SshRunner::shell_escape(resolved_run_dir) << " ] || { echo missing_run_dir; exit 11; }; "
+     << "[ -d " << SshRunner::shell_escape(resolved_log_dir)
+     << " ] || { echo missing_log_dir; exit 12; }; "
      << "startlock=" << SshRunner::shell_escape(start_lock_path) << "; "
      << "exec 9>\"$startlock\"; " << "flock -w 30 9 || { echo start_lock_timeout; exit 14; }; "
      << "pidfile=" << SshRunner::shell_escape(pid_path(queue)) << "; "
@@ -312,8 +300,8 @@ int RemoteRuntime::start(const int queue, const std::string& remote_model_path,
      << "echo queue_busy; exit 9; " << "fi; " << "fi; " << "rm -f \"$pidfile\" \"$statusfile\"; "
      << "else " << "rm -f \"$statusfile\"; " << "fi; ";
   ss << "nohup ";
-  std::vector<std::string> card_env = split_card_env(connection_.card_env);
-  if (!env_contains_name(card_env, "MLASHM_CTRL_IO_TIMEOUT_MS")) {
+  std::vector<std::string> card_env = parse_card_environment(connection_.card_env);
+  if (!card_environment_contains(card_env, "MLASHM_CTRL_IO_TIMEOUT_MS")) {
     card_env.emplace_back(kDefaultMlashmCtrlIoTimeout);
   }
   const bool needs_env = !card_env.empty() || !connection_.card_gst_debug.empty();
@@ -326,20 +314,22 @@ int RemoteRuntime::start(const int queue, const std::string& remote_model_path,
   if (!connection_.card_gst_debug.empty()) {
     ss << "GST_DEBUG=" << SshRunner::shell_escape(connection_.card_gst_debug) << " ";
     ss << "GST_DEBUG_NO_COLOR=1 ";
-    const std::string debug_file = connection_.card_gst_debug_file.empty()
-                                       ? default_card_gst_debug_file(queue)
-                                       : connection_.card_gst_debug_file;
+    const std::string debug_file =
+        connection_.card_gst_debug_file.empty()
+            ? (resolved_log_dir + "/q" + std::to_string(queue) + ".gst.log")
+            : connection_.card_gst_debug_file;
     if (!debug_file.empty()) {
       ss << "GST_DEBUG_FILE=" << SshRunner::shell_escape(debug_file) << " ";
     }
   }
-  ss << SshRunner::shell_escape(kRemoteHelper) << " --model "
-     << SshRunner::shell_escape(remote_model_path) << " --queue " << queue;
+  ss << SshRunner::shell_escape(helper) << " --model " << SshRunner::shell_escape(remote_model_path)
+     << " --queue " << queue;
   if (remote_model_options_path.has_value()) {
     ss << " --model-options " << SshRunner::shell_escape(*remote_model_options_path);
   }
-  ss << " 9>&- >/dev/null 2>&1 & " << "launched_pid=$!; " << "echo \"launched_pid=$launched_pid\"; "
-     << "for i in $(seq 1 200); do " << "owner_pid=$(cat \"$pidfile\" 2>/dev/null || true); "
+  ss << detached_child_redirections() << "launched_pid=$!; "
+     << "echo \"launched_pid=$launched_pid\"; " << "for i in $(seq 1 200); do "
+     << "owner_pid=$(cat \"$pidfile\" 2>/dev/null || true); "
      << "if [ \"$owner_pid\" = \"$launched_pid\" ]; then exit 0; fi; "
      << "if [ -n \"$owner_pid\" ] && kill -0 \"$owner_pid\" >/dev/null 2>&1 && "
      << "tr '\\0' ' ' < \"/proc/$owner_pid/cmdline\" 2>/dev/null | "
@@ -367,10 +357,9 @@ int RemoteRuntime::start(const int queue, const std::string& remote_model_path,
     } catch (const std::exception&) {
     }
     const bool cleanup_safe = start_failure_cleanup_safe(result.exit_code, result.timed_out);
-    throw RemoteStartError(
-        "remote pcie-pipeline-builder start failed (exit=" + std::to_string(result.exit_code) +
-            ", timed_out=" + (result.timed_out ? "true" : "false") + "): " + result.output,
-        cleanup_safe, cleanup_safe ? std::nullopt : launched_pid);
+    throw RemoteStartError("remote pcie-pipeline-builder start failed " +
+                               SshRunner::failure_detail(cmd, result),
+                           cleanup_safe, cleanup_safe ? std::nullopt : launched_pid);
   }
   try {
     return parse_launched_pid(result.output);
@@ -487,7 +476,7 @@ void RemoteRuntime::stop_process(const int expected_pid,
   std::ostringstream ss;
   ss << "pid=" << expected_pid << "; " << "kill -0 \"$pid\" >/dev/null 2>&1 || exit 0; "
      << "command=$(tr '\\0' '\\n' < \"/proc/$pid/cmdline\" 2>/dev/null | head -n1); "
-     << "[ \"$command\" = " << SshRunner::shell_escape(kRemoteHelper)
+     << "[ \"$command\" = " << SshRunner::shell_escape(helper_path_)
      << " ] || { echo unexpected_process; exit 19; }; "
      << "tr '\\0' '\\n' < \"/proc/$pid/cmdline\" 2>/dev/null | grep -Fx -- "
      << SshRunner::shell_escape(expected_model_path)

@@ -5,6 +5,13 @@
 #include <memory>
 #include <iterator>
 
+#ifdef _WIN32
+namespace simaai::neat::pcie::internal {
+/// Resolved through FOLDERID_ProgramData, never an environment variable.
+std::filesystem::path host_common_application_data_directory();
+} // namespace simaai::neat::pcie::internal
+#endif
+
 namespace simaai::neat::pcie::genai {
 using simaai::neat::genai::ASRTask;
 using simaai::neat::genai::GenAITask;
@@ -21,7 +28,12 @@ struct ConnectionOptions {
   std::string user = "sima";
   std::string ssh_key;
   std::string media_serve_root = "data";
+#ifdef _WIN32
+  std::filesystem::path media_directory =
+      simaai::neat::pcie::internal::host_common_application_data_directory() / "SiMa.ai" / "data";
+#else
   std::filesystem::path media_directory = "/srv/simaai/data";
+#endif
   int startup_timeout_ms = 900000;
   int request_timeout_ms = 900000;
 };

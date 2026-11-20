@@ -14,6 +14,36 @@
   ],
   "literalExceptions": [
     {
+      "path": "docs/getting-started/neat-library/pcie-host.mdx",
+      "line": "Pass `-Hosts 10.0.0.2` when discovery is unavailable. OpenSSH prompts for the",
+      "count": 1,
+      "reason": "Network address example, not a release version"
+    },
+    {
+      "path": "website/i18n/ko/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
+      "line": "이 유틸리티는 로컬 `10.0.N.1` 관리 링크에서 카드 주소를 검색합니다. 자동 검색을 사용할 수 없으면 `-Hosts 10.0.0.2`를 전달하세요. 공개 키가 아직 등록되지 않은 경우에만 OpenSSH가 카드 암호를 요청하며, 암호는 저장되지 않습니다. `.cmd` 래퍼는 자체 PowerShell 프로세스에서만 설치된 이 스크립트의 실행을 허용하며, 사용자 또는 컴퓨터의 실행 정책은 변경하지 않습니다.",
+      "count": 1,
+      "reason": "Network address example, not a release version"
+    },
+    {
+      "path": "website/i18n/ja/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
+      "line": "このユーティリティは、ローカルの`10.0.N.1`管理リンクからカードのアドレスを検出します。自動検出できない場合は、`-Hosts 10.0.0.2`を指定してください。公開鍵がまだ登録されていない場合にのみOpenSSHがカードのパスワードを要求し、パスワードは保存されません。`.cmd`ラッパーは、自身のPowerShellプロセスに限ってこのインストール済みスクリプトの実行を許可し、ユーザーやマシンの実行ポリシーは変更しません。",
+      "count": 1,
+      "reason": "Network address example, not a release version"
+    },
+    {
+      "path": "website/i18n/zh-Hant/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
+      "line": "此工具會從本機的 `10.0.N.1` 管理連線探索卡片位址。若無法自動探索，請傳入 `-Hosts 10.0.0.2`。只有在公開金鑰尚未註冊時，OpenSSH 才會提示輸入卡片密碼；工具不會儲存該密碼。`.cmd` 包裝指令碼只會在其自身的 PowerShell 程序中允許執行此已安裝的指令碼，不會變更使用者或電腦的執行原則。",
+      "count": 1,
+      "reason": "Network address example, not a release version"
+    },
+    {
+      "path": "website/i18n/uk/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
+      "line": "Програма знаходить адресу карти через локальне з'єднання керування `10.0.N.1`. Якщо автоматичне виявлення недоступне, передайте `-Hosts 10.0.0.2`. OpenSSH запитує пароль карти лише тоді, коли відкритий ключ ще не зареєстровано, і не зберігає цей пароль. Обгортка `.cmd` дозволяє виконувати цей встановлений сценарій лише у власному процесі PowerShell; вона не змінює політику виконання для користувача чи комп’ютера.",
+      "count": 1,
+      "reason": "Network address example, not a release version"
+    },
+    {
       "path": "docs/getting-started/neat-library/neat-cli.md",
       "line": "  Insight Web UI     https://10.0.0.22:9900",
       "count": 1,
@@ -62,6 +92,18 @@
       "reason": "Network address example, not a release version"
     },
     {
+      "path": "docs/getting-started/neat-library/pcie-host.mdx",
+      "line": "Test-Connection -ComputerName 10.0.0.2 -Count 1",
+      "count": 1,
+      "reason": "Network address example, not a release version"
+    },
+    {
+      "path": "docs/getting-started/neat-library/pcie-host.mdx",
+      "line": "& \"C:\\Program Files\\SimaPCIeHost\\bin\\pcie-setup.cmd\" -Hosts 10.0.0.2",
+      "count": 1,
+      "reason": "Network address example, not a release version"
+    },
+    {
       "path": "website/i18n/ko/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
       "line": "  호스트에서 접근할 수 있습니다. 카드 0의 기본 주소는 `10.0.0.2`입니다.",
       "count": 1,
@@ -76,6 +118,18 @@
     {
       "path": "website/i18n/ko/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
       "line": "pcie-setup.sh --hosts \"10.0.0.2\"",
+      "count": 1,
+      "reason": "Network address example, not a release version"
+    },
+    {
+      "path": "website/i18n/ko/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
+      "line": "Test-Connection -ComputerName 10.0.0.2 -Count 1",
+      "count": 1,
+      "reason": "Network address example, not a release version"
+    },
+    {
+      "path": "website/i18n/ko/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
+      "line": "& \"C:\\Program Files\\SimaPCIeHost\\bin\\pcie-setup.cmd\" -Hosts 10.0.0.2",
       "count": 1,
       "reason": "Network address example, not a release version"
     },
@@ -98,6 +152,18 @@
       "reason": "Network address example, not a release version"
     },
     {
+      "path": "website/i18n/ja/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
+      "line": "Test-Connection -ComputerName 10.0.0.2 -Count 1",
+      "count": 1,
+      "reason": "Network address example, not a release version"
+    },
+    {
+      "path": "website/i18n/ja/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
+      "line": "& \"C:\\Program Files\\SimaPCIeHost\\bin\\pcie-setup.cmd\" -Hosts 10.0.0.2",
+      "count": 1,
+      "reason": "Network address example, not a release version"
+    },
+    {
       "path": "website/i18n/zh-Hant/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
       "line": "  可以從主機存取。預設的卡片 0 位址為 `10.0.0.2`。",
       "count": 1,
@@ -116,6 +182,18 @@
       "reason": "Network address example, not a release version"
     },
     {
+      "path": "website/i18n/zh-Hant/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
+      "line": "Test-Connection -ComputerName 10.0.0.2 -Count 1",
+      "count": 1,
+      "reason": "Network address example, not a release version"
+    },
+    {
+      "path": "website/i18n/zh-Hant/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
+      "line": "& \"C:\\Program Files\\SimaPCIeHost\\bin\\pcie-setup.cmd\" -Hosts 10.0.0.2",
+      "count": 1,
+      "reason": "Network address example, not a release version"
+    },
+    {
       "path": "website/i18n/uk/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
       "line": "  доступний з хоста. Адреса за замовчуванням для карти 0: `10.0.0.2`.",
       "count": 1,
@@ -130,6 +208,18 @@
     {
       "path": "website/i18n/uk/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
       "line": "pcie-setup.sh --hosts \"10.0.0.2\"",
+      "count": 1,
+      "reason": "Network address example, not a release version"
+    },
+    {
+      "path": "website/i18n/uk/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
+      "line": "Test-Connection -ComputerName 10.0.0.2 -Count 1",
+      "count": 1,
+      "reason": "Network address example, not a release version"
+    },
+    {
+      "path": "website/i18n/uk/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
+      "line": "& \"C:\\Program Files\\SimaPCIeHost\\bin\\pcie-setup.cmd\" -Hosts 10.0.0.2",
       "count": 1,
       "reason": "Network address example, not a release version"
     },
@@ -426,6 +516,66 @@
       "line": "대상 호스트에 맞는 0.6.0 이상 버전을 선택하세요.",
       "count": 1,
       "reason": "Minimum supported offline package version"
+    },
+    {
+      "path": "docs/getting-started/neat-library/pcie-host.mdx",
+      "line": "- GStreamer 1.28.6 MSVC x64 (`gstreamer-1.0-msvc-x86_64-1.28.6.exe` from the",
+      "count": 1,
+      "reason": "Windows third-party prerequisite version pinned in scripts/ci/pciehost/windows_build_inputs.json, not a Neat release"
+    },
+    {
+      "path": "docs/getting-started/neat-library/pcie-host.mdx",
+      "line": "installed static library. Examples that use OpenCV also need the OpenCV 5.0.0",
+      "count": 1,
+      "reason": "Windows third-party prerequisite version pinned in scripts/ci/pciehost/windows_build_inputs.json, not a Neat release"
+    },
+    {
+      "path": "website/i18n/ko/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
+      "line": "- GStreamer 1.28.6 MSVC x64([GStreamer 다운로드 페이지](https://gstreamer.freedesktop.org/download/)의 `gstreamer-1.0-msvc-x86_64-1.28.6.exe`). C++ 애플리케이션용 개발 파일도 제공합니다.",
+      "count": 1,
+      "reason": "Windows third-party prerequisite version pinned in scripts/ci/pciehost/windows_build_inputs.json, not a Neat release"
+    },
+    {
+      "path": "website/i18n/ko/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
+      "line": "C++ 애플리케이션에는 **Desktop development with C++** 워크로드가 포함된 Visual Studio 2026이 필요합니다. Visual Studio 2022를 포함한 이전 도구 집합은 설치된 정적 라이브러리를 링크할 수 없습니다. OpenCV를 사용하는 예제에는 [opencv.org](https://opencv.org/releases/)의 OpenCV 5.0.0 Windows 패키지도 필요합니다. 패키지는 Release 구성만 제공합니다. **x64 Native Tools Command Prompt for VS 2026**에서 빌드하고 실행하세요.",
+      "count": 1,
+      "reason": "Windows third-party prerequisite version pinned in scripts/ci/pciehost/windows_build_inputs.json, not a Neat release"
+    },
+    {
+      "path": "website/i18n/ja/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
+      "line": "- GStreamer 1.28.6 MSVC x64（[GStreamerのダウンロードページ](https://gstreamer.freedesktop.org/download/)の`gstreamer-1.0-msvc-x86_64-1.28.6.exe`）。C++アプリケーション用の開発ファイルも提供します。",
+      "count": 1,
+      "reason": "Windows third-party prerequisite version pinned in scripts/ci/pciehost/windows_build_inputs.json, not a Neat release"
+    },
+    {
+      "path": "website/i18n/ja/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
+      "line": "C++アプリケーションには、**Desktop development with C++**ワークロードを含むVisual Studio 2026が必要です。Visual Studio 2022を含む古いツールセットでは、インストール済みの静的ライブラリをリンクできません。OpenCVを使用する例には、[opencv.org](https://opencv.org/releases/)のOpenCV 5.0.0 Windowsパッケージも必要です。パッケージが提供するのはReleaseビルド構成のみです。**x64 Native Tools Command Prompt for VS 2026**でビルドして実行します。",
+      "count": 1,
+      "reason": "Windows third-party prerequisite version pinned in scripts/ci/pciehost/windows_build_inputs.json, not a Neat release"
+    },
+    {
+      "path": "website/i18n/zh-Hant/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
+      "line": "- GStreamer 1.28.6 MSVC x64（[GStreamer 下載頁面](https://gstreamer.freedesktop.org/download/)上的 `gstreamer-1.0-msvc-x86_64-1.28.6.exe`）。它也提供 C++ 應用程式所需的開發檔案。",
+      "count": 1,
+      "reason": "Windows third-party prerequisite version pinned in scripts/ci/pciehost/windows_build_inputs.json, not a Neat release"
+    },
+    {
+      "path": "website/i18n/zh-Hant/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
+      "line": "C++ 應用程式需要安裝 **Desktop development with C++** 工作負載的 Visual Studio 2026。包括 Visual Studio 2022 在內的較舊工具組無法連結已安裝的靜態程式庫。使用 OpenCV 的範例也需要 [opencv.org](https://opencv.org/releases/) 提供的 OpenCV 5.0.0 Windows 套件。此套件只提供 Release 組態。請在 **x64 Native Tools Command Prompt for VS 2026** 中建置並執行：",
+      "count": 1,
+      "reason": "Windows third-party prerequisite version pinned in scripts/ci/pciehost/windows_build_inputs.json, not a Neat release"
+    },
+    {
+      "path": "website/i18n/uk/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
+      "line": "- GStreamer 1.28.6 MSVC x64 (`gstreamer-1.0-msvc-x86_64-1.28.6.exe` зі [сторінки завантаження GStreamer](https://gstreamer.freedesktop.org/download/)). Він також надає файли для розроблення застосунків C++;",
+      "count": 1,
+      "reason": "Windows third-party prerequisite version pinned in scripts/ci/pciehost/windows_build_inputs.json, not a Neat release"
+    },
+    {
+      "path": "website/i18n/uk/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
+      "line": "Для застосунків C++ потрібна Visual Studio 2026 із робочим навантаженням **Desktop development with C++**. Старіші набори інструментів, зокрема Visual Studio 2022, не можуть скомпонувати встановлену статичну бібліотеку. Прикладам, що використовують OpenCV, також потрібен пакет OpenCV 5.0.0 для Windows з [opencv.org](https://opencv.org/releases/). Пакет надає лише конфігурацію Release. Збирайте й запускайте в **x64 Native Tools Command Prompt for VS 2026**:",
+      "count": 1,
+      "reason": "Windows third-party prerequisite version pinned in scripts/ci/pciehost/windows_build_inputs.json, not a Neat release"
     },
     {
       "path": "website/i18n/ko/docusaurus-plugin-content-docs/current/getting-started/neat-library/install-or-update.mdx",

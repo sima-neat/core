@@ -273,6 +273,68 @@ def test_validation_build_does_not_reuse_or_publish(tmp_path):
     assert (args.work/ci.assemble.ARCHIVE_NAME).is_file()
 
 
+def test_same_run_core_dist_replaces_publication_downloads(tmp_path):
+    import json
+    local = tmp_path/'neat-core-dist'
+    local.mkdir()
+    data = metadata()
+    data['resources-checksum'] = {}
+    resources = {'sima-neat.deb': b'deb', 'platform-source.json': b'{}'}
+    for name, content in resources.items():
+        (local/name).write_bytes(content)
+        data['resources-checksum'][name] = ci.assemble.sha(local/name)
+    (local/'core-Linux-extras.tar.gz').write_bytes(b'extras')
+    data['selectable-resources'] = [{'resource': 'core-Linux-extras.tar.gz',
+                                     'checksum': ci.assemble.sha(local/'core-Linux-extras.tar.gz')}]
+    (local/'metadata.json').write_text(json.dumps(data))
+    args = SimpleNamespace(work=tmp_path/'work', ref='develop', sha=SHA, bucket='bucket',
+                           distro=None, arch=None, core=True, installer_revision=SHA,
+                           run_id=123, validation_only=True, local_core_dist=local)
+
+    def assemble(spec, root):
+        assert set(spec['targets']) == {'card'} and spec['scope'] == 'core'
+        for name in ci.metadata_names(args):
+            (root.parent/name).write_text('{}')
+
+    with patch.object(ci, 'download') as download, \
+         patch.object(ci, 'metadata_identity'), \
+         patch.object(ci, 'pull_baseline', return_value='sha256:' + 'd' * 64), \
+         patch.object(ci, 'baseline_config', return_value={'card': {'os_id': 'elxr', 'os_version': '26.04'}}), \
+         patch.object(ci, 'put') as put, \
+         patch.object(ci.assemble, 'verify_publication'), \
+         patch.object(ci.assemble, 'assemble', side_effect=assemble):
+        ci.build(args)
+    # Every publication file came from the local dist; no bucket object was read or written.
+    download.assert_not_called()
+    put.assert_not_called()
+    publication = args.work/'card-publication'
+    for name, content in resources.items():
+        assert (publication/name).read_bytes() == content
+    assert (publication/'core-Linux-extras.tar.gz').read_bytes() == b'extras'
+    written = json.loads((args.work/'metadata.json').read_text())
+    assert written['source_metadata_sha256'] == {'card': ci.assemble.sha(local/'metadata.json')}
+
+    (local/'sima-neat.deb').write_bytes(b'changed')
+    args.work = tmp_path/'changed'
+    with patch.object(ci, 'metadata_identity'), \
+         patch.object(ci.assemble, 'verify_publication'), \
+         pytest.raises(ValueError, match='checksum differs: sima-neat.deb'):
+        ci.build(args)
+
+
+@pytest.mark.parametrize('argv', [
+    ['build', '--validation-only'],
+    ['build', '--core'],
+    ['publish', '--core', '--validation-only'],
+])
+def test_same_run_core_dist_requires_core_validation_build(argv, tmp_path, capsys):
+    common = ['--bucket', 'b', '--ref', 'develop', '--sha', SHA, '--work', str(tmp_path / 'w'),
+              '--installer-revision', SHA, '--local-core-dist', str(tmp_path)]
+    with patch.object(sys, 'argv', ['ci.py', *argv, *common]), pytest.raises(SystemExit):
+        ci.main()
+    assert '--local-core-dist requires build --core --validation-only' in capsys.readouterr().err
+
+
 @pytest.mark.parametrize('status', ['queued', 'in_progress', 'waiting', 'pending'])
 def test_validation_can_use_ready_publications_while_other_tests_run(status):
     run = source('codex/offline-pcie-discovery')

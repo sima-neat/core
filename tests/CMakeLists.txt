@@ -53,6 +53,14 @@ simaneat_add_test(NAME unit_missing_fused_operation_test COMMAND unit_missing_fu
 set_tests_properties(unit_missing_fused_operation_test PROPERTIES
   TIMEOUT 30 LABELS "strict;unit;contracts")
 
+add_executable(unit_pcie_pipeline_lifecycle_test
+  unit_testing/unit_pcie_pipeline_lifecycle_test.cpp)
+target_include_directories(unit_pcie_pipeline_lifecycle_test PRIVATE ${PROJECT_SOURCE_DIR})
+simaneat_add_test(NAME unit_pcie_pipeline_lifecycle_test
+  COMMAND unit_pcie_pipeline_lifecycle_test)
+set_tests_properties(unit_pcie_pipeline_lifecycle_test PROPERTIES
+  TIMEOUT 10 LABELS "strict;unit;pcie;lifecycle")
+
 add_executable(unit_boxdecode_publication_test
   unit_testing/unit_boxdecode_publication_test.cpp
   ${PROJECT_SOURCE_DIR}/src/pipeline/internal/sima/BoxDecodePublication.cpp)

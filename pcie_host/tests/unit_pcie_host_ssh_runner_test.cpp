@@ -1,9 +1,23 @@
+#include "HostPlatform.h"
 #include "SshRunner.h"
 #include "RemoteRuntime.h"
 
+#include <algorithm>
+#include <array>
 #include <chrono>
 #include <iostream>
 #include <stdexcept>
+#include <string_view>
+#include <thread>
+#include <vector>
+
+#ifdef _WIN32
+#include <fstream>
+#include <optional>
+
+#define NOMINMAX
+#include <windows.h>
+#endif
 
 namespace pcie_internal = simaai::neat::pcie::internal;
 
@@ -16,6 +30,7 @@ void require(const bool condition, const std::string& message) {
 }
 
 void test_child_cleanup_shell() {
+#ifndef _WIN32
   const std::string cleanup = pcie_internal::RemoteRuntime::child_cleanup_shell_function();
   const auto normal = pcie_internal::SshRunner::run(
       {"/bin/bash", "-c",
@@ -44,6 +59,173 @@ void test_child_cleanup_shell() {
       5);
   require(preserves_owner.exit_code == 0 && !preserves_owner.timed_out,
           "launched-child cleanup affected the existing owner");
+#endif
+}
+
+void test_detached_child_redirections() {
+  const std::string redirections = pcie_internal::RemoteRuntime::detached_child_redirections();
+  require(redirections.find("9>&-") != std::string::npos,
+          "detached worker must close the launch lock descriptor");
+  require(redirections.find("</dev/null") != std::string::npos,
+          "detached worker must not inherit the SSH channel stdin");
+  require(redirections.find(">/dev/null 2>&1") != std::string::npos,
+          "detached worker must not inherit the SSH channel output streams");
+  require(redirections.find(" & ") != std::string::npos,
+          "detached worker must be launched in the background");
+}
+
+void test_command_runner(const std::string& executable) {
+  const auto ok = pcie_internal::SshRunner::run({executable, "--emit", "hello"}, 2);
+  require(ok.exit_code == 0 && ok.output == "hello\n", "expected child output capture");
+
+  const auto bad = pcie_internal::SshRunner::run({executable, "--exit", "7"}, 2);
+  require(bad.exit_code == 7, "expected child exit code 7");
+  // A command that fails without output still names its exit code and executable.
+  require(pcie_internal::SshRunner::failure_detail({executable, "--exit", "7"}, bad) ==
+              "(exit=7, timed_out=false): " + executable + " printed no output",
+          "silent command failure was not described");
+  require(pcie_internal::SshRunner::failure_detail({executable}, ok) ==
+              "(exit=0, timed_out=false): hello\n",
+          "command output was not kept in the failure detail");
+
+  const auto round_trip = pcie_internal::SshRunner::run(
+      {executable, "--echo-args", "two words", "quote\"inside", "C:\\path with space\\"}, 2);
+  require(round_trip.exit_code == 0 &&
+              round_trip.output == "ARG=two words\nARG=quote\"inside\nARG=C:\\path with space\\\n",
+          "command arguments did not round-trip exactly: " + round_trip.output);
+
+  const auto flood = pcie_internal::SshRunner::run({executable, "--emit-bytes", "131072"}, 2);
+  require(flood.exit_code == 0 && flood.output.size() == 131072 &&
+              std::all_of(flood.output.begin(), flood.output.end(),
+                          [](const char byte) { return byte == 'x'; }),
+          "large child output was truncated or corrupted");
+
+  const auto timed = pcie_internal::SshRunner::run_for({executable, "--sleep-ms", "2000"},
+                                                       std::chrono::milliseconds(50));
+  require(timed.timed_out && timed.exit_code == 124,
+          "expected bounded command timeout and timeout exit code");
+}
+
+#ifdef _WIN32
+std::optional<std::string> environment_variable(const char* name) {
+  const DWORD size = GetEnvironmentVariableA(name, nullptr, 0);
+  if (size == 0) {
+    return std::nullopt;
+  }
+  std::string value(size, '\0');
+  value.resize(GetEnvironmentVariableA(name, value.data(), size));
+  return value;
+}
+
+class ScopedEnvironmentVariable {
+public:
+  ScopedEnvironmentVariable(const char* name, const char* value)
+      : name_(name), previous_(environment_variable(name)) {
+    require(SetEnvironmentVariableA(name, value) != FALSE, std::string("could not set ") + name);
+  }
+  ~ScopedEnvironmentVariable() {
+    SetEnvironmentVariableA(name_, previous_ ? previous_->c_str() : nullptr);
+  }
+  ScopedEnvironmentVariable(const ScopedEnvironmentVariable&) = delete;
+  ScopedEnvironmentVariable& operator=(const ScopedEnvironmentVariable&) = delete;
+
+private:
+  const char* name_;
+  std::optional<std::string> previous_;
+};
+
+// A non-terminal Windows OpenSSH server session gives every descendant this
+// variable; ssh.exe children that inherit it never exit after printing.
+void test_child_environment_omits_openssh_fd_state(const std::string& executable) {
+  constexpr const char* openssh_fd_state = "c28fc6f98a2c44abbbd89d6a3037d0d9_POSIX_FD_STATE";
+  constexpr const char* ordinary = "SIMA_NEAT_PCIE_RUNNER_TEST_INHERITED";
+  const ScopedEnvironmentVariable fd_state(openssh_fd_state, "AAAAAAICAgA=");
+  const ScopedEnvironmentVariable inherited(ordinary, "kept");
+
+  const auto child =
+      pcie_internal::SshRunner::run({executable, "--print-env", openssh_fd_state, ordinary}, 2);
+  require(child.exit_code == 0 && !child.timed_out &&
+              child.output == std::string(openssh_fd_state) + " unset\n" + ordinary + "=kept\n",
+          "child environment must omit the OpenSSH descriptor state and keep the rest: " +
+              child.output);
+  require(environment_variable(openssh_fd_state) == "AAAAAAICAgA=",
+          "runner must not change the parent process environment");
+}
+
+// OpenSSH outside System32\OpenSSH (e.g. C:\Program Files\OpenSSH) is found through PATH and
+// returned as a full path; a bare name would make CreateProcessW use the current directory.
+void test_open_ssh_executable_searches_path() {
+  pcie_internal::ScopedTempDirectory directory("sima-neat-pcie-path-test");
+  const auto tool = directory.path() / "sima-neat-path-probe.exe";
+  std::ofstream(tool).put('\0');
+  const auto path = "relative;" + pcie_internal::host_path_string(directory.path());
+  const ScopedEnvironmentVariable scoped_path("PATH", path.c_str());
+  require(pcie_internal::open_ssh_executable("sima-neat-path-probe") ==
+              pcie_internal::host_path_string(tool),
+          "OpenSSH lookup did not return the full PATH match");
+  require(pcie_internal::open_ssh_executable("sima-neat-missing-probe") ==
+              "sima-neat-missing-probe.exe",
+          "OpenSSH lookup changed the not-found result");
+}
+#endif
+
+void test_windows_argument_quoting() {
+  using Runner = pcie_internal::SshRunner;
+  require(Runner::windows_quote_argument("plain") == "plain", "plain argument was quoted");
+  require(Runner::windows_quote_argument("") == "\"\"", "empty argument quoting mismatch");
+  require(Runner::windows_quote_argument("two words") == "\"two words\"",
+          "spaced argument quoting mismatch");
+  require(Runner::windows_quote_argument("quote\"inside") == "\"quote\\\"inside\"",
+          "embedded quote escaping mismatch");
+  require(Runner::windows_quote_argument("C:\\path with space\\") == "\"C:\\path with space\\\\\"",
+          "trailing backslash escaping mismatch");
+}
+
+void test_host_platform() {
+  require(pcie_internal::host_process_id() > 0, "host process ID must be positive");
+  std::array<unsigned char, 32> random{};
+  pcie_internal::host_secure_random(random.data(), random.size());
+  require(std::any_of(random.begin(), random.end(), [](const unsigned char byte) { return byte; }),
+          "secure host randomness unexpectedly returned only zero bytes");
+  require(pcie_internal::host_path_string(std::filesystem::path("path") / "file") ==
+              (std::filesystem::path("path") / "file").string(),
+          "host path conversion changed an ASCII path");
+  const std::string unicode_path = "customer models \xCE\xB4/model archive.tar.gz";
+  require(pcie_internal::host_path_string(pcie_internal::host_path_from_string(unicode_path)) ==
+              unicode_path,
+          "host path conversion did not preserve a UTF-8 path");
+#ifdef _WIN32
+  require(pcie_internal::same_host_path("c:\\Media Root", "C:\\media root"),
+          "Windows path comparison must ignore case");
+#else
+  require(!pcie_internal::same_host_path("/media/root", "/Media/Root"),
+          "POSIX path comparison must keep case");
+#endif
+#ifdef _WIN32
+  const auto ssh = pcie_internal::open_ssh_executable("ssh");
+  require(ssh.size() >= std::string("ssh.exe").size() &&
+              ssh.substr(ssh.size() - std::string("ssh.exe").size()) == "ssh.exe",
+          "Windows OpenSSH command must name ssh.exe");
+#else
+  require(pcie_internal::open_ssh_executable("ssh") == "ssh", "POSIX OpenSSH command name changed");
+#endif
+  std::filesystem::path first_path;
+  {
+    pcie_internal::ScopedTempDirectory first("sima-neat-pcie-platform-test");
+    pcie_internal::ScopedTempDirectory second("sima-neat-pcie-platform-test");
+    first_path = first.path();
+    require(first.path() != second.path() && std::filesystem::is_directory(first.path()) &&
+                std::filesystem::is_directory(second.path()),
+            "temporary directories must be distinct and exist for their scoped lifetime");
+#ifndef _WIN32
+    const auto permissions = std::filesystem::status(first.path()).permissions();
+    require((permissions & (std::filesystem::perms::group_all |
+                            std::filesystem::perms::others_all)) == std::filesystem::perms::none,
+            "temporary directory must not grant group or other access");
+#endif
+  }
+  require(!std::filesystem::exists(first_path),
+          "temporary directory must be removed at the end of its scoped lifetime");
 }
 
 void test_start_failure_cleanup_classification() {
@@ -63,27 +245,98 @@ void test_start_failure_cleanup_classification() {
           "remote start failure did not preserve its launched PID");
 }
 
+void test_remote_runtime_paths() {
+  simaai::neat::pcie::ConnectionOptions connection;
+  connection.card_env = "SIMA_NEAT_PCIE_HELPER_PATH=/home/sima/neat/bin/pcie-pipeline-builder "
+                        "SIMA_NEAT_PCIE_RUN_DIR=/home/sima/neat/run "
+                        "SIMA_NEAT_PCIE_LOG_DIR=/home/sima/neat/log";
+  const pcie_internal::RemoteRuntime runtime(connection);
+  require(runtime.helper_path() == "/home/sima/neat/bin/pcie-pipeline-builder",
+          "custom remote helper path was not retained");
+  require(runtime.pid_path(3) == "/home/sima/neat/run/q3.pid",
+          "custom remote PID path was not retained");
+  require(runtime.status_path(3) == "/home/sima/neat/run/q3.status",
+          "custom remote status path was not retained");
+
+  for (const std::string card_env : {"SIMA_NEAT_PCIE_RUN_DIR=relative/path",
+                                     "SIMA_NEAT_PCIE_HELPER_PATH=/opt/neat/bin/worker"}) {
+    simaai::neat::pcie::ConnectionOptions invalid;
+    invalid.card_env = card_env;
+    bool rejected = false;
+    try {
+      (void)pcie_internal::RemoteRuntime(invalid);
+    } catch (const std::invalid_argument&) {
+      rejected = true;
+    }
+    require(rejected, "invalid remote runtime path was accepted: " + card_env);
+  }
+}
+
+bool has_ssh_option(const std::vector<std::string>& command, const std::string& option) {
+  for (std::size_t index = 1; index < command.size(); ++index) {
+    if (command[index - 1] == "-o" && command[index] == option) {
+      return true;
+    }
+  }
+  return false;
+}
+
+void test_remote_transport_requires_known_host_keys() {
+  const pcie_internal::RemoteRuntime runtime(simaai::neat::pcie::ConnectionOptions{});
+  require(has_ssh_option(runtime.ssh_base(), "StrictHostKeyChecking=yes") &&
+              has_ssh_option(runtime.scp_base(), "StrictHostKeyChecking=yes"),
+          "tensor ssh and scp must refuse an unknown card host key");
+  require(has_ssh_option(runtime.ssh_base(), "BatchMode=yes") &&
+              has_ssh_option(runtime.scp_base(), "BatchMode=yes"),
+          "tensor ssh and scp must fail instead of waiting on a hidden prompt");
+}
+
 } // namespace
 
-int main() {
+int main(const int argc, char** argv) {
+  if (argc >= 2 && std::string_view(argv[1]) == "--emit" && argc == 3) {
+    std::cout << argv[2] << "\n";
+    return 0;
+  }
+  if (argc >= 2 && std::string_view(argv[1]) == "--exit" && argc == 3) {
+    return std::stoi(argv[2]);
+  }
+  if (argc >= 2 && std::string_view(argv[1]) == "--echo-args") {
+    for (int index = 2; index < argc; ++index) {
+      std::cout << "ARG=" << argv[index] << "\n";
+    }
+    return 0;
+  }
+  if (argc >= 2 && std::string_view(argv[1]) == "--emit-bytes" && argc == 3) {
+    std::cout << std::string(static_cast<std::size_t>(std::stoul(argv[2])), 'x');
+    return 0;
+  }
+  if (argc >= 2 && std::string_view(argv[1]) == "--sleep-ms" && argc == 3) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(std::stoi(argv[2])));
+    return 0;
+  }
+#ifdef _WIN32
+  if (argc >= 2 && std::string_view(argv[1]) == "--print-env") {
+    for (int index = 2; index < argc; ++index) {
+      const auto value = environment_variable(argv[index]);
+      std::cout << argv[index] << (value ? "=" + *value : std::string(" unset")) << "\n";
+    }
+    return 0;
+  }
+#endif
+
   try {
     const std::string escaped = pcie_internal::SshRunner::shell_escape("ab'cd");
     if (escaped != "'ab'\\''cd'") {
       throw std::runtime_error("shell escape mismatch");
     }
-    const auto ok = pcie_internal::SshRunner::run({"/bin/sh", "-c", "echo hello"}, 2);
-    if (ok.exit_code != 0 || ok.output.find("hello") == std::string::npos) {
-      throw std::runtime_error("expected echo command to succeed");
-    }
-    const auto bad = pcie_internal::SshRunner::run({"/bin/sh", "-c", "exit 7"}, 2);
-    if (bad.exit_code != 7) {
-      throw std::runtime_error("expected exit code 7");
-    }
-    const auto timed =
-        pcie_internal::SshRunner::run_for({"/bin/sleep", "2"}, std::chrono::milliseconds(50));
-    if (!timed.timed_out) {
-      throw std::runtime_error("expected millisecond command timeout");
-    }
+    test_windows_argument_quoting();
+    test_host_platform();
+    test_command_runner(argv[0]);
+#ifdef _WIN32
+    test_child_environment_omits_openssh_fd_state(argv[0]);
+    test_open_ssh_executable_searches_path();
+#endif
     const std::string first =
         pcie_internal::RemoteRuntime::unique_remote_upload_path("/first/model.tar.gz");
     const std::string second =
@@ -97,6 +350,13 @@ int main() {
     }
     if (!pcie_internal::RemoteRuntime::is_managed_upload_path(first)) {
       throw std::runtime_error("generated remote upload path must be managed");
+    }
+    // Host paths are UTF-8 on every platform, including a non-ASCII Windows profile.
+    const std::string unicode_leaf = "model \xCE\xB4.tar.gz";
+    const std::string unicode = pcie_internal::RemoteRuntime::unique_remote_upload_path(
+        "/customer models \xCE\xB4/" + unicode_leaf);
+    if (unicode.rfind("-" + unicode_leaf) != unicode.size() - unicode_leaf.size() - 1) {
+      throw std::runtime_error("remote upload path did not preserve a UTF-8 leaf: " + unicode);
     }
     const int launched_pid = pcie_internal::RemoteRuntime::parse_launched_pid(
         "Warning: known host added\nlaunched_pid=12345\n");
@@ -125,7 +385,10 @@ int main() {
       }
     }
     test_child_cleanup_shell();
+    test_detached_child_redirections();
     test_start_failure_cleanup_classification();
+    test_remote_runtime_paths();
+    test_remote_transport_requires_known_host_keys();
     std::cout << "[PASS] ssh runner\n";
     return 0;
   } catch (const std::exception& e) {

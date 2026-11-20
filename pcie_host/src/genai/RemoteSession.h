@@ -15,6 +15,7 @@ public:
 private:
   std::vector<std::string> ssh(const std::string& script) const;
   std::string id_;
+  std::string card_environment_;
   ConnectionOptions options_;
   bool launched_ = false;
 };

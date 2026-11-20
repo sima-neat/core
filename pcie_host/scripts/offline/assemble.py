@@ -186,7 +186,7 @@ def assemble(spec, output):
         shutil.copyfile(HERE.parent/'pcie-setup.sh', output/'pcie-setup.sh')
         for name in ('install.py', 'discover.py', 'INSTALL.md'):
             shutil.copyfile(HERE / name, output / name)
-    files = {str(p.relative_to(output)): sha(p) for p in sorted(output.rglob('*')) if p.is_file()}
+    files = {p.relative_to(output).as_posix(): sha(p) for p in sorted(output.rglob('*')) if p.is_file()}
     (output / 'bundle.json').write_text(json.dumps({
         'schema_version': 1, 'core_revision': revisions[0], 'files': files,
         'installer_revision': spec.get('installer_revision', revisions[0]),
@@ -321,7 +321,7 @@ def verify_bundle(root, target=None):
     data = json.loads((root / 'bundle.json').read_text())
     if any(p.is_symlink() for p in root.rglob('*')):
         raise ValueError('bundle symlinks are forbidden')
-    actual = {str(p.relative_to(root)) for p in root.rglob('*') if p.is_file()} - {'bundle.json'}
+    actual = {p.relative_to(root).as_posix() for p in root.rglob('*') if p.is_file()} - {'bundle.json'}
     expected = {name: digest for name, digest in data['files'].items()
                 if target is None or name.startswith(target + '/') or '/' not in name}
     # A card transfer omits host files and the host-only discovery/coordinator.

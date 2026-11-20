@@ -6,8 +6,9 @@ from the regular Neat Library, so SDK headers and examples can describe a differ
 ## Preferred Order
 
 1. Installed C++ header for the selected API:
-   - `pcie::Model`: `/usr/include/simaai/neat/pcie/Model.h`
-   - GenAI: `/usr/include/simaai/neat/pcie/genai/GenAIModel.h`
+   - Linux `pcie::Model`: `/usr/include/simaai/neat/pcie/Model.h`
+   - Linux GenAI: `/usr/include/simaai/neat/pcie/genai/GenAIModel.h`
+   - Windows `pcie::Model`: `<install-root>\include\simaai\neat\pcie\Model.h`
 2. Installed Python module in the selected Python environment:
    `pyneatpcie`
 3. Packaged PCIe tutorials, when the PCIe extras bundle is available:
@@ -49,6 +50,22 @@ test -r /usr/include/simaai/neat/pcie/Model.h
 rg -n "^(struct|class|enum class|using) " /usr/include/simaai/neat/pcie/Model.h
 ```
 
+On Windows, inspect the installed header in PowerShell:
+
+```powershell
+$root = "C:\Program Files\SimaPCIeHost"
+Test-Path "$root\include\simaai\neat\pcie\Model.h"
+Select-String -Path "$root\include\simaai\neat\pcie\Model.h" -Pattern "class Model"
+```
+
+For a newly installed host, run the package doctor and provision card SSH before
+building a model:
+
+```powershell
+& "$root\bin\sima-pcie-host-doctor.cmd"
+& "$root\bin\pcie-setup.cmd"
+```
+
 For Python, use the interpreter that owns the installed wheel. The PCIe package installer uses
 `~/pyneatpcie/bin/python` by default when Python support is requested:
 
@@ -57,7 +74,15 @@ For Python, use the interpreter that owns the installed wheel. The PCIe package 
   'import pyneatpcie as p; print(p.__version__); print(p.Model); print(p.Tensor)'
 ```
 
-For GenAI, inspect `genai/GenAIModel.h` instead and import `pyneatpcie.genai`.
+On Windows, use the interpreter in the venv where the wheel was installed:
+
+```powershell
+.\pyneatpcie\Scripts\python.exe -c "import pyneatpcie as p; print(p.__version__, p.Model, p.Tensor)"
+```
+
+For GenAI, inspect `genai/GenAIModel.h` and import `pyneatpcie.genai`. On Windows, the transport
+also depends on the matching Platform service in `SiMaPCIe.dll`; do not treat importable symbols
+alone as connected-card support.
 Older installed releases may not include GenAI; do not silently substitute local Core APIs.
 
 Nanobind callables do not always expose useful `inspect.signature()` output. Prefer `help()`,

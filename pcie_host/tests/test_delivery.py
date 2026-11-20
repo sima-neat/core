@@ -15,11 +15,117 @@ from unittest.mock import Mock, patch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'scripts'))
+sys.path.insert(0, str(ROOT.parent / 'tools/ci'))
 import pcie_delivery as delivery
 spec = importlib.util.spec_from_file_location('native_acquisition', ROOT / 'scripts/acquire_scheduler.py')
 acquisition = importlib.util.module_from_spec(spec); spec.loader.exec_module(acquisition)
+spec = importlib.util.spec_from_file_location(
+    'client_acquisition', ROOT.parent / 'tools/ci/acquire_scheduler.py')
+client_acquisition = importlib.util.module_from_spec(spec); spec.loader.exec_module(client_acquisition)
 spec = importlib.util.spec_from_file_location('native_publication', ROOT / 'scripts/verify_published.py')
 publication = importlib.util.module_from_spec(spec); spec.loader.exec_module(publication)
+
+
+
+def write_local_candidate(source, commit, host_changes, metadata_commit, checksum):
+    """Write a two-resource local Scheduler candidate; checksum None hashes the files."""
+    source.mkdir()
+    (source / 'host-candidate.json').write_text(json.dumps({
+        'schema_version': 2, 'profile': 'pcie-host', 'distro': 'ubuntu24',
+        'architecture': 'amd64', 'source_commit': commit, **host_changes}))
+    (source / 'native_artifacts.py').write_text('# admitted provider seam\n')
+    names = ['host-candidate.json', 'native_artifacts.py']
+    (source / 'metadata.json').write_text(json.dumps({
+        'repository': 'sima-neat/scheduler', 'branch': 'feature/native',
+        'commit': metadata_commit,
+        'artifact': {'profile': 'pcie-host', 'distro': 'ubuntu24', 'architecture': 'amd64'},
+        'resources': names,
+        'resources-checksum': {
+            name: checksum or acquisition.file_digest(source / name) for name in names}}))
+
+class SchedulerRunCandidate(unittest.TestCase):
+    commit = 'a' * 40
+
+    def candidate(self, root):
+        candidate = root / 'download'; candidate.mkdir()
+        resources = {}
+        for name, value in {
+                'client_bootstrap.py': b'# exact downloaded bootstrap\n',
+                'metadata.json': b'{}\n',
+                'scheduler.deb': b'exact downloaded package'}.items():
+            path = candidate / name; path.write_bytes(value)
+            resources[name] = {
+                'sha256': client_acquisition.digest(path), 'size': path.stat().st_size}
+        (candidate / 'candidate.json').write_text(json.dumps({
+            'schema_version': 1, 'component': 'scheduler', 'source_commit': self.commit,
+            'qualified': False, 'resources': resources}))
+        return candidate
+
+    def test_exact_actions_candidate_is_copied_before_bootstrap_execution(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp); candidate = self.candidate(root); staged = root / 'staged'
+            receipt = client_acquisition.stage_run_candidate(
+                candidate, staged, self.commit, 'feature/windows')
+            self.assertEqual(receipt['commit'], self.commit)
+            self.assertEqual(receipt['branch'], 'feature/windows')
+            self.assertEqual(set(receipt['resources']), {
+                'client_bootstrap.py', 'metadata.json', 'scheduler.deb'})
+            self.assertEqual((staged / 'scheduler.deb').read_bytes(),
+                             (candidate / 'scheduler.deb').read_bytes())
+
+    def test_exact_actions_candidate_fails_closed_on_identity_and_inventory_drift(self):
+        for mutation, error in (
+                ('wrong-commit', 'identity differs'),
+                ('missing', 'undeclared resources'),
+                ('undeclared', 'undeclared resources'),
+                ('tampered', 'resource changed'),
+                ('same-size-tampered', 'resource changed'),
+                ('symlink', 'invalid or excessive entries'),
+                ('qualified', 'identity differs'),
+                ('component', 'identity differs'),
+                ('schema_version', 'identity differs')):
+            with self.subTest(mutation=mutation), tempfile.TemporaryDirectory() as temp:
+                root = Path(temp); candidate = self.candidate(root)
+                identity = {'wrong-commit': ('source_commit', 'b' * 40), 'qualified': ('qualified', True),
+                            'component': ('component', 'runner'), 'schema_version': ('schema_version', 2)}
+                if mutation in identity:
+                    data = json.loads((candidate / 'candidate.json').read_text())
+                    data[identity[mutation][0]] = identity[mutation][1]
+                    (candidate / 'candidate.json').write_text(json.dumps(data))
+                elif mutation == 'missing':
+                    (candidate / 'scheduler.deb').unlink()
+                elif mutation == 'undeclared':
+                    (candidate / 'extra').write_text('not admitted')
+                elif mutation == 'same-size-tampered':
+                    (candidate / 'scheduler.deb').write_bytes(b'EXACT downloaded package')
+                elif mutation == 'symlink':
+                    # Identical bytes outside the candidate: only the link itself is wrong.
+                    outside = root / 'outside.deb'
+                    outside.write_bytes((candidate / 'scheduler.deb').read_bytes())
+                    (candidate / 'scheduler.deb').unlink()
+                    (candidate / 'scheduler.deb').symlink_to(outside)
+                else:
+                    (candidate / 'scheduler.deb').write_text('changed')
+                with self.assertRaisesRegex(ValueError, error):
+                    client_acquisition.stage_run_candidate(
+                        candidate, root / 'staged', self.commit, 'feature/windows')
+                self.assertFalse((root / 'staged').exists())
+
+    def test_exact_actions_candidate_enforces_resource_and_size_bounds(self):
+        for bound, value, error in (
+                ('MAX_CANDIDATE_BYTES', 1, 'size bound'),
+                ('MAX_RESOURCE_BYTES', 1, 'size bound'),
+                ('MAX_CANDIDATE_RESOURCES', 2, 'invalid or excessive entries')):
+            with self.subTest(bound=bound), tempfile.TemporaryDirectory() as temp:
+                root = Path(temp); candidate = self.candidate(root)
+                with patch.object(client_acquisition, bound, value), \
+                     patch.object(client_acquisition, 'digest') as hasher, \
+                     patch.object(client_acquisition.shutil, 'copy2') as copier:
+                    with self.assertRaisesRegex(ValueError, error):
+                        client_acquisition.stage_run_candidate(
+                            candidate, root / 'staged', self.commit, 'feature/windows')
+                    hasher.assert_not_called()
+                    copier.assert_not_called()
 
 
 class PublicationInventory(unittest.TestCase):
@@ -309,6 +415,7 @@ esac
 set -euo pipefail
 MAKE_DEB=ON; HOST_DISTRO=ubuntu24; DEB_ARCH=amd64
 SCHEDULER_SPEC=latest; SCHEDULER_ENVIRONMENT=production; SCHEDULER_CANDIDATE=''
+SCHEDULER_COMMIT=''
 current_core_branch() { printf 'feature/native'; }
 run_privileged() { echo 'unexpected privileged installation' >&2; exit 99; }
 python3() {
@@ -326,6 +433,37 @@ GENAI_CMAKE_ARGS=()
                                     check=True, capture_output=True)
             self.assertEqual(result.stdout.splitlines(), [
                 f'-DSimaScheduler_DIR={scheduler_dir}', '-DSIMAPCIE_SCHEDULER_PACKAGE_VERSION=1.2.3'])
+
+    def test_native_local_candidate_requires_external_commit_and_tuple(self):
+        commit = 'a' * 40
+        for mutation, error in (
+                ('metadata-commit', 'Invalid local Scheduler publication'),
+                ('host-commit', 'host candidate identity differs'),
+                ('host-architecture', 'host candidate identity differs')):
+            with self.subTest(mutation=mutation), tempfile.TemporaryDirectory() as temp:
+                root = Path(temp); source = root / 'candidate'
+                host = {'source_commit': 'b' * 40} if mutation == 'host-commit' else (
+                    {'architecture': 'arm64'} if mutation == 'host-architecture' else {})
+                write_local_candidate(
+                    source, commit, host,
+                    'b' * 40 if mutation == 'metadata-commit' else commit, None)
+                with self.assertRaisesRegex(ValueError, error):
+                    acquisition.local_candidate(
+                        source, root / 'staged', commit, 'ubuntu24', 'amd64')
+
+    def test_native_local_candidate_rejects_size_before_hash_or_copy(self):
+        commit = 'a' * 40
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp); source = root / 'candidate'
+            write_local_candidate(source, commit, {}, commit, '0' * 64)
+            with patch.object(acquisition, 'MAX_CANDIDATE_BYTES', 1), \
+                 patch.object(acquisition, 'file_digest') as hasher, \
+                 patch.object(acquisition.shutil, 'copy2') as copier:
+                with self.assertRaisesRegex(ValueError, 'size bound'):
+                    acquisition.local_candidate(
+                        source, root / 'staged', commit, 'ubuntu24', 'amd64')
+                hasher.assert_not_called()
+                copier.assert_not_called()
 
     def test_install_list_delegates_complete_plan_before_emitting_paths(self):
         selection = {'distro': 'ubuntu24', 'architecture': 'amd64', 'commit': 'a' * 40}
@@ -423,11 +561,21 @@ GENAI_CMAKE_ARGS=()
 
     def test_exact_cmake_dependency_guard(self):
         source = (ROOT / 'CMakeLists.txt').read_text()
+        config = (ROOT / 'cmake/SimaPCIeHostConfig.cmake.in').read_text()
         self.assertIn('simaai-scheduler-pcie-host (= ${SIMAPCIE_SCHEDULER_PACKAGE_VERSION})', source)
         self.assertIn('simaai-scheduler-pcie-host-dev (= ${SIMAPCIE_SCHEDULER_PACKAGE_VERSION})', source)
         self.assertIn('NativePackageGuard.cmake', source)
         self.assertIn('set(CMAKE_CXX_STANDARD 20)', source)
         self.assertIn('set(CMAKE_CXX_STANDARD_REQUIRED ON)', source)
+        # Windows takes the Platform service headers from Scheduler, exactly like Linux.
+        self.assertIn(
+            '\nset(SIMAPCIE_SCHEDULER_CONFIG_COMPONENTS pcie_host pcie_service_headers)\n', source)
+        self.assertIn(
+            '\nfind_package(SimaScheduler CONFIG REQUIRED COMPONENTS pcie_host pcie_service_headers)\n',
+            source)
+        self.assertNotIn('SIMAPCIE_PLATFORM_SERVICE', source)
+        self.assertIn('@SIMAPCIE_SCHEDULER_CONFIG_COMPONENTS@', config)
+        self.assertIn('pkg_check_modules(SIMAPCIE_GST REQUIRED IMPORTED_TARGET GLOBAL', config)
         self.assertNotIn('libstdc++6 (>= 14)', source)
 
     def test_default_native_compiler_reaches_required_scheduler_component(self):

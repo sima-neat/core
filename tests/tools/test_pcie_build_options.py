@@ -89,19 +89,41 @@ def test_cli_jobs_override_invalid_environment(build_env):
     assert result.returncode == 0, result.stderr
 
 
+@pytest.mark.parametrize("arguments", [
+    ("--scheduler-candidate", "/tmp/candidate"),
+    ("--scheduler-commit", "a" * 40),
+    ("--scheduler-candidate", "/tmp/candidate", "--scheduler-commit", "short"),
+    ("--scheduler-candidate", "/tmp/candidate", "--scheduler-commit", "a" * 40,
+     "--scheduler-spec", "latest"),
+])
+def test_local_scheduler_candidate_requires_one_exact_commit(build_env, arguments):
+    result = run_build(build_env, *arguments, "--install-deps-only")
+    assert result.returncode == 2
+    assert not Path(build_env["APT_LOG"]).exists()
+
+
 def test_ci_keeps_all_native_targets_and_validation():
     workflow = yaml.safe_load((ROOT / ".github/workflows/vulcan-ci.yml").read_text())
     job = workflow["jobs"]["build-pciehost-packages"]
+    rows = job["strategy"]["matrix"]["include"]
     assert {(row["distro"], row["deb_arch"], row["ubuntu_version"])
-            for row in job["strategy"]["matrix"]["include"]} == {
+            for row in rows if row["distro"] != "windows"} == {
                 (distro, arch, version) for distro, version in [("ubuntu22", "22.04"), ("ubuntu24", "24.04")]
                 for arch in ["amd64", "arm64"]}
-    assert "${{ matrix.deb_arch }}" in job["runs-on"]
-    assert "ubuntu" in job["runs-on"]
+    assert [row for row in rows if row["distro"] == "windows"] == [
+        {"distro": "windows", "deb_arch": "amd64"}]
+    assert job["runs-on"] == (
+        "${{ matrix.distro == 'windows' && 'windows-2025' || fromJSON(format("
+        "'[\"self-hosted\",\"linux\",\"{0}\",\"vulcan-{1}\",\"ubuntu\",\"default\"]', "
+        "matrix.deb_arch, needs.resolve-vulcan-config.outputs.vulcan_env)) }}")
     steps = {step.get("name"): step for step in job["steps"]}
     assert "Run PCIe host unit tests" in steps
     assert "Smoke test staged PCIe host packages and wheel" in steps
     assert '--skip-deps --jobs "${PCIE_HOST_BUILD_JOBS:-$(nproc)}"' in steps["Build PCIe host Debian packages"]["run"]
+    assert '--scheduler-candidate "${RUNNER_TEMP}/scheduler-native-candidate"' in steps["Build PCIe host Debian packages"]["run"]
+    assert '--scheduler-commit "${SCHEDULER_COMMIT}"' in steps["Build PCIe host Debian packages"]["run"]
+    assert "validate-windows-cohort-selectors" in job["needs"]
+    assert "needs.validate-windows-cohort-selectors.result == 'success'" in job["if"]
 
 
 def test_shared_image_qualification_preserves_all_targets_without_publication():
@@ -109,11 +131,14 @@ def test_shared_image_qualification_preserves_all_targets_without_publication():
     workflow = yaml.safe_load((ROOT / ".github/workflows/qualify-ubuntu-build-images.yml").read_text())
     job = workflow["jobs"]["qualify"]
     assert {(row["distro"], row["arch"]) for row in job["strategy"]["matrix"]["include"]} == {
-        (row["distro"], row["deb_arch"]) for row in regular["strategy"]["matrix"]["include"]}
+        (row["distro"], row["deb_arch"]) for row in regular["strategy"]["matrix"]["include"]
+        if row["distro"] != "windows"}
     assert "069171140053.dkr.ecr.us-west-2.amazonaws.com/vulcan/ubuntu-build:" in job["container"]["image"]
     assert "-media-" in job["container"]["image"]
-    assert "069171140053.dkr.ecr.us-west-2.amazonaws.com/vulcan/ubuntu-build:" in regular["container"]["image"]
-    assert "-media-" in regular["container"]["image"]
+    # The Windows entry has no container: the string form selects none when empty.
+    assert regular["container"].startswith("${{ matrix.distro != 'windows' && format('")
+    assert regular["container"].endswith("', matrix.distro, matrix.deb_arch) || '' }}")
+    assert "069171140053.dkr.ecr.us-west-2.amazonaws.com/vulcan/ubuntu-build:{0}-{1}-media-" in regular["container"]
     assert "id-token" not in workflow["permissions"]
     assert "credentials" not in job["container"]
     assert "credentials" not in regular["container"]

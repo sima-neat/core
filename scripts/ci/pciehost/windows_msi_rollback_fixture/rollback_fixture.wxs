@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+  <Product
+      Id="{5C5FB61E-7355-4B72-87FD-5FDD4CC2715B}"
+      Name="SiMa Neat PCIe MSI rollback CI fixture"
+      Language="1033"
+      Version="1.0.0"
+      Manufacturer="SiMa.ai CI"
+      UpgradeCode="{BA79CC39-C80F-4389-B0BE-365C1C09B48D}">
+    <Package InstallerVersion="500" Compressed="yes" InstallScope="perMachine" />
+    <MediaTemplate EmbedCab="yes" />
+
+    <Directory Id="TARGETDIR" Name="SourceDir">
+      <Directory Id="CommonAppDataFolder">
+        <Directory Id="SimaAiDirectory" Name="SiMa.ai">
+          <Directory Id="RollbackFixtureDirectory" Name="NeatPcieRollbackFixture">
+            <Component
+                Id="RollbackFixtureComponent"
+                Guid="{ECFE9663-03CC-491A-AB37-9724C3808BE0}"
+                Win64="yes">
+              <File
+                  Id="RollbackSentinel"
+                  Name="rollback-sentinel.txt"
+                  Source="rollback-sentinel.txt"
+                  KeyPath="yes" />
+              <File
+                  Id="RollbackFailureProbe"
+                  Name="rollback-probe.exe"
+                  Source="rollback-probe.exe" />
+              <RegistryValue
+                  Root="HKLM"
+                  Key="Software\SiMa.ai\NeatPcieRollbackFixture"
+                  Name="Sentinel"
+                  Type="string"
+                  Value="owned-by-windows-installer" />
+            </Component>
+          </Directory>
+        </Directory>
+      </Directory>
+    </Directory>
+
+    <Feature Id="Complete" Level="1">
+      <ComponentRef Id="RollbackFixtureComponent" />
+    </Feature>
+
+    <CustomAction
+        Id="FailAfterOwnedState"
+        FileKey="RollbackFailureProbe"
+        ExeCommand=""
+        Execute="deferred"
+        Impersonate="no"
+        Return="check" />
+    <InstallExecuteSequence>
+      <Custom Action="FailAfterOwnedState" After="WriteRegistryValues">NOT Installed</Custom>
+    </InstallExecuteSequence>
+  </Product>
+</Wix>
