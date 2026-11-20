@@ -2051,6 +2051,9 @@ Sample InputStream::pull(int timeout_ms) {
     t_wait_start = std::chrono::steady_clock::now();
   auto sample_opt = pipeline_internal::try_pull_sample_sliced(
       state_->pipeline, state_->appsink, timeout, state_->diag, "InputStream::pull");
+  if (sample_opt.has_value()) {
+    wake_deferred_pool_buffer_releaser();
+  }
   std::chrono::steady_clock::time_point t_wait_end{};
   if (timings)
     t_wait_end = std::chrono::steady_clock::now();
@@ -2203,6 +2206,9 @@ void InputStream::pull_and_discard(int timeout_ms) {
     t_wait_start = std::chrono::steady_clock::now();
   auto sample_opt = pipeline_internal::try_pull_sample_sliced(
       state_->pipeline, state_->appsink, timeout, state_->diag, "InputStream::pull_and_discard");
+  if (sample_opt.has_value()) {
+    wake_deferred_pool_buffer_releaser();
+  }
   std::chrono::steady_clock::time_point t_wait_end{};
   if (timings)
     t_wait_end = std::chrono::steady_clock::now();
