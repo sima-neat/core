@@ -14,6 +14,7 @@ from windows_candidate import _read_json as read_object
 from windows_candidate import (
     dependency_identity, msi_version, scheduler_platform_runtime, sha256, validate_candidate)
 from windows_release import customer_target, release_tag
+from qualify_windows_hardware import PERF_MAX_MEAN_LATENCY_MS, PERF_MIN_THROUGHPUT_FPS
 from windows_hardware_assets import asset_manifest_sha256, read_asset_manifest
 
 
@@ -334,8 +335,9 @@ def verify(candidate_dir: Path, qualification_path: Path, expected_commit: str,
           throughput, {"frames", "total_ms", "fps", "input_mib_per_s", "output_mib_per_s"})):
     raise ValueError("hardware qualification did not retain valid performance measurements")
   if (latency["count"] != 3000 or throughput["frames"] != 3000
-      or latency["mean_ms"] > 12.0 or throughput["fps"] < 440.0):
-    raise ValueError("hardware qualification did not meet the Linux PCIe performance gate")
+      or latency["mean_ms"] > float(PERF_MAX_MEAN_LATENCY_MS)
+      or throughput["fps"] < float(PERF_MIN_THROUGHPUT_FPS)):
+    raise ValueError("hardware qualification did not meet the PCIe performance gate")
   path_fixtures = qualification.get("path_fixtures")
   if not isinstance(path_fixtures, dict) or len(path_fixtures) != 3:
     raise ValueError("hardware qualification did not record Windows path fixtures")

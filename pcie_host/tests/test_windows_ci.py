@@ -2944,14 +2944,14 @@ class WindowsCiContracts(unittest.TestCase):
         ("did not prove clean removal", lambda value: value["cleanup"].update(errors=["left"])),
         ("every customer-owned component", lambda value: value["cleanup"].update(work="FAIL")),
         ("Platform 3.0 card baseline", lambda value: value["card_final"].update(workers="1")),
-        ("Linux PCIe performance gate",
+        ("PCIe performance gate",
          lambda value: value["performance"]["latency"].update(count=2999)),
-        ("Linux PCIe performance gate",
+        ("PCIe performance gate",
          lambda value: value["performance"]["throughput"].update(frames=2999)),
-        ("Linux PCIe performance gate",
-         lambda value: value["performance"]["latency"].update(mean_ms=12.1)),
-        ("Linux PCIe performance gate",
-         lambda value: value["performance"]["throughput"].update(fps=439.9)),
+        ("PCIe performance gate",
+         lambda value: value["performance"]["latency"].update(mean_ms=16.1)),
+        ("PCIe performance gate",
+         lambda value: value["performance"]["throughput"].update(fps=289.9)),
     )
     for index, (message, mutate) in enumerate(rows):
       with self.subTest(row=index, message=message):
@@ -3614,13 +3614,13 @@ class WindowsCiContracts(unittest.TestCase):
       with self.assertRaisesRegex(ValueError, "incomplete Windows GenAI outcomes"):
         verify(root, qualification, commit, True, True)
 
-  def test_release_gate_enforces_linux_performance_thresholds(self):
+  def test_release_gate_enforces_the_runner_performance_floor(self):
     def miss_thresholds(value):
-      value["performance"]["latency"]["mean_ms"] = 12.1
-      value["performance"]["throughput"]["fps"] = 439.9
+      value["performance"]["latency"]["mean_ms"] = 16.1
+      value["performance"]["throughput"]["fps"] = 289.9
 
     self.assert_release_rejected(
-        "Linux PCIe performance gate", miss_thresholds, require_signatures=False)
+        "PCIe performance gate", miss_thresholds, require_signatures=False)
 
   def test_release_gate_rejects_incomplete_vision_matrix(self):
     self.assert_release_rejected(
