@@ -1949,7 +1949,11 @@ class WindowsCiContracts(unittest.TestCase):
     workflow = WORKFLOW.read_text(encoding="utf-8")
     # Like Linux, CI sets no custom media root; the qualifier still honours the pair.
     self.assertNotIn("SIMA_WINDOWS_PCIE_GENAI_MEDIA_DIRECTORY", workflow)
-    self.assertIn("Required Windows GenAI variable is unset", workflow)
+    # Like the Linux card job, the lane has no switch that leaves GenAI out.
+    self.assertNotIn("include_genai", workflow + MAIN_WORKFLOW.read_text(encoding="utf-8"))
+    self.assertEqual(workflow.count('            "--include-genai"\n'), 2)
+    for name in ("SIMAPCIE_GENAI_MODELS_PATH", "SIMAPCIE_GENAI_TEST_ASSETS"):
+      self.assertIn(f'            "{name}"', workflow)
     self.assertIn("media overrides require directory and service root as a pair", source)
     self.assertIn(
         "install_root, candidate.wheel, wheelhouse, candidate.root, work, evidence", source)

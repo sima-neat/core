@@ -294,7 +294,6 @@ when debugging against a completed Linux run:
 gh workflow run pcie-host-windows.yml --repo sima-neat/core \
   --ref <core-ref> \
   -f linux_run_id=<same-commit-core-vulcan-run-id> \
-  -f include_genai=false \
   -f validation_only=true
 ```
 
@@ -351,7 +350,8 @@ not a manual-dispatch override.
 ## Publishing and formal release checks
 
 Normal branch and tag runs enter the Windows lane from Core's main CI with
-`include_genai=true` and `validation_only=true` when the lane is enabled. They
+`validation_only=true` when the lane is enabled. Like the Linux card job, every
+run prepares the GenAI models and runs the GenAI tests. They
 qualify the Windows cohort and gate branch `latest` promotion on that
 qualification. The card lane never publishes. Branch pushes publish their
 matrix build to the branch channel, as described above, but a push cannot
@@ -363,9 +363,8 @@ and either `require_upgrade=true` (below) or, for the first Windows release
 only, `first_release_upgrade_exemption=true` with a non-empty
 `first_release_upgrade_exemption_reason`. A publishing dispatch from any other
 ref fails in the admission job, before anything is built. Every publishing
-dispatch also needs `linux_run_id=<same-commit-core-vulcan-run-id>` and
-`include_genai=true`; without `include_genai=true` the run fails only at the
-hardware step. Publication is rejected unless
+dispatch also needs `linux_run_id=<same-commit-core-vulcan-run-id>`.
+Publication is rejected unless
 the Windows 11 customer-install, direct-card, complete GenAI, and cleanup evidence
 passes. Core publishes only the bytes that passed; it does not rebuild them.
 
@@ -405,7 +404,6 @@ gh workflow run pcie-host-windows.yml --repo sima-neat/core \
   -f linux_run_id=<same-commit-core-vulcan-run-id> \
   -f require_upgrade=true \
   -f upgrade_base_tag=v<previous-windows-release> \
-  -f include_genai=true \
   -f validation_only=false
 ```
 

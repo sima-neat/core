@@ -45,10 +45,6 @@ on:
         description: Auditable reason for the first-release upgrade exemption
         type: string
         default: ''
-      include_genai:
-        description: Run GenAI acceptance when the Windows transport is enabled
-        type: boolean
-        default: false
       validation_only:
         description: Build and qualify without publishing
         type: boolean
@@ -101,10 +97,6 @@ on:
         type: string
         required: false
         default: ''
-      include_genai:
-        description: Run GenAI acceptance when the Windows transport is enabled
-        type: boolean
-        default: false
       validation_only:
         description: Build and qualify without publishing
         type: boolean
@@ -676,8 +668,6 @@ jobs:
           Add-Content -LiteralPath $env:GITHUB_ENV -Value "SIMAPCIE_SSH_KEY=$key"
       - name: Resolve PCIe hardware test assets
         shell: powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -Command ". '{0}'"
-        env:
-          INCLUDE_GENAI: ${{ inputs.include_genai }}
         run: |
           $ErrorActionPreference = "Stop"
           $arguments = @(
@@ -690,26 +680,22 @@ jobs:
             "--sima-cli", (Join-Path (Split-Path $env:CARD_TOOLS_PYTHON) "sima-cli.exe"),
             "--manifest", "$env:RUNNER_TEMP\core-windows-hardware-assets.json",
             "--revision", "core-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT",
-            "--env-file", $env:GITHUB_ENV
+            "--env-file", $env:GITHUB_ENV,
+            # Like the Linux card job, every run prepares and tests GenAI.
+            "--include-genai"
           )
-          if ("$env:INCLUDE_GENAI" -eq "true") { $arguments += "--include-genai" }
           & $env:CARD_TOOLS_PYTHON @arguments
           if ($LASTEXITCODE -ne 0) { throw "PCIe hardware test assets failed: $LASTEXITCODE" }
       - name: Install, test both APIs, and remove exact cohort
         shell: powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -Command ". '{0}'"
         env:
           SIMAPCIE_CARD_SUDO_PASSWORD: ${{ secrets.DEVKIT_PASSWORD }}
-          VALIDATION_ONLY: ${{ inputs.validation_only }}
-          INCLUDE_GENAI: ${{ inputs.include_genai }}
           REQUIRE_UPGRADE: ${{ inputs.require_upgrade }}
           UPGRADE_BASE_TAG: ${{ inputs.upgrade_base_tag }}
           ARTIFACT_BASE_URL: ${{ needs.resolve-vulcan-config.outputs.artifact_base_url }}
         run: |
           $ErrorActionPreference = "Stop"
           $selection = Get-Content -Raw "$env:RUNNER_TEMP\core-windows-dependencies\selection.json" | ConvertFrom-Json
-          if ("$env:VALIDATION_ONLY" -ne "true" -and "$env:INCLUDE_GENAI" -ne "true") {
-            throw "Customer release requires the complete Windows GenAI hardware matrix"
-          }
           foreach ($name in @(
             "GSTREAMER_ROOT_X86_64",
             "SIMA_WINDOWS_DEPENDENCY_RUNTIME_PATH",
@@ -722,19 +708,11 @@ jobs:
             "SIMAPCIE_MLA_ONLY_MODEL",
             "SIMAPCIE_MLA_ONLY_BF16_MODEL",
             "SIMAPCIE_TEST_IMAGE",
-            "SIMAPCIE_BOXDECODE_IMAGE"
+            "SIMAPCIE_BOXDECODE_IMAGE",
+            "SIMAPCIE_GENAI_MODELS_PATH",
+            "SIMAPCIE_GENAI_TEST_ASSETS"
           )) {
             if (-not (Get-Item "env:$name").Value) { throw "Required hardware variable is unset: $name" }
-          }
-          if ("$env:INCLUDE_GENAI" -eq "true") {
-            foreach ($name in @(
-              "SIMAPCIE_GENAI_MODELS_PATH",
-              "SIMAPCIE_GENAI_TEST_ASSETS"
-            )) {
-              if (-not (Get-Item "env:$name").Value) {
-                throw "Required Windows GenAI variable is unset: $name"
-              }
-            }
           }
           $arguments = @(
             "scripts/ci/pciehost/qualify_windows_hardware.py",
@@ -753,11 +731,9 @@ jobs:
             "--source-root", $env:GITHUB_WORKSPACE,
             "--ssh-key", $env:SIMAPCIE_SSH_KEY,
             "--work", "$env:RUNNER_TEMP\core-windows-hardware",
-            "--evidence", "$env:RUNNER_TEMP\core-windows-hardware-evidence"
+            "--evidence", "$env:RUNNER_TEMP\core-windows-hardware-evidence",
+            "--include-genai"
           )
-          if ("$env:INCLUDE_GENAI" -eq "true") {
-            $arguments += "--include-genai"
-          }
           if ("$env:REQUIRE_UPGRADE" -eq "true") {
             # The prior release as customers download it, not a run's expiring artifact.
             $baseCommit = & git rev-parse --verify --quiet "refs/tags/$env:UPGRADE_BASE_TAG^{commit}"

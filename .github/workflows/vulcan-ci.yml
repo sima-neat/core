@@ -2625,7 +2625,6 @@ jobs:
       sima_cli_run_id: ${{ inputs.sima_cli_run_id || '' }}
       sima_cli_commit: ${{ inputs.sima_cli_commit || '' }}
       linux_current_run: true
-      include_genai: true
       # A push cannot supply the upgrade baseline or first-release exemption that
       # Windows publication requires; publish through a direct Windows dispatch.
       validation_only: true
