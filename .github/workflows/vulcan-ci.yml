@@ -1505,6 +1505,26 @@ jobs:
               --no-tests=error
           done
 
+      - name: Prepare Model Browser fixtures
+        if: ${{ contains(fromJSON(matrix.tasks), 'performance') || contains(fromJSON(matrix.tasks), 'python-tutorials') }}
+        timeout-minutes: 15
+        run: |
+          # Prepared once per job so the performance and tutorial suites test the same builds.
+          # SIMA_RESNET50_TAR also feeds the performance matrix and the Python bindings pytest.
+          MODEL_DIR="$(mktemp -d "${RUNNER_TEMP:-/tmp}/model-browser.XXXXXX")"
+          RESNET_MPK="${SIMA_RESNET50_TAR:-}"
+          if [[ -z "${RESNET_MPK}" ]]; then
+            RESNET_MPK="$(python3 scripts/ci/prepare_model_browser_fixture.py \
+              --id resnet_50 --variant w8a8 --output "${MODEL_DIR}")"
+          fi
+          YOLO_MPK="$(python3 scripts/ci/prepare_model_browser_fixture.py \
+            --id yolov8s --variant w8a8 --output "${MODEL_DIR}")"
+          {
+            printf 'SIMA_RESNET50_TAR=%s\n' "${RESNET_MPK}"
+            printf 'SIMA_NEAT_TUTORIAL_MODEL_RESNET=%s\n' "${RESNET_MPK}"
+            printf 'SIMA_NEAT_TUTORIAL_MODEL_YOLO=%s\n' "${YOLO_MPK}"
+          } >> "${GITHUB_ENV}"
+
       - name: Run Perf and Throughput Tests (Isolated)
         if: ${{ contains(fromJSON(matrix.tasks), 'performance') }}
         env:
@@ -1518,20 +1538,8 @@ jobs:
           export SIMA_GST_REGISTRY_DIR="$(cat _work/gst_registry_dir.txt)"
           echo "Using SIMA_MPK_EXTRACT_ROOT=${SIMA_MPK_EXTRACT_ROOT}"
           echo "Using SIMA_GST_REGISTRY_DIR=${SIMA_GST_REGISTRY_DIR}"
-          if [[ -z "${SIMA_RESNET50_TAR:-}" ]]; then
-            RESNET_DIR="$(mktemp -d "${RUNNER_TEMP:-/tmp}/model-browser-resnet.XXXXXX")"
-            SIMA_RESNET50_TAR="$(python3 scripts/ci/prepare_model_browser_fixture.py \
-              --id resnet_50 --variant w8a8 --output "${RESNET_DIR}")"
-            export SIMA_RESNET50_TAR
-          fi
-          # The performance matrix step loads the same archive in runtime_model_archive_load.
-          printf 'SIMA_RESNET50_TAR=%s\n' "${SIMA_RESNET50_TAR}" >> "${GITHUB_ENV}"
-          if [[ -z "${SIMA_YOLO_TAR:-}" ]]; then
-            YOLO_DIR="$(mktemp -d "${RUNNER_TEMP:-/tmp}/model-browser-yolov8s.XXXXXX")"
-            SIMA_YOLO_TAR="$(python3 scripts/ci/prepare_model_browser_fixture.py \
-              --id yolov8s --variant w8a8 --output "${YOLO_DIR}")"
-            export SIMA_YOLO_TAR
-          fi
+          # Not written to GITHUB_ENV: the Python binding tests read SIMA_YOLO_TAR and still use the legacy QuantTess model.
+          export SIMA_YOLO_TAR="${SIMA_YOLO_TAR:-${SIMA_NEAT_TUTORIAL_MODEL_YOLO:?}}"
           COVERAGE_DIR=_work/coverage/perf bash scripts/ci/run_zero_skip_gate.sh \
             ctest --test-dir "${TEST_DIR}" \
             --label-regex "perf" \
@@ -1595,21 +1603,6 @@ jobs:
           if len(actual) != len(expected) or set(actual) != expected:
               raise SystemExit('Typed admission gate requires all three Core-owned registrations')
           PY_GATE
-
-      - name: Prepare Model Browser fixtures
-        if: ${{ contains(fromJSON(matrix.tasks), 'python-tutorials') }}
-        timeout-minutes: 15
-        run: |
-          MODEL_DIR="$(mktemp -d "${RUNNER_TEMP:-/tmp}/model-browser.XXXXXX")"
-          RESNET_MPK="$(python3 scripts/ci/prepare_model_browser_fixture.py \
-            --id resnet_50 --variant w8a8 --output "${MODEL_DIR}")"
-          YOLO_MPK="$(python3 scripts/ci/prepare_model_browser_fixture.py \
-            --id yolov8s --variant w8a8 --output "${MODEL_DIR}")"
-          {
-            printf 'SIMA_RESNET50_TAR=%s\n' "${RESNET_MPK}"
-            printf 'SIMA_NEAT_TUTORIAL_MODEL_RESNET=%s\n' "${RESNET_MPK}"
-            printf 'SIMA_NEAT_TUTORIAL_MODEL_YOLO=%s\n' "${YOLO_MPK}"
-          } >> "${GITHUB_ENV}"
 
       - name: Run Tutorial Tests
         if: ${{ contains(fromJSON(matrix.tasks), 'python-tutorials') }}
