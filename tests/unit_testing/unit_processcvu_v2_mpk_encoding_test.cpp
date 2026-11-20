@@ -826,17 +826,17 @@ ps::SimaPluginStaticManifest make_detessdequant_wc_cblock_manifest(ExecutionMode
   return std::move(*manifest);
 }
 
-// Core kernel preparation requires blocked transport to end in H,W,C, so it
-// rejects this W,C frame at layout.axes. Set to false to keep the case out of
-// the run until Core accepts rank-2 blocked transport.
-constexpr bool kRunRank2WideCBlock = true;
+// Core kernel preparation requires blocked transport to end in H,W,C and
+// rejects this W,C frame at layout.axes (sima-neat/core#1473). Set to true once
+// Core accepts rank-2 blocked transport.
+constexpr bool kRunRank2WideCBlock = false;
 
 // Same bytes, input and 361,201 expected values as the rank-4 wide case, with
 // the model's own rank-2 declaration passed into Core.
 void authoritative_detessdequant_wc_cblock(ExecutionMode mode) {
   const std::string name = "rank-2 W,C [601, 601] CBlock16 case (tile [67, 601])";
   if (!kRunRank2WideCBlock) {
-    std::cout << "NOT RUN: " << name << " (Core rejects rank-2 blocked transport)\n";
+    std::cout << "NOT RUN: " << name << " (sima-neat/core#1473)\n";
     return;
   }
   // A rejection is reported against this case, not as a bare field from the
