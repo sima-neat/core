@@ -96,7 +96,7 @@
     "description": "The label used to tell the user to check the latest version"
   },
   "theme.docs.versions.latestVersionLinkLabel": {
-    "message": "остання версія",
+    "message": "останньої версії",
     "description": "The label used for the latest version suggestion link label"
   },
   "theme.docs.versionBadge.label": {
@@ -299,7 +299,7 @@
     "description": "The unlisted content banner title"
   },
   "theme.contentVisibility.unlistedBanner.message": {
-    "message": "Ця сторінка прихована зі списків. Пошукові системи її не індексуватимуть, і відкрити її зможуть лише користувачі з прямим посиланням.",
+    "message": "Ця сторінка не відображається в списках. Пошукові системи її не індексуватимуть, і відкрити її зможуть лише користувачі з прямим посиланням.",
     "description": "The unlisted content banner message"
   },
   "theme.contentVisibility.draftBanner.title": {
@@ -307,7 +307,7 @@
     "description": "The draft content banner title"
   },
   "theme.contentVisibility.draftBanner.message": {
-    "message": "Ця сторінка — чернетка. Її видно лише в режимі розробки, і до робочої збірки її не буде включено.",
+    "message": "Ця сторінка — чернетка. Її видно лише в режимі розробки, і до виробничої збірки її не буде включено.",
     "description": "The draft content banner message"
   },
   "theme.docs.DocCard.categoryDescription.plurals": {
