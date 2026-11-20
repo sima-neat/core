@@ -819,6 +819,16 @@ set_tests_properties(unit_canonical_graph_stage_admission_test PROPERTIES
 target_link_libraries(unit_processcvu_v2_mpk_encoding_test PRIVATE
   SimaScheduler::frontend
   )
+# Execute those requests on each backend against the test's own reference,
+# including the wide CBlock16 tile that once produced no EV74 output.
+foreach(backend ev74 a65)
+  simaneat_add_test(NAME processcvu_v2_mpk_encoding_${backend}_test
+    COMMAND unit_processcvu_v2_mpk_encoding_test --${backend})
+  simaneat_append_ctest_env(processcvu_v2_mpk_encoding_${backend}_test)
+  set_tests_properties(processcvu_v2_mpk_encoding_${backend}_test PROPERTIES
+    TIMEOUT 60 LABELS "strict;e2e;runtime;kernel-runner;modalix-only"
+    RESOURCE_LOCK "accelerator-device")
+endforeach()
 
 # Exercise mutable current-frame facts with both the default reader policy and
 # the explicit legacy static-preprocess shortcut. Compact facts always refresh.

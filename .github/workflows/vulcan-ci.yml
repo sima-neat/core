@@ -1231,18 +1231,6 @@ jobs:
             printf 'SIMA_TEST_LLIMA_REASONING_GEMMA_MODEL=%s\n' "${SIMA_TEST_LLIMA_REASONING_GEMMA_MODEL}"
           } >> "${GITHUB_ENV}"
 
-      - name: Prepare LightGlue NEAT-68 regression model
-        run: |
-          set -euo pipefail
-          MODEL_DIR="$(mktemp -d "${RUNNER_TEMP:-/tmp}/lg-XXXXXXXX")"
-          MODEL_PATH="${MODEL_DIR}/quantized_lightglue_superpoint_600_mpk.tar.gz"
-          ARTIFACT_URL="https://models-registry.stg.neat.sima.ai/v1/runs/ef5cf65e-797c-409a-81e7-17cb49e62452/artifacts/mpk"
-          DOWNLOAD_URL="$(curl -fsS --retry 2 "${ARTIFACT_URL}" |
-            python3 -c 'import json, sys; print(json.load(sys.stdin)["artifact"]["download_url"])')"
-          curl -fsSL --retry 2 "${DOWNLOAD_URL}" -o "${MODEL_PATH}"
-          echo '0ceb6304167d3a5ca4e3e0bcf3bd873ace6966d8a35e73d790c4496019bae7af  '"${MODEL_PATH}" | sha256sum --check --strict
-          echo "SIMA_TEST_LIGHTGLUE_MODEL=${MODEL_PATH}" >> "${GITHUB_ENV}"
-
       - name: Build docs C++ examples from DevKit-installed package
         if: ${{ contains(fromJSON(matrix.tasks), 'fast') }}
         run: |
