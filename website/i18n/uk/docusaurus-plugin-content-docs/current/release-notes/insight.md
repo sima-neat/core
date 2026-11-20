@@ -1,11 +1,11 @@
 ---
-title: "Insight Примітки до випуску"
+title: "Примітки до випуску Insight"
 sidebar_position: 6
 ---
 
-# Insight Примітки до випуску
+# Примітки до випуску Insight
 
-Примітки до випуску для SiMa.ai Neat Insight.
+Примітки до випуску SiMa.ai Neat Insight.
 
 | Випуск | Примітки |
 | --- | --- |
