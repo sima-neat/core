@@ -3,10 +3,6 @@
 #include "asset_utils.h"
 #include "test_utils.h"
 
-#if defined(SIMA_WITH_OPENCV)
-#include "yolov8_test_utils.h"
-#endif
-
 #include <array>
 #include <cstdlib>
 #include <cstring>
@@ -62,36 +58,20 @@ fs::path resolve_yolov8n_variant_or_throw(const fs::path& root, std::string_view
     return env_path;
   }
 
-  const fs::path found = first_existing({root / "tmp" / "yolov8n_6_variants" / name,
-                                         root / "tmp" / "yolov8n_drive" / name,
-                                         fs::current_path() / "tmp" / "yolov8n_6_variants" / name,
-                                         fs::current_path() / "tmp" / "yolov8n_drive" / name,
-                                         fs::path("/tmp") / "sima-yolov8n-drive" / name});
-  if (!found.empty()) {
-    return found;
+  const fs::path variants_dir = env_string("SIMA_YOLOV8_VARIANTS_DIR");
+  if (!variants_dir.empty() && usable_file(variants_dir / name)) {
+    return variants_dir / name;
   }
-
-#if defined(SIMA_WITH_OPENCV)
-  // Match the YOLO matrix tests: these variants are mandatory in CI, so a
-  // missing staged tarball should be fetched on demand and validated instead
-  // of failing this focused phase3 coverage first.
-  const fs::path variants_dir = sima_yolov8_test::ensure_yolov8n_drive_variants(root);
-  const fs::path downloaded = variants_dir / name;
-  if (sima_test::is_listable_tar_gz(downloaded)) {
-    return downloaded;
-  }
-#endif
 
   throw std::runtime_error("failed to resolve YOLOv8n variant tarball: " + name +
-                           " (stage it under tmp/yolov8n_6_variants or tmp/yolov8n_drive, "
-                           "or set SIMA_YOLOV8N_VARIANTS_BASE_URL to a mirror)");
+                           " (set SIMA_YOLOV8_VARIANTS_DIR to a directory that holds it)");
 }
 
 std::vector<fs::path> resolve_yolov8n_variants_or_throw(const fs::path& root) {
   const std::vector<std::string> names = {
-      "yolov8n_A_BF16_W_INT8_MLATess.tar.gz", "yolov8n_A_BF16_W_INT8_mpk.tar.gz",
-      "yolov8n_A_W_BF16_MLATess.tar.gz",      "yolov8n_A_W_BF16_mpk.tar.gz",
-      "yolov8n_A_W_INT8_MLATess.tar.gz",      "yolov8n_A_W_int8_mpk.tar.gz",
+      "yolov8n_w8a8_mpk.tar.gz",
+      "yolov8n_w8a16_mpk.tar.gz",
+      "yolov8n_w16a16_mpk.tar.gz",
   };
   std::vector<fs::path> out;
   out.reserve(names.size());
