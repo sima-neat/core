@@ -285,8 +285,9 @@ void runtime::RunCore::close() {
       const auto diag = st_ref.pipeline.stream.diag_ctx();
       std::ostringstream oss;
       oss << "[DIAG] async_tput\n";
-      if (diag && !diag->pipeline_string.empty()) {
-        oss << "Pipeline:\n" << diag->pipeline_string << "\n";
+      const std::string pipeline = diag ? diag->redacted_pipeline_string() : std::string();
+      if (!pipeline.empty()) {
+        oss << "Pipeline:\n" << pipeline << "\n";
       }
       if (diag) {
         const std::string boundary = pipeline_internal::boundary_summary(diag);
@@ -336,7 +337,6 @@ void runtime::RunCore::close() {
         }
       }
 
-      const std::string pipeline = diag ? diag->pipeline_string : std::string();
       const int queue2_depth = (diag && diag->queue2_enabled)
                                    ? diag->queue2_depth
                                    : run_internal::parse_queue2_depth(pipeline);
