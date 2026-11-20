@@ -103,8 +103,10 @@ std::atomic<std::uint64_t>& credit_namespace_counter() {
   return counter;
 }
 
+// Checked for every frame credit; resolved once per process like InputStreamDebugFlags.
 bool credit_debug_enabled() {
-  return env_bool("SIMA_GRAPH_REALTIME_CREDIT_DEBUG", false);
+  static const bool enabled = env_bool("SIMA_GRAPH_REALTIME_CREDIT_DEBUG", false);
+  return enabled;
 }
 
 std::atomic<int>& credit_miss_debug_logs() {

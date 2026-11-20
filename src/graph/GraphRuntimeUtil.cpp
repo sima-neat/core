@@ -82,8 +82,9 @@ int zero_copy_backpressure_cap() {
   return 1;
 }
 
+// Checked for every routed frame; resolved once per process like InputStreamDebugFlags.
 std::size_t identity_map_capacity() {
-  const int cap = env_int("SIMA_GRAPH_IDENTITY_MAP_CAPACITY", 1024);
+  static const int cap = env_int("SIMA_GRAPH_IDENTITY_MAP_CAPACITY", 1024);
   return (cap > 0) ? static_cast<std::size_t>(cap) : 0;
 }
 

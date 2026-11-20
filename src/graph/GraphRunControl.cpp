@@ -3,8 +3,10 @@
 #include <stdexcept>
 
 namespace simaai::neat::graph {
+// Checked for every routed frame; resolved once per process like InputStreamDebugFlags.
 bool graph_debug_enabled() {
-  return env_bool("SIMA_GRAPH_DEBUG", false);
+  static const bool enabled = env_bool("SIMA_GRAPH_DEBUG", false);
+  return enabled;
 }
 
 bool graph_push_fail_debug_enabled() {
@@ -50,7 +52,8 @@ GraphOutputRateState& graph_output_rate_state() {
 }
 
 bool graph_sched_debug_enabled() {
-  return env_bool("SIMA_GRAPH_SCHED_DEBUG", false);
+  static const bool enabled = env_bool("SIMA_GRAPH_SCHED_DEBUG", false);
+  return enabled;
 }
 
 int graph_sched_log_every() {

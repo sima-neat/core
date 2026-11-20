@@ -271,8 +271,11 @@ void enforce_device_visible_push_or_throw(bool require_device_visible,
   }
 }
 
+// Checked for every pushed sample; resolved once per process like InputStreamDebugFlags.
 bool allow_cross_run_gstsample_push() {
-  return pipeline_internal::env_bool("SIMA_ALLOW_CROSS_RUN_GSTSAMPLE_PUSH", false);
+  static const bool enabled =
+      pipeline_internal::env_bool("SIMA_ALLOW_CROSS_RUN_GSTSAMPLE_PUSH", false);
+  return enabled;
 }
 
 void enforce_live_gstsample_producer_or_throw(const simaai::neat::Sample& sample, const char* where,

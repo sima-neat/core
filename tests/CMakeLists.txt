@@ -492,6 +492,7 @@ set(UNIT_TESTS
   unit_graph_sink_segment_error_test
   unit_env_util_profile_test
   unit_deferred_pool_buffer_releaser_test
+  unit_per_frame_debug_knob_cache_test
   unit_framestream_test
   unit_move_semantics_proof_test
   unit_graph_compiler_determinism_test
