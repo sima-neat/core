@@ -49,7 +49,9 @@ public:
     return NodeCapsBehavior::Static;
   }
   MemoryContract memory_contract() const override {
-    return MemoryContract::AllowEitherButReport;
+    // Raw frames feed device consumers, which need the source frame metadata stamped here.
+    return camera_.format == UsbCameraFormat::YUYV ? MemoryContract::PreferDeviceZeroCopy
+                                                   : MemoryContract::AllowEitherButReport;
   }
   std::string buffer_name_hint(int /*node_index*/) const override {
     return opt_.buffer_name;

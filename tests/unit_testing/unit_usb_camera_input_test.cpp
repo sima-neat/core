@@ -6,6 +6,7 @@
 #include "nodes/io/internal/UvcMode.h"
 #include <limits>
 #include "pipeline/Graph.h"
+#include "pipeline/graph/internal/GraphTestHooks.h"
 
 #include "test_utils.h"
 
@@ -365,6 +366,13 @@ void check_yuyv_pipeline() {
   camera.storage_bytes = 1344 * 481;
   camera.colorimetry = "bt709";
   const auto node = uvc::camera_node(opt, camera);
+  // Preproc binds a raw frame only with the GstSimaMeta frame-id and timestamp the source
+  // probe stamps; JPEG frames get theirs from the decoder.
+  require(simaai::neat::session_test::source_sima_meta_probe_required_for_test(*node),
+          "YUYV capture must stamp source frame metadata");
+  require(!simaai::neat::session_test::source_sima_meta_probe_required_for_test(
+              *uvc::camera_node(opt, uvc::ResolvedCamera{"/dev/video9", FormatTag::NV16})),
+          "MJPEG capture keeps its memory contract");
   const auto text = node->backend_fragment(1);
   require_contains(text, "video/x-raw,format=YUY2,interlace-mode=progressive,width=642,height=481",
                    "packed YUYV caps");
