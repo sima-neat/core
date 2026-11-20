@@ -80,6 +80,13 @@ void test_command_runner(const std::string& executable) {
 
   const auto bad = pcie_internal::SshRunner::run({executable, "--exit", "7"}, 2);
   require(bad.exit_code == 7, "expected child exit code 7");
+  // A command that fails without output still names its exit code and executable.
+  require(pcie_internal::SshRunner::failure_detail({executable, "--exit", "7"}, bad) ==
+              "(exit=7, timed_out=false): " + executable + " printed no output",
+          "silent command failure was not described");
+  require(pcie_internal::SshRunner::failure_detail({executable}, ok) ==
+              "(exit=0, timed_out=false): hello\n",
+          "command output was not kept in the failure detail");
 
   const auto round_trip = pcie_internal::SshRunner::run(
       {executable, "--echo-args", "two words", "quote\"inside", "C:\\path with space\\"}, 2);

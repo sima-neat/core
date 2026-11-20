@@ -103,9 +103,11 @@ void RemoteSession::start(const std::string& target_directory, const std::string
             " >\"$d/worker.log\" 2>&1 </dev/null & p=$!; echo \"$p\" >\"$d/pid\"; "
             "awk '{print $22}' /proc/$p/stat >\"$d/start\"; echo launched";
   launched_ = true;
-  const auto result = Runner::run(ssh(script), 15);
+  const auto command = ssh(script);
+  const auto result = Runner::run(command, 15);
   if (result.exit_code || result.timed_out)
-    throw std::runtime_error("Could not launch GenAI worker: " + result.output);
+    throw std::runtime_error("Could not launch GenAI worker " +
+                             Runner::failure_detail(command, result));
 }
 std::string RemoteSession::stop_script(const std::string& session_id) {
   wire::validate_session(session_id);
@@ -128,11 +130,11 @@ void RemoteSession::stop() {
   if (!launched_)
     return;
   const auto script = stop_script(id_);
-  const auto result = Runner::run(ssh(script), 15);
+  const auto command = ssh(script);
+  const auto result = Runner::run(command, 15);
   if (result.exit_code || result.timed_out)
-    throw std::runtime_error(
-        "GenAI worker shutdown could not be confirmed (exit=" + std::to_string(result.exit_code) +
-        ", timed_out=" + (result.timed_out ? "true" : "false") + "): " + result.output);
+    throw std::runtime_error("GenAI worker shutdown could not be confirmed " +
+                             Runner::failure_detail(command, result));
   launched_ = false;
 }
 } // namespace simaai::neat::pcie::genai::internal

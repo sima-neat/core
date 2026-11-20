@@ -48,6 +48,23 @@ std::string SshRunner::windows_quote_argument(const std::string& value) {
   return out;
 }
 
+std::string SshRunner::failure_detail(const std::vector<std::string>& args,
+                                      const CommandResult& result) {
+  std::string detail = "(exit=" + std::to_string(result.exit_code) +
+                       ", timed_out=" + (result.timed_out ? "true" : "false") + "): ";
+  if (!result.output.empty() || args.empty()) {
+    return detail + result.output;
+  }
+  detail += args.front() + " printed no output";
+#ifdef _WIN32
+  // Windows OpenSSH exits 255 without a message when ProgramData is unset.
+  if (result.exit_code == 255) {
+    detail += "; check that the ProgramData environment variable is set for this process";
+  }
+#endif
+  return detail;
+}
+
 CommandResult SshRunner::run(const std::vector<std::string>& args, const int timeout_sec) {
   const int effective_timeout = timeout_sec > 0 ? timeout_sec : 1;
   return run_for(args, std::chrono::seconds(effective_timeout));

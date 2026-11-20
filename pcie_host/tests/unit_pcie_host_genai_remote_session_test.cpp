@@ -112,6 +112,19 @@ int main() {
                 contents.find("draft model") != std::string::npos,
             "GenAI worker launch lost the selected model directories");
 
+    // OpenSSH can exit without a message; the launch error must still say what failed.
+    std::ofstream(fake_ssh) << "#!/bin/sh\nexit 255\n";
+    try {
+      g::internal::RemoteSession silent(connection);
+      silent.start();
+      throw std::logic_error("GenAI worker launch ignored a failed SSH command");
+    } catch (const std::runtime_error& error) {
+      require(
+          std::string(error.what()) ==
+              "Could not launch GenAI worker (exit=255, timed_out=false): ssh printed no output",
+          error.what());
+    }
+
     g::ConnectionOptions invalid;
     {
       Environment invalid_environment("SIMA_NEAT_PCIE_GENAI_CARD_ENV",

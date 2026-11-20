@@ -251,9 +251,7 @@ void RemoteRuntime::run_or_throw(const std::vector<std::string>& args, const int
                                  const std::string& context) const {
   const CommandResult res = SshRunner::run(args, timeout_sec);
   if (res.timed_out || res.exit_code != 0) {
-    throw std::runtime_error(context + " failed (exit=" + std::to_string(res.exit_code) +
-                             ", timed_out=" + (res.timed_out ? "true" : "false") +
-                             "): " + res.output);
+    throw std::runtime_error(context + " failed " + SshRunner::failure_detail(args, res));
   }
 }
 
@@ -359,10 +357,9 @@ int RemoteRuntime::start(const int queue, const std::string& remote_model_path,
     } catch (const std::exception&) {
     }
     const bool cleanup_safe = start_failure_cleanup_safe(result.exit_code, result.timed_out);
-    throw RemoteStartError(
-        "remote pcie-pipeline-builder start failed (exit=" + std::to_string(result.exit_code) +
-            ", timed_out=" + (result.timed_out ? "true" : "false") + "): " + result.output,
-        cleanup_safe, cleanup_safe ? std::nullopt : launched_pid);
+    throw RemoteStartError("remote pcie-pipeline-builder start failed " +
+                               SshRunner::failure_detail(cmd, result),
+                           cleanup_safe, cleanup_safe ? std::nullopt : launched_pid);
   }
   try {
     return parse_launched_pid(result.output);
