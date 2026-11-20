@@ -13,13 +13,16 @@ if(SimaLMM_FOUND)
   check_cxx_source_compiles([=[
 #include <nlohmann/json.hpp>
 #include <sima_lmm/chat.hpp>
-// This executable is linked, never run. Referencing both methods from main
+#include <sima_lmm/vision_language_model.hpp>
+// This executable is linked, never run. Referencing the public chat and generation methods from main
 // keeps --gc-sections/LTO from discarding the ABI check as unused code.
 int main(int argc, char** argv) {
   if (argc > 1) {
     auto& chat = *reinterpret_cast<simaai::llima::Chat*>(argv[1]);
     chat.set_messages(nlohmann::ordered_json::array());
     chat.set_tools(nlohmann::ordered_json::array());
+    auto& model = *reinterpret_cast<simaai::llima::VisionLanguageModel*>(argv[0]);
+    return model.generate(chat).token_ids.empty();
   }
   return 0;
 }

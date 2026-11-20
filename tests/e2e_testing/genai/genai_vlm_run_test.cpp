@@ -139,6 +139,19 @@ int main(int argc, char** argv) {
       require(!trim_text(streamed_text).empty(),
               "GENAI_VLM_STREAM expected non-empty generated text");
 
+      // The completed handle stays alive while the next stream owns the same model.
+      auto next = model.stream(tensor_request);
+      auto chunk = next.next();
+      require(chunk && !chunk->is_final, "expected an active second stream");
+      stream.cancel();
+      std::string next_text = chunk->text;
+      while ((chunk = next.next()) && !chunk->is_final)
+        next_text += chunk->text;
+      require(chunk && chunk->finish_reason == final_sample.finish_reason &&
+                  chunk->metrics.generated_tokens == final_sample.metrics.generated_tokens &&
+                  next_text == streamed_text,
+              "cancelling the completed handle interrupted the second stream");
+
       require(model.encode(std::vector<cv::Mat>{image_bgr}), "GENAI_VLM_ENCODE failed");
       require(model.cached_image_count() == 1U, "GENAI_VLM_ENCODE expected one cached image");
 

@@ -115,10 +115,11 @@ class InternalsPackageBoundaryTest(unittest.TestCase):
             self.assertIn(kept, text, kept)
         self.assertNotIn('"simaai-kernels-dev"', text)
 
-    def test_llima_is_consumed_without_a_version_policy(self) -> None:
+    def test_llima_package_depends_on_the_selected_build(self) -> None:
         text = cmake()
         self.assertIn("find_package(SimaLMM CONFIG REQUIRED)", text)
         self.assertIn("find_package(SimaLMM CONFIG QUIET)", text)
+        self.assertIn('sima-lmm-core (= ${SimaLMM_DEBIAN_VERSION})', text)
         for removed in (
             "find_package(SimaLMM ${SIMANEAT_PLATFORM_VERSION}",
             "sima-lmm-core (>=",
