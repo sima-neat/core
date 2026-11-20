@@ -131,11 +131,13 @@ bool InputStream::can_pull() const noexcept {
 }
 
 bool InputStream::running() const {
-  return state_ && state_->running.load();
+  const auto state = std::atomic_load_explicit(&state_, std::memory_order_acquire);
+  return state && state->running.load();
 }
 
 bool InputStream::reached_eos() const {
-  return state_ && state_->eos_seen.load();
+  const auto state = std::atomic_load_explicit(&state_, std::memory_order_acquire);
+  return state && state->eos_seen.load();
 }
 
 std::string InputStream::last_error() const {
@@ -185,7 +187,7 @@ std::string InputStream::diagnostics_summary() const {
     return {};
   std::ostringstream oss;
   if (!state_->diag->pipeline_string.empty()) {
-    oss << "Pipeline:\n" << state_->diag->pipeline_string << "\n";
+    oss << "Pipeline:\n" << state_->diag->redacted_pipeline_string() << "\n";
   }
   const std::string boundary = pipeline_internal::boundary_summary(state_->diag);
   if (!boundary.empty())
@@ -249,7 +251,8 @@ void InputStream::set_on_caps_change(std::function<void(const SampleSpec&, const
   state_->on_caps_change = std::move(cb);
 }
 
-void InputStream::start(std::function<void(Sample)> on_output) {
+void InputStream::start(std::function<void(Sample)> on_output,
+                        std::function<void()> on_downstream_eos) {
   if (!state_ || !state_->pipeline) {
     throw std::runtime_error("InputStream::start: stream is closed");
   }
@@ -283,7 +286,7 @@ void InputStream::start(std::function<void(Sample)> on_output) {
   state_->running.store(true);
 
   auto st = state_;
-  st->worker = std::thread([st]() {
+  st->worker = std::thread([st, on_downstream_eos = std::move(on_downstream_eos)]() {
     const int worker_poll_ms = (st->opt.worker_poll_ms > 0) ? st->opt.worker_poll_ms
                                                             : inputstream_worker_poll_ms_default();
     const bool timings = st->timing_enabled;
@@ -354,6 +357,10 @@ void InputStream::start(std::function<void(Sample)> on_output) {
             sink_eos = gst_app_sink_is_eos(GST_APP_SINK(st->appsink));
           }
           if (eos_seen || sink_eos) {
+            if (on_downstream_eos && st->appsrc && !st->eos_sent.load() &&
+                !st->stop_requested.load() && !st->teardown_started.load()) {
+              on_downstream_eos();
+            }
             st->eos_seen.store(true);
             if (eos_debug_enabled()) {
               const char* pipeline_name =

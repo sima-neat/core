@@ -1,5 +1,6 @@
 
 import importlib
+import socket
 import warnings
 
 import numpy as np
@@ -1808,6 +1809,31 @@ def test_model_run_build_reject_layout_and_image_format_kwargs():
     pass
   else:
     raise AssertionError("expected model.run(..., image_format=...) to fail with TypeError")
+
+
+def test_http_pull_timeout_logs_only_the_origin(capfd):
+  # A listening socket with no response keeps the live HTTP source waiting for data.
+  with socket.create_server(("127.0.0.1", 0)) as server:
+    host, port = server.getsockname()
+    http = pyneat.HttpSourceOptions()
+    http.location = f"http://camera-user:camera-pass@{host}:{port}/private-feed?channel=private-channel"
+    http.is_live = True
+    graph = pyneat.Graph()
+    graph.add(pyneat.nodes.http_source(http))
+    graph.add(pyneat.nodes.output())
+    options = pyneat.RunOptions()
+    options.startup_preflight = False
+    run = graph.build(options)
+    try:
+      capfd.readouterr()
+      assert run.pull(50) is None
+      log = capfd.readouterr().err
+      assert "Pipeline:" in log and "souphttpsrc" in log
+      assert f'location="http://{host}:{port}"' in log
+      for private in ("camera-user", "camera-pass", "private-feed", "private-channel"):
+        assert private not in log
+    finally:
+      run.close()
 
 
 def test_graph_video_push_uses_input_format_without_image_semantic():

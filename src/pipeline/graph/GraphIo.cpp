@@ -60,6 +60,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <charconv>
 #include <chrono>
 #include <cmath>
 #include <limits>
@@ -130,7 +131,7 @@ struct JsonValue {
   Type type = Type::Null;
   bool b = false;
   double num = 0.0;
-  std::string str;
+  std::string str; // String value or original number token for exact integer reads.
   std::unique_ptr<JsonArray> arr;
   std::unique_ptr<JsonObject> obj;
 
@@ -369,11 +370,11 @@ private:
         fail_here("invalid number: expected exponent digits");
       }
     }
-    const std::string num = s_.substr(start, pos_ - start);
+    v.str = s_.substr(start, pos_ - start);
     try {
-      v.num = std::stod(num);
+      v.num = std::stod(v.str);
     } catch (const std::exception&) {
-      fail_at(start, "invalid numeric token '" + num + "'");
+      fail_at(start, "invalid numeric token '" + v.str + "'");
     }
     return v;
   }
@@ -504,6 +505,19 @@ std::string string_field(const JsonValue::JsonObject& obj, const char* key,
 int int_field(const JsonValue::JsonObject& obj, const char* key, int fallback = 0) {
   const JsonValue* value = object_field(obj, key);
   return value && value->type == JsonValue::Type::Number ? static_cast<int>(value->num) : fallback;
+}
+
+std::uint64_t uint64_field(const JsonValue::JsonObject& obj, const char* key,
+                           std::uint64_t fallback) {
+  const auto* field = object_field(obj, key);
+  if (!field)
+    return fallback;
+  std::uint64_t value = 0;
+  const char* end = field->str.data() + field->str.size();
+  const auto [ptr, ec] = std::from_chars(field->str.data(), end, value);
+  if (field->type != JsonValue::Type::Number || ec != std::errc{} || ptr != end)
+    throw std::invalid_argument(std::string(key) + " requires an unsigned 64-bit integer");
+  return value;
 }
 
 int strict_enum_field(const JsonValue::JsonObject& obj, const char* key, int fallback) {
@@ -670,6 +684,116 @@ CombinePolicy parse_combine_policy(const std::string& value) {
   return CombinePolicy::None;
 }
 
+void write_int_vector_json(std::ostream& oss, const std::vector<int>& values) {
+  oss << "[";
+  for (std::size_t i = 0; i < values.size(); ++i) {
+    if (i) {
+      oss << ",";
+    }
+    oss << values[i];
+  }
+  oss << "]";
+}
+
+void write_preprocess_meta_json(std::ostream& oss, const PreprocessMetaTemplate& meta) {
+  oss << "{\"enabled\":" << (meta.enabled ? "true" : "false")
+      << ",\"target_width\":" << meta.target_width << ",\"target_height\":" << meta.target_height
+      << ",\"scaled_width\":" << meta.scaled_width << ",\"scaled_height\":" << meta.scaled_height
+      << ",\"resize_mode\":\"" << json_escape(meta.resize_mode)
+      << "\",\"pad_value\":" << meta.pad_value << ",\"color_in\":\"" << json_escape(meta.color_in)
+      << "\",\"color_out\":\"" << json_escape(meta.color_out) << "\",\"axis_perm\":";
+  write_int_vector_json(oss, meta.axis_perm);
+  oss << ",\"normalize\":" << (meta.normalize ? "true" : "false")
+      << ",\"quantize\":" << (meta.quantize ? "true" : "false")
+      << ",\"tessellate\":" << (meta.tessellate ? "true" : "false")
+      << ",\"roi_list_enabled\":" << (meta.roi_list_enabled ? "true" : "false")
+      << ",\"roi_input_batch_size\":" << meta.roi_input_batch_size
+      << ",\"roi_source_width\":" << meta.roi_source_width
+      << ",\"roi_source_height\":" << meta.roi_source_height
+      << ",\"roi_source_stride_bytes\":" << meta.roi_source_stride_bytes
+      << ",\"roi_pad_value\":" << meta.roi_pad_value << ",\"rois\":[";
+  for (std::size_t i = 0; i < meta.rois.size(); ++i) {
+    const auto& roi = meta.rois[i];
+    if (i)
+      oss << ",";
+    oss << "{\"batch_index\":" << roi.batch_index << ",\"x\":" << roi.x << ",\"y\":" << roi.y
+        << ",\"width\":" << roi.width << ",\"height\":" << roi.height << "}";
+  }
+  oss << "]}";
+}
+
+int checked_json_integer(const JsonValue& v, const std::string& field) {
+  int result = 0;
+  const char* end = v.str.data() + v.str.size();
+  const auto [ptr, ec] = std::from_chars(v.str.data(), end, result);
+  if (v.type != JsonValue::Type::Number || ec != std::errc{} || ptr != end)
+    throw std::invalid_argument(field + " requires an integer");
+  return result;
+}
+
+PreprocessMetaTemplate parse_preprocess_meta(const JsonValue::JsonObject& obj) {
+  PreprocessMetaTemplate meta;
+  const auto number = [&](const char* key) {
+    const auto* v = object_field(obj, key);
+    return v ? checked_json_integer(*v, std::string("preprocess_meta.") + key) : 0;
+  };
+  for (const char* key : {"enabled", "normalize", "quantize", "tessellate", "roi_list_enabled"}) {
+    if (const auto* v = object_field(obj, key); v && v->type != JsonValue::Type::Bool)
+      throw std::invalid_argument(std::string("preprocess_meta.") + key + " requires a boolean");
+  }
+  for (const char* key : {"resize_mode", "color_in", "color_out"}) {
+    if (const auto* v = object_field(obj, key); v && v->type != JsonValue::Type::String)
+      throw std::invalid_argument(std::string("preprocess_meta.") + key + " requires a string");
+  }
+  meta.enabled = bool_field(obj, "enabled");
+  meta.target_width = number("target_width");
+  meta.target_height = number("target_height");
+  meta.scaled_width = number("scaled_width");
+  meta.scaled_height = number("scaled_height");
+  meta.resize_mode = string_field(obj, "resize_mode", meta.resize_mode);
+  meta.pad_value = number("pad_value");
+  meta.color_in = string_field(obj, "color_in");
+  meta.color_out = string_field(obj, "color_out");
+  if (const auto* axes = object_field(obj, "axis_perm")) {
+    if (!axes->arr)
+      throw std::invalid_argument("preprocess_meta.axis_perm requires an array");
+    for (const auto& axis : *axes->arr)
+      meta.axis_perm.push_back(checked_json_integer(axis, "preprocess_meta.axis_perm"));
+  }
+  meta.normalize = bool_field(obj, "normalize");
+  meta.quantize = bool_field(obj, "quantize");
+  meta.tessellate = bool_field(obj, "tessellate");
+  meta.roi_list_enabled = bool_field(obj, "roi_list_enabled");
+  meta.roi_input_batch_size = number("roi_input_batch_size");
+  meta.roi_source_width = number("roi_source_width");
+  meta.roi_source_height = number("roi_source_height");
+  meta.roi_source_stride_bytes = number("roi_source_stride_bytes");
+  meta.roi_pad_value = number("roi_pad_value");
+  if (const auto* rois = object_field(obj, "rois")) {
+    if (!rois->arr)
+      throw std::invalid_argument("preprocess_meta.rois requires an array");
+    for (const auto& roi : *rois->arr) {
+      if (!roi.obj)
+        throw std::invalid_argument("preprocess_meta.rois requires ROI objects");
+      const auto roi_number = [&](const char* key, bool positive = false) {
+        const std::string field =
+            "preprocess_meta.rois[" + std::to_string(meta.rois.size()) + "]." + key;
+        const auto* v = object_field(*roi.obj, key);
+        const int value = v ? checked_json_integer(*v, field) : 0;
+        if (positive && value <= 0)
+          throw std::invalid_argument(field + " must be positive");
+        return value;
+      };
+      meta.rois.push_back({.batch_index = roi_number("batch_index"),
+                           .x = roi_number("x"),
+                           .y = roi_number("y"),
+                           .width = roi_number("width", meta.enabled),
+                           .height = roi_number("height", meta.enabled)});
+    }
+  }
+  return meta;
+}
+
 void write_input_options_json(std::ostream& oss, const InputOptions& opt) {
   oss << "{\"payload_type\":" << static_cast<int>(opt.payload_type) << "," << "\"format\":\""
       << json_escape(opt.format.str()) << "\"," << "\"width\":" << opt.width << ","
@@ -685,7 +809,12 @@ void write_input_options_json(std::ostream& oss, const InputOptions& opt) {
       << "\"memory_policy\":" << static_cast<int>(effective_input_memory_policy(opt)) << ","
       << "\"pool_min_buffers\":" << opt.pool_min_buffers << ","
       << "\"pool_max_buffers\":" << opt.pool_max_buffers << "," << "\"buffer_name\":\""
-      << json_escape(opt.buffer_name) << "\"}";
+      << json_escape(opt.buffer_name) << '"';
+  if (opt.preprocess_meta) {
+    oss << ",\"preprocess_meta\":";
+    write_preprocess_meta_json(oss, *opt.preprocess_meta);
+  }
+  oss << "}";
 }
 
 InputOptions parse_input_options(const JsonValue::JsonObject& obj) {
@@ -697,20 +826,34 @@ InputOptions parse_input_options(const JsonValue::JsonObject& obj) {
     opt.payload_type = input_type_from_media_type(string_field(obj, "media_type", ""));
   }
   opt.format = string_field(obj, "format", opt.format.str());
-  opt.width = int_field(obj, "width", opt.width);
-  opt.height = int_field(obj, "height", opt.height);
-  opt.depth = int_field(obj, "depth", opt.depth);
-  opt.max_width = int_field(obj, "max_width", opt.max_width);
-  opt.max_height = int_field(obj, "max_height", opt.max_height);
-  opt.max_depth = int_field(obj, "max_depth", opt.max_depth);
-  opt.fps_n = int_field(obj, "fps_n", opt.fps_n);
-  opt.fps_d = int_field(obj, "fps_d", opt.fps_d);
+  if (const auto* v = object_field(obj, "width"))
+    opt.width = checked_json_integer(*v, "input_options.width");
+  if (const auto* v = object_field(obj, "height"))
+    opt.height = checked_json_integer(*v, "input_options.height");
+  if (const auto* v = object_field(obj, "depth"))
+    opt.depth = checked_json_integer(*v, "input_options.depth");
+  if (const auto* v = object_field(obj, "max_width"))
+    opt.max_width = checked_json_integer(*v, "input_options.max_width");
+  if (const auto* v = object_field(obj, "max_height"))
+    opt.max_height = checked_json_integer(*v, "input_options.max_height");
+  if (const auto* v = object_field(obj, "max_depth"))
+    opt.max_depth = checked_json_integer(*v, "input_options.max_depth");
+  if (const auto* v = object_field(obj, "fps_n"))
+    opt.fps_n = checked_json_integer(*v, "input_options.fps_n");
+  if (const auto* v = object_field(obj, "fps_d"))
+    opt.fps_d = checked_json_integer(*v, "input_options.fps_d");
   opt.caps_override = string_field(obj, "caps_override", opt.caps_override);
   opt.is_live = bool_field(obj, "is_live", opt.is_live);
   opt.do_timestamp = bool_field(obj, "do_timestamp", opt.do_timestamp);
   opt.block = bool_field(obj, "block", opt.block);
   opt.stream_type = int_field(obj, "stream_type", opt.stream_type);
-  opt.max_bytes = static_cast<std::uint64_t>(int_field(obj, "max_bytes", 0));
+  opt.max_bytes = uint64_field(obj, "max_bytes", opt.max_bytes);
+  if (const auto* meta = object_field(obj, "preprocess_meta");
+      meta && meta->type != JsonValue::Type::Null) {
+    if (!meta->obj)
+      throw std::invalid_argument("preprocess_meta requires an object");
+    opt.preprocess_meta = parse_preprocess_meta(*meta->obj);
+  }
   const JsonValue* memory_policy_value = object_field(obj, "memory_policy");
   if (const JsonValue* deprecated_pool = object_field(obj, "use_simaai_pool")) {
     warn_deprecated_use_simaai_pool_json_once();
@@ -749,17 +892,6 @@ OutputOptions parse_output_options(const JsonValue::JsonObject& obj) {
 
 template <typename EnumT> int enum_int(EnumT value) {
   return static_cast<int>(value);
-}
-
-void write_int_vector_json(std::ostream& oss, const std::vector<int>& values) {
-  oss << "[";
-  for (std::size_t i = 0; i < values.size(); ++i) {
-    if (i) {
-      oss << ",";
-    }
-    oss << values[i];
-  }
-  oss << "]";
 }
 
 void write_float3_json(std::ostream& oss, const std::array<float, 3>& values) {
@@ -1358,7 +1490,7 @@ void write_model_fragments_json(std::ostream& oss,
 }
 
 // Node wrapper used for load() when only the fragment is available.
-class ConfiguredNode final : public Node {
+class ConfiguredNode final : public Node, public SerializedElementNames {
 public:
   ConfiguredNode(std::string kind, std::string label, std::string fragment,
                  std::vector<std::string> elements)
@@ -1488,7 +1620,10 @@ std::string Graph::describe(const GraphPrinter::Options& opt) const {
 
 void Graph::save(const std::string& path) const {
   if (composition_ &&
-      (!composition_->is_linear() || has_any_model_fragment_provenance(composition_->fragments))) {
+      (!composition_->is_linear() || has_any_model_fragment_provenance(composition_->fragments) ||
+       std::any_of(composition_->vertices.begin(), composition_->vertices.end(), [](const auto& n) {
+         return dynamic_cast<const Input*>(n.get()) || dynamic_cast<const Output*>(n.get());
+       }))) {
     if (composition_->has_runtime_vertices()) {
       throw std::runtime_error(
           "Graph::save does not serialize runtime-stage Graph fragments yet; rebuild this Graph "
@@ -1499,18 +1634,29 @@ void Graph::save(const std::string& path) const {
     std::ostringstream oss;
     oss << "{\n  \"version\": 2,\n";
     oss << "  \"graph_name\":\"" << json_escape(endpoint_name_) << "\",\n";
+    oss << "  \"element_name_prefix\":\"" << json_escape(opt_.element_name_prefix) << "\",\n";
+    oss << "  \"element_name_suffix\":\"" << json_escape(opt_.element_name_suffix) << "\",\n";
     oss << "  \"nodes\": [\n";
 
+    const bool plan_linear =
+        composition_->is_linear() && !has_any_model_fragment_provenance(composition_->fragments);
+    const auto planned = plan_linear ? session_build_materialize_model_bound_nodes(
+                                           linear_nodes_snapshot("Graph::save"), false)
+                                     : std::vector<std::shared_ptr<Node>>{};
+    if (plan_linear && planned.size() != composition_->vertices.size()) {
+      throw_io_error(error_codes::kPipelineShape, "Graph::save", path,
+                     "The manual model route changes the number of serialized nodes.",
+                     "Use a Model fragment to preserve its route and endpoints.");
+    }
     const NameTransform name_transform = make_name_transform(opt_);
     for (std::size_t i = 0; i < composition_->vertices.size(); ++i) {
-      const auto& n = composition_->vertices[i];
+      const auto& n = plan_linear ? planned[i] : composition_->vertices[i].pipeline_node;
       if (i) {
         oss << ",\n";
       }
       const std::string kind = n ? n->kind() : "<null>";
       const std::string label = n ? n->user_label() : "";
-      NodeFragment frag =
-          n ? make_node_fragment(n, static_cast<int>(i), name_transform) : NodeFragment{};
+      NodeFragment frag = make_node_fragment(n, static_cast<int>(i), name_transform);
 
       oss << "    {\"kind\":\"" << json_escape(kind) << "\"," << "\"label\":\""
           << json_escape(label) << "\",";
@@ -1697,8 +1843,8 @@ Graph Graph::load(const std::string& path) {
     }
 
     Graph graph(string_field(*root.obj, "graph_name"));
-    graph.opt_.element_name_prefix.clear();
-    graph.opt_.element_name_suffix.clear();
+    graph.opt_.element_name_prefix = string_field(*root.obj, "element_name_prefix");
+    graph.opt_.element_name_suffix = string_field(*root.obj, "element_name_suffix");
 
     const auto& nodes = *it_nodes->second.arr;
     graph.composition_->vertices.reserve(nodes.size());
@@ -1723,7 +1869,11 @@ Graph Graph::load(const std::string& path) {
         InputOptions opt;
         if (const JsonValue* input_opt = object_field(nobj, "input_options");
             input_opt && input_opt->type == JsonValue::Type::Object && input_opt->obj) {
-          opt = parse_input_options(*input_opt->obj);
+          try {
+            opt = parse_input_options(*input_opt->obj);
+          } catch (const std::invalid_argument& error) {
+            throw_io_error(error_codes::kIoParse, "Graph::load", path, error.what());
+          }
         }
         node = endpoint.empty() ? simaai::neat::nodes::Input(std::move(opt))
                                 : simaai::neat::nodes::Input(endpoint, std::move(opt));
@@ -1759,6 +1909,10 @@ Graph Graph::load(const std::string& path) {
         node = std::make_shared<ConfiguredNode>(kind, label, fragment, std::move(elements));
       }
 
+      if (auto* saved = dynamic_cast<SerializedElementNames*>(node.get());
+          saved && object_field(nobj, "elements")) {
+        saved->applied_name_transform = make_name_transform(graph.opt_);
+      }
       graph.composition_->append_unlinked_pipeline_vertex(node, "Graph::load");
       graph.groups_.push_back(Graph::GroupMeta{
           .start = idx,
