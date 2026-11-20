@@ -44,6 +44,10 @@ from windows_release import (
 
 PASS_CODES = {0}
 MSI_SUCCESS_CODES = {0, 1641, 3010}
+# Runner-hardware floor (Gen3 x4, single-channel DDR4 measures ~320 FPS / ~14.2 ms);
+# Linux keeps 12 ms / 440 FPS. Restore those when the Windows runner is upgraded.
+PERF_MAX_MEAN_LATENCY_MS = "16"
+PERF_MIN_THROUGHPUT_FPS = "290"
 BASE_CPP_TESTS = (
     "test_metadata.exe",
     "test_tensor_run.exe",
@@ -2299,12 +2303,10 @@ def run_cpp_tests(args: argparse.Namespace, candidate_root: Path, evidence: Path
   for mode in ("latency", "throughput"):
     command: list[object] = [
         performance, "--mode", mode, "--warmup", "100", "--iterations", "3000"]
-    # Runner-hardware floor (Gen3 x4, single-channel DDR4 measures ~320 FPS / ~14.2 ms);
-    # Linux keeps 12 ms / 440 FPS. Restore those when the Windows runner is upgraded.
     if mode == "latency":
-      command.extend(["--max-mean-latency-ms", "16"])
+      command.extend(["--max-mean-latency-ms", PERF_MAX_MEAN_LATENCY_MS])
     else:
-      command.extend(["--min-throughput-fps", "290"])
+      command.extend(["--min-throughput-fps", PERF_MIN_THROUGHPUT_FPS])
     run_logged(
         command, evidence / f"cpp-test_tensor_{mode}.log",
         env=environment, cwd=test_root, timeout=args.test_timeout_seconds)
@@ -2350,7 +2352,8 @@ def run_python_tests(args: argparse.Namespace, python: Path, evidence: Path,
       [python, "-m", "pytest", "-vv", "--junitxml", evidence / "python-hardware.xml",
        "pcie_host/python/tests"],
       evidence / "python-hardware.log",
-      env=environment,
+      env={**environment, "SIMAPCIE_PERF_MAX_MEAN_LATENCY_MS": PERF_MAX_MEAN_LATENCY_MS,
+           "SIMAPCIE_PERF_MIN_THROUGHPUT_FPS": PERF_MIN_THROUGHPUT_FPS},
       cwd=args.source_root,
       timeout=2 * args.test_timeout_seconds,
   )

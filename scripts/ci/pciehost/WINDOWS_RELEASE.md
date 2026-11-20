@@ -272,8 +272,9 @@ selected `10.0.N.2` address to its unique local `10.0.N.1` address and one up
 SiMa.ai virtual Ethernet adapter. The receipt records the adapter GUID and PnP
 device identity and proves that the same route remains selected after cleanup.
 
-Windows hardware qualification runs the Linux PCIe performance test: 100 warmup
-iterations followed by 3,000 measured iterations. Until the Windows runner moves to
+Windows hardware qualification runs the Linux PCIe performance tests (C++ and
+Python): 100 warmup iterations followed by 3,000 measured iterations. Until the
+Windows runner moves to
 a host comparable to the Linux ones, its gate is a floor for the current runner
 (PCIe Gen3 x4, single-channel memory: about 320 FPS and 14.2 ms): mean latency no
 higher than 16 ms and throughput no lower than 290 FPS. Linux keeps 12 ms and
