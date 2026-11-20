@@ -106,9 +106,23 @@ install command.
 The Windows preview is a native Visual Studio build of the `pcie::Model` vision
 API and includes `pcie::genai::GenAIModel`. GenAI remains release-gated as
 described above; installing the API alone does not qualify the Platform transport
-or card models. Install the matching x64 GStreamer MSVC runtime, the SiMa PCIe
-driver and the existing SiMa CLI first. One `sima-cli neat install` command then
-installs the matched Scheduler MSI, Core MSI and `win_amd64` wheel as one cohort.
+or card models. Install these prerequisites first:
+
+- the SiMa Platform 3.0 Windows package that matches the Neat release. It
+  provides the PCIe drivers and the `SiMaMlaDaemon` service;
+- GStreamer 1.28.6 MSVC x64 (`gstreamer-1.0-msvc-x86_64-1.28.6.exe` from the
+  [GStreamer download page](https://gstreamer.freedesktop.org/download/)). It
+  also provides the development files for C++ applications;
+- 64-bit CPython 3.14 from [python.org](https://www.python.org/downloads/windows/),
+  installed for all users or for the current user. Free-threaded builds cannot
+  load the wheel;
+- `sima-cli`, as described in the prerequisites above. An older `sima-cli`
+  stops with `Missing 'script' in 'installation'`; update it and retry.
+
+One `sima-cli neat install` command then installs the matched Scheduler MSI,
+Core MSI and `win_amd64` wheel as one cohort. Windows asks once for
+administrator approval for the two MSI packages. The command leaves the
+downloaded packages and Windows Installer logs in the current directory.
 
 Before either MSI runs, the CLI checks Windows OpenSSH, the Platform service,
 GStreamer, and a compatible Python installation. It creates or reuses the
@@ -153,6 +167,69 @@ Set-Location $env:TEMP
 & "$venv\Scripts\python.exe" -c "import pyneatpcie as p; print(p.__version__, p.Model)"
 & $gst "$root\bin\gstreamer-1.0\gstneatpciehost.dll"
 ```
+
+### Run applications on Windows
+
+The [PCIe Co-Processing](/develop-apps/hello-neat/pcie/) example and the PCIe
+tutorials show Linux commands. On Windows, run Python programs with the managed
+environment's interpreter. Activation is not required, and the default
+PowerShell execution policy blocks `Activate.ps1`:
+
+```powershell
+& "$env:USERPROFILE\pyneatpcie\Scripts\python.exe" pcie_host.py
+```
+
+C++ applications need Visual Studio 2026 with the **Desktop development with
+C++** workload. Older toolsets, including Visual Studio 2022, cannot link the
+installed static library. Examples that use OpenCV also need the OpenCV 5.0.0
+Windows package from [opencv.org](https://opencv.org/releases/). The package
+provides only the Release configuration. Build and run from an **x64 Native
+Tools Command Prompt for VS 2026**:
+
+```bat
+call "C:\Program Files\SimaPCIeHost\bin\sima-pcie-host-env.cmd"
+set "OpenCV_DIR=C:\opencv\build"
+cmake -S . -B build
+cmake --build build --config Release
+set "PATH=%OpenCV_DIR%\x64\vc16\bin;%PATH%"
+build\Release\pcie_host.exe
+```
+
+Replace `C:\opencv\build` with the `build` directory of the extracted OpenCV
+package. `sima-pcie-host-env.cmd` changes only the current Command Prompt.
+
+The host package installs the tutorials under `C:\Program Files\SimaPCIeHost`,
+so Windows needs no separate tutorial download. The tutorial programs read the
+model archives and `share\sima-pcie-host\tutorials` from the current directory.
+Copy the sources to a writable directory, add the model archives named in
+[Tutorial Setup](/tutorials/before-you-run), and run the programs from there:
+
+```powershell
+$root = "C:\Program Files\SimaPCIeHost"
+New-Item -ItemType Directory -Force pcie-tutorials\share\sima-pcie-host | Out-Null
+Copy-Item -Recurse "$root\share\sima-pcie-host\tutorials" pcie-tutorials\share\sima-pcie-host\
+Set-Location pcie-tutorials
+& "$env:USERPROFILE\pyneatpcie\Scripts\python.exe" share\sima-pcie-host\tutorials\024_run_your_first_model_over_pcie\run_tensor_mode.py
+$env:PATH = "C:\opencv\build\x64\vc16\bin;$env:PATH"
+& "$root\bin\sima-pcie-host-run.cmd" "$root\lib\sima-pcie-host\tutorials\tutorial_024_run_tensor_mode.exe"
+```
+
+The prebuilt C++ tutorials need `opencv_world500.dll` from that OpenCV package
+on `PATH`; without it, Windows reports a missing DLL.
+
+### Uninstall on Windows
+
+```powershell
+sima-cli packages list
+sima-cli packages remove gh:sima-neat/core/pciehost/windows/amd64 --version <version> --yes
+& "$env:USERPROFILE\pyneatpcie\Scripts\python.exe" -m pip uninstall -y pyneatpcie
+sima-cli playbooks remove neat-pcie-application-builder --yes
+```
+
+Use the version that `sima-cli packages list` shows. The command removes Core
+and then Scheduler under one administrator approval. It does not delete the
+Python environment; delete `%USERPROFILE%\pyneatpcie` if no other application
+uses it.
 
 ## Troubleshooting
 

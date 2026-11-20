@@ -87,7 +87,14 @@ gst-inspect-1.0 neatpciehost
 Пакети для Windows ще не опубліковано. Їх буде опубліковано з тим самим тегом випуску Neat, що й пакети для Ubuntu, починаючи з першого випуску Neat, який постачатиме кваліфіковані бінарні файли для Windows. Тоді в цьому розділі з’явиться команда встановлення.
 :::
 
-Попередня версія для Windows — це нативна збірка Visual Studio для API обробки зображень `pcie::Model`, яка також містить `pcie::genai::GenAIModel`. Як описано вище, GenAI і надалі потребує кваліфікації для випуску; саме лише встановлення API не кваліфікує транспорт Platform або моделі на карті. Спочатку встановіть відповідне середовище виконання x64 GStreamer MSVC, драйвер SiMa PCIe та наявний SiMa CLI. Потім одна команда `sima-cli neat install` встановлює узгоджені пакети Scheduler MSI, Core MSI та wheel `win_amd64` як єдиний набір.
+Попередня версія для Windows — це нативна збірка Visual Studio для API обробки зображень `pcie::Model`, яка також містить `pcie::genai::GenAIModel`. Як описано вище, GenAI і надалі потребує кваліфікації для випуску; саме лише встановлення API не кваліфікує транспорт Platform або моделі на карті. Спочатку встановіть такі передумови:
+
+- пакет SiMa Platform 3.0 для Windows, що відповідає випуску Neat. Він надає драйвери PCIe і службу `SiMaMlaDaemon`;
+- GStreamer 1.28.6 MSVC x64 (`gstreamer-1.0-msvc-x86_64-1.28.6.exe` зі [сторінки завантаження GStreamer](https://gstreamer.freedesktop.org/download/)). Він також надає файли для розроблення застосунків C++;
+- 64-розрядний CPython 3.14 з [python.org](https://www.python.org/downloads/windows/), установлений для всіх користувачів або лише для поточного. Збірки з вільною багатопотоковістю (free-threaded) не можуть завантажити wheel;
+- `sima-cli`, як описано в передумовах вище. Старіша версія `sima-cli` зупиняється з повідомленням `Missing 'script' in 'installation'`; оновіть її та повторіть спробу.
+
+Потім одна команда `sima-cli neat install` встановлює узгоджені пакети Scheduler MSI, Core MSI та wheel `win_amd64` як єдиний набір. Windows один раз запитує дозвіл адміністратора для двох пакетів MSI. Завантажені пакети й журнали Windows Installer залишаються в поточному каталозі.
 
 Перед запуском MSI CLI перевіряє Windows OpenSSH, службу Platform, GStreamer і сумісний Python. Він створює або повторно використовує середовище `%USERPROFILE%\pyneatpcie`, перевіряє опубліковані контрольні суми, запускає Windows Installer для Scheduler і Core, виконує діагностику хоста та встановлює узгоджені навичку агента й wheel. Для відновлення або оновлення повторно виконайте ту саму команду. Щоб вибрати інше середовище, використайте `--python-executable <path>`; щоб установити лише нативну версію C++, використайте `--native-only`. Видаленням нативних компонентів керує Windows Installer, а видаленням пакета Python — pip.
 
@@ -114,6 +121,52 @@ Set-Location $env:TEMP
 & "$venv\Scripts\python.exe" -c "import pyneatpcie as p; print(p.__version__, p.Model)"
 & $gst "$root\bin\gstreamer-1.0\gstneatpciehost.dll"
 ```
+
+### Запуск застосунків у Windows
+
+Приклад [PCIe Co-Processing](/develop-apps/hello-neat/pcie/) і навчальні посібники PCIe містять команди для Linux. У Windows запускайте програми Python інтерпретатором керованого середовища. Активація не потрібна, а типова політика виконання PowerShell блокує `Activate.ps1`:
+
+```powershell
+& "$env:USERPROFILE\pyneatpcie\Scripts\python.exe" pcie_host.py
+```
+
+Для застосунків C++ потрібна Visual Studio 2026 із робочим навантаженням **Desktop development with C++**. Старіші набори інструментів, зокрема Visual Studio 2022, не можуть скомпонувати встановлену статичну бібліотеку. Прикладам, що використовують OpenCV, також потрібен пакет OpenCV 5.0.0 для Windows з [opencv.org](https://opencv.org/releases/). Пакет надає лише конфігурацію Release. Збирайте й запускайте в **x64 Native Tools Command Prompt for VS 2026**:
+
+```bat
+call "C:\Program Files\SimaPCIeHost\bin\sima-pcie-host-env.cmd"
+set "OpenCV_DIR=C:\opencv\build"
+cmake -S . -B build
+cmake --build build --config Release
+set "PATH=%OpenCV_DIR%\x64\vc16\bin;%PATH%"
+build\Release\pcie_host.exe
+```
+
+Замініть `C:\opencv\build` на каталог `build` розпакованого пакета OpenCV. `sima-pcie-host-env.cmd` змінює лише поточний командний рядок.
+
+Пакет хоста встановлює навчальні посібники в `C:\Program Files\SimaPCIeHost`, тому в Windows їх не потрібно завантажувати окремо. Програми посібників читають архіви моделей і `share\sima-pcie-host\tutorials` з поточного каталогу. Скопіюйте вихідні файли до каталогу з правом запису, додайте архіви моделей, зазначені в [Tutorial Setup](/tutorials/before-you-run), і запускайте програми звідти:
+
+```powershell
+$root = "C:\Program Files\SimaPCIeHost"
+New-Item -ItemType Directory -Force pcie-tutorials\share\sima-pcie-host | Out-Null
+Copy-Item -Recurse "$root\share\sima-pcie-host\tutorials" pcie-tutorials\share\sima-pcie-host\
+Set-Location pcie-tutorials
+& "$env:USERPROFILE\pyneatpcie\Scripts\python.exe" share\sima-pcie-host\tutorials\024_run_your_first_model_over_pcie\run_tensor_mode.py
+$env:PATH = "C:\opencv\build\x64\vc16\bin;$env:PATH"
+& "$root\bin\sima-pcie-host-run.cmd" "$root\lib\sima-pcie-host\tutorials\tutorial_024_run_tensor_mode.exe"
+```
+
+Попередньо зібраним посібникам C++ потрібен `opencv_world500.dll` з цього пакета OpenCV у `PATH`; без нього Windows повідомляє про відсутню DLL.
+
+### Видалення у Windows
+
+```powershell
+sima-cli packages list
+sima-cli packages remove gh:sima-neat/core/pciehost/windows/amd64 --version <version> --yes
+& "$env:USERPROFILE\pyneatpcie\Scripts\python.exe" -m pip uninstall -y pyneatpcie
+sima-cli playbooks remove neat-pcie-application-builder --yes
+```
+
+Використовуйте версію, яку показує `sima-cli packages list`. Команда видаляє Core, а потім Scheduler з одним підтвердженням адміністратора. Вона не видаляє середовище Python; видаліть `%USERPROFILE%\pyneatpcie`, якщо жоден інший застосунок його не використовує.
 
 ## Усунення несправностей
 
