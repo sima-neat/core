@@ -53,7 +53,7 @@ slug: /develop-apps/contribute/
     <p>Звертайтеся до цих сторінок, коли змінюєте архіви моделей, контракти плагінів або внутрішнє пакування.</p>
     <ul class="overview-link-list">
       <li><a class="overview-link-card" href="/develop-apps/contribute/mpk_contract/"><strong>Контракт MPK</strong><span>Ознайомтеся з правилами приймання, перевірки та безпеки архівів моделей.</span></a></li>
-      <li><a class="overview-link-card" href="/develop-apps/contribute/sima_plugin_json_truth_map/"><strong>Карта відповідності JSON для плагінів</strong><span>Перегляньте зафіксовану карту контракту JSON для плагінів SIMA.</span></a></li>
+      <li><a class="overview-link-card" href="/develop-apps/contribute/sima_plugin_json_truth_map/"><strong>Карта істини JSON для плагінів</strong><span>Перегляньте зафіксовану карту контракту JSON для плагінів SIMA.</span></a></li>
     </ul>
   </section>
 
@@ -61,7 +61,7 @@ slug: /develop-apps/contribute/
     <h2>Випуск і супровід</h2>
     <p>Звертайтеся до цих сторінок, коли потрібні умови допуску випуску, плани впорядкування коду та довгострокові рекомендації щодо проєктування.</p>
     <ul class="overview-link-list">
-      <li><a class="overview-link-card" href="/develop-apps/contribute/release-checklist/"><strong>Перелік завдань перед випуском</strong><span>Дотримуйтеся умов, що блокують випуск, обов’язкових перевірок і відтворюваних кроків.</span></a></li>
+      <li><a class="overview-link-card" href="/develop-apps/contribute/release-checklist/"><strong>Контрольний список випуску</strong><span>Дотримуйтеся умов, що блокують випуск, обов’язкових перевірок і відтворюваних кроків.</span></a></li>
       <li><a class="overview-link-card" href="/develop-apps/contribute/error-taxonomy-rollout/"><strong>Впровадження таксономії помилок</strong><span>Відстежуйте перехід на структуровані коди помилок і стан його перевірки.</span></a></li>
       <li><a class="overview-link-card" href="/develop-apps/contribute/agentic-workflow/"><strong>Агентний робочий процес</strong><span>Дізнайтеся, чому API побудовано з розрахунком на розробку як людьми, так і за допомогою ШІ.</span></a></li>
     </ul>
