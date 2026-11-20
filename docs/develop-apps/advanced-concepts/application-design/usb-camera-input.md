@@ -260,7 +260,7 @@ source = pyneat.nodes.usb_camera_input(camera, info)  # reuses info
 
 The node outputs `UInt8` frames in HWC layout with two bytes per pixel. Frames keep the camera's frame rate, including fractional rates such as 30000/1001, and odd heights are allowed. Calls without a format still capture MJPEG.
 
-### Run a model on YUYV frames
+### Run a model on YUYV frames {#run-a-model-on-yuyv-frames}
 
 Set the model's `preprocess.color_convert.input_format` to `PreprocessColorFormat::YUYV` and its maximum input size to the camera mode. YUYV frames do not say which matrix and range they use, so build the model route from a `Preproc` that carries `info.color`, followed by the model's inference and postprocessing:
 
@@ -312,7 +312,7 @@ Model preprocessing on YUYV frames does not support:
 
 A model whose preprocessing needs one of these fails when the graph is built. Capture MJPEG instead, or convert the frames first with `ColorConvert` to `ImageFormat::RGB` (pass `info.color` and `info.colorimetry`) and set the model's input format to `PreprocessColorFormat::RGB`.
 
-### View YUYV frames as H.264
+### View YUYV frames as H.264 {#view-yuyv-frames-as-h264}
 
 To send the camera's video to a viewer as well, branch before `Preproc` and link the viewer branch with `RealtimeLatestByStream`, so it never holds back the model. Convert the frames to NV12 in the encoder's layout with `ColorConvert(options, info.colorimetry)`, then encode them with a strict H.264 `VideoSender`:
 

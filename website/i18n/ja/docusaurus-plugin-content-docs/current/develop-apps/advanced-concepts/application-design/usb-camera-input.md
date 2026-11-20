@@ -260,7 +260,7 @@ source = pyneat.nodes.usb_camera_input(camera, info)  # reuses info
 
 ノードは、1画素2バイトのHWCレイアウトの `UInt8` フレームを出力します。フレームは30000/1001のような小数のレートを含めてカメラのフレームレートを保ち、奇数の高さも使えます。フォーマットを指定しない呼び出しは、引き続きMJPEGをキャプチャーします。
 
-### YUYVフレームでモデルを実行する
+### YUYVフレームでモデルを実行する {#run-a-model-on-yuyv-frames}
 
 モデルの `preprocess.color_convert.input_format` を `PreprocessColorFormat::YUYV` に設定し、最大入力サイズをカメラのモードに合わせます。YUYVフレームは使用する行列とレンジを示さないため、`info.color` を持つ `Preproc` からモデルの経路を構築し、その後にモデルの推論と後処理を続けます。
 
@@ -312,7 +312,7 @@ YUYVフレームに対するモデルの前処理は、次をサポートしま�
 
 これらのいずれかを必要とする前処理を持つモデルは、グラフの構築時に失敗します。代わりにMJPEGをキャプチャーするか、先に `ColorConvert` でフレームを `ImageFormat::RGB` に変換し（`info.color` と `info.colorimetry` を渡します）、モデルの入力形式を `PreprocessColorFormat::RGB` に設定します。
 
-### YUYVフレームをH.264で表示する
+### YUYVフレームをH.264で表示する {#view-yuyv-frames-as-h264}
 
 カメラの映像をビューアーにも送るには、`Preproc` の前で分岐し、ビューアーの分岐を `RealtimeLatestByStream` で接続して、モデルを決して待たせないようにします。`ColorConvert(options, info.colorimetry)` でフレームをエンコーダーのレイアウトのNV12に変換し、厳格なH.264の `VideoSender` でエンコードします。
 

@@ -260,7 +260,7 @@ source = pyneat.nodes.usb_camera_input(camera, info)  # reuses info
 
 노드는 픽셀당 2바이트인 HWC 레이아웃의 `UInt8` 프레임을 출력합니다. 프레임은 30000/1001 같은 분수 속도를 포함해 카메라의 프레임 속도를 유지하며, 홀수 높이도 허용됩니다. 형식을 지정하지 않은 호출은 여전히 MJPEG를 캡처합니다.
 
-### YUYV 프레임으로 모델 실행하기
+### YUYV 프레임으로 모델 실행하기 {#run-a-model-on-yuyv-frames}
 
 모델의 `preprocess.color_convert.input_format`을 `PreprocessColorFormat::YUYV`로 설정하고 최대 입력 크기를 카메라 모드에 맞추세요. YUYV 프레임은 어떤 행렬과 범위를 쓰는지 알려 주지 않으므로, `info.color`를 담은 `Preproc`으로 모델 경로를 구성하고 그 뒤에 모델의 추론과 후처리를 이어 붙이세요.
 
@@ -312,7 +312,7 @@ YUYV 프레임에 대한 모델 전처리는 다음을 지원하지 않습니다
 
 전처리에 이 중 하나가 필요한 모델은 그래프를 빌드할 때 실패합니다. 대신 MJPEG를 캡처하거나, 먼저 `ColorConvert`로 프레임을 `ImageFormat::RGB`로 변환하고(`info.color`와 `info.colorimetry` 전달) 모델의 입력 형식을 `PreprocessColorFormat::RGB`로 설정하세요.
 
-### YUYV 프레임을 H.264로 보기
+### YUYV 프레임을 H.264로 보기 {#view-yuyv-frames-as-h264}
 
 카메라 영상을 뷰어에도 보내려면 `Preproc` 앞에서 분기하고 뷰어 분기를 `RealtimeLatestByStream`으로 연결하여 뷰어가 모델을 지연시키지 않게 하세요. `ColorConvert(options, info.colorimetry)`로 프레임을 인코더 레이아웃의 NV12로 변환한 다음, 엄격한 H.264 `VideoSender`로 인코딩하세요.
 

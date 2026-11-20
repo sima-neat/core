@@ -260,7 +260,7 @@ source = pyneat.nodes.usb_camera_input(camera, info)  # reuses info
 
 節點輸出每像素兩位元組、HWC 排列的 `UInt8` 影格。影格保留攝影機的影格率，包括 30000/1001 這類分數影格率，且允許奇數高度。未指定格式的呼叫仍會擷取 MJPEG。
 
-### 在 YUYV 影格上執行模型
+### 在 YUYV 影格上執行模型 {#run-a-model-on-yuyv-frames}
 
 將模型的 `preprocess.color_convert.input_format` 設為 `PreprocessColorFormat::YUYV`，並將其最大輸入尺寸設為攝影機模式的尺寸。YUYV 影格不會標示所用的矩陣與範圍，因此請從攜帶 `info.color` 的 `Preproc` 建立模型路徑，接著接上模型的推論與後處理：
 
@@ -312,7 +312,7 @@ graph.add(pyneat.nodes.output())
 
 前處理需要上述任一項的模型會在建置圖時失敗。請改為擷取 MJPEG，或先以 `ColorConvert` 將影格轉換為 `ImageFormat::RGB`（傳入 `info.color` 與 `info.colorimetry`），並將模型的輸入格式設為 `PreprocessColorFormat::RGB`。
 
-### 以 H.264 檢視 YUYV 影格
+### 以 H.264 檢視 YUYV 影格 {#view-yuyv-frames-as-h264}
 
 若也要將攝影機的視訊傳送到檢視器，請在 `Preproc` 之前分流，並以 `RealtimeLatestByStream` 連接檢視分支，使其絕不拖慢模型。使用 `ColorConvert(options, info.colorimetry)` 將影格轉換為編碼器排列方式的 NV12，再以嚴格的 H.264 `VideoSender` 編碼：
 
