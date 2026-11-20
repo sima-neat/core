@@ -533,8 +533,8 @@ the leading count. Its layout is
 [`SegmentationMasksHeaderV1`](/reference/cppapi/structs/simaai-neat-segmentationmasksheaderv1)
 in `pipeline/DetectionTypes.h`: the header, then `RawBox` records, then one `uint8` mask per
 record, 0 or 255. Read it with `decode_segmentation`, which returns the boxes and masks and rejects
-a malformed header or extent. The tensor keeps the `BBOX` tag, and `decode_segmentation` and
-`decode_bbox` recognize the payload by its magic, so existing segmentation payloads are unchanged.
+a malformed header or extent. New tensors carry the `BBOX_SEGMENTATION` tag. Both
+`decode_segmentation` and `decode_bbox` also recognize older `BBOX` tensors by the mask header.
 `SimaRender` does not accept it.
 
 ## When `model.run` returns raw heads

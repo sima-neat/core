@@ -400,7 +400,7 @@ options.yolox_seg_pose.pose_classes = [0, 5]
 
 ### バージョン付きマスクペイロード {#versioned-masks-payload}
 
-Segment Anything の出力など、160×160 ではないマスクは、先頭のカウントの代わりにバージョン付きヘッダーを使用します。そのレイアウトは `pipeline/DetectionTypes.h` の [`SegmentationMasksHeaderV1`](/reference/cppapi/structs/simaai-neat-segmentationmasksheaderv1) で、ヘッダー、`RawBox` レコード、レコードごとに 1 つの `uint8` マスク（値は 0 または 255）の順に並びます。読み取りには `decode_segmentation` を使ってください。ボックスとマスクを返し、不正なヘッダーや範囲は拒否します。テンソルには `BBOX` タグが付いたままです。`decode_segmentation` と `decode_bbox` はマジック値でペイロードを識別するため、既存のセグメンテーションペイロードは変わりません。`SimaRender` はこのペイロードを受け付けません。
+Segment Anything の出力など、160×160 ではないマスクは、先頭のカウントの代わりにバージョン付きヘッダーを使用します。そのレイアウトは `pipeline/DetectionTypes.h` の [`SegmentationMasksHeaderV1`](/reference/cppapi/structs/simaai-neat-segmentationmasksheaderv1) で、ヘッダー、`RawBox` レコード、レコードごとに 1 つの `uint8` マスク（値は 0 または 255）の順に並びます。読み取りには `decode_segmentation` を使ってください。ボックスとマスクを返し、不正なヘッダーや範囲は拒否します。新しいテンソルには `BBOX_SEGMENTATION` タグが付きます。`decode_segmentation` と `decode_bbox` は、旧形式の `BBOX` テンソルもマスクヘッダーで識別します。`SimaRender` はこのペイロードを受け付けません。
 
 ## `model.run` が生のヘッドを返す場合
 
