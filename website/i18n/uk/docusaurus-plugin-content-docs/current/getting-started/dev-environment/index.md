@@ -93,7 +93,7 @@ Model Compiler пропонується під час налаштування S
 :::
 
 :::note Встановлення певної версії
-Під час стандартної інсталяції використовуються поточні значення за замовчуванням. Канал `%%release.sdk_channel%%`, який використовується на сторінці [Встановлення SDK](/getting-started/dev-environment/install-the-environment/), завжди містить інформацію про останню версію патчу %%release.sdk_series%%. Щоб встановити конкретну версію SDK, Neat Library або Model Compiler, зверніться до [Посібник зі сумісності](/getting-started/compatibility/).
+На сторінці [Встановлення SDK](/getting-started/dev-environment/install-the-environment/) використовується опублікований тег `v%%release.sdk%%` для поточного випуску серії %%release.sdk_series%%. Інші версії SDK, Neat Library або Model Compiler наведено в [посібнику із сумісності](/getting-started/compatibility/).
 :::
 
 ## Інструменти в SDK.
