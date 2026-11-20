@@ -51,7 +51,7 @@ mdx:
    └── hello_neat.py
    ```
 
-**Запустіть:**
+**Запуск:**
 
 <ShellCommand prompt="devkit">
 source ~/pyneat/bin/activate
@@ -73,7 +73,7 @@ dk hello_neat.py
 
 **Створіть два файли:**
 
-1. `CMakeLists.txt` містить інструкції для CMake щодо збірки та компонування застосунку.
+1. `CMakeLists.txt` містить інструкції для CMake щодо збирання застосунку та підключення до нього бібліотек.
 
    ```cmake title="CMakeLists.txt" {19,24-28}
    cmake_minimum_required(VERSION 3.16)
@@ -106,7 +106,7 @@ dk hello_neat.py
    )
    ```
 
-   Саме два виділені рядки підключають Neat до вашої збірки: `find_package(SimaNeat REQUIRED CONFIG)` знаходить встановлений пакет Neat, а `target_link_libraries(sima_neat_hello PRIVATE SimaNeat::sima_neat ...)` компонує з ним ваш виконуваний файл — імпортована ціль `SimaNeat::sima_neat` також підтягує заголовні файли та транзитивні залежності Neat, тому вам не потрібно вручну вказувати шляхи до заголовних файлів або бібліотек. (Рядки, що стосуються OpenCV, тут лише тому, що цей приклад декодує зображення.)
+   Саме два виділені рядки підключають Neat до вашої збірки: `find_package(SimaNeat REQUIRED CONFIG)` знаходить встановлений пакет Neat, а `target_link_libraries(sima_neat_hello PRIVATE SimaNeat::sima_neat ...)` підключає його до вашого виконуваного файлу — імпортована ціль `SimaNeat::sima_neat` також підтягує заголовні файли та транзитивні залежності Neat, тому вам не потрібно вручну вказувати шляхи до заголовних файлів або бібліотек. (Рядки, що стосуються OpenCV, тут лише тому, що цей приклад декодує зображення.)
 
 2. `main.cpp` містить невелику програму Neat.
 
@@ -140,7 +140,7 @@ cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j
 </ShellCommand>
 
-**Запустіть:**
+**Запуск:**
 
 <ShellCommand prompt="devkit">
 ./build/sima_neat_hello

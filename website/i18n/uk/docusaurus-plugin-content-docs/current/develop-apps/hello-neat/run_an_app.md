@@ -53,7 +53,7 @@ mdx:
 
     [Відкрийте або завантажте зразок зображення](../../images/tutorial_sample_image.png).
 
-## Огляд коду
+## Огляд коду {#walk-through-the-code}
 
 Програма складається з восьми коротких фрагментів. Перемикайте вкладку мови в кожному блоці.
 
@@ -201,7 +201,7 @@ graph.add(neat::nodes::Output("detections"));
 
 `Graph` — це послідовність обробки в застосунку. Кожен `add(...)` додає наступний крок, тож тут будується лінійна послідовність `image → model → detections`. Фрагмент моделі з кроку 3 стає одним із кроків у ній.
 
-### 6. Збірка та запуск графа
+### 6. Збирання та запуск графа
 
 <CodeTabs>
 <CodeTab label="Python" lang="python">
@@ -404,7 +404,7 @@ target_link_libraries(sima_neat_app
 )
 ```
 
-Саме два виділені рядки підключають ваш застосунок до Neat: `find_package(SimaNeat REQUIRED CONFIG)` знаходить встановлений пакет Neat (через `SimaNeatConfig.cmake`), а `target_link_libraries(sima_neat_app PRIVATE SimaNeat::sima_neat ...)` компонує застосунок із ним — імпортована ціль `SimaNeat::sima_neat` автоматично передає каталоги заголовків і транзитивні залежності Neat, тому не потрібно вказувати шляхи до заголовків/бібліотек вручну. (`PkgConfig::OPENCV` потрібен лише тому, що цей застосунок використовує OpenCV для завантаження зображень.)
+Саме два виділені рядки підключають ваш застосунок до Neat: `find_package(SimaNeat REQUIRED CONFIG)` знаходить встановлений пакет Neat (через `SimaNeatConfig.cmake`), а `target_link_libraries(sima_neat_app PRIVATE SimaNeat::sima_neat ...)` підключає його до застосунку — імпортована ціль `SimaNeat::sima_neat` автоматично передає каталоги заголовків і транзитивні залежності Neat, тому не потрібно вказувати шляхи до заголовків/бібліотек вручну. (`PkgConfig::OPENCV` потрібен лише тому, що цей застосунок використовує OpenCV для завантаження зображень.)
 
 ```cpp title="main.cpp" {13-19,30-31,34-37,40-42,44-46}
 #include "neat.h"
@@ -469,7 +469,7 @@ int main() {
 }
 ```
 
-**Збірка:**
+**Збирання:**
 
 <ShellCommand prompt="sdk|devkit">
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
