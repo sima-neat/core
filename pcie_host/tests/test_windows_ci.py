@@ -3969,9 +3969,7 @@ class WindowsCiContracts(unittest.TestCase):
         return item
 
     token = SimpleNamespace(is_final=False)
-    streams = [Stream([token, token, None]), Stream([token, Fault("injected")])]
     model = mock.Mock()
-    model.stream.side_effect = lambda _request: streams.pop(0)
     genai = SimpleNamespace(GenAIModel=mock.Mock(return_value=model),
                             GenerationRequest=SimpleNamespace,
                             ConnectionOptions=SimpleNamespace)
@@ -3985,14 +3983,21 @@ class WindowsCiContracts(unittest.TestCase):
     client = importlib.util.module_from_spec(spec)
     with mock.patch.dict(sys.modules, stubs):
       spec.loader.exec_module(client)
-    output = []
-    with mock.patch.object(client, "model_path", return_value="model"), \
-         mock.patch.object(client, "connection", return_value=None), \
-         mock.patch("builtins.print", lambda *args, **_: output.append(args[0])):
-      client.wait_for_injected_failure()
-    self.assertEqual(output, ["GENAI_FAULT_READY", "GENAI_FAULT_OBSERVED: injected"])
-    self.assertEqual(model.stream.call_count, 2)
-    model.close.assert_called_once()
+    for streams in (
+        [Stream([token, token, None]), Stream([token, Fault("injected")])],
+        # The fault lands after one stream ended; starting the next one reports it.
+        [Stream([token, None]), Fault("injected")]):
+      with self.subTest(second=type(streams[1]).__name__):
+        model.reset_mock()
+        model.stream.side_effect = streams
+        output = []
+        with mock.patch.object(client, "model_path", return_value="model"), \
+             mock.patch.object(client, "connection", return_value=None), \
+             mock.patch("builtins.print", lambda *args, **_: output.append(args[0])):
+          client.wait_for_injected_failure()
+        self.assertEqual(output, ["GENAI_FAULT_READY", "GENAI_FAULT_OBSERVED: injected"])
+        self.assertEqual(model.stream.call_count, 2)
+        model.close.assert_called_once()
 
 
 

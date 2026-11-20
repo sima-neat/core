@@ -53,8 +53,9 @@ def wait_for_injected_failure():
     deadline = time.monotonic() + FAULT_WINDOW_SECONDS
     ready = False
     while time.monotonic() < deadline:
-      stream = model.stream(request("Count from one to one thousand.", 2048))
       try:
+        # A fault between two streams is reported when the next one starts.
+        stream = model.stream(request("Count from one to one thousand.", 2048))
         first = stream.next()
         if first is not None and not first.is_final:
           if not ready:
