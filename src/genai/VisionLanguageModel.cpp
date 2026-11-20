@@ -7,6 +7,7 @@
 #include <sima_lmm/vision_language_model.hpp>
 
 #include <atomic>
+#include <iostream>
 #include <limits>
 #include <mutex>
 #include <stop_token>
@@ -239,6 +240,37 @@ struct VisionLanguageModel::Impl {
   std::atomic<std::size_t> cached_count{0};
 };
 
+struct GenAISession::Impl {
+  explicit Impl(std::shared_ptr<VisionLanguageModel::Impl> owner)
+      : model(std::move(owner)), id(model->runtime->create_session()) {}
+  ~Impl() {
+    try {
+      std::lock_guard lock(model->operations);
+      model->runtime->release_session(id);
+    } catch (const std::exception& error) {
+      std::cerr << "Failed to release GenAI session " << id << ": " << error.what() << '\n';
+    }
+  }
+  std::shared_ptr<VisionLanguageModel::Impl> model;
+  llima::SessionId id;
+};
+
+GenAISession::GenAISession(std::shared_ptr<Impl> impl) : impl_(std::move(impl)) {}
+GenAISession::~GenAISession() = default;
+GenAISession::GenAISession(GenAISession&&) noexcept = default;
+GenAISession& GenAISession::operator=(GenAISession&&) noexcept = default;
+
+GenerationResult GenAISession::run(const GenerationRequest& request) {
+  return impl_->model->run(request, impl_->id);
+}
+GenerationStream GenAISession::stream(const GenerationRequest& request) {
+  return VisionLanguageModel::stream_request(impl_->model, request, impl_);
+}
+void GenAISession::reset() {
+  std::lock_guard lock(impl_->model->operations);
+  impl_->model->runtime->reset_session(impl_->id);
+}
+
 VisionLanguageModel::VisionLanguageModel(std::filesystem::path model_dir)
     : VisionLanguageModel(internal::local_model_context(model_dir)) {}
 
@@ -254,6 +286,11 @@ VisionLanguageModel::~VisionLanguageModel() = default;
 VisionLanguageModel::VisionLanguageModel(VisionLanguageModel&&) noexcept = default;
 
 VisionLanguageModel& VisionLanguageModel::operator=(VisionLanguageModel&&) noexcept = default;
+
+GenAISession VisionLanguageModel::create_session() {
+  std::lock_guard lock(impl_->operations);
+  return GenAISession(std::make_shared<GenAISession::Impl>(impl_));
+}
 
 bool VisionLanguageModel::accepts_image() const {
   return impl_->info.accepts_image;
@@ -312,12 +349,21 @@ GenerationResult VisionLanguageModel::run(const GenerationRequest& request) {
 }
 
 GenerationStream VisionLanguageModel::stream(const GenerationRequest& request) {
+  return stream_request(impl_, request, nullptr);
+}
+
+GenerationStream VisionLanguageModel::stream_request(std::shared_ptr<Impl> model,
+                                                     const GenerationRequest& request,
+                                                     std::shared_ptr<GenAISession::Impl> session) {
   internal::validate_text_generation_request(request);
-  impl_->validate_thinking_request(request);
+  model->validate_thinking_request(request);
   std::stop_source stop;
   return GenerationStream(
-      [model = impl_, request, token = stop.get_token()](GenerationStream::Producer& producer) {
+      [model = std::move(model), session = std::move(session), request,
+       token = stop.get_token()](GenerationStream::Producer& producer) mutable {
+        auto active_session = std::move(session);
         llima::GenerationOptions options;
+        options.session = active_session ? active_session->id : llima::kDefaultSession;
         options.stop = token;
         options.info_callback = [&producer](const std::string& metric, double value) {
           if (metric == "ttft" || metric == "tps")
@@ -370,6 +416,7 @@ GenerationStream VisionLanguageModel::stream(const GenerationRequest& request) {
           }
         };
         const auto output = model->generate(request, std::move(options));
+        active_session.reset();
         producer.finish(finish_reason(output.finish, emitted_tool_calls),
                         output.performance.generated_tokens);
       },

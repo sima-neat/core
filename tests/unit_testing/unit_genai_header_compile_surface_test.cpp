@@ -98,6 +98,10 @@ RUN_TEST("unit_genai_header_compile_surface_test", ([] {
            static_assert(std::is_copy_constructible_v<TokenSample>);
            static_assert(std::is_default_constructible_v<VisionLanguageOptions>);
            static_assert(std::is_default_constructible_v<SpeechTranscriberOptions>);
+           static_assert(std::is_move_constructible_v<GenAISession>);
+           static_assert(!std::is_copy_constructible_v<GenAISession>);
+           static_assert(std::is_same_v<decltype(std::declval<VisionLanguageModel&>().create_session()),
+                                        GenAISession>);
            static_assert(std::is_move_constructible_v<VisionLanguageModel>);
            static_assert(!std::is_copy_constructible_v<VisionLanguageModel>);
            static_assert(std::is_move_constructible_v<ASRModel>);
