@@ -4,6 +4,7 @@
 import ast
 import base64
 import contextlib
+import io
 from functools import partial
 import importlib.util
 import getpass
@@ -684,7 +685,8 @@ class WindowsCiContracts(unittest.TestCase):
           mock.patch.object(RECOVERY, "remove_msi", return_value=0):
         lock.return_value.owner.return_value = token
         RECOVERY.cleanup(args)
-      remove_user.assert_called_once_with(args.evidence / "recovery-standard-user.log")
+      remove_user.assert_called_once_with(
+          args.evidence.resolve() / "recovery-standard-user.log")
       receipt = json.loads((args.evidence / "recovery-cleanup.json").read_text())
       self.assertEqual(receipt["errors"], [])
       self.assertEqual(receipt["results"]["standard_user"], "removed")
@@ -915,10 +917,11 @@ class WindowsCiContracts(unittest.TestCase):
     with self.assertRaisesRegex(RuntimeError, "^hardware cleanup failed: left; locked$"):
       HARDWARE.raise_first_failure(None, ["left", "locked"])
     failure = RuntimeError("command failed with 1; see tutorial.log")
-    with self.assertRaises(RuntimeError) as raised:
+    stderr = io.StringIO()
+    with self.assertRaises(RuntimeError) as raised, contextlib.redirect_stderr(stderr):
       HARDWARE.raise_first_failure(failure, ["left"])
     self.assertIs(raised.exception, failure)
-    self.assertEqual(failure.__notes__, ["hardware cleanup failed: left"])
+    self.assertEqual(stderr.getvalue(), "hardware cleanup failed: left\n")
 
   def test_workflow_uses_exact_scheduler_artifact_and_restricted_runner(self):
     workflow = WORKFLOW.read_text(encoding="utf-8")

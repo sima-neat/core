@@ -2873,11 +2873,11 @@ def qualify(args: argparse.Namespace) -> None:
 
 
 def raise_first_failure(failure: BaseException | None, cleanup_errors: list[str]) -> None:
-  """Raise the qualification failure itself; a cleanup error after it is its note."""
+  """Raise the qualification failure itself; a cleanup error after it is logged first."""
   cleanup = "hardware cleanup failed: " + "; ".join(cleanup_errors)
   if failure is not None:
     if cleanup_errors:
-      failure.add_note(cleanup)
+      print(cleanup, file=sys.stderr, flush=True)
     raise failure
   if cleanup_errors:
     raise RuntimeError(cleanup)
