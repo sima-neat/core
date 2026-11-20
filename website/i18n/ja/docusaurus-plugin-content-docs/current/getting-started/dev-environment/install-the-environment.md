@@ -23,17 +23,17 @@ sidebar_position: 2
 
 ## インストール
 
-現在のPalette SDK %%release.sdk_series%%リリースチャネルをインストールします。
+%%release.sdk_series%% 系の現在の Palette SDK %%release.sdk%% リリースをインストールします。
 
 <ShellCommand prompt="host">
-sima-cli neat install sdk@%%release.sdk_channel%%
+sima-cli neat install sdk@v%%release.sdk%%
 </ShellCommand>
 
 初回インストールではPalette SDKコンテナイメージをダウンロードするため、数分かかることがあります。ダウンロード後、インストーラーがSDKのセットアップを開始し、Modalix DevKitとペアリングするか、対応するModel CompilerをSDK内にインストールするかを確認します。
 
 DevKitとのペアリングを選んだ場合は、表示されたプロンプトにDevKitのIPアドレスを入力します。セットアップ処理はSDKワークスペースを構成し、SDKコンテナを起動してDevKit Syncを設定します。ペアリングを省略してもSDKワークスペースは作成され、後からペアリングできます。
 
-`%%release.sdk_channel%%`パッケージは、%%release.sdk_series%%系の最新Palette SDKパッチリリースを追跡します。現在のリリースはPalette SDK %%release.sdk%%。 対応する DevKit ソフトウェアのバージョンは [互換性ガイド](/getting-started/compatibility/) を参照してください。
+SDK のインストールには、公開済みの `v%%release.sdk%%` タグを使用してください。`%%release.sdk_channel%%` ブランチのイメージでは、セットアップ中にオプションの Codex および Claude 拡張機能のインストールが失敗する場合があります。 対応する DevKit ソフトウェアのバージョンは [互換性ガイド](/getting-started/compatibility/) を参照してください。
 
 セットアップ中、`sima-cli`は対応するModel CompilerをSDK内にインストールするか確認します。モデルを自分でコンパイルまたは量子化する場合は承認してください。別のバージョンを選択する必要はありません。コンパイル済みモデルパッケージだけを実行する場合は省略できます。後からインストールする場合、特定のパッチを固定する場合、またはスタンドアロンホストを使用する場合は、[Model Compilerのインストール](/getting-started/dev-environment/install-model-compiler/)と[互換性ガイド](/getting-started/compatibility/)を参照してください。
 
@@ -99,7 +99,7 @@ code-server のサインイン画面で、表示されたパスワードを入�
 現在のSDKパッケージを再インストールまたはアップグレードするには、ホストから上記のインストールコマンドを再実行します。
 
 <ShellCommand prompt="host">
-sima-cli neat install sdk@%%release.sdk_channel%%
+sima-cli neat install sdk@v%%release.sdk%%
 </ShellCommand>
 
 既存のPalette SDKコンテナ内にあるNeatライブラリを更新するには、コンテナシェルからNeat CLIを実行します。
