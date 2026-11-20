@@ -969,9 +969,12 @@ def verify_standard_user_process_activation(install_root: Path, wheel: Path,
   private_root = work / ("standard-user-private-" + secrets.token_hex(8))
   private_root.mkdir()
   private_key = private_root / "card-ssh-key"
+  known_hosts = private_root / "card-known-hosts"
   try:
     if include_genai:
       shutil.copy2(source_key, private_key)
+      # The new user has no host key for the card; the driver records the ones trusted here.
+      shutil.copy2(Path.home() / ".ssh" / "known_hosts", known_hosts)
     child_environment = {
         name: hardware_environment[name]
         for name in STANDARD_USER_GENAI_ENVIRONMENT
@@ -983,6 +986,7 @@ def verify_standard_user_process_activation(install_root: Path, wheel: Path,
         "environment": child_environment,
         "executable": str(executable),
         "include_genai": include_genai,
+        "known_hosts": str(known_hosts),
         "timeout_seconds": timeout_seconds,
     })
     wrapper = work / "standard-user-activation.cmd"
@@ -1045,9 +1049,10 @@ try {
   if ($LASTEXITCODE -ne 0) { throw "could not require the temporary password: $LASTEXITCODE" }
   & icacls.exe $env:SIMA_STANDARD_USER_WORK /grant "${account}:(OI)(CI)(M)" /T /Q | Out-Null
   if ($LASTEXITCODE -ne 0) { throw "icacls failed: $LASTEXITCODE" }
+  # Root only: with /T, /inheritance:r also empties the DACL of the files inside.
   & icacls.exe $env:SIMA_STANDARD_USER_PRIVATE /inheritance:r /grant:r `
     "${account}:(OI)(CI)(RX)" "*S-1-5-18:(OI)(CI)(F)" `
-    "*S-1-5-32-544:(OI)(CI)(F)" /T /Q | Out-Null
+    "*S-1-5-32-544:(OI)(CI)(F)" /Q | Out-Null
   if ($LASTEXITCODE -ne 0) { throw "private input icacls failed: $LASTEXITCODE" }
   & icacls.exe $env:SIMA_STANDARD_USER_PYTHON_ROOT /grant "${account}:(OI)(CI)(RX)" /T /Q |
     Out-Null

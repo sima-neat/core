@@ -91,7 +91,12 @@ from the sources that Linux's `resolve_assets.sh` and
 - the test image from its download URL;
 - the box-decode image and GenAI test fixtures from the checkout;
 - the GenAI models from Hugging Face, cached under
-  `%USERPROFILE%\workspace\models_genai`.
+  `%ProgramData%\sima-neat-ci\models_genai`.
+
+Downloads are cached under `%ProgramData%\sima-neat-ci\pciehost-assets`. Both caches
+are machine-wide, where Linux keeps the models in the runner's home, because the job's
+temporary standard user must read the GenAI models and fixtures and cannot read the
+runner's profile.
 
 It writes the hardware asset manifest from the files it resolved. The
 wheelhouse and OpenCV runtime DLLs come from the build's

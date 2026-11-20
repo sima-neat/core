@@ -1885,6 +1885,11 @@ class WindowsCiContracts(unittest.TestCase):
     self.assertIn("common_application_data().resolve(strict=True)", driver)
     self.assertIn('read_serve_mapping(configuration, options.media_serve_root)', driver)
     self.assertIn('[executable, "asr", assets]', driver)
+    # What the temporary user lacks: the card's host keys and a readable key copy; and
+    # the system variables the ProgramData known folder and Windows OpenSSH need.
+    self.assertIn('shutil.copyfile(payload["known_hosts"], known_hosts)', driver)
+    self.assertIn('"*S-1-5-32-544:(OI)(CI)(F)" /Q | Out-Null', source)
+    self.assertIn('"PROGRAMDATA", "SYSTEMDRIVE"', driver)
     self.assertNotIn("Path(sys.base_prefix).resolve", source)
     self.assertIn('(private_root, "temporary standard-user private input")', source)
     self.assertIn("TerminateProcess", source)
@@ -4169,6 +4174,11 @@ class HostedWindowsBuildContracts(unittest.TestCase):
     self.assertIn("NonInteractive = $true", ssh)
     self.assertIn("scripts/ci/pciehost/enroll_windows_card_key.py", ssh)
     self.assertIn("pcie-setup.ps1 @setup -Strict", ssh)
+    # Machine-wide caches: the temporary standard user reads the GenAI models and fixtures.
+    assets = workflow_step(hardware, "Resolve PCIe hardware test assets")
+    for cache in ("pciehost-assets", "models_genai"):
+      self.assertIn(f'(Join-Path $env:ProgramData "sima-neat-ci\\{cache}")', assets)
+    self.assertNotIn("$env:USERPROFILE", assets)
     linux_ssh = workflow_step(linux, "Provision PCIe card SSH key")
     self.assertIn('--key "${HOME}/.ssh/sima_neat_pcie_ed25519"', linux_ssh)
     helper = (SCRIPT_DIR / "enroll_windows_card_key.py").read_text(encoding="utf-8")

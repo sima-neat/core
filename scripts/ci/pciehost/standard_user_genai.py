@@ -10,6 +10,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import uuid
@@ -190,9 +191,12 @@ def run(payload_path: Path) -> dict:
   }
   for name in MEDIA_OVERRIDE_VARIABLES:
     child_environment.pop(name, None)
+  # Windows resolves the ProgramData known folder through SystemDrive, and its OpenSSH
+  # client exits without a message when ProgramData is unset.
   child_environment.update({
       name: value for name, value in os.environ.items()
-      if name.upper() in {"COMSPEC", "SYSTEMROOT", "TEMP", "TMP", "WINDIR"}
+      if name.upper() in {"COMSPEC", "PROGRAMDATA", "SYSTEMDRIVE", "SYSTEMROOT", "TEMP", "TMP",
+                          "WINDIR"}
   })
 
   executable = Path(str(payload["executable"])).resolve(strict=True)
@@ -205,6 +209,10 @@ def run(payload_path: Path) -> dict:
   for name in ("audio.wav", "audio_de.wav", "audio_16k_mono_f32le.raw"):
     require_readable_file(assets / name, f"ASR asset {name}")
   require_readable_file(Path(child_environment["SIMAPCIE_SSH_KEY"]), "SSH key copy")
+  # The card host keys pcie-setup would have recorded for this user.
+  known_hosts = Path.home() / ".ssh" / "known_hosts"
+  known_hosts.parent.mkdir(exist_ok=True)
+  shutil.copyfile(payload["known_hosts"], known_hosts)
 
   prove_writable_sentinel(actual_directory)
 

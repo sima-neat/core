@@ -684,8 +684,9 @@ jobs:
             "scripts/ci/pciehost/prepare_windows_card_inputs.py",
             "--workspace", $env:GITHUB_WORKSPACE,
             "--card-inputs", "$env:RUNNER_TEMP\core-windows-card-inputs",
-            "--cache-dir", (Join-Path $env:USERPROFILE ".sima\pciehost-assets"),
-            "--genai-models", (Join-Path $env:USERPROFILE "workspace\models_genai"),
+            # Machine-wide: the qualifier's temporary standard user reads the GenAI inputs.
+            "--cache-dir", (Join-Path $env:ProgramData "sima-neat-ci\pciehost-assets"),
+            "--genai-models", (Join-Path $env:ProgramData "sima-neat-ci\models_genai"),
             "--sima-cli", (Join-Path (Split-Path $env:CARD_TOOLS_PYTHON) "sima-cli.exe"),
             "--manifest", "$env:RUNNER_TEMP\core-windows-hardware-assets.json",
             "--revision", "core-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT",
