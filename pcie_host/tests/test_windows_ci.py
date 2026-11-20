@@ -4287,10 +4287,13 @@ class HostedWindowsBuildContracts(unittest.TestCase):
     resolver = (ROOT / "pcie_host/scripts/resolve_hardware_test_assets.sh").read_text(
         encoding="utf-8")
     genai = (ROOT / "pcie_host/scripts/prepare_pcie_genai_models.sh").read_text(encoding="utf-8")
-    for url in module.MLA_ONLY_MODELS.values():
-      self.assertIn(f'"{url}"', resolve)
+    # Linux takes the same Model Browser packages through the same helper.
+    self.assertEqual(sorted(re.findall(r"model_browser_mpk (\S+) (\S+)\)", resolve)),
+                     sorted(module.MODEL_BROWSER_MODELS.values()))
+    self.assertIn("scripts/ci/prepare_model_browser_fixture.py", resolve)
+    for name in module.MODEL_BROWSER_MODELS:
+      self.assertIn(name, resolve)
     self.assertIn(module.TEST_IMAGE_URL, resolver)
-    self.assertIn(f"SIMAPCIE_YOLOV8_MODEL_NAME:-{module.YOLOV8_MODEL_NAME}", resolver)
     self.assertIn('"${WORKSPACE}/tests/images/people.jpg"', resolver)
     for name, repository, config, revision in module.GENAI_MODELS:
       with self.subTest(model=name):
@@ -4318,6 +4321,24 @@ class HostedWindowsBuildContracts(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "SiMaMlaDaemon is not installed"):
           module.installed_platform_runtime()
 
+      # Each run downloads the current builds again, as Linux's emptied work directory does.
+      stale = root / "assets" / "model-browser" / "yolov8s" / "w8a8" / "old.zip"
+      stale.parent.mkdir(parents=True)
+      stale.write_bytes(b"old")
+      prepare = mock.Mock(side_effect=lambda _cli, model_id, variant, output: (
+          output / f"{model_id}_{variant}_mpk.tar.gz"))
+      with mock.patch.object(module.prepare_model_browser_fixture, "prepare", prepare), \
+          mock.patch.dict(os.environ, {"SIMA_CLI_CHECK_FOR_UPDATE": "1"}):
+        models = module.resolve_model_browser_models(root / "assets", Path("sima-cli.exe"))
+        self.assertEqual(os.environ["SIMA_CLI_CHECK_FOR_UPDATE"], "0")
+      self.assertFalse(stale.exists())
+      output = root / "assets" / "model-browser"
+      self.assertEqual(prepare.call_args_list, [
+          mock.call("sima-cli.exe", model_id, variant, output)
+          for model_id, variant in module.MODEL_BROWSER_MODELS.values()])
+      self.assertEqual(models["SIMAPCIE_MLA_ONLY_BF16_MODEL"],
+                       output / "yolo26n_w16a16_mpk.tar.gz")
+
       # The written environment names every input the qualifier requires, and the
       # manifest inventories exactly those files.
       inputs = root / "card inputs"
@@ -4338,12 +4359,9 @@ class HostedWindowsBuildContracts(unittest.TestCase):
               "--sima-cli", "sima-cli", "--manifest", str(root / "assets.json"),
               "--revision", "core-1-1", "--env-file", str(env_file)]
       with mock.patch.object(module, "installed_platform_runtime", return_value=service), \
-          mock.patch.object(module, "resolve_yolov8",
-                            return_value=files["SIMAPCIE_YOLOV8_MODEL"]), \
-          mock.patch.object(module, "resolve_download",
-                            side_effect=lambda _cache, _cli, url: files[
-                                next(name for name, value in module.MLA_ONLY_MODELS.items()
-                                     if value == url)]), \
+          mock.patch.object(module, "resolve_model_browser_models",
+                            return_value={name: files[name]
+                                          for name in module.MODEL_BROWSER_MODELS}), \
           mock.patch.object(module, "resolve_test_image",
                             return_value=files["SIMAPCIE_TEST_IMAGE"]), \
           mock.patch.dict(os.environ, {"GSTREAMER_ROOT_X86_64": str(gstreamer)}), \

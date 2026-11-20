@@ -22,16 +22,16 @@ import sys
 from urllib.request import urlopen
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from windows_hardware_assets import create_asset_manifest  # noqa: E402
+import prepare_model_browser_fixture  # noqa: E402
 
-# The URLs and fixtures of resolve_assets.sh / resolve_hardware_test_assets.sh.
-MLA_ONLY_MODELS = {
-    "SIMAPCIE_MLA_ONLY_MODEL": "https://docs.sima.ai/pkg_downloads/SDK2.1.3/models/modalix/"
-                               "yolo26-detection/yolo26n-det-int8-b1.tar.gz",
-    "SIMAPCIE_MLA_ONLY_BF16_MODEL": "https://docs.sima.ai/pkg_downloads/SDK2.1.3/models/modalix/"
-                                    "yolo26-detection/yolo26n-det-bf16-mla_tess-b1.tar.gz",
+# The Model Browser packages and fixtures of resolve_assets.sh / resolve_hardware_test_assets.sh.
+MODEL_BROWSER_MODELS = {
+    "SIMAPCIE_YOLOV8_MODEL": ("yolov8s", "w8a8"),
+    "SIMAPCIE_MLA_ONLY_MODEL": ("yolo26n", "w8a8"),
+    "SIMAPCIE_MLA_ONLY_BF16_MODEL": ("yolo26n", "w16a16"),
 }
-YOLOV8_MODEL_NAME = "yolo_v8s"
 TEST_IMAGE_URL = "https://raw.githubusercontent.com/ultralytics/yolov5/master/data/images/zidane.jpg"
 # The fixtures of prepare_pcie_genai_models.sh: (directory, repository, config, revision).
 GENAI_MODELS = (
@@ -46,38 +46,15 @@ GENAI_TEST_ASSETS = ("tests/assets/genai/audio.wav", "tests/assets/genai/audio_d
                      "tests/assets/genai/audio_16k_mono_f32le.raw", "tests/images/people.jpg")
 
 
-def run(command: list[object], cwd: Path) -> None:
-  print("+", subprocess.list2cmdline([str(value) for value in command]), flush=True)
-  subprocess.run([str(value) for value in command], cwd=cwd, check=True,
-                 env={**os.environ, "SIMA_CLI_CHECK_FOR_UPDATE": "0"})
-
-
-def cached(cache: Path, pattern: str) -> Path | None:
-  roots = (cache, Path.home() / ".simaai" / "modelzoo", Path.home() / ".sima" / "modelzoo")
-  found = sorted(path for root in roots if root.is_dir() for path in root.rglob(pattern)
-                 if path.is_file())
-  return found[0] if found else None
-
-
-def resolve_yolov8(cache: Path, sima_cli: Path, workspace: Path) -> Path:
-  found = cached(cache, "*yolo*v8*s*.tar.gz")
-  if not found:
-    manifest = json.loads((workspace / "deps" / "manifest.json").read_text(encoding="utf-8"))
-    version = manifest.get("modelzoo-version") or manifest["platform-version"]
-    run([sima_cli, "modelzoo", "-v", version, "get", YOLOV8_MODEL_NAME], cache)
-    found = cached(cache, "*yolo*v8*s*.tar.gz")
-  if not found:
-    raise RuntimeError("failed to resolve the YOLOv8 model from the Model Zoo")
-  return found
-
-
-def resolve_download(cache: Path, sima_cli: Path, url: str) -> Path:
-  path = cache / url.rsplit("/", 1)[1]
-  if not path.is_file():
-    run([sima_cli, "download", url], cache)
-  if not path.is_file():
-    raise RuntimeError(f"sima-cli did not download {url}")
-  return path
+def resolve_model_browser_models(cache: Path, sima_cli: Path) -> dict[str, Path]:
+  # Linux downloads into a work directory that preflight.sh empties, so every run takes the
+  # current main build; sima-cli also refuses to replace an earlier download.
+  output = cache / "model-browser"
+  if output.exists():
+    shutil.rmtree(output)
+  os.environ["SIMA_CLI_CHECK_FOR_UPDATE"] = "0"  # Keep the exact sima-cli candidate.
+  return {name: prepare_model_browser_fixture.prepare(str(sima_cli), model_id, variant, output)
+          for name, (model_id, variant) in MODEL_BROWSER_MODELS.items()}
 
 
 def resolve_test_image(cache: Path) -> Path:
@@ -148,9 +125,7 @@ def main() -> None:
       "SIMA_WINDOWS_PYTHON_WHEELHOUSE": inputs / "wheelhouse",
       "SIMA_WINDOWS_DEPENDENCY_RUNTIME_PATH": inputs / "opencv" / "opencv" / "build" / "x64" /
                                               "vc16" / "bin",
-      "SIMAPCIE_YOLOV8_MODEL": resolve_yolov8(cache, args.sima_cli, workspace),
-      **{name: resolve_download(cache, args.sima_cli, url)
-         for name, url in MLA_ONLY_MODELS.items()},
+      **resolve_model_browser_models(cache, args.sima_cli),
       "SIMAPCIE_TEST_IMAGE": resolve_test_image(cache),
       "SIMAPCIE_BOXDECODE_IMAGE": workspace / "tests" / "images" / "people.jpg",
   }

@@ -86,14 +86,17 @@ wheelhouse. `prepare_windows_card_inputs.py` then resolves the rest in-job,
 from the sources that Linux's `resolve_assets.sh` and
 `prepare_pcie_genai_models.sh` use:
 
-- the YOLOv8 model from the Model Zoo;
-- the MLA-only INT8 and BF16 models from docs.sima.ai;
+- the YOLOv8s (`yolov8s` `w8a8`) and MLA-only INT8 and BF16 (`yolo26n` `w8a8` and
+  `w16a16`) models from the Model Browser `main` catalog, through
+  `prepare_model_browser_fixture.py` and `sima-cli models download`;
 - the test image from its download URL;
 - the box-decode image and GenAI test fixtures from the checkout;
 - the GenAI models from Hugging Face, cached under
   `%ProgramData%\sima-neat-ci\models_genai`.
 
-Downloads are cached under `%ProgramData%\sima-neat-ci\pciehost-assets`. Both caches
+Downloads are cached under `%ProgramData%\sima-neat-ci\pciehost-assets`, except the
+Model Browser packages: like Linux, every run downloads the current builds again, into
+its `model-browser` directory. Both caches
 are machine-wide, where Linux keeps the models in the runner's home, because the job's
 temporary standard user must read the GenAI models and fixtures and cannot read the
 runner's profile.
