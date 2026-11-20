@@ -323,6 +323,12 @@ public:
     return closed_;
   }
 
+  /// A reserved item may still be restored for the next consumer.
+  bool drained() const {
+    std::lock_guard<std::mutex> lock(mu_);
+    return closed_ && effective_size_locked() == 0;
+  }
+
   /// Current queue size.
   std::size_t size() const {
     std::lock_guard<std::mutex> lock(mu_);

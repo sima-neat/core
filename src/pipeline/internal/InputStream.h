@@ -170,7 +170,7 @@ public:
   void signal_eos();
   void drain_before_teardown(int timeout_ms);
 
-  void start(std::function<void(Sample)> on_output);
+  void start(std::function<void(Sample)> on_output, std::function<void()> on_downstream_eos = {});
   void stop();
   void stop_async();
   bool running() const;

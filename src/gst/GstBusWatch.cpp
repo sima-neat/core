@@ -1,4 +1,5 @@
 #include "gst/GstBusWatch.h"
+#include "gst/internal/HttpDiagnostics.h"
 
 #include <gst/gst.h>
 
@@ -36,7 +37,33 @@ std::string gst_structure_to_string_safe(const GstStructure* st) {
   return out;
 }
 
+void append_http_fields(std::ostringstream& out, const char* uri, const GstStructure* details) {
+  if (const auto origin = gst::http_origin(uri); !origin.empty())
+    out << " origin=" << origin;
+  guint status = 0;
+  gint signed_status = 0;
+  if (details &&
+      (gst_structure_get_uint(details, "http-status-code", &status) ||
+       (gst_structure_get_int(details, "http-status-code", &signed_status) && signed_status > 0))) {
+    const auto code = signed_status > 0 ? static_cast<guint>(signed_status) : status;
+    if (code >= 100 && code <= 599)
+      out << " status=" << code;
+  }
+}
+
 } // namespace
+
+std::string gst::http_origin(const char* location) {
+  g_autoptr(GUri) uri = location ? g_uri_parse(location, G_URI_FLAGS_NONE, nullptr) : nullptr;
+  const char* host = uri ? g_uri_get_host(uri) : nullptr;
+  const char* scheme = uri ? g_uri_get_scheme(uri) : nullptr;
+  if (!host || !*host || !scheme ||
+      (g_ascii_strcasecmp(scheme, "http") && g_ascii_strcasecmp(scheme, "https")))
+    return {};
+  g_autofree gchar* origin = g_uri_join(G_URI_FLAGS_NONE, scheme, nullptr, host,
+                                        g_uri_get_port(uri), "", nullptr, nullptr);
+  return origin;
+}
 
 std::string gst_message_to_string(GstMessage* msg) {
   if (!msg)
@@ -45,43 +72,37 @@ std::string gst_message_to_string(GstMessage* msg) {
   const GstMessageType t = GST_MESSAGE_TYPE(msg);
   ss << gst_message_type_get_name(t);
 
-  if (t == GST_MESSAGE_ERROR) {
-    GError* e = nullptr;
-    gchar* dbg = nullptr;
-    gst_message_parse_error(msg, &e, &dbg);
-    ss << ": " << (e ? e->message : "unknown");
-    if (dbg && *dbg)
-      ss << " | " << dbg;
-    if (e)
-      g_error_free(e);
-    if (dbg)
-      g_free(dbg);
+  const GstStructure* st = gst_message_get_structure(msg);
+  if (t == GST_MESSAGE_ELEMENT && st && gst_structure_has_name(st, "http-headers")) {
+    ss << " http-headers";
+    append_http_fields(ss, gst_structure_get_string(st, "uri"), st);
     return ss.str();
   }
-  if (t == GST_MESSAGE_WARNING) {
-    GError* e = nullptr;
-    gchar* dbg = nullptr;
-    gst_message_parse_warning(msg, &e, &dbg);
-    ss << ": " << (e ? e->message : "unknown");
-    if (dbg && *dbg)
-      ss << " | " << dbg;
-    if (e)
-      g_error_free(e);
-    if (dbg)
-      g_free(dbg);
-    return ss.str();
-  }
-  if (t == GST_MESSAGE_INFO) {
-    GError* e = nullptr;
-    gchar* dbg = nullptr;
-    gst_message_parse_info(msg, &e, &dbg);
-    ss << ": " << (e ? e->message : "unknown");
-    if (dbg && *dbg)
-      ss << " | " << dbg;
-    if (e)
-      g_error_free(e);
-    if (dbg)
-      g_free(dbg);
+
+  if (t == GST_MESSAGE_ERROR || t == GST_MESSAGE_WARNING || t == GST_MESSAGE_INFO) {
+    g_autoptr(GError) error = nullptr;
+    g_autofree gchar* debug = nullptr;
+    const auto parse = t == GST_MESSAGE_ERROR     ? gst_message_parse_error
+                       : t == GST_MESSAGE_WARNING ? gst_message_parse_warning
+                                                  : gst_message_parse_info;
+    auto* source = GST_MESSAGE_SRC(msg);
+    auto* factory = GST_IS_ELEMENT(source) ? gst_element_get_factory(GST_ELEMENT(source)) : nullptr;
+    if (factory && g_strcmp0(GST_OBJECT_NAME(factory), "souphttpsrc") == 0) {
+      parse(msg, &error, nullptr);
+      if (error)
+        ss << " " << g_quark_to_string(error->domain) << "/" << error->code;
+      const GstStructure* details = nullptr;
+      if (t == GST_MESSAGE_ERROR)
+        gst_message_parse_error_details(msg, &details);
+      g_autofree gchar* location = nullptr;
+      g_object_get(source, "location", &location, nullptr);
+      append_http_fields(ss, location, details);
+    } else {
+      parse(msg, &error, &debug);
+      ss << ": " << (error ? error->message : "unknown");
+      if (debug && *debug)
+        ss << " | " << debug;
+    }
     return ss.str();
   }
   if (t == GST_MESSAGE_STATE_CHANGED) {
@@ -107,7 +128,6 @@ std::string gst_message_to_string(GstMessage* msg) {
     return ss.str();
   }
 
-  const GstStructure* st = gst_message_get_structure(msg);
   if (st)
     ss << " " << gst_structure_to_string_safe(st);
   return ss.str();

@@ -579,6 +579,8 @@ PullStatus runtime::RunCore::pull(int timeout_ms, Sample& out, PullError* err,
     if (typed.has_value() && typed->report.has_value()) {
       if (err)
         *err = *typed;
+      if (typed->code == error_codes::kUnexpectedEos)
+        stop();
       return PullStatus::Error;
     }
     GraphReport rep = diag ? diag->snapshot_basic() : GraphReport{};
@@ -597,7 +599,18 @@ PullStatus runtime::RunCore::pull(int timeout_ms, Sample& out, PullError* err,
     return PullStatus::Error;
   };
 
-  const std::string early_err = last_error();
+  // Downstream EOS is reported after outputs the worker already published.
+  const auto error_before_queued_output = [&]() {
+    auto msg = last_error();
+    if (!msg.empty()) {
+      auto detail = last_error_detail();
+      if (detail && detail->code == error_codes::kUnexpectedEos)
+        msg.clear();
+    }
+    return msg;
+  };
+
+  const std::string early_err = error_before_queued_output();
   if (!early_err.empty()) {
     return handle_stream_error(early_err);
   }
@@ -653,8 +666,9 @@ PullStatus runtime::RunCore::pull(int timeout_ms, Sample& out, PullError* err,
           if (diag) {
             std::ostringstream oss;
             oss << "[DIAG] pull_timeout Run::pull\n";
-            if (!diag->pipeline_string.empty()) {
-              oss << "Pipeline:\n" << diag->pipeline_string << "\n";
+            const auto launch = diag->redacted_pipeline_string();
+            if (!launch.empty()) {
+              oss << "Pipeline:\n" << launch << "\n";
             }
             const std::string boundary = pipeline_internal::boundary_summary(diag);
             if (!boundary.empty())
@@ -664,8 +678,8 @@ PullStatus runtime::RunCore::pull(int timeout_ms, Sample& out, PullError* err,
               oss << flow;
             std::fprintf(stderr, "%s", oss.str().c_str());
 
-            if (!diag->pipeline_string.empty()) {
-              const auto segs = parse_pipeline_segments(diag->pipeline_string);
+            if (!launch.empty()) {
+              const auto segs = parse_pipeline_segments(launch);
               for (const auto& seg : segs) {
                 const bool detess = is_detess_segment(seg);
                 const bool preproc = is_preproc_segment(seg);
@@ -720,7 +734,7 @@ PullStatus runtime::RunCore::pull(int timeout_ms, Sample& out, PullError* err,
           "; release older zero-copy outputs and retry";
       warn_if_loan_stalled(st->pipeline.loan_stall, st->pipeline.loan_stall_warn_after, message);
 
-      const std::string loop_err = last_error();
+      const std::string loop_err = error_before_queued_output();
       if (!loop_err.empty()) {
         lock.unlock();
         return handle_stream_error(loop_err);
@@ -773,30 +787,6 @@ PullStatus runtime::RunCore::pull(int timeout_ms, Sample& out, PullError* err,
   const std::string late_err = last_error();
   if (!late_err.empty()) {
     return handle_stream_error(late_err);
-  }
-
-  bool input_was_closed = false;
-  {
-    std::lock_guard<std::mutex> input_lock(st->pipeline.in_mu);
-    input_was_closed = st->pipeline.input_closed;
-  }
-  if (st->pipeline.supports_push && st->pipeline.stream.reached_eos() && !input_was_closed) {
-    GraphReport report = diag ? diag->snapshot_basic() : GraphReport{};
-    report.error_code = error_codes::kUnexpectedEos;
-    report.repro_note =
-        "The push-backed pipeline reached end of stream before the application closed its "
-        "input.\n\n"
-        "Expected: The pipeline remains open until Run::close_input() is called.\n"
-        "Received: End of stream while the input was still open.\n\n"
-        "How to fix:\n"
-        "- Check the source and upstream elements for a premature end-of-stream condition.\n"
-        "- Keep the upstream pipeline open until the application has finished pushing input, "
-        "then call Run::close_input().\n\n"
-        "Diagnostic ID: runtime.unexpected_eos";
-    pipeline_internal::error_util::set_pull_error(err, report.error_code, report.repro_note,
-                                                  std::move(report));
-    stop();
-    return PullStatus::Error;
   }
 
   if (is_done) {
