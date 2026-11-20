@@ -1045,10 +1045,12 @@ InputMemoryPolicy effective_input_memory_policy(const InputOptions& opt) {
   return opt.memory_policy;
 }
 
+// Checked for every released input buffer; resolved once per process like InputStreamDebugFlags.
 bool pool_stats_enabled() {
-  return pipeline_internal::env_bool("SIMA_INPUTSTREAM_POOL_DEBUG", false) ||
-         pipeline_internal::env_bool("SIMA_DEBUG_INPUT_POOL", false) ||
-         pipeline_internal::env_bool("SIMA_INPUTSTREAM_ALLOC_DEBUG", false);
+  static const bool enabled = pipeline_internal::env_bool("SIMA_INPUTSTREAM_POOL_DEBUG", false) ||
+                              pipeline_internal::env_bool("SIMA_DEBUG_INPUT_POOL", false) ||
+                              pipeline_internal::env_bool("SIMA_INPUTSTREAM_ALLOC_DEBUG", false);
+  return enabled;
 }
 
 int pool_wait_log_ms() {
@@ -2679,7 +2681,9 @@ void dump_buffer_memories(GstBuffer* buffer, const char* label) {
 }
 
 void dump_sima_meta(GstBuffer* buffer, const char* label) {
-  if (!pipeline_internal::env_bool("SIMA_INPUTSTREAM_META_DEBUG", false))
+  // Called for every stamped frame; resolved once per process like InputStreamDebugFlags.
+  static const bool enabled = pipeline_internal::env_bool("SIMA_INPUTSTREAM_META_DEBUG", false);
+  if (!enabled)
     return;
 #if SIMA_HAS_SIMAAI_POOL
   const char* tag = label ? label : "buffer";
@@ -2779,13 +2783,12 @@ void dump_sima_meta_full(GstBuffer* buffer, const char* label) {
 }
 
 void debug_input_buffer_release(GstBuffer* buffer, const char* where) {
-  if (!buffer)
+  // Called for every released input buffer; resolved once per process like InputStreamDebugFlags.
+  static const bool enabled = pipeline_internal::env_bool("SIMA_DEBUG_INPUT_POOL", false) ||
+                              pipeline_internal::env_bool("SIMA_INPUTSTREAM_ALLOC_DEBUG", false) ||
+                              pipeline_internal::env_bool("SIMA_INPUTSTREAM_META_DEBUG", false);
+  if (!buffer || !enabled)
     return;
-  if (!pipeline_internal::env_bool("SIMA_DEBUG_INPUT_POOL", false) &&
-      !pipeline_internal::env_bool("SIMA_INPUTSTREAM_ALLOC_DEBUG", false) &&
-      !pipeline_internal::env_bool("SIMA_INPUTSTREAM_META_DEBUG", false)) {
-    return;
-  }
   GstMemory* mem0 = gst_buffer_peek_memory(buffer, 0);
   const char* alloc_name = "unknown";
   if (mem0 && mem0->allocator) {

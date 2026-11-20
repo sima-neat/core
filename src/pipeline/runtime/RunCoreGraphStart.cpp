@@ -1163,7 +1163,8 @@ void start_pipeline_pull_thread(const std::shared_ptr<RunCore>& core, std::size_
         }
         last_output = std::chrono::steady_clock::now();
         emit_diag("sample");
-        if (env_bool("SIMA_GRAPH_PRE_RESTORE_DEBUG", false)) {
+        static const bool pre_restore_debug = env_bool("SIMA_GRAPH_PRE_RESTORE_DEBUG", false);
+        if (pre_restore_debug) {
           static std::atomic<int> pre_restore_logs{0};
           const int seen = pre_restore_logs.fetch_add(1, std::memory_order_relaxed);
           if (seen < env_int("SIMA_GRAPH_PRE_RESTORE_DEBUG_LIMIT", 64)) {
