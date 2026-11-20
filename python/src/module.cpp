@@ -675,6 +675,10 @@ void delete_dlpack_managed(DLManagedTensor* managed) {
 PyObject* tensor_to_dlpack_capsule(const Tensor& input) {
   if (input.has_tiled_storage())
     throw std::runtime_error("__dlpack__: tiled storage requires explicit detessellation");
+  // Judge the view against its own storage before any transfer: a mapper may expose more bytes
+  // than the segment assigned to the tensor.
+  if (const char* error = simaai::neat::pipeline_internal::dense_storage_bounds_error(input))
+    throw std::runtime_error(std::string("__dlpack__: ") + error);
   const Tensor source_pin = input;
   Tensor tensor = source_pin;
   if (tensor.device.type != DeviceType::CPU) {

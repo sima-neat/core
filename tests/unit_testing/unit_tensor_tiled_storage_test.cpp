@@ -224,6 +224,41 @@ void check_dense_extent_validation() {
   unknown.byte_offset = 0;
   unknown.shape = {2, 2, 4};
   rejects_dense_metadata(unknown, "stride rank mismatch accepted on unknown-size storage");
+  // The start of storage is known even when its size is not.
+  unknown.shape = {4, 4};
+  unknown.strides_bytes = {-4, 1};
+  unknown.byte_offset = 12;
+  require(unknown.validate(nullptr), "reverse view inside unknown-size storage rejected");
+  unknown.byte_offset = 0;
+  rejects_dense_metadata(unknown, "reverse view before the start of unknown-size storage accepted");
+
+  // A mapper may expose more bytes than the segment assigned to the tensor. The storage size,
+  // not the mapping, bounds what validation and shape-bounded readers accept.
+  auto backing = std::make_shared<std::array<uint8_t, 64>>();
+  std::iota(backing->begin(), backing->end(), uint8_t{0});
+  Tensor segment = make_dense_4x4();
+  segment.storage = std::make_shared<TensorBuffer>();
+  segment.storage->size_bytes = 16;
+  segment.storage->map_fn = [backing](MapMode) {
+    Mapping mapping;
+    mapping.data = backing->data();
+    mapping.size_bytes = backing->size();
+    mapping.keepalive = backing;
+    return mapping;
+  };
+  require(segment.validate(nullptr), "view inside its segment rejected");
+  require(segment.copy_dense_bytes_tight().size() == 16, "view inside its segment not copied");
+  segment.shape = {8, 8};
+  segment.strides_bytes = {8, 1};
+  rejects_dense_metadata(segment, "view past its segment accepted");
+  rejects([&] { (void)segment.copy_dense_bytes_tight(); },
+          "view past its segment copied from a wider mapping");
+  // BF16 to_numpy() copies through the same reader.
+  segment.dtype = TensorDType::BFloat16;
+  segment.shape = {2, 8};
+  segment.strides_bytes = {16, 2};
+  rejects([&] { (void)segment.copy_dense_bytes_tight(); },
+          "BF16 view past its segment copied from a wider mapping");
 
   // Opaque empty-shape carrier tagged with a tessellation format keeps its outcome.
   Tensor carrier = make_dense_4x4(1);

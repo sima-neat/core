@@ -237,8 +237,10 @@ bool copy_dense_strided_to_contiguous(const uint8_t* src, std::size_t src_bytes,
   return true;
 }
 
-// Metadata-only check of the byte range a single-plane, non-tiled view addresses inside its bound
-// storage. Returns nullptr when the view is valid or the rule does not apply.
+} // namespace
+
+namespace pipeline_internal {
+
 const char* dense_storage_bounds_error(const Tensor& tensor) noexcept {
   constexpr const char* kOverflow = "dense tensor byte extent overflows";
   if (!tensor.storage || !tensor.is_dense() || tensor.has_tiled_storage())
@@ -292,16 +294,19 @@ const char* dense_storage_bounds_error(const Tensor& tensor) noexcept {
   const std::size_t off = static_cast<std::size_t>(tensor.byte_offset);
   if (above > kMax - off)
     return kOverflow;
+  // The start of storage is known even when its size is not.
+  if (off < below)
+    return "dense tensor view exceeds storage bounds";
 
   const std::size_t size = tensor.storage->size_bytes;
   if (size == 0)
     return nullptr;
-  if (off < below || off > size || above > size - off)
+  if (off > size || above > size - off)
     return "dense tensor view exceeds storage bounds";
   return nullptr;
 }
 
-} // namespace
+} // namespace pipeline_internal
 
 //==============================================================================
 // Storage creation
@@ -1012,7 +1017,7 @@ bool Tensor::validate(std::string* err) const {
     }
   }
 
-  if (const char* error = dense_storage_bounds_error(*this))
+  if (const char* error = pipeline_internal::dense_storage_bounds_error(*this))
     return fail(error);
 
   return true;
