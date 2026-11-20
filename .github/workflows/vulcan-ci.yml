@@ -1354,12 +1354,14 @@ jobs:
           TAIL_REGEX='^(sync_yolov8_test|sync_yolov8_test_detessdequant|yolov8_variant_route_matrix_test|boxdecode_yolo_layout_matrix_e2e_test|preproc_yolov8_matrix_test|graphpipes_yolo_metadata_sender_16stream_test)$'
           # Temporary external RTSP exclusions; remove under core#890.
           EXTERNAL_RTSP_TESTS='rtsp_encoded_boundary_caps_test|decoder_multirun_admission_boundary_test|h265_rtsp_resnet50_e2e_test'
+          # Needs a model with a DetessDequant stage; remove under core#1454.
+          TESS_FIXTURE_TESTS='|sync_yolov8_test_detessdequant'
           USB_CAMERA_TESTS=''
           if [[ -z "${SIMA_NEAT_TEST_USB_CAMERA}" ]]; then
             USB_CAMERA_TESTS='|usb_camera_input_e2e_test'
             echo 'EXCLUDED profile: USB camera hardware; set vars.SIMA_NEAT_TEST_USB_CAMERA to a camera ID.'
           fi
-          SKIP_REGEX="^(unit_dispatcher_watchdog_test|${EXTERNAL_RTSP_TESTS}${USB_CAMERA_TESTS})$"
+          SKIP_REGEX="^(unit_dispatcher_watchdog_test|${EXTERNAL_RTSP_TESTS}${TESS_FIXTURE_TESTS}${USB_CAMERA_TESTS})$"
           E2E_LABEL_EXCLUDE='perf|llima|codec_stream|codec_aggregate'
           if [[ "${{ inputs.run_long_tests }}" != "true" ]]; then
             E2E_LABEL_EXCLUDE+='|long'
@@ -1406,12 +1408,14 @@ jobs:
           TAIL_REGEX='^(sync_yolov8_test|sync_yolov8_test_detessdequant|yolov8_variant_route_matrix_test|boxdecode_yolo_layout_matrix_e2e_test|preproc_yolov8_matrix_test|graphpipes_yolo_metadata_sender_16stream_test)$'
           # Temporary external RTSP exclusions; remove under core#890.
           EXTERNAL_RTSP_TESTS='rtsp_encoded_boundary_caps_test|decoder_multirun_admission_boundary_test|h265_rtsp_resnet50_e2e_test'
+          # Needs a model with a DetessDequant stage; remove under core#1454.
+          TESS_FIXTURE_TESTS='|sync_yolov8_test_detessdequant'
           USB_CAMERA_TESTS=''
           if [[ -z "${SIMA_NEAT_TEST_USB_CAMERA}" ]]; then
             USB_CAMERA_TESTS='|usb_camera_input_e2e_test'
             echo 'EXCLUDED profile: USB camera hardware; set vars.SIMA_NEAT_TEST_USB_CAMERA to a camera ID.'
           fi
-          SKIP_REGEX="^(unit_dispatcher_watchdog_test|${EXTERNAL_RTSP_TESTS}${USB_CAMERA_TESTS})$"
+          SKIP_REGEX="^(unit_dispatcher_watchdog_test|${EXTERNAL_RTSP_TESTS}${TESS_FIXTURE_TESTS}${USB_CAMERA_TESTS})$"
           E2E_LABEL_EXCLUDE='perf|llima|codec_stream|codec_aggregate'
           if [[ "${{ inputs.run_long_tests }}" != "true" ]]; then
             E2E_LABEL_EXCLUDE+='|long'
@@ -1514,6 +1518,20 @@ jobs:
           export SIMA_GST_REGISTRY_DIR="$(cat _work/gst_registry_dir.txt)"
           echo "Using SIMA_MPK_EXTRACT_ROOT=${SIMA_MPK_EXTRACT_ROOT}"
           echo "Using SIMA_GST_REGISTRY_DIR=${SIMA_GST_REGISTRY_DIR}"
+          if [[ -z "${SIMA_RESNET50_TAR:-}" ]]; then
+            RESNET_DIR="$(mktemp -d "${RUNNER_TEMP:-/tmp}/model-browser-resnet.XXXXXX")"
+            SIMA_RESNET50_TAR="$(python3 scripts/ci/prepare_model_browser_fixture.py \
+              --id resnet_50 --variant w8a8 --output "${RESNET_DIR}")"
+            export SIMA_RESNET50_TAR
+          fi
+          # The performance matrix step loads the same archive in runtime_model_archive_load.
+          printf 'SIMA_RESNET50_TAR=%s\n' "${SIMA_RESNET50_TAR}" >> "${GITHUB_ENV}"
+          if [[ -z "${SIMA_YOLO_TAR:-}" ]]; then
+            YOLO_DIR="$(mktemp -d "${RUNNER_TEMP:-/tmp}/model-browser-yolov8s.XXXXXX")"
+            SIMA_YOLO_TAR="$(python3 scripts/ci/prepare_model_browser_fixture.py \
+              --id yolov8s --variant w8a8 --output "${YOLO_DIR}")"
+            export SIMA_YOLO_TAR
+          fi
           COVERAGE_DIR=_work/coverage/perf bash scripts/ci/run_zero_skip_gate.sh \
             ctest --test-dir "${TEST_DIR}" \
             --label-regex "perf" \

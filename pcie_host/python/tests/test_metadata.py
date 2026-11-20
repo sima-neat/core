@@ -26,9 +26,9 @@ def test_load_metadata_from_yolov8_model():
       "bbox_0",
       "bbox_1",
       "bbox_2",
-      "class_prob_0",
-      "class_prob_1",
-      "class_prob_2",
+      "class_logit_0",
+      "class_logit_1",
+      "class_logit_2",
   ]
   assert all(tensor.size_bytes > 0 for tensor in info.outputs)
   assert all(tensor.quant is None for tensor in info.inputs + info.outputs)
