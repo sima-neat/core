@@ -26,7 +26,8 @@ def read_serve_mapping(configuration: Path, root: str) -> Path:
   parser = configparser.ConfigParser(interpolation=None)
   try:
     with configuration.open("r", encoding="utf-8-sig") as stream:
-      parser.read_file(stream)
+      # The Platform file sets daemon options before its first section.
+      parser.read_string("[daemon]\n" + stream.read(), source=str(configuration))
   except (OSError, configparser.Error) as error:
     raise RuntimeError(
         f"standard user cannot read Platform daemon configuration: {configuration}: {error}"

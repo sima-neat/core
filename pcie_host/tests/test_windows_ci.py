@@ -2151,6 +2151,16 @@ class WindowsCiContracts(unittest.TestCase):
           Path(r"C:\ProgramData\SiMa.ai\data"))
       with self.assertRaisesRegex(RuntimeError, r"\[serve\] missing"):
         read_serve_mapping(config, "missing")
+      # Platform 3.0 layout: daemon options precede the [recv] and [serve] sections.
+      config.write_text(
+          "# comment\nmax-clients  = 64\nnotify-queue = 256\n\n"
+          "[recv]\nincoming = C:\\ProgramData\\SiMa.ai\\incoming\n\n"
+          "[serve]\ndata    = C:\\ProgramData\\SiMa.ai\\data\n"
+          "models  = C:\\ProgramData\\SiMa.ai\\models\n",
+          encoding="utf-8")
+      self.assertEqual(
+          read_serve_mapping(config, "data"),
+          Path(r"C:\ProgramData\SiMa.ai\data"))
       config.write_text("[serve\ndata=x\n", encoding="utf-8")
       with self.assertRaisesRegex(RuntimeError, "cannot read Platform daemon configuration"):
         read_serve_mapping(config, "data")
