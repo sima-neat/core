@@ -102,8 +102,10 @@ def main():
             if consumers & set(selected) and not env.get(var):
                 env[var] = prepare_fixture(model_id, 'w8a8', tmp)
         # These tests load every MPK in the directory, so YOLOv8n gets one of its own.
+        # They take SIMA_YOLOV8_SINGLE_MODEL first, then SIMA_YOLOV8_VARIANTS_DIR.
         variants_dir = Path(tmp, 'yolov8n-variants')
-        if YOLOV8N_VARIANT_TESTS & set(selected) and not env.get('SIMA_YOLOV8_VARIANTS_DIR'):
+        if (YOLOV8N_VARIANT_TESTS & set(selected) and not env.get('SIMA_YOLOV8_SINGLE_MODEL')
+                and not env.get('SIMA_YOLOV8_VARIANTS_DIR')):
             for variant in ('w8a8', 'w8a16', 'w16a16'):
                 prepare_fixture('yolov8n', variant, variants_dir)
             env['SIMA_YOLOV8_VARIANTS_DIR'] = str(variants_dir)
