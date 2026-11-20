@@ -5,7 +5,7 @@ sidebar_position: 7
 
 # Примітки до випуску LLiMa
 
-Примітки до випуску LLiMa – компілятора моделей GenAI від SiMa.ai.
+Примітки до випуску LLiMa — компілятора моделей GenAI від SiMa.ai.
 
 | Випуск | Сумісна версія eLxr Platform / Palette SDK | Примітки |
 | --- | --- | --- |
