@@ -1,6 +1,7 @@
 #include "genai/GenAIInternal.h"
 
 #include <stdexcept>
+#include <utility>
 
 namespace simaai::neat::genai::internal {
 
@@ -24,7 +25,10 @@ std::vector<ChatMessage> build_text_messages(const GenerationRequest& request) {
   if (request.system_prompt.has_value()) {
     messages.push_back(ChatMessage{.role = "system", .content = *request.system_prompt});
   }
-  messages.push_back(ChatMessage{.role = "user", .content = *request.prompt});
+  ChatMessage user{.role = "user", .content = *request.prompt};
+  user.images = request.images;
+  user.use_cached_images = request.use_cached_images;
+  messages.push_back(std::move(user));
   return messages;
 }
 

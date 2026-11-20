@@ -47,6 +47,12 @@ RUN_TEST(
       require(prompt_messages[1].role == "user", "user role mismatch");
       require(prompt_messages[1].content == "Explain NEAT.", "user content mismatch");
 
+      GenerationRequest with_cached;
+      with_cached.prompt = std::string{"Describe it."};
+      with_cached.use_cached_images = true;
+      require(internal::build_text_messages(with_cached).back().use_cached_images,
+              "top-level cached images must travel with the user message");
+
       GenerationRequest messages;
       messages.messages.push_back(ChatMessage{.role = "system", .content = "Be brief."});
       messages.messages.push_back(ChatMessage{.role = "user", .content = "Hi"});

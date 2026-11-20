@@ -159,6 +159,8 @@ print(model.run(request).text)
 동일한 이미지에 대한 반복적인 질문의 경우, `VisionLanguageModel.encode(...)`는 모델 내에서 이미지 임베딩을 캐시할 수 있습니다. 그런 다음 `request.use_cached_images =
 true`를 설정하거나 `use_cached_images = true`를 사용하여 채팅 메시지를 보냅니다.
 
+독립적인 대화마다 `model.create_session()`을 호출합니다. 각 세션은 로드된 모델을 공유하며 자체 생성 캐시를 유지합니다. `session.run(request)` 또는 `session.stream(request)`에 전체 대화 기록을 전달합니다. `session.reset()`을 호출하면 해당 대화의 캐시를 지울 수 있습니다. `model.encode(...)`로 캐시한 이미지는 명시적으로 요청한 세션에서 사용할 수 있습니다.
+
 ## LoRA 어댑터 전환
 
 LLiMa의 `LORA_BRANCH` 모드로 컴파일된 모델은 `npy_files/<adapter-name>`에 저장된 호환 가능한 어댑터를 전환할 수 있습니다.

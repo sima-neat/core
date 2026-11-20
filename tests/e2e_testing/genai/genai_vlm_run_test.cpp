@@ -139,6 +139,19 @@ int main(int argc, char** argv) {
       require(!trim_text(streamed_text).empty(),
               "GENAI_VLM_STREAM expected non-empty generated text");
 
+      // The completed handle stays alive while the next stream owns the same model.
+      auto next = model.stream(tensor_request);
+      auto chunk = next.next();
+      require(chunk && !chunk->is_final, "expected an active second stream");
+      stream.cancel();
+      std::string next_text = chunk->text;
+      while ((chunk = next.next()) && !chunk->is_final)
+        next_text += chunk->text;
+      require(chunk && chunk->finish_reason == final_sample.finish_reason &&
+                  chunk->metrics.generated_tokens == final_sample.metrics.generated_tokens &&
+                  next_text == streamed_text,
+              "cancelling the completed handle interrupted the second stream");
+
       require(model.encode(std::vector<cv::Mat>{image_bgr}), "GENAI_VLM_ENCODE failed");
       require(model.cached_image_count() == 1U, "GENAI_VLM_ENCODE expected one cached image");
 
@@ -146,7 +159,39 @@ int main(int argc, char** argv) {
       cached_request.prompt = std::string{kPrompt};
       cached_request.use_cached_images = true;
       cached_request.max_new_tokens = 48;
-      require_generation_result(model.run(cached_request), "GENAI_VLM_CACHED");
+      const auto cached_result = model.run(cached_request);
+      require_generation_result(cached_result, "GENAI_VLM_CACHED");
+
+      auto a = model.create_session();
+      auto b = model.create_session();
+      auto other = cached_request;
+      other.prompt = "Which objects are visible?";
+      const auto expected_b = model.run(other);
+      require(a.run(cached_request).text == cached_result.text &&
+                  b.run(other).text == expected_b.text,
+              "independent session output differed from the default session");
+      a.reset();
+      require(b.run(other).text == expected_b.text &&
+                  a.run(cached_request).text == cached_result.text,
+              "resetting one session affected another conversation");
+
+      auto retained = [&] {
+        auto temporary = model.create_session();
+        return temporary.stream(cached_request);
+      }();
+      std::string retained_text;
+      while (auto sample = retained.next()) {
+        if (sample->is_final) {
+          require(sample->finish_reason == cached_result.finish_reason,
+                  "session stream ended early");
+          break;
+        }
+        retained_text += sample->text;
+      }
+      require(retained_text == cached_result.text,
+              "stream lost its session when the handle was released");
+      auto next_session = model.create_session();
+      next_session.reset();
     }
 
     simaai::neat::genai::GenAIModel generic_model(model_dir);

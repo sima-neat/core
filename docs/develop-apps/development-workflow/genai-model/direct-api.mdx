@@ -176,6 +176,8 @@ For repeated questions about the same image, `VisionLanguageModel.encode(...)`
 can cache image embeddings in the model. Then set `request.use_cached_images =
 true` or use a chat message with `use_cached_images = true`.
 
+Use `model.create_session()` for each independent conversation. Each session has its own generation cache and shares the loaded model. Pass the full message history to `session.run(request)` or `session.stream(request)`. Call `session.reset()` to clear that conversation’s cache. Images cached with `model.encode(...)` are available to sessions that explicitly request them.
+
 ## Switch LoRA adapters
 
 Models compiled with LLiMa's `LORA_BRANCH` mode can switch compatible adapters
