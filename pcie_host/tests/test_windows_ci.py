@@ -1930,8 +1930,8 @@ class WindowsCiContracts(unittest.TestCase):
     self.assertIn('command.extend(["--iterations", "10", "--interval-ms", "0"])', source)
     self.assertIn('completed.append("test_worker_loss_recovery")', source)
     self.assertIn('completed.append("test_client_process_death_recovery")', source)
-    self.assertIn('["--max-mean-latency-ms", "12"]', source)
-    self.assertIn('["--min-throughput-fps", "440"]', source)
+    self.assertIn('["--max-mean-latency-ms", "16"]', source)
+    self.assertIn('["--min-throughput-fps", "290"]', source)
     self.assertIn('"--warmup", "100", "--iterations", "3000"', source)
     self.assertIn('command.append("--terminate-on-pull-timeout")', source)
     self.assertIn('if returncode != 1 or "pull timed out; terminating the fault-injection client"',
