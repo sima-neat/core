@@ -90,8 +90,10 @@ private:
   int num_buffers_ = -1;
 
   friend simaai::neat::Graph VideoSender(const VideoSenderOptions& opt);
+  friend simaai::neat::Graph VideoSender(const VideoSenderOptions& opt, EncoderInputPolicy policy);
 };
 
 simaai::neat::Graph VideoSender(const VideoSenderOptions& opt);
+simaai::neat::Graph VideoSender(const VideoSenderOptions& opt, EncoderInputPolicy policy);
 
 } // namespace simaai::neat::nodes::groups

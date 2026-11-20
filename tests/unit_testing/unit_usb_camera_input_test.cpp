@@ -3,7 +3,10 @@
 // access itself (mode listing, first-frame sampling) is covered on a DevKit.
 #include "nodes/io/UsbCameraInput.h"
 #include "nodes/io/internal/UvcCamera.h"
+#include "nodes/io/internal/UvcMode.h"
+#include <limits>
 #include "pipeline/Graph.h"
+#include "pipeline/graph/internal/GraphTestHooks.h"
 
 #include "test_utils.h"
 
@@ -336,10 +339,91 @@ void check_from_info() {
   stale(info, "unplugged camera");
 }
 
+void check_yuyv_pipeline() {
+  auto opt = mjpeg_options();
+  simaai::neat::UsbCameraCaptureInfo cached;
+  cached.options = opt;
+  cached.camera.decoded_format = FormatTag::YUYV;
+  require_throws<std::invalid_argument>(
+      [&] { (void)simaai::neat::nodes::UsbCameraInput(opt, cached.camera); }, "capture info format",
+      "raw info must not silently select legacy MJPEG capture");
+  require_throws<std::runtime_error>(
+      [&] { (void)simaai::neat::nodes::UsbCameraInput(opt, simaai::neat::UsbCameraInfo{}); },
+      "as its UsbCameraInfo says", "a default info keeps the MJPEG connection check");
+  require_throws<std::invalid_argument>(
+      [&] { (void)simaai::neat::nodes::UsbCameraInput(opt, cached); }, "capture info format",
+      "MJPEG selection must reject raw capture info");
+  cached.format = simaai::neat::UsbCameraFormat::YUYV;
+  cached.camera.decoded_format = FormatTag::NV16;
+  require_throws<std::invalid_argument>(
+      [&] { (void)simaai::neat::nodes::UsbCameraInput(opt, cached); }, "capture info format",
+      "YUYV selection must reject decoded MJPEG capture info");
+  opt.width = 642;
+  opt.height = 481;
+  uvc::ResolvedCamera camera{"/dev/video9", FormatTag::YUYV};
+  camera.format = simaai::neat::UsbCameraFormat::YUYV;
+  camera.row_stride = 1344;
+  camera.storage_bytes = 1344 * 481;
+  camera.colorimetry = "bt709";
+  const auto node = uvc::camera_node(opt, camera);
+  // Preproc binds a raw frame only with the GstSimaMeta frame-id and timestamp the source
+  // probe stamps; JPEG frames get theirs from the decoder.
+  require(simaai::neat::session_test::source_sima_meta_probe_required_for_test(*node),
+          "YUYV capture must stamp source frame metadata");
+  require(!simaai::neat::session_test::source_sima_meta_probe_required_for_test(
+              *uvc::camera_node(opt, uvc::ResolvedCamera{"/dev/video9", FormatTag::NV16})),
+          "MJPEG capture keeps its memory contract");
+  const auto text = node->backend_fragment(1);
+  require_contains(text, "video/x-raw,format=YUY2,interlace-mode=progressive,width=642,height=481",
+                   "packed YUYV caps");
+  require_contains(text, "colorimetry=bt709,chroma-site=jpeg", "negotiated interpretation");
+  require_contains(text, "io-mode=dmabuf-import", "same import pool");
+  require_not_contains(text, "image/jpeg", "raw does not use JPEG caps");
+  require_not_contains(text, "neatdecoder", "raw does not decode");
+  const auto spec =
+      dynamic_cast<const simaai::neat::OutputSpecProvider*>(node.get())->output_spec({});
+  require(spec.payload_type == simaai::neat::PayloadType::Image && spec.format == "YUY2" &&
+              spec.depth == 2 && spec.memory == "SimaAI" && spec.byte_size == camera.storage_bytes,
+          "raw source preserves storage contract");
+  opt.width = 641;
+  require_throws<std::invalid_argument>(
+      [&] { (void)simaai::neat::usb_camera_info(opt, simaai::neat::UsbCameraFormat::YUYV); },
+      "even width", "odd widths reject before device access");
+  opt.width = 642;
+  opt.framerate_num = std::numeric_limits<std::uint32_t>::max();
+  require_throws<std::invalid_argument>(
+      [&] { (void)simaai::neat::usb_camera_info(opt, simaai::neat::UsbCameraFormat::YUYV); },
+      "signed caps", "caps integer overflow");
+}
+
+void check_rational_intervals() {
+  v4l2_frmivalenum iv{};
+  iv.type = V4L2_FRMIVAL_TYPE_DISCRETE;
+  iv.discrete = {1001, 30000};
+  require(uvc::interval_contains(iv, 30000, 1001), "exact fractional rate");
+  require(uvc::interval_contains(iv, 60000, 2002), "equivalent fractional rate");
+  require(!uvc::interval_contains(iv, 30, 1), "no rate rounding");
+  iv.type = V4L2_FRMIVAL_TYPE_STEPWISE;
+  iv.stepwise = {{1, 60}, {1, 15}, {1, 60}};
+  require(uvc::interval_contains(iv, 60, 1) && uvc::interval_contains(iv, 30, 1) &&
+              uvc::interval_contains(iv, 20, 1) && uvc::interval_contains(iv, 15, 1),
+          "supported interval steps");
+  require(!uvc::interval_contains(iv, 24, 1), "in-range off-step interval rejected");
+  iv.type = V4L2_FRMIVAL_TYPE_CONTINUOUS;
+  require(uvc::interval_contains(iv, 24, 1), "continuous interval admitted");
+  require(!uvc::interval_contains(iv, 0, 1) && !uvc::interval_contains(iv, 30, 0),
+          "zero fractions rejected");
+  iv.type = V4L2_FRMIVAL_TYPE_STEPWISE;
+  iv.stepwise.step = {0, 1};
+  require(!uvc::interval_contains(iv, 30, 1), "invalid interval step rejected");
+}
+
 } // namespace
 
 int main() {
   try {
+    check_rational_intervals();
+    check_yuyv_pipeline();
     check_validation();
     check_ids_sorted();
     check_reconnect();

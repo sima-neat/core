@@ -1,7 +1,7 @@
 /**
  * @file
  * @ingroup nodes_io
- * @brief USB (UVC) MJPEG camera source node: the camera's JPEG frames.
+ * @brief USB (UVC) MJPEG or explicitly selected YUYV camera source.
  *
  * @see CameraInput
  * @see SimaDecode
@@ -10,6 +10,7 @@
 
 #include "builder/Node.h"
 #include "pipeline/FormatSpec.h"
+#include "nodes/sima/ImageTransform.h"
 
 #include <cstdint>
 #include <memory>
@@ -28,7 +29,7 @@ struct UsbCameraInputOptions {
   // Required stable USB camera ID from usb_camera_ids().
   std::string camera_name;
 
-  // An exact MJPEG mode of the camera.
+  // An exact mode in the selected capture format (MJPEG by default).
   std::uint32_t width = 1920;
   std::uint32_t height = 1080;
   std::uint32_t framerate_num = 30;
@@ -49,6 +50,27 @@ struct UsbCameraInfo {
   FormatTag decoded_format = FormatTag::Auto; ///< NV12 for 4:2:0 JPEGs, NV16 for 4:2:2.
   int node_index = -1; ///< sysfs index of `device` in its USB interface; -1 unknown.
 };
+
+/// Explicit capture encoding. Existing overloads retain their MJPEG behavior.
+enum class UsbCameraFormat { MJPEG, YUYV };
+
+/// A checked capture mode. Keep UsbCameraInfo/UsbCameraInputOptions layouts unchanged.
+/// Pass this result with the same options to UsbCameraInput to avoid probing twice.
+struct UsbCameraCaptureInfo {
+  UsbCameraInfo camera;
+  UsbCameraInputOptions options;
+  UsbCameraFormat format = UsbCameraFormat::MJPEG;
+  /// Negotiated raw layout; zero for compressed capture. Not a per-frame payload length.
+  std::uint32_t row_stride = 0;
+  std::uint32_t storage_bytes = 0;
+  /// Resolved raw interpretation, for ColorConvert. YUYV chroma is horizontally centered.
+  ImageColorOptions color;
+  /// Negotiated GStreamer colorimetry; empty for MJPEG.
+  std::string colorimetry;
+};
+
+/// Check exactly the selected format/mode. YUYV needs no JPEG probe or decoder.
+UsbCameraCaptureInfo usb_camera_info(const UsbCameraInputOptions& opt, UsbCameraFormat format);
 
 /// Stable IDs of the connected USB (UVC) cameras, for `UsbCameraInputOptions::camera_name`.
 /// IDs follow libcamera's uvcvideo handler: "<controller>-<ports:config.interface>-<vid:pid>",
@@ -92,6 +114,10 @@ namespace simaai::neat::nodes {
  *         connected IDs or the camera's MJPEG modes.
  */
 std::shared_ptr<simaai::neat::Node> UsbCameraInput(simaai::neat::UsbCameraInputOptions opt);
+
+/// Explicit-format overload; YUYV emits packed UInt8 YUY2 directly into device memory.
+std::shared_ptr<Node> UsbCameraInput(UsbCameraInputOptions opt, UsbCameraFormat format);
+std::shared_ptr<Node> UsbCameraInput(UsbCameraInputOptions opt, const UsbCameraCaptureInfo& info);
 
 /**
  * @brief UsbCameraInput for a camera that `usb_camera_info(opt)` already checked.

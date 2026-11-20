@@ -42,6 +42,7 @@ struct VideoSenderRawIngressConfig {
   // Empty for newly-authored graphs. Loaded graphs retain the three names
   // already transformed into their serialized fallback fragment.
   std::vector<std::string> fallback_element_names;
+  bool require_direct = false;
 };
 
 std::shared_ptr<Node> VideoSenderRawIngress(int width, int height, int fps);

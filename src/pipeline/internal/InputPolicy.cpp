@@ -251,6 +251,8 @@ int default_depth_for_image_format(const std::string& fmt, int fallback) {
     return 1;
   if (up == "RGB" || up == "BGR")
     return 3;
+  if (up == "YUYV" || up == "YUY2")
+    return 2;
   return fallback;
 }
 

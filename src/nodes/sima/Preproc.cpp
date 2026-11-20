@@ -36,11 +36,15 @@ using json = nlohmann::json;
 struct Preproc::PreprocConfigHolder {
   json config;
   bool has_config = false;
+  std::optional<ImageColorOptions> input_color;
   std::shared_ptr<const internal::ImageTransformPolicy> image_transform;
 };
 
 const internal::ImageTransformPolicy* internal::ImageTransformAccess::policy(const Preproc& node) {
   return node.config_holder_ ? node.config_holder_->image_transform.get() : nullptr;
+}
+std::optional<ImageColorOptions> internal::ImageTransformAccess::input_color(const Preproc& node) {
+  return node.config_holder_ ? node.config_holder_->input_color : std::nullopt;
 }
 void internal::ImageTransformAccess::set_policy(
     Preproc& node, std::shared_ptr<const internal::ImageTransformPolicy> policy) {
@@ -55,6 +59,8 @@ namespace {
 int channels_from_format(const std::string& fmt, int fallback) {
   if (!fmt.empty()) {
     const std::string up = upper_copy(fmt);
+    if (up == "YUYV" || up == "YUY2")
+      return 2;
     if (up == "GRAY" || up == "GRAY8")
       return 1;
     if (up == "RGB" || up == "BGR" || up == "NV12" || up == "I420")
@@ -423,7 +429,7 @@ json build_preproc_json(const PreprocOptions& opt) {
       {
           {"name", "format"},
           {"type", "string"},
-          {"values", "GRAY, RGB, BGR, I420, NV12"},
+          {"values", "GRAY, RGB, BGR, I420, NV12, NV16, YUY2"},
           {"json_field", "input_img_type"},
       },
   });
@@ -475,7 +481,22 @@ json build_preproc_json(const PreprocOptions& opt) {
 
 } // namespace
 
+Preproc::Preproc(PreprocOptions opt, ImageColorOptions input_color) : Preproc(std::move(opt)) {
+  const auto input_format = upper_copy(opt_.input_img_type);
+  if (input_format != "YUYV" && input_format != "YUY2")
+    throw std::invalid_argument("Explicit Preproc input color currently requires YUYV input");
+  if ((input_color.matrix != ImageColorMatrix::Bt601 &&
+       input_color.matrix != ImageColorMatrix::Bt709) ||
+      (input_color.range != ImageYuvRange::Full && input_color.range != ImageYuvRange::Limited) ||
+      input_color.input_siting !=
+          std::array{ImageChromaSiting::Centered, ImageChromaSiting::Centered})
+    throw std::invalid_argument(
+        "Preproc input color requires BT.601/709, full/limited range and centered chroma");
+  config_holder_->input_color = input_color;
+}
+
 Preproc::Preproc(PreprocOptions opt) : opt_(std::move(opt)) {
+  opt_.input_img_type = normalize_caps_format_for_media("video/x-raw", opt_.input_img_type);
   if (opt_.num_buffers_locked) {
     if (opt_.num_buffers != opt_.num_buffers_model) {
       throw std::runtime_error("Preproc: num_buffers override is not allowed; must match model.");
@@ -581,12 +602,21 @@ void Preproc::materialize_config_from_input_contract(const InputContract& contra
     if (contract.media_type != "video/x-raw" ||
         (!contract.dtype.empty() && upper_copy(contract.dtype) != "UINT8"))
       throw std::invalid_argument("Image transforms require UInt8 raw-video input");
-    auto format = upper_copy(contract.format);
+    auto format = normalize_caps_format_for_media("video/x-raw", upper_copy(contract.format));
     if (format == "GRAY")
       format = "GRAY8";
     if (format != "RGB" && format != "BGR" && format != "GRAY8" && format != "GRAY" &&
-        format != "NV12" && format != "I420" && format != "NV16")
+        format != "NV12" && format != "I420" && format != "NV16" && format != "YUY2")
       throw std::invalid_argument("Image transform: unsupported raw-image format");
+    if (format == "YUY2" &&
+        (policy->mode != internal::ImageTransformMode::ColorConvert || (contract.width & 1) ||
+         (opt_.output_img_type != "NV12" && opt_.output_img_type != "RGB" &&
+          opt_.output_img_type != "BGR")))
+      throw std::invalid_argument("YUYV supports ColorConvert to RGB/BGR/NV12; packed "
+                                  "Resize/Normalization/output are unsupported");
+    if (format == "YUY2" && policy->color.input_siting != std::array{ImageChromaSiting::Centered,
+                                                                     ImageChromaSiting::Centered})
+      throw std::invalid_argument("YUYV ColorConvert requires centered input chroma siting");
     if ((policy->max_input_width > 0 && contract.width > policy->max_input_width) ||
         (policy->max_input_height > 0 && contract.height > policy->max_input_height))
       throw std::invalid_argument("Resize input exceeds its authored capacity envelope");
@@ -615,18 +645,20 @@ void Preproc::materialize_config_from_input_contract(const InputContract& contra
                             opt_.output_img_type == "NV16";
     if (yuv_output && opt_.pad_value != 0)
       throw std::invalid_argument("YUV image padding uses yuv_padding; pad_value must remain zero");
-    if (!yuv_output && (policy->color.range != ImageYuvRange::Full ||
-                        policy->color.input_siting !=
-                            std::array{ImageChromaSiting::Centered, ImageChromaSiting::Centered} ||
-                        policy->color.output_siting !=
-                            std::array{ImageChromaSiting::Centered, ImageChromaSiting::Centered}))
+    if (format != "YUY2" && !yuv_output &&
+        (policy->color.range != ImageYuvRange::Full ||
+         policy->color.input_siting !=
+             std::array{ImageChromaSiting::Centered, ImageChromaSiting::Centered} ||
+         policy->color.output_siting !=
+             std::array{ImageChromaSiting::Centered, ImageChromaSiting::Centered}))
       throw std::invalid_argument(
           "RGB/GRAY output supports only legacy full-range centered YUV interpretation");
     if (policy->surface == ImageSurfaceLayout::EncoderNv12 && opt_.output_img_type != "NV12")
       throw std::invalid_argument("EncoderNv12 surface requires NV12 output");
   }
   opt_.set_input_shape(compact_shape({contract.height, contract.width, 0}));
-  std::string contract_format = upper_copy(contract.format);
+  std::string contract_format =
+      normalize_caps_format_for_media("video/x-raw", upper_copy(contract.format));
   if (internal::ImageTransformAccess::policy(*this) && contract_format == "GRAY")
     contract_format = "GRAY8";
   if (!opt_.model_managed_contract || opt_.input_img_type.empty()) {
@@ -772,13 +804,14 @@ bool Preproc::compile_node_contract(const ContractCompileInput& input, CompiledN
       }
     }
     namespace semantics = pipeline_internal::sima::stagesemantics;
-    const auto compiled =
-        config_holder_ && config_holder_->image_transform
-            ? semantics::build_image_transform_compiled_contract_from_options(
-                  compile_opt, config_holder_->image_transform)
-        : compile_opt.compiled_contract
-            ? *compile_opt.compiled_contract
-            : semantics::build_processcvu_compiled_contract_from_options(compile_opt);
+    auto compiled = config_holder_ && config_holder_->image_transform
+                        ? semantics::build_image_transform_compiled_contract_from_options(
+                              compile_opt, config_holder_->image_transform)
+                    : compile_opt.compiled_contract
+                        ? *compile_opt.compiled_contract
+                        : semantics::build_processcvu_compiled_contract_from_options(compile_opt);
+    if (config_holder_ && config_holder_->input_color)
+      compiled.payload.input_color = config_holder_->input_color;
     if (!pipeline_internal::sima::stagesemantics::build_processcvu_node_contract(
             kind(), element_name, element_name, contract_definition(), compiled, out, err)) {
       return false;
@@ -806,6 +839,8 @@ void Preproc::apply_compiled_contract(const CompiledNodeContract& contract, std:
     return;
   }
   const auto& payload = contract.processcvu->payload;
+  if (payload.input_color && config_holder_)
+    config_holder_->input_color = payload.input_color;
   if (payload.image_transform)
     return;
   if (!payload.input_shapes.empty()) {
@@ -962,6 +997,17 @@ std::shared_ptr<Node> image_node(PreprocOptions options, internal::ImageTransfor
       *node, std::make_shared<const internal::ImageTransformPolicy>(std::move(policy)));
   return node;
 }
+std::shared_ptr<Node> color_convert_node(ColorConvertOptions options,
+                                         std::string colorimetry = {}) {
+  auto opt = image_options(options.element_name);
+  opt.output_img_type = image_format_name(options.output_format);
+  internal::ImageTransformPolicy policy;
+  policy.mode = internal::ImageTransformMode::ColorConvert;
+  policy.color = options.color;
+  policy.colorimetry = std::move(colorimetry);
+  policy.surface = options.surface;
+  return image_node(std::move(opt), std::move(policy));
+}
 } // namespace
 
 std::shared_ptr<Node> Resize(ResizeOptions options) {
@@ -999,14 +1045,14 @@ std::shared_ptr<Node> Resize(ResizeOptions options) {
   return image_node(std::move(opt), std::move(policy));
 }
 
+std::shared_ptr<Node> ColorConvert(ColorConvertOptions options, std::string input_colorimetry) {
+  if (input_colorimetry.empty())
+    throw std::invalid_argument("ColorConvert requires explicit source colorimetry");
+  return color_convert_node(std::move(options), std::move(input_colorimetry));
+}
+
 std::shared_ptr<Node> ColorConvert(ColorConvertOptions options) {
-  auto opt = image_options(options.element_name);
-  opt.output_img_type = image_format_name(options.output_format);
-  internal::ImageTransformPolicy policy;
-  policy.mode = internal::ImageTransformMode::ColorConvert;
-  policy.color = options.color;
-  policy.surface = options.surface;
-  return image_node(std::move(opt), std::move(policy));
+  return color_convert_node(std::move(options));
 }
 
 std::shared_ptr<Node> Normalization(NormalizationOptions options) {
@@ -1027,6 +1073,10 @@ std::shared_ptr<Node> Normalization(NormalizationOptions options) {
   internal::ImageTransformPolicy policy;
   policy.mode = internal::ImageTransformMode::Normalization;
   return image_node(std::move(opt), std::move(policy));
+}
+
+std::shared_ptr<simaai::neat::Node> Preproc(PreprocOptions opt, ImageColorOptions input_color) {
+  return std::make_shared<simaai::neat::Preproc>(std::move(opt), input_color);
 }
 
 std::shared_ptr<simaai::neat::Node> Preproc(PreprocOptions opt) {

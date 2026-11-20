@@ -148,6 +148,7 @@ struct ImageSpec {
     I420,    ///< 4:2:0 chroma with separate U and V planes.
     UNKNOWN,
     NV16 = 6, ///< 4:2:2 chroma with a full-height interleaved UV plane.
+    YUYV = 7, ///< Packed HWC2 storage; two bytes per pixel, shared chroma.
   };
 
   PixelFormat format = PixelFormat::UNKNOWN; ///< Pixel format of the image data.

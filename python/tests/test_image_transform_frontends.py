@@ -80,7 +80,7 @@ def test_decoded_group_byte_estimates_follow_spatial_overrides(group):
         (pyneat.Format.I420, 8, 6, 72),
         (pyneat.Format.NV16, -1, 5, 80),
         (pyneat.Format.Auto, -1, 5, 0),
-        (pyneat.Format.YUYV, 8, 6, 0),
+        (pyneat.Format.YUYV, 8, 6, 96),
     ):
         options.output_caps.format = format_
         options.output_caps.width, options.output_caps.height = width, height
@@ -97,6 +97,8 @@ def test_decoded_group_byte_estimates_follow_spatial_overrides(group):
     options.out_format = pyneat.Format.YUYV
     options.decoder_raw_output = False
     options.output_caps.format = pyneat.Format.Auto
+    assert project(options).byte_size == 96
+    options.out_format = pyneat.Format.ByteStream
     assert project(options).byte_size == 0
 
 
