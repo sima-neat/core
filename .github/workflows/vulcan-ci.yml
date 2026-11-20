@@ -1234,25 +1234,14 @@ jobs:
       - name: Prepare LightGlue NEAT-68 regression model
         run: |
           set -euo pipefail
-          MODEL_ROOT="${RUNNER_TEMP:-/tmp}/lg-${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-0}"
-          MODEL_SPEC="models/runtime_lightglue_superpoint_600@runtime-lightglue-neat68-v1:00d3bdc1f3b1"
-          # The restricted regression fixture is intentionally staging-only.
-          MODEL_VULCAN_ENV=stg
-          mkdir -p "${MODEL_ROOT}"
-          sima-cli neat install \
-            --env "${MODEL_VULCAN_ENV}" \
-            --install-dir "${MODEL_ROOT}" \
-            "${MODEL_SPEC}"
-
-          mapfile -t archives < <(find "${MODEL_ROOT}" -type f -name '*_mpk.tar.gz' | sort)
-          if [[ "${#archives[@]}" -ne 1 ]]; then
-            echo "Expected exactly one LightGlue MPK from ${MODEL_SPEC}, found ${#archives[@]}." >&2
-            find "${MODEL_ROOT}" -maxdepth 4 -type f -print >&2 || true
-            exit 1
-          fi
-          echo '0ceb6304167d3a5ca4e3e0bcf3bd873ace6966d8a35e73d790c4496019bae7af  '"${archives[0]}" | sha256sum --check --strict
-          echo "SIMA_TEST_LIGHTGLUE_MODEL=${archives[0]}" >> "${GITHUB_ENV}"
-          echo "Installed immutable LightGlue regression model: ${archives[0]}"
+          MODEL_DIR="$(mktemp -d "${RUNNER_TEMP:-/tmp}/lg-XXXXXXXX")"
+          MODEL_PATH="${MODEL_DIR}/quantized_lightglue_superpoint_600_mpk.tar.gz"
+          ARTIFACT_URL="https://models-registry.stg.neat.sima.ai/v1/runs/ef5cf65e-797c-409a-81e7-17cb49e62452/artifacts/mpk"
+          DOWNLOAD_URL="$(curl -fsS --retry 2 "${ARTIFACT_URL}" |
+            python3 -c 'import json, sys; print(json.load(sys.stdin)["artifact"]["download_url"])')"
+          curl -fsSL --retry 2 "${DOWNLOAD_URL}" -o "${MODEL_PATH}"
+          echo '0ceb6304167d3a5ca4e3e0bcf3bd873ace6966d8a35e73d790c4496019bae7af  '"${MODEL_PATH}" | sha256sum --check --strict
+          echo "SIMA_TEST_LIGHTGLUE_MODEL=${MODEL_PATH}" >> "${GITHUB_ENV}"
 
       - name: Build docs C++ examples from DevKit-installed package
         if: ${{ contains(fromJSON(matrix.tasks), 'fast') }}
@@ -1365,12 +1354,14 @@ jobs:
           TAIL_REGEX='^(sync_yolov8_test|sync_yolov8_test_detessdequant|yolov8_variant_route_matrix_test|boxdecode_yolo_layout_matrix_e2e_test|preproc_yolov8_matrix_test|graphpipes_yolo_metadata_sender_16stream_test)$'
           # Temporary external RTSP exclusions; remove under core#890.
           EXTERNAL_RTSP_TESTS='rtsp_encoded_boundary_caps_test|decoder_multirun_admission_boundary_test|h265_rtsp_resnet50_e2e_test'
+          # Needs a model with a DetessDequant stage; remove under core#1454.
+          TESS_FIXTURE_TESTS='|sync_yolov8_test_detessdequant'
           USB_CAMERA_TESTS=''
           if [[ -z "${SIMA_NEAT_TEST_USB_CAMERA}" ]]; then
             USB_CAMERA_TESTS='|usb_camera_input_e2e_test'
             echo 'EXCLUDED profile: USB camera hardware; set vars.SIMA_NEAT_TEST_USB_CAMERA to a camera ID.'
           fi
-          SKIP_REGEX="^(unit_dispatcher_watchdog_test|${EXTERNAL_RTSP_TESTS}${USB_CAMERA_TESTS})$"
+          SKIP_REGEX="^(unit_dispatcher_watchdog_test|${EXTERNAL_RTSP_TESTS}${TESS_FIXTURE_TESTS}${USB_CAMERA_TESTS})$"
           E2E_LABEL_EXCLUDE='perf|llima|codec_stream|codec_aggregate'
           if [[ "${{ inputs.run_long_tests }}" != "true" ]]; then
             E2E_LABEL_EXCLUDE+='|long'
@@ -1417,12 +1408,14 @@ jobs:
           TAIL_REGEX='^(sync_yolov8_test|sync_yolov8_test_detessdequant|yolov8_variant_route_matrix_test|boxdecode_yolo_layout_matrix_e2e_test|preproc_yolov8_matrix_test|graphpipes_yolo_metadata_sender_16stream_test)$'
           # Temporary external RTSP exclusions; remove under core#890.
           EXTERNAL_RTSP_TESTS='rtsp_encoded_boundary_caps_test|decoder_multirun_admission_boundary_test|h265_rtsp_resnet50_e2e_test'
+          # Needs a model with a DetessDequant stage; remove under core#1454.
+          TESS_FIXTURE_TESTS='|sync_yolov8_test_detessdequant'
           USB_CAMERA_TESTS=''
           if [[ -z "${SIMA_NEAT_TEST_USB_CAMERA}" ]]; then
             USB_CAMERA_TESTS='|usb_camera_input_e2e_test'
             echo 'EXCLUDED profile: USB camera hardware; set vars.SIMA_NEAT_TEST_USB_CAMERA to a camera ID.'
           fi
-          SKIP_REGEX="^(unit_dispatcher_watchdog_test|${EXTERNAL_RTSP_TESTS}${USB_CAMERA_TESTS})$"
+          SKIP_REGEX="^(unit_dispatcher_watchdog_test|${EXTERNAL_RTSP_TESTS}${TESS_FIXTURE_TESTS}${USB_CAMERA_TESTS})$"
           E2E_LABEL_EXCLUDE='perf|llima|codec_stream|codec_aggregate'
           if [[ "${{ inputs.run_long_tests }}" != "true" ]]; then
             E2E_LABEL_EXCLUDE+='|long'
@@ -1525,6 +1518,20 @@ jobs:
           export SIMA_GST_REGISTRY_DIR="$(cat _work/gst_registry_dir.txt)"
           echo "Using SIMA_MPK_EXTRACT_ROOT=${SIMA_MPK_EXTRACT_ROOT}"
           echo "Using SIMA_GST_REGISTRY_DIR=${SIMA_GST_REGISTRY_DIR}"
+          if [[ -z "${SIMA_RESNET50_TAR:-}" ]]; then
+            RESNET_DIR="$(mktemp -d "${RUNNER_TEMP:-/tmp}/model-browser-resnet.XXXXXX")"
+            SIMA_RESNET50_TAR="$(python3 scripts/ci/prepare_model_browser_fixture.py \
+              --id resnet_50 --variant w8a8 --output "${RESNET_DIR}")"
+            export SIMA_RESNET50_TAR
+          fi
+          # The performance matrix step loads the same archive in runtime_model_archive_load.
+          printf 'SIMA_RESNET50_TAR=%s\n' "${SIMA_RESNET50_TAR}" >> "${GITHUB_ENV}"
+          if [[ -z "${SIMA_YOLO_TAR:-}" ]]; then
+            YOLO_DIR="$(mktemp -d "${RUNNER_TEMP:-/tmp}/model-browser-yolov8s.XXXXXX")"
+            SIMA_YOLO_TAR="$(python3 scripts/ci/prepare_model_browser_fixture.py \
+              --id yolov8s --variant w8a8 --output "${YOLO_DIR}")"
+            export SIMA_YOLO_TAR
+          fi
           COVERAGE_DIR=_work/coverage/perf bash scripts/ci/run_zero_skip_gate.sh \
             ctest --test-dir "${TEST_DIR}" \
             --label-regex "perf" \

@@ -1,5 +1,6 @@
 #include "nodes/groups/internal/VideoSenderRawIngress.h"
 
+#include "builder/internal/ElementNames.h"
 #include "builder/internal/InputSpecSpecialization.h"
 
 #include <memory>
@@ -22,6 +23,7 @@ bool certainty_is_stable(SpecCertainty certainty) {
 }
 
 class VideoSenderRawIngressNode final : public Node,
+                                        public SerializedElementNames,
                                         public OutputSpecProvider,
                                         public simaai::neat::internal::InputSpecSpecializer {
 public:
@@ -117,8 +119,9 @@ public:
       const simaai::neat::internal::InputSpecSpecializationContext& context) const override {
     const bool layout_aware = context.capability(kNeatEncoderInputLayoutAwareCapability);
     const bool direct = can_encode_nv12_direct(input, layout_aware);
-    return std::make_shared<VideoSenderRawIngressNode>(
-        config_, direct ? IngressVariant::DirectNv12 : IngressVariant::ConvertToNv12);
+    auto node = std::make_shared<VideoSenderRawIngressNode>(*this);
+    node->variant_ = direct ? IngressVariant::DirectNv12 : IngressVariant::ConvertToNv12;
+    return node;
   }
 
   const VideoSenderRawIngressConfig& config() const {
