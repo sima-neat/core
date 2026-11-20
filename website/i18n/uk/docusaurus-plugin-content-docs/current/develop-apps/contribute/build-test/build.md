@@ -29,7 +29,7 @@ slug: /develop-apps/contribute/build
 sima-cli sdk neat
 ```
 
-SDK містить набір інструментів і `sima-cli`. Скрипт Core `build.sh` готує відповідні залежності Scheduler та LLiMa; див. [Локальні залежності](/develop-apps/contribute/build-test/local-dependencies/). У спареному SDK команда `./build.sh --install` також розгортає відповідні артефакти на DevKit. Для нативних збірок на DevKit SDK не потрібен.
+SDK містить набір інструментів і `sima-cli`. Скрипт Core `build.sh` готує відповідні залежності Scheduler та LLiMa; див. [Локальні залежності](/develop-apps/contribute/build-test/local-dependencies/). Якщо до SDK підключено DevKit, команда `./build.sh --install` також розгортає на ньому відповідні артефакти. Для нативних збірок на DevKit SDK не потрібен.
 
 ## Параметри збірки
 
@@ -40,7 +40,7 @@ SDK містить набір інструментів і `sima-cli`. Скрип
 - `--python`: Зібрати прив’язки для Python (`pyneat`) на додаток до вибраних цілей.
 - `--install-neat-internals`, `--install-deps`: Завантажити та встановити артефакти залежностей перед збиранням.
 - `--doc`: Зібрати лише документацію.
-- `--install`: Після збирання/пакування встановити згенеровані артефакти в поточне середовище. У режимі спареного Palette SDK цей параметр також розгортає та встановлює відповідні артефакти на спареному DevKit.
+- `--install`: Після збирання/пакування встановити згенеровані артефакти в поточне середовище. Якщо до Palette SDK підключено DevKit, цей параметр також розгортає та встановлює на ньому відповідні артефакти.
 - `--no-dist`: Пропустити створення дистрибутивного пакета.
 - `--clean`: Видалити `build/` перед налаштуванням.
 - `--no-doc`: Пропустити збирання документації (навіть з `--all`).
@@ -135,7 +135,7 @@ INSIGHT_OPENAPI_SPEC=../insight/neat_insight/openapi.json ./build.sh --doc
 
 | Параметр | За замовчуванням | Дія |
 |--------|---------|--------|
-| `SIMA_NEAT_BUILD_TESTS` | `ON` (Developer) | Збирає набір тестів gtest. Вимкніть, щоб пришвидшити CI для робочих збірок. |
+| `SIMA_NEAT_BUILD_TESTS` | `ON` (Developer) | Збирає набір тестів gtest. Вимкніть, щоб пришвидшити CI для виробничих збірок. |
 | `SIMA_NEAT_BUILD_TUTORIALS` | `OFF` | Збирає виконувані файли навчальних посібників. |
 | `SIMA_NEAT_BUILD_PYTHON` | `ON` | Збирає модуль nanobind `pyneat`. |
 | `SIMA_NEAT_BUILD_INTERNALS` | `OFF` (публічний) | Збирає внутрішній рівень наскрізного доступу (`core/src/pipeline/internal/sima/`). |
