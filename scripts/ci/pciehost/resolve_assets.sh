@@ -12,11 +12,9 @@ model_browser_mpk() {
     --id "$1" --variant "$2" --output "${WORK_DIR}/assets"
 }
 
-# An explicit model variable still wins over the Model Browser package.
-if [[ -z "${SIMAPCIE_YOLOV8_MODEL:-${SIMA_MODEL_TAR:-${SIMA_YOLO_TAR:-}}}" ]]; then
-  SIMAPCIE_YOLOV8_MODEL="$(model_browser_mpk yolov8s w8a8)"
-  export SIMAPCIE_YOLOV8_MODEL
-fi
+# The resolver takes SIMAPCIE_YOLOV8_MODEL before its own sources and writes it to the env file.
+SIMAPCIE_YOLOV8_MODEL="$(model_browser_mpk yolov8s w8a8)"
+export SIMAPCIE_YOLOV8_MODEL
 
 "${WORKSPACE}/pcie_host/scripts/resolve_hardware_test_assets.sh" \
   --workspace "${WORKSPACE}" \
