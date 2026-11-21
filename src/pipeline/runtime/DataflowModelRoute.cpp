@@ -1,4 +1,4 @@
-// A model route on the Dataflow backend (DataflowModelRoute.h; H1).
+// A model route on the Dataflow backend (DataflowModelRoute.h).
 #if defined(SIMANEAT_WITH_DATAFLOW)
 
 #include "pipeline/runtime/DataflowModelRoute.h"
@@ -120,6 +120,21 @@ TensorLayout layout_of(const std::string& token) {
   return TensorLayout::Unknown;
 }
 
+// A slot's alignment in the runtime's pools: every alignment a kernel may ask of a tensor that is a
+// view of a port's buffer (soc::KernelOp::Options::Packing) divides it, and BoxDecode's outputs
+// lie at multiples of it in their one buffer (the layout GStreamer's stage arena gives them).
+constexpr std::size_t kSlotAlignment = 64;
+
+std::size_t aligned(std::size_t bytes) {
+  return (bytes + kSlotAlignment - 1U) & ~(kSlotAlignment - 1U);
+}
+
+// The axes of an image stage's frame tensor, [1, height, width, channels].
+constexpr std::size_t kHeightAxis = 1, kWidthAxis = 2;
+
+// The channels of a BGR or RGB frame when nothing the build says gives them.
+constexpr std::int64_t kFrameChannels = 3;
+
 std::string dims_text(const std::vector<std::int64_t>& shape) {
   std::string out = "[";
   for (std::size_t i = 0; i < shape.size(); ++i) {
@@ -179,7 +194,7 @@ struct DataflowFrames {
   /// The stage's capacity envelope. The bound is below it where the Input's capacity is (its
   /// declared bound, or the seed's size: GStreamer's rule, resolve_shape_limits).
   std::int64_t envelope_width = 0, envelope_height = 0;
-  std::int64_t channels = 0; ///< of a packed frame
+  std::int64_t channels = 0; ///< of an RGB or BGR frame (0: NV12)
   bool nv12 = false;
   std::string format; ///< the frames' format, for messages
 
@@ -482,14 +497,14 @@ std::string plan_mla_stage(const si::StageStaticSpec& stage, bool first,
       // no TessSpec on the tensors and no tag on the Sample. Each further tensor is described as
       // the first is, and carries what an image preproc in front of the MLA publishes with every
       // frame, as the first does.
-      route.output.packed.reserve(tensors - 1U);
+      route.output.more.reserve(tensors - 1U);
       for (std::size_t i = 1; i < tensors; ++i) {
         const si::LogicalTensorStaticSpec& tensor = stage.logical_outputs[i];
-        DataflowPulledTensor& more = route.output.packed.emplace_back();
-        describe_pulled(stage, tensor, *dtype_of(tensor.dtype), more);
-        more.preprocess = route.output.preprocess;
-        more.frame_semantics = route.output.frame_semantics;
-        more.frames = route.output.frames;
+        DataflowPulledTensor& next = route.output.more.emplace_back();
+        describe_pulled(stage, tensor, *dtype_of(tensor.dtype), next);
+        next.preprocess = route.output.preprocess;
+        next.frame_semantics = route.output.frame_semantics;
+        next.frames = route.output.frames;
       }
     }
   }
@@ -704,7 +719,8 @@ std::string plan_frame_stage(const si::StageStaticSpec& stage, const std::string
   const auto request_at = [&](std::int64_t width, std::int64_t height) {
     return Adapter::checked_fixed_frame(
         policy, static_cast<std::size_t>(width), static_cast<std::size_t>(height),
-        static_cast<std::size_t>(nv12 ? width : width * (frame.channels > 0 ? frame.channels : 3)));
+        static_cast<std::size_t>(
+            nv12 ? width : width * (frame.channels > 0 ? frame.channels : kFrameChannels)));
   };
   const auto [envelope_width, envelope_height] = Adapter::checked_envelope(*policy);
   if (!frame.fixed) {
@@ -800,7 +816,7 @@ std::string plan_frame_stage(const si::StageStaticSpec& stage, const std::string
       return name + ": the NV12 frame's planes do not lie in the frame's bytes";
     }
     const std::size_t alignment = contract.input_requirements()[1].alignment_bytes;
-    if (alignment == 0U || 64U % alignment != 0U || luma % alignment != 0U) {
+    if (alignment == 0U || kSlotAlignment % alignment != 0U || luma % alignment != 0U) {
       return name + ": the chroma plane of a " + std::to_string(frame.width) + "x" +
              std::to_string(frame.height) + " NV12 frame begins at byte " + std::to_string(luma) +
              " of the frame, which is not a multiple of the " + std::to_string(alignment) +
@@ -831,7 +847,7 @@ std::string plan_frame_stage(const si::StageStaticSpec& stage, const std::string
     return name + ": " + error.what();
   }
   if (!frame.fixed) {
-    // Each frame is run by its geometry's kernel: a packed frame's extent on the bounded port
+    // Each frame is run by its geometry's kernel: an RGB or BGR frame's extent on the bounded port
     // says its geometry; an NV12 frame's byte port does not, its stamp's user word does.
     kernel.variants = nv12 ? DataflowModelStage::Kernel::Variants::ImageByWord
                            : DataflowModelStage::Kernel::Variants::ImageByExtent;
@@ -1026,21 +1042,20 @@ std::string plan_boxdecode_stage(const si::StageStaticSpec& stage, const std::st
     kernel.packed_inputs.push_back(
         {request.inputs[i], static_cast<std::size_t>(offset), static_cast<std::size_t>(bytes)});
   }
-  // The kernel's outputs: one buffer, each at a 64-byte boundary (the layout GStreamer's stage
-  // arena gives them), which every alignment the kernel may ask of a packed tensor divides.
+  // The kernel's outputs: one buffer, each at a slot's alignment.
   std::size_t end = 0;
   for (std::size_t i = 0; i < request.outputs.size(); ++i) {
     const client::TensorRequirements& needs = contract.output_requirements()[i];
     if (needs.storage_bytes == 0U || needs.alignment_bytes == 0U ||
-        64U % needs.alignment_bytes != 0U) {
+        kSlotAlignment % needs.alignment_bytes != 0U) {
       return name + ": the kernel's output " + std::to_string(i) + " asks for an alignment of " +
              std::to_string(needs.alignment_bytes) + " bytes, which a packed port does not have";
     }
-    const std::size_t offset = (end + 63U) & ~std::size_t{63};
+    const std::size_t offset = aligned(end);
     kernel.packed_outputs.push_back({request.outputs[i], offset, needs.storage_bytes});
     end = offset + needs.storage_bytes;
   }
-  decode.output_bytes = (end + 63U) & ~std::size_t{63};
+  decode.output_bytes = aligned(end);
   kernel.parameters = std::move(request.parameters);
   if (route.frames) {
     // Frames of a changing size: the frame's geometry is its stamp's user word (the MLA's
@@ -1355,7 +1370,7 @@ plan_dataflow_route_stages(const si::SimaPluginStaticManifest& manifest,
                      ": not one whole buffer handed on, which is not supported on Dataflow yet");
     }
   }
-  planned->output.beyond_leaf = planned->output.frame_semantics || !planned->output.packed.empty();
+  planned->output.beyond_leaf = planned->output.frame_semantics || !planned->output.more.empty();
   return planned;
 }
 
@@ -1444,7 +1459,7 @@ std::string bind_dataflow_model_input(const DataflowModelRoute& route,
     for (std::size_t i = 0; fits && i < want.size(); ++i) {
       // A changing size: the item's own height and width (a seed's, a first push's) bind
       // nothing; its other axes must be the frame's.
-      const bool sized = route.frames && (i == 1U || i == 2U);
+      const bool sized = route.frames && (i == kHeightAxis || i == kWidthAxis);
       fits = i < lead ? want[i] == 1 : sized || spec->shape.dims[i - lead].contains(want[i]);
     }
     if (!fits) {
@@ -1456,8 +1471,9 @@ std::string bind_dataflow_model_input(const DataflowModelRoute& route,
     }
     spec->shape.rank = static_cast<std::uint8_t>(want.size());
     for (std::size_t i = 0; i < want.size(); ++i) {
-      spec->shape.dims[i] =
-          route.frames && (i == 1U || i == 2U) ? df::Dim(1, want[i]) : df::Dim(want[i]);
+      spec->shape.dims[i] = route.frames && (i == kHeightAxis || i == kWidthAxis)
+                                ? df::Dim(1, want[i])
+                                : df::Dim(want[i]);
     }
     if (const df::Status status = df::validate(binding.spec)) {
       return std::string("the input's spec is not valid: ") + status->message;
@@ -1538,10 +1554,10 @@ std::shared_ptr<const PreprocessRuntimeMeta> frame_facts(const DataflowFrames* f
     }
     tensor.envelope = envelope;
   };
-  out.reserve(out.size() + 1U + pulled.packed.size());
+  out.reserve(out.size() + 1U + pulled.more.size());
   fill(pulled);
-  for (const DataflowPulledTensor& more : pulled.packed) {
-    fill(more);
+  for (const DataflowPulledTensor& next : pulled.more) {
+    fill(next);
   }
 }
 
@@ -1608,7 +1624,7 @@ const Tensor& dataflow_model_input_view(const DataflowModelRoute& route, const T
   for (std::size_t i = 0; i < want.size(); ++i) {
     // A changing size: the frame's own height and width (dataflow_frame_word holds them
     // against the bound).
-    const bool sized = route.frames && (i == 1U || i == 2U);
+    const bool sized = route.frames && (i == kHeightAxis || i == kWidthAxis);
     if (i < lead ? want[i] != 1 : !sized && want[i] != tensor.shape[i - lead]) {
       return tensor;
     }
@@ -1958,11 +1974,13 @@ std::shared_ptr<const PreprocessRuntimeMeta> frame_facts(const DataflowFrames* f
 }
 
 // A variant's kernel for the Worker (soc::KernelOp::Options::Variants::make): the table's, which
-// the frame's push made; made again when the table let it go meanwhile.
+// the frame's push made; made again when the table let it go meanwhile (a geometry its push
+// passed, so a failure here is only out of memory: its text is the operator's, below).
 df::Result<std::shared_ptr<df::soc::Kernel>>
 frame_kernel(const DataflowFrames& frames, std::uint64_t word, bool decode) noexcept {
   try {
-    std::variant<FrameGeometry, std::string> found = frame_geometry(frames, word, "Run::push");
+    std::variant<FrameGeometry, std::string> found =
+        frame_geometry(frames, word, "the Dataflow route's operator");
     if (const FrameGeometry* geometry = std::get_if<FrameGeometry>(&found)) {
       return decode ? (*geometry)->decode : (*geometry)->preproc;
     }
@@ -2071,8 +2089,7 @@ private:
   df::Out<df::Tensor> out_;
   df::PortSpec in_spec_, out_spec_;
   std::shared_ptr<const void> program_;
-  client::HostStatus (*write_)(const void*, std::span<const client::ConstBytes>,
-                               client::MutableBytes);
+  decltype(DataflowModelStage::Wire::write) write_;
   std::vector<std::size_t> offsets_; ///< each kernel output's offset in the message
   std::vector<client::ConstBytes>
       inputs_; ///< the serializer's inputs: bytes fixed, data per message
@@ -2331,11 +2348,12 @@ std::vector<std::uint32_t> add_dataflow_model_ops(df::Net& net, const DataflowMo
     const std::shared_ptr<DataflowFrames>& frames = route.frames;
     using Variants = DataflowModelStage::Kernel::Variants;
     if (request.variants == Variants::ImageByExtent) {
-      // Packed frames on the Feed's bounded tensor: the message's extent is the frame's size.
+      // RGB or BGR frames on the Feed's bounded tensor: the message's extent is the frame's size.
       options.variants.input = std::get<df::TensorSpec>(carried.payload);
       options.variants.make = [frames](std::uint64_t, const df::Extent& extent) {
-        return frame_kernel(*frames, DataflowFrames::frame_word(extent.dims[2], extent.dims[1]),
-                            false);
+        return frame_kernel(
+            *frames, DataflowFrames::frame_word(extent.dims[kWidthAxis], extent.dims[kHeightAxis]),
+            false);
       };
     } else if (request.variants != Variants::None) {
       const bool decode = request.variants == Variants::DecodeByWord;

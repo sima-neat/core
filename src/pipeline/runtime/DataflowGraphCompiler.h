@@ -3,10 +3,10 @@
 #error "Internal header. Not part of the public API."
 #endif
 
-// The Dataflow backend's build side (H0 plan 3.6; H0 step 10, H0c): which runtime a Graph::build()
-// takes (DataflowBackendSelect.cpp; Graph::build's four entries call DataflowGraphAccess::build
-// before gst_init_once()), and whether a graph qualifies for Dataflow and with which Run
-// configuration (DataflowGraphCompiler.cpp).
+// The Dataflow backend's build side: which runtime a Graph::build() takes
+// (DataflowBackendSelect.cpp; Graph::build's four entries call DataflowGraphAccess::build before
+// gst_init_once()), and whether a graph qualifies for Dataflow and with which Run configuration
+// (DataflowGraphCompiler.cpp).
 
 #include "pipeline/GraphOptions.h"
 #include "pipeline/Run.h"
@@ -82,8 +82,8 @@ struct DataflowDecline {
 std::optional<DataflowRunConfig> plan_dataflow_run(const Graph& graph, const RunOptions& opt,
                                                    const DataflowSeed& seed, DataflowDecline* why);
 
-// The options Dataflow does not read (plan 3.4), when set away from their defaults: one warning
-// per process and option.
+// The options Dataflow does not read, when set away from their defaults: one warning per process
+// and option.
 void warn_ignored_dataflow_options(const DataflowRunConfig& config);
 
 #endif // SIMANEAT_WITH_DATAFLOW

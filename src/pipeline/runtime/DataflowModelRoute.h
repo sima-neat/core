@@ -3,7 +3,7 @@
 #error "Internal header. Not part of the public API."
 #endif
 
-// A model route on the Dataflow backend (H1): one Input, the stages of a Model between it and one
+// A model route on the Dataflow backend: one Input, the stages of a Model between it and one
 // Output. GStreamer builds it as appsrc ! [neatkernelrunner !] neatprocessmla [! neatkernelrunner]
 // ! appsink; here it is Feed -> [soc::KernelOp ->] soc::MlaOp [-> soc::KernelOp] -> Fetch, one
 // operator per stage:
@@ -19,8 +19,8 @@
 //     ProcessCvuRunTargetPolicy.cpp). A stage on the EV74 is taken only where the EV74 runs the
 //     Kernels firmware; on a board with the stock firmware the route is declined at the plan.
 //   - Model::preprocess() of a model whose pre stage is the image preproc (the Kernels package's
-//     "preproc", EV74 only: resize, colour, normalize, quantize and tessellate a packed RGB or
-//     BGR frame, or an NV12 one), alone or in front of the stages above. GStreamer runs it
+//     "preproc", EV74 only: resize, colour, normalize, quantize and tessellate an RGB or BGR
+//     frame, or an NV12 one), alone or in front of the stages above. GStreamer runs it
 //     through a frame adapter that gives the kernel each frame's geometry; here the request for
 //     a frame size is made from the same checked policy (PreprocFrameAdapter::
 //     checked_fixed_frame), in one of two ways:
@@ -31,7 +31,7 @@
 //         (InputOptions::max_width / max_height, else the seed's size; the stage's capacity
 //         envelope when the build says nothing, and never above it), the
 //         operator keeps a kernel per frame size (soc::KernelOp::Options::Variants) and every
-//         frame is run by its own (DataflowFrames, below). A packed frame in EV74 memory is
+//         frame is run by its own (DataflowFrames, below). An RGB or BGR frame in EV74 memory is
 //         wrapped whatever its size (the runtime takes a wrap shorter than a bounded port's
 //         bound). A frame above the bound is refused at the push, with GStreamer's capacity
 //         error below the envelope.
@@ -49,11 +49,12 @@
 //     serializer (BoxDecodePublication.cpp), which GStreamer runs as the stage's host task. The
 //     kernel is made for the frames the route's image preproc is planned for
 //     (boxdecode_request_for_frames: what GStreamer's per-frame resolver selects for such a
-//     frame): once when the frame size is declared, otherwise one per frame size, selected by
-//     the stamp's user word (DataflowFrames). First version: YOLOv8 detection with C-blocked heads;
-//     the other decode families, pose, segmentation and oriented boxes, tiled heads (detess
-//     members) and a route without the image preproc in front are declined at the plan and stay on
-//     GStreamer.
+//     frame): once when the frame size is declared; otherwise the operator runs each frame size
+//     with the Run's kernel's "image_size" variant (soc::Kernel::with), selected by the stamp's
+//     user word (DataflowFrames). Carried: YOLOv8-style detection (profile yolo_dfl_v1) with
+//     C-blocked heads. The other decode families, pose, segmentation and oriented boxes, tiled
+//     heads (detess members), and a decode that takes each frame's size without the image
+//     preproc in front are declined at the plan and stay on GStreamer.
 // Here: what the route's stages are, read from what Core compiles and lowers for the same nodes on
 // GStreamer (the rendered stage manifest and its checked kernel recipes), and what the input's
 // port does with them: load the model and make the kernels, check the input's binding against
@@ -105,7 +106,7 @@ struct DataflowFrames;
 // output of the last stage, a view of `size_bytes` at `byte_offset` of that stage's one output
 // buffer. The route's DataflowModelRoute::output is the stage's first published tensor; a stage
 // that publishes several in its buffer (an MLA model with several heads) lists the others in
-// `packed`.
+// `more`.
 struct DataflowPulledTensor {
   TensorDType dtype = TensorDType::UInt8;
   TensorLayout layout = TensorLayout::Unknown;
@@ -138,10 +139,10 @@ struct DataflowPulledTensor {
   /// `byte_offset` of the same output buffer: the pull returns this tensor and then these, all
   /// over the one pulled message (one storage, which every one of them keeps alive). Without a
   /// `format`, as GStreamer's generic tensor-set caps leave them: no TessSpec on the tensors, no
-  /// tag on the Sample. Empty: the stage publishes one tensor. (`packed` of a listed tensor is
-  /// not read.)
-  std::vector<DataflowPulledTensor> packed;
-  /// `frame_semantics`, or `packed` is not empty: the pull builds its tensors out of line
+  /// tag on the Sample. Empty: the stage publishes one tensor. (`more` of a listed tensor is not
+  /// read.)
+  std::vector<DataflowPulledTensor> more;
+  /// `frame_semantics`, or `more` is not empty: the pull builds its tensors out of line
   /// (fill_dataflow_stage_tensors). The one flag a pull reads on its way to the one dense tensor
   /// of every other route; set once, when the route is planned.
   bool beyond_leaf = false;
@@ -174,8 +175,8 @@ struct DataflowModelStage {
   struct Kernel {
     // Which kernel runs a message (soc::KernelOp::Options::Variants): the stage's one kernel
     // (None); or, on a route whose frames change size, the image stage's or the BoxDecode kernel
-    // of the frame's geometry (DataflowFrames), found by the message's extent (packed frames on
-    // the bounded port) or by its stamp's user word where the port's bytes do not tell the
+    // of the frame's geometry (DataflowFrames), found by the message's extent (RGB or BGR frames
+    // on the bounded port) or by its stamp's user word where the port's bytes do not tell the
     // geometry (an NV12 frame's byte port, the MLA's buffer that BoxDecode reads).
     enum class Variants : std::uint8_t { None, ImageByExtent, ImageByWord, DecodeByWord };
     bool ev74 = false;
@@ -280,7 +281,7 @@ std::vector<std::uint32_t> add_dataflow_model_ops(pipeline_internal::df::Net& ne
 void apply_dataflow_frame_semantics(const DataflowPulledTensor& pulled, Tensor& tensor);
 
 // The tensors of a pulled message on a route whose output is `pulled.beyond_leaf`, appended to
-// `out`: the stage's first published tensor and then each of `pulled.packed`, in the stage's
+// `out`: the stage's first published tensor and then each of `pulled.more`, in the stage's
 // order, every one a view at its own byte offset of the same `storage` (the output buffer of
 // the pulled `message`, from its first byte: a model route's last stage writes a slot of its
 // own pool, so its slot's DMA-BUF, or with OutputMemory::Owned one CPU copy of it), with its

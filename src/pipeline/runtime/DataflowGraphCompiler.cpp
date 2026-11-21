@@ -1,15 +1,14 @@
-// The Dataflow backend's graph compiler (H0 plan 3.4, 3.6; H0 step 10, H0c): whether a graph
-// qualifies for Dataflow and, when it does, its Run configuration. A qualifying graph has public
-// Inputs and Outputs only, each Output fed by exactly one Input, after the public boundaries
-// inside it are elided as compile_public_graph elides them; or it is a model route (H1: one
-// Input, the stage nodes of a Model in a chain, one Output), which becomes Feed -> one operator
-// per stage -> Fetch when its stages are one MLA stage and A65 kernel stages around it
-// (DataflowModelRoute.h). Each Input becomes one Feed with one
-// link per Output it feeds (a fan-out when there are several) and one Fetch per Output, on a
-// Session of its own (DataflowInputPort.cpp), in one Run state (DataflowRun.cpp). Everything else
-// (fan-in and combine, operators) is declined (DataflowBackendSelect.cpp). Here: qualification,
-// endpoint names, the mapping of RunOptions and OutputOptions to link depths and policies, and
-// each Input's memory (H0b: InputOptions::memory_policy resolved as GStreamer's build resolves it).
+// The Dataflow backend's graph compiler: whether a graph qualifies for Dataflow and, when it does,
+// its Run configuration. A qualifying graph has public Inputs and Outputs only, each Output fed by
+// exactly one Input, after the public boundaries inside it are elided as compile_public_graph
+// elides them; or it is a model route (one Input, the stage nodes of a Model in a chain, one
+// Output), which becomes Feed -> one operator per stage -> Fetch when the route planner carries
+// its stages (DataflowModelRoute.h). Each Input becomes one Feed with one link per Output it feeds
+// (a fan-out when there are several) and one Fetch per Output, on a Session of its own
+// (DataflowInputPort.cpp), in one Run state (DataflowRun.cpp). Everything else (fan-in and
+// combine, other nodes) is declined (DataflowBackendSelect.cpp). Here: qualification, endpoint
+// names, the mapping of RunOptions and OutputOptions to link depths and policies, and each
+// Input's memory (InputOptions::memory_policy resolved as GStreamer's build resolves it).
 
 #include "pipeline/runtime/DataflowGraphCompiler.h"
 
@@ -80,7 +79,7 @@ DataflowGraphView DataflowGraphAccess::view(const Graph& graph) {
   out.inputs.resize(composition.vertices.size());
   for (std::size_t vertex = 0; vertex < composition.vertices.size(); ++vertex) {
     if (dynamic_cast<const Input*>(composition.vertices[vertex].get())) {
-      // The options compile_public_graph gives this Input (ExecutionGraphCompiler.cpp:3253-3267).
+      // The options compile_public_graph gives this Input.
       out.inputs[vertex] = pipeline_internal::public_input_options(composition, vertex);
     }
   }
@@ -119,7 +118,7 @@ std::string node_text(const Node& node) {
   return label.empty() ? node.kind() : node.kind() + " '" + label + "'";
 }
 
-// ---- qualification (plan 3.6) ------------------------------------------------------------------
+// ---- qualification -----------------------------------------------------------------------------
 // The public endpoints of a qualifying graph, and who feeds whom.
 struct Qualification {
   std::string reason;                // empty: qualifies
@@ -127,18 +126,18 @@ struct Qualification {
   std::vector<std::size_t> outputs;  // public Output vertices, vertex order
   std::vector<std::size_t> producer; // per output (index into outputs): its input (into inputs)
   std::vector<std::size_t> fan_out;  // per input: how many outputs it feeds
-  // A model route (H1): the model's stage vertices in chain order, between the one Input and the
+  // A model route: the model's stage vertices in chain order, between the one Input and the
   // one Output; empty otherwise.
   std::vector<std::size_t> stages;
 };
 
 // The public endpoints of the graph and who feeds whom, after compile_public_graph's boundary
-// elision (normalize_public_boundaries_for_execution, ExecutionGraphCompiler.cpp:427-650): an
+// elision (normalize_public_boundaries_for_execution): an
 // Input with an explicit upstream connection and an Output with an explicit downstream connection
 // are internal boundary declarations (a Branch's, a connected fragment's), not endpoints, and an
 // edge into one continues along its outgoing edges. What is left must be public Inputs feeding
 // public Outputs, each Output fed by exactly one Input: one Feed per Input, one link and one
-// Fetch per Output it feeds. One other shape qualifies (H1), in a build that has the MLA operator:
+// Fetch per Output it feeds. One other shape qualifies, in a build that has the MLA operator:
 // one Input feeding a chain of a Model's stage nodes (Model::inference() alone, or
 // Model::preprocess(), inference(), postprocess()) feeding one Output. Whether those nodes are
 // stages this backend runs is the planner's question (derive_config).
@@ -355,7 +354,7 @@ Qualification qualify(const DataflowGraphView& view) {
 // The public names of one endpoint vertex, as compile_public_graph names it: its explicit name;
 // else, for each named fragment holding it, the fragment's name when it is the fragment's only
 // public endpoint of its kind, or that name and its index among them ("classes_1",
-// add_fragment_named_candidates, ExecutionGraphCompiler.cpp:2715-2760); kept only when the Graph
+// add_fragment_named_candidates); kept only when the Graph
 // lists it (its prune to Graph::inputs()/outputs()). Sorted. `endpoints` are the public
 // endpoints of the vertex's kind.
 std::vector<std::string> endpoint_names(const DataflowGraphView& view,
@@ -402,8 +401,7 @@ std::vector<std::string> endpoint_names(const DataflowGraphView& view,
 }
 
 // "" when no name is shared by two endpoints of one kind (DataflowInputConfig or
-// DataflowOutputConfig); otherwise compile_public_graph's error (add_named_endpoint,
-// ExecutionGraphCompiler.cpp:1376-1392).
+// DataflowOutputConfig); otherwise compile_public_graph's error (add_named_endpoint).
 template <class Endpoint>
 std::string shared_name(const std::vector<Endpoint>& endpoints, const char* kind) {
   std::set<std::string> seen;
@@ -467,24 +465,22 @@ DataflowRunConfig derive_config(const Graph& graph, const DataflowGraphView& vie
   config.input_names = sorted_union(config.inputs);
   config.output_names = sorted_union(config.outputs);
   // The path GStreamer takes for the same graph: a connected or named graph is a graph Run, a plain
-  // linear Run one pipeline segment (RunCore::start, RunCoreGraphStart.cpp:1566-1573, through
-  // is_simple_linear_plan, :169-172).
+  // linear Run one pipeline segment (RunCore::start, through is_simple_linear_plan).
   const bool graph_path =
       !view.linear || !config.input_names.empty() || !config.output_names.empty();
 
   // RunOptions resolved as GStreamer resolves them for that path, by the same code. A plain linear
-  // Run's options are resolve_build_opt's (GraphBuildInput.cpp:1380-1414, via
-  // prepare_build_input_context :1421, in RunCore::start_pipeline_segment RunCore.cpp:1661, kept
-  // by start_single_pipeline Run.cpp:273): RunPreset fills queue_depth and overflow_policy where
-  // they equal their RunOptions{} defaults, so an explicit Block under Realtime is KeepLatest
-  // there. A graph Run keeps the caller's RunOptions as given (start_graph_plan
-  // RunCoreGraphStart.cpp:1479; its ingress queue is the given queue_depth, RunCore.h:103): the
-  // preset does not reach its ingress.
+  // Run's options are resolve_build_opt's (via prepare_build_input_context, in
+  // RunCore::start_pipeline_segment, kept by start_single_pipeline): RunPreset fills queue_depth
+  // and overflow_policy where they equal their RunOptions{} defaults, so an explicit Block under
+  // Realtime is KeepLatest there. A graph Run keeps the caller's RunOptions as given
+  // (start_graph_plan; its ingress queue is the given queue_depth): the preset does not reach its
+  // ingress.
   config.run = graph_path ? opt : session_build_resolve_build_opt(RunMode::Async, opt);
   config.run.backend = RunBackend::Dataflow;
   config.link_policy = config.run.overflow_policy;
 
-  // One link stands in for both of Core's queues on the way to each Output (Run.h:176-188):
+  // One link stands in for both of Core's queues on the way to each Output (RunOptions):
   // GStreamer's input queue (RunOptions::queue_depth) and the public Output's terminal queue
   // (OutputOptions::max_buffers). It is as deep as the deeper of the two:
   //   link depth = max(queue_depth, max_buffers)
@@ -539,7 +535,7 @@ DataflowRunConfig derive_config(const Graph& graph, const DataflowGraphView& vie
         route.push_back(view.vertices[q.outputs[o]]);
       }
     }
-    // Where the input's pool lives (H0b plan 3.1, D4), by the function GStreamer's build asks
+    // Where the input's pool lives, by the function GStreamer's build asks
     // (GraphBuildInput.cpp, ExecutionGraphCompiler.cpp resolve_pipeline_input_memory): an explicit
     // memory_policy as given (Ev74, Dms0: a device pool); use_simaai_pool = false and Auto in front
     // of an Output: system memory, a host pool. Kept in the input's options, as GStreamer keeps it
@@ -547,7 +543,7 @@ DataflowRunConfig derive_config(const Graph& graph, const DataflowGraphView& vie
     input.input.memory_policy =
         pipeline_internal::resolve_input_memory(input.input, route).allocation;
     if (!q.stages.empty()) {
-      // H1: the model's stages, from the contracts GStreamer's build compiles and lowers for the
+      // The model's stages, from the contracts GStreamer's build compiles and lowers for the
       // same nodes under the same Graph options. The input's pool is where GStreamer puts it:
       // Dms0 in front of a model fragment (Auto), or as declared.
       input.model = plan_dataflow_model_route(route, view.options, input.input, seed, why);
@@ -566,11 +562,10 @@ DataflowRunConfig derive_config(const Graph& graph, const DataflowGraphView& vie
       }
     }
     // A declared shape allows Run::alloc, whose slot the application holds while a push takes
-    // another: the pool is sized for both (PORTS.md 5.4).
+    // another: the pool is sized for both.
     input.feed_loans = input.input.shape.empty() ? 1U : 2U;
     // GStreamer stamps an empty stream_id with the input's public name, or "default" when it has
-    // none (RunPush.cpp:225-264), on its graph path; on a plain linear Run its ingress meta stamps
-    // "0" (InputStreamUtil.cpp:2703, 3720).
+    // none, on its graph path; on a plain linear Run its ingress meta stamps "0".
     input.default_stream =
         graph_path ? (input.names.empty() ? "default" : input.names.front()) : "0";
     // A blocking push into a fan-out waits for room on the links of the Outputs without
@@ -599,8 +594,8 @@ DataflowRunConfig derive_config(const Graph& graph, const DataflowGraphView& vie
 
 } // namespace
 
-// The options Dataflow does not read (plan 3.4), when set away from their defaults: one warning
-// per process and option.
+// The options Dataflow does not read, when set away from their defaults: one warning per process
+// and option.
 void warn_ignored_dataflow_options(const DataflowRunConfig& config) {
   const InputOptions defaults{};
   const auto ignored = [](const char* option) {
@@ -659,7 +654,7 @@ std::optional<DataflowRunConfig> plan_dataflow_run(const Graph& graph, const Run
     return decline(error_codes::kInputShape, seed.unsupported);
   }
   if (!seed.tensors.empty() && q.inputs.size() != 1U) {
-    // GStreamer's own rule (connected_default_input_segment_or_throw, GraphBuildInput.cpp:193).
+    // GStreamer's own rule (connected_default_input_segment_or_throw).
     return decline(error_codes::kInputShape,
                    "a seed for a graph of " + std::to_string(q.inputs.size()) +
                        " public Inputs: graph has no unambiguous default input; build without a "
