@@ -2209,7 +2209,7 @@ std::vector<std::uint32_t> add_dataflow_model_ops(df::Net& net, const DataflowMo
     // that BoxDecode reads. The kernels are the frames' table's.
     const std::shared_ptr<DataflowFrames>& frames = route.frames;
     const auto by_word = [&frames](df::soc::KernelOp::Options& options, bool decode) {
-      options.variants.key = [](const df::Stamp& stamp) noexcept { return stamp.user; };
+      options.variants.keyed = true;  // the key is the stamp's user word
       options.variants.make = [frames, decode](std::uint64_t word, const df::Extent&) {
         return frame_kernel(*frames, word, decode);
       };
