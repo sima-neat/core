@@ -2134,15 +2134,19 @@ The runtime supports environment-driven debugging knobs:
 * `SIMA_GST_TEARDOWN_REAPER_MS` -- reaper retry interval (ms)
 * `SIMA_GST_TEARDOWN_ASYNC` -- skip wait, defer to reaper
 * `SIMA_NEAT_BACKEND` -- `dataflow` makes `RunBackend::Auto` (the default
-  `RunOptions::backend`) build qualifying graphs on the Neat Dataflow runtime; unset,
-  `auto` or `gstreamer` keep GStreamer. Read at every `Graph::build()`. Only builds
-  configured with `SIMANEAT_DATAFLOW_SOURCE_DIR` carry the Dataflow runtime, and only a
-  graph of public `Input`s feeding public `Output`s, each `Output` fed by exactly one
-  `Input`, qualifies; any other graph (fan-in, any other node) stays on GStreamer. When
+  `RunOptions::backend`) build a Run on the Neat Dataflow runtime when that runtime can
+  build it; unset, `auto` or `gstreamer` keep GStreamer. Read at every `Graph::build()`.
+  Only builds configured with `SIMANEAT_DATAFLOW_SOURCE_DIR` carry the Dataflow runtime. A
+  graph the Dataflow backend does not take, and a Run whose build on Dataflow fails at
+  `Graph::build()` (a link deeper than the runtime's, a model or a device pool it cannot
+  set up), are built on GStreamer instead, except for two errors GStreamer would meet as
+  well, which `Graph::build()` reports: a model file the MLA does not load, and a device the
+  process has lost. An input with neither a declared shape nor a seed is bound by its first
+  push, after `Graph::build()`, so an error of its Dataflow session is that push's. When
   set, each `Graph::build()` prints the runtime it took and why to stderr, and each
-  `Run::stop()` on Dataflow prints each endpoint's counters. An explicit
-  `RunBackend::Dataflow` does not read the variable and fails the build instead of
-  falling back.
+  `Run::stop()` on Dataflow prints each input's session report (its feed and flow limit,
+  links, operators, fetches, pools and worker). An explicit `RunBackend::Dataflow` does not
+  read the variable and fails the build instead of falling back.
 
 These knobs are intentionally outside the public API so you can turn them on in CI or in the field without recompiling.
 There are additional low-level debug flags in `src/pipeline/internal/*` (input stream
