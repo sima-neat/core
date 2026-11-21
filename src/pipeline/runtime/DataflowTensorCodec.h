@@ -7,7 +7,7 @@
 // slot, Message and Stamp. Free functions without state: no Session, no Run; `static inline`, so
 // that each of the two files that include this one inlines them as it would its own. The push side
 // (DataflowInputPort.h) writes a tensor's bytes into a slot, or backs the slot with the tensor's
-// own storage (W2); the pull side (DataflowRun.cpp) builds the Tensors or the Sample of a message.
+// own storage; the pull side (DataflowRun.cpp) builds the Tensors or the Sample of a message.
 
 #include "pipeline/ErrorCodes.h"
 #include "pipeline/TensorCore.h"
@@ -184,8 +184,8 @@ static inline df::Extent extent_of(const std::vector<std::int64_t>& shape) {
 
 // The map_fn of a pulled tensor's storage while it leases a pool slot: the slot's bytes. One type
 // for every lease, as RunAllocationMapper marks a Run::alloc Tensor, so a push recognises such a
-// tensor by its map_fn's type and copies it instead of wrapping it (D15: a wrap would pin a slot
-// of another pool, or of this one). The same size as make_cpu_external_storage's lambda: kept
+// tensor by its map_fn's type and copies it instead of wrapping it (a wrap would pin a slot of
+// another pool, or of this one). The same size as make_cpu_external_storage's lambda: kept
 // inside the std::function, no allocation.
 struct SlotLeaseMapper {
   void* data = nullptr;
@@ -455,12 +455,13 @@ static inline std::shared_ptr<TensorBuffer> owned_copy(std::span<const std::byte
   return storage;
 }
 
-// W2: the pushed storage behind a wrapped message (D14), shared, with the offset of the
+// The pushed storage behind a wrapped message, shared, with the offset of the
 // message's first byte in it; null for a message in a slot's own memory, which the pull leases.
 // Message::block() is asked only once the input has wrapped (`has_wraps`). Every wrap of a Feed
 // is Core's own (DataflowInputPort), so its holder is the pushed Tensor's TensorBuffer; a storage
 // whose address or size no longer contains the message (the application changed the
-// TensorBuffer against D16) is not returned, and the slot is leased instead.
+// TensorBuffer, which a pushed tensor's contract forbids) is not returned, and the slot is leased
+// instead.
 static inline std::shared_ptr<TensorBuffer>
 wrapped_storage(bool has_wraps, const df::Message& message, std::int64_t& byte_offset) {
   if (!has_wraps) {
@@ -512,9 +513,10 @@ struct PulledMessage {
 };
 
 // The pulled Sample, shaped as the GStreamer Input -> Output Run returns it
-// (InputStreamPull.cpp:830-884): a TensorSet of the item's tensors, media type and payload tag
-// from the first tensor, identity from the stamp (SampleProjection). `tensors` (empty) lends its
-// buffer to the Sample's list. `owned`: OutputMemory::Owned; `has_wraps`: the input has wrapped.
+// (fill_output_meta_minimal_from_sample): a TensorSet of the item's tensors, media type and payload
+// tag from the first tensor, identity from the stamp (SampleProjection). `tensors` (empty) lends
+// its buffer to the Sample's list. `owned`: OutputMemory::Owned; `has_wraps`: the input has
+// wrapped.
 static inline Sample make_sample(const DataflowInputBinding& binding, bool has_wraps,
                                  const pipeline_internal::StreamNames& streams, bool owned,
                                  df::Message message, TensorList tensors) {
@@ -543,7 +545,7 @@ static inline Sample make_sample(const DataflowInputBinding& binding, bool has_w
       // OutputMemory::Owned: an independent CPU copy; the slot returns to the pool now.
       fill_leaf(tensor, binding, extent, owned_copy(message.bytes()), 0);
     } else if (std::shared_ptr<TensorBuffer> pushed = wrapped_storage(has_wraps, message, offset)) {
-      // A wrapped message (W2): the pushed storage itself (D14); the slot returns as `message`
+      // A wrapped message: the pushed storage itself; the slot returns as `message`
       // goes, at the return.
       fill_leaf(tensor, binding, extent, std::move(pushed), offset);
     } else {
@@ -561,8 +563,8 @@ static inline Sample make_sample(const DataflowInputBinding& binding, bool has_w
 // The pulled tensors (Run::pull(milliseconds)) into `out`: one for a leaf, the fields in schema
 // order for a record, every one carrying the message's Stamp. One allocation holds the message
 // and the envelope they share; the list (unless `out` has room), and each tensor's storage and
-// shape, are the only others. A leaf is built in its place in the list. A wrapped message (W2)
-// gives the pushed storage itself (D14) and its slot back at once: one allocation fewer (no
+// shape, are the only others. A leaf is built in its place in the list. A wrapped message gives
+// the pushed storage itself and its slot back at once: one allocation fewer (no
 // storage), the envelope alone in the other.
 static inline void fill_tensors(const DataflowInputBinding& binding, bool has_wraps,
                                 const pipeline_internal::StreamNames& streams, bool owned,

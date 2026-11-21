@@ -1,8 +1,8 @@
-// A model route whose frames change size on the Dataflow backend (H1, step Y4): the push of a
+// A model route whose frames change size on the Dataflow backend: the push of a
 // frame into its input (dataflow_device::push_frame, DataflowDeviceMemory.h), and the two
 // functions of the input's port that only such a route calls. In a unit of their own: the device
-// push's unit (DataflowDeviceMemory.cpp) is compiled as it was, and this one instantiates the
-// port's push funnel a second time, for the frame's stamp word.
+// push's unit (DataflowDeviceMemory.cpp) does not compile the frame's path, and this one
+// instantiates the port's push funnel a second time, for the frame's stamp word.
 #if defined(SIMANEAT_WITH_DATAFLOW)
 
 #include "pipeline/ErrorCodes.h"
@@ -33,7 +33,7 @@ bool wrap_frame(const Tensor& t, std::size_t slot_bytes, std::uintptr_t align_ma
   return wrap_tensor(t, port, bytes, align_mask, out, /*any_device_memory=*/false, mapped);
 }
 
-// H1: a push into a model route whose frames change size (DataflowModelRoute::frames): every
+// A push into a model route whose frames change size (DataflowModelRoute::frames): every
 // push of one tensor into such a route comes here (its `input_shape` is empty, so the test
 // that sends a tensor without the stage's batch axis out of line sends each of them). The
 // frame's geometry is stated in the stamp's user word, which the route's stages and the pull
@@ -41,34 +41,29 @@ bool wrap_frame(const Tensor& t, std::size_t slot_bytes, std::uintptr_t align_ma
 // the device push as for any input: GStreamer's guard, the checks, the slot (the frame's own
 // DMA-BUF when it is in EV74 memory, whatever its size), the publish.
 DataflowPushOutcome push_frame(DataflowInputPort& port, const DataflowModelRoute& route,
-                               const Tensor& tensor, const Stamp& proposal, bool block,
-                               const char* where, bool commit_allocation, std::int64_t pushed_seq,
-                               bool may_wrap) {
-  const std::span<const Tensor> item(&tensor, 1);
-  if (may_wrap && !(commit_allocation && allocation_of(tensor, port.core()))) {
-    enforce_device_visible_tensors_or_throw(item, where);
+                               const DataflowPushItem& item) {
+  const Tensor& tensor = item.tensors.front();
+  if (item.may_wrap && !(item.commit_allocation && allocation_of(tensor, port.core()))) {
+    enforce_device_visible_tensors_or_throw(item.tensors.first(1), item.where);
   }
-  const std::uint64_t word = dataflow_frame_word(route, tensor, where);
+  const std::uint64_t word = dataflow_frame_word(route, tensor, item.where);
   if (route.planar_input) {
-    const DataflowPushOutcome outcome =
-        port.device_push_planes(tensor, proposal, block, where, word);
-    port.device_remember_frame(item, outcome);
+    const DataflowPushOutcome outcome = port.device_push_planes(item, word);
+    port.device_remember_frame(item.tensors.first(1), outcome);
     return outcome;
   }
   // A frame without the kernel's batch axis is pushed as the kernel's tensor, a view of the
   // same storage.
   Tensor view;
-  const Tensor& frame = dataflow_model_input_view(route, tensor, view);
-  const std::span<const Tensor> pushed(&frame, 1);
-  if (!block) {
-    if (const df::Status refusal = port.device_still_full(pushed, pushed_seq)) {
+  DataflowPushItem pushed = item;
+  pushed.tensors = std::span<const Tensor>(&dataflow_model_input_view(route, tensor, view), 1);
+  if (!item.block) {
+    if (const df::Status refusal = port.device_still_full(pushed.tensors, item.pushed_seq)) {
       return {DataflowPushOutcome::Stage::Alloc, *refusal};
     }
   }
-  const DataflowPushOutcome outcome =
-      port.push(pushed, proposal, block, where, commit_allocation, pushed_seq, may_wrap,
-                /*device_port=*/true, word);
-  port.device_remember_frame(pushed, outcome);
+  const DataflowPushOutcome outcome = port.push(pushed, /*device_port=*/true, word);
+  port.device_remember_frame(pushed.tensors, outcome);
   return outcome;
 }
 
@@ -113,10 +108,11 @@ void DataflowInputPort::device_remember_frame(std::span<const Tensor> item,
   }
 }
 
-DataflowPushOutcome DataflowInputPort::device_push_planes(const Tensor& frame,
-                                                          const Stamp& proposal, bool block,
-                                                          const char* where,
+DataflowPushOutcome DataflowInputPort::device_push_planes(const DataflowPushItem& pushed,
                                                           std::uint64_t frame_word) {
+  const Tensor& frame = pushed.tensors.front();
+  const char* const where = pushed.where;
+  const bool block = pushed.block;
   const std::span<const Tensor> item(&frame, 1);
   // Core's push-time checks, as push(): skipped for a device tensor whose geometry passed them.
   if (!device_known_frame(item, where)) {
@@ -135,7 +131,7 @@ DataflowPushOutcome DataflowInputPort::device_push_planes(const Tensor& frame,
       return {};
     }
   }
-  df::Stamp stamp = dataflow_codec::runtime_stamp(proposal, run_.streams, stream_);
+  df::Stamp stamp = dataflow_codec::runtime_stamp(pushed.proposal, run_.streams, stream_);
   stamp.user = frame_word;
   const DataflowModelRoute& route = *config_.model;
   // The slot: the frame's own DMA-BUF, by its descriptor, when the frame is the port's bytes as

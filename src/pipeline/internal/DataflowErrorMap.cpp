@@ -42,7 +42,8 @@ constexpr const char* kOtherBackend = "Build this Run with RunBackend::GStreamer
 //                    request: misconfig.kernel_request. Otherwise the Net or Plan Core composed
 //                    (compile, instantiate, start): misconfig.pipeline_shape.
 //   ResourceExhausted  origin Runner: the device heap (CMA) has no memory for a device pool's slot,
-//                    at Graph::build or at the input's first push: resource.device_memory_exhausted.
+//                    at Graph::build or at the input's first push:
+//                    resource.device_memory_exhausted.
 //   Timeout          Process: a pull's deadline: PullStatus::Timeout, not latched. Stop and Drain:
 //                    logged by the caller only. Origin Runner: a device job that did not finish in
 //                    the Runner's time: infra.accelerator_execution_failed, latched.

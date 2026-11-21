@@ -1,6 +1,6 @@
-// The format contract of one public Input on the Dataflow backend (DataflowInputBinding.h; H0
-// plan 3.4: InputOptions and the seed give shape, bounds and format): the input's port spec, the
-// texts of a tensor that does not fit it, and the validated-geometry cache.
+// The format contract of one public Input on the Dataflow backend (DataflowInputBinding.h:
+// InputOptions and the seed give shape, bounds and format): the input's port spec, the texts of a
+// tensor that does not fit it, and the validated-geometry cache.
 #if defined(SIMANEAT_WITH_DATAFLOW)
 
 #include "pipeline/runtime/DataflowInputBinding.h"
@@ -60,7 +60,7 @@ std::optional<ImageSpec::PixelFormat> pixel_format(FormatTag tag) {
 }
 
 // The declared format first, then the tensor's own, as describe_tensor_geometry_or_throw reads
-// them (InputStreamUtil.cpp:1513-1516).
+// them.
 std::optional<ImageSpec::PixelFormat> image_format(const InputOptions& declared,
                                                    const Tensor* tensor) {
   if (auto fmt = pixel_format(declared.format.tag)) {
@@ -93,8 +93,8 @@ std::optional<df::Dim> axis_dim(int declared, int max, std::int64_t actual, std:
   return std::nullopt;
 }
 
-// Which axes are height, width and channels, as tensor_compat_dims_from_shape reads a shape
-// (InputStreamUtil.cpp:115-160). -1: none.
+// Which axes are height, width and channels, as tensor_compat_dims_from_shape_local reads a
+// shape. -1: none.
 struct AxisRoles {
   int height = -1;
   int width = -1;
@@ -383,11 +383,6 @@ std::string fix_dataflow_binding_at_bound(DataflowInputBinding& binding) {
 }
 
 std::string dataflow_binding_mismatch(const DataflowInputBinding& binding, const Tensor& tensor) {
-  if (binding.is_record()) {
-    return "one tensor where a record of " + std::to_string(binding.fields.size()) +
-           " is bound; the input is bound to " + binding.text +
-           " (Dataflow backend: by its seed or its first push)";
-  }
   const auto& spec = std::get<df::TensorSpec>(binding.spec.payload);
   const auto mismatch = [&](const std::string& what) {
     return what + "; the input is bound to " + binding.text +
@@ -628,7 +623,7 @@ void DataflowValidatedLeaf::remember(const Tensor& tensor, bool wrappable) {
   }
 }
 
-// W2: whether a leaf's bytes are exactly a whole slot of `binding`'s port, so that the slot can be
+// Whether a leaf's bytes are exactly a whole slot of `binding`'s port, so that the slot can be
 // backed by the tensor's own storage. The runtime takes a wrap only of exactly slot_bytes (block.h:
 // push then checks no extent against it), so the tensor's own bytes must be that size: every frame
 // of a fixed-shape port, a frame at the bound of a bounded one (InputOptions::max_*); a smaller
@@ -637,11 +632,11 @@ void DataflowValidatedLeaf::remember(const Tensor& tensor, bool wrappable) {
 // its planes at the offsets and pitches of the port's layout, which planar_layout packs back to
 // back. Everything read here is part of DataflowLeafGeometry, so a repeated geometry reuses the
 // answer; wrap_block (DataflowTensorCodec.h) checks the rest per push.
-// A device port (H0b: memory Ev74 or Dms0) takes device memory only: the tensor's storage is a
+// A device port (memory Ev74 or Dms0) takes device memory only: the tensor's storage is a
 // GstSample's (a TensorMemory::EV74 or MLA tensor; dataflow_device::wrap_tensor checks that it is
 // one DMA-BUF of the port's kind), laid out by the same rule. A CPU tensor is copied into the slot.
-// A model route whose frames change size (H1: the binding's pulled tensor has the frames'
-// table) has a bounded device port that takes every frame as it is: a dense, contiguous frame
+// A model route whose frames change size (the binding's pulled tensor has the frames' table)
+// has a bounded device port that takes every frame as it is: a dense, contiguous frame
 // below the bound, held in memory of its own size, is wrapped too (the runtime's wrap shorter
 // than a bounded port's bound, storage/block.h).
 bool dataflow_wrap_layout(const DataflowInputBinding& binding, std::size_t slot_bytes,

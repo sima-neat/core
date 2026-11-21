@@ -162,7 +162,7 @@ DataflowSeed seed_from_sample(const Sample& sample) {
     if (sample.fields.size() == 1U) {
       return seed_from_sample(sample.fields.front());
     }
-    // Core pushes a Bundle one field at a time (RunPush.cpp:1082-1086): each field is an item,
+    // Core pushes a Bundle one field at a time (RunCore::push_samples): each field is an item,
     // and they share no binding.
     seed.unsupported = "a Bundle seed of " + std::to_string(sample.fields.size()) +
                        " fields (several items for one input) does not bind one spec; seed with "
@@ -337,7 +337,7 @@ std::shared_ptr<RunCore> DataflowGraphAccess::build(const Graph& graph, const Ru
                                                     const char* where) {
   return dispatch(opt, where, [&](const auto& want) -> std::shared_ptr<RunCore> {
 #if defined(SIMA_WITH_OPENCV)
-    // GStreamer's own checks and texts (GraphBuildInput.cpp:2702-2711).
+    // GStreamer's own checks and texts (Graph::build_seeded_internal).
     if (seed.empty()) {
       throw std::runtime_error("Graph::build(inputs): empty image list");
     }

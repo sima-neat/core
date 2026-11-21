@@ -3,7 +3,7 @@
 #error "Internal header. Not part of the public API."
 #endif
 
-// The Dataflow backend's Run state (H0 plan 3.7). RunCore holds one in `dataflow_` for a Run that
+// The Dataflow backend's Run state. RunCore holds one in `dataflow_` for a Run that
 // Graph::build() put on the Neat Dataflow runtime (RunOptions::backend), and every public Run entry
 // branches to it before it reads any GStreamer state. The interface uses Core types only; the
 // implementation (DataflowRun.cpp and its DataflowInputPort) holds the runtime objects, and it
@@ -91,8 +91,8 @@ public:
 
 struct DataflowModelRoute; // DataflowModelRoute.h
 
-// One public Output of the graph: one Fetch, fed by one link from its Input's Feed (H0 plan 3.4,
-// 3.6; H0c: each Output's own depth and drop policy).
+// One public Output of the graph: one Fetch, fed by one link from its Input's Feed, with the
+// Output's own depth and drop policy.
 struct DataflowOutputConfig {
   OutputOptions output;             ///< the public Output's options
   std::vector<std::string> names;   ///< its public names (Graph::outputs()), sorted
@@ -106,8 +106,8 @@ struct DataflowOutputConfig {
 };
 
 // One public Input of the graph: one Feed with one link per Output it feeds (a fan-out when there
-// are several), one Session of its own (H0c: each input binds by its own first push). On a model
-// route (H1) the Feed's one link goes to the first stage's operator, and the last one's output
+// are several), one Session of its own (each input binds by its own first push). On a model
+// route the Feed's one link goes to the first stage's operator, and the last one's output
 // link feeds the route's one Fetch.
 struct DataflowInputConfig {
   InputOptions input; ///< the public Input's options, resolved as compile_public_graph does
@@ -116,13 +116,13 @@ struct DataflowInputConfig {
   std::uint32_t feed_loans = 1;   ///< Feed::Options::loans: 2 when Run::alloc can hold a slot
   std::vector<std::size_t>
       outputs; ///< the Outputs it feeds (DataflowRunConfig::outputs), link order
-  /// A model route (H1): the model's stages between this Input and its one Output (Feed -> one
+  /// A model route: the model's stages between this Input and its one Output (Feed -> one
   /// operator per stage -> Fetch). Null: the Input feeds its Outputs directly.
   std::shared_ptr<const DataflowModelRoute> model;
 };
 
 // What DataflowGraphCompiler decided for a qualifying graph of public Inputs and Outputs, each
-// Output fed by exactly one Input (H0 plan 3.4, 3.6; H0 step 10, H0c).
+// Output fed by exactly one Input.
 struct DataflowRunConfig {
   RunOptions run; ///< RunOptions with the preset's queue defaults resolved
   OverflowPolicy link_policy = OverflowPolicy::Block; ///< KeepLatest is the link's DropOldest

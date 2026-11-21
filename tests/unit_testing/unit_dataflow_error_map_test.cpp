@@ -1,9 +1,9 @@
-// The Dataflow backend's error table (src/pipeline/internal/DataflowErrorMap.cpp, compiled into this
-// test: libsima_neat.so hides it): for each runtime Error Core can meet, the Core error code, the
-// pull status, whether a pull latches it, and whether RunBackend::Auto builds a Run on GStreamer when
-// Graph::build meets it on Dataflow. Among them the MLA's load errors as the runtime reports them (a
-// missing file or one that is not a model: InvalidArgument; a context that cannot be opened:
-// Unsupported; a lost device: Unretired) and the Kernels package's. No device is opened.
+// The Dataflow backend's error table (src/pipeline/internal/DataflowErrorMap.cpp, compiled into
+// this test: libsima_neat.so hides it): for each runtime Error Core can meet, the Core error code,
+// the pull status, whether a pull latches it, and whether RunBackend::Auto builds a Run on
+// GStreamer when Graph::build meets it on Dataflow. Among them the MLA's load errors as the runtime
+// reports them (a missing file or one that is not a model: InvalidArgument; a context that cannot
+// be opened: Unsupported; a lost device: Unretired) and the Kernels package's. No device is opened.
 
 #include "pipeline/ErrorCodes.h"
 #include "pipeline/NeatError.h"
@@ -24,7 +24,11 @@ constexpr std::uint16_t kOperator = 1;
 
 df::Error error(df::ErrorCode code, df::Origin origin, df::Phase phase,
                 std::uint16_t op = df::kNoOperator, const char* message = "the runtime's text") {
-  return df::Error{.code = code, .origin = origin, .phase = phase, .op = op, .port = df::kNoPort,
+  return df::Error{.code = code,
+                   .origin = origin,
+                   .phase = phase,
+                   .op = op,
+                   .port = df::kNoPort,
                    .message = message};
 }
 
@@ -43,8 +47,9 @@ void table() {
   using P = df::Phase;
   const Row rows[] = {
       // soc::MlaModel::load, before any Net: the MLA's own codes.
-      {"MLA load: no such file, or not a compiled model", error(C::InvalidArgument, O::Runner, P::Prepare),
-       error_codes::kIoOpen, PullStatus::Error, true, false},
+      {"MLA load: no such file, or not a compiled model",
+       error(C::InvalidArgument, O::Runner, P::Prepare), error_codes::kIoOpen, PullStatus::Error,
+       true, false},
       {"MLA load: the context cannot be opened", error(C::Unsupported, O::Runner, P::Prepare),
        error_codes::kDispatcherUnavailable, PullStatus::Error, true, true},
       {"MLA load: out of memory", error(C::ResourceExhausted, O::Runner, P::Prepare),
@@ -59,9 +64,11 @@ void table() {
       {"Kernels: no implementation for the target", error(C::Unsupported, O::Runner, P::Describe),
        error_codes::kKernelUnsupported, PullStatus::Error, true, true},
       // Plan::instantiate: an operator or a port of the Plan names itself.
-      {"MlaOp: a port's spec is not the model's", error(C::InvalidArgument, O::Runner, P::Prepare, kOperator),
-       error_codes::kPipelineShape, PullStatus::Error, true, true},
-      {"MlaOp: a model with more than one input", error(C::Unsupported, O::Runner, P::Prepare, kOperator),
+      {"MlaOp: a port's spec is not the model's",
+       error(C::InvalidArgument, O::Runner, P::Prepare, kOperator), error_codes::kPipelineShape,
+       PullStatus::Error, true, true},
+      {"MlaOp: a model with more than one input",
+       error(C::Unsupported, O::Runner, P::Prepare, kOperator),
        error_codes::kAcceleratorExecutionFailed, PullStatus::Error, true, true},
       {"a device pool: no CMA", error(C::ResourceExhausted, O::Runner, P::Prepare, kOperator),
        error_codes::kDeviceMemoryExhausted, PullStatus::Error, true, true},
@@ -81,8 +88,8 @@ void table() {
        PullStatus::Timeout, false, true},
       {"MlaOp: the Runner's own deadline", error(C::Timeout, O::Runner, P::Retire, kOperator),
        error_codes::kAcceleratorExecutionFailed, PullStatus::Error, true, true},
-      {"pull: closed and drained", error(C::Closed, O::Dataflow, P::Process), error_codes::kRuntimePull,
-       PullStatus::Closed, false, true},
+      {"pull: closed and drained", error(C::Closed, O::Dataflow, P::Process),
+       error_codes::kRuntimePull, PullStatus::Closed, false, true},
       {"push: a device slot's write epoch did not end", error(C::Unretired, O::Runner, P::Process),
        error_codes::kAcceleratorExecutionFailed, PullStatus::Error, true, false},
       {"an operator's failure", error(C::Internal, O::Dataflow, P::Process, kOperator),
@@ -115,8 +122,9 @@ void thrown() {
     require_contains(what, "(Dataflow backend)\nMLA model /no/such/model.elf", "the detail line");
     require_contains(what, "Hint: Check the model package", "what to do");
   }
-  const df::Error context = error(df::ErrorCode::Unsupported, df::Origin::Runner, df::Phase::Prepare,
-                                  df::kNoOperator, "MLA: the MLA's context cannot be opened");
+  const df::Error context =
+      error(df::ErrorCode::Unsupported, df::Origin::Runner, df::Phase::Prepare, df::kNoOperator,
+            "MLA: the MLA's context cannot be opened");
   bool plain = false;
   try {
     pipeline_internal::throw_dataflow_error(context, "Run::push", {}, "The caller's action.");

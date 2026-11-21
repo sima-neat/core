@@ -1,4 +1,4 @@
-// Device memory on the Dataflow backend (DataflowDeviceMemory.h; H0b): the Blocks and storages of
+// Device memory on the Dataflow backend (DataflowDeviceMemory.h): the Blocks and storages of
 // device tensors, and a device input's push and pulled tensors, which instantiate the port's push
 // funnel and use the codec here so that DataflowRun.cpp compiles neither for a device.
 #if defined(SIMANEAT_WITH_DATAFLOW)
@@ -48,9 +48,9 @@ struct WrapHold {
 };
 
 // The map_fn of a pulled slot's storage: the slot's own mapping, for reading. One type, so that a
-// push recognises a tensor that leases a slot of a device pool (D15) by it, as the codec's
-// SlotLeaseMapper marks a host slot's lease. The pulled tensor is read-only: a CPU write needs the
-// pool's write epoch, which only a push holds.
+// push recognises a tensor that leases a slot of a device pool (never wrapped) by it, as the
+// codec's SlotLeaseMapper marks a host slot's lease. The pulled tensor is read-only: a CPU write
+// needs the pool's write epoch, which only a push holds.
 struct SlotMapper {
   std::shared_ptr<void> holder; ///< the GstSample: its memory keeps the Message
   void* data = nullptr;
@@ -120,8 +120,8 @@ std::shared_ptr<TensorBuffer> slot_storage(const df::Message& message, const df:
         error_codes::kMemoryAllocationFailed,
         "Run::pull: no storage for a device slot's DMA-BUF (Dataflow backend)");
   }
-  // D5: the CPU reads the slot through the pool's own mapping. The slot was written by the CPU and
-  // cleaned at its push, or (H1, a model stage's output) by the device, and the Worker invalidated
+  // The CPU reads the slot through the pool's own mapping. The slot was written by the CPU and
+  // cleaned at its push, or (a model stage's output) by the device, and the Worker invalidated
   // the CPU's view of it before it published the message: either way the view is current and a
   // read needs no epoch and no second mmap.
   storage->map_fn = SlotMapper{storage->holder, const_cast<std::byte*>(bytes.data()), bytes.size()};
@@ -278,7 +278,8 @@ std::shared_ptr<TensorBuffer> pulled_storage(const df::Message& message, const d
       gst_memory_get_sizes(memory, &memory_offset, nullptr);
     }
     if (!memory || block.fd_offset < memory_offset) {
-      // The application replaced the storage's memory while the Run held it (against D16).
+      // The application replaced the storage's memory while the Run held it, which a pushed
+      // tensor's contract forbids.
       pipeline_internal::error_util::throw_session_error(
           error_codes::kMemoryAllocationFailed,
           "Run::pull: the storage of a pushed device tensor changed while the Run held it "
@@ -300,43 +301,39 @@ std::shared_ptr<TensorBuffer> pulled_storage(const df::Message& message, const d
 
 namespace {
 
-// H1: on a model route whose first stage is a kernel, a tensor without the leading unit axes of
+// On a model route whose first stage is a kernel, a tensor without the leading unit axes of
 // the stage's tensor is pushed as that tensor (GStreamer takes both): a view of the same storage
 // with the stage's shape, pushed in its place. nullopt when `item` is not such a tensor (the push
 // goes on with it and refuses it). Out of line and cold, so that a push of the stage's own shape,
 // and every push on every other route, neither builds nor destroys a Tensor for it.
 [[gnu::noinline, gnu::cold]] std::optional<DataflowPushOutcome>
 push_as_stage_tensor(DataflowInputPort& port, const DataflowModelRoute& route,
-                     std::span<const Tensor> item, const Stamp& proposal, bool block,
-                     const char* where, bool commit_allocation, std::int64_t pushed_seq,
-                     bool may_wrap) {
+                     const DataflowPushItem& item) {
   if (route.frames) {
-    return push_frame(port, route, item.front(), proposal, block, where, commit_allocation,
-                      pushed_seq, may_wrap);
+    return push_frame(port, route, item);
   }
   Tensor view;
-  if (&dataflow_model_input_view(route, item.front(), view) != &view) {
+  if (&dataflow_model_input_view(route, item.tensors.front(), view) != &view) {
     return std::nullopt;
   }
-  return push(port, std::span<const Tensor>(&view, 1), proposal, block, where, commit_allocation,
-              pushed_seq, may_wrap);
+  DataflowPushItem as_view = item;
+  as_view.tensors = std::span<const Tensor>(&view, 1);
+  return push(port, as_view);
 }
 
 } // namespace
 
-DataflowPushOutcome push(DataflowInputPort& port, std::span<const Tensor> item,
-                         const Stamp& proposal, bool block, const char* where,
-                         bool commit_allocation, std::int64_t pushed_seq, bool may_wrap) {
+DataflowPushOutcome push(DataflowInputPort& port, const DataflowPushItem& pushed) {
+  const std::span<const Tensor> item = pushed.tensors;
   if (const DataflowModelRoute* const route = port.config().model.get();
       route && route->kernel_input && item.size() == 1U &&
       item.front().shape.size() != route->input_shape.size()) [[unlikely]] {
-    if (std::optional<DataflowPushOutcome> outcome = push_as_stage_tensor(
-            port, *route, item, proposal, block, where, commit_allocation, pushed_seq, may_wrap)) {
+    if (std::optional<DataflowPushOutcome> outcome = push_as_stage_tensor(port, *route, pushed)) {
       return *outcome;
     }
   }
-  if (!block) {
-    if (const df::Status refusal = port.device_still_full(item, pushed_seq)) {
+  if (!pushed.block) {
+    if (const df::Status refusal = port.device_still_full(item, pushed.pushed_seq)) {
       return {DataflowPushOutcome::Stage::Alloc, *refusal};
     }
   }
@@ -344,12 +341,11 @@ DataflowPushOutcome push(DataflowInputPort& port, std::span<const Tensor> item,
   // refused unless SIMA_ALLOW_INPUTSTREAM_CPU_TO_EV74_COPY allows the copy into the slot. Not
   // asked for a Tensor from this Run's alloc() that the push publishes as its slot (the funnel's
   // own condition), nor for an image cv::Mat (`may_wrap` false), which GStreamer copies unasked.
-  if (may_wrap &&
-      !(commit_allocation && item.size() == 1U && allocation_of(item.front(), port.core()))) {
-    enforce_device_visible_tensors_or_throw(item, where);
+  if (pushed.may_wrap && !(pushed.commit_allocation && item.size() == 1U &&
+                           allocation_of(item.front(), port.core()))) {
+    enforce_device_visible_tensors_or_throw(item, pushed.where);
   }
-  const DataflowPushOutcome outcome = port.push(item, proposal, block, where, commit_allocation,
-                                                pushed_seq, may_wrap, /*device_port=*/true);
+  const DataflowPushOutcome outcome = port.push(pushed, /*device_port=*/true);
   port.device_remember(item, outcome);
   return outcome;
 }
@@ -507,7 +503,7 @@ const DataflowLeafGeometry* DataflowInputPort::device_known(std::span<const Tens
   const DataflowLeafGeometry* const known = validated_device_.find_device(item);
   if (!known) {
     if (config_.model && config_.model->frame_input && item.size() == 1U) {
-      // H1: in front of the image preproc, a tensor that is not the validated frame: another
+      // In front of the image preproc, a tensor that is not the validated frame: another
       // size or ROI metadata is refused here, with what to do instead.
       refuse_dataflow_frame(*config_.model, item.front(), where);
     }
@@ -566,7 +562,7 @@ df::Status DataflowInputPort::device_full(Bound& b) noexcept {
 // (the device-visible guard, the cross-Run rule): a refused call does nothing with the tensor, so
 // it needs none of them, and costs what a CPU tensor's refusal costs. Only for a device tensor of
 // the validated geometry, whose other checks are skipped anyway: every other item is checked
-// first, as before, and throws what it threw. None when the links are not known to be full, or
+// first and throws what the checks throw. None when the links are not known to be full, or
 // have room after all: the push then runs in full.
 df::Status DataflowInputPort::device_still_full(std::span<const Tensor> item,
                                                 std::int64_t pushed_seq) noexcept {

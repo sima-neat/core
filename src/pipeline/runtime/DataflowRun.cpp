@@ -1,4 +1,4 @@
-// The Dataflow backend's Run state (H0 plan 3.7; H0 step 10, H0c): Core's push, try_push, pull,
+// The Dataflow backend's Run state: Core's push, try_push, pull,
 // close_input and stop over one DataflowInputPort per public Input (its Session: one Feed, and one
 // link and one Fetch per Output the input feeds). Built only with SIMANEAT_DATAFLOW_SOURCE_DIR.
 // This file routes endpoint names to ports, orders the Run-wide close and stop, latches the
@@ -15,24 +15,25 @@
 // input_seq and Stamp::seq count each input's pushes.
 //
 // Verbs (WORKER.md 18.1):
-//   push      waits for room on each link of the input and never drops (RunPush.cpp:402-411); an
-//             Output with OutputOptions::drop is lossy for every push, as appsink drop=true is.
+//   push      waits for room on each link of the input and never drops, as GStreamer's input
+//             queue (admit_input_queue_locked); an Output with OutputOptions::drop is lossy for
+//             every push, as appsink drop=true is.
 //   try_push  each link's policy applies: DroppedIncoming is false and a drop, DroppedOldest true
 //             and a drop, a full Block link false and no drop
-//             (unit_run_overflow_policy_parity_test.cpp:129-163).
+//             (unit_run_overflow_policy_parity_test).
 //   pull      -1 is kNoDeadline, 0 a passed deadline (a poll), t > 0 now + t ms. The pulled Tensor
 //             is CpuExternal over the pool slot, its holder the Message, read-only; a wrapped
 //             message's is the pushed storage itself, and the slot returns at the pull. The
 //             Outputs of a fan-out lease the one slot each message has: no copy per Output.
-//             From a device input (H0b: memory_policy Ev74 or Dms0) it is device memory, a
+//             From a device input (memory_policy Ev74 or Dms0) it is device memory, a
 //             GstSample over the slot's DMA-BUF, read-only as well.
 // A device input's push and the tensors of its pulled messages are DataflowDeviceMemory.cpp's
 // (dataflow_device::push, pulled_sample, pulled_tensors): another translation unit, reached here
 // by one branch each, so that what this file compiles for a host input stays what it was.
 //   close_input  Session::close_input(kNoDeadline) of every input: cancels a parked push, keeps
 //             what is queued.
-//   stop      Session::stop(now + 2 s) of every input, once more on Timeout (RunLifecycle.cpp
-//             94-95).
+//   stop      Session::stop(now + 2 s) of every input, once more on Timeout (RunCore::stop's
+//             stream-stop budget).
 // A pushed TensorList's first tensor's stamp proposes the message's stream, frame_id, source_time
 // and flags; every pulled tensor carries the message's Stamp in its envelope.
 #if defined(SIMANEAT_WITH_DATAFLOW)
@@ -123,7 +124,7 @@ struct PushVerdict {
 //            (FR2: a full Block link at a passed deadline) and Timeout are false.
 //            ResourceExhausted is FR7, no free slot for try_push (the application holds every
 //            pulled slot): a drop for the dropping policies, as a full queue is
-//            (RunPush.cpp:416-424). Anything else is an error.
+//            (admit_input_queue_locked). Anything else is an error.
 //   Publish, answered: one link: Accepted; DroppedOldest, accepted with a drop (evicted to make
 //            room: KeepLatest's input drop, or the terminal queue's output drop); DroppedIncoming,
 //            false and an input drop. A fan-out: each link answered for its own Output. The push
@@ -257,9 +258,15 @@ public:
     // nothing (the default stream, no frame_id), as develop's TensorList push.
     const Stamp& proposal = inputs.front().stamp();
     if (std::optional<TensorList> fields = pipeline_internal::list_record_fields(inputs, where)) {
-      return push_item(port, *fields, proposal, block, where);
+      return push_item(
+          port, DataflowPushItem{
+                    .tensors = *fields, .proposal = proposal, .where = where, .block = block});
     }
-    return push_item(port, inputs, proposal, block, where, /*commit_allocation=*/block);
+    return push_item(port, DataflowPushItem{.tensors = inputs,
+                                            .proposal = proposal,
+                                            .where = where,
+                                            .block = block,
+                                            .commit_allocation = block});
   }
 
   bool push(std::optional<std::string_view> input, const Sample& msgs, bool block,
@@ -268,7 +275,7 @@ public:
     DataflowInputPort::enforce_transferable(msgs, where);
     if (msgs.kind == SampleKind::Bundle) {
       // Core pushes a Bundle as one item per field, stopping at the first refusal
-      // (RunPush.cpp:1082-1086).
+      // (RunCore::push_samples).
       for (const Sample& field : msgs.fields) {
         if (!push_sample_item(port, field, block, where)) {
           return false;
@@ -302,8 +309,12 @@ public:
     // tensor to it, and to dataflow_device::push).
     const bool may_wrap =
         port.device() ? !tensor.semantic.image.has_value() : inputs.front().u != nullptr;
-    return push_item(port, std::span<const Tensor>(&tensor, 1), Stamp{}, block, where, false, -1,
-                     may_wrap);
+    const Stamp none;
+    return push_item(port, DataflowPushItem{.tensors = std::span<const Tensor>(&tensor, 1),
+                                            .proposal = none,
+                                            .where = where,
+                                            .block = block,
+                                            .may_wrap = may_wrap});
 #else
     (void)input;
     (void)inputs;
@@ -388,15 +399,14 @@ public:
     }
   }
 
+  // Called once: RunCore::stop runs it once, under its stop_mu.
   void stop() override {
-    if (stopped_.exchange(true, std::memory_order_acq_rel)) {
-      return;
-    }
+    stopped_.store(true, std::memory_order_release);
     for (const auto& port : ports_) {
       port->wake();
     }
     trace_report();
-    // Core's stream-stop budget, waited twice (RunLifecycle.cpp:94-95, 148-182), shared by the
+    // Core's stream-stop budget, waited twice (RunCore::stop), shared by the
     // Sessions: each stop wakes what is parked in its own Session, so they run one after the other
     // against one deadline, and the ones that timed out once more against a second one.
     const auto budget = std::chrono::milliseconds(
@@ -529,7 +539,7 @@ private:
   }
 
   // The input a push names, or the Run's only one for the unnamed push: GStreamer's checks and
-  // texts (named_input_endpoint_or_throw, RunPush.cpp:216; RunCore::push_samples).
+  // texts (named_input_endpoint_or_throw; RunCore::push_samples).
   DataflowInputPort& input_for_push(std::optional<std::string_view> input,
                                     const char* where) const {
     if (!input) {
@@ -560,46 +570,44 @@ private:
                         const char* where) {
     const Stamp proposal = pipeline_internal::stamp_from_sample(item);
     // What GStreamer's graph ingress keeps as orig_input_seq without counting the push: a pushed
-    // orig_input_seq, else a pushed input_seq (RunPush.cpp:276-287). Read in a Run of several
-    // inputs only.
+    // orig_input_seq, else a pushed input_seq (stamp_public_graph_ingress_sample). Read in a Run of
+    // several inputs only.
     const std::int64_t pushed_seq = item.orig_input_seq >= 0 ? item.orig_input_seq
                                     : item.input_seq >= 0    ? item.input_seq
                                                              : -1;
     if (sample_has_tensor_list(item)) {
-      return push_item(port, item.tensors, proposal, block, where, false, pushed_seq);
+      return push_item(port, DataflowPushItem{.tensors = item.tensors,
+                                              .proposal = proposal,
+                                              .where = where,
+                                              .block = block,
+                                              .pushed_seq = pushed_seq});
     }
     if (item.tensor.has_value()) {
-      return push_item(port, std::span<const Tensor>(&*item.tensor, 1), proposal, block, where,
-                       false, pushed_seq);
+      return push_item(port, DataflowPushItem{.tensors = std::span<const Tensor>(&*item.tensor, 1),
+                                              .proposal = proposal,
+                                              .where = where,
+                                              .block = block,
+                                              .pushed_seq = pushed_seq});
     }
     throw_input_shape(std::string(where) + ": the Sample carries no tensor");
   }
 
   // One item into `port` (DataflowInputPort::push, inlined here once; a device input's is
   // device_push), and its outcome.
-  bool push_item(DataflowInputPort& port, std::span<const Tensor> item, const Stamp& proposal,
-                 bool block, const char* where, bool commit_allocation = false,
-                 std::int64_t pushed_seq = -1, bool may_wrap = true) {
-    const DataflowPushOutcome outcome =
-        port.device()
-            ? device_push(port, item, proposal, block, where, commit_allocation, pushed_seq,
-                          may_wrap)
-            : port.push(item, proposal, block, where, commit_allocation, pushed_seq, may_wrap);
-    return settle(port, outcome, block, where);
+  bool push_item(DataflowInputPort& port, const DataflowPushItem& item) {
+    const DataflowPushOutcome outcome = port.device() ? device_push(port, item) : port.push(item);
+    return settle(port, outcome, item.block, item.where);
   }
 
-  // A device input's push (H0b). Its slot is device memory under a write epoch that the publish
+  // A device input's push. Its slot is device memory under a write epoch that the publish
   // ends; an end that fails (FR16, Unretired) published nothing and quarantined the slot: the
   // Run's terminal error, as a pull's is, latched here before settle throws it.
-  [[gnu::noinline, gnu::cold]] DataflowPushOutcome
-  device_push(DataflowInputPort& port, std::span<const Tensor> item, const Stamp& proposal,
-              bool block, const char* where, bool commit_allocation, std::int64_t pushed_seq,
-              bool may_wrap) {
-    DataflowPushOutcome outcome = dataflow_device::push(port, item, proposal, block, where,
-                                                        commit_allocation, pushed_seq, may_wrap);
+  [[gnu::noinline, gnu::cold]] DataflowPushOutcome device_push(DataflowInputPort& port,
+                                                               const DataflowPushItem& item) {
+    DataflowPushOutcome outcome = dataflow_device::push(port, item);
     if (const df::Error* error = df::failure(outcome.answer);
         error && error->code == df::ErrorCode::Unretired) {
-      const std::string text = pipeline_internal::dataflow_error_text(*error, where);
+      const std::string text = pipeline_internal::dataflow_error_text(*error, item.where);
       PullError latched;
       latched.code = pipeline_internal::map_dataflow_error(*error).code;
       latched.message = text;
@@ -644,7 +652,7 @@ private:
   }
 
   // A pull that found nothing in time. pull(0) is a non-blocking poll and leaves the error empty,
-  // as GStreamer's Run does (RunPull.cpp:660-664): pull_samples() drains with it, and "nothing
+  // as GStreamer's Run does (RunCore::pull): pull_samples() drains with it, and "nothing
   // more right now" must not read as a stall (unit_run_api_matrix_test's poll contract).
   static PullStatus timed_out(int timeout_ms, const std::string& where, PullError* err) {
     if (timeout_ms != 0) {
@@ -722,7 +730,7 @@ private:
       if (mapping.status == PullStatus::Closed) {
         error_util::set_pull_error(err, error_codes::kRuntimePull, where() + ": stream closed");
         // Closed and drained after close_input: a Run of one output stops itself, as the GStreamer
-        // Run does at its end of stream (RunPull.cpp:798-810). With several outputs the others
+        // Run does at its end of stream (RunCore::pull). With several outputs the others
         // may still hold messages; GStreamer's graph path does not stop at a closed output either.
         if (config_.outputs.size() == 1U && port->closed() &&
             !stopped_.load(std::memory_order_acquire)) {

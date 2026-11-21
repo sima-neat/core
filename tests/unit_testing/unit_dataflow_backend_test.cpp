@@ -447,9 +447,10 @@ void stop_prints_the_session_report() {
     text = capture.text();
   }
   ::unsetenv("SIMA_NEAT_BACKEND");
-  for (const char* line : {"[NEAT] Run::stop: input [", ", outputs [", "[NEAT]   session  dropped_frames 0",
-                           "[NEAT]   feed     input", "pushes 2", "[NEAT]   link     input.0 -> output.0",
-                           "[NEAT]   fetch    output", "pulled 2", "[NEAT]   pool     input.0"}) {
+  for (const char* line :
+       {"[NEAT] Run::stop: input [", ", outputs [", "[NEAT]   session  dropped_frames 0",
+        "[NEAT]   feed     input", "pushes 2", "[NEAT]   link     input.0 -> output.0",
+        "[NEAT]   fetch    output", "pulled 2", "[NEAT]   pool     input.0"}) {
     require(text.find(line) != std::string::npos,
             std::string("the stop's report has \"") + line + "\":\n" + text);
   }

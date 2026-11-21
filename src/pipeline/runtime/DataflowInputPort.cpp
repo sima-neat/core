@@ -1,31 +1,31 @@
 // One public Input of a Run on the Dataflow backend (DataflowInputPort.h): its Session, the
 // bind-once state, and the one path every push of the input takes (publish).
 //
-// Copy or wrap (W2, agent-work/h0b/plan.md 7.3, D14-D16). A push and a try_push of one tensor wrap
-// its storage instead of copying it when that is safe (dataflow_wrap_layout, wrap_block): CPU
-// storage (CpuOwned, CpuExternal) with an owning holder, laid out exactly as a slot of the input's
-// port and exactly a slot long (every frame of a fixed-shape input, a frame at a bounded input's
-// bound), aligned to the port's slot alignment (64 bytes or more), neither pulled from a Dataflow
-// Run nor a Run::alloc one (D15), with RunAdvancedOptions::copy_input off.
-// Session::alloc then backs the slot with that storage (the runtime's Block, W1), keeping the
-// pushed Tensor's TensorBuffer alive (one count on its own control block: no allocation) until the
-// last pulled tensor or queued message using it is gone; the pull returns that TensorBuffer (D14).
-// Anything else is copied into the slot on the pushing thread, inside push, as before: then the
-// caller's buffer is free when push returns. Either way the application must not change a pushed
-// tensor's bytes while a Tensor shares its storage (D16; GStreamer's push also retains the tensor
-// and copies it later on Core's input thread); copy_input = true copies at the push.
+// Copy or wrap. A push and a try_push of one tensor wrap its storage instead of copying it when
+// that is safe (dataflow_wrap_layout, wrap_block): CPU storage (CpuOwned, CpuExternal) with an
+// owning holder, laid out exactly as a slot of the input's port and exactly a slot long (every
+// frame of a fixed-shape input, a frame at a bounded input's bound), aligned to the port's slot
+// alignment (64 bytes or more), neither a lease pulled from a Dataflow Run nor a Run::alloc tensor
+// (a wrap would pin a slot of a pool), with RunAdvancedOptions::copy_input off.
+// Session::alloc then backs the slot with that storage (the runtime's Block), keeping the pushed
+// Tensor's TensorBuffer alive (one count on its own control block: no allocation) until the last
+// pulled tensor or queued message using it is gone; the pull returns that TensorBuffer. Anything
+// else is copied into the slot on the pushing thread, inside push: then the caller's buffer is
+// free when push returns. Either way the application must not change a pushed tensor's bytes
+// while a Tensor shares its storage (GStreamer's push also retains the tensor and copies it later
+// on Core's input thread); copy_input = true copies at the push.
 //
-// Device inputs (H0b, agent-work/h0b/plan.md 3): InputOptions::memory_policy Ev74 or Dms0 gives the
-// input's port that memory kind, and its pool one DMA-BUF per slot from the runtime's Runner-backed
-// source. A CPU tensor (and a cv::Mat, and anything a wrap is not safe for) is copied into the
-// slot: Session::alloc opened the slot's write epoch, and the push ends it (the cache clean) before
-// the message is visible. A TensorMemory::EV74 or MLA tensor of the port's kind is wrapped instead
+// Device inputs: InputOptions::memory_policy Ev74 or Dms0 gives the input's port that memory kind,
+// and its pool one DMA-BUF per slot from the runtime's Runner-backed source. A CPU tensor (and a
+// cv::Mat, and anything a wrap is not safe for) is copied into the slot: Session::alloc opened the
+// slot's write epoch, and the push ends it (the cache clean) before the message is visible. A
+// TensorMemory::EV74 or MLA tensor of the port's kind is wrapped instead
 // (dataflow_device::wrap_tensor): its DMA-BUF backs the slot. Run::alloc lends the slot's own
 // mapping, its epoch open until the push or the drop. A host input copies device tensors
-// (GstSample storage), as before.
+// (GstSample storage).
 //
 // An item is one tensor (a leaf: a TensorSpec port) or several (a record: a RecordSchema port with
-// positional field names, H0 plan 3.5). The first item binds which, as it binds the shape.
+// positional field names). The first item binds which, as it binds the shape.
 #if defined(SIMANEAT_WITH_DATAFLOW)
 
 #include "pipeline/runtime/DataflowInputPort.h"
@@ -178,15 +178,15 @@ DataflowInputPort::DataflowInputPort(const DataflowPortContext& run, std::size_t
     lossy_block_ = lossy_block_ || run_.config.outputs[o].terminal_drop;
   }
   if (config_.model) {
-    // H1: the route's model and kernels, loaded and checked at the build, where a file the MLA
+    // The route's model and kernels, loaded and checked at the build, where a file the MLA
     // refuses or a request the Kernels package refuses is the build's error.
     model_ = load_dataflow_model_route(*config_.model, "Graph::build");
   }
 }
 
-// The Session is destroyed with the port, after RunCore::close ran stop (A2: a destructor after a
-// stop that timed out only polls). Messages still held by pulled tensors, and slots still lent by
-// alloc(), keep their pool alive on the runtime's retirement list.
+// The Session is destroyed with the port, after RunCore::close ran stop (a Session's destructor
+// after a stop that timed out only polls). Messages still held by pulled tensors, and slots still
+// lent by alloc(), keep their pool alive on the runtime's retirement list.
 DataflowInputPort::~DataflowInputPort() = default;
 
 void DataflowInputPort::bind_at_build(std::span<const Tensor> seed) {
@@ -194,7 +194,7 @@ void DataflowInputPort::bind_at_build(std::span<const Tensor> seed) {
   Tensor view;
   if (config_.model && seed.size() == 1U &&
       &dataflow_model_input_view(*config_.model, seed.front(), view) == &view) {
-    // H1: a seed without the leading unit axes of the first stage's tensor binds as that tensor.
+    // A seed without the leading unit axes of the first stage's tensor binds as that tensor.
     seed = std::span<const Tensor>(&view, 1);
   }
   std::optional<DataflowInputBinding> binding = bind_dataflow_item(config_.input, seed, &why);
@@ -202,7 +202,7 @@ void DataflowInputPort::bind_at_build(std::span<const Tensor> seed) {
     throw_input_shape("Graph::build: " + why + " (Dataflow backend)");
   }
   if (binding && config_.model && !seed.empty()) {
-    // H1: a seed the model's first stage does not take binds nothing. GStreamer builds with such
+    // A seed the model's first stage does not take binds nothing. GStreamer builds with such
     // a seed too; the first push says what is wrong with its tensor, as there. (A declaration
     // the model does not take is the build's error, below.)
     DataflowInputBinding probe = *binding;
@@ -263,7 +263,7 @@ DataflowInputPort::Bound* DataflowInputPort::bind_locked(DataflowInputBinding bi
     b->wraps = !run_.config.run.advanced.copy_input;
   }
   b->device = b->binding.spec.memory != df::MemoryKind::Host;
-  // H1: in front of a kernel on the EV74 a wrap is a tensor of the port's own kind (linux,cma)
+  // In front of a kernel on the EV74 a wrap is a tensor of the port's own kind (linux,cma)
   // by its descriptor alone; a tensor of the other device heap is copied into a slot.
   const bool ev74_first = config_.model && config_.model->ev74_input;
   b->any_device_memory = config_.model && !ev74_first;
@@ -307,7 +307,8 @@ void DataflowInputPort::mark_closed() {
 
 void DataflowInputPort::close_feed() {
   if (Bound* b = bound()) {
-    // Never waits behind a parked push: that push returns FR3 (A1, A2). Queued messages stay.
+    // Never waits behind a parked push: that push returns FR3 (Session::close_input). Queued
+    // messages stay.
     (void)b->session.close_input(b->feed, df::kNoDeadline);
   }
 }
@@ -381,7 +382,8 @@ Tensor DataflowInputPort::alloc(const std::string& at) {
 // A try_push that would wrap pays the wrap decision (the storage's type query, the holder's copy
 // and release) before alloc can refuse it. So once FR14 has refused one (every link full:
 // Bound::full_at), and while no pull has returned since, the links are still full, and the next
-// try_push asks alloc first, without a wrap: its refusal (returned) costs what it cost before W2.
+// try_push asks alloc first, without a wrap: its refusal (returned) costs what a copying
+// try_push's refusal costs.
 // If alloc finds room after all (a pull is between its take and its count), the slot goes back at
 // once, before the push takes its own. Out of line: the blocking push never comes here.
 [[gnu::noinline]] df::Status DataflowInputPort::still_full(Bound& b) {

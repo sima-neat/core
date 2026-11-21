@@ -3,12 +3,12 @@
 #error "Internal header. Not part of the public API."
 #endif
 
-// Device memory on the Dataflow backend (H0b, agent-work/h0b/plan.md 3.2, 3.3, 7.3): Core's DMA-BUF
-// tensors to and from the runtime's Blocks. A device input (InputOptions::memory_policy Ev74 or
-// Dms0) has a pool of one DMA-BUF per slot. The pull of such a slot is a Tensor of GstSample
-// storage over a GstDmaBufMemory of the slot's descriptor, which is what a TensorMemory::EV74 (MLA)
-// tensor is, so Core and GStreamer code downstream use it as device memory; a push of such a tensor
-// backs the slot with the tensor's own DMA-BUF instead of copying it.
+// Device memory on the Dataflow backend: Core's DMA-BUF tensors to and from the runtime's Blocks. A
+// device input (InputOptions::memory_policy Ev74 or Dms0) has a pool of one DMA-BUF per slot. The
+// pull of such a slot is a Tensor of GstSample storage over a GstDmaBufMemory of the slot's
+// descriptor, which is what a TensorMemory::EV74 (MLA) tensor is, so Core and GStreamer code
+// downstream use it as device memory; a push of such a tensor backs the slot with the tensor's own
+// DMA-BUF instead of copying it.
 //
 // Everything a device input does differently is compiled in DataflowDeviceMemory.cpp: its push
 // (the port's inline funnel, instantiated there with the device wrap) and the tensors of its
@@ -30,6 +30,7 @@ namespace simaai::neat::runtime {
 
 class DataflowInputPort;
 struct DataflowInputBinding;
+struct DataflowPushItem;
 struct DataflowPushOutcome;
 struct DataflowPulledTensor;
 struct DataflowModelRoute;
@@ -46,21 +47,18 @@ namespace df = pipeline_internal::df;
 // or copied; nor is a Tensor from this Run's alloc() that the push publishes (`commit_allocation`,
 // alone in the item); nor an image cv::Mat, which GStreamer's ingress copies without asking:
 // `may_wrap` false says the item is one (Run::push(cv::Mat) on a device input).
-DataflowPushOutcome push(DataflowInputPort& port, std::span<const Tensor> item,
-                         const Stamp& proposal, bool block, const char* where,
-                         bool commit_allocation, std::int64_t pushed_seq, bool may_wrap);
+DataflowPushOutcome push(DataflowInputPort& port, const DataflowPushItem& item);
 
-// H1: a push of one tensor into a model route whose frames change size (`route.frames`), which
+// A push of one tensor into a model route whose frames change size (`route.frames`), which
 // dataflow_device::push hands every such push (DataflowFrameInput.cpp). The frame's geometry is
 // stated in the stamp's user word, which the route's stages and the pull read
 // (dataflow_frame_word); a frame the route cannot run is refused before anything is asked of the
 // Session. Then the device push as for any input: GStreamer's guard, the checks, the slot (the
 // frame's own DMA-BUF when it is in EV74 memory, whatever its size), the publish. An NV12 frame
-// goes to the port's own push of planes (DataflowInputPort::device_push_planes).
+// goes to the port's own push of planes (DataflowInputPort::device_push_planes). `item` is one
+// tensor, the frame.
 DataflowPushOutcome push_frame(DataflowInputPort& port, const DataflowModelRoute& route,
-                               const Tensor& frame, const Stamp& proposal, bool block,
-                               const char* where, bool commit_allocation, std::int64_t pushed_seq,
-                               bool may_wrap);
+                               const DataflowPushItem& item);
 
 // Core's own read-only mappings of the device tensors pushed into one input whose wraps carry the
 // CPU's address of their bytes: a model route whose first stage is an A65 kernel (it reads
@@ -108,7 +106,7 @@ void pulled_tensors(const DataflowInputBinding& binding,
                     const pipeline_internal::StreamNames& streams, bool owned, df::Message message,
                     TensorList& out);
 
-// H1: one tensor of a model route's pulled message, the stage's published tensor `pulled` over
+// One tensor of a model route's pulled message, the stage's published tensor `pulled` over
 // `storage` (the stage's output buffer, from `byte_offset`), as InputStreamPull.cpp's
 // apply_tensor_set_descriptor leaves a GStreamer Run's: the one dense leaf of a route whose last
 // stage publishes one tensor. What a route publishes beyond that (DataflowPulledTensor::
@@ -126,8 +124,8 @@ void fill_stage_leaf(Tensor& tensor, const DataflowPulledTensor& pulled,
 //     of either heap), placed on either;
 //   - it is Core's own (Tensor creation, or a transfer), whose writer ended its epoch through the
 //     Runner when its map ended: neither a tensor pulled from a Dataflow device pool (it leases a
-//     slot of that pool, D15) nor a buffer a running graph produced (another exporter's protocol,
-//     out of H0b);
+//     slot of that pool: a wrap would pin it) nor a buffer a running graph produced (another
+//     exporter's protocol, which this backend does not follow);
 //   - `slot_bytes` of it lie in the memory from the tensor's first byte, and that byte's offset
 //     in the DMA-BUF is aligned to `align_mask` + 1 (a DMA-BUF maps at a page, so its CPU address
 //     in any map is aligned as its offset is).

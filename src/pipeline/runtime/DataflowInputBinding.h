@@ -3,10 +3,11 @@
 #error "Internal header. Not part of the public API."
 #endif
 
-// The format contract of one public Input on the Dataflow backend (H0 plan 3.4, 3.5): the port
-// spec its declaration, its seed or its first push binds, why a tensor does not fit it, and the
-// geometry of the first leaf that passed every push-time check, which lets a repeated geometry
-// skip them. Pure functions of Core's InputOptions and Tensor; no Session, no slot.
+// The format contract of one public Input on the Dataflow backend: the port spec its declaration,
+// its seed or its first push binds (the shape, its bounds, the format; a leaf or a record), why a
+// tensor does not fit it, and the geometry of the first leaf that passed every push-time check,
+// which lets a repeated geometry skip them. Pure functions of Core's InputOptions and Tensor; no
+// Session, no slot.
 
 #include "nodes/io/Input.h"
 #include "pipeline/TensorCore.h"
@@ -55,7 +56,7 @@ struct DataflowInputBinding {
   std::size_t rank = 0; ///< Core rank: the spec's for a dense tensor, 2 ({H, W}) for planes
   std::vector<DataflowFieldBinding> fields; ///< a record's fields; empty for a leaf
   std::string text;                         ///< the spec as one line, for messages
-  /// A model route (H1): what a pulled message's tensor is, where the Fetch's port is the model
+  /// A model route: what a pulled message's tensor is, where the Fetch's port is the model
   /// stage's output and not this spec. The Run's configuration owns it. Null: the pushed tensor.
   const DataflowPulledTensor* pulled = nullptr;
   bool is_record() const noexcept {
@@ -88,27 +89,28 @@ bind_dataflow_item(const InputOptions& declared, std::span<const Tensor> item, s
 // and describes it again. "" when done; otherwise why the spec is not valid.
 std::string fix_dataflow_binding_at_bound(DataflowInputBinding& binding);
 
-// "" when `tensor` fits `binding`; otherwise why it does not.
+// "" when `tensor` fits the leaf `binding`; otherwise why it does not. A record binding is
+// dataflow_record_mismatch's.
 std::string dataflow_binding_mismatch(const DataflowInputBinding& binding, const Tensor& tensor);
 
 // "" when the item's `fields` fit the record `binding`; otherwise why they do not.
 std::string dataflow_record_mismatch(const DataflowInputBinding& binding,
                                      std::span<const Tensor> fields);
 
-// W2: whether a leaf's bytes are laid out exactly as a whole slot (`slot_bytes`) of `binding`'s
-// port, so that the slot can be backed by the tensor's own storage: CPU storage for a host port, a
-// GstSample's (device memory) for a device port (H0b). Reads only what DataflowLeafGeometry keeps,
+// Whether a leaf's bytes are laid out exactly as a whole slot (`slot_bytes`) of `binding`'s port,
+// so that the slot can be backed by the tensor's own storage: CPU storage for a host port, a
+// GstSample's (device memory) for a device port. Reads only what DataflowLeafGeometry keeps,
 // so a repeated geometry reuses the answer.
 bool dataflow_wrap_layout(const DataflowInputBinding& binding, std::size_t slot_bytes,
                           const Tensor& tensor);
 
 // What validate_public_input and dataflow_binding_mismatch read from a leaf tensor
-// (InputStreamUtil.cpp validate_declared_tensor_storage, describe_tensor_geometry_or_throw,
-// validate_public_geometry), plus the rest of its image spec. Both are pure functions of these
+// (validate_declared_tensor_storage, describe_tensor_geometry_or_throw, validate_public_geometry),
+// plus the rest of its image spec. Both are pure functions of these
 // fields and of the Run's InputOptions and InputStreamOptions, which never change: a tensor whose
 // geometry equals one that passed both passes both. Only CPU storage and no Semantic beyond an
 // image spec are kept, so a tensor with anything else is always checked in full.
-// A device input (H0b) also keeps the geometry of a device tensor (GstSample storage), in a cache
+// A device input also keeps the geometry of a device tensor (GstSample storage), in a cache
 // of its own (keepable_device, matches_device): both functions read the same fields of it, the
 // storage's kind and size among them. What they do not read is asked of every push of such a
 // tensor: its memory, and whose it is (DataflowDeviceMemory.h).
@@ -124,7 +126,7 @@ struct DataflowLeafGeometry {
   std::vector<TensorAxisSemantic> axis_semantics;
   std::vector<Plane> planes;
   std::optional<ImageSpec> image;
-  /// dataflow_wrap_layout of this geometry against the input's binding (W2), computed once.
+  /// dataflow_wrap_layout of this geometry against the input's binding, computed once.
   bool wrappable = false;
 
   static bool keepable(const Tensor& t) noexcept;

@@ -3,7 +3,7 @@
 #error "Internal header. Not part of the public API."
 #endif
 
-// One public Input of a Run on the Dataflow backend (H0c): its Session, with one Feed and one
+// One public Input of a Run on the Dataflow backend: its Session, with one Feed and one
 // link and one Fetch per Output the input feeds, bound once by the input's declaration, the seed
 // or its first push, with its own mutex and condition variable (a bind, a close or a stop of one
 // input wakes that input's waiting pulls only). Every push of the input goes through one funnel:
@@ -51,6 +51,27 @@ struct DataflowPushOutcome {
   df::Result<df::PublishResult> answer;
 };
 
+// One item of a public push, as the Run hands it to its input: what DataflowInputPort::push,
+// dataflow_device::push and dataflow_device::push_frame take.
+struct DataflowPushItem {
+  std::span<const Tensor> tensors; ///< one tensor (a leaf) or several (a record's fields)
+  /// The first tensor's stamp, or a Sample's: proposes the message's stream, frame_id,
+  /// source_time and flags.
+  const Stamp& proposal;
+  const char* where; ///< the call, for messages
+  bool block;        ///< push: waits for room and never drops; false: try_push
+  /// The blocking TensorList push: a Tensor from this Run's alloc() alone in the item is
+  /// published as its slot. Every other verb copies it like any CPU tensor, as GStreamer does.
+  bool commit_allocation = false;
+  /// False: copied even when it could be wrapped (a cv::Mat over memory it does not own; on a
+  /// device input an image cv::Mat, which GStreamer's ingress copies unasked).
+  bool may_wrap = true;
+  /// The item's own orig_input_seq (a Sample push), -1 for none: read in a Run of several
+  /// inputs only, where the message carries it, or else the Run's push count, in its stamp's
+  /// user word.
+  std::int64_t pushed_seq = -1;
+};
+
 // What the ports of one Run share; it outlives them and does not change while they run.
 struct DataflowPortContext {
   RunCore& core;
@@ -80,7 +101,7 @@ public:
   bool fan_out() const noexcept {
     return config_.outputs.size() > 1U;
   }
-  /// A device input (H0b): InputOptions::memory_policy resolved to Ev74 or Dms0, so its port's
+  /// A device input: InputOptions::memory_policy resolved to Ev74 or Dms0, so its port's
   /// slots are DMA-BUFs. Its pushes and pulls run in DataflowDeviceMemory.cpp.
   bool device() const noexcept {
     return device_;
@@ -95,26 +116,19 @@ public:
   void bind_at_build(std::span<const Tensor> seed);
 
   // One item into the input: Core's checks, the binding (the input's first item binds it), then
-  // the slot. With `commit_allocation` (the blocking TensorList push only), a Tensor from this
-  // Run's alloc() alone in the item is published as its slot; every other verb copies it like any
-  // CPU tensor, as the GStreamer backend does. `pushed_seq`: the item's own orig_input_seq (a
-  // Sample push), -1 for none; read in a Run of several inputs only, where the message carries
-  // it, or else the Run's push count, in its stamp's user word. A leaf is wrapped instead of
-  // copied when that is safe (W2), unless `may_wrap` is false (a cv::Mat that does not own its
-  // memory). Throws NeatError for an item the input does not take.
-  // `device_port` (H0b): a constant at each call, true only in a device input's push
+  // the slot. A leaf is wrapped instead of copied when that is safe (DataflowInputPort.cpp,
+  // "Copy or wrap") and `item.may_wrap`. Throws NeatError for an item the input does not take.
+  // `device_port`: a constant at each call, true only in a device input's push
   // (dataflow_device::push, another translation unit); a wrap is then device memory of the port's
   // kind (dataflow_device::wrap_tensor) instead of CPU storage, and the Run's own push, a host
   // input's, is compiled without it.
-  // `frame_word` (H1, a device input's push only): not 0 on a model route whose frames change
-  // size, where it is the message's stamp's user word (dataflow_frame_word). A constant 0 at
-  // every other call, which is then compiled without it.
+  // `frame_word` (a device input's push only): not 0 on a model route whose frames change size,
+  // where it is the message's stamp's user word (dataflow_frame_word). A constant 0 at every
+  // other call, which is then compiled without it.
   // Inline (as publish, its funnel): the Run's push compiles the checks, the slot and the outcome
-  // as one function, as it did when they were one (0.1 to 0.3 us of a 3 us round trip on the A65).
+  // as one function.
   [[gnu::always_inline]] DataflowPushOutcome
-  push(std::span<const Tensor> item, const Stamp& proposal, bool block, const char* where,
-       bool commit_allocation = false, std::int64_t pushed_seq = -1, bool may_wrap = true,
-       bool device_port = false, std::uint64_t frame_word = 0);
+  push(const DataflowPushItem& item, bool device_port = false, std::uint64_t frame_word = 0);
 
   // After a device input's push answered `outcome` (dataflow_device::push; defined in
   // DataflowDeviceMemory.cpp): the first device tensor (GstSample storage) that passed the push's
@@ -124,7 +138,7 @@ public:
   // device tensor of the validated geometry while the links are known to be full (Bound::full_at),
   // before any other work on the item; none otherwise. `pushed_seq` as push()'s.
   df::Status device_still_full(std::span<const Tensor> item, std::int64_t pushed_seq) noexcept;
-  // H1, a model route whose frames change size (DataflowDeviceMemory.cpp). After such a push
+  // A model route whose frames change size (DataflowFrameInput.cpp). After such a push
   // answered `outcome`: a device tensor that passed the checks and whose geometry is not kept
   // yet has it kept, beside the first one's (frames of a few sizes in turn each skip the checks
   // once their geometry was seen; device_known finds them).
@@ -133,18 +147,19 @@ public:
   // one's or a further one's; nullptr otherwise. Asks Core's cross-Run rule as device_known does.
   const DataflowLeafGeometry* device_known_frame(std::span<const Tensor> item,
                                                  const char* where) const;
-  // The push of one NV12 frame into such a route's byte port, whose message's stamp's user word
-  // is `frame_word`: Core's checks, the binding, then the slot backed by the frame's own
-  // DMA-BUF when the frame is the port's bytes as it is (dataflow_planar_frame_wraps), or its
-  // planes copied to the port's offsets. The funnel below is not used: it carries a frame as the
-  // input's own spec states it, and this port's spec is bytes.
-  DataflowPushOutcome device_push_planes(const Tensor& frame, const Stamp& proposal, bool block,
-                                         const char* where, std::uint64_t frame_word);
+  // The push of one NV12 frame (`item`'s one tensor) into such a route's byte port, whose
+  // message's stamp's user word is `frame_word`: Core's checks, the binding, then the slot backed
+  // by the frame's own DMA-BUF when the frame is the port's bytes as it is
+  // (dataflow_planar_frame_wraps), or its planes copied to the port's offsets. The funnel below
+  // is not used: it carries a frame as the input's own spec states it, and this port's spec is
+  // bytes.
+  DataflowPushOutcome device_push_planes(const DataflowPushItem& item, std::uint64_t frame_word);
 
   // Run::alloc: a writable Tensor over a slot of the input's pool. `at` names the call.
   Tensor alloc(const std::string& at);
 
-  // Core's cross-Run rule for frames still owned by another graph's producer (RunPush.cpp:39-50).
+  // Core's cross-Run rule for frames still owned by another graph's producer
+  // (allow_public_cross_run_gstsample_push).
   static void enforce_transferable(const Sample& sample, const char* where);
 
   struct Bound;
@@ -193,15 +208,14 @@ public:
     df::Session session;
     df::FeedRef feed;
     std::vector<df::FetchRef> fetches;
-    // W2. A push may wrap (`wraps`): a tensor port, copy_input off. What a wrap must be:
+    // A push may wrap (`wraps`): a tensor port, copy_input off. What a wrap must be:
     // `slot_bytes` long, aligned to `wrap_mask` + 1 (the Feed's port, port_spec.h slot_bytes and
-    // slot_alignment), and, into a device port (H0b), device memory of the port's kind. Fixed at
-    // bind.
+    // slot_alignment), and, into a device port, device memory of the port's kind. Fixed at bind.
     bool wraps = false;
-    /// The port's memory is a device's (H0b): a pulled message's tensors are built from its
+    /// The port's memory is a device's: a pulled message's tensors are built from its
     /// DMA-BUF (dataflow_device::pulled_sample, pulled_tensors). Fixed at bind.
     bool device = false;
-    /// A model route (H1) whose first stage is the MLA, which reads a DMA-BUF of either device
+    /// A model route whose first stage is the MLA, which reads a DMA-BUF of either device
     /// heap, or an A65 kernel, which reads either through the CPU's address: a wrap takes an EV74
     /// or an MLA tensor whatever the port's own kind (as GStreamer's input of the route does).
     /// False in front of a kernel on the EV74, which reaches linux,cma only: there a wrap is a
@@ -209,7 +223,7 @@ public:
     bool any_device_memory = false;
     std::size_t slot_bytes = 0;
     std::uintptr_t wrap_mask = 0;
-    /// A push has wrapped: a pulled message may carry the pushed storage (W2). Set, before its
+    /// A push has wrapped: a pulled message may carry the pushed storage. Set, before its
     /// publish, by the first push that wraps; a pull's take orders that publish, and so this
     /// store, before it.
     std::atomic<bool> has_wraps{false};
@@ -246,12 +260,12 @@ private:
   // Session::alloc gives now (FR14: every link full, kept in Bound::full_at), or none when it
   // would take a slot.
   df::Status device_full(Bound& bound) noexcept;
-  // `map_fn`: map_fn_type of the item's first tensor when push asked it already, else null.
-  [[gnu::always_inline]] DataflowPushOutcome publish(Bound& bound, std::span<const Tensor> item,
-                                                     const df::Stamp& stamp, bool block,
-                                                     const char* where, RunAllocation* allocation,
-                                                     bool wrappable, bool device_port,
-                                                     bool frame_port,
+  // `tensors`: `item`'s, or the stage's view of them. `map_fn`: map_fn_type of the first tensor
+  // when push asked it already, else null.
+  [[gnu::always_inline]] DataflowPushOutcome publish(Bound& bound, const DataflowPushItem& item,
+                                                     const df::Stamp& stamp,
+                                                     RunAllocation* allocation, bool wrappable,
+                                                     bool device_port, bool frame_port,
                                                      const std::type_info* map_fn);
 
   const DataflowPortContext run_;
@@ -269,7 +283,7 @@ private:
   std::atomic<bool> closed_{false};
   DataflowValidatedLeaf validated_;
   DataflowValidatedLeaf validated_device_; ///< a device input: of a device tensor (GstSample)
-  /// A model route (H1): the loaded model and the checked kernels of the input's stages
+  /// A model route: the loaded model and the checked kernels of the input's stages
   /// (DataflowModelRoute.h), for this Run's operators. Null otherwise.
   std::shared_ptr<void> model_;
   /// A model route whose frames change size: the validated geometries of further device
@@ -324,15 +338,16 @@ private:
 //              waits for room on every link and never drops; or, when an Output of the input has
 //              OutputOptions::drop, the policy push without a deadline, which waits on the Block
 //              links only and evicts on the DropOldest ones (appsink drop=true).
-inline DataflowPushOutcome DataflowInputPort::publish(Bound& b, std::span<const Tensor> item,
-                                                      const df::Stamp& stamp, bool block,
-                                                      const char* where, RunAllocation* allocation,
-                                                      bool wrappable, bool device_port,
-                                                      bool frame_port,
+inline DataflowPushOutcome DataflowInputPort::publish(Bound& b, const DataflowPushItem& item,
+                                                      const df::Stamp& stamp,
+                                                      RunAllocation* allocation, bool wrappable,
+                                                      bool device_port, bool frame_port,
                                                       const std::type_info* map_fn) {
+  const bool block = item.block;
+  const char* const where = item.where;
   df::WriteLoan loan;
   const LentSlot lent(allocation, loan, where);
-  const Tensor& first = item.front();
+  const Tensor& first = item.tensors.front();
   bool wrapped = false;
   if (allocation) {
     if (!loan || !first.is_dense() || first.byte_offset != 0 || !first.is_contiguous()) {
@@ -355,11 +370,11 @@ inline DataflowPushOutcome DataflowInputPort::publish(Bound& b, std::span<const 
         return {DataflowPushOutcome::Stage::Alloc, *refusal};
       }
     }
-    // W2: wrap when safe. The runtime takes a wrap only with the slot (Session::alloc), so the
-    // wrap is decided before alloc; a refusal of alloc (A3's FR14, FR7, SR1, FR3) takes no slot and
-    // keeps nothing: `wrap`, the only reference this call took, is released on return.
-    // A device port (H0b) takes device memory only: the tensor's own DMA-BUF; the bounded port
-    // of a model route whose frames change size (H1; `frame_port`, a constant at each call as
+    // Wrap when safe. The runtime takes a wrap only with the slot (Session::alloc), so the wrap is
+    // decided before alloc; a refusal of alloc (FR14, FR19, FR7, SR1, FR3) takes no slot and keeps
+    // nothing: `wrap`, the only reference this call took, is released on return.
+    // A device port takes device memory only: the tensor's own DMA-BUF; the bounded port of a
+    // model route whose frames change size (`frame_port`, a constant at each call as
     // `device_port` is) a frame of any size up to its bound.
     df::Block wrap;
     wrapped =
@@ -369,8 +384,7 @@ inline DataflowPushOutcome DataflowInputPort::publish(Bound& b, std::span<const 
                     ? dataflow_device::wrap_frame(first, b.slot_bytes, b.wrap_mask, wrap,
                                                   b.mapped_wraps.get())
                     : dataflow_device::wrap_tensor(first, b.binding.spec, b.slot_bytes, b.wrap_mask,
-                                                   wrap, b.any_device_memory,
-                                                   b.mapped_wraps.get()))
+                                                   wrap, b.any_device_memory, b.mapped_wraps.get()))
              : dataflow_codec::wrap_block(first, b.slot_bytes, b.wrap_mask,
                                           map_fn ? *map_fn : dataflow_codec::map_fn_type(first),
                                           wrap));
@@ -406,9 +420,9 @@ inline DataflowPushOutcome DataflowInputPort::publish(Bound& b, std::span<const 
   };
   if (b.binding.is_record()) {
     std::array<df::Extent, df::kMaxFields> extents{};
-    dataflow_codec::copy_record(b.binding, item, loan.bytes(), extents, where);
+    dataflow_codec::copy_record(b.binding, item.tensors, loan.bytes(), extents, where);
     return {DataflowPushOutcome::Stage::Publish,
-            send(std::span<const df::Extent>(extents.data(), item.size()))};
+            send(std::span<const df::Extent>(extents.data(), item.tensors.size()))};
   }
   df::Extent extent;
   if (wrapped) {
@@ -425,13 +439,12 @@ inline DataflowPushOutcome DataflowInputPort::publish(Bound& b, std::span<const 
   return {DataflowPushOutcome::Stage::Publish, send(extent)};
 }
 
-inline DataflowPushOutcome DataflowInputPort::push(std::span<const Tensor> item,
-                                                   const Stamp& proposal, bool block,
-                                                   const char* where, bool commit_allocation,
-                                                   std::int64_t pushed_seq, bool may_wrap,
-                                                   bool device_port, std::uint64_t frame_word) {
+inline DataflowPushOutcome DataflowInputPort::push(const DataflowPushItem& pushed, bool device_port,
+                                                   std::uint64_t frame_word) {
+  const std::span<const Tensor> item = pushed.tensors;
+  const char* const where = pushed.where;
   const InputOptions& declared = config_.input;
-  // Core's own push-time checks and texts first (RunPush.cpp:655, InputStreamUtil.cpp:2146-2190):
+  // Core's own push-time checks and texts first (push_tensor_items, validate_declared_shape):
   // the declaration describes the item's representative (first) tensor, as on GStreamer.
   if (item.size() > 1U && !declared.shape.empty()) {
     dataflow_codec::throw_input_shape(std::string(where) + ": an item of " +
@@ -442,7 +455,7 @@ inline DataflowPushOutcome DataflowInputPort::push(std::span<const Tensor> item,
   // Its storage's map_fn type tells it; publish reads the same type for the wrap.
   const std::type_info* map_fn = nullptr;
   std::shared_ptr<RunAllocation> allocation;
-  if (commit_allocation && item.size() == 1U) {
+  if (pushed.commit_allocation && item.size() == 1U) {
     map_fn = &dataflow_codec::map_fn_type(item.front());
     if (*map_fn == typeid(RunAllocationMapper)) {
       allocation = allocation_of(item.front(), run_.core);
@@ -475,7 +488,7 @@ inline DataflowPushOutcome DataflowInputPort::push(std::span<const Tensor> item,
       return {};
     }
   }
-  df::Stamp stamp = dataflow_codec::runtime_stamp(proposal, run_.streams, stream_);
+  df::Stamp stamp = dataflow_codec::runtime_stamp(pushed.proposal, run_.streams, stream_);
   bool wrappable = false;
   if (item.size() > 1U || b->binding.is_record()) {
     if (const std::string why = dataflow_record_mismatch(b->binding, item); !why.empty()) {
@@ -493,24 +506,25 @@ inline DataflowPushOutcome DataflowInputPort::push(std::span<const Tensor> item,
                             b->wraps && dataflow_wrap_layout(b->binding, b->slot_bytes, tensor));
       }
     }
-    // W2: wrap when safe (the layout here, the storage in publish).
+    // Wrap when safe (the layout here, the storage in publish).
     wrappable =
-        !allocation && may_wrap && b->wraps &&
+        !allocation && pushed.may_wrap && b->wraps &&
         (known ? known->wrappable : dataflow_wrap_layout(b->binding, b->slot_bytes, tensor));
   }
   if (run_.run_seq) {
-    // A Run of several inputs (GStreamer's graph ingress, RunPush.cpp:276-287): the pushed value,
-    // or the next of the Run's push counter, which its inputs share (one relaxed increment; a
-    // refused push consumes a number, as there).
-    stamp.user = 1U + (pushed_seq >= 0 ? static_cast<std::uint64_t>(pushed_seq)
-                                       : run_.run_seq->fetch_add(1, std::memory_order_relaxed));
+    // A Run of several inputs (GStreamer's graph ingress, stamp_public_graph_ingress_sample): the
+    // pushed value, or the next of the Run's push counter, which its inputs share (one relaxed
+    // increment; a refused push consumes a number, as there).
+    stamp.user =
+        1U + (pushed.pushed_seq >= 0 ? static_cast<std::uint64_t>(pushed.pushed_seq)
+                                     : run_.run_seq->fetch_add(1, std::memory_order_relaxed));
   }
   if (device_port && frame_word != 0U) {
-    // H1: a model route (a Run of one input, so the word is not the Run's counter) whose frames
+    // A model route (a Run of one input, so the word is not the Run's counter) whose frames
     // change size states the frame's geometry here, for its stages and its pull.
     stamp.user = frame_word;
   }
-  return publish(*b, item, stamp, block, where, allocation.get(), wrappable, device_port,
+  return publish(*b, pushed, stamp, allocation.get(), wrappable, device_port,
                  device_port && frame_word != 0U, map_fn);
 }
 
