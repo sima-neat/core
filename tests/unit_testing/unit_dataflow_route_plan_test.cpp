@@ -326,8 +326,10 @@ void image(const Yolo& y) {
   declines(pre_stage([](si::StageStaticSpec& s) { s.processcvu.graph_name = "resize"; }),
            "is an image stage with per-frame geometry", "an image stage other than preproc");
   {
+    // Behind an MLA stage of one tensor (of six, the stage behind would have to be BoxDecode).
     Ask a = y.full;
     a.manifest = only(y.full.manifest, {1, 0});
+    a.manifest.stages[0].logical_outputs.resize(1);
     declines(a, "is an image stage with per-frame geometry", "the image preproc behind the MLA");
   }
   declines(pre_stage([](si::StageStaticSpec& s) {
@@ -356,6 +358,8 @@ void image(const Yolo& y) {
   }
   {
     Ask a = y.nv12_pre;
+    a.declared.max_width = 1280;
+    a.declared.max_height = 720;
     a.seed = {nv12(641, 360)};
     declines(a, "frame (the seed) is not one the stage takes", "an NV12 seed of an odd width");
   }
@@ -432,10 +436,11 @@ void boxdecode(const Yolo& y) {
            "are not ones the decode takes", "frames the decode does not take");
   {
     // Without the image preproc in front, the frames' geometry is the decode's own when it
-    // does not take each frame's size.
+    // takes neither each frame's size nor its resize mode.
     Ask a = y.full;
     a.manifest = only(y.full.manifest, {1, 2});
-    if (y.full.manifest.stages[2].native_kernel->boxdecode_program->size_from_frame) {
+    const auto& program = *y.full.manifest.stages[2].native_kernel->boxdecode_program;
+    if (program.size_from_frame || program.resize_required) {
       declines(a, "the route has no image preproc stage in front", "BoxDecode without frames");
     } else {
       accepts(a, "BoxDecode of a fixed original size without the image preproc");
