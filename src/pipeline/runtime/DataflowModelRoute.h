@@ -72,6 +72,8 @@
 #include "pipeline/GraphOptions.h"
 #include "pipeline/TensorCore.h"
 #include "pipeline/internal/DataflowRuntime.h"
+#include "pipeline/internal/sima/SimaPluginStaticManifest.h"
+#include "pipeline/runtime/DataflowRoutePlan.h"
 
 #include <simaai/scheduler/client/host_task.h>
 #include <simaai/scheduler/client/parameters.h>
@@ -82,6 +84,7 @@
 #include <optional>
 #include <span>
 #include <string>
+#include <variant>
 #include <vector>
 
 namespace simaai::neat::runtime {
@@ -151,37 +154,51 @@ struct DataflowPulledTensor {
 // One stage of the route, one operator: a model on the MLA, one kernel of the Kernels package on
 // the A65 or on the EV74, or Core's BoxDecode wire serializer behind the BoxDecode kernel.
 struct DataflowModelStage {
-  enum class Kind { Mla, Kernel, Wire };
-  Kind kind = Kind::Mla;
-  std::string key;                ///< the stage's name (messages, the operator's name)
-  std::uint64_t input_bytes = 0;  ///< its one input buffer
-  std::uint64_t output_bytes = 0; ///< its one output buffer
-  // Mla: the admitted MLA ELF, and how many jobs are out at once (MlaOp::Options::depth).
-  std::string model_path;
-  std::uint32_t depth = 2;
-  // Kernel: where it runs (the checked recipe's target), and the request Core's lowering gave the
-  // Kernels package for this stage (the recipe's, KernelStageRecipe::Request): the operation's
-  // name, its two tensors, its parameters.
-  bool ev74 = false;
-  std::string operation;
-  ::simaai::scheduler::client::TensorSpec input, output;
-  std::vector<::simaai::scheduler::client::Parameter> parameters;
-  // Kernel, BoxDecode: a side whose tensors are views of the port's one buffer
-  // (soc::KernelOp::Options::Packing): every tensor of the side in the kernel's order, with where
-  // it lies in the `input_bytes` or `output_bytes` of the port. `input` or `output` is then not
-  // read. Empty: the side is its one tensor.
-  // Wire: `packed_inputs` are the kernel's outputs in its input buffer (offset and bytes).
+  // A tensor of a side whose tensors are views of the port's one buffer
+  // (soc::KernelOp::Options::Packing): the tensor, and where it lies in the port's bytes.
   struct View {
     ::simaai::scheduler::client::TensorSpec tensor;
     std::size_t offset = 0, bytes = 0;
   };
-  std::vector<View> packed_inputs, packed_outputs;
-  // Wire: the stage's serializer (KernelStageRecipe::BoxDecodeProgram), which writes the
-  // `output_bytes` of the wire from the kernel's outputs.
-  std::shared_ptr<const void> wire;
-  ::simaai::scheduler::client::HostStatus (*write)(
-      const void* wire, std::span<const ::simaai::scheduler::client::ConstBytes> inputs,
-      ::simaai::scheduler::client::MutableBytes output) = nullptr;
+  // A model on the MLA: the admitted MLA ELF, and how many jobs are out at once
+  // (soc::MlaOp::Options::depth).
+  struct Mla {
+    std::string model_path;
+    std::uint32_t depth = 2;
+  };
+  // A kernel of the Kernels package: where it runs (the checked recipe's target), and the request
+  // Core's lowering gave the Kernels package for this stage (KernelStageRecipe::Request): the
+  // operation's name, its tensors, its parameters. A packed side lists every tensor of the side
+  // in the kernel's order, each a view of the port's `input_bytes` or `output_bytes`; `input` or
+  // `output` is then not read. An empty list: the side is its one tensor.
+  struct Kernel {
+    // Which kernel runs a message (soc::KernelOp::Options::Variants): the stage's one kernel
+    // (None); or, on a route whose frames change size, the image stage's or the BoxDecode kernel
+    // of the frame's geometry (DataflowFrames), found by the message's extent (packed frames on
+    // the bounded port) or by its stamp's user word where the port's bytes do not tell the
+    // geometry (an NV12 frame's byte port, the MLA's buffer that BoxDecode reads).
+    enum class Variants : std::uint8_t { None, ImageByExtent, ImageByWord, DecodeByWord };
+    bool ev74 = false;
+    std::string operation;
+    ::simaai::scheduler::client::TensorSpec input, output;
+    std::vector<::simaai::scheduler::client::Parameter> parameters;
+    std::vector<View> packed_inputs, packed_outputs;
+    Variants variants = Variants::None;
+  };
+  // Core's BoxDecode wire serializer behind the BoxDecode kernel (KernelStageRecipe::
+  // BoxDecodeProgram): `inputs` are the kernel's outputs in the stage's input buffer (offset and
+  // bytes), from which `write` writes the `output_bytes` of the wire.
+  struct Wire {
+    std::vector<View> inputs;
+    std::shared_ptr<const void> program;
+    ::simaai::scheduler::client::HostStatus (*write)(
+        const void* program, std::span<const ::simaai::scheduler::client::ConstBytes> inputs,
+        ::simaai::scheduler::client::MutableBytes output) = nullptr;
+  };
+  std::string key;                ///< the stage's name (messages, the operator's name)
+  std::uint64_t input_bytes = 0;  ///< its one input buffer
+  std::uint64_t output_bytes = 0; ///< its one output buffer
+  std::variant<Mla, Kernel, Wire> kind;
 };
 
 // The route's stages in execution order, and its two ends.
@@ -221,10 +238,10 @@ struct DataflowModelRoute {
 // True when this build can run a model route at all (dataflow::soc is in it).
 bool dataflow_has_model_route() noexcept;
 
-// The stages of `route` (the nodes of GStreamer's segment: the Input, the model's stage nodes, the
-// Output), compiled with `options` as GStreamer's build compiles them, when every stage is one
-// this backend can carry; null with `why` otherwise. `declared` (the Input's options) and `seed`
-// (the build's seed, or empty) are what says the frame size of an image preproc stage.
+// The stages of `route` when every stage is one this backend can carry; null with `why`
+// otherwise: plan_dataflow_route_stages of its manifest (dataflow_model_manifest,
+// DataflowRoutePlan.h), with the board's EV74 asked for a route with a kernel stage on the EV74
+// (soc::ev74_runs_kernels_firmware).
 std::shared_ptr<const DataflowModelRoute>
 plan_dataflow_model_route(const std::vector<std::shared_ptr<Node>>& route,
                           const GraphOptions& options, const InputOptions& declared,

@@ -249,8 +249,8 @@ Qualification qualify(const DataflowGraphView& view) {
       return false;
     }
     if (!edge.stream_id.empty()) {
-      q.reason = "a link stream_id ('" + edge.stream_id +
-                 "') is not supported on the Dataflow backend";
+      q.reason =
+          "a link stream_id ('" + edge.stream_id + "') is not supported on the Dataflow backend";
       return false;
     }
     const std::size_t to = edge.to;
@@ -324,8 +324,8 @@ Qualification qualify(const DataflowGraphView& view) {
     }
     std::size_t& producer = q.producer[output_of[to]];
     if (producer != kNone) {
-      q.reason = text(to) +
-                 " has more than one producer: fan-in is not supported on the Dataflow backend";
+      q.reason =
+          text(to) + " has more than one producer: fan-in is not supported on the Dataflow backend";
       return q;
     }
     producer = input_of[from];
