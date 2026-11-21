@@ -956,14 +956,15 @@ std::string plan_boxdecode_stage(const si::StageStaticSpec& stage, const std::st
     return name + " publishes another wire than BBOX ('" + recipe.output_format +
            "'), which is not supported on Dataflow yet";
   }
-  // The decode is the recipe's first member when no detess member is in front of it, and the
-  // stage's host task (the serializer) the second.
+  // The decode is the recipe's first member (BoxDecodeProgram::member) when no detess member is
+  // in front of it, and the stage's host task (the serializer) the second.
   if (recipe.members.size() != 2U) {
-    return name + " runs " + std::to_string(recipe.members.size() - 2U) +
-           " detess invocations in front of the decode (heads in tiled, not C-blocked, "
-           "storage), which is not supported on Dataflow yet";
+    return name + " runs " + std::to_string(recipe.members.size()) +
+           " invocations where it runs the decode and its serializer (detess invocations in front "
+           "of the decode: heads in tiled, not C-blocked, storage), which is not supported on "
+           "Dataflow yet";
   }
-  const client::TensorStageMember& member = recipe.members[program.member];
+  const client::TensorStageMember& member = recipe.members.front();
   if (!recipe.constant_data.empty() || !member.dependencies.empty() ||
       member.inputs.size() != program.request.inputs.size() ||
       member.outputs.size() != program.request.outputs.size() || member.inputs.empty() ||

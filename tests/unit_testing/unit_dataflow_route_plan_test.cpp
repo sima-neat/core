@@ -422,6 +422,9 @@ void boxdecode(const Yolo& y) {
              r.members.push_back(r.members.front());
            }),
            "detess invocations in front of the decode", "a detess member");
+  declines(decode([](si::StageStaticSpec&, si::KernelStageRecipe& r) { r.members.pop_back(); }),
+           "runs 1 invocations where it runs the decode and its serializer",
+           "a decode without its serializer");
   declines(decode([](si::StageStaticSpec&, si::KernelStageRecipe& r) {
              r.constant_data.push_back(std::byte{0});
            }),
