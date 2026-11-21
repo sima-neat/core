@@ -230,9 +230,11 @@ DataflowInputPort::Bound* DataflowInputPort::bind_first(std::span<const Tensor> 
   std::string why;
   std::optional<DataflowInputBinding> binding = bind_dataflow_item(config_.input, item, &why);
   if (!binding) {
-    throw_input_shape(std::string(where) + ": " +
-                      (why.empty() ? std::string("the input cannot be bound") : why) +
-                      " (Dataflow backend)");
+    error_util::throw_session_error(
+        error_codes::kInputShape,
+        std::string(where) + ": " + (why.empty() ? std::string("the input cannot be bound") : why) +
+            " (Dataflow backend)",
+        {}, "Push a tensor this input takes, or build this Run with RunBackend::GStreamer.");
   }
   return bind_locked(std::move(*binding), where, /*at_build=*/false);
 }

@@ -211,7 +211,7 @@ std::shared_ptr<RunCore> build_impl(const Graph& graph, const RunOptions& opt, R
                                     const DataflowSeed& seed, const char* where, const Want& want) {
   if (mode != RunMode::Async) {
     return decline(want, where, error_codes::kPipelineShape,
-                   "synchronous runs (Graph::run) are not supported before H1");
+                   "a synchronous Run (Graph::run) is not supported on the Dataflow backend");
   }
   DataflowDecline declined;
   std::optional<DataflowRunConfig> planned = plan_dataflow_run(graph, opt, seed, &declined);

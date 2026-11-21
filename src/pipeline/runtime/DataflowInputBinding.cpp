@@ -226,7 +226,8 @@ std::optional<DataflowInputBinding> bind_dataflow_input(const InputOptions& decl
 #endif
   if (declared.payload_type == PayloadType::Encoded || declared.format.tag == FormatTag::H264 ||
       declared.format.tag == FormatTag::H265 || declared.format.tag == FormatTag::ENCODED) {
-    *why = "encoded input is not supported before H1";
+    *why = "an encoded input (an H.264, H.265 or other encoded payload) is not supported on the "
+           "Dataflow backend";
     return std::nullopt;
   }
   if (!declared.shape.empty()) {
@@ -234,7 +235,8 @@ std::optional<DataflowInputBinding> bind_dataflow_input(const InputOptions& decl
   }
   const std::optional<ImageSpec::PixelFormat> fmt = image_format(declared, tensor);
   if (fmt == ImageSpec::PixelFormat::NV16) {
-    *why = "NV16 input is not supported before H1";
+    *why = "an NV16 input is not supported on the Dataflow backend (NV12, I420 and packed formats "
+           "are)";
     return std::nullopt;
   }
   const bool nv12 = fmt == ImageSpec::PixelFormat::NV12;
@@ -244,11 +246,11 @@ std::optional<DataflowInputBinding> bind_dataflow_input(const InputOptions& decl
   df::TensorSpec spec;
   if (tensor) {
     if (tensor->has_tiled_storage()) {
-      *why = "tiled (MLA) tensors are not supported before H1";
+      *why = "a tiled (MLA) tensor is not supported on the Dataflow backend";
       return std::nullopt;
     }
     if (tensor->semantic.encoded.has_value() || tensor->semantic.byte_stream.has_value()) {
-      *why = "encoded and byte-stream payloads are not supported before H1";
+      *why = "an encoded or byte-stream tensor is not supported on the Dataflow backend";
       return std::nullopt;
     }
     const auto dtype = dataflow_dtype(tensor->dtype);
@@ -258,7 +260,8 @@ std::optional<DataflowInputBinding> bind_dataflow_input(const InputOptions& decl
     }
     if (tensor->is_composite() != (nv12 || i420)) {
       *why = tensor->is_composite()
-                 ? "a composite tensor other than NV12 or I420 is not supported before H1"
+                 ? "a composite tensor other than NV12 or I420 is not supported on the Dataflow "
+                   "backend"
                  : "an NV12 or I420 tensor without plane records is not supported";
       return std::nullopt;
     }
@@ -442,7 +445,7 @@ std::optional<DataflowInputBinding> bind_dataflow_record(const InputOptions& dec
     // The runtime's device ports carry one tensor (block.h); GStreamer's device pool is one too.
     *why = "an item of " + std::to_string(fields.size()) +
            " tensors (a record) into an input with InputOptions::memory_policy Ev74 or Dms0 is "
-           "not supported before H1";
+           "not supported on the Dataflow backend (a device input carries one tensor a push)";
     return std::nullopt;
   }
   if (fields.size() > df::kMaxFields) {
@@ -469,11 +472,11 @@ std::optional<DataflowInputBinding> bind_dataflow_record(const InputOptions& dec
     }
     if (field->planes != DataflowInputBinding::Planes::None) {
       *why = "field " + std::to_string(i) +
-             " of the record is an NV12 or I420 image; planar record fields are not supported "
-             "before H1";
+             " of the record is an NV12 or I420 image; a planar record field is not supported on "
+             "the Dataflow backend";
       return std::nullopt;
     }
-    // Dense fields, fixed by the tensor: a field's own declaration does not exist before H1.
+    // Dense fields, fixed by the tensor: a field has no declaration of its own.
     df::TensorSpec spec = std::get<df::TensorSpec>(field->spec.payload);
     for (std::size_t d = 0; d < spec.shape.rank; ++d) {
       spec.shape.dims[d] = df::Dim(fields[i].shape[d]);
