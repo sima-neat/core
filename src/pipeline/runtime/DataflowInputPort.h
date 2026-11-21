@@ -233,8 +233,9 @@ private:
   }
   Bound* wait_bound_slow(df::Deadline deadline);
   Bound* bind_first(std::span<const Tensor> item, const char* where);
-  // `where` names the call for the error of a binding the route's model does not take.
-  Bound* bind_locked(DataflowInputBinding binding, const char* where);
+  // `where` names the call (Graph::build, `at_build`, or the first push) in the errors of the
+  // input's Plan and Session, and of a binding the route's model does not take.
+  Bound* bind_locked(DataflowInputBinding binding, const char* where, bool at_build);
   df::Status still_full(Bound& bound);
   // A device input's validated geometry that `item` repeats, of a device tensor or of a CPU
   // tensor (DataflowDeviceMemory.cpp); nullptr otherwise. For a device tensor it asks Core's

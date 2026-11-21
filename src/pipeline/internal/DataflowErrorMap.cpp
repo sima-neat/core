@@ -1,5 +1,6 @@
-// The Dataflow backend's error table (H0 plan 3.8): a runtime Error (dataflow/diag/error.h) to
-// Core's PullStatus and error_codes::* families. Built only with SIMANEAT_DATAFLOW_SOURCE_DIR.
+// The Dataflow backend's error table: a runtime Error (dataflow/diag/error.h) to Core's PullStatus
+// and error_codes::* families, and to what RunBackend::Auto does with it at Graph::build. Built
+// only with SIMANEAT_DATAFLOW_SOURCE_DIR.
 #if defined(SIMANEAT_WITH_DATAFLOW)
 
 #include "pipeline/internal/DataflowErrorMap.h"
@@ -14,65 +15,103 @@ namespace simaai::neat::pipeline_internal {
 
 namespace {
 
-// Rows in ErrorCode order. Phase and Origin refine three of them:
-//   InvalidArgument  Describe/Prepare/Start: the Net or Plan (compile, instantiate, start):
-//                    misconfig.pipeline_shape. Process: FR1, a pushed extent outside the input's
-//                    bounds (Core checks it first, so this row is the backstop):
-//                    misconfig.input_shape.
-//   Timeout          Process: FR8, a pull's deadline: PullStatus::Timeout, not latched. Stop/Drain:
-//                    SR2/SR3, logged by the caller only. Origin Runner (H1): a device job that did
-//                    not finish in the Runner's time: infra.accelerator_execution_failed, latched.
-//   Internal         Runner/Kernels/Codecs origins (H0b on): infra.accelerator_execution_failed.
-//   ResourceExhausted, Unsupported  origin Runner (H0b, a device pool at Graph::build or at the
-//                    input's first push): resource.device_memory_exhausted (no CMA) and
-//                    infra.accelerator_execution_failed (no EL0 cache maintenance).
-//   Unretired        FR16 (H0b): a push whose device slot's write epoch could not end; the Run
-//                    latches it (DataflowRun.cpp, settle).
+// A model route loads its models and checks its kernels before any Net exists (soc::MlaModel::load
+// at Phase::Prepare, soc::Kernel::make at Phase::Describe), so their errors name no operator; the
+// operators and ports of a Plan name theirs (Plan::instantiate) and the Plan's own checks are
+// Origin::Dataflow.
+enum class Load { None, Model, Kernel };
+
+Load load_of(const df::Error& e) noexcept {
+  if (e.origin == df::Origin::Dataflow || e.op != df::kNoOperator) {
+    return Load::None;
+  }
+  return e.phase == df::Phase::Prepare    ? Load::Model
+         : e.phase == df::Phase::Describe ? Load::Kernel
+                                          : Load::None;
+}
+
+constexpr const char* kOtherBackend = "Build this Run with RunBackend::GStreamer.";
+
+// Rows in ErrorCode order. Every error a Run being built on Dataflow meets is Dataflow's own, and
+// RunBackend::Auto builds that Run on GStreamer, except two that GStreamer meets as well: a device
+// the process lost (Unretired; nothing in the process may drive it again) and a model file the MLA
+// does not load (GStreamer loads the same file).
+//   InvalidArgument  Process: a pushed extent outside the input's bounds (Core checks it first, so
+//                    this row is the backstop): misconfig.input_shape. The MLA's load: no such
+//                    file, or not a compiled model: io.open. The Kernels package refused a kernel's
+//                    request: misconfig.kernel_request. Otherwise the Net or Plan Core composed
+//                    (compile, instantiate, start): misconfig.pipeline_shape.
+//   ResourceExhausted  origin Runner: the device heap (CMA) has no memory for a device pool's slot,
+//                    at Graph::build or at the input's first push: resource.device_memory_exhausted.
+//   Timeout          Process: a pull's deadline: PullStatus::Timeout, not latched. Stop and Drain:
+//                    logged by the caller only. Origin Runner: a device job that did not finish in
+//                    the Runner's time: infra.accelerator_execution_failed, latched.
+//   Unsupported      The MLA's load: the MLA's context cannot be opened in this process:
+//                    infra.dispatcher_unavailable. The Kernels package has no implementation of a
+//                    kernel for its target: misconfig.kernel_unsupported. Another origin Runner:
+//                    the device memory's caches cannot be maintained in this process, a device
+//                    without the Kernels firmware: infra.accelerator_execution_failed. Origin
+//                    Dataflow: misconfig.pipeline_shape.
+//   Unretired        a push whose device slot's write epoch could not end (the Run latches it:
+//                    DataflowRun.cpp, settle), or a lost device.
+//   Internal         origins Runner, Kernels, Codecs: infra.accelerator_execution_failed.
 DataflowErrorMapping row(const df::Error& e) noexcept {
+  const Load load = load_of(e);
   switch (e.code) {
   case df::ErrorCode::InvalidArgument:
+    if (e.phase == df::Phase::Process) {
+      return {PullStatus::Error, error_codes::kInputShape, true, true, ""};
+    }
+    if (load == Load::Model) {
+      return {PullStatus::Error, error_codes::kIoOpen, true, false,
+              "Check the model package: the MLA does not load its model file."};
+    }
     return {PullStatus::Error,
-            e.phase == df::Phase::Process ? error_codes::kInputShape : error_codes::kPipelineShape,
-            true};
+            load == Load::Kernel ? error_codes::kKernelRequest : error_codes::kPipelineShape, true,
+            true, ""};
   case df::ErrorCode::ResourceExhausted:
-    // Origin Runner (H0b): the device heap (CMA) has no memory for a slot of a device pool.
     return {PullStatus::Error,
             e.origin == df::Origin::Runner ? error_codes::kDeviceMemoryExhausted
                                            : error_codes::kMemoryAllocationFailed,
-            true};
+            true, true, ""};
   case df::ErrorCode::Backpressure:
-    // FR2 is a push outcome (try_push false); a pull never returns it (WORKER.md 15.2).
-    return {PullStatus::Error, error_codes::kRuntimePull, false};
+    // A push outcome (try_push false); a pull never returns it.
+    return {PullStatus::Error, error_codes::kRuntimePull, false, true, ""};
   case df::ErrorCode::Timeout:
-    // Origin Runner (H1): a job the device did not finish in the Runner's own time (MlaOp). The
+    // Origin Runner: a job the device did not finish in the Runner's own time (MlaOp). The
     // operator failed and its Session with it: the Run's terminal error, not a pull's deadline.
     if (e.origin == df::Origin::Runner) {
-      return {PullStatus::Error, error_codes::kAcceleratorExecutionFailed, true};
+      return {PullStatus::Error, error_codes::kAcceleratorExecutionFailed, true, true, ""};
     }
     return {e.phase == df::Phase::Process ? PullStatus::Timeout : PullStatus::Error,
-            error_codes::kRuntimePull, false};
+            error_codes::kRuntimePull, false, true, ""};
   case df::ErrorCode::Closed:
-    // FR9 (closed and drained), SR1 (refused after stop), O9/O10: one Closed for Core.
-    return {PullStatus::Closed, error_codes::kRuntimePull, false};
+    // Closed and drained, refused after stop, a closed pool or port: one Closed for Core.
+    return {PullStatus::Closed, error_codes::kRuntimePull, false, true, ""};
   case df::ErrorCode::Unsupported:
-    // Origin Runner (H0b): this process cannot maintain the caches of device memory.
+    if (load == Load::Model) {
+      return {PullStatus::Error, error_codes::kDispatcherUnavailable, true, true, kOtherBackend};
+    }
+    if (load == Load::Kernel) {
+      return {PullStatus::Error, error_codes::kKernelUnsupported, true, true, kOtherBackend};
+    }
     return {PullStatus::Error,
             e.origin == df::Origin::Runner ? error_codes::kAcceleratorExecutionFailed
                                            : error_codes::kPipelineShape,
-            true};
+            true, true, kOtherBackend};
   case df::ErrorCode::Stale:
-    return {PullStatus::Error, error_codes::kInternalPluginFailure, true};
+    return {PullStatus::Error, error_codes::kInternalPluginFailure, true, true, ""};
   case df::ErrorCode::Unretired:
-    return {PullStatus::Error, error_codes::kAcceleratorExecutionFailed, true};
+    return {PullStatus::Error, error_codes::kAcceleratorExecutionFailed, true, false, ""};
   case df::ErrorCode::Internal:
     return {PullStatus::Error,
             e.origin == df::Origin::Dataflow || e.origin == df::Origin::Core ||
                     e.origin == df::Origin::Application
                 ? error_codes::kInternalPluginFailure
                 : error_codes::kAcceleratorExecutionFailed,
-            true};
+            true, true, ""};
   }
-  return {PullStatus::Error, error_codes::kInternalPluginFailure, true};
+  return {PullStatus::Error, error_codes::kInternalPluginFailure, true, true, ""};
 }
 
 } // namespace
@@ -85,21 +124,29 @@ std::string dataflow_error_text(const df::Error& error, std::string_view where) 
   std::string text(where);
   text += ": ";
   text += (error.message && *error.message) ? error.message : "runtime error";
-  if (error.code == df::ErrorCode::Unsupported && error.origin != df::Origin::Runner) {
-    text += "; not supported before H1";
-  }
   text += " (Dataflow backend)";
   return text;
 }
 
 [[noreturn]] void throw_dataflow_error(const df::Error& error, std::string_view where,
-                                       std::string_view detail) {
+                                       std::string_view detail, std::string_view hint) {
+  const DataflowErrorMapping mapping = map_dataflow_error(error);
   std::string summary = dataflow_error_text(error, where);
   if (!detail.empty()) {
     summary += "\n";
     summary += detail;
   }
-  error_util::throw_session_error(map_dataflow_error(error).code, summary);
+  std::string action = mapping.hint;
+  if (!hint.empty()) {
+    action += action.empty() ? "" : " ";
+    action += hint;
+  }
+  GraphReport report = error_util::make_report(mapping.code, summary, {}, action);
+  std::string message = error_util::decorate_error(report.error_code, report.repro_note);
+  if (!mapping.retry_on_gstreamer) {
+    throw DataflowErrorOnEveryBackend(std::move(message), std::move(report));
+  }
+  throw NeatError(std::move(message), std::move(report));
 }
 
 } // namespace simaai::neat::pipeline_internal

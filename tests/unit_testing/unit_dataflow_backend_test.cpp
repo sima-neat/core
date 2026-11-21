@@ -3,9 +3,10 @@
 // SIMA_NEAT_BACKEND, and no runtime type is named (libsima_neat.so hides the runtime's symbols).
 //
 // Covers: an undeclared input bound by its first push and enforced; a declared input with a
-// dynamic axis; a push outside the declared shape rejected at push; the H1 build errors, a fan-out
-// building since H0c (unit_dataflow_endpoints_test covers several endpoints) and an Input feeding
-// no Output;
+// dynamic axis; a push outside the declared shape rejected at push; the build errors, a fan-out
+// building (unit_dataflow_endpoints_test covers several endpoints) and an Input feeding no Output;
+// a Run Dataflow cannot build, under RunBackend::Auto (built on GStreamer) and requested
+// explicitly (an error at Graph::build);
 // the holder push error; explicit Dataflow on a sync run; a record bound by its first push (C2);
 // the link depth (the larger of queue_depth and max_buffers, each after its default or clamp);
 // try_push accounting
@@ -338,7 +339,7 @@ void build_errors() {
     g.add(nodes::Queue());
     g.add(nodes::Output());
     require_neat_error([&] { (void)g.build(dataflow()); }, error_codes::kPipelineShape,
-                       "not supported on the Dataflow backend");
+                       "not supported on the Dataflow backend", "RunBackend::GStreamer");
   }
   // A fan-out to two outputs builds since H0c (unit_dataflow_endpoints_test).
   {
@@ -386,6 +387,42 @@ void build_errors() {
     require_neat_error([&] { (void)run.push(TensorList{rgb(8, 8, 1)}); }, error_codes::kInputShape,
                        "record");
     run.close();
+  }
+}
+
+// A Run the Dataflow backend cannot build: its link would be deeper than the runtime's (2^30
+// messages; RunOptions::queue_depth above that). Decided at Graph::build whether the input binds
+// there (a seed) or at its first push (no seed). An explicit RunBackend::Dataflow request fails
+// there, naming the build and what to do; RunBackend::Auto under SIMA_NEAT_BACKEND=dataflow builds
+// the Run on GStreamer, which takes the push, and its [NEAT] line says why.
+void auto_builds_on_gstreamer_what_dataflow_cannot() {
+  constexpr int kDeeperThanTheRuntime = (1 << 30) + 1;
+  for (const bool seeded : {false, true}) {
+    const std::string what = seeded ? "seeded build" : "build without a seed";
+    const auto build = [&](RunOptions opt) {
+      Graph g = input_output();
+      return seeded ? g.build(TensorList{rgb(8, 8, 1)}, opt) : g.build(opt);
+    };
+    require_neat_error([&] { (void)build(dataflow(kDeeperThanTheRuntime)); },
+                       error_codes::kOptionOutOfRange, "Graph::build", "RunBackend::GStreamer");
+    RunOptions automatic = dataflow(kDeeperThanTheRuntime);
+    automatic.backend = RunBackend::Auto;
+    std::string text;
+    ::setenv("SIMA_NEAT_BACKEND", "dataflow", 1);
+    {
+      StderrCapture capture;
+      Run run = build(automatic);
+      require(run.push(TensorList{rgb(8, 8, 2)}), what + ": RunBackend::Auto's Run takes a push");
+      require(bytes_of(pulled_tensor(run, 5000, what)) == bytes_of(rgb(8, 8, 2)),
+              what + ": and gives it back");
+      run.close();
+      text = capture.text();
+    }
+    ::unsetenv("SIMA_NEAT_BACKEND");
+    require(text.find("backend=gstreamer") != std::string::npos &&
+                text.find("link depth") != std::string::npos &&
+                text.find("backend=dataflow") == std::string::npos,
+            what + ": RunBackend::Auto says it built the Run on GStreamer, and why:\n" + text);
   }
 }
 
@@ -1193,6 +1230,7 @@ RUN_TEST("unit_dataflow_backend_test", ([] {
            declared_input_with_dynamic_axis();
            push_outside_declared_shape_rejected();
            build_errors();
+           auto_builds_on_gstreamer_what_dataflow_cannot();
            holder_push_is_an_error();
            link_depth_is_max_of_queue_depth_and_max_buffers();
            try_push_accounting();

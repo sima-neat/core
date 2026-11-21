@@ -716,6 +716,21 @@ if (SIMANEAT_DATAFLOW_SOURCE_DIR AND
   set_property(TEST unit_dataflow_endpoints_test APPEND PROPERTY LABELS "unit;dataflow")
 endif()
 
+# The Dataflow backend's error table (DataflowErrorMap.cpp, compiled into the test because
+# libsima_neat.so hides it): Core's code and what RunBackend::Auto does for each runtime Error. No
+# device is opened.
+if (SIMANEAT_DATAFLOW_SOURCE_DIR AND
+    NOT unit_dataflow_error_map_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  add_pipeline_test(unit_dataflow_error_map_test
+    ${CMAKE_CURRENT_SOURCE_DIR}/unit_testing/unit_dataflow_error_map_test.cpp
+    ${PROJECT_SOURCE_DIR}/src/pipeline/internal/DataflowErrorMap.cpp
+  )
+  target_compile_definitions(unit_dataflow_error_map_test PRIVATE SIMANEAT_WITH_DATAFLOW=1)
+  target_include_directories(unit_dataflow_error_map_test PRIVATE
+    $<TARGET_PROPERTY:dataflow_core,INTERFACE_INCLUDE_DIRECTORIES>)
+  set_property(TEST unit_dataflow_error_map_test APPEND PROPERTY LABELS "unit;dataflow")
+endif()
+
 # H0 C2: Run's Tensor verbs, Graph::input/output and records, on both backends. One executable per
 # test, registered once for GStreamer and, with the runtime in the build, once more with
 # SIMA_NEAT_BACKEND=dataflow (label `dataflow`); the test reads the variable and requests that

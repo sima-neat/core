@@ -53,14 +53,30 @@ namespace {
 namespace error_util = pipeline_internal::error_util;
 using dataflow_codec::throw_input_shape;
 
+// Where an input's Plan is compiled and its Session started, and what an error there tells the
+// application to do: at Graph::build (a seed or a declared shape gives the spec), where an
+// explicit RunBackend::Dataflow request is told by the build (DataflowBackendSelect.cpp) and
+// RunBackend::Auto builds the Run on GStreamer instead; or at the input's first push, where the
+// Run exists already.
+struct BindSite {
+  const char* where;
+  const char* hint;
+};
+
+constexpr const char* kFirstPushHint =
+    "The input was bound by this push. Build this Run with RunBackend::GStreamer, or declare the "
+    "input's shape or build it with a seed: then this is found at Graph::build, where "
+    "RunBackend::Auto builds such a Run on GStreamer.";
+
 // The Net of input `input` of `config` for `binding`, compiled: one Feed, and one link and one
 // Fetch per Output the input feeds (a fan-out when there are several: one OutPort, one link per
-// Output, each with that Output's depth and policy). On a model route (H1, `loaded`: its model
-// and kernels), the Feed's one link goes to the first stage's operator, each operator's output
-// link to the next one, and the last one's to the one Fetch. The Feed's link and the Fetch's have
-// the Output's depth, the first with the Run's try_push policy; the links between operators hold
-// one message; every link behind the Feed's is Block (the Worker waits for room: nothing a stage
-// produced is dropped). Throws NeatError on a compile error.
+// Output, each with that Output's depth and policy). On a model route (`loaded`: its model and
+// kernels), the Feed's one link goes to the first stage's operator, each operator's output link
+// to the next one, and the last one's to the one Fetch. The Feed's link and the Fetch's have the
+// Output's depth (within the runtime's range: the build declines a deeper one), the first with
+// the Run's try_push policy; the links between operators hold one message; every link behind the
+// Feed's is Block (the Worker waits for room: nothing a stage produced is dropped). Throws
+// NeatError on a compile error.
 struct DataflowNet {
   df::Plan plan;
   std::uint32_t feed = 0;             ///< the Feed's operator index
@@ -69,7 +85,7 @@ struct DataflowNet {
 
 DataflowNet compile_dataflow_net(const DataflowRunConfig& config, std::size_t input,
                                  const DataflowInputBinding& binding, std::uint32_t stream,
-                                 const std::shared_ptr<void>& loaded) {
+                                 const std::shared_ptr<void>& loaded, const BindSite& site) {
   const DataflowInputConfig& in = config.inputs[input];
   df::Net net;
   const df::OperatorRef<df::Feed> feed = net.add<df::Feed>(
@@ -78,14 +94,6 @@ DataflowNet compile_dataflow_net(const DataflowRunConfig& config, std::size_t in
   std::vector<std::uint32_t> fetches;
   for (std::size_t k = 0; k < in.outputs.size(); ++k) {
     const DataflowOutputConfig& output = config.outputs[in.outputs[k]];
-    if (output.link_depth == 0U || output.link_depth > df::kMaxLinkDepth) {
-      pipeline_internal::error_util::throw_session_error(
-          error_codes::kOptionOutOfRange,
-          "Graph::build: the link depth " + std::to_string(output.link_depth) +
-              " (the larger of RunOptions::queue_depth " + std::to_string(output.ingress_depth) +
-              " and OutputOptions::max_buffers " + std::to_string(output.terminal_depth) +
-              ") is outside the Dataflow link's range 1.." + std::to_string(df::kMaxLinkDepth));
-    }
     df::Overflow overflow = df::Overflow::Block;
     if (output.terminal_drop || config.link_policy == OverflowPolicy::KeepLatest) {
       overflow = df::Overflow::DropOldest;
@@ -93,8 +101,8 @@ DataflowNet compile_dataflow_net(const DataflowRunConfig& config, std::size_t in
       overflow = df::Overflow::DropIncoming;
     }
     if (in.model) {
-      // H1. The last operator's output link is connected first, so that the Session's report
-      // lists the Output's link first, as for an Input that feeds its Output directly.
+      // The last operator's output link is connected first, so that the Session's report lists
+      // the Output's link first, as for an Input that feeds its Output directly.
       df::PortSpec produced;
       const std::vector<std::uint32_t> ops =
           add_dataflow_model_ops(net, *in.model, loaded, binding.spec, produced);
@@ -116,7 +124,7 @@ DataflowNet compile_dataflow_net(const DataflowRunConfig& config, std::size_t in
             df::LinkPolicy{.depth = output.link_depth, .overflow = overflow, .stale_after = {}});
       }
       if (status) {
-        pipeline_internal::throw_dataflow_error(*status, "Graph::build");
+        pipeline_internal::throw_dataflow_error(*status, site.where, {}, site.hint);
       }
       fetches.push_back(fetch.index);
       continue;
@@ -128,7 +136,7 @@ DataflowNet compile_dataflow_net(const DataflowRunConfig& config, std::size_t in
     if (const df::Status status = net.connect(
             feed.out(), fetch.in(),
             df::LinkPolicy{.depth = output.link_depth, .overflow = overflow, .stale_after = {}})) {
-      pipeline_internal::throw_dataflow_error(*status, "Graph::build");
+      pipeline_internal::throw_dataflow_error(*status, site.where, {}, site.hint);
     }
     fetches.push_back(fetch.index);
   }
@@ -136,14 +144,14 @@ DataflowNet compile_dataflow_net(const DataflowRunConfig& config, std::size_t in
   df::CompileOptions options{
       .force_fine_clock = false, .retention_limit_bytes = 0, .failure_report = &failure};
 #if defined(SIMANEAT_WITH_DATAFLOW_DEVICE_MEMORY)
-  // Where a device port (H0b: InputOptions::memory_policy Ev74 or Dms0) takes its slots: the
-  // process's Runner-backed source, which has no state and is never destroyed. A Plan of host
-  // ports never reads it.
+  // Where a device port (InputOptions::memory_policy Ev74 or Dms0) takes its slots: the process's
+  // Runner-backed source, which has no state and is never destroyed. A Plan of host ports never
+  // reads it.
   options.blocks = &df::runner::block_source();
 #endif
   df::Result<df::Plan> plan = std::move(net).compile(options);
   if (const df::Error* error = df::failure(plan)) {
-    pipeline_internal::throw_dataflow_error(*error, "Graph::build", failure.mismatch);
+    pipeline_internal::throw_dataflow_error(*error, site.where, failure.mismatch, site.hint);
   }
   return DataflowNet{std::get<df::Plan>(std::move(plan)), feed.index, std::move(fetches)};
 }
@@ -204,7 +212,7 @@ void DataflowInputPort::bind_at_build(std::span<const Tensor> seed) {
   }
   if (binding) {
     std::lock_guard<std::mutex> lock(mu_);
-    bind_locked(std::move(*binding), "Graph::build");
+    bind_locked(std::move(*binding), "Graph::build", /*at_build=*/true);
   }
 }
 
@@ -226,21 +234,22 @@ DataflowInputPort::Bound* DataflowInputPort::bind_first(std::span<const Tensor> 
                       (why.empty() ? std::string("the input cannot be bound") : why) +
                       " (Dataflow backend)");
   }
-  return bind_locked(std::move(*binding), where);
+  return bind_locked(std::move(*binding), where, /*at_build=*/false);
 }
 
 DataflowInputPort::Bound* DataflowInputPort::bind_locked(DataflowInputBinding binding,
-                                                         const char* where) {
+                                                         const char* where, bool at_build) {
+  const BindSite site{where, at_build ? "" : kFirstPushHint};
   if (config_.model) {
-    // H1: the input is the first stage's input, whatever the declaration allows beyond it.
+    // The input is the first stage's input, whatever the declaration allows beyond it.
     if (const std::string why = bind_dataflow_model_input(*config_.model, binding); !why.empty()) {
       throw_input_shape(std::string(where) + ": " + why + " (Dataflow backend)");
     }
   }
-  DataflowNet net = compile_dataflow_net(run_.config, index_, binding, stream_, model_);
+  DataflowNet net = compile_dataflow_net(run_.config, index_, binding, stream_, model_, site);
   df::Result<df::Session> session = std::move(net.plan).instantiate(df::SessionOptions{});
   if (const df::Error* error = df::failure(session)) {
-    pipeline_internal::throw_dataflow_error(*error, "Graph::build");
+    pipeline_internal::throw_dataflow_error(*error, site.where, {}, site.hint);
   }
   auto b = std::make_unique<Bound>(std::move(binding), std::get<df::Session>(std::move(session)),
                                    net.feed, net.fetches);
@@ -263,7 +272,7 @@ DataflowInputPort::Bound* DataflowInputPort::bind_locked(DataflowInputBinding bi
     b->frame_wraps = dataflow_device::make_frame_wraps();
   }
   if (const df::Status status = b->session.start()) {
-    pipeline_internal::throw_dataflow_error(*status, "Graph::build");
+    pipeline_internal::throw_dataflow_error(*status, site.where, {}, site.hint);
   }
   bound_storage_ = std::move(b);
   bound_.store(bound_storage_.get(), std::memory_order_release);
