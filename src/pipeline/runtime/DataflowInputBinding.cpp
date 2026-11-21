@@ -522,20 +522,22 @@ std::string dataflow_record_mismatch(const DataflowInputBinding& binding,
   for (std::size_t i = 0; i < fields.size(); ++i) {
     const Tensor& tensor = fields[i];
     const df::TensorSpec& spec = schema.fields[i].spec;
-    const std::string field = "field " + std::to_string(i) + ": ";
+    const auto field = [&mismatch, i](const std::string& what) {
+      return mismatch("field " + std::to_string(i) + ": " + what);
+    };
     if (tensor.dtype != binding.fields[i].dtype) {
-      return mismatch(field + "dtype differs");
+      return field("dtype differs");
     }
     if (tensor.is_composite() || tensor.has_tiled_storage()) {
-      return mismatch(field + "a composite or tiled tensor where a dense one is bound");
+      return field("a composite or tiled tensor where a dense one is bound");
     }
     if (tensor.shape.size() != spec.shape.rank) {
-      return mismatch(field + "rank " + std::to_string(tensor.shape.size()) + " differs");
+      return field("rank " + std::to_string(tensor.shape.size()) + " differs");
     }
     for (std::size_t d = 0; d < spec.shape.rank; ++d) {
       if (!spec.shape.dims[d].contains(tensor.shape[d])) {
-        return mismatch(field + "dimension " + std::to_string(d) + " = " +
-                        std::to_string(tensor.shape[d]) + " is out of bounds");
+        return field("dimension " + std::to_string(d) + " = " + std::to_string(tensor.shape[d]) +
+                     " is out of bounds");
       }
     }
   }

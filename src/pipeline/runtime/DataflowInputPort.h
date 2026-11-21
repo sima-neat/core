@@ -246,11 +246,13 @@ private:
   // Session::alloc gives now (FR14: every link full, kept in Bound::full_at), or none when it
   // would take a slot.
   df::Status device_full(Bound& bound) noexcept;
+  // `map_fn`: map_fn_type of the item's first tensor when push asked it already, else null.
   [[gnu::always_inline]] DataflowPushOutcome publish(Bound& bound, std::span<const Tensor> item,
                                                      const df::Stamp& stamp, bool block,
                                                      const char* where, RunAllocation* allocation,
                                                      bool wrappable, bool device_port,
-                                                     bool frame_port);
+                                                     bool frame_port,
+                                                     const std::type_info* map_fn);
 
   const DataflowPortContext run_;
   const std::size_t index_;
@@ -326,7 +328,8 @@ inline DataflowPushOutcome DataflowInputPort::publish(Bound& b, std::span<const 
                                                       const df::Stamp& stamp, bool block,
                                                       const char* where, RunAllocation* allocation,
                                                       bool wrappable, bool device_port,
-                                                      bool frame_port) {
+                                                      bool frame_port,
+                                                      const std::type_info* map_fn) {
   df::WriteLoan loan;
   const LentSlot lent(allocation, loan, where);
   const Tensor& first = item.front();
@@ -368,7 +371,9 @@ inline DataflowPushOutcome DataflowInputPort::publish(Bound& b, std::span<const 
                     : dataflow_device::wrap_tensor(first, b.binding.spec, b.slot_bytes, b.wrap_mask,
                                                    wrap, b.any_device_memory,
                                                    b.mapped_wraps.get()))
-             : dataflow_codec::wrap_block(first, b.slot_bytes, b.wrap_mask, wrap));
+             : dataflow_codec::wrap_block(first, b.slot_bytes, b.wrap_mask,
+                                          map_fn ? *map_fn : dataflow_codec::map_fn_type(first),
+                                          wrap));
     const df::Acquire mode = block ? df::Acquire::Block : df::Acquire::Fail;
     df::Result<df::WriteLoan> allocated =
         b.session.alloc(b.feed, mode, df::kNoDeadline, wrapped ? &wrap : nullptr);
@@ -434,8 +439,15 @@ inline DataflowPushOutcome DataflowInputPort::push(std::span<const Tensor> item,
                                       " tensors where one tensor of a declared shape is expected");
   }
   // A Tensor from this Run's alloc() that was pushed already has an empty storage: say so first.
-  const std::shared_ptr<RunAllocation> allocation =
-      commit_allocation && item.size() == 1U ? allocation_of(item.front(), run_.core) : nullptr;
+  // Its storage's map_fn type tells it; publish reads the same type for the wrap.
+  const std::type_info* map_fn = nullptr;
+  std::shared_ptr<RunAllocation> allocation;
+  if (commit_allocation && item.size() == 1U) {
+    map_fn = &dataflow_codec::map_fn_type(item.front());
+    if (*map_fn == typeid(RunAllocationMapper)) {
+      allocation = allocation_of(item.front(), run_.core);
+    }
+  }
   if (allocation) {
     require_pushable(*allocation, where);
   }
@@ -499,7 +511,7 @@ inline DataflowPushOutcome DataflowInputPort::push(std::span<const Tensor> item,
     stamp.user = frame_word;
   }
   return publish(*b, item, stamp, block, where, allocation.get(), wrappable, device_port,
-                 device_port && frame_word != 0U);
+                 device_port && frame_word != 0U, map_fn);
 }
 
 #pragma GCC visibility pop

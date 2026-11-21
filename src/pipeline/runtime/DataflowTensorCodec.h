@@ -212,21 +212,27 @@ static inline std::shared_ptr<TensorBuffer> lease_storage(std::span<const std::b
   return storage;
 }
 
-// W2: the Block that backs a slot with the storage of `t` (dataflow_wrap_layout held): its first
-// byte, `slot_bytes` long, and as keep-alive the Tensor's own TensorBuffer, which keeps the
-// storage's holder (one count on the shared_ptr's existing control block; nothing is allocated; an
-// application can read the release from its storage's use_count, as from GStreamer's). False,
-// and a copy instead, when the storage cannot be kept or must not be: no holder or no address
-// (memory nobody owns), a lease on a Dataflow slot or a Run::alloc tensor (D15), or an address
-// not aligned to the port's slot alignment (`align_mask` = slot_alignment - 1).
+// The type of a tensor's storage's map_fn (typeid(void) without one): std::function's
+// target_type, an indirect call, which a push asks once.
+static inline const std::type_info& map_fn_type(const Tensor& t) noexcept {
+  return t.storage ? t.storage->map_fn.target_type() : typeid(void);
+}
+
+// The Block that backs a slot with the storage of `t` (dataflow_wrap_layout held): its first byte,
+// `slot_bytes` long, and as keep-alive the Tensor's own TensorBuffer, which keeps the storage's
+// holder (one count on the shared_ptr's existing control block; nothing is allocated; an
+// application can read the release from its storage's use_count, as from GStreamer's). False, and
+// a copy instead, when the storage cannot be kept or must not be: no holder or no address (memory
+// nobody owns), a lease on a Dataflow slot or a Run::alloc tensor (`map_fn`, map_fn_type of `t`:
+// a wrap would pin a slot of a pool), or an address not aligned to the port's slot alignment
+// (`align_mask` = slot_alignment - 1).
 static inline bool wrap_block(const Tensor& t, std::size_t slot_bytes, std::uintptr_t align_mask,
-                              df::Block& out) {
+                              const std::type_info& map_fn, df::Block& out) {
   const TensorBuffer& storage = *t.storage;
   if (!storage.holder || !storage.data) {
     return false;
   }
-  const std::type_info& mapper = storage.map_fn.target_type(); // typeid(void) without a map_fn
-  if (mapper == typeid(SlotLeaseMapper) || mapper == typeid(RunAllocationMapper)) {
+  if (map_fn == typeid(SlotLeaseMapper) || map_fn == typeid(RunAllocationMapper)) {
     return false;
   }
   auto* data = static_cast<std::byte*>(storage.data) + t.byte_offset;

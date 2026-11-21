@@ -16,6 +16,7 @@
 #include "pipeline/internal/InputStreamStats.h"
 #include "policy/OverflowPolicy.h"
 
+#include <chrono>
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -82,6 +83,8 @@ public:
   // when its Sessions time their frames (SessionOptions::timing, which Core leaves off: two clock
   // reads and a histogram increment a frame); false, with nothing written, otherwise.
   virtual bool latency(double& avg_ms, double& min_ms, double& max_ms) const = 0;
+  // When the last pull returned a message; the clock's epoch before the first.
+  virtual std::chrono::steady_clock::time_point last_pull_at() const = 0;
 };
 
 #pragma GCC visibility push(hidden)

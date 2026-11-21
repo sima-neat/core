@@ -508,6 +508,11 @@ public:
     return true;
   }
 
+  std::chrono::steady_clock::time_point last_pull_at() const override {
+    return std::chrono::steady_clock::time_point(
+        std::chrono::steady_clock::duration(last_pull_ns_.load(std::memory_order_relaxed)));
+  }
+
 private:
   bool owned_output() const noexcept {
     return config_.run.output_memory == OutputMemory::Owned;
@@ -742,15 +747,12 @@ private:
     return PullStatus::Ok;
   }
 
+  // The Run's pull count and the time of its last pull (the run-lifetime throughput reads it:
+  // last_pull_at): one relaxed RMW, one clock read, one relaxed store.
   void count_pulled() {
     core_.outputs_pulled.fetch_add(1, std::memory_order_relaxed);
-    const auto now = std::chrono::steady_clock::now();
-    std::lock_guard<std::mutex> timing(core_.latency_mu);
-    if (!core_.pull_timing_init) {
-      core_.first_pull_at = now;
-      core_.pull_timing_init = true;
-    }
-    core_.last_pull_at = now;
+    last_pull_ns_.store(std::chrono::steady_clock::now().time_since_epoch().count(),
+                        std::memory_order_relaxed);
   }
 
   // With SIMA_NEAT_BACKEND set (the [NEAT] lines of DataflowBackendSelect.cpp), each input's
@@ -797,6 +799,7 @@ private:
 
   std::atomic<bool> stopped_{false};
   std::atomic<std::uint64_t> polls_{0};
+  std::atomic<std::chrono::steady_clock::rep> last_pull_ns_{0}; ///< count_pulled's clock read
   // A Run of several inputs: the counter of its pushes, orig_input_seq.
   std::atomic<std::uint64_t> run_seq_{0};
 

@@ -253,17 +253,19 @@ PullStatus pull_tensors_on_core(runtime::RunCore& core, std::optional<std::strin
 
 Result<TensorList> pull_result(runtime::RunCore* core, std::optional<std::string_view> output,
                                std::chrono::milliseconds timeout) {
-  const std::string where =
-      output ? "Run::pull(\"" + std::string(*output) + "\")" : std::string("Run::pull");
+  // The call's name, built only for an error's text.
+  const auto where = [output] {
+    return output ? "Run::pull(\"" + std::string(*output) + "\")" : std::string("Run::pull");
+  };
   PullError err;
   if (!core) {
     err.code = error_codes::kRuntimePull;
-    err.message = where + ": stream is closed";
+    err.message = where() + ": stream is closed";
     return Result<TensorList>::failure(PullStatus::Closed, std::move(err));
   }
   if (delivered_to_callback(*core, output)) {
     err.code = error_codes::kRuntimePull;
-    err.message = where + ": the output is delivered to on_output; it cannot be pulled";
+    err.message = where() + ": the output is delivered to on_output; it cannot be pulled";
     return Result<TensorList>::failure(PullStatus::Error, std::move(err));
   }
   TensorList tensors;
