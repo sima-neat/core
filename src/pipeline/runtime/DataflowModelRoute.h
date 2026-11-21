@@ -119,7 +119,8 @@ struct DataflowPulledTensor {
   /// TessSpec is `format` alone.
   std::optional<TessSpec> tess;
   /// What the route's image preproc publishes with every frame (Semantic::preprocess of the
-  /// pulled tensor), a constant of the frame size the route was built for. Unset: no such stage.
+  /// pulled tensor): the declared frame size's, or, where the frames change size, the port's
+  /// bound's (the pull publishes each frame's own then: `frames`). Unset: no such stage.
   std::optional<PreprocessRuntimeMeta> preprocess;
   /// A detection stage's wire (BoxDecode): Semantic::detection of the pulled tensor, beside the
   /// legacy TessSpec that carries the same `format`. Unset: no such stage.
@@ -277,10 +278,12 @@ void fill_dataflow_stage_tensors(const DataflowPulledTensor& pulled,
                                  const std::shared_ptr<const TensorEnvelope>& envelope,
                                  TensorList& out);
 
-// Before a push into a route whose first stage is the image preproc (`route.frame_input`) of a
-// tensor that is not the validated frame: throws NeatError (misconfig.input_shape) for a frame of
-// another size than the route was built for, and for one that carries ROI metadata, each with what
-// to do instead; returns for anything else (the binding's own check says what is wrong with it).
+// Before a push into a route whose first stage is the image preproc at a declared frame size
+// (`route.frame_input` without `route.frames`) of a tensor that is not the validated frame:
+// throws NeatError (misconfig.input_shape) for a frame of another size than the declared one,
+// and for one that carries ROI metadata, each with what to do instead; returns for anything else
+// (the binding's own check says what is wrong with it), and on a route whose frames change size
+// (dataflow_frame_word checks those).
 void refuse_dataflow_frame(const DataflowModelRoute& route, const Tensor& tensor,
                            const char* where);
 

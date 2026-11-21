@@ -559,7 +559,7 @@ void refused(const Model& model, const std::vector<TensorList>& inputs) {
     (void)run.push(TensorList{frame(kWidth / 2, kHeight / 2, 0)});
   } catch (const NeatError& error) {
     threw = true;
-    require_contains(error.what(), "where the Run was built for",
+    require_contains(error.what(), "where the Input declares",
                      std::string("refused: ") + error.what());
     std::cout << "[refused] a frame of half the size: " << error.what() << "\n";
   }

@@ -465,7 +465,7 @@ void refused(const Model& model) {
     }
     throw std::runtime_error(std::string("refused: ") + what + " was pushed");
   };
-  fails({frame(640, 480, 0)}, "where the Run was built for 1280x720", "a 640x480 frame");
+  fails({frame(640, 480, 0)}, "where the Input declares 1280x720", "a 640x480 frame");
   Tensor roi = frame(1280, 720, 0);
   PreprocessRuntimeMeta meta;
   meta.original_width = 1280;

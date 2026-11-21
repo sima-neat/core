@@ -1526,11 +1526,11 @@ void refuse_dataflow_frame(const DataflowModelRoute& route, const Tensor& tensor
     pipeline_internal::error_util::throw_session_error(
         error_codes::kInputShape,
         std::string(where) + ": a frame of " + std::to_string(tensor.shape[lead + 1U]) + "x" +
-            std::to_string(tensor.shape[lead]) + " where the Run was built for " +
+            std::to_string(tensor.shape[lead]) + " where the Input declares " +
             std::to_string(want[2]) + "x" + std::to_string(want[1]) +
-            ": on the Dataflow backend the image preproc stage runs at the frame size the input "
-            "had at the build (its seed or its declaration); a size that changes between pushes "
-            "needs RunBackend::GStreamer");
+            ": on the Dataflow backend a declared frame size (InputOptions width and height, or "
+            "a shape with every axis fixed) is the size of every frame; for frames whose size "
+            "changes, declare InputOptions::max_width and max_height instead, or no size");
   }
 }
 
@@ -2094,7 +2094,8 @@ std::uint64_t dataflow_frame_word(const DataflowModelRoute& route, const Tensor&
     refuse("a frame of " + std::to_string(width) + "x" + std::to_string(height) +
            " where the model's image preproc stage takes frames up to " +
            std::to_string(frames.envelope_width) + "x" + std::to_string(frames.envelope_height) +
-           " (the capacity it is prepared for) (Dataflow backend)");
+           " (the capacity it is prepared for): push frames within that size (Dataflow "
+           "backend)");
   }
   // Above the Input's capacity (its declared bound, or its seed's size): GStreamer's refusal.
   const auto above = [where](const char* axis, std::int64_t actual, std::int64_t capacity) {

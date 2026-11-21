@@ -587,13 +587,13 @@ void errors_that_stay_on_gstreamer() {
     g.connect("left", "combined");
     g.connect("right", "combined");
     require_neat_error([&] { (void)g.build(dataflow()); }, error_codes::kPipelineShape,
-                       "fan-in is not supported before H1");
+                       "fan-in is not supported on the Dataflow backend");
   }
   // Combine (a fan-in with a CombinePolicy).
   {
     Graph join = graphs::Combine({"left", "right"}, "combined", CombinePolicy::ByFrame);
     require_neat_error([&] { (void)join.build(dataflow()); }, error_codes::kPipelineShape,
-                       "before H1");
+                       "CombinePolicy (fan-in) is not supported on the Dataflow backend");
   }
   // An Input that feeds nothing.
   {

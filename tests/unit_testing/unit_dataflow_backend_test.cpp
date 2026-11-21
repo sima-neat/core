@@ -338,7 +338,7 @@ void build_errors() {
     g.add(nodes::Queue());
     g.add(nodes::Output());
     require_neat_error([&] { (void)g.build(dataflow()); }, error_codes::kPipelineShape,
-                       "not supported before H1");
+                       "not supported on the Dataflow backend");
   }
   // A fan-out to two outputs builds since H0c (unit_dataflow_endpoints_test).
   {

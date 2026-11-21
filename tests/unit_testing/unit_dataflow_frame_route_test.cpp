@@ -722,7 +722,7 @@ void declared(const Model& model, const std::vector<cv::Mat>& images) {
             df, frames, true, "declared");
     Graph g = route_graph(model, 3, &in);
     Run run = g.build(whole, on(RunBackend::Dataflow));
-    threw(run, half, "where the Run was built for", "a declared size, a frame of half of it");
+    threw(run, half, "where the Input declares", "a declared size, a frame of half of it");
     require(run.push(whole), "declared: the Run goes on");
     require(pull_frame(run, false, "declared").bytes[0] == df[0].bytes[0],
             "declared: the next frame of the declared size gives its wire");

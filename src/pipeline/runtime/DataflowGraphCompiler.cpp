@@ -143,13 +143,17 @@ struct Qualification {
 // Model::preprocess(), inference(), postprocess()) feeding one Output. Whether those nodes are
 // stages this backend runs is the planner's question (derive_config).
 Qualification qualify(const DataflowGraphView& view) {
+  static constexpr const char* kCombined =
+      "an Output with a CombinePolicy (fan-in) is not supported on the Dataflow backend";
   Qualification q;
   if (view.model_route) {
-    q.reason = "a Model input route is not supported before H1";
+    q.reason = "a graph whose Model processes its own input (Model::graph() with an input "
+               "route) is not supported on the Dataflow backend";
     return q;
   }
   if (!view.runtime_stages.empty()) {
-    q.reason = "runtime stage " + view.runtime_stages.front() + " is not supported before H1";
+    q.reason = "runtime stage " + view.runtime_stages.front() +
+               " is not supported on the Dataflow backend";
     return q;
   }
   const std::size_t n = view.vertices.size();
@@ -163,7 +167,11 @@ Qualification qualify(const DataflowGraphView& view) {
     }
     if (dynamic_cast<const Input*>(node.get())) {
       kind[vertex] = Kind::In;
-    } else if (dynamic_cast<const Output*>(node.get())) {
+    } else if (const auto* output = dynamic_cast<const Output*>(node.get())) {
+      if (output->options().combine_policy != CombinePolicy::None) {
+        q.reason = kCombined;
+        return q;
+      }
       kind[vertex] = Kind::Out;
     } else if (dataflow_has_model_route() &&
                (node->kind() == "ModelFragment" || view.model_stage[vertex])) {
@@ -171,12 +179,14 @@ Qualification qualify(const DataflowGraphView& view) {
       fragments.push_back(vertex);
     } else if (node->kind() == "SimaBoxDecode") {
       q.reason = "node " + node_text(*node) +
-                 " is a standalone BoxDecode node, which is not supported on Dataflow yet: there "
-                 "BoxDecode runs as the model's own stage, Model::postprocess() behind "
-                 "Model::inference()";
+                 " is a standalone BoxDecode node, which is not supported on the Dataflow "
+                 "backend: there BoxDecode runs as the model's own stage, Model::postprocess() "
+                 "behind Model::inference()";
       return q;
     } else {
-      q.reason = "node " + node_text(*node) + " is not supported before H1";
+      q.reason = "node " + node_text(*node) +
+                 " is not supported on the Dataflow backend, which runs Inputs, Outputs and the "
+                 "stages of a Model between them";
       return q;
     }
   }
@@ -218,11 +228,12 @@ Qualification qualify(const DataflowGraphView& view) {
     }
   }
   if (q.inputs.empty()) {
-    q.reason = "a graph with no public Input (a source graph) is not supported before H1";
+    q.reason = "a graph with no public Input (a source graph) is not supported on the Dataflow "
+               "backend";
     return q;
   }
   if (q.outputs.empty()) {
-    q.reason = "a graph with no public Output is not supported before H1";
+    q.reason = "a graph with no public Output is not supported on the Dataflow backend";
     return q;
   }
 
@@ -233,23 +244,19 @@ Qualification qualify(const DataflowGraphView& view) {
   std::function<bool(std::size_t, std::size_t)> follow = [&](std::size_t start, std::size_t e) {
     const auto& edge = view.edges[e];
     if (edge.policy != GraphLinkPolicy::Default) {
-      q.reason = "a realtime link policy is not supported before H1";
+      q.reason = "a link policy other than GraphLinkPolicy::Default is not supported on the "
+                 "Dataflow backend";
       return false;
     }
     if (!edge.stream_id.empty()) {
-      q.reason = "a link stream_id ('" + edge.stream_id + "') is not supported before H1";
+      q.reason = "a link stream_id ('" + edge.stream_id +
+                 "') is not supported on the Dataflow backend";
       return false;
     }
     const std::size_t to = edge.to;
     if (!elide[to]) {
       links.emplace_back(start, to);
       return true;
-    }
-    if (kind[to] == Kind::Out &&
-        dynamic_cast<const Output*>(view.vertices[to].get())->options().combine_policy !=
-            CombinePolicy::None) {
-      q.reason = "an Output CombinePolicy (fan-in) is not supported before H1";
-      return false;
     }
     if (visiting[to]) {
       q.reason = "the public boundary declarations form a cycle";
@@ -305,11 +312,6 @@ Qualification qualify(const DataflowGraphView& view) {
                  ") runs on Dataflow only in one chain between one Input and one Output";
       return q;
     }
-    if (dynamic_cast<const Output*>(view.vertices[q.outputs[0]].get())->options().combine_policy !=
-        CombinePolicy::None) {
-      q.reason = "an Output CombinePolicy (fan-in) is not supported before H1";
-      return q;
-    }
     q.producer[0] = 0;
     q.fan_out.assign(1, 1);
     return q;
@@ -317,17 +319,13 @@ Qualification qualify(const DataflowGraphView& view) {
   for (const auto& [from, to] : links) {
     if (kind[from] != Kind::In || kind[to] != Kind::Out) {
       q.reason = "a connection from " + text(from) + " to " + text(to) +
-                 " (only Inputs feeding Outputs) is not supported before H1";
-      return q;
-    }
-    if (dynamic_cast<const Output*>(view.vertices[to].get())->options().combine_policy !=
-        CombinePolicy::None) {
-      q.reason = "an Output CombinePolicy (fan-in) is not supported before H1";
+                 " (only Inputs feeding Outputs) is not supported on the Dataflow backend";
       return q;
     }
     std::size_t& producer = q.producer[output_of[to]];
     if (producer != kNone) {
-      q.reason = text(to) + " has more than one producer: fan-in is not supported before H1";
+      q.reason = text(to) +
+                 " has more than one producer: fan-in is not supported on the Dataflow backend";
       return q;
     }
     producer = input_of[from];
@@ -562,8 +560,8 @@ DataflowRunConfig derive_config(const Graph& graph, const DataflowGraphView& vie
         input.input.memory_policy = InputMemoryPolicy::Ev74;
       }
       if (config.outputs[input.outputs.front()].terminal_drop) {
-        *why = "OutputOptions::drop behind a model is not supported on Dataflow yet (the last "
-               "operator's output link would drop, which Core does not count yet)";
+        *why = "OutputOptions::drop behind a model is not supported on the Dataflow backend: "
+               "the route's last link would drop frames, which Core does not count";
         return config;
       }
     }
@@ -590,8 +588,8 @@ DataflowRunConfig derive_config(const Graph& graph, const DataflowGraphView& vie
              " feeds Outputs with and without OutputOptions::drop under OverflowPolicy::" +
              std::string(policy_text(config.link_policy)) +
              ": a blocking push would wait for room on some of its links and evict on the "
-             "others, which the runtime's push cannot do yet (it waits on every link, or on "
-             "the Block links only)";
+             "others, which the runtime's push cannot do (it waits on every link, or on the "
+             "Block links only)";
       return config;
     }
   }
