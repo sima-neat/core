@@ -214,14 +214,10 @@ public:
     /// full (FR14); kNoRefusal otherwise (still_full; a device input: device_full).
     static constexpr std::uint64_t kNoRefusal = ~std::uint64_t{0};
     std::atomic<std::uint64_t> full_at{kNoRefusal};
-    /// A model route whose first stage is an A65 kernel (H1): a wrap carries the CPU's address of
-    /// the tensor's bytes, from this cache of the tensors pushed so far
-    /// (DataflowDeviceMemory.h). Null on every other route. Fixed at bind.
-    std::shared_ptr<dataflow_device::CpuWraps> cpu_wraps;
-    /// A model route whose frames change size (H1): the CPU's mappings of the frames pushed so
-    /// far, for the wrap of a frame into the route's bounded port (dataflow_device::wrap_frame).
-    /// Null on every other route. Fixed at bind.
-    std::shared_ptr<void> frame_wraps;
+    /// A model route whose first stage is an A65 kernel, or whose frames change size: a wrap
+    /// carries the CPU's address of the tensor's bytes, from this cache of the tensors pushed so
+    /// far (DataflowDeviceMemory.h). Null on every other route. Fixed at bind.
+    std::shared_ptr<dataflow_device::MappedWraps> mapped_wraps;
   };
 
 private:
@@ -363,9 +359,10 @@ inline DataflowPushOutcome DataflowInputPort::publish(Bound& b, std::span<const 
         (device_port
              ? (frame_port
                     ? dataflow_device::wrap_frame(first, b.slot_bytes, b.wrap_mask, wrap,
-                                                  b.frame_wraps.get())
+                                                  b.mapped_wraps.get())
                     : dataflow_device::wrap_tensor(first, b.binding.spec, b.slot_bytes, b.wrap_mask,
-                                                   wrap, b.any_device_memory, b.cpu_wraps.get()))
+                                                   wrap, b.any_device_memory,
+                                                   b.mapped_wraps.get()))
              : dataflow_codec::wrap_block(first, b.slot_bytes, b.wrap_mask, wrap));
     const df::Acquire mode = block ? df::Acquire::Block : df::Acquire::Fail;
     df::Result<df::WriteLoan> allocated =

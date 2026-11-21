@@ -35,10 +35,12 @@ namespace {
 
 namespace codec = dataflow_codec;
 
-// What a device message wrapped with a CPU address keeps (a port of bounded shape, wrap_tensor):
-// the pushed tensor's storage and the read map its CPU address comes from. The pull takes
-// `storage`; the map ends with the last drop of the message. A message wrapped by its descriptor
-// alone keeps the pushed tensor's TensorBuffer itself, as a host wrap does, and no map.
+// The holder of every device wrap with a CPU address (wrap_tensor, wrap_frame): the pushed
+// tensor's storage and the mapping its CPU address comes from, a read map of the storage (a port
+// of bounded shape) or Core's own mmap of its DMA-BUF (MappedWraps). The pull takes `storage`;
+// the mapping ends with the last drop of the Block, before the storage is released. A message
+// wrapped by its descriptor alone holds the pushed tensor's TensorBuffer itself, as a host wrap
+// does, and no mapping.
 struct WrapHold {
   std::shared_ptr<TensorBuffer> storage;
   std::int64_t byte_offset = 0;
@@ -128,9 +130,9 @@ std::shared_ptr<TensorBuffer> slot_storage(const df::Message& message, const df:
 
 } // namespace
 
-// One read-only mapping per pushed tensor, found again by the tensor's storage and byte offset.
-// Sixteen tensors in rotation are served without a map; a seventeenth replaces the oldest entry.
-class CpuWraps {
+// One read-only mapping per pushed tensor (DataflowDeviceMemory.h), found again by the tensor's
+// storage, byte offset and bytes.
+class MappedWraps {
 public:
   // The mapping of `slot_bytes` at `fd_offset` of the DMA-BUF `fd`, which is `storage`'s, with
   // the tensor's first byte in `data`; null when the kernel gives none.
@@ -183,12 +185,13 @@ private:
   std::size_t next_ = 0;
 };
 
-std::shared_ptr<CpuWraps> make_cpu_wraps() {
-  return std::make_shared<CpuWraps>();
+std::shared_ptr<MappedWraps> make_mapped_wraps() {
+  return std::make_shared<MappedWraps>();
 }
 
 bool wrap_tensor(const Tensor& t, const df::PortSpec& port_spec, std::size_t slot_bytes,
-                 std::uintptr_t align_mask, df::Block& out, bool any_device_memory, CpuWraps* cpu) {
+                 std::uintptr_t align_mask, df::Block& out, bool any_device_memory,
+                 MappedWraps* mapped) {
   const df::MemoryKind port = port_spec.memory;
   if (port == df::MemoryKind::Host || !t.storage || t.storage->kind != StorageKind::GstSample ||
       !t.storage->holder || t.byte_offset < 0) {
@@ -217,15 +220,15 @@ bool wrap_tensor(const Tensor& t, const df::PortSpec& port_spec, std::size_t slo
   out.fd = fd;
   out.fd_offset = static_cast<std::size_t>(memory_offset) + offset;
   out.kind = port;
-  if (cpu) {
-    // The first operator reads through the CPU's address: the tensor's own mapping (CpuWraps).
+  if (mapped) {
+    // The CPU's address of the tensor's first byte, from Core's own mapping of it (MappedWraps).
     // A DMA-BUF maps at a page, so the address is aligned as the offset is.
     if ((out.fd_offset & align_mask) != 0U) {
       return false;
     }
     std::byte* data = nullptr;
     std::shared_ptr<WrapHold> hold =
-        cpu->get(t.storage, t.byte_offset, fd, out.fd_offset, slot_bytes, data);
+        mapped->get(t.storage, t.byte_offset, fd, out.fd_offset, slot_bytes, data);
     if (!hold) {
       return false;
     }
@@ -285,8 +288,8 @@ std::shared_ptr<TensorBuffer> pulled_storage(const df::Message& message, const d
     return storage;
   }
   if (block.holder) {
-    // Every wrap of a Feed is Core's own (DataflowInputPort), and a wrap with a descriptor and a
-    // CPU address is wrap_tensor's WrapHold.
+    // Every wrap of a Feed is Core's own (DataflowInputPort), and every device wrap with a
+    // descriptor and a CPU address holds a WrapHold (wrap_tensor, wrap_frame).
     const auto* hold = static_cast<const WrapHold*>(block.holder.get());
     byte_offset = hold->byte_offset;
     return hold->storage;

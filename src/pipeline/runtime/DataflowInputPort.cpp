@@ -263,13 +263,12 @@ DataflowInputPort::Bound* DataflowInputPort::bind_locked(DataflowInputBinding bi
   // by its descriptor alone; a tensor of the other device heap is copied into a slot.
   const bool ev74_first = config_.model && config_.model->ev74_input;
   b->any_device_memory = config_.model && !ev74_first;
-  if (config_.model && config_.model->kernel_input && !ev74_first) {
-    b->cpu_wraps = dataflow_device::make_cpu_wraps();
-  }
-  if (config_.model && config_.model->frames && !config_.model->planar_input) {
-    // In front of an image preproc whose frames change size the port is bounded, and the runtime
-    // takes a wrap into a bounded port only with the CPU's address of its bytes.
-    b->frame_wraps = dataflow_device::make_frame_wraps();
+  // An A65 kernel reads a wrap through the CPU's address; in front of an image preproc whose
+  // frames change size the port is bounded, and the runtime takes a wrap into a bounded port only
+  // with that address. Every push of such a route takes wrap_frame, of the other wrap_tensor.
+  if (config_.model && ((config_.model->kernel_input && !ev74_first) ||
+                        (config_.model->frames && !config_.model->planar_input))) {
+    b->mapped_wraps = dataflow_device::make_mapped_wraps();
   }
   if (const df::Status status = b->session.start()) {
     pipeline_internal::throw_dataflow_error(*status, site.where, {}, site.hint);

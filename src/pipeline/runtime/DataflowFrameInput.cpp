@@ -13,121 +13,24 @@
 #include "pipeline/runtime/DataflowModelRoute.h"
 #include "pipeline/runtime/DataflowTensorCodec.h"
 
-#include <sys/mman.h>
-#include <unistd.h>
-
-#include <array>
 #include <memory>
-#include <mutex>
 #include <span>
 #include <utility>
 
 namespace simaai::neat::runtime::dataflow_device {
 
-namespace {
-
-// What a frame wrapped with its CPU address keeps: the pushed tensor's storage and Core's own
-// read-only mapping of the frame's bytes in its DMA-BUF (not a map of its GStreamer memory,
-// which would refuse the application's next write map of the tensor). The mapping ends with the
-// last drop of the Block: the message's, or the operator's that kept the buffer.
-struct FrameHold {
-  std::shared_ptr<TensorBuffer> storage;
-  void* base = nullptr;
-  std::size_t length = 0;
-  ~FrameHold() {
-    if (base) {
-      ::munmap(base, length);
-    }
-  }
-};
-
-// One mapping per pushed frame, found again by the tensor's storage, byte offset and bytes while
-// somebody still holds it (the operator keeps the buffers it admitted). Sixteen frames in
-// rotation are served without a map; a seventeenth replaces the oldest entry. An entry does not
-// keep its mapping alive.
-class FrameWraps {
-public:
-  std::shared_ptr<FrameHold> get(const std::shared_ptr<TensorBuffer>& storage,
-                                 std::int64_t byte_offset, int fd, std::size_t fd_offset,
-                                 std::size_t bytes, std::byte*& data) {
-    static const std::size_t page = static_cast<std::size_t>(::sysconf(_SC_PAGESIZE));
-    const std::size_t lead = fd_offset % page;
-    std::lock_guard<std::mutex> lock(mu_);
-    for (Entry& entry : entries_) {
-      if (entry.storage == storage.get() && entry.byte_offset == byte_offset &&
-          entry.bytes == bytes) {
-        if (std::shared_ptr<FrameHold> hold = entry.hold.lock()) {
-          data = static_cast<std::byte*>(hold->base) + lead;
-          return hold;
-        }
-      }
-    }
-    const std::size_t length = lead + bytes;
-    void* const base =
-        ::mmap(nullptr, length, PROT_READ, MAP_SHARED, fd, static_cast<off_t>(fd_offset - lead));
-    if (base == MAP_FAILED) {
-      return nullptr;
-    }
-    auto hold = std::make_shared<FrameHold>();
-    hold->storage = storage;
-    hold->base = base;
-    hold->length = length;
-    Entry& entry = entries_[next_++ % entries_.size()];
-    entry.storage = storage.get();
-    entry.byte_offset = byte_offset;
-    entry.bytes = bytes;
-    entry.hold = hold;
-    data = static_cast<std::byte*>(base) + lead;
-    return hold;
-  }
-
-private:
-  struct Entry {
-    const TensorBuffer* storage = nullptr; ///< compared only while `hold` lives, which keeps it
-    std::int64_t byte_offset = 0;
-    std::size_t bytes = 0;
-    std::weak_ptr<FrameHold> hold;
-  };
-  std::mutex mu_;
-  std::array<Entry, 16> entries_;
-  std::size_t next_ = 0;
-};
-
-} // namespace
-
-std::shared_ptr<void> make_frame_wraps() {
-  return std::make_shared<FrameWraps>();
-}
-
 bool wrap_frame(const Tensor& t, std::size_t slot_bytes, std::uintptr_t align_mask, df::Block& out,
-                void* wraps) {
+                MappedWraps* mapped) {
   // The frame's own bytes (dataflow_wrap_layout let a dense frame with tight rows come here).
   const std::size_t bytes = t.dense_bytes_tight();
-  if (!wraps || bytes == 0U || bytes > slot_bytes) {
+  if (!mapped || bytes == 0U || bytes > slot_bytes) {
     return false;
   }
-  // wrap_tensor's Block for a tensor of exactly these bytes into an Ev74 port of fixed shape:
+  // wrap_tensor's Block for a tensor of exactly these bytes in EV74 memory, with its CPU address:
   // its conditions on the storage, the descriptor, the offset and its alignment.
-  df::TensorSpec tensor;
-  tensor.dtype = df::DType::UInt8;
-  tensor.shape.rank = 1;
-  tensor.shape.dims[0] = df::Dim(static_cast<std::int64_t>(bytes));
-  tensor.layout = df::Dense{};
   df::PortSpec port;
-  port.payload = tensor;
   port.memory = df::MemoryKind::Ev74;
-  if (!wrap_tensor(t, port, bytes, align_mask, out)) {
-    return false;
-  }
-  std::byte* data = nullptr;
-  std::shared_ptr<FrameHold> hold = static_cast<FrameWraps*>(wraps)->get(
-      t.storage, t.byte_offset, out.fd, out.fd_offset, bytes, data);
-  if (!hold) {
-    return false;
-  }
-  out.data = data;
-  out.holder = std::move(hold);
-  return true;
+  return wrap_tensor(t, port, bytes, align_mask, out, /*any_device_memory=*/false, mapped);
 }
 
 // H1: a push into a model route whose frames change size (DataflowModelRoute::frames): every

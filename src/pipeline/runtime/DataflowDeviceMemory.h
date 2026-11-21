@@ -62,19 +62,30 @@ DataflowPushOutcome push_frame(DataflowInputPort& port, const DataflowModelRoute
                                const char* where, bool commit_allocation, std::int64_t pushed_seq,
                                bool may_wrap);
 
-// H1, such a route's wrap (DataflowFrameInput.cpp), in wrap_tensor's place in its push: the
-// Block that backs a slot of the route's bounded Ev74 port with the DMA-BUF of the frame `t`,
-// whatever the frame's size up to the port's (dataflow_wrap_layout: dense, rows not padded). It
-// is wrap_tensor's Block for a tensor of the frame's own bytes (the same conditions on the
-// storage and on the alignment), with the CPU's address of its first byte, which the runtime
-// asks of a wrap into a bounded port: Core's own read-only mapping of the frame's bytes, found
-// again in `wraps` (make_frame_wraps: one per bound input) when the tensor is pushed again. Its
-// size is the frame's, which the push's extent is held against; nothing is copied, and nothing
-// is cleaned (an EV74 tensor's writer made its bytes visible when its map ended). The holder is
-// the mapping, which keeps the tensor's TensorBuffer.
-std::shared_ptr<void> make_frame_wraps();
+// Core's own read-only mappings of the device tensors pushed into one input whose wraps carry the
+// CPU's address of their bytes: a model route whose first stage is an A65 kernel (it reads
+// through that address), and one whose frames change size (the runtime takes a wrap into a
+// bounded device port only with it). A tensor pushed again is given the mapping it had, so the
+// operator knows its buffer again (a wrapped Block is known by its address, descriptor, offset
+// and holder) and nothing is mapped or admitted per frame. A mapping is an mmap of the tensor's
+// DMA-BUF, not a map of its GStreamer memory: it lives as long as an operator keeps the buffer,
+// and a held GstMemory map would refuse the application's next write map of the same tensor.
+// Its holder keeps the tensor's TensorBuffer; it is the one holder type of every device wrap
+// with a CPU address, which is how a pull finds the pushed storage again (pulled_storage).
+// Sixteen tensors in rotation are served without a map; a seventeenth replaces the oldest entry.
+// An entry does not keep its mapping alive (whoever holds the Block does); a dead one is replaced.
+class MappedWraps;
+std::shared_ptr<MappedWraps> make_mapped_wraps();
+
+// A model route whose frames change size (DataflowFrameInput.cpp), in wrap_tensor's place in its
+// push: the Block that backs a slot of the route's bounded Ev74 port with the DMA-BUF of the frame
+// `t`, whatever the frame's size up to the port's (dataflow_wrap_layout: dense, rows not padded).
+// It is wrap_tensor's Block for a tensor of the frame's own bytes, with the CPU's address of its
+// first byte from `mapped`. Its size is the frame's, which the push's extent is held against;
+// nothing is copied, and nothing is cleaned (an EV74 tensor's writer made its bytes visible when
+// its map ended).
 bool wrap_frame(const Tensor& t, std::size_t slot_bytes, std::uintptr_t align_mask, df::Block& out,
-                void* wraps);
+                MappedWraps* mapped);
 
 // Core's cross-Run rule (DataflowInputPort::enforce_transferable) for the tensors of one item,
 // asked of every push into a device input that skips the other checks for a device tensor of a
@@ -106,17 +117,6 @@ void pulled_tensors(const DataflowInputBinding& binding,
 void fill_stage_leaf(Tensor& tensor, const DataflowPulledTensor& pulled,
                      std::shared_ptr<TensorBuffer> storage, std::int64_t byte_offset);
 
-// The CPU's view of the device tensors pushed into an input whose consumer reads through the
-// CPU's address (a model route whose first stage is an A65 kernel, H1). A tensor pushed again is
-// given the mapping it had, so the operator knows its buffer again (a wrapped Block is known by
-// its address, descriptor, offset and holder) and nothing is mapped or admitted per frame. The
-// mapping is Core's own read-only mmap of the tensor's DMA-BUF, not a map of its GStreamer
-// memory: it lives as long as an operator keeps the buffer, and a held GstMemory map would refuse
-// the application's next write map of the same tensor. An entry does not keep its mapping alive
-// (whoever holds the Block does); a dead one is replaced.
-class CpuWraps;
-std::shared_ptr<CpuWraps> make_cpu_wraps();
-
 // Push. The Block that backs a slot of a device port (`port`: Ev74 or Dms0) with the DMA-BUF of
 // `t`, whose layout is a whole slot's (dataflow_wrap_layout). True when all of these hold, and a
 // copy into the slot otherwise:
@@ -136,18 +136,18 @@ std::shared_ptr<CpuWraps> make_cpu_wraps();
 // TensorBuffer, as a host wrap's, kept until the message's last drop. On a port of bounded shape
 // the runtime wants the CPU address: one read map of the storage, whose address must be aligned
 // too, kept with the storage until the message's last drop.
-// With `cpu` (a route whose first operator reads through the CPU's address) the Block also
-// carries the address of the tensor's first byte in a mapping from `cpu` (CpuWraps), whatever the
-// port's shape; its holder is that mapping, which keeps the tensor's TensorBuffer.
+// With `mapped` the Block also carries the address of the tensor's first byte in a mapping from
+// `mapped`, whatever the port's shape; its holder is that mapping.
 bool wrap_tensor(const Tensor& t, const df::PortSpec& port, std::size_t slot_bytes,
                  std::uintptr_t align_mask, df::Block& out, bool any_device_memory = false,
-                 CpuWraps* cpu = nullptr);
+                 MappedWraps* mapped = nullptr);
 
 // Pull. The storage of the tensor of `message`, whose `block` (Message::block) has a descriptor:
-//   - a wrap (the Block has a holder): the pushed tensor's storage itself (D14), with the pushed
-//     tensor's byte offset. Nothing was mapped for it unless the port's shape is bounded (then
-//     the wrap's read map ends when the caller drops the message); a CPU read of the pulled
-//     tensor maps through that storage, as of any EV74 tensor;
+//   - a wrap (the Block has a holder): the pushed tensor's storage itself, with the pushed
+//     tensor's byte offset. A wrap by its descriptor alone (no CPU address) holds the
+//     TensorBuffer itself; a wrap with a CPU address holds the mapping it came from (a read map
+//     of the storage, on a bounded port, or one of MappedWraps), which ends when the last holder
+//     drops it. A CPU read of the pulled tensor maps through that storage, as of any EV74 tensor;
 //   - a slot of the device pool: a GstSample over one GstDmaBufMemory of the slot's descriptor
 //     (not closed with the memory: the pool owns it), placed as make_driver_dmabuf_storage places
 //     a TensorMemory::EV74 (MLA) tensor. The memory keeps a copy of the Message, and so the slot,
