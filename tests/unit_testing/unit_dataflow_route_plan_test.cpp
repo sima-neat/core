@@ -1,0 +1,608 @@
+// The Dataflow backend's model-route planner as a pure function (DataflowRoutePlan.h): every
+// decline it can return, each executed. The manifests are what Core compiles, renders and lowers
+// for real models' nodes (dataflow_model_manifest), and copies of them changed in one field each;
+// the planner reads them with the Input's options, the build's seed and the EV74's state given
+// here, so no device is opened, no model is loaded onto the MLA and no board state is read.
+//
+// Models: a YOLOv8 detection package (--model-package, or SIMA_TEST_BOXDECODE_MODEL_PACKAGE,
+// SIMA_YOLO_TAR): the image preproc, the MLA stage of six heads and BoxDecode, for BGR and NV12
+// frames; and a model package whose pre and post stages are canonical transforms (--resnet-package,
+// or SIMA_TEST_MODEL_PACKAGE; ResNet-50 is the one it was written with), placed on the A65.
+// Without the first the test is skipped; without the second its kernel-stage rows are (said in
+// the output). It downloads nothing.
+//
+// Rows: `accepted` (the unchanged manifests plan), `route` (the route's shape: stage kinds, the
+// stage count, buffers handed on), `mla` (the MLA stage), `frames` (what the build says of the
+// frames: seed, declaration), `image` (the image preproc stage), `boxdecode`, `kernel` (a
+// canonical transform). Each decline's text is checked for the words that say what is not
+// carried.
+
+#include "model/Model.h"
+#include "model/internal/ModelInternal.h"
+#include "nodes/common/Output.h"
+#include "nodes/io/Input.h"
+#include "nodes/sima/internal/ImageTransformPolicy.h"
+#include "pipeline/GraphOptions.h"
+#include "pipeline/internal/sima/KernelStageRecipe.h"
+#include "pipeline/internal/sima/SimaPluginStaticManifest.h"
+#include "pipeline/runtime/DataflowRoutePlan.h"
+#include "cli_utils.h"
+#include "test_main.h"
+#include "test_utils.h"
+
+#include <cstddef>
+#include <cstdint>
+#include <cstdlib>
+#include <functional>
+#include <iostream>
+#include <memory>
+#include <optional>
+#include <string>
+#include <utility>
+#include <vector>
+
+namespace {
+
+using namespace simaai::neat;
+namespace si = pipeline_internal::sima;
+namespace client = ::simaai::scheduler::client;
+using runtime::dataflow_model_manifest;
+using runtime::plan_dataflow_route_stages;
+
+std::size_t g_declines = 0;
+
+// What the planner is asked: a manifest, the Input's options, the seed and the EV74's state.
+struct Ask {
+  si::SimaPluginStaticManifest manifest;
+  InputOptions declared;
+  std::vector<Tensor> seed;
+  std::string ev74_obstacle;
+};
+
+// "" when the route plans; otherwise the planner's reason.
+std::string plan(const Ask& ask) {
+  std::string why;
+  const auto route =
+      plan_dataflow_route_stages(ask.manifest, ask.declared, ask.seed, ask.ev74_obstacle, &why);
+  if (route) {
+    return {};
+  }
+  return why.empty() ? std::string("(declined without a reason)") : why;
+}
+
+void accepts(const Ask& ask, const std::string& what) {
+  const std::string why = plan(ask);
+  require(why.empty(), what + ": declined: " + why);
+  std::cout << "[accepted] " << what << "\n";
+}
+
+void declines(const Ask& ask, const std::string& text, const std::string& what) {
+  const std::string why = plan(ask);
+  require(!why.empty(), what + ": the route planned");
+  require_contains(why, text, what + ": " + why);
+  ++g_declines;
+  std::cout << "[declined] " << what << ": " << why << "\n";
+}
+
+// A copy of stage `i`'s kernel recipe that the caller changes.
+si::KernelStageRecipe& recipe_of(si::SimaPluginStaticManifest& manifest, std::size_t i) {
+  auto copy = std::make_shared<si::KernelStageRecipe>(*manifest.stages.at(i).native_kernel);
+  si::KernelStageRecipe& recipe = *copy;
+  manifest.stages.at(i).native_kernel = std::move(copy);
+  return recipe;
+}
+
+si::SimaPluginStaticManifest only(const si::SimaPluginStaticManifest& manifest,
+                                  std::initializer_list<std::size_t> stages) {
+  si::SimaPluginStaticManifest out = manifest;
+  out.stages.clear();
+  for (const std::size_t i : stages) {
+    out.stages.push_back(manifest.stages.at(i));
+  }
+  return out;
+}
+
+// Frames as the planner reads them (shape, dtype, layout, planes); CPU memory.
+Tensor bgr(int width, int height, int channels = 3) {
+  std::vector<std::uint8_t> bytes(static_cast<std::size_t>(width) * height * channels, 0);
+  Tensor t = Tensor::from_vector(bytes, {height, width, channels}, TensorMemory::CPU);
+  t.layout = TensorLayout::HWC;
+  return t;
+}
+
+Tensor nv12(int width, int height) {
+  std::vector<std::uint8_t> bytes(static_cast<std::size_t>(width) * height * 3U / 2U, 0);
+  Tensor t =
+      Tensor::from_vector(bytes, {static_cast<std::int64_t>(bytes.size())}, TensorMemory::CPU);
+  t.layout = TensorLayout::HW;
+  t.shape = {height, width};
+  t.strides_bytes = {width, 1};
+  t.semantic.image = ImageSpec{ImageSpec::PixelFormat::NV12, ""};
+  Plane luma;
+  luma.role = PlaneRole::Y;
+  luma.shape = {height, width};
+  luma.strides_bytes = {width, 1};
+  Plane chroma;
+  chroma.role = PlaneRole::UV;
+  chroma.shape = {height / 2, width};
+  chroma.strides_bytes = {width, 1};
+  chroma.byte_offset = static_cast<std::int64_t>(width) * height;
+  t.planes = {luma, chroma};
+  return t;
+}
+
+Model::Options image_options(PreprocessColorFormat format) {
+  Model::Options o;
+  o.preprocess.kind = InputKind::Image;
+  o.preprocess.enable = AutoFlag::On;
+  o.preprocess.normalize.enable = AutoFlag::On;
+  o.preprocess.color_convert.input_format = format;
+  o.decode_type = BoxDecodeType::YoloV8;
+  o.score_threshold = 0.49F;
+  o.nms_iou_threshold = 0.5F;
+  o.top_k = 100;
+  return o;
+}
+
+std::shared_ptr<Node> output() {
+  OutputOptions out;
+  out.max_buffers = 4;
+  out.sync = false;
+  return nodes::Output(out);
+}
+
+// The manifest of Input -> the model's stages -> Output, as the Dataflow backend asks for it.
+si::SimaPluginStaticManifest manifest_of(const Model& model, const InputOptions& in, bool pre,
+                                         bool inf, bool post, const GraphOptions& options) {
+  std::vector<std::shared_ptr<Node>> nodes{nodes::Input(in)};
+  const auto add = [&nodes](std::vector<std::shared_ptr<Node>> more) {
+    nodes.insert(nodes.end(), more.begin(), more.end());
+  };
+  if (pre) {
+    add(internal::ModelAccess::build_public_preprocess_nodes(model));
+  }
+  if (inf) {
+    add(internal::ModelAccess::build_public_inference_nodes(model));
+  }
+  if (post) {
+    add(internal::ModelAccess::build_public_postprocess_nodes(model));
+  }
+  nodes.push_back(output());
+  std::string why;
+  std::optional<si::SimaPluginStaticManifest> manifest =
+      dataflow_model_manifest(nodes, options, &why);
+  require(manifest.has_value(), "the model's manifest: " + why);
+  return *manifest;
+}
+
+struct Yolo {
+  Ask full, pre, inf, nv12_pre;
+};
+
+// ---- rows ----------------------------------------------------------------------------------
+
+void accepted(const Yolo& y, const Ask* resnet) {
+  accepts(y.full, "YOLOv8: preprocess, inference, postprocess");
+  accepts(y.pre, "YOLOv8: preprocess alone");
+  accepts(y.inf, "YOLOv8: inference alone (six heads)");
+  accepts(y.nv12_pre, "YOLOv8 of NV12 frames: preprocess alone");
+  Ask seeded = y.full;
+  seeded.seed = {bgr(1280, 720)};
+  accepts(seeded, "YOLOv8 seeded with a 1280x720 frame");
+  Ask declared = y.full;
+  declared.declared.width = 1280;
+  declared.declared.height = 720;
+  accepts(declared, "YOLOv8 with a declared 1280x720 frame");
+  if (resnet) {
+    accepts(*resnet, "canonical transforms on the A65 around the MLA");
+  }
+}
+
+void route_shape(const Yolo& y, const Ask* resnet) {
+  {
+    Ask a = y.full;
+    a.manifest.stages.clear();
+    declines(a, "the model's nodes render no stage", "no stage");
+  }
+  {
+    Ask a = y.pre;
+    a.manifest = only(y.pre.manifest, {0, 0});
+    declines(a, "two kernel stages in a row", "two kernel stages in a row");
+  }
+  {
+    Ask a = y.full;
+    a.manifest.stages[2].payload_kind = si::StagePayloadKind::None;
+    a.manifest.stages[2].native_kernel = nullptr;
+    declines(a, "is neither an MLA stage nor a kernel stage", "a stage of no kind");
+  }
+  if (resnet) {
+    Ask a = *resnet;
+    a.manifest = only(resnet->manifest, {0});
+    declines(a, "with 0 MLA stages", "a kernel stage without an MLA stage");
+    a.manifest = only(resnet->manifest, {1, 1});
+    declines(a, "with 2 MLA stages", "two MLA stages");
+    a = *resnet;
+    a.manifest.stages[1].physical_inputs[0].size_bytes += 64;
+    declines(a, "not one whole buffer handed on", "a stage reads other bytes than are written");
+  }
+}
+
+void mla(const Yolo& y) {
+  const auto mla_stage = [&y](const std::function<void(si::StageStaticSpec&)>& change) {
+    Ask a = y.inf;
+    change(a.manifest.stages[0]);
+    return a;
+  };
+  declines(mla_stage([](si::StageStaticSpec& s) { s.processmla.model_path.clear(); }),
+           "names no model file", "no model file");
+  declines(mla_stage([](si::StageStaticSpec& s) { s.processmla.batch_size = 2; }),
+           "a batched MLA model (batch 2)", "a batch of 2");
+  declines(mla_stage([](si::StageStaticSpec& s) {
+             s.physical_inputs.push_back(s.physical_inputs.front());
+           }),
+           "input buffers", "two input buffers");
+  declines(mla_stage([](si::StageStaticSpec& s) {
+             s.physical_outputs.push_back(s.physical_outputs.front());
+           }),
+           "output buffers", "two output buffers");
+  declines(mla_stage([](si::StageStaticSpec& s) { s.logical_outputs.clear(); }), "(0 tensors)",
+           "no published tensor");
+  declines(mla_stage([](si::StageStaticSpec& s) { s.logical_inputs[0].dtype = "NO_IN_DTYPE"; }),
+           "'NO_IN_DTYPE' has no Dataflow dtype", "an input dtype without a Core dtype");
+  declines(mla_stage([](si::StageStaticSpec& s) { s.logical_inputs[0].byte_offset = 16; }),
+           "is not one whole buffer", "an offset input");
+  declines(mla_stage([](si::StageStaticSpec& s) { s.logical_outputs[1].dtype = "NO_OUT_DTYPE"; }),
+           "'NO_OUT_DTYPE' has no Dataflow dtype", "an output dtype without a Core dtype");
+  declines(mla_stage([](si::StageStaticSpec& s) {
+             s.logical_outputs[2].byte_offset =
+                 static_cast<std::int64_t>(s.physical_outputs[0].size_bytes);
+           }),
+           "does not lie in its output buffer", "a head outside the buffer");
+  declines(mla_stage([](si::StageStaticSpec& s) { s.logical_outputs[1].logical_index = 7; }),
+           "is not published in the stage's logical order", "heads out of order");
+  {
+    // Six heads read by a stage other than BoxDecode.
+    Ask a = y.full;
+    recipe_of(a.manifest, 2).boxdecode_program.reset();
+    declines(a, "only BoxDecode is supported", "six heads read by another kernel");
+  }
+}
+
+void frames(const Yolo& y) {
+  {
+    Ask a = y.pre;
+    a.seed = {bgr(1280, 720), bgr(1280, 720)};
+    declines(a, "the seed is several tensors", "a seed of two tensors");
+  }
+  {
+    Ask a = y.nv12_pre;
+    a.seed = {bgr(1280, 720)};
+    declines(a, "the seed is not an NV12 frame", "a packed seed for NV12 frames");
+  }
+  {
+    Ask a = y.pre;
+    a.seed = {nv12(1280, 720)};
+    declines(a, "the seed is a planar image", "an NV12 seed for packed frames");
+  }
+  {
+    Ask a = y.pre;
+    std::vector<float> values(16U * 16U * 3U, 0.F);
+    Tensor f = Tensor::from_vector(values, {16, 16, 3}, TensorMemory::CPU);
+    f.layout = TensorLayout::HWC;
+    a.seed = {f};
+    declines(a, "the seed is not a packed UInt8 image", "a float seed");
+  }
+  {
+    Ask a = y.pre;
+    Tensor padded = bgr(1280, 720);
+    padded.strides_bytes = {1280 * 3 + 64, 3, 1};
+    a.seed = {padded};
+    declines(a, "the seed's rows are padded", "a seed with padded rows");
+  }
+  {
+    Ask a = y.pre;
+    a.declared.dtype = TensorDType::UInt8;
+    a.declared.shape = {720, 1280};
+    declines(a, "the Input's declared shape is not a UInt8 frame", "a declared shape of rank 2");
+    a = y.nv12_pre;
+    a.declared.dtype = TensorDType::UInt8;
+    a.declared.shape = {720, 1280, 3};
+    declines(a, "declares a tensor shape where the model reads NV12 frames",
+             "a declared shape for NV12 frames");
+    a = y.pre;
+    a.declared.dtype = TensorDType::UInt8;
+    a.declared.shape = {-1, -1, 3};
+    a.declared.max_shape = {5};
+    declines(a, "max_shape is not the bound of a frame", "a max_shape that is no frame");
+  }
+}
+
+void image(const Yolo& y) {
+  const auto pre_stage = [&y](const std::function<void(si::StageStaticSpec&)>& change) {
+    Ask a = y.pre;
+    change(a.manifest.stages[0]);
+    return a;
+  };
+  declines(pre_stage([](si::StageStaticSpec& s) { s.processcvu.graph_name = "resize"; }),
+           "is an image stage with per-frame geometry", "an image stage other than preproc");
+  {
+    Ask a = y.full;
+    a.manifest = only(y.full.manifest, {1, 0});
+    declines(a, "is an image stage with per-frame geometry", "the image preproc behind the MLA");
+  }
+  declines(pre_stage([](si::StageStaticSpec& s) {
+             s.processcvu.image_transform =
+                 std::make_shared<const internal::ImageTransformPolicy>();
+           }),
+           "is an image frontend", "an image frontend");
+  declines(pre_stage([](si::StageStaticSpec& s) { s.processcvu.input_img_type = "I420"; }),
+           "only packed RGB and BGR frames and NV12 frames", "I420 frames");
+  declines(pre_stage([](si::StageStaticSpec& s) { s.processcvu.batch_size = 2; }),
+           "has a batch of 2", "a batched image stage");
+  {
+    Ask a = y.pre;
+    recipe_of(a.manifest, 0).constant_data.push_back(std::byte{0});
+    declines(a, "has several outputs, variants, constants or private buffers",
+             "an image stage with constants");
+  }
+  declines(pre_stage([](si::StageStaticSpec& s) { s.processcvu.resolved_exec_backend = "A65"; }),
+           "the stage's image policy does not check", "an image policy that does not check");
+  {
+    Ask a = y.pre;
+    a.declared.max_width = 640;
+    a.declared.max_height = 360;
+    a.seed = {bgr(1280, 720)};
+    declines(a, "the Input declares as its largest", "a seed above the declared bound");
+  }
+  {
+    Ask a = y.nv12_pre;
+    a.seed = {nv12(641, 360)};
+    declines(a, "frame (the seed) is not one the stage takes", "an NV12 seed of an odd width");
+  }
+  {
+    Ask a = y.pre;
+    a.declared.width = 100000;
+    a.declared.height = 100000;
+    declines(a, "frame (the Input's declaration) is not one the stage takes",
+             "a declared size the stage does not take");
+  }
+  {
+    Ask a = y.pre;
+    a.seed = {bgr(1280, 720, 4)};
+    declines(a, "the seed has 4 channels where the model's BGR input has 3",
+             "a seed of four channels");
+  }
+  {
+    Ask a = y.nv12_pre;
+    a.declared.max_width = 1918;
+    a.declared.max_height = 1078;
+    declines(a, "is not a multiple of the", "an NV12 bound whose chroma plane is not aligned");
+  }
+  declines(pre_stage([](si::StageStaticSpec& s) { s.logical_outputs[0].dtype = "FP32"; }),
+           "the published tensor's dtype 'FP32' is not the kernel's",
+           "a published dtype other than the kernel's");
+  declines(pre_stage([](si::StageStaticSpec& s) { s.logical_outputs[0].byte_offset = 64; }),
+           "is not the kernel's whole output buffer", "a published view inside the buffer");
+  declines(pre_stage([](si::StageStaticSpec& s) {
+             s.logical_outputs[0].publication_relation = si::PublicationViewRelation::Identity;
+           }),
+           "publishes its tiled output as another view than its packed storage",
+           "a tiled output published as a view");
+}
+
+void boxdecode(const Yolo& y) {
+  const auto decode =
+      [&y](const std::function<void(si::StageStaticSpec&, si::KernelStageRecipe&)>& change) {
+        Ask a = y.full;
+        si::KernelStageRecipe& recipe = recipe_of(a.manifest, 2);
+        change(a.manifest.stages[2], recipe);
+        return a;
+      };
+  {
+    Ask a = y.full;
+    a.manifest = only(y.full.manifest, {2});
+    declines(a, "is not the route's last stage behind the model's MLA stage",
+             "BoxDecode on pushed heads");
+    a.manifest = only(y.full.manifest, {1, 2, 2});
+    declines(a, "is not the route's last stage behind the model's MLA stage", "BoxDecode not last");
+  }
+  declines(decode([](si::StageStaticSpec&, si::KernelStageRecipe& r) {
+             r.boxdecode_program->profile = "yolo26_raw_ltrb_v1";
+           }),
+           "only YOLOv8-style detection", "another decode profile");
+  declines(decode([](si::StageStaticSpec&, si::KernelStageRecipe& r) {
+             r.boxdecode_program->write = nullptr;
+           }),
+           "publishes another wire than BBOX", "no wire serializer");
+  declines(decode([](si::StageStaticSpec&, si::KernelStageRecipe& r) {
+             r.members.push_back(r.members.front());
+           }),
+           "detess invocations in front of the decode", "a detess member");
+  declines(decode([](si::StageStaticSpec&, si::KernelStageRecipe& r) {
+             r.constant_data.push_back(std::byte{0});
+           }),
+           "is not one decode on the A65", "a decode with constants");
+  declines(decode([](si::StageStaticSpec& s, si::KernelStageRecipe&) {
+             s.physical_inputs.push_back(s.physical_inputs.front());
+           }),
+           "reads its heads from 2 buffers", "heads in two buffers");
+  declines(decode([](si::StageStaticSpec&, si::KernelStageRecipe& r) {
+             r.boxdecode_program->resize = "stretch";
+           }),
+           "are not ones the decode takes", "frames the decode does not take");
+  {
+    // Without the image preproc in front, the frames' geometry is the decode's own when it
+    // does not take each frame's size.
+    Ask a = y.full;
+    a.manifest = only(y.full.manifest, {1, 2});
+    if (y.full.manifest.stages[2].native_kernel->boxdecode_program->size_from_frame) {
+      declines(a, "the route has no image preproc stage in front", "BoxDecode without frames");
+    } else {
+      accepts(a, "BoxDecode of a fixed original size without the image preproc");
+    }
+  }
+  {
+    // Another kernel's executable under the decode's request: the contract's ports differ.
+    Ask a = y.full;
+    const client::KernelExecutable preproc =
+        y.full.manifest.stages[0].native_kernel->members[0].executable;
+    recipe_of(a.manifest, 2).members[0].executable = preproc;
+    declines(a, "the kernel's contract has other ports than its request",
+             "a decode whose contract is not its request's");
+  }
+  declines(decode([](si::StageStaticSpec&, si::KernelStageRecipe& r) {
+             r.members[0].inputs[0].source = client::TensorStagePortSource::Constant;
+           }),
+           "reads a private buffer", "a head from a private buffer");
+  declines(decode([](si::StageStaticSpec& s, si::KernelStageRecipe&) {
+             s.logical_inputs[0].byte_offset =
+                 static_cast<std::int64_t>(s.physical_inputs[0].size_bytes);
+           }),
+           "does not lie in the stage's one input buffer", "a head outside the buffer");
+  declines(decode([](si::StageStaticSpec& s, si::KernelStageRecipe&) {
+             s.logical_inputs[1].byte_offset = s.logical_inputs[0].byte_offset;
+           }),
+           "shares bytes with another head", "two heads on the same bytes");
+  declines(decode([](si::StageStaticSpec& s, si::KernelStageRecipe&) {
+             s.logical_outputs[0].size_bytes = 1;
+           }),
+           "is not the wire of", "a published output that is not the wire");
+}
+
+void kernel(const Yolo& y, const Ask* resnet) {
+  {
+    Ask a = y.full;
+    a.ev74_obstacle = "the EV74 is running with firmware 'simaai_cvu'";
+    declines(a, "sima-neat-native-cvu-fw", "an EV74 kernel stage on the stock firmware");
+  }
+  if (!resnet) {
+    std::cout << "[kernel] the canonical-transform rows need --resnet-package or "
+                 "SIMA_TEST_MODEL_PACKAGE: not run\n";
+    return;
+  }
+  const auto pre =
+      [resnet](const std::function<void(si::StageStaticSpec&, si::KernelStageRecipe&)>& change) {
+        Ask a = *resnet;
+        si::KernelStageRecipe& recipe = recipe_of(a.manifest, 0);
+        change(a.manifest.stages[0], recipe);
+        return a;
+      };
+  declines(pre([](si::StageStaticSpec&, si::KernelStageRecipe& r) {
+             r.members.push_back(r.members.front());
+           }),
+           "kernel invocations per frame", "two kernel invocations");
+  declines(pre([](si::StageStaticSpec&, si::KernelStageRecipe& r) { r.requests.clear(); }),
+           "has no recorded kernel request", "no recorded request");
+  declines(pre([](si::StageStaticSpec&, si::KernelStageRecipe& r) {
+             r.constant_data.push_back(std::byte{0});
+           }),
+           "has per-frame variants, constants or private buffers", "a kernel with constants");
+  declines(pre([](si::StageStaticSpec&, si::KernelStageRecipe& r) {
+             r.members[0].inputs.push_back(r.members[0].inputs.front());
+           }),
+           "a kernel of several inputs or outputs", "a kernel of two inputs");
+  declines(pre([](si::StageStaticSpec&, si::KernelStageRecipe& r) {
+             r.members[0].inputs[0].byte_offset = 64;
+           }),
+           "reads or writes inside a shared buffer", "a kernel reading an offset view");
+  declines(pre([](si::StageStaticSpec& s, si::KernelStageRecipe&) {
+             s.logical_outputs.push_back(s.logical_outputs.front());
+           }),
+           "published tensors", "a kernel stage of two published tensors");
+  {
+    Ask a = *resnet;
+    const client::KernelExecutable decode =
+        y.full.manifest.stages[2].native_kernel->members[0].executable;
+    recipe_of(a.manifest, 0).members[0].executable = decode;
+    declines(a, "the kernel's contract has other ports than its request",
+             "a kernel whose contract is not its request's");
+  }
+  declines(pre([](si::StageStaticSpec&, si::KernelStageRecipe& r) {
+             r.requests[0].inputs[0].dtype = client::DType::Float16;
+           }),
+           "a tensor's dtype has no Core dtype", "a Float16 input");
+  declines(pre([](si::StageStaticSpec&, si::KernelStageRecipe& r) {
+             r.requests[0].inputs[0].layout = client::Strided{};
+           }),
+           "reads a strided or tiled tensor from the application", "a strided first input");
+  {
+    Ask a = *resnet;
+    si::StageStaticSpec& post = a.manifest.stages[2];
+    post.logical_outputs[0].dtype = post.logical_outputs[0].dtype == "INT8" ? "FP32" : "INT8";
+    declines(a, "the published tensor's dtype", "a published dtype other than the kernel's");
+    a = *resnet;
+    a.manifest.stages[2].logical_outputs[0].byte_offset = 1 << 30;
+    declines(a, "does not lie in the kernel's output buffer", "a published output outside");
+  }
+}
+
+} // namespace
+
+int main(int argc, char** argv) {
+  std::cout.setf(std::ios::unitbuf);
+  std::cerr.setf(std::ios::unitbuf);
+  std::string yolo;
+  sima_test::get_arg(argc, argv, "--model-package", yolo);
+  for (const char* name : {"SIMA_TEST_BOXDECODE_MODEL_PACKAGE", "SIMA_YOLO_TAR"}) {
+    if (const char* staged = std::getenv(name); yolo.empty() && staged) {
+      yolo = staged;
+    }
+  }
+  if (yolo.empty() || !file_exists(yolo)) {
+    return skip_test("unit_dataflow_route_plan_test needs a YOLOv8 detection model package: "
+                     "--model-package <X_mpk.tar.gz>, SIMA_TEST_BOXDECODE_MODEL_PACKAGE or "
+                     "SIMA_YOLO_TAR");
+  }
+  std::string resnet_archive;
+  sima_test::get_arg(argc, argv, "--resnet-package", resnet_archive);
+  if (const char* staged = std::getenv("SIMA_TEST_MODEL_PACKAGE");
+      resnet_archive.empty() && staged) {
+    resnet_archive = staged;
+  }
+  std::string only_row;
+  sima_test::get_arg(argc, argv, "--row", only_row);
+  return sima_test::run_test("unit_dataflow_route_plan_test", [&] {
+    const auto row = [&](const char* name, const std::function<void()>& body) {
+      if (!only_row.empty() && only_row != name) {
+        return;
+      }
+      body();
+      std::cout << "[row] " << name << " ok\n";
+    };
+    const Model bgr_model(yolo, image_options(PreprocessColorFormat::BGR));
+    const Model nv12_model(yolo, image_options(PreprocessColorFormat::NV12));
+    const InputOptions frame_input{};
+    const GraphOptions defaults{};
+    Yolo y;
+    y.full.manifest = manifest_of(bgr_model, frame_input, true, true, true, defaults);
+    y.pre.manifest = manifest_of(bgr_model, frame_input, true, false, false, defaults);
+    y.inf.manifest = manifest_of(bgr_model, frame_input, false, true, false, defaults);
+    y.nv12_pre.manifest = manifest_of(nv12_model, frame_input, true, false, false, defaults);
+    require(y.full.manifest.stages.size() == 3U && y.pre.manifest.stages.size() == 1U &&
+                y.inf.manifest.stages.size() == 1U && y.nv12_pre.manifest.stages.size() == 1U,
+            "the YOLOv8 manifests have the stages the rows change");
+    std::optional<Ask> resnet;
+    if (!resnet_archive.empty() && file_exists(resnet_archive)) {
+      Model::Options tensor;
+      tensor.preprocess.kind = InputKind::Tensor;
+      const Model model(resnet_archive, tensor);
+      GraphOptions on_a65;
+      on_a65.processcvu.pre_run_target = "A65";
+      on_a65.processcvu.post_run_target = "A65";
+      resnet.emplace();
+      resnet->declared = model.input_appsrc_options(true);
+      resnet->manifest = manifest_of(model, resnet->declared, true, true, true, on_a65);
+      require(resnet->manifest.stages.size() == 3U,
+              "the canonical-transform model's manifest has three stages");
+    }
+    const Ask* const r = resnet ? &*resnet : nullptr;
+    row("accepted", [&] { accepted(y, r); });
+    row("route", [&] { route_shape(y, r); });
+    row("mla", [&] { mla(y); });
+    row("frames", [&] { frames(y); });
+    row("image", [&] { image(y); });
+    row("boxdecode", [&] { boxdecode(y); });
+    row("kernel", [&] { kernel(y, r); });
+    std::cout << "[summary] " << g_declines << " declines executed\n";
+  });
+}
