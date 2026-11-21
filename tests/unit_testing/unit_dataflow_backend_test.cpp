@@ -395,39 +395,50 @@ void build_errors() {
 }
 
 // A Run the Dataflow backend cannot build: its link would be deeper than the runtime's (2^30
-// messages; RunOptions::queue_depth above that). Decided at Graph::build whether the input binds
-// there (a seed) or at its first push (no seed). An explicit RunBackend::Dataflow request fails
-// there, naming the build and what to do; RunBackend::Auto under SIMA_NEAT_BACKEND=dataflow builds
-// the Run on GStreamer, which takes the push, and its [NEAT] line says why.
+// messages; RunOptions::queue_depth above that). An explicit RunBackend::Dataflow request fails at
+// Graph::build, naming the build and what to do, whether the input binds there (a seed) or would
+// bind at its first push (no seed). RunBackend::Auto under SIMA_NEAT_BACKEND=dataflow builds the
+// Run on GStreamer instead, and its [NEAT] line says why. GStreamer refuses so deep a queue as well
+// (its kernel runner's bounded output pool), so the Run Auto returns is GStreamer's or the error is
+// GStreamer's own, never the Dataflow decline.
 void auto_builds_on_gstreamer_what_dataflow_cannot() {
   constexpr int kDeeperThanTheRuntime = (1 << 30) + 1;
   for (const bool seeded : {false, true}) {
-    const std::string what = seeded ? "seeded build" : "build without a seed";
-    const auto build = [&](RunOptions opt) {
-      Graph g = input_output();
-      return seeded ? g.build(TensorList{rgb(8, 8, 1)}, opt) : g.build(opt);
-    };
-    require_neat_error([&] { (void)build(dataflow(kDeeperThanTheRuntime)); },
-                       error_codes::kOptionOutOfRange, "Graph::build", "RunBackend::GStreamer");
-    RunOptions automatic = dataflow(kDeeperThanTheRuntime);
-    automatic.backend = RunBackend::Auto;
-    std::string text;
-    ::setenv("SIMA_NEAT_BACKEND", "dataflow", 1);
-    {
-      StderrCapture capture;
-      Run run = build(automatic);
-      require(run.push(TensorList{rgb(8, 8, 2)}), what + ": RunBackend::Auto's Run takes a push");
-      require(bytes_of(pulled_tensor(run, 5000, what)) == bytes_of(rgb(8, 8, 2)),
-              what + ": and gives it back");
-      run.close();
-      text = capture.text();
-    }
-    ::unsetenv("SIMA_NEAT_BACKEND");
-    require(text.find("backend=gstreamer") != std::string::npos &&
-                text.find("link depth") != std::string::npos &&
-                text.find("backend=dataflow") == std::string::npos,
-            what + ": RunBackend::Auto says it built the Run on GStreamer, and why:\n" + text);
+    require_neat_error(
+        [&] {
+          Graph g = input_output();
+          (void)(seeded ? g.build(TensorList{rgb(8, 8, 1)}, dataflow(kDeeperThanTheRuntime))
+                        : g.build(dataflow(kDeeperThanTheRuntime)));
+        },
+        error_codes::kOptionOutOfRange, "Graph::build", "RunBackend::GStreamer");
   }
+  RunOptions automatic = dataflow(kDeeperThanTheRuntime);
+  automatic.backend = RunBackend::Auto;
+  std::string text;
+  std::string gstreamer_error;
+  ::setenv("SIMA_NEAT_BACKEND", "dataflow", 1);
+  {
+    StderrCapture capture;
+    try {
+      Graph g = input_output();
+      Run run = g.build(TensorList{rgb(8, 8, 1)}, automatic);
+      require(run.push(TensorList{rgb(8, 8, 2)}), "RunBackend::Auto's Run takes a push");
+      require(bytes_of(pulled_tensor(run, 5000, "RunBackend::Auto")) == bytes_of(rgb(8, 8, 2)),
+              "RunBackend::Auto's Run gives the push back");
+      run.close();
+    } catch (const std::exception& e) {
+      gstreamer_error = e.what(); // GStreamer's refusal, a std::runtime_error
+    }
+    text = capture.text();
+  }
+  ::unsetenv("SIMA_NEAT_BACKEND");
+  require(text.find("backend=gstreamer") != std::string::npos &&
+              text.find("link depth") != std::string::npos &&
+              text.find("backend=dataflow") == std::string::npos,
+          "RunBackend::Auto says it built the Run on GStreamer, and why:\n" + text);
+  require(gstreamer_error.find("RunBackend::Dataflow") == std::string::npos &&
+              gstreamer_error.find("Dataflow backend") == std::string::npos,
+          "RunBackend::Auto's error, if any, is GStreamer's: " + gstreamer_error);
 }
 
 // With SIMA_NEAT_BACKEND set, Run::stop prints each input's Session report (SessionReport::to_text)
