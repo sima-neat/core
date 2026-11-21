@@ -287,9 +287,12 @@ private:
   /// (DataflowModelRoute.h), for this Run's operators. Null otherwise.
   std::shared_ptr<void> model_;
   /// A model route whose frames change size: the validated geometries of further device
-  /// tensors, beside `validated_device_`'s first (device_remember_frame). Each is written once,
-  /// under mu_, and read lock-free.
-  std::array<DataflowValidatedLeaf, 7> validated_frames_;
+  /// tensors, beside `validated_device_`'s first (device_remember_frame), as many in all as the
+  /// route's frames table keeps geometries (DataflowFrames::kKept), so that frames of that many
+  /// sizes in turn each pass the checks once. Each is written once, under mu_, and read
+  /// lock-free.
+  static constexpr std::size_t kValidatedFrames = 16;
+  std::array<DataflowValidatedLeaf, kValidatedFrames - 1> validated_frames_;
 };
 
 // The backing of a Run::alloc Tensor on this backend: the loan of one slot of the input's pool.
