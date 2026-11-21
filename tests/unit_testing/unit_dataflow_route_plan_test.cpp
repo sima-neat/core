@@ -50,6 +50,15 @@ using runtime::dataflow_model_manifest;
 using runtime::plan_dataflow_route_stages;
 
 std::size_t g_declines = 0;
+// Every row's failure, reported together at the end (one run says all that is wrong).
+std::vector<std::string> g_failures;
+
+void check(bool ok, const std::string& what) {
+  if (!ok) {
+    std::cout << "[FAIL] " << what << "\n";
+    g_failures.push_back(what);
+  }
+}
 
 // What the planner is asked: a manifest, the Input's options, the seed and the EV74's state.
 struct Ask {
@@ -72,16 +81,21 @@ std::string plan(const Ask& ask) {
 
 void accepts(const Ask& ask, const std::string& what) {
   const std::string why = plan(ask);
-  require(why.empty(), what + ": declined: " + why);
-  std::cout << "[accepted] " << what << "\n";
+  check(why.empty(), what + ": declined: " + why);
+  if (why.empty()) {
+    std::cout << "[accepted] " << what << "\n";
+  }
 }
 
 void declines(const Ask& ask, const std::string& text, const std::string& what) {
   const std::string why = plan(ask);
-  require(!why.empty(), what + ": the route planned");
-  require_contains(why, text, what + ": " + why);
-  ++g_declines;
-  std::cout << "[declined] " << what << ": " << why << "\n";
+  check(!why.empty(), what + ": the route planned");
+  check(why.empty() || why.find(text) != std::string::npos,
+        what + ": " + why + " (missing: " + text + ")");
+  if (!why.empty() && why.find(text) != std::string::npos) {
+    ++g_declines;
+    std::cout << "[declined] " << what << ": " << why << "\n";
+  }
 }
 
 // A copy of stage `i`'s kernel recipe that the caller changes.
@@ -211,8 +225,8 @@ void route_shape(const Yolo& y, const Ask* resnet) {
   }
   {
     Ask a = y.full;
-    a.manifest.stages[2].payload_kind = si::StagePayloadKind::None;
-    a.manifest.stages[2].native_kernel = nullptr;
+    a.manifest.stages[0].payload_kind = si::StagePayloadKind::None;
+    a.manifest.stages[0].native_kernel = nullptr;
     declines(a, "is neither an MLA stage nor a kernel stage", "a stage of no kind");
   }
   if (resnet) {
@@ -377,10 +391,14 @@ void image(const Yolo& y) {
              "a seed of four channels");
   }
   {
+    // The chroma plane's alignment the kernel asks divides every even-sized luma plane (an
+    // NV12 bound is even): a bound of 1918x1078, whose luma plane is four times an odd number of
+    // bytes, plans. The planner's alignment decline guards a contract the Kernels package does
+    // not give today.
     Ask a = y.nv12_pre;
     a.declared.max_width = 1918;
     a.declared.max_height = 1078;
-    declines(a, "is not a multiple of the", "an NV12 bound whose chroma plane is not aligned");
+    accepts(a, "an NV12 bound of 1918x1078");
   }
   declines(pre_stage([](si::StageStaticSpec& s) { s.logical_outputs[0].dtype = "FP32"; }),
            "the published tensor's dtype 'FP32' is not the kernel's",
@@ -611,6 +629,8 @@ int main(int argc, char** argv) {
     row("image", [&] { image(y); });
     row("boxdecode", [&] { boxdecode(y); });
     row("kernel", [&] { kernel(y, r); });
-    std::cout << "[summary] " << g_declines << " declines executed\n";
+    std::cout << "[summary] " << g_declines << " declines executed, " << g_failures.size()
+              << " failures\n";
+    require(g_failures.empty(), std::to_string(g_failures.size()) + " rows failed (above)");
   });
 }

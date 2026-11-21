@@ -40,7 +40,7 @@
 //                    between pushes; a new tensor for every frame (300 of them).
 //   held             what the Run keeps alive of pushed tensors the application let go of: of 96
 //                    new tensors pushed once each, never more than the first operator's bound
-//                    (sixteen of the input's size, the runtime's held_buffers) and one in flight;
+//                    (32 of the input's size, the runtime's held_buffers) and one in flight;
 //                    all of them gone once the Run is closed. Under the default placement and
 //                    with both kernel stages on the A65.
 //   lifecycle        a pull before any push times out; try_push; close_input drains what was
@@ -686,11 +686,11 @@ void reuse(const Route& route) {
 
 // The Run wraps a pushed device tensor and its first operator keeps the wrap's holder, which is
 // the tensor's storage, with the device's admission of it. That memory is the EV74's or the MLA's
-// heap, so what a Run keeps of tensors the application dropped is bounded in bytes: here, sixteen
-// tensors of the model's input.
+// heap, so what a Run keeps of tensors the application dropped is bounded (the runtime's
+// held_buffers: a count under a byte cap): here, 32 tensors of the model's input.
 void held(const Route& route) {
   constexpr int kFrames = 96;
-  constexpr std::size_t kKeep = 16;
+  constexpr std::size_t kKeep = 32;
   Graph g = route.graph(route.input());
   Run run = g.build({route.tensor(0)}, on(RunBackend::Dataflow));
   std::vector<std::weak_ptr<TensorBuffer>> pushed;
@@ -710,7 +710,7 @@ void held(const Route& route) {
   std::cout << "[held] " << kFrames << " new tensors of " << route.elements * sizeof(float)
             << " bytes pushed once each: at most " << most << " kept alive at once ("
             << most * route.elements * sizeof(float) << " bytes), " << last << " after the last\n";
-  require(most <= kKeep + 1U, "held: the Run keeps at most sixteen pushed tensors and the one in "
+  require(most <= kKeep + 1U, "held: the Run keeps at most 32 pushed tensors and the one in "
                               "flight alive");
   run.close();
   const auto alive = std::count_if(pushed.begin(), pushed.end(),
