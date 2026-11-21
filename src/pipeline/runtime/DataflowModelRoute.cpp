@@ -158,14 +158,23 @@ bool dataflow_has_model_route() noexcept {
 // make, a pull, a push) keeps what it read whatever is replaced meanwhile. An entry that was
 // replaced while a frame of its geometry was in flight is made again from the word (cold). The
 // Worker's key function reads the stamp alone: it takes no lock and allocates nothing.
+//
+// The two kernels of a geometry: the preproc's is made for the frame's size (its tensors are
+// the frame's). The BoxDecode kernel is the Run's loaded one (`decode_kernel`, the port's
+// bound's) with the frame's original image size in its "image_size" variant (Kernel::with),
+// which keeps the kernel's tensors: the operator prepares it from one it keeps and runs it on
+// the buffers it has admitted. The table starts with the bound's geometry, whose kernels the
+// Run loaded (seed_dataflow_frames).
 struct DataflowFrames {
   using Adapter = si::kernel_lowering::PreprocFrameAdapter;
   // What the plan fixed.
   std::shared_ptr<const Adapter::CheckedPolicy> policy; ///< the image stage's checked policy
   /// The BoxDecode stage's recipe when the route has one behind its MLA stage; else null.
   std::shared_ptr<const si::KernelStageRecipe> decode;
-  /// The two stages as planned at the port's bound: a geometry's are these with its request.
-  DataflowModelStage preproc_stage, decode_stage;
+  /// The image stage as planned at the port's bound: a geometry's is this with its request.
+  DataflowModelStage preproc_stage;
+  /// What the image stage publishes with a frame of the bound's size.
+  PreprocessRuntimeMeta bound_preprocess;
   std::int64_t max_width = 0, max_height = 0; ///< the port's bound
   /// The stage's capacity envelope. The bound is below it where the Input's capacity is (its
   /// declared bound, or the seed's size: GStreamer's rule, resolve_shape_limits).
@@ -179,7 +188,9 @@ struct DataflowFrames {
     PreprocessRuntimeMeta preprocess; ///< what the pull publishes with a frame of it
     std::shared_ptr<df::soc::Kernel> preproc, decode;
   };
-  static constexpr std::size_t kKept = 8;
+  /// As many geometries as a soc::KernelOp keeps variants: a rotation of frame sizes that the
+  /// operators keep finds every size in this table too.
+  static constexpr std::size_t kKept = 16;
   static constexpr std::uint64_t kFrameWord = std::uint64_t{1} << 63;
   static std::uint64_t frame_word(std::int64_t width, std::int64_t height) noexcept {
     return kFrameWord | (static_cast<std::uint64_t>(width) << 32) |
@@ -196,6 +207,10 @@ struct DataflowFrames {
   mutable std::array<std::shared_ptr<const Geometry>, kKept> kept;
   mutable std::array<std::uint64_t, kKept> used{};
   mutable std::uint64_t clock = 0;
+  /// The Run's BoxDecode kernel, at the port's bound (the operator's own); null without a
+  /// BoxDecode stage. Written once when the route is loaded (seed_dataflow_frames), before its
+  /// Session exists and before any push.
+  std::shared_ptr<df::soc::Kernel> decode_kernel;
   /// The word of the frame that passed dataflow_frame_word last: a push of the same geometry
   /// compares with it and asks nothing else.
   mutable std::atomic<std::uint64_t> passed{0};
@@ -681,27 +696,32 @@ std::string plan_frame_stage(const si::StageStaticSpec& stage, const std::string
     };
     frame.width = bound(frame.width, envelope_width);
     frame.height = bound(frame.height, envelope_height);
-    if (frame.seed_width > 0) {
-      // The seed is a frame the Run will be pushed: it must be one the stage takes.
-      auto seeded = request_at(frame.seed_width, frame.seed_height);
-      if (const auto* error = std::get_if<client::Error>(&seeded)) {
-        return name + ": a " + std::to_string(frame.seed_width) + "x" +
-               std::to_string(frame.seed_height) +
-               " frame (the seed) is not one the stage takes: " + error->field + ": " +
-               error->message;
-      }
-      if (frame.seed_width > frame.width || frame.seed_height > frame.height) {
-        return name + ": a " + std::to_string(frame.seed_width) + "x" +
-               std::to_string(frame.seed_height) + " frame (the seed) is above the " +
-               std::to_string(frame.width) + "x" + std::to_string(frame.height) +
-               " the Input declares as its largest (InputOptions::max_width, max_height)";
-      }
+  }
+  // The seed is a frame the Run will be pushed: it must be one the stage takes. A seed of the
+  // bound's size is checked as the bound, below.
+  const bool seed_is_bound = frame.seed_width == frame.width && frame.seed_height == frame.height;
+  if (!frame.fixed && frame.seed_width > 0 && !seed_is_bound) {
+    if (frame.seed_width > frame.width || frame.seed_height > frame.height) {
+      return name + ": a " + std::to_string(frame.seed_width) + "x" +
+             std::to_string(frame.seed_height) + " frame (the seed) is above the " +
+             std::to_string(frame.width) + "x" + std::to_string(frame.height) +
+             " the Input declares as its largest (InputOptions::max_width, max_height)";
+    }
+    auto seeded = request_at(frame.seed_width, frame.seed_height);
+    if (const auto* error = std::get_if<client::Error>(&seeded)) {
+      return name + ": a " + std::to_string(frame.seed_width) + "x" +
+             std::to_string(frame.seed_height) +
+             " frame (the seed) is not one the stage takes: " + error->field + ": " +
+             error->message;
     }
   }
   auto fixed = request_at(frame.width, frame.height);
   if (const auto* error = std::get_if<client::Error>(&fixed)) {
     return name + ": a " + std::to_string(frame.width) + "x" + std::to_string(frame.height) +
-           " frame (" + (frame.fixed ? frame.from : std::string("the input's bound")) +
+           " frame (" +
+           (frame.fixed       ? frame.from
+            : seed_is_bound ? std::string("the seed")
+                            : std::string("the input's bound")) +
            ") is not one the stage takes: " + error->field + ": " + error->message;
   }
   Adapter::FixedFrame& request = std::get<Adapter::FixedFrame>(fixed);
@@ -792,6 +812,7 @@ std::string plan_frame_stage(const si::StageStaticSpec& stage, const std::string
     auto frames = std::make_shared<DataflowFrames>();
     frames->policy = policy;
     frames->preproc_stage = planned;
+    frames->bound_preprocess = *route.output.preprocess;
     frames->max_width = frame.width;
     frames->max_height = frame.height;
     frames->envelope_width = static_cast<std::int64_t>(envelope_width);
@@ -1055,9 +1076,8 @@ std::string plan_boxdecode_stage(const si::StageStaticSpec& stage, const std::st
       out.dtype + " " + dims_text(out.shape) + " " + std::to_string(out.size_bytes) + " bytes";
   if (route.frames) {
     // Frames of a changing size: the kernel planned here is the operator's own, at the port's
-    // bound; each frame size gets its request by the same function (DataflowFrames).
+    // bound; each frame size is checked by the same function (DataflowFrames).
     route.frames->decode = stage.native_kernel;
-    route.frames->decode_stage = decode;
   }
   route.stages.push_back(std::move(decode));
   route.stages.push_back(std::move(wire));
@@ -1788,20 +1808,50 @@ make_frame_geometry(const DataflowFrames& frames, std::uint64_t word, const char
     }
     geometry->preproc = make_kernel(stage, where);
     if (frames.decode) {
-      auto decode = si::boxdecode_request_for_frames(
-          *frames.decode, geometry->preprocess.original_width, geometry->preprocess.original_height,
-          geometry->preprocess.resize_mode);
+      // The resolver's checks for such a frame (its resize mode, its size); then the Run's
+      // kernel, or its "image_size" variant where the frame says the original image's size.
+      const int width = geometry->preprocess.original_width;
+      const int height = geometry->preprocess.original_height;
+      auto decode = si::boxdecode_request_for_frames(*frames.decode, width, height,
+                                                     geometry->preprocess.resize_mode);
       if (const auto* error = std::get_if<client::Error>(&decode)) {
         return "the decode does not take such frames: " + error->message;
       }
-      DataflowModelStage decoder = frames.decode_stage;
-      decoder.parameters = std::move(std::get<si::KernelStageRecipe::Request>(decode).parameters);
-      geometry->decode = make_kernel(decoder, where);
+      const std::shared_ptr<df::soc::Kernel>& base = frames.decode_kernel;
+      geometry->decode = base;
+      if (frames.decode->boxdecode_program->size_from_frame) {
+        using Scalar = df::soc::KernelParameter::Scalar;
+        const df::soc::KernelParameter size{
+            "image_size",
+            std::vector<Scalar>{Scalar{std::int64_t{width}}, Scalar{std::int64_t{height}}}};
+        df::Result<std::shared_ptr<df::soc::Kernel>> varied = base->with("image_size", {&size, 1});
+        if (const df::Error* error = df::failure(varied)) {
+          return std::string("the decode does not take such frames: ") + error->message;
+        }
+        geometry->decode = std::get<std::shared_ptr<df::soc::Kernel>>(std::move(varied));
+      }
     }
   } catch (const std::exception& error) {
     return std::string(error.what());
   }
   return FrameGeometry(std::move(geometry));
+}
+
+// The table's first entry: the port's bound's geometry, whose kernels the Run loaded (the
+// operators' own, made from the plan's requests for that geometry), so that a frame of the
+// bound's size (the seed's, typically) makes no kernel at its first push; and the BoxDecode
+// kernel each geometry's decode is a variant of.
+void seed_dataflow_frames(DataflowFrames& frames, std::shared_ptr<df::soc::Kernel> preproc,
+                          std::shared_ptr<df::soc::Kernel> decode) {
+  frames.decode_kernel = decode;
+  auto bound = std::make_shared<DataflowFrames::Geometry>();
+  bound->word = DataflowFrames::frame_word(frames.max_width, frames.max_height);
+  bound->preprocess = frames.bound_preprocess;
+  bound->preproc = std::move(preproc);
+  bound->decode = std::move(decode);
+  std::lock_guard<std::mutex> lock(frames.mu);
+  frames.kept[0] = std::move(bound);
+  frames.used[0] = ++frames.clock;
 }
 
 // The table's entry for the geometry `word` states, made and kept when the table has none (the
@@ -2149,6 +2199,19 @@ std::shared_ptr<void> load_dataflow_model_route(const DataflowModelRoute& route,
         std::string(where) + ": this build of libsima_neat has no kernel operator (dataflow::soc)");
 #endif
   }
+#if defined(SIMANEAT_WITH_DATAFLOW_SOC_KERNELS)
+  if (route.frames) {
+    // The image stage is the route's first; BoxDecode, when there is one, the kernel stage
+    // in front of its wire serializer.
+    std::shared_ptr<df::soc::Kernel> decode;
+    for (std::size_t i = 1; i < route.stages.size(); ++i) {
+      if (route.stages[i].kind == DataflowModelStage::Kind::Wire) {
+        decode = loaded->kernels[i - 1U];
+      }
+    }
+    seed_dataflow_frames(*route.frames, loaded->kernels.front(), std::move(decode));
+  }
+#endif
   return loaded;
 }
 

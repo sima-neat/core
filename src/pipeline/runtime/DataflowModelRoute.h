@@ -290,8 +290,10 @@ void refuse_dataflow_frame(const DataflowModelRoute& route, const Tensor& tensor
 // run: one above the port's bound, of another format or layout than the route's frames, with
 // ROI metadata or an upstream stage's preprocess metadata, or one whose kernel request the
 // Kernels package refuses. So that nothing the Worker is later asked for can fail, the first
-// frame of a size makes that size's kernels here, on the pushing thread (cold: about a
-// millisecond); a frame of a size the table holds costs a compare. Never 0.
+// frame of a size makes that size's kernels here, on the pushing thread (cold: the image
+// stage's kernel is checked and made; the BoxDecode kernel is a variant of the Run's); a frame
+// of a size the table holds costs a compare, and one of the port's bound's size nothing more
+// at its first push (the table starts with it). Never 0.
 std::uint64_t dataflow_frame_word(const DataflowModelRoute& route, const Tensor& tensor,
                                   const char* where);
 

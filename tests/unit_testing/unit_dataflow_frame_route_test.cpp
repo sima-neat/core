@@ -25,7 +25,8 @@
 //   heads            Model::preprocess() and inference(): two frame sizes in turn, six head
 //                    tensors a frame (the shape of yolov8_preprocess_meta_async_test).
 //   preprocess       Model::preprocess() alone: the tessellated tensor of each frame size.
-//   many             ten frame sizes in rotation: more than the table and the operators keep.
+//   many             eighteen frame sizes in rotation: more than the table and the operators
+//                    keep.
 //   memory           Dataflow: a frame with the kernel's batch axis, a frame in MLA memory
 //                    (copied), a new tensor for every push, sizes in turn: the bytes of `sizes`.
 //   free_running     Dataflow: several frames of different sizes in flight at once come out in
@@ -611,10 +612,13 @@ void two_sizes(const Model& model, const std::vector<cv::Mat>& images, int stage
 }
 
 void many(const Model& model, const std::vector<cv::Mat>& images) {
-  // Ten sizes: more than the frames' table keeps (eight) and than an operator keeps (four).
-  // The first, the seed, is the largest: the stage's capacity.
-  constexpr int kSizes[10][2] = {{1920, 1080}, {640, 360}, {1280, 720}, {640, 480},  {1000, 700},
-                                 {642, 362},   {800, 600}, {320, 240},  {1024, 576}, {960, 540}};
+  // Eighteen sizes: more than the frames' table and an operator keep (sixteen each). The
+  // first, the seed, is the largest: the stage's capacity.
+  constexpr int kSizes[18][2] = {{1920, 1080}, {640, 360},  {1280, 720}, {640, 480},  {1000, 700},
+                                 {642, 362},   {800, 600},  {320, 240},  {1024, 576}, {960, 540},
+                                 {720, 480},   {1600, 900}, {1366, 768}, {854, 480},  {1152, 648},
+                                 {480, 270},   {1440, 810}, {576, 324}};
+  constexpr std::size_t kCount = sizeof kSizes / sizeof kSizes[0];
   std::vector<TensorList> frames;
   for (int round = 0; round < 3; ++round) {
     for (const auto& size : kSizes) {
@@ -625,8 +629,8 @@ void many(const Model& model, const std::vector<cv::Mat>& images) {
       run_frames(route_graph(model), frames, on(RunBackend::Dataflow), "many");
   compare(run_frames(route_graph(model), frames, on(RunBackend::GStreamer), "many"), df, frames,
           true, "many");
-  for (std::size_t i = 10; i < df.size(); ++i) {
-    require(df[i].bytes[0] == df[i - 10U].bytes[0],
+  for (std::size_t i = kCount; i < df.size(); ++i) {
+    require(df[i].bytes[0] == df[i - kCount].bytes[0],
             "many: a size gives the same wire when its kernels are made again");
   }
 }
