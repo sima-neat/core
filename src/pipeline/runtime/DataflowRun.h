@@ -75,7 +75,13 @@ public:
   virtual std::vector<std::string> output_names() const = 0;
   virtual std::string last_error() const = 0;
   virtual std::optional<PullError> last_error_detail() const = 0;
+  // Every input's Feed and links summed. push_count counts the pushes that returned true, as
+  // InputStreamStats states it.
   virtual InputStreamStats input_stats() const = 0;
+  // RunStats' latency, an input's admission to an output's take in ms, over the Run's outputs,
+  // when its Sessions time their frames (SessionOptions::timing, which Core leaves off: two clock
+  // reads and a histogram increment a frame); false, with nothing written, otherwise.
+  virtual bool latency(double& avg_ms, double& min_ms, double& max_ms) const = 0;
 };
 
 #pragma GCC visibility push(hidden)

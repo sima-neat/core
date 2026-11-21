@@ -178,6 +178,9 @@ public:
   df::Status stop(df::Deadline deadline);
   // The Session's counters; nullopt when the input never bound.
   std::optional<df::SessionReport> report() const;
+  // The Session's report as text (SessionReport::to_text, its operators named as the Plan names
+  // them); empty when the input never bound.
+  std::string report_text() const;
 
   // The running Session of the input and what was bound with it: one Feed, one Fetch per Output
   // the input feeds (link order: DataflowInputConfig::outputs). The Run reads `binding` and
@@ -218,6 +221,8 @@ public:
     /// carries the CPU's address of the tensor's bytes, from this cache of the tensors pushed so
     /// far (DataflowDeviceMemory.h). Null on every other route. Fixed at bind.
     std::shared_ptr<dataflow_device::MappedWraps> mapped_wraps;
+    /// What Plan::compile decided: the operators' names in the Session's report. Cold, last.
+    df::PlanReport plan;
   };
 
 private:

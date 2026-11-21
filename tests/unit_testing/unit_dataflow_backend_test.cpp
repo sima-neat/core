@@ -6,7 +6,7 @@
 // dynamic axis; a push outside the declared shape rejected at push; the build errors, a fan-out
 // building (unit_dataflow_endpoints_test covers several endpoints) and an Input feeding no Output;
 // a Run Dataflow cannot build, under RunBackend::Auto (built on GStreamer) and requested
-// explicitly (an error at Graph::build);
+// explicitly (an error at Graph::build); the Session report Run::stop prints;
 // the holder push error; explicit Dataflow on a sync run; a record bound by its first push (C2);
 // the link depth (the larger of queue_depth and max_buffers, each after its default or clamp);
 // try_push accounting
@@ -120,10 +120,14 @@ Tensor pulled_tensor(Run& run, int timeout_ms, const std::string& what) {
   return tensors.front();
 }
 
-std::uint64_t dropped_while(Run& run, const std::function<void()>& fn) {
+MeasureReport measured(Run& run, const std::function<void()>& fn) {
   MeasureScope scope = run.start_measurement();
   fn();
-  return scope.stop().counters.inputs_dropped;
+  return scope.stop();
+}
+
+std::uint64_t dropped_while(Run& run, const std::function<void()>& fn) {
+  return measured(run, fn).counters.inputs_dropped;
 }
 
 // fd 2 to a temporary file while alive; text() restores it and returns what was written.
@@ -426,6 +430,31 @@ void auto_builds_on_gstreamer_what_dataflow_cannot() {
   }
 }
 
+// With SIMA_NEAT_BACKEND set, Run::stop prints each input's Session report (SessionReport::to_text)
+// under a [NEAT] line naming the input and its Outputs.
+void stop_prints_the_session_report() {
+  std::string text;
+  ::setenv("SIMA_NEAT_BACKEND", "dataflow", 1);
+  {
+    StderrCapture capture;
+    Graph g = input_output(InputOptions{}, OutputOptions{});
+    Run run = g.build(TensorList{rgb(8, 8, 1)}, dataflow());
+    for (int i = 0; i < 2; ++i) {
+      require(run.push(TensorList{rgb(8, 8, static_cast<std::uint8_t>(i))}), "report: push");
+      (void)pulled_tensor(run, 2000, "report");
+    }
+    run.close();
+    text = capture.text();
+  }
+  ::unsetenv("SIMA_NEAT_BACKEND");
+  for (const char* line : {"[NEAT] Run::stop: input [", ", outputs [", "[NEAT]   session  dropped_frames 0",
+                           "[NEAT]   feed     input", "pushes 2", "[NEAT]   link     input.0 -> output.0",
+                           "[NEAT]   fetch    output", "pulled 2", "[NEAT]   pool     input.0"}) {
+    require(text.find(line) != std::string::npos,
+            std::string("the stop's report has \"") + line + "\":\n" + text);
+  }
+}
+
 void holder_push_is_an_error() {
   Graph g = input_output();
   Run run = g.build(TensorList{rgb(8, 8, 1)}, dataflow());
@@ -504,22 +533,36 @@ void link_depth_is_max_of_queue_depth_and_max_buffers() {
   run.close();
 }
 
+// The input statistics count what the counters do: push_count the pushes that returned true,
+// dropped_frames what a link dropped (MeasureReport::input).
 void try_push_accounting() {
   // The link holds max(queue_depth 1, max_buffers 2) = 2.
   OutputOptions out;
   out.max_buffers = 2;
+  const auto counted = [](const MeasureReport& r, std::uint64_t pushes, std::uint64_t dropped,
+                          std::uint64_t failures, const std::string& what) {
+    require(r.input.push_count == pushes && r.counters.inputs_pushed == pushes,
+            what + ": push_count " + std::to_string(r.input.push_count) + ", accepted " +
+                std::to_string(pushes));
+    require(r.input.dropped_frames == dropped,
+            what + ": dropped_frames " + std::to_string(r.input.dropped_frames));
+    require(r.input.push_failures == failures,
+            what + ": push_failures " + std::to_string(r.input.push_failures));
+  };
   // DropIncoming: the first two are queued, the rest are dropped and counted.
   {
     Graph g = input_output({}, out);
     Run run = g.build(TensorList{rgb(8, 8, 1)}, dataflow(1, OverflowPolicy::DropIncoming));
     std::vector<bool> accepted;
-    const auto dropped = dropped_while(run, [&] {
+    const MeasureReport report = measured(run, [&] {
       for (int i = 0; i < 5; ++i)
         accepted.push_back(run.try_push(TensorList{rgb(8, 8, static_cast<std::uint8_t>(i))}));
     });
+    const std::uint64_t dropped = report.counters.inputs_dropped;
     require(accepted == std::vector<bool>{true, true, false, false, false},
             "DropIncoming: the first two try_push are accepted, the rest refused");
     require(dropped == 3U, "DropIncoming: three drops counted, got " + std::to_string(dropped));
+    counted(report, 2U, 3U, 0U, "DropIncoming");
     require(bytes_of(pulled_tensor(run, 1000, "DropIncoming")) == bytes_of(rgb(8, 8, 0)) &&
                 bytes_of(pulled_tensor(run, 1000, "DropIncoming")) == bytes_of(rgb(8, 8, 1)),
             "DropIncoming keeps the oldest");
@@ -530,12 +573,14 @@ void try_push_accounting() {
     Graph g = input_output({}, out);
     Run run = g.build(TensorList{rgb(8, 8, 1)}, dataflow(1, OverflowPolicy::KeepLatest));
     bool all = true;
-    const auto dropped = dropped_while(run, [&] {
+    const MeasureReport report = measured(run, [&] {
       for (int i = 0; i < 5; ++i)
         all = run.try_push(TensorList{rgb(8, 8, static_cast<std::uint8_t>(i))}) && all;
     });
+    const std::uint64_t dropped = report.counters.inputs_dropped;
     require(all, "KeepLatest: try_push never refuses");
     require(dropped == 3U, "KeepLatest: three drops counted, got " + std::to_string(dropped));
+    counted(report, 5U, 3U, 0U, "KeepLatest");
     require(bytes_of(pulled_tensor(run, 1000, "KeepLatest")) == bytes_of(rgb(8, 8, 3)) &&
                 bytes_of(pulled_tensor(run, 1000, "KeepLatest")) == bytes_of(rgb(8, 8, 4)),
             "KeepLatest keeps the newest");
@@ -546,12 +591,13 @@ void try_push_accounting() {
     Graph g = input_output({}, out);
     Run run = g.build(TensorList{rgb(8, 8, 1)}, dataflow(1, OverflowPolicy::Block));
     std::vector<bool> accepted;
-    const auto dropped = dropped_while(run, [&] {
+    const MeasureReport report = measured(run, [&] {
       for (int i = 0; i < 4; ++i)
         accepted.push_back(run.try_push(TensorList{rgb(8, 8, static_cast<std::uint8_t>(i))}));
     });
     require(accepted == std::vector<bool>{true, true, false, false}, "Block: refused when full");
-    require(dropped == 0U, "Block: no drop counted");
+    require(report.counters.inputs_dropped == 0U, "Block: no drop counted");
+    counted(report, 2U, 0U, 2U, "Block");
     run.close();
   }
 }
@@ -1231,6 +1277,7 @@ RUN_TEST("unit_dataflow_backend_test", ([] {
            push_outside_declared_shape_rejected();
            build_errors();
            auto_builds_on_gstreamer_what_dataflow_cannot();
+           stop_prints_the_session_report();
            holder_push_is_an_error();
            link_depth_is_max_of_queue_depth_and_max_buffers();
            try_push_accounting();

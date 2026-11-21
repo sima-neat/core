@@ -456,21 +456,56 @@ public:
     return last_error_;
   }
 
-  // Every input's Feed and every link, summed: the Run's input statistics.
+  // Every input's Feed and every link, summed: the Run's input statistics. push_count is the
+  // pushes that returned true (settle's count), not the Feeds' published messages: a try_push
+  // that a full DropIncoming link refused is published and dropped, and one that a dropping Feed
+  // keeps at its flow limit's admission and replaces is accepted and never published
+  // (FlowReport::refused). Both are in dropped_frames.
   InputStreamStats input_stats() const override {
     InputStreamStats out;
+    out.push_count = core_.inputs_pushed.load(std::memory_order_relaxed);
     out.pull_count = core_.outputs_pulled.load(std::memory_order_relaxed);
     out.poll_count = polls_.load(std::memory_order_relaxed);
     for (const auto& port : ports_) {
       if (const std::optional<df::SessionReport> report = port->report()) {
         for (const df::FeedReport& feed : report->feeds) {
-          out.push_count += feed.pushes;
           out.push_failures += feed.push_failures + feed.backpressure;
         }
         out.dropped_frames += report->dropped_frames;
       }
     }
     return out;
+  }
+
+  bool latency(double& avg_ms, double& min_ms, double& max_ms) const override {
+    std::uint64_t count = 0;
+    double sum_ns = 0;
+    std::int64_t lowest = 0;
+    std::int64_t highest = 0;
+    for (const auto& port : ports_) {
+      const std::optional<df::SessionReport> report = port->report();
+      if (!report || !report->timing) {
+        continue;
+      }
+      for (const df::FetchReport& fetch : report->fetches) {
+        const df::Distribution& d = fetch.latency;
+        if (d.count == 0U) {
+          continue;
+        }
+        lowest = count == 0U ? d.min_ns : std::min(lowest, d.min_ns);
+        highest = count == 0U ? d.max_ns : std::max(highest, d.max_ns);
+        sum_ns += d.mean_ns * static_cast<double>(d.count);
+        count += d.count;
+      }
+    }
+    if (count == 0U) {
+      return false;
+    }
+    constexpr double kNsPerMs = 1e6;
+    avg_ms = sum_ns / static_cast<double>(count) / kNsPerMs;
+    min_ms = static_cast<double>(lowest) / kNsPerMs;
+    max_ms = static_cast<double>(highest) / kNsPerMs;
+    return true;
   }
 
 private:
@@ -718,35 +753,33 @@ private:
     core_.last_pull_at = now;
   }
 
-  // With SIMA_NEAT_BACKEND set (the [NEAT] lines of DataflowBackendSelect.cpp), each input's and
-  // each output's counters as the stop finds them: the per-endpoint report of the Run.
+  // With SIMA_NEAT_BACKEND set (the [NEAT] lines of DataflowBackendSelect.cpp), each input's
+  // Session report as the stop finds it (SessionReport::to_text): its Feed and the Feed's flow
+  // limit, its links, operators, Fetches and pools, the Worker. The header names the input's
+  // Outputs, whose Fetches the report lists in that order.
   void trace_report() const {
     if (pipeline_internal::env_str("SIMA_NEAT_BACKEND", "").empty()) {
       return;
     }
     for (const auto& port : ports_) {
       const DataflowInputConfig& input = port->config();
-      std::string line = "[NEAT] Run::stop: input " + dataflow_names_text(input.names);
-      const std::optional<df::SessionReport> report = port->report();
-      if (!report) {
-        std::fprintf(stderr, "%s: never bound\n", line.c_str());
+      std::string head = "[NEAT] Run::stop: input " + dataflow_names_text(input.names);
+      const std::string text = port->report_text();
+      if (text.empty()) {
+        std::fprintf(stderr, "%s: never bound\n", head.c_str());
         continue;
       }
-      if (!report->feeds.empty()) {
-        const df::FeedReport& feed = report->feeds.front();
-        line += ": pushes " + std::to_string(feed.pushes) + ", push failures " +
-                std::to_string(feed.push_failures) + ", backpressure " +
-                std::to_string(feed.backpressure);
+      head += ", outputs";
+      for (const std::size_t o : input.outputs) {
+        head += " " + dataflow_names_text(config_.outputs[o].names);
       }
-      for (std::size_t k = 0; k < report->links.size() && k < input.outputs.size(); ++k) {
-        const df::LinkReport& link = report->links[k];
-        line += "; output " + dataflow_names_text(config_.outputs[input.outputs[k]].names) +
-                ": accepted " + std::to_string(link.stats.accepted) + ", dropped oldest " +
-                std::to_string(link.stats.dropped_oldest()) + ", dropped incoming " +
-                std::to_string(link.stats.dropped_incoming()) + ", pending " +
-                std::to_string(link.pending);
+      std::string out = head + "\n";
+      for (std::size_t at = 0; at < text.size();) {
+        const std::size_t end = std::min(text.find('\n', at), text.size());
+        out += "[NEAT]   " + text.substr(at, end - at) + "\n";
+        at = end + 1;
       }
-      std::fprintf(stderr, "%s\n", line.c_str());
+      std::fputs(out.c_str(), stderr);
     }
   }
 

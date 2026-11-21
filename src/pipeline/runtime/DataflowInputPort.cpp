@@ -247,12 +247,14 @@ DataflowInputPort::Bound* DataflowInputPort::bind_locked(DataflowInputBinding bi
     }
   }
   DataflowNet net = compile_dataflow_net(run_.config, index_, binding, stream_, model_, site);
+  df::PlanReport plan = net.plan.report();
   df::Result<df::Session> session = std::move(net.plan).instantiate(df::SessionOptions{});
   if (const df::Error* error = df::failure(session)) {
     pipeline_internal::throw_dataflow_error(*error, site.where, {}, site.hint);
   }
   auto b = std::make_unique<Bound>(std::move(binding), std::get<df::Session>(std::move(session)),
                                    net.feed, net.fetches);
+  b->plan = std::move(plan);
   if (!b->binding.is_record()) {
     b->slot_bytes = df::slot_bytes(b->binding.spec);
     b->wrap_mask = df::slot_alignment(b->binding.spec) - 1U;
@@ -323,6 +325,14 @@ df::Status DataflowInputPort::stop(df::Deadline deadline) {
 std::optional<df::SessionReport> DataflowInputPort::report() const {
   Bound* b = bound();
   return b ? std::optional<df::SessionReport>(b->session.report()) : std::nullopt;
+}
+
+std::string DataflowInputPort::report_text() const {
+  std::string text;
+  if (Bound* b = bound()) {
+    b->session.report().to_text(text, &b->plan);
+  }
+  return text;
 }
 
 void DataflowInputPort::enforce_transferable(const Sample& sample, const char* where) {
