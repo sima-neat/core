@@ -28,6 +28,8 @@ namespace pcie_internal = simaai::neat::pcie::internal;
 namespace {
 
 const std::string kHostVersion = SIMA_NEAT_PCIE_HOST_VERSION;
+const std::string kHostMinor =
+    kHostVersion.substr(0, kHostVersion.find('.', kHostVersion.find('.') + 1));
 volatile std::sig_atomic_t g_stop = 0;
 
 void require(const bool condition, const std::string& message) {
@@ -62,8 +64,8 @@ int ended_pid() {
   return child;
 }
 
-// The card worker: --version reports the card release from the fixture, as a current builder
-// does, or fails as a builder that predates --version does. Otherwise it claims its queue.
+// The card worker: --version prints the fixture's version lines, as a current builder does, or
+// fails as a builder that predates --version does. Otherwise it claims its queue.
 int fake_builder(const int argc, char** argv) {
   const fs::path run_dir = std::getenv("SIMA_NEAT_PCIE_RUN_DIR");
   if (argc == 2 && std::string(argv[1]) == "--version") {
@@ -71,7 +73,7 @@ int fake_builder(const int argc, char** argv) {
       std::cerr << "unknown option '--version'\n";
       return 2;
     }
-    std::cout << "sima-neat-version=" << read_file(run_dir.parent_path() / "card-version") << "\n";
+    std::cout << read_file(run_dir.parent_path() / "card-version");
     return 0;
   }
   std::string queue;
@@ -268,21 +270,33 @@ void test_worker_without_owner_record_is_kept(Card& card,
   runtime.stop(5, worker);
 }
 
-void test_card_neat_release_must_match(Card& card, const pcie_internal::RemoteRuntime& runtime) {
-  card.set_card_version("0.0.1");
-  const std::string error = card.start_failure(runtime, 0, card.upload());
-  require(error.find("(exit=21") != std::string::npos &&
-              error.find("runs Neat 0.0.1 and this host runs Neat " + kHostVersion) !=
-                  std::string::npos &&
-              error.find("Install the matching Neat release on the card (see Install Neat on "
-                         "the card).") != std::string::npos,
-          "a different card release was not refused with both versions: " + error);
-  require(!fs::exists(card.root() / "run" / "q0.pid"), "a refused start launched a worker");
+// What a current builder prints for --version: the Git-derived version, then the package version.
+std::string builder_version(const std::string& version, const std::string& package_version) {
+  return "sima-neat-version=" + version + "\nsima-neat-package-version=" + package_version + "\n";
+}
 
-  // The same release with build metadata, and a builder that cannot report a version.
+void test_card_neat_minor_release_must_match(Card& card,
+                                             const pcie_internal::RemoteRuntime& runtime) {
+  // Another minor release, including one that only shares the host minor's leading digits.
+  for (const std::string version : {std::string("0.0.1"), kHostMinor + "0.0"}) {
+    card.set_card_version(builder_version(version, version));
+    const std::string error = card.start_failure(runtime, 0, card.upload());
+    require(error.find("(exit=21") != std::string::npos &&
+                error.find("runs Neat " + version + " and this host runs Neat " + kHostVersion +
+                           "; the card needs the same Neat minor release (" + kHostMinor +
+                           ") as the host.") != std::string::npos &&
+                error.find("Install the matching Neat release on the card (see Install Neat on "
+                           "the card).") != std::string::npos,
+            "card Neat " + version + " was not refused with both versions: " + error);
+    require(!fs::exists(card.root() / "run" / "q0.pid"), "a refused start launched a worker");
+  }
+
+  // Accepted: another patch release; a tag-built card whose Git version is the tag name; a
+  // builder that prints only the Git version (no release has one); a builder without --version.
   for (const std::optional<std::string> version :
-       {std::optional<std::string>(kHostVersion + "+develop.1a2b3c"),
-        std::optional<std::string>()}) {
+       {std::optional<std::string>(builder_version(kHostMinor + ".99", kHostMinor + ".99")),
+        std::optional<std::string>(builder_version("3.0.2121", kHostVersion)),
+        std::optional<std::string>("sima-neat-version=0.0.1\n"), std::optional<std::string>()}) {
     card.set_card_version(version);
     const int worker = card.start(runtime, 0, card.upload());
     runtime.stop(0, worker);
@@ -306,7 +320,7 @@ int main(const int argc, char** argv) {
     test_running_owner_on_this_host_is_kept(card, runtime);
     test_owner_on_another_host_is_kept(card, runtime);
     test_worker_without_owner_record_is_kept(card, runtime);
-    test_card_neat_release_must_match(card, runtime);
+    test_card_neat_minor_release_must_match(card, runtime);
     std::cout << "[PASS] PCIe remote runtime queue ownership\n";
     return 0;
   } catch (const std::exception& e) {

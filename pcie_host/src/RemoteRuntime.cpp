@@ -98,21 +98,19 @@ void validate_endpoint_component(const std::string& value, const char* name,
   }
 }
 
-// The major.minor.patch release of a Neat version such as 0.6.2 or 0.6.2+develop.1a2b3c, or "".
-std::string neat_release(const std::string& version) {
+// The major.minor release of a Neat version such as 0.6.2 or 0.6.2+develop.1a2b3c, or "".
+std::string neat_minor_release(const std::string& version) {
   std::size_t end = 0;
-  for (int part = 0; part < 3; ++part) {
+  for (int part = 0; part < 2; ++part) {
     const std::size_t begin = end;
     while (end < version.size() && std::isdigit(static_cast<unsigned char>(version[end]))) {
       ++end;
     }
-    if (end == begin || (part < 2 && (end == version.size() || version[end++] != '.'))) {
+    if (end == begin || (part == 0 && (end == version.size() || version[end++] != '.'))) {
       return "";
     }
   }
-  return end < version.size() && std::isdigit(static_cast<unsigned char>(version[end]))
-             ? ""
-             : version.substr(0, end);
+  return version.substr(0, end);
 }
 
 std::string output_value(const std::string& output, const std::string& key) {
@@ -388,8 +386,8 @@ std::string RemoteRuntime::start_failure_remedy(const std::string& output, const
     if (line == "neat_version_mismatch") {
       return "\nThe card at " + endpoint() + " runs Neat " +
              output_value(output, "card_neat_version") + " and this host runs Neat " +
-             host_neat_version() + "; the card needs the same Neat release as the host. " +
-             kInstallOnCard;
+             host_neat_version() + "; the card needs the same Neat minor release (" +
+             neat_minor_release(host_neat_version()) + ") as the host. " + kInstallOnCard;
     }
     if (line == "missing_run_dir") {
       return "\nThe card's Neat runtime directory " + run_dir_ +
@@ -443,12 +441,15 @@ RemoteRuntime::start_command(const int queue, const std::string& remote_model_pa
     helper_env += SshRunner::shell_escape(entry) + " ";
   }
 
-  // Builders that predate --version print nothing here, and the start goes ahead as before.
+  // Compare the card's package version, which like the host's comes from deps/manifest.json
+  // (sima-neat-version is a tag name on tag builds). Builders that print no package version
+  // report nothing here, and the start goes ahead as before. Patch releases may differ.
   std::ostringstream version_check;
   version_check << "card_version=$(" << helper_env << SshRunner::shell_escape(helper)
-                << " --version 2>/dev/null | sed -n 's/^sima-neat-version=//p' | head -n 1); "
+                << " --version 2>/dev/null | "
+                << "sed -n 's/^sima-neat-package-version=//p' | head -n 1); "
                 << "[ -z \"$card_version\" ] || echo \"card_neat_version=$card_version\"; ";
-  if (const std::string release = neat_release(host_neat_version()); !release.empty()) {
+  if (const std::string release = neat_minor_release(host_neat_version()); !release.empty()) {
     const std::string quoted = SshRunner::shell_escape(release);
     version_check << "case \"$card_version\" in ''|[!0-9]*|" << quoted << "|" << quoted
                   << "[!0-9]*) ;; *) echo neat_version_mismatch; exit 21;; esac; ";

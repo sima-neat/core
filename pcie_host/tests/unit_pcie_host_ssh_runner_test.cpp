@@ -343,8 +343,11 @@ void test_failures_name_the_next_step() {
           "missing card worker did not name the card install and host release: " + missing);
   const auto mismatch =
       runtime.start_failure_remedy("card_neat_version=0.5.1\r\nneat_version_mismatch\r\n", 0);
-  require(mismatch.find("runs Neat 0.5.1 and this host runs Neat " +
-                        pcie_internal::RemoteRuntime::host_neat_version()) != std::string::npos &&
+  const std::string host_version = pcie_internal::RemoteRuntime::host_neat_version();
+  require(mismatch.find("runs Neat 0.5.1 and this host runs Neat " + host_version +
+                        "; the card needs the same Neat minor release (" +
+                        host_version.substr(0, host_version.find('.', host_version.find('.') + 1)) +
+                        ") as the host.") != std::string::npos &&
               mismatch.find("Install the matching Neat release on the card (see Install Neat "
                             "on the card).") != std::string::npos,
           "a different card release did not name both releases and the install: " + mismatch);

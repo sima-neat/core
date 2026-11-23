@@ -1049,9 +1049,11 @@ int run_builder(const CliOptions& opt) {
 } // namespace
 
 int main(int argc, char** argv) {
-  // The host compares this with its own Neat release before it starts a worker.
+  // The host compares the package version (deps/manifest.json, as for the host package) with its
+  // own before it starts a worker. sima-neat-version, a tag name on tag builds, is for people.
   if (argc == 2 && std::string(argv[1]) == "--version") {
-    std::cout << "sima-neat-version=" << sima_neat_version() << '\n';
+    std::cout << "sima-neat-version=" << sima_neat_version() << '\n'
+              << "sima-neat-package-version=" << SIMA_NEAT_PACKAGE_VERSION << '\n';
     return 0;
   }
   try {
