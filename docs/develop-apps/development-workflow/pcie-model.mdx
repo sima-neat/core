@@ -458,6 +458,9 @@ target_link_libraries(pcie_model PRIVATE ${OpenCV_LIBS})
 
 - One `pcie::Model` owns one PCIe data queue. Queues range from `0` through `5`.
 - Concurrent pipelines share card compute and memory; queue availability alone does not guarantee sufficient resources.
+- On Windows, each open queue also reserves physically contiguous host memory for its buffers. When
+  that memory runs out, the model fails to start and the Platform reports error 1450; open fewer
+  models at the same time or close other applications.
 - Do not assign two active models to the same queue.
 - The host package and the Neat Library installed on the card must be from
   compatible releases.
