@@ -282,6 +282,18 @@ class WindowsPackagingContract(unittest.TestCase):
     doctor = read_source("scripts/windows/sima-pcie-host-doctor.cmd")
     self.assertEqual(doctor.count('if not "%errorlevel%"=="0" ('), 3)
 
+  def test_windows_scripts_have_pinned_line_endings_and_no_labels(self):
+    # The MSI ships the scripts as checked out; pin CRLF, which the hosted Windows
+    # build has always produced, instead of relying on core.autocrlf.
+    attributes = (ROOT.parent / ".gitattributes").read_text(encoding="utf-8").splitlines()
+    for pattern in ("*.bat", "*.cmd", "*.ps1"):
+      self.assertIn(f"{pattern} text eol=crlf", attributes)
+    # A checkout that overrides the attribute still works: cmd.exe can miss labels
+    # in LF-terminated scripts, and the scripts use none.
+    for script in sorted((ROOT / "scripts" / "windows").glob("*.cmd")):
+      with self.subTest(script=script.name):
+        self.assertNotRegex(script.read_text(encoding="utf-8"), r"(?im)^\s*:|call :|goto ")
+
   def test_windows_scripts_never_run_a_program_from_the_current_directory(self):
     # cmd.exe searches the current directory before PATH for a bare program name.
     for script in sorted((ROOT / "scripts" / "windows").glob("*.cmd")):
