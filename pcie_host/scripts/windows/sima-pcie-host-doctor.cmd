@@ -32,5 +32,7 @@ echo Neat PCIe host prerequisites: PASS
 echo Install root: %SIMA_PCIE_HOST_ROOT%
 echo GStreamer root: %GSTREAMER_ROOT_X86_64%
 echo Platform runtime: %SIMA_WINDOWS_PLATFORM_RUNTIME_DIR%
-echo Run neat to show the host and card software.
+rem The installers add no PATH entry; print the full PowerShell command.
+echo To show the host and card software, run in PowerShell:
+echo ^& "%SIMA_PCIE_HOST_ROOT%\bin\neat.cmd"
 exit /b 0

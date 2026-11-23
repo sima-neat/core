@@ -122,8 +122,9 @@ def metadata(msi: Path, wheel: Path, version: str, branch: str, commit: str,
           "[bold]Neat PCIe host installation completed.[/bold]\n"
           "Run Python applications with the managed environment's interpreter:\n"
           "& \"$env:USERPROFILE\\pyneatpcie\\Scripts\\python.exe\" app.py\n"
-          "Run neat to show the host and card software. To set up card SSH again, for "
-          "example after adding or replacing a card, run:\n"
+          "To show the host and card software, run:\n"
+          "& \"$env:ProgramFiles\\SimaPCIeHost\\bin\\neat.cmd\"\n"
+          "To set up card SSH again, for example after adding or replacing a card, run:\n"
           "& \"$env:ProgramFiles\\SimaPCIeHost\\bin\\pcie-setup.cmd\""
       ),
   }

@@ -111,6 +111,9 @@ class WindowsMetadataTests(unittest.TestCase):
     message = result["installation"]["post-message"]
     self.assertIn('& "$env:USERPROFILE\\pyneatpcie\\Scripts\\python.exe"', message)
     self.assertIn('& "$env:ProgramFiles\\SimaPCIeHost\\bin\\pcie-setup.cmd"', message)
+    # Neither MSI adds a PATH entry: name neat.cmd by its full path.
+    self.assertIn('& "$env:ProgramFiles\\SimaPCIeHost\\bin\\neat.cmd"', message)
+    self.assertNotIn("Run neat ", message)
     self.assertNotIn("%", message)
     self.assertNotIn("C:\\", message)
     for driver in platform_drivers:

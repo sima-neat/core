@@ -348,8 +348,8 @@ ssh -t -i "$env:USERPROFILE\.ssh\sima_neat_pcie_ed25519" sima@10.0.0.2 "cd /var/
 
 The installer checks that the card runs a compatible Platform 3.0 release
 before it changes anything, and `--verify` checks the installed packages and
-the PyNeat import. Run `neat` on Ubuntu or `neat.cmd` on Windows to compare the
-Neat versions on the host and the card.
+the PyNeat import. To compare the Neat versions on the host and the card, run
+`neat` on Ubuntu, or `& "$env:ProgramFiles\SimaPCIeHost\bin\neat.cmd"` in PowerShell on Windows.
 
 ## Troubleshooting {#troubleshooting}
 
