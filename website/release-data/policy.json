@@ -339,7 +339,7 @@
     },
     {
       "path": "website/i18n/uk/docusaurus-plugin-content-docs/current/reference/elxr-sdk-host-setup/windows.md",
-      "line": "Після ввімкнення ICS, Windows зазвичай призначає спільному адаптеру адресу в мережі `192.168.137.0/24`.",
+      "line": "Після ввімкнення ICS Windows зазвичай призначає спільному адаптеру адресу з мережі `192.168.137.0/24`. Знайдіть IPv4-адресу DevKit з WSL або з консолі DevKit, а потім перевірте доступ через SSH з WSL:",
       "count": 1,
       "reason": "Network address example, not a release version"
     },
