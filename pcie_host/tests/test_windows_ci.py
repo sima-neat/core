@@ -7,7 +7,6 @@ import contextlib
 import io
 from functools import partial
 import importlib.util
-import getpass
 import hashlib
 import json
 import os
