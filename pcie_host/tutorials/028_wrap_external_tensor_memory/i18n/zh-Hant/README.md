@@ -47,9 +47,8 @@
 請依照[教學設定](/tutorials/before-you-run)的說明安裝 PCIe 主機套件並下載教學套件組。將 YOLOv8s 下載到解壓縮後的 PCIe extras 根目錄：
 
 ```bash
-sima-cli modelzoo get yolo_v8s
-cp /absolute/path/to/downloaded-yolov8s-archive.tar.gz yolo_v8s_mpk.tar.gz
-test -f yolo_v8s_mpk.tar.gz
+sima-cli models download --id yolov8s --variant w8a8
+unzip -p models/yolov8s/w8a8/yolov8s_w8a8_default.zip yolov8s_w8a8_mpk.tar.gz > yolo_v8s_mpk.tar.gz
 ```
 
 **C++ (prebuilt):**

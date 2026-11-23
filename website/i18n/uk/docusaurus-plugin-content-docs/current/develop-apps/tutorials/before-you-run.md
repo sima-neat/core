@@ -64,14 +64,17 @@ python3 -c "import pyneatpcie; print('pyneatpcie ready')"
 
 ## 4. Підготуйте архіви моделей.
 
-Використовуйте Model Zoo, щоб завантажити модель, назва якої вказана в інструкції. Наприклад:
+У навчальних матеріалах використовуються ResNet-50 і YOLOv8s із [Model Browser](/tools/model-browser/). Щоб завантажити їх, потрібен `sima-cli` версії 2.1.20 або новішої, яку вже надає Palette SDK.
 
-<ShellCommand prompt="sdk|devkit|pcie-host">
-sima-cli modelzoo get resnet_50
-sima-cli modelzoo get yolo_v8s
+Для навчальних матеріалів Neat Library завантажте обидві моделі з кореневої теки розпакованих додаткових матеріалів:
+
+<ShellCommand prompt="sdk|devkit">
+./build.sh --download-models-only
 </ShellCommand>
 
-Навчальні матеріали Neat Library приймають `--model`, тому ви можете безпосередньо передавати завантажений архів. У навчальних матеріалах щодо PCIe використовуються фіксовані імена файлів у кореневій теці додаткових матеріалів PCIe:
+Команда записує `/tmp/resnet_50.tar.gz` і `/tmp/yolo_v8s.tar.gz` — шляхи, які команди навчальних матеріалів передають як `--model`. Додайте `--model-target-folder <folder>`, щоб записати їх деінде.
+
+У навчальних матеріалах щодо PCIe використовуються фіксовані імена файлів у кореневій теці додаткових матеріалів PCIe:
 
 | Навчальний посібник з PCIe | Необхідний файл моделі. |
 | --- | --- |
@@ -79,11 +82,13 @@ sima-cli modelzoo get yolo_v8s
 | Запустіть асинхронний процес виведення даних PCIe. | `yolo_v8s_mpk.tar.gz` |
 | Запустіть кілька моделей. | `resnet_50_mpk.tar.gz` та `yolo_v8s_mpk.tar.gz` |
 
-Назви та розташування вихідних файлів Model Zoo можуть відрізнятися. За потреби скопіюйте архіви в основну теку PCIe, використовуючи необхідні назви:
+Кожне завантаження — це ZIP-файл у `models/<model id>/<variant>/`. Завантажте моделі, потрібні для навчального матеріалу, з кореневої теки додаткових матеріалів PCIe і видобудьте кожен архів моделі з його ZIP-файлу під необхідною назвою:
 
 <ShellCommand prompt="pcie-host">
-cp /absolute/path/to/downloaded-resnet-archive.tar.gz resnet_50_mpk.tar.gz
-cp /absolute/path/to/downloaded-yolov8s-archive.tar.gz yolo_v8s_mpk.tar.gz
+sima-cli models download --id resnet_50 --variant w8a8
+unzip -p models/resnet_50/w8a8/resnet_50_w8a8_default.zip resnet_50_w8a8_mpk.tar.gz > resnet_50_mpk.tar.gz
+sima-cli models download --id yolov8s --variant w8a8
+unzip -p models/yolov8s/w8a8/yolov8s_w8a8_default.zip yolov8s_w8a8_mpk.tar.gz > yolo_v8s_mpk.tar.gz
 </ShellCommand>
 
 ## 5. Перевірте шляхи та очікувані результати.

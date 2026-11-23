@@ -63,14 +63,17 @@ python3 -c "import pyneatpcie; print('pyneatpcie ready')"
 
 ## 4. モデルアーカイブを準備する
 
-チュートリアルで指定されたモデルをダウンロードするには、Model Zoo を使用します。例：
+チュートリアルでは、[Model Browser](/tools/model-browser/)のResNet-50とYOLOv8sを使用します。これらのダウンロードには`sima-cli` 2.1.20以降が必要で、Palette SDKにはすでに含まれています。
 
-<ShellCommand prompt="sdk|devkit|pcie-host">
-sima-cli modelzoo get resnet_50
-sima-cli modelzoo get yolo_v8s
+Neat Libraryのチュートリアルでは、抽出した追加ファイルのルートディレクトリから両方のモデルをダウンロードします。
+
+<ShellCommand prompt="sdk|devkit">
+./build.sh --download-models-only
 </ShellCommand>
 
-Neat Libraryのチュートリアルでは、`--model`を受け入れるため、ダウンロードしたアーカイブを直接渡すことができます。PCIeチュートリアルでは、PCIeエクストラディレクトリのルートにある固定ファイル名を使用します。
+このコマンドは`/tmp/resnet_50.tar.gz`と`/tmp/yolo_v8s.tar.gz`を書き込みます。これらは、チュートリアルのコマンドが`--model`として渡すパスです。別の場所に書き込むには、`--model-target-folder <folder>`を追加してください。
+
+PCIeチュートリアルでは、PCIeエクストラディレクトリのルートにある固定ファイル名を使用します。
 
 | PCIeチュートリアル | 必要なモデルファイル |
 |---|---|
@@ -78,11 +81,13 @@ Neat Libraryのチュートリアルでは、`--model`を受け入れるため�
 | PCIe非同期推論を実行 | `yolo_v8s_mpk.tar.gz` |
 | 複数のモデルを実行 | `resnet_50_mpk.tar.gz`と`yolo_v8s_mpk.tar.gz` |
 
-Model Zooの出力名と場所は異なる場合があります。必要に応じて、アーカイブを必要な名前でPCIeエクストラディレクトリのルートにコピーしてください。
+各ダウンロードは、`models/<model id>/<variant>/`の下にあるZIPファイルです。チュートリアルに必要なモデルをPCIeエクストラディレクトリのルートからダウンロードし、各モデルアーカイブを必要な名前でZIPから展開してください。
 
 <ShellCommand prompt="pcie-host">
-cp /absolute/path/to/downloaded-resnet-archive.tar.gz resnet_50_mpk.tar.gz
-cp /absolute/path/to/downloaded-yolov8s-archive.tar.gz yolo_v8s_mpk.tar.gz
+sima-cli models download --id resnet_50 --variant w8a8
+unzip -p models/resnet_50/w8a8/resnet_50_w8a8_default.zip resnet_50_w8a8_mpk.tar.gz > resnet_50_mpk.tar.gz
+sima-cli models download --id yolov8s --variant w8a8
+unzip -p models/yolov8s/w8a8/yolov8s_w8a8_default.zip yolov8s_w8a8_mpk.tar.gz > yolo_v8s_mpk.tar.gz
 </ShellCommand>
 
 ## 5. パスと期待される出力を確認する

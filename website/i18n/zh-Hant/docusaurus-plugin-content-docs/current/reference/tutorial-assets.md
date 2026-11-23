@@ -22,13 +22,19 @@ slug: /reference/tutorial-assets
 | `SIMA_RESNET50_TAR` | 針對 ResNet-50 教學和測試，提供每個模型的個別覆寫設定。|
 | `SIMA_MODEL_TAR` | 這是用於模型測試和範例的共享預設模型封存檔。|
 | 當腳本支援時，針對 YOLO 樣式的偵測教學和測試，可以針對每個模型進行覆寫設定。| `SIMA_YOLO_TAR` |
+| `SIMA_NEAT_TUTORIAL_MODEL_RESNET` | 教學測試使用的 ResNet-50 封存檔。C++ 教學的 CTest 執行和 Python 教學測試會將它以 `--model` 傳遞給教學程式。|
+| `SIMA_NEAT_TUTORIAL_MODEL_YOLO` | 教學測試使用的 YOLOv8s 封存檔，使用方式相同。|
 
 教學指令仍然接受明確的參數。對於單次執行，建議使用 `--model <path>`；如果多個指令需要共享同一個成品，則使用環境變數。
 
 <ShellCommand prompt="sdk|devkit">
 export SIMA_RESNET50_TAR=/path/to/resnet_50.tar.gz
 export SIMA_YOLO_TAR=/path/to/yolo_v8s.tar.gz
+export SIMA_NEAT_TUTORIAL_MODEL_RESNET=/path/to/resnet_50.tar.gz
+export SIMA_NEAT_TUTORIAL_MODEL_YOLO=/path/to/yolo_v8s.tar.gz
 </ShellCommand>
+
+若未設定教學測試變數，C++ 教學的 CTest 執行會使用 `/tmp/resnet_50.tar.gz` 和 `/tmp/yolo_v8s.tar.gz`，也就是 `./build.sh --download-models-only` 寫入的檔案。請參閱[教學設定](/tutorials/before-you-run)。
 
 ## 常見的程式碼庫路徑
 
@@ -72,7 +78,7 @@ export SIMA_COCO_URL=https://example.com/path/to/coco_sample.jpg
 1. 請檢查訊息中顯示的路徑。
 2. 明確地將資源傳遞給教學模式。
 3. 如果您執行 source-tree 測試，請設定對應的環境變數。
-4. 如果該素材來自 Model Zoo，請確認已下載的檔案名稱。
-   將教學指引指向實際的 `.tar.gz` 檔案。
+4. 如果該模型來自 Model Browser，請從下載的 ZIP 中解壓縮模型封存檔，
+   並將教學指引指向該 `.tar.gz` 檔案。
 
 在一般執行時，請勿手動解壓縮模型封存檔。Neat 預期會提供已編譯的封存檔路徑，並自行處理解壓縮。

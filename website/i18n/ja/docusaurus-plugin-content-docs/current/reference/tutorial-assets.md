@@ -20,13 +20,19 @@ slug: /reference/tutorial-assets
 | `SIMA_RESNET50_TAR` | ResNet-50のチュートリアルとテストに対するモデルごとの上書き設定。|
 | `SIMA_MODEL_TAR` | モデルを基盤とするテストやサンプルで使用される、共有のフォールバックモデルアーカイブ。|
 | `SIMA_YOLO_TAR` | スクリプトが対応している場合、YOLOスタイルの検出に関するチュートリアルやテストにおいて、モデルごとに設定を上書きできます。|
+| `SIMA_NEAT_TUTORIAL_MODEL_RESNET` | チュートリアルテスト用のResNet-50アーカイブ。C++チュートリアルのCTest実行とPythonチュートリアルのテストは、これを`--model`としてチュートリアルに渡します。|
+| `SIMA_NEAT_TUTORIAL_MODEL_YOLO` | チュートリアルテスト用のYOLOv8sアーカイブ。同じ方法で使用されます。|
 
 チュートリアルのコマンドは、引き続き明示的なフラグを受け付けます。単一の実行の場合は、`--model <path>` を使用することを推奨します。複数のコマンドで同じアーティファクトを共有する必要がある場合は、環境変数を使用してください。
 
 <ShellCommand prompt="sdk|devkit">
 export SIMA_RESNET50_TAR=/path/to/resnet_50.tar.gz
 export SIMA_YOLO_TAR=/path/to/yolo_v8s.tar.gz
+export SIMA_NEAT_TUTORIAL_MODEL_RESNET=/path/to/resnet_50.tar.gz
+export SIMA_NEAT_TUTORIAL_MODEL_YOLO=/path/to/yolo_v8s.tar.gz
 </ShellCommand>
+
+チュートリアルテスト用の変数が設定されていない場合、C++チュートリアルのCTest実行では、`./build.sh --download-models-only`が書き込むファイルである`/tmp/resnet_50.tar.gz`と`/tmp/yolo_v8s.tar.gz`を使用します。[チュートリアルの設定](/tutorials/before-you-run)を参照してください。
 
 ## 一般的なソースツリーのパス
 
@@ -69,7 +75,7 @@ export SIMA_COCO_URL=https://example.com/path/to/coco_sample.jpg
 1. メッセージに表示されているパスを確認してください。
 2. アセットをチュートリアルフラグとともに明示的に渡してください。
 3. source-treeのテストを実行する場合は、対応する環境変数を設定してください。
-4. アセットがModel Zooからダウンロードされたものであることを確認し、ダウンロードしたファイル名を確認してください。
-   チュートリアルの指示に従い、実際の`.tar.gz`ファイルを参照するように設定してください。
+4. モデルをModel Browserから入手した場合は、ダウンロードしたZIPからモデルアーカイブを展開し、
+   チュートリアルがその`.tar.gz`ファイルを参照するように設定してください。
 
 通常の使用時には、モデルアーカイブを手動で展開しないでください。Neatは、コンパイルされたアーカイブのパスを期待し、自身で展開処理を行います。

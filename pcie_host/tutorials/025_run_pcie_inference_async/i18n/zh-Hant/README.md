@@ -41,15 +41,11 @@
 安裝 PCIe 主機套件，並按照 [教學設定](/tutorials/before-you-run) 中所述下載教學套件。從解壓縮後的 PCIe extras 根目錄中，下載 YOLOv8s（如果尚未存在）：
 
 ```bash
-sima-cli modelzoo get yolo_v8s
+sima-cli models download --id yolov8s --variant w8a8
+unzip -p models/yolov8s/w8a8/yolov8s_w8a8_default.zip yolov8s_w8a8_mpk.tar.gz > yolo_v8s_mpk.tar.gz
 ```
 
-該程式需要此目錄中的確切路徑 `yolo_v8s_mpk.tar.gz`。如果 Model Zoo 使用了不同的名稱或位置，請將下載的檔案複製到指定位置：
-
-```bash
-cp /absolute/path/to/downloaded-yolov8s-archive.tar.gz yolo_v8s_mpk.tar.gz
-test -f yolo_v8s_mpk.tar.gz
-```
+該程式需要此目錄中的確切路徑 `yolo_v8s_mpk.tar.gz`。第二個命令會從下載的 ZIP 中解壓縮該檔案。
 
 執行 Python：
 

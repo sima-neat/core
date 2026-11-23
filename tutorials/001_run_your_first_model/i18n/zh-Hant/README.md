@@ -116,9 +116,10 @@ source ~/.bashrc
 3. `tmp/resnet_50.tar.gz`
 4. 如果找到，則將本機檔案移動到 `tmp/`：`resnet_50.tar.gz`、`resnet-50.tar.gz`
 
-下載（如果 `sima-cli` 可用）：
+從 Model Browser 下載，並將模型封存檔解壓縮到上述命令使用的路徑。下載方式請參閱[教學設定](/tutorials/before-you-run)：
 ```bash
-sima-cli modelzoo get resnet_50
+sima-cli models download --id resnet_50 --variant w8a8
+unzip -p models/resnet_50/w8a8/resnet_50_w8a8_default.zip resnet_50_w8a8_mpk.tar.gz > /tmp/resnet_50.tar.gz
 ```
 
 ### 範例圖像
