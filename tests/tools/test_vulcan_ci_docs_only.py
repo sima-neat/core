@@ -57,10 +57,7 @@ class VulcanCiDocsOnlyTests(unittest.TestCase):
         self.assertEqual(resolver["with"]["manifest_artifact"], "neat-core-dist")
         self.assertEqual(resolver["with"]["manifest_path"], "scheduler-sdk-policy.json")
         self.assertNotIn("elxr_version", dependencies)
-        # Snap, or an explicit published Scheduler set; either way the firmware is that set's.
-        scheduler = dependencies["scheduler"]
-        self.assertTrue(scheduler == {"policy": "snap"} or set(scheduler) == {"branch", "spec"},
-                        scheduler)
+        self.assertEqual(dependencies["scheduler"], {"policy": "snap"})
         self.assertIn("--output dist/scheduler-sdk-policy.json", (ROOT / "build.sh").read_text())
 
     def test_devkit_guard_requires_actual_selected_firmware_without_fallback(self) -> None:
