@@ -14,6 +14,7 @@
 #include <optional>
 #include <sstream>
 #include <stdexcept>
+#include <string_view>
 #include <thread>
 #include <utility>
 
@@ -34,6 +35,8 @@ constexpr const char* kDefaultMlashmCtrlIoTimeout = "MLASHM_CTRL_IO_TIMEOUT_MS=5
 constexpr const char* kHelperPathEnv = "SIMA_NEAT_PCIE_HELPER_PATH";
 constexpr const char* kRunDirEnv = "SIMA_NEAT_PCIE_RUN_DIR";
 constexpr const char* kLogDirEnv = "SIMA_NEAT_PCIE_LOG_DIR";
+constexpr const char* kInstallOnCard = "Install the matching Neat release on the card (see Install "
+                                       "Neat on the card).";
 
 std::optional<std::string> default_identity_file() {
   const auto home = host_home_directory();
@@ -94,6 +97,36 @@ void validate_endpoint_component(const std::string& value, const char* name,
   }
 }
 
+// The major.minor.patch release of a Neat version such as 0.6.2 or 0.6.2+develop.1a2b3c, or "".
+std::string neat_release(const std::string& version) {
+  std::size_t end = 0;
+  for (int part = 0; part < 3; ++part) {
+    const std::size_t begin = end;
+    while (end < version.size() && std::isdigit(static_cast<unsigned char>(version[end]))) {
+      ++end;
+    }
+    if (end == begin || (part < 2 && (end == version.size() || version[end++] != '.'))) {
+      return "";
+    }
+  }
+  return end < version.size() && std::isdigit(static_cast<unsigned char>(version[end]))
+             ? ""
+             : version.substr(0, end);
+}
+
+std::string output_value(const std::string& output, const std::string& key) {
+  std::istringstream lines(output);
+  for (std::string line; std::getline(lines, line);) {
+    if (!line.empty() && line.back() == '\r') {
+      line.pop_back();
+    }
+    if (line.rfind(key + "=", 0) == 0) {
+      return line.substr(key.size() + 1);
+    }
+  }
+  return "";
+}
+
 } // namespace
 
 RemoteRuntime::RemoteRuntime(ConnectionOptions connection) : connection_(std::move(connection)) {
@@ -120,6 +153,56 @@ std::string RemoteRuntime::status_path(const int queue) const {
 
 std::string RemoteRuntime::pid_path(const int queue) const {
   return run_dir_ + "/q" + std::to_string(queue) + ".pid";
+}
+
+std::string RemoteRuntime::owner_path(const int queue) const {
+  return run_dir_ + "/q" + std::to_string(queue) + ".owner";
+}
+
+std::string RemoteRuntime::host_neat_version() {
+#ifdef SIMA_NEAT_PCIE_HOST_VERSION
+  return SIMA_NEAT_PCIE_HOST_VERSION;
+#else
+  return "unknown";
+#endif
+}
+
+std::optional<QueueOwner> RemoteRuntime::parse_queue_owner(const std::string& output) {
+  constexpr std::string_view prefix = "owner.";
+  QueueOwner owner;
+  std::istringstream lines(output);
+  for (std::string line; std::getline(lines, line);) {
+    if (!line.empty() && line.back() == '\r') {
+      line.pop_back();
+    }
+    const auto equals = line.find('=');
+    if (line.rfind(prefix, 0) != 0 || equals == std::string::npos) {
+      continue;
+    }
+    const std::string key = line.substr(prefix.size(), equals - prefix.size());
+    const std::string value = line.substr(equals + 1);
+    try {
+      if (key == "builder_pid") {
+        owner.builder_pid = std::stoi(value);
+      } else if (key == "host_id") {
+        owner.host.host_id = value;
+      } else if (key == "host") {
+        owner.host.host = value;
+      } else if (key == "host_pid") {
+        owner.host.pid = std::stoull(value);
+      } else if (key == "host_start") {
+        owner.host.start = value;
+      } else if (key == "upload") {
+        owner.uploads.push_back(value);
+      }
+    } catch (const std::exception&) {
+      return std::nullopt;
+    }
+  }
+  if (owner.builder_pid <= 0 || owner.host.pid == 0) {
+    return std::nullopt;
+  }
+  return owner;
 }
 
 std::string RemoteRuntime::unique_remote_upload_path(const std::string& local_path) {
@@ -180,6 +263,7 @@ bool RemoteRuntime::start_failure_cleanup_safe(const int exit_code, const bool t
   case 14: // start-lock timeout, before launch
   case 15: // launched child exited and was reaped
   case 16: // queue-claim timeout after launched child was terminated and reaped
+  case 21: // card Neat release differs from the host's, before launch
     return true;
   default:
     return false;
@@ -278,6 +362,9 @@ std::string RemoteRuntime::upload_file(const std::string& local_path) const {
 }
 
 std::string RemoteRuntime::start_failure_remedy(const std::string& output, const int queue) const {
+  const std::string q = std::to_string(queue);
+  const std::string stop_worker =
+      "ssh " + endpoint() + " \"pkill -f '[p]cie-pipeline-builder.*--queue " + q + "( |$)'\"";
   std::istringstream lines(output);
   for (std::string line; std::getline(lines, line);) {
     if (!line.empty() && line.back() == '\r') {
@@ -285,33 +372,102 @@ std::string RemoteRuntime::start_failure_remedy(const std::string& output, const
     }
     if (line == "missing_builder") {
       return "\nNeat is not installed on the card at " + endpoint() +
-             ". Install the Neat release that matches this host package on the card.";
+             ". Install the Neat release that matches this host package (Neat " +
+             host_neat_version() + ") on the card (see Install Neat on the card).";
+    }
+    if (line == "neat_version_mismatch") {
+      return "\nThe card at " + endpoint() + " runs Neat " +
+             output_value(output, "card_neat_version") + " and this host runs Neat " +
+             host_neat_version() + "; the card needs the same Neat release as the host. " +
+             kInstallOnCard;
     }
     if (line == "missing_run_dir") {
       return "\nThe card's Neat runtime directory " + run_dir_ +
              " is missing. Install Neat on the card, or restart the card to recreate it.";
     }
     if (line == "queue_busy") {
-      const std::string q = std::to_string(queue);
-      return "\nAnother card worker holds PCIe queue " + q +
-             ". If no application uses this queue, for example after a host application "
-             "ended without closing its model, stop the leftover worker and retry: ssh " +
-             endpoint() + " \"pkill -f '[p]cie-pipeline-builder.*--queue " + q + "( |$)'\"";
+      const auto owner = parse_queue_owner(output);
+      if (!owner.has_value()) {
+        return "\nAnother card worker holds PCIe queue " + q +
+               ". If no application uses this queue, for example after a host application "
+               "ended without closing its model, stop the leftover worker and retry: " +
+               stop_worker;
+      }
+      const std::string worker = " (card worker PID " + std::to_string(owner->builder_pid) + ")";
+      const std::string process = "process " + std::to_string(owner->host.pid);
+      if (owner->host.host_id.empty() ||
+          owner->host.host_id != current_host_process_owner().host_id) {
+        return "\nPCIe queue " + q + " is in use by " + process + " on host " + owner->host.host +
+               worker +
+               ". Close the model in that application or choose another queue. If that "
+               "application has ended, stop the leftover worker and retry: " +
+               stop_worker;
+      }
+      if (host_process_ended(owner->host)) {
+        return "\nPCIe queue " + q + " is held by a leftover worker" + worker + " of " + process +
+               " on this host, which has ended. Stop the leftover worker and retry: " + stop_worker;
+      }
+      return "\nPCIe queue " + q + " is in use by " + process + " on this host (" +
+             owner->host.host + ")" + worker +
+             ", which is still running. Close the model in that application, end the "
+             "application, or choose another queue.";
     }
   }
   return "";
 }
 
-int RemoteRuntime::start(const int queue, const std::string& remote_model_path,
-                         const std::optional<std::string>& remote_model_options_path) const {
+std::vector<std::string>
+RemoteRuntime::start_command(const int queue, const std::string& remote_model_path,
+                             const std::optional<std::string>& remote_model_options_path) const {
   const std::string& helper = helper_path_;
   const std::string& resolved_run_dir = run_dir_;
   const std::string& resolved_log_dir = log_dir_;
   const std::string start_lock_path =
       resolved_run_dir + "/q" + std::to_string(queue) + ".start.lock";
+  std::vector<std::string> card_env = parse_card_environment(connection_.card_env);
+  if (!card_environment_contains(card_env, "MLASHM_CTRL_IO_TIMEOUT_MS")) {
+    card_env.emplace_back(kDefaultMlashmCtrlIoTimeout);
+  }
+  std::string helper_env = "env ";
+  for (const auto& entry : card_env) {
+    helper_env += SshRunner::shell_escape(entry) + " ";
+  }
+
+  // Builders that predate --version print nothing here, and the start goes ahead as before.
+  std::ostringstream version_check;
+  version_check << "card_version=$(" << helper_env << SshRunner::shell_escape(helper)
+                << " --version 2>/dev/null | sed -n 's/^sima-neat-version=//p' | head -n 1); "
+                << "[ -z \"$card_version\" ] || echo \"card_neat_version=$card_version\"; ";
+  if (const std::string release = neat_release(host_neat_version()); !release.empty()) {
+    const std::string quoted = SshRunner::shell_escape(release);
+    version_check << "case \"$card_version\" in ''|[!0-9]*|" << quoted << "|" << quoted
+                  << "[!0-9]*) ;; *) echo neat_version_mismatch; exit 21;; esac; ";
+  }
+
+  // Record this process with the claim, so that a later start can tell whether the worker was
+  // left by a process that has ended. Without a record, a busy queue is reported as before.
+  const HostProcessOwner self = current_host_process_owner();
+  std::vector<std::string> record = {"host_id=" + self.host_id, "host=" + self.host,
+                                     "host_pid=" + std::to_string(self.pid),
+                                     "host_start=" + self.start, "upload=" + remote_model_path};
+  if (remote_model_options_path.has_value()) {
+    record.push_back("upload=" + *remote_model_options_path);
+  }
+  std::string write_owner;
+  if (!self.host_id.empty() && std::none_of(record.begin(), record.end(), [](const auto& line) {
+        return line.find_first_of("\r\n") != std::string::npos;
+      })) {
+    write_owner = "{ echo \"builder_pid=$launched_pid\"; printf '%s\\n'";
+    for (const auto& line : record) {
+      write_owner += " " + SshRunner::shell_escape(line);
+    }
+    write_owner += "; } > \"$ownerfile.tmp\" 2>/dev/null && "
+                   "mv -f \"$ownerfile.tmp\" \"$ownerfile\" 2>/dev/null; ";
+  }
+
   std::ostringstream ss;
   ss << child_cleanup_shell_function() << "[ -x " << SshRunner::shell_escape(helper)
-     << " ] || { echo missing_builder; exit 10; }; " << "[ -d "
+     << " ] || { echo missing_builder; exit 10; }; " << version_check.str() << "[ -d "
      << SshRunner::shell_escape(resolved_run_dir) << " ] || { echo missing_run_dir; exit 11; }; "
      << "[ -d " << SshRunner::shell_escape(resolved_log_dir)
      << " ] || { echo missing_log_dir; exit 12; }; "
@@ -319,24 +475,18 @@ int RemoteRuntime::start(const int queue, const std::string& remote_model_path,
      << "exec 9>\"$startlock\"; " << "flock -w 30 9 || { echo start_lock_timeout; exit 14; }; "
      << "pidfile=" << SshRunner::shell_escape(pid_path(queue)) << "; "
      << "statusfile=" << SshRunner::shell_escape(status_path(queue)) << "; "
+     << "ownerfile=" << SshRunner::shell_escape(owner_path(queue)) << "; "
+     << "print_owner() { grep -qx \"builder_pid=$1\" \"$ownerfile\" 2>/dev/null && "
+        "sed 's/^/owner./' \"$ownerfile\"; }; "
      << "if [ -f \"$pidfile\" ]; then " << "pid=$(cat \"$pidfile\" 2>/dev/null || true); "
      << "if [ -n \"$pid\" ] && kill -0 \"$pid\" >/dev/null 2>&1; then "
      << "if tr '\\0' ' ' < \"/proc/$pid/cmdline\" 2>/dev/null | grep -q 'pcie-pipeline-builder'; "
         "then "
-     << "echo queue_busy; exit 9; " << "fi; " << "fi; " << "rm -f \"$pidfile\" \"$statusfile\"; "
-     << "else " << "rm -f \"$statusfile\"; " << "fi; ";
+     << "print_owner \"$pid\"; echo queue_busy; exit 9; " << "fi; " << "fi; "
+     << "rm -f \"$pidfile\" \"$statusfile\" \"$ownerfile\"; " << "else "
+     << "rm -f \"$statusfile\" \"$ownerfile\"; " << "fi; ";
   ss << "nohup ";
-  std::vector<std::string> card_env = parse_card_environment(connection_.card_env);
-  if (!card_environment_contains(card_env, "MLASHM_CTRL_IO_TIMEOUT_MS")) {
-    card_env.emplace_back(kDefaultMlashmCtrlIoTimeout);
-  }
-  const bool needs_env = !card_env.empty() || !connection_.card_gst_debug.empty();
-  if (needs_env) {
-    ss << "env ";
-    for (const auto& entry : card_env) {
-      ss << SshRunner::shell_escape(entry) << " ";
-    }
-  }
+  ss << helper_env;
   if (!connection_.card_gst_debug.empty()) {
     ss << "GST_DEBUG=" << SshRunner::shell_escape(connection_.card_gst_debug) << " ";
     ss << "GST_DEBUG_NO_COLOR=1 ";
@@ -356,10 +506,11 @@ int RemoteRuntime::start(const int queue, const std::string& remote_model_path,
   ss << detached_child_redirections() << "launched_pid=$!; "
      << "echo \"launched_pid=$launched_pid\"; " << "for i in $(seq 1 200); do "
      << "owner_pid=$(cat \"$pidfile\" 2>/dev/null || true); "
-     << "if [ \"$owner_pid\" = \"$launched_pid\" ]; then exit 0; fi; "
+     << "if [ \"$owner_pid\" = \"$launched_pid\" ]; then " << write_owner << "exit 0; fi; "
      << "if [ -n \"$owner_pid\" ] && kill -0 \"$owner_pid\" >/dev/null 2>&1 && "
      << "tr '\\0' ' ' < \"/proc/$owner_pid/cmdline\" 2>/dev/null | "
         "grep -q 'pcie-pipeline-builder'; then "
+     << "print_owner \"$owner_pid\"; "
      << "if terminate_launched; then echo queue_busy; exit 9; fi; "
      << "echo queue_busy_cleanup_failed; exit 17; fi; " << "if child_exited; then "
      << "wait \"$launched_pid\"; child_rc=$?; "
@@ -369,12 +520,48 @@ int RemoteRuntime::start(const int queue, const std::string& remote_model_path,
 
   std::vector<std::string> cmd = ssh_base();
   cmd.push_back(ss.str());
-  CommandResult result;
+  return cmd;
+}
+
+CommandResult RemoteRuntime::run_start(const std::vector<std::string>& cmd) const {
   try {
-    result = SshRunner::run(cmd, kCommandTimeoutSec);
+    return SshRunner::run(cmd, kCommandTimeoutSec);
   } catch (const std::exception& e) {
     throw RemoteStartError(std::string("remote pcie-pipeline-builder start failed: ") + e.what(),
                            true);
+  }
+}
+
+int RemoteRuntime::start(const int queue, const std::string& remote_model_path,
+                         const std::optional<std::string>& remote_model_options_path) const {
+  const std::vector<std::string> cmd =
+      start_command(queue, remote_model_path, remote_model_options_path);
+  CommandResult result = run_start(cmd);
+  std::string reclaim_failure;
+  // A worker left by an ended process of this host, for example after Ctrl+C or a crash, holds
+  // the queue: stop it, remove its uploads and start once more. A worker whose recorded process
+  // still runs, or was started from another host, is never stopped.
+  if (!result.timed_out && result.exit_code == 9) {
+    const auto owner = parse_queue_owner(result.output);
+    if (owner.has_value() && host_process_ended(owner->host)) {
+      try {
+        if (owner->uploads.empty()) {
+          throw std::runtime_error("its owner record names no model upload");
+        }
+        stop_process(owner->builder_pid, owner->uploads.front());
+      } catch (const std::exception& e) {
+        reclaim_failure = std::string("\nStopping the leftover worker failed: ") + e.what();
+      }
+      if (reclaim_failure.empty()) {
+        for (const auto& upload : owner->uploads) {
+          try {
+            remove_upload(upload);
+          } catch (const std::exception&) {
+          }
+        }
+        result = run_start(cmd);
+      }
+    }
   }
   if (result.timed_out || result.exit_code != 0) {
     std::optional<int> launched_pid;
@@ -385,7 +572,7 @@ int RemoteRuntime::start(const int queue, const std::string& remote_model_path,
     const bool cleanup_safe = start_failure_cleanup_safe(result.exit_code, result.timed_out);
     throw RemoteStartError("remote pcie-pipeline-builder start failed " +
                                SshRunner::failure_detail(cmd, result) +
-                               start_failure_remedy(result.output, queue),
+                               start_failure_remedy(result.output, queue) + reclaim_failure,
                            cleanup_safe, cleanup_safe ? std::nullopt : launched_pid);
   }
   try {

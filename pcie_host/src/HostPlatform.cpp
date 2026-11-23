@@ -9,12 +9,14 @@
 #include <cstdlib>
 #include <fstream>
 #include <iomanip>
+#include <iterator>
 #include <limits>
 #include <memory>
 #include <random>
 #include <sstream>
 #include <stdexcept>
 #include <system_error>
+#include <utility>
 
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -25,6 +27,7 @@
 #include <bcrypt.h>
 #include <shlobj.h>
 #else
+#include <signal.h>
 #include <sys/stat.h>
 #include <unistd.h>
 #endif
@@ -207,6 +210,117 @@ void host_secure_random(unsigned char* buffer, std::size_t size) {
       !random.read(reinterpret_cast<char*>(buffer), static_cast<std::streamsize>(size))) {
     throw std::runtime_error("failed to read secure host randomness");
   }
+#endif
+}
+
+namespace {
+
+#ifdef _WIN32
+// Process creation time, or "" when the process cannot be queried.
+std::string process_start(const HANDLE process) {
+  FILETIME created{}, exited{}, kernel{}, user{};
+  if (!GetProcessTimes(process, &created, &exited, &kernel, &user)) {
+    return "";
+  }
+  return std::to_string((static_cast<std::uint64_t>(created.dwHighDateTime) << 32) |
+                        created.dwLowDateTime);
+}
+
+std::string host_computer_name() {
+  wchar_t name[MAX_COMPUTERNAME_LENGTH + 1]{};
+  DWORD size = MAX_COMPUTERNAME_LENGTH + 1;
+  return GetComputerNameW(name, &size) ? host_path_string(std::filesystem::path(name)) : "";
+}
+#else
+std::string first_line(const std::filesystem::path& path) {
+  std::ifstream in(path);
+  std::string line;
+  std::getline(in, line);
+  return line;
+}
+
+// The process state and start time (clock ticks after boot) from /proc/<pid>/stat.
+std::optional<std::pair<char, std::string>> process_state_and_start(const std::uint64_t pid) {
+  std::ifstream in("/proc/" + std::to_string(pid) + "/stat");
+  const std::string stat((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+  const auto name_end = stat.rfind(')');
+  if (name_end == std::string::npos) {
+    return std::nullopt;
+  }
+  std::istringstream fields(stat.substr(name_end + 1));
+  std::string state, field;
+  fields >> state;
+  // The state is field 3 and the start time field 22.
+  for (int index = 4; index <= 22; ++index) {
+    fields >> field;
+  }
+  if (!fields || state.size() != 1) {
+    return std::nullopt;
+  }
+  return std::pair{state.front(), field};
+}
+#endif
+
+} // namespace
+
+HostProcessOwner current_host_process_owner() {
+  HostProcessOwner owner;
+  owner.pid = host_process_id();
+#ifdef _WIN32
+  owner.host = host_computer_name();
+  if (!owner.host.empty()) {
+    owner.host_id = "windows:" + owner.host;
+  }
+  owner.start = process_start(GetCurrentProcess());
+#else
+  char name[256]{};
+  if (gethostname(name, sizeof(name) - 1) == 0) {
+    owner.host = name;
+  }
+  // PIDs are only meaningful within one boot and one PID namespace (a container has its own).
+  const std::string boot = first_line("/proc/sys/kernel/random/boot_id");
+  std::error_code ec;
+  const auto pid_namespace = std::filesystem::read_symlink("/proc/self/ns/pid", ec);
+  if (!boot.empty() && !ec) {
+    owner.host_id = "linux:" + boot + ":" + pid_namespace.string();
+  }
+  if (const auto stat = process_state_and_start(owner.pid)) {
+    owner.start = stat->second;
+  }
+#endif
+  return owner;
+}
+
+bool host_process_ended(const HostProcessOwner& owner) {
+  if (owner.host_id.empty() || owner.pid == 0 ||
+      owner.host_id != current_host_process_owner().host_id) {
+    return false;
+  }
+#ifdef _WIN32
+  if (owner.pid > std::numeric_limits<DWORD>::max()) {
+    return false;
+  }
+  const HANDLE process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | SYNCHRONIZE, FALSE,
+                                     static_cast<DWORD>(owner.pid));
+  if (!process) {
+    return GetLastError() == ERROR_INVALID_PARAMETER; // no process has this PID
+  }
+  const bool exited = WaitForSingleObject(process, 0) == WAIT_OBJECT_0;
+  const std::string start = process_start(process);
+  CloseHandle(process);
+  return exited || (!owner.start.empty() && !start.empty() && start != owner.start);
+#else
+  if (owner.pid > static_cast<std::uint64_t>(std::numeric_limits<pid_t>::max())) {
+    return false;
+  }
+  if (::kill(static_cast<pid_t>(owner.pid), 0) != 0 && errno == ESRCH) {
+    return true;
+  }
+  const auto stat = process_state_and_start(owner.pid);
+  if (!stat) {
+    return false; // hidden by /proc mount options, or already gone: kill() decides above
+  }
+  return stat->first == 'Z' || (!owner.start.empty() && stat->second != owner.start);
 #endif
 }
 

@@ -20,6 +20,7 @@ namespace {
 struct FakeCard {
   bool channel_stop_fails = false;
   bool remote_stop_fails = false;
+  bool ready_without_output_buffer = false;
   int channel_stops = 0;
   int remote_stops = 0;
   int upload_removals = 0;
@@ -91,6 +92,9 @@ int RemoteRuntime::start(int, const std::string&, const std::optional<std::strin
   return 42;
 }
 RemoteStatus RemoteRuntime::wait_ready(int, int, int) const {
+  if (card.ready_without_output_buffer) {
+    return {.state = "ready"};
+  }
   throw std::runtime_error("card builder did not become ready");
 }
 void RemoteRuntime::stop(int, int) const {
@@ -104,6 +108,9 @@ void RemoteRuntime::stop_process(int, const std::string&) const {
 }
 void RemoteRuntime::remove_upload(const std::string&) const {
   ++card.upload_removals;
+}
+std::string RemoteRuntime::host_neat_version() {
+  return "0.6.2";
 }
 
 } // namespace simaai::neat::pcie::internal
@@ -195,6 +202,24 @@ int main() {
       require(card.remote_stops == 1,
               "destroying a model must stop the card worker when channel stop fails");
       card.channel_stop_fails = false;
+    }
+
+    {
+      // A card builder older than output_buffer_bytes reporting: the error names the host
+      // release and the card install.
+      pcie::Model model("model.tar.gz");
+      card.ready_without_output_buffer = true;
+      std::string error;
+      try {
+        model.build(1);
+      } catch (const std::runtime_error& e) {
+        error = e.what();
+      }
+      card.ready_without_output_buffer = false;
+      require(error.find("older Neat release than this host (Neat 0.6.2)") != std::string::npos &&
+                  error.find("Install the matching Neat release on the card (see Install Neat on "
+                             "the card).") != std::string::npos,
+              "an old card builder did not name the releases: " + error);
     }
 
     std::cout << "[PASS] PCIe model teardown\n";

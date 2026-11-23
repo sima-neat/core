@@ -244,7 +244,7 @@ void test_host_platform() {
 }
 
 void test_start_failure_cleanup_classification() {
-  for (const int exit_code : {9, 10, 11, 12, 14, 15, 16}) {
+  for (const int exit_code : {9, 10, 11, 12, 14, 15, 16, 21}) {
     require(pcie_internal::RemoteRuntime::start_failure_cleanup_safe(exit_code, false),
             "known cleanup-safe start failure was not classified as safe");
   }
@@ -333,9 +333,30 @@ void test_failures_name_the_next_step() {
           "busy queue did not give the worker stop command: " + busy);
   require(runtime.start_failure_remedy("queue_busy_cleanup_failed\n", 3).empty(),
           "a failed cleanup is not a leftover worker");
-  require(runtime.start_failure_remedy("missing_builder\n", 0).find("Install the Neat release") !=
-              std::string::npos,
-          "missing card worker did not name the card install");
+  const auto missing = runtime.start_failure_remedy("missing_builder\n", 0);
+  require(missing.find("Install the Neat release") != std::string::npos &&
+              missing.find("(Neat " + pcie_internal::RemoteRuntime::host_neat_version() + ")") !=
+                  std::string::npos,
+          "missing card worker did not name the card install and host release: " + missing);
+  const auto mismatch =
+      runtime.start_failure_remedy("card_neat_version=0.5.1\r\nneat_version_mismatch\r\n", 0);
+  require(mismatch.find("runs Neat 0.5.1 and this host runs Neat " +
+                        pcie_internal::RemoteRuntime::host_neat_version()) != std::string::npos &&
+              mismatch.find("Install the matching Neat release on the card (see Install Neat "
+                            "on the card).") != std::string::npos,
+          "a different card release did not name both releases and the install: " + mismatch);
+
+  const auto owner = pcie_internal::RemoteRuntime::parse_queue_owner(
+      "owner.builder_pid=42\r\nowner.host_id=linux:x\r\nowner.host=build-02\r\n"
+      "owner.host_pid=7\r\nowner.host_start=99\r\nowner.upload=/tmp/sima-neat-pcie-a\r\n"
+      "owner.upload=/tmp/sima-neat-pcie-b\r\nqueue_busy\r\n");
+  require(owner.has_value() && owner->builder_pid == 42 && owner->host.host_id == "linux:x" &&
+              owner->host.host == "build-02" && owner->host.pid == 7 && owner->host.start == "99" &&
+              owner->uploads.size() == 2 && owner->uploads[1] == "/tmp/sima-neat-pcie-b",
+          "queue owner record was not parsed");
+  require(!pcie_internal::RemoteRuntime::parse_queue_owner("queue_busy\n").has_value() &&
+              !pcie_internal::RemoteRuntime::parse_queue_owner("owner.builder_pid=x\n").has_value(),
+          "a missing or malformed owner record was accepted");
   require(runtime.start_failure_remedy("missing_run_dir\n", 0).find("/run/sima-neat/pcie") !=
               std::string::npos,
           "missing run directory was not named");
