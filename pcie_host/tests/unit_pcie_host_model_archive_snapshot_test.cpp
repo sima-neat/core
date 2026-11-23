@@ -1,15 +1,26 @@
 #include "HostPlatform.h"
 #include "ModelArchiveSnapshot.h"
+#include "PcieModelFactsReader.h"
 #include "model/internal/ModelArchiveLoader.h"
 
 #include <zlib.h>
 
+#include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <optional>
 #include <stdexcept>
 #include <string>
+
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
 
 namespace fs = std::filesystem;
 namespace pcie_internal = simaai::neat::pcie::internal;
@@ -163,6 +174,133 @@ void test_loader_extracts_under_unicode_directory() {
           "loader did not extract the model binary under a Unicode directory");
 }
 
+// A cast, one MLA stage, a cast and a pass-through: the smallest model the strict decoder admits.
+constexpr const char* kStrictManifest = R"json({
+  "name":"synthetic","model_sdk_version":"2.0.0","input_nodes":[{"name":"input","size":16}],
+  "plugins":[
+    {"name":"cast0","sequence":1,"processor":"EV74","type":"sgpProcess",
+     "config_params":{"desired_batch_size":1,"actual_batch_size":1,"kernel":"cast_transform",
+       "params":{"out_dtype":"bfloat16","input_shapes":[[1,4]],"output_shapes":[[1,4]]}},
+     "input_nodes":[{"name":"input","size":16}],"output_nodes":[{"name":"cast0","size":8}]},
+    {"name":"MLA_0","sequence":2,"processor":"MLA","type":"sgpProcess",
+     "config_params":{"desired_batch_size":1,"actual_batch_size":1,"number_of_quads_to_user":4},
+     "input_nodes":[{"name":"cast0","size":8}],"output_nodes":[{"name":"mla0","size":8}],
+     "resources":{"executable":"synthetic_mla.elf"}},
+    {"name":"cast1","sequence":3,"processor":"EV74","type":"sgpProcess",
+     "config_params":{"desired_batch_size":1,"actual_batch_size":1,"kernel":"cast_transform",
+       "params":{"out_dtype":"float32","input_shapes":[[1,4]],"output_shapes":[[1,4]]}},
+     "input_nodes":[{"name":"mla0","size":8}],"output_nodes":[{"name":"output","size":16}]},
+    {"name":"publish","sequence":4,"processor":"EV74","type":"sgpProcess",
+     "config_params":{"desired_batch_size":1,"actual_batch_size":1,"kernel":"pass_through",
+       "params":{}},
+     "input_nodes":[{"name":"output","size":16}],
+     "output_nodes":[{"name":"pass_through_out_0","size":16}]}
+  ]
+})json";
+
+// Topology evidence for MLA_0, as tests/model_archive_fixture_utils.h writes it: one 8-byte
+// data.ifm.b0 and one 8-byte data.ofm.b0 tensor section.
+std::string topology_elf() {
+  const std::string names("\0.shstrtab\0data.ifm.b0\0data.ofm.b0\0", 35);
+  constexpr std::size_t kSections = 104;
+  constexpr std::size_t kData = kSections + 4 * 64;
+  std::string elf(kData + 32, '\0');
+  const auto put = [&elf](const std::size_t offset, const std::uint64_t value, const int bytes) {
+    for (int i = 0; i < bytes; ++i) {
+      elf[offset + i] = static_cast<char>((value >> (8 * i)) & 0xffU);
+    }
+  };
+  elf.replace(0, 7,
+              "\x7f"
+              "ELF\x02\x01\x01");
+  put(16, 1, 2);
+  put(18, 183, 2);
+  put(20, 1, 4);
+  put(40, kSections, 8);
+  put(52, 64, 2);
+  put(58, 64, 2);
+  put(60, 4, 2);
+  put(62, 1, 2);
+  elf.replace(64, names.size(), names);
+  put(kSections + 64, 1, 4);
+  put(kSections + 64 + 4, 3, 4);
+  put(kSections + 64 + 24, 64, 8);
+  put(kSections + 64 + 32, names.size(), 8);
+  put(kSections + 64 + 48, 1, 8);
+  for (std::size_t i = 0; i < 2; ++i) {
+    const std::size_t header = kSections + (2 + i) * 64;
+    put(header, i == 0 ? 11 : 23, 4);
+    put(header + 4, 0x71ba0002U, 4);
+    put(header + 24, kData + 16 * i, 8);
+    put(header + 32, 16, 8);
+    put(kData + 16 * i, 8, 8);
+    put(kData + 16 * i + 8, 1, 8);
+  }
+  return elf;
+}
+
+// Points the process temporary directory at another directory for one scope.
+class TemporaryDirectoryOverride {
+public:
+  explicit TemporaryDirectoryOverride(const fs::path& directory) {
+#ifdef _WIN32
+    const DWORD size = GetEnvironmentVariableW(L"TMP", nullptr, 0);
+    if (size != 0) {
+      std::wstring value(size, L'\0');
+      value.resize(GetEnvironmentVariableW(L"TMP", value.data(), size));
+      previous_ = value;
+    }
+    require(SetEnvironmentVariableW(L"TMP", directory.c_str()) != 0, "failed to set TMP");
+#else
+    if (const char* value = std::getenv("TMPDIR")) {
+      previous_ = value;
+    }
+    require(::setenv("TMPDIR", directory.c_str(), 1) == 0, "failed to set TMPDIR");
+#endif
+  }
+  ~TemporaryDirectoryOverride() {
+#ifdef _WIN32
+    SetEnvironmentVariableW(L"TMP", previous_ ? previous_->c_str() : nullptr);
+#else
+    if (previous_) {
+      ::setenv("TMPDIR", previous_->c_str(), 1);
+    } else {
+      ::unsetenv("TMPDIR");
+    }
+#endif
+  }
+  TemporaryDirectoryOverride(const TemporaryDirectoryOverride&) = delete;
+  TemporaryDirectoryOverride& operator=(const TemporaryDirectoryOverride&) = delete;
+
+private:
+  std::optional<fs::path::string_type> previous_;
+};
+
+// read_model_facts() extracts under the temporary directory, then decodes the MPK and reads its
+// MLA executable there. A Windows profile outside the ANSI code page puts TEMP under such a name.
+void test_model_facts_read_under_unicode_temp_directory() {
+  pcie_internal::ScopedTempDirectory temp("sima-neat-pcie-snapshot-test");
+  const fs::path directory =
+      temp.path() / pcie_internal::host_path_from_string("\xE6\x9D\xB1\xE4\xBA\xAC \xCE\xB4");
+  fs::create_directories(directory);
+  const fs::path archive = directory / "model.tar.gz";
+  write_file(archive,
+             gzip(tar_member("etc/model_mpk.json", kStrictManifest) +
+                  tar_member("share/synthetic_mla.elf", topology_elf()) + std::string(1024, '\0')));
+
+  pcie_internal::PcieModelFacts facts;
+  {
+    const TemporaryDirectoryOverride override_temp(directory);
+    require(fs::equivalent(fs::temp_directory_path(), directory),
+            "temporary directory override was ignored");
+    facts = pcie_internal::read_model_facts(pcie_internal::host_path_string(archive));
+  }
+  require(facts.inputs.size() == 1 && facts.outputs.size() == 1,
+          "model facts under a Unicode temporary directory lost the model's tensors");
+  require(facts.inputs.front().name == "input" && facts.outputs.front().name == "output",
+          "model facts under a Unicode temporary directory named the wrong tensors");
+}
+
 // cmd.exe would run a tar.bat from the current directory before the tar Windows ships.
 void test_loader_ignores_tar_in_current_directory() {
 #ifdef _WIN32
@@ -217,6 +355,7 @@ int main() {
     test_non_tar_gz_source_is_rejected_before_snapshot();
     test_loader_extracts_under_unicode_directory();
     test_loader_ignores_tar_in_current_directory();
+    test_model_facts_read_under_unicode_temp_directory();
     std::cout << "[PASS] model archive snapshot\n";
     return 0;
   } catch (const std::exception& error) {

@@ -1,4 +1,5 @@
 #include "HostPlatform.h"
+#include "pipeline/internal/Utf8Path.h"
 
 #include <algorithm>
 #include <atomic>
@@ -118,23 +119,11 @@ std::optional<std::filesystem::path> host_home_directory() {
 }
 
 std::filesystem::path host_path_from_string(const std::string& path) {
-#ifdef _WIN32
-  std::u8string utf8;
-  utf8.assign(reinterpret_cast<const char8_t*>(path.data()),
-              reinterpret_cast<const char8_t*>(path.data() + path.size()));
-  return std::filesystem::path(utf8);
-#else
-  return std::filesystem::path(path);
-#endif
+  return pipeline_internal::utf8_path(path);
 }
 
 std::string host_path_string(const std::filesystem::path& path) {
-#ifdef _WIN32
-  const auto utf8 = path.u8string();
-  return {utf8.begin(), utf8.end()};
-#else
-  return path.string();
-#endif
+  return pipeline_internal::utf8_string(path);
 }
 
 bool same_host_path(const std::filesystem::path& left, const std::filesystem::path& right) {

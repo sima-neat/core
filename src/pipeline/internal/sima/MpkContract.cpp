@@ -1,5 +1,6 @@
 #include "pipeline/internal/sima/MpkContract.h"
 #include "pipeline/internal/EnvUtil.h"
+#include "pipeline/internal/Utf8Path.h"
 
 #include <nlohmann/json.hpp>
 
@@ -5567,7 +5568,7 @@ std::optional<fs::path> find_mpk_manifest(const fs::path& package_root) {
     if (!it->is_regular_file()) {
       continue;
     }
-    const std::string filename = it->path().filename().string();
+    const std::string filename = utf8_string(it->path().filename());
     if (filename == "mpk.json" || ends_with_local(filename, "_mpk.json")) {
       candidates.push_back(it->path());
     }
@@ -5576,7 +5577,7 @@ std::optional<fs::path> find_mpk_manifest(const fs::path& package_root) {
     return std::nullopt;
   }
   std::sort(candidates.begin(), candidates.end(),
-            [](const fs::path& a, const fs::path& b) { return a.string() < b.string(); });
+            [](const fs::path& a, const fs::path& b) { return utf8_string(a) < utf8_string(b); });
   return candidates.front();
 }
 

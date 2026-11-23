@@ -1,4 +1,5 @@
 #include "model/internal/ModelArchiveLoader.h"
+#include "pipeline/internal/Utf8Path.h"
 
 #include <nlohmann/json.hpp>
 
@@ -60,25 +61,9 @@ struct ArchiveContents {
 
 [[noreturn]] void throw_archive(ModelArchiveErrorClass code, const std::string& message);
 
-// Paths cross this loader's interface as UTF-8. MSVC's narrow path conversions use the ANSI code
-// page instead, which breaks a non-ASCII profile or temporary directory, so Windows converts
-// explicitly.
-fs::path utf8_path(const std::string& path) {
-#ifdef _WIN32
-  return fs::path(std::u8string(path.begin(), path.end()));
-#else
-  return fs::path(path);
-#endif
-}
-
-std::string utf8_string(const fs::path& path) {
-#ifdef _WIN32
-  const std::u8string utf8 = path.u8string();
-  return std::string(utf8.begin(), utf8.end());
-#else
-  return path.string();
-#endif
-}
+// Paths cross this loader's interface as UTF-8.
+using pipeline_internal::utf8_path;
+using pipeline_internal::utf8_string;
 
 std::string shell_quote(const std::string& value) {
 #ifdef _WIN32
