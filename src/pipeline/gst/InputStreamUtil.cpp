@@ -2144,6 +2144,18 @@ void validate_public_metadata(Describe describe, const InputOptions& opt,
 }
 } // namespace
 
+void validate_sample_attribute_keys(const Sample& sample, const char* where) {
+  for (const auto& [key, value] : sample.attributes) {
+    if (key.find('\0') != std::string::npos) {
+      const auto name =
+          nlohmann::json(key).dump(-1, ' ', false, nlohmann::json::error_handler_t::replace);
+      pipeline_internal::error_util::throw_session_error(
+          error_codes::kSampleAttributes,
+          std::string(where) + ": sample attribute key " + name + " contains a NUL byte");
+    }
+  }
+}
+
 void validate_public_input(const cv::Mat& input, const InputOptions& opt,
                            const InputStreamOptions& stream, const char* where) {
   validate_public_metadata([&] { return describe_mat_geometry_or_throw(input, opt, where); }, opt,
@@ -2189,15 +2201,7 @@ void validate_public_input(const Sample& input, const InputOptions& opt,
     validate_public_input(tensor, opt, stream, where);
   };
   const auto visit = [&](auto&& self, const Sample& sample) -> void {
-    for (const auto& [key, value] : sample.attributes) {
-      if (key.find('\0') != std::string::npos) {
-        const auto name =
-            nlohmann::json(key).dump(-1, ' ', false, nlohmann::json::error_handler_t::replace);
-        pipeline_internal::error_util::throw_session_error(
-            error_codes::kSampleAttributes,
-            std::string(where) + ": sample attribute key " + name + " contains a NUL byte");
-      }
-    }
+    validate_sample_attribute_keys(sample, where);
     if (sample_has_tensor_list(sample) && !sample.tensors.empty()) {
       for (const auto& tensor : sample.tensors) {
         validate_tensor(tensor, sample);
