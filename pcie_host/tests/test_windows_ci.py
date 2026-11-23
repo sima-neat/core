@@ -4712,14 +4712,15 @@ class HostedWindowsBuildContracts(unittest.TestCase):
       service = root / "Platform"
       service.mkdir()
       (service / "SiMaPCIe.dll").write_bytes(b"platform")
-      output = (f'        BINARY_PATH_NAME   : "{service}\\simaai_mla_daemon.exe" --service\n'
-                if os.name == "nt" else
-                f'        BINARY_PATH_NAME   : "{service}/simaai_mla_daemon.exe" --service\n')
-      with mock.patch.object(module.subprocess, "run", return_value=subprocess.CompletedProcess(
-          [], 0, output, "")):
-        self.assertEqual(module.installed_platform_runtime(), service)
-      with mock.patch.object(module.subprocess, "run", return_value=subprocess.CompletedProcess(
-          [], 1, "[SC] OpenService FAILED 1060\n", "")):
+      # The registry ImagePath, which no display language translates; not sc.exe qc.
+      self.assertNotIn('"sc.exe"', (SCRIPT_DIR / "prepare_windows_card_inputs.py").read_text(
+          encoding="utf-8"))
+      executable = service / "simaai_mla_daemon.exe"
+      for image in (f'"{executable}" --service', f"{executable} --service"):
+        with self.subTest(image=image), \
+            mock.patch.object(module, "service_image_path", return_value=image):
+          self.assertEqual(module.installed_platform_runtime(), service)
+      with mock.patch.object(module, "service_image_path", return_value=None):
         with self.assertRaisesRegex(RuntimeError, "SiMaMlaDaemon is not installed"):
           module.installed_platform_runtime()
 

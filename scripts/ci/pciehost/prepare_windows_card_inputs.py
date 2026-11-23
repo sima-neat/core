@@ -15,9 +15,7 @@ import argparse
 import json
 import os
 from pathlib import Path
-import re
 import shutil
-import subprocess
 import sys
 from urllib.request import urlopen
 
@@ -84,14 +82,26 @@ def prepare_genai_test_assets(workspace: Path, cache: Path) -> Path:
   return root
 
 
+def service_image_path() -> str | None:
+  """Return the SiMaMlaDaemon service command line, or None when it is not installed."""
+  import winreg  # Windows only.
+  try:
+    with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE,
+                        r"SYSTEM\CurrentControlSet\Services\SiMaMlaDaemon") as service:
+      return str(winreg.QueryValueEx(service, "ImagePath")[0])
+  except OSError:
+    return None
+
+
 def installed_platform_runtime() -> Path:
-  """Find the Platform runtime as the installed sima-pcie-host-env.cmd does."""
-  output = subprocess.run(["sc.exe", "qc", "SiMaMlaDaemon"], capture_output=True, text=True,
-                          check=False).stdout
-  match = re.search(r"BINARY_PATH_NAME\s*:\s*(.+)", output)
-  if not match:
+  """Find the Platform runtime as the installed sima-pcie-host-env.cmd does.
+
+  The service's registry ImagePath is not translated, unlike sc.exe qc output.
+  """
+  image = service_image_path()
+  if not image:
     raise RuntimeError("the SiMa Platform service SiMaMlaDaemon is not installed")
-  image = match[1].strip()
+  image = os.path.expandvars(image).strip()  # REG_EXPAND_SZ
   executable = image[1:].split('"', 1)[0] if image.startswith('"') else image.split(" ", 1)[0]
   runtime = Path(executable).parent
   if not (runtime / "SiMaPCIe.dll").is_file():
