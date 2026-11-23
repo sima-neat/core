@@ -20,15 +20,37 @@ void check(int rc, const char* operation) {
                              " failed: " + std::to_string(rc));
 }
 
+// The Platform runtime is the directory of the SiMaMlaDaemon service executable, as for
+// sima-pcie-host-env.cmd and PyNeatPCIe. A bare DLL name would search the current directory.
+std::filesystem::path platform_service_directory() {
+  constexpr auto key = L"SYSTEM\\CurrentControlSet\\Services\\SiMaMlaDaemon";
+  DWORD bytes = 0;
+  if (RegGetValueW(HKEY_LOCAL_MACHINE, key, L"ImagePath", RRF_RT_REG_SZ, nullptr, nullptr,
+                   &bytes) != ERROR_SUCCESS)
+    return {};
+  std::wstring command(bytes / sizeof(wchar_t), L'\0');
+  if (RegGetValueW(HKEY_LOCAL_MACHINE, key, L"ImagePath", RRF_RT_REG_SZ, nullptr, command.data(),
+                   &bytes) != ERROR_SUCCESS)
+    return {};
+  command.resize(command.find(L'\0'));
+  command.erase(0, command.find_first_not_of(L" \t"));
+  const bool quoted = !command.empty() && command.front() == L'"';
+  const auto executable = quoted ? command.substr(1, command.find(L'"', 1) - 1)
+                                 : command.substr(0, command.find_first_of(L" \t"));
+  return std::filesystem::path(executable).parent_path();
+}
+
 std::wstring platform_library() {
   wchar_t directory[32768]{};
   const DWORD size = GetEnvironmentVariableW(L"SIMA_WINDOWS_PLATFORM_RUNTIME_DIR", directory,
                                              static_cast<DWORD>(std::size(directory)));
-  if (!size)
-    return L"SiMaPCIe.dll";
   if (size >= std::size(directory))
     throw std::runtime_error("SIMA_WINDOWS_PLATFORM_RUNTIME_DIR is too long");
-  return (std::filesystem::path(directory) / L"SiMaPCIe.dll").wstring();
+  const auto runtime = size ? std::filesystem::path(directory) : platform_service_directory();
+  if (!size && !runtime.is_absolute())
+    throw std::runtime_error("The SiMaMlaDaemon service is not installed; install matching "
+                             "Windows PCIe userspace or set SIMA_WINDOWS_PLATFORM_RUNTIME_DIR");
+  return (runtime / L"SiMaPCIe.dll").wstring();
 }
 
 // SiMaPCIe.dll opens host files with ANSI APIs, so pass UTF-8 host paths in the active code page.

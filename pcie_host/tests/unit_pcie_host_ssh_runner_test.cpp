@@ -166,9 +166,21 @@ void test_open_ssh_executable_searches_path() {
   require(pcie_internal::open_ssh_executable("sima-neat-path-probe") ==
               pcie_internal::host_path_string(tool),
           "OpenSSH lookup did not return the full PATH match");
-  require(pcie_internal::open_ssh_executable("sima-neat-missing-probe") ==
-              "sima-neat-missing-probe.exe",
-          "OpenSSH lookup changed the not-found result");
+  // A tool outside System32\OpenSSH and PATH fails, even when the current directory holds a
+  // same-named executable that CreateProcessW would run for a bare name.
+  pcie_internal::ScopedTempDirectory current("sima-neat-pcie-cwd-test");
+  std::ofstream(current.path() / "sima-neat-cwd-probe.exe").put('\0');
+  const auto previous = std::filesystem::current_path();
+  std::filesystem::current_path(current.path());
+  std::string error;
+  try {
+    (void)pcie_internal::open_ssh_executable("sima-neat-cwd-probe");
+  } catch (const std::runtime_error& e) {
+    error = e.what();
+  }
+  std::filesystem::current_path(previous);
+  require(error.find("OpenSSH Client") != std::string::npos,
+          "OpenSSH lookup must fail with the fix instead of a bare name: " + error);
 }
 #endif
 

@@ -164,7 +164,10 @@ std::string open_ssh_executable(const char* command) {
     }
     begin = end + 1;
   }
-  return std::string(command) + ".exe";
+  // A bare name would make CreateProcessW run a same-named file from the current directory.
+  throw std::runtime_error("OpenSSH " + host_path_string(executable) +
+                           " was not found in System32\\OpenSSH or PATH; install the Windows "
+                           "OpenSSH Client optional feature or add OpenSSH to PATH");
 #else
   return command;
 #endif

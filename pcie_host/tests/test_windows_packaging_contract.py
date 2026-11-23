@@ -43,6 +43,25 @@ class WindowsPackagingContract(unittest.TestCase):
       self.assertIn(symbol, source)
     self.assertNotIn("provider exposes vision queues only", source)
 
+  def test_windows_runtime_never_loads_or_runs_a_bare_file_name(self):
+    # LoadLibraryW and CreateProcessW search the current directory for a bare name, so a
+    # file planted there would run. Resolve full paths like sima-pcie-host-env.cmd does.
+    service = (ROOT.parent / "shared" / "pcie_genai" / "ServiceWindows.cpp").read_text(
+        encoding="utf-8")
+    platform = read_source("src/HostPlatform.cpp")
+    for source in (service, platform, read_source("src/SshRunnerWindows.cpp")):
+      self.assertNotRegex(source, r'(LoadLibrary|CreateProcess)\w*\(\s*L?"')
+    self.assertNotIn('return L"SiMaPCIe.dll"', service)
+    self.assertIn(r'L"SYSTEM\\CurrentControlSet\\Services\\SiMaMlaDaemon"', service)
+    self.assertIn('L"ImagePath", RRF_RT_REG_SZ', service)
+    self.assertIn("LoadLibraryW(library_path.c_str())", service)
+    self.assertIn("advapi32 bcrypt ole32 shell32", read_source("CMakeLists.txt"))
+    resolver = platform.split("std::string open_ssh_executable(", 1)[1].split("\n}\n", 1)[0]
+    windows = resolver.split("#ifdef _WIN32\n", 1)[1].split("#else\n", 1)[0]
+    self.assertEqual(re.findall(r"(?m)^ *(return [^;]+;)", windows),
+                     ["return host_path_string(candidate);"] * 2)
+    self.assertIn("throw std::runtime_error(", windows.rsplit("begin = end + 1;", 1)[1])
+
   def test_msi_has_stable_upgrade_and_install_ownership(self):
     source = PACKAGING.read_text(encoding="utf-8")
     self.assertIn('set(CPACK_GENERATOR "WIX")', source)
