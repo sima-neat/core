@@ -4,6 +4,9 @@ setlocal EnableExtensions
 rem "neat status" on a Windows PCIe host: as on Linux, collect the host and card
 rem inventory with the installed helper, then render it. No goto: cmd.exe label
 rem search is unreliable in LF-only batch files.
+rem Take this script's directory before any shift: shift also moves the script
+rem name, which then resolves against the current directory.
+set "NEAT_BIN=%~dp0"
 if /i "%~1"=="status" shift
 set "NEAT_JSON="
 if "%~1"=="--json" (
@@ -15,7 +18,7 @@ if not "%~1"=="" (
   exit /b 64
 )
 
-set "NEAT_HELPER=%~dp0..\share\sima-pcie-host\neat_pcie_status.py"
+set "NEAT_HELPER=%NEAT_BIN%..\share\sima-pcie-host\neat_pcie_status.py"
 if not exist "%NEAT_HELPER%" (
   1>&2 echo neat: PCIe status helper is missing; reinstall sima-pcie-host
   exit /b 1

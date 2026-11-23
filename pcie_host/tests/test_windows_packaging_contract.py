@@ -265,7 +265,7 @@ class WindowsPackagingContract(unittest.TestCase):
     self.assertIn('"neat-pcie-application-builder" / "playbook.yml"', producer)
 
     status = read_source("scripts/windows/neat.cmd")
-    self.assertIn(r"%~dp0..\share\sima-pcie-host\neat_pcie_status.py", status)
+    self.assertIn(r"%NEAT_BIN%..\share\sima-pcie-host\neat_pcie_status.py", status)
     self.assertIn(r"%USERPROFILE%\pyneatpcie\Scripts\python.exe", status)
     self.assertIn("py.exe -3.14", status)
     self.assertIn("--render", status)
@@ -293,6 +293,22 @@ class WindowsPackagingContract(unittest.TestCase):
     for script in sorted((ROOT / "scripts" / "windows").glob("*.cmd")):
       with self.subTest(script=script.name):
         self.assertNotRegex(script.read_text(encoding="utf-8"), r"(?im)^\s*:|call :|goto ")
+
+  def test_windows_scripts_resolve_their_own_directory_before_any_shift(self):
+    # A plain shift also moves %0: "neat.cmd --json" then took %~dp0 from the current
+    # directory and reported its helper missing everywhere but bin.
+    script_name = re.compile(r"%~?[a-z$:]*0")
+    for script in sorted((ROOT / "scripts" / "windows").glob("*.cmd")):
+      with self.subTest(script=script.name):
+        lines = script.read_text(encoding="utf-8").splitlines()
+        shifts = [index for index, line in enumerate(lines)
+                  if re.search(r"(?i)\bshift\b(?!\s*/)", line)
+                  and not line.lstrip().lower().startswith("rem ")]
+        if shifts:
+          self.assertEqual([line for line in lines[shifts[0]:] if script_name.search(line)],
+                           [])
+    status = read_source("scripts/windows/neat.cmd")
+    self.assertLess(status.index('set "NEAT_BIN=%~dp0"'), status.index("\" shift"))
 
   def test_windows_scripts_never_run_a_program_from_the_current_directory(self):
     # cmd.exe searches the current directory before PATH for a bare program name.

@@ -4343,6 +4343,9 @@ class WindowsCiContracts(unittest.TestCase):
         self.assertEqual(argv[1:], ["/d", "/c", str(install_root / "bin" / "neat.cmd"), "--json"])
         self.assertTrue(argv[0].endswith("cmd.exe"))
         self.assertEqual(run.call_args.kwargs["env"], {"PATH": "x"})
+        # Not from bin: there a neat.cmd that resolves its helper from the current
+        # directory still passes.
+        self.assertEqual(run.call_args.kwargs["cwd"], log.parent)
         self.assertIn("neat: stderr line", log.read_text(encoding="utf-8"))
 
   def test_hosted_build_and_hardware_qualifier_run_installed_neat_cmd(self):

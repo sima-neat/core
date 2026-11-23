@@ -53,12 +53,14 @@ def installed_neat_status(install_root: Path, environment: dict[str, str], log: 
 
   packages maps the installed MSI product names to their versions. The command line,
   exit code, output and errors are saved to log; only stdout must be the JSON object.
+  It runs from the log directory, not bin: neat.cmd must find its helper from its own
+  location, as when a customer runs it from any other directory.
   """
   argv = [str(Path(os.environ["SystemRoot"]) / "System32" / "cmd.exe"), "/d", "/c",
           str(install_root / "bin" / "neat.cmd"), "--json"]
   print("+", subprocess.list2cmdline(argv), flush=True)
-  result = subprocess.run(argv, env=environment, capture_output=True, text=True,
-                          encoding="utf-8", errors="replace", timeout=180)
+  result = subprocess.run(argv, cwd=log.parent, env=environment, capture_output=True,
+                          text=True, encoding="utf-8", errors="replace", timeout=180)
   log.write_text(
       f"+ {subprocess.list2cmdline(argv)}\nexit code: {result.returncode}\n"
       f"--- stdout\n{result.stdout}\n--- stderr\n{result.stderr}\n", encoding="utf-8")
