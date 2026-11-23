@@ -11,8 +11,9 @@ from the regular Neat Library, so SDK headers and examples can describe a differ
    - Windows `pcie::Model`: `<install-root>\include\simaai\neat\pcie\Model.h`
 2. Installed Python module in the selected Python environment:
    `pyneatpcie`
-3. Packaged PCIe tutorials, when the PCIe extras bundle is available:
-   `share/sima-pcie-host/tutorials/`
+3. Packaged PCIe tutorials of the same release:
+   - Linux, when the PCIe extras bundle is available: `share/sima-pcie-host/tutorials/`
+   - Windows, installed by the host package: `<install-root>\share\sima-pcie-host\tutorials\`
 4. In a Neat core source checkout only:
    - `pcie_host/include/simaai/neat/pcie/Model.h`
    - `pcie_host/include/simaai/neat/pcie/genai/GenAIModel.h`
@@ -53,7 +54,7 @@ rg -n "^(struct|class|enum class|using) " /usr/include/simaai/neat/pcie/Model.h
 On Windows, inspect the installed header in PowerShell:
 
 ```powershell
-$root = "C:\Program Files\SimaPCIeHost"
+$root = "$env:ProgramFiles\SimaPCIeHost"
 Test-Path "$root\include\simaai\neat\pcie\Model.h"
 Select-String -Path "$root\include\simaai\neat\pcie\Model.h" -Pattern "class Model"
 ```
@@ -74,10 +75,11 @@ For Python, use the interpreter that owns the installed wheel. The PCIe package 
   'import pyneatpcie as p; print(p.__version__); print(p.Model); print(p.Tensor)'
 ```
 
-On Windows, use the interpreter in the venv where the wheel was installed:
+On Windows, the installer uses `%USERPROFILE%\pyneatpcie` unless another environment was
+selected with `--python-executable`. Run its interpreter directly; activation is not required:
 
 ```powershell
-.\pyneatpcie\Scripts\python.exe -c "import pyneatpcie as p; print(p.__version__, p.Model, p.Tensor)"
+& "$env:USERPROFILE\pyneatpcie\Scripts\python.exe" -c "import pyneatpcie as p; print(p.__version__, p.Model, p.Tensor)"
 ```
 
 For GenAI, inspect `genai/GenAIModel.h` and import `pyneatpcie.genai`. On Windows, the transport

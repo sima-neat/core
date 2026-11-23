@@ -15,15 +15,15 @@ command -v pcie-setup.sh
 
 Native Windows needs the x64 GStreamer MSVC runtime, plus its development installation for C++
 builds. Python applications need CPython 3.14 x64, the only Python qualified for the Windows wheel.
-Verify the native installation and plugin in PowerShell:
+Verify the native installation in PowerShell. The doctor loads the `neatpciehost` plug-in and
+prints the GStreamer and Platform directories it used; `neat.cmd` shows the host and card
+software, like `neat` on Linux:
 
 ```powershell
-$root = "C:\Program Files\SimaPCIeHost"
-$gst = "C:\Program Files\gstreamer\1.0\msvc_x86_64\bin\gst-inspect-1.0.exe"
-$env:PATH = "$root\bin;$(Split-Path $gst);$env:PATH"
+$root = "$env:ProgramFiles\SimaPCIeHost"
 Test-Path "$root\include\simaai\neat\pcie\Model.h"
 & "$root\bin\sima-pcie-host-doctor.cmd"
-& $gst "$root\bin\gstreamer-1.0\gstneatpciehost.dll"
+& "$root\bin\neat.cmd"
 ```
 
 Before the first connected-card run on Windows, provision or verify passwordless
@@ -41,6 +41,12 @@ For Python, use the environment into which the PCIe wheel was installed:
 ```bash
 ~/pyneatpcie/bin/python -c \
   'import pyneatpcie as p; print(p.__version__); print(p.Model)'
+```
+
+On Windows, the default environment is `%USERPROFILE%\pyneatpcie`:
+
+```powershell
+& "$env:USERPROFILE\pyneatpcie\Scripts\python.exe" -c "import pyneatpcie as p; print(p.__version__, p.Model)"
 ```
 
 Do not report Python validation as successful when only the system interpreter was checked but the
@@ -85,15 +91,26 @@ cmake -S . -B build
 cmake --build build -j"$(nproc)"
 ```
 
-With Visual Studio Build Tools on Windows, `find_package(SimaPCIeHost)` finds GStreamer through
-pkg-config and zlib through CMake. Point both at the GStreamer development installation:
+On Windows, build with Visual Studio 2022 version 17.14 or later, including Visual Studio 2026,
+and the **Desktop development with C++** workload, from an **x64 Native Tools Command Prompt**.
+`sima-pcie-host-env.cmd` sets the GStreamer development installation, `CMAKE_PREFIX_PATH`, and the
+runtime `PATH` for the current Command Prompt only. The OpenCV 5.0.0 Windows package provides only
+the Release configuration, so build `Release` or `RelWithDebInfo`, not `Debug`:
+
+```bat
+call "%ProgramFiles%\SimaPCIeHost\bin\sima-pcie-host-env.cmd"
+set "OpenCV_DIR=C:\opencv\build"
+cmake -S . -B build
+cmake --build build --config Release
+set "PATH=%OpenCV_DIR%\x64\vc16\bin;%PATH%"
+build\Release\pcie_model.exe
+```
+
+Omit the OpenCV lines when the application does not use OpenCV. From another shell, start an
+executable through `sima-pcie-host-run.cmd`, which applies the same environment to that process:
 
 ```powershell
-$gstRoot = "C:\Program Files\gstreamer\1.0\msvc_x86_64"
-$env:PKG_CONFIG = "$gstRoot\bin\pkg-config.exe"
-$env:PKG_CONFIG_PATH = "$gstRoot\lib\pkgconfig"
-cmake -S . -B build -A x64 -DCMAKE_PREFIX_PATH="C:\Program Files\SimaPCIeHost;$gstRoot"
-cmake --build build --config Release
+& "$env:ProgramFiles\SimaPCIeHost\bin\sima-pcie-host-run.cmd" build\Release\pcie_model.exe
 ```
 
 ## Connected-Card Validation
@@ -118,10 +135,14 @@ For `pcie::Model`, use a bounded smoke sequence:
 The host package and card-side Neat Library must come from compatible releases. A build failure can
 also indicate SSH/SCP failure, an occupied queue, an invalid archive, or card-side pipeline startup
 failure. Preserve the original error and report the selected card and, for `pcie::Model`, queue.
+For known SSH and card-side failures, the error text ends with the next step; relay it instead of
+guessing a remedy.
 
 ## Packaged Examples
 
-When the PCIe extras bundle is present, prefer its matching-release tutorials over copied examples:
+Prefer the matching-release tutorials over copied examples. On Linux they come with the PCIe extras
+bundle; on Windows the host package installs them under
+`<install-root>\share\sima-pcie-host\tutorials\`:
 
 - `share/sima-pcie-host/tutorials/024_run_your_first_model_over_pcie/`
 - `share/sima-pcie-host/tutorials/025_run_pcie_inference_async/`
