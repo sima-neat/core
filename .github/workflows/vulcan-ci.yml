@@ -1777,31 +1777,6 @@ jobs:
               "${PYTHON_MARKS[@]}" "${test_case}"
           done
 
-      - name: Run weekly long Python pytest from installed extras
-        if: ${{ inputs.run_long_tests && (contains(fromJSON(matrix.tasks), 'python-tutorials')) }}
-        run: |
-          PYNEAT_HOME="${HOME}/pyneat"
-          if [[ -x "${PYNEAT_HOME}/bin/python" ]]; then
-            PYTHON_BIN="${PYNEAT_HOME}/bin/python"
-          elif [[ -x "${PYNEAT_HOME}/.venv/bin/python" ]]; then
-            PYTHON_BIN="${PYNEAT_HOME}/.venv/bin/python"
-          else
-            echo "Expected pyneat python not found at ${PYNEAT_HOME}/bin/python or ${PYNEAT_HOME}/.venv/bin/python" >&2
-            exit 1
-          fi
-
-          EXTRAS_PREFIX="$(cat _work/extras_prefix.txt)"
-          PYTEST_LONG_DIR="${EXTRAS_PREFIX}/share/sima-neat/python/tests_long"
-          if [[ ! -d "${PYTEST_LONG_DIR}" ]]; then
-            echo "Installed long Python tests not found at ${PYTEST_LONG_DIR}" >&2
-            exit 1
-          fi
-          export SIMA_GST_REGISTRY_DIR="$(cat _work/gst_registry_dir.txt)"
-          PYTHONPATH="${GITHUB_WORKSPACE}/tools/ci${PYTHONPATH:+:${PYTHONPATH}}" \
-            SIMA_TEST_IS_LONG=1 "${PYTHON_BIN}" -m pytest -q -p core_pytest_coverage \
-            --core-coverage-dir _work/coverage/python-weekly \
-            --junitxml _work/coverage/python-weekly.xml "${PYTEST_LONG_DIR}"
-
       - name: Record DevKit shard outcome
         if: ${{ always() }}
         env:

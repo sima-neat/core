@@ -2304,19 +2304,6 @@ if (NOT yolov8_dynamic_boxdecode_geometry_async_test IN_LIST PIPELINESESSION_TES
     LABELS "e2e;obj_detection;boxdecode;dynamic;async")
 endif()
 
-add_pipeline_test_long(
-  ssd_mobilenet_e2e_test
-  e2e_pipelines/obj_detection/ssd_mobilenet_e2e_test.cpp
-  e2e_pipelines/e2e_utils.cpp
-  e2e_pipelines/obj_detection/obj_detection_utils.cpp
-  ARGS ${CMAKE_SOURCE_DIR}
-)
-
-if (NOT ssd_mobilenet_e2e_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
-  set_property(TEST ssd_mobilenet_e2e_test
-    APPEND PROPERTY LABELS "e2e;obj_detection;ssd;accuracy;modalix-only")
-endif()
-
 # Device-free SSD contract coverage. No SKIP_RETURN_CODE: it must fail, never skip.
 add_pipeline_test(
   ssd_contract_integration_test

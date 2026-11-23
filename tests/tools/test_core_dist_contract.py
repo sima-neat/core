@@ -2421,7 +2421,6 @@ def test_installed_python_extras_include_pcie_status_test_dependencies(tmp_path)
     source = tmp_path/'producer'
     tests = source/'python/tests'
     tests.mkdir(parents=True)
-    (source/'python/tests_long').mkdir()
     (source/'scripts').mkdir()
     shutil.copy2(ROOT/'python/tests/test_neat_pcie_status.py', tests)
     for name in ('neat', 'neat_pcie_status.py'):
