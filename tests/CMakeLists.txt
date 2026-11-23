@@ -1239,13 +1239,15 @@ if (NOT mnist_preproc_channels1_accuracy_test IN_LIST PIPELINESESSION_TEST_BLACK
   set_property(TEST mnist_preproc_channels1_accuracy_test APPEND PROPERTY LABELS "e2e;modelzoo;long")
 endif()
 
-add_pipeline_test_long(
-  mnist_async_consumer_visibility_control_test
-  e2e_testing/mnist_async_consumer_visibility_control_test.cpp
+# Two-thread push/pull must hand each consumer the output of its own input; the synchronous run()
+# result for the same image is the reference. CI prepares the Model Browser resnet_18 w8a8 MPK.
+add_pipeline_test(
+  resnet18_async_consumer_visibility_test
+  e2e_testing/resnet18_async_consumer_visibility_test.cpp
 )
 
-if (NOT mnist_async_consumer_visibility_control_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
-  set_property(TEST mnist_async_consumer_visibility_control_test APPEND PROPERTY LABELS "e2e;modelzoo;long;perf")
+if (NOT resnet18_async_consumer_visibility_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  set_property(TEST resnet18_async_consumer_visibility_test APPEND PROPERTY LABELS "e2e;img_classification")
 endif()
 
 add_pipeline_test_long(
@@ -2831,6 +2833,7 @@ foreach(test
     preproc_build_input_repro_test
     mnist_preproc_channels1_accuracy_test
     modelzoo_bulk_models_test
+    resnet18_async_consumer_visibility_test
     preproc_dynamic_renegotiate_test
     graph_migration_legacy_hybrid_graph_stage_model_test
     graph_migration_legacy_yolov8_variant_route_matrix_test
