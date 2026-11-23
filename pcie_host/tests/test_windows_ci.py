@@ -80,30 +80,6 @@ from genai_admission_contract import (  # noqa: E402
     is_bounded_competing_session_rejection, is_injected_transport_failure)
 
 
-def posix_shell():
-  shell = shutil.which("sh")
-  if shell:
-    return shell
-  git = shutil.which("git")
-  if git:
-    git_root = Path(git).resolve().parent.parent
-    for candidate in (git_root / "usr" / "bin" / "sh.exe",
-                      git_root / "bin" / "sh.exe"):
-      if candidate.is_file():
-        return str(candidate)
-  raise FileNotFoundError("POSIX shell is unavailable for remote-command contract fixtures")
-
-
-def run_posix(command):
-  shell = posix_shell()
-  environment = os.environ.copy()
-  environment["PATH"] = os.pathsep.join((str(Path(shell).parent), environment["PATH"]))
-  environment["WINDOWS_FIXTURE_PYTHON"] = sys.executable
-  return subprocess.run(
-      [shell, "-c", command], capture_output=True, text=True,
-      check=False, env=environment)
-
-
 def workflow_job(source, name):
   return re.search(rf"(?ms)^  {re.escape(name)}:\n(.*?)(?=^  [\w-]+:\n|\Z)", source)[1]
 
@@ -169,13 +145,6 @@ def card_args(directory, **options):
   key = directory / "id_ed25519"
   key.write_text("fixture", encoding="ascii")
   return SimpleNamespace(card_host="10.0.0.2", card_user="sima", ssh_key=key, **options)
-
-
-def normalized_link_target(path):
-  target = os.readlink(path)
-  if os.name == "nt" and target.startswith("\\\\?\\"):
-    target = target[4:]
-  return os.path.normcase(os.path.normpath(target))
 
 
 WINDOWS_OPENSSH_HOP_SKIP = (
@@ -879,7 +848,7 @@ class WindowsCiContracts(unittest.TestCase):
           '<testcase name="both[a]"/><testcase name="both[b]"/>'
           '<testcase name="one[a]"/><testcase name="one[b]"><skipped/></testcase></testsuite>',
           encoding="utf-8")
-      self.assertEqual(HARDWARE.passed_junit_cases(junit), {"ran", "both"})
+      self.assertEqual(HARDWARE.junit_outcomes(junit)[0], {"ran", "both"})
 
   def test_fault_client_leftovers_are_removed_by_process_id(self):
     with tempfile.TemporaryDirectory() as directory:

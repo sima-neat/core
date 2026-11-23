@@ -2496,11 +2496,6 @@ def junit_outcomes(path: Path) -> tuple[set[str], list[tuple[str, str]]]:
   return {name for name, passed in outcomes.items() if passed}, failed
 
 
-def passed_junit_cases(path: Path) -> set[str]:
-  """Return the passing test names; pytest's exit status already failed the run otherwise."""
-  return junit_outcomes(path)[0]
-
-
 def run_python_tests(args: argparse.Namespace, python: Path, evidence: Path,
                      environment: dict[str, str], report: TestReport) -> list[str]:
   # Run the whole pyneatpcie folder, as Linux's run_pytest.sh does, and still
