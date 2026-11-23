@@ -35,7 +35,7 @@ You do not need to master the full API yet; for now, focus on how `Model` and `M
     </ShellCommand>
 
     :::note sima-cli model download
-    The program opens `assets/yolo_v8s_mpk.tar.gz`. See [Tutorial Setup](/tutorials/before-you-run) for the `sima-cli` version this needs.
+    The program opens `assets/yolo_v8s_mpk.tar.gz`. [Tutorial Setup](/tutorials/before-you-run) describes model preparation for all tutorials.
     :::
 3. **Download the sample image** from the docs and save it as `tutorial_sample_image.png` in the `assets` directory.
 

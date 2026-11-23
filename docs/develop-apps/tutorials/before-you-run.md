@@ -69,8 +69,8 @@ python3 -c "import pyneatpcie; print('pyneatpcie ready')"
 ## 4. Prepare model archives
 
 The tutorials use ResNet-50 and YOLOv8s from the
-[Model Browser](/tools/model-browser/). Downloading them needs `sima-cli`
-2.1.20 or newer, which the Palette SDK already provides.
+[Model Browser](/tools/model-browser/). The `sima-cli` that the Palette SDK
+provides downloads them.
 
 For Neat Library tutorials, download both models from the extracted extras
 root:

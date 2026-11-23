@@ -29,7 +29,7 @@ sima-cli models download --id resnet_50 --variant w8a8
 unzip -p models/resnet_50/w8a8/resnet_50_w8a8_default.zip resnet_50_w8a8_mpk.tar.gz > resnet_50.tar.gz
 </ShellCommand>
 
-如需此步驟所需的 `sima-cli` 版本，請參閱[教學設定](/tutorials/before-you-run)。
+所有教學課程的模型準備方式，請參閱[教學設定](/tutorials/before-you-run)。
 
 下載 [拉布拉多犬範例圖片](../../images/hello-neat-pcie-labrador.jpg)，並將其儲存為 `assets/sample.png`。
 

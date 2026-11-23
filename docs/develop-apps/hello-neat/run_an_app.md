@@ -48,7 +48,7 @@ You can skip this section — it uses the same `assets/` directory, model packag
     </ShellCommand>
 
     :::note sima-cli model download
-    The program opens `assets/yolo_v8s_mpk.tar.gz`. See [Tutorial Setup](/tutorials/before-you-run) for the `sima-cli` version this needs.
+    The program opens `assets/yolo_v8s_mpk.tar.gz`. [Tutorial Setup](/tutorials/before-you-run) describes model preparation for all tutorials.
     :::
 3. **Download the sample image** from the docs and save it as `assets/tutorial_sample_image.png`.
 

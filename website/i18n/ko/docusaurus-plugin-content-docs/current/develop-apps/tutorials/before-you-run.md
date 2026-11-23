@@ -63,7 +63,7 @@ python3 -c "import pyneatpcie; print('pyneatpcie ready')"
 
 ## 4. 모델 아카이브를 준비합니다.
 
-튜토리얼은 [Model Browser](/tools/model-browser/)의 ResNet-50과 YOLOv8s를 사용합니다. 이 모델을 다운로드하려면 `sima-cli` 2.1.20 이상이 필요하며, Palette SDK에 이미 포함되어 있습니다.
+튜토리얼은 [Model Browser](/tools/model-browser/)의 ResNet-50과 YOLOv8s를 사용합니다. 이 모델은 Palette SDK에 포함된 `sima-cli`로 다운로드할 수 있습니다.
 
 Neat Library 튜토리얼의 경우, 추출된 추가 파일의 루트 디렉터리에서 두 모델을 모두 다운로드합니다.
 

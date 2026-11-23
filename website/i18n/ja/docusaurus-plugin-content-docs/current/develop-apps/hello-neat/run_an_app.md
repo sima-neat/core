@@ -48,7 +48,7 @@ mdx:
     </ShellCommand>
 
     :::note sima-cli モデルのダウンロード
-    プログラムは `assets/yolo_v8s_mpk.tar.gz` を開きます。これに必要な `sima-cli` のバージョンについては、[チュートリアルの設定](/tutorials/before-you-run)を参照してください。
+    プログラムは `assets/yolo_v8s_mpk.tar.gz` を開きます。すべてのチュートリアルのモデル準備については、[チュートリアルの設定](/tutorials/before-you-run)を参照してください。
 :::
 3. **サンプル画像をダウンロード**し、`assets/tutorial_sample_image.png` として保存します。
 
