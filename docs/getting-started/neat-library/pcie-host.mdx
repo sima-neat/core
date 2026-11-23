@@ -179,12 +179,13 @@ PowerShell execution policy blocks `Activate.ps1`:
 & "$env:USERPROFILE\pyneatpcie\Scripts\python.exe" pcie_host.py
 ```
 
-C++ applications need Visual Studio 2026 with the **Desktop development with
-C++** workload. Older toolsets, including Visual Studio 2022, cannot link the
-installed static library. Examples that use OpenCV also need the OpenCV 5.0.0
-Windows package from [opencv.org](https://opencv.org/releases/). The package
-provides only the Release configuration. Build and run from an **x64 Native
-Tools Command Prompt for VS 2026**:
+C++ applications need Visual Studio 2022 version 17.14 or later, including
+Visual Studio 2026, with the **Desktop development with C++** workload.
+Examples that use OpenCV also need the OpenCV 5.0.0 Windows package from
+[opencv.org](https://opencv.org/releases/). The package provides only the
+Release configuration: a Debug build stops with a compiler error, and
+`--config RelWithDebInfo` builds with debugging information. Build and run
+from an **x64 Native Tools Command Prompt** for your Visual Studio version:
 
 ```bat
 call "C:\Program Files\SimaPCIeHost\bin\sima-pcie-host-env.cmd"
@@ -210,12 +211,11 @@ New-Item -ItemType Directory -Force pcie-tutorials\share\sima-pcie-host | Out-Nu
 Copy-Item -Recurse "$root\share\sima-pcie-host\tutorials" pcie-tutorials\share\sima-pcie-host\
 Set-Location pcie-tutorials
 & "$env:USERPROFILE\pyneatpcie\Scripts\python.exe" share\sima-pcie-host\tutorials\024_run_your_first_model_over_pcie\run_tensor_mode.py
-$env:PATH = "C:\opencv\build\x64\vc16\bin;$env:PATH"
 & "$root\bin\sima-pcie-host-run.cmd" "$root\lib\sima-pcie-host\tutorials\tutorial_024_run_tensor_mode.exe"
 ```
 
-The prebuilt C++ tutorials need `opencv_world500.dll` from that OpenCV package
-on `PATH`; without it, Windows reports a missing DLL.
+The prebuilt C++ tutorials load the OpenCV runtime installed beside them, so
+they do not need the OpenCV package.
 
 ### Uninstall on Windows
 

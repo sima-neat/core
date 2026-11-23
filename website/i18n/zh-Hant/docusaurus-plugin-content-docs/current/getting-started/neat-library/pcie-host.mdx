@@ -129,7 +129,7 @@ Set-Location $env:TEMP
 & "$env:USERPROFILE\pyneatpcie\Scripts\python.exe" pcie_host.py
 ```
 
-C++ 應用程式需要安裝 **Desktop development with C++** 工作負載的 Visual Studio 2026。包括 Visual Studio 2022 在內的較舊工具組無法連結已安裝的靜態程式庫。使用 OpenCV 的範例也需要 [opencv.org](https://opencv.org/releases/) 提供的 OpenCV 5.0.0 Windows 套件。此套件只提供 Release 組態。請在 **x64 Native Tools Command Prompt for VS 2026** 中建置並執行：
+C++ 應用程式需要安裝 **Desktop development with C++** 工作負載的 Visual Studio 2022 17.14 版或更新版本（包括 Visual Studio 2026）。使用 OpenCV 的範例也需要 [opencv.org](https://opencv.org/releases/) 提供的 OpenCV 5.0.0 Windows 套件。此套件只提供 Release 組態：Debug 建置會因編譯器錯誤而停止，`--config RelWithDebInfo` 則會建置含偵錯資訊的版本。請在您的 Visual Studio 版本的 **x64 Native Tools Command Prompt** 中建置並執行：
 
 ```bat
 call "C:\Program Files\SimaPCIeHost\bin\sima-pcie-host-env.cmd"
@@ -150,11 +150,10 @@ New-Item -ItemType Directory -Force pcie-tutorials\share\sima-pcie-host | Out-Nu
 Copy-Item -Recurse "$root\share\sima-pcie-host\tutorials" pcie-tutorials\share\sima-pcie-host\
 Set-Location pcie-tutorials
 & "$env:USERPROFILE\pyneatpcie\Scripts\python.exe" share\sima-pcie-host\tutorials\024_run_your_first_model_over_pcie\run_tensor_mode.py
-$env:PATH = "C:\opencv\build\x64\vc16\bin;$env:PATH"
 & "$root\bin\sima-pcie-host-run.cmd" "$root\lib\sima-pcie-host\tutorials\tutorial_024_run_tensor_mode.exe"
 ```
 
-預先建置的 C++ 教學課程需要 該 OpenCV 套件中的 `opencv_world500.dll` 位於 `PATH` 上；否則 Windows 會回報找不到 DLL。
+預先建置的 C++ 教學課程會載入安裝在其旁邊的 OpenCV 執行階段，因此不需要 OpenCV 套件。
 
 ### 在 Windows 上解除安裝
 
