@@ -30,12 +30,11 @@ struct Geometry {
   // An ROI-list buffer with several slots carries one affine per slot, but one BoxDecode call
   // takes one frame transform.
   bool roi_ambiguous = false;
-  // The frame was preprocessed from an ROI list, a crop or a window of the source: its
-  // affine does not map the scaled image onto the whole original image.
+  // A single-slot ROI list that holds no valid ROI has no crop to decode.
+  bool roi_empty = false;
+  // The frame was preprocessed from an ROI list, a crop or a window of the source; set only
+  // when the caller asks (profiles that accept no transform).
   bool partial = false;
-  // Facts attached with dimensions only serialize their default identity affine. Without an
-  // ROI or crop that is not a published transform (a resized image cannot map by identity).
-  bool identity_default = false;
 };
 // A published affine differing from the whole-image mapping by up to this many model
 // pixels still describes a full frame (preprocess rounds the placed extent).
@@ -75,8 +74,80 @@ rt::Error ambiguous_roi_list() {
                  "ROI-list frame with several slots carries one affine per slot; preprocess one "
                  "ROI per frame (ROI-list capacity 1)");
 }
+rt::Error empty_roi_list() {
+  return invalid("an ROI-list frame without exactly one valid ROI has no crop to decode; "
+                 "preprocess one valid ROI per frame");
+}
+// What a frame's metadata says, read once from either representation (compact facts or
+// GstSimaMeta) and interpreted by one set of rules.
+struct Published {
+  // The six affine coefficients when the frame carries a complete matrix (or its aliases).
+  std::optional<std::array<double, 6>> matrix;
+  // A partial, mistyped or conflicting transform; reported only where a transform is needed.
+  const char* affine_error = nullptr;
+  // The frame has no ROI, list, crop or window field: a default identity affine then names no crop.
+  bool plain = false;
+  // The source rectangle Preproc published, when it published one.
+  std::optional<std::array<std::int64_t, 4>> source_rect;
+  // ROI-list state: slot capacity and valid ROIs, when the frame is a list.
+  std::optional<std::int64_t> capacity, valid_rois;
+};
+// One rule for absent, valid and malformed transforms. An all-zero matrix is the compact form of
+// "no affine published"; facts that carry only dimensions serialize a default identity instead.
+enum class AffineState { Absent, Present, Malformed };
+AffineState classify_affine(const Published& frame, bool affine_optional) {
+  constexpr std::array<double, 6> identity{1., 0., 0., 0., 1., 0.};
+  if (frame.affine_error)
+    return AffineState::Malformed;
+  if (!frame.matrix || !affine_published(*frame.matrix))
+    return AffineState::Absent;
+  if (affine_optional && frame.plain && *frame.matrix == identity)
+    return AffineState::Absent;
+  return AffineState::Present;
+}
+// A frame preprocessed from an ROI list, a crop or a window of the source: its affine does not map
+// the scaled image onto the whole original image. Only profiles that cannot take the transform ask.
+bool partial_frame(const Published& frame, const Geometry& geometry, AffineState state) {
+  if (geometry.roi_ambiguous || geometry.resize == "crop")
+    return true;
+  // The published rectangle is exact; the rounding tolerance serves frames only the affine
+  // describes.
+  if (frame.source_rect &&
+      *frame.source_rect != std::array<std::int64_t, 4>{0, 0, geometry.width, geometry.height})
+    return true;
+  return state == AffineState::Present && geometry.width > 0 && geometry.height > 0 &&
+         geometry.placed[2] > 0 && geometry.placed[3] > 0 &&
+         !boxdecode_affine_covers_image(*frame.matrix, geometry.width, geometry.height,
+                                        geometry.placed, kFullFrameTolerance);
+}
+std::optional<rt::Error> interpret(const Published& frame, Geometry& geometry, bool complete,
+                                   bool uniform, bool affine_optional, bool want_partial) {
+  geometry.roi_ambiguous =
+      geometry.roi_list && (!frame.capacity || *frame.capacity != 1 || !frame.valid_rois);
+  geometry.roi_empty = geometry.roi_list && !geometry.roi_ambiguous && *frame.valid_rois != 1;
+  const auto state = classify_affine(frame, affine_optional);
+  geometry.affine = frame.matrix;
+  if (want_partial)
+    geometry.partial = partial_frame(frame, geometry, state) || geometry.roi_empty;
+  if (!complete)
+    return std::nullopt;
+  if (geometry.roi_ambiguous)
+    return ambiguous_roi_list();
+  if (geometry.roi_empty)
+    return empty_roi_list();
+  if (state == AffineState::Malformed)
+    return invalid(frame.affine_error);
+  // Legacy ingress publishes dimensions without an affine: the recipe's fallback applies.
+  if (state == AffineState::Present) {
+    auto transform = checked_transform(*frame.matrix, uniform);
+    if (const auto* error = std::get_if<rt::Error>(&transform))
+      return *error;
+    geometry.transform = std::get<Transform>(transform);
+  }
+  return std::nullopt;
+}
 rt::Result<Geometry> read_geometry(GstBuffer* buffer, bool complete, bool uniform,
-                                   bool affine_optional = false) {
+                                   bool affine_optional = false, bool want_partial = false) {
   if (!buffer)
     return invalid("input buffer is absent");
   std::string error;
@@ -99,25 +170,22 @@ rt::Result<Geometry> read_geometry(GstBuffer* buffer, bool complete, bool unifor
                       facts->resized_width,
                       facts->resized_height,
                       facts->placed,
-                      facts->roi_list,
-                      facts->affine};
-    geometry.roi_ambiguous = facts->roi_list && facts->capacity != 1;
-    geometry.partial =
-        geometry.roi_ambiguous || facts->resize_mode == "crop" ||
-        (affine_published(facts->affine) &&
-         !boxdecode_affine_covers_image(facts->affine, geometry.width, geometry.height,
-                                        facts->placed, kFullFrameTolerance));
-    if (complete) {
-      if (geometry.roi_ambiguous)
-        return ambiguous_roi_list();
-      // Legacy ingress publishes dimensions without an affine: keep the recipe's fallback.
-      if (!affine_optional || affine_published(facts->affine)) {
-        auto transform = checked_transform(facts->affine, uniform);
-        if (const auto* error = std::get_if<rt::Error>(&transform))
-          return *error;
-        geometry.transform = std::get<Transform>(transform);
-      }
+                      facts->roi_list};
+    Published published;
+    published.matrix = facts->affine;
+    if (facts->primary[2] > 0 && facts->primary[3] > 0)
+      published.source_rect = facts->primary;
+    if (facts->roi_list) {
+      published.capacity = facts->capacity;
+      published.valid_rois = std::int64_t(facts->counts[1]);
     }
+    published.plain = !facts->has_roi && !facts->roi_list && facts->resize_mode != "crop" &&
+                      (!published.source_rect ||
+                       *published.source_rect ==
+                           std::array<std::int64_t, 4>{0, 0, geometry.width, geometry.height});
+    if (auto failure =
+            interpret(published, geometry, complete, uniform, affine_optional, want_partial))
+      return *failure;
     return geometry;
   }
   auto* custom = gst_buffer_get_custom_meta(buffer, "GstSimaMeta");
@@ -125,12 +193,14 @@ rt::Result<Geometry> read_geometry(GstBuffer* buffer, bool complete, bool unifor
   if (!meta)
     return Geometry{};
   Geometry geometry;
+  Published published;
   gst_structure_get_int(meta, "preproc_original_width", &geometry.width);
   gst_structure_get_int(meta, "preproc_original_height", &geometry.height);
   if (const auto* mode = gst_structure_get_string(meta, "preproc_resize_mode"))
     geometry.resize = mode;
+  int resized_width = 0, resized_height = 0;
   {
-    int resized_width = 0, resized_height = 0, scaled_width = 0, scaled_height = 0;
+    int scaled_width = 0, scaled_height = 0;
     int left = 0, right = 0, top = 0, bottom = 0;
     gst_structure_get_int(meta, "preproc_resized_width", &resized_width);
     gst_structure_get_int(meta, "preproc_resized_height", &resized_height);
@@ -143,87 +213,88 @@ rt::Result<Geometry> read_geometry(GstBuffer* buffer, bool complete, bool unifor
     gboolean roi_list = FALSE;
     gst_structure_get_boolean(meta, "preproc_roi_list_enable", &roi_list);
     geometry.roi_list = roi_list;
-    int roi_capacity = 0;
-    gst_structure_get_int(meta, "preproc_roi_capacity", &roi_capacity);
-    // A list without its capacity cannot be told apart from a multi-slot one.
-    geometry.roi_ambiguous = roi_list && roi_capacity != 1;
+    if (roi_list) {
+      // A list without its capacity or valid count cannot be told apart from a multi-slot one.
+      int capacity = 0, count = 0;
+      if (gst_structure_get_int(meta, "preproc_roi_capacity", &capacity))
+        published.capacity = capacity;
+      if (gst_structure_get_int(meta, "preproc_roi_count", &count))
+        published.valid_rois = count;
+    }
     const std::int64_t width = scaled_width > 0 ? scaled_width : resized_width;
     const std::int64_t height = scaled_height > 0 ? scaled_height : resized_height;
     geometry.placed = {left, top, width, height};
     geometry.canvas_width = width + left + right;
     geometry.canvas_height = height + top + bottom;
+  }
+  {
     std::array<double, 6> matrix{};
     std::array<double, 4> alias{};
-    bool matrix_complete = true, alias_complete = true;
-    for (std::size_t i = 0; i < matrix.size(); ++i)
-      matrix_complete &= bool(gst_structure_get_double(meta, affine_matrix_names[i], &matrix[i]));
-    for (std::size_t i = 0; i < alias.size(); ++i)
-      alias_complete &= bool(gst_structure_get_double(meta, affine_alias_names[i], &alias[i]));
-    if (matrix_complete)
-      geometry.affine = matrix;
-    else if (alias_complete)
-      geometry.affine = std::array<double, 6>{alias[0], 0., alias[2], 0., alias[1], alias[3]};
-    {
-      constexpr std::array identity{1., 0., 0., 0., 1., 0.};
-      gboolean roi = FALSE;
-      gst_structure_get_boolean(meta, "preproc_roi_enable", &roi);
-      geometry.identity_default = geometry.affine == identity && !roi && !roi_list &&
-                                  !gst_structure_has_field(meta, "preproc_roi_rects") &&
-                                  !gst_structure_has_field(meta, "preproc_roi_count") &&
-                                  geometry.resize != "crop";
+    std::size_t matrix_fields = 0, alias_fields = 0;
+    bool matrix_valid = true, alias_valid = true;
+    for (std::size_t i = 0; i < matrix.size(); ++i) {
+      if (!gst_structure_has_field(meta, affine_matrix_names[i]))
+        continue;
+      ++matrix_fields;
+      matrix_valid &= bool(gst_structure_get_double(meta, affine_matrix_names[i], &matrix[i]));
     }
-    geometry.partial =
-        geometry.roi_ambiguous || geometry.resize == "crop" ||
-        (geometry.affine && !geometry.identity_default && affine_published(*geometry.affine) &&
-         geometry.width > 0 && geometry.height > 0 && geometry.placed[2] > 0 &&
-         geometry.placed[3] > 0 &&
-         !boxdecode_affine_covers_image(*geometry.affine, geometry.width, geometry.height,
-                                        geometry.placed, kFullFrameTolerance));
+    for (std::size_t i = 0; i < alias.size(); ++i) {
+      if (!gst_structure_has_field(meta, affine_alias_names[i]))
+        continue;
+      ++alias_fields;
+      alias_valid &= bool(gst_structure_get_double(meta, affine_alias_names[i], &alias[i]));
+    }
+    if (matrix_fields && (matrix_fields != matrix.size() || !matrix_valid))
+      published.affine_error = "preprocess affine matrix is partial or has invalid field types";
+    else if (alias_fields && (alias_fields != alias.size() || !alias_valid))
+      published.affine_error = "preprocess affine aliases are partial or have invalid field types";
+    else if (matrix_fields && alias_fields &&
+             matrix != std::array<double, 6>{alias[0], 0., alias[2], 0., alias[1], alias[3]})
+      published.affine_error = "preprocess affine matrix and aliases disagree";
+    if (!published.affine_error) {
+      if (matrix_fields)
+        published.matrix = matrix;
+      else if (alias_fields)
+        published.matrix = std::array<double, 6>{alias[0], 0., alias[2], 0., alias[1], alias[3]};
+    }
+  }
+  {
+    gboolean roi = FALSE;
+    gst_structure_get_boolean(meta, "preproc_roi_enable", &roi);
+    published.plain =
+        !roi && !geometry.roi_list && !gst_structure_has_field(meta, "preproc_roi_rects") &&
+        !gst_structure_has_field(meta, "preproc_roi_count") && geometry.resize != "crop";
+    int x = 0, y = 0, w = 0, h = 0;
+    if (roi && gst_structure_get_int(meta, "preproc_roi_x", &x) &&
+        gst_structure_get_int(meta, "preproc_roi_y", &y) &&
+        gst_structure_get_int(meta, "preproc_roi_width", &w) &&
+        gst_structure_get_int(meta, "preproc_roi_height", &h) && w > 0 && h > 0) {
+      published.source_rect = {x, y, w, h};
+    } else if (const auto* rects = gst_structure_get_value(meta, "preproc_roi_rects");
+               rects && GST_VALUE_HOLDS_LIST(rects) && gst_value_list_get_size(rects) >= 4) {
+      std::array<std::int64_t, 4> rect{};
+      bool typed = true;
+      for (guint i = 0; i < 4; ++i) {
+        const auto* value = gst_value_list_get_value(rects, i);
+        typed &= value && G_VALUE_HOLDS_INT(value);
+        if (typed)
+          rect[i] = g_value_get_int(value);
+      }
+      if (typed && rect[2] > 0 && rect[3] > 0)
+        published.source_rect = rect;
+    }
   }
   if (complete) {
     // PreprocessRuntimeMeta::resized_* is the size before padding (Core's own projection writes
     // the canvas there and the placed image in scaled_*). The model canvas is the placed image
     // plus its pads, as compile_boxdecode_kernel() computes it; a crop publishes its canvas.
-    int resized_width = 0, resized_height = 0;
-    gst_structure_get_int(meta, "preproc_resized_width", &resized_width);
-    gst_structure_get_int(meta, "preproc_resized_height", &resized_height);
     const bool crop = geometry.resize == "crop";
     geometry.model_width = crop ? resized_width : static_cast<int>(geometry.canvas_width);
     geometry.model_height = crop ? resized_height : static_cast<int>(geometry.canvas_height);
-    if (geometry.roi_ambiguous)
-      return ambiguous_roi_list();
-    std::array<double, 6> matrix{};
-    bool matrix_present = false, alias_present = false;
-    // Facts attached with dimensions only carry the default identity: no published transform.
-    if (!(affine_optional && geometry.identity_default)) {
-      for (const auto* name : affine_matrix_names)
-        matrix_present |= gst_structure_has_field(meta, name);
-      for (const auto* name : affine_alias_names)
-        alias_present |= gst_structure_has_field(meta, name);
-    }
-    if (matrix_present) {
-      for (std::size_t i = 0; i < matrix.size(); ++i)
-        if (!gst_structure_get_double(meta, affine_matrix_names[i], &matrix[i]))
-          return invalid("preprocess affine matrix is partial or has invalid field types");
-      auto transform = checked_transform(matrix, uniform);
-      if (const auto* error = std::get_if<rt::Error>(&transform))
-        return *error;
-      geometry.transform = std::get<Transform>(transform);
-    }
-    if (alias_present) {
-      std::array<double, 4> values{};
-      for (std::size_t i = 0; i < values.size(); ++i)
-        if (!gst_structure_get_double(meta, affine_alias_names[i], &values[i]))
-          return invalid("preprocess affine aliases are partial or have invalid field types");
-      auto transform =
-          checked_transform({values[0], 0., values[2], 0., values[1], values[3]}, uniform);
-      if (const auto* error = std::get_if<rt::Error>(&transform))
-        return *error;
-      if (geometry.transform && *geometry.transform != std::get<Transform>(transform))
-        return invalid("preprocess affine matrix and aliases disagree");
-      geometry.transform = std::get<Transform>(transform);
-    }
   }
+  if (auto failure =
+          interpret(published, geometry, complete, uniform, affine_optional, want_partial))
+    return *failure;
   return geometry;
 }
 struct Cache {
@@ -275,9 +346,9 @@ void attach_boxdecode_geometry_resolver(KernelStageRecipe& recipe, std::size_t m
            bool found = false, found_transform_authority = false, partial = false,
                 override_conflict = false;
            for (auto* buffer : buffers) {
-             auto parsed =
-                 read_geometry(buffer, options.complete_geometry,
-                               options.uniform_transform_required, options.frame_affine_optional);
+             auto parsed = read_geometry(buffer, options.complete_geometry,
+                                         options.uniform_transform_required,
+                                         options.frame_affine_optional, options.full_frame_only);
              if (const auto* error = std::get_if<rt::Error>(&parsed))
                return *error;
              const auto geometry = std::get<Geometry>(parsed);

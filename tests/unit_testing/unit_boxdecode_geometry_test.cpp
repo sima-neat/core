@@ -651,7 +651,13 @@ void published_frame_geometry() {
   require(std::holds_alternative<rt::Error>(resolve(executor.preparer(), one)),
           "an ROI list of four slots was decoded with one affine");
   gst_structure_set(meta, "preproc_roi_capacity", G_TYPE_INT, 1, nullptr);
+  require(std::holds_alternative<rt::Error>(resolve(executor.preparer(), one)),
+          "a one-slot ROI list of unknown valid count was decoded with one affine");
+  gst_structure_set(meta, "preproc_roi_count", G_TYPE_INT, 1, nullptr);
   require(take(resolve(executor.preparer(), one)) == roi, "a one-slot ROI list lost its affine");
+  gst_structure_set(meta, "preproc_roi_count", G_TYPE_INT, 0, nullptr);
+  require(std::holds_alternative<rt::Error>(resolve(executor.preparer(), one)),
+          "a one-slot ROI list without a valid ROI was decoded as a whole frame");
   // A published affine that is not axis-aligned is not a legacy frame.
   set_published_frame(meta, "stretch", 1., .5625, 400., 200.);
   gst_structure_set(meta, "preproc_affine_m01", G_TYPE_DOUBLE, .1, nullptr);
@@ -677,6 +683,256 @@ void published_frame_geometry() {
                     G_TYPE_INT, 0, "preproc_scaled_height", G_TYPE_INT, 0, nullptr);
   require(take(resolve_boxed(executor.preparer(), one)) == projected,
           "legacy letterbox metadata with resized_* before padding was not read as its canvas");
+}
+// Compact facts of a 1280x720 frame stretched into 640x640 from the issue's ROI.
+simaai::gst::TensorBufferPreprocessFacts stretched_roi_facts() {
+  simaai::gst::TensorBufferPreprocessFacts facts;
+  facts.original_width = 1280;
+  facts.original_height = 720;
+  facts.resized_width = facts.resized_height = 640;
+  facts.primary = {400, 200, 640, 360};
+  facts.placed = {0, 0, 640, 640};
+  facts.affine = {1., 0., 400., 0., .5625, 200.};
+  facts.source_stride = 3840;
+  facts.has_roi = true;
+  facts.resize_mode = "stretch";
+  facts.color_in = facts.color_out = "RGB";
+  return facts;
+}
+Buffer compact_buffer(const simaai::gst::TensorBufferPreprocessFacts& facts) {
+  Buffer buffer(gst_buffer_new_allocate(nullptr, 4, nullptr));
+  std::string error;
+  require(
+      simaai::gst::tensor_buffer_attach_publication(buffer.get(), compact_publication(), &error),
+      "attach compact publication failed");
+  simaai::gst::TensorBufferFrameMetadata frame;
+  frame.preprocess = simaai::gst::tensor_buffer_freeze_preprocess_facts(facts, &error);
+  require(bool(frame.preprocess),
+          ("compact facts freeze failed: " + error + " resize=" + facts.resize_mode +
+           " primary=" + std::to_string(facts.primary[2]) +
+           " affine0=" + std::to_string(facts.affine[0]) + " cap=" + std::to_string(facts.capacity))
+              .c_str());
+  require(simaai::gst::tensor_buffer_attach_frame_metadata(buffer.get(), std::move(frame), &error),
+          "compact facts attach failed");
+  return buffer;
+}
+// The same facts as Scheduler's GstSimaMeta serializer writes them.
+Buffer serialized_buffer(const simaai::gst::TensorBufferPreprocessFacts& facts) {
+  if (!gst_meta_get_info("GstSimaMeta")) {
+    const gchar* tags[] = {nullptr};
+    require(gst_meta_register_custom("GstSimaMeta", tags, nullptr, nullptr, nullptr),
+            "metadata registration failed");
+  }
+  Buffer buffer(gst_buffer_new());
+  auto* meta =
+      gst_custom_meta_get_structure(gst_buffer_add_custom_meta(buffer.get(), "GstSimaMeta"));
+  simaai::gst::tensor_buffer_write_preprocess_facts(meta, facts, true);
+  return buffer;
+}
+// Compact facts and their GstSimaMeta serialization are one frame: absent, valid and malformed
+// transforms, ROI-list validity and source rectangles must decode the same from either (#1507).
+void frame_metadata_formats() {
+  probe::OperationProbe executor;
+  const auto checked = executable(true);
+  require(!executor.prepare(checked), "real A65 preparation failed");
+  const auto base = executor.operation();
+  const auto resolver = [&](core::BoxDecodeGeometryOptions options) {
+    auto recipe = std::make_shared<core::KernelStageRecipe>();
+    recipe->members.resize(1);
+    recipe->members.front().executable = checked;
+    core::attach_boxdecode_geometry_resolver(*recipe, 0, options, !options.full_frame_only,
+                                             !options.full_frame_only);
+    return std::pair{recipe, recipe->resolver_factories.front().instantiate()};
+  };
+  core::BoxDecodeGeometryOptions detection{640, 640, 640, 640, simaai::neat::ResizeMode::Stretch};
+  detection.complete_geometry = detection.frame_affine_optional = true;
+  detection.model_to_original = std::array<float, 4>{1.f, 1.f, 0.f, 0.f};
+  auto [detection_recipe, detect] = resolver(detection);
+  core::BoxDecodeGeometryOptions guarded{640, 640, 640, 640, simaai::neat::ResizeMode::Letterbox};
+  guarded.full_frame_only = true;
+  guarded.profile = "yolov8-seg";
+  auto [guarded_recipe, guard] = resolver(guarded);
+  // Both representations of one fixture give one result.
+  const auto same = [&](auto& resolve, const simaai::gst::TensorBufferPreprocessFacts& facts,
+                        const char* message) {
+    auto compact = compact_buffer(facts);
+    auto legacy = serialized_buffer(facts);
+    const std::array<GstBuffer*, 1> from_compact{compact.get()}, from_legacy{legacy.get()};
+    auto a = resolve(executor.preparer(), from_compact);
+    auto b = resolve(executor.preparer(), from_legacy);
+    require(a.index() == b.index(), message);
+    if (const auto* x = std::get_if<rt::PreparedSelection>(&a))
+      require(*x == std::get<rt::PreparedSelection>(b), message);
+    return a;
+  };
+  auto facts = stretched_roi_facts();
+  const auto roi = take(same(detect, facts, "an ROI frame decodes differently per format"));
+  require(roi != base, "an ROI frame did not select its affine");
+  // Dimensions only: no affine is published, so the recipe's fallback applies in both formats.
+  facts.affine = {};
+  facts.primary = {0, 0, 1280, 720};
+  facts.has_roi = false;
+  require(std::holds_alternative<rt::PreparedSelection>(
+              same(detect, facts, "a dimensions-only frame decodes differently per format")),
+          "a dimensions-only frame was rejected");
+  // A published transform that is not axis-aligned is malformed in both.
+  facts = stretched_roi_facts();
+  facts.affine[1] = .1;
+  require(std::holds_alternative<rt::Error>(
+              same(detect, facts, "a sheared affine decodes differently per format")),
+          "a sheared affine was accepted");
+  // Partial matrices and conflicting aliases remain errors.
+  {
+    auto legacy = serialized_buffer(stretched_roi_facts());
+    auto* meta =
+        gst_custom_meta_get_structure(gst_buffer_get_custom_meta(legacy.get(), "GstSimaMeta"));
+    const std::array<GstBuffer*, 1> one{legacy.get()};
+    gst_structure_remove_field(meta, "preproc_affine_m12");
+    require(std::holds_alternative<rt::Error>(detect(executor.preparer(), one)),
+            "a partial affine matrix was accepted");
+  }
+  {
+    auto legacy = serialized_buffer(stretched_roi_facts());
+    auto* meta =
+        gst_custom_meta_get_structure(gst_buffer_get_custom_meta(legacy.get(), "GstSimaMeta"));
+    const std::array<GstBuffer*, 1> one{legacy.get()};
+    gst_structure_set(meta, "preproc_affine_scale_x", G_TYPE_DOUBLE, 3., nullptr);
+    require(std::holds_alternative<rt::Error>(detect(executor.preparer(), one)),
+            "partial affine aliases were accepted");
+    gst_structure_set(meta, "preproc_affine_scale_y", G_TYPE_DOUBLE, .5625,
+                      "preproc_affine_offset_x", G_TYPE_DOUBLE, 400., "preproc_affine_offset_y",
+                      G_TYPE_DOUBLE, 200., nullptr);
+    require(std::holds_alternative<rt::Error>(detect(executor.preparer(), one)),
+            "aliases that conflict with the matrix were accepted");
+  }
+  // One-slot ROI lists need one valid ROI: an empty list leaves EV74's unused slot zeroed.
+  facts = stretched_roi_facts();
+  facts.roi_list = true;
+  facts.capacity = 1;
+  facts.counts = {1, 1, 0, 0};
+  facts.roi_batch_indices = {0};
+  facts.roi_rects = {400, 200, 640, 360};
+  facts.roi_affines = {1., 0., 400., 0., .5625, 200.};
+  require(take(same(detect, facts, "a one-ROI list decodes differently per format")) == roi,
+          "a one-slot ROI list with one valid ROI lost its affine");
+  facts.counts = {0, 0, 0, 0};
+  facts.has_roi = false;
+  facts.primary = {0, 0, 1280, 720};
+  facts.affine = {};
+  facts.roi_batch_indices.clear();
+  facts.roi_rects.clear();
+  facts.roi_affines.clear();
+  require(std::holds_alternative<rt::Error>(
+              same(detect, facts, "an empty ROI list decodes differently per format")),
+          "a one-slot ROI list without a valid ROI was decoded as a whole frame");
+  require(std::holds_alternative<rt::Error>(
+              same(guard, facts, "an empty ROI list decodes differently per format")),
+          "a full-frame-only profile decoded an empty ROI list");
+  // A whole frame, then a window the 1.5-pixel tolerance cannot tell from it: the published source
+  // rectangle decides where Preproc supplies one.
+  facts = {};
+  facts.original_width = 1280;
+  facts.original_height = 720;
+  facts.resized_width = facts.resized_height = 640;
+  facts.placed = {0, 140, 640, 360};
+  facts.affine = {2., 0., 0., 0., 2., -280.};
+  facts.resize_mode = "letterbox";
+  facts.source_stride = 3840;
+  facts.color_in = facts.color_out = "RGB";
+  facts.primary = {0, 0, 1280, 720};
+  require(std::holds_alternative<rt::PreparedSelection>(
+              same(guard, facts, "a whole frame decodes differently per format")),
+          "a whole frame was refused by a full-frame-only profile");
+  facts.primary = {2, 0, 1278, 720};
+  facts.has_roi = true;
+  facts.placed = {0, 139, 640, 361};
+  facts.affine = {1.996875, 0., 2., 0., 1.996875, -277.565625};
+  require(std::holds_alternative<rt::Error>(
+              same(guard, facts, "a two-pixel crop decodes differently per format")),
+          "a window of two pixels was taken for the whole frame");
+  // Without a rectangle only the affine describes the window, and rounding is tolerated.
+  auto legacy = serialized_buffer(facts);
+  auto* meta =
+      gst_custom_meta_get_structure(gst_buffer_get_custom_meta(legacy.get(), "GstSimaMeta"));
+  require(gst_structure_has_field(meta, "preproc_roi_x"),
+          "the serializer no longer publishes the ROI rectangle");
+  for (const char* name : {"preproc_roi_enable", "preproc_roi_x", "preproc_roi_y",
+                           "preproc_roi_width", "preproc_roi_height", "preproc_roi_rects"})
+    gst_structure_remove_field(meta, name);
+  const std::array<GstBuffer*, 1> one{legacy.get()};
+  require(std::holds_alternative<rt::PreparedSelection>(guard(executor.preparer(), one)),
+          "rounding of the placed extent was refused");
+}
+// Precedence and canvas rules for frames that publish an affine.
+void frame_geometry_precedence() {
+  probe::OperationProbe executor;
+  const auto checked = executable(true);
+  require(!executor.prepare(checked), "real A65 preparation failed");
+  const auto make = [&](std::int64_t original_width, std::int64_t original_height) {
+    auto recipe = std::make_shared<core::KernelStageRecipe>();
+    recipe->members.resize(1);
+    recipe->members.front().executable = checked;
+    core::BoxDecodeGeometryOptions options{640, 640, int(original_width), int(original_height),
+                                           simaai::neat::ResizeMode::Stretch};
+    options.complete_geometry = options.frame_affine_optional = true;
+    options.model_to_original = std::array<float, 4>{1.f, 1.f, 0.f, 0.f};
+    core::attach_boxdecode_geometry_resolver(*recipe, 0, options, original_width == 0,
+                                             original_width == 0);
+    return std::pair{recipe, recipe->resolver_factories.front().instantiate()};
+  };
+  auto [metadata_recipe, from_metadata] = make(0, 0);
+  const auto frame = [&](auto& resolve, const simaai::gst::TensorBufferPreprocessFacts& facts) {
+    auto buffer = serialized_buffer(facts);
+    const std::array<GstBuffer*, 1> one{buffer.get()};
+    return resolve(executor.preparer(), one);
+  };
+  // Facts attached with dimensions only serialize the default identity affine: unpublished.
+  auto dimensions = stretched_roi_facts();
+  dimensions.primary = {0, 0, 1280, 720};
+  dimensions.has_roi = false;
+  dimensions.affine = {};
+  const auto fallback = take(frame(from_metadata, dimensions));
+  {
+    auto buffer = serialized_buffer(dimensions);
+    auto* meta =
+        gst_custom_meta_get_structure(gst_buffer_get_custom_meta(buffer.get(), "GstSimaMeta"));
+    for (const char* name : {"preproc_affine_scale_x", "preproc_affine_scale_y",
+                             "preproc_affine_offset_x", "preproc_affine_offset_y"})
+      gst_structure_remove_field(meta, name);
+    gst_structure_set(meta, "preproc_affine_m00", G_TYPE_DOUBLE, 1., "preproc_affine_m01",
+                      G_TYPE_DOUBLE, 0., "preproc_affine_m02", G_TYPE_DOUBLE, 0.,
+                      "preproc_affine_m10", G_TYPE_DOUBLE, 0., "preproc_affine_m11", G_TYPE_DOUBLE,
+                      1., "preproc_affine_m12", G_TYPE_DOUBLE, 0., nullptr);
+    const std::array<GstBuffer*, 1> one{buffer.get()};
+    require(take(from_metadata(executor.preparer(), one)) == fallback,
+            "the default identity affine of dimension-only facts was applied as a published one");
+  }
+  // A second ROI reselects: same size, new affine.
+  const auto roi = take(frame(from_metadata, stretched_roi_facts()));
+  auto moved = stretched_roi_facts();
+  moved.primary[0] = 440;
+  moved.affine[2] = 440.;
+  require(take(frame(from_metadata, moved)) != roi, "a second ROI reused the first ROI's affine");
+  // The model canvas must be the checked one for a frame that publishes an affine.
+  auto other_canvas = stretched_roi_facts();
+  other_canvas.resized_width = other_canvas.resized_height = 320;
+  other_canvas.placed = {0, 0, 320, 320};
+  const auto rejected = frame(from_metadata, other_canvas);
+  const auto* error = std::get_if<rt::Error>(&rejected);
+  require(error && error->message.find("differ from the checked model") != std::string::npos,
+          "a frame preprocessed to another canvas was accepted");
+  // An explicit original size keeps its precedence over another source's affine.
+  auto [explicit_recipe, explicit_size] = make(1280, 720);
+  Buffer bare(gst_buffer_new());
+  const std::array<GstBuffer*, 1> bare_one{bare.get()};
+  const auto fallback_frame = take(explicit_size(executor.preparer(), bare_one));
+  require(take(frame(explicit_size, stretched_roi_facts())) != fallback_frame,
+          "an ROI frame under a matching explicit size lost its affine");
+  auto other_source = stretched_roi_facts();
+  other_source.original_width = 1920;
+  other_source.original_height = 1080;
+  require(take(frame(explicit_size, other_source)) == fallback_frame,
+          "an explicit original size lost its precedence over another source's affine");
 }
 void full_frame_only_geometry() {
   probe::OperationProbe executor;
@@ -751,6 +1007,8 @@ int main(int argc, char** argv) {
     published_frame_geometry();
     std::cout << "BoxDecode published frame affine passed\n";
     full_frame_only_geometry();
+    frame_metadata_formats();
+    frame_geometry_precedence();
     std::cout << "BoxDecode full-frame-only profiles passed\n";
     return 0;
   } catch (const std::exception& error) {
