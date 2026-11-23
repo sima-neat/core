@@ -23,7 +23,8 @@ import tempfile
 import zipfile
 
 from windows_candidate import (
-    dependency_identity, require_junit_cases, sha256, validate_candidate, write_json)
+    dependency_identity, installed_neat_status, require_junit_cases, sha256,
+    validate_candidate, write_json)
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -897,6 +898,14 @@ def build(args: argparse.Namespace) -> None:
     ):
       require_file(required, "installed Core MSI payload")
     check_consumer(install_root, "installed")
+    # neat.cmd as a customer runs it, on a runner without a card.
+    neat_status = installed_neat_status(
+        install_root, environment, output / "neat-status.log", {
+            "simaai-scheduler-pcie-host": scheduler_metadata["package-version"],
+            "sima-pcie-host": version,
+        })
+    if neat_status["cards"]:
+      raise ValueError(f"neat.cmd reports cards on a runner without one: {neat_status['cards']}")
     # The prebuilt tutorials load the OpenCV runtime installed beside them, not from PATH.
     tutorial_environment = os.environ.copy()
     tutorial_environment["PATH"] = os.pathsep.join((
@@ -1047,6 +1056,7 @@ def build(args: argparse.Namespace) -> None:
         "core_msi_remove": "PENDING_CLEANUP",
         "hardware_qualified": False,
         "installed_consumer": "PASS",
+        "neat_status": "PASS",
         "python_import": "PASS",
         "relocated_consumer": "PASS",
         "repeat_install": "PASS",

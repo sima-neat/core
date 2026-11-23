@@ -34,7 +34,7 @@ import xml.etree.ElementTree as ET
 import zipfile
 
 from windows_candidate import (
-    dependency_identity, msi_version, scheduler_platform_runtime, sha256,
+    dependency_identity, installed_neat_status, msi_version, scheduler_platform_runtime, sha256,
     validate_candidate,
     validate_published_package, write_json)
 from windows_hardware_assets import asset_manifest_sha256, verify_asset_manifest
@@ -997,6 +997,32 @@ def verify_customer_process_activation(install_root: Path, python: Path,
       [python, "-c",
        "import pyneatpcie as p; assert p.Model and p.Runtime and p.Tensor"],
       evidence / "customer-process-python-import.log", env=environment, timeout=60)
+
+
+def verify_installed_neat_status(args: argparse.Namespace, candidate, install_root: Path,
+                                 customer_home: Path, card_packages: dict[str, str],
+                                 evidence: Path) -> dict:
+  """Run neat.cmd --json as the customer and require this cohort on host and card."""
+  environment = customer_process_environment()
+  # The customer profile holds the managed interpreter neat.cmd runs first.
+  environment["USERPROFILE"] = str(customer_home)
+  environment["NEAT_PCIE_SSH_KEY"] = str(args.ssh_key.resolve(strict=True))
+  environment["NEAT_PCIE_SSH_USER"] = args.card_user
+  log = evidence / "customer-neat-status.log"
+  status = installed_neat_status(install_root, environment, log, {
+      {"scheduler": "simaai-scheduler-pcie-host", "core": "sima-pcie-host"}[item["owner"]]:
+      str(item["version"])
+      for item in candidate.metadata["installation"]["native-packages"]})
+  cards = status["cards"]
+  if len(cards) != 1 or cards[0].get("address") != args.card_host or cards[0].get("state") != "ok":
+    raise RuntimeError(f"neat.cmd --json does not report the card at {args.card_host}; see {log}")
+  reported = (cards[0].get("software") or {}).get("packages") or {}
+  found = {name: (reported.get(name) or {}).get("version") for name in card_packages}
+  if found != card_packages:
+    raise RuntimeError(
+        f"neat.cmd --json reports card packages {found}, expected {card_packages}; see {log}")
+  return {"card": {"address": args.card_host, "interfaces": cards[0].get("interfaces")},
+          "host_packages": sorted(status["host"]["packages"]), "status": "PASS"}
 
 
 def remove_qualification_tree(path: Path, description: str) -> None:
@@ -2866,6 +2892,8 @@ def qualify(args: argparse.Namespace) -> None:
 
       verify_customer_process_activation(install_root, python, evidence)
       result["customer_install"]["process_activation"] = "PASS"
+      result["customer_install"]["neat_status"] = verify_installed_neat_status(
+          args, candidate, install_root, customer_home, card_outcome["installed"], evidence)
       # The installed doctor loads the Scheduler plug-in through the same
       # process-scoped activation entry point customers use.
       result["customer_install"]["plugin_discovery"] = "PASS"

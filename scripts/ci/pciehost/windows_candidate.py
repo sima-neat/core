@@ -6,8 +6,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 import hashlib
 import json
+import os
 from pathlib import Path
 import re
+import subprocess
 import xml.etree.ElementTree as ET
 
 
@@ -16,6 +18,7 @@ _OPTIONAL_EVIDENCE_FILES = {
     "core-msi-repeat-install.log",
     "core-msi-uninstall.log",
     "installed-checks.json",
+    "neat-status.log",
     "scheduler-host-candidate.json",
     "scheduler-installed-checks.json",
     "scheduler-metadata.json",
@@ -42,6 +45,38 @@ def msi_version(value: object) -> tuple[int, int, int]:
   if not match:
     raise ValueError(f"Windows candidate version is not numeric major.minor.patch: {value!r}")
   return tuple(int(part) for part in match.groups())
+
+
+def installed_neat_status(install_root: Path, environment: dict[str, str], log: Path,
+                          packages: dict[str, str]) -> dict:
+  """Run the installed neat.cmd --json as a customer does and check its host report.
+
+  packages maps the installed MSI product names to their versions. The command line,
+  exit code, output and errors are saved to log; only stdout must be the JSON object.
+  """
+  argv = [str(Path(os.environ["SystemRoot"]) / "System32" / "cmd.exe"), "/d", "/c",
+          str(install_root / "bin" / "neat.cmd"), "--json"]
+  print("+", subprocess.list2cmdline(argv), flush=True)
+  result = subprocess.run(argv, env=environment, capture_output=True, text=True,
+                          encoding="utf-8", errors="replace", timeout=180)
+  log.write_text(
+      f"+ {subprocess.list2cmdline(argv)}\nexit code: {result.returncode}\n"
+      f"--- stdout\n{result.stdout}\n--- stderr\n{result.stderr}\n", encoding="utf-8")
+  if result.returncode:
+    raise RuntimeError(f"neat.cmd --json exited with {result.returncode}; see {log}")
+  try:
+    status = json.loads(result.stdout)
+  except ValueError as error:
+    raise RuntimeError(f"neat.cmd --json did not print one JSON object; see {log}") from error
+  if (not isinstance(status, dict) or not isinstance(status.get("cards"), list)
+      or status.get("errors") != []):
+    raise RuntimeError(f"neat.cmd --json reported errors or no card list; see {log}")
+  installed = (status.get("host") or {}).get("packages")
+  found = {name: ((installed or {}).get(name) or {}).get("version") for name in packages}
+  if not isinstance(installed, dict) or found != packages:
+    raise RuntimeError(
+        f"neat.cmd --json reports host packages {found}, expected {packages}; see {log}")
+  return status
 
 
 def require_junit_cases(path: Path, expected: set[str]) -> dict[str, int]:

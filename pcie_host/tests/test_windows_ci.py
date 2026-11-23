@@ -40,7 +40,8 @@ MODULE = importlib.util.module_from_spec(SPEC)
 assert SPEC.loader
 SPEC.loader.exec_module(MODULE)
 from windows_candidate import (  # noqa: E402
-    dependency_identity, require_junit_cases, sha256, validate_candidate)
+    dependency_identity, installed_neat_status, require_junit_cases, sha256,
+    validate_candidate)
 from windows_hardware_assets import (  # noqa: E402
     GENAI_ASSETS, VISION_ASSETS, asset_manifest_sha256, create_asset_manifest,
     normalize_asset_manifest, verify_asset_manifest)
@@ -4311,6 +4312,92 @@ class WindowsCiContracts(unittest.TestCase):
         self.assertEqual(model.stream.call_count, 2)
         model.close.assert_called_once()
 
+  def test_installed_neat_status_runs_neat_cmd_and_checks_the_host_report(self):
+    packages = {"simaai-scheduler-pcie-host": "0.6.2", "sima-pcie-host": "0.6.2"}
+    report = {"host": {"packages": {name: {"version": version, "architecture": "amd64"}
+                                    for name, version in packages.items()}},
+              "cards": [], "errors": []}
+    install_root = Path(r"C:\Program Files\SimaPCIeHost")
+    for case, code, stdout, expected in (
+        ("pass", 0, json.dumps(report), None),
+        ("exit", 1, "", "exited with 1"),
+        # stderr text is kept apart from the JSON on stdout.
+        ("not-json", 0, "Usage: neat [status] [--json]", "did not print one JSON object"),
+        ("errors", 0, json.dumps({**report, "errors": ["Unable to read PCI inventory"]}),
+         "reported errors"),
+        ("version", 0, json.dumps({**report, "host": {"packages": {
+            "sima-pcie-host": {"version": "0.6.1"}}}}), "reports host packages"),
+    ):
+      with self.subTest(case=case), tempfile.TemporaryDirectory() as directory:
+        log = Path(directory) / "neat-status.log"
+        completed = subprocess.CompletedProcess([], code, stdout, "neat: stderr line\n")
+        with mock.patch.dict(os.environ, {"SystemRoot": r"C:\Windows"}), \
+            mock.patch("windows_candidate.subprocess.run", return_value=completed) as run:
+          if expected:
+            with self.assertRaisesRegex(RuntimeError, expected):
+              installed_neat_status(install_root, {"PATH": "x"}, log, packages)
+          else:
+            self.assertEqual(installed_neat_status(install_root, {"PATH": "x"}, log, packages),
+                             report)
+        argv = run.call_args.args[0]
+        self.assertEqual(argv[1:], ["/d", "/c", str(install_root / "bin" / "neat.cmd"), "--json"])
+        self.assertTrue(argv[0].endswith("cmd.exe"))
+        self.assertEqual(run.call_args.kwargs["env"], {"PATH": "x"})
+        self.assertIn("neat: stderr line", log.read_text(encoding="utf-8"))
+
+  def test_hosted_build_and_hardware_qualifier_run_installed_neat_cmd(self):
+    producer = SCRIPT.read_text(encoding="utf-8")
+    installed = producer.split('    check_consumer(install_root, "installed")\n', 1)[1]
+    self.assertTrue(installed.startswith(
+        "    # neat.cmd as a customer runs it, on a runner without a card.\n"
+        "    neat_status = installed_neat_status(\n"))
+    self.assertIn('if neat_status["cards"]:\n      raise ValueError', installed)
+    self.assertIn('"neat_status": "PASS",', producer)
+    self.assertIn('"neat-status.log",', (SCRIPT_DIR / "windows_candidate.py").read_text(
+        encoding="utf-8"))
+    qualifier = (SCRIPT_DIR / "qualify_windows_hardware.py").read_text(encoding="utf-8")
+    self.assertIn(
+        '      result["customer_install"]["process_activation"] = "PASS"\n'
+        '      result["customer_install"]["neat_status"] = verify_installed_neat_status(\n',
+        qualifier)
+
+  def test_hardware_qualifier_requires_the_card_and_cohort_in_neat_status(self):
+    native = [{"owner": "scheduler", "version": "0.6.2"}, {"owner": "core", "version": "0.6.2"}]
+    candidate = SimpleNamespace(metadata={"installation": {"native-packages": native}})
+    card_packages = {"sima-neat": "0.6.2.abcdef123456", "simaai-runner": "1.0"}
+    with tempfile.TemporaryDirectory() as directory:
+      root = Path(directory)
+      key = root / "key"
+      key.write_text("k", encoding="ascii")
+      args = SimpleNamespace(card_host="10.0.0.2", card_user="sima", ssh_key=key)
+      card = {"address": "10.0.0.2", "interfaces": ["Ethernet 3"], "state": "ok",
+              "software": {"packages": {name: {"version": version}
+                                        for name, version in card_packages.items()}}}
+      for case, cards, expected in (
+          ("pass", [card], None),
+          ("missing", [], "does not report the card"),
+          ("unavailable", [{**card, "state": "unavailable"}], "does not report the card"),
+          ("version", [{**card, "software": {"packages": {}}}], "reports card packages"),
+      ):
+        with self.subTest(case=case), \
+            mock.patch.object(HARDWARE, "customer_process_environment",
+                              return_value={"PATH": "p", "USERPROFILE": "runner"}), \
+            mock.patch.object(HARDWARE, "installed_neat_status", return_value={
+                "host": {"packages": {"sima-pcie-host": {}}}, "cards": cards,
+                "errors": []}) as status:
+          call = partial(HARDWARE.verify_installed_neat_status, args, candidate,
+                         Path("install"), root / "home", card_packages, root)
+          if expected:
+            with self.assertRaisesRegex(RuntimeError, expected):
+              call()
+          else:
+            self.assertEqual(call()["status"], "PASS")
+          install_root, environment, log, packages = status.call_args.args
+          self.assertEqual(packages, {"simaai-scheduler-pcie-host": "0.6.2",
+                                      "sima-pcie-host": "0.6.2"})
+          self.assertEqual(environment["USERPROFILE"], str(root / "home"))
+          self.assertEqual(environment["NEAT_PCIE_SSH_KEY"], str(key.resolve()))
+          self.assertEqual(log, root / "customer-neat-status.log")
 
 
 class HostedWindowsBuildContracts(unittest.TestCase):
