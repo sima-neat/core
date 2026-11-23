@@ -109,8 +109,8 @@ RUN_TEST(
     "model_archive_load_e2e_test", ([] {
       const std::string archive = sima_test::resolve_resnet50_tar();
       if (archive.empty()) {
-        // Registered in the long lane, where an unreachable modelzoo is an environment gap
-        // rather than a regression in the extraction path this test covers.
+        // Registered in the long lane, where a missing model is an environment gap rather
+        // than a regression in the extraction path this test covers.
         skip_test_exception(
             "ResNet50 model pack not found; set SIMA_MODEL_TAR or SIMA_RESNET50_TAR");
       }
