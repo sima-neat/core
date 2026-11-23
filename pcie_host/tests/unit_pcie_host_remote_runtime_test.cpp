@@ -17,6 +17,7 @@
 #include <thread>
 #include <vector>
 
+#include <sys/prctl.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -295,6 +296,9 @@ int main(const int argc, char** argv) {
     return fake_builder(argc, argv);
   }
   try {
+    // Adopt the detached workers and never reap them, as the `tail -f /dev/null` PID 1 of a CI
+    // job container does: a worker that ended stays a zombie, which every stop must accept.
+    require(prctl(PR_SET_CHILD_SUBREAPER, 1) == 0, "PR_SET_CHILD_SUBREAPER failed");
     Card card;
     const pcie_internal::RemoteRuntime runtime(card.connection());
     test_start_records_the_host_owner(card, runtime);

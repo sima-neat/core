@@ -678,8 +678,9 @@ void RemoteRuntime::stop(const int queue, const int expected_pid) const {
      << "tr '\\0' ' ' < \"/proc/$pid/cmdline\" 2>/dev/null | grep -q 'pcie-pipeline-builder' || "
         "exit 0; "
      << "kill -TERM \"$pid\" >/dev/null 2>&1 || true; "
-     << "for i in $(seq 1 20); do kill -0 \"$pid\" >/dev/null 2>&1 || { rm -f "
-     << SshRunner::shell_escape(pid_path(queue)) << "; exit 0; }; sleep 0.25; done; "
+     << "for i in $(seq 1 20); do if ! kill -0 \"$pid\" >/dev/null 2>&1 || "
+     << "grep -q '^State:[[:space:]]*Z' \"/proc/$pid/status\" 2>/dev/null; then rm -f "
+     << SshRunner::shell_escape(pid_path(queue)) << "; exit 0; fi; sleep 0.25; done; "
      << "echo still_running_after_sigterm; exit 13; " << "fi";
 
   std::vector<std::string> cmd = ssh_base();
