@@ -1210,13 +1210,17 @@ struct HostStorage final {
     std::memcpy(static_cast<std::byte*>(memory.get()) + element * 4, &value, 4);
   }
 };
-// The 91-class SSD-Mobile-300-v1 and SSDlite-Mobile-320-v1 signatures decode as
-// their source models do: every foreground anchor/class pair, NMS per class.
-// Other signatures keep one class per anchor. One anchor whose two foreground
-// classes both pass the threshold tells the two policies apart.
-std::int32_t ssd_policy_detections(stagesemantics::SsdRecipeId id, int side,
-                                   const std::array<int, 6>& dims,
-                                   const std::array<int, 6>& anchors) {
+// One BF16 logit in the first score head, as (element, value). Every other logit is -10.
+struct SsdLogit {
+  std::size_t element;
+  float value;
+};
+// Runs the checked SSD numerical member and the publication member on the host
+// with zero box offsets, which decode to the priors, and returns the wire.
+HostStorage ssd_decode_wire(stagesemantics::SsdRecipeId id, const std::array<int, 6>& dims,
+                            const std::array<int, 6>& anchors,
+                            const BoxDecodeGeometryOptions& geometry,
+                            const std::vector<SsdLogit>& logits) {
   constexpr int classes = 91;
   auto request = source(BoxDecodeType::Ssd, classes);
   request.payload.ssd_recipe_id = id;
@@ -1224,7 +1228,7 @@ std::int32_t ssd_policy_detections(stagesemantics::SsdRecipeId id, int side,
     input(request, dims[i], dims[i], anchors[i] * 4);
   for (std::size_t i = 0; i < dims.size(); ++i)
     input(request, dims[i], dims[i], anchors[i] * classes);
-  const auto prepared = check(request, {side, side, side, side, ResizeMode::Stretch});
+  const auto prepared = check(request, geometry);
   const auto& members = prepared.compiled.recipe->members;
   require(prepared.decode_member == 0, "SSD decode must read the stage inputs directly");
   const auto& numerical = members[prepared.decode_member].executable;
@@ -1237,8 +1241,6 @@ std::int32_t ssd_policy_detections(stagesemantics::SsdRecipeId id, int side,
     inputs.push_back(std::make_shared<HostStorage>(req.storage_bytes));
     in.push_back({static_cast<const std::byte*>(inputs.back()->memory.get()), req.storage_bytes});
   }
-  // Box offsets 0 decode to the priors. BF16 logits: -10 everywhere, then
-  // classes 1 and 2 of the first anchor of the first cell at 5 and 4.
   const auto set_bf16 = [](HostStorage& storage, std::size_t element, float value) {
     std::uint32_t bits = 0;
     std::memcpy(&bits, &value, 4);
@@ -1253,8 +1255,8 @@ std::int32_t ssd_policy_detections(stagesemantics::SsdRecipeId id, int side,
     for (std::size_t e = 0; e < elements; ++e)
       set_bf16(scores, e, -10.f);
   }
-  set_bf16(*inputs[dims.size()], 1, 5.f);
-  set_bf16(*inputs[dims.size()], 2, 4.f);
+  for (const auto& logit : logits)
+    set_bf16(*inputs[dims.size()], logit.element, logit.value);
   for (const auto& req : description.output_requirements()) {
     outputs.push_back(std::make_shared<HostStorage>(req.storage_bytes));
     auto* data = static_cast<std::byte*>(outputs.back()->memory.get());
@@ -1272,11 +1274,45 @@ std::int32_t ssd_policy_detections(stagesemantics::SsdRecipeId id, int side,
       {{static_cast<std::byte*>(wire.memory.get()), wire_bytes}}};
   require(!publisher.execute_host(publisher.operation(), public_inputs, published),
           "SSD publication failed");
+  return wire;
+}
+// The 91-class SSD-Mobile-300-v1 and SSDlite-Mobile-320-v1 signatures decode as
+// their source models do: every foreground anchor/class pair, NMS per class.
+// Other signatures keep one class per anchor. One anchor whose two foreground
+// classes both pass the threshold tells the two policies apart.
+std::int32_t ssd_policy_detections(stagesemantics::SsdRecipeId id, int side,
+                                   const std::array<int, 6>& dims,
+                                   const std::array<int, 6>& anchors) {
+  // Classes 1 and 2 of the first anchor of the first cell at 5 and 4.
+  const auto wire = ssd_decode_wire(id, dims, anchors,
+                                    {side, side, side, side, ResizeMode::Stretch},
+                                    {{1, 5.f}, {2, 4.f}});
   const auto count = wire.read<std::int32_t>(0);
   for (std::int32_t row = 1; row < count; ++row)
     require(wire.read<std::int32_t>(4 + row * 24 + 20) != wire.read<std::int32_t>(4 + 20),
             "SSD published one class twice for a single anchor");
   return count;
+}
+// A sigmoid-scored SSD-Mobile-300-v1 detection from one known logit. The prior
+// is worked out here from the TF SSD-MobileNet-v1 anchor layout, not read from
+// Core: the 19x19 level's first anchor has scale 0.1 and aspect ratio 1, and
+// cell (9, 9) is centred at 9.5 / 19 = 0.5. Zero offsets decode to that prior,
+// [0.45, 0.55] on both axes, and a stretch to 600x300 gives x 270, y 135, w 60,
+// h 30. Class 1 at logit 5 must publish class 1 with score sigmoid(5).
+void ssd_known_logit_detection() {
+  constexpr std::size_t classes = 91, anchors_19 = 3, cell = 9 * 19 + 9;
+  const auto wire = ssd_decode_wire(stagesemantics::SsdRecipeId::SsdMobile300V1,
+                                    {19, 10, 5, 3, 2, 1}, {3, 6, 6, 6, 6, 6},
+                                    {300, 300, 600, 300, ResizeMode::Stretch},
+                                    {{cell * anchors_19 * classes + 1, 5.f}});
+  require(wire.read<std::int32_t>(0) == 1, "SSD-Mobile-300 published other than one detection");
+  const auto near = [](std::int32_t got, int want) { return std::abs(got - want) <= 1; };
+  require(near(wire.read<std::int32_t>(4), 270) && near(wire.read<std::int32_t>(8), 135) &&
+              near(wire.read<std::int32_t>(12), 60) && near(wire.read<std::int32_t>(16), 30),
+          "SSD-Mobile-300 box does not match its prior stretched to the original frame");
+  require(wire.read<std::int32_t>(24) == 1, "SSD-Mobile-300 published the wrong class");
+  require(std::abs(wire.read<float>(20) - 1.f / (1.f + std::exp(-5.f))) < 1e-3f,
+          "SSD-Mobile-300 score is not the sigmoid of its logit");
 }
 void ssd_source_policy_execution() {
   using stagesemantics::SsdRecipeId;
@@ -1286,6 +1322,7 @@ void ssd_source_policy_execution() {
   require(ssd_policy_detections(SsdRecipeId::SsdMobile320V1, 320, {20, 10, 5, 3, 2, 1},
                                 {3, 6, 6, 6, 6, 6}) == 1,
           "SSD-Mobile-320-v1 must keep its one-class-per-anchor policy");
+  ssd_known_logit_detection();
 }
 
 void detr_numerical_publication(bool crop = false) {
