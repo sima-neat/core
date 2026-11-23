@@ -32,14 +32,9 @@ struct BoxDecodeGeometryOptions {
   bool uniform_transform_required = false;
   // A source-driven cold seed must never substitute for per-frame authority.
   bool require_frame_transform = false;
-  // Default for ordinary detection profiles: a frame decodes with the model-to-original
-  // affine its preprocess published (an ROI, crop, stretch or centered letterbox alike).
-  // A frame that publishes none (legacy ingress with dimensions only) keeps the recipe's
-  // full-frame fallback, so model_to_original is then only the cold-preparation seed.
+  // Use full-frame mapping when the frame supplies no affine.
   bool frame_affine_optional = false;
-  // Profiles whose kernel accepts no transform (pose, segmentation, RCNN proposals,
-  // multiclass SSD) map boxes over the whole frame: a frame preprocessed from an ROI or
-  // a crop fails, naming this profile, instead of decoding in full-frame coordinates.
+  // Reject frames that cover only part of the source image.
   bool full_frame_only = false;
   std::string profile;
 };

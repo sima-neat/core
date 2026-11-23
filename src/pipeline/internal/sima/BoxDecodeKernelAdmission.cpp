@@ -410,11 +410,7 @@ CompiledKernelContract compile_boxdecode_kernel(const CompiledBoxDecodeContract&
         input.upstream_preprocess ? &input.upstream_preprocess->payload : nullptr, geometry);
   if (observed && observed->resize_mode == "crop" && detection_transform)
     geometry.complete_geometry = true;
-  // Pose, segmentation, RCNN proposals and multiclass SSD map boxes over the whole frame:
-  // their kernels accept no transform, so an ROI or crop frame must fail, naming the profile.
-  // Per-frame geometry exists only where something publishes it: an upstream preprocess,
-  // preprocess facts on ingress, or an image size taken from each frame. An explicit image size
-  // with none of these keeps the static recipe it always had.
+  // Keep fixed-size decoding static when there is no source of per-frame geometry.
   const bool frame_geometry_source = input.upstream_preprocess || observed ||
                                      geometry.original_width <= 0 || geometry.original_height <= 0;
   geometry.full_frame_only = frame_geometry_source && !detection_transform &&
@@ -500,12 +496,6 @@ CompiledKernelContract compile_boxdecode_kernel(const CompiledBoxDecodeContract&
     observed = std::move(meta);
     geometry.require_frame_transform = true;
   }
-  // Every other detection profile consumes the affine its preprocess published, for each
-  // frame: an ROI, a crop, a stretch or a centered letterbox alike. A frame without one
-  // (legacy ingress with dimensions only) keeps the recipe's full-frame fallback. The kernel
-  // variant that takes the transform needs an executable prepared with one: the published
-  // affine seeds it when ingress shows one, an identity otherwise. Neither is ever applied to
-  // a frame that publishes no affine.
   if (frame_geometry_source && detection_transform && !geometry.complete_geometry) {
     geometry.complete_geometry = true;
     geometry.frame_affine_optional = true;
@@ -594,6 +584,7 @@ CompiledKernelContract compile_boxdecode_kernel(const CompiledBoxDecodeContract&
                                static_cast<float>(values[2]), static_cast<float>(values[5])};
     }
   }
+  // Identity is only for kernel preparation. Frames without an affine use full-frame mapping.
   if (geometry.frame_affine_optional && !geometry.model_to_original)
     geometry.model_to_original = std::array<float, 4>{1.f, 1.f, 0.f, 0.f};
   if (geometry.complete_geometry && geometry.resize == ResizeMode::Crop &&
