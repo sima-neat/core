@@ -36,6 +36,7 @@ YOLOV8S_TESTS = {
     'model_seeded_input_capacity_tensor_test',
     'model_seeded_input_capacity_test',
     'model_seeded_input_capacity_unseeded_test',
+    'preproc_roi_boxdecode_color_test',
     'seedless_yolov8_preproc_input_max_smoke_test',
     'stage_chain_cache_admission_test',
     'sync_yolov8_test',
