@@ -2669,9 +2669,12 @@ NB_MODULE(_pyneat_core, m) {
 
   nb::class_<MeasureOptions>(m, "MeasureOptions")
       .def(nb::init<>())
-      .def_rw("duration_ms", &MeasureOptions::duration_ms)
-      .def_rw("warmup_ms", &MeasureOptions::warmup_ms)
-      .def_rw("timeout_ms", &MeasureOptions::timeout_ms)
+      .def_rw("duration_ms", &MeasureOptions::duration_ms,
+              "Deprecated. Report metadata only. End measurement with `scope.stop`.")
+      .def_rw("warmup_ms", &MeasureOptions::warmup_ms,
+              "Deprecated. Report metadata only. Finish warmup before starting measurement.")
+      .def_rw("timeout_ms", &MeasureOptions::timeout_ms,
+              "Deprecated. Report metadata only. Set the timeout on each `pull` call.")
       .def_rw("include_plugin_latency", &MeasureOptions::include_plugin_latency,
               "Deprecated: plugin latency will be removed.")
       .def_rw("plugin_latency_source", &MeasureOptions::plugin_latency_source)
