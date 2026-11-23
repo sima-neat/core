@@ -86,6 +86,15 @@ neat --json
 neat --offline
 ```
 
+Windows에서는 PCIe 호스트 패키지가 `neat.cmd`를 설치합니다. PowerShell에서 실행하세요. `--json`은 `sima.neat.status.v1` 래퍼 없이 아래에 설명된 PCIe 상태 객체를 출력합니다.
+
+```powershell
+& "$env:ProgramFiles\SimaPCIeHost\bin\neat.cmd"
+& "$env:ProgramFiles\SimaPCIeHost\bin\neat.cmd" --json
+```
+
+Windows에는 PCI 주소 목록이 없으므로 카드는 Platform PCIe 네트워크 어댑터의 인터페이스와 해당 주소로 표시됩니다. 호스트 패키지는 설치된 Scheduler 및 Core MSI 제품입니다.
+
 카드 조회는 `pcie-setup.sh`와 동일하게 구성된 호스트 인터페이스 `10.0.N.1`과 카드 주소 `10.0.N.2`를 사용합니다. 네트워크 연결과 신뢰할 SSH 키를 먼저 설정하세요. 이 명령은 인터페이스 설정, 호스트 키 등록, 암호 입력, 카드에서의 sudo 실행 또는 패키지 변경을 수행하지 않습니다. 인터페이스 누락, 비표준 주소, SSH 오류 및 소프트웨어 정보 조회 실패는 카드별로 표시하며 연결 가능한 카드의 버전은 계속 표시합니다.
 
 `NEAT_PCIE_SSH_USER`는 카드 SSH 사용자(기본값 `sima`)를 선택합니다. `NEAT_PCIE_SSH_KEY`는 개인 키(기본값 `~/.ssh/sima_neat_pcie_ed25519`)를 선택하며 기존 SSH 설정과 에이전트 인증도 사용할 수 있습니다. `--offline`은 인터넷 업데이트 확인을 생략하지만 로컬 SSH로 연결된 카드를 조회합니다. PCIe 호스트 상태에서는 아티팩트 업데이트를 확인하지 않습니다. 호스트 패키지를 업데이트하려면 `sima-cli neat install core/pciehost/<distro>/<arch>@<ref>`를 사용하세요. `neat update`는 PCIe 카드를 업데이트하지 않습니다.

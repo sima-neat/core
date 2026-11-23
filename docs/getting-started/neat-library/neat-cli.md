@@ -97,6 +97,15 @@ neat --json
 neat --offline
 ```
 
+On Windows, the PCIe host package installs `neat.cmd`. Run it from PowerShell; `--json` prints the PCIe status object described below without the `sima.neat.status.v1` wrapper:
+
+```powershell
+& "$env:ProgramFiles\SimaPCIeHost\bin\neat.cmd"
+& "$env:ProgramFiles\SimaPCIeHost\bin\neat.cmd" --json
+```
+
+Windows has no PCI address inventory, so cards are listed by the interface of the Platform's PCIe network adapter and their address. Host packages are the installed Scheduler and Core MSI products.
+
 Card queries use the provisioned `10.0.N.1` host interface and `10.0.N.2` card address, matching `pcie-setup.sh`. Configure network access and trusted SSH keys first. The command does not configure interfaces, enroll host keys, prompt for passwords, use sudo on cards, or modify packages. Missing interfaces, nonstandard addresses, SSH failures, and unavailable software are reported per card; reachable cards still report their versions.
 
 `NEAT_PCIE_SSH_USER` selects the card SSH user (default `sima`). `NEAT_PCIE_SSH_KEY` selects a private key (default `~/.ssh/sima_neat_pcie_ed25519`); existing SSH configuration and agent authentication remain available. `--offline` skips Internet update checks but still reads attached cards over local SSH. PCIe host status skips artifact update checks; use `sima-cli neat install core/pciehost/<distro>/<arch>@<ref>` to update the host package. `neat update` does not update PCIe cards.
