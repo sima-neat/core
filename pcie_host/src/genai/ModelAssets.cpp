@@ -15,8 +15,7 @@ std::filesystem::path host_model_path(const std::filesystem::path& model) {
 }
 std::optional<std::filesystem::path> model_asset_path(const std::filesystem::path& model,
                                                       const std::string& name) {
-  // Compare canonical forms: Windows expands 8.3 short names (C:\Users\RUNNER~1) in one but not
-  // the other otherwise.
+  // Compare canonical forms: Windows may expand an 8.3 short name in one path and not the other.
   const auto root = std::filesystem::weakly_canonical(model);
   // Worker names are UTF-8; convert explicitly so Windows does not use the ANSI code page.
   const auto path = std::filesystem::weakly_canonical(

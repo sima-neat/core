@@ -11,6 +11,7 @@
 #include <string>
 #include <string_view>
 #include <thread>
+#include <vector>
 
 #define NOMINMAX
 #include <windows.h>

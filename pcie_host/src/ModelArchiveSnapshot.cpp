@@ -23,10 +23,9 @@ ModelArchiveSnapshot::ModelArchiveSnapshot(const std::string& source_path)
       source_name.compare(source_name.size() - suffix.size(), suffix.size(), suffix) != 0) {
     throw std::runtime_error("model archive must use .tar.gz: " + source_path);
   }
-  // Keep the Windows private snapshot path ASCII-only. The archive loader
-  // invokes the operating system's tar program, while the customer path may
-  // contain any valid Unicode characters. Inspection and upload still use
-  // this exact same immutable snapshot.
+  // Give the Windows snapshot a fixed ASCII name: the card-side upload name
+  // embeds it, while the customer's file name may hold any Unicode characters.
+  // Inspection and upload still use this one immutable snapshot.
   snapshot = directory_.path() / "model.tar.gz";
 #endif
   fs::copy_file(source, snapshot, fs::copy_options::none);

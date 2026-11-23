@@ -8,7 +8,6 @@
 #include <atomic>
 #include <cctype>
 #include <chrono>
-#include <cstdlib>
 #include <filesystem>
 #include <limits>
 #include <nlohmann/json.hpp>

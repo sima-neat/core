@@ -81,24 +81,24 @@ int main() {
     host.send(wire::tag(session, false), wire::envelope(session, 0, "hello").dump());
     auto reply = host.receive(2000);
     require(reply.has_value() && wire::parse(*reply, session).at("capabilities").at("text"),
-            "Windows service transports readiness values");
+            "service transports readiness values");
 
     auto request = wire::envelope(session, 1, "generate");
     request["body"] = {{"prompt", "hello"}};
     host.send(wire::tag(session, false), request.dump());
     reply = host.receive(2000);
-    require(reply.has_value(), "Windows service transports generation result");
+    require(reply.has_value(), "service transports generation result");
     const auto event = wire::parse(*reply, session);
     const auto sample = wire::decode(event.at("body"));
     require(sample.text == "answer" && sample.is_final && sample.metrics.generated_tokens == 1,
-            "Windows service preserves GenAI value fields");
+            "service preserves GenAI value fields");
 
     host.send(wire::tag(session, false), wire::envelope(session, 2, "cancel").dump());
     reply = host.receive(2000);
     require(reply.has_value() &&
                 wire::decode(wire::parse(*reply, session).at("body")).finish_reason ==
                     "interrupted",
-            "Windows service transports terminal cancellation");
+            "service transports terminal cancellation");
     remote.join();
     if (remote_error)
       std::rethrow_exception(remote_error);

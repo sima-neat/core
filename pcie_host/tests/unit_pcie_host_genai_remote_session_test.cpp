@@ -94,7 +94,7 @@ int main() {
         "LD_LIBRARY_PATH=/tmp/private/lib");
 
     g::ConnectionOptions connection;
-    connection.card_host = "192.168.1.42";
+    connection.card_host = "10.0.0.2";
     g::internal::RemoteSession remote(connection);
     remote.start("target model", "draft model");
 

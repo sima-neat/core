@@ -8,15 +8,11 @@
 
 #include <algorithm>
 #include <cctype>
-#include <filesystem>
 #include <limits>
 #include <stdexcept>
 #include <string>
-#include <system_error>
 #include <utility>
 #include <vector>
-
-namespace fs = std::filesystem;
 
 namespace simaai::neat::pcie::internal {
 namespace {
