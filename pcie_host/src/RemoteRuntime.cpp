@@ -310,8 +310,11 @@ std::vector<std::string> RemoteRuntime::ssh_base() const {
   cmd.push_back(open_ssh_executable("ssh"));
   cmd.insert(cmd.end(), {"-p", std::to_string(kSshPort)});
   if (const auto identity = default_identity_file(); identity.has_value()) {
-    // Offer only the Neat key; agent keys could exhaust the card's MaxAuthTries.
-    cmd.insert(cmd.end(), {"-i", *identity, "-o", "IdentitiesOnly=yes"});
+    cmd.insert(cmd.end(), {"-i", *identity});
+#ifdef _WIN32
+    // Windows only: the ssh-agent service commonly offers several keys before the Neat key.
+    cmd.insert(cmd.end(), {"-o", "IdentitiesOnly=yes"});
+#endif
   }
   cmd.insert(cmd.end(), {"-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes"});
   cmd.insert(cmd.end(), {"-o", "ConnectTimeout=" + std::to_string(kConnectTimeoutSec)});
@@ -324,8 +327,11 @@ std::vector<std::string> RemoteRuntime::scp_base() const {
   cmd.push_back(open_ssh_executable("scp"));
   cmd.insert(cmd.end(), {"-P", std::to_string(kSshPort)});
   if (const auto identity = default_identity_file(); identity.has_value()) {
-    // Offer only the Neat key; agent keys could exhaust the card's MaxAuthTries.
-    cmd.insert(cmd.end(), {"-i", *identity, "-o", "IdentitiesOnly=yes"});
+    cmd.insert(cmd.end(), {"-i", *identity});
+#ifdef _WIN32
+    // Windows only: the ssh-agent service commonly offers several keys before the Neat key.
+    cmd.insert(cmd.end(), {"-o", "IdentitiesOnly=yes"});
+#endif
   }
   cmd.insert(cmd.end(), {"-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes"});
   cmd.insert(cmd.end(), {"-o", "ConnectTimeout=" + std::to_string(kConnectTimeoutSec)});

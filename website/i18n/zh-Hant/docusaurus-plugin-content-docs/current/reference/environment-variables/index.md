@@ -190,7 +190,7 @@ ProcessCVU 階段預設透過 Runtime 的 `neatkernelrunner` 執行。
 
 ## PCIe 主機與卡片狀態
 
-`NEAT_PCIE_SSH_USER` 指定卡片的 SSH 使用者（預設為 `sima`）。`NEAT_PCIE_SSH_KEY` 指定私密金鑰（預設為 `~/.ssh/sima_neat_pcie_ed25519`），也可繼續使用既有 SSH 設定與代理程式驗證。`--offline` 會略過網際網路更新檢查，但仍透過本機 SSH 讀取已連接的卡片。PCIe 主機狀態不檢查成品更新；請使用 `sima-cli neat install core/pciehost/<distro>/<arch>@<ref>` 更新主機套件。`neat update` 不會更新 PCIe 卡片。
+`NEAT_PCIE_SSH_USER` 指定卡片的 SSH 使用者（預設為 `sima`）。`NEAT_PCIE_SSH_KEY` 指定私密金鑰（預設為 `~/.ssh/sima_neat_pcie_ed25519`）。在 Ubuntu 上，也可繼續使用既有 SSH 設定與代理程式驗證。在 Windows 上，若該金鑰檔案存在，OpenSSH 只會提供該金鑰及 SSH 設定中 `IdentityFile` 指定的金鑰，不會提供 ssh-agent 的金鑰。`--offline` 會略過網際網路更新檢查，但仍透過本機 SSH 讀取已連接的卡片。PCIe 主機狀態不檢查成品更新；請使用 `sima-cli neat install core/pciehost/<distro>/<arch>@<ref>` 更新主機套件。`neat update` 不會更新 PCIe 卡片。
 
 ## Windows PCIe 主機執行階段
 

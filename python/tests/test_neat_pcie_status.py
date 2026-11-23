@@ -353,6 +353,26 @@ def test_windows_single_adapter_json_and_identity_options(tmp_path, monkeypatch)
         str(key), '-o', 'IdentitiesOnly=yes']
 
 
+def test_linux_offers_the_key_without_disabling_agent_and_configured_keys(tmp_path):
+    key = tmp_path/'sima_neat_pcie_ed25519'
+    key.write_text('key')
+    devices = tmp_path/'devices'
+    devices.mkdir()
+    pci(devices, '0000:01:00.0', 'enp1s0')
+    commands = []
+    def command(args, **kwargs):
+        commands.append(args)
+        return json.dumps(report())
+    with patch.object(status, 'WINDOWS', False), \
+         patch.object(status, 'software', return_value=report()), \
+         patch.object(status, 'endpoint', return_value=('10.0.0.1', '10.0.0.2')), \
+         patch.object(status, 'command', side_effect=command):
+        result = status.collect(devices, key=key)
+    assert result['cards'][0]['state'] == 'ok'
+    assert commands[0][commands[0].index('-i')+1] == str(key)
+    assert 'IdentitiesOnly=yes' not in commands[0]
+
+
 def test_windows_failed_probe_keeps_card_with_error(monkeypatch):
     def probe(args):
         raise subprocess.CalledProcessError(255, args, stderr='Host key verification failed')

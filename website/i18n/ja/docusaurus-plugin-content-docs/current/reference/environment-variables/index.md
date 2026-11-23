@@ -174,7 +174,7 @@ ProcessCVU ステージはデフォルトで Runtime の `neatkernelrunner` を�
 
 ## PCIe ホストとカードの状態
 
-`NEAT_PCIE_SSH_USER` はカードの SSH ユーザー（既定値 `sima`）を選択します。`NEAT_PCIE_SSH_KEY` は秘密キー（既定値 `~/.ssh/sima_neat_pcie_ed25519`）を選択します。既存の SSH 設定とエージェント認証も利用できます。`--offline` はインターネット経由の更新確認を省略しますが、ローカル SSH によるカードの読み取りは行います。PCIe ホストの状態表示ではアーティファクト更新を確認しません。ホストの更新には `sima-cli neat install core/pciehost/<distro>/<arch>@<ref>` を使用してください。`neat update` は PCIe カードを更新しません。
+`NEAT_PCIE_SSH_USER` はカードの SSH ユーザー（既定値 `sima`）を選択します。`NEAT_PCIE_SSH_KEY` は秘密キー（既定値 `~/.ssh/sima_neat_pcie_ed25519`）を選択します。Ubuntu では、既存の SSH 設定とエージェント認証も利用できます。Windows では、このキーファイルが存在する場合、OpenSSH はそのキーと SSH 設定の `IdentityFile` で指定されたキーのみを提示し、ssh-agent のキーは提示しません。`--offline` はインターネット経由の更新確認を省略しますが、ローカル SSH によるカードの読み取りは行います。PCIe ホストの状態表示ではアーティファクト更新を確認しません。ホストの更新には `sima-cli neat install core/pciehost/<distro>/<arch>@<ref>` を使用してください。`neat update` は PCIe カードを更新しません。
 
 ## Windows PCIe ホストのランタイム
 

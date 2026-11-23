@@ -194,7 +194,7 @@ ProcessCVU 단계는 기본적으로 Runtime의 `neatkernelrunner`를 통해 실
 
 ## PCIe 호스트 및 카드 상태
 
-`NEAT_PCIE_SSH_USER`는 카드 SSH 사용자(기본값 `sima`)를 선택합니다. `NEAT_PCIE_SSH_KEY`는 개인 키(기본값 `~/.ssh/sima_neat_pcie_ed25519`)를 선택하며 기존 SSH 설정과 에이전트 인증도 사용할 수 있습니다. `--offline`은 인터넷 업데이트 확인을 생략하지만 로컬 SSH로 연결된 카드를 조회합니다. PCIe 호스트 상태에서는 아티팩트 업데이트를 확인하지 않습니다. 호스트 패키지를 업데이트하려면 `sima-cli neat install core/pciehost/<distro>/<arch>@<ref>`를 사용하세요. `neat update`는 PCIe 카드를 업데이트하지 않습니다.
+`NEAT_PCIE_SSH_USER`는 카드 SSH 사용자(기본값 `sima`)를 선택합니다. `NEAT_PCIE_SSH_KEY`는 개인 키(기본값 `~/.ssh/sima_neat_pcie_ed25519`)를 선택합니다. Ubuntu에서는 기존 SSH 설정과 에이전트 인증도 사용할 수 있습니다. Windows에서는 이 키 파일이 있으면 OpenSSH가 해당 키와 SSH 설정의 `IdentityFile`에 지정된 키만 제시하며 ssh-agent 키는 제시하지 않습니다. `--offline`은 인터넷 업데이트 확인을 생략하지만 로컬 SSH로 연결된 카드를 조회합니다. PCIe 호스트 상태에서는 아티팩트 업데이트를 확인하지 않습니다. 호스트 패키지를 업데이트하려면 `sima-cli neat install core/pciehost/<distro>/<arch>@<ref>`를 사용하세요. `neat update`는 PCIe 카드를 업데이트하지 않습니다.
 
 ## Windows PCIe 호스트 런타임
 

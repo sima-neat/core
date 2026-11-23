@@ -97,7 +97,7 @@ Windows에는 PCI 주소 목록이 없으므로 카드는 Platform PCIe 네트�
 
 카드 조회는 `pcie-setup.sh`와 동일하게 구성된 호스트 인터페이스 `10.0.N.1`과 카드 주소 `10.0.N.2`를 사용합니다. 네트워크 연결과 신뢰할 SSH 키를 먼저 설정하세요. 이 명령은 인터페이스 설정, 호스트 키 등록, 암호 입력, 카드에서의 sudo 실행 또는 패키지 변경을 수행하지 않습니다. 인터페이스 누락, 비표준 주소, SSH 오류 및 소프트웨어 정보 조회 실패는 카드별로 표시하며 연결 가능한 카드의 버전은 계속 표시합니다.
 
-`NEAT_PCIE_SSH_USER`는 카드 SSH 사용자(기본값 `sima`)를 선택합니다. `NEAT_PCIE_SSH_KEY`는 개인 키(기본값 `~/.ssh/sima_neat_pcie_ed25519`)를 선택하며 기존 SSH 설정과 에이전트 인증도 사용할 수 있습니다. `--offline`은 인터넷 업데이트 확인을 생략하지만 로컬 SSH로 연결된 카드를 조회합니다. PCIe 호스트 상태에서는 아티팩트 업데이트를 확인하지 않습니다. 호스트 패키지를 업데이트하려면 `sima-cli neat install core/pciehost/<distro>/<arch>@<ref>`를 사용하세요. `neat update`는 PCIe 카드를 업데이트하지 않습니다.
+`NEAT_PCIE_SSH_USER`는 카드 SSH 사용자(기본값 `sima`)를 선택합니다. `NEAT_PCIE_SSH_KEY`는 개인 키(기본값 `~/.ssh/sima_neat_pcie_ed25519`)를 선택합니다. Ubuntu에서는 기존 SSH 설정과 에이전트 인증도 사용할 수 있습니다. Windows에서는 이 키 파일이 있으면 OpenSSH가 해당 키와 SSH 설정의 `IdentityFile`에 지정된 키만 제시하며 ssh-agent 키는 제시하지 않습니다. `--offline`은 인터넷 업데이트 확인을 생략하지만 로컬 SSH로 연결된 카드를 조회합니다. PCIe 호스트 상태에서는 아티팩트 업데이트를 확인하지 않습니다. 호스트 패키지를 업데이트하려면 `sima-cli neat install core/pciehost/<distro>/<arch>@<ref>`를 사용하세요. `neat update`는 PCIe 카드를 업데이트하지 않습니다.
 
 JSON은 `sima.neat.status.v1`을 유지하며 `components.pcieHost`, `components.pcieScheduler`, `components.pyneatpcie` 및 `pcie`를 추가합니다. `pcie`에는 호스트 소프트웨어, PCI 주소·인터페이스·주소·상태·소프트웨어·오류 필드가 있는 `cards` 배열 및 토폴로지 오류가 포함됩니다. 원격 소프트웨어 정보를 읽을 수 없으면 설치된 버전을 추정하지 않고 `null`을 반환합니다.
 

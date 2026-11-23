@@ -117,9 +117,11 @@ int main() {
     g::internal::RemoteSession(keyed).start();
     std::ifstream keyed_input(arguments);
     const std::string keyed_contents((std::istreambuf_iterator<char>(keyed_input)), {});
-    require(keyed_contents.find("-i\n" + keyed.ssh_key + "\n-o\nIdentitiesOnly=yes\n") !=
-                std::string::npos,
-            "GenAI worker launch offered keys other than the selected one");
+    // Linux keeps agent and configured keys beside the selected key; only Windows
+    // adds IdentitiesOnly=yes.
+    require(keyed_contents.find("-i\n" + keyed.ssh_key + "\n") != std::string::npos &&
+                keyed_contents.find("IdentitiesOnly") == std::string::npos,
+            "GenAI worker launch did not offer the selected key as on develop");
 
     // OpenSSH can exit without a message; the launch error must still say what failed.
     std::ofstream(fake_ssh) << "#!/bin/sh\nexit 255\n";

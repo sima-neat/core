@@ -362,28 +362,46 @@ void test_failures_name_the_next_step() {
           "missing run directory was not named");
 }
 
-#ifndef _WIN32
-void test_remote_transport_offers_only_the_neat_key() {
+void set_test_environment(const char* name, const std::optional<std::string>& value) {
+#ifdef _WIN32
+  _putenv_s(name, value ? value->c_str() : "");
+#else
+  value ? setenv(name, value->c_str(), 1) : unsetenv(name);
+#endif
+}
+
+void test_remote_transport_offers_the_neat_key() {
+#ifdef _WIN32
+  const char* home_variable = "USERPROFILE";
+#else
+  const char* home_variable = "HOME";
+#endif
   const auto home = std::filesystem::temp_directory_path() /
                     ("neat-pcie-identity-" + std::to_string(pcie_internal::host_process_id()));
   std::filesystem::create_directories(home / ".ssh");
   std::ofstream(home / ".ssh" / "sima_neat_pcie_ed25519") << "fixture";
-  const char* previous = std::getenv("HOME");
+  const char* previous = std::getenv(home_variable);
   const std::optional<std::string> saved =
       previous ? std::optional<std::string>(previous) : std::nullopt;
-  setenv("HOME", home.c_str(), 1);
+  set_test_environment(home_variable, home.string());
   const pcie_internal::RemoteRuntime runtime(simaai::neat::pcie::ConnectionOptions{});
   const auto ssh = runtime.ssh_base();
   const auto scp = runtime.scp_base();
-  saved ? setenv("HOME", saved->c_str(), 1) : unsetenv("HOME");
+  set_test_environment(home_variable, saved);
   std::filesystem::remove_all(home);
+#ifdef _WIN32
+  // Windows offers only the Neat key: the ssh-agent service offers its keys first.
+  const bool identities_only = true;
+#else
+  // Linux keeps agent and configured keys beside the Neat key, as on develop.
+  const bool identities_only = false;
+#endif
   for (const auto* command : {&ssh, &scp}) {
     require(std::find(command->begin(), command->end(), "-i") != command->end() &&
-                has_ssh_option(*command, "IdentitiesOnly=yes"),
-            "tensor ssh and scp must offer only the Neat key when it exists");
+                has_ssh_option(*command, "IdentitiesOnly=yes") == identities_only,
+            "tensor ssh and scp must offer the Neat key, and only it on Windows");
   }
 }
-#endif
 
 } // namespace
 
@@ -485,9 +503,7 @@ int main(const int argc, char** argv) {
     test_remote_runtime_paths();
     test_remote_transport_requires_known_host_keys();
     test_failures_name_the_next_step();
-#ifndef _WIN32
-    test_remote_transport_offers_only_the_neat_key();
-#endif
+    test_remote_transport_offers_the_neat_key();
     std::cout << "[PASS] ssh runner\n";
     return 0;
   } catch (const std::exception& e) {

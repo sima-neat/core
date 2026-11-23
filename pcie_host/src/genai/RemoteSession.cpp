@@ -70,8 +70,11 @@ std::vector<std::string> RemoteSession::ssh(const std::string& script) const {
     }
   }
   if (!key.empty()) {
-    // Offer only the Neat key; agent keys could exhaust the card's MaxAuthTries.
-    args.insert(args.end(), {"-i", key, "-o", "IdentitiesOnly=yes"});
+    args.insert(args.end(), {"-i", key});
+#ifdef _WIN32
+    // Windows only: the ssh-agent service commonly offers several keys before the Neat key.
+    args.insert(args.end(), {"-o", "IdentitiesOnly=yes"});
+#endif
   }
   args.push_back(options_.user + "@" + options_.card_host);
   args.push_back("sh -c " + Runner::shell_escape(script));

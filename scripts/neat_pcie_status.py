@@ -225,6 +225,7 @@ def collect(root=Path('/sys/bus/pci/devices'), user='sima', key=None):
                    '-o', 'ConnectTimeout=3', '-o', 'ConnectionAttempts=1', '-o', 'ServerAliveInterval=2',
                    '-o', 'ServerAliveCountMax=1']
             if key and key.is_file():
+                # Windows only: the ssh-agent service commonly offers several keys before the Neat key.
                 ssh += ['-i', str(key)] + (['-o', 'IdentitiesOnly=yes'] if WINDOWS else [])
             # stdin carries only this read-only probe; no installation, sudo,
             # password prompts, host-key enrollment, or network configuration.
