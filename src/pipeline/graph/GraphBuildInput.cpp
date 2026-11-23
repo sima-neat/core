@@ -442,23 +442,10 @@ int preset_default_queue_depth(RunPreset preset) {
   return 4;
 }
 
-OverflowPolicy preset_default_overflow_policy(RunPreset preset) {
-  switch (preset) {
-  case RunPreset::Realtime:
-    return OverflowPolicy::KeepLatest;
-  case RunPreset::Balanced:
-    return OverflowPolicy::Block;
-  case RunPreset::Reliable:
-    return OverflowPolicy::Block;
-  }
-  return OverflowPolicy::Block;
-}
-
 RunOptions sync_run_defaults() {
   RunOptions opt;
   opt.preset = RunPreset::Reliable;
   opt.queue_depth = 1;
-  opt.overflow_policy = OverflowPolicy::Block;
   opt.output_memory = OutputMemory::Auto;
   opt.advanced.copy_input = false;
   opt.advanced.max_input_bytes = 0;
@@ -1029,7 +1016,7 @@ InputStreamOptions make_stream_options(const RunOptions& opt, RunMode mode) {
   // reversible env override). See resolve_output_memory().
   const OutputMemoryResolution output_mem = resolve_output_memory(opt, mode);
   stream_opt.appsink_sync = false;
-  stream_opt.appsink_drop = (opt.overflow_policy != OverflowPolicy::Block);
+  stream_opt.appsink_drop = runtime::resolve_overflow_policy(opt) != OverflowPolicy::Block;
   stream_opt.appsink_max_buffers = queue_depth;
   stream_opt.stability_frames = preset_default_stability_frames(opt.preset);
   stream_opt.max_input_bytes = opt.advanced.max_input_bytes;
@@ -1387,9 +1374,6 @@ RunOptions resolve_build_opt(RunMode mode, const RunOptions& opt) {
     if (out.queue_depth == defaults.queue_depth) {
       out.queue_depth = sync_defaults.queue_depth;
     }
-    if (out.overflow_policy == defaults.overflow_policy) {
-      out.overflow_policy = sync_defaults.overflow_policy;
-    }
     if (out.output_memory == defaults.output_memory) {
       out.output_memory = sync_defaults.output_memory;
     }
@@ -1406,9 +1390,7 @@ RunOptions resolve_build_opt(RunMode mode, const RunOptions& opt) {
   if (out.queue_depth == defaults.queue_depth) {
     out.queue_depth = preset_default_queue_depth(out.preset);
   }
-  if (out.overflow_policy == defaults.overflow_policy) {
-    out.overflow_policy = preset_default_overflow_policy(out.preset);
-  }
+  out.overflow_policy = runtime::resolve_overflow_policy(out);
   return out;
 }
 
@@ -1666,12 +1648,27 @@ std::string summarize_pipeline_stage_chain(const std::string& pipeline) {
   throw NeatError(message, std::move(rep));
 }
 
-std::string single_sample_preflight_unsupported_reason(const std::string& pipeline,
+std::string single_sample_preflight_unsupported_reason(GstElement* parsed_pipeline,
+                                                       const std::string& pipeline,
                                                        const InputStreamOptions& opt) {
   const std::string lower = lower_copy(pipeline);
   if (lower.find("neatencoder") != std::string::npos) {
     return "pipeline contains neatencoder";
   }
+
+  g_autoptr(GstIterator) decoders =
+      gst_bin_iterate_all_by_element_factory_name(GST_BIN(parsed_pipeline), "neatdecoder");
+  g_auto(GValue) decoder = G_VALUE_INIT;
+  const auto is_buffered_video = [](gconstpointer item, gconstpointer) -> gint {
+    g_autofree gchar* type = nullptr;
+    g_object_get(g_value_get_object(static_cast<const GValue*>(item)), "dec-type", &type, nullptr);
+    // Before negotiation a bare decoder reports H264. Skip the speculative single-frame
+    // probe in that case; the first real buffer still negotiates its actual codec.
+    // GstIterator matches when the comparator returns zero.
+    return g_strcmp0(type, "h264") != 0 && g_strcmp0(type, "h265") != 0;
+  };
+  if (decoders && gst_iterator_find_custom(decoders, is_buffered_video, &decoder, nullptr))
+    return "video decoder can require multiple access units before producing a frame";
 
   const bool has_async_hardware_stage = (lower.find("neatprocessmla") != std::string::npos ||
                                          lower.find("neatkernelrunner") != std::string::npos) &&
@@ -2134,7 +2131,7 @@ InputStream run_input_stream_internal_typed(const std::vector<std::shared_ptr<No
   const int max_buffers = max_num_buffers_in_pipeline_local(last_pipeline);
   const bool want_preflight = resolve_startup_preflight(opt);
   const std::string pipeline_preflight_unsupported_reason =
-      single_sample_preflight_unsupported_reason(last_pipeline, stream_opt);
+      single_sample_preflight_unsupported_reason(pipeline, last_pipeline, stream_opt);
   const bool pipeline_preflight_supported = pipeline_preflight_unsupported_reason.empty();
   const bool input_preflight_supported = supports_single_sample_preflight_input(sample);
   const bool preflight_supported = pipeline_preflight_supported && input_preflight_supported;
@@ -2718,7 +2715,8 @@ Run Graph::build_seeded_internal(const std::vector<cv::Mat>& inputs, RunMode mod
     runtime::RunCoreStartOptions start_opt;
     start_opt.run_options = opt;
     start_opt.mode = mode;
-    start_opt.graph_options = runtime::graph_runtime_options_from_run_options(opt, opt_.verbose);
+    start_opt.graph_options =
+        runtime::graph_runtime_options_from_run_options(opt, opt_.verbose, mode);
     start_opt.seed = std::move(seed);
     start_opt.guard = guard_;
     start_opt.input_route_processor = input_route_processor_;
@@ -2748,7 +2746,8 @@ Run Graph::build_seeded_internal(const std::vector<cv::Mat>& inputs, RunMode mod
   runtime::RunCoreStartOptions start_opt;
   start_opt.run_options = opt;
   start_opt.mode = mode;
-  start_opt.graph_options = runtime::graph_runtime_options_from_run_options(opt, opt_.verbose);
+  start_opt.graph_options =
+      runtime::graph_runtime_options_from_run_options(opt, opt_.verbose, mode);
   start_opt.seed = std::move(seed);
   start_opt.guard = guard_;
   start_opt.input_route_processor = input_route_processor_;
@@ -2780,7 +2779,8 @@ Run Graph::build_seeded_internal(const TensorList& inputs, RunMode mode, const R
     runtime::RunCoreStartOptions start_opt;
     start_opt.run_options = opt;
     start_opt.mode = mode;
-    start_opt.graph_options = runtime::graph_runtime_options_from_run_options(opt, opt_.verbose);
+    start_opt.graph_options =
+        runtime::graph_runtime_options_from_run_options(opt, opt_.verbose, mode);
     start_opt.seed = std::move(seed);
     start_opt.guard = guard_;
     start_opt.input_route_processor = input_route_processor_;
@@ -2806,7 +2806,8 @@ Run Graph::build_seeded_internal(const TensorList& inputs, RunMode mode, const R
   runtime::RunCoreStartOptions start_opt;
   start_opt.run_options = opt;
   start_opt.mode = mode;
-  start_opt.graph_options = runtime::graph_runtime_options_from_run_options(opt, opt_.verbose);
+  start_opt.graph_options =
+      runtime::graph_runtime_options_from_run_options(opt, opt_.verbose, mode);
   start_opt.seed = std::move(seed);
   start_opt.guard = guard_;
   start_opt.input_route_processor = input_route_processor_;
@@ -2838,7 +2839,8 @@ Run Graph::build_seeded_internal(const Sample& inputs, RunMode mode, const RunOp
     runtime::RunCoreStartOptions start_opt;
     start_opt.run_options = opt;
     start_opt.mode = mode;
-    start_opt.graph_options = runtime::graph_runtime_options_from_run_options(opt, opt_.verbose);
+    start_opt.graph_options =
+        runtime::graph_runtime_options_from_run_options(opt, opt_.verbose, mode);
     start_opt.seed = std::move(seed);
     start_opt.guard = guard_;
     start_opt.input_route_processor = input_route_processor_;
@@ -2858,7 +2860,8 @@ Run Graph::build_seeded_internal(const Sample& inputs, RunMode mode, const RunOp
   runtime::RunCoreStartOptions start_opt;
   start_opt.run_options = opt;
   start_opt.mode = mode;
-  start_opt.graph_options = runtime::graph_runtime_options_from_run_options(opt, opt_.verbose);
+  start_opt.graph_options =
+      runtime::graph_runtime_options_from_run_options(opt, opt_.verbose, mode);
   start_opt.seed = std::move(seed);
   start_opt.guard = guard_;
   start_opt.input_route_processor = input_route_processor_;

@@ -2651,8 +2651,12 @@ void test_standalone_quantize_authors_exact_graph222_layout() {
 }
 
 void test_scalar_quantize_keeps_generic_logical_shapes() {
-  for (const TensorShape shape : {TensorShape{1, 7}, TensorShape{1, 2, 6}}) {
-    const auto elements = shape.size() == 3U ? 12U : 7U;
+  for (const TensorShape& shape : {TensorShape{7}, TensorShape{1, 7}, TensorShape{1, 2, 6},
+                                   TensorShape{1, 2, 3, 4}, TensorShape{1, 8, 172, 172, 3},
+                                   TensorShape{1, 2, 4, 3, 5, 3}, TensorShape{2, 2, 2, 3, 5, 3}}) {
+    std::uint64_t elements = 1;
+    for (const auto dim : shape)
+      elements *= dim;
     auto manifest = nlohmann::json::parse(standalone_quant_mla_manifest());
     manifest["input_nodes"][0]["size"] = elements * 4U;
     auto& quant = manifest["plugins"][0];
@@ -2682,16 +2686,24 @@ void test_scalar_quantize_keeps_generic_logical_shapes() {
       std::cerr << "Generic Quantize projection: " << error << "\n";
     check(contract.has_value(), "generic Quantize physical descriptor builds");
     const auto& payload = contract->payload;
-    check(payload.input_tensors.front().descriptor().shape.rank == shape.size() &&
-              payload.output_tensors.front().descriptor().shape.rank == shape.size(),
+    const auto& input = payload.input_tensors.front().descriptor();
+    const auto& output = payload.output_tensors.front().descriptor();
+    check(input.shape.rank == shape.size() && output.shape.rank == shape.size(),
           "canonical Quantize preserves generic tensor rank without a fabricated HWC view");
-    for (std::size_t axis = 0; axis < shape.size(); ++axis) {
-      check(payload.input_tensors.front().descriptor().shape.sizes[axis] == shape[axis] &&
-                payload.output_tensors.front().descriptor().shape.sizes[axis] == shape[axis],
+    std::int64_t stride = 1;
+    for (std::size_t axis = shape.size(); axis-- > 0;) {
+      check(input.shape.sizes[axis] == shape[axis] && output.shape.sizes[axis] == shape[axis],
             "canonical Quantize retains every logical extent");
+      check(input.layout.strided.strides_bytes[axis] == stride * 4 &&
+                output.layout.strided.strides_bytes[axis] == stride,
+            "dense Quantize uses row-major FP32 input and INT8 output strides");
+      if (shape.size() > 4U)
+        check(input.shape.axis_semantics[axis] == SIMA_EV_AXIS_UNKNOWN &&
+                  output.shape.axis_semantics[axis] == SIMA_EV_AXIS_UNKNOWN,
+              "standalone Quantize does not invent image axes for higher-rank tensors");
+      stride *= shape[axis];
     }
-    check(payload.input_tensors.front().descriptor().storage.nbytes == elements * 4U &&
-              payload.output_tensors.front().descriptor().storage.nbytes == elements &&
+    check(input.storage.nbytes == elements * 4U && output.storage.nbytes == elements &&
               payload.q_scale == 0.25 && payload.q_zp == 0 && payload.round_off == 1,
           "generic Quantize preserves exact bytes and arithmetic");
     const auto& op = decoded.plan->ops().front();

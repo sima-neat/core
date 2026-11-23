@@ -8,8 +8,53 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+import tempfile
 
 ROOT = Path(__file__).resolve().parents[2]
+# CTest names that read SIMA_RESNET50_TAR through sima_test::resolve_resnet50_tar().
+RESNET50_TESTS = {
+    'graph_migration_phase3_lazy_dynamic_spec_test',
+    'h265_decode_resnet50_e2e_test',
+    'h265_rtsp_resnet50_e2e_test',
+    'model_archive_load_e2e_test',
+    'model_resnet50_multi_test',
+    'model_unique_names_test',
+    'resnet50_modelpack_direct',
+    'resnet50_modelpack_jpeg',
+    'resnet50_modelpack_rtsp',
+    'resnet50_neatargmax_test',
+}
+# CTest names that read SIMA_YOLO_TAR through sima_test::resolve_yolov8s_tar().
+YOLOV8S_TESTS = {
+    'core_scheduler_yolov8_render_integration_test',
+    'graphpipes_yolo_metadata_sender_16stream_test',
+    'model_execution_plan_test',
+    'model_seeded_input_capacity_defaults_test',
+    'model_seeded_input_capacity_oversize_height_test',
+    'model_seeded_input_capacity_oversize_width_test',
+    'model_seeded_input_capacity_sample_test',
+    'model_seeded_input_capacity_tensor_test',
+    'model_seeded_input_capacity_test',
+    'model_seeded_input_capacity_unseeded_test',
+    'seedless_yolov8_preproc_input_max_smoke_test',
+    'stage_chain_cache_admission_test',
+    'sync_yolov8_test',
+    'yolov8_boxdecode_model_benchmark_test',
+    'yolov8_dynamic_boxdecode_geometry_async_test',
+    'yolov8_dynamic_boxdecode_geometry_sync_test',
+    'yolov8_model_benchmark_metrics_test',
+    'yolov8_model_mla_stats_test',
+}
+# CTest names that load every *.tar.gz in SIMA_YOLOV8_VARIANTS_DIR.
+YOLOV8N_VARIANT_TESTS = {
+    'graph_migration_legacy_preproc_yolov8_matrix_test',
+    'graph_migration_legacy_yolov8_variant_route_matrix_test',
+    'graph_migration_unified_preproc_yolov8_matrix_test',
+    'graph_migration_unified_yolov8_graph_model_composition_test',
+    'graph_migration_unified_yolov8_variant_route_matrix_test',
+    'preproc_yolov8_matrix_test',
+    'yolov8_variant_route_matrix_test',
+}
 
 
 def partition(names, weights):
@@ -21,6 +66,13 @@ def partition(names, weights):
         bins[i].append(name)
         costs[i] += weights.get(name, 10)
     return [sorted(b) for b in bins]
+
+
+def prepare_fixture(model_id, variant, output):
+    return subprocess.check_output(
+        [sys.executable, str(ROOT / 'scripts/ci/prepare_model_browser_fixture.py'),
+         '--id', model_id, '--variant', variant, '--output', str(output)], text=True,
+        timeout=900).strip()
 
 
 def main():
@@ -41,9 +93,25 @@ def main():
     regex = '^(' + '|'.join(re.escape(n) for n in selected) + ')$'
     # Required zero-skip accounting still discovers and validates the exact
     # partial selection and executes CTest with its original timeout/jobs/labels.
-    result = subprocess.run([sys.executable, str(ROOT / 'tools/ci/check_test_coverage.py'),
-                    '--profile', os.environ.get('COVERAGE_PROFILE', 'strict'),
-                    '--output-dir', str(coverage), '--', *command, '-R', regex])
+    env = os.environ.copy()
+    with tempfile.TemporaryDirectory(prefix='model-browser-', dir=env.get('RUNNER_TEMP')) as tmp:
+        fixtures = [('SIMA_TEST_MLA_ONLY_MODEL', 'yolo26n', {'model_execution_plan_test'}),
+                    ('SIMA_RESNET50_TAR', 'resnet_50', RESNET50_TESTS),
+                    ('SIMA_YOLO_TAR', 'yolov8s', YOLOV8S_TESTS)]
+        for var, model_id, consumers in fixtures:
+            if consumers & set(selected) and not env.get(var):
+                env[var] = prepare_fixture(model_id, 'w8a8', tmp)
+        # These tests load every MPK in the directory, so YOLOv8n gets one of its own.
+        # They take SIMA_YOLOV8_SINGLE_MODEL first, then SIMA_YOLOV8_VARIANTS_DIR.
+        variants_dir = Path(tmp, 'yolov8n-variants')
+        if (YOLOV8N_VARIANT_TESTS & set(selected) and not env.get('SIMA_YOLOV8_SINGLE_MODEL')
+                and not env.get('SIMA_YOLOV8_VARIANTS_DIR')):
+            for variant in ('w8a8', 'w8a16', 'w16a16'):
+                prepare_fixture('yolov8n', variant, variants_dir)
+            env['SIMA_YOLOV8_VARIANTS_DIR'] = str(variants_dir)
+        result = subprocess.run([sys.executable, str(ROOT / 'tools/ci/check_test_coverage.py'),
+                    '--profile', env.get('COVERAGE_PROFILE', 'strict'),
+                    '--output-dir', str(coverage), '--', *command, '-R', regex], env=env)
     coverage.mkdir(parents=True, exist_ok=True)
     (coverage / 'e2e-partition.json').write_text(json.dumps(
         {'index': args.index, 'canonical': names, 'selected': selected}, indent=2) + '\n')

@@ -52,6 +52,7 @@
 #include "builder/OutputSpec.h"
 #include "pipeline/Tensor.h"
 #include "nodes/io/Input.h"
+#include "nodes/io/StillImageInput.h"
 #include "nodes/sima/Preproc.h"
 #include "nodes/common/Output.h"
 
@@ -3574,8 +3575,37 @@ static bool has_input_role(const std::vector<std::shared_ptr<Node>>& nodes, Inpu
   return false;
 }
 
+static const StillImageInput* rtsp_still_image(const Node* node, const std::string& where) {
+  if (!node || node->kind() != "StillImageInput")
+    return nullptr;
+  if (const auto* image = dynamic_cast<const StillImageInput*>(node))
+    return image;
+  throw_session_error_simple(error_codes::kPipelineShape,
+                             where + ": recreate the saved StillImageInput from its image path "
+                                     "before calling Graph::run_rtsp().");
+}
+
+const StillImageInput* find_rtsp_still_image(const std::vector<std::shared_ptr<Node>>& nodes,
+                                             const std::string& where) {
+  for (const auto& node : nodes)
+    if (const auto* image = rtsp_still_image(node.get(), where))
+      return image;
+  return nullptr;
+}
+
+void enforce_still_image_source_mode(const Node* node, const std::string& where) {
+  if (rtsp_still_image(node, where))
+    throw_session_error_simple(
+        error_codes::kPipelineShape,
+        where + ": To process this image locally, use groups.image_input() "
+                "(C++: nodes::groups::ImageInputGroup). To serve it over RTSP, use "
+                "still_image_input() with an H.264 RTP output and Graph::run_rtsp().");
+}
+
 void enforce_source_run_mode(const std::vector<std::shared_ptr<Node>>& nodes,
                              const std::string& where) {
+  for (const auto& node : nodes)
+    enforce_still_image_source_mode(node.get(), where);
   if (has_input_role(nodes, InputRole::Push)) {
     throw_session_error_simple(error_codes::kPipelineShape,
                                where + ": Input is present; use run(input) for push pipelines.");

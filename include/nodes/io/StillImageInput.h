@@ -1,12 +1,7 @@
 /**
  * @file
  * @ingroup nodes_io
- * @brief `StillImageInput` Node — source that emits a single image, typically as a freeze frame.
- *
- * Reads one image file from disk and presents it as a video source at a configured
- * framerate. Useful as a stand-in for a live camera (e.g. powering an RTSP server
- * with a fixed test pattern, or driving a Graph that expects continuous video
- * input).
+ * @brief Still-image source for `Graph::run_rtsp()`.
  */
 #pragma once
 
@@ -21,11 +16,7 @@
 namespace simaai::neat {
 
 /**
- * @brief Source Node that emits a single image as a continuous video stream.
- *
- * The image is loaded once at construction and re-emitted at the configured
- * framerate. Carries `InputRole::Source`, so the Graph is driven with
- * `Run::run()`.
+ * @brief Loads an image once for `Graph::run_rtsp()` to stream at the configured framerate.
  *
  * @ingroup nodes_io
  */

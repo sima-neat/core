@@ -140,7 +140,8 @@ endfunction()
         executables = {'unit_boxdecode_publication_test', 'unit_boxdecode_kernel_recipe_test',
                        'unit_boxdecode_geometry_test', 'unit_boxdecode_public_input_binding_test',
                        'unit_kernel_runner_integration_test'}
-        names = executables | {'unit_kernel_runner_capacity_policy_test'}
+        names = executables | {'unit_kernel_runner_capacity_policy_test',
+                               'unit_ssd_artifact_completion_guard_test'}
         env = os.environ.copy()
         for key in ('CC', 'CXX', 'CFLAGS', 'CXXFLAGS', 'CPPFLAGS', 'LDFLAGS', 'CPATH',
                     'CPLUS_INCLUDE_PATH', 'LIBRARY_PATH', 'LD_LIBRARY_PATH', 'LD_PRELOAD',
@@ -261,6 +262,13 @@ include("{ROOT}/cmake/NeatGuardedTests.cmake")
                     installed_cases = json.loads(command(
                         'ctest', '--test-dir', installed_tests, '--show-only=json-v1').stdout)['tests']
                     self.assertEqual({test['name'] for test in installed_cases}, names)
+                    completion_case = next(test for test in installed_cases
+                                           if test['name'] == 'unit_ssd_artifact_completion_guard_test')
+                    self.assertEqual(completion_case['command'], [
+                        str(installed_tests / 'unit_boxdecode_kernel_recipe_test'),
+                        '--ssd-completion-guard-test'])
+                    self.assertFalse(any(p['name'] == 'WILL_FAIL' and p['value']
+                                         for p in completion_case['properties']))
                     capacity_case = next(test for test in installed_cases
                                          if test['name'] == 'unit_kernel_runner_capacity_policy_test')
                     self.assertEqual(capacity_case['command'], [

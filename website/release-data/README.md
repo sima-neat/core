@@ -28,7 +28,7 @@ to release and dependency tokens.
 
 The Algolia record generator also uses the shared resolver, through
 `website/scripts/resolve-release-sources.js`, before extracting search text.
-It batches token-bearing source documents per locale and fails on invalid tokens
+It batches source documents per locale and fails on invalid tokens
 or release metadata, so search records contain the same concrete versions as the site.
 
 The compatibility page and its translations are maintained manually, with concrete

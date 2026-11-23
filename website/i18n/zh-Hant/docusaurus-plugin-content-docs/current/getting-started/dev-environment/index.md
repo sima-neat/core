@@ -32,6 +32,7 @@ DevKit Sync 將這些位置連接到一個共享的 `/workspace`，因此，建�
       <li><a class="overview-link-card" href="/getting-started/dev-environment/install-the-environment/"><strong>安裝 SDK</strong><span>安裝並設定與您的 DevKit 軟體版本相符的 SDK 套件。</span></a></li>
       <li><a class="overview-link-card" href="/getting-started/dev-environment/devkit-sync/"><strong>DevKit Sync</strong><span>了解工作區共用、配對更新、rsync 備援機制等。 <code>dk</code> 命令執行。</span></a></li>
       <li><a class="overview-link-card" href="/getting-started/dev-environment/offline-installation/"><strong>離線安裝</strong><span>下載 SDK 和 Model Compiler 套件，以供離線安裝。</span></a></li>
+      <li><a class="overview-link-card" href="/getting-started/dev-environment/containerized-apps/"><strong>開發容器化應用程式</strong><span>在 SDK 中建置容器映像檔，並使用 <code>dk container</code> 在 DevKit 上執行。</span></a></li>
     </ul>
   </section>
 </div>
@@ -80,7 +81,7 @@ Model Compiler 會在 SDK 設定期間提供。若要稍後安裝，請指定特
 :::
 
 :::note 安裝特定版本
-標準安裝會採用目前支援的預設設定。在「[安裝 SDK](/getting-started/dev-environment/install-the-environment/)」頁面上使用的 `%%release.sdk_channel%%` 通道，會隨時追蹤最新的 %%release.sdk_series%% 版本更新。若要指定確切的 SDK、Neat Library 或 Model Compiler 版本，請參閱「[相容性指南](/getting-started/compatibility/)」。
+「[安裝 SDK](/getting-started/dev-environment/install-the-environment/)」頁面使用目前 %%release.sdk_series%% 版本已發布的 `v%%release.sdk%%` 標籤。如需其他 SDK、Neat Library 或 Model Compiler 版本，請參閱「[相容性指南](/getting-started/compatibility/)」。
 :::
 
 ## SDK 中的工具

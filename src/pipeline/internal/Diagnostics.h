@@ -258,9 +258,13 @@ struct DiagCtx {
                              redact_gst_credentials(detail), now_us()});
   }
 
+  std::string redacted_pipeline_string() const {
+    return redact_gst_credentials(pipeline_string);
+  }
+
   GraphReport snapshot_basic() const {
     GraphReport rep;
-    const std::string report_pipeline = redact_gst_credentials(pipeline_string);
+    const std::string report_pipeline = redacted_pipeline_string();
     rep.pipeline_string = report_pipeline;
     rep.nodes = node_reports;
     for (NodeReport& node : rep.nodes) {

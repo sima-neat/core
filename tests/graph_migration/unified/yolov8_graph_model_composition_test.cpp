@@ -279,7 +279,9 @@ bool should_run_stress_cases(const fs::path& tar, std::size_t pack_count) {
     return true;
   if (sima_yolov8_test::env_bool("SIMA_GRAPH_MODEL_COMPOSITION_FULL_MATRIX", false))
     return true;
-  return tar.filename().string() == "yolov8n_A_W_INT8_MLATess.tar.gz";
+  // The INT8 build: the Model Browser pack CI prepares, or the legacy one the test downloads.
+  const std::string name = tar.filename().string();
+  return name == "yolov8n_w8a8_mpk.tar.gz" || name == "yolov8n_A_W_INT8_MLATess.tar.gz";
 }
 
 } // namespace

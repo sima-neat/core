@@ -48,6 +48,7 @@ def _exercise_blocking_push(call_shape: str) -> None:
   graph.connect(source, sink)
 
   options = pyneat.RunOptions()
+  assert options.overflow_policy == pyneat.OverflowPolicy.Auto
   options.preset = pyneat.RunPreset.Realtime
   options.queue_depth = 1
   options.overflow_policy = pyneat.OverflowPolicy.Block

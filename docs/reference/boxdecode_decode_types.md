@@ -715,6 +715,13 @@ Advanced tensor-contract rules:
   81-to-8 route; the other three profiles require the exact encoded count. An
   invalid selection is rejected at build time. Leave it unset to use the profile
   default.
+
+  **91-class MobileNet exports.** With exactly 91 encoded classes, SSD-Mobile-300-v1
+  (MobileNet V1 and V2) and SSDlite-Mobile-320-v1 (TorchVision MobileNet V3) decode
+  as the source models do: every foreground anchor/class pair is kept and NMS runs
+  per class in floating point (SSDlite keeps up to 300 candidates per class before
+  NMS). The output is the same BBOX payload. Other SSD profiles and class counts
+  keep their existing behavior.
 - `Detr` infers class channels from the maximum head depth and requires a valid
   class dimension.
 - `EffDet` and `Centernet` use their model-family contracts; do

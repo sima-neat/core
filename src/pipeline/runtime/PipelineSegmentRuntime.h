@@ -208,7 +208,7 @@ struct PipelineSegmentRuntime {
 
   std::mutex in_mu;
   std::condition_variable in_cv;
-  std::mutex out_mu;
+  mutable std::mutex out_mu;
   std::condition_variable out_cv;
   std::deque<InputItem> in_queue;
   std::deque<Sample> out_queue;
@@ -226,7 +226,7 @@ struct PipelineSegmentRuntime {
   bool zero_copy_fallback_enabled = false;
   std::atomic<bool> copy_output_latched{true};
   std::atomic<bool> zero_copy_warned{false};
-  bool input_closed = false;
+  std::atomic<bool> input_closed{false};
   std::atomic<bool> input_thread_done{false};
   std::atomic<bool> pull_timeout_logged{false};
 };

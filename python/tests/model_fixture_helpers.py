@@ -83,9 +83,10 @@ def resolve_model_tar(name: str) -> Path | None:
     env_value = os.environ.get(env_name, "")
     if env_value:
       env_path = _existing_file(Path(env_value))
-      if env_path is not None:
-        _MODEL_PATH_CACHE[name] = env_path
-        return env_path
+      if env_path is None:
+        pytest.fail(f"{env_name}={env_value} is not a non-empty file")
+      _MODEL_PATH_CACHE[name] = env_path
+      return env_path
 
   found = find_existing_model_tar(spec["names"])
   if found is not None:

@@ -45,6 +45,8 @@ The response should include the served names registered in this tutorial: `llm`,
 ## Run
 
 
+On a DevKit without NVMe, set `LLIMA_MODELS_PATH` to a writable directory before `llima pull`, and use it instead of `/media/nvme/llima/models` below.
+
 On the Modalix DevKit, download the LLM, VLM, and ASR models from Hugging Face using the LLiMa CLI:
 
 ```bash

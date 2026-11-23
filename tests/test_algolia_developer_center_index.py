@@ -96,13 +96,14 @@ class ReleaseRecordTests(unittest.TestCase):
         snapshot = json.loads((CORE_ROOT / "website/release-data/current.json").read_text())
         minimum = snapshot["dependencies"]["docker"]["minimum"]["value"]
         sources = {"windows.md": "Docker %%dependency.docker.minimum%% or later.", "plain.md": "Plain text."}
-        self.assertEqual(MODULE.resolve_release_sources(sources), {
+        records = MODULE.prepare_search_sources(sources)
+        self.assertEqual({name: record["body"] for name, record in records.items()}, {
             "windows.md": f"Docker {minimum} or later.", "plain.md": "Plain text.",
         })
         for token in ("%%dependency.missing.minimum%%", "%%dependency.docker.minimum%"):
             with self.subTest(token=token):
                 with self.assertRaisesRegex(RuntimeError, r"windows.md:1:.*dependency"):
-                    MODULE.resolve_release_sources({"windows.md": token})
+                    MODULE.prepare_search_sources({"windows.md": token})
 
     def test_resolves_versions_in_all_locales_before_parsing_metadata(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -141,6 +142,67 @@ class ReleaseRecordTests(unittest.TestCase):
                     page.write_text(f"# SDK\nVisible prose.\n```bash\n{token}\n```\n", encoding="utf-8")
                     with self.assertRaisesRegex(RuntimeError, r"index.md:4:.*release"):
                         MODULE.generate_records(docs, "https://developer.sima.ai", MODULE.DEFAULT_MAX_RECORD_BYTES)
+
+
+class RecordTitleTests(unittest.TestCase):
+    """Titles follow the page: H1, then frontmatter title, then the file name (#800)."""
+
+    def _titles(self, english: str, localized: dict[str, str]) -> dict[str, str]:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            docs_dir = root / "docs"
+            (docs_dir / "guide").mkdir(parents=True)
+            (docs_dir / "guide" / "configure-sdk.md").write_text(english, encoding="utf-8")
+            for language, text in localized.items():
+                target = root / "i18n" / language / "docusaurus-plugin-content-docs" / "current" / "guide"
+                target.mkdir(parents=True)
+                (target / "configure-sdk.md").write_text(text, encoding="utf-8")
+            records, _ = MODULE.generate_records(
+                docs_dir,
+                "https://build.neat.sima.ai",
+                MODULE.DEFAULT_MAX_RECORD_BYTES,
+                root / "i18n",
+            )
+            self.assertTrue(all(record["hierarchy"]["lvl1"] == record["title"] for record in records))
+            return {record["language"]: record["title"] for record in records}
+
+    def test_frontmatter_title_is_used_when_there_is_no_h1(self) -> None:
+        titles = self._titles(
+            "---\ntitle: Configure the SDK\n---\nEnglish body.\n",
+            {
+                "ja": "---\ntitle: SDK を設定します。\n---\n日本語の本文。\n",
+                "uk": "---\ntitle: 'Налаштування SDK'\nsidebar_position: 2\n---\nУкраїнський текст.\n",
+            },
+        )
+        self.assertEqual(titles, {"en": "Configure the SDK", "ja": "SDK を設定します。", "uk": "Налаштування SDK"})
+
+    def test_h1_still_wins_over_frontmatter_title(self) -> None:
+        titles = self._titles(
+            "---\ntitle: Configure\n---\n# Configure the Palette SDK\nBody.\n",
+            {"ko": "---\ntitle: 구성\n---\n# Palette SDK 구성\n본문.\n"},
+        )
+        self.assertEqual(titles, {"en": "Configure the Palette SDK", "ko": "Palette SDK 구성"})
+
+    def test_frontmatter_title_follows_yaml_scalars(self) -> None:
+        cases = {
+            "folded": ("title: >-\n  Configure the\n  Palette SDK\n", "Configure the Palette SDK"),
+            "comment": ("title: Configure SDK # draft name\n", "Configure SDK"),
+            "escaped": ('title: "Say \\"hi\\" to the SDK"\n', 'Say "hi" to the SDK'),
+            "single-quoted": ("title: 'It''s the SDK'\n", "It's the SDK"),
+            "yaml-1.1-bool": ("title: No\n", "No"),
+            "yaml-1.1-on": ("title: On\n", "On"),
+            "leading-zero": ("title: 0123\n", "123"),
+            "quoted-leading-zero": ('title: "0123"\n', "0123"),
+            "merge": ("defaults: &defaults\n  title: Palette SDK\n<<: *defaults\n", "Palette SDK"),
+        }
+        for name, (frontmatter, expected) in cases.items():
+            with self.subTest(name):
+                titles = self._titles(f"---\n{frontmatter}---\nBody.\n", {})
+                self.assertEqual(titles, {"en": expected})
+
+    def test_file_name_fallback_is_unchanged(self) -> None:
+        titles = self._titles("---\nsidebar_position: 1\n---\nBody.\n", {"zh-Hant": "本文。\n"})
+        self.assertEqual(titles, {"en": "Configure Sdk", "zh-Hant": "Configure Sdk"})
 
 
 if __name__ == "__main__":

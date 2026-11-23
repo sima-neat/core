@@ -43,6 +43,8 @@ LLM, VLM 또는 ASR 작업이 더 큰 작업의 한 단계일 때 GenAI 그래�
 
 ## Run
 
+NVMe가 없는 DevKit에서는 `llima pull` 전에 `LLIMA_MODELS_PATH`를 쓰기 가능한 디렉터리로 설정하고, 아래의 `/media/nvme/llima/models` 대신 해당 디렉터리를 사용하세요.
+
  Modalix DevKitLFM2-VL 1.6B VLM을 다운로드하세요. Hugging Face 다음 텍스트를 사용하여 LLiMa CLI:
 
 ```bash

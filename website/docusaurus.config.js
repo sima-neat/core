@@ -163,7 +163,11 @@ const config = {
         if (previewEnabled) return;
         const base = ${JSON.stringify(baseUrl.endsWith("/") ? baseUrl : `${baseUrl}/`)};
         const cookie = document.cookie.match(/(?:^|; )sima-neat-locale=([^;]*)/);
-        const cookieLocale = cookie ? decodeURIComponent(cookie[1]) : "";
+        // A malformed value (for example a lone "%") must not stop the other preferences.
+        let cookieLocale = "";
+        try {
+          cookieLocale = cookie ? decodeURIComponent(cookie[1]) : "";
+        } catch {}
         const preferred = supported.includes(window.__NEAT_DOCS_PREFERRED_LOCALE__)
           ? window.__NEAT_DOCS_PREFERRED_LOCALE__
           : (supported.includes(cookieLocale) ? cookieLocale : "en");

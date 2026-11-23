@@ -18,7 +18,7 @@ SDK with DevKit-Sync.
 
 Run Palette SDK commands from inside your WSL Linux
 distribution, not from PowerShell or Command Prompt. This includes
-`sima-cli neat install sdk@%%release.sdk_channel%%`.
+`sima-cli neat install sdk@v%%release.sdk%%`.
 
 ## WSL network mode
 

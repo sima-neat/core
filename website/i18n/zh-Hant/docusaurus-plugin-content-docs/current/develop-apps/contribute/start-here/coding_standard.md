@@ -80,11 +80,9 @@ bash scripts/check_duplicate_includes.sh --changed-only
 
 ## 檔案義務
 
-當行為發生變更時：
+當既有說明變得不正確，或變更涉及公開 API、架構、契約或使用者工作流程的重要調整時，才更新說明文件。請修改相關的既有頁面；只有實際架構或已記錄的契約改變時，才更新[架構](/develop-apps/contribute/architecture)。
 
-- 更新 [架構](/develop-apps/contribute/architecture)。
-- 如果工作流程或控制項發生變更，請更新面向使用者的指南。
-- 在參考檔案中記錄新的環境變數。
+錯誤修正、診斷與內部重構不會自動要求修改說明文件。實作理由應放在 PR 或原始碼註解中，驗證證據則放在 PR 中。若既有說明仍然正確，且沒有需要解釋的新概念或工作流程，請選擇 `No docs update needed`。
 
 ## PR 品質標準
 
@@ -92,5 +90,5 @@ bash scripts/check_duplicate_includes.sh --changed-only
 
 - 在程式碼和提交/PR 訊息中提供明確的理由。
 - 對於新的行為和回歸進行測試。
-- 更新任何使用者可見變更的檔案。
+- 已依上述原則評估對說明文件的影響。
 - 對於公開標頭檔的變更，進行 API 相容性評估（如果適用，則進行完整的破壞性變更流程）。
