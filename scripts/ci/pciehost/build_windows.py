@@ -855,6 +855,7 @@ def build(args: argparse.Namespace) -> None:
         install_root / "include" / "nlohmann" / "json.hpp",
         install_root / "share" / "licenses" / "sima-pcie-host" /
         "nlohmann-json-LICENSE.MIT",
+        install_root / "share" / "licenses" / "sima-pcie-host" / "opencv" / "LICENSE",
         install_root / "bin" / "sima-pcie-host-env.cmd",
         install_root / "bin" / "sima-pcie-host-run.cmd",
         install_root / "bin" / "sima-pcie-host-doctor.cmd",
@@ -870,6 +871,13 @@ def build(args: argparse.Namespace) -> None:
     ):
       require_file(required, "installed Core MSI payload")
     check_consumer(install_root, "installed")
+    # The prebuilt tutorials load the OpenCV runtime installed beside them, not from PATH.
+    tutorial_environment = os.environ.copy()
+    tutorial_environment["PATH"] = os.pathsep.join((
+        str(install_root / "bin"), str(gstreamer_bin),
+        str(Path(os.environ["SystemRoot"]) / "System32")))
+    run([install_root / "lib" / "sima-pcie-host" / "tutorials" /
+         "tutorial_024_run_image_mode.exe", "--help"], env=tutorial_environment)
 
     rollback_receipt = qualify_failed_msi_transaction(
         rollback_fixture_msi, scheduler_msi, core_msi, install_root,

@@ -65,6 +65,27 @@ if (SIMAPCIE_TUTORIAL_TARGETS)
     COMPONENT PcieHostTutorials)
 endif()
 
+# Linux tutorials get OpenCV from the distribution's packages. Windows has no
+# package manager, so the package ships the OpenCV runtime of its prebuilt
+# tutorials beside them, with its licenses. Signing signs the build-tree copy.
+if (WIN32 AND NOT CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
+  get_target_property(SIMAPCIE_OPENCV_RUNTIME opencv_world IMPORTED_LOCATION_RELEASE)
+  file(COPY "${SIMAPCIE_OPENCV_RUNTIME}" DESTINATION "${CMAKE_CURRENT_BINARY_DIR}/opencv-runtime")
+  get_filename_component(SIMAPCIE_OPENCV_RUNTIME_NAME "${SIMAPCIE_OPENCV_RUNTIME}" NAME)
+  install(
+    FILES "${CMAKE_CURRENT_BINARY_DIR}/opencv-runtime/${SIMAPCIE_OPENCV_RUNTIME_NAME}"
+    DESTINATION lib/sima-pcie-host/tutorials
+    COMPONENT PcieHostTutorials)
+  install(
+    FILES "${OpenCV_INSTALL_PATH}/LICENSE"
+    DESTINATION share/licenses/sima-pcie-host/opencv
+    COMPONENT PcieHostTutorials)
+  install(
+    DIRECTORY "${OpenCV_INSTALL_PATH}/etc/licenses/"
+    DESTINATION share/licenses/sima-pcie-host/opencv
+    COMPONENT PcieHostTutorials)
+endif()
+
 install(
   DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/
   DESTINATION share/sima-pcie-host/tutorials
