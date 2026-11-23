@@ -259,6 +259,17 @@ std::optional<std::pair<char, std::string>> process_state_and_start(const std::u
   }
   return std::pair{state.front(), field};
 }
+
+// True when /proc/<pid>/task lists only the thread-group leader.
+bool only_leader_thread(const std::uint64_t pid) {
+  std::error_code ec;
+  std::size_t threads = 0;
+  for (std::filesystem::directory_iterator it("/proc/" + std::to_string(pid) + "/task", ec), end;
+       !ec && it != end; it.increment(ec)) {
+    ++threads;
+  }
+  return !ec && threads == 1;
+}
 #endif
 
 } // namespace
@@ -320,7 +331,10 @@ bool host_process_ended(const HostProcessOwner& owner) {
   if (!stat) {
     return false; // hidden by /proc mount options, or already gone: kill() decides above
   }
-  return stat->first == 'Z' || (!owner.start.empty() && stat->second != owner.start);
+  // A zombie has ended. A live process whose main thread exited also shows its leader as Z, but
+  // keeps its other threads in /proc/<pid>/task.
+  return (stat->first == 'Z' && only_leader_thread(owner.pid)) ||
+         (!owner.start.empty() && stat->second != owner.start);
 #endif
 }
 

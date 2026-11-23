@@ -10,6 +10,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <iostream>
 #include <optional>
 #include <stdexcept>
@@ -21,8 +22,12 @@
 #endif
 #include <windows.h>
 #else
+#include <pthread.h>
 #include <sys/wait.h>
 #include <unistd.h>
+
+#include <chrono>
+#include <thread>
 #endif
 
 namespace fs = std::filesystem;
@@ -356,6 +361,63 @@ void test_snapshots_of_ended_processes_are_removed() {
           "the snapshot did not record its owner: " + owner);
 }
 
+#ifndef _WIN32
+// The state field of /proc/<pid>/stat.
+char process_state(const pid_t pid) {
+  const std::string stat = read_file("/proc/" + std::to_string(pid) + "/stat");
+  const auto name_end = stat.rfind(')');
+  return name_end != std::string::npos && name_end + 2 < stat.size() ? stat[name_end + 2] : '?';
+}
+
+bool eventually(const std::function<bool()>& condition) {
+  for (int attempt = 0; attempt < 500; ++attempt) {
+    if (condition()) {
+      return true;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  }
+  return false;
+}
+#endif
+
+// A process whose main thread called pthread_exit while another thread runs shows its leader as
+// a zombie in /proc/<pid>/stat, yet it is running. Once its last thread exits it is a zombie.
+void test_process_with_exited_main_thread_is_running() {
+#ifndef _WIN32
+  int release[2];
+  require(pipe(release) == 0, "pipe failed");
+  const pid_t child = fork();
+  if (child == 0) {
+    close(release[1]);
+    pthread_t worker;
+    const auto wait_for_release = [](void* fd) -> void* {
+      char byte;
+      [[maybe_unused]] const ssize_t got =
+          read(static_cast<int>(reinterpret_cast<std::intptr_t>(fd)), &byte, 1);
+      return nullptr;
+    };
+    if (pthread_create(&worker, nullptr, wait_for_release,
+                       reinterpret_cast<void*>(static_cast<std::intptr_t>(release[0]))) != 0) {
+      _exit(1);
+    }
+    pthread_exit(nullptr);
+  }
+  close(release[0]);
+  pcie_internal::HostProcessOwner owner = pcie_internal::current_host_process_owner();
+  owner.pid = static_cast<std::uint64_t>(child);
+  owner.start.clear(); // only the process state decides
+  const bool leader_exited = eventually([child] { return process_state(child) == 'Z'; });
+  const bool ended_while_running = pcie_internal::host_process_ended(owner);
+  close(release[1]);
+  const bool ended_after_exit =
+      eventually([&owner] { return pcie_internal::host_process_ended(owner); });
+  waitpid(child, nullptr, 0);
+  require(leader_exited, "the main thread of the test process did not exit");
+  require(!ended_while_running, "a running process whose main thread exited was taken for ended");
+  require(ended_after_exit, "a zombie process was not taken for ended");
+#endif
+}
+
 // cmd.exe would run a tar.bat from the current directory before the tar Windows ships.
 void test_loader_ignores_tar_in_current_directory() {
 #ifdef _WIN32
@@ -412,6 +474,7 @@ int main() {
     test_loader_ignores_tar_in_current_directory();
     test_model_facts_read_under_unicode_temp_directory();
     test_snapshots_of_ended_processes_are_removed();
+    test_process_with_exited_main_thread_is_running();
     std::cout << "[PASS] model archive snapshot\n";
     return 0;
   } catch (const std::exception& error) {
