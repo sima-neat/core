@@ -145,7 +145,10 @@ class WindowsPackagingContract(unittest.TestCase):
     self.assertIn('do for %%K in (%%J) do if not defined SIMA_WINDOWS_PLATFORM_RUNTIME_DIR '
                   'set "SIMA_WINDOWS_PLATFORM_RUNTIME_DIR=%%~dpK"', environment)
     self.assertNotIn("_SIMAPCIE_PLATFORM_EXE", environment)
-    self.assertIn("GSTREAMER_ROOT_X86_64", environment)
+    self.assertLess(environment.index('"%GSTREAMER_1_0_ROOT_MSVC_X86_64%"'),
+                    environment.index('"%GSTREAMER_ROOT_X86_64%"'))
+    self.assertLess(environment.index('"%GSTREAMER_ROOT_X86_64%"'),
+                    environment.index('"%ProgramFiles%\\gstreamer\\1.0\\msvc_x86_64"'))
     self.assertIn("CMAKE_PREFIX_PATH", environment)
     self.assertIn("GST_PLUGIN_PATH_1_0", environment)
     self.assertNotIn(r"C:\simaai\build", environment)
@@ -157,6 +160,7 @@ class WindowsPackagingContract(unittest.TestCase):
     )
     self.assertIn("SIMA_WINDOWS_PLATFORM_RUNTIME_DIR", python_bootstrap)
     self.assertIn("GSTREAMER_ROOT_X86_64", python_bootstrap)
+    self.assertIn("GSTREAMER_1_0_ROOT_MSVC_X86_64", python_bootstrap)
     self.assertIn("Services\\SiMaMlaDaemon", python_bootstrap)
     self.assertNotIn(r"C:\simaai\build", python_bootstrap)
 

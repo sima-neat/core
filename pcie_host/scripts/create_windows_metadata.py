@@ -17,6 +17,11 @@ def sha256(path: Path) -> str:
   return digest.hexdigest()
 
 
+def gstreamer_installer_url(version: str) -> str:
+  return ("https://gstreamer.freedesktop.org/data/pkg/windows/"
+          f"{version}/msvc/gstreamer-1.0-msvc-x86_64-{version}.exe")
+
+
 def metadata(msi: Path, wheel: Path, version: str, branch: str, commit: str,
              scheduler_msi: Path = None, scheduler_version: str = None,
              platform_version: str = None, gstreamer_version: str = None) -> dict:
@@ -60,6 +65,11 @@ def metadata(msi: Path, wheel: Path, version: str, branch: str, commit: str,
               ),
               "candidates": [
                   {
+                      # Set by the GStreamer installer; searched first.
+                      "environment": "GSTREAMER_1_0_ROOT_MSVC_X86_64",
+                      "relative": "bin\\gst-inspect-1.0.exe",
+                  },
+                  {
                       "environment": "GSTREAMER_ROOT_X86_64",
                       "relative": "bin\\gst-inspect-1.0.exe",
                   },
@@ -69,8 +79,9 @@ def metadata(msi: Path, wheel: Path, version: str, branch: str, commit: str,
                   },
               ],
               "guidance": (
-                  f"Install GStreamer {gstreamer_version} MSVC x64 or set "
-                  "GSTREAMER_ROOT_X86_64 to its installation root."
+                  f"Install GStreamer {gstreamer_version} MSVC x64 with the development "
+                  f"files from {gstreamer_installer_url(gstreamer_version)}, then open a "
+                  "new terminal, or set GSTREAMER_ROOT_X86_64 to its installation root."
               ),
           },
       ],

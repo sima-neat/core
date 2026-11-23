@@ -2,6 +2,7 @@
 """Validate Windows package metadata composition."""
 
 import importlib.util
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -14,6 +15,8 @@ SKILL_MANIFEST = (
     / "neat-pcie-application-builder"
     / "playbook.yml"
 )
+BUILD_INPUTS = (
+    Path(__file__).parents[2] / "scripts" / "ci" / "pciehost" / "windows_build_inputs.json")
 SPEC = importlib.util.spec_from_file_location("create_windows_metadata", SCRIPT)
 MODULE = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(MODULE)
@@ -83,10 +86,17 @@ class WindowsMetadataTests(unittest.TestCase):
     gstreamer = prerequisites[-1]
     self.assertEqual(gstreamer["type"], "command-version")
     self.assertEqual(gstreamer["version"], "1.28.6")
-    self.assertIn(
-        "gst-inspect-1.0.exe",
-        gstreamer["candidates"][0]["relative"],
+    self.assertEqual(
+        [candidate["environment"] for candidate in gstreamer["candidates"]],
+        ["GSTREAMER_1_0_ROOT_MSVC_X86_64", "GSTREAMER_ROOT_X86_64", "ProgramFiles"],
     )
+    self.assertTrue(all(
+        candidate["relative"].endswith("bin\\gst-inspect-1.0.exe")
+        for candidate in gstreamer["candidates"]))
+    build_inputs = json.loads(BUILD_INPUTS.read_text(encoding="utf-8"))
+    installer = next(item for item in build_inputs["files"] if item["use"] == "gstreamer")
+    self.assertIn(installer["url"], gstreamer["guidance"])
+    self.assertIn(f"-{gstreamer['version']}.exe", installer["url"])
     self.assertEqual(set(result["resources"]), {msi.name, wheel.name})
     self.assertEqual(len(result["resources-checksum"][msi.name]), 64)
     self.assertEqual(len(result["resources-checksum"][wheel.name]), 64)

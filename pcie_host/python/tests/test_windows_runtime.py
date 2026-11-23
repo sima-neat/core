@@ -28,6 +28,21 @@ class WindowsRuntimeTests(unittest.TestCase):
     self.assertIn(Path("/gstreamer/bin"), directories)
     self.assertTrue(all(r"simaai\build" not in str(path).lower() for path in directories))
 
+  def test_gstreamer_installer_root_is_searched_before_the_other_roots(self):
+    environment = {
+        "ProgramFiles": "/program-files",
+        "GSTREAMER_ROOT_X86_64": "/gstreamer",
+        "GSTREAMER_1_0_ROOT_MSVC_X86_64": "/per-user/gstreamer/1.0/msvc_x86_64/",
+    }
+    directories = RUNTIME.runtime_directories(
+        Path("/customer/pyneatpcie"), environment, service_directory=None)
+
+    order = [directories.index(path) for path in (
+        Path("/per-user/gstreamer/1.0/msvc_x86_64/bin"),
+        Path("/gstreamer/bin"),
+        Path("/program-files/gstreamer/1.0/msvc_x86_64/bin"))]
+    self.assertEqual(order, sorted(order))
+
   def test_loaded_dll_outside_approved_directories_is_rejected(self):
     with tempfile.TemporaryDirectory() as directory:
       approved = Path(directory) / "approved"

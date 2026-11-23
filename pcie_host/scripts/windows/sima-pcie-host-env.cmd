@@ -3,14 +3,18 @@ rem Configure only this cmd.exe process for the installed Neat PCIe host SDK.
 
 for %%I in ("%~dp0..") do set "SIMA_PCIE_HOST_ROOT=%%~fI"
 
-if not defined GSTREAMER_ROOT_X86_64 (
-  set "GSTREAMER_ROOT_X86_64=%ProgramFiles%\gstreamer\1.0\msvc_x86_64"
+rem The GStreamer installer sets GSTREAMER_1_0_ROOT_MSVC_X86_64; search it first.
+set "_SIMA_PCIE_HOST_GSTREAMER="
+for %%R in ("%GSTREAMER_1_0_ROOT_MSVC_X86_64%" "%GSTREAMER_ROOT_X86_64%" "%ProgramFiles%\gstreamer\1.0\msvc_x86_64") do (
+  if not defined _SIMA_PCIE_HOST_GSTREAMER if not "%%~R"=="" if exist "%%~R\bin\gstreamer-1.0-0.dll" set "_SIMA_PCIE_HOST_GSTREAMER=%%~R"
 )
-if not exist "%GSTREAMER_ROOT_X86_64%\bin\gstreamer-1.0-0.dll" (
-  1>&2 echo Neat PCIe host: GStreamer MSVC x64 was not found at "%GSTREAMER_ROOT_X86_64%".
-  1>&2 echo Install the supported GStreamer package or set GSTREAMER_ROOT_X86_64.
+if not defined _SIMA_PCIE_HOST_GSTREAMER (
+  1>&2 echo Neat PCIe host: GStreamer MSVC x64 was not found under GSTREAMER_1_0_ROOT_MSVC_X86_64, GSTREAMER_ROOT_X86_64 or "%ProgramFiles%\gstreamer\1.0\msvc_x86_64".
+  1>&2 echo Install the supported GStreamer package or set GSTREAMER_ROOT_X86_64 to its installation root.
   exit /b 2
 )
+set "GSTREAMER_ROOT_X86_64=%_SIMA_PCIE_HOST_GSTREAMER%"
+set "_SIMA_PCIE_HOST_GSTREAMER="
 
 if not defined SIMA_WINDOWS_PLATFORM_RUNTIME_DIR (
   rem sc.exe indentation varies by Windows build; the path may be quoted and contain spaces.

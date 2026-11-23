@@ -44,9 +44,11 @@ def runtime_directories(package_dir, environ=None, service_directory=None):
   if service_runtime:
     candidates.append(Path(service_runtime))
 
-  gstreamer_root = environ.get("GSTREAMER_ROOT_X86_64")
-  if gstreamer_root:
-    candidates.append(Path(gstreamer_root) / "bin")
+  # GSTREAMER_1_0_ROOT_MSVC_X86_64 is the GStreamer installer's own variable.
+  for variable in ("GSTREAMER_1_0_ROOT_MSVC_X86_64", "GSTREAMER_ROOT_X86_64"):
+    gstreamer_root = environ.get(variable)
+    if gstreamer_root:
+      candidates.append(Path(gstreamer_root) / "bin")
 
   program_files = environ.get("ProgramFiles")
   if program_files:
