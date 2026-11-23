@@ -425,7 +425,6 @@ jobs:
             --repository "sima-neat/scheduler" \
             --run-id "${SCHEDULER_RUN_ID}" \
             --expected-commit "${SCHEDULER_COMMIT}" \
-            --workflow-name "Scheduler" \
             --workflow-path ".github/workflows/ci.yml" \
             --required-reusable-workflow "sima-neat/scheduler/.github/workflows/pcie-host.yml" \
             --required-job "Check ARM64 build result and package" \
@@ -853,7 +852,6 @@ jobs:
             --repository "sima-neat/scheduler" \
             --run-id "${SCHEDULER_RUN_ID}" \
             --expected-commit "${SCHEDULER_COMMIT}" \
-            --workflow-name "Scheduler" \
             --workflow-path ".github/workflows/ci.yml" \
             --required-reusable-workflow "sima-neat/scheduler/.github/workflows/pcie-host.yml" \
             --required-job "Build, test, and publish native PCIe profiles / Native ${{ matrix.distro }} ${{ matrix.deb_arch }}" \
@@ -1046,7 +1044,6 @@ jobs:
             --repository "sima-neat/scheduler" \
             --run-id "${SCHEDULER_RUN_ID}" \
             --expected-commit "${SCHEDULER_COMMIT}" \
-            --workflow-name "Scheduler" \
             --workflow-path ".github/workflows/ci.yml" \
             --required-reusable-workflow "sima-neat/scheduler/.github/workflows/pcie-host-windows.yml" \
             --required-job "Build, test, and publish native Windows PCIe profile / contracts" \

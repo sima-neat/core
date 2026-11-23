@@ -28,7 +28,8 @@ class ReleaseRunAdmissionTests(unittest.TestCase):
   run_id = 42
   run_attempt = 3
   repository_id = 1234
-  workflow_name = "Scheduler"
+  # A workflow's `run-name` sets the run `name` and every job's `workflow_name`.
+  run_name = "feature/windows-pcie (production)"
   workflow_path = ".github/workflows/ci.yml"
   reusable_workflow = "sima-neat/scheduler/.github/workflows/pcie-host-windows.yml"
   job_names = (
@@ -41,6 +42,7 @@ class ReleaseRunAdmissionTests(unittest.TestCase):
   def make_run(self) -> dict:
     return {
         "conclusion": "success",
+        "display_title": self.run_name,
         "event": "workflow_dispatch",
         "head_branch": "feature/windows-pcie",
         "head_repository": {
@@ -50,7 +52,7 @@ class ReleaseRunAdmissionTests(unittest.TestCase):
         "head_sha": self.commit,
         "html_url": "https://github.example/run/42",
         "id": self.run_id,
-        "name": self.workflow_name,
+        "name": self.run_name,
         "path": self.workflow_path,
         "referenced_workflows": [{
             "path": f"{self.reusable_workflow}@{self.commit}",
@@ -60,6 +62,7 @@ class ReleaseRunAdmissionTests(unittest.TestCase):
         "repository": {"full_name": self.repository, "id": self.repository_id},
         "run_attempt": self.run_attempt,
         "status": "completed",
+        "workflow_id": 386851362,
     }
 
   def make_jobs(self) -> list[dict]:
@@ -72,7 +75,7 @@ class ReleaseRunAdmissionTests(unittest.TestCase):
             "run_attempt": self.run_attempt,
             "run_id": self.run_id,
             "status": "completed",
-            "workflow_name": self.workflow_name,
+            "workflow_name": self.run_name,
         }
         for index, name in enumerate(self.job_names)
     ]
@@ -98,7 +101,6 @@ class ReleaseRunAdmissionTests(unittest.TestCase):
         self.repository,
         self.run_id,
         self.commit,
-        self.workflow_name,
         self.workflow_path,
         required_reusable_workflow=self.reusable_workflow,
         required_job_names=self.job_names,
@@ -125,23 +127,52 @@ class ReleaseRunAdmissionTests(unittest.TestCase):
   def test_generic_admission_does_not_require_strict_inventories(self):
     run = self.make_run()
     receipt = MODULE.verify_run(
-        run, self.repository, self.run_id, self.commit,
-        self.workflow_name, self.workflow_path)
+        run, self.repository, self.run_id, self.commit, self.workflow_path)
     self.assertNotIn("jobs", receipt)
     self.assertNotIn("artifact", receipt)
     self.assertNotIn("reusable_workflow", receipt)
+
+  def test_run_is_identified_by_workflow_path_not_run_name(self):
+    # Run 45140904350 of sima-neat/core: run-name made `name` the branch title.
+    core_run = {
+        "conclusion": "success",
+        "display_title": "codex/1074-windows-pcie (production)",
+        "event": "workflow_dispatch",
+        "head_branch": "codex/1074-windows-pcie",
+        "head_repository": {"full_name": "sima-neat/core", "id": 1},
+        "head_sha": "71474ed3615341af879201fd43c8ef0d10c07712",
+        "id": 45140904350,
+        "name": "codex/1074-windows-pcie (production)",
+        "path": ".github/workflows/vulcan-ci.yml",
+        "repository": {"full_name": "sima-neat/core", "id": 1},
+        "run_attempt": 1,
+        "status": "completed",
+        "workflow_id": 280517358,
+    }
+    receipt = MODULE.verify_run(
+        core_run, "sima-neat/core", 45140904350,
+        "71474ed3615341af879201fd43c8ef0d10c07712")
+    self.assertEqual(receipt["workflow"], ".github/workflows/vulcan-ci.yml")
+    self.assertEqual(self.verify()["workflow"], self.workflow_path)
+
+    for path in (".github/workflows/other.yml", None):
+      with self.subTest(path=path):
+        with self.assertRaisesRegex(ValueError, "unexpected path"):
+          MODULE.verify_run(
+              dict(core_run, path=path), "sima-neat/core", 45140904350,
+              "71474ed3615341af879201fd43c8ef0d10c07712")
 
   def test_strict_selectors_must_be_complete(self):
     with self.assertRaisesRegex(ValueError, "requires reusable workflow, jobs, and artifact"):
       MODULE.verify_run(
           self.make_run(), self.repository, self.run_id, self.commit,
-          self.workflow_name, self.workflow_path,
+          self.workflow_path,
           required_reusable_workflow=self.reusable_workflow,
           jobs=self.make_jobs(), artifacts=self.make_artifacts())
     with self.assertRaisesRegex(ValueError, "requires job and artifact inventories"):
       MODULE.verify_run(
           self.make_run(), self.repository, self.run_id, self.commit,
-          self.workflow_name, self.workflow_path,
+          self.workflow_path,
           required_reusable_workflow=self.reusable_workflow,
           required_job_names=self.job_names,
           required_artifact_name=self.artifact_name)
@@ -184,7 +215,6 @@ class ReleaseRunAdmissionTests(unittest.TestCase):
         "run_attempt": self.run_attempt + 1,
         "run_id": self.run_id + 1,
         "status": "in_progress",
-        "workflow_name": "Other workflow",
     }
     for field, value in field_mutations.items():
       with self.subTest(field=field):
@@ -273,7 +303,6 @@ class ReleaseRunAdmissionTests(unittest.TestCase):
           "--repository", self.repository,
           "--run-id", str(self.run_id),
           "--expected-commit", self.commit,
-          "--workflow-name", self.workflow_name,
           "--workflow-path", self.workflow_path,
           "--required-reusable-workflow", self.reusable_workflow,
           "--required-artifact", self.artifact_name,

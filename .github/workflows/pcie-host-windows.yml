@@ -292,7 +292,6 @@ jobs:
             --repository "sima-neat/scheduler" \
             --run-id "${SCHEDULER_RUN_ID}" \
             --expected-commit "${SCHEDULER_COMMIT}" \
-            --workflow-name "Scheduler" \
             --workflow-path ".github/workflows/ci.yml" \
             --required-reusable-workflow "sima-neat/scheduler/.github/workflows/pcie-host-windows.yml" \
             --required-job "Build, test, and publish native Windows PCIe profile / contracts" \

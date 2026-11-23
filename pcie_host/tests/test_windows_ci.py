@@ -910,9 +910,9 @@ class WindowsCiContracts(unittest.TestCase):
     # The reusable Windows workflow cannot be dispatched from a feature ref
     # before it exists on the default branch. Admit the Scheduler root run,
     # which owns the reusable job and the retained artifact under one run ID.
-    self.assertIn('--workflow-name "Scheduler"', source)
+    # The workflow path identifies the run; run-name can replace the run name.
+    self.assertNotIn("--workflow-name", source)
     self.assertIn('--workflow-path ".github/workflows/ci.yml"', source)
-    self.assertNotIn('--workflow-name "Scheduler native Windows PCIe host"', source)
     self.assertIn(
         '--required-reusable-workflow '
         '"sima-neat/scheduler/.github/workflows/pcie-host-windows.yml"', source)
@@ -1230,7 +1230,7 @@ class WindowsCiContracts(unittest.TestCase):
       self.assertIn("actions/create-github-app-token@v2", body)
       self.assertIn('repository: sima-neat/scheduler', body)
       self.assertIn('run-id: ${{ inputs.scheduler_run_id }}', body)
-      self.assertIn('--workflow-name "Scheduler"', body)
+      self.assertNotIn("--workflow-name", body)
       self.assertIn('--workflow-path ".github/workflows/ci.yml"', body)
       self.assertIn(
           '--required-reusable-workflow '
@@ -4058,7 +4058,7 @@ class WindowsCiContracts(unittest.TestCase):
         "head_sha": commit,
         "html_url": "https://github.example/run/42",
         "id": 42,
-        "name": "Vulcan CI",
+        "name": "feature/branch (production)",
         "path": ".github/workflows/vulcan-ci.yml",
         "run_attempt": 1,
         "status": "completed",
