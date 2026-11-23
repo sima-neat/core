@@ -13,7 +13,7 @@ For normal model-pack usage, prefer the `Model`-aware constructor. The model arc
 ## Runtime backend
 
 BoxDecode and SuperPoint use `neatkernelrunner` with checked Kernels executables.
-Existing detection and feature output formats are unchanged. YOLO26 oriented-box decoding uses a separate versioned format. For direct tensor
+Pose and segmentation outputs retain their payload layouts and carry task-specific format tags. YOLO26 oriented-box decoding uses a separate versioned format. For direct tensor
 ingress, use shared-CMA tensors (`TensorMemory::EV74`), even when decode executes
 on A65: this memory choice supplies DMA-BUF transport, not the execution target.
 
@@ -540,13 +540,13 @@ a malformed header or extent. New tensors carry the `BBOX_SEGMENTATION` tag. Bot
 ## When `model.run` returns raw heads
 
 Some model routes return raw feature-map heads from `model.run(...)` instead of
-a decoded `BBOX` tensor. That is not a failed run. It means the model executed,
+a decoded detection tensor. That is not a failed run. It means the model executed,
 but the route did not include BoxDecode at the point where you read output.
 
 Use this rule:
 
-- `detections=...` or a `BBOX` tensor: parse the packed BBOX payload or use the
-  decode helpers.
+- For decoded tensors, use the helper for the task, such as `decode_pose()` for keypoints or
+  `decode_segmentation()` for masks.
 - `raw_output_heads=...`: add a BoxDecode stage, inspect the model route, or
   consume the raw tensors with model-specific postprocessing.
 
