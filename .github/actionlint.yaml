@@ -8,7 +8,6 @@ self-hosted-runner:
     - modalix
     - pcie
     - rtsp
-    - sdk-build
     - 3.0.0-pcie-test
     - vulcan-dev
     - vulcan-stg
