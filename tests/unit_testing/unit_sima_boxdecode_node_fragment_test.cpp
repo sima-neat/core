@@ -248,8 +248,8 @@ RUN_TEST(
       require(ssd_letterbox_refused, "SSD BoxDecode must refuse a letterbox resize assertion");
       require(simaai::neat::nodes::SimaBoxDecode(
                   simaai::neat::BoxDecodeType::Ssd, 0.30, 0.60, 100, "ssd_stretch", 0, 0, 0, 0,
-                  simaai::neat::BoxDecodeTypeOption::Auto, std::nullopt, std::nullopt,
-                  std::nullopt, simaai::neat::ResizeMode::Stretch) != nullptr,
+                  simaai::neat::BoxDecodeTypeOption::Auto, std::nullopt, std::nullopt, std::nullopt,
+                  simaai::neat::ResizeMode::Stretch) != nullptr,
               "SSD BoxDecode must accept a stretch resize assertion");
       simaai::neat::BoxDecodeOptions superpoint_options(simaai::neat::BoxDecodeType::SuperPoint);
       superpoint_options.superpoint.profile = simaai::neat::SuperPointProfile::A65V1;
