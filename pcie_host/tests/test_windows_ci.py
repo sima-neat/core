@@ -1668,6 +1668,19 @@ class WindowsCiContracts(unittest.TestCase):
       with self.assertRaisesRegex(ValueError, "not release commit cccccccccccc"):
         RELEASE.publication_plan(bucket.__getitem__, "v0.6.2", commit, root)
 
+  def test_a_newer_run_never_cancels_a_tag_run_mid_publication(self):
+    workflow = WORKFLOW.read_text(encoding="utf-8")
+    cancel = re.search(r"(?m)^concurrency:\n(?:  .*\n)*?  cancel-in-progress: (.+)$", workflow)[1]
+    # The same rule as Vulcan CI, which publishes the Linux release of the tag.
+    self.assertEqual(cancel, re.search(
+        r"(?m)^concurrency:\n(?:  .*\n)*?  cancel-in-progress: (.+)$",
+        MAIN_WORKFLOW.read_text(encoding="utf-8"))[1])
+    for ref_type, cancelled in (("branch", True), ("tag", False)):
+      with self.subTest(ref_type=ref_type):
+        self.assertEqual(
+            evaluate_actions_expression(cancel, {"github.ref_type": ref_type}), cancelled)
+    self.assertNotIn("concurrency:", workflow_job(workflow, "publish"))
+
   @unittest.skipIf(os.name == "nt", WORKFLOW_BASH_SKIP)
   def test_publish_step_writes_the_layout_the_qualifier_stages(self):
     source = WORKFLOW.read_text(encoding="utf-8")

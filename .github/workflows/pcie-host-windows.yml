@@ -111,9 +111,11 @@ on:
         default: false
 permissions:
   contents: read
+# As in Vulcan CI, a newer run cancels only branch runs; a tag run that may be
+# publishing a release queues instead of being cancelled mid-publication.
 concurrency:
   group: core-native-windows-pcie-${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.ref_type == 'branch' }}
 jobs:
   resolve-vulcan-config:
     name: Resolve Vulcan Config
