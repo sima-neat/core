@@ -92,7 +92,7 @@ python3 share/sima-pcie-host/tutorials/027_run_mla_only_int8/run_mla_only_int8.p
 Windows에서는 튜토리얼 복사본 디렉터리의 **x64 Native Tools Command Prompt**에서 CMake로 빌드하세요. `C:\opencv\build`는 [Windows에서 애플리케이션 실행](/getting-started/neat-library/pcie-host/#run-applications-on-windows)에 설명된 OpenCV 패키지의 `build` 디렉터리로 바꾸세요.
 
 ```bat
-call "C:\Program Files\SimaPCIeHost\bin\sima-pcie-host-env.cmd"
+call "%ProgramFiles%\SimaPCIeHost\bin\sima-pcie-host-env.cmd"
 set "OpenCV_DIR=C:\opencv\build"
 cmake -S share\sima-pcie-host\tutorials -B build
 cmake --build build --config Release --target tutorial_027_run_mla_only_int8

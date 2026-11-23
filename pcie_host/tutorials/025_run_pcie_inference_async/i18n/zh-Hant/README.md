@@ -79,7 +79,7 @@ python3 share/sima-pcie-host/tutorials/025_run_pcie_inference_async/run_pcie_inf
 在 Windows 上，請在您的教學課程副本中，從 **x64 Native Tools Command Prompt** 使用 CMake 重新建置。將 `C:\opencv\build` 替換為[在 Windows 上執行應用程式](/getting-started/neat-library/pcie-host/#run-applications-on-windows)中所述 OpenCV 套件的 `build` 目錄：
 
 ```bat
-call "C:\Program Files\SimaPCIeHost\bin\sima-pcie-host-env.cmd"
+call "%ProgramFiles%\SimaPCIeHost\bin\sima-pcie-host-env.cmd"
 set "OpenCV_DIR=C:\opencv\build"
 cmake -S share\sima-pcie-host\tutorials -B build
 cmake --build build --config Release --target tutorial_025_run_pcie_inference_async

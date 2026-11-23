@@ -92,7 +92,7 @@ python3 share/sima-pcie-host/tutorials/027_run_mla_only_int8/run_mla_only_int8.p
 У Windows зберіть програму за допомогою CMake з **x64 Native Tools Command Prompt** у своїй копії навчальних матеріалів. Замініть `C:\opencv\build` на каталог `build` пакета OpenCV, описаного в розділі [Запуск застосунків у Windows](/getting-started/neat-library/pcie-host/#run-applications-on-windows):
 
 ```bat
-call "C:\Program Files\SimaPCIeHost\bin\sima-pcie-host-env.cmd"
+call "%ProgramFiles%\SimaPCIeHost\bin\sima-pcie-host-env.cmd"
 set "OpenCV_DIR=C:\opencv\build"
 cmake -S share\sima-pcie-host\tutorials -B build
 cmake --build build --config Release --target tutorial_027_run_mla_only_int8

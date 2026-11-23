@@ -109,7 +109,7 @@ directory of the OpenCV package described in
 [Run applications on Windows](/getting-started/neat-library/pcie-host/#run-applications-on-windows):
 
 ```bat
-call "C:\Program Files\SimaPCIeHost\bin\sima-pcie-host-env.cmd"
+call "%ProgramFiles%\SimaPCIeHost\bin\sima-pcie-host-env.cmd"
 set "OpenCV_DIR=C:\opencv\build"
 cmake -S share\sima-pcie-host\tutorials -B build
 cmake --build build --config Release --target tutorial_026_run_multiple_models
