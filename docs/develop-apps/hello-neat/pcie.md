@@ -263,7 +263,7 @@ ImageNet class index. With the documented ResNet-50 artifact and Labrador
 image, the expected top class is index 208, Labrador retriever:
 
 ```text
-output: resnetv17_dense0_fwd [1, 1000]
+output: dequantize_1 [1, 1000]
 top1: 208
 ```
 

@@ -245,7 +245,7 @@ cmake --build build
 執行成功時，會列印傳回的輸出張量及其分數最高的 ImageNet 類別索引。使用提供的 ResNet-50 成品和拉布拉多犬圖片，預期的分數最高的類別索引為 208，即拉布拉多犬：
 
 ```text
-output: resnetv17_dense0_fwd [1, 1000]
+output: dequantize_1 [1, 1000]
 top1: 208
 ```
 

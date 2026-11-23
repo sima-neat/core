@@ -245,7 +245,7 @@ cmake --build build
 성공적으로 실행되면 반환된 출력 텐서와 가장 높은 점수를 받은 ImageNet 클래스 인덱스가 출력됩니다. 문서화된 ResNet-50 아티팩트와 래브라도 이미지를 사용하면 예상되는 최상위 클래스는 인덱스 208, 즉 래브라도 리트리버입니다.
 
 ```text
-output: resnetv17_dense0_fwd [1, 1000]
+output: dequantize_1 [1, 1000]
 top1: 208
 ```
 
