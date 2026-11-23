@@ -41,6 +41,8 @@ python3 -c "import pyneat; print('pyneat ready')"
 Потім завантажте пакет навчальних матеріалів для версії Ubuntu, яка працює на хості.
 Запустіть команду з каталогу, в якому ви хочете розмістити цей пакет.
 
+У Windows пакет хоста вже містить навчальні матеріали. Налаштуйте їх, як описано в розділі [Запуск застосунків у Windows](/getting-started/neat-library/pcie-host/#run-applications-on-windows).
+
 **Ubuntu 22.04:**
 
 <ShellCommand prompt="pcie-host">
@@ -64,14 +66,16 @@ python3 -c "import pyneatpcie; print('pyneatpcie ready')"
 
 ## 4. Підготуйте архіви моделей.
 
-Використовуйте Model Zoo, щоб завантажити модель, назва якої вказана в інструкції. Наприклад:
+Завантажте моделі, які використовують навчальні матеріали, з [Model Browser](/tools/model-browser/) і видобудьте архів із кожного ZIP-файлу:
 
 <ShellCommand prompt="sdk|devkit|pcie-host">
-sima-cli modelzoo get resnet_50
-sima-cli modelzoo get yolo_v8s
+sima-cli models download --id resnet_50 --variant w8a8 --output models
+sima-cli models download --id yolov8s --variant w8a8 --output models
+unzip models/resnet_50/w8a8/*.zip resnet_50_w8a8_mpk.tar.gz
+unzip models/yolov8s/w8a8/*.zip yolov8s_w8a8_mpk.tar.gz
 </ShellCommand>
 
-Навчальні матеріали Neat Library приймають `--model`, тому ви можете безпосередньо передавати завантажений архів. У навчальних матеріалах щодо PCIe використовуються фіксовані імена файлів у кореневій теці додаткових матеріалів PCIe:
+Навчальні матеріали Neat Library приймають `--model`, тому ви можете безпосередньо передавати видобутий архів. У навчальних матеріалах щодо PCIe використовуються фіксовані імена файлів у кореневій теці додаткових матеріалів PCIe:
 
 | Навчальний посібник з PCIe | Необхідний файл моделі. |
 | --- | --- |
@@ -79,12 +83,23 @@ sima-cli modelzoo get yolo_v8s
 | Запустіть асинхронний процес виведення даних PCIe. | `yolo_v8s_mpk.tar.gz` |
 | Запустіть кілька моделей. | `resnet_50_mpk.tar.gz` та `yolo_v8s_mpk.tar.gz` |
 
-Назви та розташування вихідних файлів Model Zoo можуть відрізнятися. За потреби скопіюйте архіви в основну теку PCIe, використовуючи необхідні назви:
+Для навчальних матеріалів щодо PCIe виконайте команди в кореневій теці додаткових матеріалів PCIe і перейменуйте архіви:
 
 <ShellCommand prompt="pcie-host">
-cp /absolute/path/to/downloaded-resnet-archive.tar.gz resnet_50_mpk.tar.gz
-cp /absolute/path/to/downloaded-yolov8s-archive.tar.gz yolo_v8s_mpk.tar.gz
+mv resnet_50_w8a8_mpk.tar.gz resnet_50_mpk.tar.gz
+mv yolov8s_w8a8_mpk.tar.gz yolo_v8s_mpk.tar.gz
 </ShellCommand>
+
+У Windows виконайте ці команди PowerShell у своїй копії навчальних матеріалів:
+
+```powershell
+sima-cli models download --id resnet_50 --variant w8a8 --output models
+sima-cli models download --id yolov8s --variant w8a8 --output models
+Expand-Archive models\resnet_50\w8a8\*.zip -DestinationPath models\resnet_50\w8a8
+Expand-Archive models\yolov8s\w8a8\*.zip -DestinationPath models\yolov8s\w8a8
+Copy-Item models\resnet_50\w8a8\resnet_50_w8a8_mpk.tar.gz resnet_50_mpk.tar.gz
+Copy-Item models\yolov8s\w8a8\yolov8s_w8a8_mpk.tar.gz yolo_v8s_mpk.tar.gz
+```
 
 ## 5. Перевірте шляхи та очікувані результати.
 

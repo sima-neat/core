@@ -54,20 +54,29 @@ arrives.
 ## Run
 
 Install the PCIe host package and download the tutorial bundle as described in
-[Tutorial Setup](/tutorials/before-you-run). From the extracted PCIe
-extras root, download YOLOv8s if it is not already present:
-
-```bash
-sima-cli modelzoo get yolo_v8s
-```
+[Tutorial Setup](/tutorials/before-you-run). Run the following
+commands from the extracted PCIe extras root.
+On Windows, set up the tutorials and run the programs as described in
+[Run applications on Windows](/getting-started/neat-library/pcie-host/#run-applications-on-windows).
 
 The program requires the exact path `yolo_v8s_mpk.tar.gz` in this directory.
-If Model Zoo used another name or location, copy the downloaded archive into
-place:
+If it is not already present, download YOLOv8s from the
+[Model Browser](/tools/model-browser/), extract the archive from the downloaded
+ZIP file, and save it under that name:
 
 ```bash
-cp /absolute/path/to/downloaded-yolov8s-archive.tar.gz yolo_v8s_mpk.tar.gz
-test -f yolo_v8s_mpk.tar.gz
+sima-cli models download --id yolov8s --variant w8a8 --output models
+unzip models/yolov8s/w8a8/*.zip yolov8s_w8a8_mpk.tar.gz
+mv yolov8s_w8a8_mpk.tar.gz yolo_v8s_mpk.tar.gz
+```
+
+On Windows, download the model in PowerShell and extract the archive with
+`Expand-Archive`:
+
+```powershell
+sima-cli models download --id yolov8s --variant w8a8 --output models
+Expand-Archive models\yolov8s\w8a8\*.zip -DestinationPath models\yolov8s\w8a8
+Copy-Item models\yolov8s\w8a8\yolov8s_w8a8_mpk.tar.gz yolo_v8s_mpk.tar.gz
 ```
 
 Run Python:

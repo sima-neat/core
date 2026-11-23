@@ -44,12 +44,22 @@
 
 ## Run
 
-PCIeホストパッケージをインストールし、[チュートリアルの設定](/tutorials/before-you-run)で説明されているようにチュートリアルバンドルをダウンロードします。抽出したPCIeエクストラのルートへYOLOv8sをダウンロードします。
+PCIeホストパッケージをインストールし、[チュートリアルの設定](/tutorials/before-you-run)で説明されているように、チュートリアルバンドルをダウンロードします。抽出したPCIeエクストラのルートで次のコマンドを実行します。Windowsでは、[Windowsでアプリケーションを実行する](/getting-started/neat-library/pcie-host/#run-applications-on-windows)の説明に従ってチュートリアルを設定し、プログラムを実行します。
+
+プログラムには、このディレクトリに `yolo_v8s_mpk.tar.gz` が必要です。[Model Browser](/tools/model-browser/)からYOLOv8sをダウンロードし、ダウンロードしたZIPファイルからアーカイブを展開して、その名前で保存します。
 
 ```bash
-sima-cli modelzoo get yolo_v8s
-cp /absolute/path/to/downloaded-yolov8s-archive.tar.gz yolo_v8s_mpk.tar.gz
-test -f yolo_v8s_mpk.tar.gz
+sima-cli models download --id yolov8s --variant w8a8 --output models
+unzip models/yolov8s/w8a8/*.zip yolov8s_w8a8_mpk.tar.gz
+mv yolov8s_w8a8_mpk.tar.gz yolo_v8s_mpk.tar.gz
+```
+
+Windowsでは、PowerShellでモデルをダウンロードし、`Expand-Archive`でアーカイブを展開します。
+
+```powershell
+sima-cli models download --id yolov8s --variant w8a8 --output models
+Expand-Archive models\yolov8s\w8a8\*.zip -DestinationPath models\yolov8s\w8a8
+Copy-Item models\yolov8s\w8a8\yolov8s_w8a8_mpk.tar.gz yolo_v8s_mpk.tar.gz
 ```
 
 **C++ (prebuilt):**

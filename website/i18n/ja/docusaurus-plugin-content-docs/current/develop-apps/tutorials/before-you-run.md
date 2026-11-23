@@ -40,6 +40,8 @@ python3 -c "import pyneat; print('pyneat ready')"
 次に、ホストで実行されているUbuntuバージョン用のチュートリアルバンドルをダウンロードします。
 バンドルを配置したいディレクトリからコマンドを実行します。
 
+Windowsでは、ホストパッケージにチュートリアルがすでに含まれています。[Windowsでアプリケーションを実行する](/getting-started/neat-library/pcie-host/#run-applications-on-windows)の説明に従って設定してください。
+
 **Ubuntu 22.04:**
 
 <ShellCommand prompt="pcie-host">
@@ -63,14 +65,16 @@ python3 -c "import pyneatpcie; print('pyneatpcie ready')"
 
 ## 4. モデルアーカイブを準備する
 
-チュートリアルで指定されたモデルをダウンロードするには、Model Zoo を使用します。例：
+チュートリアルで使用するモデルを[Model Browser](/tools/model-browser/)からダウンロードし、各ZIPファイルからアーカイブを展開します。
 
 <ShellCommand prompt="sdk|devkit|pcie-host">
-sima-cli modelzoo get resnet_50
-sima-cli modelzoo get yolo_v8s
+sima-cli models download --id resnet_50 --variant w8a8 --output models
+sima-cli models download --id yolov8s --variant w8a8 --output models
+unzip models/resnet_50/w8a8/*.zip resnet_50_w8a8_mpk.tar.gz
+unzip models/yolov8s/w8a8/*.zip yolov8s_w8a8_mpk.tar.gz
 </ShellCommand>
 
-Neat Libraryのチュートリアルでは、`--model`を受け入れるため、ダウンロードしたアーカイブを直接渡すことができます。PCIeチュートリアルでは、PCIeエクストラディレクトリのルートにある固定ファイル名を使用します。
+Neat Libraryのチュートリアルでは、`--model`を受け入れるため、展開したアーカイブを直接渡すことができます。PCIeチュートリアルでは、PCIeエクストラディレクトリのルートにある固定ファイル名を使用します。
 
 | PCIeチュートリアル | 必要なモデルファイル |
 |---|---|
@@ -78,12 +82,23 @@ Neat Libraryのチュートリアルでは、`--model`を受け入れるため�
 | PCIe非同期推論を実行 | `yolo_v8s_mpk.tar.gz` |
 | 複数のモデルを実行 | `resnet_50_mpk.tar.gz`と`yolo_v8s_mpk.tar.gz` |
 
-Model Zooの出力名と場所は異なる場合があります。必要に応じて、アーカイブを必要な名前でPCIeエクストラディレクトリのルートにコピーしてください。
+PCIeチュートリアルでは、PCIeエクストラディレクトリのルートでコマンドを実行し、アーカイブの名前を変更します。
 
 <ShellCommand prompt="pcie-host">
-cp /absolute/path/to/downloaded-resnet-archive.tar.gz resnet_50_mpk.tar.gz
-cp /absolute/path/to/downloaded-yolov8s-archive.tar.gz yolo_v8s_mpk.tar.gz
+mv resnet_50_w8a8_mpk.tar.gz resnet_50_mpk.tar.gz
+mv yolov8s_w8a8_mpk.tar.gz yolo_v8s_mpk.tar.gz
 </ShellCommand>
+
+Windowsでは、チュートリアルのコピー先で次のPowerShellコマンドを実行します。
+
+```powershell
+sima-cli models download --id resnet_50 --variant w8a8 --output models
+sima-cli models download --id yolov8s --variant w8a8 --output models
+Expand-Archive models\resnet_50\w8a8\*.zip -DestinationPath models\resnet_50\w8a8
+Expand-Archive models\yolov8s\w8a8\*.zip -DestinationPath models\yolov8s\w8a8
+Copy-Item models\resnet_50\w8a8\resnet_50_w8a8_mpk.tar.gz resnet_50_mpk.tar.gz
+Copy-Item models\yolov8s\w8a8\yolov8s_w8a8_mpk.tar.gz yolo_v8s_mpk.tar.gz
+```
 
 ## 5. パスと期待される出力を確認する
 

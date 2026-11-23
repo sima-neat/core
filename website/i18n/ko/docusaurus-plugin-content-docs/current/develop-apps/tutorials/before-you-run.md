@@ -40,6 +40,8 @@ python3 -c "import pyneat; print('pyneat ready')"
 그런 다음 호스트에서 실행되는 Ubuntu 버전에 대한 튜토리얼 패키지를 다운로드합니다.
 패키지를 원하는 디렉터리에서 명령을 실행합니다.
 
+Windows에서는 호스트 패키지에 튜토리얼이 이미 포함되어 있습니다. [Windows에서 애플리케이션 실행](/getting-started/neat-library/pcie-host/#run-applications-on-windows)에 설명된 대로 설정하세요.
+
 **Ubuntu 22.04:**
 
 <ShellCommand prompt="pcie-host">
@@ -63,14 +65,16 @@ python3 -c "import pyneatpcie; print('pyneatpcie ready')"
 
 ## 4. 모델 아카이브를 준비합니다.
 
-튜토리얼에서 지정된 모델을 다운로드하려면 Model Zoo를 사용하세요. 예를 들어:
+튜토리얼에서 사용하는 모델을 [Model Browser](/tools/model-browser/)에서 다운로드하고 각 ZIP 파일에서 아카이브를 추출하세요.
 
 <ShellCommand prompt="sdk|devkit|pcie-host">
-sima-cli modelzoo get resnet_50
-sima-cli modelzoo get yolo_v8s
+sima-cli models download --id resnet_50 --variant w8a8 --output models
+sima-cli models download --id yolov8s --variant w8a8 --output models
+unzip models/resnet_50/w8a8/*.zip resnet_50_w8a8_mpk.tar.gz
+unzip models/yolov8s/w8a8/*.zip yolov8s_w8a8_mpk.tar.gz
 </ShellCommand>
 
-Neat Library 튜토리얼은 `--model`을 허용하므로 다운로드한 아카이브 파일을 직접 사용할 수 있습니다. PCIe 튜토리얼은 PCIe 추가 자료의 루트 디렉터리에 있는 고정된 파일 이름을 사용합니다.
+Neat Library 튜토리얼은 `--model`을 허용하므로 추출한 아카이브 파일을 직접 사용할 수 있습니다. PCIe 튜토리얼은 PCIe 추가 자료의 루트 디렉터리에 있는 고정된 파일 이름을 사용합니다.
 
 | PCIe 튜토리얼 | 필수 모델 파일 |
 | --- | --- |
@@ -78,12 +82,23 @@ Neat Library 튜토리얼은 `--model`을 허용하므로 다운로드한 아카
 | PCIe 추론을 비동기적으로 실행합니다. | `yolo_v8s_mpk.tar.gz` |
 | 여러 모델을 실행합니다. | `resnet_50_mpk.tar.gz` 및 `yolo_v8s_mpk.tar.gz` |
 
-Model Zoo의 출력 이름과 위치는 다를 수 있습니다. 필요한 경우, 다음 이름으로 아카이브 파일을 PCIe 추가 기능 루트 디렉터리에 복사하십시오.
+PCIe 튜토리얼의 경우 PCIe 추가 자료의 루트 디렉터리에서 명령을 실행하고 아카이브 이름을 변경하세요.
 
 <ShellCommand prompt="pcie-host">
-cp /absolute/path/to/downloaded-resnet-archive.tar.gz resnet_50_mpk.tar.gz
-cp /absolute/path/to/downloaded-yolov8s-archive.tar.gz yolo_v8s_mpk.tar.gz
+mv resnet_50_w8a8_mpk.tar.gz resnet_50_mpk.tar.gz
+mv yolov8s_w8a8_mpk.tar.gz yolo_v8s_mpk.tar.gz
 </ShellCommand>
+
+Windows에서는 튜토리얼 복사본 디렉터리에서 다음 PowerShell 명령을 실행하세요.
+
+```powershell
+sima-cli models download --id resnet_50 --variant w8a8 --output models
+sima-cli models download --id yolov8s --variant w8a8 --output models
+Expand-Archive models\resnet_50\w8a8\*.zip -DestinationPath models\resnet_50\w8a8
+Expand-Archive models\yolov8s\w8a8\*.zip -DestinationPath models\yolov8s\w8a8
+Copy-Item models\resnet_50\w8a8\resnet_50_w8a8_mpk.tar.gz resnet_50_mpk.tar.gz
+Copy-Item models\yolov8s\w8a8\yolov8s_w8a8_mpk.tar.gz yolo_v8s_mpk.tar.gz
+```
 
 ## 5. 경로와 예상 출력을 확인합니다.
 

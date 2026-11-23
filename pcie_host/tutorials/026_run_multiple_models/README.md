@@ -52,23 +52,35 @@ its assigned queue.
 ## Run
 
 Install the PCIe host package and download the tutorial bundle as described in
-[Tutorial Setup](/tutorials/before-you-run). From the extracted PCIe
-extras root, download both models:
-
-```bash
-sima-cli modelzoo get resnet_50
-sima-cli modelzoo get yolo_v8s
-```
+[Tutorial Setup](/tutorials/before-you-run). Run the following
+commands from the extracted PCIe extras root.
+On Windows, set up the tutorials and run the programs as described in
+[Run applications on Windows](/getting-started/neat-library/pcie-host/#run-applications-on-windows).
 
 The program requires the exact paths `resnet_50_mpk.tar.gz` and
-`yolo_v8s_mpk.tar.gz` in this directory. If Model Zoo used other names or
-locations, copy the downloaded archives into place and verify them:
+`yolo_v8s_mpk.tar.gz` in this directory. Download both models from the
+[Model Browser](/tools/model-browser/), extract the archives from the downloaded
+ZIP files, and save them under those names:
 
 ```bash
-cp /absolute/path/to/downloaded-resnet-archive.tar.gz resnet_50_mpk.tar.gz
-cp /absolute/path/to/downloaded-yolov8s-archive.tar.gz yolo_v8s_mpk.tar.gz
-test -f resnet_50_mpk.tar.gz
-test -f yolo_v8s_mpk.tar.gz
+sima-cli models download --id resnet_50 --variant w8a8 --output models
+sima-cli models download --id yolov8s --variant w8a8 --output models
+unzip models/resnet_50/w8a8/*.zip resnet_50_w8a8_mpk.tar.gz
+unzip models/yolov8s/w8a8/*.zip yolov8s_w8a8_mpk.tar.gz
+mv resnet_50_w8a8_mpk.tar.gz resnet_50_mpk.tar.gz
+mv yolov8s_w8a8_mpk.tar.gz yolo_v8s_mpk.tar.gz
+```
+
+On Windows, download the models in PowerShell and extract the archives with
+`Expand-Archive`:
+
+```powershell
+sima-cli models download --id resnet_50 --variant w8a8 --output models
+sima-cli models download --id yolov8s --variant w8a8 --output models
+Expand-Archive models\resnet_50\w8a8\*.zip -DestinationPath models\resnet_50\w8a8
+Expand-Archive models\yolov8s\w8a8\*.zip -DestinationPath models\yolov8s\w8a8
+Copy-Item models\resnet_50\w8a8\resnet_50_w8a8_mpk.tar.gz resnet_50_mpk.tar.gz
+Copy-Item models\yolov8s\w8a8\yolov8s_w8a8_mpk.tar.gz yolo_v8s_mpk.tar.gz
 ```
 
 Run Python:

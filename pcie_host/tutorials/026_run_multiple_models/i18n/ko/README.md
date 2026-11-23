@@ -36,23 +36,28 @@ Modalix PCIe 카드는 0번부터 5번까지의 공동 처리 큐를 제공합�
 
 ## Run
 
-PCIe 호스트 패키지를 설치하고, 설명서에 나와 있는 대로 튜토리얼 번들을 다운로드하세요.
-[튜토리얼 설정](/tutorials/before-you-run)추출된 PCIe
-추가 루트에서 두 모델을 모두 다운로드합니다.
+PCIe 호스트 패키지를 설치하고 [튜토리얼 설정](/tutorials/before-you-run)에 설명된 대로 튜토리얼 번들을 다운로드합니다. 추출된 PCIe extras 루트에서 다음 명령을 실행합니다. Windows에서는 [Windows에서 애플리케이션 실행](/getting-started/neat-library/pcie-host/#run-applications-on-windows)에 설명된 대로 튜토리얼을 설정하고 프로그램을 실행하세요.
+
+이 프로그램에는 이 디렉터리의 정확한 경로 `resnet_50_mpk.tar.gz` 및 `yolo_v8s_mpk.tar.gz`가 필요합니다. [Model Browser](/tools/model-browser/)에서 두 모델을 다운로드하고, 다운로드한 ZIP 파일에서 아카이브를 추출하여 해당 이름으로 저장하세요.
 
 ```bash
-sima-cli modelzoo get resnet_50
-sima-cli modelzoo get yolo_v8s
+sima-cli models download --id resnet_50 --variant w8a8 --output models
+sima-cli models download --id yolov8s --variant w8a8 --output models
+unzip models/resnet_50/w8a8/*.zip resnet_50_w8a8_mpk.tar.gz
+unzip models/yolov8s/w8a8/*.zip yolov8s_w8a8_mpk.tar.gz
+mv resnet_50_w8a8_mpk.tar.gz resnet_50_mpk.tar.gz
+mv yolov8s_w8a8_mpk.tar.gz yolo_v8s_mpk.tar.gz
 ```
 
-이 프로그램은 정확한 경로를 필요로 합니다. `resnet_50_mpk.tar.gz` 그리고
-`yolo_v8s_mpk.tar.gz` 이 디렉터리 안에 있습니다. 만약 Model Zoo 다른 이름이나 위치를 사용한 경우, 다운로드한 파일을 해당 위치에 복사하고 파일이 올바른지 확인합니다.
+Windows에서는 PowerShell에서 모델을 다운로드하고 `Expand-Archive`로 아카이브를 추출하세요.
 
-```bash
-cp /absolute/path/to/downloaded-resnet-archive.tar.gz resnet_50_mpk.tar.gz
-cp /absolute/path/to/downloaded-yolov8s-archive.tar.gz yolo_v8s_mpk.tar.gz
-test -f resnet_50_mpk.tar.gz
-test -f yolo_v8s_mpk.tar.gz
+```powershell
+sima-cli models download --id resnet_50 --variant w8a8 --output models
+sima-cli models download --id yolov8s --variant w8a8 --output models
+Expand-Archive models\resnet_50\w8a8\*.zip -DestinationPath models\resnet_50\w8a8
+Expand-Archive models\yolov8s\w8a8\*.zip -DestinationPath models\yolov8s\w8a8
+Copy-Item models\resnet_50\w8a8\resnet_50_w8a8_mpk.tar.gz resnet_50_mpk.tar.gz
+Copy-Item models\yolov8s\w8a8\yolov8s_w8a8_mpk.tar.gz yolo_v8s_mpk.tar.gz
 ```
 
 Python 실행:

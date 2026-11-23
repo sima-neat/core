@@ -40,6 +40,8 @@ python3 -c "import pyneat; print('pyneat ready')"
 然後，下載適用於在主機上執行的 Ubuntu 版本的教學套件。
 從您想要放置套件的目錄中執行指令。
 
+在 Windows 上，主機套件已包含教學課程。請依照[在 Windows 上執行應用程式](/getting-started/neat-library/pcie-host/#run-applications-on-windows)的說明進行設定。
+
 **Ubuntu 22.04：**
 
 <ShellCommand prompt="pcie-host">
@@ -63,14 +65,16 @@ python3 -c "import pyneatpcie; print('pyneatpcie ready')"
 
 ## 4. 準備模型封存檔
 
-使用 Model Zoo 下載教學檔案中指定的模型。例如：
+從 [Model Browser](/tools/model-browser/) 下載教學課程使用的模型，並從每個 ZIP 檔案中解壓縮封存檔：
 
 <ShellCommand prompt="sdk|devkit|pcie-host">
-sima-cli modelzoo get resnet_50
-sima-cli modelzoo get yolo_v8s
+sima-cli models download --id resnet_50 --variant w8a8 --output models
+sima-cli models download --id yolov8s --variant w8a8 --output models
+unzip models/resnet_50/w8a8/*.zip resnet_50_w8a8_mpk.tar.gz
+unzip models/yolov8s/w8a8/*.zip yolov8s_w8a8_mpk.tar.gz
 </ShellCommand>
 
-Neat Library 的教學課程接受 `--model`，因此您可以直接傳遞下載的壓縮檔。PCIe 教學課程會在 PCIe 附加資料的根目錄中使用固定的檔案名稱：
+Neat Library 的教學課程接受 `--model`，因此您可以直接傳遞解壓縮後的封存檔。PCIe 教學課程會在 PCIe 附加資料的根目錄中使用固定的檔案名稱：
 
 | PCIe 教學課程 | 必要的模型檔案 |
 |---|---|
@@ -78,12 +82,23 @@ Neat Library 的教學課程接受 `--model`，因此您可以直接傳遞下載
 | 執行 PCIe 非同步推論 | `yolo_v8s_mpk.tar.gz` |
 | 執行多個模型 | `resnet_50_mpk.tar.gz` 和 `yolo_v8s_mpk.tar.gz` |
 
-Model Zoo 的輸出名稱和位置可能會有所不同。如果需要，請將壓縮檔複製到 PCIe 附加資料的根目錄，並使用所需的名稱：
+對於 PCIe 教學課程，請在 PCIe 附加資料的根目錄中執行這些命令，並重新命名封存檔：
 
 <ShellCommand prompt="pcie-host">
-cp /absolute/path/to/downloaded-resnet-archive.tar.gz resnet_50_mpk.tar.gz
-cp /absolute/path/to/downloaded-yolov8s-archive.tar.gz yolo_v8s_mpk.tar.gz
+mv resnet_50_w8a8_mpk.tar.gz resnet_50_mpk.tar.gz
+mv yolov8s_w8a8_mpk.tar.gz yolo_v8s_mpk.tar.gz
 </ShellCommand>
+
+在 Windows 上，請在您的教學課程副本中執行下列 PowerShell 命令：
+
+```powershell
+sima-cli models download --id resnet_50 --variant w8a8 --output models
+sima-cli models download --id yolov8s --variant w8a8 --output models
+Expand-Archive models\resnet_50\w8a8\*.zip -DestinationPath models\resnet_50\w8a8
+Expand-Archive models\yolov8s\w8a8\*.zip -DestinationPath models\yolov8s\w8a8
+Copy-Item models\resnet_50\w8a8\resnet_50_w8a8_mpk.tar.gz resnet_50_mpk.tar.gz
+Copy-Item models\yolov8s\w8a8\yolov8s_w8a8_mpk.tar.gz yolo_v8s_mpk.tar.gz
+```
 
 ## 5. 驗證路徑和預期輸出
 

@@ -20,15 +20,25 @@ PCIe 공동 처리 방식을 사용하면 애플리케이션 제어 및 입력 �
 
 ## 모델과 이미지를 가져오세요
 
-호스트 시스템에 작업 디렉터리를 생성하고 Model Zoo에서 ResNet-50을 다운로드합니다.
+호스트 시스템에 작업 디렉터리를 생성하고 [Model Browser](/tools/model-browser/)에서 ResNet-50 `w8a8` 모델을 다운로드합니다. 다운로드한 ZIP 파일에서 아카이브를 추출하여 `resnet_50.tar.gz`로 저장하세요.
 
 <ShellCommand prompt="pcie-host">
 mkdir -p pcie-host-quickstart/assets
 cd pcie-host-quickstart
-sima-cli modelzoo get resnet_50
+sima-cli models download --id resnet_50 --variant w8a8 --output models
+unzip models/resnet_50/w8a8/*.zip resnet_50_w8a8_mpk.tar.gz
+mv resnet_50_w8a8_mpk.tar.gz resnet_50.tar.gz
 </ShellCommand>
 
-다운로드한 압축 파일을 이 디렉터리에 `resnet_50.tar.gz`로 저장하십시오.
+Windows에서는 PowerShell에서 같은 단계를 실행하고 `Expand-Archive`로 아카이브를 추출하세요.
+
+```powershell
+New-Item -ItemType Directory -Force pcie-host-quickstart\assets | Out-Null
+Set-Location pcie-host-quickstart
+sima-cli models download --id resnet_50 --variant w8a8 --output models
+Expand-Archive models\resnet_50\w8a8\*.zip -DestinationPath models\resnet_50\w8a8
+Copy-Item models\resnet_50\w8a8\resnet_50_w8a8_mpk.tar.gz resnet_50.tar.gz
+```
 
 [래브라도어 견종 이미지 예시](../../images/hello-neat-pcie-labrador.jpg)를 다운로드하고 `assets/sample.png`로 저장하세요.
 
@@ -40,6 +50,7 @@ sima-cli modelzoo get resnet_50
 pcie-host-quickstart/
 ├── assets/
 │   └── sample.png
+├── models/
 └── resnet_50.tar.gz
 ```
 
@@ -202,6 +213,8 @@ target_link_libraries(
 </CodeTabs>
 
 ## 애플리케이션을 실행합니다.
+
+Windows에서는 대신 [Windows에서 애플리케이션 실행](/getting-started/neat-library/pcie-host/#run-applications-on-windows)의 명령을 사용하세요.
 
 <CodeTabs>
 <CodeTab label="Python" lang="python">

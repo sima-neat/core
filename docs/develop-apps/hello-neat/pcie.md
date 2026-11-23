@@ -25,16 +25,28 @@ You need:
 
 ## Get the model and image
 
-Create a working directory on the host machine and download ResNet-50 from the
-Model Zoo:
+Create a working directory on the host machine and download the ResNet-50
+`w8a8` model from the [Model Browser](/tools/model-browser/). Extract the
+archive from the downloaded ZIP file and save it as `resnet_50.tar.gz`:
 
 <ShellCommand prompt="pcie-host">
 mkdir -p pcie-host-quickstart/assets
 cd pcie-host-quickstart
-sima-cli modelzoo get resnet_50
+sima-cli models download --id resnet_50 --variant w8a8 --output models
+unzip models/resnet_50/w8a8/*.zip resnet_50_w8a8_mpk.tar.gz
+mv resnet_50_w8a8_mpk.tar.gz resnet_50.tar.gz
 </ShellCommand>
 
-Place the downloaded archive in this directory as `resnet_50.tar.gz`.
+On Windows, run the same steps in PowerShell and extract the archive with
+`Expand-Archive`:
+
+```powershell
+New-Item -ItemType Directory -Force pcie-host-quickstart\assets | Out-Null
+Set-Location pcie-host-quickstart
+sima-cli models download --id resnet_50 --variant w8a8 --output models
+Expand-Archive models\resnet_50\w8a8\*.zip -DestinationPath models\resnet_50\w8a8
+Copy-Item models\resnet_50\w8a8\resnet_50_w8a8_mpk.tar.gz resnet_50.tar.gz
+```
 
 Download the [sample Labrador image](../../images/hello-neat-pcie-labrador.jpg)
 and save it as `assets/sample.png`.
@@ -50,6 +62,7 @@ Your working directory should now contain:
 pcie-host-quickstart/
 ├── assets/
 │   └── sample.png
+├── models/
 └── resnet_50.tar.gz
 ```
 
@@ -212,6 +225,10 @@ target_link_libraries(
 </CodeTabs>
 
 ## Run the application
+
+On Windows, use the commands in
+[Run applications on Windows](/getting-started/neat-library/pcie-host/#run-applications-on-windows)
+instead.
 
 <CodeTabs>
 <CodeTab label="Python" lang="python">

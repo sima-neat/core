@@ -47,21 +47,22 @@ PCIe host API приймає або тензор, готовий до викор
 
 ## Run
 
-Встановіть пакет PCIe host і завантажте пакет для навчального посібника, як описано в
-[Налаштування навчального посібника.](/tutorials/before-you-run). Запустіть наступні
-команди з кореневої папки розпакованих додаткових матеріалів PCIe:
+Установіть пакет хоста PCIe та завантажте набір навчальних матеріалів, як описано в розділі [Налаштування навчальних матеріалів](/tutorials/before-you-run). Виконайте наведені нижче команди в корені розпакованих додаткових матеріалів PCIe. У Windows налаштуйте навчальні матеріали та запускайте програми, як описано в розділі [Запуск застосунків у Windows](/getting-started/neat-library/pcie-host/#run-applications-on-windows).
+
+Програмам потрібен файл `yolo_v8s_mpk.tar.gz` у цьому каталозі. Завантажте YOLOv8s з [Model Browser](/tools/model-browser/), видобудьте архів із завантаженого ZIP-файлу та збережіть його під цією назвою:
 
 ```bash
-sima-cli modelzoo get yolo_v8s
+sima-cli models download --id yolov8s --variant w8a8 --output models
+unzip models/yolov8s/w8a8/*.zip yolov8s_w8a8_mpk.tar.gz
+mv yolov8s_w8a8_mpk.tar.gz yolo_v8s_mpk.tar.gz
 ```
 
-Програми вимагають наявності `yolo_v8s_mpk.tar.gz` у цьому каталозі. Вихідні
-імена та розташування Model Zoo можуть відрізнятися. Якщо команда не створила саме цей шлях,
-скопіюйте завантажений архів на місце та перевірте його:
+У Windows завантажте модель у PowerShell і видобудьте архів за допомогою `Expand-Archive`:
 
-```bash
-cp /absolute/path/to/downloaded-yolov8s-archive.tar.gz yolo_v8s_mpk.tar.gz
-test -f yolo_v8s_mpk.tar.gz
+```powershell
+sima-cli models download --id yolov8s --variant w8a8 --output models
+Expand-Archive models\yolov8s\w8a8\*.zip -DestinationPath models\yolov8s\w8a8
+Copy-Item models\yolov8s\w8a8\yolov8s_w8a8_mpk.tar.gz yolo_v8s_mpk.tar.gz
 ```
 
 **Python:**

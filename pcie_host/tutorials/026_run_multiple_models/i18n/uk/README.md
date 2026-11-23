@@ -36,20 +36,28 @@ PCIe-карта Modalix надає доступ до черг співоброб
 
 ## Run
 
-Встановіть пакет хоста PCIe та завантажте пакет для посібника, як описано в [Налаштування навчального посібника.](/tutorials/before-you-run). З кореневої папки додаткових матеріалів PCIe, завантажте обидві моделі:
+Установіть пакет хоста PCIe та завантажте набір навчальних матеріалів, як описано в розділі [Налаштування навчальних матеріалів](/tutorials/before-you-run). Виконайте наведені нижче команди в корені розпакованих додаткових матеріалів PCIe. У Windows налаштуйте навчальні матеріали та запускайте програми, як описано в розділі [Запуск застосунків у Windows](/getting-started/neat-library/pcie-host/#run-applications-on-windows).
+
+Програмі потрібні точні шляхи `resnet_50_mpk.tar.gz` і `yolo_v8s_mpk.tar.gz` у цьому каталозі. Завантажте обидві моделі з [Model Browser](/tools/model-browser/), видобудьте архіви із завантажених ZIP-файлів і збережіть їх під цими назвами:
 
 ```bash
-sima-cli modelzoo get resnet_50
-sima-cli modelzoo get yolo_v8s
+sima-cli models download --id resnet_50 --variant w8a8 --output models
+sima-cli models download --id yolov8s --variant w8a8 --output models
+unzip models/resnet_50/w8a8/*.zip resnet_50_w8a8_mpk.tar.gz
+unzip models/yolov8s/w8a8/*.zip yolov8s_w8a8_mpk.tar.gz
+mv resnet_50_w8a8_mpk.tar.gz resnet_50_mpk.tar.gz
+mv yolov8s_w8a8_mpk.tar.gz yolo_v8s_mpk.tar.gz
 ```
 
-Програма вимагає точних шляхів до `resnet_50_mpk.tar.gz` і `yolo_v8s_mpk.tar.gz` у цьому каталозі. Якщо Model Zoo використовував інші імена або розташування, скопіюйте завантажені архіви на відповідні місця та перевірте їх:
+У Windows завантажте моделі в PowerShell і видобудьте архіви за допомогою `Expand-Archive`:
 
-```bash
-cp /absolute/path/to/downloaded-resnet-archive.tar.gz resnet_50_mpk.tar.gz
-cp /absolute/path/to/downloaded-yolov8s-archive.tar.gz yolo_v8s_mpk.tar.gz
-test -f resnet_50_mpk.tar.gz
-test -f yolo_v8s_mpk.tar.gz
+```powershell
+sima-cli models download --id resnet_50 --variant w8a8 --output models
+sima-cli models download --id yolov8s --variant w8a8 --output models
+Expand-Archive models\resnet_50\w8a8\*.zip -DestinationPath models\resnet_50\w8a8
+Expand-Archive models\yolov8s\w8a8\*.zip -DestinationPath models\yolov8s\w8a8
+Copy-Item models\resnet_50\w8a8\resnet_50_w8a8_mpk.tar.gz resnet_50_mpk.tar.gz
+Copy-Item models\yolov8s\w8a8\yolov8s_w8a8_mpk.tar.gz yolo_v8s_mpk.tar.gz
 ```
 
 Запустіть Python:

@@ -20,15 +20,25 @@ PCIe 協同處理將應用程式控制和輸入準備保留在主機機器上，
 
 ## 取得模型和影像
 
-在主機機器上建立一個工作目錄，並從 Model Zoo 下載 ResNet-50：
+在主機機器上建立一個工作目錄，並從 [Model Browser](/tools/model-browser/) 下載 ResNet-50 `w8a8` 模型。從下載的 ZIP 檔案中解壓縮封存檔，並將其儲存為 `resnet_50.tar.gz`：
 
 <ShellCommand prompt="pcie-host">
 mkdir -p pcie-host-quickstart/assets
 cd pcie-host-quickstart
-sima-cli modelzoo get resnet_50
+sima-cli models download --id resnet_50 --variant w8a8 --output models
+unzip models/resnet_50/w8a8/*.zip resnet_50_w8a8_mpk.tar.gz
+mv resnet_50_w8a8_mpk.tar.gz resnet_50.tar.gz
 </ShellCommand>
 
-將下載的壓縮檔放在這個目錄中，檔案名稱為 `resnet_50.tar.gz`。
+在 Windows 上，請在 PowerShell 中執行相同步驟，並使用 `Expand-Archive` 解壓縮封存檔：
+
+```powershell
+New-Item -ItemType Directory -Force pcie-host-quickstart\assets | Out-Null
+Set-Location pcie-host-quickstart
+sima-cli models download --id resnet_50 --variant w8a8 --output models
+Expand-Archive models\resnet_50\w8a8\*.zip -DestinationPath models\resnet_50\w8a8
+Copy-Item models\resnet_50\w8a8\resnet_50_w8a8_mpk.tar.gz resnet_50.tar.gz
+```
 
 下載 [拉布拉多犬範例圖片](../../images/hello-neat-pcie-labrador.jpg)，並將其儲存為 `assets/sample.png`。
 
@@ -40,6 +50,7 @@ sima-cli modelzoo get resnet_50
 pcie-host-quickstart/
 ├── assets/
 │   └── sample.png
+├── models/
 └── resnet_50.tar.gz
 ```
 
@@ -202,6 +213,8 @@ target_link_libraries(
 </CodeTabs>
 
 ## 執行應用程式
+
+在 Windows 上，請改用[在 Windows 上執行應用程式](/getting-started/neat-library/pcie-host/#run-applications-on-windows)中的命令。
 
 <CodeTabs>
 <CodeTab label="Python" lang="python">

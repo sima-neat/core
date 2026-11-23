@@ -45,6 +45,10 @@ First [install and verify the PCIe host package](/getting-started/neat-library/p
 Then download the tutorial bundle for the Ubuntu version running on the host.
 Run the command from the directory where you want the bundle.
 
+On Windows, the host package already includes the tutorials. Set them up as
+described in
+[Run applications on Windows](/getting-started/neat-library/pcie-host/#run-applications-on-windows).
+
 **Ubuntu 22.04:**
 
 <ShellCommand prompt="pcie-host">
@@ -68,14 +72,18 @@ python3 -c "import pyneatpcie; print('pyneatpcie ready')"
 
 ## 4. Prepare model archives
 
-Use Model Zoo to download the model named by the tutorial. For example:
+Download the models that the tutorials use from the
+[Model Browser](/tools/model-browser/) and extract each archive from its ZIP
+file:
 
 <ShellCommand prompt="sdk|devkit|pcie-host">
-sima-cli modelzoo get resnet_50
-sima-cli modelzoo get yolo_v8s
+sima-cli models download --id resnet_50 --variant w8a8 --output models
+sima-cli models download --id yolov8s --variant w8a8 --output models
+unzip models/resnet_50/w8a8/*.zip resnet_50_w8a8_mpk.tar.gz
+unzip models/yolov8s/w8a8/*.zip yolov8s_w8a8_mpk.tar.gz
 </ShellCommand>
 
-Neat Library tutorials accept `--model`, so you can pass the downloaded archive
+Neat Library tutorials accept `--model`, so you can pass the extracted archive
 directly. PCIe tutorials use fixed filenames in the PCIe extras root:
 
 | PCIe tutorial | Required model file |
@@ -84,13 +92,24 @@ directly. PCIe tutorials use fixed filenames in the PCIe extras root:
 | Run PCIe Inference Async | `yolo_v8s_mpk.tar.gz` |
 | Run Multiple Models | `resnet_50_mpk.tar.gz` and `yolo_v8s_mpk.tar.gz` |
 
-Model Zoo output names and locations can vary. If necessary, copy the archives
-into the PCIe extras root using the required names:
+For the PCIe tutorials, run the commands in the PCIe extras root and rename the
+archives:
 
 <ShellCommand prompt="pcie-host">
-cp /absolute/path/to/downloaded-resnet-archive.tar.gz resnet_50_mpk.tar.gz
-cp /absolute/path/to/downloaded-yolov8s-archive.tar.gz yolo_v8s_mpk.tar.gz
+mv resnet_50_w8a8_mpk.tar.gz resnet_50_mpk.tar.gz
+mv yolov8s_w8a8_mpk.tar.gz yolo_v8s_mpk.tar.gz
 </ShellCommand>
+
+On Windows, run these PowerShell commands in your copy of the tutorials:
+
+```powershell
+sima-cli models download --id resnet_50 --variant w8a8 --output models
+sima-cli models download --id yolov8s --variant w8a8 --output models
+Expand-Archive models\resnet_50\w8a8\*.zip -DestinationPath models\resnet_50\w8a8
+Expand-Archive models\yolov8s\w8a8\*.zip -DestinationPath models\yolov8s\w8a8
+Copy-Item models\resnet_50\w8a8\resnet_50_w8a8_mpk.tar.gz resnet_50_mpk.tar.gz
+Copy-Item models\yolov8s\w8a8\yolov8s_w8a8_mpk.tar.gz yolo_v8s_mpk.tar.gz
+```
 
 ## 5. Verify paths and expected output
 
