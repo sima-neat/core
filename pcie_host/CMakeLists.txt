@@ -235,6 +235,9 @@ set(SimaPCIeHost_INSTALL_CMAKEDIR
 )
 
 set(SIMAPCIE_SCHEDULER_CONFIG_COMPONENTS pcie_host pcie_service_headers)
+if(MSVC)
+  string(REGEX MATCH "^[0-9]+[.][0-9]+" SIMAPCIE_MSVC_VERSION "${CMAKE_CXX_COMPILER_VERSION}")
+endif()
 
 configure_package_config_file(
   ${CMAKE_CURRENT_SOURCE_DIR}/cmake/SimaPCIeHostConfig.cmake.in

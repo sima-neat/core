@@ -16,8 +16,15 @@ $selection = Get-Content -Raw "$Dependencies\selection.json" | ConvertFrom-Json
 $vswhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"
 $installation = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
 if (-not $installation) { throw "Visual Studio x64 C++ tools are unavailable" }
+# Linux builds with the compiler of its pinned image. MSVC links a static library
+# only with the toolset that built it or a newer one, so the package is built
+# with the oldest toolset it supports: v143 of Visual Studio 2022 17.14.
+$msvcToolset = "14.44"
 Import-Module (Join-Path $installation "Common7\Tools\Microsoft.VisualStudio.DevShell.dll")
-Enter-VsDevShell -VsInstallPath $installation -SkipAutomaticLocation -DevCmdArguments "-arch=x64 -host_arch=x64"
+Enter-VsDevShell -VsInstallPath $installation -SkipAutomaticLocation -DevCmdArguments "-arch=x64 -host_arch=x64 -vcvars_ver=$msvcToolset"
+if (-not "$env:VCToolsVersion".StartsWith("$msvcToolset.")) {
+  throw "MSVC $msvcToolset tools are unavailable; the developer shell selected '$env:VCToolsVersion'"
+}
 # Hosted images and actions/setup-python export these; the producer takes its prefixes explicitly.
 foreach ($name in @("CMAKE_TOOLCHAIN_FILE", "CMAKE_GENERATOR_PLATFORM", "CMAKE_PREFIX_PATH", "PKG_CONFIG_PATH")) {
   Remove-Item -LiteralPath "env:$name" -ErrorAction SilentlyContinue

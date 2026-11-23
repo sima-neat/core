@@ -162,9 +162,10 @@ def verify_scheduler_candidate(directory: Path, expected_commit: str) -> tuple[d
 
 
 def toolchain_identity() -> dict[str, str | None]:
-  """Record the MSVC toolchain and runner image a hosted build cannot pin.
+  """Record the MSVC toolchain and the runner image a hosted build cannot pin.
 
-  Linux builds in a digest-pinned image. Record-only: no consumer checks it.
+  Linux builds in a digest-pinned image; run_windows_build.ps1 pins the MSVC
+  toolset. Record-only: no consumer checks it.
   """
   def value(name: str) -> str | None:
     return os.environ.get(name, "").strip().rstrip("\\") or None
