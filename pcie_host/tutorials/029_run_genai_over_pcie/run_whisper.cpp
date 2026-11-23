@@ -8,7 +8,8 @@ namespace genai = simaai::neat::pcie::genai;
 int main(int argc, char** argv) {
   try {
     const auto args = tutorial::parse_args(argc, argv, "whisper");
-    if (!std::filesystem::is_regular_file(args.media))
+    const auto audio = tutorial::utf8_path(args.media);
+    if (!std::filesystem::is_regular_file(audio))
       throw std::invalid_argument("audio file does not exist: " + args.media);
 
     // STEP audio-request
@@ -16,7 +17,7 @@ int main(int argc, char** argv) {
     if (model.task() != genai::GenAITask::ASR || !model.accepts_audio())
       throw std::invalid_argument("choose a Whisper model directory");
     genai::GenerationRequest request;
-    request.audio_file = args.media;
+    request.audio_file = audio;
     request.language = args.language;
     request.asr_task = args.translate ? genai::ASRTask::Translate : genai::ASRTask::Transcribe;
     const auto result = model.run(request);

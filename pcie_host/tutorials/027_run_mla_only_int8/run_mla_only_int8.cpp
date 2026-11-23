@@ -15,10 +15,19 @@
 #include <filesystem>
 #include <iomanip>
 #include <iostream>
+#include <memory>
 #include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
+
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#include <shellapi.h>
+#endif
 
 namespace pcie = simaai::neat::pcie;
 
@@ -34,23 +43,46 @@ struct Args {
   int card_id = 0;
 };
 
-std::string require_value(int argc, char** argv, int& index, const char* option) {
-  if (index + 1 >= argc) {
+// The API takes UTF-8 paths. On Windows, main() receives its arguments in the ANSI code page,
+// which turns characters outside it into '?', so read the UTF-16 command line instead.
+std::vector<std::string> utf8_arguments([[maybe_unused]] int argc, [[maybe_unused]] char** argv) {
+#ifdef _WIN32
+  int count = 0;
+  const std::unique_ptr<LPWSTR, decltype(&LocalFree)> wide(
+      CommandLineToArgvW(GetCommandLineW(), &count), &LocalFree);
+  if (!wide) {
+    throw std::runtime_error("cannot read the command line");
+  }
+  std::vector<std::string> arguments;
+  for (int index = 0; index < count; ++index) {
+    const auto utf8 = std::filesystem::path(wide.get()[index]).u8string();
+    arguments.emplace_back(utf8.begin(), utf8.end());
+  }
+  return arguments;
+#else
+  return {argv, argv + argc};
+#endif
+}
+
+std::string require_value(const std::vector<std::string>& arguments, std::size_t& index,
+                          const char* option) {
+  if (index + 1 >= arguments.size()) {
     throw std::runtime_error(std::string("missing value for ") + option);
   }
-  return argv[++index];
+  return arguments[++index];
 }
 
 Args parse_args(int argc, char** argv) {
+  const auto arguments = utf8_arguments(argc, argv);
   Args args;
-  for (int index = 1; index < argc; ++index) {
-    const std::string arg = argv[index];
+  for (std::size_t index = 1; index < arguments.size(); ++index) {
+    const std::string& arg = arguments[index];
     if (arg == "--model") {
-      args.model = require_value(argc, argv, index, "--model");
+      args.model = require_value(arguments, index, "--model");
     } else if (arg == "--card") {
-      args.card_id = std::stoi(require_value(argc, argv, index, "--card"));
+      args.card_id = std::stoi(require_value(arguments, index, "--card"));
     } else if (arg == "-h" || arg == "--help") {
-      std::cout << "Usage: " << argv[0] << " --model yolo26n_w8a8_mpk.tar.gz [--card 0]\n";
+      std::cout << "Usage: " << arguments[0] << " --model yolo26n_w8a8_mpk.tar.gz [--card 0]\n";
       std::exit(0);
     } else {
       throw std::runtime_error("unknown argument: " + arg);
@@ -154,7 +186,7 @@ std::vector<std::int8_t> quantize_image(const cv::Mat& bgr, const pcie::TensorIn
 int main(int argc, char** argv) {
   try {
     const Args args = parse_args(argc, argv);
-    if (!std::filesystem::is_regular_file(args.model)) {
+    if (!std::filesystem::is_regular_file(std::u8string(args.model.begin(), args.model.end()))) {
       throw std::runtime_error("model does not exist: " + args.model);
     }
     const cv::Mat image = cv::imread(kImagePath, cv::IMREAD_COLOR);

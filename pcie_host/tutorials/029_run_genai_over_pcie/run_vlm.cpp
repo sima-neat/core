@@ -5,6 +5,8 @@
 #include <opencv2/imgproc.hpp>
 
 #include <cstdint>
+#include <fstream>
+#include <iterator>
 #include <vector>
 
 namespace genai = simaai::neat::pcie::genai;
@@ -15,7 +17,11 @@ int main(int argc, char** argv) {
     const auto args = tutorial::parse_args(argc, argv, "vlm");
 
     // STEP prepare-image
-    const auto bgr = cv::imread(args.media, cv::IMREAD_COLOR);
+    // cv::imread takes an ANSI file name on Windows; read the bytes and decode them instead.
+    std::ifstream file(tutorial::utf8_path(args.media), std::ios::binary);
+    const std::vector<std::uint8_t> bytes{std::istreambuf_iterator<char>(file),
+                                          std::istreambuf_iterator<char>()};
+    const auto bgr = bytes.empty() ? cv::Mat() : cv::imdecode(bytes, cv::IMREAD_COLOR);
     if (bgr.empty())
       throw std::invalid_argument("cannot read image: " + args.media);
     cv::Mat rgb;
