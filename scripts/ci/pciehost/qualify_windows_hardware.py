@@ -1476,17 +1476,28 @@ def run_captured_to_file(command: list[object], log: Path, *,
   return run_windows_openssh(command, log, timeout=timeout)
 
 
+def uninstall_msi(msi: Path, log: Path, *, attempts: int = 5, delay: float = 30) -> int:
+  """Run msiexec /x, waiting while another installation holds Windows Installer."""
+  for attempt in range(1, attempts + 1):
+    returncode = subprocess.run(
+        ["msiexec.exe", "/x", str(msi), "/quiet", "/norestart", "/L*v", str(log)],
+        check=False,
+    ).returncode
+    # ERROR_INSTALL_ALREADY_RUNNING: e.g. Windows Update is installing; nothing changed.
+    if returncode != 1618 or attempt == attempts:
+      return returncode
+    time.sleep(delay)
+  raise AssertionError("unreachable")
+
+
 def remove_msi(msi: Path, log: Path) -> str:
-  result = subprocess.run(
-      ["msiexec.exe", "/x", str(msi), "/quiet", "/norestart", "/L*v", str(log)],
-      check=False,
-  )
-  if result.returncode == 1605:
+  returncode = uninstall_msi(msi, log)
+  if returncode == 1605:
     return "ABSENT"
-  if result.returncode not in MSI_SUCCESS_CODES:
-    raise RuntimeError(f"Windows Installer /x failed with {result.returncode}; see {log}")
-  if result.returncode != 0:
-    raise RuntimeError(f"Windows Installer /x requested a restart ({result.returncode})")
+  if returncode not in MSI_SUCCESS_CODES:
+    raise RuntimeError(f"Windows Installer /x failed with {returncode}; see {log}")
+  if returncode != 0:
+    raise RuntimeError(f"Windows Installer /x requested a restart ({returncode})")
   return "PASS"
 
 

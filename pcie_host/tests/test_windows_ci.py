@@ -612,6 +612,28 @@ class WindowsCiContracts(unittest.TestCase):
           else:
             self.assertEqual(RECOVERY.recorded_card_stage(args, evidence), expected)
 
+  def test_msi_removal_waits_while_another_installation_runs(self):
+    # 1618 (ERROR_INSTALL_ALREADY_RUNNING) changes nothing; Windows Update can hold it briefly.
+    msi, log = Path("C:/cohort/core.msi"), Path("C:/evidence/core.log")
+    command = ["msiexec.exe", "/x", str(msi), "/quiet", "/norestart", "/L*v", str(log)]
+    for codes, removal, expected in (
+        ([1618, 1618, 0], RECOVERY.remove_msi, 0),
+        ([1618, 1605], HARDWARE.remove_msi, "ABSENT"),
+        ([1618] * 5, RECOVERY.remove_msi, "failed with 1618"),
+        ([1618] * 5, HARDWARE.remove_msi, "failed with 1618"),
+        ([1603], HARDWARE.remove_msi, "failed with 1603")):
+      with self.subTest(codes=codes, removal=removal.__module__), \
+          mock.patch.object(HARDWARE.subprocess, "run", side_effect=[
+              subprocess.CompletedProcess(command, code) for code in codes]) as run, \
+          mock.patch.object(HARDWARE.time, "sleep") as sleep:
+        if isinstance(expected, str) and expected.startswith("failed"):
+          with self.assertRaisesRegex(RuntimeError, expected):
+            removal(msi, log)
+        else:
+          self.assertEqual(removal(msi, log), expected)
+        self.assertEqual(run.call_args_list, [mock.call(command, check=False)] * len(codes))
+        self.assertEqual(sleep.call_args_list, [mock.call(30)] * (len(codes) - 1))
+
   def test_recovery_without_owned_lock_does_not_mutate_host_or_card(self):
     with tempfile.TemporaryDirectory() as directory:
       root = Path(directory)

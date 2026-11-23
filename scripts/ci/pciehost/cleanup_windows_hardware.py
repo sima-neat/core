@@ -15,7 +15,7 @@ import sys
 from qualify_windows_hardware import (
     CARD_STAGE_PATTERN, RemoteExclusiveLock, _validate_remote_path, remove_card_stage,
     remove_standard_user_leftovers, restart_windows_platform_service, run_captured_to_file,
-    ssh_command, stop_card_workers)
+    ssh_command, stop_card_workers, uninstall_msi)
 from windows_candidate import validate_candidate, validate_published_package
 
 
@@ -53,12 +53,10 @@ def recover_stale_lock(path: Path) -> None:
 
 
 def remove_msi(msi: Path, log: Path) -> int:
-  result = subprocess.run(
-      ["msiexec.exe", "/x", str(msi), "/quiet", "/norestart", "/L*v", str(log)],
-      check=False)
-  if result.returncode not in {0, 1605}:
-    raise RuntimeError(f"Windows Installer cleanup failed with {result.returncode}; see {log}")
-  return result.returncode
+  returncode = uninstall_msi(msi, log)
+  if returncode not in {0, 1605}:
+    raise RuntimeError(f"Windows Installer cleanup failed with {returncode}; see {log}")
+  return returncode
 
 
 def recorded_card_stage(args: argparse.Namespace, evidence: Path) -> str | None:
