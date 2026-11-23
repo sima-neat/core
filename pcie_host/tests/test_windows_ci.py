@@ -1021,7 +1021,7 @@ class WindowsCiContracts(unittest.TestCase):
         ),
         2,
     )
-    self.assertEqual(workflow.count("shell: powershell"), 11)
+    self.assertEqual(workflow.count("shell: powershell"), 12)
     hardware_job = workflow.split("  hardware:\n", 1)[1].split("  publish:\n", 1)[0]
     # Self-hosted Windows keeps the default Restricted script policy, as customer PCs do;
     # run every step like pcie-setup.cmd does instead of provisioning the host.
@@ -4318,34 +4318,38 @@ class WindowsCiContracts(unittest.TestCase):
                                     for name, version in packages.items()}},
               "cards": [], "errors": []}
     install_root = Path(r"C:\Program Files\SimaPCIeHost")
-    for case, code, stdout, expected in (
-        ("pass", 0, json.dumps(report), None),
-        ("exit", 1, "", "exited with 1"),
+    for case, code, stdout, render_code, expected in (
+        ("pass", 0, json.dumps(report), 0, None),
+        ("exit", 1, "", 0, "--json exited with 1"),
         # stderr text is kept apart from the JSON on stdout.
-        ("not-json", 0, "Usage: neat [status] [--json]", "did not print one JSON object"),
-        ("errors", 0, json.dumps({**report, "errors": ["Unable to read PCI inventory"]}),
+        ("not-json", 0, "Usage: neat [status] [--json]", 0, "did not print one JSON object"),
+        ("errors", 0, json.dumps({**report, "errors": ["Unable to read PCI inventory"]}), 0,
          "reported errors"),
         ("version", 0, json.dumps({**report, "host": {"packages": {
-            "sima-pcie-host": {"version": "0.6.1"}}}}), "reports host packages"),
+            "sima-pcie-host": {"version": "0.6.1"}}}}), 0, "reports host packages"),
+        ("render", 0, json.dumps(report), 1, "neat.cmd status exited with 1"),
     ):
       with self.subTest(case=case), tempfile.TemporaryDirectory() as directory:
         log = Path(directory) / "neat-status.log"
-        completed = subprocess.CompletedProcess([], code, stdout, "neat: stderr line\n")
+        completed = [subprocess.CompletedProcess([], code, stdout, "neat: stderr line\n"),
+                     subprocess.CompletedProcess([], render_code, "Host\n", "")]
         with mock.patch.dict(os.environ, {"SystemRoot": r"C:\Windows"}), \
-            mock.patch("windows_candidate.subprocess.run", return_value=completed) as run:
+            mock.patch("windows_candidate.subprocess.run", side_effect=completed) as run:
           if expected:
             with self.assertRaisesRegex(RuntimeError, expected):
               installed_neat_status(install_root, {"PATH": "x"}, log, packages)
           else:
             self.assertEqual(installed_neat_status(install_root, {"PATH": "x"}, log, packages),
                              report)
-        argv = run.call_args.args[0]
-        self.assertEqual(argv[1:], ["/d", "/c", str(install_root / "bin" / "neat.cmd"), "--json"])
-        self.assertTrue(argv[0].endswith("cmd.exe"))
-        self.assertEqual(run.call_args.kwargs["env"], {"PATH": "x"})
-        # Not from bin: there a neat.cmd that resolves its helper from the current
-        # directory still passes.
-        self.assertEqual(run.call_args.kwargs["cwd"], log.parent)
+        neat = str(install_root / "bin" / "neat.cmd")
+        self.assertEqual([call.args[0][1:] for call in run.call_args_list],
+                         [["/d", "/c", neat, "--json"], ["/d", "/c", neat, "status"]])
+        for call in run.call_args_list:
+          self.assertTrue(call.args[0][0].endswith("cmd.exe"))
+          self.assertEqual(call.kwargs["env"], {"PATH": "x"})
+          # Not from bin: there a neat.cmd that resolves its helper from the current
+          # directory still passes.
+          self.assertEqual(call.kwargs["cwd"], log.parent)
         self.assertIn("neat: stderr line", log.read_text(encoding="utf-8"))
 
   def test_hosted_build_and_hardware_qualifier_run_installed_neat_cmd(self):
@@ -4363,6 +4367,29 @@ class WindowsCiContracts(unittest.TestCase):
         '      result["customer_install"]["process_activation"] = "PASS"\n'
         '      result["customer_install"]["neat_status"] = verify_installed_neat_status(\n',
         qualifier)
+
+  def test_hosted_windows_build_runs_every_windows_only_test_first(self):
+    # The contracts job runs these files on Linux, where Windows-only tests skip.
+    native = workflow_job(WORKFLOW.read_text(encoding="utf-8"), "native")
+    step = workflow_step(native, "Run the Windows-only script tests")
+    self.assertLess(native.index("- name: Run the Windows-only script tests"),
+                    native.index("- name: Provision pinned Windows producer inputs"))
+    self.assertIn("working-directory: pcie_host/tests\n", step)
+    self.assertIn("& python -m unittest -v `\n", step)
+    self.assertTrue(step.endswith("exit $LASTEXITCODE\n"))
+    windows_only = []
+    for path in sorted((ROOT / "pcie_host" / "tests").glob("test_*.py")):
+      for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+        if not isinstance(node, ast.ClassDef):
+          continue
+        members = [node, *(item for item in node.body if isinstance(item, ast.FunctionDef))]
+        for member in members:
+          if any(ast.unparse(decorator).startswith("unittest.skipUnless(os.name == 'nt'")
+                 for decorator in member.decorator_list):
+            windows_only.append(".".join(dict.fromkeys((path.stem, node.name, member.name))))
+    self.assertGreaterEqual(len(windows_only), 3)
+    for name in windows_only:
+      self.assertRegex(step, rf"(?m)^ +{re.escape(name)}(?: `)?$")
 
   def test_hardware_qualifier_requires_the_card_and_cohort_in_neat_status(self):
     native = [{"owner": "scheduler", "version": "0.6.2"}, {"owner": "core", "version": "0.6.2"}]

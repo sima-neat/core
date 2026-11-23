@@ -49,21 +49,27 @@ def msi_version(value: object) -> tuple[int, int, int]:
 
 def installed_neat_status(install_root: Path, environment: dict[str, str], log: Path,
                           packages: dict[str, str]) -> dict:
-  """Run the installed neat.cmd --json as a customer does and check its host report.
+  """Run the installed neat.cmd --json and neat.cmd status as a customer does.
 
-  packages maps the installed MSI product names to their versions. The command line,
-  exit code, output and errors are saved to log; only stdout must be the JSON object.
-  It runs from the log directory, not bin: neat.cmd must find its helper from its own
-  location, as when a customer runs it from any other directory.
+  packages maps the installed MSI product names to their versions. The command lines,
+  exit codes, output and errors are saved to log; only stdout must be the JSON object,
+  and the rendered status must exit 0. Both run from the log directory, not bin:
+  neat.cmd must find its helper from its own location, as when a customer runs it from
+  any other directory.
   """
-  argv = [str(Path(os.environ["SystemRoot"]) / "System32" / "cmd.exe"), "/d", "/c",
-          str(install_root / "bin" / "neat.cmd"), "--json"]
-  print("+", subprocess.list2cmdline(argv), flush=True)
-  result = subprocess.run(argv, cwd=log.parent, env=environment, capture_output=True,
-                          text=True, encoding="utf-8", errors="replace", timeout=180)
-  log.write_text(
+  results = []
+  for arguments in (["--json"], ["status"]):
+    argv = [str(Path(os.environ["SystemRoot"]) / "System32" / "cmd.exe"), "/d", "/c",
+            str(install_root / "bin" / "neat.cmd"), *arguments]
+    print("+", subprocess.list2cmdline(argv), flush=True)
+    results.append((argv, subprocess.run(
+        argv, cwd=log.parent, env=environment, capture_output=True, text=True,
+        encoding="utf-8", errors="replace", timeout=180)))
+  log.write_text("".join(
       f"+ {subprocess.list2cmdline(argv)}\nexit code: {result.returncode}\n"
-      f"--- stdout\n{result.stdout}\n--- stderr\n{result.stderr}\n", encoding="utf-8")
+      f"--- stdout\n{result.stdout}\n--- stderr\n{result.stderr}\n"
+      for argv, result in results), encoding="utf-8")
+  result, rendered = (result for _, result in results)
   if result.returncode:
     raise RuntimeError(f"neat.cmd --json exited with {result.returncode}; see {log}")
   try:
@@ -78,6 +84,8 @@ def installed_neat_status(install_root: Path, environment: dict[str, str], log: 
   if not isinstance(installed, dict) or found != packages:
     raise RuntimeError(
         f"neat.cmd --json reports host packages {found}, expected {packages}; see {log}")
+  if rendered.returncode:
+    raise RuntimeError(f"neat.cmd status exited with {rendered.returncode}; see {log}")
   return status
 
 

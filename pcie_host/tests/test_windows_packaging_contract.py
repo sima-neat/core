@@ -6,6 +6,7 @@ from pathlib import Path
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 from xml.etree import ElementTree
@@ -23,6 +24,21 @@ FIXTURE_KEY = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGZpeHR1cmUta2V5LW1hdGVyaWFsL
 
 def read_source(path):
   return (ROOT / path).read_text(encoding="utf-8")
+
+
+def install_windows_scripts(root):
+  """Lay out the shipped scripts as the MSI installs them, under a path with a space."""
+  install = Path(root) / "Sima PCIe Host"
+  shutil.copytree(ROOT / "scripts" / "windows", install / "bin")
+  (install / "share" / "sima-pcie-host").mkdir(parents=True)
+  return install
+
+
+def run_cmd(command_line, cwd, env):
+  """Run one command line under cmd.exe, as a customer types it."""
+  processor = Path(os.environ["SystemRoot"]) / "System32" / "cmd.exe"
+  return subprocess.run(f'"{processor}" /d /c "{command_line}"', cwd=cwd, env=env,
+                        capture_output=True, text=True, check=False, timeout=120)
 
 
 def setup_enrolment_command():
@@ -619,6 +635,84 @@ class WindowsPackagingContract(unittest.TestCase):
     self.assertIn(r"%ProgramData%\SiMa.ai\simaai-mla-daemon.conf", media_stage)
     self.assertIn("missing or is not a directory", media_stage)
     self.assertIn("noncanonical or traverses a symlink", media_stage)
+
+
+
+@unittest.skipUnless(os.name == "nt", "runs the shipped scripts under cmd.exe; executed on Windows")
+class WindowsScriptExecution(unittest.TestCase):
+  """Run the installed scripts from a directory other than their own."""
+
+  def setUp(self):
+    directory = tempfile.TemporaryDirectory()
+    self.addCleanup(directory.cleanup)
+    root = Path(directory.name)
+    self.install = install_windows_scripts(root)
+    self.bin = self.install / "bin"
+    self.cwd = root / "work dir"
+    self.profile = root / "profile"
+    for folder in (self.cwd, self.profile):
+      folder.mkdir()
+    # Fakes for the files sima-pcie-host-env.cmd requires; nothing loads them.
+    gstreamer, platform = root / "gstreamer", root / "platform"
+    for path in (gstreamer / "bin" / "gstreamer-1.0-0.dll", platform / "SiMaPCIe.dll",
+                 self.bin / "simaai_scheduler_pcie_host.dll",
+                 self.bin / "gstreamer-1.0" / "gstneatpciehost.dll"):
+      path.parent.mkdir(parents=True, exist_ok=True)
+      path.write_bytes(b"")
+    self.env = {**os.environ, "USERPROFILE": str(self.profile), "TEMP": str(root),
+                "TMP": str(root), "GSTREAMER_ROOT_X86_64": str(gstreamer),
+                "SIMA_WINDOWS_PLATFORM_RUNTIME_DIR": str(platform),
+                "PATH": str(Path(sys.executable).parent) + os.pathsep + os.environ["PATH"]}
+    self.env.pop("SIMA_PCIE_HOST_ENVIRONMENT", None)
+
+  def test_neat_finds_its_helper_for_every_argument_form(self):
+    # With no managed interpreter in the profile, neat.cmd runs Python from PATH.
+    (self.install / "share" / "sima-pcie-host" / "neat_pcie_status.py").write_text(
+        "import json, sys\n"
+        "if sys.argv[1:] == ['--render']:\n"
+        "  print('rendered', json.load(sys.stdin)['stub'])\n"
+        "else:\n"
+        "  print(json.dumps({'stub': 'status'}))\n", encoding="utf-8")
+    for arguments, output in (("", "rendered status"), ("status", "rendered status"),
+                              ("--json", '{"stub": "status"}'),
+                              ("status --json", '{"stub": "status"}')):
+      with self.subTest(arguments=arguments):
+        result = run_cmd(f'"{self.bin / "neat.cmd"}" {arguments}', self.cwd, self.env)
+        self.assertEqual((result.returncode, result.stdout.strip()), (0, output),
+                         result.stderr)
+    for arguments in ("--bogus", "--json status"):
+      with self.subTest(arguments=arguments):
+        result = run_cmd(f'"{self.bin / "neat.cmd"}" {arguments}', self.cwd, self.env)
+        self.assertEqual(result.returncode, 64, result.stdout + result.stderr)
+        self.assertIn("Usage: neat [status] [--json]", result.stderr)
+
+  def test_environment_and_run_wrappers_find_the_install_root(self):
+    processor = Path(os.environ["SystemRoot"]) / "System32" / "cmd.exe"
+    for command in (
+        f'call "{self.bin / "sima-pcie-host-env.cmd"}" && set SIMA_PCIE_HOST_ROOT',
+        f'"{self.bin / "sima-pcie-host-run.cmd"}" "{processor}" /d /c set SIMA_PCIE_HOST_ROOT'):
+      with self.subTest(command=command):
+        result = run_cmd(command, self.cwd, self.env)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        (line,) = result.stdout.splitlines()
+        name, value = line.split("=", 1)
+        self.assertEqual(name, "SIMA_PCIE_HOST_ROOT")
+        self.assertEqual(Path(value).resolve(), self.install.resolve())
+
+  def test_doctor_runs_the_environment_wrapper_beside_it(self):
+    result = run_cmd(f'"{self.bin / "sima-pcie-host-doctor.cmd"}"', self.cwd, self.env)
+    # Past the environment: then OpenSSH (10), the Platform service (11) or the fake
+    # GStreamer plug-in (12) fails on a host without the full stack.
+    self.assertIn(result.returncode, (10, 11, 12), result.stdout + result.stderr)
+    self.assertNotIn("sima-pcie-host-env.cmd", result.stderr)
+
+  def test_setup_wrapper_runs_the_powershell_script_beside_it(self):
+    key = self.profile / "keys" / "card"
+    result = run_cmd(
+        f'"{self.bin / "pcie-setup.cmd"}" -Key "{key}" -Hosts 10.0.0.2 -DryRun',
+        self.cwd, self.env)
+    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+    self.assertIn(f"Known hosts: {self.profile / '.ssh' / 'known_hosts'}", result.stdout)
 
 
 if __name__ == "__main__":

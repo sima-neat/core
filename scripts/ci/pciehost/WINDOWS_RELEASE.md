@@ -35,11 +35,14 @@ plug-in or need the Platform service (`gst-inspect-1.0` of `gstneatpciehost`,
 `sima-pcie-host-doctor.cmd`) run in hardware qualification, on the card PC.
 The build records only the Platform version from Scheduler's receipt, and
 carries Scheduler's installed Platform record to the hardware job.
-`neat.cmd --json` needs neither: the build runs it after installing the MSIs
-and requires both installed products at their cohort versions and no card
-(`neat-status.log`). Hardware qualification runs it again as the customer
-after installation and requires the card at its address with the candidate's
-card packages (`customer-neat-status.log`).
+`neat.cmd --json` and `neat.cmd status` need neither: the build runs them
+from a directory other than `bin` after installing the MSIs and requires both
+installed products at their cohort versions and no card (`neat-status.log`).
+Hardware qualification runs them again as the customer after installation and
+requires the card at its address with the candidate's card packages
+(`customer-neat-status.log`). Before the build, the hosted job runs the tests
+that skip on Linux, which run the shipped scripts under `cmd.exe` from another
+directory.
 The Windows build needs Scheduler's published Windows profile for the selected
 branch, or `develop` when that branch is unpublished. Without it, dependency
 resolution fails.
