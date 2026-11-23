@@ -246,4 +246,8 @@ The Windows PCIe host package reads these variables in the Python package, in
   service executable.
 - `SIMA_PCIE_HOST_LIBRARY_PATH`: additional directories, separated by `;`, that
   contain the PCIe host and GStreamer DLLs, for an installation outside the
-  default locations.
+  default locations. The Python package reads it. Windows defines no order
+  among the DLL directories the package adds, so do not list a directory with a
+  second copy of a DLL that another location already provides.
+  `sima-pcie-host-env.cmd` puts the installation's `bin` directory before the
+  existing value.

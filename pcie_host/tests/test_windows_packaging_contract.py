@@ -219,6 +219,9 @@ class WindowsPackagingContract(unittest.TestCase):
                     environment.index('"%ProgramFiles%\\gstreamer\\1.0\\msvc_x86_64"'))
     self.assertIn("CMAKE_PREFIX_PATH", environment)
     self.assertIn("GST_PLUGIN_PATH_1_0", environment)
+    # A user's SIMA_PCIE_HOST_LIBRARY_PATH survives, after the installation's bin.
+    self.assertIn('if defined SIMA_PCIE_HOST_LIBRARY_PATH (set "SIMA_PCIE_HOST_LIBRARY_PATH='
+                  '%SIMA_PCIE_HOST_ROOT%\\bin;%SIMA_PCIE_HOST_LIBRARY_PATH%")', environment)
     self.assertNotIn(r"C:\simaai\build", environment)
     self.assertNotIn("setx", environment.lower())
 

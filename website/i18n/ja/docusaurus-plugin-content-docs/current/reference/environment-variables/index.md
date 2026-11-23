@@ -183,4 +183,4 @@ Windows PCIe ホストパッケージは、Python パッケージ、`sima-pcie-h
 - `GSTREAMER_ROOT_X86_64`: GStreamer インストーラーが記録したものの代わりに使用する GStreamer のインストールルートです。最初に検索されます。
 - `GSTREAMER_1_0_ROOT_MSVC_X86_64`: GStreamer MSVC x64 のインストールルートです。GStreamer インストーラーが設定します。`GSTREAMER_ROOT_X86_64` の後、`%ProgramFiles%\gstreamer\1.0\msvc_x86_64` の前に検索されます。
 - `SIMA_WINDOWS_PLATFORM_RUNTIME_DIR`: Platform ランタイムの `SiMaPCIe.dll` を含むディレクトリです。既定では、`SiMaMlaDaemon` サービスの実行ファイルがあるディレクトリです。
-- `SIMA_PCIE_HOST_LIBRARY_PATH`: 既定の場所以外にインストールした場合に使用する、PCIe ホストと GStreamer の DLL を含む追加ディレクトリです。`;` で区切ります。
+- `SIMA_PCIE_HOST_LIBRARY_PATH`: 既定の場所以外にインストールした場合に使用する、PCIe ホストと GStreamer の DLL を含む追加ディレクトリです。`;` で区切ります。Python パッケージがこの変数を読み取ります。パッケージが追加する DLL ディレクトリの間に Windows は順序を定めていないため、ほかの場所にすでにある DLL の別のコピーを含むディレクトリは指定しないでください。`sima-pcie-host-env.cmd` は、インストールの `bin` ディレクトリを既存の値の前に追加します。

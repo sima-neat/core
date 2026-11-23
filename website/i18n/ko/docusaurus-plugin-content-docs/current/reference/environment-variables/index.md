@@ -209,4 +209,7 @@ Windows PCIe 호스트 패키지는 Python 패키지, `sima-pcie-host-env.cmd` �
 - `SIMA_WINDOWS_PLATFORM_RUNTIME_DIR`: Platform 런타임 `SiMaPCIe.dll`이 있는 디렉터리입니다.
   기본값은 `SiMaMlaDaemon` 서비스 실행 파일이 있는 디렉터리입니다.
 - `SIMA_PCIE_HOST_LIBRARY_PATH`: 기본 위치 외부에 설치한 경우 PCIe 호스트 및 GStreamer DLL이
-  있는 추가 디렉터리로, `;`로 구분합니다.
+  있는 추가 디렉터리로, `;`로 구분합니다. Python 패키지가 이 변수를 읽습니다. Windows는
+  패키지가 추가하는 DLL 디렉터리 사이에 순서를 정하지 않으므로, 다른 위치에 이미 있는 DLL의
+  두 번째 사본이 있는 디렉터리는 지정하지 마세요. `sima-pcie-host-env.cmd`는 설치의 `bin`
+  디렉터리를 기존 값 앞에 추가합니다.
