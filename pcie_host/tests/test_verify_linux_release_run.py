@@ -42,7 +42,7 @@ class ReleaseRunAdmissionTests(unittest.TestCase):
     return {
         "conclusion": "success",
         "event": "workflow_dispatch",
-        "head_branch": "codex/1074-windows-pcie",
+        "head_branch": "feature/windows-pcie",
         "head_repository": {
             "full_name": self.repository,
             "id": self.repository_id,
@@ -54,7 +54,7 @@ class ReleaseRunAdmissionTests(unittest.TestCase):
         "path": self.workflow_path,
         "referenced_workflows": [{
             "path": f"{self.reusable_workflow}@{self.commit}",
-            "ref": "refs/heads/codex/1074-windows-pcie",
+            "ref": "refs/heads/feature/windows-pcie",
             "sha": self.commit,
         }],
         "repository": {"full_name": self.repository, "id": self.repository_id},
@@ -111,7 +111,7 @@ class ReleaseRunAdmissionTests(unittest.TestCase):
     receipt = self.verify()
     self.assertEqual(receipt["reusable_workflow"], {
         "path": f"{self.reusable_workflow}@{self.commit}",
-        "ref": "refs/heads/codex/1074-windows-pcie",
+        "ref": "refs/heads/feature/windows-pcie",
         "sha": self.commit,
     })
     self.assertEqual([job["name"] for job in receipt["jobs"]], list(self.job_names))

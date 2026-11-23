@@ -1714,7 +1714,7 @@ class WindowsCiContracts(unittest.TestCase):
       environment = {
           **os.environ, "PATH": f"{tools}{os.pathsep}{os.environ['PATH']}",
           "FAKE_S3": str(bucket), "ARTIFACT_BUCKET": "neat-artifacts",
-          "CLOUDFRONT_DISTRIBUTION_ID": "", "REF_NAME": "codex/1074-windows-pcie",
+          "CLOUDFRONT_DISTRIBUTION_ID": "", "REF_NAME": "feature/windows-pcie",
           "REF_TYPE": "branch", "SSE_KMS_KEY_ID": "", "GITHUB_SHA": commit,
           "RUNNER_TEMP": str(root / "runner"),
       }
@@ -1722,8 +1722,8 @@ class WindowsCiContracts(unittest.TestCase):
       result = subprocess.run([shutil.which("bash"), "-c", script], cwd=ROOT,
                               capture_output=True, text=True, env=environment)
       self.assertEqual(result.returncode, 0, result.stderr)
-      prefix = "core/codex%2F1074-windows-pcie/cccccccccccc/pciehost/windows/amd64"
-      self.assertEqual(RELEASE.package_prefix("codex/1074-windows-pcie", commit), prefix)
+      prefix = "core/feature%2Fwindows-pcie/cccccccccccc/pciehost/windows/amd64"
+      self.assertEqual(RELEASE.package_prefix("feature/windows-pcie", commit), prefix)
       published = {path.relative_to(bucket).as_posix() for path in bucket.rglob("*")
                    if path.is_file()}
       self.assertIn(f"{prefix}/metadata.json", published)
@@ -1732,7 +1732,7 @@ class WindowsCiContracts(unittest.TestCase):
           f"s3://neat-artifacts/{prefix}/metadata.json --content-type application/json "
           "--sse aws:kms"))
       fetched = RELEASE.fetch_release(
-          lambda key: (bucket / key).read_bytes(), "codex/1074-windows-pcie", commit,
+          lambda key: (bucket / key).read_bytes(), "feature/windows-pcie", commit,
           root / "fetched", require_latest=False)
       self.assertEqual(fetched.resources, validate_candidate(candidate_root).resources)
       with self.assertRaisesRegex(ValueError, "branch or tag"):
@@ -2798,7 +2798,7 @@ class WindowsCiContracts(unittest.TestCase):
             "core_commit": commit,
             "firmware": "modalix-cvu-fw",
             "genai_worker_sha256": "5" * 64,
-            "installed": {"sima-neat": f"0.6.2+codex.{commit[:12]}"},
+            "installed": {"sima-neat": f"0.6.2+feature.{commit[:12]}"},
             "runtime_sha256": "2" * 64,
             "worker_sha256": "3" * 64,
         },
@@ -3109,7 +3109,7 @@ class WindowsCiContracts(unittest.TestCase):
         "name": "gh:sima-neat/core/offline",
         "artifact": {"type": "offline", "repository": "core", "package_path": "offline",
                      "distro": "elxr26", "arches": ["arm64"]},
-        "version": "0.6.2+codex." + commit[:12],
+        "version": "0.6.2+feature." + commit[:12],
         "installer_revision": commit,
         "resources": [CARD_BUNDLE_ARCHIVE],
         "resources-checksum": {CARD_BUNDLE_ARCHIVE: sha256(archive)},
@@ -3180,7 +3180,7 @@ class WindowsCiContracts(unittest.TestCase):
           "card-offline-space.log": "999999999999\n",
           "card-offline-stage.log": "/var/tmp/neat-offline-Ab3dE6gH\n",
           "card-runtime-packages-candidate.log": "".join(
-              f"{name} 0.6.2+codex.{commit[:12]}\n" for name in HARDWARE.CARD_RUNTIME_PACKAGES),
+              f"{name} 0.6.2+feature.{commit[:12]}\n" for name in HARDWARE.CARD_RUNTIME_PACKAGES),
       }
       calls = []
 
@@ -3200,7 +3200,7 @@ class WindowsCiContracts(unittest.TestCase):
         installed = install_card_candidate(args, bundle, root, state)
       stage = "/var/tmp/neat-offline-Ab3dE6gH"
       self.assertEqual(state, {"stage": stage, "install_started": True})
-      self.assertEqual(installed["sima-neat"], f"0.6.2+codex.{commit[:12]}")
+      self.assertEqual(installed["sima-neat"], f"0.6.2+feature.{commit[:12]}")
       self.assertEqual([command for owner, command in calls if owner == "root"], [
           HARDWARE.card_deploy_command(stage, phase)
           for phase in ("preflight", "install", "verify")])
@@ -4082,8 +4082,8 @@ class WindowsCiContracts(unittest.TestCase):
     self.assertEqual(RELEASE.package_prefix("v0.7.0", commit),
                      "core/v0.7.0/0123456789ab/pciehost/windows/amd64")
     # Ubuntu and sima-cli quote the whole ref, so a branch is one path segment.
-    self.assertEqual(RELEASE.package_prefix("codex/x y", commit),
-                     "core/codex%2Fx%20y/0123456789ab/pciehost/windows/amd64")
+    self.assertEqual(RELEASE.package_prefix("feature/x y", commit),
+                     "core/feature%2Fx%20y/0123456789ab/pciehost/windows/amd64")
     for invalid in ("0123456789ab", "C" * 40, ""):
       with self.subTest(commit=invalid), self.assertRaisesRegex(ValueError, "full lowercase"):
         RELEASE.package_prefix("v0.7.0", invalid)
