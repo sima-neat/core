@@ -88,10 +88,35 @@ class WindowsPackagingContract(unittest.TestCase):
     self.assertIn('string(REGEX MATCH "^[0-9]+[.][0-9]+" SIMAPCIE_MSVC_VERSION',
                   read_source("CMakeLists.txt"))
     self.assertIn(
-        'if(MSVC AND CMAKE_CXX_COMPILER_VERSION VERSION_LESS "@SIMAPCIE_MSVC_VERSION@")',
+        'if(MSVC AND _simapcie_msvc_version VERSION_LESS "@SIMAPCIE_MSVC_VERSION@")',
         read_source("cmake/SimaPCIeHostConfig.cmake.in"))
     self.assertIn("#if defined(_MSC_VER) && defined(_DEBUG)\n#error",
                   read_source("include/simaai/neat/pcie/Model.h"))
+
+  @unittest.skipUnless(shutil.which("cmake"), "requires CMake")
+  def test_consumer_toolset_check_uses_the_msvc_version_clang_cl_simulates(self):
+    config = read_source("cmake/SimaPCIeHostConfig.cmake.in")
+    check = config.split("include(CMakeFindDependencyMacro)", 1)[0].replace(
+        "@PACKAGE_INIT@", "").replace("@SIMAPCIE_MSVC_VERSION@", "19.44")
+    with tempfile.TemporaryDirectory() as directory:
+      script = Path(directory) / "check.cmake"
+      script.write_text(check, encoding="utf-8")
+      for compiler, simulated, accepted in (
+          ("19.44.35211", "", True),         # cl.exe of the producer toolset
+          ("19.38.33130", "", False),        # an older cl.exe
+          ("19.1.5", "19.44", True),         # clang-cl bundled with Visual Studio
+          ("20.1.0", "19.38", False),        # newer clang-cl on an older MSVC toolset
+      ):
+        with self.subTest(compiler=compiler, simulated=simulated):
+          result = subprocess.run(
+              ["cmake", "-DMSVC=1", f"-DCMAKE_CXX_COMPILER_VERSION={compiler}",
+               f"-DCMAKE_CXX_SIMULATE_ID={'MSVC' if simulated else ''}",
+               f"-DCMAKE_CXX_SIMULATE_VERSION={simulated}", "-P", str(script)],
+              capture_output=True, text=True, check=False)
+          self.assertEqual(result.returncode == 0, accepted, result.stderr)
+          if not accepted:
+            self.assertIn(f"this project uses MSVC {simulated or compiler}",
+                          " ".join(result.stderr.split()))
 
   def test_prebuilt_tutorials_ship_their_opencv_runtime(self):
     tutorials = read_source("tutorials/CMakeLists.txt")
