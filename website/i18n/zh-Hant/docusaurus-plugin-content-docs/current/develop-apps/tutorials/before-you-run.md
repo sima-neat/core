@@ -74,6 +74,8 @@ unzip models/resnet_50/w8a8/*.zip resnet_50_w8a8_mpk.tar.gz
 unzip models/yolov8s/w8a8/*.zip yolov8s_w8a8_mpk.tar.gz
 </ShellCommand>
 
+如果下載的是 `<id>_<variant>_mpk.tar.gz` 檔案而不是 ZIP 檔案（例如 Model Browser 開始以 ZIP 檔案封裝模型之前最後一次建置的模型），請直接從 `models/<id>/<variant>` 複製該檔案，不要解壓縮。 如果未安裝 `unzip`，請改為執行 `python3 -m zipfile -e models/yolov8s/w8a8/*.zip .`，並以相同方式處理 `resnet_50`；此命令會將 ZIP 檔案中的所有檔案解壓縮到目前目錄。
+
 Neat Library 的教學課程接受 `--model`，因此您可以直接傳遞解壓縮後的封存檔。PCIe 教學課程會在 PCIe 附加資料的根目錄中使用固定的檔案名稱：
 
 | PCIe 教學課程 | 必要的模型檔案 |

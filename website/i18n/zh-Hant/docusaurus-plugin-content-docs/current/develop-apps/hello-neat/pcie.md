@@ -40,6 +40,8 @@ Expand-Archive models\resnet_50\w8a8\*.zip -DestinationPath models\resnet_50\w8a
 Copy-Item models\resnet_50\w8a8\resnet_50_w8a8_mpk.tar.gz resnet_50.tar.gz
 ```
 
+如果下載的是 `<id>_<variant>_mpk.tar.gz` 檔案而不是 ZIP 檔案（例如 Model Browser 開始以 ZIP 檔案封裝模型之前最後一次建置的模型），請直接從 `models/<id>/<variant>` 複製該檔案，不要解壓縮。
+
 下載 [拉布拉多犬範例圖片](../../images/hello-neat-pcie-labrador.jpg)，並將其儲存為 `assets/sample.png`。
 
 圖片的原始素材為 [黃色拉布拉多犬，看起來很新。](https://commons.wikimedia.org/wiki/File:YellowLabradorLooking_new.jpg)，由 Elf 拍攝，Djmirko 和 FT2 進行修改，並以 [知識共享署名-相同方式分享 3.0](https://creativecommons.org/licenses/by-sa/3.0/) 授權。

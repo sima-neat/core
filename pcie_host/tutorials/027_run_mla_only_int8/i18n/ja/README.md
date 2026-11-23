@@ -60,6 +60,8 @@ Expand-Archive models\yolo26n\w8a8\*.zip -DestinationPath models\yolo26n\w8a8
 Copy-Item models\yolo26n\w8a8\yolo26n_w8a8_mpk.tar.gz .
 ```
 
+ダウンロードしたファイルが ZIP ファイルではなく `<id>_<variant>_mpk.tar.gz` ファイルの場合（Model Browser がモデルを ZIP ファイルとして提供する前に最後にビルドされたモデルの場合）は、展開せずに `models/<id>/<variant>` からそのファイルをコピーしてください。
+
 その他のアーカイブは、Model SDKの`tessellate_parameters`で`enable_mla=True`を指定し、すべての入力に`HWC`のDRAMレイアウト、すべての出力に`HWC16`を指定してコンパイルされていれば条件を満たします。Model Zooの`yolo_v8s`ビルドのように代わりにCVUでテッセレーションを行うアーカイブは、`mla_only`を有効にすると拒否されます。
 
 ```text

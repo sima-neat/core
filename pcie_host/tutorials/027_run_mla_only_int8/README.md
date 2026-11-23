@@ -88,6 +88,10 @@ Expand-Archive models\yolo26n\w8a8\*.zip -DestinationPath models\yolo26n\w8a8
 Copy-Item models\yolo26n\w8a8\yolo26n_w8a8_mpk.tar.gz .
 ```
 
+If the download is a `<id>_<variant>_mpk.tar.gz` file instead of a ZIP file, as
+for a model last built before Model Browser packaged models as ZIP files, copy
+that file from `models/<id>/<variant>` instead of extracting it.
+
 Other archives qualify when they were compiled with the Model SDK
 `tessellate_parameters` `enable_mla=True`, an `HWC` DRAM layout on every input,
 and `HWC16` on every output. Archives that tessellate on the CVU instead, such as

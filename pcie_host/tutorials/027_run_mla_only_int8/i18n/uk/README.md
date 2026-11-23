@@ -60,6 +60,8 @@ Expand-Archive models\yolo26n\w8a8\*.zip -DestinationPath models\yolo26n\w8a8
 Copy-Item models\yolo26n\w8a8\yolo26n_w8a8_mpk.tar.gz .
 ```
 
+Якщо завантажено файл `<id>_<variant>_mpk.tar.gz`, а не ZIP-файл (так буває з моделлю, востаннє зібраною до того, як Model Browser почав пакувати моделі у ZIP-файли), скопіюйте цей файл із `models/<id>/<variant>` замість розпакування.
+
 Інші архіви підходять, якщо їх скомпільовано з `tessellate_parameters` у Model SDK з `enable_mla=True`, розкладкою DRAM `HWC` на кожному вході та `HWC16` на кожному виході. Архіви, що натомість виконують теселяцію на CVU, як-от збірка `yolo_v8s` з Model Zoo, відхиляються, коли ввімкнено `mla_only`:
 
 ```text

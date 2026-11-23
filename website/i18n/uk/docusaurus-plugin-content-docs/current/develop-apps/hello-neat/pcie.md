@@ -42,6 +42,8 @@ Expand-Archive models\resnet_50\w8a8\*.zip -DestinationPath models\resnet_50\w8a
 Copy-Item models\resnet_50\w8a8\resnet_50_w8a8_mpk.tar.gz resnet_50.tar.gz
 ```
 
+Якщо завантажено файл `<id>_<variant>_mpk.tar.gz`, а не ZIP-файл (так буває з моделлю, востаннє зібраною до того, як Model Browser почав пакувати моделі у ZIP-файли), скопіюйте цей файл із `models/<id>/<variant>` замість розпакування.
+
 Завантажте [зразок зображення породи лабрадор](../../images/hello-neat-pcie-labrador.jpg)
 і збережіть його як `assets/sample.png`.
 

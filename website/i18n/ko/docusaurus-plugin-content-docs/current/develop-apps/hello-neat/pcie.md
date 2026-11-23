@@ -40,6 +40,8 @@ Expand-Archive models\resnet_50\w8a8\*.zip -DestinationPath models\resnet_50\w8a
 Copy-Item models\resnet_50\w8a8\resnet_50_w8a8_mpk.tar.gz resnet_50.tar.gz
 ```
 
+다운로드한 파일이 ZIP 파일이 아니라 `<id>_<variant>_mpk.tar.gz` 파일인 경우(Model Browser가 모델을 ZIP 파일로 패키징하기 전에 마지막으로 빌드된 모델), 압축을 풀지 말고 `models/<id>/<variant>`에서 해당 파일을 복사하세요.
+
 [래브라도어 견종 이미지 예시](../../images/hello-neat-pcie-labrador.jpg)를 다운로드하고 `assets/sample.png`로 저장하세요.
 
 이 이미지는 엘프가 촬영하고, 디미르코와 FT2가 수정한 [노란 래브라도어, 새것처럼 보이는 모습.jpg](https://commons.wikimedia.org/wiki/File:YellowLabradorLooking_new.jpg)를 기반으로 하며, [CC BY-SA 3.0](https://creativecommons.org/licenses/by-sa/3.0/) 라이선스에 따라 배포됩니다.

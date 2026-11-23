@@ -79,6 +79,10 @@ Expand-Archive models\yolov8s\w8a8\*.zip -DestinationPath models\yolov8s\w8a8
 Copy-Item models\yolov8s\w8a8\yolov8s_w8a8_mpk.tar.gz yolo_v8s_mpk.tar.gz
 ```
 
+If the download is a `<id>_<variant>_mpk.tar.gz` file instead of a ZIP file, as
+for a model last built before Model Browser packaged models as ZIP files, copy
+that file from `models/<id>/<variant>` instead of extracting it.
+
 **Python:**
 
 ```bash

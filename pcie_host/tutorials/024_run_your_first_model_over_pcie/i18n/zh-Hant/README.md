@@ -56,6 +56,8 @@ Expand-Archive models\yolov8s\w8a8\*.zip -DestinationPath models\yolov8s\w8a8
 Copy-Item models\yolov8s\w8a8\yolov8s_w8a8_mpk.tar.gz yolo_v8s_mpk.tar.gz
 ```
 
+如果下載的是 `<id>_<variant>_mpk.tar.gz` 檔案而不是 ZIP 檔案（例如 Model Browser 開始以 ZIP 檔案封裝模型之前最後一次建置的模型），請直接從 `models/<id>/<variant>` 複製該檔案，不要解壓縮。
+
 **Python:**
 
 ```bash

@@ -83,6 +83,10 @@ Copy-Item models\resnet_50\w8a8\resnet_50_w8a8_mpk.tar.gz resnet_50_mpk.tar.gz
 Copy-Item models\yolov8s\w8a8\yolov8s_w8a8_mpk.tar.gz yolo_v8s_mpk.tar.gz
 ```
 
+If the download is a `<id>_<variant>_mpk.tar.gz` file instead of a ZIP file, as
+for a model last built before Model Browser packaged models as ZIP files, copy
+that file from `models/<id>/<variant>` instead of extracting it.
+
 Run Python:
 
 ```bash

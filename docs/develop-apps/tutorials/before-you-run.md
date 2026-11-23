@@ -83,6 +83,13 @@ unzip models/resnet_50/w8a8/*.zip resnet_50_w8a8_mpk.tar.gz
 unzip models/yolov8s/w8a8/*.zip yolov8s_w8a8_mpk.tar.gz
 </ShellCommand>
 
+If the download is a `<id>_<variant>_mpk.tar.gz` file instead of a ZIP file, as
+for a model last built before Model Browser packaged models as ZIP files, copy
+that file from `models/<id>/<variant>` instead of extracting it. If `unzip` is
+not installed, run `python3 -m zipfile -e models/yolov8s/w8a8/*.zip .` and the
+same for `resnet_50` instead; it extracts every file in the ZIP file into the
+current directory.
+
 Neat Library tutorials accept `--model`, so you can pass the extracted archive
 directly. PCIe tutorials use fixed filenames in the PCIe extras root:
 

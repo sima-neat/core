@@ -40,6 +40,8 @@ Expand-Archive models\resnet_50\w8a8\*.zip -DestinationPath models\resnet_50\w8a
 Copy-Item models\resnet_50\w8a8\resnet_50_w8a8_mpk.tar.gz resnet_50.tar.gz
 ```
 
+ダウンロードしたファイルが ZIP ファイルではなく `<id>_<variant>_mpk.tar.gz` ファイルの場合（Model Browser がモデルを ZIP ファイルとして提供する前に最後にビルドされたモデルの場合）は、展開せずに `models/<id>/<variant>` からそのファイルをコピーしてください。
+
 [ラブラドール犬のサンプル画像](../../images/hello-neat-pcie-labrador.jpg)をダウンロードし、`assets/sample.png`として保存します。
 
 この画像は、Elfが撮影し、DjmirkoとFT2が修正した[黄色のラブラドール犬。新品のように見える。jpg](https://commons.wikimedia.org/wiki/File:YellowLabradorLooking_new.jpg)を基にしており、[CC BY-SA 3.0](https://creativecommons.org/licenses/by-sa/3.0/)のライセンスで提供されています。

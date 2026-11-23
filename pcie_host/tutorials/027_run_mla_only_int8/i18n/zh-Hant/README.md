@@ -60,6 +60,8 @@ Expand-Archive models\yolo26n\w8a8\*.zip -DestinationPath models\yolo26n\w8a8
 Copy-Item models\yolo26n\w8a8\yolo26n_w8a8_mpk.tar.gz .
 ```
 
+如果下載的是 `<id>_<variant>_mpk.tar.gz` 檔案而不是 ZIP 檔案（例如 Model Browser 開始以 ZIP 檔案封裝模型之前最後一次建置的模型），請直接從 `models/<id>/<variant>` 複製該檔案，不要解壓縮。
+
 其他封存檔若以 Model SDK 的 `tessellate_parameters` 設定 `enable_mla=True`、每個輸入使用 `HWC` DRAM 版面配置、每個輸出使用 `HWC16` 編譯，也符合條件。改在 CVU 上進行鑲嵌的封存檔，例如 Model Zoo 的 `yolo_v8s` 建置，在啟用 `mla_only` 時會被拒絕：
 
 ```text

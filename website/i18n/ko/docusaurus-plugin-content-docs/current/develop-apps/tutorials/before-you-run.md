@@ -74,6 +74,8 @@ unzip models/resnet_50/w8a8/*.zip resnet_50_w8a8_mpk.tar.gz
 unzip models/yolov8s/w8a8/*.zip yolov8s_w8a8_mpk.tar.gz
 </ShellCommand>
 
+다운로드한 파일이 ZIP 파일이 아니라 `<id>_<variant>_mpk.tar.gz` 파일인 경우(Model Browser가 모델을 ZIP 파일로 패키징하기 전에 마지막으로 빌드된 모델), 압축을 풀지 말고 `models/<id>/<variant>`에서 해당 파일을 복사하세요. `unzip`이 설치되어 있지 않으면 대신 `python3 -m zipfile -e models/yolov8s/w8a8/*.zip .`을 실행하고 `resnet_50`도 같은 방법으로 실행하세요. ZIP 파일의 모든 파일이 현재 디렉터리에 압축 해제됩니다.
+
 Neat Library 튜토리얼은 `--model`을 허용하므로 추출한 아카이브 파일을 직접 사용할 수 있습니다. PCIe 튜토리얼은 PCIe 추가 자료의 루트 디렉터리에 있는 고정된 파일 이름을 사용합니다.
 
 | PCIe 튜토리얼 | 필수 모델 파일 |
