@@ -2578,6 +2578,8 @@ if (NOT rtsp_encoded_boundary_caps_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
   set_property(TEST rtsp_encoded_boundary_caps_test APPEND PROPERTY LABELS "e2e;rtsp")
   set_property(TEST rtsp_encoded_boundary_caps_test APPEND PROPERTY RESOURCE_LOCK "rtsp")
   set_tests_properties(rtsp_encoded_boundary_caps_test PROPERTIES SKIP_RETURN_CODE 77)
+  simaneat_add_test(NAME rtsp_loopback_offer_test COMMAND rtsp_encoded_boundary_caps_test --loopback)
+  set_tests_properties(rtsp_loopback_offer_test PROPERTIES LABELS "e2e;rtsp" RESOURCE_LOCK "rtsp")
 endif()
 
 add_pipeline_test(

@@ -195,7 +195,7 @@
     },
     {
       "path": "website/i18n/uk/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
-      "line": "  доступний з хоста. Адреса за замовчуванням для карти 0: `10.0.0.2`.",
+      "line": "  доступний із хоста. Типова адреса для карти 0 — `10.0.0.2`.",
       "count": 1,
       "reason": "Network address example, not a release version"
     },
@@ -489,19 +489,19 @@
     },
     {
       "path": "website/i18n/uk/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
-      "line": "Автономні пакети Neat PCIe доступні у версії 0.6.0 або новішій.",
+      "line": "Офлайн-пакети Neat PCIe доступні у версії 0.6.0 і новіших.",
       "count": 1,
       "reason": "Minimum supported offline package version"
     },
     {
       "path": "website/i18n/uk/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
-      "line": "Виберіть версію 0.6.0 або новішу для цільового хоста.",
+      "line": "Виберіть для цільового хоста версію 0.6.0 або новішу.",
       "count": 1,
       "reason": "Minimum supported offline package version"
     },
     {
       "path": "website/i18n/uk/docusaurus-plugin-content-docs/current/getting-started/neat-library/install-or-update.mdx",
-      "line": "Автономні пакети Neat Library доступні у версії 0.6.0 або новішій.",
+      "line": "Офлайн-пакети Neat Library доступні у версії 0.6.0 і новіших.",
       "count": 1,
       "reason": "Minimum supported offline package version"
     },
