@@ -279,10 +279,31 @@ class WindowsPackagingContract(unittest.TestCase):
     doctor = read_source("scripts/windows/sima-pcie-host-doctor.cmd")
     self.assertEqual(doctor.count('if not "%errorlevel%"=="0" ('), 3)
 
+  def test_windows_scripts_never_run_a_program_from_the_current_directory(self):
+    # cmd.exe searches the current directory before PATH for a bare program name.
+    for script in sorted((ROOT / "scripts" / "windows").glob("*.cmd")):
+      with self.subTest(script=script.name):
+        commands = "\n".join(
+            line for line in script.read_text(encoding="utf-8").splitlines()
+            if not line.lstrip().lower().startswith("rem "))
+        prefixes = re.findall(
+            r"(?i)([^\s'(\"]*)\b(?:reg|findstr|powershell|where|sc|cmd)\.exe\b", commands)
+        self.assertTrue(all(
+            prefix in ("%SystemRoot%\\System32\\",
+                       "%SystemRoot%\\System32\\WindowsPowerShell\\v1.0\\")
+            for prefix in prefixes), prefixes)
+    status = read_source("scripts/windows/neat.cmd")
+    # py.exe and python.exe stay PATH lookups, without the current directory.
+    self.assertLess(status.index('set "NoDefaultCurrentDirectoryInExePath=1"'),
+                    status.index("py.exe -3.14"))
+    self.assertLess(status.index("setlocal"),
+                    status.index('set "NoDefaultCurrentDirectoryInExePath=1"'))
+
   def test_doctor_reports_driver_signing_state_without_failing(self):
     doctor = read_source("scripts/windows/sima-pcie-host-doctor.cmd")
     (line,) = [line for line in doctor.splitlines() if "Confirm-SecureBootUEFI" in line
-               and line.startswith("powershell.exe")]
+               and line.startswith(
+                   '"%SystemRoot%\\System32\\WindowsPowerShell\\v1.0\\powershell.exe"')]
     # Runs only when no MLA device works, before the service check, and sets no exit code.
     self.assertIn("ConfigManagerErrorCode=0' -ErrorAction SilentlyContinue) { exit 0 }", line)
     self.assertLess(doctor.index(line), doctor.index("Get-Service -Name SiMaMlaDaemon"))

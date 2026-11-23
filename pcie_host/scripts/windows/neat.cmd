@@ -21,6 +21,9 @@ if not exist "%NEAT_HELPER%" (
   exit /b 1
 )
 set "NEAT_PYTHON=%USERPROFILE%\pyneatpcie\Scripts\python.exe"
+rem Find py.exe and python.exe on PATH only: cmd.exe otherwise searches the current
+rem directory first. Local to this script (setlocal).
+set "NoDefaultCurrentDirectoryInExePath=1"
 set "NEAT_PYTHON_ARGS="
 if not exist "%NEAT_PYTHON%" (
   set "NEAT_PYTHON=python.exe"

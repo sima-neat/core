@@ -21,7 +21,9 @@ set "_SIMA_PCIE_HOST_SERVICE="
 if not defined SIMA_WINDOWS_PLATFORM_RUNTIME_DIR (
   rem reg.exe prints "ImagePath <type> <command line>" in every display language; the
   rem service-control labels are translated. "call set" expands %%VAR%% in REG_EXPAND_SZ.
-  for /f "tokens=2,*" %%I in ('reg.exe query "HKLM\SYSTEM\CurrentControlSet\Services\SiMaMlaDaemon" /v ImagePath 2^>nul ^| findstr.exe /C:"ImagePath"') do call set "_SIMA_PCIE_HOST_SERVICE=%%J"
+  rem System tools by full path: cmd.exe searches the current directory first. SystemRoot
+  rem has no spaces, and quoting it here would break for /f quote handling.
+  for /f "tokens=2,*" %%I in ('%SystemRoot%\System32\reg.exe query "HKLM\SYSTEM\CurrentControlSet\Services\SiMaMlaDaemon" /v ImagePath 2^>nul ^| %SystemRoot%\System32\findstr.exe /C:"ImagePath"') do call set "_SIMA_PCIE_HOST_SERVICE=%%J"
 )
 rem The executable is the first item of the command line; it is quoted when it has spaces.
 if defined _SIMA_PCIE_HOST_SERVICE for %%K in (%_SIMA_PCIE_HOST_SERVICE%) do if not defined SIMA_WINDOWS_PLATFORM_RUNTIME_DIR set "SIMA_WINDOWS_PLATFORM_RUNTIME_DIR=%%~dpK"
