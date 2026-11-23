@@ -232,6 +232,27 @@ class WindowsPackagingContract(unittest.TestCase):
     doctor = read_source("scripts/windows/sima-pcie-host-doctor.cmd")
     self.assertEqual(doctor.count('if not "%errorlevel%"=="0" ('), 3)
 
+  def test_doctor_reports_driver_signing_state_without_failing(self):
+    doctor = read_source("scripts/windows/sima-pcie-host-doctor.cmd")
+    (line,) = [line for line in doctor.splitlines() if "Confirm-SecureBootUEFI" in line
+               and line.startswith("powershell.exe")]
+    # Runs only when no MLA device works, before the service check, and sets no exit code.
+    self.assertIn("ConfigManagerErrorCode=0' -ErrorAction SilentlyContinue) { exit 0 }", line)
+    self.assertLess(doctor.index(line), doctor.index("Get-Service -Name SiMaMlaDaemon"))
+    self.assertEqual(doctor[doctor.index(line):].count('if not "%errorlevel%"=="0" ('), 2)
+    # Non-elevated: the registry boot options replace bcdedit, and a refused
+    # Confirm-SecureBootUEFI asks for an elevated check instead of failing.
+    self.assertIn("SystemStartOptions -match 'TESTSIGNING'", line)
+    self.assertNotIn("bcdedit.exe", line.lower())
+    self.assertIn("catch { $secureBoot = 'unknown, run Confirm-SecureBootUEFI from an "
+                  "elevated PowerShell to check' }", line)
+    self.assertIn("Secure Boot off and test-signing on", line)
+    # One cmd.exe-quoted argument: no inner double quotes or %-expansion.
+    command = line.split(' -Command "', 1)[1]
+    self.assertTrue(command.endswith('"'))
+    self.assertNotIn('"', command[:-1])
+    self.assertNotIn("%", command)
+
   def test_setup_sends_only_the_public_key_on_standard_input(self):
     source = SETUP_SCRIPT.read_text(encoding="utf-8")
     self.assertRegex(
