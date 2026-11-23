@@ -6,14 +6,29 @@ import ipaddress
 import json
 import os
 from pathlib import Path
+import platform
 import re
 import shlex
 import subprocess
 import sys
 
+WINDOWS = os.name == 'nt'
+# MSI product names (CPACK_PACKAGE_NAME) of Core and Scheduler, as Linux lists sima*/neat* DEBs.
+WINDOWS_PRODUCTS = ('sima-pcie-host', 'simaai-scheduler-pcie-host')
+# The Platform virtual Ethernet driver; Windows numbers later instances "#2", "#3", ...
+# A LAN, VPN or Hyper-V adapter at 10.0.N.1 is not a card.
+WINDOWS_CARD_ADAPTER = r'SiMa\.ai Virtual Ethernet Adapter( #\d+)?'
+WINDOWS_ADAPTERS = (
+    "$ErrorActionPreference='Stop'; [Console]::OutputEncoding=New-Object Text.UTF8Encoding $false; "
+    "Get-NetAdapter | ForEach-Object { $a=$_; "
+    "$ips=@(Get-NetIPAddress -InterfaceIndex $a.ifIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue); "
+    "if (-not $ips) { $ips=@($null) }; foreach ($ip in $ips) { [pscustomobject]@{"
+    "Alias=$a.Name; Description=$a.InterfaceDescription; Status=[string]$a.Status; Address=$ip.IPAddress} } "
+    "} | ConvertTo-Json -Compress")
 
-def command(args, **kwargs):
-    return subprocess.run(args, check=True, text=True, capture_output=True, timeout=8, **kwargs).stdout
+
+def command(args, timeout=8, **kwargs):
+    return subprocess.run(args, check=True, text=True, capture_output=True, timeout=timeout, **kwargs).stdout
 
 
 def fields(path):
@@ -43,6 +58,53 @@ def software():
             'packages': packages, 'python': python}
 
 
+def registry(path, names, children=False):
+    import winreg
+    # 64-bit view: the x64 MSIs register there whatever the interpreter's bitness.
+    access = winreg.KEY_READ | winreg.KEY_WOW64_64KEY
+
+    def read(key):
+        row = {}
+        for name in names:
+            try:
+                row[name] = winreg.QueryValueEx(key, name)[0]
+            except OSError:
+                pass
+        return row
+    with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, path, 0, access) as key:
+        if not children:
+            return [read(key)]
+        rows = []
+        for index in range(winreg.QueryInfoKey(key)[0]):
+            try:
+                with winreg.OpenKey(key, winreg.EnumKey(key, index), 0, access) as child:
+                    rows.append(read(child))
+            except OSError:
+                continue
+        return rows
+
+
+def windows_software():
+    try:
+        products = registry(r'SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall',
+                            ('DisplayName', 'DisplayVersion'), children=True)
+        current = registry(r'SOFTWARE\Microsoft\Windows NT\CurrentVersion',
+                           ('DisplayVersion', 'CurrentBuild'))[0]
+    except OSError as exc:
+        raise ValueError('Unable to read installed Neat products: '+str(exc)) from exc
+    packages = {}
+    for product in products:
+        name = str(product.get('DisplayName', ''))
+        if name.startswith(WINDOWS_PRODUCTS):
+            packages[name] = {'version': str(product.get('DisplayVersion', '')), 'architecture': 'amd64'}
+    # Not ProductName: Windows 11 still stores "Windows 10" there.
+    pretty = ' '.join(part for part in ('Windows', platform.release(), current.get('DisplayVersion'),
+                                        '(build '+str(current.get('CurrentBuild', '?'))+')') if part)
+    release = {'ID': 'windows', 'VERSION_ID': platform.version(), 'PRETTY_NAME': pretty}
+    python = {name: python_installations(name) for name in ('pyneat', 'pyneatpcie')}
+    return {'os': release, 'board': {}, 'packages': packages, 'python': python}
+
+
 def python_installations(name):
     # Inspect metadata only: importing native modules can initialize hardware.
     found = {}
@@ -59,7 +121,7 @@ def python_installations(name):
     for distribution in importlib.metadata.distributions():
         add(distribution)
     for venv in (Path.home()/name, Path('/opt/sima/neat')/name, Path('/media/nvme')/name):
-        for site in sorted(venv.glob('lib/python*/site-packages')):
+        for site in sorted([*venv.glob('lib/python*/site-packages'), *venv.glob('Lib/site-packages')]):
             for distribution in importlib.metadata.distributions(path=[str(site)]):
                 add(distribution)
     installations = [found[key] for key in sorted(found)]
@@ -99,12 +161,50 @@ def endpoint(interface):
     return local[0], peer
 
 
+def windows_inventory():
+    # Named deviation: Windows has no sysfs PCI inventory; cards are the Platform's
+    # virtual Ethernet adapters, listed by interface and address without a PCI address.
+    powershell = Path(os.environ.get('SystemRoot', r'C:\Windows'))/'System32/WindowsPowerShell/v1.0/powershell.exe'
+    try:
+        rows = json.loads(command([str(powershell), '-NoLogo', '-NoProfile', '-NonInteractive', '-Command',
+                                   WINDOWS_ADAPTERS], timeout=30, encoding='utf-8-sig') or '[]')
+        adapters = {}
+        for row in rows if isinstance(rows, list) else [rows]:
+            if row.get('Status') == 'Up' and re.fullmatch(WINDOWS_CARD_ADAPTER, row.get('Description') or ''):
+                addresses = adapters.setdefault(row['Alias'], [])
+                if row.get('Address'):
+                    addresses.append(str(ipaddress.IPv4Address(row['Address'])))
+    except subprocess.CalledProcessError as exc:
+        raise OSError(exc.stderr.strip() or str(exc)) from exc
+    except (ValueError, KeyError, AttributeError, subprocess.SubprocessError) as exc:
+        raise OSError(str(exc)) from exc
+    return [{'bdf': None, 'deviceId': None, 'interfaces': [alias], 'addresses': sorted(addresses)}
+            for alias, addresses in sorted(adapters.items())]
+
+
+def windows_endpoint(row):
+    local = row['addresses']
+    if len(local) != 1 or not re.fullmatch(r'10\.0\.\d+\.1', local[0]):
+        raise ValueError('Expected a provisioned 10.0.N.1 PCIe interface; check PCIe network setup')
+    return local[0], local[0].rsplit('.', 1)[0]+'.2'
+
+
+def windows_ssh():
+    # As HostPlatform.cpp open_ssh_executable: System32 OpenSSH, then absolute PATH entries.
+    for folder in [Path(os.environ.get('SystemRoot', r'C:\Windows'))/'System32/OpenSSH',
+                   *map(Path, os.environ.get('PATH', '').split(os.pathsep))]:
+        if folder.is_absolute() and (folder/'ssh.exe').is_file():
+            return str(folder/'ssh.exe')
+    raise ValueError('Windows OpenSSH client (ssh.exe) not found; install the OpenSSH Client optional feature')
+
+
 def collect(root=Path('/sys/bus/pci/devices'), user='sima', key=None):
     if not re.fullmatch(r'[a-z_][a-z0-9_-]*', user):
         raise ValueError('Invalid PCIe SSH user')
-    result = {'host': software(), 'cards': [], 'errors': []}
+    result = {'host': windows_software() if WINDOWS else software(), 'cards': [], 'errors': []}
+    discover = windows_inventory if WINDOWS else lambda: inventory(root)
     try:
-        before = inventory(root)
+        before = discover()
     except OSError as exc:
         result['errors'].append('Unable to read PCI inventory: '+str(exc))
         return result
@@ -115,16 +215,17 @@ def collect(root=Path('/sys/bus/pci/devices'), user='sima', key=None):
         try:
             if len(row['interfaces']) != 1:
                 raise ValueError('Expected one provisioned PCI-owned network interface')
-            local, peer = endpoint(row['interfaces'][0])
+            local, peer = windows_endpoint(row) if WINDOWS else endpoint(row['interfaces'][0])
             card['address'] = peer
             if peer in peers:
                 raise ValueError('Duplicate card address; check PCIe network setup')
             peers.add(peer)
-            ssh = ['ssh', '-T', '-b', local, '-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=yes',
+            ssh = [windows_ssh() if WINDOWS else 'ssh',
+                   '-T', '-b', local, '-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=yes',
                    '-o', 'ConnectTimeout=3', '-o', 'ConnectionAttempts=1', '-o', 'ServerAliveInterval=2',
                    '-o', 'ServerAliveCountMax=1']
             if key and key.is_file():
-                ssh += ['-i', str(key)]
+                ssh += ['-i', str(key)] + (['-o', 'IdentitiesOnly=yes'] if WINDOWS else [])
             # stdin carries only this read-only probe; no installation, sudo,
             # password prompts, host-key enrollment, or network configuration.
             raw = command([*ssh, user+'@'+peer, shlex.join(['python3', '-B', '-', '--probe'])],
@@ -157,7 +258,7 @@ def collect(root=Path('/sys/bus/pci/devices'), user='sima', key=None):
             detail = exc.stderr.strip() if isinstance(exc, subprocess.CalledProcessError) and exc.stderr else str(exc)
             card['error'] = detail
     try:
-        if inventory(root) != before:
+        if discover() != before:
             result['errors'].append('PCI inventory changed during status collection; rerun with stable topology')
     except OSError as exc:
         result['errors'].append('Unable to recheck PCI inventory: '+str(exc))
@@ -190,7 +291,8 @@ def print_software(value, python_name):
 
 
 def render(value):
-    print('Neat Environment\n  Mode               Ubuntu PCIe host\n\nHost Software')
+    print('Neat Environment\n  Mode               '+('Windows' if WINDOWS else 'Ubuntu')
+          +' PCIe host\n\nHost Software')
     release = value['host']['os']
     print('    OS: '+safe(release.get('PRETTY_NAME') or release.get('ID', 'unknown')))
     print_software(value['host'], 'pyneatpcie')
@@ -198,8 +300,9 @@ def render(value):
     if not value['cards']:
         print('  No SiMa PCIe cards detected')
     for card in value['cards']:
-        print('  '+safe(card['bdf'])+'  '+safe(', '.join(card['interfaces']) or 'no interface')
-              +'  '+safe(card['address'] or 'no address'))
+        parts = ([card['bdf']] if card['bdf'] else []) + [', '.join(card['interfaces']) or 'no interface',
+                                                         card['address'] or 'no address']
+        print('  '+'  '.join(safe(part) for part in parts))
         if card['software']:
             board = card['software']['board']
             print('    Board: '+safe(board.get('MACHINE', 'unknown'))

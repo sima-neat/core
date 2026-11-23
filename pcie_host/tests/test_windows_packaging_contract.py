@@ -130,6 +130,10 @@ class WindowsPackagingContract(unittest.TestCase):
     self.assertIn("scripts/windows/sima-pcie-host-doctor.cmd", cmake)
     self.assertIn("scripts/windows/pcie-setup.cmd", cmake)
     self.assertIn("scripts/windows/pcie-setup.ps1", cmake)
+    self.assertIn("scripts/windows/neat.cmd", cmake)
+    windows_block = cmake[cmake.index("if(WIN32)\n  get_target_property"):]
+    self.assertIn("${SIMA_NEAT_CORE_ROOT}/scripts/neat_pcie_status.py\n"
+                  "    DESTINATION ${CMAKE_INSTALL_DATADIR}/sima-pcie-host", windows_block)
     self.assertIn("COMPONENT Runtime", cmake)
     self.assertIn("SIMAPCIE_NLOHMANN_INCLUDE_ROOT", cmake)
     self.assertIn("nlohmann-json-LICENSE.MIT", cmake)
@@ -190,7 +194,16 @@ class WindowsPackagingContract(unittest.TestCase):
     producer = WINDOWS_PRODUCER.read_text(encoding="utf-8")
     self.assertIn('install_root / "bin" / "pcie-setup.cmd"', producer)
     self.assertIn('"-Hosts", "10.0.0.2", "-DryRun"', producer)
+    self.assertIn('install_root / "bin" / "neat.cmd"', producer)
+    self.assertIn('install_root / "share" / "sima-pcie-host" / "neat_pcie_status.py"', producer)
     self.assertIn('"neat-pcie-application-builder" / "playbook.yml"', producer)
+
+    status = read_source("scripts/windows/neat.cmd")
+    self.assertIn(r"%~dp0..\share\sima-pcie-host\neat_pcie_status.py", status)
+    self.assertIn(r"%USERPROFILE%\pyneatpcie\Scripts\python.exe", status)
+    self.assertIn("py.exe -3.14", status)
+    self.assertIn("--render", status)
+    self.assertIn("exit /b 64", status)
 
   def test_windows_scripts_treat_negative_exit_codes_as_failure(self):
     # "if errorlevel 1" is false for crash codes such as 0xC0000142 (-1073741502).

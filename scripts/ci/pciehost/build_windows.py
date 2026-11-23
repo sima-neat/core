@@ -870,6 +870,8 @@ def build(args: argparse.Namespace) -> None:
         install_root / "bin" / "sima-pcie-host-doctor.cmd",
         install_root / "bin" / "pcie-setup.cmd",
         install_root / "bin" / "pcie-setup.ps1",
+        install_root / "bin" / "neat.cmd",
+        install_root / "share" / "sima-pcie-host" / "neat_pcie_status.py",
         install_root / "share" / "sima-pcie-host" / "skills" /
         "neat-pcie-application-builder" / "SKILL.md",
         install_root / "share" / "sima-pcie-host" / "skills" /

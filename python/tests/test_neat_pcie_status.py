@@ -265,3 +265,125 @@ def test_invalid_installation_records_do_not_mark_card_healthy(tmp_path, install
         result = status.collect(tmp_path)
     assert result['cards'][0]['state'] == 'unavailable'
     assert 'Invalid card Python installation report' in result['cards'][0]['error']
+
+
+def adapter(alias, description, address, state='Up'):
+    return {'Alias': alias, 'Description': description, 'Status': state, 'Address': address}
+
+
+SIMA_ADAPTER = 'SiMa.ai Virtual Ethernet Adapter'
+
+
+def test_windows_software_lists_only_neat_msi_products(tmp_path, monkeypatch):
+    products = [{'DisplayName': 'sima-pcie-host', 'DisplayVersion': '0.6.2'},
+                {'DisplayName': 'simaai-scheduler-pcie-host', 'DisplayVersion': '0.6.1'},
+                {'DisplayName': 'GStreamer 1.28.6 (MSVC 64-bit)', 'DisplayVersion': '1.28.6'},
+                {'DisplayVersion': '1.0'}]
+    def registry(path, names, children=False):
+        return products if children else [{'DisplayVersion': '24H2', 'CurrentBuild': '26100'}]
+    monkeypatch.setattr(status, 'registry', registry)
+    monkeypatch.setattr(status.platform, 'release', lambda: '11')
+    monkeypatch.setattr(status.Path, 'home', lambda: tmp_path)
+    # The managed venv uses the Windows layout: Lib/site-packages, no pythonX.Y.
+    metadata = tmp_path/'pyneatpcie/Lib/site-packages/pyneatpcie-0.6.2.dist-info'
+    metadata.mkdir(parents=True)
+    (metadata/'METADATA').write_text('Name: pyneatpcie\nVersion: 0.6.2\n')
+    (tmp_path/'pyneatpcie/pyvenv.cfg').write_text('')
+    isolate_python_distributions(monkeypatch, tmp_path, [])
+    host = status.windows_software()
+    assert host['packages'] == {'sima-pcie-host': {'version': '0.6.2', 'architecture': 'amd64'},
+                                'simaai-scheduler-pcie-host': {'version': '0.6.1', 'architecture': 'amd64'}}
+    assert host['os']['PRETTY_NAME'] == 'Windows 11 24H2 (build 26100)'
+    assert [item['environment'] for item in host['python']['pyneatpcie']['installations']] == [
+        str(tmp_path/'pyneatpcie')]
+
+
+def windows_collect(monkeypatch, adapters, probe):
+    commands = []
+    def command(args, **kwargs):
+        commands.append(args)
+        if args[0].endswith('powershell.exe'):
+            return json.dumps(adapters)
+        assert kwargs['input'] == (ROOT/'scripts/neat_pcie_status.py').read_text()
+        return probe(args)
+    monkeypatch.setattr(status, 'WINDOWS', True)
+    monkeypatch.setattr(status, 'windows_ssh', lambda: r'C:\Windows\System32\OpenSSH\ssh.exe')
+    with patch.object(status, 'windows_software', return_value=report()), \
+         patch.object(status, 'command', side_effect=command):
+        return status.collect(), [args for args in commands if 'ssh.exe' in args[0]]
+
+
+def test_windows_cards_are_only_up_platform_virtual_adapters(monkeypatch):
+    adapters = [adapter('Ethernet', 'Intel(R) Ethernet Connection I219-LM', '10.0.1.1'),
+                adapter('Ethernet 2', SIMA_ADAPTER, '10.0.0.1'),
+                adapter('Ethernet 2', SIMA_ADAPTER, '169.254.7.7'),
+                adapter('Ethernet 3', SIMA_ADAPTER+' #2', '10.0.2.1'),
+                adapter('Ethernet 4', SIMA_ADAPTER+' #3', '10.0.3.1', state='Disconnected'),
+                adapter('vEthernet', 'Hyper-V Virtual Ethernet Adapter', '10.0.4.1'),
+                adapter('Ethernet 5', SIMA_ADAPTER+' #4', None)]
+    result, probes = windows_collect(monkeypatch, adapters, lambda args: json.dumps(report()))
+    cards = result['cards']
+    assert [(card['interfaces'], card['address'], card['state']) for card in cards] == [
+        (['Ethernet 2'], None, 'unavailable'), (['Ethernet 3'], '10.0.2.2', 'ok'),
+        (['Ethernet 5'], None, 'unavailable')]
+    assert all(card['bdf'] is None for card in cards)
+    assert 'Expected a provisioned 10.0.N.1' in cards[0]['error']
+    assert len(probes) == 1
+    args = probes[0]
+    assert args[args.index('-b')+1] == '10.0.2.1' and 'sima@10.0.2.2' in args
+    assert 'StrictHostKeyChecking=yes' in args and 'BatchMode=yes' in args
+    assert result['errors'] == []
+
+
+def test_windows_single_adapter_json_and_identity_options(tmp_path, monkeypatch):
+    key = tmp_path/'sima_neat_pcie_ed25519'
+    key.write_text('key')
+    commands = []
+    monkeypatch.setattr(status, 'WINDOWS', True)
+    monkeypatch.setattr(status, 'windows_ssh', lambda: 'ssh.exe')
+    def command(args, **kwargs):
+        commands.append(args)
+        # PowerShell emits a bare object, not an array, for one adapter row.
+        return json.dumps(adapter('Ethernet 2', SIMA_ADAPTER, '10.0.0.1')) if len(commands) != 2 else json.dumps(report())
+    with patch.object(status, 'windows_software', return_value=report()), \
+         patch.object(status, 'command', side_effect=command):
+        result = status.collect(key=key)
+    assert result['cards'][0]['state'] == 'ok' and result['cards'][0]['address'] == '10.0.0.2'
+    assert commands[1][commands[1].index('-i')+1:commands[1].index('-i')+4] == [
+        str(key), '-o', 'IdentitiesOnly=yes']
+
+
+def test_windows_failed_probe_keeps_card_with_error(monkeypatch):
+    def probe(args):
+        raise subprocess.CalledProcessError(255, args, stderr='Host key verification failed')
+    result, probes = windows_collect(monkeypatch, [adapter('Ethernet 2', SIMA_ADAPTER, '10.0.0.1')], probe)
+    card = result['cards'][0]
+    assert (card['address'], card['state'], card['software']) == ('10.0.0.2', 'unavailable', None)
+    assert 'Host key verification failed' in card['error']
+    assert len(probes) == 1
+
+
+def test_windows_adapter_query_failure_and_changed_topology(monkeypatch):
+    monkeypatch.setattr(status, 'WINDOWS', True)
+    def failed(args, **kwargs):
+        raise subprocess.CalledProcessError(1, args, stderr='Get-NetAdapter : Access denied')
+    with patch.object(status, 'windows_software', return_value=report()), \
+         patch.object(status, 'command', side_effect=failed):
+        result = status.collect()
+    assert result['cards'] == [] and 'Access denied' in result['errors'][0]
+    with patch.object(status, 'windows_software', return_value=report()), \
+         patch.object(status, 'windows_inventory', side_effect=[[], [{'bdf': None}]]):
+        result = status.collect()
+    assert 'changed' in result['errors'][0]
+
+
+def test_windows_render_names_host_and_cards_without_pci_address(monkeypatch, capsys):
+    monkeypatch.setattr(status, 'WINDOWS', True)
+    host = dict(report(), os={'ID': 'windows', 'PRETTY_NAME': 'Windows 11 24H2 (build 26100)'})
+    status.render({'host': host, 'errors': [], 'cards': [
+        {'bdf': None, 'interfaces': ['Ethernet 2'], 'address': '10.0.0.2', 'software': report(), 'error': None},
+        {'bdf': None, 'interfaces': ['Ethernet 3'], 'address': None, 'software': None, 'error': 'down'}]})
+    text = capsys.readouterr().out
+    assert 'Windows PCIe host' in text and 'Ubuntu' not in text
+    assert '  Ethernet 2  10.0.0.2\n' in text and '  Ethernet 3  no address\n' in text
+    assert 'None' not in text

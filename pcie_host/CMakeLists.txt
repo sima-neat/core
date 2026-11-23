@@ -201,6 +201,7 @@ if(WIN32)
     ${CMAKE_CURRENT_SOURCE_DIR}/scripts/windows/sima-pcie-host-run.cmd
     ${CMAKE_CURRENT_SOURCE_DIR}/scripts/windows/sima-pcie-host-doctor.cmd
     ${CMAKE_CURRENT_SOURCE_DIR}/scripts/windows/pcie-setup.cmd
+    ${CMAKE_CURRENT_SOURCE_DIR}/scripts/windows/neat.cmd
     DESTINATION ${CMAKE_INSTALL_BINDIR}
     COMPONENT Runtime
   )
@@ -208,6 +209,9 @@ if(WIN32)
     DESTINATION ${CMAKE_INSTALL_BINDIR}
     COMPONENT Runtime
   )
+  install(FILES ${SIMA_NEAT_CORE_ROOT}/scripts/neat_pcie_status.py
+    DESTINATION ${CMAKE_INSTALL_DATADIR}/sima-pcie-host
+    COMPONENT Runtime)
 endif()
 
 set(SIMAPCIE_APPLICATION_SKILL_INSTALL_DIR
