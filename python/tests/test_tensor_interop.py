@@ -145,3 +145,104 @@ def test_explicit_tiled_storage_rejects_dense_exports():
   tensor.semantic = semantic
   assert not tensor.has_tiled_storage()
   np.testing.assert_array_equal(tensor.to_numpy(copy=False), stored)
+
+
+# --- Dense geometry that does not fit the storage -------------------------------------------
+#
+# The tensor wraps the first 16 bytes of a larger NumPy buffer, so a read past the 16-byte
+# storage stays inside memory that is valid for the test.
+
+
+def _cpu_tensor_over_prefix():
+  backing = np.arange(1024, dtype=np.uint8) % 251
+  tensor = pn.Tensor.from_numpy(backing[:16].reshape(4, 4), copy=False, memory=pn.TensorMemory.CPU)
+  assert tensor.storage.size_bytes == 16
+  return backing, tensor
+
+
+def _grow_shape_keep_strides(t):
+  t.shape = [8, 8]
+
+
+def _wide_row_stride(t):
+  t.strides_bytes = [100, 1]
+
+
+def _offset_far_past_end(t):
+  t.byte_offset = 1000
+
+
+def _stride_rank_mismatch(t):
+  t.shape = [2, 2, 4]
+
+
+def _negative_dimension(t):
+  t.shape = [4, -4]
+
+
+_BAD_GEOMETRY = [
+    _grow_shape_keep_strides, _wide_row_stride, _offset_far_past_end, _stride_rank_mismatch,
+    _negative_dimension
+]
+_BAD_GEOMETRY_IDS = [f.__name__.lstrip("_") for f in _BAD_GEOMETRY]
+
+
+@pytest.mark.parametrize("edit", _BAD_GEOMETRY, ids=_BAD_GEOMETRY_IDS)
+def test_validate_rejects_dense_geometry_outside_storage(edit):
+  _, tensor = _cpu_tensor_over_prefix()
+  ok, message = tensor.validate()
+  assert ok, message
+  edit(tensor)
+  ok, message = tensor.validate()
+  assert not ok
+  assert message
+
+
+@pytest.mark.parametrize("edit", _BAD_GEOMETRY, ids=_BAD_GEOMETRY_IDS)
+def test_to_numpy_refuses_dense_geometry_outside_storage(edit):
+  _, tensor = _cpu_tensor_over_prefix()
+  edit(tensor)
+  with pytest.raises(RuntimeError):
+    tensor.to_numpy(copy=False)
+  with pytest.raises(RuntimeError):
+    tensor.to_numpy(copy=True)
+  with pytest.raises(RuntimeError):
+    np.from_dlpack(tensor)
+
+
+@pytest.mark.parametrize("copy", [False, True])
+def test_to_numpy_exports_sub_view_inside_storage(copy):
+  backing, tensor = _cpu_tensor_over_prefix()
+  tensor.shape = [2, 4]
+  tensor.byte_offset = 8
+  assert tensor.validate()[0]
+  np.testing.assert_array_equal(tensor.to_numpy(copy=copy), backing[8:16].reshape(2, 4))
+
+
+@pytest.mark.parametrize("copy", [False, True])
+def test_to_numpy_exports_strided_view_with_gaps(copy):
+  view = np.arange(24, dtype=np.int16).reshape(3, 8)[:, ::2]
+  tensor = pn.Tensor.from_numpy(view, copy=False, memory=pn.TensorMemory.CPU)
+  assert tensor.validate()[0]
+  np.testing.assert_array_equal(tensor.to_numpy(copy=copy), view)
+
+
+def test_zero_element_tensor_validates_and_exports():
+  _, tensor = _cpu_tensor_over_prefix()
+  tensor.shape = [0, 6]
+  tensor.strides_bytes = []
+  ok, message = tensor.validate()
+  assert ok, message
+  assert tensor.to_numpy(copy=False).shape == (0, 6)
+
+
+def test_rank_zero_scalar_validates_and_exports():
+  backing = np.arange(8, dtype=np.uint8)
+  tensor = pn.Tensor.from_numpy(backing.view(np.int32).reshape(2), copy=False,
+                                memory=pn.TensorMemory.CPU)
+  tensor.shape = []
+  tensor.strides_bytes = []
+  tensor.byte_offset = 4
+  ok, message = tensor.validate()
+  assert ok, message
+  assert tensor.to_numpy(copy=False).item() == backing.view(np.int32)[1]

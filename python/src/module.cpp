@@ -675,6 +675,10 @@ void delete_dlpack_managed(DLManagedTensor* managed) {
 PyObject* tensor_to_dlpack_capsule(const Tensor& input) {
   if (input.has_tiled_storage())
     throw std::runtime_error("__dlpack__: tiled storage requires explicit detessellation");
+  // Judge the view against its own storage before any transfer: a mapper may expose more bytes
+  // than the segment assigned to the tensor.
+  if (const char* error = simaai::neat::pipeline_internal::dense_storage_bounds_error(input))
+    throw std::runtime_error(std::string("__dlpack__: ") + error);
   const Tensor source_pin = input;
   Tensor tensor = source_pin;
   if (tensor.device.type != DeviceType::CPU) {
@@ -700,6 +704,16 @@ PyObject* tensor_to_dlpack_capsule(const Tensor& input) {
     }
   }
 
+  if (!tensor.strides_bytes.empty() && tensor.strides_bytes.size() != tensor.shape.size())
+    throw std::runtime_error("__dlpack__: tensor strides rank differs from shape rank");
+  bool has_elements = true;
+  for (int64_t dim : tensor.shape) {
+    if (dim < 0)
+      throw std::runtime_error("__dlpack__: tensor shape has a negative dimension");
+    if (dim == 0)
+      has_elements = false;
+  }
+
   auto owner = std::make_unique<DlpackExportOwner>();
   owner->tensor = std::move(tensor);
   {
@@ -708,6 +722,11 @@ PyObject* tensor_to_dlpack_capsule(const Tensor& input) {
   }
   if (!owner->mapping.data)
     throw std::runtime_error("tensor mapping failed");
+  if (has_elements) {
+    const std::size_t span = span_bytes(owner->tensor.shape, owner->tensor.strides_bytes, elem);
+    if (span > owner->mapping.size_bytes)
+      throw std::runtime_error("__dlpack__: tensor view exceeds its storage mapping");
+  }
 
   owner->shape = owner->tensor.shape;
   owner->strides_elems.clear();
@@ -2669,9 +2688,12 @@ NB_MODULE(_pyneat_core, m) {
 
   nb::class_<MeasureOptions>(m, "MeasureOptions")
       .def(nb::init<>())
-      .def_rw("duration_ms", &MeasureOptions::duration_ms)
-      .def_rw("warmup_ms", &MeasureOptions::warmup_ms)
-      .def_rw("timeout_ms", &MeasureOptions::timeout_ms)
+      .def_rw("duration_ms", &MeasureOptions::duration_ms,
+              "Deprecated. Report metadata only. End measurement with `scope.stop`.")
+      .def_rw("warmup_ms", &MeasureOptions::warmup_ms,
+              "Deprecated. Report metadata only. Finish warmup before starting measurement.")
+      .def_rw("timeout_ms", &MeasureOptions::timeout_ms,
+              "Deprecated. Report metadata only. Set the timeout on each `pull` call.")
       .def_rw("include_plugin_latency", &MeasureOptions::include_plugin_latency,
               "Deprecated: plugin latency will be removed.")
       .def_rw("plugin_latency_source", &MeasureOptions::plugin_latency_source)
