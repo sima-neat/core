@@ -33,6 +33,13 @@ def metadata(msi: Path, wheel: Path, version: str, branch: str, commit: str,
     raise ValueError("Scheduler MSI requires its exact numeric package version")
   resources = []
   openssh = "Install the Windows OpenSSH Client optional feature and reopen the terminal."
+  platform_driver = (
+      f"Install the SiMa Platform 3.0 Windows host package whose drivers report version "
+      f"{platform_version}, as described in the PCIe Driver Installation guide "
+      "(https://developer.sima.ai/hardware/getting-started/pcie-mode/driver-installation). "
+      "If no device is found although that package is installed, Windows has not detected "
+      "the card: check that it is seated and powered, then shut the host down and power it on."
+  )
   installation = {
       "type": "windows-msi",
       "prerequisites": [
@@ -42,7 +49,7 @@ def metadata(msi: Path, wheel: Path, version: str, branch: str, commit: str,
                                 ("Windows OpenSSH key generator", "ssh-keygen.exe"))),
           *({"name": name, "type": "windows-pnp-driver", "value": value,
              "version": platform_version,
-             "guidance": f"Install SiMa Platform Windows package {platform_version}."}
+             "guidance": platform_driver}
             for name, value in (
                 ("SiMa Platform MLA driver", "SiMa.ai MLA Device"),
                 ("SiMa Platform virtual Ethernet driver", "SiMa.ai Virtual Ethernet Adapter"))),

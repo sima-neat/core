@@ -102,6 +102,11 @@ class WindowsMetadataTests(unittest.TestCase):
     self.assertEqual(len(result["resources-checksum"][wheel.name]), 64)
     self.assertIn("%USERPROFILE%\\pyneatpcie", result["installation"]["post-message"])
     self.assertIn("--native-only", result["installation"]["post-message"])
+    for driver in platform_drivers:
+      with self.subTest(driver=driver["value"]):
+        self.assertIn("version 3.0.0.2", driver["guidance"])
+        self.assertIn("pcie-mode/driver-installation", driver["guidance"])
+        self.assertIn("Windows has not detected the card", driver["guidance"])
     self.assertNotIn("script", result["installation"])
 
   def test_native_only_metadata_does_not_request_python_installation(self):
