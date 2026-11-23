@@ -108,12 +108,20 @@ def metadata(msi: Path, wheel: Path, version: str, branch: str, commit: str,
               ),
           },
       ],
+      # Runs last, unelevated, as install_pciehost.sh runs pcie-setup.sh.
+      "setup": {
+          "command": {
+              "environment": "ProgramFiles",
+              "relative": "SimaPCIeHost\\bin\\pcie-setup.cmd",
+          },
+      },
       "post-message": (
           "[bold]Neat PCIe host installation completed.[/bold]\n"
-          "Run 'C:\\Program Files\\SimaPCIeHost\\bin\\pcie-setup.cmd' once to provision "
-          "passwordless card SSH. Python support is available in "
-          "'%USERPROFILE%\\pyneatpcie'; use --python-executable <path> to select a different "
-          "environment or --native-only to omit Python support."
+          "Run Python applications with the managed environment's interpreter:\n"
+          "& \"$env:USERPROFILE\\pyneatpcie\\Scripts\\python.exe\" app.py\n"
+          "Run neat to show the host and card software. To set up card SSH again, for "
+          "example after adding or replacing a card, run:\n"
+          "& \"$env:ProgramFiles\\SimaPCIeHost\\bin\\pcie-setup.cmd\""
       ),
   }
   artifact_paths = {}

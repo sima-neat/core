@@ -100,8 +100,19 @@ class WindowsMetadataTests(unittest.TestCase):
     self.assertEqual(set(result["resources"]), {msi.name, wheel.name})
     self.assertEqual(len(result["resources-checksum"][msi.name]), 64)
     self.assertEqual(len(result["resources-checksum"][wheel.name]), 64)
-    self.assertIn("%USERPROFILE%\\pyneatpcie", result["installation"]["post-message"])
-    self.assertIn("--native-only", result["installation"]["post-message"])
+    self.assertEqual(
+        result["installation"]["setup"],
+        {"command": {
+            "environment": "ProgramFiles",
+            "relative": "SimaPCIeHost\\bin\\pcie-setup.cmd",
+        }},
+    )
+    # The message is pasted into PowerShell: no cmd.exe %VAR% syntax or fixed drive.
+    message = result["installation"]["post-message"]
+    self.assertIn('& "$env:USERPROFILE\\pyneatpcie\\Scripts\\python.exe"', message)
+    self.assertIn('& "$env:ProgramFiles\\SimaPCIeHost\\bin\\pcie-setup.cmd"', message)
+    self.assertNotIn("%", message)
+    self.assertNotIn("C:\\", message)
     for driver in platform_drivers:
       with self.subTest(driver=driver["value"]):
         self.assertIn("version 3.0.0.2", driver["guidance"])
