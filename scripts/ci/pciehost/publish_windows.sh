@@ -13,6 +13,7 @@ plan="$(python3 scripts/ci/pciehost/windows_release.py publication "${ref_args[@
 mapfile -t paths <<< "${plan}"
 prefix="${paths[0]}"
 if (( ${#paths[@]} == 1 )); then
+  # Nothing is uploaded: the live objects already hold these bytes, so no invalidation is needed.
   echo "s3://${ARTIFACT_BUCKET}/${prefix}/ already holds this release; nothing to publish"
   exit 0
 fi
