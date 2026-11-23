@@ -80,6 +80,7 @@ PCIe 튜토리얼은 PCIe 추가 자료의 루트 디렉터리에 있는 고정�
 | PCIe를 통해 첫 번째 모델을 실행하세요. | `yolo_v8s_mpk.tar.gz` |
 | PCIe 추론을 비동기적으로 실행합니다. | `yolo_v8s_mpk.tar.gz` |
 | 여러 모델을 실행합니다. | `resnet_50_mpk.tar.gz` 및 `yolo_v8s_mpk.tar.gz` |
+| 외부 텐서 메모리를 래핑합니다. | `yolo_v8s_mpk.tar.gz` |
 
 각 다운로드는 `models/<model id>/<variant>/` 아래의 ZIP 파일입니다. PCIe 추가 자료의 루트 디렉터리에서 튜토리얼에 필요한 모델을 다운로드하고, 각 ZIP에서 모델 아카이브를 필수 이름으로 추출하세요.
 

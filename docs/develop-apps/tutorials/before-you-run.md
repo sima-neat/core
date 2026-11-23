@@ -90,6 +90,7 @@ PCIe tutorials use fixed filenames in the PCIe extras root:
 | Run Your First Model over PCIe | `yolo_v8s_mpk.tar.gz` |
 | Run PCIe Inference Async | `yolo_v8s_mpk.tar.gz` |
 | Run Multiple Models | `resnet_50_mpk.tar.gz` and `yolo_v8s_mpk.tar.gz` |
+| Wrap External Tensor Memory | `yolo_v8s_mpk.tar.gz` |
 
 Each download is a ZIP file under `models/<model id>/<variant>/`. Download the
 models the tutorial needs from the PCIe extras root, and extract each model

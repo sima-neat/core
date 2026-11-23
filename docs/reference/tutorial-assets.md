@@ -39,7 +39,8 @@ export SIMA_NEAT_TUTORIAL_MODEL_YOLO=/path/to/yolo_v8s.tar.gz
 </ShellCommand>
 
 When a tutorial test variable is unset, the C++ tutorial CTest runs use
-`/tmp/resnet_50.tar.gz` and `/tmp/yolo_v8s.tar.gz`, the files
+`resnet_50.tar.gz` and `yolo_v8s.tar.gz` from the model target folder: `/tmp`,
+or the folder given to `./build.sh --model-target-folder`. These are the files
 `./build.sh --download-models-only` writes. See
 [Tutorial Setup](/tutorials/before-you-run).
 

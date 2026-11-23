@@ -80,6 +80,7 @@ PCIeチュートリアルでは、PCIeエクストラディレクトリのルー
 | PCIe経由で最初のモデルを実行 | `yolo_v8s_mpk.tar.gz` |
 | PCIe非同期推論を実行 | `yolo_v8s_mpk.tar.gz` |
 | 複数のモデルを実行 | `resnet_50_mpk.tar.gz`と`yolo_v8s_mpk.tar.gz` |
+| 外部テンソルメモリをラップする | `yolo_v8s_mpk.tar.gz` |
 
 各ダウンロードは、`models/<model id>/<variant>/`の下にあるZIPファイルです。チュートリアルに必要なモデルをPCIeエクストラディレクトリのルートからダウンロードし、各モデルアーカイブを必要な名前でZIPから展開してください。
 

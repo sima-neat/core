@@ -32,7 +32,7 @@ export SIMA_NEAT_TUTORIAL_MODEL_RESNET=/path/to/resnet_50.tar.gz
 export SIMA_NEAT_TUTORIAL_MODEL_YOLO=/path/to/yolo_v8s.tar.gz
 </ShellCommand>
 
-チュートリアルテスト用の変数が設定されていない場合、C++チュートリアルのCTest実行では、`./build.sh --download-models-only`が書き込むファイルである`/tmp/resnet_50.tar.gz`と`/tmp/yolo_v8s.tar.gz`を使用します。[チュートリアルの設定](/tutorials/before-you-run)を参照してください。
+チュートリアルテスト用の変数が設定されていない場合、C++チュートリアルのCTest実行では、モデルの保存先フォルダーにある`resnet_50.tar.gz`と`yolo_v8s.tar.gz`を使用します。保存先は`/tmp`、または`./build.sh --model-target-folder`で指定したフォルダーです。これらは`./build.sh --download-models-only`が書き込むファイルです。[チュートリアルの設定](/tutorials/before-you-run)を参照してください。
 
 ## 一般的なソースツリーのパス
 

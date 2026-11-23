@@ -80,6 +80,7 @@ PCIe 教學課程會在 PCIe 附加資料的根目錄中使用固定的檔案名
 | 透過 PCIe 執行您的第一個模型 | `yolo_v8s_mpk.tar.gz` |
 | 執行 PCIe 非同步推論 | `yolo_v8s_mpk.tar.gz` |
 | 執行多個模型 | `resnet_50_mpk.tar.gz` 和 `yolo_v8s_mpk.tar.gz` |
+| 包裝外部張量記憶體 | `yolo_v8s_mpk.tar.gz` |
 
 每次下載都會在 `models/<model id>/<variant>/` 下產生一個 ZIP 檔案。請從 PCIe 附加資料的根目錄下載教學課程所需的模型，並以所需的名稱從各自的 ZIP 中解壓縮每個模型封存檔：
 

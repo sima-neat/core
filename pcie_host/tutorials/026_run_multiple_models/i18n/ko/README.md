@@ -47,8 +47,7 @@ sima-cli models download --id yolov8s --variant w8a8
 unzip -p models/yolov8s/w8a8/yolov8s_w8a8_default.zip yolov8s_w8a8_mpk.tar.gz > yolo_v8s_mpk.tar.gz
 ```
 
-이 프로그램은 정확한 경로를 필요로 합니다. `resnet_50_mpk.tar.gz` 그리고
-`yolo_v8s_mpk.tar.gz` 이 디렉터리 안에 있습니다. 각 `unzip` 명령은 다운로드한 ZIP에서 이 중 하나를 추출합니다.
+이 프로그램에는 이 디렉터리의 정확한 경로 `resnet_50_mpk.tar.gz`와 `yolo_v8s_mpk.tar.gz`가 필요합니다. 각 `unzip` 명령은 다운로드한 ZIP에서 이 중 하나를 추출합니다.
 
 Python 실행:
 
