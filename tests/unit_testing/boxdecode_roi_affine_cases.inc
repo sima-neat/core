@@ -1,17 +1,5 @@
 // Included by unit_boxdecode_kernel_recipe_test.cpp, inside its anonymous namespace.
-//
-// #1507: a Preproc that crops an ROI and letterboxes or stretches it into the model canvas
-// publishes the model-to-source affine for that frame. Every detection profile whose kernel
-// accepts `model_to_original` decodes the frame with it. A profile whose kernel accepts none
-// refuses an ROI or crop frame, naming itself. An ROI-list buffer with several slots carries one
-// affine per slot, which one BoxDecode call cannot apply: it fails instead of decoding.
-//
-// The oracle is independent: the issue's example (1280x720 frame, ROI x=400 y=200 w=640 h=360)
-// and its expected source-frame boxes, run through the real A65 BoxDecode kernel.
 
-// What the Preproc publishes for one frame (PreprocFrameAdapter publishes
-// affine(primary, placed): scale = primary extent / placed extent, offset = primary origin -
-// placed origin * scale).
 struct RoiFrame {
   int original_width = 1280, original_height = 720, canvas = 640;
   std::array<std::int64_t, 4> primary{0, 0, 1280, 720}, placed{0, 140, 640, 360};
@@ -79,38 +67,6 @@ test::GstBufferOwner roi_carrier(const RoiFrame& frame) {
   require(bool(metadata.preprocess), error.c_str());
   require(tr::tensor_buffer_attach_frame_metadata(buffer.get(), std::move(metadata), &error),
           error.c_str());
-  return buffer;
-}
-// Legacy ingress: dimensions and resize mode without any affine.
-test::GstBufferOwner legacy_dimensions_carrier(const RoiFrame& frame) {
-  if (!gst_meta_get_info("GstSimaMeta")) {
-    const gchar* tags[] = {nullptr};
-    require(gst_meta_register_custom("GstSimaMeta", tags, nullptr, nullptr, nullptr),
-            "ROI metadata registration failed");
-  }
-  test::GstBufferOwner buffer(gst_buffer_new());
-  auto* meta =
-      gst_custom_meta_get_structure(gst_buffer_add_custom_meta(buffer.get(), "GstSimaMeta"));
-  gst_structure_set(meta, "preproc_original_width", G_TYPE_INT, frame.original_width,
-                    "preproc_original_height", G_TYPE_INT, frame.original_height,
-                    "preproc_resized_width", G_TYPE_INT, frame.canvas, "preproc_resized_height",
-                    G_TYPE_INT, frame.canvas, "preproc_resize_mode", G_TYPE_STRING, frame.mode,
-                    nullptr);
-  return buffer;
-}
-// Facts attached by the user with dimensions only: the writer still serializes the default
-// identity affine, which is not a published transform for a resized image.
-test::GstBufferOwner attached_dimensions_carrier(const RoiFrame& frame) {
-  auto buffer = legacy_dimensions_carrier(frame);
-  auto* meta =
-      gst_custom_meta_get_structure(gst_buffer_get_custom_meta(buffer.get(), "GstSimaMeta"));
-  gst_structure_set(meta, "preproc_affine_m00", G_TYPE_DOUBLE, 1., "preproc_affine_m01",
-                    G_TYPE_DOUBLE, 0., "preproc_affine_m02", G_TYPE_DOUBLE, 0.,
-                    "preproc_affine_m10", G_TYPE_DOUBLE, 0., "preproc_affine_m11", G_TYPE_DOUBLE,
-                    1., "preproc_affine_m12", G_TYPE_DOUBLE, 0., "preproc_affine_scale_x",
-                    G_TYPE_DOUBLE, 1., "preproc_affine_scale_y", G_TYPE_DOUBLE, 1.,
-                    "preproc_affine_offset_x", G_TYPE_DOUBLE, 0., "preproc_affine_offset_y",
-                    G_TYPE_DOUBLE, 0., nullptr);
   return buffer;
 }
 // The head tensors a profile decodes, with their physical carriers.
@@ -243,7 +199,8 @@ const auto expect_box = [](const RoiBox& got, const RoiBox& want, const char* me
 // Decoded (BoxDecodeType::Yolo) centered letterbox: one box (cx,cy,w,h)=(324,324,16,16) in model
 // pixels. Independent oracle: the ROI frame maps it by (x + 400, y + 60) to 716,376,16,16; the
 // whole frame at scale 2 with pad top 140 maps it to 632,352,32,32 (what the size-only route
-// produced for the ROI frame as well).
+// produced for the ROI frame as well). Cache, rejection and metadata-format variations live in
+// unit_boxdecode_geometry_test.
 void roi_decoded_letterbox() {
   auto heads = source(BoxDecodeType::Yolo, 2);
   heads.payload.topk = 4;
@@ -260,8 +217,8 @@ void roi_decoded_letterbox() {
       set_bf16(*inputs[0], i, box[i]);
     set_bf16(*inputs[1], 0, 8.f);
   };
-  const auto decode = [&](const RoiFrame& frame, bool legacy = false) {
-    auto carrier = legacy ? legacy_dimensions_carrier(frame) : roi_carrier(frame);
+  const auto decode = [&](const RoiFrame& frame) {
+    auto carrier = roi_carrier(frame);
     auto selected = select_frame(*run, carrier.get());
     require(std::holds_alternative<c::PreparedSelection>(selected),
             "an ordinary frame was rejected");
@@ -271,82 +228,14 @@ void roi_decoded_letterbox() {
              "an ROI letterbox frame was decoded as if the whole frame had been resized");
   // Full frames keep the boxes they have always had.
   expect_box(decode(full_letterbox()), {1, 632, 352, 32, 32}, "full-frame letterbox changed");
-  // Legacy ingress publishes dimensions only: today's behavior, not a failure.
-  expect_box(decode(full_letterbox(), true), {1, 632, 352, 32, 32},
-             "dimensions-only ingress stopped decoding with the recipe's fallback");
-  {
-    auto carrier = attached_dimensions_carrier(full_letterbox());
-    auto selected = select_frame(*run, carrier.get());
-    require(std::holds_alternative<c::PreparedSelection>(selected),
-            "user-attached dimensions were rejected");
-    expect_box(
-        execute_roi(*run, std::get<c::PreparedSelection>(selected), fill), {1, 632, 352, 32, 32},
-        "the default identity affine of dimension-only facts was applied as a published one");
-  }
-  // Compact facts of a legacy producer that never computed an affine are the same case.
-  auto zero = full_letterbox();
-  zero.affine = {};
-  expect_box(decode(zero), {1, 632, 352, 32, 32},
-             "compact facts without an affine stopped decoding with the recipe's fallback");
-  // A different ROI reselects: same size, new affine.
-  auto other = roi_letterbox();
-  other.affine = {1., 0., 440., 0., 1., 60.};
-  expect_box(decode(other), {1, 756, 376, 16, 16}, "a second ROI reused the first ROI's affine");
-  // The model canvas must be the checked one for a frame that publishes an affine.
-  auto wrong_canvas = roi_letterbox();
-  wrong_canvas.canvas = 320;
-  wrong_canvas.placed = {0, 70, 320, 180};
-  auto carrier = roi_carrier(wrong_canvas);
-  require(is_error(select_frame(*run, carrier.get()), "differ from the checked model"),
-          "a frame preprocessed to another canvas was accepted");
-  // An explicit original size keeps its precedence. Frames that publish nothing decode with the
-  // recipe's fallback over that size, never with the cold-preparation seed.
-  {
-    auto explicit_run =
-        admit_roi(heads, ResizeMode::Letterbox, {640, 640, 1280, 720, ResizeMode::Letterbox});
-    const auto decode_explicit = [&](GstBuffer* buffer) {
-      auto selected = select_frame(*explicit_run, buffer);
-      require(std::holds_alternative<c::PreparedSelection>(selected),
-              "a frame under an explicit original size was rejected");
-      return execute_roi(*explicit_run, std::get<c::PreparedSelection>(selected), fill);
-    };
-    test::GstBufferOwner bare(gst_buffer_new());
-    expect_box(
-        decode_explicit(bare.get()), {1, 632, 352, 32, 32},
-        "a frame without preprocess facts decoded with the cold seed instead of the fallback");
-    auto carrier = roi_carrier(roi_letterbox());
-    expect_box(decode_explicit(carrier.get()), {1, 716, 376, 16, 16},
-               "an ROI frame under a matching explicit size lost its affine");
-    auto other_source = roi_letterbox();
-    other_source.original_width = 1920;
-    other_source.original_height = 1080;
-    carrier = roi_carrier(other_source);
-    expect_box(decode_explicit(carrier.get()), {1, 632, 352, 32, 32},
-               "an explicit original size lost its precedence over another source's affine");
-  }
-  // Several ROI slots carry one affine each; one call cannot apply them.
-  auto list = roi_letterbox();
-  list.roi_list = true;
-  list.capacity = 4;
-  carrier = roi_carrier(list);
-  require(is_error(select_frame(*run, carrier.get()), "ROI-list"),
-          "an ROI-list buffer with several slots decoded with one slot's affine");
-  // One slot is one frame: the ROI's own affine applies.
-  list.capacity = 1;
-  expect_box(decode(list), {1, 716, 376, 16, 16}, "a one-slot ROI list lost its ROI affine");
 }
 
 // DETR stretch: normalized cxcywh (.5,.5,.5,.5). The ROI frame (scale 1, .5625, offset 400,200)
 // maps it to 560,290,320,180; the whole frame to 320,180,640,360.
 void roi_detr_stretch() {
-  auto heads = source(BoxDecodeType::Detr, 2);
-  heads.payload.nms_iou_threshold = 0;
-  heads.payload.score_activation = BoxDecodeScoreActivation::Softmax;
+  auto heads = detr_geometry_heads(BoxDecodeType::Detr);
   heads.payload.topk = 2;
   heads.payload.detection_threshold = .6;
-  input(heads, 1, 2, 4, "FP32");
-  input(heads, 1, 2, 3, "FP32");
-  heads = roi_heads(std::move(heads));
   const BoxDecodeGeometryOptions geometry{640, 640, 0, 0, ResizeMode::Stretch};
   auto run = admit_roi(heads, ResizeMode::Stretch, geometry);
   const auto fill = [](std::vector<std::shared_ptr<HostStorage>>& inputs) {
@@ -356,8 +245,8 @@ void roi_detr_stretch() {
     for (std::size_t i = 0; i < 6; ++i)
       inputs[1]->set_float(i, i % 3 == 0 ? std::log(4.f) : 0.f);
   };
-  const auto decode = [&](const RoiFrame& frame, bool legacy = false) {
-    auto carrier = legacy ? legacy_dimensions_carrier(frame) : roi_carrier(frame);
+  const auto decode = [&](const RoiFrame& frame) {
+    auto carrier = roi_carrier(frame);
     auto selected = select_frame(*run, carrier.get());
     require(std::holds_alternative<c::PreparedSelection>(selected),
             "an ordinary DETR frame was rejected");
@@ -366,12 +255,11 @@ void roi_detr_stretch() {
   expect_box(decode(roi_stretch()), {2, 560, 290, 320, 180},
              "a stretched ROI frame was decoded as if the whole frame had been stretched");
   expect_box(decode(full_stretch()), {2, 320, 180, 640, 360}, "full-frame stretch changed");
-  expect_box(decode(full_stretch(), true), {2, 320, 180, 640, 360},
-             "dimensions-only DETR ingress stopped decoding with the recipe's fallback");
 }
 
-// Pose, segmentation, RCNN proposals and multiclass SSD: their kernels accept no transform.
-// Whole frames decode; an ROI, crop or ROI list fails naming the profile.
+// Pose, segmentation and RCNN proposals: their kernels accept no transform. Admission installs the
+// guard: a whole frame decodes, an ROI frame fails naming the profile, a requested Crop fails at
+// build. The per-frame rules themselves are covered by unit_boxdecode_geometry_test.
 void roi_no_transform_profiles() {
   struct Case {
     BoxDecodeType type;
@@ -423,40 +311,19 @@ void roi_no_transform_profiles() {
     RoiFrame roi = roi_letterbox();
     if (item.geometry.model_width != 640) {
       whole.canvas = roi.canvas = item.geometry.model_width;
-      // Same geometry on the profile's own canvas: scale 2.0 letterbox of the whole frame; the
-      // ROI window unchanged.
       whole.placed = {0, 112, 544, 306};
       whole.affine = {1280. / 544, 0., 0., 0., 1280. / 544, -112. * 1280. / 544};
       roi.placed = {0, 112, 544, 306};
       roi.affine = {640. / 544, 0., 400., 0., 640. / 544, 200. - 112. * 640. / 544};
     }
     auto run = admit_roi(item.heads, item.preproc, item.geometry);
-    const auto base = run->executor.operation();
     auto carrier = roi_carrier(whole);
     auto selected = select_frame(*run, carrier.get());
     require(std::holds_alternative<c::PreparedSelection>(selected),
             (token + ": a whole frame was rejected").c_str());
-    // A whole frame keeps the cold prepared operation or a size-only variant, never a transform.
-    carrier = legacy_dimensions_carrier(whole);
-    require(std::holds_alternative<c::PreparedSelection>(select_frame(*run, carrier.get())),
-            (token + ": dimensions-only ingress was rejected").c_str());
-    carrier = attached_dimensions_carrier(whole);
-    require(std::holds_alternative<c::PreparedSelection>(select_frame(*run, carrier.get())),
-            (token + ": user-attached dimensions were refused as a window").c_str());
     carrier = roi_carrier(roi);
     require(is_error(select_frame(*run, carrier.get()), token.c_str()),
             (token + ": an ROI frame decoded in full-frame coordinates").c_str());
-    auto crop = whole;
-    crop.mode = "crop";
-    carrier = roi_carrier(crop);
-    require(is_error(select_frame(*run, carrier.get()), token.c_str()),
-            (token + ": a crop frame decoded in full-frame coordinates").c_str());
-    auto list = roi;
-    list.roi_list = true;
-    list.capacity = 4;
-    carrier = roi_carrier(list);
-    require(is_error(select_frame(*run, carrier.get()), token.c_str()),
-            (token + ": an ROI-list frame decoded in full-frame coordinates").c_str());
     // A crop requested for the profile fails at admission, naming it.
     bool rejected = false;
     try {
