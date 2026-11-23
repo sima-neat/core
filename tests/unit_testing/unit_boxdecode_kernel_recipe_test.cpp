@@ -1318,24 +1318,23 @@ void ssd_known_logit_detection() {
 }
 // SSD300-v1 decodes softmax scores from 81-class heads, and the prepared route
 // selects the first 8 classes (#624). Confidence channels are class * A + anchor.
-// At the first cell of the 38x38 level, anchor 0 favours class 3 and anchor 1
-// favours class 50, every other logit is -10. With the 0.5 threshold the result
-// does not depend on whether the softmax covers 81 or 8 classes: anchor 0 gives
-// one class-3 detection, and anchor 1 gives nothing, since class 50 is not
-// selected and the selected classes stay far below the threshold.
+// At the first cell of the 38x38 level, anchor 0 has a logit of 5 for class 3
+// and anchor 1 a logit of 5 for class 50, every other logit is -10. With the 0.5 threshold the
+// result does not depend on whether the softmax covers 81 or 8 classes: anchor 0 gives one class-3
+// detection, and anchor 1 gives nothing, since class 50 is not selected and the selected classes
+// stay far below the threshold.
 void ssd300_class_selection() {
   constexpr std::size_t anchors_38 = 4;
   const auto wire = ssd_decode_wire(stagesemantics::SsdRecipeId::Ssd300V1, {38, 19, 10, 5, 3, 1},
                                     {4, 6, 6, 6, 4, 4}, {300, 300, 300, 300, ResizeMode::Stretch},
                                     {{3 * anchors_38 + 0, 5.f}, {50 * anchors_38 + 1, 5.f}}, 81, 8,
                                     BoxDecodeScoreActivation::Softmax);
-  const auto count = wire.read<std::int32_t>(0);
-  require(count == 1, "SSD300 81-to-8 decode published other than one detection");
-  for (std::int32_t row = 0; row < count; ++row) {
-    const auto cls = wire.read<std::int32_t>(4 + row * 24 + 20);
-    require(cls >= 1 && cls <= 7, "SSD300 81-to-8 decode published a class outside [1, 7]");
-  }
+  require(wire.read<std::int32_t>(0) == 1,
+          "SSD300 81-to-8 decode published other than one detection");
   require(wire.read<std::int32_t>(24) == 3, "SSD300 81-to-8 decode lost the class-3 detection");
+  // Softmax gives at least 0.99997 over 81 or 8 classes; sigmoid(5) would give 0.993.
+  require(std::abs(wire.read<float>(20) - 1.f) < 1e-3f,
+          "SSD300 score is not a softmax of its logits");
 }
 void ssd_source_policy_execution() {
   using stagesemantics::SsdRecipeId;
