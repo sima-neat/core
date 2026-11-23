@@ -14,7 +14,8 @@
 namespace wire = simaai::neat::pcie::genai::wire;
 
 #ifdef _WIN32
-void test_genai_open_error(int);
+// Defined with C linkage in the fake SiMaPCIe.dll.
+extern "C" void test_genai_open_error(int);
 #endif
 
 namespace {
