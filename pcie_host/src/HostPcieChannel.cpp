@@ -212,11 +212,27 @@ void free_wrapped_payload(gpointer user_data) {
 } // namespace
 
 TensorList tensors_from_output_payload(const std::shared_ptr<MappedSample>& owner,
-                                       const PcieModelFacts& facts) {
+                                       const HostPcieOutputLayout& layout) {
   TensorList out;
   if (!owner || !owner->map.data) {
     return out;
   }
+  if (layout.byte_stream_format) {
+    Tensor tensor;
+    tensor.owner = owner;
+    tensor.data = owner->map.data;
+    tensor.size_bytes = owner->map.size;
+    tensor.shape = {static_cast<std::int64_t>(tensor.size_bytes)};
+    tensor.strides_bytes = {1};
+    tensor.read_only = true;
+    tensor.route.name = layout.byte_stream_format;
+    tensor.route.logical_index = 0;
+    tensor.route.backend_output_index = 0;
+    tensor.route.physical_index = 0;
+    out.push_back(std::move(tensor));
+    return out;
+  }
+  const auto& facts = layout.facts;
   HostPcieChannel::validate_output_payload_size(owner->map.size, facts.packed_output_bytes);
   std::shared_ptr<std::vector<std::uint8_t>> dense;
   if (facts.dense_output_bytes > 0U) {
@@ -261,34 +277,6 @@ TensorList tensors_from_output_payload(const std::shared_ptr<MappedSample>& owne
   }
   return out;
 }
-
-namespace {
-
-TensorList bbox_tensor_from_output_payload(const std::shared_ptr<MappedSample>& owner) {
-  TensorList out;
-  if (!owner || !owner->map.data) {
-    return out;
-  }
-
-  Tensor tensor;
-  tensor.owner = owner;
-  tensor.data = owner->map.data;
-  tensor.size_bytes = owner->map.size;
-  tensor.dtype = TensorDType::UInt8;
-  tensor.layout = TensorLayout::Unknown;
-  tensor.shape = {static_cast<std::int64_t>(owner->map.size)};
-  tensor.strides_bytes = {1};
-  tensor.byte_offset = 0;
-  tensor.read_only = true;
-  tensor.route.name = "BBOX";
-  tensor.route.logical_index = 0;
-  tensor.route.backend_output_index = 0;
-  tensor.route.physical_index = 0;
-  out.push_back(std::move(tensor));
-  return out;
-}
-
-} // namespace
 
 HostPcieChannel::HostPcieChannel()
     : transport_(std::make_unique<simaai::scheduler::pcie::Channel>()) {}
@@ -421,15 +409,11 @@ std::optional<RuntimeInferenceResult> HostPcieChannel::pull_result(int timeout_m
     throw std::runtime_error("PCIe output cannot be mapped for public tensor access");
   owner->mapped = true;
   if (!output_layout_)
-    output_layout_ = resolve_output_layout(facts_, gst_sample_get_caps(owner->sample));
+    output_layout_ = resolve_output_layout(facts_, gst_sample_get_caps(owner->sample),
+                                           expects_bbox_output_);
   if (output_layout_->raw_bytes && owner->map.size != output_layout_->raw_bytes)
     throw std::runtime_error("PCIe raw output extent differs from the negotiated layout");
-  const bool byte_stream_bbox =
-      !output_layout_->raw_bytes &&
-      (expects_bbox_output_ || is_bbox_output_caps(gst_sample_get_caps(owner->sample)));
   return RuntimeInferenceResult{received->request_id,
-                                byte_stream_bbox
-                                    ? bbox_tensor_from_output_payload(owner)
-                                    : tensors_from_output_payload(owner, output_layout_->facts)};
+                                tensors_from_output_payload(owner, *output_layout_)};
 }
 } // namespace simaai::neat::pcie::internal

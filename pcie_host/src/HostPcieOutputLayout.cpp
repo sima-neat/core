@@ -1,4 +1,5 @@
 #include "HostPcieOutputLayout.h"
+#include "pipeline/DetectionTypes.h"
 #include <neat_pcie_return_layout.h>
 
 #include <limits>
@@ -41,9 +42,23 @@ std::size_t tensor_span(const PcieTensorFact& tensor) {
   return span;
 }
 
+const char* boxdecode_format(const GstStructure* caps) {
+  if (!gst_structure_has_name(caps, "application/vnd.simaai.tensor"))
+    return nullptr;
+  const char* format = gst_structure_get_string(caps, "format");
+  for (const auto* tag : {kDetectionFormatBbox, kDetectionFormatBboxPose,
+                          kDetectionFormatBboxSegmentation, kDetectionFormatBboxSegmentationPose,
+                          kDetectionFormatBboxObbV1}) {
+    if (g_strcmp0(format, tag) == 0)
+      return tag;
+  }
+  return nullptr;
+}
+
 } // namespace
 
-HostPcieOutputLayout resolve_output_layout(const PcieModelFacts& facts, const GstCaps* caps) {
+HostPcieOutputLayout resolve_output_layout(const PcieModelFacts& facts, const GstCaps* caps,
+                                           bool expects_bbox_output) {
   HostPcieOutputLayout out{facts};
   NeatPcieReturnLayout layout{};
   GError* error = nullptr;
@@ -52,14 +67,19 @@ HostPcieOutputLayout resolve_output_layout(const PcieModelFacts& facts, const Gs
     g_clear_error(&error);
     throw std::runtime_error("Invalid PCIe return layout: " + message);
   }
-  if (!layout.count)
+  const char* format = boxdecode_format(gst_caps_get_structure(caps, 0));
+  if (!layout.count) {
+    out.byte_stream_format = format;
+    if (!format && expects_bbox_output)
+      out.byte_stream_format = kDetectionFormatBbox;
     return out;
-  if (is_bbox_output_caps(caps)) {
+  }
+  if (format) {
     if (layout.count != 1)
       invalid("BBOX output requires one logical region");
     const auto& region = layout.regions[0];
     PcieTensorFact tensor;
-    tensor.name = "BBOX";
+    tensor.name = format;
     tensor.dtype = "UINT8";
     tensor.shape = {static_cast<std::int64_t>(region.size)};
     tensor.size_bytes = region.size;
