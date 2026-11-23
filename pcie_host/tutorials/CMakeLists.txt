@@ -100,11 +100,14 @@ install(
     PATTERN "*.png"
     PATTERN "CMakeLists.txt")
 
-install(
-  FILES ${CMAKE_CURRENT_SOURCE_DIR}/build.sh
-  DESTINATION .
-  COMPONENT PcieHostTutorials
-  PERMISSIONS
-    OWNER_READ OWNER_WRITE OWNER_EXECUTE
-    GROUP_READ GROUP_EXECUTE
-    WORLD_READ WORLD_EXECUTE)
+# The bash tutorial builder has no use in the Windows MSI.
+if(NOT WIN32)
+  install(
+    FILES ${CMAKE_CURRENT_SOURCE_DIR}/build.sh
+    DESTINATION .
+    COMPONENT PcieHostTutorials
+    PERMISSIONS
+      OWNER_READ OWNER_WRITE OWNER_EXECUTE
+      GROUP_READ GROUP_EXECUTE
+      WORLD_READ WORLD_EXECUTE)
+endif()
