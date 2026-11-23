@@ -18,7 +18,8 @@
 // refused by a full link reading none of its tensor's bytes (C7c; with copy_input, so that the
 // accepted ones copy: W2 wraps them otherwise, unit_run_push_wrap_test); the one-time warnings (the
 // deprecated Run forms, the options this backend ignores); RunPreset::Realtime with an explicit
-// Block on a connected graph (kept as given) and on a linear Run (KeepLatest); concurrent stops;
+// Block on a connected graph (kept as given) and on a linear Run (kept too: only
+// OverflowPolicy::Auto takes the preset's KeepLatest, on both backends); concurrent stops;
 // state and measurement reads racing a stop; device inputs (H0b: InputOptions::memory_policy Ev74
 // and Dms0): a CPU tensor copied into the input's DMA-BUF pool (with the compatibility copy
 // allowed: without it the push throws, unit_run_backend_differential_test), the pulled tensor
@@ -762,17 +763,33 @@ void connected_realtime_explicit_block() {
   run.close();
 }
 
-// A plain linear Run resolves its options as GStreamer's one-segment Run does: the Realtime preset
-// makes the same explicit Block KeepLatest, so try_push never refuses and evicts the oldest.
-void linear_realtime_block_is_keep_latest() {
-  const RealtimeBlock c;
-  Graph g = input_output(c.in, OutputOptions::EveryFrame(1));
-  Run run = g.build(TensorList{rgb(32, 24, 1)}, c.opt);
-  std::uint64_t dropped = 0;
-  require(!RealtimeBlock::refuses_when_full(run, nullptr, dropped),
-          "linear Realtime + explicit Block: KeepLatest, try_push must never refuse");
-  require(dropped > 0U, "linear Realtime + explicit Block: KeepLatest evicts past the link depth");
-  run.close();
+// A plain linear Run resolves its options as GStreamer's one-segment Run does, by the same code: an
+// explicit Block survives the Realtime preset (try_push refuses when the queue is full and drops
+// nothing), and only OverflowPolicy::Auto takes the preset's KeepLatest (try_push never refuses
+// and evicts the oldest). The same on both backends.
+void linear_realtime_keeps_an_explicit_block() {
+  for (const RunBackend backend : {RunBackend::Dataflow, RunBackend::GStreamer}) {
+    const std::string on = backend == RunBackend::Dataflow ? " (Dataflow)" : " (GStreamer)";
+    for (const OverflowPolicy policy : {OverflowPolicy::Block, OverflowPolicy::Auto}) {
+      RealtimeBlock c;
+      c.opt.backend = backend;
+      c.opt.overflow_policy = policy;
+      Graph g = input_output(c.in, OutputOptions::EveryFrame(1));
+      Run run = g.build(TensorList{rgb(32, 24, 1)}, c.opt);
+      std::uint64_t dropped = 0;
+      const bool refused = RealtimeBlock::refuses_when_full(run, nullptr, dropped);
+      if (policy == OverflowPolicy::Block) {
+        require(refused, "linear Realtime + explicit Block: try_push must refuse when full" + on);
+        require(dropped == 0U, "linear Realtime + explicit Block: try_push dropped " +
+                                   std::to_string(dropped) + on);
+      } else {
+        require(!refused, "linear Realtime + Auto: KeepLatest, try_push must never refuse" + on);
+        require(dropped > 0U,
+                "linear Realtime + Auto: KeepLatest evicts past the queue depth" + on);
+      }
+      run.close();
+    }
+  }
 }
 
 // Several threads stop the same Run at once while a push is parked: every call returns, the parked
@@ -1296,7 +1313,7 @@ RUN_TEST("unit_dataflow_backend_test", ([] {
            refused_try_push_reads_no_byte();
            blocking_push_never_drops();
            connected_realtime_explicit_block();
-           linear_realtime_block_is_keep_latest();
+           linear_realtime_keeps_an_explicit_block();
            close_input_cancels_a_parked_push();
            stop_unblocks_pull_and_refuses_push();
            concurrent_stops_with_a_parked_push();

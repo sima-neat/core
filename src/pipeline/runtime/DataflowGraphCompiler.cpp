@@ -472,10 +472,10 @@ DataflowRunConfig derive_config(const Graph& graph, const DataflowGraphView& vie
   // RunOptions resolved as GStreamer resolves them for that path, by the same code. A plain linear
   // Run's options are resolve_build_opt's (via prepare_build_input_context, in
   // RunCore::start_pipeline_segment, kept by start_single_pipeline): RunPreset fills queue_depth
-  // and overflow_policy where they equal their RunOptions{} defaults, so an explicit Block under
-  // Realtime is KeepLatest there. A graph Run keeps the caller's RunOptions as given
-  // (start_graph_plan; its ingress queue is the given queue_depth): the preset does not reach its
-  // ingress.
+  // where it equals its RunOptions{} default and overflow_policy where it is OverflowPolicy::Auto,
+  // so an explicit Block under Realtime stays Block there. A graph Run keeps the caller's
+  // RunOptions as given (start_graph_plan; its ingress queue is the given queue_depth): the
+  // preset does not reach its ingress.
   config.run = graph_path ? opt : session_build_resolve_build_opt(RunMode::Async, opt);
   config.run.backend = RunBackend::Dataflow;
   config.link_policy = config.run.overflow_policy;
