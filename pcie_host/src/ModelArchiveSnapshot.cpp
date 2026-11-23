@@ -38,6 +38,7 @@ void remove_ended_snapshots(const fs::path& own) noexcept {
           owner.start = value;
         }
       }
+      record.close(); // Windows cannot remove a directory that holds an open file.
       if (host_process_ended(owner)) {
         std::error_code remove_error;
         fs::remove_all(it->path(), remove_error);
@@ -70,7 +71,8 @@ ModelArchiveSnapshot::ModelArchiveSnapshot(const std::string& source_path)
   snapshot = directory_.path() / "model.tar.gz";
 #endif
   const HostProcessOwner owner = current_host_process_owner();
-  std::ofstream(directory_.path() / kOwnerFile)
+  // Binary, so that the record holds the same LF lines on every host.
+  std::ofstream(directory_.path() / kOwnerFile, std::ios::binary)
       << "host_id=" << owner.host_id << "\nhost_pid=" << owner.pid << "\nhost_start=" << owner.start
       << "\n";
   remove_ended_snapshots(directory_.path());
