@@ -110,6 +110,9 @@ class WindowsMetadataTests(unittest.TestCase):
     # The message is pasted into PowerShell: no cmd.exe %VAR% syntax or fixed drive.
     message = result["installation"]["post-message"]
     self.assertIn('& "$env:USERPROFILE\\pyneatpcie\\Scripts\\python.exe"', message)
+    # sima-cli prints it unchanged after --native-only or --python-executable too.
+    self.assertIn("If Python support was installed into the default managed environment", message)
+    self.assertIn("installed with --python-executable, use that interpreter instead", message)
     self.assertIn('& "$env:ProgramFiles\\SimaPCIeHost\\bin\\pcie-setup.cmd"', message)
     # Neither MSI adds a PATH entry: name neat.cmd by its full path.
     self.assertIn('& "$env:ProgramFiles\\SimaPCIeHost\\bin\\neat.cmd"', message)

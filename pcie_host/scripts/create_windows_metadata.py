@@ -121,8 +121,11 @@ def metadata(msi: Path, wheel: Path, version: str, branch: str, commit: str,
       },
       "post-message": (
           "[bold]Neat PCIe host installation completed.[/bold]\n"
-          "Run Python applications with the managed environment's interpreter:\n"
+          # Static text: it cannot know about --native-only or --python-executable.
+          "If Python support was installed into the default managed environment, run "
+          "Python applications with its interpreter:\n"
           "& \"$env:USERPROFILE\\pyneatpcie\\Scripts\\python.exe\" app.py\n"
+          "If it was installed with --python-executable, use that interpreter instead.\n"
           "To show the host and card software, run:\n"
           "& \"$env:ProgramFiles\\SimaPCIeHost\\bin\\neat.cmd\"\n"
           "To set up card SSH again, for example after adding or replacing a card, run:\n"
