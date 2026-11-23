@@ -166,6 +166,28 @@ int main() {
     }
 
     {
+      pcie::Model model("model.tar.gz");
+      build_with_running_card_worker(model);
+      card.channel_stop_fails = true;
+      card.remote_stop_fails = true;
+      std::string error;
+      try {
+        model.close();
+      } catch (const std::runtime_error& e) {
+        error = e.what();
+      }
+      require(error == "channel stop deadline expired; card worker stop also failed: card worker "
+                       "stop failed",
+              "close must report both stop failures: " + error);
+      require(card.upload_removals == 0, "close must keep uploads while the worker may run");
+
+      card.channel_stop_fails = card.remote_stop_fails = false;
+      model.close();
+      require(card.remote_stops == 2, "a later close must retry the failed card worker stop");
+      require(card.upload_removals == 1, "close must remove uploads once the worker stopped");
+    }
+
+    {
       auto model = std::make_unique<pcie::Model>("model.tar.gz");
       build_with_running_card_worker(*model);
       card.channel_stop_fails = true;

@@ -41,6 +41,16 @@ void write_temp_model_options(const fs::path& path, const std::string& contents)
   }
 }
 
+std::string exception_message(const std::exception_ptr& error) {
+  try {
+    std::rethrow_exception(error);
+  } catch (const std::exception& e) {
+    return e.what();
+  } catch (...) {
+    return "unknown error";
+  }
+}
+
 } // namespace
 
 class Model::Impl {
@@ -386,8 +396,13 @@ private:
           remote_stop_error = std::current_exception();
         }
       }
+      if (remote_stop_error && !channel_stop_error) {
+        std::rethrow_exception(remote_stop_error);
+      }
       if (remote_stop_error) {
-        std::rethrow_exception(channel_stop_error ? channel_stop_error : remote_stop_error);
+        throw std::runtime_error(
+            exception_message(channel_stop_error) +
+            "; card worker stop also failed: " + exception_message(remote_stop_error));
       }
       state_ = channel_stop_error ? State::Failed : State::Exited;
     }
