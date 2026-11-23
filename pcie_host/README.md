@@ -458,8 +458,11 @@ The Platform driver, host DLLs and daemon remain a separate Platform prerequisit
 
 ### Windows package CI
 
-Vulcan CI runs the Windows lane only when the repository variable
-`ENABLE_WINDOWS_PCIE_CI` is `true`. The Windows producer, hardware
+Vulcan CI builds, tests and retains the Windows package on a GitHub-hosted
+runner on every standard run, and publishes branch builds beside the Ubuntu
+packages. The self-hosted card lane runs only when the repository variable
+`ENABLE_WINDOWS_PCIE_CI` is `true` or a manual run sets `run_windows_pcie`. The
+Windows producer, hardware
 qualification, publishing and recovery procedure are documented for maintainers
 in [`scripts/ci/pciehost/WINDOWS_RELEASE.md`](../scripts/ci/pciehost/WINDOWS_RELEASE.md).
 

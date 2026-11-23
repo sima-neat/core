@@ -101,6 +101,10 @@ on:
         description: Build and qualify without publishing
         type: boolean
         default: true
+      release_qualification:
+        description: Also run and require the release-only hardware checks (rehearses a release with validation_only)
+        type: boolean
+        default: false
       require_signatures:
         description: Require Authenticode for Neat user-space packages (optional)
         type: boolean
@@ -699,6 +703,7 @@ jobs:
           REQUIRE_UPGRADE: ${{ inputs.require_upgrade }}
           UPGRADE_BASE_TAG: ${{ inputs.upgrade_base_tag }}
           VALIDATION_ONLY: ${{ inputs.validation_only }}
+          RELEASE_QUALIFICATION: ${{ inputs.release_qualification }}
           ARTIFACT_BASE_URL: ${{ needs.resolve-vulcan-config.outputs.artifact_base_url }}
         run: |
           $ErrorActionPreference = "Stop"
@@ -741,7 +746,7 @@ jobs:
             "--evidence", "$env:RUNNER_TEMP\core-windows-hardware-evidence",
             "--include-genai"
           )
-          if ("$env:VALIDATION_ONLY" -ne "true") {
+          if ("$env:VALIDATION_ONLY" -ne "true" -or "$env:RELEASE_QUALIFICATION" -eq "true") {
             # Windows-only release checks; validation runs keep what Linux's card job covers.
             $arguments += "--release-qualification"
           }
@@ -795,6 +800,7 @@ jobs:
         shell: powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -Command ". '{0}'"
         env:
           VALIDATION_ONLY: ${{ inputs.validation_only }}
+          RELEASE_QUALIFICATION: ${{ inputs.release_qualification }}
           REQUIRE_UPGRADE: ${{ inputs.require_upgrade }}
           REQUIRE_SIGNATURES: ${{ inputs.require_signatures }}
         run: |
@@ -807,7 +813,7 @@ jobs:
             "--expected-commit", $env:GITHUB_SHA,
             "--output", "$env:RUNNER_TEMP\core-windows-hardware-evidence\release-admission.json"
           )
-          if ("$env:VALIDATION_ONLY" -ne "true") {
+          if ("$env:VALIDATION_ONLY" -ne "true" -or "$env:RELEASE_QUALIFICATION" -eq "true") {
             $arguments += @("--require-genai", "--require-release-qualification")
           }
           if ("$env:REQUIRE_UPGRADE" -eq "true") {

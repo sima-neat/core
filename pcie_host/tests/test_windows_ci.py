@@ -1084,6 +1084,7 @@ class WindowsCiContracts(unittest.TestCase):
             environment = {
                 "RESULTS": json.dumps(results), "BUILD_MODE": "standard",
                 "WINDOWS_PCIE_CI": str(evaluate_actions_expression(gate_flag, context)).lower(),
+                "GITHUB_REF_TYPE": "branch",
             }
             with mock.patch.dict(os.environ, environment):
               if outcome == "success" or variable != "true":
@@ -1135,6 +1136,73 @@ class WindowsCiContracts(unittest.TestCase):
               self.assertEqual(
                   evaluate_actions_expression(condition("promote-latest-tag"), context),
                   outcome == "success" or not enabled)
+
+  def test_tag_runs_build_the_card_bundle_the_release_dispatch_downloads(self):
+    source = MAIN_WORKFLOW.read_text(encoding="utf-8")
+    job, condition = partial(workflow_job, source), partial(job_condition, source)
+    gate = textwrap.dedent(job("validation-complete").split(
+        "          python3 - <<'PYGATE'\n", 1)[1].split("\n          PYGATE", 1)[0])
+    for ref_type in ("branch", "tag"):
+      with self.subTest(ref_type=ref_type):
+        context = {
+            "always()": True,
+            "vars.ENABLE_WINDOWS_PCIE_CI": "",
+            "github.event_name": "push",
+            "inputs.run_windows_pcie": False,
+            "github.workflow": "Vulcan CI",
+            "inputs.offline_source_run_id": "",
+            "inputs.validation_only": False,
+            "inputs.build_mode": "standard",
+            "github.ref_type": ref_type,
+            "needs.detect-changes.outputs.docs_only": "false",
+        }
+        for upstream in (
+            "validate-windows-cohort-selectors", "build",
+            "build-pcie-card-offline-bundle", "build-pciehost-packages"):
+          context[f"needs.{upstream}.result"] = "success"
+        tag = ref_type == "tag"
+        self.assertEqual(
+            evaluate_actions_expression(condition("build-pcie-card-offline-bundle"), context),
+            tag)
+        # The card lane itself stays opt-in.
+        self.assertFalse(evaluate_actions_expression(condition("test-pciehost-windows"), context))
+
+        results = {name: {"result": "success"} for name in re.findall(
+            r"- ([\w-]+)", job("validation-complete").split("    steps:", 1)[0])}
+        for name in ("publish-vulcan-artifacts", "publish-pciehost-package",
+                     "promote-latest-tag", "test-pciehost-windows"):
+          results[name]["result"] = "skipped"
+        results["build-pcie-card-offline-bundle"]["result"] = "success" if tag else "skipped"
+        environment = {"RESULTS": json.dumps(results), "BUILD_MODE": "standard",
+                       "WINDOWS_PCIE_CI": "false", "GITHUB_REF_TYPE": ref_type}
+        with mock.patch.dict(os.environ, environment):
+          exec(compile(gate, str(MAIN_WORKFLOW), "exec"), {})
+
+  def test_release_qualification_can_be_rehearsed_without_publishing(self):
+    source = WORKFLOW.read_text(encoding="utf-8")
+    call_inputs = source.split("  workflow_call:\n", 1)[1].split("  workflow_dispatch:\n", 1)[0]
+    dispatch_inputs = source.split("  workflow_dispatch:\n", 1)[1].split("\npermissions:", 1)[0]
+    self.assertRegex(
+        dispatch_inputs,
+        r"      release_qualification:\n        description: .+\n"
+        r"        type: boolean\n        default: false\n")
+    self.assertNotIn("release_qualification", call_inputs)
+    hardware = workflow_job(source, "hardware")
+    release_checks = '"$env:VALIDATION_ONLY" -ne "true" -or "$env:RELEASE_QUALIFICATION" -eq "true"'
+    for step, arguments in (
+        ("Install, test both APIs, and remove exact cohort",
+         '$arguments += "--release-qualification"'),
+        ("Enforce release admission",
+         '$arguments += @("--require-genai", "--require-release-qualification")'),
+    ):
+      with self.subTest(step=step):
+        body = workflow_step(hardware, step)
+        self.assertIn("RELEASE_QUALIFICATION: ${{ inputs.release_qualification }}\n", body)
+        self.assertIn(f"if ({release_checks}) {{\n", body)
+        self.assertIn(arguments, body)
+    # A rehearsal never publishes: publication still requires validation_only=false.
+    self.assertIn("inputs.validation_only != true", job_condition(source, "publish"))
+    self.assertNotIn("release_qualification", workflow_job(source, "publish"))
 
   def test_workflows_calling_main_ci_skip_the_windows_lane_and_accept_the_skip(self):
     # A called workflow sees the top-level caller's name, which the Windows
