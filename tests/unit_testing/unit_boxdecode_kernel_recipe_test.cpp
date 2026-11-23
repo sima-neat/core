@@ -1297,17 +1297,19 @@ std::int32_t ssd_policy_detections(stagesemantics::SsdRecipeId id, int side,
 // A sigmoid-scored SSD-Mobile-300-v1 detection from one known logit. The prior
 // is worked out here from the TF SSD-MobileNet-v1 anchor layout, not read from
 // Core: the 19x19 level's first anchor has scale 0.1 and aspect ratio 1, and
-// cell (9, 9) is centred at 9.5 / 19 = 0.5. Zero offsets decode to that prior,
-// [0.45, 0.55] on both axes, and a stretch to 600x300 gives x 270, y 135, w 60,
-// h 30. Class 1 at logit 5 must publish class 1 with score sigmoid(5).
+// the cell at row 4, column 12 is centred at x 12.5 / 19, y 4.5 / 19. Zero
+// offsets decode to that prior, and a stretch to 600x300 gives x 364.7, y 56.1,
+// w 60, h 30. An off-centre cell and a non-square frame make a swapped row and
+// column, or a swapped x and y scale, fail. Class 1 at logit 5 must publish
+// class 1 with score sigmoid(5).
 void ssd_known_logit_detection() {
-  constexpr std::size_t classes = 91, anchors_19 = 3, cell = 9 * 19 + 9;
+  constexpr std::size_t classes = 91, anchors_19 = 3, cell = 4 * 19 + 12;
   const auto wire = ssd_decode_wire(
       stagesemantics::SsdRecipeId::SsdMobile300V1, {19, 10, 5, 3, 2, 1}, {3, 6, 6, 6, 6, 6},
       {300, 300, 600, 300, ResizeMode::Stretch}, {{cell * anchors_19 * classes + 1, 5.f}});
   require(wire.read<std::int32_t>(0) == 1, "SSD-Mobile-300 published other than one detection");
   const auto near = [](std::int32_t got, int want) { return std::abs(got - want) <= 1; };
-  require(near(wire.read<std::int32_t>(4), 270) && near(wire.read<std::int32_t>(8), 135) &&
+  require(near(wire.read<std::int32_t>(4), 365) && near(wire.read<std::int32_t>(8), 56) &&
               near(wire.read<std::int32_t>(12), 60) && near(wire.read<std::int32_t>(16), 30),
           "SSD-Mobile-300 box does not match its prior stretched to the original frame");
   require(wire.read<std::int32_t>(24) == 1, "SSD-Mobile-300 published the wrong class");

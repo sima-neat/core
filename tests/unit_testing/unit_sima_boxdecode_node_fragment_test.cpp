@@ -243,7 +243,8 @@ RUN_TEST(
             simaai::neat::BoxDecodeTypeOption::Auto, std::nullopt, std::nullopt, std::nullopt,
             simaai::neat::ResizeMode::Letterbox);
       } catch (const std::invalid_argument& e) {
-        ssd_letterbox_refused = std::string(e.what()).find("stretch") != std::string::npos;
+        ssd_letterbox_refused =
+            std::string(e.what()).find("requires a stretch") != std::string::npos;
       }
       require(ssd_letterbox_refused, "SSD BoxDecode must refuse a letterbox resize assertion");
       require(simaai::neat::nodes::SimaBoxDecode(
