@@ -1341,22 +1341,18 @@ def test_graph_describe_backend_includes_quant_tess_stage():
   assert "quanttess" in text or "quant_tess" in text
 
 
-def test_graph_describe_backend_includes_detess_dequant_stage(tmp_path):
+def test_graph_describe_backend_includes_model_dequantize_stage(tmp_path):
   model_path = _strict_yolo_model_path()
   model = pyneat.Model(str(model_path))
 
   graph = pyneat.Graph()
   graph.add(pyneat.nodes.input())
   graph.add(pyneat.groups.mla(model))
-  graph.add(pyneat.nodes.detess_dequant(pyneat.DetessDequantOptions(model)))
   graph.add(pyneat.nodes.output())
 
-  # A fused physical cohort need not use the logical operation as its element name.
-  assert "detessdequant" in graph.describe().lower()
   info = model.info()
-  assert info.capabilities.has_post_detessellation
   assert info.capabilities.has_post_dequantization
-  assert "neatkernelrunner" in graph.describe_backend().lower()
+  assert "neatprocessmla" in graph.describe_backend().lower()
 
 
 def test_graph_describe_backend_includes_sima_box_decode_stage(tmp_path):
