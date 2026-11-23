@@ -159,7 +159,10 @@ public:
       const auto status = remote_.wait_ready(connection_.queue, *remote_pid_, readiness_timeout_ms);
       if (!status.output_buffer_bytes)
         throw std::runtime_error(
-            "card builder did not report output_buffer_bytes; install matching Core packages");
+            "card builder did not report output_buffer_bytes, so the card runs an older Neat "
+            "release than this host (Neat " +
+            internal::RemoteRuntime::host_neat_version() +
+            "). Install the matching Neat release on the card (see Install Neat on the card).");
       std::this_thread::sleep_for(kPostReadyStabilizationDelay);
       channel_.configure(facts_, connection_.queue, connection_.card_id, connection_.max_inflight,
                          model_options.has_boxdecode || facts_.has_boxdecode,

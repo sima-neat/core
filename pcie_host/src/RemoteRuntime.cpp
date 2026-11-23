@@ -35,6 +35,8 @@ constexpr const char* kDefaultMlashmCtrlIoTimeout = "MLASHM_CTRL_IO_TIMEOUT_MS=5
 constexpr const char* kHelperPathEnv = "SIMA_NEAT_PCIE_HELPER_PATH";
 constexpr const char* kRunDirEnv = "SIMA_NEAT_PCIE_RUN_DIR";
 constexpr const char* kLogDirEnv = "SIMA_NEAT_PCIE_LOG_DIR";
+constexpr const char* kInstallOnCard = "Install the matching Neat release on the card (see Install "
+                                       "Neat on the card).";
 
 std::optional<std::string> default_identity_file() {
   const auto home = host_home_directory();
@@ -95,6 +97,36 @@ void validate_endpoint_component(const std::string& value, const char* name,
   }
 }
 
+// The major.minor.patch release of a Neat version such as 0.6.2 or 0.6.2+develop.1a2b3c, or "".
+std::string neat_release(const std::string& version) {
+  std::size_t end = 0;
+  for (int part = 0; part < 3; ++part) {
+    const std::size_t begin = end;
+    while (end < version.size() && std::isdigit(static_cast<unsigned char>(version[end]))) {
+      ++end;
+    }
+    if (end == begin || (part < 2 && (end == version.size() || version[end++] != '.'))) {
+      return "";
+    }
+  }
+  return end < version.size() && std::isdigit(static_cast<unsigned char>(version[end]))
+             ? ""
+             : version.substr(0, end);
+}
+
+std::string output_value(const std::string& output, const std::string& key) {
+  std::istringstream lines(output);
+  for (std::string line; std::getline(lines, line);) {
+    if (!line.empty() && line.back() == '\r') {
+      line.pop_back();
+    }
+    if (line.rfind(key + "=", 0) == 0) {
+      return line.substr(key.size() + 1);
+    }
+  }
+  return "";
+}
+
 } // namespace
 
 RemoteRuntime::RemoteRuntime(ConnectionOptions connection) : connection_(std::move(connection)) {
@@ -125,6 +157,14 @@ std::string RemoteRuntime::pid_path(const int queue) const {
 
 std::string RemoteRuntime::owner_path(const int queue) const {
   return run_dir_ + "/q" + std::to_string(queue) + ".owner";
+}
+
+std::string RemoteRuntime::host_neat_version() {
+#ifdef SIMA_NEAT_PCIE_HOST_VERSION
+  return SIMA_NEAT_PCIE_HOST_VERSION;
+#else
+  return "unknown";
+#endif
 }
 
 std::optional<QueueOwner> RemoteRuntime::parse_queue_owner(const std::string& output) {
@@ -223,6 +263,7 @@ bool RemoteRuntime::start_failure_cleanup_safe(const int exit_code, const bool t
   case 14: // start-lock timeout, before launch
   case 15: // launched child exited and was reaped
   case 16: // queue-claim timeout after launched child was terminated and reaped
+  case 21: // card Neat release differs from the host's, before launch
     return true;
   default:
     return false;
@@ -331,7 +372,14 @@ std::string RemoteRuntime::start_failure_remedy(const std::string& output, const
     }
     if (line == "missing_builder") {
       return "\nNeat is not installed on the card at " + endpoint() +
-             ". Install the Neat release that matches this host package on the card.";
+             ". Install the Neat release that matches this host package (Neat " +
+             host_neat_version() + ") on the card (see Install Neat on the card).";
+    }
+    if (line == "neat_version_mismatch") {
+      return "\nThe card at " + endpoint() + " runs Neat " +
+             output_value(output, "card_neat_version") + " and this host runs Neat " +
+             host_neat_version() + "; the card needs the same Neat release as the host. " +
+             kInstallOnCard;
     }
     if (line == "missing_run_dir") {
       return "\nThe card's Neat runtime directory " + run_dir_ +
@@ -385,6 +433,17 @@ RemoteRuntime::start_command(const int queue, const std::string& remote_model_pa
     helper_env += SshRunner::shell_escape(entry) + " ";
   }
 
+  // Builders that predate --version print nothing here, and the start goes ahead as before.
+  std::ostringstream version_check;
+  version_check << "card_version=$(" << helper_env << SshRunner::shell_escape(helper)
+                << " --version 2>/dev/null | sed -n 's/^sima-neat-version=//p' | head -n 1); "
+                << "[ -z \"$card_version\" ] || echo \"card_neat_version=$card_version\"; ";
+  if (const std::string release = neat_release(host_neat_version()); !release.empty()) {
+    const std::string quoted = SshRunner::shell_escape(release);
+    version_check << "case \"$card_version\" in ''|[!0-9]*|" << quoted << "|" << quoted
+                  << "[!0-9]*) ;; *) echo neat_version_mismatch; exit 21;; esac; ";
+  }
+
   // Record this process with the claim, so that a later start can tell whether the worker was
   // left by a process that has ended. Without a record, a busy queue is reported as before.
   const HostProcessOwner self = current_host_process_owner();
@@ -408,7 +467,7 @@ RemoteRuntime::start_command(const int queue, const std::string& remote_model_pa
 
   std::ostringstream ss;
   ss << child_cleanup_shell_function() << "[ -x " << SshRunner::shell_escape(helper)
-     << " ] || { echo missing_builder; exit 10; }; " << "[ -d "
+     << " ] || { echo missing_builder; exit 10; }; " << version_check.str() << "[ -d "
      << SshRunner::shell_escape(resolved_run_dir) << " ] || { echo missing_run_dir; exit 11; }; "
      << "[ -d " << SshRunner::shell_escape(resolved_log_dir)
      << " ] || { echo missing_log_dir; exit 12; }; "

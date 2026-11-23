@@ -115,7 +115,8 @@ add_library(sima_neat_pcie_host STATIC
   ${SIMA_NEAT_PCIE_HOST_SOURCES}
 )
 
-target_compile_definitions(sima_neat_pcie_host PRIVATE SIMA_NEAT_INTERNAL=1)
+target_compile_definitions(sima_neat_pcie_host PRIVATE SIMA_NEAT_INTERNAL=1
+  SIMA_NEAT_PCIE_HOST_VERSION="${PROJECT_VERSION}")
 target_include_directories(sima_neat_pcie_host PRIVATE
   ${SIMA_NEAT_CORE_ROOT}/shared/pcie_genai)
 target_include_directories(sima_neat_pcie_host PUBLIC $<BUILD_INTERFACE:${SIMA_NEAT_CORE_ROOT}/include>)
@@ -488,6 +489,8 @@ if (SIMAPCIE_BUILD_TESTS)
     target_link_libraries(unit_pcie_host_remote_runtime_test PRIVATE sima_neat_pcie_host)
     target_include_directories(unit_pcie_host_remote_runtime_test PRIVATE
       ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_compile_definitions(unit_pcie_host_remote_runtime_test PRIVATE
+      SIMA_NEAT_PCIE_HOST_VERSION="${PROJECT_VERSION}")
     add_test(NAME unit_pcie_host_remote_runtime_test COMMAND unit_pcie_host_remote_runtime_test)
     set_tests_properties(unit_pcie_host_remote_runtime_test PROPERTIES TIMEOUT 120)
 

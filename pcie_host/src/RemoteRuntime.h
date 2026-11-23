@@ -79,6 +79,8 @@ public:
   // The next step for a card-side start failure the user can fix, or "".
   std::string start_failure_remedy(const std::string& output, int queue) const;
   static std::optional<QueueOwner> parse_queue_owner(const std::string& output);
+  // This host package's Neat release, which the card's Neat release must match.
+  static std::string host_neat_version();
   static std::string child_cleanup_shell_function();
   static std::string detached_child_redirections();
   std::vector<std::string> ssh_base() const;

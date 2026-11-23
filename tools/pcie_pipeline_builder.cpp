@@ -1,4 +1,5 @@
 #include <neat.h>
+#include <neat/version.h>
 
 #include "gst/GstInit.h"
 #include "pipeline/internal/sima/BoxDecodeTypeUtils.h"
@@ -114,7 +115,8 @@ private:
 
 std::string usage() {
   return "usage: pcie-pipeline-builder --model <model.tar.gz> "
-         "--queue <0..5> [--model-options <options.json>] [--print-gst]";
+         "--queue <0..5> [--model-options <options.json>] [--print-gst]\n"
+         "       pcie-pipeline-builder --version";
 }
 
 std::string mode_name(const Mode mode) {
@@ -1047,6 +1049,11 @@ int run_builder(const CliOptions& opt) {
 } // namespace
 
 int main(int argc, char** argv) {
+  // The host compares this with its own Neat release before it starts a worker.
+  if (argc == 2 && std::string(argv[1]) == "--version") {
+    std::cout << "sima-neat-version=" << sima_neat_version() << '\n';
+    return 0;
+  }
   try {
     CliOptions opt = parse_cli(argc, argv);
     simaai::neat::gst_init_once();
