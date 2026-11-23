@@ -982,6 +982,21 @@ static GstElement* parse_pipeline_or_throw(const BuildResult& build, const char*
       actual_by_name;
   actual_by_name.reserve(object_inventory.size());
   for (const auto& object : object_inventory) {
+    if (object.factory_name == "udpsink" &&
+        std::any_of(name_origins.begin(), name_origins.end(), [&](const auto& origin) {
+          return origin.node_kind == "UdpOutput" && origin.name == object.short_name;
+        })) {
+      pipeline_internal::GstSinkPtr sink(
+          gst_bin_get_by_name(GST_BIN(pipeline), object.short_name.c_str()));
+      g_autofree gchar* clients = nullptr;
+      g_autofree gchar* host = nullptr;
+      g_object_get(sink.get(), "clients", &clients, "host", &host, nullptr);
+      if (!clients || !*clients) {
+        session_build_throw_session_error_simple(
+            error_codes::kIoOpen, std::string("Cannot resolve UdpOutput.host '") + host + "'.",
+            "Check name resolution on the target and retry.", pipeline_string);
+      }
+    }
     if (!object.short_name.empty()) {
       actual_by_name[object.short_name].push_back(&object);
     }
