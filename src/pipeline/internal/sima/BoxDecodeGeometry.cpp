@@ -94,14 +94,19 @@ struct Published {
 };
 // One rule for absent, valid and malformed transforms. An all-zero matrix is the compact form of
 // "no affine published"; facts that carry only dimensions serialize a default identity instead.
+// That identity is a real transform only when the placement confirms it: the whole source image
+// sits at the canvas origin (a 640x360 frame at (0, 0) on a 640x640 canvas).
 enum class AffineState { Absent, Present, Malformed };
-AffineState classify_affine(const Published& frame, bool affine_optional) {
+AffineState classify_affine(const Published& frame, const Geometry& geometry,
+                            bool affine_optional) {
   constexpr std::array<double, 6> identity{1., 0., 0., 0., 1., 0.};
   if (frame.affine_error)
     return AffineState::Malformed;
   if (!frame.matrix || !affine_published(*frame.matrix))
     return AffineState::Absent;
-  if (affine_optional && frame.plain && *frame.matrix == identity)
+  const bool confirmed =
+      geometry.placed == std::array<std::int64_t, 4>{0, 0, geometry.width, geometry.height};
+  if (affine_optional && frame.plain && *frame.matrix == identity && !confirmed)
     return AffineState::Absent;
   return AffineState::Present;
 }
@@ -125,22 +130,26 @@ std::optional<rt::Error> interpret(const Published& frame, Geometry& geometry, b
   geometry.roi_ambiguous =
       geometry.roi_list && (!frame.capacity || *frame.capacity != 1 || !frame.valid_rois);
   geometry.roi_empty = geometry.roi_list && !geometry.roi_ambiguous && *frame.valid_rois != 1;
-  const auto state = classify_affine(frame, affine_optional);
+  const auto state = classify_affine(frame, geometry, affine_optional);
   geometry.affine = frame.matrix;
-  // Dimensions-only metadata serializes a default identity; it names no crop for the full-frame
-  // guard either, whatever the profile.
+  // The full-frame guard reads dimensions-only metadata by the same rule, whatever the profile.
   if (want_partial)
-    geometry.partial =
-        partial_frame(frame, geometry, classify_affine(frame, true)) || geometry.roi_empty;
+    geometry.partial = partial_frame(frame, geometry, classify_affine(frame, geometry, true)) ||
+                       geometry.roi_empty;
+  // Contradicting affine fields are an error for every reader, not only for those that map boxes.
+  if (state == AffineState::Malformed)
+    return invalid(frame.affine_error);
   if (!complete)
     return std::nullopt;
   if (geometry.roi_ambiguous)
     return ambiguous_roi_list();
   if (geometry.roi_empty)
     return empty_roi_list();
-  if (state == AffineState::Malformed)
-    return invalid(frame.affine_error);
-  // Legacy ingress publishes dimensions without an affine: the recipe's fallback applies.
+  // Only genuinely dimensions-only frames take the recipe's fallback; a published partial ROI
+  // without a usable transform has none to fall back to.
+  if (state == AffineState::Absent && frame.source_rect &&
+      *frame.source_rect != std::array<std::int64_t, 4>{0, 0, geometry.width, geometry.height})
+    return invalid("an ROI frame published no usable model-to-original transform");
   if (state == AffineState::Present) {
     auto transform = checked_transform(*frame.matrix, uniform);
     if (const auto* error = std::get_if<rt::Error>(&transform))
