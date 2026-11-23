@@ -3,6 +3,7 @@
 
 #include <simaai_svc.h>
 
+#include <cerrno>
 #include <chrono>
 #include <exception>
 #include <iostream>
@@ -11,6 +12,10 @@
 #include <thread>
 
 namespace wire = simaai::neat::pcie::genai::wire;
+
+#ifdef _WIN32
+void test_genai_open_error(int);
+#endif
 
 namespace {
 void require(bool value, const char* message) {
@@ -103,6 +108,24 @@ int main() {
     if (remote_error)
       std::rethrow_exception(remote_error);
     rejects([&] { wire::Service invalid(-1); });
+#ifdef _WIN32
+    // A stopped SiMaMlaDaemon service fails the open with a bare code: name the fix.
+    std::string stopped;
+    test_genai_open_error(-ENOENT);
+    try {
+      wire::Service unavailable(0);
+    } catch (const std::runtime_error& error) {
+      stopped = error.what();
+    }
+    test_genai_open_error(0);
+    require(stopped.starts_with("PCIe service open card failed: -2. ") &&
+                stopped.find("Get-Service SiMaMlaDaemon") != std::string::npos &&
+                stopped.find("Start-Service SiMaMlaDaemon from an elevated PowerShell") !=
+                    std::string::npos &&
+                stopped.find(R"(\SimaPCIeHost\bin\sima-pcie-host-doctor.cmd")") !=
+                    std::string::npos,
+            "service open failure names the stopped Platform service and its fix");
+#endif
     rejects([&] {
       host.send(wire::tag(session, false), std::string(SIMAAI_SVC_PAYLOAD_MAX + 1, 'x'));
     });

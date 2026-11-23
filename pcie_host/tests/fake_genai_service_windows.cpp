@@ -30,7 +30,7 @@ namespace {
 std::mutex mutex;
 std::vector<simaai_svc*> clients;
 std::filesystem::path receive_root;
-std::atomic<int> copies{0}, put_error{0};
+std::atomic<int> copies{0}, put_error{0}, open_error{0};
 std::atomic<bool> block_put{false}, pause_put{false}, put_paused{false}, put_waiting{false};
 std::atomic<unsigned long> pipe_sequence{0};
 
@@ -145,7 +145,13 @@ int test_genai_open_clients() {
   std::lock_guard lock(mutex);
   return static_cast<int>(clients.size());
 }
+// Fail the next opens with error, as Platform does while SiMaMlaDaemon is stopped.
+void test_genai_open_error(int error) {
+  open_error = error;
+}
 int simaai_svc_open_card(uint32_t, simaai_svc** out) {
+  if (open_error)
+    return open_error;
   auto* client = new simaai_svc;
   if (!make_pipe(*client)) {
     if (client->reader != INVALID_HANDLE_VALUE)

@@ -131,7 +131,14 @@ Service::Service(int card, bool endpoint) : impl_(std::make_unique<Impl>()) {
     if (card < 0)
       throw std::invalid_argument("card_id must be nonnegative");
     const auto open = impl_->symbol<int (*)(uint32_t, simaai_svc**)>("simaai_svc_open_card");
-    check(open(static_cast<uint32_t>(card), &impl_->handle), "open card");
+    // Platform reports a stopped SiMaMlaDaemon service only as an error code, -2 among them.
+    if (const int rc = open(static_cast<uint32_t>(card), &impl_->handle))
+      throw std::runtime_error(
+          "PCIe service open card failed: " + std::to_string(rc) +
+          ". The SiMa Platform service may not be running: check it with Get-Service "
+          "SiMaMlaDaemon and start it with Start-Service SiMaMlaDaemon from an elevated "
+          "PowerShell. To check the whole host, run "
+          R"(& "$env:ProgramFiles\SimaPCIeHost\bin\sima-pcie-host-doctor.cmd")");
   }
 }
 
