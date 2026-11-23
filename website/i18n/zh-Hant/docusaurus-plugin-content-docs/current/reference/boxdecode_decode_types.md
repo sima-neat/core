@@ -87,6 +87,21 @@ opt.top_k = 100;
 
 未置中的信箱式調整（例如 `LetterboxPlacement::TopLeft`，請參閱 [Preproc 調整大小](/reference/nodes/preproc#resize-and-aspect-ratio)）受偵測設定檔支援，這些設定檔會使用每個影格的模型座標到原始影像座標仿射轉換來對應邊界框：YOLO 偵測系列、已解碼的 YOLO、EfficientDet、DETR、DetrFocal、CenterNet 與 SSD。姿勢、分割與 RCNN 提議設定檔會拒絕這種調整，而不是傳回偏移的結果。置中的信箱式調整會維持其對應方式。Segment Anything 類型有各自的要求；請參閱 [Segment Anything 規則](#segment-anything-rules)。
 
+## ROI、裁切與拉伸影格 {#roi-and-crop-frames}
+
+裁切感興趣區域 (ROI) 並將其以黑邊或拉伸方式放入模型畫布的 Preproc，會為每個影格發佈將模型座標對應回完整來源影格的仿射轉換。偵測設定檔會以其預處理所發佈的仿射轉換解碼每個影格，因此無論是單一 ROI、置中或非置中的黑邊、拉伸或整個影格，方框都會以來源影格的像素為單位輸出。來源影格是未經裁切的影像，而不是 ROI。整個影格的解碼結果與以往完全相同。只發佈影像尺寸而未發佈仿射轉換的輸入，維持整個影格的對應方式。
+
+| 設定檔 | 單一 ROI、裁切或拉伸 | 含多個槽位的 ROI 清單 |
+| --- | --- | --- |
+| YOLO26、YOLOv5、YOLOv6、YOLOv7、YOLOv8 至 YOLOv11、YOLOX、已解碼 YOLO、EfficientDet、CenterNet、DETR、DetrFocal、SSD (不含 91 類多類別 SSD 配方) | 以來源影格像素為單位的方框 | 失敗 |
+| YOLOX 分割與姿勢、旋轉方框 | 以來源影格像素為單位的方框 (旋轉方框需要兩軸縮放比例相同) | 失敗 |
+| 姿勢、分割 (YOLOv5、v7、v8、v9、v10、YOLO26)、RCNN 提案、91 類多類別 SSD | 失敗，並指出設定檔名稱 | 失敗，並指出設定檔名稱 |
+| Segment Anything | 失敗：需要將整張影像僅調整大小一次 | 失敗 |
+
+由於設定檔的核心不接受轉換，因此它會失敗，而不是以整個影格座標解碼。它仍可解碼整個影格。對此類設定檔要求的 Crop 調整大小，會在建置圖時失敗。
+
+含多個槽位的 ROI 清單緩衝區每個槽位帶有一個仿射轉換，但一次 BoxDecode 呼叫只接受一個影格轉換，因此它會以錯誤失敗，而不是用第一個槽位的仿射轉換解碼所有槽位。請使用容量為 1 的 ROI 清單，讓每個 ROI 成為一個影格，或每個影格只預處理一個 ROI。
+
 ## 傳統 DETR {#classic-detr}
 
 對於同一查詢網格上的四通道方框 logits，以及最後一個通道為背景的類別 logits，請選擇 `Detr`。將 `decode_type_option` 保持為 `Auto`：配方會選擇 Softmax，不依賴張量名稱。背景會參與分母計算，但不計入前景類別數，也不會被選為輸出。方框座標會套用 sigmoid；此解碼器不適用於已正規化的 focal-loss 方框。
@@ -374,7 +389,7 @@ offset  size  content
 
 對應的 Python `struct` 格式，用於單一記錄，為 `"<iiiifi"`。
 
-如果存在上游預處理的元資料，則座標將以原始影像的像素為單位。它們不會正規化到 `[0, 1]`，也不會以模型內部「黑邊」輸入空間的形式表示。
+如果存在上游預處理的元資料，則座標將以原始影像的像素為單位。對於由 ROI 預處理的影格，原始影像是完整的來源影格，而不是 ROI (請參閱 [ROI、裁切與拉伸影格](#roi-and-crop-frames))。它們不會正規化到 `[0, 1]`，也不會以模型內部「黑邊」輸入空間的形式表示。
 
 ### 分割 + 姿態的組合酬載
 

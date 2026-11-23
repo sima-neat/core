@@ -150,6 +150,12 @@ For Python, pass `image_format=pyneat.PixelFormat.BGR` for `cv2.imread` images, 
 
 Each output's preprocess metadata includes the selected ROI, letterbox geometry, normalization/quantization/tessellation flags, and an affine transform that maps model/preprocessed coordinates back to the original source-frame coordinate system.
 
+## Detection boxes from an ROI
+
+When a preprocessed ROI feeds `SimaBoxDecode`, the detection profiles map boxes back through the ROI's affine, so boxes are in the coordinates of the full source image, not of the ROI or the model canvas. This holds for a letterboxed or stretched ROI. See [ROI, crop and stretch frames](/reference/boxdecode_decode_types#roi-and-crop-frames) for the profiles that do this, and for the profiles (pose, segmentation, RCNN proposals and multiclass SSD) that fail on an ROI frame instead of returning whole-frame coordinates.
+
+BoxDecode decodes one frame per call. A buffer that holds several ROI slots carries one affine per slot, so decoding it fails with an error. Preprocess one ROI per frame (ROI-list capacity 1) when a detector consumes the result.
+
 ## Out-of-frame ROIs
 
 ROIs may extend outside the source image:

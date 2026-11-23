@@ -295,7 +295,7 @@ roi_tensors = pyneat.stages.preproc(
 
 ## 메타데이터 및 BoxDecode
 
-`Preproc`는 후속 노드가 이미지 변환을 올바르게 되돌릴 수 있도록 전처리 메타데이터를 기록합니다. 특히 `SimaBoxDecode`는 이 메타데이터를 사용하여 감지 상자를 원래 이미지 또는 ROI 좌표 공간에 다시 매핑합니다.
+`Preproc`는 후속 노드가 이미지 변환을 올바르게 되돌릴 수 있도록 전처리 메타데이터를 기록합니다. 특히 `SimaBoxDecode`는 이 메타데이터를 사용하여 감지 상자를 원래 소스 프레임에 다시 매핑하며, ROI에서 전처리한 프레임도 마찬가지입니다([ROI, 자르기 및 늘이기 프레임](/reference/boxdecode_decode_types#roi-and-crop-frames) 참조). ROI나 자르기를 매핑할 수 없는 프로필은 전체 프레임 좌표로 디코딩하는 대신 실패합니다.
 
 중요한 메타데이터 필드에는 다음이 포함됩니다.
 
