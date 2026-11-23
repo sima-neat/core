@@ -16,10 +16,15 @@ if not defined _SIMA_PCIE_HOST_GSTREAMER (
 set "GSTREAMER_ROOT_X86_64=%_SIMA_PCIE_HOST_GSTREAMER%"
 set "_SIMA_PCIE_HOST_GSTREAMER="
 
+set "_SIMA_PCIE_HOST_SERVICE="
 if not defined SIMA_WINDOWS_PLATFORM_RUNTIME_DIR (
-  rem sc.exe indentation varies by Windows build; the path may be quoted and contain spaces.
-  for /f "tokens=2,*" %%I in ('sc.exe qc SiMaMlaDaemon 2^>nul ^| findstr.exe /C:"BINARY_PATH_NAME"') do for %%K in (%%J) do if not defined SIMA_WINDOWS_PLATFORM_RUNTIME_DIR set "SIMA_WINDOWS_PLATFORM_RUNTIME_DIR=%%~dpK"
+  rem reg.exe prints "ImagePath <type> <command line>" in every display language; the
+  rem service-control labels are translated. "call set" expands %%VAR%% in REG_EXPAND_SZ.
+  for /f "tokens=2,*" %%I in ('reg.exe query "HKLM\SYSTEM\CurrentControlSet\Services\SiMaMlaDaemon" /v ImagePath 2^>nul ^| findstr.exe /C:"ImagePath"') do call set "_SIMA_PCIE_HOST_SERVICE=%%J"
 )
+rem The executable is the first item of the command line; it is quoted when it has spaces.
+if defined _SIMA_PCIE_HOST_SERVICE for %%K in (%_SIMA_PCIE_HOST_SERVICE%) do if not defined SIMA_WINDOWS_PLATFORM_RUNTIME_DIR set "SIMA_WINDOWS_PLATFORM_RUNTIME_DIR=%%~dpK"
+set "_SIMA_PCIE_HOST_SERVICE="
 if not exist "%SIMA_WINDOWS_PLATFORM_RUNTIME_DIR%\SiMaPCIe.dll" (
   1>&2 echo Neat PCIe host: the SiMa Platform runtime was not found at "%SIMA_WINDOWS_PLATFORM_RUNTIME_DIR%".
   1>&2 echo Install the supported Platform package or set SIMA_WINDOWS_PLATFORM_RUNTIME_DIR to its runtime directory.

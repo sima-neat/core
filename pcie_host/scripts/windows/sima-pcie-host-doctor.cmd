@@ -10,7 +10,8 @@ if not "%errorlevel%"=="0" (
   exit /b 10
 )
 
-sc.exe query SiMaMlaDaemon | findstr.exe /C:"RUNNING" >nul
+rem Service status names are not translated; service-control text is.
+powershell.exe -NoLogo -NoProfile -NonInteractive -Command "if ((Get-Service -Name SiMaMlaDaemon -ErrorAction Stop).Status -ne 'Running') { exit 1 }" >nul 2>nul
 if not "%errorlevel%"=="0" (
   1>&2 echo Neat PCIe host: SiMaMlaDaemon is not running.
   exit /b 11

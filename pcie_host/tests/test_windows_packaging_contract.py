@@ -138,13 +138,18 @@ class WindowsPackagingContract(unittest.TestCase):
 
     environment = read_source("scripts/windows/sima-pcie-host-env.cmd")
     self.assertIn("SIMA_WINDOWS_PLATFORM_RUNTIME_DIR", environment)
-    self.assertIn('findstr.exe /C:"BINARY_PATH_NAME"', environment)
-    self.assertNotIn('findstr.exe /B /C:"        BINARY_PATH_NAME"', environment)
-    # A Platform path with spaces is one quoted item after "BINARY_PATH_NAME :".
-    self.assertIn('for /f "tokens=2,*" %%I in', environment)
-    self.assertIn('do for %%K in (%%J) do if not defined SIMA_WINDOWS_PLATFORM_RUNTIME_DIR '
+    # sc.exe labels and states are translated with the display language; the registry
+    # value name, its type and the PowerShell status name are not.
+    self.assertNotIn("sc.exe", environment)
+    self.assertIn('reg.exe query "HKLM\\SYSTEM\\CurrentControlSet\\Services\\SiMaMlaDaemon" '
+                  '/v ImagePath', environment)
+    self.assertIn('do call set "_SIMA_PCIE_HOST_SERVICE=%%J"', environment)
+    # A Platform path with spaces is one quoted item of the command line.
+    self.assertIn('for %%K in (%_SIMA_PCIE_HOST_SERVICE%) do if not defined '
+                  'SIMA_WINDOWS_PLATFORM_RUNTIME_DIR '
                   'set "SIMA_WINDOWS_PLATFORM_RUNTIME_DIR=%%~dpK"', environment)
-    self.assertNotIn("_SIMAPCIE_PLATFORM_EXE", environment)
+    # cmd.exe can miss labels in LF-terminated scripts; the scripts use none.
+    self.assertNotRegex(environment, r"(?m)^:|call :|goto ")
     self.assertLess(environment.index('"%GSTREAMER_1_0_ROOT_MSVC_X86_64%"'),
                     environment.index('"%GSTREAMER_ROOT_X86_64%"'))
     self.assertLess(environment.index('"%GSTREAMER_ROOT_X86_64%"'),
@@ -166,6 +171,9 @@ class WindowsPackagingContract(unittest.TestCase):
 
     doctor = read_source("scripts/windows/sima-pcie-host-doctor.cmd")
     self.assertIn("SiMaMlaDaemon", doctor)
+    self.assertNotIn("sc.exe", doctor)
+    self.assertIn("(Get-Service -Name SiMaMlaDaemon -ErrorAction Stop).Status -ne 'Running'",
+                  doctor)
     self.assertIn("gst-inspect-1.0.exe", doctor)
 
     setup_wrapper = read_source("scripts/windows/pcie-setup.cmd")
