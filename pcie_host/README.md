@@ -52,6 +52,10 @@ Set `connection.card_id` to select the card; its default address is
 `10.0.<card_id>.2`. Set `connection.card_host` to override that address.
 For speculative decoding, pass the parent directory of a prepared target/draft
 pair. Both models load in one card session using their compiled configuration.
+GenAI `ConnectionOptions` has no `card_env`; the host environment variable
+`SIMA_NEAT_PCIE_GENAI_CARD_ENV` takes its place, with the same `NAME=VALUE`
+format, and `SIMA_NEAT_PCIE_GENAI_HELPER_PATH` in it selects the card worker
+(default `/usr/bin/neat-pcie-genai-worker`, an absolute POSIX path).
 Linux uses the native Platform service for GenAI transport. Windows uses the
 matching Platform service exported by `SiMaPCIe.dll`; the Neat package resolves
 that DLL at runtime and does not redistribute it. Windows GenAI is a supported

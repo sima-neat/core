@@ -33,8 +33,7 @@ RemoteSession::RemoteSession(ConnectionOptions options) : options_(std::move(opt
       options_.user.find(':') != std::string::npos || options_.startup_timeout_ms <= 0 ||
       options_.request_timeout_ms <= 0)
     throw std::invalid_argument("Invalid GenAI connection options");
-  // Qualification can select the exact staged card worker without changing the
-  // public GenAI ConnectionOptions layout used by existing Linux applications.
+  // Host-side override of the card worker environment; ConnectionOptions has no card_env.
   if (const auto* value = std::getenv(kCardEnvironment))
     card_environment_ = value;
   const auto card_environment = parse_card_environment(card_environment_);
