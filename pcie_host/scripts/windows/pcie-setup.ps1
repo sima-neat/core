@@ -194,7 +194,8 @@ if ($targets.Count -eq 0) {
 $Key = [System.IO.Path]::GetFullPath($Key)
 $sshDirectory = Split-Path -Parent $Key
 $publicKeyPath = "$Key.pub"
-$knownHostsPath = Join-Path $sshDirectory "known_hosts"
+# Runtime ssh.exe reads the profile's known_hosts whatever key it uses, as on Linux.
+$knownHostsPath = Join-Path $env:USERPROFILE ".ssh\known_hosts"
 # OpenSSH splits -o values at spaces before expanding ${VAR}, so pass the path that way.
 $env:SIMA_NEAT_PCIE_KNOWN_HOSTS = $knownHostsPath
 $knownHostsOption = 'UserKnownHostsFile=${SIMA_NEAT_PCIE_KNOWN_HOSTS}'
@@ -203,13 +204,15 @@ Write-Host "SiMa Neat PCIe SSH provisioning"
 Write-Host "User: $User"
 Write-Host "Port: $Port"
 Write-Host "Key:  $Key"
+Write-Host "Known hosts: $knownHostsPath"
 Write-Host "Hosts: $($targets -join ' ')"
 
 if ($DryRun) {
-  Write-Host "[dry-run] Would create or reuse the key and known_hosts under $sshDirectory."
+  Write-Host "[dry-run] Would create or reuse the key and known_hosts."
 }
 else {
   New-Item -ItemType Directory -Path $sshDirectory -Force | Out-Null
+  New-Item -ItemType Directory -Path (Split-Path -Parent $knownHostsPath) -Force | Out-Null
   if (-not (Test-Path -LiteralPath $Key -PathType Leaf)) {
     & $commands["ssh-keygen.exe"] -t ed25519 -N '""' -f $Key `
         -C "sima-neat-pcie@$env:COMPUTERNAME" | Out-Null

@@ -259,6 +259,29 @@ class WindowsPackagingContract(unittest.TestCase):
                      source.count("-o $knownHostsOption"), 3)
     self.assertNotRegex(source, r"UserKnownHostsFile=\$(?!{)")
 
+  def test_setup_records_host_keys_where_runtime_ssh_reads_them(self):
+    source = SETUP_SCRIPT.read_text(encoding="utf-8")
+    # Runtime ssh.exe/scp.exe name no UserKnownHostsFile, so OpenSSH reads the
+    # profile's known_hosts; -Key C:\keys\card must not move trust beside the key.
+    self.assertIn('$knownHostsPath = Join-Path $env:USERPROFILE ".ssh\\known_hosts"', source)
+    self.assertEqual(source.count("$knownHostsPath = "), 1)
+    for runtime in ("src/RemoteRuntime.cpp", "src/SshRunner.cpp", "src/genai/RemoteSession.cpp"):
+      with self.subTest(runtime=runtime):
+        self.assertNotIn("UserKnownHostsFile", read_source(runtime))
+
+  @unittest.skipUnless(os.name == "nt", "runs pcie-setup.ps1 with the Windows OpenSSH client")
+  def test_setup_with_a_key_outside_the_profile_uses_the_profile_known_hosts(self):
+    with tempfile.TemporaryDirectory() as root:
+      profile = Path(root) / "profile"
+      key = Path(root) / "keys" / "card"
+      result = subprocess.run(
+          ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
+           str(SETUP_SCRIPT), "-Key", str(key), "-Hosts", "10.0.0.2", "-DryRun"],
+          capture_output=True, text=True, check=False,
+          env={**os.environ, "USERPROFILE": str(profile)})
+      self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+      self.assertIn(f"Known hosts: {profile / '.ssh' / 'known_hosts'}", result.stdout)
+
   def test_setup_key_probes_offer_only_the_neat_key(self):
     source = SETUP_SCRIPT.read_text(encoding="utf-8")
     # A key held by ssh-agent that the card already accepts would otherwise
