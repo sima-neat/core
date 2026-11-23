@@ -361,6 +361,16 @@ A tensor was constructed with both `byte_format=` (opaque bytes) and `image_form
 Pass one or the other, not both.
 :::
 
+### 23. `misconfig.option_out_of_range` — `preprocess.normalize resolved Off … quantized`
+
+:::info Cause
+The model's MLA input is quantized INT8, but `preprocess.normalize` resolved Off: it was left at `Auto` with no mean/stddev and no preset, or set explicitly to `Off`. Raw 0–255 pixel bytes would reach the MLA unquantized and degrade results, so the preprocess stage refuses to build.
+:::
+
+:::tip Fix
+Set `preprocess.normalize.enable = On` with the model's mean/stddev (for YOLO-style `[0,1]` models, `On` with the default mean 0 / stddev 1), or set `preprocess.preset` (for example `COCO_YOLO` or `ImageNet`). Setting mean/stddev alone does not enable normalization.
+:::
+
 ## Coming from another stack
 
 - **"Where's my `.engine` / `.blob` / `.dlc` / `.hef`?"** — Neat loads a `.tar.gz` model archive; that's the equivalent compiled artifact.

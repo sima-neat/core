@@ -359,6 +359,16 @@ case simaai::neat::PullStatus::Error:
 둘 중 하나만 통과하면 됩니다. 둘 다 통과할 필요는 없습니다.
 :::
 
+### 23. `misconfig.option_out_of_range` — `preprocess.normalize resolved Off … quantized`
+
+:::info 원인
+모델의 MLA 입력은 양자화된 INT8이지만 `preprocess.normalize`가 Off로 결정되었습니다. mean/stddev와 preset 없이 `Auto`로 두었거나 명시적으로 `Off`로 설정한 경우입니다. 0–255 원시 픽셀 바이트가 양자화되지 않은 채 MLA로 전달되어 결과가 저하되므로 전처리 스테이지 빌드가 거부됩니다.
+:::
+
+:::tip 해결
+`preprocess.normalize.enable = On`과 모델의 mean/stddev를 설정하십시오(YOLO 계열 `[0,1]` 모델의 경우 기본 mean 0 / stddev 1로 `On`). 또는 `preprocess.preset`(예: `COCO_YOLO`, `ImageNet`)을 설정하십시오. mean/stddev만 설정해서는 정규화가 활성화되지 않습니다.
+:::
+
 ## 다른 스택에서 왔습니다.
 
 - **"내 `.engine` / `.blob` / `.dlc` / `.hef`는 어디에 있나요?"** — Neat은 `.tar.gz` 모델 아카이브를 로드합니다. 이는 컴파일된 아티팩트와 동일합니다.

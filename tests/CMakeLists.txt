@@ -572,6 +572,7 @@ set(UNIT_TESTS
   unit_model_semantic_segmentation_test
   unit_model_metadata_test
   unit_model_route_planner_test
+  unit_model_preproc_quantize_refusal_regression_test
   unit_resnet50_mla_handoff_segment_test
   unit_cast_fanout_contract_test
   unit_mla_boundary_output_contract_test

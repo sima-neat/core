@@ -60,6 +60,7 @@ int main(int argc, char** argv) {
     model_opt.preprocess.kind = simaai::neat::InputKind::Image;
     model_opt.preprocess.enable = simaai::neat::AutoFlag::On;
     model_opt.preprocess.color_convert.input_format = simaai::neat::PreprocessColorFormat::RGB;
+    model_opt.preprocess.preset = simaai::neat::NormalizePreset::ImageNet;
     simaai::neat::Model model(tar_gz, model_opt);
     simaai::neat::Model::RouteOptions route_opt;
     route_opt.include_input = true;

@@ -141,6 +141,7 @@ void run_model_once(const std::string& model_name, const std::string& tar_gz,
   model_opt.preprocess.kind = simaai::neat::InputKind::Image;
   model_opt.preprocess.enable = simaai::neat::AutoFlag::On;
   model_opt.preprocess.color_convert.input_format = simaai::neat::PreprocessColorFormat::BGR;
+  model_opt.preprocess.normalize.enable = simaai::neat::AutoFlag::On;
   simaai::neat::Model model(tar_gz, model_opt);
 
   simaai::neat::TensorList sync_out = model.run(std::vector<cv::Mat>{img_bgr});

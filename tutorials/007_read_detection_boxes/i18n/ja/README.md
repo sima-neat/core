@@ -23,6 +23,8 @@
 
 これらのオプションは、入力の契約と後処理の動作の両方を設定します。`decode_type`（ここでは`YoloV8`）は、モデルファミリーのデコードパスを選択します。信頼度しきい値は、NMSの前に弱い候補を削除します。NMS IoUしきい値は、重複するバウンディングボックスの結合をどの程度積極的に行うかを制御します。`top_k`は、決定的な下流のコストのために最終的なカウントを制限します。そして、`boxdecode_original_width`/`boxdecode_original_height`は、デコードされた座標をソース画像のピクセルにマッピングします。これらの各項目の調整に関するガイダンスは、以下に示す「実践」にあります。
 
+このチュートリアルでは、前処理の正規化も有効にしています（`normalize.enable = On`、この `[0,1]` YOLO モデルではデフォルトの mean 0 / stddev 1）。検出器の入力は量子化されているため、正規化が Off に解決される `Model` は前処理ステージの構築を拒否します。
+
 **C++:** `decode_type`は、`BoxDecodeType::YoloV8` enumを受け取ります。しきい値/NMS/`top_k`の値は、`Model::Options`ではなく、後で`stages::BoxDecodeOptions`を通じて渡されます。
 
 **Python:** `decode_type`は、`pyneat.BoxDecodeType.YoloV8` enumを受け取り、`score_threshold`、`nms_iou_threshold`、`top_k`、および`boxdecode_original_width`/`boxdecode_original_height`は、`ModelOptions`に直接設定されます。（`score_threshold`とC++の`detection_threshold`は、同じ制御を行います。命名に関する注意については、「実践」を参照してください。）

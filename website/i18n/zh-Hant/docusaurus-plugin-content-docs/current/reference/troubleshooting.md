@@ -358,6 +358,16 @@ case simaai::neat::PullStatus::Error:
 通過其中一個，但不能同時通過兩個。
 :::
 
+### 23. `misconfig.option_out_of_range` — `preprocess.normalize resolved Off … quantized`
+
+:::info 原因
+模型的 MLA 輸入為量化 INT8，但 `preprocess.normalize` 解析為 Off：未設定 mean/stddev 與 preset 而保留 `Auto`，或明確設為 `Off`。原始 0–255 像素位元組會在未量化的情況下送入 MLA 並降低結果品質，因此前處理階段的建置會被拒絕。
+:::
+
+:::tip 修正
+設定 `preprocess.normalize.enable = On` 並搭配模型的 mean/stddev（YOLO 類 `[0,1]` 模型使用預設 mean 0 / stddev 1 的 `On`），或設定 `preprocess.preset`（例如 `COCO_YOLO`、`ImageNet`）。僅設定 mean/stddev 不會啟用正規化。
+:::
+
 ## 來自另一個堆疊。
 
 - **「我的 `.engine` / `.blob` / `.dlc` / `.hef` 呢？」**— Neat 會載入一個 `.tar.gz` 模型封存檔；這相當於編譯後的成品。

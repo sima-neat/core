@@ -214,7 +214,7 @@ opt.preprocess.resize.placement = pyneat.LetterboxPlacement.TopLeft
 | --- | --- |
 | `opt.preprocess.color_convert.input_format` | 來源格式提示：`RGB`、`BGR`、`GRAY8`、`NV12`、`NV16`、`I420` 或 `Auto`。|
 | `opt.preprocess.color_convert.output_format` | 模型輸入的色彩空間，通常為 `RGB`、`BGR` 或 `GRAY8`。|
-| `opt.preprocess.normalize.enable` | 啟用或停用平均值/標準差正規化。|
+| `opt.preprocess.normalize.enable` | 啟用或停用平均值/標準差正規化。`Auto` 除非設定了 `preset` 或 `normalize.has_explicit_stats` 為 true，否則會解析為 Off（僅設定 `mean`/`stddev` 不會啟用）。在 MLA 輸入為量化 INT8 的模型上，若影像輸入的 `Model` 其正規化解析為 Off，則在建置前處理階段時會被拒絕；請設定 `On`（搭配模型的 mean/stddev）或 `preset`。|
 | `opt.preprocess.normalize.mean` | 每個通道的平均值。與模型的訓練預處理方式相符。|
 | `opt.preprocess.normalize.stddev` | 每個通道的除數。使用與模型訓練期間相同的正規化通道統計資訊，例如 ImageNet 樣式的數值，接近 `{0.229,0.224,0.225}`。|
 | 當模型預期輸出為量化格式時，規劃器/使用者控制量化輸出的設定。| `opt.preprocess.quantize.enable` |

@@ -311,6 +311,7 @@ int main(int argc, char** argv) {
     model_opt.preprocess.kind = simaai::neat::InputKind::Image;
     model_opt.preprocess.enable = simaai::neat::AutoFlag::On;
     model_opt.preprocess.color_convert.input_format = simaai::neat::PreprocessColorFormat::BGR;
+    model_opt.preprocess.normalize.enable = simaai::neat::AutoFlag::On;
     model_opt.upstream_name = "decoder";
     model_opt.decode_type = simaai::neat::BoxDecodeType::YoloV8;
     model_opt.score_threshold = cfg.min_score;

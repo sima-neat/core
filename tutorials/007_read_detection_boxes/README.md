@@ -23,6 +23,8 @@ This chapter configures that decode — picking the model family with `decode_ty
 
 These options set both the input contract and the postprocessing behavior. `decode_type` (`YoloV8` here) selects the model-family decode path. The confidence threshold drops weak candidates before NMS; the NMS IoU threshold controls how aggressively overlapping boxes are merged; `top_k` caps the final count for deterministic downstream cost; and `boxdecode_original_width`/`boxdecode_original_height` map decoded coordinates back into source-image pixels. Tuning guidance for each of these is in In Practice below.
 
+The tutorial also enables preprocess normalization (`normalize.enable = On`, default mean 0 / stddev 1 for this `[0,1]` YOLO model). The detector's input is quantized, so a `Model` whose normalization resolves Off refuses to build its preprocess stage.
+
 **C++:** `decode_type` takes the `BoxDecodeType::YoloV8` enum. The threshold/NMS/`top_k` values are passed later through `stages::BoxDecodeOptions`, not on `Model::Options`.
 
 **Python:** `decode_type` takes the `pyneat.BoxDecodeType.YoloV8` enum, and `score_threshold`, `nms_iou_threshold`, `top_k`, and `boxdecode_original_width`/`boxdecode_original_height` are set directly on `ModelOptions`. (`score_threshold` and the C++ `detection_threshold` name the same control — see the naming note in In Practice.)

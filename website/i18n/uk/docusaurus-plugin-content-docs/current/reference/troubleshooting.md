@@ -361,6 +361,16 @@ case simaai::neat::PullStatus::Error:
 Передавайте щось одне, а не обидва.
 :::
 
+### 23. `misconfig.option_out_of_range` — `preprocess.normalize resolved Off … quantized`
+
+:::info Причина
+Вхід MLA моделі квантований INT8, але `preprocess.normalize` визначилась як Off: її залишили в `Auto` без mean/stddev і без preset або явно задали `Off`. Сирі байти пікселів 0–255 потрапили б у MLA без квантування й погіршили б результати, тому побудова етапу препроцесингу відхиляється.
+:::
+
+:::tip Виправлення
+Задайте `preprocess.normalize.enable = On` разом із mean/stddev моделі (для моделей у стилі YOLO з діапазоном `[0,1]` — `On` зі стандартними mean 0 / stddev 1) або задайте `preprocess.preset` (наприклад, `COCO_YOLO`, `ImageNet`). Самі лише mean/stddev не вмикають нормалізацію.
+:::
+
 ## Перехід з іншого стеку
 
 - **«Де мій `.engine` / `.blob` / `.dlc` / `.hef`?»** — Neat завантажує архів моделі `.tar.gz`; це еквівалентний скомпільований артефакт.

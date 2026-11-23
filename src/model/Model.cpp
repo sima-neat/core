@@ -322,6 +322,15 @@ bool preproc_output_dtype_is_quantized(const std::string& raw) {
   return token == "INT8" || token == "EVXX_INT8" || token == "UINT8" || token == "U8";
 }
 
+// The Preproc lowering keeps such a request with normalization Off as raw [0,255] bytes and drops
+// the quantizer.
+bool preproc_quantizer_requires_normalization(const std::string& output_dtype,
+                                              const PreprocessOptions& effective) {
+  return preproc_output_dtype_is_quantized(output_dtype) && effective.quantize.scale > 0.0 &&
+         !effective.rescale_factor && !effective.quantization_step &&
+         effective.floating_conversion == PreprocFloatingConversion::Legacy;
+}
+
 std::string route_mla_input_dtype_from_diagnostics(const internal::PreprocessPlannerResult& plan);
 const pipeline_internal::sima::MpkPluginIoContract*
 find_pre_mla_processcvu_stage(const internal::ModelPack& pack,
@@ -4262,11 +4271,6 @@ internal::PreprocessPlannerResult build_preprocess_plan(const std::string& tar_g
   if (route.ambiguous) {
     session_route_plan.diagnostics.push_back("route-ambiguous=" + route.ambiguity_reason);
   }
-  if (route_uses_image_ingress(session_route_plan) && plan.normalize_auto_without_config) {
-    plan.resolved_plan.warnings.push_back(
-        "preprocess.normalize=Auto resolved Off: set preprocess.normalize.enable=On with "
-        "mean/stddev or choose a preprocess.preset; set normalize.enable=Off for raw pixels.");
-  }
   if (options.decode_type == BoxDecodeType::EdgeTamTrack && session_route_plan.boxdecode_selected) {
     // EdgeTAM tracking: the raw outputs are exactly what the same Model returns without BoxDecode.
     Model::Options raw = options;
@@ -4291,6 +4295,20 @@ internal::PreprocessPlannerResult build_preprocess_plan(const std::string& tar_g
   }
   plan.session_route_plan = session_route_plan;
   populate_effective_model_managed_contract_fields(&plan, capability_pack);
+  if (route_uses_image_ingress(plan.session_route_plan) && plan.normalize_auto_without_config) {
+    if (preproc_quantizer_requires_normalization(capability.mla_input_dtype_raw,
+                                                 plan.resolved_plan.effective)) {
+      plan.resolved_plan.warnings.push_back(
+          "preprocess.normalize=Auto resolved Off: this model's input is quantized by the pack's "
+          "quantizer, so its preprocess stage will be refused until normalization is set; set "
+          "preprocess.normalize.enable=On with the model's mean/stddev or choose a "
+          "preprocess.preset.");
+    } else {
+      plan.resolved_plan.warnings.push_back(
+          "preprocess.normalize=Auto resolved Off: set preprocess.normalize.enable=On with "
+          "mean/stddev or choose a preprocess.preset; set normalize.enable=Off for raw pixels.");
+    }
+  }
 
   // Typed route owns ingress contract. Adapter-first pre chains must ingest
   // tensor data at appsrc (not legacy video caps from preproc family probing).
@@ -5392,6 +5410,20 @@ void populate_model_managed_preproc_options(PreprocOptions* opt,
     if (!(effective.quantize.scale > 0.0)) {
       throw std::runtime_error("PreprocOptions(Model): model-managed preproc stage requires "
                                "q_scale from the resolved route contract.");
+    }
+    if (!opt->normalize && preproc_quantizer_requires_normalization(opt->output_dtype, effective)) {
+      std::ostringstream oss;
+      oss << "PreprocOptions(Model): preprocess.normalize resolved Off";
+      if (plan.normalize_auto_without_config) {
+        oss << " (Auto with no mean/stddev and no preprocess.preset)";
+      }
+      oss << ", but this model's input is quantized by the pack's quantizer (q_scale="
+          << effective.quantize.scale << ", q_zp=" << effective.quantize.zero_point
+          << "). Without normalization the raw 0-255 pixels would reach the MLA unquantized, so "
+             "the model-managed preprocess stage is refused.";
+      throw_model_error(error_codes::kOptionOutOfRange, oss.str(),
+                        "Set preprocess.normalize.enable=On with the model's mean/stddev, or "
+                        "choose a preprocess.preset (for example COCO_YOLO or ImageNet).");
     }
     opt->q_scale = effective.quantize.scale;
     opt->q_zp = static_cast<std::int64_t>(effective.quantize.zero_point);

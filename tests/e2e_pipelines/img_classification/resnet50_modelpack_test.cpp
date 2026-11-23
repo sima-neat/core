@@ -973,6 +973,7 @@ int main(int argc, char** argv) {
       bad_opt.preprocess.kind = simaai::neat::InputKind::Image;
       bad_opt.preprocess.enable = simaai::neat::AutoFlag::On;
       bad_opt.preprocess.color_convert.input_format = simaai::neat::PreprocessColorFormat::RGB;
+      bad_opt.preprocess.preset = simaai::neat::NormalizePreset::ImageNet;
       bad_opt.inference_terminal.last_stage_name = "__definitely_missing_terminal_stage__";
       bool threw = false;
       try {
@@ -993,6 +994,7 @@ int main(int argc, char** argv) {
       idx_opt.preprocess.kind = simaai::neat::InputKind::Image;
       idx_opt.preprocess.enable = simaai::neat::AutoFlag::On;
       idx_opt.preprocess.color_convert.input_format = simaai::neat::PreprocessColorFormat::RGB;
+      idx_opt.preprocess.preset = simaai::neat::NormalizePreset::ImageNet;
       idx_opt.inference_terminal.last_stage_index = 0;
       idx_opt.inference_terminal.last_stage_name = "__ignored_when_index_is_set__";
       simaai::neat::Model idx_model(tar_gz, idx_opt);
@@ -1006,6 +1008,7 @@ int main(int argc, char** argv) {
       mla_opt.preprocess.kind = simaai::neat::InputKind::Image;
       mla_opt.preprocess.enable = simaai::neat::AutoFlag::On;
       mla_opt.preprocess.color_convert.input_format = simaai::neat::PreprocessColorFormat::RGB;
+      mla_opt.preprocess.preset = simaai::neat::NormalizePreset::ImageNet;
       mla_opt.inference_terminal.mla_only = true;
       simaai::neat::Model mla_model(tar_gz, mla_opt);
       simaai::neat::Graph sess;

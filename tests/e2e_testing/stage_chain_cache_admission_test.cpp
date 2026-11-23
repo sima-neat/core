@@ -130,6 +130,7 @@ RUN_TEST(
       require(!image.empty(), "canonical test image is required");
       Model::Options options;
       options.preprocess.color_convert.input_format = PreprocessColorFormat::BGR;
+      options.preprocess.normalize.enable = AutoFlag::On;
       options.preprocess.input_max_width = image.cols;
       options.preprocess.input_max_height = image.rows;
       options.preprocess.input_max_depth = image.channels();
