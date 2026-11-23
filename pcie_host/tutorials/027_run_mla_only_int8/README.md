@@ -124,8 +124,8 @@ Both versions print the contract and a zero deviation for every head:
 
 ```text
 MLA-only contract:
-  input images INT8 [640, 640, 3] scale=... zero_point=...
-  output bbox_0 INT8 [80, 80, 4] scale=... zero_point=...
+  input images INT8 [640, 640, 3] scale=0.00391965 zero_point=-128
+  output bbox_0 INT8 [80, 80, 4] scale=0.0331556 zero_point=-108
   ...
 Dequantized MLA-only outputs vs the default route (error in scale units):
   bbox_0 [80, 80, 4] max_err=0.0000
