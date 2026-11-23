@@ -1652,21 +1652,49 @@ class WindowsCiContracts(unittest.TestCase):
       commit, resources, _ = self.windows_candidate(root)
       (root / "core.msi.sha256").write_text(resources["core.msi"] + "  core.msi\n")
       bucket = {"core/v0.6.2/latest.tag": b"cccccccccccc\n"}
-      prefix, files = RELEASE.publication_plan(bucket.__getitem__, "v0.6.2", commit, root)
+
+      def read(key):
+        if key not in bucket:
+          raise FileNotFoundError(key)  # what s3_reader raises for an HTTP 404
+        return bucket[key]
+
+      prefix, files = RELEASE.publication_plan(read, "v0.6.2", commit, root)
       self.assertEqual(prefix, "core/v0.6.2/cccccccccccc/pciehost/windows/amd64")
       # Receipts and qualification evidence stay in the Actions artifact.
       self.assertEqual([path.name for path in files],
                        [*resources, "core.msi.sha256", "metadata.json"])
+      # A failed attempt left files but never exposed metadata.json: publish again.
+      bucket.update({f"{prefix}/{path.name}": b"partial" for path in files[:-1]})
+      bucket[f"{prefix}/metadata.json.pending"] = b"{}"
+      self.assertEqual(RELEASE.publication_plan(read, "v0.6.2", commit, root)[1], files)
+      # A published release is re-published only as a no-op, never with other bytes.
+      bucket.update({f"{prefix}/{path.name}": path.read_bytes() for path in files})
+      self.assertEqual(RELEASE.publication_plan(read, "v0.6.2", commit, root), (prefix, []))
+      bucket[f"{prefix}/core.msi"] = b"rebuilt core"
+      with self.assertRaisesRegex(ValueError, "already published with a different core.msi"):
+        RELEASE.publication_plan(read, "v0.6.2", commit, root)
       for ref, error in (("develop", "requires the release tag v0.6.2"),
                          ("v0.6.1", "requires the release tag v0.6.2")):
         with self.subTest(ref=ref), self.assertRaisesRegex(ValueError, error):
-          RELEASE.publication_plan(bucket.__getitem__, ref, commit, root)
+          RELEASE.publication_plan(read, ref, commit, root)
       with self.assertRaisesRegex(ValueError, "not d{40}"):
-        RELEASE.publication_plan(bucket.__getitem__, "v0.6.2", "d" * 40, root)
+        RELEASE.publication_plan(read, "v0.6.2", "d" * 40, root)
       # The Linux release of the tag must already have promoted this commit.
       bucket["core/v0.6.2/latest.tag"] = b"aaaaaaaaaaaa\n"
       with self.assertRaisesRegex(ValueError, "not release commit cccccccccccc"):
-        RELEASE.publication_plan(bucket.__getitem__, "v0.6.2", commit, root)
+        RELEASE.publication_plan(read, "v0.6.2", commit, root)
+
+  def test_s3_reader_tells_a_missing_object_from_a_failed_read(self):
+    for stderr, error in (
+        (b'fatal error: An error occurred (404) when calling the HeadObject operation: '
+         b'Key "k" does not exist', FileNotFoundError),
+        (b"fatal error: An error occurred (403) when calling the HeadObject operation: "
+         b"Forbidden", ValueError)):
+      with self.subTest(error=error.__name__), mock.patch.object(
+          RELEASE.subprocess, "run", return_value=subprocess.CompletedProcess(
+              [], 1, stdout=b"", stderr=stderr)):
+        with self.assertRaises(error):
+          RELEASE.s3_reader("bucket")("k")
 
   def test_a_newer_run_never_cancels_a_tag_run_mid_publication(self):
     workflow = WORKFLOW.read_text(encoding="utf-8")
@@ -1699,7 +1727,12 @@ class WindowsCiContracts(unittest.TestCase):
           set -e
           echo "$*" >> "$FAKE_S3.log"
           [[ "$1 $2" == "s3 cp" ]] || exit 0
-          if [[ "$3" == s3://* ]]; then cat "$FAKE_S3/${3#s3://*/}"; exit; fi
+          if [[ "$3" == s3://* ]]; then
+            key="${3#s3://*/}"
+            [[ -f "$FAKE_S3/$key" ]] || { echo "fatal error: An error occurred (404) when \\
+          calling the HeadObject operation: Key \\"$key\\" does not exist" >&2; exit 1; }
+            cat "$FAKE_S3/$key"; exit
+          fi
           mkdir -p "$(dirname "$FAKE_S3/${4#s3://*/}")"
           cp "$3" "$FAKE_S3/${4#s3://*/}"
           """))
@@ -1745,6 +1778,20 @@ class WindowsCiContracts(unittest.TestCase):
       fetched = RELEASE.fetch_release(
           lambda key: (bucket / key).read_bytes(), "v0.6.2", commit, root / "fetched")
       self.assertEqual(fetched.resources, candidate.resources)
+
+      # A re-run of the published release uploads nothing; other bytes are refused.
+      uploads = log.count("\ns3 cp /")
+      result = publish()
+      self.assertEqual(result.returncode, 0, result.stderr)
+      self.assertIn("already holds this release; nothing to publish", result.stdout)
+      self.assertEqual(Path(f"{bucket}.log").read_text().count("\ns3 cp /"), uploads)
+      self.assertGreater(uploads, len(candidate.resources))
+      published_msi = bucket / RELEASE.package_prefix("v0.6.2", commit) / "core.msi"
+      published_msi.write_bytes(b"another build")
+      result = publish()
+      self.assertNotEqual(result.returncode, 0)
+      self.assertIn("already published with a different core.msi", result.stderr)
+      self.assertEqual(published_msi.read_bytes(), b"another build")
 
   @unittest.skipIf(os.name == "nt", WORKFLOW_BASH_SKIP)
   def test_branch_build_publishes_beside_the_branch_ubuntu_packages(self):
