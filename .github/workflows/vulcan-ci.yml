@@ -1306,7 +1306,8 @@ jobs:
 
           # unit_resnet50_mla_handoff_segment_test and unit_model_infer_output_name_test pass
           # without loading a model when they find no ResNet-50 MPK, and nothing downloads one
-          # for them. stress_model_lifecycle_test looks for the same MPK first.
+          # for them. stress_model_lifecycle_test also uses it when SIMA_STRESS_MODEL_TAR and
+          # SIMA_MODEL_TAR are unset.
           if [[ -z "${SIMA_RESNET50_TAR:-}" ]]; then
             SIMA_RESNET50_TAR="$(python3 scripts/ci/prepare_model_browser_fixture.py \
               --id resnet_50 --variant w8a8 \
