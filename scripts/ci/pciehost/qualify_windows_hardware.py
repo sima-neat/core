@@ -48,15 +48,6 @@ MSI_SUCCESS_CODES = {0, 1641, 3010}
 # Linux keeps 12 ms / 440 FPS. Restore those when the Windows runner is upgraded.
 PERF_MAX_MEAN_LATENCY_MS = "16"
 PERF_MIN_THROUGHPUT_FPS = "290"
-BASE_CPP_TESTS = (
-    "test_metadata.exe",
-    "test_tensor_run.exe",
-    "test_tensor_mla_only_run.exe",
-    "test_image_run.exe",
-    "test_image_boxdecode_run.exe",
-    "test_queue_blocker.exe",
-    "test_model_resilience.exe",
-)
 BASE_PYTHON_TESTS = (
     "test_async_test_runner_cancels_blocked_peer",
     "test_metadata_yolov8",
@@ -768,14 +759,53 @@ def run_windows_openssh(command: list[object], log: Path, *,
   return subprocess.CompletedProcess(argv, process.returncode, captured, None)
 
 
+def _echo_log(log: Path, done: threading.Event) -> None:
+  """Copy a growing log to the job log; the child keeps writing to a plain file."""
+  with log.open(encoding="utf-8", errors="replace") as source:
+    while True:
+      chunk = source.read()
+      if chunk:
+        sys.stdout.write(chunk)
+        sys.stdout.flush()
+      elif done.is_set():
+        return
+      else:
+        time.sleep(0.5)
+
+
 def _run_to_log(argv: list[str], log: Path, env: dict[str, str] | None,
-                cwd: Path | None, timeout: int) -> int:
+                cwd: Path | None, timeout: int, *, echo: bool = False) -> int:
   with log.open("w", encoding="utf-8", errors="replace") as output:
     output.write("+ " + subprocess.list2cmdline(argv) + "\n")
     output.flush()
-    return subprocess.run(
-        argv, cwd=cwd, env=env, stdin=subprocess.DEVNULL, stdout=output,
-        stderr=subprocess.STDOUT, text=True, timeout=timeout, check=False).returncode
+    done = threading.Event()
+    follower = threading.Thread(target=_echo_log, args=(log, done), daemon=True)
+    if echo:
+      follower.start()
+    try:
+      return subprocess.run(
+          argv, cwd=cwd, env=env, stdin=subprocess.DEVNULL, stdout=output,
+          stderr=subprocess.STDOUT, text=True, timeout=timeout, check=False).returncode
+    finally:
+      done.set()
+      if echo:
+        follower.join(timeout=30)
+
+
+FAILURE_LINE = re.compile(
+    r"error|fail|assert|exception|timed out|abort", re.IGNORECASE)
+
+
+def failure_line(log: Path) -> str:
+  """The line that says why a command failed: its last error-like line, else its last line."""
+  try:
+    lines = [line.strip() for line in log.read_text(
+        encoding="utf-8", errors="replace").splitlines()[1:] if line.strip()]
+  except OSError:
+    return ""
+  line = next((line for line in reversed(lines) if FAILURE_LINE.search(line)),
+              lines[-1] if lines else "")
+  return line[:300]
 
 
 def run_logged(command: list[object], log: Path, *, env: dict[str, str] | None = None,
@@ -786,7 +816,79 @@ def run_logged(command: list[object], log: Path, *, env: dict[str, str] | None =
   else:
     returncode = _run_to_log(argv, log, env, cwd, timeout)
   if returncode not in PASS_CODES:
-    raise RuntimeError(f"command failed with {returncode}; see {log}")
+    raise RuntimeError(f"command failed with {returncode}: {failure_line(log)} ({log.name})")
+
+
+def _workflow_value(value: str, *, property_value: bool = False) -> str:
+  value = value.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+  return value.replace(":", "%3A").replace(",", "%2C") if property_value else value
+
+
+def annotate_error(title: str, message: str) -> None:
+  print(f"::error title={_workflow_value(title, property_value=True)}::"
+        f"{_workflow_value(message)}", flush=True)
+
+
+class TestReport:
+  """ctest-style result lines; a failed case is recorded and the run goes on, as CTest does."""
+
+  def __init__(self, evidence: Path):
+    self.evidence = evidence
+    self.rows: list[tuple[str, str, float, str]] = []
+    self.failures: list[str] = []
+
+  @contextmanager
+  def case(self, name: str, log: str):
+    started = time.monotonic()
+    try:
+      yield
+    except Exception as error:  # noqa: BLE001 - recorded; the run fails at the end
+      seconds = time.monotonic() - started
+      detail = str(error) or type(error).__name__
+      self.rows.append((name, "FAIL", seconds, log))
+      self.failures.append(f"{name}: {detail}")
+      print(f"{len(self.rows):3d} {name} ... FAILED {seconds:8.2f} sec  {log}", flush=True)
+      path = self.evidence / log
+      if path.is_file():
+        print(f"::group::{log} (last 60 lines)", flush=True)
+        tail = path.read_text(encoding="utf-8", errors="replace").splitlines()[-60:]
+        print("\n".join(tail), flush=True)
+        print("::endgroup::", flush=True)
+      annotate_error(name, detail)
+    else:
+      seconds = time.monotonic() - started
+      self.rows.append((name, "PASS", seconds, log))
+      print(f"{len(self.rows):3d} {name} ... Passed {seconds:8.2f} sec  {log}", flush=True)
+
+  @staticmethod
+  def phase(name: str) -> None:
+    print(f"=== {name}", flush=True)
+
+  def raise_failures(self) -> None:
+    if self.failures:
+      raise RuntimeError(
+          f"{len(self.failures)} of {len(self.rows)} hardware tests failed: "
+          + "; ".join(self.failures))
+
+  def write_summary(self, result: str) -> None:
+    """Append the results table to the job summary, when the job has one."""
+    summary = os.environ.get("GITHUB_STEP_SUMMARY")
+    if not summary:
+      return
+    passed = sum(status == "PASS" for _, status, _, _ in self.rows)
+    lines = [
+        f"### Windows direct-card qualification: {result}", "",
+        f"{passed} of {len(self.rows)} tests passed.", "",
+        "| # | Test | Result | Seconds | Evidence log |", "| --- | --- | --- | --- | --- |",
+        *(f"| {index} | {name} | {status} | {seconds:.1f} | {log} |"
+          for index, (name, status, seconds, log) in enumerate(self.rows, 1)),
+        "", *(f"- {failure}" for failure in self.failures), "",
+    ]
+    try:
+      with open(summary, "a", encoding="utf-8") as output:
+        output.write("\n".join(lines) + "\n")
+    except OSError as error:
+      print(f"job summary unavailable: {error}", flush=True)
 
 
 def imports_pyneatpcie(python: Path) -> bool:
@@ -1484,9 +1586,14 @@ def load_upgrade_base(candidate, directory: Path | None, expected_commit: str):
   return upgrade_base
 
 
+class _QuietRegistryHandler(SimpleHTTPRequestHandler):
+  def log_message(self, format, *args):  # noqa: A002 - keeps the job log to test results
+    pass
+
+
 @contextmanager
 def local_registry(root: Path):
-  handler = partial(SimpleHTTPRequestHandler, directory=str(root))
+  handler = partial(_QuietRegistryHandler, directory=str(root))
   server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
   thread = threading.Thread(target=server.serve_forever, daemon=True)
   thread.start()
@@ -1807,6 +1914,52 @@ def stop_card_workers(args: argparse.Namespace, evidence: Path) -> None:
   terminate_card_workers(args, evidence / "card-worker-cleanup.log")
 
 
+def card_queues(environment: dict[str, str]) -> str:
+  return " ".join(str(queue) for queue in sorted(
+      {int(environment.get("SIMAPCIE_QUEUE", "0")), *stress_queues(environment)}))
+
+
+def cleanup_card_queues(args: argparse.Namespace, environment: dict[str, str],
+                        log: Path) -> None:
+  """scripts/ci/pciehost/cleanup_queue.sh's card half, best effort as there.
+
+  The qualifier owns every host test process and ends it on timeout, so the
+  script's host half has nothing to find here.
+  """
+  remote = (
+      "if pkill -TERM -f '(^|/)[p]cie-pipeline-builder([[:space:]]|$)' 2>/dev/null; then "
+      "sleep 1; pkill -KILL -f '(^|/)[p]cie-pipeline-builder([[:space:]]|$)' 2>/dev/null; fi; "
+      f"for queue in {card_queues(environment)}; do "
+      "rm -f /run/sima-neat/pcie/q$queue.pid /run/sima-neat/pcie/q$queue.status "
+      "/tmp/q$queue-card.gst.log 2>/dev/null; done; true"
+  )
+  try:
+    run_logged(ssh_command(args, remote), log, timeout=60)
+  except Exception as error:  # noqa: BLE001 - Linux runs it with || true
+    print(f"card queue cleanup failed: {error}", flush=True)
+
+
+def collect_card_diagnostics(args: argparse.Namespace, environment: dict[str, str],
+                             log: Path) -> None:
+  """scripts/ci/pciehost/collect_artifacts.sh's card half, best effort as there."""
+  remote = (
+      "export GST_PLUGIN_PATH_1_0=/usr/lib/aarch64-linux-gnu/neat/gst-plugins; "
+      "unset GST_PLUGIN_PATH; "
+      "for element in neatpciesrc neatpciesink; do echo \"== gst-inspect-1.0 $element\"; "
+      "gst-inspect-1.0 $element 2>&1; done; "
+      "echo '== pcie-pipeline-builder --help'; command -v pcie-pipeline-builder; "
+      "pcie-pipeline-builder --help 2>&1 | head -n 80; "
+      f"for queue in {card_queues(environment)}; do "
+      "for file in /run/sima-neat/pcie/q$queue.status /var/log/sima-neat/pcie/q$queue.log "
+      "/tmp/q$queue-card.gst.log; do "
+      "if [ -f \"$file\" ]; then echo \"== $file\"; cat \"$file\"; fi; done; done; true"
+  )
+  try:
+    run_logged(ssh_command(args, remote), log, timeout=120)
+  except Exception as error:  # noqa: BLE001 - Linux collects with || true
+    print(f"card diagnostics collection failed: {error}", flush=True)
+
+
 def _control_platform_service(cmdlet: str, status: str, failure: str, settle: str,
                               log: Path) -> None:
   command = (
@@ -1985,7 +2138,7 @@ def remove_fault_client_leftovers(args: argparse.Namespace, pid: int, log: Path)
 
 
 def run_fault_recovery_tests(args: argparse.Namespace, test_root: Path, evidence: Path,
-                             environment: dict[str, str]) -> list[str]:
+                             environment: dict[str, str], report: TestReport) -> list[str]:
   blocker = test_root / "test_queue_blocker.exe"
   recovery = test_root / "test_tensor_run.exe"
   completed = []
@@ -1999,68 +2152,72 @@ def run_fault_recovery_tests(args: argparse.Namespace, test_root: Path, evidence
         command, evidence / f"cpp-{label}.log", test_root, environment,
         "queue is now occupied", 300)
 
-  process, stream, log = launch(
-      "test_worker_loss_recovery", terminate_on_pull_timeout=True)
-  try:
-    remote = (
-        "pkill -KILL -f '(^|/)[p]cie-pipeline-builder([[:space:]]|$)' "
-        "2>/dev/null || true"
-    )
-    run_logged(
-        ssh_command(args, remote), evidence / "card-worker-loss-injection.log", timeout=30)
+  with report.case("test_worker_loss_recovery", "cpp-test_worker_loss_recovery.log"):
+    process, stream, log = launch(
+        "test_worker_loss_recovery", terminate_on_pull_timeout=True)
     try:
-      returncode = process.wait(timeout=120)
-    except subprocess.TimeoutExpired as error:
-      raise RuntimeError("client did not terminate after card worker loss") from error
-    if returncode == 0:
-      raise RuntimeError("client reported success after its card worker was killed")
-  finally:
-    if process.poll() is None:
-      process.kill()
-      process.wait(timeout=30)
-    stream.close()
-  # Only the bounded pull timeout proves recovery; any other exit may be a crash.
-  if returncode != 1 or "pull timed out; terminating the fault-injection client" not in \
-      log.read_text(encoding="utf-8", errors="replace"):
-    raise RuntimeError(f"client did not exit through its pull timeout after worker loss; see {log}")
-  wait_for_no_card_workers(args, evidence / "card-worker-loss-drain.log", 120)
-  remove_fault_client_leftovers(
-      args, process.pid, evidence / "card-worker-loss-leftovers.log")
-  run_logged(
-      [recovery, "--sync-iterations", "1", "--iterations", "0"],
-      evidence / "cpp-test_worker_loss_queue_reuse.log", env=environment,
-      cwd=test_root, timeout=args.test_timeout_seconds)
-  completed.append("test_worker_loss_recovery")
+      remote = (
+          "pkill -KILL -f '(^|/)[p]cie-pipeline-builder([[:space:]]|$)' "
+          "2>/dev/null || true"
+      )
+      run_logged(
+          ssh_command(args, remote), evidence / "card-worker-loss-injection.log", timeout=30)
+      try:
+        returncode = process.wait(timeout=120)
+      except subprocess.TimeoutExpired as error:
+        raise RuntimeError("client did not terminate after card worker loss") from error
+      if returncode == 0:
+        raise RuntimeError("client reported success after its card worker was killed")
+    finally:
+      if process.poll() is None:
+        process.kill()
+        process.wait(timeout=30)
+      stream.close()
+    # Only the bounded pull timeout proves recovery; any other exit may be a crash.
+    if returncode != 1 or "pull timed out; terminating the fault-injection client" not in \
+        log.read_text(encoding="utf-8", errors="replace"):
+      raise RuntimeError(
+          f"client did not exit through its pull timeout after worker loss; see {log}")
+    wait_for_no_card_workers(args, evidence / "card-worker-loss-drain.log", 120)
+    remove_fault_client_leftovers(
+        args, process.pid, evidence / "card-worker-loss-leftovers.log")
+    run_logged(
+        [recovery, "--sync-iterations", "1", "--iterations", "0"],
+        evidence / "cpp-test_worker_loss_queue_reuse.log", env=environment,
+        cwd=test_root, timeout=args.test_timeout_seconds)
+    completed.append("test_worker_loss_recovery")
 
-  process, stream, _ = launch("test_client_process_death_recovery")
-  try:
-    process.kill()
-    process.wait(timeout=30)
-  finally:
-    if process.poll() is None:
+  with report.case("test_client_process_death_recovery",
+                   "cpp-test_client_process_death_recovery.log"):
+    process, stream, _ = launch("test_client_process_death_recovery")
+    try:
       process.kill()
       process.wait(timeout=30)
-    stream.close()
-  terminate_card_workers(args, evidence / "client-process-death-worker-cleanup.log")
-  wait_for_no_card_workers(args, evidence / "client-process-death-drain.log", 120)
-  remove_fault_client_leftovers(
-      args, process.pid, evidence / "client-process-death-leftovers.log")
-  recover_windows_platform_device(
-      args.platform_runtime,
-      evidence / "client-process-death-platform-recovery.log")
-  wait_for_card_ssh(
-      args, evidence / "client-process-death-card-readiness.log", 120)
-  run_logged(
-      [recovery, "--sync-iterations", "1", "--iterations", "0"],
-      evidence / "cpp-test_client_process_death_queue_reuse.log", env=environment,
-      cwd=test_root, timeout=args.test_timeout_seconds)
-  completed.append("test_client_process_death_recovery")
+    finally:
+      if process.poll() is None:
+        process.kill()
+        process.wait(timeout=30)
+      stream.close()
+    terminate_card_workers(args, evidence / "client-process-death-worker-cleanup.log")
+    wait_for_no_card_workers(args, evidence / "client-process-death-drain.log", 120)
+    remove_fault_client_leftovers(
+        args, process.pid, evidence / "client-process-death-leftovers.log")
+    recover_windows_platform_device(
+        args.platform_runtime,
+        evidence / "client-process-death-platform-recovery.log")
+    wait_for_card_ssh(
+        args, evidence / "client-process-death-card-readiness.log", 120)
+    run_logged(
+        [recovery, "--sync-iterations", "1", "--iterations", "0"],
+        evidence / "cpp-test_client_process_death_queue_reuse.log", env=environment,
+        cwd=test_root, timeout=args.test_timeout_seconds)
+    completed.append("test_client_process_death_recovery")
   return completed
 
 
 def run_genai_fault_recovery_tests(
     args: argparse.Namespace, python: Path, evidence: Path,
-    environment: dict[str, str]) -> list[str]:
+    environment: dict[str, str], report: TestReport) -> list[str]:
   client = args.source_root / "pcie_host/python/tests/genai_fault_client.py"
   completed = []
 
@@ -2093,42 +2250,46 @@ def run_genai_fault_recovery_tests(
         [python, client, "smoke"], evidence / f"python-{label}.log",
         env=environment, cwd=args.source_root, timeout=args.test_timeout_seconds)
 
-  process, stream, log = launch("test_genai_worker_loss_recovery")
-  try:
-    remote = (
-        "pkill -KILL -f '(^|/)[n]eat-pcie-genai-worker([[:space:]]|$)' "
-        "2>/dev/null || true"
-    )
-    run_logged(
-        ssh_command(args, remote), evidence / "genai-worker-loss-injection.log", timeout=30)
-    require_observed_failure(process, stream, log, "GenAI worker-loss client")
-  finally:
-    if process.poll() is None:
-      process.kill()
-      process.wait(timeout=30)
-      stream.close()
-  wait_for_no_genai_workers(args, evidence / "genai-worker-loss-drain.log", 120)
-  recovery_smoke("test_genai_restart_after_worker_loss")
-  completed.extend((
-      "test_genai_worker_loss_recovery", "test_genai_restart_after_worker_loss"))
+  with report.case("test_genai_worker_loss_recovery",
+                   "python-test_genai_worker_loss_recovery.log"):
+    process, stream, log = launch("test_genai_worker_loss_recovery")
+    try:
+      remote = (
+          "pkill -KILL -f '(^|/)[n]eat-pcie-genai-worker([[:space:]]|$)' "
+          "2>/dev/null || true"
+      )
+      run_logged(
+          ssh_command(args, remote), evidence / "genai-worker-loss-injection.log", timeout=30)
+      require_observed_failure(process, stream, log, "GenAI worker-loss client")
+    finally:
+      if process.poll() is None:
+        process.kill()
+        process.wait(timeout=30)
+        stream.close()
+    wait_for_no_genai_workers(args, evidence / "genai-worker-loss-drain.log", 120)
+    recovery_smoke("test_genai_restart_after_worker_loss")
+    completed.extend((
+        "test_genai_worker_loss_recovery", "test_genai_restart_after_worker_loss"))
 
-  process, stream, log = launch("test_genai_service_loss_recovery")
-  service_stop_attempted = False
-  try:
-    service_stop_attempted = True
-    stop_windows_platform_service(evidence / "genai-service-loss-injection.log")
-    require_observed_failure(process, stream, log, "GenAI service-loss client")
-  finally:
-    if process.poll() is None:
-      process.kill()
-      process.wait(timeout=30)
-      stream.close()
-    if service_stop_attempted:
-      restart_windows_platform_service(evidence / "genai-service-loss-recovery.log")
-  wait_for_no_genai_workers(args, evidence / "genai-service-loss-drain.log", 120)
-  recovery_smoke("test_genai_restart_after_service_loss")
-  completed.extend((
-      "test_genai_service_loss_recovery", "test_genai_restart_after_service_loss"))
+  with report.case("test_genai_service_loss_recovery",
+                   "python-test_genai_service_loss_recovery.log"):
+    process, stream, log = launch("test_genai_service_loss_recovery")
+    service_stop_attempted = False
+    try:
+      service_stop_attempted = True
+      stop_windows_platform_service(evidence / "genai-service-loss-injection.log")
+      require_observed_failure(process, stream, log, "GenAI service-loss client")
+    finally:
+      if process.poll() is None:
+        process.kill()
+        process.wait(timeout=30)
+        stream.close()
+      if service_stop_attempted:
+        restart_windows_platform_service(evidence / "genai-service-loss-recovery.log")
+    wait_for_no_genai_workers(args, evidence / "genai-service-loss-drain.log", 120)
+    recovery_smoke("test_genai_restart_after_service_loss")
+    completed.extend((
+        "test_genai_service_loss_recovery", "test_genai_restart_after_service_loss"))
   return completed
 
 
@@ -2197,8 +2358,10 @@ def run_cpp_parallel_queues(executable: Path, evidence: Path,
     for queue in stress_queues(environment):
       log = (evidence / f"cpp-test_tensor_parallel_queue_{queue}.log").open(
           "w", encoding="utf-8", errors="replace")
+      # The arguments of pcie_host/tests/hardware/test_tensor_parallel_queues.sh.
       command = [str(executable), "--model", environment["SIMAPCIE_YOLOV8_MODEL"],
-                 "--queue", str(queue), "--iterations", iterations]
+                 "--queue", str(queue), "--iterations", iterations,
+                 "--card-gst-debug-file", f"/tmp/q{queue}-card.gst.log"]
       log.write("+ " + subprocess.list2cmdline(command) + "\n")
       log.flush()
       process = subprocess.Popen(
@@ -2214,7 +2377,8 @@ def run_cpp_parallel_queues(executable: Path, evidence: Path,
         failures.append(f"queue {queue} exceeded {timeout} seconds")
         break
       if returncode != 0:
-        failures.append(f"queue {queue} failed with {returncode}")
+        failures.append(f"queue {queue} failed with {returncode}: " + failure_line(
+            evidence / f"cpp-test_tensor_parallel_queue_{queue}.log"))
     if failures:
       raise RuntimeError("C++ parallel queue qualification failed: " + "; ".join(failures))
   finally:
@@ -2261,70 +2425,54 @@ def parse_performance_log(path: Path, mode: str) -> dict[str, float | int]:
 
 
 def run_cpp_tests(args: argparse.Namespace, candidate_root: Path, evidence: Path,
-                  environment: dict[str, str]) -> list[str]:
+                  environment: dict[str, str], report: TestReport) -> list[str]:
+  """Linux's CTest cases in its order, with its arguments and timeouts
+  (pcie_host/tests/hardware/CTestTestfile.cmake.in); fault injection follows them."""
   test_root = candidate_root / "hardware-tests" / "lib" / "sima-pcie-host" / "tests"
   if not test_root.is_dir():
     raise RuntimeError(f"candidate contains no C++ hardware extras: {test_root}")
-  completed = []
-  for name in BASE_CPP_TESTS:
-    executable = test_root / name
-    if not executable.is_file():
-      raise RuntimeError(f"candidate is missing C++ hardware test: {name}")
-    command: list[object] = [executable]
-    if name == "test_tensor_mla_only_run.exe":
-      command.extend(["--model", environment["SIMAPCIE_MLA_ONLY_MODEL"]])
-    elif name == "test_image_boxdecode_run.exe":
-      command.append("--require-person")
-    elif name == "test_queue_blocker.exe":
-      command.extend(["--iterations", "10", "--interval-ms", "0"])
-    run_logged(command, evidence / f"cpp-{executable.stem}.log", env=environment,
-               cwd=test_root, timeout=args.test_timeout_seconds)
-    completed.append(executable.stem)
-
-  completed.extend(run_fault_recovery_tests(
-      args, test_root, evidence, environment))
-
-  bf16 = test_root / "test_tensor_mla_only_run.exe"
-  run_logged(
-      [bf16, "--model", environment["SIMAPCIE_MLA_ONLY_BF16_MODEL"]],
-      evidence / "cpp-test_tensor_mla_only_bf16_run.log",
-      env=environment,
-      cwd=test_root,
-      timeout=args.test_timeout_seconds,
-  )
-  completed.append("test_tensor_mla_only_bf16_run")
-
-  parallel = test_root / "test_tensor_run.exe"
-  run_cpp_parallel_queues(
-      parallel, evidence, environment, args.test_timeout_seconds)
-  completed.append("test_tensor_parallel_queues")
-
-  performance = test_root / "test_tensor_perf.exe"
-  for mode in ("latency", "throughput"):
-    command: list[object] = [
-        performance, "--mode", mode, "--warmup", "100", "--iterations", "3000"]
-    if mode == "latency":
-      command.extend(["--max-mean-latency-ms", PERF_MAX_MEAN_LATENCY_MS])
-    else:
-      command.extend(["--min-throughput-fps", PERF_MIN_THROUGHPUT_FPS])
-    run_logged(
-        command, evidence / f"cpp-test_tensor_{mode}.log",
-        env=environment, cwd=test_root, timeout=args.test_timeout_seconds)
-    completed.append(f"test_tensor_{mode}")
-
+  performance = [test_root / "test_tensor_perf.exe", "--warmup", "100", "--iterations", "3000"]
+  cases: list[tuple[str, list[object] | None, int]] = [
+      ("test_metadata", [test_root / "test_metadata.exe"], 60),
+      ("test_tensor_run", [test_root / "test_tensor_run.exe"], 3600),
+      ("test_tensor_mla_only_run", [test_root / "test_tensor_mla_only_run.exe", "--model",
+                                    environment["SIMAPCIE_MLA_ONLY_MODEL"]], 3600),
+      ("test_tensor_mla_only_bf16_run", [test_root / "test_tensor_mla_only_run.exe", "--model",
+                                         environment["SIMAPCIE_MLA_ONLY_BF16_MODEL"]], 3600),
+      ("test_tensor_latency", [*performance, "--mode", "latency",
+                               "--max-mean-latency-ms", PERF_MAX_MEAN_LATENCY_MS], 3600),
+      ("test_tensor_throughput", [*performance, "--mode", "throughput",
+                                  "--min-throughput-fps", PERF_MIN_THROUGHPUT_FPS], 3600),
+      ("test_queue_blocker", [test_root / "test_queue_blocker.exe", "--iterations", "10"], 3600),
+      ("test_tensor_parallel_queues", None, 3600),
+      ("test_image_run", [test_root / "test_image_run.exe"], 3600),
+      ("test_image_boxdecode_run", [test_root / "test_image_boxdecode_run.exe",
+                                    "--require-person"], 3600),
+      ("test_model_resilience", [test_root / "test_model_resilience.exe"], 3600),
+  ]
   if args.include_genai:
-    executable = test_root / "test_genai_run.exe"
-    assets = Path(environment["SIMAPCIE_GENAI_TEST_ASSETS"])
-    for kind in ("llm", "vlm", "asr"):
-      run_logged(
-          [executable, kind, assets], evidence / f"cpp-test_genai_{kind}_run.log",
-          env=environment, cwd=test_root, timeout=args.test_timeout_seconds)
-      completed.append(f"test_genai_{kind}_run")
+    assets = environment["SIMAPCIE_GENAI_TEST_ASSETS"]
+    cases.extend(
+        (f"test_genai_{kind}_run", [test_root / "test_genai_run.exe", kind, assets], 900)
+        for kind in ("llm", "vlm", "asr"))
+  completed = []
+  for name, command, timeout in cases:
+    log = ("cpp-test_tensor_parallel_queue_*.log" if command is None else f"cpp-{name}.log")
+    with report.case(name, log):
+      if command is None:
+        run_cpp_parallel_queues(
+            test_root / "test_tensor_run.exe", evidence, environment, timeout)
+      else:
+        run_logged(command, evidence / log, env=environment, cwd=test_root, timeout=timeout)
+      completed.append(name)
+  if args.release_qualification:
+    completed.extend(run_fault_recovery_tests(
+        args, test_root, evidence, environment, report))
   return completed
 
 
-def passed_junit_cases(path: Path) -> set[str]:
-  """Return the passing test names; pytest's exit status already failed the run otherwise.
+def junit_outcomes(path: Path) -> tuple[set[str], list[tuple[str, str]]]:
+  """Return the passing test names and each failing case with its message.
 
   pytest reports a parametrized test as one name[parameter] case per parameter; the
   test passed when every one of them did.
@@ -2334,46 +2482,70 @@ def passed_junit_cases(path: Path) -> set[str]:
   except (OSError, ET.ParseError) as error:
     raise ValueError(f"invalid JUnit evidence: {path}: {error}") from error
   outcomes: dict[str, bool] = {}
+  failed: list[tuple[str, str]] = []
   for case in root.iter("testcase"):
     name = case.get("name", "").split("[", 1)[0]
-    passed = not any(case.find(tag) is not None for tag in ("skipped", "failure", "error"))
+    problem = case.find("failure")
+    if problem is None:
+      problem = case.find("error")
+    if problem is not None:
+      message = (problem.get("message") or problem.tag).splitlines()
+      failed.append((case.get("name", ""), message[0][:300] if message else problem.tag))
+    passed = problem is None and case.find("skipped") is None
     outcomes[name] = outcomes.get(name, True) and passed
-  return {name for name, passed in outcomes.items() if passed}
+  return {name for name, passed in outcomes.items() if passed}, failed
+
+
+def passed_junit_cases(path: Path) -> set[str]:
+  """Return the passing test names; pytest's exit status already failed the run otherwise."""
+  return junit_outcomes(path)[0]
 
 
 def run_python_tests(args: argparse.Namespace, python: Path, evidence: Path,
-                     environment: dict[str, str]) -> list[str]:
+                     environment: dict[str, str], report: TestReport) -> list[str]:
   # Run the whole pyneatpcie folder, as Linux's run_pytest.sh does, and still
   # require the hardware and GenAI cases to have run and passed rather than skipped.
   required = set(BASE_PYTHON_TESTS)
   if args.include_genai:
     required |= GENAI_PYTHON_TESTS
-  run_logged(
-      [python, "-m", "pytest", "-vv", "--junitxml", evidence / "python-hardware.xml",
-       "pcie_host/python/tests"],
-      evidence / "python-hardware.log",
-      env={**environment, "SIMAPCIE_PERF_MAX_MEAN_LATENCY_MS": PERF_MAX_MEAN_LATENCY_MS,
-           "SIMAPCIE_PERF_MIN_THROUGHPUT_FPS": PERF_MIN_THROUGHPUT_FPS},
-      cwd=args.source_root,
-      timeout=2 * args.test_timeout_seconds,
-  )
-  passed = passed_junit_cases(evidence / "python-hardware.xml")
-  missing = sorted(required - passed)
-  if missing:
-    raise RuntimeError(f"required Python hardware tests did not pass: {missing}")
-  completed = sorted(passed)
-  if args.include_genai:
+  completed: list[str] = []
+  with report.case("pcie_host/python/tests", "python-hardware.log"):
+    # Linux's -q, echoed to the job log; -rfEs also lists skipped cases.
+    returncode = _run_to_log(
+        [str(python), "-m", "pytest", "-q", "-rfEs", "--junitxml",
+         str(evidence / "python-hardware.xml"), "pcie_host/python/tests"],
+        evidence / "python-hardware.log",
+        {**environment, "SIMAPCIE_PERF_MAX_MEAN_LATENCY_MS": PERF_MAX_MEAN_LATENCY_MS,
+         "SIMAPCIE_PERF_MIN_THROUGHPUT_FPS": PERF_MIN_THROUGHPUT_FPS},
+        args.source_root, 2 * args.test_timeout_seconds, echo=True)
+    try:
+      passed, failed = junit_outcomes(evidence / "python-hardware.xml")
+    except ValueError:
+      if returncode in PASS_CODES:
+        raise
+      passed, failed = set(), [("pytest", failure_line(evidence / "python-hardware.log"))]
+    for name, message in failed:
+      annotate_error(name, message)
+    if returncode not in PASS_CODES:
+      raise RuntimeError(f"pytest failed with {returncode}: " + "; ".join(
+          f"{name}: {message}" for name, message in failed))
+    missing = sorted(required - passed)
+    if missing:
+      raise RuntimeError(f"required Python hardware tests did not pass: {missing}")
+    completed.extend(sorted(passed))
+  if args.release_qualification and args.include_genai:
     completed.extend(run_genai_fault_recovery_tests(
-        args, python, evidence, environment))
-    wait_for_no_genai_workers(
-        args, evidence / "genai-release-resource-cleanup.log", 120)
-    completed.append("test_genai_workers_drained")
+        args, python, evidence, environment, report))
+    with report.case("test_genai_workers_drained", "genai-release-resource-cleanup.log"):
+      wait_for_no_genai_workers(
+          args, evidence / "genai-release-resource-cleanup.log", 120)
+      completed.append("test_genai_workers_drained")
   return completed
 
 
 def run_customer_tutorials(args: argparse.Namespace, install_root: Path, python: Path,
-                           work: Path, evidence: Path,
-                           environment: dict[str, str]) -> dict[str, list[str]]:
+                           work: Path, evidence: Path, environment: dict[str, str],
+                           report: TestReport) -> dict[str, list[str]]:
   tutorial_name = "024_run_your_first_model_over_pcie"
   source_root = install_root / "share" / "sima-pcie-host" / "tutorials"
   python_root = source_root / tutorial_name
@@ -2392,21 +2564,24 @@ def run_customer_tutorials(args: argparse.Namespace, install_root: Path, python:
   completed: dict[str, list[str]] = {"cpp": [], "python": []}
   programs = ("run_tensor_mode", "run_image_mode", "run_image_boxdecode")
   for program in programs:
-    script = python_root / f"{program}.py"
-    if not script.is_file():
-      raise RuntimeError(f"installed package is missing Python tutorial: {script}")
-    run_logged(
-        [python, script], evidence / f"tutorial-024-python-{program}.log",
-        env=environment, cwd=run_root, timeout=args.test_timeout_seconds)
-    completed["python"].append(program)
+    with report.case(f"tutorial_024_python_{program}",
+                     f"tutorial-024-python-{program}.log"):
+      script = python_root / f"{program}.py"
+      if not script.is_file():
+        raise RuntimeError(f"installed package is missing Python tutorial: {script}")
+      run_logged(
+          [python, script], evidence / f"tutorial-024-python-{program}.log",
+          env=environment, cwd=run_root, timeout=args.test_timeout_seconds)
+      completed["python"].append(program)
 
-    executable = executable_root / f"tutorial_024_{program}.exe"
-    if not executable.is_file():
-      raise RuntimeError(f"installed package is missing C++ tutorial: {executable}")
-    run_logged(
-        [executable], evidence / f"tutorial-024-cpp-{program}.log",
-        env=environment, cwd=run_root, timeout=args.test_timeout_seconds)
-    completed["cpp"].append(program)
+    with report.case(f"tutorial_024_cpp_{program}", f"tutorial-024-cpp-{program}.log"):
+      executable = executable_root / f"tutorial_024_{program}.exe"
+      if not executable.is_file():
+        raise RuntimeError(f"installed package is missing C++ tutorial: {executable}")
+      run_logged(
+          [executable], evidence / f"tutorial-024-cpp-{program}.log",
+          env=environment, cwd=run_root, timeout=args.test_timeout_seconds)
+      completed["cpp"].append(program)
   return completed
 
 
@@ -2471,6 +2646,8 @@ def qualify(args: argparse.Namespace) -> None:
   managed_python = managed_venv / "Scripts" / "python.exe"
   failure: BaseException | None = None
   cleanup_errors: list[str] = []
+  report = TestReport(evidence)
+  result["profile"] = "release" if args.release_qualification else "validation"
 
   result["host"]["windows_security"] = windows_security_snapshot(
       evidence / "windows-security-state.log")
@@ -2503,6 +2680,7 @@ def qualify(args: argparse.Namespace) -> None:
         raise RuntimeError("card had PCIe workers before qualification; refusing to disturb them")
 
       card_install_attempted = True
+      report.phase("Install the card candidate and the host cohort")
       installed = install_card_candidate(args, card_bundle, evidence, card_state)
       # deploy.py card verify proved the installed versions; the hashes are evidence.
       active_card = card_snapshot(
@@ -2510,31 +2688,10 @@ def qualify(args: argparse.Namespace) -> None:
           runtime_path="/usr/share/sima-neat-firmware/modalix-cvu-fw",
           worker_path="/usr/bin/pcie-pipeline-builder",
           genai_worker_path="/usr/bin/neat-pcie-genai-worker" if args.include_genai else "")
-      result["card_candidate"] = {
-          "core_commit": args.expected_card_commit,
-          "bundle_sha256": card_bundle.sha256,
-          "installed": installed,
-          "firmware": active_card["firmware"],
-          "runtime_sha256": active_card["runtime_sha256"],
-          "worker_sha256": active_card["worker_sha256"],
-      }
-      if args.include_genai:
-        result["card_candidate"]["genai_worker_sha256"] = active_card["genai_worker_sha256"]
-      restart_windows_platform_service(
-          evidence / "card-candidate-platform-start.log")
-
-      subprocess.run([sys.executable, "-m", "venv", str(venv)], check=True)
-      python = venv / "Scripts" / "python.exe"
+      requirements = ["pytest", "numpy", "pillow", *args.test_requirement]
       subprocess.run([sys.executable, "-m", "venv", str(cli_venv)], check=True)
       cli_python = cli_venv / "Scripts" / "python.exe"
       cli = cli_venv / "Scripts" / "sima-cli.exe"
-      requirements = ["pytest", "numpy", "pillow", *args.test_requirement]
-      run_logged(
-          [python, "-m", "pip", "install", "--no-index", "--find-links", wheelhouse,
-           *requirements],
-          evidence / "test-dependencies-install.log",
-          timeout=900,
-      )
       run_logged(
           [cli_python, "-m", "pip", "install", "--no-index", "--find-links", wheelhouse,
            cli_wheel],
@@ -2566,50 +2723,64 @@ def qualify(args: argparse.Namespace) -> None:
         if not install_root.is_dir():
           raise RuntimeError("sima-cli installed no native upgrade baseline")
 
-      native_registry_root = work / "native only registry with spaces"
-      stage_local_registry(candidate, native_registry_root)
-      with local_registry(native_registry_root) as registry_url:
-        sima_cli_install(
-            registry_url, native_download_root, "sima-cli-native-only-install.log",
-            "--native-only")
-      if not install_root.is_dir():
-        raise RuntimeError("sima-cli native-only flow installed no native cohort")
-      # Without --python-executable the CLI installs into its managed environment.
-      if imports_pyneatpcie(python) or (
-          managed_python.is_file() and imports_pyneatpcie(managed_python)):
-        raise RuntimeError("native-only sima-cli flow unexpectedly installed pyneatpcie")
+      if args.release_qualification:
+        # The partial and failing customer flows need a second, caller-owned Python.
+        subprocess.run([sys.executable, "-m", "venv", str(venv)], check=True)
+        python = venv / "Scripts" / "python.exe"
+        run_logged(
+            [python, "-m", "pip", "install", "--no-index", "--find-links", wheelhouse,
+             *requirements],
+            evidence / "test-dependencies-install.log",
+            timeout=900,
+        )
+        native_registry_root = work / "native only registry with spaces"
+        stage_local_registry(candidate, native_registry_root)
+        with local_registry(native_registry_root) as registry_url:
+          sima_cli_install(
+              registry_url, native_download_root, "sima-cli-native-only-install.log",
+              "--native-only")
+        if not install_root.is_dir():
+          raise RuntimeError("sima-cli native-only flow installed no native cohort")
+        # Without --python-executable the CLI installs into its managed environment.
+        if imports_pyneatpcie(python) or (
+            managed_python.is_file() and imports_pyneatpcie(managed_python)):
+          raise RuntimeError("native-only sima-cli flow unexpectedly installed pyneatpcie")
 
-      missing_registry_root = work / "missing wheel registry with spaces"
-      missing_package = stage_local_registry(candidate, missing_registry_root)
-      (missing_package / candidate.wheel.name).unlink()
-      missing_download_root = work / "missing wheel downloads with spaces"
-      with local_registry(missing_registry_root) as registry_url:
-        missing_code = sima_cli_install(
-            registry_url, missing_download_root, "sima-cli-missing-wheel.log",
-            "--python-executable", python, run=run_expected_failure)
-      if not install_root.is_dir():
-        raise RuntimeError("missing-wheel failure removed the successful native installation")
-      if imports_pyneatpcie(python):
-        raise RuntimeError("missing-wheel flow reported failure after installing pyneatpcie")
+        missing_registry_root = work / "missing wheel registry with spaces"
+        missing_package = stage_local_registry(candidate, missing_registry_root)
+        (missing_package / candidate.wheel.name).unlink()
+        missing_download_root = work / "missing wheel downloads with spaces"
+        with local_registry(missing_registry_root) as registry_url:
+          missing_code = sima_cli_install(
+              registry_url, missing_download_root, "sima-cli-missing-wheel.log",
+              "--python-executable", python, run=run_expected_failure)
+        if not install_root.is_dir():
+          raise RuntimeError("missing-wheel failure removed the successful native installation")
+        if imports_pyneatpcie(python):
+          raise RuntimeError("missing-wheel flow reported failure after installing pyneatpcie")
 
-      invalid_wheel_registry_root = work / "invalid wheel registry with spaces"
-      stage_invalid_wheel_registry(candidate, invalid_wheel_registry_root)
-      invalid_wheel_download_root = work / "invalid wheel downloads with spaces"
-      with local_registry(invalid_wheel_registry_root) as registry_url:
-        invalid_wheel_code = sima_cli_install(
-            registry_url, invalid_wheel_download_root, "sima-cli-invalid-wheel.log",
-            "--python-executable", python, run=run_expected_failure)
-      if not install_root.is_dir():
-        raise RuntimeError("wheel-install failure removed the successful native installation")
-      if imports_pyneatpcie(python):
-        raise RuntimeError("invalid-wheel flow reported failure after installing pyneatpcie")
+        invalid_wheel_registry_root = work / "invalid wheel registry with spaces"
+        stage_invalid_wheel_registry(candidate, invalid_wheel_registry_root)
+        invalid_wheel_download_root = work / "invalid wheel downloads with spaces"
+        with local_registry(invalid_wheel_registry_root) as registry_url:
+          invalid_wheel_code = sima_cli_install(
+              registry_url, invalid_wheel_download_root, "sima-cli-invalid-wheel.log",
+              "--python-executable", python, run=run_expected_failure)
+        if not install_root.is_dir():
+          raise RuntimeError("wheel-install failure removed the successful native installation")
+        if imports_pyneatpcie(python):
+          raise RuntimeError("invalid-wheel flow reported failure after installing pyneatpcie")
+        install_logs = ("sima-cli-customer-recovery-install.log",
+                        "sima-cli-customer-repeat-install.log")
+      else:
+        # Linux's one host package install (install_host_package.sh).
+        install_logs = ("sima-cli-customer-install.log",)
 
       registry_root = work / "complete registry with spaces"
       stage_local_registry(candidate, registry_root)
       recovery_download_root = work / "recovery downloads with spaces"
       with local_registry(registry_root) as registry_url:
-        for log in ("sima-cli-customer-recovery-install.log",
-                    "sima-cli-customer-repeat-install.log"):
+        for log in install_logs:
           sima_cli_install(registry_url, recovery_download_root, log)
       if not managed_python.is_file():
         raise RuntimeError(
@@ -2625,12 +2796,15 @@ def qualify(args: argparse.Namespace) -> None:
           "command": target,
           "download_path_with_spaces": str(recovery_download_root),
           "managed_python": str(managed_python),
-          "missing_wheel": {"exit_code": missing_code, "status": "PASS"},
-          "native_only": "PASS",
-          "recovery": "PASS",
-          "repeat": "PASS",
-          "wheel_failure": {"exit_code": invalid_wheel_code, "status": "PASS"},
       }
+      if args.release_qualification:
+        result["customer_install"].update({
+            "missing_wheel": {"exit_code": missing_code, "status": "PASS"},
+            "native_only": "PASS",
+            "recovery": "PASS",
+            "repeat": "PASS",
+            "wheel_failure": {"exit_code": invalid_wheel_code, "status": "PASS"},
+        })
       if upgrade_base is not None:
         result["customer_install"]["upgrade"] = {
             "baseline_commit": upgrade_base.core_commit,
@@ -2639,16 +2813,29 @@ def qualify(args: argparse.Namespace) -> None:
             "status": "PASS",
         }
 
-      result["customer_install"]["repair"] = {
-          "core": repair_owned_file(
-              candidate.core_msi,
-              install_root / "include" / "simaai" / "neat" / "pcie" / "Model.h",
-              evidence / "core-msi-repair.log"),
-          "scheduler": repair_owned_file(
-              candidate.scheduler_msi,
-              install_root / "bin" / "gstreamer-1.0" / "gstneatpciehost.dll",
-              evidence / "scheduler-msi-repair.log"),
+      if args.release_qualification:
+        result["customer_install"]["repair"] = {
+            "core": repair_owned_file(
+                candidate.core_msi,
+                install_root / "include" / "simaai" / "neat" / "pcie" / "Model.h",
+                evidence / "core-msi-repair.log"),
+            "scheduler": repair_owned_file(
+                candidate.scheduler_msi,
+                install_root / "bin" / "gstreamer-1.0" / "gstneatpciehost.dll",
+                evidence / "scheduler-msi-repair.log"),
+        }
+      result["card_candidate"] = {
+          "core_commit": args.expected_card_commit,
+          "bundle_sha256": card_bundle.sha256,
+          "installed": installed,
+          "firmware": active_card["firmware"],
+          "runtime_sha256": active_card["runtime_sha256"],
+          "worker_sha256": active_card["worker_sha256"],
       }
+      if args.include_genai:
+        result["card_candidate"]["genai_worker_sha256"] = active_card["genai_worker_sha256"]
+      restart_windows_platform_service(
+          evidence / "card-candidate-platform-start.log")
 
       verify_customer_process_activation(install_root, python, evidence)
       result["customer_install"]["process_activation"] = "PASS"
@@ -2673,9 +2860,11 @@ def qualify(args: argparse.Namespace) -> None:
           environment["PATH"],
       ))
       require_assets(environment, args.include_genai)
-      result["customer_install"]["standard_user"] = verify_standard_user_process_activation(
-          install_root, candidate.wheel, wheelhouse, candidate.root, work, evidence,
-          environment, args.include_genai, args.test_timeout_seconds)
+      report.phase("Standard-user activation and installed tutorials")
+      with report.case("standard_user_process_activation", "standard-user-control.log"):
+        result["customer_install"]["standard_user"] = verify_standard_user_process_activation(
+            install_root, candidate.wheel, wheelhouse, candidate.root, work, evidence,
+            environment, args.include_genai, args.test_timeout_seconds)
       if args.include_genai:
         if environment.get("SIMAPCIE_GENAI_MEDIA_DIRECTORY"):
           result["genai_media"] = {
@@ -2693,10 +2882,17 @@ def qualify(args: argparse.Namespace) -> None:
           evidence / "python-import.log", env=environment, cwd=work, timeout=60)
 
       result["tests"]["tutorial"] = run_customer_tutorials(
-          args, install_root, python, work, evidence, environment)
-      result["tests"]["cpp"] = run_cpp_tests(args, candidate.root, evidence, environment)
-      result["tests"]["python"] = run_python_tests(args, python, evidence, environment)
-      if args.include_genai:
+          args, install_root, python, work, evidence, environment, report)
+      report.phase("C++ hardware tests")
+      cleanup_card_queues(args, environment, evidence / "card-queue-cleanup-cpp.log")
+      result["tests"]["cpp"] = run_cpp_tests(
+          args, candidate.root, evidence, environment, report)
+      report.phase("Python hardware tests")
+      cleanup_card_queues(args, environment, evidence / "card-queue-cleanup-python.log")
+      result["tests"]["python"] = run_python_tests(
+          args, python, evidence, environment, report)
+      report.raise_failures()
+      if args.include_genai and args.release_qualification:
         completed_genai = (
             set(result["tests"]["cpp"]) | set(result["tests"]["python"]))
         if not GENAI_ADMISSION_TESTS.issubset(completed_genai):
@@ -2753,6 +2949,7 @@ def qualify(args: argparse.Namespace) -> None:
     finally:
       # As on Linux, the card keeps the installed candidate; only the stage goes.
       if card_install_attempted:
+        collect_card_diagnostics(args, dict(os.environ), evidence / "card-diagnostics.log")
         try:
           stop_card_workers(args, evidence)
         except BaseException as error:
@@ -2873,6 +3070,7 @@ def qualify(args: argparse.Namespace) -> None:
         result["result"] = "FAIL"
         card_lock.retain()
       write_json(evidence / "hardware-qualification.json", result)
+      report.write_summary(result["result"])
 
   raise_first_failure(failure, cleanup_errors)
 
@@ -2911,6 +3109,10 @@ def main() -> None:
   parser.add_argument("--remote-lock-path", default="/tmp/neat-pcie-card0.lock")
   parser.add_argument("--platform-runtime", type=Path, required=True)
   parser.add_argument("--python-wheelhouse", type=Path, required=True)
+  parser.add_argument(
+      "--release-qualification", action="store_true",
+      help="also run the Windows-only release checks: customer-install failure and "
+           "recovery flows, MSI repair, and C++ and GenAI fault injection")
   parser.add_argument("--sima-cli-candidate", type=Path, required=True)
   parser.add_argument("--source-root", type=Path, default=Path.cwd())
   parser.add_argument("--ssh-key", type=Path, required=True)
@@ -2934,7 +3136,12 @@ def main() -> None:
     args.card_sudo_password_value = sys.stdin.readline().rstrip("\r\n")
     if not args.card_sudo_password_value:
       parser.error("--card-sudo-password-stdin received no password line")
-  qualify(args)
+  sys.stdout.reconfigure(errors="replace")
+  try:
+    qualify(args)
+  except Exception as error:
+    annotate_error("Windows hardware qualification", str(error) or type(error).__name__)
+    raise
 
 
 if __name__ == "__main__":

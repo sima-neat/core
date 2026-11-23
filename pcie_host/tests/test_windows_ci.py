@@ -910,7 +910,7 @@ class WindowsCiContracts(unittest.TestCase):
         'std::string(kRemoteModelDir) + "/sima-neat-pcie-" + std::to_string(host_process_id())',
         (ROOT / "pcie_host/src/RemoteRuntime.cpp").read_text(encoding="utf-8"))
     source = (SCRIPT_DIR / "qualify_windows_hardware.py").read_text(encoding="utf-8")
-    self.assertEqual(source.count("remove_fault_client_leftovers(\n      args, process.pid,"), 2)
+    self.assertEqual(source.count("remove_fault_client_leftovers(\n        args, process.pid,"), 2)
 
   def test_cleanup_error_does_not_mask_the_qualification_failure(self):
     HARDWARE.raise_first_failure(None, [])
@@ -995,7 +995,9 @@ class WindowsCiContracts(unittest.TestCase):
     self.assertIn("sima_cli_run_id", source)
     self.assertIn("sima-cli-dist", source)
     self.assertIn("--require-signatures", source)
-    self.assertIn('$arguments += "--require-genai"', source)
+    self.assertIn('$arguments += @("--require-genai", "--require-release-qualification")',
+                  source)
+    self.assertIn('$arguments += "--release-qualification"', source)
     self.assertIn('$arguments += "--require-release"', source)
     self.assertIn('if ("$env:REQUIRE_SIGNATURES" -eq "true")', source)
     self.assertIn("if: always()", source)
@@ -1904,6 +1906,106 @@ class WindowsCiContracts(unittest.TestCase):
     self.assertNotIn('"-B", output, "-C", "Release"', source)
     self.assertIn("validate_candidate(output)", source)
 
+  def test_cpp_hardware_tests_mirror_linux_ctest_and_continue_after_a_failure(self):
+    ctest = (ROOT / "pcie_host/tests/hardware/CTestTestfile.cmake.in").read_text(
+        encoding="utf-8")
+    linux_order = re.findall(r"^add_test\((\w+)", ctest, re.MULTILINE)
+    linux_timeouts = {
+        name: int(timeout)
+        for names, timeout in re.findall(
+            r"set_tests_properties\(([^)]*?)\s+PROPERTIES\s+TIMEOUT\s+(\d+)", ctest)
+        for name in names.split()
+    }
+    with tempfile.TemporaryDirectory() as directory:
+      root = Path(directory)
+      (root / "hardware-tests/lib/sima-pcie-host/tests").mkdir(parents=True)
+      evidence = root / "evidence"
+      evidence.mkdir()
+      environment = {"SIMAPCIE_MLA_ONLY_MODEL": "mla.tar.gz",
+                     "SIMAPCIE_MLA_ONLY_BF16_MODEL": "bf16.tar.gz",
+                     "SIMAPCIE_GENAI_TEST_ASSETS": "assets"}
+      timeouts = {}
+
+      def logged(command, log, **options):
+        timeouts[log.name[len("cpp-"):-len(".log")]] = options["timeout"]
+        if log.name == "cpp-test_tensor_latency.log":
+          raise RuntimeError("command failed with 1: ERROR: mean latency 14.5 ms is above 12")
+
+      def parallel(_executable, _evidence, _environment, timeout):
+        timeouts["test_tensor_parallel_queues"] = timeout
+
+      for release in (False, True):
+        report = HARDWARE.TestReport(evidence)
+        args = SimpleNamespace(include_genai=True, release_qualification=release)
+        output = io.StringIO()
+        with mock.patch.object(HARDWARE, "run_logged", side_effect=logged) as run, \
+            mock.patch.object(HARDWARE, "run_cpp_parallel_queues", side_effect=parallel), \
+            mock.patch.object(HARDWARE, "run_fault_recovery_tests",
+                              return_value=["fault"]) as faults, \
+            contextlib.redirect_stdout(output):
+          completed = HARDWARE.run_cpp_tests(args, root, evidence, environment, report)
+        self.assertEqual([row[0] for row in report.rows], linux_order)
+        self.assertEqual(faults.called, release)
+        self.assertNotIn("test_tensor_latency", completed)
+        self.assertEqual(completed[-1] == "fault", release)
+      queue_blocker = next(call.args[0] for call in run.call_args_list
+                           if call.args[1].name == "cpp-test_queue_blocker.log")
+      self.assertEqual([str(value) for value in queue_blocker[1:]], ["--iterations", "10"])
+      self.assertEqual({name: timeouts[name] for name in linux_timeouts}, linux_timeouts)
+      self.assertEqual(report.failures, [
+          "test_tensor_latency: command failed with 1: ERROR: mean latency 14.5 ms is above 12"])
+      self.assertIn("  5 test_tensor_latency ... FAILED", output.getvalue())
+      self.assertIn("::error title=test_tensor_latency::command failed with 1: ERROR: mean",
+                    output.getvalue())
+      with self.assertRaisesRegex(RuntimeError,
+                                  "1 of 14 hardware tests failed: test_tensor_latency"):
+        report.raise_failures()
+      summary = root / "summary.md"
+      with mock.patch.dict(os.environ, {"GITHUB_STEP_SUMMARY": str(summary)}):
+        report.write_summary("FAIL")
+      table = summary.read_text(encoding="utf-8")
+      self.assertIn("13 of 14 tests passed.", table)
+      self.assertIn("| 5 | test_tensor_latency | FAIL |", table)
+
+  def test_failed_command_names_its_error_line_not_only_a_runner_path(self):
+    with tempfile.TemporaryDirectory() as directory:
+      log = Path(directory) / "cpp-test_metadata.log"
+      log.write_text("+ test_metadata.exe\nloading model\nERROR: model has no outputs\n"
+                     "teardown complete\n", encoding="utf-8")
+      self.assertEqual(HARDWARE.failure_line(log), "ERROR: model has no outputs")
+      with mock.patch.object(HARDWARE, "_run_to_log", return_value=1), \
+          self.assertRaisesRegex(RuntimeError, r"failed with 1: ERROR: model has no outputs "
+                                               r"\(cpp-test_metadata\.log\)"):
+        HARDWARE.run_logged(["test_metadata.exe"], log)
+
+  def test_python_failures_are_annotated_from_junit(self):
+    with tempfile.TemporaryDirectory() as directory:
+      evidence = Path(directory)
+
+      def pytest(argv, log, _env, _cwd, _timeout, *, echo):
+        self.assertTrue(echo)
+        self.assertEqual(argv[3:5], ["-q", "-rfEs"])
+        (evidence / "python-hardware.xml").write_text(
+            '<testsuites><testsuite><testcase name="test_metadata_yolov8"/>'
+            '<testcase name="test_tensor_latency_yolov8">'
+            '<failure message="AssertionError: assert 14.51 &lt; 12.1&#10;more"/>'
+            '</testcase></testsuite></testsuites>', encoding="utf-8")
+        return 1
+
+      report = HARDWARE.TestReport(evidence)
+      args = SimpleNamespace(include_genai=False, release_qualification=False,
+                             source_root=evidence, test_timeout_seconds=60)
+      output = io.StringIO()
+      with mock.patch.object(HARDWARE, "_run_to_log", side_effect=pytest), \
+          contextlib.redirect_stdout(output):
+        self.assertEqual(
+            HARDWARE.run_python_tests(args, Path("python.exe"), evidence, {}, report), [])
+      self.assertIn("::error title=test_tensor_latency_yolov8::AssertionError: assert "
+                    "14.51 < 12.1\n", output.getvalue())
+      self.assertEqual(report.failures, [
+          "pcie_host/python/tests: pytest failed with 1: "
+          "test_tensor_latency_yolov8: AssertionError: assert 14.51 < 12.1"])
+
   def test_hardware_qualification_bounds_blocker_and_injects_process_faults(self):
     source = (SCRIPT_DIR / "qualify_windows_hardware.py").read_text(encoding="utf-8")
     customer_recovery = source.split(
@@ -1927,12 +2029,14 @@ class WindowsCiContracts(unittest.TestCase):
                   source)
     self.assertIn('evidence / "genai-worker-loss-injection.log"', source)
     self.assertIn('completed.append("test_genai_workers_drained")', source)
-    self.assertIn('command.extend(["--iterations", "10", "--interval-ms", "0"])', source)
+    # Linux's CTest arguments (CTestTestfile.cmake.in).
+    self.assertIn('[test_root / "test_queue_blocker.exe", "--iterations", "10"]', source)
+    self.assertNotIn("--interval-ms", source)
     self.assertIn('completed.append("test_worker_loss_recovery")', source)
     self.assertIn('completed.append("test_client_process_death_recovery")', source)
     self.assertIn('PERF_MAX_MEAN_LATENCY_MS = "16"', source)
     self.assertIn('PERF_MIN_THROUGHPUT_FPS = "290"', source)
-    self.assertIn('["--max-mean-latency-ms", PERF_MAX_MEAN_LATENCY_MS]', source)
+    self.assertIn('"--max-mean-latency-ms", PERF_MAX_MEAN_LATENCY_MS]', source)
     self.assertIn('"SIMAPCIE_PERF_MIN_THROUGHPUT_FPS": PERF_MIN_THROUGHPUT_FPS', source)
     self.assertIn('"--warmup", "100", "--iterations", "3000"', source)
     self.assertIn('command.append("--terminate-on-pull-timeout")', source)
@@ -2453,8 +2557,10 @@ class WindowsCiContracts(unittest.TestCase):
            mock.patch.object(HARDWARE, "stop_windows_platform_service") as stop_service, \
            mock.patch.object(HARDWARE, "restart_windows_platform_service") as restart_service, \
            mock.patch.object(HARDWARE, "wait_for_no_genai_workers") as wait_for_no_workers:
+        report = HARDWARE.TestReport(evidence)
         completed = HARDWARE.run_genai_fault_recovery_tests(
-            args, Path("python.exe"), evidence, {"TEST": "1"})
+            args, Path("python.exe"), evidence, {"TEST": "1"}, report)
+      self.assertEqual(report.failures, [])
 
       self.assertEqual(completed, [
           "test_genai_worker_loss_recovery", "test_genai_restart_after_worker_loss",
@@ -2879,7 +2985,7 @@ class WindowsCiContracts(unittest.TestCase):
                     "core/pciehost/windows/amd64@develop"):
       with self.subTest(command=command):
         self.assert_release_rejected(
-            "repeated customer CLI flow",
+            "customer CLI install",
             lambda value: value["customer_install"].update(command=command))
 
   def test_release_gate_requires_exact_external_asset_manifest(self):
@@ -3447,7 +3553,38 @@ class WindowsCiContracts(unittest.TestCase):
   def test_release_gate_requires_partial_wheel_failure_recovery(self):
     self.assert_release_rejected(
         "native success, wheel failure, and retry",
-        lambda value: value["customer_install"].pop("wheel_failure"))
+        lambda value: value["customer_install"].pop("wheel_failure"),
+        require_release_qualification=True)
+
+  def test_validation_admission_leaves_windows_only_release_checks_to_releases(self):
+    release_only = ("missing_wheel", "native_only", "recovery", "repair", "repeat",
+                    "wheel_failure")
+    fault_cases = ("test_worker_loss_recovery", "test_client_process_death_recovery")
+
+    def validation_run(value):
+      for name in release_only:
+        del value["customer_install"][name]
+      value["tests"]["cpp"] = [
+          name for name in value["tests"]["cpp"] if name not in fault_cases]
+
+    with tempfile.TemporaryDirectory() as directory:
+      root = Path(directory)
+      commit, _, qualification = self.windows_candidate(root)
+      self.rewrite_json(qualification, validation_run)
+      admission = verify(root, qualification, commit, False)
+      self.assertFalse(admission["release_qualification_required"])
+      with self.assertRaisesRegex(ValueError, "repeated customer CLI flow"):
+        verify(root, qualification, commit, False, require_release_qualification=True)
+    for name in ("repair", "missing_wheel"):
+      with self.subTest(evidence=name):
+        self.assert_release_rejected(
+            "release qualification did not prove",
+            lambda value: value["customer_install"].pop(name),
+            require_signatures=False, require_release_qualification=True)
+    self.assert_release_rejected(
+        "test_client_process_death_recovery",
+        lambda value: value["tests"]["cpp"].remove("test_client_process_death_recovery"),
+        require_signatures=False, require_release_qualification=True)
 
   def test_release_gate_requires_customer_process_activation(self):
     self.assert_release_rejected(

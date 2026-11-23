@@ -585,12 +585,16 @@ jobs:
     # As on Linux, the card address is fixed and every other input is resolved
     # in-job; the card PC needs no repository variables.
     env:
+      SIMAPCIE_BURST_ITERATIONS: "20"
       SIMAPCIE_CARD_GST_DEBUG: ${{ vars.SIMAPCIE_PCIEHOST_CARD_GST_DEBUG }}
+      # Linux's run_ctest.sh and run_pytest.sh default for queue 0.
+      SIMAPCIE_CARD_GST_DEBUG_FILE: "/tmp/q0-card.gst.log"
       SIMAPCIE_CARD_HOST: "10.0.0.2"
       SIMAPCIE_CARD_ID: "0"
       SIMAPCIE_LIFECYCLE_CYCLES: "10"
       SIMAPCIE_LIFETIME_ITERATIONS: "20"
       SIMAPCIE_PULL_TIMEOUT_MS: "30000"
+      SIMAPCIE_QUEUE: "0"
       SIMAPCIE_READINESS_TIMEOUT_MS: "180000"
       SIMAPCIE_STRESS_ITERATIONS: "1000"
       SIMAPCIE_STRESS_QUEUES: "0 1 2 3 4 5"
@@ -692,6 +696,7 @@ jobs:
           SIMAPCIE_CARD_SUDO_PASSWORD: ${{ secrets.DEVKIT_PASSWORD }}
           REQUIRE_UPGRADE: ${{ inputs.require_upgrade }}
           UPGRADE_BASE_TAG: ${{ inputs.upgrade_base_tag }}
+          VALIDATION_ONLY: ${{ inputs.validation_only }}
           ARTIFACT_BASE_URL: ${{ needs.resolve-vulcan-config.outputs.artifact_base_url }}
         run: |
           $ErrorActionPreference = "Stop"
@@ -734,6 +739,10 @@ jobs:
             "--evidence", "$env:RUNNER_TEMP\core-windows-hardware-evidence",
             "--include-genai"
           )
+          if ("$env:VALIDATION_ONLY" -ne "true") {
+            # Windows-only release checks; validation runs keep what Linux's card job covers.
+            $arguments += "--release-qualification"
+          }
           if ("$env:REQUIRE_UPGRADE" -eq "true") {
             # The prior release as customers download it, not a run's expiring artifact.
             $baseCommit = & git rev-parse --verify --quiet "refs/tags/$env:UPGRADE_BASE_TAG^{commit}"
@@ -797,7 +806,7 @@ jobs:
             "--output", "$env:RUNNER_TEMP\core-windows-hardware-evidence\release-admission.json"
           )
           if ("$env:VALIDATION_ONLY" -ne "true") {
-            $arguments += "--require-genai"
+            $arguments += @("--require-genai", "--require-release-qualification")
           }
           if ("$env:REQUIRE_UPGRADE" -eq "true") {
             $arguments += "--require-release"

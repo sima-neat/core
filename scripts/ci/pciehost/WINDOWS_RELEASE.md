@@ -220,8 +220,10 @@ has passed its Linux build, DevKit, and PCIe-card gates. The Windows lane:
    the card's `/etc/buildinfo` `DISTRO_VERSION` to equal the `platform-version`
    in `deps/manifest.json` (the Linux card lane's `check_card_compatibility.sh`
    rule). It then installs that candidate on the card from the offline bundle;
-5. runs the customer CLI, C++, Python, lifecycle, fault, performance, and GenAI
-   acceptance; and
+5. runs the customer CLI install, standard-user activation, installed tutorials,
+   and Linux's C++ CTest and pyneatpcie cases with their order, arguments and
+   timeouts, printing one result line per test, continuing after a failure, and
+   adding a results table to the job summary; and
 6. publishes nothing: Vulcan CI calls it with `validation_only=true`, and while
    the lane is enabled its success is required before Core can advance its
    branch `latest` tag.
@@ -236,10 +238,16 @@ environment using only the pinned wheelhouse, and fails if cleanup leaves the
 shared installation root behind.
 
 The hardware qualifier serves the candidate from disposable loopback registries
-and runs the documented `sima-cli neat install` command for a native-only
-install, a missing-wheel download failure, a checksum-valid but invalid wheel
-after native installation, managed-environment recovery with the real wheel,
-and a repeated install. It records the Windows version, elevation, Smart App
+and runs the documented `sima-cli neat install` command once, as Linux installs
+its host package once. Release
+qualification (`validation_only=false`, `--release-qualification`) adds the
+Windows-only checks that have no Linux equivalent: a native-only install, a
+missing-wheel download failure, a checksum-valid but invalid wheel after native
+installation, managed-environment recovery with the real wheel, a repeated
+install, MSI repair, C++ worker-loss and client-death recovery (with a Platform
+device remove and rescan), and GenAI worker-loss and service-loss recovery.
+Release admission (`--require-release-qualification`) requires their evidence.
+It records the Windows version, elevation, Smart App
 Control, effective AppLocker visibility and driver-signing policy (Secure Boot,
 boot test-signing and integrity-check options, WDAC and HVCI enforcement)
 without changing policy, and removes Python, Core and Scheduler in reverse order.
@@ -433,8 +441,8 @@ additional provenance; it does not replace tests.
 
 Wheel installation failure deliberately preserves successful native MSI work so
 the customer can retry the Python step. This is not a transaction that rolls all
-three packages back. MSI repair, repeat installation, failure recovery, and clean
-removal are exercised on every publishing run; the older-version upgrade is the
+three packages back. MSI repair, repeat installation, and failure recovery
+are exercised on every publishing run, and clean removal on every run; the older-version upgrade is the
 separate formal gate described above.
 
 ## Evidence and recovery

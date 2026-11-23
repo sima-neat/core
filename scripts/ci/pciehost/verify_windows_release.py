@@ -95,7 +95,8 @@ def verify_msi_transaction_rollback(candidate_root: Path) -> dict:
 def verify(candidate_dir: Path, qualification_path: Path, expected_commit: str,
            require_signatures: bool, require_genai: bool = False,
            require_release: bool = False,
-           asset_manifest_path: Path | None = None) -> dict:
+           asset_manifest_path: Path | None = None,
+           require_release_qualification: bool = False) -> dict:
   candidate = validate_candidate(candidate_dir)
   if candidate.core_commit != expected_commit:
     raise ValueError(
@@ -192,27 +193,30 @@ def verify(candidate_dir: Path, qualification_path: Path, expected_commit: str,
   if (not isinstance(customer_install, dict)
       or customer_install.get("command") != customer_target(
           release_tag(candidate.metadata.get("version")))
-      or customer_install.get("native_only") != "PASS"
-      or customer_install.get("recovery") != "PASS"
-      or customer_install.get("repeat") != "PASS"
       or " " not in str(customer_install.get("download_path_with_spaces", ""))):
-    raise ValueError("hardware qualification did not prove the repeated customer CLI flow")
-  missing_wheel = customer_install.get("missing_wheel")
-  if (not isinstance(missing_wheel, dict) or missing_wheel.get("status") != "PASS"
-      or not isinstance(missing_wheel.get("exit_code"), int)
-      or missing_wheel["exit_code"] == 0):
-    raise ValueError("hardware qualification did not prove missing-wheel failure and recovery")
-  wheel_failure = customer_install.get("wheel_failure")
-  if (not isinstance(wheel_failure, dict) or wheel_failure.get("status") != "PASS"
-      or not isinstance(wheel_failure.get("exit_code"), int)
-      or wheel_failure["exit_code"] == 0):
-    raise ValueError(
-        "hardware qualification did not prove native success, wheel failure, and retry")
-  repair = customer_install.get("repair")
+    raise ValueError("hardware qualification did not prove the customer CLI install")
+  if require_release_qualification:
+    if (customer_install.get("native_only") != "PASS"
+        or customer_install.get("recovery") != "PASS"
+        or customer_install.get("repeat") != "PASS"):
+      raise ValueError("release qualification did not prove the repeated customer CLI flow")
+    missing_wheel = customer_install.get("missing_wheel")
+    if (not isinstance(missing_wheel, dict) or missing_wheel.get("status") != "PASS"
+        or not isinstance(missing_wheel.get("exit_code"), int)
+        or missing_wheel["exit_code"] == 0):
+      raise ValueError("release qualification did not prove missing-wheel failure and recovery")
+    wheel_failure = customer_install.get("wheel_failure")
+    if (not isinstance(wheel_failure, dict) or wheel_failure.get("status") != "PASS"
+        or not isinstance(wheel_failure.get("exit_code"), int)
+        or wheel_failure["exit_code"] == 0):
+      raise ValueError(
+          "release qualification did not prove native success, wheel failure, and retry")
+    repair = customer_install.get("repair")
+    if (not isinstance(repair, dict) or repair.get("core") != "PASS"
+        or repair.get("scheduler") != "PASS"):
+      raise ValueError("release qualification did not prove MSI repair")
   standard_user = customer_install.get("standard_user")
-  if (not isinstance(repair, dict) or repair.get("core") != "PASS"
-      or repair.get("scheduler") != "PASS"
-      or customer_install.get("plugin_discovery") != "PASS"
+  if (customer_install.get("plugin_discovery") != "PASS"
       or customer_install.get("process_activation") != "PASS"
       or not isinstance(standard_user, dict)
       or standard_user.get("is_administrator") is not False
@@ -220,8 +224,7 @@ def verify(candidate_dir: Path, qualification_path: Path, expected_commit: str,
       or standard_user.get("doctor") != "PASS"
       or standard_user.get("python") != "PASS"
       or standard_user.get("standard_user") != "PASS"):
-    raise ValueError(
-        "hardware qualification did not prove MSI repair and standard-user process activation")
+    raise ValueError("hardware qualification did not prove standard-user process activation")
   if require_release:
     upgrade = customer_install.get("upgrade")
     if (not isinstance(upgrade, dict) or upgrade.get("status") != "PASS"
@@ -302,8 +305,9 @@ def verify(candidate_dir: Path, qualification_path: Path, expected_commit: str,
       "test_tensor_mla_only_bf16_run", "test_tensor_parallel_queues",
       "test_image_run", "test_image_boxdecode_run", "test_queue_blocker",
       "test_model_resilience", "test_tensor_latency", "test_tensor_throughput",
-      "test_worker_loss_recovery", "test_client_process_death_recovery",
   }
+  if require_release_qualification:
+    required_cpp |= {"test_worker_loss_recovery", "test_client_process_death_recovery"}
   required_python = {
       "test_async_test_runner_cancels_blocked_peer", "test_metadata_yolov8",
       "test_runtime_request_correlation", "test_runtime_two_models_and_independent_unload",
@@ -446,6 +450,7 @@ def verify(candidate_dir: Path, qualification_path: Path, expected_commit: str,
       "customer_install_qualified": True,
       "msi_transaction_rollback_qualified": True,
       "release_gates_required": require_release,
+      "release_qualification_required": require_release_qualification,
       "genai_qualified": require_genai,
       "resources": candidate.resources,
       "dependency_signatures": dependency_signatures,
@@ -463,13 +468,15 @@ def main() -> None:
   parser.add_argument("--require-genai", action="store_true")
   parser.add_argument("--require-release", action="store_true",
                       help="Require release lifecycle evidence even for unsigned packages")
+  parser.add_argument("--require-release-qualification", action="store_true",
+                      help="Require the qualifier's Windows-only release checks")
   parser.add_argument("--require-signatures", action="store_true")
   parser.add_argument("--output", type=Path, required=True)
   args = parser.parse_args()
   result = verify(
       args.candidate, args.qualification, args.expected_commit,
       args.require_signatures, args.require_genai, args.require_release,
-      args.asset_manifest)
+      args.asset_manifest, args.require_release_qualification)
   args.output.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
