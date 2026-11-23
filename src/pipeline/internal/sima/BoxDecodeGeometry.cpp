@@ -127,8 +127,11 @@ std::optional<rt::Error> interpret(const Published& frame, Geometry& geometry, b
   geometry.roi_empty = geometry.roi_list && !geometry.roi_ambiguous && *frame.valid_rois != 1;
   const auto state = classify_affine(frame, affine_optional);
   geometry.affine = frame.matrix;
+  // Dimensions-only metadata serializes a default identity; it names no crop for the full-frame
+  // guard either, whatever the profile.
   if (want_partial)
-    geometry.partial = partial_frame(frame, geometry, state) || geometry.roi_empty;
+    geometry.partial =
+        partial_frame(frame, geometry, classify_affine(frame, true)) || geometry.roi_empty;
   if (!complete)
     return std::nullopt;
   if (geometry.roi_ambiguous)

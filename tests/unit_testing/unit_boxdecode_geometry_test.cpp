@@ -976,6 +976,11 @@ void full_frame_only_geometry() {
   require(take(resolve(executor.preparer(), one)) == base, "rounding of the placed extent refused");
   set_published_frame(meta, "letterbox", 0., 0., 0., 0., false);
   require(take(resolve(executor.preparer(), one)) == base, "dimensions-only ingress was refused");
+  // Dimensions-only facts serialize a default identity affine; a whole 1280x720 frame resized into
+  // the 640x640 canvas must still decode.
+  set_published_frame(meta, "letterbox", 1., 1., 0., 0.);
+  require(take(resolve(executor.preparer(), one)) == base,
+          "dimensions-only metadata with the default identity affine was refused as an ROI");
   // An ROI, a crop and an ROI list decoded in full-frame coordinates would be wrong.
   set_published_frame(meta, "letterbox", 1., .5625, 400., 200.);
   require(refused("ROI, a crop or a window"), "an ROI frame decoded in full-frame coordinates");
