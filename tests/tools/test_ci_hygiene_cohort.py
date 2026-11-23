@@ -122,6 +122,7 @@ def test_final_validation_requires_tooling_success(monkeypatch, outcome):
     monkeypatch.setenv('RESULTS', json.dumps(results))
     monkeypatch.setenv('BUILD_MODE', 'standard')
     monkeypatch.setenv('WINDOWS_PCIE_CI', 'true')
+    monkeypatch.setenv('CARD_BUNDLE', 'true')
     script = textwrap.dedent(job('validation-complete').split(
         "          python3 - <<'PYGATE'\n", 1)[1].split('\n          PYGATE', 1)[0])
     if outcome == 'success':
