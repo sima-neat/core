@@ -13,7 +13,7 @@ import ctypes
 import hashlib
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PurePath
 import platform
 import re
 import shutil
@@ -229,6 +229,14 @@ def sign_files(paths: list[Path], signtool: str, certificate_sha1: str,
     run(command)
 
 
+# Shipped unmodified from its vendor; release signing covers only SiMa-built binaries.
+THIRD_PARTY_NATIVE = frozenset({"opencv_world500.dll"})
+
+
+def ours(paths: list[Path]) -> list[Path]:
+  return [path for path in paths if path.name.lower() not in THIRD_PARTY_NATIVE]
+
+
 def native_files(root: Path) -> list[Path]:
   return [
       path for path in sorted(root.rglob("*"))
@@ -241,7 +249,7 @@ def build_sources_for_installed(build_root: Path, installed_roots: list[Path]) -
   for path in native_files(build_root):
     build_by_name.setdefault(path.name.lower(), []).append(path)
   selected = []
-  for name in sorted({path.name.lower() for root in installed_roots for path in native_files(root)}):
+  for name in sorted({path.name.lower() for root in installed_roots for path in ours(native_files(root))}):
     matches = build_by_name.get(name, [])
     if len(matches) != 1:
       raise ValueError(f"cannot identify one build source for shipped native file {name}: {matches}")
@@ -273,9 +281,10 @@ def require_valid_signatures(records: list[dict], description: str,
   expected = certificate_sha1.replace(" ", "").upper()
   invalid = [
       record["path"] for record in records
-      if record.get("status") != "Valid"
+      if PurePath(record["path"]).name.lower() not in THIRD_PARTY_NATIVE
+      and (record.get("status") != "Valid"
       or str(record.get("thumbprint", "")).upper() != expected
-      or not record.get("timestamp_thumbprint")
+      or not record.get("timestamp_thumbprint"))
   ]
   if invalid:
     raise RuntimeError(f"{description} has missing or invalid Authenticode signatures: {invalid}")
@@ -774,7 +783,7 @@ def build(args: argparse.Namespace) -> None:
       raise ValueError("Windows Core producer installed no C++ hardware test executables")
     if args.signing_certificate_sha1:
       sign_files(
-          hardware_native, signtool, args.signing_certificate_sha1,
+          ours(hardware_native), signtool, args.signing_certificate_sha1,
           args.signing_timestamp_url, args.signing_machine_store)
 
     version = json.loads((ROOT / "deps" / "manifest.json").read_text(encoding="utf-8"))[

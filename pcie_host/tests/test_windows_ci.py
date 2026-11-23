@@ -1881,6 +1881,17 @@ class WindowsCiContracts(unittest.TestCase):
     ), self.assertRaisesRegex(RuntimeError, "PnP identity was invalid"):
       windows_platform_state_snapshot(Path(directory) / "platform.log")
 
+  def test_release_signing_leaves_vendor_runtime_unsigned_by_sima(self):
+    shipped = [Path("bin/sima-pcie-host.dll"), Path("bin/opencv_world500.dll")]
+    self.assertEqual(MODULE.ours(shipped), [Path("bin/sima-pcie-host.dll")])
+    valid = {"status": "Valid", "thumbprint": "AB", "timestamp_thumbprint": "CD"}
+    MODULE.require_valid_signatures(
+        [{"path": "bin/sima-pcie-host.dll", **valid},
+         {"path": "bin/OpenCV_World500.dll", "status": "NotSigned"}], "candidate", "ab")
+    with self.assertRaisesRegex(RuntimeError, "sima-pcie-host.dll"):
+      MODULE.require_valid_signatures(
+          [{"path": "bin/sima-pcie-host.dll", "status": "NotSigned"}], "candidate", "ab")
+
   def test_signature_path_avoids_powershell_command_line_quoting(self):
     path = Path("C:/Program Files/SimaPCIeHost/bin/plugin.dll")
     output = '{"status":"NotSigned","message":"","thumbprint":null,' \
