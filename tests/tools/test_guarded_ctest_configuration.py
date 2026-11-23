@@ -141,7 +141,8 @@ endfunction()
                        'unit_boxdecode_geometry_test', 'unit_boxdecode_public_input_binding_test',
                        'unit_kernel_runner_integration_test'}
         names = executables | {'unit_kernel_runner_capacity_policy_test',
-                               'unit_ssd_artifact_completion_guard_test'}
+                               'unit_ssd_artifact_completion_guard_test',
+                               'unit_boxdecode_roi_affine_test'}
         env = os.environ.copy()
         for key in ('CC', 'CXX', 'CFLAGS', 'CXXFLAGS', 'CPPFLAGS', 'LDFLAGS', 'CPATH',
                     'CPLUS_INCLUDE_PATH', 'LIBRARY_PATH', 'LD_LIBRARY_PATH', 'LD_PRELOAD',
