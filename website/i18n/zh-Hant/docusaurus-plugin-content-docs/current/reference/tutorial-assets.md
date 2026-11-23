@@ -34,7 +34,7 @@ export SIMA_NEAT_TUTORIAL_MODEL_RESNET=/path/to/resnet_50.tar.gz
 export SIMA_NEAT_TUTORIAL_MODEL_YOLO=/path/to/yolo_v8s.tar.gz
 </ShellCommand>
 
-若未設定教學測試變數，C++ 教學的 CTest 執行會使用模型目標資料夾中的 `resnet_50.tar.gz` 和 `yolo_v8s.tar.gz`：預設為 `/tmp`，或是以 `./build.sh --model-target-folder` 指定的資料夾。這些是 `./build.sh --download-models-only` 寫入的檔案。請參閱[教學設定](/tutorials/before-you-run)。
+若未設定教學測試變數，C++ 教學的 CTest 執行會使用 `/tmp/resnet_50.tar.gz` 和 `/tmp/yolo_v8s.tar.gz`。準備方式請參閱[教學設定](/tutorials/before-you-run)。
 
 ## 常見的程式碼庫路徑
 

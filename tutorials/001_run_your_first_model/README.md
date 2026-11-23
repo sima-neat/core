@@ -47,6 +47,13 @@ That's the whole story. Everything in later chapters — async, pipelines, custo
 
 ## Run
 
+Download ResNet-50 from the Model Browser and extract its model archive to `/tmp/resnet_50.tar.gz`, the path the commands below pass as `--model`:
+
+```bash
+sima-cli models download --id resnet_50 --variant w8a8
+unzip -p models/resnet_50/w8a8/resnet_50_w8a8_default.zip resnet_50_w8a8_mpk.tar.gz > /tmp/resnet_50.tar.gz
+```
+
 Run it and you should see the predicted class index printed to stdout. Run the **Python** and **C++ (prebuilt)** commands from the **Neat install root** (the directory that contains `share/` and `lib/`); run the **build from source** commands from the **repo root**.
 
 **Python:**
@@ -81,46 +88,7 @@ For throughput, batching, or live streams, continue to chapter 002. Reference: [
 
 ## In Practice
 
-Where the tutorials and tests look for model archives (`.tar.gz`) and sample assets, and how to provide them locally. This is the prerequisite for every model-backed tutorial.
-
-### Ensure `sima-cli` is on PATH
-
-Some tests invoke `sima-cli` from non-interactive shells. Use this once after installing `sima-cli`:
-
-```bash
-SIMA_CLI_BIN_DIR="<path-to-sima-cli-bin>"
-grep -Fqx "export PATH=\"${SIMA_CLI_BIN_DIR}:\$PATH\"" ~/.bashrc || echo "export PATH=\"${SIMA_CLI_BIN_DIR}:\$PATH\"" >> ~/.bashrc
-source ~/.bashrc
-```
-
-Then verify:
-
-```bash
-/bin/sh -c 'command -v sima-cli'
-```
-
-### Model archive locations and environment variables
-
-Extraction/runtime placement knobs:
-- `SIMA_MPK_EXTRACT_ROOT=<dir>` sets the base extract directory.
-- `SIMA_MPK_CLEANUP_EXTRACTED=0` preserves extracted `proc_run_*` model data after process exit.
-- `SIMA_MPK_EXTRACT_GC_STALE_PROC=0` disables lock-based cleanup of abandoned `proc_run_*` directories on startup.
-
-Remove legacy `proc_<pid>` roots manually once unused.
-
-#### ResNet50
-
-Search order:
-1. `SIMA_RESNET50_TAR` (per-model override)
-2. `SIMA_MODEL_TAR` (shared fallback for model-archive tests/examples)
-3. `tmp/resnet_50.tar.gz`
-4. Local files moved into `tmp/` if found: `resnet_50.tar.gz`, `resnet-50.tar.gz`
-
-Download it from the Model Browser and extract the model archive to the path the commands above use. [Tutorial Setup](/tutorials/before-you-run) describes the download:
-```bash
-sima-cli models download --id resnet_50 --variant w8a8
-unzip -p models/resnet_50/w8a8/resnet_50_w8a8_default.zip resnet_50_w8a8_mpk.tar.gz > /tmp/resnet_50.tar.gz
-```
+Model archive overrides, the paths source-tree tests search, and the extraction settings are described in [Tutorial Assets](/reference/tutorial-assets).
 
 ### Sample images
 

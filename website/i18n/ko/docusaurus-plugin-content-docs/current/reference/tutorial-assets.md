@@ -32,7 +32,7 @@ export SIMA_NEAT_TUTORIAL_MODEL_RESNET=/path/to/resnet_50.tar.gz
 export SIMA_NEAT_TUTORIAL_MODEL_YOLO=/path/to/yolo_v8s.tar.gz
 </ShellCommand>
 
-튜토리얼 테스트 변수가 설정되지 않은 경우, C++ 튜토리얼 CTest 실행은 모델 대상 폴더의 `resnet_50.tar.gz`와 `yolo_v8s.tar.gz`를 사용합니다. 대상 폴더는 `/tmp` 또는 `./build.sh --model-target-folder`로 지정한 폴더입니다. 이 파일은 `./build.sh --download-models-only`가 생성합니다. [튜토리얼 설정](/tutorials/before-you-run)을 참조하세요.
+튜토리얼 테스트 변수가 설정되지 않은 경우, C++ 튜토리얼 CTest 실행은 `/tmp/resnet_50.tar.gz`와 `/tmp/yolo_v8s.tar.gz`를 사용합니다. 준비 방법은 [튜토리얼 설정](/tutorials/before-you-run)을 참조하세요.
 
 ## 일반적인 소스 트리 경로
 

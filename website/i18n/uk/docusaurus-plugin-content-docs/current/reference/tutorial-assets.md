@@ -32,7 +32,7 @@ export SIMA_NEAT_TUTORIAL_MODEL_RESNET=/path/to/resnet_50.tar.gz
 export SIMA_NEAT_TUTORIAL_MODEL_YOLO=/path/to/yolo_v8s.tar.gz
 </ShellCommand>
 
-Якщо змінну для тестів навчальних матеріалів не встановлено, запуски CTest для навчальних матеріалів C++ використовують `resnet_50.tar.gz` і `yolo_v8s.tar.gz` з теки для моделей: `/tmp` або теки, указаної в `./build.sh --model-target-folder`. Саме ці файли записує `./build.sh --download-models-only`. Див. [Налаштування навчального посібника](/tutorials/before-you-run).
+Якщо змінну для тестів навчальних матеріалів не встановлено, запуски CTest для навчальних матеріалів C++ використовують `/tmp/resnet_50.tar.gz` і `/tmp/yolo_v8s.tar.gz`. Як їх підготувати, див. у розділі [Налаштування навчального посібника](/tutorials/before-you-run).
 
 ## Поширені шляхи в структурі коду.
 

@@ -65,13 +65,14 @@ python3 -c "import pyneatpcie; print('pyneatpcie ready')"
 
 教學課程使用 [Model Browser](/tools/model-browser/) 中的 ResNet-50 和 YOLOv8s。Palette SDK 內建的 `sima-cli` 即可下載這些模型。
 
-若要使用 Neat Library 的教學課程，請從提取的額外檔案的根目錄下載這兩個模型：
+若要使用 Neat Library 的教學課程，請下載這兩個模型，並從各自的 ZIP 將模型封存檔解壓縮到教學指令以 `--model` 傳遞的路徑：
 
 <ShellCommand prompt="sdk|devkit">
-./build.sh --download-models-only
+sima-cli models download --id resnet_50 --variant w8a8
+unzip -p models/resnet_50/w8a8/resnet_50_w8a8_default.zip resnet_50_w8a8_mpk.tar.gz > /tmp/resnet_50.tar.gz
+sima-cli models download --id yolov8s --variant w8a8
+unzip -p models/yolov8s/w8a8/yolov8s_w8a8_default.zip yolov8s_w8a8_mpk.tar.gz > /tmp/yolo_v8s.tar.gz
 </ShellCommand>
-
-此命令會寫入 `/tmp/resnet_50.tar.gz` 和 `/tmp/yolo_v8s.tar.gz`，也就是教學指令以 `--model` 傳遞的路徑。加上 `--model-target-folder <folder>` 即可將它們寫入其他位置。
 
 PCIe 教學課程會在 PCIe 附加資料的根目錄中使用固定的檔案名稱：
 
