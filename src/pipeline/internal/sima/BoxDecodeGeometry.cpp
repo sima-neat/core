@@ -175,8 +175,8 @@ rt::Result<Geometry> read_geometry(GstBuffer* buffer, bool complete, bool unifor
     geometry.partial =
         geometry.roi_ambiguous || geometry.resize == "crop" ||
         (geometry.affine && !geometry.identity_default && affine_published(*geometry.affine) &&
-         geometry.width > 0 &&
-         geometry.height > 0 && geometry.placed[2] > 0 && geometry.placed[3] > 0 &&
+         geometry.width > 0 && geometry.height > 0 && geometry.placed[2] > 0 &&
+         geometry.placed[3] > 0 &&
          !boxdecode_affine_covers_image(*geometry.affine, geometry.width, geometry.height,
                                         geometry.placed, kFullFrameTolerance));
   }
