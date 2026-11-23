@@ -1021,7 +1021,7 @@ class WindowsCiContracts(unittest.TestCase):
         ),
         2,
     )
-    self.assertEqual(workflow.count("shell: powershell"), 12)
+    self.assertEqual(workflow.count("shell: powershell"), 11)
     hardware_job = workflow.split("  hardware:\n", 1)[1].split("  publish:\n", 1)[0]
     # Self-hosted Windows keeps the default Restricted script policy, as customer PCs do;
     # run every step like pcie-setup.cmd does instead of provisioning the host.
@@ -4368,28 +4368,54 @@ class WindowsCiContracts(unittest.TestCase):
         '      result["customer_install"]["neat_status"] = verify_installed_neat_status(\n',
         qualifier)
 
-  def test_hosted_windows_build_runs_every_windows_only_test_first(self):
-    # The contracts job runs these files on Linux, where Windows-only tests skip.
-    native = workflow_job(WORKFLOW.read_text(encoding="utf-8"), "native")
-    step = workflow_step(native, "Run the Windows-only script tests")
-    self.assertLess(native.index("- name: Run the Windows-only script tests"),
-                    native.index("- name: Provision pinned Windows producer inputs"))
-    self.assertIn("working-directory: pcie_host/tests\n", step)
-    self.assertIn("& python -m unittest -v `\n", step)
-    self.assertTrue(step.endswith("exit $LASTEXITCODE\n"))
-    windows_only = []
-    for path in sorted((ROOT / "pcie_host" / "tests").glob("test_*.py")):
+  def test_hosted_windows_build_runs_every_windows_only_test_through_ctest(self):
+    # The contracts job runs these files on Linux, where Windows-only tests skip. The
+    # hosted Windows build of every non-docs Vulcan CI push runs them through CTest.
+    windows_only = set()
+    for path in (ROOT / "pcie_host" / "tests").glob("test_*.py"):
       for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
-        if not isinstance(node, ast.ClassDef):
-          continue
-        members = [node, *(item for item in node.body if isinstance(item, ast.FunctionDef))]
-        for member in members:
-          if any(ast.unparse(decorator).startswith("unittest.skipUnless(os.name == 'nt'")
-                 for decorator in member.decorator_list):
-            windows_only.append(".".join(dict.fromkeys((path.stem, node.name, member.name))))
-    self.assertGreaterEqual(len(windows_only), 3)
-    for name in windows_only:
-      self.assertRegex(step, rf"(?m)^ +{re.escape(name)}(?: `)?$")
+        if isinstance(node, (ast.ClassDef, ast.FunctionDef)) and any(
+            ast.unparse(decorator).startswith("unittest.skipUnless(os.name == 'nt'")
+            for decorator in node.decorator_list):
+          windows_only.add(path.name)
+    self.assertGreaterEqual(len(windows_only), 2)
+    # Each registration's enclosing CMake conditions, with else() branches negated.
+    registrations, conditions = {}, []
+    cmake = (ROOT / "pcie_host" / "CMakeLists.txt").read_text(encoding="utf-8")
+    for command, arguments in re.findall(
+        r"(?ms)^\s*(if|elseif|else|endif|add_test)\s*\((.*?)\)\s*$", cmake):
+      if command == "if":
+        conditions.append(arguments.strip())
+      elif command in ("elseif", "else"):
+        conditions[-1] = f"{command}: {conditions[-1]}"
+      elif command == "endif":
+        conditions.pop()
+      for name in re.findall(r"\$\{CMAKE_CURRENT_SOURCE_DIR\}/tests/(test_\w+\.py)", arguments):
+        registrations[name] = list(conditions)
+    for name in sorted(windows_only):
+      with self.subTest(name=name):
+        self.assertEqual(registrations.get(name), ["SIMAPCIE_BUILD_TESTS"])
+    producer = SCRIPT.read_text(encoding="utf-8")
+    self.assertIn('"-S", PCIE_HOST,', producer)
+    self.assertIn('"-DSIMAPCIE_BUILD_TESTS=ON",', producer)
+    # Every registered test runs, unfiltered, and must pass without a CTest skip.
+    self.assertIn('run([ctest, "--test-dir", build_dir, "--output-on-failure", "--no-tests=error",\n'
+                  '         "--output-junit", native_junit], env=environment)', producer)
+    self.assertIn("require_junit_cases(native_junit, set(test_names))", producer)
+    wrapper = (SCRIPT_DIR / "run_windows_build.ps1").read_text(encoding="utf-8")
+    self.assertIn('  "scripts/ci/pciehost/build_windows.py",\n', wrapper)
+    self.assertIn("& python @arguments\n", wrapper)
+    main = MAIN_WORKFLOW.read_text(encoding="utf-8")
+    self.assertIn('\non:\n  push:\n    branches:\n      - "**"\n', main.split("\njobs:\n", 1)[0])
+    build = workflow_job(main, "build-pciehost-packages")
+    # Not the card lane's opt-in gates: this job runs for every non-docs change.
+    condition = job_condition(main, "build-pciehost-packages")
+    for gate in ("ENABLE_WINDOWS_PCIE_CI", "run_windows_pcie", "refs/tags"):
+      self.assertNotIn(gate, condition)
+    self.assertIn("          - distro: windows\n            deb_arch: amd64\n", build)
+    step = workflow_step(build, "Build, test, package, install, and remove the Windows cohort")
+    self.assertIn("        if: ${{ matrix.distro == 'windows' }}\n", step)
+    self.assertIn("& ./scripts/ci/pciehost/run_windows_build.ps1", step)
 
   def test_hardware_qualifier_requires_the_card_and_cohort_in_neat_status(self):
     native = [{"owner": "scheduler", "version": "0.6.2"}, {"owner": "core", "version": "0.6.2"}]

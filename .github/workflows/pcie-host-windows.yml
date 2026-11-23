@@ -530,16 +530,6 @@ jobs:
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: 3.14.7
-      # The tests that skip on Linux run the shipped scripts under cmd.exe and PowerShell.
-      - name: Run the Windows-only script tests
-        shell: powershell
-        working-directory: pcie_host/tests
-        run: |
-          & python -m unittest -v `
-            test_windows_packaging_contract.WindowsScriptExecution `
-            test_windows_packaging_contract.WindowsPackagingContract.test_setup_with_a_key_outside_the_profile_uses_the_profile_known_hosts `
-            test_windows_ci.WindowsCiContracts.test_standard_user_wrapper_runs_from_arguments_without_inherited_variables
-          exit $LASTEXITCODE
       - name: Provision pinned Windows producer inputs
         shell: pwsh
         run: |
