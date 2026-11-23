@@ -4659,7 +4659,7 @@ class HostedWindowsBuildContracts(unittest.TestCase):
         (SCRIPT_DIR / "windows_build_inputs.json").read_text(encoding="utf-8"))[
             "sima_cli_publication"]
     self.assertEqual(re.fullmatch(pattern, publication).groups(),
-                     ("codex/1074-windows-msi-install", "9126b24348c0"))
+                     ("codex/1074-windows-msi-install", "91d5420c7db9"))
     self.assertNotIn("--sima-cli-branch", workflow_job(self.windows, "dependencies"))
     self.assertIn('parser.add_argument("--sima-cli-spec", default="latest")',
                   (SCRIPT_DIR / "acquire_windows_dependencies.py").read_text(encoding="utf-8"))
