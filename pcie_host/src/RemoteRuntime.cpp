@@ -277,6 +277,31 @@ std::string RemoteRuntime::upload_file(const std::string& local_path) const {
   return remote_path;
 }
 
+std::string RemoteRuntime::start_failure_remedy(const std::string& output, const int queue) const {
+  std::istringstream lines(output);
+  for (std::string line; std::getline(lines, line);) {
+    if (!line.empty() && line.back() == '\r') {
+      line.pop_back();
+    }
+    if (line == "missing_builder") {
+      return "\nNeat is not installed on the card at " + endpoint() +
+             ". Install the Neat release that matches this host package on the card.";
+    }
+    if (line == "missing_run_dir") {
+      return "\nThe card's Neat runtime directory " + run_dir_ +
+             " is missing. Install Neat on the card, or restart the card to recreate it.";
+    }
+    if (line == "queue_busy") {
+      const std::string q = std::to_string(queue);
+      return "\nAnother card worker holds PCIe queue " + q +
+             ". If no application uses this queue, for example after a host application "
+             "ended without closing its model, stop the leftover worker and retry: ssh " +
+             endpoint() + " \"pkill -f '[p]cie-pipeline-builder.*--queue " + q + "( |$)'\"";
+    }
+  }
+  return "";
+}
+
 int RemoteRuntime::start(const int queue, const std::string& remote_model_path,
                          const std::optional<std::string>& remote_model_options_path) const {
   const std::string& helper = helper_path_;
@@ -359,7 +384,8 @@ int RemoteRuntime::start(const int queue, const std::string& remote_model_path,
     }
     const bool cleanup_safe = start_failure_cleanup_safe(result.exit_code, result.timed_out);
     throw RemoteStartError("remote pcie-pipeline-builder start failed " +
-                               SshRunner::failure_detail(cmd, result),
+                               SshRunner::failure_detail(cmd, result) +
+                               start_failure_remedy(result.output, queue),
                            cleanup_safe, cleanup_safe ? std::nullopt : launched_pid);
   }
   try {

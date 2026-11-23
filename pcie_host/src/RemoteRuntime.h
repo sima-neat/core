@@ -65,6 +65,8 @@ public:
   static int parse_launched_pid(const std::string& output);
   static bool status_owner_matches(const RemoteStatus& status, int expected_pid);
   static bool start_failure_cleanup_safe(int exit_code, bool timed_out);
+  // The next step for a card-side start failure the user can fix, or "".
+  std::string start_failure_remedy(const std::string& output, int queue) const;
   static std::string child_cleanup_shell_function();
   static std::string detached_child_redirections();
   std::vector<std::string> ssh_base() const;

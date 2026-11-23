@@ -294,6 +294,41 @@ void test_remote_transport_requires_known_host_keys() {
           "tensor ssh and scp must fail instead of waiting on a hidden prompt");
 }
 
+void test_failures_name_the_next_step() {
+  using Runner = pcie_internal::SshRunner;
+#ifdef _WIN32
+  const std::string setup = "pcie-setup.cmd";
+#else
+  const std::string setup = "pcie-setup.sh";
+#endif
+  for (const std::string output :
+       {"@@@ WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED! @@@\n",
+        "Host key verification failed.\r\n", "sima@10.0.0.2: Permission denied (publickey).\n"}) {
+    const auto detail = Runner::failure_detail({"ssh"}, {255, false, output});
+    require(detail.find(output) != std::string::npos && detail.find(setup) != std::string::npos,
+            "SSH trust failure did not name the setup tool: " + detail);
+  }
+  require(Runner::failure_remedy("ssh: connect to host 10.0.0.2 port 22: Connection timed out")
+                  .find("ping") != std::string::npos,
+          "unreachable card did not name the link check");
+  require(Runner::failure_remedy("some other failure").empty(),
+          "an unknown failure must not get a guessed remedy");
+
+  const pcie_internal::RemoteRuntime runtime(simaai::neat::pcie::ConnectionOptions{});
+  const auto busy = runtime.start_failure_remedy("launched_pid=42\r\nqueue_busy\r\n", 3);
+  require(busy.find("ssh " + runtime.endpoint() +
+                    " \"pkill -f '[p]cie-pipeline-builder.*--queue 3( |$)'\"") != std::string::npos,
+          "busy queue did not give the worker stop command: " + busy);
+  require(runtime.start_failure_remedy("queue_busy_cleanup_failed\n", 3).empty(),
+          "a failed cleanup is not a leftover worker");
+  require(runtime.start_failure_remedy("missing_builder\n", 0).find("Install the Neat release") !=
+              std::string::npos,
+          "missing card worker did not name the card install");
+  require(runtime.start_failure_remedy("missing_run_dir\n", 0).find("/run/sima-neat/pcie") !=
+              std::string::npos,
+          "missing run directory was not named");
+}
+
 #ifndef _WIN32
 void test_remote_transport_offers_only_the_neat_key() {
   const auto home = std::filesystem::temp_directory_path() /
@@ -416,6 +451,7 @@ int main(const int argc, char** argv) {
     test_start_failure_cleanup_classification();
     test_remote_runtime_paths();
     test_remote_transport_requires_known_host_keys();
+    test_failures_name_the_next_step();
 #ifndef _WIN32
     test_remote_transport_offers_only_the_neat_key();
 #endif

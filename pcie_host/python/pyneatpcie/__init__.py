@@ -6,6 +6,7 @@ import sys as _sys
 
 
 _dll_directory_handles = []
+_runtime_directories = []
 
 
 def _prepend_env_path(name, directories):
@@ -28,6 +29,7 @@ def _configure_runtime_environment():
     from ._windows_runtime import configure
     candidates, handles = configure(package_dir)
     _dll_directory_handles.extend(handles)
+    _runtime_directories.extend(candidates)
 
     plugin_dirs = [
         package_dir.parent / "bin" / "gstreamer-1.0",
@@ -78,7 +80,11 @@ if _os.name == "posix":
   _sys.setdlopenflags(_old_dl_flags)
   del _old_dl_flags
 else:
-  from . import _pyneatpcie_core as _core
+  try:
+    from . import _pyneatpcie_core as _core
+  except ImportError as _error:
+    from ._windows_runtime import extension_load_error
+    raise extension_load_error(_error, _runtime_directories) from _error
 
 from ._pyneatpcie_core import *
 

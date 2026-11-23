@@ -43,6 +43,17 @@ class WindowsRuntimeTests(unittest.TestCase):
         Path("/program-files/gstreamer/1.0/msvc_x86_64/bin"))]
     self.assertEqual(order, sorted(order))
 
+  def test_extension_load_failure_names_the_searched_directories(self):
+    error = RUNTIME.extension_load_error(
+        ImportError("DLL load failed while importing _pyneatpcie_core"),
+        [Path("/program-files/SimaPCIeHost/bin"), Path("/gstreamer/bin")])
+
+    message = str(error)
+    self.assertIn("DLL load failed while importing _pyneatpcie_core", message)
+    self.assertIn(str(Path("/program-files/SimaPCIeHost/bin")), message)
+    self.assertIn(str(Path("/gstreamer/bin")), message)
+    self.assertIn("SIMA_PCIE_HOST_LIBRARY_PATH", message)
+
   def test_loaded_dll_outside_approved_directories_is_rejected(self):
     with tempfile.TemporaryDirectory() as directory:
       approved = Path(directory) / "approved"

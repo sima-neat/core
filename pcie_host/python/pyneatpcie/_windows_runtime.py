@@ -125,6 +125,16 @@ def admit_loaded_dlls(directories, loaded_path=_loaded_module_path):
         "GStreamer, and Neat PCIe host installation.")
 
 
+def extension_load_error(error, directories):
+  """Name where the runtime DLLs were searched when the extension cannot load."""
+  searched = "; ".join(str(path) for path in directories) or "none"
+  return ImportError(
+      f"{error}. PyNeatPCIe searched for the Neat PCIe host, SiMa Platform and GStreamer "
+      f"DLLs in: {searched}. Install the Platform package and GStreamer MSVC x64 that this "
+      "release requires, run sima-pcie-host-doctor.cmd, or set SIMA_PCIE_HOST_LIBRARY_PATH "
+      "to the directories that contain them.")
+
+
 def configure(package_dir):
   directories = runtime_directories(package_dir)
   admit_loaded_dlls(directories)

@@ -23,6 +23,8 @@ public:
   // when it printed nothing.
   static std::string failure_detail(const std::vector<std::string>& args,
                                     const CommandResult& result);
+  // The next step for an OpenSSH failure the user can fix, or "" when there is none.
+  static std::string failure_remedy(const std::string& output);
 };
 
 } // namespace simaai::neat::pcie::internal
