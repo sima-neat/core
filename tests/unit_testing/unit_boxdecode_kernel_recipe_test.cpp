@@ -1216,14 +1216,16 @@ struct SsdLogit {
   float value;
 };
 // Runs the checked SSD numerical member and the publication member on the host
-// with zero box offsets, which decode to the priors, and returns the wire.
-HostStorage ssd_decode_wire(stagesemantics::SsdRecipeId id, const std::array<int, 6>& dims,
-                            const std::array<int, 6>& anchors,
-                            const BoxDecodeGeometryOptions& geometry,
-                            const std::vector<SsdLogit>& logits) {
-  constexpr int classes = 91;
-  auto request = source(BoxDecodeType::Ssd, classes);
+// with zero box offsets, which decode to the priors, and returns the wire. The
+// score heads carry `classes` encoded classes; the request selects `selected`.
+HostStorage
+ssd_decode_wire(stagesemantics::SsdRecipeId id, const std::array<int, 6>& dims,
+                const std::array<int, 6>& anchors, const BoxDecodeGeometryOptions& geometry,
+                const std::vector<SsdLogit>& logits, int classes = 91, int selected = 91,
+                BoxDecodeScoreActivation activation = BoxDecodeScoreActivation::Sigmoid) {
+  auto request = source(BoxDecodeType::Ssd, selected);
   request.payload.ssd_recipe_id = id;
+  request.payload.score_activation = activation;
   for (std::size_t i = 0; i < dims.size(); ++i)
     input(request, dims[i], dims[i], anchors[i] * 4);
   for (std::size_t i = 0; i < dims.size(); ++i)
@@ -1284,9 +1286,8 @@ std::int32_t ssd_policy_detections(stagesemantics::SsdRecipeId id, int side,
                                    const std::array<int, 6>& dims,
                                    const std::array<int, 6>& anchors) {
   // Classes 1 and 2 of the first anchor of the first cell at 5 and 4.
-  const auto wire = ssd_decode_wire(id, dims, anchors,
-                                    {side, side, side, side, ResizeMode::Stretch},
-                                    {{1, 5.f}, {2, 4.f}});
+  const auto wire = ssd_decode_wire(
+      id, dims, anchors, {side, side, side, side, ResizeMode::Stretch}, {{1, 5.f}, {2, 4.f}});
   const auto count = wire.read<std::int32_t>(0);
   for (std::int32_t row = 1; row < count; ++row)
     require(wire.read<std::int32_t>(4 + row * 24 + 20) != wire.read<std::int32_t>(4 + 20),
@@ -1301,10 +1302,9 @@ std::int32_t ssd_policy_detections(stagesemantics::SsdRecipeId id, int side,
 // h 30. Class 1 at logit 5 must publish class 1 with score sigmoid(5).
 void ssd_known_logit_detection() {
   constexpr std::size_t classes = 91, anchors_19 = 3, cell = 9 * 19 + 9;
-  const auto wire = ssd_decode_wire(stagesemantics::SsdRecipeId::SsdMobile300V1,
-                                    {19, 10, 5, 3, 2, 1}, {3, 6, 6, 6, 6, 6},
-                                    {300, 300, 600, 300, ResizeMode::Stretch},
-                                    {{cell * anchors_19 * classes + 1, 5.f}});
+  const auto wire = ssd_decode_wire(
+      stagesemantics::SsdRecipeId::SsdMobile300V1, {19, 10, 5, 3, 2, 1}, {3, 6, 6, 6, 6, 6},
+      {300, 300, 600, 300, ResizeMode::Stretch}, {{cell * anchors_19 * classes + 1, 5.f}});
   require(wire.read<std::int32_t>(0) == 1, "SSD-Mobile-300 published other than one detection");
   const auto near = [](std::int32_t got, int want) { return std::abs(got - want) <= 1; };
   require(near(wire.read<std::int32_t>(4), 270) && near(wire.read<std::int32_t>(8), 135) &&
@@ -1313,6 +1313,27 @@ void ssd_known_logit_detection() {
   require(wire.read<std::int32_t>(24) == 1, "SSD-Mobile-300 published the wrong class");
   require(std::abs(wire.read<float>(20) - 1.f / (1.f + std::exp(-5.f))) < 1e-3f,
           "SSD-Mobile-300 score is not the sigmoid of its logit");
+}
+// SSD300-v1 decodes softmax scores from 81-class heads, and the prepared route
+// selects the first 8 classes (#624). Confidence channels are class * A + anchor.
+// At the first cell of the 38x38 level, anchor 0 favours class 3 and anchor 1
+// favours class 50, every other logit is -10. With the 0.5 threshold the result
+// does not depend on whether the softmax covers 81 or 8 classes: anchor 0 gives
+// one class-3 detection, and anchor 1 gives nothing, since class 50 is not
+// selected and the selected classes stay far below the threshold.
+void ssd300_class_selection() {
+  constexpr std::size_t anchors_38 = 4;
+  const auto wire = ssd_decode_wire(stagesemantics::SsdRecipeId::Ssd300V1, {38, 19, 10, 5, 3, 1},
+                                    {4, 6, 6, 6, 4, 4}, {300, 300, 300, 300, ResizeMode::Stretch},
+                                    {{3 * anchors_38 + 0, 5.f}, {50 * anchors_38 + 1, 5.f}}, 81, 8,
+                                    BoxDecodeScoreActivation::Softmax);
+  const auto count = wire.read<std::int32_t>(0);
+  require(count == 1, "SSD300 81-to-8 decode published other than one detection");
+  for (std::int32_t row = 0; row < count; ++row) {
+    const auto cls = wire.read<std::int32_t>(4 + row * 24 + 20);
+    require(cls >= 1 && cls <= 7, "SSD300 81-to-8 decode published a class outside [1, 7]");
+  }
+  require(wire.read<std::int32_t>(24) == 3, "SSD300 81-to-8 decode lost the class-3 detection");
 }
 void ssd_source_policy_execution() {
   using stagesemantics::SsdRecipeId;
@@ -1323,6 +1344,7 @@ void ssd_source_policy_execution() {
                                 {3, 6, 6, 6, 6, 6}) == 1,
           "SSD-Mobile-320-v1 must keep its one-class-per-anchor policy");
   ssd_known_logit_detection();
+  ssd300_class_selection();
 }
 
 void detr_numerical_publication(bool crop = false) {
