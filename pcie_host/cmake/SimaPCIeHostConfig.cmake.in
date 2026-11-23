@@ -1,5 +1,11 @@
 @PACKAGE_INIT@
 
+# MSVC links a static library only with the toolset that built it or a newer one.
+if(MSVC AND CMAKE_CXX_COMPILER_VERSION VERSION_LESS "@SIMAPCIE_MSVC_VERSION@")
+  message(FATAL_ERROR "SimaPCIeHost requires MSVC @SIMAPCIE_MSVC_VERSION@ or newer; "
+    "this project uses MSVC ${CMAKE_CXX_COMPILER_VERSION}")
+endif()
+
 include(CMakeFindDependencyMacro)
 find_dependency(PkgConfig REQUIRED)
 find_dependency(Threads REQUIRED)

@@ -525,7 +525,7 @@
     },
     {
       "path": "docs/getting-started/neat-library/pcie-host.mdx",
-      "line": "installed static library. Examples that use OpenCV also need the OpenCV 5.0.0",
+      "line": "Examples that use OpenCV also need the OpenCV 5.0.0 Windows package from",
       "count": 1,
       "reason": "Windows third-party prerequisite version pinned in scripts/ci/pciehost/windows_build_inputs.json, not a Neat release"
     },
@@ -537,7 +537,7 @@
     },
     {
       "path": "website/i18n/ko/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
-      "line": "C++ 애플리케이션에는 **Desktop development with C++** 워크로드가 포함된 Visual Studio 2026이 필요합니다. Visual Studio 2022를 포함한 이전 도구 집합은 설치된 정적 라이브러리를 링크할 수 없습니다. OpenCV를 사용하는 예제에는 [opencv.org](https://opencv.org/releases/)의 OpenCV 5.0.0 Windows 패키지도 필요합니다. 패키지는 Release 구성만 제공합니다. **x64 Native Tools Command Prompt for VS 2026**에서 빌드하고 실행하세요.",
+      "line": "C++ 애플리케이션에는 **Desktop development with C++** 워크로드가 포함된 Visual Studio 2022 버전 17.14 이상(Visual Studio 2026 포함)이 필요합니다. OpenCV를 사용하는 예제에는 [opencv.org](https://opencv.org/releases/)의 OpenCV 5.0.0 Windows 패키지도 필요합니다. 패키지는 Release 구성만 제공합니다. Debug 빌드는 컴파일러 오류로 중지되며, `--config RelWithDebInfo`는 디버깅 정보를 포함해 빌드합니다. 사용하는 Visual Studio 버전의 **x64 Native Tools Command Prompt**에서 빌드하고 실행하세요.",
       "count": 1,
       "reason": "Windows third-party prerequisite version pinned in scripts/ci/pciehost/windows_build_inputs.json, not a Neat release"
     },
@@ -549,7 +549,7 @@
     },
     {
       "path": "website/i18n/ja/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
-      "line": "C++アプリケーションには、**Desktop development with C++**ワークロードを含むVisual Studio 2026が必要です。Visual Studio 2022を含む古いツールセットでは、インストール済みの静的ライブラリをリンクできません。OpenCVを使用する例には、[opencv.org](https://opencv.org/releases/)のOpenCV 5.0.0 Windowsパッケージも必要です。パッケージが提供するのはReleaseビルド構成のみです。**x64 Native Tools Command Prompt for VS 2026**でビルドして実行します。",
+      "line": "C++アプリケーションには、**Desktop development with C++**ワークロードを含むVisual Studio 2022バージョン17.14以降（Visual Studio 2026を含む）が必要です。OpenCVを使用する例には、[opencv.org](https://opencv.org/releases/)のOpenCV 5.0.0 Windowsパッケージも必要です。パッケージが提供するのはReleaseビルド構成のみです。Debugビルドはコンパイラエラーで停止します。`--config RelWithDebInfo`ではデバッグ情報付きでビルドします。お使いのVisual Studioバージョンの**x64 Native Tools Command Prompt**でビルドして実行します。",
       "count": 1,
       "reason": "Windows third-party prerequisite version pinned in scripts/ci/pciehost/windows_build_inputs.json, not a Neat release"
     },
@@ -561,7 +561,7 @@
     },
     {
       "path": "website/i18n/zh-Hant/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
-      "line": "C++ 應用程式需要安裝 **Desktop development with C++** 工作負載的 Visual Studio 2026。包括 Visual Studio 2022 在內的較舊工具組無法連結已安裝的靜態程式庫。使用 OpenCV 的範例也需要 [opencv.org](https://opencv.org/releases/) 提供的 OpenCV 5.0.0 Windows 套件。此套件只提供 Release 組態。請在 **x64 Native Tools Command Prompt for VS 2026** 中建置並執行：",
+      "line": "C++ 應用程式需要安裝 **Desktop development with C++** 工作負載的 Visual Studio 2022 17.14 版或更新版本（包括 Visual Studio 2026）。使用 OpenCV 的範例也需要 [opencv.org](https://opencv.org/releases/) 提供的 OpenCV 5.0.0 Windows 套件。此套件只提供 Release 組態：Debug 建置會因編譯器錯誤而停止，`--config RelWithDebInfo` 則會建置含偵錯資訊的版本。請在您的 Visual Studio 版本的 **x64 Native Tools Command Prompt** 中建置並執行：",
       "count": 1,
       "reason": "Windows third-party prerequisite version pinned in scripts/ci/pciehost/windows_build_inputs.json, not a Neat release"
     },
@@ -573,7 +573,7 @@
     },
     {
       "path": "website/i18n/uk/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
-      "line": "Для застосунків C++ потрібна Visual Studio 2026 із робочим навантаженням **Desktop development with C++**. Старіші набори інструментів, зокрема Visual Studio 2022, не можуть скомпонувати встановлену статичну бібліотеку. Прикладам, що використовують OpenCV, також потрібен пакет OpenCV 5.0.0 для Windows з [opencv.org](https://opencv.org/releases/). Пакет надає лише конфігурацію Release. Збирайте й запускайте в **x64 Native Tools Command Prompt for VS 2026**:",
+      "line": "Для застосунків C++ потрібна Visual Studio 2022 версії 17.14 або новіша, зокрема Visual Studio 2026, із робочим навантаженням **Desktop development with C++**. Прикладам, що використовують OpenCV, також потрібен пакет OpenCV 5.0.0 для Windows з [opencv.org](https://opencv.org/releases/). Пакет надає лише конфігурацію Release: збірка Debug зупиняється з помилкою компілятора, а `--config RelWithDebInfo` збирає з налагоджувальною інформацією. Збирайте й запускайте в **x64 Native Tools Command Prompt** для вашої версії Visual Studio:",
       "count": 1,
       "reason": "Windows third-party prerequisite version pinned in scripts/ci/pciehost/windows_build_inputs.json, not a Neat release"
     },

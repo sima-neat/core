@@ -61,6 +61,32 @@ class WindowsPackagingContract(unittest.TestCase):
         r"^[0-9A-F]{8}(?:-[0-9A-F]{4}){3}-[0-9A-F]{12}$",
     )
 
+  def test_cxx_consumers_link_with_the_oldest_supported_toolset(self):
+    producer = (WINDOWS_PRODUCER.parent / "run_windows_build.ps1").read_text(encoding="utf-8")
+    self.assertIn('$msvcToolset = "14.44"', producer)
+    self.assertIn('-DevCmdArguments "-arch=x64 -host_arch=x64 -vcvars_ver=$msvcToolset"', producer)
+    self.assertIn('if (-not "$env:VCToolsVersion".StartsWith("$msvcToolset.")) {', producer)
+    self.assertIn('string(REGEX MATCH "^[0-9]+[.][0-9]+" SIMAPCIE_MSVC_VERSION',
+                  read_source("CMakeLists.txt"))
+    self.assertIn(
+        'if(MSVC AND CMAKE_CXX_COMPILER_VERSION VERSION_LESS "@SIMAPCIE_MSVC_VERSION@")',
+        read_source("cmake/SimaPCIeHostConfig.cmake.in"))
+    self.assertIn("#if defined(_MSC_VER) && defined(_DEBUG)\n#error",
+                  read_source("include/simaai/neat/pcie/Model.h"))
+
+  def test_prebuilt_tutorials_ship_their_opencv_runtime(self):
+    tutorials = read_source("tutorials/CMakeLists.txt")
+    self.assertIn(
+        "get_target_property(SIMAPCIE_OPENCV_RUNTIME opencv_world IMPORTED_LOCATION_RELEASE)",
+        tutorials)
+    rule = tutorials[tutorials.index('FILES "${CMAKE_CURRENT_BINARY_DIR}/opencv-runtime/'):]
+    self.assertLess(rule.index("DESTINATION lib/sima-pcie-host/tutorials"),
+                    rule.index("COMPONENT PcieHostTutorials"))
+    self.assertIn('DIRECTORY "${OpenCV_INSTALL_PATH}/etc/licenses/"', tutorials)
+    producer = WINDOWS_PRODUCER.read_text(encoding="utf-8")
+    self.assertIn('"tutorial_024_run_image_mode.exe", "--help"], env=tutorial_environment)',
+                  producer)
+
   def test_msi_first_install_requires_exact_scheduler_msi(self):
     source = PACKAGING.read_text(encoding="utf-8")
     self.assertIn(
