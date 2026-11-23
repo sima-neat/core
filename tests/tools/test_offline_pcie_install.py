@@ -737,3 +737,29 @@ def test_custom_trust_file_requires_prior_provisioning(ssh_setup):
     with pytest.raises(ValueError, match='omit --known-hosts'):
         prepare(ssh_setup, create_key=True)
     assert not ssh_setup.calls
+
+
+def test_shared_setup_probe_offers_only_the_neat_key(tmp_path):
+    # A key from ssh-agent or ~/.ssh/id_* that the card already accepts would
+    # otherwise make the probe report the Neat key as provisioned.
+    home, stubs = tmp_path/'home', tmp_path/'bin'
+    (home/'.ssh').mkdir(parents=True)
+    stubs.mkdir()
+    key = home/'.ssh'/'sima_neat_pcie_ed25519'
+    key.write_text('private\n')
+    key.with_suffix('.pub').write_text('ssh-ed25519 AAAA test\n')
+    log = tmp_path/'ssh.log'
+    for name in ('ssh', 'ssh-keyscan', 'ssh-copy-id'):
+        (stubs/name).write_text(f'#!/bin/sh\necho "{name} $*" >> "{log}"\n')
+        (stubs/name).chmod(0o755)
+    result = subprocess.run(
+        ['bash', str(HERE.parent/'pcie-setup.sh'), '--hosts', '10.0.0.2', '--non-interactive',
+         '--strict'],
+        env={'HOME': str(home), 'PATH': f'{stubs}:/usr/bin:/bin'},
+        capture_output=True, text=True, check=False)
+    assert result.returncode == 0, result.stdout + result.stderr
+    probes = [line.split()[1:] for line in log.read_text().splitlines() if line.startswith('ssh ')]
+    assert len(probes) == 1
+    probe = probes[0]
+    assert probe[probe.index('-i')+1] == str(key)
+    assert 'IdentitiesOnly=yes' in probe and probe[probe.index('IdentitiesOnly=yes')-1] == '-o'
