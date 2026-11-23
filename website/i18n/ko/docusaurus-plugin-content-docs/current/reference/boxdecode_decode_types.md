@@ -13,7 +13,7 @@ sidebar_position: 6
 ## 런타임 백엔드
 
 BoxDecode와 SuperPoint는 검증된 Kernels 실행 파일과 함께 `neatkernelrunner`를
-사용합니다. 기존 감지 및 특징 출력 형식은 바뀌지 않습니다. YOLO26 회전 박스 디코딩은 별도의 버전 지정 형식을 사용합니다. 텐서를 직접 입력할
+사용합니다. 포즈 및 분할 출력은 기존 페이로드 레이아웃을 유지하며 각 작업에 맞는 형식 태그를 사용합니다. YOLO26 회전 박스 디코딩은 별도의 버전 지정 형식을 사용합니다. 텐서를 직접 입력할
 때는 디코딩이 A65에서 실행되더라도 공유 CMA 텐서(`TensorMemory::EV74`)를 사용합니다.
 이 메모리 선택은 실행 타깃이 아니라 DMA-BUF 전송을 제공합니다.
 
@@ -414,16 +414,15 @@ options.yolox_seg_pose.pose_classes = [0, 5]
 
 ### 버전이 지정된 마스크 페이로드 {#versioned-masks-payload}
 
-Segment Anything 출력처럼 160×160이 아닌 마스크는 앞부분의 개수 대신 버전이 지정된 헤더를 사용합니다. 레이아웃은 `pipeline/DetectionTypes.h`의 [`SegmentationMasksHeaderV1`](/reference/cppapi/structs/simaai-neat-segmentationmasksheaderv1)이며, 헤더 뒤에 `RawBox` 레코드가 오고, 그 뒤에 레코드마다 하나의 `uint8` 마스크(값 0 또는 255)가 옵니다. `decode_segmentation`으로 읽으세요. 이 함수는 박스와 마스크를 반환하고 잘못된 헤더나 범위는 거부합니다. 텐서에는 `BBOX` 태그가 그대로 유지되며, `decode_segmentation`과 `decode_bbox`는 매직 값으로 페이로드를 인식하므로 기존 분할 페이로드는 변경되지 않습니다. `SimaRender`는 이 페이로드를 받지 않습니다.
+Segment Anything 출력처럼 160×160이 아닌 마스크는 앞부분의 개수 대신 버전이 지정된 헤더를 사용합니다. 레이아웃은 `pipeline/DetectionTypes.h`의 [`SegmentationMasksHeaderV1`](/reference/cppapi/structs/simaai-neat-segmentationmasksheaderv1)이며, 헤더 뒤에 `RawBox` 레코드가 오고, 그 뒤에 레코드마다 하나의 `uint8` 마스크(값 0 또는 255)가 옵니다. `decode_segmentation`으로 읽으세요. 이 함수는 박스와 마스크를 반환하고 잘못된 헤더나 범위는 거부합니다. 새 텐서에는 `BBOX_SEGMENTATION` 태그가 붙습니다. `decode_segmentation`과 `decode_bbox`는 마스크 헤더를 통해 이전 형식의 `BBOX` 텐서도 식별합니다. `SimaRender`는 이 페이로드를 받지 않습니다.
 
 ## `model.run`이 원본 헤더를 반환할 때
 
-일부 모델 경로는 디코딩된 `BBOX` 텐서 대신 `model.run(...)`에서 원시 특징 맵 헤드를 반환합니다. 이는 실패한 실행이 아닙니다. 모델이 실행되었지만 해당 경로에 출력을 읽는 시점에 BoxDecode가 포함되지 않았다는 의미입니다.
+일부 모델 경로는 디코딩된 검출 텐서 대신 `model.run(...)`에서 원시 특징 맵 헤드를 반환합니다. 이는 실패한 실행이 아닙니다. 모델이 실행되었지만 해당 경로에 출력을 읽는 시점에 BoxDecode가 포함되지 않았다는 의미입니다.
 
 다음 규칙을 사용하십시오.
 
-- `detections=...` 또는 `BBOX` 텐서: 압축된 BBOX 페이로드를 파싱하거나 사용합니다.
-  디코딩 도우미 함수.
+- 디코딩된 텐서에서 키포인트를 읽으려면 `decode_pose()`를, 마스크를 읽으려면 `decode_segmentation()`을 사용합니다.
 - `raw_output_heads=...`: BoxDecode 단계를 추가하거나, 모델 경로를 검사하거나.
   모델별 후처리를 통해 원시 텐서를 처리합니다.
 

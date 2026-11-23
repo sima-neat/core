@@ -85,6 +85,15 @@ int main(int argc, char** argv) {
       }
       require(visible, "people image must produce visible keypoints, not untouched zero output");
     };
+    require(run.push(inputs.front()), "pose metadata input was rejected");
+    const auto sample = run.pull(30000);
+    require(sample && sample->format == kDetectionFormatBboxPose &&
+                sample->payload_tag == kDetectionFormatBboxPose,
+            "sample format and payload tag must identify the published pose wire");
+    const auto tensors = tensors_from_sample(*sample);
+    require(tensors.size() == 1 && read_detection_format(tensors.front()) == sample->format,
+            "tensor and frame must advertise the same pose wire");
+    validate(tensors);
     for (int i = 0; i < 8; ++i)
       validate(run.run(inputs[i % 2], 30000));
     const auto start = std::chrono::steady_clock::now();

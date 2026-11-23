@@ -2,6 +2,7 @@
 
 #include "model/Model.h"
 #include "pipeline/GraphOptions.h"
+#include "pipeline/DetectionTypes.h"
 #include "pipeline/internal/SampleUtil.h"
 #include "pipeline/internal/PreprocTensor.h"
 #include "pipeline/Tensor.h"
@@ -116,7 +117,8 @@ void StageModelExecutor::on_input(StageMsg&& msg, std::vector<StageOutMsg>& out)
                                std::to_string(decoded.size()) + ")");
     }
     out_sample = std::move(decoded.front());
-    if (out_sample.payload_tag == "BBOX" && !sample_tensor_list(out_sample).empty()) {
+    if (detection_format_is_bbox_family(out_sample.payload_tag) &&
+        !sample_tensor_list(out_sample).empty()) {
       out_sample.frame_id = msg.sample.frame_id;
       out_sample.stream_id = msg.sample.stream_id;
       out_sample.pts_ns = msg.sample.pts_ns;

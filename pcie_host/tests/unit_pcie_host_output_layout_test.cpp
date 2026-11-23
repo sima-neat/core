@@ -68,7 +68,7 @@ int main() {
     second.name = "second";
     second.payload_offset = 4;
     facts.outputs = {first, second};
-    auto* c = caps(16, {12, 4, 0, 4});
+    auto* c = caps(16, {12, 4, 0, 4}, "EVXX_UINT8");
     auto layout = resolve_output_layout(facts, c);
     check(layout.raw_bytes == 16, "raw extent lost");
     check(layout.facts.outputs[0].payload_offset == 12 &&
@@ -84,7 +84,7 @@ int main() {
     owner->mapped = true;
     gst_buffer_unref(buffer);
     gst_caps_unref(c);
-    auto tensors = tensors_from_output_payload(owner, layout.facts);
+    auto tensors = tensors_from_output_payload(owner, layout);
     check(tensors[0].data == owner->map.data + 12 && tensors[1].data == owner->map.data,
           "outputs must be views without a repacking copy");
     check(tensors[0].route.name == "first" && tensors[1].route.name == "second",
@@ -108,10 +108,12 @@ int main() {
     gst_structure_set(gst_caps_get_structure(bad_version, 0), "pcie-return-layout-version",
                       G_TYPE_UINT, NEAT_PCIE_RETURN_CAPS_VERSION - 1u, nullptr);
     rejects(facts, bad_version);
-    auto* byte_stream = caps(0, {}, "BBOX");
-    check(resolve_output_layout(facts, byte_stream).raw_bytes == 0,
-          "variable byte-stream mode changed");
-    gst_caps_unref(byte_stream);
+    auto* untagged = caps(0, {});
+    check(!resolve_output_layout(facts, untagged).byte_stream_format,
+          "untagged raw output classified as BoxDecode");
+    check(g_strcmp0(resolve_output_layout(facts, untagged, true).byte_stream_format, "BBOX") == 0,
+          "legacy BoxDecode byte stream lost its default tag");
+    gst_caps_unref(untagged);
 
     // MLA-only reservation includes padding; the logical region is its exact
     // strided access footprint, independent of the allocation's capacity.
@@ -132,7 +134,7 @@ int main() {
     check(gst_buffer_map(padded_buffer, &padded_owner->map, GST_MAP_READ), "padded map failed");
     padded_owner->mapped = true;
     gst_buffer_unref(padded_buffer);
-    auto compacted = tensors_from_output_payload(padded_owner, padded_layout.facts);
+    auto compacted = tensors_from_output_payload(padded_owner, padded_layout);
     std::weak_ptr<MappedSample> padded_weak = padded_owner;
     padded_owner.reset();
     check(padded_weak.expired() && std::memcmp(compacted[0].data, "ABCD", 4) == 0,
@@ -181,13 +183,28 @@ int main() {
     bbox_owner->mapped = true;
     gst_buffer_unref(bbox_buffer);
     gst_caps_unref(bbox_caps);
-    auto bbox_tensors = tensors_from_output_payload(bbox_owner, bbox_layout.facts);
+    auto bbox_tensors = tensors_from_output_payload(bbox_owner, bbox_layout);
     check(bbox_tensors.size() == 1 && bbox_tensors[0].route.name == "BBOX" &&
               bbox_tensors[0].dtype == simaai::neat::pcie::TensorDType::UInt8 &&
               bbox_tensors[0].shape == std::vector<std::int64_t>({sizeof(bbox)}) &&
               bbox_tensors[0].data == bbox_owner->map.data + 64 &&
               bbox_tensors[0].size_bytes == sizeof(bbox),
           "BBOX public view contract changed");
+    for (const char* tag :
+         {"BBOX", "BBOX_POSE", "BBOX_SEGMENTATION", "BBOX_SEGMENTATION_POSE", "BBOX_OBB_V1"}) {
+      for (bool byte_stream : {false, true}) {
+        auto* tagged_caps = byte_stream ? caps(0, {}, tag) : caps(128, {64, sizeof(bbox)}, tag);
+        const auto tagged_layout = resolve_output_layout(facts, tagged_caps, true);
+        gst_caps_unref(tagged_caps);
+        auto tagged = tensors_from_output_payload(bbox_owner, tagged_layout);
+        check(tagged.size() == 1 && tagged.front().route.name == tag &&
+                  tagged.front().dtype == simaai::neat::pcie::TensorDType::UInt8 &&
+                  tagged.front().data == bbox_owner->map.data + (byte_stream ? 0 : 64) &&
+                  tagged.front().size_bytes == (byte_stream ? 128 : sizeof(bbox)),
+              "BoxDecode output lost its tag or its zero-copy payload view");
+      }
+    }
+    rejects(facts, caps(128, {64, sizeof(bbox)}, "BBOX_UNKNOWN"));
     std::weak_ptr<MappedSample> bbox_weak = bbox_owner;
     bbox_owner.reset();
     check(!bbox_weak.expired() && std::memcmp(bbox_tensors[0].data, bbox.data(), sizeof(bbox)) == 0,

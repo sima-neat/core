@@ -12,7 +12,7 @@ sidebar_position: 6
 
 ## ランタイムバックエンド
 
-BoxDecode と SuperPoint は、検証済みの Kernels 実行ファイルと `neatkernelrunner` を使います。既存の検出・特徴出力形式は変わりません。YOLO26 の回転ボックスには、別のバージョン付き形式を使います。テンソルを直接入力する場合は、デコードを A65 で実行する場合も共有 CMA テンソル（`TensorMemory::EV74`）を使ってください。このメモリの選択は DMA-BUF 転送を提供するものであり、実行ターゲットを指定するものではありません。
+BoxDecode と SuperPoint は、検証済みの Kernels 実行ファイルと `neatkernelrunner` を使います。姿勢推定とセグメンテーションの出力は従来のペイロードレイアウトを保持し、それぞれのタスクに対応する形式タグを持ちます。YOLO26 の回転ボックスには、別のバージョン付き形式を使います。テンソルを直接入力する場合は、デコードを A65 で実行する場合も共有 CMA テンソル（`TensorMemory::EV74`）を使ってください。このメモリの選択は DMA-BUF 転送を提供するものであり、実行ターゲットを指定するものではありません。
 
 RCNN ステージ 1 はカーネルが管理するレベル別 top-K 契約を使います。グローバル NMS の後、モデル面積レベルごとに最大 `top_k` 件を残します。出力は通常の BBOX 形式ではなく、提案用ワイヤ形式です。4 つのグループがあり、それぞれに INT32 の件数と、6 個の FP16 からなる `top_k` 件のレコード（`score, 0, x1, y1, x2, y2`）が含まれます。座標変換では最終シリアライズまで小数の幾何情報を保持します。ステージ 2 の提案入力として使い、`decode_bbox_tensor()` には渡さないでください。従来のプラグインはロードされません。
 
@@ -400,16 +400,15 @@ options.yolox_seg_pose.pose_classes = [0, 5]
 
 ### バージョン付きマスクペイロード {#versioned-masks-payload}
 
-Segment Anything の出力など、160×160 ではないマスクは、先頭のカウントの代わりにバージョン付きヘッダーを使用します。そのレイアウトは `pipeline/DetectionTypes.h` の [`SegmentationMasksHeaderV1`](/reference/cppapi/structs/simaai-neat-segmentationmasksheaderv1) で、ヘッダー、`RawBox` レコード、レコードごとに 1 つの `uint8` マスク（値は 0 または 255）の順に並びます。読み取りには `decode_segmentation` を使ってください。ボックスとマスクを返し、不正なヘッダーや範囲は拒否します。テンソルには `BBOX` タグが付いたままです。`decode_segmentation` と `decode_bbox` はマジック値でペイロードを識別するため、既存のセグメンテーションペイロードは変わりません。`SimaRender` はこのペイロードを受け付けません。
+Segment Anything の出力など、160×160 ではないマスクは、先頭のカウントの代わりにバージョン付きヘッダーを使用します。そのレイアウトは `pipeline/DetectionTypes.h` の [`SegmentationMasksHeaderV1`](/reference/cppapi/structs/simaai-neat-segmentationmasksheaderv1) で、ヘッダー、`RawBox` レコード、レコードごとに 1 つの `uint8` マスク（値は 0 または 255）の順に並びます。読み取りには `decode_segmentation` を使ってください。ボックスとマスクを返し、不正なヘッダーや範囲は拒否します。新しいテンソルには `BBOX_SEGMENTATION` タグが付きます。`decode_segmentation` と `decode_bbox` は、旧形式の `BBOX` テンソルもマスクヘッダーで識別します。`SimaRender` はこのペイロードを受け付けません。
 
 ## `model.run` が生のヘッドを返す場合
 
-一部のモデルの処理経路では、デコードされた`BBOX`テンソルではなく、`model.run(...)`から生の特徴マップヘッドが返されます。これは、処理が失敗したことを意味するのではなく、モデルは正常に実行されたものの、出力の読み取り時にBoxDecodeが処理経路に含まれていなかったことを意味します。
+一部のモデルの処理経路では、デコード済みの検出テンソルではなく、`model.run(...)`から生の特徴マップヘッドが返されます。これは、処理が失敗したことを意味するのではなく、モデルは正常に実行されたものの、出力の読み取り時にBoxDecodeが処理経路に含まれていなかったことを意味します。
 
 次のルールを使用してください。
 
-- `detections=...`または`BBOX`テンソル：パックされたBBOXペイロードを解析するか、または使用します。
-  デコードヘルパー。
+- デコード済みのテンソルには、キーポイントなら `decode_pose()`、マスクなら `decode_segmentation()` を使います。
 - `raw_output_heads=...`: BoxDecodeステージを追加するか、モデルのルーティングを検査するか。
   モデル固有の後処理を用いて、生のテンソルを処理します。
 

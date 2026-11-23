@@ -3,24 +3,12 @@
 #error "Internal header. Not part of the public API."
 #endif
 
+#include "contracts/BoxDecodeWireFormat.h"
 #include <simaai/scheduler/client/host_task.h>
 
 namespace simaai::neat::pipeline_internal::sima {
 
-// Core's application wire formats, not numerical kernel output layouts.
-enum class BoxDecodeWireFormat {
-  Boxes,
-  OrientedBoxesV1,
-  Pose,
-  Masks,
-  MasksPose,
-  RcnnProposals,
-  FeaturePointsV1,
-  LegacyFeaturePointsV0,
-  // SegmentationMasksHeaderV1 prefix (header, records, padding). The fifth
-  // input spec describes masks the producer writes in place after the prefix.
-  MasksV1
-};
+using contracts::BoxDecodeWireFormat;
 struct BoxDecodePublication {
   ::simaai::scheduler::client::KernelExecutable executable;
   ::simaai::scheduler::client::TensorSpec output;

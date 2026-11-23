@@ -9,6 +9,8 @@
 
 namespace simaai::neat::pcie::internal {
 
+struct HostPcieOutputLayout;
+
 struct MappedSample {
   GstSample* sample = nullptr;
   GstBuffer* buffer = nullptr;
@@ -19,7 +21,7 @@ struct MappedSample {
 };
 
 TensorList tensors_from_output_payload(const std::shared_ptr<MappedSample>& owner,
-                                       const PcieModelFacts& facts);
+                                       const HostPcieOutputLayout& layout);
 
 void attach_tensor_set_meta(GstBuffer* buffer, const std::vector<TensorMetaSpan>& spans,
                             const std::vector<PcieTensorFact>& input_facts,

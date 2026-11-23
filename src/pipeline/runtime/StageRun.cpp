@@ -1842,17 +1842,14 @@ bool sample_is_bbox_tensor(const Sample& sample) {
   if (fmt.empty()) {
     fmt = read_detection_format(tensor);
   }
-  return upper_copy(fmt) == "BBOX";
+  return detection_format_is_bbox_family(fmt);
 }
 
 std::optional<BoxDecodeResult> try_decode_bbox_sample_recursive(const Sample& sample, int img_w,
                                                                 int img_h, int expected_topk) {
   if (sample_is_bbox_tensor(sample)) {
-    BoxDecodeResult out;
-    out.raw =
-        require_single_tensor(sample, "try_decode_bbox_sample_recursive").copy_payload_bytes();
-    out.boxes = parse_bbox_bytes(out.raw, img_w, img_h, expected_topk, true);
-    return out;
+    return decode_bbox_tensor(require_single_tensor(sample, "try_decode_bbox_sample_recursive"),
+                              img_w, img_h, expected_topk, true);
   }
   if (sample.kind == SampleKind::TensorSet) {
     if (sample.tensors.size() <= 1U) {

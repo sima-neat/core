@@ -13,7 +13,7 @@ sidebar_position: 6
 ## 執行階段後端
 
 BoxDecode 與 SuperPoint 透過 `neatkernelrunner` 使用已檢查的 Kernels 執行物件。
-既有的偵測與特徵輸出格式保持不變。YOLO26 旋轉框解碼使用獨立的版本化格式。直接張量輸入請使用共用 CMA 張量
+姿態估計與分割的輸出保留原有的資料配置，並使用各自的格式標籤。YOLO26 旋轉框解碼使用獨立的版本化格式。直接張量輸入請使用共用 CMA 張量
 （`TensorMemory::EV74`），即使解碼在 A65 執行也一樣：此記憶體選擇提供的是
 DMA-BUF 傳輸，而非執行目標。
 
@@ -414,16 +414,15 @@ options.yolox_seg_pose.pose_classes = [0, 5]
 
 ### 版本化遮罩酬載 {#versioned-masks-payload}
 
-不是 160×160 的遮罩（例如 Segment Anything 的輸出）會使用版本化標頭，而不是開頭的數量。其版面配置為 `pipeline/DetectionTypes.h` 中的 [`SegmentationMasksHeaderV1`](/reference/cppapi/structs/simaai-neat-segmentationmasksheaderv1)：先是標頭，接著是 `RawBox` 記錄，然後每筆記錄一個 `uint8` 遮罩，值為 0 或 255。請使用 `decode_segmentation` 讀取，它會傳回邊界框與遮罩，並拒絕格式錯誤的標頭或範圍。張量仍帶有 `BBOX` 標籤，且 `decode_segmentation` 與 `decode_bbox` 依魔術值辨識此酬載，因此既有的分割酬載不受影響。`SimaRender` 不接受此酬載。
+不是 160×160 的遮罩（例如 Segment Anything 的輸出）會使用版本化標頭，而不是開頭的數量。其版面配置為 `pipeline/DetectionTypes.h` 中的 [`SegmentationMasksHeaderV1`](/reference/cppapi/structs/simaai-neat-segmentationmasksheaderv1)：先是標頭，接著是 `RawBox` 記錄，然後每筆記錄一個 `uint8` 遮罩，值為 0 或 255。請使用 `decode_segmentation` 讀取，它會傳回邊界框與遮罩，並拒絕格式錯誤的標頭或範圍。新產生的張量帶有 `BBOX_SEGMENTATION` 標籤。`decode_segmentation` 和 `decode_bbox` 也能透過遮罩標頭辨識帶有 `BBOX` 標籤的舊版張量。`SimaRender` 不接受此酬載。
 
 ## 當 `model.run` 傳回原始的標題時
 
-某些模型路徑會從 `model.run(...)` 傳回原始的特徵圖頭，而不是傳回已解碼的 `BBOX` 張量。這並不是表示執行失敗。這表示模型已執行，但該路徑在您讀取輸出時並沒有包含「框解碼」步驟。
+某些模型路徑會從 `model.run(...)` 傳回原始的特徵圖頭，而不是傳回已解碼的偵測張量。這並不是表示執行失敗。這表示模型已執行，但該路徑在您讀取輸出時並沒有包含「框解碼」步驟。
 
 請使用以下規則：
 
-- `detections=...` 或一個 `BBOX` 張量：解析壓縮後的 BBOX 負載，或使用。
-  解碼輔助工具。
+- 讀取已解碼的張量時，請依任務選用解碼函式。關鍵點使用 `decode_pose()`，遮罩使用 `decode_segmentation()`。
 - `raw_output_heads=...`: 新增「BoxDecode」階段，或檢查模型路徑。
   使用模型特定的後處理方式來處理原始的張量。
 

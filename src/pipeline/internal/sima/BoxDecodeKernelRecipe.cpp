@@ -1,8 +1,6 @@
 #include "pipeline/internal/sima/BoxDecodeKernelRecipe.h"
-#include "pipeline/DetectionTypes.h"
 #include "pipeline/internal/sima/BoxDecodePublication.h"
 #include "pipeline/internal/sima/BoxDecodeTypeUtils.h"
-#include "pipeline/FeatureTypes.h"
 #include "pipeline/internal/sima/KernelStageRecipe.h"
 #include "pipeline/internal/sima/StaticSpecBuilders.h"
 #include "pipeline/internal/sima/stagesemantics/SsdDecodeContract.h"
@@ -1205,11 +1203,7 @@ BoxDecodeKernelRecipeResult prepare_boxdecode_kernel(const CompiledBoxDecodeCont
   build.recipe->metrics = std::move(metrics);
   build.recipe->boxdecode_settings = KernelStageRecipe::BoxDecodeSettings{
       p.decode_type, p.num_classes, p.detection_threshold, p.nms_iou_threshold, p.topk};
-  build.recipe->output_format =
-      wire == BoxDecodeWireFormat::FeaturePointsV1         ? kFeatureFormatPointsV1
-      : wire == BoxDecodeWireFormat::LegacyFeaturePointsV0 ? kFeatureFormatLegacyA65V0
-      : wire == BoxDecodeWireFormat::OrientedBoxesV1       ? kDetectionFormatBboxObbV1
-                                                           : kDetectionFormatBbox;
+  build.recipe->output_format = contracts::boxdecode_output_format(wire);
   build.compiled.recipe = std::move(build.recipe);
   return {std::move(build.compiled), decode_member};
 }
