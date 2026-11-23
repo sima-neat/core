@@ -8,6 +8,10 @@
 #include <iostream>
 #include <optional>
 #include <thread>
+#ifdef _WIN32
+#define NOMINMAX
+#include <windows.h>
+#endif
 
 extern "C" {
 void test_genai_receive_root(const char*);
@@ -242,27 +246,53 @@ int main() {
     require(
         wait_until([&] { return test_genai_open_clients() == clients; }, std::chrono::seconds(2)),
         "Leaked worker releases its service once the transfer returns");
-    {
-      // GenAIModel receives UTF-8 names; a non-ASCII root must reach the upload intact.
-      const auto tokyo = directory.path / std::filesystem::path(u8"\u6771\u4eac"); // 東京
-      std::filesystem::create_directory(tokyo);
-      std::ofstream(tokyo / "layer.bin") << "weights";
+    // GenAIModel receives UTF-8 names; a non-ASCII root must reach the upload intact.
+    auto upload_under = [&](const std::u8string& folder, char id) -> std::string {
+      const auto parent = directory.path / std::filesystem::path(folder);
+      std::filesystem::create_directory(parent);
+      std::ofstream(parent / "layer.bin") << "weights";
       const auto root =
-          internal::host_model_path(host::host_path_from_string(host::host_path_string(tokyo)));
-      const std::string unicode(24, 'e');
+          internal::host_model_path(host::host_path_from_string(host::host_path_string(parent)));
+      const std::string unicode(24, id);
       internal::ModelAssets unicode_assets(root, unicode, 0);
       wire::Service replies(0);
       replies.subscribe(wire::asset_tag(unicode, true));
-      require(
-          wire::request_asset(
-              unicode, 1, "layer.bin", 2000,
-              [&](const std::string& text) { replies.send(wire::asset_tag(unicode, false), text); },
-              [&](int ms) { return replies.receive(ms); }, [] { return false; }) == 7,
-          "Upload an asset under a non-ASCII model directory");
+      try {
+        require(wire::request_asset(
+                    unicode, 1, "layer.bin", 2000,
+                    [&](const std::string& text) {
+                      replies.send(wire::asset_tag(unicode, false), text);
+                    },
+                    [&](int ms) { return replies.receive(ms); }, [] { return false; }) == 7,
+                "Non-ASCII model asset size");
+      } catch (const std::exception& e) {
+        return e.what();
+      }
       std::ifstream uploaded(recv / "neat-genai" / unicode / "model/layer.bin");
       require(std::string((std::istreambuf_iterator<char>(uploaded)), {}) == "weights",
               "Non-ASCII model asset contents");
-    }
+      return {};
+    };
+#ifdef _WIN32
+    // The released SiMaPCIe.dll, like the fake, opens host files in the active code page.
+    const auto code_page_holds = [](const wchar_t* text) {
+      BOOL defaulted = FALSE;
+      return GetACP() == CP_UTF8 || (WideCharToMultiByte(CP_ACP, WC_NO_BEST_FIT_CHARS, text, -1,
+                                                         nullptr, 0, nullptr, &defaulted) > 0 &&
+                                     !defaulted);
+    };
+    if (code_page_holds(L"\u00e9"))
+      require(upload_under(u8"caf\u00e9", '0').empty(),
+              "Upload an asset under a folder the code page represents");
+    // No ANSI code page holds both Thai and Hebrew.
+    const auto error = upload_under(u8"\u0e01\u05d0", '1');
+    require(GetACP() == CP_UTF8 ? error.empty()
+                                : error.find("system code page") != std::string::npos,
+            "Report a model folder the code page cannot represent");
+#else
+    require(upload_under(u8"\u6771\u4eac", '0').empty(), // 東京
+            "Upload an asset under a non-ASCII model directory");
+#endif
     std::cout << "GenAI on-demand assets: PASS\n";
     return 0;
   } catch (const std::exception& e) {

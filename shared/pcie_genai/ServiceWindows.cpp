@@ -3,6 +3,7 @@
 #include <simaai_svc.h>
 
 #include <cerrno>
+#include <climits>
 #include <filesystem>
 #include <iterator>
 #include <stdexcept>
@@ -28,6 +29,36 @@ std::wstring platform_library() {
   if (size >= std::size(directory))
     throw std::runtime_error("SIMA_WINDOWS_PLATFORM_RUNTIME_DIR is too long");
   return (std::filesystem::path(directory) / L"SiMaPCIe.dll").wstring();
+}
+
+// SiMaPCIe.dll opens host files with ANSI APIs, so pass UTF-8 host paths in the active code page.
+std::string code_page_path(const std::string& path) {
+  const UINT code_page = GetACP();
+  if (path.empty() || code_page == CP_UTF8)
+    return path;
+  const auto unrepresentable = [&] {
+    return std::invalid_argument("Host path cannot be represented in the system code page " +
+                                 std::to_string(code_page) +
+                                 "; keep GenAI model folders on paths it can represent: " + path);
+  };
+  if (path.size() > INT_MAX)
+    throw unrepresentable();
+  const int length = static_cast<int>(path.size());
+  const int wide_length =
+      MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, path.data(), length, nullptr, 0);
+  if (wide_length <= 0)
+    throw unrepresentable();
+  std::wstring wide(static_cast<size_t>(wide_length), L'\0');
+  MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, path.data(), length, wide.data(), wide_length);
+  BOOL defaulted = FALSE;
+  const int narrow_length = WideCharToMultiByte(code_page, WC_NO_BEST_FIT_CHARS, wide.data(),
+                                                wide_length, nullptr, 0, nullptr, &defaulted);
+  if (narrow_length <= 0 || defaulted)
+    throw unrepresentable();
+  std::string narrow(static_cast<size_t>(narrow_length), '\0');
+  WideCharToMultiByte(code_page, WC_NO_BEST_FIT_CHARS, wide.data(), wide_length, narrow.data(),
+                      narrow_length, nullptr, nullptr);
+  return narrow;
 }
 } // namespace
 
@@ -123,7 +154,8 @@ void Service::fetch(const std::string& root, const std::string& source,
   simaai_svc_xfer_opts options{};
   options.flags = SIMAAI_SVC_XF_OVERWRITE;
   simaai_svc_xfer statistics{};
-  check(impl_->fetch(impl_->handle, root.c_str(), source.c_str(), destination.c_str(), &options,
+  const auto local = code_page_path(destination);
+  check(impl_->fetch(impl_->handle, root.c_str(), source.c_str(), local.c_str(), &options,
                      &statistics),
         "fetch");
 }
@@ -132,8 +164,9 @@ void Service::put(const std::string& source, const std::string& destination) {
   simaai_svc_xfer_opts options{};
   options.flags = SIMAAI_SVC_XF_OVERWRITE;
   simaai_svc_xfer statistics{};
-  check(impl_->put(impl_->handle, source.c_str(), nullptr, destination.c_str(), &options,
-                   &statistics),
-        "put model asset");
+  const auto local = code_page_path(source);
+  check(
+      impl_->put(impl_->handle, local.c_str(), nullptr, destination.c_str(), &options, &statistics),
+      "put model asset");
 }
 } // namespace simaai::neat::pcie::genai::wire

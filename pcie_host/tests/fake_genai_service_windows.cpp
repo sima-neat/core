@@ -229,13 +229,15 @@ int simaai_svc_put_file(simaai_svc* client, const char* source, const char* root
   }
   if (put_error)
     return put_error;
-  // Decodes the host path as UTF-8, as Neat sends it; the Platform encoding is unconfirmed.
-  const std::filesystem::path local(std::u8string(reinterpret_cast<const char8_t*>(source)));
+  // Decodes the host path in the active code page, as the released SiMaPCIe.dll does.
+  const std::filesystem::path local(source);
   if (root != nullptr || !local.is_absolute())
     return -EINVAL;
   const auto target = receive_root / destination;
   std::filesystem::create_directories(target.parent_path());
-  std::filesystem::copy_file(local, target, std::filesystem::copy_options::overwrite_existing);
-  return 0;
+  std::error_code error;
+  std::filesystem::copy_file(local, target, std::filesystem::copy_options::overwrite_existing,
+                             error);
+  return error ? -ENOENT : 0;
 }
 }
