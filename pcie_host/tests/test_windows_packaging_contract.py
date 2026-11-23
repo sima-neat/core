@@ -176,6 +176,8 @@ class WindowsPackagingContract(unittest.TestCase):
     doctor = read_source("scripts/windows/sima-pcie-host-doctor.cmd")
     self.assertIn("SiMaMlaDaemon", doctor)
     self.assertNotIn("sc.exe", doctor)
+    # The doctor checks the host only; neat reports the cards.
+    self.assertIn("echo Run neat to show the host and card software.", doctor)
     self.assertIn("(Get-Service -Name SiMaMlaDaemon -ErrorAction Stop).Status -ne 'Running'",
                   doctor)
     self.assertIn("gst-inspect-1.0.exe", doctor)

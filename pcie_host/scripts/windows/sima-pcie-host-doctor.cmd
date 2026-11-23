@@ -27,4 +27,5 @@ echo Neat PCIe host prerequisites: PASS
 echo Install root: %SIMA_PCIE_HOST_ROOT%
 echo GStreamer root: %GSTREAMER_ROOT_X86_64%
 echo Platform runtime: %SIMA_WINDOWS_PLATFORM_RUNTIME_DIR%
+echo Run neat to show the host and card software.
 exit /b 0
