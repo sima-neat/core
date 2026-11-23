@@ -422,10 +422,11 @@ release that ships Windows binaries is published. The customer page,
 prerequisites, installation, card SSH enrollment, verification and
 troubleshooting; keep customer instructions there rather than here.
 
-The MSIs do not redistribute Platform or third-party binaries. A supported host
-therefore also needs the qualified Platform runtime, GStreamer MSVC development
-installation, and the CMake packages required by the exported static C++ target
-(including zlib and nlohmann JSON). CI currently supplies those roots explicitly;
+The MSIs do not redistribute Platform or GStreamer binaries. The Core MSI ships
+only the OpenCV runtime of the prebuilt tutorials and the nlohmann/json headers,
+each with its license. A supported host therefore also needs the qualified
+Platform runtime, GStreamer MSVC development installation, and the CMake packages
+required by the exported static C++ target (including zlib). CI currently supplies those roots explicitly;
 that runner setup is not a customer installation contract. Do not publish a
 release until a clean-host install or process-scoped activation path proves that
 ordinary C++ and Python processes find the same qualified dependency cohort

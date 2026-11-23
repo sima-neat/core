@@ -202,13 +202,13 @@ gh workflow run vulcan-ci.yml --repo sima-neat/core --ref <branch> \
 
 The run is a normal Vulcan CI run of that branch with the card lane added. It
 builds the Windows cohort once in the PCIe host matrix, then the card lane tests
-those bytes on the self-hosted runner after the Linux gates pass. It publishes
+those bytes on the self-hosted runner, beside the Linux DevKit and card tests. It publishes
 and promotes as a push would, and promotion fails if the card lane fails.
 Add `-f validation_only=true` to test without publishing or promoting. A new
 push to the same branch cancels the run, as it does any branch run.
 
-Core's main `Vulcan CI` calls the Windows workflow after the same Core revision
-has passed its Linux build, DevKit, and PCIe-card gates. The Windows lane:
+Core's main `Vulcan CI` calls the Windows workflow once the same Core revision's
+Linux builds succeed, beside its DevKit and PCIe-card tests. The Windows lane:
 
 1. follows Core's Scheduler snap policy and resolves the immutable Windows
    profile through the pinned bootstrap `sima-cli`;
@@ -308,8 +308,8 @@ gh workflow run vulcan-ci.yml --repo sima-neat/core \
 ```
 
 The main workflow still runs Windows hardware qualification when the lane is
-enabled, and skips Linux publication and branch promotion; Vulcan CI never
-publishes Windows packages. A direct Windows dispatch is useful
+enabled, and skips Linux and Windows publication and branch promotion. A direct
+Windows dispatch is useful
 when debugging against a completed Linux run:
 
 ```text
@@ -366,8 +366,8 @@ disables that policy.
 
 Direct Windows dispatch always requires an admitted completed Linux run. The
 same-run `linux_current_run` input belongs only to the reusable workflow call
-from Vulcan CI after its Linux build and hardware dependencies succeed; it is
-not a manual-dispatch override.
+from Vulcan CI after its Linux builds succeed; it is not a manual-dispatch
+override.
 
 ## Publishing and formal release checks
 
