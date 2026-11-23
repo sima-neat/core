@@ -38,7 +38,10 @@ function Get-DiscoveredTargets {
   try {
     $interfaces = [System.Net.NetworkInformation.NetworkInterface]::GetAllNetworkInterfaces()
     foreach ($interface in $interfaces) {
-      if ($interface.OperationalStatus -ne [System.Net.NetworkInformation.OperationalStatus]::Up) {
+      # Only the Platform's PCIe adapter is a card link; a LAN, VPN or Hyper-V adapter can
+      # also use 10.0.N.1. Windows numbers further instances ("... #2").
+      if ($interface.OperationalStatus -ne [System.Net.NetworkInformation.OperationalStatus]::Up -or
+          $interface.Description -notmatch '^SiMa\.ai Virtual Ethernet Adapter( #\d+)?$') {
         continue
       }
       foreach ($address in $interface.GetIPProperties().UnicastAddresses) {

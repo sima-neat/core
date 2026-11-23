@@ -307,6 +307,24 @@ class WindowsPackagingContract(unittest.TestCase):
         r"Get-Command \$name -CommandType Application -ErrorAction SilentlyContinue \|\s*"
         r"Select-Object -First 1")
 
+  def test_setup_discovers_cards_only_on_the_platform_pcie_adapter(self):
+    source = SETUP_SCRIPT.read_text(encoding="utf-8")
+    pattern = re.search(r"\$interface\.Description -notmatch '([^']+)'", source)[1]
+    metadata = (ROOT / "scripts" / "create_windows_metadata.py").read_text(encoding="utf-8")
+    self.assertIn('"SiMa.ai Virtual Ethernet Adapter"', metadata)
+    adapters = {
+        "SiMa.ai Virtual Ethernet Adapter": True,
+        "SiMa.ai Virtual Ethernet Adapter #2": True,
+        "Intel(R) Ethernet Connection (17) I219-LM": False,
+        "Hyper-V Virtual Ethernet Adapter": False,
+        "WireGuard Tunnel": False,
+        "SiMa.ai Virtual Ethernet Adapter (copy)": False,
+    }
+    for description, is_card in adapters.items():
+      with self.subTest(description=description):
+        # PowerShell -match is case-insensitive.
+        self.assertEqual(bool(re.search(pattern, description, re.IGNORECASE)), is_card)
+
   def test_setup_prefers_the_openssh_client_the_runtime_uses(self):
     source = SETUP_SCRIPT.read_text(encoding="utf-8")
     runtime = read_source("src/HostPlatform.cpp")
