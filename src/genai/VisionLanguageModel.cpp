@@ -7,6 +7,7 @@
 #include <sima_lmm/vision_language_model.hpp>
 
 #include <atomic>
+#include <cstdint>
 #include <iostream>
 #include <limits>
 #include <mutex>
@@ -248,7 +249,8 @@ struct GenAISession::Impl {
       std::lock_guard lock(model->operations);
       model->runtime->release_session(id);
     } catch (const std::exception& error) {
-      std::cerr << "Failed to release GenAI session " << id << ": " << error.what() << '\n';
+      std::cerr << "Failed to release GenAI session " << static_cast<std::uint64_t>(id) << ": "
+                << error.what() << '\n';
     }
   }
   std::shared_ptr<VisionLanguageModel::Impl> model;
