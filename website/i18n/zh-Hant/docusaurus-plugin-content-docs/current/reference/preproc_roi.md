@@ -148,13 +148,7 @@ out = pyneat.stages.preproc(
 - 模型路徑所選擇的資料類型和佈局，包括 BF16 或 INT8，以及密集或鑲嵌式輸出；
 - 每個輸出的 `tensor.semantic.preprocess` 中繼資料。
 
-每個輸出的預處理元資料包含選取的感興趣區域 (ROI)、信箱幾何形狀、正規化/量化/細分旗標，以及一個仿射變換，用於將模型/預處理後的座標映射回原始來源框架座標系統。
-
-## 來自 ROI 的偵測方框
-
-當預處理後的 ROI 送入 `SimaBoxDecode` 時，偵測設定檔會透過該 ROI 的仿射轉換還原方框，因此方框位於完整來源影像的座標中，而不是 ROI 或模型畫布的座標。以黑邊或拉伸方式處理的 ROI 都是如此。請參閱 [ROI、裁切與拉伸影格](/reference/boxdecode_decode_types#roi-and-crop-frames)，了解會這樣做的設定檔，以及對 ROI 影格失敗而不是傳回整個影格座標的設定檔 (姿勢、分割、RCNN 提案與多類別 SSD)。
-
-BoxDecode 每次呼叫解碼一個影格。含有多個 ROI 槽位的緩衝區每個槽位帶有一個仿射轉換，因此解碼會以錯誤失敗。當偵測器使用結果時，請每個影格只預處理一個 ROI (ROI 清單容量為 1)。
+每個輸出的預處理元資料包含選取的感興趣區域 (ROI)、信箱幾何形狀、正規化/量化/細分旗標，以及一個仿射變換，用於將模型/預處理後的座標映射回原始來源框架座標系統。 支援的 ROI 設定檔請參閱 [BoxDecode](/reference/boxdecode_decode_types#crop-coordinate-mapping)。
 
 ## 超出畫面的感興趣區域 (ROI)
 

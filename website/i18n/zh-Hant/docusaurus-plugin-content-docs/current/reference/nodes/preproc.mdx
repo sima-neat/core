@@ -294,7 +294,7 @@ roi_tensors = pyneat.stages.preproc(
 
 ## 元資料與 BoxDecode
 
-`Preproc` 會寫入預處理的元資料，以便後續節點能夠正確地反轉影像轉換。特別是，`SimaBoxDecode` 會使用這些元資料，將檢測框映射回原始來源影格，由 ROI 預處理的影格也一樣 (請參閱 [ROI、裁切與拉伸影格](/reference/boxdecode_decode_types#roi-and-crop-frames))。無法對應 ROI 或裁切的設定檔會失敗，而不是以整個影格座標解碼。
+`Preproc` 會寫入預處理的元資料，以便後續節點能夠正確地反轉影像轉換。對於[支援的設定檔](/reference/boxdecode_decode_types#crop-coordinate-mapping)，`SimaBoxDecode` 會以完整來源影格座標回報 ROI 偵測結果。
 
 重要的元資料欄位包括：
 
