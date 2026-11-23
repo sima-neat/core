@@ -117,7 +117,10 @@ class WindowsMetadataTests(unittest.TestCase):
       with self.subTest(driver=driver["value"]):
         self.assertIn("version 3.0.0.2", driver["guidance"])
         self.assertIn("pcie-mode/driver-installation", driver["guidance"])
-        self.assertIn("Windows has not detected the card", driver["guidance"])
+        self.assertIn("has not detected the card", driver["guidance"])
+        self.assertIn("Secure Boot off and test-signing on", driver["guidance"])
+        self.assertIn("Confirm-SecureBootUEFI must print False", driver["guidance"])
+        self.assertIn("bcdedit must list testsigning Yes", driver["guidance"])
     self.assertNotIn("script", result["installation"])
 
   def test_native_only_metadata_does_not_request_python_installation(self):

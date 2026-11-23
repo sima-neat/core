@@ -37,8 +37,11 @@ def metadata(msi: Path, wheel: Path, version: str, branch: str, commit: str,
       f"Install the SiMa Platform 3.0 Windows host package whose drivers report version "
       f"{platform_version}, as described in the PCIe Driver Installation guide "
       "(https://developer.sima.ai/hardware/getting-started/pcie-mode/driver-installation). "
-      "If no device is found although that package is installed, Windows has not detected "
-      "the card: check that it is seated and powered, then shut the host down and power it on."
+      "If no device is found although that package is installed, Windows did not load the "
+      "test-signed driver or has not detected the card. The driver loads only with Secure Boot "
+      "off and test-signing on: in PowerShell started as administrator, Confirm-SecureBootUEFI "
+      "must print False and bcdedit must list testsigning Yes. If both are set, check that the "
+      "card is seated and powered, then shut the host down and power it on."
   )
   installation = {
       "type": "windows-msi",
