@@ -153,11 +153,20 @@ struct GenAIModel::Impl {
       active.reset();
       pending.reset();
     }
-    assets.close();
+    std::exception_ptr upload;
+    try {
+      assets.close();
+    } catch (...) {
+      upload = std::current_exception();
+    }
     remote.stop();
-    std::lock_guard lock(mutex);
-    // Keep staged media until remote shutdown is confirmed, even if stop() throws.
-    media.reset();
+    {
+      std::lock_guard lock(mutex);
+      // Keep staged media until remote shutdown is confirmed, even if stop() throws.
+      media.reset();
+    }
+    if (upload)
+      std::rethrow_exception(upload);
   }
   std::shared_ptr<internal::StreamState> start(const GenerationRequest& request) {
     std::lock_guard lock(mutex);

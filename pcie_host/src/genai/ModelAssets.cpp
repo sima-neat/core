@@ -29,7 +29,7 @@ std::optional<std::filesystem::path> model_asset_path(const std::filesystem::pat
     throw std::invalid_argument("Model asset must be a regular file: " + name);
   return path;
 }
-// Shared with the worker so close() can leak a worker stuck in put() instead of hanging.
+// Shared with the worker so the destructor can leak a worker stuck in put() instead of hanging.
 struct ModelAssets::State {
   State(std::filesystem::path model, std::string session, int card)
       : model_(std::move(model)), session_(std::move(session)), service_(card) {}
@@ -47,23 +47,28 @@ ModelAssets::ModelAssets(std::filesystem::path model, std::string session, int c
   thread_ = std::thread([state = state_] { state->receive(); });
 }
 ModelAssets::~ModelAssets() {
-  close();
+  try {
+    close();
+  } catch (...) {
+    thread_.detach(); // leak a put() that ignores interruption rather than hang
+  }
 }
 void ModelAssets::close() {
   if (!thread_.joinable())
     return;
   state_->stop_ = true;
   // Windows cancels only I/O already pending, so a put() that starts waiting
-  // after the first interrupt needs another one. Leak a put() that ignores it.
+  // after the first interrupt needs another one.
   const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
   while (!state_->done_ && std::chrono::steady_clock::now() < deadline) {
     state_->service_.interrupt();
     std::this_thread::sleep_for(std::chrono::milliseconds(10));
   }
-  if (state_->done_)
-    thread_.join();
-  else
-    thread_.detach();
+  // Keep the thread so a later close() can confirm the upload finished.
+  if (!state_->done_)
+    throw std::runtime_error("GenAI model asset upload is still running; close again to confirm "
+                             "it finished");
+  thread_.join();
 }
 void ModelAssets::check() const {
   std::lock_guard lock(state_->mutex_);

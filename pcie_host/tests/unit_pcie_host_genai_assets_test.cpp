@@ -6,6 +6,7 @@
 #include <cstdlib>
 #include <fstream>
 #include <iostream>
+#include <optional>
 #include <thread>
 
 extern "C" {
@@ -33,12 +34,18 @@ template <class Ready> bool wait_until(Ready ready, std::chrono::milliseconds ti
   return ready();
 }
 // A hung close() cannot be joined, so report it and exit instead of waiting for ctest.
-template <class During>
-void close_within(internal::ModelAssets& assets, std::chrono::milliseconds bound, During during,
-                  const char* message) {
+// Returns the error close() reported, or an empty string.
+template <class Close, class During>
+std::string close_within(Close close, std::chrono::milliseconds bound, During during,
+                         const char* message) {
   std::atomic<bool> closed{false};
+  std::string error;
   std::thread closer([&] {
-    assets.close();
+    try {
+      close();
+    } catch (const std::exception& e) {
+      error = e.what();
+    }
     closed = true;
   });
   during();
@@ -47,6 +54,7 @@ void close_within(internal::ModelAssets& assets, std::chrono::milliseconds bound
     std::_Exit(1);
   }
   closer.join();
+  return error;
 }
 struct Directory {
   std::filesystem::path path;
@@ -189,13 +197,14 @@ int main() {
       send_asset(late);
       require(wait_until(test_genai_put_paused, std::chrono::seconds(2)),
               "Pause before the transfer waits");
-      close_within(
-          paused, std::chrono::seconds(1),
-          [] {
-            std::this_thread::sleep_for(std::chrono::milliseconds(100));
-            test_genai_pause_put(false);
-          },
-          "Close interrupts a transfer that starts waiting after close begins");
+      require(close_within([&] { paused.close(); }, std::chrono::seconds(1),
+                           [] {
+                             std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                             test_genai_pause_put(false);
+                           },
+                           "Close interrupts a transfer that starts waiting after close begins")
+                  .empty(),
+              "Close confirms an interrupted transfer");
       paused.check();
       test_genai_block_put(false);
     }
@@ -207,9 +216,27 @@ int main() {
       send_asset(stuck);
       require(wait_until(test_genai_put_paused, std::chrono::seconds(2)),
               "Pause a transfer that ignores interruption");
-      close_within(
-          ignored, std::chrono::seconds(4), [] {},
-          "Close leaks a transfer that ignores interruption instead of hanging");
+      auto close = [&] { ignored.close(); };
+      require(close_within(
+                  close, std::chrono::seconds(4), [] {},
+                  "Close returns while a transfer ignores interruption")
+                      .find("upload is still running") != std::string::npos,
+              "Close reports an unfinished transfer");
+      test_genai_pause_put(false);
+      require(close_within(
+                  close, std::chrono::seconds(4), [] {}, "Close confirms a transfer that finished")
+                  .empty(),
+              "A later close confirms the transfer finished");
+    }
+    {
+      const std::string abandoned(24, 'f');
+      std::optional<internal::ModelAssets> leaked(std::in_place, model, abandoned, 0);
+      test_genai_pause_put(true);
+      send_asset(abandoned);
+      require(wait_until(test_genai_put_paused, std::chrono::seconds(2)),
+              "Pause a transfer the destructor abandons");
+      close_within([&] { leaked.reset(); }, std::chrono::seconds(4), [] {},
+                   "Destruction leaks a transfer that ignores interruption instead of hanging");
     }
     test_genai_pause_put(false);
     require(
