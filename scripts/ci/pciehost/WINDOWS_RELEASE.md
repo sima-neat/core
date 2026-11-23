@@ -39,9 +39,31 @@ The Windows build needs Scheduler's published Windows profile for the selected
 branch, or `develop` when that branch is unpublished. Without it, dependency
 resolution fails.
 
-Signed runs also need `SIMA_WINDOWS_SIGNING_CERTIFICATE_SHA1`,
-`SIMA_WINDOWS_SIGNING_MACHINE_STORE`, and `SIMA_WINDOWS_SIGNING_TIMESTAMP_URL`,
-and a signing certificate the runner can use.
+Authenticode signing happens only in a run with `require_signatures=true`, in
+the `native` job of Scheduler's and of Core's `pcie-host-windows.yml`. Both run
+`signtool sign /sha1 <thumbprint>` against the runner's Windows certificate
+store and read three Actions variables, which must be set in both repositories.
+Core's `native` job has no environment, so set Core's at repository or
+organization level; Scheduler's job runs in the `production` environment.
+
+- `SIMA_WINDOWS_SIGNING_CERTIFICATE_SHA1`: the certificate thumbprint, 40 hex
+  digits. Scheduler and Core must sign with the same certificate; Core's
+  release admission rejects a Scheduler package from another publisher.
+- `SIMA_WINDOWS_SIGNING_MACHINE_STORE`: `true` selects the certificate from
+  `LocalMachine\My` (`signtool /sm`); otherwise signtool uses `CurrentUser\My`
+  of the runner account.
+- `SIMA_WINDOWS_SIGNING_TIMESTAMP_URL`: an HTTPS RFC 3161 timestamp service.
+  Unset, it is `https://timestamp.digicert.com`.
+
+The certificate, with a private key the runner account can use without a
+prompt, must already be in that store when the job starts. Neither workflow
+installs one, and GitHub-hosted `windows-2025` runners start from a clean
+image, so a signed run fails at `signtool` there. Before the first signed
+release, either run both `native` jobs on a self-hosted Windows signing runner
+that holds the certificate, or add a step to both jobs that makes it available
+from the organization's signing service. Publicly trusted code-signing keys
+must stay in hardware or a cloud HSM, so a PFX file stored as a secret is not an
+option.
 
 The card runner must be a Windows 11 x64 client workstation with the
 supported Platform package and a directly attached Modalix card. Like the
@@ -440,7 +462,18 @@ candidate, repeats repair, plug-in discovery, API, fault-recovery, and cleanup,
 and retains evidence for both cohorts.
 
 Set `require_signatures=true` in Scheduler and Core only when delivery policy
-requires Authenticode. The optional gate requires the certificate, RFC 3161
+requires Authenticode. Neither main CI passes it: Vulcan CI calls the Core
+Windows lane with `require_signatures=false`, and Scheduler's `ci.yml` leaves it
+at its default. A signed cohort therefore needs a direct Scheduler dispatch that
+publishes a signed profile, followed by the Core release dispatch above with
+`-f require_signatures=true`:
+
+```text
+gh workflow run pcie-host-windows.yml --repo sima-neat/scheduler \
+  --ref <scheduler-ref> -f validation_only=false -f require_signatures=true
+```
+
+The optional gate requires the certificate, RFC 3161
 timestamp service, and complete Scheduler/Core signature receipts. Platform DLLs
 are the Platform installer's and are not part of this gate. Signing is
 additional provenance; it does not replace tests.
