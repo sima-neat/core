@@ -12,6 +12,10 @@ ref_args=(--bucket "${ARTIFACT_BUCKET}" --ref-type "${REF_TYPE}" --ref "${REF_NA
 plan="$(python3 scripts/ci/pciehost/windows_release.py publication "${ref_args[@]}")"
 mapfile -t paths <<< "${plan}"
 prefix="${paths[0]}"
+if (( ${#paths[@]} == 1 )); then
+  echo "s3://${ARTIFACT_BUCKET}/${prefix}/ already holds this release; nothing to publish"
+  exit 0
+fi
 s3_args=(--sse aws:kms)
 if [[ -n "${SSE_KMS_KEY_ID:-}" ]]; then
   s3_args+=(--sse-kms-key-id "${SSE_KMS_KEY_ID}")

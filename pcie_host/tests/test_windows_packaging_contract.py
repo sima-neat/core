@@ -43,6 +43,25 @@ class WindowsPackagingContract(unittest.TestCase):
       self.assertIn(symbol, source)
     self.assertNotIn("provider exposes vision queues only", source)
 
+  def test_windows_runtime_never_loads_or_runs_a_bare_file_name(self):
+    # LoadLibraryW and CreateProcessW search the current directory for a bare name, so a
+    # file planted there would run. Resolve full paths like sima-pcie-host-env.cmd does.
+    service = (ROOT.parent / "shared" / "pcie_genai" / "ServiceWindows.cpp").read_text(
+        encoding="utf-8")
+    platform = read_source("src/HostPlatform.cpp")
+    for source in (service, platform, read_source("src/SshRunnerWindows.cpp")):
+      self.assertNotRegex(source, r'(LoadLibrary|CreateProcess)\w*\(\s*L?"')
+    self.assertNotIn('return L"SiMaPCIe.dll"', service)
+    self.assertIn(r'L"SYSTEM\\CurrentControlSet\\Services\\SiMaMlaDaemon"', service)
+    self.assertIn('L"ImagePath", RRF_RT_REG_SZ', service)
+    self.assertIn("LoadLibraryW(library_path.c_str())", service)
+    self.assertIn("advapi32 bcrypt ole32 shell32", read_source("CMakeLists.txt"))
+    resolver = platform.split("std::string open_ssh_executable(", 1)[1].split("\n}\n", 1)[0]
+    windows = resolver.split("#ifdef _WIN32\n", 1)[1].split("#else\n", 1)[0]
+    self.assertEqual(re.findall(r"(?m)^ *(return [^;]+;)", windows),
+                     ["return host_path_string(candidate);"] * 2)
+    self.assertIn("throw std::runtime_error(", windows.rsplit("begin = end + 1;", 1)[1])
+
   def test_msi_has_stable_upgrade_and_install_ownership(self):
     source = PACKAGING.read_text(encoding="utf-8")
     self.assertIn('set(CPACK_GENERATOR "WIX")', source)
@@ -69,10 +88,35 @@ class WindowsPackagingContract(unittest.TestCase):
     self.assertIn('string(REGEX MATCH "^[0-9]+[.][0-9]+" SIMAPCIE_MSVC_VERSION',
                   read_source("CMakeLists.txt"))
     self.assertIn(
-        'if(MSVC AND CMAKE_CXX_COMPILER_VERSION VERSION_LESS "@SIMAPCIE_MSVC_VERSION@")',
+        'if(MSVC AND _simapcie_msvc_version VERSION_LESS "@SIMAPCIE_MSVC_VERSION@")',
         read_source("cmake/SimaPCIeHostConfig.cmake.in"))
     self.assertIn("#if defined(_MSC_VER) && defined(_DEBUG)\n#error",
                   read_source("include/simaai/neat/pcie/Model.h"))
+
+  @unittest.skipUnless(shutil.which("cmake"), "requires CMake")
+  def test_consumer_toolset_check_uses_the_msvc_version_clang_cl_simulates(self):
+    config = read_source("cmake/SimaPCIeHostConfig.cmake.in")
+    check = config.split("include(CMakeFindDependencyMacro)", 1)[0].replace(
+        "@PACKAGE_INIT@", "").replace("@SIMAPCIE_MSVC_VERSION@", "19.44")
+    with tempfile.TemporaryDirectory() as directory:
+      script = Path(directory) / "check.cmake"
+      script.write_text(check, encoding="utf-8")
+      for compiler, simulated, accepted in (
+          ("19.44.35211", "", True),         # cl.exe of the producer toolset
+          ("19.38.33130", "", False),        # an older cl.exe
+          ("19.1.5", "19.44", True),         # clang-cl bundled with Visual Studio
+          ("20.1.0", "19.38", False),        # newer clang-cl on an older MSVC toolset
+      ):
+        with self.subTest(compiler=compiler, simulated=simulated):
+          result = subprocess.run(
+              ["cmake", "-DMSVC=1", f"-DCMAKE_CXX_COMPILER_VERSION={compiler}",
+               f"-DCMAKE_CXX_SIMULATE_ID={'MSVC' if simulated else ''}",
+               f"-DCMAKE_CXX_SIMULATE_VERSION={simulated}", "-P", str(script)],
+              capture_output=True, text=True, check=False)
+          self.assertEqual(result.returncode == 0, accepted, result.stderr)
+          if not accepted:
+            self.assertIn(f"this project uses MSVC {simulated or compiler}",
+                          " ".join(result.stderr.split()))
 
   def test_prebuilt_tutorials_ship_their_opencv_runtime(self):
     tutorials = read_source("tutorials/CMakeLists.txt")

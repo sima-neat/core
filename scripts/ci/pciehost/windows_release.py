@@ -74,6 +74,9 @@ def publication_plan(read: Callable[[str], bytes], ref: str, commit: str,
   only by the qualified release dispatch: ``read`` must already resolve its
   ``latest.tag`` to this commit, because Vulcan CI promotes the tag channel
   after the Linux release and the Windows files join that commit directory.
+  A tag whose metadata.json is already published is never overwritten: the
+  plan is empty when every published file has the candidate's bytes, and is
+  refused otherwise.
   """
   package = validate_published_package(directory, allow_unlisted=True)
   if ref_type == "tag":
@@ -88,7 +91,24 @@ def publication_plan(read: Callable[[str], bytes], ref: str, commit: str,
   files = [package.root / name for name in names]
   files += [path for path in (package.root / f"{name}.sha256" for name in names)
             if path.is_file()]
-  return package_prefix(ref, commit), [*files, package.root / "metadata.json"]
+  files.append(package.root / "metadata.json")
+  prefix = package_prefix(ref, commit)
+  if ref_type == "tag" and _published(read, f"{prefix}/metadata.json"):
+    for path in files:
+      if read(f"{prefix}/{path.name}") != path.read_bytes():
+        raise ValueError(
+            f"{customer_target(ref)} is already published with a different {path.name}; "
+            "a published release is never overwritten")
+    return prefix, []
+  return prefix, files
+
+
+def _published(read: Callable[[str], bytes], key: str) -> bool:
+  try:
+    read(key)
+  except FileNotFoundError:
+    return False
+  return True
 
 
 def _require_latest(read: Callable[[str], bytes], ref: str, commit: str) -> None:
@@ -133,8 +153,10 @@ def s3_reader(bucket: str) -> Callable[[str], bytes]:
     result = subprocess.run(["aws", "s3", "cp", f"s3://{bucket}/{key}", "-"],
                             check=False, capture_output=True)
     if result.returncode:
-      raise ValueError(f"cannot read s3://{bucket}/{key}: "
-                       + result.stderr.decode("utf-8", errors="replace").strip())
+      error = result.stderr.decode("utf-8", errors="replace").strip()
+      # The AWS CLI reports a missing object as HTTP 404; anything else is a read failure.
+      missing = FileNotFoundError if "(404)" in error else ValueError
+      raise missing(f"cannot read s3://{bucket}/{key}: {error}")
     return result.stdout
   return read
 
@@ -168,7 +190,8 @@ def main() -> None:
   elif args.command == "publication":
     prefix, files = publication_plan(
         s3_reader(args.bucket), args.ref, args.commit, args.candidate, ref_type=args.ref_type)
-    # First line: destination prefix; then one source file per line.
+    # First line: destination prefix; then one source file per line, none when the
+    # release is already published with these bytes.
     print("\n".join([prefix, *map(str, files)]))
   elif args.command == "fetch":
     package = fetch_release(https_reader(args.base_url), args.ref, args.commit, args.output)
