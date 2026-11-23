@@ -24,8 +24,8 @@ esac
 MPK="${!MODEL_ENV:-${DEFAULT_MPK}}"
 
 # Fail here rather than in the tutorial: some tutorials skip a model path that does not exist.
-if [[ ! -s "${MPK}" ]]; then
-  echo "Missing or empty ${MODEL_NAME} MPK: ${MPK}" >&2
+if [[ ! -f "${MPK}" || ! -s "${MPK}" ]]; then
+  echo "${MODEL_NAME} MPK is missing, empty or not a regular file: ${MPK}" >&2
   echo "Set ${MODEL_ENV} to an MPK, or run build.sh --download-models-only --model-target-folder ${DEFAULT_MPK%/*} to write ${DEFAULT_MPK}." >&2
   exit 1
 fi

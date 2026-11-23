@@ -46,11 +46,15 @@ def test_unset_variable_uses_the_registered_default(tmp_path, program):
     assert result.stdout.splitlines() == ['--model', str(default), '--samples', '10']
 
 
-@pytest.mark.parametrize('data', [None, b''], ids=['missing', 'empty'])
-def test_missing_or_empty_mpk_fails_and_names_the_variable(tmp_path, program, data):
+@pytest.mark.parametrize('kind', ['missing', 'empty', 'directory'])
+def test_missing_empty_or_directory_mpk_fails_and_names_the_variable(tmp_path, program, kind):
     default = tmp_path / 'yolo_v8s.tar.gz'
-    if data is not None:
-        mpk(default, data)
+    if kind == 'empty':
+        mpk(default, b'')
+    elif kind == 'directory':
+        # Not empty: -s alone accepts this directory on Linux, and only -f rejects it.
+        default.mkdir()
+        mpk(default / 'model.elf')
     result = run(program, 'yolo_v8s', default)
     assert result.returncode == 1
     assert result.stdout == ''
