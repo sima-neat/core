@@ -292,6 +292,12 @@ higher than 16 ms and throughput no lower than 290 FPS. Linux keeps 12 ms and
 440 FPS; a Gen5 Windows host measures about 680 FPS and 9 ms. Restore the Linux
 gate when the runner is upgraded.
 
+The same runner runs the parallel-queue tests on queues 0 and 1 instead of Linux's
+0-5 (`SIMAPCIE_STRESS_QUEUES`). The Platform driver allocates each data queue as
+physically contiguous memory, about 300 MB per queue at this test's tensor size,
+and an 8 GB host has about 1 GB of free physical memory, so a fourth queue fails
+with Error 1450. Restore all six queues when the runner has 16 GB or more.
+
 ## Validation and bootstrap overrides
 
 Run a non-publishing validation of the entire Core cohort with:

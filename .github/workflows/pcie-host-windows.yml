@@ -597,7 +597,10 @@ jobs:
       SIMAPCIE_QUEUE: "0"
       SIMAPCIE_READINESS_TIMEOUT_MS: "180000"
       SIMAPCIE_STRESS_ITERATIONS: "1000"
-      SIMAPCIE_STRESS_QUEUES: "0 1 2 3 4 5"
+      # Runner-memory floor: the 8 GB runner has ~1 GB of free physical memory and the
+      # Platform driver needs ~300 MB of contiguous memory per queue (Error 1450 above 3).
+      # Linux runs queues 0-5; restore them when the runner gets 16 GB or more.
+      SIMAPCIE_STRESS_QUEUES: "0 1"
       SIMAPCIE_SYNC_ITERATIONS: "50"
       SIMAPCIE_TEST_ITERATIONS: "1000"
       SIMAPCIE_USER: "sima"

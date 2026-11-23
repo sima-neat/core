@@ -2045,6 +2045,9 @@ class WindowsCiContracts(unittest.TestCase):
     self.assertNotIn("--interval-ms", source)
     self.assertIn('completed.append("test_worker_loss_recovery")', source)
     self.assertIn('completed.append("test_client_process_death_recovery")', source)
+    hardware_env = WORKFLOW.read_text(encoding="utf-8").split("  hardware:\n", 1)[1].split(
+        "    steps:\n", 1)[0]
+    self.assertIn('SIMAPCIE_STRESS_QUEUES: "0 1"', hardware_env)
     self.assertIn('PERF_MAX_MEAN_LATENCY_MS = "16"', source)
     self.assertIn('PERF_MIN_THROUGHPUT_FPS = "290"', source)
     self.assertIn('"--max-mean-latency-ms", PERF_MAX_MEAN_LATENCY_MS]', source)
