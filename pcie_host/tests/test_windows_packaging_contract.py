@@ -307,6 +307,15 @@ class WindowsPackagingContract(unittest.TestCase):
         r"Get-Command \$name -CommandType Application -ErrorAction SilentlyContinue \|\s*"
         r"Select-Object -First 1")
 
+  def test_setup_prefers_the_openssh_client_the_runtime_uses(self):
+    source = SETUP_SCRIPT.read_text(encoding="utf-8")
+    runtime = read_source("src/HostPlatform.cpp")
+    # Enrollment and runtime must trust the card through the same client.
+    self.assertIn('/ L"OpenSSH" / executable', runtime)
+    self.assertIn("GetSystemDirectoryW", runtime)
+    inbox = source.index('Join-Path ([Environment]::SystemDirectory) "OpenSSH\\$name"')
+    self.assertLess(inbox, source.index("Get-Command $name -CommandType Application"))
+
   def test_setup_drains_redirected_process_output_while_command_runs(self):
     setup_script = read_source("scripts/windows/pcie-setup.ps1")
     bounded_command = setup_script.split(

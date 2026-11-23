@@ -152,7 +152,13 @@ $requiredCommands = @(
 )
 $commands = @{}
 foreach ($name in $requiredCommands) {
-  # PATH can hold more than one OpenSSH; use the first match, as the shell would.
+  # Resolve as the runtime does (HostPlatform.cpp open_ssh_executable): the in-box
+  # client first, then the first match on PATH, so both use the same OpenSSH.
+  $inbox = Join-Path ([Environment]::SystemDirectory) "OpenSSH\$name"
+  if (Test-Path -LiteralPath $inbox -PathType Leaf) {
+    $commands[$name] = $inbox
+    continue
+  }
   $command = Get-Command $name -CommandType Application -ErrorAction SilentlyContinue |
     Select-Object -First 1
   if ($null -eq $command) {

@@ -112,6 +112,15 @@ int main() {
                 contents.find("draft model") != std::string::npos,
             "GenAI worker launch lost the selected model directories");
 
+    g::ConnectionOptions keyed = connection;
+    keyed.ssh_key = (directory.path / "card key").string();
+    g::internal::RemoteSession(keyed).start();
+    std::ifstream keyed_input(arguments);
+    const std::string keyed_contents((std::istreambuf_iterator<char>(keyed_input)), {});
+    require(keyed_contents.find("-i\n" + keyed.ssh_key + "\n-o\nIdentitiesOnly=yes\n") !=
+                std::string::npos,
+            "GenAI worker launch offered keys other than the selected one");
+
     // OpenSSH can exit without a message; the launch error must still say what failed.
     std::ofstream(fake_ssh) << "#!/bin/sh\nexit 255\n";
     try {

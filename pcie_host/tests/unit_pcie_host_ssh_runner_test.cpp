@@ -5,16 +5,17 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <cstdlib>
+#include <filesystem>
+#include <fstream>
 #include <iostream>
+#include <optional>
 #include <stdexcept>
 #include <string_view>
 #include <thread>
 #include <vector>
 
 #ifdef _WIN32
-#include <fstream>
-#include <optional>
-
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
@@ -293,6 +294,29 @@ void test_remote_transport_requires_known_host_keys() {
           "tensor ssh and scp must fail instead of waiting on a hidden prompt");
 }
 
+#ifndef _WIN32
+void test_remote_transport_offers_only_the_neat_key() {
+  const auto home = std::filesystem::temp_directory_path() /
+                    ("neat-pcie-identity-" + std::to_string(pcie_internal::host_process_id()));
+  std::filesystem::create_directories(home / ".ssh");
+  std::ofstream(home / ".ssh" / "sima_neat_pcie_ed25519") << "fixture";
+  const char* previous = std::getenv("HOME");
+  const std::optional<std::string> saved =
+      previous ? std::optional<std::string>(previous) : std::nullopt;
+  setenv("HOME", home.c_str(), 1);
+  const pcie_internal::RemoteRuntime runtime(simaai::neat::pcie::ConnectionOptions{});
+  const auto ssh = runtime.ssh_base();
+  const auto scp = runtime.scp_base();
+  saved ? setenv("HOME", saved->c_str(), 1) : unsetenv("HOME");
+  std::filesystem::remove_all(home);
+  for (const auto* command : {&ssh, &scp}) {
+    require(std::find(command->begin(), command->end(), "-i") != command->end() &&
+                has_ssh_option(*command, "IdentitiesOnly=yes"),
+            "tensor ssh and scp must offer only the Neat key when it exists");
+  }
+}
+#endif
+
 } // namespace
 
 int main(const int argc, char** argv) {
@@ -392,6 +416,9 @@ int main(const int argc, char** argv) {
     test_start_failure_cleanup_classification();
     test_remote_runtime_paths();
     test_remote_transport_requires_known_host_keys();
+#ifndef _WIN32
+    test_remote_transport_offers_only_the_neat_key();
+#endif
     std::cout << "[PASS] ssh runner\n";
     return 0;
   } catch (const std::exception& e) {
