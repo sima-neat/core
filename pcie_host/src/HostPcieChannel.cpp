@@ -409,8 +409,8 @@ std::optional<RuntimeInferenceResult> HostPcieChannel::pull_result(int timeout_m
     throw std::runtime_error("PCIe output cannot be mapped for public tensor access");
   owner->mapped = true;
   if (!output_layout_)
-    output_layout_ = resolve_output_layout(facts_, gst_sample_get_caps(owner->sample),
-                                           expects_bbox_output_);
+    output_layout_ =
+        resolve_output_layout(facts_, gst_sample_get_caps(owner->sample), expects_bbox_output_);
   if (output_layout_->raw_bytes && owner->map.size != output_layout_->raw_bytes)
     throw std::runtime_error("PCIe raw output extent differs from the negotiated layout");
   return RuntimeInferenceResult{received->request_id,

@@ -190,8 +190,8 @@ int main() {
               bbox_tensors[0].data == bbox_owner->map.data + 64 &&
               bbox_tensors[0].size_bytes == sizeof(bbox),
           "BBOX public view contract changed");
-    for (const char* tag : {"BBOX", "BBOX_POSE", "BBOX_SEGMENTATION", "BBOX_SEGMENTATION_POSE",
-                            "BBOX_OBB_V1"}) {
+    for (const char* tag :
+         {"BBOX", "BBOX_POSE", "BBOX_SEGMENTATION", "BBOX_SEGMENTATION_POSE", "BBOX_OBB_V1"}) {
       for (bool byte_stream : {false, true}) {
         auto* tagged_caps = byte_stream ? caps(0, {}, tag) : caps(128, {64, sizeof(bbox)}, tag);
         const auto tagged_layout = resolve_output_layout(facts, tagged_caps, true);

@@ -46,9 +46,9 @@ const char* boxdecode_format(const GstStructure* caps) {
   if (!gst_structure_has_name(caps, "application/vnd.simaai.tensor"))
     return nullptr;
   const char* format = gst_structure_get_string(caps, "format");
-  for (const auto* tag : {kDetectionFormatBbox, kDetectionFormatBboxPose,
-                          kDetectionFormatBboxSegmentation, kDetectionFormatBboxSegmentationPose,
-                          kDetectionFormatBboxObbV1}) {
+  for (const auto* tag :
+       {kDetectionFormatBbox, kDetectionFormatBboxPose, kDetectionFormatBboxSegmentation,
+        kDetectionFormatBboxSegmentationPose, kDetectionFormatBboxObbV1}) {
     if (g_strcmp0(format, tag) == 0)
       return tag;
   }
