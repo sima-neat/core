@@ -130,7 +130,7 @@ jobs:
       - run: python3 pcie_host/tests/test_verify_linux_release_run.py
   linux_release:
     name: Exact Linux build and hardware regressions
-    needs: contracts
+    # Runs beside contracts; every job after it also needs contracts.
     if: github.event_name != 'pull_request'
     environment: production
     runs-on: ubuntu-24.04
