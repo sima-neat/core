@@ -2510,6 +2510,8 @@ class WindowsCiContracts(unittest.TestCase):
         self.assertTrue(Path(environment[name]).is_relative_to(work.resolve()))
       self.assertEqual(environment["USERPROFILE"], str(home.resolve()))
       self.assertEqual(environment["HOME"], str(home.resolve()))
+      # No console is attached in CI, so the install must not wait for a card password.
+      self.assertEqual(environment["SIMAPCIE_SKIP_SETUP"], "1")
       with self.assertRaisesRegex(ValueError, "inside the disposable work tree"):
         isolated_sima_cli_environment(work.parent / "outside", wheelhouse, work)
 

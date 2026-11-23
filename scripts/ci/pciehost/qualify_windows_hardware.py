@@ -966,6 +966,8 @@ def isolated_sima_cli_environment(customer_home: Path, wheelhouse: Path,
       "PIP_NO_INDEX": "1",
       "SIMA_CLI_CHECK_FOR_UPDATE": "0",
       "SIMA_CLI_HOME": str(home / ".sima-cli"),
+      # The qualifier enrolls the card key itself, as the Linux lifecycle passes --skip-setup.
+      "SIMAPCIE_SKIP_SETUP": "1",
       "USERPROFILE": str(home),
   })
   # Skill and sima-cli state live under the work tree, so its removal proves none remains.
