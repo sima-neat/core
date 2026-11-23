@@ -2417,20 +2417,19 @@ if (NOT preproc_roi_user_smoke_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
     LABELS "e2e;obj_detection;preproc;roi;smoke")
 endif()
 
-add_pipeline_test_long(
-  preproc_roi_boxdecode_color_test
-  e2e_pipelines/obj_detection/preproc_roi_boxdecode_color_test.cpp
+add_pipeline_test(
+  preproc_roi_boxdecode_moving_test
+  e2e_pipelines/obj_detection/preproc_roi_boxdecode_moving_test.cpp
   e2e_pipelines/e2e_utils.cpp
   e2e_pipelines/obj_detection/obj_detection_utils.cpp
   ARGS ${CMAKE_SOURCE_DIR}
+  LOCK_ACCELERATOR
 )
 
-if (NOT preproc_roi_boxdecode_color_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
-  set_property(TEST preproc_roi_boxdecode_color_test APPEND PROPERTY
-    LABELS "e2e;obj_detection;preproc;roi;boxdecode;rgb;long")
-  set_property(TEST preproc_roi_boxdecode_color_test APPEND PROPERTY
-    RESOURCE_LOCK "accelerator-device")
-  set_tests_properties(preproc_roi_boxdecode_color_test PROPERTIES TIMEOUT 300)
+if (NOT preproc_roi_boxdecode_moving_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  set_property(TEST preproc_roi_boxdecode_moving_test APPEND PROPERTY
+    LABELS "e2e;obj_detection;preproc;roi;boxdecode")
+  set_tests_properties(preproc_roi_boxdecode_moving_test PROPERTIES TIMEOUT 120)
 endif()
 
 add_pipeline_test(
