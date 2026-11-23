@@ -32,7 +32,7 @@ Arm64ホストでのビルドは、まだ検証されていません。Windows�
 Windowsプレビューには、次の制限があります。
 
 - Windows 10、Windows Server、SモードのWindows、およびArm64版Windowsはサポートされていません。
-- プレビューは、セキュアブートを無効にし、PlatformドライバーのためにWindowsのテスト署名モードを有効にした状態で検証されています。セキュアブートを有効にした状態でPlatformドライバーが読み込まれるかどうかは、まだ確認されていません。
+- 現在のPlatform 3.0 Windowsドライバーパッケージはテスト署名されています。Windowsは、セキュアブートが無効で、Windowsのテスト署名モードが有効な場合にのみこのドライバーを読み込みます。セキュアブートを有効のままにする必要があるホストでは、本番署名されたPlatformドライバーが提供されるまでプレビューを使用できません。
 - Windowsの再起動後に、カードが見つからなかったり、モデルがタイムアウトしたりすることがあります。再起動ではなく、ホストをシャットダウンしてから電源を入れてください。スリープ、休止状態、高速スタートアップは検証されていません。
 - 検証済みの構成は、ホスト1台につきカード1枚です。
 - プレビューパッケージはコード署名されていません。Smart App Control、Windows Defender Application Control、および強制適用されたAppLockerポリシーによってブロックされます。
@@ -97,6 +97,15 @@ gst-inspect-1.0 neatpciehost
 Windowsプレビューは、`pcie::Model`ビジョンAPIのネイティブVisual Studioビルドであり、`pcie::genai::GenAIModel`も含まれます。上記のとおり、GenAIのリリースには引き続き認定が必要です。APIをインストールするだけでは、Platformトランスポートやカードモデルは認定されません。次の前提条件を、この順序でインストールしてください。
 
 1. Neatリリースに対応するSiMa Platform 3.0 Windowsパッケージ。[PCIeドライバーインストールガイド](https://developer.sima.ai/hardware/getting-started/pcie-mode/driver-installation)の説明に従ってインストールします。PCIeドライバーと`SiMaMlaDaemon`サービスを提供します。インストーラーが確認するのはドライバーのバージョンであり、**Installed apps**に表示されるパッケージ名ではありません。ドライバーのバージョンを確認するには、PowerShellで`Get-CimInstance Win32_PnPSignedDriver | Where-Object DeviceName -like 'SiMa.ai*' | Select-Object DeviceName, DriverVersion`を実行します。カードが取り付けられていれば、`SiMa.ai MLA Device`と`SiMa.ai Virtual Ethernet Adapter`が表示されます。
+
+   現在のPlatform 3.0 Windowsドライバーパッケージは、本番署名ではなくテスト署名されています。Windowsは、セキュアブートが無効で、Windowsのテスト署名モードが有効な場合にのみこのドライバーを読み込みます。Platformインストーラーはテスト署名を有効にしますが、セキュアブートが有効な間はWindowsがこれを許可しないため、Platformパッケージをインストールする前にセキュアブートを無効にしてください。両方の設定を確認するには、PowerShellを管理者として起動し、次を実行します。
+
+   ```powershell
+   Confirm-SecureBootUEFI
+   bcdedit
+   ```
+
+   `Confirm-SecureBootUEFI`は`False`を出力し、`bcdedit`の出力には`testsigning Yes`が含まれている必要があります。テスト署名が有効な場合、Windowsのデスクトップに**テスト モード**と表示されます。セキュアブートはPCのファームウェア（UEFI）設定で無効にします。手順はPCメーカーによって異なります。詳しくは[セキュアブートを無効にする](https://learn.microsoft.com/windows-hardware/manufacture/desktop/disabling-secure-boot)を参照してください。セキュアブートを変更すると、BitLockerの回復が開始されることがあります。システムドライブでBitLockerまたはデバイスの暗号化を使用している場合は、セキュアブートを変更する前に、組織のデバイス暗号化ポリシーを確認し、BitLockerを一時停止して、回復キーを用意してください。
 2. GStreamer 1.28.6 MSVC x64。[gstreamer-1.0-msvc-x86_64-1.28.6.exe](https://gstreamer.freedesktop.org/data/pkg/windows/1.28.6/msvc/gstreamer-1.0-msvc-x86_64-1.28.6.exe)から入手します。パッケージにはこのバージョンが厳密に必要です。C++アプリケーションに必要な開発ファイルを含むセットアップの種類を選択してください。インストール後は、GStreamerインストーラーが設定する`GSTREAMER_1_0_ROOT_MSVC_X86_64`変数が反映されるように、新しいターミナルを開いてください。
 3. [python.org](https://www.python.org/downloads/windows/)の64ビットCPython 3.14。すべてのユーザー向けと現在のユーザー向けのどちらのインストールでも使用できます。Pythonは`sima-cli`より先にインストールしてください。フリースレッドビルドではwheelを読み込めません。
 4. [sima-cliインストールガイド](/tools/sima-cli/)に従ってインストールした`sima-cli`。その後、`sima-cli login`でサインインします。古い`sima-cli`は`Missing 'script' in 'installation'`で停止します。更新してから再試行してください。
@@ -248,7 +257,7 @@ Windowsでは、次のケースも確認してください。
 
 | 症状 | 原因 | 対処方法 |
 | --- | --- | --- |
-| Platformドライバーまたは`SiMa.ai MLA Device`が見つからないとインストーラーが報告する | Platformパッケージがインストールされていないか、Windowsがカードを検出していない | Platformパッケージをインストールします。インストール済みの場合は、カードが正しく装着され、電源が供給されていることを確認してから、ホストをシャットダウンして電源を入れます。 |
+| `SiMa.ai MLA Device`がデバイスマネージャーに表示されない、または警告付きで表示される。あるいは、Platformドライバーが見つからないとインストーラーが報告する | Platformパッケージがインストールされていない。セキュアブートが有効か、テスト署名が無効なため、Windowsがテスト署名済みドライバーを読み込まない。またはWindowsがカードを検出していない | Platformパッケージをインストールします。管理者として起動したPowerShellで、`Confirm-SecureBootUEFI`が`False`を出力し、`bcdedit`に`testsigning Yes`が表示されることを確認します。セキュアブートが有効な場合は、ファームウェア設定で無効にしてから`bcdedit /set testsigning on`を実行します。両方の設定が正しい場合は、カードが正しく装着され、電源が供給されていることを確認します。その後、ホストをシャットダウンして電源を入れます。 |
 | インストール後にWindowsが再起動を求める、または再起動後にカードが見つからない | Windowsの再起動後に、カードが必ず復帰するとは限らない | 再起動ではなく、ホストをシャットダウンしてから電源を入れます。 |
 | ほかのモデルを開いているときにモデルの起動に失敗し、Platformがエラー1450を報告する | 開いている各キューがバッファー用に物理的に連続したホストメモリを確保し、その量はキューの深さとテンソルのサイズに応じて増える | 同時に開くモデルを減らし、ほかのアプリケーションを終了します。メモリの少ないホストでは、同時に開けるキューが少なくなります。 |
 | インストールが終了コード1625で停止する | Smart App Control、Windows Defender Application Control、またはAppLockerのポリシーが、署名されていないパッケージをブロックしている | そのポリシーでパッケージが許可されているホストにインストールします。 |

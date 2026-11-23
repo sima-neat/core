@@ -32,7 +32,7 @@ Arm64 主機上的建置尚未經過驗證。Windows 套件包含 PCIe GenAI API
 Windows 預覽版有下列限制：
 
 - 不支援 Windows 10、Windows Server、S 模式的 Windows 以及 Arm64 Windows。
-- 預覽版的驗證環境為關閉安全開機（Secure Boot），並為 Platform 驅動程式開啟 Windows 測試簽章模式。尚未確認在開啟安全開機時是否能載入 Platform 驅動程式。
+- 目前的 Platform 3.0 Windows 驅動程式套件採用測試簽章。只有在關閉安全開機（Secure Boot）並開啟 Windows 測試簽章模式時，Windows 才會載入此驅動程式。必須保持開啟安全開機的主機，在提供正式簽章的 Platform 驅動程式之前，無法使用預覽版。
 - Windows 重新啟動後，可能找不到卡片，或模型可能逾時。請將主機關機後再開機，而不要重新啟動。睡眠、休眠與快速啟動尚未經過驗證。
 - 目前僅驗證過每部主機一張卡片的設定。
 - 預覽版套件未經程式碼簽署。智慧型應用程式控制（Smart App Control）、Windows Defender 應用程式控制，以及強制執行的 AppLocker 原則會封鎖這些套件。
@@ -97,6 +97,15 @@ gst-inspect-1.0 neatpciehost
 Windows 預覽是 `pcie::Model` 視覺 API 的原生 Visual Studio 建置，並包含 `pcie::genai::GenAIModel`。如上所述，GenAI 仍需通過版本發布資格驗證；僅安裝 API 並不代表 Platform 傳輸或卡片模型已通過資格驗證。請依下列順序安裝先決條件：
 
 1. 與 Neat 版本相符的 SiMa Platform 3.0 Windows 套件，請依照 [PCIe 驅動程式安裝指南](https://developer.sima.ai/hardware/getting-started/pcie-mode/driver-installation) 安裝。它提供 PCIe 驅動程式與 `SiMaMlaDaemon` 服務。安裝程式檢查的是驅動程式版本，而不是 **Installed apps** 中顯示的套件名稱。若要查看驅動程式版本，請在 PowerShell 中執行 `Get-CimInstance Win32_PnPSignedDriver | Where-Object DeviceName -like 'SiMa.ai*' | Select-Object DeviceName, DriverVersion`。安裝卡片後，輸出會列出 `SiMa.ai MLA Device` 與 `SiMa.ai Virtual Ethernet Adapter`。
+
+   目前的 Platform 3.0 Windows 驅動程式套件採用測試簽章，而非正式簽章。只有在關閉安全開機並開啟 Windows 測試簽章模式時，Windows 才會載入此驅動程式。Platform 安裝程式會開啟測試簽章，但在安全開機開啟時 Windows 不允許這項變更，因此請在安裝 Platform 套件之前關閉安全開機。若要檢查這兩項設定，請以系統管理員身分啟動 PowerShell 並執行：
+
+   ```powershell
+   Confirm-SecureBootUEFI
+   bcdedit
+   ```
+
+   `Confirm-SecureBootUEFI` 必須輸出 `False`，且 `bcdedit` 的輸出必須列出 `testsigning Yes`。開啟測試簽章後，Windows 桌面會顯示 **測試模式**。安全開機需在電腦的韌體（UEFI）設定中關閉；步驟依電腦製造商而異，請參閱 [停用安全開機](https://learn.microsoft.com/windows-hardware/manufacture/desktop/disabling-secure-boot)。變更安全開機可能會啟動 BitLocker 修復。若系統磁碟機使用 BitLocker 或裝置加密，請在變更安全開機之前確認組織的裝置加密原則、暫停 BitLocker，並備妥修復金鑰。
 2. GStreamer 1.28.6 MSVC x64，下載自 [gstreamer-1.0-msvc-x86_64-1.28.6.exe](https://gstreamer.freedesktop.org/data/pkg/windows/1.28.6/msvc/gstreamer-1.0-msvc-x86_64-1.28.6.exe)。此套件必須使用這個確切版本。請選擇包含開發檔案的安裝類型，C++ 應用程式需要這些檔案。安裝完成後請開啟新的終端機，使其能讀取 GStreamer 安裝程式所設定的 `GSTREAMER_1_0_ROOT_MSVC_X86_64` 變數。
 3. 來自 [python.org](https://www.python.org/downloads/windows/) 的 64 位元 CPython 3.14，可為所有使用者或僅為目前使用者安裝。請在安裝 `sima-cli` 之前先安裝 Python。自由執行緒（free-threaded）建置無法載入此 wheel。
 4. 依照 [sima-cli 安裝指南](/tools/sima-cli/) 安裝的 `sima-cli`。接著使用 `sima-cli login` 登入。較舊的 `sima-cli` 會以 `Missing 'script' in 'installation'` 停止；請更新後再試一次。
@@ -248,7 +257,7 @@ ssh -i "$env:USERPROFILE\.ssh\sima_neat_pcie_ed25519" sima@10.0.0.2 "pkill -f '[
 
 | 症狀 | 原因 | 處理方式 |
 | --- | --- | --- |
-| 安裝程式回報缺少 Platform 驅動程式或 `SiMa.ai MLA Device` | 尚未安裝 Platform 套件，或 Windows 未偵測到卡片 | 安裝 Platform 套件。若已安裝，請確認卡片已確實插好並已通電，然後將主機關機後再開機。 |
+| `SiMa.ai MLA Device` 未出現在裝置管理員中或顯示警告，或安裝程式回報找不到 Platform 驅動程式 | 尚未安裝 Platform 套件；安全開機已開啟或測試簽章已關閉，因此 Windows 不會載入測試簽章的驅動程式；或 Windows 未偵測到卡片 | 安裝 Platform 套件。在以系統管理員身分啟動的 PowerShell 中，確認 `Confirm-SecureBootUEFI` 輸出 `False`，且 `bcdedit` 列出 `testsigning Yes`。若安全開機已開啟，請在韌體設定中將其關閉，然後執行 `bcdedit /set testsigning on`。若兩項設定都正確，請確認卡片已確實插好並已通電。接著將主機關機後再開機。 |
 | 安裝後 Windows 要求重新啟動，或重新啟動後找不到卡片 | Windows 重新啟動後，卡片不一定會恢復 | 請將主機關機後再開機，而不要重新啟動。 |
 | 其他模型開啟時，模型無法啟動，且 Platform 回報錯誤 1450 | 每個開啟的佇列都會為其緩衝區保留實體連續的主機記憶體，其大小會隨佇列深度與張量大小增加 | 減少同時開啟的模型數量，並關閉其他應用程式。記憶體較少的主機能同時開啟的佇列也較少。 |
 | 安裝停止並傳回結束代碼 1625 | 智慧型應用程式控制、Windows Defender 應用程式控制或 AppLocker 原則封鎖了未簽署的套件 | 在該原則允許這些套件的主機上安裝。 |

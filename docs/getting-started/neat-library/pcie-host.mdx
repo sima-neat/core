@@ -41,9 +41,10 @@ The Windows preview has these limits:
 
 - Windows 10, Windows Server, Windows in S mode, and Arm64 Windows are not
   supported.
-- The preview was validated with Secure Boot turned off and Windows test-signing
-  mode turned on for the Platform driver. Whether the Platform driver loads with
-  Secure Boot turned on is not yet confirmed.
+- The current Platform 3.0 Windows driver package is test-signed. Windows loads
+  it only with Secure Boot turned off and Windows test-signing mode turned on.
+  A host that must keep Secure Boot on cannot use the preview until a
+  production-signed Platform driver is available.
 - After a Windows restart, the card may be missing or models may time out. Shut
   the host down and power it on instead of restarting. Sleep, hibernation, and
   Fast Startup have not been validated.
@@ -132,6 +133,28 @@ or card models. Install these prerequisites in this order:
    `Get-CimInstance Win32_PnPSignedDriver | Where-Object DeviceName -like 'SiMa.ai*' | Select-Object DeviceName, DriverVersion`
    in PowerShell. With the card installed, it lists `SiMa.ai MLA Device` and
    `SiMa.ai Virtual Ethernet Adapter`.
+
+   The current Platform 3.0 Windows driver package is test-signed, not
+   production-signed. Windows loads it only with Secure Boot turned off and
+   Windows test-signing mode turned on. The Platform installer turns
+   test-signing on, which Windows does not allow while Secure Boot is on, so
+   turn Secure Boot off before you install the Platform package. To check both
+   settings, start PowerShell as administrator and run:
+
+   ```powershell
+   Confirm-SecureBootUEFI
+   bcdedit
+   ```
+
+   `Confirm-SecureBootUEFI` must print `False`, and the `bcdedit` output must
+   list `testsigning Yes`. With test-signing on, Windows shows **Test Mode** on
+   the desktop. Secure Boot is turned off in the PC's firmware (UEFI) setup;
+   the steps depend on the PC manufacturer, as described in
+   [Disabling Secure Boot](https://learn.microsoft.com/windows-hardware/manufacture/desktop/disabling-secure-boot).
+   Changing Secure Boot can start BitLocker recovery. If the system drive uses
+   BitLocker or device encryption, check your organization's device-encryption
+   policy, suspend BitLocker, and have the recovery key available before you
+   change Secure Boot.
 2. GStreamer 1.28.6 MSVC x64, from
    [gstreamer-1.0-msvc-x86_64-1.28.6.exe](https://gstreamer.freedesktop.org/data/pkg/windows/1.28.6/msvc/gstreamer-1.0-msvc-x86_64-1.28.6.exe).
    The package requires exactly this version. Choose a setup type that includes
@@ -364,7 +387,7 @@ On Windows, also check these cases:
 
 | Symptom | Cause | What to do |
 | --- | --- | --- |
-| The installer reports a missing Platform driver or `SiMa.ai MLA Device` | The Platform package is not installed, or Windows has not detected the card | Install the Platform package. If it is installed, check that the card is seated and powered, then shut the host down and power it on. |
+| `SiMa.ai MLA Device` is missing or shows a warning in Device Manager, or the installer reports that the Platform driver was not found | The Platform package is not installed; Secure Boot is on or test-signing is off, so Windows does not load the test-signed driver; or Windows has not detected the card | Install the Platform package. From PowerShell started as administrator, check that `Confirm-SecureBootUEFI` prints `False` and that `bcdedit` lists `testsigning Yes`. If Secure Boot is on, turn it off in firmware setup, then run `bcdedit /set testsigning on`. If both settings are correct, check that the card is seated and powered. Then shut the host down and power it on. |
 | Windows asks for a restart after an installation, or the card is missing after a restart | The card does not always return after a Windows restart | Shut the host down and power it on instead of restarting. |
 | A model fails to start while other models are open, and the Platform reports error 1450 | Each open queue reserves physically contiguous host memory for its buffers, which grows with the queue depth and tensor size | Open fewer models at the same time and close other applications. Hosts with less memory can open fewer queues at once. |
 | Installation stops with exit code 1625 | A Smart App Control, Windows Defender Application Control, or AppLocker policy blocks the unsigned packages | Install on a host where that policy allows the packages. |
