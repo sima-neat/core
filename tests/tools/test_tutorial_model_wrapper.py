@@ -58,17 +58,22 @@ def test_missing_empty_or_directory_mpk_fails_and_names_the_variable(tmp_path, p
     result = run(program, 'yolo_v8s', default)
     assert result.returncode == 1
     assert result.stdout == ''
+    assert f'Prepare {default} as described in Tutorial Setup' in result.stderr
     assert 'SIMA_NEAT_TUTORIAL_MODEL_YOLO' in result.stderr
-    assert 'build.sh --download-models-only' in result.stderr
+    assert 'unset' not in result.stderr
 
 
 def test_variable_naming_a_missing_file_does_not_fall_back(tmp_path, program):
     default = mpk(tmp_path / 'resnet_50.tar.gz')
-    result = run(program, 'resnet_50', default,
-                 SIMA_NEAT_TUTORIAL_MODEL_RESNET=str(tmp_path / 'missing.tar.gz'))
+    missing = tmp_path / 'missing.tar.gz'
+    result = run(program, 'resnet_50', default, SIMA_NEAT_TUTORIAL_MODEL_RESNET=str(missing))
     assert result.returncode == 1
     assert result.stdout == ''
-    assert 'SIMA_NEAT_TUTORIAL_MODEL_RESNET' in result.stderr
+    assert str(missing) in result.stderr
+    assert ('Correct SIMA_NEAT_TUTORIAL_MODEL_RESNET, or unset it to use '
+            f'{default}') in result.stderr
+    # The default file is valid: preparing it again would not help.
+    assert 'Tutorial Setup' not in result.stderr
 
 
 def test_unknown_model_is_a_usage_error(tmp_path, program):
