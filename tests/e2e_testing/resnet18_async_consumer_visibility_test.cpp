@@ -33,11 +33,6 @@ namespace fs = std::filesystem;
 
 namespace {
 
-int env_int_value(const char* key, int fallback) {
-  const char* v = std::getenv(key);
-  return (v && *v) ? std::atoi(v) : fallback;
-}
-
 std::uint64_t duration_ns(std::chrono::steady_clock::time_point a,
                           std::chrono::steady_clock::time_point b) {
   return static_cast<std::uint64_t>(
@@ -309,27 +304,23 @@ int main(int argc, char** argv) {
 #if !defined(SIMA_WITH_OPENCV)
   (void)argc;
   (void)argv;
-  return skip_long_test("OpenCV required");
+  return skip_test("OpenCV required");
 #else
   try {
     simaai::neat::gst_init_once();
     if (!simaai::neat::element_exists("neatkernelrunner") ||
         !simaai::neat::element_exists("neatprocessmla")) {
-      return skip_long_test("missing SimaAI plugins");
+      return skip_test("missing SimaAI plugins");
     }
 
-    int count = env_int_value("SIMA_ASYNC_VISIBILITY_COUNT", 32);
-    int timeout_ms = env_int_value("SIMA_ASYNC_VISIBILITY_TIMEOUT_MS", 20000);
-    int queue_depth = env_int_value("SIMA_ASYNC_VISIBILITY_QUEUE_DEPTH", 4);
-    int consumer_work_us = env_int_value("SIMA_ASYNC_VISIBILITY_WORK_US", 2000);
+    constexpr int count = 32;
+    constexpr int timeout_ms = 20000;
+    constexpr int queue_depth = 4;
+    constexpr int consumer_work_us = 2000;
     std::string model_path;
     if (const char* env = std::getenv("SIMA_RESNET18_TAR"); env && *env)
       model_path = env;
     std::string tmp;
-    sima_test::parse_int_arg(argc, argv, "--count", count);
-    sima_test::parse_int_arg(argc, argv, "--timeout-ms", timeout_ms);
-    sima_test::parse_int_arg(argc, argv, "--queue-depth", queue_depth);
-    sima_test::parse_int_arg(argc, argv, "--consumer-work-us", consumer_work_us);
     if (sima_test::get_arg(argc, argv, "--model", tmp))
       model_path = tmp;
     if (model_path.empty())
@@ -338,8 +329,6 @@ int main(int argc, char** argv) {
     std::error_code ec;
     if (!fs::is_regular_file(model_path, ec) || fs::file_size(model_path, ec) == 0)
       throw std::runtime_error("ResNet-18 MPK is missing or empty: " + model_path);
-    if (count < 4)
-      throw std::runtime_error("--count must be at least 4");
 
     simaai::neat::Model::Options model_opt;
     model_opt.preprocess.kind = simaai::neat::InputKind::Image;
@@ -369,8 +358,6 @@ int main(int argc, char** argv) {
                                       consumer_work_us));
     std::cout << "[OK] resnet18_async_consumer_visibility_test passed\n";
     return 0;
-  } catch (const SkipTest& e) {
-    return skip_long_test(e.what());
   } catch (const std::exception& e) {
     std::cerr << "[FAIL] " << e.what() << "\n";
     return 1;
