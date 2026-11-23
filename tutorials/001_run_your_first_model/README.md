@@ -116,9 +116,10 @@ Search order:
 3. `tmp/resnet_50.tar.gz`
 4. Local files moved into `tmp/` if found: `resnet_50.tar.gz`, `resnet-50.tar.gz`
 
-Download (if `sima-cli` is available):
+Download it from the Model Browser and extract the model archive to the path the commands above use. [Tutorial Setup](/tutorials/before-you-run) describes the download:
 ```bash
-sima-cli modelzoo get resnet_50
+sima-cli models download --id resnet_50 --variant w8a8
+unzip -p models/resnet_50/w8a8/resnet_50_w8a8_default.zip resnet_50_w8a8_mpk.tar.gz > /tmp/resnet_50.tar.gz
 ```
 
 ### Sample images

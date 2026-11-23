@@ -40,14 +40,15 @@ You can skip this section — it uses the same `assets/` directory, model packag
     mkdir -p assets
     </ShellCommand>
 
-2. **Download the model:**
+2. **Download the model** from the Model Browser and extract the model archive from the downloaded ZIP:
 
     <ShellCommand prompt="sdk|devkit">
-    sima-cli modelzoo -v 2.1.3 get yolo_v8s
+    sima-cli models download --id yolov8s --variant w8a8
+    unzip -p models/yolov8s/w8a8/yolov8s_w8a8_default.zip yolov8s_w8a8_mpk.tar.gz > assets/yolo_v8s_mpk.tar.gz
     </ShellCommand>
 
     :::note sima-cli model download
-    If `sima-cli` writes the model somewhere other than the `assets` directory, copy that file into `assets/yolo_v8s_mpk.tar.gz`.
+    The program opens `assets/yolo_v8s_mpk.tar.gz`. See [Tutorial Setup](/tutorials/before-you-run) for the `sima-cli` version this needs.
     :::
 3. **Download the sample image** from the docs and save it as `assets/tutorial_sample_image.png`.
 

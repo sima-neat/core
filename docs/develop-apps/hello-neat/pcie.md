@@ -25,16 +25,19 @@ You need:
 
 ## Get the model and image
 
-Create a working directory on the host machine and download ResNet-50 from the
-Model Zoo:
+Create a working directory on the host machine, download ResNet-50 from the
+Model Browser, and extract the model archive from the downloaded ZIP as
+`resnet_50.tar.gz`:
 
 <ShellCommand prompt="pcie-host">
 mkdir -p pcie-host-quickstart/assets
 cd pcie-host-quickstart
-sima-cli modelzoo get resnet_50
+sima-cli models download --id resnet_50 --variant w8a8
+unzip -p models/resnet_50/w8a8/resnet_50_w8a8_default.zip resnet_50_w8a8_mpk.tar.gz > resnet_50.tar.gz
 </ShellCommand>
 
-Place the downloaded archive in this directory as `resnet_50.tar.gz`.
+See [Tutorial Setup](/tutorials/before-you-run) for
+the `sima-cli` version this needs.
 
 Download the [sample Labrador image](../../images/hello-neat-pcie-labrador.jpg)
 and save it as `assets/sample.png`.
