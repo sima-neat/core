@@ -33,8 +33,8 @@ void MediaStage::prepare() {
     return;
   std::error_code error;
   const auto canonical_root = std::filesystem::canonical(root_, error);
-  const auto configuration =
-      "Platform daemon [serve] root '" + serve_ + "' at '" + root_.string() + "'";
+  const auto configuration = "Platform daemon [serve] root '" + serve_ + "' at '" +
+                             pcie::internal::host_path_string(root_) + "'";
   const bool root_is_directory = !error && std::filesystem::is_directory(canonical_root, error);
   if (error || !root_is_directory)
     throw std::runtime_error(configuration + " is missing or is not a directory; repair " +
@@ -75,7 +75,8 @@ Json MediaStage::descriptor(const std::filesystem::path& path) {
 }
 Json MediaStage::file(const std::filesystem::path& source) {
   if (!std::filesystem::is_regular_file(source) || std::filesystem::file_size(source) > max_bytes)
-    throw std::invalid_argument("Media file missing or too large: " + source.string());
+    throw std::invalid_argument("Media file missing or too large: " +
+                                pcie::internal::host_path_string(source));
   prepare();
   auto dest = directory_ / (std::to_string(count_++) + ".media");
   std::filesystem::copy_file(source, dest);
