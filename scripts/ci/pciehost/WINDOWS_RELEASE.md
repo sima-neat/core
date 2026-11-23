@@ -443,15 +443,16 @@ then install with:
 sima-cli neat install core/pciehost/windows/amd64@v<package-version>
 ```
 
-Before the first production publication, rehearse against staging. The Vulcan
-environment comes from the `VULCAN_ENV` variable, as for the Ubuntu packages, so
-the rehearsal is a release-tag dispatch while that variable selects `staging`,
-after the same tag's Linux release has promoted `latest.tag` in staging. Then,
-on a clean Windows 11 host, run the customer command against staging and
-confirm that both MSIs and the wheel download and install:
+Before the first production publication, rehearse the customer install from
+the `develop` channel. Staging holds no Core or Scheduler publications to
+install from. A `develop` push publishes its Windows cohort with the same
+`publish_windows.sh` and layout as a release, at
+`core/develop/<commit12>/pciehost/windows/amd64/`, and promotes `develop`
+`latest` once its lanes pass. On a clean Windows 11 host, run the customer
+command and confirm that both MSIs and the wheel download and install:
 
 ```text
-sima-cli neat install core/pciehost/windows/amd64@v<package-version> --env staging
+sima-cli neat install core/pciehost/windows/amd64@develop
 ```
 
 Cross-version upgrade is a formal release check rather than a cost paid by every

@@ -404,7 +404,7 @@ jobs:
           retention-days: 7
   dependencies:
     name: Resolve immutable Windows dependency cohort
-    needs: [contracts, linux_release]
+    needs: [contracts, linux_release, resolve-vulcan-config]
     # Vulcan CI's PCIe host matrix already built this commit's cohort in the same run.
     if: needs.contracts.result == 'success' && needs.linux_release.result == 'success' && inputs.linux_current_run != true
     runs-on: windows-2025
@@ -462,6 +462,8 @@ jobs:
         env:
           SOURCE_BRANCH: ${{ github.head_ref || github.ref_name }}
           SIMA_CLI_CHECK_FOR_UPDATE: "0"
+          # The environment the publish job publishes to, as in Vulcan CI's matrix.
+          NEAT_VULCAN_ENV: ${{ needs.resolve-vulcan-config.outputs.vulcan_env }}
           SCHEDULER_COMMIT: ${{ inputs.scheduler_commit }}
           SIMA_CLI_COMMIT: ${{ inputs.sima_cli_commit }}
         run: |
@@ -470,7 +472,7 @@ jobs:
             "scripts/ci/pciehost/acquire_windows_dependencies.py",
             "--cli", $env:SIMA_CLI,
             "--branch", $env:SOURCE_BRANCH,
-            "--environment", "production",
+            "--environment", $env:NEAT_VULCAN_ENV,
             "--output", "$env:RUNNER_TEMP\core-windows-dependencies"
           )
           if (Test-Path -LiteralPath "$env:RUNNER_TEMP\scheduler-windows-override") {

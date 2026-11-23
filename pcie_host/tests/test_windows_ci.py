@@ -1204,6 +1204,19 @@ class WindowsCiContracts(unittest.TestCase):
     self.assertIn("inputs.validation_only != true", job_condition(source, "publish"))
     self.assertNotIn("release_qualification", workflow_job(source, "publish"))
 
+  def test_direct_dispatch_resolves_dependencies_where_it_publishes(self):
+    # Like Vulcan CI's matrix, resolve from the environment the publish job uses.
+    source = WORKFLOW.read_text(encoding="utf-8")
+    dependencies = workflow_job(source, "dependencies")
+    self.assertIn("    needs: [contracts, linux_release, resolve-vulcan-config]\n", dependencies)
+    step = workflow_step(dependencies, "Resolve, verify, and record dependencies")
+    self.assertIn(
+        "          NEAT_VULCAN_ENV: ${{ needs.resolve-vulcan-config.outputs.vulcan_env }}\n", step)
+    self.assertIn('"--environment", $env:NEAT_VULCAN_ENV,', step)
+    self.assertNotIn('"--environment", "production"', source)
+    self.assertIn("    environment: ${{ needs.resolve-vulcan-config.outputs.vulcan_env }}\n",
+                  workflow_job(source, "publish"))
+
   def test_workflows_calling_main_ci_skip_the_windows_lane_and_accept_the_skip(self):
     # A called workflow sees the top-level caller's name, which the Windows
     # preflight rejects for same-run Linux admission.
@@ -1331,7 +1344,7 @@ class WindowsCiContracts(unittest.TestCase):
         "    outputs:\n"
         "      scheduler_artifact_id: ${{ steps.scheduler-admission.outputs.artifact_id }}\n",
         linux_release)
-    self.assertIn("needs: [contracts, linux_release]", dependencies)
+    self.assertIn("needs: [contracts, linux_release, resolve-vulcan-config]", dependencies)
     step_id = "${{ steps.scheduler-admission.outputs.artifact_id }}"
     cases = (
         (main.split("  code-hygiene:\n", 1)[1],
