@@ -189,11 +189,6 @@ slug: /reference/environment-variables
   `tools/ci/verify_core_dist.py --capture-platform-baseline`. Потрібні тесту
   переліку встановлених пакетів DevKit поряд із вибраним переліком пакетів.
   Не відтворюйте цей початковий стан із післяінсталяційного стану.
-- `SIMA_RUN_MNIST_PREPROC_CHANNELS1=1` — вмикає тривалий тест точності попередньої
-  обробки MNIST. Отримайте це значення від `tools/ci/prepare_weekly_fixtures.py`
-  після перевірки тестових даних, а не встановлюйте його лише для усунення
-  пропуску. Локальні засоби запуску використовують `--environment-json`;
-  CI використовує те саме відображення через `--github-env`.
 
 Про вибір груп тестових даних і профілі встановлених пакетів див.
 [Вимоги до тестування](../../develop-apps/contribute/build-test/test_requirements.md).
