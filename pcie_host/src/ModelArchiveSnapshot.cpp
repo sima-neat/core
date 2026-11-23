@@ -1,6 +1,7 @@
 #include "ModelArchiveSnapshot.h"
 
 #include <fstream>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -13,6 +14,24 @@ namespace {
 
 constexpr const char* kSnapshotPrefix = "sima-neat-pcie-model";
 constexpr const char* kOwnerFile = "owner";
+constexpr std::size_t kMaxOwnerRecordBytes = 4096;
+
+// The owner record of a snapshot directory, or "" when the entry is not a directory holding a
+// regular owner file. Other local users can create entries in a shared temporary directory, so
+// neither is followed through a symbolic link, and a FIFO or device is never opened.
+std::string read_owner_record(const fs::directory_entry& entry) {
+  std::error_code ec;
+  const fs::path path = entry.path() / kOwnerFile;
+  if (entry.symlink_status(ec).type() != fs::file_type::directory ||
+      fs::symlink_status(path, ec).type() != fs::file_type::regular) {
+    return "";
+  }
+  std::ifstream file(path, std::ios::binary);
+  std::string record(kMaxOwnerRecordBytes, '\0');
+  file.read(record.data(), static_cast<std::streamsize>(record.size()));
+  record.resize(static_cast<std::size_t>(file.gcount()));
+  return record;
+}
 
 // Removes snapshots left by ended processes of this host, for example after a crash or kill.
 // Snapshots without an owner record, from other hosts or of running processes are kept.
@@ -25,7 +44,7 @@ void remove_ended_snapshots(const fs::path& own) noexcept {
         continue;
       }
       HostProcessOwner owner;
-      std::ifstream record(it->path() / kOwnerFile);
+      std::istringstream record(read_owner_record(*it));
       for (std::string line; std::getline(record, line);) {
         const auto equals = line.find('=');
         const std::string key = line.substr(0, equals);
@@ -38,7 +57,6 @@ void remove_ended_snapshots(const fs::path& own) noexcept {
           owner.start = value;
         }
       }
-      record.close(); // Windows cannot remove a directory that holds an open file.
       if (host_process_ended(owner)) {
         std::error_code remove_error;
         fs::remove_all(it->path(), remove_error);

@@ -23,6 +23,8 @@
 #include <windows.h>
 #else
 #include <pthread.h>
+#include <signal.h>
+#include <sys/stat.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -380,6 +382,54 @@ bool eventually(const std::function<bool()>& condition) {
 }
 #endif
 
+// Other local users can create entries in the shared temporary directory. The sweep skips a
+// FIFO owner record, which would block the open, and does not follow symbolic links.
+void test_snapshot_sweep_skips_special_and_linked_entries() {
+#ifndef _WIN32
+  pcie_internal::ScopedTempDirectory temp("sima-neat-pcie-snapshot-test");
+  const pcie_internal::HostProcessOwner self = pcie_internal::current_host_process_owner();
+  // This process with another start time: a record the sweep would otherwise remove.
+  const std::string ended_record =
+      "host_id=" + self.host_id + "\nhost_pid=" + std::to_string(self.pid) + "\nhost_start=1\n";
+  fs::create_directories(temp.path() / "sima-neat-pcie-model-fifo");
+  require(mkfifo((temp.path() / "sima-neat-pcie-model-fifo" / "owner").c_str(), 0600) == 0,
+          "mkfifo failed");
+  fs::create_directories(temp.path() / "elsewhere");
+  write_file(temp.path() / "elsewhere" / "owner", ended_record);
+  fs::create_directory_symlink(temp.path() / "elsewhere",
+                               temp.path() / "sima-neat-pcie-model-linked-directory");
+  fs::create_directories(temp.path() / "sima-neat-pcie-model-linked-owner");
+  fs::create_symlink(temp.path() / "elsewhere" / "owner",
+                     temp.path() / "sima-neat-pcie-model-linked-owner" / "owner");
+  write_file(temp.path() / "model.tar.gz", "archive");
+
+  // In a child, so that a sweep blocked on the FIFO fails the test instead of hanging it.
+  const pid_t child = fork();
+  if (child == 0) {
+    try {
+      const TemporaryDirectoryOverride override_temp(temp.path());
+      pcie_internal::ModelArchiveSnapshot snapshot(
+          pcie_internal::host_path_string(temp.path() / "model.tar.gz"));
+    } catch (...) {
+      _exit(1);
+    }
+    _exit(0);
+  }
+  int status = 0;
+  const bool exited =
+      eventually([child, &status] { return waitpid(child, &status, WNOHANG) == child; });
+  if (!exited) {
+    kill(child, SIGKILL);
+    waitpid(child, nullptr, 0);
+  }
+  require(exited, "the snapshot sweep blocked on a FIFO owner record");
+  require(WIFEXITED(status) && WEXITSTATUS(status) == 0, "the snapshot failed beside a FIFO");
+  require(fs::is_symlink(temp.path() / "sima-neat-pcie-model-linked-directory") &&
+              fs::exists(temp.path() / "sima-neat-pcie-model-linked-owner"),
+          "the snapshot sweep followed a symbolic link");
+#endif
+}
+
 // A process whose main thread called pthread_exit while another thread runs shows its leader as
 // a zombie in /proc/<pid>/stat, yet it is running. Once its last thread exits it is a zombie.
 void test_process_with_exited_main_thread_is_running() {
@@ -475,6 +525,7 @@ int main() {
     test_model_facts_read_under_unicode_temp_directory();
     test_snapshots_of_ended_processes_are_removed();
     test_process_with_exited_main_thread_is_running();
+    test_snapshot_sweep_skips_special_and_linked_entries();
     std::cout << "[PASS] model archive snapshot\n";
     return 0;
   } catch (const std::exception& error) {
