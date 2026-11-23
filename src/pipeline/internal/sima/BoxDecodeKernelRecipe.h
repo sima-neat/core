@@ -6,6 +6,7 @@
 #include "model/PreprocessPlan.h"
 #include <array>
 #include <optional>
+#include <string>
 #include "pipeline/internal/contract/PluginCompiledContracts.h"
 
 namespace simaai::neat::pipeline_internal::sima {
@@ -31,10 +32,23 @@ struct BoxDecodeGeometryOptions {
   bool uniform_transform_required = false;
   // A source-driven cold seed must never substitute for per-frame authority.
   bool require_frame_transform = false;
+  // Default for ordinary detection profiles: a frame decodes with the model-to-original
+  // affine its preprocess published (an ROI, crop, stretch or centered letterbox alike).
+  // A frame that publishes none (legacy ingress with dimensions only) keeps the recipe's
+  // full-frame fallback, so model_to_original is then only the cold-preparation seed.
+  bool frame_affine_optional = false;
+  // Profiles whose kernel accepts no transform (pose, segmentation, RCNN proposals,
+  // multiclass SSD) map boxes over the whole frame: a frame preprocessed from an ROI or
+  // a crop fails, naming this profile, instead of decoding in full-frame coordinates.
+  bool full_frame_only = false;
+  std::string profile;
 };
 // Axis-aligned ordinary boxes only; proposals and auxiliary payloads are not
 // implicitly admitted when a new decode type is added.
 bool boxdecode_supports_detection_transform(BoxDecodeType);
+// The same for one admitted payload: multiclass SSD shares BoxDecodeType::Ssd with the
+// detection recipe, but its kernel profile accepts no transform.
+bool boxdecode_payload_supports_detection_transform(const BoxDecodeStagePayload&);
 // Segment Anything: the resize each model was trained on (MobileSAM a top-left
 // letterbox, the others a stretch).
 ResizeMode sam_required_resize(BoxDecodeType);

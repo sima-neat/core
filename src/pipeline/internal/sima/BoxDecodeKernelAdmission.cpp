@@ -375,8 +375,7 @@ CompiledKernelContract compile_boxdecode_kernel(const CompiledBoxDecodeContract&
   const bool upstream_image_transform =
       input.upstream_preprocess && input.upstream_preprocess->payload.image_transform;
   const bool crop_requested = resize_mode == ResizeMode::Crop || upstream_crop;
-  const bool detection_transform =
-      boxdecode_supports_detection_transform(compiled.payload.decode_type);
+  const bool detection_transform = boxdecode_payload_supports_detection_transform(compiled.payload);
   geometry.uniform_transform_required = box_decode_type_is_oriented(compiled.payload.decode_type);
   geometry.complete_geometry =
       compiled.payload.decode_type == BoxDecodeType::YoloXSegPose ||
@@ -411,6 +410,16 @@ CompiledKernelContract compile_boxdecode_kernel(const CompiledBoxDecodeContract&
         input.upstream_preprocess ? &input.upstream_preprocess->payload : nullptr, geometry);
   if (observed && observed->resize_mode == "crop" && detection_transform)
     geometry.complete_geometry = true;
+  // Pose, segmentation, RCNN proposals and multiclass SSD map boxes over the whole frame:
+  // their kernels accept no transform, so an ROI or crop frame must fail, naming the profile.
+  geometry.full_frame_only = !detection_transform && !geometry.complete_geometry &&
+                             compiled.payload.decode_type != BoxDecodeType::SuperPoint;
+  geometry.profile = box_decode_type_token(compiled.payload.decode_type);
+  if (geometry.full_frame_only && (crop_requested || (observed && observed->resize_mode == "crop")))
+    throw std::invalid_argument("SimaBoxDecode: " + geometry.profile +
+                                " maps boxes over the whole frame; its kernel accepts no "
+                                "model-to-original transform, so a Crop resize cannot be mapped "
+                                "back to the source image");
   // Profiles map letterboxed boxes with a centered rule. Any other placement
   // (for example ResizeSpec TopLeft) needs the actual model-to-original affine.
   // Placement comes from published pads or the nearest Preproc policy only.
@@ -485,6 +494,16 @@ CompiledKernelContract compile_boxdecode_kernel(const CompiledBoxDecodeContract&
     observed = std::move(meta);
     geometry.require_frame_transform = true;
   }
+  // Every other detection profile consumes the affine its preprocess published, for each
+  // frame: an ROI, a crop, a stretch or a centered letterbox alike. A frame without one
+  // (legacy ingress with dimensions only) keeps the recipe's full-frame fallback. The kernel
+  // variant that takes the transform needs an executable prepared with one: the published
+  // affine seeds it when ingress shows one, an identity otherwise. Neither is ever applied to
+  // a frame that publishes no affine.
+  if (detection_transform && !geometry.complete_geometry) {
+    geometry.complete_geometry = true;
+    geometry.frame_affine_optional = true;
+  }
   if (observed && geometry.model_width <= 0 && geometry.model_height <= 0) {
     const auto width =
         observed->scaled_width > 0 ? observed->scaled_width : observed->resized_width;
@@ -544,23 +563,33 @@ CompiledKernelContract compile_boxdecode_kernel(const CompiledBoxDecodeContract&
     // Both compact preprocess facts and the public metadata projection carry
     // model-to-original coefficients. Do not invert them a second time.
     const auto values = affine(*observed);
-    if (observed->roi_list_enabled || observed->has_roi_list())
+    // An ROI-list buffer with several slots carries one affine per slot; one slot is one frame.
+    if ((observed->roi_list_enabled || observed->has_roi_list()) && observed->roi_capacity != 1)
       throw std::invalid_argument("SimaBoxDecode: complete geometry requires one image "
-                                  "transform, not ROI-list metadata");
-    if (std::any_of(values.begin(), values.end(),
-                    [](double v) {
-                      return !std::isfinite(v) || std::abs(v) > std::numeric_limits<float>::max();
-                    }) ||
-        values[1] != 0 || values[3] != 0 || values[0] <= 0 || values[4] <= 0)
+                                  "transform, not an ROI list with several slots; preprocess one "
+                                  "ROI per frame (ROI-list capacity 1)");
+    const bool unpublished =
+        geometry.frame_affine_optional &&
+        std::all_of(values.begin(), values.end(), [](double v) { return v == 0.; });
+    if (!unpublished && (std::any_of(values.begin(), values.end(),
+                                     [](double v) {
+                                       return !std::isfinite(v) ||
+                                              std::abs(v) > std::numeric_limits<float>::max();
+                                     }) ||
+                         values[1] != 0 || values[3] != 0 || values[0] <= 0 || values[4] <= 0))
       throw std::invalid_argument("SimaBoxDecode: model-to-original affine must be finite, "
                                   "axis-aligned and have positive scales");
-    if (geometry.uniform_transform_required && values[0] != values[4])
-      throw std::invalid_argument(
-          "SimaBoxDecode: oriented boxes require equal authoritative affine scales");
-    geometry.model_to_original =
-        std::array<float, 4>{static_cast<float>(values[0]), static_cast<float>(values[4]),
-                             static_cast<float>(values[2]), static_cast<float>(values[5])};
+    if (!unpublished) {
+      if (geometry.uniform_transform_required && values[0] != values[4])
+        throw std::invalid_argument(
+            "SimaBoxDecode: oriented boxes require equal authoritative affine scales");
+      geometry.model_to_original =
+          std::array<float, 4>{static_cast<float>(values[0]), static_cast<float>(values[4]),
+                               static_cast<float>(values[2]), static_cast<float>(values[5])};
+    }
   }
+  if (geometry.frame_affine_optional && !geometry.model_to_original)
+    geometry.model_to_original = std::array<float, 4>{1.f, 1.f, 0.f, 0.f};
   if (geometry.complete_geometry && geometry.resize == ResizeMode::Crop &&
       !geometry.model_to_original)
     throw std::invalid_argument("SimaBoxDecode: crop geometry requires authoritative ingress "

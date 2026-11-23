@@ -583,6 +583,138 @@ void sam_fixed_image() {
   auto composed = compact({0, 0, 1024, 576}, 160.);
   require(rejects(composed.get(), kAffine), "a compact composed crop must be rejected");
 }
+// #1507: an ordinary detection profile decodes each frame with the affine its preprocess
+// published (an ROI, a stretch, a whole frame); legacy ingress that publishes dimensions only keeps
+// the recipe's fallback. A profile whose kernel accepts no transform refuses ROI and crop frames.
+void set_published_frame(GstStructure* meta, const char* mode, double scale_x, double scale_y,
+                         double offset_x, double offset_y, bool affine = true) {
+  gst_structure_remove_all_fields(meta);
+  gst_structure_set(meta, "preproc_original_width", G_TYPE_INT, 1280, "preproc_original_height",
+                    G_TYPE_INT, 720, "preproc_resized_width", G_TYPE_INT, 640,
+                    "preproc_resized_height", G_TYPE_INT, 640, "preproc_scaled_width", G_TYPE_INT,
+                    640, "preproc_scaled_height", G_TYPE_INT, 640, "preproc_pad_left", G_TYPE_INT,
+                    0, "preproc_pad_right", G_TYPE_INT, 0, "preproc_pad_top", G_TYPE_INT, 0,
+                    "preproc_pad_bottom", G_TYPE_INT, 0, "preproc_resize_mode", G_TYPE_STRING, mode,
+                    nullptr);
+  if (affine)
+    gst_structure_set(meta, "preproc_affine_m00", G_TYPE_DOUBLE, scale_x, "preproc_affine_m01",
+                      G_TYPE_DOUBLE, 0., "preproc_affine_m02", G_TYPE_DOUBLE, offset_x,
+                      "preproc_affine_m10", G_TYPE_DOUBLE, 0., "preproc_affine_m11", G_TYPE_DOUBLE,
+                      scale_y, "preproc_affine_m12", G_TYPE_DOUBLE, offset_y, nullptr);
+}
+void published_frame_geometry() {
+  probe::OperationProbe executor;
+  const auto checked = executable(true);
+  require(!executor.prepare(checked), "real A65 preparation failed");
+  const auto base = executor.operation();
+  core::KernelStageRecipe recipe;
+  recipe.members.resize(1);
+  recipe.members.front().executable = checked;
+  // The cold executable carries a seed transform; no frame ever decodes with it.
+  core::BoxDecodeGeometryOptions options{640, 640, 640, 640, simaai::neat::ResizeMode::Stretch};
+  options.complete_geometry = options.frame_affine_optional = true;
+  options.model_to_original = std::array<float, 4>{1.f, 1.f, 0.f, 0.f};
+  core::attach_boxdecode_geometry_resolver(recipe, 0, options, true, true);
+  auto resolve = recipe.resolver_factories.front().instantiate();
+  const gchar* tags[] = {nullptr};
+  if (!gst_meta_get_info("GstSimaMeta"))
+    require(gst_meta_register_custom("GstSimaMeta", tags, nullptr, nullptr, nullptr),
+            "metadata registration failed");
+  Buffer frame(gst_buffer_new());
+  auto* meta =
+      gst_custom_meta_get_structure(gst_buffer_add_custom_meta(frame.get(), "GstSimaMeta"));
+  const std::array<GstBuffer*, 1> one{frame.get()};
+  // The issue's ROI stretched into the canvas, and the same size at another offset.
+  set_published_frame(meta, "stretch", 1., .5625, 400., 200.);
+  const auto roi = take(resolve(executor.preparer(), one));
+  require(roi != base && take(resolve(executor.preparer(), one)) == roi,
+          "an ROI frame did not select (and cache) its own affine");
+  set_published_frame(meta, "stretch", 1., .5625, 440., 200.);
+  const auto moved = take(resolve(executor.preparer(), one));
+  require(moved != roi && moved != base, "a second ROI reused the first ROI's affine");
+  // The whole frame stretched: its published affine is the recipe's fallback.
+  set_published_frame(meta, "stretch", 2., 1.125, 0., 0.);
+  const auto whole = take(resolve(executor.preparer(), one));
+  require(whole != roi, "a whole frame reused an ROI's affine");
+  // Legacy ingress: dimensions and mode, no affine. It decodes with the fallback, not an error
+  // and not the seed.
+  set_published_frame(meta, "stretch", 0., 0., 0., 0., false);
+  const auto legacy = take(resolve(executor.preparer(), one));
+  require(legacy != roi && legacy != base,
+          "dimensions-only ingress was given an affine, or was rejected");
+  // ROI lists: one slot is one frame; several slots carry one affine each.
+  set_published_frame(meta, "stretch", 1., .5625, 400., 200.);
+  gst_structure_set(meta, "preproc_roi_list_enable", G_TYPE_BOOLEAN, TRUE, nullptr);
+  require(std::holds_alternative<rt::Error>(resolve(executor.preparer(), one)),
+          "an ROI list of unknown capacity was decoded with one affine");
+  gst_structure_set(meta, "preproc_roi_capacity", G_TYPE_INT, 4, nullptr);
+  require(std::holds_alternative<rt::Error>(resolve(executor.preparer(), one)),
+          "an ROI list of four slots was decoded with one affine");
+  gst_structure_set(meta, "preproc_roi_capacity", G_TYPE_INT, 1, nullptr);
+  require(take(resolve(executor.preparer(), one)) == roi, "a one-slot ROI list lost its affine");
+  // A published affine that is not axis-aligned is not a legacy frame.
+  set_published_frame(meta, "stretch", 1., .5625, 400., 200.);
+  gst_structure_set(meta, "preproc_affine_m01", G_TYPE_DOUBLE, .1, nullptr);
+  require(std::holds_alternative<rt::Error>(resolve(executor.preparer(), one)),
+          "a sheared affine was accepted");
+}
+void full_frame_only_geometry() {
+  probe::OperationProbe executor;
+  const auto checked = executable(true);
+  require(!executor.prepare(checked), "real A65 preparation failed");
+  const auto base = executor.operation();
+  core::KernelStageRecipe recipe;
+  recipe.members.resize(1);
+  recipe.members.front().executable = checked;
+  core::BoxDecodeGeometryOptions options{640, 640, 640, 640, simaai::neat::ResizeMode::Letterbox};
+  options.full_frame_only = true;
+  options.profile = "yolov8-seg";
+  core::attach_boxdecode_geometry_resolver(recipe, 0, options, false, false);
+  require(recipe.resolver_factories.size() == 1,
+          "a profile that accepts no transform needs a per-frame guard");
+  auto resolve = recipe.resolver_factories.front().instantiate();
+  const gchar* tags[] = {nullptr};
+  if (!gst_meta_get_info("GstSimaMeta"))
+    require(gst_meta_register_custom("GstSimaMeta", tags, nullptr, nullptr, nullptr),
+            "metadata registration failed");
+  Buffer frame(gst_buffer_new());
+  auto* meta =
+      gst_custom_meta_get_structure(gst_buffer_add_custom_meta(frame.get(), "GstSimaMeta"));
+  const std::array<GstBuffer*, 1> one{frame.get()};
+  const auto refused = [&](const char* message) {
+    auto result = resolve(executor.preparer(), one);
+    const auto* error = std::get_if<rt::Error>(&result);
+    return error && error->message.find("yolov8-seg") != std::string::npos &&
+           error->message.find(message) != std::string::npos;
+  };
+  // Whole frames keep decoding: a centered letterbox (pad 140, scale 2), a placed extent rounded by
+  // a pixel, and legacy ingress.
+  set_published_frame(meta, "letterbox", 2., 1.125, 0., 0.);
+  require(take(resolve(executor.preparer(), one)) == base, "a whole frame was refused");
+  set_published_frame(meta, "letterbox", 2., 2., 0., -280.);
+  gst_structure_set(meta, "preproc_scaled_height", G_TYPE_INT, 360, "preproc_pad_top", G_TYPE_INT,
+                    140, "preproc_pad_bottom", G_TYPE_INT, 140, nullptr);
+  require(take(resolve(executor.preparer(), one)) == base, "a whole letterboxed frame was refused");
+  // Preprocess rounds the placed extent; a pixel of drift is still the whole frame.
+  gst_structure_set(meta, "preproc_affine_m12", G_TYPE_DOUBLE, -282., nullptr);
+  require(take(resolve(executor.preparer(), one)) == base, "rounding of the placed extent refused");
+  set_published_frame(meta, "letterbox", 0., 0., 0., 0., false);
+  require(take(resolve(executor.preparer(), one)) == base, "dimensions-only ingress was refused");
+  // An ROI, a crop and an ROI list decoded in full-frame coordinates would be wrong.
+  set_published_frame(meta, "letterbox", 1., .5625, 400., 200.);
+  require(refused("ROI, a crop or a window"), "an ROI frame decoded in full-frame coordinates");
+  set_published_frame(meta, "letterbox", 2., 2., 0., -280.);
+  gst_structure_set(meta, "preproc_scaled_height", G_TYPE_INT, 360, "preproc_pad_top", G_TYPE_INT,
+                    140, "preproc_pad_bottom", G_TYPE_INT, 140, "preproc_affine_m12", G_TYPE_DOUBLE,
+                    -284., nullptr);
+  require(refused("ROI, a crop or a window"), "a window of the source decoded as a whole frame");
+  set_published_frame(meta, "crop", 2., 1.125, 0., 0.);
+  require(refused("ROI, a crop or a window"), "a crop frame decoded in full-frame coordinates");
+  set_published_frame(meta, "letterbox", 2., 1.125, 0., 0.);
+  gst_structure_set(meta, "preproc_roi_list_enable", G_TYPE_BOOLEAN, TRUE, "preproc_roi_capacity",
+                    G_TYPE_INT, 4, nullptr);
+  require(refused("ROI, a crop or a window"), "an ROI list decoded in full-frame coordinates");
+}
 } // namespace
 int main(int argc, char** argv) {
   gst_init(&argc, &argv);
@@ -596,6 +728,10 @@ int main(int argc, char** argv) {
     geometry();
     geometry(true);
     std::cout << "BoxDecode complete geometry and retained variant cache passed\n";
+    published_frame_geometry();
+    std::cout << "BoxDecode published frame affine passed\n";
+    full_frame_only_geometry();
+    std::cout << "BoxDecode full-frame-only profiles passed\n";
     return 0;
   } catch (const std::exception& error) {
     std::cerr << error.what() << '\n';

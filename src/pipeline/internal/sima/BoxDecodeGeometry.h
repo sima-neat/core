@@ -24,7 +24,8 @@ struct BoxDecodeFixedImage {
 // the image instead.
 bool boxdecode_affine_covers_image(const std::array<double, 6>& model_to_original,
                                    int original_width, int original_height,
-                                   const std::array<std::int64_t, 4>& placed);
+                                   const std::array<std::int64_t, 4>& placed,
+                                   double tolerance = 0.5);
 // Install only on the numerical BoxDecode member. Explicit original-size
 // properties retain their precedence; otherwise each frame supplies geometry.
 void attach_boxdecode_geometry_resolver(KernelStageRecipe&, std::size_t member,
