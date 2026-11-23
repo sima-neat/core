@@ -4325,6 +4325,18 @@ class HostedWindowsBuildContracts(unittest.TestCase):
       for action in re.findall(r"uses: (actions/setup-python@\S+)", body):
         self.assertRegex(action, r"@[0-9a-f]{40}$")
 
+  def test_pinned_downloads_retry_transfers_but_never_the_checksum(self):
+    # About fifty downloads gate the release build; one transient failure must not fail it.
+    script = self.PROVISION.read_text(encoding="utf-8")
+    helper = script.split("function Get-PinnedFile", 1)[1].split("\n}\n", 1)[0]
+    loop, after = helper.split("for ($attempt = 1; ; $attempt++) {", 1)[1].split("\n  }\n", 1)
+    self.assertIn("try { Invoke-WebRequest -Uri $Url -OutFile $Path; break }", loop)
+    self.assertIn("if ($attempt -ge 4) { throw }", loop)
+    self.assertIn("Start-Sleep -Seconds (10 * $attempt)", loop)
+    self.assertNotIn("Get-FileHash", loop)
+    self.assertIn("Get-FileHash -Algorithm SHA256", after)
+    self.assertIn("-ne $Sha256) { throw", after)
+
   def test_platform_inputs_come_only_from_the_scheduler_package(self):
     # As on Linux: no Platform download, installation, or file hashes on the build host.
     producer = SCRIPT.read_text(encoding="utf-8")

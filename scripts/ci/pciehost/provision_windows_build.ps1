@@ -21,7 +21,15 @@ function Get-PinnedFile([string] $Url, [string] $Sha256, [string] $Path) {
   if ($Url -notmatch '^https://' -or $Sha256 -notmatch '^[0-9a-f]{64}$') {
     throw "Windows build input is not pinned by HTTPS URL and SHA-256: $Url"
   }
-  Invoke-WebRequest -Uri $Url -OutFile $Path
+  # One transient network failure must not fail the release build; the pin is never retried.
+  for ($attempt = 1; ; $attempt++) {
+    try { Invoke-WebRequest -Uri $Url -OutFile $Path; break }
+    catch {
+      if ($attempt -ge 4) { throw }
+      Write-Warning "Download attempt $attempt of 4 failed for ${Url}: $($_.Exception.Message)"
+      Start-Sleep -Seconds (10 * $attempt)
+    }
+  }
   $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $Path).Hash.ToLowerInvariant()
   if ($actual -ne $Sha256) { throw "SHA-256 mismatch for ${Url}: expected $Sha256, got $actual" }
 }
