@@ -258,10 +258,30 @@ class WindowsPackagingContract(unittest.TestCase):
     self.assertIn("$env:SIMA_NEAT_PCIE_KNOWN_HOSTS = $knownHostsPath", source)
     self.assertIn("$knownHostsOption = 'UserKnownHostsFile=${SIMA_NEAT_PCIE_KNOWN_HOSTS}'",
                   source)
+    self.assertIn("$scanHostsOption = 'UserKnownHostsFile=${SIMA_NEAT_PCIE_SCAN_HOSTS}'",
+                  source)
     self.assertEqual(source.count('"-o", $KnownHostsOption') +
                      source.count('"-o", $knownHostsOption') +
+                     source.count('"-o", $scanHostsOption') +
                      source.count("-o $knownHostsOption"), 3)
     self.assertNotRegex(source, r"UserKnownHostsFile=\$(?!{)")
+
+  def test_setup_refreshes_the_card_host_key_on_every_run(self):
+    source = SETUP_SCRIPT.read_text(encoding="utf-8")
+    loop = source.split("foreach ($cardHost in $targets) {", 1)[1]
+    # pcie-setup.sh rescans every run; a reflashed or replaced card must be trusted again
+    # without losing the saved key when the card does not answer.
+    self.assertNotIn("$findExitCode", source)
+    probe = loop.index('"-o", $scanHostsOption, $target, "true"')
+    retrieved = loop.index("if ($currentEntries.Count -eq 0) {")
+    removed = loop.index("& $sshKeygen -R $cardHost -f $knownHostsPath")
+    self.assertLess(probe, retrieved)
+    self.assertLess(retrieved, removed)
+    self.assertIn("Remove-Item -LiteralPath $scanHostsPath", loop)
+    self.assertIn("The SSH host key of $cardHost changed; recorded its current key.", loop)
+    failure = loop[retrieved:removed]
+    self.assertIn("Test-Connection -ComputerName $cardHost -Count 1", failure)
+    self.assertIn("-Hosts $cardHost", failure)
 
   def test_setup_records_host_keys_where_runtime_ssh_reads_them(self):
     source = SETUP_SCRIPT.read_text(encoding="utf-8")

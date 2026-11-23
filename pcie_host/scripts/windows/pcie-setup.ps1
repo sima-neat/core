@@ -208,6 +208,7 @@ $knownHostsPath = Join-Path $env:USERPROFILE ".ssh\known_hosts"
 # OpenSSH splits -o values at spaces before expanding ${VAR}, so pass the path that way.
 $env:SIMA_NEAT_PCIE_KNOWN_HOSTS = $knownHostsPath
 $knownHostsOption = 'UserKnownHostsFile=${SIMA_NEAT_PCIE_KNOWN_HOSTS}'
+$scanHostsOption = 'UserKnownHostsFile=${SIMA_NEAT_PCIE_SCAN_HOSTS}'
 
 Write-Host "SiMa Neat PCIe SSH provisioning"
 Write-Host "User: $User"
@@ -252,56 +253,64 @@ $sshKeygen = $commands["ssh-keygen.exe"]
 
 foreach ($cardHost in $targets) {
   $target = "${User}@${cardHost}"
-  $keyAccessChecked = $false
-  $keyAccessVerified = $false
   Write-Host ""
   Write-Host "==> ${target}:$Port"
 
   if ($DryRun) {
-    Write-Host "[dry-run] Would record the host key, enroll the public key if needed, and verify SSH."
+    Write-Host "[dry-run] Would refresh the host key, enroll the public key if needed, and verify SSH."
     $success += 1
     continue
   }
 
+  # Like pcie-setup.sh, renew the card's host key on every run so a reflashed or replaced
+  # card is trusted again. ssh-keyscan can hang here, so a bounded accept-new login records
+  # the current key, in a scratch file so that an unreachable card keeps its saved entry.
+  $scanHostsPath = [System.IO.Path]::GetTempFileName()
+  try {
+    $env:SIMA_NEAT_PCIE_SCAN_HOSTS = $scanHostsPath
+    $bootstrapResult = Invoke-BoundedCommand -Executable $ssh -Arguments @(
+      "-i", $Key, "-o", "IdentitiesOnly=yes", "-p", "$Port", "-o", "BatchMode=yes",
+      "-o", "ConnectTimeout=5", "-o", "StrictHostKeyChecking=accept-new",
+      "-o", $scanHostsOption, $target, "true"
+    )
+    $currentEntries = @(Get-Content -LiteralPath $scanHostsPath |
+      Where-Object { $_ -match '^[^#\s]+\s+\S+\s+\S+' })
+  }
+  finally {
+    Remove-Item -LiteralPath $scanHostsPath -Force -ErrorAction SilentlyContinue
+  }
+  if ($currentEntries.Count -eq 0) {
+    Write-Warning "Could not retrieve the SSH host key for $cardHost."
+    Write-Host "Check that the card answers with: Test-Connection -ComputerName $cardHost -Count 1"
+    Write-Host "Then run pcie-setup again with -Hosts $cardHost."
+    $failed += 1
+    continue
+  }
   $savedErrorPreference = $ErrorActionPreference
   try {
     $ErrorActionPreference = "Continue"
-    & $sshKeygen -F $cardHost -f $knownHostsPath *> $null
-    $findExitCode = $LASTEXITCODE
+    $savedKeys = @(& $sshKeygen -F $cardHost -f $knownHostsPath 2> $null |
+      Where-Object { $_ -and -not $_.StartsWith("#") } |
+      ForEach-Object { ($_ -split '\s+')[1..2] -join " " })
+    $currentKeys = @($currentEntries | ForEach-Object { ($_ -split '\s+')[1..2] -join " " })
+    if (@($currentKeys | Where-Object { $savedKeys -notcontains $_ }).Count -gt 0) {
+      if ($savedKeys.Count -gt 0) {
+        & $sshKeygen -R $cardHost -f $knownHostsPath *> $null
+        Write-Host "The SSH host key of $cardHost changed; recorded its current key."
+      }
+      $existing = [System.IO.File]::ReadAllText($knownHostsPath)
+      $separator = if ($existing.Length -gt 0 -and -not $existing.EndsWith("`n")) { "`n" } else { "" }
+      [System.IO.File]::AppendAllText(
+          $knownHostsPath,
+          $separator + (($currentEntries -join "`n") + "`n"),
+          (New-Object System.Text.UTF8Encoding($false)))
+    }
   }
   finally {
     $ErrorActionPreference = $savedErrorPreference
   }
-  if ($findExitCode -ne 0) {
-    # ssh-keyscan can hang here; a bounded accept-new login records the first-seen key.
-    $bootstrapResult = Invoke-BoundedCommand -Executable $ssh -Arguments @(
-      "-i", $Key, "-o", "IdentitiesOnly=yes", "-p", "$Port", "-o", "BatchMode=yes",
-      "-o", "ConnectTimeout=5", "-o", "StrictHostKeyChecking=accept-new",
-      "-o", $knownHostsOption, $target, "true"
-    )
-    $keyAccessChecked = $true
-    $keyAccessVerified = (
-      -not $bootstrapResult.TimedOut -and $bootstrapResult.ExitCode -eq 0)
-    $savedErrorPreference = $ErrorActionPreference
-    try {
-      $ErrorActionPreference = "Continue"
-      & $sshKeygen -F $cardHost -f $knownHostsPath *> $null
-      $findExitCode = $LASTEXITCODE
-    }
-    finally {
-      $ErrorActionPreference = $savedErrorPreference
-    }
-    if ($findExitCode -ne 0) {
-      Write-Warning "Could not retrieve the SSH host key for $cardHost."
-      $failed += 1
-      continue
-    }
-  }
 
-  if ($keyAccessVerified -or (
-      -not $keyAccessChecked -and
-      (Test-KeyAccess -Ssh $ssh -PrivateKey $Key -KnownHostsOption $knownHostsOption `
-          -Target $target))) {
+  if (-not $bootstrapResult.TimedOut -and $bootstrapResult.ExitCode -eq 0) {
     Write-Host "Already provisioned."
     $success += 1
     continue
