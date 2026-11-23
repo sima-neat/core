@@ -466,6 +466,24 @@ command and confirm that both MSIs and the wheel download and install:
 sima-cli neat install core/pciehost/windows/amd64@develop
 ```
 
+Before the first Windows release publication, also confirm that the publisher
+role can tell a missing object from a forbidden one. A release publication
+reads `metadata.json` under the release prefix first, so that it never
+overwrites a published release, and only HTTP 404 means "not published yet".
+S3 answers a missing key with 404 only when the role has `s3:ListBucket` on the
+bucket; otherwise it answers 403. Branch publications skip this read, so the
+`develop` rehearsal does not cover it. With the publisher role's credentials,
+read a key that does not exist under the release prefix:
+
+```text
+aws s3 cp s3://<artifact-bucket>/core/<release-tag>/000000000000/pciehost/windows/amd64/metadata.json -
+```
+
+It must fail with `An error occurred (404)`. If it reports `(403)`, the first
+release publication fails with
+`cannot read s3://<artifact-bucket>/core/<release-tag>/<commit12>/pciehost/windows/amd64/metadata.json: ... (403) ...`;
+grant the role `s3:ListBucket` on the bucket before the release dispatch.
+
 Cross-version upgrade is a formal release check rather than a cost paid by every
 branch commit. To run it against the previous published Windows release,
 dispatch the Windows workflow with:
