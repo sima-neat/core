@@ -175,3 +175,12 @@ ProcessCVU ステージはデフォルトで Runtime の `neatkernelrunner` を�
 ## PCIe ホストとカードの状態
 
 `NEAT_PCIE_SSH_USER` はカードの SSH ユーザー（既定値 `sima`）を選択します。`NEAT_PCIE_SSH_KEY` は秘密キー（既定値 `~/.ssh/sima_neat_pcie_ed25519`）を選択します。既存の SSH 設定とエージェント認証も利用できます。`--offline` はインターネット経由の更新確認を省略しますが、ローカル SSH によるカードの読み取りは行います。PCIe ホストの状態表示ではアーティファクト更新を確認しません。ホストの更新には `sima-cli neat install core/pciehost/<distro>/<arch>@<ref>` を使用してください。`neat update` は PCIe カードを更新しません。
+
+## Windows PCIe ホストのランタイム
+
+Windows PCIe ホストパッケージは、Python パッケージ、`sima-pcie-host-env.cmd`、およびインストールの事前チェックで、次の変数を読み取ります。
+
+- `GSTREAMER_1_0_ROOT_MSVC_X86_64`: GStreamer MSVC x64 のインストールルートです。GStreamer インストーラーが設定します。最初に検索されます。
+- `GSTREAMER_ROOT_X86_64`: 別の GStreamer インストールルートです。`GSTREAMER_1_0_ROOT_MSVC_X86_64` の後、`%ProgramFiles%\gstreamer\1.0\msvc_x86_64` の前に検索されます。
+- `SIMA_WINDOWS_PLATFORM_RUNTIME_DIR`: Platform ランタイムの `SiMaPCIe.dll` を含むディレクトリです。既定では、`SiMaMlaDaemon` サービスの実行ファイルがあるディレクトリです。
+- `SIMA_PCIE_HOST_LIBRARY_PATH`: 既定の場所以外にインストールした場合に使用する、PCIe ホストと GStreamer の DLL を含む追加ディレクトリです。`;` で区切ります。

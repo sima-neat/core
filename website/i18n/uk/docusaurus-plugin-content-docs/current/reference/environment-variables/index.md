@@ -201,3 +201,19 @@ slug: /reference/environment-variables
 ## Стан хоста та карт PCIe
 
 `NEAT_PCIE_SSH_USER` вибирає користувача SSH карти (типово `sima`). `NEAT_PCIE_SSH_KEY` вибирає приватний ключ (типово `~/.ssh/sima_neat_pcie_ed25519`); наявні налаштування SSH та автентифікація через агент також доступні. `--offline` пропускає перевірку оновлень через Інтернет, але читає підключені карти через локальний SSH. Перегляд стану хоста PCIe не перевіряє оновлення артефактів; для оновлення пакета хоста використовуйте `sima-cli neat install core/pciehost/<distro>/<arch>@<ref>`. `neat update` не оновлює карти PCIe.
+
+## Середовище виконання хоста PCIe у Windows
+
+Пакет хоста PCIe для Windows читає ці змінні в пакеті Python, у
+`sima-pcie-host-env.cmd` і під час попередньої перевірки встановлення.
+
+- `GSTREAMER_1_0_ROOT_MSVC_X86_64`: корінь встановлення GStreamer MSVC x64.
+  Його задає програма встановлення GStreamer. Пошук виконується в ньому першим.
+- `GSTREAMER_ROOT_X86_64`: інший корінь встановлення GStreamer. Пошук у ньому
+  виконується після `GSTREAMER_1_0_ROOT_MSVC_X86_64` і перед
+  `%ProgramFiles%\gstreamer\1.0\msvc_x86_64`.
+- `SIMA_WINDOWS_PLATFORM_RUNTIME_DIR`: каталог, що містить `SiMaPCIe.dll`
+  середовища виконання Platform. Типово це каталог виконуваного файлу служби
+  `SiMaMlaDaemon`.
+- `SIMA_PCIE_HOST_LIBRARY_PATH`: додаткові каталоги, розділені `;`, що містять
+  DLL хоста PCIe та GStreamer, для встановлення поза типовими розташуваннями.
