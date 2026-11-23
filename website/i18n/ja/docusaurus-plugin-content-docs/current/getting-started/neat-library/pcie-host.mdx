@@ -25,7 +25,7 @@ Neat PCIe ホストパッケージは、以下の検証済みのホストプラ�
 | --- | --- | --- |
 | Ubuntu 22.04 | x86_64 | 対応済み |
 | Ubuntu 24.04 | x86_64 | 対応済み |
-| Windows 11 | x86_64 | ネイティブプレビュー（未公開） |
+| Windows 11 | x86_64 | ネイティブプレビュー |
 
 Arm64ホストでのビルドは、まだ検証されていません。WindowsパッケージにはPCIe GenAI APIが含まれていますが、対応するPlatformプロバイダーとWindows向けC++およびPython GenAIの完全なリリースマトリックスが認定されるまでは、サポート対象の顧客構成ではありません。
 
@@ -82,22 +82,26 @@ gst-inspect-1.0 neatpciehost
 
 ## Windows 11 ネイティブプレビューをインストールする
 
-:::note まだ利用できません
-Windowsパッケージはまだ公開されていません。認定済みのWindowsバイナリを提供する最初のNeatリリース以降、Ubuntuパッケージと同じNeatリリースタグで公開されます。その時点で、このセクションにインストールコマンドを掲載します。
-:::
+Windowsプレビューは、`pcie::Model`ビジョンAPIのネイティブVisual Studioビルドであり、`pcie::genai::GenAIModel`も含まれます。上記のとおり、GenAIのリリースには引き続き認定が必要です。APIをインストールするだけでは、Platformトランスポートやカードモデルは認定されません。次の前提条件を、この順序でインストールしてください。
 
-Windowsプレビューは、`pcie::Model`ビジョンAPIのネイティブVisual Studioビルドであり、`pcie::genai::GenAIModel`も含まれます。上記のとおり、GenAIのリリースには引き続き認定が必要です。APIをインストールするだけでは、Platformトランスポートやカードモデルは認定されません。最初に、次の前提条件をインストールしてください。
+1. Neatリリースに対応するSiMa Platform 3.0 Windowsパッケージ。[PCIeドライバーインストールガイド](https://developer.sima.ai/hardware/getting-started/pcie-mode/driver-installation)の説明に従ってインストールします。PCIeドライバーと`SiMaMlaDaemon`サービスを提供します。
+2. GStreamer 1.28.6 MSVC x64（[GStreamerのダウンロードページ](https://gstreamer.freedesktop.org/download/)の`gstreamer-1.0-msvc-x86_64-1.28.6.exe`）。C++アプリケーション用の開発ファイルも提供します。
+3. [python.org](https://www.python.org/downloads/windows/)の64ビットCPython 3.14。すべてのユーザー向けと現在のユーザー向けのどちらのインストールでも使用できます。Pythonは`sima-cli`より先にインストールしてください。フリースレッドビルドではwheelを読み込めません。
+4. [sima-cliインストールガイド](/tools/sima-cli/)に従ってインストールした`sima-cli`。その後、`sima-cli login`でサインインします。古い`sima-cli`は`Missing 'script' in 'installation'`で停止します。更新してから再試行してください。
 
-- Neatリリースに対応するSiMa Platform 3.0 Windowsパッケージ。PCIeドライバーと`SiMaMlaDaemon`サービスを提供します。
-- GStreamer 1.28.6 MSVC x64（[GStreamerのダウンロードページ](https://gstreamer.freedesktop.org/download/)の`gstreamer-1.0-msvc-x86_64-1.28.6.exe`）。C++アプリケーション用の開発ファイルも提供します。
-- [python.org](https://www.python.org/downloads/windows/)の64ビットCPython 3.14。すべてのユーザー向けと現在のユーザー向けのどちらのインストールでも使用できます。フリースレッドビルドではwheelを読み込めません。
-- 上記の前提条件で説明している`sima-cli`。古い`sima-cli`は`Missing 'script' in 'installation'`で停止します。更新してから再試行してください。
+PCIeホスト上で作業ディレクトリを選び、Windowsパッケージをインストールします。
 
-その後、1つの`sima-cli neat install`コマンドで、対応するScheduler MSI、Core MSI、および`win_amd64` wheelを1つのコホートとしてインストールします。2つのMSIパッケージのために、Windowsが管理者の承認を1回求めます。ダウンロードしたパッケージとWindows Installerのログは、現在のディレクトリに残ります。
+<ShellCommand prompt="pcie-host">
+sima-cli neat install core/pciehost/windows/amd64@v%%release.core%%
+</ShellCommand>
+
+Windowsパッケージは、それを含む最初のNeatリリースから公開されます。
+
+このコマンドは、対応するScheduler MSI、Core MSI、および`win_amd64` wheelを1つのコホートとしてインストールします。2つのMSIパッケージのために、Windowsが管理者の承認を1回求めます。ダウンロードしたパッケージとWindows Installerのログは、現在のディレクトリに残ります。
 
 CLIはMSIを実行する前に、Windows OpenSSH、Platformサービス、GStreamer、および互換性のあるPythonを確認します。`%USERPROFILE%\pyneatpcie`環境を作成または再利用し、公開済みのチェックサムを検証して、SchedulerとCoreに対してWindows Installerを実行します。さらに、インストール済みのホスト診断ツールを実行し、パッケージに対応するコーディングエージェントのスキルをインストールして、wheelをそのPython環境にインストールします。修復またはアップグレードする場合は、同じコマンドを再度実行してください。別の環境を使用する場合は`--python-executable <path>`を、ネイティブC++のみをインストールする場合は`--native-only`を使用します。ネイティブコンポーネントの削除はWindows Installerが、Pythonパッケージの削除はpipが管理します。
 
-インストール後に一度、カードへのパスワードなしSSHを設定します。
+インストール後に一度セットアップユーティリティを実行して、カードへのパスワードなしSSHを設定します。カードの`sima`アカウントのパスワードは1回だけ求められます。
 
 ```powershell
 & "C:\Program Files\SimaPCIeHost\bin\pcie-setup.cmd"

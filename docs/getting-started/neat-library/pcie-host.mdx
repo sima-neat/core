@@ -29,7 +29,7 @@ The Neat PCIe host package supports the following validated host platforms:
 | --- | --- | --- |
 | Ubuntu 22.04 | x86_64 | Supported |
 | Ubuntu 24.04 | x86_64 | Supported |
-| Windows 11 | x86_64 | Native preview; not yet published |
+| Windows 11 | x86_64 | Native preview |
 
 Arm64 host builds have not yet been validated. The Windows package contains the
 PCIe GenAI API, but it is not a supported customer configuration until a matching
@@ -96,31 +96,36 @@ gst-inspect-1.0 neatpciehost
 
 ## Install the Windows 11 native preview
 
-:::note Not yet available
-The Windows packages have not been published. They will be published under the
-same Neat release tag as the Ubuntu packages, starting with the first Neat
-release that ships qualified Windows binaries. This section will then show the
-install command.
-:::
-
 The Windows preview is a native Visual Studio build of the `pcie::Model` vision
 API and includes `pcie::genai::GenAIModel`. GenAI remains release-gated as
 described above; installing the API alone does not qualify the Platform transport
-or card models. Install these prerequisites first:
+or card models. Install these prerequisites in this order:
 
-- the SiMa Platform 3.0 Windows package that matches the Neat release. It
-  provides the PCIe drivers and the `SiMaMlaDaemon` service;
-- GStreamer 1.28.6 MSVC x64 (`gstreamer-1.0-msvc-x86_64-1.28.6.exe` from the
-  [GStreamer download page](https://gstreamer.freedesktop.org/download/)). It
-  also provides the development files for C++ applications;
-- 64-bit CPython 3.14 from [python.org](https://www.python.org/downloads/windows/),
-  installed for all users or for the current user. Free-threaded builds cannot
-  load the wheel;
-- `sima-cli`, as described in the prerequisites above. An older `sima-cli`
-  stops with `Missing 'script' in 'installation'`; update it and retry.
+1. The SiMa Platform 3.0 Windows package that matches the Neat release, as
+   described in the
+   [PCIe Driver Installation guide](https://developer.sima.ai/hardware/getting-started/pcie-mode/driver-installation).
+   It provides the PCIe drivers and the `SiMaMlaDaemon` service.
+2. GStreamer 1.28.6 MSVC x64 (`gstreamer-1.0-msvc-x86_64-1.28.6.exe` from the
+   [GStreamer download page](https://gstreamer.freedesktop.org/download/)). It
+   also provides the development files for C++ applications.
+3. 64-bit CPython 3.14 from [python.org](https://www.python.org/downloads/windows/),
+   installed for all users or for the current user. Install Python before
+   `sima-cli`. Free-threaded builds cannot load the wheel.
+4. `sima-cli`, from the [sima-cli installation guide](/tools/sima-cli/). Then
+   sign in with `sima-cli login`. An older `sima-cli` stops with
+   `Missing 'script' in 'installation'`; update it and retry.
 
-One `sima-cli neat install` command then installs the matched Scheduler MSI,
-Core MSI and `win_amd64` wheel as one cohort. Windows asks once for
+Choose a working directory on the PCIe host, then install the Windows package:
+
+<ShellCommand prompt="pcie-host">
+sima-cli neat install core/pciehost/windows/amd64@v%%release.core%%
+</ShellCommand>
+
+Windows packages are published starting with the first Neat release that
+includes them.
+
+The command installs the matched Scheduler MSI, Core MSI and `win_amd64` wheel
+as one cohort. Windows asks once for
 administrator approval for the two MSI packages. The command leaves the
 downloaded packages and Windows Installer logs in the current directory.
 
@@ -134,7 +139,8 @@ Use `--python-executable <path>` to install into a different environment, or
 `--native-only` for a C++-only installation. Windows Installer owns native
 removal; pip owns Python-package removal.
 
-Provision passwordless SSH to the card once after installation:
+After installation, run the setup utility once to provision passwordless SSH
+to the card. It asks once for the password of the card's `sima` account:
 
 ```powershell
 & "C:\Program Files\SimaPCIeHost\bin\pcie-setup.cmd"

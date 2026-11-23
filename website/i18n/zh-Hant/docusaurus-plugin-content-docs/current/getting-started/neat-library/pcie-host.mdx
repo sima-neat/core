@@ -25,7 +25,7 @@ Neat PCIe 主機封裝支援以下經過驗證的主機平台：
 | --- | --- | --- |
 | Ubuntu 22.04 | x86_64 | 支援 |
 | Ubuntu 24.04 | x86_64 | 支援 |
-| Windows 11 | x86_64 | 原生預覽；尚未發布 |
+| Windows 11 | x86_64 | 原生預覽 |
 
 Arm64 主機上的建置尚未經過驗證。Windows 套件包含 PCIe GenAI API，但在相符的 Platform 提供者以及完整的 Windows C++ 與 Python GenAI 版本發布矩陣通過資格驗證之前，這並非受支援的客戶設定。
 
@@ -82,22 +82,26 @@ gst-inspect-1.0 neatpciehost
 
 ## 安裝 Windows 11 原生預覽
 
-:::note 尚未提供
-Windows 套件尚未發布。從第一個提供通過資格驗證之 Windows 二進位檔的 Neat 版本開始，這些套件將以與 Ubuntu 套件相同的 Neat 版本標籤發布。屆時本節將提供安裝指令。
-:::
+Windows 預覽是 `pcie::Model` 視覺 API 的原生 Visual Studio 建置，並包含 `pcie::genai::GenAIModel`。如上所述，GenAI 仍需通過版本發布資格驗證；僅安裝 API 並不代表 Platform 傳輸或卡片模型已通過資格驗證。請依下列順序安裝先決條件：
 
-Windows 預覽是 `pcie::Model` 視覺 API 的原生 Visual Studio 建置，並包含 `pcie::genai::GenAIModel`。如上所述，GenAI 仍需通過版本發布資格驗證；僅安裝 API 並不代表 Platform 傳輸或卡片模型已通過資格驗證。請先安裝下列先決條件：
+1. 與 Neat 版本相符的 SiMa Platform 3.0 Windows 套件，請依照 [PCIe 驅動程式安裝指南](https://developer.sima.ai/hardware/getting-started/pcie-mode/driver-installation) 安裝。它提供 PCIe 驅動程式與 `SiMaMlaDaemon` 服務。
+2. GStreamer 1.28.6 MSVC x64（[GStreamer 下載頁面](https://gstreamer.freedesktop.org/download/)上的 `gstreamer-1.0-msvc-x86_64-1.28.6.exe`）。它也提供 C++ 應用程式所需的開發檔案。
+3. 來自 [python.org](https://www.python.org/downloads/windows/) 的 64 位元 CPython 3.14，可為所有使用者或僅為目前使用者安裝。請在安裝 `sima-cli` 之前先安裝 Python。自由執行緒（free-threaded）建置無法載入此 wheel。
+4. 依照 [sima-cli 安裝指南](/tools/sima-cli/) 安裝的 `sima-cli`。接著使用 `sima-cli login` 登入。較舊的 `sima-cli` 會以 `Missing 'script' in 'installation'` 停止；請更新後再試一次。
 
-- 與 Neat 版本相符的 SiMa Platform 3.0 Windows 套件。它提供 PCIe 驅動程式與 `SiMaMlaDaemon` 服務。
-- GStreamer 1.28.6 MSVC x64（[GStreamer 下載頁面](https://gstreamer.freedesktop.org/download/)上的 `gstreamer-1.0-msvc-x86_64-1.28.6.exe`）。它也提供 C++ 應用程式所需的開發檔案。
-- 來自 [python.org](https://www.python.org/downloads/windows/) 的 64 位元 CPython 3.14，可為所有使用者或僅為目前使用者安裝。自由執行緒（free-threaded）建置無法載入此 wheel。
-- 依上方先決條件所述安裝的 `sima-cli`。較舊的 `sima-cli` 會以 `Missing 'script' in 'installation'` 停止；請更新後再試一次。
+請在 PCIe 主機上選擇工作目錄，然後安裝 Windows 套件：
 
-接著，只需一個 `sima-cli neat install` 指令，即可將相符的 Scheduler MSI、Core MSI 和 `win_amd64` wheel 安裝為同一組套件。Windows 會針對這兩個 MSI 套件要求一次系統管理員核准。下載的套件與 Windows Installer 記錄檔會留在目前的目錄中。
+<ShellCommand prompt="pcie-host">
+sima-cli neat install core/pciehost/windows/amd64@v%%release.core%%
+</ShellCommand>
+
+Windows 套件會從第一個包含這些套件的 Neat 版本開始發布。
+
+此指令會將相符的 Scheduler MSI、Core MSI 和 `win_amd64` wheel 安裝為同一組套件。Windows 會針對這兩個 MSI 套件要求一次系統管理員核准。下載的套件與 Windows Installer 記錄檔會留在目前的目錄中。
 
 CLI 會在執行 MSI 前檢查 Windows OpenSSH、Platform 服務、GStreamer，以及相容的 Python 安裝。它會建立或重用 `%USERPROFILE%\pyneatpcie` 環境、驗證所有已發布的總和檢查碼、呼叫 Windows Installer 安裝 Scheduler 與 Core，並執行主機診斷及安裝相符的程式設計代理技能和 wheel。如需修復或升級，請再次執行相同指令。若要使用其他環境，請指定 `--python-executable <path>`；若只安裝原生 C++，請使用 `--native-only`。原生元件由 Windows Installer 負責移除；Python 套件則由 pip 負責移除。
 
-安裝完成後，請設定一次連到卡片的免密碼 SSH：
+安裝完成後，請執行一次設定工具，設定連到卡片的免密碼 SSH。它只會詢問一次卡片 `sima` 帳戶的密碼：
 
 ```powershell
 & "C:\Program Files\SimaPCIeHost\bin\pcie-setup.cmd"

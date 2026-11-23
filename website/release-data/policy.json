@@ -519,7 +519,7 @@
     },
     {
       "path": "docs/getting-started/neat-library/pcie-host.mdx",
-      "line": "- GStreamer 1.28.6 MSVC x64 (`gstreamer-1.0-msvc-x86_64-1.28.6.exe` from the",
+      "line": "2. GStreamer 1.28.6 MSVC x64 (`gstreamer-1.0-msvc-x86_64-1.28.6.exe` from the",
       "count": 1,
       "reason": "Windows third-party prerequisite version pinned in scripts/ci/pciehost/windows_build_inputs.json, not a Neat release"
     },
@@ -531,7 +531,7 @@
     },
     {
       "path": "website/i18n/ko/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
-      "line": "- GStreamer 1.28.6 MSVC x64([GStreamer 다운로드 페이지](https://gstreamer.freedesktop.org/download/)의 `gstreamer-1.0-msvc-x86_64-1.28.6.exe`). C++ 애플리케이션용 개발 파일도 제공합니다.",
+      "line": "2. GStreamer 1.28.6 MSVC x64([GStreamer 다운로드 페이지](https://gstreamer.freedesktop.org/download/)의 `gstreamer-1.0-msvc-x86_64-1.28.6.exe`). C++ 애플리케이션용 개발 파일도 제공합니다.",
       "count": 1,
       "reason": "Windows third-party prerequisite version pinned in scripts/ci/pciehost/windows_build_inputs.json, not a Neat release"
     },
@@ -543,7 +543,7 @@
     },
     {
       "path": "website/i18n/ja/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
-      "line": "- GStreamer 1.28.6 MSVC x64（[GStreamerのダウンロードページ](https://gstreamer.freedesktop.org/download/)の`gstreamer-1.0-msvc-x86_64-1.28.6.exe`）。C++アプリケーション用の開発ファイルも提供します。",
+      "line": "2. GStreamer 1.28.6 MSVC x64（[GStreamerのダウンロードページ](https://gstreamer.freedesktop.org/download/)の`gstreamer-1.0-msvc-x86_64-1.28.6.exe`）。C++アプリケーション用の開発ファイルも提供します。",
       "count": 1,
       "reason": "Windows third-party prerequisite version pinned in scripts/ci/pciehost/windows_build_inputs.json, not a Neat release"
     },
@@ -555,7 +555,7 @@
     },
     {
       "path": "website/i18n/zh-Hant/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
-      "line": "- GStreamer 1.28.6 MSVC x64（[GStreamer 下載頁面](https://gstreamer.freedesktop.org/download/)上的 `gstreamer-1.0-msvc-x86_64-1.28.6.exe`）。它也提供 C++ 應用程式所需的開發檔案。",
+      "line": "2. GStreamer 1.28.6 MSVC x64（[GStreamer 下載頁面](https://gstreamer.freedesktop.org/download/)上的 `gstreamer-1.0-msvc-x86_64-1.28.6.exe`）。它也提供 C++ 應用程式所需的開發檔案。",
       "count": 1,
       "reason": "Windows third-party prerequisite version pinned in scripts/ci/pciehost/windows_build_inputs.json, not a Neat release"
     },
@@ -567,7 +567,7 @@
     },
     {
       "path": "website/i18n/uk/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
-      "line": "- GStreamer 1.28.6 MSVC x64 (`gstreamer-1.0-msvc-x86_64-1.28.6.exe` зі [сторінки завантаження GStreamer](https://gstreamer.freedesktop.org/download/)). Він також надає файли для розроблення застосунків C++;",
+      "line": "2. GStreamer 1.28.6 MSVC x64 (`gstreamer-1.0-msvc-x86_64-1.28.6.exe` зі [сторінки завантаження GStreamer](https://gstreamer.freedesktop.org/download/)). Він також надає файли для розроблення застосунків C++.",
       "count": 1,
       "reason": "Windows third-party prerequisite version pinned in scripts/ci/pciehost/windows_build_inputs.json, not a Neat release"
     },
