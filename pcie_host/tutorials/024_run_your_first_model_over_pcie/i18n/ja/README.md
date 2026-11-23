@@ -83,6 +83,21 @@ python3 share/sima-pcie-host/tutorials/024_run_your_first_model_over_pcie/run_im
 ./build/tutorials-standalone/tutorial_024_run_image_boxdecode
 ```
 
+Windowsでは、チュートリアルのコピー先で、**x64 Native Tools Command Prompt** からCMakeでビルドします。`C:\opencv\build` は、[Windowsでアプリケーションを実行する](/getting-started/neat-library/pcie-host/#run-applications-on-windows)で説明しているOpenCVパッケージの`build`ディレクトリに置き換えてください。
+
+```bat
+call "C:\Program Files\SimaPCIeHost\bin\sima-pcie-host-env.cmd"
+set "OpenCV_DIR=C:\opencv\build"
+cmake -S share\sima-pcie-host\tutorials -B build
+cmake --build build --config Release --target tutorial_024_run_tensor_mode
+cmake --build build --config Release --target tutorial_024_run_image_mode
+cmake --build build --config Release --target tutorial_024_run_image_boxdecode
+set "PATH=%OpenCV_DIR%\x64\vc16\bin;%PATH%"
+build\Release\tutorial_024_run_tensor_mode.exe
+build\Release\tutorial_024_run_image_mode.exe
+build\Release\tutorial_024_run_image_boxdecode.exe
+```
+
 対応する C++ および Python プログラムは、テンソルモードと画像モードの両方で同じ 6 つの生の出力コントラクトを出力し、その後、デコードされた人、車、またはその他の見えるオブジェクトを出力します。
 
 ```text

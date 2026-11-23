@@ -80,6 +80,17 @@ python3 share/sima-pcie-host/tutorials/026_run_multiple_models/run_multiple_mode
 ./build/tutorials-standalone/tutorial_026_run_multiple_models
 ```
 
+Windowsでは、チュートリアルのコピー先で、**x64 Native Tools Command Prompt** からCMakeで再ビルドします。`C:\opencv\build` は、[Windowsでアプリケーションを実行する](/getting-started/neat-library/pcie-host/#run-applications-on-windows)で説明しているOpenCVパッケージの`build`ディレクトリに置き換えてください。
+
+```bat
+call "C:\Program Files\SimaPCIeHost\bin\sima-pcie-host-env.cmd"
+set "OpenCV_DIR=C:\opencv\build"
+cmake -S share\sima-pcie-host\tutorials -B build
+cmake --build build --config Release --target tutorial_026_run_multiple_models
+set "PATH=%OpenCV_DIR%\x64\vc16\bin;%PATH%"
+build\Release\tutorial_026_run_multiple_models.exe
+```
+
 ドキュメント化されたモデルとアセットを使用すると、両方のバージョンで次のような出力が表示されます。
 
 ```text

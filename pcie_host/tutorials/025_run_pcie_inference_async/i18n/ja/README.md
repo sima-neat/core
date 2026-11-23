@@ -76,6 +76,17 @@ python3 share/sima-pcie-host/tutorials/025_run_pcie_inference_async/run_pcie_inf
 ./build/tutorials-standalone/tutorial_025_run_pcie_inference_async
 ```
 
+Windowsでは、チュートリアルのコピー先で、**x64 Native Tools Command Prompt** からCMakeで再ビルドします。`C:\opencv\build` は、[Windowsでアプリケーションを実行する](/getting-started/neat-library/pcie-host/#run-applications-on-windows)で説明しているOpenCVパッケージの`build`ディレクトリに置き換えてください。
+
+```bat
+call "C:\Program Files\SimaPCIeHost\bin\sima-pcie-host-env.cmd"
+set "OpenCV_DIR=C:\opencv\build"
+cmake -S share\sima-pcie-host\tutorials -B build
+cmake --build build --config Release --target tutorial_025_run_pcie_inference_async
+set "PATH=%OpenCV_DIR%\x64\vc16\bin;%PATH%"
+build\Release\tutorial_025_run_pcie_inference_async.exe
+```
+
 正確なタイミングは、ホストとカードによって異なりますが、両方のプログラムは同じ測定境界を使用し、以下を出力します。
 
 ```text

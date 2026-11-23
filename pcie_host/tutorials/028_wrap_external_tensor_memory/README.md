@@ -104,6 +104,20 @@ Copy-Item models\yolov8s\w8a8\yolov8s_w8a8_mpk.tar.gz yolo_v8s_mpk.tar.gz
 ./build/tutorials-standalone/tutorial_028_wrap_external_tensor_memory
 ```
 
+On Windows, build with CMake from an **x64 Native Tools Command Prompt**
+in your copy of the tutorials. Replace `C:\opencv\build` with the `build`
+directory of the OpenCV package described in
+[Run applications on Windows](/getting-started/neat-library/pcie-host/#run-applications-on-windows):
+
+```bat
+call "C:\Program Files\SimaPCIeHost\bin\sima-pcie-host-env.cmd"
+set "OpenCV_DIR=C:\opencv\build"
+cmake -S share\sima-pcie-host\tutorials -B build
+cmake --build build --config Release --target tutorial_028_wrap_external_tensor_memory
+set "PATH=%OpenCV_DIR%\x64\vc16\bin;%PATH%"
+build\Release\tutorial_028_wrap_external_tensor_memory.exe
+```
+
 The default is card 0 and queue 0. Pass `--card N` only when using another
 card. A successful run prints:
 

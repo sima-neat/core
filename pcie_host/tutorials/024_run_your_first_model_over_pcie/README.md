@@ -108,6 +108,24 @@ python3 share/sima-pcie-host/tutorials/024_run_your_first_model_over_pcie/run_im
 ./build/tutorials-standalone/tutorial_024_run_image_boxdecode
 ```
 
+On Windows, build with CMake from an **x64 Native Tools Command Prompt**
+in your copy of the tutorials. Replace `C:\opencv\build` with the `build`
+directory of the OpenCV package described in
+[Run applications on Windows](/getting-started/neat-library/pcie-host/#run-applications-on-windows):
+
+```bat
+call "C:\Program Files\SimaPCIeHost\bin\sima-pcie-host-env.cmd"
+set "OpenCV_DIR=C:\opencv\build"
+cmake -S share\sima-pcie-host\tutorials -B build
+cmake --build build --config Release --target tutorial_024_run_tensor_mode
+cmake --build build --config Release --target tutorial_024_run_image_mode
+cmake --build build --config Release --target tutorial_024_run_image_boxdecode
+set "PATH=%OpenCV_DIR%\x64\vc16\bin;%PATH%"
+build\Release\tutorial_024_run_tensor_mode.exe
+build\Release\tutorial_024_run_image_mode.exe
+build\Release\tutorial_024_run_image_boxdecode.exe
+```
+
 The matching C++ and Python programs print the same six raw output contracts
 for tensor and image mode, followed by decoded people, cars, or other visible
 objects:

@@ -826,6 +826,21 @@ def build(args: argparse.Namespace) -> None:
         binary = consumer_build / executable
         inspect_x64(binary, dumpbin)
         run([binary], env=consumer_environment)
+      # The installed tutorials tree, configured standalone as the tutorial READMEs show.
+      tutorial_build = consumer_build_root / label / "tutorials"
+      run([
+          cmake,
+          "-S", prefix / "share" / "sima-pcie-host" / "tutorials",
+          "-B", tutorial_build,
+          "-G", "Ninja",
+          "-DCMAKE_BUILD_TYPE=Release",
+          "-DCMAKE_PREFIX_PATH=" + consumer_prefix_path,
+      ], env=environment)
+      run([cmake, "--build", tutorial_build, "--target", "tutorial_024_run_image_mode"],
+          env=environment)
+      binary = tutorial_build / "tutorial_024_run_image_mode.exe"
+      inspect_x64(binary, dumpbin)
+      run([binary, "--help"], env=consumer_environment)
 
     check_consumer(relocated, "relocated")
 

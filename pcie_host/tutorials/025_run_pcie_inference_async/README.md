@@ -99,6 +99,20 @@ Or rebuild it:
 ./build/tutorials-standalone/tutorial_025_run_pcie_inference_async
 ```
 
+On Windows, rebuild it with CMake from an **x64 Native Tools Command Prompt**
+in your copy of the tutorials. Replace `C:\opencv\build` with the `build`
+directory of the OpenCV package described in
+[Run applications on Windows](/getting-started/neat-library/pcie-host/#run-applications-on-windows):
+
+```bat
+call "C:\Program Files\SimaPCIeHost\bin\sima-pcie-host-env.cmd"
+set "OpenCV_DIR=C:\opencv\build"
+cmake -S share\sima-pcie-host\tutorials -B build
+cmake --build build --config Release --target tutorial_025_run_pcie_inference_async
+set "PATH=%OpenCV_DIR%\x64\vc16\bin;%PATH%"
+build\Release\tutorial_025_run_pcie_inference_async.exe
+```
+
 The exact timing depends on the host and card, but both programs use the same
 measurement boundaries and print:
 

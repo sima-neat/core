@@ -87,6 +87,20 @@ class WindowsPackagingContract(unittest.TestCase):
     self.assertIn('"tutorial_024_run_image_mode.exe", "--help"], env=tutorial_environment)',
                   producer)
 
+  def test_installed_tutorials_build_standalone(self):
+    producer = WINDOWS_PRODUCER.read_text(encoding="utf-8")
+    consumer = producer[producer.index("def check_consumer("):]
+    consumer = consumer[:consumer.index('check_consumer(relocated, "relocated")')]
+    self.assertIn('"-S", prefix / "share" / "sima-pcie-host" / "tutorials"', consumer)
+    self.assertIn('"--target", "tutorial_024_run_image_mode"', consumer)
+    self.assertIn('run([binary, "--help"], env=consumer_environment)', consumer)
+    tutorials = read_source("tutorials/CMakeLists.txt")
+    self.assertTrue(tutorials.startswith(
+        "if (CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)\n"
+        "  cmake_minimum_required(VERSION 3.16)"))
+    self.assertIn("find_package(SimaPCIeHost REQUIRED CONFIG)", tutorials)
+    self.assertIn('PATTERN "CMakeLists.txt"', tutorials)
+
   def test_msi_first_install_requires_exact_scheduler_msi(self):
     source = PACKAGING.read_text(encoding="utf-8")
     self.assertIn(

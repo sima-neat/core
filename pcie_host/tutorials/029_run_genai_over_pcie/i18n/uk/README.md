@@ -117,6 +117,22 @@ python share/sima-pcie-host/tutorials/029_run_genai_over_pcie/run_whisper.py \
   --model models/whisper-small-a16w8 --audio speech.wav
 ```
 
+У Windows зберіть програми за допомогою CMake з **x64 Native Tools Command Prompt** у своїй копії навчальних матеріалів. Замініть `C:\opencv\build` на каталог `build` пакета OpenCV, описаного в розділі [Запуск застосунків у Windows](/getting-started/neat-library/pcie-host/#run-applications-on-windows):
+
+```bat
+call "C:\Program Files\SimaPCIeHost\bin\sima-pcie-host-env.cmd"
+set "OpenCV_DIR=C:\opencv\build"
+cmake -S share\sima-pcie-host\tutorials -B build
+cmake --build build --config Release --target tutorial_029_run_llm
+cmake --build build --config Release --target tutorial_029_run_vlm
+cmake --build build --config Release --target tutorial_029_run_whisper
+set "PATH=%OpenCV_DIR%\x64\vc16\bin;%PATH%"
+build\Release\tutorial_029_run_llm.exe --model models\Qwen3-0.6B-Autoround-a16w4 --stream
+build\Release\tutorial_029_run_vlm.exe --model models\LFM2-VL-450M-Autoround-a16w4 ^
+  --image share\sima-pcie-host\tutorials\assets\street-scene.png
+build\Release\tutorial_029_run_whisper.exe --model models\whisper-small-a16w8 --audio speech.wav
+```
+
 Для збирання C++ з вихідного коду потрібні пакет розробки PCIe та файли розробки OpenCV. Усі приклади за замовчуванням використовують карту 0 і стандартного SSH-користувача з’єднання sima. Якщо ваше встановлення відрізняється, додайте `--card N`, `--user USER`, `--ssh-key PATH` або `--card-host ADDRESS`. Використовуйте налаштований SSH-акаунт; приклади не налаштовують доступ.
 
 Очікуйте відповідь LLM, опис сцени або транскрипт, що відповідає записаному мовленню. Формулювання залежить від моделі та вхідних даних; сам успішний запуск не є перевіркою якості.
