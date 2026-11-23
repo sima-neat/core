@@ -657,6 +657,26 @@ void published_frame_geometry() {
   gst_structure_set(meta, "preproc_affine_m01", G_TYPE_DOUBLE, .1, nullptr);
   require(std::holds_alternative<rt::Error>(resolve(executor.preparer(), one)),
           "a sheared affine was accepted");
+  // Legacy GstSimaMeta that follows PreprocessRuntimeMeta (resized_* before padding, pads around
+  // it) describes the padded 640x640 canvas, exactly as Core's own projection (resized_* the
+  // canvas, scaled_* the placed image) does: both letterbox the issue's ROI, so both decode alike.
+  core::KernelStageRecipe boxed;
+  boxed.members.resize(1);
+  boxed.members.front().executable = checked;
+  auto letterbox = options;
+  letterbox.resize = simaai::neat::ResizeMode::Letterbox;
+  core::attach_boxdecode_geometry_resolver(boxed, 0, letterbox, true, true);
+  auto resolve_boxed = boxed.resolver_factories.front().instantiate();
+  set_published_frame(meta, "letterbox", 1., 1., 400., 60.);
+  gst_structure_set(meta, "preproc_scaled_width", G_TYPE_INT, 640, "preproc_scaled_height",
+                    G_TYPE_INT, 360, "preproc_pad_top", G_TYPE_INT, 140, "preproc_pad_bottom",
+                    G_TYPE_INT, 140, nullptr);
+  const auto projected = take(resolve_boxed(executor.preparer(), one));
+  require(projected != base, "a letterboxed ROI frame did not select its affine");
+  gst_structure_set(meta, "preproc_resized_height", G_TYPE_INT, 360, "preproc_scaled_width",
+                    G_TYPE_INT, 0, "preproc_scaled_height", G_TYPE_INT, 0, nullptr);
+  require(take(resolve_boxed(executor.preparer(), one)) == projected,
+          "legacy letterbox metadata with resized_* before padding was not read as its canvas");
 }
 void full_frame_only_geometry() {
   probe::OperationProbe executor;

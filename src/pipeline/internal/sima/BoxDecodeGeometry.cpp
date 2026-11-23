@@ -181,8 +181,15 @@ rt::Result<Geometry> read_geometry(GstBuffer* buffer, bool complete, bool unifor
                                         geometry.placed, kFullFrameTolerance));
   }
   if (complete) {
-    gst_structure_get_int(meta, "preproc_resized_width", &geometry.model_width);
-    gst_structure_get_int(meta, "preproc_resized_height", &geometry.model_height);
+    // PreprocessRuntimeMeta::resized_* is the size before padding (Core's own projection writes
+    // the canvas there and the placed image in scaled_*). The model canvas is the placed image
+    // plus its pads, as compile_boxdecode_kernel() computes it; a crop publishes its canvas.
+    int resized_width = 0, resized_height = 0;
+    gst_structure_get_int(meta, "preproc_resized_width", &resized_width);
+    gst_structure_get_int(meta, "preproc_resized_height", &resized_height);
+    const bool crop = geometry.resize == "crop";
+    geometry.model_width = crop ? resized_width : static_cast<int>(geometry.canvas_width);
+    geometry.model_height = crop ? resized_height : static_cast<int>(geometry.canvas_height);
     if (geometry.roi_ambiguous)
       return ambiguous_roi_list();
     std::array<double, 6> matrix{};
