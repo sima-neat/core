@@ -511,8 +511,31 @@ void roi_transform_support() {
   }
 }
 
+// An explicit image size with no preprocess publisher (no upstream Preproc, no ingress facts)
+// keeps the static recipe it had before #1507: nothing can publish a per-frame affine. The same
+// explicit size behind a Preproc installs the per-frame resolver.
+void roi_explicit_size_static() {
+  auto heads = source(BoxDecodeType::Yolo, 2);
+  heads.payload.topk = 4;
+  input(heads, 8, 8, 4);
+  input(heads, 8, 8, 2);
+  heads = roi_heads(std::move(heads));
+  const BoxDecodeGeometryOptions geometry{640, 640, 1280, 720, ResizeMode::Letterbox};
+  auto producer = std::make_shared<CompiledNodeContract>();
+  producer->logical_stage_id = "roi_head_producer";
+  producer->kernel.emplace();
+  producer->kernel->runtime_contract.physical_outputs = heads.runtime_contract.physical_inputs;
+  ContractCompileInput alone;
+  alone.immediate_upstream = producer.get();
+  const auto admitted = compile_boxdecode_kernel(heads, alone, geometry, ResizeMode::Letterbox);
+  require(admitted.recipe && admitted.recipe->resolver_factories.empty(),
+          "an explicit image size without a preprocess publisher gained per-frame resolution");
+  (void)admit_roi(heads, ResizeMode::Letterbox, geometry);
+}
+
 void roi_affine_geometry() {
   roi_transform_support();
+  roi_explicit_size_static();
   roi_decoded_letterbox();
   roi_detr_stretch();
   roi_no_transform_profiles();

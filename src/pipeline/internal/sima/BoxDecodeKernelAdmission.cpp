@@ -412,7 +412,13 @@ CompiledKernelContract compile_boxdecode_kernel(const CompiledBoxDecodeContract&
     geometry.complete_geometry = true;
   // Pose, segmentation, RCNN proposals and multiclass SSD map boxes over the whole frame:
   // their kernels accept no transform, so an ROI or crop frame must fail, naming the profile.
-  geometry.full_frame_only = !detection_transform && !geometry.complete_geometry &&
+  // Per-frame geometry exists only where something publishes it: an upstream preprocess,
+  // preprocess facts on ingress, or an image size taken from each frame. An explicit image size
+  // with none of these keeps the static recipe it always had.
+  const bool frame_geometry_source = input.upstream_preprocess || observed ||
+                                     geometry.original_width <= 0 || geometry.original_height <= 0;
+  geometry.full_frame_only = frame_geometry_source && !detection_transform &&
+                             !geometry.complete_geometry &&
                              compiled.payload.decode_type != BoxDecodeType::SuperPoint;
   geometry.profile = box_decode_type_token(compiled.payload.decode_type);
   if (geometry.full_frame_only && (crop_requested || (observed && observed->resize_mode == "crop")))
@@ -500,7 +506,7 @@ CompiledKernelContract compile_boxdecode_kernel(const CompiledBoxDecodeContract&
   // variant that takes the transform needs an executable prepared with one: the published
   // affine seeds it when ingress shows one, an identity otherwise. Neither is ever applied to
   // a frame that publishes no affine.
-  if (detection_transform && !geometry.complete_geometry) {
+  if (frame_geometry_source && detection_transform && !geometry.complete_geometry) {
     geometry.complete_geometry = true;
     geometry.frame_affine_optional = true;
   }
