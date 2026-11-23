@@ -345,8 +345,8 @@ gh workflow run pcie-host-windows.yml --repo sima-neat/core \
   -f validation_only=true
 ```
 
-The admitted Linux run must contain `core-pcie-card-offline-bundle`: a tag run,
-or a branch run with the Windows card lane enabled. To rehearse release
+The admitted Linux run must contain `core-pcie-card-offline-bundle`: a release
+tag (`v*`) run, or a branch run with the Windows card lane enabled. To rehearse release
 qualification without publishing, add `-f release_qualification=true`. The
 hardware job then runs the Windows-only release checks (`--release-qualification`)
 and admission requires their evidence, exactly as a release does, while
@@ -404,8 +404,9 @@ override.
 
 ## Publishing and formal release checks
 
-Normal branch and tag runs enter the Windows lane from Core's main CI with
-`validation_only=true` when the lane is enabled. Like the Linux card job, every
+Normal branch and release tag runs enter the Windows lane from Core's main CI
+with `validation_only=true` when the lane is enabled. Other tags skip the lane
+and the card bundle, whose metadata accepts only release tag versions. Like the Linux card job, every
 run prepares the GenAI models and runs the GenAI tests. They
 qualify the Windows cohort and gate branch `latest` promotion on that
 qualification. The card lane never publishes. Branch pushes publish their
@@ -420,10 +421,12 @@ only, `first_release_upgrade_exemption=true` with a non-empty
 ref fails in the admission job, before anything is built. Every publishing
 dispatch also needs `linux_run_id=<same-commit-core-vulcan-run-id>`.
 The dispatch downloads that run's `neat-core-dist` and
-`core-pcie-card-offline-bundle` artifacts. Tag runs build the card bundle even
-when the Windows card lane is off, but Vulcan CI keeps `neat-core-dist` for only
-3 days (`artifact_retention_days` of its `build` job), so dispatch the Windows
-release within 3 days of the tag's Vulcan CI run.
+`core-pcie-card-offline-bundle` artifacts. Release tag runs build the card
+bundle even when the Windows card lane is off, but Vulcan CI keeps
+`neat-core-dist` for only 3 days (`artifact_retention_days` of its `build` job),
+so dispatch the Windows release within 3 days of the tag's Vulcan CI run. The
+tag run's `publish-offline-develop` waits for the card bundle job: if that job
+fails, the release's offline bundles are not published until it is re-run.
 Publication is rejected unless
 the Windows 11 customer-install, direct-card, complete GenAI, and cleanup evidence
 passes. Core publishes only the bytes that passed; it does not rebuild them.

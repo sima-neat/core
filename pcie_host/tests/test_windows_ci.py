@@ -1061,6 +1061,7 @@ class WindowsCiContracts(unittest.TestCase):
     gate = textwrap.dedent(job("validation-complete").split(
         "          python3 - <<'PYGATE'\n", 1)[1].split("\n          PYGATE", 1)[0])
     gate_flag = re.search(r"(?m)^          WINDOWS_PCIE_CI: (.+)$", job("validation-complete"))[1]
+    bundle_flag = re.search(r"(?m)^          CARD_BUNDLE: (.+)$", job("validation-complete"))[1]
     for variable in ("", "false", "true"):
       for hardware in ("success", "skipped"):
         for outcome in ("success", "failure"):
@@ -1075,6 +1076,7 @@ class WindowsCiContracts(unittest.TestCase):
                 "inputs.validation_only": False,
                 "inputs.build_mode": "standard",
                 "github.ref_type": "branch",
+                "startsWith(github.ref, 'refs/tags/v')": False,
                 "needs.detect-changes.outputs.docs_only": "false",
                 "needs.test-pciehost-hardware.result": hardware,
             }
@@ -1106,7 +1108,7 @@ class WindowsCiContracts(unittest.TestCase):
             environment = {
                 "RESULTS": json.dumps(results), "BUILD_MODE": "standard",
                 "WINDOWS_PCIE_CI": str(evaluate_actions_expression(gate_flag, context)).lower(),
-                "GITHUB_REF_TYPE": "branch",
+                "CARD_BUNDLE": str(evaluate_actions_expression(bundle_flag, context)).lower(),
             }
             with mock.patch.dict(os.environ, environment):
               if outcome == "success" or variable != "true":
@@ -1142,6 +1144,7 @@ class WindowsCiContracts(unittest.TestCase):
                   "inputs.validation_only": False,
                   "inputs.build_mode": "standard",
                   "github.ref_type": "branch",
+                  "startsWith(github.ref, 'refs/tags/v')": False,
                   "needs.detect-changes.outputs.docs_only": "false",
               }
               for upstream in (
@@ -1159,46 +1162,73 @@ class WindowsCiContracts(unittest.TestCase):
                   evaluate_actions_expression(condition("promote-latest-tag"), context),
                   outcome == "success" or not enabled)
 
-  def test_tag_runs_build_the_card_bundle_the_release_dispatch_downloads(self):
+  def test_release_tags_build_the_card_bundle_and_other_tags_block_nothing(self):
+    # The release dispatch downloads a release tag run's card bundle. A bundle
+    # accepts only release tag versions, so other tags never build it and never
+    # wait for the Windows lane, which needs it.
     source = MAIN_WORKFLOW.read_text(encoding="utf-8")
     job, condition = partial(workflow_job, source), partial(job_condition, source)
     gate = textwrap.dedent(job("validation-complete").split(
         "          python3 - <<'PYGATE'\n", 1)[1].split("\n          PYGATE", 1)[0])
-    for ref_type in ("branch", "tag"):
-      with self.subTest(ref_type=ref_type):
-        context = {
-            "always()": True,
-            "vars.ENABLE_WINDOWS_PCIE_CI": "",
-            "github.event_name": "push",
-            "inputs.run_windows_pcie": False,
-            "github.workflow": "Vulcan CI",
-            "inputs.offline_source_run_id": "",
-            "inputs.validation_only": False,
-            "inputs.build_mode": "standard",
-            "github.ref_type": ref_type,
-            "needs.detect-changes.outputs.docs_only": "false",
-        }
-        for upstream in (
-            "validate-windows-cohort-selectors", "build",
-            "build-pcie-card-offline-bundle", "build-pciehost-packages"):
-          context[f"needs.{upstream}.result"] = "success"
-        tag = ref_type == "tag"
-        self.assertEqual(
-            evaluate_actions_expression(condition("build-pcie-card-offline-bundle"), context),
-            tag)
-        # The card lane itself stays opt-in.
-        self.assertFalse(evaluate_actions_expression(condition("test-pciehost-windows"), context))
+    flag = lambda name: re.search(
+        rf"(?m)^          {name}: (.+)$", job("validation-complete"))[1]
+    for ref in ("refs/heads/develop", "refs/tags/v0.7.0", "refs/tags/3.0.2121"):
+      for variable in ("", "true"):
+        for workflow_name in ("Vulcan CI", "Long Tests Weekly"):
+          with self.subTest(ref=ref, variable=variable, workflow=workflow_name):
+            release = ref.startswith("refs/tags/v")
+            context = {
+                "always()": True,
+                "vars.ENABLE_WINDOWS_PCIE_CI": variable,
+                "github.event_name": "push",
+                "inputs.run_windows_pcie": False,
+                "github.workflow": workflow_name,
+                "inputs.offline_source_run_id": "",
+                "inputs.validation_only": False,
+                "inputs.build_mode": "standard",
+                "github.ref_type": "tag" if ref.startswith("refs/tags/") else "branch",
+                "startsWith(github.ref, 'refs/tags/v')": release,
+                "needs.detect-changes.outputs.docs_only": "false",
+            }
+            for upstream in (
+                "validate-windows-cohort-selectors", "build", "build-pciehost-packages",
+                "test-devkit", "test-pciehost-hardware", "publish-pciehost-package"):
+              context[f"needs.{upstream}.result"] = "success"
+            main = workflow_name == "Vulcan CI"
+            lane = main and variable == "true" and (release or not ref.startswith("refs/tags/"))
+            bundle = main and (release or lane)
+            self.assertEqual(
+                evaluate_actions_expression(condition("build-pcie-card-offline-bundle"), context),
+                bundle)
+            context["needs.build-pcie-card-offline-bundle.result"] = (
+                "success" if bundle else "skipped")
+            self.assertEqual(
+                evaluate_actions_expression(condition("test-pciehost-windows"), context), lane)
+            # A skipped lane blocks promotion only where the lane applies.
+            context["needs.test-pciehost-windows.result"] = "skipped"
+            self.assertEqual(
+                evaluate_actions_expression(condition("promote-latest-tag"), context), not lane)
+            for name, expected in (("WINDOWS_PCIE_CI", lane), ("CARD_BUNDLE", bundle)):
+              self.assertEqual(evaluate_actions_expression(flag(name), context), expected)
 
-        results = {name: {"result": "success"} for name in re.findall(
-            r"- ([\w-]+)", job("validation-complete").split("    steps:", 1)[0])}
-        for name in ("publish-vulcan-artifacts", "publish-pciehost-package",
-                     "promote-latest-tag", "test-pciehost-windows"):
-          results[name]["result"] = "skipped"
-        results["build-pcie-card-offline-bundle"]["result"] = "success" if tag else "skipped"
-        environment = {"RESULTS": json.dumps(results), "BUILD_MODE": "standard",
-                       "WINDOWS_PCIE_CI": "false", "GITHUB_REF_TYPE": ref_type}
-        with mock.patch.dict(os.environ, environment):
-          exec(compile(gate, str(MAIN_WORKFLOW), "exec"), {})
+            results = {name: {"result": "success"} for name in re.findall(
+                r"- ([\w-]+)", job("validation-complete").split("    steps:", 1)[0])}
+            for name in ("publish-vulcan-artifacts", "publish-pciehost-package",
+                         "promote-latest-tag"):
+              results[name]["result"] = "skipped"
+            results["test-pciehost-windows"]["result"] = "success" if lane else "skipped"
+            results["build-pcie-card-offline-bundle"]["result"] = (
+                "success" if bundle else "skipped")
+            environment = {"RESULTS": json.dumps(results), "BUILD_MODE": "standard",
+                           "WINDOWS_PCIE_CI": str(lane).lower(),
+                           "CARD_BUNDLE": str(bundle).lower()}
+            with mock.patch.dict(os.environ, environment):
+              exec(compile(gate, str(MAIN_WORKFLOW), "exec"), {})
+            # Release publication waits for the bundle only where it is built.
+            self.assertIn("      - build-pcie-card-offline-bundle\n",
+                          job("publish-offline-develop"))
+            self.assertIn("startsWith(github.ref, 'refs/tags/v')",
+                          condition("publish-offline-develop"))
 
   def test_release_qualification_can_be_rehearsed_without_publishing(self):
     source = WORKFLOW.read_text(encoding="utf-8")
@@ -1268,6 +1298,7 @@ class WindowsCiContracts(unittest.TestCase):
             "inputs.validation_only": False,
             "inputs.build_mode": "standard",
             "github.ref_type": "branch",
+            "startsWith(github.ref, 'refs/tags/v')": False,
             "needs.detect-changes.outputs.docs_only": "false",
         }
         for upstream in (
