@@ -21,7 +21,7 @@ By the end you will have a working harness for measuring an async run under back
 
 ### Configure the run options {#step-configure-run-options}
 
-`RunOptions` is where async behavior under load is decided. We set `queue_depth` (how many in-flight samples the runtime accepts), `overflow_policy` (what happens when that queue is full — `Block`, `KeepLatest`, or `DropIncoming`), `output_memory = Owned` (returned tensors own their data so they survive past the pull), We then `build()` the graph in `Async` mode, which gives us a run with independent producer and consumer sides.
+Set `queue_depth` for each runtime queue and `overflow_policy` for `try_push(...)` on a full input queue. With `output_memory = Owned`, pulled tensors own their data. Call `build()` to start the asynchronous run.
 
 **C++:** The overflow policy is parsed from `--drop` into `simaai::neat::OverflowPolicy::{Block,KeepLatest,DropIncoming}`; `graph.build(input, opt)` returns the run handle.
 
@@ -29,7 +29,7 @@ By the end you will have a working harness for measuring an async run under back
 
 ### Push the workload and drain {#step-push-workload}
 
-This is where the queue policy is exercised. We call `try_push(...)` in a tight loop — a non-blocking push that simply returns whether the sample was accepted, so a full queue under `DropIncoming`/`KeepLatest` shows up as rejected pushes rather than a stall. After the burst we call `close_input()` to signal no more inputs, then drain the consumer side with a `pull(...)` loop until it reports `Timeout` or `Closed` (an `Error` fails the run). Pairing `try_push` with `close_input` plus a drain loop is the canonical non-blocking async pattern.
+Submit the burst with `try_push(...)`, call `close_input()`, then `pull(...)` until the output closes. With `KeepLatest`, a successful submission can replace an older pending sample.
 
 ### Read the measurement report {#step-read-measurement}
 
@@ -87,7 +87,7 @@ Heuristics:
 
 ### Overflow policy (`RunOptions::overflow_policy`)
 
-- `Block`: safest for correctness; producer waits when queue is full.
+- `Block` returns `false` when the queue is full. Retry to preserve the sample.
 - `DropIncoming`: keep queued work, drop incoming samples when saturated.
 - `KeepLatest`: prefer freshest frames, drop the oldest queued samples.
 

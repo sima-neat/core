@@ -763,6 +763,28 @@ RUN_TEST(
       static_assert(std::is_same_v<decltype(std::declval<const Model&>().preprocess()), Graph>);
       static_assert(std::is_same_v<decltype(std::declval<const Model&>().postprocess()), Graph>);
 
+      {
+        RouteCapability capability;
+        capability.ordered_pre_ops = {
+            OrderedRouteOp{.kind = OrderedRouteOp::Kind::Quant, .before_mla = true},
+            OrderedRouteOp{.kind = OrderedRouteOp::Kind::Tess, .before_mla = true}};
+        ModelSemantics semantics;
+        const auto authored = build_route_plan(Model::Options{}, semantics, &capability, nullptr);
+        require(authored.pre_chain == std::vector<SessionPreStageOp>{SessionPreStageOp::QuantTess},
+                "typed resize regression must start with the authored tensor pre-chain");
+        Model::Options options;
+        Transform resize;
+        resize.type = TransformType::Resize;
+        resize.resize.interpolation = ResizeInterpolation::Nearest;
+        options.preprocess.transforms.push_back(resize);
+        const auto planned = build_route_plan(options, semantics, &capability, nullptr);
+        require(planned.use_preproc && planned.pre_adapter == SessionPreAdapterKind::None &&
+                    planned.pre_chain ==
+                        std::vector<SessionPreStageOp>{SessionPreStageOp::Preproc} &&
+                    planned.pipeline_type == PipelineType::Preproc,
+                "typed transform sampler must replace rather than retain the tensor pre-chain");
+      }
+
       for (const int batch : {1, 4}) {
         const auto fixture = make_packed_post_fixture(batch);
         Model::Options options;

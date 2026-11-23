@@ -904,14 +904,14 @@ void apply_input_evidence(ModelExecutionPlanData& data, const OpSpec& op, const 
     }
     break;
   }
-  case OpKind::Quantize:
-    merge_dtype(data.values[op.inputs.front()], "float32", path);
-    // Graph 222's registered dense quantize ABI (and graph 226's dense
-    // ingress) consumes canonical HWC geometry.  Seed that exact target ABI
-    // evidence here so standalone Quantize does not depend on a following
-    // Tessellate operation to recover its semantic axes.
-    merge_layout(data.values[op.inputs.front()], "HWC", path);
+  case OpKind::Quantize: {
+    auto& input = data.values[op.inputs.front()];
+    merge_dtype(input, "float32", path);
+    // Preserve graph 222's legacy image axis labels for shapes up to NHWC.
+    if (input.logical_shape && input.logical_shape->size() <= 4U)
+      merge_layout(input, "HWC", path);
     break;
+  }
   case OpKind::Tessellate:
     merge_dtype(data.values[op.inputs.front()], std::get<TessellateOpConfig>(op.config).frame_type,
                 path);

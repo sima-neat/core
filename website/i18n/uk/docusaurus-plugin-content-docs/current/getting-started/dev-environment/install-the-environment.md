@@ -26,17 +26,17 @@ sidebar_position: 2
 
 ## Встановити
 
-Встановіть поточну версію Palette SDK %%release.sdk_series%%:
+Встановіть поточний випуск Palette SDK %%release.sdk%% із серії %%release.sdk_series%%:
 
 <ShellCommand prompt="host">
-sima-cli neat install sdk@%%release.sdk_channel%%
+sima-cli neat install sdk@v%%release.sdk%%
 </ShellCommand>
 
 Перше встановлення може зайняти кілька хвилин, оскільки відбувається завантаження контейнерного образу Palette SDK. Після завантаження образу, інсталятор запускає налаштування SDK і запитує, чи бажаєте ви підключитися до Modalix DevKit і чи потрібно встановити відповідний Model Compiler всередині SDK.
 
 Якщо ви вирішите підключитися до DevKit, введіть IP-адресу DevKit, коли буде запропоновано. Процес налаштування конфігурує робочий простір SDK, запускає контейнер SDK і налаштовує DevKit Sync. Якщо ви пропустите етап підключення, робочий простір SDK все одно буде створено, і ви зможете підключитися пізніше.
 
-Пакет `%%release.sdk_channel%%` містить останню версію Palette SDK у серії %%release.sdk_series%%. Поточна версія — Palette SDK %%release.sdk%%, яка сумісна з програмним забезпеченням DevKit %%release.platform%%.
+Для встановлення SDK використовуйте опублікований тег `v%%release.sdk%%`. Образ гілки `%%release.sdk_channel%%` може спричинити помилку під час встановлення необов’язкових розширень Codex і Claude. Сумісну версію програмного забезпечення DevKit наведено в [посібнику із сумісності](/getting-started/compatibility/).
 
 Під час налаштування `sima-cli` також пропонує встановити відповідний Model Compiler всередині SDK — прийміть пропозицію, якщо ви самі компілюєте або квантуєте моделі; окремої версії для вибору немає. Пропустіть цей крок, якщо ви використовуєте лише попередньо скомпільовані пакети моделей. Щоб встановити його пізніше, вкажіть конкретну версію або використовуйте окремий хост, див. [Встановіть Model Compiler.](/getting-started/dev-environment/install-model-compiler/) та [Посібник зі сумісності](/getting-started/compatibility/).
 
@@ -105,7 +105,7 @@ VS Code password   <password shown by neat>
 Щоб повторно встановити або оновити до поточної версії пакета SDK, повторно запустіть команду встановлення, наведену вище, на хості:
 
 <ShellCommand prompt="host">
-sima-cli neat install sdk@%%release.sdk_channel%%
+sima-cli neat install sdk@v%%release.sdk%%
 </ShellCommand>
 
 Щоб оновити Neat Library у межах наявного контейнера Palette SDK, запустіть Neat

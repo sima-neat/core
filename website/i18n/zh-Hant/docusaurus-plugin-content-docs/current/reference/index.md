@@ -28,6 +28,7 @@ sidebar_position: 1
       <li><a class="overview-link-card" href="/reference/environment-variables/"><strong>環境變數</strong><span>檢閱執行階段和建構器環境變數。</span></a></li>
       <li><a class="overview-link-card" href="/reference/tutorial-assets/"><strong>教學範例素材</strong><span>控制模型封存檔路徑和來源樹教學範例素材。</span></a></li>
       <li><a class="overview-link-card" href="/reference/boxdecode_decode_types/"><strong>BoxDecode 解碼類型</strong><span>選擇解碼類型並解析封裝的偵測輸出。</span></a></li>
+      <li><a class="overview-link-card" href="/reference/semantic_segmentation_decode/"><strong>語意分割解碼</strong><span>在 EV74 上將各類別分數轉換為縮放後的類別圖。</span></a></li>
       <li><a class="overview-link-card" href="/reference/error-codes/"><strong>錯誤碼</strong><span>將框架錯誤常數映射到原因和後續步驟。</span></a></li>
       <li><a class="overview-link-card" href="/reference/error_format/"><strong>外掛程式錯誤格式</strong><span>了解 GStreamer 外掛程式失敗時報告的結構化錯誤欄位。</span></a></li>
     </ul>
@@ -40,6 +41,7 @@ sidebar_position: 1
     <ul class="overview-link-list">
       <li><a class="overview-link-card" href="/reference/glossary/"><strong>術語表</strong><span>查找檔案中使用的術語和縮寫。</span></a></li>
       <li><a class="overview-link-card" href="/reference/elxr-sdk-host-setup/ubuntu/"><strong>SDK 主機設定</strong><span>適用於 Ubuntu、macOS 和 Windows 的主機設定注意事項。</span></a></li>
+      <li><a class="overview-link-card" href="/reference/devkit-containers/"><strong>DevKit 容器</strong><span>在 DevKit 上安裝 Docker、<code>dk container</code> 指令，以及 Ubuntu 容器。</span></a></li>
       <li><a class="overview-link-card" href="/reference/two-step-sdk-installation/"><strong>兩步驟 SDK 安裝</strong><span>適用於 SDK 2.0.0、2.1.2.0 和 2.1.2.1 的舊版映像拉取和設定流程。</span></a></li>
     </ul>
   </section>

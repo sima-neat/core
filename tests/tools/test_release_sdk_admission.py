@@ -28,9 +28,8 @@ def test_inherit_official_scheduler_pin_without_duplicate_core_firmware():
     assert 'elxr_version' not in core
 
 
-@pytest.mark.parametrize('bad', [None, 'receipt', 'duplicate-receipt', 'inventory',
-                                 'duplicate-inventory', 'firmware', 'overlay'])
-def test_release_sdk_requires_matching_receipt_inventory_and_firmware(tmp_path, bad):
+@pytest.mark.parametrize('bad', [None, 'inventory', 'duplicate-inventory', 'firmware'])
+def test_release_sdk_requires_matching_active_inventory_and_firmware(tmp_path, bad):
     receipt = tmp_path / 'sdk-release'
     receipt.write_text('Platform Version = 3.0.0\nPlatform Base = 3.0.0\nPlatform Channel = release\n')
     inventory = tmp_path / 'var/lib/sima-sdk/sysroot-packages.tsv'
@@ -41,12 +40,12 @@ def test_release_sdk_requires_matching_receipt_inventory_and_firmware(tmp_path, 
     firmware = tmp_path / 'etc/packageinfo'
     firmware.parent.mkdir()
     firmware.write_text('SIMA_PACKAGE_VERSION = 3.0.0_master_B2499\n')
-    if bad == 'receipt': receipt.write_text(receipt.read_text().replace('release', 'daily'))
-    if bad == 'duplicate-receipt': receipt.write_text(receipt.read_text() + 'Platform Base = 3.0.0\n')
     if bad == 'inventory': inventory.write_text(inventory.read_text().replace('3.0.0', '3.0.1'))
     if bad == 'duplicate-inventory': inventory.write_text(inventory.read_text() * 2)
     if bad == 'firmware': firmware.write_text('SIMA_PACKAGE_VERSION = 3.0.0_master_B2372\n')
-    if bad == 'overlay': (inventory.parent / 'sysroot-overlay').mkdir()
+    # Original container identity may predate a valid target overlay.
+    receipt.write_text('Platform Version = 3.0.0~git202610070120.ea3713d-1926\nPlatform Channel = daily\n')
+    (inventory.parent / 'sysroot-overlay').write_text('Overlay State = active\nPlatform Revision = 3.0.0\n')
     def check():
         policy.check_release_sdk('3.0.0', '3.0.0_master_B2499', receipt, tmp_path)
     if bad:

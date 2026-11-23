@@ -15,7 +15,7 @@ sidebar_position: 2
 
 ## Почніть з WSL.
 
-Виконуйте команди Palette SDK у середовищі вашої дистрибуції Linux WSL, а не в PowerShell або командному рядку. Це стосується і команди `sima-cli neat install sdk@%%release.sdk_channel%%`.
+Виконуйте команди Palette SDK у середовищі вашої дистрибуції Linux WSL, а не в PowerShell або командному рядку. Це стосується і команди `sima-cli neat install sdk@v%%release.sdk%%`.
 
 ## Режим мережі WSL.
 

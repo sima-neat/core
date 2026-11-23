@@ -33,6 +33,7 @@ SDKをインストールし、DevKitとペアリングしていない場合は�
       <li><a class="overview-link-card" href="/getting-started/dev-environment/install-the-environment/"><strong>SDK のインストール</strong><span>お使いの DevKit ソフトウェアのバージョンに合った SDK パッケージをインストールして設定してください。</span></a></li>
       <li><a class="overview-link-card" href="/getting-started/dev-environment/devkit-sync/"><strong>DevKit Sync</strong><span>ワークスペースの共有、ペアリングの更新、rsyncによる代替処理について理解する。 <code>dk</code> コマンドの実行。</span></a></li>
       <li><a class="overview-link-card" href="/getting-started/dev-environment/offline-installation/"><strong>オフラインでのインストール</strong><span>オフラインでのインストール用に、SDK と Model Compiler パッケージをダウンロードしてください。</span></a></li>
+      <li><a class="overview-link-card" href="/getting-started/dev-environment/containerized-apps/"><strong>コンテナ化されたアプリケーションの開発</strong><span>SDK でコンテナイメージをビルドし、<code>dk container</code> を使って DevKit 上で実行します。</span></a></li>
     </ul>
   </section>
 </div>
@@ -80,7 +81,7 @@ LLiMa を使用して GenAI モデルをコンパイルする場合、基本的�
 :::
 
 :::note 特定のバージョンをインストールする
-標準インストールでは、現在サポートされているデフォルト設定が適用されます。`%%release.sdk_channel%%`チャンネルは、[SDK のインストール](/getting-started/dev-environment/install-the-environment/)ページで常に最新の%%release.sdk_series%%パッチリリースを追跡します。特定のSDK、Neat Library、またはModel Compilerバージョンを固定するには、[互換性ガイド](/getting-started/compatibility/)を参照してください。
+[SDK のインストール](/getting-started/dev-environment/install-the-environment/)ページでは、現在の %%release.sdk_series%% リリースの公開済み `v%%release.sdk%%` タグを使用します。他の SDK、Neat Library、Model Compiler のバージョンについては、[互換性ガイド](/getting-started/compatibility/)を参照してください。
 :::
 
 ## SDKに含まれるツール

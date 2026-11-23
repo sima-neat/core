@@ -92,6 +92,8 @@ array = outputs[0].to_numpy(copy=True)
 torch_tensor = outputs[0].to_torch(copy=True)
 ```
 
+BF16 テンソルでは、`copy=False` の場合も `to_numpy()` は独立した `float32` 配列を返します。
+
 通常、初回実行時にコードはメモリの配置を手動で選択すべきではありません。もし必要であれば、Pythonは`TensorMemory.Auto`、`CPU`、`A65`、`EV74`、および`MLA`を、`memory=`引数を通じて公開します。
 
 `byte_format=`は、バイト形式のテンソルペイロードに対してのみ使用してください。`byte_format=`と`image_format=`を組み合わせて使用しないでください。

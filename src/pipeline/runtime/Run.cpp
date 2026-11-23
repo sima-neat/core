@@ -2,10 +2,12 @@
 #include "RunInternal.h"
 
 #include "internal/InputStream.h"
+#include "pipeline/ErrorCodes.h"
 #include "pipeline/RunExport.h"
 #include "pipeline/NeatError.h"
 #include "pipeline/internal/Diagnostics.h"
 #include "pipeline/internal/EnvUtil.h"
+#include "pipeline/internal/ErrorUtil.h"
 #include "pipeline/internal/RealtimeFrameCredit.h"
 #include "pipeline/internal/OutputQueueMemory.h"
 #include "pipeline/internal/TensorMath.h"
@@ -271,6 +273,7 @@ std::shared_ptr<runtime::RunCore> runtime::RunCore::start_single_pipeline(
   RunCoreStartupGuard startup_guard(st);
   st->pipeline.stream = std::move(stream);
   st->opt = opt;
+  st->opt.overflow_policy = resolve_overflow_policy(opt);
   st->pipeline.stream_opt = stream_opt;
   st->mode = mode;
   st->pipeline.tensor_input_opt_for_cv = tensor_input_opt_for_cv;
@@ -483,7 +486,37 @@ std::shared_ptr<runtime::RunCore> runtime::RunCore::start_single_pipeline(
   };
 
   if (st->pipeline.supports_pull) {
-    st->pipeline.stream.start(on_output);
+    st->pipeline.stream.start(on_output, [st]() {
+      {
+        std::lock_guard<std::mutex> lock(st->pipeline.in_mu);
+        if (!st->pipeline.input_closed && !st->stop_requested) {
+          const auto diag = st->pipeline.stream.diag_ctx();
+          GraphReport report = diag ? diag->snapshot_basic() : GraphReport{};
+          report.error_code = error_codes::kUnexpectedEos;
+          report.repro_note =
+              "The push-backed pipeline reached end of stream before the application closed "
+              "its "
+              "input.\n\n"
+              "Expected: The pipeline remains open until Run::close_input() is called.\n"
+              "Received: End of stream while the input was still open.\n\n"
+              "How to fix:\n"
+              "- Check the source and upstream elements for a premature end-of-stream "
+              "condition.\n"
+              "- Keep the upstream pipeline open until the application has finished pushing "
+              "input, "
+              "then call Run::close_input().\n\n"
+              "Diagnostic ID: runtime.unexpected_eos";
+          PullError detail;
+          detail.code = report.error_code;
+          detail.message = report.repro_note;
+          detail.report = std::move(report);
+          st->set_terminal_error(std::move(detail));
+        }
+        st->stop_requested.store(true);
+      }
+      st->pipeline.in_cv.notify_all();
+      st->pipeline.out_cv.notify_all();
+    });
   }
 
   if (!st->pipeline.supports_push) {
@@ -507,7 +540,8 @@ std::shared_ptr<runtime::RunCore> runtime::RunCore::start_single_pipeline(
         st->set_terminal_error(*typed_error);
       } else {
         std::lock_guard<std::mutex> lock(st->error_mu);
-        st->error = e.what();
+        if (st->error.empty())
+          st->error = e.what();
       }
       st->stop_requested.store(true);
       st->pipeline.out_cv.notify_all();
@@ -645,9 +679,11 @@ bool runtime::RunCore::can_push() const {
     return dataflow_->can_push();
   }
   if (graph_execution_) {
-    return graph_execution_->plan.default_input.has_value();
+    return graph_execution_->plan.default_input.has_value() && !graph_public_input_closed() &&
+           !graph_stop_requested();
   }
-  return pipeline.supports_push;
+  return pipeline.supports_push && !pipeline.input_closed && !stop_requested &&
+         !pipeline.stream.reached_eos();
 }
 
 bool runtime::RunCore::can_pull() const {
@@ -655,9 +691,16 @@ bool runtime::RunCore::can_pull() const {
     return dataflow_->can_pull();
   }
   if (graph_execution_) {
-    return graph_execution_->plan.default_output.has_value();
+    const auto& output = graph_execution_->plan.default_output;
+    if (!output)
+      return false;
+    const auto sink = graph_execution_->sinks.find(output->node);
+    return sink != graph_execution_->sinks.end() && sink->second && !sink->second->drained();
   }
-  return pipeline.supports_pull;
+  std::lock_guard<std::mutex> lock(pipeline.out_mu);
+  return pipeline.supports_pull &&
+         (!pipeline.out_queue.empty() ||
+          (!stop_requested && !pipeline.stream.reached_eos() && pipeline.stream.running()));
 }
 
 bool runtime::RunCore::running() const {
@@ -773,7 +816,13 @@ bool Run::running() const {
 }
 
 std::string Run::last_error() const {
-  return core_ ? core_->last_error() : std::string{};
+  if (!core_)
+    return {};
+  auto error = core_->last_error();
+  if (error.empty() && core_->push_refused_after_close)
+    return pipeline_internal::error_util::decorate_error(error_codes::kRuntimePull,
+                                                         "Run::push: input is closed");
+  return error;
 }
 
 } // namespace simaai::neat

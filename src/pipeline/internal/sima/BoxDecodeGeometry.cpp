@@ -5,7 +5,9 @@
 #include <array>
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <mutex>
+#include <optional>
 #include <stdexcept>
 #include <string_view>
 
@@ -18,7 +20,19 @@ struct Geometry {
   int width = 0, height = 0, model_width = 0, model_height = 0;
   std::string_view resize;
   std::optional<Transform> transform;
+  // Canvas and the scaled image's {x, y, width, height} on it, normalized as
+  // sam_boxdecode_geometry() admits them.
+  std::int64_t canvas_width = 0, canvas_height = 0;
+  std::array<std::int64_t, 4> placed{};
+  bool roi_list = false;
+  // The published model-to-original affine; legacy metadata may omit it.
+  std::optional<std::array<double, 6>> affine;
 };
+constexpr std::array affine_matrix_names{"preproc_affine_m00", "preproc_affine_m01",
+                                         "preproc_affine_m02", "preproc_affine_m10",
+                                         "preproc_affine_m11", "preproc_affine_m12"};
+constexpr std::array affine_alias_names{"preproc_affine_scale_x", "preproc_affine_scale_y",
+                                        "preproc_affine_offset_x", "preproc_affine_offset_y"};
 rt::Error invalid(const char* message) {
   return {rt::ErrorCode::InvalidRequest, "boxdecode.geometry", message};
 }
@@ -60,7 +74,12 @@ rt::Result<Geometry> read_geometry(GstBuffer* buffer, bool complete, bool unifor
                       static_cast<int>(facts->resized_width),
                       static_cast<int>(facts->resized_height),
                       facts->resize_mode,
-                      {}};
+                      {},
+                      facts->resized_width,
+                      facts->resized_height,
+                      facts->placed,
+                      facts->roi_list,
+                      facts->affine};
     if (complete) {
       if (facts->roi_list)
         return invalid("one BoxDecode frame requires one unambiguous preprocessing transform");
@@ -80,6 +99,37 @@ rt::Result<Geometry> read_geometry(GstBuffer* buffer, bool complete, bool unifor
   gst_structure_get_int(meta, "preproc_original_height", &geometry.height);
   if (const auto* mode = gst_structure_get_string(meta, "preproc_resize_mode"))
     geometry.resize = mode;
+  {
+    int resized_width = 0, resized_height = 0, scaled_width = 0, scaled_height = 0;
+    int left = 0, right = 0, top = 0, bottom = 0;
+    gst_structure_get_int(meta, "preproc_resized_width", &resized_width);
+    gst_structure_get_int(meta, "preproc_resized_height", &resized_height);
+    gst_structure_get_int(meta, "preproc_scaled_width", &scaled_width);
+    gst_structure_get_int(meta, "preproc_scaled_height", &scaled_height);
+    gst_structure_get_int(meta, "preproc_pad_left", &left);
+    gst_structure_get_int(meta, "preproc_pad_right", &right);
+    gst_structure_get_int(meta, "preproc_pad_top", &top);
+    gst_structure_get_int(meta, "preproc_pad_bottom", &bottom);
+    gboolean roi_list = FALSE;
+    gst_structure_get_boolean(meta, "preproc_roi_list_enable", &roi_list);
+    geometry.roi_list = roi_list;
+    const std::int64_t width = scaled_width > 0 ? scaled_width : resized_width;
+    const std::int64_t height = scaled_height > 0 ? scaled_height : resized_height;
+    geometry.placed = {left, top, width, height};
+    geometry.canvas_width = width + left + right;
+    geometry.canvas_height = height + top + bottom;
+    std::array<double, 6> matrix{};
+    std::array<double, 4> alias{};
+    bool matrix_complete = true, alias_complete = true;
+    for (std::size_t i = 0; i < matrix.size(); ++i)
+      matrix_complete &= bool(gst_structure_get_double(meta, affine_matrix_names[i], &matrix[i]));
+    for (std::size_t i = 0; i < alias.size(); ++i)
+      alias_complete &= bool(gst_structure_get_double(meta, affine_alias_names[i], &alias[i]));
+    if (matrix_complete)
+      geometry.affine = matrix;
+    else if (alias_complete)
+      geometry.affine = std::array<double, 6>{alias[0], 0., alias[2], 0., alias[1], alias[3]};
+  }
   if (complete) {
     gst_structure_get_int(meta, "preproc_resized_width", &geometry.model_width);
     gst_structure_get_int(meta, "preproc_resized_height", &geometry.model_height);
@@ -87,20 +137,15 @@ rt::Result<Geometry> read_geometry(GstBuffer* buffer, bool complete, bool unifor
     gst_structure_get_boolean(meta, "preproc_roi_list_enable", &roi_list);
     if (roi_list)
       return invalid("one BoxDecode frame requires one unambiguous preprocessing transform");
-    constexpr std::array matrix_names{"preproc_affine_m00", "preproc_affine_m01",
-                                      "preproc_affine_m02", "preproc_affine_m10",
-                                      "preproc_affine_m11", "preproc_affine_m12"};
-    constexpr std::array alias_names{"preproc_affine_scale_x", "preproc_affine_scale_y",
-                                     "preproc_affine_offset_x", "preproc_affine_offset_y"};
     std::array<double, 6> matrix{};
     bool matrix_present = false, alias_present = false;
-    for (const auto* name : matrix_names)
+    for (const auto* name : affine_matrix_names)
       matrix_present |= gst_structure_has_field(meta, name);
-    for (const auto* name : alias_names)
+    for (const auto* name : affine_alias_names)
       alias_present |= gst_structure_has_field(meta, name);
     if (matrix_present) {
       for (std::size_t i = 0; i < matrix.size(); ++i)
-        if (!gst_structure_get_double(meta, matrix_names[i], &matrix[i]))
+        if (!gst_structure_get_double(meta, affine_matrix_names[i], &matrix[i]))
           return invalid("preprocess affine matrix is partial or has invalid field types");
       auto transform = checked_transform(matrix, uniform);
       if (const auto* error = std::get_if<rt::Error>(&transform))
@@ -110,7 +155,7 @@ rt::Result<Geometry> read_geometry(GstBuffer* buffer, bool complete, bool unifor
     if (alias_present) {
       std::array<double, 4> values{};
       for (std::size_t i = 0; i < values.size(); ++i)
-        if (!gst_structure_get_double(meta, alias_names[i], &values[i]))
+        if (!gst_structure_get_double(meta, affine_alias_names[i], &values[i]))
           return invalid("preprocess affine aliases are partial or have invalid field types");
       auto transform =
           checked_transform({values[0], 0., values[2], 0., values[1], values[3]}, uniform);
@@ -238,7 +283,8 @@ void attach_boxdecode_geometry_resolver(KernelStageRecipe& recipe, std::size_t m
            if (options.complete_geometry) {
              if (options.require_frame_transform &&
                  (!found_transform_authority || !selected.transform))
-               return invalid("source-driven oriented boxes require per-frame preprocess affine");
+               return invalid(
+                   "source-driven complete geometry requires per-frame preprocess affine");
              if (!found_transform_authority)
                selected.transform = options.model_to_original;
              if (options.uniform_transform_required &&
@@ -281,6 +327,79 @@ void attach_boxdecode_geometry_resolver(KernelStageRecipe& recipe, std::size_t m
                                            operation};
            cache->next = (cache->next + 1) % cache->variants.size();
            return operation;
+         };
+       }});
+}
+bool boxdecode_affine_covers_image(const std::array<double, 6>& a, int original_width,
+                                   int original_height, const std::array<std::int64_t, 4>& placed) {
+  if (!std::all_of(a.begin(), a.end(), [](double value) { return std::isfinite(value); }) ||
+      a[1] != 0. || a[3] != 0. || a[0] <= 0. || a[4] <= 0. || placed[2] < 1 || placed[3] < 1)
+    return false;
+  // Where an original image edge lands on the canvas, against the placed rectangle's edge.
+  const auto lands = [](double scale, double offset, double edge, std::int64_t expected) {
+    return std::abs((edge - offset) / scale - double(expected)) <= 0.5 + 1e-6;
+  };
+  return lands(a[0], a[2], 0., placed[0]) &&
+         lands(a[0], a[2], original_width, placed[0] + placed[2]) &&
+         lands(a[4], a[5], 0., placed[1]) &&
+         lands(a[4], a[5], original_height, placed[1] + placed[3]);
+}
+void attach_boxdecode_fixed_image_guard(KernelStageRecipe& recipe, std::size_t member_index,
+                                        BoxDecodeFixedImage image) {
+  if (member_index >= recipe.members.size() || image.original_width < 1 ||
+      image.original_height < 1 || image.canvas_width < 1 || image.canvas_height < 1 ||
+      image.resize_mode.empty())
+    throw std::invalid_argument(
+        "BoxDecode fixed image guard requires a member, the image size and its preprocessing");
+  recipe.resolver_factories.push_back(
+      {member_index, [image = std::move(image)]() -> KernelStageRecipe::Resolver {
+         return [image](const rt::VariantPreparer& preparer,
+                        std::span<GstBuffer* const> buffers) -> rt::Result<rt::PreparedSelection> {
+           const auto& base = preparer.base();
+           if (!base || buffers.empty())
+             return invalid("prepared operation and input buffers are required");
+           bool described = false;
+           for (auto* buffer : buffers) {
+             auto parsed = read_geometry(buffer, false, false);
+             if (const auto* error = std::get_if<rt::Error>(&parsed))
+               return *error;
+             const auto& geometry = std::get<Geometry>(parsed);
+             // An input without preprocess facts (a prompt) describes no image.
+             if (!geometry.width && !geometry.height)
+               continue;
+             described = true;
+             // As cold admission requires: one image, not an ROI list.
+             if (geometry.roi_list)
+               return invalid("Segment Anything decodes one image; ROI-list preprocessing is not "
+                              "admitted");
+             if (geometry.width != image.original_width || geometry.height != image.original_height)
+               return invalid("the prepared output is sized for another original image; a new "
+                              "frame size requires a new runner");
+             // The kernel maps masks back with the admitted resize, canvas and placement.
+             if (geometry.resize != image.resize_mode ||
+                 geometry.canvas_width != image.canvas_width ||
+                 geometry.canvas_height != image.canvas_height ||
+                 !std::equal(image.placed.begin(), image.placed.end(), geometry.placed.begin()))
+               return invalid("the frame was preprocessed with another resize mode, canvas or "
+                              "placement than the prepared plan; other preprocessing requires a "
+                              "new runner");
+             // The kernel ignores the affine, so a crop composed before the resize would
+             // place the masks over the whole image.
+             if (geometry.affine &&
+                 !boxdecode_affine_covers_image(*geometry.affine, image.original_width,
+                                                image.original_height, geometry.placed))
+               return invalid("the frame's preprocess affine does not map the scaled image onto "
+                              "the whole image (a crop or ROI before the resize, or facts without "
+                              "that affine); Segment Anything masks cover the whole image resized "
+                              "once");
+           }
+           // Every run decodes for an image: without its facts the masks would silently use the
+           // previous image's geometry.
+           if (!described)
+             return invalid("Segment Anything decoding needs the image's semantic.preprocess facts "
+                            "on its inputs on every run; pass the encoder outputs, for example "
+                            "through .cvu()");
+           return base;
          };
        }});
 }

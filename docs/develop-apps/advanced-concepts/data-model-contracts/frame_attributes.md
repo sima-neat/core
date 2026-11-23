@@ -64,7 +64,7 @@ opt.header_capture.headers = ["Image-Index", "Image-Time"]
 source = pyneat.groups.http_mjpeg_decoded_input(opt)
 
 # ... later, on a pulled sample:
-index = sample.attributes.get("image-index")
+index = sample.attributes["image-index"] if "image-index" in sample.attributes else None
 
 sample.attributes["image-index"] = "42"     # reaches the Sample
 sample.attributes = {"image-time": "..."}   # replaces the whole map
@@ -89,8 +89,7 @@ the existing topology and behavior untouched.
 | JPEG payload | A part must contain exactly one complete JPEG from SOI through EOI. Truncated, empty, or concatenated images fail the stream. |
 | Invalid input | Invalid header names, folded header lines, and CR/LF/NUL injection are rejected — the stream errors rather than being normalized into something safe-looking. |
 
-Distinguish "absent" from "empty" with `count()` / `get()` rather than by testing for an
-empty string.
+Check for the key with `in` in Python or `count()` in C++. A present key can have an empty string as its value.
 
 ### Limits
 

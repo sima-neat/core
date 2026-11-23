@@ -92,6 +92,8 @@ array = outputs[0].to_numpy(copy=True)
 torch_tensor = outputs[0].to_torch(copy=True)
 ```
 
+BF16 텐서에서는 `copy=False`인 경우에도 `to_numpy()`가 독립적인 `float32` 배열을 반환합니다.
+
 대부분의 초기 실행 코드에서는 메모리 할당을 수동으로 지정하지 않아야 합니다. 필요한 경우 Python은 `TensorMemory.Auto`, `CPU`, `A65`, `EV74` 및 `MLA`를 `memory=` 인수를 통해 제공합니다.
 
 `byte_format=`은 바이트 형식의 텐서 페이로드에만 사용하십시오. `byte_format=`과 `image_format=`을 함께 사용하지 마십시오.

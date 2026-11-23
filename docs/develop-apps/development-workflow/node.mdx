@@ -83,7 +83,7 @@ Use this map before you open the full API reference.
 | App pushes tensors, images, or samples | `nodes::Input("name", options)` | `pyneat.nodes.input("name", options)` |
 | App pulls a full sample | `nodes::Output("name", options)` | `pyneat.nodes.output("name", options)` |
 | Read frames from a file | `nodes::FileInput(...)` plus decode nodes, or `nodes::groups::VideoInputGroup(...)` | `pyneat.nodes.file_input(...)` plus decode nodes, or `pyneat.groups.video_input(...)` |
-| Read one image as a source | `nodes::StillImageInput(...)` | `pyneat.nodes.still_image_input(...)` |
+| Stream a still image with `run_rtsp()` | `nodes::StillImageInput(...)` | `pyneat.nodes.still_image_input(...)` |
 | Read a MIPI/libcamera camera | `nodes::CameraInput(...)` | `pyneat.nodes.camera_input(...)` |
 | Read a USB (UVC) MJPEG camera | `nodes::UsbCameraInput(...)` | `pyneat.nodes.usb_camera_input(...)` |
 | Read an RTSP stream | `nodes::RTSPInput(...)`, `nodes::groups::RtspEncodedInput(...)`, or `nodes::groups::RtspDecodedInput(...)` | `pyneat.nodes.rtsp_input(...)`, `pyneat.groups.rtsp_encoded_input(...)`, or `pyneat.groups.rtsp_decoded_input(...)` |
@@ -99,6 +99,7 @@ Use this map before you open the full API reference.
 | Send metadata out | `MetadataSender` | `pyneat.MetadataSender` |
 | Render detections | `nodes::SimaRender(...)` | `pyneat.nodes.sima_render(...)` |
 | Convert logits to class index | `nodes::SimaArgMax(...)` | `pyneat.nodes.sima_argmax(...)` |
+| Resize segmentation scores into a class map | `nodes::ResizeArgMax(ResizeArgMaxOptions{...})` | `pyneat.nodes.resize_argmax(options)` |
 | Voxelize a LiDAR sweep into pillars | `nodes::SimaVoxelize(SimaVoxelizeOptions{...})` | `pyneat.nodes.sima_voxelize(options)` |
 | Scatter pillar features onto a BEV canvas | `nodes::SimaPillarScatter(SimaPillarScatterOptions{...})` | `pyneat.nodes.sima_pillar_scatter(options)` |
 | Pool camera features into a BEV grid | `nodes::SimaBEVPoolPlan(...)` and `nodes::SimaBEVPool(...)` | `pyneat.nodes.sima_bev_pool_plan(options)` and `pyneat.nodes.sima_bev_pool(options)` |
@@ -184,6 +185,11 @@ the decoder policy.
 Leave `decoder_tuning` empty to keep the plugin default. Explicit values, including
 `default` and `auto`, are forwarded to the plugin alongside `memory_opt` and buffer
 count overrides so the decoder can apply its tuning precedence.
+The canonical presets are `auto`, `default`, `low-memory`, and
+`throughput-low-latency`; the decoder's aliases, such as `low_memory` and
+`throughput`, are also accepted. Matching ignores case and surrounding whitespace.
+Any other non-empty value makes `SimaDecode` and `RtspDecodedInput` refuse at
+creation with `misconfig.option_out_of_range`.
 `throughput-low-latency` disables decoded-picture reordering and uses command
 depth one through 720p, or two for larger frames. Use it only for
 streams encoded without B-frames; leave tuning unset for general streams.

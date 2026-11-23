@@ -65,6 +65,7 @@
 #include "nodes/io/StillImageInput.h"
 #include "nodes/sima/SimaRender.h"
 #include "nodes/sima/SimaArgMax.h"
+#include "nodes/sima/ResizeArgMax.h"
 #include "nodes/sima/SimaBEVPool.h"
 #include "nodes/sima/SimaBEVPoolPlan.h"
 #include "nodes/sima/SimaPillarScatter.h"
@@ -678,6 +679,10 @@ void delete_dlpack_managed(DLManagedTensor* managed) {
 PyObject* tensor_to_dlpack_capsule(const Tensor& input) {
   if (input.has_tiled_storage())
     throw std::runtime_error("__dlpack__: tiled storage requires explicit detessellation");
+  // Judge the view against its own storage before any transfer: a mapper may expose more bytes
+  // than the segment assigned to the tensor.
+  if (const char* error = simaai::neat::pipeline_internal::dense_storage_bounds_error(input))
+    throw std::runtime_error(std::string("__dlpack__: ") + error);
   const Tensor source_pin = input;
   Tensor tensor = source_pin;
   if (tensor.device.type != DeviceType::CPU) {
@@ -703,6 +708,16 @@ PyObject* tensor_to_dlpack_capsule(const Tensor& input) {
     }
   }
 
+  if (!tensor.strides_bytes.empty() && tensor.strides_bytes.size() != tensor.shape.size())
+    throw std::runtime_error("__dlpack__: tensor strides rank differs from shape rank");
+  bool has_elements = true;
+  for (int64_t dim : tensor.shape) {
+    if (dim < 0)
+      throw std::runtime_error("__dlpack__: tensor shape has a negative dimension");
+    if (dim == 0)
+      has_elements = false;
+  }
+
   auto owner = std::make_unique<DlpackExportOwner>();
   owner->tensor = std::move(tensor);
   {
@@ -711,6 +726,11 @@ PyObject* tensor_to_dlpack_capsule(const Tensor& input) {
   }
   if (!owner->mapping.data)
     throw std::runtime_error("tensor mapping failed");
+  if (has_elements) {
+    const std::size_t span = span_bytes(owner->tensor.shape, owner->tensor.strides_bytes, elem);
+    if (span > owner->mapping.size_bytes)
+      throw std::runtime_error("__dlpack__: tensor view exceeds its storage mapping");
+  }
 
   owner->shape = owner->tensor.shape;
   owner->strides_elems.clear();
@@ -1305,7 +1325,7 @@ Sample sample_batch_from_python_input(const nb::object& input) {
 void reject_single_tensor_or_sample(const nb::object& input, const char* where) {
   if (nb::isinstance<Sample>(input)) {
     throw std::runtime_error(std::string(where) +
-                             " expects Sample; pass [sample] instead of a single Sample");
+                             " expects a list or tuple of Samples; pass [sample]");
   }
   if (nb::isinstance<Tensor>(input)) {
     throw std::runtime_error(std::string(where) +
@@ -1780,7 +1800,8 @@ NB_MODULE(_pyneat_core, m) {
   nb::enum_<simaai::neat::OverflowPolicy>(m, "OverflowPolicy")
       .value("Block", simaai::neat::OverflowPolicy::Block)
       .value("KeepLatest", simaai::neat::OverflowPolicy::KeepLatest)
-      .value("DropIncoming", simaai::neat::OverflowPolicy::DropIncoming);
+      .value("DropIncoming", simaai::neat::OverflowPolicy::DropIncoming)
+      .value("Auto", simaai::neat::OverflowPolicy::Auto);
 
   nb::class_<simaai::neat::QueueOptions>(m, "QueueOptions")
       .def(nb::init<>())
@@ -2644,7 +2665,10 @@ NB_MODULE(_pyneat_core, m) {
       },
       "Decode BoxDecode segmentation tensors into boxes and masks tensors, positional 1:1.\n\n"
       "Each result has `boxes`, a float32 tensor of shape [N, 6], and `masks`,\n"
-      "a uint8 tensor of shape [N, 160, 160].\n\n"
+      "a uint8 tensor of shape [N, 160, 160]. A versioned masks payload\n"
+      "(the Segment Anything BoxDecode types) is recognized by its header and\n"
+      "returns masks [N, H, W] at the original image size, 0 or 255; its records\n"
+      "are kept even when the mask is empty.\n\n"
       "Args:\n"
       "  segmentation_tensors: list[Tensor] of BoxDecode segmentation-format tensors.\n"
       "  clamp_to:             Optional (width, height) - clamp box coordinates to that "
@@ -3206,9 +3230,12 @@ NB_MODULE(_pyneat_core, m) {
 
   nb::class_<MeasureOptions>(m, "MeasureOptions")
       .def(nb::init<>())
-      .def_rw("duration_ms", &MeasureOptions::duration_ms)
-      .def_rw("warmup_ms", &MeasureOptions::warmup_ms)
-      .def_rw("timeout_ms", &MeasureOptions::timeout_ms)
+      .def_rw("duration_ms", &MeasureOptions::duration_ms,
+              "Deprecated. Report metadata only. End measurement with `scope.stop`.")
+      .def_rw("warmup_ms", &MeasureOptions::warmup_ms,
+              "Deprecated. Report metadata only. Finish warmup before starting measurement.")
+      .def_rw("timeout_ms", &MeasureOptions::timeout_ms,
+              "Deprecated. Report metadata only. Set the timeout on each `pull` call.")
       .def_rw("include_plugin_latency", &MeasureOptions::include_plugin_latency,
               "Deprecated: plugin latency will be removed.")
       .def_rw("plugin_latency_source", &MeasureOptions::plugin_latency_source)
@@ -4654,13 +4681,23 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("transmit", &simaai::neat::SimaRenderOptions::transmit);
   nb::class_<simaai::neat::SimaArgMaxOptions>(m, "SimaArgMaxOptions")
       .def(nb::init<>())
-      .def_rw("config_path", &simaai::neat::SimaArgMaxOptions::config_path)
-      .def_rw("sima_allocator_type", &simaai::neat::SimaArgMaxOptions::sima_allocator_type)
+      .def_rw("config_path", &simaai::neat::SimaArgMaxOptions::config_path,
+              "Deprecated. Leave empty. ArgMax uses axis and keepdims.")
+      .def_rw("sima_allocator_type", &simaai::neat::SimaArgMaxOptions::sima_allocator_type,
+              "Deprecated. The runtime chooses the allocator. Both 0 and 2 are accepted.")
       .def_rw("silent", &simaai::neat::SimaArgMaxOptions::silent)
-      .def_rw("emit_signals", &simaai::neat::SimaArgMaxOptions::emit_signals)
-      .def_rw("transmit", &simaai::neat::SimaArgMaxOptions::transmit)
-      .def_rw("axis", &simaai::neat::SimaArgMaxOptions::axis)
-      .def_rw("keepdims", &simaai::neat::SimaArgMaxOptions::keepdims);
+      .def_rw("emit_signals", &simaai::neat::SimaArgMaxOptions::emit_signals,
+              "Deprecated. Leave false.")
+      .def_rw("transmit", &simaai::neat::SimaArgMaxOptions::transmit, "Deprecated. Leave false.")
+      .def_rw("axis", &simaai::neat::SimaArgMaxOptions::axis,
+              "Reduction axis. Negative values count from the end.")
+      .def_rw("keepdims", &simaai::neat::SimaArgMaxOptions::keepdims,
+              "Retain the reduced axis with size one.");
+  nb::class_<simaai::neat::ResizeArgMaxOptions>(m, "ResizeArgMaxOptions")
+      .def(nb::init<>())
+      .def_rw("output_width", &simaai::neat::ResizeArgMaxOptions::output_width)
+      .def_rw("output_height", &simaai::neat::ResizeArgMaxOptions::output_height)
+      .def_rw("align_corners", &simaai::neat::ResizeArgMaxOptions::align_corners);
   // Kernels-library LiDAR/BEV Nodes: one named kernels request each, on an explicit target.
   nb::enum_<simaai::neat::SimaKernelTarget>(m, "SimaKernelTarget")
       .value("A65", simaai::neat::SimaKernelTarget::A65)
@@ -4817,7 +4854,8 @@ NB_MODULE(_pyneat_core, m) {
           .def_rw("element_name", &simaai::neat::DequantOptions::element_name)
           .def_rw("stage_id", &simaai::neat::DequantOptions::stage_id)
           .def_rw("model_managed", &simaai::neat::DequantOptions::model_managed)
-          .def_rw("q_scale", &simaai::neat::DequantOptions::q_scale)
+          .def_rw("q_scale", &simaai::neat::DequantOptions::q_scale,
+                  "Positive quantization multiplier. FP32 output is (INT8 input - q_zp) / q_scale.")
           .def_rw("q_zp", &simaai::neat::DequantOptions::q_zp)
           .def_rw("num_buffers", &simaai::neat::DequantOptions::num_buffers)
           .def_rw("num_buffers_model", &simaai::neat::DequantOptions::num_buffers_model)
@@ -4967,13 +5005,15 @@ NB_MODULE(_pyneat_core, m) {
             simaai::neat::StillImageInput::FramesPerSecond{fps});
       },
       "image_path"_a, "content_width"_a, "content_height"_a, "encode_width"_a, "encode_height"_a,
-      "fps"_a = 30);
+      "fps"_a = 30,
+      "Load a still image for Graph.run_rtsp() to stream at the configured frame rate.");
   // SimaRender (S6): render bbox overlays onto a frame — the render stage UdpOutputGroupG needs, so
   // binding it here keeps the overlay→UDP power reachable while that group stays deferred.
   nodes_mod.def("sima_render", &simaai::neat::nodes::SimaRender,
                 "options"_a = simaai::neat::SimaRenderOptions{});
   nodes_mod.def("sima_argmax", &simaai::neat::nodes::SimaArgMax,
                 "options"_a = simaai::neat::SimaArgMaxOptions{});
+  nodes_mod.def("resize_argmax", &simaai::neat::nodes::ResizeArgMax, "options"_a);
   nodes_mod.def("sima_voxelize", &simaai::neat::nodes::SimaVoxelize, "options"_a);
   nodes_mod.def("sima_pillar_scatter", &simaai::neat::nodes::SimaPillarScatter, "options"_a);
   nodes_mod.def("sima_bev_pool_plan", &simaai::neat::nodes::SimaBEVPoolPlan, "options"_a);
@@ -5156,6 +5196,10 @@ NB_MODULE(_pyneat_core, m) {
       .value("Letterbox", simaai::neat::ResizeMode::Letterbox)
       .value("Crop", simaai::neat::ResizeMode::Crop);
 
+  nb::enum_<simaai::neat::LetterboxPlacement>(m, "LetterboxPlacement")
+      .value("Center", simaai::neat::LetterboxPlacement::Center)
+      .value("TopLeft", simaai::neat::LetterboxPlacement::TopLeft);
+
   nb::enum_<simaai::neat::PreprocessColorFormat>(m, "PreprocessColorFormat")
       .value("Auto", simaai::neat::PreprocessColorFormat::Auto)
       .value("RGB", simaai::neat::PreprocessColorFormat::RGB)
@@ -5201,11 +5245,21 @@ NB_MODULE(_pyneat_core, m) {
       .value("YoloX", simaai::neat::BoxDecodeType::YoloX)
       .value("Ssd", simaai::neat::BoxDecodeType::Ssd)
       .value("Detr", simaai::neat::BoxDecodeType::Detr)
+      .value("DetrFocal", simaai::neat::BoxDecodeType::DetrFocal)
+      .value("MobileSam", simaai::neat::BoxDecodeType::MobileSam)
+      .value("EdgeTamSeg", simaai::neat::BoxDecodeType::EdgeTamSeg)
+      .value("EdgeTamTrack", simaai::neat::BoxDecodeType::EdgeTamTrack)
+      .value("EfficientSam", simaai::neat::BoxDecodeType::EfficientSam)
+      .value("EfficientSam3", simaai::neat::BoxDecodeType::EfficientSam3)
       .value("EffDet", simaai::neat::BoxDecodeType::EffDet)
       .value("RcnnStage1", simaai::neat::BoxDecodeType::RcnnStage1)
       .value("Centernet", simaai::neat::BoxDecodeType::Centernet)
       .value("SuperPoint", simaai::neat::BoxDecodeType::SuperPoint)
       .value("YoloXSegPose", simaai::neat::BoxDecodeType::YoloXSegPose);
+
+  nb::enum_<simaai::neat::BoxDecodeSourceStorage>(m, "BoxDecodeSourceStorage")
+      .value("DenseHwc", simaai::neat::BoxDecodeSourceStorage::DenseHwc)
+      .value("PackedCBlock", simaai::neat::BoxDecodeSourceStorage::PackedCBlock);
 
   nb::enum_<simaai::neat::BoxDecodeTypeOption>(m, "BoxDecodeTypeOption")
       .value("Auto", simaai::neat::BoxDecodeTypeOption::Auto)
@@ -5259,6 +5313,20 @@ NB_MODULE(_pyneat_core, m) {
       .value("Production", simaai::neat::VerbosityLevel::Production)
       .value("Verbose", simaai::neat::VerbosityLevel::Verbose);
 
+  nb::enum_<simaai::neat::PreprocColorConversionPlacement>(m, "PreprocColorConversionPlacement")
+      .value("AfterResize", simaai::neat::PreprocColorConversionPlacement::AfterResize)
+      .value("BeforeResize", simaai::neat::PreprocColorConversionPlacement::BeforeResize);
+  nb::enum_<simaai::neat::PreprocFloatingConversion>(m, "PreprocFloatingConversion")
+      .value("Legacy", simaai::neat::PreprocFloatingConversion::Legacy)
+      .value("NearestEven", simaai::neat::PreprocFloatingConversion::NearestEven);
+
+  nb::enum_<simaai::neat::ResizeInterpolation>(m, "ResizeInterpolation")
+      .value("Nearest", simaai::neat::ResizeInterpolation::Nearest)
+      .value("Bilinear", simaai::neat::ResizeInterpolation::Bilinear)
+      .value("Bicubic", simaai::neat::ResizeInterpolation::Bicubic)
+      .value("BoxAverage", simaai::neat::ResizeInterpolation::BoxAverage)
+      .value("BilinearAntialiased", simaai::neat::ResizeInterpolation::BilinearAntialiased);
+
   nb::class_<simaai::neat::ResizeSpec>(m, "ResizeSpec")
       .def(nb::init<>())
       .def_rw("enable", &simaai::neat::ResizeSpec::enable)
@@ -5266,7 +5334,12 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("height", &simaai::neat::ResizeSpec::height)
       .def_rw("mode", &simaai::neat::ResizeSpec::mode)
       .def_rw("pad_value", &simaai::neat::ResizeSpec::pad_value)
-      .def_rw("scaling_type", &simaai::neat::ResizeSpec::scaling_type);
+      .def_rw("placement", &simaai::neat::ResizeSpec::placement)
+      .def_rw("scaling_type", &simaai::neat::ResizeSpec::scaling_type)
+      .def_rw("interpolation", &simaai::neat::ResizeSpec::interpolation,
+              nb::for_setter(nb::arg("interpolation").none()))
+      .def_rw("shorter_side", &simaai::neat::ResizeSpec::shorter_side,
+              nb::for_setter(nb::arg("shorter_side").none().noconvert()));
 
   nb::class_<simaai::neat::ColorConvertSpec>(m, "ColorConvertSpec")
       .def(nb::init<>())
@@ -5321,6 +5394,13 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("resize", &simaai::neat::PreprocessOptions::resize)
       .def_rw("color_convert", &simaai::neat::PreprocessOptions::color_convert)
       .def_rw("layout_convert", &simaai::neat::PreprocessOptions::layout_convert)
+      .def_rw("rescale_factor", &simaai::neat::PreprocessOptions::rescale_factor,
+              nb::for_setter(nb::arg("rescale_factor").none()))
+      .def_rw("quantization_step", &simaai::neat::PreprocessOptions::quantization_step,
+              nb::for_setter(nb::arg("quantization_step").none()))
+      .def_rw("color_conversion_placement",
+              &simaai::neat::PreprocessOptions::color_conversion_placement)
+      .def_rw("floating_conversion", &simaai::neat::PreprocessOptions::floating_conversion)
       .def_rw("normalize", &simaai::neat::PreprocessOptions::normalize)
       .def_rw("quantize", &simaai::neat::PreprocessOptions::quantize)
       .def_rw("tessellate", &simaai::neat::PreprocessOptions::tessellate)
@@ -5364,6 +5444,14 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("last_plugin_id", &simaai::neat::Model::InferenceTerminalPolicy::last_plugin_id)
       .def_rw("last_processor", &simaai::neat::Model::InferenceTerminalPolicy::last_processor);
 
+  nb::class_<simaai::neat::Model::SemanticSegmentationOptions>(m,
+                                                               "ModelSemanticSegmentationOptions")
+      .def(nb::init<>())
+      .def_rw("enable", &simaai::neat::Model::SemanticSegmentationOptions::enable)
+      .def_rw("output_width", &simaai::neat::Model::SemanticSegmentationOptions::output_width)
+      .def_rw("output_height", &simaai::neat::Model::SemanticSegmentationOptions::output_height)
+      .def_rw("align_corners", &simaai::neat::Model::SemanticSegmentationOptions::align_corners);
+
   nb::class_<simaai::neat::Model::Options>(m, "ModelOptions")
       .def(nb::init<>())
       .def_rw("preprocess", &simaai::neat::Model::Options::preprocess)
@@ -5375,9 +5463,13 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("superpoint", &simaai::neat::Model::Options::superpoint)
       .def_rw("num_classes", &simaai::neat::Model::Options::num_classes)
       .def_rw("yolox_seg_pose", &simaai::neat::Model::Options::yolox_seg_pose)
+      .def_rw("semantic_segmentation", &simaai::neat::Model::Options::semantic_segmentation)
       .def_rw("boxdecode_original_width", &simaai::neat::Model::Options::boxdecode_original_width)
       .def_rw("boxdecode_original_height", &simaai::neat::Model::Options::boxdecode_original_height)
       .def_rw("boxdecode_resize_mode", &simaai::neat::Model::Options::boxdecode_resize_mode)
+      .def_rw("multimask_output", &simaai::neat::Model::Options::multimask_output,
+              "Segment Anything decoders: True keeps the best of the multimask candidates, False "
+              "the single-mask answer (upstream predict(multimask_output=...)).")
       .def_rw("upstream_name", &simaai::neat::Model::Options::upstream_name)
       .def_rw("name_suffix", &simaai::neat::Model::Options::name_suffix)
       .def_rw("cleanup_extracted_model_data",
@@ -6001,14 +6093,10 @@ NB_MODULE(_pyneat_core, m) {
       .value("NV12", simaai::neat::ImageFormat::NV12)
       .value("I420", simaai::neat::ImageFormat::I420)
       .value("NV16", simaai::neat::ImageFormat::NV16);
-  nb::enum_<simaai::neat::ResizeInterpolation>(m, "ResizeInterpolation")
-      .value("Nearest", simaai::neat::ResizeInterpolation::Nearest)
-      .value("Bilinear", simaai::neat::ResizeInterpolation::Bilinear)
-      .value("Bicubic", simaai::neat::ResizeInterpolation::Bicubic)
-      .value("BoxAverage", simaai::neat::ResizeInterpolation::BoxAverage);
   nb::enum_<simaai::neat::ResizeFit>(m, "ResizeFit")
       .value("Stretch", simaai::neat::ResizeFit::Stretch)
-      .value("Contain", simaai::neat::ResizeFit::Contain);
+      .value("Contain", simaai::neat::ResizeFit::Contain)
+      .value("Cover", simaai::neat::ResizeFit::Cover);
   nb::enum_<simaai::neat::ImageColorMatrix>(m, "ImageColorMatrix")
       .value("Bt601", simaai::neat::ImageColorMatrix::Bt601)
       .value("Bt709", simaai::neat::ImageColorMatrix::Bt709);
@@ -6031,6 +6119,8 @@ NB_MODULE(_pyneat_core, m) {
       .def(nb::init<>())
       .def_rw("width", &simaai::neat::ResizeOptions::width)
       .def_rw("height", &simaai::neat::ResizeOptions::height)
+      .def_rw("shorter_side", &simaai::neat::ResizeOptions::shorter_side,
+              nb::for_setter(nb::arg("shorter_side").none().noconvert()))
       .def_rw("interpolation", &simaai::neat::ResizeOptions::interpolation)
       .def_rw("fit", &simaai::neat::ResizeOptions::fit)
       .def_rw("max_input_width", &simaai::neat::ResizeOptions::max_input_width)
@@ -6050,7 +6140,10 @@ NB_MODULE(_pyneat_core, m) {
       .def(nb::init<>())
       .def_rw("mean", &simaai::neat::NormalizationOptions::mean)
       .def_rw("stddev", &simaai::neat::NormalizationOptions::stddev)
-      .def_rw("element_name", &simaai::neat::NormalizationOptions::element_name);
+      .def_rw("element_name", &simaai::neat::NormalizationOptions::element_name)
+      .def_rw("rescale_factor", &simaai::neat::NormalizationOptions::rescale_factor,
+              nb::for_setter(nb::arg("rescale_factor").none()))
+      .def_rw("floating_conversion", &simaai::neat::NormalizationOptions::floating_conversion);
 
   nb::class_<simaai::neat::PreprocOptions>(m, "PreprocOptions")
       .def(nb::init<>())
@@ -6067,6 +6160,17 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("scaled_width", &simaai::neat::PreprocOptions::scaled_width)
       .def_rw("scaled_height", &simaai::neat::PreprocOptions::scaled_height)
       .def_rw("batch_size", &simaai::neat::PreprocOptions::batch_size)
+      .def_rw("resize_mode", &simaai::neat::PreprocOptions::resize_mode,
+              nb::for_setter(nb::arg("resize_mode").none()))
+      .def_rw("shorter_side", &simaai::neat::PreprocOptions::shorter_side,
+              nb::for_setter(nb::arg("shorter_side").none().noconvert()))
+      .def_rw("rescale_factor", &simaai::neat::PreprocOptions::rescale_factor,
+              nb::for_setter(nb::arg("rescale_factor").none()))
+      .def_rw("quantization_step", &simaai::neat::PreprocOptions::quantization_step,
+              nb::for_setter(nb::arg("quantization_step").none()))
+      .def_rw("color_conversion_placement",
+              &simaai::neat::PreprocOptions::color_conversion_placement)
+      .def_rw("floating_conversion", &simaai::neat::PreprocOptions::floating_conversion)
       .def_rw("normalize", &simaai::neat::PreprocOptions::normalize)
       .def_rw("aspect_ratio", &simaai::neat::PreprocOptions::aspect_ratio)
       .def_rw("tessellate", &simaai::neat::PreprocOptions::tessellate)
@@ -6198,6 +6302,24 @@ NB_MODULE(_pyneat_core, m) {
       "payload_type"_a = 96, "config_interval"_a = 1);
   nodes_mod.def("detess_dequant", &simaai::neat::nodes::DetessDequant,
                 "options"_a = simaai::neat::DetessDequantOptions{});
+  nodes_mod.def(
+      "sima_box_decode",
+      [](simaai::neat::BoxDecodeType decode_type, int original_width, int original_height,
+         int model_width, int model_height, double detection_threshold, double nms_iou_threshold,
+         int top_k, simaai::neat::BoxDecodeTypeOption decode_type_option,
+         std::optional<simaai::neat::BoxDecodeSourceStorage> source_storage,
+         std::optional<bool> detess, std::optional<bool> dequant,
+         std::optional<simaai::neat::ResizeMode> resize_mode) {
+        return simaai::neat::nodes::SimaBoxDecode(
+            decode_type, detection_threshold, nms_iou_threshold, top_k, "", original_width,
+            original_height, model_width, model_height, decode_type_option, source_storage, detess,
+            dequant, resize_mode);
+      },
+      "decode_type"_a, "original_width"_a = 0, "original_height"_a = 0, "model_width"_a = 0,
+      "model_height"_a = 0, "detection_threshold"_a = 0.0, "nms_iou_threshold"_a = 0.0,
+      "top_k"_a = 0, "decode_type_option"_a = simaai::neat::BoxDecodeTypeOption::Auto,
+      "source_storage"_a = std::nullopt, "detess"_a = std::nullopt, "dequant"_a = std::nullopt,
+      "resize_mode"_a = std::nullopt);
   nodes_mod.def(
       "sima_box_decode",
       [](const simaai::neat::Model& model, const simaai::neat::BoxDecodeOptions& options) {

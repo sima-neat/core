@@ -65,6 +65,7 @@ set_tests_properties(unit_boxdecode_publication_test PROPERTIES
 
 add_executable(unit_boxdecode_kernel_recipe_test
   unit_testing/unit_boxdecode_kernel_recipe_test.cpp
+  unit_testing/boxdecode_ssd_mpk_contract.cpp
   ${PROJECT_SOURCE_DIR}/src/pipeline/internal/sima/BoxDecodeGeometry.cpp
   ${PROJECT_SOURCE_DIR}/src/pipeline/internal/sima/BoxDecodeKernelRecipe.cpp
   ${PROJECT_SOURCE_DIR}/src/pipeline/internal/sima/BoxDecodePublication.cpp
@@ -75,6 +76,10 @@ target_link_libraries(unit_boxdecode_kernel_recipe_test PRIVATE
 target_include_directories(unit_boxdecode_kernel_recipe_test PRIVATE ${PROJECT_SOURCE_DIR}/include)
 simaneat_add_test(NAME unit_boxdecode_kernel_recipe_test COMMAND unit_boxdecode_kernel_recipe_test)
 set_tests_properties(unit_boxdecode_kernel_recipe_test PROPERTIES
+  TIMEOUT 30 LABELS "strict;unit;contracts")
+simaneat_add_test(NAME unit_ssd_artifact_completion_guard_test
+  COMMAND unit_boxdecode_kernel_recipe_test --ssd-completion-guard-test)
+set_tests_properties(unit_ssd_artifact_completion_guard_test PROPERTIES
   TIMEOUT 30 LABELS "strict;unit;contracts")
 
 add_executable(unit_boxdecode_public_input_binding_test
@@ -186,6 +191,7 @@ foreach(_target IN LISTS PIPELINESESSION_TEST_TARGETS)
   simaneat_append_ctest_env(${_target})
 endforeach()
 simaneat_append_ctest_env(unit_kernel_runner_capacity_policy_test)
+simaneat_append_ctest_env(unit_ssd_artifact_completion_guard_test)
 # ------------------------------------------------------------------------------
 # Test blacklist (by executable name)
 # ------------------------------------------------------------------------------
@@ -527,6 +533,7 @@ set(UNIT_TESTS
   unit_ordered_public_input_contract_test
   unit_input_metadata_admission_test
   unit_input_planner_semantics_test
+  unit_crop_geometry_test
   unit_preprocess_meta_validation_test
   unit_preprocess_roi_meta_test
   unit_preprocess_roi_api_test
@@ -562,6 +569,7 @@ set(UNIT_TESTS
   unit_model_ingress_tail_padding_test
   unit_model_output_spec_contract_test
   unit_post_region_materialization_test
+  unit_model_semantic_segmentation_test
   unit_model_metadata_test
   unit_model_route_planner_test
   unit_resnet50_mla_handoff_segment_test
@@ -668,6 +676,7 @@ set(UNIT_TESTS
   unit_image_transform_frontends_test
   unit_image_transform_render_test
   unit_plugin_failure_messages_test
+  unit_graph_last_pipeline_regression_test
 )
 
 if (SimaLMM_FOUND)
@@ -1287,6 +1296,18 @@ foreach(bevfusion_suite sima_voxelize:ev74 sima_voxelize:a65 sima_pillar_scatter
     set_tests_properties(${bevfusion_test} PROPERTIES TIMEOUT 180)
   endif()
 endforeach()
+
+# Public ResizeArgMax correctness. The operation runs on the EV74 only; the
+# byte-exact reference needs no FMA contraction.
+add_pipeline_test(resize_argmax_ev_test
+  SOURCES e2e_testing/resize_argmax_test.cpp LOCK_ACCELERATOR)
+if (NOT resize_argmax_ev_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  target_compile_definitions(resize_argmax_ev_test PRIVATE SIMA_BEVFUSION_TARGET_EV74=1)
+  target_compile_options(resize_argmax_ev_test PRIVATE -ffp-contract=off)
+  set_property(TEST resize_argmax_ev_test APPEND PROPERTY LABELS
+    "e2e;segmentation;ev74;customer_api;kernel-runner;modalix-only")
+  set_tests_properties(resize_argmax_ev_test PROPERTIES TIMEOUT 180)
+endif()
 
 add_pipeline_test(kernel_runner_public_cast_test
   SOURCES e2e_testing/kernel_runner_public_cast_test.cpp
@@ -3110,6 +3131,11 @@ install(
   COMPONENT extras
 )
 install(
+  FILES "${CMAKE_SOURCE_DIR}/pcie_host/tutorials/assets/labrador.jpg"
+  DESTINATION share/sima-neat/test-assets/pcie_host/tutorials/assets
+  COMPONENT extras
+)
+install(
   FILES "${CMAKE_SOURCE_DIR}/tests/assets/genai/audio.wav"
   DESTINATION share/sima-neat/test-assets/tests/assets/genai
   COMPONENT extras
@@ -3127,6 +3153,11 @@ install(
 install(
   FILES "${CMAKE_SOURCE_DIR}/tests/assets/preproc_dynamic/ilena_488.jpg"
   DESTINATION share/sima-neat/test-assets/tests/assets/preproc_dynamic
+  COMPONENT extras
+)
+install(
+  DIRECTORY "${CMAKE_SOURCE_DIR}/tests/assets/ssd-contract/"
+  DESTINATION share/sima-neat/test-assets/tests/assets/ssd-contract
   COMPONENT extras
 )
 

@@ -51,6 +51,8 @@ cd website && yarn start           # preview the site
 
 這些子目錄包含屬於各自工作流程的腳本——持續整合 (CI) 執行 `ci/` 腳本集，開發人員執行 `dev/` 臨時腳本，發布工程團隊執行 `release/` 腳本。請勿在應用程式程式碼中使用這些腳本。
 
+`scripts/ci/prepare_scheduler_sdk.sh` 會匯出 `NEAT_SDK_VERIFICATION_JSON`，其值是 `deps/` 下已驗證 SDK 觀測檔案的路徑。`build.sh` 會在編譯後重新驗證此檔案，並將它傳給套件中繼資料產生程序。此變數傳遞內部建置狀態。使用 `--scheduler` 選取相依套件，並使用 `--update-sysroot` 要求更新 SDK。
+
 ## 從一個乾淨的程式碼儲存庫執行檔案產生器。
 
 ```bash

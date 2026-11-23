@@ -55,7 +55,7 @@ opt.header_capture.headers = ["Image-Index", "Image-Time"]
 source = pyneat.groups.http_mjpeg_decoded_input(opt)
 
 # ... later, on a pulled sample:
-index = sample.attributes.get("image-index")
+index = sample.attributes["image-index"] if "image-index" in sample.attributes else None
 
 sample.attributes["image-index"] = "42"     # reaches the Sample
 sample.attributes = {"image-time": "..."}   # replaces the whole map
@@ -79,7 +79,7 @@ Python には、項目ごとのメタデータを取得する非推奨ではな�
 | JPEGペイロード | パートには、SOIからEOIまでの完全なJPEGが1つだけ含まれている必要があります。切り捨てられた、空の、または連結された画像は、ストリームでエラーになります。 |
 | 無効な入力 | 無効なヘッダー名、折りたたまれたヘッダー行、およびCR/LF/NULの挿入は拒否されます。ストリームはエラーを報告し、安全な形式に正規化されることはありません。 |
 
-「存在しない」と「空」を、空の文字列をテストするのではなく、`count()`/ `get()`を使用して区別します。
+キーの有無は Python では `in`、C++ では `count()` で確認します。キーが存在していても、値が空文字列の場合があります。
 
 ### 制限
 

@@ -973,9 +973,11 @@ struct StorageCompilation {
           client::FrameInputBinding input;
           input.view_offset = static_cast<std::size_t>(logical.byte_offset);
           const auto imported_origin = imported_model_origin(index, *physical);
-          const bool direct =
-              physical->address_source == PhysicalAddressSource::DirectCarrierSpan ||
-              (physical->address_source == PhysicalAddressSource::FrameSpan && imported_origin);
+          // Imported tensor ordinals select current views, not backing memories.
+          // Several cache inputs can share one allocation at different offsets.
+          const bool imported_tensor =
+              physical->address_source == PhysicalAddressSource::FrameSpan && imported_origin;
+          const bool direct = physical->address_source == PhysicalAddressSource::DirectCarrierSpan;
           if (owner && physical->address_source != PhysicalAddressSource::RuntimePhysicalBinding) {
             auto offset = static_cast<std::uint64_t>(physical->source_byte_offset);
             if (!physical->model_carrier_id) {
@@ -1023,7 +1025,7 @@ struct StorageCompilation {
             if (direct && !public_tensor)
               input.source = client::DirectMemory{pad, static_cast<std::size_t>(source), offset,
                                                   static_cast<std::size_t>(physical->size_bytes)};
-            else if (public_tensor ||
+            else if (public_tensor || imported_tensor ||
                      physical->address_source == PhysicalAddressSource::RuntimePhysicalBinding)
               input.source =
                   client::PhysicalBinding{pad, static_cast<std::size_t>(source), offset,

@@ -21,7 +21,7 @@
 
 ### 設定執行選項 {#step-configure-run-options}
 
-`RunOptions` 是決定負載下非同步行為的地方。我們設定 `queue_depth`（執行階段接受的同時進行的樣本數量）、`overflow_policy`（當該佇列已滿時發生的情況——`Block`、`KeepLatest` 或 `DropIncoming`）、`output_memory = Owned`（傳回的張量擁有其資料，因此在提取後仍會保留）。然後，我們以 `Async` 模式 `build()` 圖，這為我們提供了一個具有獨立的生產者和消費者端的運行。
+使用 `queue_depth` 設定各佇列的容量，並使用 `overflow_policy` 設定輸入佇列已滿時 `try_push(...)` 的行為。使用 `output_memory = Owned` 時，取出的張量擁有自己的資料。呼叫 `build()` 即可開始非同步執行。
 
 **C++：** 超出限制策略從 `--drop` 解析為 `simaai::neat::OverflowPolicy::{Block,KeepLatest,DropIncoming}`；`graph.build(input, opt)` 傳回運行句柄。
 
@@ -29,7 +29,7 @@
 
 ### 推送工作負載並排出 {#step-push-workload}
 
-這是測試佇列策略的地方。我們在緊密迴圈中呼叫 `try_push(...)`——這是一種非阻塞推送，它僅傳回樣本是否被接受，因此在 `DropIncoming`/`KeepLatest` 下，已滿的佇列會顯示為被拒絕的推送，而不是停頓。在推送完一組影格後，我們呼叫 `close_input()` 以指示不再有輸入，然後使用 `pull(...)` 迴圈排出消費者端，直到它回報 `Timeout` 或 `Closed`（`Error` 會使這次執行失敗）。將 `try_push` 與 `close_input` 結合，再加上一個排出迴圈，是標準的非阻塞非同步模式。
+使用 `try_push(...)` 連續提交樣本，接著呼叫 `close_input()`，再以 `pull(...)` 取出結果，直到輸出關閉。使用 `KeepLatest` 時，提交成功的樣本可能取代較早進入佇列的樣本。
 
 ### 讀取測量報告 {#step-read-measurement}
 
@@ -87,7 +87,7 @@ renegotiations=0
 
 ### 溢出策略 (`RunOptions::overflow_policy`)
 
-- `Block`：最能保證正確性；當佇列已滿時，產生器會等待。
+- 佇列已滿時，`Block` 會傳回 `false`。如要保留樣本，請重試。
 - `DropIncoming`：保留佇列中的工作，當達到飽和狀態時，捨棄傳入的樣本。
 - `KeepLatest`：優先選擇最新的影格，捨棄最舊的佇列樣本。
 

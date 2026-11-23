@@ -103,8 +103,7 @@ PR을 열거나 병합하기 전에 다음 사항을 확인하십시오.
 
 - 추가/업데이트된 테스트가 변경된 동작과 일치하는지 확인합니다.
 - 기존 관련 테스트가 여전히 통과하는지 확인합니다.
-- 사용자에게 보이는 동작에 맞게 문서를 업데이트합니다.
-- API/아키텍처 변경 사항이 [아키텍처](/develop-apps/contribute/architecture)에 반영되었는지 확인합니다.
+- 문서에 미치는 영향은 [문서 업데이트 정책](/develop-apps/contribute/coding_standard)에 따라 평가합니다.
 - 공개 API 변경 사항이 [코딩 표준](/develop-apps/contribute/coding_standard)의 API 호환성 정책을 준수하는지 확인합니다.
 
 ## 필수 적용 범위 및 기능 프로파일
@@ -135,8 +134,10 @@ Python 레인은 선택한 노드 ID와 명시적으로 제외한 노드 ID를 �
 | Python 런타임 | `NEAT_CI_PYTHON_PROFILE=runtime` (기본값) | 준비된 ResNet 픽스처로 Graph Phase 3을 활성화하며 Torch는 명시적으로 제외합니다. |
 | Torch 통합 | `NEAT_CI_PYTHON_PROFILE=torch` | 검토된 정확한 `NEAT_CI_TORCH_VERSION`을 설정합니다. 설치/가져오기에 성공해야 합니다. |
 | MIPI 카메라 | `SIMA_NEAT_TEST_MIPI_CAMERA=1` | 카메라 하드웨어, `SIMA_NEAT_TUTORIAL_MODEL_MIPI` 및 `SIMA_NEAT_TUTORIAL_MIPI_DECODE`를 제공합니다. |
-| 주간 HTTP 스트림 | `NEAT_CI_STREAM_PROFILE=http` (기본값) | HTTP MJPEG URL과 양의 FPS를 제공합니다. 두 HTTP 사례와 동기 스모크 검사는 계속 필수입니다. |
-| 주간 HTTP + RTSP 스트림 | `NEAT_CI_STREAM_PROFILE=all` | H264, H265 및 MJPEG RTSP URL과 양의 MJPEG FPS도 제공합니다. |
+| 주간 HTTP 스트림 | `stream_profile: http` (기본값) | Colo 카탈로그에서 HTTP MJPEG URL과 양의 정수 FPS를 가져옵니다. 두 HTTP 사례와 동기 스모크 검사는 계속 필수입니다. |
+| 주간 HTTP + RTSP 스트림 | `stream_profile: all` | 카탈로그에서 H.264, H.265 및 MJPEG RTSP URL과 양의 정수 MJPEG FPS도 가져옵니다. |
+
+주간 스트림 작업은 할당된 DevKit의 `/etc/colo-services.json`에서 카탈로그를 찾습니다. 스트림 사례를 생략하려면 `stream_profile: none`을 선택합니다.
 
 하드웨어가 필요 없는 카메라 API 테스트는 항상 런타임 프로파일에 포함됩니다.
 카메라와 Torch 제외는 통과가 아니라 적용 범위 공백으로 남습니다. 스트림 프로파일은

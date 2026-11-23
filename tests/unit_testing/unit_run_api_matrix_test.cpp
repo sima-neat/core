@@ -17,6 +17,7 @@
 
 #include <chrono>
 #include <functional>
+#include <future>
 #include <memory>
 #include <string>
 #include <thread>
@@ -213,6 +214,13 @@ RUN_TEST(
         require(pipeline && gst_element_send_event(pipeline, gst_event_new_eos()),
                 run_api_case("unexpected_eos_inject", "failed to inject premature EOS"));
 
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+        while (eos_run.can_push() && std::chrono::steady_clock::now() < deadline)
+          std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        require(!eos_run.can_push() && !eos_run.try_push(TensorList{seed}),
+                "EOS must close input admission before pull");
+        require_contains(eos_run.last_error(), "end of stream",
+                         "EOS must publish its reason before pull");
         Sample tmp;
         PullError err;
         const PullStatus status = pull_until_terminal(eos_run, tmp, err);
@@ -226,6 +234,57 @@ RUN_TEST(
                 run_api_case("unexpected_eos_report", "premature EOS report code mismatch"));
         require_contains(err.message, "How to fix:",
                          run_api_case("unexpected_eos_action", "premature EOS needs an action"));
+      }
+
+      // A queued output survives downstream EOS. A producer blocked on the full input queue
+      // wakes even when the input worker cannot drain it.
+      for (bool close_input : {false, true}) {
+        auto run = make_async_rgb_run_with_copy_input(seed, 1);
+        auto core = run_internal::core(run);
+        require(run.push(TensorList{seed}), "first input must be accepted");
+        const auto output_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+        while (!core->outputs_ready && std::chrono::steady_clock::now() < output_deadline)
+          std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        require(core->outputs_ready != 0, "first output must already be queued");
+        std::future<bool> producer;
+        // Pause the public input worker after dequeue, before it can submit another frame.
+        std::unique_lock pause(core->latency_mu);
+        require(run.push(TensorList{seed}) && run.push(TensorList{seed}),
+                "one input must be in flight and one queued");
+        producer = std::async(std::launch::async, [&] { return run.push(TensorList{seed}); });
+        require(producer.wait_for(std::chrono::milliseconds(50)) == std::future_status::timeout,
+                "producer must wait on the full queue");
+        if (close_input)
+          run.close_input();
+        require(
+            gst_element_send_event(core->pipeline.stream.pipeline_handle(), gst_event_new_eos()),
+            "failed to inject downstream EOS");
+        require(producer.wait_for(std::chrono::seconds(5)) == std::future_status::ready &&
+                    !producer.get(),
+                "closed admission must wake and reject the blocked push");
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+        while (!core->pipeline.stream.reached_eos() && std::chrono::steady_clock::now() < deadline)
+          std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        require(core->pipeline.stream.reached_eos(), "downstream EOS must be observed");
+        pause.unlock();
+
+        require(!run.can_push() && run.can_pull(), "queued output must remain readable after EOS");
+        require_contains(run.last_error(),
+                         close_input ? "input is closed" : error_codes::kUnexpectedEos,
+                         "input rejection must distinguish explicit closure from premature EOS");
+        Sample output;
+        PullError err;
+        require(run.pull(1000, output, &err) == PullStatus::Ok &&
+                    !tensors_from_sample(output, true).empty(),
+                "pull must deliver the queued frame");
+        const auto status = run.pull(1000, output, &err);
+        require(close_input
+                    ? status == PullStatus::Closed
+                    : status == PullStatus::Error && err.code == error_codes::kUnexpectedEos,
+                "only the pull after the queued frame should report terminal status");
+        if (!close_input)
+          require(core->stop_started && core->pipeline.in_queue.empty(),
+                  "the unexpected-EOS pull must release the live Run's queued inputs");
       }
 
       // Once the application has closed its input, a lower output count is not evidence of a
@@ -452,8 +511,20 @@ RUN_TEST(
                 run_api_case("after_stop_try_push", "Run::try_push should fail after stop"));
       }
 
-      // Holder-specific matrix on a fresh run.
       {
+        Run run = make_async_rgb_run_with_copy_input(seed);
+        require(run.can_push() && run.push(TensorList{seed}), "open input should accept a frame");
+        run.close_input();
+        require(!run.can_push() && run.can_pull(), "queued output must survive input close");
+        require(!run.push(TensorList{seed}), "closed input must refuse new frames");
+        require_contains(run.last_error(), "input is closed", "late push should explain refusal");
+        require(run.pull(1000).has_value(), "late push diagnostic must allow output drain");
+        require(!run.pull(1000).has_value() && !run.can_pull(),
+                "drained output must stop advertising more samples");
+      }
+
+      {
+        // Holder-specific matrix on a fresh run.
         Run holder_run = make_async_rgb_run_with_copy_input(seed, 1);
 
         require(holder_run.push(TensorList{seed}),

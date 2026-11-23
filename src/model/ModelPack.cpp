@@ -2549,6 +2549,8 @@ private:
             child_input.upstream_preprocess =
                 last_preprocess_contract(stages, input.upstream_preprocess);
             auto geometry = boxdecode_model_geometry();
+            if (si::box_decode_type_is_sam(compiled_stage.boxdecode->payload.decode_type))
+              geometry = {}; // The SAM canvas comes from the published preprocess facts.
             std::optional<ResizeMode> resize;
             if (model_lineage_ && model_lineage_->base_options.preprocess.enable != AutoFlag::Off &&
                 model_lineage_->base_options.preprocess.resize.enable != AutoFlag::Off) {

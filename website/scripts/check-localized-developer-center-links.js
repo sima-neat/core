@@ -8,6 +8,7 @@ const remarkLocalizeDeveloperCenterLinks = require(
   "../remark-localize-developer-center-links.js",
 );
 const {
+  ENGLISH_ONLY_PILLARS,
   localeForFile,
   localizeDeveloperCenterUrl,
 } = remarkLocalizeDeveloperCenterLinks;
@@ -100,6 +101,15 @@ for (const locale of locales) {
     const source = fs.readFileSync(file, "utf8");
     for (const match of source.matchAll(developerCenterUrl)) {
       const rawUrl = match[0].replace(/[.,]$/, "");
+      const pillar = new URL(rawUrl).pathname.split("/").filter(Boolean)[0];
+      if (ENGLISH_ONLY_PILLARS.has(pillar)) {
+        assert.equal(
+          localizeDeveloperCenterUrl(rawUrl, locale, "https://developer-stg.sima.ai"),
+          rawUrl,
+          `${file} rewrote an English-only Developer Center link: ${rawUrl}`,
+        );
+        continue;
+      }
       const localized = localizeDeveloperCenterUrl(
         rawUrl,
         locale,

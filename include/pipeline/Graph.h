@@ -91,9 +91,7 @@ ExecutionGraphPlan compile_public_graph(const Graph& graph, const RunOptions& op
 /**
  * @brief Live handle for a Graph running in RTSP server mode.
  *
- * Returned by `Graph::run_rtsp(opts)`. The handle owns the running RTSP server background
- * threads and the underlying GStreamer pipeline. Destroying the handle (or calling `stop()`)
- * tears down the server cleanly. Move-only: the handle uniquely owns its server.
+ * Returned by `Graph::run_rtsp(opts)`. This move-only handle owns the RTSP server.
  *
  * Use this when the Graph terminates in an H.264 encoded stream that should be published as
  * an RTSP source for downstream consumers (VLC, ffmpeg, browsers via WebRTC gateway, etc.).
@@ -105,7 +103,7 @@ class RtspServerHandle {
 public:
   /// Default-construct an empty handle that owns no server.
   RtspServerHandle() = default;
-  /// Destructor; stops the server and tears down the underlying pipeline.
+  /// Calls `stop()`.
   ~RtspServerHandle();
 
   RtspServerHandle(const RtspServerHandle&) = delete; ///< Non-copyable: server ownership is unique.
@@ -118,13 +116,16 @@ public:
   const std::string& url() const {
     return url_;
   }
-  /// Stop the server and tear down the pipeline. Safe to call multiple times.
+  /// Stop accepting clients and begin teardown. Safe to call multiple times.
+  /// If the shutdown wait expires, the worker finishes releasing media and device resources
+  /// after this call returns.
   void stop();
   /// Alias for `stop()`. Kept for parity with other handle types.
   void kill() {
     stop();
   }
-  /// Returns `true` while the server is actively serving clients.
+  /// Returns `true` while the server is running. After `stop()`, this returns `false`
+  /// even if the worker still holds device resources.
   bool running() const;
 
 private:
@@ -462,6 +463,8 @@ public:
   }
 
   /// Returns the GStreamer launch string from the most recent `build()` call.
+  /// It is empty if the build has multiple pipeline segments or defers pipeline creation until
+  /// the first push.
   const std::string& last_pipeline() const {
     return last_pipeline_;
   }

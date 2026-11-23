@@ -92,6 +92,8 @@ array = outputs[0].to_numpy(copy=True)
 torch_tensor = outputs[0].to_torch(copy=True)
 ```
 
+For a BF16 tensor, `to_numpy()` returns an independent `float32` array, including when `copy=False`.
+
 Most first-run code should not pick memory placement manually. If you need to, Python exposes `TensorMemory.Auto`, `CPU`, `A65`, `EV74`, and `MLA` through the `memory=` argument.
 
 Use `byte_format=` only for byte-format tensor payloads. Do not combine `byte_format=` with `image_format=`.

@@ -224,3 +224,48 @@ def test_graph_ambiguous_default_diagnostic_python():
             run.push([arr], layout=pyneat.TensorLayout.HWC, image_format=pyneat.PixelFormat.RGB)
     finally:
         run.close()
+
+
+@pytest.mark.parametrize("shape,axes", [((1, 8, 8, 4), "NHWC"), ((8, 8, 4), "HWC"),
+                                       ((1, 8, 8, 4), "")])
+@pytest.mark.parametrize("with_quant_metadata", [False, True])
+def test_standalone_dequant_from_graph_input(shape, axes, with_quant_metadata):
+    _require_phase3_runtime()
+    values = np.arange(np.prod(shape), dtype=np.int8).reshape(shape)
+    tensor = pyneat.Tensor.from_numpy(values, copy=True, memory=pyneat.TensorMemory.EV74)
+    if with_quant_metadata:
+        quant = pyneat.QuantSpec()
+        # The node explicitly requests (x - 3) / 20, even when ingress metadata differs.
+        quant.scale, quant.zero_point = 0.25, -7
+        tensor.semantic.quant = quant
+    if axes:
+        tensor.axis_semantics = [getattr(pyneat.TensorAxisSemantic, axis) for axis in axes]
+    options = pyneat.DequantOptions()
+    options.q_scale, options.q_zp = 20.0, 3
+    graph = pyneat.Graph()
+    graph.add(pyneat.nodes.input("in"))
+    graph.add(pyneat.nodes.dequant(options))
+    graph.add(pyneat.nodes.output("out"))
+    run = graph.build([tensor])
+    try:
+        assert run.push([tensor])
+        result, = run.pull_tensors(5000)
+        assert result.dtype == pyneat.TensorDType.Float32
+        np.testing.assert_allclose(result.to_numpy(copy=True),
+                                   (values.astype(np.float32) - 3) * 0.05, rtol=1e-6)
+    finally:
+        run.close()
+
+
+def test_standalone_dequant_rejects_int16():
+    _require_phase3_runtime()
+    tensor = pyneat.Tensor.from_numpy(np.ones((1, 8, 8, 4), dtype=np.int16), copy=True,
+                                      memory=pyneat.TensorMemory.EV74)
+    options = pyneat.DequantOptions()
+    options.q_scale, options.q_zp = 20.0, 3
+    graph = pyneat.Graph()
+    graph.add(pyneat.nodes.input("in"))
+    graph.add(pyneat.nodes.dequant(options))
+    graph.add(pyneat.nodes.output("out"))
+    with pytest.raises(pyneat.NeatError, match="Dequant requires INT8 input and FP32 output"):
+        graph.build([tensor])

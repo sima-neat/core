@@ -20,7 +20,10 @@ enum class BoxDecodeWireFormat {
   MasksPose,
   RcnnProposals,
   FeaturePointsV1,
-  LegacyFeaturePointsV0
+  LegacyFeaturePointsV0,
+  // SegmentationMasksHeaderV1 prefix (header, records, padding). The fifth
+  // input spec describes masks the producer writes in place after the prefix.
+  MasksV1
 };
 // The serializer as a plain call: `plan` is BoxDecodePublication::plan, `inputs` the numerical
 // kernel's outputs in its order, `output` the wire. What the host task's callback runs.

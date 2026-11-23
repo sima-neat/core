@@ -78,16 +78,15 @@ run.close();
 
 ## 推送時機
 
-`Run::push(...)` 在輸入於圖的邊界被接受後傳回。它不會等待該輸入遍歷每個節點。
+使用任何溢位策略時，`push()` 都會等待輸入佇列出現空位。若圖的輸入端等候逾時，便會傳回 `false`。重新提交單一樣本前，請先取出已接受樣本的輸出。
 
-當輸入佇列已滿時：
+`push()` 和 `try_push()` 都可能先接受樣本組或 Python 樣本串列開頭的幾個項目，再傳回 `false`。若需要重試，請每次只提交一個樣本。
 
-- `OverflowPolicy::Block` 對產生者施加反壓；
-- `OverflowPolicy::DropIncoming` 拒絕新的輸入；
-- `OverflowPolicy::KeepLatest` 捨棄較舊的佇列輸入，以保持即時路徑的新鮮度；
-- `try_push(...)` 傳回 `false`，而不是阻塞。
+輸入佇列已滿時，`try_push()` 會立即傳回結果。
 
-選擇與來源相符的策略。檔案和批次作業通常需要 `Block`。即時串流通常需要新鮮度策略。
+- `Block` 會傳回 `false`，呼叫端可以重試。
+- `DropIncoming` 會傳回 `false`，並將新樣本計入捨棄數。
+- `KeepLatest` 會取代等待中最舊的樣本，將捨棄數加一，並傳回 `true`。
 
 ## 內嵌佇列
 

@@ -68,9 +68,181 @@ opt.top_k = 100;
 | ポーズ | `decode_pose(...)` | `pyneat.decode_pose(...)` | ボックス `[N, 6]` とキーポイント `[N, 17, 3]` float32: `x, y, visibility` |
 | セグメンテーション | `decode_segmentation(...)` | `pyneat.decode_segmentation(...)` | ボックス `[N, 6]` float32、マスク `[N, 160, 160]` uint8 |
 | セグメンテーション + ポーズ | `decode_segmentation_pose(...)` | `pyneat.decode_segmentation_pose(...)` | ボックス `[N, 6]` float32、マスク `[N, 160, 160]` uint8、キーポイント `[N, 17, 3]` float32 |
+| Segment Anything | `decode_segmentation(...)` | `pyneat.decode_segmentation(...)` | ボックス `[N, 6]` float32 と元画像サイズのマスク `[N, H, W]` uint8（プロンプトデコーダーでは N は 1） |
 | SuperPoint | `decode_superpoint(...)` | `pyneat.decode_superpoint(...)` | キーポイント `[N,2]`、スコア `[N]`、記述子 `[N,D]` |
 
 軸に平行な検出結果の表示グラフでは、結果を `SimaRender` に渡せます。`decode_bbox(...)` は既存のボックス先頭形式にのみ使ってください。これも `SimaRender` も回転ボックスには対応していません。
+
+## レターボックスの配置 {#letterbox-placement}
+
+`LetterboxPlacement::TopLeft` など中央以外に配置されたレターボックス（[Preproc のサイズ変更](/reference/nodes/preproc#resize-and-aspect-ratio)を参照）には検出プロファイルが対応しており、各フレームのモデル座標から元画像座標へのアフィン変換でボックスを変換します。対象は YOLO の検出ファミリー、デコード済み YOLO、EfficientDet、DETR、DetrFocal、CenterNet、SSD です。ポーズ、セグメンテーション、RCNN 提案のプロファイルは、ずれた結果を返す代わりに、中央以外のレターボックスを拒否します。中央配置のレターボックスは従来どおりの変換を維持します。Segment Anything の各タイプには独自の要件があります。[Segment Anything の規則](#segment-anything-rules)を参照してください。
+
+## 従来の DETR {#classic-detr}
+
+同じクエリグリッド上にある、4 チャネルのボックスロジットと末尾に背景チャネルを持つクラスロジットには `Detr` を選択します。`decode_type_option` は `Auto` のままにしてください。テンソル名に依存せず、レシピが Softmax を選択します。背景は分母に含まれますが、前景クラス数と出力の選択からは除外されます。ボックス座標には sigmoid が適用されます。既に正規化された focal-loss のボックス用デコーダーではありません。
+
+Stretch と正の `top_k` を使用してください。NMS は適用されず、前処理メタデータを使って元フレームの座標へ変換します。確率値を指定するレイアウトや矛盾するスコア活性化は拒否されます。
+
+```python
+options = pyneat.ModelOptions()
+options.decode_type = pyneat.BoxDecodeType.Detr
+options.preprocess.resize.mode = pyneat.ResizeMode.Stretch
+options.top_k = 100
+options.score_threshold = 0.7
+```
+
+## Focal loss を用いるクエリ検出器
+
+正規化済み `cx,cy,width,height`（深さ4）と独立したクラスロジット（深さN）の順に並ぶ2つのテンソルには、`BoxDecodeType::DetrFocal`（Python: `pyneat.BoxDecodeType.DetrFocal`、トークン `detr-focal`）を使用します。クエリ軸とデータ型は一致し、Nは1～1024です。FP32、BF16、および量子化情報が指定されたINT8ストレージに対応します。
+
+クラスロジットだけにsigmoidを適用し、全クエリ・クラスの組から上位K件を選択します。同じクエリから複数のクラスを出力できます。背景クラス、ボックスへのsigmoid、クエリごとのargmax、NMS、小面積フィルターはありません。正の `top_k`、フィルタリングなしなら `detection_threshold=0`、必須の `nms_iou_threshold=0` を設定します。Stretchと実際の画像・モデル寸法を使用してください。
+
+既存の `BBOX` 出力はボックスを画像境界にクリップし、XYWH座標を整数に丸めます。`decode_bbox` はそれを浮動小数点値として公開しますが、サブピクセル精度は復元しません。クリップしない浮動小数点リファレンスとは別に精度への影響を測定してください。従来の `BoxDecodeType::Detr` は変更されず、この形式ではなくボックスロジットと背景クラスを含むsoftmaxスコアを期待します。
+
+Pythonでは `decode_bbox(..., strict=True)` を使用し、既定の縮退ボックス除去を避けて、丸めにより面積がゼロになった行も保持してください。
+
+Python の raw-geometry オーバーロードは C++ ファクトリに対応し、ヘッドテンソルを直接渡す場合に使用します。密な FP32 ヘッドでは、モデルの出力アダプターをすべて保持し、実際のストレージを明示してください。生の MLA 出力で打ち切ったり、パディング済みバイトを密なテンソルとして扱ったりしないでください。
+
+```python
+node = pyneat.nodes.sima_box_decode(
+    pyneat.BoxDecodeType.DetrFocal,
+    original_width=1280, original_height=720,
+    model_width=640, model_height=640,
+    detection_threshold=0.0, nms_iou_threshold=0.0, top_k=300,
+    decode_type_option=pyneat.BoxDecodeTypeOption.InterleavedByHeadLogit,
+    source_storage=pyneat.BoxDecodeSourceStorage.DenseHwc,
+    detess=False, dequant=False,
+    resize_mode=pyneat.ResizeMode.Stretch,
+)
+```
+
+有限の反転サイズは既存の端点クリップで面積ゼロの BBOX レコードになり、選択したペアとスコアを保持します。非有限の座標やロジットは、出力を公開する前に失敗します。
+
+## Segment Anything のマスク {#segment-anything-masks}
+
+Segment Anything の各モデルには、それぞれ専用のデコードタイプがあります。プロンプトデコーダーでは、BoxDecode は 1 回のデコーダー実行を 1 件の検出に変換します。内容は、元画像サイズで選択されたマスク、そのマスクを囲むボックス、および予測された IoU です。EfficientSAM3 のコンセプト画像モデルでは、1 回の実行を、それぞれ専用のマスクを持つ最大 `top_k` 件の検出に変換します。
+
+| モデル | `decode_type`（トークン） | 画像を受け取る Model の前処理 | デコーダーのオプション |
+| --- | --- | --- | --- |
+| MobileSAM | `MobileSam`（`mobilesam`） | エンコーダー: `resize.mode=Letterbox`、`resize.placement=TopLeft`、1024×1024、`pad_value=116`。`preset=ImageNet` | `multimask_output` |
+| EdgeTAM | マスクには `EdgeTamSeg`（`edgetam-seg`）、トラッキングには `EdgeTamTrack`（`edgetam-track`） | 画像エンコーダー: `resize.mode=Stretch`、1024×1024、パディングなし。`preset=ImageNet` | `multimask_output` |
+| EfficientSAM-T / -S | `EfficientSam`（`efficientsam`） | エンコーダー: `resize.mode=Stretch`、1024×1024、パディングなし。プリセットなし、`normalize.enable=On`（値は 0〜1。正規化はエンコーダー自身が行います） | `multimask_output` は true のまま |
+| EfficientSAM3 インタラクティブ | `EfficientSam3`（`efficientsam3`） | 画像エンコーダー: `resize.mode=Stretch`、1008×1008、パディングなし。`normalize.enable=On` と、`normalize.mean` および `normalize.stddev` (0.5, 0.5, 0.5) | `multimask_output` |
+| EfficientSAM3 コンセプト | `EfficientSam3`（`efficientsam3`） | コンセプト画像モデル自身（テンソルルート）: アプリケーションが画像を 1008×1008 に引き伸ばし、[−1, 1] にスケーリングし、`resize_mode="stretch"` の `semantic.preprocess` を付けます | `top_k`、`score_threshold` |
+
+Python でも同じ名前を使います: `pyneat.BoxDecodeType.MobileSam`、`EdgeTamSeg`、`EdgeTamTrack`、`EfficientSam`、`EfficientSam3`。MobileSAM は正規化の後に 0 でパディングします。これは ImageNet の平均画素（124、116、104）に相当し、`pad_value=116` はその近似です。マスクがパディング部分を覆うことはありません。EfficientSAM3 の Model は、出力が検出 `[Q, 6]` と Q チャネルのマスクロジットであればコンセプト画像モデル、それ以外であればプロンプトデコーダーとして扱われます。各モデルの完全なワークフローは、[sima-neat/models](https://github.com/sima-neat/models) にある各モデルの README（たとえば [EdgeTAM の README](https://github.com/sima-neat/models/tree/develop/models/edgetam)）に記載されています。
+
+`Model::Options::multimask_output`（Python: `ModelOptions.multimask_output`）は、上流の `predict(multimask_output=...)` に対応します。曖昧な 1 回のクリックでは `true` のままにし、ボックスや複数の点では `false` に設定してください。
+
+| `decode_type` | `multimask_output=true`（既定） | `multimask_output=false` |
+| --- | --- | --- |
+| `MobileSam` | マスク 1〜3 のうち予測 IoU が最良のもの | マスク 0 |
+| `EdgeTamSeg`、`EdgeTamTrack` | マスク 1〜3 のうち予測 IoU が最良のもの | マスク 0 が安定していればマスク 0、そうでなければマスク 1〜3 の最良 |
+| `EfficientSam` | マスク 0〜2 のうち予測 IoU が最良のもの | 拒否: EfficientSAM は単一マスクのトークンをエクスポートしません |
+| `EfficientSam3` プロンプトデコーダー | 4 枚ならマスク 1〜3、3 枚ならマスク 0〜2 のうち予測 IoU が最良のもの | 4 枚: EdgeTAM と同じ。3 枚: 拒否 |
+| `EfficientSam3` コンセプト | `score_threshold` を超える最大 `top_k` 個のクエリ | 拒否: コンセプト検出にはマルチマスクの選択がありません |
+
+- SAM2 と同様に、マスク 0 のロジットのうち −0.05 を超えるものの 98% 以上が 0.05 も超えていれば、マスク 0 は安定しているとみなします。
+- マスクチャネルが 1 つでエクスポートされたデコーダーは、どちらの値でもそのマスクを使います。
+- その他のデコードタイプは `multimask_output=false` を拒否します。この選択は `Model` ごとに行い、2 つのデコーダー Model で同じ MPK を使用できます。
+
+### 各出力の意味 {#segment-anything-outputs}
+
+BoxDecode テンソルは[バージョン付きマスクペイロード](#versioned-masks-payload)を使用します。`decode_segmentation` はボックス `[N, 6]` とマスク `[N, H, W]` を返します。
+
+- **ボックス。** 元画像の画素単位の `x1, y1, x2, y2` です。プロンプトデコーダーのボックスはマスク画素を囲む最小のボックスです。`x2` と `y2` はマスクの最後の列と行の 1 つ先を指すため、`x2 - x1` はマスクの幅です。コンセプト検出のボックスは検出ヘッドから取得し、元画像に合わせてスケーリングし、クリップはしません。
+- **スコア。** 選択されたマスクの予測 IoU、またはコンセプトクエリのスコアです。
+- **クラス。** 選択されたマスクチャネル（上の表のインデックス）、またはコンセプトクエリでは 0 です。
+- **マスク。** `uint8` で、元画像サイズにリサンプリングしたロジットが 0 を超える位置は 255、それ以外は 0 です。
+- **件数。** プロンプトデコーダーでは常に 1 です。空のマスクのボックスはすべて 0 ですが、スコアとクラスは保持されます。上流と同様に、EdgeTAM のオブジェクトスコアが 0 以下の場合はマスクが空になります。コンセプトモデルは、残したクエリをスコアの降順（同点はクエリのインデックス順）で返します。
+
+`EdgeTamSeg` とその他すべての Segment Anything タイプは、BoxDecode テンソルだけを返します。`EdgeTamTrack` では、デコーダー自身の出力がその後に続きます。[EdgeTAM のトラッキング](#edgetam-tracking)を参照してください。
+
+`SimaRender` はこれらのマスクを描画しません。描画するのは、マスクがフレームより小さいヘッダーなしのセグメンテーションペイロードだけです。Segment Anything のマスクは `decode_segmentation` の結果から描画してください。
+
+### 規則 {#segment-anything-rules}
+
+- **デコーダーの出力。** プロンプトデコーダーは、指定したモデルのマスク数（1、3 または 4）のマスクロジット、マスクごとに 1 つの予測 IoU、EdgeTAM ではさらにオブジェクトスコアをエクスポートします。INT8、BF16、FP32 の出力を受け付けます。コンセプト画像モデルは、検出 `[Q, 6]` とクエリごとのマスクロジットをエクスポートします。
+- **オプション。** プロンプトデコーダー: `top_k` は 0 または 1、`nms_iou_threshold` は 0 のままにしてください。`score_threshold` は 1 未満である必要があり、それ以外の点では無視されます。`num_classes` はマスク数または 0 です。コンセプト画像モデル: `top_k` を 1..Q に設定します。
+- **画像のジオメトリ。** キャンバス、元画像サイズ、リサイズは、デコーダー入力の `tensor.semantic.preprocess` から取得し、表と一致している必要があります。一致しない場合、構築は変更すべき設定を示して失敗します。エンコーダーの出力は `.cvu()` でデコーダーに渡し、プロンプトデコーダーは `build(inputs)` または `execution_plan(inputs)` で入力から構築してください。コンセプト画像モデルのテンソルルートでは、その画素テンソルにこれらの情報を付けてください。
+- **一度だけリサイズされた画像全体。** リサイズ前のクロップや ROI は拒否されます。デコーダーが再現しないスケール後のサイズも同様です。MobileSAM では、単独の `Preproc` ノードではなく、画像を前処理する Model で `resize.placement=TopLeft` を指定してレターボックス処理してください。こちらは Segment Anything と同じように丸めます。自分で付ける情報には、アフィン変換を含めてください。`affine_m00` = 元の幅 / スケール後の幅、`affine_m11` = 元の高さ / スケール後の高さです。
+- **ランナーごとに 1 つの画像サイズ。** マスクは元画像サイズを持つため、構築されたランナーは 1 つのサイズにのみ対応します。`Model::run` は新しいサイズに対して別のランナーを構築します。ストリーミンググラフは、異なるサイズのフレームを拒否します。
+
+### エンコーダーとデコーダー {#segment-anything-example}
+
+MobileSAM の例です。他のモデルでは、表にあるそのモデルのエンコーダー設定とデコードタイプを使ってください。
+
+```python
+encoder_options = pyneat.ModelOptions()
+encoder_options.preprocess.resize.mode = pyneat.ResizeMode.Letterbox
+encoder_options.preprocess.resize.placement = pyneat.LetterboxPlacement.TopLeft
+encoder_options.preprocess.resize.pad_value = 116
+encoder_options.preprocess.preset = pyneat.NormalizePreset.ImageNet
+encoder = pyneat.Model("/path/to/mobile_sam_image_encoder_mpk.tar.gz", encoder_options)
+
+options = pyneat.ModelOptions()
+options.decode_type = pyneat.BoxDecodeType.MobileSam
+options.multimask_output = False  # a box prompt; keep True for one click
+decoder = pyneat.Model("/path/to/mobile_sam_prompt_decoder_mpk.tar.gz", options)
+
+embeddings = encoder.run([image])[0]
+# .cvu() keeps the encoder's preprocess metadata on the embeddings.
+outputs = decoder.run([embeddings.cvu(), point_encoding, point_types])
+result = pyneat.decode_segmentation(outputs)[0]
+box = result.boxes.to_numpy()[0]  # x1, y1, x2, y2, IoU, mask index
+mask = result.masks.to_numpy()[0]  # uint8 [H, W], 0 or 255
+```
+
+### EdgeTAM のトラッキング {#edgetam-tracking}
+
+EdgeTAM のメモリエンコーダーとメモリバンクには、選択されたマスクの低解像度ロジットとそのオブジェクトポインターが必要ですが、BoxDecode はこれらをデコードしません。`EdgeTamTrack` は BoxDecode テンソルを返し、続いて同じ実行のデコーダー出力を、同じ Model が BoxDecode なしで返すものとまったく同じ形で返します。出力は `mask_logits` `[1, 256, 256, 4]`、`iou_scores` `[1, 4]`、`object_score_logits` `[1, 1]`、`object_pointers` `[1, 4, 256]` で、いずれも float32 です。それぞれフレームごとに 1 回の変換を要します。デコードするのは先頭のテンソルだけにしてください。生テンソルには検出タグは付きません。BoxDecode なしのモデルのルートがテンソルを返せない場合、`EdgeTamTrack` は拒否されます。
+
+- 検出のクラスは選択されたプレーンです。メモリエンコーダーには `mask_logits[0, :, :, class]` を使い、モデルの README のとおり 1024×1024 にアップサンプリングします。
+- 2 点以上のプロンプトでは `multimask_output=False` を設定し、1 回のクリックと追跡中のフレームでは `True` のままにします。クラスは、どちらの規則でも選ばれたプレーンを示します。
+- メモリバンクには、`multimask_output=True` のときは `object_pointers[0, class]` を使います。`False` のときは `object_pointers[0, 0]` を使います。SAM 2 は、安定性のフォールバックがプレーン 1～3 のマスクを選んだ場合でも、単一マスクのポインターを使い続けます。
+- オブジェクトスコアが 0 以下の場合はマスクとそのボックスが空になりますが、クラスは選択されたプレーンを示したままです。メモリエンコーダーに渡すロジットには、README のオブジェクトスコアの規則を適用してください。
+
+```python
+options = pyneat.ModelOptions()
+options.decode_type = pyneat.BoxDecodeType.EdgeTamTrack
+decoder = pyneat.Model("/path/to/edgetam_mask_decoder_mpk.tar.gz", options)
+
+outputs = decoder.run(decoder_inputs)
+result = pyneat.decode_segmentation(outputs[:1])[0]
+plane = int(result.boxes.to_numpy()[0, 5])
+logits = outputs[1].to_numpy()[0, :, :, plane]  # [256, 256] low-resolution logits
+pointer = outputs[4].to_numpy()[0, plane if options.multimask_output else 0]  # [256]
+```
+
+### EfficientSAM3 のコンセプト {#efficientsam3-concept}
+
+```python
+options = pyneat.ModelOptions()
+options.decode_type = pyneat.BoxDecodeType.EfficientSam3
+options.top_k = 20
+options.score_threshold = 0.5
+options.preprocess.kind = pyneat.InputKind.Tensor  # two inputs: pixels and packed text
+model = pyneat.Model("/path/to/efficientsam3_image_model_mpk.tar.gz", options)
+
+# Stretch to 1008x1008 and scale to [-1, 1], as SAM 3 does, and record that geometry.
+stretched = cv2.resize(rgb, (1008, 1008), interpolation=cv2.INTER_LINEAR)
+pixels = pyneat.Tensor.from_numpy(stretched.astype(np.float32) / 127.5 - 1, copy=True,
+                                  layout=pyneat.TensorLayout.HWC)
+facts = pyneat.PreprocessRuntimeMeta()
+facts.resize_mode = "stretch"
+facts.original_width, facts.original_height = rgb.shape[1], rgb.shape[0]
+facts.resized_width = facts.resized_height = 1008
+facts.affine_m00 = facts.original_width / 1008  # model-to-original scale
+facts.affine_m11 = facts.original_height / 1008
+semantic = pixels.semantic
+semantic.preprocess = facts
+pixels.semantic = semantic
+
+outputs = model.run([pixels, packed_text])
+result = pyneat.decode_segmentation(outputs)[0]
+boxes = result.boxes.to_numpy()  # [N, 6]: x1, y1, x2, y2, score, 0
+masks = result.masks.to_numpy()  # uint8 [N, H, W]
+```
 
 ## YOLOv8 と YOLO11 の回転ボックス {#yolov8-oriented-boxes}
 
@@ -226,6 +398,10 @@ options.yolox_seg_pose.pose_classes = [0, 5]
 - `BoxDecodeOptions` のリストが空の場合、モデルの設定を継承します。リストを設定しない場合、すべてのクラスにキーポイントが生成されます。
 - ID は重複せず、`[0, num_classes)` の範囲内である必要があります。このオプションは `YoloXSegPose` でのみ使用できます。
 
+### バージョン付きマスクペイロード {#versioned-masks-payload}
+
+Segment Anything の出力など、160×160 ではないマスクは、先頭のカウントの代わりにバージョン付きヘッダーを使用します。そのレイアウトは `pipeline/DetectionTypes.h` の [`SegmentationMasksHeaderV1`](/reference/cppapi/structs/simaai-neat-segmentationmasksheaderv1) で、ヘッダー、`RawBox` レコード、レコードごとに 1 つの `uint8` マスク（値は 0 または 255）の順に並びます。読み取りには `decode_segmentation` を使ってください。ボックスとマスクを返し、不正なヘッダーや範囲は拒否します。テンソルには `BBOX` タグが付いたままです。`decode_segmentation` と `decode_bbox` はマジック値でペイロードを識別するため、既存のセグメンテーションペイロードは変わりません。`SimaRender` はこのペイロードを受け付けません。
+
 ## `model.run` が生のヘッドを返す場合
 
 一部のモデルの処理経路では、デコードされた`BBOX`テンソルではなく、`model.run(...)`から生の特徴マップヘッドが返されます。これは、処理が失敗したことを意味するのではなく、モデルは正常に実行されたものの、出力の読み取り時にBoxDecodeが処理経路に含まれていなかったことを意味します。
@@ -296,6 +472,11 @@ MPK はテンソル契約とデコードファミリーの情報を提供しま�
 | `BoxDecodeType::Ssd` | `ssd` | 注文されたヘッドジオメトリから選択された、正確に準備されたSSD300、SSD-Mobile-300、SSD-Mobile-320、またはSSDlite-Mobile-320の契約。 |
 | `BoxDecodeType::SuperPoint` | `superpoint` | SuperPoint検出器および特徴記述子の後処理 |
 | `BoxDecodeType::Detr` | `detr` | DETRスタイルのトランスフォーマーによる検出 |
+| `BoxDecodeType::MobileSam` | `mobilesam` | MobileSAM のプロンプトデコーダー（左上配置のレターボックス） |
+| `BoxDecodeType::EdgeTamSeg` | `edgetam-seg` | EdgeTAM のマスクデコーダーとオブジェクトスコア（引き伸ばし） |
+| `BoxDecodeType::EdgeTamTrack` | `edgetam-track` | `EdgeTamSeg` の結果に続けて、トラッキング用のデコーダーの生出力 |
+| `BoxDecodeType::EfficientSam` | `efficientsam` | EfficientSAM のプロンプトデコーダー、マルチマスクのトークン 3 つ（引き伸ばし） |
+| `BoxDecodeType::EfficientSam3` | `efficientsam3` | EfficientSAM3 のプロンプトデコーダー、または保持したクエリごとにマスク 1 枚のコンセプト画像モデル（引き伸ばし） |
 | `BoxDecodeType::EffDet` | `effdet` | EfficientDetによる検出 |
 | `BoxDecodeType::RcnnStage1` | `rcnn-stage1` | 順序付けられた 5 つの RPN ヘッド。グローバル NMS の後に面積レベルごとの top-K を実行 |
 | `BoxDecodeType::Centernet` | `centernet` | CenterNetによる物体検出 |
@@ -347,6 +528,8 @@ MPK はテンソル契約とデコードファミリーの情報を提供しま�
   生の/スタンドアロンの`SimaBoxDecode`の構築では、リサイズモードは決して生成されません。上流の`Preproc`メタデータ要件を維持するか、明示的な生のオーバーロードを使用して、外部で実行される`ResizeMode::Stretch`をアサートします。LetterboxとCropは拒否されます。
 
 **`num_classes`契約。** エンコードされたクラス数は、常に信頼度ヘッドの深さ（`conf_depth / priors-per-cell`、インデックス0に背景が含まれる）から導き出されます。SSD300-v1では、準備された81から8への連続したプレフィックス選択が許可されます。他の3つのプロファイルでは、正確なエンコードされた数が必須です。無効な選択は、ビルド時に拒否されます。設定しない場合は、プロファイルのデフォルトが使用されます。
+
+  **91 クラスの MobileNet エクスポート。** エンコードされたクラス数が正確に 91 の場合、SSD-Mobile-300-v1（MobileNet V1 と V2）と SSDlite-Mobile-320-v1（TorchVision MobileNet V3）は元のモデルと同じようにデコードされます。前景のアンカーとクラスのペアはすべて保持され、NMS はクラスごとに浮動小数点で実行されます（SSDlite は NMS の前に、クラスごとに最大 300 個の候補を保持します）。出力は同じ BBOX ペイロードです。他の SSD プロファイルとクラス数では、既存の動作を維持します。
 - `Detr` は、最大のヘッド深度からクラスチャネルを推論し、有効なものを必要とします。
   クラス：次元。
 - `EffDet` と `Centernet`は、それぞれのモデルファミリーの規約を使用します。
@@ -382,10 +565,15 @@ masks = seg.masks.to_numpy()
 
 ## アップグレード
 
-新しいオプションにより C++ オブジェクトのレイアウトが変わります。Core は ABI 6、`libsima_neat.so.6` を使用します。対応するヘッダーとライブラリで C++ アプリケーション、プラグイン、Python バインディングを再ビルドしてください。互換性用のシンボリックリンクで ABI 5 のバイナリを ABI 6 にリンクしないでください。
+以前の BoxDecode オプションは ABI 6 を導入しました。現在の元の演算オプションには ABI 7 (`libsima_neat.so.7`) が必要です。対応するヘッダーとライブラリで C++ アプリケーション、プラグイン、Python バインディングを再ビルドし、互換性用シンボリックリンクで ABI 5 または 6 のバイナリを読み込まないでください。
 
 ### 複合 YOLOX 入力の受け入れ条件
 
 `YoloXSegPose` は BF16 と INT8 のヘッド、または連続ストレージか、正で重なりのないストライド付きストレージ（平面 CHW ビューを含む）に置かれたネイティブ FP32 ヘッドを受け付けます。FP32 のアドレスとストライドは 4 バイト境界に整列させる必要があります。チャネルブロック化された FP32 と UINT8 は拒否されます。損失を伴う暗黙の FP32 変換は追加されません。プロトタイプは独自の dtype とテンソル単位の INT8 量子化を持ちますが、各検出ヘッド内の役割間では dtype が一致している必要があります。Core は、最初のヘッドの dtype や量子化をすべてのポートに適用するのではなく、Kernels の受け入れ検証のためにポートごとの情報を保持します。3 つの検出レベルは両軸ともストライド 8、16、32 です。モデルの幅と高さは 32 の倍数である必要がありますが、同じ値である必要はありません。プロトタイプは 160×160×32 のままで、モデル寸法に合わせて暗黙にリサイズされることはありません。
 
 中心からずれたパディングやクロップの座標には、前処理メタデータを使います。アフィン変換の方向は**モデル座標から元画像座標へ**です。この複合プロファイルでは、せん断、回転、ROI リストはサポートされません。クロップには準備時に信頼できるアフィンメタデータが必要です。これは外部で前処理されたテンソルのデコーダー契約であり、`Model` の前処理でクロップを生成する新機能ではありません。キーポイントが 17 個未満のモデルでも、公開ワイヤ形式は固定の 17 スロットを使い、未使用スロットはゼロに設定されます。
+
+
+## クロップ座標のマッピング {#crop-coordinate-mapping}
+
+モデル管理の Crop は、従来の DETR、DetrFocal、通常の YOLO 検出などの対応プロファイルへ実際の画像逆変換を渡します。選択と NMS はモデル座標で行い、採用されたボックスを元画像へ変換してクリップします。変換メタデータの不足や矛盾は明示的に失敗します。マスク、姿勢、RCNN 提案、SSD multiclass の新しいクロップ組み合わせは有効化しません。既存の回転ボックスは引き続き両軸の等しいスケールを要求し、整数リサイズ寸法ではスケールが異なる場合があります。

@@ -27,6 +27,7 @@ sidebar_position: 1
       <li><a class="overview-link-card" href="/reference/environment-variables/"><strong>환경 변수</strong><span>런타임 및 빌더 환경 변수를 확인하세요.</span></a></li>
       <li><a class="overview-link-card" href="/reference/tutorial-assets/"><strong>튜토리얼 자산</strong><span>모델 아카이브 경로 및 소스 트리 튜토리얼 자산을 제어하세요.</span></a></li>
       <li><a class="overview-link-card" href="/reference/boxdecode_decode_types/"><strong>BoxDecode 디코딩 유형</strong><span>디코딩 유형을 선택하고 패킹된 감지 출력을 파싱하세요.</span></a></li>
+      <li><a class="overview-link-card" href="/reference/semantic_segmentation_decode/"><strong>시맨틱 세그멘테이션 디코딩</strong><span>EV74에서 클래스별 점수를 크기 조정된 클래스 맵으로 변환하세요.</span></a></li>
       <li><a class="overview-link-card" href="/reference/error-codes/"><strong>오류 코드</strong><span>프레임워크 오류 상수를 원인 및 다음 단계에 매핑하세요.</span></a></li>
       <li><a class="overview-link-card" href="/reference/error_format/"><strong>플러그인 오류 형식</strong><span>GStreamer 플러그인 오류로 보고되는 구조화된 오류 필드를 이해하세요.</span></a></li>
     </ul>
@@ -39,6 +40,7 @@ sidebar_position: 1
     <ul class="overview-link-list">
       <li><a class="overview-link-card" href="/reference/glossary/"><strong>용어집</strong><span>문서 전체에서 사용되는 용어 및 약어 검색.</span></a></li>
       <li><a class="overview-link-card" href="/reference/elxr-sdk-host-setup/ubuntu/"><strong>SDK 호스트 설정</strong><span>Ubuntu, macOS 및 Windows용 호스트 설정 참고 사항.</span></a></li>
+      <li><a class="overview-link-card" href="/reference/devkit-containers/"><strong>DevKit 컨테이너</strong><span>DevKit에 Docker 설치, <code>dk container</code> 명령, Ubuntu 컨테이너.</span></a></li>
       <li><a class="overview-link-card" href="/reference/two-step-sdk-installation/"><strong>2단계 SDK 설치</strong><span>SDK 2.0.0, 2.1.2.0 및 2.1.2.1용 레거시 이미지 가져오기 및 설정 흐름.</span></a></li>
     </ul>
   </section>

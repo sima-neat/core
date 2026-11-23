@@ -7,6 +7,7 @@
 #include <gstsimaaitensorbuffer_meta.h>
 #include <atomic>
 #include <mutex>
+#include <string_view>
 #include <simaai/scheduler/client/frame_adapter.h>
 namespace simaai::neat::pipeline_internal::sima::kernel_lowering {
 // Scheduler names are qualified (rt::, CanonicalKernelLowering.h), never brought in by a
@@ -30,8 +31,9 @@ public:
   checked_image_publication(const CheckedPolicy&);
   // Initial immutable facts from the same checked policy as runtime publication.
   // This cold query opens no session and retains no frame or adapter state.
-  static rt::Result<simaai::gst::TensorBufferPreprocessFactsOwner>
-      checked_initial_preprocess_facts(std::shared_ptr<const CheckedPolicy>);
+  static rt::Result<simaai::gst::TensorBufferPreprocessFactsOwner> checked_initial_preprocess_facts(
+      std::shared_ptr<const CheckedPolicy>,
+      const simaai::gst::TensorBufferPreprocessFacts* upstream = nullptr);
   // The stage as one kernel request at one packed frame geometry, for a backend that runs it
   // without a frame adapter (Dataflow, at a size fixed when the input binds): the request the
   // geometry variant gives the Kernels package for such a frame (bind's cold path with no ROI
@@ -92,7 +94,14 @@ private:
   rt::Result<GstVideoInfo> parse_caps(const GstCaps*) const;
   rt::Result<std::vector<rt::TensorSpec>> input_specs(const Geometry&) const;
   // Slot order belongs to the bound geometry capability, not the frame metadata.
-  enum GeometryField { SourceRoi, SourceRois, Destination, Padding, GeometryFieldCount };
+  enum GeometryField {
+    SourceRoi,
+    SourceRois,
+    Destination,
+    Padding,
+    ResizeWindow,
+    GeometryFieldCount
+  };
   using GeometryParameters = std::array<std::optional<rt::ParameterValue>, GeometryFieldCount>;
   rt::Result<std::vector<rt::Parameter>> static_parameters() const;
   rt::Result<GeometryParameters> parameters(const Geometry&, const GstStructure*,
@@ -110,6 +119,12 @@ private:
     }
   };
   using Publication = simaai::gst::TensorBufferPreprocessFactsOwner;
+  // Pure metadata composition shared by cold seeding and runtime cache misses.
+  static rt::Result<Publication> compose_publication(const Publication&,
+                                                     const std::array<double, 6>& upstream,
+                                                     const std::array<int, 4>& upstream_roi,
+                                                     int original_width, int original_height,
+                                                     bool has_roi, std::string_view color_in);
   rt::Result<Publication> prepare_publication(const Geometry&, const rt::KernelExecutable&,
                                               const GstStructure*) const;
   struct Variant {

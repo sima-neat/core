@@ -2113,8 +2113,7 @@ static std::string find_rtsp_input_name_for_fixup(const std::vector<std::shared_
     if (!rtsp)
       continue;
     const int rendered_index = rendered_node_index(i, node_indices);
-    const auto names =
-        apply_name_transform(name_transform, nodes[i]->element_names(rendered_index));
+    const auto names = rendered_element_names(*nodes[i], rendered_index, name_transform);
     if (!names.empty())
       return names[0];
   }
@@ -2131,8 +2130,7 @@ find_h264_capsfilter_name_for_fixup(const std::vector<std::shared_ptr<Node>>& no
     if (nodes[i]->kind() != "H264Depacketize")
       continue;
     const int rendered_index = rendered_node_index(i, node_indices);
-    const auto names =
-        apply_name_transform(name_transform, nodes[i]->element_names(rendered_index));
+    const auto names = rendered_element_names(*nodes[i], rendered_index, name_transform);
     if (!names.empty())
       return names.back();
   }
@@ -2371,8 +2369,7 @@ static void attach_rtsp_debug(GstElement* pipeline, const std::vector<std::share
     if (!rtsp)
       continue;
     const int rendered_index = rendered_node_index(i, node_indices);
-    const auto names =
-        apply_name_transform(name_transform, nodes[i]->element_names(rendered_index));
+    const auto names = rendered_element_names(*nodes[i], rendered_index, name_transform);
     if (names.empty())
       continue;
     GstElement* rtspsrc = gst_bin_get_by_name(GST_BIN(pipeline), names[0].c_str());
@@ -2404,8 +2401,7 @@ static void attach_h264_caps_fixups(GstElement* pipeline,
       continue;
 
     const int rendered_index = rendered_node_index(i, node_indices);
-    const auto names =
-        apply_name_transform(name_transform, nodes[i]->element_names(rendered_index));
+    const auto names = rendered_element_names(*nodes[i], rendered_index, name_transform);
     if (names.empty())
       continue;
 
@@ -2617,8 +2613,7 @@ static void attach_encoded_caps_fixups(GstElement* pipeline,
       continue;
 
     const int rendered_index = rendered_node_index(i, node_indices);
-    const auto names =
-        apply_name_transform(name_transform, nodes[i]->element_names(rendered_index));
+    const auto names = rendered_element_names(*nodes[i], rendered_index, name_transform);
     if (names.empty())
       continue;
 

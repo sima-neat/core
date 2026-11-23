@@ -426,7 +426,7 @@ void RunCore::graph_request_stop(const NeatError& err) {
 }
 
 void RunCore::graph_request_stop_from_pipeline(const std::shared_ptr<RunCore>& pipeline_core,
-                                               std::string fallback_error) {
+                                               bool has_pull_worker) {
   // An appsrc flow failure can precede the terminal GStreamer bus message. Give the child
   // InputStream worker a bounded window to replace its reportless push placeholder with the
   // normalized, report-bearing bus error before stopping the parent graph.
@@ -435,10 +435,13 @@ void RunCore::graph_request_stop_from_pipeline(const std::shared_ptr<RunCore>& p
       pipeline_core ? pipeline_core->wait_for_report_bearing_error(kErrorSettleTimeout)
                     : std::nullopt;
   if (detail.has_value() && detail->report.has_value()) {
+    // The pull worker forwards the child's queued output before reporting unexpected EOS.
+    if (has_pull_worker && detail->code == error_codes::kUnexpectedEos)
+      return;
     graph_request_stop(*detail);
     return;
   }
-  graph_request_stop(fallback_error.empty() ? "GraphRun: pipeline push failed" : fallback_error);
+  graph_request_stop("GraphRun: pipeline push failed");
 }
 
 void RunCore::graph_target_producer_completed(const DownstreamTarget& target) {
@@ -773,7 +776,7 @@ void RunCore::graph_forward_public_input_completion() {
     if (!runtime.seg.node_ids.empty()) {
       graph_mark_downstream_close_provenance(runtime.seg.node_ids.back(), nullptr);
     }
-    if (runtime.seg.boundary.direct_graph_source) {
+    if (runtime.seg.boundary.direct_graph_source && !runtime.transport.input_queue) {
       if (completed_direct_sources.insert(endpoint.node).second) {
         graph_producer_completed(endpoint.node);
       }
@@ -991,6 +994,40 @@ bool RunCore::ensure_graph_pipeline_built(std::size_t index, const Sample& sampl
   return false;
 }
 
+// Only public input admission applies the Run overflow policy. Downstream queues keep their
+// own link and Output policies after the graph has accepted a sample.
+template <class Message>
+static bool enqueue_graph_input(RunCore& core, graph::runtime::BlockingQueue<Message>& queue,
+                                Message&& message, const EdgeRouterOptions& options) {
+  if (!options.public_try_push_policy) {
+    return queue.push_interruptible(std::move(message), options.push_timeout_ms, [&] {
+      return core.graph_stop_requested() || core.graph_public_input_closed();
+    });
+  }
+  const auto policy = *options.public_try_push_policy;
+  using graph::runtime::QueueOffer;
+  std::optional<Message> evicted;
+  QueueOffer result;
+  {
+    auto& execution = core.graph_execution();
+    std::lock_guard lock(execution.public_ingress_mu);
+    if (execution.public_ingress_closed || core.graph_stop_requested()) {
+      return false;
+    }
+    result =
+        queue.offer(std::move(message), policy == OverflowPolicy::KeepLatest ? &evicted : nullptr);
+  }
+  if (result == QueueOffer::ReplacedOldest) {
+    pipeline_internal::release_realtime_frame_credits_for_sample(evicted->sample,
+                                                                 "async-input-drop-oldest");
+  }
+  if (result == QueueOffer::ReplacedOldest ||
+      (result == QueueOffer::Full && policy == OverflowPolicy::DropIncoming)) {
+    core.inputs_dropped.fetch_add(1, std::memory_order_relaxed);
+  }
+  return result == QueueOffer::Enqueued || result == QueueOffer::ReplacedOldest;
+}
+
 bool RunCore::graph_dispatch_to_stage_group(std::size_t group_index,
                                             simaai::neat::graph::PortId port, Sample&& sample,
                                             std::size_t edge_index,
@@ -1030,10 +1067,9 @@ bool RunCore::graph_dispatch_to_stage_group(std::size_t group_index,
   const auto cancelled = [&] {
     return graph_stop_requested() || (cancel_on_public_input_close && graph_public_input_closed());
   };
-  const bool ok =
-      cancel_on_public_input_close
-          ? stage.inbox.push_interruptible(std::move(next), options.push_timeout_ms, cancelled)
-          : stage.inbox.push(std::move(next), options.push_timeout_ms);
+  const bool ok = cancel_on_public_input_close
+                      ? enqueue_graph_input(*this, stage.inbox, std::move(next), options)
+                      : stage.inbox.push(std::move(next), options.push_timeout_ms);
   if (!ok && options.request_stop_on_backpressure && !cancelled()) {
     std::ostringstream msg;
     msg << "GraphRun: stage inbox backpressure timeout (node="
@@ -1045,54 +1081,64 @@ bool RunCore::graph_dispatch_to_stage_group(std::size_t group_index,
   return ok;
 }
 
+bool RunCore::graph_dispatch_direct_input(const PipelineSegmentRuntime& pipe, graph::PortId port,
+                                          Sample sample, const EdgeRouterOptions& options,
+                                          bool cancel_on_public_input_close) {
+  auto& execution = graph_execution();
+  const auto node_id = pipe.seg.node_ids.front();
+  EdgeRouter router(execution);
+  auto* targets = router.targets(node_id, port);
+  if (!targets && port == graph::kInvalidPort) {
+    for (const std::size_t edge_index : pipe.seg.output_edges) {
+      if (edge_index < execution.plan.edges.size()) {
+        targets = router.targets(node_id, execution.plan.edges[edge_index].from_port);
+        if (targets) {
+          break;
+        }
+      }
+    }
+  }
+  if (!targets) {
+    graph_request_stop("GraphRun::push failed: direct graph source has no downstream target");
+    return false;
+  }
+
+  EdgeRouterCallbacks callbacks;
+  callbacks.dispatch_to_stage_group =
+      [this, &options, cancel_on_public_input_close](std::size_t group,
+                                                     simaai::neat::graph::PortId target_port,
+                                                     Sample&& next, std::size_t edge_index) {
+        return graph_dispatch_to_stage_group(group, target_port, std::move(next), edge_index,
+                                             options, cancel_on_public_input_close);
+      };
+  callbacks.ensure_pipeline_built = [this, cancel_on_public_input_close](
+                                        std::size_t index, const Sample& seed, std::string* err) {
+    return ensure_graph_pipeline_built(index, seed, err, false, cancel_on_public_input_close);
+  };
+  callbacks.sanitize_pipeline_input = [this](std::size_t index, Sample& next) {
+    graph_sanitize_pipeline_input(index, next);
+  };
+  callbacks.request_stop = [this](const std::string& err) { graph_request_stop(err); };
+  callbacks.stop_requested = [this, cancel_on_public_input_close] {
+    return graph_stop_requested() || (cancel_on_public_input_close && graph_public_input_closed());
+  };
+
+  EdgeRouterDispatchOptions dispatch_options;
+  dispatch_options.sanitize_pipeline_input_before_enqueue = true;
+  dispatch_options.sink_backpressure_context = static_cast<std::size_t>(node_id);
+  return router.dispatch_to_targets(*targets, std::move(sample), options, callbacks,
+                                    dispatch_options);
+}
+
 bool RunCore::graph_push(simaai::neat::graph::NodeId node_id, simaai::neat::graph::PortId port,
                          bool has_port, const Sample& sample, const EdgeRouterOptions& options) {
   ExecutionGraphRuntime& execution = graph_execution();
   auto it_pipe = execution.node_to_pipeline.find(node_id);
   if (it_pipe != execution.node_to_pipeline.end()) {
     auto& pipe = *execution.pipelines[it_pipe->second];
-    if (pipe.seg.boundary.direct_graph_source) {
-      EdgeRouter router(execution);
-      auto* targets = router.targets(node_id, has_port ? port : simaai::neat::graph::kInvalidPort);
-      if (!targets && !has_port) {
-        for (const std::size_t edge_index : pipe.seg.output_edges) {
-          if (edge_index < execution.plan.edges.size()) {
-            targets = router.targets(node_id, execution.plan.edges[edge_index].from_port);
-            if (targets) {
-              break;
-            }
-          }
-        }
-      }
-      if (!targets) {
-        graph_request_stop("GraphRun::push failed: direct graph source has no downstream target");
-        return false;
-      }
-
-      EdgeRouterCallbacks callbacks;
-      callbacks.dispatch_to_stage_group = [this, &options](std::size_t group,
-                                                           simaai::neat::graph::PortId target_port,
-                                                           Sample&& next, std::size_t edge_index) {
-        return graph_dispatch_to_stage_group(group, target_port, std::move(next), edge_index,
-                                             options, true);
-      };
-      callbacks.ensure_pipeline_built = [this](std::size_t index, const Sample& seed,
-                                               std::string* err) {
-        return ensure_graph_pipeline_built(index, seed, err, false, true);
-      };
-      callbacks.sanitize_pipeline_input = [this](std::size_t index, Sample& next) {
-        graph_sanitize_pipeline_input(index, next);
-      };
-      callbacks.request_stop = [this](const std::string& err) { graph_request_stop(err); };
-      callbacks.stop_requested = [this] {
-        return graph_stop_requested() || graph_public_input_closed();
-      };
-
-      EdgeRouterDispatchOptions dispatch_options;
-      dispatch_options.sanitize_pipeline_input_before_enqueue = true;
-      dispatch_options.sink_backpressure_context = static_cast<std::size_t>(node_id);
-      return router.dispatch_to_targets(*targets, Sample{sample}, options, callbacks,
-                                        dispatch_options);
+    if (pipe.seg.boundary.direct_graph_source && !pipe.transport.input_queue) {
+      return graph_dispatch_direct_input(pipe, has_port ? port : graph::kInvalidPort, sample,
+                                         options, true);
     }
 
     if (!pipe.transport.input_queue) {
@@ -1119,10 +1165,10 @@ bool RunCore::graph_push(simaai::neat::graph::NodeId node_id, simaai::neat::grap
       return false;
     }
 
-    RuntimePipelineQueueMsg queued{Sample{sample}, invalid_edge_index()};
+    RuntimePipelineQueueMsg queued{.sample = sample};
     const auto cancelled = [this] { return graph_stop_requested() || graph_public_input_closed(); };
-    const bool ok = pipe.transport.input_queue->push_interruptible(
-        std::move(queued), options.push_timeout_ms, cancelled);
+    const bool ok =
+        enqueue_graph_input(*this, *pipe.transport.input_queue, std::move(queued), options);
     if (!ok && options.request_stop_on_backpressure && !cancelled()) {
       std::ostringstream msg;
       msg << "GraphRun::push timed out waiting for pipeline input queue (seg="

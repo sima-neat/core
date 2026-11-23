@@ -83,7 +83,7 @@ graph.add(pyneat.groups.video_input(vopt))
 | 앱이 텐서, 이미지 또는 샘플을 푸시 | `nodes::Input("name", options)` | `pyneat.nodes.input("name", options)` |
 | 앱이 전체 샘플을 가져옴 | `nodes::Output("name", options)` | `pyneat.nodes.output("name", options)` |
 | 파일에서 프레임 읽기 | `nodes::FileInput(...)` 더하기 디코딩 노드, 또는 `nodes::groups::VideoInputGroup(...)` | `pyneat.nodes.file_input(...)` 더하기 디코딩 노드, 또는 `pyneat.groups.video_input(...)` |
-| 소스로 단일 이미지 읽기 | `nodes::StillImageInput(...)` | `pyneat.nodes.still_image_input(...)` |
+| `run_rtsp()`로 정지 이미지 스트리밍 | `nodes::StillImageInput(...)` | `pyneat.nodes.still_image_input(...)` |
 | MIPI/libcamera 카메라 읽기 | `nodes::CameraInput(...)` | `pyneat.nodes.camera_input(...)` |
 | USB(UVC) MJPEG 카메라 읽기 | `nodes::UsbCameraInput(...)` | `pyneat.nodes.usb_camera_input(...)` |
 | RTSP 스트림 읽기 | `nodes::RTSPInput(...)`, `nodes::groups::RtspEncodedInput(...)`, 또는 `nodes::groups::RtspDecodedInput(...)` | `pyneat.nodes.rtsp_input(...)`, `pyneat.groups.rtsp_encoded_input(...)`, 또는 `pyneat.groups.rtsp_decoded_input(...)` |
@@ -99,6 +99,7 @@ graph.add(pyneat.groups.video_input(vopt))
 | 메타데이터 출력 | `MetadataSender` | `pyneat.MetadataSender` |
 | 감지 결과 렌더링 | `nodes::SimaRender(...)` | `pyneat.nodes.sima_render(...)` |
 | 로짓을 클래스 인덱스로 변환 | `nodes::SimaArgMax(...)` | `pyneat.nodes.sima_argmax(...)` |
+| 세그멘테이션 점수를 크기 조정하여 클래스 맵으로 변환 | `nodes::ResizeArgMax(ResizeArgMaxOptions{...})` | `pyneat.nodes.resize_argmax(options)` |
 | LiDAR 스윕을 필러로 복셀화 | `nodes::SimaVoxelize(SimaVoxelizeOptions{...})` | `pyneat.nodes.sima_voxelize(options)` |
 | 필러 특징을 BEV 캔버스에 분산 | `nodes::SimaPillarScatter(SimaPillarScatterOptions{...})` | `pyneat.nodes.sima_pillar_scatter(options)` |
 | 카메라 특징을 BEV 격자로 풀링 | `nodes::SimaBEVPoolPlan(...)` 및 `nodes::SimaBEVPool(...)` | `pyneat.nodes.sima_bev_pool_plan(options)` 및 `pyneat.nodes.sima_bev_pool(options)` |
@@ -155,7 +156,7 @@ H.265 디코더는 `codec_name=hevc`, `profile=Main` 및 `pix_fmt=yuv420p`를 �
 
 상위 입력의 크기나 프레임 속도를 재정의해야 할 때만 `dec_width`, `dec_height`, `dec_fps`를 사용합니다. `-1`은 상위 입력의 값을 유지합니다. 이 옵션은 디코더 용량을 예약하지 않습니다. Core는 명시적인 `num_buffers` 값을 디코더로 전달하며 디코더가 하드웨어 풀 요구사항을 적용합니다. `-1`은 디코더 정책을 유지합니다.
 
-플러그인 기본값을 유지하려면 `decoder_tuning`을 비워 둡니다. `default`, `auto`를 포함한 명시적 값은 `memory_opt`와 버퍼 수 재정의와 함께 플러그인에 전달되어 디코더가 튜닝 우선순위를 적용합니다. `throughput-low-latency`는 디코딩된 프레임의 표시 순서 재정렬을 비활성화하고 720p 이하에서는 명령 깊이 1, 더 큰 프레임에서는 2를 사용합니다. B 프레임 없이 인코딩된 스트림에만 사용하고 일반 스트림은 튜닝을 설정하지 않습니다.
+플러그인 기본값을 유지하려면 `decoder_tuning`을 비워 둡니다. `default`, `auto`를 포함한 명시적 값은 `memory_opt`와 버퍼 수 재정의와 함께 플러그인에 전달되어 디코더가 튜닝 우선순위를 적용합니다. 표준 프리셋은 `auto`, `default`, `low-memory`, `throughput-low-latency`이며 `low_memory`, `throughput` 같은 디코더 별칭도 허용됩니다. 대소문자와 앞뒤 공백은 무시하고 비교합니다. 그 외의 비어 있지 않은 값을 지정하면 `SimaDecode`와 `RtspDecodedInput`은 생성 시 `misconfig.option_out_of_range`로 거부합니다. `throughput-low-latency`는 디코딩된 프레임의 표시 순서 재정렬을 비활성화하고 720p 이하에서는 명령 깊이 1, 더 큰 프레임에서는 2를 사용합니다. B 프레임 없이 인코딩된 스트림에만 사용하고 일반 스트림은 튜닝을 설정하지 않습니다.
 
 `nodes::JpegDecode()` 및 `pyneat.nodes.jpeg_decode()`는 별도의 CPU/GStreamer JPEG 디코딩 노드입니다. 간단한 CPU 이미지 파이프라인에 사용합니다. 모델 전처리기 전에 기본 MJPEG 비디오 디코딩에는 사용하지 마십시오.
 

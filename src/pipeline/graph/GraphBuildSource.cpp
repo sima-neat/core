@@ -731,11 +731,10 @@ bool attach_source_sima_meta_probe_for_node(GstElement* pipeline,
     return false;
   }
 
-  std::vector<std::string> element_names = node->element_names(actual_element_index);
+  const auto element_names = rendered_element_names(*node, actual_element_index, name_transform);
   if (element_names.empty()) {
     return false;
   }
-  element_names = apply_name_transform(name_transform, element_names);
   const std::string source_tail = element_names.back();
   std::string buffer_name = node->buffer_name_hint(actual_element_index);
   if (buffer_name.empty()) {
@@ -3751,6 +3750,10 @@ Run Graph::build_source_internal_(const RunOptions& opt) {
   gst_init_once();
 
   progress.step("Building graph...");
+  if (composition_) {
+    for (const auto& vertex : composition_->vertices)
+      enforce_still_image_source_mode(vertex.pipeline_node.get(), "Graph::build");
+  }
   runtime::ExecutionGraphPlan plan = runtime::compile_public_graph(*this, opt, std::nullopt);
   if (plan.linear_compat) {
     progress.detail(std::string("mode=async nodes=") +
