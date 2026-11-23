@@ -19,6 +19,7 @@
 #include <gst/allocators/gstdmabuf.h>
 #include <gst/gst.h>
 
+#include <nlohmann/json.hpp>
 #include <opencv2/core/mat.hpp>
 
 #include <algorithm>
@@ -2188,6 +2189,15 @@ void validate_public_input(const Sample& input, const InputOptions& opt,
     validate_public_input(tensor, opt, stream, where);
   };
   const auto visit = [&](auto&& self, const Sample& sample) -> void {
+    for (const auto& [key, value] : sample.attributes) {
+      if (key.find('\0') != std::string::npos) {
+        const auto name =
+            nlohmann::json(key).dump(-1, ' ', false, nlohmann::json::error_handler_t::replace);
+        pipeline_internal::error_util::throw_session_error(
+            error_codes::kSampleAttributes,
+            std::string(where) + ": sample attribute key " + name + " contains a NUL byte");
+      }
+    }
     if (sample_has_tensor_list(sample) && !sample.tensors.empty()) {
       for (const auto& tensor : sample.tensors) {
         validate_tensor(tensor, sample);

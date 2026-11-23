@@ -421,7 +421,12 @@ RUN_TEST(
         copy_msg.tensor = seed;
         copy_msg.payload_type = PayloadType::Image;
         copy_msg.format = "RGB";
-        copy_msg.attributes = {{"image-channel", "color"}, {"image-index", "41"}};
+        copy_msg.attributes = {{"image-channel", "color"}, {"image-index", "41"}, {"empty", ""}};
+        Sample invalid = copy_msg;
+        invalid.attributes[std::string("bad\0key", 7)] = "v";
+        require_neat_error([&] { run.push(Sample{invalid}); }, error_codes::kSampleAttributes,
+                           R"(sample attribute key "bad\u0000key" contains a NUL byte)");
+        require_neat_error([&] { run.try_push(Sample{invalid}); }, error_codes::kSampleAttributes);
         try {
           require(run.try_push(Sample{copy_msg}),
                   run_api_case("active_try_push_sample_copy",

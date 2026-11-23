@@ -24,6 +24,7 @@ bool is_framework_error_code(std::string_view code) {
       error_codes::kPipelineShape,
       error_codes::kCaps,
       error_codes::kInputShape,
+      error_codes::kSampleAttributes,
       error_codes::kRuntimeAbiMismatch,
       error_codes::kGraphElementName,
       error_codes::kMediaCaps,
