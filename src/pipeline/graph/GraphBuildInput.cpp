@@ -1364,6 +1364,10 @@ replace_first_input_node_for_build(const std::vector<std::shared_ptr<Node>>& nod
 }
 
 RunOptions resolve_build_opt(RunMode mode, const RunOptions& opt) {
+  if (opt.queue_depth < 0) {
+    session_build_throw_session_error_simple(error_codes::kOptionOutOfRange,
+                                             "RunOptions.queue_depth must be >= 0");
+  }
   RunOptions out = opt;
   const RunOptions defaults{};
   if (mode == RunMode::Sync) {
@@ -1524,21 +1528,6 @@ bool resolve_startup_preflight(const InputStreamOptions& opt) {
   if (env && *env)
     return std::atoi(env) != 0;
   return opt.startup_preflight;
-}
-
-void validate_caps_override_or_throw(const InputOptions& src_opt, const char* where,
-                                     const std::string& pipeline_hint) {
-  if (src_opt.caps_override.empty())
-    return;
-  GstCaps* parsed = gst_caps_from_string(src_opt.caps_override.c_str());
-  if (!parsed) {
-    session_build_throw_session_error_simple(
-        error_codes::kCaps,
-        std::string(where ? where : "Graph::build(input)") +
-            ": invalid caps_override: " + src_opt.caps_override,
-        "Provide a valid GstCaps string matching the input payload.", pipeline_hint);
-  }
-  gst_caps_unref(parsed);
 }
 
 std::string parse_named_element_for_error(const std::string& pipeline, const std::string& element) {
@@ -1907,7 +1896,6 @@ InputStream run_input_stream_internal_typed(const std::vector<std::shared_ptr<No
     session_build_maybe_dump_pipeline_string(last_pipeline, "build_input");
   }
   enforce_mla_pipeline_guard("Graph::build(input)", last_pipeline, owner);
-  validate_caps_override_or_throw(src_node->options(), "Graph::build(input)", last_pipeline);
 
   GstElement* pipeline = session_build_parse_pipeline_or_throw(br, "Graph::build(input)");
   session_build_dump_pipeline_element_properties(pipeline);

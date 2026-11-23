@@ -15,7 +15,7 @@ sidebar_position: 2
 
 ## WSLから始めましょう。
 
-WSL Linuxディストリビューション内でPalette SDKコマンドを実行してください。PowerShellやコマンドプロンプトからは実行しないでください。これには、`sima-cli neat install sdk@%%release.sdk_channel%%`も含まれます。
+WSL Linuxディストリビューション内でPalette SDKコマンドを実行してください。PowerShellやコマンドプロンプトからは実行しないでください。これには、`sima-cli neat install sdk@v%%release.sdk%%`も含まれます。
 
 ## WSL ネットワークモード
 

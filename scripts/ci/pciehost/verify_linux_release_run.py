@@ -106,7 +106,7 @@ def verify_reusable_workflow(run: dict, expected_commit: str,
 
 
 def verify_jobs(jobs: list[dict], run: dict, run_id: int, expected_commit: str,
-                workflow_name: str, required_names: tuple[str, ...]) -> list[dict]:
+                required_names: tuple[str, ...]) -> list[dict]:
   if not isinstance(jobs, list) or any(not isinstance(job, dict) for job in jobs):
     raise ValueError("required job inventory is invalid")
   if not required_names or len(required_names) != len(set(required_names)):
@@ -128,7 +128,6 @@ def verify_jobs(jobs: list[dict], run: dict, run_id: int, expected_commit: str,
         "run_attempt": run_attempt,
         "run_id": run_id,
         "status": "completed",
-        "workflow_name": workflow_name,
     }
     for name, value in expected.items():
       if job.get(name) != value:
@@ -198,18 +197,17 @@ def verify_artifact(artifacts: list[dict], run: dict, run_id: int,
 
 
 def verify_run(run: dict, repository: str, run_id: int, expected_commit: str,
-               workflow_name: str = "Vulcan CI",
                workflow_path: str = ".github/workflows/vulcan-ci.yml", *,
                required_reusable_workflow: str | None = None,
                required_job_names: tuple[str, ...] = (),
                required_artifact_name: str | None = None,
                jobs: list[dict] | None = None,
                artifacts: list[dict] | None = None) -> dict:
+  # The workflow file identifies the run: run-name replaces `name` with a per-run title.
   expected = {
       "conclusion": "success",
       "head_sha": expected_commit,
       "id": run_id,
-      "name": workflow_name,
       "path": workflow_path,
       "status": "completed",
   }
@@ -228,7 +226,7 @@ def verify_run(run: dict, repository: str, run_id: int, expected_commit: str,
       "repository": repository,
       "run_attempt": run.get("run_attempt"),
       "run_id": run_id,
-      "workflow": run["name"],
+      "workflow": run["path"],
   }
   strict = bool(
       required_reusable_workflow or required_job_names or required_artifact_name)
@@ -244,7 +242,7 @@ def verify_run(run: dict, repository: str, run_id: int, expected_commit: str,
     receipt["reusable_workflow"] = verify_reusable_workflow(
         run, expected_commit, required_reusable_workflow)
     receipt["jobs"] = verify_jobs(
-        jobs, run, run_id, expected_commit, workflow_name, required_job_names)
+        jobs, run, run_id, expected_commit, required_job_names)
     receipt["artifact"] = verify_artifact(
         artifacts, run, run_id, expected_commit, required_artifact_name)
   return receipt
@@ -267,7 +265,6 @@ def main() -> None:
   parser.add_argument("--output", type=Path, required=True)
   parser.add_argument("--repository", required=True)
   parser.add_argument("--run-id", type=int, required=True)
-  parser.add_argument("--workflow-name", default="Vulcan CI")
   parser.add_argument("--workflow-path", default=".github/workflows/vulcan-ci.yml")
   parser.add_argument("--required-reusable-workflow")
   parser.add_argument("--required-job", action="append", default=[])
@@ -289,7 +286,7 @@ def main() -> None:
   receipt = verify_run(
       run,
       args.repository, args.run_id, args.expected_commit,
-      args.workflow_name, args.workflow_path,
+      args.workflow_path,
       required_reusable_workflow=args.required_reusable_workflow,
       required_job_names=tuple(args.required_job),
       required_artifact_name=args.required_artifact,

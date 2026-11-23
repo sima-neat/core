@@ -101,6 +101,10 @@ on:
         description: Build and qualify without publishing
         type: boolean
         default: true
+      release_qualification:
+        description: Also run and require the release-only hardware checks (rehearses a release with validation_only)
+        type: boolean
+        default: false
       require_signatures:
         description: Require Authenticode for Neat user-space packages (optional)
         type: boolean
@@ -292,7 +296,6 @@ jobs:
             --repository "sima-neat/scheduler" \
             --run-id "${SCHEDULER_RUN_ID}" \
             --expected-commit "${SCHEDULER_COMMIT}" \
-            --workflow-name "Scheduler" \
             --workflow-path ".github/workflows/ci.yml" \
             --required-reusable-workflow "sima-neat/scheduler/.github/workflows/pcie-host-windows.yml" \
             --required-job "Build, test, and publish native Windows PCIe profile / contracts" \
@@ -401,7 +404,7 @@ jobs:
           retention-days: 7
   dependencies:
     name: Resolve immutable Windows dependency cohort
-    needs: [contracts, linux_release]
+    needs: [contracts, linux_release, resolve-vulcan-config]
     # Vulcan CI's PCIe host matrix already built this commit's cohort in the same run.
     if: needs.contracts.result == 'success' && needs.linux_release.result == 'success' && inputs.linux_current_run != true
     runs-on: windows-2025
@@ -459,6 +462,8 @@ jobs:
         env:
           SOURCE_BRANCH: ${{ github.head_ref || github.ref_name }}
           SIMA_CLI_CHECK_FOR_UPDATE: "0"
+          # The environment the publish job publishes to, as in Vulcan CI's matrix.
+          NEAT_VULCAN_ENV: ${{ needs.resolve-vulcan-config.outputs.vulcan_env }}
           SCHEDULER_COMMIT: ${{ inputs.scheduler_commit }}
           SIMA_CLI_COMMIT: ${{ inputs.sima_cli_commit }}
         run: |
@@ -467,7 +472,7 @@ jobs:
             "scripts/ci/pciehost/acquire_windows_dependencies.py",
             "--cli", $env:SIMA_CLI,
             "--branch", $env:SOURCE_BRANCH,
-            "--environment", "production",
+            "--environment", $env:NEAT_VULCAN_ENV,
             "--output", "$env:RUNNER_TEMP\core-windows-dependencies"
           )
           if (Test-Path -LiteralPath "$env:RUNNER_TEMP\scheduler-windows-override") {
@@ -700,6 +705,7 @@ jobs:
           REQUIRE_UPGRADE: ${{ inputs.require_upgrade }}
           UPGRADE_BASE_TAG: ${{ inputs.upgrade_base_tag }}
           VALIDATION_ONLY: ${{ inputs.validation_only }}
+          RELEASE_QUALIFICATION: ${{ inputs.release_qualification }}
           ARTIFACT_BASE_URL: ${{ needs.resolve-vulcan-config.outputs.artifact_base_url }}
         run: |
           $ErrorActionPreference = "Stop"
@@ -742,7 +748,7 @@ jobs:
             "--evidence", "$env:RUNNER_TEMP\core-windows-hardware-evidence",
             "--include-genai"
           )
-          if ("$env:VALIDATION_ONLY" -ne "true") {
+          if ("$env:VALIDATION_ONLY" -ne "true" -or "$env:RELEASE_QUALIFICATION" -eq "true") {
             # Windows-only release checks; validation runs keep what Linux's card job covers.
             $arguments += "--release-qualification"
           }
@@ -796,6 +802,7 @@ jobs:
         shell: powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -Command ". '{0}'"
         env:
           VALIDATION_ONLY: ${{ inputs.validation_only }}
+          RELEASE_QUALIFICATION: ${{ inputs.release_qualification }}
           REQUIRE_UPGRADE: ${{ inputs.require_upgrade }}
           REQUIRE_SIGNATURES: ${{ inputs.require_signatures }}
         run: |
@@ -808,7 +815,7 @@ jobs:
             "--expected-commit", $env:GITHUB_SHA,
             "--output", "$env:RUNNER_TEMP\core-windows-hardware-evidence\release-admission.json"
           )
-          if ("$env:VALIDATION_ONLY" -ne "true") {
+          if ("$env:VALIDATION_ONLY" -ne "true" -or "$env:RELEASE_QUALIFICATION" -eq "true") {
             $arguments += @("--require-genai", "--require-release-qualification")
           }
           if ("$env:REQUIRE_UPGRADE" -eq "true") {

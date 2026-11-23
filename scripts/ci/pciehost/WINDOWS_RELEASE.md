@@ -262,7 +262,8 @@ shared installation root behind.
 The hardware qualifier serves the candidate from disposable loopback registries
 and runs the documented `sima-cli neat install` command once, as Linux installs
 its host package once; the card installs over SSH meanwhile. Release
-qualification (`validation_only=false`, `--release-qualification`) adds the
+qualification (`validation_only=false` or `release_qualification=true`,
+`--release-qualification`) adds the
 Windows-only checks that have no Linux equivalent: a native-only install, a
 missing-wheel download failure, a checksum-valid but invalid wheel after native
 installation, managed-environment recovery with the real wheel, a repeated
@@ -344,6 +345,13 @@ gh workflow run pcie-host-windows.yml --repo sima-neat/core \
   -f validation_only=true
 ```
 
+The admitted Linux run must contain `core-pcie-card-offline-bundle`: a tag run,
+or a branch run with the Windows card lane enabled. To rehearse release
+qualification without publishing, add `-f release_qualification=true`. The
+hardware job then runs the Windows-only release checks (`--release-qualification`)
+and admission requires their evidence, exactly as a release does, while
+`validation_only=true` keeps the publish job skipped.
+
 By default that dispatch resolves published Scheduler and sima-cli revisions.
 During initial bootstrap, or when intentionally testing unpublished producer
 changes, supply `scheduler_run_id` with `scheduler_commit`, or `sima_cli_run_id`
@@ -411,6 +419,11 @@ only, `first_release_upgrade_exemption=true` with a non-empty
 `first_release_upgrade_exemption_reason`. A publishing dispatch from any other
 ref fails in the admission job, before anything is built. Every publishing
 dispatch also needs `linux_run_id=<same-commit-core-vulcan-run-id>`.
+The dispatch downloads that run's `neat-core-dist` and
+`core-pcie-card-offline-bundle` artifacts. Tag runs build the card bundle even
+when the Windows card lane is off, but Vulcan CI keeps `neat-core-dist` for only
+3 days (`artifact_retention_days` of its `build` job), so dispatch the Windows
+release within 3 days of the tag's Vulcan CI run.
 Publication is rejected unless
 the Windows 11 customer-install, direct-card, complete GenAI, and cleanup evidence
 passes. Core publishes only the bytes that passed; it does not rebuild them.
@@ -430,15 +443,16 @@ then install with:
 sima-cli neat install core/pciehost/windows/amd64@v<package-version>
 ```
 
-Before the first production publication, rehearse against staging. The Vulcan
-environment comes from the `VULCAN_ENV` variable, as for the Ubuntu packages, so
-the rehearsal is a release-tag dispatch while that variable selects `staging`,
-after the same tag's Linux release has promoted `latest.tag` in staging. Then,
-on a clean Windows 11 host, run the customer command against staging and
-confirm that both MSIs and the wheel download and install:
+Before the first production publication, rehearse the customer install from
+the `develop` channel. Staging holds no Core or Scheduler publications to
+install from. A `develop` push publishes its Windows cohort with the same
+`publish_windows.sh` and layout as a release, at
+`core/develop/<commit12>/pciehost/windows/amd64/`, and promotes `develop`
+`latest` once its lanes pass. On a clean Windows 11 host, run the customer
+command and confirm that both MSIs and the wheel download and install:
 
 ```text
-sima-cli neat install core/pciehost/windows/amd64@v<package-version> --env staging
+sima-cli neat install core/pciehost/windows/amd64@develop
 ```
 
 Cross-version upgrade is a formal release check rather than a cost paid by every
@@ -484,7 +498,7 @@ additional provenance; it does not replace tests.
 Wheel installation failure deliberately preserves successful native MSI work so
 the customer can retry the Python step. This is not a transaction that rolls all
 three packages back. MSI repair, repeat installation, and failure recovery
-are exercised on every publishing run, and clean removal on every run; the older-version upgrade is the
+are exercised on every publishing run and `release_qualification` rehearsal, and clean removal on every run; the older-version upgrade is the
 separate formal gate described above.
 
 ## Evidence and recovery
@@ -496,6 +510,14 @@ Retain these artifacts with the release record:
 - `core-pciehost-windows-amd64`;
 - `core-pciehost-windows-hardware-<run>-<attempt>`;
 - `core-pciehost-linux-admission-<run>-<attempt>`.
+
+Actions deletes them after 7 to 14 days (`retention-days`), so download the Core
+artifacts, including the hardware evidence, as soon as the release dispatch
+finishes:
+
+```text
+gh run download <release-dispatch-run-id> --repo sima-neat/core --dir <release-record>
+```
 
 The hardware workflow holds both a runner-local lock and an atomic card-side
 lock. At the end it stops card workers, removes its `/var/tmp/neat-offline-*`

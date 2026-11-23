@@ -55,7 +55,7 @@ opt.header_capture.headers = ["Image-Index", "Image-Time"]
 source = pyneat.groups.http_mjpeg_decoded_input(opt)
 
 # ... later, on a pulled sample:
-index = sample.attributes.get("image-index")
+index = sample.attributes["image-index"] if "image-index" in sample.attributes else None
 
 sample.attributes["image-index"] = "42"     # reaches the Sample
 sample.attributes = {"image-time": "..."}   # replaces the whole map
@@ -77,7 +77,7 @@ sample.attributes = {"image-time": "..."}   # replaces the whole map
 | Дані, що містяться в файлі JPEG. | Частина має містити рівно одне повне зображення у форматі JPEG, починаючи з SOI і закінчуючи EOI. Обрізані, порожні або з’єднані зображення призводять до помилки в потоці даних. |
 | Неправильний вхідний параметр. | Недопустимі імена заголовків, згорнуті рядки заголовків і впровадження символів CR/LF/NUL відхиляються — замість того, щоб їх нормалізували та перетворили на щось, що виглядає безпечно, виникають помилки в потоці даних. |
 
-Розрізняйте поняття «відсутній» і «порожній», використовуючи `count()` / `get()`, а не перевіряючи наявність порожнього рядка.
+У Python перевіряйте наявність ключа за допомогою `in`, а в C++ — за допомогою `count()`. Значення наявного ключа може бути порожнім рядком.
 
 ### Обмеження
 
