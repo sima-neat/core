@@ -213,7 +213,7 @@ Ubuntu:
 <ShellCommand prompt="pcie-host">
 sima-cli neat install core/offline@v%%release.core%% -t minimal --download-only
 scp -i ~/.ssh/sima_neat_pcie_ed25519 neat-core-offline-installer*.tar.gz sima@10.0.0.2:/var/tmp/neat-core-offline-installer.tar.gz
-ssh -t -i ~/.ssh/sima_neat_pcie_ed25519 sima@10.0.0.2 "cd /var/tmp && rm -rf neat-core-offline && tar -xzf neat-core-offline-installer.tar.gz && cd neat-core-offline && ./install.sh && ./install.sh --verify"
+ssh -t -i ~/.ssh/sima_neat_pcie_ed25519 sima@10.0.0.2 "cd /var/tmp && rm -rf neat-core-offline && tar -xzf neat-core-offline-installer.tar.gz && cd neat-core-offline && ./install.sh && ./install.sh --verify && cd /var/tmp && rm -rf neat-core-offline neat-core-offline-installer.tar.gz"
 </ShellCommand>
 
 Windows에서는 PowerShell에서 다음을 실행합니다.
@@ -222,7 +222,7 @@ Windows에서는 PowerShell에서 다음을 실행합니다.
 sima-cli neat install core/offline@v%%release.core%% -t minimal --download-only
 $bundle = (Get-Item neat-core-offline-installer*.tar.gz).FullName
 scp -i "$env:USERPROFILE\.ssh\sima_neat_pcie_ed25519" $bundle sima@10.0.0.2:/var/tmp/neat-core-offline-installer.tar.gz
-ssh -t -i "$env:USERPROFILE\.ssh\sima_neat_pcie_ed25519" sima@10.0.0.2 "cd /var/tmp && rm -rf neat-core-offline && tar -xzf neat-core-offline-installer.tar.gz && cd neat-core-offline && ./install.sh && ./install.sh --verify"
+ssh -t -i "$env:USERPROFILE\.ssh\sima_neat_pcie_ed25519" sima@10.0.0.2 "cd /var/tmp && rm -rf neat-core-offline && tar -xzf neat-core-offline-installer.tar.gz && cd neat-core-offline && ./install.sh && ./install.sh --verify && cd /var/tmp && rm -rf neat-core-offline neat-core-offline-installer.tar.gz"
 ```
 
 설치 프로그램은 변경을 시작하기 전에 카드가 호환되는 Platform 3.0 릴리스를 실행하는지 확인하며, `--verify`는 설치된 패키지와 PyNeat 가져오기를 확인합니다. 호스트와 카드의 Neat 버전을 비교하려면 Ubuntu에서는 `neat`를, Windows에서는 PowerShell에서 `& "$env:ProgramFiles\SimaPCIeHost\bin\neat.cmd"`를 실행하세요.

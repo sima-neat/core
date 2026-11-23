@@ -63,7 +63,7 @@
     },
     {
       "path": "docs/getting-started/neat-library/pcie-host.mdx",
-      "line": "ssh -t -i ~/.ssh/sima_neat_pcie_ed25519 sima@10.0.0.2 \"cd /var/tmp && rm -rf neat-core-offline && tar -xzf neat-core-offline-installer.tar.gz && cd neat-core-offline && ./install.sh && ./install.sh --verify\"",
+      "line": "ssh -t -i ~/.ssh/sima_neat_pcie_ed25519 sima@10.0.0.2 \"cd /var/tmp && rm -rf neat-core-offline && tar -xzf neat-core-offline-installer.tar.gz && cd neat-core-offline && ./install.sh && ./install.sh --verify && cd /var/tmp && rm -rf neat-core-offline neat-core-offline-installer.tar.gz\"",
       "count": 1,
       "reason": "Network address example, not a release version"
     },
@@ -75,7 +75,7 @@
     },
     {
       "path": "docs/getting-started/neat-library/pcie-host.mdx",
-      "line": "ssh -t -i \"$env:USERPROFILE\\.ssh\\sima_neat_pcie_ed25519\" sima@10.0.0.2 \"cd /var/tmp && rm -rf neat-core-offline && tar -xzf neat-core-offline-installer.tar.gz && cd neat-core-offline && ./install.sh && ./install.sh --verify\"",
+      "line": "ssh -t -i \"$env:USERPROFILE\\.ssh\\sima_neat_pcie_ed25519\" sima@10.0.0.2 \"cd /var/tmp && rm -rf neat-core-offline && tar -xzf neat-core-offline-installer.tar.gz && cd neat-core-offline && ./install.sh && ./install.sh --verify && cd /var/tmp && rm -rf neat-core-offline neat-core-offline-installer.tar.gz\"",
       "count": 1,
       "reason": "Network address example, not a release version"
     },
@@ -165,7 +165,7 @@
     },
     {
       "path": "website/i18n/ja/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
-      "line": "ssh -t -i ~/.ssh/sima_neat_pcie_ed25519 sima@10.0.0.2 \"cd /var/tmp && rm -rf neat-core-offline && tar -xzf neat-core-offline-installer.tar.gz && cd neat-core-offline && ./install.sh && ./install.sh --verify\"",
+      "line": "ssh -t -i ~/.ssh/sima_neat_pcie_ed25519 sima@10.0.0.2 \"cd /var/tmp && rm -rf neat-core-offline && tar -xzf neat-core-offline-installer.tar.gz && cd neat-core-offline && ./install.sh && ./install.sh --verify && cd /var/tmp && rm -rf neat-core-offline neat-core-offline-installer.tar.gz\"",
       "count": 1,
       "reason": "Network address example, not a release version"
     },
@@ -177,7 +177,7 @@
     },
     {
       "path": "website/i18n/ja/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
-      "line": "ssh -t -i \"$env:USERPROFILE\\.ssh\\sima_neat_pcie_ed25519\" sima@10.0.0.2 \"cd /var/tmp && rm -rf neat-core-offline && tar -xzf neat-core-offline-installer.tar.gz && cd neat-core-offline && ./install.sh && ./install.sh --verify\"",
+      "line": "ssh -t -i \"$env:USERPROFILE\\.ssh\\sima_neat_pcie_ed25519\" sima@10.0.0.2 \"cd /var/tmp && rm -rf neat-core-offline && tar -xzf neat-core-offline-installer.tar.gz && cd neat-core-offline && ./install.sh && ./install.sh --verify && cd /var/tmp && rm -rf neat-core-offline neat-core-offline-installer.tar.gz\"",
       "count": 1,
       "reason": "Network address example, not a release version"
     },
@@ -267,7 +267,7 @@
     },
     {
       "path": "website/i18n/ko/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
-      "line": "ssh -t -i ~/.ssh/sima_neat_pcie_ed25519 sima@10.0.0.2 \"cd /var/tmp && rm -rf neat-core-offline && tar -xzf neat-core-offline-installer.tar.gz && cd neat-core-offline && ./install.sh && ./install.sh --verify\"",
+      "line": "ssh -t -i ~/.ssh/sima_neat_pcie_ed25519 sima@10.0.0.2 \"cd /var/tmp && rm -rf neat-core-offline && tar -xzf neat-core-offline-installer.tar.gz && cd neat-core-offline && ./install.sh && ./install.sh --verify && cd /var/tmp && rm -rf neat-core-offline neat-core-offline-installer.tar.gz\"",
       "count": 1,
       "reason": "Network address example, not a release version"
     },
@@ -279,7 +279,7 @@
     },
     {
       "path": "website/i18n/ko/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
-      "line": "ssh -t -i \"$env:USERPROFILE\\.ssh\\sima_neat_pcie_ed25519\" sima@10.0.0.2 \"cd /var/tmp && rm -rf neat-core-offline && tar -xzf neat-core-offline-installer.tar.gz && cd neat-core-offline && ./install.sh && ./install.sh --verify\"",
+      "line": "ssh -t -i \"$env:USERPROFILE\\.ssh\\sima_neat_pcie_ed25519\" sima@10.0.0.2 \"cd /var/tmp && rm -rf neat-core-offline && tar -xzf neat-core-offline-installer.tar.gz && cd neat-core-offline && ./install.sh && ./install.sh --verify && cd /var/tmp && rm -rf neat-core-offline neat-core-offline-installer.tar.gz\"",
       "count": 1,
       "reason": "Network address example, not a release version"
     },
@@ -369,7 +369,7 @@
     },
     {
       "path": "website/i18n/uk/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
-      "line": "ssh -t -i ~/.ssh/sima_neat_pcie_ed25519 sima@10.0.0.2 \"cd /var/tmp && rm -rf neat-core-offline && tar -xzf neat-core-offline-installer.tar.gz && cd neat-core-offline && ./install.sh && ./install.sh --verify\"",
+      "line": "ssh -t -i ~/.ssh/sima_neat_pcie_ed25519 sima@10.0.0.2 \"cd /var/tmp && rm -rf neat-core-offline && tar -xzf neat-core-offline-installer.tar.gz && cd neat-core-offline && ./install.sh && ./install.sh --verify && cd /var/tmp && rm -rf neat-core-offline neat-core-offline-installer.tar.gz\"",
       "count": 1,
       "reason": "Network address example, not a release version"
     },
@@ -381,7 +381,7 @@
     },
     {
       "path": "website/i18n/uk/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
-      "line": "ssh -t -i \"$env:USERPROFILE\\.ssh\\sima_neat_pcie_ed25519\" sima@10.0.0.2 \"cd /var/tmp && rm -rf neat-core-offline && tar -xzf neat-core-offline-installer.tar.gz && cd neat-core-offline && ./install.sh && ./install.sh --verify\"",
+      "line": "ssh -t -i \"$env:USERPROFILE\\.ssh\\sima_neat_pcie_ed25519\" sima@10.0.0.2 \"cd /var/tmp && rm -rf neat-core-offline && tar -xzf neat-core-offline-installer.tar.gz && cd neat-core-offline && ./install.sh && ./install.sh --verify && cd /var/tmp && rm -rf neat-core-offline neat-core-offline-installer.tar.gz\"",
       "count": 1,
       "reason": "Network address example, not a release version"
     },
@@ -471,7 +471,7 @@
     },
     {
       "path": "website/i18n/zh-Hant/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
-      "line": "ssh -t -i ~/.ssh/sima_neat_pcie_ed25519 sima@10.0.0.2 \"cd /var/tmp && rm -rf neat-core-offline && tar -xzf neat-core-offline-installer.tar.gz && cd neat-core-offline && ./install.sh && ./install.sh --verify\"",
+      "line": "ssh -t -i ~/.ssh/sima_neat_pcie_ed25519 sima@10.0.0.2 \"cd /var/tmp && rm -rf neat-core-offline && tar -xzf neat-core-offline-installer.tar.gz && cd neat-core-offline && ./install.sh && ./install.sh --verify && cd /var/tmp && rm -rf neat-core-offline neat-core-offline-installer.tar.gz\"",
       "count": 1,
       "reason": "Network address example, not a release version"
     },
@@ -483,7 +483,7 @@
     },
     {
       "path": "website/i18n/zh-Hant/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
-      "line": "ssh -t -i \"$env:USERPROFILE\\.ssh\\sima_neat_pcie_ed25519\" sima@10.0.0.2 \"cd /var/tmp && rm -rf neat-core-offline && tar -xzf neat-core-offline-installer.tar.gz && cd neat-core-offline && ./install.sh && ./install.sh --verify\"",
+      "line": "ssh -t -i \"$env:USERPROFILE\\.ssh\\sima_neat_pcie_ed25519\" sima@10.0.0.2 \"cd /var/tmp && rm -rf neat-core-offline && tar -xzf neat-core-offline-installer.tar.gz && cd neat-core-offline && ./install.sh && ./install.sh --verify && cd /var/tmp && rm -rf neat-core-offline neat-core-offline-installer.tar.gz\"",
       "count": 1,
       "reason": "Network address example, not a release version"
     },

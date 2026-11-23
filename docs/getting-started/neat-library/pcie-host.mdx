@@ -335,7 +335,7 @@ On Ubuntu:
 <ShellCommand prompt="pcie-host">
 sima-cli neat install core/offline@v%%release.core%% -t minimal --download-only
 scp -i ~/.ssh/sima_neat_pcie_ed25519 neat-core-offline-installer*.tar.gz sima@10.0.0.2:/var/tmp/neat-core-offline-installer.tar.gz
-ssh -t -i ~/.ssh/sima_neat_pcie_ed25519 sima@10.0.0.2 "cd /var/tmp && rm -rf neat-core-offline && tar -xzf neat-core-offline-installer.tar.gz && cd neat-core-offline && ./install.sh && ./install.sh --verify"
+ssh -t -i ~/.ssh/sima_neat_pcie_ed25519 sima@10.0.0.2 "cd /var/tmp && rm -rf neat-core-offline && tar -xzf neat-core-offline-installer.tar.gz && cd neat-core-offline && ./install.sh && ./install.sh --verify && cd /var/tmp && rm -rf neat-core-offline neat-core-offline-installer.tar.gz"
 </ShellCommand>
 
 On Windows, in PowerShell:
@@ -344,7 +344,7 @@ On Windows, in PowerShell:
 sima-cli neat install core/offline@v%%release.core%% -t minimal --download-only
 $bundle = (Get-Item neat-core-offline-installer*.tar.gz).FullName
 scp -i "$env:USERPROFILE\.ssh\sima_neat_pcie_ed25519" $bundle sima@10.0.0.2:/var/tmp/neat-core-offline-installer.tar.gz
-ssh -t -i "$env:USERPROFILE\.ssh\sima_neat_pcie_ed25519" sima@10.0.0.2 "cd /var/tmp && rm -rf neat-core-offline && tar -xzf neat-core-offline-installer.tar.gz && cd neat-core-offline && ./install.sh && ./install.sh --verify"
+ssh -t -i "$env:USERPROFILE\.ssh\sima_neat_pcie_ed25519" sima@10.0.0.2 "cd /var/tmp && rm -rf neat-core-offline && tar -xzf neat-core-offline-installer.tar.gz && cd neat-core-offline && ./install.sh && ./install.sh --verify && cd /var/tmp && rm -rf neat-core-offline neat-core-offline-installer.tar.gz"
 ```
 
 The installer checks that the card runs a compatible Platform 3.0 release

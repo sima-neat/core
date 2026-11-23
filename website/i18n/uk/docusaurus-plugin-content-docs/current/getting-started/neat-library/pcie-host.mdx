@@ -226,7 +226,7 @@ Windows Installer не замінює пакет старішою версією
 <ShellCommand prompt="pcie-host">
 sima-cli neat install core/offline@v%%release.core%% -t minimal --download-only
 scp -i ~/.ssh/sima_neat_pcie_ed25519 neat-core-offline-installer*.tar.gz sima@10.0.0.2:/var/tmp/neat-core-offline-installer.tar.gz
-ssh -t -i ~/.ssh/sima_neat_pcie_ed25519 sima@10.0.0.2 "cd /var/tmp && rm -rf neat-core-offline && tar -xzf neat-core-offline-installer.tar.gz && cd neat-core-offline && ./install.sh && ./install.sh --verify"
+ssh -t -i ~/.ssh/sima_neat_pcie_ed25519 sima@10.0.0.2 "cd /var/tmp && rm -rf neat-core-offline && tar -xzf neat-core-offline-installer.tar.gz && cd neat-core-offline && ./install.sh && ./install.sh --verify && cd /var/tmp && rm -rf neat-core-offline neat-core-offline-installer.tar.gz"
 </ShellCommand>
 
 У Windows, у PowerShell:
@@ -235,7 +235,7 @@ ssh -t -i ~/.ssh/sima_neat_pcie_ed25519 sima@10.0.0.2 "cd /var/tmp && rm -rf nea
 sima-cli neat install core/offline@v%%release.core%% -t minimal --download-only
 $bundle = (Get-Item neat-core-offline-installer*.tar.gz).FullName
 scp -i "$env:USERPROFILE\.ssh\sima_neat_pcie_ed25519" $bundle sima@10.0.0.2:/var/tmp/neat-core-offline-installer.tar.gz
-ssh -t -i "$env:USERPROFILE\.ssh\sima_neat_pcie_ed25519" sima@10.0.0.2 "cd /var/tmp && rm -rf neat-core-offline && tar -xzf neat-core-offline-installer.tar.gz && cd neat-core-offline && ./install.sh && ./install.sh --verify"
+ssh -t -i "$env:USERPROFILE\.ssh\sima_neat_pcie_ed25519" sima@10.0.0.2 "cd /var/tmp && rm -rf neat-core-offline && tar -xzf neat-core-offline-installer.tar.gz && cd neat-core-offline && ./install.sh && ./install.sh --verify && cd /var/tmp && rm -rf neat-core-offline neat-core-offline-installer.tar.gz"
 ```
 
 Перш ніж щось змінювати, програма встановлення перевіряє, що на карті працює сумісний випуск Platform 3.0, а `--verify` перевіряє встановлені пакети та імпорт PyNeat. Виконайте `neat` в Ubuntu або `& "$env:ProgramFiles\SimaPCIeHost\bin\neat.cmd"` у PowerShell у Windows, щоб порівняти версії Neat на хості й карті.
