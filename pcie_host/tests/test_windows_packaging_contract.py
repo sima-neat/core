@@ -212,9 +212,10 @@ class WindowsPackagingContract(unittest.TestCase):
                   'set "SIMA_WINDOWS_PLATFORM_RUNTIME_DIR=%%~dpK"', environment)
     # cmd.exe can miss labels in LF-terminated scripts; the scripts use none.
     self.assertNotRegex(environment, r"(?m)^:|call :|goto ")
-    self.assertLess(environment.index('"%GSTREAMER_1_0_ROOT_MSVC_X86_64%"'),
-                    environment.index('"%GSTREAMER_ROOT_X86_64%"'))
+    # The documented override wins over the GStreamer installer's variable.
     self.assertLess(environment.index('"%GSTREAMER_ROOT_X86_64%"'),
+                    environment.index('"%GSTREAMER_1_0_ROOT_MSVC_X86_64%"'))
+    self.assertLess(environment.index('"%GSTREAMER_1_0_ROOT_MSVC_X86_64%"'),
                     environment.index('"%ProgramFiles%\\gstreamer\\1.0\\msvc_x86_64"'))
     self.assertIn("CMAKE_PREFIX_PATH", environment)
     self.assertIn("GST_PLUGIN_PATH_1_0", environment)

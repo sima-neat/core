@@ -88,7 +88,7 @@ class WindowsMetadataTests(unittest.TestCase):
     self.assertEqual(gstreamer["version"], "1.28.6")
     self.assertEqual(
         [candidate["environment"] for candidate in gstreamer["candidates"]],
-        ["GSTREAMER_1_0_ROOT_MSVC_X86_64", "GSTREAMER_ROOT_X86_64", "ProgramFiles"],
+        ["GSTREAMER_ROOT_X86_64", "GSTREAMER_1_0_ROOT_MSVC_X86_64", "ProgramFiles"],
     )
     self.assertTrue(all(
         candidate["relative"].endswith("bin\\gst-inspect-1.0.exe")

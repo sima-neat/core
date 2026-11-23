@@ -135,7 +135,7 @@ CLI 會在執行 MSI 前檢查 Windows OpenSSH、Platform 服務、GStreamer，�
 
 此工具會從 Platform 的 PCIe 網路介面卡的本機 `10.0.N.1` 位址探索卡片位址。若無法自動探索，請傳入 `-Hosts 10.0.0.2`。每次執行都會記錄卡片目前的 SSH 主機金鑰，因此重新刷寫或更換過的卡片會再次受到信任。`.cmd` 包裝指令碼只會在其自身的 PowerShell 程序中允許執行此已安裝的指令碼，不會變更使用者或電腦的執行原則。
 
-匯入擴充模組前，Python 套件會在預設安裝根目錄和 GStreamer 根目錄下尋找 DLL。搜尋順序為 `GSTREAMER_1_0_ROOT_MSVC_X86_64`、`GSTREAMER_ROOT_X86_64`，最後是預設的 x64 GStreamer 位置。若使用其他安裝根目錄，請將 `SIMA_PCIE_HOST_LIBRARY_PATH` 設為包含 PCIe 主機及 GStreamer DLL 的目錄。如果必要的 DLL 已從核准位置以外的地方載入，匯入將會失敗。請先讓安裝版本一致並啟動新程序，不要繼續使用混合的執行階段。
+匯入擴充模組前，Python 套件會在預設安裝根目錄和一個 GStreamer 根目錄下尋找 DLL。它會使用 `GSTREAMER_ROOT_X86_64`、`GSTREAMER_1_0_ROOT_MSVC_X86_64` 與預設 x64 GStreamer 位置中第一個包含 GStreamer 的位置；若要選用其他 GStreamer 安裝，請設定 `GSTREAMER_ROOT_X86_64`。若使用其他安裝根目錄，請將 `SIMA_PCIE_HOST_LIBRARY_PATH` 設為包含 PCIe 主機及 GStreamer DLL 的目錄。如果必要的 DLL 已從核准位置以外的地方載入，匯入將會失敗。請先讓安裝版本一致並啟動新程序，不要繼續使用混合的執行階段。
 
 驗證已安裝的 wheel 與外掛程式。診斷工具會載入 `neatpciehost` 外掛程式，並顯示其使用的 GStreamer 與 Platform 目錄；`neat.cmd` 則會顯示主機與卡片上的軟體：
 

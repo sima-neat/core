@@ -75,12 +75,13 @@ def metadata(msi: Path, wheel: Path, version: str, branch: str, commit: str,
               ),
               "candidates": [
                   {
-                      # Set by the GStreamer installer; searched first.
-                      "environment": "GSTREAMER_1_0_ROOT_MSVC_X86_64",
+                      # The documented override; searched first.
+                      "environment": "GSTREAMER_ROOT_X86_64",
                       "relative": "bin\\gst-inspect-1.0.exe",
                   },
                   {
-                      "environment": "GSTREAMER_ROOT_X86_64",
+                      # Set by the GStreamer installer.
+                      "environment": "GSTREAMER_1_0_ROOT_MSVC_X86_64",
                       "relative": "bin\\gst-inspect-1.0.exe",
                   },
                   {

@@ -44,19 +44,21 @@ def runtime_directories(package_dir, environ=None, service_directory=None):
   if service_runtime:
     candidates.append(Path(service_runtime))
 
-  # GSTREAMER_1_0_ROOT_MSVC_X86_64 is the GStreamer installer's own variable.
-  for variable in ("GSTREAMER_1_0_ROOT_MSVC_X86_64", "GSTREAMER_ROOT_X86_64"):
-    gstreamer_root = environ.get(variable)
-    if gstreamer_root:
-      candidates.append(Path(gstreamer_root) / "bin")
-
   program_files = environ.get("ProgramFiles")
   if program_files:
-    root = Path(program_files)
-    candidates.extend([
-        root / "SimaPCIeHost" / "bin",
-        root / "gstreamer" / "1.0" / "msvc_x86_64" / "bin",
-    ])
+    candidates.append(Path(program_files) / "SimaPCIeHost" / "bin")
+
+  # One GStreamer, as sima-pcie-host-env.cmd selects: the explicit GSTREAMER_ROOT_X86_64,
+  # then the installer's GSTREAMER_1_0_ROOT_MSVC_X86_64, then the default location.
+  # Windows defines no order among DLL directories, so a second root could also bind.
+  roots = [Path(environ[variable]) for variable in (
+      "GSTREAMER_ROOT_X86_64", "GSTREAMER_1_0_ROOT_MSVC_X86_64") if environ.get(variable)]
+  if program_files:
+    roots.append(Path(program_files) / "gstreamer" / "1.0" / "msvc_x86_64")
+  gstreamer = [root / "bin" for root in roots]
+  installed = [path for path in gstreamer if (path / "gstreamer-1.0-0.dll").is_file()]
+  # Without any installation, keep every candidate so a load error names them.
+  candidates.extend(installed[:1] or gstreamer)
 
   result = []
   seen = set()

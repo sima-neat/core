@@ -136,7 +136,7 @@ Ubuntu에서와 마찬가지로 설치의 마지막 단계에서 설치된 설�
 
 이 유틸리티는 Platform PCIe 네트워크 어댑터의 로컬 `10.0.N.1` 주소에서 카드 주소를 검색합니다. 자동 검색을 사용할 수 없으면 `-Hosts 10.0.0.2`를 전달하세요. 실행할 때마다 카드의 현재 SSH 호스트 키를 기록하므로 다시 플래시하거나 교체한 카드도 다시 신뢰됩니다. `.cmd` 래퍼는 자체 PowerShell 프로세스에서만 설치된 이 스크립트의 실행을 허용하며, 사용자 또는 컴퓨터의 실행 정책은 변경하지 않습니다.
 
-Python 패키지는 확장 모듈을 가져오기 전에 기본 설치 루트와 GStreamer 루트에서 DLL을 검색합니다. `GSTREAMER_1_0_ROOT_MSVC_X86_64`, `GSTREAMER_ROOT_X86_64`, 기본 x64 GStreamer 위치 순서로 검색합니다. 다른 설치 루트를 사용하려면 `SIMA_PCIE_HOST_LIBRARY_PATH`를 PCIe 호스트 및 GStreamer DLL이 있는 디렉터리로 설정하세요. 필요한 DLL이 승인된 위치가 아닌 다른 위치에서 이미 로드된 경우 가져오기가 실패합니다. 혼합된 런타임을 계속 사용하지 말고 설치 버전을 맞춘 뒤 새 프로세스를 시작하세요.
+Python 패키지는 확장 모듈을 가져오기 전에 기본 설치 루트와 하나의 GStreamer 루트에서 DLL을 검색합니다. `GSTREAMER_ROOT_X86_64`, `GSTREAMER_1_0_ROOT_MSVC_X86_64`, 기본 x64 GStreamer 위치 중 GStreamer가 있는 첫 번째 위치를 사용하므로, 다른 GStreamer 설치를 선택하려면 `GSTREAMER_ROOT_X86_64`를 설정하세요. 다른 설치 루트를 사용하려면 `SIMA_PCIE_HOST_LIBRARY_PATH`를 PCIe 호스트 및 GStreamer DLL이 있는 디렉터리로 설정하세요. 필요한 DLL이 승인된 위치가 아닌 다른 위치에서 이미 로드된 경우 가져오기가 실패합니다. 혼합된 런타임을 계속 사용하지 말고 설치 버전을 맞춘 뒤 새 프로세스를 시작하세요.
 
 설치된 wheel과 플러그인을 확인합니다. 진단 도구는 `neatpciehost` 플러그인을 로드하고 사용하는 GStreamer 및 Platform 디렉터리를 출력하며, `neat.cmd`는 호스트와 카드의 소프트웨어를 표시합니다.
 

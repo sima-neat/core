@@ -28,20 +28,30 @@ class WindowsRuntimeTests(unittest.TestCase):
     self.assertIn(Path("/gstreamer/bin"), directories)
     self.assertTrue(all(r"simaai\build" not in str(path).lower() for path in directories))
 
-  def test_gstreamer_installer_root_is_searched_before_the_other_roots(self):
-    environment = {
-        "ProgramFiles": "/program-files",
-        "GSTREAMER_ROOT_X86_64": "/gstreamer",
-        "GSTREAMER_1_0_ROOT_MSVC_X86_64": "/per-user/gstreamer/1.0/msvc_x86_64/",
-    }
-    directories = RUNTIME.runtime_directories(
-        Path("/customer/pyneatpcie"), environment, service_directory=None)
-
-    order = [directories.index(path) for path in (
-        Path("/per-user/gstreamer/1.0/msvc_x86_64/bin"),
-        Path("/gstreamer/bin"),
-        Path("/program-files/gstreamer/1.0/msvc_x86_64/bin"))]
-    self.assertEqual(order, sorted(order))
+  def test_one_gstreamer_root_is_selected_and_the_explicit_override_wins(self):
+    with tempfile.TemporaryDirectory() as directory:
+      root = Path(directory)
+      explicit, installer = root / "explicit", root / "per-user" / "msvc_x86_64"
+      default = root / "program-files" / "gstreamer" / "1.0" / "msvc_x86_64"
+      environment = {
+          "ProgramFiles": str(root / "program-files"),
+          "GSTREAMER_ROOT_X86_64": str(explicit),
+          "GSTREAMER_1_0_ROOT_MSVC_X86_64": str(installer),
+      }
+      gstreamer = [explicit / "bin", installer / "bin", default / "bin"]
+      select = lambda: [path for path in RUNTIME.runtime_directories(
+          Path("/customer/pyneatpcie"), environment, service_directory=None)
+          if path in gstreamer]
+      # No installation: every candidate is listed, override first.
+      self.assertEqual(select(), gstreamer)
+      for path in gstreamer:
+        path.mkdir(parents=True)
+        (path / "gstreamer-1.0-0.dll").write_bytes(b"")
+      self.assertEqual(select(), [explicit / "bin"])
+      (explicit / "bin" / "gstreamer-1.0-0.dll").unlink()
+      self.assertEqual(select(), [installer / "bin"])
+      del environment["GSTREAMER_1_0_ROOT_MSVC_X86_64"]
+      self.assertEqual(select(), [default / "bin"])
 
   def test_extension_load_failure_names_the_searched_directories(self):
     error = RUNTIME.extension_load_error(

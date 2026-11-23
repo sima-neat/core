@@ -180,7 +180,7 @@ ProcessCVU ステージはデフォルトで Runtime の `neatkernelrunner` を�
 
 Windows PCIe ホストパッケージは、Python パッケージ、`sima-pcie-host-env.cmd`、およびインストールの事前チェックで、次の変数を読み取ります。
 
-- `GSTREAMER_1_0_ROOT_MSVC_X86_64`: GStreamer MSVC x64 のインストールルートです。GStreamer インストーラーが設定します。最初に検索されます。
-- `GSTREAMER_ROOT_X86_64`: 別の GStreamer インストールルートです。`GSTREAMER_1_0_ROOT_MSVC_X86_64` の後、`%ProgramFiles%\gstreamer\1.0\msvc_x86_64` の前に検索されます。
+- `GSTREAMER_ROOT_X86_64`: GStreamer インストーラーが記録したものの代わりに使用する GStreamer のインストールルートです。最初に検索されます。
+- `GSTREAMER_1_0_ROOT_MSVC_X86_64`: GStreamer MSVC x64 のインストールルートです。GStreamer インストーラーが設定します。`GSTREAMER_ROOT_X86_64` の後、`%ProgramFiles%\gstreamer\1.0\msvc_x86_64` の前に検索されます。
 - `SIMA_WINDOWS_PLATFORM_RUNTIME_DIR`: Platform ランタイムの `SiMaPCIe.dll` を含むディレクトリです。既定では、`SiMaMlaDaemon` サービスの実行ファイルがあるディレクトリです。
 - `SIMA_PCIE_HOST_LIBRARY_PATH`: 既定の場所以外にインストールした場合に使用する、PCIe ホストと GStreamer の DLL を含む追加ディレクトリです。`;` で区切ります。

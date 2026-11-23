@@ -236,11 +236,11 @@ for fixture-group selection and installed-package profiles.
 The Windows PCIe host package reads these variables in the Python package, in
 `sima-pcie-host-env.cmd`, and in the installation preflight.
 
+- `GSTREAMER_ROOT_X86_64`: GStreamer installation root to use instead of the one
+  the GStreamer installer recorded. It is searched first.
 - `GSTREAMER_1_0_ROOT_MSVC_X86_64`: GStreamer MSVC x64 installation root. The
-  GStreamer installer sets it. It is searched first.
-- `GSTREAMER_ROOT_X86_64`: another GStreamer installation root. It is searched
-  after `GSTREAMER_1_0_ROOT_MSVC_X86_64` and before
-  `%ProgramFiles%\gstreamer\1.0\msvc_x86_64`.
+  GStreamer installer sets it. It is searched after `GSTREAMER_ROOT_X86_64` and
+  before `%ProgramFiles%\gstreamer\1.0\msvc_x86_64`.
 - `SIMA_WINDOWS_PLATFORM_RUNTIME_DIR`: directory that contains the Platform
   runtime `SiMaPCIe.dll`. By default it is the directory of the `SiMaMlaDaemon`
   service executable.

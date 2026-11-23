@@ -196,7 +196,7 @@ ProcessCVU 階段預設透過 Runtime 的 `neatkernelrunner` 執行。
 
 Windows PCIe 主機套件會在 Python 套件、`sima-pcie-host-env.cmd` 以及安裝前檢查中讀取下列變數。
 
-- `GSTREAMER_1_0_ROOT_MSVC_X86_64`：GStreamer MSVC x64 安裝根目錄。由 GStreamer 安裝程式設定，會最先搜尋。
-- `GSTREAMER_ROOT_X86_64`：另一個 GStreamer 安裝根目錄。搜尋順序在 `GSTREAMER_1_0_ROOT_MSVC_X86_64` 之後、`%ProgramFiles%\gstreamer\1.0\msvc_x86_64` 之前。
+- `GSTREAMER_ROOT_X86_64`：要取代 GStreamer 安裝程式所記錄之根目錄而使用的 GStreamer 安裝根目錄，會最先搜尋。
+- `GSTREAMER_1_0_ROOT_MSVC_X86_64`：GStreamer MSVC x64 安裝根目錄。由 GStreamer 安裝程式設定。搜尋順序在 `GSTREAMER_ROOT_X86_64` 之後、`%ProgramFiles%\gstreamer\1.0\msvc_x86_64` 之前。
 - `SIMA_WINDOWS_PLATFORM_RUNTIME_DIR`：包含 Platform 執行階段 `SiMaPCIe.dll` 的目錄。預設為 `SiMaMlaDaemon` 服務執行檔所在的目錄。
 - `SIMA_PCIE_HOST_LIBRARY_PATH`：包含 PCIe 主機與 GStreamer DLL 的其他目錄，以 `;` 分隔，適用於安裝在預設位置以外的情況。

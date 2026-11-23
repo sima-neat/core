@@ -218,10 +218,11 @@ was reflashed or replaced is trusted again. The `.cmd` wrapper allows this
 installed script for its own PowerShell process only; it does not change the
 user or machine execution policy.
 
-The Python package discovers DLLs under the default install root and the
-GStreamer root before importing its extension. It searches
-`GSTREAMER_1_0_ROOT_MSVC_X86_64`, then `GSTREAMER_ROOT_X86_64`, then the default
-x64 GStreamer location. For another install root, set
+The Python package discovers DLLs under the default install root and one
+GStreamer root before importing its extension. It uses the first of
+`GSTREAMER_ROOT_X86_64`, `GSTREAMER_1_0_ROOT_MSVC_X86_64` and the default x64
+GStreamer location that contains GStreamer, so set `GSTREAMER_ROOT_X86_64` to
+select another GStreamer installation. For another install root, set
 `SIMA_PCIE_HOST_LIBRARY_PATH` to the directories containing the PCIe host and
 GStreamer DLLs. Import fails if a required DLL is already loaded from outside
 these approved locations. Align the installed versions and start a fresh process

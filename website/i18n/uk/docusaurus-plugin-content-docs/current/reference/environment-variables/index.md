@@ -207,11 +207,11 @@ slug: /reference/environment-variables
 Пакет хоста PCIe для Windows читає ці змінні в пакеті Python, у
 `sima-pcie-host-env.cmd` і під час попередньої перевірки встановлення.
 
+- `GSTREAMER_ROOT_X86_64`: корінь встановлення GStreamer, який слід використовувати
+  замість записаного програмою встановлення GStreamer. Пошук виконується в ньому першим.
 - `GSTREAMER_1_0_ROOT_MSVC_X86_64`: корінь встановлення GStreamer MSVC x64.
-  Його задає програма встановлення GStreamer. Пошук виконується в ньому першим.
-- `GSTREAMER_ROOT_X86_64`: інший корінь встановлення GStreamer. Пошук у ньому
-  виконується після `GSTREAMER_1_0_ROOT_MSVC_X86_64` і перед
-  `%ProgramFiles%\gstreamer\1.0\msvc_x86_64`.
+  Його задає програма встановлення GStreamer. Пошук у ньому виконується після
+  `GSTREAMER_ROOT_X86_64` і перед `%ProgramFiles%\gstreamer\1.0\msvc_x86_64`.
 - `SIMA_WINDOWS_PLATFORM_RUNTIME_DIR`: каталог, що містить `SiMaPCIe.dll`
   середовища виконання Platform. Типово це каталог виконуваного файлу служби
   `SiMaMlaDaemon`.
