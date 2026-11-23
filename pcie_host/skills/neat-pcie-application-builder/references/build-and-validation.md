@@ -59,6 +59,10 @@ For GenAI, verify the selected interpreter exposes the separate API:
   'from pyneatpcie import genai; print(genai.GenAIModel); print(genai.GenerationRequest)'
 ```
 
+```powershell
+& "$env:USERPROFILE\pyneatpcie\Scripts\python.exe" -c "from pyneatpcie import genai; print(genai.GenAIModel, genai.GenerationRequest)"
+```
+
 On Windows, this import check confirms only that the bindings are installed. Customer acceptance
 also requires the release-qualified Platform package and the connected-card C++ and Python GenAI
 matrix.
