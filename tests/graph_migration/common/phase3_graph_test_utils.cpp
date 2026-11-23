@@ -59,12 +59,15 @@ fs::path resolve_yolov8n_variant_or_throw(const fs::path& root, std::string_view
   }
 
   const fs::path variants_dir = env_string("SIMA_YOLOV8_VARIANTS_DIR");
-  if (!variants_dir.empty() && usable_file(variants_dir / name)) {
-    return variants_dir / name;
+  if (variants_dir.empty()) {
+    throw std::runtime_error("SIMA_YOLOV8_VARIANTS_DIR is not set; it must hold " + name);
   }
-
-  throw std::runtime_error("failed to resolve YOLOv8n variant tarball: " + name +
-                           " (set SIMA_YOLOV8_VARIANTS_DIR to a directory that holds it)");
+  const fs::path path = variants_dir / name;
+  if (!usable_file(path)) {
+    throw std::runtime_error("YOLOv8n MPK is missing or empty: " + path.string() +
+                             " (from SIMA_YOLOV8_VARIANTS_DIR)");
+  }
+  return path;
 }
 
 std::vector<fs::path> resolve_yolov8n_variants_or_throw(const fs::path& root) {
