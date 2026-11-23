@@ -30,7 +30,7 @@ constexpr const char* kRemoteModelDir = "/tmp";
 constexpr const char* kRemoteHelper = "/usr/bin/pcie-pipeline-builder";
 constexpr const char* kRemoteRunDir = "/run/sima-neat/pcie";
 constexpr const char* kRemoteLogDir = "/var/log/sima-neat/pcie";
-constexpr const char* kDefaultIdentityFile = ".ssh/sima_neat_pcie_ed25519";
+constexpr const char* kDefaultIdentityFile = "sima_neat_pcie_ed25519";
 constexpr const char* kDefaultMlashmCtrlIoTimeout = "MLASHM_CTRL_IO_TIMEOUT_MS=5000";
 constexpr const char* kHelperPathEnv = "SIMA_NEAT_PCIE_HELPER_PATH";
 constexpr const char* kRunDirEnv = "SIMA_NEAT_PCIE_RUN_DIR";
@@ -43,7 +43,8 @@ std::optional<std::string> default_identity_file() {
   if (!home.has_value()) {
     return std::nullopt;
   }
-  std::filesystem::path path = *home / kDefaultIdentityFile;
+  // Joined per component, so that the printed path uses the host's own separators.
+  std::filesystem::path path = *home / ".ssh" / kDefaultIdentityFile;
   std::error_code ec;
   if (!std::filesystem::exists(path, ec)) {
     return std::nullopt;
