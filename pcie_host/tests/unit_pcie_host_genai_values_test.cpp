@@ -274,6 +274,13 @@ int main(int argc, char** argv) {
     require(g::internal::model_asset_path(model_path, "layer 1.bin") == asset,
             "Host asset paths preserve spaces");
     require(!g::internal::model_asset_path(model_path, "missing.bin"), "Optional missing asset");
+    const std::filesystem::path unicode_dir = model_path / std::filesystem::path(u8"\u6771\u4eac");
+    std::filesystem::create_directory(unicode_dir);
+    const auto unicode_asset = unicode_dir / std::filesystem::path(u8"\u91cd\u307f.bin");
+    std::ofstream(unicode_asset) << "weights";
+    const std::string utf8_name = "\xe6\x9d\xb1\xe4\xba\xac/\xe9\x87\x8d\xe3\x81\xbf.bin";
+    require(g::internal::model_asset_path(model_path, utf8_name) == unicode_asset,
+            "UTF-8 asset names resolve to the same host file");
     const auto model_link = model_root / "link";
     std::filesystem::create_directory_symlink(model_path, model_link);
     require(g::internal::host_model_path(model_link) == model_path, "Canonical model directory");

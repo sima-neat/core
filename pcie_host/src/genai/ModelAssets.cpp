@@ -18,7 +18,9 @@ std::optional<std::filesystem::path> model_asset_path(const std::filesystem::pat
   // Compare canonical forms: Windows expands 8.3 short names (C:\Users\RUNNER~1) in one but not
   // the other otherwise.
   const auto root = std::filesystem::weakly_canonical(model);
-  const auto path = std::filesystem::weakly_canonical(root / wire::relative_name(name));
+  // Worker names are UTF-8; convert explicitly so Windows does not use the ANSI code page.
+  const auto path = std::filesystem::weakly_canonical(
+      root / pcie::internal::host_path_from_string(wire::relative_name(name)));
   const auto relative = path.lexically_relative(root);
   if (relative.empty() || relative == "." || *relative.begin() == "..")
     throw std::invalid_argument("Model asset escapes its host directory: " + name);
