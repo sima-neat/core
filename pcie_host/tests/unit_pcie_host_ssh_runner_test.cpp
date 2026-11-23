@@ -324,6 +324,18 @@ void test_failures_name_the_next_step() {
   require(runtime.start_failure_remedy("missing_builder\n", 0).find("Install the Neat release") !=
               std::string::npos,
           "missing card worker did not name the card install");
+
+  const auto owner = pcie_internal::RemoteRuntime::parse_queue_owner(
+      "owner.builder_pid=42\r\nowner.host_id=linux:x\r\nowner.host=build-02\r\n"
+      "owner.host_pid=7\r\nowner.host_start=99\r\nowner.upload=/tmp/sima-neat-pcie-a\r\n"
+      "owner.upload=/tmp/sima-neat-pcie-b\r\nqueue_busy\r\n");
+  require(owner.has_value() && owner->builder_pid == 42 && owner->host.host_id == "linux:x" &&
+              owner->host.host == "build-02" && owner->host.pid == 7 && owner->host.start == "99" &&
+              owner->uploads.size() == 2 && owner->uploads[1] == "/tmp/sima-neat-pcie-b",
+          "queue owner record was not parsed");
+  require(!pcie_internal::RemoteRuntime::parse_queue_owner("queue_busy\n").has_value() &&
+              !pcie_internal::RemoteRuntime::parse_queue_owner("owner.builder_pid=x\n").has_value(),
+          "a missing or malformed owner record was accepted");
   require(runtime.start_failure_remedy("missing_run_dir\n", 0).find("/run/sima-neat/pcie") !=
               std::string::npos,
           "missing run directory was not named");

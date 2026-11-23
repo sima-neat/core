@@ -20,6 +20,9 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
+#else
+#include <sys/wait.h>
+#include <unistd.h>
 #endif
 
 namespace fs = std::filesystem;
@@ -301,6 +304,58 @@ void test_model_facts_read_under_unicode_temp_directory() {
           "model facts under a Unicode temporary directory named the wrong tensors");
 }
 
+// A killed or crashed application leaves its snapshot behind; the next one removes it, and only
+// snapshots whose recorded process on this host has ended.
+void test_snapshots_of_ended_processes_are_removed() {
+  pcie_internal::ScopedTempDirectory temp("sima-neat-pcie-snapshot-test");
+  const pcie_internal::HostProcessOwner self = pcie_internal::current_host_process_owner();
+  require(!self.host_id.empty() && !self.start.empty(), "host process owner is unknown");
+  const auto leave = [&temp](const std::string& name, const std::optional<std::string>& host_id,
+                             const std::uint64_t pid, const std::string& start) {
+    fs::create_directories(temp.path() / name);
+    write_file(temp.path() / name / "model.tar.gz", "archive");
+    if (host_id.has_value()) {
+      write_file(temp.path() / name / "owner", "host_id=" + *host_id +
+                                                   "\nhost_pid=" + std::to_string(pid) +
+                                                   "\nhost_start=" + start + "\n");
+    }
+    return temp.path() / name;
+  };
+  // This process with another start time stands for an ended process whose PID was reused.
+  const fs::path reused = leave("sima-neat-pcie-model-reused", self.host_id, self.pid, "1");
+  const fs::path running =
+      leave("sima-neat-pcie-model-running", self.host_id, self.pid, self.start);
+  const fs::path other_host = leave("sima-neat-pcie-model-other", "linux:another-host", 1, "1");
+  const fs::path unrecorded = leave("sima-neat-pcie-model-unrecorded", std::nullopt, 0, "");
+  const fs::path other_prefix = leave("sima-neat-pcie-options-reused", self.host_id, self.pid, "1");
+#ifndef _WIN32
+  const pid_t child = fork();
+  if (child == 0) {
+    _exit(0);
+  }
+  waitpid(child, nullptr, 0);
+  const fs::path ended = leave("sima-neat-pcie-model-ended", self.host_id,
+                               static_cast<std::uint64_t>(child), self.start);
+#endif
+  write_file(temp.path() / "model.tar.gz", "archive");
+
+  const TemporaryDirectoryOverride override_temp(temp.path());
+  pcie_internal::ModelArchiveSnapshot snapshot(
+      pcie_internal::host_path_string(temp.path() / "model.tar.gz"));
+  require(!fs::exists(reused), "a snapshot of a reused PID was kept");
+#ifndef _WIN32
+  require(!fs::exists(ended), "a snapshot of an ended process was kept");
+#endif
+  require(fs::exists(running) && fs::exists(other_host) && fs::exists(unrecorded) &&
+              fs::exists(other_prefix),
+          "a snapshot of a running, foreign or unrecorded owner was removed");
+  const std::string owner =
+      read_file(pcie_internal::host_path_from_string(snapshot.path()).parent_path() / "owner");
+  require(owner == "host_id=" + self.host_id + "\nhost_pid=" + std::to_string(self.pid) +
+                       "\nhost_start=" + self.start + "\n",
+          "the snapshot did not record its owner: " + owner);
+}
+
 // cmd.exe would run a tar.bat from the current directory before the tar Windows ships.
 void test_loader_ignores_tar_in_current_directory() {
 #ifdef _WIN32
@@ -356,6 +411,7 @@ int main() {
     test_loader_extracts_under_unicode_directory();
     test_loader_ignores_tar_in_current_directory();
     test_model_facts_read_under_unicode_temp_directory();
+    test_snapshots_of_ended_processes_are_removed();
     std::cout << "[PASS] model archive snapshot\n";
     return 0;
   } catch (const std::exception& error) {

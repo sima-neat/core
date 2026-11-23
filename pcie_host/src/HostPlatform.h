@@ -34,4 +34,16 @@ std::string open_ssh_executable(const char* command);
 std::uint64_t host_process_id();
 void host_secure_random(unsigned char* buffer, std::size_t size);
 
+// A host process, recorded so that a later process can tell whether it has ended.
+struct HostProcessOwner {
+  std::string host_id; // this OS instance (on Linux, also the PID namespace); empty if unknown
+  std::string host;    // host name, for messages
+  std::uint64_t pid = 0;
+  std::string start; // process start time, so that a reused PID is not taken for this process
+};
+
+HostProcessOwner current_host_process_owner();
+// True only when the owner was recorded on this host and that process is known to have ended.
+bool host_process_ended(const HostProcessOwner& owner);
+
 } // namespace simaai::neat::pcie::internal
