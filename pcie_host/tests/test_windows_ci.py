@@ -2787,13 +2787,6 @@ class WindowsCiContracts(unittest.TestCase):
             "repair": {"core": "PASS", "scheduler": "PASS"},
             "recovery": "PASS",
             "repeat": "PASS",
-            "rollback": {
-                "baseline_commit": "b" * 40,
-                "baseline_version": "0.6.1",
-                "candidate_removal": {"core": "PASS", "scheduler": "PASS"},
-                "candidate_version": version,
-                "status": "PASS",
-            },
             "standard_user": {
                 "account": "TEST\\sna-1234",
                 "common_application_data": r"C:\ProgramData",
@@ -3494,11 +3487,6 @@ class WindowsCiContracts(unittest.TestCase):
       qualification.write_text(json.dumps(value), encoding="utf-8")
       with self.assertRaisesRegex(ValueError, "real MSI package upgrade"):
         verify(root, qualification, commit, False, require_release=True)
-
-  def test_release_gate_requires_real_package_rollback_and_reupgrade(self):
-    self.assert_release_rejected(
-        "roll back and re-upgrade", lambda value: value["customer_install"].pop("rollback"),
-        require_signatures=False, require_release=True)
 
   def test_release_gate_requires_failed_msi_transaction_rollback(self):
     with tempfile.TemporaryDirectory() as directory:

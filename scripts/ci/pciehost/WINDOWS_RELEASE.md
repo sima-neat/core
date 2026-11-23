@@ -278,10 +278,13 @@ This is the normal validation path. It does not require maintainers to copy work
 run IDs between repositories. Scheduler follows Core's branch/snap policy;
 sima-cli resolves from its supported `main` channel.
 
-Release qualification requires a real older Windows cohort. It installs that
-cohort, upgrades to the candidate, removes the candidate, reinstalls and verifies
-the older native/Python cohort, then upgrades and verifies the candidate again.
-Synthetic version metadata is not accepted as upgrade or rollback evidence.
+Once a previous Windows release exists, release qualification installs that
+published release through `sima-cli`, upgrades to the candidate through
+`sima-cli`, and verifies that the candidate's Scheduler MSI, Core MSI and
+`pyneatpcie` wheel work together. Synthetic version metadata is not accepted as
+upgrade evidence. After a successful upgrade, the qualifier does not remove the
+candidate and reinstall the previous release; Windows Installer's
+failed-transaction rollback is the separate CI fixture gate below.
 
 Native CTest and Python hardware/GenAI runs emit JUnit evidence. The candidate is
 rejected if the observed case set differs from the required set or contains any

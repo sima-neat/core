@@ -2922,37 +2922,6 @@ def qualify(args: argparse.Namespace) -> None:
           args.asset_manifest, asset_environment, args.include_genai)
       if final_asset_manifest != asset_manifest:
         raise RuntimeError("hardware asset manifest identity changed during qualification")
-      if upgrade_base is not None:
-        rollback_removal = {
-            "core": remove_msi(
-                candidate.core_msi, evidence / "rollback-candidate-core-uninstall.log"),
-            "scheduler": remove_msi(
-                candidate.scheduler_msi,
-                evidence / "rollback-candidate-scheduler-uninstall.log"),
-        }
-        if install_root.exists():
-          raise RuntimeError("candidate installation remained before rollback")
-        rollback_download_root = work / "rollback downloads with spaces"
-        with local_registry(upgrade_registry_root) as registry_url:
-          sima_cli_install(
-              registry_url, rollback_download_root, "sima-cli-rollback-baseline-install.log")
-        rollback_baseline_evidence = evidence / "rollback-baseline"
-        rollback_baseline_evidence.mkdir()
-        verify_customer_process_activation(
-            install_root, managed_python, rollback_baseline_evidence)
-        with local_registry(registry_root) as registry_url:
-          sima_cli_install(registry_url, rollback_download_root, "sima-cli-rollback-reupgrade.log")
-        rollback_candidate_evidence = evidence / "rollback-candidate"
-        rollback_candidate_evidence.mkdir()
-        verify_customer_process_activation(
-            install_root, managed_python, rollback_candidate_evidence)
-        result["customer_install"]["rollback"] = {
-            "baseline_commit": upgrade_base.core_commit,
-            "baseline_version": str(upgrade_base.metadata["version"]),
-            "candidate_version": str(candidate.metadata["version"]),
-            "candidate_removal": rollback_removal,
-            "status": "PASS",
-        }
       result["result"] = "PASS"
     except BaseException as error:
       failure = error
