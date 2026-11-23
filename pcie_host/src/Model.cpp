@@ -34,6 +34,7 @@ void write_temp_model_options(const fs::path& path, const std::string& contents)
                              internal::host_path_string(path));
   }
   out << contents;
+  out.close();
   if (!out) {
     throw std::runtime_error("failed to write temporary model-options file: " +
                              internal::host_path_string(path));
