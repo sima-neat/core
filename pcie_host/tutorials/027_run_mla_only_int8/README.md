@@ -7,7 +7,7 @@
 | Category | PCIe Co-Processing |
 | Difficulty | Intermediate |
 | Estimated Read Time | 15 minutes |
-| Model | yolo26n-det-int8-b1 (Model Zoo, compiled for direct MLA input and output) |
+| Model | yolo26n w8a8 (Model Browser, compiled for direct MLA input and output) |
 | Labels | PCIe, MLA, INT8, quantization, tensor |
 
 ## Concept
@@ -69,11 +69,24 @@ is zero.
 Install the PCIe host package and download the tutorial bundle as described in
 [Tutorial Setup](/tutorials/before-you-run).
 
-The tutorial runs the Model Zoo YOLO26n INT8 archive, which is compiled for
-direct MLA input and output. Download it into the extracted PCIe extras root:
+The tutorial runs the YOLO26n `w8a8` archive from the
+[Model Browser](/tools/model-browser/), which is compiled for direct MLA input
+and output. From the extracted PCIe extras root, download the model and extract
+the archive from the downloaded ZIP file:
 
-Use the download URL published by the current Platform 3.0 Model Zoo release.
-The artifact URL is release-specific; do not substitute an earlier-platform model.
+```bash
+sima-cli models download --id yolo26n --variant w8a8 --output models
+unzip models/yolo26n/w8a8/*.zip yolo26n_w8a8_mpk.tar.gz
+```
+
+On Windows, download the model in PowerShell and extract the archive with
+`Expand-Archive`:
+
+```powershell
+sima-cli models download --id yolo26n --variant w8a8 --output models
+Expand-Archive models\yolo26n\w8a8\*.zip -DestinationPath models\yolo26n\w8a8
+Copy-Item models\yolo26n\w8a8\yolo26n_w8a8_mpk.tar.gz .
+```
 
 Other archives qualify when they were compiled with the Model SDK
 `tessellate_parameters` `enable_mla=True`, an `HWC` DRAM layout on every input,
@@ -89,14 +102,14 @@ mla_only does not support stage 'tessellate_quantize_0_MLA_0/...' (tess)
 ```bash
 source ~/pyneatpcie/bin/activate
 python3 share/sima-pcie-host/tutorials/027_run_mla_only_int8/run_mla_only_int8.py \
-  --model yolo26n-det-int8-b1.tar.gz
+  --model yolo26n_w8a8_mpk.tar.gz
 ```
 
 **C++ (prebuilt):**
 
 ```bash
 ./lib/sima-pcie-host/tutorials/tutorial_027_run_mla_only_int8 \
-  --model yolo26n-det-int8-b1.tar.gz
+  --model yolo26n_w8a8_mpk.tar.gz
 ```
 
 **C++ (build from source):**
@@ -104,15 +117,15 @@ python3 share/sima-pcie-host/tutorials/027_run_mla_only_int8/run_mla_only_int8.p
 ```bash
 ./build.sh --target tutorial_027_run_mla_only_int8
 ./build/tutorials-standalone/tutorial_027_run_mla_only_int8 \
-  --model yolo26n-det-int8-b1.tar.gz
+  --model yolo26n_w8a8_mpk.tar.gz
 ```
 
 Both versions print the contract and a zero deviation for every head:
 
 ```text
 MLA-only contract:
-  input images INT8 [640, 640, 3] scale=0.00390434 zero_point=-128
-  output bbox_0 INT8 [80, 80, 4] scale=0.0302856 zero_point=-117
+  input images INT8 [640, 640, 3] scale=... zero_point=...
+  output bbox_0 INT8 [80, 80, 4] scale=... zero_point=...
   ...
 Dequantized MLA-only outputs vs the default route (error in scale units):
   bbox_0 [80, 80, 4] max_err=0.0000

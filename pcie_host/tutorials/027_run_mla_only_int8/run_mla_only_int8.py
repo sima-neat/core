@@ -2,7 +2,7 @@
 """Quantize on the host, run only the MLA over PCIe, and dequantize the INT8 results.
 
 Usage:
-  python3 run_mla_only_int8.py --model yolo26n-det-int8-b1.tar.gz [--card 0]
+  python3 run_mla_only_int8.py --model yolo26n_w8a8_mpk.tar.gz [--card 0]
 """
 
 from __future__ import annotations
@@ -25,7 +25,7 @@ IMAGE_PATH = Path("share/sima-pcie-host/tutorials/assets/street-scene.png")
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "--model", required=True, help="yolo26n-det-int8-b1.tar.gz from the Model Zoo"
+        "--model", required=True, help="yolo26n_w8a8_mpk.tar.gz from the Model Browser"
     )
     parser.add_argument("--card", type=int, default=0)
     return parser.parse_args()
