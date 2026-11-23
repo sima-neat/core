@@ -2680,154 +2680,173 @@ def qualify(args: argparse.Namespace) -> None:
         raise RuntimeError("card had PCIe workers before qualification; refusing to disturb them")
 
       card_install_attempted = True
+      card_outcome: dict = {}
+
+      def install_card() -> None:
+        try:
+          card_outcome["installed"] = install_card_candidate(
+              args, card_bundle, evidence, card_state)
+          # deploy.py card verify proved the installed versions; the hashes are evidence.
+          card_outcome["active"] = card_snapshot(
+              args, evidence, "candidate",
+              runtime_path="/usr/share/sima-neat-firmware/modalix-cvu-fw",
+              worker_path="/usr/bin/pcie-pipeline-builder",
+              genai_worker_path=(
+                  "/usr/bin/neat-pcie-genai-worker" if args.include_genai else ""))
+        except BaseException as error:  # noqa: BLE001 - re-raised after the host install
+          card_outcome["error"] = error
+
+      # The card installs over SSH while the host installs locally; neither touches
+      # the other's state, and the Platform service restarts after both.
       report.phase("Install the card candidate and the host cohort")
-      installed = install_card_candidate(args, card_bundle, evidence, card_state)
-      # deploy.py card verify proved the installed versions; the hashes are evidence.
-      active_card = card_snapshot(
-          args, evidence, "candidate",
-          runtime_path="/usr/share/sima-neat-firmware/modalix-cvu-fw",
-          worker_path="/usr/bin/pcie-pipeline-builder",
-          genai_worker_path="/usr/bin/neat-pcie-genai-worker" if args.include_genai else "")
-      requirements = ["pytest", "numpy", "pillow", *args.test_requirement]
-      subprocess.run([sys.executable, "-m", "venv", str(cli_venv)], check=True)
-      cli_python = cli_venv / "Scripts" / "python.exe"
-      cli = cli_venv / "Scripts" / "sima-cli.exe"
-      run_logged(
-          [cli_python, "-m", "pip", "install", "--no-index", "--find-links", wheelhouse,
-           cli_wheel],
-          evidence / "sima-cli-install.log",
-          timeout=900,
-      )
-      if not cli.is_file():
-        raise RuntimeError(f"exact sima-cli candidate installed no console entry point: {cli}")
-
-      cli_environment = isolated_sima_cli_environment(
-          customer_home, wheelhouse, work)
-      native_download_root = work / "native customer downloads with spaces"
-      target = customer_install_target(candidate)
-
-      def sima_cli_install(registry_url, download_root, log, *options, run=run_logged,
-                           install_target=target):
-        return run(
-            [cli, "neat", "--base-url", registry_url, "install", install_target,
-             "--install-dir", download_root, *options],
-            evidence / log, env=cli_environment, cwd=work, timeout=1800)
-
-      if upgrade_base is not None:
-        upgrade_registry_root = work / "upgrade baseline registry with spaces"
-        stage_local_registry(upgrade_base, upgrade_registry_root)
-        with local_registry(upgrade_registry_root) as registry_url:
-          sima_cli_install(
-              registry_url, native_download_root, "sima-cli-upgrade-baseline-install.log",
-              install_target=customer_install_target(upgrade_base))
-        if not install_root.is_dir():
-          raise RuntimeError("sima-cli installed no native upgrade baseline")
-
-      if args.release_qualification:
-        # The partial and failing customer flows need a second, caller-owned Python.
-        subprocess.run([sys.executable, "-m", "venv", str(venv)], check=True)
-        python = venv / "Scripts" / "python.exe"
+      card_install = threading.Thread(target=install_card, name="card-install")
+      card_install.start()
+      try:
+        requirements = ["pytest", "numpy", "pillow", *args.test_requirement]
+        subprocess.run([sys.executable, "-m", "venv", str(cli_venv)], check=True)
+        cli_python = cli_venv / "Scripts" / "python.exe"
+        cli = cli_venv / "Scripts" / "sima-cli.exe"
         run_logged(
-            [python, "-m", "pip", "install", "--no-index", "--find-links", wheelhouse,
-             *requirements],
-            evidence / "test-dependencies-install.log",
+            [cli_python, "-m", "pip", "install", "--no-index", "--find-links", wheelhouse,
+             cli_wheel],
+            evidence / "sima-cli-install.log",
             timeout=900,
         )
-        native_registry_root = work / "native only registry with spaces"
-        stage_local_registry(candidate, native_registry_root)
-        with local_registry(native_registry_root) as registry_url:
-          sima_cli_install(
-              registry_url, native_download_root, "sima-cli-native-only-install.log",
-              "--native-only")
-        if not install_root.is_dir():
-          raise RuntimeError("sima-cli native-only flow installed no native cohort")
-        # Without --python-executable the CLI installs into its managed environment.
-        if imports_pyneatpcie(python) or (
-            managed_python.is_file() and imports_pyneatpcie(managed_python)):
-          raise RuntimeError("native-only sima-cli flow unexpectedly installed pyneatpcie")
+        if not cli.is_file():
+          raise RuntimeError(f"exact sima-cli candidate installed no console entry point: {cli}")
 
-        missing_registry_root = work / "missing wheel registry with spaces"
-        missing_package = stage_local_registry(candidate, missing_registry_root)
-        (missing_package / candidate.wheel.name).unlink()
-        missing_download_root = work / "missing wheel downloads with spaces"
-        with local_registry(missing_registry_root) as registry_url:
-          missing_code = sima_cli_install(
-              registry_url, missing_download_root, "sima-cli-missing-wheel.log",
-              "--python-executable", python, run=run_expected_failure)
-        if not install_root.is_dir():
-          raise RuntimeError("missing-wheel failure removed the successful native installation")
-        if imports_pyneatpcie(python):
-          raise RuntimeError("missing-wheel flow reported failure after installing pyneatpcie")
+        cli_environment = isolated_sima_cli_environment(
+            customer_home, wheelhouse, work)
+        native_download_root = work / "native customer downloads with spaces"
+        target = customer_install_target(candidate)
 
-        invalid_wheel_registry_root = work / "invalid wheel registry with spaces"
-        stage_invalid_wheel_registry(candidate, invalid_wheel_registry_root)
-        invalid_wheel_download_root = work / "invalid wheel downloads with spaces"
-        with local_registry(invalid_wheel_registry_root) as registry_url:
-          invalid_wheel_code = sima_cli_install(
-              registry_url, invalid_wheel_download_root, "sima-cli-invalid-wheel.log",
-              "--python-executable", python, run=run_expected_failure)
-        if not install_root.is_dir():
-          raise RuntimeError("wheel-install failure removed the successful native installation")
-        if imports_pyneatpcie(python):
-          raise RuntimeError("invalid-wheel flow reported failure after installing pyneatpcie")
-        install_logs = ("sima-cli-customer-recovery-install.log",
-                        "sima-cli-customer-repeat-install.log")
-      else:
-        # Linux's one host package install (install_host_package.sh).
-        install_logs = ("sima-cli-customer-install.log",)
+        def sima_cli_install(registry_url, download_root, log, *options, run=run_logged,
+                             install_target=target):
+          return run(
+              [cli, "neat", "--base-url", registry_url, "install", install_target,
+               "--install-dir", download_root, *options],
+              evidence / log, env=cli_environment, cwd=work, timeout=1800)
 
-      registry_root = work / "complete registry with spaces"
-      stage_local_registry(candidate, registry_root)
-      recovery_download_root = work / "recovery downloads with spaces"
-      with local_registry(registry_root) as registry_url:
-        for log in install_logs:
-          sima_cli_install(registry_url, recovery_download_root, log)
-      if not managed_python.is_file():
-        raise RuntimeError(
-            "default sima-cli flow did not create the managed pyneatpcie environment")
-      run_logged(
-          [managed_python, "-m", "pip", "install", "--no-index", "--find-links",
-           wheelhouse, *requirements],
-          evidence / "managed-python-test-dependencies-install.log",
-          timeout=900,
-      )
-      python = managed_python
-      result["customer_install"] = {
-          "command": target,
-          "download_path_with_spaces": str(recovery_download_root),
-          "managed_python": str(managed_python),
-      }
-      if args.release_qualification:
-        result["customer_install"].update({
-            "missing_wheel": {"exit_code": missing_code, "status": "PASS"},
-            "native_only": "PASS",
-            "recovery": "PASS",
-            "repeat": "PASS",
-            "wheel_failure": {"exit_code": invalid_wheel_code, "status": "PASS"},
-        })
-      if upgrade_base is not None:
-        result["customer_install"]["upgrade"] = {
-            "baseline_commit": upgrade_base.core_commit,
-            "baseline_version": str(upgrade_base.metadata["version"]),
-            "candidate_version": str(candidate.metadata["version"]),
-            "status": "PASS",
+        if upgrade_base is not None:
+          upgrade_registry_root = work / "upgrade baseline registry with spaces"
+          stage_local_registry(upgrade_base, upgrade_registry_root)
+          with local_registry(upgrade_registry_root) as registry_url:
+            sima_cli_install(
+                registry_url, native_download_root, "sima-cli-upgrade-baseline-install.log",
+                install_target=customer_install_target(upgrade_base))
+          if not install_root.is_dir():
+            raise RuntimeError("sima-cli installed no native upgrade baseline")
+
+        if args.release_qualification:
+          # The partial and failing customer flows need a second, caller-owned Python.
+          subprocess.run([sys.executable, "-m", "venv", str(venv)], check=True)
+          python = venv / "Scripts" / "python.exe"
+          run_logged(
+              [python, "-m", "pip", "install", "--no-index", "--find-links", wheelhouse,
+               *requirements],
+              evidence / "test-dependencies-install.log",
+              timeout=900,
+          )
+          native_registry_root = work / "native only registry with spaces"
+          stage_local_registry(candidate, native_registry_root)
+          with local_registry(native_registry_root) as registry_url:
+            sima_cli_install(
+                registry_url, native_download_root, "sima-cli-native-only-install.log",
+                "--native-only")
+          if not install_root.is_dir():
+            raise RuntimeError("sima-cli native-only flow installed no native cohort")
+          # Without --python-executable the CLI installs into its managed environment.
+          if imports_pyneatpcie(python) or (
+              managed_python.is_file() and imports_pyneatpcie(managed_python)):
+            raise RuntimeError("native-only sima-cli flow unexpectedly installed pyneatpcie")
+
+          missing_registry_root = work / "missing wheel registry with spaces"
+          missing_package = stage_local_registry(candidate, missing_registry_root)
+          (missing_package / candidate.wheel.name).unlink()
+          missing_download_root = work / "missing wheel downloads with spaces"
+          with local_registry(missing_registry_root) as registry_url:
+            missing_code = sima_cli_install(
+                registry_url, missing_download_root, "sima-cli-missing-wheel.log",
+                "--python-executable", python, run=run_expected_failure)
+          if not install_root.is_dir():
+            raise RuntimeError("missing-wheel failure removed the successful native installation")
+          if imports_pyneatpcie(python):
+            raise RuntimeError("missing-wheel flow reported failure after installing pyneatpcie")
+
+          invalid_wheel_registry_root = work / "invalid wheel registry with spaces"
+          stage_invalid_wheel_registry(candidate, invalid_wheel_registry_root)
+          invalid_wheel_download_root = work / "invalid wheel downloads with spaces"
+          with local_registry(invalid_wheel_registry_root) as registry_url:
+            invalid_wheel_code = sima_cli_install(
+                registry_url, invalid_wheel_download_root, "sima-cli-invalid-wheel.log",
+                "--python-executable", python, run=run_expected_failure)
+          if not install_root.is_dir():
+            raise RuntimeError("wheel-install failure removed the successful native installation")
+          if imports_pyneatpcie(python):
+            raise RuntimeError("invalid-wheel flow reported failure after installing pyneatpcie")
+          install_logs = ("sima-cli-customer-recovery-install.log",
+                          "sima-cli-customer-repeat-install.log")
+        else:
+          # Linux's one host package install (install_host_package.sh).
+          install_logs = ("sima-cli-customer-install.log",)
+
+        registry_root = work / "complete registry with spaces"
+        stage_local_registry(candidate, registry_root)
+        recovery_download_root = work / "recovery downloads with spaces"
+        with local_registry(registry_root) as registry_url:
+          for log in install_logs:
+            sima_cli_install(registry_url, recovery_download_root, log)
+        if not managed_python.is_file():
+          raise RuntimeError(
+              "default sima-cli flow did not create the managed pyneatpcie environment")
+        run_logged(
+            [managed_python, "-m", "pip", "install", "--no-index", "--find-links",
+             wheelhouse, *requirements],
+            evidence / "managed-python-test-dependencies-install.log",
+            timeout=900,
+        )
+        python = managed_python
+        result["customer_install"] = {
+            "command": target,
+            "download_path_with_spaces": str(recovery_download_root),
+            "managed_python": str(managed_python),
         }
+        if args.release_qualification:
+          result["customer_install"].update({
+              "missing_wheel": {"exit_code": missing_code, "status": "PASS"},
+              "native_only": "PASS",
+              "recovery": "PASS",
+              "repeat": "PASS",
+              "wheel_failure": {"exit_code": invalid_wheel_code, "status": "PASS"},
+          })
+        if upgrade_base is not None:
+          result["customer_install"]["upgrade"] = {
+              "baseline_commit": upgrade_base.core_commit,
+              "baseline_version": str(upgrade_base.metadata["version"]),
+              "candidate_version": str(candidate.metadata["version"]),
+              "status": "PASS",
+          }
 
-      if args.release_qualification:
-        result["customer_install"]["repair"] = {
-            "core": repair_owned_file(
-                candidate.core_msi,
-                install_root / "include" / "simaai" / "neat" / "pcie" / "Model.h",
-                evidence / "core-msi-repair.log"),
-            "scheduler": repair_owned_file(
-                candidate.scheduler_msi,
-                install_root / "bin" / "gstreamer-1.0" / "gstneatpciehost.dll",
-                evidence / "scheduler-msi-repair.log"),
-        }
+        if args.release_qualification:
+          result["customer_install"]["repair"] = {
+              "core": repair_owned_file(
+                  candidate.core_msi,
+                  install_root / "include" / "simaai" / "neat" / "pcie" / "Model.h",
+                  evidence / "core-msi-repair.log"),
+              "scheduler": repair_owned_file(
+                  candidate.scheduler_msi,
+                  install_root / "bin" / "gstreamer-1.0" / "gstneatpciehost.dll",
+                  evidence / "scheduler-msi-repair.log"),
+          }
+      finally:
+        card_install.join()
+      if "error" in card_outcome:
+        raise card_outcome["error"]
+      active_card = card_outcome["active"]
       result["card_candidate"] = {
           "core_commit": args.expected_card_commit,
           "bundle_sha256": card_bundle.sha256,
-          "installed": installed,
+          "installed": card_outcome["installed"],
           "firmware": active_card["firmware"],
           "runtime_sha256": active_card["runtime_sha256"],
           "worker_sha256": active_card["worker_sha256"],

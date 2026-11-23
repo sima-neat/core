@@ -239,7 +239,7 @@ shared installation root behind.
 
 The hardware qualifier serves the candidate from disposable loopback registries
 and runs the documented `sima-cli neat install` command once, as Linux installs
-its host package once. Release
+its host package once; the card installs over SSH meanwhile. Release
 qualification (`validation_only=false`, `--release-qualification`) adds the
 Windows-only checks that have no Linux equivalent: a native-only install, a
 missing-wheel download failure, a checksum-valid but invalid wheel after native
