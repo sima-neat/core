@@ -23,17 +23,17 @@ sidebar_position: 2
 
 ## 安裝
 
-安裝目前的 Palette SDK %%release.sdk_series%% 發行通道：
+安裝 %%release.sdk_series%% 系列目前的 Palette SDK %%release.sdk%% 版本：
 
 <ShellCommand prompt="host">
-sima-cli neat install sdk@%%release.sdk_channel%%
+sima-cli neat install sdk@v%%release.sdk%%
 </ShellCommand>
 
 首次安裝可能需要數分鐘，因為必須下載 Palette SDK 容器映像。下載完成後，安裝程式會開始設定 SDK，並詢問是否要與 Modalix DevKit 配對，以及是否要在 SDK 中安裝相容的 Model Compiler。
 
 若選擇與 DevKit 配對，請在提示時輸入 DevKit IP 位址。設定流程會設定 SDK 工作區、啟動 SDK 容器並設定 DevKit Sync。若略過配對，系統仍會建立 SDK 工作區，之後也可以再進行配對。
 
-`%%release.sdk_channel%%` 套件會追蹤 %%release.sdk_series%% 系列最新的 Palette SDK 修補程式版本。目前版本為 Palette SDK %%release.sdk%%。 請參閱[相容性指南](/getting-started/compatibility/)以確認對應的 DevKit 軟體版本。
+安裝 SDK 時，請使用已發布的 `v%%release.sdk%%` 標籤。使用 `%%release.sdk_channel%%` 分支映像時，設定程序可能無法安裝選用的 Codex 和 Claude 擴充功能。 請參閱[相容性指南](/getting-started/compatibility/)，了解相容的 DevKit 軟體版本。
 
 設定期間，`sima-cli` 也會詢問是否要在 SDK 中安裝相容的 Model Compiler。若您會自行編譯或量化模型，請接受提示；不需要另外選擇版本。若只執行預先編譯的模型套件，則可略過。若要稍後安裝、固定特定修補版本或使用獨立主機，請參閱[安裝 Model Compiler](/getting-started/dev-environment/install-model-compiler/)及[相容性指南](/getting-started/compatibility/)。
 
@@ -99,7 +99,7 @@ VS Code password   <password shown by neat>
 若要重新安裝或升級至目前的 SDK 套件，請從主機重新執行上述安裝命令：
 
 <ShellCommand prompt="host">
-sima-cli neat install sdk@%%release.sdk_channel%%
+sima-cli neat install sdk@v%%release.sdk%%
 </ShellCommand>
 
 若要更新現有 Palette SDK 容器內的 Neat 程式庫，請從容器 shell 執行 Neat CLI：
