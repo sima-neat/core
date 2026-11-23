@@ -87,6 +87,15 @@ int main() {
     std::filesystem::create_directories(model / "draft/elf_files");
     std::ofstream(model / "target/elf_files/model.elf") << "target";
     std::ofstream(model / "draft/elf_files/model.elf") << "draft";
+    // The worker resolves these names on the card: UTF-8 with '/' separators, not the
+    // Windows ANSI code page or native separators.
+    const std::string tokyo = "\xE6\x9D\xB1\xE4\xBA\xAC"; // 東京
+    require(internal::model_subdirectory(model, model).empty() &&
+                internal::model_subdirectory(model, model / host::host_path_from_string(tokyo) /
+                                                        "target") == tokyo + "/target",
+            "Model subdirectory names are UTF-8 relative paths");
+    require(wire::relative_name(tokyo + "/elf_files/model.elf") == tokyo + "/elf_files/model.elf",
+            "Asset names stay UTF-8");
     const auto recv = directory.path / "received";
     auto rejects_asset = [&](const std::filesystem::path& path, uint64_t size,
                              const std::string& message) {

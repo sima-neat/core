@@ -29,6 +29,14 @@ std::optional<std::filesystem::path> model_asset_path(const std::filesystem::pat
     throw std::invalid_argument("Model asset must be a regular file: " + name);
   return path;
 }
+std::string model_subdirectory(const std::filesystem::path& model,
+                               const std::filesystem::path& directory) {
+  std::string name;
+  for (const auto& part : directory.lexically_relative(model))
+    if (part != ".")
+      name += (name.empty() ? "" : "/") + pcie::internal::host_path_string(part);
+  return name;
+}
 // Shared with the worker so the destructor can leak a worker stuck in put() instead of hanging.
 struct ModelAssets::State {
   State(std::filesystem::path model, std::string session, int card)

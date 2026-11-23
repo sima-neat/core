@@ -357,7 +357,8 @@ int main(const int argc, char** argv) {
     const std::string unicode_leaf = "model \xCE\xB4.tar.gz";
     const std::string unicode = pcie_internal::RemoteRuntime::unique_remote_upload_path(
         "/customer models \xCE\xB4/" + unicode_leaf);
-    if (unicode.rfind("-" + unicode_leaf) != unicode.size() - unicode_leaf.size() - 1) {
+    if (unicode.rfind("-" + unicode_leaf) != unicode.size() - unicode_leaf.size() - 1 ||
+        !pcie_internal::RemoteRuntime::is_managed_upload_path(unicode)) {
       throw std::runtime_error("remote upload path did not preserve a UTF-8 leaf: " + unicode);
     }
     const int launched_pid = pcie_internal::RemoteRuntime::parse_launched_pid(

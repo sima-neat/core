@@ -136,8 +136,8 @@ std::string RemoteRuntime::unique_remote_upload_path(const std::string& local_pa
 }
 
 bool RemoteRuntime::is_managed_upload_path(const std::string& remote_path) {
-  const fs::path path(remote_path);
-  const std::string filename = path.filename().string();
+  const fs::path path = host_path_from_string(remote_path);
+  const std::string filename = host_path_string(path.filename());
   return path == path.lexically_normal() && path.parent_path() == kRemoteModelDir &&
          filename.rfind("sima-neat-pcie-", 0) == 0 &&
          filename.size() > std::string("sima-neat-pcie-").size();

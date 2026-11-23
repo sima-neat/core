@@ -100,10 +100,9 @@ struct GenAIModel::Impl {
         model_layout(simaai::neat::genai::internal::inspect_model_directory(model)),
         remote(options), service(options.card_id), assets(model, remote.id(), options.card_id) {
     service.subscribe(wire::tag(remote.id(), true));
-    const auto target = model_layout.root.lexically_relative(model);
-    remote.start(target == "." ? "" : target.generic_string(),
+    remote.start(internal::model_subdirectory(model, model_layout.root),
                  model_layout.draft_root
-                     ? model_layout.draft_root->lexically_relative(model).generic_string()
+                     ? internal::model_subdirectory(model, *model_layout.draft_root)
                      : "");
     const auto until = Clock::now() + std::chrono::milliseconds(options.startup_timeout_ms);
     auto sent = Clock::time_point{};
