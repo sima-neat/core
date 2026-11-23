@@ -24,6 +24,8 @@ spec = importlib.util.spec_from_file_location(
 client_acquisition = importlib.util.module_from_spec(spec); spec.loader.exec_module(client_acquisition)
 spec = importlib.util.spec_from_file_location('native_publication', ROOT / 'scripts/verify_published.py')
 publication = importlib.util.module_from_spec(spec); spec.loader.exec_module(publication)
+# build.sh is the Linux host build; the Windows producer is build_windows.py.
+LINUX_BUILD_SKIP = 'runs build.sh, the Linux host build, under bash; executed on Linux'
 
 
 
@@ -129,6 +131,7 @@ class SchedulerRunCandidate(unittest.TestCase):
 
 
 class PublicationInventory(unittest.TestCase):
+    @unittest.skipIf(os.name == 'nt', 'runs a vulcan-ci.yml bash step of the Ubuntu runners; executed on Linux')
     def test_ci_uploads_source_archives_and_keeps_metadata_pending(self):
         workflow = (ROOT.parent / '.github/workflows/vulcan-ci.yml').read_text()
         step = workflow.split('- name: Publish PCIe host Debian packages', 1)[1]
@@ -270,6 +273,7 @@ class PublicationInventory(unittest.TestCase):
 
 
 class Delivery(unittest.TestCase):
+    @unittest.skipIf(os.name == 'nt', 'runs verify_card_runtime.sh, a Linux CI script, under bash; executed on Linux')
     def test_card_runtime_verification_uses_installed_plugins_without_legacy_wrapper(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
@@ -315,6 +319,7 @@ printf '%s\\n' "$*" >> "$INSPECT_LOG"
                                 ['neatpciesrc', 'neatpciesink'])
                     self.assertEqual(log.read_text().splitlines() if log.exists() else [], expected)
 
+    @unittest.skipIf(os.name == 'nt', LINUX_BUILD_SKIP)
     def test_dependency_bootstrap_reuses_existing_host_privilege_helper(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp); commands = root / 'bin'; commands.mkdir()
@@ -352,6 +357,7 @@ run_host_sudo ./pcie_host/build.sh --python --install-deps-only
                                  if password_required else [command])
                     self.assertEqual(log.read_text().splitlines(), expected)
 
+    @unittest.skipIf(os.name == 'nt', LINUX_BUILD_SKIP)
     def test_dependency_only_mode_uses_existing_bootstrap_and_stops_before_build(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp); commands = root / 'bin'; commands.mkdir()
@@ -403,6 +409,7 @@ esac
         self.assertLess(source.index('package_list="$(python3'), source.index('run_sudo apt-get "${apt_install_opts[@]}"'))
         self.assertIn('closure_args+=(--extra-dependency "$dependency")', source)
 
+    @unittest.skipIf(os.name == 'nt', LINUX_BUILD_SKIP)
     def test_build_consumes_staged_component_without_privileged_install(self):
         source = (ROOT / 'build.sh').read_text()
         block = source.split('GENAI_CMAKE_ARGS=()\n', 1)[1].split('\ncmake -S .', 1)[0]
@@ -578,6 +585,7 @@ GENAI_CMAKE_ARGS=()
         self.assertIn('pkg_check_modules(SIMAPCIE_GST REQUIRED IMPORTED_TARGET GLOBAL', config)
         self.assertNotIn('libstdc++6 (>= 14)', source)
 
+    @unittest.skipIf(os.name == 'nt', 'configures with the Linux native compiler that build.sh uses; executed on Linux')
     def test_default_native_compiler_reaches_required_scheduler_component(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
@@ -648,6 +656,7 @@ GENAI_CMAKE_ARGS=()
                                      (distro, arch, commit))
                     self.assertEqual(selection['package_version'], '0.1.0')
 
+    @unittest.skipIf(os.name == 'nt', LINUX_BUILD_SKIP)
     def test_selected_environment_reaches_native_acquisition(self):
         source = (ROOT / 'build.sh').read_text()
         parser = source.split('while [[ $# -gt 0 ]]; do', 1)[1].split('\ndone\n', 1)[0]

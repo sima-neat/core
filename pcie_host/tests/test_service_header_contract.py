@@ -20,6 +20,7 @@ class ServiceHeaderContract(unittest.TestCase):
         self.assertNotIn("find_path(SIMAPCIE_SVC_INCLUDE_DIR", config)
         self.assertIn("SimaScheduler::pcie_service_headers", source)
 
+    @unittest.skipIf(os.name == 'nt', 'runs build.sh, the Linux host build, under bash; executed on Linux')
     def test_retired_override_rejected_before_dependency_installation(self):
         result = subprocess.run(["bash", str(ROOT / "build.sh"), "--help"],
                                 env=dict(os.environ, SIMAPCIE_SVC_INCLUDE_DIR="/unverified/headers"),
