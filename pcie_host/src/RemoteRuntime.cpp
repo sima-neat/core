@@ -418,7 +418,9 @@ std::string RemoteRuntime::start_failure_remedy(const std::string& output, const
       return "\nPCIe queue " + q + " is in use by " + process + " on this host (" +
              owner->host.host + ")" + worker +
              ", which is still running. Close the model in that application, end the "
-             "application, or choose another queue.";
+             "application, or choose another queue. If that application has ended, stop the "
+             "leftover worker and retry: " +
+             stop_worker;
     }
   }
   return "";

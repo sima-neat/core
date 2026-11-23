@@ -238,6 +238,11 @@ void test_running_owner_on_this_host_is_kept(Card& card,
               error.find("(card worker PID " + std::to_string(worker) +
                          "), which is still running") != std::string::npos,
           "a running owner was not named: " + error);
+  // The owner may only look running (its PID cannot be queried), so the stop command is given.
+  require(error.find("If that application has ended, stop the leftover worker and retry: ssh ") !=
+                  std::string::npos &&
+              error.find("pkill -f '[p]cie-pipeline-builder.*--queue 3( |$)'") != std::string::npos,
+          "a running owner gave no worker stop command: " + error);
   require(running(worker), "the worker of a running process was stopped");
   runtime.stop(3, worker);
 }
