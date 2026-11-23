@@ -159,8 +159,6 @@ print(model.run(request).text)
 對於關於相同圖片的重複問題，`VisionLanguageModel.encode(...)` 可以在模型中快取圖片嵌入。然後設定 `request.use_cached_images =
 true` 或使用包含 `use_cached_images = true` 的聊天訊息。
 
-為每個獨立的對話呼叫 `model.create_session()`。各工作階段共用已載入的模型，並保有各自的生成快取。將完整的訊息記錄傳給 `session.run(request)` 或 `session.stream(request)`。呼叫 `session.reset()` 即可清除該對話的快取。工作階段可以明確要求使用透過 `model.encode(...)` 快取的影像。
-
 ## 切換 LoRA 轉接器
 
 使用 LLiMa 的 `LORA_BRANCH` 模式編譯的模型可以切換儲存在 `npy_files/<adapter-name>` 下的相容轉接器。

@@ -412,7 +412,6 @@ def test_genai_value_types_and_text_sample_helpers():
 def test_genai_top_level_and_namespace_aliases_exist():
   assert pyneat.genai.ASRTask is pyneat.ASRTask
   assert pyneat.genai.VisionLanguageModel is pyneat.VisionLanguageModel
-  assert pyneat.genai.GenAISession is pyneat.GenAISession
   assert pyneat.genai.ASRModel is pyneat.ASRModel
   assert pyneat.genai.GenAIModel is pyneat.GenAIModel
   assert pyneat.genai.GenAIServer is pyneat.GenAIServer
@@ -498,12 +497,6 @@ def test_genai_direct_text_generation_and_streaming():
     assert _trim_text("".join(streamed_text)) == _EXPECTED_TEXT
     _assert_finish_reason(final_sample.finish_reason)
     assert final_sample.metrics.generated_tokens > 0
-
-    session = model.create_session()
-    assert isinstance(session, pyneat.genai.GenAISession)
-    assert _trim_text(session.run(request).text) == _EXPECTED_TEXT
-    session.reset()
-    del session
 
     generic = pyneat.GenAIModel(_text_model_dir())
     assert generic.task() == pyneat.GenAITask.VisionLanguage

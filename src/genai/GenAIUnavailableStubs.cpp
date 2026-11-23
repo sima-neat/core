@@ -111,22 +111,6 @@ GenerationStream ASRModel::stream(const GenerationRequest&) {
   throw_genai_unavailable();
 }
 
-GenAISession::~GenAISession() = default;
-GenAISession::GenAISession(GenAISession&&) noexcept = default;
-GenAISession& GenAISession::operator=(GenAISession&&) noexcept = default;
-GenerationResult GenAISession::run(const GenerationRequest&) {
-  throw_genai_unavailable();
-}
-GenerationStream GenAISession::stream(const GenerationRequest&) {
-  throw_genai_unavailable();
-}
-void GenAISession::reset() {
-  throw_genai_unavailable();
-}
-GenAISession VisionLanguageModel::create_session() {
-  throw_genai_unavailable();
-}
-
 VisionLanguageModel::VisionLanguageModel(std::filesystem::path) {
   throw_genai_unavailable();
 }

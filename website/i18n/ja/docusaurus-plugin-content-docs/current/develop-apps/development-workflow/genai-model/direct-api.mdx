@@ -159,8 +159,6 @@ print(model.run(request).text)
 同じ画像に関する繰り返しのご質問の場合、`VisionLanguageModel.encode(...)` は、モデル内で画像の埋め込みをキャッシュできます。その後、`request.use_cached_images =
 true` を設定するか、`use_cached_images = true` を含むチャットメッセージを使用します。
 
-独立した会話ごとに `model.create_session()` を呼び出します。各セッションは読み込み済みのモデルを共有し、生成用のキャッシュを個別に保持します。`session.run(request)` または `session.stream(request)` に会話の全履歴を渡します。`session.reset()` を呼ぶと、その会話のキャッシュを消去できます。`model.encode(...)` でキャッシュした画像は、明示的に要求したセッションで使用できます。
-
 ## LoRAアダプターの切り替え
 
 LLiMa の `LORA_BRANCH` モードでコンパイルされたモデルは、`npy_files/<adapter-name>` に保存されている互換性のあるアダプターを切り替えることができます。

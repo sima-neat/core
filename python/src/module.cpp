@@ -2314,18 +2314,8 @@ NB_MODULE(_pyneat_core, m) {
         return std::move(*token);
       });
 
-  nb::class_<simaai::neat::genai::GenAISession>(m, "GenAISession")
-      .def("run", &simaai::neat::genai::GenAISession::run, "request"_a,
-           nb::call_guard<nb::gil_scoped_release>())
-      .def("stream", &simaai::neat::genai::GenAISession::stream, "request"_a,
-           nb::call_guard<nb::gil_scoped_release>())
-      .def("reset", &simaai::neat::genai::GenAISession::reset,
-           nb::call_guard<nb::gil_scoped_release>());
-
   nb::class_<simaai::neat::genai::VisionLanguageModel>(m, "VisionLanguageModel")
       .def(nb::init<std::filesystem::path>(), "model_dir"_a)
-      .def("create_session", &simaai::neat::genai::VisionLanguageModel::create_session,
-           nb::call_guard<nb::gil_scoped_release>())
       .def("accepts_image", &simaai::neat::genai::VisionLanguageModel::accepts_image)
       .def("model_id", &simaai::neat::genai::VisionLanguageModel::model_id)
       .def("set_lora", &simaai::neat::genai::VisionLanguageModel::set_lora, "adapter_name"_a,
@@ -2408,7 +2398,6 @@ NB_MODULE(_pyneat_core, m) {
   genai_mod.attr("TokenSample") = m.attr("TokenSample");
   genai_mod.attr("GenerationStream") = m.attr("GenerationStream");
   genai_mod.attr("VisionLanguageModel") = m.attr("VisionLanguageModel");
-  genai_mod.attr("GenAISession") = m.attr("GenAISession");
   genai_mod.attr("ASRModel") = m.attr("ASRModel");
   genai_mod.attr("GenAIModel") = m.attr("GenAIModel");
   genai_mod.attr("GenAIServerOptions") = m.attr("GenAIServerOptions");

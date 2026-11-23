@@ -22,26 +22,6 @@ struct ModelLoadContext;
 struct ModelAccess;
 } // namespace internal
 
-/// A conversation with its own LLiMa generation cache. Requests supply their full message history.
-class GenAISession {
-public:
-  ~GenAISession();
-  GenAISession(GenAISession&&) noexcept;
-  GenAISession& operator=(GenAISession&&) noexcept;
-  GenAISession(const GenAISession&) = delete;
-  GenAISession& operator=(const GenAISession&) = delete;
-
-  GenerationResult run(const GenerationRequest& request);
-  GenerationStream stream(const GenerationRequest& request);
-  void reset();
-
-private:
-  struct Impl;
-  explicit GenAISession(std::shared_ptr<Impl> impl);
-  std::shared_ptr<Impl> impl_;
-  friend class VisionLanguageModel;
-};
-
 class VisionLanguageModel {
 public:
   explicit VisionLanguageModel(std::filesystem::path model_dir);
@@ -53,7 +33,6 @@ public:
   VisionLanguageModel(const VisionLanguageModel&) = delete;
   VisionLanguageModel& operator=(const VisionLanguageModel&) = delete;
 
-  GenAISession create_session();
   bool accepts_image() const;
   std::string model_id() const;
   void set_lora(const std::string& adapter_name);
@@ -76,10 +55,6 @@ private:
   struct Impl;
   std::shared_ptr<Impl> impl_;
 
-  static GenerationStream stream_request(std::shared_ptr<Impl> model,
-                                         const GenerationRequest& request,
-                                         std::shared_ptr<GenAISession::Impl> session);
-  friend class GenAISession;
   friend class GenAIModel;
   friend class GenerationStream;
 };
