@@ -328,8 +328,11 @@ void test_failures_name_the_next_step() {
 
   const pcie_internal::RemoteRuntime runtime(simaai::neat::pcie::ConnectionOptions{});
   const auto busy = runtime.start_failure_remedy("launched_pid=42\r\nqueue_busy\r\n", 3);
-  require(busy.find("ssh " + runtime.endpoint() +
-                    " \"pkill -f '[p]cie-pipeline-builder.*--queue 3( |$)'\"") != std::string::npos,
+  require(busy.find("\nAnother card worker holds PCIe queue 3.") == 0 &&
+              busy.find(": ssh ") != std::string::npos &&
+              busy.find(runtime.endpoint() +
+                        " \"pkill -f '[p]cie-pipeline-builder.*--queue 3( |$)'\"") !=
+                  std::string::npos,
           "busy queue did not give the worker stop command: " + busy);
   require(runtime.start_failure_remedy("queue_busy_cleanup_failed\n", 3).empty(),
           "a failed cleanup is not a leftover worker");
@@ -387,7 +390,13 @@ void test_remote_transport_offers_the_neat_key() {
   const pcie_internal::RemoteRuntime runtime(simaai::neat::pcie::ConnectionOptions{});
   const auto ssh = runtime.ssh_base();
   const auto scp = runtime.scp_base();
+  const auto busy = runtime.start_failure_remedy("queue_busy\n", 3);
   set_test_environment(home_variable, saved);
+  // The printed stop command names the key, as the troubleshooting docs do.
+  const std::string key = pcie_internal::host_path_string(home / ".ssh" / "sima_neat_pcie_ed25519");
+  require(busy.find("ssh -i \"" + key + "\" " + runtime.endpoint() + " \"pkill -f ") !=
+              std::string::npos,
+          "busy queue stop command must use the Neat key: " + busy);
   std::filesystem::remove_all(home);
 #ifdef _WIN32
   // Windows offers only the Neat key: the ssh-agent service offers its keys first.

@@ -369,8 +369,11 @@ std::string RemoteRuntime::upload_file(const std::string& local_path) const {
 
 std::string RemoteRuntime::start_failure_remedy(const std::string& output, const int queue) const {
   const std::string q = std::to_string(queue);
+  // Name the Neat key as the docs do: where only it is enrolled, plain ssh asks for a password.
+  const auto identity = default_identity_file();
   const std::string stop_worker =
-      "ssh " + endpoint() + " \"pkill -f '[p]cie-pipeline-builder.*--queue " + q + "( |$)'\"";
+      "ssh " + (identity ? "-i \"" + *identity + "\" " : std::string()) + endpoint() +
+      " \"pkill -f '[p]cie-pipeline-builder.*--queue " + q + "( |$)'\"";
   std::istringstream lines(output);
   for (std::string line; std::getline(lines, line);) {
     if (!line.empty() && line.back() == '\r') {
