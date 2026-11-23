@@ -4,6 +4,7 @@ These cover the public Python surface only: mapping semantics, independence of c
 and configuration validation. Association through decode is proven by the board tests.
 """
 
+import numpy as np
 import pyneat
 import pytest
 
@@ -56,6 +57,34 @@ def test_membership_and_iteration():
     assert "image-index" in sample.attributes
     assert "missing" not in sample.attributes
     assert sorted(sample.attributes) == ["image-index", "image-time"]
+
+
+@pytest.mark.parametrize("method", ["push", "try_push"])
+def test_push_rejects_nul_key_and_accepts_corrected_sample(method):
+    frame = pyneat.Tensor.from_numpy(
+        np.zeros((24, 32, 3), np.uint8), copy=True, image_format=pyneat.PixelFormat.RGB
+    )
+    sample = pyneat.make_tensor_sample("frame", frame)
+    sample.attributes["bad\0key"] = "42"
+    graph = pyneat.Graph("sample_attributes")
+    graph.add(pyneat.nodes.input("in"))
+    graph.add(pyneat.nodes.output("out"))
+    run = graph.build([frame])
+    try:
+        push = getattr(run, method)
+        with pytest.raises(pyneat.NeatError) as exc:
+            push([sample])
+        assert exc.value.error_code == pyneat.ERROR_SAMPLE_ATTRIBUTES
+        assert r'"bad\u0000key"' in str(exc.value)
+
+        del sample.attributes["bad\0key"]
+        sample.attributes["image-index"] = "42"
+        assert push([sample])
+        result = run.pull(timeout_ms=2000)
+        assert result is not None
+        assert dict(result.attributes) == {"image-index": "42"}
+    finally:
+        run.close()
 
 
 def test_distinct_samples_do_not_alias():
