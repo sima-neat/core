@@ -65,8 +65,8 @@ from the [Model Browser](/tools/model-browser/), extract the archive from the
 downloaded ZIP file, and save it under that name:
 
 ```bash
-sima-cli models download --id yolov8s --variant w8a8 --output models
-unzip models/yolov8s/w8a8/*.zip yolov8s_w8a8_mpk.tar.gz
+sima-cli models download --id yolov8s --variant w8a8 --output models --force
+unzip -o models/yolov8s/w8a8/*.zip yolov8s_w8a8_mpk.tar.gz
 mv yolov8s_w8a8_mpk.tar.gz yolo_v8s_mpk.tar.gz
 ```
 
@@ -74,8 +74,8 @@ On Windows, download the model in PowerShell and extract the archive with
 `Expand-Archive`:
 
 ```powershell
-sima-cli models download --id yolov8s --variant w8a8 --output models
-Expand-Archive models\yolov8s\w8a8\*.zip -DestinationPath models\yolov8s\w8a8
+sima-cli models download --id yolov8s --variant w8a8 --output models --force
+Expand-Archive models\yolov8s\w8a8\*.zip -DestinationPath models\yolov8s\w8a8 -Force
 Copy-Item models\yolov8s\w8a8\yolov8s_w8a8_mpk.tar.gz yolo_v8s_mpk.tar.gz
 ```
 

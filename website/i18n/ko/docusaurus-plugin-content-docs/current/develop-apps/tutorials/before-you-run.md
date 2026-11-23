@@ -68,10 +68,10 @@ python3 -c "import pyneatpcie; print('pyneatpcie ready')"
 튜토리얼에서 사용하는 모델을 [Model Browser](/tools/model-browser/)에서 다운로드하고 각 ZIP 파일에서 아카이브를 추출하세요.
 
 <ShellCommand prompt="sdk|devkit|pcie-host">
-sima-cli models download --id resnet_50 --variant w8a8 --output models
-sima-cli models download --id yolov8s --variant w8a8 --output models
-unzip models/resnet_50/w8a8/*.zip resnet_50_w8a8_mpk.tar.gz
-unzip models/yolov8s/w8a8/*.zip yolov8s_w8a8_mpk.tar.gz
+sima-cli models download --id resnet_50 --variant w8a8 --output models --force
+sima-cli models download --id yolov8s --variant w8a8 --output models --force
+unzip -o models/resnet_50/w8a8/*.zip resnet_50_w8a8_mpk.tar.gz
+unzip -o models/yolov8s/w8a8/*.zip yolov8s_w8a8_mpk.tar.gz
 </ShellCommand>
 
 다운로드한 파일이 ZIP 파일이 아니라 `<id>_<variant>_mpk.tar.gz` 파일인 경우(Model Browser가 모델을 ZIP 파일로 패키징하기 전에 마지막으로 빌드된 모델), 압축을 풀지 말고 `models/<id>/<variant>`에서 해당 파일을 복사하세요. `unzip`이 설치되어 있지 않으면 대신 `python3 -m zipfile -e models/yolov8s/w8a8/*.zip .`을 실행하고 `resnet_50`도 같은 방법으로 실행하세요. ZIP 파일의 모든 파일이 현재 디렉터리에 압축 해제됩니다.
@@ -94,10 +94,10 @@ mv yolov8s_w8a8_mpk.tar.gz yolo_v8s_mpk.tar.gz
 Windows에서는 튜토리얼 복사본 디렉터리에서 다음 PowerShell 명령을 실행하세요.
 
 ```powershell
-sima-cli models download --id resnet_50 --variant w8a8 --output models
-sima-cli models download --id yolov8s --variant w8a8 --output models
-Expand-Archive models\resnet_50\w8a8\*.zip -DestinationPath models\resnet_50\w8a8
-Expand-Archive models\yolov8s\w8a8\*.zip -DestinationPath models\yolov8s\w8a8
+sima-cli models download --id resnet_50 --variant w8a8 --output models --force
+sima-cli models download --id yolov8s --variant w8a8 --output models --force
+Expand-Archive models\resnet_50\w8a8\*.zip -DestinationPath models\resnet_50\w8a8 -Force
+Expand-Archive models\yolov8s\w8a8\*.zip -DestinationPath models\yolov8s\w8a8 -Force
 Copy-Item models\resnet_50\w8a8\resnet_50_w8a8_mpk.tar.gz resnet_50_mpk.tar.gz
 Copy-Item models\yolov8s\w8a8\yolov8s_w8a8_mpk.tar.gz yolo_v8s_mpk.tar.gz
 ```

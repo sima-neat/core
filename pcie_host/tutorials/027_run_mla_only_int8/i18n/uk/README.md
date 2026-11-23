@@ -48,15 +48,15 @@ q = clamp(round(x / scale) + zero_point, -128, 127)
 Посібник виконує архів YOLO26n `w8a8` з [Model Browser](/tools/model-browser/), скомпільований для прямого входу та виходу MLA. У корені розпакованих додаткових матеріалів PCIe завантажте модель і видобудьте архів із завантаженого ZIP-файлу:
 
 ```bash
-sima-cli models download --id yolo26n --variant w8a8 --output models
-unzip models/yolo26n/w8a8/*.zip yolo26n_w8a8_mpk.tar.gz
+sima-cli models download --id yolo26n --variant w8a8 --output models --force
+unzip -o models/yolo26n/w8a8/*.zip yolo26n_w8a8_mpk.tar.gz
 ```
 
 У Windows завантажте модель у PowerShell і видобудьте архів за допомогою `Expand-Archive`:
 
 ```powershell
-sima-cli models download --id yolo26n --variant w8a8 --output models
-Expand-Archive models\yolo26n\w8a8\*.zip -DestinationPath models\yolo26n\w8a8
+sima-cli models download --id yolo26n --variant w8a8 --output models --force
+Expand-Archive models\yolo26n\w8a8\*.zip -DestinationPath models\yolo26n\w8a8 -Force
 Copy-Item models\yolo26n\w8a8\yolo26n_w8a8_mpk.tar.gz .
 ```
 

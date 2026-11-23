@@ -63,10 +63,10 @@ The program requires the exact paths `resnet_50_mpk.tar.gz` and
 ZIP files, and save them under those names:
 
 ```bash
-sima-cli models download --id resnet_50 --variant w8a8 --output models
-sima-cli models download --id yolov8s --variant w8a8 --output models
-unzip models/resnet_50/w8a8/*.zip resnet_50_w8a8_mpk.tar.gz
-unzip models/yolov8s/w8a8/*.zip yolov8s_w8a8_mpk.tar.gz
+sima-cli models download --id resnet_50 --variant w8a8 --output models --force
+sima-cli models download --id yolov8s --variant w8a8 --output models --force
+unzip -o models/resnet_50/w8a8/*.zip resnet_50_w8a8_mpk.tar.gz
+unzip -o models/yolov8s/w8a8/*.zip yolov8s_w8a8_mpk.tar.gz
 mv resnet_50_w8a8_mpk.tar.gz resnet_50_mpk.tar.gz
 mv yolov8s_w8a8_mpk.tar.gz yolo_v8s_mpk.tar.gz
 ```
@@ -75,10 +75,10 @@ On Windows, download the models in PowerShell and extract the archives with
 `Expand-Archive`:
 
 ```powershell
-sima-cli models download --id resnet_50 --variant w8a8 --output models
-sima-cli models download --id yolov8s --variant w8a8 --output models
-Expand-Archive models\resnet_50\w8a8\*.zip -DestinationPath models\resnet_50\w8a8
-Expand-Archive models\yolov8s\w8a8\*.zip -DestinationPath models\yolov8s\w8a8
+sima-cli models download --id resnet_50 --variant w8a8 --output models --force
+sima-cli models download --id yolov8s --variant w8a8 --output models --force
+Expand-Archive models\resnet_50\w8a8\*.zip -DestinationPath models\resnet_50\w8a8 -Force
+Expand-Archive models\yolov8s\w8a8\*.zip -DestinationPath models\yolov8s\w8a8 -Force
 Copy-Item models\resnet_50\w8a8\resnet_50_w8a8_mpk.tar.gz resnet_50_mpk.tar.gz
 Copy-Item models\yolov8s\w8a8\yolov8s_w8a8_mpk.tar.gz yolo_v8s_mpk.tar.gz
 ```

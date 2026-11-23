@@ -25,8 +25,8 @@ PCIe 協同處理將應用程式控制和輸入準備保留在主機機器上，
 <ShellCommand prompt="pcie-host">
 mkdir -p pcie-host-quickstart/assets
 cd pcie-host-quickstart
-sima-cli models download --id resnet_50 --variant w8a8 --output models
-unzip models/resnet_50/w8a8/*.zip resnet_50_w8a8_mpk.tar.gz
+sima-cli models download --id resnet_50 --variant w8a8 --output models --force
+unzip -o models/resnet_50/w8a8/*.zip resnet_50_w8a8_mpk.tar.gz
 mv resnet_50_w8a8_mpk.tar.gz resnet_50.tar.gz
 </ShellCommand>
 
@@ -35,8 +35,8 @@ mv resnet_50_w8a8_mpk.tar.gz resnet_50.tar.gz
 ```powershell
 New-Item -ItemType Directory -Force pcie-host-quickstart\assets | Out-Null
 Set-Location pcie-host-quickstart
-sima-cli models download --id resnet_50 --variant w8a8 --output models
-Expand-Archive models\resnet_50\w8a8\*.zip -DestinationPath models\resnet_50\w8a8
+sima-cli models download --id resnet_50 --variant w8a8 --output models --force
+Expand-Archive models\resnet_50\w8a8\*.zip -DestinationPath models\resnet_50\w8a8 -Force
 Copy-Item models\resnet_50\w8a8\resnet_50_w8a8_mpk.tar.gz resnet_50.tar.gz
 ```
 

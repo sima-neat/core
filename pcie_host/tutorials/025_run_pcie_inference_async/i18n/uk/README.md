@@ -43,16 +43,16 @@
 Програмі потрібен точний шлях `yolo_v8s_mpk.tar.gz` у цьому каталозі. Якщо файлу ще немає, завантажте YOLOv8s з [Model Browser](/tools/model-browser/), видобудьте архів із завантаженого ZIP-файлу та збережіть його під цією назвою:
 
 ```bash
-sima-cli models download --id yolov8s --variant w8a8 --output models
-unzip models/yolov8s/w8a8/*.zip yolov8s_w8a8_mpk.tar.gz
+sima-cli models download --id yolov8s --variant w8a8 --output models --force
+unzip -o models/yolov8s/w8a8/*.zip yolov8s_w8a8_mpk.tar.gz
 mv yolov8s_w8a8_mpk.tar.gz yolo_v8s_mpk.tar.gz
 ```
 
 У Windows завантажте модель у PowerShell і видобудьте архів за допомогою `Expand-Archive`:
 
 ```powershell
-sima-cli models download --id yolov8s --variant w8a8 --output models
-Expand-Archive models\yolov8s\w8a8\*.zip -DestinationPath models\yolov8s\w8a8
+sima-cli models download --id yolov8s --variant w8a8 --output models --force
+Expand-Archive models\yolov8s\w8a8\*.zip -DestinationPath models\yolov8s\w8a8 -Force
 Copy-Item models\yolov8s\w8a8\yolov8s_w8a8_mpk.tar.gz yolo_v8s_mpk.tar.gz
 ```
 

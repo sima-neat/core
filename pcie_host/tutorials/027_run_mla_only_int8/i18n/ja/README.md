@@ -48,15 +48,15 @@ PCIeホストパッケージをインストールし、[チュートリアルの
 このチュートリアルは、MLAの入出力を直接扱うようにコンパイルされた[Model Browser](/tools/model-browser/)のYOLO26n `w8a8`アーカイブを実行します。抽出したPCIeエクストラのルートでモデルをダウンロードし、ダウンロードしたZIPファイルからアーカイブを展開します。
 
 ```bash
-sima-cli models download --id yolo26n --variant w8a8 --output models
-unzip models/yolo26n/w8a8/*.zip yolo26n_w8a8_mpk.tar.gz
+sima-cli models download --id yolo26n --variant w8a8 --output models --force
+unzip -o models/yolo26n/w8a8/*.zip yolo26n_w8a8_mpk.tar.gz
 ```
 
 Windowsでは、PowerShellでモデルをダウンロードし、`Expand-Archive`でアーカイブを展開します。
 
 ```powershell
-sima-cli models download --id yolo26n --variant w8a8 --output models
-Expand-Archive models\yolo26n\w8a8\*.zip -DestinationPath models\yolo26n\w8a8
+sima-cli models download --id yolo26n --variant w8a8 --output models --force
+Expand-Archive models\yolo26n\w8a8\*.zip -DestinationPath models\yolo26n\w8a8 -Force
 Copy-Item models\yolo26n\w8a8\yolo26n_w8a8_mpk.tar.gz .
 ```
 

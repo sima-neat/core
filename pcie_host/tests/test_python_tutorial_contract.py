@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Keep shipped Python tutorials on the public PyNeatPCIe surface."""
+"""Keep shipped PCIe tutorials on the public PyNeatPCIe surface and re-runnable."""
 
 import ast
 import unittest
@@ -7,6 +7,7 @@ from pathlib import Path
 
 
 TUTORIALS = Path(__file__).resolve().parents[1] / "tutorials"
+REPO = TUTORIALS.parents[1]
 
 
 def attribute_root(node):
@@ -37,6 +38,30 @@ class PythonTutorialContract(unittest.TestCase):
                 node.attr.startswith("_"),
                 f"{script.name} uses private PyNeatPCIe name {node.attr}",
             )
+
+
+  def test_model_download_steps_can_run_again_in_the_same_folder(self):
+    # A second tutorial in the same folder repeats the steps: without these flags
+    # sima-cli, unzip and Expand-Archive stop on the files the first one left.
+    pages = [*TUTORIALS.glob("[0-9][0-9][0-9]_*/README.md"),
+             *TUTORIALS.glob("[0-9][0-9][0-9]_*/i18n/*/README.md")]
+    for page in ("develop-apps/hello-neat/pcie.md", "develop-apps/tutorials/before-you-run.md"):
+      pages += [REPO / "docs" / page, *REPO.glob(
+          f"website/i18n/*/docusaurus-plugin-content-docs/current/{page}")]
+    steps = 0
+    for page in sorted(pages):
+      for line in page.read_text(encoding="utf-8").splitlines():
+        with self.subTest(page=str(page.relative_to(REPO)), line=line):
+          if line.startswith("sima-cli models download "):
+            self.assertIn(" --force", line)
+          elif line.startswith("unzip "):
+            self.assertTrue(line.startswith("unzip -o "))
+          elif line.startswith("Expand-Archive "):
+            self.assertTrue(line.endswith(" -Force"))
+          else:
+            continue
+          steps += 1
+    self.assertGreaterEqual(steps, 100)
 
 
 if __name__ == "__main__":

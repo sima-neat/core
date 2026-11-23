@@ -75,16 +75,16 @@ and output. From the extracted PCIe extras root, download the model and extract
 the archive from the downloaded ZIP file:
 
 ```bash
-sima-cli models download --id yolo26n --variant w8a8 --output models
-unzip models/yolo26n/w8a8/*.zip yolo26n_w8a8_mpk.tar.gz
+sima-cli models download --id yolo26n --variant w8a8 --output models --force
+unzip -o models/yolo26n/w8a8/*.zip yolo26n_w8a8_mpk.tar.gz
 ```
 
 On Windows, download the model in PowerShell and extract the archive with
 `Expand-Archive`:
 
 ```powershell
-sima-cli models download --id yolo26n --variant w8a8 --output models
-Expand-Archive models\yolo26n\w8a8\*.zip -DestinationPath models\yolo26n\w8a8
+sima-cli models download --id yolo26n --variant w8a8 --output models --force
+Expand-Archive models\yolo26n\w8a8\*.zip -DestinationPath models\yolo26n\w8a8 -Force
 Copy-Item models\yolo26n\w8a8\yolo26n_w8a8_mpk.tar.gz .
 ```
 
