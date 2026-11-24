@@ -89,7 +89,6 @@ RUN_TEST("unit_model_preproc_normalize_off_quantize_regression_test", ([] {
            const auto strict = sima_test::make_strict_model_archive_fixture(
                "model_preproc_normalize_off_quantize", {}, true, "yolo_v9c_seg",
                /*include_topology_artifacts=*/true);
-           // Pre-MLA quantizer: multiplier 0.5, zero point 0.
            const auto half = sima_test::make_strict_model_archive_fixture_with_quantizer(
                "model_preproc_normalize_off_quantize_half", 0.5, 0);
 
@@ -108,18 +107,15 @@ RUN_TEST("unit_model_preproc_normalize_off_quantize_regression_test", ([] {
              require_quantized_stage(*fixture, off, false, name + "normalize Off");
              require_quantized_stage(*fixture, off_preset, false, name + "Off with preset");
              require_quantized_stage(*fixture, auto_options, false, name + "normalize Auto");
-             // Guards the combined normalize + quantize lowering.
              require_quantized_stage(*fixture, on, true, name + "normalize On");
              require_quantized_stage(*fixture, preset, true, name + "preset");
            }
 
-           // The pack's quantizer, not a default, reaches the stage.
            {
              const PreprocOptions opt(Model(half.tar_path, off));
              require(opt.q_scale == 0.5 && opt.q_zp == 0, "expected multiplier 0.5, zero point 0");
            }
 
-           // The Auto advisory describes the quantized route.
            {
              std::size_t advisories = 0;
              for (const auto& warning :
@@ -130,14 +126,10 @@ RUN_TEST("unit_model_preproc_normalize_off_quantize_regression_test", ([] {
                require_contains(warning, "preprocess.normalize.enable=On",
                                 "advisory must point to explicit normalization");
                require_contains(warning, "preprocess.preset", "advisory must mention presets");
-               require_contains(warning, "quantiz", "advisory must say Off quantizes raw pixels");
-               require(warning.find("refused") == std::string::npos,
-                       "advisory must not say the stage is refused");
              }
              require(advisories == 1U, "exactly one Auto advisory is expected");
            }
 
-           // Explicit Off never produces the Auto advisory.
            for (const auto& warning :
                 Model(strict.tar_path, off).resolved_preprocess_plan().warnings) {
              require(warning.find("preprocess.normalize=Auto resolved Off") == std::string::npos,

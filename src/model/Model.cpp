@@ -322,15 +322,6 @@ bool preproc_output_dtype_is_quantized(const std::string& raw) {
   return token == "INT8" || token == "EVXX_INT8" || token == "UINT8" || token == "U8";
 }
 
-// With normalization Off, the Model's Preproc stage quantizes the raw 0-255 pixel values with the
-// pack's quantizer (legacy arithmetic only).
-bool preproc_normalize_off_quantizes_raw_pixels(const std::string& output_dtype,
-                                                const PreprocessOptions& effective) {
-  return preproc_output_dtype_is_quantized(output_dtype) && effective.quantize.scale > 0.0 &&
-         !effective.rescale_factor && !effective.quantization_step &&
-         effective.floating_conversion == PreprocFloatingConversion::Legacy;
-}
-
 std::string route_mla_input_dtype_from_diagnostics(const internal::PreprocessPlannerResult& plan);
 const pipeline_internal::sima::MpkPluginIoContract*
 find_pre_mla_processcvu_stage(const internal::ModelPack& pack,
@@ -4271,6 +4262,11 @@ internal::PreprocessPlannerResult build_preprocess_plan(const std::string& tar_g
   if (route.ambiguous) {
     session_route_plan.diagnostics.push_back("route-ambiguous=" + route.ambiguity_reason);
   }
+  if (route_uses_image_ingress(session_route_plan) && plan.normalize_auto_without_config) {
+    plan.resolved_plan.warnings.push_back(
+        "preprocess.normalize=Auto resolved Off. If your model expects normalized input, set "
+        "preprocess.normalize.enable=On or choose a preprocess.preset.");
+  }
   if (options.decode_type == BoxDecodeType::EdgeTamTrack && session_route_plan.boxdecode_selected) {
     // EdgeTAM tracking: the raw outputs are exactly what the same Model returns without BoxDecode.
     Model::Options raw = options;
@@ -4295,21 +4291,6 @@ internal::PreprocessPlannerResult build_preprocess_plan(const std::string& tar_g
   }
   plan.session_route_plan = session_route_plan;
   populate_effective_model_managed_contract_fields(&plan, capability_pack);
-  if (route_uses_image_ingress(plan.session_route_plan) && plan.normalize_auto_without_config) {
-    if (preproc_normalize_off_quantizes_raw_pixels(capability.mla_input_dtype_raw,
-                                                   plan.resolved_plan.effective)) {
-      plan.resolved_plan.warnings.push_back(
-          "preprocess.normalize=Auto resolved Off: with normalization Off, this model's "
-          "preprocess stage quantizes the raw 0-255 pixel values with the pack's quantizer; for "
-          "models trained on [0,1] or normalized input, set preprocess.normalize.enable=On with "
-          "the model's mean/stddev or choose a preprocess.preset; for models trained on raw "
-          "0-255 pixels, set preprocess.normalize.enable=Off.");
-    } else {
-      plan.resolved_plan.warnings.push_back(
-          "preprocess.normalize=Auto resolved Off: set preprocess.normalize.enable=On with "
-          "mean/stddev or choose a preprocess.preset; set normalize.enable=Off for raw pixels.");
-    }
-  }
 
   // Typed route owns ingress contract. Adapter-first pre chains must ingest
   // tensor data at appsrc (not legacy video caps from preproc family probing).

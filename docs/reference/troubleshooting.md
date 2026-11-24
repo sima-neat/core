@@ -361,14 +361,14 @@ A tensor was constructed with both `byte_format=` (opaque bytes) and `image_form
 Pass one or the other, not both.
 :::
 
-### 23. Quantized image model returns few or low-quality detections — `preprocess.normalize=Auto resolved Off …`
+### 23. An image-input Model on a quantized INT8 model returns few, no, or low-quality detections
 
 :::info Cause
-An image-input `Model` on a quantized INT8 model returns few or no detections, or low-quality ones, and the planner warns `preprocess.normalize=Auto resolved Off …`. Normalization resolved Off: it was left at `Auto` with no mean/stddev and no preset, or set explicitly to `Off`. The preprocess stage then quantizes the raw 0–255 pixel values, which is correct only for models trained on raw 0–255 input. A model that expects `[0,1]` or mean/stddev-normalized input receives values that mostly saturate (for example at 127 for a quantizer of about 255), and no error is reported.
+Normalization is Off. Either it was set explicitly to `Off` (no warning), or it was left at `Auto` with no preset and no explicit stats, in which case the planner warns `preprocess.normalize=Auto resolved Off`. With normalization Off, the stage quantizes the raw 0–255 pixel values.
 :::
 
 :::tip Fix
-Set `preprocess.normalize.enable = On` with the model's mean/stddev (for YOLO-style `[0,1]` models, `On` with the default mean 0 / stddev 1), or set `preprocess.preset` (for example `COCO_YOLO` or `ImageNet`). Setting mean/stddev alone does not enable normalization.
+For a detector trained on `[0,1]` input, enable normalization. For a model trained on raw `0–255` pixels, leave normalization off.
 :::
 
 ## Coming from another stack

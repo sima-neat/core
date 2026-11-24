@@ -6,6 +6,8 @@
 
 #include <opencv2/core.hpp>
 
+#include <algorithm>
+#include <cstddef>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -52,10 +54,10 @@ RUN_TEST("model_preproc_normalize_off_quantize_regression_test", ([] {
            off.preprocess.normalize.enable = AutoFlag::Off;
            const auto require_all_100 = [&](const Model::Options& options,
                                             const std::string& label) {
-             for (const auto value : run_preprocess(half.tar_path, options, uniform)) {
-               require(value == 100, label + ": expected every INT8 byte to be 100, got " +
-                                         std::to_string(static_cast<int>(value)));
-             }
+             const auto bytes = run_preprocess(half.tar_path, options, uniform);
+             require(std::all_of(bytes.begin(), bytes.end(),
+                                 [](std::int8_t value) { return value == 100; }),
+                     label + ": expected every INT8 byte to be 100");
            };
            require_all_100(off, "normalize Off");
            require_all_100(letterbox_options(), "normalize Auto");
@@ -68,8 +70,8 @@ RUN_TEST("model_preproc_normalize_off_quantize_regression_test", ([] {
            // A 640x320 frame leaves 160 padded rows above and below the content.
            const cv::Mat wide(kCanvas / 2, kCanvas, CV_8UC3, cv::Scalar::all(200));
            const auto bytes = run_preprocess(strict.tar_path, on, wide);
-           for (std::size_t i = 0; i < static_cast<std::size_t>(kCanvas) * 3U; ++i) {
-             require(bytes[i] == -14, "normalize On: expected pad byte -14, got " +
-                                          std::to_string(static_cast<int>(bytes[i])));
-           }
+           const auto first_row_end = bytes.begin() + static_cast<std::ptrdiff_t>(kCanvas) * 3;
+           require(std::all_of(bytes.begin(), first_row_end,
+                               [](std::int8_t value) { return value == -14; }),
+                   "normalize On: expected the first padded row to be INT8 -14");
          }));

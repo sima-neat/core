@@ -359,14 +359,14 @@ case simaai::neat::PullStatus::Error:
 둘 중 하나만 통과하면 됩니다. 둘 다 통과할 필요는 없습니다.
 :::
 
-### 23. 양자화된 이미지 모델에서 감지 결과가 적거나 품질이 낮음 — `preprocess.normalize=Auto resolved Off …`
+### 23. 양자화된 INT8 모델의 이미지 입력 Model이 감지 결과를 적게 반환하거나, 전혀 반환하지 않거나, 품질이 낮음
 
 :::info 원인
-양자화된 INT8 모델의 이미지 입력 `Model`이 감지 결과를 거의(또는 전혀) 반환하지 않거나 품질이 낮고, 플래너가 `preprocess.normalize=Auto resolved Off …` 경고를 표시합니다. 정규화가 Off로 결정되었기 때문입니다. mean/stddev와 preset 없이 `Auto`로 두었거나 명시적으로 `Off`로 설정한 경우입니다. 이때 전처리 스테이지는 0–255 원시 픽셀 값을 양자화하며, 이는 0–255 원시 입력으로 학습된 모델에만 맞습니다. `[0,1]` 또는 mean/stddev로 정규화된 입력을 기대하는 모델에서는 대부분의 값이 포화되며(양자화기가 약 255이면 127에서 포화 등) 오류는 보고되지 않습니다.
+정규화가 Off입니다. 명시적으로 `Off`로 설정했거나(경고 없음), 프리셋과 명시적 통계 없이 `Auto`로 둔 경우이며, 후자에서는 플래너가 `preprocess.normalize=Auto resolved Off` 경고를 표시합니다. 정규화가 Off이면 스테이지는 0–255 원시 픽셀 값을 양자화합니다.
 :::
 
 :::tip 해결
-`preprocess.normalize.enable = On`과 모델의 mean/stddev를 설정하십시오(YOLO 계열 `[0,1]` 모델의 경우 기본 mean 0 / stddev 1로 `On`). 또는 `preprocess.preset`(예: `COCO_YOLO`, `ImageNet`)을 설정하십시오. mean/stddev만 설정해서는 정규화가 활성화되지 않습니다.
+`[0,1]` 입력으로 학습된 감지기에서는 정규화를 활성화하십시오. 0–255 원시 픽셀로 학습된 모델에서는 정규화를 꺼 두십시오.
 :::
 
 ## 다른 스택에서 왔습니다.

@@ -358,14 +358,14 @@ case simaai::neat::PullStatus::Error:
 通過其中一個，但不能同時通過兩個。
 :::
 
-### 23. 量化影像模型的偵測結果很少或品質不佳 — `preprocess.normalize=Auto resolved Off …`
+### 23. 量化 INT8 模型上的影像輸入 Model 回傳很少、沒有或品質不佳的偵測結果
 
 :::info 原因
-量化 INT8 模型上的影像輸入 `Model` 只回傳很少（或沒有）偵測結果，或結果品質不佳，且規劃器警告 `preprocess.normalize=Auto resolved Off …`。這是因為正規化解析為 Off：未設定 mean/stddev 與 preset 而保留 `Auto`，或明確設為 `Off`。此時前處理階段會量化原始 0–255 像素值，這僅適用於以原始 0–255 輸入訓練的模型。若模型預期 `[0,1]` 或經 mean/stddev 正規化的輸入，大多數數值會飽和（例如量化器約為 255 時飽和於 127），且不會回報任何錯誤。
+正規化為 Off。可能是明確設為 `Off`（不會有警告），或保留 `Auto` 但沒有預設也沒有明確統計值，此時規劃器會警告 `preprocess.normalize=Auto resolved Off`。正規化為 Off 時，該階段會量化原始 0–255 像素值。
 :::
 
 :::tip 修正
-設定 `preprocess.normalize.enable = On` 並搭配模型的 mean/stddev（YOLO 類 `[0,1]` 模型使用預設 mean 0 / stddev 1 的 `On`），或設定 `preprocess.preset`（例如 `COCO_YOLO`、`ImageNet`）。僅設定 mean/stddev 不會啟用正規化。
+對於以 `[0,1]` 輸入訓練的偵測器，請啟用正規化。對於以原始 `0–255` 像素訓練的模型，請保持正規化關閉。
 :::
 
 ## 來自另一個堆疊。
