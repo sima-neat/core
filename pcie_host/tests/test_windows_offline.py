@@ -501,18 +501,6 @@ class GateContracts(unittest.TestCase):
     self.assertNotIn("HTTPS_PROXY", connected)
     self.assertEqual(target["HTTPS_PROXY"], GATE.DEAD_PROXY)
 
-  def test_block_covers_every_installer_process(self):
-    programs = GATE.blocked_programs(Path("C:/py"), Path("C:/home"), Path("C:/Windows"))
-    self.assertEqual(programs, [
-        Path("C:/py/python.exe"), Path("C:/home/.sima-cli-env/Scripts/python.exe"),
-        Path("C:/home/pyneatpcie/Scripts/python.exe"),
-        Path("C:/Windows/System32/msiexec.exe"), Path("C:/Windows/SysWOW64/msiexec.exe")])
-    source = (SCRIPT_DIR / "validate_windows_offline.py").read_text(encoding="utf-8")
-    # The proof is a canary that must fail; a dead proxy alone is not a block.
-    self.assertIn('raise RuntimeError("the firewall block is not effective', source)
-    for name in ("PIP_FIND_LINKS", "PIP_NO_INDEX", "SIMA_CLI_CHECK_FOR_UPDATE"):
-      self.assertIn(f'"{name}"', source)
-
 
 class GateRun(unittest.TestCase):
   """validate() on Linux, with Windows, MSI, firewall and sima-cli replaced by fakes."""
@@ -534,10 +522,11 @@ class GateRun(unittest.TestCase):
         "vendor_installers": [{"name": name, "sha256": digest}
                               for name, digest in self.INSTALLERS.items()]}))
     self.installed, self.canaries, self.unblocked = set(), [], set()
-    self.blocked = []
+    self.blocked, self.commands = [], []
 
   def run_logged(self, command, log, *, env=None, cwd=None, timeout=3600):
     argv = [str(value) for value in command]
+    self.commands.append((argv, env))
     text = "ok\n"
     if "-t" in argv:  # the download: the extracted bundle and both installers
       folder = Path(argv[-1])
@@ -577,8 +566,9 @@ class GateRun(unittest.TestCase):
         expected_upgrade_base_commit=None, offline=self.offline,
         evidence=self.root / "evidence", work=self.root / "work",
         sima_cli=self.root / "bootstrap" / "sima-cli.exe")
-    fake_subprocess = SimpleNamespace(run=lambda *_, **__: SimpleNamespace(stdout="[]", returncode=0),
-                                      SubprocessError=subprocess.SubprocessError)
+    fake_subprocess = SimpleNamespace(
+        run=lambda *_, **__: SimpleNamespace(stdout="[]", returncode=0),
+        SubprocessError=subprocess.SubprocessError)
     with contextlib.ExitStack() as stack:
       stack.enter_context(mock.patch.dict(os.environ, {"SystemRoot": "C:/Windows",
                                                        "ProgramFiles": "C:/Program Files"}))
@@ -590,6 +580,8 @@ class GateRun(unittest.TestCase):
           "reaches_internet": self.reaches_internet, "receipts": self.receipts,
           "sha256": lambda path: self.INSTALLERS[path.name],
           "require_environment_packages": lambda *_: None, "subprocess": fake_subprocess,
+          "sys": SimpleNamespace(executable="C:/Python314/python.exe",
+                                 base_prefix="C:/Python314"),
       }.items():
         stack.enter_context(mock.patch.object(GATE, name, value))
       stack.enter_context(mock.patch.object(GATE.windows_offline, "verify"))
@@ -603,6 +595,27 @@ class GateRun(unittest.TestCase):
     self.assertIn(managed, self.blocked)
     self.assertTrue((self.root / "evidence" / "windows-offline-gate.json").is_file())
     self.assertEqual(self.installed, set())
+
+  def test_every_program_behind_the_block_is_blocked(self):
+    self.validate()
+    behind = {Path(argv[0]) for argv, env in self.commands
+              if env and env.get("HTTPS_PROXY") == GATE.DEAD_PROXY}
+    # A console script runs its environment's python.exe, which starts the base CPython.
+    interpreters = {path.with_name("python.exe") for path in behind}
+    self.assertGreaterEqual(len(interpreters), 2)
+    self.assertLessEqual(interpreters | {Path("C:/Python314/python.exe")}, set(self.blocked))
+    # sima-cli installs both MSIs through Windows Installer.
+    self.assertEqual({path for path in self.blocked if path.name == "msiexec.exe"},
+                     {Path("C:/Windows/System32/msiexec.exe"),
+                      Path("C:/Windows/SysWOW64/msiexec.exe")})
+    # Each blocked interpreter is proven by a canary after the block, not by the dead proxy.
+    proven = {python for python, log in self.canaries if log != "canary-before-block.log"}
+    self.assertEqual(proven, {path for path in self.blocked if path.name == "python.exe"})
+
+  def test_a_canary_through_the_block_fails_the_gate(self):
+    self.unblocked = {Path("C:/Python314/python.exe")}
+    with self.assertRaisesRegex(RuntimeError, "firewall block is not effective"):
+      self.validate()
 
   def test_an_unblocked_managed_environment_fails_the_gate(self):
     # sima-cli created pyneatpcie from a CPython 3.14 that the rules do not cover.
@@ -664,14 +677,27 @@ class InputContracts(unittest.TestCase):
   def setUp(self):
     self.windows = WORKFLOW.read_text(encoding="utf-8")
 
+  @staticmethod
+  def windows_python_versions(source):
+    """python-version of each setup-python step that runs on Windows."""
+    versions = []
+    for job in re.split(r"(?m)^  (?=[\w-]+:\n)", source.split("\njobs:\n", 1)[1]):
+      on_windows = re.search(r"(?mi)^    runs-on: .*windows", job)
+      for condition, version in re.findall(
+          r"uses: actions/setup-python@[^\n]*\n(?:\s+if: ([^\n]*)\n)?"
+          r"\s+with:\n\s+python-version: (\S+)", job):
+        if on_windows or "matrix.distro == 'windows'" in condition:
+          versions.append(version)
+    return versions
+
   def test_cpython_installer_pin_is_the_version_ci_builds_with(self):
     manifest = json.loads((SCRIPT_DIR / "windows_build_inputs.json").read_text())
     pinned = [entry for entry in manifest["files"] if entry["use"] == "python-installer"]
     self.assertEqual(len(pinned), 1)
     version = re.fullmatch(r"python-([0-9.]+)-amd64[.]exe", pinned[0]["name"])[1]
-    versions = re.findall(r"python-version: (\S+)", self.windows + MAIN_WORKFLOW.read_text(
-        encoding="utf-8"))
-    self.assertTrue(versions)
+    # The Windows build, the card lane and the offline gate; Linux jobs may use another.
+    versions = (self.windows_python_versions(self.windows)
+                + self.windows_python_versions(MAIN_WORKFLOW.read_text(encoding="utf-8")))
     self.assertEqual(set(versions), {version})
 
   def test_install_guide_uses_the_bundle_paths(self):
