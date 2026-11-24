@@ -312,11 +312,10 @@ int main(int argc, char** argv) {
     } else {
       fs::path variants_dir = resolve_variants_dir(root, argc, argv);
       packs = collect_model_packs(variants_dir);
-      if (packs.empty()) {
-        variants_dir = sima_yolov8_test::ensure_yolov8n_drive_variants(root);
-        packs = collect_model_packs(variants_dir);
-      }
-      require(!packs.empty(), "no model packs found in " + variants_dir.string());
+      require(!packs.empty(),
+              "no model packs found in " + variants_dir.string() +
+                  "; set SIMA_YOLOV8_VARIANTS_DIR to a folder with the yolov8n MPKs from "
+                  "'sima-cli models download --id yolov8n'");
     }
 
     const cv::Mat img_bgr = sima_yolov8_test::load_people_image_or_skip(root);
