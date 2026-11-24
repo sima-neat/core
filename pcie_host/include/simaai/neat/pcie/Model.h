@@ -12,6 +12,12 @@
 #include <type_traits>
 #include <vector>
 
+// The Windows package and the Scheduler DLL it calls use the release C++
+// runtime (/MD); the debug runtime (/MDd) has a different C++ ABI.
+#if defined(_MSC_VER) && defined(_DEBUG)
+#error "The SiMa PCIe host library needs the release C++ runtime: use Release or RelWithDebInfo"
+#endif
+
 #if __has_include(<opencv2/core/mat.hpp>)
 #include <opencv2/core/mat.hpp>
 #define SIMA_PCIE_HAS_OPENCV_OVERLOAD 1

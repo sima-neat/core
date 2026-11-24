@@ -39,13 +39,24 @@ PCIe-карта Modalix надає доступ до черг співоброб
 Встановіть пакет хоста PCIe та завантажте пакет для посібника, як описано в [Налаштування навчального посібника.](/tutorials/before-you-run). З кореневої папки додаткових матеріалів PCIe, завантажте обидві моделі:
 
 ```bash
-sima-cli models download --id resnet_50 --variant w8a8
+sima-cli models download --id resnet_50 --variant w8a8 --force
 unzip -p models/resnet_50/w8a8/resnet_50_w8a8_default.zip resnet_50_w8a8_mpk.tar.gz > resnet_50_mpk.tar.gz
-sima-cli models download --id yolov8s --variant w8a8
+sima-cli models download --id yolov8s --variant w8a8 --force
 unzip -p models/yolov8s/w8a8/yolov8s_w8a8_default.zip yolov8s_w8a8_mpk.tar.gz > yolo_v8s_mpk.tar.gz
 ```
 
 Програма вимагає точних шляхів до `resnet_50_mpk.tar.gz` і `yolo_v8s_mpk.tar.gz` у цьому каталозі. Кожна команда `unzip` видобуває один із них із відповідного завантаженого ZIP-файлу.
+
+У Windows налаштуйте навчальні матеріали та запускайте програми, як описано в розділі [Запуск застосунків у Windows](/getting-started/neat-library/pcie-host/#run-applications-on-windows). Завантажте моделі в PowerShell і видобудьте архіви за допомогою `Expand-Archive`:
+
+```powershell
+sima-cli models download --id resnet_50 --variant w8a8 --force
+Expand-Archive models\resnet_50\w8a8\resnet_50_w8a8_default.zip -DestinationPath models\resnet_50\w8a8 -Force
+Copy-Item models\resnet_50\w8a8\resnet_50_w8a8_mpk.tar.gz resnet_50_mpk.tar.gz
+sima-cli models download --id yolov8s --variant w8a8 --force
+Expand-Archive models\yolov8s\w8a8\yolov8s_w8a8_default.zip -DestinationPath models\yolov8s\w8a8 -Force
+Copy-Item models\yolov8s\w8a8\yolov8s_w8a8_mpk.tar.gz yolo_v8s_mpk.tar.gz
+```
 
 Запустіть Python:
 
@@ -65,6 +76,17 @@ python3 share/sima-pcie-host/tutorials/026_run_multiple_models/run_multiple_mode
 ```bash
 ./build.sh --target tutorial_026_run_multiple_models
 ./build/tutorials-standalone/tutorial_026_run_multiple_models
+```
+
+У Windows перезберіть її за допомогою CMake з **x64 Native Tools Command Prompt** у своїй копії навчальних матеріалів. Замініть `C:\opencv\build` на каталог `build` пакета OpenCV, описаного в розділі [Запуск застосунків у Windows](/getting-started/neat-library/pcie-host/#run-applications-on-windows):
+
+```bat
+call "%ProgramFiles%\SimaPCIeHost\bin\sima-pcie-host-env.cmd"
+set "OpenCV_DIR=C:\opencv\build"
+cmake -S share\sima-pcie-host\tutorials -B build
+cmake --build build --config Release --target tutorial_026_run_multiple_models
+set "PATH=%OpenCV_DIR%\x64\vc16\bin;%PATH%"
+build\Release\tutorial_026_run_multiple_models.exe
 ```
 
 За наявності задокументованих моделей і ресурсів, обидві версії виводять результати, подібні до:

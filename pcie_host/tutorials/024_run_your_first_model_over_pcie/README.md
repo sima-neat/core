@@ -59,12 +59,22 @@ Install the PCIe host package and download the tutorial bundle as described in
 commands from the extracted PCIe extras root:
 
 ```bash
-sima-cli models download --id yolov8s --variant w8a8
+sima-cli models download --id yolov8s --variant w8a8 --force
 unzip -p models/yolov8s/w8a8/yolov8s_w8a8_default.zip yolov8s_w8a8_mpk.tar.gz > yolo_v8s_mpk.tar.gz
 ```
 
 The programs require `yolo_v8s_mpk.tar.gz` in this directory. The second
 command extracts it from the downloaded ZIP.
+
+On Windows, set up the tutorials and run the programs as described in
+[Run applications on Windows](/getting-started/neat-library/pcie-host/#run-applications-on-windows).
+Download the model in PowerShell and extract the archive with `Expand-Archive`:
+
+```powershell
+sima-cli models download --id yolov8s --variant w8a8 --force
+Expand-Archive models\yolov8s\w8a8\yolov8s_w8a8_default.zip -DestinationPath models\yolov8s\w8a8 -Force
+Copy-Item models\yolov8s\w8a8\yolov8s_w8a8_mpk.tar.gz yolo_v8s_mpk.tar.gz
+```
 
 **Python:**
 
@@ -93,6 +103,24 @@ python3 share/sima-pcie-host/tutorials/024_run_your_first_model_over_pcie/run_im
 ./build/tutorials-standalone/tutorial_024_run_tensor_mode
 ./build/tutorials-standalone/tutorial_024_run_image_mode
 ./build/tutorials-standalone/tutorial_024_run_image_boxdecode
+```
+
+On Windows, build with CMake from an **x64 Native Tools Command Prompt**
+in your copy of the tutorials. Replace `C:\opencv\build` with the `build`
+directory of the OpenCV package described in
+[Run applications on Windows](/getting-started/neat-library/pcie-host/#run-applications-on-windows):
+
+```bat
+call "%ProgramFiles%\SimaPCIeHost\bin\sima-pcie-host-env.cmd"
+set "OpenCV_DIR=C:\opencv\build"
+cmake -S share\sima-pcie-host\tutorials -B build
+cmake --build build --config Release --target tutorial_024_run_tensor_mode
+cmake --build build --config Release --target tutorial_024_run_image_mode
+cmake --build build --config Release --target tutorial_024_run_image_boxdecode
+set "PATH=%OpenCV_DIR%\x64\vc16\bin;%PATH%"
+build\Release\tutorial_024_run_tensor_mode.exe
+build\Release\tutorial_024_run_image_mode.exe
+build\Release\tutorial_024_run_image_boxdecode.exe
 ```
 
 The matching C++ and Python programs print the same six raw output contracts

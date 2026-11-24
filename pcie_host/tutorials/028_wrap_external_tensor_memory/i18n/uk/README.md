@@ -47,8 +47,16 @@
 Установіть пакет хоста PCIe та завантажте комплект посібників, як описано в розділі [Налаштування посібників](/tutorials/before-you-run). Завантажте YOLOv8s до кореня розпакованих додаткових файлів PCIe:
 
 ```bash
-sima-cli models download --id yolov8s --variant w8a8
+sima-cli models download --id yolov8s --variant w8a8 --force
 unzip -p models/yolov8s/w8a8/yolov8s_w8a8_default.zip yolov8s_w8a8_mpk.tar.gz > yolo_v8s_mpk.tar.gz
+```
+
+У Windows налаштуйте навчальні матеріали та запускайте програми, як описано в розділі [Запуск застосунків у Windows](/getting-started/neat-library/pcie-host/#run-applications-on-windows). Завантажте модель у PowerShell і видобудьте архів за допомогою `Expand-Archive`:
+
+```powershell
+sima-cli models download --id yolov8s --variant w8a8 --force
+Expand-Archive models\yolov8s\w8a8\yolov8s_w8a8_default.zip -DestinationPath models\yolov8s\w8a8 -Force
+Copy-Item models\yolov8s\w8a8\yolov8s_w8a8_mpk.tar.gz yolo_v8s_mpk.tar.gz
 ```
 
 **C++ (prebuilt):**
@@ -62,6 +70,17 @@ unzip -p models/yolov8s/w8a8/yolov8s_w8a8_default.zip yolov8s_w8a8_mpk.tar.gz > 
 ```bash
 ./build.sh --target tutorial_028_wrap_external_tensor_memory
 ./build/tutorials-standalone/tutorial_028_wrap_external_tensor_memory
+```
+
+У Windows зберіть програму за допомогою CMake з **x64 Native Tools Command Prompt** у своїй копії навчальних матеріалів. Замініть `C:\opencv\build` на каталог `build` пакета OpenCV, описаного в розділі [Запуск застосунків у Windows](/getting-started/neat-library/pcie-host/#run-applications-on-windows):
+
+```bat
+call "%ProgramFiles%\SimaPCIeHost\bin\sima-pcie-host-env.cmd"
+set "OpenCV_DIR=C:\opencv\build"
+cmake -S share\sima-pcie-host\tutorials -B build
+cmake --build build --config Release --target tutorial_028_wrap_external_tensor_memory
+set "PATH=%OpenCV_DIR%\x64\vc16\bin;%PATH%"
+build\Release\tutorial_028_wrap_external_tensor_memory.exe
 ```
 
 Типово використовується карта 0 і черга 0. Передавайте `--card N` лише для іншої карти. Успішний запуск виводить:

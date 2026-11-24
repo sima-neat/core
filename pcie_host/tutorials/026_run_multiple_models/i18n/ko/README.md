@@ -41,13 +41,24 @@ PCIe 호스트 패키지를 설치하고, 설명서에 나와 있는 대로 튜�
 추가 루트에서 두 모델을 모두 다운로드합니다.
 
 ```bash
-sima-cli models download --id resnet_50 --variant w8a8
+sima-cli models download --id resnet_50 --variant w8a8 --force
 unzip -p models/resnet_50/w8a8/resnet_50_w8a8_default.zip resnet_50_w8a8_mpk.tar.gz > resnet_50_mpk.tar.gz
-sima-cli models download --id yolov8s --variant w8a8
+sima-cli models download --id yolov8s --variant w8a8 --force
 unzip -p models/yolov8s/w8a8/yolov8s_w8a8_default.zip yolov8s_w8a8_mpk.tar.gz > yolo_v8s_mpk.tar.gz
 ```
 
 이 프로그램에는 이 디렉터리의 정확한 경로 `resnet_50_mpk.tar.gz`와 `yolo_v8s_mpk.tar.gz`가 필요합니다. 각 `unzip` 명령은 다운로드한 ZIP에서 이 중 하나를 추출합니다.
+
+Windows에서는 [Windows에서 애플리케이션 실행](/getting-started/neat-library/pcie-host/#run-applications-on-windows)에 설명된 대로 튜토리얼을 설정하고 프로그램을 실행하세요. PowerShell에서 모델을 다운로드하고 `Expand-Archive`로 아카이브를 추출하세요.
+
+```powershell
+sima-cli models download --id resnet_50 --variant w8a8 --force
+Expand-Archive models\resnet_50\w8a8\resnet_50_w8a8_default.zip -DestinationPath models\resnet_50\w8a8 -Force
+Copy-Item models\resnet_50\w8a8\resnet_50_w8a8_mpk.tar.gz resnet_50_mpk.tar.gz
+sima-cli models download --id yolov8s --variant w8a8 --force
+Expand-Archive models\yolov8s\w8a8\yolov8s_w8a8_default.zip -DestinationPath models\yolov8s\w8a8 -Force
+Copy-Item models\yolov8s\w8a8\yolov8s_w8a8_mpk.tar.gz yolo_v8s_mpk.tar.gz
+```
 
 Python 실행:
 
@@ -67,6 +78,17 @@ python3 share/sima-pcie-host/tutorials/026_run_multiple_models/run_multiple_mode
 ```bash
 ./build.sh --target tutorial_026_run_multiple_models
 ./build/tutorials-standalone/tutorial_026_run_multiple_models
+```
+
+Windows에서는 튜토리얼 복사본 디렉터리의 **x64 Native Tools Command Prompt**에서 CMake로 다시 빌드하세요. `C:\opencv\build`는 [Windows에서 애플리케이션 실행](/getting-started/neat-library/pcie-host/#run-applications-on-windows)에 설명된 OpenCV 패키지의 `build` 디렉터리로 바꾸세요.
+
+```bat
+call "%ProgramFiles%\SimaPCIeHost\bin\sima-pcie-host-env.cmd"
+set "OpenCV_DIR=C:\opencv\build"
+cmake -S share\sima-pcie-host\tutorials -B build
+cmake --build build --config Release --target tutorial_026_run_multiple_models
+set "PATH=%OpenCV_DIR%\x64\vc16\bin;%PATH%"
+build\Release\tutorial_026_run_multiple_models.exe
 ```
 
 문서화된 모델과 에셋을 사용하면 두 버전 모두 다음과 유사한 결과를 출력합니다.

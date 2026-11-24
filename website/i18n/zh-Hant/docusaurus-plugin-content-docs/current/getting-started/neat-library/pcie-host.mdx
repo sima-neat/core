@@ -4,7 +4,7 @@ description: "安裝 PCIe 主機的執行階段，以便在連接的 Modalix PCI
 sidebar_position: 3
 ---
 
-請使用此頁面，在已連接至 Modalix PCIe 卡的 Linux 主機上安裝 Neat PCIe 主機套件。
+請使用此頁面，在已連接至 Modalix PCIe 卡且受支援的 Linux 或 Windows 主機上安裝 Neat PCIe 主機套件。
 
 Neat PCIe 主機套件提供協同處理 API，用於將來自主機的輸入傳送到已連接的 Modalix PCIe 卡，並接收推論結果。
 
@@ -13,8 +13,8 @@ Neat PCIe 主機套件提供協同處理 API，用於將來自主機的輸入傳
 :::
 
 :::tip 何時需要離線安裝
-若目標無法從 SiMa.ai 服務下載套件，請使用[離線安裝](#offline-installation)。
-在可連上網際網路的電腦上下載套件。
+若 Ubuntu 目標無法從 SiMa.ai 服務下載套件，請使用[離線安裝](#offline-installation)。
+在可連上網際網路的電腦上下載套件。Windows 主機目前尚無法使用離線安裝。
 :::
 
 ## 支援的主機作業系統
@@ -25,8 +25,21 @@ Neat PCIe 主機封裝支援以下經過驗證的主機平台：
 | --- | --- | --- |
 | Ubuntu 22.04 | x86_64 | 支援 |
 | Ubuntu 24.04 | x86_64 | 支援 |
+| Windows 11 家用版或專業版，組建 26300 | x86_64 | 原生預覽 |
 
-Arm64 主機上的建置尚未經過驗證。Windows 11 不受支援。
+Arm64 主機上的建置尚未經過驗證。Windows 套件包含 PCIe GenAI API，但在相符的 Platform 提供者以及完整的 Windows C++ 與 Python GenAI 版本發布矩陣通過資格驗證之前，這並非受支援的客戶設定。
+
+Windows 預覽版有下列限制：
+
+- 不支援 Windows 10、Windows Server、S 模式的 Windows 以及 Arm64 Windows。
+- Platform 3.0 Windows 套件的虛擬乙太網路驅動程式 `SiMaNetAdapter` 採用測試簽章。只有在關閉安全開機（Secure Boot）並開啟 Windows 測試簽章模式時，Windows 才會載入此驅動程式。必須保持開啟安全開機的主機，在提供正式簽章的 `SiMaNetAdapter` 驅動程式之前，無法使用預覽版。
+- Windows 重新啟動後，可能找不到卡片，或模型可能逾時。請將主機關機後再開機，而不要重新啟動。睡眠、休眠與快速啟動尚未經過驗證。
+- 目前僅驗證過每部主機一張卡片的設定。
+- 預覽版套件未經程式碼簽署。智慧型應用程式控制（Smart App Control）、Windows Defender 應用程式控制，以及強制執行的 AppLocker 原則會封鎖這些套件。
+- GenAI 模型資料夾的路徑必須能以 Windows 系統字碼頁表示。
+- 若在 Windows 執行期間卡片脫離 PCIe 匯流排，Windows 可能會以藍色畫面停止，例如在裝置管理員中或使用 `pnputil` 重新啟動卡片或其 PCIe 連接埠時。請勿在 Windows 執行期間重新啟動卡片或其連接埠。若卡片停止回應，請將主機關機後再開機。
+- Platform 套件會將 `Opening simaai_mla_c0` 等佇列訊息輸出到每個 PCIe 應用程式的標準輸出。請勿將應用程式的標準輸出當作資料剖析，而應將結果寫入檔案。
+- [離線安裝](#offline-installation)僅適用於 Ubuntu 主機。Windows 主機需要連上網際網路才能安裝套件。
 
 ## 線上安裝先決條件
 
@@ -38,8 +51,8 @@ Arm64 主機上的建置尚未經過驗證。Windows 11 不受支援。
   [PCIe Driver Installation guide](https://developer.sima.ai/hardware/getting-started/pcie-mode/driver-installation).
 - 連接並設定 Modalix PCIe 卡，使其管理介面為
   可以從主機存取。預設的卡片 0 位址為 `10.0.0.2`。
-- 在卡片上安裝相容的 Neat Library 版本。主機和
-  卡片套件必須來自相容的版本。
+- 請準備在卡片上安裝同一版本的 Neat Library。主機和
+  卡片套件必須來自相容的版本。安裝主機套件後，請依照[在卡片上安裝 Neat](#install-neat-on-the-card)進行。
 
 驗證 PCIe 主機，以便它可以下載 SiMa.ai 成品：
 
@@ -79,21 +92,204 @@ python3 -c "import pyneatpcie; print('pyneatpcie ready')"
 gst-inspect-1.0 neatpciehost
 </ShellCommand>
 
-## 疑難排解
+接著[在卡片上安裝 Neat](#install-neat-on-the-card)。
 
-如果 SSH 佈線無法自動偵測到卡片，請先確認主機是否能夠連線到其管理位址：
+## 安裝 Windows 11 原生預覽
+
+Windows 預覽是 `pcie::Model` 視覺 API 的原生 Visual Studio 建置，並包含 `pcie::genai::GenAIModel`。如上所述，GenAI 仍需通過版本發布資格驗證；僅安裝 API 並不代表 Platform 傳輸或卡片模型已通過資格驗證。請依下列順序安裝先決條件：
+
+1. 來自 [python.org](https://www.python.org/downloads/windows/) 的 64 位元 CPython 3.14，可為所有使用者或僅為目前使用者安裝。請在安裝 `sima-cli` 之前先安裝 Python。自由執行緒（free-threaded）建置無法載入此 wheel。
+2. 依照 [sima-cli 安裝指南](/tools/sima-cli/) 安裝的 `sima-cli`。接著使用 `sima-cli login` 登入。較舊的 `sima-cli` 會以 `Missing 'script' in 'installation'` 停止；請重新執行 sima-cli 安裝程式加以更新，然後再試一次。若在新視窗中執行 `sima-cli --version` 仍顯示舊版本，表示 PATH 中有另一份副本排在前面；安裝程式會顯示警告，指出該副本以及修正方式。
+3. SiMa Platform 3.0 Windows 套件。它提供 PCIe 驅動程式與 `SiMaMlaDaemon` 服務。其虛擬乙太網路驅動程式 `SiMaNetAdapter` 採用測試簽章，而非正式簽章。只有在關閉安全開機並開啟 Windows 測試簽章模式時，Windows 才會載入此驅動程式。Platform 安裝程式會開啟測試簽章，但在安全開機開啟時 Windows 不允許這項變更，因此請在安裝 Platform 套件之前關閉安全開機。若要檢查這兩項設定，請以系統管理員身分啟動 PowerShell 並執行：
+
+   ```powershell
+   Confirm-SecureBootUEFI
+   bcdedit
+   ```
+
+   `Confirm-SecureBootUEFI` 必須輸出 `False`，且 `bcdedit` 的輸出必須列出 `testsigning Yes`。開啟測試簽章後，Windows 桌面會顯示 **測試模式**。安全開機需在電腦的韌體（UEFI）設定中關閉；步驟依電腦製造商而異，請參閱 [停用安全開機](https://learn.microsoft.com/windows-hardware/manufacture/desktop/disabling-secure-boot)。變更安全開機可能會啟動 BitLocker 修復。若系統磁碟機使用 BitLocker 或裝置加密，請在變更安全開機之前確認組織的裝置加密原則、暫停 BitLocker，並備妥修復金鑰。
+
+   接著以系統管理員身分啟動 PowerShell 並安裝套件。`sima-cli` 會將套件下載到目前的目錄，而系統管理員視窗會在 `C:\Windows\System32` 中開啟，因此請先切換到工作目錄：
+
+   ```powershell
+   New-Item -ItemType Directory -Force "$HOME\sima-platform" | Out-Null
+   Set-Location "$HOME\sima-platform"
+   sima-cli install drivers/windows
+   ```
+
+   當安裝程式詢問是否重新啟動 Windows 時，請回答 `N`。接著將主機關機後再開機。Neat 安裝程式檢查的是驅動程式版本，而不是 **Installed apps** 中顯示的套件名稱。若要查看驅動程式版本，請在 PowerShell 中執行 `Get-CimInstance Win32_PnPSignedDriver | Where-Object DeviceName -like 'SiMa.ai*' | Select-Object DeviceName, DriverVersion`。安裝卡片後，輸出會列出 `SiMa.ai MLA Device` 與 `SiMa.ai Virtual Ethernet Adapter`。
+4. GStreamer 1.28.6 MSVC x64，下載自 [gstreamer-1.0-msvc-x86_64-1.28.6.exe](https://gstreamer.freedesktop.org/data/pkg/windows/1.28.6/msvc/gstreamer-1.0-msvc-x86_64-1.28.6.exe)。此套件必須使用這個確切版本。請選擇包含開發檔案的安裝類型，C++ 應用程式需要這些檔案。安裝完成後請開啟新的終端機，使其能讀取 GStreamer 安裝程式所設定的 `GSTREAMER_1_0_ROOT_MSVC_X86_64` 變數。
+
+請以平常使用的使用者身分（而非系統管理員）開啟 PowerShell，並建立一個工作目錄來存放下載的套件與記錄檔。以系統管理員身分啟動的 PowerShell 視窗會在 `C:\Windows\System32` 中開啟；請勿從該處安裝。然後安裝 Windows 套件：
+
+```powershell
+New-Item -ItemType Directory -Force "$HOME\neat-pcie" | Out-Null
+Set-Location "$HOME\neat-pcie"
+```
 
 <ShellCommand prompt="pcie-host">
-ping -c 1 10.0.0.2
+sima-cli neat install core/pciehost/windows/amd64@v%%release.core%%
 </ShellCommand>
 
-然後以明確指定的位址執行已安裝的設定工具：
+Windows 套件會從第一個包含這些套件的 Neat 版本開始發布。
+
+此指令會將相符的 Scheduler MSI、Core MSI 和 `win_amd64` wheel 安裝為同一組套件。Windows 會針對這兩個 MSI 套件要求一次系統管理員核准。下載的套件與 Windows Installer 記錄檔會留在目前的目錄中。
+
+CLI 會在執行 MSI 前檢查 Windows OpenSSH、Platform 服務、GStreamer，以及相容的 Python 安裝。它會建立或重用 `%USERPROFILE%\pyneatpcie` 環境、驗證所有已發布的總和檢查碼、呼叫 Windows Installer 安裝 Scheduler 與 Core，並執行主機診斷及安裝相符的程式設計代理技能和 wheel。如需修復或升級，請再次執行相同指令。若要使用其他環境，請指定 `--python-executable <path>`；若只安裝原生 C++，請使用 `--native-only`。原生元件由 Windows Installer 負責移除；Python 套件則由 pip 負責移除。
+
+與 Ubuntu 相同，安裝的最後一步會使用已安裝的設定工具，設定連到卡片的免密碼 SSH。它會建立或重用 `%USERPROFILE%\.ssh\sima_neat_pcie_ed25519`；若公開金鑰尚未註冊，OpenSSH 會詢問一次卡片 `sima` 帳戶的密碼。此工具不會儲存該密碼。若要再次執行，例如在新增或更換卡片之後：
+
+```powershell
+& "$env:ProgramFiles\SimaPCIeHost\bin\pcie-setup.cmd"
+```
+
+此工具會從 Platform 的 PCIe 網路介面卡的本機 `10.0.N.1` 位址探索卡片位址。若無法自動探索，請傳入 `-Hosts 10.0.0.2`。每次執行都會記錄卡片目前的 SSH 主機金鑰，因此重新刷寫或更換過的卡片會再次受到信任。`.cmd` 包裝指令碼只會在其自身的 PowerShell 程序中允許執行此已安裝的指令碼，不會變更使用者或電腦的執行原則。
+
+匯入擴充模組前，Python 套件會在預設安裝根目錄和一個 GStreamer 根目錄下尋找 DLL。它會使用 `GSTREAMER_ROOT_X86_64`、`GSTREAMER_1_0_ROOT_MSVC_X86_64` 與預設 x64 GStreamer 位置中第一個包含 GStreamer 的位置；若要選用其他 GStreamer 安裝，請設定 `GSTREAMER_ROOT_X86_64`。若使用其他安裝根目錄，請將 `SIMA_PCIE_HOST_LIBRARY_PATH` 設為包含 PCIe 主機及 GStreamer DLL 的目錄。如果必要的 DLL 已從核准位置以外的地方載入，匯入將會失敗。請先讓安裝版本一致並啟動新程序，不要繼續使用混合的執行階段。
+
+驗證已安裝的 wheel 與外掛程式。診斷工具會載入 `neatpciehost` 外掛程式，並顯示其使用的 GStreamer 與 Platform 目錄；`neat.cmd` 則會顯示主機與卡片上的軟體：
+
+```powershell
+$venv = "$env:USERPROFILE\pyneatpcie"
+$root = "$env:ProgramFiles\SimaPCIeHost"
+& "$root\bin\sima-pcie-host-doctor.cmd"
+& "$venv\Scripts\python.exe" -m pip check
+& "$venv\Scripts\python.exe" -c "import pyneatpcie as p; print(p.__version__, p.Model)"
+& "$root\bin\neat.cmd"
+```
+
+接著[在卡片上安裝 Neat](#install-neat-on-the-card)。
+
+### 在 Windows 上執行應用程式 {#run-applications-on-windows}
+
+[PCIe Co-Processing](/develop-apps/hello-neat/pcie/) 範例與 PCIe 教學課程使用 Linux 指令。在 Windows 上，請使用受管理環境的直譯器執行 Python 程式。不需要啟用環境，而且預設的 PowerShell 執行原則會封鎖 `Activate.ps1`：
+
+```powershell
+& "$env:USERPROFILE\pyneatpcie\Scripts\python.exe" pcie_host.py
+```
+
+C++ 應用程式需要安裝 **Desktop development with C++** 工作負載的 Visual Studio 2022 17.14 版或更新版本（包括 Visual Studio 2026）。使用 OpenCV 的範例也需要 [opencv.org](https://opencv.org/releases/) 提供的 OpenCV 5.0.0 Windows 套件。此套件只提供 Release 組態：Debug 建置會因編譯器錯誤而停止，`--config RelWithDebInfo` 則會建置含偵錯資訊的版本。請在您的 Visual Studio 版本的 **x64 Native Tools Command Prompt** 中建置並執行：
+
+```bat
+call "%ProgramFiles%\SimaPCIeHost\bin\sima-pcie-host-env.cmd"
+set "OpenCV_DIR=C:\opencv\build"
+cmake -S . -B build
+cmake --build build --config Release
+set "PATH=%OpenCV_DIR%\x64\vc16\bin;%PATH%"
+build\Release\pcie_host.exe
+```
+
+請將 `C:\opencv\build` 替換為解壓縮後 OpenCV 套件的 `build` 目錄。`sima-pcie-host-env.cmd` 只會變更目前的命令提示字元。若要從其他 shell 啟動您自己的程式，請透過 `sima-pcie-host-run.cmd` 執行，它只會對該程式套用相同的設定：
+
+```powershell
+& "$env:ProgramFiles\SimaPCIeHost\bin\sima-pcie-host-run.cmd" build\Release\pcie_host.exe
+```
+
+主機套件會將教學課程安裝在安裝目錄下，因此 Windows 不需要另外下載教學課程。教學課程程式會從目前目錄讀取模型封存檔與 `share\sima-pcie-host\tutorials`。請將原始碼複製到可寫入的目錄，加入 [Tutorial Setup](/tutorials/before-you-run) 中列出的模型封存檔，然後從該目錄執行程式：
+
+```powershell
+$root = "$env:ProgramFiles\SimaPCIeHost"
+New-Item -ItemType Directory -Force pcie-tutorials\share\sima-pcie-host | Out-Null
+Copy-Item -Recurse "$root\share\sima-pcie-host\tutorials" pcie-tutorials\share\sima-pcie-host\
+Set-Location pcie-tutorials
+& "$env:USERPROFILE\pyneatpcie\Scripts\python.exe" share\sima-pcie-host\tutorials\024_run_your_first_model_over_pcie\run_tensor_mode.py
+& "$root\bin\sima-pcie-host-run.cmd" "$root\lib\sima-pcie-host\tutorials\tutorial_024_run_tensor_mode.exe"
+```
+
+預先建置的 C++ 教學課程會載入安裝在其旁邊的 OpenCV 執行階段，因此不需要 OpenCV 套件。
+
+### 在 Windows 上解除安裝
+
+```powershell
+sima-cli packages list
+sima-cli packages remove gh:sima-neat/core/pciehost/windows/amd64 --version <version> --yes
+& "$env:USERPROFILE\pyneatpcie\Scripts\python.exe" -m pip uninstall -y pyneatpcie
+sima-cli playbooks remove neat-pcie-application-builder --yes
+```
+
+請使用 `sima-cli packages list` 顯示的版本。此指令會在一次系統管理員核准下，先移除 Core，再移除 Scheduler。它不會刪除 Python 環境；若沒有其他應用程式使用 `%USERPROFILE%\pyneatpcie`，請將其刪除。SSH 金鑰 `%USERPROFILE%\.ssh\sima_neat_pcie_ed25519`、`%USERPROFILE%\.ssh\known_hosts` 中的卡片項目，以及工作目錄中下載的套件與記錄檔也會保留。
+
+`sima-cli` 會透過 `%USERPROFILE%\.sima-cli\registry.json` 中的安裝記錄（receipt）找到這些套件，因此請先移除套件，再移除 `sima-cli` 或該資料夾。若安裝記錄已遺失，可以再次執行已安裝版本的安裝指令以還原安裝記錄，然後依上述方式移除套件；或在 **Settings > Apps > Installed apps** 中先解除安裝 `sima-pcie-host`，再解除安裝 `simaai-scheduler-pcie-host`。若您刪除了整個 `%USERPROFILE%\.sima-cli` 資料夾，安裝指令會先停止，並顯示技能已存在於 sima-cli 登錄之外的訊息；請刪除訊息中列出的技能資料夾，然後再次執行安裝指令。
+
+安裝記錄屬於執行安裝的 Windows 帳戶，而套件則是為整台電腦安裝，因此其他帳戶須執行相同的安裝指令，以取得自己的安裝記錄、Python 環境、技能與卡片 SSH 金鑰；這會修復套件，而不會重新安裝。
+
+Windows Installer 不會以較舊的版本取代已安裝的套件。若要安裝較舊的版本，請先解除安裝目前已安裝的版本。
+
+移除套件後，若要移除 `sima-cli` 本身，請依照 [sima-cli 安裝指南](/tools/sima-cli/) 的說明，以 `uninstall` 引數執行其安裝程式。
+
+## 在卡片上安裝 Neat {#install-neat-on-the-card}
+
+卡片需要與主機套件相同版本的 Neat Library。請先安裝主機套件，以完成卡片 SSH 的佈建，然後從主機在每張卡片上安裝 Neat。升級時，請先升級主機套件，再升級每張卡片，然後才再次執行應用程式。
+
+請在主機上的空白工作目錄中執行下列指令。這些指令會下載 Neat Library 離線套件、將其複製到位於 `10.0.0.2` 的卡片，並在卡片上執行其安裝程式。當安裝程式要求時，請輸入卡片 `sima` 帳戶的密碼。若是其他卡片，請將 `10.0.0.2` 替換為該卡片的位址 `10.0.N.2`。
+
+在 Ubuntu 上：
 
 <ShellCommand prompt="pcie-host">
-pcie-setup.sh --hosts "10.0.0.2"
+sima-cli neat install core/offline@v%%release.core%% -t minimal --download-only
+scp -i ~/.ssh/sima_neat_pcie_ed25519 neat-core-offline-installer*.tar.gz sima@10.0.0.2:/var/tmp/neat-core-offline-installer.tar.gz
+ssh -t -i ~/.ssh/sima_neat_pcie_ed25519 sima@10.0.0.2 "cd /var/tmp && rm -rf neat-core-offline && tar -xzf neat-core-offline-installer.tar.gz && cd neat-core-offline && ./install.sh && ./install.sh --verify && cd /var/tmp && rm -rf neat-core-offline neat-core-offline-installer.tar.gz"
 </ShellCommand>
 
-如果套件安裝或執行階段啟動失敗，請確認 PCIe 主機套件以及安裝在卡上的 Neat Library，是否來自相容的版本。
+在 Windows 上，請於 PowerShell 中執行：
+
+```powershell
+sima-cli neat install core/offline@v%%release.core%% -t minimal --download-only
+$bundle = (Get-Item neat-core-offline-installer*.tar.gz).FullName
+scp -i "$env:USERPROFILE\.ssh\sima_neat_pcie_ed25519" $bundle sima@10.0.0.2:/var/tmp/neat-core-offline-installer.tar.gz
+ssh -t -i "$env:USERPROFILE\.ssh\sima_neat_pcie_ed25519" sima@10.0.0.2 "cd /var/tmp && rm -rf neat-core-offline && tar -xzf neat-core-offline-installer.tar.gz && cd neat-core-offline && ./install.sh && ./install.sh --verify && cd /var/tmp && rm -rf neat-core-offline neat-core-offline-installer.tar.gz"
+```
+
+安裝程式在變更任何內容之前，會先檢查卡片是否執行相容的 Platform 3.0 版本；`--verify` 則會檢查已安裝的套件與 PyNeat 匯入。在 Ubuntu 上執行 `neat`，或在 Windows 的 PowerShell 中執行 `& "$env:ProgramFiles\SimaPCIeHost\bin\neat.cmd"`，即可比較主機與卡片上的 Neat 版本。
+
+## 疑難排解 {#troubleshooting}
+
+大多數失敗都會在錯誤訊息的結尾顯示下一步該怎麼做。下表列出 Ubuntu 與 Windows 上的常見情況。在 Ubuntu 上，設定工具為 `pcie-setup.sh`；在 Windows 上則為 `& "$env:ProgramFiles\SimaPCIeHost\bin\pcie-setup.cmd"`。
+
+| 症狀 | 原因 | 處理方式 |
+| --- | --- | --- |
+| SSH 佈建找不到卡片 | 無法連線到卡片，或其管理連線尚未設定 | 在 Ubuntu 上使用 `ping -c 1 10.0.0.2`，或在 Windows 上使用 `Test-Connection -ComputerName 10.0.0.2 -Count 1` 檢查連線，然後執行設定工具，並在 Ubuntu 上加上 `--hosts 10.0.0.2`，或在 Windows 上加上 `-Hosts 10.0.0.2`。 |
+| `REMOTE HOST IDENTIFICATION HAS CHANGED` 或 `Host key verification failed` | 卡片已重新刷寫或更換，因此有新的 SSH 主機金鑰 | 再次執行設定工具。它會記錄卡片目前的金鑰。 |
+| `Permission denied (publickey)` | 卡片上沒有此主機的 Neat SSH 金鑰 | 執行設定工具，並在 OpenSSH 詢問時輸入卡片的 `sima` 密碼。 |
+| 模型啟動時出現 `missing_builder` | 卡片上未安裝 Neat | 從與主機套件相同的版本[在卡片上安裝 Neat](#install-neat-on-the-card)。 |
+| 模型啟動時出現 `queue_busy` | 卡片上的工作程序仍佔用該佇列，例如主機應用程式結束時未關閉其模型 | 若沒有其他應用程式使用該佇列，請依下方說明停止殘留的工作程序，然後再次啟動模型。 |
+| 升級後模型無法啟動或逾時 | 主機套件與卡片執行的是不同版本 | 在主機與卡片上安裝相同版本。 |
+
+若要停止佇列 `0` 的殘留卡片工作程序，請在主機上執行下列指令。請將 `--queue 0` 中的 `0` 替換為錯誤訊息中的佇列，並將 `10.0.0.2` 替換為卡片位址。
+
+在 Ubuntu 上：
+
+<ShellCommand prompt="pcie-host">
+ssh -i ~/.ssh/sima_neat_pcie_ed25519 sima@10.0.0.2 "pkill -f '[p]cie-pipeline-builder.*--queue 0( |$)'"
+</ShellCommand>
+
+在 Windows 上：
+
+```powershell
+ssh -i "$env:USERPROFILE\.ssh\sima_neat_pcie_ed25519" sima@10.0.0.2 "pkill -f '[p]cie-pipeline-builder.*--queue 0( |$)'"
+```
+
+在 Windows 上，也請檢查下列情況：
+
+| 症狀 | 原因 | 處理方式 |
+| --- | --- | --- |
+| `SiMa.ai MLA Device` 或 `SiMa.ai Virtual Ethernet Adapter` 未出現在裝置管理員中或顯示警告，或安裝程式回報找不到 Platform 驅動程式 | 尚未安裝 Platform 套件；安全開機已開啟或測試簽章已關閉，因此 Windows 不會載入測試簽章的 `SiMaNetAdapter` 驅動程式；或 Windows 未偵測到卡片 | 使用 `sima-cli install drivers/windows` 安裝 Platform 套件。在以系統管理員身分啟動的 PowerShell 中，確認 `Confirm-SecureBootUEFI` 輸出 `False`，且 `bcdedit` 列出 `testsigning Yes`。若安全開機已開啟，請在韌體設定中將其關閉，然後執行 `bcdedit /set testsigning on`。若兩項設定都正確，請確認卡片已確實插好並已通電。接著將主機關機後再開機。 |
+| 安裝後 Windows 要求重新啟動，或重新啟動後找不到卡片 | Windows 重新啟動後，卡片不一定會恢復 | 請將主機關機後再開機，而不要重新啟動。 |
+| 其他模型開啟時，模型無法啟動，且 Platform 回報錯誤 1450 | 每個開啟的佇列都會為其緩衝區保留實體連續的主機記憶體，其大小會隨佇列深度與張量大小增加 | 減少同時開啟的模型數量，並關閉其他應用程式。記憶體較少的主機能同時開啟的佇列也較少。 |
+| `SiMaMlaDaemon` 無法停止，或 Platform 套件升級一直等待 | 應用程式仍開啟著 GenAI 模型 | 關閉應用程式，然後再停止或升級服務。 |
+| 安裝停止並傳回結束代碼 1625 | 智慧型應用程式控制、Windows Defender 應用程式控制或 AppLocker 原則封鎖了未簽署的套件 | 在該原則允許這些套件的主機上安裝。 |
+| 安裝較舊版本時停止並傳回結束代碼 1603 | Windows Installer 不會取代較新的版本 | 解除安裝目前已安裝的版本，然後再安裝較舊的版本。 |
+| 未出現系統管理員核准提示，或該提示遭原則封鎖 | 端點安全性封鎖了提升權限要求 | 以系統管理員身分啟動 PowerShell，切換到您的工作目錄，並在該處執行安裝指令。 |
+| `pcie-setup.cmd` 遭貴組織設定的執行原則封鎖 | 群組原則會覆寫包裝指令碼僅限程序的執行原則 | 依下方說明，使用 OpenSSH 手動註冊金鑰。 |
+| 找不到第二張卡片 | 卡片 `N` 使用 `10.0.N.2` | 使用 `-Range 0-1` 執行設定工具，並在應用程式中以 `card_id` 選取卡片。 |
+
+若要在不使用 `pcie-setup.cmd` 的情況下註冊金鑰，請建立金鑰，在兩次通關密語提示時都按下 **Enter**，將其公開金鑰附加到卡片上，然後確認可以免密碼登入：
+
+```powershell
+ssh-keygen -t ed25519 -f "$env:USERPROFILE\.ssh\sima_neat_pcie_ed25519"
+Get-Content "$env:USERPROFILE\.ssh\sima_neat_pcie_ed25519.pub" | ssh sima@10.0.0.2 "umask 077; mkdir -p ~/.ssh; tr -d '\r' >> ~/.ssh/authorized_keys"
+ssh -i "$env:USERPROFILE\.ssh\sima_neat_pcie_ed25519" -o IdentitiesOnly=yes sima@10.0.0.2 true
+```
 
 ## 離線安裝 {#offline-installation}
 

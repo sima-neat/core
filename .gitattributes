@@ -1,0 +1,6 @@
+# Windows scripts ship with CRLF line endings, as the hosted Windows build has
+# always checked them out (core.autocrlf=true there). Pin them so the shipped
+# bytes do not depend on the Git configuration of the build machine.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf

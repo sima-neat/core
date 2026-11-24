@@ -1,5 +1,6 @@
 #include "simaai/neat/pcie/Model.h"
 
+#include "HostPlatform.h"
 #include "HostPcieChannel.h"
 #include "ModelArchiveSnapshot.h"
 #include "ModelOptionsJsonWriter.h"
@@ -7,10 +8,7 @@
 #include "RemoteRuntime.h"
 #include "RuntimeModelAccess.h"
 
-#include <cerrno>
 #include <chrono>
-#include <cstdlib>
-#include <cstring>
 #include <exception>
 #include <filesystem>
 #include <fstream>
@@ -19,7 +17,6 @@
 #include <thread>
 #include <utility>
 #include <vector>
-#include <unistd.h>
 
 namespace fs = std::filesystem;
 
@@ -30,25 +27,28 @@ namespace {
 // Preserve the established delay until readiness represents complete pipeline stabilization.
 constexpr auto kPostReadyStabilizationDelay = std::chrono::seconds(5);
 
-std::string write_temp_model_options(const std::string& contents) {
-  std::string tmpl = (fs::temp_directory_path() / "sima-neat-pcie-options-XXXXXX.json").string();
-  std::vector<char> chars(tmpl.begin(), tmpl.end());
-  chars.push_back('\0');
-  const int fd = ::mkstemps(chars.data(), 5);
-  if (fd < 0) {
-    throw std::runtime_error(std::string("mkstemps failed: ") + std::strerror(errno));
+void write_temp_model_options(const fs::path& path, const std::string& contents) {
+  std::ofstream out(path, std::ios::out | std::ios::trunc);
+  if (!out) {
+    throw std::runtime_error("failed to open temporary model-options file: " +
+                             internal::host_path_string(path));
   }
-  const std::string path(chars.data());
-  {
-    std::ofstream out(path, std::ios::out | std::ios::trunc);
-    if (!out) {
-      ::close(fd);
-      throw std::runtime_error("failed to open temp model-options file: " + path);
-    }
-    out << contents;
+  out << contents;
+  out.close();
+  if (!out) {
+    throw std::runtime_error("failed to write temporary model-options file: " +
+                             internal::host_path_string(path));
   }
-  ::close(fd);
-  return path;
+}
+
+std::string exception_message(const std::exception_ptr& error) {
+  try {
+    std::rethrow_exception(error);
+  } catch (const std::exception& e) {
+    return e.what();
+  } catch (...) {
+    return "unknown error";
+  }
 }
 
 } // namespace
@@ -132,16 +132,11 @@ public:
       remote_model_upload_ = remote_.upload_file(model_archive_->path());
 
       if (model_options.json.has_value()) {
-        const std::string local_options_path = write_temp_model_options(*model_options.json);
-        try {
-          remote_options_upload_ = remote_.upload_file(local_options_path);
-        } catch (...) {
-          std::error_code ec;
-          fs::remove(local_options_path, ec);
-          throw;
-        }
-        std::error_code ec;
-        fs::remove(local_options_path, ec);
+        internal::ScopedTempDirectory options_directory("sima-neat-pcie-options");
+        const auto local_options_path = options_directory.path() / "model-options.json";
+        write_temp_model_options(local_options_path, *model_options.json);
+        remote_options_upload_ =
+            remote_.upload_file(internal::host_path_string(local_options_path));
       }
 
       remote_uploads_may_be_in_use_ = true;
@@ -164,7 +159,10 @@ public:
       const auto status = remote_.wait_ready(connection_.queue, *remote_pid_, readiness_timeout_ms);
       if (!status.output_buffer_bytes)
         throw std::runtime_error(
-            "card builder did not report output_buffer_bytes; install matching Core packages");
+            "card builder did not report output_buffer_bytes, so the card runs an older Neat "
+            "release than this host (Neat " +
+            internal::RemoteRuntime::host_neat_version() +
+            "). Install the matching Neat release on the card (see Install Neat on the card).");
       std::this_thread::sleep_for(kPostReadyStabilizationDelay);
       channel_.configure(facts_, connection_.queue, connection_.card_id, connection_.max_inflight,
                          model_options.has_boxdecode || facts_.has_boxdecode,
@@ -174,7 +172,10 @@ public:
     } catch (...) {
       const std::exception_ptr build_error = std::current_exception();
       state_ = State::Failed;
-      channel_.stop();
+      try {
+        channel_.stop();
+      } catch (...) {
+      }
       if (remote_started_) {
         try {
           stop_remote_locked();
@@ -379,7 +380,14 @@ private:
   void close_locked() {
     reset_submission_state_locked();
     channel_.request_stop();
-    channel_.stop();
+    // A failed channel stop must not leave the card worker running; stop it regardless and
+    // leave the model failed so a later close() or build() retries the channel stop.
+    std::exception_ptr channel_stop_error;
+    try {
+      channel_.stop();
+    } catch (...) {
+      channel_stop_error = std::current_exception();
+    }
     if (state_ == State::Ready || state_ == State::Starting || state_ == State::Failed ||
         state_ == State::Stopping) {
       state_ = State::Stopping;
@@ -391,13 +399,21 @@ private:
           remote_stop_error = std::current_exception();
         }
       }
-      if (remote_stop_error) {
+      if (remote_stop_error && !channel_stop_error) {
         std::rethrow_exception(remote_stop_error);
       }
-      state_ = State::Exited;
+      if (remote_stop_error) {
+        throw std::runtime_error(
+            exception_message(channel_stop_error) +
+            "; card worker stop also failed: " + exception_message(remote_stop_error));
+      }
+      state_ = channel_stop_error ? State::Failed : State::Exited;
     }
     if (!remote_started_ && !remote_uploads_may_be_in_use_) {
-      cleanup_remote_uploads_locked(true);
+      cleanup_remote_uploads_locked(!channel_stop_error);
+    }
+    if (channel_stop_error) {
+      std::rethrow_exception(channel_stop_error);
     }
   }
 

@@ -25,9 +25,19 @@ PCIe による共同処理では、アプリケーションの制御と入力の
 <ShellCommand prompt="pcie-host">
 mkdir -p pcie-host-quickstart/assets
 cd pcie-host-quickstart
-sima-cli models download --id resnet_50 --variant w8a8
+sima-cli models download --id resnet_50 --variant w8a8 --force
 unzip -p models/resnet_50/w8a8/resnet_50_w8a8_default.zip resnet_50_w8a8_mpk.tar.gz > resnet_50.tar.gz
 </ShellCommand>
+
+Windowsでは、PowerShellで同じ手順を実行し、`Expand-Archive`でアーカイブを展開します。
+
+```powershell
+New-Item -ItemType Directory -Force pcie-host-quickstart\assets | Out-Null
+Set-Location pcie-host-quickstart
+sima-cli models download --id resnet_50 --variant w8a8 --force
+Expand-Archive models\resnet_50\w8a8\resnet_50_w8a8_default.zip -DestinationPath models\resnet_50\w8a8 -Force
+Copy-Item models\resnet_50\w8a8\resnet_50_w8a8_mpk.tar.gz resnet_50.tar.gz
+```
 
 すべてのチュートリアルのモデル準備については、[チュートリアルの設定](/tutorials/before-you-run)を参照してください。
 
@@ -41,6 +51,7 @@ unzip -p models/resnet_50/w8a8/resnet_50_w8a8_default.zip resnet_50_w8a8_mpk.tar
 pcie-host-quickstart/
 ├── assets/
 │   └── sample.png
+├── models/
 └── resnet_50.tar.gz
 ```
 
@@ -204,6 +215,8 @@ target_link_libraries(
 
 ## アプリケーションを実行します
 
+Windowsでは、代わりに[Windowsでアプリケーションを実行する](/getting-started/neat-library/pcie-host/#run-applications-on-windows)のコマンドを使用してください。
+
 <CodeTabs>
 <CodeTab label="Python" lang="python">
 
@@ -231,7 +244,7 @@ cmake --build build
 正常に実行されると、返された出力テンソルと、最も高いスコアを獲得した ImageNet クラスのインデックスが出力されます。ドキュメントに記載されている ResNet-50 アーティファクトとラブラドール犬の画像を使用した場合、期待される上位クラスはインデックス 208、つまりラブラドール・レトリバーです。
 
 ```text
-output: resnetv17_dense0_fwd [1, 1000]
+output: dequantize_1 [1, 1000]
 top1: 208
 ```
 

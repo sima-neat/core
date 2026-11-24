@@ -3,9 +3,20 @@
 #include <simaai/neat/pcie/genai/GenAIModel.h>
 
 #include <cstdlib>
+#include <filesystem>
 #include <iostream>
+#include <memory>
 #include <stdexcept>
 #include <string>
+#include <vector>
+
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#include <shellapi.h>
+#endif
 
 namespace tutorial {
 
@@ -22,17 +33,44 @@ struct Args {
   bool translate = false;
 };
 
+// The API takes UTF-8 paths. On Windows, main() receives its arguments in the ANSI code page,
+// which turns characters outside it into '?', so read the UTF-16 command line instead.
+inline std::vector<std::string> utf8_arguments([[maybe_unused]] int argc,
+                                               [[maybe_unused]] char** argv) {
+#ifdef _WIN32
+  int count = 0;
+  const std::unique_ptr<LPWSTR, decltype(&LocalFree)> wide(
+      CommandLineToArgvW(GetCommandLineW(), &count), &LocalFree);
+  if (!wide)
+    throw std::runtime_error("cannot read the command line");
+  std::vector<std::string> arguments;
+  for (int i = 0; i < count; ++i) {
+    const auto utf8 = std::filesystem::path(wide.get()[i]).u8string();
+    arguments.emplace_back(utf8.begin(), utf8.end());
+  }
+  return arguments;
+#else
+  return {argv, argv + argc};
+#endif
+}
+
+// Without this, std::filesystem would read the UTF-8 bytes in the ANSI code page on Windows.
+inline std::filesystem::path utf8_path(const std::string& path) {
+  return std::u8string(path.begin(), path.end());
+}
+
 inline Args parse_args(int argc, char** argv, const std::string& task) {
+  const auto arguments = utf8_arguments(argc, argv);
   Args args;
   args.connection.startup_timeout_ms = 900000;
   args.connection.request_timeout_ms = 300000;
   if (task == "vlm")
     args.prompt = "Describe this image briefly.";
   const std::string media_option = task == "vlm" ? "--image" : "--audio";
-  for (int i = 1; i < argc; ++i) {
-    const std::string option = argv[i];
+  for (std::size_t i = 1; i < arguments.size(); ++i) {
+    const std::string& option = arguments[i];
     if (option == "--help" || option == "-h") {
-      std::cout << "Usage: " << argv[0] << " --model HOST_DIRECTORY";
+      std::cout << "Usage: " << arguments[0] << " --model HOST_DIRECTORY";
       if (task != "llm")
         std::cout << ' ' << media_option << " HOST_FILE";
       std::cout << " [--card 0] [--card-host IP] [--user sima] [--ssh-key FILE]";
@@ -53,9 +91,9 @@ inline Args parse_args(int argc, char** argv, const std::string& task) {
       args.translate = true;
       continue;
     }
-    if (i + 1 >= argc)
+    if (i + 1 >= arguments.size())
       throw std::invalid_argument("missing value for " + option);
-    const std::string value = argv[++i];
+    const std::string& value = arguments[++i];
     if (option == "--model")
       args.model = value;
     else if (option == "--card")

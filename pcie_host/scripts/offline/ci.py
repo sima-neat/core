@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
 import subprocess
 from urllib.parse import quote
 
@@ -130,6 +131,15 @@ def is_core(args):
     return getattr(args, 'core', False)
 
 
+def fetch(args, key, path):
+    """Read a Core publication file, or this run's local neat-core-dist copy of it."""
+    local = getattr(args, 'local_core_dist', None)
+    if local is None:
+        download(args.bucket, key, path)
+    else:
+        shutil.copyfile(local/Path(key).name, path)
+
+
 def artifact_prefix(args):
     return prefix(args.ref, args.sha) + '/offline' if is_core(args) else prefix(args.ref, args.sha, args.distro, args.arch)
 
@@ -141,7 +151,7 @@ def source_metadata(args, work):
         directory.mkdir()
         key = prefix(args.ref, args.sha, args.distro, args.arch) if role == 'host' else prefix(args.ref, args.sha)
         path = directory/'metadata.json'
-        download(args.bucket, key+'/metadata.json', path)
+        fetch(args, key+'/metadata.json', path)
         data = json.loads(path.read_text())
         metadata_identity(data, args.sha, args.ref, args.distro if role == 'host' else None, args.arch)
         records[role], paths[role], inputs[role] = data, (key, directory), assemble.sha(path)
@@ -310,14 +320,14 @@ def build(args):
         return
     for role, (key, directory) in paths.items():
         for name, digest in records[role]['resources-checksum'].items():
-            download(args.bucket, key+'/'+name, directory/name)
+            fetch(args, key+'/'+name, directory/name)
             if assemble.sha(directory/name) != digest:
                 raise ValueError('publication resource checksum differs: '+name)
         assemble.verify_publication(directory, inputs[role])
     if is_core(args):
         name, digest = assemble.core_extras(records['card'])
         key, directory = paths['card']
-        download(args.bucket, key+'/'+name, directory/name)
+        fetch(args, key+'/'+name, directory/name)
         if assemble.sha(directory/name) != digest:
             raise ValueError('Core extras archive checksum mismatch')
     if not is_core(args):
@@ -431,8 +441,13 @@ def main():
     p.add_argument('--run-id', type=int)
     p.add_argument('--kms', default='')
     p.add_argument('--distribution', default='')
+    p.add_argument('--local-core-dist', type=Path,
+                   help="this run's neat-core-dist in place of its Core publication")
     args = p.parse_args()
     prefix(args.ref, args.sha)
+    if args.local_core_dist is not None and not (
+            args.command == 'build' and args.core and args.validation_only):
+        p.error('--local-core-dist requires build --core --validation-only')
     if args.command == 'build':
         if (not args.core and (args.distro, args.arch) not in TUPLES) or not re.fullmatch(r'[0-9a-f]{40}', args.installer_revision):
             p.error('build requires a host tuple and immutable installer revision')

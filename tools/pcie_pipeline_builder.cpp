@@ -1,9 +1,11 @@
 #include <neat.h>
+#include <neat/version.h>
 
 #include "gst/GstInit.h"
 #include "pipeline/internal/sima/BoxDecodeTypeUtils.h"
 #include "pipeline/runtime/RunCore.h"
 #include "pcie_output_capacity.h"
+#include "pcie_pipeline_lifecycle.h"
 
 #include <gst/gst.h>
 #include <nlohmann/json.hpp>
@@ -47,6 +49,8 @@ using simaai::neat::PCIeSinkOptions;
 using simaai::neat::PCIeSrcOptions;
 using simaai::neat::PreprocessColorFormat;
 using simaai::neat::ResizeMode;
+using simaai::neat::pcie_builder::clean_stop_status;
+using simaai::neat::pcie_builder::CleanStopReason;
 
 constexpr const char* kProgramName = "pcie-pipeline-builder";
 constexpr const char* kPcieSourceBufferName = "n0_pciesrc";
@@ -111,7 +115,8 @@ private:
 
 std::string usage() {
   return "usage: pcie-pipeline-builder --model <model.tar.gz> "
-         "--queue <0..5> [--model-options <options.json>] [--print-gst]";
+         "--queue <0..5> [--model-options <options.json>] [--print-gst]\n"
+         "       pcie-pipeline-builder --version";
 }
 
 std::string mode_name(const Mode mode) {
@@ -897,7 +902,7 @@ public:
     return readiness;
   }
 
-  void run_until_stop_or_error() {
+  CleanStopReason run_until_stop_or_error() {
     while (!g_stop_requested) {
       GstMessage* msg = gst_bus_timed_pop_filtered(
           bus_, 250 * GST_MSECOND,
@@ -913,10 +918,11 @@ public:
       }
       if (type == GST_MESSAGE_EOS) {
         gst_message_unref(msg);
-        throw PciePipelineError("gst_state", "GStreamer pipeline reached EOS");
+        return CleanStopReason::EndOfStream;
       }
       gst_message_unref(msg);
     }
+    return CleanStopReason::Signal;
   }
 
   void stop() noexcept {
@@ -1009,10 +1015,12 @@ int run_builder(const CliOptions& opt) {
       set_status(status_writer, status, "waiting", readiness.message());
     }
 
-    pipeline->run_until_stop_or_error();
-    set_status(status_writer, status, "stopping", "signal received");
+    const CleanStopReason stop_reason = pipeline->run_until_stop_or_error();
+    const auto clean_status = clean_stop_status(stop_reason);
+    set_status(status_writer, status, "stopping", std::string(clean_status.stopping_message));
     pipeline->stop();
-    set_status(status_writer, status, "exited", "pipeline stopped");
+    set_status(status_writer, status, std::string(clean_status.final_state),
+               std::string(clean_status.final_message));
     ownership.release();
     return 0;
   } catch (const PciePipelineError& e) {
@@ -1041,6 +1049,13 @@ int run_builder(const CliOptions& opt) {
 } // namespace
 
 int main(int argc, char** argv) {
+  // The host compares the package version (deps/manifest.json, as for the host package) with its
+  // own before it starts a worker. sima-neat-version, a tag name on tag builds, is for people.
+  if (argc == 2 && std::string(argv[1]) == "--version") {
+    std::cout << "sima-neat-version=" << sima_neat_version() << '\n'
+              << "sima-neat-package-version=" << SIMA_NEAT_PACKAGE_VERSION << '\n';
+    return 0;
+  }
   try {
     CliOptions opt = parse_cli(argc, argv);
     simaai::neat::gst_init_once();

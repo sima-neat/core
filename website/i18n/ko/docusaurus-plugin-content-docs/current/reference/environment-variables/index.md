@@ -190,4 +190,22 @@ ProcessCVU 단계는 기본적으로 Runtime의 `neatkernelrunner`를 통해 실
 
 ## PCIe 호스트 및 카드 상태
 
-`NEAT_PCIE_SSH_USER`는 카드 SSH 사용자(기본값 `sima`)를 선택합니다. `NEAT_PCIE_SSH_KEY`는 개인 키(기본값 `~/.ssh/sima_neat_pcie_ed25519`)를 선택하며 기존 SSH 설정과 에이전트 인증도 사용할 수 있습니다. `--offline`은 인터넷 업데이트 확인을 생략하지만 로컬 SSH로 연결된 카드를 조회합니다. PCIe 호스트 상태에서는 아티팩트 업데이트를 확인하지 않습니다. 호스트 패키지를 업데이트하려면 `sima-cli neat install core/pciehost/<distro>/<arch>@<ref>`를 사용하세요. `neat update`는 PCIe 카드를 업데이트하지 않습니다.
+`NEAT_PCIE_SSH_USER`는 카드 SSH 사용자(기본값 `sima`)를 선택합니다. `NEAT_PCIE_SSH_KEY`는 개인 키(기본값 `~/.ssh/sima_neat_pcie_ed25519`)를 선택합니다. Ubuntu에서는 기존 SSH 설정과 에이전트 인증도 사용할 수 있습니다. Windows에서는 이 키 파일이 있으면 OpenSSH가 해당 키와 SSH 설정의 `IdentityFile`에 지정된 키만 제시하며 ssh-agent 키는 제시하지 않습니다. `--offline`은 인터넷 업데이트 확인을 생략하지만 로컬 SSH로 연결된 카드를 조회합니다. PCIe 호스트 상태에서는 아티팩트 업데이트를 확인하지 않습니다. 호스트 패키지를 업데이트하려면 `sima-cli neat install core/pciehost/<distro>/<arch>@<ref>`를 사용하세요. `neat update`는 PCIe 카드를 업데이트하지 않습니다.
+
+## Windows PCIe 호스트 런타임
+
+Windows PCIe 호스트 패키지는 Python 패키지, `sima-pcie-host-env.cmd` 및 설치 사전 검사에서
+다음 변수를 읽습니다.
+
+- `GSTREAMER_ROOT_X86_64`: GStreamer 설치 프로그램이 기록한 루트 대신 사용할 GStreamer 설치
+  루트입니다. 가장 먼저 검색됩니다.
+- `GSTREAMER_1_0_ROOT_MSVC_X86_64`: GStreamer MSVC x64 설치 루트입니다. GStreamer 설치
+  프로그램이 이 변수를 설정합니다. `GSTREAMER_ROOT_X86_64` 다음,
+  `%ProgramFiles%\gstreamer\1.0\msvc_x86_64`보다 먼저 검색됩니다.
+- `SIMA_WINDOWS_PLATFORM_RUNTIME_DIR`: Platform 런타임 `SiMaPCIe.dll`이 있는 디렉터리입니다.
+  기본값은 `SiMaMlaDaemon` 서비스 실행 파일이 있는 디렉터리입니다.
+- `SIMA_PCIE_HOST_LIBRARY_PATH`: 기본 위치 외부에 설치한 경우 PCIe 호스트 및 GStreamer DLL이
+  있는 추가 디렉터리로, `;`로 구분합니다. Python 패키지가 이 변수를 읽습니다. Windows는
+  패키지가 추가하는 DLL 디렉터리 사이에 순서를 정하지 않으므로, 다른 위치에 이미 있는 DLL의
+  두 번째 사본이 있는 디렉터리는 지정하지 마세요. `sima-pcie-host-env.cmd`는 설치의 `bin`
+  디렉터리를 기존 값 앞에 추가합니다.

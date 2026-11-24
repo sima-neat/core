@@ -14,6 +14,528 @@
   ],
   "literalExceptions": [
     {
+      "path": "docs/getting-started/neat-library/pcie-host.mdx",
+      "line": "  reachable from the host. The default address for card 0 is `10.0.0.2`.",
+      "count": 1,
+      "reason": "Network address example, not a release version"
+    },
+    {
+      "path": "docs/getting-started/neat-library/pcie-host.mdx",
+      "line": "4. GStreamer 1.28.6 MSVC x64, from",
+      "count": 1,
+      "reason": "Windows third-party prerequisite version pinned in scripts/ci/pciehost/windows_build_inputs.json, not a Neat release"
+    },
+    {
+      "path": "docs/getting-started/neat-library/pcie-host.mdx",
+      "line": "   [gstreamer-1.0-msvc-x86_64-1.28.6.exe](https://gstreamer.freedesktop.org/data/pkg/windows/1.28.6/msvc/gstreamer-1.0-msvc-x86_64-1.28.6.exe).",
+      "count": 1,
+      "reason": "Windows third-party prerequisite version pinned in scripts/ci/pciehost/windows_build_inputs.json, not a Neat release"
+    },
+    {
+      "path": "docs/getting-started/neat-library/pcie-host.mdx",
+      "line": "Platform's PCIe network adapter. Pass `-Hosts 10.0.0.2` when discovery is",
+      "count": 1,
+      "reason": "Network address example, not a release version"
+    },
+    {
+      "path": "docs/getting-started/neat-library/pcie-host.mdx",
+      "line": "Examples that use OpenCV also need the OpenCV 5.0.0 Windows package from",
+      "count": 1,
+      "reason": "Windows third-party prerequisite version pinned in scripts/ci/pciehost/windows_build_inputs.json, not a Neat release"
+    },
+    {
+      "path": "docs/getting-started/neat-library/pcie-host.mdx",
+      "line": "Neat Library offline package, copy it to the card at `10.0.0.2`, and run its",
+      "count": 1,
+      "reason": "Network address example, not a release version"
+    },
+    {
+      "path": "docs/getting-started/neat-library/pcie-host.mdx",
+      "line": "`sima` account. For another card, replace `10.0.0.2` with its address,",
+      "count": 1,
+      "reason": "Network address example, not a release version"
+    },
+    {
+      "path": "docs/getting-started/neat-library/pcie-host.mdx",
+      "line": "scp -i ~/.ssh/sima_neat_pcie_ed25519 neat-core-offline-installer*.tar.gz sima@10.0.0.2:/var/tmp/neat-core-offline-installer.tar.gz",
+      "count": 1,
+      "reason": "Network address example, not a release version"
+    },
+    {
+      "path": "docs/getting-started/neat-library/pcie-host.mdx",
+      "line": "ssh -t -i ~/.ssh/sima_neat_pcie_ed25519 sima@10.0.0.2 \"cd /var/tmp && rm -rf neat-core-offline && tar -xzf neat-core-offline-installer.tar.gz && cd neat-core-offline && ./install.sh && ./install.sh --verify && cd /var/tmp && rm -rf neat-core-offline neat-core-offline-installer.tar.gz\"",
+      "count": 1,
+      "reason": "Network address example, not a release version"
+    },
+    {
+      "path": "docs/getting-started/neat-library/pcie-host.mdx",
+      "line": "scp -i \"$env:USERPROFILE\\.ssh\\sima_neat_pcie_ed25519\" $bundle sima@10.0.0.2:/var/tmp/neat-core-offline-installer.tar.gz",
+      "count": 1,
+      "reason": "Network address example, not a release version"
+    },
+    {
+      "path": "docs/getting-started/neat-library/pcie-host.mdx",
+      "line": "ssh -t -i \"$env:USERPROFILE\\.ssh\\sima_neat_pcie_ed25519\" sima@10.0.0.2 \"cd /var/tmp && rm -rf neat-core-offline && tar -xzf neat-core-offline-installer.tar.gz && cd neat-core-offline && ./install.sh && ./install.sh --verify && cd /var/tmp && rm -rf neat-core-offline neat-core-offline-installer.tar.gz\"",
+      "count": 1,
+      "reason": "Network address example, not a release version"
+    },
+    {
+      "path": "docs/getting-started/neat-library/pcie-host.mdx",
+      "line": "| SSH provisioning finds no card | The card is not reachable, or its management link is not configured | Check the link with `ping -c 1 10.0.0.2` on Ubuntu or `Test-Connection -ComputerName 10.0.0.2 -Count 1` on Windows, then run the setup utility with `--hosts 10.0.0.2` on Ubuntu or `-Hosts 10.0.0.2` on Windows. |",
+      "count": 1,
+      "reason": "Network address example, not a release version"
+    },
+    {
+      "path": "docs/getting-started/neat-library/pcie-host.mdx",
+      "line": "`--queue 0`, replace `0` with the queue from the error, and replace `10.0.0.2`",
+      "count": 1,
+      "reason": "Network address example, not a release version"
+    },
+    {
+      "path": "docs/getting-started/neat-library/pcie-host.mdx",
+      "line": "ssh -i ~/.ssh/sima_neat_pcie_ed25519 sima@10.0.0.2 \"pkill -f '[p]cie-pipeline-builder.*--queue 0( |$)'\"",
+      "count": 1,
+      "reason": "Network address example, not a release version"
+    },
+    {
+      "path": "docs/getting-started/neat-library/pcie-host.mdx",
+      "line": "ssh -i \"$env:USERPROFILE\\.ssh\\sima_neat_pcie_ed25519\" sima@10.0.0.2 \"pkill -f '[p]cie-pipeline-builder.*--queue 0( |$)'\"",
+      "count": 1,
+      "reason": "Network address example, not a release version"
+    },
+    {
+      "path": "docs/getting-started/neat-library/pcie-host.mdx",
+      "line": "Get-Content \"$env:USERPROFILE\\.ssh\\sima_neat_pcie_ed25519.pub\" | ssh sima@10.0.0.2 \"umask 077; mkdir -p ~/.ssh; tr -d '\\r' >> ~/.ssh/authorized_keys\"",
+      "count": 1,
+      "reason": "Network address example, not a release version"
+    },
+    {
+      "path": "docs/getting-started/neat-library/pcie-host.mdx",
+      "line": "ssh -i \"$env:USERPROFILE\\.ssh\\sima_neat_pcie_ed25519\" -o IdentitiesOnly=yes sima@10.0.0.2 true",
+      "count": 1,
+      "reason": "Network address example, not a release version"
+    },
+    {
+      "path": "docs/getting-started/neat-library/pcie-host.mdx",
+      "line": "Neat PCIe offline packages are available in version 0.6.0 or later.",
+      "count": 1,
+      "reason": "Minimum supported offline package version"
+    },
+    {
+      "path": "docs/getting-started/neat-library/pcie-host.mdx",
+      "line": "Select version 0.6.0 or later for the target host.",
+      "count": 1,
+      "reason": "Minimum supported offline package version"
+    },
+    {
+      "path": "website/i18n/ja/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
+      "line": "  ホストからアクセス可能な状態。カード0のデフォルトアドレスは`10.0.0.2`です。",
+      "count": 1,
+      "reason": "Network address example, not a release version"
+    },
+    {
+      "path": "website/i18n/ja/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
+      "line": "4. GStreamer 1.28.6 MSVC x64。[gstreamer-1.0-msvc-x86_64-1.28.6.exe](https://gstreamer.freedesktop.org/data/pkg/windows/1.28.6/msvc/gstreamer-1.0-msvc-x86_64-1.28.6.exe)から入手します。パッケージにはこのバージョンが厳密に必要です。C++アプリケーションに必要な開発ファイルを含むセットアップの種類を選択してください。インストール後は、GStreamerインストーラーが設定する`GSTREAMER_1_0_ROOT_MSVC_X86_64`変数が反映されるように、新しいターミナルを開いてください。",
+      "count": 1,
+      "reason": "Windows third-party prerequisite version pinned in scripts/ci/pciehost/windows_build_inputs.json, not a Neat release"
+    },
+    {
+      "path": "website/i18n/ja/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
+      "line": "このユーティリティは、PlatformのPCIeネットワークアダプターに割り当てられたローカルの`10.0.N.1`アドレスから、カードのアドレスを検出します。自動検出できない場合は、`-Hosts 10.0.0.2`を指定してください。実行するたびにカードの現在のSSHホストキーを記録するため、再フラッシュまたは交換したカードも再び信頼されます。`.cmd`ラッパーは、自身のPowerShellプロセスに限ってこのインストール済みスクリプトの実行を許可し、ユーザーやマシンの実行ポリシーは変更しません。",
+      "count": 1,
+      "reason": "Network address example, not a release version"
+    },
+    {
+      "path": "website/i18n/ja/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
+      "line": "C++アプリケーションには、**Desktop development with C++**ワークロードを含むVisual Studio 2022バージョン17.14以降（Visual Studio 2026を含む）が必要です。OpenCVを使用する例には、[opencv.org](https://opencv.org/releases/)のOpenCV 5.0.0 Windowsパッケージも必要です。パッケージが提供するのはReleaseビルド構成のみです。Debugビルドはコンパイラエラーで停止します。`--config RelWithDebInfo`ではデバッグ情報付きでビルドします。お使いのVisual Studioバージョンの**x64 Native Tools Command Prompt**でビルドして実行します。",
+      "count": 1,
+      "reason": "Windows third-party prerequisite version pinned in scripts/ci/pciehost/windows_build_inputs.json, not a Neat release"
+    },
+    {
+      "path": "website/i18n/ja/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
+      "line": "ホスト上の空の作業ディレクトリで、次のコマンドを実行します。これらのコマンドは、Neat Libraryのオフラインパッケージをダウンロードして`10.0.0.2`のカードにコピーし、カード上でそのインストーラーを実行します。インストーラーから求められたら、カードの`sima`アカウントのパスワードを入力してください。別のカードの場合は、`10.0.0.2`をそのカードのアドレス`10.0.N.2`に置き換えてください。",
+      "count": 1,
+      "reason": "Network address example, not a release version"
+    },
+    {
+      "path": "website/i18n/ja/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
+      "line": "scp -i ~/.ssh/sima_neat_pcie_ed25519 neat-core-offline-installer*.tar.gz sima@10.0.0.2:/var/tmp/neat-core-offline-installer.tar.gz",
+      "count": 1,
+      "reason": "Network address example, not a release version"
+    },
+    {
+      "path": "website/i18n/ja/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
+      "line": "ssh -t -i ~/.ssh/sima_neat_pcie_ed25519 sima@10.0.0.2 \"cd /var/tmp && rm -rf neat-core-offline && tar -xzf neat-core-offline-installer.tar.gz && cd neat-core-offline && ./install.sh && ./install.sh --verify && cd /var/tmp && rm -rf neat-core-offline neat-core-offline-installer.tar.gz\"",
+      "count": 1,
+      "reason": "Network address example, not a release version"
+    },
+    {
+      "path": "website/i18n/ja/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
+      "line": "scp -i \"$env:USERPROFILE\\.ssh\\sima_neat_pcie_ed25519\" $bundle sima@10.0.0.2:/var/tmp/neat-core-offline-installer.tar.gz",
+      "count": 1,
+      "reason": "Network address example, not a release version"
+    },
+    {
+      "path": "website/i18n/ja/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
+      "line": "ssh -t -i \"$env:USERPROFILE\\.ssh\\sima_neat_pcie_ed25519\" sima@10.0.0.2 \"cd /var/tmp && rm -rf neat-core-offline && tar -xzf neat-core-offline-installer.tar.gz && cd neat-core-offline && ./install.sh && ./install.sh --verify && cd /var/tmp && rm -rf neat-core-offline neat-core-offline-installer.tar.gz\"",
+      "count": 1,
+      "reason": "Network address example, not a release version"
+    },
+    {
+      "path": "website/i18n/ja/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
+      "line": "| SSHプロビジョニングでカードが見つからない | カードにアクセスできないか、カードの管理リンクが設定されていない | Ubuntuでは`ping -c 1 10.0.0.2`、Windowsでは`Test-Connection -ComputerName 10.0.0.2 -Count 1`でリンクを確認してから、Ubuntuでは`--hosts 10.0.0.2`、Windowsでは`-Hosts 10.0.0.2`を指定してセットアップユーティリティを実行します。 |",
+      "count": 1,
+      "reason": "Network address example, not a release version"
+    },
+    {
+      "path": "website/i18n/ja/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
+      "line": "キュー`0`に残っているカードのワーカーを停止するには、ホストで次のコマンドを実行します。`--queue 0`の`0`をエラーに表示されたキューに、`10.0.0.2`をカードのアドレスに置き換えてください。",
+      "count": 1,
+      "reason": "Network address example, not a release version"
+    },
+    {
+      "path": "website/i18n/ja/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
+      "line": "ssh -i ~/.ssh/sima_neat_pcie_ed25519 sima@10.0.0.2 \"pkill -f '[p]cie-pipeline-builder.*--queue 0( |$)'\"",
+      "count": 1,
+      "reason": "Network address example, not a release version"
+    },
+    {
+      "path": "website/i18n/ja/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
+      "line": "ssh -i \"$env:USERPROFILE\\.ssh\\sima_neat_pcie_ed25519\" sima@10.0.0.2 \"pkill -f '[p]cie-pipeline-builder.*--queue 0( |$)'\"",
+      "count": 1,
+      "reason": "Network address example, not a release version"
+    },
+    {
+      "path": "website/i18n/ja/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
+      "line": "Get-Content \"$env:USERPROFILE\\.ssh\\sima_neat_pcie_ed25519.pub\" | ssh sima@10.0.0.2 \"umask 077; mkdir -p ~/.ssh; tr -d '\\r' >> ~/.ssh/authorized_keys\"",
+      "count": 1,
+      "reason": "Network address example, not a release version"
+    },
+    {
+      "path": "website/i18n/ja/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
+      "line": "ssh -i \"$env:USERPROFILE\\.ssh\\sima_neat_pcie_ed25519\" -o IdentitiesOnly=yes sima@10.0.0.2 true",
+      "count": 1,
+      "reason": "Network address example, not a release version"
+    },
+    {
+      "path": "website/i18n/ja/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
+      "line": "Neat PCIe オフラインパッケージは、バージョン 0.6.0 以降で利用できます。",
+      "count": 1,
+      "reason": "Minimum supported offline package version"
+    },
+    {
+      "path": "website/i18n/ja/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
+      "line": "対象ホスト用のバージョン 0.6.0 以降を選択してください。",
+      "count": 1,
+      "reason": "Minimum supported offline package version"
+    },
+    {
+      "path": "website/i18n/ko/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
+      "line": "  호스트에서 접근할 수 있습니다. 카드 0의 기본 주소는 `10.0.0.2`입니다.",
+      "count": 1,
+      "reason": "Network address example, not a release version"
+    },
+    {
+      "path": "website/i18n/ko/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
+      "line": "4. GStreamer 1.28.6 MSVC x64. [gstreamer-1.0-msvc-x86_64-1.28.6.exe](https://gstreamer.freedesktop.org/data/pkg/windows/1.28.6/msvc/gstreamer-1.0-msvc-x86_64-1.28.6.exe)에서 받으세요. 패키지에는 정확히 이 버전이 필요합니다. C++ 애플리케이션에 필요한 개발 파일이 포함된 설치 유형을 선택하세요. 설치 후에는 GStreamer 설치 프로그램이 설정하는 `GSTREAMER_1_0_ROOT_MSVC_X86_64` 변수를 인식하도록 새 터미널을 여세요.",
+      "count": 1,
+      "reason": "Windows third-party prerequisite version pinned in scripts/ci/pciehost/windows_build_inputs.json, not a Neat release"
+    },
+    {
+      "path": "website/i18n/ko/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
+      "line": "이 유틸리티는 Platform PCIe 네트워크 어댑터의 로컬 `10.0.N.1` 주소에서 카드 주소를 검색합니다. 자동 검색을 사용할 수 없으면 `-Hosts 10.0.0.2`를 전달하세요. 실행할 때마다 카드의 현재 SSH 호스트 키를 기록하므로 다시 플래시하거나 교체한 카드도 다시 신뢰됩니다. `.cmd` 래퍼는 자체 PowerShell 프로세스에서만 설치된 이 스크립트의 실행을 허용하며, 사용자 또는 컴퓨터의 실행 정책은 변경하지 않습니다.",
+      "count": 1,
+      "reason": "Network address example, not a release version"
+    },
+    {
+      "path": "website/i18n/ko/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
+      "line": "C++ 애플리케이션에는 **Desktop development with C++** 워크로드가 포함된 Visual Studio 2022 버전 17.14 이상(Visual Studio 2026 포함)이 필요합니다. OpenCV를 사용하는 예제에는 [opencv.org](https://opencv.org/releases/)의 OpenCV 5.0.0 Windows 패키지도 필요합니다. 패키지는 Release 구성만 제공합니다. Debug 빌드는 컴파일러 오류로 중지되며, `--config RelWithDebInfo`는 디버깅 정보를 포함해 빌드합니다. 사용하는 Visual Studio 버전의 **x64 Native Tools Command Prompt**에서 빌드하고 실행하세요.",
+      "count": 1,
+      "reason": "Windows third-party prerequisite version pinned in scripts/ci/pciehost/windows_build_inputs.json, not a Neat release"
+    },
+    {
+      "path": "website/i18n/ko/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
+      "line": "호스트의 빈 작업 디렉터리에서 다음 명령을 실행하세요. 이 명령은 Neat Library 오프라인 패키지를 다운로드하여 `10.0.0.2`의 카드로 복사한 다음 카드에서 설치 프로그램을 실행합니다. 설치 프로그램이 요청하면 카드의 `sima` 계정 암호를 입력하세요. 다른 카드의 경우 `10.0.0.2`를 해당 카드의 주소인 `10.0.N.2`로 바꾸세요.",
+      "count": 1,
+      "reason": "Network address example, not a release version"
+    },
+    {
+      "path": "website/i18n/ko/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
+      "line": "scp -i ~/.ssh/sima_neat_pcie_ed25519 neat-core-offline-installer*.tar.gz sima@10.0.0.2:/var/tmp/neat-core-offline-installer.tar.gz",
+      "count": 1,
+      "reason": "Network address example, not a release version"
+    },
+    {
+      "path": "website/i18n/ko/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
+      "line": "ssh -t -i ~/.ssh/sima_neat_pcie_ed25519 sima@10.0.0.2 \"cd /var/tmp && rm -rf neat-core-offline && tar -xzf neat-core-offline-installer.tar.gz && cd neat-core-offline && ./install.sh && ./install.sh --verify && cd /var/tmp && rm -rf neat-core-offline neat-core-offline-installer.tar.gz\"",
+      "count": 1,
+      "reason": "Network address example, not a release version"
+    },
+    {
+      "path": "website/i18n/ko/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
+      "line": "scp -i \"$env:USERPROFILE\\.ssh\\sima_neat_pcie_ed25519\" $bundle sima@10.0.0.2:/var/tmp/neat-core-offline-installer.tar.gz",
+      "count": 1,
+      "reason": "Network address example, not a release version"
+    },
+    {
+      "path": "website/i18n/ko/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
+      "line": "ssh -t -i \"$env:USERPROFILE\\.ssh\\sima_neat_pcie_ed25519\" sima@10.0.0.2 \"cd /var/tmp && rm -rf neat-core-offline && tar -xzf neat-core-offline-installer.tar.gz && cd neat-core-offline && ./install.sh && ./install.sh --verify && cd /var/tmp && rm -rf neat-core-offline neat-core-offline-installer.tar.gz\"",
+      "count": 1,
+      "reason": "Network address example, not a release version"
+    },
+    {
+      "path": "website/i18n/ko/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
+      "line": "| SSH 프로비저닝에서 카드를 찾지 못함 | 카드에 연결할 수 없거나 카드의 관리 링크가 구성되지 않음 | Ubuntu에서는 `ping -c 1 10.0.0.2`, Windows에서는 `Test-Connection -ComputerName 10.0.0.2 -Count 1`로 링크를 확인한 다음, Ubuntu에서는 `--hosts 10.0.0.2`, Windows에서는 `-Hosts 10.0.0.2`를 지정하여 설정 유틸리티를 실행하세요. |",
+      "count": 1,
+      "reason": "Network address example, not a release version"
+    },
+    {
+      "path": "website/i18n/ko/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
+      "line": "큐 `0`에 남아 있는 카드 워커를 중지하려면 호스트에서 다음을 실행하세요. `--queue 0`의 `0`을 오류에 표시된 큐 번호로, `10.0.0.2`를 카드 주소로 바꾸세요.",
+      "count": 1,
+      "reason": "Network address example, not a release version"
+    },
+    {
+      "path": "website/i18n/ko/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
+      "line": "ssh -i ~/.ssh/sima_neat_pcie_ed25519 sima@10.0.0.2 \"pkill -f '[p]cie-pipeline-builder.*--queue 0( |$)'\"",
+      "count": 1,
+      "reason": "Network address example, not a release version"
+    },
+    {
+      "path": "website/i18n/ko/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
+      "line": "ssh -i \"$env:USERPROFILE\\.ssh\\sima_neat_pcie_ed25519\" sima@10.0.0.2 \"pkill -f '[p]cie-pipeline-builder.*--queue 0( |$)'\"",
+      "count": 1,
+      "reason": "Network address example, not a release version"
+    },
+    {
+      "path": "website/i18n/ko/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
+      "line": "Get-Content \"$env:USERPROFILE\\.ssh\\sima_neat_pcie_ed25519.pub\" | ssh sima@10.0.0.2 \"umask 077; mkdir -p ~/.ssh; tr -d '\\r' >> ~/.ssh/authorized_keys\"",
+      "count": 1,
+      "reason": "Network address example, not a release version"
+    },
+    {
+      "path": "website/i18n/ko/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
+      "line": "ssh -i \"$env:USERPROFILE\\.ssh\\sima_neat_pcie_ed25519\" -o IdentitiesOnly=yes sima@10.0.0.2 true",
+      "count": 1,
+      "reason": "Network address example, not a release version"
+    },
+    {
+      "path": "website/i18n/ko/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
+      "line": "Neat PCIe 오프라인 패키지는 0.6.0 이상 버전에서 사용할 수 있습니다.",
+      "count": 1,
+      "reason": "Minimum supported offline package version"
+    },
+    {
+      "path": "website/i18n/ko/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
+      "line": "대상 호스트에 맞는 0.6.0 이상 버전을 선택하세요.",
+      "count": 1,
+      "reason": "Minimum supported offline package version"
+    },
+    {
+      "path": "website/i18n/uk/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
+      "line": "  доступний із хоста. Адреса для карти 0 за замовчуванням — `10.0.0.2`.",
+      "count": 1,
+      "reason": "Network address example, not a release version"
+    },
+    {
+      "path": "website/i18n/uk/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
+      "line": "4. GStreamer 1.28.6 MSVC x64 з [gstreamer-1.0-msvc-x86_64-1.28.6.exe](https://gstreamer.freedesktop.org/data/pkg/windows/1.28.6/msvc/gstreamer-1.0-msvc-x86_64-1.28.6.exe). Пакет потребує саме цієї версії. Виберіть тип встановлення, що містить файли для розроблення, потрібні застосункам C++. Після встановлення відкрийте новий термінал, щоб він бачив змінну `GSTREAMER_1_0_ROOT_MSVC_X86_64`, яку задає програма встановлення GStreamer.",
+      "count": 1,
+      "reason": "Windows third-party prerequisite version pinned in scripts/ci/pciehost/windows_build_inputs.json, not a Neat release"
+    },
+    {
+      "path": "website/i18n/uk/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
+      "line": "Програма знаходить адресу карти за локальною адресою `10.0.N.1` мережевого адаптера PCIe від Platform. Якщо автоматичне виявлення недоступне, передайте `-Hosts 10.0.0.2`. Під час кожного запуску програма записує поточний ключ хоста SSH карти, тож перепрошита або замінена карта знову стає довіреною. Обгортка `.cmd` дозволяє виконувати цей встановлений сценарій лише у власному процесі PowerShell; вона не змінює політику виконання для користувача чи комп’ютера.",
+      "count": 1,
+      "reason": "Network address example, not a release version"
+    },
+    {
+      "path": "website/i18n/uk/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
+      "line": "Для застосунків C++ потрібна Visual Studio 2022 версії 17.14 або новіша, зокрема Visual Studio 2026, із робочим навантаженням **Desktop development with C++**. Прикладам, що використовують OpenCV, також потрібен пакет OpenCV 5.0.0 для Windows з [opencv.org](https://opencv.org/releases/). Пакет надає лише конфігурацію Release: збірка Debug зупиняється з помилкою компілятора, а `--config RelWithDebInfo` збирає з налагоджувальною інформацією. Збирайте й запускайте в **x64 Native Tools Command Prompt** для вашої версії Visual Studio:",
+      "count": 1,
+      "reason": "Windows third-party prerequisite version pinned in scripts/ci/pciehost/windows_build_inputs.json, not a Neat release"
+    },
+    {
+      "path": "website/i18n/uk/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
+      "line": "Виконайте ці команди в порожньому робочому каталозі на хості. Вони завантажують офлайн-пакет Neat Library, копіюють його на карту за адресою `10.0.0.2` і запускають там його програму встановлення. Коли програма встановлення запитає, введіть пароль облікового запису `sima` на карті. Для іншої карти замініть `10.0.0.2` на її адресу, `10.0.N.2`.",
+      "count": 1,
+      "reason": "Network address example, not a release version"
+    },
+    {
+      "path": "website/i18n/uk/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
+      "line": "scp -i ~/.ssh/sima_neat_pcie_ed25519 neat-core-offline-installer*.tar.gz sima@10.0.0.2:/var/tmp/neat-core-offline-installer.tar.gz",
+      "count": 1,
+      "reason": "Network address example, not a release version"
+    },
+    {
+      "path": "website/i18n/uk/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
+      "line": "ssh -t -i ~/.ssh/sima_neat_pcie_ed25519 sima@10.0.0.2 \"cd /var/tmp && rm -rf neat-core-offline && tar -xzf neat-core-offline-installer.tar.gz && cd neat-core-offline && ./install.sh && ./install.sh --verify && cd /var/tmp && rm -rf neat-core-offline neat-core-offline-installer.tar.gz\"",
+      "count": 1,
+      "reason": "Network address example, not a release version"
+    },
+    {
+      "path": "website/i18n/uk/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
+      "line": "scp -i \"$env:USERPROFILE\\.ssh\\sima_neat_pcie_ed25519\" $bundle sima@10.0.0.2:/var/tmp/neat-core-offline-installer.tar.gz",
+      "count": 1,
+      "reason": "Network address example, not a release version"
+    },
+    {
+      "path": "website/i18n/uk/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
+      "line": "ssh -t -i \"$env:USERPROFILE\\.ssh\\sima_neat_pcie_ed25519\" sima@10.0.0.2 \"cd /var/tmp && rm -rf neat-core-offline && tar -xzf neat-core-offline-installer.tar.gz && cd neat-core-offline && ./install.sh && ./install.sh --verify && cd /var/tmp && rm -rf neat-core-offline neat-core-offline-installer.tar.gz\"",
+      "count": 1,
+      "reason": "Network address example, not a release version"
+    },
+    {
+      "path": "website/i18n/uk/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
+      "line": "| Налаштування SSH не знаходить карту | Карта недоступна або її з’єднання керування не налаштовано | Перевірте з’єднання за допомогою `ping -c 1 10.0.0.2` в Ubuntu або `Test-Connection -ComputerName 10.0.0.2 -Count 1` у Windows, а потім запустіть програму налаштування з `--hosts 10.0.0.2` в Ubuntu або з `-Hosts 10.0.0.2` у Windows. |",
+      "count": 1,
+      "reason": "Network address example, not a release version"
+    },
+    {
+      "path": "website/i18n/uk/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
+      "line": "Щоб зупинити залишений робочий процес карти для черги `0`, виконайте цю команду на хості. У `--queue 0` замініть `0` на чергу з повідомлення про помилку, а `10.0.0.2` — на адресу карти.",
+      "count": 1,
+      "reason": "Network address example, not a release version"
+    },
+    {
+      "path": "website/i18n/uk/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
+      "line": "ssh -i ~/.ssh/sima_neat_pcie_ed25519 sima@10.0.0.2 \"pkill -f '[p]cie-pipeline-builder.*--queue 0( |$)'\"",
+      "count": 1,
+      "reason": "Network address example, not a release version"
+    },
+    {
+      "path": "website/i18n/uk/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
+      "line": "ssh -i \"$env:USERPROFILE\\.ssh\\sima_neat_pcie_ed25519\" sima@10.0.0.2 \"pkill -f '[p]cie-pipeline-builder.*--queue 0( |$)'\"",
+      "count": 1,
+      "reason": "Network address example, not a release version"
+    },
+    {
+      "path": "website/i18n/uk/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
+      "line": "Get-Content \"$env:USERPROFILE\\.ssh\\sima_neat_pcie_ed25519.pub\" | ssh sima@10.0.0.2 \"umask 077; mkdir -p ~/.ssh; tr -d '\\r' >> ~/.ssh/authorized_keys\"",
+      "count": 1,
+      "reason": "Network address example, not a release version"
+    },
+    {
+      "path": "website/i18n/uk/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
+      "line": "ssh -i \"$env:USERPROFILE\\.ssh\\sima_neat_pcie_ed25519\" -o IdentitiesOnly=yes sima@10.0.0.2 true",
+      "count": 1,
+      "reason": "Network address example, not a release version"
+    },
+    {
+      "path": "website/i18n/uk/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
+      "line": "Офлайн-пакети Neat PCIe доступні у версії 0.6.0 і новіших.",
+      "count": 1,
+      "reason": "Minimum supported offline package version"
+    },
+    {
+      "path": "website/i18n/uk/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
+      "line": "Виберіть для цільового хоста версію 0.6.0 або новішу.",
+      "count": 1,
+      "reason": "Minimum supported offline package version"
+    },
+    {
+      "path": "website/i18n/zh-Hant/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
+      "line": "  可以從主機存取。預設的卡片 0 位址為 `10.0.0.2`。",
+      "count": 1,
+      "reason": "Network address example, not a release version"
+    },
+    {
+      "path": "website/i18n/zh-Hant/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
+      "line": "4. GStreamer 1.28.6 MSVC x64，下載自 [gstreamer-1.0-msvc-x86_64-1.28.6.exe](https://gstreamer.freedesktop.org/data/pkg/windows/1.28.6/msvc/gstreamer-1.0-msvc-x86_64-1.28.6.exe)。此套件必須使用這個確切版本。請選擇包含開發檔案的安裝類型，C++ 應用程式需要這些檔案。安裝完成後請開啟新的終端機，使其能讀取 GStreamer 安裝程式所設定的 `GSTREAMER_1_0_ROOT_MSVC_X86_64` 變數。",
+      "count": 1,
+      "reason": "Windows third-party prerequisite version pinned in scripts/ci/pciehost/windows_build_inputs.json, not a Neat release"
+    },
+    {
+      "path": "website/i18n/zh-Hant/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
+      "line": "此工具會從 Platform 的 PCIe 網路介面卡的本機 `10.0.N.1` 位址探索卡片位址。若無法自動探索，請傳入 `-Hosts 10.0.0.2`。每次執行都會記錄卡片目前的 SSH 主機金鑰，因此重新刷寫或更換過的卡片會再次受到信任。`.cmd` 包裝指令碼只會在其自身的 PowerShell 程序中允許執行此已安裝的指令碼，不會變更使用者或電腦的執行原則。",
+      "count": 1,
+      "reason": "Network address example, not a release version"
+    },
+    {
+      "path": "website/i18n/zh-Hant/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
+      "line": "C++ 應用程式需要安裝 **Desktop development with C++** 工作負載的 Visual Studio 2022 17.14 版或更新版本（包括 Visual Studio 2026）。使用 OpenCV 的範例也需要 [opencv.org](https://opencv.org/releases/) 提供的 OpenCV 5.0.0 Windows 套件。此套件只提供 Release 組態：Debug 建置會因編譯器錯誤而停止，`--config RelWithDebInfo` 則會建置含偵錯資訊的版本。請在您的 Visual Studio 版本的 **x64 Native Tools Command Prompt** 中建置並執行：",
+      "count": 1,
+      "reason": "Windows third-party prerequisite version pinned in scripts/ci/pciehost/windows_build_inputs.json, not a Neat release"
+    },
+    {
+      "path": "website/i18n/zh-Hant/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
+      "line": "請在主機上的空白工作目錄中執行下列指令。這些指令會下載 Neat Library 離線套件、將其複製到位於 `10.0.0.2` 的卡片，並在卡片上執行其安裝程式。當安裝程式要求時，請輸入卡片 `sima` 帳戶的密碼。若是其他卡片，請將 `10.0.0.2` 替換為該卡片的位址 `10.0.N.2`。",
+      "count": 1,
+      "reason": "Network address example, not a release version"
+    },
+    {
+      "path": "website/i18n/zh-Hant/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
+      "line": "scp -i ~/.ssh/sima_neat_pcie_ed25519 neat-core-offline-installer*.tar.gz sima@10.0.0.2:/var/tmp/neat-core-offline-installer.tar.gz",
+      "count": 1,
+      "reason": "Network address example, not a release version"
+    },
+    {
+      "path": "website/i18n/zh-Hant/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
+      "line": "ssh -t -i ~/.ssh/sima_neat_pcie_ed25519 sima@10.0.0.2 \"cd /var/tmp && rm -rf neat-core-offline && tar -xzf neat-core-offline-installer.tar.gz && cd neat-core-offline && ./install.sh && ./install.sh --verify && cd /var/tmp && rm -rf neat-core-offline neat-core-offline-installer.tar.gz\"",
+      "count": 1,
+      "reason": "Network address example, not a release version"
+    },
+    {
+      "path": "website/i18n/zh-Hant/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
+      "line": "scp -i \"$env:USERPROFILE\\.ssh\\sima_neat_pcie_ed25519\" $bundle sima@10.0.0.2:/var/tmp/neat-core-offline-installer.tar.gz",
+      "count": 1,
+      "reason": "Network address example, not a release version"
+    },
+    {
+      "path": "website/i18n/zh-Hant/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
+      "line": "ssh -t -i \"$env:USERPROFILE\\.ssh\\sima_neat_pcie_ed25519\" sima@10.0.0.2 \"cd /var/tmp && rm -rf neat-core-offline && tar -xzf neat-core-offline-installer.tar.gz && cd neat-core-offline && ./install.sh && ./install.sh --verify && cd /var/tmp && rm -rf neat-core-offline neat-core-offline-installer.tar.gz\"",
+      "count": 1,
+      "reason": "Network address example, not a release version"
+    },
+    {
+      "path": "website/i18n/zh-Hant/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
+      "line": "| SSH 佈建找不到卡片 | 無法連線到卡片，或其管理連線尚未設定 | 在 Ubuntu 上使用 `ping -c 1 10.0.0.2`，或在 Windows 上使用 `Test-Connection -ComputerName 10.0.0.2 -Count 1` 檢查連線，然後執行設定工具，並在 Ubuntu 上加上 `--hosts 10.0.0.2`，或在 Windows 上加上 `-Hosts 10.0.0.2`。 |",
+      "count": 1,
+      "reason": "Network address example, not a release version"
+    },
+    {
+      "path": "website/i18n/zh-Hant/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
+      "line": "若要停止佇列 `0` 的殘留卡片工作程序，請在主機上執行下列指令。請將 `--queue 0` 中的 `0` 替換為錯誤訊息中的佇列，並將 `10.0.0.2` 替換為卡片位址。",
+      "count": 1,
+      "reason": "Network address example, not a release version"
+    },
+    {
+      "path": "website/i18n/zh-Hant/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
+      "line": "ssh -i ~/.ssh/sima_neat_pcie_ed25519 sima@10.0.0.2 \"pkill -f '[p]cie-pipeline-builder.*--queue 0( |$)'\"",
+      "count": 1,
+      "reason": "Network address example, not a release version"
+    },
+    {
+      "path": "website/i18n/zh-Hant/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
+      "line": "ssh -i \"$env:USERPROFILE\\.ssh\\sima_neat_pcie_ed25519\" sima@10.0.0.2 \"pkill -f '[p]cie-pipeline-builder.*--queue 0( |$)'\"",
+      "count": 1,
+      "reason": "Network address example, not a release version"
+    },
+    {
+      "path": "website/i18n/zh-Hant/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
+      "line": "Get-Content \"$env:USERPROFILE\\.ssh\\sima_neat_pcie_ed25519.pub\" | ssh sima@10.0.0.2 \"umask 077; mkdir -p ~/.ssh; tr -d '\\r' >> ~/.ssh/authorized_keys\"",
+      "count": 1,
+      "reason": "Network address example, not a release version"
+    },
+    {
+      "path": "website/i18n/zh-Hant/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
+      "line": "ssh -i \"$env:USERPROFILE\\.ssh\\sima_neat_pcie_ed25519\" -o IdentitiesOnly=yes sima@10.0.0.2 true",
+      "count": 1,
+      "reason": "Network address example, not a release version"
+    },
+    {
+      "path": "website/i18n/zh-Hant/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
+      "line": "Neat PCIe 離線套件自 0.6.0 版本起提供。",
+      "count": 1,
+      "reason": "Minimum supported offline package version"
+    },
+    {
+      "path": "website/i18n/zh-Hant/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
+      "line": "選擇適用於目標主機的 0.6.0 或更新版本。",
+      "count": 1,
+      "reason": "Minimum supported offline package version"
+    },
+    {
       "path": "docs/getting-started/neat-library/neat-cli.md",
       "line": "  Insight Web UI     https://10.0.0.22:9900",
       "count": 1,
@@ -40,96 +562,6 @@
     {
       "path": "website/i18n/uk/docusaurus-plugin-content-docs/current/getting-started/neat-library/neat-cli.md",
       "line": "  Insight Web UI     https://10.0.0.22:9900",
-      "count": 1,
-      "reason": "Network address example, not a release version"
-    },
-    {
-      "path": "docs/getting-started/neat-library/pcie-host.mdx",
-      "line": "  reachable from the host. The default address for card 0 is `10.0.0.2`.",
-      "count": 1,
-      "reason": "Network address example, not a release version"
-    },
-    {
-      "path": "docs/getting-started/neat-library/pcie-host.mdx",
-      "line": "ping -c 1 10.0.0.2",
-      "count": 1,
-      "reason": "Network address example, not a release version"
-    },
-    {
-      "path": "docs/getting-started/neat-library/pcie-host.mdx",
-      "line": "pcie-setup.sh --hosts \"10.0.0.2\"",
-      "count": 1,
-      "reason": "Network address example, not a release version"
-    },
-    {
-      "path": "website/i18n/ko/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
-      "line": "  호스트에서 접근할 수 있습니다. 카드 0의 기본 주소는 `10.0.0.2`입니다.",
-      "count": 1,
-      "reason": "Network address example, not a release version"
-    },
-    {
-      "path": "website/i18n/ko/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
-      "line": "ping -c 1 10.0.0.2",
-      "count": 1,
-      "reason": "Network address example, not a release version"
-    },
-    {
-      "path": "website/i18n/ko/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
-      "line": "pcie-setup.sh --hosts \"10.0.0.2\"",
-      "count": 1,
-      "reason": "Network address example, not a release version"
-    },
-    {
-      "path": "website/i18n/ja/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
-      "line": "  ホストからアクセス可能な状態。カード0のデフォルトアドレスは`10.0.0.2`です。",
-      "count": 1,
-      "reason": "Network address example, not a release version"
-    },
-    {
-      "path": "website/i18n/ja/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
-      "line": "ping -c 1 10.0.0.2",
-      "count": 1,
-      "reason": "Network address example, not a release version"
-    },
-    {
-      "path": "website/i18n/ja/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
-      "line": "pcie-setup.sh --hosts \"10.0.0.2\"",
-      "count": 1,
-      "reason": "Network address example, not a release version"
-    },
-    {
-      "path": "website/i18n/zh-Hant/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
-      "line": "  可以從主機存取。預設的卡片 0 位址為 `10.0.0.2`。",
-      "count": 1,
-      "reason": "Network address example, not a release version"
-    },
-    {
-      "path": "website/i18n/zh-Hant/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
-      "line": "ping -c 1 10.0.0.2",
-      "count": 1,
-      "reason": "Network address example, not a release version"
-    },
-    {
-      "path": "website/i18n/zh-Hant/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
-      "line": "pcie-setup.sh --hosts \"10.0.0.2\"",
-      "count": 1,
-      "reason": "Network address example, not a release version"
-    },
-    {
-      "path": "website/i18n/uk/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
-      "line": "  доступний із хоста. Адреса для карти 0 за замовчуванням — `10.0.0.2`.",
-      "count": 1,
-      "reason": "Network address example, not a release version"
-    },
-    {
-      "path": "website/i18n/uk/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
-      "line": "ping -c 1 10.0.0.2",
-      "count": 1,
-      "reason": "Network address example, not a release version"
-    },
-    {
-      "path": "website/i18n/uk/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
-      "line": "pcie-setup.sh --hosts \"10.0.0.2\"",
       "count": 1,
       "reason": "Network address example, not a release version"
     },
@@ -344,32 +776,8 @@
       "reason": "Network address example, not a release version"
     },
     {
-      "path": "docs/getting-started/neat-library/pcie-host.mdx",
-      "line": "Neat PCIe offline packages are available in version 0.6.0 or later.",
-      "count": 1,
-      "reason": "Minimum supported offline package version"
-    },
-    {
-      "path": "docs/getting-started/neat-library/pcie-host.mdx",
-      "line": "Select version 0.6.0 or later for the target host.",
-      "count": 1,
-      "reason": "Minimum supported offline package version"
-    },
-    {
       "path": "docs/getting-started/neat-library/install-or-update.mdx",
       "line": "Neat Library offline packages are available in version 0.6.0 or later.",
-      "count": 1,
-      "reason": "Minimum supported offline package version"
-    },
-    {
-      "path": "website/i18n/zh-Hant/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
-      "line": "Neat PCIe 離線套件自 0.6.0 版本起提供。",
-      "count": 1,
-      "reason": "Minimum supported offline package version"
-    },
-    {
-      "path": "website/i18n/zh-Hant/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
-      "line": "選擇適用於目標主機的 0.6.0 或更新版本。",
       "count": 1,
       "reason": "Minimum supported offline package version"
     },
@@ -380,50 +788,14 @@
       "reason": "Minimum supported offline package version"
     },
     {
-      "path": "website/i18n/ja/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
-      "line": "Neat PCIe オフラインパッケージは、バージョン 0.6.0 以降で利用できます。",
-      "count": 1,
-      "reason": "Minimum supported offline package version"
-    },
-    {
-      "path": "website/i18n/ja/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
-      "line": "対象ホスト用のバージョン 0.6.0 以降を選択してください。",
-      "count": 1,
-      "reason": "Minimum supported offline package version"
-    },
-    {
       "path": "website/i18n/ja/docusaurus-plugin-content-docs/current/getting-started/neat-library/install-or-update.mdx",
       "line": "Neat Library オフラインパッケージは、バージョン 0.6.0 以降で利用できます。",
       "count": 1,
       "reason": "Minimum supported offline package version"
     },
     {
-      "path": "website/i18n/uk/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
-      "line": "Офлайн-пакети Neat PCIe доступні у версії 0.6.0 і новіших.",
-      "count": 1,
-      "reason": "Minimum supported offline package version"
-    },
-    {
-      "path": "website/i18n/uk/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
-      "line": "Виберіть для цільового хоста версію 0.6.0 або новішу.",
-      "count": 1,
-      "reason": "Minimum supported offline package version"
-    },
-    {
       "path": "website/i18n/uk/docusaurus-plugin-content-docs/current/getting-started/neat-library/install-or-update.mdx",
       "line": "Офлайн-пакети Neat Library доступні у версії 0.6.0 і новіших.",
-      "count": 1,
-      "reason": "Minimum supported offline package version"
-    },
-    {
-      "path": "website/i18n/ko/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
-      "line": "Neat PCIe 오프라인 패키지는 0.6.0 이상 버전에서 사용할 수 있습니다.",
-      "count": 1,
-      "reason": "Minimum supported offline package version"
-    },
-    {
-      "path": "website/i18n/ko/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
-      "line": "대상 호스트에 맞는 0.6.0 이상 버전을 선택하세요.",
       "count": 1,
       "reason": "Minimum supported offline package version"
     },

@@ -18,6 +18,13 @@ public:
   static CommandResult run_for(const std::vector<std::string>& args,
                                std::chrono::milliseconds timeout);
   static std::string shell_escape(const std::string& value);
+  static std::string windows_quote_argument(const std::string& value);
+  // "(exit=N, timed_out=B): <output>" for a failed command; names the executable
+  // when it printed nothing.
+  static std::string failure_detail(const std::vector<std::string>& args,
+                                    const CommandResult& result);
+  // The next step for an OpenSSH failure the user can fix, or "" when there is none.
+  static std::string failure_remedy(const std::string& output);
 };
 
 } // namespace simaai::neat::pcie::internal

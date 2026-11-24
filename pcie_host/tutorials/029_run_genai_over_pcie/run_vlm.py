@@ -29,7 +29,11 @@ def main():
     connection.request_timeout_ms = 300000
 
     # STEP prepare-image
-    bgr = cv2.imread(args.image, cv2.IMREAD_COLOR)
+    try:
+        # cv2.imread takes an ANSI file name on Windows; np.fromfile accepts any path.
+        bgr = cv2.imdecode(np.fromfile(args.image, np.uint8), cv2.IMREAD_COLOR)
+    except (OSError, cv2.error):
+        bgr = None
     if bgr is None:
         parser.error(f"cannot read image: {args.image}")
     rgb = np.ascontiguousarray(cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB))

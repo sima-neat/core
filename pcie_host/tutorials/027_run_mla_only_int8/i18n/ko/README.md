@@ -43,13 +43,21 @@ q = clamp(round(x / scale) + zero_point, -128, 127)
 
 ## Run
 
-[튜토리얼 설정](/tutorials/before-you-run)에 설명된 대로 PCIe 호스트 패키지를 설치하고 튜토리얼 번들을 다운로드합니다.
+[튜토리얼 설정](/tutorials/before-you-run)에 설명된 대로 PCIe 호스트 패키지를 설치하고 튜토리얼 번들을 다운로드합니다. Windows에서는 [Windows에서 애플리케이션 실행](/getting-started/neat-library/pcie-host/#run-applications-on-windows)에 설명된 대로 튜토리얼을 설정하고 프로그램을 실행하세요.
 
 이 튜토리얼은 MLA 입출력을 직접 처리하도록 컴파일된 Model Browser의 YOLO26n `w8a8` 패키지를 실행합니다. 추출된 PCIe extras 루트에 다운로드하고 MPK 아카이브를 꺼내세요.
 
 ```bash
-sima-cli models download --id yolo26n --variant w8a8
+sima-cli models download --id yolo26n --variant w8a8 --force
 unzip -p models/yolo26n/w8a8/yolo26n_w8a8_default.zip yolo26n_w8a8_mpk.tar.gz > yolo26n_w8a8_mpk.tar.gz
+```
+
+Windows에서는 PowerShell에서 모델을 다운로드하고 `Expand-Archive`로 아카이브를 추출하세요.
+
+```powershell
+sima-cli models download --id yolo26n --variant w8a8 --force
+Expand-Archive models\yolo26n\w8a8\yolo26n_w8a8_default.zip -DestinationPath models\yolo26n\w8a8 -Force
+Copy-Item models\yolo26n\w8a8\yolo26n_w8a8_mpk.tar.gz .
 ```
 
 다른 아카이브는 Model SDK의 `tessellate_parameters`에서 `enable_mla=True`를 지정하고, 모든 입력에 `HWC` DRAM 레이아웃을, 모든 출력에 `HWC16`을 지정하여 컴파일된 경우 조건을 충족합니다. 대신 CVU에서 테셀레이션을 수행하는 아카이브는 `mla_only`가 활성화되면 거부됩니다.
@@ -79,6 +87,17 @@ python3 share/sima-pcie-host/tutorials/027_run_mla_only_int8/run_mla_only_int8.p
 ./build.sh --target tutorial_027_run_mla_only_int8
 ./build/tutorials-standalone/tutorial_027_run_mla_only_int8 \
   --model yolo26n_w8a8_mpk.tar.gz
+```
+
+Windows에서는 튜토리얼 복사본 디렉터리의 **x64 Native Tools Command Prompt**에서 CMake로 빌드하세요. `C:\opencv\build`는 [Windows에서 애플리케이션 실행](/getting-started/neat-library/pcie-host/#run-applications-on-windows)에 설명된 OpenCV 패키지의 `build` 디렉터리로 바꾸세요.
+
+```bat
+call "%ProgramFiles%\SimaPCIeHost\bin\sima-pcie-host-env.cmd"
+set "OpenCV_DIR=C:\opencv\build"
+cmake -S share\sima-pcie-host\tutorials -B build
+cmake --build build --config Release --target tutorial_027_run_mla_only_int8
+set "PATH=%OpenCV_DIR%\x64\vc16\bin;%PATH%"
+build\Release\tutorial_027_run_mla_only_int8.exe --model yolo26n_w8a8_mpk.tar.gz
 ```
 
 두 버전 모두 계약과 모든 헤드에 대한 0의 편차를 출력합니다.

@@ -177,7 +177,7 @@ pcie::Tensor tensor_from_numpy_copy(nb::object array, const pcie::PixelFormat im
                                     const std::string& route_name) {
   nb::module_ np = nb::module_::import_("numpy");
   nb::object contiguous = np.attr("ascontiguousarray")(array);
-  const auto dtype_name = nb::cast<std::string>(nb::str(contiguous.attr("dtype").attr("name")));
+  const auto dtype_name = nb::cast<std::string>(contiguous.attr("dtype").attr("name"));
   const pcie::TensorDType dtype = dtype_from_numpy_name(dtype_name);
   const std::vector<std::int64_t> shape = tuple_to_i64_vector(contiguous.attr("shape"));
   const std::vector<std::int64_t> strides = tuple_to_i64_vector(contiguous.attr("strides"));
@@ -212,7 +212,7 @@ pcie::Tensor tensor_from_numpy_zero_copy(nb::object array, const pcie::PixelForm
     throw std::runtime_error("Tensor.from_numpy(copy=False) requires a C-contiguous NumPy array");
   }
 
-  const auto dtype_name = nb::cast<std::string>(nb::str(view_array.attr("dtype").attr("name")));
+  const auto dtype_name = nb::cast<std::string>(view_array.attr("dtype").attr("name"));
   const pcie::TensorDType dtype = dtype_from_numpy_name(dtype_name);
   const std::vector<std::int64_t> shape = tuple_to_i64_vector(view_array.attr("shape"));
   const std::vector<std::int64_t> strides = tuple_to_i64_vector(view_array.attr("strides"));

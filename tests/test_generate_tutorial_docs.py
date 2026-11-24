@@ -300,3 +300,17 @@ def test_accepts_translated_table_with_escaped_pipe(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     tutorial_docs._validate_localized_readme(source, localized)
+
+
+def test_windows_build_form_stays_in_the_cpp_block() -> None:
+    run = (
+        "Intro.\n\n**Python:**\n\n```bash\npython3 a.py\n```\n\n"
+        "**C++ (prebuilt):**\n\n```bash\n./a\n```\n\n"
+        "**C++ (build from source):**\n\n```bash\n./build.sh\n```\n\n"
+        "On Windows:\n\n```bat\ncmake -S . -B build\n```\n\n"
+        "Expected output:\n\n```text\n[OK]\n```"
+    )
+    wrapped = tutorial_docs._wrap_run_languages(run)
+    cpp = wrapped[wrapped.index('<LanguageContent lang="cpp">'):]
+    assert cpp.index("cmake -S . -B build") < cpp.index("</LanguageContent>")
+    assert cpp.index("</LanguageContent>") < cpp.index("Expected output:")

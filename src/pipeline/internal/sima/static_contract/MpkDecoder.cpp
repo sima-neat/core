@@ -1,6 +1,7 @@
 #define SIMA_NEAT_INTERNAL 1
 #include "pipeline/internal/sima/static_contract/MpkDecoder.h"
 
+#include "pipeline/internal/Utf8Path.h"
 #include "pipeline/internal/sima/static_contract/AfePublicationLedger.h"
 #include "pipeline/internal/sima/static_contract/KernelRegistry.h"
 #include "pipeline/internal/sima/static_contract/TvmHostModuleGraph.h"
@@ -2623,7 +2624,7 @@ MpkDecodeResult MpkDecoder::decode_file(const std::filesystem::path& mpk_manifes
   std::ifstream input(mpk_manifest, std::ios::binary);
   if (!input.is_open()) {
     MpkDecodeResult result;
-    result.error = MpkDecodeError{MpkDecodeErrorCode::IoError, mpk_manifest.string(), "$",
+    result.error = MpkDecodeError{MpkDecodeErrorCode::IoError, utf8_string(mpk_manifest), "$",
                                   "cannot open MPK manifest"};
     return result;
   }
@@ -2631,11 +2632,11 @@ MpkDecodeResult MpkDecoder::decode_file(const std::filesystem::path& mpk_manifes
   contents << input.rdbuf();
   if (!input.good() && !input.eof()) {
     MpkDecodeResult result;
-    result.error = MpkDecodeError{MpkDecodeErrorCode::IoError, mpk_manifest.string(), "$",
+    result.error = MpkDecodeError{MpkDecodeErrorCode::IoError, utf8_string(mpk_manifest), "$",
                                   "cannot read MPK manifest"};
     return result;
   }
-  return decode_json(contents.str(), elf_topology, mpk_manifest.string());
+  return decode_json(contents.str(), elf_topology, utf8_string(mpk_manifest));
 }
 
 MpkDecodeResult MpkDecoder::decode_file(
@@ -2652,7 +2653,7 @@ MpkDecodeResult MpkDecoder::decode_file(
   std::ifstream input(mpk_manifest, std::ios::binary);
   if (!input.is_open()) {
     MpkDecodeResult result;
-    result.error = MpkDecodeError{MpkDecodeErrorCode::IoError, mpk_manifest.string(), "$",
+    result.error = MpkDecodeError{MpkDecodeErrorCode::IoError, utf8_string(mpk_manifest), "$",
                                   "cannot open MPK manifest"};
     return result;
   }
@@ -2660,11 +2661,11 @@ MpkDecodeResult MpkDecoder::decode_file(
   contents << input.rdbuf();
   if (!input.good() && !input.eof()) {
     MpkDecodeResult result;
-    result.error = MpkDecodeError{MpkDecodeErrorCode::IoError, mpk_manifest.string(), "$",
+    result.error = MpkDecodeError{MpkDecodeErrorCode::IoError, utf8_string(mpk_manifest), "$",
                                   "cannot read MPK manifest"};
     return result;
   }
-  return decode_impl(contents.str(), executable_evidence, host_evidence, mpk_manifest.string());
+  return decode_impl(contents.str(), executable_evidence, host_evidence, utf8_string(mpk_manifest));
 }
 
 std::optional<std::string> sha256_file(const std::filesystem::path& path) {
@@ -2700,7 +2701,7 @@ std::filesystem::path resolve_mla_executable(const std::filesystem::path& mpk_ma
   if (executable.empty()) {
     return {};
   }
-  const std::filesystem::path raw(executable);
+  const auto raw = utf8_path(executable);
   if (raw.is_absolute()) {
     return raw;
   }
@@ -2713,7 +2714,7 @@ std::filesystem::path resolve_mla_executable(const std::filesystem::path& mpk_ma
 
 std::filesystem::path resolve_host_executable(const std::filesystem::path& mpk_manifest,
                                               const std::string& executable) {
-  const std::filesystem::path raw(executable);
+  const auto raw = utf8_path(executable);
   if (raw.is_absolute()) {
     return raw;
   }
@@ -2743,8 +2744,8 @@ std::optional<LoadedMpk> MpkDecoder::load(const std::filesystem::path& mpk_manif
   loaded.package.manifest_path = mpk_manifest;
   loaded.package.manifest_bytes = contents.str();
   std::string contract_error;
-  auto contract = load_mpk_contract_from_json(loaded.package.manifest_bytes, mpk_manifest.string(),
-                                              &contract_error);
+  auto contract = load_mpk_contract_from_json(loaded.package.manifest_bytes,
+                                              utf8_string(mpk_manifest), &contract_error);
   if (!contract) {
     return fail(std::move(contract_error));
   }
@@ -2874,8 +2875,8 @@ MpkExecutableEvidence MpkDecoder::read_executable_evidence(const MpkPackage& pac
 MpkDecodeResult MpkDecoder::decode(const MpkPackage& package) const noexcept {
   const auto failed = [&](const MpkDecodeErrorCode code, std::string path, std::string detail) {
     MpkDecodeResult result;
-    result.error =
-        MpkDecodeError{code, package.manifest_path.string(), std::move(path), std::move(detail)};
+    result.error = MpkDecodeError{code, utf8_string(package.manifest_path), std::move(path),
+                                  std::move(detail)};
     return result;
   };
   try {
@@ -2893,7 +2894,7 @@ MpkDecodeResult MpkDecoder::decode(const MpkPackage& package) const noexcept {
                     error->detail);
     }
     return decode_json(package.manifest_bytes, evidence.mla, evidence.host,
-                       package.manifest_path.string());
+                       utf8_string(package.manifest_path));
   } catch (const std::exception& error) {
     return failed(MpkDecodeErrorCode::IoError, "$", error.what());
   }

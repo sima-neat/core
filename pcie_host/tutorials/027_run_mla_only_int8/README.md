@@ -68,14 +68,25 @@ is zero.
 
 Install the PCIe host package and download the tutorial bundle as described in
 [Tutorial Setup](/tutorials/before-you-run).
+On Windows, set up the tutorials and run the programs as described in
+[Run applications on Windows](/getting-started/neat-library/pcie-host/#run-applications-on-windows).
 
 The tutorial runs the Model Browser YOLO26n `w8a8` package, which is compiled for
 direct MLA input and output. Download it into the extracted PCIe extras root and
 extract the MPK archive:
 
 ```bash
-sima-cli models download --id yolo26n --variant w8a8
+sima-cli models download --id yolo26n --variant w8a8 --force
 unzip -p models/yolo26n/w8a8/yolo26n_w8a8_default.zip yolo26n_w8a8_mpk.tar.gz > yolo26n_w8a8_mpk.tar.gz
+```
+
+On Windows, download the model in PowerShell and extract the archive with
+`Expand-Archive`:
+
+```powershell
+sima-cli models download --id yolo26n --variant w8a8 --force
+Expand-Archive models\yolo26n\w8a8\yolo26n_w8a8_default.zip -DestinationPath models\yolo26n\w8a8 -Force
+Copy-Item models\yolo26n\w8a8\yolo26n_w8a8_mpk.tar.gz .
 ```
 
 Other archives qualify when they were compiled with the Model SDK
@@ -108,6 +119,20 @@ python3 share/sima-pcie-host/tutorials/027_run_mla_only_int8/run_mla_only_int8.p
 ./build.sh --target tutorial_027_run_mla_only_int8
 ./build/tutorials-standalone/tutorial_027_run_mla_only_int8 \
   --model yolo26n_w8a8_mpk.tar.gz
+```
+
+On Windows, build with CMake from an **x64 Native Tools Command Prompt**
+in your copy of the tutorials. Replace `C:\opencv\build` with the `build`
+directory of the OpenCV package described in
+[Run applications on Windows](/getting-started/neat-library/pcie-host/#run-applications-on-windows):
+
+```bat
+call "%ProgramFiles%\SimaPCIeHost\bin\sima-pcie-host-env.cmd"
+set "OpenCV_DIR=C:\opencv\build"
+cmake -S share\sima-pcie-host\tutorials -B build
+cmake --build build --config Release --target tutorial_027_run_mla_only_int8
+set "PATH=%OpenCV_DIR%\x64\vc16\bin;%PATH%"
+build\Release\tutorial_027_run_mla_only_int8.exe --model yolo26n_w8a8_mpk.tar.gz
 ```
 
 Both versions print the contract and a zero deviation for every head:

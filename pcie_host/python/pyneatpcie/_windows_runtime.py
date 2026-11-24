@@ -1,0 +1,155 @@
+"""Windows runtime discovery and loaded-DLL admission for PyNeatPCIe."""
+
+from pathlib import Path
+import ctypes
+import os
+
+
+def _normalized_path(path):
+  return os.path.normcase(os.path.realpath(os.path.abspath(path)))
+
+
+def platform_service_directory():
+  try:
+    import winreg
+
+    with winreg.OpenKey(
+        winreg.HKEY_LOCAL_MACHINE,
+        r"SYSTEM\CurrentControlSet\Services\SiMaMlaDaemon",
+    ) as service:
+      command, _ = winreg.QueryValueEx(service, "ImagePath")
+  except (ImportError, OSError):
+    return None
+
+  command = os.path.expandvars(str(command)).strip()
+  if command.startswith('"'):
+    end = command.find('"', 1)
+    executable = command[1:end] if end > 1 else ""
+  else:
+    executable = command.split(maxsplit=1)[0] if command else ""
+  return Path(executable).parent if executable else None
+
+
+def runtime_directories(package_dir, environ=None, service_directory=None):
+  environ = os.environ if environ is None else environ
+  candidates = [Path(package_dir), Path(package_dir).parent / "bin"]
+  for token in environ.get("SIMA_PCIE_HOST_LIBRARY_PATH", "").split(os.pathsep):
+    if token:
+      candidates.append(Path(token))
+
+  platform_runtime = environ.get("SIMA_WINDOWS_PLATFORM_RUNTIME_DIR")
+  if platform_runtime:
+    candidates.append(Path(platform_runtime))
+  service_runtime = platform_service_directory() if service_directory is None else service_directory
+  if service_runtime:
+    candidates.append(Path(service_runtime))
+
+  program_files = environ.get("ProgramFiles")
+  if program_files:
+    candidates.append(Path(program_files) / "SimaPCIeHost" / "bin")
+
+  # One GStreamer, as sima-pcie-host-env.cmd selects: the explicit GSTREAMER_ROOT_X86_64,
+  # then the installer's GSTREAMER_1_0_ROOT_MSVC_X86_64, then the default location.
+  # Windows defines no order among DLL directories, so a second root could also bind.
+  roots = [Path(environ[variable]) for variable in (
+      "GSTREAMER_ROOT_X86_64", "GSTREAMER_1_0_ROOT_MSVC_X86_64") if environ.get(variable)]
+  if program_files:
+    roots.append(Path(program_files) / "gstreamer" / "1.0" / "msvc_x86_64")
+  gstreamer = [root / "bin" for root in roots]
+  installed = [path for path in gstreamer if (path / "gstreamer-1.0-0.dll").is_file()]
+  # Without any installation, keep every candidate so a load error names them.
+  candidates.extend(installed[:1] or gstreamer)
+
+  result = []
+  seen = set()
+  for directory in candidates:
+    normalized = _normalized_path(directory)
+    if normalized not in seen:
+      seen.add(normalized)
+      result.append(directory)
+  return result
+
+
+# DLLs this package binds to. Other DLLs in the GStreamer bin directory, such as
+# OpenSSL or zlib, may already be loaded from another installation.
+REQUIRED_DLLS = frozenset({
+    "simapcie.dll", "simaai_scheduler_pcie_host.dll", "gstreamer-1.0-0.dll",
+    "gstapp-1.0-0.dll", "glib-2.0-0.dll", "gobject-2.0-0.dll",
+})
+
+
+def find_loaded_dll_conflicts(directories, loaded_path):
+  """Return required DLL names that are already loaded from another location."""
+  approved = {}
+  for directory in directories:
+    if not directory.is_dir():
+      continue
+    for path in directory.glob("*.dll"):
+      if path.name.casefold() in REQUIRED_DLLS:
+        approved.setdefault(path.name.casefold(), set()).add(_normalized_path(path))
+
+  conflicts = []
+  for name, paths in sorted(approved.items()):
+    loaded = loaded_path(name)
+    if loaded is None:
+      continue
+    normalized = _normalized_path(loaded)
+    if normalized not in paths:
+      conflicts.append((name, Path(loaded)))
+  return conflicts
+
+
+def _loaded_module_path(name):
+  kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+  kernel32.GetModuleHandleW.argtypes = [ctypes.c_wchar_p]
+  kernel32.GetModuleHandleW.restype = ctypes.c_void_p
+  kernel32.GetModuleFileNameW.argtypes = [ctypes.c_void_p, ctypes.c_wchar_p, ctypes.c_uint]
+  kernel32.GetModuleFileNameW.restype = ctypes.c_uint
+
+  handle = kernel32.GetModuleHandleW(name)
+  if not handle:
+    return None
+  buffer = ctypes.create_unicode_buffer(32768)
+  length = kernel32.GetModuleFileNameW(handle, buffer, len(buffer))
+  if not length or length >= len(buffer):
+    error = ctypes.get_last_error()
+    raise OSError(error, f"cannot resolve loaded Windows module: {name}")
+  return Path(buffer.value)
+
+
+def admit_loaded_dlls(directories, loaded_path=_loaded_module_path):
+  conflicts = find_loaded_dll_conflicts(directories, loaded_path)
+  if conflicts:
+    detail = ", ".join(f"{name} from {path}" for name, path in conflicts)
+    raise ImportError(
+        "PyNeatPCIe found runtime DLLs already loaded from outside the approved runtime "
+        f"directories: {detail}. Start a fresh process with one compatible Platform, "
+        "GStreamer, and Neat PCIe host installation.")
+
+
+def extension_load_error(error, directories):
+  """Name where the runtime DLLs were searched when the extension cannot load."""
+  searched = "; ".join(str(path) for path in directories) or "none"
+  return ImportError(
+      f"{error}. PyNeatPCIe searched for the Neat PCIe host, SiMa Platform and GStreamer "
+      f"DLLs in: {searched}. Install the Platform package with sima-cli install "
+      "drivers/windows and the GStreamer MSVC x64 that this release requires, run "
+      "sima-pcie-host-doctor.cmd, or set SIMA_PCIE_HOST_LIBRARY_PATH "
+      "to the directories that contain them.")
+
+
+def configure(package_dir):
+  directories = runtime_directories(package_dir)
+  admit_loaded_dlls(directories)
+
+  existing = [token for token in os.environ.get("PATH", "").split(os.pathsep) if token]
+  selected = [str(path) for path in directories if path.is_dir()]
+  selected_paths = {_normalized_path(path) for path in selected}
+  os.environ["PATH"] = os.pathsep.join(selected + [
+      value for value in existing if _normalized_path(value) not in selected_paths
+  ])
+
+  handles = []
+  if hasattr(os, "add_dll_directory"):
+    handles = [os.add_dll_directory(path) for path in selected]
+  return directories, handles

@@ -508,6 +508,39 @@ def test_healthy_venv_and_extra_packages_survive_offline_install(tmp_path, symli
     assert path.is_symlink() == symlink
 
 
+def test_system_package_diagnostics_do_not_stop_installation(tmp_path, capsys):
+    import subprocess
+    # Synthetic stand-in for OS-owned dist-packages seen through system site
+    # packages: a distribution visible to the environment but installed outside
+    # it, whose metadata requires a package the OS does not ship.
+    system = tmp_path/'dist-packages'
+    (system/'os_package-1.0.egg-info').mkdir(parents=True)
+    (system/'os_package-1.0.egg-info/PKG-INFO').write_text(
+        'Metadata-Version: 2.1\nName: os-package\nVersion: 1.0\nRequires-Dist: absent_dependency\n')
+    path = tmp_path/'pyneat'
+    deploy.prepare_python_environment(path)
+    python = str(path/'bin/python')
+    site = Path(subprocess.check_output([python, '-c',
+        'import sysconfig; print(sysconfig.get_path("purelib"))'], text=True).strip())
+    (site/'system.pth').write_text(f'{system}\n')
+    broken = subprocess.run([python, '-m', 'pip', 'check'], capture_output=True, text=True)
+    assert broken.returncode == 1
+    assert broken.stdout.startswith('os-package 1.0 requires ')
+    for stage in ('before installation', 'after installation or during verification'):
+        deploy.check_python_environment(path, stage)
+        assert 'os-package 1.0 requires ' in capsys.readouterr().out
+    # The environment's own packages keep stopping installation, whatever
+    # spelling their metadata uses for the name pip check normalizes.
+    metadata = site/'User_Application-1.0.dist-info'
+    metadata.mkdir()
+    (metadata/'METADATA').write_text(
+        'Metadata-Version: 2.1\nName: User_Application\nVersion: 1.0\nRequires-Dist: absent_dependency\n')
+    with pytest.raises(ValueError, match='Existing Python environment is broken') as error:
+        deploy.check_python_environment(path, 'before installation')
+    assert 'os-package 1.0 requires ' in str(error.value)
+    assert 'application 1.0 requires ' in str(error.value)
+
+
 @pytest.mark.parametrize('phase', ['preflight', 'install'])
 def test_broken_environment_stops_before_any_package_mutation(tmp_path, monkeypatch, phase):
     import subprocess

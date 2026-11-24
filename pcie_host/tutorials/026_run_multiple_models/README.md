@@ -56,15 +56,28 @@ Install the PCIe host package and download the tutorial bundle as described in
 extras root, download both models:
 
 ```bash
-sima-cli models download --id resnet_50 --variant w8a8
+sima-cli models download --id resnet_50 --variant w8a8 --force
 unzip -p models/resnet_50/w8a8/resnet_50_w8a8_default.zip resnet_50_w8a8_mpk.tar.gz > resnet_50_mpk.tar.gz
-sima-cli models download --id yolov8s --variant w8a8
+sima-cli models download --id yolov8s --variant w8a8 --force
 unzip -p models/yolov8s/w8a8/yolov8s_w8a8_default.zip yolov8s_w8a8_mpk.tar.gz > yolo_v8s_mpk.tar.gz
 ```
 
 The program requires the exact paths `resnet_50_mpk.tar.gz` and
 `yolo_v8s_mpk.tar.gz` in this directory. Each `unzip` command extracts one of
 them from its downloaded ZIP.
+
+On Windows, set up the tutorials and run the programs as described in
+[Run applications on Windows](/getting-started/neat-library/pcie-host/#run-applications-on-windows).
+Download the models in PowerShell and extract the archives with `Expand-Archive`:
+
+```powershell
+sima-cli models download --id resnet_50 --variant w8a8 --force
+Expand-Archive models\resnet_50\w8a8\resnet_50_w8a8_default.zip -DestinationPath models\resnet_50\w8a8 -Force
+Copy-Item models\resnet_50\w8a8\resnet_50_w8a8_mpk.tar.gz resnet_50_mpk.tar.gz
+sima-cli models download --id yolov8s --variant w8a8 --force
+Expand-Archive models\yolov8s\w8a8\yolov8s_w8a8_default.zip -DestinationPath models\yolov8s\w8a8 -Force
+Copy-Item models\yolov8s\w8a8\yolov8s_w8a8_mpk.tar.gz yolo_v8s_mpk.tar.gz
+```
 
 Run Python:
 
@@ -84,6 +97,20 @@ Or rebuild it:
 ```bash
 ./build.sh --target tutorial_026_run_multiple_models
 ./build/tutorials-standalone/tutorial_026_run_multiple_models
+```
+
+On Windows, rebuild it with CMake from an **x64 Native Tools Command Prompt**
+in your copy of the tutorials. Replace `C:\opencv\build` with the `build`
+directory of the OpenCV package described in
+[Run applications on Windows](/getting-started/neat-library/pcie-host/#run-applications-on-windows):
+
+```bat
+call "%ProgramFiles%\SimaPCIeHost\bin\sima-pcie-host-env.cmd"
+set "OpenCV_DIR=C:\opencv\build"
+cmake -S share\sima-pcie-host\tutorials -B build
+cmake --build build --config Release --target tutorial_026_run_multiple_models
+set "PATH=%OpenCV_DIR%\x64\vc16\bin;%PATH%"
+build\Release\tutorial_026_run_multiple_models.exe
 ```
 
 With the documented models and assets, both versions print output similar to:

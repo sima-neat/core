@@ -35,6 +35,14 @@ template <class Fn> void rejects(Fn fn) {
   }
   throw std::runtime_error("Expected rejection");
 }
+template <class Fn> std::string rejection_message(Fn fn) {
+  try {
+    fn();
+  } catch (const std::exception& error) {
+    return error.what();
+  }
+  throw std::runtime_error("Expected rejection");
+}
 struct Directory {
   std::filesystem::path path;
   Directory() {
@@ -75,6 +83,8 @@ int main(int argc, char** argv) {
   }
   try {
     require(g::ConnectionOptions{}.user == "sima", "Default SSH user matches PCIe provisioning");
+    require(g::ConnectionOptions{}.media_directory == "/srv/simaai/data",
+            "Linux media directory default remains unchanged");
     const std::string session(24, 'a');
     require(wire::tag(session, true).size() < 32, "Platform tag limit");
     const auto e = wire::envelope(session, UINT64_MAX, "sample");
@@ -264,6 +274,13 @@ int main(int argc, char** argv) {
     require(g::internal::model_asset_path(model_path, "layer 1.bin") == asset,
             "Host asset paths preserve spaces");
     require(!g::internal::model_asset_path(model_path, "missing.bin"), "Optional missing asset");
+    const std::filesystem::path unicode_dir = model_path / std::filesystem::path(u8"\u6771\u4eac");
+    std::filesystem::create_directory(unicode_dir);
+    const auto unicode_asset = unicode_dir / std::filesystem::path(u8"\u91cd\u307f.bin");
+    std::ofstream(unicode_asset) << "weights";
+    const std::string utf8_name = "\xe6\x9d\xb1\xe4\xba\xac/\xe9\x87\x8d\xe3\x81\xbf.bin";
+    require(g::internal::model_asset_path(model_path, utf8_name) == unicode_asset,
+            "UTF-8 asset names resolve to the same host file");
     const auto model_link = model_root / "link";
     std::filesystem::create_directory_symlink(model_path, model_link);
     require(g::internal::host_model_path(model_link) == model_path, "Canonical model directory");
@@ -431,6 +448,28 @@ int main(int argc, char** argv) {
     image.shape = {1, 2, 3};
     image.strides_bytes = {7, 4, 1};
     request.images = {image};
+    const auto require_media_root_rejection =
+        [&](const std::filesystem::path& root, uint64_t request_id, const char* expected_reason) {
+          options.media_directory = root;
+          const auto message = rejection_message([&] {
+            g::internal::MediaStage stage(options, session, request_id);
+            stage.encode(request);
+          });
+          require(message.find(root.string()) != std::string::npos &&
+                      message.find(options.media_serve_root) != std::string::npos &&
+                      message.find("Platform daemon") != std::string::npos &&
+                      message.find(expected_reason) != std::string::npos,
+                  "Invalid media roots identify the configured path, root, and repair reason");
+        };
+    require_media_root_rejection(directory.path / "does-not-exist", 92,
+                                 "missing or is not a directory");
+    const auto media_file = directory.path / "not-a-directory";
+    std::ofstream(media_file) << "not a directory";
+    require_media_root_rejection(media_file, 93, "missing or is not a directory");
+    const auto media_link = directory.path / "media-root-link";
+    std::filesystem::create_directory_symlink(directory.path, media_link);
+    require_media_root_rejection(media_link, 94, "noncanonical or traverses a symlink");
+    options.media_directory = directory.path;
     std::filesystem::path staged;
     {
       g::internal::MediaStage stage(options, session, 2);

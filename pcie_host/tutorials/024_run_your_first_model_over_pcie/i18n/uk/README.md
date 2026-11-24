@@ -52,12 +52,20 @@ PCIe host API приймає або тензор, готовий до викор
 команди з кореневої папки розпакованих додаткових матеріалів PCIe:
 
 ```bash
-sima-cli models download --id yolov8s --variant w8a8
+sima-cli models download --id yolov8s --variant w8a8 --force
 unzip -p models/yolov8s/w8a8/yolov8s_w8a8_default.zip yolov8s_w8a8_mpk.tar.gz > yolo_v8s_mpk.tar.gz
 ```
 
 Програми вимагають наявності `yolo_v8s_mpk.tar.gz` у цьому каталозі. Друга
 команда видобуває його із завантаженого ZIP-файлу.
+
+У Windows налаштуйте навчальні матеріали та запускайте програми, як описано в розділі [Запуск застосунків у Windows](/getting-started/neat-library/pcie-host/#run-applications-on-windows). Завантажте модель у PowerShell і видобудьте архів за допомогою `Expand-Archive`:
+
+```powershell
+sima-cli models download --id yolov8s --variant w8a8 --force
+Expand-Archive models\yolov8s\w8a8\yolov8s_w8a8_default.zip -DestinationPath models\yolov8s\w8a8 -Force
+Copy-Item models\yolov8s\w8a8\yolov8s_w8a8_mpk.tar.gz yolo_v8s_mpk.tar.gz
+```
 
 **Python:**
 
@@ -86,6 +94,21 @@ python3 share/sima-pcie-host/tutorials/024_run_your_first_model_over_pcie/run_im
 ./build/tutorials-standalone/tutorial_024_run_tensor_mode
 ./build/tutorials-standalone/tutorial_024_run_image_mode
 ./build/tutorials-standalone/tutorial_024_run_image_boxdecode
+```
+
+У Windows зберіть програми за допомогою CMake з **x64 Native Tools Command Prompt** у своїй копії навчальних матеріалів. Замініть `C:\opencv\build` на каталог `build` пакета OpenCV, описаного в розділі [Запуск застосунків у Windows](/getting-started/neat-library/pcie-host/#run-applications-on-windows):
+
+```bat
+call "%ProgramFiles%\SimaPCIeHost\bin\sima-pcie-host-env.cmd"
+set "OpenCV_DIR=C:\opencv\build"
+cmake -S share\sima-pcie-host\tutorials -B build
+cmake --build build --config Release --target tutorial_024_run_tensor_mode
+cmake --build build --config Release --target tutorial_024_run_image_mode
+cmake --build build --config Release --target tutorial_024_run_image_boxdecode
+set "PATH=%OpenCV_DIR%\x64\vc16\bin;%PATH%"
+build\Release\tutorial_024_run_tensor_mode.exe
+build\Release\tutorial_024_run_image_mode.exe
+build\Release\tutorial_024_run_image_boxdecode.exe
 ```
 
 Відповідні програми C++ і Python виводять однакові шість необроблених вихідних каналів

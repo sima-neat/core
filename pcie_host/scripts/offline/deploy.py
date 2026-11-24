@@ -175,6 +175,30 @@ def finish_python_location(user, path, role):
         os.chown(home_path, user.pw_uid, user.pw_gid, follow_symlinks=False)
 
 
+# pip check diagnostics start with the distribution whose requirement is unmet.
+PIP_DIAGNOSTIC = re.compile(r'(\S+) \S+ (?:requires \S+, which is not installed|'
+                            r'has requirement .+, but you have .+)\.')
+
+
+def system_packages_only(python, diagnostics):
+    """True when every pip check diagnostic is for a distribution outside the environment.
+
+    An environment with system site packages also reports distributions owned by
+    the OS package manager; this installer neither installs nor repairs those.
+    """
+    rows = [PIP_DIAGNOSTIC.fullmatch(line.strip()) for line in (diagnostics or '').splitlines()]
+    if not rows or not all(rows):
+        return False
+    try:
+        local = json.loads(output([python, '-m', 'pip', 'list', '--local', '--format=json',
+                                   '--disable-pip-version-check']))
+    except (subprocess.SubprocessError, OSError, ValueError):
+        return False
+    # pip list reports names as written in metadata; pip check normalizes them.
+    names = {re.sub(r'[-_.]+', '-', row['name']).lower() for row in local}
+    return names.isdisjoint(re.sub(r'[-_.]+', '-', row[1]).lower() for row in rows)
+
+
 def check_python_environment(path, stage):
     """Report the environment and pip's dependency diagnostics without repairing it."""
     command = [str(path/'bin/python'), '-m', 'pip', 'check']
@@ -185,6 +209,10 @@ def check_python_environment(path, stage):
                             (getattr(exc, 'stdout', ''), getattr(exc, 'stderr', '')) if value)
         if not details:
             details = str(exc)
+        if system_packages_only(command[0], getattr(exc, 'stdout', '')):
+            print(f'Dependency diagnostics for system packages outside {path} '
+                  f'do not stop installation:\n{details}')
+            return
         context = ('Existing Python environment is broken; installation stopped before package changes'
                    if stage == 'before installation' else
                    'Python dependency verification failed; installation may have changed packages')

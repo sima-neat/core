@@ -221,8 +221,8 @@ for host in "${hosts[@]}"; do
   ssh-keyscan -H -p "${port}" "${host}" >> "${HOME}/.ssh/known_hosts" 2>/dev/null || true
   chmod 600 "${HOME}/.ssh/known_hosts" 2>/dev/null || true
 
-  if ssh -i "${key_path}" -p "${port}" -o BatchMode=yes -o ConnectTimeout=5 \
-      -o StrictHostKeyChecking=accept-new "${target}" true >/dev/null 2>&1; then
+  if ssh -i "${key_path}" -o IdentitiesOnly=yes -p "${port}" -o BatchMode=yes \
+      -o ConnectTimeout=5 -o StrictHostKeyChecking=accept-new "${target}" true >/dev/null 2>&1; then
     echo "Already provisioned."
     ((success += 1))
     continue

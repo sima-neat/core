@@ -41,11 +41,19 @@
 PCIeホストパッケージをインストールし、[チュートリアルの設定](/tutorials/before-you-run)で説明されているように、チュートリアルのバンドルをダウンロードします。抽出されたPCIeエクストラルのルートから、YOLOv8sがまだ存在しない場合は、ダウンロードします。
 
 ```bash
-sima-cli models download --id yolov8s --variant w8a8
+sima-cli models download --id yolov8s --variant w8a8 --force
 unzip -p models/yolov8s/w8a8/yolov8s_w8a8_default.zip yolov8s_w8a8_mpk.tar.gz > yolo_v8s_mpk.tar.gz
 ```
 
 プログラムには、このディレクトリ内の正確なパス`yolo_v8s_mpk.tar.gz`が必要です。2番目のコマンドは、ダウンロードしたZIPからこのファイルを展開します。
+
+Windowsでは、[Windowsでアプリケーションを実行する](/getting-started/neat-library/pcie-host/#run-applications-on-windows)の説明に従ってチュートリアルを設定し、プログラムを実行します。PowerShellでモデルをダウンロードし、`Expand-Archive`でアーカイブを展開します。
+
+```powershell
+sima-cli models download --id yolov8s --variant w8a8 --force
+Expand-Archive models\yolov8s\w8a8\yolov8s_w8a8_default.zip -DestinationPath models\yolov8s\w8a8 -Force
+Copy-Item models\yolov8s\w8a8\yolov8s_w8a8_mpk.tar.gz yolo_v8s_mpk.tar.gz
+```
 
 Pythonを実行します。
 
@@ -65,6 +73,17 @@ python3 share/sima-pcie-host/tutorials/025_run_pcie_inference_async/run_pcie_inf
 ```bash
 ./build.sh --target tutorial_025_run_pcie_inference_async
 ./build/tutorials-standalone/tutorial_025_run_pcie_inference_async
+```
+
+Windowsでは、チュートリアルのコピー先で、**x64 Native Tools Command Prompt** からCMakeで再ビルドします。`C:\opencv\build` は、[Windowsでアプリケーションを実行する](/getting-started/neat-library/pcie-host/#run-applications-on-windows)で説明しているOpenCVパッケージの`build`ディレクトリに置き換えてください。
+
+```bat
+call "%ProgramFiles%\SimaPCIeHost\bin\sima-pcie-host-env.cmd"
+set "OpenCV_DIR=C:\opencv\build"
+cmake -S share\sima-pcie-host\tutorials -B build
+cmake --build build --config Release --target tutorial_025_run_pcie_inference_async
+set "PATH=%OpenCV_DIR%\x64\vc16\bin;%PATH%"
+build\Release\tutorial_025_run_pcie_inference_async.exe
 ```
 
 正確なタイミングは、ホストとカードによって異なりますが、両方のプログラムは同じ測定境界を使用し、以下を出力します。

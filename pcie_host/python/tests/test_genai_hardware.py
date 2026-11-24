@@ -5,15 +5,16 @@ SIMAPCIE_CARD_HOST is set; once enabled, missing models/assets are failures.
 """
 import os
 import re
+import time
 from pathlib import Path
 
 import numpy as np
 import pytest
 from pyneatpcie import genai
+from genai_admission_contract import is_bounded_competing_session_rejection
 
 
-@pytest.fixture
-def connection():
+def _connection(request_timeout_ms=None):
   if not os.environ.get("SIMAPCIE_CARD_HOST"):
     pytest.skip("SIMAPCIE_CARD_HOST is not set")
   result = genai.ConnectionOptions()
@@ -22,8 +23,19 @@ def connection():
   result.user = os.environ.get("SIMAPCIE_USER", "sima")
   result.ssh_key = os.environ.get("SIMAPCIE_SSH_KEY", "")
   result.startup_timeout_ms = int(os.environ.get("SIMAPCIE_READINESS_TIMEOUT_MS", "180000"))
-  result.request_timeout_ms = int(os.environ.get("SIMAPCIE_GENAI_REQUEST_TIMEOUT_MS", "120000"))
+  result.request_timeout_ms = (
+      int(os.environ.get("SIMAPCIE_GENAI_REQUEST_TIMEOUT_MS", "120000"))
+      if request_timeout_ms is None else request_timeout_ms)
+  if os.environ.get("SIMAPCIE_GENAI_MEDIA_DIRECTORY"):
+    result.media_directory = os.environ["SIMAPCIE_GENAI_MEDIA_DIRECTORY"]
+  if os.environ.get("SIMAPCIE_GENAI_MEDIA_SERVE_ROOT"):
+    result.media_serve_root = os.environ["SIMAPCIE_GENAI_MEDIA_SERVE_ROOT"]
   return result
+
+
+@pytest.fixture
+def connection():
+  return _connection()
 
 
 def _model(kind):
@@ -82,6 +94,13 @@ def _asr_metadata(result, language):
   assert result.no_speech_prob is not None and np.isfinite(result.no_speech_prob)
   assert 0 <= result.no_speech_prob <= 1
   assert result.avg_logprob is not None and np.isfinite(result.avg_logprob)
+
+
+def _llm_request(prompt="What is the capital of Germany?", max_new_tokens=24):
+  request = genai.GenerationRequest()
+  request.prompt = prompt
+  request.max_new_tokens = max_new_tokens
+  return request
 
 
 def test_genai_llm_run_stream_history_and_cancel(connection):
@@ -214,3 +233,60 @@ def test_genai_asr_file_pcm_translation_and_stream(connection):
       model.run(bad_image)
     model.close()
     model.close()
+
+
+def test_genai_request_timeout_and_restart_after_failure():
+  request = _llm_request("Count from one to one hundred.", 256)
+  with genai.GenAIModel(_model("llm"), _connection(request_timeout_ms=1)) as model:
+    with pytest.raises(RuntimeError, match="(?i)timeout"):
+      model.run(request)
+
+  with genai.GenAIModel(_model("llm"), _connection()) as model:
+    _generated(model.run(_llm_request()))
+
+
+def test_genai_competing_sessions_are_isolated(connection):
+  model_path = _model("llm")
+  request = _llm_request()
+  with genai.GenAIModel(model_path, connection) as first:
+    second = None
+    started = time.monotonic()
+    try:
+      second = genai.GenAIModel(model_path, _connection())
+      _generated(second.run(request))
+      outcome = "accepted"
+    except (RuntimeError, ValueError) as error:
+      assert is_bounded_competing_session_rejection(error), (
+          f"Competing session failed without an admission/resource/busy rejection: {error}")
+      outcome = "bounded-rejection"
+    finally:
+      if second is not None:
+        second.close()
+    elapsed = time.monotonic() - started
+    startup_bound = _connection().startup_timeout_ms / 1000 + 30
+    assert elapsed < startup_bound, f"Competing session took {elapsed:.1f}s to resolve"
+    print(f"competing_session_outcome={outcome} elapsed_seconds={elapsed:.3f}")
+    _generated(first.run(request))
+
+
+def test_genai_bounded_cancellation_soak_and_context_cleanup(connection):
+  iterations = int(os.environ.get("SIMAPCIE_GENAI_CANCEL_SOAK_ITERATIONS", "20"))
+  assert iterations >= 20, "Release cancellation soak requires at least 20 iterations"
+  request = _llm_request("Count from one to one hundred.", 256)
+  bound = connection.request_timeout_ms / 1000 + 5
+  with genai.GenAIModel(_model("llm"), connection) as model:
+    for iteration in range(iterations):
+      started = time.monotonic()
+      stream = model.stream(request)
+      first = stream.next()
+      assert first is not None and not first.is_final
+      stream.cancel()
+      _, final = _consume(stream)
+      assert final.finish_reason == "interrupted"
+      elapsed = time.monotonic() - started
+      assert elapsed < bound, (
+          f"Cancellation {iteration + 1} exceeded {bound:.1f}s: {elapsed:.1f}s")
+    _generated(model.run(_llm_request()))
+
+  with genai.GenAIModel(_model("llm"), _connection()) as reopened:
+    _generated(reopened.run(_llm_request()))

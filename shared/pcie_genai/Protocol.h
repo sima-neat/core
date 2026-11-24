@@ -25,14 +25,19 @@ inline void decode_reasoning_effort(const Json& request, std::string& effort) {
     effort = request.at("reasoning_effort").get<std::string>();
 }
 inline std::string relative_name(const std::string& name) {
-  std::filesystem::path p(name);
+#ifdef _WIN32
+  // Names are UTF-8; the narrow path constructor would read them in the ANSI code page.
+  const std::filesystem::path p(std::u8string(name.begin(), name.end()));
+#else
+  const std::filesystem::path p(name);
+#endif
   if (name.empty() || p.is_absolute() || name.find('\0') != std::string::npos ||
       name.find('\\') != std::string::npos)
     throw std::invalid_argument("Expected relative asset name");
   for (const auto& part : p)
     if (part == ".." || part == ".")
       throw std::invalid_argument("Unsafe asset name");
-  return p.generic_string();
+  return name; // no backslashes, so already the generic form
 }
 inline void validate_session(const std::string& session) {
   if (session.size() != 24 || session.find_first_not_of("0123456789abcdef") != std::string::npos)

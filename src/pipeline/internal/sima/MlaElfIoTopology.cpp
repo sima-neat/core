@@ -1,5 +1,6 @@
 #define SIMA_NEAT_INTERNAL 1
 #include "pipeline/internal/sima/MlaElfIoTopology.h"
+#include "pipeline/internal/Utf8Path.h"
 
 #include <algorithm>
 #include <array>
@@ -256,7 +257,7 @@ bool read_mla_elf_io_topology(const std::filesystem::path& elf_path, MlaElfIoTop
     return false;
   }
   *out = MlaElfIoTopology{};
-  out->source_path = elf_path.string();
+  out->source_path = utf8_string(elf_path);
 
   std::ifstream in(elf_path, std::ios::binary);
   if (!in.is_open()) {

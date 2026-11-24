@@ -186,4 +186,13 @@ ProcessCVU 階段預設透過 Runtime 的 `neatkernelrunner` 執行。
 
 ## PCIe 主機與卡片狀態
 
-`NEAT_PCIE_SSH_USER` 指定卡片的 SSH 使用者（預設為 `sima`）。`NEAT_PCIE_SSH_KEY` 指定私密金鑰（預設為 `~/.ssh/sima_neat_pcie_ed25519`），也可繼續使用既有 SSH 設定與代理程式驗證。`--offline` 會略過網際網路更新檢查，但仍透過本機 SSH 讀取已連接的卡片。PCIe 主機狀態不檢查成品更新；請使用 `sima-cli neat install core/pciehost/<distro>/<arch>@<ref>` 更新主機套件。`neat update` 不會更新 PCIe 卡片。
+`NEAT_PCIE_SSH_USER` 指定卡片的 SSH 使用者（預設為 `sima`）。`NEAT_PCIE_SSH_KEY` 指定私密金鑰（預設為 `~/.ssh/sima_neat_pcie_ed25519`）。在 Ubuntu 上，也可繼續使用既有 SSH 設定與代理程式驗證。在 Windows 上，若該金鑰檔案存在，OpenSSH 只會提供該金鑰及 SSH 設定中 `IdentityFile` 指定的金鑰，不會提供 ssh-agent 的金鑰。`--offline` 會略過網際網路更新檢查，但仍透過本機 SSH 讀取已連接的卡片。PCIe 主機狀態不檢查成品更新；請使用 `sima-cli neat install core/pciehost/<distro>/<arch>@<ref>` 更新主機套件。`neat update` 不會更新 PCIe 卡片。
+
+## Windows PCIe 主機執行階段
+
+Windows PCIe 主機套件會在 Python 套件、`sima-pcie-host-env.cmd` 以及安裝前檢查中讀取下列變數。
+
+- `GSTREAMER_ROOT_X86_64`：要取代 GStreamer 安裝程式所記錄之根目錄而使用的 GStreamer 安裝根目錄，會最先搜尋。
+- `GSTREAMER_1_0_ROOT_MSVC_X86_64`：GStreamer MSVC x64 安裝根目錄。由 GStreamer 安裝程式設定。搜尋順序在 `GSTREAMER_ROOT_X86_64` 之後、`%ProgramFiles%\gstreamer\1.0\msvc_x86_64` 之前。
+- `SIMA_WINDOWS_PLATFORM_RUNTIME_DIR`：包含 Platform 執行階段 `SiMaPCIe.dll` 的目錄。預設為 `SiMaMlaDaemon` 服務執行檔所在的目錄。
+- `SIMA_PCIE_HOST_LIBRARY_PATH`：包含 PCIe 主機與 GStreamer DLL 的其他目錄，以 `;` 分隔，適用於安裝在預設位置以外的情況。由 Python 套件讀取。Windows 不會為套件加入的 DLL 目錄定義順序，因此請勿列出含有其他位置已提供之 DLL 第二份副本的目錄。`sima-pcie-host-env.cmd` 會將安裝的 `bin` 目錄加在現有值之前。

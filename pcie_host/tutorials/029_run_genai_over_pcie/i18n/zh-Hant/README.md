@@ -48,7 +48,7 @@ VLM 範例在主機上使用 OpenCV 讀取圖片，將 BGR 轉換為 RGB，並�
 
 ## Run
 
-請依照[安裝 PCIe 主機](/getting-started/neat-library/pcie-host/)與[教學準備](/tutorials/before-you-run)操作。使用互相相容且提供 PCIe GenAI API 的主機與卡端套件。以下所有命令都在主機上，從解壓縮後的 PCIe extras 根目錄執行。
+請依照[安裝 PCIe 主機](/getting-started/neat-library/pcie-host/)與[教學準備](/tutorials/before-you-run)操作。使用互相相容且提供 PCIe GenAI API 的主機與卡端套件。以下所有命令都在主機上，從解壓縮後的 PCIe extras 根目錄執行。在 Windows 上，請依照[在 Windows 上執行應用程式](/getting-started/neat-library/pcie-host/#run-applications-on-windows)的說明設定教學課程並執行程式。Windows 套件包含 PCIe GenAI API，但在此預覽版中並非受支援的客戶設定。
 
 ### 下載已準備好的模型
 
@@ -115,6 +115,22 @@ python share/sima-pcie-host/tutorials/029_run_genai_over_pcie/run_whisper.py \
   --image share/sima-pcie-host/tutorials/assets/street-scene.png
 ./build/tutorials-standalone/tutorial_029_run_whisper \
   --model models/whisper-small-a16w8 --audio speech.wav
+```
+
+在 Windows 上，請在您的教學課程副本中，從 **x64 Native Tools Command Prompt** 使用 CMake 建置。將 `C:\opencv\build` 替換為[在 Windows 上執行應用程式](/getting-started/neat-library/pcie-host/#run-applications-on-windows)中所述 OpenCV 套件的 `build` 目錄：
+
+```bat
+call "%ProgramFiles%\SimaPCIeHost\bin\sima-pcie-host-env.cmd"
+set "OpenCV_DIR=C:\opencv\build"
+cmake -S share\sima-pcie-host\tutorials -B build
+cmake --build build --config Release --target tutorial_029_run_llm
+cmake --build build --config Release --target tutorial_029_run_vlm
+cmake --build build --config Release --target tutorial_029_run_whisper
+set "PATH=%OpenCV_DIR%\x64\vc16\bin;%PATH%"
+build\Release\tutorial_029_run_llm.exe --model models\Qwen3-0.6B-Autoround-a16w4 --stream
+build\Release\tutorial_029_run_vlm.exe --model models\LFM2-VL-450M-Autoround-a16w4 ^
+  --image share\sima-pcie-host\tutorials\assets\street-scene.png
+build\Release\tutorial_029_run_whisper.exe --model models\whisper-small-a16w8 --audio speech.wav
 ```
 
 從原始碼建置 C++ 需要 PCIe 開發套件與 OpenCV 開發檔案。所有範例預設使用卡 0 與連線的預設 SSH 使用者 sima。若安裝環境不同，請加入 `--card N`、`--user USER`、`--ssh-key PATH` 或 `--card-host ADDRESS`。請使用已設定的 SSH 帳號；範例不會設定存取權限。

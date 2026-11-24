@@ -3,6 +3,7 @@
 #include "genai/MediaStage.h"
 #include "genai/ModelAssets.h"
 #include "genai/ModelDirectory.h"
+#include "HostPlatform.h"
 #include "Protocol.h"
 #include "Service.h"
 #include <atomic>
@@ -77,7 +78,7 @@ std::optional<TokenSample> GenerationStream::next() {
 
 struct GenAIModel::Impl {
   ConnectionOptions options;
-  std::string model;
+  std::filesystem::path model;
   simaai::neat::genai::internal::ModelDirectoryInfo model_layout;
   internal::RemoteSession remote;
   wire::Service service;
@@ -94,14 +95,14 @@ struct GenAIModel::Impl {
   Clock::time_point deadline;
 
   Impl(std::string name, ConnectionOptions connection)
-      : options(std::move(connection)), model(internal::host_model_path(name).string()),
+      : options(std::move(connection)),
+        model(internal::host_model_path(pcie::internal::host_path_from_string(name))),
         model_layout(simaai::neat::genai::internal::inspect_model_directory(model)),
         remote(options), service(options.card_id), assets(model, remote.id(), options.card_id) {
     service.subscribe(wire::tag(remote.id(), true));
-    const auto target = model_layout.root.lexically_relative(model);
-    remote.start(target == "." ? "" : target.generic_string(),
+    remote.start(internal::model_subdirectory(model, model_layout.root),
                  model_layout.draft_root
-                     ? model_layout.draft_root->lexically_relative(model).generic_string()
+                     ? internal::model_subdirectory(model, *model_layout.draft_root)
                      : "");
     const auto until = Clock::now() + std::chrono::milliseconds(options.startup_timeout_ms);
     auto sent = Clock::time_point{};
@@ -151,11 +152,20 @@ struct GenAIModel::Impl {
       active.reset();
       pending.reset();
     }
-    assets.close();
+    std::exception_ptr upload;
+    try {
+      assets.close();
+    } catch (...) {
+      upload = std::current_exception();
+    }
     remote.stop();
-    std::lock_guard lock(mutex);
-    // Keep staged media until remote shutdown is confirmed, even if stop() throws.
-    media.reset();
+    {
+      std::lock_guard lock(mutex);
+      // Keep staged media until remote shutdown is confirmed, even if stop() throws.
+      media.reset();
+    }
+    if (upload)
+      std::rethrow_exception(upload);
   }
   std::shared_ptr<internal::StreamState> start(const GenerationRequest& request) {
     std::lock_guard lock(mutex);
@@ -320,7 +330,7 @@ bool GenAIModel::accepts_audio() const {
   return impl_->capabilities.at("audio");
 }
 std::string GenAIModel::model_id() const {
-  return impl_->model;
+  return pcie::internal::host_path_string(impl_->model);
 }
 GenerationStream GenAIModel::stream(const GenerationRequest& request) {
   if (!impl_)

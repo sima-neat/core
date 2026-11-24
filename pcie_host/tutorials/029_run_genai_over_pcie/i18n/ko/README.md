@@ -48,7 +48,7 @@ Whisper 디렉터리를 로드하고 `audio_file`에 호스트 오디오 경로�
 
 ## Run
 
-[PCIe 호스트 설치](/getting-started/neat-library/pcie-host/)와 [튜토리얼 준비](/tutorials/before-you-run)를 따르세요. PCIe GenAI API를 제공하는 서로 호환되는 호스트 및 카드 패키지를 사용합니다. 아래 모든 명령은 호스트에서 압축 해제한 PCIe extras 루트를 기준으로 실행하세요.
+[PCIe 호스트 설치](/getting-started/neat-library/pcie-host/)와 [튜토리얼 준비](/tutorials/before-you-run)를 따르세요. PCIe GenAI API를 제공하는 서로 호환되는 호스트 및 카드 패키지를 사용합니다. 아래 모든 명령은 호스트에서 압축 해제한 PCIe extras 루트를 기준으로 실행하세요. Windows에서는 [Windows에서 애플리케이션 실행](/getting-started/neat-library/pcie-host/#run-applications-on-windows)에 설명된 대로 튜토리얼을 설정하고 프로그램을 실행하세요. Windows 패키지에는 PCIe GenAI API가 포함되어 있지만, 이 프리뷰에서는 지원되는 고객 구성이 아닙니다.
 
 ### 준비된 모델 다운로드하기
 
@@ -115,6 +115,22 @@ python share/sima-pcie-host/tutorials/029_run_genai_over_pcie/run_whisper.py \
   --image share/sima-pcie-host/tutorials/assets/street-scene.png
 ./build/tutorials-standalone/tutorial_029_run_whisper \
   --model models/whisper-small-a16w8 --audio speech.wav
+```
+
+Windows에서는 튜토리얼 복사본 디렉터리의 **x64 Native Tools Command Prompt**에서 CMake로 빌드하세요. `C:\opencv\build`는 [Windows에서 애플리케이션 실행](/getting-started/neat-library/pcie-host/#run-applications-on-windows)에 설명된 OpenCV 패키지의 `build` 디렉터리로 바꾸세요.
+
+```bat
+call "%ProgramFiles%\SimaPCIeHost\bin\sima-pcie-host-env.cmd"
+set "OpenCV_DIR=C:\opencv\build"
+cmake -S share\sima-pcie-host\tutorials -B build
+cmake --build build --config Release --target tutorial_029_run_llm
+cmake --build build --config Release --target tutorial_029_run_vlm
+cmake --build build --config Release --target tutorial_029_run_whisper
+set "PATH=%OpenCV_DIR%\x64\vc16\bin;%PATH%"
+build\Release\tutorial_029_run_llm.exe --model models\Qwen3-0.6B-Autoround-a16w4 --stream
+build\Release\tutorial_029_run_vlm.exe --model models\LFM2-VL-450M-Autoround-a16w4 ^
+  --image share\sima-pcie-host\tutorials\assets\street-scene.png
+build\Release\tutorial_029_run_whisper.exe --model models\whisper-small-a16w8 --audio speech.wav
 ```
 
 C++ 소스 빌드에는 PCIe 개발 패키지와 OpenCV 개발 파일이 필요합니다. 모든 예제는 기본적으로 카드 0과 연결의 기본 SSH 사용자 sima를 사용합니다. 설치 환경이 다르면 `--card N`, `--user USER`, `--ssh-key PATH`, `--card-host ADDRESS`를 추가하세요. 설정된 SSH 계정을 사용하세요. 예제는 접근 권한을 설정하지 않습니다.

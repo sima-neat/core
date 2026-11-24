@@ -41,11 +41,19 @@
 Встановіть пакет PCIe host і завантажте пакет навчального посібника, як описано в [Налаштування навчального посібника.](/tutorials/before-you-run). З кореневої папки розпакованих додаткових матеріалів PCIe завантажте YOLOv8s, якщо він ще не присутній:
 
 ```bash
-sima-cli models download --id yolov8s --variant w8a8
+sima-cli models download --id yolov8s --variant w8a8 --force
 unzip -p models/yolov8s/w8a8/yolov8s_w8a8_default.zip yolov8s_w8a8_mpk.tar.gz > yolo_v8s_mpk.tar.gz
 ```
 
 Програма вимагає точного шляху `yolo_v8s_mpk.tar.gz` у цьому каталозі. Друга команда видобуває його із завантаженого ZIP-файлу.
+
+У Windows налаштуйте навчальні матеріали та запускайте програми, як описано в розділі [Запуск застосунків у Windows](/getting-started/neat-library/pcie-host/#run-applications-on-windows). Завантажте модель у PowerShell і видобудьте архів за допомогою `Expand-Archive`:
+
+```powershell
+sima-cli models download --id yolov8s --variant w8a8 --force
+Expand-Archive models\yolov8s\w8a8\yolov8s_w8a8_default.zip -DestinationPath models\yolov8s\w8a8 -Force
+Copy-Item models\yolov8s\w8a8\yolov8s_w8a8_mpk.tar.gz yolo_v8s_mpk.tar.gz
+```
 
 Запустіть Python:
 
@@ -65,6 +73,17 @@ python3 share/sima-pcie-host/tutorials/025_run_pcie_inference_async/run_pcie_inf
 ```bash
 ./build.sh --target tutorial_025_run_pcie_inference_async
 ./build/tutorials-standalone/tutorial_025_run_pcie_inference_async
+```
+
+У Windows перезберіть її за допомогою CMake з **x64 Native Tools Command Prompt** у своїй копії навчальних матеріалів. Замініть `C:\opencv\build` на каталог `build` пакета OpenCV, описаного в розділі [Запуск застосунків у Windows](/getting-started/neat-library/pcie-host/#run-applications-on-windows):
+
+```bat
+call "%ProgramFiles%\SimaPCIeHost\bin\sima-pcie-host-env.cmd"
+set "OpenCV_DIR=C:\opencv\build"
+cmake -S share\sima-pcie-host\tutorials -B build
+cmake --build build --config Release --target tutorial_025_run_pcie_inference_async
+set "PATH=%OpenCV_DIR%\x64\vc16\bin;%PATH%"
+build\Release\tutorial_025_run_pcie_inference_async.exe
 ```
 
 Точний час залежить від хоста та відеокарти, але обидві програми використовують однакові межі вимірювання та виводять:

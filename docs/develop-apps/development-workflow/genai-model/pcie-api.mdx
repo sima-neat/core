@@ -26,6 +26,17 @@ GenAI does not take a vision queue number or require `build()`.
   relative to your application's current working directory, not a card-local path.
   Keep the model files readable and unchanged while the model is open.
 
+On Windows, the matching Platform installer provisions the `data` service root
+under the Windows CommonApplicationData known folder, normally
+`%ProgramData%\SiMa.ai\data`; the API resolves that known folder and uses the
+directory by default. If the Platform daemon configuration maps `data`
+elsewhere, set
+`connection.media_directory` and `connection.media_serve_root` to the published
+pair before sending an image or audio request. Linux continues to use
+`/srv/simaai/data`. Windows GenAI is not a supported customer configuration until
+that provider contract and the complete C++ and Python hardware matrix are
+qualified.
+
 ## Run a text request
 
 This example assumes `Qwen3-0.6B-Autoround-a16w4` is in `./models/` beneath

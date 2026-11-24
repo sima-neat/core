@@ -4,7 +4,7 @@ description: "연결된 Modalix PCIe 카드에서 모델을 실행하려면 PCIe
 sidebar_position: 3
 ---
 
-이 페이지를 사용하여 Linux 시스템에 Neat PCIe 호스트 패키지를 설치하고, Modalix PCIe 카드에 연결합니다.
+이 페이지를 사용하여 Modalix PCIe 카드에 연결된 지원 대상 Linux 또는 Windows 시스템에 Neat PCIe 호스트 패키지를 설치합니다.
 
 Neat PCIe 호스트 패키지는 호스트 시스템에서 연결된 Modalix PCIe 카드로 입력을 보내고 추론 결과를 수신하기 위한 공동 처리 API를 제공합니다.
 
@@ -13,8 +13,8 @@ Neat PCIe 호스트 패키지는 호스트 시스템에서 연결된 Modalix PCI
 :::
 
 :::tip 오프라인 설치가 필요한 경우
-대상에서 SiMa.ai 서비스의 패키지를 다운로드할 수 없으면 [오프라인 설치](#offline-installation)를 사용하세요.
-인터넷에 연결된 컴퓨터에서 패키지를 다운로드하세요.
+Ubuntu 대상에서 SiMa.ai 서비스의 패키지를 다운로드할 수 없으면 [오프라인 설치](#offline-installation)를 사용하세요.
+인터넷에 연결된 컴퓨터에서 패키지를 다운로드하세요. Windows 호스트에서는 아직 오프라인 설치를 사용할 수 없습니다.
 :::
 
 ## 지원되는 호스트 운영체제
@@ -25,8 +25,21 @@ Neat PCIe 호스트 패키지는 다음으로 검증된 호스트 플랫폼을 �
 | --- | --- | --- |
 | 우분투 22.04 | x86_64 | 지원됨 |
 | 우분투 24.04 | x86_64 | 지원됨 |
+| Windows 11 Home 또는 Pro, 빌드 26300 | x86_64 | 네이티브 미리 보기 |
 
-Arm64 호스트 빌드는 아직 검증되지 않았습니다. Windows 11은 지원되지 않습니다.
+Arm64 호스트 빌드는 아직 검증되지 않았습니다. Windows 패키지에는 PCIe GenAI API가 포함되어 있지만, 일치하는 Platform 공급자와 전체 Windows C++ 및 Python GenAI 릴리스 매트릭스가 자격 검증을 통과할 때까지 지원 대상 고객 구성으로 제공되지 않습니다.
+
+Windows 미리 보기에는 다음과 같은 제한이 있습니다.
+
+- Windows 10, Windows Server, S 모드의 Windows 및 Arm64 Windows는 지원되지 않습니다.
+- Platform 3.0 Windows 패키지의 가상 이더넷 드라이버 `SiMaNetAdapter`는 테스트 서명되어 있습니다. Windows는 Secure Boot가 꺼져 있고 Windows 테스트 서명 모드가 켜져 있을 때만 이 드라이버를 로드합니다. Secure Boot를 켠 상태로 유지해야 하는 호스트는 프로덕션 서명된 `SiMaNetAdapter` 드라이버가 제공될 때까지 미리 보기를 사용할 수 없습니다.
+- Windows를 다시 시작한 후 카드가 표시되지 않거나 모델이 시간 초과될 수 있습니다. 다시 시작하는 대신 호스트를 종료한 다음 전원을 켜세요. 절전, 최대 절전 모드 및 빠른 시작은 검증되지 않았습니다.
+- 호스트당 카드 1개 구성만 검증되었습니다.
+- 미리 보기 패키지는 코드 서명되지 않았습니다. Smart App Control, Windows Defender Application Control 및 적용 중인 AppLocker 정책은 이 패키지를 차단합니다.
+- GenAI 모델 폴더 경로는 Windows 시스템 코드 페이지로 표현할 수 있어야 합니다.
+- Windows가 실행 중일 때 카드가 PCIe 버스에서 분리되면 Windows가 블루 스크린으로 중지될 수 있습니다. 예를 들어 장치 관리자나 `pnputil`에서 카드 또는 해당 PCIe 포트를 다시 시작한 경우입니다. Windows가 실행 중일 때는 카드나 해당 포트를 다시 시작하지 마세요. 카드가 응답하지 않으면 호스트를 종료한 다음 전원을 켜세요.
+- Platform 패키지는 `Opening simaai_mla_c0` 같은 큐 메시지를 모든 PCIe 애플리케이션의 표준 출력에 출력합니다. 애플리케이션의 표준 출력을 데이터로 파싱하지 말고, 결과는 파일에 기록하세요.
+- [오프라인 설치](#offline-installation)는 Ubuntu 호스트에서만 사용할 수 있습니다. Windows 호스트에서 패키지를 설치하려면 인터넷 연결이 필요합니다.
 
 ## 온라인 설치 필수 조건
 
@@ -38,8 +51,9 @@ Arm64 호스트 빌드는 아직 검증되지 않았습니다. Windows 11은 지
   [PCIe Driver Installation guide](https://developer.sima.ai/hardware/getting-started/pcie-mode/driver-installation).
 - Modalix PCIe 카드를 연결하고 구성하여 관리 인터페이스를 사용할 수 있도록 합니다.
   호스트에서 접근할 수 있습니다. 카드 0의 기본 주소는 `10.0.0.2`입니다.
-- 카드에 호환되는 Neat Library 버전을 설치합니다. 호스트와
-  카드 패키지는 호환되는 버전에서 제공되어야 합니다.
+- 카드에는 같은 릴리스의 Neat Library를 설치할 준비를 하세요. 호스트와 카드 패키지는
+  호환되는 릴리스에서 제공되어야 합니다. 호스트 패키지를 설치한 후
+  [카드에 Neat 설치](#install-neat-on-the-card)를 따르세요.
 
 PCIe 호스트를 인증하여 SiMa.ai 아티팩트를 다운로드할 수 있도록 합니다.
 
@@ -79,21 +93,204 @@ python3 -c "import pyneatpcie; print('pyneatpcie ready')"
 gst-inspect-1.0 neatpciehost
 </ShellCommand>
 
-## 문제 해결
+그런 다음 [카드에 Neat를 설치](#install-neat-on-the-card)합니다.
 
-SSH 프로비저닝으로 카드를 자동으로 검색할 수 없는 경우, 먼저 호스트가 관리 주소에 접속할 수 있는지 확인하십시오.
+## Windows 11 네이티브 미리 보기 설치
+
+Windows 미리 보기는 `pcie::Model` 비전 API의 네이티브 Visual Studio 빌드이며 `pcie::genai::GenAIModel`을 포함합니다. 위에서 설명한 대로 GenAI 릴리스에는 계속 자격 검증이 필요하며, API 설치만으로 Platform 전송 또는 카드 모델이 자격 검증을 통과하는 것은 아닙니다. 다음 필수 구성 요소를 이 순서대로 설치하세요.
+
+1. [python.org](https://www.python.org/downloads/windows/)의 64비트 CPython 3.14. 모든 사용자용 또는 현재 사용자용으로 설치할 수 있습니다. `sima-cli`보다 먼저 Python을 설치하세요. 프리 스레드 빌드는 wheel을 로드할 수 없습니다.
+2. [sima-cli 설치 가이드](/tools/sima-cli/)에 따라 설치한 `sima-cli`. 그런 다음 `sima-cli login`으로 로그인하세요. 이전 버전의 `sima-cli`는 `Missing 'script' in 'installation'` 오류로 중지됩니다. sima-cli 설치 프로그램을 다시 실행하여 업데이트한 후 다시 시도하세요. 새 창에서 `sima-cli --version`이 여전히 이전 버전을 표시하면 PATH에서 다른 사본이 먼저 검색되는 것입니다. 설치 프로그램은 해당 사본과 해결 방법을 알려 주는 경고를 출력합니다.
+3. SiMa Platform 3.0 Windows 패키지. PCIe 드라이버와 `SiMaMlaDaemon` 서비스를 제공합니다. 가상 이더넷 드라이버 `SiMaNetAdapter`는 프로덕션 서명이 아닌 테스트 서명되어 있습니다. Windows는 Secure Boot가 꺼져 있고 Windows 테스트 서명 모드가 켜져 있을 때만 이 드라이버를 로드합니다. Platform 설치 프로그램은 테스트 서명을 켜지만, Secure Boot가 켜져 있으면 Windows가 이를 허용하지 않으므로 Platform 패키지를 설치하기 전에 Secure Boot를 끄세요. 두 설정을 확인하려면 PowerShell을 관리자 권한으로 시작하고 다음을 실행하세요.
+
+   ```powershell
+   Confirm-SecureBootUEFI
+   bcdedit
+   ```
+
+   `Confirm-SecureBootUEFI`는 `False`를 출력해야 하고, `bcdedit` 출력에는 `testsigning Yes`가 있어야 합니다. 테스트 서명이 켜져 있으면 Windows 바탕 화면에 **테스트 모드**가 표시됩니다. Secure Boot는 PC의 펌웨어(UEFI) 설정에서 끕니다. 단계는 PC 제조업체에 따라 다르며, [Secure Boot 사용 안 함](https://learn.microsoft.com/windows-hardware/manufacture/desktop/disabling-secure-boot)에 설명되어 있습니다. Secure Boot를 변경하면 BitLocker 복구가 시작될 수 있습니다. 시스템 드라이브에서 BitLocker 또는 디바이스 암호화를 사용하는 경우 Secure Boot를 변경하기 전에 조직의 디바이스 암호화 정책을 확인하고, BitLocker를 일시 중단하고, 복구 키를 준비하세요.
+
+   그런 다음 PowerShell을 관리자 권한으로 시작하고 패키지를 설치하세요. `sima-cli`는 패키지를 현재 디렉터리에 다운로드하고, 관리자 창은 `C:\Windows\System32`에서 열리므로 먼저 작업 디렉터리로 이동하세요.
+
+   ```powershell
+   New-Item -ItemType Directory -Force "$HOME\sima-platform" | Out-Null
+   Set-Location "$HOME\sima-platform"
+   sima-cli install drivers/windows
+   ```
+
+   설치 프로그램이 Windows를 다시 시작할지 물으면 `N`을 입력하세요. 그런 다음 호스트를 종료했다가 전원을 켜세요. Neat 설치 프로그램은 **Installed apps**에 표시되는 패키지 이름이 아니라 드라이버 버전을 확인합니다. 드라이버 버전을 확인하려면 PowerShell에서 `Get-CimInstance Win32_PnPSignedDriver | Where-Object DeviceName -like 'SiMa.ai*' | Select-Object DeviceName, DriverVersion`을 실행하세요. 카드가 설치되어 있으면 `SiMa.ai MLA Device`와 `SiMa.ai Virtual Ethernet Adapter`가 표시됩니다.
+4. GStreamer 1.28.6 MSVC x64. [gstreamer-1.0-msvc-x86_64-1.28.6.exe](https://gstreamer.freedesktop.org/data/pkg/windows/1.28.6/msvc/gstreamer-1.0-msvc-x86_64-1.28.6.exe)에서 받으세요. 패키지에는 정확히 이 버전이 필요합니다. C++ 애플리케이션에 필요한 개발 파일이 포함된 설치 유형을 선택하세요. 설치 후에는 GStreamer 설치 프로그램이 설정하는 `GSTREAMER_1_0_ROOT_MSVC_X86_64` 변수를 인식하도록 새 터미널을 여세요.
+
+관리자가 아닌 평소 사용하는 사용자로 PowerShell을 열고, 다운로드한 패키지와 로그를 보관할 작업 디렉터리를 만드세요. 관리자 권한으로 시작한 PowerShell 창은 `C:\Windows\System32`에서 열리므로 그 위치에서 설치하지 마세요. 그런 다음 Windows 패키지를 설치합니다.
+
+```powershell
+New-Item -ItemType Directory -Force "$HOME\neat-pcie" | Out-Null
+Set-Location "$HOME\neat-pcie"
+```
 
 <ShellCommand prompt="pcie-host">
-ping -c 1 10.0.0.2
+sima-cli neat install core/pciehost/windows/amd64@v%%release.core%%
 </ShellCommand>
 
-그런 다음 설치된 설정 유틸리티를 실행하고 주소를 명시적으로 지정합니다.
+Windows 패키지는 이를 포함하는 첫 Neat 릴리스부터 게시됩니다.
+
+이 명령은 일치하는 Scheduler MSI, Core MSI 및 `win_amd64` wheel을 하나의 코호트로 설치합니다. Windows는 두 MSI 패키지에 대해 관리자 승인을 한 번 요청합니다. 다운로드한 패키지와 Windows Installer 로그는 현재 디렉터리에 남습니다.
+
+CLI는 MSI를 실행하기 전에 Windows OpenSSH, Platform 서비스, GStreamer 및 호환되는 Python 설치를 확인합니다. `%USERPROFILE%\pyneatpcie` 환경을 생성하거나 재사용하고, 게시된 모든 체크섬을 확인한 뒤 Scheduler와 Core에 대해 Windows Installer를 실행합니다. 또한 설치된 호스트 진단을 실행하고 패키지와 일치하는 코딩 에이전트 스킬과 wheel을 설치합니다. 복구 또는 업그레이드가 필요하면 같은 명령을 다시 실행하세요. 다른 환경을 사용하려면 `--python-executable <path>`를, 네이티브 C++만 설치하려면 `--native-only`를 사용하세요. 네이티브 제거는 Windows Installer가, Python 패키지 제거는 pip가 관리합니다.
+
+Ubuntu에서와 마찬가지로 설치의 마지막 단계에서 설치된 설정 유틸리티가 카드에 대한 암호 없는 SSH를 구성합니다. 이 유틸리티는 `%USERPROFILE%\.ssh\sima_neat_pcie_ed25519`를 생성하거나 재사용하며, 공개 키가 아직 등록되지 않은 경우 OpenSSH가 카드의 `sima` 계정 암호를 한 번 요청합니다. 유틸리티는 암호를 저장하지 않습니다. 카드를 추가하거나 교체한 후처럼 유틸리티를 다시 실행하려면 다음을 실행하세요.
+
+```powershell
+& "$env:ProgramFiles\SimaPCIeHost\bin\pcie-setup.cmd"
+```
+
+이 유틸리티는 Platform PCIe 네트워크 어댑터의 로컬 `10.0.N.1` 주소에서 카드 주소를 검색합니다. 자동 검색을 사용할 수 없으면 `-Hosts 10.0.0.2`를 전달하세요. 실행할 때마다 카드의 현재 SSH 호스트 키를 기록하므로 다시 플래시하거나 교체한 카드도 다시 신뢰됩니다. `.cmd` 래퍼는 자체 PowerShell 프로세스에서만 설치된 이 스크립트의 실행을 허용하며, 사용자 또는 컴퓨터의 실행 정책은 변경하지 않습니다.
+
+Python 패키지는 확장 모듈을 가져오기 전에 기본 설치 루트와 하나의 GStreamer 루트에서 DLL을 검색합니다. `GSTREAMER_ROOT_X86_64`, `GSTREAMER_1_0_ROOT_MSVC_X86_64`, 기본 x64 GStreamer 위치 중 GStreamer가 있는 첫 번째 위치를 사용하므로, 다른 GStreamer 설치를 선택하려면 `GSTREAMER_ROOT_X86_64`를 설정하세요. 다른 설치 루트를 사용하려면 `SIMA_PCIE_HOST_LIBRARY_PATH`를 PCIe 호스트 및 GStreamer DLL이 있는 디렉터리로 설정하세요. 필요한 DLL이 승인된 위치가 아닌 다른 위치에서 이미 로드된 경우 가져오기가 실패합니다. 혼합된 런타임을 계속 사용하지 말고 설치 버전을 맞춘 뒤 새 프로세스를 시작하세요.
+
+설치된 wheel과 플러그인을 확인합니다. 진단 도구는 `neatpciehost` 플러그인을 로드하고 사용하는 GStreamer 및 Platform 디렉터리를 출력하며, `neat.cmd`는 호스트와 카드의 소프트웨어를 표시합니다.
+
+```powershell
+$venv = "$env:USERPROFILE\pyneatpcie"
+$root = "$env:ProgramFiles\SimaPCIeHost"
+& "$root\bin\sima-pcie-host-doctor.cmd"
+& "$venv\Scripts\python.exe" -m pip check
+& "$venv\Scripts\python.exe" -c "import pyneatpcie as p; print(p.__version__, p.Model)"
+& "$root\bin\neat.cmd"
+```
+
+그런 다음 [카드에 Neat를 설치](#install-neat-on-the-card)합니다.
+
+### Windows에서 애플리케이션 실행 {#run-applications-on-windows}
+
+[PCIe Co-Processing](/develop-apps/hello-neat/pcie/) 예제와 PCIe 튜토리얼은 Linux 명령을 보여 줍니다. Windows에서는 관리되는 환경의 인터프리터로 Python 프로그램을 실행하세요. 활성화는 필요하지 않으며, 기본 PowerShell 실행 정책은 `Activate.ps1`을 차단합니다.
+
+```powershell
+& "$env:USERPROFILE\pyneatpcie\Scripts\python.exe" pcie_host.py
+```
+
+C++ 애플리케이션에는 **Desktop development with C++** 워크로드가 포함된 Visual Studio 2022 버전 17.14 이상(Visual Studio 2026 포함)이 필요합니다. OpenCV를 사용하는 예제에는 [opencv.org](https://opencv.org/releases/)의 OpenCV 5.0.0 Windows 패키지도 필요합니다. 패키지는 Release 구성만 제공합니다. Debug 빌드는 컴파일러 오류로 중지되며, `--config RelWithDebInfo`는 디버깅 정보를 포함해 빌드합니다. 사용하는 Visual Studio 버전의 **x64 Native Tools Command Prompt**에서 빌드하고 실행하세요.
+
+```bat
+call "%ProgramFiles%\SimaPCIeHost\bin\sima-pcie-host-env.cmd"
+set "OpenCV_DIR=C:\opencv\build"
+cmake -S . -B build
+cmake --build build --config Release
+set "PATH=%OpenCV_DIR%\x64\vc16\bin;%PATH%"
+build\Release\pcie_host.exe
+```
+
+`C:\opencv\build`를 압축을 푼 OpenCV 패키지의 `build` 디렉터리로 바꾸세요. `sima-pcie-host-env.cmd`는 현재 명령 프롬프트만 변경합니다. 다른 셸에서 직접 만든 프로그램을 시작하려면 `sima-pcie-host-run.cmd`를 통해 실행하세요. 이 스크립트는 같은 설정을 해당 프로그램에만 적용합니다.
+
+```powershell
+& "$env:ProgramFiles\SimaPCIeHost\bin\sima-pcie-host-run.cmd" build\Release\pcie_host.exe
+```
+
+호스트 패키지는 튜토리얼을 설치 디렉터리 아래에 설치하므로 Windows에서는 튜토리얼을 따로 다운로드할 필요가 없습니다. 튜토리얼 프로그램은 현재 디렉터리에서 모델 아카이브와 `share\sima-pcie-host\tutorials`를 읽습니다. 소스를 쓰기 가능한 디렉터리에 복사하고 [Tutorial Setup](/tutorials/before-you-run)에 나온 모델 아카이브를 추가한 다음 해당 디렉터리에서 프로그램을 실행하세요.
+
+```powershell
+$root = "$env:ProgramFiles\SimaPCIeHost"
+New-Item -ItemType Directory -Force pcie-tutorials\share\sima-pcie-host | Out-Null
+Copy-Item -Recurse "$root\share\sima-pcie-host\tutorials" pcie-tutorials\share\sima-pcie-host\
+Set-Location pcie-tutorials
+& "$env:USERPROFILE\pyneatpcie\Scripts\python.exe" share\sima-pcie-host\tutorials\024_run_your_first_model_over_pcie\run_tensor_mode.py
+& "$root\bin\sima-pcie-host-run.cmd" "$root\lib\sima-pcie-host\tutorials\tutorial_024_run_tensor_mode.exe"
+```
+
+미리 빌드된 C++ 튜토리얼은 옆에 설치된 OpenCV 런타임을 로드하므로 OpenCV 패키지가 필요하지 않습니다.
+
+### Windows에서 제거
+
+```powershell
+sima-cli packages list
+sima-cli packages remove gh:sima-neat/core/pciehost/windows/amd64 --version <version> --yes
+& "$env:USERPROFILE\pyneatpcie\Scripts\python.exe" -m pip uninstall -y pyneatpcie
+sima-cli playbooks remove neat-pcie-application-builder --yes
+```
+
+`sima-cli packages list`에 표시되는 버전을 사용하세요. 이 명령은 한 번의 관리자 승인으로 Core를 제거한 다음 Scheduler를 제거합니다. Python 환경은 삭제하지 않습니다. 다른 애플리케이션에서 사용하지 않는다면 `%USERPROFILE%\pyneatpcie`를 삭제하세요. SSH 키 `%USERPROFILE%\.ssh\sima_neat_pcie_ed25519`, `%USERPROFILE%\.ssh\known_hosts`에 있는 카드 항목, 작업 디렉터리에 있는 다운로드한 패키지와 로그도 남습니다.
+
+`sima-cli`는 `%USERPROFILE%\.sima-cli\registry.json`에 있는 설치 기록(receipt)으로 패키지를 찾습니다. 따라서 `sima-cli`나 이 폴더를 제거하기 전에 패키지를 먼저 제거하세요. 설치 기록이 없어졌다면, 설치된 릴리스의 설치 명령을 다시 실행해 설치 기록을 복원한 다음 위의 방법으로 패키지를 제거하거나, **Settings > Apps > Installed apps**에서 `sima-pcie-host`를 제거한 다음 `simaai-scheduler-pcie-host`를 제거하세요. `%USERPROFILE%\.sima-cli` 폴더 전체를 삭제했다면, 설치 명령은 먼저 스킬이 sima-cli 레지스트리 밖에 이미 있다는 메시지와 함께 중지됩니다. 메시지에 표시된 스킬 폴더를 삭제한 다음 설치 명령을 다시 실행하세요.
+
+설치 기록은 설치를 실행한 Windows 계정에 속하지만 패키지는 컴퓨터 전체에 설치되므로, 다른 계정에서는 같은 설치 명령을 실행하여 해당 계정의 설치 기록, Python 환경, 스킬, 카드 SSH 키를 얻습니다. 이때 패키지는 다시 설치되지 않고 복구됩니다.
+
+Windows Installer는 패키지를 이전 버전으로 교체하지 않습니다. 이전 릴리스를 설치하려면 먼저 설치된 릴리스를 제거하세요.
+
+패키지를 제거한 후 `sima-cli` 자체를 제거하려면 [sima-cli 설치 가이드](/tools/sima-cli/)의 설명에 따라 설치 프로그램을 `uninstall` 인수와 함께 실행하세요.
+
+## 카드에 Neat 설치 {#install-neat-on-the-card}
+
+카드에는 호스트 패키지와 같은 릴리스의 Neat Library가 필요합니다. 카드 SSH가 프로비저닝되도록 호스트 패키지를 먼저 설치한 다음, 호스트에서 각 카드에 Neat를 설치하세요. 업그레이드할 때는 애플리케이션을 다시 실행하기 전에 호스트 패키지를 업그레이드한 다음 모든 카드를 업그레이드하세요.
+
+호스트의 빈 작업 디렉터리에서 다음 명령을 실행하세요. 이 명령은 Neat Library 오프라인 패키지를 다운로드하여 `10.0.0.2`의 카드로 복사한 다음 카드에서 설치 프로그램을 실행합니다. 설치 프로그램이 요청하면 카드의 `sima` 계정 암호를 입력하세요. 다른 카드의 경우 `10.0.0.2`를 해당 카드의 주소인 `10.0.N.2`로 바꾸세요.
+
+Ubuntu:
 
 <ShellCommand prompt="pcie-host">
-pcie-setup.sh --hosts "10.0.0.2"
+sima-cli neat install core/offline@v%%release.core%% -t minimal --download-only
+scp -i ~/.ssh/sima_neat_pcie_ed25519 neat-core-offline-installer*.tar.gz sima@10.0.0.2:/var/tmp/neat-core-offline-installer.tar.gz
+ssh -t -i ~/.ssh/sima_neat_pcie_ed25519 sima@10.0.0.2 "cd /var/tmp && rm -rf neat-core-offline && tar -xzf neat-core-offline-installer.tar.gz && cd neat-core-offline && ./install.sh && ./install.sh --verify && cd /var/tmp && rm -rf neat-core-offline neat-core-offline-installer.tar.gz"
 </ShellCommand>
 
-패키지 설치 또는 런타임 시작에 실패하는 경우, PCIe 호스트 패키지와 카드에 설치된 Neat Library가 호환되는 버전인지 확인하십시오.
+Windows에서는 PowerShell에서 다음을 실행합니다.
+
+```powershell
+sima-cli neat install core/offline@v%%release.core%% -t minimal --download-only
+$bundle = (Get-Item neat-core-offline-installer*.tar.gz).FullName
+scp -i "$env:USERPROFILE\.ssh\sima_neat_pcie_ed25519" $bundle sima@10.0.0.2:/var/tmp/neat-core-offline-installer.tar.gz
+ssh -t -i "$env:USERPROFILE\.ssh\sima_neat_pcie_ed25519" sima@10.0.0.2 "cd /var/tmp && rm -rf neat-core-offline && tar -xzf neat-core-offline-installer.tar.gz && cd neat-core-offline && ./install.sh && ./install.sh --verify && cd /var/tmp && rm -rf neat-core-offline neat-core-offline-installer.tar.gz"
+```
+
+설치 프로그램은 변경을 시작하기 전에 카드가 호환되는 Platform 3.0 릴리스를 실행하는지 확인하며, `--verify`는 설치된 패키지와 PyNeat 가져오기를 확인합니다. 호스트와 카드의 Neat 버전을 비교하려면 Ubuntu에서는 `neat`를, Windows에서는 PowerShell에서 `& "$env:ProgramFiles\SimaPCIeHost\bin\neat.cmd"`를 실행하세요.
+
+## 문제 해결 {#troubleshooting}
+
+대부분의 오류는 오류 메시지 끝에 다음 단계를 출력합니다. 다음 표는 Ubuntu와 Windows에서 흔히 발생하는 경우를 정리한 것입니다. 설정 유틸리티는 Ubuntu에서는 `pcie-setup.sh`이고, Windows에서는 `& "$env:ProgramFiles\SimaPCIeHost\bin\pcie-setup.cmd"`입니다.
+
+| 증상 | 원인 | 조치 |
+| --- | --- | --- |
+| SSH 프로비저닝에서 카드를 찾지 못함 | 카드에 연결할 수 없거나 카드의 관리 링크가 구성되지 않음 | Ubuntu에서는 `ping -c 1 10.0.0.2`, Windows에서는 `Test-Connection -ComputerName 10.0.0.2 -Count 1`로 링크를 확인한 다음, Ubuntu에서는 `--hosts 10.0.0.2`, Windows에서는 `-Hosts 10.0.0.2`를 지정하여 설정 유틸리티를 실행하세요. |
+| `REMOTE HOST IDENTIFICATION HAS CHANGED` 또는 `Host key verification failed` | 카드를 다시 플래시하거나 교체하여 SSH 호스트 키가 바뀜 | 설정 유틸리티를 다시 실행하세요. 유틸리티가 카드의 현재 키를 기록합니다. |
+| `Permission denied (publickey)` | 카드에 이 호스트의 Neat SSH 키가 없음 | 설정 유틸리티를 실행하고 OpenSSH가 요청하면 카드의 `sima` 암호를 입력하세요. |
+| 모델 시작 시 `missing_builder` | 카드에 Neat가 설치되지 않음 | 호스트 패키지와 같은 릴리스로 [카드에 Neat를 설치](#install-neat-on-the-card)하세요. |
+| 모델 시작 시 `queue_busy` | 호스트 애플리케이션이 모델을 닫지 않고 종료된 경우처럼 카드 워커가 아직 큐를 점유하고 있음 | 해당 큐를 사용하는 다른 애플리케이션이 없으면 아래와 같이 남아 있는 워커를 중지한 다음 모델을 다시 시작하세요. |
+| 업그레이드 후 모델이 시작되지 않거나 시간 초과됨 | 호스트 패키지와 카드가 서로 다른 릴리스를 실행함 | 호스트와 카드에 같은 릴리스를 설치하세요. |
+
+큐 `0`에 남아 있는 카드 워커를 중지하려면 호스트에서 다음을 실행하세요. `--queue 0`의 `0`을 오류에 표시된 큐 번호로, `10.0.0.2`를 카드 주소로 바꾸세요.
+
+Ubuntu:
+
+<ShellCommand prompt="pcie-host">
+ssh -i ~/.ssh/sima_neat_pcie_ed25519 sima@10.0.0.2 "pkill -f '[p]cie-pipeline-builder.*--queue 0( |$)'"
+</ShellCommand>
+
+Windows:
+
+```powershell
+ssh -i "$env:USERPROFILE\.ssh\sima_neat_pcie_ed25519" sima@10.0.0.2 "pkill -f '[p]cie-pipeline-builder.*--queue 0( |$)'"
+```
+
+Windows에서는 다음 경우도 확인하세요.
+
+| 증상 | 원인 | 조치 |
+| --- | --- | --- |
+| `SiMa.ai MLA Device` 또는 `SiMa.ai Virtual Ethernet Adapter`가 장치 관리자에 없거나 경고와 함께 표시됨, 또는 설치 프로그램이 Platform 드라이버를 찾을 수 없다고 보고함 | Platform 패키지가 설치되지 않았거나, Secure Boot가 켜져 있거나 테스트 서명이 꺼져 있어 Windows가 테스트 서명된 `SiMaNetAdapter` 드라이버를 로드하지 않거나, Windows가 카드를 감지하지 못함 | `sima-cli install drivers/windows`로 Platform 패키지를 설치하세요. 관리자 권한으로 시작한 PowerShell에서 `Confirm-SecureBootUEFI`가 `False`를 출력하고 `bcdedit`에 `testsigning Yes`가 표시되는지 확인하세요. Secure Boot가 켜져 있으면 펌웨어 설정에서 끈 다음 `bcdedit /set testsigning on`을 실행하세요. 두 설정이 올바르면 카드가 제대로 장착되고 전원이 공급되는지 확인하세요. 그런 다음 호스트를 종료했다가 전원을 켜세요. |
+| 설치 후 Windows가 다시 시작을 요청하거나, 다시 시작한 후 카드가 표시되지 않음 | Windows를 다시 시작한 후 카드가 항상 복구되지는 않음 | 다시 시작하는 대신 호스트를 종료한 다음 전원을 켜세요. |
+| 다른 모델이 열려 있는 동안 모델이 시작되지 않고 Platform이 오류 1450을 보고함 | 열려 있는 각 큐는 버퍼용으로 물리적으로 연속된 호스트 메모리를 예약하며, 이 메모리는 큐 깊이와 텐서 크기에 따라 커짐 | 동시에 여는 모델 수를 줄이고 다른 애플리케이션을 닫으세요. 메모리가 적은 호스트에서는 동시에 열 수 있는 큐 수가 더 적습니다. |
+| `SiMaMlaDaemon`이 중지되지 않거나 Platform 패키지 업그레이드가 대기 상태로 남음 | 애플리케이션이 아직 GenAI 모델을 열어 두고 있음 | 애플리케이션을 닫은 다음 서비스를 중지하거나 업그레이드하세요. |
+| 종료 코드 1625로 설치가 중지됨 | Smart App Control, Windows Defender Application Control 또는 AppLocker 정책이 서명되지 않은 패키지를 차단함 | 해당 정책이 패키지를 허용하는 호스트에 설치하세요. |
+| 이전 릴리스 설치가 종료 코드 1603으로 중지됨 | Windows Installer는 최신 버전을 교체하지 않음 | 설치된 릴리스를 제거한 다음 이전 릴리스를 설치하세요. |
+| 관리자 승인 프롬프트가 표시되지 않거나 정책이 이를 차단함 | 엔드포인트 보안이 권한 상승 요청을 차단함 | 관리자 권한으로 PowerShell을 시작하고 작업 디렉터리로 이동한 다음 그곳에서 설치 명령을 실행하세요. |
+| 조직에서 설정한 실행 정책이 `pcie-setup.cmd`를 차단함 | 그룹 정책이 래퍼의 프로세스 전용 정책보다 우선함 | 아래와 같이 OpenSSH로 키를 직접 등록하세요. |
+| 두 번째 카드를 찾을 수 없음 | 카드 `N`은 `10.0.N.2`를 사용함 | `-Range 0-1`을 지정하여 설정 유틸리티를 실행하고, 애플리케이션에서는 `card_id`로 카드를 선택하세요. |
+
+`pcie-setup.cmd` 없이 키를 등록하려면 키를 생성하고 두 암호 문구 프롬프트에서 모두 **Enter**를 누른 다음, 카드에 공개 키를 추가하고 암호 없는 로그인을 확인하세요.
+
+```powershell
+ssh-keygen -t ed25519 -f "$env:USERPROFILE\.ssh\sima_neat_pcie_ed25519"
+Get-Content "$env:USERPROFILE\.ssh\sima_neat_pcie_ed25519.pub" | ssh sima@10.0.0.2 "umask 077; mkdir -p ~/.ssh; tr -d '\r' >> ~/.ssh/authorized_keys"
+ssh -i "$env:USERPROFILE\.ssh\sima_neat_pcie_ed25519" -o IdentitiesOnly=yes sima@10.0.0.2 true
+```
 
 ## 오프라인 설치 {#offline-installation}
 

@@ -1271,7 +1271,9 @@ def _wrap_run_languages(run_text: str) -> str:
     the language toggle: the `**Python:**` block is wrapped in
     `<LanguageContent lang="py">` and the two `**C++ …**` blocks in
     `<LanguageContent lang="cpp">`, so a reader sees only their language's
-    commands. Shared intro/expected-output prose stays outside the wrappers.
+    commands. A paragraph and `bat` block right after the build-from-source
+    block are its Windows form and stay with it. Shared intro/expected-output
+    prose stays outside the wrappers.
     Returns the text unchanged if it doesn't match the expected shape."""
     lines = run_text.split("\n")
 
@@ -1297,6 +1299,20 @@ def _wrap_run_languages(run_text: str) -> str:
     if j >= len(lines):
         return run_text  # no closing fence found — don't risk a bad split
     cpp_end = j  # index of the closing ``` line
+
+    k = cpp_end + 1
+    while k < len(lines) and not lines[k].strip():
+        k += 1
+    while k < len(lines) and lines[k].strip() and not lines[k].lstrip().startswith("```"):
+        k += 1
+    while k < len(lines) and not lines[k].strip():
+        k += 1
+    if k < len(lines) and lines[k].strip() == "```bat":
+        k += 1
+        while k < len(lines) and not lines[k].lstrip().startswith("```"):
+            k += 1
+        if k < len(lines):
+            cpp_end = k
 
     intro = _strip_blank_edges(lines[:py_i])
     py_block = _strip_blank_edges(lines[py_i:cpp1_i])

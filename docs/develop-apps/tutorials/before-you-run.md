@@ -45,6 +45,10 @@ First [install and verify the PCIe host package](/getting-started/neat-library/p
 Then download the tutorial bundle for the Ubuntu version running on the host.
 Run the command from the directory where you want the bundle.
 
+On Windows, the host package already includes the tutorials. Set them up as
+described in
+[Run applications on Windows](/getting-started/neat-library/pcie-host/#run-applications-on-windows).
+
 **Ubuntu 22.04:**
 
 <ShellCommand prompt="pcie-host">
@@ -76,9 +80,9 @@ For Neat Library tutorials, download both models and extract each model
 archive from its ZIP to the path the tutorial commands pass as `--model`:
 
 <ShellCommand prompt="sdk|devkit">
-sima-cli models download --id resnet_50 --variant w8a8
+sima-cli models download --id resnet_50 --variant w8a8 --force
 unzip -p models/resnet_50/w8a8/resnet_50_w8a8_default.zip resnet_50_w8a8_mpk.tar.gz > /tmp/resnet_50.tar.gz
-sima-cli models download --id yolov8s --variant w8a8
+sima-cli models download --id yolov8s --variant w8a8 --force
 unzip -p models/yolov8s/w8a8/yolov8s_w8a8_default.zip yolov8s_w8a8_mpk.tar.gz > /tmp/yolo_v8s.tar.gz
 </ShellCommand>
 
@@ -96,11 +100,22 @@ models the tutorial needs from the PCIe extras root, and extract each model
 archive from its ZIP under the required name:
 
 <ShellCommand prompt="pcie-host">
-sima-cli models download --id resnet_50 --variant w8a8
+sima-cli models download --id resnet_50 --variant w8a8 --force
 unzip -p models/resnet_50/w8a8/resnet_50_w8a8_default.zip resnet_50_w8a8_mpk.tar.gz > resnet_50_mpk.tar.gz
-sima-cli models download --id yolov8s --variant w8a8
+sima-cli models download --id yolov8s --variant w8a8 --force
 unzip -p models/yolov8s/w8a8/yolov8s_w8a8_default.zip yolov8s_w8a8_mpk.tar.gz > yolo_v8s_mpk.tar.gz
 </ShellCommand>
+
+On Windows, run these PowerShell commands in your copy of the tutorials:
+
+```powershell
+sima-cli models download --id resnet_50 --variant w8a8 --force
+Expand-Archive models\resnet_50\w8a8\resnet_50_w8a8_default.zip -DestinationPath models\resnet_50\w8a8 -Force
+Copy-Item models\resnet_50\w8a8\resnet_50_w8a8_mpk.tar.gz resnet_50_mpk.tar.gz
+sima-cli models download --id yolov8s --variant w8a8 --force
+Expand-Archive models\yolov8s\w8a8\yolov8s_w8a8_default.zip -DestinationPath models\yolov8s\w8a8 -Force
+Copy-Item models\yolov8s\w8a8\yolov8s_w8a8_mpk.tar.gz yolo_v8s_mpk.tar.gz
+```
 
 ## 5. Verify paths and expected output
 
@@ -118,6 +133,10 @@ ls share/*/tutorials/
 - `./build.sh --list-targets` lists the C++ programs you can rebuild.
 - Successful C++ tutorials finish with `[OK]`; Python tutorials print a compact
   result such as `top1=...`, `completed=...`, or `detections=...`.
+
+On Windows, the host package does not install `build.sh`. Run the tutorials as
+described in
+[Run applications on Windows](/getting-started/neat-library/pcie-host/#run-applications-on-windows).
 
 If a tutorial reports a missing file, first check the current directory and the
 model filename. For more help, see [Troubleshooting](/reference/troubleshooting/).

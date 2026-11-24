@@ -1,12 +1,21 @@
 #include "genai/MediaStage.h"
+#include "HostPlatform.h"
 #include "Protocol.h"
 #include <cstring>
 #include <fstream>
+#ifndef _WIN32
 #include <sys/stat.h>
+#endif
 
 namespace simaai::neat::pcie::genai::internal {
 namespace {
 constexpr std::size_t max_bytes = 256 * 1024 * 1024;
+#ifdef _WIN32
+constexpr const char* platform_daemon_configuration =
+    R"(%ProgramData%\SiMa.ai\simaai-mla-daemon.conf)";
+#else
+constexpr const char* platform_daemon_configuration = "the SiMa Platform daemon configuration";
+#endif
 void le(std::ostream& out, uint32_t value, unsigned bytes) {
   for (unsigned i = 0; i < bytes; ++i)
     out.put(static_cast<char>(value >> (8 * i)));
@@ -22,15 +31,31 @@ MediaStage::MediaStage(const ConnectionOptions& options, const std::string& sess
 void MediaStage::prepare() {
   if (prepared_)
     return;
-  if (std::filesystem::canonical(root_) != root_)
-    throw std::runtime_error("Media serve root must be canonical");
+  std::error_code error;
+  const auto canonical_root = std::filesystem::canonical(root_, error);
+  const auto configuration = "Platform daemon [serve] root '" + serve_ + "' at '" +
+                             pcie::internal::host_path_string(root_) + "'";
+  const bool root_is_directory = !error && std::filesystem::is_directory(canonical_root, error);
+  if (error || !root_is_directory)
+    throw std::runtime_error(configuration + " is missing or is not a directory; repair " +
+                             platform_daemon_configuration +
+                             " and ensure its configured media directory exists");
+  if (!pcie::internal::same_host_path(canonical_root, root_))
+    throw std::runtime_error(configuration + " is noncanonical or traverses a symlink; update " +
+                             platform_daemon_configuration +
+                             " to use the exact directory without symlinks");
   std::filesystem::create_directories(directory_.parent_path());
-  if (std::filesystem::canonical(directory_.parent_path()) != directory_.parent_path())
+  if (!pcie::internal::same_host_path(std::filesystem::canonical(directory_.parent_path()),
+                                      directory_.parent_path()))
     throw std::runtime_error("Media staging path contains a symlink");
+#ifndef _WIN32
   chmod(directory_.parent_path().c_str(), 0700);
+#endif
   if (!std::filesystem::create_directory(directory_))
     throw std::runtime_error("Media request directory already exists");
+#ifndef _WIN32
   chmod(directory_.c_str(), 0700);
+#endif
   prepared_ = true;
 }
 MediaStage::~MediaStage() {
@@ -50,7 +75,8 @@ Json MediaStage::descriptor(const std::filesystem::path& path) {
 }
 Json MediaStage::file(const std::filesystem::path& source) {
   if (!std::filesystem::is_regular_file(source) || std::filesystem::file_size(source) > max_bytes)
-    throw std::invalid_argument("Media file missing or too large: " + source.string());
+    throw std::invalid_argument("Media file missing or too large: " +
+                                pcie::internal::host_path_string(source));
   prepare();
   auto dest = directory_ / (std::to_string(count_++) + ".media");
   std::filesystem::copy_file(source, dest);

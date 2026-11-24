@@ -1,4 +1,6 @@
 #include "genai/ModelAssets.h"
+#include "HostPlatform.h"
+#include <chrono>
 
 namespace simaai::neat::pcie::genai::internal {
 std::filesystem::path host_model_path(const std::filesystem::path& model) {
@@ -8,13 +10,17 @@ std::filesystem::path host_model_path(const std::filesystem::path& model) {
   const auto path = std::filesystem::canonical(model, error);
   if (error || !std::filesystem::is_directory(path))
     throw std::invalid_argument("Model path must name an existing host directory: " +
-                                model.string());
+                                pcie::internal::host_path_string(model));
   return path;
 }
 std::optional<std::filesystem::path> model_asset_path(const std::filesystem::path& model,
                                                       const std::string& name) {
-  const auto path = std::filesystem::weakly_canonical(model / wire::relative_name(name));
-  const auto relative = path.lexically_relative(model);
+  // Compare canonical forms: Windows may expand an 8.3 short name in one path and not the other.
+  const auto root = std::filesystem::weakly_canonical(model);
+  // Worker names are UTF-8; convert explicitly so Windows does not use the ANSI code page.
+  const auto path = std::filesystem::weakly_canonical(
+      root / pcie::internal::host_path_from_string(wire::relative_name(name)));
+  const auto relative = path.lexically_relative(root);
   if (relative.empty() || relative == "." || *relative.begin() == "..")
     throw std::invalid_argument("Model asset escapes its host directory: " + name);
   if (!std::filesystem::exists(path))
@@ -23,26 +29,61 @@ std::optional<std::filesystem::path> model_asset_path(const std::filesystem::pat
     throw std::invalid_argument("Model asset must be a regular file: " + name);
   return path;
 }
+std::string model_subdirectory(const std::filesystem::path& model,
+                               const std::filesystem::path& directory) {
+  std::string name;
+  for (const auto& part : directory.lexically_relative(model))
+    if (part != ".")
+      name += (name.empty() ? "" : "/") + pcie::internal::host_path_string(part);
+  return name;
+}
+// Shared with the worker so the destructor can leak a worker stuck in put() instead of hanging.
+struct ModelAssets::State {
+  State(std::filesystem::path model, std::string session, int card)
+      : model_(std::move(model)), session_(std::move(session)), service_(card) {}
+  void receive();
+  std::filesystem::path model_;
+  std::string session_;
+  wire::Service service_;
+  std::atomic<bool> stop_{false}, done_{false};
+  mutable std::mutex mutex_;
+  std::exception_ptr error_;
+};
 ModelAssets::ModelAssets(std::filesystem::path model, std::string session, int card)
-    : model_(std::move(model)), session_(std::move(session)), service_(card) {
-  service_.subscribe(wire::asset_tag(session_, false));
-  thread_ = std::thread([this] { receive(); });
+    : state_(std::make_shared<State>(std::move(model), std::move(session), card)) {
+  state_->service_.subscribe(wire::asset_tag(state_->session_, false));
+  thread_ = std::thread([state = state_] { state->receive(); });
 }
 ModelAssets::~ModelAssets() {
-  close();
+  try {
+    close();
+  } catch (...) {
+    thread_.detach(); // leak a put() that ignores interruption rather than hang
+  }
 }
 void ModelAssets::close() {
-  stop_ = true;
-  service_.interrupt();
-  if (thread_.joinable())
-    thread_.join();
+  if (!thread_.joinable())
+    return;
+  state_->stop_ = true;
+  // Windows cancels only I/O already pending, so a put() that starts waiting
+  // after the first interrupt needs another one.
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+  while (!state_->done_ && std::chrono::steady_clock::now() < deadline) {
+    state_->service_.interrupt();
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  }
+  // Keep the thread so a later close() can confirm the upload finished.
+  if (!state_->done_)
+    throw std::runtime_error("GenAI model asset upload is still running; close again to confirm "
+                             "it finished");
+  thread_.join();
 }
 void ModelAssets::check() const {
-  std::lock_guard lock(mutex_);
-  if (error_)
-    std::rethrow_exception(error_);
+  std::lock_guard lock(state_->mutex_);
+  if (state_->error_)
+    std::rethrow_exception(state_->error_);
 }
-void ModelAssets::receive() {
+void ModelAssets::State::receive() {
   uint64_t last = 0;
   wire::Json reply;
   try {
@@ -63,8 +104,11 @@ void ModelAssets::receive() {
           const auto source = model_asset_path(model_, name);
           reply["found"] = source.has_value();
           if (source) {
+            if (stop_)
+              break;
             reply["bytes"] = std::filesystem::file_size(*source);
-            service_.put(source->string(), "neat-genai/" + session_ + "/model/" + name);
+            service_.put(pcie::internal::host_path_string(*source),
+                         "neat-genai/" + session_ + "/model/" + name);
           }
         } catch (const std::exception& e) {
           reply["error"] = std::string(e.what()).substr(0, 4096);
@@ -81,5 +125,6 @@ void ModelAssets::receive() {
       error_ = std::current_exception();
     }
   }
+  done_ = true;
 }
 } // namespace simaai::neat::pcie::genai::internal

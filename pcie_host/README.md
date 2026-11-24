@@ -52,6 +52,15 @@ Set `connection.card_id` to select the card; its default address is
 `10.0.<card_id>.2`. Set `connection.card_host` to override that address.
 For speculative decoding, pass the parent directory of a prepared target/draft
 pair. Both models load in one card session using their compiled configuration.
+GenAI `ConnectionOptions` has no `card_env`; the host environment variable
+`SIMA_NEAT_PCIE_GENAI_CARD_ENV` takes its place, with the same `NAME=VALUE`
+format, and `SIMA_NEAT_PCIE_GENAI_HELPER_PATH` in it selects the card worker
+(default `/usr/bin/neat-pcie-genai-worker`, an absolute POSIX path).
+Linux uses the native Platform service for GenAI transport. Windows uses the
+matching Platform service exported by `SiMaPCIe.dll`; the Neat package resolves
+that DLL at runtime and does not redistribute it. Windows GenAI is a supported
+customer configuration only after the matching Platform package and the full
+C++ and Python GenAI release matrix have passed qualification.
 
 ### Multi-model runtime
 
@@ -144,13 +153,18 @@ Useful variants:
 pcie-setup.sh --hosts "10.0.0.2 10.0.1.2"
 pcie-setup.sh --range 0-3
 pcie-setup.sh --key ~/.ssh/sima_neat_pcie_ed25519
-pcie-setup.sh --password '<bootstrap-password>'
 ```
 
-Password/`sshpass` is only a bootstrap path for installing the key. Runtime
+When password bootstrap is required, let `pcie-setup.sh` prompt interactively;
+do not put the password in a command argument. Runtime
 PCIe model APIs use passwordless SSH. If `~/.ssh/sima_neat_pcie_ed25519` exists,
 the PCIe host automatically passes it to `ssh`/`scp`; otherwise it falls back to
 the user's normal SSH configuration.
+
+Model `ssh`/`scp` calls use `BatchMode=yes` and `StrictHostKeyChecking=yes`:
+they fail instead of prompting, and the card host key must already be in
+`known_hosts`. Earlier releases accepted an unknown key on first use; run
+`pcie-setup.sh` (`pcie-setup.cmd` on Windows) once to record it.
 
 ### ConnectionOptions
 
@@ -168,6 +182,13 @@ struct ConnectionOptions {
   std::string card_gst_debug_file;
 };
 ```
+
+`card_env` also keeps host lifecycle bookkeeping aligned with a non-default
+card installation. `SIMA_NEAT_PCIE_HELPER_PATH` selects the card worker, whose
+file name must remain `pcie-pipeline-builder`, `SIMA_NEAT_PCIE_RUN_DIR` selects
+its PID/status/start-lock directory, and `SIMA_NEAT_PCIE_LOG_DIR` selects its
+default log directory. Each override must be an absolute POSIX path. The selected directories must already exist and be
+writable by the SSH user. Normal packages use the defaults shown above.
 
 `card_id` is the hardware/plugin card number passed to `neatpciehost` as
 `card-number`. It is also used as the default SSH management endpoint when
@@ -307,8 +328,10 @@ public:
 };
 ```
 
-The constructor parses the local model archive, validates representable options,
-and caches model information. It does not touch the card. Metadata uses the
+The constructor parses the local model archive, validates representable options
+and `connection.card_env`, and caches model information. It does not touch the
+card. A malformed `card_env` now throws from the constructor; earlier releases
+reported it from `build()`. Metadata uses the
 logical full-model tensor contract, commonly `FP32` when quant/cast and
 dequant/postcast stages are present. `build(...)` performs model upload, card
 runtime startup, readiness wait, and local host channel setup.
@@ -329,6 +352,11 @@ settling before host traffic starts. This is not exposed as a public option.
 `close()` sends `SIGTERM` to the card-side builder and waits briefly for a clean
 exit. It does not send `SIGKILL`; if the remote process ignores `SIGTERM`, the
 PID file remains and the queue stays visibly busy for diagnosis.
+
+When the card pipeline reaches end of stream, the card-side builder records
+state `exited` with message `pipeline stopped after end of stream` and exits
+with status 0. Earlier releases recorded state `failed` with error `gst_state`
+and exited with status 1.
 
 ### Minimal Tensor Example
 
@@ -374,8 +402,69 @@ implementation sources are build-only inputs to Scheduler CI and are not include
 in the delivered artifacts. The PCIe driver and Platform userspace library remain
 separately provisioned.
 
-PCIe host builds always include the GenAI APIs. They do not acquire the device
-Scheduler profile, Runner, Kernels or Codecs.
+Linux and Windows PCIe host builds include the same public vision and GenAI API
+surfaces. Release qualification runs the complete GenAI matrix on Windows;
+validation-only runs may be used for the shorter vision path.
+Neither build acquires the device Scheduler profile, Runner, Kernels or Codecs.
+
+### Windows package
+
+The native Windows build produces a Core-owned WiX v3 MSI. Scheduler produces a
+separate MSI for its channel and `neatpciehost` plugin. Release metadata pins the
+two packages as one ordered native cohort, while Windows Installer retains file
+ownership for each producer. Like the Linux package's exact Scheduler
+dependency, the Core MSI refuses a first installation (exit code 1603) unless
+the Scheduler MSI with the exact UpgradeCode and ProductVersion it was built
+against is already installed; repair, modify and uninstall are not blocked.
+Python remains a separate wheel owned by the
+application's Python environment. The initial wheel supports CPython 3.14 x64;
+other Python minors are not part of the first qualified Windows configuration.
+Customers install the complete cohort with one command,
+`sima-cli neat install core/pciehost/windows/amd64@v<Neat version>`, once a
+release that ships Windows binaries is published. The customer page,
+[Install PCIe Host](../docs/getting-started/neat-library/pcie-host.mdx), covers
+prerequisites, installation, card SSH enrollment, verification and
+troubleshooting; keep customer instructions there rather than here.
+
+The MSIs do not redistribute Platform or GStreamer binaries. The Core MSI ships
+only the OpenCV runtime of the prebuilt tutorials and the nlohmann/json headers,
+each with its license. A supported host therefore also needs the qualified
+Platform runtime, GStreamer MSVC development installation, and the CMake packages
+required by the exported static C++ target (including zlib). CI currently supplies those roots explicitly;
+that runner setup is not a customer installation contract. Do not publish a
+release until a clean-host install or process-scoped activation path proves that
+ordinary C++ and Python processes find the same qualified dependency cohort
+without relying on a developer shell or a machine-wide PATH mutation.
+
+The Windows release uses the Neat release tag and layout of the Ubuntu host
+packages: `core/v<version>/<commit12>/pciehost/windows/amd64/`, found through
+`core/v<version>/latest.tag`.
+
+Build the MSI from a configured native Windows build directory with `cpack`.
+`cpack` fails unless that build was configured with the selected Scheduler
+MSI's `ProductVersion` as `SIMAPCIE_SCHEDULER_PACKAGE_VERSION` and its braced
+`UpgradeCode` as `SIMAPCIE_SCHEDULER_WIX_UPGRADE_CODE`.
+Use `scripts/create_windows_metadata.py` to create the matching sima-cli
+metadata for the MSI and optional wheel. The default per-machine destination is
+`C:\Program Files\SimaPCIeHost`; a packaging test can set
+`SIMAPCIE_WIX_INSTALL_DIRECTORY` to an isolated directory at configure time.
+
+Core does not copy or repackage Scheduler-owned files. Scheduler publishes its
+owner-produced MSI as an immutable native profile, and Core places that exact MSI
+beside the Core MSI in the customer manifest. Customers still install one cohort
+and do not manage the repository boundary. Core's combined hardware gate owns
+qualification of that customer cohort.
+The Platform driver, host DLLs and daemon remain a separate Platform prerequisite.
+
+### Windows package CI
+
+Vulcan CI builds, tests and retains the Windows package on a GitHub-hosted
+runner on every standard run, and publishes branch builds beside the Ubuntu
+packages. The self-hosted card lane runs only when the repository variable
+`ENABLE_WINDOWS_PCIE_CI` is `true` or a manual run sets `run_windows_pcie`. The
+Windows producer, hardware
+qualification, publishing and recovery procedure are documented for maintainers
+in [`scripts/ci/pciehost/WINDOWS_RELEASE.md`](../scripts/ci/pciehost/WINDOWS_RELEASE.md).
 
 `build.sh` follows the Scheduler policy in Core's `deps/manifest.json`, in the
 `production` publication environment by default. Branch `snap` first tries

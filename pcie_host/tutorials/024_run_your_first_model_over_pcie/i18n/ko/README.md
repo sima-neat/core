@@ -39,11 +39,19 @@ PCIe 호스트 API는 모델에 사용할 수 있는 텐서 또는 디코딩된 
 PCIe 호스트 패키지를 설치하고 [튜토리얼 설정](/tutorials/before-you-run)에 설명된 대로 튜토리얼 번들을 다운로드합니다. 추출된 PCIe 추가 루트에서 다음 명령을 실행합니다.
 
 ```bash
-sima-cli models download --id yolov8s --variant w8a8
+sima-cli models download --id yolov8s --variant w8a8 --force
 unzip -p models/yolov8s/w8a8/yolov8s_w8a8_default.zip yolov8s_w8a8_mpk.tar.gz > yolo_v8s_mpk.tar.gz
 ```
 
 프로그램에는 이 디렉터리에 `yolo_v8s_mpk.tar.gz`가 필요합니다. 두 번째 명령은 다운로드한 ZIP에서 이 파일을 추출합니다.
+
+Windows에서는 [Windows에서 애플리케이션 실행](/getting-started/neat-library/pcie-host/#run-applications-on-windows)에 설명된 대로 튜토리얼을 설정하고 프로그램을 실행하세요. PowerShell에서 모델을 다운로드하고 `Expand-Archive`로 아카이브를 추출하세요.
+
+```powershell
+sima-cli models download --id yolov8s --variant w8a8 --force
+Expand-Archive models\yolov8s\w8a8\yolov8s_w8a8_default.zip -DestinationPath models\yolov8s\w8a8 -Force
+Copy-Item models\yolov8s\w8a8\yolov8s_w8a8_mpk.tar.gz yolo_v8s_mpk.tar.gz
+```
 
 **Python:**
 
@@ -72,6 +80,21 @@ python3 share/sima-pcie-host/tutorials/024_run_your_first_model_over_pcie/run_im
 ./build/tutorials-standalone/tutorial_024_run_tensor_mode
 ./build/tutorials-standalone/tutorial_024_run_image_mode
 ./build/tutorials-standalone/tutorial_024_run_image_boxdecode
+```
+
+Windows에서는 튜토리얼 복사본 디렉터리의 **x64 Native Tools Command Prompt**에서 CMake로 빌드하세요. `C:\opencv\build`는 [Windows에서 애플리케이션 실행](/getting-started/neat-library/pcie-host/#run-applications-on-windows)에 설명된 OpenCV 패키지의 `build` 디렉터리로 바꾸세요.
+
+```bat
+call "%ProgramFiles%\SimaPCIeHost\bin\sima-pcie-host-env.cmd"
+set "OpenCV_DIR=C:\opencv\build"
+cmake -S share\sima-pcie-host\tutorials -B build
+cmake --build build --config Release --target tutorial_024_run_tensor_mode
+cmake --build build --config Release --target tutorial_024_run_image_mode
+cmake --build build --config Release --target tutorial_024_run_image_boxdecode
+set "PATH=%OpenCV_DIR%\x64\vc16\bin;%PATH%"
+build\Release\tutorial_024_run_tensor_mode.exe
+build\Release\tutorial_024_run_image_mode.exe
+build\Release\tutorial_024_run_image_boxdecode.exe
 ```
 
 일치하는 C++ 및 Python 프로그램은 텐서 모드와 이미지 모드에 대해 동일한 6개의 원시 출력 계약을 출력한 다음 디코딩된 사람, 자동차 또는 기타 보이는 개체를 출력합니다.

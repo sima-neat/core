@@ -834,6 +834,10 @@ target_include_directories(pcie-pipeline-builder PRIVATE
 target_compile_options(pcie-pipeline-builder PRIVATE
   ${GST_CFLAGS_OTHER}
 )
+# The PCIe host compares this with its own package version before it starts a worker.
+target_compile_definitions(pcie-pipeline-builder PRIVATE
+  SIMA_NEAT_PACKAGE_VERSION="${SIMANEAT_PACKAGE_BASE_VERSION}"
+)
 add_dependencies(sima_neat_libraries pcie-pipeline-builder)
 install(TARGETS pcie-pipeline-builder
   RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}

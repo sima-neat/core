@@ -40,6 +40,8 @@ python3 -c "import pyneat; print('pyneat ready')"
 然後，下載適用於在主機上執行的 Ubuntu 版本的教學套件。
 從您想要放置套件的目錄中執行指令。
 
+在 Windows 上，主機套件已包含教學課程。請依照[在 Windows 上執行應用程式](/getting-started/neat-library/pcie-host/#run-applications-on-windows)的說明進行設定。
+
 **Ubuntu 22.04：**
 
 <ShellCommand prompt="pcie-host">
@@ -68,9 +70,9 @@ python3 -c "import pyneatpcie; print('pyneatpcie ready')"
 若要使用 Neat Library 的教學課程，請下載這兩個模型，並從各自的 ZIP 將模型封存檔解壓縮到教學指令以 `--model` 傳遞的路徑：
 
 <ShellCommand prompt="sdk|devkit">
-sima-cli models download --id resnet_50 --variant w8a8
+sima-cli models download --id resnet_50 --variant w8a8 --force
 unzip -p models/resnet_50/w8a8/resnet_50_w8a8_default.zip resnet_50_w8a8_mpk.tar.gz > /tmp/resnet_50.tar.gz
-sima-cli models download --id yolov8s --variant w8a8
+sima-cli models download --id yolov8s --variant w8a8 --force
 unzip -p models/yolov8s/w8a8/yolov8s_w8a8_default.zip yolov8s_w8a8_mpk.tar.gz > /tmp/yolo_v8s.tar.gz
 </ShellCommand>
 
@@ -86,11 +88,22 @@ PCIe 教學課程會在 PCIe 附加資料的根目錄中使用固定的檔案名
 每次下載都會在 `models/<model id>/<variant>/` 下產生一個 ZIP 檔案。請從 PCIe 附加資料的根目錄下載教學課程所需的模型，並以所需的名稱從各自的 ZIP 中解壓縮每個模型封存檔：
 
 <ShellCommand prompt="pcie-host">
-sima-cli models download --id resnet_50 --variant w8a8
+sima-cli models download --id resnet_50 --variant w8a8 --force
 unzip -p models/resnet_50/w8a8/resnet_50_w8a8_default.zip resnet_50_w8a8_mpk.tar.gz > resnet_50_mpk.tar.gz
-sima-cli models download --id yolov8s --variant w8a8
+sima-cli models download --id yolov8s --variant w8a8 --force
 unzip -p models/yolov8s/w8a8/yolov8s_w8a8_default.zip yolov8s_w8a8_mpk.tar.gz > yolo_v8s_mpk.tar.gz
 </ShellCommand>
+
+在 Windows 上，請在您的教學課程副本中執行下列 PowerShell 命令：
+
+```powershell
+sima-cli models download --id resnet_50 --variant w8a8 --force
+Expand-Archive models\resnet_50\w8a8\resnet_50_w8a8_default.zip -DestinationPath models\resnet_50\w8a8 -Force
+Copy-Item models\resnet_50\w8a8\resnet_50_w8a8_mpk.tar.gz resnet_50_mpk.tar.gz
+sima-cli models download --id yolov8s --variant w8a8 --force
+Expand-Archive models\yolov8s\w8a8\yolov8s_w8a8_default.zip -DestinationPath models\yolov8s\w8a8 -Force
+Copy-Item models\yolov8s\w8a8\yolov8s_w8a8_mpk.tar.gz yolo_v8s_mpk.tar.gz
+```
 
 ## 5. 驗證路徑和預期輸出
 
@@ -106,5 +119,7 @@ ls share/*/tutorials/
 - C++ 和 Python 原始碼位於 `share/<package>/tutorials/`。
 - `./build.sh --list-targets` 列出您可以重新建置的 C++ 程式。
 - 成功的 C++ 教程會以 `[OK]` 結束；Python 教程會列印出簡潔的結果，例如 `top1=...`、`completed=...` 或 `detections=...`。
+
+在 Windows 上，主機套件不會安裝 `build.sh`。請依照[在 Windows 上執行應用程式](/getting-started/neat-library/pcie-host/#run-applications-on-windows)的說明執行教學課程。
 
 如果某個教程報告缺少檔案，請先檢查目前目錄和模型檔案名稱。 如需更多協助，請參閱 [疑難排解](/reference/troubleshooting/)（疑難排解）。

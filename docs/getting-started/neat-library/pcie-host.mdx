@@ -4,8 +4,8 @@ description: Install the PCIe host runtime to run models on a connected Modalix 
 sidebar_position: 3
 ---
 
-Use this page to install the Neat PCIe host package on a Linux machine connected
-to a Modalix PCIe Card.
+Use this page to install the Neat PCIe host package on a supported Linux or
+Windows machine connected to a Modalix PCIe Card.
 
 The Neat PCIe host package provides co-processing APIs for sending input from a
 host machine to a connected Modalix PCIe Card and receiving inference results.
@@ -17,8 +17,9 @@ Modalix PCIe Card.
 :::
 
 :::tip When to use offline installation
-If the target cannot download packages from SiMa.ai services, use [offline installation](#offline-installation).
-Download the package on a computer with internet access.
+If an Ubuntu target cannot download packages from SiMa.ai services, use [offline installation](#offline-installation).
+Download the package on a computer with internet access. Offline installation is
+not yet available for Windows hosts.
 :::
 
 ## Supported host operating systems
@@ -29,8 +30,39 @@ The Neat PCIe host package supports the following validated host platforms:
 | --- | --- | --- |
 | Ubuntu 22.04 | x86_64 | Supported |
 | Ubuntu 24.04 | x86_64 | Supported |
+| Windows 11 Home or Pro, build 26300 | x86_64 | Native preview |
 
-Arm64 host builds have not yet been validated. Windows 11 is not supported.
+Arm64 host builds have not yet been validated. The Windows package contains the
+PCIe GenAI API, but it is not a supported customer configuration until a matching
+Platform provider and the full Windows C++ and Python GenAI release matrix have
+passed qualification.
+
+The Windows preview has these limits:
+
+- Windows 10, Windows Server, Windows in S mode, and Arm64 Windows are not
+  supported.
+- The Platform 3.0 Windows package's virtual Ethernet driver, `SiMaNetAdapter`,
+  is test-signed. Windows loads it only with Secure Boot turned off and Windows
+  test-signing mode turned on. A host that must keep Secure Boot on cannot use
+  the preview until a production-signed `SiMaNetAdapter` driver is available.
+- After a Windows restart, the card may be missing or models may time out. Shut
+  the host down and power it on instead of restarting. Sleep, hibernation, and
+  Fast Startup have not been validated.
+- One card per host has been validated.
+- The preview packages are not code-signed. Smart App Control, Windows Defender
+  Application Control, and enforced AppLocker policies block them.
+- GenAI model folders must have paths that the Windows system code page can
+  represent.
+- Windows can stop with a blue screen if the card leaves the PCIe bus while
+  Windows is running, for example when the card or its PCIe port is restarted
+  in Device Manager or with `pnputil`. Do not restart the card or its port
+  while Windows is running. If the card stops responding, shut the host down
+  and power it on.
+- The Platform package prints queue messages such as `Opening simaai_mla_c0`
+  to the standard output of every PCIe application. Do not parse an
+  application's standard output as data; write results to a file instead.
+- [Offline installation](#offline-installation) is available for Ubuntu hosts
+  only. A Windows host needs internet access to install the package.
 
 ## Online installation prerequisites
 
@@ -42,8 +74,9 @@ Before installing the package:
   [PCIe Driver Installation guide](https://developer.sima.ai/hardware/getting-started/pcie-mode/driver-installation).
 - Connect and configure the Modalix PCIe Card so its management interface is
   reachable from the host. The default address for card 0 is `10.0.0.2`.
-- Install a compatible Neat Library version on the card. The host and
-  card packages must come from compatible releases.
+- Plan to install the Neat Library from the same release on the card. The host
+  and card packages must come from compatible releases. After the host package,
+  follow [Install Neat on the card](#install-neat-on-the-card).
 
 Authenticate the PCIe host so it can download SiMa.ai artifacts:
 
@@ -90,24 +123,329 @@ python3 -c "import pyneatpcie; print('pyneatpcie ready')"
 gst-inspect-1.0 neatpciehost
 </ShellCommand>
 
-## Troubleshooting
+Then [install Neat on the card](#install-neat-on-the-card).
 
-If SSH provisioning cannot discover the card automatically, first verify that
-the host can reach its management address:
+## Install the Windows 11 native preview
+
+The Windows preview is a native Visual Studio build of the `pcie::Model` vision
+API and includes `pcie::genai::GenAIModel`. GenAI remains release-gated as
+described above; installing the API alone does not qualify the Platform transport
+or card models. Install these prerequisites in this order:
+
+1. 64-bit CPython 3.14 from [python.org](https://www.python.org/downloads/windows/),
+   installed for all users or for the current user. Install Python before
+   `sima-cli`. Free-threaded builds cannot load the wheel.
+2. `sima-cli`, from the [sima-cli installation guide](/tools/sima-cli/). Then
+   sign in with `sima-cli login`. An older `sima-cli` stops with
+   `Missing 'script' in 'installation'`; update it by running the sima-cli
+   installer again, then retry. If `sima-cli --version` in a new window still
+   shows the old version, another copy comes first on the PATH; the installer
+   prints a warning that names that copy and how to fix it.
+3. The SiMa Platform 3.0 Windows package. It provides the PCIe drivers and the
+   `SiMaMlaDaemon` service. Its virtual Ethernet driver, `SiMaNetAdapter`, is
+   test-signed, not production-signed. Windows loads it only with Secure Boot
+   turned off and Windows test-signing mode turned on. The Platform installer turns
+   test-signing on, which Windows does not allow while Secure Boot is on, so
+   turn Secure Boot off before you install the Platform package. To check both
+   settings, start PowerShell as administrator and run:
+
+   ```powershell
+   Confirm-SecureBootUEFI
+   bcdedit
+   ```
+
+   `Confirm-SecureBootUEFI` must print `False`, and the `bcdedit` output must
+   list `testsigning Yes`. With test-signing on, Windows shows **Test Mode** on
+   the desktop. Secure Boot is turned off in the PC's firmware (UEFI) setup;
+   the steps depend on the PC manufacturer, as described in
+   [Disabling Secure Boot](https://learn.microsoft.com/windows-hardware/manufacture/desktop/disabling-secure-boot).
+   Changing Secure Boot can start BitLocker recovery. If the system drive uses
+   BitLocker or device encryption, check your organization's device-encryption
+   policy, suspend BitLocker, and have the recovery key available before you
+   change Secure Boot.
+
+   Then start PowerShell as administrator and install the package. `sima-cli`
+   downloads it into the current directory, and an administrator window opens
+   in `C:\Windows\System32`, so change to a working directory first:
+
+   ```powershell
+   New-Item -ItemType Directory -Force "$HOME\sima-platform" | Out-Null
+   Set-Location "$HOME\sima-platform"
+   sima-cli install drivers/windows
+   ```
+
+   When the installer asks to restart Windows, answer `N`. Then shut the host
+   down and power it on. The Neat installer checks the driver version, not the
+   package name shown under **Installed apps**. To see the driver version, run
+   `Get-CimInstance Win32_PnPSignedDriver | Where-Object DeviceName -like 'SiMa.ai*' | Select-Object DeviceName, DriverVersion`
+   in PowerShell. With the card installed, it lists `SiMa.ai MLA Device` and
+   `SiMa.ai Virtual Ethernet Adapter`.
+4. GStreamer 1.28.6 MSVC x64, from
+   [gstreamer-1.0-msvc-x86_64-1.28.6.exe](https://gstreamer.freedesktop.org/data/pkg/windows/1.28.6/msvc/gstreamer-1.0-msvc-x86_64-1.28.6.exe).
+   The package requires exactly this version. Choose a setup type that includes
+   the development files, which C++ applications need. Open a new terminal after
+   the installation so that it sees the `GSTREAMER_1_0_ROOT_MSVC_X86_64`
+   variable that the GStreamer installer sets.
+
+Open PowerShell as your usual user, not as administrator, and create a working
+directory for the downloaded packages and logs. A PowerShell window started as
+administrator opens in `C:\Windows\System32`; do not install from there. Then
+install the Windows package:
+
+```powershell
+New-Item -ItemType Directory -Force "$HOME\neat-pcie" | Out-Null
+Set-Location "$HOME\neat-pcie"
+```
 
 <ShellCommand prompt="pcie-host">
-ping -c 1 10.0.0.2
+sima-cli neat install core/pciehost/windows/amd64@v%%release.core%%
 </ShellCommand>
 
-Then run the installed setup utility with the address explicitly:
+Windows packages are published starting with the first Neat release that
+includes them.
+
+The command installs the matched Scheduler MSI, Core MSI and `win_amd64` wheel
+as one cohort. Windows asks once for
+administrator approval for the two MSI packages. The command leaves the
+downloaded packages and Windows Installer logs in the current directory.
+
+Before either MSI runs, the CLI checks Windows OpenSSH, the Platform service,
+GStreamer, and a compatible Python installation. It creates or reuses the
+managed environment at `%USERPROFILE%\pyneatpcie`, verifies every published
+checksum, invokes Windows Installer for Scheduler and Core, runs the installed
+host doctor, installs the package-matched coding-agent skill, and installs the
+wheel into that environment. Run the same command again for repair or upgrade.
+Use `--python-executable <path>` to install into a different environment, or
+`--native-only` for a C++-only installation. Windows Installer owns native
+removal; pip owns Python-package removal.
+
+As on Ubuntu, the installation ends by provisioning passwordless SSH to the
+card with the installed setup utility. It creates or reuses
+`%USERPROFILE%\.ssh\sima_neat_pcie_ed25519`, and OpenSSH asks once for the
+password of the card's `sima` account when the public key is not already
+enrolled. The utility does not store the password. To run it again, for
+example after you add or replace a card:
+
+```powershell
+& "$env:ProgramFiles\SimaPCIeHost\bin\pcie-setup.cmd"
+```
+
+The utility discovers a card address from the local `10.0.N.1` address of the
+Platform's PCIe network adapter. Pass `-Hosts 10.0.0.2` when discovery is
+unavailable. Each run records the card's current SSH host key, so a card that
+was reflashed or replaced is trusted again. The `.cmd` wrapper allows this
+installed script for its own PowerShell process only; it does not change the
+user or machine execution policy.
+
+The Python package discovers DLLs under the default install root and one
+GStreamer root before importing its extension. It uses the first of
+`GSTREAMER_ROOT_X86_64`, `GSTREAMER_1_0_ROOT_MSVC_X86_64` and the default x64
+GStreamer location that contains GStreamer, so set `GSTREAMER_ROOT_X86_64` to
+select another GStreamer installation. For another install root, set
+`SIMA_PCIE_HOST_LIBRARY_PATH` to the directories containing the PCIe host and
+GStreamer DLLs. Import fails if a required DLL is already loaded from outside
+these approved locations. Align the installed versions and start a fresh process
+instead of continuing with a mixed runtime.
+
+Verify the installed wheel and plugin. The doctor loads the `neatpciehost`
+plug-in and prints the GStreamer and Platform directories it uses, and `neat.cmd`
+shows the host and card software:
+
+```powershell
+$venv = "$env:USERPROFILE\pyneatpcie"
+$root = "$env:ProgramFiles\SimaPCIeHost"
+& "$root\bin\sima-pcie-host-doctor.cmd"
+& "$venv\Scripts\python.exe" -m pip check
+& "$venv\Scripts\python.exe" -c "import pyneatpcie as p; print(p.__version__, p.Model)"
+& "$root\bin\neat.cmd"
+```
+
+Then [install Neat on the card](#install-neat-on-the-card).
+
+### Run applications on Windows {#run-applications-on-windows}
+
+The [PCIe Co-Processing](/develop-apps/hello-neat/pcie/) example and the PCIe
+tutorials show Linux commands. On Windows, run Python programs with the managed
+environment's interpreter. Activation is not required, and the default
+PowerShell execution policy blocks `Activate.ps1`:
+
+```powershell
+& "$env:USERPROFILE\pyneatpcie\Scripts\python.exe" pcie_host.py
+```
+
+C++ applications need Visual Studio 2022 version 17.14 or later, including
+Visual Studio 2026, with the **Desktop development with C++** workload.
+Examples that use OpenCV also need the OpenCV 5.0.0 Windows package from
+[opencv.org](https://opencv.org/releases/). The package provides only the
+Release configuration: a Debug build stops with a compiler error, and
+`--config RelWithDebInfo` builds with debugging information. Build and run
+from an **x64 Native Tools Command Prompt** for your Visual Studio version:
+
+```bat
+call "%ProgramFiles%\SimaPCIeHost\bin\sima-pcie-host-env.cmd"
+set "OpenCV_DIR=C:\opencv\build"
+cmake -S . -B build
+cmake --build build --config Release
+set "PATH=%OpenCV_DIR%\x64\vc16\bin;%PATH%"
+build\Release\pcie_host.exe
+```
+
+Replace `C:\opencv\build` with the `build` directory of the extracted OpenCV
+package. `sima-pcie-host-env.cmd` changes only the current Command Prompt. To
+start your own program from another shell, run it through
+`sima-pcie-host-run.cmd`, which applies the same settings to that program only:
+
+```powershell
+& "$env:ProgramFiles\SimaPCIeHost\bin\sima-pcie-host-run.cmd" build\Release\pcie_host.exe
+```
+
+The host package installs the tutorials under the installation directory, so
+Windows needs no separate tutorial download. The tutorial programs read the
+model archives and `share\sima-pcie-host\tutorials` from the current directory.
+Copy the sources to a writable directory, add the model archives named in
+[Tutorial Setup](/tutorials/before-you-run), and run the programs from there:
+
+```powershell
+$root = "$env:ProgramFiles\SimaPCIeHost"
+New-Item -ItemType Directory -Force pcie-tutorials\share\sima-pcie-host | Out-Null
+Copy-Item -Recurse "$root\share\sima-pcie-host\tutorials" pcie-tutorials\share\sima-pcie-host\
+Set-Location pcie-tutorials
+& "$env:USERPROFILE\pyneatpcie\Scripts\python.exe" share\sima-pcie-host\tutorials\024_run_your_first_model_over_pcie\run_tensor_mode.py
+& "$root\bin\sima-pcie-host-run.cmd" "$root\lib\sima-pcie-host\tutorials\tutorial_024_run_tensor_mode.exe"
+```
+
+The prebuilt C++ tutorials load the OpenCV runtime installed beside them, so
+they do not need the OpenCV package.
+
+### Uninstall on Windows
+
+```powershell
+sima-cli packages list
+sima-cli packages remove gh:sima-neat/core/pciehost/windows/amd64 --version <version> --yes
+& "$env:USERPROFILE\pyneatpcie\Scripts\python.exe" -m pip uninstall -y pyneatpcie
+sima-cli playbooks remove neat-pcie-application-builder --yes
+```
+
+Use the version that `sima-cli packages list` shows. The command removes Core
+and then Scheduler under one administrator approval. It does not delete the
+Python environment; delete `%USERPROFILE%\pyneatpcie` if no other application
+uses it. The SSH key `%USERPROFILE%\.ssh\sima_neat_pcie_ed25519`, the card's
+entry in `%USERPROFILE%\.ssh\known_hosts`, and the downloaded packages and logs
+in your working directory also remain.
+
+`sima-cli` finds the packages through its receipt in
+`%USERPROFILE%\.sima-cli\registry.json`, so remove them before you remove
+`sima-cli` or that folder. If the receipt is gone, either run the install
+command for the installed release again, which restores the receipt, and then
+remove the packages as above; or uninstall `sima-pcie-host` and then
+`simaai-scheduler-pcie-host` under **Settings > Apps > Installed apps**. If you
+deleted the whole `%USERPROFILE%\.sima-cli` folder, the install command stops
+first with a message that the skill already exists outside the sima-cli
+registry; delete the skill folders that the message names, then run the
+install command again.
+
+The receipt belongs to the Windows account that ran the install, while the
+packages are installed for the whole machine, so another account runs the same
+install command to get its own receipt, Python environment, skill and card SSH
+key; this repairs the packages instead of installing them again.
+
+Windows Installer does not replace a package with an older version. To install
+an older release, uninstall the installed one first.
+
+To remove `sima-cli` itself after the packages, run its installer with the
+`uninstall` argument, as described in the
+[sima-cli installation guide](/tools/sima-cli/).
+
+## Install Neat on the card {#install-neat-on-the-card}
+
+The card needs the Neat Library from the same release as the host package.
+Install the host package first, so that card SSH is provisioned, then install
+Neat on each card from the host. When you upgrade, upgrade the host package and
+then every card before you run applications again.
+
+Run these commands in an empty working directory on the host. They download the
+Neat Library offline package, copy it to the card at `10.0.0.2`, and run its
+installer there. When the installer asks, enter the password of the card's
+`sima` account. For another card, replace `10.0.0.2` with its address,
+`10.0.N.2`.
+
+On Ubuntu:
 
 <ShellCommand prompt="pcie-host">
-pcie-setup.sh --hosts "10.0.0.2"
+sima-cli neat install core/offline@v%%release.core%% -t minimal --download-only
+scp -i ~/.ssh/sima_neat_pcie_ed25519 neat-core-offline-installer*.tar.gz sima@10.0.0.2:/var/tmp/neat-core-offline-installer.tar.gz
+ssh -t -i ~/.ssh/sima_neat_pcie_ed25519 sima@10.0.0.2 "cd /var/tmp && rm -rf neat-core-offline && tar -xzf neat-core-offline-installer.tar.gz && cd neat-core-offline && ./install.sh && ./install.sh --verify && cd /var/tmp && rm -rf neat-core-offline neat-core-offline-installer.tar.gz"
 </ShellCommand>
 
-If package installation or runtime startup fails, confirm that the PCIe host
-package and the Neat Library installed on the card are from compatible
-releases.
+On Windows, in PowerShell:
+
+```powershell
+sima-cli neat install core/offline@v%%release.core%% -t minimal --download-only
+$bundle = (Get-Item neat-core-offline-installer*.tar.gz).FullName
+scp -i "$env:USERPROFILE\.ssh\sima_neat_pcie_ed25519" $bundle sima@10.0.0.2:/var/tmp/neat-core-offline-installer.tar.gz
+ssh -t -i "$env:USERPROFILE\.ssh\sima_neat_pcie_ed25519" sima@10.0.0.2 "cd /var/tmp && rm -rf neat-core-offline && tar -xzf neat-core-offline-installer.tar.gz && cd neat-core-offline && ./install.sh && ./install.sh --verify && cd /var/tmp && rm -rf neat-core-offline neat-core-offline-installer.tar.gz"
+```
+
+The installer checks that the card runs a compatible Platform 3.0 release
+before it changes anything, and `--verify` checks the installed packages and
+the PyNeat import. To compare the Neat versions on the host and the card, run
+`neat` on Ubuntu, or `& "$env:ProgramFiles\SimaPCIeHost\bin\neat.cmd"` in PowerShell on Windows.
+
+## Troubleshooting {#troubleshooting}
+
+Most failures print the next step at the end of the error. The table lists the
+common cases on Ubuntu and Windows. On Ubuntu the setup utility is
+`pcie-setup.sh`; on Windows it is
+`& "$env:ProgramFiles\SimaPCIeHost\bin\pcie-setup.cmd"`.
+
+| Symptom | Cause | What to do |
+| --- | --- | --- |
+| SSH provisioning finds no card | The card is not reachable, or its management link is not configured | Check the link with `ping -c 1 10.0.0.2` on Ubuntu or `Test-Connection -ComputerName 10.0.0.2 -Count 1` on Windows, then run the setup utility with `--hosts 10.0.0.2` on Ubuntu or `-Hosts 10.0.0.2` on Windows. |
+| `REMOTE HOST IDENTIFICATION HAS CHANGED` or `Host key verification failed` | The card was reflashed or replaced and has a new SSH host key | Run the setup utility again. It records the card's current key. |
+| `Permission denied (publickey)` | The card does not have this host's Neat SSH key | Run the setup utility and enter the card's `sima` password when OpenSSH asks. |
+| `missing_builder` when a model starts | Neat is not installed on the card | [Install Neat on the card](#install-neat-on-the-card) from the same release as the host package. |
+| `queue_busy` when a model starts | A card worker still holds the queue, for example after a host application ended without closing its model | If no other application uses that queue, stop the leftover worker as shown below, then start the model again. |
+| A model fails to start or times out after an upgrade | The host package and the card run different releases | Install the same release on the host and the card. |
+
+To stop a leftover card worker for queue `0`, run this on the host. In
+`--queue 0`, replace `0` with the queue from the error, and replace `10.0.0.2`
+with the card address.
+
+On Ubuntu:
+
+<ShellCommand prompt="pcie-host">
+ssh -i ~/.ssh/sima_neat_pcie_ed25519 sima@10.0.0.2 "pkill -f '[p]cie-pipeline-builder.*--queue 0( |$)'"
+</ShellCommand>
+
+On Windows:
+
+```powershell
+ssh -i "$env:USERPROFILE\.ssh\sima_neat_pcie_ed25519" sima@10.0.0.2 "pkill -f '[p]cie-pipeline-builder.*--queue 0( |$)'"
+```
+
+On Windows, also check these cases:
+
+| Symptom | Cause | What to do |
+| --- | --- | --- |
+| `SiMa.ai MLA Device` or `SiMa.ai Virtual Ethernet Adapter` is missing or shows a warning in Device Manager, or the installer reports that the Platform driver was not found | The Platform package is not installed; Secure Boot is on or test-signing is off, so Windows does not load the test-signed `SiMaNetAdapter` driver; or Windows has not detected the card | Install the Platform package with `sima-cli install drivers/windows`. From PowerShell started as administrator, check that `Confirm-SecureBootUEFI` prints `False` and that `bcdedit` lists `testsigning Yes`. If Secure Boot is on, turn it off in firmware setup, then run `bcdedit /set testsigning on`. If both settings are correct, check that the card is seated and powered. Then shut the host down and power it on. |
+| Windows asks for a restart after an installation, or the card is missing after a restart | The card does not always return after a Windows restart | Shut the host down and power it on instead of restarting. |
+| A model fails to start while other models are open, and the Platform reports error 1450 | Each open queue reserves physically contiguous host memory for its buffers, which grows with the queue depth and tensor size | Open fewer models at the same time and close other applications. Hosts with less memory can open fewer queues at once. |
+| `SiMaMlaDaemon` does not stop, or a Platform package upgrade waits | An application still has a GenAI model open | Close the application, then stop or upgrade the service. |
+| Installation stops with exit code 1625 | A Smart App Control, Windows Defender Application Control, or AppLocker policy blocks the unsigned packages | Install on a host where that policy allows the packages. |
+| Installation of an older release stops with exit code 1603 | Windows Installer does not replace a newer version | Uninstall the installed release, then install the older one. |
+| The administrator approval prompt does not appear, or a policy blocks it | Endpoint security blocks the elevation request | Start PowerShell as administrator, change to your working directory, and run the install command there. |
+| `pcie-setup.cmd` is blocked by an execution policy set by your organization | Group Policy overrides the wrapper's process-only policy | Enroll the key manually with OpenSSH, as shown below. |
+| A second card is not found | Card `N` uses `10.0.N.2` | Run the setup utility with `-Range 0-1`, and select the card in applications with `card_id`. |
+
+To enroll the key without `pcie-setup.cmd`, create the key, press **Enter** at
+both passphrase prompts, append its public key on the card, and check the
+passwordless login:
+
+```powershell
+ssh-keygen -t ed25519 -f "$env:USERPROFILE\.ssh\sima_neat_pcie_ed25519"
+Get-Content "$env:USERPROFILE\.ssh\sima_neat_pcie_ed25519.pub" | ssh sima@10.0.0.2 "umask 077; mkdir -p ~/.ssh; tr -d '\r' >> ~/.ssh/authorized_keys"
+ssh -i "$env:USERPROFILE\.ssh\sima_neat_pcie_ed25519" -o IdentitiesOnly=yes sima@10.0.0.2 true
+```
 
 ## Offline installation {#offline-installation}
 

@@ -39,13 +39,24 @@ Modalix PCIe 卡提供 0 到 5 號協同處理佇列。每個啟用的 `Model` �
 如 [教學設定](/tutorials/before-you-run) 中所述，請安裝 PCIe 主機套件，並下載教學範例。從解壓縮後的 PCIe 額外檔案根目錄中，下載這兩個模型：
 
 ```bash
-sima-cli models download --id resnet_50 --variant w8a8
+sima-cli models download --id resnet_50 --variant w8a8 --force
 unzip -p models/resnet_50/w8a8/resnet_50_w8a8_default.zip resnet_50_w8a8_mpk.tar.gz > resnet_50_mpk.tar.gz
-sima-cli models download --id yolov8s --variant w8a8
+sima-cli models download --id yolov8s --variant w8a8 --force
 unzip -p models/yolov8s/w8a8/yolov8s_w8a8_default.zip yolov8s_w8a8_mpk.tar.gz > yolo_v8s_mpk.tar.gz
 ```
 
 該程式需要此目錄中確切的路徑 `resnet_50_mpk.tar.gz` 和 `yolo_v8s_mpk.tar.gz`。每個 `unzip` 命令會從其下載的 ZIP 中解壓縮其中一個檔案。
+
+在 Windows 上，請依照[在 Windows 上執行應用程式](/getting-started/neat-library/pcie-host/#run-applications-on-windows)的說明設定教學課程並執行程式。請在 PowerShell 中下載模型，並使用 `Expand-Archive` 解壓縮封存檔：
+
+```powershell
+sima-cli models download --id resnet_50 --variant w8a8 --force
+Expand-Archive models\resnet_50\w8a8\resnet_50_w8a8_default.zip -DestinationPath models\resnet_50\w8a8 -Force
+Copy-Item models\resnet_50\w8a8\resnet_50_w8a8_mpk.tar.gz resnet_50_mpk.tar.gz
+sima-cli models download --id yolov8s --variant w8a8 --force
+Expand-Archive models\yolov8s\w8a8\yolov8s_w8a8_default.zip -DestinationPath models\yolov8s\w8a8 -Force
+Copy-Item models\yolov8s\w8a8\yolov8s_w8a8_mpk.tar.gz yolo_v8s_mpk.tar.gz
+```
 
 執行 Python：
 
@@ -65,6 +76,17 @@ python3 share/sima-pcie-host/tutorials/026_run_multiple_models/run_multiple_mode
 ```bash
 ./build.sh --target tutorial_026_run_multiple_models
 ./build/tutorials-standalone/tutorial_026_run_multiple_models
+```
+
+在 Windows 上，請在您的教學課程副本中，從 **x64 Native Tools Command Prompt** 使用 CMake 重新建置。將 `C:\opencv\build` 替換為[在 Windows 上執行應用程式](/getting-started/neat-library/pcie-host/#run-applications-on-windows)中所述 OpenCV 套件的 `build` 目錄：
+
+```bat
+call "%ProgramFiles%\SimaPCIeHost\bin\sima-pcie-host-env.cmd"
+set "OpenCV_DIR=C:\opencv\build"
+cmake -S share\sima-pcie-host\tutorials -B build
+cmake --build build --config Release --target tutorial_026_run_multiple_models
+set "PATH=%OpenCV_DIR%\x64\vc16\bin;%PATH%"
+build\Release\tutorial_026_run_multiple_models.exe
 ```
 
 使用提供的模型和素材，兩個版本都會輸出類似的結果：

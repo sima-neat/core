@@ -39,11 +39,19 @@ PCIe ホスト API は、モデルで使用できるテンソルまたはデコ�
 PCIe ホストパッケージをインストールし、[チュートリアルの設定](/tutorials/before-you-run) で説明されているように、チュートリアルバンドルをダウンロードします。抽出された PCIe extras ルートから、次のコマンドを実行します。
 
 ```bash
-sima-cli models download --id yolov8s --variant w8a8
+sima-cli models download --id yolov8s --variant w8a8 --force
 unzip -p models/yolov8s/w8a8/yolov8s_w8a8_default.zip yolov8s_w8a8_mpk.tar.gz > yolo_v8s_mpk.tar.gz
 ```
 
 プログラムには、このディレクトリに `yolo_v8s_mpk.tar.gz` が必要です。2 番目のコマンドは、ダウンロードした ZIP からこのファイルを展開します。
+
+Windowsでは、[Windowsでアプリケーションを実行する](/getting-started/neat-library/pcie-host/#run-applications-on-windows)の説明に従ってチュートリアルを設定し、プログラムを実行します。PowerShellでモデルをダウンロードし、`Expand-Archive`でアーカイブを展開します。
+
+```powershell
+sima-cli models download --id yolov8s --variant w8a8 --force
+Expand-Archive models\yolov8s\w8a8\yolov8s_w8a8_default.zip -DestinationPath models\yolov8s\w8a8 -Force
+Copy-Item models\yolov8s\w8a8\yolov8s_w8a8_mpk.tar.gz yolo_v8s_mpk.tar.gz
+```
 
 **Python:**
 
@@ -72,6 +80,21 @@ python3 share/sima-pcie-host/tutorials/024_run_your_first_model_over_pcie/run_im
 ./build/tutorials-standalone/tutorial_024_run_tensor_mode
 ./build/tutorials-standalone/tutorial_024_run_image_mode
 ./build/tutorials-standalone/tutorial_024_run_image_boxdecode
+```
+
+Windowsでは、チュートリアルのコピー先で、**x64 Native Tools Command Prompt** からCMakeでビルドします。`C:\opencv\build` は、[Windowsでアプリケーションを実行する](/getting-started/neat-library/pcie-host/#run-applications-on-windows)で説明しているOpenCVパッケージの`build`ディレクトリに置き換えてください。
+
+```bat
+call "%ProgramFiles%\SimaPCIeHost\bin\sima-pcie-host-env.cmd"
+set "OpenCV_DIR=C:\opencv\build"
+cmake -S share\sima-pcie-host\tutorials -B build
+cmake --build build --config Release --target tutorial_024_run_tensor_mode
+cmake --build build --config Release --target tutorial_024_run_image_mode
+cmake --build build --config Release --target tutorial_024_run_image_boxdecode
+set "PATH=%OpenCV_DIR%\x64\vc16\bin;%PATH%"
+build\Release\tutorial_024_run_tensor_mode.exe
+build\Release\tutorial_024_run_image_mode.exe
+build\Release\tutorial_024_run_image_boxdecode.exe
 ```
 
 対応する C++ および Python プログラムは、テンソルモードと画像モードの両方で同じ 6 つの生の出力コントラクトを出力し、その後、デコードされた人、車、またはその他の見えるオブジェクトを出力します。

@@ -59,13 +59,15 @@
 <g id="code4" class="fanim" opacity="0">
 <text x="76" y="212" class="fsans fcap">STEP 5 · Prepare image</text>
 <text x="76" y="248" class="fmono fln">1</text>
-<text x="104" y="248" class="fmono fcode" xml:space="preserve">bgr = cv2.imread(args.image, cv2.IMREAD_COL…</text>
+<text x="104" y="248" class="fmono fcode" xml:space="preserve">try:</text>
 <text x="76" y="274" class="fmono fln">2</text>
-<text x="104" y="274" class="fmono fcode" xml:space="preserve">if bgr is None:</text>
+<text x="104" y="274" class="fmono fcode" xml:space="preserve">    # cv2.imread takes an ANSI file name on…</text>
 <text x="76" y="300" class="fmono fln">3</text>
-<text x="104" y="300" class="fmono fcode" xml:space="preserve">    parser.error(f&quot;cannot read image: {args…</text>
+<text x="104" y="300" class="fmono fcode" xml:space="preserve">    bgr = cv2.imdecode(np.fromfile(args.ima…</text>
 <text x="76" y="326" class="fmono fln">4</text>
-<text x="104" y="326" class="fmono fcode" xml:space="preserve">rgb = np.ascontiguousarray(cv2.cvtColor(bgr…</text>
+<text x="104" y="326" class="fmono fcode" xml:space="preserve">except (OSError, cv2.error):</text>
+<text x="76" y="352" class="fmono fln">5</text>
+<text x="104" y="352" class="fmono fcode" xml:space="preserve">    bgr = None</text>
 </g>
 </g>
 <g filter="url(#fsh)">

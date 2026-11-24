@@ -39,13 +39,24 @@ Modalix PCIeカードは、協調処理用のキュー0から5までを公開し
 PCIeホストパッケージをインストールし、[チュートリアルの設定](/tutorials/before-you-run)で説明されているように、チュートリアルバンドルをダウンロードします。抽出されたPCIeエクストラルのルートから、両方のモデルをダウンロードします。
 
 ```bash
-sima-cli models download --id resnet_50 --variant w8a8
+sima-cli models download --id resnet_50 --variant w8a8 --force
 unzip -p models/resnet_50/w8a8/resnet_50_w8a8_default.zip resnet_50_w8a8_mpk.tar.gz > resnet_50_mpk.tar.gz
-sima-cli models download --id yolov8s --variant w8a8
+sima-cli models download --id yolov8s --variant w8a8 --force
 unzip -p models/yolov8s/w8a8/yolov8s_w8a8_default.zip yolov8s_w8a8_mpk.tar.gz > yolo_v8s_mpk.tar.gz
 ```
 
 このプログラムでは、このディレクトリ内の正確なパス`resnet_50_mpk.tar.gz`と`yolo_v8s_mpk.tar.gz`が必要です。各`unzip`コマンドは、ダウンロードしたZIPからそれぞれ1つのファイルを展開します。
+
+Windowsでは、[Windowsでアプリケーションを実行する](/getting-started/neat-library/pcie-host/#run-applications-on-windows)の説明に従ってチュートリアルを設定し、プログラムを実行します。PowerShellでモデルをダウンロードし、`Expand-Archive`でアーカイブを展開します。
+
+```powershell
+sima-cli models download --id resnet_50 --variant w8a8 --force
+Expand-Archive models\resnet_50\w8a8\resnet_50_w8a8_default.zip -DestinationPath models\resnet_50\w8a8 -Force
+Copy-Item models\resnet_50\w8a8\resnet_50_w8a8_mpk.tar.gz resnet_50_mpk.tar.gz
+sima-cli models download --id yolov8s --variant w8a8 --force
+Expand-Archive models\yolov8s\w8a8\yolov8s_w8a8_default.zip -DestinationPath models\yolov8s\w8a8 -Force
+Copy-Item models\yolov8s\w8a8\yolov8s_w8a8_mpk.tar.gz yolo_v8s_mpk.tar.gz
+```
 
 Pythonを実行します。
 
@@ -65,6 +76,17 @@ python3 share/sima-pcie-host/tutorials/026_run_multiple_models/run_multiple_mode
 ```bash
 ./build.sh --target tutorial_026_run_multiple_models
 ./build/tutorials-standalone/tutorial_026_run_multiple_models
+```
+
+Windowsでは、チュートリアルのコピー先で、**x64 Native Tools Command Prompt** からCMakeで再ビルドします。`C:\opencv\build` は、[Windowsでアプリケーションを実行する](/getting-started/neat-library/pcie-host/#run-applications-on-windows)で説明しているOpenCVパッケージの`build`ディレクトリに置き換えてください。
+
+```bat
+call "%ProgramFiles%\SimaPCIeHost\bin\sima-pcie-host-env.cmd"
+set "OpenCV_DIR=C:\opencv\build"
+cmake -S share\sima-pcie-host\tutorials -B build
+cmake --build build --config Release --target tutorial_026_run_multiple_models
+set "PATH=%OpenCV_DIR%\x64\vc16\bin;%PATH%"
+build\Release\tutorial_026_run_multiple_models.exe
 ```
 
 ドキュメント化されたモデルとアセットを使用すると、両方のバージョンで次のような出力が表示されます。

@@ -41,6 +41,8 @@ python3 -c "import pyneat; print('pyneat ready')"
 Потім завантажте пакет навчальних матеріалів для версії Ubuntu, яка працює на хості.
 Запустіть команду з каталогу, в якому ви хочете розмістити цей пакет.
 
+У Windows пакет хоста вже містить навчальні матеріали. Налаштуйте їх, як описано в розділі [Запуск застосунків у Windows](/getting-started/neat-library/pcie-host/#run-applications-on-windows).
+
 **Ubuntu 22.04:**
 
 <ShellCommand prompt="pcie-host">
@@ -69,9 +71,9 @@ python3 -c "import pyneatpcie; print('pyneatpcie ready')"
 Для навчальних матеріалів Neat Library завантажте обидві моделі й видобудьте кожен архів моделі з його ZIP-файлу за шляхом, який команди навчальних матеріалів передають як `--model`:
 
 <ShellCommand prompt="sdk|devkit">
-sima-cli models download --id resnet_50 --variant w8a8
+sima-cli models download --id resnet_50 --variant w8a8 --force
 unzip -p models/resnet_50/w8a8/resnet_50_w8a8_default.zip resnet_50_w8a8_mpk.tar.gz > /tmp/resnet_50.tar.gz
-sima-cli models download --id yolov8s --variant w8a8
+sima-cli models download --id yolov8s --variant w8a8 --force
 unzip -p models/yolov8s/w8a8/yolov8s_w8a8_default.zip yolov8s_w8a8_mpk.tar.gz > /tmp/yolo_v8s.tar.gz
 </ShellCommand>
 
@@ -87,11 +89,22 @@ unzip -p models/yolov8s/w8a8/yolov8s_w8a8_default.zip yolov8s_w8a8_mpk.tar.gz > 
 Кожне завантаження — це ZIP-файл у `models/<model id>/<variant>/`. Завантажте моделі, потрібні для навчального матеріалу, з кореневої теки додаткових матеріалів PCIe і видобудьте кожен архів моделі з його ZIP-файлу під необхідною назвою:
 
 <ShellCommand prompt="pcie-host">
-sima-cli models download --id resnet_50 --variant w8a8
+sima-cli models download --id resnet_50 --variant w8a8 --force
 unzip -p models/resnet_50/w8a8/resnet_50_w8a8_default.zip resnet_50_w8a8_mpk.tar.gz > resnet_50_mpk.tar.gz
-sima-cli models download --id yolov8s --variant w8a8
+sima-cli models download --id yolov8s --variant w8a8 --force
 unzip -p models/yolov8s/w8a8/yolov8s_w8a8_default.zip yolov8s_w8a8_mpk.tar.gz > yolo_v8s_mpk.tar.gz
 </ShellCommand>
+
+У Windows виконайте ці команди PowerShell у своїй копії навчальних матеріалів:
+
+```powershell
+sima-cli models download --id resnet_50 --variant w8a8 --force
+Expand-Archive models\resnet_50\w8a8\resnet_50_w8a8_default.zip -DestinationPath models\resnet_50\w8a8 -Force
+Copy-Item models\resnet_50\w8a8\resnet_50_w8a8_mpk.tar.gz resnet_50_mpk.tar.gz
+sima-cli models download --id yolov8s --variant w8a8 --force
+Expand-Archive models\yolov8s\w8a8\yolov8s_w8a8_default.zip -DestinationPath models\yolov8s\w8a8 -Force
+Copy-Item models\yolov8s\w8a8\yolov8s_w8a8_mpk.tar.gz yolo_v8s_mpk.tar.gz
+```
 
 ## 5. Перевірте шляхи та очікувані результати.
 
@@ -108,5 +121,7 @@ ls share/*/tutorials/
 - `./build.sh --list-targets` містить перелік програм, написаних мовою C++, які ви можете перекомпілювати.
 - Успішні навчальні матеріали з C++ завершуються позначкою `[OK]`; у навчальних матеріалах з Python виводиться стислий
   результат, наприклад, `top1=...`, `completed=...` або `detections=...`.
+
+У Windows пакет хоста не встановлює `build.sh`. Запускайте навчальні матеріали, як описано в розділі [Запуск застосунків у Windows](/getting-started/neat-library/pcie-host/#run-applications-on-windows).
 
 Якщо в інструкції зазначено про відсутній файл, спочатку перевірте поточну директорію та назву файлу моделі. Для отримання додаткової допомоги зверніться до розділу [Усунення несправностей](/reference/troubleshooting/) (усунення несправностей).

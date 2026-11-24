@@ -40,6 +40,8 @@ python3 -c "import pyneat; print('pyneat ready')"
 그런 다음 호스트에서 실행되는 Ubuntu 버전에 대한 튜토리얼 패키지를 다운로드합니다.
 패키지를 원하는 디렉터리에서 명령을 실행합니다.
 
+Windows에서는 호스트 패키지에 튜토리얼이 이미 포함되어 있습니다. [Windows에서 애플리케이션 실행](/getting-started/neat-library/pcie-host/#run-applications-on-windows)에 설명된 대로 설정하세요.
+
 **Ubuntu 22.04:**
 
 <ShellCommand prompt="pcie-host">
@@ -68,9 +70,9 @@ python3 -c "import pyneatpcie; print('pyneatpcie ready')"
 Neat Library 튜토리얼의 경우, 두 모델을 다운로드하고 각 ZIP에서 모델 아카이브를 튜토리얼 명령이 `--model`로 전달하는 경로로 추출합니다.
 
 <ShellCommand prompt="sdk|devkit">
-sima-cli models download --id resnet_50 --variant w8a8
+sima-cli models download --id resnet_50 --variant w8a8 --force
 unzip -p models/resnet_50/w8a8/resnet_50_w8a8_default.zip resnet_50_w8a8_mpk.tar.gz > /tmp/resnet_50.tar.gz
-sima-cli models download --id yolov8s --variant w8a8
+sima-cli models download --id yolov8s --variant w8a8 --force
 unzip -p models/yolov8s/w8a8/yolov8s_w8a8_default.zip yolov8s_w8a8_mpk.tar.gz > /tmp/yolo_v8s.tar.gz
 </ShellCommand>
 
@@ -86,11 +88,22 @@ PCIe 튜토리얼은 PCIe 추가 자료의 루트 디렉터리에 있는 고정�
 각 다운로드는 `models/<model id>/<variant>/` 아래의 ZIP 파일입니다. PCIe 추가 자료의 루트 디렉터리에서 튜토리얼에 필요한 모델을 다운로드하고, 각 ZIP에서 모델 아카이브를 필수 이름으로 추출하세요.
 
 <ShellCommand prompt="pcie-host">
-sima-cli models download --id resnet_50 --variant w8a8
+sima-cli models download --id resnet_50 --variant w8a8 --force
 unzip -p models/resnet_50/w8a8/resnet_50_w8a8_default.zip resnet_50_w8a8_mpk.tar.gz > resnet_50_mpk.tar.gz
-sima-cli models download --id yolov8s --variant w8a8
+sima-cli models download --id yolov8s --variant w8a8 --force
 unzip -p models/yolov8s/w8a8/yolov8s_w8a8_default.zip yolov8s_w8a8_mpk.tar.gz > yolo_v8s_mpk.tar.gz
 </ShellCommand>
+
+Windows에서는 튜토리얼 복사본 디렉터리에서 다음 PowerShell 명령을 실행하세요.
+
+```powershell
+sima-cli models download --id resnet_50 --variant w8a8 --force
+Expand-Archive models\resnet_50\w8a8\resnet_50_w8a8_default.zip -DestinationPath models\resnet_50\w8a8 -Force
+Copy-Item models\resnet_50\w8a8\resnet_50_w8a8_mpk.tar.gz resnet_50_mpk.tar.gz
+sima-cli models download --id yolov8s --variant w8a8 --force
+Expand-Archive models\yolov8s\w8a8\yolov8s_w8a8_default.zip -DestinationPath models\yolov8s\w8a8 -Force
+Copy-Item models\yolov8s\w8a8\yolov8s_w8a8_mpk.tar.gz yolo_v8s_mpk.tar.gz
+```
 
 ## 5. 경로와 예상 출력을 확인합니다.
 
@@ -108,5 +121,7 @@ ls share/*/tutorials/
 - `./build.sh --list-targets`는 다시 빌드할 수 있는 C++ 프로그램을 나열합니다.
 - 성공적인 C++ 튜토리얼은 `[OK]`로 마무리됩니다. Python 튜토리얼은 간결한 내용을 출력합니다.
   예를 들어 다음과 같은 결과 `top1=...`, `completed=...`또는 `detections=...`.
+
+Windows에서는 호스트 패키지가 `build.sh`를 설치하지 않습니다. [Windows에서 애플리케이션 실행](/getting-started/neat-library/pcie-host/#run-applications-on-windows)에 설명된 대로 튜토리얼을 실행하세요.
 
 튜토리얼에서 파일이 누락되었다는 메시지가 표시되면 먼저 현재 디렉터리와 모델 파일 이름을 확인하십시오. 추가 지원이 필요하면 다음을 참조하십시오. [문제 해결](/reference/troubleshooting/).

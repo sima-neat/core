@@ -25,9 +25,19 @@ PCIe 공동 처리 방식을 사용하면 애플리케이션 제어 및 입력 �
 <ShellCommand prompt="pcie-host">
 mkdir -p pcie-host-quickstart/assets
 cd pcie-host-quickstart
-sima-cli models download --id resnet_50 --variant w8a8
+sima-cli models download --id resnet_50 --variant w8a8 --force
 unzip -p models/resnet_50/w8a8/resnet_50_w8a8_default.zip resnet_50_w8a8_mpk.tar.gz > resnet_50.tar.gz
 </ShellCommand>
+
+Windows에서는 PowerShell에서 같은 단계를 실행하고 `Expand-Archive`로 아카이브를 추출하세요.
+
+```powershell
+New-Item -ItemType Directory -Force pcie-host-quickstart\assets | Out-Null
+Set-Location pcie-host-quickstart
+sima-cli models download --id resnet_50 --variant w8a8 --force
+Expand-Archive models\resnet_50\w8a8\resnet_50_w8a8_default.zip -DestinationPath models\resnet_50\w8a8 -Force
+Copy-Item models\resnet_50\w8a8\resnet_50_w8a8_mpk.tar.gz resnet_50.tar.gz
+```
 
 모든 튜토리얼의 모델 준비는 [튜토리얼 설정](/tutorials/before-you-run)을 참조하세요.
 
@@ -41,6 +51,7 @@ unzip -p models/resnet_50/w8a8/resnet_50_w8a8_default.zip resnet_50_w8a8_mpk.tar
 pcie-host-quickstart/
 ├── assets/
 │   └── sample.png
+├── models/
 └── resnet_50.tar.gz
 ```
 
@@ -204,6 +215,8 @@ target_link_libraries(
 
 ## 애플리케이션을 실행합니다.
 
+Windows에서는 대신 [Windows에서 애플리케이션 실행](/getting-started/neat-library/pcie-host/#run-applications-on-windows)의 명령을 사용하세요.
+
 <CodeTabs>
 <CodeTab label="Python" lang="python">
 
@@ -231,7 +244,7 @@ cmake --build build
 성공적으로 실행되면 반환된 출력 텐서와 가장 높은 점수를 받은 ImageNet 클래스 인덱스가 출력됩니다. 문서화된 ResNet-50 아티팩트와 래브라도 이미지를 사용하면 예상되는 최상위 클래스는 인덱스 208, 즉 래브라도 리트리버입니다.
 
 ```text
-output: resnetv17_dense0_fwd [1, 1000]
+output: dequantize_1 [1, 1000]
 top1: 208
 ```
 

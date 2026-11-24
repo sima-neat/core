@@ -27,9 +27,19 @@ sidebar_position: 4
 <ShellCommand prompt="pcie-host">
 mkdir -p pcie-host-quickstart/assets
 cd pcie-host-quickstart
-sima-cli models download --id resnet_50 --variant w8a8
+sima-cli models download --id resnet_50 --variant w8a8 --force
 unzip -p models/resnet_50/w8a8/resnet_50_w8a8_default.zip resnet_50_w8a8_mpk.tar.gz > resnet_50.tar.gz
 </ShellCommand>
+
+У Windows виконайте ті самі кроки в PowerShell і видобудьте архів за допомогою `Expand-Archive`:
+
+```powershell
+New-Item -ItemType Directory -Force pcie-host-quickstart\assets | Out-Null
+Set-Location pcie-host-quickstart
+sima-cli models download --id resnet_50 --variant w8a8 --force
+Expand-Archive models\resnet_50\w8a8\resnet_50_w8a8_default.zip -DestinationPath models\resnet_50\w8a8 -Force
+Copy-Item models\resnet_50\w8a8\resnet_50_w8a8_mpk.tar.gz resnet_50.tar.gz
+```
 
 Підготовку моделей для всіх навчальних матеріалів описано в розділі [Налаштування навчального посібника](/tutorials/before-you-run).
 
@@ -47,6 +57,7 @@ unzip -p models/resnet_50/w8a8/resnet_50_w8a8_default.zip resnet_50_w8a8_mpk.tar
 pcie-host-quickstart/
 ├── assets/
 │   └── sample.png
+├── models/
 └── resnet_50.tar.gz
 ```
 
@@ -210,6 +221,8 @@ target_link_libraries(
 
 ## Запуск застосунку
 
+У Windows натомість використовуйте команди з розділу [Запуск застосунків у Windows](/getting-started/neat-library/pcie-host/#run-applications-on-windows).
+
 <CodeTabs>
 <CodeTab label="Python" lang="python">
 
@@ -237,7 +250,7 @@ cmake --build build
 У разі успішного запуску виводиться повернутий вихідний тензор та індекс класу ImageNet з найвищою оцінкою. Для задокументованого артефакту ResNet-50 і зображення лабрадора очікуваний найкращий клас — індекс 208, лабрадор-ретривер:
 
 ```text
-output: resnetv17_dense0_fwd [1, 1000]
+output: dequantize_1 [1, 1000]
 top1: 208
 ```
 

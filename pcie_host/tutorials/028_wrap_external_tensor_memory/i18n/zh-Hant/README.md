@@ -47,8 +47,16 @@
 請依照[教學設定](/tutorials/before-you-run)的說明安裝 PCIe 主機套件並下載教學套件組。將 YOLOv8s 下載到解壓縮後的 PCIe extras 根目錄：
 
 ```bash
-sima-cli models download --id yolov8s --variant w8a8
+sima-cli models download --id yolov8s --variant w8a8 --force
 unzip -p models/yolov8s/w8a8/yolov8s_w8a8_default.zip yolov8s_w8a8_mpk.tar.gz > yolo_v8s_mpk.tar.gz
+```
+
+在 Windows 上，請依照[在 Windows 上執行應用程式](/getting-started/neat-library/pcie-host/#run-applications-on-windows)的說明設定教學課程並執行程式。請在 PowerShell 中下載模型，並使用 `Expand-Archive` 解壓縮封存檔：
+
+```powershell
+sima-cli models download --id yolov8s --variant w8a8 --force
+Expand-Archive models\yolov8s\w8a8\yolov8s_w8a8_default.zip -DestinationPath models\yolov8s\w8a8 -Force
+Copy-Item models\yolov8s\w8a8\yolov8s_w8a8_mpk.tar.gz yolo_v8s_mpk.tar.gz
 ```
 
 **C++ (prebuilt):**
@@ -62,6 +70,17 @@ unzip -p models/yolov8s/w8a8/yolov8s_w8a8_default.zip yolov8s_w8a8_mpk.tar.gz > 
 ```bash
 ./build.sh --target tutorial_028_wrap_external_tensor_memory
 ./build/tutorials-standalone/tutorial_028_wrap_external_tensor_memory
+```
+
+在 Windows 上，請在您的教學課程副本中，從 **x64 Native Tools Command Prompt** 使用 CMake 建置。將 `C:\opencv\build` 替換為[在 Windows 上執行應用程式](/getting-started/neat-library/pcie-host/#run-applications-on-windows)中所述 OpenCV 套件的 `build` 目錄：
+
+```bat
+call "%ProgramFiles%\SimaPCIeHost\bin\sima-pcie-host-env.cmd"
+set "OpenCV_DIR=C:\opencv\build"
+cmake -S share\sima-pcie-host\tutorials -B build
+cmake --build build --config Release --target tutorial_028_wrap_external_tensor_memory
+set "PATH=%OpenCV_DIR%\x64\vc16\bin;%PATH%"
+build\Release\tutorial_028_wrap_external_tensor_memory.exe
 ```
 
 預設使用卡片 0 和佇列 0。只有使用其他卡片時才傳入 `--card N`。成功執行會列印：

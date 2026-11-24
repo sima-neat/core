@@ -40,6 +40,8 @@ python3 -c "import pyneat; print('pyneat ready')"
 次に、ホストで実行されているUbuntuバージョン用のチュートリアルバンドルをダウンロードします。
 バンドルを配置したいディレクトリからコマンドを実行します。
 
+Windowsでは、ホストパッケージにチュートリアルがすでに含まれています。[Windowsでアプリケーションを実行する](/getting-started/neat-library/pcie-host/#run-applications-on-windows)の説明に従って設定してください。
+
 **Ubuntu 22.04:**
 
 <ShellCommand prompt="pcie-host">
@@ -68,9 +70,9 @@ python3 -c "import pyneatpcie; print('pyneatpcie ready')"
 Neat Libraryのチュートリアルでは、両方のモデルをダウンロードし、各モデルアーカイブをZIPから、チュートリアルのコマンドが`--model`として渡すパスに展開します。
 
 <ShellCommand prompt="sdk|devkit">
-sima-cli models download --id resnet_50 --variant w8a8
+sima-cli models download --id resnet_50 --variant w8a8 --force
 unzip -p models/resnet_50/w8a8/resnet_50_w8a8_default.zip resnet_50_w8a8_mpk.tar.gz > /tmp/resnet_50.tar.gz
-sima-cli models download --id yolov8s --variant w8a8
+sima-cli models download --id yolov8s --variant w8a8 --force
 unzip -p models/yolov8s/w8a8/yolov8s_w8a8_default.zip yolov8s_w8a8_mpk.tar.gz > /tmp/yolo_v8s.tar.gz
 </ShellCommand>
 
@@ -86,11 +88,22 @@ PCIeチュートリアルでは、PCIeエクストラディレクトリのルー
 各ダウンロードは、`models/<model id>/<variant>/`の下にあるZIPファイルです。チュートリアルに必要なモデルをPCIeエクストラディレクトリのルートからダウンロードし、各モデルアーカイブを必要な名前でZIPから展開してください。
 
 <ShellCommand prompt="pcie-host">
-sima-cli models download --id resnet_50 --variant w8a8
+sima-cli models download --id resnet_50 --variant w8a8 --force
 unzip -p models/resnet_50/w8a8/resnet_50_w8a8_default.zip resnet_50_w8a8_mpk.tar.gz > resnet_50_mpk.tar.gz
-sima-cli models download --id yolov8s --variant w8a8
+sima-cli models download --id yolov8s --variant w8a8 --force
 unzip -p models/yolov8s/w8a8/yolov8s_w8a8_default.zip yolov8s_w8a8_mpk.tar.gz > yolo_v8s_mpk.tar.gz
 </ShellCommand>
+
+Windowsでは、チュートリアルのコピー先で次のPowerShellコマンドを実行します。
+
+```powershell
+sima-cli models download --id resnet_50 --variant w8a8 --force
+Expand-Archive models\resnet_50\w8a8\resnet_50_w8a8_default.zip -DestinationPath models\resnet_50\w8a8 -Force
+Copy-Item models\resnet_50\w8a8\resnet_50_w8a8_mpk.tar.gz resnet_50_mpk.tar.gz
+sima-cli models download --id yolov8s --variant w8a8 --force
+Expand-Archive models\yolov8s\w8a8\yolov8s_w8a8_default.zip -DestinationPath models\yolov8s\w8a8 -Force
+Copy-Item models\yolov8s\w8a8\yolov8s_w8a8_mpk.tar.gz yolo_v8s_mpk.tar.gz
+```
 
 ## 5. パスと期待される出力を確認する
 
@@ -106,5 +119,7 @@ ls share/*/tutorials/
 - C++とPythonのソースコードは、`share/<package>/tutorials/`にあります。
 - `./build.sh --list-targets`には、再構築できるC++プログラムのリストが記載されています。
 - 正常に完了したC++のチュートリアルは、`[OK]`で終了します。Pythonのチュートリアルは、`top1=...`、`completed=...`、または`detections=...`などの簡潔な結果を出力します。
+
+Windowsでは、ホストパッケージは`build.sh`をインストールしません。[Windowsでアプリケーションを実行する](/getting-started/neat-library/pcie-host/#run-applications-on-windows)の説明に従ってチュートリアルを実行してください。
 
 チュートリアルでファイルが見つからないというエラーが表示された場合は、まず現在のディレクトリとモデルファイル名を確認してください。さらに詳しい情報が必要な場合は、[トラブルシューティング](/reference/troubleshooting/)を参照してください。

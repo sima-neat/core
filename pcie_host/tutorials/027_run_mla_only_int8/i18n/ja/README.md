@@ -43,13 +43,21 @@ q = clamp(round(x / scale) + zero_point, -128, 127)
 
 ## Run
 
-PCIeホストパッケージをインストールし、[チュートリアルの設定](/tutorials/before-you-run)で説明されているように、チュートリアルバンドルをダウンロードします。
+PCIeホストパッケージをインストールし、[チュートリアルの設定](/tutorials/before-you-run)で説明されているように、チュートリアルバンドルをダウンロードします。Windowsでは、[Windowsでアプリケーションを実行する](/getting-started/neat-library/pcie-host/#run-applications-on-windows)の説明に従ってチュートリアルを設定し、プログラムを実行します。
 
 このチュートリアルは、MLAの入出力を直接扱うようにコンパイルされたModel BrowserのYOLO26n `w8a8`パッケージを実行します。抽出したPCIeエクストラのルートにダウンロードし、MPKアーカイブを取り出します。
 
 ```bash
-sima-cli models download --id yolo26n --variant w8a8
+sima-cli models download --id yolo26n --variant w8a8 --force
 unzip -p models/yolo26n/w8a8/yolo26n_w8a8_default.zip yolo26n_w8a8_mpk.tar.gz > yolo26n_w8a8_mpk.tar.gz
+```
+
+Windowsでは、PowerShellでモデルをダウンロードし、`Expand-Archive`でアーカイブを展開します。
+
+```powershell
+sima-cli models download --id yolo26n --variant w8a8 --force
+Expand-Archive models\yolo26n\w8a8\yolo26n_w8a8_default.zip -DestinationPath models\yolo26n\w8a8 -Force
+Copy-Item models\yolo26n\w8a8\yolo26n_w8a8_mpk.tar.gz .
 ```
 
 その他のアーカイブは、Model SDKの`tessellate_parameters`で`enable_mla=True`を指定し、すべての入力に`HWC`のDRAMレイアウト、すべての出力に`HWC16`を指定してコンパイルされていれば条件を満たします。代わりにCVUでテッセレーションを行うアーカイブは、`mla_only`を有効にすると拒否されます。
@@ -79,6 +87,17 @@ python3 share/sima-pcie-host/tutorials/027_run_mla_only_int8/run_mla_only_int8.p
 ./build.sh --target tutorial_027_run_mla_only_int8
 ./build/tutorials-standalone/tutorial_027_run_mla_only_int8 \
   --model yolo26n_w8a8_mpk.tar.gz
+```
+
+Windowsでは、チュートリアルのコピー先で、**x64 Native Tools Command Prompt** からCMakeでビルドします。`C:\opencv\build` は、[Windowsでアプリケーションを実行する](/getting-started/neat-library/pcie-host/#run-applications-on-windows)で説明しているOpenCVパッケージの`build`ディレクトリに置き換えてください。
+
+```bat
+call "%ProgramFiles%\SimaPCIeHost\bin\sima-pcie-host-env.cmd"
+set "OpenCV_DIR=C:\opencv\build"
+cmake -S share\sima-pcie-host\tutorials -B build
+cmake --build build --config Release --target tutorial_027_run_mla_only_int8
+set "PATH=%OpenCV_DIR%\x64\vc16\bin;%PATH%"
+build\Release\tutorial_027_run_mla_only_int8.exe --model yolo26n_w8a8_mpk.tar.gz
 ```
 
 両方のバージョンがコントラクトと、すべてのヘッドでゼロの偏差を出力します。

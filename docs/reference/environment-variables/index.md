@@ -224,4 +224,25 @@ for fixture-group selection and installed-package profiles.
 
 ## PCIe host and card status
 
-`NEAT_PCIE_SSH_USER` selects the card SSH user (default `sima`). `NEAT_PCIE_SSH_KEY` selects a private key (default `~/.ssh/sima_neat_pcie_ed25519`); existing SSH configuration and agent authentication remain available. `--offline` skips Internet update checks but still reads attached cards over local SSH. PCIe host status skips artifact update checks; use `sima-cli neat install core/pciehost/<distro>/<arch>@<ref>` to update the host package. `neat update` does not update PCIe cards.
+`NEAT_PCIE_SSH_USER` selects the card SSH user (default `sima`). `NEAT_PCIE_SSH_KEY` selects a private key (default `~/.ssh/sima_neat_pcie_ed25519`). On Ubuntu, existing SSH configuration and agent authentication remain available. On Windows, when that key file exists, OpenSSH offers only it and keys named by `IdentityFile` in the SSH configuration, not ssh-agent keys. `--offline` skips Internet update checks but still reads attached cards over local SSH. PCIe host status skips artifact update checks; use `sima-cli neat install core/pciehost/<distro>/<arch>@<ref>` to update the host package. `neat update` does not update PCIe cards.
+
+## Windows PCIe host runtime
+
+The Windows PCIe host package reads these variables in the Python package, in
+`sima-pcie-host-env.cmd`, and in the installation preflight.
+
+- `GSTREAMER_ROOT_X86_64`: GStreamer installation root to use instead of the one
+  the GStreamer installer recorded. It is searched first.
+- `GSTREAMER_1_0_ROOT_MSVC_X86_64`: GStreamer MSVC x64 installation root. The
+  GStreamer installer sets it. It is searched after `GSTREAMER_ROOT_X86_64` and
+  before `%ProgramFiles%\gstreamer\1.0\msvc_x86_64`.
+- `SIMA_WINDOWS_PLATFORM_RUNTIME_DIR`: directory that contains the Platform
+  runtime `SiMaPCIe.dll`. By default it is the directory of the `SiMaMlaDaemon`
+  service executable.
+- `SIMA_PCIE_HOST_LIBRARY_PATH`: additional directories, separated by `;`, that
+  contain the PCIe host and GStreamer DLLs, for an installation outside the
+  default locations. The Python package reads it. Windows defines no order
+  among the DLL directories the package adds, so do not list a directory with a
+  second copy of a DLL that another location already provides.
+  `sima-pcie-host-env.cmd` puts the installation's `bin` directory before the
+  existing value.
