@@ -8,8 +8,9 @@ pyneat.set_backend(...) first, as a customer's program would, and then runs the 
 runpy.run_path(script, run_name="__main__") and the script's own arguments (sys.argv as the script
 expects it, its directory first on sys.path). Without the launcher a script runs on the default
 backend. --record writes what the run did: backend, exit status, wall time, and the exception's
-text if one escaped (a not-carried refusal is recognised by its fixed words), for qualify.py to
-put beside the other backend's run.
+type and text if one escaped (`error` is the text alone, which qualify.py reads as the one
+not-carried form), for qualify.py to put beside the other backend's run. The record is written
+before the script starts too, so a run that dies without unwinding leaves its backend and command.
 """
 import argparse
 import json
@@ -37,6 +38,9 @@ def main():
 
     record = {'backend': args.backend, 'script': os.path.abspath(script), 'args': script_args,
               'set_backend': str(pyneat.backend())}
+    if args.record:
+        with open(args.record, 'w') as f:
+            json.dump(record, f, indent=1)
     sys.argv = [script] + script_args
     sys.path.insert(0, os.path.dirname(os.path.abspath(script)))
     t0 = time.monotonic()
@@ -45,8 +49,13 @@ def main():
         runpy.run_path(script, run_name='__main__')
     except SystemExit as e:
         status = e.code if isinstance(e.code, int) else (0 if e.code is None else 1)
-    except BaseException as e:  # recorded, then re-raised so the exit status stays the script's
+        if status and not isinstance(e.code, int):  # sys.exit("text"): Python prints the text and exits 1
+            print(e.code, file=sys.stderr)
+            record['exit_message'] = str(e.code)
+    except BaseException as e:  # recorded, and printed as Python prints an uncaught exception
+        traceback.print_exc()
         record['exception'] = f'{type(e).__name__}: {e}'
+        record['error'] = str(e)
         record['not_carried'] = 'is not carried by the Dataflow backend' in str(e)
         record['traceback'] = traceback.format_exc()[-4000:]
         status = 1
