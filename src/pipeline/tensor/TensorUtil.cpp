@@ -1222,6 +1222,10 @@ simaai::neat::Mapping map_dense_tensor_read(const simaai::neat::Tensor& tensor) 
       (!tensor.strides_bytes.empty() && tensor.strides_bytes.size() != tensor.shape.size())) {
     return {};
   }
+  // A mapper may expose more bytes than the segment assigned to this tensor.
+  if (dense_storage_bounds_error(tensor)) {
+    return {};
+  }
   const auto span = is_bound_dense_scalar(tensor) ? tensor_dtype_bytes(tensor.dtype)
                                                   : dense_tensor_physical_span_bytes(tensor);
   if (span == 0U) {

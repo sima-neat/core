@@ -120,6 +120,40 @@ def _image_input_model(
   return pyneat.Model(str(model_tar), opt)
 
 
+def test_standalone_preproc_matches_graph_and_preserves_batch_outputs():
+  model = _image_input_model(_env_path("SIMA_YOLO_TAR"))
+  rgb = cv2.resize(_decode_rgb_image(_fixture_image_path(Path("tests/images/people.jpg"))),
+                   (640, 480))
+  bgr = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
+  image = _rgb_tensor(rgb)
+  graph = pyneat.Graph()
+  graph.add(pyneat.nodes.input(model.input_appsrc_options(False)))
+  graph.add_graph(model.preprocess())
+  graph.add(pyneat.nodes.output())
+  run = graph.build([image])
+  try:
+    assert run.push([image])
+    expected, = run.pull_tensors(10000)
+    reference = bytes(expected.copy_payload_bytes())
+  finally:
+    run.close()
+
+  def preprocess(images, fmt, rois=None):
+    return pyneat.stages.preproc(images, model, image_format=fmt, rois=rois)
+
+  first, second = preprocess([bgr, np.zeros_like(bgr)], pyneat.PixelFormat.BGR)
+  tagged_rgb, = preprocess([rgb], pyneat.PixelFormat.RGB)
+  assert bytes(first.copy_payload_bytes()) == bytes(tagged_rgb.copy_payload_bytes()) == reference
+  assert bytes(second.copy_payload_bytes()) != reference
+
+  rois = [pyneat.PreprocessRoi(0, 0, 0, 320, 240), pyneat.PreprocessRoi(0, 120, 80, 160, 160)]
+  crops = preprocess([bgr], pyneat.PixelFormat.BGR, rois)
+  assert len(crops) == len(rois)
+  for crop, roi in zip(crops, rois):
+    single, = preprocess([bgr], pyneat.PixelFormat.BGR, [roi])
+    assert bytes(crop.copy_payload_bytes()) == bytes(single.copy_payload_bytes())
+
+
 def _rgb_tensor(image: np.ndarray) -> pyneat.Tensor:
   return pyneat.Tensor.from_numpy(image, copy=True, image_format=pyneat.PixelFormat.RGB)
 
