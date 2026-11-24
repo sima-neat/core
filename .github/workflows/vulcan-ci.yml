@@ -1282,6 +1282,36 @@ jobs:
             --output-on-failure \
             --no-tests=error
 
+      - name: Prepare Model Browser fixtures
+        if: ${{ contains(fromJSON(matrix.tasks), 'fast') || contains(fromJSON(matrix.tasks), 'performance') || contains(fromJSON(matrix.tasks), 'python-tutorials') }}
+        timeout-minutes: 15
+        env:
+          HAS_PERFORMANCE: ${{ contains(fromJSON(matrix.tasks), 'performance') }}
+          HAS_TUTORIALS: ${{ contains(fromJSON(matrix.tasks), 'python-tutorials') }}
+        run: |
+          # Prepared once per job and shared by the fast, performance and tutorial suites.
+          # SIMA_RESNET50_TAR also feeds the performance matrix and the Python bindings pytest.
+          # In the fast suite, unit_resnet50_mla_handoff_segment_test and
+          # unit_model_infer_output_name_test pass without loading a model when they find no
+          # ResNet-50 MPK, and stress_model_lifecycle_test uses it when SIMA_STRESS_MODEL_TAR
+          # and SIMA_MODEL_TAR are unset.
+          MODEL_DIR="$(mktemp -d "${RUNNER_TEMP:-/tmp}/model-browser.XXXXXX")"
+          RESNET_MPK="${SIMA_RESNET50_TAR:-}"
+          if [[ -z "${RESNET_MPK}" ]]; then
+            RESNET_MPK="$(python3 scripts/ci/prepare_model_browser_fixture.py \
+              --id resnet_50 --variant w8a8 --output "${MODEL_DIR}")"
+          fi
+          {
+            printf 'SIMA_RESNET50_TAR=%s\n' "${RESNET_MPK}"
+            printf 'SIMA_NEAT_TUTORIAL_MODEL_RESNET=%s\n' "${RESNET_MPK}"
+          } >> "${GITHUB_ENV}"
+          # Only the tutorials, and a performance job without a preset SIMA_YOLO_TAR, need YOLOv8s.
+          if [[ "${HAS_TUTORIALS}" == true || ( "${HAS_PERFORMANCE}" == true && -z "${SIMA_YOLO_TAR:-}" ) ]]; then
+            YOLO_MPK="$(python3 scripts/ci/prepare_model_browser_fixture.py \
+              --id yolov8s --variant w8a8 --output "${MODEL_DIR}")"
+            printf 'SIMA_NEAT_TUTORIAL_MODEL_YOLO=%s\n' "${YOLO_MPK}" >> "${GITHUB_ENV}"
+          fi
+
       - name: Run Fast Non-E2E Tests (Parallel)
         if: ${{ contains(fromJSON(matrix.tasks), 'fast') }}
         env:
@@ -1303,17 +1333,6 @@ jobs:
             echo "SIMA_CTEST_TAIL_ONLY=1; skipping broad non-e2e lane."
             exit 0
           fi
-
-          # unit_resnet50_mla_handoff_segment_test and unit_model_infer_output_name_test pass
-          # without loading a model when they find no ResNet-50 MPK, and nothing downloads one
-          # for them. stress_model_lifecycle_test also uses it when SIMA_STRESS_MODEL_TAR and
-          # SIMA_MODEL_TAR are unset.
-          if [[ -z "${SIMA_RESNET50_TAR:-}" ]]; then
-            SIMA_RESNET50_TAR="$(python3 scripts/ci/prepare_model_browser_fixture.py \
-              --id resnet_50 --variant w8a8 \
-              --output "$(mktemp -d "${RUNNER_TEMP:-/tmp}/model-browser.XXXXXX")")"
-          fi
-          export SIMA_RESNET50_TAR
 
           FAST_JOBS="${SIMA_CTEST_FAST_JOBS:-4}"
           COVERAGE_DIR=_work/coverage/fast COVERAGE_PROFILE=required bash scripts/ci/run_zero_skip_gate.sh \
@@ -1513,31 +1532,6 @@ jobs:
               --output-on-failure \
               --no-tests=error
           done
-
-      - name: Prepare Model Browser fixtures
-        if: ${{ contains(fromJSON(matrix.tasks), 'performance') || contains(fromJSON(matrix.tasks), 'python-tutorials') }}
-        timeout-minutes: 15
-        env:
-          HAS_TUTORIALS: ${{ contains(fromJSON(matrix.tasks), 'python-tutorials') }}
-        run: |
-          # Prepared once per job and shared by the performance and tutorial suites.
-          # SIMA_RESNET50_TAR also feeds the performance matrix and the Python bindings pytest.
-          MODEL_DIR="$(mktemp -d "${RUNNER_TEMP:-/tmp}/model-browser.XXXXXX")"
-          RESNET_MPK="${SIMA_RESNET50_TAR:-}"
-          if [[ -z "${RESNET_MPK}" ]]; then
-            RESNET_MPK="$(python3 scripts/ci/prepare_model_browser_fixture.py \
-              --id resnet_50 --variant w8a8 --output "${MODEL_DIR}")"
-          fi
-          {
-            printf 'SIMA_RESNET50_TAR=%s\n' "${RESNET_MPK}"
-            printf 'SIMA_NEAT_TUTORIAL_MODEL_RESNET=%s\n' "${RESNET_MPK}"
-          } >> "${GITHUB_ENV}"
-          # A performance-only job uses a preset SIMA_YOLO_TAR and needs no YOLO download.
-          if [[ "${HAS_TUTORIALS}" == true || -z "${SIMA_YOLO_TAR:-}" ]]; then
-            YOLO_MPK="$(python3 scripts/ci/prepare_model_browser_fixture.py \
-              --id yolov8s --variant w8a8 --output "${MODEL_DIR}")"
-            printf 'SIMA_NEAT_TUTORIAL_MODEL_YOLO=%s\n' "${YOLO_MPK}" >> "${GITHUB_ENV}"
-          fi
 
       - name: Run Perf and Throughput Tests (Isolated)
         if: ${{ contains(fromJSON(matrix.tasks), 'performance') }}
