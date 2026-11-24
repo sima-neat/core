@@ -415,33 +415,6 @@ inline bool ensure_writable_directory(const fs::path& dir) {
   return true;
 }
 
-// An installed package tree is often root-owned. Fall back to the system temp
-// directory when <root>/tmp cannot be written.
-inline fs::path writable_asset_tmp_dir(const fs::path& root, const std::string& fallback_name) {
-  const fs::path primary = root / "tmp";
-  if (ensure_writable_directory(primary))
-    return primary;
-
-  fs::path temp_root;
-  try {
-    temp_root = fs::temp_directory_path();
-  } catch (...) {
-    temp_root = fs::path("/tmp");
-  }
-
-  const std::vector<fs::path> fallbacks = {
-      temp_root / fallback_name,
-      fs::path("/tmp") / fallback_name,
-  };
-  for (const auto& candidate : fallbacks) {
-    if (ensure_writable_directory(candidate))
-      return candidate;
-  }
-
-  // Let the original path surface the concrete create/open error to callers.
-  return primary;
-}
-
 inline int run_modelzoo_get_noninteractive(const std::string& model_name,
                                            const fs::path& download_dir = {}) {
   std::string cmd;
@@ -597,7 +570,7 @@ inline std::string resolve_yolov8s_tar(const fs::path& = {}) {
 inline std::string resolve_modelzoo_tar(const std::string& model_name,
                                         const fs::path& root_in = {}) {
   const fs::path root = default_asset_root(root_in);
-  const fs::path tmp_dir = writable_asset_tmp_dir(root, "sima-modelzoo-cache");
+  const fs::path tmp_dir = root / "tmp";
   std::error_code ec;
   fs::create_directories(tmp_dir, ec);
 
@@ -659,7 +632,7 @@ inline std::string resolve_modelzoo_tar(const std::string& model_name,
   // Only validate listability for the *cached* tmp tar (the path that
   // gets handed back to callers and consumed by ModelPack). Candidates
   // discovered via the search loop below may be unit-test fixtures
-  // containing dummy payloads.
+  // containing dummy payloads — see unit_asset_utils_readable_model_tar_test.
   purge_unlistable_tar_gz(local);
   if (is_usable_regular_file(local))
     return local.string();
@@ -676,17 +649,10 @@ inline std::string resolve_modelzoo_tar(const std::string& model_name,
 
   const char* home = std::getenv("HOME");
   const fs::path home_path = home ? fs::path(home) : fs::path();
-  // In board mode, sima-cli modelzoo get writes <cwd>/<last name part>/<file>.
-  // It runs in tmp_dir, which is writable.
   const std::vector<fs::path> search_dirs = {
       tmp_dir,
-      tmp_dir / base,
-      // Read-only candidate when tmp_dir fell back to the system temp directory.
-      root / "tmp",
       root,
       fs::current_path(),
-      root / base,
-      fs::current_path() / base,
       fs::temp_directory_path(),
       home_path / ".simaai",
       home_path / ".simaai" / "modelzoo",
@@ -704,7 +670,7 @@ inline std::string resolve_modelzoo_tar(const std::string& model_name,
     }
   }
 
-  if (run_modelzoo_get_noninteractive(model_name, tmp_dir) != 0)
+  if (run_modelzoo_get_noninteractive(model_name) != 0)
     return "";
 
   // Post-download validation: the modelzoo path historically produces
@@ -729,41 +695,12 @@ inline std::string resolve_modelzoo_tar(const std::string& model_name,
   return "";
 }
 
-// unit_modelpack_mla_handoff_segment_test runs in the fast lane, where CI prepares
-// no YOLOv8s, and still reaches the Model Zoo branch here. It goes when that test
-// moves to a local manifest fixture. A variable that is set but invalid does not
-// fall back to Model Zoo.
+// The same variables as resolve_yolov8s_tar(), and the archive must contain a *_mpk.json.
 inline std::string resolve_yolov8s_strict_mpk_tar(const fs::path& root = {}) {
-  for (const char* name : {"SIMA_YOLO_TAR", "SIMA_MODEL_TAR"}) {
-    const char* value = std::getenv(name);
-    if (!value || !*value)
-      continue;
-    if (is_usable_regular_file(value) && is_strict_mpk_tar_gz(value))
-      return value;
-    std::cerr << name << "=" << value << " is not a .tar.gz MPK with a *_mpk.json\n";
-    return "";
-  }
-  const std::string modelzoo = resolve_modelzoo_tar("yolo_v8s", root);
-  if (modelzoo.empty())
-    return "";
-  if (is_strict_mpk_tar_gz(modelzoo))
-    return modelzoo;
-  // A cached archive without *_mpk.json. Drop the staged copy and fetch a fresh archive into
-  // the same cache, without searching the folders that held the rejected one again.
-  const fs::path cached(modelzoo);
-  const fs::path cache_dir = cached.parent_path();
-  const ScopedFileLock lock(cached.string() + ".lock");
-  // Another process may have refetched it while this one waited for the lock.
-  if (is_usable_regular_file(cached) && is_strict_mpk_tar_gz(cached))
-    return cached.string();
-  std::error_code ec;
-  fs::remove(cached, ec);
-  if (run_modelzoo_get_noninteractive("yolo_v8s", cache_dir) != 0)
-    return "";
-  for (const fs::path& candidate : {cached, cache_dir / "yolo_v8s" / cached.filename()}) {
-    if (is_usable_regular_file(candidate) && is_strict_mpk_tar_gz(candidate))
-      return candidate.string();
-  }
+  const std::string tar = resolve_yolov8s_tar(root);
+  if (tar.empty() || is_strict_mpk_tar_gz(tar))
+    return tar;
+  std::cerr << tar << " is not a .tar.gz MPK with a *_mpk.json\n";
   return "";
 }
 
