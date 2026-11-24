@@ -500,6 +500,7 @@ DataflowRunConfig derive_config(const Graph& graph, const DataflowGraphView& vie
   // linear Run one pipeline segment (RunCore::start, through is_simple_linear_plan).
   const bool graph_path =
       !view.linear || !config.input_names.empty() || !config.output_names.empty();
+  config.graph_run = graph_path;
 
   // RunOptions resolved as GStreamer resolves them for either path, by the same code,
   // resolve_build_opt: a plain linear Run's (prepare_build_input_context, in

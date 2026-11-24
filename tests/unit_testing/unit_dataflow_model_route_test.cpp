@@ -193,18 +193,19 @@ struct Route {
     return model.input_appsrc_options(true);
   }
 
+  // `named`: named endpoints, a graph Run (built without a seed too; a plain linear Run is not).
   Graph graph(const InputOptions& in, int max_buffers = 4, bool drop = false,
-              const GraphOptions& options = placement()) const {
+              const GraphOptions& options = placement(), bool named = false) const {
     OutputOptions out;
     out.max_buffers = max_buffers;
     out.drop = drop;
     out.sync = false;
     Graph g(options);
-    g.add(nodes::Input(in));
+    g.add(named ? nodes::Input("in", in) : nodes::Input(in));
     g.add(model.preprocess());
     g.add(model.inference());
     g.add(model.postprocess());
-    g.add(nodes::Output(out));
+    g.add(named ? nodes::Output("out", out) : nodes::Output(out));
     return g;
   }
 
@@ -555,7 +556,7 @@ void partial(const Route& route, const std::string& archive, sima_test::Referenc
 // What a push of `tensor` does: "accepted" with an output pulled, or the error's text.
 std::string push_outcome(const Route& route, const InputOptions& in, const Tensor& tensor,
                          const TensorList* seed) {
-  Graph g = route.graph(in);
+  Graph g = route.graph(in, 4, false, placement(), /*named=*/seed == nullptr);
   std::string outcome;
   try {
     Run run = seed ? g.build(*seed, on()) : g.build(on());

@@ -145,6 +145,9 @@ struct DataflowRunConfig {
   /// The customer's call that builds the Run (Graph::build, or a Model's call), which names the
   /// errors of the build: a model the MLA refuses, a kernel request refused, a binding.
   std::string where = "Graph::build";
+  /// GStreamer builds the same graph as a graph Run (a connected or named graph), not as one
+  /// pipeline segment (a plain linear Input -> ... -> Output).
+  bool graph_run = false;
 };
 
 // "[a, b]": endpoint names in messages.

@@ -10,9 +10,10 @@
 //     compiled and its Session started where the input binds at the build): that error, whose
 //     action is the GStreamer backend unless GStreamer would meet the same error (the error
 //     table's backend_action, DataflowErrorMap.h).
-// An input that binds at its first push (no seed, no declared shape, no model route in front)
-// compiles its Plan there: an error then is the push's, on the Dataflow Run that exists, and names
-// the push.
+// An input of a graph Run that binds at its first push (no seed, no declared shape, no model route
+// in front) compiles its Plan there: an error then is the push's, on the Dataflow Run that exists,
+// and names the push. A plain linear Run without a seed or a declaration is not built, as on
+// GStreamer.
 // Compiles without the runtime: a Run for Dataflow then fails.
 
 #include "pipeline/runtime/DataflowGraphCompiler.h"
@@ -196,6 +197,13 @@ std::shared_ptr<RunCore> build_impl(const Graph& graph, const RunOptions& opt, R
                              "Input " + dataflow_names_text(input.names) +
                                  (seed.tensors.empty() ? " as declared" : " with this seed"),
                              why});
+    }
+    if (!bindings.back() && !config.graph_run) {
+      // GStreamer's build of a plain linear Run starts its one pipeline segment with the seed
+      // and refuses to build without one: the same mistake, the same error. (A declaration that
+      // gives the input's spec binds it here instead.)
+      throw std::runtime_error(
+          "RunCore::start_pipeline_segment: push-style segment requires an input seed");
     }
   }
   // A tensor pulled from a device pool is a GstSample over a GstDmaBufMemory

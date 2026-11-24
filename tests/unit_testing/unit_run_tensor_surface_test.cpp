@@ -295,8 +295,18 @@ void positional_records() {
   run.close();
 
   if (on_dataflow()) {
-    // Fields of different shapes and dtypes, bound by the first push (no seed).
-    Graph h = tensor_media_graph();
+    // Fields of different shapes and dtypes, bound by the first push (no seed: a graph Run, as a
+    // plain linear Run is not built without one).
+    Graph h;
+    {
+      InputOptions input;
+      input.payload_type = PayloadType::Tensor;
+      input.format = FormatTag::FP32;
+      input.memory_policy = InputMemoryPolicy::SystemMemory;
+      h.add(nodes::Input("in", input));
+      h.add(nodes::Output("out"));
+      h.connect("in", "out");
+    }
     Run mixed = h.build(options());
     const Tensor u8 =
         Tensor::from_vector(std::vector<std::uint8_t>{1, 2, 3, 4, 5, 6}, {2, 3}, TensorMemory::CPU);

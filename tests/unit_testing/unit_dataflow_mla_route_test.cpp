@@ -118,15 +118,17 @@ struct Route {
     return in;
   }
 
-  Graph graph(const InputOptions& in, int max_buffers = 4, bool drop = false) const {
+  // `named`: named endpoints, a graph Run (built without a seed too; a plain linear Run is not).
+  Graph graph(const InputOptions& in, int max_buffers = 4, bool drop = false,
+              bool named = false) const {
     OutputOptions out;
     out.max_buffers = max_buffers;
     out.drop = drop;
     out.sync = false;
     Graph g;
-    g.add(nodes::Input(in));
+    g.add(named ? nodes::Input("in", in) : nodes::Input(in));
     g.add(model.inference());
-    g.add(nodes::Output(out));
+    g.add(named ? nodes::Output("out", out) : nodes::Output(out));
     return g;
   }
 
@@ -296,7 +298,7 @@ void differential(const Route& route, sima_test::Reference& ref) {
 // What a push of `tensor` does: "accepted" with an output pulled, or the error's text.
 std::string push_outcome(const Route& route, const InputOptions& in, const Tensor& tensor,
                          const TensorList* seed) {
-  Graph g = route.graph(in);
+  Graph g = route.graph(in, 4, false, /*named=*/seed == nullptr);
   std::string outcome;
   try {
     // A seed the route refuses fails the build (its preflight pushes it), as on GStreamer.
@@ -548,10 +550,10 @@ void declined(const Route& route, const std::string& archive) {
   // Explicit Dataflow fails at the build, naming what it does not take; nothing runs.
   Model full(archive);
   Graph g;
-  g.add(nodes::Input(full.input_appsrc_options(false)));
+  g.add(nodes::Input("in", full.input_appsrc_options(false)));
   g.add(full.preprocess());
   g.add(full.inference());
-  g.add(nodes::Output());
+  g.add(nodes::Output("out"));
   // Since the model route takes kernel stages, this one (a quantize + tessellate stage placed on
   // the EV74 by default) is declined only where the EV74 runs the stock firmware; on the Kernels
   // firmware it builds (nothing is pushed, so nothing runs).

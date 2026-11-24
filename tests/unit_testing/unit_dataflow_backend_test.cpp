@@ -3,7 +3,8 @@
 // (libsima_neat.so hides the runtime's symbols). Registered a second time with
 // --backend=gstreamer, which runs the rows that hold on both backends.
 //
-// Covers: an undeclared input bound by its first push and enforced; a declared input with a
+// Covers: a seedless, undeclared linear Run refused at the build with GStreamer's error; an
+// undeclared input of a graph Run bound by its first push and enforced; a declared input with a
 // dynamic axis; a push outside the declared shape rejected at push; the build errors, a fan-out
 // building (unit_dataflow_endpoints_test covers several endpoints) and an Input feeding no Output;
 // a Run Dataflow does not carry (the not-carried error at Graph::build, never a Run on
@@ -122,6 +123,16 @@ Graph input_output(InputOptions in = {}, OutputOptions out = {}) {
   Graph g;
   g.add(nodes::Input(in));
   g.add(nodes::Output(out));
+  return g;
+}
+
+// The same with named endpoints: a graph Run, which GStreamer builds without a seed too (a plain
+// linear Run it refuses to build without one).
+Graph named_input_output(InputOptions in = {}) {
+  Graph g;
+  g.add(nodes::Input("in", in));
+  g.add(nodes::Output("out"));
+  g.connect("in", "out");
   return g;
 }
 
@@ -311,7 +322,19 @@ void ignored_options_warn_once() {
 }
 
 void undeclared_input_bound_by_first_push() {
-  Graph g = input_output();
+  // A plain linear Run without a seed: GStreamer's refusal and text.
+  {
+    Graph linear = input_output();
+    bool refused = false;
+    try {
+      (void)linear.build(dataflow());
+    } catch (const std::runtime_error& e) {
+      refused = std::string(e.what()) ==
+                "RunCore::start_pipeline_segment: push-style segment requires an input seed";
+    }
+    require(refused, "a seedless, undeclared linear Run is refused at the build");
+  }
+  Graph g = named_input_output();
   Run run = g.build(dataflow()); // seedless: the first push binds the input
   {
     Sample s;
@@ -448,7 +471,7 @@ void build_errors() {
   }
   // Records (an item of several tensors) bind a record port since C2; the binding is enforced.
   {
-    Graph g = input_output();
+    Graph g = named_input_output();
     Run run = g.build(dataflow());
     require(run.push(TensorList{rgb(8, 8, 1), rgb(8, 8, 2)}), "a record push");
     const auto s = pull_sample(run, 2000);
@@ -1128,7 +1151,7 @@ void nv12_planes_round_trip() {
 // A push whose tensor repeats the geometry of an accepted one may skip the push-time checks (C7a);
 // a change in anything they read brings them back, with the same refusal as on any push.
 void repeated_geometry_is_rechecked_on_change() {
-  Graph g = input_output();
+  Graph g = named_input_output();
   Run run = g.build(dataflow()); // the first push binds
   for (int i = 0; i < 3; ++i) {
     const Tensor t = rgb(32, 24, static_cast<std::uint8_t>(0x30 + i));
@@ -1178,7 +1201,7 @@ void dma_heap_tensor_is_copied() {
   // Core's default tensor: a DMA-BUF from the heap. Mappable, so the push copies it.
   const Tensor t =
       Tensor::from_vector(std::vector<float>{1.0F, 2.0F, 3.0F, 4.0F}, {4}, TensorMemory::EV74);
-  Graph g = input_output();
+  Graph g = named_input_output();
   Run run = g.build(dataflow());
   require(run.push(TensorList{t}), "DMA-heap push");
   const Tensor out = pulled_tensor(run, 2000, "DMA-heap");
@@ -1243,7 +1266,7 @@ InputOptions device_input(InputMemoryPolicy memory) {
 // bytes, and the pushed storage is not kept. (Ev74; Dms0 once.)
 void cpu_tensor_into_device_input(InputMemoryPolicy memory, DeviceType device) {
   const CompatCopy copy;
-  Graph g = input_output(device_input(memory));
+  Graph g = named_input_output(device_input(memory));
   Run run = g.build(dataflow());
   const Tensor pushed = rgb(64, 48, 0x21);
   require(run.push(TensorList{pushed}), "a CPU tensor into a device input");
@@ -1299,7 +1322,7 @@ void alloc_on_device_input() {
 // repeated geometry skips is not the wrap's own question, whose memory it is.
 void pulled_device_tensor_is_copied_back() {
   const CompatCopy copy;
-  Graph g = input_output(device_input(InputMemoryPolicy::Ev74));
+  Graph g = named_input_output(device_input(InputMemoryPolicy::Ev74));
   Run run = g.build(dataflow());
   require(run.push(TensorList{rgb(64, 48, 0x51)}), "push");
   const Tensor first = pulled_tensor(run, 2000, "first");
@@ -1325,7 +1348,7 @@ void pulled_device_tensor_is_copied_back() {
 void owned_pull_of_wrapped_device_tensor() {
   RunOptions opt = dataflow();
   opt.output_memory = OutputMemory::Owned;
-  Graph g = input_output(device_input(InputMemoryPolicy::Ev74));
+  Graph g = named_input_output(device_input(InputMemoryPolicy::Ev74));
   Run run = g.build(opt);
   for (int i = 0; i < 3; ++i) {
     const Tensor pushed = rgb(64, 48, static_cast<std::uint8_t>(0x61 + i)).cvu();
