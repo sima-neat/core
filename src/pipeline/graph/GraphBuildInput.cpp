@@ -2967,6 +2967,14 @@ InputStreamOptions session_build_make_stream_options(const RunOptions& opt, RunM
   return make_stream_options(opt, mode);
 }
 
+bool session_build_startup_preflight(const RunOptions& opt, RunMode mode, int* timeout_ms) {
+  const InputStreamOptions stream_opt = make_stream_options(opt, mode);
+  if (timeout_ms) {
+    *timeout_ms = stream_opt.timeout_ms;
+  }
+  return resolve_startup_preflight(stream_opt);
+}
+
 void session_build_finalize_public_zero_copy_holder_loan_credits(InputStreamOptions& stream_opt) {
   finalize_public_zero_copy_holder_loan_credits(stream_opt);
 }

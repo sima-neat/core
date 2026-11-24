@@ -482,7 +482,8 @@ void no_fallback_to_gstreamer() {
 }
 
 // With SIMA_GRAPH_DEBUG set, Run::stop prints each input's Session report (SessionReport::to_text)
-// under a [NEAT] line naming the input and its Outputs.
+// under a [NEAT] line naming the input and its Outputs. The Session counts every item it carried:
+// the seed the build pushed and pulled once, then the two frames.
 void stop_prints_the_session_report() {
   std::string text;
   ::setenv("SIMA_GRAPH_DEBUG", "1", 1);
@@ -500,8 +501,8 @@ void stop_prints_the_session_report() {
   ::unsetenv("SIMA_GRAPH_DEBUG");
   for (const char* line :
        {"[NEAT] Run::stop: input [", ", outputs [", "[NEAT]   session  dropped_frames 0",
-        "[NEAT]   feed     input", "pushes 2", "[NEAT]   link     input.0 -> output.0",
-        "[NEAT]   fetch    output", "pulled 2", "[NEAT]   pool     input.0"}) {
+        "[NEAT]   feed     input", "pushes 3", "[NEAT]   link     input.0 -> output.0",
+        "[NEAT]   fetch    output", "pulled 3", "[NEAT]   pool     input.0"}) {
     require(text.find(line) != std::string::npos,
             std::string("the stop's report has \"") + line + "\":\n" + text);
   }

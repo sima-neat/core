@@ -388,6 +388,33 @@ public:
     return port->alloc(at);
   }
 
+  void preflight(const std::function<bool()>& push_seed, int timeout_ms,
+                 const char* where) override {
+    const auto failed = [where](const std::string& code, const std::string& detail) {
+      error_util::throw_session_error(code.empty() ? std::string_view(error_codes::kRuntimePull)
+                                                   : std::string_view(code),
+                                      std::string(where) + ": preflight failed: " + detail);
+    };
+    if (!push_seed()) {
+      failed({}, "the seed was not taken" +
+                     (last_error().empty() ? std::string() : std::string(": ") + last_error()));
+    }
+    Sample out;
+    PullError err;
+    const PullStatus status = pull(std::nullopt, timeout_ms, out, &err);
+    if (status != PullStatus::Ok) {
+      failed(err.code, err.message.empty() ? std::string("no output from the seed") : err.message);
+    }
+    out = Sample{};
+    // GStreamer's build pushes and pulls its seed below its Run: the Run counts neither.
+    core_.inputs_enqueued.store(0, std::memory_order_relaxed);
+    core_.inputs_pushed.store(0, std::memory_order_relaxed);
+    core_.outputs_ready.store(0, std::memory_order_relaxed);
+    core_.outputs_pulled.store(0, std::memory_order_relaxed);
+    polls_.store(0, std::memory_order_relaxed);
+    last_pull_ns_.store(0, std::memory_order_relaxed);
+  }
+
   // Every input of the Run (Run::close_input names none): each one's queued messages stay pullable,
   // then its Outputs are Closed.
   void close_input() override {

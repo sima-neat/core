@@ -297,17 +297,18 @@ void differential(const Route& route, sima_test::Reference& ref) {
 std::string push_outcome(const Route& route, const InputOptions& in, const Tensor& tensor,
                          const TensorList* seed) {
   Graph g = route.graph(in);
-  Run run = seed ? g.build(*seed, on()) : g.build(on());
   std::string outcome;
   try {
+    // A seed the route refuses fails the build (its preflight pushes it), as on GStreamer.
+    Run run = seed ? g.build(*seed, on()) : g.build(on());
     outcome = run.push({tensor}) ? "accepted" : "push returned false";
     if (outcome == "accepted") {
       (void)pull_ok(run, "input_contract");
     }
+    run.close();
   } catch (const std::exception& error) {
     outcome = error.what();
   }
-  run.close();
   return outcome;
 }
 
@@ -336,8 +337,10 @@ void input_contract(const Route& route) {
   const Tensor u8 = Tensor::from_vector(zeros, route.shape, TensorMemory::MLA);
   const TensorList u8_seed{u8};
   const std::string wrong = push_outcome(route, in, u8, &u8_seed);
-  require_contains(wrong, "tensor format does not match dtype",
-                   "a UInt8 tensor is refused at the push, as on GStreamer: " + wrong);
+  require_contains(
+      wrong, "tensor format does not match dtype",
+      "a UInt8 tensor is refused (as the seed, by the build's preflight), as on GStreamer: " +
+          wrong);
   // The model's own options declare its public FP32 input; the MLA's INT8 tensor does not fit them.
   const std::string fp32 =
       push_outcome(route, route.model.input_appsrc_options(true), route.tensor(1), &seed);

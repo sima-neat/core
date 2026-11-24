@@ -200,9 +200,10 @@ void DataflowInputPort::bind_at_build(std::span<const Tensor> seed) {
                             why});
   }
   if (binding && config_.model && !seed.empty()) {
-    // A seed the model's first stage does not take binds nothing. GStreamer builds with such
-    // a seed too; the first push says what is wrong with its tensor, as there. (A declaration
-    // the model does not take is the build's error, below.)
+    // A seed the model's first stage does not take binds nothing here: the build's preflight
+    // pushes it and its push says what is wrong with its tensor, as GStreamer's preflight does
+    // (without the preflight the first push says it). A declaration the model does not take is
+    // the build's error, below.
     DataflowInputBinding probe = *binding;
     if (!bind_dataflow_model_input(*config_.model, probe).empty()) {
       return;

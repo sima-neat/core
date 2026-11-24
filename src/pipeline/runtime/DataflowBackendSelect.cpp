@@ -38,6 +38,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cstdio>
+#include <functional>
 #include <mutex>
 #include <set>
 #include <string>
@@ -89,9 +90,9 @@ using pipeline_internal::DataflowNotCarried;
 }
 
 // ---- seeds -------------------------------------------------------------------------------------
-// The seed of a seeded build is the Run's representative input: it binds the input's spec and is
-// not pushed (GStreamer's preflight pushes and pulls it once, which leaves no output behind
-// either). One tensor binds a leaf, several a record (DataflowSeed).
+// The seed of a seeded build is the Run's representative input: it binds the input's spec, and the
+// build's preflight pushes and pulls it once, as GStreamer's does (build_impl). One tensor binds a
+// leaf, several a record (DataflowSeed).
 DataflowSeed seed_from_sample(const Sample& sample) {
   DataflowSeed seed;
   if (sample.kind == SampleKind::Bundle) {
@@ -143,8 +144,16 @@ std::string describe_choice(const DataflowRunConfig& config,
   return out;
 }
 
+// What a seeded entry gives the build besides the seed's tensors: how the seed is pushed into the
+// Run (DataflowRunState::preflight), in the entry's own form (a TensorList, a Sample, the cv::Mat
+// images).
+struct SeedForms {
+  std::function<bool(DataflowRunState&, const char* where)> push;
+};
+
 std::shared_ptr<RunCore> build_impl(const Graph& graph, const RunOptions& opt, RunMode mode,
-                                    const DataflowSeed& seed, const char* where) {
+                                    const DataflowSeed& seed, const char* where,
+                                    const SeedForms& forms = {}) {
   // What is not carried names the customer's call: the Model's (ModelRouteOrigin) when a Model's
   // own build made the Graph. A mistake both backends refuse keeps GStreamer's text and `where`.
   const std::shared_ptr<const pipeline_internal::ModelRouteOrigin> origin =
@@ -203,6 +212,15 @@ std::shared_ptr<RunCore> build_impl(const Graph& graph, const RunOptions& opt, R
   core->mode = RunMode::Async;
   core->dataflow_ = make_dataflow_run_state(*core, config, seed.tensors);
   warn_ignored_dataflow_options(config);
+  // A seeded build pushes its seed and pulls the output once before it returns, where GStreamer's
+  // does: every seeded Run of one Output (nothing this backend carries is a pipeline GStreamer
+  // skips the preflight for). A first-frame refusal of the seed is then the build's error.
+  int timeout_ms = 0;
+  if (forms.push && config.outputs.size() == 1U &&
+      session_build_startup_preflight(opt, mode, &timeout_ms)) {
+    DataflowRunState& run = *core->dataflow_;
+    run.preflight([&] { return forms.push(run, call.c_str()); }, timeout_ms, call.c_str());
+  }
   trace_choice(where, "dataflow", describe_choice(config, bindings));
   return core;
 }
@@ -247,7 +265,9 @@ std::shared_ptr<RunCore> DataflowGraphAccess::build(const Graph& graph, const Ru
     }
     DataflowSeed s;
     s.tensors = seed;
-    return build_impl(graph, opt, mode, s, where);
+    return build_impl(graph, opt, mode, s, where, {[&seed](DataflowRunState& run, const char* at) {
+                        return run.push(std::nullopt, seed, true, at);
+                      }});
   });
 }
 
@@ -258,7 +278,10 @@ std::shared_ptr<RunCore> DataflowGraphAccess::build(const Graph& graph, const Ru
     if (seed.empty()) {
       throw std::runtime_error("Graph::build(inputs): empty sample list");
     }
-    return build_impl(graph, opt, mode, seed_from_sample(seed), where);
+    return build_impl(graph, opt, mode, seed_from_sample(seed), where,
+                      {[&seed](DataflowRunState& run, const char* at) {
+                        return run.push(std::nullopt, seed, true, at);
+                      }});
   });
 }
 
@@ -288,7 +311,9 @@ std::shared_ptr<RunCore> DataflowGraphAccess::build(const Graph& graph, const Ru
     input.memory_policy = InputMemoryPolicy::SystemMemory;
     const Tensor view = tensor_from_cv_mat(seed.front(), input, "Graph::build(inputs)");
     s.tensors = std::span<const Tensor>(&view, 1);
-    return build_impl(graph, opt, mode, s, where);
+    return build_impl(graph, opt, mode, s, where, {[&seed](DataflowRunState& run, const char* at) {
+                        return run.push(std::nullopt, seed, true, at);
+                      }});
 #else
     throw std::runtime_error("Graph::build(inputs): this build has no OpenCV");
 #endif

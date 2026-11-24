@@ -83,6 +83,10 @@ std::string session_build_apply_fast_path_options_to_fragment(std::string fragme
 // selected here and no consumer factory/plugin name is encoded.
 std::string session_build_propagate_terminal_consumer_lane_window(std::string pipeline);
 InputStreamOptions session_build_make_stream_options(const RunOptions& opt, RunMode mode);
+// Whether a seeded build pushes its seed once and pulls the output before it returns
+// (RunOptions::startup_preflight, or SIMA_INPUTSTREAM_PREFLIGHT_RUN), and within how long that
+// output must come (the Run's resolved input timeout).
+bool session_build_startup_preflight(const RunOptions& opt, RunMode mode, int* timeout_ms);
 void session_build_finalize_public_zero_copy_holder_loan_credits(InputStreamOptions& stream_opt);
 void session_build_tune_internal_zero_copy_holder_window(InputStreamOptions& stream_opt,
                                                          std::size_t edge_queue,

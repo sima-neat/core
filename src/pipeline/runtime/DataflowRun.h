@@ -18,6 +18,7 @@
 
 #include <chrono>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <span>
@@ -62,6 +63,15 @@ public:
                           PullError* err) = 0;
   // Run::alloc(name): a writable Tensor over a slot of the input's pool (RunAllocation.h).
   virtual Tensor alloc(std::string_view input, const char* where) = 0;
+
+  // The startup preflight of a seeded build (RunOptions::startup_preflight), before the Run is
+  // handed out, as GStreamer's build runs it: `push_seed` pushes the seed through this Run's own
+  // push (a refusal is that push's error, raised by the build), one output is pulled within
+  // `timeout_ms` and dropped, and the Run's counters are left as they were. The seed's item takes
+  // the first sequence number, so the first item pushed after the build is input_seq 1. Throws
+  // NeatError, naming `where`, when the seed is not taken or gives no output.
+  virtual void preflight(const std::function<bool()>& push_seed, int timeout_ms,
+                         const char* where) = 0;
 
   virtual void close_input() = 0;
   virtual void stop() = 0;
