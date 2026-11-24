@@ -36,6 +36,7 @@ YOLOV8S_TESTS = {
     'model_seeded_input_capacity_tensor_test',
     'model_seeded_input_capacity_test',
     'model_seeded_input_capacity_unseeded_test',
+    'preproc_roi_boxdecode_moving_test',
     'seedless_yolov8_preproc_input_max_smoke_test',
     'stage_chain_cache_admission_test',
     'sync_yolov8_test',
@@ -45,10 +46,13 @@ YOLOV8S_TESTS = {
     'yolov8_model_benchmark_metrics_test',
     'yolov8_model_mla_stats_test',
 }
-# CTest names that load every *.tar.gz in SIMA_YOLOV8_VARIANTS_DIR.
+# CTest names that read SIMA_YOLOV8_VARIANTS_DIR. The two phase3 tests open named MPKs in it;
+# the others load every *.tar.gz.
 YOLOV8N_VARIANT_TESTS = {
     'graph_migration_legacy_preproc_yolov8_matrix_test',
     'graph_migration_legacy_yolov8_variant_route_matrix_test',
+    'graph_migration_phase3_connected_yolo_route_test',
+    'graph_migration_phase3_yolov8_bgr_bf16_preproc_test',
     'graph_migration_unified_preproc_yolov8_matrix_test',
     'graph_migration_unified_yolov8_graph_model_composition_test',
     'graph_migration_unified_yolov8_variant_route_matrix_test',
@@ -102,11 +106,11 @@ def main():
         for var, model_id, consumers in fixtures:
             if consumers & set(selected) and not env.get(var):
                 env[var] = prepare_fixture(model_id, 'w8a8', tmp)
-        # These tests load every MPK in the directory, so YOLOv8n gets one of its own.
-        # They take SIMA_YOLOV8_SINGLE_MODEL first, then SIMA_YOLOV8_VARIANTS_DIR.
+        # The tests that load every MPK need a directory of their own for YOLOv8n. They take
+        # SIMA_YOLOV8_SINGLE_MODEL first when it is set; the phase3 tests read only the directory,
+        # so it is prepared either way.
         variants_dir = Path(tmp, 'yolov8n-variants')
-        if (YOLOV8N_VARIANT_TESTS & set(selected) and not env.get('SIMA_YOLOV8_SINGLE_MODEL')
-                and not env.get('SIMA_YOLOV8_VARIANTS_DIR')):
+        if YOLOV8N_VARIANT_TESTS & set(selected) and not env.get('SIMA_YOLOV8_VARIANTS_DIR'):
             for variant in ('w8a8', 'w8a16', 'w16a16'):
                 prepare_fixture('yolov8n', variant, variants_dir)
             env['SIMA_YOLOV8_VARIANTS_DIR'] = str(variants_dir)

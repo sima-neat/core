@@ -56,20 +56,15 @@ Install the PCIe host package and download the tutorial bundle as described in
 extras root, download both models:
 
 ```bash
-sima-cli modelzoo get resnet_50
-sima-cli modelzoo get yolo_v8s
+sima-cli models download --id resnet_50 --variant w8a8
+unzip -p models/resnet_50/w8a8/resnet_50_w8a8_default.zip resnet_50_w8a8_mpk.tar.gz > resnet_50_mpk.tar.gz
+sima-cli models download --id yolov8s --variant w8a8
+unzip -p models/yolov8s/w8a8/yolov8s_w8a8_default.zip yolov8s_w8a8_mpk.tar.gz > yolo_v8s_mpk.tar.gz
 ```
 
 The program requires the exact paths `resnet_50_mpk.tar.gz` and
-`yolo_v8s_mpk.tar.gz` in this directory. If Model Zoo used other names or
-locations, copy the downloaded archives into place and verify them:
-
-```bash
-cp /absolute/path/to/downloaded-resnet-archive.tar.gz resnet_50_mpk.tar.gz
-cp /absolute/path/to/downloaded-yolov8s-archive.tar.gz yolo_v8s_mpk.tar.gz
-test -f resnet_50_mpk.tar.gz
-test -f yolo_v8s_mpk.tar.gz
-```
+`yolo_v8s_mpk.tar.gz` in this directory. Each `unzip` command extracts one of
+them from its downloaded ZIP.
 
 Run Python:
 

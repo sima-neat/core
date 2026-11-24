@@ -1445,6 +1445,14 @@ NormalizedDiagnostic classify_gst_error(RawGstError raw) {
     return buffer_too_small(std::move(raw));
   }
 
+  if (raw.factory_name == "rtspsrc" && diagnostic_id == "rtsp.video_caps_mismatch") {
+    auto out = base(std::move(raw), error_codes::kMediaCaps, diagnostic_id,
+                    "The RTSP server does not offer the configured video codec and payload_type.");
+    add_fact(out, "Requested", find_structured_detail(out.raw, {"requested"}).value_or(""));
+    add_fact(out, "Offered", find_structured_detail(out.raw, {"offered"}).value_or(""));
+    out.actions = {"Set codec and payload_type to a video stream offered by the RTSP server."};
+    return out;
+  }
   if (raw.factory_name == "filesrc" && raw.domain_name == "gst-resource-error-quark" &&
       raw.code == GST_RESOURCE_ERROR_NOT_FOUND) {
     return file_not_found(std::move(raw));

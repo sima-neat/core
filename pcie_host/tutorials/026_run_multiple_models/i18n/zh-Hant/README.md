@@ -39,18 +39,13 @@ Modalix PCIe 卡提供 0 到 5 號協同處理佇列。每個啟用的 `Model` �
 如 [教學設定](/tutorials/before-you-run) 中所述，請安裝 PCIe 主機套件，並下載教學範例。從解壓縮後的 PCIe 額外檔案根目錄中，下載這兩個模型：
 
 ```bash
-sima-cli modelzoo get resnet_50
-sima-cli modelzoo get yolo_v8s
+sima-cli models download --id resnet_50 --variant w8a8
+unzip -p models/resnet_50/w8a8/resnet_50_w8a8_default.zip resnet_50_w8a8_mpk.tar.gz > resnet_50_mpk.tar.gz
+sima-cli models download --id yolov8s --variant w8a8
+unzip -p models/yolov8s/w8a8/yolov8s_w8a8_default.zip yolov8s_w8a8_mpk.tar.gz > yolo_v8s_mpk.tar.gz
 ```
 
-該程式需要此目錄中確切的路徑 `resnet_50_mpk.tar.gz` 和 `yolo_v8s_mpk.tar.gz`。如果 Model Zoo 使用了其他名稱或位置，請將下載的封存檔複製到正確的位置，並進行驗證：
-
-```bash
-cp /absolute/path/to/downloaded-resnet-archive.tar.gz resnet_50_mpk.tar.gz
-cp /absolute/path/to/downloaded-yolov8s-archive.tar.gz yolo_v8s_mpk.tar.gz
-test -f resnet_50_mpk.tar.gz
-test -f yolo_v8s_mpk.tar.gz
-```
+該程式需要此目錄中確切的路徑 `resnet_50_mpk.tar.gz` 和 `yolo_v8s_mpk.tar.gz`。每個 `unzip` 命令會從其下載的 ZIP 中解壓縮其中一個檔案。
 
 執行 Python：
 

@@ -41,15 +41,11 @@
 PCIe 호스트 패키지를 설치하고 [튜토리얼 설정](/tutorials/before-you-run)에 설명된 대로 튜토리얼 번들을 다운로드합니다. 추출된 PCIe 추가 기능 루트에서 YOLOv8s가 이미 없는 경우 다운로드합니다.
 
 ```bash
-sima-cli modelzoo get yolo_v8s
+sima-cli models download --id yolov8s --variant w8a8
+unzip -p models/yolov8s/w8a8/yolov8s_w8a8_default.zip yolov8s_w8a8_mpk.tar.gz > yolo_v8s_mpk.tar.gz
 ```
 
-프로그램에는 이 디렉터리의 정확한 경로 `yolo_v8s_mpk.tar.gz`가 필요합니다. Model Zoo에서 다른 이름이나 위치를 사용한 경우 다운로드한 아카이브를 해당 위치에 복사합니다.
-
-```bash
-cp /absolute/path/to/downloaded-yolov8s-archive.tar.gz yolo_v8s_mpk.tar.gz
-test -f yolo_v8s_mpk.tar.gz
-```
+프로그램에는 이 디렉터리의 정확한 경로 `yolo_v8s_mpk.tar.gz`가 필요합니다. 두 번째 명령은 다운로드한 ZIP에서 이 파일을 추출합니다.
 
 Python을 실행합니다.
 

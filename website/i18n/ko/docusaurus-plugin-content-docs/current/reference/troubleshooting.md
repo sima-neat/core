@@ -39,17 +39,14 @@ export LD_LIBRARY_PATH=/usr/lib/aarch64-linux-gnu/neat/runtime:$LD_LIBRARY_PATH
 ```
 :::
 
-### 3. 모델 아카이브 누락 — `sima-cli modelzoo`가 아직 실행되지 않았습니다.
+### 3. 모델 아카이브 누락
 
 :::info 원인
 코드에서 참조하는 `.tar.gz` 모델 아카이브(또는 `SIMA_YOLO_TAR` / `SIMA_RESNET50_TAR` / `SIMA_MODEL_TAR`)가 디스크에 존재하지 않습니다.
 :::
 
 :::tip 수정
-Model Zoo에서 다운로드하세요.
-```bash
-sima-cli modelzoo get yolo_v8s     # or resnet_50, etc.
-```
+[모델 아카이브 준비](/tutorials/before-you-run#prepare-model-archives)의 안내에 따라 Model Browser에서 다운로드하세요.
 :::
 
 ## 구축

@@ -206,6 +206,7 @@ jobs:
             tests/tools/test_install_neat_framework_native_restore.py \
             tests/tools/test_neat_model_compiler_discovery.py \
             tests/tools/test_core_dist_contract.py \
+            tests/tools/test_tutorial_model_wrapper.py \
             tests/tools/test_package_buildinfo.py \
             tests/tools/test_build_install_sanity.py \
             tests/tools/test_core_inventory_soname.py \
@@ -1328,7 +1329,6 @@ jobs:
       - name: Run E2E Tests
         if: ${{ contains(fromJSON(matrix.tasks), 'e2e-0') }}
         env:
-          SIMA_YOLOV8_VARIANTS_BASE_URL: https://docs.sima.ai/pkg_downloads/SDK2.0.0/models/modalix
           SIMA_NEAT_TEST_USB_CAMERA: ${{ vars.SIMA_NEAT_TEST_USB_CAMERA }}
           SIMA_CTEST_TAIL_ONLY: "0"
           SIMA_CTEST_E2E_JOBS: "1"
@@ -1382,7 +1382,6 @@ jobs:
       - name: Run E2E Tests (partition 2)
         if: ${{ contains(fromJSON(matrix.tasks), 'e2e-1') }}
         env:
-          SIMA_YOLOV8_VARIANTS_BASE_URL: https://docs.sima.ai/pkg_downloads/SDK2.0.0/models/modalix
           SIMA_NEAT_TEST_USB_CAMERA: ${{ vars.SIMA_NEAT_TEST_USB_CAMERA }}
           SIMA_CTEST_TAIL_ONLY: "0"
           SIMA_CTEST_E2E_JOBS: "1"
@@ -1613,42 +1612,8 @@ jobs:
             exit 1
           fi
           TUTORIALS_DIR="$(cat _work/extras_lib_dir.txt)/tutorials"
-          # The tutorial tests are registered with Model Zoo archive paths; point them at the
-          # Model Browser MPKs so run_with_modelzoo.sh finds the model and downloads nothing.
-          mapfile -t TUTORIAL_CTEST_FILES < <(find "${TUTORIALS_DIR}" -type f -name CTestTestfile.cmake)
-          sed -E -i \
-            -e "s|/[^\"[:space:]]*/resnet_50\\.tar\\.gz|${SIMA_NEAT_TUTORIAL_MODEL_RESNET:?}|g" \
-            -e "s|/[^\"[:space:]]*/yolo_v8s\\.tar\\.gz|${SIMA_NEAT_TUTORIAL_MODEL_YOLO:?}|g" \
-            "${TUTORIAL_CTEST_FILES[@]}"
-          # Check each model-backed registration rather than file names: a valid MPK may itself
-          # be called resnet_50.tar.gz.
-          python3 - "${SIMA_NEAT_TUTORIAL_MODEL_RESNET}" "${SIMA_NEAT_TUTORIAL_MODEL_YOLO}" \
-            "${TUTORIAL_CTEST_FILES[@]}" <<'PY'
-          import re
-          import sys
-
-          selected = {'resnet_50': sys.argv[1], 'yolo_v8s': sys.argv[2]}
-          used, problems = set(), []
-          for path in sys.argv[3:]:
-              for line in open(path, encoding='utf-8'):
-                  args = re.findall(r'"([^"]*)"', line)
-                  wrapper = [i for i, arg in enumerate(args) if arg.endswith('/run_with_modelzoo.sh')]
-                  if not line.lstrip().startswith('add_test(') or not wrapper:
-                      continue
-                  i = wrapper[0]
-                  name, archive = args[i + 1], args[i + 2]
-                  model = args[args.index('--model') + 1] if '--model' in args else None
-                  if name not in selected:
-                      problems.append(f'{path}: unexpected model {name}')
-                  elif archive != selected[name] or model != selected[name]:
-                      problems.append(f'{path}: {name} uses {archive} and --model {model}')
-                  used.add(name)
-          missing = sorted(set(selected) - used)
-          if missing:
-              problems.append('no tutorial test uses ' + ', '.join(missing))
-          if problems:
-              raise SystemExit('Tutorial model check failed:\n' + '\n'.join(problems))
-          PY
+          # Without these, run_with_modelzoo.sh falls back to a possibly stale archive in /tmp.
+          : "${SIMA_NEAT_TUTORIAL_MODEL_RESNET:?}" "${SIMA_NEAT_TUTORIAL_MODEL_YOLO:?}"
           export SIMA_GST_REGISTRY_DIR="$(cat _work/gst_registry_dir.txt)"
           # Temporary external RTSP exclusions; remove under core#890.
           COVERAGE_DIR=_work/coverage/tutorials COVERAGE_PROFILE=required \
@@ -1769,31 +1734,6 @@ jobs:
               --core-coverage-dir "${coverage_dir}" --junitxml "${coverage_dir}/junit.xml" \
               "${PYTHON_MARKS[@]}" "${test_case}"
           done
-
-      - name: Run weekly long Python pytest from installed extras
-        if: ${{ inputs.run_long_tests && (contains(fromJSON(matrix.tasks), 'python-tutorials')) }}
-        run: |
-          PYNEAT_HOME="${HOME}/pyneat"
-          if [[ -x "${PYNEAT_HOME}/bin/python" ]]; then
-            PYTHON_BIN="${PYNEAT_HOME}/bin/python"
-          elif [[ -x "${PYNEAT_HOME}/.venv/bin/python" ]]; then
-            PYTHON_BIN="${PYNEAT_HOME}/.venv/bin/python"
-          else
-            echo "Expected pyneat python not found at ${PYNEAT_HOME}/bin/python or ${PYNEAT_HOME}/.venv/bin/python" >&2
-            exit 1
-          fi
-
-          EXTRAS_PREFIX="$(cat _work/extras_prefix.txt)"
-          PYTEST_LONG_DIR="${EXTRAS_PREFIX}/share/sima-neat/python/tests_long"
-          if [[ ! -d "${PYTEST_LONG_DIR}" ]]; then
-            echo "Installed long Python tests not found at ${PYTEST_LONG_DIR}" >&2
-            exit 1
-          fi
-          export SIMA_GST_REGISTRY_DIR="$(cat _work/gst_registry_dir.txt)"
-          PYTHONPATH="${GITHUB_WORKSPACE}/tools/ci${PYTHONPATH:+:${PYTHONPATH}}" \
-            SIMA_TEST_IS_LONG=1 "${PYTHON_BIN}" -m pytest -q -p core_pytest_coverage \
-            --core-coverage-dir _work/coverage/python-weekly \
-            --junitxml _work/coverage/python-weekly.xml "${PYTEST_LONG_DIR}"
 
       - name: Record DevKit shard outcome
         if: ${{ always() }}

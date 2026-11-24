@@ -893,7 +893,7 @@ PreparedSourcePipeline prepare_source_pipeline_from_nodes(
   session_build_attach_boxdecode_debug_probes(pipeline.get());
   session_build_attach_h264_caps_fixups(pipeline.get(), build_nodes, name_transform);
   session_build_attach_encoded_caps_fixups(pipeline.get(), build_nodes, name_transform);
-  session_build_attach_rtsp_debug(pipeline.get(), build_nodes, name_transform);
+  session_build_attach_rtsp_diagnostics(pipeline.get(), build_nodes, name_transform);
 
   // --- 6. resolve and configure sink ------------------------------------------------
   pipeline_internal::GstSinkPtr sink;
@@ -3545,7 +3545,7 @@ SourceStreamBuildContext session_build_fused_realtime_source_stream_internal(
   attach_fused_realtime_pad_probes(pipeline.get());
   session_build_attach_h264_caps_fixups(pipeline.get(), build_consumer_nodes, name_transform);
   session_build_attach_encoded_caps_fixups(pipeline.get(), build_consumer_nodes, name_transform);
-  session_build_attach_rtsp_debug(pipeline.get(), build_consumer_nodes, name_transform);
+  session_build_attach_rtsp_diagnostics(pipeline.get(), build_consumer_nodes, name_transform);
   for (std::size_t branch_index = 0; branch_index < build_branch_nodes.size(); ++branch_index) {
     session_build_attach_h264_caps_fixups(pipeline.get(), build_branch_nodes[branch_index],
                                           branch_name_transforms[branch_index],
@@ -3553,9 +3553,9 @@ SourceStreamBuildContext session_build_fused_realtime_source_stream_internal(
     session_build_attach_encoded_caps_fixups(pipeline.get(), build_branch_nodes[branch_index],
                                              branch_name_transforms[branch_index],
                                              &branch_actual_indices[branch_index]);
-    session_build_attach_rtsp_debug(pipeline.get(), build_branch_nodes[branch_index],
-                                    branch_name_transforms[branch_index],
-                                    &branch_actual_indices[branch_index]);
+    session_build_attach_rtsp_diagnostics(pipeline.get(), build_branch_nodes[branch_index],
+                                          branch_name_transforms[branch_index],
+                                          &branch_actual_indices[branch_index]);
   }
 
   pipeline_internal::GstSinkPtr sink;
