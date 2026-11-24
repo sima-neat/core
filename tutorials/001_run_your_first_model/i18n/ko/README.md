@@ -47,6 +47,13 @@
 
 ## Run
 
+Model Browser에서 ResNet-50을 다운로드하고, 모델 아카이브를 아래 명령이 `--model`로 전달하는 경로인 `/tmp/resnet_50.tar.gz`로 추출합니다.
+
+```bash
+sima-cli models download --id resnet_50 --variant w8a8
+unzip -p models/resnet_50/w8a8/resnet_50_w8a8_default.zip resnet_50_w8a8_mpk.tar.gz > /tmp/resnet_50.tar.gz
+```
+
 프로그램을 실행하면 예측된 클래스 인덱스가 표준 출력에 표시됩니다. **Neat 설치 디렉터리**(`share/` 및 `lib/`가 포함된 디렉터리)에서 **Python** 및 **C++(미리 빌드된 버전)** 명령을 실행하고, **리포지토리 루트**에서 **소스 코드를 빌드**하는 명령을 실행합니다.
 
 **Python:**
@@ -63,7 +70,7 @@ python3 share/sima-neat/tutorials/001_run_your_first_model/run_your_first_model.
 
 **C++ (build from source):**
 ```bash
-./build.sh --target tutorial_001_run_your_first_model
+./tutorials/build.sh --target tutorial_001_run_your_first_model
 ./build/tutorials-standalone/tutorial_001_run_your_first_model \
   --model /tmp/resnet_50.tar.gz
 ```
@@ -81,45 +88,7 @@ top1=285
 
 ## In Practice
 
-튜토리얼과 테스트가 모델 아카이브(`.tar.gz`)와 샘플 에셋을 어디에서 찾는지, 그리고 이를 로컬에 어떻게 제공하는지 설명합니다. 이는 모든 모델 기반 튜토리얼의 필수 조건입니다.
-
-### `sima-cli`가 PATH에 포함되어 있는지 확인합니다.
-
-일부 테스트는 비대화형 셸에서 `sima-cli`를 호출합니다. `sima-cli`를 설치한 후 한 번만 실행하십시오.
-
-```bash
-SIMA_CLI_BIN_DIR="<path-to-sima-cli-bin>"
-grep -Fqx "export PATH=\"${SIMA_CLI_BIN_DIR}:\$PATH\"" ~/.bashrc || echo "export PATH=\"${SIMA_CLI_BIN_DIR}:\$PATH\"" >> ~/.bashrc
-source ~/.bashrc
-```
-
-그런 다음 확인합니다.
-
-```bash
-/bin/sh -c 'command -v sima-cli'
-```
-
-### 모델 아카이브 위치 및 환경 변수
-
-추출/런타임 배치 설정:
-- `SIMA_MPK_EXTRACT_ROOT=<dir>`은 기본 추출 디렉터리를 설정합니다.
-- `SIMA_MPK_CLEANUP_EXTRACTED=0`은 프로세스 종료 후 추출된 `proc_run_*` 모델 데이터를 보존합니다.
-- `SIMA_MPK_EXTRACT_GC_STALE_PROC=0`은 시작 시 소유권 잠금을 기반으로 사용이 끝난 `proc_run_*` 디렉터리를 정리하는 기능을 비활성화합니다.
-
-기존 `proc_<pid>` 루트는 사용 중이 아님을 확인한 후 수동으로 삭제하세요.
-
-#### ResNet50
-
-검색 순서:
-1. `SIMA_RESNET50_TAR` (모델별 재정의)
-2. `SIMA_MODEL_TAR` (모델 아카이브 테스트/예제에 대한 공유 대체)
-3. `tmp/resnet_50.tar.gz`
-4. 발견된 경우 `tmp/`로 이동된 로컬 파일: `resnet_50.tar.gz`, `resnet-50.tar.gz`
-
-다운로드 (`sima-cli`가 사용 가능한 경우):
-```bash
-sima-cli modelzoo get resnet_50
-```
+모델 아카이브 재정의, 소스 트리 테스트가 검색하는 경로 및 추출 설정은 [튜토리얼 자료 및 모델 아카이브](/reference/tutorial-assets)를 참조하세요.
 
 ### 샘플 이미지
 

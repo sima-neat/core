@@ -284,7 +284,7 @@ fan_out_graph.add(simaai::neat::nodes::Output("model_image"));
 image_input --> original_image --> model_image
 ```
 
-Потім використайте `connect()`, щоб замінити типову лінійну схему з’єднань на потрібну вам топологію:
+Потім використайте `connect()`, щоб замінити лінійну схему з’єднань за замовчуванням на потрібну вам топологію:
 
 ```cpp
 fan_out_graph.connect("image_input", "original_image");
@@ -346,7 +346,7 @@ render_inputs_graph.add(simaai::neat::nodes::Output("render_inputs", render_opti
 image -> bbox -> render_inputs
 ```
 
-Потім використайте `connect()`, щоб замінити типову лінійну схему з’єднань на потрібну вам топологію:
+Потім використайте `connect()`, щоб замінити лінійну схему з’єднань за замовчуванням на потрібну вам топологію:
 
 ```cpp
 render_inputs_graph.connect("image", "render_inputs");
@@ -604,7 +604,7 @@ Fusion (злиття) — це внутрішнє рішення компіля�
 
 Поля допуску в `GraphLinkOptions` є частиною його публічного розміщення в пам’яті (layout) у C++. Поточна версія C++ ABI та SONAME спільної бібліотеки Neat Library — 7. Перезберіть застосунки C++ і плагіни з відповідним пакетом Core. Не змішуйте бінарні файли, зібрані для попереднього SONAME `libsima_neat`, з `libsima_neat.so.7`.
 
-Перенесіть вихідний код попередньої версії таким чином:
+Перенесіть вихідний код preview-версії таким чином:
 
 | API preview-версії | Поточний API |
 | --- | --- |

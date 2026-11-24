@@ -47,9 +47,8 @@
 PCIe 호스트 패키지를 설치하고 [튜토리얼 설정](/tutorials/before-you-run)에 설명된 대로 튜토리얼 번들을 다운로드합니다. 압축을 푼 PCIe extras 루트에 YOLOv8s를 다운로드합니다.
 
 ```bash
-sima-cli modelzoo get yolo_v8s
-cp /absolute/path/to/downloaded-yolov8s-archive.tar.gz yolo_v8s_mpk.tar.gz
-test -f yolo_v8s_mpk.tar.gz
+sima-cli models download --id yolov8s --variant w8a8
+unzip -p models/yolov8s/w8a8/yolov8s_w8a8_default.zip yolov8s_w8a8_mpk.tar.gz > yolo_v8s_mpk.tar.gz
 ```
 
 **C++ (prebuilt):**

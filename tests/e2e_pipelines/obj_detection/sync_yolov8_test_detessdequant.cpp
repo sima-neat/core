@@ -471,6 +471,7 @@ RunSummary run_yolov8_sync(const std::string& tar_gz, const cv::Mat& img, const 
   model_opt.preprocess.kind = simaai::neat::InputKind::Image;
   model_opt.preprocess.enable = simaai::neat::AutoFlag::On;
   model_opt.preprocess.color_convert.input_format = simaai::neat::PreprocessColorFormat::BGR;
+  model_opt.preprocess.normalize.enable = simaai::neat::AutoFlag::On;
   if (env_bool("SIMA_DETESS_FORCE_STRETCH", false)) {
     model_opt.preprocess.resize.enable = simaai::neat::AutoFlag::On;
     model_opt.preprocess.resize.mode = simaai::neat::ResizeMode::Stretch;

@@ -38,17 +38,14 @@ export LD_LIBRARY_PATH=/usr/lib/aarch64-linux-gnu/neat/runtime:$LD_LIBRARY_PATH
 ```
 :::
 
-### 3. モデルアーカイブが見つかりません — `sima-cli modelzoo` がまだ実行されていません。
+### 3. モデルアーカイブが見つからない
 
 :::info 原因
 コード（または`SIMA_YOLO_TAR` / `SIMA_RESNET50_TAR` / `SIMA_MODEL_TAR`）で参照されている`.tar.gz`というモデルアーカイブがディスク上に存在しません。
 :::
 
 :::tip 修正
-Model Zooからダウンロードしてください。
-```bash
-sima-cli modelzoo get yolo_v8s     # or resnet_50, etc.
-```
+[モデルアーカイブを準備する](/tutorials/before-you-run#prepare-model-archives)の手順に従って、Model Browser からダウンロードしてください。
 :::
 
 ## ビルド
@@ -356,6 +353,16 @@ case simaai::neat::PullStatus::Error:
 
 :::tip 修正
 どちらか一方のみを合格すればよい。両方合格する必要はない。
+:::
+
+### 23. 量子化 INT8 モデル上の画像入力 Model で、検出が少ない、まったく得られない、または品質が低い
+
+:::info 原因
+正規化が Off になっています。明示的に `Off` に設定した場合（警告なし）か、プリセットも明示的な統計値も指定せず `Auto` のままにした場合で、後者ではプランナーが `preprocess.normalize=Auto resolved Off` と警告します。正規化が Off のとき、ステージは 0〜255 の生のピクセル値を量子化します。
+:::
+
+:::tip 修正
+`[0,1]` 入力で学習した検出器では、正規化を有効にしてください。`0–255` の生のピクセルで学習したモデルでは、正規化を Off のままにしてください。
 :::
 
 ## 別のスタックから来た

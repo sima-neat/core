@@ -1133,19 +1133,6 @@ bool attach_tensor_set_meta_from_descriptor_view_impl(GstBuffer* buffer,
   return true;
 }
 
-void attach_tensor_set_meta_from_tensors_impl(GstBuffer* buffer, const TensorList& tensors) {
-  if (!buffer || tensors.empty()) {
-    return;
-  }
-  TensorBufferView descriptor;
-  std::string descriptor_err;
-  if (!tensor_buffer_descriptor_from_tensors(tensors, &descriptor, &descriptor_err)) {
-    return;
-  }
-  std::string attach_err;
-  (void)attach_tensor_set_meta_from_descriptor_view_impl(buffer, descriptor, &attach_err);
-}
-
 bool try_build_multi_source_tensor_set_backing(const Sample& bundle, GstBuffer** out_buffer,
                                                GstCaps** out_caps, std::string* err);
 
@@ -2655,8 +2642,11 @@ bool build_segmented_bundle_backing(const Sample& bundle, GstBuffer** out_buffer
 
 } // namespace
 
-void attach_tensor_set_meta_from_tensors(GstBuffer* buffer, const TensorList& tensors) {
-  attach_tensor_set_meta_from_tensors_impl(buffer, tensors);
+bool attach_tensor_set_meta_from_tensors(GstBuffer* buffer, const TensorList& tensors,
+                                         std::string* error) {
+  TensorBufferView descriptor;
+  return tensor_buffer_descriptor_from_tensors(tensors, &descriptor, error) &&
+         attach_tensor_set_meta_from_descriptor_view_impl(buffer, descriptor, error);
 }
 
 bool buffer_has_dmabuf_memory(GstBuffer* buffer) {

@@ -20,7 +20,9 @@ C++：
 
 using namespace simaai::neat;
 
-Model model("/path/to/model.tar.gz");
+Model::Options opt;
+opt.preprocess.resize.enable = AutoFlag::On;
+Model model("/path/to/model.tar.gz", opt);
 
 std::vector<cv::Mat> images = {
     cv::imread("/data/camera0.jpg", cv::IMREAD_COLOR),
@@ -48,7 +50,9 @@ Python：
 import cv2
 import pyneat
 
-model = pyneat.Model("/path/to/model.tar.gz")
+opt = pyneat.ModelOptions()
+opt.preprocess.resize.enable = pyneat.AutoFlag.On
+model = pyneat.Model("/path/to/model.tar.gz", opt)
 
 images = [
     cv2.imread("/data/camera0.jpg", cv2.IMREAD_COLOR),
@@ -82,7 +86,6 @@ C++:
 
 ```cpp
 Model::Options opt;
-opt.preprocess.resize.enable = AutoFlag::On;
 opt.preprocess.resize.width = 640;
 opt.preprocess.resize.height = 640;
 opt.preprocess.resize.mode = ResizeMode::Letterbox;
@@ -101,7 +104,6 @@ Python：
 
 ```python
 opt = pyneat.ModelOptions()
-opt.preprocess.resize.enable = pyneat.AutoFlag.On
 opt.preprocess.resize.width = 640
 opt.preprocess.resize.height = 640
 opt.preprocess.resize.mode = pyneat.ResizeMode.Letterbox
@@ -146,7 +148,7 @@ Pythonの場合、`cv2.imread`で読み込んだ画像には`image_format=pyneat
 - モデルのルーティングによって選択されたデータ型とレイアウト（BF16やINT8、および密な出力またはテッセレーションされた出力など）
 - 出力ごとの `tensor.semantic.preprocess` メタデータ。
 
-各出力の事前処理メタデータには、選択された関心領域（ROI）、レターボックスのジオメトリ、正規化/量子化/テッセレーションのフラグ、およびモデル/事前処理された座標を元のソースフレーム座標系にマッピングするアフィン変換が含まれます。
+各出力の事前処理メタデータには、選択された関心領域（ROI）、レターボックスのジオメトリ、正規化/量子化/テッセレーションのフラグ、およびモデル/事前処理された座標を元のソースフレーム座標系にマッピングするアフィン変換が含まれます。サポートされる ROI プロファイルについては、[BoxDecode](/reference/boxdecode_decode_types#crop-coordinate-mapping) を参照してください。
 
 ## フレーム外にある関心領域
 

@@ -23,7 +23,7 @@ endif()
 include(CMakeParseArguments)
 
 set(SIMANEAT_TUTORIAL_MODEL_TARGET_FOLDER "/tmp" CACHE PATH
-  "Directory passed to tutorials/build.sh --model-target-folder for Model Zoo downloads"
+  "Directory passed to tutorials/build.sh --model-target-folder for tutorial model downloads"
 )
 
 function(add_tutorial exe source)
@@ -39,12 +39,6 @@ function(add_tutorial exe source)
   )
 
   set(test_args ${AT_ARGS})
-  if (AT_MODEL)
-    get_filename_component(model_base "${AT_MODEL}" NAME)
-    list(APPEND test_args
-      --model "${SIMANEAT_TUTORIAL_MODEL_TARGET_FOLDER}/${model_base}.tar.gz"
-    )
-  endif()
 
   set(label_list "tutorial")
   if (AT_LABELS)
@@ -53,12 +47,12 @@ function(add_tutorial exe source)
 
   if (NOT AT_NO_TEST)
     if (AT_MODEL)
+      # The wrapper passes --model itself, from the tutorial model variable or this default.
+      get_filename_component(model_base "${AT_MODEL}" NAME)
       simaneat_add_test(NAME ${exe} NATIVE_COMMAND
         COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/run_with_modelzoo.sh
           ${AT_MODEL}
           "${SIMANEAT_TUTORIAL_MODEL_TARGET_FOLDER}/${model_base}.tar.gz"
-          "${SIMANEAT_TUTORIAL_MODEL_TARGET_FOLDER}"
-          "${SIMANEAT_MODELZOO_VERSION}"
           $<TARGET_FILE:${exe}>
           ${test_args}
       )
@@ -306,6 +300,17 @@ if (EXISTS "${SIMANEAT_TUTORIALS_MANIFEST}")
   install(
     FILES ${SIMANEAT_TUTORIALS_MANIFEST}
     DESTINATION share/sima-neat/deps
+    COMPONENT extras
+  )
+endif()
+
+# build.sh --download-models-only fetches tutorial models with the same helper as CI.
+set(SIMANEAT_TUTORIALS_MODEL_BROWSER_HELPER
+  "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/ci/prepare_model_browser_fixture.py")
+if (EXISTS "${SIMANEAT_TUTORIALS_MODEL_BROWSER_HELPER}")
+  install(
+    FILES ${SIMANEAT_TUTORIALS_MODEL_BROWSER_HELPER}
+    DESTINATION share/sima-neat/scripts/ci
     COMPONENT extras
   )
 endif()

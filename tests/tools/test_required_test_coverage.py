@@ -232,10 +232,8 @@ def test_isolated_genai_pytest_workflow_requires_each_result(tmp_path, outcome):
         assert marker.read_text().splitlines() == executed
 
 
-def test_manual_gate_reuses_canonical_lane_without_forcing_guarded_execution():
-    manual = (ROOT / '.github/workflows/zero-skip.yml').read_text()
+def test_zero_skip_gate_does_not_build_or_force_guarded_execution():
     wrapper = (ROOT / 'scripts/ci/run_zero_skip_gate.sh').read_text()
-    assert 'uses: ./.github/workflows/vulcan-ci.yml' in manual
     assert 'cmake --build' not in wrapper and '--require-guarded' not in wrapper
 
 

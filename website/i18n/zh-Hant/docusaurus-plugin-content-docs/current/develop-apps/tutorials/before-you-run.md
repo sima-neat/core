@@ -61,28 +61,35 @@ source ~/pyneatpcie/bin/activate
 python3 -c "import pyneatpcie; print('pyneatpcie ready')"
 </ShellCommand>
 
-## 4. 準備模型封存檔
+## 4. 準備模型封存檔 {#prepare-model-archives}
 
-使用 Model Zoo 下載教學檔案中指定的模型。例如：
+教學課程使用 [Model Browser](/tools/model-browser/) 中的 ResNet-50 和 YOLOv8s。Palette SDK 內建的 `sima-cli` 即可下載這些模型。
 
-<ShellCommand prompt="sdk|devkit|pcie-host">
-sima-cli modelzoo get resnet_50
-sima-cli modelzoo get yolo_v8s
+若要使用 Neat Library 的教學課程，請下載這兩個模型，並從各自的 ZIP 將模型封存檔解壓縮到教學指令以 `--model` 傳遞的路徑：
+
+<ShellCommand prompt="sdk|devkit">
+sima-cli models download --id resnet_50 --variant w8a8
+unzip -p models/resnet_50/w8a8/resnet_50_w8a8_default.zip resnet_50_w8a8_mpk.tar.gz > /tmp/resnet_50.tar.gz
+sima-cli models download --id yolov8s --variant w8a8
+unzip -p models/yolov8s/w8a8/yolov8s_w8a8_default.zip yolov8s_w8a8_mpk.tar.gz > /tmp/yolo_v8s.tar.gz
 </ShellCommand>
 
-Neat Library 的教學課程接受 `--model`，因此您可以直接傳遞下載的壓縮檔。PCIe 教學課程會在 PCIe 附加資料的根目錄中使用固定的檔案名稱：
+PCIe 教學課程會在 PCIe 附加資料的根目錄中使用固定的檔案名稱：
 
 | PCIe 教學課程 | 必要的模型檔案 |
 |---|---|
 | 透過 PCIe 執行您的第一個模型 | `yolo_v8s_mpk.tar.gz` |
 | 執行 PCIe 非同步推論 | `yolo_v8s_mpk.tar.gz` |
 | 執行多個模型 | `resnet_50_mpk.tar.gz` 和 `yolo_v8s_mpk.tar.gz` |
+| 包裝外部張量記憶體 | `yolo_v8s_mpk.tar.gz` |
 
-Model Zoo 的輸出名稱和位置可能會有所不同。如果需要，請將壓縮檔複製到 PCIe 附加資料的根目錄，並使用所需的名稱：
+每次下載都會在 `models/<model id>/<variant>/` 下產生一個 ZIP 檔案。請從 PCIe 附加資料的根目錄下載教學課程所需的模型，並以所需的名稱從各自的 ZIP 中解壓縮每個模型封存檔：
 
 <ShellCommand prompt="pcie-host">
-cp /absolute/path/to/downloaded-resnet-archive.tar.gz resnet_50_mpk.tar.gz
-cp /absolute/path/to/downloaded-yolov8s-archive.tar.gz yolo_v8s_mpk.tar.gz
+sima-cli models download --id resnet_50 --variant w8a8
+unzip -p models/resnet_50/w8a8/resnet_50_w8a8_default.zip resnet_50_w8a8_mpk.tar.gz > resnet_50_mpk.tar.gz
+sima-cli models download --id yolov8s --variant w8a8
+unzip -p models/yolov8s/w8a8/yolov8s_w8a8_default.zip yolov8s_w8a8_mpk.tar.gz > yolo_v8s_mpk.tar.gz
 </ShellCommand>
 
 ## 5. 驗證路徑和預期輸出

@@ -30,7 +30,7 @@ sidebar_position: 7
 
 | Де | Що відбувається |
 | --- | --- |
-| Хост | `sima-cli sdk setup --devkit` створює пару DevKit із SDK і налаштовує локальний реєстр контейнерів на хості. |
+| Хост | `sima-cli sdk setup --devkit` під’єднує DevKit до SDK і налаштовує локальний реєстр контейнерів на хості. |
 | Контейнер SDK | Ви збираєте образ для ARM64 за допомогою `docker buildx` і надсилаєте його до локального реєстру. |
 | DevKit | `dk container deploy` завантажує образ із локального реєстру та запускає його за допомогою Docker. |
 
@@ -49,22 +49,22 @@ sidebar_position: 7
 
 ## Збирання та запуск контейнеризованого застосунку
 
-### 1. Створіть пару DevKit із локальним реєстром
+### 1. Під’єднайте DevKit і налаштуйте локальний реєстр
 
-На хості створіть пару DevKit із SDK:
+На хості під’єднайте DevKit до SDK:
 
 <ShellCommand prompt="host">
 sima-cli sdk setup --devkit {devkit-ip}
 </ShellCommand>
 
 Коли налаштування запитає **Set up a local container registry so the DevKit can download
-images built in the SDK?**, дайте відповідь `y`. Створення пари налаштовує доступ до `sudo` без пароля, потрібний для встановлення Docker. Потім відкрийте нову оболонку SDK:
+images built in the SDK?**, дайте відповідь `y`. Під’єднання налаштовує доступ до `sudo` без пароля, потрібний для встановлення Docker. Потім відкрийте нову оболонку SDK:
 
 <ShellCommand prompt="host">
 sima-cli sdk neat
 </ShellCommand>
 
-Якщо раніше ви створили пару DevKit без реєстру, знову виконайте команду
+Якщо раніше ви під’єднали DevKit без реєстру, знову виконайте команду
 налаштування й дайте відповідь `y`.
 
 ### 2. Налаштуйте Docker на DevKit
@@ -75,18 +75,18 @@ sima-cli sdk neat
 dk container setup
 </ShellCommand>
 
-Дайте відповідь `y` на пропозицію налаштувати Docker на DevKit. Якщо Docker уже працює, команда використає його повторно. Зміни під час встановлення описано в розділі [Встановлення Docker на DevKit](/reference/devkit-containers/#install).
+Дайте відповідь `y` на пропозицію налаштувати Docker на DevKit. Якщо Docker уже працює на DevKit, команда використає його. Зміни під час встановлення описано в розділі [Встановлення Docker на DevKit](/reference/devkit-containers/#install).
 
 ### 3. Зберіть і надішліть образ
 
-Створіть каталог із файлом `Dockerfile` для вашого застосунку. Наприклад, цей `Dockerfile` виводить повідомлення в Ubuntu 24.04:
+Створіть теку з файлом `Dockerfile` для вашого застосунку. Наприклад, цей `Dockerfile` виводить повідомлення в Ubuntu 24.04:
 
 ```dockerfile
 FROM ubuntu:24.04
 CMD ["sh", "-c", "echo Hello from the DevKit"]
 ```
 
-В оболонці SDK, перебуваючи в цьому каталозі, зберіть образ для ARM64 і надішліть
+В оболонці SDK, перебуваючи в цій теці, зберіть образ для ARM64 і надішліть
 його до локального реєстру:
 
 <ShellCommand prompt="sdk">
@@ -121,5 +121,5 @@ dk container remove my-app
 - Опис усіх команд `dk container`, встановлення Docker вручну, запуску контейнера
   Ubuntu та усунення несправностей див. у розділі
   [Контейнери DevKit](/reference/devkit-containers/).
-- Як SDK і DevKit спільно використовують файли та виконують команди, див. у розділі
+- Про те, як SDK і DevKit спільно використовують файли та виконують команди, див. розділ
   [DevKit Sync](/getting-started/dev-environment/devkit-sync/).

@@ -59,17 +59,12 @@ Install the PCIe host package and download the tutorial bundle as described in
 commands from the extracted PCIe extras root:
 
 ```bash
-sima-cli modelzoo get yolo_v8s
+sima-cli models download --id yolov8s --variant w8a8
+unzip -p models/yolov8s/w8a8/yolov8s_w8a8_default.zip yolov8s_w8a8_mpk.tar.gz > yolo_v8s_mpk.tar.gz
 ```
 
-The programs require `yolo_v8s_mpk.tar.gz` in this directory. Model Zoo output
-names and locations can vary. If the command did not create that exact path,
-copy the downloaded archive into place and verify it:
-
-```bash
-cp /absolute/path/to/downloaded-yolov8s-archive.tar.gz yolo_v8s_mpk.tar.gz
-test -f yolo_v8s_mpk.tar.gz
-```
+The programs require `yolo_v8s_mpk.tar.gz` in this directory. The second
+command extracts it from the downloaded ZIP.
 
 **Python:**
 

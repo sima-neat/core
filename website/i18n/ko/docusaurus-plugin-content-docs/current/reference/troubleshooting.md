@@ -39,17 +39,14 @@ export LD_LIBRARY_PATH=/usr/lib/aarch64-linux-gnu/neat/runtime:$LD_LIBRARY_PATH
 ```
 :::
 
-### 3. 모델 아카이브 누락 — `sima-cli modelzoo`가 아직 실행되지 않았습니다.
+### 3. 모델 아카이브 누락
 
 :::info 원인
 코드에서 참조하는 `.tar.gz` 모델 아카이브(또는 `SIMA_YOLO_TAR` / `SIMA_RESNET50_TAR` / `SIMA_MODEL_TAR`)가 디스크에 존재하지 않습니다.
 :::
 
 :::tip 수정
-Model Zoo에서 다운로드하세요.
-```bash
-sima-cli modelzoo get yolo_v8s     # or resnet_50, etc.
-```
+[모델 아카이브 준비](/tutorials/before-you-run#prepare-model-archives)의 안내에 따라 Model Browser에서 다운로드하세요.
 :::
 
 ## 구축
@@ -357,6 +354,16 @@ case simaai::neat::PullStatus::Error:
 
 :::tip 수정
 둘 중 하나만 통과하면 됩니다. 둘 다 통과할 필요는 없습니다.
+:::
+
+### 23. 양자화된 INT8 모델의 이미지 입력 Model이 감지 결과를 적게 반환하거나, 전혀 반환하지 않거나, 품질이 낮음
+
+:::info 원인
+정규화가 Off입니다. 명시적으로 `Off`로 설정했거나(경고 없음), 프리셋과 명시적 통계 없이 `Auto`로 둔 경우이며, 후자에서는 플래너가 `preprocess.normalize=Auto resolved Off` 경고를 표시합니다. 정규화가 Off이면 스테이지는 0–255 원시 픽셀 값을 양자화합니다.
+:::
+
+:::tip 해결
+`[0,1]` 입력으로 학습된 감지기에서는 정규화를 활성화하십시오. `0–255` 원시 픽셀로 학습된 모델에서는 정규화를 꺼 두십시오.
 :::
 
 ## 다른 스택에서 왔습니다.

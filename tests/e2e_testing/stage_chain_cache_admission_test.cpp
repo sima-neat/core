@@ -1,11 +1,14 @@
 #include "neat.h"
 #include "asset_utils.h"
+#include "graph/nodes/StageModelExecutor.h"
 #include "pipeline/StageRun.h"
 #include "pipeline/internal/StageInputCacheIdentity.h"
+#include "pipeline/internal/PreprocTensor.h"
 #include "test_main.h"
 
 #include <nlohmann/json.hpp>
 #include <opencv2/imgcodecs.hpp>
+#include <opencv2/imgproc.hpp>
 
 #include <cmath>
 #include <cstdio>
@@ -90,6 +93,47 @@ Sample heads_for_image(const cv::Mat& image, const Model& model) {
   return infer;
 }
 
+void check_executor_image_format(const std::string& archive, Model::Options options) {
+  options.preprocess.kind = InputKind::Image;
+  options.preprocess.enable = AutoFlag::On;
+  options.preprocess.resize.enable = AutoFlag::On;
+  options.preprocess.normalize.enable = AutoFlag::On;
+  options.preprocess.color_convert.input_format = PreprocessColorFormat::Auto;
+  const cv::Mat bgr(64, 64, CV_8UC3, cv::Scalar(17, 83, 211));
+  cv::Mat rgb;
+  cv::cvtColor(bgr, rgb, cv::COLOR_BGR2RGB);
+  const auto rgb_input = Tensor::from_cv_mat(rgb, ImageSpec::PixelFormat::RGB, TensorMemory::EV74);
+  const auto bgr_input = Tensor::from_cv_mat(bgr, ImageSpec::PixelFormat::BGR, TensorMemory::EV74);
+
+  Model reference(archive, options);
+  Graph graph;
+  graph.add(nodes::Input(reference.input_appsrc_options(false)));
+  graph.add(reference.preprocess());
+  graph.add(nodes::Output());
+  const TensorList seed{rgb_input};
+  const auto expected = graph.build(seed).run(seed, 10000).at(0).copy_payload_bytes();
+
+  for (const auto hint :
+       {PreprocessColorFormat::Auto, PreprocessColorFormat::RGB, PreprocessColorFormat::BGR}) {
+    options.preprocess.color_convert.input_format = hint;
+    auto model = std::make_shared<Model>(archive, options);
+    graph::nodes::StageModelExecutor executor({.model = model, .do_mla = false});
+    for (const auto& image : {bgr_input, rgb_input}) {
+      std::vector<graph::StageOutMsg> outputs;
+      executor.on_input({.sample = sample_from_tensors({image})}, outputs);
+      require(outputs.size() == 1 && outputs[0].sample.tensor.has_value(),
+              "StageModelExecutor did not publish a single Preproc tensor");
+      require(outputs[0].sample.tensor->copy_payload_bytes() == expected,
+              image.image_format() == ImageSpec::PixelFormat::RGB
+                  ? "RGB StageModelExecutor output differs from the typed graph"
+                  : "BGR StageModelExecutor output differs from the typed graph");
+    }
+    const cv::Mat& untagged = hint == PreprocessColorFormat::RGB ? rgb : bgr;
+    require(stages::Preproc({untagged}, *model).at(0).copy_payload_bytes() == expected,
+            "OpenCV Preproc did not honor the configured or default input format");
+  }
+}
+
 void report_cache_identity_difference(
     const pipeline_internal::StageInputCacheIdentity& first,
     const std::optional<pipeline_internal::StageInputCacheIdentity>& second,
@@ -130,6 +174,7 @@ RUN_TEST(
       require(!image.empty(), "canonical test image is required");
       Model::Options options;
       options.preprocess.color_convert.input_format = PreprocessColorFormat::BGR;
+      options.preprocess.normalize.enable = AutoFlag::On;
       options.preprocess.input_max_width = image.cols;
       options.preprocess.input_max_height = image.rows;
       options.preprocess.input_max_depth = image.channels();
@@ -137,10 +182,20 @@ RUN_TEST(
       options.score_threshold = 0.25F;
       options.nms_iou_threshold = 0.5F;
       options.top_k = 100;
+      check_executor_image_format(archive, options);
       Model model(archive, options);
 
       require(setenv("SIMA_GRAPH_BUILD_TIMING", "1", 1) == 0, "could not enable build diagnostic");
       Sample first = heads_for_image(image, model);
+      {
+        const auto loan = stages::internal::preproc_tensor(
+            image, model, stages::internal::PreprocOutput::ForImmediateMla);
+        const auto heads = stages::MLA(sample_from_tensors({loan}), model);
+        require(heads.tensors.size() == first.tensors.size(), "loaned Preproc lost MLA heads");
+        for (std::size_t i = 0; i < heads.tensors.size(); ++i)
+          require(heads.tensors[i].copy_payload_bytes() == first.tensors[i].copy_payload_bytes(),
+                  "loaned Preproc changed MLA output");
+      }
       const auto first_key = pi::stage_input_cache_identity(
           first, nullptr, pi::StageInputCacheGeometryPolicy::DynamicOriginalSize);
       require(first_key.has_value(), "actual typed producer output must permit safe stage reuse");
@@ -237,6 +292,17 @@ RUN_TEST(
           ++frame;
         }
         require(inference_compiles <= 1, "moving ROI sequence retained per-coordinate stages");
+        const std::vector<PreprocessRoi> pair{
+            {0, image.cols / 2, 0, image.cols / 2, image.rows / 2},
+            {0, 0, 0, image.cols / 2, image.rows / 2}};
+        const auto crops = stages::Preproc({image}, model, pair);
+        require(crops.size() == pair.size(), "preprocessing lost a requested ROI");
+        const Sample last = sample_from_tensors({crops.back()});
+        const Sample heads = mla_only ? stages::MLA(last, model) : stages::Infer(last, model);
+        require(heads.tensors.size() == first_roi_outputs.size(), "batched ROI lost model heads");
+        for (std::size_t i = 0; i < heads.tensors.size(); ++i)
+          require(heads.tensors[i].copy_payload_bytes() == first_roi_outputs[i],
+                  "inference on the second ROI differs from the same crop processed alone");
         std::cout << "[stage-cache] route=" << (mla_only ? "MLA" : "Infer")
                   << " moving_roi_frames=" << frame
                   << " inference_stage_compiles=" << inference_compiles << '\n';

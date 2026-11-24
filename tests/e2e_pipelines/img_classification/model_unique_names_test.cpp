@@ -42,8 +42,7 @@ int main(int argc, char** argv) {
     tar_gz = sima_test::resolve_resnet50_tar();
     if (tar_gz.empty()) {
       std::cerr << "Failed to resolve resnet50 tar.gz. "
-                << "Set SIMA_MODEL_TAR (or SIMA_RESNET50_TAR) or run "
-                   "'sima-cli modelzoo get resnet_50'.\n";
+                << "Set SIMA_MODEL_TAR (or SIMA_RESNET50_TAR).\n";
       return 3;
     }
   }
@@ -60,6 +59,7 @@ int main(int argc, char** argv) {
     model_opt.preprocess.kind = simaai::neat::InputKind::Image;
     model_opt.preprocess.enable = simaai::neat::AutoFlag::On;
     model_opt.preprocess.color_convert.input_format = simaai::neat::PreprocessColorFormat::RGB;
+    model_opt.preprocess.preset = simaai::neat::NormalizePreset::ImageNet;
     simaai::neat::Model model(tar_gz, model_opt);
     simaai::neat::Model::RouteOptions route_opt;
     route_opt.include_input = true;

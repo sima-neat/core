@@ -47,99 +47,68 @@ def test_camera_api_not_hardware_gated():
     assert '@_hardware_only\ndef test_installed_pyneat' not in text
 
 
-def preparation_fixture(tmp_path, *, ssd=True):
-    import gzip
-    import struct
-    env = {}
-    def pinned(name, payload):
-        path = tmp_path / name
-        path.write_bytes(payload)
-        env['SIMA_CI_' + name] = str(path)
-        env['SIMA_CI_' + name + '_SHA256'] = hashlib.sha256(payload).hexdigest()
+def preparation_fixture(tmp_path):
     buf = io.BytesIO()
     with tarfile.open(fileobj=buf, mode='w:gz') as archive:
         member = tarfile.TarInfo('model/mpk.json'); member.size = 2
         archive.addfile(member, io.BytesIO(b'{}'))
-    pinned('MNIST_MODEL', buf.getvalue())
-    if ssd:
-        pinned('SSD300_MODEL', buf.getvalue())
-    pinned('MNIST_IMAGES', gzip.compress(struct.pack('>IIII', 2051, 100, 28, 28) + bytes(100 * 28 * 28)))
-    pinned('MNIST_LABELS', gzip.compress(struct.pack('>II', 2049, 100) + bytes(range(10)) * 10))
-    manifest = tmp_path / 'fixtures/runtime_manifest.json'
-    manifest.parent.mkdir()
-    manifest.write_text(json.dumps({'source_root_rel': 'source'}))
-    return env, manifest, tmp_path / 'source/tmp/mnist_preproc_channels1'
+    path = tmp_path / 'SSD300_MODEL'
+    path.write_bytes(buf.getvalue())
+    return {'SIMA_CI_SSD300_MODEL': str(path),
+            'SIMA_CI_SSD300_MODEL_SHA256': hashlib.sha256(buf.getvalue()).hexdigest()}
 
 
-def test_default_requires_ssd_explicit_mnist_does_not(tmp_path):
-    env, manifest, cache = preparation_fixture(tmp_path, ssd=False)
+def test_default_requires_ssd(tmp_path):
     with pytest.raises(ValueError, match='SSD300_MODEL'):
-        weekly.prepare(tmp_path / 'all', manifest, env)
-    values = weekly.prepare(tmp_path / 'mnist', manifest, env, groups=['mnist'])
-    assert values['SIMA_RUN_MNIST_PREPROC_CHANNELS1'] == '1'
-    assert 'SIMA_SSD300_TAR' not in values
-    assert len(list(cache.iterdir())) == 4
+        weekly.prepare(tmp_path / 'all', {})
 
 
 def test_all_groups_and_exports_are_one_mapping(tmp_path, monkeypatch):
     import os
     import subprocess
     import sys
-    env, manifest, _ = preparation_fixture(tmp_path)
+    env = preparation_fixture(tmp_path)
     monkeypatch.setattr(weekly.urllib.request, 'urlopen', lambda *a, **kw: pytest.fail('Unexpected network access'))
-    values = weekly.prepare(tmp_path / 'all', manifest, env)
+    values = weekly.prepare(tmp_path / 'all', env)
     github = tmp_path / 'github-env'
     local = tmp_path / 'environment.json'
     weekly.export_environment(values, github_env=github, environment_json=local)
     assert dict(line.split('=', 1) for line in github.read_text().splitlines()) == json.loads(local.read_text()) == values
     child_env = {**os.environ, **json.loads(local.read_text())}
-    subprocess.run([sys.executable, '-c', "import os; assert os.environ['SIMA_RUN_MNIST_PREPROC_CHANNELS1'] == '1'"], env=child_env, check=True)
-    assert 'SIMA_SSD300_TAR' in values
-    # Exact, already-populated gzip and raw caches are reusable without download.
-    weekly.prepare(tmp_path / 'again', manifest, env)
+    subprocess.run([sys.executable, '-c', "import os, pathlib; assert pathlib.Path(os.environ['SIMA_SSD300_TAR']).is_file()"],
+                   env=child_env, check=True)
 
 
-@pytest.mark.parametrize('kind', ['gzip_crc', 'raw_cache', 'gzip_cache', 'model', 'labels', 'symlink_cache'])
+@pytest.mark.parametrize('kind', ['model', 'checksum'])
 def test_corrupt_fixture_never_exports_optin(tmp_path, kind):
-    import gzip
-    import struct
+    import os
     import subprocess
     import sys
-    env, manifest, cache = preparation_fixture(tmp_path)
-    if kind in ('raw_cache', 'gzip_cache', 'symlink_cache'):
-        cache.mkdir(parents=True)
-        target = cache / ('t10k-images-idx3-ubyte.gz' if kind == 'gzip_cache' else 't10k-images-idx3-ubyte')
-        if kind == 'symlink_cache':
-            target.symlink_to(tmp_path / 'elsewhere')
-        else:
-            target.write_bytes(b'other campaign')
+    env = preparation_fixture(tmp_path)
+    if kind == 'model':
+        payload = b'not an archive'
+        Path(env['SIMA_CI_SSD300_MODEL']).write_bytes(payload)
+        env['SIMA_CI_SSD300_MODEL_SHA256'] = hashlib.sha256(payload).hexdigest()
     else:
-        key = 'MNIST_MODEL' if kind == 'model' else ('MNIST_LABELS' if kind == 'labels' else 'MNIST_IMAGES')
-        path = Path(env['SIMA_CI_' + key])
-        payload = (b'not an archive' if kind == 'model' else
-                   gzip.compress(struct.pack('>II', 2049, 100) + bytes([11]) * 100) if kind == 'labels' else
-                   path.read_bytes()[:-8] + bytes(8))
-        path.write_bytes(payload)
-        env['SIMA_CI_' + key + '_SHA256'] = hashlib.sha256(payload).hexdigest()
+        env['SIMA_CI_SSD300_MODEL_SHA256'] = '0' * 64
     github = tmp_path / 'github-env'; local = tmp_path / 'environment.json'
-    import os
     result = subprocess.run([sys.executable, str(ROOT / 'tools/ci/prepare_weekly_fixtures.py'),
-        '--output', str(tmp_path / 'out'), '--runtime-manifest', str(manifest),
+        '--output', str(tmp_path / 'out'),
         '--github-env', str(github), '--environment-json', str(local)], env={**os.environ, **env}, capture_output=True, text=True)
     assert result.returncode != 0
     assert not github.exists() and not local.exists()
 
 
-@pytest.mark.parametrize('groups', [[], ['mnist', 'mnist'], ['unknown']])
+@pytest.mark.parametrize('groups', [[], ['ssd300', 'ssd300'], ['unknown']])
 def test_invalid_selection_rejected_before_staging(tmp_path, groups):
     with pytest.raises(ValueError, match='fixture group'):
-        weekly.prepare(tmp_path / 'out', '/missing', {}, groups=groups)
+        weekly.prepare(tmp_path / 'out', {}, groups=groups)
     assert not (tmp_path / 'out').exists()
 
 
 def test_export_rejects_newline_before_any_output(tmp_path):
     github = tmp_path / 'github-env'; local = tmp_path / 'environment.json'
     with pytest.raises(ValueError, match='environment value'):
-        weekly.export_environment({'SIMA_RUN_MNIST_PREPROC_CHANNELS1': '1', 'PATH': 'bad\nvalue'},
+        weekly.export_environment({'SIMA_SSD300_TAR': '/fixture', 'PATH': 'bad\nvalue'},
                                   github_env=github, environment_json=local)
     assert not github.exists() and not local.exists()

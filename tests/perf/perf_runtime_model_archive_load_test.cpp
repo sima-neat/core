@@ -40,8 +40,8 @@ int main() {
 
     const std::string archive = sima_test::resolve_resnet50_tar();
     if (archive.empty()) {
-      throw std::runtime_error("model download failed: ResNet50 model pack unavailable; set "
-                               "SIMA_MODEL_TAR or SIMA_RESNET50_TAR");
+      throw std::runtime_error("ResNet50 model pack unavailable; set SIMA_MODEL_TAR or "
+                               "SIMA_RESNET50_TAR");
     }
 
     const fs::path scratch = fs::path(sima_test::make_temp_dir("perf_runtime_model_archive_load"));
