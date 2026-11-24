@@ -1545,6 +1545,8 @@ jobs:
           PERF_MATRIX_ARGS=()
           if [[ "${{ inputs.run_long_tests }}" == "true" ]]; then
             PERF_MATRIX_ARGS+=(--include-long)
+            # The weekly yolov8s_boxdecode scenario reads the prepared Model Browser YOLOv8s.
+            export SIMA_YOLO_TAR="${SIMA_YOLO_TAR:-${SIMA_NEAT_TUTORIAL_MODEL_YOLO:?Model Browser YOLOv8s preparation required}}"
           fi
           python3 tests/perf/tools/run_perf_matrix.py \
             --prebuilt-tests-dir "${TEST_DIR}" \

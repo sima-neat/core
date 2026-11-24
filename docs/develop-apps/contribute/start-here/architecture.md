@@ -1851,9 +1851,9 @@ earlier frame's downstream backpressure can extend that residence. Neither metri
 is CPU busy time or device-only execution time. They are not aliases for the legacy
 synchronous plugin components, so compare matching component versions.
 
-The SSD performance profile requires backend p99 at most
-0.7 ms, stage p99 at most 0.93 ms, at least 1,000 samples per component and at least
-99 FPS. Each measured frame must contribute exactly one complete span per required
+The `yolov8s_boxdecode` performance profile caps stage p99 and requires at least
+1,000 stage samples. Backend p99 is reported for diagnosis without a cap. Each
+measured frame must contribute exactly one complete span per required
 component. Missing, duplicate, ambiguous or incomplete observations do not qualify.
 
 Measurement starts the collector before committing an enabled identity snapshot.
