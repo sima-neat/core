@@ -75,11 +75,11 @@ class FixturePreparationTests(unittest.TestCase):
         self.assertEqual(set(report["members"]), set(self.members))
         self.assertFalse((self.root / "unrelated").exists())
 
-    def test_warm_offline_has_no_cli_or_generator_dependency(self):
+    def test_warm_offline_has_no_network_or_generator_dependency(self):
         self.prepare(archive=self.archive)
         self.archive.unlink()
-        with mock.patch.object(preparation.subprocess, "run", side_effect=AssertionError("network")):
-            self.prepare(offline=True, cli="not-installed")
+        with mock.patch.object(preparation, "download", side_effect=AssertionError("network")):
+            self.prepare(offline=True)
         self.assert_members()
 
     def test_stale_recipe_stamp_does_not_redefine_locked_content(self):
@@ -142,13 +142,12 @@ class FixturePreparationTests(unittest.TestCase):
             self.prepare(archive=self.archive)
         self.assertEqual(list(outside.iterdir()), [])
 
-    def test_cli_download_is_immutable_and_cached(self):
+    def test_download_is_immutable_and_cached(self):
         payload = self.archive.read_bytes()
-        def download(command, **kwargs):
-            self.assertEqual(command[:3], ["sima-cli", "download", self.data["archive"]["url"]])
-            self.assertEqual(command[3], "-d")
-            (Path(command[4]) / "extras.tar.gz").write_bytes(payload)
-        with mock.patch.object(preparation.subprocess, "run", side_effect=download) as call:
+        def download(url, target):
+            self.assertEqual(url, self.data["archive"]["url"])
+            target.write_bytes(payload)
+        with mock.patch.object(preparation, "download", side_effect=download) as call:
             self.prepare(cache=self.cache)
             (self.output / "h264.h264").unlink()
             self.prepare(cache=self.cache, offline=True)
@@ -156,9 +155,9 @@ class FixturePreparationTests(unittest.TestCase):
         self.assert_members()
 
     def test_wrong_download_does_not_install_or_poison_cache(self):
-        def download(command, **kwargs):
-            (Path(command[4]) / "extras.tar.gz").write_bytes(b"wrong")
-        with mock.patch.object(preparation.subprocess, "run", side_effect=download):
+        def download(url, target):
+            target.write_bytes(b"wrong")
+        with mock.patch.object(preparation, "download", side_effect=download):
             with self.assertRaisesRegex(ValueError, "Downloaded"):
                 self.prepare(cache=self.cache)
         self.assertEqual(list(self.cache.glob("*.tar.gz")), [])
@@ -176,9 +175,9 @@ class FixturePreparationTests(unittest.TestCase):
                 archive.addfile(entry, io.BytesIO(value))
         payload = self.archive.read_bytes()
         self.assertNotEqual(sha(payload), expected["sha256"])
-        def download(command, **kwargs):
-            (Path(command[4]) / "extras.tar.gz").write_bytes(payload)
-        with mock.patch.object(preparation.subprocess, "run", side_effect=download):
+        def download(url, target):
+            target.write_bytes(payload)
+        with mock.patch.object(preparation, "download", side_effect=download):
             with self.assertRaises(ValueError) as failure:
                 self.prepare(cache=self.cache)
         message = str(failure.exception)

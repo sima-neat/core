@@ -2,8 +2,8 @@
 """Prepare accepted codec inputs, without regenerating a benchmark's workload.
 
 The lock pins original encoded streams AND their decoded references. Normal
-build/package preparation verifies these bytes or obtains the immutable extras
-archive through sima-cli. The existing generator remains an explicit developer
+build/package preparation verifies these bytes or downloads the immutable, public
+extras archive over HTTPS. The existing generator remains an explicit developer
 tool for creating a new workload; its independent accuracy recipes are unchanged.
 """
 from __future__ import annotations
@@ -17,11 +17,11 @@ import os
 from pathlib import Path, PurePosixPath
 import re
 import shutil
-import subprocess
 import sys
 import tarfile
 import tempfile
-from urllib.parse import unquote, urlsplit
+import urllib.request
+from urllib.parse import urlsplit
 
 DEFAULT_LOCK = Path(__file__).with_name("codec_perf_fixtures.lock.json")
 
@@ -89,7 +89,13 @@ def exclusive(path: Path):
         yield
 
 
-def obtain_archive(lock: dict, cache: Path, cli: str, offline: bool) -> Path:
+def download(url: str, target: Path) -> None:
+    """Fetch a public HTTPS file. The artifact host needs no sima-cli session."""
+    with urllib.request.urlopen(url, timeout=300) as response, target.open("xb") as output:
+        shutil.copyfileobj(response, output)
+
+
+def obtain_archive(lock: dict, cache: Path, offline: bool) -> Path:
     cache.mkdir(parents=True, exist_ok=True)
     expected = lock["archive"]
     target = cache / (expected["sha256"] + ".tar.gz")
@@ -99,17 +105,10 @@ def obtain_archive(lock: dict, cache: Path, cli: str, offline: bool) -> Path:
         if offline:
             raise ValueError("Verified codec fixture archive is absent from the offline cache")
         with tempfile.TemporaryDirectory(prefix=".download-", dir=cache) as temporary:
-            root = Path(temporary)
-            subprocess.run([cli, "download", expected["url"], "-d", str(root)], check=True)
-            # CLI versions may preserve or decode the URL's escaped basename.
-            encoded = PurePosixPath(urlsplit(expected["url"]).path).name
-            candidates = [root / name for name in {encoded, unquote(encoded)}
-                          if (root / name).exists()]
-            if len(candidates) != 1:
-                raise ValueError("Downloaded codec fixture archive is absent or ambiguous: "
-                                 + ", ".join(str(path) for path in candidates))
-            verify_file(candidates[0], expected, "Downloaded codec fixture archive")
-            os.replace(candidates[0], target)
+            downloaded = Path(temporary) / "extras.tar.gz"
+            download(expected["url"], downloaded)
+            verify_file(downloaded, expected, "Downloaded codec fixture archive")
+            os.replace(downloaded, target)
     return target
 
 
@@ -136,7 +135,7 @@ def stage_members(archive: Path, lock: dict, stage: Path) -> None:
 
 
 def prepare(output: Path, lock_path: Path = DEFAULT_LOCK, *, archive: Path | None = None,
-            cache: Path | None = None, cli: str = "sima-cli", offline: bool = False,
+            cache: Path | None = None, offline: bool = False,
             accuracy: bool = True) -> dict:
     lock = load_lock(lock_path)
     if output.is_symlink():
@@ -148,7 +147,7 @@ def prepare(output: Path, lock_path: Path = DEFAULT_LOCK, *, archive: Path | Non
         intact = all(valid_file(output / name, entry) for name, entry in lock["members"].items())
         if not intact:
             selected = archive if archive is not None else obtain_archive(
-                lock, cache or output.parent / ".codec-perf-cache", cli, offline)
+                lock, cache or output.parent / ".codec-perf-cache", offline)
             with tempfile.TemporaryDirectory(prefix=".codec-pairs-", dir=output.parent) as temporary:
                 stage = Path(temporary)
                 stage_members(selected, lock, stage)
@@ -177,15 +176,14 @@ def main() -> int:
     parser.add_argument("--lock", type=Path, default=DEFAULT_LOCK)
     parser.add_argument("--archive", type=Path, help="Previously downloaded exact extras archive")
     parser.add_argument("--cache-dir", type=Path)
-    parser.add_argument("--cli", default="sima-cli")
     parser.add_argument("--offline", action="store_true", help="Do not download missing/corrupt baseline data")
     args = parser.parse_args()
     try:
         report = prepare(args.output_dir, args.lock, archive=args.archive,
-                         cache=args.cache_dir, cli=args.cli, offline=args.offline)
+                         cache=args.cache_dir, offline=args.offline)
         print(json.dumps(report, sort_keys=True))
         return 0
-    except (ValueError, OSError, RuntimeError, subprocess.CalledProcessError, tarfile.TarError) as error:
+    except (ValueError, OSError, RuntimeError, tarfile.TarError) as error:
         print("ERROR: " + str(error), file=sys.stderr)
         return 1
 
