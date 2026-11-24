@@ -411,7 +411,10 @@ void lifecycle(const Route& route) {
   run.stop();
   run.stop();
   require(!run.running(), "stopped");
-  require(run.last_error().empty(), "no error latched: " + run.last_error());
+  // What last_error says is the refused push's reason, as on GStreamer (develop #1431): no error
+  // of the Run was latched.
+  require(run.last_error() == "[runtime.pull] Run::push: input is closed",
+          "last_error is the reason of the refused push: " + run.last_error());
 }
 
 // A Run that goes away with frames queued in front of the MLA, on it, and waiting to be pulled.
