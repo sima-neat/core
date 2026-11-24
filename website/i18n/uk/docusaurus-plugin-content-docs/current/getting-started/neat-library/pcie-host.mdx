@@ -15,9 +15,8 @@ sidebar_position: 3
 :::
 
 :::tip Коли використовувати офлайн-встановлення
-Якщо цільова система Ubuntu не може завантажувати пакети зі служб SiMa.ai, скористайтеся [офлайн-встановленням](#offline-installation).
-Завантажте пакет на комп’ютері з доступом до інтернету. Офлайн-встановлення
-поки що недоступне для хостів Windows.
+Якщо цільовий хост не може завантажувати пакети зі служб SiMa.ai, скористайтеся офлайн-встановленням для [Ubuntu](#offline-installation) або [Windows](#offline-installation-windows).
+Завантажте пакет на комп’ютері з доступом до інтернету.
 :::
 
 ## Підтримувані операційні системи хоста
@@ -57,8 +56,6 @@ sidebar_position: 3
 - Пакет Platform виводить повідомлення про черги, як-от `Opening simaai_mla_c0`,
   у стандартний вивід кожного застосунку PCIe. Не розбирайте стандартний вивід
   застосунку як дані; записуйте результати у файл.
-- [Офлайн-встановлення](#offline-installation) доступне лише для хостів
-  Ubuntu. Хосту Windows для встановлення пакета потрібен доступ до інтернету.
 
 ## Передумови встановлення через інтернет
 
@@ -235,6 +232,8 @@ Windows Installer не замінює пакет старішою версією
 
 Виконайте ці команди в порожньому робочому каталозі на хості. Вони завантажують офлайн-пакет Neat Library, копіюють його на карту за адресою `10.0.0.2` і запускають там його програму встановлення. Коли програма встановлення запитає, введіть пароль облікового запису `sima` на карті. Для іншої карти замініть `10.0.0.2` на її адресу, `10.0.N.2`.
 
+На хості Windows без доступу до інтернету натомість використовуйте команди з кроку 5 розділу [Офлайн-встановлення у Windows](#offline-installation-windows).
+
 В Ubuntu:
 
 <ShellCommand prompt="pcie-host">
@@ -393,6 +392,94 @@ sudo python3 -B install.py
 Якщо встановлення завершилося помилкою, прочитайте діагностичний журнал за виведеним шляхом.
 Якщо під час встановлення з’єднання з картою обірвалося, перед повторною спробою переконайтеся, що процес встановлення на карті зупинився.
 Після збою програма встановлення не відновлює попереднє встановлення автоматично.
+
+## Офлайн-встановлення у Windows {#offline-installation-windows}
+
+Офлайн-пакети для Windows публікуються, починаючи з першого випуску Neat, який їх містить.
+
+Пакет для Windows встановлює пакет хоста Neat PCIe на хост Windows 11 x64. Потім ви встановлюєте Neat на кожну карту з тієї самої теки. Для цього встановлення хосту не потрібен доступ до інтернету.
+
+### 1. Підготуйте хост і карту
+
+Перед встановленням Neat виконайте такі завдання:
+
+- Встановіть пакет SiMa Platform 3.0 для Windows, як описано в [посібнику зі встановлення драйвера PCIe](https://developer.sima.ai/hardware/getting-started/pcie-mode/driver-installation). Офлайн-пакет його не містить.
+- Переконайтеся, що хост має зв’язок із кожною картою через мережеве з’єднання PCIe.
+- Підготуйте пароль облікового запису `sima` на кожній карті.
+
+### 2. Завантажте пакет
+
+Встановіть `sima-cli` на комп’ютері з доступом до інтернету. На ньому може працювати Linux, macOS або Windows. Див. [посібник зі встановлення sima-cli](/tools/sima-cli/).
+
+У цьому прикладі версію %%release.core%% завантажують на комп’ютері з доступом до інтернету:
+
+<ShellCommand prompt="host">
+sima-cli neat install core/pciehost/windows/amd64@v%%release.core%% -t offline -d ./pcie-offline
+</ShellCommand>
+
+Після цього тека `pcie-offline` містить архів пакета, його видобуту теку `neat-pcie-offline-installer-*`, а також програми встановлення GStreamer і Python, потрібні пакету. Команда завантажує та видобуває пакет. Вона не встановлює Neat.
+
+### 3. Встановіть передумови та sima-cli
+
+Скопіюйте всю теку `pcie-offline` на локальний диск хоста. Програма встановлення записує журнали в цю теку. Відкрийте PowerShell від імені звичайного користувача, а не адміністратора, у скопійованій теці та запустіть програми встановлення GStreamer і Python. У програмі встановлення GStreamer виберіть тип встановлення, що містить файли для розробки. Пропустіть програму встановлення, якщо ця версія вже встановлена.
+
+```powershell
+Start-Process -Wait (Get-Item .\gstreamer-1.0-msvc-x86_64-*.exe).FullName
+Start-Process -Wait (Get-Item .\python-3.14.*-amd64.exe).FullName
+```
+
+Закрийте PowerShell і відкрийте нове вікно в тій самій теці. Потім встановіть `sima-cli` з пакета. pip встановлює лише файли з пакета й перевіряє кожен із них за SHA-256:
+
+```powershell
+Set-Location .\neat-pcie-offline-installer-*\neat-offline
+py -3.14 -m venv "$env:USERPROFILE\.sima-cli-env"
+& "$env:USERPROFILE\.sima-cli-env\Scripts\python.exe" -m pip install --no-index --find-links .\sima-cli --require-hashes -r .\sima-cli\requirements.txt
+$cli = "$env:USERPROFILE\.sima-cli-env\Scripts\sima-cli.exe"
+```
+
+Тека `neat-offline` також містить `INSTALL.md`, де описано ці кроки й що робити, якщо PowerShell не знаходить `py`.
+
+### 4. Встановіть пакет і перевірте результати
+
+Виконайте цю команду в тій самій теці `neat-offline`:
+
+```powershell
+& $cli install -m .\metadata.json
+```
+
+Windows один раз запитує дозвіл адміністратора для двох пакетів MSI. Перш ніж запустити будь-який із пакетів MSI, `sima-cli` перевіряє ті самі передумови, що й під час встановлення через інтернет, і звіряє кожен файл пакета з його SHA-256. Якщо файл відсутній або змінений, встановлення зупиняється, перш ніж щось буде встановлено. Наприкінці встановлення налаштовується SSH-доступ до карти; OpenSSH один раз запитує пароль облікового запису `sima` на карті. У `%USERPROFILE%\pyneatpcie` для `numpy` і `opencv-python` встановлюються версії з пакета. Використовуйте `--python-executable <path>` або `--native-only`, як і під час встановлення через інтернет.
+
+Перевірте встановлення:
+
+```powershell
+$venv = "$env:USERPROFILE\pyneatpcie"
+$root = "$env:ProgramFiles\SimaPCIeHost"
+& "$root\bin\sima-pcie-host-doctor.cmd"
+& "$venv\Scripts\python.exe" -m pip check
+& "$venv\Scripts\python.exe" -c "import pyneatpcie as p; print(p.__version__, p.Model)"
+& "$root\bin\neat.cmd"
+```
+
+Щоб відновити встановлення, виконайте команду встановлення ще раз. Щоб оновити його, виконайте її в теці `neat-offline` новішого пакета. Щоб видалити пакет, використайте версію, яку показує `& $cli packages list`:
+
+```powershell
+& $cli packages remove gh:sima-neat/core/pciehost/windows/amd64 --version <version> --yes
+```
+
+Інші команди `sima-cli` під час запуску шукають новішу версію `sima-cli` і продовжують роботу без доступу до інтернету. Щоб пропустити цю перевірку, спочатку виконайте `$env:SIMA_CLI_CHECK_FOR_UPDATE = "0"`.
+
+### 5. Встановіть Neat на карту
+
+Виконайте ці команди в тій самій теці `neat-offline`. Коли програма встановлення на карті запитає, введіть пароль облікового запису `sima` на карті. Для іншої карти замініть `10.0.0.2` на її адресу, `10.0.N.2`. Програмі встановлення на карті не потрібен доступ до інтернету.
+
+```powershell
+$bundle = (Get-Item .\card\neat-core-offline-installer.tar.gz).FullName
+scp -i "$env:USERPROFILE\.ssh\sima_neat_pcie_ed25519" $bundle sima@10.0.0.2:/var/tmp/neat-core-offline-installer.tar.gz
+ssh -t -i "$env:USERPROFILE\.ssh\sima_neat_pcie_ed25519" sima@10.0.0.2 "cd /var/tmp && rm -rf neat-core-offline && tar -xzf neat-core-offline-installer.tar.gz && cd neat-core-offline && ./install.sh && ./install.sh --verify && cd /var/tmp && rm -rf neat-core-offline neat-core-offline-installer.tar.gz"
+& "$env:ProgramFiles\SimaPCIeHost\bin\neat.cmd"
+```
+
+`neat.cmd` показує випуск Neat на хості й на карті; вони мають збігатися.
 
 ## Наступний крок
 

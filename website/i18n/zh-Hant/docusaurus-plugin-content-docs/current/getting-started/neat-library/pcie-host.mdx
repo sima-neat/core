@@ -13,8 +13,8 @@ Neat PCIe 主機套件提供協同處理 API，用於將來自主機的輸入傳
 :::
 
 :::tip 何時需要離線安裝
-若 Ubuntu 目標無法從 SiMa.ai 服務下載套件，請使用[離線安裝](#offline-installation)。
-在可連上網際網路的電腦上下載套件。Windows 主機目前尚無法使用離線安裝。
+若目標主機無法從 SiMa.ai 服務下載套件，請使用 [Ubuntu](#offline-installation) 或 [Windows](#offline-installation-windows) 的離線安裝。
+在可連上網際網路的電腦上下載套件。
 :::
 
 ## 支援的主機作業系統
@@ -39,7 +39,6 @@ Windows 預覽版有下列限制：
 - GenAI 模型資料夾的路徑必須能以 Windows 系統字碼頁表示。
 - 若在 Windows 執行期間卡片脫離 PCIe 匯流排，Windows 可能會以藍色畫面停止，例如在裝置管理員中或使用 `pnputil` 重新啟動卡片或其 PCIe 連接埠時。請勿在 Windows 執行期間重新啟動卡片或其連接埠。若卡片停止回應，請將主機關機後再開機。
 - Platform 套件會將 `Opening simaai_mla_c0` 等佇列訊息輸出到每個 PCIe 應用程式的標準輸出。請勿將應用程式的標準輸出當作資料剖析，而應將結果寫入檔案。
-- [離線安裝](#offline-installation)僅適用於 Ubuntu 主機。Windows 主機需要連上網際網路才能安裝套件。
 
 ## 線上安裝先決條件
 
@@ -215,6 +214,8 @@ Windows Installer 不會以較舊的版本取代已安裝的套件。若要安�
 
 請在主機上的空白工作目錄中執行下列指令。這些指令會下載 Neat Library 離線套件、將其複製到位於 `10.0.0.2` 的卡片，並在卡片上執行其安裝程式。當安裝程式要求時，請輸入卡片 `sima` 帳戶的密碼。若是其他卡片，請將 `10.0.0.2` 替換為該卡片的位址 `10.0.N.2`。
 
+若 Windows 主機無法連上網際網路，請改用[在 Windows 上離線安裝](#offline-installation-windows)步驟 5 中的指令。
+
 在 Ubuntu 上：
 
 <ShellCommand prompt="pcie-host">
@@ -365,6 +366,94 @@ sudo python3 -B install.py
 如果安裝失敗，請閱讀所顯示路徑中的診斷記錄。
 如果安裝期間與卡的連線失敗，請先確認該卡的安裝程序已停止，再重試。
 安裝失敗後，安裝程式不會自動還原先前的安裝狀態。
+
+## 在 Windows 上離線安裝 {#offline-installation-windows}
+
+Windows 離線套件自第一個包含此套件的 Neat 版本起發布。
+
+Windows 套件會在 Windows 11 x64 主機上安裝 Neat PCIe 主機套件。接著，從同一個資料夾在每張卡片上安裝 Neat。此安裝不需要主機連上網際網路。
+
+### 1. 準備主機和卡片
+
+安裝 Neat 之前，請完成下列工作：
+
+- 依照 [PCIe 驅動程式安裝指南](https://developer.sima.ai/hardware/getting-started/pcie-mode/driver-installation)的說明，安裝 SiMa Platform 3.0 Windows 套件。離線套件不包含此套件。
+- 確認主機可透過 PCIe 網路連結連上每張卡片。
+- 準備好每張卡片 `sima` 帳戶的密碼。
+
+### 2. 下載套件
+
+在可連上網際網路的電腦上安裝 `sima-cli`。這台電腦可以執行 Linux、macOS 或 Windows。請參閱 [sima-cli 安裝指南](/tools/sima-cli/)。
+
+此範例在可連上網際網路的電腦上下載 %%release.core%% 版本：
+
+<ShellCommand prompt="host">
+sima-cli neat install core/pciehost/windows/amd64@v%%release.core%% -t offline -d ./pcie-offline
+</ShellCommand>
+
+完成後，`pcie-offline` 資料夾會包含套件封存檔、解壓縮後的 `neat-pcie-offline-installer-*` 資料夾，以及套件所需的 GStreamer 和 Python 安裝程式。此命令會下載並解壓縮套件，不會安裝 Neat。
+
+### 3. 安裝先決條件和 sima-cli
+
+將整個 `pcie-offline` 資料夾複製到主機的本機磁碟。安裝程式會將記錄檔寫入此資料夾。以一般使用者身分（不要以系統管理員身分）在複製的資料夾中開啟 PowerShell，然後執行 GStreamer 和 Python 安裝程式。在 GStreamer 安裝程式中，請選擇包含開發檔案的安裝類型。若已安裝相同版本，請略過該安裝程式。
+
+```powershell
+Start-Process -Wait (Get-Item .\gstreamer-1.0-msvc-x86_64-*.exe).FullName
+Start-Process -Wait (Get-Item .\python-3.14.*-amd64.exe).FullName
+```
+
+關閉 PowerShell，並在同一個資料夾中開啟新視窗。接著從套件安裝 `sima-cli`。pip 只會安裝套件中的檔案，並以 SHA-256 檢查每個檔案：
+
+```powershell
+Set-Location .\neat-pcie-offline-installer-*\neat-offline
+py -3.14 -m venv "$env:USERPROFILE\.sima-cli-env"
+& "$env:USERPROFILE\.sima-cli-env\Scripts\python.exe" -m pip install --no-index --find-links .\sima-cli --require-hashes -r .\sima-cli\requirements.txt
+$cli = "$env:USERPROFILE\.sima-cli-env\Scripts\sima-cli.exe"
+```
+
+`neat-offline` 資料夾中也有 `INSTALL.md`，其中說明這些步驟，以及 PowerShell 找不到 `py` 時的處理方式。
+
+### 4. 安裝並檢查結果
+
+在同一個 `neat-offline` 資料夾中執行下列指令：
+
+```powershell
+& $cli install -m .\metadata.json
+```
+
+Windows 會針對兩個 MSI 套件要求一次系統管理員核准。在執行任一 MSI 之前，`sima-cli` 會檢查與線上安裝相同的先決條件，並以 SHA-256 檢查套件中的每個檔案。若有檔案遺失或遭到變更，安裝會在安裝任何內容之前停止。安裝最後會設定連到卡片的 SSH，OpenSSH 會要求輸入一次卡片 `sima` 帳戶的密碼。在 `%USERPROFILE%\pyneatpcie` 中，`numpy` 和 `opencv-python` 會設為套件中的版本。與線上安裝相同，可使用 `--python-executable <path>` 或 `--native-only`。
+
+驗證安裝：
+
+```powershell
+$venv = "$env:USERPROFILE\pyneatpcie"
+$root = "$env:ProgramFiles\SimaPCIeHost"
+& "$root\bin\sima-pcie-host-doctor.cmd"
+& "$venv\Scripts\python.exe" -m pip check
+& "$venv\Scripts\python.exe" -c "import pyneatpcie as p; print(p.__version__, p.Model)"
+& "$root\bin\neat.cmd"
+```
+
+若要修復安裝，請再次執行安裝指令。若要升級，請在較新套件的 `neat-offline` 資料夾中執行。若要移除套件，請使用 `& $cli packages list` 顯示的版本：
+
+```powershell
+& $cli packages remove gh:sima-neat/core/pciehost/windows/amd64 --version <version> --yes
+```
+
+其他 `sima-cli` 指令會在啟動時檢查是否有較新的 `sima-cli`，並在無法連上網際網路時繼續執行。若要略過此檢查，請先執行 `$env:SIMA_CLI_CHECK_FOR_UPDATE = "0"`。
+
+### 5. 在卡片上安裝 Neat
+
+在同一個 `neat-offline` 資料夾中執行下列指令。當卡片安裝程式要求時，請輸入卡片 `sima` 帳戶的密碼。若是其他卡片，請將 `10.0.0.2` 替換為該卡片的位址 `10.0.N.2`。卡片安裝程式不需要連上網際網路。
+
+```powershell
+$bundle = (Get-Item .\card\neat-core-offline-installer.tar.gz).FullName
+scp -i "$env:USERPROFILE\.ssh\sima_neat_pcie_ed25519" $bundle sima@10.0.0.2:/var/tmp/neat-core-offline-installer.tar.gz
+ssh -t -i "$env:USERPROFILE\.ssh\sima_neat_pcie_ed25519" sima@10.0.0.2 "cd /var/tmp && rm -rf neat-core-offline && tar -xzf neat-core-offline-installer.tar.gz && cd neat-core-offline && ./install.sh && ./install.sh --verify && cd /var/tmp && rm -rf neat-core-offline neat-core-offline-installer.tar.gz"
+& "$env:ProgramFiles\SimaPCIeHost\bin\neat.cmd"
+```
+
+`neat.cmd` 會顯示主機和卡片上的 Neat 版本，兩者必須相同。
 
 ## 下一步
 

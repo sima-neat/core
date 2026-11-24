@@ -13,8 +13,8 @@ Neat PCIe 호스트 패키지는 호스트 시스템에서 연결된 Modalix PCI
 :::
 
 :::tip 오프라인 설치가 필요한 경우
-Ubuntu 대상에서 SiMa.ai 서비스의 패키지를 다운로드할 수 없으면 [오프라인 설치](#offline-installation)를 사용하세요.
-인터넷에 연결된 컴퓨터에서 패키지를 다운로드하세요. Windows 호스트에서는 아직 오프라인 설치를 사용할 수 없습니다.
+대상 호스트에서 SiMa.ai 서비스의 패키지를 다운로드할 수 없으면 [Ubuntu](#offline-installation) 또는 [Windows](#offline-installation-windows) 오프라인 설치를 사용하세요.
+인터넷에 연결된 컴퓨터에서 패키지를 다운로드하세요.
 :::
 
 ## 지원되는 호스트 운영체제
@@ -39,7 +39,6 @@ Windows 미리 보기에는 다음과 같은 제한이 있습니다.
 - GenAI 모델 폴더 경로는 Windows 시스템 코드 페이지로 표현할 수 있어야 합니다.
 - Windows가 실행 중일 때 카드가 PCIe 버스에서 분리되면 Windows가 블루 스크린으로 중지될 수 있습니다. 예를 들어 장치 관리자나 `pnputil`에서 카드 또는 해당 PCIe 포트를 다시 시작한 경우입니다. Windows가 실행 중일 때는 카드나 해당 포트를 다시 시작하지 마세요. 카드가 응답하지 않으면 호스트를 종료한 다음 전원을 켜세요.
 - Platform 패키지는 `Opening simaai_mla_c0` 같은 큐 메시지를 모든 PCIe 애플리케이션의 표준 출력에 출력합니다. 애플리케이션의 표준 출력을 데이터로 파싱하지 말고, 결과는 파일에 기록하세요.
-- [오프라인 설치](#offline-installation)는 Ubuntu 호스트에서만 사용할 수 있습니다. Windows 호스트에서 패키지를 설치하려면 인터넷 연결이 필요합니다.
 
 ## 온라인 설치 필수 조건
 
@@ -216,6 +215,8 @@ Windows Installer는 패키지를 이전 버전으로 교체하지 않습니다.
 
 호스트의 빈 작업 디렉터리에서 다음 명령을 실행하세요. 이 명령은 Neat Library 오프라인 패키지를 다운로드하여 `10.0.0.2`의 카드로 복사한 다음 카드에서 설치 프로그램을 실행합니다. 설치 프로그램이 요청하면 카드의 `sima` 계정 암호를 입력하세요. 다른 카드의 경우 `10.0.0.2`를 해당 카드의 주소인 `10.0.N.2`로 바꾸세요.
 
+인터넷에 연결되지 않은 Windows 호스트에서는 대신 [Windows 오프라인 설치](#offline-installation-windows)의 5단계 명령을 사용하세요.
+
 Ubuntu:
 
 <ShellCommand prompt="pcie-host">
@@ -366,6 +367,94 @@ sudo python3 -B install.py
 설치가 실패하면 표시된 경로의 진단 로그를 읽으세요.
 설치 중 카드 연결이 실패하면 다시 시도하기 전에 해당 카드의 설치 프로세스가 중지되었는지 확인하세요.
 설치 프로그램은 실패 후 이전 설치 상태를 자동으로 복원하지 않습니다.
+
+## Windows 오프라인 설치 {#offline-installation-windows}
+
+Windows 오프라인 패키지는 이를 포함하는 첫 번째 Neat 릴리스부터 게시됩니다.
+
+Windows 패키지는 Windows 11 x64 호스트에 Neat PCIe 호스트 패키지를 설치합니다. 그런 다음 같은 폴더에서 각 카드에 Neat를 설치합니다. 이 설치에는 호스트의 인터넷 연결이 필요하지 않습니다.
+
+### 1. 호스트 및 카드 준비
+
+Neat를 설치하기 전에 다음 작업을 완료하세요:
+
+- [PCIe 드라이버 설치 가이드](https://developer.sima.ai/hardware/getting-started/pcie-mode/driver-installation)에 설명된 대로 SiMa Platform 3.0 Windows 패키지를 설치하세요. 오프라인 패키지에는 이 패키지가 포함되어 있지 않습니다.
+- 호스트가 PCIe 네트워크 링크를 통해 각 카드에 연결되는지 확인하세요.
+- 각 카드의 `sima` 계정 암호를 준비하세요.
+
+### 2. 패키지 다운로드
+
+인터넷에 연결된 컴퓨터에 `sima-cli`를 설치하세요. 이 컴퓨터는 Linux, macOS 또는 Windows를 실행할 수 있습니다. [sima-cli 설치 가이드](/tools/sima-cli/)를 참조하세요.
+
+이 예제는 인터넷에 연결된 컴퓨터에서 %%release.core%% 버전을 다운로드합니다:
+
+<ShellCommand prompt="host">
+sima-cli neat install core/pciehost/windows/amd64@v%%release.core%% -t offline -d ./pcie-offline
+</ShellCommand>
+
+그러면 `pcie-offline` 폴더에 패키지 아카이브, 압축을 푼 `neat-pcie-offline-installer-*` 폴더, 그리고 패키지에 필요한 GStreamer 및 Python 설치 프로그램이 들어 있습니다. 이 명령은 패키지를 다운로드하고 압축을 풉니다. Neat를 설치하지는 않습니다.
+
+### 3. 필수 구성 요소 및 sima-cli 설치
+
+`pcie-offline` 폴더 전체를 호스트의 로컬 디스크에 복사하세요. 설치 프로그램은 이 폴더에 로그를 기록합니다. 관리자가 아닌 일반 사용자로 복사한 폴더에서 PowerShell을 열고 GStreamer 및 Python 설치 프로그램을 실행하세요. GStreamer 설치 프로그램에서는 개발 파일이 포함된 설치 유형을 선택하세요. 같은 버전이 이미 설치되어 있으면 해당 설치 프로그램은 건너뛰세요.
+
+```powershell
+Start-Process -Wait (Get-Item .\gstreamer-1.0-msvc-x86_64-*.exe).FullName
+Start-Process -Wait (Get-Item .\python-3.14.*-amd64.exe).FullName
+```
+
+PowerShell을 닫고 같은 폴더에서 새 창을 여세요. 그런 다음 패키지에서 `sima-cli`를 설치하세요. pip는 패키지에 있는 파일만 설치하고 각 파일을 SHA-256으로 확인합니다:
+
+```powershell
+Set-Location .\neat-pcie-offline-installer-*\neat-offline
+py -3.14 -m venv "$env:USERPROFILE\.sima-cli-env"
+& "$env:USERPROFILE\.sima-cli-env\Scripts\python.exe" -m pip install --no-index --find-links .\sima-cli --require-hashes -r .\sima-cli\requirements.txt
+$cli = "$env:USERPROFILE\.sima-cli-env\Scripts\sima-cli.exe"
+```
+
+`neat-offline` 폴더에는 이 단계와 PowerShell에서 `py`를 찾지 못할 때의 조치를 설명하는 `INSTALL.md`도 있습니다.
+
+### 4. 설치 및 결과 확인
+
+같은 `neat-offline` 폴더에서 다음 명령을 실행하세요:
+
+```powershell
+& $cli install -m .\metadata.json
+```
+
+Windows는 두 MSI 패키지에 대해 관리자 승인을 한 번 요청합니다. 두 MSI 중 하나라도 실행하기 전에 `sima-cli`는 온라인 설치와 같은 필수 구성 요소를 확인하고 패키지의 모든 파일을 SHA-256으로 확인합니다. 파일이 없거나 변경되었으면 아무것도 설치하기 전에 설치가 중지됩니다. 설치는 카드에 대한 SSH를 설정하면서 끝나며, OpenSSH가 카드의 `sima` 계정 암호를 한 번 요청합니다. `%USERPROFILE%\pyneatpcie`에서 `numpy`와 `opencv-python`은 패키지에 있는 버전으로 설정됩니다. 온라인 설치와 마찬가지로 `--python-executable <path>` 또는 `--native-only`를 사용하세요.
+
+설치를 확인하세요:
+
+```powershell
+$venv = "$env:USERPROFILE\pyneatpcie"
+$root = "$env:ProgramFiles\SimaPCIeHost"
+& "$root\bin\sima-pcie-host-doctor.cmd"
+& "$venv\Scripts\python.exe" -m pip check
+& "$venv\Scripts\python.exe" -c "import pyneatpcie as p; print(p.__version__, p.Model)"
+& "$root\bin\neat.cmd"
+```
+
+설치를 복구하려면 설치 명령을 다시 실행하세요. 업그레이드하려면 더 새로운 패키지의 `neat-offline` 폴더에서 실행하세요. 패키지를 제거하려면 `& $cli packages list`에 표시되는 버전을 사용하세요:
+
+```powershell
+& $cli packages remove gh:sima-neat/core/pciehost/windows/amd64 --version <version> --yes
+```
+
+다른 `sima-cli` 명령은 시작할 때 더 새로운 `sima-cli`를 확인하며, 인터넷에 연결되지 않아도 계속 진행합니다. 이 확인을 건너뛰려면 먼저 `$env:SIMA_CLI_CHECK_FOR_UPDATE = "0"`을 실행하세요.
+
+### 5. 카드에 Neat 설치
+
+같은 `neat-offline` 폴더에서 다음 명령을 실행하세요. 카드 설치 프로그램이 요청하면 카드의 `sima` 계정 암호를 입력하세요. 다른 카드의 경우 `10.0.0.2`를 해당 카드의 주소인 `10.0.N.2`로 바꾸세요. 카드 설치 프로그램에는 인터넷 연결이 필요하지 않습니다.
+
+```powershell
+$bundle = (Get-Item .\card\neat-core-offline-installer.tar.gz).FullName
+scp -i "$env:USERPROFILE\.ssh\sima_neat_pcie_ed25519" $bundle sima@10.0.0.2:/var/tmp/neat-core-offline-installer.tar.gz
+ssh -t -i "$env:USERPROFILE\.ssh\sima_neat_pcie_ed25519" sima@10.0.0.2 "cd /var/tmp && rm -rf neat-core-offline && tar -xzf neat-core-offline-installer.tar.gz && cd neat-core-offline && ./install.sh && ./install.sh --verify && cd /var/tmp && rm -rf neat-core-offline neat-core-offline-installer.tar.gz"
+& "$env:ProgramFiles\SimaPCIeHost\bin\neat.cmd"
+```
+
+`neat.cmd`는 호스트와 카드의 Neat 릴리스를 표시하며, 두 릴리스는 같아야 합니다.
 
 ## 다음 단계
 

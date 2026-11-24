@@ -70,13 +70,13 @@
     {
       "path": "docs/getting-started/neat-library/pcie-host.mdx",
       "line": "scp -i \"$env:USERPROFILE\\.ssh\\sima_neat_pcie_ed25519\" $bundle sima@10.0.0.2:/var/tmp/neat-core-offline-installer.tar.gz",
-      "count": 1,
+      "count": 2,
       "reason": "Network address example, not a release version"
     },
     {
       "path": "docs/getting-started/neat-library/pcie-host.mdx",
       "line": "ssh -t -i \"$env:USERPROFILE\\.ssh\\sima_neat_pcie_ed25519\" sima@10.0.0.2 \"cd /var/tmp && rm -rf neat-core-offline && tar -xzf neat-core-offline-installer.tar.gz && cd neat-core-offline && ./install.sh && ./install.sh --verify && cd /var/tmp && rm -rf neat-core-offline neat-core-offline-installer.tar.gz\"",
-      "count": 1,
+      "count": 2,
       "reason": "Network address example, not a release version"
     },
     {
@@ -128,6 +128,12 @@
       "reason": "Minimum supported offline package version"
     },
     {
+      "path": "docs/getting-started/neat-library/pcie-host.mdx",
+      "line": "replace `10.0.0.2` with its address, `10.0.N.2`. The card installer does not",
+      "count": 1,
+      "reason": "Network address example, not a release version"
+    },
+    {
       "path": "website/i18n/ja/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
       "line": "  ホストからアクセス可能な状態。カード0のデフォルトアドレスは`10.0.0.2`です。",
       "count": 1,
@@ -172,13 +178,13 @@
     {
       "path": "website/i18n/ja/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
       "line": "scp -i \"$env:USERPROFILE\\.ssh\\sima_neat_pcie_ed25519\" $bundle sima@10.0.0.2:/var/tmp/neat-core-offline-installer.tar.gz",
-      "count": 1,
+      "count": 2,
       "reason": "Network address example, not a release version"
     },
     {
       "path": "website/i18n/ja/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
       "line": "ssh -t -i \"$env:USERPROFILE\\.ssh\\sima_neat_pcie_ed25519\" sima@10.0.0.2 \"cd /var/tmp && rm -rf neat-core-offline && tar -xzf neat-core-offline-installer.tar.gz && cd neat-core-offline && ./install.sh && ./install.sh --verify && cd /var/tmp && rm -rf neat-core-offline neat-core-offline-installer.tar.gz\"",
-      "count": 1,
+      "count": 2,
       "reason": "Network address example, not a release version"
     },
     {
@@ -230,6 +236,12 @@
       "reason": "Minimum supported offline package version"
     },
     {
+      "path": "website/i18n/ja/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
+      "line": "同じ`neat-offline`フォルダーで次のコマンドを実行してください。カードのインストーラーから求められたら、カードの`sima`アカウントのパスワードを入力してください。別のカードの場合は、`10.0.0.2`をそのカードのアドレス`10.0.N.2`に置き換えてください。カードのインストーラーにインターネット接続は必要ありません。",
+      "count": 1,
+      "reason": "Network address example, not a release version"
+    },
+    {
       "path": "website/i18n/ko/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
       "line": "  호스트에서 접근할 수 있습니다. 카드 0의 기본 주소는 `10.0.0.2`입니다.",
       "count": 1,
@@ -274,13 +286,13 @@
     {
       "path": "website/i18n/ko/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
       "line": "scp -i \"$env:USERPROFILE\\.ssh\\sima_neat_pcie_ed25519\" $bundle sima@10.0.0.2:/var/tmp/neat-core-offline-installer.tar.gz",
-      "count": 1,
+      "count": 2,
       "reason": "Network address example, not a release version"
     },
     {
       "path": "website/i18n/ko/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
       "line": "ssh -t -i \"$env:USERPROFILE\\.ssh\\sima_neat_pcie_ed25519\" sima@10.0.0.2 \"cd /var/tmp && rm -rf neat-core-offline && tar -xzf neat-core-offline-installer.tar.gz && cd neat-core-offline && ./install.sh && ./install.sh --verify && cd /var/tmp && rm -rf neat-core-offline neat-core-offline-installer.tar.gz\"",
-      "count": 1,
+      "count": 2,
       "reason": "Network address example, not a release version"
     },
     {
@@ -332,6 +344,12 @@
       "reason": "Minimum supported offline package version"
     },
     {
+      "path": "website/i18n/ko/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
+      "line": "같은 `neat-offline` 폴더에서 다음 명령을 실행하세요. 카드 설치 프로그램이 요청하면 카드의 `sima` 계정 암호를 입력하세요. 다른 카드의 경우 `10.0.0.2`를 해당 카드의 주소인 `10.0.N.2`로 바꾸세요. 카드 설치 프로그램에는 인터넷 연결이 필요하지 않습니다.",
+      "count": 1,
+      "reason": "Network address example, not a release version"
+    },
+    {
       "path": "website/i18n/uk/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
       "line": "  доступний із хоста. Типова адреса для карти 0 — `10.0.0.2`.",
       "count": 1,
@@ -376,13 +394,13 @@
     {
       "path": "website/i18n/uk/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
       "line": "scp -i \"$env:USERPROFILE\\.ssh\\sima_neat_pcie_ed25519\" $bundle sima@10.0.0.2:/var/tmp/neat-core-offline-installer.tar.gz",
-      "count": 1,
+      "count": 2,
       "reason": "Network address example, not a release version"
     },
     {
       "path": "website/i18n/uk/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
       "line": "ssh -t -i \"$env:USERPROFILE\\.ssh\\sima_neat_pcie_ed25519\" sima@10.0.0.2 \"cd /var/tmp && rm -rf neat-core-offline && tar -xzf neat-core-offline-installer.tar.gz && cd neat-core-offline && ./install.sh && ./install.sh --verify && cd /var/tmp && rm -rf neat-core-offline neat-core-offline-installer.tar.gz\"",
-      "count": 1,
+      "count": 2,
       "reason": "Network address example, not a release version"
     },
     {
@@ -434,6 +452,12 @@
       "reason": "Minimum supported offline package version"
     },
     {
+      "path": "website/i18n/uk/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
+      "line": "Виконайте ці команди в тій самій теці `neat-offline`. Коли програма встановлення на карті запитає, введіть пароль облікового запису `sima` на карті. Для іншої карти замініть `10.0.0.2` на її адресу, `10.0.N.2`. Програмі встановлення на карті не потрібен доступ до інтернету.",
+      "count": 1,
+      "reason": "Network address example, not a release version"
+    },
+    {
       "path": "website/i18n/zh-Hant/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
       "line": "  可以從主機存取。預設的卡片 0 位址為 `10.0.0.2`。",
       "count": 1,
@@ -478,13 +502,13 @@
     {
       "path": "website/i18n/zh-Hant/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
       "line": "scp -i \"$env:USERPROFILE\\.ssh\\sima_neat_pcie_ed25519\" $bundle sima@10.0.0.2:/var/tmp/neat-core-offline-installer.tar.gz",
-      "count": 1,
+      "count": 2,
       "reason": "Network address example, not a release version"
     },
     {
       "path": "website/i18n/zh-Hant/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
       "line": "ssh -t -i \"$env:USERPROFILE\\.ssh\\sima_neat_pcie_ed25519\" sima@10.0.0.2 \"cd /var/tmp && rm -rf neat-core-offline && tar -xzf neat-core-offline-installer.tar.gz && cd neat-core-offline && ./install.sh && ./install.sh --verify && cd /var/tmp && rm -rf neat-core-offline neat-core-offline-installer.tar.gz\"",
-      "count": 1,
+      "count": 2,
       "reason": "Network address example, not a release version"
     },
     {
@@ -534,6 +558,12 @@
       "line": "選擇適用於目標主機的 0.6.0 或更新版本。",
       "count": 1,
       "reason": "Minimum supported offline package version"
+    },
+    {
+      "path": "website/i18n/zh-Hant/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
+      "line": "在同一個 `neat-offline` 資料夾中執行下列指令。當卡片安裝程式要求時，請輸入卡片 `sima` 帳戶的密碼。若是其他卡片，請將 `10.0.0.2` 替換為該卡片的位址 `10.0.N.2`。卡片安裝程式不需要連上網際網路。",
+      "count": 1,
+      "reason": "Network address example, not a release version"
     },
     {
       "path": "docs/getting-started/neat-library/neat-cli.md",
