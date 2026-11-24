@@ -109,13 +109,16 @@ void lockstep_measures(Run& run, int n, const Push& push, const Pull& pull, bool
             what + ": a gap between consecutive outputs (" + std::to_string(r.frame_gap.count) +
                 ")");
   }
-  // GStreamer's input stream times the pushes it builds a buffer for (not an image's), and its
-  // output thread's wait for each output; Dataflow times every accepted push and every pull.
-  require(r.input.push_count == count && r.input.pull_count == count &&
-              r.input.avg_pull_wait_us > 0.0 &&
-              (!sima_test::on_dataflow() || r.input.avg_push_us > 0.0),
-          what + ": the push and pull averages (push " + std::to_string(r.input.avg_push_us) +
-              " us, pull wait " + std::to_string(r.input.avg_pull_wait_us) + " us)");
+  // GStreamer's input stream counts and times the pushes it builds a buffer for (a tensor's, not
+  // an image's, which it counts under decode), and its output thread's wait for each output;
+  // Dataflow counts and times every accepted push and every pull.
+  const bool pushes = sima_test::on_dataflow()
+                          ? r.input.push_count == count && r.input.avg_push_us > 0.0
+                          : r.input.push_count == count || r.input.push_count == 0U;
+  require(pushes && r.input.pull_count == count && r.input.avg_pull_wait_us > 0.0,
+          what + ": the push and pull averages (" + std::to_string(r.input.push_count) +
+              " pushes, push " + std::to_string(r.input.avg_push_us) + " us, pull wait " +
+              std::to_string(r.input.avg_pull_wait_us) + " us)");
   require(r.throughput_batches_per_s > 0.0 && r.elapsed_s > 0.0, what + ": throughput");
   const RunStats s = run_internal::stats(run);
   require(s.avg_latency_ms > 0.0 && s.min_latency_ms <= s.avg_latency_ms &&
