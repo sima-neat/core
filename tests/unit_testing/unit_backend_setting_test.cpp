@@ -66,7 +66,8 @@ Graph no_input() {
   return g;
 }
 
-// Input -> Queue -> Output: GStreamer runs it; Dataflow refuses the Queue node at the build.
+// Input -> Queue -> Output: GStreamer runs it (built with a seed, as GStreamer's linear Run of an
+// Input with a declared shape needs); Dataflow refuses the Queue node at the build.
 Graph with_queue() {
   Graph g = input_output_with([](Graph& graph) { graph.add(nodes::Queue()); });
   return g;
@@ -149,7 +150,7 @@ void dataflow_case() {
 void gstreamer_case() {
   require(backend() == RunBackend::GStreamer, "the default is GStreamer");
   Graph g = with_queue();
-  Run run = g.build();
+  Run run = g.build(TensorList{bytes4(1)});
   require_neat_error([] { set_backend(RunBackend::Dataflow); }, error_codes::kOptionOutOfRange,
                      "this one runs on the GStreamer backend since its first Model was "
                      "constructed or its first Graph built");
@@ -200,7 +201,7 @@ void race_case() {
   {
     Graph g = with_queue();
     try {
-      Run run = g.build();
+      Run run = g.build(TensorList{bytes4(1)});
       run.close();
     } catch (const NeatError& e) {
       on_dataflow = std::string(e.what()).find("node Queue is not carried by the Dataflow "
