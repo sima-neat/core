@@ -752,6 +752,7 @@ inline std::string resolve_yolov8s_strict_mpk_tar(const fs::path& root = {}) {
   // the same cache, without searching the folders that held the rejected one again.
   const fs::path cached(modelzoo);
   const fs::path cache_dir = cached.parent_path();
+  const ScopedFileLock lock(cached.string() + ".lock");
   std::error_code ec;
   fs::remove(cached, ec);
   if (run_modelzoo_get_noninteractive("yolo_v8s", cache_dir) != 0)
