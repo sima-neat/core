@@ -111,8 +111,9 @@ public:
     return run_.core;
   }
 
-  // Binds now when `seed` (one tensor: a leaf; several: a record) or the declaration gives the
-  // spec; otherwise the first push binds. Throws NeatError when this backend cannot carry it.
+  // Binds now when `seed` (one tensor: a leaf; several: a record), the declaration or, in front of
+  // a model route, what the route's first stage takes gives the spec; otherwise the first push
+  // binds. Throws NeatError when this backend cannot carry it.
   void bind_at_build(std::span<const Tensor> seed);
 
   // One item into the input: Core's checks, the binding (the input's first item binds it), then

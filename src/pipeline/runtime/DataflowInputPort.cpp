@@ -192,6 +192,12 @@ void DataflowInputPort::bind_at_build(std::span<const Tensor> seed) {
     seed = std::span<const Tensor>(&view, 1);
   }
   std::optional<DataflowInputBinding> binding = bind_dataflow_item(config_.input, seed, &why);
+  if (!binding && why.empty() && seed.empty() && config_.model) {
+    // A model route binds at the build from what its first stage takes, so that the model, its
+    // kernels and the pools are the build's (a refusal is the build's error, never a push's).
+    binding =
+        bind_dataflow_item(dataflow_model_input_contract(*config_.model, config_.input), {}, &why);
+  }
   if (!why.empty()) {
     pipeline_internal::throw_dataflow_not_carried(
         run_.config.where, {error_codes::kInputShape,

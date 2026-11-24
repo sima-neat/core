@@ -10,8 +10,9 @@
 //     compiled and its Session started where the input binds at the build): that error, whose
 //     action is the GStreamer backend unless GStreamer would meet the same error (the error
 //     table's backend_action, DataflowErrorMap.h).
-// An input that binds at its first push (no seed, no declared shape) compiles its Plan there: an
-// error then is the push's, on the Dataflow Run that exists, and names the push.
+// An input that binds at its first push (no seed, no declared shape, no model route in front)
+// compiles its Plan there: an error then is the push's, on the Dataflow Run that exists, and names
+// the push.
 // Compiles without the runtime: a Run for Dataflow then fails.
 
 #include "pipeline/runtime/DataflowGraphCompiler.h"

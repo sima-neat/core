@@ -158,8 +158,9 @@ inline std::string dataflow_names_text(const std::vector<std::string>& names) {
 
 // Builds the Run state. A seed binds the (one) input's spec now (one tensor: a leaf; several: a
 // record); without one, each input whose declaration (an image, or a declared shape) gives its
-// spec binds now and every other input binds at its own first push. Throws NeatError on a compile
-// error.
+// spec binds now, an input in front of a model route binds now from what the route's first stage
+// takes (dataflow_model_input_contract), and every other input binds at its own first push. Throws
+// NeatError on a compile error.
 std::unique_ptr<DataflowRunState> make_dataflow_run_state(RunCore& core, DataflowRunConfig config,
                                                           std::span<const Tensor> seed);
 

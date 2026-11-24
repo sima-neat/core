@@ -262,6 +262,14 @@ std::shared_ptr<void> load_dataflow_model_route(const DataflowModelRoute& route,
 std::string bind_dataflow_model_input(const DataflowModelRoute& route,
                                       DataflowInputBinding& binding);
 
+// What the route's first stage takes, as an Input's declaration that binds the input without a
+// seed: an image of the route's frame format bounded by its port's bound, or, in front of a
+// kernel stage (which takes a pushed tensor with leading unit axes as its own), that stage's
+// tensor (its shape and dtype), in `declared`'s memory. `declared` itself otherwise: an image
+// stage planned for a declared frame size, an MLA stage first (a pushed tensor binds it as it is).
+InputOptions dataflow_model_input_contract(const DataflowModelRoute& route,
+                                           const InputOptions& declared);
+
 // `tensor` as the route's first stage takes it: `tensor` itself, or, on a route whose first stage
 // is a kernel, a view of the same storage with the stage's shape when the tensor's differs from it
 // by leading unit axes only (a dense, contiguous tensor); `view` holds it.

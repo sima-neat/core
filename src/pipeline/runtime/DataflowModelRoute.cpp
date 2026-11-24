@@ -1414,6 +1414,30 @@ plan_dataflow_model_route(const std::vector<std::shared_ptr<Node>>& route,
   return plan_dataflow_route_stages(*manifest, declared, seed, ev74_obstacle, why);
 }
 
+InputOptions dataflow_model_input_contract(const DataflowModelRoute& route,
+                                           const InputOptions& declared) {
+  InputOptions contract;
+  contract.memory_policy = declared.memory_policy;
+  contract.pool_max_buffers = declared.pool_max_buffers;
+#if defined(SIMANEAT_WITH_DATAFLOW_SOC_KERNELS)
+  if (route.frames) {
+    const DataflowFrames& frames = *route.frames;
+    contract.payload_type = PayloadType::Image;
+    contract.format = frames.format;
+    contract.max_width = static_cast<int>(frames.max_width);
+    contract.max_height = static_cast<int>(frames.max_height);
+    return contract;
+  }
+#endif
+  if (route.frame_input || !route.kernel_input || route.input_shape.empty()) {
+    return declared;
+  }
+  contract.payload_type = PayloadType::Tensor;
+  contract.shape = route.input_shape;
+  contract.dtype = route.input_dtype;
+  return contract;
+}
+
 std::string bind_dataflow_model_input(const DataflowModelRoute& route,
                                       DataflowInputBinding& binding) {
   // The first stage's input: the MLA's (an MLA-only route), or the model's public tensor. In
