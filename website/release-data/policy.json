@@ -303,13 +303,13 @@
     },
     {
       "path": "website/i18n/uk/docusaurus-plugin-content-docs/current/getting-started/dev-environment/index.md",
-      "line": "| Ubuntu 22.04 і 24.04 за допомогою Docker Engine. | `arm64` | Так | Model Compiler версії 2.1.2 і новіші. |",
+      "line": "| Ubuntu 22.04 і 24.04 через Docker Engine | `arm64` | Так | Model Compiler 2.1.2 і новіші |",
       "count": 1,
       "reason": "Historical compatibility or version-specific example/minimum requirement"
     },
     {
       "path": "website/i18n/uk/docusaurus-plugin-content-docs/current/getting-started/dev-environment/index.md",
-      "line": "| macOS 15.5 або новішої версії за допомогою Colima. | `arm64` | Так | Model Compiler версії 2.1.2 і новішої; встановіть його в межах Palette SDK. |",
+      "line": "| macOS 15.5 або новіша через Colima | `arm64` | Так | Model Compiler 2.1.2 і новіші; встановлюйте його всередині Palette SDK |",
       "count": 1,
       "reason": "Historical compatibility or version-specific example/minimum requirement"
     },
@@ -339,7 +339,7 @@
     },
     {
       "path": "website/i18n/uk/docusaurus-plugin-content-docs/current/reference/elxr-sdk-host-setup/windows.md",
-      "line": "Після ввімкнення ICS, Windows зазвичай призначає спільному адаптеру адресу в мережі `192.168.137.0/24`.",
+      "line": "Після ввімкнення ICS Windows зазвичай призначає спільному адаптеру адресу з мережі `192.168.137.0/24`. Знайдіть IPv4-адресу DevKit з WSL або з консолі DevKit, а потім перевірте доступ через SSH з WSL:",
       "count": 1,
       "reason": "Network address example, not a release version"
     },
@@ -519,7 +519,7 @@
     },
     {
       "path": "website/i18n/uk/docusaurus-plugin-content-docs/current/getting-started/dev-environment/install-the-environment.md",
-      "line": "SDK 2.0.0, 2.1.2.0 та 2.1.2.1 потребують окремих команд завантаження образу й налаштування. Лише для цих випусків використовуйте [Двохетапну інсталяцію SDK](/reference/two-step-sdk-installation/).",
+      "line": "SDK 2.0.0, 2.1.2.0 і 2.1.2.1 потребують окремих команд для завантаження образу та налаштування. Лише для цих випусків див. [Двоетапне встановлення SDK](/reference/two-step-sdk-installation/).",
       "count": 1,
       "reason": "Fixed SDK version boundary or legacy two-step installation scope"
     },
