@@ -112,8 +112,6 @@ void table() {
 void thrown() {
   const std::string backend =
       pipeline_internal::dataflow_backend_action(pipeline_internal::DataflowRemedy::Backend);
-  const std::string rebuild = pipeline_internal::dataflow_backend_action(
-      pipeline_internal::DataflowRemedy::BackendAndRebuild);
   const df::Error file =
       error(df::ErrorCode::InvalidArgument, df::Origin::Runner, df::Phase::Prepare, df::kNoOperator,
             "MLA: the file is not a model the MLA loads (no such file, or not a compiled model)");
@@ -142,8 +140,8 @@ void thrown() {
       {DataflowErrorSite::FirstPush, "Run::push",
        "Hint: The input was bound by this push: declare the input's shape or build the Run with "
        "a seed, and this is found at Graph::build. " +
-           rebuild},
-      {DataflowErrorSite::Running, "Run::push", "Hint: " + rebuild},
+           backend},
+      {DataflowErrorSite::Running, "Run::push", "Hint: " + backend},
   };
   for (const auto& s : sites) {
     try {

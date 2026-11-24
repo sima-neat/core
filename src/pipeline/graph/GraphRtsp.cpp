@@ -16,6 +16,7 @@
 
 #include "pipeline/NeatError.h"
 #include "pipeline/ErrorCodes.h"
+#include "pipeline/internal/BackendSetting.h"
 #include "pipeline/internal/ErrorUtil.h"
 #include "pipeline/GraphReport.h"
 #include "internal/InputStream.h"
@@ -391,6 +392,9 @@ void RtspServerHandle::stop() {
 }
 
 RtspServerHandle Graph::run_rtsp(const RtspServerOptions& opt) {
+  pipeline_internal::require_gstreamer_backend(
+      "Graph::run_rtsp", {error_codes::kPipelineShape, "this graph's RTSP server",
+                          "it streams the graph's H.264 output over RTSP"});
   if (opt.port < 0 || opt.port > 65535)
     pipeline_internal::error_util::throw_session_error(
         error_codes::kOptionOutOfRange, "RtspServerOptions.port must be in [0, 65535].");

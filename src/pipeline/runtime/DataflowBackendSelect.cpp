@@ -1,4 +1,5 @@
-// Which runtime a Graph::build() takes: RunOptions::backend and SIMA_NEAT_BACKEND decide.
+// Which runtime a Graph::build() takes: an explicit RunOptions::backend, else SIMA_NEAT_BACKEND,
+// else the process's backend (set_backend, BackendSetting.h), which every build fixes.
 // Graph::build's four entries call DataflowGraphAccess::build before gst_init_once(): nullptr is
 // a Run for GStreamer, by that choice alone. A Run for Dataflow is built on Dataflow or the build
 // throws; nothing is built on GStreamer in its place:
@@ -19,6 +20,7 @@
 #include "pipeline/ErrorCodes.h"
 #include "pipeline/Graph.h"
 #include "pipeline/graph/internal/GraphBuildInternal.h"
+#include "pipeline/internal/BackendSetting.h"
 #include "pipeline/internal/DataflowNotCarried.h"
 #include "pipeline/internal/EnvUtil.h"
 #include "pipeline/internal/ErrorUtil.h"
@@ -89,14 +91,19 @@ void trace_choice(const char* where, const char* backend, const std::string& det
                detail.c_str());
 }
 
-// Whether this Run is for Dataflow: RunOptions::backend says it, and RunBackend::Auto reads
-// SIMA_NEAT_BACKEND.
+// Whether this Run is for Dataflow: RunOptions::backend says it; RunBackend::Auto reads
+// SIMA_NEAT_BACKEND and, without it, the process's backend. Every build fixes the process's
+// backend (use_backend).
 bool wants_dataflow(const RunOptions& opt) {
+  const RunBackend process = pipeline_internal::use_backend();
   if (opt.backend != RunBackend::Auto) {
     return opt.backend == RunBackend::Dataflow;
   }
   const std::string env = backend_env();
-  if (env.empty() || env == "auto" || env == "gstreamer") {
+  if (env.empty()) {
+    return process == RunBackend::Dataflow;
+  }
+  if (env == "auto" || env == "gstreamer") {
     return false;
   }
   if (env != "dataflow") {

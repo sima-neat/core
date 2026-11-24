@@ -146,9 +146,7 @@ std::string dataflow_error_text(const df::Error& error, std::string_view where) 
   }
   if (mapping.backend_action &&
       (site != DataflowErrorSite::Running || error.code == df::ErrorCode::Unsupported)) {
-    add(dataflow_backend_action(site == DataflowErrorSite::Build
-                                    ? DataflowRemedy::Backend
-                                    : DataflowRemedy::BackendAndRebuild));
+    add(dataflow_backend_action(DataflowRemedy::Backend));
   }
   error_util::throw_session_error(mapping.code, summary, {}, action);
 }

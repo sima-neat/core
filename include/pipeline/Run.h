@@ -279,8 +279,8 @@ struct RunOptions {
   /**
    * @brief Runtime that executes this Run (see `RunBackend`).
    *
-   * Read by `Graph::build()`; `Auto` keeps the GStreamer runtime unless
-   * `SIMA_NEAT_BACKEND=dataflow` is set and the graph qualifies.
+   * Read by `Graph::build()`; `Auto` takes `SIMA_NEAT_BACKEND` when it is set, and otherwise the
+   * process's backend (`simaai::neat::set_backend`, `neat/runtime.h`).
    */
   RunBackend backend = RunBackend::Auto;
 };

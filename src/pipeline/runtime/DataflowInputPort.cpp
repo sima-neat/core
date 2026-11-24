@@ -231,8 +231,7 @@ DataflowInputPort::Bound* DataflowInputPort::bind_first(std::span<const Tensor> 
     pipeline_internal::throw_dataflow_not_carried(
         where, {error_codes::kInputShape,
                 "the first item pushed into Input " + dataflow_names_text(config_.names),
-                why.empty() ? std::string("it binds no spec") : why,
-                pipeline_internal::DataflowRemedy::BackendAndRebuild});
+                why.empty() ? std::string("it binds no spec") : why});
   }
   return bind_locked(std::move(*binding), where, /*at_build=*/false);
 }

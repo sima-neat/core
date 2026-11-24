@@ -12,7 +12,10 @@ namespace {
 
 // How the program selects the GStreamer backend: the one place that names it.
 constexpr const char* kSelectGStreamer =
-    "build this Run with RunOptions::backend = RunBackend::GStreamer";
+    "To run this program on the GStreamer backend, call "
+    "simaai::neat::set_backend(simaai::neat::RunBackend::GStreamer) (Python: "
+    "pyneat.set_backend(pyneat.RunBackend.GStreamer)) before the program constructs its first "
+    "Model or builds its first Graph.";
 
 } // namespace
 
@@ -22,13 +25,9 @@ std::string dataflow_not_carried_sentence(const DataflowNotCarried& what) {
 }
 
 std::string dataflow_backend_action(DataflowRemedy remedy) {
-  std::string action = std::string("To run this program on the GStreamer backend, ") +
-                       kSelectGStreamer + ".";
+  std::string action = kSelectGStreamer;
   switch (remedy) {
   case DataflowRemedy::Backend:
-    break;
-  case DataflowRemedy::BackendAndRebuild:
-    action += " A Run keeps the backend it was built on.";
     break;
   case DataflowRemedy::BackendOrFirmware:
     action += " Or select the Kernels firmware on the board (package simaai-kernels-firmware) "

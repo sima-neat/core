@@ -26,6 +26,7 @@
 #include "pipeline/ErrorCodes.h"
 #include "pipeline/NeatError.h"
 #include "pipeline/GraphReport.h"
+#include "pipeline/internal/BackendSetting.h"
 #include "pipeline/internal/BuildTiming.h"
 #include "pipeline/internal/EnvUtil.h"
 #include "pipeline/internal/RealtimeLinkOptions.h"
@@ -3670,6 +3671,10 @@ SourceStreamBuildContext session_build_fused_realtime_source_stream_internal(
 }
 
 void Graph::run() {
+  pipeline_internal::require_gstreamer_backend(
+      "Graph::run", {error_codes::kPipelineShape, "this source graph",
+                     "it has no public Input: its frames come from its source node, and its "
+                     "tensor callback takes each output"});
   pipeline_internal::ux::ScopedVerboseContext verbose_ctx(opt_.verbose);
   gst_init_once();
 

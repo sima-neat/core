@@ -30,11 +30,9 @@ namespace simaai::neat::pipeline_internal {
 
 // What follows "Hint: ".
 enum class DataflowRemedy : unsigned char {
-  /// The program selects the GStreamer backend.
+  /// The program selects the GStreamer backend (neat/runtime.h: set_backend). A process runs on
+  /// one backend, so this is the action for an error raised on a Run that exists as well.
   Backend,
-  /// The same, said of a Run that exists (a frame, a call on the Run): the Run is built again,
-  /// since a Run keeps the backend it was built on.
-  BackendAndRebuild,
   /// The board's EV74 does not run the Kernels firmware: the GStreamer backend, or that firmware.
   /// The sentence reads "... is not carried by the Dataflow backend on this board: ...".
   BackendOrFirmware,

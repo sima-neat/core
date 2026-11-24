@@ -33,8 +33,8 @@ struct DataflowErrorMapping {
 enum class DataflowErrorSite : unsigned char {
   /// While a Run is built (Graph::build): a row's backend action is DataflowRemedy::Backend.
   Build,
-  /// While an input that binds at its first push is built there: the same action for a Run that
-  /// exists (DataflowRemedy::BackendAndRebuild), and how to find the error at the build.
+  /// While an input that binds at its first push is built there: the same action, and how to
+  /// find the error at the build.
   FirstPush,
   /// On a running Session (a push, an alloc): only what the backend does not implement
   /// (ErrorCode::Unsupported) names the backend action; a failure of a device or of the

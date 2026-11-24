@@ -5829,6 +5829,14 @@ NB_MODULE(_pyneat_core, m) {
   // build_info() preferred over version_info() — returns a dict of the three version strings.
   m.def("prewarm_runtime", &simaai::neat::prewarm_runtime,
         nb::call_guard<nb::gil_scoped_release>());
+  m.def("set_backend", &simaai::neat::set_backend, "backend"_a,
+        "Select the backend that runs this process's Models and Graphs (RunBackend). Call it "
+        "before the program constructs its first Model or builds its first Graph: that one fixes "
+        "the backend for the rest of the process. Afterwards the same value does nothing and the "
+        "other raises NeatError. RunBackend.Dataflow raises NeatError in a build without the "
+        "Dataflow backend.");
+  m.def("backend", &simaai::neat::backend,
+        "The backend this process's Models and Graphs run on (RunBackend).");
   m.def("build_info", []() {
     nb::dict info;
     info["version"] = ::sima_neat_version();

@@ -25,6 +25,7 @@
 #include "nodes/sima/SimaBoxDecode.h"
 #include "nodes/sima/Tess.h"
 #include "pipeline/Graph.h"
+#include "pipeline/internal/BackendSetting.h"
 #include "pipeline/internal/Diagnostics.h"
 #include "pipeline/internal/EnvUtil.h"
 #include "pipeline/internal/InputPolicy.h"
@@ -4762,6 +4763,8 @@ struct Model::Impl {
 Model::Model(const std::string& model_path) : Model(model_path, Options{}) {}
 
 Model::Model(const std::string& model_path, const Options& opt) {
+  // The first Model fixes the process's backend (set_backend), on which it builds its Runs.
+  (void)pipeline_internal::use_backend();
   impl_ = std::make_unique<Impl>(model_path, opt);
 }
 

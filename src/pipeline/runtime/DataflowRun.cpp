@@ -327,8 +327,7 @@ public:
   bool push_holder(const std::shared_ptr<void>&, bool, const char* where) override {
     pipeline_internal::throw_dataflow_not_carried(
         where, {error_codes::kPipelineShape, "a buffer holder",
-                "it is a GStreamer buffer (push the Tensor or the Sample instead)",
-                pipeline_internal::DataflowRemedy::BackendAndRebuild});
+                "it is a GStreamer buffer (push the Tensor or the Sample instead)"});
   }
 
   PullStatus pull(std::optional<std::string_view> output, int timeout_ms, Sample& out,

@@ -19,6 +19,7 @@
 #include "pipeline/ErrorCodes.h"
 #include "internal/InputStream.h"
 #include "internal/InputStreamUtil.h"
+#include "pipeline/internal/BackendSetting.h"
 #include "pipeline/internal/Diagnostics.h"
 #include "pipeline/internal/GstDataAdapter.h"
 #include "pipeline/internal/GstDiagnosticsUtil.h"
@@ -110,9 +111,17 @@ int resolve_validate_timeout_ms(const ValidateOptions& opt, int default_timeout_
   return std::max(10, env_int("SIMA_GST_VALIDATE_TIMEOUT_MS", default_timeout_ms));
 }
 
+// Graph::validate prerolls the graph's GStreamer pipeline: the GStreamer backend's call only.
+void require_validate_backend(const char* where) {
+  pipeline_internal::require_gstreamer_backend(
+      where, {error_codes::kPipelineShape, "the validation of this graph",
+              "it prerolls the graph as a GStreamer pipeline"});
+}
+
 } // namespace
 
 GraphReport Graph::validate(const ValidateOptions& opt) const {
+  require_validate_backend("Graph::validate");
   gst_init_once();
 
   if (composition_ && !composition_->is_linear()) {
@@ -294,6 +303,7 @@ GraphReport Graph::validate(const ValidateOptions& opt) const {
 }
 
 GraphReport Graph::validate(const ValidateOptions& opt, const cv::Mat& input) const {
+  require_validate_backend("Graph::validate(input)");
   gst_init_once();
 
   const auto nodes = linear_nodes_snapshot("Graph::validate(input)");

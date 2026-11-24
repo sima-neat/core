@@ -714,6 +714,30 @@ if (SIMANEAT_DATAFLOW_SOURCE_DIR AND
   set_property(TEST unit_dataflow_backend_test APPEND PROPERTY LABELS "unit;dataflow")
 endif()
 
+# The process's backend (neat/runtime.h: set_backend, backend). The first Model constructed or
+# Graph built fixes it, so each case runs as a process of its own (--case=<name>).
+if (NOT unit_backend_setting_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  add_pipeline_test(unit_backend_setting_test
+    SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/unit_testing/unit_backend_setting_test.cpp
+    ARGS --case=gstreamer)
+  set_property(TEST unit_backend_setting_test APPEND PROPERTY LABELS "unit")
+  if (SIMANEAT_DATAFLOW_SOURCE_DIR)
+    foreach(_setting_case dataflow race)
+      simaneat_add_test(NAME unit_backend_setting_test_${_setting_case}
+        COMMAND unit_backend_setting_test --case=${_setting_case})
+      simaneat_append_ctest_env(unit_backend_setting_test_${_setting_case})
+      set_property(TEST unit_backend_setting_test_${_setting_case} APPEND PROPERTY LABELS
+        "strict;unit;dataflow")
+    endforeach()
+  else()
+    simaneat_add_test(NAME unit_backend_setting_test_without_dataflow
+      COMMAND unit_backend_setting_test --case=without_dataflow)
+    simaneat_append_ctest_env(unit_backend_setting_test_without_dataflow)
+    set_property(TEST unit_backend_setting_test_without_dataflow APPEND PROPERTY LABELS
+      "strict;unit")
+  endif()
+endif()
+
 # H0c: graphs of several public Inputs and Outputs on the Dataflow backend (named endpoints, fan-out
 # by handle reuse, each Output's own link), on the public API only (RunBackend::Dataflow).
 if (SIMANEAT_DATAFLOW_SOURCE_DIR AND

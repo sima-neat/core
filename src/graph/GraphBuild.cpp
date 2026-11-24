@@ -1,5 +1,7 @@
 #include "graph/GraphBuild.h"
 #include "internal/GraphRunState.h"
+#include "pipeline/ErrorCodes.h"
+#include "pipeline/internal/BackendSetting.h"
 #include "pipeline/internal/UxLogging.h"
 #include "pipeline/runtime/ExecutionGraphPlan.h"
 #include "pipeline/runtime/RunCore.h"
@@ -31,6 +33,9 @@ simaai::neat::runtime::GraphRuntimeOptions make_graph_runtime_options(const Grap
 } // namespace
 
 GraphRun build(Graph graph, const GraphRunOptions& opt) {
+  pipeline_internal::require_gstreamer_backend(
+      "graph::build", {error_codes::kPipelineShape, "this runtime graph",
+                       "it runs as GStreamer pipeline segments and runtime stage nodes"});
   if (opt.push_timeout_ms < 0) {
     throw std::invalid_argument("graph::build: GraphRunOptions.push_timeout_ms must be >= 0");
   }

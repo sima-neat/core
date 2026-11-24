@@ -1592,8 +1592,7 @@ constexpr const char* kFrameWithUpstreamTransform =
 
 [[noreturn]] void throw_frame_not_carried(const char* where, const char* fact) {
   pipeline_internal::throw_dataflow_not_carried(
-      where, {error_codes::kInputShape, "this frame", fact,
-              pipeline_internal::DataflowRemedy::BackendAndRebuild});
+      where, {error_codes::kInputShape, "this frame", fact});
 }
 
 } // namespace
