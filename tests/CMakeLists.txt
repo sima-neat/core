@@ -830,6 +830,23 @@ if (NOT unit_run_statistics_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
     set_property(TEST unit_run_statistics_test_dataflow APPEND PROPERTY LABELS "unit;dataflow")
   endif()
 endif()
+# How many pulled outputs an application may hold while it pushes, and what the next pull says once
+# it holds them all, on both backends through Model::build + Model::Runner of a YOLOv8 detection
+# package (--model-package, SIMA_TEST_BOXDECODE_MODEL_PACKAGE or SIMA_YOLO_TAR), with the EV74 on
+# the Kernels firmware: a long test that skips without them.
+if (NOT unit_run_held_outputs_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  add_pipeline_test_long(unit_run_held_outputs_test
+    SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/unit_testing/unit_run_held_outputs_test.cpp)
+  set_tests_properties(unit_run_held_outputs_test PROPERTIES TIMEOUT 600)
+  set_property(TEST unit_run_held_outputs_test APPEND PROPERTY LABELS "unit")
+  if (SIMANEAT_DATAFLOW_SOURCE_DIR)
+    simaneat_add_test(NAME unit_run_held_outputs_test_dataflow
+      COMMAND unit_run_held_outputs_test --backend=dataflow)
+    simaneat_append_ctest_env(unit_run_held_outputs_test_dataflow)
+    set_tests_properties(unit_run_held_outputs_test_dataflow PROPERTIES TIMEOUT 600)
+    set_property(TEST unit_run_held_outputs_test_dataflow APPEND PROPERTY LABELS "unit;dataflow")
+  endif()
+endif()
 # The public Graph header without GStreamer's headers: no Run is built, so no backend is involved.
 if (NOT unit_graph_header_no_gstreamer_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
   add_pipeline_test(unit_graph_header_no_gstreamer_test

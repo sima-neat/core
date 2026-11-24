@@ -761,6 +761,17 @@ private:
       const pipeline_internal::DataflowErrorMapping mapping =
           pipeline_internal::map_dataflow_error(*error);
       if (mapping.status == PullStatus::Timeout) {
+        if (timeout_ms != 0) {
+          if (const std::string held = held_outputs(*port); !held.empty()) {
+            // The application holds every output the route can publish into: GStreamer's answer
+            // when its zero-copy loan credits run out. The Run goes on; a release lets the route
+            // publish again.
+            error_util::set_pull_error(err, error_codes::kRuntimePull,
+                                       where() + ": zero-copy output loan credits exhausted: " +
+                                           held + "; release older zero-copy outputs and retry");
+            return PullStatus::Timeout;
+          }
+        }
         return timed_out(timeout_ms, where(), err);
       }
       if (mapping.status == PullStatus::Closed) {
@@ -791,6 +802,23 @@ private:
     message = std::get<df::Message>(std::move(pulled));
     taken.published_ns = published_at(*port, message.stamp());
     return PullStatus::Ok;
+  }
+
+  // Why a pull found nothing in time when the application is the reason: it holds every slot of
+  // a pool of the input's Session (the pulled zero-copy outputs it has not released), so the
+  // route cannot publish another output. Empty otherwise. Cold: read at a timeout only.
+  static std::string held_outputs(const DataflowInputPort& port) {
+    const std::optional<df::SessionReport> report = port.report();
+    if (!report) {
+      return {};
+    }
+    for (const df::PoolReport& pool : report->pools) {
+      if (pool.capacity > 0U && pool.in_flight >= pool.capacity && pool.retained > 0U) {
+        return "the application holds " + std::to_string(pool.retained) + " of the " +
+               std::to_string(pool.capacity) + " output buffers of this Run";
+      }
+    }
+    return {};
   }
 
   // The instant the item behind a pulled message was published into its input: a model route's
