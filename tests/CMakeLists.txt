@@ -964,6 +964,23 @@ if (SIMANEAT_DATAFLOW_SOURCE_DIR AND
   simaneat_add_backend_pair(unit_dataflow_frame_route_test)
 endif()
 
+# A Model's own entry points on the Dataflow backend: Model::build (with a seed and without), the
+# Runner's verbs, Model::run and Model::execution_plan of a YOLOv8 detection model, against
+# GStreamer's record for the same calls (simaneat_add_backend_pair), public API only. Needs the
+# EV74 on the Kernels firmware and a compiled YOLOv8 detection package (--model-package,
+# SIMA_TEST_BOXDECODE_MODEL_PACKAGE or SIMA_YOLO_TAR; it downloads nothing), so it is a long test
+# that skips without one.
+if (SIMANEAT_DATAFLOW_SOURCE_DIR AND
+    NOT unit_dataflow_model_entry_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  simaneat_backend_pair_args(unit_dataflow_model_entry_test _pair_args)
+  add_pipeline_test_long(unit_dataflow_model_entry_test
+    SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/unit_testing/unit_dataflow_model_entry_test.cpp
+    ARGS ${_pair_args})
+  set_tests_properties(unit_dataflow_model_entry_test PROPERTIES TIMEOUT 600)
+  set_property(TEST unit_dataflow_model_entry_test APPEND PROPERTY LABELS "unit;dataflow")
+  simaneat_add_backend_pair(unit_dataflow_model_entry_test)
+endif()
+
 # The Dataflow backend's model-route planner as a pure function: every decline it can return,
 # on manifests Core renders for real models and on copies of them changed in one field. No device
 # is opened. It needs a YOLOv8 detection package (--model-package,
