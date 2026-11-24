@@ -13,7 +13,7 @@ import re
 from windows_candidate import _read_json as read_object
 from windows_candidate import (
     dependency_identity, msi_version, scheduler_platform_runtime, sha256, validate_candidate)
-from windows_release import customer_target, release_tag
+from windows_release import core_version_matches, customer_target, release_tag
 from qualify_windows_hardware import PERF_MAX_MEAN_LATENCY_MS, PERF_MIN_THROUGHPUT_FPS
 from windows_hardware_assets import asset_manifest_sha256, read_asset_manifest
 
@@ -96,7 +96,7 @@ def verify(candidate_dir: Path, qualification_path: Path, expected_commit: str,
            require_signatures: bool, require_genai: bool = False,
            require_release: bool = False,
            asset_manifest_path: Path | None = None,
-           require_release_qualification: bool = False) -> dict:
+           require_release_qualification: bool = False, ref: str = "") -> dict:
   candidate = validate_candidate(candidate_dir)
   if candidate.core_commit != expected_commit:
     raise ValueError(
@@ -281,7 +281,8 @@ def verify(candidate_dir: Path, qualification_path: Path, expected_commit: str,
       or not re.fullmatch(r"[0-9a-f]{64}", str(card_candidate.get("worker_sha256", "")))
       or not re.fullmatch(r"[0-9a-f]{64}", str(card_candidate.get("bundle_sha256", "")))
       or not isinstance(card_candidate.get("installed"), dict)
-      or candidate.core_commit[:12] not in str(card_candidate["installed"].get("sima-neat", ""))):
+      or not core_version_matches(
+          card_candidate["installed"].get("sima-neat", ""), candidate.core_commit, ref)):
     raise ValueError("hardware qualification did not use the exact Linux card candidate")
   tests = qualification.get("tests")
   if (not isinstance(tests, dict) or not tests.get("cpp") or not tests.get("python")):
@@ -456,6 +457,7 @@ def main() -> None:
   parser.add_argument("--candidate", type=Path, required=True)
   parser.add_argument("--asset-manifest", type=Path, required=True)
   parser.add_argument("--expected-commit", required=True)
+  parser.add_argument("--ref", required=True, help="Git ref name of the selected Core commit")
   parser.add_argument("--qualification", type=Path, required=True)
   parser.add_argument("--require-genai", action="store_true")
   parser.add_argument("--require-release", action="store_true",
@@ -468,7 +470,7 @@ def main() -> None:
   result = verify(
       args.candidate, args.qualification, args.expected_commit,
       args.require_signatures, args.require_genai, args.require_release,
-      args.asset_manifest, args.require_release_qualification)
+      args.asset_manifest, args.require_release_qualification, args.ref)
   args.output.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 

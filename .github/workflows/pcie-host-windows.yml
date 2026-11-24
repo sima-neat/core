@@ -817,6 +817,7 @@ jobs:
             "--candidate", "$env:RUNNER_TEMP\core-windows-candidate",
             "--qualification", "$env:RUNNER_TEMP\core-windows-hardware-evidence\hardware-qualification.json",
             "--expected-commit", $env:GITHUB_SHA,
+            "--ref", $env:GITHUB_REF_NAME,
             "--output", "$env:RUNNER_TEMP\core-windows-hardware-evidence\release-admission.json"
           )
           if ("$env:VALIDATION_ONLY" -ne "true" -or "$env:RELEASE_QUALIFICATION" -eq "true") {

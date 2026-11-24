@@ -41,6 +41,18 @@ def require_release_ref(ref_type: str, ref_name: str, version: object) -> str:
   return expected
 
 
+def core_version_matches(version: object, commit: str, ref: str) -> bool:
+  """Linux's offline metadata_identity rule for a Core package version.
+
+  A branch build's version ends in its commit; a release tag build's version is
+  the bare tag version (tools/compute_version.sh, CMakeLists.txt).
+  """
+  version = str(version)
+  release = (re.fullmatch(r"v[0-9]+\.[0-9]+\.[0-9]+(?:[.-][0-9A-Za-z][0-9A-Za-z.-]*)?", ref)
+             and version == ref[1:])
+  return version.endswith("." + commit[:12]) or bool(release)
+
+
 def short_commit(commit: str) -> str:
   if not re.fullmatch(r"[0-9a-f]{40}", commit):
     raise ValueError(f"expected a full lowercase Git commit: {commit!r}")

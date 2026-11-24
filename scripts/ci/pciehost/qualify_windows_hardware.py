@@ -39,7 +39,8 @@ from windows_candidate import (
     validate_published_package, write_json)
 from windows_hardware_assets import asset_manifest_sha256, verify_asset_manifest
 from windows_release import (
-    customer_target, latest_tag_key, package_prefix, release_tag, short_commit)
+    core_version_matches, customer_target, latest_tag_key, package_prefix, release_tag,
+    short_commit)
 
 
 PASS_CODES = {0}
@@ -131,12 +132,7 @@ def validate_card_bundle(directory: Path, expected_commit: str, ref: str) -> Car
   if (metadata.get("name") != "gh:sima-neat/core/offline"
       or metadata.get("artifact") != CARD_BUNDLE_ARTIFACT):
     raise ValueError("card bundle is not the standalone Core offline card bundle")
-  # Linux's offline metadata_identity rule: branch builds suffix the version with
-  # the commit, while a release tag build carries the bare tag version.
-  version = str(metadata.get("version", ""))
-  release = (re.fullmatch(r"v[0-9]+\.[0-9]+\.[0-9]+(?:[.-][0-9A-Za-z][0-9A-Za-z.-]*)?", ref)
-             and version == ref[1:])
-  if not (version.endswith("." + expected_commit[:12]) or release):
+  if not core_version_matches(metadata.get("version", ""), expected_commit, ref):
     raise ValueError("card bundle version is not tied to the selected Core commit")
   if metadata.get("installer_revision") != expected_commit:
     raise ValueError("card bundle installer revision is not the selected Core commit")
@@ -1778,7 +1774,7 @@ def install_card_candidate(args: argparse.Namespace, bundle: CardBundle, evidenc
             "gst-inspect-1.0 neatpciesrc >/dev/null; gst-inspect-1.0 neatpciesink >/dev/null"),
       evidence / "card-runtime-verify.log", timeout=120)
   installed = card_runtime_packages(args, evidence, "candidate")
-  if args.expected_card_commit[:12] not in installed["sima-neat"]:
+  if not core_version_matches(installed["sima-neat"], args.expected_card_commit, args.ref):
     raise RuntimeError("card did not install the exact Core candidate")
   return installed
 

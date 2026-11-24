@@ -968,7 +968,7 @@ class WindowsCiContracts(unittest.TestCase):
     self.assertIn("name: neat-core-dist", source)
     self.assertIn("--card-candidate", source)
     self.assertIn("--expected-card-commit", source)
-    self.assertIn('"--ref", $env:GITHUB_REF_NAME,', source)
+    self.assertEqual(source.count('"--ref", $env:GITHUB_REF_NAME,'), 2)
     self.assertIn("SIMA_WINDOWS_PCIE_ASSET_MANIFEST", source)
     # The asset manifest is written in-job from the resolved assets, not a variable.
     self.assertNotIn("SIMA_WINDOWS_PCIE_GENAI_ASSET_MANIFEST", source)
@@ -3368,7 +3368,7 @@ class WindowsCiContracts(unittest.TestCase):
       commit = "c" * 40
       bundle = validate_card_bundle(self.card_bundle(root, commit), commit, "feature")
       args = SimpleNamespace(remote_lock_path="/tmp/neat-pcie-card0.lock",
-                             expected_card_commit=commit)
+                             expected_card_commit=commit, ref="feature")
       outputs = {
           "card-offline-space.log": "999999999999\n",
           "card-offline-stage.log": "/var/tmp/neat-offline-Ab3dE6gH\n",
@@ -3407,6 +3407,25 @@ class WindowsCiContracts(unittest.TestCase):
       self.assertEqual(HARDWARE.card_deploy_command(stage, "install"),
                        "timeout --kill-after=30 1500 flock -n /run/neat-offline-install.lock "
                        f"unshare --net python3 -B {stage}/neat-core-offline/deploy.py card install")
+
+      # A release tag's card reports the bare tag version; a branch run's never may.
+      outputs["card-runtime-packages-candidate.log"] = "".join(
+          f"{name} 0.6.2\n" for name in HARDWARE.CARD_RUNTIME_PACKAGES)
+      for ref, accepted in (("v0.6.2", True), ("v0.6.3", False), ("feature", False)):
+        with self.subTest(ref=ref), \
+            mock.patch.object(HARDWARE, "ssh_command", side_effect=lambda _a, cmd: ["ssh", cmd]), \
+            mock.patch.object(HARDWARE, "scp_command", return_value=["scp"]), \
+            mock.patch.object(HARDWARE, "run_logged", side_effect=logged), \
+            mock.patch.object(HARDWARE, "run_sudo_remote", side_effect=privileged):
+          release_args = SimpleNamespace(**{**vars(args), "ref": ref})
+          if accepted:
+            self.assertEqual(install_card_candidate(release_args, bundle, root, {})["sima-neat"],
+                             "0.6.2")
+          else:
+            with self.assertRaisesRegex(RuntimeError, "exact Core candidate"):
+              install_card_candidate(release_args, bundle, root, {})
+      outputs["card-runtime-packages-candidate.log"] = "".join(
+          f"{name} 0.6.2+feature.{commit[:12]}\n" for name in HARDWARE.CARD_RUNTIME_PACKAGES)
 
       # A failed preflight never starts the install phase.
       def failing(_args, command, log, **_kwargs):
@@ -3470,6 +3489,19 @@ class WindowsCiContracts(unittest.TestCase):
     ):
       self.assert_release_rejected(
           "exact Linux card candidate", mutate, require_signatures=False)
+
+  def test_release_gate_accepts_the_release_tag_card_version(self):
+    with tempfile.TemporaryDirectory() as directory:
+      root = Path(directory)
+      commit, _, qualification = self.windows_candidate(root)
+      self.rewrite_json(qualification, lambda value: value["card_candidate"]["installed"].update(
+          {"sima-neat": "0.6.2"}))
+      self.assertTrue(verify(root, qualification, commit, False, ref="v0.6.2")[
+          "hardware_qualified"])
+      for ref in ("v0.6.3", "feature", "0.6.2"):
+        with self.subTest(ref=ref), \
+            self.assertRaisesRegex(ValueError, "exact Linux card candidate"):
+          verify(root, qualification, commit, False, ref=ref)
 
   def test_card_sudo_secret_stays_off_command_line_and_log(self):
     with tempfile.TemporaryDirectory() as directory:
