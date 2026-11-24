@@ -643,10 +643,13 @@ inline std::string resolve_modelzoo_tar(const std::string& model_name,
 
   const char* home = std::getenv("HOME");
   const fs::path home_path = home ? fs::path(home) : fs::path();
+  // In board mode, sima-cli modelzoo get writes <cwd>/<last name part>/<file>.
   const std::vector<fs::path> search_dirs = {
       tmp_dir,
       root,
       fs::current_path(),
+      root / base,
+      fs::current_path() / base,
       fs::temp_directory_path(),
       home_path / ".simaai",
       home_path / ".simaai" / "modelzoo",
