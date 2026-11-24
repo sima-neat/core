@@ -455,6 +455,11 @@ bool boxdecode_supports_detection_transform(BoxDecodeType type) {
   }
 }
 
+bool boxdecode_payload_supports_detection_transform(const BoxDecodeStagePayload& payload) {
+  return boxdecode_supports_detection_transform(payload.decode_type) &&
+         !uses_source_multiclass_ssd_policy(payload);
+}
+
 ResizeMode sam_required_resize(BoxDecodeType type) {
   return type == BoxDecodeType::MobileSam ? ResizeMode::Letterbox : ResizeMode::Stretch;
 }
@@ -505,7 +510,7 @@ BoxDecodeKernelRecipeResult prepare_boxdecode_kernel(const CompiledBoxDecodeCont
   if (geometry.resize == ResizeMode::Crop && p.decode_type != BoxDecodeType::SuperPoint &&
       !((p.decode_type == BoxDecodeType::YoloXSegPose ||
          box_decode_type_is_oriented(p.decode_type) ||
-         boxdecode_supports_detection_transform(p.decode_type)) &&
+         boxdecode_payload_supports_detection_transform(p)) &&
         geometry.model_to_original))
     invalid("crop geometry is not supported by the numerical recipe");
   if (p.topk == 0)
@@ -1052,7 +1057,7 @@ BoxDecodeKernelRecipeResult prepare_boxdecode_kernel(const CompiledBoxDecodeCont
       parameters.push_back({"pose_classes", std::move(pose_classes)});
     }
     if (geometry.model_to_original) {
-      if (!seg_pose && !oriented && !boxdecode_supports_detection_transform(p.decode_type))
+      if (!seg_pose && !oriented && !boxdecode_payload_supports_detection_transform(p))
         invalid("explicit affine is unsupported by this BoxDecode profile/task");
       const auto& t = *geometry.model_to_original;
       parameters.push_back({"model_to_original", k::ParameterArray{t[0], t[1], t[2], t[3]}});

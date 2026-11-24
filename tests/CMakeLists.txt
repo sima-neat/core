@@ -2418,6 +2418,21 @@ if (NOT preproc_roi_user_smoke_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
 endif()
 
 add_pipeline_test(
+  preproc_roi_boxdecode_moving_test
+  e2e_pipelines/obj_detection/preproc_roi_boxdecode_moving_test.cpp
+  e2e_pipelines/e2e_utils.cpp
+  e2e_pipelines/obj_detection/obj_detection_utils.cpp
+  ARGS ${CMAKE_SOURCE_DIR}
+  LOCK_ACCELERATOR
+)
+
+if (NOT preproc_roi_boxdecode_moving_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  set_property(TEST preproc_roi_boxdecode_moving_test APPEND PROPERTY
+    LABELS "e2e;obj_detection;preproc;roi;boxdecode")
+  set_tests_properties(preproc_roi_boxdecode_moving_test PROPERTIES TIMEOUT 120)
+endif()
+
+add_pipeline_test(
   yolov8_variant_route_matrix_test
   e2e_pipelines/obj_detection/yolov8_variant_route_matrix_test.cpp
   e2e_pipelines/e2e_utils.cpp

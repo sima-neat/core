@@ -148,7 +148,7 @@ out = pyneat.stages.preproc(
 - 模型路徑所選擇的資料類型和佈局，包括 BF16 或 INT8，以及密集或鑲嵌式輸出；
 - 每個輸出的 `tensor.semantic.preprocess` 中繼資料。
 
-每個輸出的預處理元資料包含選取的感興趣區域 (ROI)、信箱幾何形狀、正規化/量化/細分旗標，以及一個仿射變換，用於將模型/預處理後的座標映射回原始來源框架座標系統。
+每個輸出的預處理元資料包含選取的感興趣區域 (ROI)、信箱幾何形狀、正規化/量化/細分旗標，以及一個仿射變換，用於將模型/預處理後的座標映射回原始來源框架座標系統。 支援的 ROI 設定檔請參閱 [BoxDecode](/reference/boxdecode_decode_types#crop-coordinate-mapping)。
 
 ## 超出畫面的感興趣區域 (ROI)
 
