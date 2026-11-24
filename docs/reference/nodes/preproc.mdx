@@ -294,7 +294,7 @@ Use these only for manual node construction. Model-managed construction populate
 
 ## Metadata and BoxDecode
 
-`Preproc` writes preprocessing metadata so downstream nodes can invert the image transform correctly. In particular, `SimaBoxDecode` uses this metadata to map detection boxes back to the original image or ROI coordinate space.
+`Preproc` writes preprocessing metadata so downstream nodes can invert the image transform correctly. For [supported profiles](/reference/boxdecode_decode_types#crop-coordinate-mapping), `SimaBoxDecode` reports ROI detections in full source-frame coordinates.
 
 Important metadata fields include:
 

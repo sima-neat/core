@@ -27,10 +27,8 @@ std::vector<fs::path> selected_models(const fs::path& root) {
   if (sima_yolov8_test::env_bool("SIMA_GRAPH_PHASE3_CONNECTED_YOLO_FULL_MATRIX", false)) {
     return graph_phase3_test::resolve_yolov8n_variants_or_throw(root);
   }
-  return {
-      graph_phase3_test::resolve_yolov8n_variant_or_throw(root, "yolov8n_A_W_INT8_MLATess.tar.gz"),
-      graph_phase3_test::resolve_yolov8n_variant_or_throw(root,
-                                                          "yolov8n_A_BF16_W_INT8_MLATess.tar.gz")};
+  return {graph_phase3_test::resolve_yolov8n_variant_or_throw(root, "yolov8n_w8a8_mpk.tar.gz"),
+          graph_phase3_test::resolve_yolov8n_variant_or_throw(root, "yolov8n_w8a16_mpk.tar.gz")};
 }
 
 simaai::neat::Sample run_connected_image_route(const cv::Mat& img_bgr, simaai::neat::Model& model) {
