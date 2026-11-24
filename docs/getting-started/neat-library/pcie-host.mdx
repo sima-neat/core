@@ -556,6 +556,7 @@ Complete these tasks before you install Neat:
 Install `sima-cli` on the computer with internet access. It can run Linux,
 macOS, or Windows. See the [sima-cli installation guide](/tools/sima-cli/).
 
+The version must be a Neat release that has a Windows offline package.
 This example downloads version %%release.core%% on the computer with internet access:
 
 <ShellCommand prompt="host">
@@ -620,6 +621,12 @@ $root = "$env:ProgramFiles\SimaPCIeHost"
 & "$venv\Scripts\python.exe" -m pip check
 & "$venv\Scripts\python.exe" -c "import pyneatpcie as p; print(p.__version__, p.Model)"
 & "$root\bin\neat.cmd"
+```
+
+In a new PowerShell window, open the `neat-offline` folder and set `$cli` again first:
+
+```powershell
+$cli = "$env:USERPROFILE\.sima-cli-env\Scripts\sima-cli.exe"
 ```
 
 To repair the installation, run the install command again. To upgrade, run it

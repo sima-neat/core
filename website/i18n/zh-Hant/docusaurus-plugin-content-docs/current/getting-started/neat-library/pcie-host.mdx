@@ -385,7 +385,7 @@ Windows 套件會在 Windows 11 x64 主機上安裝 Neat PCIe 主機套件。接
 
 在可連上網際網路的電腦上安裝 `sima-cli`。這台電腦可以執行 Linux、macOS 或 Windows。請參閱 [sima-cli 安裝指南](/tools/sima-cli/)。
 
-此範例在可連上網際網路的電腦上下載 %%release.core%% 版本：
+版本必須是提供 Windows 離線套件的 Neat 版本。此範例在可連上網際網路的電腦上下載 %%release.core%% 版本：
 
 <ShellCommand prompt="host">
 sima-cli neat install core/pciehost/windows/amd64@v%%release.core%% -t offline -d ./pcie-offline
@@ -432,6 +432,12 @@ $root = "$env:ProgramFiles\SimaPCIeHost"
 & "$venv\Scripts\python.exe" -m pip check
 & "$venv\Scripts\python.exe" -c "import pyneatpcie as p; print(p.__version__, p.Model)"
 & "$root\bin\neat.cmd"
+```
+
+在新的 PowerShell 視窗中，請先開啟 `neat-offline` 資料夾，並再次設定 `$cli`：
+
+```powershell
+$cli = "$env:USERPROFILE\.sima-cli-env\Scripts\sima-cli.exe"
 ```
 
 若要修復安裝，請再次執行安裝指令。若要升級，請在較新套件的 `neat-offline` 資料夾中執行。若要移除套件，請使用 `& $cli packages list` 顯示的版本：

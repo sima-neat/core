@@ -385,7 +385,7 @@ Neatをインストールする前に、次の作業を完了してください�
 
 インターネットに接続されたコンピューターに`sima-cli`をインストールしてください。このコンピューターはLinux、macOS、Windowsのいずれでもかまいません。[sima-cli インストールガイド](/tools/sima-cli/)を参照してください。
 
-この例では、インターネットに接続されたコンピューターでバージョン %%release.core%% をダウンロードします：
+バージョンには、Windows用のオフラインパッケージがあるNeatリリースを指定してください。この例では、インターネットに接続されたコンピューターでバージョン %%release.core%% をダウンロードします：
 
 <ShellCommand prompt="host">
 sima-cli neat install core/pciehost/windows/amd64@v%%release.core%% -t offline -d ./pcie-offline
@@ -432,6 +432,12 @@ $root = "$env:ProgramFiles\SimaPCIeHost"
 & "$venv\Scripts\python.exe" -m pip check
 & "$venv\Scripts\python.exe" -c "import pyneatpcie as p; print(p.__version__, p.Model)"
 & "$root\bin\neat.cmd"
+```
+
+新しいPowerShellウィンドウでは、先に`neat-offline`フォルダーを開き、`$cli`をもう一度設定してください：
+
+```powershell
+$cli = "$env:USERPROFILE\.sima-cli-env\Scripts\sima-cli.exe"
 ```
 
 インストールを修復するには、インストールコマンドをもう一度実行してください。アップグレードするには、新しいパッケージの`neat-offline`フォルダーで実行してください。パッケージを削除するには、`& $cli packages list`に表示されるバージョンを使用します：

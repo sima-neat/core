@@ -411,7 +411,7 @@ sudo python3 -B install.py
 
 Встановіть `sima-cli` на комп’ютері з доступом до інтернету. На ньому може працювати Linux, macOS або Windows. Див. [посібник зі встановлення sima-cli](/tools/sima-cli/).
 
-У цьому прикладі версію %%release.core%% завантажують на комп’ютері з доступом до інтернету:
+Версія має бути випуском Neat, для якого є офлайн-пакет для Windows. У цьому прикладі версію %%release.core%% завантажують на комп’ютері з доступом до інтернету:
 
 <ShellCommand prompt="host">
 sima-cli neat install core/pciehost/windows/amd64@v%%release.core%% -t offline -d ./pcie-offline
@@ -458,6 +458,12 @@ $root = "$env:ProgramFiles\SimaPCIeHost"
 & "$venv\Scripts\python.exe" -m pip check
 & "$venv\Scripts\python.exe" -c "import pyneatpcie as p; print(p.__version__, p.Model)"
 & "$root\bin\neat.cmd"
+```
+
+У новому вікні PowerShell спочатку відкрийте теку `neat-offline` і знову задайте `$cli`:
+
+```powershell
+$cli = "$env:USERPROFILE\.sima-cli-env\Scripts\sima-cli.exe"
 ```
 
 Щоб відновити встановлення, виконайте команду встановлення ще раз. Щоб оновити його, виконайте її в теці `neat-offline` новішого пакета. Щоб видалити пакет, використайте версію, яку показує `& $cli packages list`:
