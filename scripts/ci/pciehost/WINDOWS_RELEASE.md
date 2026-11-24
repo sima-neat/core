@@ -607,13 +607,15 @@ name the CPython version that `python-version:` installs in CI, and the
 GStreamer pin must be the installer the package requires; contract tests check
 both.
 
-The target installs from a local `windows-msi` metadata file, which needs a
-`sima-cli` that reads resources from the metadata's folder and installs
+The `offline` job needs a pinned `sima-cli` build that contains the offline
+profile. The target installs from a local `windows-msi` metadata file, which
+needs a `sima-cli` that reads resources from the metadata's folder and installs
 `installation.python.wheelhouse` without an index (sima-cli branch
-`feat/windows-msi-offline`). The bundle carries the `sima-cli` that
-`windows_build_inputs.json` pins, so re-pin `sima_cli_version`,
-`sima_cli_publication` and the `sima_cli-*.whl` entry to a publication that
-contains it, and later to the release that does, as described in Runner setup.
+`feat/windows-offline-install`). The job downloads with, and the bundle
+carries, the `sima-cli` that `windows_build_inputs.json` pins, so re-pin
+`sima_cli_version`, `sima_cli_publication` and the `sima_cli-*.whl` entry to a
+publication that contains it, and later to the release that does, as described
+in Runner setup; `publish-offline` accepts only a release or a `main` build.
 Until then the gate's install step fails.
 
 When the pinned `sima-cli` release has a per-user Windows installer, replace
