@@ -125,9 +125,9 @@ inline bool has_tar_gz_suffix(const fs::path& path) {
 
 // Defensive: returns false when `tar -tzf` cannot list the archive (file is
 // truncated, gzip CRC is wrong, content is HTML from a failed download, etc.).
-// Callers of resolve_yolov8s_tar_*() rely on this to reject corrupt cached
-// fixtures that previously slipped through `is_usable_regular_file` (which
-// only checks size>0) and surfaced as ModelPack "tar listing failed".
+// resolve_modelzoo_tar() relies on this to reject a corrupt cached archive
+// that `is_usable_regular_file` (size > 0 only) lets through, which would
+// otherwise surface as ModelPack "tar listing failed".
 inline bool is_listable_tar_gz(const fs::path& tar_path) {
   if (!is_usable_regular_file(tar_path) || !has_tar_gz_suffix(tar_path))
     return false;
@@ -415,39 +415,8 @@ inline bool ensure_writable_directory(const fs::path& dir) {
   return true;
 }
 
-inline fs::path writable_asset_tmp_dir(const fs::path& root, const std::string& fallback_name) {
-  const fs::path primary = root / "tmp";
-  if (ensure_writable_directory(primary))
-    return primary;
-
-  fs::path temp_root;
-  try {
-    temp_root = fs::temp_directory_path();
-  } catch (...) {
-    temp_root = fs::path("/tmp");
-  }
-
-  const std::vector<fs::path> fallbacks = {
-      temp_root / fallback_name,
-      fs::path("/tmp") / fallback_name,
-  };
-  for (const auto& candidate : fallbacks) {
-    if (ensure_writable_directory(candidate))
-      return candidate;
-  }
-
-  // Let the original path surface the concrete create/open error to callers.
-  return primary;
-}
-
-inline int run_modelzoo_get_noninteractive(const std::string& model_name,
-                                           const fs::path& download_dir = {}) {
-  std::string cmd;
-  if (!download_dir.empty()) {
-    // The CLI writes relative to its working directory. Change it in the child only.
-    cmd = "cd " + shell_quote(fs::absolute(download_dir).string()) + " && ";
-  }
-  cmd += "SIMA_CLI_CHECK_FOR_UPDATE=0 sima-cli modelzoo";
+inline int run_modelzoo_get_noninteractive(const std::string& model_name) {
+  std::string cmd = "SIMA_CLI_CHECK_FOR_UPDATE=0 sima-cli modelzoo";
   const std::string version = modelzoo_version();
   if (!version.empty()) {
     cmd += " -v " + shell_quote(version);
@@ -657,7 +626,7 @@ inline std::string resolve_modelzoo_tar(const std::string& model_name,
   // Only validate listability for the *cached* tmp tar (the path that
   // gets handed back to callers and consumed by ModelPack). Candidates
   // discovered via the search loop below may be unit-test fixtures
-  // containing dummy payloads — see unit_asset_utils_readable_model_tar_test.
+  // containing dummy payloads.
   purge_unlistable_tar_gz(local);
   if (is_usable_regular_file(local))
     return local.string();
@@ -722,12 +691,17 @@ inline std::string resolve_modelzoo_tar(const std::string& model_name,
 
 // unit_modelpack_mla_handoff_segment_test runs in the fast lane, where CI prepares
 // no YOLOv8s, and still reaches the Model Zoo branch here. It goes when that test
-// moves to a local manifest fixture.
+// moves to a local manifest fixture. A variable that is set but invalid does not
+// fall back to Model Zoo.
 inline std::string resolve_yolov8s_strict_mpk_tar(const fs::path& root = {}) {
   for (const char* name : {"SIMA_YOLO_TAR", "SIMA_MODEL_TAR"}) {
     const char* value = std::getenv(name);
-    if (value && *value && is_usable_regular_file(value) && is_strict_mpk_tar_gz(value))
+    if (!value || !*value)
+      continue;
+    if (is_usable_regular_file(value) && is_strict_mpk_tar_gz(value))
       return value;
+    std::cerr << name << "=" << value << " is not a .tar.gz MPK with a *_mpk.json\n";
+    return "";
   }
   const std::string modelzoo = resolve_modelzoo_tar("yolo_v8s", root);
   if (!modelzoo.empty() && is_strict_mpk_tar_gz(modelzoo))
