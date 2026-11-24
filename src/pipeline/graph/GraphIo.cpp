@@ -548,7 +548,7 @@ void reject_unsaved_source_color(const std::shared_ptr<Node>& node, const std::s
   if (!pre)
     return;
   const auto* policy = internal::ImageTransformAccess::policy(*pre);
-  if (internal::ImageTransformAccess::input_color(*pre) || (policy && !policy->colorimetry.empty()))
+  if (pre->options().input_color || (policy && !policy->colorimetry.empty()))
     throw_io_error(error_codes::kPipelineShape, "Graph::save", path,
                    "Graph JSON does not store the explicit color of Preproc(options, color) or "
                    "ColorConvert(options, colorimetry).",

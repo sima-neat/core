@@ -341,20 +341,26 @@ void check_from_info() {
 
 void check_yuyv_pipeline() {
   auto opt = mjpeg_options();
-  simaai::neat::UsbCameraCaptureInfo cached;
-  cached.options = opt;
-  cached.camera.decoded_format = FormatTag::YUYV;
+  UsbCameraInfo cached;
+  cached.decoded_format = FormatTag::YUYV;
   require_throws<std::invalid_argument>(
-      [&] { (void)simaai::neat::nodes::UsbCameraInput(opt, cached.camera); }, "capture info format",
+      [&] { (void)simaai::neat::nodes::UsbCameraInput(opt, cached); }, "capture info format",
       "raw info must not silently select legacy MJPEG capture");
   require_throws<std::runtime_error>(
-      [&] { (void)simaai::neat::nodes::UsbCameraInput(opt, simaai::neat::UsbCameraInfo{}); },
+      [&] { (void)simaai::neat::nodes::UsbCameraInput(opt, UsbCameraInfo{}); },
       "as its UsbCameraInfo says", "a default info keeps the MJPEG connection check");
+  cached.format = simaai::neat::UsbCameraFormat::YUYV;
   require_throws<std::invalid_argument>(
       [&] { (void)simaai::neat::nodes::UsbCameraInput(opt, cached); }, "capture info format",
       "MJPEG selection must reject raw capture info");
-  cached.format = simaai::neat::UsbCameraFormat::YUYV;
-  cached.camera.decoded_format = FormatTag::NV16;
+  opt.format = simaai::neat::UsbCameraFormat::YUYV;
+  require_throws<std::invalid_argument>(
+      [&] { (void)simaai::neat::nodes::UsbCameraInput(opt, UsbCameraInfo{}); },
+      "capture info format", "YUYV selection must reject an MJPEG info");
+  require_throws<std::invalid_argument>(
+      [&] { (void)simaai::neat::nodes::UsbCameraInput(opt, cached); }, "describes another mode",
+      "YUYV info must record the selected mode");
+  cached.decoded_format = FormatTag::NV16;
   require_throws<std::invalid_argument>(
       [&] { (void)simaai::neat::nodes::UsbCameraInput(opt, cached); }, "capture info format",
       "YUYV selection must reject decoded MJPEG capture info");
@@ -386,14 +392,12 @@ void check_yuyv_pipeline() {
               spec.depth == 2 && spec.memory == "SimaAI" && spec.byte_size == camera.storage_bytes,
           "raw source preserves storage contract");
   opt.width = 641;
-  require_throws<std::invalid_argument>(
-      [&] { (void)simaai::neat::usb_camera_info(opt, simaai::neat::UsbCameraFormat::YUYV); },
-      "even width", "odd widths reject before device access");
+  require_throws<std::invalid_argument>([&] { (void)simaai::neat::usb_camera_info(opt); },
+                                        "even width", "odd widths reject before device access");
   opt.width = 642;
   opt.framerate_num = std::numeric_limits<std::uint32_t>::max();
-  require_throws<std::invalid_argument>(
-      [&] { (void)simaai::neat::usb_camera_info(opt, simaai::neat::UsbCameraFormat::YUYV); },
-      "signed caps", "caps integer overflow");
+  require_throws<std::invalid_argument>([&] { (void)simaai::neat::usb_camera_info(opt); },
+                                        "signed caps", "caps integer overflow");
 }
 
 void check_rational_intervals() {

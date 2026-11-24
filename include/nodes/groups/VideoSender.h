@@ -88,12 +88,11 @@ private:
   std::optional<int> idr_interval_;
   std::optional<int> quality_;
   int num_buffers_ = -1;
+  EncoderInputPolicy input_policy_ = EncoderInputPolicy::Compatible;
 
   friend simaai::neat::Graph VideoSender(const VideoSenderOptions& opt);
-  friend simaai::neat::Graph VideoSender(const VideoSenderOptions& opt, EncoderInputPolicy policy);
 };
 
 simaai::neat::Graph VideoSender(const VideoSenderOptions& opt);
-simaai::neat::Graph VideoSender(const VideoSenderOptions& opt, EncoderInputPolicy policy);
 
 } // namespace simaai::neat::nodes::groups

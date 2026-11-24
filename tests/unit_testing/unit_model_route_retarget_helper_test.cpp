@@ -5,7 +5,6 @@
 #include "nodes/groups/ModelGroups.h"
 #include "nodes/sima/SimaBoxDecode.h"
 #include "nodes/sima/Preproc.h"
-#include "nodes/sima/internal/ImageTransformPolicy.h"
 #include "pipeline/internal/contract/CompiledNodeContract.h"
 #include "pipeline/BoxDecodeType.h"
 #include "pipeline/graph/internal/GraphBuildInternal.h"
@@ -224,7 +223,9 @@ RUN_TEST(
       ImageColorOptions raw_color;
       raw_color.matrix = ImageColorMatrix::Bt709;
       raw_color.range = ImageYuvRange::Limited;
-      auto authored = nodes::Preproc(PreprocOptions(raw_model), raw_color);
+      PreprocOptions authored_options(raw_model);
+      authored_options.input_color = raw_color;
+      auto authored = nodes::Preproc(authored_options);
       const auto raw_binding = internal::make_model_lineage_binding(
           raw_model, internal::ModelLineageStageRole::ManualPost,
           internal::RequestedPostRouteKind::BoxDecode, "SimaBoxDecode");
@@ -236,7 +237,7 @@ RUN_TEST(
       require(rebuilt_pre != rebuilt_nodes.end() && rebuilt_pre->get() != authored.get(),
               "regression must exercise actual preprocessing replacement");
       const auto* pre = static_cast<const Preproc*>(rebuilt_pre->get());
-      const auto color = internal::ImageTransformAccess::input_color(*pre);
+      const auto& color = pre->options().input_color;
       require(color && color->matrix == ImageColorMatrix::Bt709 &&
                   color->range == ImageYuvRange::Limited &&
                   color->input_siting == raw_color.input_siting,
@@ -246,6 +247,11 @@ RUN_TEST(
       require(raw_compiled.processcvu && raw_compiled.processcvu->payload.input_color &&
                   raw_compiled.processcvu->payload.input_color->range == ImageYuvRange::Limited,
               "retargeted executable contract must carry the authored color");
+      // Without input_color the contract carries none, so preparation rejects YUYV input.
+      CompiledNodeContract uncolored;
+      require(Preproc(PreprocOptions(raw_model)).compile_node_contract({}, &uncolored, &err) &&
+                  uncolored.processcvu && !uncolored.processcvu->payload.input_color,
+              "YUYV Preproc without input_color must not acquire a color");
 
       std::vector<std::shared_ptr<Node>> nodes;
       nodes.push_back(std::make_shared<ManualPostProbeNode>(probe_binding));

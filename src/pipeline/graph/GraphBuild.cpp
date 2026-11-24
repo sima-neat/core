@@ -54,7 +54,6 @@
 #include "nodes/io/Input.h"
 #include "nodes/io/StillImageInput.h"
 #include "nodes/sima/Preproc.h"
-#include "nodes/sima/internal/ImageTransformPolicy.h"
 #include "nodes/common/Output.h"
 
 #include <gst/gst.h>
@@ -3275,17 +3274,16 @@ session_build_materialize_model_bound_nodes(const std::vector<std::shared_ptr<No
       // to the authored node. Rebuilding from Model::Options alone loses it.
       for (std::size_t k = i; k < j; ++k) {
         const auto* authored = dynamic_cast<const Preproc*>(nodes[k].get());
-        const auto color =
-            authored ? internal::ImageTransformAccess::input_color(*authored) : std::nullopt;
-        if (!color)
+        if (!authored || !authored->options().input_color)
           continue;
         auto target = std::find_if(replacement.begin(), replacement.end(), [](const auto& node) {
           return dynamic_cast<const Preproc*>(node.get()) != nullptr;
         });
         if (target == replacement.end())
           throw std::runtime_error("Model retarget cannot preserve explicit Preproc input color");
-        const auto& rebuilt = static_cast<const Preproc&>(**target);
-        *target = nodes::Preproc(rebuilt.options(), *color);
+        auto options = static_cast<const Preproc&>(**target).options();
+        options.input_color = authored->options().input_color;
+        *target = nodes::Preproc(std::move(options));
       }
       break;
     case internal::ModelLineageStageRole::Infer:

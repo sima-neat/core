@@ -116,6 +116,9 @@ struct PreprocOptions {
   PreprocColorConversionPlacement color_conversion_placement =
       PreprocColorConversionPlacement::AfterResize;
   PreprocFloatingConversion floating_conversion = PreprocFloatingConversion::Legacy;
+  /// Camera matrix and range of YUYV input, for example `usb_camera_info(...).color`.
+  /// Required for YUYV input and rejected for any other input format.
+  std::optional<ImageColorOptions> input_color;
 
   /// Replace the input image shape (H, W, C).
   void set_input_shape(std::vector<int> shape) {
@@ -219,8 +222,6 @@ class Preproc final : public Node,
 public:
   /// Construct with optional `PreprocOptions`.
   explicit Preproc(PreprocOptions opt = {});
-  /// YUYV only: resolved camera matrix/range; other input formats are rejected.
-  Preproc(PreprocOptions opt, ImageColorOptions input_color);
 
   /// Type label for this Node kind.
   std::string kind() const override {
@@ -276,6 +277,4 @@ private:
 namespace simaai::neat::nodes {
 /// Convenience factory for a `Preproc` Node with optional `PreprocOptions`.
 std::shared_ptr<simaai::neat::Node> Preproc(PreprocOptions opt = {});
-/// Explicit raw input interpretation, including YUYV camera matrix/range.
-std::shared_ptr<simaai::neat::Node> Preproc(PreprocOptions opt, ImageColorOptions input_color);
 } // namespace simaai::neat::nodes

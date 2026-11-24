@@ -51,6 +51,7 @@ yuyv_mode(const std::string& device, simaai::neat::UsbCameraInputOptions opt) {
     for (; ::ioctl(fd, VIDIOC_ENUM_FRAMEINTERVALS, &ival) == 0; ++ival.index) {
       if (ival.type != V4L2_FRMIVAL_TYPE_DISCRETE || ival.discrete.numerator != 1)
         continue;
+      opt.format = simaai::neat::UsbCameraFormat::YUYV;
       opt.width = size.discrete.width;
       opt.height = size.discrete.height;
       opt.framerate_num = ival.discrete.denominator;
@@ -66,7 +67,7 @@ yuyv_mode(const std::string& device, simaai::neat::UsbCameraInputOptions opt) {
 // capture -> Preproc -> model, and capture -> ColorConvert -> strict H.264 VideoSender.
 int run_yuyv(const simaai::neat::UsbCameraInputOptions& opt) {
   namespace neat = simaai::neat;
-  const auto info = neat::usb_camera_info(opt, neat::UsbCameraFormat::YUYV);
+  const auto info = neat::usb_camera_info(opt);
   require(info.row_stride >= opt.width * 2 && !info.colorimetry.empty(), "YUYV capture info");
   std::cout << "[INFO] YUYV " << opt.width << "x" << opt.height << " at " << opt.framerate_num
             << " fps, colorimetry " << info.colorimetry << "\n";
@@ -83,7 +84,9 @@ int run_yuyv(const simaai::neat::UsbCameraInputOptions& opt) {
   {
     neat::Graph graph("usb_camera_yuyv_model");
     graph.add(neat::nodes::UsbCameraInput(opt, info));
-    graph.add(neat::nodes::Preproc(neat::PreprocOptions(model), info.color));
+    neat::PreprocOptions preproc(model);
+    preproc.input_color = info.color;
+    graph.add(neat::nodes::Preproc(preproc));
     graph.add(model.inference());
     graph.add(model.postprocess());
     graph.add(neat::nodes::Output());
@@ -102,14 +105,16 @@ int run_yuyv(const simaai::neat::UsbCameraInputOptions& opt) {
   convert.color = info.color;
   convert.color.output_siting = {neat::ImageChromaSiting::Cosited,
                                  neat::ImageChromaSiting::Centered};
+  convert.input_colorimetry = info.colorimetry;
   auto sender = neat::nodes::groups::VideoSenderOptions::FromRaw(
-      {.fps = static_cast<int>(opt.framerate_num)});
+      {.fps = static_cast<int>(opt.framerate_num),
+       .input_policy = neat::EncoderInputPolicy::RequireDirect});
   sender.host = "127.0.0.1";
   sender.video_port_base = receiver.port();
   neat::Graph viewer("usb_camera_yuyv_h264");
   viewer.add(neat::nodes::UsbCameraInput(opt, info));
-  viewer.add(neat::nodes::ColorConvert(convert, info.colorimetry));
-  viewer.add(neat::nodes::groups::VideoSender(sender, neat::EncoderInputPolicy::RequireDirect));
+  viewer.add(neat::nodes::ColorConvert(convert));
+  viewer.add(neat::nodes::groups::VideoSender(sender));
   neat::Run run = viewer.build();
   std::string packet;
   for (int i = 0; i < 30; ++i) {

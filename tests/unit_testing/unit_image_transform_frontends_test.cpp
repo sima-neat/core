@@ -96,7 +96,9 @@ void contracts() {
     options.surface = ImageSurfaceLayout::EncoderNv12;
     options.color.matrix = ImageColorMatrix::Bt709;
     options.color.range = ImageYuvRange::Limited;
-    auto explicit_color = nodes::ColorConvert(options, "bt709");
+    auto explicit_options = options;
+    explicit_options.input_colorimetry = "bt709";
+    auto explicit_color = nodes::ColorConvert(explicit_options);
     const auto* policy = internal::ImageTransformAccess::policy(preproc(explicit_color));
     require(policy->colorimetry == "bt709" && policy->color.matrix == ImageColorMatrix::Bt709 &&
                 policy->color.range == ImageYuvRange::Limited &&
@@ -105,7 +107,6 @@ void contracts() {
     auto implicit_color = nodes::ColorConvert(options);
     require(internal::ImageTransformAccess::policy(preproc(implicit_color))->colorimetry.empty(),
             "legacy ColorConvert must not acquire another node's source color");
-    rejects([&] { nodes::ColorConvert(options, ""); });
   }
   for (const auto format : {ImageFormat::RGB, ImageFormat::BGR, ImageFormat::GRAY8,
                             ImageFormat::NV12, ImageFormat::I420, ImageFormat::NV16}) {
@@ -328,7 +329,8 @@ void yuyv_input_boundary_chain() {
     convert.color.matrix = ImageColorMatrix::Bt709;
     convert.color.range = ImageYuvRange::Limited;
     convert.color.output_siting = {ImageChromaSiting::Cosited, ImageChromaSiting::Centered};
-    auto transform = nodes::ColorConvert(convert, "bt709");
+    convert.input_colorimetry = "bt709";
+    auto transform = nodes::ColorConvert(convert);
     auto& p = preproc(transform);
     // Repeated graph contract walks must consider the two public aliases equal.
     auto upstream = boundary;
@@ -364,7 +366,8 @@ void yuyv_input_boundary_chain() {
     rgb.output_format = ImageFormat::RGB;
     rgb.color.matrix = convert.color.matrix;
     rgb.color.range = convert.color.range;
-    auto rgb_convert = nodes::ColorConvert(rgb, "bt709");
+    rgb.input_colorimetry = "bt709";
+    auto rgb_convert = nodes::ColorConvert(rgb);
     require(preproc(rgb_convert).output_spec(boundary).format == "RGB", "YUYV to RGB output");
     const auto rgb_compiled =
         compile_node_contracts({source, rgb_convert}, compile_input, &diagnostics);
@@ -380,7 +383,7 @@ void yuyv_input_boundary_chain() {
       cosited.surface = ImageSurfaceLayout::Native;
       cosited.color.output_siting = {ImageChromaSiting::Centered, ImageChromaSiting::Centered};
       cosited.color.input_siting = {ImageChromaSiting::Cosited, ImageChromaSiting::Centered};
-      auto rejected = nodes::ColorConvert(cosited, "bt709");
+      auto rejected = nodes::ColorConvert(cosited);
       InputContract contract;
       contract.media_type = boundary.media_type;
       contract.format = alias;
@@ -406,8 +409,13 @@ void yuyv_input_boundary_chain() {
   ColorConvertOptions viewer;
   viewer.output_format = ImageFormat::NV12;
   viewer.color = camera_color;
-  for (const auto& node :
-       {nodes::ColorConvert(viewer, "bt709"), nodes::Preproc(explicit_options, camera_color)}) {
+  viewer.input_colorimetry = "bt709";
+  explicit_options.input_color = camera_color;
+  PreprocOptions rgb_options;
+  rgb_options.input_img_type = "RGB";
+  rgb_options.input_color = camera_color;
+  rejects([&] { Preproc rejected(rgb_options); });
+  for (const auto& node : {nodes::ColorConvert(viewer), nodes::Preproc(explicit_options)}) {
     Graph graph("yuyv_save");
     graph.add(node);
     try {

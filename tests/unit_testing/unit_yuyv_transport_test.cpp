@@ -252,23 +252,25 @@ int main(int argc, char** argv) {
         static_cast<std::shared_ptr<Node> (*)(UsbCameraInputOptions)>(&nodes::UsbCameraInput);
     [[maybe_unused]] auto old_info =
         static_cast<UsbCameraInfo (*)(const UsbCameraInputOptions&)>(&usb_camera_info);
-    [[maybe_unused]] auto new_source =
-        static_cast<std::shared_ptr<Node> (*)(UsbCameraInputOptions, UsbCameraFormat)>(
+    [[maybe_unused]] auto info_source =
+        static_cast<std::shared_ptr<Node> (*)(UsbCameraInputOptions, const UsbCameraInfo&)>(
             &nodes::UsbCameraInput);
     require(format_tag_from_string("YUY2") == FormatTag::YUYV, "GStreamer alias");
     SimaEncodeOptions encode;
-    const auto strict = nodes::SimaEncode(encode, EncoderInputPolicy::RequireDirect);
+    encode.input_policy = EncoderInputPolicy::RequireDirect;
+    const auto strict = nodes::SimaEncode(encode);
     require(strict->backend_fragment(0).find("require-direct=true") != std::string::npos,
             "strict encoder property");
-    require(nodes::SimaEncode(encode)->backend_fragment(0).find("require-direct=true") ==
-                std::string::npos,
-            "legacy encoder policy");
+    require(
+        nodes::SimaEncode(SimaEncodeOptions{})->backend_fragment(0).find("require-direct=true") ==
+            std::string::npos,
+        "legacy encoder policy");
     require(strict->backend_fragment(0).find("signal-input-color=true") != std::string::npos,
             "strict encoder must signal the negotiated color");
     encode.type = SimaEncodeType::H265;
     bool rejected = false;
     try {
-      (void)nodes::SimaEncode(encode, EncoderInputPolicy::RequireDirect);
+      (void)nodes::SimaEncode(encode);
     } catch (const std::invalid_argument&) {
       rejected = true;
     }

@@ -54,6 +54,10 @@ struct ColorConvertOptions {
   ImageColorOptions color;
   ImageSurfaceLayout surface = ImageSurfaceLayout::Native;
   std::string element_name;
+  /// Source colorimetry whose primaries and transfer YUV output preserves, for example
+  /// `usb_camera_info(...).colorimetry`. It must agree with `color`'s matrix and range; no
+  /// transfer conversion is performed. Empty describes the output from `color` alone.
+  std::string input_colorimetry;
 };
 
 /// UInt8 RGB/BGR/GRAY8 to dense BF16; coefficients are in semantic RGB order.
@@ -75,8 +79,5 @@ namespace simaai::neat::nodes {
 /// Named Preproc frontends; canonical Node::kind() remains "Preproc".
 std::shared_ptr<Node> Resize(ResizeOptions options);
 std::shared_ptr<Node> ColorConvert(ColorConvertOptions options = {});
-/// Preserve source primaries/transfer while converting YUV packing. The colorimetry
-/// must agree with options.color's matrix/range; no transfer conversion is performed.
-std::shared_ptr<Node> ColorConvert(ColorConvertOptions options, std::string input_colorimetry);
 std::shared_ptr<Node> Normalization(NormalizationOptions options = {});
 } // namespace simaai::neat::nodes

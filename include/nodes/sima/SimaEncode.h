@@ -40,6 +40,7 @@ struct SimaEncodeOptions {
   std::optional<int> idr_interval;         ///< H.264/H.265: nonnegative; 0 uses three times FPS.
   std::optional<int> quality;              ///< MJPEG: 1..100, default 80.
   int num_buffers = -1; ///< Encoded outputs: -1 uses the native default, or 1..20.
+  EncoderInputPolicy input_policy = EncoderInputPolicy::Compatible; ///< Raw input admission.
 };
 
 namespace internal {
@@ -59,7 +60,6 @@ struct SimaEncodeAccess;
 class SimaEncode final : public Node, public OutputSpecProvider {
 public:
   explicit SimaEncode(SimaEncodeOptions options = {});
-  SimaEncode(SimaEncodeOptions options, EncoderInputPolicy policy);
   std::string kind() const override {
     return "SimaEncode";
   }
@@ -86,6 +86,4 @@ private:
 
 namespace simaai::neat::nodes {
 std::shared_ptr<simaai::neat::Node> SimaEncode(SimaEncodeOptions options = {});
-std::shared_ptr<simaai::neat::Node> SimaEncode(SimaEncodeOptions options,
-                                               EncoderInputPolicy policy);
 } // namespace simaai::neat::nodes

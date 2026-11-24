@@ -141,6 +141,8 @@ void validate_options(const UsbCameraInputOptions& opt) {
                                 ": the capture pool (queue_depth + " +
                                 std::to_string(kHeldDownstream) + ") would exceed " +
                                 std::to_string(kMaxCaptureBuffers) + " buffers");
+  if (opt.format != UsbCameraFormat::MJPEG && opt.format != UsbCameraFormat::YUYV)
+    throw std::invalid_argument("UsbCameraInput: unsupported capture format");
 }
 
 void validate_capture_info_format(UsbCameraFormat format, const UsbCameraInfo& info) {
@@ -150,7 +152,7 @@ void validate_capture_info_format(UsbCameraFormat format, const UsbCameraInfo& i
   if (!matches)
     throw std::invalid_argument(
         "UsbCameraInput: capture info format does not match the selected mode; "
-        "pass the complete UsbCameraCaptureInfo returned by usb_camera_info");
+        "pass the complete UsbCameraInfo returned by usb_camera_info");
 }
 
 } // namespace
@@ -169,25 +171,21 @@ std::vector<std::string> usb_camera_ids() {
 
 UsbCameraInfo usb_camera_info(const UsbCameraInputOptions& opt) {
   validate_options(opt);
-  const auto camera = internal::uvc::resolve_mjpeg_camera(opt.camera_name, opt.width, opt.height,
-                                                          opt.framerate_num, opt.framerate_den);
-  return {camera.device, camera.sampling, camera.index};
-}
-
-UsbCameraCaptureInfo usb_camera_info(const UsbCameraInputOptions& opt, UsbCameraFormat format) {
-  validate_options(opt);
-  if (format != UsbCameraFormat::MJPEG && format != UsbCameraFormat::YUYV)
-    throw std::invalid_argument("UsbCameraInput: unsupported capture format");
-  if (format == UsbCameraFormat::YUYV && (opt.width & 1U))
+  if (opt.format == UsbCameraFormat::YUYV && (opt.width & 1U))
     throw std::invalid_argument("UsbCameraInput: YUYV requires an even width");
-  const auto camera = internal::uvc::resolve_camera(opt, format);
-  return {{camera.device, camera.sampling, camera.index},
-          opt,
-          format,
-          camera.row_stride,
-          camera.storage_bytes,
-          camera.color,
-          camera.colorimetry};
+  const auto camera = internal::uvc::resolve_camera(opt, opt.format);
+  return {.device = camera.device,
+          .decoded_format = camera.sampling,
+          .node_index = camera.index,
+          .format = opt.format,
+          .row_stride = camera.row_stride,
+          .storage_bytes = camera.storage_bytes,
+          .color = camera.color,
+          .colorimetry = camera.colorimetry,
+          .width = opt.width,
+          .height = opt.height,
+          .framerate_num = opt.framerate_num,
+          .framerate_den = opt.framerate_den};
 }
 
 } // namespace simaai::neat
@@ -195,6 +193,10 @@ UsbCameraCaptureInfo usb_camera_info(const UsbCameraInputOptions& opt, UsbCamera
 namespace simaai::neat::nodes {
 
 std::shared_ptr<simaai::neat::Node> UsbCameraInput(simaai::neat::UsbCameraInputOptions opt) {
+  if (opt.format == UsbCameraFormat::YUYV) {
+    const auto info = usb_camera_info(opt);
+    return UsbCameraInput(std::move(opt), info);
+  }
   validate_options(opt);
   const auto camera = internal::uvc::resolve_mjpeg_camera(opt.camera_name, opt.width, opt.height,
                                                           opt.framerate_num, opt.framerate_den);
@@ -204,65 +206,51 @@ std::shared_ptr<simaai::neat::Node> UsbCameraInput(simaai::neat::UsbCameraInputO
 std::shared_ptr<simaai::neat::Node> UsbCameraInput(simaai::neat::UsbCameraInputOptions opt,
                                                    const simaai::neat::UsbCameraInfo& info) {
   validate_options(opt);
-  if (info.decoded_format == FormatTag::YUYV) // Other values keep the MJPEG behaviour.
-    validate_capture_info_format(UsbCameraFormat::MJPEG, info);
-  return internal::uvc::camera_node(opt, internal::uvc::camera_from_info(opt.camera_name, info));
-}
-
-std::shared_ptr<Node> UsbCameraInput(UsbCameraInputOptions opt, UsbCameraFormat format) {
-  const auto info = usb_camera_info(opt, format);
-  return UsbCameraInput(std::move(opt), info);
-}
-
-std::shared_ptr<Node> UsbCameraInput(UsbCameraInputOptions opt, const UsbCameraCaptureInfo& info) {
-  validate_options(opt);
-  const auto& checked = info.options;
-  if (info.format != UsbCameraFormat::MJPEG && info.format != UsbCameraFormat::YUYV)
-    throw std::invalid_argument("UsbCameraInput: unsupported capture format");
-  validate_capture_info_format(info.format, info.camera);
-  if (opt.camera_name != checked.camera_name || opt.width != checked.width ||
-      opt.height != checked.height || opt.framerate_num != checked.framerate_num ||
-      opt.framerate_den != checked.framerate_den)
+  if (info.format != opt.format)
+    throw std::invalid_argument("UsbCameraInput: capture info format does not match opt.format; "
+                                "call usb_camera_info with these options");
+  if (opt.format == UsbCameraFormat::MJPEG) {
+    if (info.decoded_format == FormatTag::YUYV) // Other values keep the MJPEG behaviour.
+      validate_capture_info_format(UsbCameraFormat::MJPEG, info);
+    return internal::uvc::camera_node(opt, internal::uvc::camera_from_info(opt.camera_name, info));
+  }
+  validate_capture_info_format(UsbCameraFormat::YUYV, info);
+  if (opt.width != info.width || opt.height != info.height ||
+      opt.framerate_num != info.framerate_num || opt.framerate_den != info.framerate_den)
     throw std::invalid_argument(
         "UsbCameraInput: capture info describes another mode; call usb_camera_info again");
-  if (info.format == UsbCameraFormat::YUYV &&
-      ((opt.width & 1U) || info.row_stride < std::uint64_t(opt.width) * 2 ||
-       info.storage_bytes <
-           std::uint64_t(opt.height - 1) * info.row_stride + std::uint64_t(opt.width) * 2 ||
-       info.colorimetry.empty()))
+  if ((opt.width & 1U) || info.row_stride < std::uint64_t(opt.width) * 2 ||
+      info.storage_bytes <
+          std::uint64_t(opt.height - 1) * info.row_stride + std::uint64_t(opt.width) * 2 ||
+      info.colorimetry.empty())
     throw std::invalid_argument(
         "UsbCameraInput: invalid YUYV capture info; call usb_camera_info again");
-  GstVideoColorimetry color{};
-  if (info.format == UsbCameraFormat::YUYV &&
-      ((info.color.matrix != ImageColorMatrix::Bt601 &&
-        info.color.matrix != ImageColorMatrix::Bt709) ||
-       (info.color.range != ImageYuvRange::Full && info.color.range != ImageYuvRange::Limited) ||
-       info.color.input_siting !=
-           std::array{ImageChromaSiting::Centered, ImageChromaSiting::Centered}))
+  if ((info.color.matrix != ImageColorMatrix::Bt601 &&
+       info.color.matrix != ImageColorMatrix::Bt709) ||
+      (info.color.range != ImageYuvRange::Full && info.color.range != ImageYuvRange::Limited) ||
+      info.color.input_siting !=
+          std::array{ImageChromaSiting::Centered, ImageChromaSiting::Centered})
     throw std::invalid_argument("UsbCameraInput: invalid YUYV color interpretation");
-  if (info.format == UsbCameraFormat::YUYV &&
-      (!gst_video_colorimetry_from_string(&color, info.colorimetry.c_str()) ||
-       (color.matrix != GST_VIDEO_COLOR_MATRIX_BT601 &&
-        color.matrix != GST_VIDEO_COLOR_MATRIX_BT709) ||
-       (color.range != GST_VIDEO_COLOR_RANGE_0_255 &&
-        color.range != GST_VIDEO_COLOR_RANGE_16_235) ||
-       color.primaries == GST_VIDEO_COLOR_PRIMARIES_UNKNOWN ||
-       color.transfer == GST_VIDEO_TRANSFER_UNKNOWN ||
-       (color.matrix == GST_VIDEO_COLOR_MATRIX_BT601) !=
-           (info.color.matrix == ImageColorMatrix::Bt601) ||
-       (color.range == GST_VIDEO_COLOR_RANGE_0_255) != (info.color.range == ImageYuvRange::Full)))
+  GstVideoColorimetry color{};
+  if (!gst_video_colorimetry_from_string(&color, info.colorimetry.c_str()) ||
+      (color.matrix != GST_VIDEO_COLOR_MATRIX_BT601 &&
+       color.matrix != GST_VIDEO_COLOR_MATRIX_BT709) ||
+      (color.range != GST_VIDEO_COLOR_RANGE_0_255 && color.range != GST_VIDEO_COLOR_RANGE_16_235) ||
+      color.primaries == GST_VIDEO_COLOR_PRIMARIES_UNKNOWN ||
+      color.transfer == GST_VIDEO_TRANSFER_UNKNOWN ||
+      (color.matrix == GST_VIDEO_COLOR_MATRIX_BT601) !=
+          (info.color.matrix == ImageColorMatrix::Bt601) ||
+      (color.range == GST_VIDEO_COLOR_RANGE_0_255) != (info.color.range == ImageYuvRange::Full))
     throw std::invalid_argument(
         "UsbCameraInput: invalid YUYV color metadata; call usb_camera_info again");
-  auto camera = internal::uvc::camera_from_info(opt.camera_name, info.camera);
+  auto camera = internal::uvc::camera_from_info(opt.camera_name, info);
   camera.format = info.format;
   camera.row_stride = info.row_stride;
   camera.storage_bytes = info.storage_bytes;
   camera.color = info.color;
-  if (info.format == UsbCameraFormat::YUYV) {
-    gchar* canonical = gst_video_colorimetry_to_string(&color);
-    camera.colorimetry = canonical;
-    g_free(canonical);
-  }
+  gchar* canonical = gst_video_colorimetry_to_string(&color);
+  camera.colorimetry = canonical;
+  g_free(canonical);
   return internal::uvc::camera_node(opt, camera);
 }
 
