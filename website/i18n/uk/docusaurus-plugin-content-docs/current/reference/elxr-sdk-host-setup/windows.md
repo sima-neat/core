@@ -82,4 +82,4 @@ New-NetFirewallRule -DisplayName "Allow NFS UDP 2049" -Direction Inbound -Protoc
 
 ## Наступний крок
 
-Поверніться до [Palette SDK](/getting-started/dev-environment/) і продовжте встановлення/налаштування.
+Поверніться до [Palette SDK](/getting-started/dev-environment/) і продовжуйте встановлення/налаштування.

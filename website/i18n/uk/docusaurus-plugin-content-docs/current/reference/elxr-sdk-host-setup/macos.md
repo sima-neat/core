@@ -126,4 +126,4 @@ curl -k 'https://127.0.0.1:9900/api/ingest/stats?all=1&verbose=1'
 
 ## Наступний крок
 
-Поверніться до [Palette SDK](/getting-started/dev-environment/) і продовжте встановлення/налаштування.
+Поверніться до [Palette SDK](/getting-started/dev-environment/) і продовжуйте встановлення/налаштування.
