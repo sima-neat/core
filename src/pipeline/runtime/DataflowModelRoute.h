@@ -320,10 +320,10 @@ void refuse_dataflow_frame(const DataflowModelRoute& route, const Tensor& tensor
 // A route whose frames change size (`route.frames`), before a push of `tensor`: the stamp's
 // user word that states the frame's geometry to the route's stages and to the pull. Throws
 // NeatError (misconfig.input_shape), each with what to do instead, for a frame the route cannot
-// run: one above the port's bound, of another format or layout than the route's frames, or one
-// whose kernel request the Kernels package refuses; and the not-carried error for a frame with
-// ROI metadata. An upstream stage's preprocess metadata without an ROI is not read. So that
-// nothing the Worker is later
+// run: one above the port's bound, of another format or layout than the route's frames (an image
+// spec of another format: GStreamer's "image format mismatch"), or one whose kernel request the
+// Kernels package refuses; and the not-carried error for a frame with ROI metadata. An upstream
+// stage's preprocess metadata without an ROI is not read. So that nothing the Worker is later
 // asked for can fail, the first frame of a size makes that size's kernels here, on the pushing
 // thread (cold: the image stage's kernel is checked and made; the BoxDecode kernel is a variant of
 // the Run's); a frame of a size the table holds costs a compare, and one of the port's bound's size

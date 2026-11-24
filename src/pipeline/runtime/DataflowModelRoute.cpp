@@ -1651,6 +1651,27 @@ constexpr const char* kFrameWithRois =
     "it carries ROI metadata (Semantic::preprocess with an ROI or an ROI list) in front of the "
     "image preproc stage";
 
+// A frame's image format as the route's frames name theirs (DataflowFrames::format).
+[[maybe_unused]] std::string_view pixel_format_text(ImageSpec::PixelFormat format) {
+  switch (format) {
+  case ImageSpec::PixelFormat::RGB:
+    return "RGB";
+  case ImageSpec::PixelFormat::BGR:
+    return "BGR";
+  case ImageSpec::PixelFormat::GRAY8:
+    return "GRAY8";
+  case ImageSpec::PixelFormat::NV12:
+    return "NV12";
+  case ImageSpec::PixelFormat::NV16:
+    return "NV16";
+  case ImageSpec::PixelFormat::I420:
+    return "I420";
+  case ImageSpec::PixelFormat::UNKNOWN:
+    break;
+  }
+  return "";
+}
+
 [[noreturn]] void throw_frame_not_carried(const char* where, const char* fact) {
   pipeline_internal::throw_dataflow_not_carried(where,
                                                 {error_codes::kInputShape, "this frame", fact});
@@ -2200,6 +2221,11 @@ std::uint64_t dataflow_frame_word(const DataflowModelRoute& route, const Tensor&
     pipeline_internal::error_util::throw_session_error(error_codes::kInputShape,
                                                        std::string(where) + ": " + why);
   };
+  // A frame that says it is of another image format than the route's frames: GStreamer's push
+  // check (validate_public_input) and its text, before anything else is read of it.
+  if (tensor.semantic.image && pixel_format_text(tensor.semantic.image->format) != frames.format) {
+    refuse("simaai::neat::Tensor image format mismatch");
+  }
   std::int64_t width = 0, height = 0;
   if (frames.nv12) {
     const Plane* const luma = tensor.try_plane(PlaneRole::Y);
