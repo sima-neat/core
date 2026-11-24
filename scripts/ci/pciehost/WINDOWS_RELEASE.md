@@ -562,10 +562,17 @@ Two jobs of `pcie-host-windows.yml` own it:
   pinned or differs from the build's `host-candidate.json` record.
   `validate_windows_offline.py` then runs the documented download against a
   local copy of the release channel, installs GStreamer from the downloaded
-  installer, and blocks outbound traffic of Python and `msiexec` with Windows
-  Firewall rules named `neat-offline-gate`. A canary must fail to reach PyPI
-  through the block; if it succeeds, or the rules cannot be added, the job
-  fails. Behind the block it installs `sima-cli` from the bundle, installs the
+  installer, and blocks outbound traffic with Windows Firewall rules named
+  `neat-offline-gate` for the runner's CPython, the `python.exe` of the
+  `sima-cli` and `pyneatpcie` environments, and the 64-bit and 32-bit
+  `msiexec.exe`. `powershell.exe` and `cmd.exe`, which `sima-cli` also
+  starts, are not blocked; the Windows installation downloads nothing through
+  them. A canary must fail to reach PyPI with the runner's CPython and the
+  `sima-cli` environment before the install, and with the managed
+  `pyneatpcie` environment after it, because `sima-cli` may create that
+  environment from another CPython 3.14. If a canary succeeds, or the rules
+  cannot be added, the job fails. Behind the block it installs `sima-cli`
+  from the bundle, installs the
   release with `sima-cli install -m`, checks the receipt, both products and the
   exact Python packages, installs again and removes it. A hosted runner has no
   Platform package, so the gate drops the Platform driver and service

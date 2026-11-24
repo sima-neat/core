@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Contracts for the Windows PCIe-host offline bundle: producer, gate and publication."""
 
+import contextlib
 import copy
 import hashlib
 import json
@@ -12,6 +13,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+from types import SimpleNamespace
 import unittest
 from unittest import mock
 import zipfile
@@ -482,6 +484,104 @@ class GateContracts(unittest.TestCase):
     self.assertIn('raise RuntimeError("the firewall block is not effective', source)
     for name in ("PIP_FIND_LINKS", "PIP_NO_INDEX", "SIMA_CLI_CHECK_FOR_UPDATE"):
       self.assertIn(f'"{name}"', source)
+
+
+class GateRun(unittest.TestCase):
+  """validate() on Linux, with Windows, MSI, firewall and sima-cli replaced by fakes."""
+
+  ARCHIVE = "neat-pcie-offline-installer-12345678.tar.gz"
+  INSTALLERS = {"gstreamer-1.0-msvc-x86_64-1.28.6.exe": "4" * 64,
+                "python-3.14.7-amd64.exe": "5" * 64}
+
+  def setUp(self):
+    self.root = Path(tempfile.mkdtemp(prefix="neat offline gate "))
+    self.addCleanup(shutil.rmtree, self.root)
+    self.offline = self.root / "offline"
+    self.offline.mkdir()
+    (self.offline / self.ARCHIVE).write_bytes(b"bundle")
+    (self.offline / OFFLINE.OFFLINE_METADATA).write_text(json.dumps(
+        {"version": VERSION, "commit": COMMIT, "resources": [self.ARCHIVE]}))
+    (self.offline / OFFLINE.INVENTORY).write_text(json.dumps({
+        "archive": {"name": self.ARCHIVE},
+        "vendor_installers": [{"name": name, "sha256": digest}
+                              for name, digest in self.INSTALLERS.items()]}))
+    self.installed, self.canaries, self.unblocked = set(), [], set()
+    self.blocked = []
+
+  def run_logged(self, command, log, *, env=None, cwd=None, timeout=3600):
+    argv = [str(value) for value in command]
+    text = "ok\n"
+    if "-t" in argv:  # the download: the extracted bundle and both installers
+      folder = Path(argv[-1])
+      tree = folder / self.ARCHIVE.removesuffix(".tar.gz") / OFFLINE.TOP
+      tree.mkdir(parents=True)
+      (tree / "metadata.json").write_text(json.dumps({"installation": {"prerequisites": []}}))
+      for name in self.INSTALLERS:
+        (folder / name).write_bytes(b"installer")
+    elif argv[1:3] == ["install", "-m"]:
+      if self.installed:
+        text = "is already installed and verified\n"
+      self.installed.update({"{core.msi}", "{scheduler.msi}"})
+    elif argv[1:3] == ["packages", "remove"]:
+      self.installed.clear()
+    log.write_text(text)
+
+  def powershell(self, script, log):
+    if "New-NetFirewallRule" in script:
+      self.blocked = [Path(path) for path in re.findall(r"-Program '([^']+)'", script)]
+    return {"firewall-profiles-before.log": "Domain=True\nPrivate=True\nPublic=True\n",
+            "python-installer-signature.log": "Valid\n"}.get(log.name, "")
+
+  def reaches_internet(self, python, environment, log):
+    self.canaries.append((Path(python), log.name))
+    return log.name == "canary-before-block.log" or Path(python) in self.unblocked
+
+  def receipts(self, home, name):
+    return [{"state": "installed", "version": VERSION, "native_packages": [
+        {"product_code": code} for code in sorted(self.installed)]}] if self.installed else []
+
+  def validate(self):
+    candidate = SimpleNamespace(metadata={"name": "pciehost", "version": VERSION},
+                                core_msi="core.msi", scheduler_msi="scheduler.msi",
+                                core_commit=COMMIT)
+    args = SimpleNamespace(
+        candidate=self.root / "candidate", upgrade_base_candidate=None,
+        expected_upgrade_base_commit=None, offline=self.offline,
+        evidence=self.root / "evidence", work=self.root / "work",
+        sima_cli=self.root / "bootstrap" / "sima-cli.exe")
+    fake_subprocess = SimpleNamespace(run=lambda *_, **__: SimpleNamespace(stdout="[]", returncode=0),
+                                      SubprocessError=subprocess.SubprocessError)
+    with contextlib.ExitStack() as stack:
+      stack.enter_context(mock.patch.dict(os.environ, {"SystemRoot": "C:/Windows",
+                                                       "ProgramFiles": "C:/Program Files"}))
+      for name, value in {
+          "require_windows": lambda: None, "validate_candidate": lambda _: candidate,
+          "load_upgrade_base": lambda *_: None, "msi_product_code": lambda msi: f"{{{msi}}}",
+          "msi_product_state": lambda code: 5 if code in self.installed else -1,
+          "run_logged": self.run_logged, "powershell": self.powershell,
+          "reaches_internet": self.reaches_internet, "receipts": self.receipts,
+          "sha256": lambda path: self.INSTALLERS[path.name],
+          "require_environment_packages": lambda *_: None, "subprocess": fake_subprocess,
+      }.items():
+        stack.enter_context(mock.patch.object(GATE, name, value))
+      stack.enter_context(mock.patch.object(GATE.windows_offline, "verify"))
+      GATE.validate(args)
+
+  def test_every_blocked_interpreter_is_proven_by_a_canary(self):
+    self.validate()
+    home = (self.root / "work" / "customer profile").resolve()
+    managed = home / "pyneatpcie" / "Scripts" / "python.exe"
+    self.assertEqual(self.canaries[-1], (managed, "canary-blocked-managed.log"))
+    self.assertIn(managed, self.blocked)
+    self.assertTrue((self.root / "evidence" / "windows-offline-gate.json").is_file())
+    self.assertEqual(self.installed, set())
+
+  def test_an_unblocked_managed_environment_fails_the_gate(self):
+    # sima-cli created pyneatpcie from a CPython 3.14 that the rules do not cover.
+    self.unblocked = {(self.root / "work" / "customer profile").resolve() / "pyneatpcie"
+                      / "Scripts" / "python.exe"}
+    with self.assertRaisesRegex(RuntimeError, "not effective for the managed environment"):
+      self.validate()
 
 
 def workflow_job(source, name):

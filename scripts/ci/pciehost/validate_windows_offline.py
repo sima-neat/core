@@ -255,6 +255,10 @@ def validate(args: argparse.Namespace) -> None:
     if any(msi_product_state(code) != INSTALLSTATE_DEFAULT for code in products):
       raise RuntimeError("both MSI products must be installed")
     managed = home / "pyneatpcie" / "Scripts" / "python.exe"
+    # pip ran here; sima-cli may have created it from another CPython 3.14 than ours.
+    if reaches_internet(managed, customer_profile(home, work, blocked=False),
+                        evidence / "canary-blocked-managed.log"):
+      raise RuntimeError("the firewall block is not effective for the managed environment")
     listing = subprocess.run(
         [managed, "-m", "pip", "list", "--format=json", "--isolated",
          "--disable-pip-version-check"], env=offline, capture_output=True, text=True,
