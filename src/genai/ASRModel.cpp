@@ -2,9 +2,6 @@
 #include "genai/GenAIInternal.h"
 #include "pipeline/TensorAudio.h"
 
-// The Platform 3.0 LLiMa header uses std::variant without including it.
-#include <variant>
-
 #include <sima_lmm/whisper_model.hpp>
 
 #include <cstdint>
@@ -53,17 +50,7 @@ struct ASRModel::Impl {
     load();
 
     std::lock_guard<std::mutex> run_lock(run_mutex);
-    const std::string language = request.language.empty() ? "auto" : request.language;
-    const char* task = asr_task_name(request.asr_task);
-    simaai::llima::WhisperModel::TranscriptionResult transcription;
-    if (request.audio_file.has_value()) {
-      transcription = whisper_model->run_model(*request.audio_file, language, task);
-    } else {
-      const PcmAudio audio = tensor_to_pcm_audio(*request.audio);
-      transcription = whisper_model->run_model_from_pcm(
-          std::span<const float>{audio.samples.data(), audio.samples.size()}, audio.sample_rate,
-          language, task);
-    }
+    auto transcription = transcribe(request, {.text = [](const std::string&, bool, bool) {}});
 
     GenerationResult result;
     result.text = std::move(transcription.text);
@@ -72,6 +59,21 @@ struct ASRModel::Impl {
     result.avg_logprob = transcription.avg_logprob;
     result.finish_reason = "stop";
     return result;
+  }
+
+  // Called after load(), with run_mutex held by the request.
+  simaai::llima::WhisperModel::TranscriptionResult
+  transcribe(const GenerationRequest& request, simaai::llima::StreamCallbacks callbacks) {
+    const simaai::llima::TranscriptionOptions options{
+        .language = request.language.empty() ? "auto" : request.language,
+        .task = asr_task_name(request.asr_task),
+        .callbacks = std::move(callbacks)};
+    if (request.audio_file.has_value())
+      return whisper_model->run_model(*request.audio_file, options);
+    const PcmAudio audio = tensor_to_pcm_audio(*request.audio);
+    return whisper_model->run_model_from_pcm(
+        std::span<const float>{audio.samples.data(), audio.samples.size()}, audio.sample_rate,
+        options);
   }
 
   internal::ModelDirectoryInfo info;
@@ -115,36 +117,14 @@ GenerationStream ASRModel::stream(const GenerationRequest& request) {
   return GenerationStream(
       [model = impl_, request](GenerationStream::Producer& producer) {
         std::lock_guard<std::mutex> run_lock(model->run_mutex);
-        struct CallbackGuard {
-          std::shared_ptr<Impl> model;
-          ~CallbackGuard() {
-            if (model && model->whisper_model) {
-              model->whisper_model->set_info_callback([](const std::string&, double) {});
-              model->whisper_model->set_text_callback([](const std::string&, bool, bool) {});
-            }
-          }
-        } callback_guard{model};
-
-        model->whisper_model->set_info_callback(
-            [&producer](const std::string& metric, double value) {
-              producer.record_metric(metric, value);
-            });
-        model->whisper_model->set_text_callback(
-            [&producer](const std::string& text, bool stream_end, bool) {
-              producer.record_text(text, stream_end);
-            });
-
-        const std::string language = request.language.empty() ? "auto" : request.language;
-        const char* task = asr_task_name(request.asr_task);
-        simaai::llima::WhisperModel::TranscriptionResult transcription;
-        if (request.audio_file.has_value()) {
-          transcription = model->whisper_model->run_model(*request.audio_file, language, task);
-        } else {
-          const PcmAudio audio = tensor_to_pcm_audio(*request.audio);
-          transcription = model->whisper_model->run_model_from_pcm(
-              std::span<const float>{audio.samples.data(), audio.samples.size()}, audio.sample_rate,
-              language, task);
-        }
+        simaai::llima::StreamCallbacks callbacks;
+        callbacks.info = [&producer](const std::string& metric, double value) {
+          producer.record_metric(metric, value);
+        };
+        callbacks.text = [&producer](const std::string& text, bool stream_end, bool) {
+          producer.record_text(text, stream_end);
+        };
+        auto transcription = model->transcribe(request, std::move(callbacks));
         producer.finish(producer.cancelled() ? "interrupted" : "stop",
                         std::optional<std::uint32_t>(0), transcription.language,
                         transcription.no_speech_prob, transcription.avg_logprob);

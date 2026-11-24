@@ -260,6 +260,22 @@ int main(int argc, char** argv) {
               "Voiced audio should have a higher avg_logprob than streamed silence hallucination");
     }
 
+    auto invalid_request = file_request;
+    invalid_request.audio_file = audio_path / "missing.wav";
+    bool rejected_audio = false;
+    try {
+      auto failed_stream = model.stream(invalid_request);
+      while (failed_stream.next()) {
+      }
+    } catch (const std::exception&) {
+      rejected_audio = true;
+    }
+    require(rejected_audio, "ASR stream should reject an invalid audio path");
+    const auto recovered = model.run(file_request);
+    require(normalize_transcript(recovered.text) == kExpectedTranscript,
+            "ASR request callbacks leaked after a completed or failed stream");
+    require_asr_metadata(recovered, "ASR run after streams");
+
     simaai::neat::genai::GenAIModel generic_model(model_dir);
     require(generic_model.task() == simaai::neat::genai::GenAITask::ASR,
             "GenAIModel ASR task mismatch");
