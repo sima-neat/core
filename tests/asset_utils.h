@@ -4,6 +4,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <iostream>
 #include <iterator>
 #include <optional>
 #include <stdexcept>
@@ -545,39 +546,21 @@ inline std::string resolve_resnet50_tar_local_only(const fs::path& root_in = {})
   return "";
 }
 
-inline std::string resolve_resnet50_tar(const fs::path& root_in = {}) {
-  const fs::path root = default_asset_root(root_in);
-  const std::string env_tar = env_existing_model_tar_path("SIMA_RESNET50_TAR");
-  if (!env_tar.empty()) {
-    return env_tar;
-  }
-
-  const fs::path local = root / "tmp" / "resnet_50_mpk.tar.gz";
-  const ScopedFileLock lock(local.string() + ".lock");
-  if (is_usable_regular_file(local))
-    return local.string();
-
-  const int rc = run_modelzoo_get_noninteractive("resnet_50");
-  if (rc != 0)
+// CI prepares the Model Browser resnet_50 w8a8 MPK and names it in SIMA_RESNET50_TAR. An empty
+// result means the variable is unset or names something unusable; the reason goes to stderr.
+inline std::string resolve_resnet50_tar() {
+  for (const char* name : {"SIMA_RESNET50_TAR", "SIMA_MODEL_TAR"}) {
+    const char* value = std::getenv(name);
+    if (!value || !*value)
+      continue;
+    if (is_usable_regular_file(value))
+      return value;
+    std::cerr << name << "=" << value << " is not a non-empty file\n";
     return "";
-
-  if (is_usable_regular_file(local))
-    return local.string();
-
-  const std::vector<fs::path> candidates = {
-      root / "resnet_50_mpk.tar.gz",
-      root / "resnet-50_mpk.tar.gz",
-      fs::current_path() / "resnet_50_mpk.tar.gz",
-      fs::current_path() / "resnet-50_mpk.tar.gz",
-      fs::temp_directory_path() / "resnet_50_mpk.tar.gz",
-      fs::temp_directory_path() / "resnet-50_mpk.tar.gz",
-  };
-  for (const auto& candidate : candidates) {
-    if (is_usable_regular_file(candidate) && move_to_tmp(candidate, local)) {
-      return local.string();
-    }
   }
-
+  std::cerr << "SIMA_RESNET50_TAR is not set. Set it, or SIMA_MODEL_TAR, to the "
+               "resnet_50_w8a8_mpk.tar.gz from 'sima-cli models download --id resnet_50 "
+               "--variant w8a8'.\n";
   return "";
 }
 
