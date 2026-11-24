@@ -53,20 +53,13 @@ namespace {
 namespace error_util = pipeline_internal::error_util;
 using dataflow_codec::throw_input_shape;
 
-// Where an input's Plan is compiled and its Session started, and what an error there tells the
-// application to do: at Graph::build (a seed or a declared shape gives the spec), where an
-// explicit RunBackend::Dataflow request is told by the build (DataflowBackendSelect.cpp) and
-// RunBackend::Auto builds the Run on GStreamer instead; or at the input's first push, where the
-// Run exists already.
+// Where an input's Plan is compiled and its Session started, which decides what an error there
+// tells the application to do (DataflowErrorSite): at Graph::build (a seed or a declared shape
+// gives the spec), or at the input's first push, where the Run exists already.
 struct BindSite {
   const char* where;
-  const char* hint;
+  pipeline_internal::DataflowErrorSite site;
 };
-
-constexpr const char* kFirstPushHint =
-    "The input was bound by this push. Build this Run with RunBackend::GStreamer, or declare the "
-    "input's shape or build it with a seed: then this is found at Graph::build, where "
-    "RunBackend::Auto builds such a Run on GStreamer.";
 
 // The Net of input `input` of `config` for `binding`, compiled: one Feed, and one link and one
 // Fetch per Output the input feeds (a fan-out when there are several: one OutPort, one link per
@@ -124,7 +117,7 @@ DataflowNet compile_dataflow_net(const DataflowRunConfig& config, std::size_t in
             df::LinkPolicy{.depth = output.link_depth, .overflow = overflow, .stale_after = {}});
       }
       if (status) {
-        pipeline_internal::throw_dataflow_error(*status, site.where, {}, site.hint);
+        pipeline_internal::throw_dataflow_error(*status, site.where, {}, site.site);
       }
       fetches.push_back(fetch.index);
       continue;
@@ -136,7 +129,7 @@ DataflowNet compile_dataflow_net(const DataflowRunConfig& config, std::size_t in
     if (const df::Status status = net.connect(
             feed.out(), fetch.in(),
             df::LinkPolicy{.depth = output.link_depth, .overflow = overflow, .stale_after = {}})) {
-      pipeline_internal::throw_dataflow_error(*status, site.where, {}, site.hint);
+      pipeline_internal::throw_dataflow_error(*status, site.where, {}, site.site);
     }
     fetches.push_back(fetch.index);
   }
@@ -151,7 +144,7 @@ DataflowNet compile_dataflow_net(const DataflowRunConfig& config, std::size_t in
 #endif
   df::Result<df::Plan> plan = std::move(net).compile(options);
   if (const df::Error* error = df::failure(plan)) {
-    pipeline_internal::throw_dataflow_error(*error, site.where, failure.mismatch, site.hint);
+    pipeline_internal::throw_dataflow_error(*error, site.where, failure.mismatch, site.site);
   }
   return DataflowNet{std::get<df::Plan>(std::move(plan)), feed.index, std::move(fetches)};
 }
@@ -234,14 +227,18 @@ DataflowInputPort::Bound* DataflowInputPort::bind_first(std::span<const Tensor> 
         error_codes::kInputShape,
         std::string(where) + ": " + (why.empty() ? std::string("the input cannot be bound") : why) +
             " (Dataflow backend)",
-        {}, "Push a tensor this input takes, or build this Run with RunBackend::GStreamer.");
+        {},
+        "Push a tensor this input takes. " +
+            pipeline_internal::dataflow_backend_action(
+                pipeline_internal::DataflowRemedy::BackendAndRebuild));
   }
   return bind_locked(std::move(*binding), where, /*at_build=*/false);
 }
 
 DataflowInputPort::Bound* DataflowInputPort::bind_locked(DataflowInputBinding binding,
                                                          const char* where, bool at_build) {
-  const BindSite site{where, at_build ? "" : kFirstPushHint};
+  const BindSite site{where, at_build ? pipeline_internal::DataflowErrorSite::Build
+                                      : pipeline_internal::DataflowErrorSite::FirstPush};
   if (config_.model) {
     // The input is the first stage's input, whatever the declaration allows beyond it.
     if (const std::string why = bind_dataflow_model_input(*config_.model, binding); !why.empty()) {
@@ -252,7 +249,7 @@ DataflowInputPort::Bound* DataflowInputPort::bind_locked(DataflowInputBinding bi
   df::PlanReport plan = net.plan.report();
   df::Result<df::Session> session = std::move(net.plan).instantiate(df::SessionOptions{});
   if (const df::Error* error = df::failure(session)) {
-    pipeline_internal::throw_dataflow_error(*error, site.where, {}, site.hint);
+    pipeline_internal::throw_dataflow_error(*error, site.where, {}, site.site);
   }
   auto b = std::make_unique<Bound>(std::move(binding), std::get<df::Session>(std::move(session)),
                                    net.feed, net.fetches);
@@ -275,7 +272,7 @@ DataflowInputPort::Bound* DataflowInputPort::bind_locked(DataflowInputBinding bi
     b->mapped_wraps = dataflow_device::make_mapped_wraps();
   }
   if (const df::Status status = b->session.start()) {
-    pipeline_internal::throw_dataflow_error(*status, site.where, {}, site.hint);
+    pipeline_internal::throw_dataflow_error(*status, site.where, {}, site.site);
   }
   bound_storage_ = std::move(b);
   bound_.store(bound_storage_.get(), std::memory_order_release);

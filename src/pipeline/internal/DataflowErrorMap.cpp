@@ -1,6 +1,6 @@
 // The Dataflow backend's error table: a runtime Error (dataflow/diag/error.h) to Core's PullStatus
-// and error_codes::* families, and to what RunBackend::Auto does with it at Graph::build. Built
-// only with SIMANEAT_DATAFLOW_SOURCE_DIR.
+// and error_codes::* families, and to whether its action is to run the program on the GStreamer
+// backend. Built only with SIMANEAT_DATAFLOW_SOURCE_DIR.
 #if defined(SIMANEAT_WITH_DATAFLOW)
 
 #include "pipeline/internal/DataflowErrorMap.h"
@@ -30,11 +30,9 @@ Load load_of(const df::Error& e) noexcept {
                                           : Load::None;
 }
 
-constexpr const char* kOtherBackend = "Build this Run with RunBackend::GStreamer.";
-
 // Rows in ErrorCode order. Every error a Run being built on Dataflow meets is Dataflow's own, and
-// RunBackend::Auto builds that Run on GStreamer, except two that GStreamer meets as well: a device
-// the process lost (Unretired; nothing in the process may drive it again) and a model file the MLA
+// its action is the GStreamer backend, except two that GStreamer meets as well: a device the
+// process lost (Unretired; nothing in the process may drive it again) and a model file the MLA
 // does not load (GStreamer loads the same file).
 //   InvalidArgument  Process: a pushed extent outside the input's bounds (Core checks it first, so
 //                    this row is the backstop): misconfig.input_shape. The MLA's load: no such
@@ -91,15 +89,15 @@ DataflowErrorMapping row(const df::Error& e) noexcept {
     return {PullStatus::Closed, error_codes::kRuntimePull, false, true, ""};
   case df::ErrorCode::Unsupported:
     if (load == Load::Model) {
-      return {PullStatus::Error, error_codes::kDispatcherUnavailable, true, true, kOtherBackend};
+      return {PullStatus::Error, error_codes::kDispatcherUnavailable, true, true, ""};
     }
     if (load == Load::Kernel) {
-      return {PullStatus::Error, error_codes::kKernelUnsupported, true, true, kOtherBackend};
+      return {PullStatus::Error, error_codes::kKernelUnsupported, true, true, ""};
     }
     return {PullStatus::Error,
             e.origin == df::Origin::Runner ? error_codes::kAcceleratorExecutionFailed
                                            : error_codes::kPipelineShape,
-            true, true, kOtherBackend};
+            true, true, ""};
   case df::ErrorCode::Stale:
     return {PullStatus::Error, error_codes::kInternalPluginFailure, true, true, ""};
   case df::ErrorCode::Unretired:
@@ -130,7 +128,7 @@ std::string dataflow_error_text(const df::Error& error, std::string_view where) 
 }
 
 [[noreturn]] void throw_dataflow_error(const df::Error& error, std::string_view where,
-                                       std::string_view detail, std::string_view hint) {
+                                       std::string_view detail, DataflowErrorSite site) {
   const DataflowErrorMapping mapping = map_dataflow_error(error);
   std::string summary = dataflow_error_text(error, where);
   if (!detail.empty()) {
@@ -138,16 +136,21 @@ std::string dataflow_error_text(const df::Error& error, std::string_view where) 
     summary += detail;
   }
   std::string action = mapping.hint;
-  if (!hint.empty()) {
+  const auto add = [&action](const std::string& sentence) {
     action += action.empty() ? "" : " ";
-    action += hint;
+    action += sentence;
+  };
+  if (site == DataflowErrorSite::FirstPush) {
+    add("The input was bound by this push: declare the input's shape or build the Run with a "
+        "seed, and this is found at Graph::build.");
   }
-  GraphReport report = error_util::make_report(mapping.code, summary, {}, action);
-  std::string message = error_util::decorate_error(report.error_code, report.repro_note);
-  if (!mapping.retry_on_gstreamer) {
-    throw DataflowErrorOnEveryBackend(std::move(message), std::move(report));
+  if (mapping.backend_action &&
+      (site != DataflowErrorSite::Running || error.code == df::ErrorCode::Unsupported)) {
+    add(dataflow_backend_action(site == DataflowErrorSite::Build
+                                    ? DataflowRemedy::Backend
+                                    : DataflowRemedy::BackendAndRebuild));
   }
-  throw NeatError(std::move(message), std::move(report));
+  error_util::throw_session_error(mapping.code, summary, {}, action);
 }
 
 } // namespace simaai::neat::pipeline_internal

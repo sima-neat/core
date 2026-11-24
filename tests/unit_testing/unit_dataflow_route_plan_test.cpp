@@ -22,7 +22,10 @@
 #include "nodes/common/Output.h"
 #include "nodes/io/Input.h"
 #include "nodes/sima/internal/ImageTransformPolicy.h"
+#include "pipeline/ErrorCodes.h"
 #include "pipeline/GraphOptions.h"
+#include "pipeline/NeatError.h"
+#include "pipeline/internal/DataflowNotCarried.h"
 #include "pipeline/internal/sima/KernelStageRecipe.h"
 #include "pipeline/internal/sima/SimaPluginStaticManifest.h"
 #include "pipeline/runtime/DataflowRoutePlan.h"
@@ -68,15 +71,38 @@ struct Ask {
   std::string ev74_obstacle;
 };
 
-// "" when the route plans; otherwise the planner's reason.
-std::string plan(const Ask& ask) {
-  std::string why;
+// What the planner answered: nothing when the route plans; otherwise who is not carried and the
+// fact about it.
+pipeline_internal::DataflowNotCarried ask_planner(const Ask& ask) {
+  pipeline_internal::DataflowNotCarried why;
   const auto route =
       plan_dataflow_route_stages(ask.manifest, ask.declared, ask.seed, ask.ev74_obstacle, &why);
   if (route) {
     return {};
   }
-  return why.empty() ? std::string("(declined without a reason)") : why;
+  if (!why) {
+    why.subject = "(declined without a subject)";
+  }
+  return why;
+}
+
+// "" when the route plans; otherwise the planner's answer as the error's sentence.
+std::string plan(const Ask& ask) {
+  const pipeline_internal::DataflowNotCarried why = ask_planner(ask);
+  return why ? pipeline_internal::dataflow_not_carried_sentence(why) : std::string();
+}
+
+// The form every answer of the planner has (DataflowNotCarried.h): a subject, a fact that is
+// one clause in the present tense without a final period, no promise and no word of the old
+// texts.
+void check_form(const pipeline_internal::DataflowNotCarried& why, const std::string& what) {
+  check(!why.subject.empty() && !why.fact.empty(), what + ": a subject and a fact");
+  check(why.fact.empty() || why.fact.back() != '.', what + ": the fact ends in a period");
+  const std::string text = pipeline_internal::dataflow_not_carried_sentence(why);
+  for (const char* gone : {" yet", "not supported", "RunBackend", "the runtime", "on Dataflow"}) {
+    check(text.find(gone) == std::string::npos,
+          what + ": the text has '" + gone + "': " + text);
+  }
 }
 
 void accepts(const Ask& ask, const std::string& what) {
@@ -88,8 +114,13 @@ void accepts(const Ask& ask, const std::string& what) {
 }
 
 void declines(const Ask& ask, const std::string& text, const std::string& what) {
-  const std::string why = plan(ask);
+  const pipeline_internal::DataflowNotCarried answer = ask_planner(ask);
+  const std::string why =
+      answer ? pipeline_internal::dataflow_not_carried_sentence(answer) : std::string();
   check(!why.empty(), what + ": the route planned");
+  if (answer) {
+    check_form(answer, what);
+  }
   check(why.empty() || why.find(text) != std::string::npos,
         what + ": " + why + " (missing: " + text + ")");
   if (!why.empty() && why.find(text) != std::string::npos) {
@@ -182,10 +213,11 @@ si::SimaPluginStaticManifest manifest_of(const Model& model, const InputOptions&
     add(internal::ModelAccess::build_public_postprocess_nodes(model));
   }
   nodes.push_back(output());
-  std::string why;
+  pipeline_internal::DataflowNotCarried why;
   std::optional<si::SimaPluginStaticManifest> manifest =
       dataflow_model_manifest(nodes, options, &why);
-  require(manifest.has_value(), "the model's manifest: " + why);
+  require(manifest.has_value(),
+          "the model's manifest: " + pipeline_internal::dataflow_not_carried_sentence(why));
   return *manifest;
 }
 
@@ -262,11 +294,11 @@ void mla(const Yolo& y) {
   declines(mla_stage([](si::StageStaticSpec& s) { s.logical_outputs.clear(); }), "(0 tensors)",
            "no published tensor");
   declines(mla_stage([](si::StageStaticSpec& s) { s.logical_inputs[0].dtype = "NO_IN_DTYPE"; }),
-           "'NO_IN_DTYPE' has no Dataflow dtype", "an input dtype without a Core dtype");
+           "the dtype 'NO_IN_DTYPE' of its input is not a tensor dtype of Core", "an input dtype without a Core dtype");
   declines(mla_stage([](si::StageStaticSpec& s) { s.logical_inputs[0].byte_offset = 16; }),
            "is not one whole buffer", "an offset input");
   declines(mla_stage([](si::StageStaticSpec& s) { s.logical_outputs[1].dtype = "NO_OUT_DTYPE"; }),
-           "'NO_OUT_DTYPE' has no Dataflow dtype", "an output dtype without a Core dtype");
+           "the dtype 'NO_OUT_DTYPE' of the MLA stage's published tensor", "an output dtype without a Core dtype");
   declines(mla_stage([](si::StageStaticSpec& s) {
              s.logical_outputs[2].byte_offset =
                  static_cast<std::int64_t>(s.physical_outputs[0].size_bytes);
@@ -278,7 +310,7 @@ void mla(const Yolo& y) {
     // Six heads read by a stage other than BoxDecode.
     Ask a = y.full;
     recipe_of(a.manifest, 2).boxdecode_program.reset();
-    declines(a, "only BoxDecode is supported", "six heads read by another kernel");
+    declines(a, "behind an MLA stage of several tensors only BoxDecode runs", "six heads read by another kernel");
   }
 }
 
@@ -431,7 +463,7 @@ void boxdecode(const Yolo& y) {
   declines(decode([](si::StageStaticSpec&, si::KernelStageRecipe& r) {
              r.boxdecode_program->profile = "yolo26_raw_ltrb_v1";
            }),
-           "only YOLOv8-style detection", "another decode profile");
+           "the BoxDecode stage runs YOLOv8-style detection", "another decode profile");
   declines(decode([](si::StageStaticSpec&, si::KernelStageRecipe& r) {
              r.boxdecode_program->write = nullptr;
            }),
@@ -499,7 +531,34 @@ void kernel(const Yolo& y, const Ask* resnet) {
   {
     Ask a = y.full;
     a.ev74_obstacle = "the EV74 is running with firmware 'simaai_cvu'";
-    declines(a, "sima-neat-native-cvu-fw", "an EV74 kernel stage on the stock firmware");
+    declines(a,
+             "is not carried by the Dataflow backend on this board: the EV74 is running with "
+             "firmware 'simaai_cvu', and the Dataflow backend runs EV74 kernels on the firmware "
+             "'sima-neat-native-cvu-fw' only",
+             "an EV74 kernel stage on the stock firmware");
+    // The board's fact is an error of its own: its code, and a second remedy.
+    const pipeline_internal::DataflowNotCarried board = ask_planner(a);
+    check(board.code != nullptr &&
+              std::string(board.code) == error_codes::kDispatcherUnavailable &&
+              board.remedy == pipeline_internal::DataflowRemedy::BackendOrFirmware,
+          "the stock firmware: infra.dispatcher_unavailable, with the firmware as a remedy");
+    check(board.subject.rfind("stage 0 '", 0) == 0 &&
+              board.subject.find("(kernel preproc on the EV74)") != std::string::npos,
+          "the stock firmware: the subject is the stage, its kind and target: " + board.subject);
+    try {
+      pipeline_internal::throw_dataflow_not_carried("Graph::build", board);
+      check(false, "throw_dataflow_not_carried returned");
+    } catch (const NeatError& e) {
+      const std::string text = e.what();
+      check(text.rfind("[infra.dispatcher_unavailable] Graph::build: stage 0 '", 0) == 0,
+            "the stock firmware: the error's head: " + text);
+      check(text.find("only.\nHint: To run this program on the GStreamer backend, ") !=
+                    std::string::npos &&
+                text.find(" Or select the Kernels firmware on the board (package "
+                          "simaai-kernels-firmware) and start the program again.") !=
+                    std::string::npos,
+            "the stock firmware: the fact, then both remedies: " + text);
+    }
   }
   if (!resnet) {
     std::cout << "[kernel] the canonical-transform rows need --resnet-package or "

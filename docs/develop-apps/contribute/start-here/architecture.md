@@ -2141,19 +2141,17 @@ The runtime supports environment-driven debugging knobs:
 * `SIMA_GST_TEARDOWN_REAPER_MS` -- reaper retry interval (ms)
 * `SIMA_GST_TEARDOWN_ASYNC` -- skip wait, defer to reaper
 * `SIMA_NEAT_BACKEND` -- `dataflow` makes `RunBackend::Auto` (the default
-  `RunOptions::backend`) build a Run on the Neat Dataflow runtime when that runtime can
-  build it; unset, `auto` or `gstreamer` keep GStreamer. Read at every `Graph::build()`.
-  Only builds configured with `SIMANEAT_DATAFLOW_SOURCE_DIR` carry the Dataflow runtime. A
-  graph the Dataflow backend does not take, and a Run whose build on Dataflow fails at
-  `Graph::build()` (a link deeper than the runtime's, a model or a device pool it cannot
-  set up), are built on GStreamer instead, except for two errors GStreamer would meet as
-  well, which `Graph::build()` reports: a model file the MLA does not load, and a device the
-  process has lost. An input with neither a declared shape nor a seed is bound by its first
-  push, after `Graph::build()`, so an error of its Dataflow session is that push's. When
-  set, each `Graph::build()` prints the runtime it took and why to stderr, and each
-  `Run::stop()` on Dataflow prints each input's session report (its feed and flow limit,
-  links, operators, fetches, pools and worker). An explicit `RunBackend::Dataflow` does not
-  read the variable and fails the build instead of falling back.
+  `RunOptions::backend`) build a Run on the Neat Dataflow runtime; unset, `auto` or
+  `gstreamer` keep GStreamer. Read at every `Graph::build()`. Only builds configured with
+  `SIMANEAT_DATAFLOW_SOURCE_DIR` carry the Dataflow runtime. There is no fallback: a graph,
+  an option or a model route the Dataflow backend does not carry fails `Graph::build()` with
+  an error that names what is not carried and how to build the Run on GStreamer, and so
+  does a Run whose build on Dataflow fails (a model or a device pool it cannot set up). An
+  input with neither a declared shape nor a seed is bound by its first push, after
+  `Graph::build()`, so an error of its Dataflow session is that push's. When set, each
+  `Graph::build()` on Dataflow prints what it built to stderr, and each `Run::stop()` on
+  Dataflow prints each input's session report (its feed and flow limit, links, operators,
+  fetches, pools and worker). An explicit `RunBackend::Dataflow` does not read the variable.
 
 These knobs are intentionally outside the public API so you can turn them on in CI or in the field without recompiling.
 There are additional low-level debug flags in `src/pipeline/internal/*` (input stream

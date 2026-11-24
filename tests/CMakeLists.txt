@@ -726,7 +726,8 @@ if (SIMANEAT_DATAFLOW_SOURCE_DIR AND
 endif()
 
 # The Dataflow backend's error table (DataflowErrorMap.cpp, compiled into the test because
-# libsima_neat.so hides it): Core's code and what RunBackend::Auto does for each runtime Error. No
+# libsima_neat.so hides it): Core's code and whether its action is the GStreamer backend, for each
+# runtime Error. No
 # device is opened.
 if (SIMANEAT_DATAFLOW_SOURCE_DIR AND
     NOT unit_dataflow_error_map_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)

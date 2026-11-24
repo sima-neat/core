@@ -42,6 +42,7 @@
 
 #include "pipeline/ErrorCodes.h"
 #include "pipeline/internal/DataflowErrorMap.h"
+#include "pipeline/internal/DataflowNotCarried.h"
 #include "pipeline/internal/DataflowRuntime.h"
 #include "pipeline/internal/EnvUtil.h"
 #include "pipeline/internal/ErrorUtil.h"
@@ -324,11 +325,10 @@ public:
   }
 
   bool push_holder(const std::shared_ptr<void>&, bool, const char* where) override {
-    error_util::throw_session_error(
-        error_codes::kPipelineShape,
-        std::string(where) + ": GStreamer buffer holders do not exist on the Dataflow backend", {},
-        "Push the Tensor or Sample instead, or build this Run with RunOptions::backend = "
-        "RunBackend::GStreamer.");
+    pipeline_internal::throw_dataflow_not_carried(
+        where, {error_codes::kPipelineShape, "a buffer holder",
+                "it is a GStreamer buffer (push the Tensor or the Sample instead)",
+                pipeline_internal::DataflowRemedy::BackendAndRebuild});
   }
 
   PullStatus pull(std::optional<std::string_view> output, int timeout_ms, Sample& out,
@@ -625,7 +625,8 @@ private:
     const PushVerdict v = push_verdict(
         outcome, PushPolicy{block, port.lossy_block(), port.fan_out(), config_.link_policy});
     if (v.error) {
-      pipeline_internal::throw_dataflow_error(*df::failure(outcome.answer), where);
+      pipeline_internal::throw_dataflow_error(*df::failure(outcome.answer), where, {},
+                                            pipeline_internal::DataflowErrorSite::Running);
     }
     if (v.accepted) {
       core_.inputs_enqueued.fetch_add(1, std::memory_order_relaxed);

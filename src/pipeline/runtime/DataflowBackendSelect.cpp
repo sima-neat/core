@@ -1,17 +1,17 @@
 // Which runtime a Graph::build() takes: RunOptions::backend and SIMA_NEAT_BACKEND decide.
-// Graph::build's four entries call DataflowGraphAccess::build before gst_init_once(): nullptr keeps
-// the Run on GStreamer. A Run that Dataflow cannot build stays there too, or fails loudly when
-// RunBackend::Dataflow was asked for explicitly:
-//   - a graph or an option the planner declines (DataflowGraphCompiler.cpp), a link deeper than the
-//     runtime's, a seed or a declaration no input can bind: declined before anything is built;
+// Graph::build's four entries call DataflowGraphAccess::build before gst_init_once(): nullptr is
+// a Run for GStreamer, by that choice alone. A Run for Dataflow is built on Dataflow or the build
+// throws; nothing is built on GStreamer in its place:
+//   - a graph, an option or a model route the planner does not carry (DataflowGraphCompiler.cpp),
+//     a link deeper than the backend's, a seed or a declaration no input can bind: the
+//     not-carried error (DataflowNotCarried.h), before anything is built;
 //   - an error while the Run is built (its models loaded, its kernels checked, each input's Plan
-//     compiled and its Session started where the input binds at the build): RunBackend::Auto
-//     builds the Run on GStreamer instead, unless GStreamer would meet the same error (the
-//     error table's retry_on_gstreamer, DataflowErrorMap.h: a lost device, a model file the MLA
-//     does not load), which leaves Graph::build as it is.
+//     compiled and its Session started where the input binds at the build): that error, whose
+//     action is the GStreamer backend unless GStreamer would meet the same error (the error
+//     table's backend_action, DataflowErrorMap.h).
 // An input that binds at its first push (no seed, no declared shape) compiles its Plan there: an
 // error then is the push's, on the Dataflow Run that exists, and names the push.
-// Compiles without the runtime: an explicit request then fails.
+// Compiles without the runtime: a Run for Dataflow then fails.
 
 #include "pipeline/runtime/DataflowGraphCompiler.h"
 
@@ -19,6 +19,7 @@
 #include "pipeline/ErrorCodes.h"
 #include "pipeline/Graph.h"
 #include "pipeline/graph/internal/GraphBuildInternal.h"
+#include "pipeline/internal/DataflowNotCarried.h"
 #include "pipeline/internal/EnvUtil.h"
 #include "pipeline/internal/ErrorUtil.h"
 #include "pipeline/runtime/RunCore.h"
@@ -78,8 +79,8 @@ void dataflow_warn_once(const std::string& key, const std::string& message) {
 
 namespace {
 
-// With SIMA_NEAT_BACKEND set, every Graph::build says which runtime it took and why: the evidence a
-// test log needs to tell a Dataflow block from one that stayed on GStreamer.
+// With SIMA_NEAT_BACKEND set, every Graph::build on Dataflow says so and what it built: the
+// evidence a test log needs.
 void trace_choice(const char* where, const char* backend, const std::string& detail) {
   if (pipeline_internal::env_str(kBackendEnv, "").empty()) {
     return;
@@ -88,69 +89,31 @@ void trace_choice(const char* where, const char* backend, const std::string& det
                detail.c_str());
 }
 
-// The verdict: build on Dataflow, stay on GStreamer, or fail (explicit Dataflow only).
-struct Want {
-  bool dataflow = false;
-  bool explicit_request = false;
-};
-
-Want wanted_backend(const RunOptions& opt) {
-  if (opt.backend == RunBackend::GStreamer) {
-    return {};
-  }
-  if (opt.backend == RunBackend::Dataflow) {
-    return {true, true};
+// Whether this Run is for Dataflow: RunOptions::backend says it, and RunBackend::Auto reads
+// SIMA_NEAT_BACKEND.
+bool wants_dataflow(const RunOptions& opt) {
+  if (opt.backend != RunBackend::Auto) {
+    return opt.backend == RunBackend::Dataflow;
   }
   const std::string env = backend_env();
   if (env.empty() || env == "auto" || env == "gstreamer") {
-    return {};
+    return false;
   }
   if (env != "dataflow") {
     dataflow_warn_once("env:" + env,
                        std::string(kBackendEnv) + "=" + env +
                            " is not a backend (dataflow, gstreamer, auto); using GStreamer");
-    return {};
+    return false;
   }
-  return {true, false};
+  return true;
 }
 
-// What an explicit RunBackend::Dataflow request that Dataflow cannot build is told to do.
-constexpr const char* kAction = "Build this Run with RunBackend::GStreamer or RunBackend::Auto.";
+using pipeline_internal::DataflowNotCarried;
 
-// Why Dataflow does not take this Run: an error for an explicit request, a trace line for Auto.
-std::shared_ptr<RunCore> decline(const Want& want, const char* where, const char* code,
-                                 const std::string& reason) {
-  if (want.explicit_request) {
-    pipeline_internal::error_util::throw_session_error(
-        code, std::string(where ? where : "Graph::build") + ": RunBackend::Dataflow: " + reason, {},
-        kAction);
-  }
-  trace_choice(where, "gstreamer", std::string(kBackendEnv) + "=dataflow: " + reason);
-  return nullptr;
+// A Run for Dataflow that Dataflow does not carry: the build's error.
+[[noreturn]] void decline(const char* where, const DataflowNotCarried& what) {
+  pipeline_internal::throw_dataflow_not_carried(where ? where : "Graph::build", what);
 }
-
-#if defined(SIMANEAT_WITH_DATAFLOW)
-
-// The first line of an error's text: the [NEAT] line of a Run that fell back.
-std::string first_line(const char* text) {
-  const std::string_view all(text ? text : "");
-  return std::string(all.substr(0, all.find('\n')));
-}
-
-// Inside the handler of `error`, an error of an explicit RunBackend::Dataflow request while the
-// Run is built: rethrown with a decline's action when its own text names none.
-[[noreturn]] void rethrow_with_action(const NeatError& error) {
-  GraphReport report = error.report();
-  if (report.repro_note.find("\nHint: ") != std::string::npos) {
-    throw;
-  }
-  report.repro_note = pipeline_internal::error_util::append_hint(report.repro_note, kAction);
-  std::string message =
-      pipeline_internal::error_util::decorate_error(report.error_code, report.repro_note);
-  throw NeatError(std::move(message), std::move(report));
-}
-
-#endif // SIMANEAT_WITH_DATAFLOW
 
 // ---- seeds -------------------------------------------------------------------------------------
 // The seed of a seeded build is the Run's representative input: it binds the input's spec and is
@@ -164,9 +127,9 @@ DataflowSeed seed_from_sample(const Sample& sample) {
     }
     // Core pushes a Bundle one field at a time (RunCore::push_samples): each field is an item,
     // and they share no binding.
-    seed.unsupported = "a Bundle seed of " + std::to_string(sample.fields.size()) +
-                       " fields (several items for one input) does not bind one spec; seed with "
-                       "one of its fields";
+    seed.unsupported = "it is a Bundle of " + std::to_string(sample.fields.size()) +
+                       " fields (several items for one input), which bind no one spec: seed "
+                       "with one of its fields";
     return seed;
   }
   if (sample_has_tensor_list(sample)) {
@@ -177,7 +140,7 @@ DataflowSeed seed_from_sample(const Sample& sample) {
     seed.tensors = std::span<const Tensor>(&*sample.tensor, 1);
     return seed;
   }
-  seed.unsupported = "the seed Sample has no tensor";
+  seed.unsupported = "it is a Sample without a tensor";
   return seed;
 }
 
@@ -208,35 +171,39 @@ std::string describe_choice(const DataflowRunConfig& config,
 }
 
 std::shared_ptr<RunCore> build_impl(const Graph& graph, const RunOptions& opt, RunMode mode,
-                                    const DataflowSeed& seed, const char* where, const Want& want) {
+                                    const DataflowSeed& seed, const char* where) {
   if (mode != RunMode::Async) {
-    return decline(want, where, error_codes::kPipelineShape,
-                   "a synchronous Run (Graph::run) is not supported on the Dataflow backend");
+    decline(where, {error_codes::kPipelineShape, "a synchronous Run",
+                    "Graph::run(inputs) builds one, and the backend runs the Runs of Graph::build"});
   }
-  DataflowDecline declined;
-  std::optional<DataflowRunConfig> planned = plan_dataflow_run(graph, opt, seed, &declined);
+  DataflowNotCarried declined;
+  std::optional<DataflowRunConfig> planned = plan_dataflow_run(graph, opt, seed, where, &declined);
   if (!planned) {
-    return decline(want, where, declined.code, declined.reason);
+    decline(where, declined);
   }
   const DataflowRunConfig& config = *planned;
   for (const DataflowOutputConfig& output : config.outputs) {
     if (output.link_depth > pipeline_internal::df::kMaxLinkDepth) {
-      return decline(want, where, error_codes::kOptionOutOfRange,
-                     "the link depth " + std::to_string(output.link_depth) +
-                         " (the larger of RunOptions::queue_depth " +
-                         std::to_string(output.ingress_depth) + " and OutputOptions::max_buffers " +
-                         std::to_string(output.terminal_depth) + ") is above the Dataflow link's " +
-                         std::to_string(pipeline_internal::df::kMaxLinkDepth));
+      decline(where, {error_codes::kOptionOutOfRange,
+                      "option RunOptions::queue_depth = " + std::to_string(output.ingress_depth) +
+                          " with OutputOptions::max_buffers = " +
+                          std::to_string(output.terminal_depth),
+                      "the link from an Input to its Output is as deep as the larger of the two, " +
+                          std::to_string(output.link_depth) + ", and a link holds at most " +
+                          std::to_string(pipeline_internal::df::kMaxLinkDepth) + " items"});
     }
   }
-  // Each input's spec, when a seed or the declaration gives it now; an unsupported declaration or
-  // seed is decided here, before a Run exists.
+  // Each input's spec, when a seed or the declaration gives it now; a declaration or a seed that
+  // binds none is decided here, before a Run exists.
   std::string why;
   std::vector<std::optional<DataflowInputBinding>> bindings;
   for (const DataflowInputConfig& input : config.inputs) {
     bindings.push_back(bind_dataflow_item(input.input, seed.tensors, &why));
     if (!why.empty()) {
-      return decline(want, where, error_codes::kInputShape, why);
+      decline(where, {error_codes::kInputShape,
+                      "Input " + dataflow_names_text(input.names) +
+                          (seed.tensors.empty() ? " as declared" : " with this seed"),
+                      why});
     }
   }
   // A tensor pulled from a device pool is a GstSample over a GstDmaBufMemory
@@ -254,19 +221,7 @@ std::shared_ptr<RunCore> build_impl(const Graph& graph, const RunOptions& opt, R
   initialize_run_identity(*core);
   core->opt = config.run;
   core->mode = RunMode::Async;
-  try {
-    core->dataflow_ = make_dataflow_run_state(*core, config, seed.tensors);
-  } catch (const pipeline_internal::DataflowErrorOnEveryBackend&) {
-    throw;
-  } catch (const NeatError& error) {
-    if (want.explicit_request) {
-      rethrow_with_action(error);
-    }
-    trace_choice(where, "gstreamer",
-                 std::string(kBackendEnv) + "=dataflow: the Run could not be built on Dataflow: " +
-                     first_line(error.what()));
-    return nullptr;
-  }
+  core->dataflow_ = make_dataflow_run_state(*core, config, seed.tensors);
   warn_ignored_dataflow_options(config);
   trace_choice(where, "dataflow", describe_choice(config, bindings));
   return core;
@@ -274,28 +229,26 @@ std::shared_ptr<RunCore> build_impl(const Graph& graph, const RunOptions& opt, R
 
 #else
 
-// No runtime in this build: dispatch declines before it asks for a build.
+// No runtime in this build: dispatch fails before it asks for a build.
 template <class... Args> std::shared_ptr<RunCore> build_impl(const Args&...) {
   return nullptr;
 }
 
 #endif // SIMANEAT_WITH_DATAFLOW
 
-// The common head of the four entries: no Dataflow wanted, or no runtime in this build.
+// The common head of the four entries: a Run for GStreamer, or no runtime in this build.
 template <class Build>
 std::shared_ptr<RunCore> dispatch(const RunOptions& opt, const char* where, Build&& build) {
-  const Want want = wanted_backend(opt);
-  if (!want.dataflow) {
+  if (!wants_dataflow(opt)) {
     return nullptr;
   }
 #if defined(SIMANEAT_WITH_DATAFLOW)
   (void)where; // the build reports with it
-  return build(want);
+  return build();
 #else
   (void)build;
-  return decline(want, where, error_codes::kPipelineShape,
-                 "this build of libsima_neat has no Dataflow backend (configure it with "
-                 "SIMANEAT_DATAFLOW_SOURCE_DIR)");
+  decline(where, {error_codes::kPipelineShape, "this build of libsima_neat",
+                  "it was configured without the Dataflow runtime (SIMANEAT_DATAFLOW_SOURCE_DIR)"});
 #endif
 }
 
@@ -303,39 +256,38 @@ std::shared_ptr<RunCore> dispatch(const RunOptions& opt, const char* where, Buil
 
 std::shared_ptr<RunCore> DataflowGraphAccess::build(const Graph& graph, const RunOptions& opt,
                                                     RunMode mode, const char* where) {
-  return dispatch(opt, where, [&](const auto& want) {
-    return build_impl(graph, opt, mode, DataflowSeed{}, where, want);
-  });
+  return dispatch(opt, where,
+                  [&] { return build_impl(graph, opt, mode, DataflowSeed{}, where); });
 }
 
 std::shared_ptr<RunCore> DataflowGraphAccess::build(const Graph& graph, const RunOptions& opt,
                                                     RunMode mode, const TensorList& seed,
                                                     const char* where) {
-  return dispatch(opt, where, [&](const auto& want) {
+  return dispatch(opt, where, [&] {
     if (seed.empty()) {
       throw std::runtime_error("Graph::build(inputs): empty tensor list");
     }
     DataflowSeed s;
     s.tensors = seed;
-    return build_impl(graph, opt, mode, s, where, want);
+    return build_impl(graph, opt, mode, s, where);
   });
 }
 
 std::shared_ptr<RunCore> DataflowGraphAccess::build(const Graph& graph, const RunOptions& opt,
                                                     RunMode mode, const Sample& seed,
                                                     const char* where) {
-  return dispatch(opt, where, [&](const auto& want) {
+  return dispatch(opt, where, [&] {
     if (seed.empty()) {
       throw std::runtime_error("Graph::build(inputs): empty sample list");
     }
-    return build_impl(graph, opt, mode, seed_from_sample(seed), where, want);
+    return build_impl(graph, opt, mode, seed_from_sample(seed), where);
   });
 }
 
 std::shared_ptr<RunCore> DataflowGraphAccess::build(const Graph& graph, const RunOptions& opt,
                                                     RunMode mode, const std::vector<cv::Mat>& seed,
                                                     const char* where) {
-  return dispatch(opt, where, [&](const auto& want) -> std::shared_ptr<RunCore> {
+  return dispatch(opt, where, [&]() -> std::shared_ptr<RunCore> {
 #if defined(SIMA_WITH_OPENCV)
     // GStreamer's own checks and texts (Graph::build_seeded_internal).
     if (seed.empty()) {
@@ -349,19 +301,18 @@ std::shared_ptr<RunCore> DataflowGraphAccess::build(const Graph& graph, const Ru
     }
     DataflowSeed s;
     if (seed.size() != 1U) {
-      s.unsupported =
-          "a seed of " + std::to_string(seed.size()) + " images (a record) is not supported yet";
-      return build_impl(graph, opt, mode, s, where, want);
+      s.unsupported = "it is " + std::to_string(seed.size()) +
+                      " images (a record) where a cv::Mat seed is one image";
+      return build_impl(graph, opt, mode, s, where);
     }
     // The seed only binds the spec: a CPU view, whatever the Input's memory policy.
     InputOptions input = dataflow_seed_input_options(graph);
     input.memory_policy = InputMemoryPolicy::SystemMemory;
     const Tensor view = tensor_from_cv_mat(seed.front(), input, "Graph::build(inputs)");
     s.tensors = std::span<const Tensor>(&view, 1);
-    return build_impl(graph, opt, mode, s, where, want);
+    return build_impl(graph, opt, mode, s, where);
 #else
-    (void)want;
-    return nullptr;
+    throw std::runtime_error("Graph::build(inputs): this build has no OpenCV");
 #endif
   });
 }

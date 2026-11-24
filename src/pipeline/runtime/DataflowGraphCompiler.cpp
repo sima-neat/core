@@ -6,7 +6,8 @@
 // its stages (DataflowModelRoute.h). Each Input becomes one Feed with one link per Output it feeds
 // (a fan-out when there are several) and one Fetch per Output, on a Session of its own
 // (DataflowInputPort.cpp), in one Run state (DataflowRun.cpp). Everything else (fan-in and
-// combine, other nodes) is declined (DataflowBackendSelect.cpp). Here: qualification, endpoint
+// combine, other nodes) is not carried: the compiler says who and what (DataflowNotCarried), and
+// the build throws it (DataflowBackendSelect.cpp). Here: qualification, endpoint
 // names, the mapping of RunOptions and OutputOptions to link depths and policies, and each
 // Input's memory (InputOptions::memory_policy resolved as GStreamer's build resolves it).
 
@@ -15,6 +16,7 @@
 #include "pipeline/ErrorCodes.h"
 #include "pipeline/Graph.h"
 #include "pipeline/graph/internal/GraphBuildInternal.h"
+#include "pipeline/internal/DataflowNotCarried.h"
 #include "pipeline/internal/InputPolicy.h"
 #include "pipeline/internal/InputStreamUtil.h"
 #include "pipeline/internal/PublicInputContract.h"
@@ -29,6 +31,7 @@
 #include <cstdint>
 #include <functional>
 #include <set>
+#include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
@@ -112,16 +115,20 @@ DataflowGraphView DataflowGraphAccess::view(const Graph& graph) {
 namespace {
 
 namespace df = pipeline_internal::df;
+using pipeline_internal::DataflowNotCarried;
 
 std::string node_text(const Node& node) {
   const std::string label = node.user_label();
   return label.empty() ? node.kind() : node.kind() + " '" + label + "'";
 }
 
+// The graph as a subject, for a fact that is no one node's.
+constexpr const char* kThisGraph = "this graph";
+
 // ---- qualification -----------------------------------------------------------------------------
 // The public endpoints of a qualifying graph, and who feeds whom.
 struct Qualification {
-  std::string reason;                // empty: qualifies
+  DataflowNotCarried declined;       // empty: qualifies
   std::vector<std::size_t> inputs;   // public Input vertices, vertex order
   std::vector<std::size_t> outputs;  // public Output vertices, vertex order
   std::vector<std::size_t> producer; // per output (index into outputs): its input (into inputs)
@@ -142,17 +149,21 @@ struct Qualification {
 // Model::preprocess(), inference(), postprocess()) feeding one Output. Whether those nodes are
 // stages this backend runs is the planner's question (derive_config).
 Qualification qualify(const DataflowGraphView& view) {
-  static constexpr const char* kCombined =
-      "an Output with a CombinePolicy (fan-in) is not supported on the Dataflow backend";
+  static constexpr const char* kRuns =
+      "the backend runs Inputs, Outputs and the stages of a Model between them";
   Qualification q;
+  const auto decline = [&q](std::string subject, std::string fact) {
+    q.declined.subject = std::move(subject);
+    q.declined.fact = std::move(fact);
+  };
   if (view.model_route) {
-    q.reason = "a graph whose Model processes its own input (Model::graph() with an input "
-               "route) is not supported on the Dataflow backend";
+    decline(kThisGraph,
+            "its Model processes its own input (Model::graph() with an input route)");
     return q;
   }
   if (!view.runtime_stages.empty()) {
-    q.reason = "runtime stage " + view.runtime_stages.front() +
-               " is not supported on the Dataflow backend";
+    decline("runtime stage " + view.runtime_stages.front(),
+            std::string("it is a runtime stage: ") + kRuns);
     return q;
   }
   const std::size_t n = view.vertices.size();
@@ -168,7 +179,7 @@ Qualification qualify(const DataflowGraphView& view) {
       kind[vertex] = Kind::In;
     } else if (const auto* output = dynamic_cast<const Output*>(node.get())) {
       if (output->options().combine_policy != CombinePolicy::None) {
-        q.reason = kCombined;
+        decline("node " + node_text(*node), "it has a CombinePolicy (fan-in)");
         return q;
       }
       kind[vertex] = Kind::Out;
@@ -177,15 +188,12 @@ Qualification qualify(const DataflowGraphView& view) {
       kind[vertex] = Kind::Fragment;
       fragments.push_back(vertex);
     } else if (node->kind() == "SimaBoxDecode") {
-      q.reason = "node " + node_text(*node) +
-                 " is a standalone BoxDecode node, which is not supported on the Dataflow "
-                 "backend: there BoxDecode runs as the model's own stage, Model::postprocess() "
-                 "behind Model::inference()";
+      decline("node " + node_text(*node),
+              "it is a standalone BoxDecode node: BoxDecode runs as the model's own stage, "
+              "Model::postprocess() behind Model::inference()");
       return q;
     } else {
-      q.reason = "node " + node_text(*node) +
-                 " is not supported on the Dataflow backend, which runs Inputs, Outputs and the "
-                 "stages of a Model between them";
+      decline("node " + node_text(*node), kRuns);
       return q;
     }
   }
@@ -199,7 +207,7 @@ Qualification qualify(const DataflowGraphView& view) {
   for (std::size_t e = 0; e < view.edges.size(); ++e) {
     const auto& edge = view.edges[e];
     if (edge.from >= n || edge.to >= n) {
-      q.reason = "a composition edge references an invalid vertex";
+      decline(kThisGraph, "a composition edge references an invalid vertex");
       return q;
     }
     outgoing[edge.from].push_back(e);
@@ -227,12 +235,11 @@ Qualification qualify(const DataflowGraphView& view) {
     }
   }
   if (q.inputs.empty()) {
-    q.reason = "a graph with no public Input (a source graph) is not supported on the Dataflow "
-               "backend";
+    decline(kThisGraph, "it has no public Input (a source graph)");
     return q;
   }
   if (q.outputs.empty()) {
-    q.reason = "a graph with no public Output is not supported on the Dataflow backend";
+    decline(kThisGraph, "it has no public Output");
     return q;
   }
 
@@ -243,13 +250,11 @@ Qualification qualify(const DataflowGraphView& view) {
   std::function<bool(std::size_t, std::size_t)> follow = [&](std::size_t start, std::size_t e) {
     const auto& edge = view.edges[e];
     if (edge.policy != GraphLinkPolicy::Default) {
-      q.reason = "a link policy other than GraphLinkPolicy::Default is not supported on the "
-                 "Dataflow backend";
+      decline(kThisGraph, "a link of it has a policy other than GraphLinkPolicy::Default");
       return false;
     }
     if (!edge.stream_id.empty()) {
-      q.reason =
-          "a link stream_id ('" + edge.stream_id + "') is not supported on the Dataflow backend";
+      decline(kThisGraph, "a link of it has a stream_id ('" + edge.stream_id + "')");
       return false;
     }
     const std::size_t to = edge.to;
@@ -258,11 +263,11 @@ Qualification qualify(const DataflowGraphView& view) {
       return true;
     }
     if (visiting[to]) {
-      q.reason = "the public boundary declarations form a cycle";
+      decline(kThisGraph, "its public boundary declarations form a cycle");
       return false;
     }
     if (outgoing[to].empty()) {
-      q.reason = "the internal boundary " + text(to) + " leads to no endpoint";
+      decline("node " + text(to), "it is an internal boundary that leads to no endpoint");
       return false;
     }
     visiting[to] = true;
@@ -307,8 +312,8 @@ Qualification qualify(const DataflowGraphView& view) {
     chain = chain && std::count(links.begin(), links.end(), std::pair{at, q.outputs[0]}) == 1;
     if (!chain) {
       q.stages.clear();
-      q.reason = "a model fragment (" + text(fragments.front()) +
-                 ") runs on Dataflow only in one chain between one Input and one Output";
+      decline("node " + text(fragments.front()),
+              "it is a stage of a Model outside one chain between one Input and one Output");
       return q;
     }
     q.producer[0] = 0;
@@ -317,14 +322,13 @@ Qualification qualify(const DataflowGraphView& view) {
   }
   for (const auto& [from, to] : links) {
     if (kind[from] != Kind::In || kind[to] != Kind::Out) {
-      q.reason = "a connection from " + text(from) + " to " + text(to) +
-                 " (only Inputs feeding Outputs) is not supported on the Dataflow backend";
+      decline("the connection from " + text(from) + " to " + text(to),
+              "it is not an Input feeding an Output");
       return q;
     }
     std::size_t& producer = q.producer[output_of[to]];
     if (producer != kNone) {
-      q.reason =
-          text(to) + " has more than one producer: fan-in is not supported on the Dataflow backend";
+      decline("node " + text(to), "it has more than one producer (fan-in)");
       return q;
     }
     producer = input_of[from];
@@ -332,19 +336,20 @@ Qualification qualify(const DataflowGraphView& view) {
   q.fan_out.resize(q.inputs.size());
   for (std::size_t o = 0; o < q.outputs.size(); ++o) {
     if (q.producer[o] == kNone) {
-      q.reason = text(q.outputs[o]) + " is connected to no Input";
+      decline("node " + text(q.outputs[o]), "it is connected to no Input");
       return q;
     }
     ++q.fan_out[q.producer[o]];
   }
   for (std::size_t i = 0; i < q.inputs.size(); ++i) {
     if (q.fan_out[i] == 0U) {
-      q.reason = text(q.inputs[i]) + " is connected to no Output";
+      decline("node " + text(q.inputs[i]), "it is connected to no Output");
       return q;
     }
     if (q.fan_out[i] > df::kMaxFanOut) {
-      q.reason = text(q.inputs[i]) + " feeds " + std::to_string(q.fan_out[i]) +
-                 " Outputs: the runtime's fan-out is at most " + std::to_string(df::kMaxFanOut);
+      decline("node " + text(q.inputs[i]),
+              "it feeds " + std::to_string(q.fan_out[i]) + " Outputs: an Input feeds at most " +
+                  std::to_string(df::kMaxFanOut));
       return q;
     }
   }
@@ -440,10 +445,12 @@ const char* policy_text(OverflowPolicy policy) {
   return "?";
 }
 
-// The Run's configuration; `why` set when this graph's options are what Dataflow cannot carry.
+// The Run's configuration; `why` set when this graph's options, or its model's route, are what
+// Dataflow does not carry. Throws what GStreamer's build throws for endpoint names two endpoints
+// share.
 DataflowRunConfig derive_config(const Graph& graph, const DataflowGraphView& view,
                                 const Qualification& q, const RunOptions& opt,
-                                std::span<const Tensor> seed, std::string* why) {
+                                std::span<const Tensor> seed, DataflowNotCarried* why) {
   DataflowRunConfig config;
   const std::vector<std::string> listed_inputs = graph.inputs();
   const std::vector<std::string> listed_outputs = graph.outputs();
@@ -455,12 +462,12 @@ DataflowRunConfig derive_config(const Graph& graph, const DataflowGraphView& vie
   for (std::size_t o = 0; o < q.outputs.size(); ++o) {
     config.outputs[o].names = endpoint_names(view, q.outputs, q.outputs[o], listed_outputs);
   }
-  *why = shared_name(config.inputs, "input");
-  if (why->empty()) {
-    *why = shared_name(config.outputs, "output");
+  std::string shared = shared_name(config.inputs, "input");
+  if (shared.empty()) {
+    shared = shared_name(config.outputs, "output");
   }
-  if (!why->empty()) {
-    return config;
+  if (!shared.empty()) {
+    throw std::runtime_error(shared);
   }
   config.input_names = sorted_union(config.inputs);
   config.output_names = sorted_union(config.outputs);
@@ -556,8 +563,9 @@ DataflowRunConfig derive_config(const Graph& graph, const DataflowGraphView& vie
         input.input.memory_policy = InputMemoryPolicy::Ev74;
       }
       if (config.outputs[input.outputs.front()].terminal_drop) {
-        *why = "OutputOptions::drop behind a model is not supported on the Dataflow backend: "
-               "the route's last link would drop frames, which Core does not count";
+        why->subject = "option OutputOptions::drop behind a model";
+        why->fact = "it makes the route's last link drop frames, which Core does not count";
+        why->code = error_codes::kOptionOutOfRange;
         return config;
       }
     }
@@ -579,12 +587,12 @@ DataflowRunConfig derive_config(const Graph& graph, const DataflowGraphView& vie
       (config.outputs[o].terminal_drop ? lossy : lossless) = true;
     }
     if (lossy && lossless && config.link_policy != OverflowPolicy::Block) {
-      *why = "Input " + dataflow_names_text(input.names) +
-             " feeds Outputs with and without OutputOptions::drop under OverflowPolicy::" +
-             std::string(policy_text(config.link_policy)) +
-             ": a blocking push would wait for room on some of its links and evict on the "
-             "others, which the runtime's push cannot do (it waits on every link, or on the "
-             "Block links only)";
+      why->subject = "Input " + dataflow_names_text(input.names);
+      why->fact = "it feeds Outputs with and without OutputOptions::drop under OverflowPolicy::" +
+                  std::string(policy_text(config.link_policy)) +
+                  ": a blocking push would wait for room on some of its links and evict on the "
+                  "others";
+      why->code = error_codes::kOptionOutOfRange;
       return config;
     }
   }
@@ -635,35 +643,33 @@ void warn_ignored_dataflow_options(const DataflowRunConfig& config) {
 InputOptions dataflow_seed_input_options(const Graph& graph) {
   const DataflowGraphView view = DataflowGraphAccess::view(graph);
   const Qualification q = qualify(view);
-  return q.reason.empty() && q.inputs.size() == 1U ? *view.inputs[q.inputs.front()]
-                                                   : InputOptions{};
+  return !q.declined && q.inputs.size() == 1U ? *view.inputs[q.inputs.front()] : InputOptions{};
 }
 
 std::optional<DataflowRunConfig> plan_dataflow_run(const Graph& graph, const RunOptions& opt,
-                                                   const DataflowSeed& seed, DataflowDecline* why) {
-  const auto decline = [why](const char* code, std::string reason) {
-    *why = DataflowDecline{code, std::move(reason)};
-    return std::nullopt;
-  };
+                                                   const DataflowSeed& seed, const char* where,
+                                                   DataflowNotCarried* why) {
   const DataflowGraphView view = DataflowGraphAccess::view(graph);
-  const Qualification q = qualify(view);
-  if (!q.reason.empty()) {
-    return decline(error_codes::kPipelineShape, q.reason);
+  Qualification q = qualify(view);
+  if (q.declined) {
+    *why = std::move(q.declined);
+    return std::nullopt;
   }
   if (!seed.unsupported.empty()) {
-    return decline(error_codes::kInputShape, seed.unsupported);
+    *why = DataflowNotCarried{error_codes::kInputShape, "the seed", seed.unsupported};
+    return std::nullopt;
   }
   if (!seed.tensors.empty() && q.inputs.size() != 1U) {
-    // GStreamer's own rule (connected_default_input_segment_or_throw).
-    return decline(error_codes::kInputShape,
-                   "a seed for a graph of " + std::to_string(q.inputs.size()) +
-                       " public Inputs: graph has no unambiguous default input; build without a "
-                       "seed");
+    // GStreamer's own rule and text (connected_default_input_segment_or_throw).
+    throw std::runtime_error(std::string(where ? where : "Graph::build(inputs)") +
+                             ": graph has no unambiguous default input; build without a seed or "
+                             "make the connected graph topology unambiguous");
   }
-  std::string reason;
-  DataflowRunConfig config = derive_config(graph, view, q, opt, seed.tensors, &reason);
-  if (!reason.empty()) {
-    return decline(error_codes::kPipelineShape, reason);
+  DataflowNotCarried declined;
+  DataflowRunConfig config = derive_config(graph, view, q, opt, seed.tensors, &declined);
+  if (declined) {
+    *why = std::move(declined);
+    return std::nullopt;
   }
   return config;
 }

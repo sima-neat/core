@@ -12,12 +12,13 @@
 //     heads of a detection model): when the MLA stage is the route's last, a pull returns them
 //     as GStreamer's does, a TensorList of views of the one pulled message. A model of several
 //     output buffers, and a stage other than BoxDecode behind an MLA stage of several tensors,
-//     are declined at the plan and stay on GStreamer;
+//     are not carried: the plan says so and the build fails;
 //   - Model::preprocess(), inference(), postprocess() of a model package whose pre and post stages
 //     are canonical transforms (quanttess, detessdequant, ...), each on the A65 or on the EV74 as
 //     the Graph places it (GraphOptions::processcvu.pre_run_target / post_run_target,
 //     ProcessCvuRunTargetPolicy.cpp). A stage on the EV74 is taken only where the EV74 runs the
-//     Kernels firmware; on a board with the stock firmware the route is declined at the plan.
+//     Kernels firmware; on a board with another firmware the route is not carried, and the plan
+//     says so as the board's fact.
 //   - Model::preprocess() of a model whose pre stage is the image preproc (the Kernels package's
 //     "preproc", EV74 only: resize, colour, normalize, quantize and tessellate an RGB or BGR
 //     frame, or an NV12 one), alone or in front of the stages above. GStreamer runs it
@@ -38,9 +39,9 @@
 //     An NV12 frame is one port of bytes, the two planes views of it at fixed offsets
 //     (soc::KernelOp::Options::Packing): a frame of the port's size, its chroma plane behind its
 //     luma plane, is wrapped; a smaller one is copied to those offsets. I420 and the other planar
-//     formats, an image frontend and a batched (ROI) stage are declined at the plan and stay on
-//     GStreamer; a frame with ROI metadata or an upstream stage's preprocess metadata is refused
-//     at the push.
+//     formats, an image frontend and a batched (ROI) stage are not carried (the plan says so);
+//     a frame with ROI metadata or an upstream stage's preprocess metadata is refused at the
+//     push.
 //   - Model::postprocess() of a detection model (BoxDecode) behind the MLA stage, at the route's
 //     end: the Kernels package's "boxdecode" on the A65 as one kernel operator whose inputs are
 //     the heads, views at their byte offsets of the MLA's one output buffer (one port, no join),
@@ -54,7 +55,7 @@
 //     user word (DataflowFrames). Carried: YOLOv8-style detection (profile yolo_dfl_v1) with
 //     C-blocked heads. The other decode families, pose, segmentation and oriented boxes, tiled
 //     heads (detess members), and a decode that takes each frame's size without the image
-//     preproc in front are declined at the plan and stay on GStreamer.
+//     preproc in front are not carried (the plan says so).
 // Here: what the route's stages are, read from what Core compiles and lowers for the same nodes on
 // GStreamer (the rendered stage manifest and its checked kernel recipes), and what the input's
 // port does with them: load the model and make the kernels, check the input's binding against
@@ -72,6 +73,7 @@
 #include "nodes/io/Input.h"
 #include "pipeline/GraphOptions.h"
 #include "pipeline/TensorCore.h"
+#include "pipeline/internal/DataflowNotCarried.h"
 #include "pipeline/internal/DataflowRuntime.h"
 #include "pipeline/internal/sima/SimaPluginStaticManifest.h"
 #include "pipeline/runtime/DataflowRoutePlan.h"
@@ -246,7 +248,8 @@ bool dataflow_has_model_route() noexcept;
 std::shared_ptr<const DataflowModelRoute>
 plan_dataflow_model_route(const std::vector<std::shared_ptr<Node>>& route,
                           const GraphOptions& options, const InputOptions& declared,
-                          std::span<const Tensor> seed, std::string* why);
+                          std::span<const Tensor> seed,
+                          pipeline_internal::DataflowNotCarried* why);
 
 // What one Run's operators are made with: the loaded model (soc::MlaModel) of an MLA stage and
 // the checked kernel (soc::Kernel) of a kernel stage, one per such stage. Throws NeatError when the
@@ -298,8 +301,9 @@ void fill_dataflow_stage_tensors(const DataflowPulledTensor& pulled,
 
 // Before a push into a route whose first stage is the image preproc at a declared frame size
 // (`route.frame_input` without `route.frames`) of a tensor that is not the validated frame:
-// throws NeatError (misconfig.input_shape) for a frame of another size than the declared one,
-// and for one that carries ROI metadata, each with what to do instead; returns for anything else
+// throws NeatError (misconfig.input_shape) for a frame of another size than the declared one
+// (with what to do instead), and the not-carried error for one that carries ROI metadata; returns
+// for anything else
 // (the binding's own check says what is wrong with it), and on a route whose frames change size
 // (dataflow_frame_word checks those).
 void refuse_dataflow_frame(const DataflowModelRoute& route, const Tensor& tensor,
@@ -308,9 +312,9 @@ void refuse_dataflow_frame(const DataflowModelRoute& route, const Tensor& tensor
 // A route whose frames change size (`route.frames`), before a push of `tensor`: the stamp's
 // user word that states the frame's geometry to the route's stages and to the pull. Throws
 // NeatError (misconfig.input_shape), each with what to do instead, for a frame the route cannot
-// run: one above the port's bound, of another format or layout than the route's frames, with
-// ROI metadata or an upstream stage's preprocess metadata, or one whose kernel request the
-// Kernels package refuses. So that nothing the Worker is later asked for can fail, the first
+// run: one above the port's bound, of another format or layout than the route's frames, or one
+// whose kernel request the Kernels package refuses; and the not-carried error for a frame with
+// ROI metadata or an upstream stage's preprocess metadata. So that nothing the Worker is later asked for can fail, the first
 // frame of a size makes that size's kernels here, on the pushing thread (cold: the image
 // stage's kernel is checked and made; the BoxDecode kernel is a variant of the Run's); a frame
 // of a size the table holds costs a compare, and one of the port's bound's size nothing more

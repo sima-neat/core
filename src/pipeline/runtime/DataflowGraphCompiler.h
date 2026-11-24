@@ -11,6 +11,7 @@
 #include "pipeline/GraphOptions.h"
 #include "pipeline/Run.h"
 #include "pipeline/TensorCore.h"
+#include "pipeline/internal/DataflowNotCarried.h"
 #include "pipeline/runtime/DataflowRun.h"
 
 #include <cstdint>
@@ -39,8 +40,9 @@ struct __attribute__((visibility("hidden"))) DataflowGraphAccess {
   // The Graph's composition as the compiler needs it, read as compile_public_graph reads it.
   static DataflowGraphView view(const Graph& graph);
 
-  // nullptr: build this Run on GStreamer. Otherwise the RunCore of a Run on Dataflow. Throws
-  // NeatError when RunOptions::backend is Dataflow and this build or this graph cannot honor it.
+  // nullptr: this Run is for GStreamer. Otherwise the RunCore of a Run on Dataflow. Throws when
+  // the Run is for Dataflow and Dataflow does not carry it or cannot build it: nothing is built
+  // on GStreamer in its place.
   static std::shared_ptr<RunCore> build(const Graph& graph, const RunOptions& opt, RunMode mode,
                                         const char* where);
   static std::shared_ptr<RunCore> build(const Graph& graph, const RunOptions& opt, RunMode mode,
@@ -70,17 +72,15 @@ InputOptions dataflow_seed_input_options(const Graph& graph);
 
 #if defined(SIMANEAT_WITH_DATAFLOW)
 
-// Why the Dataflow backend does not take a Run.
-struct DataflowDecline {
-  const char* code = nullptr; ///< error_codes: the error of an explicit RunBackend::Dataflow
-  std::string reason;
-};
-
 // The Run configuration of `graph` under `opt` when the graph qualifies (public Inputs feeding
-// public Outputs, each Output fed by one Input) and Dataflow can carry its options and `seed`;
-// nullopt with `why` set otherwise.
-std::optional<DataflowRunConfig> plan_dataflow_run(const Graph& graph, const RunOptions& opt,
-                                                   const DataflowSeed& seed, DataflowDecline* why);
+// public Outputs, each Output fed by one Input; or one Input, a Model's stages in a chain, one
+// Output) and Dataflow carries its options and `seed`; nullopt with `why` set otherwise: who is
+// not carried and the fact about it. Throws what GStreamer's build throws for a mistake both
+// backends refuse (an endpoint name two endpoints share, a seed for a graph of several Inputs),
+// naming `where`.
+std::optional<DataflowRunConfig>
+plan_dataflow_run(const Graph& graph, const RunOptions& opt, const DataflowSeed& seed,
+                  const char* where, pipeline_internal::DataflowNotCarried* why);
 
 // The options Dataflow does not read, when set away from their defaults: one warning per process
 // and option.

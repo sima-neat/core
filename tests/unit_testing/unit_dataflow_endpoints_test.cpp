@@ -577,7 +577,7 @@ void alloc_on_named_inputs() {
   run.close();
 }
 
-void errors_that_stay_on_gstreamer() {
+void graphs_not_carried() {
   // Fan-in: two Inputs into one Output.
   {
     Graph g;
@@ -587,13 +587,13 @@ void errors_that_stay_on_gstreamer() {
     g.connect("left", "combined");
     g.connect("right", "combined");
     require_neat_error([&] { (void)g.build(dataflow()); }, error_codes::kPipelineShape,
-                       "fan-in is not supported on the Dataflow backend");
+                       "is not carried by the Dataflow backend: it has more than one producer (fan-in)");
   }
   // Combine (a fan-in with a CombinePolicy).
   {
     Graph join = graphs::Combine({"left", "right"}, "combined", CombinePolicy::ByFrame);
     require_neat_error([&] { (void)join.build(dataflow()); }, error_codes::kPipelineShape,
-                       "CombinePolicy (fan-in) is not supported on the Dataflow backend");
+                       "is not carried by the Dataflow backend: it has a CombinePolicy (fan-in)");
   }
   // An Input that feeds nothing.
   {
@@ -635,5 +635,5 @@ RUN_TEST("unit_dataflow_endpoints_test", ([] {
            elided_boundaries();
            seeds();
            alloc_on_named_inputs();
-           errors_that_stay_on_gstreamer();
+           graphs_not_carried();
          }));

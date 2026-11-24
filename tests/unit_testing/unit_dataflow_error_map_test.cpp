@@ -1,7 +1,7 @@
 // The Dataflow backend's error table (src/pipeline/internal/DataflowErrorMap.cpp, compiled into
 // this test: libsima_neat.so hides it): for each runtime Error Core can meet, the Core error code,
-// the pull status, whether a pull latches it, and whether RunBackend::Auto builds a Run on
-// GStreamer when Graph::build meets it on Dataflow. Among them the MLA's load errors as the runtime
+// the pull status, whether a pull latches it, and whether its action is to run the program on the
+// GStreamer backend (false where GStreamer meets the same error). Among them the MLA's load errors as the runtime
 // reports them (a missing file or one that is not a model: InvalidArgument; a context that cannot
 // be opened: Unsupported; a lost device: Unretired) and the Kernels package's. No device is opened.
 
@@ -18,7 +18,7 @@ namespace {
 using namespace simaai::neat;
 namespace df = pipeline_internal::df;
 using pipeline_internal::DataflowErrorMapping;
-using pipeline_internal::DataflowErrorOnEveryBackend;
+using pipeline_internal::DataflowErrorSite;
 
 constexpr std::uint16_t kOperator = 1;
 
@@ -38,7 +38,7 @@ struct Row {
   const char* code;
   PullStatus status;
   bool terminal;
-  bool retry_on_gstreamer;
+  bool backend_action;
 };
 
 void table() {
@@ -101,47 +101,77 @@ void table() {
             std::string(r.what) + ": code " + m.code + ", expected " + r.code);
     require(m.status == r.status, std::string(r.what) + ": pull status");
     require(m.terminal == r.terminal, std::string(r.what) + ": latched or not");
-    require(m.retry_on_gstreamer == r.retry_on_gstreamer,
-            std::string(r.what) + ": RunBackend::Auto's retry on GStreamer");
+    require(m.backend_action == r.backend_action,
+            std::string(r.what) + ": whether the action is the GStreamer backend");
   }
 }
 
 // What throw_dataflow_error throws: the table's code, "<where>: <text> (Dataflow backend)", the
-// detail line, the row's action and the caller's; the type RunBackend::Auto reads.
+// detail line, and as its hint the row's own and the action its site gives the row: the GStreamer
+// backend for an error that is the Dataflow backend's own, nothing for one GStreamer meets too.
 void thrown() {
+  const std::string backend =
+      pipeline_internal::dataflow_backend_action(pipeline_internal::DataflowRemedy::Backend);
+  const std::string rebuild = pipeline_internal::dataflow_backend_action(
+      pipeline_internal::DataflowRemedy::BackendAndRebuild);
   const df::Error file =
       error(df::ErrorCode::InvalidArgument, df::Origin::Runner, df::Phase::Prepare, df::kNoOperator,
             "MLA: the file is not a model the MLA loads (no such file, or not a compiled model)");
   try {
-    pipeline_internal::throw_dataflow_error(file, "Graph::build", "MLA model /no/such/model.elf");
+    pipeline_internal::throw_dataflow_error(file, "Graph::build", "MLA model /no/such/model.elf",
+                                            DataflowErrorSite::Build);
     require(false, "throw_dataflow_error returned");
-  } catch (const DataflowErrorOnEveryBackend& e) {
+  } catch (const NeatError& e) {
     const std::string what = e.what();
     require(e.report().error_code == error_codes::kIoOpen, "the model file: io.open");
     require_contains(what, "Graph::build: MLA: the file is not a model", "the phase and the text");
     require_contains(what, "(Dataflow backend)\nMLA model /no/such/model.elf", "the detail line");
     require_contains(what, "Hint: Check the model package", "what to do");
+    require(what.find("GStreamer") == std::string::npos,
+            "an error GStreamer meets too names no backend action: " + what);
   }
   const df::Error context =
       error(df::ErrorCode::Unsupported, df::Origin::Runner, df::Phase::Prepare, df::kNoOperator,
             "MLA: the MLA's context cannot be opened");
-  bool plain = false;
-  try {
-    pipeline_internal::throw_dataflow_error(context, "Run::push", {}, "The caller's action.");
-  } catch (const DataflowErrorOnEveryBackend&) {
-    plain = false;
-  } catch (const NeatError& e) {
-    plain = true;
-    const std::string what = e.what();
-    require(e.report().error_code == error_codes::kDispatcherUnavailable,
-            "the context: infra.dispatcher_unavailable");
-    require_contains(what, "Run::push: MLA: the MLA's context cannot be opened (Dataflow backend)",
-                     "the phase the caller names");
-    require_contains(what, "Hint: Build this Run with RunBackend::GStreamer. The caller's action.",
-                     "the row's action, then the caller's");
-    require(what.find("before H1") == std::string::npos, "no milestone in the text");
+  const struct {
+    DataflowErrorSite site;
+    const char* where;
+    std::string hint;
+  } sites[] = {
+      {DataflowErrorSite::Build, "Graph::build", "Hint: " + backend},
+      {DataflowErrorSite::FirstPush, "Run::push",
+       "Hint: The input was bound by this push: declare the input's shape or build the Run with "
+       "a seed, and this is found at Graph::build. " +
+           rebuild},
+      {DataflowErrorSite::Running, "Run::push", "Hint: " + rebuild},
+  };
+  for (const auto& s : sites) {
+    try {
+      pipeline_internal::throw_dataflow_error(context, s.where, {}, s.site);
+      require(false, "throw_dataflow_error returned");
+    } catch (const NeatError& e) {
+      const std::string what = e.what();
+      require(e.report().error_code == error_codes::kDispatcherUnavailable,
+              "the context: infra.dispatcher_unavailable");
+      require_contains(what,
+                       std::string(s.where) +
+                           ": MLA: the MLA's context cannot be opened (Dataflow backend)",
+                       "the call the caller names");
+      require(what.size() >= s.hint.size() &&
+                  what.compare(what.size() - s.hint.size(), s.hint.size(), s.hint) == 0,
+              "the site's action ends the text: " + what);
+    }
   }
-  require(plain, "an error GStreamer would not meet is a plain NeatError");
+  // On a running Session only what the backend does not implement names the backend action.
+  const df::Error lost_job = error(df::ErrorCode::Internal, df::Origin::Runner, df::Phase::Process,
+                                   kOperator, "the device did not finish the job");
+  try {
+    pipeline_internal::throw_dataflow_error(lost_job, "Run::push", {}, DataflowErrorSite::Running);
+    require(false, "throw_dataflow_error returned");
+  } catch (const NeatError& e) {
+    require(std::string(e.what()).find("Hint:") == std::string::npos,
+            std::string("a device failure on a running Session names no action: ") + e.what());
+  }
 }
 
 } // namespace

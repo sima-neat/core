@@ -962,8 +962,8 @@ void declined(const Route& route, bool ev74) {
     // backend. The default placement puts the pre stage on the EV74.
     refused(GraphOptions{}, false, "sima-neat-native-cvu-fw", "the default placement");
     // The pre stage on the A65 and the post stage asked onto the EV74.
-    refused(placed("A65", "EV74"), false, "is placed on the EV74", "post_run_target EV74");
-    refused(placed("EV74", "EV74"), false, "is placed on the EV74", "both on the EV74");
+    refused(placed("A65", "EV74"), false, "is not carried by the Dataflow backend on this board", "post_run_target EV74");
+    refused(placed("EV74", "EV74"), false, "is not carried by the Dataflow backend on this board", "both on the EV74");
   }
   // OutputOptions::drop behind a model.
   refused(on_a65(), true, "OutputOptions::drop behind a model", "OutputOptions::drop");

@@ -6,6 +6,7 @@
 #include "pipeline/DetectionTypes.h"
 #include "pipeline/ErrorCodes.h"
 #include "pipeline/internal/DataflowErrorMap.h"
+#include "pipeline/internal/DataflowNotCarried.h"
 #include "pipeline/internal/ErrorUtil.h"
 #include "pipeline/internal/InputPolicy.h"
 #include "pipeline/internal/InputStreamUtil.h"
@@ -37,6 +38,7 @@
 #include <mutex>
 #include <optional>
 #include <span>
+#include <string_view>
 #include <type_traits>
 #include <utility>
 #include <variant>
@@ -296,6 +298,9 @@ std::string parameters_text(const std::vector<client::Parameter>& parameters) {
   return out;
 }
 
+// The EV74 firmware a kernel stage on the EV74 runs on (the Kernels package's).
+constexpr std::string_view kKernelsFirmwareName = "sima-neat-native-cvu-fw";
+
 const char* target_text(client::Hardware target) {
   return target == client::Hardware::A65 ? "A65" : "EV74";
 }
@@ -341,6 +346,27 @@ std::string stage_kind_text(const si::StageStaticSpec& stage) {
            "@" + target_text(stage.native_kernel->target);
   }
   return stage.kernel_kind.empty() ? stage.plugin_kind : stage.kernel_kind;
+}
+
+// A stage as an error names it: its place in the route, its name, its kind and target, its
+// model: "stage 2 'detess_dequant_0' (kernel detessdequant on the EV74) of model yolo11n".
+std::string stage_subject(std::size_t index, const si::StageStaticSpec& stage,
+                          const std::string& model) {
+  std::string kind;
+  if (stage.payload_kind == si::StagePayloadKind::ProcessMla) {
+    kind = "model on the MLA";
+  } else if (stage.native_kernel) {
+    const si::KernelStageRecipe& recipe = *stage.native_kernel;
+    kind = "kernel " +
+           (!recipe.requests.empty()                 ? recipe.requests.front().operation
+            : !stage.processcvu.graph_name.empty() ? stage.processcvu.graph_name
+                                                     : stage.kernel_kind) +
+           " on the " + target_text(recipe.target);
+  } else {
+    kind = stage.kernel_kind.empty() ? stage.plugin_kind : stage.kernel_kind;
+  }
+  return "stage " + std::to_string(index) + " '" + stage_key_of(stage) + "' (" + kind + ")" +
+         (model.empty() ? std::string() : " of model " + model);
 }
 
 // The pulled tensor of the route: the last stage's one published output `out`, described as
@@ -395,7 +421,8 @@ void describe_pulled(const si::StageStaticSpec& stage, const si::LogicalTensorSt
   }
 }
 
-// One MLA stage of the manifest as a route stage; "" or why this backend cannot carry it. `next`
+// One MLA stage of the manifest as a route stage; "" or the fact about it that this backend does
+// not carry (DataflowNotCarried::fact, the stage its subject). `next`
 // is the stage behind it, null when the MLA stage is the route's last. The model writes one output
 // buffer; the tensors it publishes in that buffer may be several, each at its byte offset (a
 // detection model's heads). Then the route ends here and the pull returns them as a list, or the
@@ -405,33 +432,31 @@ std::string plan_mla_stage(const si::StageStaticSpec& stage, bool first,
   const bool last = next == nullptr;
   const si::ProcessMlaStagePayload& mla = stage.processmla;
   if (mla.model_path.empty()) {
-    return "the MLA stage names no model file";
+    return "it names no model file";
   }
   if (mla.batch_size > 1 || mla.batch_sz_model > 1) {
-    return "a batched MLA model (batch " +
-           std::to_string(std::max(mla.batch_size, mla.batch_sz_model)) +
-           ") is not supported on Dataflow yet";
+    return "it is a batched MLA model (batch " +
+           std::to_string(std::max(mla.batch_size, mla.batch_sz_model)) + ")";
   }
   if (stage.physical_inputs.size() != 1U || stage.logical_inputs.size() != 1U) {
-    return "an MLA stage of " + std::to_string(stage.physical_inputs.size()) + " input buffers (" +
+    return "it reads " + std::to_string(stage.physical_inputs.size()) + " input buffers (" +
            std::to_string(stage.logical_inputs.size()) +
-           " tensors) is not supported on Dataflow yet: the runtime has no join";
+           " tensors): an MLA stage reads one input buffer of one tensor";
   }
   const std::size_t tensors = stage.logical_outputs.size();
   if (stage.physical_outputs.size() != 1U || tensors == 0U) {
-    return "an MLA stage of " + std::to_string(stage.physical_outputs.size()) +
-           " output buffers (" + std::to_string(tensors) +
-           " tensors) is not supported on Dataflow yet: a model that writes one output buffer "
-           "runs (its tensors may be several, each at its offset of that buffer); several output "
-           "buffers need a join in the runtime";
+    return "it writes " + std::to_string(stage.physical_outputs.size()) + " output buffers (" +
+           std::to_string(tensors) +
+           " tensors): an MLA stage writes one output buffer (its tensors may be several, each at "
+           "its offset of that buffer)";
   }
   if (tensors > 1U && !last && !(next->native_kernel && next->native_kernel->boxdecode_program)) {
-    return "MLA stage " + stage_key_of(stage) + " publishes " + std::to_string(tensors) +
-           " tensors in its one output buffer and stage " + stage_key_of(*next) + " (" +
+    return "it publishes " + std::to_string(tensors) +
+           " tensors in its one output buffer and stage '" + stage_key_of(*next) + "' (" +
            stage_kind_text(*next) +
-           ") reads them: behind an MLA stage of several tensors only BoxDecode is supported on "
-           "Dataflow yet (such a model also runs when Model::inference() is the route's last "
-           "stage: the pull returns the tensors)";
+           ") reads them: behind an MLA stage of several tensors only BoxDecode runs (such a "
+           "model also runs when Model::inference() is the route's last stage: the pull returns "
+           "the tensors)";
   }
   const si::LogicalInputStaticSpec& in = stage.logical_inputs.front();
   const si::LogicalTensorStaticSpec& out = stage.logical_outputs.front();
@@ -439,12 +464,11 @@ std::string plan_mla_stage(const si::StageStaticSpec& stage, bool first,
   const si::PhysicalBufferStaticSpec& out_buffer = stage.physical_outputs.front();
   const std::optional<TensorDType> in_dtype = dtype_of(in.dtype);
   if (!in_dtype) {
-    return "the MLA stage's dtype '" + in.dtype + "' has no Dataflow dtype";
+    return "the dtype '" + in.dtype + "' of its input is not a tensor dtype of Core";
   }
   if (in.materialization_kind != si::TensorMaterializationKind::Direct || in.byte_offset != 0 ||
       in_buffer.size_bytes == 0U || in_buffer.source_byte_offset != 0) {
-    return "the MLA stage's input is not one whole buffer (a repacked or offset view), "
-           "which is not supported on Dataflow yet";
+    return "the MLA stage's input is not one whole buffer (a repacked or offset view)";
   }
   for (std::size_t i = 0; i < tensors; ++i) {
     // Each published tensor: a view of the one output buffer, in the stage's logical order (the
@@ -455,7 +479,7 @@ std::string plan_mla_stage(const si::StageStaticSpec& stage, bool first,
                       : "the MLA stage's published tensor " + std::to_string(i) + " of " +
                             std::to_string(tensors) + " (" + tensor.logical_name + ")";
     if (!dtype_of(tensor.dtype)) {
-      return "the MLA stage's dtype '" + tensor.dtype + "' has no Dataflow dtype";
+      return "the dtype '" + tensor.dtype + "' of " + which + " is not a tensor dtype of Core";
     }
     if (tensor.byte_offset < 0 || tensor.size_bytes == 0U ||
         static_cast<std::uint64_t>(tensor.byte_offset) > out_buffer.size_bytes ||
@@ -472,7 +496,7 @@ std::string plan_mla_stage(const si::StageStaticSpec& stage, bool first,
              " is not published in the stage's logical order from its one output buffer "
              "(logical index " +
              std::to_string(tensor.logical_index) + ", buffer " +
-             std::to_string(tensor.physical_index) + "), which is not supported on Dataflow yet";
+             std::to_string(tensor.physical_index) + ")";
     }
   }
   DataflowModelStage planned;
@@ -529,7 +553,8 @@ std::string plan_mla_stage(const si::StageStaticSpec& stage, bool first,
 
 // The contract of a checked kernel request (`inspected`, the Kernels package's inspection of its
 // executable) when it is one this backend runs as one operator: `inputs` and `outputs` ports, no
-// workspace, no host tasks, every input of a fixed extent. Null with `why` otherwise.
+// workspace, no host tasks, every input of a fixed extent. Null with `why`, the fact about the
+// kernel, otherwise.
 const client::KernelInspection*
 plain_contract(const client::Result<client::KernelInspection>& inspected, std::size_t inputs,
                std::size_t outputs, std::string& why) {
@@ -543,14 +568,14 @@ plain_contract(const client::Result<client::KernelInspection>& inspected, std::s
     why = "the kernel's contract has other ports than its request";
   } else if (contract.workspace().storage_bytes != 0U) {
     why = "the kernel needs a workspace of " + std::to_string(contract.workspace().storage_bytes) +
-          " bytes, which is not supported on Dataflow yet";
+          " bytes";
   } else if (contract.requires_host_tasks()) {
-    why = "the kernel needs host tasks, which is not supported on Dataflow yet";
+    why = "the kernel needs host tasks";
   } else {
     for (std::size_t i = 0; i < inputs; ++i) {
       if (contract.input_extent(i).mode != client::InputExtentMode::Fixed) {
         why = "the kernel reads its input " + std::to_string(i) +
-              " at a varying extent, which is not supported on Dataflow yet";
+              " at a varying extent";
         return nullptr;
       }
     }
@@ -617,8 +642,8 @@ std::string planned_frame(const InputOptions& declared, std::span<const Tensor> 
                "a batch axis of 1 in front)";
       }
       if (!tensor.is_contiguous()) {
-        return "the seed's rows are padded (its row stride is not width x channels): a per-frame "
-               "row stride is not supported on Dataflow yet";
+        return "the seed's rows are padded (its row stride is not width x channels) where the "
+               "stage reads frames whose rows are tight";
       }
       frame.channels = channels;
     }
@@ -666,51 +691,49 @@ std::string planned_frame(const InputOptions& declared, std::span<const Tensor> 
 }
 
 // The image preproc stage (the Kernels package's "preproc", which GStreamer runs through a frame
-// adapter); "" or why this backend cannot carry it. With a declared frame size it is one kernel
+// adapter); "" or the fact about it that this backend does not carry. With a declared frame
+// size it is one kernel
 // at that size. Without one the stage's request is the one at the port's bound and
 // `route.frames` gives each frame its own (DataflowFrames). The requests, the published
 // tensor's description and the preprocess facts all come from the stage's own checked policy
 // (PreprocFrameAdapter), by the functions the adapter runs for a frame of that geometry.
-std::string plan_frame_stage(const si::StageStaticSpec& stage, const std::string& name, bool first,
-                             bool last, const InputOptions& declared, std::span<const Tensor> seed,
+std::string plan_frame_stage(const si::StageStaticSpec& stage, bool first, bool last,
+                             const InputOptions& declared, std::span<const Tensor> seed,
                              DataflowModelRoute& route) {
   using Adapter = si::kernel_lowering::PreprocFrameAdapter;
   const si::KernelStageRecipe& recipe = *stage.native_kernel;
   const si::ProcessCvuStagePayload& payload = stage.processcvu;
   if (!recipe.frame_adapter_factory || payload.graph_name != "preproc" || !first) {
-    return name + " is an image stage with per-frame geometry, which is not supported on "
-                  "Dataflow yet";
+    return "it is an image stage with per-frame geometry that is not the image preproc at the "
+           "route's front";
   }
   if (payload.image_transform || recipe.image_publication || stage.image_publication) {
-    return name + " is an image frontend (it publishes image planes), which is not supported on "
-                  "Dataflow yet";
+    return "it is an image frontend (it publishes image planes)";
   }
   const std::string format = upper(payload.input_img_type);
   const bool nv12 = format == "NV12";
   if (format != "RGB" && format != "BGR" && !nv12) {
-    return name + " reads " + (format.empty() ? std::string("an unnamed format") : format) +
-           " frames: only packed RGB and BGR frames and NV12 frames are supported on Dataflow "
-           "yet (I420 and NV16 are other plane layouts, GRAY another packing)";
+    return "it reads " + (format.empty() ? std::string("an unnamed format") : format) +
+           " frames: only packed RGB and BGR frames and NV12 frames run (I420 and NV16 are other "
+           "plane layouts, GRAY another packing)";
   }
   if (payload.batch_size != 1) {
-    return name + " has a batch of " + std::to_string(payload.batch_size) +
-           " (an ROI list or a batched model), which is not supported on Dataflow yet";
+    return "it has a batch of " + std::to_string(payload.batch_size) +
+           " (an ROI list or a batched model)";
   }
   if (recipe.members.size() != 1U || recipe.members.front().outputs.size() != 1U ||
       !recipe.resolver_factories.empty() || !recipe.constant_data.empty() ||
       !recipe.private_buffers.empty() || !recipe.private_outputs.empty() ||
       stage.logical_outputs.size() != 1U) {
-    return name + " has several outputs, variants, constants or private buffers, which is not "
-                  "supported on Dataflow yet";
+    return "it has several outputs, variants, constants or private buffers";
   }
   PlannedFrame frame;
   if (const std::string why = planned_frame(declared, seed, nv12, frame); !why.empty()) {
-    return name + ": " + why;
+    return why;
   }
   auto checked = Adapter::check_policy(payload);
   if (const auto* error = std::get_if<client::Error>(&checked)) {
-    return name + ": the stage's image policy does not check: " + error->field + ": " +
-           error->message;
+    return "the stage's image policy does not check: " + error->field + ": " + error->message;
   }
   const std::shared_ptr<const Adapter::CheckedPolicy> policy =
       std::get<std::shared_ptr<const Adapter::CheckedPolicy>>(std::move(checked));
@@ -748,14 +771,14 @@ std::string plan_frame_stage(const si::StageStaticSpec& stage, const std::string
   const bool seed_is_bound = frame.seed_width == frame.width && frame.seed_height == frame.height;
   if (!frame.fixed && frame.seed_width > 0 && !seed_is_bound) {
     if (frame.seed_width > frame.width || frame.seed_height > frame.height) {
-      return name + ": a " + std::to_string(frame.seed_width) + "x" +
+      return "a " + std::to_string(frame.seed_width) + "x" +
              std::to_string(frame.seed_height) + " frame (the seed) is above the " +
              std::to_string(frame.width) + "x" + std::to_string(frame.height) +
              " the Input declares as its largest (InputOptions::max_width, max_height)";
     }
     auto seeded = request_at(frame.seed_width, frame.seed_height);
     if (const auto* error = std::get_if<client::Error>(&seeded)) {
-      return name + ": a " + std::to_string(frame.seed_width) + "x" +
+      return "a " + std::to_string(frame.seed_width) + "x" +
              std::to_string(frame.seed_height) +
              " frame (the seed) is not one the stage takes: " + error->field + ": " +
              error->message;
@@ -763,8 +786,7 @@ std::string plan_frame_stage(const si::StageStaticSpec& stage, const std::string
   }
   auto fixed = request_at(frame.width, frame.height);
   if (const auto* error = std::get_if<client::Error>(&fixed)) {
-    return name + ": a " + std::to_string(frame.width) + "x" + std::to_string(frame.height) +
-           " frame (" +
+    return "a " + std::to_string(frame.width) + "x" + std::to_string(frame.height) + " frame (" +
            (frame.fixed     ? frame.from
             : seed_is_bound ? std::string("the seed")
                             : std::string("the input's bound")) +
@@ -774,10 +796,10 @@ std::string plan_frame_stage(const si::StageStaticSpec& stage, const std::string
   const std::size_t planes = nv12 ? 2U : 1U;
   if (request.inputs.size() != planes || request.outputs.size() != 1U ||
       request.inputs.front().shape.size() != 4U) {
-    return name + ": the frame's kernel request has other tensors than the frame's planes";
+    return "the frame's kernel request has other tensors than the frame's planes";
   }
   if (!nv12 && frame.channels > 0 && request.inputs.front().shape[3] != frame.channels) {
-    return name + ": " + (frame.seed_width > 0 ? "the seed" : "the Input's declaration") + " has " +
+    return std::string(frame.seed_width > 0 ? "the seed" : "the Input's declaration") + " has " +
            std::to_string(frame.channels) + " channels where the model's " + format +
            " input has " + std::to_string(request.inputs.front().shape[3]);
   }
@@ -785,7 +807,7 @@ std::string plan_frame_stage(const si::StageStaticSpec& stage, const std::string
   std::string unsupported;
   const client::KernelInspection* const plain = plain_contract(inspected, planes, 1U, unsupported);
   if (!plain) {
-    return name + ": " + unsupported;
+    return unsupported;
   }
   const client::KernelInspection& contract = *plain;
   const std::optional<TensorDType> in_dtype = dtype_of(request.inputs.front().dtype);
@@ -793,7 +815,7 @@ std::string plan_frame_stage(const si::StageStaticSpec& stage, const std::string
   const simaai::gst::TensorBufferPreprocessFacts* const facts =
       simaai::gst::tensor_buffer_preprocess_facts(request.facts);
   if (!in_dtype || !out_dtype || !facts) {
-    return name + ": the frame's kernel request has no Core dtype or no preprocess facts";
+    return "the frame's kernel request has no Core dtype or no preprocess facts";
   }
   DataflowModelStage planned;
   planned.key = stage_key_of(stage);
@@ -813,11 +835,11 @@ std::string plan_frame_stage(const si::StageStaticSpec& stage, const std::string
         {request.inputs[1], luma, contract.input_requirements()[1].storage_bytes});
     planned.input_bytes = luma + luma / 2U;
     if (kernel.packed_inputs[0].bytes > luma || kernel.packed_inputs[1].bytes > luma / 2U) {
-      return name + ": the NV12 frame's planes do not lie in the frame's bytes";
+      return "the NV12 frame's planes do not lie in the frame's bytes";
     }
     const std::size_t alignment = contract.input_requirements()[1].alignment_bytes;
     if (alignment == 0U || kSlotAlignment % alignment != 0U || luma % alignment != 0U) {
-      return name + ": the chroma plane of a " + std::to_string(frame.width) + "x" +
+      return "the chroma plane of a " + std::to_string(frame.width) + "x" +
              std::to_string(frame.height) + " NV12 frame begins at byte " + std::to_string(luma) +
              " of the frame, which is not a multiple of the " + std::to_string(alignment) +
              " bytes the kernel asks of a plane: such a frame's planes are not two views of one "
@@ -844,7 +866,7 @@ std::string plan_frame_stage(const si::StageStaticSpec& stage, const std::string
     route.output.preprocess = preprocess_from_compact_facts(*facts);
     route.output.frame_semantics = true;
   } catch (const std::exception& error) {
-    return name + ": " + error.what();
+    return error.what();
   }
   if (!frame.fixed) {
     // Each frame is run by its geometry's kernel: an RGB or BGR frame's extent on the bounded port
@@ -869,11 +891,11 @@ std::string plan_frame_stage(const si::StageStaticSpec& stage, const std::string
   if (last) {
     const std::optional<TensorDType> published = dtype_of(out.dtype);
     if (!published || *published != *out_dtype) {
-      return name + ": the published tensor's dtype '" + out.dtype + "' is not the kernel's";
+      return "the published tensor's dtype '" + out.dtype + "' is not the kernel's";
     }
     if (out.byte_offset != 0 || out.shape.empty() ||
         (out.size_bytes != 0U && out.size_bytes != planned.output_bytes)) {
-      return name + ": the published output (" + std::to_string(out.size_bytes) + " bytes at " +
+      return "the published output (" + std::to_string(out.size_bytes) + " bytes at " +
              std::to_string(out.byte_offset) + ") is not the kernel's whole output buffer of " +
              std::to_string(planned.output_bytes) + " bytes";
     }
@@ -890,11 +912,9 @@ std::string plan_frame_stage(const si::StageStaticSpec& stage, const std::string
                                 : kernel.output.dtype == client::DType::UInt8  ? "UINT8"
                                                                                : nullptr;
       if (!dtype || out.publication_relation != si::PublicationViewRelation::PackedStorage) {
-        return name +
-               " publishes its tiled output as another view than its packed storage "
+        return "it publishes its tiled output as another view than its packed storage "
                "(publication relation " +
-               std::to_string(static_cast<int>(out.publication_relation)) +
-               "), which is not supported on Dataflow yet";
+               std::to_string(static_cast<int>(out.publication_relation)) + ")";
       }
       TessSpec tess;
       tess.format =
@@ -931,51 +951,46 @@ std::string plan_frame_stage(const si::StageStaticSpec& stage, const std::string
 
 // The BoxDecode stage behind the MLA stage, at the route's end, as two route stages: the Kernels
 // package's "boxdecode" with its heads as views of the MLA's one output buffer and its outputs as
-// views of one small buffer, and Core's wire serializer behind it; "" or why this backend cannot
-// carry it. The request, the heads' places, the serializer and the published tensor's
+// views of one small buffer, and Core's wire serializer behind it; "" or the fact about it that
+// this backend does not carry. The request, the heads' places, the serializer and the published tensor's
 // description are the stage's own (KernelStageRecipe::BoxDecodeProgram, the manifest); the
 // original image size and the resize mode are those of the frames the route's image preproc was
 // planned for. The stage in front is the MLA stage when there is one (the planner declines two
 // kernel stages in a row, and the wire serializer is a route's last stage).
-std::string plan_boxdecode_stage(const si::StageStaticSpec& stage, const std::string& name,
-                                 bool first, bool last, DataflowModelRoute& route) {
+std::string plan_boxdecode_stage(const si::StageStaticSpec& stage, bool first, bool last,
+                                 DataflowModelRoute& route) {
   const si::KernelStageRecipe& recipe = *stage.native_kernel;
   const si::KernelStageRecipe::BoxDecodeProgram& program = *recipe.boxdecode_program;
   if (first || !last) {
-    return name + " is not the route's last stage behind the model's MLA stage: BoxDecode runs "
-                  "on Dataflow only there (its kernel reads the heads in the MLA's output "
-                  "buffer), not on heads the application pushes";
+    return "it is not the route's last stage behind the model's MLA stage: BoxDecode runs "
+           "there only (its kernel reads the heads in the MLA's output buffer), not on heads the "
+           "application pushes";
   }
   if (program.profile != "yolo_dfl_v1" || program.task != "detection") {
-    return name + " decodes profile '" + program.profile + "', task '" + program.task +
-           "': only YOLOv8-style detection (profile 'yolo_dfl_v1', task 'detection') is "
-           "supported on Dataflow yet; pose, segmentation, oriented boxes and the other decode "
-           "families run on GStreamer";
+    return "it decodes profile '" + program.profile + "', task '" + program.task +
+           "': the BoxDecode stage runs YOLOv8-style detection (profile 'yolo_dfl_v1', task "
+           "'detection') only";
   }
   if (!program.write || recipe.output_format != kDetectionFormatBbox) {
-    return name + " publishes another wire than BBOX ('" + recipe.output_format +
-           "'), which is not supported on Dataflow yet";
+    return "it publishes another wire than BBOX ('" + recipe.output_format + "')";
   }
   // The decode is the recipe's first member (BoxDecodeProgram::member) when no detess member is
   // in front of it, and the stage's host task (the serializer) the second.
   if (recipe.members.size() != 2U) {
-    return name + " runs " + std::to_string(recipe.members.size()) +
+    return "it runs " + std::to_string(recipe.members.size()) +
            " invocations where it runs the decode and its serializer (detess invocations in front "
-           "of the decode: heads in tiled, not C-blocked, storage), which is not supported on "
-           "Dataflow yet";
+           "of the decode: heads in tiled, not C-blocked, storage)";
   }
   const client::TensorStageMember& member = recipe.members.front();
   if (!recipe.constant_data.empty() || !member.dependencies.empty() ||
       member.inputs.size() != program.request.inputs.size() ||
       member.outputs.size() != program.request.outputs.size() || member.inputs.empty() ||
       stage.logical_outputs.size() != 1U) {
-    return name + " is not one decode on the A65 from the stage's inputs into one published "
-                  "wire, which is not supported on Dataflow yet";
+    return "it is not one decode on the A65 from the stage's inputs into one published wire";
   }
   if (stage.physical_inputs.size() != 1U) {
-    return name + " reads its heads from " + std::to_string(stage.physical_inputs.size()) +
-           " buffers: on Dataflow the heads are views of one buffer (a model that writes one "
-           "output buffer); several need a join in the runtime";
+    return "it reads its heads from " + std::to_string(stage.physical_inputs.size()) +
+           " buffers: the heads are views of one buffer (a model that writes one output buffer)";
   }
   // The frames' geometry: what the route's image preproc publishes with every frame, a constant
   // of the frame size it was planned for. The request is the one GStreamer's resolver selects
@@ -986,15 +1001,13 @@ std::string plan_boxdecode_stage(const si::StageStaticSpec& stage, const std::st
       recipe, facts ? facts->original_width : 0, facts ? facts->original_height : 0,
       facts ? std::string_view(facts->resize_mode) : std::string_view());
   if (const auto* error = std::get_if<client::Error>(&fixed)) {
-    return name +
-           (facts ? ": the frames of the route's image preproc (" +
+    return (facts ? "the frames of the route's image preproc (" +
                         std::to_string(facts->original_width) + "x" +
                         std::to_string(facts->original_height) + ", resize mode '" +
                         facts->resize_mode + "') are not ones the decode takes: "
-                  : std::string(": the route has no image preproc stage in front, whose frame "
-                                "size at the build would fix the decode's image geometry (a "
-                                "geometry that comes with each frame is not supported on "
-                                "Dataflow yet): ")) +
+                  : std::string("the route has no image preproc stage in front, whose frame size "
+                                "at the build fixes the decode's image geometry (here the "
+                                "geometry comes with each frame): ")) +
            error->message;
   }
   si::KernelStageRecipe::Request& request = std::get<si::KernelStageRecipe::Request>(fixed);
@@ -1003,7 +1016,7 @@ std::string plan_boxdecode_stage(const si::StageStaticSpec& stage, const std::st
   const client::KernelInspection* const plain =
       plain_contract(inspected, request.inputs.size(), request.outputs.size(), unsupported);
   if (!plain) {
-    return name + ": " + unsupported;
+    return unsupported;
   }
   const client::KernelInspection& contract = *plain;
   DataflowModelStage decode;
@@ -1018,7 +1031,7 @@ std::string plan_boxdecode_stage(const si::StageStaticSpec& stage, const std::st
     const client::TensorStagePort& port = member.inputs[i];
     if (port.source != client::TensorStagePortSource::Input ||
         port.tensor >= stage.logical_inputs.size()) {
-      return name + " reads a private buffer, which is not supported on Dataflow yet";
+      return "it reads a private buffer";
     }
     const si::LogicalInputStaticSpec& logical = stage.logical_inputs[port.tensor];
     const std::string head = "head " + std::to_string(i) + " (" + logical.logical_name + ")";
@@ -1029,7 +1042,7 @@ std::string plan_boxdecode_stage(const si::StageStaticSpec& stage, const std::st
             : static_cast<std::uint64_t>(logical.byte_offset) + port.byte_offset;
     if (logical.physical_index != carrier.physical_index || bytes == 0U ||
         offset > carrier.size_bytes || bytes > carrier.size_bytes - offset) {
-      return name + ": " + head + " of " + std::to_string(bytes) + " bytes at " +
+      return head + " of " + std::to_string(bytes) + " bytes at " +
              std::to_string(logical.byte_offset) +
              " does not lie in the stage's one input "
              "buffer of " +
@@ -1037,7 +1050,7 @@ std::string plan_boxdecode_stage(const si::StageStaticSpec& stage, const std::st
     }
     for (const DataflowModelStage::View& other : kernel.packed_inputs) {
       if (offset < other.offset + other.bytes && other.offset < offset + bytes) {
-        return name + ": " + head + " shares bytes with another head in the stage's input buffer";
+        return head + " shares bytes with another head in the stage's input buffer";
       }
     }
     kernel.packed_inputs.push_back(
@@ -1049,7 +1062,7 @@ std::string plan_boxdecode_stage(const si::StageStaticSpec& stage, const std::st
     const client::TensorRequirements& needs = contract.output_requirements()[i];
     if (needs.storage_bytes == 0U || needs.alignment_bytes == 0U ||
         kSlotAlignment % needs.alignment_bytes != 0U) {
-      return name + ": the kernel's output " + std::to_string(i) + " asks for an alignment of " +
+      return "the kernel's output " + std::to_string(i) + " asks for an alignment of " +
              std::to_string(needs.alignment_bytes) + " bytes, which a packed port does not have";
     }
     const std::size_t offset = aligned(end);
@@ -1068,7 +1081,7 @@ std::string plan_boxdecode_stage(const si::StageStaticSpec& stage, const std::st
   const std::optional<TensorDType> published = dtype_of(out.dtype);
   if (!published || *published != TensorDType::UInt8 || out.byte_offset != 0 ||
       out.size_bytes != program.wire_bytes || out.shape.empty()) {
-    return name + ": the published output (" + out.dtype + ", " + std::to_string(out.size_bytes) +
+    return "the published output (" + out.dtype + ", " + std::to_string(out.size_bytes) +
            " bytes at " + std::to_string(out.byte_offset) + ") is not the wire of " +
            std::to_string(program.wire_bytes) + " bytes";
   }
@@ -1126,88 +1139,79 @@ struct PlanInput {
 };
 
 // One kernel stage of the manifest (its checked recipe, as prepare_kernel_stage_recipes left it)
-// as a route stage; "" or why this backend cannot carry it.
+// as a route stage; "" or the fact about it that this backend does not carry. `board` is set
+// when that fact is the board's: the stage is placed on the EV74 and the EV74 does not run the
+// Kernels firmware (`in.ev74_obstacle` says what it runs).
 std::string plan_kernel_stage(const si::StageStaticSpec& stage, bool first, bool last,
-                              const PlanInput& in, DataflowModelRoute& route) {
+                              const PlanInput& in, DataflowModelRoute& route, bool& board) {
   const si::KernelStageRecipe& recipe = *stage.native_kernel;
   const std::string key = stage_key_of(stage);
-  const std::string name = "kernel stage " + key + " (" + stage_kind_text(stage) + ")";
+  board = false;
 #if !defined(SIMANEAT_WITH_DATAFLOW_SOC_KERNELS)
   (void)recipe;
   (void)first;
   (void)last;
   (void)in;
   (void)route;
-  return name + ": this build of libsima_neat has no kernel operator (dataflow::soc was built "
-                "without the Runner's Executor and the Kernels package)";
+  return "this build of libsima_neat runs no kernel stage on the Dataflow backend (it was built "
+         "without the Runner's Executor and the Kernels package)";
 #else
   const bool ev74 = recipe.target != client::Hardware::A65;
   if (ev74 && !in.ev74_obstacle.empty()) {
-    // A board whose EV74 runs the stock firmware keeps the route on GStreamer. Never the A65
-    // kernel in the EV74's place: the placement is the Graph's (the processcvu run target
-    // policy), not this backend's. It is the runtime's own condition (soc::KernelOp refuses the
-    // EV74 target on it at instantiate), asked at the plan because an input may be bound, and
-    // its Session instantiated, only by its first push: by then the Run is on this backend and
-    // cannot go back to GStreamer.
-    return name + " is placed on the EV74 (processcvu run target requested '" +
-           stage.processcvu.requested_run_target + "', resolved '" +
-           stage.processcvu.resolved_exec_backend +
-           "'): the Dataflow backend runs an EV74 kernel stage on the Kernels firmware "
-           "(sima-neat-native-cvu-fw) only, and " +
-           in.ev74_obstacle;
+    // Never the A65 kernel in the EV74's place: the placement is the Graph's (the processcvu run
+    // target policy), not this backend's. It is the runtime's own condition (soc::KernelOp
+    // refuses the EV74 target on it at instantiate), asked at the plan because an input may be
+    // bound, and its Session instantiated, only by its first push.
+    board = true;
+    return in.ev74_obstacle + ", and the Dataflow backend runs EV74 kernels on the firmware '" +
+           std::string(kKernelsFirmwareName) + "' only";
   }
   if (recipe.frame_adapter_factory || recipe.image_publication || stage.image_publication) {
-    return plan_frame_stage(stage, name, first, last, in.declared, in.seed, route);
+    return plan_frame_stage(stage, first, last, in.declared, in.seed, route);
   }
   if (recipe.boxdecode_program) {
-    return plan_boxdecode_stage(stage, name, first, last, route);
+    return plan_boxdecode_stage(stage, first, last, route);
   }
   if (recipe.members.size() != 1U) {
-    return name + " runs " + std::to_string(recipe.members.size()) +
-           " kernel invocations per frame (a batched model or several tensors), which is not "
-           "supported on Dataflow yet";
+    return "it runs " + std::to_string(recipe.members.size()) +
+           " kernel invocations per frame (a batched model or several tensors)";
   }
   if (recipe.requests.size() != recipe.members.size()) {
-    return name + " has no recorded kernel request (not a canonical transform), which is not "
-                  "supported on Dataflow yet";
+    return "it has no recorded kernel request (not a canonical transform)";
   }
   if (!recipe.resolver_factories.empty() || !recipe.constant_data.empty() ||
       !recipe.private_buffers.empty() || !recipe.private_outputs.empty()) {
-    return name + " has per-frame variants, constants or private buffers, which is not supported "
-                  "on Dataflow yet";
+    return "it has per-frame variants, constants or private buffers";
   }
   const client::TensorStageMember& member = recipe.members.front();
   const si::KernelStageRecipe::Request& request = recipe.requests.front();
   if (member.inputs.size() != 1U || member.outputs.size() != 1U || request.inputs.size() != 1U ||
       request.outputs.size() != 1U) {
-    return name + " has " + std::to_string(member.inputs.size()) + " inputs and " +
+    return "it has " + std::to_string(member.inputs.size()) + " inputs and " +
            std::to_string(member.outputs.size()) +
-           " outputs: a kernel of several inputs or outputs is not supported on Dataflow yet (the "
-           "runtime has no join)";
+           " outputs: a kernel of several inputs or outputs";
   }
   if (member.inputs.front().byte_offset != 0U || member.outputs.front().byte_offset != 0U ||
       member.inputs.front().source != client::TensorStagePortSource::Input ||
       member.outputs.front().source != client::TensorStagePortSource::Output ||
       !member.dependencies.empty()) {
-    return name + " reads or writes inside a shared buffer (an offset view), which is not "
-                  "supported on Dataflow yet";
+    return "it reads or writes inside a shared buffer (an offset view)";
   }
   if (stage.logical_inputs.size() > 1U || stage.physical_inputs.size() > 1U ||
       stage.logical_outputs.size() != 1U || stage.input_bindings.size() > 1U) {
-    return name + " has " + std::to_string(stage.logical_inputs.size()) + " input tensors and " +
-           std::to_string(stage.logical_outputs.size()) +
-           " published tensors, which is not supported on Dataflow yet";
+    return "it has " + std::to_string(stage.logical_inputs.size()) + " input tensors and " +
+           std::to_string(stage.logical_outputs.size()) + " published tensors";
   }
   const auto inspected = client::inspect_kernel(member.executable);
   std::string unsupported;
   const client::KernelInspection* const contract = plain_contract(inspected, 1U, 1U, unsupported);
   if (!contract) {
-    return name + ": " + unsupported;
+    return unsupported;
   }
   const std::optional<TensorDType> in_dtype = dtype_of(request.inputs.front().dtype);
   const std::optional<TensorDType> out_dtype = dtype_of(request.outputs.front().dtype);
   if (!in_dtype || !out_dtype) {
-    return name + ": a tensor's dtype has no Core dtype";
+    return "a tensor's dtype has no Core dtype";
   }
   DataflowModelStage planned;
   planned.key = key;
@@ -1221,8 +1225,7 @@ std::string plan_kernel_stage(const si::StageStaticSpec& stage, bool first, bool
   kernel.parameters = request.parameters;
   if (first) {
     if (!std::holds_alternative<client::Contiguous>(kernel.input.layout)) {
-      return name + " reads a strided or tiled tensor from the application, which is not "
-                    "supported on Dataflow yet";
+      return "it reads a strided or tiled tensor from the application";
     }
     route.input_bytes = planned.input_bytes;
     route.input_dtype = *in_dtype;
@@ -1234,12 +1237,12 @@ std::string plan_kernel_stage(const si::StageStaticSpec& stage, bool first, bool
   if (last) {
     const std::optional<TensorDType> published = dtype_of(out.dtype);
     if (!published || *published != *out_dtype) {
-      return name + ": the published tensor's dtype '" + out.dtype + "' is not the kernel's";
+      return "the published tensor's dtype '" + out.dtype + "' is not the kernel's";
     }
     if (out.byte_offset < 0 || out.size_bytes == 0U || out.shape.empty() ||
         static_cast<std::uint64_t>(out.byte_offset) > planned.output_bytes ||
         out.size_bytes > planned.output_bytes - static_cast<std::uint64_t>(out.byte_offset)) {
-      return name + ": the published output does not lie in the kernel's output buffer";
+      return "the published output does not lie in the kernel's output buffer";
     }
     describe_pulled(stage, out, *out_dtype, route.output);
     route.output.format = kernel_caps_format_of(out.dtype, stage.processcvu.output_dtype);
@@ -1266,7 +1269,12 @@ std::string plan_kernel_stage(const si::StageStaticSpec& stage, bool first, bool
 
 std::optional<si::SimaPluginStaticManifest>
 dataflow_model_manifest(const std::vector<std::shared_ptr<Node>>& route,
-                        const GraphOptions& options, std::string* why) {
+                        const GraphOptions& options, pipeline_internal::DataflowNotCarried* why) {
+  const auto decline = [why](std::string fact) {
+    why->subject = "this model";
+    why->fact = std::move(fact);
+    return std::nullopt;
+  };
   // The contracts of the route's nodes, compiled and rendered as GStreamer's build compiles them
   // (maybe_compile_build_result_contracts): the Graph's processcvu options decide each kernel
   // stage's target (the processcvu run target policy).
@@ -1280,13 +1288,11 @@ dataflow_model_manifest(const std::vector<std::shared_ptr<Node>>& route,
     manifest = pipeline_internal::rendered_stage_query::rendered_manifest_from_nodes(
         std::span<const std::shared_ptr<Node>>(route), input, &diagnostics);
   } catch (const std::exception& error) {
-    *why = std::string("the model's contracts do not compile: ") + error.what();
-    return std::nullopt;
+    return decline(std::string("the model's contracts do not compile: ") + error.what());
   }
   if (!manifest) {
-    *why = "the model's contracts do not compile" +
-           (diagnostics.errors.empty() ? std::string() : ": " + diagnostics.errors.front());
-    return std::nullopt;
+    return decline("the model's contracts do not compile" +
+                   (diagnostics.errors.empty() ? std::string() : ": " + diagnostics.errors.front()));
   }
   // The kernel stages' checked recipes, by the function GStreamer's build lowers them with: the
   // canonical operation, its tensors and parameters, checked by the Kernels package for the
@@ -1300,13 +1306,11 @@ dataflow_model_manifest(const std::vector<std::shared_ptr<Node>>& route,
       const std::optional<si::SimaPluginStaticManifest> original = manifest;
       if (auto failure =
               si::prepare_kernel_stage_recipes(&*manifest, original, {}, {}, NameTransform{})) {
-        *why =
-            "the model's kernel stages do not lower: " + failure->field + ": " + failure->message;
-        return std::nullopt;
+        return decline("the model's kernel stages do not lower: " + failure->field + ": " +
+                       failure->message);
       }
     } catch (const std::exception& error) {
-      *why = std::string("the model's kernel stages do not lower: ") + error.what();
-      return std::nullopt;
+      return decline(std::string("the model's kernel stages do not lower: ") + error.what());
     }
   }
   return manifest;
@@ -1315,18 +1319,26 @@ dataflow_model_manifest(const std::vector<std::shared_ptr<Node>>& route,
 std::shared_ptr<const DataflowModelRoute>
 plan_dataflow_route_stages(const si::SimaPluginStaticManifest& manifest,
                            const InputOptions& declared, std::span<const Tensor> seed,
-                           const std::string& ev74_obstacle, std::string* why) {
-  const auto decline = [why](std::string reason) {
-    *why = std::move(reason);
+                           const std::string& ev74_obstacle,
+                           pipeline_internal::DataflowNotCarried* why) {
+  const auto decline = [why](std::string subject, std::string fact) {
+    why->subject = std::move(subject);
+    why->fact = std::move(fact);
     return nullptr;
   };
+  const std::string of_model =
+      manifest.model_id.empty() ? std::string() : " of model " + manifest.model_id;
   if (manifest.stages.empty()) {
-    return decline("the model's nodes render no stage");
+    return decline("the model route" + of_model, "the model's nodes render no stage");
   }
   std::string kinds;
   for (const si::StageStaticSpec& stage : manifest.stages) {
     kinds += (kinds.empty() ? "" : ", ") + stage_kind_text(stage);
   }
+  // The whole route as a subject, for a fact that is no one stage's.
+  const std::string route_subject = "the model route" + of_model + " (" +
+                                    std::to_string(manifest.stages.size()) + " stages: " + kinds +
+                                    ")";
   const PlanInput in{declared, seed, ev74_obstacle};
   auto planned = std::make_shared<DataflowModelRoute>();
   std::size_t mla_stages = 0;
@@ -1334,41 +1346,46 @@ plan_dataflow_route_stages(const si::SimaPluginStaticManifest& manifest,
     const si::StageStaticSpec& stage = manifest.stages[i];
     const bool first = i == 0U;
     const bool last = i + 1U == manifest.stages.size();
-    std::string reason;
+    std::string fact;
+    bool board = false;
     if (stage.payload_kind == si::StagePayloadKind::ProcessMla) {
       ++mla_stages;
-      reason = plan_mla_stage(stage, first, last ? nullptr : &manifest.stages[i + 1U], *planned);
+      fact = plan_mla_stage(stage, first, last ? nullptr : &manifest.stages[i + 1U], *planned);
     } else if (stage.native_kernel) {
       if (!first &&
           std::holds_alternative<DataflowModelStage::Kernel>(planned->stages.back().kind)) {
-        reason = "two kernel stages in a row (" + kinds + ") are not supported on Dataflow yet";
+        fact = "it is the second of two kernel stages in a row (the route's stages: " + kinds +
+               ")";
       } else {
-        reason = plan_kernel_stage(stage, first, last, in, *planned);
+        fact = plan_kernel_stage(stage, first, last, in, *planned, board);
       }
     } else {
-      reason = "stage " + stage_key_of(stage) + " (" + stage_kind_text(stage) +
-               ") is neither an MLA stage nor a kernel stage";
+      fact = "it is neither an MLA stage nor a kernel stage";
     }
-    if (!reason.empty()) {
-      return decline("a model route of " + std::to_string(manifest.stages.size()) + " stages (" +
-                     kinds + "): " + reason);
+    if (!fact.empty()) {
+      if (board) {
+        why->code = error_codes::kDispatcherUnavailable;
+        why->remedy = pipeline_internal::DataflowRemedy::BackendOrFirmware;
+      }
+      return decline(stage_subject(i, stage, manifest.model_id), std::move(fact));
     }
   }
   // Exactly one MLA stage, or the image preproc alone (Model::preprocess() between the Input and
   // the Output).
   if (mla_stages != 1U &&
       !(mla_stages == 0U && planned->frame_input && planned->stages.size() == 1U)) {
-    return decline("a model route of " + std::to_string(manifest.stages.size()) + " stages (" +
-                   kinds + ") with " + std::to_string(mla_stages) +
-                   " MLA stages is not supported on Dataflow yet: exactly one runs");
+    return decline(route_subject, "it is a route with " + std::to_string(mla_stages) +
+                                      " MLA stages: a route has exactly one MLA stage, or is "
+                                      "the image preproc stage alone");
   }
   for (std::size_t i = 0; i + 1U < planned->stages.size(); ++i) {
     if (planned->stages[i].output_bytes != planned->stages[i + 1U].input_bytes) {
-      return decline("stage " + planned->stages[i].key + " writes " +
-                     std::to_string(planned->stages[i].output_bytes) + " bytes and stage " +
-                     planned->stages[i + 1U].key + " reads " +
-                     std::to_string(planned->stages[i + 1U].input_bytes) +
-                     ": not one whole buffer handed on, which is not supported on Dataflow yet");
+      return decline(route_subject,
+                     "stage '" + planned->stages[i].key + "' writes " +
+                         std::to_string(planned->stages[i].output_bytes) + " bytes and stage '" +
+                         planned->stages[i + 1U].key + "' reads " +
+                         std::to_string(planned->stages[i + 1U].input_bytes) +
+                         ": not one whole buffer handed on");
     }
   }
   planned->output.beyond_leaf = planned->output.frame_semantics || !planned->output.more.empty();
@@ -1378,7 +1395,8 @@ plan_dataflow_route_stages(const si::SimaPluginStaticManifest& manifest,
 std::shared_ptr<const DataflowModelRoute>
 plan_dataflow_model_route(const std::vector<std::shared_ptr<Node>>& route,
                           const GraphOptions& options, const InputOptions& declared,
-                          std::span<const Tensor> seed, std::string* why) {
+                          std::span<const Tensor> seed,
+                          pipeline_internal::DataflowNotCarried* why) {
   const std::optional<si::SimaPluginStaticManifest> manifest =
       dataflow_model_manifest(route, options, why);
   if (!manifest) {
@@ -1562,15 +1580,28 @@ std::shared_ptr<const PreprocessRuntimeMeta> frame_facts(const DataflowFrames* f
   }
 }
 
+namespace {
+
+// What a pushed frame carries that the route's image preproc stage does not take.
+constexpr const char* kFrameWithRois =
+    "it carries ROI metadata (Semantic::preprocess with an ROI or an ROI list) in front of the "
+    "image preproc stage";
+constexpr const char* kFrameWithUpstreamTransform =
+    "it carries an upstream stage's preprocess metadata (Semantic::preprocess), which the image "
+    "preproc stage composes with its own";
+
+[[noreturn]] void throw_frame_not_carried(const char* where, const char* fact) {
+  pipeline_internal::throw_dataflow_not_carried(
+      where, {error_codes::kInputShape, "this frame", fact,
+              pipeline_internal::DataflowRemedy::BackendAndRebuild});
+}
+
+} // namespace
+
 void refuse_dataflow_frame(const DataflowModelRoute& route, const Tensor& tensor,
                            const char* where) {
   if (tensor.semantic.preprocess && tensor.semantic.preprocess->has_roi_list()) {
-    pipeline_internal::error_util::throw_session_error(
-        error_codes::kInputShape,
-        std::string(where) +
-            ": a frame with ROI metadata (Semantic::preprocess with an ROI or an ROI list) in "
-            "front of the image preproc stage is not supported on the Dataflow backend yet; build "
-            "this Run with RunBackend::GStreamer");
+    throw_frame_not_carried(where, kFrameWithRois);
   }
   const std::vector<std::int64_t>& want = route.input_shape;
   const std::size_t rank = tensor.shape.size();
@@ -1779,7 +1810,8 @@ bool same_bytes(std::span<const df::PortSpec> made, std::uint64_t bytes,
 
 // The soc::Kernel of a kernel stage. Throws NeatError when the Kernels package refuses the
 // request or the kernel's bytes are not the stage's.
-std::shared_ptr<df::soc::Kernel> make_kernel(const DataflowModelStage& stage, const char* where) {
+std::shared_ptr<df::soc::Kernel> make_kernel(const DataflowModelStage& stage, const char* where,
+                                             pipeline_internal::DataflowErrorSite site) {
   const DataflowModelStage::Kernel& request = std::get<DataflowModelStage::Kernel>(stage.kind);
   const std::string name = "kernel stage " + stage.key + " (" + request.operation + ")";
   std::vector<df::TensorSpec> inputs, outputs;
@@ -1799,7 +1831,7 @@ std::shared_ptr<df::soc::Kernel> make_kernel(const DataflowModelStage& stage, co
       request.ev74 ? df::soc::Kernel::Target::Ev74 : df::soc::Kernel::Target::A65, inputs, outputs,
       parameters);
   if (const df::Error* error = df::failure(made)) {
-    pipeline_internal::throw_dataflow_error(*error, where, name);
+    pipeline_internal::throw_dataflow_error(*error, where, name, site);
   }
   std::shared_ptr<df::soc::Kernel> kernel =
       std::get<std::shared_ptr<df::soc::Kernel>>(std::move(made));
@@ -1866,7 +1898,7 @@ make_frame_geometry(const DataflowFrames& frames, std::uint64_t word, const char
       kernel.input = request.inputs.front();
       stage.input_bytes = contract.input_requirements().front().storage_bytes;
     }
-    geometry->preproc = make_kernel(stage, where);
+    geometry->preproc = make_kernel(stage, where, pipeline_internal::DataflowErrorSite::Running);
     if (frames.decode) {
       // The resolver's checks for such a frame (its resize mode, its size); then the Run's
       // kernel, or its "image_size" variant where the frame says the original image's size.
@@ -1999,7 +2031,8 @@ std::shared_ptr<df::soc::MlaModel> load_model(const DataflowModelStage& stage, c
   const std::string& path = std::get<DataflowModelStage::Mla>(stage.kind).model_path;
   df::Result<std::shared_ptr<df::soc::MlaModel>> loaded = df::soc::MlaModel::load(path);
   if (const df::Error* error = df::failure(loaded)) {
-    pipeline_internal::throw_dataflow_error(*error, where, "MLA model " + path);
+    pipeline_internal::throw_dataflow_error(*error, where, "MLA model " + path,
+                                            pipeline_internal::DataflowErrorSite::Build);
   }
   std::shared_ptr<df::soc::MlaModel> model =
       std::get<std::shared_ptr<df::soc::MlaModel>>(std::move(loaded));
@@ -2132,14 +2165,9 @@ std::uint64_t dataflow_frame_word(const DataflowModelRoute& route, const Tensor&
     width = tensor.shape[lead + 1U];
   }
   if (tensor.semantic.preprocess) {
-    refuse(tensor.semantic.preprocess->has_roi_list()
-               ? "a frame with ROI metadata (Semantic::preprocess with an ROI or an ROI list) "
-                 "in front of the image preproc stage is not supported on the Dataflow backend "
-                 "yet; build this Run with RunBackend::GStreamer"
-               : "a frame that carries an upstream stage's preprocess metadata "
-                 "(Semantic::preprocess), which the image preproc stage would compose with its "
-                 "own, is not supported on the Dataflow backend yet; build this Run with "
-                 "RunBackend::GStreamer");
+    throw_frame_not_carried(where, tensor.semantic.preprocess->has_roi_list()
+                                       ? kFrameWithRois
+                                       : kFrameWithUpstreamTransform);
   }
   if (width <= 0 || height <= 0 || width > frames.envelope_width ||
       height > frames.envelope_height) {
@@ -2242,7 +2270,7 @@ std::shared_ptr<void> load_dataflow_model_route(const DataflowModelRoute& route,
       loaded->models[i] = load_model(stage, where);
     } else if (std::holds_alternative<DataflowModelStage::Kernel>(stage.kind)) {
 #if defined(SIMANEAT_WITH_DATAFLOW_SOC_KERNELS)
-      loaded->kernels[i] = make_kernel(stage, where);
+      loaded->kernels[i] = make_kernel(stage, where, pipeline_internal::DataflowErrorSite::Build);
 #else
       pipeline_internal::error_util::throw_session_error(
           error_codes::kPipelineShape, std::string(where) +

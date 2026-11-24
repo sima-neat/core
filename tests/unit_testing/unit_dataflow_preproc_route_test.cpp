@@ -29,10 +29,10 @@
 //                    CPU tensor is refused.
 //   refused          a frame of another size than the Run was built for, and a frame with ROI
 //                    metadata, fail their push with misconfig.input_shape and the Run goes on.
-//   declined         what stays off this backend at the build: a build that does not say the
-//                    frame the stage reads and an I420 input (explicit Dataflow fails); under
-//                    RunBackend::Auto with SIMA_NEAT_BACKEND=dataflow a graph it declines (a
-//                    standalone BoxDecode node behind the model's stages) is GStreamer's.
+//   declined         what this backend does not carry fails at the build: an I420 input, a seed
+//                    the stage does not read, and, under RunBackend::Auto with
+//                    SIMA_NEAT_BACKEND=dataflow as well, a standalone BoxDecode node behind the
+//                    model's stages (no Run is built on GStreamer in its place).
 //   lifecycle        close_input drains what was pushed; Runs one after the other give the same
 //                    bytes.
 // On a board whose EV74 runs the stock firmware every Dataflow build of the route must be refused
@@ -520,11 +520,11 @@ void declined(const Model& model, const std::string& archive) {
     }
     require(!built, "declined: a GRAY8 seed does not build on the Dataflow backend");
   }
-  // Under RunBackend::Auto with SIMA_NEAT_BACKEND=dataflow a declined build is GStreamer's: the
-  // model's stages with a standalone BoxDecode node behind them (not a Model stage, so not a
-  // route this backend takes) run there and give their one detection tensor.
+  // Under RunBackend::Auto with SIMA_NEAT_BACKEND=dataflow a graph this backend does not carry
+  // fails as it does when Dataflow is asked for explicitly: the model's stages with a standalone
+  // BoxDecode node behind them (not a Model stage). No Run is built on GStreamer in its place.
   ::setenv("SIMA_NEAT_BACKEND", "dataflow", 1);
-  {
+  for (const RunBackend backend : {RunBackend::Dataflow, RunBackend::Auto}) {
     OutputOptions out;
     out.max_buffers = 4;
     out.sync = false;
@@ -534,14 +534,19 @@ void declined(const Model& model, const std::string& archive) {
     g.add(model.inference());
     g.add(nodes::SimaBoxDecode(model, BoxDecodeType::YoloV8, 0.49, 0.5, 100));
     g.add(nodes::Output(out));
-    Run run = g.build(inputs[0], on(RunBackend::Auto));
-    require(run.push(inputs[1]), "declined: push on the fallback");
-    Result<TensorList> pulled = run.pull(std::chrono::milliseconds(30000));
-    require(static_cast<bool>(pulled) && pulled->size() == 1U &&
-                pulled->front().semantic.detection.has_value(),
-            "declined: a graph Dataflow declines runs on GStreamer under Auto and gives its "
-            "detections");
-    run.close();
+    bool built = false;
+    try {
+      (void)g.build(inputs[0], on(backend));
+      built = true;
+    } catch (const NeatError& error) {
+      require_contains(error.what(),
+                       " is not carried by the Dataflow backend: it is a standalone BoxDecode "
+                       "node",
+                       std::string("declined: ") + error.what());
+      require_contains(error.what(), "\nHint: To run this program on the GStreamer backend, ",
+                       std::string("declined: ") + error.what());
+    }
+    require(!built, "declined: a graph Dataflow does not carry builds nowhere");
   }
   ::unsetenv("SIMA_NEAT_BACKEND");
 }
