@@ -5,11 +5,11 @@
   "run_mode": "sync",
   "iterations": 1000,
   "metrics_thresholds": {
-    "throughput_min": 99.0,
-    "p50_max": 10.1,
-    "p95_max": 10.4,
-    "startup_max": 1600.0,
-    "rss_peak_kb_max": 260000.0,
+    "throughput_min": 230.0,
+    "p50_max": 4.4,
+    "p95_max": 4.5,
+    "startup_max": 750.0,
+    "rss_peak_kb_max": 270000.0,
     "input_drop_count_max": 0.0,
     "output_drop_count_max": 0.0,
     "regression_tolerance_percent": 10.0
@@ -18,7 +18,7 @@
     "boxdecode_stage_wall_v2": {
       "required": true,
       "min_samples": 1000,
-      "p99_max_ms": 0.93
+      "p99_max_ms": 0.85
     }
   }
 }
