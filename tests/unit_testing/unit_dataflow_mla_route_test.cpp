@@ -14,10 +14,11 @@
 //   differential     the same inputs (4 patterns in rotation) on each backend: every pulled
 //                    tensor's dtype, layout, shape, strides, byte offset, route, quantization and
 //                    format tag, the Sample's shape, and every byte (its digest). Excluded, each
-//                    printed with both values: the stage's element name (GStreamer numbers its elements per
-//                    process: MLA_0_<n>), the storage's size (GStreamer: the allocation; Dataflow:
-//                    the MLA's output buffer), frame_id / input_seq / timestamps / caps_string
-//                    (documented for every Dataflow Run: unit_run_backend_differential_test).
+//                    printed with both values: the stage's element name (GStreamer numbers its
+//                    elements per process: MLA_0_<n>), the storage's size (GStreamer: the
+//                    allocation; Dataflow: the MLA's output buffer), frame_id / input_seq /
+//                    timestamps / caps_string (documented for every Dataflow Run:
+//                    unit_run_backend_differential_test).
 //   input_contract   which tensors the route takes: TensorMemory::MLA and EV74 tensors, with and
 //                    without the batch axis; a CPU tensor is refused with GStreamer's guard
 //                    message; a tensor of another dtype with GStreamer's push error.
@@ -244,8 +245,8 @@ void differential(const Route& route, sima_test::Reference& ref) {
                                sima_test::text(t.route.physical_index) + "," +
                                sima_test::text(t.route.memory_index) + "," +
                                sima_test::text(t.route.physical_byte_offset) + ",name '" +
-                               t.route.name + "',backend '" + t.route.backend_name +
-                               "',segment '" + t.route.segment_name + "'");
+                               t.route.name + "',backend '" + t.route.backend_name + "',segment '" +
+                               t.route.segment_name + "'");
     // GStreamer names the element MLA_0_<n>, n counting the elements this process built.
     ref.prefix(at("route.stage_key"), t.route.stage_key);
     ref.equal(at("semantic.tess"),
@@ -261,7 +262,8 @@ void differential(const Route& route, sima_test::Reference& ref) {
     ref.equal(at("from a Sample"), f.from_sample);
     if (f.from_sample) {
       const Sample& sa = f.sample;
-      ref.equal(at("Sample kind / owned"), sima_test::text(sa.kind) + "/" + sima_test::text(sa.owned));
+      ref.equal(at("Sample kind / owned"),
+                sima_test::text(sa.kind) + "/" + sima_test::text(sa.owned));
       ref.equal(at("Sample media"), sima_test::text(sa.media_type) + "/" +
                                         sima_test::text(sa.payload_type) + "/'" + sa.payload_tag +
                                         "'/" + sima_test::text(sa.format));

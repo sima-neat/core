@@ -165,8 +165,8 @@ public:
         const std::size_t tab2 = line.find('\t', tab + 1);
         require(tab != std::string::npos && tab2 != std::string::npos,
                 "the reference record's line: " + line);
-        r.recorded_[unescape(line.substr(tab + 1, tab2 - tab - 1))] = {line.substr(0, tab),
-                                                                       unescape(line.substr(tab2 + 1))};
+        r.recorded_[unescape(line.substr(tab + 1, tab2 - tab - 1))] = {
+            line.substr(0, tab), unescape(line.substr(tab2 + 1))};
       }
       require(!r.recorded_.empty(), "the reference record " + r.path_ + " is empty");
     }
@@ -245,8 +245,8 @@ public:
     require(!path_.empty(), "on Dataflow a comparing test needs --reference=<file>, which a run "
                             "with --backend=gstreamer writes");
     for (const auto& [key, recorded] : recorded_) {
-      require(met_.count(key) == 1U, "the Dataflow run gave no value for '" + key +
-                                         "', which the GStreamer run recorded");
+      require(met_.count(key) == 1U,
+              "the Dataflow run gave no value for '" + key + "', which the GStreamer run recorded");
     }
     std::cout << "[INFO] reference record: " << met_.size() << " values compared with " << path_
               << "\n";
@@ -269,8 +269,9 @@ private:
   }
 
   void add(const char* kind, const std::string& key, const std::string& value) {
-    require(lines_.emplace(key, std::string(kind) + "\t" + escape(key) + "\t" + escape(value)).second,
-            "'" + key + "' recorded twice");
+    require(
+        lines_.emplace(key, std::string(kind) + "\t" + escape(key) + "\t" + escape(value)).second,
+        "'" + key + "' recorded twice");
   }
 
   static std::string escape(const std::string& s) {
@@ -304,8 +305,9 @@ private:
 
   std::string path_;
   bool dataflow_ = false;
-  std::map<std::string, std::string> lines_;                            // GStreamer: key -> line
-  std::map<std::string, std::pair<std::string, std::string>> recorded_; // Dataflow: key -> kind, value
+  std::map<std::string, std::string> lines_; // GStreamer: key -> line
+  std::map<std::string, std::pair<std::string, std::string>>
+      recorded_; // Dataflow: key -> kind, value
   std::set<std::string> met_;
 };
 

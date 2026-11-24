@@ -442,13 +442,13 @@ void lease_outlives_run(int) {
 } // namespace
 
 RUN_BACKEND_TEST("unit_run_torture_test", ([] {
-           const int n = repeats();
-           std::cout << "[INFO] backend=" << backend_name() << " repeats=" << n << "\n";
-           for (int round = 0; round < n; ++round) {
-             stop_during_blocked_push(round);
-             stop_during_pending_pull(round);
-             close_input_with_queued_messages(round);
-             two_pushers(round);
-             lease_outlives_run(round);
-           }
-         }));
+                   const int n = repeats();
+                   std::cout << "[INFO] backend=" << backend_name() << " repeats=" << n << "\n";
+                   for (int round = 0; round < n; ++round) {
+                     stop_during_blocked_push(round);
+                     stop_during_pending_pull(round);
+                     close_input_with_queued_messages(round);
+                     two_pushers(round);
+                     lease_outlives_run(round);
+                   }
+                 }));

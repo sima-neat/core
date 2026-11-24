@@ -3,15 +3,15 @@
 // off; the pulled items are compared field by field and byte by byte. A process runs on one
 // backend (set_backend), so the test is two processes: --backend=gstreamer
 // --reference=<file> records what GStreamer gave, every observed value and byte, and
-// --backend=dataflow --reference=<file> runs the same sequence and compares. W2 (zero-copy push): on Dataflow each single-input item is also checked to be wrapped (the
-// pulled tensor's first byte is the pushed one) exactly when copy_input is off and the frame fills
-// a slot (a fixed port's frames, a bounded port's frames at the bound), and copied otherwise; the
-// fixed-port variants are wrapped throughout.
-// H0b (device memory): two variants with InputOptions::memory_policy = Ev74, one pushing
-// TensorMemory::EV74 tensors and one CPU tensors. Compared besides the above: whether the pulled
-// tensor is DMA-BUF memory, and whether it is the pushed DMA-BUF itself (EV74 tensors: yes on both
-// backends, GStreamer forwarding the buffer and Dataflow wrapping it; CPU tensors: no, both copy
-// into the input's pool). Both backends refuse a CPU tensor on such an input unless
+// --backend=dataflow --reference=<file> runs the same sequence and compares. W2 (zero-copy push):
+// on Dataflow each single-input item is also checked to be wrapped (the pulled tensor's first byte
+// is the pushed one) exactly when copy_input is off and the frame fills a slot (a fixed port's
+// frames, a bounded port's frames at the bound), and copied otherwise; the fixed-port variants are
+// wrapped throughout. H0b (device memory): two variants with InputOptions::memory_policy = Ev74,
+// one pushing TensorMemory::EV74 tensors and one CPU tensors. Compared besides the above: whether
+// the pulled tensor is DMA-BUF memory, and whether it is the pushed DMA-BUF itself (EV74 tensors:
+// yes on both backends, GStreamer forwarding the buffer and Dataflow wrapping it; CPU tensors: no,
+// both copy into the input's pool). Both backends refuse a CPU tensor on such an input unless
 // SIMA_ALLOW_INPUTSTREAM_CPU_TO_EV74_COPY is set (InputStreamPush.cpp; Dataflow asks the same
 // guard), so that variant sets it for both runs; a third variant leaves it unset and checks that
 // both refuse the first item with the guard's message (Dataflow's push throws it; GStreamer's
@@ -1129,112 +1129,111 @@ int main(int argc, char** argv) {
     return 1;
   }
   return sima_test::run_test("unit_run_backend_differential_test", [&] {
-           sima_test::Reference ref = sima_test::Reference::from_args(argc, argv);
-           std::cout << "[INFO] backend: " << sima_test::backend_name() << "\n";
-           constexpr RunPreset kRealtime = RunPreset::Realtime;
-           constexpr RunPreset kBalanced = RunPreset::Balanced;
-           // name, preset, connected, vary_shapes, copy_input, do_timestamp, new_pull
-           const std::vector<Variant> variants = {
-               {"linear/realtime/old-pull/copy_input=off/do_timestamp=off", kRealtime, false, true,
-                false, false, false},
-               {"linear/realtime/old-pull/copy_input=on/do_timestamp=off", kRealtime, false, true,
-                true, false, false},
-               {"linear/realtime/new-pull/copy_input=off/do_timestamp=off", kRealtime, false, true,
-                false, false, true},
-               {"linear/realtime/new-pull/copy_input=on/do_timestamp=off", kRealtime, false, true,
-                true, false, true},
-               {"linear/realtime/old-pull/copy_input=off/do_timestamp=on", kRealtime, false, true,
-                false, true, false},
-               {"linear/balanced/old-pull/copy_input=off/do_timestamp=off", kBalanced, false, false,
-                false, false, false},
-               {"linear/balanced/new-pull/copy_input=on/do_timestamp=on", kBalanced, false, false,
-                true, true, true},
-               {"connected/balanced/old-pull/copy_input=off/do_timestamp=off", kBalanced, true,
-                false, false, false, false},
-               {"connected/balanced/new-pull/copy_input=on/do_timestamp=off", kBalanced, true,
-                false, true, false, true},
-               // W2: a fixed port, every item wrapped on Dataflow (copy_input off) or copied (on).
-               {"linear/balanced/fixed/old-pull/copy_input=off/do_timestamp=off", kBalanced, false,
-                false, false, false, false, true},
-               {"linear/balanced/fixed/new-pull/copy_input=off/do_timestamp=off", kBalanced, false,
-                false, false, false, true, true},
-               {"linear/balanced/fixed/new-pull/copy_input=on/do_timestamp=off", kBalanced, false,
-                false, true, false, true, true},
-               // H0b: an Ev74 input; pushed EV74 tensors (the pulled tensor is the pushed
-               // DMA-BUF) and pushed CPU tensors (copied into the input's device pool).
-               {"linear/balanced/fixed/ev74-input/ev74-tensors/new-pull", kBalanced, false, false,
-                false, false, true, true, InputMemoryPolicy::Ev74, true},
-               {"linear/balanced/fixed/ev74-input/cpu-tensors/old-pull", kBalanced, false, false,
-                false, false, false, true, InputMemoryPolicy::Ev74, false},
-               {"linear/balanced/fixed/ev74-input/cpu-tensors/refused", kBalanced, false, false,
-                false, false, false, true, InputMemoryPolicy::Ev74, false, true},
-           };
-           std::vector<std::string> failures;
-           std::size_t compared = 0;
-           for (const Variant& v : variants) {
-             std::cout << "== " << v.name << "\n";
-             // Both backends take a CPU tensor on a device input only with the compatibility
-             // copy allowed.
-             const bool compat_copy =
-                 v.memory != InputMemoryPolicy::SystemMemory && !v.ev74_source && !v.refused;
-             if (compat_copy) {
-               setenv(kCompatCopyEnv, "1", 1);
-             }
-             const Outcome mine = run_variant(v);
-             if (compat_copy) {
-               unsetenv(kCompatCopyEnv);
-             }
-             if (!ref.comparing()) {
-               ref.blob(v.name, save(mine));
-               std::cout << "  recorded: final=" << status_name(mine.final_status) << " '"
-                         << mine.final_error << "' build_error='" << mine.build_error << "'\n";
-               continue;
-             }
-             const Outcome gst = load_outcome(ref.recorded(v.name));
-             const Outcome& df = mine;
-             Comparison c(v.name);
-             compare(v, gst, df, c);
-             std::cout << "  final: gstreamer=" << status_name(gst.final_status) << " '"
-                       << gst.final_error << "' dataflow=" << status_name(df.final_status) << " '"
-                       << df.final_error << "'\n";
-             std::cout << "  compared " << c.compared() << " values, " << c.failures().size()
-                       << " differences\n";
-             compared += c.compared();
-             failures.insert(failures.end(), c.failures().begin(), c.failures().end());
-           }
-           // H0c: several endpoints.
-           const std::vector<MultiVariant> multi = {
-               {"two-by-two/old-pull", Topology::TwoByTwo, false},
-               {"two-by-two/new-pull", Topology::TwoByTwo, true},
-               {"fan-out/old-pull", Topology::FanOut, false},
-               {"fan-out/new-pull", Topology::FanOut, true},
-           };
-           for (const MultiVariant& v : multi) {
-             std::cout << "== " << v.name << "\n";
-             const MultiOutcome mine = run_multi(v);
-             if (!ref.comparing()) {
-               ref.blob(v.name, save(mine));
-               std::cout << "  recorded: build_error='" << mine.build_error << "'\n";
-               continue;
-             }
-             const MultiOutcome gst = load_multi(ref.recorded(v.name));
-             const MultiOutcome& df = mine;
-             Comparison c(v.name);
-             compare_multi(v, gst, df, c);
-             std::cout << "  compared " << c.compared() << " values, " << c.failures().size()
-                       << " differences\n";
-             compared += c.compared();
-             failures.insert(failures.end(), c.failures().begin(), c.failures().end());
-           }
-           for (const std::string& f : failures) {
-             std::cerr << "[DIFF] " << f << "\n";
-           }
-           ref.finish();
-           std::cout << "[INFO] differential: " << variants.size() + multi.size() << " variants, "
-                     << compared << " values compared, " << failures.size() << " differences\n";
-           // A process that started GStreamer may lose its stdout tail at exit: flush first.
-           std::cout << std::flush;
-           require(failures.empty(), std::to_string(failures.size()) +
-                                         " differences between the backends (see [DIFF] lines)");
-         });
+    sima_test::Reference ref = sima_test::Reference::from_args(argc, argv);
+    std::cout << "[INFO] backend: " << sima_test::backend_name() << "\n";
+    constexpr RunPreset kRealtime = RunPreset::Realtime;
+    constexpr RunPreset kBalanced = RunPreset::Balanced;
+    // name, preset, connected, vary_shapes, copy_input, do_timestamp, new_pull
+    const std::vector<Variant> variants = {
+        {"linear/realtime/old-pull/copy_input=off/do_timestamp=off", kRealtime, false, true, false,
+         false, false},
+        {"linear/realtime/old-pull/copy_input=on/do_timestamp=off", kRealtime, false, true, true,
+         false, false},
+        {"linear/realtime/new-pull/copy_input=off/do_timestamp=off", kRealtime, false, true, false,
+         false, true},
+        {"linear/realtime/new-pull/copy_input=on/do_timestamp=off", kRealtime, false, true, true,
+         false, true},
+        {"linear/realtime/old-pull/copy_input=off/do_timestamp=on", kRealtime, false, true, false,
+         true, false},
+        {"linear/balanced/old-pull/copy_input=off/do_timestamp=off", kBalanced, false, false, false,
+         false, false},
+        {"linear/balanced/new-pull/copy_input=on/do_timestamp=on", kBalanced, false, false, true,
+         true, true},
+        {"connected/balanced/old-pull/copy_input=off/do_timestamp=off", kBalanced, true, false,
+         false, false, false},
+        {"connected/balanced/new-pull/copy_input=on/do_timestamp=off", kBalanced, true, false, true,
+         false, true},
+        // W2: a fixed port, every item wrapped on Dataflow (copy_input off) or copied (on).
+        {"linear/balanced/fixed/old-pull/copy_input=off/do_timestamp=off", kBalanced, false, false,
+         false, false, false, true},
+        {"linear/balanced/fixed/new-pull/copy_input=off/do_timestamp=off", kBalanced, false, false,
+         false, false, true, true},
+        {"linear/balanced/fixed/new-pull/copy_input=on/do_timestamp=off", kBalanced, false, false,
+         true, false, true, true},
+        // H0b: an Ev74 input; pushed EV74 tensors (the pulled tensor is the pushed
+        // DMA-BUF) and pushed CPU tensors (copied into the input's device pool).
+        {"linear/balanced/fixed/ev74-input/ev74-tensors/new-pull", kBalanced, false, false, false,
+         false, true, true, InputMemoryPolicy::Ev74, true},
+        {"linear/balanced/fixed/ev74-input/cpu-tensors/old-pull", kBalanced, false, false, false,
+         false, false, true, InputMemoryPolicy::Ev74, false},
+        {"linear/balanced/fixed/ev74-input/cpu-tensors/refused", kBalanced, false, false, false,
+         false, false, true, InputMemoryPolicy::Ev74, false, true},
+    };
+    std::vector<std::string> failures;
+    std::size_t compared = 0;
+    for (const Variant& v : variants) {
+      std::cout << "== " << v.name << "\n";
+      // Both backends take a CPU tensor on a device input only with the compatibility
+      // copy allowed.
+      const bool compat_copy =
+          v.memory != InputMemoryPolicy::SystemMemory && !v.ev74_source && !v.refused;
+      if (compat_copy) {
+        setenv(kCompatCopyEnv, "1", 1);
+      }
+      const Outcome mine = run_variant(v);
+      if (compat_copy) {
+        unsetenv(kCompatCopyEnv);
+      }
+      if (!ref.comparing()) {
+        ref.blob(v.name, save(mine));
+        std::cout << "  recorded: final=" << status_name(mine.final_status) << " '"
+                  << mine.final_error << "' build_error='" << mine.build_error << "'\n";
+        continue;
+      }
+      const Outcome gst = load_outcome(ref.recorded(v.name));
+      const Outcome& df = mine;
+      Comparison c(v.name);
+      compare(v, gst, df, c);
+      std::cout << "  final: gstreamer=" << status_name(gst.final_status) << " '" << gst.final_error
+                << "' dataflow=" << status_name(df.final_status) << " '" << df.final_error << "'\n";
+      std::cout << "  compared " << c.compared() << " values, " << c.failures().size()
+                << " differences\n";
+      compared += c.compared();
+      failures.insert(failures.end(), c.failures().begin(), c.failures().end());
+    }
+    // H0c: several endpoints.
+    const std::vector<MultiVariant> multi = {
+        {"two-by-two/old-pull", Topology::TwoByTwo, false},
+        {"two-by-two/new-pull", Topology::TwoByTwo, true},
+        {"fan-out/old-pull", Topology::FanOut, false},
+        {"fan-out/new-pull", Topology::FanOut, true},
+    };
+    for (const MultiVariant& v : multi) {
+      std::cout << "== " << v.name << "\n";
+      const MultiOutcome mine = run_multi(v);
+      if (!ref.comparing()) {
+        ref.blob(v.name, save(mine));
+        std::cout << "  recorded: build_error='" << mine.build_error << "'\n";
+        continue;
+      }
+      const MultiOutcome gst = load_multi(ref.recorded(v.name));
+      const MultiOutcome& df = mine;
+      Comparison c(v.name);
+      compare_multi(v, gst, df, c);
+      std::cout << "  compared " << c.compared() << " values, " << c.failures().size()
+                << " differences\n";
+      compared += c.compared();
+      failures.insert(failures.end(), c.failures().begin(), c.failures().end());
+    }
+    for (const std::string& f : failures) {
+      std::cerr << "[DIFF] " << f << "\n";
+    }
+    ref.finish();
+    std::cout << "[INFO] differential: " << variants.size() + multi.size() << " variants, "
+              << compared << " values compared, " << failures.size() << " differences\n";
+    // A process that started GStreamer may lose its stdout tail at exit: flush first.
+    std::cout << std::flush;
+    require(failures.empty(), std::to_string(failures.size()) +
+                                  " differences between the backends (see [DIFF] lines)");
+  });
 }

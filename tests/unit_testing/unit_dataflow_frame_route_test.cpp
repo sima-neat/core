@@ -781,8 +781,7 @@ void refused(const Model& model, const std::vector<cv::Mat>& images,
   {
     // Above the stage's capacity, on a Run whose seed is that capacity.
     Graph large = route_graph(model);
-    Run at_capacity =
-        large.build(TensorList{bgr(resized(images[0], 1920, 1080))}, on());
+    Run at_capacity = large.build(TensorList{bgr(resized(images[0], 1920, 1080))}, on());
     try {
       (void)at_capacity.push(TensorList{bgr(resized(images[0], 1922, 1082))});
       throw std::runtime_error("refused: a frame above the stage's capacity was pushed");
@@ -859,8 +858,7 @@ void nv12_frames(sima_test::Reference& ref, const std::string& archive,
     const std::string rows[] = {row + ", a declared bound of 1280x720", row + ", no declaration",
                                 row + ", a declared bound of 1920x1080"};
     if (!sima_test::on_dataflow()) {
-      const std::vector<Frame> gst =
-          run_frames(route_graph(model, stages, &in), frames, on(), row);
+      const std::vector<Frame> gst = run_frames(route_graph(model, stages, &in), frames, on(), row);
       for (const std::string& name : rows) {
         compare(ref, gst, frames, stages == 3, name);
       }

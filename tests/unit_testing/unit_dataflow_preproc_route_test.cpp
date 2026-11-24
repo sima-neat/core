@@ -366,8 +366,8 @@ std::vector<TensorList> frames_of(int width, int height) {
   return inputs;
 }
 
-void differential(sima_test::Reference& ref, const Model& model, int width, int height,
-                  int frames, const std::string& row) {
+void differential(sima_test::Reference& ref, const Model& model, int width, int height, int frames,
+                  const std::string& row) {
   const std::vector<TensorList> inputs = frames_of(width, height);
   compare(ref, run_frames(graph(model), inputs, frames), row);
 }
@@ -487,8 +487,7 @@ void declined(const Model& model, const std::string& archive) {
   const std::vector<TensorList> inputs = frames_of(1280, 720);
   const auto fails = [&](Graph g, bool seeded, const char* text, const char* what) {
     try {
-      (void)(seeded ? g.build(inputs[0], on())
-                    : g.build(on()));
+      (void)(seeded ? g.build(inputs[0], on()) : g.build(on()));
     } catch (const NeatError& error) {
       require_contains(error.what(), text, std::string(what) + ": " + error.what());
       std::cout << "[declined] " << what << ": " << error.what() << "\n";

@@ -1,9 +1,10 @@
 // The Dataflow backend's error table (src/pipeline/internal/DataflowErrorMap.cpp, compiled into
 // this test: libsima_neat.so hides it): for each runtime Error Core can meet, the Core error code,
 // the pull status, whether a pull latches it, and whether its action is to run the program on the
-// GStreamer backend (false where GStreamer meets the same error). Among them the MLA's load errors as the runtime
-// reports them (a missing file or one that is not a model: InvalidArgument; a context that cannot
-// be opened: Unsupported; a lost device: Unretired) and the Kernels package's. No device is opened.
+// GStreamer backend (false where GStreamer meets the same error). Among them the MLA's load errors
+// as the runtime reports them (a missing file or one that is not a model: InvalidArgument; a
+// context that cannot be opened: Unsupported; a lost device: Unretired) and the Kernels package's.
+// No device is opened.
 
 #include "pipeline/ErrorCodes.h"
 #include "pipeline/NeatError.h"

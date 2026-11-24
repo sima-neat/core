@@ -25,9 +25,9 @@
 //   differential     the same inputs (4 images in rotation) on each backend: every pulled
 //                    tensor's dtype, layout, shape, strides, byte offset, route, quantization and
 //                    format tag, the Sample's shape, and every byte (its digest). Excluded, each
-//                    printed with both values: the storage's size (GStreamer: the stage's allocation;
-//                    Dataflow: the kernel's output buffer), frame_id / input_seq / timestamps /
-//                    caps_string (documented for every Dataflow Run:
+//                    printed with both values: the storage's size (GStreamer: the stage's
+//                    allocation; Dataflow: the kernel's output buffer), frame_id / input_seq /
+//                    timestamps / caps_string (documented for every Dataflow Run:
 //                    unit_run_backend_differential_test).
 //   reference        the logits against a reference computed here: the image quantized and
 //                    tessellated in the test, inferred through the MLA-only route, dequantized in
@@ -321,8 +321,8 @@ void compare(sima_test::Reference& ref, const std::vector<Frame>& frames, const 
                                sima_test::text(t.route.physical_index) + "," +
                                sima_test::text(t.route.memory_index) + "," +
                                sima_test::text(t.route.physical_byte_offset) + ",name '" +
-                               t.route.name + "',backend '" + t.route.backend_name +
-                               "',segment '" + t.route.segment_name + "'");
+                               t.route.name + "',backend '" + t.route.backend_name + "',segment '" +
+                               t.route.segment_name + "'");
     ref.prefix(at("route.stage_key"), t.route.stage_key);
     ref.equal(at("semantic.tess"),
               t.semantic.tess ? sima_test::text(t.semantic.tess->format) : std::string("none"));
@@ -337,7 +337,8 @@ void compare(sima_test::Reference& ref, const std::vector<Frame>& frames, const 
     ref.equal(at("from a Sample"), f.from_sample);
     if (f.from_sample) {
       const Sample& sa = f.sample;
-      ref.equal(at("Sample kind / owned"), sima_test::text(sa.kind) + "/" + sima_test::text(sa.owned));
+      ref.equal(at("Sample kind / owned"),
+                sima_test::text(sa.kind) + "/" + sima_test::text(sa.owned));
       ref.equal(at("Sample media"), sima_test::text(sa.media_type) + "/" +
                                         sima_test::text(sa.payload_type) + "/'" + sa.payload_tag +
                                         "'/" + sima_test::text(sa.format));
@@ -492,9 +493,9 @@ void reference(const Route& route, const std::string& archive, const Dequant& de
       }
     }
     run.close();
-    std::cout << "[reference] " << sima_test::backend_name()
-              << ": of " << compared << " logits " << different
-              << " differ from the reference computed in the test (worst " << worst << ")\n";
+    std::cout << "[reference] " << sima_test::backend_name() << ": of " << compared << " logits "
+              << different << " differ from the reference computed in the test (worst " << worst
+              << ")\n";
     require(different == 0, "the route's logits are the reference's, bit for bit");
   }
 }
@@ -953,8 +954,10 @@ void declined(const Route& route, bool ev74) {
     // backend. The default placement puts the pre stage on the EV74.
     refused(GraphOptions{}, false, "sima-neat-native-cvu-fw", "the default placement");
     // The pre stage on the A65 and the post stage asked onto the EV74.
-    refused(placed("A65", "EV74"), false, "is not carried by the Dataflow backend on this board", "post_run_target EV74");
-    refused(placed("EV74", "EV74"), false, "is not carried by the Dataflow backend on this board", "both on the EV74");
+    refused(placed("A65", "EV74"), false, "is not carried by the Dataflow backend on this board",
+            "post_run_target EV74");
+    refused(placed("EV74", "EV74"), false, "is not carried by the Dataflow backend on this board",
+            "both on the EV74");
   }
   // OutputOptions::drop behind a model.
   refused(on_a65(), true, "OutputOptions::drop behind a model", "OutputOptions::drop");

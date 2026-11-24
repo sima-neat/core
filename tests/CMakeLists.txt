@@ -868,13 +868,15 @@ if (SIMANEAT_DATAFLOW_SOURCE_DIR AND
 endif()
 
 # H1: the MLA-only model route on the Dataflow backend (Feed -> MlaOp -> Fetch), against GStreamer's
-# record (simaneat_add_backend_pair), on the public API only. It needs the MLA and a compiled model (--mla-model or
-# SIMA_TEST_MLA_ONLY_MODEL; it downloads nothing), so it is a long test that skips without one.
+# record (simaneat_add_backend_pair), on the public API only. It needs the MLA and a compiled model
+# (--mla-model or SIMA_TEST_MLA_ONLY_MODEL; it downloads nothing), so it is a long test that skips
+# without one.
 if (SIMANEAT_DATAFLOW_SOURCE_DIR AND
     NOT unit_dataflow_mla_route_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
   simaneat_backend_pair_args(unit_dataflow_mla_route_test _pair_args)
   add_pipeline_test_long(unit_dataflow_mla_route_test
-    SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/unit_testing/unit_dataflow_mla_route_test.cpp ARGS ${_pair_args})
+    SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/unit_testing/unit_dataflow_mla_route_test.cpp
+    ARGS ${_pair_args})
   set_tests_properties(unit_dataflow_mla_route_test PROPERTIES TIMEOUT 300)
   set_property(TEST unit_dataflow_mla_route_test APPEND PROPERTY LABELS "unit;dataflow")
   simaneat_add_backend_pair(unit_dataflow_mla_route_test)
@@ -890,22 +892,23 @@ if (SIMANEAT_DATAFLOW_SOURCE_DIR AND
     NOT unit_dataflow_model_route_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
   simaneat_backend_pair_args(unit_dataflow_model_route_test _pair_args)
   add_pipeline_test_long(unit_dataflow_model_route_test
-    SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/unit_testing/unit_dataflow_model_route_test.cpp ARGS ${_pair_args})
+    SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/unit_testing/unit_dataflow_model_route_test.cpp
+    ARGS ${_pair_args})
   set_tests_properties(unit_dataflow_model_route_test PROPERTIES TIMEOUT 300)
   set_property(TEST unit_dataflow_model_route_test APPEND PROPERTY LABELS "unit;dataflow")
   simaneat_add_backend_pair(unit_dataflow_model_route_test)
 endif()
 
-# The image preproc stage (H1, step Y1): Input -> Model::preprocess() -> Output of a detection
-# model on both backends (simaneat_add_backend_pair), public API only. It needs the EV74 on the Kernels
-# firmware and a model package with an image input (--model-package,
-# SIMA_TEST_PREPROC_MODEL_PACKAGE or SIMA_YOLO_TAR; it downloads nothing), so it is a long test
-# that skips without one.
+# The image preproc stage (H1, step Y1): Input -> Model::preprocess() -> Output of a detection model
+# on both backends (simaneat_add_backend_pair), public API only. It needs the EV74 on the Kernels
+# firmware and a model package with an image input (--model-package, SIMA_TEST_PREPROC_MODEL_PACKAGE
+# or SIMA_YOLO_TAR; it downloads nothing), so it is a long test that skips without one.
 if (SIMANEAT_DATAFLOW_SOURCE_DIR AND
     NOT unit_dataflow_preproc_route_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
   simaneat_backend_pair_args(unit_dataflow_preproc_route_test _pair_args)
   add_pipeline_test_long(unit_dataflow_preproc_route_test
-    SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/unit_testing/unit_dataflow_preproc_route_test.cpp ARGS ${_pair_args})
+    SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/unit_testing/unit_dataflow_preproc_route_test.cpp
+    ARGS ${_pair_args})
   set_tests_properties(unit_dataflow_preproc_route_test PROPERTIES TIMEOUT 300)
   set_property(TEST unit_dataflow_preproc_route_test APPEND PROPERTY LABELS "unit;dataflow")
   simaneat_add_backend_pair(unit_dataflow_preproc_route_test)
@@ -922,7 +925,8 @@ if (SIMANEAT_DATAFLOW_SOURCE_DIR AND
     NOT unit_dataflow_packed_route_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
   simaneat_backend_pair_args(unit_dataflow_packed_route_test _pair_args)
   add_pipeline_test_long(unit_dataflow_packed_route_test
-    SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/unit_testing/unit_dataflow_packed_route_test.cpp ARGS ${_pair_args})
+    SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/unit_testing/unit_dataflow_packed_route_test.cpp
+    ARGS ${_pair_args})
   set_tests_properties(unit_dataflow_packed_route_test PROPERTIES TIMEOUT 300)
   set_property(TEST unit_dataflow_packed_route_test APPEND PROPERTY LABELS "unit;dataflow")
   simaneat_add_backend_pair(unit_dataflow_packed_route_test)
@@ -930,29 +934,31 @@ endif()
 
 # BoxDecode behind the MLA (H1, step Y3): Input -> Model::preprocess() -> Model::inference() ->
 # Model::postprocess() -> Output of a detection model on both backends (simaneat_add_backend_pair),
-# public API only. It needs the MLA, the EV74 on the Kernels firmware and a YOLOv8 detection model package
-# (--model-package, SIMA_TEST_BOXDECODE_MODEL_PACKAGE or SIMA_YOLO_TAR; it downloads nothing), so
-# it is a long test that skips without one.
+# public API only. It needs the MLA, the EV74 on the Kernels firmware and a YOLOv8 detection model
+# package (--model-package, SIMA_TEST_BOXDECODE_MODEL_PACKAGE or SIMA_YOLO_TAR; it downloads
+# nothing), so it is a long test that skips without one.
 if (SIMANEAT_DATAFLOW_SOURCE_DIR AND
     NOT unit_dataflow_boxdecode_route_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
   simaneat_backend_pair_args(unit_dataflow_boxdecode_route_test _pair_args)
   add_pipeline_test_long(unit_dataflow_boxdecode_route_test
-    SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/unit_testing/unit_dataflow_boxdecode_route_test.cpp ARGS ${_pair_args})
+    SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/unit_testing/unit_dataflow_boxdecode_route_test.cpp
+    ARGS ${_pair_args})
   set_tests_properties(unit_dataflow_boxdecode_route_test PROPERTIES TIMEOUT 300)
   set_property(TEST unit_dataflow_boxdecode_route_test APPEND PROPERTY LABELS "unit;dataflow")
   simaneat_add_backend_pair(unit_dataflow_boxdecode_route_test)
 endif()
 
-# Frames of a size that changes between pushes, and NV12 frames, on the Dataflow backend (H1,
-# step Y4): the routes of a detection model with the image preproc in front, against GStreamer's
-# record for the same pushes (simaneat_add_backend_pair). Needs the EV74 on the Kernels firmware and a compiled YOLOv8 detection
-# package (--model-package, SIMA_TEST_BOXDECODE_MODEL_PACKAGE or SIMA_YOLO_TAR; it downloads
-# nothing), so it is a long test that skips without one.
+# Frames of a size that changes between pushes, and NV12 frames, on the Dataflow backend (H1, step
+# Y4): the routes of a detection model with the image preproc in front, against GStreamer's record
+# for the same pushes (simaneat_add_backend_pair). Needs the EV74 on the Kernels firmware and a
+# compiled YOLOv8 detection package (--model-package, SIMA_TEST_BOXDECODE_MODEL_PACKAGE or
+# SIMA_YOLO_TAR; it downloads nothing), so it is a long test that skips without one.
 if (SIMANEAT_DATAFLOW_SOURCE_DIR AND
     NOT unit_dataflow_frame_route_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
   simaneat_backend_pair_args(unit_dataflow_frame_route_test _pair_args)
   add_pipeline_test_long(unit_dataflow_frame_route_test
-    SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/unit_testing/unit_dataflow_frame_route_test.cpp ARGS ${_pair_args})
+    SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/unit_testing/unit_dataflow_frame_route_test.cpp
+    ARGS ${_pair_args})
   set_tests_properties(unit_dataflow_frame_route_test PROPERTIES TIMEOUT 600)
   set_property(TEST unit_dataflow_frame_route_test APPEND PROPERTY LABELS "unit;dataflow")
   simaneat_add_backend_pair(unit_dataflow_frame_route_test)
@@ -3423,30 +3429,29 @@ endforeach()
 # Native recipe assertions use the same public executable vocabulary as Core.
 target_link_libraries(unit_sima_plugins_test PRIVATE SimaScheduler::frontend)
 
-# ------------------------------------------------------------------------------
-# H0 C4: the H0-scope tests a second time, on the Dataflow backend
-# ------------------------------------------------------------------------------
-# Each test below is built a second time as <name>_dataflow, from its own sources unchanged plus
+# ------------------------------------------------------------------------------ H0 C4: the H0-scope
+# tests a second time, on the Dataflow backend
+# ------------------------------------------------------------------------------ Each test below is
+# built a second time as <name>_dataflow, from its own sources unchanged plus
 # support/select_dataflow_backend.cpp, whose static initializer selects the Dataflow backend
 # (set_backend) before main() as an application's first call would; it is registered with the
 # original's properties and the label `dataflow`. Every Run of such a process is on Dataflow: a
 # graph the Dataflow backend does not carry (fan-in and Combine, custom(), realtime links, sources)
 # fails at its build with the not-carried error, so a block of such a test that builds one fails
-# there, and the list of those failures is what the Dataflow backend has left to carry.
-# Not registered on Dataflow (plan D12): unit_run_overflow_policy_parity_test,
+# there, and the list of those failures is what the Dataflow backend has left to carry. Not
+# registered on Dataflow (plan D12): unit_run_overflow_policy_parity_test,
 # unit_run_lifecycle_teardown_test and unit_run_api_matrix_test assert GStreamer internals (buffer
 # holders, pipeline_handle(), RunCore's input worker and stream_close_state, bus messages); the
 # public contracts behind them are checked on Dataflow by unit_dataflow_backend_test,
-# unit_dataflow_endpoints_test, unit_run_torture_test and unit_run_backend_differential_test.
-# Not registered on Dataflow (H0c): graph_migration_phaseA3_branch_helper_test, whose one Run (the
-# Branch helper block) asserts the pushed TensorBuffer on both outputs: on Dataflow a fan-out returns
-# a projected Sample, not the pushed TensorBuffer, until W-wrap (zero-copy push, W2). Its Branch
-# topology runs on Dataflow in unit_dataflow_endpoints_test (elided_boundaries).
-# async_stream_test pushes queue_depth (50) frames before its first pull, with Output
-# max_buffers = 8: on Dataflow the one link holds max(queue_depth, max_buffers) = 50 messages, the
-# deeper of GStreamer's input queue and appsink (DataflowGraphCompiler.cpp, derive_config).
-# perf_runtime_graph_async_rgb_test has no ctest entry to duplicate (PERF_TARGETS are run
-# directly).
+# unit_dataflow_endpoints_test, unit_run_torture_test and unit_run_backend_differential_test. Not
+# registered on Dataflow (H0c): graph_migration_phaseA3_branch_helper_test, whose one Run (the
+# Branch helper block) asserts the pushed TensorBuffer on both outputs: on Dataflow a fan-out
+# returns a projected Sample, not the pushed TensorBuffer, until W-wrap (zero-copy push, W2). Its
+# Branch topology runs on Dataflow in unit_dataflow_endpoints_test (elided_boundaries).
+# async_stream_test pushes queue_depth (50) frames before its first pull, with Output max_buffers =
+# 8: on Dataflow the one link holds max(queue_depth, max_buffers) = 50 messages, the deeper of
+# GStreamer's input queue and appsink (DataflowGraphCompiler.cpp, derive_config).
+# perf_runtime_graph_async_rgb_test has no ctest entry to duplicate (PERF_TARGETS are run directly).
 if (SIMANEAT_DATAFLOW_SOURCE_DIR)
   foreach(_h0_test
       graph_migration_phase1_graph_api_surface_test

@@ -100,8 +100,7 @@ void check_form(const pipeline_internal::DataflowNotCarried& why, const std::str
   check(why.fact.empty() || why.fact.back() != '.', what + ": the fact ends in a period");
   const std::string text = pipeline_internal::dataflow_not_carried_sentence(why);
   for (const char* gone : {" yet", "not supported", "RunBackend", "the runtime", "on Dataflow"}) {
-    check(text.find(gone) == std::string::npos,
-          what + ": the text has '" + gone + "': " + text);
+    check(text.find(gone) == std::string::npos, what + ": the text has '" + gone + "': " + text);
   }
 }
 
@@ -294,11 +293,13 @@ void mla(const Yolo& y) {
   declines(mla_stage([](si::StageStaticSpec& s) { s.logical_outputs.clear(); }), "(0 tensors)",
            "no published tensor");
   declines(mla_stage([](si::StageStaticSpec& s) { s.logical_inputs[0].dtype = "NO_IN_DTYPE"; }),
-           "the dtype 'NO_IN_DTYPE' of its input is not a tensor dtype of Core", "an input dtype without a Core dtype");
+           "the dtype 'NO_IN_DTYPE' of its input is not a tensor dtype of Core",
+           "an input dtype without a Core dtype");
   declines(mla_stage([](si::StageStaticSpec& s) { s.logical_inputs[0].byte_offset = 16; }),
            "is not one whole buffer", "an offset input");
   declines(mla_stage([](si::StageStaticSpec& s) { s.logical_outputs[1].dtype = "NO_OUT_DTYPE"; }),
-           "the dtype 'NO_OUT_DTYPE' of the MLA stage's published tensor", "an output dtype without a Core dtype");
+           "the dtype 'NO_OUT_DTYPE' of the MLA stage's published tensor",
+           "an output dtype without a Core dtype");
   declines(mla_stage([](si::StageStaticSpec& s) {
              s.logical_outputs[2].byte_offset =
                  static_cast<std::int64_t>(s.physical_outputs[0].size_bytes);
@@ -310,7 +311,8 @@ void mla(const Yolo& y) {
     // Six heads read by a stage other than BoxDecode.
     Ask a = y.full;
     recipe_of(a.manifest, 2).boxdecode_program.reset();
-    declines(a, "behind an MLA stage of several tensors only BoxDecode runs", "six heads read by another kernel");
+    declines(a, "behind an MLA stage of several tensors only BoxDecode runs",
+             "six heads read by another kernel");
   }
 }
 
@@ -538,8 +540,7 @@ void kernel(const Yolo& y, const Ask* resnet) {
              "an EV74 kernel stage on the stock firmware");
     // The board's fact is an error of its own: its code, and a second remedy.
     const pipeline_internal::DataflowNotCarried board = ask_planner(a);
-    check(board.code != nullptr &&
-              std::string(board.code) == error_codes::kDispatcherUnavailable &&
+    check(board.code != nullptr && std::string(board.code) == error_codes::kDispatcherUnavailable &&
               board.remedy == pipeline_internal::DataflowRemedy::BackendOrFirmware,
           "the stock firmware: infra.dispatcher_unavailable, with the firmware as a remedy");
     check(board.subject.rfind("stage 0 '", 0) == 0 &&

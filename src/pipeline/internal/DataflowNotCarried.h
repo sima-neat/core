@@ -55,15 +55,15 @@ struct DataflowNotCarried {
 
 // "<subject> is not carried by the Dataflow backend: <fact>" (no final period): the sentence of
 // the form without its call, for a log line and for a test that reads a planner's answer.
-__attribute__((visibility("default")))
-std::string dataflow_not_carried_sentence(const DataflowNotCarried& what);
+__attribute__((visibility("default"))) std::string
+dataflow_not_carried_sentence(const DataflowNotCarried& what);
 
 // The action of `remedy`: the one sentence that names how the GStreamer backend is selected, and
 // what the remedy adds to it.
 __attribute__((visibility("default"))) std::string dataflow_backend_action(DataflowRemedy remedy);
 
 // Throws the NeatError of the form above for `what`, raised by the customer's call `where`.
-[[noreturn]] __attribute__((visibility("default")))
-void throw_dataflow_not_carried(std::string_view where, const DataflowNotCarried& what);
+[[noreturn]] __attribute__((visibility("default"))) void
+throw_dataflow_not_carried(std::string_view where, const DataflowNotCarried& what);
 
 } // namespace simaai::neat::pipeline_internal

@@ -145,8 +145,9 @@ std::string describe_choice(const DataflowRunConfig& config,
 std::shared_ptr<RunCore> build_impl(const Graph& graph, const RunOptions& opt, RunMode mode,
                                     const DataflowSeed& seed, const char* where) {
   if (mode != RunMode::Async) {
-    decline(where, {error_codes::kPipelineShape, "a synchronous Run",
-                    "Graph::run(inputs) builds one, and the backend runs the Runs of Graph::build"});
+    decline(where,
+            {error_codes::kPipelineShape, "a synchronous Run",
+             "Graph::run(inputs) builds one, and the backend runs the Runs of Graph::build"});
   }
   DataflowNotCarried declined;
   std::optional<DataflowRunConfig> planned = plan_dataflow_run(graph, opt, seed, where, &declined);
@@ -156,13 +157,13 @@ std::shared_ptr<RunCore> build_impl(const Graph& graph, const RunOptions& opt, R
   const DataflowRunConfig& config = *planned;
   for (const DataflowOutputConfig& output : config.outputs) {
     if (output.link_depth > pipeline_internal::df::kMaxLinkDepth) {
-      decline(where, {error_codes::kOptionOutOfRange,
-                      "option RunOptions::queue_depth = " + std::to_string(output.ingress_depth) +
-                          " with OutputOptions::max_buffers = " +
-                          std::to_string(output.terminal_depth),
-                      "the link from an Input to its Output is as deep as the larger of the two, " +
-                          std::to_string(output.link_depth) + ", and a link holds at most " +
-                          std::to_string(pipeline_internal::df::kMaxLinkDepth) + " items"});
+      decline(where,
+              {error_codes::kOptionOutOfRange,
+               "option RunOptions::queue_depth = " + std::to_string(output.ingress_depth) +
+                   " with OutputOptions::max_buffers = " + std::to_string(output.terminal_depth),
+               "the link from an Input to its Output is as deep as the larger of the two, " +
+                   std::to_string(output.link_depth) + ", and a link holds at most " +
+                   std::to_string(pipeline_internal::df::kMaxLinkDepth) + " items"});
     }
   }
   // Each input's spec, when a seed or the declaration gives it now; a declaration or a seed that
@@ -209,8 +210,7 @@ template <class... Args> std::shared_ptr<RunCore> build_impl(const Args&...) {
 #endif // SIMANEAT_WITH_DATAFLOW
 
 // The common head of the four entries: a Run for GStreamer, or no runtime in this build.
-template <class Build>
-std::shared_ptr<RunCore> dispatch(const char* where, Build&& build) {
+template <class Build> std::shared_ptr<RunCore> dispatch(const char* where, Build&& build) {
   if (!wants_dataflow()) {
     return nullptr;
   }

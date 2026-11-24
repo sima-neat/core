@@ -157,8 +157,7 @@ Qualification qualify(const DataflowGraphView& view) {
     q.declined.fact = std::move(fact);
   };
   if (view.model_route) {
-    decline(kThisGraph,
-            "its Model processes its own input (Model::graph() with an input route)");
+    decline(kThisGraph, "its Model processes its own input (Model::graph() with an input route)");
     return q;
   }
   if (!view.runtime_stages.empty()) {
@@ -347,9 +346,9 @@ Qualification qualify(const DataflowGraphView& view) {
       return q;
     }
     if (q.fan_out[i] > df::kMaxFanOut) {
-      decline("node " + text(q.inputs[i]),
-              "it feeds " + std::to_string(q.fan_out[i]) + " Outputs: an Input feeds at most " +
-                  std::to_string(df::kMaxFanOut));
+      decline("node " + text(q.inputs[i]), "it feeds " + std::to_string(q.fan_out[i]) +
+                                               " Outputs: an Input feeds at most " +
+                                               std::to_string(df::kMaxFanOut));
       return q;
     }
   }

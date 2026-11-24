@@ -586,8 +586,9 @@ void graphs_not_carried() {
     g.add(nodes::Output("combined"));
     g.connect("left", "combined");
     g.connect("right", "combined");
-    require_neat_error([&] { (void)g.build(dataflow()); }, error_codes::kPipelineShape,
-                       "is not carried by the Dataflow backend: it has more than one producer (fan-in)");
+    require_neat_error(
+        [&] { (void)g.build(dataflow()); }, error_codes::kPipelineShape,
+        "is not carried by the Dataflow backend: it has more than one producer (fan-in)");
   }
   // Combine (a fan-in with a CombinePolicy).
   {
@@ -624,17 +625,17 @@ void graphs_not_carried() {
 } // namespace
 
 RUN_BACKEND_TEST("unit_dataflow_endpoints_test", ([] {
-           require(sima_test::on_dataflow(), "run with --backend=dataflow");
-           two_inputs_two_outputs();
-           fan_out_by_handle_reuse();
-           fan_out_blocking_push_waits_for_every_link();
-           fan_out_try_push_policies();
-           fan_out_mixed_drop();
-           stop_with_push_blocked_on_one_link();
-           per_endpoint_pull_timeouts();
-           on_output_per_endpoint();
-           elided_boundaries();
-           seeds();
-           alloc_on_named_inputs();
-           graphs_not_carried();
-         }));
+                   require(sima_test::on_dataflow(), "run with --backend=dataflow");
+                   two_inputs_two_outputs();
+                   fan_out_by_handle_reuse();
+                   fan_out_blocking_push_waits_for_every_link();
+                   fan_out_try_push_policies();
+                   fan_out_mixed_drop();
+                   stop_with_push_blocked_on_one_link();
+                   per_endpoint_pull_timeouts();
+                   on_output_per_endpoint();
+                   elided_boundaries();
+                   seeds();
+                   alloc_on_named_inputs();
+                   graphs_not_carried();
+                 }));

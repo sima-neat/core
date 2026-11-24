@@ -77,9 +77,9 @@ InputOptions dataflow_seed_input_options(const Graph& graph);
 // not carried and the fact about it. Throws what GStreamer's build throws for a mistake both
 // backends refuse (an endpoint name two endpoints share, a seed for a graph of several Inputs),
 // naming `where`.
-std::optional<DataflowRunConfig>
-plan_dataflow_run(const Graph& graph, const RunOptions& opt, const DataflowSeed& seed,
-                  const char* where, pipeline_internal::DataflowNotCarried* why);
+std::optional<DataflowRunConfig> plan_dataflow_run(const Graph& graph, const RunOptions& opt,
+                                                   const DataflowSeed& seed, const char* where,
+                                                   pipeline_internal::DataflowNotCarried* why);
 
 // The options Dataflow does not read, when set away from their defaults: one warning per process
 // and option.

@@ -257,9 +257,8 @@ std::optional<DataflowInputBinding> bind_dataflow_input(const InputOptions& decl
       return std::nullopt;
     }
     if (tensor->is_composite() != (nv12 || i420)) {
-      *why = tensor->is_composite()
-                 ? "it is a composite tensor other than NV12 or I420"
-                 : "it is an NV12 or I420 tensor without plane records";
+      *why = tensor->is_composite() ? "it is a composite tensor other than NV12 or I420"
+                                    : "it is an NV12 or I420 tensor without plane records";
       return std::nullopt;
     }
     binding.dtype = tensor->dtype;
@@ -283,7 +282,8 @@ std::optional<DataflowInputBinding> bind_dataflow_input(const InputOptions& decl
     } else {
       const std::size_t rank = tensor->shape.size();
       if (rank == 0U || rank > df::kMaxRank) {
-        *why = "it is a tensor of rank " + std::to_string(rank) + ", where a tensor has rank 1 to 6";
+        *why =
+            "it is a tensor of rank " + std::to_string(rank) + ", where a tensor has rank 1 to 6";
         return std::nullopt;
       }
       const AxisRoles roles = axis_roles(rank, tensor->layout);
@@ -441,8 +441,8 @@ std::optional<DataflowInputBinding> bind_dataflow_record(const InputOptions& dec
     return std::nullopt;
   }
   if (fields.size() > df::kMaxFields) {
-    *why = "it is a record of " + std::to_string(fields.size()) + " tensors, where a record has at most " +
-           std::to_string(df::kMaxFields);
+    *why = "it is a record of " + std::to_string(fields.size()) +
+           " tensors, where a record has at most " + std::to_string(df::kMaxFields);
     return std::nullopt;
   }
   // Each field binds as an undeclared tensor of its own: the InputOptions describe one tensor (an

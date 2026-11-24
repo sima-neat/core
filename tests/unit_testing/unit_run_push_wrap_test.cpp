@@ -830,16 +830,17 @@ void mat_cases() {
 } // namespace
 
 RUN_BACKEND_TEST("unit_run_push_wrap_test", ([] {
-           std::fprintf(stderr, "[INFO] backend %s\n", on_dataflow() ? "dataflow" : "gstreamer");
-           wrap_round_trips();
-           lifetimes();
-           fan_out();
-           keep_latest_eviction();
-           refused_try_push_keeps_nothing();
-           dense_cases();
-           nv12_cases();
-           record();
-           two_inputs();
-           origin_and_options();
-           mat_cases();
-         }));
+                   std::fprintf(stderr, "[INFO] backend %s\n",
+                                on_dataflow() ? "dataflow" : "gstreamer");
+                   wrap_round_trips();
+                   lifetimes();
+                   fan_out();
+                   keep_latest_eviction();
+                   refused_try_push_keeps_nothing();
+                   dense_cases();
+                   nv12_cases();
+                   record();
+                   two_inputs();
+                   origin_and_options();
+                   mat_cases();
+                 }));

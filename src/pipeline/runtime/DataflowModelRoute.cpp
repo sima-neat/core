@@ -358,9 +358,9 @@ std::string stage_subject(std::size_t index, const si::StageStaticSpec& stage,
   } else if (stage.native_kernel) {
     const si::KernelStageRecipe& recipe = *stage.native_kernel;
     kind = "kernel " +
-           (!recipe.requests.empty()                 ? recipe.requests.front().operation
+           (!recipe.requests.empty()               ? recipe.requests.front().operation
             : !stage.processcvu.graph_name.empty() ? stage.processcvu.graph_name
-                                                     : stage.kernel_kind) +
+                                                   : stage.kernel_kind) +
            " on the " + target_text(recipe.target);
   } else {
     kind = stage.kernel_kind.empty() ? stage.plugin_kind : stage.kernel_kind;
@@ -574,8 +574,7 @@ plain_contract(const client::Result<client::KernelInspection>& inspected, std::s
   } else {
     for (std::size_t i = 0; i < inputs; ++i) {
       if (contract.input_extent(i).mode != client::InputExtentMode::Fixed) {
-        why = "the kernel reads its input " + std::to_string(i) +
-              " at a varying extent";
+        why = "the kernel reads its input " + std::to_string(i) + " at a varying extent";
         return nullptr;
       }
     }
@@ -771,15 +770,14 @@ std::string plan_frame_stage(const si::StageStaticSpec& stage, bool first, bool 
   const bool seed_is_bound = frame.seed_width == frame.width && frame.seed_height == frame.height;
   if (!frame.fixed && frame.seed_width > 0 && !seed_is_bound) {
     if (frame.seed_width > frame.width || frame.seed_height > frame.height) {
-      return "a " + std::to_string(frame.seed_width) + "x" +
-             std::to_string(frame.seed_height) + " frame (the seed) is above the " +
-             std::to_string(frame.width) + "x" + std::to_string(frame.height) +
+      return "a " + std::to_string(frame.seed_width) + "x" + std::to_string(frame.seed_height) +
+             " frame (the seed) is above the " + std::to_string(frame.width) + "x" +
+             std::to_string(frame.height) +
              " the Input declares as its largest (InputOptions::max_width, max_height)";
     }
     auto seeded = request_at(frame.seed_width, frame.seed_height);
     if (const auto* error = std::get_if<client::Error>(&seeded)) {
-      return "a " + std::to_string(frame.seed_width) + "x" +
-             std::to_string(frame.seed_height) +
+      return "a " + std::to_string(frame.seed_width) + "x" + std::to_string(frame.seed_height) +
              " frame (the seed) is not one the stage takes: " + error->field + ": " +
              error->message;
     }
@@ -952,8 +950,8 @@ std::string plan_frame_stage(const si::StageStaticSpec& stage, bool first, bool 
 // The BoxDecode stage behind the MLA stage, at the route's end, as two route stages: the Kernels
 // package's "boxdecode" with its heads as views of the MLA's one output buffer and its outputs as
 // views of one small buffer, and Core's wire serializer behind it; "" or the fact about it that
-// this backend does not carry. The request, the heads' places, the serializer and the published tensor's
-// description are the stage's own (KernelStageRecipe::BoxDecodeProgram, the manifest); the
+// this backend does not carry. The request, the heads' places, the serializer and the published
+// tensor's description are the stage's own (KernelStageRecipe::BoxDecodeProgram, the manifest); the
 // original image size and the resize mode are those of the frames the route's image preproc was
 // planned for. The stage in front is the MLA stage when there is one (the planner declines two
 // kernel stages in a row, and the wire serializer is a route's last stage).
@@ -1291,8 +1289,9 @@ dataflow_model_manifest(const std::vector<std::shared_ptr<Node>>& route,
     return decline(std::string("the model's contracts do not compile: ") + error.what());
   }
   if (!manifest) {
-    return decline("the model's contracts do not compile" +
-                   (diagnostics.errors.empty() ? std::string() : ": " + diagnostics.errors.front()));
+    return decline(
+        "the model's contracts do not compile" +
+        (diagnostics.errors.empty() ? std::string() : ": " + diagnostics.errors.front()));
   }
   // The kernel stages' checked recipes, by the function GStreamer's build lowers them with: the
   // canonical operation, its tensors and parameters, checked by the Kernels package for the
@@ -1354,8 +1353,7 @@ plan_dataflow_route_stages(const si::SimaPluginStaticManifest& manifest,
     } else if (stage.native_kernel) {
       if (!first &&
           std::holds_alternative<DataflowModelStage::Kernel>(planned->stages.back().kind)) {
-        fact = "it is the second of two kernel stages in a row (the route's stages: " + kinds +
-               ")";
+        fact = "it is the second of two kernel stages in a row (the route's stages: " + kinds + ")";
       } else {
         fact = plan_kernel_stage(stage, first, last, in, *planned, board);
       }
@@ -1380,12 +1378,12 @@ plan_dataflow_route_stages(const si::SimaPluginStaticManifest& manifest,
   }
   for (std::size_t i = 0; i + 1U < planned->stages.size(); ++i) {
     if (planned->stages[i].output_bytes != planned->stages[i + 1U].input_bytes) {
-      return decline(route_subject,
-                     "stage '" + planned->stages[i].key + "' writes " +
-                         std::to_string(planned->stages[i].output_bytes) + " bytes and stage '" +
-                         planned->stages[i + 1U].key + "' reads " +
-                         std::to_string(planned->stages[i + 1U].input_bytes) +
-                         ": not one whole buffer handed on");
+      return decline(route_subject, "stage '" + planned->stages[i].key + "' writes " +
+                                        std::to_string(planned->stages[i].output_bytes) +
+                                        " bytes and stage '" + planned->stages[i + 1U].key +
+                                        "' reads " +
+                                        std::to_string(planned->stages[i + 1U].input_bytes) +
+                                        ": not one whole buffer handed on");
     }
   }
   planned->output.beyond_leaf = planned->output.frame_semantics || !planned->output.more.empty();
@@ -1591,8 +1589,8 @@ constexpr const char* kFrameWithUpstreamTransform =
     "preproc stage composes with its own";
 
 [[noreturn]] void throw_frame_not_carried(const char* where, const char* fact) {
-  pipeline_internal::throw_dataflow_not_carried(
-      where, {error_codes::kInputShape, "this frame", fact});
+  pipeline_internal::throw_dataflow_not_carried(where,
+                                                {error_codes::kInputShape, "this frame", fact});
 }
 
 } // namespace

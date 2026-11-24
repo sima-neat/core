@@ -58,7 +58,8 @@ void throw_deprecated_on_dataflow(std::string_view form, std::string_view replac
       std::string(form) + " is deprecated and is not carried by the Dataflow backend: use " +
           std::string(replacement) + ".",
       {},
-      pipeline_internal::dataflow_backend_action(pipeline_internal::DataflowRemedy::DeprecatedForm));
+      pipeline_internal::dataflow_backend_action(
+          pipeline_internal::DataflowRemedy::DeprecatedForm));
 }
 
 void deprecated_call(DeprecatedRunApi api) {

@@ -626,14 +626,14 @@ void statistics() {
 } // namespace
 
 RUN_BACKEND_TEST("unit_run_tensor_surface_test", ([] {
-           std::cout << "[INFO] backend under test: " << (on_dataflow() ? "dataflow" : "gstreamer")
-                     << "\n";
-           graph_input_output();
-           stamp_after_pull();
-           positional_records();
-           result_outcomes();
-           on_output_callbacks();
-           declared_input_enforced_and_alloc();
-           bounded_dynamic_axis();
-           statistics();
-         }));
+                   std::cout << "[INFO] backend under test: "
+                             << (on_dataflow() ? "dataflow" : "gstreamer") << "\n";
+                   graph_input_output();
+                   stamp_after_pull();
+                   positional_records();
+                   result_outcomes();
+                   on_output_callbacks();
+                   declared_input_enforced_and_alloc();
+                   bounded_dynamic_axis();
+                   statistics();
+                 }));

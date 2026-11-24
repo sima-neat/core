@@ -222,11 +222,11 @@ void deprecated_forms() {
   if (sima_test::on_dataflow()) {
     Run run = g.build(dataflow());
     const std::function<void()> calls[] = {
-        [&] { (void)run.push(mats); },          [&] { (void)run.push("image", mats); },
-        [&] { (void)run.try_push(mats); },      [&] { (void)run.try_push("image", mats); },
-        [&] { (void)run.pull(2000); },          [&] { (void)run.pull("out", 2000); },
-        [&] { (void)run.pull_tensors(2000); },  [&] { (void)run.pull_tensors("out", 2000); },
-        [&] { (void)run.pull_samples(0); },     [&] { (void)run.pull_samples("out", 0); }};
+        [&] { (void)run.push(mats); },         [&] { (void)run.push("image", mats); },
+        [&] { (void)run.try_push(mats); },     [&] { (void)run.try_push("image", mats); },
+        [&] { (void)run.pull(2000); },         [&] { (void)run.pull("out", 2000); },
+        [&] { (void)run.pull_tensors(2000); }, [&] { (void)run.pull_tensors("out", 2000); },
+        [&] { (void)run.pull_samples(0); },    [&] { (void)run.pull_samples("out", 0); }};
     for (int i = 0; i < 2; ++i) {
       for (std::size_t f = 0; f < std::size(calls); ++f) {
         require_neat_error(
@@ -806,8 +806,8 @@ void connected_realtime_resolves_the_preset() {
   std::uint64_t dropped = 0;
   require(RealtimeBlock::refuses_when_full(run, "input", dropped),
           "connected Realtime + explicit Block: try_push must refuse when full" + on);
-  require(dropped == 0U, "connected Realtime + explicit Block: try_push dropped " +
-                             std::to_string(dropped) + on);
+  require(dropped == 0U,
+          "connected Realtime + explicit Block: try_push dropped " + std::to_string(dropped) + on);
   auto consumer = std::async(std::launch::async, [&] {
     std::this_thread::sleep_for(std::chrono::milliseconds(200));
     return pull_sample(run, 5000, "output");
@@ -1347,8 +1347,10 @@ void mat_and_bundle_pushes() {
   Graph g = input_output(in);
   const cv::Mat mat(24, 32, CV_8UC3, cv::Scalar(3, 5, 7));
   Run run = g.build(std::vector<cv::Mat>{mat}, dataflow());
-  // The deprecated cv::Mat push fails on Dataflow (deprecated_forms); its replacement takes the Mat.
-  require(run.push(TensorList{Tensor::from_cv_mat(mat, ImageSpec::PixelFormat::BGR, TensorMemory::CPU)}),
+  // The deprecated cv::Mat push fails on Dataflow (deprecated_forms); its replacement takes the
+  // Mat.
+  require(run.push(
+              TensorList{Tensor::from_cv_mat(mat, ImageSpec::PixelFormat::BGR, TensorMemory::CPU)}),
           "cv::Mat push");
   const Tensor out = pulled_tensor(run, 2000, "cv::Mat");
   require(out.shape == std::vector<std::int64_t>{24, 32, 3}, "cv::Mat shape");
@@ -1371,40 +1373,40 @@ void mat_and_bundle_pushes() {
 } // namespace
 
 RUN_BACKEND_TEST("unit_dataflow_backend_test", ([] {
-           deprecated_forms();
-           // The rows that hold on both backends.
-           linear_realtime_keeps_an_explicit_block();
-           connected_realtime_resolves_the_preset();
-           readiness_follows_close_and_drain();
-           if (!sima_test::on_dataflow()) {
-             return;
-           }
-           ignored_options_warn_once();
-           undeclared_input_bound_by_first_push();
-           declared_input_with_dynamic_axis();
-           push_outside_declared_shape_rejected();
-           build_errors();
-           no_fallback_to_gstreamer();
-           stop_prints_the_session_report();
-           holder_push_is_an_error();
-           link_depth_is_max_of_queue_depth_and_max_buffers();
-           try_push_accounting();
-           refused_try_push_reads_no_byte();
-           blocking_push_never_drops();
-           close_input_cancels_a_parked_push();
-           stop_unblocks_pull_and_refuses_push();
-           concurrent_stops_with_a_parked_push();
-           reads_race_stop();
-           pull_timeouts();
-           identity_round_trip_and_names();
-           nv12_planes_round_trip();
-           repeated_geometry_is_rechecked_on_change();
-           dma_heap_tensor_is_copied();
-           owned_output_and_lease_lifetime();
-           cpu_tensor_into_device_input(InputMemoryPolicy::Ev74, DeviceType::SIMA_CVU);
-           cpu_tensor_into_device_input(InputMemoryPolicy::Dms0, DeviceType::SIMA_MLA);
-           alloc_on_device_input();
-           pulled_device_tensor_is_copied_back();
-           owned_pull_of_wrapped_device_tensor();
-           mat_and_bundle_pushes();
-         }));
+                   deprecated_forms();
+                   // The rows that hold on both backends.
+                   linear_realtime_keeps_an_explicit_block();
+                   connected_realtime_resolves_the_preset();
+                   readiness_follows_close_and_drain();
+                   if (!sima_test::on_dataflow()) {
+                     return;
+                   }
+                   ignored_options_warn_once();
+                   undeclared_input_bound_by_first_push();
+                   declared_input_with_dynamic_axis();
+                   push_outside_declared_shape_rejected();
+                   build_errors();
+                   no_fallback_to_gstreamer();
+                   stop_prints_the_session_report();
+                   holder_push_is_an_error();
+                   link_depth_is_max_of_queue_depth_and_max_buffers();
+                   try_push_accounting();
+                   refused_try_push_reads_no_byte();
+                   blocking_push_never_drops();
+                   close_input_cancels_a_parked_push();
+                   stop_unblocks_pull_and_refuses_push();
+                   concurrent_stops_with_a_parked_push();
+                   reads_race_stop();
+                   pull_timeouts();
+                   identity_round_trip_and_names();
+                   nv12_planes_round_trip();
+                   repeated_geometry_is_rechecked_on_change();
+                   dma_heap_tensor_is_copied();
+                   owned_output_and_lease_lifetime();
+                   cpu_tensor_into_device_input(InputMemoryPolicy::Ev74, DeviceType::SIMA_CVU);
+                   cpu_tensor_into_device_input(InputMemoryPolicy::Dms0, DeviceType::SIMA_MLA);
+                   alloc_on_device_input();
+                   pulled_device_tensor_is_copied_back();
+                   owned_pull_of_wrapped_device_tensor();
+                   mat_and_bundle_pushes();
+                 }));

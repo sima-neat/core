@@ -475,8 +475,7 @@ void capacity(sima_test::Reference& ref, const std::string& archive,
 }
 
 void owned(const Model& model, const std::vector<TensorList>& inputs) {
-  const std::vector<Frame> expected =
-      run_frames(model, inputs, on(), 2, "owned");
+  const std::vector<Frame> expected = run_frames(model, inputs, on(), 2, "owned");
   Graph g = route_graph(model);
   RunOptions o = on();
   o.output_memory = OutputMemory::Owned;
@@ -531,8 +530,7 @@ void held(const Model& model, const std::vector<TensorList>& inputs) {
 }
 
 void refused(const Model& model, const std::vector<TensorList>& inputs) {
-  const std::vector<Frame> expected =
-      run_frames(model, inputs, on(), 1, "refused");
+  const std::vector<Frame> expected = run_frames(model, inputs, on(), 1, "refused");
   // The Input declares the frame's size: the route's kernels are made once, for that size (a
   // seed alone fixes none since step Y4: unit_dataflow_frame_route_test).
   InputOptions in;

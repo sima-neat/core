@@ -27,8 +27,8 @@ std::string dataflow_backend_action(DataflowRemedy remedy) {
   if (remedy == DataflowRemedy::DeprecatedForm) {
     return std::string("The deprecated form works on the GStreamer backend: ") + kSelectGStreamer;
   }
-  std::string action = std::string("To run this program on the GStreamer backend, ") +
-                       kSelectGStreamer;
+  std::string action =
+      std::string("To run this program on the GStreamer backend, ") + kSelectGStreamer;
   switch (remedy) {
   case DataflowRemedy::Backend:
   case DataflowRemedy::DeprecatedForm:

@@ -273,7 +273,7 @@ void list_of_two_is_one_item() {
 } // namespace
 
 RUN_BACKEND_TEST("unit_run_verb_resolution_test", ([] {
-           std::cout << "[INFO] backend under test: " << sima_test::backend_name() << "\n";
-           list_pushes_carry_the_stamp();
-           list_of_two_is_one_item();
-         }));
+                   std::cout << "[INFO] backend under test: " << sima_test::backend_name() << "\n";
+                   list_pushes_carry_the_stamp();
+                   list_of_two_is_one_item();
+                 }));
