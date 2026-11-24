@@ -28,6 +28,9 @@
 #include "pipeline/internal/EnvUtil.h"
 #include "pipeline/internal/ErrorUtil.h"
 #include "pipeline/internal/ModelRouteOrigin.h"
+#include "pipeline/internal/SampleUtil.h"
+#include "pipeline/internal/UxLogging.h"
+#include "pipeline/runtime/ExecutionGraphPlan.h"
 #include "pipeline/runtime/RunCore.h"
 
 #include "pipeline/internal/InputStreamUtil.h"
@@ -72,6 +75,50 @@ bool wants_dataflow() {
 }
 
 using pipeline_internal::DataflowNotCarried;
+
+// GraphOptions::verbose's progress lines on a Dataflow build: the steps GStreamer's build of the
+// same entry prints (Graph::build in GraphBuildSource.cpp, the seeded entries in
+// GraphBuildInput.cpp), in its order and numbering, then "Graph ready" with the build's time.
+// The first step is printed when the build starts, the others once the Run is planned. A build
+// that also has GStreamer record its plan (Model::execution_plan) prints only "Graph ready": that
+// recording build prints GStreamer's steps before it, once.
+class BuildProgress {
+public:
+  BuildProgress(const Graph& graph, bool seeded, bool quiet)
+      : context_(DataflowGraphAccess::verbose(graph)),
+        progress_(DataflowGraphAccess::verbose(graph), 4), seeded_(seeded),
+        connected_(DataflowGraphAccess::connected(graph)), quiet_(quiet) {
+    if (!quiet_) {
+      progress_.step("Initializing runtime...");
+    }
+  }
+  void planned() {
+    if (quiet_) {
+      return;
+    }
+    if (!seeded_) {
+      progress_.step("Building graph...");
+      progress_.step("Starting pipeline...");
+    } else if (connected_) {
+      progress_.step("Building graph...");
+      progress_.step("Preparing input stream...");
+      progress_.step("Starting pipeline...");
+    } else {
+      progress_.step("Preparing input stream...");
+      progress_.step("Building graph...");
+    }
+  }
+  void done() {
+    progress_.done("Graph ready");
+  }
+
+private:
+  pipeline_internal::ux::ScopedVerboseContext context_;
+  pipeline_internal::ux::ProgressReporter progress_;
+  bool seeded_;
+  bool connected_;
+  bool quiet_;
+};
 
 // A Run for Dataflow that Dataflow does not carry: the build's error.
 [[noreturn]] void decline(const char* where, const DataflowNotCarried& what) {
@@ -149,6 +196,8 @@ std::shared_ptr<RunCore> build_impl(const Graph& graph, const RunOptions& opt, R
   // own build made the Graph. A mistake both backends refuse keeps GStreamer's text and `where`.
   const std::shared_ptr<const pipeline_internal::ModelRouteOrigin> origin =
       DataflowGraphAccess::model_origin(graph);
+  BuildProgress progress(graph, !seed.tensors.empty() || !seed.unsupported.empty(),
+                         origin && origin->record_plan && forms.gstreamer_build);
   const std::string call = origin ? origin->call : std::string(where ? where : "Graph::build");
   DataflowNotCarried declined;
   std::optional<DataflowRunConfig> planned = plan_dataflow_run(graph, opt, seed, where, &declined);
@@ -204,11 +253,26 @@ std::shared_ptr<RunCore> build_impl(const Graph& graph, const RunOptions& opt, R
     }
   }
 
+  progress.planned();
   auto core = std::make_shared<RunCore>();
   initialize_run_identity(*core);
   core->opt = config.run;
   core->mode = RunMode::Async;
   core->dataflow_ = make_dataflow_run_state(*core, config, seed.tensors);
+  // What run_to_json and the run exports draw of the Run's topology: the plan GStreamer's build
+  // compiles for the same Graph and seed, kept as it keeps it for a Run of one pipeline segment.
+  // A plan that does not compile leaves the topology empty, as for a Run without one.
+  try {
+    std::optional<Sample> plan_seed;
+    if (!seed.tensors.empty() && !DataflowGraphAccess::connected(graph)) {
+      plan_seed = pipeline_internal::sample_from_tensors_for_input(
+          TensorList(seed.tensors.begin(), seed.tensors.end()), dataflow_seed_input_options(graph));
+    }
+    core->graph_export_plan_ =
+        std::make_unique<ExecutionGraphPlan>(compile_public_graph(graph, opt, plan_seed));
+  } catch (const std::exception&) {
+    core->graph_export_plan_.reset();
+  }
   // RunOptions::power_monitor (deprecated): the board's rails sampled for the Run's lifetime, from
   // its build to its stop, as GStreamer's Run samples them (MeasureReport::power, the exports).
   if (core->opt.power_monitor.enabled) {
@@ -233,6 +297,7 @@ std::shared_ptr<RunCore> build_impl(const Graph& graph, const RunOptions& opt, R
     core->dataflow_plan_ = session_build_segment_plan(forms.gstreamer_build);
   }
   trace_choice(where, "dataflow", describe_choice(config, bindings));
+  progress.done();
   return core;
 }
 

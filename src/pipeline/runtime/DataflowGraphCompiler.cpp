@@ -123,6 +123,14 @@ DataflowGraphView DataflowGraphAccess::view(const Graph& graph) {
   return out;
 }
 
+const VerboseOptions& DataflowGraphAccess::verbose(const Graph& graph) {
+  return graph.opt_.verbose;
+}
+
+bool DataflowGraphAccess::connected(const Graph& graph) {
+  return graph.composition_ && !graph.composition_->is_linear();
+}
+
 std::shared_ptr<const pipeline_internal::ModelRouteOrigin>
 DataflowGraphAccess::model_origin(const Graph& graph) {
   return pipeline_internal::ModelRouteScope::of(graph);

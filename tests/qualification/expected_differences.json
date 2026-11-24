@@ -89,18 +89,6 @@
    }
   },
   {
-   "id": "gstreamer_verbose_progress",
-   "kind": "interim",
-   "state": "active",
-   "check": "stderr",
-   "side": "gstreamer",
-   "until": "S8d (exports and verbose progress lines on a Dataflow Run)",
-   "decision": "plan-entry.md 2.3 B37 (fix: print the same steps)",
-   "gstreamer": "Graph::build prints [1/4] Initializing runtime..., [2/4] Preparing input stream..., [3/4] Building graph..., [4/4] Graph ready (N ms)",
-   "dataflow": "nothing",
-   "regex": "^\\[N/N\\] (Initializing runtime|Preparing input stream|Building graph|Graph ready)"
-  },
-  {
    "id": "gstreamer_kernel_driver_arch_warning",
    "kind": "proposed",
    "state": "active",

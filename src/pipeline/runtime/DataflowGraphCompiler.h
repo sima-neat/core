@@ -43,6 +43,11 @@ struct __attribute__((visibility("hidden"))) DataflowGraphAccess {
   // The Graph's composition as the compiler needs it, read as compile_public_graph reads it.
   static DataflowGraphView view(const Graph& graph);
 
+  // GraphOptions::verbose of the Graph, and whether GStreamer builds it as a connected graph (its
+  // composition is not linear): what the progress lines of its build say.
+  static const VerboseOptions& verbose(const Graph& graph);
+  static bool connected(const Graph& graph);
+
   // The mark of a Model's own build of the Graph on this thread (ModelRouteScope); null for any
   // other build.
   static std::shared_ptr<const pipeline_internal::ModelRouteOrigin>
