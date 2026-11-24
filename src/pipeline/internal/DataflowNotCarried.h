@@ -36,6 +36,8 @@ enum class DataflowRemedy : unsigned char {
   /// The board's EV74 does not run the Kernels firmware: the GStreamer backend, or that firmware.
   /// The sentence reads "... is not carried by the Dataflow backend on this board: ...".
   BackendOrFirmware,
+  /// A deprecated Run form called on the Dataflow backend: it works on the GStreamer backend.
+  DeprecatedForm,
 };
 
 // What the Dataflow backend does not carry. Empty `subject`: nothing, the answer of a planner that

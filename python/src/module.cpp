@@ -99,6 +99,7 @@
 #include "pipeline/EncodedSampleUtil.h"
 #include "neat/version.h"
 #include "neat/runtime.h"
+#include "pipeline/runtime/RunDeprecation.h"
 
 #if defined(SIMA_WITH_OPENCV)
 #include <opencv2/core.hpp>
@@ -1523,32 +1524,48 @@ const char* pull_status_name(PullStatus status) {
   return "Error";
 }
 
-// Run.pull(...) -> Sample | None: kept one release with a DeprecationWarning (plan D6). Raised
-// with the GIL held, attributed to the caller's line (stacklevel 1 from a C function), so the
-// default warning filters show it once per call site.
-void warn_run_pull_deprecated() {
+// A deprecated Run form called from Python: on the Dataflow backend (the process's) it raises
+// NeatError with the Python names (the same text the C++ forms throw); otherwise the
+// DeprecationWarning `message`, raised with the GIL held and attributed to the caller's line
+// (stacklevel 1 from a C function), so the default warning filters show it once per call site.
+void deprecated_python_call(const char* form, const char* replacement, const std::string& message) {
+  if (simaai::neat::backend() == simaai::neat::RunBackend::Dataflow) {
+    simaai::neat::runtime::throw_deprecated_on_dataflow(form, replacement);
+  }
   if (PyErr_WarnEx(PyExc_DeprecationWarning,
-                   "Run.pull() returning Sample | None is deprecated; use "
-                   "Run.pull_result(name, timeout_ms), which returns a PullResult (status, error, "
-                   "value(): a list of Tensors). Run.pull will return a PullResult in the release "
-                   "that removes the Sample form.",
+                   (message + " " + simaai::neat::runtime::kDeprecatedNotOnDataflow).c_str(),
                    1) != 0) {
     throw nb::python_error();
   }
+}
+
+// Run.pull(...) -> Sample | None: kept one release with a DeprecationWarning (plan D6).
+void warn_run_pull_deprecated() {
+  deprecated_python_call(
+      "Run.pull() returning Sample | None", "Run.pull_result(name, timeout_ms)",
+      "Run.pull() returning Sample | None is deprecated; use Run.pull_result(name, timeout_ms), "
+      "which returns a PullResult (status, error, value(): a list of Tensors). Run.pull will "
+      "return a PullResult in the release that removes the Sample form.");
 }
 
 // Run.pull_tensors(...): kept one release with a DeprecationWarning (H0 C5), raised as Run.pull's
 // is. Like every binding of a deprecated C++ Run form, it calls run_internal:: so the C++
 // runtime's one-time stderr warning (meant for C++ callers) never reaches Python.
 void warn_run_pull_tensors_deprecated() {
-  if (PyErr_WarnEx(PyExc_DeprecationWarning,
-                   "Run.pull_tensors() is deprecated; use Run.pull_result(name, timeout_ms), "
-                   "which returns a PullResult (status, error, value(): a list of Tensors; "
-                   "Tensor.leaves() flattens a record). Run.pull_tensors will be removed in the "
-                   "next release.",
-                   1) != 0) {
-    throw nb::python_error();
-  }
+  deprecated_python_call(
+      "Run.pull_tensors()", "Run.pull_result(name, timeout_ms)",
+      "Run.pull_tensors() is deprecated; use Run.pull_result(name, timeout_ms), which returns a "
+      "PullResult (status, error, value(): a list of Tensors; Tensor.leaves() flattens a "
+      "record). Run.pull_tensors will be removed in the next release.");
+}
+
+// Run.pull_samples(...): kept one release with a DeprecationWarning, raised as Run.pull's is.
+void warn_run_pull_samples_deprecated() {
+  deprecated_python_call(
+      "Run.pull_samples()", "Run.pull_result(name, timeout_ms) per item",
+      "Run.pull_samples() is deprecated; use Run.pull_result(name, timeout_ms) per item, which "
+      "returns a PullResult (status, error, value(): a list of Tensors). Run.pull_samples will "
+      "be removed in the next release.");
 }
 
 // Tensor.copy_from(source): fill a writable dense Tensor (for example one from Run.alloc) with the
@@ -3546,15 +3563,23 @@ NB_MODULE(_pyneat_core, m) {
       .def(
           "pull_samples",
           [](Run& run, std::string name, int timeout_ms) {
+            warn_run_pull_samples_deprecated();
+            nb::gil_scoped_release release;
             return simaai::neat::run_internal::pull_samples(run, name, timeout_ms);
           },
-          "name"_a, "timeout_ms"_a = -1, nb::call_guard<nb::gil_scoped_release>())
+          "name"_a, "timeout_ms"_a = -1,
+          "Deprecated: returns a Sample. Emits a DeprecationWarning (its replacement is "
+          "Run.pull_result).")
       .def(
           "pull_samples",
           [](Run& run, int timeout_ms) {
+            warn_run_pull_samples_deprecated();
+            nb::gil_scoped_release release;
             return simaai::neat::run_internal::pull_samples(run, timeout_ms);
           },
-          "timeout_ms"_a = -1, nb::call_guard<nb::gil_scoped_release>())
+          "timeout_ms"_a = -1,
+          "Deprecated: returns a Sample. Emits a DeprecationWarning (its replacement is "
+          "Run.pull_result).")
       .def(
           "run",
           [](Run& run, nb::object input, int timeout_ms, bool copy,

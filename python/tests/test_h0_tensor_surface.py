@@ -88,10 +88,34 @@ def _bytes(t: pn.Tensor) -> bytes:
 
 
 def _pull(run: pn.Run, *args):
-  """The Sample pull without its DeprecationWarning (tested once, in its own test)."""
+  """A Sample or None: on GStreamer the deprecated Sample pull without its DeprecationWarning
+  (tested once, in its own test); on Dataflow, where that form fails at the call, the projection
+  of Run.pull_result's list (pn.to_sample)."""
+  if _process_backend() == "dataflow":
+    result = run.pull_result(*args)
+    if not result.ok:
+      return None
+    tensors = result.value()
+    return pn.to_sample(tensors[0] if len(tensors) == 1 else pn.Tensor.record(tensors))
   with warnings.catch_warnings():
     warnings.simplefilter("ignore", DeprecationWarning)
     return run.pull(*args)
+
+
+_NOT_ON_DATAFLOW = "It does not work on the Dataflow backend."
+
+
+def _refused_on_dataflow(call, form: str, replacement: str):
+  """A deprecated form called on the Dataflow backend: NeatError, naming its replacement and the
+  GStreamer backend."""
+  with pytest.raises(pn.NeatError) as exc:
+    call()
+  text = str(exc.value)
+  assert exc.value.error_code == "misconfig.pipeline_shape"
+  assert f"{form} is deprecated and is not carried by the Dataflow backend: use {replacement}." in text
+  assert ("Hint: The deprecated form works on the GStreamer backend: call "
+          "simaai::neat::set_backend(simaai::neat::RunBackend::GStreamer) (Python: "
+          "pyneat.set_backend(pyneat.RunBackend.GStreamer))") in text
 
 
 def _named_graph():
@@ -359,6 +383,15 @@ def test_pull_is_deprecated_once_per_call_site(backend):
   try:
     for tag in range(4):
       assert run.push([_rgb(8, 8, tag)])
+    if backend == "dataflow":
+      for args in (("out", 5000), (5000,)):
+        _refused_on_dataflow(lambda: run.pull(*args), "Run.pull() returning Sample | None",
+                             "Run.pull_result(name, timeout_ms)")
+      # Refused before the pull: every output is still there.
+      for tag in range(4):
+        r = run.pull_result("out", 5000)
+        assert r.ok and _bytes(r.value()[0]) == _rgb_array(8, 8, tag).tobytes()
+      return
     with warnings.catch_warnings(record=True) as caught:
       warnings.simplefilter("default")
       pulled = []
@@ -368,6 +401,7 @@ def test_pull_is_deprecated_once_per_call_site(backend):
     deprecations = [w for w in caught if issubclass(w.category, DeprecationWarning)]
     assert len(deprecations) == 2, [str(w.message) for w in caught]
     assert all("pull_result" in str(w.message) for w in deprecations)
+    assert all(str(w.message).endswith(_NOT_ON_DATAFLOW) for w in deprecations)
     assert all(w.filename == __file__ for w in deprecations)
     assert all(isinstance(s, pn.Sample) for s in pulled)
     assert [_bytes(pn.to_tensor(s)) for s in pulled] == [
@@ -392,6 +426,13 @@ def test_pull_tensors_is_deprecated_once_per_call_site(backend, capfd):
   try:
     for tag in range(4):
       assert run.push([_rgb(8, 8, tag)])
+    if backend == "dataflow":
+      for args in (("out", 5000), (5000,)):
+        _refused_on_dataflow(lambda: run.pull_tensors(*args), "Run.pull_tensors()",
+                             "Run.pull_result(name, timeout_ms)")
+      r = run.pull_result("out", 5000)
+      assert r.ok and _bytes(r.value()[0]) == _rgb_array(8, 8, 0).tobytes()
+      return
     with warnings.catch_warnings(record=True) as caught:
       warnings.simplefilter("default")
       pulled = []
@@ -401,6 +442,7 @@ def test_pull_tensors_is_deprecated_once_per_call_site(backend, capfd):
     deprecations = [w for w in caught if issubclass(w.category, DeprecationWarning)]
     assert len(deprecations) == 2, [str(w.message) for w in caught]
     assert all("Run.pull_tensors()" in str(w.message) for w in deprecations)
+    assert all(str(w.message).endswith(_NOT_ON_DATAFLOW) for w in deprecations)
     assert all("pull_result" in str(w.message) for w in deprecations)
     assert all(w.filename == __file__ for w in deprecations)
     # Unchanged: a list of Tensors per item.
@@ -428,16 +470,20 @@ def test_python_never_sees_the_cpp_deprecation_line(backend, capfd):
   try:
     for tag in range(3):
       assert run.push([_rgb(8, 8, tag)])
+    if backend == "dataflow":
+      _refused_on_dataflow(lambda: run.pull_samples("out", 5000), "Run.pull_samples()",
+                           "Run.pull_result(name, timeout_ms) per item")
+      return
     with warnings.catch_warnings(record=True) as caught:
       warnings.simplefilter("always")
       first = run.pull("out", 5000)
       second = run.pull_tensors("out", 5000)
       third = run.pull_samples("out", 5000)
     deprecations = [str(w.message) for w in caught if issubclass(w.category, DeprecationWarning)]
-    # Run.pull (C6) and Run.pull_tensors (C5) warn; Run.pull_samples does not (it is the only
-    # Python Sample pull without a deprecation: Sample.attributes readers need it).
-    assert len(deprecations) == 2, deprecations
+    # Run.pull (C6), Run.pull_tensors (C5) and Run.pull_samples warn, each naming its replacement.
+    assert len(deprecations) == 3, deprecations
     assert "Run.pull()" in deprecations[0] and "Run.pull_tensors()" in deprecations[1]
+    assert "Run.pull_samples()" in deprecations[2]
     assert _bytes(pn.to_tensor(first)) == _rgb_array(8, 8, 0).tobytes()
     assert [_bytes(t) for t in second] == [_rgb_array(8, 8, 1).tobytes()]
     assert _bytes(pn.to_tensor(third)) == _rgb_array(8, 8, 2).tobytes()

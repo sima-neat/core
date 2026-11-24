@@ -233,7 +233,7 @@ void stop_during_pending_pull(int) {
   // One round trip first, so the GStreamer pipeline is live (its pre-push pull is slow, c2.md
   // section 4 row 7).
   require(run.push(TensorList{rgb(1)}), "pending pull: warm-up push");
-  require(!run.pull_tensors(2000).empty(), "pending pull: warm-up pull");
+  require(run.pull(2000ms).ok(), "pending pull: warm-up pull");
   struct Pending {
     std::mutex mu;
     std::condition_variable cv;
@@ -401,7 +401,12 @@ void lease_outlives_run(int) {
       expected.push_back(bytes_of(t));
       require(run.push(TensorList{t}), "lease: push " + std::to_string(i));
       if (i % 2 == 0) {
-        const TensorList out = run.pull_tensors(3000);
+        // The old surface: a Sample (the structured pull; the deprecated forms fail on Dataflow).
+        Sample sample;
+        PullError error;
+        require(run.pull(3000, sample, &error) == PullStatus::Ok,
+                "lease: old pull " + std::to_string(i) + ": " + error.message);
+        const TensorList out = tensors_from_sample(sample);
         require(out.size() == 1U, "lease: old pull " + std::to_string(i));
         old_verb.push_back(out.front());
       } else {

@@ -95,6 +95,19 @@ std::vector<std::uint8_t> bytes_of(const Tensor& t) {
   return t.copy_dense_bytes_tight();
 }
 
+// The next Sample of the Run, or of its output `output`, through the structured pull (the
+// deprecated std::optional<Sample> forms fail on Dataflow); nullopt unless the pull is Ok.
+std::optional<Sample> pull_sample(Run& run, int timeout_ms, const std::string& output = {}) {
+  Sample s;
+  PullError e;
+  const PullStatus st =
+      output.empty() ? run.pull(timeout_ms, s, &e) : run.pull(output, timeout_ms, s, &e);
+  if (st != PullStatus::Ok) {
+    return std::nullopt;
+  }
+  return s;
+}
+
 Sample tagged(int frame_id, const std::string& stream, std::int64_t pts, std::uint8_t tag) {
   Sample s;
   s.kind = SampleKind::Tensor;
@@ -179,23 +192,63 @@ int lines_starting_with(const std::string& text, const std::string& prefix) {
   return n;
 }
 
-// The first case of the process (the warnings are once per process). Each of Run's ten deprecated
-// forms prints one "[WARN] Run::<form> is deprecated ..." line however often it is called (H0 C5),
-// and each option this backend ignores one line however many builds set it (H0 3.10).
-void warnings_once_per_process() {
+constexpr const char* kDeprecatedForms[] = {
+    "Run::push(const std::vector<cv::Mat>&)",
+    "Run::push(std::string_view, const std::vector<cv::Mat>&)",
+    "Run::try_push(const std::vector<cv::Mat>&)",
+    "Run::try_push(std::string_view, const std::vector<cv::Mat>&)",
+    "Run::pull(int)",
+    "Run::pull(std::string_view, int)",
+    "Run::pull_tensors(int)",
+    "Run::pull_tensors(std::string_view, int)",
+    "Run::pull_samples(int)",
+    "Run::pull_samples(std::string_view, int)"};
+
+// Run's ten deprecated forms, each called twice (H0 C5). On GStreamer each works and prints one
+// "[WARN] Run::<form> is deprecated ...; use Run::...  It does not work on the Dataflow backend."
+// line however often it is called (the warnings are once per process: the first case of the
+// process). On Dataflow each fails at the call, before anything is pushed or pulled, with the
+// not-carried error that names the replacement and the GStreamer backend.
+void deprecated_forms() {
+  InputOptions image;
+  image.payload_type = PayloadType::Image;
+  image.format = FormatTag::BGR;
+  image.width = 32;
+  image.height = 24;
+  Graph g;
+  g.add(nodes::Input("image", image));
+  g.add(nodes::Output("out"));
+  const std::vector<cv::Mat> mats{cv::Mat(24, 32, CV_8UC3, cv::Scalar(1, 2, 3))};
+  if (sima_test::on_dataflow()) {
+    Run run = g.build(dataflow());
+    const std::function<void()> calls[] = {
+        [&] { (void)run.push(mats); },          [&] { (void)run.push("image", mats); },
+        [&] { (void)run.try_push(mats); },      [&] { (void)run.try_push("image", mats); },
+        [&] { (void)run.pull(2000); },          [&] { (void)run.pull("out", 2000); },
+        [&] { (void)run.pull_tensors(2000); },  [&] { (void)run.pull_tensors("out", 2000); },
+        [&] { (void)run.pull_samples(0); },     [&] { (void)run.pull_samples("out", 0); }};
+    for (int i = 0; i < 2; ++i) {
+      for (std::size_t f = 0; f < std::size(calls); ++f) {
+        require_neat_error(
+            calls[f], error_codes::kPipelineShape,
+            std::string(kDeprecatedForms[f]) +
+                " is deprecated and is not carried by the Dataflow backend: use Run::",
+            ".\nHint: The deprecated form works on the GStreamer backend: call "
+            "simaai::neat::set_backend(simaai::neat::RunBackend::GStreamer) (Python: "
+            "pyneat.set_backend(pyneat.RunBackend.GStreamer)) before the program constructs its "
+            "first Model or builds its first Graph.");
+      }
+    }
+    require(run.pull(std::chrono::milliseconds(50)).status() == PullStatus::Timeout,
+            "a refused deprecated push pushed nothing");
+    require(run.last_error().empty(), "a refused call is no error of the Run: " + run.last_error());
+    run.close();
+    return;
+  }
   std::string text;
   {
     StderrCapture capture;
-    InputOptions image;
-    image.payload_type = PayloadType::Image;
-    image.format = FormatTag::BGR;
-    image.width = 32;
-    image.height = 24;
-    Graph g;
-    g.add(nodes::Input("image", image));
-    g.add(nodes::Output("out"));
     Run run = g.build(dataflow());
-    const std::vector<cv::Mat> mats{cv::Mat(24, 32, CV_8UC3, cv::Scalar(1, 2, 3))};
     for (int i = 0; i < 2; ++i) {
       require(run.push(mats) && run.push("image", mats) && run.try_push(mats) &&
                   run.try_push("image", mats),
@@ -207,6 +260,26 @@ void warnings_once_per_process() {
               "pull_samples on an empty output");
     }
     run.close();
+    text = capture.text();
+  }
+  for (const char* form : kDeprecatedForms) {
+    const int n = lines_starting_with(
+        text, std::string("[WARN] ") + form +
+                  " is deprecated and will be removed in the next release; use Run::");
+    require(n == 1, std::string(form) + " warns exactly once, naming its replacement (it warned " +
+                        std::to_string(n) + " times):\n" + text);
+  }
+  require(lines_starting_with(text, "[WARN] Run::") == 10, "no other Run warning:\n" + text);
+  require(text.find(". It does not work on the Dataflow backend.\n") != std::string::npos,
+          "the warning says the form does not work on the Dataflow backend:\n" + text);
+}
+
+// Each option this backend ignores prints one line however many builds set it (H0 3.10): the
+// first build that sets them in the process.
+void ignored_options_warn_once() {
+  std::string text;
+  {
+    StderrCapture capture;
     for (int i = 0; i < 2; ++i) {
       InputOptions in;
       in.is_live = false;
@@ -227,20 +300,6 @@ void warnings_once_per_process() {
     }
     text = capture.text();
   }
-  for (const char* form : {"Run::push(const std::vector<cv::Mat>&)",
-                           "Run::push(std::string_view, const std::vector<cv::Mat>&)",
-                           "Run::try_push(const std::vector<cv::Mat>&)",
-                           "Run::try_push(std::string_view, const std::vector<cv::Mat>&)",
-                           "Run::pull(int)", "Run::pull(std::string_view, int)",
-                           "Run::pull_tensors(int)", "Run::pull_tensors(std::string_view, int)",
-                           "Run::pull_samples(int)", "Run::pull_samples(std::string_view, int)"}) {
-    const int n = lines_starting_with(
-        text, std::string("[WARN] ") + form +
-                  " is deprecated and will be removed in the next release; use Run::");
-    require(n == 1, std::string(form) + " warns exactly once, naming its replacement (it warned " +
-                        std::to_string(n) + " times):\n" + text);
-  }
-  require(lines_starting_with(text, "[WARN] Run::") == 10, "no other Run warning:\n" + text);
   for (const char* option :
        {"InputOptions::is_live", "InputOptions::do_timestamp", "InputOptions::stream_type",
         "InputOptions::caps_override", "InputOptions::max_bytes", "OutputOptions::sync"}) {
@@ -392,7 +451,7 @@ void build_errors() {
     Graph g = input_output();
     Run run = g.build(dataflow());
     require(run.push(TensorList{rgb(8, 8, 1), rgb(8, 8, 2)}), "a record push");
-    const auto s = run.pull(2000);
+    const auto s = pull_sample(run, 2000);
     require(s && s->tensors.size() == 2U && bytes_of(s->tensors[1]) == bytes_of(rgb(8, 8, 2)),
             "the record's tensors");
     require_neat_error([&] { (void)run.push(TensorList{rgb(8, 8, 1)}); }, error_codes::kInputShape,
@@ -730,7 +789,7 @@ void connected_realtime_explicit_block() {
           "connected Realtime + explicit Block: try_push dropped " + std::to_string(dropped));
   auto consumer = std::async(std::launch::async, [&] {
     std::this_thread::sleep_for(std::chrono::milliseconds(200));
-    return run.pull("output", 5000);
+    return pull_sample(run, 5000, "output");
   });
   const auto t0 = Clock::now();
   const bool pushed = run.push("input", TensorList{rgb(32, 24, 0xEE)});
@@ -955,9 +1014,9 @@ void identity_round_trip_and_names() {
   require(run.push("image", Sample{tagged(7, "cam-a", 1234, 1)}), "named push");
   require(run.push("image", Sample{tagged(8, "", -1, 2)}), "named push, no identity");
   require(run.push(Sample{tagged(-1, "cam-b", 99, 3)}), "default push");
-  const auto first = run.pull("classes", 2000);
-  const auto second = run.pull("classes", 2000);
-  const auto third = run.pull(2000);
+  const auto first = pull_sample(run, 2000, "classes");
+  const auto second = pull_sample(run, 2000, "classes");
+  const auto third = pull_sample(run, 2000);
   require(first && second && third, "three outputs");
   require(first->frame_id == 7 && first->stream_id == "cam-a" && first->pts_ns == 1234,
           "frame_id, stream_id and pts_ns round trip");
@@ -1159,7 +1218,7 @@ void alloc_on_device_input() {
     std::memcpy(map.data, values.data(), values.size() * sizeof(float));
   }
   require(run.push("x", {t}), "push the allocated tensor");
-  const auto out = run.pull("y", 2000);
+  const auto out = pull_sample(run, 2000, "y");
   require(out && out->tensors.size() == 1U && sima_test::dmabuf_inode(out->tensors[0]) != 0U,
           "the pulled tensor is DMA-BUF memory");
   const std::vector<std::uint8_t> bytes = bytes_of(out->tensors[0]);
@@ -1224,7 +1283,9 @@ void mat_and_bundle_pushes() {
   Graph g = input_output(in);
   const cv::Mat mat(24, 32, CV_8UC3, cv::Scalar(3, 5, 7));
   Run run = g.build(std::vector<cv::Mat>{mat}, dataflow());
-  require(run.push(std::vector<cv::Mat>{mat}), "cv::Mat push");
+  // The deprecated cv::Mat push fails on Dataflow (deprecated_forms); its replacement takes the Mat.
+  require(run.push(TensorList{Tensor::from_cv_mat(mat, ImageSpec::PixelFormat::BGR, TensorMemory::CPU)}),
+          "cv::Mat push");
   const Tensor out = pulled_tensor(run, 2000, "cv::Mat");
   require(out.shape == std::vector<std::int64_t>{24, 32, 3}, "cv::Mat shape");
   Sample bundle;
@@ -1237,7 +1298,7 @@ void mat_and_bundle_pushes() {
   }
   require(run.push(bundle), "a Bundle is pushed one item per field");
   for (int i = 0; i < 3; ++i) {
-    const auto s = run.pull(2000);
+    const auto s = pull_sample(run, 2000);
     require(s && s->frame_id == 100 + i, "bundle field " + std::to_string(i));
   }
   run.close();
@@ -1246,12 +1307,13 @@ void mat_and_bundle_pushes() {
 } // namespace
 
 RUN_BACKEND_TEST("unit_dataflow_backend_test", ([] {
+           deprecated_forms();
            if (!sima_test::on_dataflow()) {
              // The rows that hold on both backends.
              linear_realtime_keeps_an_explicit_block();
              return;
            }
-           warnings_once_per_process();
+           ignored_options_warn_once();
            undeclared_input_bound_by_first_push();
            declared_input_with_dynamic_axis();
            push_outside_declared_shape_rejected();

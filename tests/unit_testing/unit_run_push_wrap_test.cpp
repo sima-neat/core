@@ -30,6 +30,7 @@
 
 #include "nodes/common/Output.h"
 #include "nodes/io/Input.h"
+#include "pipeline/ErrorCodes.h"
 #include "pipeline/Graph.h"
 #include "pipeline/Result.h"
 #include "support/backend_selection.h"
@@ -786,8 +787,8 @@ void origin_and_options() {
   }
 }
 
-// cv::Mat pushes (the deprecated forms): an owning Mat is wrapped when its memory is aligned, a Mat
-// over memory it does not own is copied.
+// cv::Mat pushes (the deprecated forms): on GStreamer an owning Mat and a Mat over memory it does
+// not own round trip; on Dataflow the deprecated form fails at the call, before anything is kept.
 void mat_cases() {
   const cv::Mat seed(24, 32, CV_8UC3, cv::Scalar(1, 2, 3));
   Run run = input_output(image_input(FormatTag::BGR))
@@ -805,6 +806,13 @@ void mat_cases() {
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wdeprecated-declarations"
 #endif
+    if (on_dataflow()) {
+      require_neat_error([&] { (void)run.push(std::vector<cv::Mat>{*mat}); },
+                         error_codes::kPipelineShape,
+                         "Run::push(const std::vector<cv::Mat>&) is deprecated and is not carried "
+                         "by the Dataflow backend");
+      continue;
+    }
     require(run.push(std::vector<cv::Mat>{*mat}), "cv::Mat push");
 #if defined(__GNUC__)
 #pragma GCC diagnostic pop
@@ -813,11 +821,6 @@ void mat_cases() {
     const std::vector<std::uint8_t> expected(mat->data, mat->data + 24U * 32U * 3U);
     require(bytes_of(out) == expected, "cv::Mat: bytes");
     const bool same = first_byte(out) == reinterpret_cast<const std::byte*>(mat->data);
-    if (on_dataflow()) {
-      require(same == (owns && aligned),
-              owns ? "an owning cv::Mat: wrapped when its memory is aligned"
-                   : "a cv::Mat over memory it does not own: copied");
-    }
     std::fprintf(stderr, "[INFO] cv::Mat %s (aligned %d): the pulled tensor %s the Mat's memory\n",
                  owns ? "owning" : "borrowed", aligned ? 1 : 0, same ? "is" : "is not");
   }

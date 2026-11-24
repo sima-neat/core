@@ -1358,9 +1358,11 @@ GStreamer records no `publish_time`.
 The `Run` forms the TensorList verbs replace are `[[deprecated]]` and keep working for one
 release: the four `cv::Mat` `push`/`try_push` overloads, the `int` pulls that return
 `std::optional<Sample>`, `pull_tensors` and `pull_samples`. Each attribute names its
-replacement, and the first call of each form in a process writes one
-`[WARN] Run::<form> is deprecated` line to stderr; Core's own callers use non-warning internal
-entries. Push an OpenCV image as `TensorList{Tensor::from_cv_mat(mat, format, memory)}` and
+replacement. On the GStreamer backend the first call of each form in a process writes one
+`[WARN] Run::<form> is deprecated` line to stderr; on the Dataflow backend each call fails with
+`misconfig.pipeline_shape`, before anything is pushed or pulled, naming the replacement and the
+`set_backend` call under which the form still works. Core's own callers use internal entries,
+which do neither. Push an OpenCV image as `TensorList{Tensor::from_cv_mat(mat, format, memory)}` and
 pull with `pull(timeout)`. `pull(timeout_ms, sample, error)` and its named form are not
 deprecated: they are the path to a `Sample`'s metadata (`attributes`, `caps_string`, `dts_ns`,
 `duration_ns`, Bundle field names), which `Result<TensorList>` does not carry. Under
@@ -1370,7 +1372,8 @@ failing Core's own targets.
 The Python binding (`python/src/module.cpp`) exposes the same verbs on Python lists: `Run.push`,
 `Run.try_push` and `Run(tensors)` take a list, `Run.pull_result(name, timeout_ms)` returns a
 `PullResult` (`Result<TensorList>`, whose `value()` is a list), and `Run.pull` keeps returning
-`Sample | None` for one release with a `DeprecationWarning`; `Run.pull_tensors` warns too. It
+`Sample | None` for one release with a `DeprecationWarning`; `Run.pull_tensors` and
+`Run.pull_samples` warn too. On the Dataflow backend the three raise `NeatError` instead. It
 also exposes `set_backend` and `backend`, the `Stamp` (a frozen value), the record accessors,
 `Graph.input`/`Graph.output`, `Run.alloc` (filled with `Tensor.copy_from`) and the
 `to_tensor`/`to_sample` projection. `Run.on_output` runs

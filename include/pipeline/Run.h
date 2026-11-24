@@ -685,8 +685,9 @@ public:
    * @brief Push `cv::Mat` inputs into the pipeline. Multi-input models accept one Mat per ingress.
    * @return `true` once accepted. Waits for input space under every overflow policy.
    * A graph input timeout returns `false` and leaves accepted work available to drain.
-   * @deprecated Use `push(TensorList{Tensor::from_cv_mat(mat, format, memory)})`. The first call
-   * in a process writes a one-line warning to stderr.
+   * @deprecated Use `push(TensorList{Tensor::from_cv_mat(mat, format, memory)})`. On the
+   * GStreamer backend the first call in a process writes a one-line warning to stderr; on the
+   * Dataflow backend this and every other deprecated form throws `NeatError` at the call.
    */
   [[deprecated("use push(TensorList{Tensor::from_cv_mat(mat, format, memory)})")]]
   bool push(const std::vector<cv::Mat>& inputs);
@@ -769,8 +770,9 @@ public:
    * @brief Convenience pull returning an optional `Sample` (empty on timeout/closed; throws on
    * error).
    * @deprecated Use `pull(std::chrono::milliseconds)`, which returns a `Result<TensorList>` with
-   * the outcome; for the Sample's metadata, `pull(int, Sample&, PullError*)`. The first call in a
-   * process writes a one-line warning to stderr.
+   * the outcome; for the Sample's metadata, `pull(int, Sample&, PullError*)`. On the GStreamer
+   * backend the first call in a process writes a one-line warning to stderr; on the Dataflow
+   * backend the call throws `NeatError`.
    */
   [[deprecated("use pull(std::chrono::milliseconds) -> Result<TensorList>; for Sample metadata, "
                "pull(int, Sample&, PullError*)")]]

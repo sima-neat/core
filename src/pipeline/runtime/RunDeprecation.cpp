@@ -1,9 +1,15 @@
 #include "pipeline/runtime/RunDeprecation.h"
 
+#include "neat/runtime.h"
+#include "pipeline/ErrorCodes.h"
+#include "pipeline/internal/DataflowNotCarried.h"
+#include "pipeline/internal/ErrorUtil.h"
+
 #include <array>
 #include <atomic>
 #include <cstddef>
 #include <cstdio>
+#include <string>
 
 namespace simaai::neat::runtime {
 
@@ -46,13 +52,29 @@ std::array<std::atomic<bool>, kForms> g_warned{};
 
 } // namespace
 
-void warn_deprecated_once(DeprecatedRunApi api) noexcept {
+void throw_deprecated_on_dataflow(std::string_view form, std::string_view replacement) {
+  pipeline_internal::error_util::throw_session_error(
+      error_codes::kPipelineShape,
+      std::string(form) + " is deprecated and is not carried by the Dataflow backend: use " +
+          std::string(replacement) + ".",
+      {},
+      pipeline_internal::dataflow_backend_action(pipeline_internal::DataflowRemedy::DeprecatedForm));
+}
+
+void deprecated_call(DeprecatedRunApi api) {
   const auto index = static_cast<std::size_t>(api);
-  if (index >= kForms || g_warned[index].exchange(true, std::memory_order_relaxed)) {
+  if (index >= kForms) {
     return;
   }
-  std::fprintf(stderr, "[WARN] %s is deprecated and will be removed in the next release; use %s.\n",
-               kTable[index].form, kTable[index].replacement);
+  if (backend() == RunBackend::Dataflow) {
+    throw_deprecated_on_dataflow(kTable[index].form, kTable[index].replacement);
+  }
+  if (g_warned[index].exchange(true, std::memory_order_relaxed)) {
+    return;
+  }
+  std::fprintf(stderr,
+               "[WARN] %s is deprecated and will be removed in the next release; use %s. %s\n",
+               kTable[index].form, kTable[index].replacement, kDeprecatedNotOnDataflow);
 }
 
 } // namespace simaai::neat::runtime

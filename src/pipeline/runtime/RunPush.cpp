@@ -1076,25 +1076,26 @@ bool Run::try_push_mats_impl(std::string_view input_name, const std::vector<cv::
                                         false);
 }
 
-// The deprecated cv::Mat forms (Run.h): the warning, then the body above. Core's own calls take
-// run_internal::push_mats or the *_impl members and never warn.
+// The deprecated cv::Mat forms (Run.h): on GStreamer the warning, then the body above; on Dataflow
+// the call fails first (deprecated_call). Core's own calls take run_internal::push_mats or the
+// *_impl members and do neither.
 bool Run::push(const std::vector<cv::Mat>& inputs) {
-  runtime::warn_deprecated_once(runtime::DeprecatedRunApi::PushMats);
+  runtime::deprecated_call(runtime::DeprecatedRunApi::PushMats);
   return push_mats_impl(inputs);
 }
 
 bool Run::push(std::string_view input_name, const std::vector<cv::Mat>& inputs) {
-  runtime::warn_deprecated_once(runtime::DeprecatedRunApi::PushMatsNamed);
+  runtime::deprecated_call(runtime::DeprecatedRunApi::PushMatsNamed);
   return push_mats_impl(input_name, inputs);
 }
 
 bool Run::try_push(const std::vector<cv::Mat>& inputs) {
-  runtime::warn_deprecated_once(runtime::DeprecatedRunApi::TryPushMats);
+  runtime::deprecated_call(runtime::DeprecatedRunApi::TryPushMats);
   return try_push_mats_impl(inputs);
 }
 
 bool Run::try_push(std::string_view input_name, const std::vector<cv::Mat>& inputs) {
-  runtime::warn_deprecated_once(runtime::DeprecatedRunApi::TryPushMatsNamed);
+  runtime::deprecated_call(runtime::DeprecatedRunApi::TryPushMatsNamed);
   return try_push_mats_impl(input_name, inputs);
 }
 

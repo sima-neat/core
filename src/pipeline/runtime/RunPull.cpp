@@ -1038,35 +1038,36 @@ Sample Run::pull_samples_impl(std::string_view output_name, int timeout_ms) {
   }
 }
 
-// The deprecated pull forms (Run.h): the warning, then the body above. Core's own calls take
-// run_internal:: (below) and never warn.
+// The deprecated pull forms (Run.h): on GStreamer the warning, then the body above; on Dataflow
+// the call fails first (deprecated_call). Core's own calls take run_internal:: (below) and do
+// neither.
 std::optional<Sample> Run::pull(int timeout_ms) {
-  runtime::warn_deprecated_once(runtime::DeprecatedRunApi::PullOptional);
+  runtime::deprecated_call(runtime::DeprecatedRunApi::PullOptional);
   return pull_optional_impl(timeout_ms);
 }
 
 std::optional<Sample> Run::pull(std::string_view output_name, int timeout_ms) {
-  runtime::warn_deprecated_once(runtime::DeprecatedRunApi::PullOptionalNamed);
+  runtime::deprecated_call(runtime::DeprecatedRunApi::PullOptionalNamed);
   return pull_optional_impl(output_name, timeout_ms);
 }
 
 TensorList Run::pull_tensors(int timeout_ms) {
-  runtime::warn_deprecated_once(runtime::DeprecatedRunApi::PullTensors);
+  runtime::deprecated_call(runtime::DeprecatedRunApi::PullTensors);
   return pull_tensors_impl(timeout_ms);
 }
 
 TensorList Run::pull_tensors(std::string_view output_name, int timeout_ms) {
-  runtime::warn_deprecated_once(runtime::DeprecatedRunApi::PullTensorsNamed);
+  runtime::deprecated_call(runtime::DeprecatedRunApi::PullTensorsNamed);
   return pull_tensors_impl(output_name, timeout_ms);
 }
 
 Sample Run::pull_samples(int timeout_ms) {
-  runtime::warn_deprecated_once(runtime::DeprecatedRunApi::PullSamples);
+  runtime::deprecated_call(runtime::DeprecatedRunApi::PullSamples);
   return pull_samples_impl(timeout_ms);
 }
 
 Sample Run::pull_samples(std::string_view output_name, int timeout_ms) {
-  runtime::warn_deprecated_once(runtime::DeprecatedRunApi::PullSamplesNamed);
+  runtime::deprecated_call(runtime::DeprecatedRunApi::PullSamplesNamed);
   return pull_samples_impl(output_name, timeout_ms);
 }
 

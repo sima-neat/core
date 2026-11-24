@@ -196,6 +196,23 @@ std::vector<std::uint8_t> bytes_of(const Tensor& t) {
   return t.copy_dense_bytes_tight();
 }
 
+// The int pull, std::optional<Sample>: on GStreamer the deprecated form itself; on Dataflow, where
+// the deprecated form fails at the call (checked here), the structured Sample pull.
+std::optional<Sample> int_pull(Run& run, int timeout_ms, const std::string& output = {}) {
+  if (sima_test::on_dataflow()) {
+    require_neat_error(
+        [&] { (void)(output.empty() ? run.pull(timeout_ms) : run.pull(output, timeout_ms)); },
+        error_codes::kPipelineShape,
+        " is deprecated and is not carried by the Dataflow backend: use Run::pull(");
+    Sample s;
+    PullError e;
+    const PullStatus st =
+        output.empty() ? run.pull(timeout_ms, s, &e) : run.pull(output, timeout_ms, s, &e);
+    return st == PullStatus::Ok ? std::optional<Sample>(std::move(s)) : std::nullopt;
+  }
+  return output.empty() ? run.pull(timeout_ms) : run.pull(output, timeout_ms);
+}
+
 Stamp proposal(std::int64_t frame_id) {
   Stamp s;
   s.frame_id = frame_id;
@@ -216,7 +233,7 @@ void list_pushes_carry_the_stamp() {
   require(run.push({rgb(16, 8, 4)}), "push({t}) without a stamp");
   const Result<TensorList> first = run.pull(2000ms);
   const Result<TensorList> second = run.pull("out", 2000ms);
-  const std::optional<Sample> third = run.pull("out", 2000);
+  const std::optional<Sample> third = int_pull(run, 2000, "out");
   const Result<TensorList> fourth = run.pull("out", 2000ms);
   require(first.ok() && second.ok() && third.has_value() && fourth.ok(), "four outputs");
   require(first->size() == 1U && second->size() == 1U && fourth->size() == 1U,
@@ -242,7 +259,7 @@ void list_of_two_is_one_item() {
   g.add(nodes::Output());
   Run run = g.build(TensorList{floats(1, 2), floats(3, 4)}, options());
   require(run.push({floats(5, 6), floats(7, 8)}), "push({t, u})");
-  const std::optional<Sample> out = run.pull(2000);
+  const std::optional<Sample> out = int_pull(run, 2000);
   require(out && out->tensors.size() == 2U, "push({t, u}) pushed one item of two tensors");
   require(bytes_of(out->tensors[1]) == bytes_of(floats(7, 8)), "the second tensor's bytes");
   require(run.push({floats(9, 10), floats(11, 12)}), "push({t, u}) again");

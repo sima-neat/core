@@ -49,6 +49,16 @@ RunOptions options() {
   return RunOptions{};
 }
 
+// The old surface's pull of a Sample: the structured form, Run::pull(int, Sample&, PullError*)
+// (the deprecated std::optional<Sample> forms fail on Dataflow); nullopt unless Ok.
+std::optional<Sample> pull_sample(Run& run, int timeout_ms, const std::string& output = {}) {
+  Sample s;
+  PullError e;
+  const PullStatus st =
+      output.empty() ? run.pull(timeout_ms, s, &e) : run.pull(output, timeout_ms, s, &e);
+  return st == PullStatus::Ok ? std::optional<Sample>(std::move(s)) : std::nullopt;
+}
+
 // An RGB tensor whose bytes encode `tag` and their position.
 Tensor rgb(int w, int h, std::uint8_t tag) {
   Tensor t = make_color_tensor(w, h, ImageSpec::PixelFormat::RGB, tag);
@@ -190,7 +200,7 @@ void stamp_after_pull() {
               projected.orig_input_seq == 0,
           "to_sample: identity");
   require(run.push("image", {rgb(16, 8, 4).with_stamp(proposal(11))}), "push for the old pull");
-  const std::optional<Sample> pulled = run.pull("out", 2000);
+  const std::optional<Sample> pulled = pull_sample(run, 2000, "out");
   require(pulled && pulled->frame_id == 11 && pulled->input_seq == 3 &&
               pulled->orig_input_seq == pulled->input_seq,
           "the old pull: frame_id, input_seq, and orig_input_seq = input_seq (develop)");
@@ -253,7 +263,7 @@ void positional_records() {
               bytes_of((*listed)[1]) == bytes_of(floats(iota(2, 30), {2})),
           "the list's first tensor proposed the record's stamp");
 
-  const std::optional<Sample> old = run.pull(2000);
+  const std::optional<Sample> old = pull_sample(run, 2000);
   require(old && old->kind == SampleKind::TensorSet && old->tensors.size() == 2U &&
               bytes_of(old->tensors[1]) == bytes_of(floats(iota(2, 40), {2})),
           "the old pull: a TensorSet of the record's tensors");
@@ -266,7 +276,7 @@ void positional_records() {
     control.kind = SampleKind::TensorSet;
     control.tensors = {floats(iota(2, 9), {2}), floats(iota(2, 50), {2})};
     require(run.push(control), "a Sample push without identity (the control)");
-    const std::optional<Sample> pulled = run.pull(2000);
+    const std::optional<Sample> pulled = pull_sample(run, 2000);
     require(pulled && pulled->tensors.size() == 2U, "the control's output");
     std::cerr << "[INFO] old pull frame_id: unstamped list push " << old->frame_id
               << ", Sample push without identity " << pulled->frame_id << "\n";
