@@ -29,21 +29,20 @@ bool push_return_debug_enabled() {
   return pipeline_internal::env_bool("SIMA_PIPELINE_PUSH_RETURN_DEBUG", false);
 }
 
-// Checked for every pushed sample; resolved once per process like InputStreamDebugFlags.
+// Checked for every pushed sample.
 bool run_push_timing_enabled() {
-  static const bool enabled = pipeline_internal::env_bool("SIMA_RUN_PUSH_TIMING", false);
-  return enabled;
+  static pipeline_internal::CachedEnvBool enabled("SIMA_RUN_PUSH_TIMING");
+  return enabled.get();
 }
 
 bool allow_public_cross_run_gstsample_push() {
-  static const bool enabled =
-      pipeline_internal::env_bool("SIMA_ALLOW_CROSS_RUN_GSTSAMPLE_PUSH", false);
-  return enabled;
+  static pipeline_internal::CachedEnvBool enabled("SIMA_ALLOW_CROSS_RUN_GSTSAMPLE_PUSH");
+  return enabled.get();
 }
 
 bool graph_zero_copy_debug_enabled() {
-  static const bool enabled = pipeline_internal::env_bool("SIMA_GRAPH_ZERO_COPY_DEBUG", false);
-  return enabled;
+  static pipeline_internal::CachedEnvBool enabled("SIMA_GRAPH_ZERO_COPY_DEBUG");
+  return enabled.get();
 }
 
 void enforce_public_sample_push_transferable(const Sample& msg, const char* where) {

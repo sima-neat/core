@@ -4,8 +4,10 @@
 #endif
 
 #include <algorithm>
+#include <atomic>
 #include <cctype>
 #include <cstddef>
+#include <cstdint>
 #include <cstdlib>
 #include <cstring>
 #include <string>
@@ -380,6 +382,36 @@ inline bool env_bool(const char* key, bool def_val) {
     return true;
   return def_val;
 }
+
+// Bumped whenever the runtime verbosity environment (VerboseOptions) changes.
+inline std::atomic<std::uint64_t>& env_generation() {
+  static std::atomic<std::uint64_t> generation{1};
+  return generation;
+}
+
+// A boolean knob read on per-frame paths. It is resolved through env_bool() again only after
+// env_generation() changes, so a raw setenv() after the first read is not seen.
+class CachedEnvBool {
+public:
+  explicit CachedEnvBool(const char* key) : key_(key) {}
+
+  bool get() {
+    // The generation and the value share one word, so a value is never paired with another
+    // generation. Zero means not resolved yet, because generations start at one.
+    std::uint64_t state = state_.load(std::memory_order_relaxed);
+    if ((state >> 1) != env_generation().load(std::memory_order_relaxed)) {
+      // Pairs with the release bump, so env_bool() sees the environment of this generation.
+      const std::uint64_t generation = env_generation().load(std::memory_order_acquire);
+      state = (generation << 1) | (env_bool(key_, false) ? 1U : 0U);
+      state_.store(state, std::memory_order_relaxed);
+    }
+    return (state & 1U) != 0;
+  }
+
+private:
+  const char* key_;
+  std::atomic<std::uint64_t> state_{0};
+};
 
 inline bool env_truthy(const char* key) {
   const char* value = std::getenv(key);

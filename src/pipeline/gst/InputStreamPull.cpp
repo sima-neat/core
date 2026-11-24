@@ -313,15 +313,15 @@ void maybe_restore_cached_preprocess_meta_on_sample(InputStream::State& st, Samp
 constexpr const char* kSampleMetaName = "GstSimaSampleMeta";
 constexpr const char* kTensorSetMetaName = SIMA_TENSOR_SET_META_NAME;
 
-// Checked for every pulled sample; resolved once per process like InputStreamDebugFlags.
+// Checked for every pulled sample.
 bool sample_debug_enabled() {
-  static const bool enabled = pipeline_internal::env_bool("SIMA_SAMPLE_DEBUG", false);
-  return enabled;
+  static pipeline_internal::CachedEnvBool enabled("SIMA_SAMPLE_DEBUG");
+  return enabled.get();
 }
 
 bool sample_bytes_enabled() {
-  static const bool enabled = pipeline_internal::env_bool("SIMA_SAMPLE_BYTES", false);
-  return enabled;
+  static pipeline_internal::CachedEnvBool enabled("SIMA_SAMPLE_BYTES");
+  return enabled.get();
 }
 
 bool sample_storage_debug_enabled() {
@@ -332,8 +332,8 @@ bool sample_storage_debug_enabled() {
 }
 
 bool tensor_set_debug_enabled() {
-  static const bool enabled = pipeline_internal::env_bool("SIMA_TENSOR_SET_DEBUG", false);
-  return enabled;
+  static pipeline_internal::CachedEnvBool enabled("SIMA_TENSOR_SET_DEBUG");
+  return enabled.get();
 }
 
 bool inputstream_restore_preproc_buffer_meta_enabled() {
@@ -878,8 +878,8 @@ static Sample output_from_sample_stream_inner(GstSample* sample, const char* whe
   if (is_raw) {
     simaai::neat::Tensor neat = simaai::neat::from_gst_sample(sample);
     log_sample_tensor_state(where, "from_gst_sample", neat);
-    static const bool caps_trace = pipeline_internal::env_bool("SIMA_NEAT_CAPS_TRACE", false);
-    if (caps_trace) {
+    static pipeline_internal::CachedEnvBool caps_trace("SIMA_NEAT_CAPS_TRACE");
+    if (caps_trace.get()) {
       const auto constraint = pipeline_internal::tensor_constraint_from_caps(out_caps);
       std::fprintf(stderr, "[NEAT_CAPS] caps=%s constraint=%s tensor=%s\n", out.caps_string.c_str(),
                    pipeline_internal::tensor_constraint_debug_string(constraint).c_str(),

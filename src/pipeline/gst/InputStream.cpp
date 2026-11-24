@@ -437,6 +437,7 @@ GstFlowReturn appsink_new_sample(GstAppSink* sink, gpointer user_data) {
   GstSample* sample = gst_app_sink_try_pull_sample(sink, 0);
   if (!sample)
     return GST_FLOW_OK;
+  wake_deferred_pool_buffer_releaser();
 
   {
     std::unique_lock<std::mutex> lock(st->cb_mu);

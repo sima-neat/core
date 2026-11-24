@@ -84,10 +84,10 @@ std::string make_run_uuid() {
   return oss.str();
 }
 
-// Checked for every routed frame; resolved once per process like InputStreamDebugFlags.
+// Checked for every routed frame.
 bool graph_debug_enabled_for_core() {
-  static const bool enabled = pipeline_internal::env_bool("SIMA_GRAPH_DEBUG", false);
-  return enabled;
+  static pipeline_internal::CachedEnvBool enabled("SIMA_GRAPH_DEBUG");
+  return enabled.get();
 }
 
 bool graph_serial_pipeline_build_enabled_for_core() {

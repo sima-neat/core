@@ -1,6 +1,8 @@
-// Debug knobs read on per-frame paths are resolved once per process: the value present at the
-// first read stays in effect, so later environment changes do not reach a running graph.
+// Debug knobs read on per-frame paths are cached: a raw environment change after the first read
+// does not reach a running graph, but a runtime verbosity change (VerboseOptions) does.
 #include "graph/internal/GraphRunState.h"
+#include "pipeline/GraphOptions.h"
+#include "pipeline/internal/UxLogging.h"
 #include "test_main.h"
 #include "test_utils.h"
 
@@ -22,4 +24,11 @@ RUN_TEST("unit_per_frame_debug_knob_cache_test", ([] {
                    "SIMA_GRAPH_SCHED_DEBUG keeps its first-read value");
            ::unsetenv("SIMA_GRAPH_DEBUG");
            ::unsetenv("SIMA_GRAPH_SCHED_DEBUG");
+
+           auto verbose = simaai::neat::VerboseOptions::production();
+           verbose.graph = true;
+           auto lease = simaai::neat::pipeline_internal::ux::acquire_runtime_verbosity(verbose);
+           require(graph_sched_debug_enabled(), "a graph verbosity lease enables graph knobs");
+           lease.reset();
+           require(!graph_sched_debug_enabled(), "releasing the lease disables graph knobs");
          }));
