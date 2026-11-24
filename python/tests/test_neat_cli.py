@@ -1370,6 +1370,42 @@ def test_devkit_status_runtime_only_system_pyneat(tmp_path: Path, home_install: 
         assert "not installed" in component_line(removed.stdout, "Neat core")
 
 
+def test_devkit_status_reports_incomplete_dpkg_packages(tmp_path: Path) -> None:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    env = base_env(tmp_path, bin_dir)
+    (bin_dir / "dpkg-query").symlink_to("/usr/bin/dpkg-query")
+    packages = {
+        "sima-neat": ("hold ok installed", "0.6.2"),
+        "simaai-runner": ("install ok half-configured", "0.6.3"),
+        "simaai-scheduler": ("install ok unpacked", "0.6.4"),
+        "neat-runtime": ("deinstall ok config-files", "0.5.0"),
+    }
+    (tmp_path / "status").write_text("\n".join(
+        f"Package: {package}\nStatus: {state}\nVersion: {version}\n"
+        "Architecture: arm64\nMaintainer: Test <test@example.org>\nDescription: runtime\n"
+        for package, (state, version) in packages.items()
+    ), encoding="utf-8")
+    env["DPKG_ADMINDIR"] = str(tmp_path)
+
+    text = run_neat(tmp_path, ["status", "--offline"], env)
+    assert text.returncode == 0, text.stderr
+    assert "0.6.2" in component_line(text.stdout, "Neat core")
+    assert component_line(text.stdout, "simaai-runner").split()[1:] == ["0.6.3", "half-configured"]
+    assert component_line(text.stdout, "simaai-scheduler").split()[1:] == ["0.6.4", "unpacked"]
+    assert "neat-runtime" not in text.stdout
+    assert "neat-gst-plugins" not in text.stdout
+
+    result = run_neat(tmp_path, ["status", "--offline", "--json"], env)
+    assert result.returncode == 0, result.stderr
+    components = json.loads(result.stdout)["components"]
+    assert components["runner"]["version"] == "0.6.3"
+    assert components["runner"]["dpkgState"] == "half-configured"
+    assert components["scheduler"]["version"] == "0.6.4"
+    assert components["scheduler"]["dpkgState"] == "unpacked"
+    assert components["runtime"]["version"] is None
+
+
 @pytest.mark.parametrize("component", ["pyneat", "insight"])
 @pytest.mark.parametrize("version", ["0.0.0+develop.1234567", None])
 @pytest.mark.parametrize("python_name", ["python", "python3"])
