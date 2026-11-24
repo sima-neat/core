@@ -1,8 +1,10 @@
 """The H0 surface of pyneat, on both backends (Core's Run verbs take and give TensorLists).
 
-Each runtime test requests its backend explicitly through ``RunOptions.backend`` (GStreamer and
-Dataflow); the Dataflow cases are skipped only when the build carries no Dataflow runtime (a build
-without ``SIMANEAT_DATAFLOW_SOURCE_DIR``). Covers: ``RunBackend``; ``Stamp``/``TimePoint`` as frozen
+A process runs on one backend (``pyneat.set_backend``): the runtime tests run on this process's
+backend, and ``test_the_surface_on_the_other_backend`` runs this file again in a child process on
+the other one (skipped when the build carries no Dataflow runtime, a build without
+``SIMANEAT_DATAFLOW_SOURCE_DIR``). Covers: ``RunBackend``, ``set_backend``/``backend``;
+``Stamp``/``TimePoint`` as frozen
 values; records (``Tensor.record``, ``is_record``, ``fields``, ``field_names``, ``leaves``,
 ``t[name]``, ``t[index]``, ``with_stamp``); the ``to_tensor``/``to_sample`` projection;
 ``Graph.input``/``Graph.output``; ``Run.pull_result`` (``PullResult``: four outcomes, a list of
@@ -17,6 +19,7 @@ with ``Tensor.copy_from`` and its commit; and the GIL released by every blocking
 from __future__ import annotations
 
 import gc
+import subprocess
 import sys
 import threading
 import time
@@ -27,36 +30,40 @@ import pytest
 
 import pyneat as pn
 
-BACKENDS = ("gstreamer", "dataflow")
 _DATAFLOW_AVAILABLE: list[bool] = []
 
 
 def _options(backend: str) -> pn.RunOptions:
-  opt = pn.RunOptions()
-  opt.backend = pn.RunBackend.GStreamer if backend == "gstreamer" else pn.RunBackend.Dataflow
-  return opt
+  # The Run takes the process's backend; `backend` names it for the test's own checks.
+  del backend
+  return pn.RunOptions()
+
+
+def _process_backend() -> str:
+  return "dataflow" if pn.backend() == pn.RunBackend.Dataflow else "gstreamer"
 
 
 def _dataflow_available() -> bool:
+  # Asked of a child process: in this one set_backend would change the backend of the tests
+  # after it, or be refused once a build fixed it.
   if not _DATAFLOW_AVAILABLE:
-    g = pn.Graph()
-    g.output("out", g.input("in"))
-    try:
-      run = g.build(_options("dataflow"))
-      run.close()
-      _DATAFLOW_AVAILABLE.append(True)
-    except pn.NeatError as exc:
-      if "has no Dataflow backend" not in str(exc):
-        raise
-      _DATAFLOW_AVAILABLE.append(False)
+    child = subprocess.run(
+        [sys.executable, "-c",
+         "import pyneat as pn\n"
+         "try:\n"
+         "  pn.set_backend(pn.RunBackend.Dataflow)\n"
+         "except pn.NeatError as exc:\n"
+         "  raise SystemExit(3 if 'built without the Dataflow backend' in str(exc) else 1)\n"],
+        capture_output=True, text=True, timeout=120)
+    if child.returncode not in (0, 3):
+      raise AssertionError(child.stdout + child.stderr)
+    _DATAFLOW_AVAILABLE.append(child.returncode == 0)
   return _DATAFLOW_AVAILABLE[0]
 
 
-@pytest.fixture(params=BACKENDS)
-def backend(request) -> str:
-  if request.param == "dataflow" and not _dataflow_available():
-    pytest.skip("this build of libsima_neat has no Dataflow backend (SIMANEAT_DATAFLOW_SOURCE_DIR)")
-  return request.param
+@pytest.fixture
+def backend() -> str:
+  return _process_backend()
 
 
 def _rgb_array(w: int, h: int, tag: int) -> np.ndarray:
@@ -115,13 +122,29 @@ def _declared_graph(shape, max_shape=None):
 # ── Types, no Run ──────────────────────────────────────────────────────────────────────────────
 
 
-def test_run_backend_option():
-  opt = pn.RunOptions()
-  assert opt.backend == pn.RunBackend.Auto
-  for value in (pn.RunBackend.GStreamer, pn.RunBackend.Dataflow, pn.RunBackend.Auto):
-    opt.backend = value
-    assert opt.backend == value
-  assert {m.name for m in pn.RunBackend} == {"Auto", "GStreamer", "Dataflow"}
+def test_backend_setting():
+  # A build fixes the process's backend: the same value is then accepted, the other refused with
+  # the rule, and nothing changes.
+  run = _named_graph().build(pn.RunOptions())
+  run.close()
+  fixed = pn.backend()
+  assert fixed in (pn.RunBackend.GStreamer, pn.RunBackend.Dataflow)
+  pn.set_backend(fixed)
+  other = pn.RunBackend.Dataflow if fixed == pn.RunBackend.GStreamer else pn.RunBackend.GStreamer
+  with pytest.raises(pn.NeatError) as exc:
+    pn.set_backend(other)
+  assert exc.value.error_code == "misconfig.option_out_of_range"
+  assert "a process runs on one backend" in str(exc.value)
+  assert pn.backend() == fixed
+  assert {"GStreamer", "Dataflow"} <= {m.name for m in pn.RunBackend}
+  # Before the first build, in a process of its own: the default, and any number of sets.
+  values = ["GStreamer"] + (["Dataflow", "GStreamer", "Dataflow"] if _dataflow_available() else [])
+  script = "import pyneat as pn\nassert pn.backend() == pn.RunBackend.GStreamer\n" + "".join(
+      f"pn.set_backend(pn.RunBackend.{v})\nassert pn.backend() == pn.RunBackend.{v}\n"
+      for v in values)
+  child = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True,
+                         timeout=120)
+  assert child.returncode == 0, child.stdout + child.stderr
   inp = pn.InputOptions()
   assert list(inp.shape) == [] and list(inp.max_shape) == [] and inp.dtype == pn.TensorDType.UInt8
   inp.shape, inp.max_shape, inp.dtype = [-1, 4], [8, 4], pn.TensorDType.Float32
@@ -218,10 +241,11 @@ def test_graph_input_output_errors():
     other.input("v", dtype=pn.TensorDType.Float32)
 
 
-def test_explicit_dataflow_refuses_a_graph_it_does_not_support():
-  if not _dataflow_available():
-    pytest.skip("this build of libsima_neat has no Dataflow backend (SIMANEAT_DATAFLOW_SOURCE_DIR)")
-  # Fan-in, two inputs into one output: a combine operator, not before H1.
+def test_dataflow_refuses_a_graph_it_does_not_carry():
+  if _process_backend() != "dataflow":
+    pytest.skip("the process runs on GStreamer (the child process of "
+                "test_the_surface_on_the_other_backend runs this on Dataflow)")
+  # Fan-in, two inputs into one output.
   g = pn.Graph()
   g.add(pn.nodes.input("left"))
   g.add(pn.nodes.input("right"))
@@ -229,8 +253,25 @@ def test_explicit_dataflow_refuses_a_graph_it_does_not_support():
   g.connect("left", "combined")
   g.connect("right", "combined")
   with pytest.raises(pn.NeatError) as exc:
-    g.build(_options("dataflow"))
-  assert "RunBackend::Dataflow" in str(exc.value) and "fan-in" in str(exc.value)
+    g.build(pn.RunOptions())
+  assert "is not carried by the Dataflow backend" in str(exc.value) and "fan-in" in str(exc.value)
+  assert "pyneat.set_backend(pyneat.RunBackend.GStreamer)" in str(exc.value)
+
+
+def test_the_surface_on_the_other_backend():
+  # This file again, in a child process that selects the other backend before anything is built.
+  other = "GStreamer" if _process_backend() == "dataflow" else "Dataflow"
+  if other == "Dataflow" and not _dataflow_available():
+    pytest.skip("this build of libsima_neat has no Dataflow backend (SIMANEAT_DATAFLOW_SOURCE_DIR)")
+  script = (
+      "import sys, pytest, pyneat as pn\n"
+      f"pn.set_backend(pn.RunBackend.{other})\n"
+      f"sys.exit(pytest.main([{__file__!r}, '-q', '-p', 'no:cacheprovider', '-k',\n"
+      "                       'not test_the_surface_on_the_other_backend']))\n")
+  child = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True,
+                         timeout=1800)
+  sys.stdout.write(child.stdout[-4000:])
+  assert child.returncode == 0, f"the surface on {other}:\n{child.stdout[-6000:]}{child.stderr[-2000:]}"
 
 
 def test_graph_of_several_endpoints(backend):

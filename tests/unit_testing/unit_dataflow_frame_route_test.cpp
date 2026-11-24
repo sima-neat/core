@@ -2,8 +2,10 @@
 // step Y4), on the public API only: the routes of a detection model,
 //   Input(frame, EV74 memory) -> Model::preprocess() [-> Model::inference() [->
 //   Model::postprocess()]] -> Output,
-// built with RunOptions::backend = RunBackend::Dataflow and, for the comparison, with
-// RunBackend::GStreamer in the same process and pushed the same frames. A build whose Input
+// on the Dataflow backend and, for the comparison, on GStreamer, pushed the same frames. A process
+// runs on one backend (set_backend): the test runs twice, --backend=gstreamer --reference=<file>
+// recording what the comparison rows pull, then --backend=dataflow --reference=<file> running
+// every row and comparing. A build whose Input
 // declares no frame size (a seed is an example) takes every frame up to the image stage's
 // capacity: on Dataflow the preproc and BoxDecode operators keep a kernel per frame size, the
 // frame's geometry travels in its stamp's user word, and the pull publishes the frame's own
@@ -41,7 +43,6 @@
 //   nv12             a model that reads NV12 frames: the frame's two planes as two views of the
 //                    input's one buffer; a frame of the declared bound's size (wrapped) and a
 //                    smaller one (copied to the port's offsets).
-//   automatic        RunBackend::Auto with SIMA_NEAT_BACKEND=dataflow gives the same.
 // On a board whose EV74 runs the stock firmware the test is one check: the build is refused,
 // naming the firmware.
 
@@ -53,6 +54,7 @@
 #include "pipeline/NeatError.h"
 #include "pipeline/Result.h"
 #include "cli_utils.h"
+#include "support/backend_selection.h"
 #include "test_main.h"
 #include "test_utils.h"
 
@@ -167,9 +169,8 @@ Model::Options image_options(PreprocessColorFormat format = PreprocessColorForma
   return o;
 }
 
-RunOptions on(RunBackend backend) {
+RunOptions on() {
   RunOptions o;
-  o.backend = backend;
   o.queue_depth = 4;
   o.overflow_policy = OverflowPolicy::Block;
   return o;
@@ -439,40 +440,38 @@ void size_of(const TensorList& frame, int& width, int& height) {
   width = static_cast<int>(t.shape[lead + 1U]);
 }
 
-// Both backends' frames, field by field and byte by byte; and, on Dataflow's, each frame's own
+// A backend's frames, field by field and byte by byte: recorded by the GStreamer run and compared
+// by the Dataflow run (`row` names the record's keys); and, on Dataflow's, each frame's own
 // original size and, for a wire, its boxes inside that frame.
-void compare(const std::vector<Frame>& gst, const std::vector<Frame>& df,
+void compare(sima_test::Reference& ref, const std::vector<Frame>& df,
              const std::vector<TensorList>& frames, bool wire, const std::string& row) {
-  require(gst.size() == df.size() && df.size() == frames.size(),
-          row + ": both backends produced every frame");
+  require(df.size() == frames.size(), row + ": every frame was produced");
+  ref.equal(row + ": frames", df.size());
   std::size_t tensors = 0, bytes = 0;
-  for (std::size_t i = 0; i < gst.size(); ++i) {
+  for (std::size_t i = 0; i < df.size(); ++i) {
     int width = 0, height = 0;
     size_of(frames[i], width, height);
     const std::string at = row + " frame " + std::to_string(i) + " (" + std::to_string(width) +
                            "x" + std::to_string(height) + "): ";
-    const auto same = [&](const std::vector<std::string>& a, const std::vector<std::string>& b,
-                          const std::string& what) {
-      require(a.size() == b.size(), at + what + ": the same number of fields");
-      for (std::size_t k = 0; k < a.size(); ++k) {
-        require(a[k] == b[k],
-                at + what + " field differs: GStreamer " + a[k] + ", Dataflow " + b[k]);
+    const auto same = [&](const std::vector<std::string>& fields, const std::string& what) {
+      ref.equal(at + what + " fields", fields.size());
+      for (std::size_t k = 0; k < fields.size(); ++k) {
+        ref.equal(at + what + " field " + std::to_string(k), fields[k]);
       }
     };
-    require(gst[i].tensors.size() == df[i].tensors.size(),
-            at + "GStreamer returns " + std::to_string(gst[i].tensors.size()) +
-                " tensors, Dataflow " + std::to_string(df[i].tensors.size()));
+    ref.equal(at + "tensors", df[i].tensors.size());
     for (std::size_t t = 0; t < df[i].tensors.size(); ++t) {
-      same(gst[i].tensors[t], df[i].tensors[t], "tensor " + std::to_string(t));
-      require(gst[i].bytes[t] == df[i].bytes[t],
-              at + "tensor " + std::to_string(t) + ": the bytes are the same" +
-                  (wire ? ": GStreamer" + boxes_text(gst[i].bytes[t]) + ", Dataflow" +
-                              boxes_text(df[i].bytes[t])
-                        : std::string()));
+      same(df[i].tensors[t], "tensor " + std::to_string(t));
+      ref.equal(at + "tensor " + std::to_string(t) + " bytes",
+                sima_test::bytes_digest(df[i].bytes[t]) +
+                    (wire ? boxes_text(df[i].bytes[t]) : std::string()));
       ++tensors;
       bytes += df[i].bytes[t].size();
     }
-    same(gst[i].sample, df[i].sample, "Sample");
+    same(df[i].sample, "Sample");
+    if (!sima_test::on_dataflow()) {
+      continue;
+    }
     require(df[i].original_width == width && df[i].original_height == height,
             at + "Semantic::preprocess is the frame's own (original " +
                 std::to_string(df[i].original_width) + "x" + std::to_string(df[i].original_height) +
@@ -491,9 +490,8 @@ void compare(const std::vector<Frame>& gst, const std::vector<Frame>& df,
     }
   }
   std::cout << "[" << row << "] " << df.size() << " frames, " << tensors << " tensors, " << bytes
-            << " bytes, " << df[0].tensors[0].size()
-            << " fields a tensor: the same on both backends; stage '" << gst[0].stage_key << "' / '"
-            << df[0].stage_key << "'\n";
+            << " bytes, " << df[0].tensors[0].size() << " fields a tensor\n";
+  ref.note(row + " excluded: stage", df[0].stage_key);
 }
 
 // The images of the test: the real ones given, then generated ones.
@@ -546,12 +544,11 @@ std::vector<TensorList> sized_frames(const std::vector<cv::Mat>& images) {
   return out;
 }
 
-void sizes(const Model& model, const std::vector<cv::Mat>& images, std::size_t real,
-           std::vector<Frame>* kept) {
+void sizes(sima_test::Reference& ref, const Model& model, const std::vector<cv::Mat>& images,
+           std::size_t real, std::vector<Frame>* kept) {
   const std::vector<TensorList> frames = sized_frames(images);
-  std::vector<Frame> df = run_frames(route_graph(model), frames, on(RunBackend::Dataflow), "sizes");
-  compare(run_frames(route_graph(model), frames, on(RunBackend::GStreamer), "sizes"), df, frames,
-          true, "sizes");
+  std::vector<Frame> df = run_frames(route_graph(model), frames, on(), "sizes");
+  compare(ref, df, frames, true, "sizes");
   int boxes = 0;
   for (std::size_t i = 0; i < 3U * images.size(); ++i) {
     const std::int32_t count = wire_count(df[i].bytes[0]);
@@ -574,7 +571,7 @@ void black(const Model& model, const std::vector<cv::Mat>& images,
   const TensorList whole{bgr(images[0])};
   const TensorList half{bgr(resized(images[0], kWidth / 2, kHeight / 2))};
   const TensorList dark{bgr(cv::Mat::zeros(kHeight, kWidth, CV_8UC3))};
-  Run run = g.build(whole, on(RunBackend::Dataflow));
+  Run run = g.build(whole, on());
   const auto frame = [&](const TensorList& input, const std::string& what) {
     require(run.push(input), "black: push " + what);
     return pull_frame(run, true, "black " + what);
@@ -598,20 +595,17 @@ void black(const Model& model, const std::vector<cv::Mat>& images,
 }
 
 // Two frame sizes in turn through the first `stages` stages.
-void two_sizes(const Model& model, const std::vector<cv::Mat>& images, int stages,
-               const std::string& row) {
+void two_sizes(sima_test::Reference& ref, const Model& model, const std::vector<cv::Mat>& images,
+               int stages, const std::string& row) {
   std::vector<TensorList> frames;
   for (std::size_t i = 0; i < 6U; ++i) {
     const cv::Mat& image = images[i % images.size()];
     frames.push_back({bgr(i % 2U == 0U ? image : resized(image, kWidth / 2, kHeight / 2))});
   }
-  const std::vector<Frame> df =
-      run_frames(route_graph(model, stages), frames, on(RunBackend::Dataflow), row);
-  compare(run_frames(route_graph(model, stages), frames, on(RunBackend::GStreamer), row), df,
-          frames, false, row);
+  compare(ref, run_frames(route_graph(model, stages), frames, on(), row), frames, false, row);
 }
 
-void many(const Model& model, const std::vector<cv::Mat>& images) {
+void many(sima_test::Reference& ref, const Model& model, const std::vector<cv::Mat>& images) {
   // Eighteen sizes: more than the frames' table and an operator keep (sixteen each). The
   // first, the seed, is the largest: the stage's capacity.
   constexpr int kSizes[18][2] = {{1920, 1080}, {640, 360},  {1280, 720}, {640, 480},  {1000, 700},
@@ -625,10 +619,8 @@ void many(const Model& model, const std::vector<cv::Mat>& images) {
       frames.push_back({bgr(resized(images[0], size[0], size[1]))});
     }
   }
-  const std::vector<Frame> df =
-      run_frames(route_graph(model), frames, on(RunBackend::Dataflow), "many");
-  compare(run_frames(route_graph(model), frames, on(RunBackend::GStreamer), "many"), df, frames,
-          true, "many");
+  const std::vector<Frame> df = run_frames(route_graph(model), frames, on(), "many");
+  compare(ref, df, frames, true, "many");
   for (std::size_t i = kCount; i < df.size(); ++i) {
     require(df[i].bytes[0] == df[i - kCount].bytes[0],
             "many: a size gives the same wire when its kernels are made again");
@@ -639,7 +631,7 @@ void memory(const Model& model, const std::vector<cv::Mat>& images,
             const std::vector<Frame>& expected) {
   const cv::Mat half = resized(images[0], kWidth / 2, kHeight / 2);
   Graph g = route_graph(model);
-  Run run = g.build(TensorList{bgr(images[0])}, on(RunBackend::Dataflow));
+  Run run = g.build(TensorList{bgr(images[0])}, on());
   const auto gives = [&](Tensor frame, std::size_t which, const std::string& what) {
     require(run.push(TensorList{std::move(frame)}), "memory: push " + what);
     require(pull_frame(run, false, "memory " + what).bytes[0] == expected[which].bytes[0],
@@ -669,7 +661,7 @@ void free_running(const Model& model, const std::vector<cv::Mat>& images,
   const TensorList whole{bgr(images[0])};
   const TensorList half{bgr(resized(images[0], kWidth / 2, kHeight / 2))};
   Graph g = route_graph(model);
-  Run run = g.build(whole, on(RunBackend::Dataflow));
+  Run run = g.build(whole, on());
   for (int round = 0; round < 8; ++round) {
     for (int i = 0; i < 4; ++i) {
       require(run.push((round + i) % 2 == 0 ? whole : half), "free_running: push");
@@ -690,7 +682,7 @@ void free_running(const Model& model, const std::vector<cv::Mat>& images,
                "wires; a close with three frames in flight\n";
 }
 
-void declared(const Model& model, const std::vector<cv::Mat>& images) {
+void declared(sima_test::Reference& ref, const Model& model, const std::vector<cv::Mat>& images) {
   const TensorList whole{bgr(images[0])};
   const TensorList half{bgr(resized(images[0], kWidth / 2, kHeight / 2))};
   const TensorList large{bgr(resized(images[0], 1920, 1080))};
@@ -716,17 +708,17 @@ void declared(const Model& model, const std::vector<cv::Mat>& images) {
     for (std::size_t i = 0; i < 6U; ++i) {
       frames.push_back({bgr(images[i % images.size()])});
     }
-    const std::vector<Frame> df =
-        run_frames(route_graph(model, 3, &in), frames, on(RunBackend::Dataflow), "declared");
-    compare(run_frames(route_graph(model, 3, &in), frames, on(RunBackend::GStreamer), "declared"),
-            df, frames, true, "declared");
-    Graph g = route_graph(model, 3, &in);
-    Run run = g.build(whole, on(RunBackend::Dataflow));
-    threw(run, half, "where the Input declares", "a declared size, a frame of half of it");
-    require(run.push(whole), "declared: the Run goes on");
-    require(pull_frame(run, false, "declared").bytes[0] == df[0].bytes[0],
-            "declared: the next frame of the declared size gives its wire");
-    run.close();
+    const std::vector<Frame> df = run_frames(route_graph(model, 3, &in), frames, on(), "declared");
+    compare(ref, df, frames, true, "declared");
+    if (sima_test::on_dataflow()) {
+      Graph g = route_graph(model, 3, &in);
+      Run run = g.build(whole, on());
+      threw(run, half, "where the Input declares", "a declared size, a frame of half of it");
+      require(run.push(whole), "declared: the Run goes on");
+      require(pull_frame(run, false, "declared").bytes[0] == df[0].bytes[0],
+              "declared: the next frame of the declared size gives its wire");
+      run.close();
+    }
   }
   {
     // A bound declared: frames up to it, each with its own kernels.
@@ -737,12 +729,13 @@ void declared(const Model& model, const std::vector<cv::Mat>& images) {
     in.max_height = kHeight;
     const std::vector<TensorList> frames{whole, half, whole, half};
     const std::vector<Frame> df =
-        run_frames(route_graph(model, 3, &in), frames, on(RunBackend::Dataflow), "declared bound");
-    compare(
-        run_frames(route_graph(model, 3, &in), frames, on(RunBackend::GStreamer), "declared bound"),
-        df, frames, true, "declared bound");
+        run_frames(route_graph(model, 3, &in), frames, on(), "declared bound");
+    compare(ref, df, frames, true, "declared bound");
+    if (!sima_test::on_dataflow()) {
+      return; // GStreamer: the comparisons' records only
+    }
     Graph g = route_graph(model, 3, &in);
-    Run run = g.build(whole, on(RunBackend::Dataflow));
+    Run run = g.build(whole, on());
     threw(run, large, "", "a declared bound of 1280x720, a 1920x1080 frame");
     require(run.push(half), "declared: the Run goes on");
     require(pull_frame(run, false, "declared").bytes[0] == df[1].bytes[0],
@@ -755,7 +748,7 @@ void refused(const Model& model, const std::vector<cv::Mat>& images,
              const std::vector<Frame>& expected) {
   const TensorList whole{bgr(images[0])};
   Graph g = route_graph(model);
-  Run run = g.build(whole, on(RunBackend::Dataflow));
+  Run run = g.build(whole, on());
   const auto fails = [&](const Tensor& frame, const char* text, const char* what) {
     try {
       (void)run.push(TensorList{frame});
@@ -789,7 +782,7 @@ void refused(const Model& model, const std::vector<cv::Mat>& images,
     // Above the stage's capacity, on a Run whose seed is that capacity.
     Graph large = route_graph(model);
     Run at_capacity =
-        large.build(TensorList{bgr(resized(images[0], 1920, 1080))}, on(RunBackend::Dataflow));
+        large.build(TensorList{bgr(resized(images[0], 1920, 1080))}, on());
     try {
       (void)at_capacity.push(TensorList{bgr(resized(images[0], 1922, 1082))});
       throw std::runtime_error("refused: a frame above the stage's capacity was pushed");
@@ -844,7 +837,8 @@ void refused(const Model& model, const std::vector<cv::Mat>& images,
   run.close();
 }
 
-void nv12_frames(const std::string& archive, const std::vector<cv::Mat>& images) {
+void nv12_frames(sima_test::Reference& ref, const std::string& archive,
+                 const std::vector<cv::Mat>& images) {
   const Model model(archive, image_options(PreprocessColorFormat::NV12));
   std::vector<TensorList> frames;
   for (std::size_t i = 0; i < 8U; ++i) {
@@ -860,35 +854,30 @@ void nv12_frames(const std::string& archive, const std::vector<cv::Mat>& images)
     in.format = FormatTag::NV12;
     in.max_width = kWidth;
     in.max_height = kHeight;
-    const std::vector<Frame> gst =
-        run_frames(route_graph(model, stages, &in), frames, on(RunBackend::GStreamer), row);
-    compare(gst, run_frames(route_graph(model, stages, &in), frames, on(RunBackend::Dataflow), row),
-            frames, stages == 3, row + ", a declared bound of 1280x720");
+    // The reference, GStreamer with the bound of 1280x720 declared, is recorded once for each of
+    // the three Dataflow builds below.
+    const std::string rows[] = {row + ", a declared bound of 1280x720", row + ", no declaration",
+                                row + ", a declared bound of 1920x1080"};
+    if (!sima_test::on_dataflow()) {
+      const std::vector<Frame> gst =
+          run_frames(route_graph(model, stages, &in), frames, on(), row);
+      for (const std::string& name : rows) {
+        compare(ref, gst, frames, stages == 3, name);
+      }
+      continue;
+    }
+    compare(ref, run_frames(route_graph(model, stages, &in), frames, on(), row), frames,
+            stages == 3, rows[0]);
     // Nothing declared: the port is the seed's frame, as above.
-    compare(gst, run_frames(route_graph(model, stages), frames, on(RunBackend::Dataflow), row),
-            frames, stages == 3, row + ", no declaration");
+    compare(ref, run_frames(route_graph(model, stages), frames, on(), row), frames, stages == 3,
+            rows[1]);
     // A larger bound declared: the port is 1920x1080 and every frame is copied to its offsets.
     InputOptions wide = in;
     wide.max_width = 1920;
     wide.max_height = 1080;
-    compare(gst,
-            run_frames(route_graph(model, stages, &wide), frames, on(RunBackend::Dataflow), row),
-            frames, stages == 3, row + ", a declared bound of 1920x1080");
+    compare(ref, run_frames(route_graph(model, stages, &wide), frames, on(), row), frames,
+            stages == 3, rows[2]);
   }
-}
-
-void automatic(const Model& model, const std::vector<cv::Mat>& images) {
-  const std::vector<TensorList> frames{
-      {bgr(images[0])}, {bgr(resized(images[0], kWidth / 2, kHeight / 2))}, {bgr(images[0])}};
-  const std::vector<Frame> expected =
-      run_frames(route_graph(model), frames, on(RunBackend::GStreamer), "automatic");
-  ::setenv("SIMA_NEAT_BACKEND", "dataflow", 1);
-  const std::vector<Frame> seen =
-      run_frames(route_graph(model), frames, on(RunBackend::Auto), "automatic");
-  ::unsetenv("SIMA_NEAT_BACKEND");
-  compare(expected, seen, frames, true, "automatic");
-  require(!seen[0].stage_key.empty() && seen[0].stage_key == "boxdecode",
-          "automatic: the Run is Dataflow's (its stage is not numbered): " + seen[0].stage_key);
 }
 
 } // namespace
@@ -915,7 +904,15 @@ int main(int argc, char** argv) {
   }
   std::string only;
   sima_test::get_arg(argc, argv, "--row", only);
+  try {
+    sima_test::select_backend(argc, argv);
+  } catch (const std::exception& e) {
+    std::cerr << "[FAIL] " << e.what() << "\n";
+    return 1;
+  }
   return sima_test::run_test("unit_dataflow_frame_route_test", [&] {
+    sima_test::Reference ref = sima_test::Reference::from_args(argc, argv);
+    const bool dataflow = sima_test::on_dataflow();
     const auto row = [&](const char* name, const std::function<void()>& body) {
       if (!only.empty() && only != name && std::string(name) != "sizes") {
         return;
@@ -927,9 +924,12 @@ int main(int argc, char** argv) {
     std::size_t real = 0;
     const std::vector<cv::Mat> images = images_of(dir, &real);
     if (!ev74_runs_kernels_firmware()) {
+      if (!dataflow) {
+        return;
+      }
       try {
         Graph g = route_graph(model);
-        (void)g.build(TensorList{bgr(images[0])}, on(RunBackend::Dataflow));
+        (void)g.build(TensorList{bgr(images[0])}, on());
       } catch (const NeatError& error) {
         require_contains(error.what(), "sima-neat-native-cvu-fw",
                          std::string("stock firmware: ") + error.what());
@@ -940,16 +940,25 @@ int main(int argc, char** argv) {
     }
     // `sizes` runs with every row: the others compare with its frames 0 (whole) and 1 (half).
     std::vector<Frame> expected;
-    row("sizes", [&] { sizes(model, images, real, &expected); });
-    row("black", [&] { black(model, images, expected); });
-    row("heads", [&] { two_sizes(model, images, 2, "heads"); });
-    row("preprocess", [&] { two_sizes(model, images, 1, "preprocess"); });
-    row("many", [&] { many(model, images); });
-    row("memory", [&] { memory(model, images, expected); });
-    row("free_running", [&] { free_running(model, images, expected); });
-    row("declared", [&] { declared(model, images); });
-    row("refused", [&] { refused(model, images, expected); });
-    row("nv12", [&] { nv12_frames(archive, images); });
-    row("automatic", [&] { automatic(model, images); });
+    // On GStreamer the comparison rows only (their record); on Dataflow every row.
+    row("sizes", [&] { sizes(ref, model, images, real, &expected); });
+    if (dataflow) {
+      row("black", [&] { black(model, images, expected); });
+    }
+    row("heads", [&] { two_sizes(ref, model, images, 2, "heads"); });
+    row("preprocess", [&] { two_sizes(ref, model, images, 1, "preprocess"); });
+    row("many", [&] { many(ref, model, images); });
+    if (dataflow) {
+      row("memory", [&] { memory(model, images, expected); });
+      row("free_running", [&] { free_running(model, images, expected); });
+    }
+    row("declared", [&] { declared(ref, model, images); });
+    if (dataflow) {
+      row("refused", [&] { refused(model, images, expected); });
+    }
+    row("nv12", [&] { nv12_frames(ref, archive, images); });
+    if (only.empty() || !dataflow) {
+      ref.finish();
+    }
   });
 }

@@ -1,6 +1,6 @@
 // The Dataflow backend's graphs of several public Inputs and Outputs (H0 step 10, H0c), on the
-// public API only: every Run here is built with RunOptions::backend = RunBackend::Dataflow, so the
-// test does not depend on SIMA_NEAT_BACKEND, and no runtime type is named.
+// public API only: the process runs on the Dataflow backend (--backend=dataflow, set_backend), and
+// no runtime type is named.
 //
 // Covers: two inputs feeding two outputs (named verbs, each input bound by its own first push and
 // enforced, the unnamed verbs' "no unambiguous default" errors, unknown names, can_push/can_pull,
@@ -21,6 +21,7 @@
 #include "pipeline/Graph.h"
 #include "pipeline/NeatError.h"
 #include "pipeline/Result.h"
+#include "support/backend_selection.h"
 #include "test_main.h"
 #include "test_utils.h"
 
@@ -46,7 +47,6 @@ using Clock = std::chrono::steady_clock;
 
 RunOptions dataflow(int queue_depth = 4, OverflowPolicy policy = OverflowPolicy::Block) {
   RunOptions opt;
-  opt.backend = RunBackend::Dataflow;
   opt.queue_depth = queue_depth;
   opt.overflow_policy = policy;
   return opt;
@@ -623,7 +623,8 @@ void graphs_not_carried() {
 
 } // namespace
 
-RUN_TEST("unit_dataflow_endpoints_test", ([] {
+RUN_BACKEND_TEST("unit_dataflow_endpoints_test", ([] {
+           require(sima_test::on_dataflow(), "run with --backend=dataflow");
            two_inputs_two_outputs();
            fan_out_by_handle_reuse();
            fan_out_blocking_push_waits_for_every_link();

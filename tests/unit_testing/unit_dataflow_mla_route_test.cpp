@@ -1,18 +1,20 @@
 // The MLA-only model route on the Dataflow backend (H1), on the public API only:
 //   Input -> Model::inference() -> Output      (Model: preprocess off, inference_terminal.mla_only)
-// built with RunOptions::backend = RunBackend::Dataflow (Feed -> MlaOp -> Fetch) and, for the
-// comparison rows, with RunBackend::GStreamer (appsrc ! neatprocessmla ! appsink) in the same
-// process. No runtime type is named.
+// on the Dataflow backend (Feed -> MlaOp -> Fetch) and, for the comparison row, on GStreamer
+// (appsrc ! neatprocessmla ! appsink). A process runs on one backend (set_backend): the test runs
+// twice, --backend=gstreamer --reference=<file> recording what the comparison row pulls, then
+// --backend=dataflow --reference=<file> running every row and comparing. No runtime type is
+// named.
 //
 // It needs the MLA and a compiled model: --mla-model <X_mpk.tar.gz>, or SIMA_TEST_MLA_ONLY_MODEL.
 // Without one the test is skipped (it downloads nothing). The model has one INT8 input and one
 // output; ResNet-50 INT8 is the one it was written with.
 //
 // Rows:
-//   differential     the same inputs (4 patterns in rotation) through both backends: every pulled
+//   differential     the same inputs (4 patterns in rotation) on each backend: every pulled
 //                    tensor's dtype, layout, shape, strides, byte offset, route, quantization and
-//                    format tag, the Sample's shape, and every byte. Excluded, each printed with
-//                    both values: the stage's element name (GStreamer numbers its elements per
+//                    format tag, the Sample's shape, and every byte (its digest). Excluded, each
+//                    printed with both values: the stage's element name (GStreamer numbers its elements per
 //                    process: MLA_0_<n>), the storage's size (GStreamer: the allocation; Dataflow:
 //                    the MLA's output buffer), frame_id / input_seq / timestamps / caps_string
 //                    (documented for every Dataflow Run: unit_run_backend_differential_test).
@@ -38,6 +40,7 @@
 #include "pipeline/NeatError.h"
 #include "pipeline/Result.h"
 #include "cli_utils.h"
+#include "support/backend_selection.h"
 #include "test_main.h"
 #include "test_utils.h"
 
@@ -131,9 +134,8 @@ struct Route {
   }
 };
 
-RunOptions on(RunBackend backend, int depth = 4) {
+RunOptions on(int depth = 4) {
   RunOptions o;
-  o.backend = backend;
   o.queue_depth = depth;
   o.overflow_policy = OverflowPolicy::Block;
   return o;
@@ -181,13 +183,13 @@ Frame keep(Tensor tensor) {
   return frame;
 }
 
-std::vector<Frame> run_frames(const Route& route, RunBackend backend, int frames) {
+std::vector<Frame> run_frames(const Route& route, int frames) {
   Graph g = route.graph(route.input());
   std::vector<TensorList> inputs;
   for (int p = 0; p < kPatterns; ++p) {
     inputs.push_back({route.tensor(static_cast<unsigned>(p))});
   }
-  Run run = g.build(inputs[0], on(backend));
+  Run run = g.build(inputs[0], on());
   std::vector<Frame> seen;
   for (int i = 0; i < frames; ++i) {
     require(run.push(inputs[static_cast<std::size_t>(i % kPatterns)]), "push");
@@ -215,82 +217,76 @@ std::vector<Frame> run_frames(const Route& route, RunBackend backend, int frames
   return seen;
 }
 
-void differential(const Route& route) {
+// What both backends give the same, recorded by the GStreamer run and compared by the Dataflow run;
+// the values each backend gives its own way are printed side by side.
+void differential(const Route& route, sima_test::Reference& ref) {
   constexpr int kFrames = 64;
-  const std::vector<Frame> gst = run_frames(route, RunBackend::GStreamer, kFrames);
-  const std::vector<Frame> df = run_frames(route, RunBackend::Dataflow, kFrames);
-  require(gst.size() == df.size(), "both backends produced every frame");
+  const std::vector<Frame> frames = run_frames(route, kFrames);
+  ref.equal("differential: frames", frames.size());
   for (int i = 0; i < kFrames; ++i) {
     const auto at = [&](const char* what) {
       return std::string("differential frame ") + std::to_string(i) + ": " + what;
     };
-    const Frame& fa = gst[static_cast<std::size_t>(i)];
-    const Frame& fb = df[static_cast<std::size_t>(i)];
-    const Tensor& a = fa.tensor;
-    const Tensor& b = fb.tensor;
-    require(a.dtype == b.dtype, at("dtype"));
-    require(a.layout == b.layout, at("layout"));
-    require(a.shape == b.shape, at("shape ") + dims(a.shape) + " / " + dims(b.shape));
-    require(a.strides_bytes == b.strides_bytes, at("strides"));
-    require(a.byte_offset == b.byte_offset, at("byte_offset"));
-    require(a.axis_semantics == b.axis_semantics, at("axis_semantics"));
-    require(a.device.type == b.device.type && a.device.id == b.device.id, at("device"));
-    require(a.read_only == b.read_only, at("read_only"));
-    require(a.planes.size() == b.planes.size(), at("planes"));
-    require(a.route.logical_index == b.route.logical_index &&
-                a.route.backend_output_index == b.route.backend_output_index &&
-                a.route.route_slot == b.route.route_slot &&
-                a.route.physical_index == b.route.physical_index &&
-                a.route.memory_index == b.route.memory_index &&
-                a.route.physical_byte_offset == b.route.physical_byte_offset &&
-                a.route.name == b.route.name && a.route.backend_name == b.route.backend_name &&
-                a.route.segment_name == b.route.segment_name,
-            at("route: name '") + a.route.name + "' / '" + b.route.name + "', segment '" +
-                a.route.segment_name + "' / '" + b.route.segment_name + "'");
+    const Frame& f = frames[static_cast<std::size_t>(i)];
+    const Tensor& t = f.tensor;
+    ref.equal(at("dtype"), t.dtype);
+    ref.equal(at("layout"), t.layout);
+    ref.equal(at("shape"), t.shape);
+    ref.equal(at("strides"), t.strides_bytes);
+    ref.equal(at("byte_offset"), t.byte_offset);
+    ref.equal(at("axis_semantics"), t.axis_semantics);
+    ref.equal(at("device"), sima_test::text(t.device.type) + "/" + sima_test::text(t.device.id));
+    ref.equal(at("read_only"), t.read_only);
+    ref.equal(at("planes"), t.planes.size());
+    ref.equal(at("route"), sima_test::text(t.route.logical_index) + "," +
+                               sima_test::text(t.route.backend_output_index) + "," +
+                               sima_test::text(t.route.route_slot) + "," +
+                               sima_test::text(t.route.physical_index) + "," +
+                               sima_test::text(t.route.memory_index) + "," +
+                               sima_test::text(t.route.physical_byte_offset) + ",name '" +
+                               t.route.name + "',backend '" + t.route.backend_name +
+                               "',segment '" + t.route.segment_name + "'");
     // GStreamer names the element MLA_0_<n>, n counting the elements this process built.
-    require(a.route.stage_key.rfind(b.route.stage_key, 0) == 0,
-            at("route.stage_key '") + a.route.stage_key + "' / '" + b.route.stage_key + "'");
-    require(a.semantic.tess.has_value() == b.semantic.tess.has_value() &&
-                (!a.semantic.tess || a.semantic.tess->format == b.semantic.tess->format),
-            at("semantic.tess"));
-    require(a.semantic.quant.has_value() == b.semantic.quant.has_value(), at("semantic.quant"));
-    require(!a.semantic.image && !b.semantic.image, at("no image semantic"));
-    require(fa.storage_kind == fb.storage_kind && fa.storage_device == fb.storage_device &&
-                fa.storage_target_flags == fb.storage_target_flags &&
-                fa.storage_segments == fb.storage_segments,
-            at("storage kind, placement, segments"));
-    require(!fa.bytes.empty() && fa.bytes == fb.bytes, at("bytes"));
-    if (fa.from_sample) {
-      const Sample& sa = fa.sample;
-      const Sample& sb = fb.sample;
-      require(sa.kind == sb.kind && sa.owned == sb.owned, at("Sample kind / owned"));
-      require(sa.media_type == sb.media_type && sa.payload_type == sb.payload_type &&
-                  sa.payload_tag == sb.payload_tag && sa.format == sb.format,
-              at("Sample media: '") + sa.payload_tag + "' / '" + sb.payload_tag + "'");
-      require(sa.output_index == sb.output_index &&
-                  sa.logical_output_index == sb.logical_output_index &&
-                  sa.route_slot == sb.route_slot && sa.memory_index == sb.memory_index,
-              at("Sample routing"));
-      require(sa.stream_id == sb.stream_id, at("Sample stream_id"));
-      require(sa.stream_label.rfind(sb.stream_label, 0) == 0 &&
-                  sa.segment_name.rfind(sb.segment_name, 0) == 0,
-              at("Sample stream_label '") + sa.stream_label + "' / '" + sb.stream_label + "'");
+    ref.prefix(at("route.stage_key"), t.route.stage_key);
+    ref.equal(at("semantic.tess"),
+              t.semantic.tess ? sima_test::text(t.semantic.tess->format) : std::string("none"));
+    ref.equal(at("semantic.quant"), t.semantic.quant.has_value());
+    require(!t.semantic.image, at("no image semantic"));
+    ref.equal(at("storage kind, placement, segments"),
+              sima_test::text(f.storage_kind) + "/" + sima_test::text(f.storage_device) + "/" +
+                  sima_test::text(f.storage_target_flags) + "/" +
+                  sima_test::text(f.storage_segments));
+    require(!f.bytes.empty(), at("bytes"));
+    ref.equal(at("bytes"), sima_test::bytes_digest(f.bytes));
+    ref.equal(at("from a Sample"), f.from_sample);
+    if (f.from_sample) {
+      const Sample& sa = f.sample;
+      ref.equal(at("Sample kind / owned"), sima_test::text(sa.kind) + "/" + sima_test::text(sa.owned));
+      ref.equal(at("Sample media"), sima_test::text(sa.media_type) + "/" +
+                                        sima_test::text(sa.payload_type) + "/'" + sa.payload_tag +
+                                        "'/" + sima_test::text(sa.format));
+      ref.equal(at("Sample routing"),
+                sima_test::text(sa.output_index) + "/" + sima_test::text(sa.logical_output_index) +
+                    "/" + sima_test::text(sa.route_slot) + "/" + sima_test::text(sa.memory_index));
+      ref.equal(at("Sample stream_id"), sa.stream_id);
+      ref.prefix(at("Sample stream_label"), sa.stream_label);
+      ref.prefix(at("Sample segment_name"), sa.segment_name);
     }
   }
   // The four inputs give four different outputs, and each input the same one every time.
   for (int p = 1; p < kPatterns; ++p) {
-    require(df[0].bytes != df[static_cast<std::size_t>(p)].bytes,
+    require(frames[0].bytes != frames[static_cast<std::size_t>(p)].bytes,
             "the outputs of different inputs differ");
-    require(df[static_cast<std::size_t>(p)].bytes ==
-                df[static_cast<std::size_t>(p + kPatterns)].bytes,
+    require(frames[static_cast<std::size_t>(p)].bytes ==
+                frames[static_cast<std::size_t>(p + kPatterns)].bytes,
             "an input gives the same output again");
   }
-  std::cout << "[differential] excluded: stage_key '" << gst[0].tensor.route.stage_key << "' / '"
-            << df[0].tensor.route.stage_key << "'; storage bytes " << gst[0].storage_bytes << " / "
-            << df[0].storage_bytes << "; first frame_id " << gst[0].frame_id << " / "
-            << df[0].frame_id << "; first seq " << gst[0].seq << " / " << df[0].seq
-            << "; caps_string '" << gst[1].sample.caps_string << "' / '" << df[1].sample.caps_string
-            << "'\n";
+  // Excluded: each backend's own.
+  ref.note("differential excluded: stage_key", frames[0].tensor.route.stage_key);
+  ref.note("differential excluded: storage bytes", frames[0].storage_bytes);
+  ref.note("differential excluded: first frame_id", frames[0].frame_id);
+  ref.note("differential excluded: first seq", frames[0].seq);
+  ref.note("differential excluded: caps_string", frames[1].sample.caps_string);
 }
 
 // ---- input contract ----------------------------------------------------------------------------
@@ -299,7 +295,7 @@ void differential(const Route& route) {
 std::string push_outcome(const Route& route, const InputOptions& in, const Tensor& tensor,
                          const TensorList* seed) {
   Graph g = route.graph(in);
-  Run run = seed ? g.build(*seed, on(RunBackend::Dataflow)) : g.build(on(RunBackend::Dataflow));
+  Run run = seed ? g.build(*seed, on()) : g.build(on());
   std::string outcome;
   try {
     outcome = run.push({tensor}) ? "accepted" : "push returned false";
@@ -353,7 +349,7 @@ void input_contract(const Route& route) {
     require_neat_error(
         [&] {
           Graph g = route.graph(other);
-          (void)g.build(on(RunBackend::Dataflow));
+          (void)g.build(on());
         },
         error_codes::kInputShape, "the model's MLA input is");
   }
@@ -378,7 +374,7 @@ void lifecycle(const Route& route) {
   Graph g = route.graph(route.input(), /*max_buffers=*/8);
   const TensorList a{route.tensor(0)};
   const TensorList b{route.tensor(1)};
-  Run run = g.build(a, on(RunBackend::Dataflow, 8));
+  Run run = g.build(a, on(8));
   require(run.running() && run.can_push() && run.can_pull(), "a built Run runs");
 
   // Nothing pushed: a pull times out and says so; a poll says nothing.
@@ -422,7 +418,7 @@ void in_flight(const Route& route) {
   std::vector<std::uint8_t> expected;
   {
     Graph g = route.graph(route.input(), /*max_buffers=*/4);
-    Run run = g.build(a, on(RunBackend::Dataflow, 4));
+    Run run = g.build(a, on(4));
     require(run.push(a), "push");
     expected = bytes_of(pull_ok(run, "in_flight first").front());
     for (int i = 0; i < 6; ++i) {
@@ -432,7 +428,7 @@ void in_flight(const Route& route) {
   }
   {
     Graph g = route.graph(route.input(), 4);
-    Run run = g.build(a, on(RunBackend::Dataflow, 4));
+    Run run = g.build(a, on(4));
     require(run.push(a), "push into the next Run");
     require(bytes_of(pull_ok(run, "in_flight next").front()) == expected,
             "the next Run infers as the first");
@@ -453,7 +449,7 @@ void recreate(const Route& route) {
   std::vector<std::uint8_t> first;
   for (int round = 0; round < 4; ++round) {
     Graph g = route.graph(route.input());
-    Run run = g.build(a, on(RunBackend::Dataflow));
+    Run run = g.build(a, on());
     for (int i = 0; i < 8; ++i) {
       require(run.push(a), "push");
       const std::vector<std::uint8_t> out = bytes_of(pull_ok(run, "recreate").front());
@@ -472,7 +468,7 @@ void owned(const Route& route) {
   std::vector<std::uint8_t> zero_copy;
   {
     Graph g = route.graph(route.input());
-    Run run = g.build(a, on(RunBackend::Dataflow));
+    Run run = g.build(a, on());
     require(run.push(a), "push");
     const Tensor t = pull_ok(run, "owned reference").front();
     require(t.storage && t.storage->kind == StorageKind::GstSample,
@@ -481,7 +477,7 @@ void owned(const Route& route) {
     run.close();
   }
   Graph g = route.graph(route.input());
-  RunOptions o = on(RunBackend::Dataflow);
+  RunOptions o = on();
   o.output_memory = OutputMemory::Owned;
   Run run = g.build(a, o);
   Tensor kept;
@@ -501,7 +497,7 @@ void alloc(const Route& route) {
   std::vector<std::uint8_t> expected;
   {
     Graph g = route.graph(route.input());
-    Run run = g.build(reference_input, on(RunBackend::Dataflow));
+    Run run = g.build(reference_input, on());
     require(run.push(reference_input), "push");
     expected = bytes_of(pull_ok(run, "alloc reference").front());
     run.close();
@@ -514,7 +510,7 @@ void alloc(const Route& route) {
   g.add(nodes::Input("x", in));
   g.add(route.model.inference());
   g.add(nodes::Output("y", out));
-  Run run = g.build(on(RunBackend::Dataflow));
+  Run run = g.build(on());
   const std::vector<std::int8_t> values = pattern(route.bytes, 1);
   for (int i = 0; i < 3; ++i) {
     Tensor t = run.alloc("x");
@@ -537,7 +533,7 @@ void declined(const Route& route, const std::string& archive) {
   require_neat_error(
       [&] {
         Graph g = route.graph(route.input(), 2, /*drop=*/true);
-        (void)g.build(seed, on(RunBackend::Dataflow));
+        (void)g.build(seed, on());
       },
       error_codes::kPipelineShape, "OutputOptions::drop behind a model");
   // The model's preprocessing in front of its inference: stages this backend does not run yet.
@@ -567,7 +563,7 @@ void declined(const Route& route, const std::string& archive) {
     }
   }
   try {
-    (void)g.build(on(RunBackend::Dataflow));
+    (void)g.build(on());
     if (kernels_firmware) {
       std::cout << "[declined] the preprocess stage built: the EV74 runs the Kernels firmware\n";
       return;
@@ -597,7 +593,14 @@ int main(int argc, char** argv) {
   }
   std::string only;
   sima_test::get_arg(argc, argv, "--row", only);
+  try {
+    sima_test::select_backend(argc, argv);
+  } catch (const std::exception& e) {
+    std::cerr << "[FAIL] " << e.what() << "\n";
+    return 1;
+  }
   return sima_test::run_test("unit_dataflow_mla_route_test", [&] {
+    sima_test::Reference ref = sima_test::Reference::from_args(argc, argv);
     const Route route(archive);
     const auto row = [&](const char* name, const std::function<void()>& body) {
       if (!only.empty() && only != name) {
@@ -606,7 +609,12 @@ int main(int argc, char** argv) {
       body();
       std::cout << "[row] " << name << " ok\n";
     };
-    row("differential", [&] { differential(route); });
+    row("differential", [&] { differential(route, ref); });
+    if (!sima_test::on_dataflow()) {
+      // GStreamer: the comparison row's record only.
+      ref.finish();
+      return;
+    }
     row("input_contract", [&] { input_contract(route); });
     row("lifecycle", [&] { lifecycle(route); });
     row("in_flight", [&] { in_flight(route); });
@@ -614,5 +622,8 @@ int main(int argc, char** argv) {
     row("owned", [&] { owned(route); });
     row("alloc", [&] { alloc(route); });
     row("declined", [&] { declined(route, archive); });
+    if (only.empty() || only == "differential") {
+      ref.finish();
+    }
   });
 }

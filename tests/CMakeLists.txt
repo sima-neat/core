@@ -704,15 +704,47 @@ foreach(test ${UNIT_TESTS})
   endif()
 endforeach()
 
-# The Dataflow backend behind Core's Run, on the public API only (RunBackend::Dataflow): the test
-# links libsima_neat.so alone and names no runtime type.
+# The Dataflow backend behind Core's Run, on the public API only, in a process on the Dataflow
+# backend (--backend=dataflow): the test links libsima_neat.so alone and names no runtime type.
+# Registered a second time on GStreamer for its rows that hold on both backends.
 if (SIMANEAT_DATAFLOW_SOURCE_DIR AND
     NOT unit_dataflow_backend_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
   add_pipeline_test(unit_dataflow_backend_test
-    ${CMAKE_CURRENT_SOURCE_DIR}/unit_testing/unit_dataflow_backend_test.cpp
+    SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/unit_testing/unit_dataflow_backend_test.cpp
+    ARGS --backend=dataflow
   )
   set_property(TEST unit_dataflow_backend_test APPEND PROPERTY LABELS "unit;dataflow")
+  simaneat_add_test(NAME unit_dataflow_backend_test_gstreamer
+    COMMAND unit_dataflow_backend_test --backend=gstreamer)
+  simaneat_append_ctest_env(unit_dataflow_backend_test_gstreamer)
+  set_property(TEST unit_dataflow_backend_test_gstreamer APPEND PROPERTY LABELS "strict;unit")
 endif()
+
+# A test that compares the two backends. A process runs on one backend (set_backend), so it is two
+# tests: `name` on GStreamer records what it pulls into a reference record, and `name`_dataflow on
+# Dataflow runs the same and compares with the record (a ctest fixture runs the first before the
+# second). `name` is registered by the caller with ARGS from simaneat_backend_pair_args; this adds
+# the second test, with the first one's properties.
+function(simaneat_backend_pair_args name out)
+  set(${out} --backend=gstreamer --reference=${CMAKE_CURRENT_BINARY_DIR}/${name}.reference
+    PARENT_SCOPE)
+endfunction()
+
+function(simaneat_add_backend_pair name)
+  if (NOT TEST ${name})
+    return()
+  endif()
+  simaneat_add_test(NAME ${name}_dataflow COMMAND ${name} --backend=dataflow
+    --reference=${CMAKE_CURRENT_BINARY_DIR}/${name}.reference)
+  foreach(_pair_prop LABELS ENVIRONMENT TIMEOUT SKIP_RETURN_CODE RESOURCE_LOCK)
+    get_test_property(${name} ${_pair_prop} _pair_value)
+    if (_pair_value)
+      set_property(TEST ${name}_dataflow PROPERTY ${_pair_prop} "${_pair_value}")
+    endif()
+  endforeach()
+  set_property(TEST ${name} APPEND PROPERTY FIXTURES_SETUP ${name}_reference)
+  set_property(TEST ${name}_dataflow APPEND PROPERTY FIXTURES_REQUIRED ${name}_reference)
+endfunction()
 
 # The process's backend (neat/runtime.h: set_backend, backend). The first Model constructed or
 # Graph built fixes it, so each case runs as a process of its own (--case=<name>).
@@ -739,11 +771,12 @@ if (NOT unit_backend_setting_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
 endif()
 
 # H0c: graphs of several public Inputs and Outputs on the Dataflow backend (named endpoints, fan-out
-# by handle reuse, each Output's own link), on the public API only (RunBackend::Dataflow).
+# by handle reuse, each Output's own link), on the public API only (--backend=dataflow).
 if (SIMANEAT_DATAFLOW_SOURCE_DIR AND
     NOT unit_dataflow_endpoints_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
   add_pipeline_test(unit_dataflow_endpoints_test
-    ${CMAKE_CURRENT_SOURCE_DIR}/unit_testing/unit_dataflow_endpoints_test.cpp
+    SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/unit_testing/unit_dataflow_endpoints_test.cpp
+    ARGS --backend=dataflow
   )
   set_tests_properties(unit_dataflow_endpoints_test PROPERTIES TIMEOUT 300)
   set_property(TEST unit_dataflow_endpoints_test APPEND PROPERTY LABELS "unit;dataflow")
@@ -767,22 +800,25 @@ endif()
 
 # H0 C2: Run's Tensor verbs, Graph::input/output and records, on both backends. One executable per
 # test, registered once for GStreamer and, with the runtime in the build, once more with
-# SIMA_NEAT_BACKEND=dataflow (label `dataflow`); the test reads the variable and requests that
-# backend explicitly (RunOptions::backend), so a Run the Dataflow backend cannot take fails.
-foreach(_c2_test unit_run_verb_resolution_test unit_run_tensor_surface_test
-        unit_graph_header_no_gstreamer_test)
+# --backend=dataflow (label `dataflow`): the process runs on that backend (set_backend), so a Run
+# the Dataflow backend does not carry fails.
+foreach(_c2_test unit_run_verb_resolution_test unit_run_tensor_surface_test)
   if (NOT _c2_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
     add_pipeline_test(${_c2_test} ${CMAKE_CURRENT_SOURCE_DIR}/unit_testing/${_c2_test}.cpp)
     set_property(TEST ${_c2_test} APPEND PROPERTY LABELS "unit")
     if (SIMANEAT_DATAFLOW_SOURCE_DIR)
-      simaneat_add_test(NAME ${_c2_test}_dataflow COMMAND ${_c2_test})
+      simaneat_add_test(NAME ${_c2_test}_dataflow COMMAND ${_c2_test} --backend=dataflow)
       simaneat_append_ctest_env(${_c2_test}_dataflow)
-      set_property(TEST ${_c2_test}_dataflow APPEND PROPERTY ENVIRONMENT
-        "SIMA_NEAT_BACKEND=dataflow")
       set_property(TEST ${_c2_test}_dataflow APPEND PROPERTY LABELS "strict;unit;dataflow")
     endif()
   endif()
 endforeach()
+# The public Graph header without GStreamer's headers: no Run is built, so no backend is involved.
+if (NOT unit_graph_header_no_gstreamer_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  add_pipeline_test(unit_graph_header_no_gstreamer_test
+    ${CMAKE_CURRENT_SOURCE_DIR}/unit_testing/unit_graph_header_no_gstreamer_test.cpp)
+  set_property(TEST unit_graph_header_no_gstreamer_test APPEND PROPERTY LABELS "unit")
+endif()
 
 # H0 C4: H0's torture list on the public API (stop during a blocked push, stop during a pending
 # pull, close_input with queued messages, two pushers, a lease outliving the Run), registered per
@@ -793,10 +829,9 @@ if (NOT unit_run_torture_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
   set_tests_properties(unit_run_torture_test PROPERTIES TIMEOUT 300)
   set_property(TEST unit_run_torture_test APPEND PROPERTY LABELS "unit")
   if (SIMANEAT_DATAFLOW_SOURCE_DIR)
-    simaneat_add_test(NAME unit_run_torture_test_dataflow COMMAND unit_run_torture_test)
+    simaneat_add_test(NAME unit_run_torture_test_dataflow
+      COMMAND unit_run_torture_test --backend=dataflow)
     simaneat_append_ctest_env(unit_run_torture_test_dataflow)
-    set_property(TEST unit_run_torture_test_dataflow APPEND PROPERTY ENVIRONMENT
-      "SIMA_NEAT_BACKEND=dataflow")
     set_tests_properties(unit_run_torture_test_dataflow PROPERTIES TIMEOUT 300)
     set_property(TEST unit_run_torture_test_dataflow APPEND PROPERTY LABELS "strict;unit;dataflow")
   endif()
@@ -810,101 +845,117 @@ if (NOT unit_run_push_wrap_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
   set_tests_properties(unit_run_push_wrap_test PROPERTIES TIMEOUT 300)
   set_property(TEST unit_run_push_wrap_test APPEND PROPERTY LABELS "unit")
   if (SIMANEAT_DATAFLOW_SOURCE_DIR)
-    simaneat_add_test(NAME unit_run_push_wrap_test_dataflow COMMAND unit_run_push_wrap_test)
+    simaneat_add_test(NAME unit_run_push_wrap_test_dataflow
+      COMMAND unit_run_push_wrap_test --backend=dataflow)
     simaneat_append_ctest_env(unit_run_push_wrap_test_dataflow)
-    set_property(TEST unit_run_push_wrap_test_dataflow APPEND PROPERTY ENVIRONMENT
-      "SIMA_NEAT_BACKEND=dataflow")
     set_tests_properties(unit_run_push_wrap_test_dataflow PROPERTIES TIMEOUT 300)
     set_property(TEST unit_run_push_wrap_test_dataflow APPEND PROPERTY LABELS
       "strict;unit;dataflow")
   endif()
 endif()
 
-# H0 C4, with the runtime in the build: the differential test, which builds the same graph on both
-# backends in one process.
+# H0 C4, with the runtime in the build: the differential test, the same graph and input sequence on
+# each backend, GStreamer's record compared by the Dataflow run (simaneat_add_backend_pair).
 if (SIMANEAT_DATAFLOW_SOURCE_DIR AND
     NOT unit_run_backend_differential_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  simaneat_backend_pair_args(unit_run_backend_differential_test _pair_args)
   add_pipeline_test(unit_run_backend_differential_test
-    ${CMAKE_CURRENT_SOURCE_DIR}/unit_testing/unit_run_backend_differential_test.cpp)
+    SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/unit_testing/unit_run_backend_differential_test.cpp
+    ARGS ${_pair_args})
   set_tests_properties(unit_run_backend_differential_test PROPERTIES TIMEOUT 300)
   set_property(TEST unit_run_backend_differential_test APPEND PROPERTY LABELS "unit;dataflow")
+  simaneat_add_backend_pair(unit_run_backend_differential_test)
 endif()
 
-# H1: the MLA-only model route on the Dataflow backend (Feed -> MlaOp -> Fetch), against GStreamer in
-# one process, on the public API only. It needs the MLA and a compiled model (--mla-model or
+# H1: the MLA-only model route on the Dataflow backend (Feed -> MlaOp -> Fetch), against GStreamer's
+# record (simaneat_add_backend_pair), on the public API only. It needs the MLA and a compiled model (--mla-model or
 # SIMA_TEST_MLA_ONLY_MODEL; it downloads nothing), so it is a long test that skips without one.
 if (SIMANEAT_DATAFLOW_SOURCE_DIR AND
     NOT unit_dataflow_mla_route_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  simaneat_backend_pair_args(unit_dataflow_mla_route_test _pair_args)
   add_pipeline_test_long(unit_dataflow_mla_route_test
-    ${CMAKE_CURRENT_SOURCE_DIR}/unit_testing/unit_dataflow_mla_route_test.cpp)
+    SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/unit_testing/unit_dataflow_mla_route_test.cpp ARGS ${_pair_args})
   set_tests_properties(unit_dataflow_mla_route_test PROPERTIES TIMEOUT 300)
   set_property(TEST unit_dataflow_mla_route_test APPEND PROPERTY LABELS "unit;dataflow")
+  simaneat_add_backend_pair(unit_dataflow_mla_route_test)
 endif()
 
 # A model package's whole route (H1): Input -> Model::preprocess() -> inference() -> postprocess()
-# -> Output with the kernel stages on the A65, on both backends in one process, public API only.
+# -> Output with the kernel stages on the A65, on both backends (simaneat_add_backend_pair), public
+# API only.
 # It needs the MLA and a compiled model package (--model-package or SIMA_TEST_MODEL_PACKAGE; it
 # downloads nothing), so it is a long test that skips without one. No row runs a kernel on the
 # EV74.
 if (SIMANEAT_DATAFLOW_SOURCE_DIR AND
     NOT unit_dataflow_model_route_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  simaneat_backend_pair_args(unit_dataflow_model_route_test _pair_args)
   add_pipeline_test_long(unit_dataflow_model_route_test
-    ${CMAKE_CURRENT_SOURCE_DIR}/unit_testing/unit_dataflow_model_route_test.cpp)
+    SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/unit_testing/unit_dataflow_model_route_test.cpp ARGS ${_pair_args})
   set_tests_properties(unit_dataflow_model_route_test PROPERTIES TIMEOUT 300)
   set_property(TEST unit_dataflow_model_route_test APPEND PROPERTY LABELS "unit;dataflow")
+  simaneat_add_backend_pair(unit_dataflow_model_route_test)
 endif()
 
 # The image preproc stage (H1, step Y1): Input -> Model::preprocess() -> Output of a detection
-# model on both backends in one process, public API only. It needs the EV74 on the Kernels
+# model on both backends (simaneat_add_backend_pair), public API only. It needs the EV74 on the Kernels
 # firmware and a model package with an image input (--model-package,
 # SIMA_TEST_PREPROC_MODEL_PACKAGE or SIMA_YOLO_TAR; it downloads nothing), so it is a long test
 # that skips without one.
 if (SIMANEAT_DATAFLOW_SOURCE_DIR AND
     NOT unit_dataflow_preproc_route_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  simaneat_backend_pair_args(unit_dataflow_preproc_route_test _pair_args)
   add_pipeline_test_long(unit_dataflow_preproc_route_test
-    ${CMAKE_CURRENT_SOURCE_DIR}/unit_testing/unit_dataflow_preproc_route_test.cpp)
+    SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/unit_testing/unit_dataflow_preproc_route_test.cpp ARGS ${_pair_args})
   set_tests_properties(unit_dataflow_preproc_route_test PROPERTIES TIMEOUT 300)
   set_property(TEST unit_dataflow_preproc_route_test APPEND PROPERTY LABELS "unit;dataflow")
+  simaneat_add_backend_pair(unit_dataflow_preproc_route_test)
 endif()
 
 # An MLA stage whose one output buffer holds several tensors (H1, step Y2): Input ->
 # Model::inference() -> Output, and Input -> Model::preprocess() -> Model::inference() -> Output,
-# of a detection model on both backends in one process, public API only. It needs the MLA and a
+# of a detection model on both backends (simaneat_add_backend_pair), public API only. It needs the
+# MLA and a
 # model package whose MLA stage publishes several tensors (--model-package,
 # SIMA_TEST_PACKED_MODEL_PACKAGE or SIMA_YOLO_TAR; it downloads nothing), so it is a long test
 # that skips without one.
 if (SIMANEAT_DATAFLOW_SOURCE_DIR AND
     NOT unit_dataflow_packed_route_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  simaneat_backend_pair_args(unit_dataflow_packed_route_test _pair_args)
   add_pipeline_test_long(unit_dataflow_packed_route_test
-    ${CMAKE_CURRENT_SOURCE_DIR}/unit_testing/unit_dataflow_packed_route_test.cpp)
+    SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/unit_testing/unit_dataflow_packed_route_test.cpp ARGS ${_pair_args})
   set_tests_properties(unit_dataflow_packed_route_test PROPERTIES TIMEOUT 300)
   set_property(TEST unit_dataflow_packed_route_test APPEND PROPERTY LABELS "unit;dataflow")
+  simaneat_add_backend_pair(unit_dataflow_packed_route_test)
 endif()
 
 # BoxDecode behind the MLA (H1, step Y3): Input -> Model::preprocess() -> Model::inference() ->
-# Model::postprocess() -> Output of a detection model on both backends in one process, public API
-# only. It needs the MLA, the EV74 on the Kernels firmware and a YOLOv8 detection model package
+# Model::postprocess() -> Output of a detection model on both backends (simaneat_add_backend_pair),
+# public API only. It needs the MLA, the EV74 on the Kernels firmware and a YOLOv8 detection model package
 # (--model-package, SIMA_TEST_BOXDECODE_MODEL_PACKAGE or SIMA_YOLO_TAR; it downloads nothing), so
 # it is a long test that skips without one.
 if (SIMANEAT_DATAFLOW_SOURCE_DIR AND
     NOT unit_dataflow_boxdecode_route_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  simaneat_backend_pair_args(unit_dataflow_boxdecode_route_test _pair_args)
   add_pipeline_test_long(unit_dataflow_boxdecode_route_test
-    ${CMAKE_CURRENT_SOURCE_DIR}/unit_testing/unit_dataflow_boxdecode_route_test.cpp)
+    SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/unit_testing/unit_dataflow_boxdecode_route_test.cpp ARGS ${_pair_args})
   set_tests_properties(unit_dataflow_boxdecode_route_test PROPERTIES TIMEOUT 300)
   set_property(TEST unit_dataflow_boxdecode_route_test APPEND PROPERTY LABELS "unit;dataflow")
+  simaneat_add_backend_pair(unit_dataflow_boxdecode_route_test)
 endif()
 
 # Frames of a size that changes between pushes, and NV12 frames, on the Dataflow backend (H1,
-# step Y4): the routes of a detection model with the image preproc in front, against GStreamer
-# for the same pushes. Needs the EV74 on the Kernels firmware and a compiled YOLOv8 detection
+# step Y4): the routes of a detection model with the image preproc in front, against GStreamer's
+# record for the same pushes (simaneat_add_backend_pair). Needs the EV74 on the Kernels firmware and a compiled YOLOv8 detection
 # package (--model-package, SIMA_TEST_BOXDECODE_MODEL_PACKAGE or SIMA_YOLO_TAR; it downloads
 # nothing), so it is a long test that skips without one.
 if (SIMANEAT_DATAFLOW_SOURCE_DIR AND
     NOT unit_dataflow_frame_route_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  simaneat_backend_pair_args(unit_dataflow_frame_route_test _pair_args)
   add_pipeline_test_long(unit_dataflow_frame_route_test
-    ${CMAKE_CURRENT_SOURCE_DIR}/unit_testing/unit_dataflow_frame_route_test.cpp)
+    SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/unit_testing/unit_dataflow_frame_route_test.cpp ARGS ${_pair_args})
   set_tests_properties(unit_dataflow_frame_route_test PROPERTIES TIMEOUT 600)
   set_property(TEST unit_dataflow_frame_route_test APPEND PROPERTY LABELS "unit;dataflow")
+  simaneat_add_backend_pair(unit_dataflow_frame_route_test)
 endif()
 
 # The Dataflow backend's model-route planner as a pure function: every decline it can return,
@@ -3375,17 +3426,13 @@ target_link_libraries(unit_sima_plugins_test PRIVATE SimaScheduler::frontend)
 # ------------------------------------------------------------------------------
 # H0 C4: the H0-scope tests a second time, on the Dataflow backend
 # ------------------------------------------------------------------------------
-# Each test below is registered once more as <name>_dataflow, with the original's properties plus
-# SIMA_NEAT_BACKEND=dataflow and the label `dataflow`. RunBackend::Auto, the default, then takes
-# the Dataflow backend for every Run whose graph qualifies (public Inputs feeding public Outputs,
-# each Output fed by one Input: H0c) and keeps the others on GStreamer (architecture.md,
-# "Environment / configuration knobs"). H0c's multi-endpoint tests (plan 1.5 group 4): phaseA0,
-# phase3_public_graph_branching and phase4_named_endpoint_api (already here), phaseA1 and phaseA3
-# combine run their fan-out, several-input and elided-boundary blocks on Dataflow; their fan-in and
-# Combine blocks (H1: a combine operator), custom() and realtime-link blocks (H1) and
-# describe_backend-only blocks stay on GStreamer, each said by its [NEAT] line. Tests that set
-# RunOptions::backend themselves (C3's unit_dataflow_backend_test asks for Dataflow) run the same
-# under either entry.
+# Each test below is built a second time as <name>_dataflow, from its own sources unchanged plus
+# support/select_dataflow_backend.cpp, whose static initializer selects the Dataflow backend
+# (set_backend) before main() as an application's first call would; it is registered with the
+# original's properties and the label `dataflow`. Every Run of such a process is on Dataflow: a
+# graph the Dataflow backend does not carry (fan-in and Combine, custom(), realtime links, sources)
+# fails at its build with the not-carried error, so a block of such a test that builds one fails
+# there, and the list of those failures is what the Dataflow backend has left to carry.
 # Not registered on Dataflow (plan D12): unit_run_overflow_policy_parity_test,
 # unit_run_lifecycle_teardown_test and unit_run_api_matrix_test assert GStreamer internals (buffer
 # holders, pipeline_handle(), RunCore's input worker and stream_close_state, bus messages); the
@@ -3416,20 +3463,36 @@ if (SIMANEAT_DATAFLOW_SOURCE_DIR)
       pull_timeout_regression_test
       unit_error_code_taxonomy_test
       stress_run_async_pressure_test
-      async_stream_test
-      unit_dataflow_backend_test)
-    if (NOT TEST ${_h0_test})
+      async_stream_test)
+    if (NOT TEST ${_h0_test} OR NOT TARGET ${_h0_test})
       continue()
     endif()
-    simaneat_add_test(NAME ${_h0_test}_dataflow COMMAND ${_h0_test})
+    get_target_property(_h0_sources ${_h0_test} SOURCES)
+    get_target_property(_h0_libraries ${_h0_test} LINK_LIBRARIES)
+    get_target_property(_h0_includes ${_h0_test} INCLUDE_DIRECTORIES)
+    get_target_property(_h0_definitions ${_h0_test} COMPILE_DEFINITIONS)
+    add_executable(${_h0_test}_dataflow ${_h0_sources}
+      ${CMAKE_CURRENT_SOURCE_DIR}/support/select_dataflow_backend.cpp)
+    add_dependencies(${_h0_test}_dataflow prepare_test_fixtures)
+    if (_h0_libraries)
+      target_link_libraries(${_h0_test}_dataflow PRIVATE ${_h0_libraries})
+    endif()
+    if (_h0_includes)
+      target_include_directories(${_h0_test}_dataflow PRIVATE ${_h0_includes})
+    endif()
+    if (_h0_definitions)
+      target_compile_definitions(${_h0_test}_dataflow PRIVATE ${_h0_definitions})
+    endif()
+    set_target_properties(${_h0_test}_dataflow PROPERTIES
+      INSTALL_RPATH "$ORIGIN/../..;${CMAKE_INSTALL_RPATH}")
+    install(TARGETS ${_h0_test}_dataflow RUNTIME DESTINATION lib/sima-neat/tests COMPONENT extras)
+    simaneat_add_test(NAME ${_h0_test}_dataflow COMMAND ${_h0_test}_dataflow)
     foreach(_h0_prop LABELS ENVIRONMENT TIMEOUT SKIP_RETURN_CODE RESOURCE_LOCK)
       get_test_property(${_h0_test} ${_h0_prop} _h0_value)
       if (_h0_value)
         set_property(TEST ${_h0_test}_dataflow PROPERTY ${_h0_prop} "${_h0_value}")
       endif()
     endforeach()
-    set_property(TEST ${_h0_test}_dataflow APPEND PROPERTY ENVIRONMENT
-      "SIMA_NEAT_BACKEND=dataflow")
     set_property(TEST ${_h0_test}_dataflow APPEND PROPERTY LABELS "dataflow")
   endforeach()
 endif()

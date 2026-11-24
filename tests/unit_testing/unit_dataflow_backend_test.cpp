@@ -1,13 +1,13 @@
-// The Dataflow backend behind Core's Run (H0 C3), on the public API only: every Run here is built
-// with RunOptions::backend = RunBackend::Dataflow, so the test does not depend on
-// SIMA_NEAT_BACKEND, and no runtime type is named (libsima_neat.so hides the runtime's symbols).
+// The Dataflow backend behind Core's Run (H0 C3), on the public API only: the process runs on the
+// Dataflow backend (--backend=dataflow, set_backend), and no runtime type is named
+// (libsima_neat.so hides the runtime's symbols). Registered a second time with
+// --backend=gstreamer, which runs the rows that hold on both backends.
 //
 // Covers: an undeclared input bound by its first push and enforced; a declared input with a
 // dynamic axis; a push outside the declared shape rejected at push; the build errors, a fan-out
 // building (unit_dataflow_endpoints_test covers several endpoints) and an Input feeding no Output;
-// a Run Dataflow does not carry, asked for explicitly and under RunBackend::Auto (the
-// not-carried error at Graph::build either way, never a Run on GStreamer); the Session report
-// Run::stop prints;
+// a Run Dataflow does not carry (the not-carried error at Graph::build, never a Run on
+// GStreamer); the Session report Run::stop prints;
 // the holder push error; explicit Dataflow on a sync run; a record bound by its first push (C2);
 // the link depth (the larger of queue_depth and max_buffers, each after its default or clamp);
 // try_push accounting
@@ -23,8 +23,8 @@
 // OverflowPolicy::Auto takes the preset's KeepLatest, on both backends); concurrent stops;
 // state and measurement reads racing a stop; device inputs (H0b: InputOptions::memory_policy Ev74
 // and Dms0): a CPU tensor copied into the input's DMA-BUF pool (with the compatibility copy
-// allowed: without it the push throws, unit_run_backend_differential_test), the pulled tensor
-// forwarded as it is into a GStreamer Run, Run::alloc on the pool, a pulled device tensor pushed
+// allowed: without it the push throws, unit_run_backend_differential_test), Run::alloc on the
+// pool, a pulled device tensor pushed
 // back (copied, and copied again once its geometry is one the input has validated), an Owned pull,
 // also of an EV74 tensor that was wrapped.
 
@@ -38,6 +38,7 @@
 #include "pipeline/Graph.h"
 #include "pipeline/NeatError.h"
 #include "dmabuf_identity.h"
+#include "support/backend_selection.h"
 #include "test_main.h"
 #include "test_utils.h"
 
@@ -67,9 +68,9 @@ namespace {
 using namespace simaai::neat;
 using Clock = std::chrono::steady_clock;
 
+// The Run options of most rows (the process runs on Dataflow).
 RunOptions dataflow(int queue_depth = 4, OverflowPolicy policy = OverflowPolicy::Block) {
   RunOptions opt;
-  opt.backend = RunBackend::Dataflow;
   opt.queue_depth = queue_depth;
   opt.overflow_policy = policy;
   return opt;
@@ -400,39 +401,24 @@ void build_errors() {
   }
 }
 
-// No fallback: a Run for Dataflow that Dataflow does not carry fails at Graph::build with the
-// not-carried error, whether Dataflow was asked for by RunOptions::backend or by RunBackend::Auto
-// under SIMA_NEAT_BACKEND=dataflow, and whether the input binds at the build (a seed) or would
-// bind at its first push (no seed). Nothing is built on GStreamer in its place. Here: a link
-// deeper than the backend's (2^30 items; RunOptions::queue_depth above that).
+// No fallback: a Run that Dataflow does not carry fails at Graph::build with the not-carried
+// error, whether the input binds at the build (a seed) or would bind at its first push (no seed).
+// Nothing is built on GStreamer in its place. Here: a link deeper than the backend's (2^30 items;
+// RunOptions::queue_depth above that).
 void no_fallback_to_gstreamer() {
   constexpr int kDeeperThanALink = (1 << 30) + 1;
-  for (const bool automatic : {false, true}) {
-    RunOptions options = dataflow(kDeeperThanALink);
-    if (automatic) {
-      options.backend = RunBackend::Auto;
-      ::setenv("SIMA_NEAT_BACKEND", "dataflow", 1);
-    }
-    std::string text;
-    {
-      StderrCapture capture;
-      for (const bool seeded : {false, true}) {
-        require_neat_error(
-            [&] {
-              Graph g = input_output();
-              (void)(seeded ? g.build(TensorList{rgb(8, 8, 1)}, options) : g.build(options));
-            },
-            error_codes::kOptionOutOfRange,
-            "option RunOptions::queue_depth = 1073741825 with OutputOptions::max_buffers = ",
-            " is not carried by the Dataflow backend: the link from an Input to its Output is as "
-            "deep as the larger of the two, 1073741825, and a link holds at most 1073741824 "
-            "items.\nHint: To run this program on the GStreamer backend, ");
-      }
-      text = capture.text();
-    }
-    ::unsetenv("SIMA_NEAT_BACKEND");
-    require(text.find("backend=gstreamer") == std::string::npos,
-            "a declined Run is not built on GStreamer:\n" + text);
+  const RunOptions options = dataflow(kDeeperThanALink);
+  for (const bool seeded : {false, true}) {
+    require_neat_error(
+        [&] {
+          Graph g = input_output();
+          (void)(seeded ? g.build(TensorList{rgb(8, 8, 1)}, options) : g.build(options));
+        },
+        error_codes::kOptionOutOfRange,
+        "option RunOptions::queue_depth = 1073741825 with OutputOptions::max_buffers = ",
+        " is not carried by the Dataflow backend: the link from an Input to its Output is as "
+        "deep as the larger of the two, 1073741825, and a link holds at most 1073741824 "
+        "items.\nHint: To run this program on the GStreamer backend, ");
   }
 }
 
@@ -760,13 +746,12 @@ void connected_realtime_explicit_block() {
 // A plain linear Run resolves its options as GStreamer's one-segment Run does, by the same code: an
 // explicit Block survives the Realtime preset (try_push refuses when the queue is full and drops
 // nothing), and only OverflowPolicy::Auto takes the preset's KeepLatest (try_push never refuses
-// and evicts the oldest). The same on both backends.
+// and evicts the oldest). The same on both backends (each process runs it on its own).
 void linear_realtime_keeps_an_explicit_block() {
-  for (const RunBackend backend : {RunBackend::Dataflow, RunBackend::GStreamer}) {
-    const std::string on = backend == RunBackend::Dataflow ? " (Dataflow)" : " (GStreamer)";
+  {
+    const std::string on = std::string(" (") + sima_test::backend_name() + ")";
     for (const OverflowPolicy policy : {OverflowPolicy::Block, OverflowPolicy::Auto}) {
       RealtimeBlock c;
-      c.opt.backend = backend;
       c.opt.overflow_policy = policy;
       Graph g = input_output(c.in, OutputOptions::EveryFrame(1));
       Run run = g.build(TensorList{rgb(32, 24, 1)}, c.opt);
@@ -1151,39 +1136,6 @@ void cpu_tensor_into_device_input(InputMemoryPolicy memory, DeviceType device) {
   run.close();
 }
 
-// A tensor pulled from an Ev74 input goes as it is into a GStreamer Run with an Ev74 input, which
-// hands out the same DMA-BUF; once both tensors are gone the slot is the pool's again, so more
-// frames than the pool holds still pass.
-void device_pull_forwards_into_gstreamer() {
-  const CompatCopy copy;
-  Graph g = input_output(device_input(InputMemoryPolicy::Ev74));
-  Run source = g.build(dataflow());
-  RunOptions gst;
-  gst.backend = RunBackend::GStreamer;
-  gst.startup_preflight = false;
-  Graph g2 = input_output(device_input(InputMemoryPolicy::Ev74));
-  Run sink = g2.build(TensorList{rgb(64, 48, 0x01)}, gst);
-  const std::vector<std::uint8_t> expected = bytes_of(rgb(64, 48, 0x31));
-  {
-    require(source.push(TensorList{rgb(64, 48, 0x31)}), "push into the source");
-    const Tensor pulled = pulled_tensor(source, 2000, "source");
-    require(sink.push(TensorList{pulled}), "forward into the GStreamer Run");
-    const Tensor forwarded = pulled_tensor(sink, 5000, "GStreamer Run");
-    require(sima_test::dmabuf_inode(pulled) != 0U &&
-                sima_test::dmabuf_inode(forwarded) == sima_test::dmabuf_inode(pulled),
-            "the GStreamer Run hands out the same DMA-BUF");
-    require(bytes_of(forwarded) == expected, "forwarded bytes");
-  }
-  sink.close();
-  for (int i = 0; i < 24; ++i) {
-    const Tensor t = rgb(64, 48, static_cast<std::uint8_t>(0x40 + i));
-    require(source.push(TensorList{t}), "push after the forward " + std::to_string(i));
-    require(bytes_of(pulled_tensor(source, 2000, "after the forward")) == bytes_of(t),
-            "bytes after the forward " + std::to_string(i));
-  }
-  source.close();
-}
-
 // Run::alloc on a device input lends a slot of the device pool: what the application writes there
 // is what the pull hands out, as DMA-BUF memory.
 void alloc_on_device_input() {
@@ -1293,7 +1245,12 @@ void mat_and_bundle_pushes() {
 
 } // namespace
 
-RUN_TEST("unit_dataflow_backend_test", ([] {
+RUN_BACKEND_TEST("unit_dataflow_backend_test", ([] {
+           if (!sima_test::on_dataflow()) {
+             // The rows that hold on both backends.
+             linear_realtime_keeps_an_explicit_block();
+             return;
+           }
            warnings_once_per_process();
            undeclared_input_bound_by_first_push();
            declared_input_with_dynamic_axis();
@@ -1320,7 +1277,6 @@ RUN_TEST("unit_dataflow_backend_test", ([] {
            owned_output_and_lease_lifetime();
            cpu_tensor_into_device_input(InputMemoryPolicy::Ev74, DeviceType::SIMA_CVU);
            cpu_tensor_into_device_input(InputMemoryPolicy::Dms0, DeviceType::SIMA_MLA);
-           device_pull_forwards_into_gstreamer();
            alloc_on_device_input();
            pulled_device_tensor_is_copied_back();
            owned_pull_of_wrapped_device_tensor();

@@ -1,6 +1,6 @@
-// Zero-copy push on Core's public API (W2: agent-work/h0b/plan.md 7.3, D14-D16), on the backend
-// SIMA_NEAT_BACKEND names (dataflow: RunBackend::Dataflow, requested explicitly; otherwise
-// RunBackend::GStreamer). The same executable is registered once per backend.
+// Zero-copy push on Core's public API (W2: agent-work/h0b/plan.md 7.3, D14-D16), on the process's
+// backend (--backend=gstreamer|dataflow, set_backend). The same executable is registered once per
+// backend.
 //
 // Both backends (what every push keeps):
 //   - the bytes pulled are the bytes pushed: push and try_push, TensorList and Sample, the new and
@@ -32,6 +32,7 @@
 #include "nodes/io/Input.h"
 #include "pipeline/Graph.h"
 #include "pipeline/Result.h"
+#include "support/backend_selection.h"
 #include "test_main.h"
 #include "test_utils.h"
 
@@ -56,14 +57,10 @@ using namespace simaai::neat;
 using namespace std::chrono_literals;
 using Clock = std::chrono::steady_clock;
 
-bool on_dataflow() {
-  const char* env = std::getenv("SIMA_NEAT_BACKEND");
-  return env != nullptr && std::string(env) == "dataflow";
-}
+using sima_test::on_dataflow;
 
 RunOptions options(int queue_depth = 4, OverflowPolicy policy = OverflowPolicy::Block) {
   RunOptions opt;
-  opt.backend = on_dataflow() ? RunBackend::Dataflow : RunBackend::GStreamer;
   opt.queue_depth = queue_depth;
   opt.overflow_policy = policy;
   opt.startup_preflight = false;
@@ -829,7 +826,7 @@ void mat_cases() {
 
 } // namespace
 
-RUN_TEST("unit_run_push_wrap_test", ([] {
+RUN_BACKEND_TEST("unit_run_push_wrap_test", ([] {
            std::fprintf(stderr, "[INFO] backend %s\n", on_dataflow() ? "dataflow" : "gstreamer");
            wrap_round_trips();
            lifetimes();

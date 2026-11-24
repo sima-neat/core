@@ -1,7 +1,6 @@
 // The TensorList surface of H0 (parts C2, C2b: Core's Tensor surface is TensorList-only) on the
-// public API, on the backend SIMA_NEAT_BACKEND names (dataflow: RunBackend::Dataflow, requested
-// explicitly; otherwise RunBackend::GStreamer). The same executable is registered once per backend
-// (tests/CMakeLists.txt).
+// public API, on the process's backend (--backend=gstreamer|dataflow, set_backend). The same
+// executable is registered once per backend (tests/CMakeLists.txt).
 //
 // Covers: Graph::input/output graphs (named endpoints, a Handle from another Graph); stamp fields
 // after pull (proposed by a list's first tensor, push and try_push), and the projection of a
@@ -19,6 +18,7 @@
 #include "pipeline/Graph.h"
 #include "pipeline/NeatError.h"
 #include "pipeline/Result.h"
+#include "support/backend_selection.h"
 #include "test_main.h"
 #include "test_utils.h"
 
@@ -43,15 +43,10 @@ namespace {
 using namespace simaai::neat;
 using namespace std::chrono_literals;
 
-bool on_dataflow() {
-  const char* env = std::getenv("SIMA_NEAT_BACKEND");
-  return env != nullptr && std::string(env) == "dataflow";
-}
+using sima_test::on_dataflow;
 
 RunOptions options() {
-  RunOptions opt;
-  opt.backend = on_dataflow() ? RunBackend::Dataflow : RunBackend::GStreamer;
-  return opt;
+  return RunOptions{};
 }
 
 // An RGB tensor whose bytes encode `tag` and their position.
@@ -620,7 +615,7 @@ void statistics() {
 
 } // namespace
 
-RUN_TEST("unit_run_tensor_surface_test", ([] {
+RUN_BACKEND_TEST("unit_run_tensor_surface_test", ([] {
            std::cout << "[INFO] backend under test: " << (on_dataflow() ? "dataflow" : "gstreamer")
                      << "\n";
            graph_input_output();

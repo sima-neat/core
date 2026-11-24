@@ -1,8 +1,9 @@
 // Differential test (H0 3.10, parts C4, C2b): one fixed input sequence through the same graph on
-// both backends (RunBackend::GStreamer and RunBackend::Dataflow, requested explicitly, in one
-// process), with and without frame_id / stream_id / pts_ns set and with copy_input on and off; the
-// pulled items are compared field by field and byte by byte. SIMA_NEAT_BACKEND does not matter
-// here. W2 (zero-copy push): on Dataflow each single-input item is also checked to be wrapped (the
+// both backends, with and without frame_id / stream_id / pts_ns set and with copy_input on and
+// off; the pulled items are compared field by field and byte by byte. A process runs on one
+// backend (set_backend), so the test is two processes: --backend=gstreamer
+// --reference=<file> records what GStreamer gave, every observed value and byte, and
+// --backend=dataflow --reference=<file> runs the same sequence and compares. W2 (zero-copy push): on Dataflow each single-input item is also checked to be wrapped (the
 // pulled tensor's first byte is the pushed one) exactly when copy_input is off and the frame fills
 // a slot (a fixed port's frames, a bounded port's frames at the bound), and copied otherwise; the
 // fixed-port variants are wrapped throughout.
@@ -63,6 +64,7 @@
 #include "pipeline/NeatError.h"
 #include "pipeline/Result.h"
 #include "dmabuf_identity.h"
+#include "support/backend_selection.h"
 #include "test_main.h"
 #include "test_utils.h"
 
@@ -191,7 +193,7 @@ TensorObs observe(const Tensor& t) {
   return o;
 }
 
-Run build(const Variant& v, RunBackend backend) {
+Run build(const Variant& v) {
   InputOptions in;
   in.payload_type = PayloadType::Image;
   in.format = FormatTag::RGB;
@@ -208,7 +210,6 @@ Run build(const Variant& v, RunBackend backend) {
   out.sync = false;
   RunOptions opt;
   opt.preset = v.preset;
-  opt.backend = backend;
   opt.queue_depth = 16;
   opt.overflow_policy = OverflowPolicy::Block;
   opt.startup_preflight = false;
@@ -314,10 +315,10 @@ struct Outcome {
   std::string build_error;
 };
 
-Outcome run_variant(const Variant& v, RunBackend backend) {
+Outcome run_variant(const Variant& v) {
   Outcome out;
   try {
-    Run run = build(v, backend);
+    Run run = build(v);
     const std::vector<Item> items = sequence(v.vary_shapes);
     std::vector<Tensor> sources; // kept unchanged and alive until pulled (copy_input off)
     for (std::size_t i = 0; i < items.size(); ++i) {
@@ -346,6 +347,112 @@ Outcome run_variant(const Variant& v, RunBackend backend) {
   } catch (const std::exception& e) {
     out.build_error = e.what();
   }
+  return out;
+}
+
+// ---- the reference record ----------------------------------------------------------------------
+// What the GStreamer process observed, written field by field and read back by the Dataflow
+// process for compare(): every value compare() reads of the GStreamer side.
+
+void save(sima_test::Archive& a, const Observed& o) {
+  a.put_number(static_cast<int>(o.status)).put(o.error);
+  a.put_number(static_cast<int>(o.kind)).put_number(o.has_tensor).put_number(o.tensors);
+  a.put_number(o.fields).put_number(o.frame_id).put_number(o.pts_ns).put_number(o.dts_ns);
+  a.put_number(o.duration_ns).put_number(o.input_seq).put_number(o.orig_input_seq);
+  a.put(o.stream_id).put(o.stream_label).put(o.media_type).put(o.payload_tag).put(o.caps_string);
+  a.put_number(o.attributes).put_number(o.list_size);
+  a.put_number(o.stamp.frame_id).put(o.stamp.stream_name).put_number(o.stamp.stream);
+  a.put_number(o.stamp.seq).put_number(o.stamp.source_time.ns);
+  a.put_number(static_cast<int>(o.stamp.source_time.clock)).put_number(o.stamp.publish_time.ns);
+  a.put_number(static_cast<int>(o.stamp.publish_time.clock));
+  a.put_number(static_cast<int>(o.stamp.flags));
+  a.put_number(o.leaves.size());
+  for (const TensorObs& t : o.leaves) {
+    a.put_number(static_cast<int>(t.dtype)).put_number(t.shape.size());
+    for (const std::int64_t d : t.shape) {
+      a.put_number(d);
+    }
+    a.put_number(t.format).put(t.bytes).put_number(t.device).put_number(t.dmabuf);
+  }
+}
+
+Observed load_observed(sima_test::Archive& a) {
+  Observed o;
+  o.status = static_cast<PullStatus>(a.get_number<int>());
+  o.error = a.get();
+  o.kind = static_cast<SampleKind>(a.get_number<int>());
+  o.has_tensor = a.get_number<int>() != 0;
+  o.tensors = a.get_number<std::size_t>();
+  o.fields = a.get_number<std::size_t>();
+  o.frame_id = a.get_number<std::int64_t>();
+  o.pts_ns = a.get_number<std::int64_t>();
+  o.dts_ns = a.get_number<std::int64_t>();
+  o.duration_ns = a.get_number<std::int64_t>();
+  o.input_seq = a.get_number<std::int64_t>();
+  o.orig_input_seq = a.get_number<std::int64_t>();
+  o.stream_id = a.get();
+  o.stream_label = a.get();
+  o.media_type = a.get();
+  o.payload_tag = a.get();
+  o.caps_string = a.get();
+  o.attributes = a.get_number<std::size_t>();
+  o.list_size = a.get_number<std::size_t>();
+  o.stamp.frame_id = a.get_number<std::int64_t>();
+  o.stamp.stream_name = a.get();
+  o.stamp.stream = a.get_number<decltype(o.stamp.stream)>();
+  o.stamp.seq = a.get_number<decltype(o.stamp.seq)>();
+  o.stamp.source_time.ns = a.get_number<std::int64_t>();
+  o.stamp.source_time.clock = static_cast<ClockId>(a.get_number<int>());
+  o.stamp.publish_time.ns = a.get_number<std::int64_t>();
+  o.stamp.publish_time.clock = static_cast<ClockId>(a.get_number<int>());
+  o.stamp.flags = static_cast<decltype(o.stamp.flags)>(a.get_number<int>());
+  const auto leaves = a.get_number<std::size_t>();
+  for (std::size_t i = 0; i < leaves; ++i) {
+    TensorObs t;
+    t.dtype = static_cast<TensorDType>(a.get_number<int>());
+    const auto rank = a.get_number<std::size_t>();
+    for (std::size_t d = 0; d < rank; ++d) {
+      t.shape.push_back(a.get_number<std::int64_t>());
+    }
+    t.format = a.get_number<int>();
+    t.bytes = a.get_bytes();
+    t.device = a.get_number<int>();
+    t.dmabuf = a.get_number<std::uint64_t>();
+    o.leaves.push_back(std::move(t));
+  }
+  return o;
+}
+
+std::string save(const Outcome& out) {
+  sima_test::Archive a;
+  a.put_number(out.items.size());
+  for (const Observed& o : out.items) {
+    save(a, o);
+  }
+  a.put_number(out.pushed.size());
+  for (std::size_t i = 0; i < out.pushed.size(); ++i) {
+    a.put(out.pushed[i]).put_number(out.source_dmabufs[i]);
+  }
+  a.put_number(static_cast<int>(out.final_status)).put(out.final_error).put(out.build_error);
+  return a.data();
+}
+
+Outcome load_outcome(const std::string& data) {
+  sima_test::Archive a(data);
+  Outcome out;
+  const auto items = a.get_number<std::size_t>();
+  for (std::size_t i = 0; i < items; ++i) {
+    out.items.push_back(load_observed(a));
+  }
+  const auto pushed = a.get_number<std::size_t>();
+  for (std::size_t i = 0; i < pushed; ++i) {
+    out.pushed.push_back(a.get_bytes());
+    out.source_dmabufs.push_back(a.get_number<std::uint64_t>());
+    out.sources.push_back(nullptr); // an address in the GStreamer process: not compared
+  }
+  out.final_status = static_cast<PullStatus>(a.get_number<int>());
+  out.final_error = a.get();
+  out.build_error = a.get();
   return out;
 }
 
@@ -681,7 +788,7 @@ std::vector<std::string> multi_outputs(Topology t) {
                                  : std::vector<std::string>{"a", "b"};
 }
 
-Run build_multi(const MultiVariant& v, RunBackend backend) {
+Run build_multi(const MultiVariant& v) {
   InputOptions in;
   in.payload_type = PayloadType::Image;
   in.format = FormatTag::RGB;
@@ -695,7 +802,6 @@ Run build_multi(const MultiVariant& v, RunBackend backend) {
   out.drop = false;
   out.sync = false;
   RunOptions opt;
-  opt.backend = backend;
   opt.queue_depth = 16;
   opt.overflow_policy = OverflowPolicy::Block;
   opt.startup_preflight = false;
@@ -764,10 +870,10 @@ Observed pull_named(Run& run, bool new_pull, const std::string& output) {
   return o;
 }
 
-MultiOutcome run_multi(const MultiVariant& v, RunBackend backend) {
+MultiOutcome run_multi(const MultiVariant& v) {
   MultiOutcome out;
   try {
-    Run run = build_multi(v, backend);
+    Run run = build_multi(v);
     const std::vector<Item> items = sequence(false);
     std::vector<Tensor> sources;
     for (std::size_t i = 0; i < items.size(); ++i) {
@@ -822,6 +928,49 @@ MultiOutcome run_multi(const MultiVariant& v, RunBackend backend) {
   } catch (const std::exception& e) {
     out.build_error = e.what();
   }
+  return out;
+}
+
+std::string save(const MultiOutcome& out) {
+  sima_test::Archive a;
+  a.put_number(out.pulls.size());
+  for (const MultiObserved& p : out.pulls) {
+    a.put(p.output).put_number(p.item);
+    save(a, p.seen);
+  }
+  a.put_number(out.pushed.size());
+  for (const auto& bytes : out.pushed) {
+    a.put(bytes);
+  }
+  a.put_number(out.final_status.size());
+  for (const auto& [output, status] : out.final_status) {
+    a.put(output).put_number(static_cast<int>(status));
+  }
+  a.put(out.build_error);
+  return a.data();
+}
+
+MultiOutcome load_multi(const std::string& data) {
+  sima_test::Archive a(data);
+  MultiOutcome out;
+  const auto pulls = a.get_number<std::size_t>();
+  for (std::size_t i = 0; i < pulls; ++i) {
+    MultiObserved p;
+    p.output = a.get();
+    p.item = a.get_number<std::size_t>();
+    p.seen = load_observed(a);
+    out.pulls.push_back(std::move(p));
+  }
+  const auto pushed = a.get_number<std::size_t>();
+  for (std::size_t i = 0; i < pushed; ++i) {
+    out.pushed.push_back(a.get_bytes());
+  }
+  const auto finals = a.get_number<std::size_t>();
+  for (std::size_t i = 0; i < finals; ++i) {
+    std::string output = a.get();
+    out.final_status.emplace_back(std::move(output), static_cast<PullStatus>(a.get_number<int>()));
+  }
+  out.build_error = a.get();
   return out;
 }
 
@@ -972,7 +1121,16 @@ void compare_multi(const MultiVariant& v, const MultiOutcome& gst, const MultiOu
 
 } // namespace
 
-RUN_TEST("unit_run_backend_differential_test", ([] {
+int main(int argc, char** argv) {
+  try {
+    sima_test::select_backend(argc, argv);
+  } catch (const std::exception& e) {
+    std::cerr << "[FAIL] " << e.what() << "\n";
+    return 1;
+  }
+  return sima_test::run_test("unit_run_backend_differential_test", [&] {
+           sima_test::Reference ref = sima_test::Reference::from_args(argc, argv);
+           std::cout << "[INFO] backend: " << sima_test::backend_name() << "\n";
            constexpr RunPreset kRealtime = RunPreset::Realtime;
            constexpr RunPreset kBalanced = RunPreset::Balanced;
            // name, preset, connected, vary_shapes, copy_input, do_timestamp, new_pull
@@ -1022,11 +1180,18 @@ RUN_TEST("unit_run_backend_differential_test", ([] {
              if (compat_copy) {
                setenv(kCompatCopyEnv, "1", 1);
              }
-             const Outcome gst = run_variant(v, RunBackend::GStreamer);
-             const Outcome df = run_variant(v, RunBackend::Dataflow);
+             const Outcome mine = run_variant(v);
              if (compat_copy) {
                unsetenv(kCompatCopyEnv);
              }
+             if (!ref.comparing()) {
+               ref.blob(v.name, save(mine));
+               std::cout << "  recorded: final=" << status_name(mine.final_status) << " '"
+                         << mine.final_error << "' build_error='" << mine.build_error << "'\n";
+               continue;
+             }
+             const Outcome gst = load_outcome(ref.recorded(v.name));
+             const Outcome& df = mine;
              Comparison c(v.name);
              compare(v, gst, df, c);
              std::cout << "  final: gstreamer=" << status_name(gst.final_status) << " '"
@@ -1046,8 +1211,14 @@ RUN_TEST("unit_run_backend_differential_test", ([] {
            };
            for (const MultiVariant& v : multi) {
              std::cout << "== " << v.name << "\n";
-             const MultiOutcome gst = run_multi(v, RunBackend::GStreamer);
-             const MultiOutcome df = run_multi(v, RunBackend::Dataflow);
+             const MultiOutcome mine = run_multi(v);
+             if (!ref.comparing()) {
+               ref.blob(v.name, save(mine));
+               std::cout << "  recorded: build_error='" << mine.build_error << "'\n";
+               continue;
+             }
+             const MultiOutcome gst = load_multi(ref.recorded(v.name));
+             const MultiOutcome& df = mine;
              Comparison c(v.name);
              compare_multi(v, gst, df, c);
              std::cout << "  compared " << c.compared() << " values, " << c.failures().size()
@@ -1058,10 +1229,12 @@ RUN_TEST("unit_run_backend_differential_test", ([] {
            for (const std::string& f : failures) {
              std::cerr << "[DIFF] " << f << "\n";
            }
+           ref.finish();
            std::cout << "[INFO] differential: " << variants.size() + multi.size() << " variants, "
                      << compared << " values compared, " << failures.size() << " differences\n";
            // A process that started GStreamer may lose its stdout tail at exit: flush first.
            std::cout << std::flush;
            require(failures.empty(), std::to_string(failures.size()) +
                                          " differences between the backends (see [DIFF] lines)");
-         }));
+         });
+}

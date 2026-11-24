@@ -1,9 +1,11 @@
 // An MLA stage whose one output buffer holds several tensors, on the Dataflow backend (H1, step
 // Y2), on the public API only. A detection model's MLA writes its heads into one buffer, each at
 // its byte offset; when Model::inference() is the route's last stage a pull returns them as a
-// TensorList, every tensor a view of the one pulled output. Two graphs, each built with
-// RunOptions::backend = RunBackend::Dataflow and, for the comparison, with RunBackend::GStreamer
-// in the same process. No runtime type is named.
+// TensorList, every tensor a view of the one pulled output. Two graphs, each on the Dataflow
+// backend and, for the comparison, on GStreamer. A process runs on one backend (set_backend): the
+// test runs twice, --backend=gstreamer --reference=<file> recording what the comparison rows pull,
+// then --backend=dataflow --reference=<file> running every row and comparing. No runtime type is
+// named.
 //   inference:  Input(the MLA's tessellated INT8 tensor) -> Model::inference() -> Output
 //               (Model: preprocess off, inference_terminal.mla_only): Feed -> MlaOp -> Fetch
 //   preprocess: Input(BGR frame, EV74 memory) -> Model::preprocess() -> Model::inference() ->
@@ -14,7 +16,7 @@
 // the test is skipped (it downloads nothing). YOLOv8s (six heads in one buffer of 1,209,600
 // bytes) is the one it was written with.
 // Rows:
-//   inference        four inputs in rotation through both backends, pulled as TensorList and as
+//   inference        four inputs in rotation on each backend, pulled as TensorList and as
 //                    Sample: the number of tensors; every tensor's dtype, layout, shape, strides,
 //                    byte offset, route, Semantic; the Sample's tags and labels; every byte of
 //                    every tensor. Excluded, printed with both values: the stage's name (GStreamer
@@ -26,7 +28,7 @@
 //                    produces more frames than it has output buffers, and after the Run is closed;
 //                    dropping it releases the storage.
 //   owned            OutputMemory::Owned: the same tensors over one CPU copy.
-//   preprocess       the second graph through both backends, compared as `inference` is, with
+//   preprocess       the second graph on each backend, compared as `inference` is, with
 //                    every field of Semantic::preprocess on every tensor. On a board whose EV74
 //                    runs the stock firmware: the build is refused, naming the firmware.
 // (The model's whole route, BoxDecode behind this MLA stage, is
@@ -40,6 +42,7 @@
 #include "pipeline/NeatError.h"
 #include "pipeline/Result.h"
 #include "cli_utils.h"
+#include "support/backend_selection.h"
 #include "test_main.h"
 #include "test_utils.h"
 
@@ -129,9 +132,8 @@ Model::Options image_options() {
   return o;
 }
 
-RunOptions on(RunBackend backend) {
+RunOptions on() {
   RunOptions o;
-  o.backend = backend;
   o.queue_depth = 4;
   o.overflow_policy = OverflowPolicy::Block;
   return o;
@@ -373,9 +375,9 @@ Frame pull_frame(Run& run, bool as_sample, const std::string& what) {
   return out;
 }
 
-std::vector<Frame> run_frames(Graph g, const std::vector<TensorList>& inputs, RunBackend backend,
-                              int frames, const std::string& row) {
-  Run run = g.build(inputs[0], on(backend));
+std::vector<Frame> run_frames(Graph g, const std::vector<TensorList>& inputs, int frames,
+                              const std::string& row) {
+  Run run = g.build(inputs[0], on());
   std::vector<Frame> seen;
   for (int i = 0; i < frames; ++i) {
     require(run.push(inputs[static_cast<std::size_t>(i) % inputs.size()]), row + ": push");
@@ -390,60 +392,57 @@ std::vector<Frame> run_frames(Graph g, const std::vector<TensorList>& inputs, Ru
   return seen;
 }
 
-// Both backends' frames, field by field and byte by byte. Returns the number of tensors a frame.
-std::size_t compare(const std::vector<Frame>& gst, const std::vector<Frame>& df,
+// A backend's frames, field by field and byte by byte: recorded by the GStreamer run and compared
+// by the Dataflow run (`row` names the record's keys). Returns the number of tensors a frame.
+std::size_t compare(sima_test::Reference& ref, const std::vector<Frame>& frames,
                     const std::string& row) {
-  require(gst.size() == df.size() && !gst.empty(), row + ": both backends produced every frame");
-  const std::size_t count = gst[0].tensors.size();
+  require(!frames.empty(), row + ": every frame was produced");
+  ref.equal(row + ": frames", frames.size());
+  const std::size_t count = frames[0].tensors.size();
   std::size_t bytes = 0;
-  for (std::size_t i = 0; i < gst.size(); ++i) {
+  for (std::size_t i = 0; i < frames.size(); ++i) {
     const std::string at = row + " frame " + std::to_string(i) + ": ";
-    const auto same = [&](const std::vector<std::string>& a, const std::vector<std::string>& b,
-                          const std::string& what) {
-      require(a.size() == b.size(), at + what + ": the same number of fields");
-      for (std::size_t k = 0; k < a.size(); ++k) {
-        require(a[k] == b[k],
-                at + what + " field differs: GStreamer " + a[k] + ", Dataflow " + b[k]);
+    const auto same = [&](const std::vector<std::string>& fields, const std::string& what) {
+      ref.equal(at + what + " fields", fields.size());
+      for (std::size_t k = 0; k < fields.size(); ++k) {
+        ref.equal(at + what + " field " + std::to_string(k), fields[k]);
       }
     };
-    require(gst[i].tensors.size() == count && df[i].tensors.size() == count,
-            at + "GStreamer returns " + std::to_string(gst[i].tensors.size()) +
-                " tensors, Dataflow " + std::to_string(df[i].tensors.size()));
+    ref.equal(at + "tensors", frames[i].tensors.size());
+    require(frames[i].tensors.size() == count, at + "every frame has the first frame's tensors");
     for (std::size_t t = 0; t < count; ++t) {
       const std::string which = "tensor " + std::to_string(t);
-      same(gst[i].tensors[t], df[i].tensors[t], which);
-      require(!gst[i].bytes[t].empty() && gst[i].bytes[t] == df[i].bytes[t],
-              at + which + ": the bytes are the same (" + std::to_string(gst[i].bytes[t].size()) +
-                  " and " + std::to_string(df[i].bytes[t].size()) + ")");
-      bytes += i == 0 ? gst[i].bytes[t].size() : 0U;
+      same(frames[i].tensors[t], which);
+      require(!frames[i].bytes[t].empty(), at + which + ": bytes");
+      ref.equal(at + which + " bytes", sima_test::bytes_digest(frames[i].bytes[t]));
+      bytes += i == 0 ? frames[i].bytes[t].size() : 0U;
     }
-    same(gst[i].sample, df[i].sample, "Sample");
+    same(frames[i].sample, "Sample");
     // Dataflow's tensors hold one TensorBuffer (the pulled message); GStreamer's each hold their
     // own over the one sample, so only the bytes and the offsets say that they share a buffer.
-    require(df[i].one_storage, at + "Dataflow's tensors share one storage");
+    if (sima_test::on_dataflow()) {
+      require(frames[i].one_storage, at + "Dataflow's tensors share one storage");
+    }
     // GStreamer names the element <stage>_<n>, n counting the elements this process built.
-    require(!df[i].stage_key.empty() && gst[i].stage_key.rfind(df[i].stage_key, 0) == 0 &&
-                gst[i].stream_label.rfind(df[i].stream_label, 0) == 0 &&
-                gst[i].segment_name.rfind(df[i].segment_name, 0) == 0,
-            at + "the stage's name: GStreamer '" + gst[i].stage_key + "' / '" +
-                gst[i].stream_label + "', Dataflow '" + df[i].stage_key + "' / '" +
-                df[i].stream_label + "'");
+    require(!frames[i].stage_key.empty(), at + "the stage's name is set");
+    ref.prefix(at + "route.stage_key", frames[i].stage_key);
+    ref.prefix(at + "Sample stream_label", frames[i].stream_label);
+    ref.prefix(at + "Sample segment_name", frames[i].segment_name);
   }
-  for (int p = 1; p < kPatterns && static_cast<std::size_t>(p) < df.size(); ++p) {
-    require(df[0].bytes != df[static_cast<std::size_t>(p)].bytes,
+  for (int p = 1; p < kPatterns && static_cast<std::size_t>(p) < frames.size(); ++p) {
+    require(frames[0].bytes != frames[static_cast<std::size_t>(p)].bytes,
             row + ": the outputs of different inputs differ");
   }
-  std::cout << "[" << row << "] " << gst.size() << " frames of " << count << " tensors, " << bytes
-            << " bytes a frame, " << gst[0].tensors[0].size() << " fields a tensor and "
-            << gst[1].sample.size() << " Sample fields the same; excluded: stage_key '"
-            << gst[0].stage_key << "' / '" << df[0].stage_key << "'; storage bytes "
-            << gst[0].storage_bytes << " / " << df[0].storage_bytes << " in "
-            << gst[0].storage_segments << " / " << df[0].storage_segments
-            << " segment(s); one TensorBuffer for the list " << (gst[0].one_storage ? "yes" : "no")
-            << " / " << (df[0].one_storage ? "yes" : "no") << "\n";
+  std::cout << "[" << row << "] " << frames.size() << " frames of " << count << " tensors, "
+            << bytes << " bytes a frame, " << frames[0].tensors[0].size() << " fields a tensor\n";
+  ref.note(row + " excluded: stage_key", frames[0].stage_key);
+  ref.note(row + " excluded: storage", sima_test::text(frames[0].storage_bytes) + " bytes in " +
+                                           sima_test::text(frames[0].storage_segments) +
+                                           " segment(s)");
+  ref.note(row + " excluded: one TensorBuffer for the list", frames[0].one_storage);
   for (std::size_t t = 0; t < count; ++t) {
     std::cout << "  tensor " << t << ":";
-    for (const std::string& field : df[0].tensors[t]) {
+    for (const std::string& field : frames[0].tensors[t]) {
       if (field.rfind("shape=", 0) == 0 || field.rfind("byte_offset=", 0) == 0 ||
           field.rfind("route.name=", 0) == 0 || field.rfind("semantic.", 0) == 0) {
         std::cout << " " << field;
@@ -454,12 +453,11 @@ std::size_t compare(const std::vector<Frame>& gst, const std::vector<Frame>& df,
   return count;
 }
 
-void inference(const Inference& route) {
+void inference(const Inference& route, sima_test::Reference& ref) {
   constexpr int kFrames = 32;
   const std::vector<TensorList> inputs = route.inputs();
-  const std::size_t count = compare(
-      run_frames(route.graph(), inputs, RunBackend::GStreamer, kFrames, "inference"),
-      run_frames(route.graph(), inputs, RunBackend::Dataflow, kFrames, "inference"), "inference");
+  const std::size_t count =
+      compare(ref, run_frames(route.graph(), inputs, kFrames, "inference"), "inference");
   require(count > 1U, "the test model's MLA stage publishes several tensors (" +
                           std::to_string(count) + " pulled)");
 }
@@ -468,7 +466,7 @@ void shared(const Inference& route) {
   constexpr int kMore = 24; // more frames than a Run has output buffers
   const std::vector<TensorList> inputs = route.inputs();
   Graph g = route.graph();
-  Run run = g.build(inputs[0], on(RunBackend::Dataflow));
+  Run run = g.build(inputs[0], on());
   require(run.push(inputs[0]), "shared: push");
   Tensor kept;
   std::weak_ptr<TensorBuffer> storage;
@@ -516,7 +514,7 @@ void owned(const Inference& route) {
   std::vector<std::vector<std::string>> described;
   {
     Graph g = route.graph();
-    Run run = g.build(inputs[0], on(RunBackend::Dataflow));
+    Run run = g.build(inputs[0], on());
     require(run.push(inputs[1]), "owned: push");
     Result<TensorList> out = run.pull(std::chrono::milliseconds(30000));
     require(static_cast<bool>(out) && out->front().storage->kind == StorageKind::GstSample,
@@ -528,7 +526,7 @@ void owned(const Inference& route) {
     run.close();
   }
   Graph g = route.graph();
-  RunOptions o = on(RunBackend::Dataflow);
+  RunOptions o = on();
   o.output_memory = OutputMemory::Owned;
   Run run = g.build(inputs[0], o);
   TensorList kept;
@@ -551,13 +549,16 @@ void owned(const Inference& route) {
           "owned: the copy outlives its Run");
 }
 
-void preprocess(const Model& model) {
+void preprocess(const Model& model, sima_test::Reference& ref) {
   constexpr int kFrames = 32;
   const std::vector<TensorList> inputs = frames_of(1280, 720);
   if (!ev74_runs_kernels_firmware()) {
+    if (!sima_test::on_dataflow()) {
+      return;
+    }
     try {
       Graph g = image_graph(model);
-      (void)g.build(inputs[0], on(RunBackend::Dataflow));
+      (void)g.build(inputs[0], on());
     } catch (const NeatError& error) {
       require_contains(error.what(), "sima-neat-native-cvu-fw",
                        std::string("preprocess: ") + error.what());
@@ -566,11 +567,8 @@ void preprocess(const Model& model) {
     }
     throw std::runtime_error("preprocess: the route built on Dataflow on the stock firmware");
   }
-  const std::vector<Frame> df =
-      run_frames(image_graph(model), inputs, RunBackend::Dataflow, kFrames, "preprocess");
-  const std::size_t count =
-      compare(run_frames(image_graph(model), inputs, RunBackend::GStreamer, kFrames, "preprocess"),
-              df, "preprocess");
+  const std::vector<Frame> df = run_frames(image_graph(model), inputs, kFrames, "preprocess");
+  const std::size_t count = compare(ref, df, "preprocess");
   require(count > 1U, "preprocess: several tensors");
   for (const std::vector<std::string>& tensor : df[0].tensors) {
     bool has = false;
@@ -605,7 +603,16 @@ int main(int argc, char** argv) {
   }
   std::string only;
   sima_test::get_arg(argc, argv, "--row", only);
+  try {
+    sima_test::select_backend(argc, argv);
+  } catch (const std::exception& e) {
+    std::cerr << "[FAIL] " << e.what() << "\n";
+    return 1;
+  }
   return sima_test::run_test("unit_dataflow_packed_route_test", [&] {
+    sima_test::Reference ref = sima_test::Reference::from_args(argc, argv);
+    // GStreamer: the comparison rows only (their record); Dataflow: every row.
+    const bool every_row = sima_test::on_dataflow();
     const auto row = [&](const char* name, const std::function<void()>& body) {
       if (!only.empty() && only != name) {
         return;
@@ -615,11 +622,16 @@ int main(int argc, char** argv) {
     };
     {
       const Inference route(archive);
-      row("inference", [&] { inference(route); });
-      row("shared", [&] { shared(route); });
-      row("owned", [&] { owned(route); });
+      row("inference", [&] { inference(route, ref); });
+      if (every_row) {
+        row("shared", [&] { shared(route); });
+        row("owned", [&] { owned(route); });
+      }
     }
     const Model model(archive, image_options());
-    row("preprocess", [&] { preprocess(model); });
+    row("preprocess", [&] { preprocess(model, ref); });
+    if (only.empty()) {
+      ref.finish();
+    }
   });
 }

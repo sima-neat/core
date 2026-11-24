@@ -1,10 +1,12 @@
 // A model package's whole route on the Dataflow backend (H1), on the public API only:
 //   Input -> Model::preprocess() -> Model::inference() -> Model::postprocess() -> Output
 // with the kernel stages on the A65 (GraphOptions::processcvu.pre_run_target / post_run_target =
-// "A65"), built with RunOptions::backend = RunBackend::Dataflow (Feed -> KernelOp -> MlaOp ->
-// KernelOp -> Fetch) and, for the comparison rows, with RunBackend::GStreamer (appsrc !
-// neatkernelrunner ! neatprocessmla ! neatkernelrunner ! appsink) in the same process; and, on
-// the Dataflow backend only, with the kernel stages on the EV74 (row ev74). No runtime type is
+// "A65"), on the Dataflow backend (Feed -> KernelOp -> MlaOp -> KernelOp -> Fetch) and, for the
+// comparison rows, on GStreamer (appsrc ! neatkernelrunner ! neatprocessmla ! neatkernelrunner !
+// appsink); and, on the Dataflow backend only, with the kernel stages on the EV74 (row ev74). A
+// process runs on one backend (set_backend): the test runs twice, --backend=gstreamer
+// --reference=<file> running the comparison rows and recording what they pull, then
+// --backend=dataflow --reference=<file> running every row and comparing. No runtime type is
 // named.
 //
 // It needs the MLA and a compiled model package: --model-package <X_mpk.tar.gz>, or
@@ -13,17 +15,17 @@
 // that the package quantizes and tessellates, one MLA stage and one output that the package
 // detessellates and dequantizes; ResNet-50 INT8 is the one it was written with.
 //
-// A kernel stage on the EV74 is only ever asked of the Dataflow backend, explicitly
-// (RunBackend::Dataflow: no fallback), and only run where the EV74 runs the Kernels firmware (the
+// A kernel stage on the EV74 is only ever asked of the Dataflow backend (no fallback), and only
+// run where the EV74 runs the Kernels firmware (the
 // remoteproc "ev74" running "sima-neat-native-cvu-fw", read here from sysfs). On a board with the
 // stock firmware the same builds must be refused at the build, before anything runs, and the
 // rows check that instead. GStreamer is never built with a kernel stage on the EV74 here.
 //
 // Rows:
-//   differential     the same inputs (4 images in rotation) through both backends: every pulled
+//   differential     the same inputs (4 images in rotation) on each backend: every pulled
 //                    tensor's dtype, layout, shape, strides, byte offset, route, quantization and
-//                    format tag, the Sample's shape, and every byte. Excluded, each printed with
-//                    both values: the storage's size (GStreamer: the stage's allocation;
+//                    format tag, the Sample's shape, and every byte (its digest). Excluded, each
+//                    printed with both values: the storage's size (GStreamer: the stage's allocation;
 //                    Dataflow: the kernel's output buffer), frame_id / input_seq / timestamps /
 //                    caps_string (documented for every Dataflow Run:
 //                    unit_run_backend_differential_test).
@@ -73,6 +75,7 @@
 #include "pipeline/NeatError.h"
 #include "pipeline/Result.h"
 #include "cli_utils.h"
+#include "support/backend_selection.h"
 #include "test_main.h"
 #include "test_utils.h"
 
@@ -210,9 +213,8 @@ struct Route {
   }
 };
 
-RunOptions on(RunBackend backend, int depth = 4) {
+RunOptions on(int depth = 4) {
   RunOptions o;
-  o.backend = backend;
   o.queue_depth = depth;
   o.overflow_policy = OverflowPolicy::Block;
   return o;
@@ -263,9 +265,8 @@ Frame keep(Tensor tensor) {
   return frame;
 }
 
-std::vector<Frame> run_frames(Graph g, const std::vector<TensorList>& inputs, RunBackend backend,
-                              int frames) {
-  Run run = g.build(inputs[0], on(backend));
+std::vector<Frame> run_frames(Graph g, const std::vector<TensorList>& inputs, int frames) {
+  Run run = g.build(inputs[0], on());
   std::vector<Frame> seen;
   for (int i = 0; i < frames; ++i) {
     require(run.push(inputs[static_cast<std::size_t>(i) % inputs.size()]), "push");
@@ -293,74 +294,69 @@ std::vector<Frame> run_frames(Graph g, const std::vector<TensorList>& inputs, Ru
   return seen;
 }
 
-// Every field a user reads of the two backends' frames, and every byte. `stage_prefix`: GStreamer
-// numbers some elements per pipeline built in the process (MLA_0_<n>), so the stage's name is
-// compared by prefix.
-void compare(const std::vector<Frame>& gst, const std::vector<Frame>& df, const char* row) {
-  require(gst.size() == df.size(), std::string(row) + ": both backends produced every frame");
-  for (std::size_t i = 0; i < gst.size(); ++i) {
+// Every field a user reads of a backend's frames, and every byte: recorded by the GStreamer run
+// and compared by the Dataflow run (`row` names the record's keys). GStreamer numbers some
+// elements per pipeline built in the process (MLA_0_<n>), so the stage's name is compared by
+// prefix.
+void compare(sima_test::Reference& ref, const std::vector<Frame>& frames, const std::string& row) {
+  ref.equal(row + ": frames", frames.size());
+  for (std::size_t i = 0; i < frames.size(); ++i) {
     const auto at = [&](const char* what) {
-      return std::string(row) + " frame " + std::to_string(i) + ": " + what;
+      return row + " frame " + std::to_string(i) + ": " + what;
     };
-    const Frame& fa = gst[i];
-    const Frame& fb = df[i];
-    const Tensor& a = fa.tensor;
-    const Tensor& b = fb.tensor;
-    require(a.dtype == b.dtype, at("dtype"));
-    require(a.layout == b.layout, at("layout"));
-    require(a.shape == b.shape, at("shape ") + dims(a.shape) + " / " + dims(b.shape));
-    require(a.strides_bytes == b.strides_bytes, at("strides"));
-    require(a.byte_offset == b.byte_offset, at("byte_offset"));
-    require(a.axis_semantics == b.axis_semantics, at("axis_semantics"));
-    require(a.device.type == b.device.type && a.device.id == b.device.id, at("device"));
-    require(a.read_only == b.read_only, at("read_only"));
-    require(a.planes.size() == b.planes.size(), at("planes"));
-    require(a.route.logical_index == b.route.logical_index &&
-                a.route.backend_output_index == b.route.backend_output_index &&
-                a.route.route_slot == b.route.route_slot &&
-                a.route.physical_index == b.route.physical_index &&
-                a.route.memory_index == b.route.memory_index &&
-                a.route.physical_byte_offset == b.route.physical_byte_offset &&
-                a.route.name == b.route.name && a.route.backend_name == b.route.backend_name &&
-                a.route.segment_name == b.route.segment_name,
-            at("route: name '") + a.route.name + "' / '" + b.route.name + "', segment '" +
-                a.route.segment_name + "' / '" + b.route.segment_name + "'");
-    require(a.route.stage_key.rfind(b.route.stage_key, 0) == 0,
-            at("route.stage_key '") + a.route.stage_key + "' / '" + b.route.stage_key + "'");
-    require(a.semantic.tess.has_value() == b.semantic.tess.has_value() &&
-                (!a.semantic.tess || a.semantic.tess->format == b.semantic.tess->format),
-            at("semantic.tess"));
-    require(a.semantic.quant.has_value() == b.semantic.quant.has_value(), at("semantic.quant"));
-    require(!a.semantic.image && !b.semantic.image, at("no image semantic"));
-    require(fa.storage_kind == fb.storage_kind && fa.storage_device == fb.storage_device &&
-                fa.storage_target_flags == fb.storage_target_flags &&
-                fa.storage_segments == fb.storage_segments &&
-                fa.storage_segment == fb.storage_segment,
-            at("storage kind, placement, segments"));
-    require(!fa.bytes.empty() && fa.bytes == fb.bytes, at("bytes"));
-    if (fa.from_sample) {
-      const Sample& sa = fa.sample;
-      const Sample& sb = fb.sample;
-      require(sa.kind == sb.kind && sa.owned == sb.owned, at("Sample kind / owned"));
-      require(sa.media_type == sb.media_type && sa.payload_type == sb.payload_type &&
-                  sa.payload_tag == sb.payload_tag && sa.format == sb.format,
-              at("Sample media: '") + sa.payload_tag + "' / '" + sb.payload_tag + "'");
-      require(sa.output_index == sb.output_index &&
-                  sa.logical_output_index == sb.logical_output_index &&
-                  sa.route_slot == sb.route_slot && sa.memory_index == sb.memory_index,
-              at("Sample routing"));
-      require(sa.stream_id == sb.stream_id, at("Sample stream_id"));
-      require(sa.stream_label.rfind(sb.stream_label, 0) == 0 &&
-                  sa.segment_name.rfind(sb.segment_name, 0) == 0,
-              at("Sample stream_label '") + sa.stream_label + "' / '" + sb.stream_label + "'");
+    const Frame& f = frames[i];
+    const Tensor& t = f.tensor;
+    ref.equal(at("dtype"), t.dtype);
+    ref.equal(at("layout"), t.layout);
+    ref.equal(at("shape"), t.shape);
+    ref.equal(at("strides"), t.strides_bytes);
+    ref.equal(at("byte_offset"), t.byte_offset);
+    ref.equal(at("axis_semantics"), t.axis_semantics);
+    ref.equal(at("device"), sima_test::text(t.device.type) + "/" + sima_test::text(t.device.id));
+    ref.equal(at("read_only"), t.read_only);
+    ref.equal(at("planes"), t.planes.size());
+    ref.equal(at("route"), sima_test::text(t.route.logical_index) + "," +
+                               sima_test::text(t.route.backend_output_index) + "," +
+                               sima_test::text(t.route.route_slot) + "," +
+                               sima_test::text(t.route.physical_index) + "," +
+                               sima_test::text(t.route.memory_index) + "," +
+                               sima_test::text(t.route.physical_byte_offset) + ",name '" +
+                               t.route.name + "',backend '" + t.route.backend_name +
+                               "',segment '" + t.route.segment_name + "'");
+    ref.prefix(at("route.stage_key"), t.route.stage_key);
+    ref.equal(at("semantic.tess"),
+              t.semantic.tess ? sima_test::text(t.semantic.tess->format) : std::string("none"));
+    ref.equal(at("semantic.quant"), t.semantic.quant.has_value());
+    require(!t.semantic.image, at("no image semantic"));
+    ref.equal(at("storage kind, placement, segments"),
+              sima_test::text(f.storage_kind) + "/" + sima_test::text(f.storage_device) + "/" +
+                  sima_test::text(f.storage_target_flags) + "/" +
+                  sima_test::text(f.storage_segments) + "/'" + f.storage_segment + "'");
+    require(!f.bytes.empty(), at("bytes"));
+    ref.equal(at("bytes"), sima_test::bytes_digest(f.bytes));
+    ref.equal(at("from a Sample"), f.from_sample);
+    if (f.from_sample) {
+      const Sample& sa = f.sample;
+      ref.equal(at("Sample kind / owned"), sima_test::text(sa.kind) + "/" + sima_test::text(sa.owned));
+      ref.equal(at("Sample media"), sima_test::text(sa.media_type) + "/" +
+                                        sima_test::text(sa.payload_type) + "/'" + sa.payload_tag +
+                                        "'/" + sima_test::text(sa.format));
+      ref.equal(at("Sample routing"),
+                sima_test::text(sa.output_index) + "/" + sima_test::text(sa.logical_output_index) +
+                    "/" + sima_test::text(sa.route_slot) + "/" + sima_test::text(sa.memory_index));
+      ref.equal(at("Sample stream_id"), sa.stream_id);
+      ref.prefix(at("Sample stream_label"), sa.stream_label);
+      ref.prefix(at("Sample segment_name"), sa.segment_name);
     }
   }
-  std::cout << "[" << row << "] excluded: stage_key '" << gst[0].tensor.route.stage_key << "' / '"
-            << df[0].tensor.route.stage_key << "'; storage bytes " << gst[0].storage_bytes << " / "
-            << df[0].storage_bytes << "; first frame_id " << gst[0].frame_id << " / "
-            << df[0].frame_id << "; first seq " << gst[0].seq << " / " << df[0].seq
-            << "; caps_string '" << (gst.size() > 1U ? gst[1].sample.caps_string : "") << "' / '"
-            << (df.size() > 1U ? df[1].sample.caps_string : "") << "'\n";
+  if (frames.empty()) {
+    return;
+  }
+  ref.note(row + " excluded: stage_key", frames[0].tensor.route.stage_key);
+  ref.note(row + " excluded: storage bytes", frames[0].storage_bytes);
+  ref.note(row + " excluded: first frame_id", frames[0].frame_id);
+  ref.note(row + " excluded: first seq", frames[0].seq);
+  ref.note(row + " excluded: caps_string", frames.size() > 1U ? frames[1].sample.caps_string : "");
 }
 
 std::vector<TensorList> images(const Route& route) {
@@ -371,14 +367,11 @@ std::vector<TensorList> images(const Route& route) {
   return inputs;
 }
 
-void differential(const Route& route) {
+void differential(const Route& route, sima_test::Reference& ref) {
   constexpr int kFrames = 64;
   const std::vector<TensorList> inputs = images(route);
-  const std::vector<Frame> gst =
-      run_frames(route.graph(route.input()), inputs, RunBackend::GStreamer, kFrames);
-  const std::vector<Frame> df =
-      run_frames(route.graph(route.input()), inputs, RunBackend::Dataflow, kFrames);
-  compare(gst, df, "differential");
+  const std::vector<Frame> df = run_frames(route.graph(route.input()), inputs, kFrames);
+  compare(ref, df, "differential");
   // The four inputs give four different outputs, and each input the same one every time.
   for (int p = 1; p < kPatterns; ++p) {
     require(df[0].bytes != df[static_cast<std::size_t>(p)].bytes,
@@ -461,7 +454,7 @@ void reference(const Route& route, const std::string& archive, const Dequant& de
                             static_cast<int>(*pre.q_zp)),
           route.shape, TensorMemory::MLA)});
     }
-    Run run = g.build(coded[0], on(RunBackend::Dataflow));
+    Run run = g.build(coded[0], on());
     const float scale = 1.0F / static_cast<float>(dequant.scale);
     for (int p = 0; p < kPatterns; ++p) {
       require(run.push(coded[static_cast<std::size_t>(p)]), "reference: push");
@@ -476,10 +469,10 @@ void reference(const Route& route, const std::string& archive, const Dequant& de
     }
     run.close();
   }
-  for (const RunBackend backend : {RunBackend::GStreamer, RunBackend::Dataflow}) {
+  {
     Graph g = route.graph(route.input());
     const std::vector<TensorList> inputs = images(route);
-    Run run = g.build(inputs[0], on(backend));
+    Run run = g.build(inputs[0], on());
     std::size_t different = 0;
     std::size_t compared = 0;
     double worst = 0;
@@ -499,7 +492,7 @@ void reference(const Route& route, const std::string& archive, const Dequant& de
       }
     }
     run.close();
-    std::cout << "[reference] " << (backend == RunBackend::Dataflow ? "Dataflow" : "GStreamer")
+    std::cout << "[reference] " << sima_test::backend_name()
               << ": of " << compared << " logits " << different
               << " differ from the reference computed in the test (worst " << worst << ")\n";
     require(different == 0, "the route's logits are the reference's, bit for bit");
@@ -508,7 +501,7 @@ void reference(const Route& route, const std::string& archive, const Dequant& de
 
 // ---- partial -----------------------------------------------------------------------------------
 
-void partial(const Route& route, const std::string& archive) {
+void partial(const Route& route, const std::string& archive, sima_test::Reference& ref) {
   // preprocess + inference, the inference ending at the MLA: kernel -> MLA.
   {
     Model::Options o = Route::options();
@@ -523,8 +516,7 @@ void partial(const Route& route, const std::string& archive) {
       return g;
     };
     const std::vector<TensorList> inputs = images(route);
-    compare(run_frames(graph(), inputs, RunBackend::GStreamer, 16),
-            run_frames(graph(), inputs, RunBackend::Dataflow, 16), "partial kernel -> MLA");
+    compare(ref, run_frames(graph(), inputs, 16), "partial kernel -> MLA");
   }
   // inference + postprocess of a model without preprocess: MLA -> kernel. Its input is the MLA's.
   {
@@ -553,8 +545,7 @@ void partial(const Route& route, const std::string& archive) {
       }
       inputs.push_back({Tensor::from_vector(codes, route.shape, TensorMemory::MLA)});
     }
-    compare(run_frames(graph(), inputs, RunBackend::GStreamer, 16),
-            run_frames(graph(), inputs, RunBackend::Dataflow, 16), "partial MLA -> kernel");
+    compare(ref, run_frames(graph(), inputs, 16), "partial MLA -> kernel");
   }
 }
 
@@ -566,7 +557,7 @@ std::string push_outcome(const Route& route, const InputOptions& in, const Tenso
   Graph g = route.graph(in);
   std::string outcome;
   try {
-    Run run = seed ? g.build(*seed, on(RunBackend::Dataflow)) : g.build(on(RunBackend::Dataflow));
+    Run run = seed ? g.build(*seed, on()) : g.build(on());
     outcome = run.push({tensor}) ? "accepted" : "push returned false";
     if (outcome == "accepted") {
       (void)pull_ok(run, "input_contract");
@@ -600,7 +591,7 @@ void input_contract(const Route& route) {
             "the input without its batch axis binds an unseeded Run");
     // The same bytes with and without the axis give the same output.
     Graph g = route.graph(in);
-    Run run = g.build(seed, on(RunBackend::Dataflow));
+    Run run = g.build(seed, on());
     require(run.push({route.tensor(1)}), "push with the batch axis");
     const std::vector<std::uint8_t> batched = bytes_of(pull_ok(run, "batched").front());
     require(run.push({t}), "push without the batch axis");
@@ -639,7 +630,7 @@ void input_contract(const Route& route) {
     require_neat_error(
         [&] {
           Graph g = route.graph(other);
-          (void)g.build(on(RunBackend::Dataflow));
+          (void)g.build(on());
         },
         error_codes::kInputShape, "the model's input is");
   }
@@ -651,7 +642,7 @@ void reuse(const Route& route) {
   const std::vector<TensorList> inputs = images(route);
   std::vector<std::vector<std::uint8_t>> expected;
   Graph g = route.graph(route.input());
-  Run run = g.build(inputs[0], on(RunBackend::Dataflow));
+  Run run = g.build(inputs[0], on());
   for (int p = 0; p < kPatterns; ++p) {
     require(run.push(inputs[static_cast<std::size_t>(p)]), "push");
     expected.push_back(bytes_of(pull_ok(run, "reuse reference").front()));
@@ -692,7 +683,7 @@ void held(const Route& route) {
   constexpr int kFrames = 96;
   constexpr std::size_t kKeep = 32;
   Graph g = route.graph(route.input());
-  Run run = g.build({route.tensor(0)}, on(RunBackend::Dataflow));
+  Run run = g.build({route.tensor(0)}, on());
   std::vector<std::weak_ptr<TensorBuffer>> pushed;
   std::size_t most = 0;
   std::size_t last = 0;
@@ -724,7 +715,7 @@ void lifecycle(const Route& route) {
   Graph g = route.graph(route.input(), /*max_buffers=*/8);
   const TensorList a{route.tensor(0)};
   const TensorList b{route.tensor(1)};
-  Run run = g.build(a, on(RunBackend::Dataflow, 8));
+  Run run = g.build(a, on(8));
   require(run.running() && run.can_push() && run.can_pull(), "a built Run runs");
 
   // Nothing pushed: a pull times out and says so; a poll says nothing.
@@ -770,7 +761,7 @@ void in_flight(const Route& route) {
   std::vector<std::uint8_t> expected;
   {
     Graph g = route.graph(route.input(), /*max_buffers=*/4);
-    Run run = g.build(a, on(RunBackend::Dataflow, 4));
+    Run run = g.build(a, on(4));
     require(run.push(a), "push");
     expected = bytes_of(pull_ok(run, "in_flight first").front());
     for (int i = 0; i < 10; ++i) {
@@ -780,7 +771,7 @@ void in_flight(const Route& route) {
   }
   {
     Graph g = route.graph(route.input(), 4);
-    Run run = g.build(a, on(RunBackend::Dataflow, 4));
+    Run run = g.build(a, on(4));
     require(run.push(a), "push into the next Run");
     require(bytes_of(pull_ok(run, "in_flight next").front()) == expected,
             "the next Run infers as the first");
@@ -802,7 +793,7 @@ void recreate(const Route& route) {
   std::vector<std::uint8_t> first;
   for (int round = 0; round < 4; ++round) {
     Graph g = route.graph(route.input());
-    Run run = g.build(a, on(RunBackend::Dataflow));
+    Run run = g.build(a, on());
     for (int i = 0; i < 8; ++i) {
       require(run.push(a), "push");
       const std::vector<std::uint8_t> out = bytes_of(pull_ok(run, "recreate").front());
@@ -821,7 +812,7 @@ void owned(const Route& route) {
   std::vector<std::uint8_t> zero_copy;
   {
     Graph g = route.graph(route.input());
-    Run run = g.build(a, on(RunBackend::Dataflow));
+    Run run = g.build(a, on());
     require(run.push(a), "push");
     const Tensor t = pull_ok(run, "owned reference").front();
     require(t.storage && t.storage->kind == StorageKind::GstSample,
@@ -830,7 +821,7 @@ void owned(const Route& route) {
     run.close();
   }
   Graph g = route.graph(route.input());
-  RunOptions o = on(RunBackend::Dataflow);
+  RunOptions o = on();
   o.output_memory = OutputMemory::Owned;
   Run run = g.build(a, o);
   Tensor kept;
@@ -850,7 +841,7 @@ void alloc(const Route& route) {
   std::vector<std::uint8_t> expected;
   {
     Graph g = route.graph(route.input());
-    Run run = g.build(reference_input, on(RunBackend::Dataflow));
+    Run run = g.build(reference_input, on());
     require(run.push(reference_input), "push");
     expected = bytes_of(pull_ok(run, "alloc reference").front());
     run.close();
@@ -866,7 +857,7 @@ void alloc(const Route& route) {
   g.add(route.model.inference());
   g.add(route.model.postprocess());
   g.add(nodes::Output("y", out));
-  Run run = g.build(on(RunBackend::Dataflow));
+  Run run = g.build(on());
   const std::vector<float> values = image(route.elements, 1);
   for (int i = 0; i < 3; ++i) {
     Tensor t = run.alloc("x");
@@ -892,7 +883,7 @@ void policies(const Route& route) {
   std::vector<std::vector<std::uint8_t>> expected;
   {
     Graph g = route.graph(route.input());
-    Run run = g.build(inputs[0], on(RunBackend::Dataflow));
+    Run run = g.build(inputs[0], on());
     for (int p = 0; p < kPatterns; ++p) {
       require(run.push(inputs[static_cast<std::size_t>(p)]), "push");
       expected.push_back(bytes_of(pull_ok(run, "policies reference").front()));
@@ -903,7 +894,7 @@ void policies(const Route& route) {
   for (const OverflowPolicy policy : {OverflowPolicy::KeepLatest, OverflowPolicy::DropIncoming}) {
     const bool latest = policy == OverflowPolicy::KeepLatest;
     Graph g = route.graph(route.input(), /*max_buffers=*/2);
-    RunOptions o = on(RunBackend::Dataflow, 2);
+    RunOptions o = on(2);
     o.overflow_policy = policy;
     Run run = g.build(inputs[0], o);
     int accepted = 0;
@@ -947,7 +938,7 @@ void declined(const Route& route, bool ev74) {
                            const char* what) {
     try {
       Graph g = route.graph(route.input(), 2, drop, options);
-      (void)g.build(seed, on(RunBackend::Dataflow));
+      (void)g.build(seed, on());
     } catch (const NeatError& error) {
       require(error.report().error_code == error_codes::kPipelineShape,
               std::string(what) + ": a build error of the pipeline's shape: " + error.what());
@@ -975,7 +966,7 @@ void declined(const Route& route, bool ev74) {
 
 // ---- the kernel stages on the EV74 ---------------------------------------------------------
 
-void on_ev74(const Route& route, bool ev74) {
+void on_ev74(const Route& route, bool ev74, sima_test::Reference& ref) {
   if (!ev74) {
     std::cout << "[ev74] not run: the EV74 does not run the Kernels firmware (row declined "
                  "checks that the route stays off the Dataflow backend)\n";
@@ -991,25 +982,30 @@ void on_ev74(const Route& route, bool ev74) {
                                   {"pre EV74, post EV74", placed("EV74", "EV74")}};
   constexpr int kFrames = 64;
   const std::vector<TensorList> inputs = images(route);
-  // The reference: GStreamer with both kernel stages on the A65.
-  const std::vector<Frame> gst = run_frames(route.graph(route.input(), 4, false, on_a65()), inputs,
-                                            RunBackend::GStreamer, kFrames);
+  if (!sima_test::on_dataflow()) {
+    // The reference of every placement: GStreamer with both kernel stages on the A65.
+    const std::vector<Frame> gst =
+        run_frames(route.graph(route.input(), 4, false, on_a65()), inputs, kFrames);
+    for (const Placement& p : placements) {
+      compare(ref, gst, std::string("ev74 ") + p.name);
+    }
+    return;
+  }
   for (const Placement& p : placements) {
     const std::string row = std::string("ev74 ") + p.name;
-    compare(gst,
-            run_frames(route.graph(route.input(), 4, false, p.options), inputs,
-                       RunBackend::Dataflow, kFrames),
-            row.c_str());
+    const std::vector<Frame> df =
+        run_frames(route.graph(route.input(), 4, false, p.options), inputs, kFrames);
+    compare(ref, df, row);
     // A TensorMemory::MLA tensor (the DMS heap) gives the output of the same bytes in EV74 memory,
     // whatever the first stage's target: wrapped where the first stage reads either heap, copied
     // into a slot of the input's pool in front of a kernel on the EV74.
     {
       Graph g = route.graph(route.input(), 4, false, p.options);
-      Run run = g.build(inputs[0], on(RunBackend::Dataflow));
+      Run run = g.build(inputs[0], on());
       for (int i = 0; i < 2 * kPatterns; ++i) {
         const unsigned image_index = static_cast<unsigned>(i % kPatterns);
         require(run.push({route.tensor(image_index, TensorMemory::MLA)}), row + ": push (MLA)");
-        require(bytes_of(pull_ok(run, row).front()) == gst[image_index].bytes,
+        require(bytes_of(pull_ok(run, row).front()) == df[image_index].bytes,
                 row + ": a TensorMemory::MLA tensor gives the EV74 tensor's output");
       }
       run.close();
@@ -1058,7 +1054,14 @@ int main(int argc, char** argv) {
   if (sima_test::get_arg(argc, argv, "--dequant-zero-point", value)) {
     dequant.zero_point = std::atoi(value.c_str());
   }
+  try {
+    sima_test::select_backend(argc, argv);
+  } catch (const std::exception& e) {
+    std::cerr << "[FAIL] " << e.what() << "\n";
+    return 1;
+  }
   return sima_test::run_test("unit_dataflow_model_route_test", [&] {
+    sima_test::Reference ref = sima_test::Reference::from_args(argc, argv);
     const Route route(archive);
     const auto row = [&](const char* name, const std::function<void()>& body) {
       if (!only.empty() && only != name) {
@@ -1070,9 +1073,15 @@ int main(int argc, char** argv) {
     const bool ev74 = ev74_runs_kernels_firmware();
     std::cout << "[ev74] the EV74 " << (ev74 ? "runs" : "does not run")
               << " the Kernels firmware\n";
-    row("differential", [&] { differential(route); });
+    row("differential", [&] { differential(route, ref); });
     row("reference", [&] { reference(route, archive, dequant); });
-    row("partial", [&] { partial(route, archive); });
+    row("partial", [&] { partial(route, archive, ref); });
+    if (!sima_test::on_dataflow()) {
+      // GStreamer: the comparison rows' records (and the reference row, checked on its own).
+      row("ev74", [&] { on_ev74(route, ev74, ref); });
+      ref.finish();
+      return;
+    }
     row("input_contract", [&] { input_contract(route); });
     row("reuse", [&] { reuse(route); });
     row("held", [&] { held(route); });
@@ -1083,6 +1092,9 @@ int main(int argc, char** argv) {
     row("alloc", [&] { alloc(route); });
     row("policies", [&] { policies(route); });
     row("declined", [&] { declined(route, ev74); });
-    row("ev74", [&] { on_ev74(route, ev74); });
+    row("ev74", [&] { on_ev74(route, ev74, ref); });
+    if (only.empty()) {
+      ref.finish();
+    }
   });
 }

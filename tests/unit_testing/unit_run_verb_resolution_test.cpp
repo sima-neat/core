@@ -12,7 +12,7 @@
 // on_output takes no Tensor callback (requires-expressions, false because the call is ill-formed,
 // each beside a control that is true), and push({t}) is the TensorList overload.
 //
-// Run time (on the backend SIMA_NEAT_BACKEND names, requested explicitly): push({t}),
+// Run time (on the backend --backend=gstreamer|dataflow selects, set_backend): push({t}),
 // push(TensorList{t}) and push("in", {t}) are the same list verb and each carries the first
 // tensor's stamp; push({t, u}) pushes one item of two tensors; the int pulls return
 // std::optional<Sample>, the chrono pulls Result<TensorList>.
@@ -23,6 +23,7 @@
 #include "pipeline/Graph.h"
 #include "pipeline/NeatError.h"
 #include "pipeline/Result.h"
+#include "support/backend_selection.h"
 #include "test_main.h"
 #include "test_utils.h"
 
@@ -177,18 +178,9 @@ static_assert(Calls<Run, TensorList> && !Calls<Run, Tensor>,
 static_assert(Delivers<Run, TensorList> && !Delivers<Run, Tensor>,
               "on_output takes a TensorList callback, not a Tensor one");
 
-// The backend under test: SIMA_NEAT_BACKEND=dataflow requests Dataflow explicitly (a Run it cannot
-// take fails at build), anything else GStreamer.
-RunBackend backend_under_test() {
-  const char* env = std::getenv("SIMA_NEAT_BACKEND");
-  return env != nullptr && std::string(env) == "dataflow" ? RunBackend::Dataflow
-                                                          : RunBackend::GStreamer;
-}
-
+// The process's backend is the one under test (a Run Dataflow does not carry fails at build).
 RunOptions options() {
-  RunOptions opt;
-  opt.backend = backend_under_test();
-  return opt;
+  return RunOptions{};
 }
 
 Tensor rgb(int w, int h, std::uint8_t tag) {
@@ -263,10 +255,8 @@ void list_of_two_is_one_item() {
 
 } // namespace
 
-RUN_TEST("unit_run_verb_resolution_test", ([] {
-           std::cout << "[INFO] backend under test: "
-                     << (backend_under_test() == RunBackend::Dataflow ? "dataflow" : "gstreamer")
-                     << "\n";
+RUN_BACKEND_TEST("unit_run_verb_resolution_test", ([] {
+           std::cout << "[INFO] backend under test: " << sima_test::backend_name() << "\n";
            list_pushes_carry_the_stamp();
            list_of_two_is_one_item();
          }));

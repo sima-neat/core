@@ -1,17 +1,19 @@
 // The image preproc stage on the Dataflow backend (H1, step Y1), on the public API only:
 //   Input -> Model::preprocess() -> Output
 // of a detection model whose pre stage is the Kernels package's "preproc" (EV74 only: resize,
-// colour, normalize, quantize and tessellate a packed BGR frame), built with RunOptions::backend
-// = RunBackend::Dataflow (Feed -> KernelOp -> Fetch, one kernel at the frame size the input has
-// at the build) and, for the comparison rows, with RunBackend::GStreamer (appsrc !
-// neatkernelrunner ! appsink, whose frame adapter gives the kernel each frame's geometry) in the
-// same process. No runtime type is named.
+// colour, normalize, quantize and tessellate a packed BGR frame), on the Dataflow backend (Feed ->
+// KernelOp -> Fetch, one kernel at the frame size the input has at the build) and, for the
+// comparison rows, on GStreamer (appsrc ! neatkernelrunner ! appsink, whose frame adapter gives
+// the kernel each frame's geometry). A process runs on one backend (set_backend): the test runs
+// twice, --backend=gstreamer --reference=<file> recording what the comparison rows pull, then
+// --backend=dataflow --reference=<file> running every row and comparing. No runtime type is
+// named.
 // It needs the EV74 on the Kernels firmware (the stage has no A65 implementation, on either
 // backend) and a compiled model package with an image input: --model-package <X_mpk.tar.gz>, or
 // SIMA_TEST_PREPROC_MODEL_PACKAGE, SIMA_YOLO_TAR. Without either the test is skipped (it
 // downloads nothing). YOLOv8s (640x640 INT8, letterbox) is the one it was written with.
 // Rows:
-//   differential     four 1280x720 BGR frames in rotation through both backends, pulled as
+//   differential     four 1280x720 BGR frames in rotation on each backend, pulled as
 //                    TensorList and as Sample: every pulled tensor's dtype, layout, shape,
 //                    strides, byte offset, route, tessellation description and every field of
 //                    Semantic::preprocess; the Sample's tags and labels; and every byte of the
@@ -30,9 +32,8 @@
 //   refused          a frame of another size than the Run was built for, and a frame with ROI
 //                    metadata, fail their push with misconfig.input_shape and the Run goes on.
 //   declined         what this backend does not carry fails at the build: an I420 input, a seed
-//                    the stage does not read, and, under RunBackend::Auto with
-//                    SIMA_NEAT_BACKEND=dataflow as well, a standalone BoxDecode node behind the
-//                    model's stages (no Run is built on GStreamer in its place).
+//                    the stage does not read, and a standalone BoxDecode node behind the model's
+//                    stages (no Run is built on GStreamer in its place).
 //   lifecycle        close_input drains what was pushed; Runs one after the other give the same
 //                    bytes.
 // On a board whose EV74 runs the stock firmware every Dataflow build of the route must be refused
@@ -47,6 +48,7 @@
 #include "pipeline/NeatError.h"
 #include "pipeline/Result.h"
 #include "cli_utils.h"
+#include "support/backend_selection.h"
 #include "test_main.h"
 #include "test_utils.h"
 
@@ -134,9 +136,8 @@ Graph graph(const Model& model, const InputOptions* in = nullptr) {
   return g;
 }
 
-RunOptions on(RunBackend backend) {
+RunOptions on() {
   RunOptions o;
-  o.backend = backend;
   o.queue_depth = 4;
   o.overflow_policy = OverflowPolicy::Block;
   return o;
@@ -305,9 +306,8 @@ Frame pull_frame(Run& run, bool as_sample, const std::string& what) {
   return out;
 }
 
-std::vector<Frame> run_frames(Graph g, const std::vector<TensorList>& inputs, RunBackend backend,
-                              int frames) {
-  Run run = g.build(inputs[0], on(backend));
+std::vector<Frame> run_frames(Graph g, const std::vector<TensorList>& inputs, int frames) {
+  Run run = g.build(inputs[0], on());
   std::vector<Frame> seen;
   for (int i = 0; i < frames; ++i) {
     require(run.push(inputs[static_cast<std::size_t>(i) % inputs.size()]), "push");
@@ -322,35 +322,36 @@ std::vector<Frame> run_frames(Graph g, const std::vector<TensorList>& inputs, Ru
   return seen;
 }
 
-void compare(const std::vector<Frame>& gst, const std::vector<Frame>& df, const std::string& row) {
-  require(gst.size() == df.size(), row + ": both backends produced every frame");
-  for (std::size_t i = 0; i < gst.size(); ++i) {
+// Every field of each pulled tensor and Sample, and every byte: recorded by the GStreamer run and
+// compared by the Dataflow run (`row` names the record's keys). GStreamer numbers its element, so
+// the stage's name is compared by prefix.
+void compare(sima_test::Reference& ref, const std::vector<Frame>& frames, const std::string& row) {
+  ref.equal(row + ": frames", frames.size());
+  for (std::size_t i = 0; i < frames.size(); ++i) {
     const std::string at = row + " frame " + std::to_string(i) + ": ";
-    const auto same = [&](const std::vector<std::string>& a, const std::vector<std::string>& b,
-                          const char* what) {
-      require(a.size() == b.size(), at + what + ": the same number of fields");
-      for (std::size_t k = 0; k < a.size(); ++k) {
-        require(a[k] == b[k],
-                at + what + " field differs: GStreamer " + a[k] + ", Dataflow " + b[k]);
+    const auto same = [&](const std::vector<std::string>& fields, const char* what) {
+      ref.equal(at + what + " fields", fields.size());
+      for (std::size_t k = 0; k < fields.size(); ++k) {
+        ref.equal(at + what + " field " + std::to_string(k), fields[k]);
       }
     };
-    same(gst[i].tensor, df[i].tensor, "tensor");
-    same(gst[i].sample, df[i].sample, "Sample");
-    require(gst[i].stage_key.rfind(df[i].stage_key, 0) == 0 && !df[i].stage_key.empty(),
-            at + "route.stage_key: GStreamer '" + gst[i].stage_key + "' begins with Dataflow's '" +
-                df[i].stage_key + "'");
-    require(gst[i].bytes.size() == df[i].bytes.size() && gst[i].bytes == df[i].bytes,
-            at + "the tensor's bytes are the same (" + std::to_string(gst[i].bytes.size()) +
-                " and " + std::to_string(df[i].bytes.size()) + ")");
+    same(frames[i].tensor, "tensor");
+    same(frames[i].sample, "Sample");
+    require(!frames[i].stage_key.empty(), at + "route.stage_key is set");
+    ref.prefix(at + "route.stage_key", frames[i].stage_key);
+    ref.equal(at + "bytes", sima_test::bytes_digest(frames[i].bytes));
   }
-  std::cout << "[" << row << "] " << gst.size() << " frames, " << gst[0].tensor.size()
-            << " tensor fields and " << gst[1].sample.size() << " Sample fields and "
-            << gst[0].bytes.size() << " bytes each the same; stage_key GStreamer '"
-            << gst[0].stage_key << "' Dataflow '" << df[0].stage_key << "'; storage GStreamer "
-            << gst[0].storage_bytes << " bytes in " << gst[0].storage_segments
-            << " segment(s), Dataflow " << df[0].storage_bytes << " in " << df[0].storage_segments
-            << "\n";
-  for (const std::string& field : df[0].tensor) {
+  if (frames.size() < 2U) {
+    return;
+  }
+  std::cout << "[" << row << "] " << frames.size() << " frames, " << frames[0].tensor.size()
+            << " tensor fields and " << frames[1].sample.size() << " Sample fields and "
+            << frames[0].bytes.size() << " bytes each\n";
+  ref.note(row + " excluded: stage_key", frames[0].stage_key);
+  ref.note(row + " excluded: storage", sima_test::text(frames[0].storage_bytes) + " bytes in " +
+                                           sima_test::text(frames[0].storage_segments) +
+                                           " segment(s)");
+  for (const std::string& field : frames[0].tensor) {
     if (field.rfind("preprocess.", 0) == 0 || field.rfind("tess.", 0) == 0) {
       std::cout << "  " << field << "\n";
     }
@@ -365,10 +366,10 @@ std::vector<TensorList> frames_of(int width, int height) {
   return inputs;
 }
 
-void differential(const Model& model, int width, int height, int frames, const std::string& row) {
+void differential(sima_test::Reference& ref, const Model& model, int width, int height,
+                  int frames, const std::string& row) {
   const std::vector<TensorList> inputs = frames_of(width, height);
-  compare(run_frames(graph(model), inputs, RunBackend::GStreamer, frames),
-          run_frames(graph(model), inputs, RunBackend::Dataflow, frames), row);
+  compare(ref, run_frames(graph(model), inputs, frames), row);
 }
 
 // The first `count` outputs of a Dataflow Run built with `seed` (or, without one, from `in`).
@@ -376,8 +377,7 @@ std::vector<std::vector<std::uint8_t>> outputs(const Model& model,
                                                const std::vector<TensorList>& inputs,
                                                const InputOptions* in, bool seeded) {
   Graph g = graph(model, in);
-  Run run =
-      seeded ? g.build(inputs[0], on(RunBackend::Dataflow)) : g.build(on(RunBackend::Dataflow));
+  Run run = seeded ? g.build(inputs[0], on()) : g.build(on());
   std::vector<std::vector<std::uint8_t>> out;
   for (const TensorList& input : inputs) {
     require(run.push(input), "push");
@@ -402,7 +402,7 @@ void input_contract(const Model& model) {
   const std::vector<TensorList> inputs = frames_of(1280, 720);
   const std::vector<std::vector<std::uint8_t>> expected = outputs(model, inputs, nullptr, true);
   Graph g = graph(model);
-  Run run = g.build(inputs[0], on(RunBackend::Dataflow));
+  Run run = g.build(inputs[0], on());
   for (int i = 0; i < 2 * kPatterns; ++i) {
     const auto p = static_cast<std::size_t>(i % kPatterns);
     // With the kernel's batch axis.
@@ -452,7 +452,7 @@ void refused(const Model& model) {
   in.width = 1280;
   in.height = 720;
   Graph g = graph(model, &in);
-  Run run = g.build(inputs[0], on(RunBackend::Dataflow));
+  Run run = g.build(inputs[0], on());
   const auto fails = [&](const TensorList& item, const char* text, const char* what) {
     try {
       (void)run.push(item);
@@ -487,8 +487,8 @@ void declined(const Model& model, const std::string& archive) {
   const std::vector<TensorList> inputs = frames_of(1280, 720);
   const auto fails = [&](Graph g, bool seeded, const char* text, const char* what) {
     try {
-      (void)(seeded ? g.build(inputs[0], on(RunBackend::Dataflow))
-                    : g.build(on(RunBackend::Dataflow)));
+      (void)(seeded ? g.build(inputs[0], on())
+                    : g.build(on()));
     } catch (const NeatError& error) {
       require_contains(error.what(), text, std::string(what) + ": " + error.what());
       std::cout << "[declined] " << what << ": " << error.what() << "\n";
@@ -513,18 +513,16 @@ void declined(const Model& model, const std::string& archive) {
       const TensorList gray{Tensor::from_cv_mat(cv::Mat(720, 1280, CV_8UC1, cv::Scalar(7)),
                                                 ImageSpec::PixelFormat::GRAY8, TensorMemory::EV74)};
       Graph g = graph(model);
-      (void)g.build(gray, on(RunBackend::Dataflow));
+      (void)g.build(gray, on());
       built = true;
     } catch (const std::exception& error) {
       std::cout << "[declined] a GRAY8 seed: " << error.what() << "\n";
     }
     require(!built, "declined: a GRAY8 seed does not build on the Dataflow backend");
   }
-  // Under RunBackend::Auto with SIMA_NEAT_BACKEND=dataflow a graph this backend does not carry
-  // fails as it does when Dataflow is asked for explicitly: the model's stages with a standalone
-  // BoxDecode node behind them (not a Model stage). No Run is built on GStreamer in its place.
-  ::setenv("SIMA_NEAT_BACKEND", "dataflow", 1);
-  for (const RunBackend backend : {RunBackend::Dataflow, RunBackend::Auto}) {
+  // A graph this backend does not carry fails: the model's stages with a standalone BoxDecode node
+  // behind them (not a Model stage). No Run is built on GStreamer in its place.
+  {
     OutputOptions out;
     out.max_buffers = 4;
     out.sync = false;
@@ -536,7 +534,7 @@ void declined(const Model& model, const std::string& archive) {
     g.add(nodes::Output(out));
     bool built = false;
     try {
-      (void)g.build(inputs[0], on(backend));
+      (void)g.build(inputs[0], on());
       built = true;
     } catch (const NeatError& error) {
       require_contains(error.what(),
@@ -548,7 +546,6 @@ void declined(const Model& model, const std::string& archive) {
     }
     require(!built, "declined: a graph Dataflow does not carry builds nowhere");
   }
-  ::unsetenv("SIMA_NEAT_BACKEND");
 }
 
 void lifecycle(const Model& model) {
@@ -556,7 +553,7 @@ void lifecycle(const Model& model) {
   const std::vector<std::vector<std::uint8_t>> expected = outputs(model, inputs, nullptr, true);
   for (int round = 0; round < 3; ++round) {
     Graph g = graph(model);
-    Run run = g.build(inputs[0], on(RunBackend::Dataflow));
+    Run run = g.build(inputs[0], on());
     for (int p = 0; p < kPatterns; ++p) {
       require(run.push(inputs[static_cast<std::size_t>(p)]), "lifecycle: push");
     }
@@ -579,7 +576,7 @@ void firmware(const Model& model) {
   const std::vector<TensorList> inputs = frames_of(1280, 720);
   try {
     Graph g = graph(model);
-    (void)g.build(inputs[0], on(RunBackend::Dataflow));
+    (void)g.build(inputs[0], on());
   } catch (const NeatError& error) {
     require_contains(error.what(), "sima-neat-native-cvu-fw",
                      std::string("firmware: ") + error.what());
@@ -609,7 +606,14 @@ int main(int argc, char** argv) {
   }
   std::string only;
   sima_test::get_arg(argc, argv, "--row", only);
+  try {
+    sima_test::select_backend(argc, argv);
+  } catch (const std::exception& e) {
+    std::cerr << "[FAIL] " << e.what() << "\n";
+    return 1;
+  }
   return sima_test::run_test("unit_dataflow_preproc_route_test", [&] {
+    sima_test::Reference ref = sima_test::Reference::from_args(argc, argv);
     const Model model(archive, model_options());
     const auto row = [&](const char* name, const std::function<void()>& body) {
       if (!only.empty() && only != name) {
@@ -622,19 +626,29 @@ int main(int argc, char** argv) {
     std::cout << "[ev74] the EV74 " << (ev74 ? "runs" : "does not run")
               << " the Kernels firmware\n";
     if (!ev74) {
-      row("firmware", [&] { firmware(model); });
+      if (sima_test::on_dataflow()) {
+        row("firmware", [&] { firmware(model); });
+      }
       return;
     }
-    row("differential", [&] { differential(model, 1280, 720, 64, "differential"); });
+    row("differential", [&] { differential(ref, model, 1280, 720, 64, "differential"); });
     row("sizes", [&] {
-      differential(model, 640, 480, 8, "sizes 640x480");
-      differential(model, 642, 362, 8, "sizes 642x362");
-      differential(model, 1920, 1080, 8, "sizes 1920x1080");
+      differential(ref, model, 640, 480, 8, "sizes 640x480");
+      differential(ref, model, 642, 362, 8, "sizes 642x362");
+      differential(ref, model, 1920, 1080, 8, "sizes 1920x1080");
     });
+    if (!sima_test::on_dataflow()) {
+      // GStreamer: the comparison rows' records only.
+      ref.finish();
+      return;
+    }
     row("declared", [&] { declared(model); });
     row("input_contract", [&] { input_contract(model); });
     row("refused", [&] { refused(model); });
     row("declined", [&] { declined(model, archive); });
     row("lifecycle", [&] { lifecycle(model); });
+    if (only.empty()) {
+      ref.finish();
+    }
   });
 }

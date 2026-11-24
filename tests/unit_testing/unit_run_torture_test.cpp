@@ -1,7 +1,6 @@
-// H0's torture list (H0-input-output.md 2.6 and plan C4) on Core's public API, on the backend
-// SIMA_NEAT_BACKEND names (dataflow: RunBackend::Dataflow, requested explicitly; otherwise
-// RunBackend::GStreamer). The same executable is registered once per backend, and it is the
-// subject of the sanitizer runs (ASan+UBSan, TSan) of part C4.
+// H0's torture list (H0-input-output.md 2.6 and plan C4) on Core's public API, on the process's
+// backend (--backend=gstreamer|dataflow, set_backend). The same executable is registered once per
+// backend, and it is the subject of the sanitizer runs (ASan+UBSan, TSan) of part C4.
 //
 // Cases, each repeated SIMA_TORTURE_REPEAT times (default 3) for more interleavings:
 // 1. stop during a blocked push: the push returns (false, or a "stopped"/"closed" error), stop is
@@ -22,6 +21,7 @@
 #include "pipeline/Graph.h"
 #include "pipeline/NeatError.h"
 #include "pipeline/Result.h"
+#include "support/backend_selection.h"
 #include "test_main.h"
 #include "test_utils.h"
 
@@ -47,14 +47,8 @@ using namespace simaai::neat;
 using namespace std::chrono_literals;
 using Clock = std::chrono::steady_clock;
 
-bool on_dataflow() {
-  const char* env = std::getenv("SIMA_NEAT_BACKEND");
-  return env != nullptr && std::string(env) == "dataflow";
-}
-
-const char* backend_name() {
-  return on_dataflow() ? "dataflow" : "gstreamer";
-}
+using sima_test::backend_name;
+using sima_test::on_dataflow;
 
 int repeats() {
   const char* env = std::getenv("SIMA_TORTURE_REPEAT");
@@ -103,7 +97,6 @@ Run make_run(int depth, bool bounded_appsrc = false) {
   g.add(nodes::Input(in));
   g.add(nodes::Output(out));
   RunOptions opt;
-  opt.backend = on_dataflow() ? RunBackend::Dataflow : RunBackend::GStreamer;
   opt.queue_depth = depth;
   opt.overflow_policy = OverflowPolicy::Block;
   opt.startup_preflight = false;
@@ -443,7 +436,7 @@ void lease_outlives_run(int) {
 
 } // namespace
 
-RUN_TEST("unit_run_torture_test", ([] {
+RUN_BACKEND_TEST("unit_run_torture_test", ([] {
            const int n = repeats();
            std::cout << "[INFO] backend=" << backend_name() << " repeats=" << n << "\n";
            for (int round = 0; round < n; ++round) {
