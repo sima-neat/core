@@ -315,6 +315,13 @@ else()
   # coherent without making LLiMa a hard dependency for normal Graph/Core builds.
   find_package(SimaLMM CONFIG QUIET)
 endif()
+if(SimaLMM_FOUND AND NOT SimaLMM_DEBIAN_VERSION)
+  if(SIMANEAT_CPP_TIDY OR SIMANEAT_DOCS_ONLY_CONFIGURE)
+    set(SimaLMM_FOUND FALSE)
+  else()
+    message(FATAL_ERROR "Select a LLiMa package with request-scoped generation and an exported Debian version")
+  endif()
+endif()
 if (SimaLMM_FOUND)
   message(STATUS "Using exported SimaLMM package from ${SimaLMM_DIR}")
 else()
@@ -1043,7 +1050,7 @@ set(SIMANEAT_CORE_DEBIAN_DEPENDS
   "libcpp-httplib0.18"
 )
 if (SimaLMM_FOUND)
-  list(APPEND SIMANEAT_CORE_DEBIAN_DEPENDS "sima-lmm-core")
+  list(APPEND SIMANEAT_CORE_DEBIAN_DEPENDS "sima-lmm-core (= ${SimaLMM_DEBIAN_VERSION})")
 endif()
 string(JOIN ", " CPACK_DEBIAN_CORE_PACKAGE_DEPENDS ${SIMANEAT_CORE_DEBIAN_DEPENDS})
 set(SIMANEAT_DEV_DEBIAN_DEPENDS

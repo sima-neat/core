@@ -5,7 +5,9 @@ if(SimaLMM_FOUND)
   include(CMakePushCheckState)
   cmake_push_check_state(RESET)
   set(CMAKE_REQUIRED_INCLUDES ${OPENCV_INCLUDE_DIRS})
-  set(CMAKE_REQUIRED_LIBRARIES nlohmann_json::nlohmann_json SimaLMM::sima_lmm_runtime)
+  # Match Core's real platform include context, including the Scheduler headers.
+  set(CMAKE_REQUIRED_LIBRARIES
+    nlohmann_json::nlohmann_json SimaLMM::sima_lmm_runtime SimaScheduler::frontend)
   set(_neat_try_compile_type "${CMAKE_TRY_COMPILE_TARGET_TYPE}")
   set(CMAKE_TRY_COMPILE_TARGET_TYPE EXECUTABLE)
   # Re-evaluate after a dependency/header change in an existing build directory.
@@ -13,13 +15,16 @@ if(SimaLMM_FOUND)
   check_cxx_source_compiles([=[
 #include <nlohmann/json.hpp>
 #include <sima_lmm/chat.hpp>
-// This executable is linked, never run. Referencing both methods from main
+#include <sima_lmm/vision_language_model.hpp>
+// This executable is linked, never run. Referencing the public chat and generation methods from main
 // keeps --gc-sections/LTO from discarding the ABI check as unused code.
 int main(int argc, char** argv) {
   if (argc > 1) {
     auto& chat = *reinterpret_cast<simaai::llima::Chat*>(argv[1]);
     chat.set_messages(nlohmann::ordered_json::array());
     chat.set_tools(nlohmann::ordered_json::array());
+    auto& model = *reinterpret_cast<simaai::llima::VisionLanguageModel*>(argv[0]);
+    return model.generate(chat).token_ids.empty();
   }
   return 0;
 }

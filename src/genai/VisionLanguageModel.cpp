@@ -1,38 +1,20 @@
 #include "genai/VisionLanguageModel.h"
 #include "genai/GenAIInternal.h"
-#include <sima_lmm/file_provider.hpp>
+#include "genai/internal/ModelOperations.h"
 
 #include <sima_lmm/chat.hpp>
-#include <sima_lmm/image_processor.hpp>
-#include <sima_lmm/language_model.hpp>
-#include <sima_lmm/mla_model.hpp>
 #include <sima_lmm/reasoning_parser.hpp>
-#include <sima_lmm/text_streamer.hpp>
 #include <sima_lmm/tool_call_parser.hpp>
-#include <sima_lmm/utils.hpp>
-#include <sima_lmm/vlm_config.hpp>
-#include <sima_lmm/vlm_helper.hpp>
-#include <sima_lmm/vision_model.hpp>
+#include <sima_lmm/vision_language_model.hpp>
 
 #include <atomic>
-#include <condition_variable>
-#include <cstddef>
-#include <cstring>
-#include <exception>
 #include <limits>
-#include <map>
 #include <mutex>
-#include <queue>
-#include <stdexcept>
-#include <thread>
+#include <stop_token>
 #include <utility>
-#include <variant>
-#include <vector>
 
 namespace simaai::neat::genai {
 namespace {
-
-using CachedVisionOutput = std::vector<std::vector<std::byte>>;
 
 cv::Mat require_genai_rgb_image_tensor(const Tensor& image) {
   if (image.dtype != TensorDType::UInt8) {
@@ -51,76 +33,12 @@ cv::Mat require_genai_rgb_image_tensor(const Tensor& image) {
   return image.to_cv_mat_copy(ImageSpec::PixelFormat::RGB);
 }
 
-simaai::llima::VlmConfig load_vlm_config(const std::filesystem::path& model_root,
-                                         simaai::llima::FileProvider& files) {
-  const auto config_path = model_root / "devkit" / "vlm_config.json";
-  auto input = files.open_stream("devkit/vlm_config.json");
-  auto& in = *input;
-  if (!in) {
-    throw std::runtime_error("Unable to open LLiMa VLM config: " + config_path.string());
-  }
-  try {
-    return nlohmann::json::parse(in).get<simaai::llima::VlmConfig>();
-  } catch (const std::exception& e) {
-    throw std::runtime_error("Unable to parse LLiMa VLM config " + config_path.string() + ": " +
-                             e.what());
-  }
-}
-
 void validate_lora_adapter_name(const std::string& adapter_name) {
   if (adapter_name.empty() || adapter_name == "." || adapter_name == ".." ||
       std::filesystem::path(adapter_name).is_absolute() ||
       adapter_name.find('/') != std::string::npos || adapter_name.find('\\') != std::string::npos ||
       adapter_name.find('\0') != std::string::npos) {
     throw std::invalid_argument("LoRA adapter name must be one non-empty directory name");
-  }
-}
-
-std::optional<uint16_t> make_max_total_tokens(std::size_t input_token_count,
-                                              std::uint32_t max_new_tokens) {
-  if (max_new_tokens == 0) {
-    return std::nullopt;
-  }
-  const auto max_uint16 = static_cast<std::size_t>(std::numeric_limits<uint16_t>::max());
-  if (input_token_count > max_uint16 || max_new_tokens > max_uint16 ||
-      input_token_count + static_cast<std::size_t>(max_new_tokens) > max_uint16) {
-    throw std::runtime_error("GenerationRequest::max_new_tokens exceeds LLiMa token limit");
-  }
-  return static_cast<uint16_t>(input_token_count + max_new_tokens);
-}
-
-std::string token_content_from_json(const nlohmann::json& token_json, const char* token_name) {
-  if (token_json.is_null()) {
-    return {};
-  }
-  if (token_json.is_string()) {
-    return token_json.get<std::string>();
-  }
-  if (token_json.contains("content") && token_json.at("content").is_string()) {
-    return token_json.at("content").get<std::string>();
-  }
-  throw std::runtime_error(std::string("Failed to read ") + token_name + " from tokenizer config");
-}
-
-std::string load_bos_token(const std::filesystem::path& model_root,
-                           simaai::llima::FileProvider& files) {
-  const auto config_path = model_root / "devkit" / "tokenizer_config.json";
-  if (!files.exists("devkit/tokenizer_config.json"))
-    return {};
-  auto input = files.open_stream("devkit/tokenizer_config.json");
-  auto& in = *input;
-  if (!in) {
-    return {};
-  }
-  try {
-    const auto config = nlohmann::json::parse(in);
-    if (!config.contains("bos_token")) {
-      return {};
-    }
-    return token_content_from_json(config.at("bos_token"), "bos_token");
-  } catch (const nlohmann::json::exception& e) {
-    throw std::runtime_error("Unable to parse LLiMa tokenizer config " + config_path.string() +
-                             ": " + e.what());
   }
 }
 
@@ -137,71 +55,6 @@ std::vector<std::string> tool_names_from_definitions(const Json& tools) {
     }
   }
   return names;
-}
-
-std::unique_ptr<simaai::llima::ImageProcessor>
-make_image_processor(const simaai::llima::VlmConfig& cfg, simaai::llima::FileProvider& files) {
-  const auto json_root = nlohmann::json::parse(*files.open_stream(
-      files.exists("devkit/preprocessor_config.json") ? "devkit/preprocessor_config.json"
-                                                      : "devkit/processor_config.json"));
-  const auto& json =
-      json_root.contains("image_processor") ? json_root["image_processor"] : json_root;
-
-  bool do_pad_to_square = false;
-  if (json.contains("do_pad") && json["do_pad"].is_boolean()) {
-    do_pad_to_square = json["do_pad"];
-  } else if (cfg.model_type.starts_with("vlm-lfm2") || cfg.model_type.starts_with("vlm-qwen")) {
-    do_pad_to_square = true;
-  }
-
-  const bool do_center_crop = json.contains("do_center_crop") && json["do_center_crop"].is_boolean()
-                                  ? json["do_center_crop"].get<bool>()
-                                  : false;
-
-  const int resample = json.value("resample", 3);
-  cv::InterpolationFlags interpolation = cv::INTER_CUBIC;
-  switch (resample) {
-  case 2:
-    interpolation = cv::INTER_LINEAR;
-    break;
-  case 3:
-    interpolation = cv::INTER_CUBIC;
-    break;
-  default:
-    throw std::runtime_error("Unsupported GenAI image resample type: " + std::to_string(resample));
-  }
-
-  return std::make_unique<simaai::llima::ImageProcessor>(
-      cfg, do_pad_to_square, do_center_crop, interpolation,
-      json.value("rescale_factor", 1.0 / 255.0), json.at("image_mean").get<std::vector<double>>(),
-      json.at("image_std").get<std::vector<double>>());
-}
-
-const std::string& dummy_image_data_uri() {
-  static const std::string uri =
-      "data:image/jpeg;base64,"
-      "/9j/4AAQSkZJRgABAQAAAQABAAD/"
-      "2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/"
-      "2wBDAQkJCQwLDBgNDRgyIRwhMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjL/"
-      "wAARCAABAAEDASIAAhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/"
-      "8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoK"
-      "So0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKzt"
-      "LW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/"
-      "8QAHwEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoL/"
-      "8QAtREAAgECBAQDBAcFBAQAAQJ3AAECAxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRomJ"
-      "ygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOEhYaHiImKkpOUlZaXmJmaoqOkpaanqKmqs"
-      "rO0tba3uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwD3+iiigD//2Q==";
-  return uri;
-}
-
-void append_image_items(nlohmann::ordered_json& content, std::size_t count) {
-  for (std::size_t i = 0; i < count; ++i) {
-    content.push_back({{"type", "image"}, {"image", dummy_image_data_uri()}});
-  }
-}
-
-void append_text_item(nlohmann::ordered_json& content, const std::string& text) {
-  content.push_back({{"type", "text"}, {"text", text}});
 }
 
 Json make_llima_message(const ChatMessage& message, const Json& content) {
@@ -222,215 +75,134 @@ Json make_llima_message(const ChatMessage& message, const Json& content) {
   return out;
 }
 
-struct BuiltMessages {
-  nlohmann::ordered_json messages = nlohmann::ordered_json::array();
-  std::vector<Tensor> images;
-  bool use_cached_images = false;
-  std::size_t expected_image_count = 0;
-};
-
-BuiltMessages build_llima_messages(const GenerationRequest& request,
-                                   std::size_t cached_image_count) {
-  BuiltMessages built;
-
-  auto make_content = [](const std::string& text, std::size_t image_count) {
-    if (image_count == 0U) {
-      return nlohmann::ordered_json(text);
-    }
-    nlohmann::ordered_json content = nlohmann::ordered_json::array();
-    append_image_items(content, image_count);
-    append_text_item(content, text);
-    return content;
-  };
-
-  if (!request.messages.empty()) {
-    for (const auto& message : internal::build_text_messages(request)) {
-      const std::size_t direct_count = message.images.size();
-      const std::size_t cached_count = message.use_cached_images ? cached_image_count : 0U;
-      if (message.use_cached_images && cached_image_count == 0U) {
-        throw std::runtime_error("GenerationRequest requested cached images but none are cached");
-      }
-      if (message.use_cached_images) {
-        built.use_cached_images = true;
-      }
-      built.expected_image_count += direct_count + cached_count;
-      built.images.insert(built.images.end(), message.images.tensors().begin(),
-                          message.images.tensors().end());
-      built.messages.push_back(
-          make_llima_message(message, make_content(message.content, direct_count + cached_count)));
-    }
-    return built;
-  }
-
-  nlohmann::ordered_json messages = nlohmann::ordered_json::array();
-  if (request.system_prompt.has_value()) {
-    messages.push_back({{"role", "system"}, {"content", *request.system_prompt}});
-  }
-
-  if (request.use_cached_images && cached_image_count == 0U) {
-    throw std::runtime_error("GenerationRequest requested cached images but none are cached");
-  }
-  const std::size_t cached_count = request.use_cached_images ? cached_image_count : 0U;
-  const std::size_t direct_count = request.images.size();
-  built.expected_image_count = direct_count + cached_count;
-  built.use_cached_images = request.use_cached_images;
-  built.images = request.images.tensors();
-  messages.push_back({{"role", "user"},
-                      {"content", make_content(request.prompt.value_or(std::string{}),
-                                               built.expected_image_count)}});
-  built.messages = std::move(messages);
-  return built;
+// The chat template needs image placeholders. Pixels and encoded images travel separately.
+Json message_content(const ChatMessage& message, std::size_t image_count) {
+  if (!image_count)
+    return message.content;
+  auto content = Json::array();
+  for (std::size_t i = 0; i < image_count; ++i)
+    content.push_back({{"type", "image"}, {"image", ""}});
+  content.push_back({{"type", "text"}, {"text", message.content}});
+  return content;
 }
 
-std::vector<std::vector<Eigen::bfloat16>>
-preprocess_images(simaai::llima::ImageProcessor& image_processor,
-                  const std::vector<Tensor>& images) {
-  std::vector<std::vector<Eigen::bfloat16>> out;
-  out.reserve(images.size());
-  for (const auto& image : images) {
-    out.push_back(image_processor.preprocess(require_genai_rgb_image_tensor(image)));
-  }
-  return out;
+std::string finish_reason(llima::ChatResult::Finish finish, bool tool_calls) {
+  if (finish == llima::ChatResult::Finish::Cancelled)
+    return "interrupted";
+  if (finish == llima::ChatResult::Finish::Length)
+    return "length";
+  return tool_calls ? "tool_calls" : "stop";
 }
 
 } // namespace
 
 struct VisionLanguageModel::Impl {
-  class ActiveRunGuard {
-  public:
-    explicit ActiveRunGuard(Impl& owner_in) : owner(&owner_in) {}
-
-    ActiveRunGuard(const ActiveRunGuard&) = delete;
-    ActiveRunGuard& operator=(const ActiveRunGuard&) = delete;
-
-    ActiveRunGuard(ActiveRunGuard&& other) noexcept : owner(other.owner) {
-      other.owner = nullptr;
-    }
-
-    ActiveRunGuard& operator=(ActiveRunGuard&& other) noexcept {
-      if (this == &other) {
-        return *this;
-      }
-      release();
-      owner = other.owner;
-      other.owner = nullptr;
-      return *this;
-    }
-
-    ~ActiveRunGuard() {
-      release();
-    }
-
-    static ActiveRunGuard acquire(Impl& owner) {
-      std::unique_lock<std::mutex> lock(owner.run_state_mutex);
-      owner.run_state_cv.wait(lock, [&] { return !owner.run_active; });
-      owner.run_active = true;
-      return ActiveRunGuard(owner);
-    }
-
-  private:
-    void release() {
-      if (!owner) {
-        return;
-      }
-      {
-        std::lock_guard<std::mutex> lock(owner->run_state_mutex);
-        owner->run_active = false;
-      }
-      owner->run_state_cv.notify_one();
-      owner = nullptr;
-    }
-
-    Impl* owner = nullptr;
-  };
-
-  explicit Impl(internal::ModelLoadContext context)
-      : info(std::move(context.info)), files(std::move(context.files)),
-        draft_files(std::move(context.draft_files)) {
-    if (info.task != GenAITask::VisionLanguage) {
+  explicit Impl(internal::ModelLoadContext context) : info(std::move(context.info)) {
+    if (info.task != GenAITask::VisionLanguage)
       throw std::runtime_error("GenAI model directory is not a vision-language model: " +
                                info.root.string());
-    }
-  }
-
-  void load() {
-    std::lock_guard<std::mutex> lock(load_mutex);
-    if (language_model) {
-      return;
-    }
 
     internal::ensure_llima_runtime_connected();
-    cfg = load_vlm_config(info.root, *files);
-    bos_token = load_bos_token(info.root, *files);
-    vlm_helper =
-        std::make_unique<simaai::llima::VlmHelper>(cfg, *files, std::nullopt, std::nullopt);
-    text_streamer = std::make_unique<simaai::llima::TextStreamer>(
-        vlm_helper->get_tokenizer(),
-        [this](const std::string& metric, double value) { record_metric(metric, value); },
-        [](const std::string&, bool, bool) {});
-    text_streamer->set_performance_summary_enabled(false);
-    tool_call_format = simaai::llima::tool_call_format_for_model(cfg.model_type);
-    reasoning_format = simaai::llima::reasoning_format_for_model(cfg.model_type);
-    preserved_tool_call_tokens = simaai::llima::resolve_tool_call_special_tokens(
-        tool_call_format, *vlm_helper->get_tokenizer());
-    text_streamer->set_preserved_token_ids(preserved_tool_call_tokens);
-    language_model = std::make_unique<simaai::llima::LanguageModel>(
-        info.root, vlm_helper->get_stop_token_ids(), vlm_helper->get_image_token_id(),
-        vlm_helper->get_pad_token_id(), *text_streamer, files);
-    if (info.draft_root.has_value()) {
-      draft_cfg = load_vlm_config(*info.draft_root, *draft_files);
-      draft_vlm_helper = std::make_unique<simaai::llima::VlmHelper>(draft_cfg, *draft_files,
-                                                                    std::nullopt, std::nullopt);
-      draft_text_streamer = std::make_unique<simaai::llima::TextStreamer>(
-          draft_vlm_helper->get_tokenizer(), std::nullopt, std::nullopt);
-      draft_text_streamer->set_performance_summary_enabled(false);
-      draft_language_model = std::make_unique<simaai::llima::LanguageModel>(
-          *info.draft_root, draft_vlm_helper->get_stop_token_ids(),
-          draft_vlm_helper->get_image_token_id(), draft_vlm_helper->get_pad_token_id(),
-          *draft_text_streamer, draft_files);
+    runtime = std::make_unique<llima::VisionLanguageModel>(info.root, std::nullopt, std::nullopt,
+                                                           std::move(context.files));
+    if (info.draft_root) {
+      llima::VisionLanguageModel draft(*info.draft_root, std::nullopt, std::nullopt,
+                                       std::move(context.draft_files));
+      runtime->set_draft_vlm(&draft);
     }
-    if (info.accepts_image) {
-      image_processor = make_image_processor(cfg, *files);
-      vision_model = std::make_unique<simaai::llima::VisionModel>(info.root, files);
+    tool_call_format = runtime->tool_call_format();
+    reasoning_format = llima::reasoning_format_for_model(runtime->model_type());
+  }
+
+  void validate_thinking_request(const GenerationRequest& request) const {
+    if (request.enable_thinking && reasoning_format == llima::ReasoningFormat::None)
+      throw std::invalid_argument("Thinking is not supported for this model");
+  }
+
+  bool prompt_opens_reasoning(const GenerationRequest& request) const {
+    return reasoning_format == llima::ReasoningFormat::Gemma4 && !request.messages.empty() &&
+           request.messages.back().role == "tool";
+  }
+
+  llima::ChatResult generate(const GenerationRequest& request, llima::GenerationOptions options) {
+    if (!operations.lock(options.stop)) {
+      llima::ChatResult cancelled;
+      cancelled.finish = llima::ChatResult::Finish::Cancelled;
+      return cancelled;
     }
-    configure_run_callbacks();
+    std::lock_guard lock(operations, std::adopt_lock);
+    if (request.max_new_tokens > std::numeric_limits<uint16_t>::max())
+      throw std::runtime_error("GenerationRequest::max_new_tokens exceeds LLiMa token limit");
+    if (request.max_new_tokens)
+      options.max_new_tokens = static_cast<uint16_t>(request.max_new_tokens);
+    options.performance_summary = false;
+    options.reject_oversized_prompt = true;
+
+    auto chat = runtime->create_chat();
+    chat.set_enable_thinking(request.enable_thinking);
+    chat.set_reasoning_effort(request.reasoning_effort);
+    if (internal::tool_calls_enabled(request))
+      chat.set_tools(request.tools);
+
+    auto messages = Json::array();
+    std::vector<cv::Mat> images;
+    std::optional<std::size_t> cached_at;
+    for (const auto& message : internal::build_text_messages(request)) {
+      if ((!message.images.empty() || message.use_cached_images) && !info.accepts_image)
+        throw std::runtime_error(
+            "GenerationRequest uses images, but this model does not accept images");
+      if (message.use_cached_images) {
+        if (cached_images.empty())
+          throw std::runtime_error("GenerationRequest requested cached images but none are cached");
+        cached_at = images.size();
+      }
+      for (const auto& tensor : message.images.tensors())
+        images.push_back(require_genai_rgb_image_tensor(tensor));
+      const auto count = message.use_cached_images ? cached_images.size() : message.images.size();
+      messages.push_back(make_llima_message(message, message_content(message, count)));
+    }
+    chat.set_messages(std::move(messages));
+    options.images = images;
+
+    // LLiMa accepts raw placeholders first, followed by encoded placeholders. Encode any
+    // raw images after the cached turn so the original conversation order is preserved.
+    std::vector<llima::EncodedImage> ordered;
+    if (cached_at) {
+      options.encoded_images = cached_images;
+      if (*cached_at < images.size()) {
+        auto suffix = runtime->encode_images(options.images.subspan(*cached_at));
+        ordered = cached_images;
+        ordered.insert(ordered.end(), suffix.begin(), suffix.end());
+        options.images = options.images.first(*cached_at);
+        options.encoded_images = ordered;
+      }
+    }
+    return runtime->generate(chat, options);
   }
 
   GenerationResult run(const GenerationRequest& request) {
-    internal::validate_text_generation_request(request);
     validate_thinking_request(request);
-
-    auto active_run = ActiveRunGuard::acquire(*this);
-    reset_metrics();
-    configure_run_callbacks();
-
-    const bool parse_tools = internal::tool_calls_enabled(request);
-    auto output_token_ids = generate_tokens(request);
-
     GenerationResult result;
-    result.metrics = current_metrics();
-    if (!output_token_ids.has_value()) {
-      result.finish_reason = "interrupted";
-      return result;
-    }
-
-    result.metrics.generated_tokens = static_cast<std::uint32_t>(output_token_ids->size());
-    const auto preserved_tokens = structural_tokens(request);
-    const auto decoded =
-        preserved_tokens.empty()
-            ? vlm_helper->get_tokenizer()->decode(output_token_ids.value(), true)
-            : simaai::llima::decode_tool_call_output(*vlm_helper->get_tokenizer(),
-                                                     output_token_ids.value(), preserved_tokens);
+    llima::GenerationOptions options;
+    options.callbacks.info = [&](const std::string& metric, double value) {
+      if (metric == "ttft")
+        result.metrics.time_to_first_token_s = value;
+      if (metric == "tps")
+        result.metrics.tokens_per_second = value;
+    };
+    options.callbacks.text = [](const std::string&, bool, bool) {};
+    const auto output = generate(request, std::move(options));
+    result.metrics.generated_tokens = output.performance.generated_tokens;
     simaai::llima::ReasoningStreamParser reasoning_parser(reasoning_format, request.enable_thinking,
                                                           prompt_opens_reasoning(request));
-    for (auto& event : reasoning_parser.add(decoded, true)) {
+    for (auto& event : reasoning_parser.add(output.text, true)) {
       if (event.reasoning) {
         result.reasoning += event.text;
       } else {
         result.text += event.text;
       }
     }
-    if (parse_tools) {
+    if (internal::tool_calls_enabled(request)) {
       auto tool_calls = simaai::llima::try_parse_tool_calls(
           tool_call_format, result.text, tool_names_from_definitions(request.tools));
       if (!tool_calls.is_null()) {
@@ -438,299 +210,33 @@ struct VisionLanguageModel::Impl {
         result.text.clear();
       }
     }
-    result.finish_reason =
-        token_limit_reached ? "length" : (result.tool_calls.empty() ? "stop" : "tool_calls");
+    result.finish_reason = finish_reason(output.finish, !result.tool_calls.empty());
     return result;
   }
 
-  void validate_thinking_request(const GenerationRequest& request) const {
-    if (request.enable_thinking && reasoning_format == simaai::llima::ReasoningFormat::None) {
-      throw std::invalid_argument("Thinking is not supported for this model");
-    }
-  }
-
-  std::optional<std::vector<uint32_t>> generate_tokens(const GenerationRequest& request) {
-    auto preserved_tokens = structural_tokens(request);
-    text_streamer->set_preserved_token_ids(preserved_tokens);
-    text_streamer->set_tool_call_enabled(!preserved_tokens.empty());
-    simaai::llima::ChronoTimer timer_ttft{true};
-    auto prepared = prepare_input(request);
-    auto vision_ofm_maps = language_model->create_input_buffers(prepared.input_token_ids);
-    fill_vision_buffers(vision_ofm_maps, prepared);
-
-    const auto max_total_tokens =
-        make_max_total_tokens(prepared.input_token_ids.size(), request.max_new_tokens);
-    if (draft_language_model) {
-      return language_model->run_model_speculative_decoding(
-          *draft_language_model, prepared.input_token_ids, max_total_tokens, timer_ttft, nullptr,
-          prepared.stable_prefix_token_count);
-    }
-    return language_model->run_model(prepared.input_token_ids, timer_ttft, max_total_tokens,
-                                     std::nullopt, prepared.stable_prefix_token_count);
-  }
-
-  bool prompt_opens_reasoning(const GenerationRequest& request) const {
-    return reasoning_format == simaai::llima::ReasoningFormat::Gemma4 &&
-           !request.messages.empty() && request.messages.back().role == "tool";
-  }
-
-  simaai::llima::PreservedToolCallTokens structural_tokens(const GenerationRequest& request) const {
-    simaai::llima::PreservedToolCallTokens tokens;
-    if (internal::tool_calls_enabled(request)) {
-      tokens = preserved_tool_call_tokens;
-    }
-    // gpt_oss emits channel markers even with thinking off; the parser needs them.
-    const bool preserve_reasoning_markers =
-        request.enable_thinking || reasoning_format == simaai::llima::ReasoningFormat::GptOss;
-    if (preserve_reasoning_markers && reasoning_format != simaai::llima::ReasoningFormat::None) {
-      for (const auto marker : simaai::llima::reasoning_special_tokens(reasoning_format)) {
-        try {
-          tokens.emplace_back(vlm_helper->get_tokenizer()->token_to_id(std::string(marker)),
-                              marker);
-        } catch (const std::exception&) {
-          throw std::runtime_error("Reasoning token '" + std::string(marker) +
-                                   "' is missing from the tokenizer");
-        }
-      }
-    }
-    return tokens;
-  }
-
-  struct PreparedInput {
-    std::vector<uint32_t> input_token_ids;
-    std::vector<std::vector<Eigen::bfloat16>> image_tensors;
-    std::vector<CachedVisionOutput> cached_vision_outputs;
-    std::size_t expected_image_count = 0;
-    uint16_t stable_prefix_token_count = 0;
-  };
-
-  PreparedInput prepare_input(const GenerationRequest& request) {
-    const auto cached = cached_images_copy();
-    const auto built = build_llima_messages(request, cached.size());
-    if (built.expected_image_count > 0U && !info.accepts_image) {
-      throw std::runtime_error(
-          "GenerationRequest uses images, but this model does not accept images");
-    }
-
-    simaai::llima::Chat chat(*vlm_helper);
-    chat.set_enable_thinking(request.enable_thinking);
-    chat.set_reasoning_effort(request.reasoning_effort);
-    chat.set_messages(built.messages);
-    if (internal::tool_calls_enabled(request)) {
-      chat.set_tools(request.tools);
-    }
-    auto preprocessed = vlm_helper->preprocess(chat);
-    if (preprocessed.input_token_ids.size() >= cfg.pipeline_cfg.max_num_tokens) {
-      throw std::length_error("Prompt uses " + std::to_string(preprocessed.input_token_ids.size()) +
-                              " tokens; model context is " +
-                              std::to_string(cfg.pipeline_cfg.max_num_tokens) +
-                              ". Start a new conversation or shorten the input.");
-    }
-    if (preprocessed.image_tensors.size() != built.expected_image_count) {
-      throw std::runtime_error("LLiMa chat template image count did not match GenAI request");
-    }
-
-    PreparedInput prepared;
-    prepared.input_token_ids = std::move(preprocessed.input_token_ids);
-    prepared.stable_prefix_token_count = preprocessed.stable_prefix_token_count;
-    prepared.expected_image_count = built.expected_image_count;
-    if (!built.images.empty()) {
-      if (!image_processor) {
-        throw std::runtime_error("GenAI image processor is unavailable for this model");
-      }
-      prepared.image_tensors = preprocess_images(*image_processor, built.images);
-    }
-    if (built.use_cached_images) {
-      prepared.cached_vision_outputs = cached;
-    }
-    return prepared;
-  }
-
-  void fill_vision_buffers(std::vector<std::map<uint8_t, simaai::llima::MLABufferSlice>>& ofm_maps,
-                           const PreparedInput& prepared) {
-    if (ofm_maps.size() != prepared.expected_image_count) {
-      throw std::runtime_error("LLiMa language model image-token count did not match request");
-    }
-    if (ofm_maps.empty()) {
-      return;
-    }
-    if (!vision_model) {
-      throw std::runtime_error("GenAI vision model is unavailable for this model");
-    }
-
-    std::size_t map_idx = 0;
-    for (const auto& image_tensor : prepared.image_tensors) {
-      vision_model->run_model(image_tensor, &ofm_maps.at(map_idx));
-      ++map_idx;
-    }
-    for (const auto& cached_output : prepared.cached_vision_outputs) {
-      upload_cached_vision_output(cached_output, ofm_maps.at(map_idx));
-      ++map_idx;
-    }
-  }
-
-  static CachedVisionOutput
-  cache_vision_output(const std::map<uint8_t, simaai::llima::MLABufferSlice>& ofm_map) {
-    CachedVisionOutput cached_output;
-    cached_output.reserve(ofm_map.size());
-    for (const auto& [output_idx, slice] : ofm_map) {
-      if (output_idx != cached_output.size()) {
-        throw std::runtime_error("Vision encoder output indexes must be contiguous from zero");
-      }
-
-      auto* buffer = slice.get_buf_ptr();
-      if (buffer == nullptr || buffer->get_virtual_addr() == nullptr) {
-        throw std::runtime_error("Vision encoder output buffer is unavailable");
-      }
-      const auto data_offset = buffer->get_buf_addr_offset(slice.get_buf_begins());
-      const auto data_size = buffer->get_buf_len(slice.get_buf_shapes());
-      buffer->invalidate_cache(data_offset, data_size);
-
-      std::vector<std::byte> bytes(data_size);
-      const auto* source = static_cast<const std::byte*>(buffer->get_virtual_addr()) + data_offset;
-      std::memcpy(bytes.data(), source, data_size);
-      cached_output.push_back(std::move(bytes));
-    }
-    return cached_output;
-  }
-
-  static void
-  upload_cached_vision_output(const CachedVisionOutput& cached_output,
-                              const std::map<uint8_t, simaai::llima::MLABufferSlice>& ofm_map) {
-    if (cached_output.size() != ofm_map.size()) {
-      throw std::runtime_error("Cached image output count does not match language input buffers");
-    }
-
-    std::size_t expected_output_idx = 0;
-    for (const auto& [output_idx, slice] : ofm_map) {
-      if (output_idx != expected_output_idx) {
-        throw std::runtime_error("Language model input indexes must be contiguous from zero");
-      }
-
-      auto* buffer = slice.get_buf_ptr();
-      if (buffer == nullptr) {
-        throw std::runtime_error("Cached image destination buffer is null");
-      }
-      const auto data_size = buffer->get_buf_len(slice.get_buf_shapes());
-      const auto& bytes = cached_output[expected_output_idx];
-      if (data_size != bytes.size()) {
-        throw std::runtime_error("Cached image output does not match language input buffer");
-      }
-      buffer->upload_raw(bytes.data(), buffer->get_buf_addr_offset(slice.get_buf_begins()),
-                         data_size);
-      ++expected_output_idx;
-    }
-  }
-
-  std::vector<CachedVisionOutput> cached_images_copy() const {
-    std::lock_guard<std::mutex> lock(cache_mutex);
-    return cached_vision_outputs;
-  }
-
   bool encode(const std::vector<Tensor>& images) {
-    if (!info.accepts_image) {
+    if (!info.accepts_image)
       throw std::runtime_error("VisionLanguageModel::encode requires a vision-capable model");
-    }
-    if (images.empty()) {
+    if (images.empty())
       throw std::runtime_error("VisionLanguageModel::encode requires at least one image");
-    }
-
-    auto active_run = ActiveRunGuard::acquire(*this);
-    if (!image_processor || !vision_model) {
-      throw std::runtime_error("GenAI vision runtime is unavailable for this model");
-    }
-    if (!cfg.mm_cfg.has_value() || cfg.mm_cfg->mm_tokens_per_image == 0U) {
-      throw std::runtime_error("VisionLanguageModel::encode requires image-token configuration");
-    }
-    const auto image_token_id = vlm_helper->get_image_token_id();
-    if (!image_token_id.has_value()) {
-      throw std::runtime_error("VisionLanguageModel::encode requires an image token ID");
-    }
-    const auto tokens_per_image = static_cast<std::size_t>(cfg.mm_cfg->mm_tokens_per_image);
-    const auto max_token_count = static_cast<std::size_t>(std::numeric_limits<uint16_t>::max());
-    if (images.size() > max_token_count / tokens_per_image) {
-      throw std::runtime_error("VisionLanguageModel::encode image count exceeds LLiMa token limit");
-    }
-
-    auto image_tensors = preprocess_images(*image_processor, images);
-    std::vector<uint32_t> image_token_ids(images.size() * tokens_per_image, *image_token_id);
-    auto ofm_maps = language_model->create_input_buffers(image_token_ids);
-    if (ofm_maps.size() != image_tensors.size()) {
-      throw std::runtime_error("LLiMa language model did not create one output map per image");
-    }
-
-    std::vector<CachedVisionOutput> encoded;
-    encoded.reserve(image_tensors.size());
-    for (std::size_t i = 0; i < image_tensors.size(); ++i) {
-      vision_model->run_model(image_tensors[i], &ofm_maps[i]);
-      encoded.push_back(cache_vision_output(ofm_maps[i]));
-    }
-    {
-      std::lock_guard<std::mutex> lock(cache_mutex);
-      cached_vision_outputs = std::move(encoded);
-    }
+    std::vector<cv::Mat> pixels;
+    pixels.reserve(images.size());
+    for (const auto& image : images)
+      pixels.push_back(require_genai_rgb_image_tensor(image));
+    std::lock_guard lock(operations);
+    cached_images = runtime->encode_images(pixels);
+    cached_count.store(cached_images.size());
     return true;
   }
 
-  std::size_t cached_image_count() const {
-    std::lock_guard<std::mutex> lock(cache_mutex);
-    return cached_vision_outputs.size();
-  }
-
-  void configure_run_callbacks() {
-    text_streamer->set_info_callback(
-        [this](const std::string& metric, double value) { record_metric(metric, value); });
-    text_streamer->set_text_callback([](const std::string&, bool, bool) {});
-  }
-
-  void reset_metrics() {
-    std::lock_guard<std::mutex> lock(metrics_mutex);
-    metrics = {};
-    token_limit_reached = false;
-  }
-
-  void record_metric(const std::string& metric, double value) {
-    std::lock_guard<std::mutex> lock(metrics_mutex);
-    if (metric == "ttft") {
-      metrics.time_to_first_token_s = value;
-    } else if (metric == "tps") {
-      metrics.tokens_per_second = value;
-    } else if (metric == "FULL") {
-      token_limit_reached = true;
-    }
-  }
-
-  GenerationMetrics current_metrics() const {
-    std::lock_guard<std::mutex> lock(metrics_mutex);
-    return metrics;
-  }
-
   internal::ModelDirectoryInfo info;
-  std::atomic<bool> token_limit_reached{false};
-  std::shared_ptr<simaai::llima::FileProvider> files;
-  std::shared_ptr<simaai::llima::FileProvider> draft_files;
-  simaai::llima::VlmConfig cfg;
-  std::string bos_token;
-  std::unique_ptr<simaai::llima::VlmHelper> vlm_helper;
-  std::unique_ptr<simaai::llima::TextStreamer> text_streamer;
-  simaai::llima::ToolCallFormat tool_call_format = simaai::llima::ToolCallFormat::GenericJson;
-  simaai::llima::ReasoningFormat reasoning_format = simaai::llima::ReasoningFormat::None;
-  simaai::llima::PreservedToolCallTokens preserved_tool_call_tokens;
-  std::unique_ptr<simaai::llima::LanguageModel> language_model;
-  simaai::llima::VlmConfig draft_cfg;
-  std::unique_ptr<simaai::llima::VlmHelper> draft_vlm_helper;
-  std::unique_ptr<simaai::llima::TextStreamer> draft_text_streamer;
-  std::unique_ptr<simaai::llima::LanguageModel> draft_language_model;
-  std::unique_ptr<simaai::llima::ImageProcessor> image_processor;
-  std::unique_ptr<simaai::llima::VisionModel> vision_model;
-  std::mutex load_mutex;
-  std::mutex run_state_mutex;
-  std::condition_variable run_state_cv;
-  bool run_active = false;
-  mutable std::mutex cache_mutex;
-  std::vector<CachedVisionOutput> cached_vision_outputs;
-  mutable std::mutex metrics_mutex;
-  GenerationMetrics metrics;
+  std::unique_ptr<llima::VisionLanguageModel> runtime;
+  llima::ToolCallFormat tool_call_format;
+  llima::ReasoningFormat reasoning_format;
+  // Adapter changes must wait for an in-flight request. Callbacks only touch request-local state.
+  internal::ModelOperations operations;
+  std::vector<llima::EncodedImage> cached_images;
+  std::atomic<std::size_t> cached_count{0};
 };
 
 VisionLanguageModel::VisionLanguageModel(std::filesystem::path model_dir)
@@ -741,9 +247,7 @@ VisionLanguageModel internal::ModelAccess::vision(ModelLoadContext context) {
 }
 
 VisionLanguageModel::VisionLanguageModel(internal::ModelLoadContext context)
-    : impl_(std::make_shared<Impl>(std::move(context))) {
-  impl_->load();
-}
+    : impl_(std::make_shared<Impl>(std::move(context))) {}
 
 VisionLanguageModel::~VisionLanguageModel() = default;
 
@@ -765,23 +269,23 @@ std::string VisionLanguageModel::model_id() const {
 
 void VisionLanguageModel::set_lora(const std::string& adapter_name) {
   validate_lora_adapter_name(adapter_name);
-  if (impl_->draft_language_model) {
+  if (impl_->info.draft_root) {
     throw std::invalid_argument("Dynamic LoRA is not supported with speculative decoding");
   }
-  auto active_run = Impl::ActiveRunGuard::acquire(*impl_);
-  impl_->language_model->set_reloc(adapter_name);
+  std::lock_guard lock(impl_->operations);
+  impl_->runtime->set_reloc(adapter_name);
 }
 
 void VisionLanguageModel::unset_lora() {
-  if (impl_->draft_language_model) {
+  if (impl_->info.draft_root) {
     throw std::invalid_argument("Dynamic LoRA is not supported with speculative decoding");
   }
-  auto active_run = Impl::ActiveRunGuard::acquire(*impl_);
-  impl_->language_model->unset_reloc();
+  std::lock_guard lock(impl_->operations);
+  impl_->runtime->unset_reloc();
 }
 
 std::size_t VisionLanguageModel::cached_image_count() const {
-  return impl_->cached_image_count();
+  return impl_->cached_count.load();
 }
 
 bool VisionLanguageModel::encode(const Tensor& image) {
@@ -810,23 +314,15 @@ GenerationResult VisionLanguageModel::run(const GenerationRequest& request) {
 GenerationStream VisionLanguageModel::stream(const GenerationRequest& request) {
   internal::validate_text_generation_request(request);
   impl_->validate_thinking_request(request);
+  std::stop_source stop;
   return GenerationStream(
-      [model = impl_, request](GenerationStream::Producer& producer) {
-        struct CallbackGuard {
-          std::shared_ptr<VisionLanguageModel::Impl> model;
-          ~CallbackGuard() {
-            if (model) {
-              model->configure_run_callbacks();
-            }
-          }
-        } callback_guard{model};
-
-        auto active_run = VisionLanguageModel::Impl::ActiveRunGuard::acquire(*model);
-        model->reset_metrics();
-        model->text_streamer->set_info_callback(
-            [&producer](const std::string& metric, double value) {
-              producer.record_metric(metric, value);
-            });
+      [model = impl_, request, token = stop.get_token()](GenerationStream::Producer& producer) {
+        llima::GenerationOptions options;
+        options.stop = token;
+        options.callbacks.info = [&producer](const std::string& metric, double value) {
+          if (metric == "ttft" || metric == "tps")
+            producer.record_metric(metric, value);
+        };
         const bool parse_tools = internal::tool_calls_enabled(request);
         simaai::llima::ToolCallStreamParser tool_parser(model->tool_call_format,
                                                         tool_names_from_definitions(request.tools));
@@ -851,47 +347,33 @@ GenerationStream VisionLanguageModel::stream(const GenerationRequest& request) {
                 producer.push(std::move(sample));
               }
             };
-        model->text_streamer->set_text_callback(
-            [&producer, parse_tools, &reasoning_parser, &tool_parser,
-             &handle_tool_parser_events](const std::string& text, bool stream_end, bool) {
-              for (auto& event : reasoning_parser.add(text, stream_end)) {
-                if (event.reasoning) {
-                  TokenSample sample;
-                  sample.reasoning = std::move(event.text);
-                  sample.metrics = producer.current_metrics();
-                  producer.push(std::move(sample));
-                } else if (parse_tools) {
-                  handle_tool_parser_events(tool_parser.add(event.text, false));
-                } else {
-                  producer.record_text(event.text, false);
-                }
-              }
-              if (stream_end) {
-                if (parse_tools) {
-                  handle_tool_parser_events(tool_parser.add("", true));
-                }
-                producer.record_text("", true);
-              }
-            });
-        auto output_token_ids = model->generate_tokens(request);
-        std::string finish_reason = output_token_ids.has_value() ? "stop" : "interrupted";
-        if (parse_tools && output_token_ids.has_value() && emitted_tool_calls) {
-          finish_reason = "tool_calls";
-        }
-        const auto generated_tokens =
-            output_token_ids.has_value()
-                ? std::optional<std::uint32_t>(static_cast<std::uint32_t>(output_token_ids->size()))
-                : std::optional<std::uint32_t>(0);
-        producer.finish(finish_reason, generated_tokens);
+        options.callbacks.text = [&producer, parse_tools, &reasoning_parser, &tool_parser,
+                                  &handle_tool_parser_events](const std::string& text,
+                                                              bool stream_end, bool) {
+          for (auto& event : reasoning_parser.add(text, stream_end)) {
+            if (event.reasoning) {
+              TokenSample sample;
+              sample.reasoning = std::move(event.text);
+              sample.metrics = producer.current_metrics();
+              producer.push(std::move(sample));
+            } else if (parse_tools) {
+              handle_tool_parser_events(tool_parser.add(event.text, false));
+            } else {
+              producer.record_text(event.text, false);
+            }
+          }
+          if (stream_end) {
+            if (parse_tools) {
+              handle_tool_parser_events(tool_parser.add("", true));
+            }
+            producer.record_text("", true);
+          }
+        };
+        const auto output = model->generate(request, std::move(options));
+        producer.finish(finish_reason(output.finish, emitted_tool_calls),
+                        output.performance.generated_tokens);
       },
-      [model = impl_] {
-        if (model && model->language_model) {
-          model->language_model->stop_model();
-        }
-        if (model && model->draft_language_model) {
-          model->draft_language_model->stop_model();
-        }
-      });
+      [stop] { stop.request_stop(); });
 }
 
 } // namespace simaai::neat::genai
