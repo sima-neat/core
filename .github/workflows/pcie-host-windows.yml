@@ -134,6 +134,7 @@ jobs:
           persist-credentials: false
       - run: python3 pcie_host/tests/test_windows_ci.py
       - run: python3 pcie_host/tests/test_verify_linux_release_run.py
+      - run: python3 pcie_host/tests/test_windows_offline.py
   linux_release:
     name: Exact Linux build and hardware regressions
     # Runs beside contracts; every job after it also needs contracts.
@@ -875,3 +876,174 @@ jobs:
         run: |
           bash scripts/ci/pciehost/publish_windows.sh \
             "${RUNNER_TEMP}/core-windows-candidate" "${RUNNER_TEMP}/core-windows-published"
+  offline:
+    name: Assemble and validate the Windows offline bundle
+    # Beside the hardware job, with its condition: it needs the run's candidate,
+    # card bundle and wheelhouse, and the release channel for an upgrade baseline.
+    needs: [native, linux_release, card_candidate, resolve-vulcan-config]
+    if: ${{ !cancelled() && (needs.native.result == 'success' || (inputs.linux_current_run == true && needs.native.result == 'skipped')) && needs.linux_release.result == 'success' && needs.card_candidate.result == 'success' && needs.resolve-vulcan-config.result == 'success' }}
+    runs-on: windows-2025
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - name: Require an elevated runner
+        shell: powershell
+        run: |
+          $principal = [Security.Principal.WindowsPrincipal]::new(
+            [Security.Principal.WindowsIdentity]::GetCurrent())
+          if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+            Write-Output ("::error::$env:USERDOMAIN\$env:USERNAME is not elevated. This job " +
+              "installs per-machine MSIs and adds firewall rules; run it as an administrator.")
+            exit 1
+          }
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: 3.14.7
+      - name: Provision pinned bootstrap sima-cli
+        shell: pwsh
+        run: |
+          & ./scripts/ci/pciehost/provision_windows_build.ps1 -Component sima-cli -Root "$env:RUNNER_TEMP\windows-inputs"
+      - uses: actions/download-artifact@v4
+        with:
+          name: core-pciehost-windows-amd64
+          path: ${{ runner.temp }}/core-windows-candidate
+      - name: Download the build's Windows card inputs
+        uses: actions/download-artifact@v4
+        with:
+          name: core-pciehost-windows-card-inputs
+          path: ${{ runner.temp }}/core-windows-card-inputs
+      - name: Download exact private card qualification candidate
+        uses: actions/download-artifact@v4
+        with:
+          name: core-pcie-card-qualification-candidate
+          path: ${{ runner.temp }}/core-card-candidate
+      - name: Assemble the offline bundle
+        shell: powershell
+        run: |
+          $ErrorActionPreference = "Stop"
+          & python scripts/ci/pciehost/windows_offline.py assemble `
+            --candidate "$env:RUNNER_TEMP\core-windows-candidate" `
+            --wheelhouse "$env:RUNNER_TEMP\core-windows-card-inputs\wheelhouse" `
+            --card-candidate "$env:RUNNER_TEMP\core-card-candidate" `
+            --inputs scripts/ci/pciehost/windows_build_inputs.json `
+            --installer-revision $env:GITHUB_SHA --run-id $env:GITHUB_RUN_ID `
+            --ref $env:GITHUB_REF_NAME `
+            --output "$env:RUNNER_TEMP\core-windows-offline"
+          if ($LASTEXITCODE -ne 0) { throw "Offline bundle assembly failed: $LASTEXITCODE" }
+      - name: Download, install, repair and remove with the network blocked
+        shell: powershell
+        env:
+          REQUIRE_UPGRADE: ${{ inputs.require_upgrade }}
+          UPGRADE_BASE_TAG: ${{ inputs.upgrade_base_tag }}
+          ARTIFACT_BASE_URL: ${{ needs.resolve-vulcan-config.outputs.artifact_base_url }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $arguments = @(
+            "scripts/ci/pciehost/validate_windows_offline.py",
+            "--offline", "$env:RUNNER_TEMP\core-windows-offline",
+            "--candidate", "$env:RUNNER_TEMP\core-windows-candidate",
+            "--sima-cli", $env:SIMA_CLI,
+            "--work", "$env:RUNNER_TEMP\core-windows-offline-gate",
+            "--evidence", "$env:RUNNER_TEMP\core-windows-offline-evidence"
+          )
+          if ("$env:REQUIRE_UPGRADE" -eq "true") {
+            # The prior release as customers download it, as in the hardware job.
+            $baseCommit = & git rev-parse --verify --quiet "refs/tags/$env:UPGRADE_BASE_TAG^{commit}"
+            if ($LASTEXITCODE -ne 0 -or -not $baseCommit) {
+              throw "Upgrade baseline tag is not in this repository: $env:UPGRADE_BASE_TAG"
+            }
+            & python scripts/ci/pciehost/windows_release.py fetch `
+              --base-url $env:ARTIFACT_BASE_URL --ref $env:UPGRADE_BASE_TAG `
+              --commit $baseCommit --output "$env:RUNNER_TEMP\core-windows-upgrade-base"
+            if ($LASTEXITCODE -ne 0) { throw "Published upgrade baseline fetch failed: $LASTEXITCODE" }
+            $arguments += @(
+              "--upgrade-base-candidate", "$env:RUNNER_TEMP\core-windows-upgrade-base",
+              "--expected-upgrade-base-commit", $baseCommit
+            )
+          }
+          & python @arguments
+          if ($LASTEXITCODE -ne 0) { throw "Offline bundle validation failed: $LASTEXITCODE" }
+      - name: Retain the offline bundle
+        uses: actions/upload-artifact@v6
+        with:
+          name: core-pciehost-windows-offline
+          path: |
+            ${{ runner.temp }}/core-windows-offline/neat-pcie-offline-installer-*.tar.gz
+            ${{ runner.temp }}/core-windows-offline/metadata-offline.json
+            ${{ runner.temp }}/core-windows-offline/windows-offline-bundle.json
+          if-no-files-found: error
+          retention-days: 7
+      - name: Retain offline bundle evidence
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: core-pciehost-windows-offline-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/core-windows-offline-evidence/*
+          if-no-files-found: ignore
+          retention-days: 14
+      - name: Remove the network block
+        if: always()
+        shell: powershell
+        run: |
+          $ErrorActionPreference = "Stop"
+          Get-NetFirewallRule -DisplayName "neat-offline-gate" -ErrorAction SilentlyContinue | Remove-NetFirewallRule
+          $state = "$env:RUNNER_TEMP\core-windows-offline-evidence\firewall-profiles.json"
+          if (Test-Path -LiteralPath $state) {
+            $recorded = Get-Content -Raw -LiteralPath $state | ConvertFrom-Json
+            foreach ($item in $recorded.PSObject.Properties) {
+              Set-NetFirewallProfile -Name $item.Name -Enabled $item.Value
+            }
+          }
+  publish-offline:
+    name: Publish the Windows offline bundle under its Neat tag
+    # publish runs only for a qualified release tag; this job never changes the
+    # online release and never replaces a published offline bundle.
+    needs: [publish, offline, resolve-vulcan-config]
+    if: ${{ needs.publish.result == 'success' && needs.offline.result == 'success' }}
+    environment: ${{ needs.resolve-vulcan-config.outputs.vulcan_env }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    concurrency:
+      group: pciehost-windows-offline-publish-${{ github.ref_name }}-${{ github.sha }}
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - name: Install publication client with conditional-write support
+        run: |
+          python3 -m venv "$RUNNER_TEMP/offline-aws"
+          "$RUNNER_TEMP/offline-aws/bin/pip" install awscli==1.42.49
+          echo "$RUNNER_TEMP/offline-aws/bin" >> "$GITHUB_PATH"
+      - name: Download the validated offline bundle
+        uses: actions/download-artifact@v4
+        with:
+          name: core-pciehost-windows-offline
+          path: ${{ runner.temp }}/core-windows-offline
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          aws-region: ${{ needs.resolve-vulcan-config.outputs.aws_region }}
+          role-to-assume: ${{ needs.resolve-vulcan-config.outputs.artifact_publisher_role_arn }}
+          role-session-name: pciehost-windows-offline-${{ github.run_id }}
+      - name: Publish the offline bundle beside the online release
+        env:
+          ARTIFACT_BUCKET: ${{ needs.resolve-vulcan-config.outputs.artifact_bucket }}
+          CLOUDFRONT_DISTRIBUTION_ID: ${{ needs.resolve-vulcan-config.outputs.artifact_cloudfront_distribution_id }}
+          REF_NAME: ${{ github.ref_name }}
+          SSE_KMS_KEY_ID: ${{ needs.resolve-vulcan-config.outputs.artifact_kms_key_id }}
+        run: |
+          python3 scripts/ci/pciehost/windows_offline.py publish \
+            --bucket "${ARTIFACT_BUCKET}" --kms "${SSE_KMS_KEY_ID}" \
+            --ref "${REF_NAME}" --commit "${GITHUB_SHA}" \
+            --offline "${RUNNER_TEMP}/core-windows-offline" \
+            --distribution "${CLOUDFRONT_DISTRIBUTION_ID}"

@@ -1024,7 +1024,7 @@ class WindowsCiContracts(unittest.TestCase):
         ),
         2,
     )
-    self.assertEqual(workflow.count("shell: powershell"), 11)
+    self.assertEqual(workflow.count("shell: powershell"), 15)
     hardware_job = workflow.split("  hardware:\n", 1)[1].split("  publish:\n", 1)[0]
     # Self-hosted Windows keeps the default Restricted script policy, as customer PCs do;
     # run every step like pcie-setup.cmd does instead of provisioning the host.
@@ -4607,7 +4607,8 @@ class HostedWindowsBuildContracts(unittest.TestCase):
     self.assertEqual(len(names), len(set(names)))
     self.assertEqual(
         {entry["use"] for entry in manifest["files"]},
-        {"gstreamer", "opencv", "nlohmann-json", "wix", "wheelhouse", "sima-cli"})
+        {"gstreamer", "opencv", "nlohmann-json", "wix", "wheelhouse", "sima-cli",
+         "python-installer"})
     for entry in manifest["files"]:
       with self.subTest(input=entry["name"]):
         self.assertRegex(entry["url"], r"^https://[^\s?#]+$")
