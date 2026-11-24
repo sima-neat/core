@@ -803,8 +803,7 @@ RUN_TEST(
                 "single-channel GRAY8 Preproc must take one input channel, got " +
                     std::to_string(opt.input_channels()));
         require(opt.output_img_type == "GRAY8",
-                "single-channel GRAY8 Preproc must not convert to RGB, got " +
-                    opt.output_img_type);
+                "single-channel GRAY8 Preproc must not convert to RGB, got " + opt.output_img_type);
 
         pipeline_internal::sima::ManifestBuildDiagnostics diagnostics;
         const std::vector<std::shared_ptr<Node>> nodes{std::make_shared<Preproc>(opt)};
