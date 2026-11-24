@@ -8,6 +8,7 @@
 #include <simaai/scheduler/client/stage.h>
 #include <array>
 #include <cstdint>
+#include <optional>
 #include <string>
 namespace simaai::neat::pipeline_internal::sima {
 // The image a prepared Segment Anything plan was admitted for, as its preprocess
@@ -39,14 +40,34 @@ void attach_boxdecode_geometry_resolver(KernelStageRecipe&, std::size_t member,
 // cover the whole image, fails loudly.
 void attach_boxdecode_fixed_image_guard(KernelStageRecipe&, std::size_t member,
                                         BoxDecodeFixedImage);
-// The numerical member's request for frames that all carry the same preprocess facts: an image
-// of `original_width` x `original_height` (0, 0: the frames carry none) resized by `resize_mode`
-// ("" when they do not say). It is what the resolver above selects for such a frame, by its
-// rules and with its texts: the cold request when the size is explicit or equals the seed's,
-// otherwise the request with the image size the "image_size" variant would give the kernel. For
-// a backend that fixes the frame geometry when its input binds and makes one kernel for it. A
-// complete-geometry profile (each frame's affine) has no such request.
-::simaai::scheduler::client::Result<KernelStageRecipe::Request>
-boxdecode_request_for_frames(const KernelStageRecipe&, int original_width, int original_height,
-                             std::string_view resize_mode);
+// One frame's image geometry as its preprocess facts state it: what the image preproc publishes
+// with a frame, and what the resolver above reads from a buffer's compact facts.
+struct BoxDecodeFrameFacts {
+  int original_width = 0, original_height = 0; ///< 0, 0: the frames carry no facts
+  int resized_width = 0, resized_height = 0;   ///< the model canvas the frame is resized onto
+  std::string_view resize_mode;                ///< "" when the facts do not say
+  bool roi_list = false;
+  std::array<double, 6> affine{}; ///< model-to-original, row-major 2x3
+};
+// What the numerical member runs for frames that all carry the same preprocess facts: what the
+// resolver above selects for one buffer with those facts, by its rules, in its order and with its
+// texts. For a backend that fixes the frame geometry when its input binds and makes one kernel for
+// it, or one per frame size.
+struct BoxDecodeFrameGeometry {
+  /// The resolver selects the stage's cold kernel as it is: the stage takes no geometry from its
+  /// frames, or the frames' geometry is the cold seed's.
+  bool cold = false;
+  /// The variant the stage binds for a frame's geometry, "image_size" or "image_geometry" (a
+  /// complete-geometry profile: each frame's affine as well); "" when it binds none. Its values:
+  /// the original image's size, and for "image_geometry" the model-to-original transform (scale
+  /// x, scale y, offset x, offset y) when the frame or the seed has one.
+  std::string_view variant;
+  std::array<int, 2> image_size{};
+  std::optional<std::array<float, 4>> model_to_original;
+  /// The cold request with those values in place of the seed's: the kernel made of it runs such
+  /// frames as the variant of the cold kernel does.
+  KernelStageRecipe::Request request;
+};
+::simaai::scheduler::client::Result<BoxDecodeFrameGeometry>
+boxdecode_geometry_for_frames(const KernelStageRecipe&, const BoxDecodeFrameFacts&);
 } // namespace simaai::neat::pipeline_internal::sima

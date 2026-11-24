@@ -3,6 +3,7 @@
 #error "Internal header. Not part of the public API."
 #endif
 
+#include <array>
 #include <cstddef>
 #include <memory>
 #include <optional>
@@ -77,6 +78,14 @@ struct KernelStageRecipe {
     // frame must state its resize mode, the profile takes each frame's affine as well.
     bool size_from_frame = false, resize_required = false, complete_geometry = false;
     std::string resize; ///< the checked decode geometry's resize mode, as preprocess facts name it
+    // What the resolver holds besides: the model canvas the frames are resized onto; the cold
+    // seed's image size and model-to-original transform (scale x, scale y, offset x, offset y),
+    // which are the request's; whether a frame's two scales must be equal (oriented boxes) and
+    // whether each frame must bring its transform.
+    int model_width = 0, model_height = 0;
+    int seed_width = 0, seed_height = 0;
+    std::optional<std::array<float, 4>> seed_transform;
+    bool uniform_transform = false, frame_transform_required = false;
     // Core's wire serializer (BoxDecodePublication.cpp), the function the stage's host task
     // calls: `inputs` are the numerical member's outputs in its order, `output` the wire of
     // `wire_bytes`. Null where the wire is not written from all of the member's outputs.

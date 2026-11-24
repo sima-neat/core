@@ -1013,6 +1013,23 @@ std::size_t kernel_object_bytes(const client::TensorSpec& tensor) {
   return df::validate(port) ? 0 : df::slot_bytes(port);
 }
 
+// A frame's preprocess facts as the BoxDecode stage's geometry reads them (null: the route has no
+// image preproc, its frames carry none). The result views `meta`.
+si::BoxDecodeFrameFacts boxdecode_facts(const PreprocessRuntimeMeta* meta) {
+  si::BoxDecodeFrameFacts facts;
+  if (meta) {
+    facts.original_width = meta->original_width;
+    facts.original_height = meta->original_height;
+    facts.resized_width = meta->resized_width;
+    facts.resized_height = meta->resized_height;
+    facts.resize_mode = meta->resize_mode;
+    facts.roi_list = meta->roi_list_enabled;
+    facts.affine = {meta->affine_m00, meta->affine_m01, meta->affine_m02,
+                    meta->affine_m10, meta->affine_m11, meta->affine_m12};
+  }
+  return facts;
+}
+
 // The BoxDecode stage behind the MLA stage, at the route's end, as two route stages: the Kernels
 // package's "boxdecode" with its heads as views of the MLA's one output buffer and its outputs as
 // views of one small buffer, and Core's wire serializer behind it; "" or the fact about it that
@@ -1060,9 +1077,11 @@ std::string plan_boxdecode_stage(const si::StageStaticSpec& stage, bool first, b
   // for such a frame.
   const PreprocessRuntimeMeta* const facts =
       route.output.preprocess ? &*route.output.preprocess : nullptr;
-  auto fixed = si::boxdecode_request_for_frames(
-      recipe, facts ? facts->original_width : 0, facts ? facts->original_height : 0,
-      facts ? std::string_view(facts->resize_mode) : std::string_view());
+  auto fixed = program.complete_geometry
+                   ? client::Result<si::BoxDecodeFrameGeometry>(client::Error{
+                         client::ErrorCode::InvalidRequest, "boxdecode.geometry",
+                         "a complete-geometry profile takes each frame's preprocess affine"})
+                   : si::boxdecode_geometry_for_frames(recipe, boxdecode_facts(facts));
   if (const auto* error = std::get_if<client::Error>(&fixed)) {
     return (facts ? "the frames of the route's image preproc (" +
                         std::to_string(facts->original_width) + "x" +
@@ -1073,7 +1092,7 @@ std::string plan_boxdecode_stage(const si::StageStaticSpec& stage, bool first, b
                                 "geometry comes with each frame): ")) +
            error->message;
   }
-  si::KernelStageRecipe::Request& request = std::get<si::KernelStageRecipe::Request>(fixed);
+  si::KernelStageRecipe::Request& request = std::get<si::BoxDecodeFrameGeometry>(fixed).request;
   const auto inspected = client::inspect_kernel(member.executable);
   std::string unsupported;
   const client::KernelInspection* const plain =
@@ -2061,9 +2080,9 @@ using FrameGeometry = std::shared_ptr<const DataflowFrames::Geometry>;
 
 // What Core derives from one frame geometry, by the functions the plan used for the port's
 // bound: the image stage's request for it and the facts it publishes
-// (PreprocFrameAdapter::checked_fixed_frame), the BoxDecode request for frames of it
-// (boxdecode_request_for_frames), and the two kernels made of them. Cold: the Kernels package
-// checks both requests. The geometry, or why it has none.
+// (PreprocFrameAdapter::checked_fixed_frame), what the BoxDecode stage runs for frames of it
+// (boxdecode_geometry_for_frames), and the two kernels made of them. Cold: the Kernels package
+// checks the preproc's request and the decode's variant. The geometry, or why it has none.
 std::variant<FrameGeometry, std::string>
 make_frame_geometry(const DataflowFrames& frames, std::uint64_t word, const char* where) {
   using Adapter = DataflowFrames::Adapter;
@@ -2111,21 +2130,21 @@ make_frame_geometry(const DataflowFrames& frames, std::uint64_t word, const char
     if (frames.decode) {
       // The resolver's checks for such a frame (its resize mode, its size); then the Run's
       // kernel, or its "image_size" variant where the frame says the original image's size.
-      const int width = geometry->preprocess.original_width;
-      const int height = geometry->preprocess.original_height;
-      auto decode = si::boxdecode_request_for_frames(*frames.decode, width, height,
-                                                     geometry->preprocess.resize_mode);
+      auto decode =
+          si::boxdecode_geometry_for_frames(*frames.decode, boxdecode_facts(&geometry->preprocess));
       if (const auto* error = std::get_if<client::Error>(&decode)) {
         return "the decode does not take such frames: " + error->message;
       }
+      const si::BoxDecodeFrameGeometry& selected = std::get<si::BoxDecodeFrameGeometry>(decode);
       const std::shared_ptr<df::soc::Kernel>& base = frames.decode_kernel;
       geometry->decode = base;
-      if (frames.decode->boxdecode_program->size_from_frame) {
+      if (!selected.variant.empty()) {
         using Scalar = df::soc::KernelParameter::Scalar;
         const df::soc::KernelParameter size{
-            "image_size",
-            std::vector<Scalar>{Scalar{std::int64_t{width}}, Scalar{std::int64_t{height}}}};
-        df::Result<std::shared_ptr<df::soc::Kernel>> varied = base->with("image_size", {&size, 1});
+            "image_size", std::vector<Scalar>{Scalar{std::int64_t{selected.image_size[0]}},
+                                              Scalar{std::int64_t{selected.image_size[1]}}}};
+        df::Result<std::shared_ptr<df::soc::Kernel>> varied =
+            base->with(selected.variant, {&size, 1});
         if (const df::Error* error = df::failure(varied)) {
           return std::string("the decode does not take such frames: ") + error->message;
         }

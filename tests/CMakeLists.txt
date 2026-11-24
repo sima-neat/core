@@ -99,6 +99,16 @@ simaneat_add_test(NAME unit_boxdecode_geometry_test COMMAND unit_boxdecode_geome
 set_tests_properties(unit_boxdecode_geometry_test PROPERTIES
   TIMEOUT 30 LABELS "strict;unit;contracts")
 
+add_executable(unit_boxdecode_frame_geometry_test
+  unit_testing/unit_boxdecode_frame_geometry_test.cpp)
+target_link_libraries(unit_boxdecode_frame_geometry_test PRIVATE
+  sima_neat sima_neat_internal_headers SimaScheduler::frontend
+    SimaScheduler::ClientTestSupport)
+simaneat_add_test(NAME unit_boxdecode_frame_geometry_test
+  COMMAND unit_boxdecode_frame_geometry_test)
+set_tests_properties(unit_boxdecode_frame_geometry_test PROPERTIES
+  TIMEOUT 30 LABELS "strict;unit;contracts")
+
 add_executable(unit_kernel_runner_integration_test
   unit_testing/unit_kernel_runner_integration_test.cpp
   ${PROJECT_SOURCE_DIR}/src/pipeline/internal/sima/SchedulerStageIntegration.cpp)
@@ -186,6 +196,7 @@ set(PIPELINESESSION_TEST_TARGETS
   unit_boxdecode_kernel_recipe_test
   unit_boxdecode_public_input_binding_test
   unit_boxdecode_geometry_test
+  unit_boxdecode_frame_geometry_test
   unit_kernel_runner_integration_test)
 foreach(_target IN LISTS PIPELINESESSION_TEST_TARGETS)
   simaneat_append_ctest_env(${_target})

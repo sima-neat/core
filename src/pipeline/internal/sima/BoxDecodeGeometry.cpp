@@ -186,7 +186,7 @@ void attach_boxdecode_geometry_resolver(KernelStageRecipe& recipe, std::size_t m
                                         bool original_size_from_metadata,
                                         bool require_resize_metadata) {
   if (recipe.boxdecode_program) {
-    // The same authority for a backend that asks once (boxdecode_request_for_frames).
+    // The same authority for a backend that asks once (boxdecode_geometry_for_frames).
     auto& program = *recipe.boxdecode_program;
     program.size_from_frame = original_size_from_metadata;
     program.resize_required = require_resize_metadata;
@@ -194,6 +194,13 @@ void attach_boxdecode_geometry_resolver(KernelStageRecipe& recipe, std::size_t m
     program.resize = options.resize == ResizeMode::Stretch ? "stretch"
                      : options.resize == ResizeMode::Crop  ? "crop"
                                                            : "letterbox";
+    program.model_width = options.model_width;
+    program.model_height = options.model_height;
+    program.seed_width = options.original_width;
+    program.seed_height = options.original_height;
+    program.seed_transform = options.model_to_original;
+    program.uniform_transform = options.uniform_transform_required;
+    program.frame_transform_required = options.require_frame_transform;
   }
   if (!original_size_from_metadata && !require_resize_metadata && !options.complete_geometry)
     return;
@@ -403,35 +410,92 @@ void attach_boxdecode_fixed_image_guard(KernelStageRecipe& recipe, std::size_t m
          };
        }});
 }
-rt::Result<KernelStageRecipe::Request> boxdecode_request_for_frames(const KernelStageRecipe& recipe,
-                                                                    int original_width,
-                                                                    int original_height,
-                                                                    std::string_view resize_mode) {
+rt::Result<BoxDecodeFrameGeometry> boxdecode_geometry_for_frames(const KernelStageRecipe& recipe,
+                                                                 const BoxDecodeFrameFacts& facts) {
   if (!recipe.boxdecode_program)
     return invalid("the stage has no numerical BoxDecode request");
   const auto& program = *recipe.boxdecode_program;
-  if (program.complete_geometry)
-    return invalid("a complete-geometry profile takes each frame's preprocess affine");
-  // The resolver's order: the resize mode first, then who says the size.
-  if (program.resize_required && resize_mode.empty())
-    return invalid("required resize-mode metadata is missing");
-  if (!resize_mode.empty() && resize_mode != program.resize)
-    return invalid("preprocess resize mode differs from the checked decode geometry");
-  auto request = program.request;
+  const bool complete = program.complete_geometry;
+  // read_geometry, for a buffer that carries these compact facts (or none).
+  const bool described = facts.original_width != 0 || facts.original_height != 0;
+  std::optional<Transform> transform;
+  if (described) {
+    if (facts.original_width < 1 || facts.original_width > 1048576 || facts.original_height < 1 ||
+        facts.original_height > 1048576)
+      return invalid("original image dimensions must be 1..1048576");
+    if (complete) {
+      if (facts.roi_list)
+        return invalid("one BoxDecode frame requires one unambiguous preprocessing transform");
+      auto checked = checked_transform(facts.affine, program.uniform_transform);
+      if (const auto* error = std::get_if<rt::Error>(&checked))
+        return *error;
+      transform = std::get<Transform>(checked);
+    }
+  }
+  // The resolver's pass over its one buffer.
+  const std::string_view resize = described ? facts.resize_mode : std::string_view();
+  if (complete && described) {
+    if ((facts.resized_width || facts.resized_height) &&
+        (facts.resized_width != program.model_width ||
+         facts.resized_height != program.model_height))
+      return invalid("preprocess destination dimensions differ from the checked model");
+    if (!program.size_from_frame && (facts.original_width != program.seed_width ||
+                                     facts.original_height != program.seed_height))
+      return invalid("preprocess affine source dimensions conflict with explicit image size");
+  }
   // Explicit image dimensions retain their established precedence.
-  if (!program.size_from_frame)
-    return request;
-  if (original_width == 0 && original_height == 0)
-    return invalid("original image dimensions require preprocess metadata");
-  if (original_width < 1 || original_width > 1048576 || original_height < 1 ||
-      original_height > 1048576)
-    return invalid("original image dimensions are missing or invalid");
-  const auto size = std::find_if(request.parameters.begin(), request.parameters.end(),
-                                 [](const auto& p) { return p.name == "original_image_size"; });
-  if (size == request.parameters.end())
+  const bool found = program.size_from_frame && described;
+  // Its checks behind the pass: the resize mode first, then who says the size.
+  if (program.resize_required && resize.empty())
+    return invalid("required resize-mode metadata is missing");
+  if (!resize.empty() && resize != program.resize)
+    return invalid("preprocess resize mode differs from the checked decode geometry");
+  BoxDecodeFrameGeometry out;
+  out.image_size = {program.seed_width, program.seed_height};
+  if (program.size_from_frame) {
+    if (!found)
+      return invalid("original image dimensions require preprocess metadata");
+    out.image_size = {facts.original_width, facts.original_height};
+  }
+  out.request = program.request;
+  if (!complete && !program.size_from_frame) {
+    out.cold = true;
+    return out;
+  }
+  if (complete) {
+    if (program.frame_transform_required && !transform)
+      return invalid("source-driven complete geometry requires per-frame preprocess affine");
+    if (!described)
+      transform = program.seed_transform;
+    if (program.uniform_transform &&
+        (!transform || (*transform)[0] <= 0 || (*transform)[0] != (*transform)[1] ||
+         !std::all_of(transform->begin(), transform->end(),
+                      [](float value) { return std::isfinite(value); })))
+      return invalid("oriented boxes require a positive uniform explicit transform");
+    if (program.resize == "crop" && !transform)
+      return invalid("crop decoding requires the actual model-to-original affine");
+    out.model_to_original = transform;
+  }
+  out.variant = complete ? "image_geometry" : "image_size";
+  out.cold = out.image_size[0] == program.seed_width && out.image_size[1] == program.seed_height &&
+             out.model_to_original == program.seed_transform;
+  // The values the variant carries for such a frame, in the request.
+  const auto parameter = [&out](std::string_view name) {
+    return std::find_if(out.request.parameters.begin(), out.request.parameters.end(),
+                        [name](const auto& p) { return p.name == name; });
+  };
+  const auto size = parameter("original_image_size");
+  if (size == out.request.parameters.end())
     return invalid("the numerical request states no original image size");
-  // The value the "image_size" variant carries for such a frame.
-  size->value = rt::ParameterArray{original_width, original_height};
-  return request;
+  size->value = rt::ParameterArray{out.image_size[0], out.image_size[1]};
+  if (out.model_to_original) {
+    const auto& t = *out.model_to_original;
+    rt::ParameterValue value{rt::ParameterArray{t[0], t[1], t[2], t[3]}};
+    if (const auto stated = parameter("model_to_original"); stated != out.request.parameters.end())
+      stated->value = std::move(value);
+    else
+      out.request.parameters.push_back({"model_to_original", std::move(value)});
+  }
+  return out;
 }
 } // namespace simaai::neat::pipeline_internal::sima

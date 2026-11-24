@@ -50,7 +50,7 @@
 //     a Core operator on the Worker writes the BBOX wire from them with the stage's own
 //     serializer (BoxDecodePublication.cpp), which GStreamer runs as the stage's host task. The
 //     kernel is made for the frames the route's image preproc is planned for
-//     (boxdecode_request_for_frames: what GStreamer's per-frame resolver selects for such a
+//     (boxdecode_geometry_for_frames: what GStreamer's per-frame resolver selects for such a
 //     frame): once when the frame size is declared; otherwise the operator runs each frame size
 //     with the Run's kernel's "image_size" variant (soc::Kernel::with), selected by the stamp's
 //     user word (DataflowFrames). Carried: the decode families whose wire a device row has
