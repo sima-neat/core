@@ -408,7 +408,7 @@ void fan_out_mixed_drop() {
   {
     Graph g = fan_out(out_options(2, /*drop=*/true), out_options(3));
     require_neat_error([&] { (void)g.build(dataflow(1, OverflowPolicy::DropIncoming)); },
-                       error_codes::kPipelineShape, "OutputOptions::drop");
+                       error_codes::kOptionOutOfRange, "OutputOptions::drop");
   }
 }
 
@@ -617,8 +617,19 @@ void graphs_not_carried() {
     Graph app;
     app.connect(input, a);
     app.connect(input, b);
-    require_neat_error([&] { (void)app.build(dataflow()); }, error_codes::kPipelineShape,
-                       "used by more than one output");
+    // A mistake both backends refuse: GStreamer's own error (ExecutionGraphCompiler), not a
+    // refusal of the Dataflow backend.
+    bool threw = false;
+    try {
+      (void)app.build(dataflow());
+    } catch (const std::exception& e) {
+      threw = true;
+      require_contains(e.what(), "' is used by more than one output",
+                       "a name two Outputs share is GStreamer's error");
+      require(std::string(e.what()).find("Dataflow") == std::string::npos,
+              std::string("a name two Outputs share names no backend: ") + e.what());
+    }
+    require(threw, "a name two Outputs share fails the build");
   }
 }
 
