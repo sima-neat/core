@@ -33,6 +33,7 @@
 #include "pipeline/internal/RenderedMlaContractQuery.h"
 #include "pipeline/internal/SelectedStageBoundary.h"
 #include "pipeline/internal/InputRouteProcessor.h"
+#include "pipeline/internal/ModelRouteOrigin.h"
 #include "pipeline/internal/PublicInputContract.h"
 #include "pipeline/internal/SampleUtil.h"
 #include "pipeline/internal/TensorTransfer.h"
@@ -4512,6 +4513,25 @@ build_preprocess_plan_with_verbosity(const std::string& tar_gz, const Model::Opt
   return build_preprocess_plan(tar_gz, options);
 }
 
+// The customer's call a Model's own build serves on this thread (ModelRouteOrigin::call): set by
+// Model::run and Model::benchmark around the build they make, which then names that call; a build
+// outside every scope is the customer's Model::build.
+struct ModelCallScope {
+  explicit ModelCallScope(const char* call) noexcept : saved_call_(current_call) {
+    current_call = call;
+  }
+  ~ModelCallScope() {
+    current_call = saved_call_;
+  }
+  ModelCallScope(const ModelCallScope&) = delete;
+  ModelCallScope& operator=(const ModelCallScope&) = delete;
+
+  static inline thread_local const char* current_call = nullptr;
+
+private:
+  const char* saved_call_;
+};
+
 } // namespace
 
 struct Model::Impl {
@@ -4546,6 +4566,7 @@ struct Model::Impl {
       sync_runner = Runner{};
     }
     if (!sync_ready) {
+      const ModelCallScope call("Model::run");
       sync_runner = model.build(inputs);
       sync_ready = true;
       sync_original_size = original_size;
@@ -7545,6 +7566,9 @@ Model::Runner Model::build(const Model::RouteOptions& opt,
   if (use_input_route_processor) {
     internal::ModelAccess::configure_session_input_route(p, *this, build_opt);
   }
+  // The build below is this Model's own (only the Dataflow backend reads the mark).
+  const pipeline_internal::ModelRouteScope route_mark(
+      p, internal::ModelAccess::model_route_origin(*this));
   const RunOptions effective_run_opt =
       run_options_for_model_public_boundary(impl_->preprocess_plan, run_opt);
   Run run = p.build(dummy_inputs, effective_run_opt);
@@ -7603,6 +7627,9 @@ Model::Runner Model::build_with_model_options(const simaai::neat::TensorList& in
   if (use_input_route_processor) {
     internal::ModelAccess::configure_session_input_route(p, *this, build_opt);
   }
+  // The build below is this Model's own (only the Dataflow backend reads the mark).
+  const pipeline_internal::ModelRouteScope route_mark(
+      p, internal::ModelAccess::model_route_origin(*this));
   const RunOptions effective_run_opt =
       run_options_for_model_public_boundary(impl_->preprocess_plan, run_opt);
   Run run = p.build(inputs, effective_run_opt);
@@ -7658,6 +7685,9 @@ Model::Runner Model::build(const simaai::neat::Sample& inputs, const Model::Rout
   if (use_input_route_processor) {
     internal::ModelAccess::configure_session_input_route(p, *this, build_opt);
   }
+  // The build below is this Model's own (only the Dataflow backend reads the mark).
+  const pipeline_internal::ModelRouteScope route_mark(
+      p, internal::ModelAccess::model_route_origin(*this));
   const RunOptions effective_run_opt =
       run_options_for_model_public_boundary(impl_->preprocess_plan, run_opt);
   Run run = p.build(inputs, effective_run_opt);
@@ -7718,6 +7748,9 @@ Model::Runner Model::build(const std::vector<cv::Mat>& inputs, const Model::Rout
                                     &info, false, false);
   Graph p(route_options_from_model_route_options(build_opt, &impl_->options));
   add_nodes_to_graph(p, std::move(nodes));
+  // The build below is this Model's own (only the Dataflow backend reads the mark).
+  const pipeline_internal::ModelRouteScope route_mark(
+      p, internal::ModelAccess::model_route_origin(*this));
   const RunOptions effective_run_opt =
       run_options_for_model_public_boundary(impl_->preprocess_plan, run_opt);
   Run run = p.build(inputs, effective_run_opt);
@@ -8083,6 +8116,7 @@ const Run& ModelAccess::run(const Model::Runner& runner) {
 Model::Runner ModelAccess::build_benchmark_runner(Model& model, const TensorList& inputs,
                                                   const RunOptions& run_options,
                                                   const Model::Options& model_options) {
+  const ModelCallScope call("Model::benchmark");
   return model.build_with_model_options(inputs, Model::RouteOptions{}, run_options, model_options);
 }
 
@@ -8518,6 +8552,18 @@ void ModelAccess::configure_session_input_route(simaai::neat::Graph& session, co
   Model owned_model = ModelAccess::clone_with_options(model, ModelAccess::options(model));
   session.input_route_processor_ = std::make_shared<ModelIngressRouteProcessor>(
       std::move(owned_model), model.impl_->preprocess_plan, opt);
+}
+
+std::shared_ptr<const pipeline_internal::ModelRouteOrigin>
+ModelAccess::model_route_origin(const Model& model) {
+  const auto& plan = model.impl_->preprocess_plan;
+  auto origin = std::make_shared<pipeline_internal::ModelRouteOrigin>();
+  origin->call = ModelCallScope::current_call ? ModelCallScope::current_call : "Model::build";
+  origin->model = model.impl_->pack.logical_package_name();
+  origin->inputs =
+      std::max<std::size_t>(1U, normalized_ingress_contracts(plan.session_route_plan).size());
+  origin->direct_mla = plan_uses_direct_mla_tensor_set_ingress(plan);
+  return origin;
 }
 
 std::vector<std::shared_ptr<Node>> ModelAccess::build_public_preprocess_nodes(const Model& model) {

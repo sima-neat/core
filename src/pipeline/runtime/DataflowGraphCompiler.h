@@ -27,6 +27,9 @@ class Mat;
 
 namespace simaai::neat {
 class Graph;
+namespace pipeline_internal {
+struct ModelRouteOrigin;
+} // namespace pipeline_internal
 } // namespace simaai::neat
 
 namespace simaai::neat::runtime {
@@ -39,6 +42,11 @@ struct DataflowGraphView; // DataflowGraphCompiler.cpp: what the compiler reads 
 struct __attribute__((visibility("hidden"))) DataflowGraphAccess {
   // The Graph's composition as the compiler needs it, read as compile_public_graph reads it.
   static DataflowGraphView view(const Graph& graph);
+
+  // The mark of a Model's own build of the Graph on this thread (ModelRouteScope); null for any
+  // other build.
+  static std::shared_ptr<const pipeline_internal::ModelRouteOrigin>
+  model_origin(const Graph& graph);
 
   // nullptr: this Run is for GStreamer. Otherwise the RunCore of a Run on Dataflow. Throws when
   // the Run is for Dataflow and Dataflow does not carry it or cannot build it: nothing is built

@@ -24,6 +24,7 @@
 #include "pipeline/internal/DataflowNotCarried.h"
 #include "pipeline/internal/EnvUtil.h"
 #include "pipeline/internal/ErrorUtil.h"
+#include "pipeline/internal/ModelRouteOrigin.h"
 #include "pipeline/runtime/RunCore.h"
 
 #include "pipeline/internal/InputStreamUtil.h"
@@ -144,20 +145,26 @@ std::string describe_choice(const DataflowRunConfig& config,
 
 std::shared_ptr<RunCore> build_impl(const Graph& graph, const RunOptions& opt, RunMode mode,
                                     const DataflowSeed& seed, const char* where) {
+  // What is not carried names the customer's call: the Model's (ModelRouteOrigin) when a Model's
+  // own build made the Graph. A mistake both backends refuse keeps GStreamer's text and `where`.
+  const std::shared_ptr<const pipeline_internal::ModelRouteOrigin> origin =
+      DataflowGraphAccess::model_origin(graph);
+  const std::string call = origin ? origin->call : std::string(where ? where : "Graph::build");
   if (mode != RunMode::Async) {
-    decline(where,
+    decline(call.c_str(),
             {error_codes::kPipelineShape, "a synchronous Run",
              "Graph::run(inputs) builds one, and the backend runs the Runs of Graph::build"});
   }
   DataflowNotCarried declined;
   std::optional<DataflowRunConfig> planned = plan_dataflow_run(graph, opt, seed, where, &declined);
   if (!planned) {
-    decline(where, declined);
+    decline(call.c_str(), declined);
   }
+  planned->where = call;
   const DataflowRunConfig& config = *planned;
   for (const DataflowOutputConfig& output : config.outputs) {
     if (output.link_depth > pipeline_internal::df::kMaxLinkDepth) {
-      decline(where,
+      decline(call.c_str(),
               {error_codes::kOptionOutOfRange,
                "option RunOptions::queue_depth = " + std::to_string(output.ingress_depth) +
                    " with OutputOptions::max_buffers = " + std::to_string(output.terminal_depth),
@@ -173,10 +180,10 @@ std::shared_ptr<RunCore> build_impl(const Graph& graph, const RunOptions& opt, R
   for (const DataflowInputConfig& input : config.inputs) {
     bindings.push_back(bind_dataflow_item(input.input, seed.tensors, &why));
     if (!why.empty()) {
-      decline(where, {error_codes::kInputShape,
-                      "Input " + dataflow_names_text(input.names) +
-                          (seed.tensors.empty() ? " as declared" : " with this seed"),
-                      why});
+      decline(call.c_str(), {error_codes::kInputShape,
+                             "Input " + dataflow_names_text(input.names) +
+                                 (seed.tensors.empty() ? " as declared" : " with this seed"),
+                             why});
     }
   }
   // A tensor pulled from a device pool is a GstSample over a GstDmaBufMemory

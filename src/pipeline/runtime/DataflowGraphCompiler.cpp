@@ -19,6 +19,7 @@
 #include "pipeline/internal/DataflowNotCarried.h"
 #include "pipeline/internal/InputPolicy.h"
 #include "pipeline/internal/InputStreamUtil.h"
+#include "pipeline/internal/ModelRouteOrigin.h"
 #include "pipeline/internal/PublicInputContract.h"
 #include "pipeline/runtime/RunCore.h"
 
@@ -49,7 +50,10 @@ struct __attribute__((visibility("hidden"))) DataflowGraphView {
     std::string stream_id; // the edge's stream identity, or its link options'
   };
   bool model_route = false; // Graph::input_route_processor_
-  GraphOptions options;     // the Graph's options, as its build reads them
+  // A Model's own build of the Graph (ModelRouteScope): every vertex between its Input and its
+  // Output is a stage of that Model.
+  std::shared_ptr<const pipeline_internal::ModelRouteOrigin> origin;
+  GraphOptions options; // the Graph's options, as its build reads them
   bool linear = true;
   std::string name;
   std::vector<std::shared_ptr<Node>> vertices;
@@ -87,6 +91,14 @@ DataflowGraphView DataflowGraphAccess::view(const Graph& graph) {
     }
   }
   out.model_stage.assign(composition.vertices.size(), false);
+  out.origin = pipeline_internal::ModelRouteScope::of(graph);
+  if (out.origin) {
+    for (std::size_t vertex = 0; vertex < composition.vertices.size(); ++vertex) {
+      const Node* node = composition.vertices[vertex].get();
+      out.model_stage[vertex] =
+          node && !dynamic_cast<const Input*>(node) && !dynamic_cast<const Output*>(node);
+    }
+  }
   for (const auto& fragment : composition.fragments) {
     // Model::preprocess(), inference(), postprocess() and graph() attach the model's identity to
     // the vertices they add (ModelAccess::build_stage_graph_fragment).
@@ -108,6 +120,11 @@ DataflowGraphView DataflowGraphAccess::view(const Graph& graph) {
     out.named_fragments.push_back({named.start, named.end, named.name, named.user_named});
   }
   return out;
+}
+
+std::shared_ptr<const pipeline_internal::ModelRouteOrigin>
+DataflowGraphAccess::model_origin(const Graph& graph) {
+  return pipeline_internal::ModelRouteScope::of(graph);
 }
 
 #if defined(SIMANEAT_WITH_DATAFLOW)
@@ -157,7 +174,16 @@ Qualification qualify(const DataflowGraphView& view) {
     q.declined.fact = std::move(fact);
   };
   if (view.model_route) {
-    decline(kThisGraph, "its Model processes its own input (Model::graph() with an input route)");
+    if (!view.origin) {
+      decline(kThisGraph, "its Model processes its own input (Model::graph() with an input route)");
+    } else if (view.origin->inputs > 1U) {
+      decline("model " + view.origin->model,
+              "it reads " + std::to_string(view.origin->inputs) + " inputs");
+    } else {
+      decline("model " + view.origin->model,
+              "its input tensor goes to the MLA as it is pushed, with no stage in front of the "
+              "MLA");
+    }
     return q;
   }
   if (!view.runtime_stages.empty()) {
@@ -529,6 +555,13 @@ DataflowRunConfig derive_config(const Graph& graph, const DataflowGraphView& vie
   for (std::size_t i = 0; i < q.inputs.size(); ++i) {
     DataflowInputConfig& input = config.inputs[i];
     input.input = *view.inputs[q.inputs[i]];
+    if (view.origin && input.input.payload_type == PayloadType::Image) {
+      // A Model's own build gives its Input the size of the seed's frame (GStreamer's first caps)
+      // and the model's capacity as the bound: each frame brings its own size up to the bound,
+      // as on GStreamer.
+      input.input.width = 0;
+      input.input.height = 0;
+    }
     // The Input and what it feeds, as the nodes of GStreamer's segment for it.
     std::vector<std::shared_ptr<Node>> route{view.vertices[q.inputs[i]]};
     for (const std::size_t stage : q.stages) {

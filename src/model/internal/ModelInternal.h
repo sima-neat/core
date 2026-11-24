@@ -16,6 +16,10 @@
 #include <utility>
 #include <vector>
 
+namespace simaai::neat::pipeline_internal {
+struct ModelRouteOrigin;
+} // namespace simaai::neat::pipeline_internal
+
 namespace simaai::neat {
 class Node;
 class Graph;
@@ -130,6 +134,11 @@ struct ModelAccess {
                        simaai::neat::runtime::FragmentBoundaryHints* hints = nullptr);
   static void configure_session_input_route(simaai::neat::Graph& session, const Model& model,
                                             const Model::RouteOptions& opt);
+  // The mark of a Model's own build of the Graph it made of the model's node list
+  // (pipeline_internal::ModelRouteScope; only the Dataflow backend reads it). Its call is the
+  // enclosing Model::run or benchmark on this thread, else Model::build.
+  static std::shared_ptr<const pipeline_internal::ModelRouteOrigin>
+  model_route_origin(const Model& model);
 };
 
 BenchmarkReport run_benchmark(Model& model, const BenchmarkOptions& options);

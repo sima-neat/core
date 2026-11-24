@@ -174,7 +174,7 @@ DataflowInputPort::DataflowInputPort(const DataflowPortContext& run, std::size_t
   if (config_.model) {
     // The route's model and kernels, loaded and checked at the build, where a file the MLA
     // refuses or a request the Kernels package refuses is the build's error.
-    model_ = load_dataflow_model_route(*config_.model, "Graph::build");
+    model_ = load_dataflow_model_route(*config_.model, run_.config.where.c_str());
   }
 }
 
@@ -194,10 +194,10 @@ void DataflowInputPort::bind_at_build(std::span<const Tensor> seed) {
   std::optional<DataflowInputBinding> binding = bind_dataflow_item(config_.input, seed, &why);
   if (!why.empty()) {
     pipeline_internal::throw_dataflow_not_carried(
-        "Graph::build", {error_codes::kInputShape,
-                         "Input " + dataflow_names_text(config_.names) +
-                             (seed.empty() ? " as declared" : " with this seed"),
-                         why});
+        run_.config.where, {error_codes::kInputShape,
+                            "Input " + dataflow_names_text(config_.names) +
+                                (seed.empty() ? " as declared" : " with this seed"),
+                            why});
   }
   if (binding && config_.model && !seed.empty()) {
     // A seed the model's first stage does not take binds nothing. GStreamer builds with such
@@ -210,7 +210,7 @@ void DataflowInputPort::bind_at_build(std::span<const Tensor> seed) {
   }
   if (binding) {
     std::lock_guard<std::mutex> lock(mu_);
-    bind_locked(std::move(*binding), "Graph::build", /*at_build=*/true);
+    bind_locked(std::move(*binding), run_.config.where.c_str(), /*at_build=*/true);
   }
 }
 

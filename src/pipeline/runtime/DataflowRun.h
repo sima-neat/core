@@ -132,6 +132,9 @@ struct DataflowRunConfig {
   std::vector<std::string> input_names;  ///< every input's names (Run::input_names), sorted
   std::vector<std::string> output_names; ///< every output's names (Run::output_names), sorted
   std::string label;                     ///< the graph, for messages
+  /// The customer's call that builds the Run (Graph::build, or a Model's call), which names the
+  /// errors of the build: a model the MLA refuses, a kernel request refused, a binding.
+  std::string where = "Graph::build";
 };
 
 // "[a, b]": endpoint names in messages.
