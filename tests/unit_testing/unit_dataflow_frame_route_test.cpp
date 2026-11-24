@@ -12,7 +12,10 @@
 // preprocess facts. No runtime type is named. It needs the EV74 on the Kernels firmware and a
 // compiled YOLOv8 detection package: --model-package <X_mpk.tar.gz>, or
 // SIMA_TEST_BOXDECODE_MODEL_PACKAGE, SIMA_YOLO_TAR. Without one the test is skipped (it
-// downloads nothing). YOLOv8s is the one it was written with. Frames: generated ones, and in
+// downloads nothing). YOLOv8s is the one it was written with. Another decode family's package
+// runs with --opts=<file>, the package's option set in the qualification harness's form: the
+// wire then has that task's size and layout (support/boxdecode_wire.h) and the frames say the
+// set's format. Frames: generated ones, and in
 // front of them the real images given with --frames-dir <dir> (or SIMA_TEST_BOXDECODE_FRAMES):
 // raw 1280x720 BGR files named img<N>.bgr, which are what gives boxes.
 // Rows (each compares Dataflow with GStreamer for the same pushes unless said: every field a
@@ -56,6 +59,7 @@
 #include "pipeline/Result.h"
 #include "cli_utils.h"
 #include "support/backend_selection.h"
+#include "support/boxdecode_wire.h"
 #include "test_main.h"
 #include "test_utils.h"
 
@@ -72,6 +76,7 @@
 #include <functional>
 #include <iostream>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -82,6 +87,9 @@ using namespace simaai::neat;
 constexpr int kWidth = 1280;
 constexpr int kHeight = 720;
 constexpr int kTopK = 100;
+
+// The Model's options and the frames' format: the YOLOv8 ones below, or --opts' (main).
+sima_test::DecodeOptions g_decode;
 
 // A BGR "image": smooth gradients with texture, different for every index.
 cv::Mat pattern(int width, int height, unsigned index) {
@@ -101,8 +109,9 @@ cv::Mat pattern(int width, int height, unsigned index) {
   return mat;
 }
 
+// A packed frame of the image, in the format the Model's options read (BGR without --opts).
 Tensor bgr(const cv::Mat& mat, TensorMemory memory = TensorMemory::EV74) {
-  return Tensor::from_cv_mat(mat, ImageSpec::PixelFormat::BGR, memory);
+  return Tensor::from_cv_mat(mat, g_decode.frame_format, memory);
 }
 
 // The NV12 frame of a BGR image (even sizes), in EV74 memory: the luma plane, then the
@@ -157,15 +166,25 @@ bool ev74_runs_kernels_firmware() {
   return false;
 }
 
-Model::Options image_options(PreprocessColorFormat format = PreprocessColorFormat::BGR) {
+// The options the test was written with: YOLOv8 detection on BGR frames.
+Model::Options yolov8_options() {
   Model::Options o;
   o.preprocess.kind = InputKind::Image;
   o.preprocess.enable = AutoFlag::On;
   o.preprocess.normalize.enable = AutoFlag::On;
-  o.preprocess.color_convert.input_format = format;
+  o.preprocess.color_convert.input_format = PreprocessColorFormat::BGR;
   o.decode_type = BoxDecodeType::YoloV8;
   o.score_threshold = 0.49F;
   o.nms_iou_threshold = 0.5F;
+  return o;
+}
+
+// The Model's options; `format` set: for frames of that format in place of the packed ones.
+Model::Options image_options(std::optional<PreprocessColorFormat> format = std::nullopt) {
+  Model::Options o = g_decode.options;
+  if (format) {
+    o.preprocess.color_convert.input_format = *format;
+  }
   o.top_k = kTopK;
   return o;
 }
@@ -324,6 +343,7 @@ std::vector<std::string> sample_fields(const Sample& s) {
 struct Frame {
   std::vector<std::vector<std::string>> tensors; // fields() of each tensor, in the list's order
   std::vector<std::vector<std::uint8_t>> bytes;  // each tensor's dense bytes
+  std::vector<std::string> parsed; // a wire: what the task's public parser makes of it
   std::vector<std::string> sample;               // empty: pulled as a TensorList
   std::string stage_key;
   int original_width = 0, original_height = 0; // of the first tensor's Semantic::preprocess
@@ -345,6 +365,9 @@ Frame keep(const TensorList& tensors) {
       const auto* first = static_cast<const std::uint8_t*>(mapping.data);
       out.bytes.back().assign(first, first + mapping.size_bytes);
     }
+    out.parsed.push_back(tensor.semantic.detection
+                             ? sima_test::parsed_text(g_decode.task, tensor, 0)
+                             : std::string());
   }
   out.stage_key = tensors.front().route.stage_key;
   if (tensors.front().semantic.preprocess) {
@@ -390,42 +413,17 @@ std::vector<Frame> run_frames(Graph g, const std::vector<TensorList>& frames, Ru
 }
 
 std::int32_t wire_count(const std::vector<std::uint8_t>& wire) {
-  std::int32_t count = -1;
-  if (wire.size() >= sizeof count) {
-    std::memcpy(&count, wire.data(), sizeof count);
-  }
-  return count;
+  return sima_test::wire_count(g_decode.task, wire);
 }
 
-// The wire: an int32 count, then top_k rows of 24 bytes (x, y, w, h int32, score float, class
-// int32), every byte behind the last box zero.
+// The wire of the decode's task (support/boxdecode_wire.h): its size for top_k, its count, and
+// zeros in all its unused capacity.
 void require_wire(const std::vector<std::uint8_t>& wire, int top_k, const std::string& at) {
-  require(wire.size() == 4U + 24U * static_cast<std::size_t>(top_k),
-          at + "the wire is 4 + 24 x top_k bytes (" + std::to_string(wire.size()) + ")");
-  const std::int32_t count = wire_count(wire);
-  require(count >= 0 && count <= top_k, at + "the wire's count is 0..top_k");
-  for (std::size_t i = 4U + 24U * static_cast<std::size_t>(count); i < wire.size(); ++i) {
-    require(wire[i] == 0U, at + "the wire is zero behind its last box");
-  }
+  sima_test::require_wire(g_decode.task, wire, top_k, at);
 }
 
 std::string boxes_text(const std::vector<std::uint8_t>& wire) {
-  std::string out;
-  const std::int32_t count = wire_count(wire);
-  for (std::int32_t i = 0; i < count; ++i) {
-    std::int32_t box[4];
-    float score = 0;
-    std::int32_t cls = 0;
-    const std::uint8_t* row = wire.data() + 4 + 24 * i;
-    std::memcpy(box, row, sizeof box);
-    std::memcpy(&score, row + 16, sizeof score);
-    std::memcpy(&cls, row + 20, sizeof cls);
-    char text[96];
-    std::snprintf(text, sizeof text, " [x=%d y=%d w=%d h=%d score=%.6f cls=%d]", box[0], box[1],
-                  box[2], box[3], static_cast<double>(score), cls);
-    out += text;
-  }
-  return out;
+  return sima_test::wire_text(g_decode.task, wire);
 }
 
 // The size of the frame a TensorList carries.
@@ -466,6 +464,9 @@ void compare(sima_test::Reference& ref, const std::vector<Frame>& df,
       ref.equal(at + "tensor " + std::to_string(t) + " bytes",
                 sima_test::bytes_digest(df[i].bytes[t]) +
                     (wire ? boxes_text(df[i].bytes[t]) : std::string()));
+      if (wire) {
+        ref.equal(at + "tensor " + std::to_string(t) + " parsed", df[i].parsed[t]);
+      }
       ++tensors;
       bytes += df[i].bytes[t].size();
     }
@@ -479,15 +480,8 @@ void compare(sima_test::Reference& ref, const std::vector<Frame>& df,
                 ")");
     if (wire) {
       require_wire(df[i].bytes[0], kTopK, at);
-      const std::int32_t count = wire_count(df[i].bytes[0]);
-      for (std::int32_t b = 0; b < count; ++b) {
-        std::int32_t box[4];
-        std::memcpy(box, df[i].bytes[0].data() + 4 + 24 * b, sizeof box);
-        require(box[2] > 0 && box[3] > 0 && box[0] >= -4 && box[1] >= -4 &&
-                    box[0] + box[2] <= width + 4 && box[1] + box[3] <= height + 4,
-                at + "box " + std::to_string(b) +
-                    " lies in the frame:" + boxes_text(df[i].bytes[0]));
-      }
+      require(sima_test::wire_in_frame(g_decode.task, df[i].bytes[0], kTopK, width, height),
+              at + "every detection lies in the frame:" + boxes_text(df[i].bytes[0]));
     }
   }
   std::cout << "[" << row << "] " << df.size() << " frames, " << tensors << " tensors, " << bytes
@@ -702,7 +696,7 @@ void declared(sima_test::Reference& ref, const Model& model, const std::vector<c
     // The frame's size declared: one kernel a stage, as before step Y4.
     InputOptions in;
     in.payload_type = PayloadType::Image;
-    in.format = FormatTag::BGR;
+    in.format = g_decode.input_format;
     in.width = kWidth;
     in.height = kHeight;
     std::vector<TensorList> frames;
@@ -725,7 +719,7 @@ void declared(sima_test::Reference& ref, const Model& model, const std::vector<c
     // A bound declared: frames up to it, each with its own kernels.
     InputOptions in;
     in.payload_type = PayloadType::Image;
-    in.format = FormatTag::BGR;
+    in.format = g_decode.input_format;
     in.max_width = kWidth;
     in.max_height = kHeight;
     const std::vector<TensorList> frames{whole, half, whole, half};
@@ -911,6 +905,7 @@ int main(int argc, char** argv) {
     return 1;
   }
   return sima_test::run_test("unit_dataflow_frame_route_test", [&] {
+    g_decode = sima_test::decode_options(argc, argv, yolov8_options());
     sima_test::Reference ref = sima_test::Reference::from_args(argc, argv);
     const bool dataflow = sima_test::on_dataflow();
     const auto row = [&](const char* name, const std::function<void()>& body) {
