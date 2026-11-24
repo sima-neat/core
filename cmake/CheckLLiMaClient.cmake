@@ -5,7 +5,9 @@ if(SimaLMM_FOUND)
   include(CMakePushCheckState)
   cmake_push_check_state(RESET)
   set(CMAKE_REQUIRED_INCLUDES ${OPENCV_INCLUDE_DIRS})
-  set(CMAKE_REQUIRED_LIBRARIES nlohmann_json::nlohmann_json SimaLMM::sima_lmm_runtime)
+  # Match Core's real platform include context, including the Scheduler headers.
+  set(CMAKE_REQUIRED_LIBRARIES
+    nlohmann_json::nlohmann_json SimaLMM::sima_lmm_runtime SimaScheduler::frontend)
   set(_neat_try_compile_type "${CMAKE_TRY_COMPILE_TARGET_TYPE}")
   set(CMAKE_TRY_COMPILE_TARGET_TYPE EXECUTABLE)
   # Re-evaluate after a dependency/header change in an existing build directory.
