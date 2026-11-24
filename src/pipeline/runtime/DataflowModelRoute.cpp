@@ -11,6 +11,7 @@
 #include "pipeline/internal/InputPolicy.h"
 #include "pipeline/internal/InputStreamUtil.h"
 #include "pipeline/internal/RenderedMlaContractQuery.h"
+#include "pipeline/internal/SampleUtil.h"
 #include "pipeline/internal/sima/BoxDecodeGeometry.h"
 #include "pipeline/internal/sima/KernelStageRecipe.h"
 #include "pipeline/internal/sima/PreprocFrameAdapter.h"
@@ -1265,6 +1266,46 @@ std::string plan_kernel_stage(const si::StageStaticSpec& stage, bool first, bool
 
 } // namespace
 
+namespace {
+
+// A seed that carries a frame's preprocess metadata (Semantic::preprocess) is read by the contracts
+// GStreamer's build compiles with the seed as their ingress sample: the BoxDecode recipe checks
+// the decode's geometry against it. A seed they refuse fails that build, with this error; one they
+// take changes nothing on either backend (each frame's geometry is the image stage's own).
+void check_seed_preprocess(const std::vector<std::shared_ptr<Node>>& route,
+                           const GraphOptions& options, std::span<const Tensor> seed) {
+  if (std::none_of(seed.begin(), seed.end(),
+                   [](const Tensor& t) { return t.semantic.preprocess.has_value(); })) {
+    return;
+  }
+  ContractCompileInput input;
+  input.pipeline_label = "Graph::build(input)";
+  input.processcvu_requested_run_target = options.processcvu_requested_run_target;
+  input.processcvu = options.processcvu;
+  input.ingress.ingress_sample = sample_from_tensors(TensorList(seed.begin(), seed.end()));
+  si::ManifestBuildDiagnostics diagnostics;
+  std::vector<std::string> errors;
+  try {
+    (void)pipeline_internal::rendered_stage_query::rendered_manifest_from_nodes(
+        std::span<const std::shared_ptr<Node>>(route), input, &diagnostics);
+    errors = diagnostics.errors;
+  } catch (const std::exception& error) {
+    errors.push_back(error.what());
+  }
+  if (errors.empty()) {
+    return;
+  }
+  std::string message = "Graph::build(input): contract compilation failed";
+  for (const std::string& error : errors) {
+    message += "\n  - " + error;
+  }
+  pipeline_internal::error_util::throw_session_error(
+      error_codes::kPipelineShape, message, {},
+      "Supply the required input context and correct the reported stage contract.");
+}
+
+} // namespace
+
 std::optional<si::SimaPluginStaticManifest>
 dataflow_model_manifest(const std::vector<std::shared_ptr<Node>>& route,
                         const GraphOptions& options, pipeline_internal::DataflowNotCarried* why) {
@@ -1400,6 +1441,7 @@ plan_dataflow_model_route(const std::vector<std::shared_ptr<Node>>& route,
   if (!manifest) {
     return nullptr;
   }
+  check_seed_preprocess(route, options, seed);
   std::string ev74_obstacle;
 #if defined(SIMANEAT_WITH_DATAFLOW_SOC_KERNELS)
   // Asked only of a route with a kernel stage on the EV74. Cold: sysfs is read; nothing is
@@ -1608,9 +1650,6 @@ namespace {
 constexpr const char* kFrameWithRois =
     "it carries ROI metadata (Semantic::preprocess with an ROI or an ROI list) in front of the "
     "image preproc stage";
-constexpr const char* kFrameWithUpstreamTransform =
-    "it carries an upstream stage's preprocess metadata (Semantic::preprocess), which the image "
-    "preproc stage composes with its own";
 
 [[noreturn]] void throw_frame_not_carried(const char* where, const char* fact) {
   pipeline_internal::throw_dataflow_not_carried(where,
@@ -2185,10 +2224,11 @@ std::uint64_t dataflow_frame_word(const DataflowModelRoute& route, const Tensor&
     height = tensor.shape[lead];
     width = tensor.shape[lead + 1U];
   }
-  if (tensor.semantic.preprocess) {
-    throw_frame_not_carried(where, tensor.semantic.preprocess->has_roi_list()
-                                       ? kFrameWithRois
-                                       : kFrameWithUpstreamTransform);
+  // An upstream stage's preprocess metadata without an ROI is not read, as GStreamer's image
+  // stage does not read it on a frame that is not the build's seed: the frame is the stage's
+  // input as it is, and the pull publishes the stage's own facts.
+  if (tensor.semantic.preprocess && tensor.semantic.preprocess->has_roi_list()) {
+    throw_frame_not_carried(where, kFrameWithRois);
   }
   if (width <= 0 || height <= 0 || width > frames.envelope_width ||
       height > frames.envelope_height) {

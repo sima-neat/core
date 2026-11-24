@@ -40,8 +40,9 @@
 //     (soc::KernelOp::Options::Packing): a frame of the port's size, its chroma plane behind its
 //     luma plane, is wrapped; a smaller one is copied to those offsets. I420 and the other planar
 //     formats, an image frontend and a batched (ROI) stage are not carried (the plan says so);
-//     a frame with ROI metadata or an upstream stage's preprocess metadata is refused at the
-//     push.
+//     a frame with ROI metadata is refused at the push, and an upstream stage's preprocess
+//     metadata without an ROI is not read (as GStreamer's stage does not read it on a frame that
+//     is not the build's seed).
 //   - Model::postprocess() of a detection model (BoxDecode) behind the MLA stage, at the route's
 //     end: the Kernels package's "boxdecode" on the A65 as one kernel operator whose inputs are
 //     the heads, views at their byte offsets of the MLA's one output buffer (one port, no join),
@@ -321,7 +322,8 @@ void refuse_dataflow_frame(const DataflowModelRoute& route, const Tensor& tensor
 // NeatError (misconfig.input_shape), each with what to do instead, for a frame the route cannot
 // run: one above the port's bound, of another format or layout than the route's frames, or one
 // whose kernel request the Kernels package refuses; and the not-carried error for a frame with
-// ROI metadata or an upstream stage's preprocess metadata. So that nothing the Worker is later
+// ROI metadata. An upstream stage's preprocess metadata without an ROI is not read. So that
+// nothing the Worker is later
 // asked for can fail, the first frame of a size makes that size's kernels here, on the pushing
 // thread (cold: the image stage's kernel is checked and made; the BoxDecode kernel is a variant of
 // the Run's); a frame of a size the table holds costs a compare, and one of the port's bound's size

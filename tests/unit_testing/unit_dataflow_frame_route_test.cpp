@@ -37,9 +37,10 @@
 //                    refuses another; one that declares a bound (max_width, max_height) takes
 //                    frames up to it.
 //   refused          Dataflow: a frame above the Run's capacity (the seed's size: GStreamer's
-//                    error), one above the stage's capacity, one with ROI metadata, one
-//                    with an upstream stage's preprocess metadata, one of another channel count
-//                    and a CPU frame are each refused at the push, and the Run goes on.
+//                    error), one above the stage's capacity, one with ROI metadata, one of
+//                    another channel count and a CPU frame are each refused at the push, and the
+//                    Run goes on. A frame with an upstream stage's preprocess metadata without an
+//                    ROI is taken, its metadata not read: the bare frame's wire, as on GStreamer.
 //   nv12             a model that reads NV12 frames: the frame's two planes as two views of the
 //                    input's one buffer; a frame of the declared bound's size (wrapped) and a
 //                    smaller one (copied to the port's offsets).
@@ -811,9 +812,10 @@ void refused(const Model& model, const std::vector<cv::Mat>& images,
   before.affine_m00 = 2.0;
   before.affine_m11 = 2.0;
   upstream.semantic.preprocess = before;
-  fails(upstream, "an upstream stage's preprocess metadata",
-        "a frame with an upstream stage's preprocess metadata");
-  goes_on("the metadata refusals");
+  require(run.push(TensorList{upstream}), "refused: a frame with an upstream transform is taken");
+  require(pull_frame(run, false, "upstream").bytes[0] == expected[0].bytes[0],
+          "refused: an upstream stage's preprocess metadata without an ROI is not read");
+  goes_on("the metadata refusal");
   bool gray = false;
   try {
     (void)run.push(
