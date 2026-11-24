@@ -17,7 +17,11 @@
 #include <glib.h>
 
 #include <algorithm>
+#include <array>
 #include <cerrno>
+#include <chrono>
+#include <condition_variable>
+#include <cstdio>
 #include <cstdint>
 #include <future>
 #include <mutex>
@@ -218,7 +222,25 @@ bool should_suppress_verbosity_line(const std::string& line) {
   return false;
 }
 
-void start_stdio_filter(int target_fd, std::vector<std::unique_ptr<std::thread>>& threads) {
+// A stdio stream routed through a filter thread: the descriptor it replaced, a copy of the stream's
+// own file to put back at exit, and whether the thread has written out all it read.
+struct StdioFilter {
+  int target_fd = -1;
+  int restore_fd = -1;
+  bool started = false;
+  std::mutex mutex;
+  std::condition_variable cv;
+  bool finished = false;
+};
+
+// Never destroyed: a filter thread may outlive static destruction.
+std::array<StdioFilter, 2>& stdio_filters() {
+  static auto* filters = new std::array<StdioFilter, 2>;
+  return *filters;
+}
+
+void start_stdio_filter(int target_fd, StdioFilter& filter,
+                        std::vector<std::unique_ptr<std::thread>>& threads) {
   int fds[2];
   if (pipe(fds) != 0)
     return;
@@ -235,8 +257,11 @@ void start_stdio_filter(int target_fd, std::vector<std::unique_ptr<std::thread>>
     return;
   }
   close(fds[1]);
+  filter.target_fd = target_fd;
+  filter.restore_fd = dup(orig_fd);
+  filter.started = true;
 
-  threads.emplace_back(std::make_unique<std::thread>([read_fd = fds[0], orig_fd]() {
+  threads.emplace_back(std::make_unique<std::thread>([read_fd = fds[0], orig_fd, &filter]() {
     std::string buffer;
     buffer.reserve(1024);
     char chunk[512];
@@ -278,16 +303,48 @@ void start_stdio_filter(int target_fd, std::vector<std::unique_ptr<std::thread>>
     flush(false);
     close(read_fd);
     close(orig_fd);
+    {
+      const std::lock_guard<std::mutex> hold(filter.mutex);
+      filter.finished = true;
+    }
+    filter.cv.notify_all();
   }));
   threads.back()->detach();
+}
+
+// At exit (std::atexit, ahead of the C library's last flush): the C streams' buffered bytes go into
+// the filters' pipes, each stream gets its own file back, which closes the pipe's last write end
+// the process holds, and each filter thread has a bounded time to write out what it read. Output
+// a program leaves buffered when it returns from main reaches the pipe only during exit, after
+// which a detached thread no longer runs.
+void drain_stdio_filters() {
+  std::fflush(stdout);
+  std::fflush(stderr);
+  for (StdioFilter& filter : stdio_filters()) {
+    if (filter.started && filter.restore_fd >= 0) {
+      (void)dup2(filter.restore_fd, filter.target_fd);
+      close(filter.restore_fd);
+      filter.restore_fd = -1;
+    }
+  }
+  // A child process that inherited a pipe's write end keeps it open: the wait is bounded.
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(250);
+  for (StdioFilter& filter : stdio_filters()) {
+    if (!filter.started) {
+      continue;
+    }
+    std::unique_lock<std::mutex> lock(filter.mutex);
+    (void)filter.cv.wait_until(lock, deadline, [&filter] { return filter.finished; });
+  }
 }
 
 void install_stdio_filters() {
   static std::once_flag once;
   static std::vector<std::unique_ptr<std::thread>> threads;
   std::call_once(once, [&]() {
-    start_stdio_filter(STDOUT_FILENO, threads);
-    start_stdio_filter(STDERR_FILENO, threads);
+    start_stdio_filter(STDOUT_FILENO, stdio_filters()[0], threads);
+    start_stdio_filter(STDERR_FILENO, stdio_filters()[1], threads);
+    std::atexit(drain_stdio_filters);
   });
 }
 
