@@ -635,6 +635,11 @@ def judge_component(comp, row, expected, differences, g, d, floor, view, forms, 
         verdicts.append(fv['outcome'])
     if check_stderr:
         out['stderr'] = stderr_diff(g['stderr'], d['stderr'], floor_lines, differences)
+        # A component Dataflow builds nothing of: what GStreamer's process printed for the builds
+        # and runs it made (their progress lines, a benchmark's summary) has no Dataflow
+        # counterpart, so only the lines Dataflow printed and GStreamer did not are compared.
+        if not any(r.get('record') == 'build' and r.get('ok') for r in d['records']):
+            out['stderr'] = [line for line in out['stderr'] if not line.startswith('gstreamer only: ')]
     # The component's outcome: what its first form (the route's build) says, with every other
     # form either agreeing or pending.
     first_outcome = verdicts[0] if verdicts else 'FAIL'
@@ -916,6 +921,11 @@ def selftest(_args):
     r = judge_component(comp_r, {'outcome': 'not_carried'}, expected, differences, g, proc(0, build_error=good),
                         g, 'app', ['graph'])
     check(r['outcome'] == 'not_carried', 'judge: the expected refusal is not_carried')
+    g_ran = dict(g, stderr='[1/4] Initializing runtime...\nNEAT Benchmark\n')
+    r = judge_component(comp_r, {'outcome': 'not_carried'}, expected, differences, g_ran,
+                        proc(0, build_error=good, stderr='[WARN] other\n'), g_ran, 'app', ['graph'])
+    check(r['outcome'] == 'FAIL' and r['stderr'] == ['dataflow only: [WARN] other'],
+          f'judge: a refused component compares what Dataflow printed only ({r["stderr"]})')
     r = judge_component(comp_r, {'outcome': 'not_carried'}, expected, differences, g,
                         proc(0, build_error=good.replace('2 output', '3 output')), g, 'app', ['graph'])
     check(r['outcome'] == 'FAIL', 'judge: another fact fails')
