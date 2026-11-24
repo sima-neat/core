@@ -989,8 +989,9 @@ int main(int argc, char** argv) {
       model_packs = collect_model_packs(variants_dir);
       require(!model_packs.empty(),
               "no model packs found in " + variants_dir.string() +
-                  "; set SIMA_YOLOV8_VARIANTS_DIR to a folder with the yolov8n MPKs from "
-                  "'sima-cli models download --id yolov8n'");
+                  "; set SIMA_YOLOV8_VARIANTS_DIR to a folder with the "
+                  "yolov8n_<variant>_mpk.tar.gz files from "
+                  "'sima-cli models download --id yolov8n --variant <variant>'");
     }
 
     std::size_t run_count = 0U;

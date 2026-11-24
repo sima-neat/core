@@ -5138,10 +5138,10 @@ int main(int argc, char** argv) {
       sima_yolov8_test::step_log("Locating YOLOv8n variants");
       fs::path variants_dir = resolve_variants_dir(root, argc, argv);
       packs = collect_model_packs(variants_dir);
-      require(!packs.empty(),
-              "no model packs found in " + variants_dir.string() +
-                  "; set SIMA_YOLOV8_VARIANTS_DIR to a folder with the yolov8n MPKs from "
-                  "'sima-cli models download --id yolov8n'");
+      require(!packs.empty(), "no model packs found in " + variants_dir.string() +
+                                  "; set SIMA_YOLOV8_VARIANTS_DIR to a folder with the "
+                                  "yolov8n_<variant>_mpk.tar.gz files from "
+                                  "'sima-cli models download --id yolov8n --variant <variant>'");
     }
 
     sima_yolov8_test::step_log("Loading YOLOv8 test image");
