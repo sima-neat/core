@@ -30,18 +30,15 @@ A release is blocked unless all conditions below are true:
 5. Working tree is clean after generation steps.
 6. Zero unresolved crash/correctness failures before push and on release refs.
 7. Crash/correctness/stress/sanitizer gates are green on the release ref.
-8. Model-archive security gate is green (`model-archive-security-gate`).
-9. Install smoke gate is green (`install-smoke`).
-10. Performance regression gate is green (`perf-regression-gate`).
-11. Soak stability lane is green for release tags (`soak-weekly`).
-12. Fuzz lane is green for release candidates (`fuzz-nightly`).
-13. Zero-skip gate is green (`zero-skip-gate`) for strict test lanes.
-14. Required governance files are present and valid:
+8. Soak stability lane is green for release tags (`soak-weekly`).
+9. Fuzz lane is green for release candidates (`fuzz-nightly`).
+10. Zero-skip gate is green (`zero-skip-gate`) for strict test lanes.
+11. Required governance files are present and valid:
    - `.github/CODEOWNERS`
    - `.github/PULL_REQUEST_TEMPLATE.md`
    - `CONTRIBUTING.md`
    - `docs/develop-apps/contribute/release-checklist.md`
-15. Release metadata is complete:
+12. Release metadata is complete:
    - `project(SimaNeat VERSION x.y.z)` updated in `CMakeLists.txt`
    - `package-version` and `platform-version` updated in `deps/manifest.json` when required
    - `modelzoo-version` explicitly selects the validated Model Zoo release when it differs from
@@ -63,9 +60,6 @@ The following checks are required on release PRs and release tags:
 - `configure-build-sanity`
 - `docs-link-check`
 - `crash-correctness-gate`
-- `model-archive-security-gate`
-- `install-smoke`
-- `perf-regression-gate`
 - `zero-skip-gate`
 - `soak-weekly` (required for release tags)
 - `fuzz-nightly` (required for release candidates)
@@ -75,22 +69,13 @@ The following checks are required on release PRs and release tags:
 
 These checks are implemented in:
 
-- `.github/workflows/release-gate.yml`
+- `.github/workflows/vulcan-ci.yml`
 - `.github/workflows/test-crash-correctness-nightly.yml`
-- `.github/workflows/model-archive-security.yml`
-- `.github/workflows/install-smoke.yml`
-- `.github/workflows/perf-regression.yml`
-- `.github/workflows/zero-skip.yml`
 - `.github/workflows/test-soak-weekly.yml`
 - `.github/workflows/long-tests-weekly.yml`
 - `.github/workflows/vulcan-fuzz-nightly.yml`
 - `.github/workflows/test-stress-nightly.yml`
 - `.github/workflows/sanitizers.yml`
-
-Trigger ownership to avoid duplicate gate execution:
-
-- Non-release PRs into `main` run `model-archive-security`, `install-smoke`, `perf-regression`, and `zero-skip` from their standalone workflows.
-- Release PRs (`release/*` head refs) and release refs (`release/**`, `v*`) run those same lanes from `.github/workflows/release-gate.yml`.
 
 ## GitHub Branch and Tag Protection
 
