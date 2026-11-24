@@ -48,7 +48,7 @@ The `.tar.gz` model archive referenced by your code (or by `SIMA_YOLO_TAR` / `SI
 :::
 
 :::tip Fix
-Download it with the Model Browser as described in [Prepare model archives](/tutorials/before-you-run#prepare-model-archives).
+Download it from the Model Browser as described in [Prepare model archives](/tutorials/before-you-run#prepare-model-archives).
 :::
 
 ## Build
