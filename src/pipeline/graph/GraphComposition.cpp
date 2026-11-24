@@ -11,7 +11,13 @@
 
 #include "GraphDetail.h"
 
+#include "nodes/common/Output.h"
+#include "nodes/io/Input.h"
+#include "nodes/io/UdpOutput.h"
+#include "pipeline/ErrorCodes.h"
 #include "pipeline/graph/internal/GraphTestHooks.h"
+#include "pipeline/internal/CapsStringUtil.h"
+#include "pipeline/internal/ErrorUtil.h"
 
 #include <algorithm>
 #include <sstream>
@@ -24,6 +30,38 @@
 
 namespace simaai::neat {
 namespace {
+
+void validate_endpoint_options(const Node& node) {
+  using pipeline_internal::error_util::throw_session_error;
+  if (const auto* input = dynamic_cast<const Input*>(&node)) {
+    const auto& opt = input->options();
+    if (opt.fps_n < 0 || opt.fps_d <= 0) {
+      throw_session_error(error_codes::kOptionOutOfRange,
+                          "InputOptions requires fps_n >= 0 and fps_d > 0");
+    }
+    if (opt.pool_min_buffers < 0 || opt.pool_max_buffers < 0) {
+      throw_session_error(error_codes::kOptionOutOfRange,
+                          "InputOptions.pool_min_buffers and pool_max_buffers must be >= 0");
+    }
+    if (!opt.caps_override.empty() && !pipeline_internal::valid_input_caps(opt.caps_override)) {
+      throw_session_error(error_codes::kCaps,
+                          "Invalid InputOptions.caps_override: " + opt.caps_override, {},
+                          "Provide fixed GStreamer caps with one media type such as video/x-raw.");
+    }
+  } else if (const auto* output = dynamic_cast<const Output*>(&node)) {
+    if (output->options().max_buffers < 0) {
+      throw_session_error(error_codes::kOptionOutOfRange, "OutputOptions.max_buffers must be >= 0");
+    }
+  } else if (const auto* udp = dynamic_cast<const UdpOutput*>(&node)) {
+    const auto& opt = udp->options();
+    if (opt.port < 1 || opt.port > 65535) {
+      throw_session_error(error_codes::kOptionOutOfRange, "UdpOutput.port must be in [1, 65535]");
+    }
+    if (opt.host.empty()) {
+      throw_session_error(error_codes::kOptionOutOfRange, "UdpOutput.host must not be empty");
+    }
+  }
+}
 
 std::string automatic_realtime_stream_id(std::size_t from, std::size_t to,
                                          const std::string& endpoint) {
@@ -184,6 +222,7 @@ Graph::CompositionGraph::append_unlinked_pipeline_vertex(NodePtr node, std::stri
   const VertexId id = vertices.size();
   const Node* identity = node.get();
   if (identity) {
+    validate_endpoint_options(*identity);
     // Publish the derived-index entry first. If allocation fails, the vertex vector is untouched;
     // if vertex construction then fails, erase the unpublished entry before propagating.
     const auto [it, inserted] = pipeline_vertex_by_identity.emplace(identity, id);

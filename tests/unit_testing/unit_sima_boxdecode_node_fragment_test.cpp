@@ -234,6 +234,24 @@ RUN_TEST(
                                                               0.25, 0.45, 100, "metadata_yolo");
       auto metadata_ssd = simaai::neat::nodes::SimaBoxDecode(simaai::neat::BoxDecodeType::Ssd, 0.30,
                                                              0.60, 100, "metadata_ssd");
+      // The SSD decoder inverts a stretch remap, so an explicit letterbox assertion is refused
+      // before any model is involved, and an explicit stretch is accepted.
+      bool ssd_letterbox_refused = false;
+      try {
+        (void)simaai::neat::nodes::SimaBoxDecode(
+            simaai::neat::BoxDecodeType::Ssd, 0.30, 0.60, 100, "ssd_letterbox", 0, 0, 0, 0,
+            simaai::neat::BoxDecodeTypeOption::Auto, std::nullopt, std::nullopt, std::nullopt,
+            simaai::neat::ResizeMode::Letterbox);
+      } catch (const std::invalid_argument& e) {
+        ssd_letterbox_refused =
+            std::string(e.what()).find("requires a stretch") != std::string::npos;
+      }
+      require(ssd_letterbox_refused, "SSD BoxDecode must refuse a letterbox resize assertion");
+      require(simaai::neat::nodes::SimaBoxDecode(
+                  simaai::neat::BoxDecodeType::Ssd, 0.30, 0.60, 100, "ssd_stretch", 0, 0, 0, 0,
+                  simaai::neat::BoxDecodeTypeOption::Auto, std::nullopt, std::nullopt, std::nullopt,
+                  simaai::neat::ResizeMode::Stretch) != nullptr,
+              "SSD BoxDecode must accept a stretch resize assertion");
       simaai::neat::BoxDecodeOptions superpoint_options(simaai::neat::BoxDecodeType::SuperPoint);
       superpoint_options.superpoint.profile = simaai::neat::SuperPointProfile::A65V1;
       auto metadata_superpoint =

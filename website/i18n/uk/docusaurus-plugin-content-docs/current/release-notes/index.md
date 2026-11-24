@@ -1,12 +1,12 @@
 ---
 title: "Примітки до випуску"
-description: "Примітки до випуску для Palette SDK, Neat Library, Neat Examples, sima-cli, Insight, Model Compiler та LLiMa."
+description: "Примітки до випуску для Palette SDK, Neat Library, Neat Examples, sima-cli, Insight, Model Compiler та LLiMa"
 sidebar_position: 1
 ---
 
 # Примітки до випуску
 
-Відстежуйте зміни в усьому програмному забезпеченні SiMa.ai.
+Відстежуйте зміни в усьому програмному стеку SiMa.ai.
 
 З кожним випуском компонента публікуються примітки до випуску. Відкрийте сторінку компонента нижче, а потім виберіть версію, яку ви використовуєте.
 
@@ -17,11 +17,11 @@ sidebar_position: 1
     <ul class="overview-link-list">
       <li><a class="overview-link-card" href="/release-notes/neat-development-environment/"><strong>Palette SDK</strong><span>Зміни в середовищі розробки та на платформі.</span></a></li>
       <li><a class="overview-link-card" href="/release-notes/neat/"><strong>Neat Library</strong><span>Зміни в API бібліотеки та середовищі виконання.</span></a></li>
-      <li><a class="overview-link-card" href="/release-notes/neat-examples/"><strong>Neat Examples</strong><span>Приклади змін і виправлень у застосунку.</span></a></li>
-      <li><a class="overview-link-card" href="/release-notes/sima-cli/"><strong>sima-cli</strong><span>Встановлення через командний рядок, налаштування SDK, оновлення та зміни у робочому процесі DevKit.</span></a></li>
-      <li><a class="overview-link-card" href="/release-notes/insight/"><strong>Insight</strong><span>Insight Зміни в інтерфейсі користувача та службі середовища виконання.</span></a></li>
+      <li><a class="overview-link-card" href="/release-notes/neat-examples/"><strong>Neat Examples</strong><span>Зміни та виправлення в прикладах застосунків.</span></a></li>
+      <li><a class="overview-link-card" href="/release-notes/sima-cli/"><strong>sima-cli</strong><span>Зміни у встановленні CLI, налаштуванні SDK, оновленні та робочих процесах DevKit.</span></a></li>
+      <li><a class="overview-link-card" href="/release-notes/insight/"><strong>Insight</strong><span>Зміни в інтерфейсі Insight і службі середовища виконання.</span></a></li>
       <li><a class="overview-link-card" href="/release-notes/modelsdk/"><strong>Model Compiler</strong><span>Зміни в компіляторі та інструментах для роботи з моделями.</span></a></li>
-      <li><a class="overview-link-card" href="/release-notes/llima/"><strong>LLiMa</strong><span>Зміни в компіляторі моделі GenAI.</span></a></li>
+      <li><a class="overview-link-card" href="/release-notes/llima/"><strong>LLiMa</strong><span>Зміни в компіляторі моделей GenAI.</span></a></li>
     </ul>
   </section>
 </div>

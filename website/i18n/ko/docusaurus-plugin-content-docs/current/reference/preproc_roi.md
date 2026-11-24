@@ -20,7 +20,9 @@ C++:
 
 using namespace simaai::neat;
 
-Model model("/path/to/model.tar.gz");
+Model::Options opt;
+opt.preprocess.resize.enable = AutoFlag::On;
+Model model("/path/to/model.tar.gz", opt);
 
 std::vector<cv::Mat> images = {
     cv::imread("/data/camera0.jpg", cv::IMREAD_COLOR),
@@ -48,7 +50,9 @@ for (std::size_t i = 0; i < out.size(); ++i) {
 import cv2
 import pyneat
 
-model = pyneat.Model("/path/to/model.tar.gz")
+opt = pyneat.ModelOptions()
+opt.preprocess.resize.enable = pyneat.AutoFlag.On
+model = pyneat.Model("/path/to/model.tar.gz", opt)
 
 images = [
     cv2.imread("/data/camera0.jpg", cv2.IMREAD_COLOR),
@@ -82,7 +86,6 @@ C++:
 
 ```cpp
 Model::Options opt;
-opt.preprocess.resize.enable = AutoFlag::On;
 opt.preprocess.resize.width = 640;
 opt.preprocess.resize.height = 640;
 opt.preprocess.resize.mode = ResizeMode::Letterbox;
@@ -101,7 +104,6 @@ TensorList out = stages::Preproc(images, model, rois);
 
 ```python
 opt = pyneat.ModelOptions()
-opt.preprocess.resize.enable = pyneat.AutoFlag.On
 opt.preprocess.resize.width = 640
 opt.preprocess.resize.height = 640
 opt.preprocess.resize.mode = pyneat.ResizeMode.Letterbox
@@ -146,7 +148,7 @@ Python의 경우, `cv2.imread` 이미지에는 `image_format=pyneat.PixelFormat.
 - 모델 경로에서 선택한 데이터 유형과 레이아웃(예: BF16 또는 INT8, 덴스 또는 테셀레이션 출력)을 의미합니다.
 - 각 출력에 대한 `tensor.semantic.preprocess` 메타데이터.
 
-각 출력 결과의 전처리 메타데이터에는 선택된 ROI, 레터박스 기하학적 정보, 정규화/양자화/테셀레이션 플래그, 그리고 모델/전처리된 좌표를 원래 소스 프레임 좌표계로 매핑하는 어파인 변환이 포함됩니다.
+각 출력 결과의 전처리 메타데이터에는 선택된 ROI, 레터박스 기하학적 정보, 정규화/양자화/테셀레이션 플래그, 그리고 모델/전처리된 좌표를 원래 소스 프레임 좌표계로 매핑하는 어파인 변환이 포함됩니다. 지원되는 ROI 프로필은 [BoxDecode](/reference/boxdecode_decode_types#crop-coordinate-mapping)를 참조하세요.
 
 ## 프레임 바깥 영역
 

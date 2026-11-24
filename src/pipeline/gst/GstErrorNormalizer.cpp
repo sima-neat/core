@@ -1,5 +1,6 @@
 #include "pipeline/internal/GstErrorNormalizer.h"
 
+#include "gst/internal/HttpDiagnostics.h"
 #include "pipeline/ErrorCodes.h"
 
 #include <algorithm>
@@ -57,7 +58,8 @@ std::string value_to_string(const GValue* value) {
   return out;
 }
 
-std::size_t redact_secret_value(std::string& value, std::size_t begin, bool line_value) {
+std::size_t redact_secret_value(std::string& value, std::size_t begin, bool line_value,
+                                bool use_http_origin = false) {
   const auto skip_inline_space = [&]() {
     while (begin < value.size() && std::isspace(static_cast<unsigned char>(value[begin])) &&
            value[begin] != '\r' && value[begin] != '\n') {
@@ -109,11 +111,15 @@ std::size_t redact_secret_value(std::string& value, std::size_t begin, bool line
       ++candidate;
     }
   } else {
-    end = value.find_first_of(line_value ? "\r\n" : "&,; \t\r\n'\"", content_begin);
+    const char* delimiters = line_value ? "\r\n" : "&,; \t\r\n'\"";
+    end = value.find_first_of(use_http_origin ? " \t\r\n'\"" : delimiters, content_begin);
   }
-  value.replace(content_begin, (end == std::string::npos ? value.size() : end) - content_begin,
-                "<redacted>");
-  return content_begin + std::string("<redacted>").size();
+  const std::size_t length = (end == std::string::npos ? value.size() : end) - content_begin;
+  const std::string replacement =
+      use_http_origin ? gst::http_origin(value.substr(content_begin, length).c_str())
+                      : "<redacted>";
+  value.replace(content_begin, length, replacement);
+  return content_begin + replacement.size();
 }
 
 bool looks_like_basic_credentials(const std::string& value, std::size_t begin) {
@@ -222,6 +228,14 @@ std::optional<std::size_t> find_uri_authority_start(const std::string& value,
 }
 
 std::string redact_uri_credentials(std::string value) {
+  // The generated launch string is also exposed in the structured report and reproduction hint.
+  for (auto pos = value.find("souphttpsrc "); pos != std::string::npos;
+       pos = value.find("souphttpsrc ", pos)) {
+    pos += sizeof("souphttpsrc ") - 1;
+    const auto location = value.find(" location=", pos - 1);
+    if (location != std::string::npos && location < value.find(" ! ", pos))
+      pos = redact_secret_value(value, location + sizeof(" location=") - 1, false, true);
+  }
   std::size_t search_from = 0;
   while (true) {
     const std::optional<std::size_t> authority_start = find_uri_authority_start(value, search_from);
@@ -921,6 +935,8 @@ NormalizedDiagnostic authentication_failed(RawGstError raw) {
            "The remote source rejected the supplied credentials.");
   add_fact(out, "Source",
            find_detail(out.raw, {"source-identity", "source_identity", "location"}).value_or(""));
+  if (const auto status = find_structured_detail(out.raw, {"http-status-code"}))
+    add_fact(out, "HTTP status", *status);
   out.actions = {
       "Verify the username, password, token, or other credentials configured for the source.",
       "Confirm that the account is allowed to access the requested stream or resource.",
@@ -1239,11 +1255,17 @@ RawGstError parse_gst_error_message(GstMessage* message) {
         const char* factory_name = gst_plugin_feature_get_name(GST_PLUGIN_FEATURE(factory));
         out.factory_name = factory_name ? factory_name : "";
       }
-      if (out.factory_name == "filesrc" || out.factory_name == "rtspsrc") {
+      if (out.factory_name == "filesrc" || out.factory_name == "rtspsrc" ||
+          out.factory_name == "souphttpsrc") {
         const std::string location =
             readable_string_property(G_OBJECT(GST_MESSAGE_SRC(message)), "location");
         if (!location.empty())
           out.details.emplace("source-identity", location);
+      } else if (out.factory_name == "multipartdemux") {
+        std::string boundary =
+            readable_string_property(G_OBJECT(GST_MESSAGE_SRC(message)), "boundary");
+        if (!boundary.empty())
+          out.details.emplace("boundary", std::move(boundary));
       } else if (out.factory_name == "libcamerasrc") {
         std::string camera =
             readable_string_property(G_OBJECT(GST_MESSAGE_SRC(message)), "camera-name");
@@ -1314,6 +1336,55 @@ std::string sanitize_gst_diagnostic_text(std::string text) {
 
 NormalizedDiagnostic classify_gst_error(RawGstError raw) {
   const std::string text = combined_raw(raw);
+  if (raw.factory_name == "souphttpsrc") {
+    const bool invalid_url = raw.domain_name == "gst-resource-error-quark" &&
+                             raw.code == GST_RESOURCE_ERROR_OPEN_READ &&
+                             contains_ci(raw.message, "error parsing url");
+    const bool stream_stopped = raw.domain_name == "gst-stream-error-quark" &&
+                                raw.code == GST_STREAM_ERROR_FAILED &&
+                                contains_ci(raw.debug, "streaming stopped, reason error");
+
+    const auto origin = gst::http_origin(
+        find_structured_detail(raw, {"source-identity", "source_identity", "location", "uri"})
+            .value_or("")
+            .c_str());
+    const auto status_text = find_structured_detail(raw, {"http-status-code"});
+    guint64 status = 0;
+    const bool valid_status = status_text && g_ascii_string_to_unsigned(status_text->c_str(), 10,
+                                                                        100, 599, &status, nullptr);
+    // Provider text and nested header structures may contain private request/redirect data.
+    raw.message.clear();
+    raw.debug.clear();
+    raw.details.clear();
+    if (!origin.empty())
+      raw.details.emplace("source-identity", origin);
+    if (valid_status)
+      raw.details.emplace("http-status-code", std::to_string(status));
+    if (raw.domain_name == "gst-resource-error-quark") {
+      if (raw.code == GST_RESOURCE_ERROR_NOT_AUTHORIZED)
+        return authentication_failed(std::move(raw));
+      if (valid_status && status >= 400) {
+        auto out = base(std::move(raw), error_codes::kIoOpen, "http.error_response",
+                        "The HTTP server returned an error response.");
+        add_fact(out, "HTTP status", std::to_string(status));
+        add_fact(out, "Source", origin);
+        out.actions = {status >= 500 ? "Check the server and retry the request."
+                                     : "Check the requested URL and the server's response."};
+        return out;
+      }
+    }
+    if (invalid_url || stream_stopped) {
+      auto out = base(std::move(raw), error_codes::kIoOpen,
+                      invalid_url ? "http.invalid_url" : "http.read_failed",
+                      invalid_url ? "The HTTP source URL is invalid."
+                                  : "The HTTP stream could not be read.");
+      add_fact(out, "Source", origin);
+      out.actions = {invalid_url
+                         ? "Set the source URL to a complete http:// or https:// address."
+                         : "Check the URL, port, and HTTP server availability from the DevKit."};
+      return out;
+    }
+  }
   const std::string diagnostic_id =
       find_detail(raw, {"neat-diagnostic-id", "neat_diagnostic_id", "diagnostic_id"}).value_or("");
   const std::string reason =
@@ -1374,6 +1445,14 @@ NormalizedDiagnostic classify_gst_error(RawGstError raw) {
     return buffer_too_small(std::move(raw));
   }
 
+  if (raw.factory_name == "rtspsrc" && diagnostic_id == "rtsp.video_caps_mismatch") {
+    auto out = base(std::move(raw), error_codes::kMediaCaps, diagnostic_id,
+                    "The RTSP server does not offer the configured video codec and payload_type.");
+    add_fact(out, "Requested", find_structured_detail(out.raw, {"requested"}).value_or(""));
+    add_fact(out, "Offered", find_structured_detail(out.raw, {"offered"}).value_or(""));
+    out.actions = {"Set codec and payload_type to a video stream offered by the RTSP server."};
+    return out;
+  }
   if (raw.factory_name == "filesrc" && raw.domain_name == "gst-resource-error-quark" &&
       raw.code == GST_RESOURCE_ERROR_NOT_FOUND) {
     return file_not_found(std::move(raw));
@@ -1381,6 +1460,17 @@ NormalizedDiagnostic classify_gst_error(RawGstError raw) {
   if (raw.domain_name == "gst-resource-error-quark" &&
       raw.code == GST_RESOURCE_ERROR_NOT_AUTHORIZED && remote_source(raw)) {
     return authentication_failed(std::move(raw));
+  }
+  if (raw.factory_name == "multipartdemux" && raw.domain_name == "gst-stream-error-quark" &&
+      raw.code == GST_STREAM_ERROR_DEMUX &&
+      contains_ci(raw.debug, "Boundary not found in the multipart header")) {
+    auto out = base(std::move(raw), error_codes::kMediaFormat, "http.multipart_boundary",
+                    "The multipart boundary does not match the JPEG stream.");
+    add_fact(out, "Boundary", find_detail(out.raw, {"boundary"}).value_or(""));
+    out.actions = {
+        "Check the server's multipart Content-Type and delimiters. Leave multipart_boundary empty "
+        "for automatic detection or set it to the server's boundary."};
+    return out;
   }
   if (raw.factory_name == "rtspsrc" &&
       (contains_ci(text, "failed to connect") || contains_ci(text, "could not open resource"))) {
@@ -1586,6 +1676,10 @@ int diagnostic_priority(const NormalizedDiagnostic& diagnostic) {
           .has_value()) {
     return 200;
   }
+
+  // A generic flow failure propagated to the source must yield to a specific stage error.
+  if (diagnostic.diagnostic_id == "http.read_failed")
+    return 20;
 
   if (diagnostic.error_code.rfind("resource.", 0) == 0 ||
       diagnostic.error_code.rfind("io.", 0) == 0 || diagnostic.error_code.rfind("codec.", 0) == 0 ||

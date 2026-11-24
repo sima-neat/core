@@ -6,6 +6,7 @@
 #include "pipeline/internal/TensorMath.h"
 #include "pipeline/internal/UxLogging.h"
 
+#include "gst/GstBusWatch.h"
 #include "pipeline/ErrorCodes.h"
 #include "pipeline/NeatError.h"
 
@@ -424,93 +425,6 @@ std::string gst_caps_to_string_safe(GstCaps* caps) {
   return out;
 }
 
-std::string gst_structure_to_string_safe(const GstStructure* st) {
-  if (!st)
-    return "<null structure>";
-  gchar* s = gst_structure_to_string(st);
-  if (!s)
-    return "<structure_to_string failed>";
-  std::string out = s;
-  g_free(s);
-  return out;
-}
-
-std::string gst_message_to_string(GstMessage* msg) {
-  if (!msg)
-    return "<null message>";
-
-  std::ostringstream ss;
-  const GstMessageType t = GST_MESSAGE_TYPE(msg);
-  ss << gst_message_type_get_name(t);
-
-  if (t == GST_MESSAGE_ERROR) {
-    GError* e = nullptr;
-    gchar* dbg = nullptr;
-    gst_message_parse_error(msg, &e, &dbg);
-    ss << ": " << (e ? e->message : "unknown");
-    if (dbg && *dbg)
-      ss << " | " << dbg;
-    if (e)
-      g_error_free(e);
-    if (dbg)
-      g_free(dbg);
-    return ss.str();
-  }
-  if (t == GST_MESSAGE_WARNING) {
-    GError* e = nullptr;
-    gchar* dbg = nullptr;
-    gst_message_parse_warning(msg, &e, &dbg);
-    ss << ": " << (e ? e->message : "unknown");
-    if (dbg && *dbg)
-      ss << " | " << dbg;
-    if (e)
-      g_error_free(e);
-    if (dbg)
-      g_free(dbg);
-    return ss.str();
-  }
-  if (t == GST_MESSAGE_INFO) {
-    GError* e = nullptr;
-    gchar* dbg = nullptr;
-    gst_message_parse_info(msg, &e, &dbg);
-    ss << ": " << (e ? e->message : "unknown");
-    if (dbg && *dbg)
-      ss << " | " << dbg;
-    if (e)
-      g_error_free(e);
-    if (dbg)
-      g_free(dbg);
-    return ss.str();
-  }
-  if (t == GST_MESSAGE_STATE_CHANGED) {
-    if (GST_MESSAGE_SRC(msg) && GST_IS_OBJECT(GST_MESSAGE_SRC(msg))) {
-      ss << " src=" << GST_OBJECT_NAME(GST_MESSAGE_SRC(msg));
-    }
-    GstState old_s, new_s, pend_s;
-    gst_message_parse_state_changed(msg, &old_s, &new_s, &pend_s);
-    ss << " " << state_name(old_s) << " -> " << state_name(new_s) << " (pending "
-       << state_name(pend_s) << ")";
-    return ss.str();
-  }
-  if (t == GST_MESSAGE_EOS) {
-    ss << " (EOS)";
-    return ss.str();
-  }
-  if (t == GST_MESSAGE_ASYNC_DONE) {
-    ss << " (ASYNC_DONE)";
-    return ss.str();
-  }
-  if (t == GST_MESSAGE_STREAM_START) {
-    ss << " (STREAM_START)";
-    return ss.str();
-  }
-
-  const GstStructure* st = gst_message_get_structure(msg);
-  if (st)
-    ss << " " << gst_structure_to_string_safe(st);
-  return ss.str();
-}
-
 std::string caps_features_string(GstCaps* caps) {
   if (!caps)
     return "<none>";
@@ -748,13 +662,16 @@ void throw_if_bus_error(GstElement* pipeline, const std::shared_ptr<DiagCtx>& di
     const GstMessageType type = GST_MESSAGE_TYPE(msg);
     RawGstError raw = parse_gst_error_message(msg);
     const std::string source = raw.source_name.empty() ? "<unknown>" : raw.source_name;
+    NormalizedDiagnostic candidate = classify_gst_error(std::move(raw));
     if (diag) {
-      diag->push_bus(gst_message_type_get_name(type), source,
-                     sanitize_gst_diagnostic_text(gst_message_to_string(msg)));
+      // souphttpsrc embeds the entire request and redirect URIs in its debug message.
+      const auto detail = candidate.raw.factory_name == "souphttpsrc"
+                              ? render_diagnostic_body(candidate, false)
+                              : sanitize_gst_diagnostic_text(gst_message_to_string(msg));
+      diag->push_bus(gst_message_type_get_name(type), source, detail);
     }
     gst_message_unref(msg);
 
-    NormalizedDiagnostic candidate = classify_gst_error(std::move(raw));
     const int priority = diagnostic_priority(candidate);
     if (!primary.has_value() || priority > primary_priority) {
       primary = std::move(candidate);
@@ -815,7 +732,7 @@ std::optional<GstSample*> try_pull_sample_sliced(GstElement* pipeline, GstElemen
                  cur_str.c_str(), allowed_str.c_str());
     if (diag && !diag->pipeline_string.empty()) {
       std::fprintf(stderr, "[DBG] %s: pipeline=%s\n", where ? where : "try_pull_sample_sliced",
-                   diag->pipeline_string.c_str());
+                   diag->redacted_pipeline_string().c_str());
     }
   };
 

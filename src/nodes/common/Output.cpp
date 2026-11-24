@@ -19,7 +19,7 @@ OutputOptions OutputOptions::EveryFrame(int max_buffers) {
   OutputOptions opt;
   opt.drop = false;
   opt.sync = false;
-  opt.max_buffers = (max_buffers < 0) ? 0 : max_buffers;
+  opt.max_buffers = max_buffers;
   return opt;
 }
 
@@ -27,7 +27,7 @@ OutputOptions OutputOptions::Clocked(int max_buffers) {
   OutputOptions opt;
   opt.drop = true;
   opt.sync = true;
-  opt.max_buffers = (max_buffers < 0) ? 0 : max_buffers;
+  opt.max_buffers = max_buffers;
   return opt;
 }
 
