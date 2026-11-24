@@ -53,10 +53,13 @@
 //     (boxdecode_request_for_frames: what GStreamer's per-frame resolver selects for such a
 //     frame): once when the frame size is declared; otherwise the operator runs each frame size
 //     with the Run's kernel's "image_size" variant (soc::Kernel::with), selected by the stamp's
-//     user word (DataflowFrames). Carried: YOLOv8-style detection (profile yolo_dfl_v1) with
-//     C-blocked heads. The other decode families, pose, segmentation and oriented boxes, tiled
-//     heads (detess members), and a decode that takes each frame's size without the image
-//     preproc in front are not carried (the plan says so).
+//     user word (DataflowFrames). Carried: the decode families whose wire a device row has
+//     shown byte-equal to GStreamer's (the table in front of plan_boxdecode_stage: YOLOv8-style
+//     detection), with C-blocked heads. A head that is a dense or strided tensor must span exactly
+//     the bytes its kernel reads: one whose rows carry channel padding does not, and is not
+//     carried. The other decode families, pose, segmentation and oriented boxes, tiled heads
+//     (detess members), and a decode that takes each frame's size without the image preproc in
+//     front are not carried (the plan says so).
 // Here: what the route's stages are, read from what Core compiles and lowers for the same nodes on
 // GStreamer (the rendered stage manifest and its checked kernel recipes), and what the input's
 // port does with them: load the model and make the kernels, check the input's binding against

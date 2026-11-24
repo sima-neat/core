@@ -462,10 +462,36 @@ void boxdecode(const Yolo& y) {
     a.manifest = only(y.full.manifest, {1, 2, 2});
     declines(a, "is not the route's last stage behind the model's MLA stage", "BoxDecode not last");
   }
+  // The decode families: a (profile, task) pair runs once a device row has shown its wire
+  // byte-equal to GStreamer's; the stage's shape is the same for all of them.
+  for (const char* profile : {"yolo26_v1", "yolox_v1", "ssd_v1", "yolov5_v1", "detr_v1"}) {
+    declines(decode([profile](si::StageStaticSpec&, si::KernelStageRecipe& r) {
+               r.boxdecode_program->profile = profile;
+             }),
+             "the BoxDecode stage runs the decode families yolo_dfl_v1/detection",
+             std::string("a decode family without a device row: ") + profile);
+  }
+  for (const char* task : {"pose", "segmentation", "segmentation_pose"}) {
+    declines(decode([task](si::StageStaticSpec&, si::KernelStageRecipe& r) {
+               r.boxdecode_program->task = task;
+             }),
+             std::string("task '") + task + "': the BoxDecode stage runs the decode families",
+             std::string("a task without a device row: ") + task);
+  }
+  // A head stated as a strided tensor whose rows are pitched for more channels than it has: the
+  // kernel reads every row to the end of its padding, the tensor ends at its last element.
   declines(decode([](si::StageStaticSpec&, si::KernelStageRecipe& r) {
-             r.boxdecode_program->profile = "yolo26_raw_ltrb_v1";
+             client::TensorSpec& head = r.boxdecode_program->request.inputs.front();
+             const std::size_t rank = head.shape.size();
+             client::Strided pitched;
+             std::int64_t pitch = 1024;
+             for (std::size_t axis = rank; axis-- > 0U;) {
+               pitched.strides_bytes[axis] = axis + 1U == rank ? 4 : pitch;
+               pitch = axis + 1U == rank ? pitch : pitch * head.shape[axis];
+             }
+             head.layout = pitched;
            }),
-           "the BoxDecode stage runs YOLOv8-style detection", "another decode profile");
+           "is a strided tensor of", "a strided head with channel padding");
   declines(decode([](si::StageStaticSpec&, si::KernelStageRecipe& r) {
              r.boxdecode_program->write = nullptr;
            }),

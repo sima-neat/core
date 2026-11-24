@@ -962,6 +962,57 @@ std::string plan_frame_stage(const si::StageStaticSpec& stage, bool first, bool 
   return {};
 }
 
+// The decode families the BoxDecode stage runs: the (profile, task) pairs of the Kernels package's
+// "boxdecode" whose wire a device row has shown byte-equal to GStreamer's. The stage has one shape
+// for every family (one decode kernel on the heads in the MLA's buffer, the stage's serializer over
+// its outputs); what a family's row shows is its own: the kernel's one-phase entry gives the bytes
+// of the staged entry GStreamer's host tasks give it, and its per-frame geometry variant gives the
+// bytes of the request. A family is added with its row; one without a row is not carried. YOLO26
+// and YOLOX detection, YOLO26 pose and segmentation have no row: their box head is a strided
+// tensor with channel padding, which the Run's kernel object does not hold (below).
+struct CarriedDecode {
+  std::string_view profile, task;
+};
+constexpr CarriedDecode kCarriedDecodes[] = {
+    {"yolo_dfl_v1", "detection"},
+};
+
+bool carried_decode(std::string_view profile, std::string_view task) {
+  for (const CarriedDecode& carried : kCarriedDecodes) {
+    if (carried.profile == profile && carried.task == task) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// "yolo_dfl_v1/detection, yolo26_v1/detection, ...": the families, for the text of a refusal.
+std::string carried_decodes_text() {
+  std::string out;
+  for (const CarriedDecode& carried : kCarriedDecodes) {
+    out +=
+        (out.empty() ? "" : ", ") + std::string(carried.profile) + "/" + std::string(carried.task);
+  }
+  return out;
+}
+
+// A kernel request's tensor as the runtime states it (defined with the kernels' making, below).
+std::optional<df::TensorSpec> runtime_tensor(const client::TensorSpec& tensor);
+
+// The bytes the Run's kernel object holds a dense or strided tensor of a request in: the tensor's
+// own extent, to the end of its last element (soc::Kernel::make checks the Kernels package's
+// byte count against it). 0: an MLA layout, whose bytes are the Kernels package's, or a tensor
+// the runtime does not state.
+std::size_t kernel_object_bytes(const client::TensorSpec& tensor) {
+  const std::optional<df::TensorSpec> spec = runtime_tensor(tensor);
+  if (!spec || std::holds_alternative<df::MlaTiled>(spec->layout) ||
+      std::holds_alternative<df::MlaCBlocked>(spec->layout)) {
+    return 0;
+  }
+  const df::PortSpec port{.payload = *spec, .memory = df::MemoryKind::Host};
+  return df::validate(port) ? 0 : df::slot_bytes(port);
+}
+
 // The BoxDecode stage behind the MLA stage, at the route's end, as two route stages: the Kernels
 // package's "boxdecode" with its heads as views of the MLA's one output buffer and its outputs as
 // views of one small buffer, and Core's wire serializer behind it; "" or the fact about it that
@@ -979,10 +1030,9 @@ std::string plan_boxdecode_stage(const si::StageStaticSpec& stage, bool first, b
            "there only (its kernel reads the heads in the MLA's output buffer), not on heads the "
            "application pushes";
   }
-  if (program.profile != "yolo_dfl_v1" || program.task != "detection") {
+  if (!carried_decode(program.profile, program.task)) {
     return "it decodes profile '" + program.profile + "', task '" + program.task +
-           "': the BoxDecode stage runs YOLOv8-style detection (profile 'yolo_dfl_v1', task "
-           "'detection') only";
+           "': the BoxDecode stage runs the decode families " + carried_decodes_text() + " only";
   }
   if (!program.write || recipe.output_format != kDetectionFormatBbox) {
     return "it publishes another wire than BBOX ('" + recipe.output_format + "')";
@@ -1060,6 +1110,14 @@ std::string plan_boxdecode_stage(const si::StageStaticSpec& stage, bool first, b
              " does not lie in the stage's one input "
              "buffer of " +
              std::to_string(carrier.size_bytes) + " bytes";
+    }
+    if (const std::size_t extent = kernel_object_bytes(request.inputs[i]);
+        extent != 0U && extent != bytes) {
+      return head + " is a strided tensor of " + dims_text(request.inputs[i].shape) +
+             " whose kernel reads " + std::to_string(bytes) +
+             " bytes of it, its rows to the end of their channel padding, where the tensor's own "
+             "extent is " +
+             std::to_string(extent) + " bytes";
     }
     for (const DataflowModelStage::View& other : kernel.packed_inputs) {
       if (offset < other.offset + other.bytes && other.offset < offset + bytes) {

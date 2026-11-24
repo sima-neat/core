@@ -777,7 +777,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 2 'boxdecode' (kernel SimaBoxDecode on the A65)",
-     "fact": "it decodes profile 'detr_v1', task 'detection': the BoxDecode stage runs YOLOv8-style detection (profile 'yolo_dfl_v1', task 'detection') only",
+     "fact": "it decodes profile 'detr_v1', task 'detection': the BoxDecode stage runs the decode families yolo_dfl_v1/detection only",
      "kinds": [
       "preproc@EV74",
       "mla",
@@ -831,7 +831,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 2 'boxdecode' (kernel SimaBoxDecode on the A65)",
-     "fact": "it decodes profile 'detr_v1', task 'detection': the BoxDecode stage runs YOLOv8-style detection (profile 'yolo_dfl_v1', task 'detection') only",
+     "fact": "it decodes profile 'detr_v1', task 'detection': the BoxDecode stage runs the decode families yolo_dfl_v1/detection only",
      "kinds": [
       "preproc@EV74",
       "mla",
@@ -885,7 +885,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 2 'boxdecode' (kernel SimaBoxDecode on the A65)",
-     "fact": "it decodes profile 'detr_v1', task 'detection': the BoxDecode stage runs YOLOv8-style detection (profile 'yolo_dfl_v1', task 'detection') only",
+     "fact": "it decodes profile 'detr_v1', task 'detection': the BoxDecode stage runs the decode families yolo_dfl_v1/detection only",
      "kinds": [
       "preproc@EV74",
       "mla",
@@ -939,7 +939,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 2 'boxdecode' (kernel SimaBoxDecode on the A65)",
-     "fact": "it decodes profile 'detr_v1', task 'detection': the BoxDecode stage runs YOLOv8-style detection (profile 'yolo_dfl_v1', task 'detection') only",
+     "fact": "it decodes profile 'detr_v1', task 'detection': the BoxDecode stage runs the decode families yolo_dfl_v1/detection only",
      "kinds": [
       "preproc@EV74",
       "mla",
@@ -7988,7 +7988,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 2 'boxdecode' (kernel SimaBoxDecode on the A65)",
-     "fact": "it decodes profile 'yolo_dfl_obb_v1', task 'detection': the BoxDecode stage runs YOLOv8-style detection (profile 'yolo_dfl_v1', task 'detection') only",
+     "fact": "it decodes profile 'yolo_dfl_obb_v1', task 'detection': the BoxDecode stage runs the decode families yolo_dfl_v1/detection only",
      "kinds": [
       "preproc@EV74",
       "mla",
@@ -8042,7 +8042,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 2 'boxdecode' (kernel SimaBoxDecode on the A65)",
-     "fact": "it decodes profile 'yolo_dfl_obb_v1', task 'detection': the BoxDecode stage runs YOLOv8-style detection (profile 'yolo_dfl_v1', task 'detection') only",
+     "fact": "it decodes profile 'yolo_dfl_obb_v1', task 'detection': the BoxDecode stage runs the decode families yolo_dfl_v1/detection only",
      "kinds": [
       "preproc@EV74",
       "mla",
@@ -8225,7 +8225,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 2 'boxdecode' (kernel SimaBoxDecode on the A65)",
-     "fact": "it decodes profile 'yolo_dfl_obb_v1', task 'detection': the BoxDecode stage runs YOLOv8-style detection (profile 'yolo_dfl_v1', task 'detection') only",
+     "fact": "it decodes profile 'yolo_dfl_obb_v1', task 'detection': the BoxDecode stage runs the decode families yolo_dfl_v1/detection only",
      "kinds": [
       "preproc@EV74",
       "mla",
@@ -8279,7 +8279,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 2 'boxdecode' (kernel SimaBoxDecode on the A65)",
-     "fact": "it decodes profile 'yolo_dfl_obb_v1', task 'detection': the BoxDecode stage runs YOLOv8-style detection (profile 'yolo_dfl_v1', task 'detection') only",
+     "fact": "it decodes profile 'yolo_dfl_obb_v1', task 'detection': the BoxDecode stage runs the decode families yolo_dfl_v1/detection only",
      "kinds": [
       "preproc@EV74",
       "mla",
@@ -8462,7 +8462,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 2 'boxdecode' (kernel SimaBoxDecode on the A65)",
-     "fact": "it decodes profile 'yolo_dfl_obb_v1', task 'detection': the BoxDecode stage runs YOLOv8-style detection (profile 'yolo_dfl_v1', task 'detection') only",
+     "fact": "it decodes profile 'yolo_dfl_obb_v1', task 'detection': the BoxDecode stage runs the decode families yolo_dfl_v1/detection only",
      "kinds": [
       "preproc@EV74",
       "mla",
@@ -8516,7 +8516,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 2 'boxdecode' (kernel SimaBoxDecode on the A65)",
-     "fact": "it decodes profile 'yolo_dfl_obb_v1', task 'detection': the BoxDecode stage runs YOLOv8-style detection (profile 'yolo_dfl_v1', task 'detection') only",
+     "fact": "it decodes profile 'yolo_dfl_obb_v1', task 'detection': the BoxDecode stage runs the decode families yolo_dfl_v1/detection only",
      "kinds": [
       "preproc@EV74",
       "mla",
@@ -8699,7 +8699,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 2 'boxdecode' (kernel SimaBoxDecode on the A65)",
-     "fact": "it decodes profile 'yolo_dfl_obb_v1', task 'detection': the BoxDecode stage runs YOLOv8-style detection (profile 'yolo_dfl_v1', task 'detection') only",
+     "fact": "it decodes profile 'yolo_dfl_obb_v1', task 'detection': the BoxDecode stage runs the decode families yolo_dfl_v1/detection only",
      "kinds": [
       "preproc@EV74",
       "mla",
@@ -8753,7 +8753,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 2 'boxdecode' (kernel SimaBoxDecode on the A65)",
-     "fact": "it decodes profile 'yolo_dfl_obb_v1', task 'detection': the BoxDecode stage runs YOLOv8-style detection (profile 'yolo_dfl_v1', task 'detection') only",
+     "fact": "it decodes profile 'yolo_dfl_obb_v1', task 'detection': the BoxDecode stage runs the decode families yolo_dfl_v1/detection only",
      "kinds": [
       "preproc@EV74",
       "mla",
@@ -8936,7 +8936,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 2 'boxdecode' (kernel SimaBoxDecode on the A65)",
-     "fact": "it decodes profile 'yolo_dfl_obb_v1', task 'detection': the BoxDecode stage runs YOLOv8-style detection (profile 'yolo_dfl_v1', task 'detection') only",
+     "fact": "it decodes profile 'yolo_dfl_obb_v1', task 'detection': the BoxDecode stage runs the decode families yolo_dfl_v1/detection only",
      "kinds": [
       "preproc@EV74",
       "mla",
@@ -8990,7 +8990,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 2 'boxdecode' (kernel SimaBoxDecode on the A65)",
-     "fact": "it decodes profile 'yolo_dfl_obb_v1', task 'detection': the BoxDecode stage runs YOLOv8-style detection (profile 'yolo_dfl_v1', task 'detection') only",
+     "fact": "it decodes profile 'yolo_dfl_obb_v1', task 'detection': the BoxDecode stage runs the decode families yolo_dfl_v1/detection only",
      "kinds": [
       "preproc@EV74",
       "mla",
@@ -9044,7 +9044,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 2 'boxdecode' (kernel SimaBoxDecode on the A65)",
-     "fact": "it decodes profile 'yolo26_v1', task 'detection': the BoxDecode stage runs YOLOv8-style detection (profile 'yolo_dfl_v1', task 'detection') only",
+     "fact": "it decodes profile 'yolo26_v1', task 'detection': the BoxDecode stage runs the decode families yolo_dfl_v1/detection only",
      "kinds": [
       "preproc@EV74",
       "mla",
@@ -9098,7 +9098,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 2 'boxdecode' (kernel SimaBoxDecode on the A65)",
-     "fact": "it decodes profile 'yolo26_v1', task 'detection': the BoxDecode stage runs YOLOv8-style detection (profile 'yolo_dfl_v1', task 'detection') only",
+     "fact": "it decodes profile 'yolo26_v1', task 'detection': the BoxDecode stage runs the decode families yolo_dfl_v1/detection only",
      "kinds": [
       "preproc@EV74",
       "mla",
@@ -9152,7 +9152,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 2 'boxdecode' (kernel SimaBoxDecode on the A65)",
-     "fact": "it decodes profile 'yolo26_v1', task 'detection': the BoxDecode stage runs YOLOv8-style detection (profile 'yolo_dfl_v1', task 'detection') only",
+     "fact": "it decodes profile 'yolo26_v1', task 'detection': the BoxDecode stage runs the decode families yolo_dfl_v1/detection only",
      "kinds": [
       "preproc@EV74",
       "mla",
@@ -9206,7 +9206,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 2 'boxdecode' (kernel SimaBoxDecode on the A65)",
-     "fact": "it decodes profile 'yolo26_obb_v1', task 'detection': the BoxDecode stage runs YOLOv8-style detection (profile 'yolo_dfl_v1', task 'detection') only",
+     "fact": "it decodes profile 'yolo26_obb_v1', task 'detection': the BoxDecode stage runs the decode families yolo_dfl_v1/detection only",
      "kinds": [
       "preproc@EV74",
       "mla",
@@ -9260,7 +9260,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 2 'boxdecode' (kernel SimaBoxDecode on the A65)",
-     "fact": "it decodes profile 'yolo26_obb_v1', task 'detection': the BoxDecode stage runs YOLOv8-style detection (profile 'yolo_dfl_v1', task 'detection') only",
+     "fact": "it decodes profile 'yolo26_obb_v1', task 'detection': the BoxDecode stage runs the decode families yolo_dfl_v1/detection only",
      "kinds": [
       "preproc@EV74",
       "mla",
@@ -9314,7 +9314,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 2 'boxdecode' (kernel SimaBoxDecode on the A65)",
-     "fact": "it decodes profile 'yolo26_obb_v1', task 'detection': the BoxDecode stage runs YOLOv8-style detection (profile 'yolo_dfl_v1', task 'detection') only",
+     "fact": "it decodes profile 'yolo26_obb_v1', task 'detection': the BoxDecode stage runs the decode families yolo_dfl_v1/detection only",
      "kinds": [
       "preproc@EV74",
       "mla",
@@ -9368,7 +9368,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 2 'boxdecode' (kernel SimaBoxDecode on the A65)",
-     "fact": "it decodes profile 'yolo26_v1', task 'pose': the BoxDecode stage runs YOLOv8-style detection (profile 'yolo_dfl_v1', task 'detection') only",
+     "fact": "it decodes profile 'yolo26_v1', task 'pose': the BoxDecode stage runs the decode families yolo_dfl_v1/detection only",
      "kinds": [
       "preproc@EV74",
       "mla",
@@ -9422,7 +9422,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 2 'boxdecode' (kernel SimaBoxDecode on the A65)",
-     "fact": "it decodes profile 'yolo26_v1', task 'pose': the BoxDecode stage runs YOLOv8-style detection (profile 'yolo_dfl_v1', task 'detection') only",
+     "fact": "it decodes profile 'yolo26_v1', task 'pose': the BoxDecode stage runs the decode families yolo_dfl_v1/detection only",
      "kinds": [
       "preproc@EV74",
       "mla",
@@ -9476,7 +9476,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 2 'boxdecode' (kernel SimaBoxDecode on the A65)",
-     "fact": "it decodes profile 'yolo26_v1', task 'pose': the BoxDecode stage runs YOLOv8-style detection (profile 'yolo_dfl_v1', task 'detection') only",
+     "fact": "it decodes profile 'yolo26_v1', task 'pose': the BoxDecode stage runs the decode families yolo_dfl_v1/detection only",
      "kinds": [
       "preproc@EV74",
       "mla",
@@ -9530,7 +9530,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 2 'boxdecode' (kernel SimaBoxDecode on the A65)",
-     "fact": "it decodes profile 'yolo26_v1', task 'segmentation': the BoxDecode stage runs YOLOv8-style detection (profile 'yolo_dfl_v1', task 'detection') only",
+     "fact": "it decodes profile 'yolo26_v1', task 'segmentation': the BoxDecode stage runs the decode families yolo_dfl_v1/detection only",
      "kinds": [
       "preproc@EV74",
       "mla",
@@ -9584,7 +9584,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 2 'boxdecode' (kernel SimaBoxDecode on the A65)",
-     "fact": "it decodes profile 'yolo26_v1', task 'segmentation': the BoxDecode stage runs YOLOv8-style detection (profile 'yolo_dfl_v1', task 'detection') only",
+     "fact": "it decodes profile 'yolo26_v1', task 'segmentation': the BoxDecode stage runs the decode families yolo_dfl_v1/detection only",
      "kinds": [
       "preproc@EV74",
       "mla",
@@ -9638,7 +9638,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 2 'boxdecode' (kernel SimaBoxDecode on the A65)",
-     "fact": "it decodes profile 'yolo26_v1', task 'segmentation': the BoxDecode stage runs YOLOv8-style detection (profile 'yolo_dfl_v1', task 'detection') only",
+     "fact": "it decodes profile 'yolo26_v1', task 'segmentation': the BoxDecode stage runs the decode families yolo_dfl_v1/detection only",
      "kinds": [
       "preproc@EV74",
       "mla",
@@ -9692,7 +9692,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 2 'boxdecode' (kernel SimaBoxDecode on the A65)",
-     "fact": "it decodes profile 'yolo26_v1', task 'detection': the BoxDecode stage runs YOLOv8-style detection (profile 'yolo_dfl_v1', task 'detection') only",
+     "fact": "it decodes profile 'yolo26_v1', task 'detection': the BoxDecode stage runs the decode families yolo_dfl_v1/detection only",
      "kinds": [
       "preproc@EV74",
       "mla",
@@ -9746,7 +9746,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 2 'boxdecode' (kernel SimaBoxDecode on the A65)",
-     "fact": "it decodes profile 'yolo26_v1', task 'detection': the BoxDecode stage runs YOLOv8-style detection (profile 'yolo_dfl_v1', task 'detection') only",
+     "fact": "it decodes profile 'yolo26_v1', task 'detection': the BoxDecode stage runs the decode families yolo_dfl_v1/detection only",
      "kinds": [
       "preproc@EV74",
       "mla",
@@ -9800,7 +9800,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 2 'boxdecode' (kernel SimaBoxDecode on the A65)",
-     "fact": "it decodes profile 'yolo26_v1', task 'detection': the BoxDecode stage runs YOLOv8-style detection (profile 'yolo_dfl_v1', task 'detection') only",
+     "fact": "it decodes profile 'yolo26_v1', task 'detection': the BoxDecode stage runs the decode families yolo_dfl_v1/detection only",
      "kinds": [
       "preproc@EV74",
       "mla",
@@ -9854,7 +9854,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 2 'boxdecode' (kernel SimaBoxDecode on the A65)",
-     "fact": "it decodes profile 'yolo26_obb_v1', task 'detection': the BoxDecode stage runs YOLOv8-style detection (profile 'yolo_dfl_v1', task 'detection') only",
+     "fact": "it decodes profile 'yolo26_obb_v1', task 'detection': the BoxDecode stage runs the decode families yolo_dfl_v1/detection only",
      "kinds": [
       "preproc@EV74",
       "mla",
@@ -9908,7 +9908,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 2 'boxdecode' (kernel SimaBoxDecode on the A65)",
-     "fact": "it decodes profile 'yolo26_obb_v1', task 'detection': the BoxDecode stage runs YOLOv8-style detection (profile 'yolo_dfl_v1', task 'detection') only",
+     "fact": "it decodes profile 'yolo26_obb_v1', task 'detection': the BoxDecode stage runs the decode families yolo_dfl_v1/detection only",
      "kinds": [
       "preproc@EV74",
       "mla",
@@ -9962,7 +9962,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 2 'boxdecode' (kernel SimaBoxDecode on the A65)",
-     "fact": "it decodes profile 'yolo26_v1', task 'pose': the BoxDecode stage runs YOLOv8-style detection (profile 'yolo_dfl_v1', task 'detection') only",
+     "fact": "it decodes profile 'yolo26_v1', task 'pose': the BoxDecode stage runs the decode families yolo_dfl_v1/detection only",
      "kinds": [
       "preproc@EV74",
       "mla",
@@ -10016,7 +10016,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 2 'boxdecode' (kernel SimaBoxDecode on the A65)",
-     "fact": "it decodes profile 'yolo26_v1', task 'pose': the BoxDecode stage runs YOLOv8-style detection (profile 'yolo_dfl_v1', task 'detection') only",
+     "fact": "it decodes profile 'yolo26_v1', task 'pose': the BoxDecode stage runs the decode families yolo_dfl_v1/detection only",
      "kinds": [
       "preproc@EV74",
       "mla",
@@ -10070,7 +10070,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 2 'boxdecode' (kernel SimaBoxDecode on the A65)",
-     "fact": "it decodes profile 'yolo26_v1', task 'pose': the BoxDecode stage runs YOLOv8-style detection (profile 'yolo_dfl_v1', task 'detection') only",
+     "fact": "it decodes profile 'yolo26_v1', task 'pose': the BoxDecode stage runs the decode families yolo_dfl_v1/detection only",
      "kinds": [
       "preproc@EV74",
       "mla",
@@ -10124,7 +10124,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 2 'boxdecode' (kernel SimaBoxDecode on the A65)",
-     "fact": "it decodes profile 'yolo26_v1', task 'segmentation': the BoxDecode stage runs YOLOv8-style detection (profile 'yolo_dfl_v1', task 'detection') only",
+     "fact": "it decodes profile 'yolo26_v1', task 'segmentation': the BoxDecode stage runs the decode families yolo_dfl_v1/detection only",
      "kinds": [
       "preproc@EV74",
       "mla",
@@ -10178,7 +10178,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 2 'boxdecode' (kernel SimaBoxDecode on the A65)",
-     "fact": "it decodes profile 'yolo26_v1', task 'segmentation': the BoxDecode stage runs YOLOv8-style detection (profile 'yolo_dfl_v1', task 'detection') only",
+     "fact": "it decodes profile 'yolo26_v1', task 'segmentation': the BoxDecode stage runs the decode families yolo_dfl_v1/detection only",
      "kinds": [
       "preproc@EV74",
       "mla",
@@ -10232,7 +10232,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 2 'boxdecode' (kernel SimaBoxDecode on the A65)",
-     "fact": "it decodes profile 'yolo26_v1', task 'segmentation': the BoxDecode stage runs YOLOv8-style detection (profile 'yolo_dfl_v1', task 'detection') only",
+     "fact": "it decodes profile 'yolo26_v1', task 'segmentation': the BoxDecode stage runs the decode families yolo_dfl_v1/detection only",
      "kinds": [
       "preproc@EV74",
       "mla",
@@ -10286,7 +10286,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 2 'boxdecode' (kernel SimaBoxDecode on the A65)",
-     "fact": "it decodes profile 'yolo26_v1', task 'detection': the BoxDecode stage runs YOLOv8-style detection (profile 'yolo_dfl_v1', task 'detection') only",
+     "fact": "it decodes profile 'yolo26_v1', task 'detection': the BoxDecode stage runs the decode families yolo_dfl_v1/detection only",
      "kinds": [
       "preproc@EV74",
       "mla",
@@ -10340,7 +10340,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 2 'boxdecode' (kernel SimaBoxDecode on the A65)",
-     "fact": "it decodes profile 'yolo26_v1', task 'detection': the BoxDecode stage runs YOLOv8-style detection (profile 'yolo_dfl_v1', task 'detection') only",
+     "fact": "it decodes profile 'yolo26_v1', task 'detection': the BoxDecode stage runs the decode families yolo_dfl_v1/detection only",
      "kinds": [
       "preproc@EV74",
       "mla",
@@ -10394,7 +10394,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 2 'boxdecode' (kernel SimaBoxDecode on the A65)",
-     "fact": "it decodes profile 'yolo26_v1', task 'detection': the BoxDecode stage runs YOLOv8-style detection (profile 'yolo_dfl_v1', task 'detection') only",
+     "fact": "it decodes profile 'yolo26_v1', task 'detection': the BoxDecode stage runs the decode families yolo_dfl_v1/detection only",
      "kinds": [
       "preproc@EV74",
       "mla",
@@ -10448,7 +10448,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 2 'boxdecode' (kernel SimaBoxDecode on the A65)",
-     "fact": "it decodes profile 'yolo26_obb_v1', task 'detection': the BoxDecode stage runs YOLOv8-style detection (profile 'yolo_dfl_v1', task 'detection') only",
+     "fact": "it decodes profile 'yolo26_obb_v1', task 'detection': the BoxDecode stage runs the decode families yolo_dfl_v1/detection only",
      "kinds": [
       "preproc@EV74",
       "mla",
@@ -10502,7 +10502,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 2 'boxdecode' (kernel SimaBoxDecode on the A65)",
-     "fact": "it decodes profile 'yolo26_obb_v1', task 'detection': the BoxDecode stage runs YOLOv8-style detection (profile 'yolo_dfl_v1', task 'detection') only",
+     "fact": "it decodes profile 'yolo26_obb_v1', task 'detection': the BoxDecode stage runs the decode families yolo_dfl_v1/detection only",
      "kinds": [
       "preproc@EV74",
       "mla",
@@ -10556,7 +10556,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 2 'boxdecode' (kernel SimaBoxDecode on the A65)",
-     "fact": "it decodes profile 'yolo26_v1', task 'pose': the BoxDecode stage runs YOLOv8-style detection (profile 'yolo_dfl_v1', task 'detection') only",
+     "fact": "it decodes profile 'yolo26_v1', task 'pose': the BoxDecode stage runs the decode families yolo_dfl_v1/detection only",
      "kinds": [
       "preproc@EV74",
       "mla",
@@ -10610,7 +10610,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 2 'boxdecode' (kernel SimaBoxDecode on the A65)",
-     "fact": "it decodes profile 'yolo26_v1', task 'pose': the BoxDecode stage runs YOLOv8-style detection (profile 'yolo_dfl_v1', task 'detection') only",
+     "fact": "it decodes profile 'yolo26_v1', task 'pose': the BoxDecode stage runs the decode families yolo_dfl_v1/detection only",
      "kinds": [
       "preproc@EV74",
       "mla",
@@ -10664,7 +10664,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 2 'boxdecode' (kernel SimaBoxDecode on the A65)",
-     "fact": "it decodes profile 'yolo26_v1', task 'pose': the BoxDecode stage runs YOLOv8-style detection (profile 'yolo_dfl_v1', task 'detection') only",
+     "fact": "it decodes profile 'yolo26_v1', task 'pose': the BoxDecode stage runs the decode families yolo_dfl_v1/detection only",
      "kinds": [
       "preproc@EV74",
       "mla",
@@ -10718,7 +10718,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 2 'boxdecode' (kernel SimaBoxDecode on the A65)",
-     "fact": "it decodes profile 'yolo26_v1', task 'segmentation': the BoxDecode stage runs YOLOv8-style detection (profile 'yolo_dfl_v1', task 'detection') only",
+     "fact": "it decodes profile 'yolo26_v1', task 'segmentation': the BoxDecode stage runs the decode families yolo_dfl_v1/detection only",
      "kinds": [
       "preproc@EV74",
       "mla",
@@ -10772,7 +10772,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 2 'boxdecode' (kernel SimaBoxDecode on the A65)",
-     "fact": "it decodes profile 'yolo26_v1', task 'segmentation': the BoxDecode stage runs YOLOv8-style detection (profile 'yolo_dfl_v1', task 'detection') only",
+     "fact": "it decodes profile 'yolo26_v1', task 'segmentation': the BoxDecode stage runs the decode families yolo_dfl_v1/detection only",
      "kinds": [
       "preproc@EV74",
       "mla",
@@ -10826,7 +10826,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 2 'boxdecode' (kernel SimaBoxDecode on the A65)",
-     "fact": "it decodes profile 'yolo26_v1', task 'segmentation': the BoxDecode stage runs YOLOv8-style detection (profile 'yolo_dfl_v1', task 'detection') only",
+     "fact": "it decodes profile 'yolo26_v1', task 'segmentation': the BoxDecode stage runs the decode families yolo_dfl_v1/detection only",
      "kinds": [
       "preproc@EV74",
       "mla",
@@ -10880,7 +10880,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 2 'boxdecode' (kernel SimaBoxDecode on the A65)",
-     "fact": "it decodes profile 'yolo26_v1', task 'detection': the BoxDecode stage runs YOLOv8-style detection (profile 'yolo_dfl_v1', task 'detection') only",
+     "fact": "it decodes profile 'yolo26_v1', task 'detection': the BoxDecode stage runs the decode families yolo_dfl_v1/detection only",
      "kinds": [
       "preproc@EV74",
       "mla",
@@ -10934,7 +10934,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 2 'boxdecode' (kernel SimaBoxDecode on the A65)",
-     "fact": "it decodes profile 'yolo26_v1', task 'detection': the BoxDecode stage runs YOLOv8-style detection (profile 'yolo_dfl_v1', task 'detection') only",
+     "fact": "it decodes profile 'yolo26_v1', task 'detection': the BoxDecode stage runs the decode families yolo_dfl_v1/detection only",
      "kinds": [
       "preproc@EV74",
       "mla",
@@ -10988,7 +10988,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 2 'boxdecode' (kernel SimaBoxDecode on the A65)",
-     "fact": "it decodes profile 'yolo26_v1', task 'detection': the BoxDecode stage runs YOLOv8-style detection (profile 'yolo_dfl_v1', task 'detection') only",
+     "fact": "it decodes profile 'yolo26_v1', task 'detection': the BoxDecode stage runs the decode families yolo_dfl_v1/detection only",
      "kinds": [
       "preproc@EV74",
       "mla",
@@ -11042,7 +11042,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 2 'boxdecode' (kernel SimaBoxDecode on the A65)",
-     "fact": "it decodes profile 'yolo26_obb_v1', task 'detection': the BoxDecode stage runs YOLOv8-style detection (profile 'yolo_dfl_v1', task 'detection') only",
+     "fact": "it decodes profile 'yolo26_obb_v1', task 'detection': the BoxDecode stage runs the decode families yolo_dfl_v1/detection only",
      "kinds": [
       "preproc@EV74",
       "mla",
@@ -11096,7 +11096,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 2 'boxdecode' (kernel SimaBoxDecode on the A65)",
-     "fact": "it decodes profile 'yolo26_obb_v1', task 'detection': the BoxDecode stage runs YOLOv8-style detection (profile 'yolo_dfl_v1', task 'detection') only",
+     "fact": "it decodes profile 'yolo26_obb_v1', task 'detection': the BoxDecode stage runs the decode families yolo_dfl_v1/detection only",
      "kinds": [
       "preproc@EV74",
       "mla",
@@ -11150,7 +11150,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 2 'boxdecode' (kernel SimaBoxDecode on the A65)",
-     "fact": "it decodes profile 'yolo26_obb_v1', task 'detection': the BoxDecode stage runs YOLOv8-style detection (profile 'yolo_dfl_v1', task 'detection') only",
+     "fact": "it decodes profile 'yolo26_obb_v1', task 'detection': the BoxDecode stage runs the decode families yolo_dfl_v1/detection only",
      "kinds": [
       "preproc@EV74",
       "mla",
@@ -11204,7 +11204,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 2 'boxdecode' (kernel SimaBoxDecode on the A65)",
-     "fact": "it decodes profile 'yolo26_v1', task 'pose': the BoxDecode stage runs YOLOv8-style detection (profile 'yolo_dfl_v1', task 'detection') only",
+     "fact": "it decodes profile 'yolo26_v1', task 'pose': the BoxDecode stage runs the decode families yolo_dfl_v1/detection only",
      "kinds": [
       "preproc@EV74",
       "mla",
@@ -11258,7 +11258,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 2 'boxdecode' (kernel SimaBoxDecode on the A65)",
-     "fact": "it decodes profile 'yolo26_v1', task 'pose': the BoxDecode stage runs YOLOv8-style detection (profile 'yolo_dfl_v1', task 'detection') only",
+     "fact": "it decodes profile 'yolo26_v1', task 'pose': the BoxDecode stage runs the decode families yolo_dfl_v1/detection only",
      "kinds": [
       "preproc@EV74",
       "mla",
@@ -11312,7 +11312,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 2 'boxdecode' (kernel SimaBoxDecode on the A65)",
-     "fact": "it decodes profile 'yolo26_v1', task 'pose': the BoxDecode stage runs YOLOv8-style detection (profile 'yolo_dfl_v1', task 'detection') only",
+     "fact": "it decodes profile 'yolo26_v1', task 'pose': the BoxDecode stage runs the decode families yolo_dfl_v1/detection only",
      "kinds": [
       "preproc@EV74",
       "mla",
@@ -11366,7 +11366,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 2 'boxdecode' (kernel SimaBoxDecode on the A65)",
-     "fact": "it decodes profile 'yolo26_v1', task 'segmentation': the BoxDecode stage runs YOLOv8-style detection (profile 'yolo_dfl_v1', task 'detection') only",
+     "fact": "it decodes profile 'yolo26_v1', task 'segmentation': the BoxDecode stage runs the decode families yolo_dfl_v1/detection only",
      "kinds": [
       "preproc@EV74",
       "mla",
@@ -11420,7 +11420,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 2 'boxdecode' (kernel SimaBoxDecode on the A65)",
-     "fact": "it decodes profile 'yolo26_v1', task 'segmentation': the BoxDecode stage runs YOLOv8-style detection (profile 'yolo_dfl_v1', task 'detection') only",
+     "fact": "it decodes profile 'yolo26_v1', task 'segmentation': the BoxDecode stage runs the decode families yolo_dfl_v1/detection only",
      "kinds": [
       "preproc@EV74",
       "mla",
@@ -11474,7 +11474,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 2 'boxdecode' (kernel SimaBoxDecode on the A65)",
-     "fact": "it decodes profile 'yolo26_v1', task 'segmentation': the BoxDecode stage runs YOLOv8-style detection (profile 'yolo_dfl_v1', task 'detection') only",
+     "fact": "it decodes profile 'yolo26_v1', task 'segmentation': the BoxDecode stage runs the decode families yolo_dfl_v1/detection only",
      "kinds": [
       "preproc@EV74",
       "mla",
@@ -11528,7 +11528,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 2 'boxdecode' (kernel SimaBoxDecode on the A65)",
-     "fact": "it decodes profile 'yolo26_v1', task 'detection': the BoxDecode stage runs YOLOv8-style detection (profile 'yolo_dfl_v1', task 'detection') only",
+     "fact": "it decodes profile 'yolo26_v1', task 'detection': the BoxDecode stage runs the decode families yolo_dfl_v1/detection only",
      "kinds": [
       "preproc@EV74",
       "mla",
@@ -11582,7 +11582,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 2 'boxdecode' (kernel SimaBoxDecode on the A65)",
-     "fact": "it decodes profile 'yolo26_v1', task 'detection': the BoxDecode stage runs YOLOv8-style detection (profile 'yolo_dfl_v1', task 'detection') only",
+     "fact": "it decodes profile 'yolo26_v1', task 'detection': the BoxDecode stage runs the decode families yolo_dfl_v1/detection only",
      "kinds": [
       "preproc@EV74",
       "mla",
@@ -11636,7 +11636,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 2 'boxdecode' (kernel SimaBoxDecode on the A65)",
-     "fact": "it decodes profile 'yolo26_v1', task 'detection': the BoxDecode stage runs YOLOv8-style detection (profile 'yolo_dfl_v1', task 'detection') only",
+     "fact": "it decodes profile 'yolo26_v1', task 'detection': the BoxDecode stage runs the decode families yolo_dfl_v1/detection only",
      "kinds": [
       "preproc@EV74",
       "mla",
@@ -11690,7 +11690,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 2 'boxdecode' (kernel SimaBoxDecode on the A65)",
-     "fact": "it decodes profile 'yolo26_obb_v1', task 'detection': the BoxDecode stage runs YOLOv8-style detection (profile 'yolo_dfl_v1', task 'detection') only",
+     "fact": "it decodes profile 'yolo26_obb_v1', task 'detection': the BoxDecode stage runs the decode families yolo_dfl_v1/detection only",
      "kinds": [
       "preproc@EV74",
       "mla",
@@ -11744,7 +11744,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 2 'boxdecode' (kernel SimaBoxDecode on the A65)",
-     "fact": "it decodes profile 'yolo26_obb_v1', task 'detection': the BoxDecode stage runs YOLOv8-style detection (profile 'yolo_dfl_v1', task 'detection') only",
+     "fact": "it decodes profile 'yolo26_obb_v1', task 'detection': the BoxDecode stage runs the decode families yolo_dfl_v1/detection only",
      "kinds": [
       "preproc@EV74",
       "mla",
@@ -11798,7 +11798,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 2 'boxdecode' (kernel SimaBoxDecode on the A65)",
-     "fact": "it decodes profile 'yolo26_v1', task 'pose': the BoxDecode stage runs YOLOv8-style detection (profile 'yolo_dfl_v1', task 'detection') only",
+     "fact": "it decodes profile 'yolo26_v1', task 'pose': the BoxDecode stage runs the decode families yolo_dfl_v1/detection only",
      "kinds": [
       "preproc@EV74",
       "mla",
@@ -11852,7 +11852,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 2 'boxdecode' (kernel SimaBoxDecode on the A65)",
-     "fact": "it decodes profile 'yolo26_v1', task 'pose': the BoxDecode stage runs YOLOv8-style detection (profile 'yolo_dfl_v1', task 'detection') only",
+     "fact": "it decodes profile 'yolo26_v1', task 'pose': the BoxDecode stage runs the decode families yolo_dfl_v1/detection only",
      "kinds": [
       "preproc@EV74",
       "mla",
@@ -11906,7 +11906,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 2 'boxdecode' (kernel SimaBoxDecode on the A65)",
-     "fact": "it decodes profile 'yolo26_v1', task 'pose': the BoxDecode stage runs YOLOv8-style detection (profile 'yolo_dfl_v1', task 'detection') only",
+     "fact": "it decodes profile 'yolo26_v1', task 'pose': the BoxDecode stage runs the decode families yolo_dfl_v1/detection only",
      "kinds": [
       "preproc@EV74",
       "mla",
@@ -11960,7 +11960,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 2 'boxdecode' (kernel SimaBoxDecode on the A65)",
-     "fact": "it decodes profile 'yolo26_v1', task 'segmentation': the BoxDecode stage runs YOLOv8-style detection (profile 'yolo_dfl_v1', task 'detection') only",
+     "fact": "it decodes profile 'yolo26_v1', task 'segmentation': the BoxDecode stage runs the decode families yolo_dfl_v1/detection only",
      "kinds": [
       "preproc@EV74",
       "mla",
@@ -12014,7 +12014,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 2 'boxdecode' (kernel SimaBoxDecode on the A65)",
-     "fact": "it decodes profile 'yolo26_v1', task 'segmentation': the BoxDecode stage runs YOLOv8-style detection (profile 'yolo_dfl_v1', task 'detection') only",
+     "fact": "it decodes profile 'yolo26_v1', task 'segmentation': the BoxDecode stage runs the decode families yolo_dfl_v1/detection only",
      "kinds": [
       "preproc@EV74",
       "mla",
@@ -12068,7 +12068,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 2 'boxdecode' (kernel SimaBoxDecode on the A65)",
-     "fact": "it decodes profile 'yolo26_v1', task 'segmentation': the BoxDecode stage runs YOLOv8-style detection (profile 'yolo_dfl_v1', task 'detection') only",
+     "fact": "it decodes profile 'yolo26_v1', task 'segmentation': the BoxDecode stage runs the decode families yolo_dfl_v1/detection only",
      "kinds": [
       "preproc@EV74",
       "mla",
@@ -12545,7 +12545,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 2 'boxdecode' (kernel SimaBoxDecode on the A65)",
-     "fact": "it decodes profile 'yolo_dfl_obb_v1', task 'detection': the BoxDecode stage runs YOLOv8-style detection (profile 'yolo_dfl_v1', task 'detection') only",
+     "fact": "it decodes profile 'yolo_dfl_obb_v1', task 'detection': the BoxDecode stage runs the decode families yolo_dfl_v1/detection only",
      "kinds": [
       "preproc@EV74",
       "mla",
@@ -12599,7 +12599,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 2 'boxdecode' (kernel SimaBoxDecode on the A65)",
-     "fact": "it decodes profile 'yolo_dfl_obb_v1', task 'detection': the BoxDecode stage runs YOLOv8-style detection (profile 'yolo_dfl_v1', task 'detection') only",
+     "fact": "it decodes profile 'yolo_dfl_obb_v1', task 'detection': the BoxDecode stage runs the decode families yolo_dfl_v1/detection only",
      "kinds": [
       "preproc@EV74",
       "mla",
@@ -12782,7 +12782,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 2 'boxdecode' (kernel SimaBoxDecode on the A65)",
-     "fact": "it decodes profile 'yolo_dfl_obb_v1', task 'detection': the BoxDecode stage runs YOLOv8-style detection (profile 'yolo_dfl_v1', task 'detection') only",
+     "fact": "it decodes profile 'yolo_dfl_obb_v1', task 'detection': the BoxDecode stage runs the decode families yolo_dfl_v1/detection only",
      "kinds": [
       "preproc@EV74",
       "mla",
@@ -12836,7 +12836,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 2 'boxdecode' (kernel SimaBoxDecode on the A65)",
-     "fact": "it decodes profile 'yolo_dfl_obb_v1', task 'detection': the BoxDecode stage runs YOLOv8-style detection (profile 'yolo_dfl_v1', task 'detection') only",
+     "fact": "it decodes profile 'yolo_dfl_obb_v1', task 'detection': the BoxDecode stage runs the decode families yolo_dfl_v1/detection only",
      "kinds": [
       "preproc@EV74",
       "mla",
@@ -13019,7 +13019,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 2 'boxdecode' (kernel SimaBoxDecode on the A65)",
-     "fact": "it decodes profile 'yolo_dfl_obb_v1', task 'detection': the BoxDecode stage runs YOLOv8-style detection (profile 'yolo_dfl_v1', task 'detection') only",
+     "fact": "it decodes profile 'yolo_dfl_obb_v1', task 'detection': the BoxDecode stage runs the decode families yolo_dfl_v1/detection only",
      "kinds": [
       "preproc@EV74",
       "mla",
@@ -13073,7 +13073,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 2 'boxdecode' (kernel SimaBoxDecode on the A65)",
-     "fact": "it decodes profile 'yolo_dfl_obb_v1', task 'detection': the BoxDecode stage runs YOLOv8-style detection (profile 'yolo_dfl_v1', task 'detection') only",
+     "fact": "it decodes profile 'yolo_dfl_obb_v1', task 'detection': the BoxDecode stage runs the decode families yolo_dfl_v1/detection only",
      "kinds": [
       "preproc@EV74",
       "mla",
@@ -13256,7 +13256,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 2 'boxdecode' (kernel SimaBoxDecode on the A65)",
-     "fact": "it decodes profile 'yolo_dfl_obb_v1', task 'detection': the BoxDecode stage runs YOLOv8-style detection (profile 'yolo_dfl_v1', task 'detection') only",
+     "fact": "it decodes profile 'yolo_dfl_obb_v1', task 'detection': the BoxDecode stage runs the decode families yolo_dfl_v1/detection only",
      "kinds": [
       "preproc@EV74",
       "mla",
@@ -13310,7 +13310,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 2 'boxdecode' (kernel SimaBoxDecode on the A65)",
-     "fact": "it decodes profile 'yolo_dfl_obb_v1', task 'detection': the BoxDecode stage runs YOLOv8-style detection (profile 'yolo_dfl_v1', task 'detection') only",
+     "fact": "it decodes profile 'yolo_dfl_obb_v1', task 'detection': the BoxDecode stage runs the decode families yolo_dfl_v1/detection only",
      "kinds": [
       "preproc@EV74",
       "mla",
@@ -13493,7 +13493,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 2 'boxdecode' (kernel SimaBoxDecode on the A65)",
-     "fact": "it decodes profile 'yolo_dfl_obb_v1', task 'detection': the BoxDecode stage runs YOLOv8-style detection (profile 'yolo_dfl_v1', task 'detection') only",
+     "fact": "it decodes profile 'yolo_dfl_obb_v1', task 'detection': the BoxDecode stage runs the decode families yolo_dfl_v1/detection only",
      "kinds": [
       "preproc@EV74",
       "mla",
@@ -13547,7 +13547,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 2 'boxdecode' (kernel SimaBoxDecode on the A65)",
-     "fact": "it decodes profile 'yolo_dfl_obb_v1', task 'detection': the BoxDecode stage runs YOLOv8-style detection (profile 'yolo_dfl_v1', task 'detection') only",
+     "fact": "it decodes profile 'yolo_dfl_obb_v1', task 'detection': the BoxDecode stage runs the decode families yolo_dfl_v1/detection only",
      "kinds": [
       "preproc@EV74",
       "mla",
@@ -13601,7 +13601,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 2 'boxdecode' (kernel SimaBoxDecode on the A65)",
-     "fact": "it decodes profile 'yolox_v1', task 'detection': the BoxDecode stage runs YOLOv8-style detection (profile 'yolo_dfl_v1', task 'detection') only",
+     "fact": "it decodes profile 'yolox_v1', task 'detection': the BoxDecode stage runs the decode families yolo_dfl_v1/detection only",
      "kinds": [
       "preproc@EV74",
       "mla",
@@ -13655,7 +13655,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 2 'boxdecode' (kernel SimaBoxDecode on the A65)",
-     "fact": "it decodes profile 'yolox_v1', task 'detection': the BoxDecode stage runs YOLOv8-style detection (profile 'yolo_dfl_v1', task 'detection') only",
+     "fact": "it decodes profile 'yolox_v1', task 'detection': the BoxDecode stage runs the decode families yolo_dfl_v1/detection only",
      "kinds": [
       "preproc@EV74",
       "mla",
@@ -13709,7 +13709,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 2 'boxdecode' (kernel SimaBoxDecode on the A65)",
-     "fact": "it decodes profile 'yolox_v1', task 'detection': the BoxDecode stage runs YOLOv8-style detection (profile 'yolo_dfl_v1', task 'detection') only",
+     "fact": "it decodes profile 'yolox_v1', task 'detection': the BoxDecode stage runs the decode families yolo_dfl_v1/detection only",
      "kinds": [
       "preproc@EV74",
       "mla",
@@ -13763,7 +13763,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 2 'boxdecode' (kernel SimaBoxDecode on the A65)",
-     "fact": "it decodes profile 'yolox_v1', task 'detection': the BoxDecode stage runs YOLOv8-style detection (profile 'yolo_dfl_v1', task 'detection') only",
+     "fact": "it decodes profile 'yolox_v1', task 'detection': the BoxDecode stage runs the decode families yolo_dfl_v1/detection only",
      "kinds": [
       "preproc@EV74",
       "mla",
