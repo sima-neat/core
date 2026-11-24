@@ -634,8 +634,15 @@ std::string planned_frame(const InputOptions& declared, std::span<const Tensor> 
         return "the seed is a planar image (NV12, I420) where the model reads packed frames";
       }
       std::int64_t channels = 0;
-      if (tensor.dtype != TensorDType::UInt8 || !tensor.is_dense() ||
-          tensor.layout != TensorLayout::HWC ||
+      // Packed: its layout says HWC, or it says none and its axes say height, width, channels
+      // (a Model's own dummy frame).
+      using Axis = TensorAxisSemantic;
+      const bool packed =
+          tensor.layout == TensorLayout::HWC ||
+          (tensor.layout == TensorLayout::Unknown &&
+           (tensor.axis_semantics == std::vector<Axis>{Axis::H, Axis::W, Axis::C} ||
+            tensor.axis_semantics == std::vector<Axis>{Axis::N, Axis::H, Axis::W, Axis::C}));
+      if (tensor.dtype != TensorDType::UInt8 || !tensor.is_dense() || !packed ||
           !of_shape(tensor.shape, frame.seed_height, frame.seed_width, channels) ||
           frame.seed_height <= 0 || frame.seed_width <= 0 || channels <= 0) {
         return "the seed is not a packed UInt8 image of shape [height, width, channels] (or with "
@@ -1751,7 +1758,12 @@ const Tensor& dataflow_model_input_view(const DataflowModelRoute& route, const T
     view.strides_bytes[i] = stride;
     stride *= std::max<std::int64_t>(view.shape[i], 1);
   }
-  if (!view.axis_semantics.empty()) {
+  // The axes' names, where the tensor names them: a frame's height, width and channels behind the
+  // stage's one batch axis (a Model's own dummy frame, which says no layout). Otherwise none.
+  using Axis = TensorAxisSemantic;
+  if (lead == 1U && tensor.axis_semantics == std::vector<Axis>{Axis::H, Axis::W, Axis::C}) {
+    view.axis_semantics = {Axis::N, Axis::H, Axis::W, Axis::C};
+  } else if (!view.axis_semantics.empty()) {
     view.axis_semantics.clear();
   }
   return view;
