@@ -1294,14 +1294,9 @@ std::int32_t ssd_policy_detections(stagesemantics::SsdRecipeId id, int side,
             "SSD published one class twice for a single anchor");
   return count;
 }
-// A sigmoid-scored SSD-Mobile-300-v1 detection from one known logit. The prior
-// is worked out here from the TF SSD-MobileNet-v1 anchor layout, not read from
-// Core: the 19x19 level's first anchor has scale 0.1 and aspect ratio 1, and
-// the cell at row 4, column 12 is centred at x 12.5 / 19, y 4.5 / 19. Zero
-// offsets decode to that prior, and a stretch to 600x300 gives x 364.7, y 56.1,
-// w 60, h 30. An off-centre cell and a non-square frame make a swapped row and
-// column, or a swapped x and y scale, fail. Class 1 at logit 5 must publish
-// class 1 with score sigmoid(5).
+// The first SSD-MobileNet-v1 anchor at row 4, column 12 is a 0.1-wide square
+// centered at (12.5/19, 4.5/19). With zero offsets, stretching to 600x300
+// gives the expected (x, y, width, height) of about (365, 56, 60, 30).
 void ssd_known_logit_detection() {
   constexpr std::size_t classes = 91, anchors_19 = 3, cell = 4 * 19 + 12;
   const auto wire = ssd_decode_wire(
@@ -1316,13 +1311,8 @@ void ssd_known_logit_detection() {
   require(std::abs(wire.read<float>(20) - 1.f / (1.f + std::exp(-5.f))) < 1e-3f,
           "SSD-Mobile-300 score is not the sigmoid of its logit");
 }
-// SSD300-v1 decodes softmax scores from 81-class heads, and the prepared route
-// selects the first 8 classes (#624). Confidence channels are class * A + anchor.
-// At the first cell of the 38x38 level, anchor 0 has a logit of 5 for class 3
-// and anchor 1 a logit of 5 for class 50, every other logit is -10. With the 0.5 threshold the
-// result does not depend on whether the softmax covers 81 or 8 classes: anchor 0 gives one class-3
-// detection, and anchor 1 gives nothing, since class 50 is not selected and the selected classes
-// stay far below the threshold.
+// SSD300 indexes scores by class * anchors_per_cell + anchor.
+// Selecting the first 8 of 81 classes keeps class 3 and excludes class 50.
 void ssd300_class_selection() {
   constexpr std::size_t anchors_38 = 4;
   const auto wire = ssd_decode_wire(stagesemantics::SsdRecipeId::Ssd300V1, {38, 19, 10, 5, 3, 1},
