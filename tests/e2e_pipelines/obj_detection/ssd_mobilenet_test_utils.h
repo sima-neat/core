@@ -54,7 +54,7 @@ inline simaai::neat::Model::Options make_model_options(const ModelConfig& cfg) {
 
 // Full download URL for the compiled SSD-MobileNetV2 pack. Overridable via env for mirrors;
 // defaults to the SDK2.1.2 modalix model download (OAuth-gated docs.sima.ai endpoint that
-// sima_test::download_file resolves via sima-cli), mirroring yolov8n_variant_base_url().
+// sima_test::download_file resolves via sima-cli).
 inline std::string ssd_mobilenet_pack_url() {
   if (const char* env = std::getenv("SIMA_SSD_MOBILENET_URL"); env && *env)
     return env;
@@ -95,7 +95,7 @@ inline std::string resolve_ssd_mobilenet_tar_or_skip(const fs::path& root = {}) 
 
   // Not staged locally: fetch on demand. Prefer <root>/tmp; fall back to a writable scratch dir
   // when root is a build-host path that doesn't exist on the test runner (same approach as
-  // ensure_yolov8n_drive_variants / ensure_coco_sample).
+  // ensure_coco_sample).
   fs::path dest_dir = base / "tmp";
   std::error_code ec;
   fs::create_directories(dest_dir, ec);
