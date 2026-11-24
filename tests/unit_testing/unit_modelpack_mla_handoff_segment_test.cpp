@@ -374,6 +374,7 @@ RUN_TEST(
       model_opt.preprocess.kind = InputKind::Image;
       model_opt.preprocess.enable = AutoFlag::On;
       model_opt.preprocess.color_convert.input_format = PreprocessColorFormat::BGR;
+      model_opt.preprocess.normalize.enable = AutoFlag::On;
       model_opt.upstream_name = "decoder";
       Model model(tar_path, model_opt);
       const auto& pack = internal::ModelAccess::pack(model);

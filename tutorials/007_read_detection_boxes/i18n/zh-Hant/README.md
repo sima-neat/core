@@ -23,6 +23,8 @@
 
 這些選項同時設定輸入合約和後處理行為。`decode_type`（這裡為 `YoloV8`）選擇模型系列的解碼路徑。置信度閾值會在 NMS 之前剔除較弱的候選者；NMS IoU 閾值控制重疊框的合併程度；`top_k` 限制最終數量，以實現確定性的下游成本；`boxdecode_original_width`/`boxdecode_original_height` 將解碼後的座標映射回源圖像像素。關於這些參數的調整指南，請參閱下面的「實務參考」。
 
+此 YOLO 模型預期 `[0,1]` 範圍的 RGB 值，因此範例設定 `normalize.enable = On`。
+
 **C++：** `decode_type` 採用 `BoxDecodeType::YoloV8` 列舉。閾值/NMS/`top_k` 值稍後通過 `stages::BoxDecodeOptions` 傳遞，而不是通過 `Model::Options`。
 
 **Python：** `decode_type` 採用 `pyneat.BoxDecodeType.YoloV8` 列舉，並且 `score_threshold`、`nms_iou_threshold`、`top_k` 和 `boxdecode_original_width`/`boxdecode_original_height` 直接設定在 `ModelOptions` 上。（`score_threshold` 和 C++ 中的 `detection_threshold` 名稱相同，控制相同的內容——請參閱「實務參考」中的命名說明。）

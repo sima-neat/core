@@ -199,6 +199,7 @@ RUN_TEST(
       live_options.preprocess.kind = InputKind::Image;
       live_options.preprocess.enable = AutoFlag::On;
       live_options.preprocess.color_convert.input_format = PreprocessColorFormat::NV12;
+      live_options.preprocess.normalize.enable = AutoFlag::On;
       Model live_model(fixture.tar_path, live_options);
       const auto live_nodes = internal::ModelAccess::build_public_route_nodes(live_model, {});
       GraphOptions live_graph_options;
