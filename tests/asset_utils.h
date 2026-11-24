@@ -753,6 +753,9 @@ inline std::string resolve_yolov8s_strict_mpk_tar(const fs::path& root = {}) {
   const fs::path cached(modelzoo);
   const fs::path cache_dir = cached.parent_path();
   const ScopedFileLock lock(cached.string() + ".lock");
+  // Another process may have refetched it while this one waited for the lock.
+  if (is_usable_regular_file(cached) && is_strict_mpk_tar_gz(cached))
+    return cached.string();
   std::error_code ec;
   fs::remove(cached, ec);
   if (run_modelzoo_get_noninteractive("yolo_v8s", cache_dir) != 0)
