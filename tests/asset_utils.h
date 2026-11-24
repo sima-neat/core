@@ -415,6 +415,33 @@ inline bool ensure_writable_directory(const fs::path& dir) {
   return true;
 }
 
+// An installed package tree is often root-owned. Fall back to the system temp
+// directory when <root>/tmp cannot be written.
+inline fs::path writable_asset_tmp_dir(const fs::path& root, const std::string& fallback_name) {
+  const fs::path primary = root / "tmp";
+  if (ensure_writable_directory(primary))
+    return primary;
+
+  fs::path temp_root;
+  try {
+    temp_root = fs::temp_directory_path();
+  } catch (...) {
+    temp_root = fs::path("/tmp");
+  }
+
+  const std::vector<fs::path> fallbacks = {
+      temp_root / fallback_name,
+      fs::path("/tmp") / fallback_name,
+  };
+  for (const auto& candidate : fallbacks) {
+    if (ensure_writable_directory(candidate))
+      return candidate;
+  }
+
+  // Let the original path surface the concrete create/open error to callers.
+  return primary;
+}
+
 inline int run_modelzoo_get_noninteractive(const std::string& model_name) {
   std::string cmd = "SIMA_CLI_CHECK_FOR_UPDATE=0 sima-cli modelzoo";
   const std::string version = modelzoo_version();
@@ -540,7 +567,7 @@ inline std::string resolve_yolov8s_tar_local_only(const fs::path& root_in = {}) 
   if (!env_tar.empty())
     return env_tar;
   const fs::path local = default_asset_root(root_in) / "tmp" / "yolo_v8s_mpk.tar.gz";
-  if (is_usable_regular_file(local))
+  if (is_usable_regular_file(local) && is_listable_tar_gz(local))
     return local.string();
   return "";
 }
@@ -564,7 +591,7 @@ inline std::string resolve_yolov8s_tar(const fs::path& = {}) {
 inline std::string resolve_modelzoo_tar(const std::string& model_name,
                                         const fs::path& root_in = {}) {
   const fs::path root = default_asset_root(root_in);
-  const fs::path tmp_dir = root / "tmp";
+  const fs::path tmp_dir = writable_asset_tmp_dir(root, "sima-modelzoo-cache");
   std::error_code ec;
   fs::create_directories(tmp_dir, ec);
 
