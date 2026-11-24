@@ -20,6 +20,11 @@ Subcommands
   judge     the same judgement from records kept by an earlier `compare --keep`.
   seed      write expected.json from a census (rows keep their hand-written `forms` overrides).
   rows      list the rows a selection names (tiers: catalogue.json "tiers").
+  scripts   T3: the registry's own performance.py and accuracy.py, unchanged, per package on each
+            backend through launch_script.py (scripts.json), judged against expected.json: the
+            reports' fields and the accuracy metrics equal, or the one refusal. --judge-only
+            judges runs kept by earlier invocations.
+  speed     the latency and throughput table of the performance.py reports a `scripts` run kept.
   selftest  the judge's own rules on synthetic records (no device, no package).
 """
 import argparse
@@ -38,6 +43,8 @@ import time
 
 HERE = pathlib.Path(__file__).resolve().parent
 CATALOGUE = HERE / 'catalogue.json'
+SCRIPTS = HERE / 'scripts.json'
+LAUNCHER = HERE / 'launch_script.py'
 EXPECTED = HERE / 'expected.json'
 DIFFERENCES = HERE / 'expected_differences.json'
 
@@ -892,6 +899,346 @@ def write_table(results, path):
     pathlib.Path(path).write_text('\n'.join(lines) + '\n')
 
 
+# ---- the catalogue's own scripts (T3) ------------------------------------------------------------------
+SCRIPT_NAMES = ('performance', 'accuracy')
+BACKENDS = ('gstreamer', 'dataflow')
+
+
+def package_id(p):
+    return f"{p['model']}__{p['variant']}"
+
+
+def look_through(directory):
+    """An extracted dataset, looking through a single top-level directory as the registry's
+    run_model_performance.sh and run_model_accuracy.sh do."""
+    d = pathlib.Path(directory)
+    entries = sorted(d.iterdir()) if d.is_dir() else []
+    return entries[0] if len(entries) == 1 and entries[0].is_dir() else d
+
+
+def script_arguments(spec, p, script, args, report_dir):
+    """The script's own arguments, as the registry's run scripts give them: one --mpk (a
+    multi-component model and every accuracy.py: <component>=<path> each), the model's first
+    accuracy dataset as <source id>=<directory>, --resources where the script requires it, --output,
+    and for accuracy.py --limit."""
+    m = spec['models'][p['model']]
+    named = script == 'accuracy' or len(p['components']) > 1
+    out = []
+    for c in p['components']:
+        f = pathlib.Path(args.packages) / f"{c['id']}.tar.gz"
+        out += ['--mpk', f"{c['component']}={f}" if named else str(f)]
+    if m.get('dataset'):
+        out += ['--dataset', f"{m['dataset']}={look_through(pathlib.Path(args.datasets) / m['dataset'])}"]
+    if m[script].get('resources'):
+        out += ['--resources', str(pathlib.Path(args.resources) / package_id(p))]
+    out += ['--output', str(report_dir)]
+    if script == 'accuracy':
+        out += ['--limit', str(args.limit or spec['limit'])]
+    return out
+
+
+def kernel_log():
+    try:
+        return subprocess.run(['dmesg'], capture_output=True, text=True).stdout.splitlines()
+    except OSError:
+        return None
+
+
+def run_script(args, spec, p, script, backend, run_dir):
+    """One script on one backend in a process of its own; everything it did is kept in run_dir:
+    run.json (command, exit status, seconds, the kernel log's new lines), launch.json (the
+    launcher's record), stdout.txt, stderr.txt and report/ (the script's --output)."""
+    run_dir.mkdir(parents=True, exist_ok=True)
+    for stale in ('run.json', 'launch.json', 'stdout.txt', 'stderr.txt'):
+        (run_dir / stale).unlink(missing_ok=True)
+    shutil.rmtree(run_dir / 'report', ignore_errors=True)
+    path = pathlib.Path(args.registry) / 'models' / p['model'] / 'scripts' / f'{script}.py'
+    cmd = [args.python, str(LAUNCHER), '--backend', backend, '--record', str(run_dir / 'launch.json'), '--',
+           str(path)] + script_arguments(spec, p, script, args, run_dir / 'report')
+    env = dict(os.environ)
+    # PYTHONPATH as the registry's run scripts set it: its tools (model_report) and the packages
+    # the script's requirements file names; pyneat is the installed one unless --pythonpath adds it.
+    env['PYTHONPATH'] = os.pathsep.join(x for x in (str(pathlib.Path(args.registry) / 'tools'), args.pythonpath,
+                                                    env.get('PYTHONPATH')) if x)
+    env['PYTHONDONTWRITEBYTECODE'] = '1'
+    before = kernel_log()
+    t0 = time.time()
+    try:
+        proc = subprocess.run(shlex.split(args.run_prefix) + cmd, capture_output=True, text=True,
+                              timeout=args.process_timeout, env=env, cwd=run_dir)
+        rc, so, se = proc.returncode, proc.stdout, proc.stderr
+    except subprocess.TimeoutExpired as e:
+        rc = 124
+        so, se = (x.decode(errors='replace') if isinstance(x, bytes) else (x or '') for x in (e.stdout, e.stderr))
+        se += '\nTIMEOUT'
+    seconds = round(time.time() - t0, 1)
+    after = kernel_log()
+    new = after[len(before):] if before is not None and after is not None else []
+    accept = re.compile(args.accept_kernel_line) if args.accept_kernel_line and \
+        spec['models'][p['model']][script].get('benchmark', {}).get('include_mla_layer_stats') else None
+    accepted = [l for l in new if accept and accept.search(l)]
+    other = [l for l in new if not (accept and accept.search(l))]
+    (run_dir / 'stdout.txt').write_text(so)
+    (run_dir / 'stderr.txt').write_text(se)
+    run = {'package': p['name'], 'script': script, 'backend': backend, 'command': cmd, 'exit_status': rc,
+           'seconds': seconds, 'kernel_log': {'before': None if before is None else len(before),
+                                              'accepted_lines': len(accepted), 'other_lines': other}}
+    write_json(run_dir / 'run.json', run)
+    return run
+
+
+def load_script_run(run_dir):
+    """What run_script kept, or None when the run is not there."""
+    run_dir = pathlib.Path(run_dir)
+    if not (run_dir / 'run.json').exists():
+        return None
+    run = load_json(run_dir / 'run.json')
+    launch = load_json(run_dir / 'launch.json') if (run_dir / 'launch.json').exists() else {}
+    reports = {}
+    if (run_dir / 'report').is_dir():
+        for f in sorted((run_dir / 'report').rglob('*.json')):
+            try:
+                reports[str(f.relative_to(run_dir / 'report'))] = load_json(f)
+            except json.JSONDecodeError:
+                reports[str(f.relative_to(run_dir / 'report'))] = {'<unreadable>': True}
+    text = lambda n: (run_dir / n).read_text() if (run_dir / n).exists() else ''
+    return {'rc': run['exit_status'], 'run': run, 'launch': launch, 'reports': reports,
+            'stdout': text('stdout.txt'), 'stderr': text('stderr.txt')}
+
+
+def report_differences(g_reports, d_reports, measured):
+    """What differs between two backends' report files: a file or field one side lacks, a stated
+    field whose values differ, a measured field filled on one side only. A measured field's two
+    values are not compared (they are the measurement)."""
+    out = []
+    for name in sorted(set(g_reports) | set(d_reports)):
+        if name not in g_reports or name not in d_reports:
+            out.append([name, '<file>', 'present' if name in g_reports else 'absent',
+                        'present' if name in d_reports else 'absent'])
+            continue
+        fg, fd = flatten(g_reports[name]), flatten(d_reports[name])
+        for path in sorted(set(fg) | set(fd)):
+            vg, vd = fg.get(path, '<absent>'), fd.get(path, '<absent>')
+            if path not in fg or path not in fd:
+                out.append([name, path, vg, vd])
+            elif any(m.search(path) for m in measured):
+                number = lambda v: isinstance(v, (int, float)) and not isinstance(v, bool)
+                if not (number(vg) and number(vd)) or (vg == 0) != (vd == 0):
+                    out.append([name, path, vg, vd])
+            elif vg != vd:
+                out.append([name, path, vg, vd])
+    return out
+
+
+def last_line(text):
+    lines = [l for l in (text or '').splitlines() if l.strip()]
+    return lines[-1][:300] if lines else ''
+
+
+def judge_script(row, spec, script, g, d, differences):
+    """One package's script on both backends against the row of the script's view: equal (both ran,
+    every report file and field present on both, every stated field and every accuracy metric
+    equal, the measured fields filled alike, the same lines printed) or not_carried (GStreamer ran;
+    on Dataflow the script ended with the one error form, as expected.json records it for a refused
+    component of the row)."""
+    out = {'script': script, 'view': row['view'], 'expected': row['outcome']}
+    if g is None or d is None:
+        out.update(outcome='FAIL', why='no run of ' + ' and '.join(b for b, x in zip(BACKENDS, (g, d)) if x is None))
+        return out
+    out['seconds'] = {'gstreamer': g['run'].get('seconds'), 'dataflow': d['run'].get('seconds')}
+    out['accepted_kernel_lines'] = {b: x['run'].get('kernel_log', {}).get('accepted_lines', 0)
+                                    for b, x in zip(BACKENDS, (g, d))}
+    other = [l for x in (g, d) for l in x['run'].get('kernel_log', {}).get('other_lines', [])]
+    if other:
+        out.update(outcome='FAIL', why=f'the kernel log grew by lines not accepted: {other[:3]}')
+        return out
+    if g['rc'] != 0 or not g['reports']:
+        out.update(outcome='FAIL', why=f"GStreamer: the script exited {g['rc']}"
+                   + ('' if g['reports'] else ' and wrote no report')
+                   + f": {g['launch'].get('exception') or g['launch'].get('exit_message') or last_line(g['stderr'])}"[:400])
+        return out
+    error = d['launch'].get('error', '')
+    parts = parse_one_form(error)
+    if row['outcome'] == 'not_carried':
+        if d['rc'] == 0:
+            out.update(outcome='FAIL', why='expected.json says not carried; the script ran on Dataflow')
+            return out
+        if parts is None:
+            out.update(outcome='FAIL', why='Dataflow failed, not in the one form: '
+                       + (d['launch'].get('exception') or last_line(d['stderr']))[:400])
+            return out
+        out['refusal'] = {k: parts[k] for k in ('code', 'where', 'subject', 'fact')}
+        refused = [c for c in row['components'] if c.get('planner') == 'refused']
+        same = any(all(parts[k] == c.get(k) for k in ('code', 'subject', 'fact')) for c in refused)
+        out.update(outcome='not_carried') if same else \
+            out.update(outcome='FAIL', why='refusal differs from expected.json (code, subject or fact)')
+        return out
+    if d['rc'] != 0:
+        out.update(outcome='FAIL', why=('Dataflow refused what the planner accepts: ' if parts else
+                                        f"Dataflow: the script exited {d['rc']}: ")
+                   + (d['launch'].get('exception') or d['launch'].get('exit_message') or last_line(d['stderr']))[:400])
+        return out
+    measured = [re.compile(x) for x in spec['measured_fields']]
+    diff = report_differences(g['reports'], d['reports'], measured)
+    lines = stderr_diff(g['stdout'] + g['stderr'], d['stdout'] + d['stderr'], set(), differences)
+    out['report_files'] = sorted(g['reports'])
+    out['fields'] = sum(len(flatten(r)) for r in g['reports'].values())
+    if diff or lines:
+        out.update(outcome='FAIL', why='; '.join(x for x in (
+            f'{len(diff)} report fields differ: ' + ', '.join(f'{n}:{p}' for n, p, _, _ in diff[:4]) if diff else '',
+            f'{len(lines)} printed lines differ: {lines[:3]}' if lines else '') if x),
+            report_differences=diff[:40], printed_differences=lines[:20])
+        return out
+    out['outcome'] = 'equal'
+    return out
+
+
+def script_metrics(run, script):
+    """The numbers a report states: accuracy metrics per dataset; latency and throughput per
+    component (a single-component report states them at the top)."""
+    rep = (run or {}).get('reports', {}).get('model-report.json')
+    if not rep:
+        return {}
+    if script == 'accuracy':
+        return {name: {**d.get('metrics', {}), 'evaluated_samples': d.get('evaluated_samples')}
+                for name, d in rep.get('datasets', {}).items()}
+    if 'metrics' in rep:
+        return {'model': rep['metrics']}
+    return {name: c.get('metrics', {}) for name, c in rep.get('components', {}).items() if c.get('metrics')}
+
+
+def scripts_tier(args):
+    for name in ('registry', 'packages', 'datasets', 'resources', 'pythonpath', 'out'):  # a run's cwd is its own directory
+        if getattr(args, name):
+            setattr(args, name, os.path.abspath(getattr(args, name)))
+    cat = catalogue()
+    expected = load_json(args.expected)
+    differences = load_json(args.differences)
+    spec = load_json(args.scripts)
+    rows = {(r['package'], r['view']): r for r in expected['rows']}
+    names = set(args.names.split(',')) if args.names else None
+    wanted = [s for s in SCRIPT_NAMES if args.script in (s, 'both')]
+    backends = [b for b in BACKENDS if b in args.backends.split(',')]
+    out = pathlib.Path(args.out)
+    (out / 'runs').mkdir(parents=True, exist_ok=True)
+    results = []
+    for p in cat['packages']:
+        if names is not None and p['name'] not in names:
+            continue
+        if p['model'] not in spec['models']:
+            continue
+        carried = any(rows[(p['name'], v)]['outcome'] == 'equal' for v in ('app', 'default'))
+        if names is None and not (carried or args.all):
+            continue
+        for script in wanted:
+            if script not in spec['models'][p['model']]:
+                continue
+            view = 'app' if script == 'performance' else spec['models'][p['model']][script].get('view', 'default')
+            row = rows[(p['name'], view)]
+            runs = {}
+            # the order of the two backends alternates from package to package
+            order = backends if len(results) % 2 == 0 or not args.alternate else backends[::-1]
+            for backend in order:
+                run_dir = out / 'runs' / f'{package_id(p)}.{script}.{backend}'
+                if not args.judge_only and not (args.resume and (run_dir / 'run.json').exists()):
+                    run = run_script(args, spec, p, script, backend, run_dir)
+                    print(f"{p['name']:36s} {script:11s} {backend:9s} exit {run['exit_status']} "
+                          f"{run['seconds']} s kernel lines accepted {run['kernel_log']['accepted_lines']} "
+                          f"other {len(run['kernel_log']['other_lines'])}", flush=True)
+                    if run['kernel_log']['other_lines']:
+                        print('STOP: the kernel log grew: ' + ' | '.join(run['kernel_log']['other_lines'][:5]))
+                        return 22
+            for backend in BACKENDS:
+                runs[backend] = load_script_run(out / 'runs' / f'{package_id(p)}.{script}.{backend}')
+            if runs['gstreamer'] is None and runs['dataflow'] is None:
+                continue
+            res = judge_script(row, spec, script, runs['gstreamer'], runs['dataflow'], differences)
+            res = {'package': p['name'], **res, 'verdict': res.pop('outcome'),
+                   'metrics': {b: script_metrics(runs[b], script) for b in BACKENDS}}
+            results.append(res)
+    if all(b in backends for b in BACKENDS) or args.judge_only:
+        write_json(out / 'results.json', results)
+        write_scripts_table(results, out / 'results.md')
+        for r in results:
+            print(f"{r['package']:36s} {r['script']:11s} {r['view']:8s} expected {r['expected']:12s} -> {r['verdict']}"
+                  + ('' if r['verdict'] == r['expected'] else '   ' + r.get('why', '')[:300]), flush=True)
+        bad = [r for r in results if r['verdict'] != r['expected']]
+        print(f'{len(results)} package scripts, {len(bad)} not as expected')
+        return 0 if not bad else 1
+    return 0
+
+
+def fmt(v):
+    return f'{v:.4g}' if isinstance(v, float) else str(v)
+
+
+def write_scripts_table(results, path):
+    lines = ['| package | script | view | expected | verdict | GStreamer | Dataflow | evidence |',
+             '|---|---|---|---|---|---|---|---|']
+    for r in results:
+        cells = []
+        for b in BACKENDS:
+            m = r.get('metrics', {}).get(b, {})
+            if r['script'] == 'accuracy':
+                cells.append('; '.join(', '.join(f'{k} {fmt(v)}' for k, v in d.items()) for d in m.values()))
+            else:
+                cells.append('; '.join(f"{c}: p50 {fmt(d.get('latency_p50_ms', '-'))} ms, "
+                                       f"{fmt(d.get('throughput_fps', '-'))} /s" for c, d in m.items()))
+        ev = r.get('why', '')
+        if r.get('refusal'):
+            ev = f"[{r['refusal']['code']}] {r['refusal']['where']}: {r['refusal']['subject']}: {r['refusal']['fact']}"
+        elif r['verdict'] == 'equal':
+            ev = f"{r.get('fields', 0)} report fields in {len(r.get('report_files', []))} files"
+        lines.append(f"| {r['package']} | {r['script']} | {r['view']} | {r['expected']} | {r['verdict']} | "
+                     f"{cells[0]} | {cells[1]} | {ev[:500].replace('|', '/')} |")
+    pathlib.Path(path).write_text('\n'.join(lines) + '\n')
+
+
+def speed_rows(results):
+    """Per package and component of the performance.py reports: latency and throughput on both
+    backends and Dataflow's change against GStreamer (latency: + is slower; throughput: - is slower)."""
+    out = []
+    for r in results:
+        if r['script'] != 'performance':
+            continue
+        g, d = r['metrics'].get('gstreamer', {}), r['metrics'].get('dataflow', {})
+        for comp in sorted(set(g) & set(d)):
+            row = {'package': r['package'], 'component': comp, 'verdict': r['verdict']}
+            for k in ('latency_avg_ms', 'latency_p50_ms', 'latency_p99_ms', 'throughput_fps'):
+                a, b = g[comp].get(k), d[comp].get(k)
+                row[k] = {'gstreamer': a, 'dataflow': b,
+                          'change_pct': round((b - a) / a * 100, 2) if a and b is not None else None}
+            row['slower'] = [k for k in ('latency_p50_ms', 'throughput_fps')
+                             if row[k]['change_pct'] is not None and
+                             (row[k]['change_pct'] > 0) == (k != 'throughput_fps') and row[k]['change_pct'] != 0]
+            out.append(row)
+    return out
+
+
+def speed(args):
+    rows = speed_rows(load_json(args.results))
+    lines = ['| package | component | latency p50 ms G | D | change | latency p99 ms G | D | throughput /s G | D | change | slower on Dataflow |',
+             '|---|---|---|---|---|---|---|---|---|---|---|']
+    for r in rows:
+        l, q, f = r['latency_p50_ms'], r['latency_p99_ms'], r['throughput_fps']
+        pct = lambda x: '-' if x['change_pct'] is None else f"{x['change_pct']:+.2f} %"
+        lines.append(f"| {r['package']} | {r['component']} | {fmt(l['gstreamer'])} | {fmt(l['dataflow'])} | {pct(l)} | "
+                     f"{fmt(q['gstreamer'])} | {fmt(q['dataflow'])} | {fmt(f['gstreamer'])} | {fmt(f['dataflow'])} | "
+                     f"{pct(f)} | {', '.join(x.replace('_ms', '').replace('_fps', '') for x in r['slower']) or 'no'} |")
+    text = '\n'.join(lines) + '\n'
+    if args.out:
+        pathlib.Path(args.out).write_text(text)
+        write_json(pathlib.Path(args.out).with_suffix('.json'), rows)
+    else:
+        print(text, end='')
+    slower = [r for r in rows if r['slower']]
+    print(f"{len(rows)} components of {len({r['package'] for r in rows})} packages; slower on Dataflow in "
+          f"latency p50: {sum('latency_p50_ms' in r['slower'] for r in rows)}, in throughput: "
+          f"{sum('throughput_fps' in r['slower'] for r in rows)} ({len(slower)} components in either)")
+    return 0
+
+
+
 def list_rows(args):
     for r in select_rows(load_json(args.expected), args):
         print(r['package'], r['view'], r['outcome'], ' '.join(c['id'] for c in r['components']))
@@ -1031,6 +1378,58 @@ def selftest(_args):
     check(judge_row({'outcome': 'equal', 'components': [comp]}, [{'outcome': 'equal'}]) == 'equal', 'row: equal')
     check(judge_row({'outcome': 'not_carried', 'components': [comp_r, comp]},
                     [{'outcome': 'not_carried'}, {'outcome': 'equal'}]) == 'not_carried', 'row: not_carried')
+    # T3: a script's two runs against the row of its view.
+    spec = {'measured_fields': [r'(^|\.)latency(_[a-z0-9]+)*_(ms|us)$', r'(^|\.)(fps|throughput_fps)$',
+                                r'(^|\.)energy_joules$', r'(^|\.)details\.inference_seconds$']}
+
+    def srun(rc=0, report=None, error=None, out='', accepted=0, other=()):
+        launch = {'exit_status': rc}
+        if error:
+            launch.update(error=error, exception='NeatError: ' + error)
+        return {'rc': rc, 'launch': launch, 'reports': {'model-report.json': report} if report else {},
+                'stdout': out, 'stderr': '',
+                'run': {'seconds': 1.0, 'kernel_log': {'accepted_lines': accepted, 'other_lines': list(other)}}}
+
+    perf = lambda lat, fps, joules=0.0, layers=2: {
+        'stage': 'performance', 'metrics': {'latency_p50_ms': lat, 'throughput_fps': fps}, 'energy_joules': joules,
+        'mla_layer_stats': {'status': 'ok', 'layers': [{'name': f'l{i}', 'latency_us': lat} for i in range(layers)]}}
+    acc = lambda top1, s=1.5: {'stage': 'accuracy', 'datasets': {'d': {'metrics': {'top1_accuracy': top1},
+                                                                         'details': {'inference_seconds': s}}}}
+    row_e = {'view': 'app', 'outcome': 'equal', 'components': [comp]}
+    row_n = {'view': 'default', 'outcome': 'not_carried', 'components': [comp_r]}
+    no_rows = {'rows': []}
+    js = lambda row, script, g, d: judge_script(row, spec, script, g, d, no_rows)
+    r = js(row_e, 'performance', srun(report=perf(3.3, 746.8), accepted=1), srun(report=perf(2.3, 742.2), accepted=1))
+    check(r['outcome'] == 'equal' and r['accepted_kernel_lines'] == {'gstreamer': 1, 'dataflow': 1},
+          f'scripts: measured fields differ in value only ({r})')
+    r = js(row_e, 'performance', srun(report=perf(3.3, 746.8)), srun(report=perf(2.3, 0.0)))
+    check(r['outcome'] == 'FAIL', 'scripts: a measured field filled on one backend only fails')
+    r = js(row_e, 'performance', srun(report=perf(3.3, 746.8)), srun(report=perf(2.3, 742.2, layers=1)))
+    check(r['outcome'] == 'FAIL', 'scripts: a report field one backend lacks fails')
+    r = js(row_e, 'accuracy', srun(report=acc(0.81), out='{"top1": 0.81}'), srun(report=acc(0.81, 1.2), out='{"top1": 0.81}'))
+    check(r['outcome'] == 'equal', f'scripts: equal accuracy metrics ({r})')
+    r = js(row_e, 'accuracy', srun(report=acc(0.81)), srun(report=acc(0.80)))
+    check(r['outcome'] == 'FAIL' and r['report_differences'], 'scripts: an accuracy metric that differs fails')
+    r = js(row_e, 'accuracy', srun(report=acc(0.81)), srun(rc=1, error=good))
+    check(r['outcome'] == 'FAIL' and 'planner accepts' in r['why'], 'scripts: a refusal of a carried row fails')
+    r = js(row_e, 'accuracy', srun(rc=1), srun(report=acc(0.81)))
+    check(r['outcome'] == 'FAIL' and r['why'].startswith('GStreamer'), 'scripts: the script must run on GStreamer')
+    r = js(row_e, 'performance', srun(report=perf(3.3, 746.8), other=['[1.0] mla: fault']), srun(report=perf(2.3, 742.2)))
+    check(r['outcome'] == 'FAIL' and 'kernel log' in r['why'], 'scripts: a kernel-log line not accepted fails')
+    r = js(row_n, 'accuracy', srun(report=acc(0.81)), srun(rc=1, error=good))
+    check(r['outcome'] == 'not_carried' and r['refusal']['code'] == 'misconfig.pipeline_shape',
+          f'scripts: the expected refusal is not_carried ({r})')
+    r = js(row_n, 'accuracy', srun(report=acc(0.81)), srun(rc=1, error=good.replace('2 output', '3 output')))
+    check(r['outcome'] == 'FAIL', 'scripts: another fact fails')
+    r = js(row_n, 'accuracy', srun(report=acc(0.81)), srun(rc=1, error='RuntimeError: no'))
+    check(r['outcome'] == 'FAIL' and 'one form' in r['why'], 'scripts: a failure out of the form fails')
+    r = js(row_n, 'accuracy', srun(report=acc(0.81)), srun(report=acc(0.81)))
+    check(r['outcome'] == 'FAIL', 'scripts: a row expected.json says is not carried must flip when it runs')
+    sp = speed_rows([{'package': 'p', 'script': 'performance', 'verdict': 'equal', 'metrics': {
+        'gstreamer': {'model': {'latency_p50_ms': 2.0, 'throughput_fps': 100.0}},
+        'dataflow': {'model': {'latency_p50_ms': 1.0, 'throughput_fps': 99.0}}}}])
+    check(len(sp) == 1 and sp[0]['slower'] == ['throughput_fps'] and sp[0]['latency_p50_ms']['change_pct'] == -50.0,
+          f'speed: lower throughput is slower, lower latency is not ({sp})')
     for f in failures:
         print('selftest FAIL:', f)
     print(f"selftest: {'OK' if not failures else 'FAILED'}")
@@ -1103,6 +1502,37 @@ def main():
     s = sub.add_parser('rows')
     selection(s)
     s.set_defaults(fn=list_rows)
+
+    s = sub.add_parser('scripts')
+    s.add_argument('--expected', default=str(EXPECTED))
+    s.add_argument('--differences', default=str(DIFFERENCES))
+    s.add_argument('--scripts', default=str(SCRIPTS))
+    s.add_argument('--names', help='package names ("yolov8s w8a8"), comma separated; default: every package '
+                                   'with an `equal` row')
+    s.add_argument('--all', action='store_true', help='every package of the models scripts.json lists')
+    s.add_argument('--script', choices=SCRIPT_NAMES + ('both',), default='both')
+    s.add_argument('--backends', default=','.join(BACKENDS))
+    s.add_argument('--alternate', action='store_true', help='alternate the backends\' order between packages')
+    s.add_argument('--registry', help='a checkout of the Models registry (models/<id>/scripts, tools/model_report)')
+    s.add_argument('--packages', help='directory of <component id>.tar.gz')
+    s.add_argument('--datasets', help='directory of <source id>/, each an extracted dataset archive')
+    s.add_argument('--resources', help='directory of <model>__<variant>/, the package\'s supporting files')
+    s.add_argument('--out', required=True)
+    s.add_argument('--python', default=sys.executable, help='the interpreter that has pyneat and the scripts\' modules')
+    s.add_argument('--pythonpath', help='more module directories, after the registry\'s tools')
+    s.add_argument('--run-prefix', default='', help='a command put in front of each run (taskset -c 4-7)')
+    s.add_argument('--limit', type=int, help='accuracy.py --limit (default: scripts.json)')
+    s.add_argument('--process-timeout', type=int, default=1800)
+    s.add_argument('--accept-kernel-line', help='a regular expression: new kernel-log lines matching it are '
+                   'counted, not a reason to stop, in runs of a script that requests MLA layer stats')
+    s.add_argument('--resume', action='store_true', help='keep the runs already in --out')
+    s.add_argument('--judge-only', action='store_true', help='run nothing: judge the runs kept in --out')
+    s.set_defaults(fn=scripts_tier)
+
+    s = sub.add_parser('speed')
+    s.add_argument('--results', required=True, help='results.json of a `scripts` run')
+    s.add_argument('--out', help='the table (markdown; the same rows as JSON beside it)')
+    s.set_defaults(fn=speed)
 
     s = sub.add_parser('selftest')
     s.set_defaults(fn=selftest)

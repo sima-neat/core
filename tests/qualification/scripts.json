@@ -1,0 +1,800 @@
+{
+ "schema": 1,
+ "about": "Tier T3 (README.md): the Models registry's own scripts, run unchanged on each backend through launch_script.py. performance.py builds the package with the options catalogue.json records (the app view), so its expected outcome is the app row of expected.json; accuracy.py feeds the model's own tensors (the default view), so its expected outcome is the default row. datasets and models are written by make_scripts_catalogue.py from the registry; the fields above them are written by hand.",
+ "source": {
+  "models_registry": "models-develop 36d97e4"
+ },
+ "limit": 100,
+ "limit_about": "accuracy.py --limit N: the first N validation images (ImageNet), a seeded sample of N images (COCO), the first N queries against the whole database (Pittsburgh 30k)",
+ "measured_fields": [
+  "(^|\\.)latency(_[a-z0-9]+)*_(ms|us)$",
+  "(^|\\.)(fps|throughput_fps|throughput_duration_ms|throughput_samples)$",
+  "(^|\\.)(avg_power_watts|peak_power_watts|energy_joules)$",
+  "(^|\\.)telemetry\\.(samples|duration_ms|sample_interval_ms)$",
+  "(^|\\.)telemetry\\..*(samples|mean|minimum|maximum|last)$",
+  "(^|\\.)details\\.inference_seconds$"
+ ],
+ "measured_about": "Report fields that are measurements: present on both backends and filled alike (zero on both or non-zero on both), their values not compared. Every other field of every report file must be equal.",
+ "datasets": {
+  "imagenet-2012-val": {
+   "id": "imagenet-2012",
+   "variant": "val",
+   "sha256": "018bf95eb75b8b7f1d7766303cdecf3c45ecb02ccf4cf161122ae885c4d7a36f",
+   "size_bytes": 6666407650,
+   "models": 23
+  },
+  "pitts30k-val": {
+   "id": "pitts30k",
+   "variant": "val",
+   "sha256": "11099213681d0b0037b497d02c983a4a53c09c6e3eed0ac08637bf22cfeee395",
+   "size_bytes": 611858077,
+   "models": 1
+  },
+  "coco-2017-val": {
+   "id": "coco-2017",
+   "variant": "val",
+   "sha256": "a40de1caf42b47c5a8976eb97efe3c83f3a41337c4d16d318eb15d65c293f2da",
+   "size_bytes": 898368520,
+   "models": 10
+  }
+ },
+ "models": {
+  "clip_vit_b_16": {
+   "dataset": "imagenet-2012-val",
+   "performance": {
+    "benchmark": {
+     "num_samples": 1000,
+     "min_duration_ms": 60000,
+     "include_mla_layer_stats": true,
+     "include_mla_stage_stats": true
+    }
+   },
+   "accuracy": {
+    "resources": true,
+    "view": "default",
+    "builds": "3 Model(package, options)"
+   },
+   "modules": [
+    "PIL",
+    "cv2",
+    "numpy",
+    "tokenizers"
+   ],
+   "requirements": [
+    "pillow==12.3.0",
+    "tokenizers==0.23.3"
+   ]
+  },
+  "densenet_121": {
+   "dataset": "imagenet-2012-val",
+   "performance": {
+    "benchmark": {
+     "num_samples": 1000,
+     "min_duration_ms": 60000,
+     "include_mla_layer_stats": true,
+     "include_mla_stage_stats": true
+    }
+   },
+   "accuracy": {
+    "view": "default"
+   },
+   "modules": [
+    "PIL",
+    "cv2",
+    "numpy"
+   ],
+   "requirements": [
+    "pillow==12.3.0"
+   ]
+  },
+  "densenet_161": {
+   "dataset": "imagenet-2012-val",
+   "performance": {
+    "benchmark": {
+     "num_samples": 1000,
+     "min_duration_ms": 60000,
+     "include_mla_layer_stats": true,
+     "include_mla_stage_stats": true
+    }
+   },
+   "accuracy": {
+    "view": "default"
+   },
+   "modules": [
+    "PIL",
+    "cv2",
+    "numpy"
+   ],
+   "requirements": [
+    "pillow==12.3.0"
+   ]
+  },
+  "densenet_169": {
+   "dataset": "imagenet-2012-val",
+   "performance": {
+    "benchmark": {
+     "num_samples": 1000,
+     "min_duration_ms": 60000,
+     "include_mla_layer_stats": true,
+     "include_mla_stage_stats": true
+    }
+   },
+   "accuracy": {
+    "view": "default"
+   },
+   "modules": [
+    "PIL",
+    "cv2",
+    "numpy"
+   ],
+   "requirements": [
+    "pillow==12.3.0"
+   ]
+  },
+  "dla_34": {
+   "dataset": "imagenet-2012-val",
+   "performance": {
+    "benchmark": {
+     "num_samples": 1000,
+     "min_duration_ms": 60000,
+     "include_mla_layer_stats": true,
+     "include_mla_stage_stats": true
+    }
+   },
+   "accuracy": {
+    "view": "default"
+   },
+   "modules": [
+    "PIL",
+    "cv2",
+    "numpy"
+   ],
+   "requirements": [
+    "pillow==12.3.0"
+   ]
+  },
+  "hrnet_w32": {
+   "dataset": "imagenet-2012-val",
+   "performance": {
+    "benchmark": {
+     "num_samples": 1000,
+     "min_duration_ms": 60000,
+     "include_mla_layer_stats": true,
+     "include_mla_stage_stats": true
+    }
+   },
+   "accuracy": {
+    "view": "default"
+   },
+   "modules": [
+    "PIL",
+    "cv2",
+    "numpy"
+   ],
+   "requirements": [
+    "pillow==12.3.0"
+   ]
+  },
+  "netvlad": {
+   "dataset": "pitts30k-val",
+   "performance": {
+    "benchmark": {
+     "num_samples": 1000,
+     "min_duration_ms": 60000,
+     "include_mla_layer_stats": true,
+     "include_mla_stage_stats": true
+    }
+   },
+   "accuracy": {
+    "view": "default",
+    "builds": "1 Model(package, options)"
+   },
+   "modules": [
+    "PIL",
+    "cv2",
+    "numpy"
+   ],
+   "requirements": [
+    "pillow==12.3.0"
+   ]
+  },
+  "resnet_18": {
+   "dataset": "imagenet-2012-val",
+   "performance": {
+    "benchmark": {
+     "num_samples": 1000,
+     "min_duration_ms": 60000,
+     "include_mla_layer_stats": true,
+     "include_mla_stage_stats": true
+    }
+   },
+   "accuracy": {
+    "view": "default"
+   },
+   "modules": [
+    "PIL",
+    "cv2",
+    "numpy"
+   ],
+   "requirements": [
+    "pillow==12.3.0"
+   ]
+  },
+  "resnet_34": {
+   "dataset": "imagenet-2012-val",
+   "performance": {
+    "benchmark": {
+     "num_samples": 1000,
+     "min_duration_ms": 60000,
+     "include_mla_layer_stats": true,
+     "include_mla_stage_stats": true
+    }
+   },
+   "accuracy": {
+    "view": "default"
+   },
+   "modules": [
+    "PIL",
+    "cv2",
+    "numpy"
+   ],
+   "requirements": [
+    "pillow==12.3.0"
+   ]
+  },
+  "resnet_50": {
+   "dataset": "imagenet-2012-val",
+   "performance": {
+    "benchmark": {
+     "num_samples": 1000,
+     "min_duration_ms": 60000,
+     "include_mla_layer_stats": true,
+     "include_mla_stage_stats": true
+    }
+   },
+   "accuracy": {
+    "view": "default"
+   },
+   "modules": [
+    "PIL",
+    "cv2",
+    "numpy"
+   ],
+   "requirements": [
+    "pillow==12.3.0"
+   ]
+  },
+  "resnext_101_32x8d": {
+   "dataset": "imagenet-2012-val",
+   "performance": {
+    "benchmark": {
+     "num_samples": 1000,
+     "min_duration_ms": 60000,
+     "include_mla_layer_stats": true,
+     "include_mla_stage_stats": true
+    }
+   },
+   "accuracy": {
+    "view": "default"
+   },
+   "modules": [
+    "PIL",
+    "cv2",
+    "numpy"
+   ],
+   "requirements": [
+    "pillow==12.3.0"
+   ]
+  },
+  "resnext_101_64x4d": {
+   "dataset": "imagenet-2012-val",
+   "performance": {
+    "benchmark": {
+     "num_samples": 1000,
+     "min_duration_ms": 60000,
+     "include_mla_layer_stats": true,
+     "include_mla_stage_stats": true
+    }
+   },
+   "accuracy": {
+    "view": "default"
+   },
+   "modules": [
+    "PIL",
+    "cv2",
+    "numpy"
+   ],
+   "requirements": [
+    "pillow==12.3.0"
+   ]
+  },
+  "resnext_50_32x4d": {
+   "dataset": "imagenet-2012-val",
+   "performance": {
+    "benchmark": {
+     "num_samples": 1000,
+     "min_duration_ms": 60000,
+     "include_mla_layer_stats": true,
+     "include_mla_stage_stats": true
+    }
+   },
+   "accuracy": {
+    "view": "default"
+   },
+   "modules": [
+    "PIL",
+    "cv2",
+    "numpy"
+   ],
+   "requirements": [
+    "pillow==12.3.0"
+   ]
+  },
+  "siglip2_vit_b_16": {
+   "dataset": "imagenet-2012-val",
+   "performance": {
+    "benchmark": {
+     "num_samples": 1000,
+     "min_duration_ms": 60000,
+     "include_mla_layer_stats": true,
+     "include_mla_stage_stats": true
+    }
+   },
+   "accuracy": {
+    "resources": true,
+    "view": "default",
+    "builds": "3 Model(package, options)"
+   },
+   "modules": [
+    "PIL",
+    "cv2",
+    "numpy",
+    "tokenizers"
+   ],
+   "requirements": [
+    "pillow==12.3.0",
+    "tokenizers==0.23.3"
+   ]
+  },
+  "vgg_11": {
+   "dataset": "imagenet-2012-val",
+   "performance": {
+    "benchmark": {
+     "num_samples": 1000,
+     "min_duration_ms": 60000,
+     "include_mla_layer_stats": true,
+     "include_mla_stage_stats": true
+    }
+   },
+   "accuracy": {
+    "view": "default"
+   },
+   "modules": [
+    "PIL",
+    "cv2",
+    "numpy"
+   ],
+   "requirements": [
+    "pillow==12.3.0"
+   ]
+  },
+  "vgg_11_bn": {
+   "dataset": "imagenet-2012-val",
+   "performance": {
+    "benchmark": {
+     "num_samples": 1000,
+     "min_duration_ms": 60000,
+     "include_mla_layer_stats": true,
+     "include_mla_stage_stats": true
+    }
+   },
+   "accuracy": {
+    "view": "default"
+   },
+   "modules": [
+    "PIL",
+    "cv2",
+    "numpy"
+   ],
+   "requirements": [
+    "pillow==12.3.0"
+   ]
+  },
+  "vgg_13": {
+   "dataset": "imagenet-2012-val",
+   "performance": {
+    "benchmark": {
+     "num_samples": 1000,
+     "min_duration_ms": 60000,
+     "include_mla_layer_stats": true,
+     "include_mla_stage_stats": true
+    }
+   },
+   "accuracy": {
+    "view": "default"
+   },
+   "modules": [
+    "PIL",
+    "cv2",
+    "numpy"
+   ],
+   "requirements": [
+    "pillow==12.3.0"
+   ]
+  },
+  "vgg_13_bn": {
+   "dataset": "imagenet-2012-val",
+   "performance": {
+    "benchmark": {
+     "num_samples": 1000,
+     "min_duration_ms": 60000,
+     "include_mla_layer_stats": true,
+     "include_mla_stage_stats": true
+    }
+   },
+   "accuracy": {
+    "view": "default"
+   },
+   "modules": [
+    "PIL",
+    "cv2",
+    "numpy"
+   ],
+   "requirements": [
+    "pillow==12.3.0"
+   ]
+  },
+  "vgg_16": {
+   "dataset": "imagenet-2012-val",
+   "performance": {
+    "benchmark": {
+     "num_samples": 1000,
+     "min_duration_ms": 60000,
+     "include_mla_layer_stats": true,
+     "include_mla_stage_stats": true
+    }
+   },
+   "accuracy": {
+    "view": "default"
+   },
+   "modules": [
+    "PIL",
+    "cv2",
+    "numpy"
+   ],
+   "requirements": [
+    "pillow==12.3.0"
+   ]
+  },
+  "vgg_16_bn": {
+   "dataset": "imagenet-2012-val",
+   "performance": {
+    "benchmark": {
+     "num_samples": 1000,
+     "min_duration_ms": 60000,
+     "include_mla_layer_stats": true,
+     "include_mla_stage_stats": true
+    }
+   },
+   "accuracy": {
+    "view": "default"
+   },
+   "modules": [
+    "PIL",
+    "cv2",
+    "numpy"
+   ],
+   "requirements": [
+    "pillow==12.3.0"
+   ]
+  },
+  "vgg_19": {
+   "dataset": "imagenet-2012-val",
+   "performance": {
+    "benchmark": {
+     "num_samples": 1000,
+     "min_duration_ms": 60000,
+     "include_mla_layer_stats": true,
+     "include_mla_stage_stats": true
+    }
+   },
+   "accuracy": {
+    "view": "default"
+   },
+   "modules": [
+    "PIL",
+    "cv2",
+    "numpy"
+   ],
+   "requirements": [
+    "pillow==12.3.0"
+   ]
+  },
+  "vgg_19_bn": {
+   "dataset": "imagenet-2012-val",
+   "performance": {
+    "benchmark": {
+     "num_samples": 1000,
+     "min_duration_ms": 60000,
+     "include_mla_layer_stats": true,
+     "include_mla_stage_stats": true
+    }
+   },
+   "accuracy": {
+    "view": "default"
+   },
+   "modules": [
+    "PIL",
+    "cv2",
+    "numpy"
+   ],
+   "requirements": [
+    "pillow==12.3.0"
+   ]
+  },
+  "vit_b_16": {
+   "dataset": "imagenet-2012-val",
+   "performance": {
+    "benchmark": {
+     "num_samples": 1000,
+     "min_duration_ms": 60000,
+     "include_mla_layer_stats": true,
+     "include_mla_stage_stats": true
+    }
+   },
+   "accuracy": {
+    "view": "default"
+   },
+   "modules": [
+    "PIL",
+    "cv2",
+    "numpy"
+   ],
+   "requirements": [
+    "pillow==12.3.0"
+   ]
+  },
+  "wide_resnet_50_2": {
+   "dataset": "imagenet-2012-val",
+   "performance": {
+    "benchmark": {
+     "num_samples": 1000,
+     "min_duration_ms": 60000,
+     "include_mla_layer_stats": true,
+     "include_mla_stage_stats": true
+    }
+   },
+   "accuracy": {
+    "view": "default"
+   },
+   "modules": [
+    "PIL",
+    "cv2",
+    "numpy"
+   ],
+   "requirements": [
+    "pillow==12.3.0"
+   ]
+  },
+  "yolo11l": {
+   "dataset": "coco-2017-val",
+   "performance": {
+    "benchmark": {
+     "num_samples": 1000,
+     "min_duration_ms": 60000,
+     "include_mla_layer_stats": true,
+     "include_mla_stage_stats": true
+    }
+   },
+   "accuracy": {
+    "view": "default"
+   },
+   "modules": [
+    "cv2",
+    "faster_coco_eval",
+    "numpy"
+   ],
+   "requirements": [
+    "faster-coco-eval==1.8.0"
+   ]
+  },
+  "yolo11m": {
+   "dataset": "coco-2017-val",
+   "performance": {
+    "benchmark": {
+     "num_samples": 1000,
+     "min_duration_ms": 60000,
+     "include_mla_layer_stats": true,
+     "include_mla_stage_stats": true
+    }
+   },
+   "accuracy": {
+    "view": "default"
+   },
+   "modules": [
+    "cv2",
+    "faster_coco_eval",
+    "numpy"
+   ],
+   "requirements": [
+    "faster-coco-eval==1.8.0"
+   ]
+  },
+  "yolo11n": {
+   "dataset": "coco-2017-val",
+   "performance": {
+    "benchmark": {
+     "num_samples": 1000,
+     "min_duration_ms": 60000,
+     "include_mla_layer_stats": true,
+     "include_mla_stage_stats": true
+    }
+   },
+   "accuracy": {
+    "view": "default"
+   },
+   "modules": [
+    "cv2",
+    "faster_coco_eval",
+    "numpy"
+   ],
+   "requirements": [
+    "faster-coco-eval==1.8.0"
+   ]
+  },
+  "yolo11s": {
+   "dataset": "coco-2017-val",
+   "performance": {
+    "benchmark": {
+     "num_samples": 1000,
+     "min_duration_ms": 60000,
+     "include_mla_layer_stats": true,
+     "include_mla_stage_stats": true
+    }
+   },
+   "accuracy": {
+    "view": "default"
+   },
+   "modules": [
+    "cv2",
+    "faster_coco_eval",
+    "numpy"
+   ],
+   "requirements": [
+    "faster-coco-eval==1.8.0"
+   ]
+  },
+  "yolo11x": {
+   "dataset": "coco-2017-val",
+   "performance": {
+    "benchmark": {
+     "num_samples": 1000,
+     "min_duration_ms": 60000,
+     "include_mla_layer_stats": true,
+     "include_mla_stage_stats": true
+    }
+   },
+   "accuracy": {
+    "view": "default"
+   },
+   "modules": [
+    "cv2",
+    "faster_coco_eval",
+    "numpy"
+   ],
+   "requirements": [
+    "faster-coco-eval==1.8.0"
+   ]
+  },
+  "yolov8l": {
+   "dataset": "coco-2017-val",
+   "performance": {
+    "benchmark": {
+     "num_samples": 1000,
+     "min_duration_ms": 60000,
+     "include_mla_layer_stats": true,
+     "include_mla_stage_stats": true
+    }
+   },
+   "accuracy": {
+    "view": "default"
+   },
+   "modules": [
+    "cv2",
+    "faster_coco_eval",
+    "numpy"
+   ],
+   "requirements": [
+    "faster-coco-eval==1.8.0"
+   ]
+  },
+  "yolov8m": {
+   "dataset": "coco-2017-val",
+   "performance": {
+    "benchmark": {
+     "num_samples": 1000,
+     "min_duration_ms": 60000,
+     "include_mla_layer_stats": true,
+     "include_mla_stage_stats": true
+    }
+   },
+   "accuracy": {
+    "view": "default"
+   },
+   "modules": [
+    "cv2",
+    "faster_coco_eval",
+    "numpy"
+   ],
+   "requirements": [
+    "faster-coco-eval==1.8.0"
+   ]
+  },
+  "yolov8n": {
+   "dataset": "coco-2017-val",
+   "performance": {
+    "benchmark": {
+     "num_samples": 1000,
+     "min_duration_ms": 60000,
+     "include_mla_layer_stats": true,
+     "include_mla_stage_stats": true
+    }
+   },
+   "accuracy": {
+    "view": "default"
+   },
+   "modules": [
+    "cv2",
+    "faster_coco_eval",
+    "numpy"
+   ],
+   "requirements": [
+    "faster-coco-eval==1.8.0"
+   ]
+  },
+  "yolov8s": {
+   "dataset": "coco-2017-val",
+   "performance": {
+    "benchmark": {
+     "num_samples": 1000,
+     "min_duration_ms": 60000,
+     "include_mla_layer_stats": true,
+     "include_mla_stage_stats": true
+    }
+   },
+   "accuracy": {
+    "view": "default"
+   },
+   "modules": [
+    "cv2",
+    "faster_coco_eval",
+    "numpy"
+   ],
+   "requirements": [
+    "faster-coco-eval==1.8.0"
+   ]
+  },
+  "yolov8x": {
+   "dataset": "coco-2017-val",
+   "performance": {
+    "benchmark": {
+     "num_samples": 1000,
+     "min_duration_ms": 60000,
+     "include_mla_layer_stats": true,
+     "include_mla_stage_stats": true
+    }
+   },
+   "accuracy": {
+    "view": "default"
+   },
+   "modules": [
+    "cv2",
+    "faster_coco_eval",
+    "numpy"
+   ],
+   "requirements": [
+    "faster-coco-eval==1.8.0"
+   ]
+  }
+ }
+}

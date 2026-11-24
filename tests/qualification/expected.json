@@ -136,6 +136,9 @@
   "T2": {
    "about": "every row, 1,000 frames, the floor (select with no --tier)",
    "frames": 1000
+  },
+  "T3": {
+   "about": "the Models registry's own performance.py and accuracy.py --limit N, unchanged, per package with an equal row, on each backend (qualify.py scripts; scripts.json). A script's expected outcome is the row of the view it builds: performance.py the app row, accuracy.py the default row"
   }
  },
  "rows": [
