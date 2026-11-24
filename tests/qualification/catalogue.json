@@ -1,0 +1,5168 @@
+{
+ "schema": 1,
+ "about": "The catalogue the harness qualifies: every compiled model package of the Models registry (develop, production Model Registry) and, per component, the option set of its registry performance script (the app view; null: the script builds the component with default options). A component package is <id>.tar.gz in the package directory the tools are given.",
+ "source": {
+  "models_registry": "models-develop 36d97e4",
+  "kernels": "0.6.2",
+  "census": "agent-work/h1/core-adapt/tally-301"
+ },
+ "frames": {
+  "width": 1280,
+  "height": 720,
+  "images": "img0..img3.bgr (1280x720 BGR bytes)"
+ },
+ "options": {
+  "clip_vit_b_16__image_encoder": [
+   "preprocess.enable=On",
+   "preprocess.input_max_height=720",
+   "preprocess.input_max_width=1280",
+   "preprocess.kind=Image",
+   "preprocess.normalize.enable=On",
+   "preprocess.normalize.has_explicit_stats=true",
+   "preprocess.normalize.mean=[0.48145466,0.4578275,0.40821073]",
+   "preprocess.normalize.stddev=[0.26862954,0.26130258,0.27577711]",
+   "preprocess.resize.enable=On",
+   "preprocess.resize.mode=Stretch",
+   "frame_format=RGB"
+  ],
+  "clip_vit_b_16__text_encoder": [
+   "preprocess.color_convert.enable=Off",
+   "preprocess.kind=Tensor",
+   "preprocess.normalize.enable=Off",
+   "preprocess.resize.enable=Off",
+   "frame_format=RGB"
+  ],
+  "densenet_121__model": [
+   "preprocess.enable=On",
+   "preprocess.input_max_height=720",
+   "preprocess.input_max_width=1280",
+   "preprocess.kind=Image",
+   "preprocess.normalize.enable=On",
+   "preprocess.preset=ImageNet",
+   "preprocess.resize.enable=On",
+   "preprocess.resize.mode=Stretch",
+   "frame_format=RGB"
+  ],
+  "densenet_161__model": [
+   "preprocess.enable=On",
+   "preprocess.input_max_height=720",
+   "preprocess.input_max_width=1280",
+   "preprocess.kind=Image",
+   "preprocess.normalize.enable=On",
+   "preprocess.preset=ImageNet",
+   "preprocess.resize.enable=On",
+   "preprocess.resize.mode=Stretch",
+   "frame_format=RGB"
+  ],
+  "densenet_169__model": [
+   "preprocess.enable=On",
+   "preprocess.input_max_height=720",
+   "preprocess.input_max_width=1280",
+   "preprocess.kind=Image",
+   "preprocess.normalize.enable=On",
+   "preprocess.preset=ImageNet",
+   "preprocess.resize.enable=On",
+   "preprocess.resize.mode=Stretch",
+   "frame_format=RGB"
+  ],
+  "depth_anything_3_small_1view_280x504__model": [
+   "preprocess.enable=On",
+   "preprocess.input_max_height=720",
+   "preprocess.input_max_width=1280",
+   "preprocess.kind=Image",
+   "preprocess.normalize.enable=On",
+   "preprocess.preset=ImageNet",
+   "preprocess.resize.enable=On",
+   "preprocess.resize.mode=Letterbox",
+   "frame_format=RGB"
+  ],
+  "depth_anything_3_small_1view_378x504__model": [
+   "preprocess.enable=On",
+   "preprocess.input_max_height=720",
+   "preprocess.input_max_width=1280",
+   "preprocess.kind=Image",
+   "preprocess.normalize.enable=On",
+   "preprocess.preset=ImageNet",
+   "preprocess.resize.enable=On",
+   "preprocess.resize.mode=Letterbox",
+   "frame_format=RGB"
+  ],
+  "depth_anything_v2_small__model": [
+   "preprocess.enable=On",
+   "preprocess.input_max_height=720",
+   "preprocess.input_max_width=1280",
+   "preprocess.kind=Image",
+   "preprocess.normalize.enable=On",
+   "preprocess.preset=ImageNet",
+   "preprocess.resize.enable=On",
+   "preprocess.resize.mode=Stretch",
+   "frame_format=RGB"
+  ],
+  "detr_resnet_101__model": [
+   "decode_type=Detr",
+   "preprocess.enable=On",
+   "preprocess.input_max_height=720",
+   "preprocess.input_max_width=1280",
+   "preprocess.kind=Image",
+   "preprocess.normalize.enable=On",
+   "preprocess.preset=ImageNet",
+   "preprocess.resize.enable=On",
+   "preprocess.resize.mode=Stretch",
+   "score_threshold=0.25",
+   "top_k=10",
+   "frame_format=RGB"
+  ],
+  "detr_resnet_50__model": [
+   "decode_type=Detr",
+   "preprocess.enable=On",
+   "preprocess.input_max_height=720",
+   "preprocess.input_max_width=1280",
+   "preprocess.kind=Image",
+   "preprocess.normalize.enable=On",
+   "preprocess.preset=ImageNet",
+   "preprocess.resize.enable=On",
+   "preprocess.resize.mode=Stretch",
+   "score_threshold=0.25",
+   "top_k=10",
+   "frame_format=RGB"
+  ],
+  "dfine_n__backbone": [
+   "advanced_execution.postprocess_target=EV74",
+   "preprocess.enable=On",
+   "preprocess.input_max_height=720",
+   "preprocess.input_max_width=1280",
+   "preprocess.kind=Image",
+   "preprocess.normalize.enable=On",
+   "preprocess.normalize.has_explicit_stats=true",
+   "preprocess.normalize.mean=[0.0,0.0,0.0]",
+   "preprocess.normalize.stddev=[1.0,1.0,1.0]",
+   "preprocess.resize.enable=On",
+   "preprocess.resize.mode=Stretch",
+   "frame_format=RGB"
+  ],
+  "dfine_n__decoder": [
+   "preprocess.color_convert.enable=Off",
+   "preprocess.kind=Tensor",
+   "preprocess.normalize.enable=Off",
+   "preprocess.resize.enable=Off",
+   "frame_format=RGB"
+  ],
+  "dinov3_convnext_base__model": [
+   "preprocess.enable=On",
+   "preprocess.input_max_height=720",
+   "preprocess.input_max_width=1280",
+   "preprocess.kind=Image",
+   "preprocess.normalize.enable=On",
+   "preprocess.preset=ImageNet",
+   "preprocess.resize.enable=On",
+   "preprocess.resize.mode=Stretch",
+   "frame_format=RGB"
+  ],
+  "dinov3_convnext_large__model": [
+   "preprocess.enable=On",
+   "preprocess.input_max_height=720",
+   "preprocess.input_max_width=1280",
+   "preprocess.kind=Image",
+   "preprocess.normalize.enable=On",
+   "preprocess.preset=ImageNet",
+   "preprocess.resize.enable=On",
+   "preprocess.resize.mode=Stretch",
+   "frame_format=RGB"
+  ],
+  "dinov3_convnext_small__model": [
+   "preprocess.enable=On",
+   "preprocess.input_max_height=720",
+   "preprocess.input_max_width=1280",
+   "preprocess.kind=Image",
+   "preprocess.normalize.enable=On",
+   "preprocess.preset=ImageNet",
+   "preprocess.resize.enable=On",
+   "preprocess.resize.mode=Stretch",
+   "frame_format=RGB"
+  ],
+  "dinov3_convnext_tiny__model": [
+   "preprocess.enable=On",
+   "preprocess.input_max_height=720",
+   "preprocess.input_max_width=1280",
+   "preprocess.kind=Image",
+   "preprocess.normalize.enable=On",
+   "preprocess.preset=ImageNet",
+   "preprocess.resize.enable=On",
+   "preprocess.resize.mode=Stretch",
+   "frame_format=RGB"
+  ],
+  "dinov3_vit_b_16__model": [
+   "preprocess.enable=On",
+   "preprocess.input_max_height=720",
+   "preprocess.input_max_width=1280",
+   "preprocess.kind=Image",
+   "preprocess.normalize.enable=On",
+   "preprocess.preset=ImageNet",
+   "preprocess.resize.enable=On",
+   "preprocess.resize.mode=Stretch",
+   "frame_format=RGB"
+  ],
+  "dinov3_vit_h_plus_16__model": [
+   "preprocess.enable=On",
+   "preprocess.input_max_height=720",
+   "preprocess.input_max_width=1280",
+   "preprocess.kind=Image",
+   "preprocess.normalize.enable=On",
+   "preprocess.preset=ImageNet",
+   "preprocess.resize.enable=On",
+   "preprocess.resize.mode=Stretch",
+   "frame_format=RGB"
+  ],
+  "dinov3_vit_l_16__model": [
+   "preprocess.enable=On",
+   "preprocess.input_max_height=720",
+   "preprocess.input_max_width=1280",
+   "preprocess.kind=Image",
+   "preprocess.normalize.enable=On",
+   "preprocess.preset=ImageNet",
+   "preprocess.resize.enable=On",
+   "preprocess.resize.mode=Stretch",
+   "frame_format=RGB"
+  ],
+  "dinov3_vit_s_16__model": [
+   "preprocess.enable=On",
+   "preprocess.input_max_height=720",
+   "preprocess.input_max_width=1280",
+   "preprocess.kind=Image",
+   "preprocess.normalize.enable=On",
+   "preprocess.preset=ImageNet",
+   "preprocess.resize.enable=On",
+   "preprocess.resize.mode=Stretch",
+   "frame_format=RGB"
+  ],
+  "dinov3_vit_s_plus_16__model": [
+   "preprocess.enable=On",
+   "preprocess.input_max_height=720",
+   "preprocess.input_max_width=1280",
+   "preprocess.kind=Image",
+   "preprocess.normalize.enable=On",
+   "preprocess.preset=ImageNet",
+   "preprocess.resize.enable=On",
+   "preprocess.resize.mode=Stretch",
+   "frame_format=RGB"
+  ],
+  "dla_34__model": [
+   "preprocess.enable=On",
+   "preprocess.input_max_height=720",
+   "preprocess.input_max_width=1280",
+   "preprocess.kind=Image",
+   "preprocess.normalize.enable=On",
+   "preprocess.preset=ImageNet",
+   "preprocess.resize.enable=On",
+   "preprocess.resize.mode=Stretch",
+   "frame_format=RGB"
+  ],
+  "edgetam__image_encoder": [
+   "preprocess.enable=On",
+   "preprocess.input_max_height=720",
+   "preprocess.input_max_width=1280",
+   "preprocess.kind=Image",
+   "preprocess.normalize.enable=On",
+   "preprocess.preset=ImageNet",
+   "preprocess.resize.enable=On",
+   "preprocess.resize.mode=Stretch",
+   "processcvu.post_run_target=EV74",
+   "frame_format=RGB"
+  ],
+  "edgetam__mask_decoder": [
+   "preprocess.color_convert.enable=Off",
+   "preprocess.kind=Tensor",
+   "preprocess.normalize.enable=Off",
+   "preprocess.resize.enable=Off",
+   "processcvu.pre_run_target=A65",
+   "frame_format=RGB"
+  ],
+  "edgetam__memory_attention": [
+   "preprocess.color_convert.enable=Off",
+   "preprocess.kind=Tensor",
+   "preprocess.normalize.enable=Off",
+   "preprocess.resize.enable=Off",
+   "frame_format=RGB"
+  ],
+  "edgetam__memory_encoder": [
+   "preprocess.color_convert.enable=Off",
+   "preprocess.kind=Tensor",
+   "preprocess.normalize.enable=Off",
+   "preprocess.resize.enable=Off",
+   "frame_format=RGB"
+  ],
+  "hrnet_w32__model": [
+   "preprocess.enable=On",
+   "preprocess.input_max_height=720",
+   "preprocess.input_max_width=1280",
+   "preprocess.kind=Image",
+   "preprocess.normalize.enable=On",
+   "preprocess.preset=ImageNet",
+   "preprocess.resize.enable=On",
+   "preprocess.resize.mode=Stretch",
+   "frame_format=RGB"
+  ],
+  "inception_v3__model": [
+   "preprocess.enable=On",
+   "preprocess.input_max_height=720",
+   "preprocess.input_max_width=1280",
+   "preprocess.kind=Image",
+   "preprocess.normalize.enable=On",
+   "preprocess.normalize.has_explicit_stats=true",
+   "preprocess.normalize.mean=[0.5,0.5,0.5]",
+   "preprocess.normalize.stddev=[0.5,0.5,0.5]",
+   "preprocess.resize.enable=On",
+   "preprocess.resize.mode=Stretch",
+   "frame_format=RGB"
+  ],
+  "lightglue_superpoint__model": [
+   "preprocess.color_convert.enable=Off",
+   "preprocess.kind=Tensor",
+   "preprocess.normalize.enable=Off",
+   "preprocess.resize.enable=Off",
+   "frame_format=RGB"
+  ],
+  "lightstereo_l__model": [
+   "preprocess.enable=On",
+   "preprocess.kind=Image",
+   "preprocess.normalize.enable=On",
+   "preprocess.preset=ImageNet",
+   "preprocess.resize.enable=On",
+   "preprocess.resize.mode=Stretch",
+   "frame_format=RGB"
+  ],
+  "lightstereo_m__model": [
+   "preprocess.enable=On",
+   "preprocess.kind=Image",
+   "preprocess.normalize.enable=On",
+   "preprocess.preset=ImageNet",
+   "preprocess.resize.enable=On",
+   "preprocess.resize.mode=Stretch",
+   "frame_format=RGB"
+  ],
+  "lightstereo_s__model": [
+   "preprocess.enable=On",
+   "preprocess.kind=Image",
+   "preprocess.normalize.enable=On",
+   "preprocess.preset=ImageNet",
+   "preprocess.resize.enable=On",
+   "preprocess.resize.mode=Stretch",
+   "frame_format=RGB"
+  ],
+  "netvlad__model": [
+   "preprocess.enable=On",
+   "preprocess.input_max_height=720",
+   "preprocess.input_max_width=1280",
+   "preprocess.kind=Image",
+   "preprocess.normalize.enable=On",
+   "preprocess.preset=ImageNet",
+   "preprocess.resize.enable=On",
+   "preprocess.resize.mode=Stretch",
+   "frame_format=RGB"
+  ],
+  "raft_stereo_realtime__model": [
+   "preprocess.enable=On",
+   "preprocess.kind=Image",
+   "preprocess.normalize.enable=On",
+   "preprocess.preset=ImageNet",
+   "preprocess.resize.enable=On",
+   "preprocess.resize.mode=Stretch",
+   "frame_format=RGB"
+  ],
+  "resnet_18__model": [
+   "preprocess.enable=On",
+   "preprocess.input_max_height=720",
+   "preprocess.input_max_width=1280",
+   "preprocess.kind=Image",
+   "preprocess.normalize.enable=On",
+   "preprocess.preset=ImageNet",
+   "preprocess.resize.enable=On",
+   "preprocess.resize.mode=Stretch",
+   "frame_format=RGB"
+  ],
+  "resnet_34__model": [
+   "preprocess.enable=On",
+   "preprocess.input_max_height=720",
+   "preprocess.input_max_width=1280",
+   "preprocess.kind=Image",
+   "preprocess.normalize.enable=On",
+   "preprocess.preset=ImageNet",
+   "preprocess.resize.enable=On",
+   "preprocess.resize.mode=Stretch",
+   "frame_format=RGB"
+  ],
+  "resnet_50__model": [
+   "preprocess.enable=On",
+   "preprocess.input_max_height=720",
+   "preprocess.input_max_width=1280",
+   "preprocess.kind=Image",
+   "preprocess.normalize.enable=On",
+   "preprocess.preset=ImageNet",
+   "preprocess.resize.enable=On",
+   "preprocess.resize.mode=Stretch",
+   "frame_format=RGB"
+  ],
+  "resnext_101_32x8d__model": [
+   "preprocess.enable=On",
+   "preprocess.input_max_height=720",
+   "preprocess.input_max_width=1280",
+   "preprocess.kind=Image",
+   "preprocess.normalize.enable=On",
+   "preprocess.preset=ImageNet",
+   "preprocess.resize.enable=On",
+   "preprocess.resize.mode=Stretch",
+   "frame_format=RGB"
+  ],
+  "resnext_101_64x4d__model": [
+   "preprocess.enable=On",
+   "preprocess.input_max_height=720",
+   "preprocess.input_max_width=1280",
+   "preprocess.kind=Image",
+   "preprocess.normalize.enable=On",
+   "preprocess.preset=ImageNet",
+   "preprocess.resize.enable=On",
+   "preprocess.resize.mode=Stretch",
+   "frame_format=RGB"
+  ],
+  "resnext_50_32x4d__model": [
+   "preprocess.enable=On",
+   "preprocess.input_max_height=720",
+   "preprocess.input_max_width=1280",
+   "preprocess.kind=Image",
+   "preprocess.normalize.enable=On",
+   "preprocess.preset=ImageNet",
+   "preprocess.resize.enable=On",
+   "preprocess.resize.mode=Stretch",
+   "frame_format=RGB"
+  ],
+  "rf_detr_large__backbone": [
+   "preprocess.enable=On",
+   "preprocess.input_max_height=720",
+   "preprocess.input_max_width=1280",
+   "preprocess.kind=Image",
+   "preprocess.normalize.enable=On",
+   "preprocess.preset=ImageNet",
+   "preprocess.resize.enable=On",
+   "preprocess.resize.mode=Stretch",
+   "frame_format=RGB"
+  ],
+  "rf_detr_medium__backbone": [
+   "preprocess.enable=On",
+   "preprocess.input_max_height=720",
+   "preprocess.input_max_width=1280",
+   "preprocess.kind=Image",
+   "preprocess.normalize.enable=On",
+   "preprocess.preset=ImageNet",
+   "preprocess.resize.enable=On",
+   "preprocess.resize.mode=Stretch",
+   "frame_format=RGB"
+  ],
+  "rf_detr_nano__backbone": [
+   "preprocess.enable=On",
+   "preprocess.input_max_height=720",
+   "preprocess.input_max_width=1280",
+   "preprocess.kind=Image",
+   "preprocess.normalize.enable=On",
+   "preprocess.preset=ImageNet",
+   "preprocess.resize.enable=On",
+   "preprocess.resize.mode=Stretch",
+   "frame_format=RGB"
+  ],
+  "rf_detr_seg_medium__backbone": [
+   "preprocess.enable=On",
+   "preprocess.input_max_height=720",
+   "preprocess.input_max_width=1280",
+   "preprocess.kind=Image",
+   "preprocess.normalize.enable=On",
+   "preprocess.preset=ImageNet",
+   "preprocess.resize.enable=On",
+   "preprocess.resize.mode=Stretch",
+   "frame_format=RGB"
+  ],
+  "rf_detr_seg_nano__backbone": [
+   "preprocess.enable=On",
+   "preprocess.input_max_height=720",
+   "preprocess.input_max_width=1280",
+   "preprocess.kind=Image",
+   "preprocess.normalize.enable=On",
+   "preprocess.preset=ImageNet",
+   "preprocess.resize.enable=On",
+   "preprocess.resize.mode=Stretch",
+   "frame_format=RGB"
+  ],
+  "rf_detr_seg_small__backbone": [
+   "preprocess.enable=On",
+   "preprocess.input_max_height=720",
+   "preprocess.input_max_width=1280",
+   "preprocess.kind=Image",
+   "preprocess.normalize.enable=On",
+   "preprocess.preset=ImageNet",
+   "preprocess.resize.enable=On",
+   "preprocess.resize.mode=Stretch",
+   "frame_format=RGB"
+  ],
+  "rf_detr_small__backbone": [
+   "preprocess.enable=On",
+   "preprocess.input_max_height=720",
+   "preprocess.input_max_width=1280",
+   "preprocess.kind=Image",
+   "preprocess.normalize.enable=On",
+   "preprocess.preset=ImageNet",
+   "preprocess.resize.enable=On",
+   "preprocess.resize.mode=Stretch",
+   "frame_format=RGB"
+  ],
+  "segformer_b0_ade_512__model": [
+   "preprocess.enable=On",
+   "preprocess.input_max_height=720",
+   "preprocess.input_max_width=1280",
+   "preprocess.kind=Image",
+   "preprocess.normalize.enable=On",
+   "preprocess.preset=ImageNet",
+   "preprocess.resize.enable=On",
+   "preprocess.resize.mode=Stretch",
+   "semantic_segmentation.enable=true",
+   "semantic_segmentation.output_height=720",
+   "semantic_segmentation.output_width=1280",
+   "frame_format=RGB"
+  ],
+  "siglip2_vit_b_16__image_encoder": [
+   "preprocess.enable=On",
+   "preprocess.input_max_height=720",
+   "preprocess.input_max_width=1280",
+   "preprocess.kind=Image",
+   "preprocess.normalize.enable=On",
+   "preprocess.normalize.has_explicit_stats=true",
+   "preprocess.normalize.mean=[0.5,0.5,0.5]",
+   "preprocess.normalize.stddev=[0.5,0.5,0.5]",
+   "preprocess.resize.enable=On",
+   "preprocess.resize.mode=Stretch",
+   "frame_format=RGB"
+  ],
+  "siglip2_vit_b_16__text_encoder": [
+   "preprocess.color_convert.enable=Off",
+   "preprocess.kind=Tensor",
+   "preprocess.normalize.enable=Off",
+   "preprocess.resize.enable=Off",
+   "frame_format=RGB"
+  ],
+  "superglue_outdoor__model": [
+   "preprocess.color_convert.enable=Off",
+   "preprocess.kind=Tensor",
+   "preprocess.normalize.enable=Off",
+   "preprocess.resize.enable=Off",
+   "frame_format=RGB"
+  ],
+  "superpoint__model": [
+   "decode_type=SuperPoint",
+   "preprocess.color_convert.enable=On",
+   "preprocess.color_convert.input_format=RGB",
+   "preprocess.color_convert.output_format=GRAY8",
+   "preprocess.enable=On",
+   "preprocess.input_max_height=720",
+   "preprocess.input_max_width=1280",
+   "preprocess.kind=Image",
+   "preprocess.normalize.enable=On",
+   "preprocess.resize.enable=On",
+   "preprocess.resize.mode=Stretch",
+   "superpoint.profile=MagicLeapDemoV1",
+   "top_k=1000",
+   "frame_format=RGB"
+  ],
+  "vgg_11__model": [
+   "preprocess.enable=On",
+   "preprocess.input_max_height=720",
+   "preprocess.input_max_width=1280",
+   "preprocess.kind=Image",
+   "preprocess.normalize.enable=On",
+   "preprocess.preset=ImageNet",
+   "preprocess.resize.enable=On",
+   "preprocess.resize.mode=Stretch",
+   "frame_format=RGB"
+  ],
+  "vgg_11_bn__model": [
+   "preprocess.enable=On",
+   "preprocess.input_max_height=720",
+   "preprocess.input_max_width=1280",
+   "preprocess.kind=Image",
+   "preprocess.normalize.enable=On",
+   "preprocess.preset=ImageNet",
+   "preprocess.resize.enable=On",
+   "preprocess.resize.mode=Stretch",
+   "frame_format=RGB"
+  ],
+  "vgg_13__model": [
+   "preprocess.enable=On",
+   "preprocess.input_max_height=720",
+   "preprocess.input_max_width=1280",
+   "preprocess.kind=Image",
+   "preprocess.normalize.enable=On",
+   "preprocess.preset=ImageNet",
+   "preprocess.resize.enable=On",
+   "preprocess.resize.mode=Stretch",
+   "frame_format=RGB"
+  ],
+  "vgg_13_bn__model": [
+   "preprocess.enable=On",
+   "preprocess.input_max_height=720",
+   "preprocess.input_max_width=1280",
+   "preprocess.kind=Image",
+   "preprocess.normalize.enable=On",
+   "preprocess.preset=ImageNet",
+   "preprocess.resize.enable=On",
+   "preprocess.resize.mode=Stretch",
+   "frame_format=RGB"
+  ],
+  "vgg_16__model": [
+   "preprocess.enable=On",
+   "preprocess.input_max_height=720",
+   "preprocess.input_max_width=1280",
+   "preprocess.kind=Image",
+   "preprocess.normalize.enable=On",
+   "preprocess.preset=ImageNet",
+   "preprocess.resize.enable=On",
+   "preprocess.resize.mode=Stretch",
+   "frame_format=RGB"
+  ],
+  "vgg_16_bn__model": [
+   "preprocess.enable=On",
+   "preprocess.input_max_height=720",
+   "preprocess.input_max_width=1280",
+   "preprocess.kind=Image",
+   "preprocess.normalize.enable=On",
+   "preprocess.preset=ImageNet",
+   "preprocess.resize.enable=On",
+   "preprocess.resize.mode=Stretch",
+   "frame_format=RGB"
+  ],
+  "vgg_19__model": [
+   "preprocess.enable=On",
+   "preprocess.input_max_height=720",
+   "preprocess.input_max_width=1280",
+   "preprocess.kind=Image",
+   "preprocess.normalize.enable=On",
+   "preprocess.preset=ImageNet",
+   "preprocess.resize.enable=On",
+   "preprocess.resize.mode=Stretch",
+   "frame_format=RGB"
+  ],
+  "vgg_19_bn__model": [
+   "preprocess.enable=On",
+   "preprocess.input_max_height=720",
+   "preprocess.input_max_width=1280",
+   "preprocess.kind=Image",
+   "preprocess.normalize.enable=On",
+   "preprocess.preset=ImageNet",
+   "preprocess.resize.enable=On",
+   "preprocess.resize.mode=Stretch",
+   "frame_format=RGB"
+  ],
+  "vit_b_16__model": [
+   "preprocess.enable=On",
+   "preprocess.input_max_height=720",
+   "preprocess.input_max_width=1280",
+   "preprocess.kind=Image",
+   "preprocess.normalize.enable=On",
+   "preprocess.normalize.has_explicit_stats=true",
+   "preprocess.normalize.mean=[0.5,0.5,0.5]",
+   "preprocess.normalize.stddev=[0.5,0.5,0.5]",
+   "preprocess.resize.enable=On",
+   "preprocess.resize.mode=Stretch",
+   "frame_format=RGB"
+  ],
+  "wide_resnet_50_2__model": [
+   "preprocess.enable=On",
+   "preprocess.input_max_height=720",
+   "preprocess.input_max_width=1280",
+   "preprocess.kind=Image",
+   "preprocess.normalize.enable=On",
+   "preprocess.preset=ImageNet",
+   "preprocess.resize.enable=On",
+   "preprocess.resize.mode=Stretch",
+   "frame_format=RGB"
+  ],
+  "yolo11l__model": [
+   "decode_type=YoloV8",
+   "nms_iou_threshold=0.7",
+   "preprocess.enable=On",
+   "preprocess.input_max_height=720",
+   "preprocess.input_max_width=1280",
+   "preprocess.kind=Image",
+   "preprocess.normalize.enable=On",
+   "preprocess.resize.enable=On",
+   "preprocess.resize.mode=Letterbox",
+   "score_threshold=0.25",
+   "top_k=10",
+   "frame_format=RGB"
+  ],
+  "yolo11l_obb__model": [
+   "decode_type=YoloV8Obb",
+   "nms_iou_threshold=0.7",
+   "preprocess.enable=On",
+   "preprocess.input_max_height=720",
+   "preprocess.input_max_width=1280",
+   "preprocess.kind=Image",
+   "preprocess.normalize.enable=On",
+   "preprocess.resize.enable=On",
+   "preprocess.resize.mode=Letterbox",
+   "score_threshold=0.25",
+   "top_k=10",
+   "frame_format=RGB"
+  ],
+  "yolo11m__model": [
+   "decode_type=YoloV8",
+   "nms_iou_threshold=0.7",
+   "preprocess.enable=On",
+   "preprocess.input_max_height=720",
+   "preprocess.input_max_width=1280",
+   "preprocess.kind=Image",
+   "preprocess.normalize.enable=On",
+   "preprocess.resize.enable=On",
+   "preprocess.resize.mode=Letterbox",
+   "score_threshold=0.25",
+   "top_k=10",
+   "frame_format=RGB"
+  ],
+  "yolo11m_obb__model": [
+   "decode_type=YoloV8Obb",
+   "nms_iou_threshold=0.7",
+   "preprocess.enable=On",
+   "preprocess.input_max_height=720",
+   "preprocess.input_max_width=1280",
+   "preprocess.kind=Image",
+   "preprocess.normalize.enable=On",
+   "preprocess.resize.enable=On",
+   "preprocess.resize.mode=Letterbox",
+   "score_threshold=0.25",
+   "top_k=10",
+   "frame_format=RGB"
+  ],
+  "yolo11n__model": [
+   "decode_type=YoloV8",
+   "nms_iou_threshold=0.7",
+   "preprocess.enable=On",
+   "preprocess.input_max_height=720",
+   "preprocess.input_max_width=1280",
+   "preprocess.kind=Image",
+   "preprocess.normalize.enable=On",
+   "preprocess.resize.enable=On",
+   "preprocess.resize.mode=Letterbox",
+   "score_threshold=0.25",
+   "top_k=10",
+   "frame_format=RGB"
+  ],
+  "yolo11n_obb__model": [
+   "decode_type=YoloV8Obb",
+   "nms_iou_threshold=0.7",
+   "preprocess.enable=On",
+   "preprocess.input_max_height=720",
+   "preprocess.input_max_width=1280",
+   "preprocess.kind=Image",
+   "preprocess.normalize.enable=On",
+   "preprocess.resize.enable=On",
+   "preprocess.resize.mode=Letterbox",
+   "score_threshold=0.25",
+   "top_k=10",
+   "frame_format=RGB"
+  ],
+  "yolo11s__model": [
+   "decode_type=YoloV8",
+   "nms_iou_threshold=0.7",
+   "preprocess.enable=On",
+   "preprocess.input_max_height=720",
+   "preprocess.input_max_width=1280",
+   "preprocess.kind=Image",
+   "preprocess.normalize.enable=On",
+   "preprocess.resize.enable=On",
+   "preprocess.resize.mode=Letterbox",
+   "score_threshold=0.25",
+   "top_k=10",
+   "frame_format=RGB"
+  ],
+  "yolo11s_obb__model": [
+   "decode_type=YoloV8Obb",
+   "nms_iou_threshold=0.7",
+   "preprocess.enable=On",
+   "preprocess.input_max_height=720",
+   "preprocess.input_max_width=1280",
+   "preprocess.kind=Image",
+   "preprocess.normalize.enable=On",
+   "preprocess.resize.enable=On",
+   "preprocess.resize.mode=Letterbox",
+   "score_threshold=0.25",
+   "top_k=10",
+   "frame_format=RGB"
+  ],
+  "yolo11x__model": [
+   "decode_type=YoloV8",
+   "nms_iou_threshold=0.7",
+   "preprocess.enable=On",
+   "preprocess.input_max_height=720",
+   "preprocess.input_max_width=1280",
+   "preprocess.kind=Image",
+   "preprocess.normalize.enable=On",
+   "preprocess.resize.enable=On",
+   "preprocess.resize.mode=Letterbox",
+   "score_threshold=0.25",
+   "top_k=10",
+   "frame_format=RGB"
+  ],
+  "yolo11x_obb__model": [
+   "decode_type=YoloV8Obb",
+   "nms_iou_threshold=0.7",
+   "preprocess.enable=On",
+   "preprocess.input_max_height=720",
+   "preprocess.input_max_width=1280",
+   "preprocess.kind=Image",
+   "preprocess.normalize.enable=On",
+   "preprocess.resize.enable=On",
+   "preprocess.resize.mode=Letterbox",
+   "score_threshold=0.25",
+   "top_k=10",
+   "frame_format=RGB"
+  ],
+  "yolo26l__model": [
+   "decode_type=YoloV26",
+   "preprocess.enable=On",
+   "preprocess.input_max_height=720",
+   "preprocess.input_max_width=1280",
+   "preprocess.kind=Image",
+   "preprocess.normalize.enable=On",
+   "preprocess.resize.enable=On",
+   "preprocess.resize.mode=Letterbox",
+   "score_threshold=0.25",
+   "top_k=10",
+   "frame_format=RGB"
+  ],
+  "yolo26l_obb__model": [
+   "decode_type=YoloV26Obb",
+   "preprocess.enable=On",
+   "preprocess.input_max_height=720",
+   "preprocess.input_max_width=1280",
+   "preprocess.kind=Image",
+   "preprocess.normalize.enable=On",
+   "preprocess.resize.enable=On",
+   "preprocess.resize.mode=Letterbox",
+   "score_threshold=0.25",
+   "top_k=10",
+   "frame_format=RGB"
+  ],
+  "yolo26l_pose__model": [
+   "decode_type=YoloV26Pose",
+   "preprocess.enable=On",
+   "preprocess.input_max_height=720",
+   "preprocess.input_max_width=1280",
+   "preprocess.kind=Image",
+   "preprocess.normalize.enable=On",
+   "preprocess.resize.enable=On",
+   "preprocess.resize.mode=Letterbox",
+   "score_threshold=0.25",
+   "top_k=10",
+   "frame_format=RGB"
+  ],
+  "yolo26l_seg__model": [
+   "decode_type=YoloV26Seg",
+   "preprocess.enable=On",
+   "preprocess.input_max_height=720",
+   "preprocess.input_max_width=1280",
+   "preprocess.kind=Image",
+   "preprocess.normalize.enable=On",
+   "preprocess.resize.enable=On",
+   "preprocess.resize.mode=Letterbox",
+   "score_threshold=0.25",
+   "top_k=10",
+   "frame_format=RGB"
+  ],
+  "yolo26m__model": [
+   "decode_type=YoloV26",
+   "preprocess.enable=On",
+   "preprocess.input_max_height=720",
+   "preprocess.input_max_width=1280",
+   "preprocess.kind=Image",
+   "preprocess.normalize.enable=On",
+   "preprocess.resize.enable=On",
+   "preprocess.resize.mode=Letterbox",
+   "score_threshold=0.25",
+   "top_k=10",
+   "frame_format=RGB"
+  ],
+  "yolo26m_obb__model": [
+   "decode_type=YoloV26Obb",
+   "preprocess.enable=On",
+   "preprocess.input_max_height=720",
+   "preprocess.input_max_width=1280",
+   "preprocess.kind=Image",
+   "preprocess.normalize.enable=On",
+   "preprocess.resize.enable=On",
+   "preprocess.resize.mode=Letterbox",
+   "score_threshold=0.25",
+   "top_k=10",
+   "frame_format=RGB"
+  ],
+  "yolo26m_pose__model": [
+   "decode_type=YoloV26Pose",
+   "preprocess.enable=On",
+   "preprocess.input_max_height=720",
+   "preprocess.input_max_width=1280",
+   "preprocess.kind=Image",
+   "preprocess.normalize.enable=On",
+   "preprocess.resize.enable=On",
+   "preprocess.resize.mode=Letterbox",
+   "score_threshold=0.25",
+   "top_k=10",
+   "frame_format=RGB"
+  ],
+  "yolo26m_seg__model": [
+   "decode_type=YoloV26Seg",
+   "preprocess.enable=On",
+   "preprocess.input_max_height=720",
+   "preprocess.input_max_width=1280",
+   "preprocess.kind=Image",
+   "preprocess.normalize.enable=On",
+   "preprocess.resize.enable=On",
+   "preprocess.resize.mode=Letterbox",
+   "score_threshold=0.25",
+   "top_k=10",
+   "frame_format=RGB"
+  ],
+  "yolo26n__model": [
+   "decode_type=YoloV26",
+   "preprocess.enable=On",
+   "preprocess.input_max_height=720",
+   "preprocess.input_max_width=1280",
+   "preprocess.kind=Image",
+   "preprocess.normalize.enable=On",
+   "preprocess.resize.enable=On",
+   "preprocess.resize.mode=Letterbox",
+   "score_threshold=0.25",
+   "top_k=10",
+   "frame_format=RGB"
+  ],
+  "yolo26n_obb__model": [
+   "decode_type=YoloV26Obb",
+   "preprocess.enable=On",
+   "preprocess.input_max_height=720",
+   "preprocess.input_max_width=1280",
+   "preprocess.kind=Image",
+   "preprocess.normalize.enable=On",
+   "preprocess.resize.enable=On",
+   "preprocess.resize.mode=Letterbox",
+   "score_threshold=0.25",
+   "top_k=10",
+   "frame_format=RGB"
+  ],
+  "yolo26n_pose__model": [
+   "decode_type=YoloV26Pose",
+   "preprocess.enable=On",
+   "preprocess.input_max_height=720",
+   "preprocess.input_max_width=1280",
+   "preprocess.kind=Image",
+   "preprocess.normalize.enable=On",
+   "preprocess.resize.enable=On",
+   "preprocess.resize.mode=Letterbox",
+   "score_threshold=0.25",
+   "top_k=10",
+   "frame_format=RGB"
+  ],
+  "yolo26n_seg__model": [
+   "decode_type=YoloV26Seg",
+   "preprocess.enable=On",
+   "preprocess.input_max_height=720",
+   "preprocess.input_max_width=1280",
+   "preprocess.kind=Image",
+   "preprocess.normalize.enable=On",
+   "preprocess.resize.enable=On",
+   "preprocess.resize.mode=Letterbox",
+   "score_threshold=0.25",
+   "top_k=10",
+   "frame_format=RGB"
+  ],
+  "yolo26s__model": [
+   "decode_type=YoloV26",
+   "preprocess.enable=On",
+   "preprocess.input_max_height=720",
+   "preprocess.input_max_width=1280",
+   "preprocess.kind=Image",
+   "preprocess.normalize.enable=On",
+   "preprocess.resize.enable=On",
+   "preprocess.resize.mode=Letterbox",
+   "score_threshold=0.25",
+   "top_k=10",
+   "frame_format=RGB"
+  ],
+  "yolo26s_obb__model": [
+   "decode_type=YoloV26Obb",
+   "preprocess.enable=On",
+   "preprocess.input_max_height=720",
+   "preprocess.input_max_width=1280",
+   "preprocess.kind=Image",
+   "preprocess.normalize.enable=On",
+   "preprocess.resize.enable=On",
+   "preprocess.resize.mode=Letterbox",
+   "score_threshold=0.25",
+   "top_k=10",
+   "frame_format=RGB"
+  ],
+  "yolo26s_pose__model": [
+   "decode_type=YoloV26Pose",
+   "preprocess.enable=On",
+   "preprocess.input_max_height=720",
+   "preprocess.input_max_width=1280",
+   "preprocess.kind=Image",
+   "preprocess.normalize.enable=On",
+   "preprocess.resize.enable=On",
+   "preprocess.resize.mode=Letterbox",
+   "score_threshold=0.25",
+   "top_k=10",
+   "frame_format=RGB"
+  ],
+  "yolo26s_seg__model": [
+   "decode_type=YoloV26Seg",
+   "preprocess.enable=On",
+   "preprocess.input_max_height=720",
+   "preprocess.input_max_width=1280",
+   "preprocess.kind=Image",
+   "preprocess.normalize.enable=On",
+   "preprocess.resize.enable=On",
+   "preprocess.resize.mode=Letterbox",
+   "score_threshold=0.25",
+   "top_k=10",
+   "frame_format=RGB"
+  ],
+  "yolo26x__model": [
+   "decode_type=YoloV26",
+   "preprocess.enable=On",
+   "preprocess.input_max_height=720",
+   "preprocess.input_max_width=1280",
+   "preprocess.kind=Image",
+   "preprocess.normalize.enable=On",
+   "preprocess.resize.enable=On",
+   "preprocess.resize.mode=Letterbox",
+   "score_threshold=0.25",
+   "top_k=10",
+   "frame_format=RGB"
+  ],
+  "yolo26x_obb__model": [
+   "decode_type=YoloV26Obb",
+   "preprocess.enable=On",
+   "preprocess.input_max_height=720",
+   "preprocess.input_max_width=1280",
+   "preprocess.kind=Image",
+   "preprocess.normalize.enable=On",
+   "preprocess.resize.enable=On",
+   "preprocess.resize.mode=Letterbox",
+   "score_threshold=0.25",
+   "top_k=10",
+   "frame_format=RGB"
+  ],
+  "yolo26x_pose__model": [
+   "decode_type=YoloV26Pose",
+   "preprocess.enable=On",
+   "preprocess.input_max_height=720",
+   "preprocess.input_max_width=1280",
+   "preprocess.kind=Image",
+   "preprocess.normalize.enable=On",
+   "preprocess.resize.enable=On",
+   "preprocess.resize.mode=Letterbox",
+   "score_threshold=0.25",
+   "top_k=10",
+   "frame_format=RGB"
+  ],
+  "yolo26x_seg__model": [
+   "decode_type=YoloV26Seg",
+   "preprocess.enable=On",
+   "preprocess.input_max_height=720",
+   "preprocess.input_max_width=1280",
+   "preprocess.kind=Image",
+   "preprocess.normalize.enable=On",
+   "preprocess.resize.enable=On",
+   "preprocess.resize.mode=Letterbox",
+   "score_threshold=0.25",
+   "top_k=10",
+   "frame_format=RGB"
+  ],
+  "yolo_world_l__detector": [
+   "boxdecode_original_height=640",
+   "boxdecode_original_width=640",
+   "boxdecode_resize_mode=Letterbox",
+   "decode_type=YoloV8",
+   "decode_type_option=GroupedByRoleProbability",
+   "nms_iou_threshold=0.7",
+   "num_classes=80",
+   "preprocess.kind=Tensor",
+   "score_threshold=0.25",
+   "top_k=10",
+   "frame_format=RGB"
+  ],
+  "yolo_world_l__text_encoder": [
+   "preprocess.kind=Tensor",
+   "frame_format=RGB"
+  ],
+  "yolo_world_m__detector": [
+   "boxdecode_original_height=640",
+   "boxdecode_original_width=640",
+   "boxdecode_resize_mode=Letterbox",
+   "decode_type=YoloV8",
+   "decode_type_option=GroupedByRoleProbability",
+   "nms_iou_threshold=0.7",
+   "num_classes=80",
+   "preprocess.kind=Tensor",
+   "score_threshold=0.25",
+   "top_k=10",
+   "frame_format=RGB"
+  ],
+  "yolo_world_m__text_encoder": [
+   "preprocess.kind=Tensor",
+   "frame_format=RGB"
+  ],
+  "yolo_world_s__detector": [
+   "boxdecode_original_height=640",
+   "boxdecode_original_width=640",
+   "boxdecode_resize_mode=Letterbox",
+   "decode_type=YoloV8",
+   "decode_type_option=GroupedByRoleProbability",
+   "nms_iou_threshold=0.7",
+   "num_classes=80",
+   "preprocess.kind=Tensor",
+   "score_threshold=0.25",
+   "top_k=10",
+   "frame_format=RGB"
+  ],
+  "yolo_world_s__text_encoder": [
+   "preprocess.kind=Tensor",
+   "frame_format=RGB"
+  ],
+  "yolov8l__model": [
+   "decode_type=YoloV8",
+   "nms_iou_threshold=0.7",
+   "preprocess.enable=On",
+   "preprocess.input_max_height=720",
+   "preprocess.input_max_width=1280",
+   "preprocess.kind=Image",
+   "preprocess.normalize.enable=On",
+   "preprocess.resize.enable=On",
+   "preprocess.resize.mode=Letterbox",
+   "score_threshold=0.25",
+   "top_k=10",
+   "frame_format=RGB"
+  ],
+  "yolov8l_obb__model": [
+   "decode_type=YoloV8Obb",
+   "nms_iou_threshold=0.7",
+   "preprocess.enable=On",
+   "preprocess.input_max_height=720",
+   "preprocess.input_max_width=1280",
+   "preprocess.kind=Image",
+   "preprocess.normalize.enable=On",
+   "preprocess.resize.enable=On",
+   "preprocess.resize.mode=Letterbox",
+   "score_threshold=0.25",
+   "top_k=10",
+   "frame_format=RGB"
+  ],
+  "yolov8m__model": [
+   "decode_type=YoloV8",
+   "nms_iou_threshold=0.7",
+   "preprocess.enable=On",
+   "preprocess.input_max_height=720",
+   "preprocess.input_max_width=1280",
+   "preprocess.kind=Image",
+   "preprocess.normalize.enable=On",
+   "preprocess.resize.enable=On",
+   "preprocess.resize.mode=Letterbox",
+   "score_threshold=0.25",
+   "top_k=10",
+   "frame_format=RGB"
+  ],
+  "yolov8m_obb__model": [
+   "decode_type=YoloV8Obb",
+   "nms_iou_threshold=0.7",
+   "preprocess.enable=On",
+   "preprocess.input_max_height=720",
+   "preprocess.input_max_width=1280",
+   "preprocess.kind=Image",
+   "preprocess.normalize.enable=On",
+   "preprocess.resize.enable=On",
+   "preprocess.resize.mode=Letterbox",
+   "score_threshold=0.25",
+   "top_k=10",
+   "frame_format=RGB"
+  ],
+  "yolov8n__model": [
+   "decode_type=YoloV8",
+   "nms_iou_threshold=0.7",
+   "preprocess.enable=On",
+   "preprocess.input_max_height=720",
+   "preprocess.input_max_width=1280",
+   "preprocess.kind=Image",
+   "preprocess.normalize.enable=On",
+   "preprocess.resize.enable=On",
+   "preprocess.resize.mode=Letterbox",
+   "score_threshold=0.25",
+   "top_k=10",
+   "frame_format=RGB"
+  ],
+  "yolov8n_obb__model": [
+   "decode_type=YoloV8Obb",
+   "nms_iou_threshold=0.7",
+   "preprocess.enable=On",
+   "preprocess.input_max_height=720",
+   "preprocess.input_max_width=1280",
+   "preprocess.kind=Image",
+   "preprocess.normalize.enable=On",
+   "preprocess.resize.enable=On",
+   "preprocess.resize.mode=Letterbox",
+   "score_threshold=0.25",
+   "top_k=10",
+   "frame_format=RGB"
+  ],
+  "yolov8s__model": [
+   "decode_type=YoloV8",
+   "nms_iou_threshold=0.7",
+   "preprocess.enable=On",
+   "preprocess.input_max_height=720",
+   "preprocess.input_max_width=1280",
+   "preprocess.kind=Image",
+   "preprocess.normalize.enable=On",
+   "preprocess.resize.enable=On",
+   "preprocess.resize.mode=Letterbox",
+   "score_threshold=0.25",
+   "top_k=10",
+   "frame_format=RGB"
+  ],
+  "yolov8s_obb__model": [
+   "decode_type=YoloV8Obb",
+   "nms_iou_threshold=0.7",
+   "preprocess.enable=On",
+   "preprocess.input_max_height=720",
+   "preprocess.input_max_width=1280",
+   "preprocess.kind=Image",
+   "preprocess.normalize.enable=On",
+   "preprocess.resize.enable=On",
+   "preprocess.resize.mode=Letterbox",
+   "score_threshold=0.25",
+   "top_k=10",
+   "frame_format=RGB"
+  ],
+  "yolov8x__model": [
+   "decode_type=YoloV8",
+   "nms_iou_threshold=0.7",
+   "preprocess.enable=On",
+   "preprocess.input_max_height=720",
+   "preprocess.input_max_width=1280",
+   "preprocess.kind=Image",
+   "preprocess.normalize.enable=On",
+   "preprocess.resize.enable=On",
+   "preprocess.resize.mode=Letterbox",
+   "score_threshold=0.25",
+   "top_k=10",
+   "frame_format=RGB"
+  ],
+  "yolov8x_obb__model": [
+   "decode_type=YoloV8Obb",
+   "nms_iou_threshold=0.7",
+   "preprocess.enable=On",
+   "preprocess.input_max_height=720",
+   "preprocess.input_max_width=1280",
+   "preprocess.kind=Image",
+   "preprocess.normalize.enable=On",
+   "preprocess.resize.enable=On",
+   "preprocess.resize.mode=Letterbox",
+   "score_threshold=0.25",
+   "top_k=10",
+   "frame_format=RGB"
+  ],
+  "yolox_l__model": [
+   "decode_type=YoloX",
+   "decode_type_option=Split3Interleaved",
+   "nms_iou_threshold=0.65",
+   "num_classes=80",
+   "preprocess.color_convert.enable=On",
+   "preprocess.color_convert.input_format=RGB",
+   "preprocess.color_convert.output_format=BGR",
+   "preprocess.enable=On",
+   "preprocess.input_max_height=720",
+   "preprocess.input_max_width=1280",
+   "preprocess.kind=Image",
+   "preprocess.normalize.enable=On",
+   "preprocess.normalize.has_explicit_stats=true",
+   "preprocess.normalize.mean=[0.0,0.0,0.0]",
+   "preprocess.normalize.stddev=[0.00392156862745098,0.00392156862745098,0.00392156862745098]",
+   "preprocess.resize.enable=On",
+   "preprocess.resize.height=640",
+   "preprocess.resize.mode=Letterbox",
+   "preprocess.resize.pad_value=114",
+   "preprocess.resize.width=640",
+   "score_threshold=0.25",
+   "top_k=10",
+   "frame_format=RGB"
+  ],
+  "yolox_m__model": [
+   "decode_type=YoloX",
+   "decode_type_option=Split3Interleaved",
+   "nms_iou_threshold=0.65",
+   "num_classes=80",
+   "preprocess.color_convert.enable=On",
+   "preprocess.color_convert.input_format=RGB",
+   "preprocess.color_convert.output_format=BGR",
+   "preprocess.enable=On",
+   "preprocess.input_max_height=720",
+   "preprocess.input_max_width=1280",
+   "preprocess.kind=Image",
+   "preprocess.normalize.enable=On",
+   "preprocess.normalize.has_explicit_stats=true",
+   "preprocess.normalize.mean=[0.0,0.0,0.0]",
+   "preprocess.normalize.stddev=[0.00392156862745098,0.00392156862745098,0.00392156862745098]",
+   "preprocess.resize.enable=On",
+   "preprocess.resize.height=640",
+   "preprocess.resize.mode=Letterbox",
+   "preprocess.resize.pad_value=114",
+   "preprocess.resize.width=640",
+   "score_threshold=0.25",
+   "top_k=10",
+   "frame_format=RGB"
+  ],
+  "yolox_s__model": [
+   "decode_type=YoloX",
+   "decode_type_option=Split3Interleaved",
+   "nms_iou_threshold=0.65",
+   "num_classes=80",
+   "preprocess.color_convert.enable=On",
+   "preprocess.color_convert.input_format=RGB",
+   "preprocess.color_convert.output_format=BGR",
+   "preprocess.enable=On",
+   "preprocess.input_max_height=720",
+   "preprocess.input_max_width=1280",
+   "preprocess.kind=Image",
+   "preprocess.normalize.enable=On",
+   "preprocess.normalize.has_explicit_stats=true",
+   "preprocess.normalize.mean=[0.0,0.0,0.0]",
+   "preprocess.normalize.stddev=[0.00392156862745098,0.00392156862745098,0.00392156862745098]",
+   "preprocess.resize.enable=On",
+   "preprocess.resize.height=640",
+   "preprocess.resize.mode=Letterbox",
+   "preprocess.resize.pad_value=114",
+   "preprocess.resize.width=640",
+   "score_threshold=0.25",
+   "top_k=10",
+   "frame_format=RGB"
+  ],
+  "yolox_x__model": [
+   "decode_type=YoloX",
+   "decode_type_option=Split3Interleaved",
+   "nms_iou_threshold=0.65",
+   "num_classes=80",
+   "preprocess.color_convert.enable=On",
+   "preprocess.color_convert.input_format=RGB",
+   "preprocess.color_convert.output_format=BGR",
+   "preprocess.enable=On",
+   "preprocess.input_max_height=720",
+   "preprocess.input_max_width=1280",
+   "preprocess.kind=Image",
+   "preprocess.normalize.enable=On",
+   "preprocess.normalize.has_explicit_stats=true",
+   "preprocess.normalize.mean=[0.0,0.0,0.0]",
+   "preprocess.normalize.stddev=[0.00392156862745098,0.00392156862745098,0.00392156862745098]",
+   "preprocess.resize.enable=On",
+   "preprocess.resize.height=640",
+   "preprocess.resize.mode=Letterbox",
+   "preprocess.resize.pad_value=114",
+   "preprocess.resize.width=640",
+   "score_threshold=0.25",
+   "top_k=10",
+   "frame_format=RGB"
+  ]
+ },
+ "packages": [
+  {
+   "name": "clip_vit_b_16 w16a16",
+   "model": "clip_vit_b_16",
+   "variant": "w16a16",
+   "tasks": [
+    "image_text_embedding"
+   ],
+   "components": [
+    {
+     "component": "image_encoder",
+     "id": "clip_vit_b_16__w16a16__image_encoder",
+     "options": "clip_vit_b_16__image_encoder"
+    },
+    {
+     "component": "text_encoder",
+     "id": "clip_vit_b_16__w16a16__text_encoder",
+     "options": "clip_vit_b_16__text_encoder"
+    }
+   ]
+  },
+  {
+   "name": "clip_vit_b_16 w8a16",
+   "model": "clip_vit_b_16",
+   "variant": "w8a16",
+   "tasks": [
+    "image_text_embedding"
+   ],
+   "components": [
+    {
+     "component": "image_encoder",
+     "id": "clip_vit_b_16__w8a16__image_encoder",
+     "options": "clip_vit_b_16__image_encoder"
+    },
+    {
+     "component": "text_encoder",
+     "id": "clip_vit_b_16__w8a16__text_encoder",
+     "options": "clip_vit_b_16__text_encoder"
+    }
+   ]
+  },
+  {
+   "name": "densenet_121 w16a16",
+   "model": "densenet_121",
+   "variant": "w16a16",
+   "tasks": [
+    "image_classification"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "densenet_121__w16a16__model",
+     "options": "densenet_121__model"
+    }
+   ]
+  },
+  {
+   "name": "densenet_121 w8a8",
+   "model": "densenet_121",
+   "variant": "w8a8",
+   "tasks": [
+    "image_classification"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "densenet_121__w8a8__model",
+     "options": "densenet_121__model"
+    }
+   ]
+  },
+  {
+   "name": "densenet_161 w16a16",
+   "model": "densenet_161",
+   "variant": "w16a16",
+   "tasks": [
+    "image_classification"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "densenet_161__w16a16__model",
+     "options": "densenet_161__model"
+    }
+   ]
+  },
+  {
+   "name": "densenet_161 w8a8",
+   "model": "densenet_161",
+   "variant": "w8a8",
+   "tasks": [
+    "image_classification"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "densenet_161__w8a8__model",
+     "options": "densenet_161__model"
+    }
+   ]
+  },
+  {
+   "name": "densenet_169 w16a16",
+   "model": "densenet_169",
+   "variant": "w16a16",
+   "tasks": [
+    "image_classification"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "densenet_169__w16a16__model",
+     "options": "densenet_169__model"
+    }
+   ]
+  },
+  {
+   "name": "densenet_169 w8a8",
+   "model": "densenet_169",
+   "variant": "w8a8",
+   "tasks": [
+    "image_classification"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "densenet_169__w8a8__model",
+     "options": "densenet_169__model"
+    }
+   ]
+  },
+  {
+   "name": "depth_anything_3_small_1view_280x504 w8a16",
+   "model": "depth_anything_3_small_1view_280x504",
+   "variant": "w8a16",
+   "tasks": [
+    "depth_estimation"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "depth_anything_3_small_1view_280x504__w8a16__model",
+     "options": "depth_anything_3_small_1view_280x504__model"
+    }
+   ]
+  },
+  {
+   "name": "depth_anything_3_small_1view_378x504 w8a16",
+   "model": "depth_anything_3_small_1view_378x504",
+   "variant": "w8a16",
+   "tasks": [
+    "depth_estimation"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "depth_anything_3_small_1view_378x504__w8a16__model",
+     "options": "depth_anything_3_small_1view_378x504__model"
+    }
+   ]
+  },
+  {
+   "name": "depth_anything_v2_small w16a16",
+   "model": "depth_anything_v2_small",
+   "variant": "w16a16",
+   "tasks": [
+    "depth_estimation"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "depth_anything_v2_small__w16a16__model",
+     "options": "depth_anything_v2_small__model"
+    }
+   ]
+  },
+  {
+   "name": "depth_anything_v2_small w8a16",
+   "model": "depth_anything_v2_small",
+   "variant": "w8a16",
+   "tasks": [
+    "depth_estimation"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "depth_anything_v2_small__w8a16__model",
+     "options": "depth_anything_v2_small__model"
+    }
+   ]
+  },
+  {
+   "name": "depth_anything_v2_small w8a8_mixed",
+   "model": "depth_anything_v2_small",
+   "variant": "w8a8_mixed",
+   "tasks": [
+    "depth_estimation"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "depth_anything_v2_small__w8a8_mixed__model",
+     "options": "depth_anything_v2_small__model"
+    }
+   ]
+  },
+  {
+   "name": "detr_resnet_101 w16a16",
+   "model": "detr_resnet_101",
+   "variant": "w16a16",
+   "tasks": [
+    "object_detection"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "detr_resnet_101__w16a16__model",
+     "options": "detr_resnet_101__model"
+    }
+   ]
+  },
+  {
+   "name": "detr_resnet_101 w8a8_mixed",
+   "model": "detr_resnet_101",
+   "variant": "w8a8_mixed",
+   "tasks": [
+    "object_detection"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "detr_resnet_101__w8a8_mixed__model",
+     "options": "detr_resnet_101__model"
+    }
+   ]
+  },
+  {
+   "name": "detr_resnet_50 w16a16",
+   "model": "detr_resnet_50",
+   "variant": "w16a16",
+   "tasks": [
+    "object_detection"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "detr_resnet_50__w16a16__model",
+     "options": "detr_resnet_50__model"
+    }
+   ]
+  },
+  {
+   "name": "detr_resnet_50 w8a8_mixed",
+   "model": "detr_resnet_50",
+   "variant": "w8a8_mixed",
+   "tasks": [
+    "object_detection"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "detr_resnet_50__w8a8_mixed__model",
+     "options": "detr_resnet_50__model"
+    }
+   ]
+  },
+  {
+   "name": "dfine_n w16a16",
+   "model": "dfine_n",
+   "variant": "w16a16",
+   "tasks": [
+    "object_detection"
+   ],
+   "components": [
+    {
+     "component": "backbone",
+     "id": "dfine_n__w16a16__backbone",
+     "options": "dfine_n__backbone"
+    },
+    {
+     "component": "decoder",
+     "id": "dfine_n__w16a16__decoder",
+     "options": "dfine_n__decoder"
+    }
+   ]
+  },
+  {
+   "name": "dfine_n w8a8_mixed_w16a16",
+   "model": "dfine_n",
+   "variant": "w8a8_mixed_w16a16",
+   "tasks": [
+    "object_detection"
+   ],
+   "components": [
+    {
+     "component": "backbone",
+     "id": "dfine_n__w8a8_mixed_w16a16__backbone",
+     "options": "dfine_n__backbone"
+    },
+    {
+     "component": "decoder",
+     "id": "dfine_n__w8a8_mixed_w16a16__decoder",
+     "options": "dfine_n__decoder"
+    }
+   ]
+  },
+  {
+   "name": "dfine_n w8a8_w16a16",
+   "model": "dfine_n",
+   "variant": "w8a8_w16a16",
+   "tasks": [
+    "object_detection"
+   ],
+   "components": [
+    {
+     "component": "backbone",
+     "id": "dfine_n__w8a8_w16a16__backbone",
+     "options": "dfine_n__backbone"
+    },
+    {
+     "component": "decoder",
+     "id": "dfine_n__w8a8_w16a16__decoder",
+     "options": "dfine_n__decoder"
+    }
+   ]
+  },
+  {
+   "name": "dinov3_convnext_base w16a16",
+   "model": "dinov3_convnext_base",
+   "variant": "w16a16",
+   "tasks": [
+    "image_embedding"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "dinov3_convnext_base__w16a16__model",
+     "options": "dinov3_convnext_base__model"
+    }
+   ]
+  },
+  {
+   "name": "dinov3_convnext_large w16a16",
+   "model": "dinov3_convnext_large",
+   "variant": "w16a16",
+   "tasks": [
+    "image_embedding"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "dinov3_convnext_large__w16a16__model",
+     "options": "dinov3_convnext_large__model"
+    }
+   ]
+  },
+  {
+   "name": "dinov3_convnext_large w8a16",
+   "model": "dinov3_convnext_large",
+   "variant": "w8a16",
+   "tasks": [
+    "image_embedding"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "dinov3_convnext_large__w8a16__model",
+     "options": "dinov3_convnext_large__model"
+    }
+   ]
+  },
+  {
+   "name": "dinov3_convnext_small w16a16",
+   "model": "dinov3_convnext_small",
+   "variant": "w16a16",
+   "tasks": [
+    "image_embedding"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "dinov3_convnext_small__w16a16__model",
+     "options": "dinov3_convnext_small__model"
+    }
+   ]
+  },
+  {
+   "name": "dinov3_convnext_small w8a16",
+   "model": "dinov3_convnext_small",
+   "variant": "w8a16",
+   "tasks": [
+    "image_embedding"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "dinov3_convnext_small__w8a16__model",
+     "options": "dinov3_convnext_small__model"
+    }
+   ]
+  },
+  {
+   "name": "dinov3_convnext_tiny w16a16",
+   "model": "dinov3_convnext_tiny",
+   "variant": "w16a16",
+   "tasks": [
+    "image_embedding"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "dinov3_convnext_tiny__w16a16__model",
+     "options": "dinov3_convnext_tiny__model"
+    }
+   ]
+  },
+  {
+   "name": "dinov3_convnext_tiny w8a16",
+   "model": "dinov3_convnext_tiny",
+   "variant": "w8a16",
+   "tasks": [
+    "image_embedding"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "dinov3_convnext_tiny__w8a16__model",
+     "options": "dinov3_convnext_tiny__model"
+    }
+   ]
+  },
+  {
+   "name": "dinov3_vit_b_16 w16a16",
+   "model": "dinov3_vit_b_16",
+   "variant": "w16a16",
+   "tasks": [
+    "image_embedding"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "dinov3_vit_b_16__w16a16__model",
+     "options": "dinov3_vit_b_16__model"
+    }
+   ]
+  },
+  {
+   "name": "dinov3_vit_b_16 w8a16",
+   "model": "dinov3_vit_b_16",
+   "variant": "w8a16",
+   "tasks": [
+    "image_embedding"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "dinov3_vit_b_16__w8a16__model",
+     "options": "dinov3_vit_b_16__model"
+    }
+   ]
+  },
+  {
+   "name": "dinov3_vit_h_plus_16 w16a16",
+   "model": "dinov3_vit_h_plus_16",
+   "variant": "w16a16",
+   "tasks": [
+    "image_embedding"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "dinov3_vit_h_plus_16__w16a16__model",
+     "options": "dinov3_vit_h_plus_16__model"
+    }
+   ]
+  },
+  {
+   "name": "dinov3_vit_h_plus_16 w8a16",
+   "model": "dinov3_vit_h_plus_16",
+   "variant": "w8a16",
+   "tasks": [
+    "image_embedding"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "dinov3_vit_h_plus_16__w8a16__model",
+     "options": "dinov3_vit_h_plus_16__model"
+    }
+   ]
+  },
+  {
+   "name": "dinov3_vit_l_16 w16a16",
+   "model": "dinov3_vit_l_16",
+   "variant": "w16a16",
+   "tasks": [
+    "image_embedding"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "dinov3_vit_l_16__w16a16__model",
+     "options": "dinov3_vit_l_16__model"
+    }
+   ]
+  },
+  {
+   "name": "dinov3_vit_l_16 w8a16",
+   "model": "dinov3_vit_l_16",
+   "variant": "w8a16",
+   "tasks": [
+    "image_embedding"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "dinov3_vit_l_16__w8a16__model",
+     "options": "dinov3_vit_l_16__model"
+    }
+   ]
+  },
+  {
+   "name": "dinov3_vit_s_16 w16a16",
+   "model": "dinov3_vit_s_16",
+   "variant": "w16a16",
+   "tasks": [
+    "image_embedding"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "dinov3_vit_s_16__w16a16__model",
+     "options": "dinov3_vit_s_16__model"
+    }
+   ]
+  },
+  {
+   "name": "dinov3_vit_s_16 w8a16",
+   "model": "dinov3_vit_s_16",
+   "variant": "w8a16",
+   "tasks": [
+    "image_embedding"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "dinov3_vit_s_16__w8a16__model",
+     "options": "dinov3_vit_s_16__model"
+    }
+   ]
+  },
+  {
+   "name": "dinov3_vit_s_plus_16 w16a16",
+   "model": "dinov3_vit_s_plus_16",
+   "variant": "w16a16",
+   "tasks": [
+    "image_embedding"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "dinov3_vit_s_plus_16__w16a16__model",
+     "options": "dinov3_vit_s_plus_16__model"
+    }
+   ]
+  },
+  {
+   "name": "dinov3_vit_s_plus_16 w8a16",
+   "model": "dinov3_vit_s_plus_16",
+   "variant": "w8a16",
+   "tasks": [
+    "image_embedding"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "dinov3_vit_s_plus_16__w8a16__model",
+     "options": "dinov3_vit_s_plus_16__model"
+    }
+   ]
+  },
+  {
+   "name": "dla_34 w16a16",
+   "model": "dla_34",
+   "variant": "w16a16",
+   "tasks": [
+    "image_classification"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "dla_34__w16a16__model",
+     "options": "dla_34__model"
+    }
+   ]
+  },
+  {
+   "name": "dla_34 w8a8",
+   "model": "dla_34",
+   "variant": "w8a8",
+   "tasks": [
+    "image_classification"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "dla_34__w8a8__model",
+     "options": "dla_34__model"
+    }
+   ]
+  },
+  {
+   "name": "edgetam w16a16_w8a16_w16a16_w8a8",
+   "model": "edgetam",
+   "variant": "w16a16_w8a16_w16a16_w8a8",
+   "tasks": [
+    "video_object_segmentation"
+   ],
+   "components": [
+    {
+     "component": "image_encoder",
+     "id": "edgetam__w16a16_w8a16_w16a16_w8a8__image_encoder",
+     "options": "edgetam__image_encoder"
+    },
+    {
+     "component": "mask_decoder",
+     "id": "edgetam__w16a16_w8a16_w16a16_w8a8__mask_decoder",
+     "options": "edgetam__mask_decoder"
+    },
+    {
+     "component": "memory_attention",
+     "id": "edgetam__w16a16_w8a16_w16a16_w8a8__memory_attention",
+     "options": "edgetam__memory_attention"
+    },
+    {
+     "component": "memory_encoder",
+     "id": "edgetam__w16a16_w8a16_w16a16_w8a8__memory_encoder",
+     "options": "edgetam__memory_encoder"
+    }
+   ]
+  },
+  {
+   "name": "edgetam w8a8_w8a16_w16a16_w8a8",
+   "model": "edgetam",
+   "variant": "w8a8_w8a16_w16a16_w8a8",
+   "tasks": [
+    "video_object_segmentation"
+   ],
+   "components": [
+    {
+     "component": "image_encoder",
+     "id": "edgetam__w8a8_w8a16_w16a16_w8a8__image_encoder",
+     "options": "edgetam__image_encoder"
+    },
+    {
+     "component": "mask_decoder",
+     "id": "edgetam__w8a8_w8a16_w16a16_w8a8__mask_decoder",
+     "options": "edgetam__mask_decoder"
+    },
+    {
+     "component": "memory_attention",
+     "id": "edgetam__w8a8_w8a16_w16a16_w8a8__memory_attention",
+     "options": "edgetam__memory_attention"
+    },
+    {
+     "component": "memory_encoder",
+     "id": "edgetam__w8a8_w8a16_w16a16_w8a8__memory_encoder",
+     "options": "edgetam__memory_encoder"
+    }
+   ]
+  },
+  {
+   "name": "hrnet_w32 w16a16",
+   "model": "hrnet_w32",
+   "variant": "w16a16",
+   "tasks": [
+    "image_classification"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "hrnet_w32__w16a16__model",
+     "options": "hrnet_w32__model"
+    }
+   ]
+  },
+  {
+   "name": "hrnet_w32 w8a8",
+   "model": "hrnet_w32",
+   "variant": "w8a8",
+   "tasks": [
+    "image_classification"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "hrnet_w32__w8a8__model",
+     "options": "hrnet_w32__model"
+    }
+   ]
+  },
+  {
+   "name": "inception_v3 w16a16",
+   "model": "inception_v3",
+   "variant": "w16a16",
+   "tasks": [
+    "image_classification"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "inception_v3__w16a16__model",
+     "options": "inception_v3__model"
+    }
+   ]
+  },
+  {
+   "name": "inception_v3 w8a8",
+   "model": "inception_v3",
+   "variant": "w8a8",
+   "tasks": [
+    "image_classification"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "inception_v3__w8a8__model",
+     "options": "inception_v3__model"
+    }
+   ]
+  },
+  {
+   "name": "lightglue_superpoint w16a16",
+   "model": "lightglue_superpoint",
+   "variant": "w16a16",
+   "tasks": [
+    "feature_matching"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "lightglue_superpoint__w16a16__model",
+     "options": "lightglue_superpoint__model"
+    }
+   ]
+  },
+  {
+   "name": "lightglue_superpoint w8a8",
+   "model": "lightglue_superpoint",
+   "variant": "w8a8",
+   "tasks": [
+    "feature_matching"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "lightglue_superpoint__w8a8__model",
+     "options": "lightglue_superpoint__model"
+    }
+   ]
+  },
+  {
+   "name": "lightglue_superpoint w8a8_mixed",
+   "model": "lightglue_superpoint",
+   "variant": "w8a8_mixed",
+   "tasks": [
+    "feature_matching"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "lightglue_superpoint__w8a8_mixed__model",
+     "options": "lightglue_superpoint__model"
+    }
+   ]
+  },
+  {
+   "name": "lightstereo_l w8a8_mixed",
+   "model": "lightstereo_l",
+   "variant": "w8a8_mixed",
+   "tasks": [
+    "depth_estimation"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "lightstereo_l__w8a8_mixed__model",
+     "options": "lightstereo_l__model"
+    }
+   ]
+  },
+  {
+   "name": "lightstereo_m w16a16",
+   "model": "lightstereo_m",
+   "variant": "w16a16",
+   "tasks": [
+    "depth_estimation"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "lightstereo_m__w16a16__model",
+     "options": "lightstereo_m__model"
+    }
+   ]
+  },
+  {
+   "name": "lightstereo_m w8a8_mixed",
+   "model": "lightstereo_m",
+   "variant": "w8a8_mixed",
+   "tasks": [
+    "depth_estimation"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "lightstereo_m__w8a8_mixed__model",
+     "options": "lightstereo_m__model"
+    }
+   ]
+  },
+  {
+   "name": "lightstereo_s w16a16",
+   "model": "lightstereo_s",
+   "variant": "w16a16",
+   "tasks": [
+    "depth_estimation"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "lightstereo_s__w16a16__model",
+     "options": "lightstereo_s__model"
+    }
+   ]
+  },
+  {
+   "name": "lightstereo_s w8a8_mixed",
+   "model": "lightstereo_s",
+   "variant": "w8a8_mixed",
+   "tasks": [
+    "depth_estimation"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "lightstereo_s__w8a8_mixed__model",
+     "options": "lightstereo_s__model"
+    }
+   ]
+  },
+  {
+   "name": "netvlad w16a16",
+   "model": "netvlad",
+   "variant": "w16a16",
+   "tasks": [
+    "loop_closure"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "netvlad__w16a16__model",
+     "options": "netvlad__model"
+    }
+   ]
+  },
+  {
+   "name": "netvlad w8a16",
+   "model": "netvlad",
+   "variant": "w8a16",
+   "tasks": [
+    "loop_closure"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "netvlad__w8a16__model",
+     "options": "netvlad__model"
+    }
+   ]
+  },
+  {
+   "name": "netvlad w8a8_mixed",
+   "model": "netvlad",
+   "variant": "w8a8_mixed",
+   "tasks": [
+    "loop_closure"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "netvlad__w8a8_mixed__model",
+     "options": "netvlad__model"
+    }
+   ]
+  },
+  {
+   "name": "raft_stereo_realtime w16a16",
+   "model": "raft_stereo_realtime",
+   "variant": "w16a16",
+   "tasks": [
+    "depth_estimation"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "raft_stereo_realtime__w16a16__model",
+     "options": "raft_stereo_realtime__model"
+    }
+   ]
+  },
+  {
+   "name": "resnet_18 w16a16",
+   "model": "resnet_18",
+   "variant": "w16a16",
+   "tasks": [
+    "image_classification"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "resnet_18__w16a16__model",
+     "options": "resnet_18__model"
+    }
+   ]
+  },
+  {
+   "name": "resnet_18 w8a8",
+   "model": "resnet_18",
+   "variant": "w8a8",
+   "tasks": [
+    "image_classification"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "resnet_18__w8a8__model",
+     "options": "resnet_18__model"
+    }
+   ]
+  },
+  {
+   "name": "resnet_34 w16a16",
+   "model": "resnet_34",
+   "variant": "w16a16",
+   "tasks": [
+    "image_classification"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "resnet_34__w16a16__model",
+     "options": "resnet_34__model"
+    }
+   ]
+  },
+  {
+   "name": "resnet_34 w8a8",
+   "model": "resnet_34",
+   "variant": "w8a8",
+   "tasks": [
+    "image_classification"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "resnet_34__w8a8__model",
+     "options": "resnet_34__model"
+    }
+   ]
+  },
+  {
+   "name": "resnet_50 w16a16",
+   "model": "resnet_50",
+   "variant": "w16a16",
+   "tasks": [
+    "image_classification"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "resnet_50__w16a16__model",
+     "options": "resnet_50__model"
+    }
+   ]
+  },
+  {
+   "name": "resnet_50 w8a16",
+   "model": "resnet_50",
+   "variant": "w8a16",
+   "tasks": [
+    "image_classification"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "resnet_50__w8a16__model",
+     "options": "resnet_50__model"
+    }
+   ]
+  },
+  {
+   "name": "resnet_50 w8a8",
+   "model": "resnet_50",
+   "variant": "w8a8",
+   "tasks": [
+    "image_classification"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "resnet_50__w8a8__model",
+     "options": "resnet_50__model"
+    }
+   ]
+  },
+  {
+   "name": "resnext_101_32x8d w16a16",
+   "model": "resnext_101_32x8d",
+   "variant": "w16a16",
+   "tasks": [
+    "image_classification"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "resnext_101_32x8d__w16a16__model",
+     "options": "resnext_101_32x8d__model"
+    }
+   ]
+  },
+  {
+   "name": "resnext_101_32x8d w8a8",
+   "model": "resnext_101_32x8d",
+   "variant": "w8a8",
+   "tasks": [
+    "image_classification"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "resnext_101_32x8d__w8a8__model",
+     "options": "resnext_101_32x8d__model"
+    }
+   ]
+  },
+  {
+   "name": "resnext_101_64x4d w16a16",
+   "model": "resnext_101_64x4d",
+   "variant": "w16a16",
+   "tasks": [
+    "image_classification"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "resnext_101_64x4d__w16a16__model",
+     "options": "resnext_101_64x4d__model"
+    }
+   ]
+  },
+  {
+   "name": "resnext_101_64x4d w8a8",
+   "model": "resnext_101_64x4d",
+   "variant": "w8a8",
+   "tasks": [
+    "image_classification"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "resnext_101_64x4d__w8a8__model",
+     "options": "resnext_101_64x4d__model"
+    }
+   ]
+  },
+  {
+   "name": "resnext_50_32x4d w16a16",
+   "model": "resnext_50_32x4d",
+   "variant": "w16a16",
+   "tasks": [
+    "image_classification"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "resnext_50_32x4d__w16a16__model",
+     "options": "resnext_50_32x4d__model"
+    }
+   ]
+  },
+  {
+   "name": "resnext_50_32x4d w8a8",
+   "model": "resnext_50_32x4d",
+   "variant": "w8a8",
+   "tasks": [
+    "image_classification"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "resnext_50_32x4d__w8a8__model",
+     "options": "resnext_50_32x4d__model"
+    }
+   ]
+  },
+  {
+   "name": "rf_detr_large w8a16_w16a16",
+   "model": "rf_detr_large",
+   "variant": "w8a16_w16a16",
+   "tasks": [
+    "object_detection"
+   ],
+   "components": [
+    {
+     "component": "backbone",
+     "id": "rf_detr_large__w8a16_w16a16__backbone",
+     "options": "rf_detr_large__backbone"
+    },
+    {
+     "component": "decoder",
+     "id": "rf_detr_large__w8a16_w16a16__decoder",
+     "options": null
+    }
+   ]
+  },
+  {
+   "name": "rf_detr_large w8a8_mixed_w16a16",
+   "model": "rf_detr_large",
+   "variant": "w8a8_mixed_w16a16",
+   "tasks": [
+    "object_detection"
+   ],
+   "components": [
+    {
+     "component": "backbone",
+     "id": "rf_detr_large__w8a8_mixed_w16a16__backbone",
+     "options": "rf_detr_large__backbone"
+    },
+    {
+     "component": "decoder",
+     "id": "rf_detr_large__w8a8_mixed_w16a16__decoder",
+     "options": null
+    }
+   ]
+  },
+  {
+   "name": "rf_detr_large w8a8_w16a16",
+   "model": "rf_detr_large",
+   "variant": "w8a8_w16a16",
+   "tasks": [
+    "object_detection"
+   ],
+   "components": [
+    {
+     "component": "backbone",
+     "id": "rf_detr_large__w8a8_w16a16__backbone",
+     "options": "rf_detr_large__backbone"
+    },
+    {
+     "component": "decoder",
+     "id": "rf_detr_large__w8a8_w16a16__decoder",
+     "options": null
+    }
+   ]
+  },
+  {
+   "name": "rf_detr_medium w8a16_w16a16",
+   "model": "rf_detr_medium",
+   "variant": "w8a16_w16a16",
+   "tasks": [
+    "object_detection"
+   ],
+   "components": [
+    {
+     "component": "backbone",
+     "id": "rf_detr_medium__w8a16_w16a16__backbone",
+     "options": "rf_detr_medium__backbone"
+    },
+    {
+     "component": "decoder",
+     "id": "rf_detr_medium__w8a16_w16a16__decoder",
+     "options": null
+    }
+   ]
+  },
+  {
+   "name": "rf_detr_medium w8a8_mixed_w16a16",
+   "model": "rf_detr_medium",
+   "variant": "w8a8_mixed_w16a16",
+   "tasks": [
+    "object_detection"
+   ],
+   "components": [
+    {
+     "component": "backbone",
+     "id": "rf_detr_medium__w8a8_mixed_w16a16__backbone",
+     "options": "rf_detr_medium__backbone"
+    },
+    {
+     "component": "decoder",
+     "id": "rf_detr_medium__w8a8_mixed_w16a16__decoder",
+     "options": null
+    }
+   ]
+  },
+  {
+   "name": "rf_detr_medium w8a8_w16a16",
+   "model": "rf_detr_medium",
+   "variant": "w8a8_w16a16",
+   "tasks": [
+    "object_detection"
+   ],
+   "components": [
+    {
+     "component": "backbone",
+     "id": "rf_detr_medium__w8a8_w16a16__backbone",
+     "options": "rf_detr_medium__backbone"
+    },
+    {
+     "component": "decoder",
+     "id": "rf_detr_medium__w8a8_w16a16__decoder",
+     "options": null
+    }
+   ]
+  },
+  {
+   "name": "rf_detr_nano w8a16_w16a16",
+   "model": "rf_detr_nano",
+   "variant": "w8a16_w16a16",
+   "tasks": [
+    "object_detection"
+   ],
+   "components": [
+    {
+     "component": "backbone",
+     "id": "rf_detr_nano__w8a16_w16a16__backbone",
+     "options": "rf_detr_nano__backbone"
+    },
+    {
+     "component": "decoder",
+     "id": "rf_detr_nano__w8a16_w16a16__decoder",
+     "options": null
+    }
+   ]
+  },
+  {
+   "name": "rf_detr_nano w8a8_mixed_w16a16",
+   "model": "rf_detr_nano",
+   "variant": "w8a8_mixed_w16a16",
+   "tasks": [
+    "object_detection"
+   ],
+   "components": [
+    {
+     "component": "backbone",
+     "id": "rf_detr_nano__w8a8_mixed_w16a16__backbone",
+     "options": "rf_detr_nano__backbone"
+    },
+    {
+     "component": "decoder",
+     "id": "rf_detr_nano__w8a8_mixed_w16a16__decoder",
+     "options": null
+    }
+   ]
+  },
+  {
+   "name": "rf_detr_nano w8a8_w16a16",
+   "model": "rf_detr_nano",
+   "variant": "w8a8_w16a16",
+   "tasks": [
+    "object_detection"
+   ],
+   "components": [
+    {
+     "component": "backbone",
+     "id": "rf_detr_nano__w8a8_w16a16__backbone",
+     "options": "rf_detr_nano__backbone"
+    },
+    {
+     "component": "decoder",
+     "id": "rf_detr_nano__w8a8_w16a16__decoder",
+     "options": null
+    }
+   ]
+  },
+  {
+   "name": "rf_detr_seg_medium w8a16_w16a16",
+   "model": "rf_detr_seg_medium",
+   "variant": "w8a16_w16a16",
+   "tasks": [
+    "instance_segmentation"
+   ],
+   "components": [
+    {
+     "component": "backbone",
+     "id": "rf_detr_seg_medium__w8a16_w16a16__backbone",
+     "options": "rf_detr_seg_medium__backbone"
+    },
+    {
+     "component": "decoder",
+     "id": "rf_detr_seg_medium__w8a16_w16a16__decoder",
+     "options": null
+    }
+   ]
+  },
+  {
+   "name": "rf_detr_seg_medium w8a16_w8a8_mixed",
+   "model": "rf_detr_seg_medium",
+   "variant": "w8a16_w8a8_mixed",
+   "tasks": [
+    "instance_segmentation"
+   ],
+   "components": [
+    {
+     "component": "backbone",
+     "id": "rf_detr_seg_medium__w8a16_w8a8_mixed__backbone",
+     "options": "rf_detr_seg_medium__backbone"
+    },
+    {
+     "component": "decoder",
+     "id": "rf_detr_seg_medium__w8a16_w8a8_mixed__decoder",
+     "options": null
+    }
+   ]
+  },
+  {
+   "name": "rf_detr_seg_medium w8a8_mixed_w16a16",
+   "model": "rf_detr_seg_medium",
+   "variant": "w8a8_mixed_w16a16",
+   "tasks": [
+    "instance_segmentation"
+   ],
+   "components": [
+    {
+     "component": "backbone",
+     "id": "rf_detr_seg_medium__w8a8_mixed_w16a16__backbone",
+     "options": "rf_detr_seg_medium__backbone"
+    },
+    {
+     "component": "decoder",
+     "id": "rf_detr_seg_medium__w8a8_mixed_w16a16__decoder",
+     "options": null
+    }
+   ]
+  },
+  {
+   "name": "rf_detr_seg_medium w8a8_w16a16",
+   "model": "rf_detr_seg_medium",
+   "variant": "w8a8_w16a16",
+   "tasks": [
+    "instance_segmentation"
+   ],
+   "components": [
+    {
+     "component": "backbone",
+     "id": "rf_detr_seg_medium__w8a8_w16a16__backbone",
+     "options": "rf_detr_seg_medium__backbone"
+    },
+    {
+     "component": "decoder",
+     "id": "rf_detr_seg_medium__w8a8_w16a16__decoder",
+     "options": null
+    }
+   ]
+  },
+  {
+   "name": "rf_detr_seg_nano w8a16_w16a16",
+   "model": "rf_detr_seg_nano",
+   "variant": "w8a16_w16a16",
+   "tasks": [
+    "instance_segmentation"
+   ],
+   "components": [
+    {
+     "component": "backbone",
+     "id": "rf_detr_seg_nano__w8a16_w16a16__backbone",
+     "options": "rf_detr_seg_nano__backbone"
+    },
+    {
+     "component": "decoder",
+     "id": "rf_detr_seg_nano__w8a16_w16a16__decoder",
+     "options": null
+    }
+   ]
+  },
+  {
+   "name": "rf_detr_seg_nano w8a16_w8a8_mixed",
+   "model": "rf_detr_seg_nano",
+   "variant": "w8a16_w8a8_mixed",
+   "tasks": [
+    "instance_segmentation"
+   ],
+   "components": [
+    {
+     "component": "backbone",
+     "id": "rf_detr_seg_nano__w8a16_w8a8_mixed__backbone",
+     "options": "rf_detr_seg_nano__backbone"
+    },
+    {
+     "component": "decoder",
+     "id": "rf_detr_seg_nano__w8a16_w8a8_mixed__decoder",
+     "options": null
+    }
+   ]
+  },
+  {
+   "name": "rf_detr_seg_nano w8a8_mixed_w16a16",
+   "model": "rf_detr_seg_nano",
+   "variant": "w8a8_mixed_w16a16",
+   "tasks": [
+    "instance_segmentation"
+   ],
+   "components": [
+    {
+     "component": "backbone",
+     "id": "rf_detr_seg_nano__w8a8_mixed_w16a16__backbone",
+     "options": "rf_detr_seg_nano__backbone"
+    },
+    {
+     "component": "decoder",
+     "id": "rf_detr_seg_nano__w8a8_mixed_w16a16__decoder",
+     "options": null
+    }
+   ]
+  },
+  {
+   "name": "rf_detr_seg_nano w8a8_w16a16",
+   "model": "rf_detr_seg_nano",
+   "variant": "w8a8_w16a16",
+   "tasks": [
+    "instance_segmentation"
+   ],
+   "components": [
+    {
+     "component": "backbone",
+     "id": "rf_detr_seg_nano__w8a8_w16a16__backbone",
+     "options": "rf_detr_seg_nano__backbone"
+    },
+    {
+     "component": "decoder",
+     "id": "rf_detr_seg_nano__w8a8_w16a16__decoder",
+     "options": null
+    }
+   ]
+  },
+  {
+   "name": "rf_detr_seg_small w8a16_w16a16",
+   "model": "rf_detr_seg_small",
+   "variant": "w8a16_w16a16",
+   "tasks": [
+    "instance_segmentation"
+   ],
+   "components": [
+    {
+     "component": "backbone",
+     "id": "rf_detr_seg_small__w8a16_w16a16__backbone",
+     "options": "rf_detr_seg_small__backbone"
+    },
+    {
+     "component": "decoder",
+     "id": "rf_detr_seg_small__w8a16_w16a16__decoder",
+     "options": null
+    }
+   ]
+  },
+  {
+   "name": "rf_detr_seg_small w8a16_w8a8_mixed",
+   "model": "rf_detr_seg_small",
+   "variant": "w8a16_w8a8_mixed",
+   "tasks": [
+    "instance_segmentation"
+   ],
+   "components": [
+    {
+     "component": "backbone",
+     "id": "rf_detr_seg_small__w8a16_w8a8_mixed__backbone",
+     "options": "rf_detr_seg_small__backbone"
+    },
+    {
+     "component": "decoder",
+     "id": "rf_detr_seg_small__w8a16_w8a8_mixed__decoder",
+     "options": null
+    }
+   ]
+  },
+  {
+   "name": "rf_detr_seg_small w8a8_mixed_w16a16",
+   "model": "rf_detr_seg_small",
+   "variant": "w8a8_mixed_w16a16",
+   "tasks": [
+    "instance_segmentation"
+   ],
+   "components": [
+    {
+     "component": "backbone",
+     "id": "rf_detr_seg_small__w8a8_mixed_w16a16__backbone",
+     "options": "rf_detr_seg_small__backbone"
+    },
+    {
+     "component": "decoder",
+     "id": "rf_detr_seg_small__w8a8_mixed_w16a16__decoder",
+     "options": null
+    }
+   ]
+  },
+  {
+   "name": "rf_detr_seg_small w8a8_w16a16",
+   "model": "rf_detr_seg_small",
+   "variant": "w8a8_w16a16",
+   "tasks": [
+    "instance_segmentation"
+   ],
+   "components": [
+    {
+     "component": "backbone",
+     "id": "rf_detr_seg_small__w8a8_w16a16__backbone",
+     "options": "rf_detr_seg_small__backbone"
+    },
+    {
+     "component": "decoder",
+     "id": "rf_detr_seg_small__w8a8_w16a16__decoder",
+     "options": null
+    }
+   ]
+  },
+  {
+   "name": "rf_detr_small w8a16_w16a16",
+   "model": "rf_detr_small",
+   "variant": "w8a16_w16a16",
+   "tasks": [
+    "object_detection"
+   ],
+   "components": [
+    {
+     "component": "backbone",
+     "id": "rf_detr_small__w8a16_w16a16__backbone",
+     "options": "rf_detr_small__backbone"
+    },
+    {
+     "component": "decoder",
+     "id": "rf_detr_small__w8a16_w16a16__decoder",
+     "options": null
+    }
+   ]
+  },
+  {
+   "name": "rf_detr_small w8a8_mixed_w16a16",
+   "model": "rf_detr_small",
+   "variant": "w8a8_mixed_w16a16",
+   "tasks": [
+    "object_detection"
+   ],
+   "components": [
+    {
+     "component": "backbone",
+     "id": "rf_detr_small__w8a8_mixed_w16a16__backbone",
+     "options": "rf_detr_small__backbone"
+    },
+    {
+     "component": "decoder",
+     "id": "rf_detr_small__w8a8_mixed_w16a16__decoder",
+     "options": null
+    }
+   ]
+  },
+  {
+   "name": "rf_detr_small w8a8_w16a16",
+   "model": "rf_detr_small",
+   "variant": "w8a8_w16a16",
+   "tasks": [
+    "object_detection"
+   ],
+   "components": [
+    {
+     "component": "backbone",
+     "id": "rf_detr_small__w8a8_w16a16__backbone",
+     "options": "rf_detr_small__backbone"
+    },
+    {
+     "component": "decoder",
+     "id": "rf_detr_small__w8a8_w16a16__decoder",
+     "options": null
+    }
+   ]
+  },
+  {
+   "name": "segformer_b0_ade_512 w16a16",
+   "model": "segformer_b0_ade_512",
+   "variant": "w16a16",
+   "tasks": [
+    "semantic_segmentation"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "segformer_b0_ade_512__w16a16__model",
+     "options": "segformer_b0_ade_512__model"
+    }
+   ]
+  },
+  {
+   "name": "segformer_b0_ade_512 w8a8",
+   "model": "segformer_b0_ade_512",
+   "variant": "w8a8",
+   "tasks": [
+    "semantic_segmentation"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "segformer_b0_ade_512__w8a8__model",
+     "options": "segformer_b0_ade_512__model"
+    }
+   ]
+  },
+  {
+   "name": "segformer_b0_ade_512 w8a8_mixed",
+   "model": "segformer_b0_ade_512",
+   "variant": "w8a8_mixed",
+   "tasks": [
+    "semantic_segmentation"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "segformer_b0_ade_512__w8a8_mixed__model",
+     "options": "segformer_b0_ade_512__model"
+    }
+   ]
+  },
+  {
+   "name": "siglip2_vit_b_16 w16a16",
+   "model": "siglip2_vit_b_16",
+   "variant": "w16a16",
+   "tasks": [
+    "image_text_embedding"
+   ],
+   "components": [
+    {
+     "component": "image_encoder",
+     "id": "siglip2_vit_b_16__w16a16__image_encoder",
+     "options": "siglip2_vit_b_16__image_encoder"
+    },
+    {
+     "component": "text_encoder",
+     "id": "siglip2_vit_b_16__w16a16__text_encoder",
+     "options": "siglip2_vit_b_16__text_encoder"
+    }
+   ]
+  },
+  {
+   "name": "siglip2_vit_b_16 w8a16",
+   "model": "siglip2_vit_b_16",
+   "variant": "w8a16",
+   "tasks": [
+    "image_text_embedding"
+   ],
+   "components": [
+    {
+     "component": "image_encoder",
+     "id": "siglip2_vit_b_16__w8a16__image_encoder",
+     "options": "siglip2_vit_b_16__image_encoder"
+    },
+    {
+     "component": "text_encoder",
+     "id": "siglip2_vit_b_16__w8a16__text_encoder",
+     "options": "siglip2_vit_b_16__text_encoder"
+    }
+   ]
+  },
+  {
+   "name": "superglue_outdoor w16a16",
+   "model": "superglue_outdoor",
+   "variant": "w16a16",
+   "tasks": [
+    "feature_matching"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "superglue_outdoor__w16a16__model",
+     "options": "superglue_outdoor__model"
+    }
+   ]
+  },
+  {
+   "name": "superglue_outdoor w8a8_mixed",
+   "model": "superglue_outdoor",
+   "variant": "w8a8_mixed",
+   "tasks": [
+    "feature_matching"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "superglue_outdoor__w8a8_mixed__model",
+     "options": "superglue_outdoor__model"
+    }
+   ]
+  },
+  {
+   "name": "superpoint w16a16",
+   "model": "superpoint",
+   "variant": "w16a16",
+   "tasks": [
+    "feature_point_detection"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "superpoint__w16a16__model",
+     "options": "superpoint__model"
+    }
+   ]
+  },
+  {
+   "name": "superpoint w8a16",
+   "model": "superpoint",
+   "variant": "w8a16",
+   "tasks": [
+    "feature_point_detection"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "superpoint__w8a16__model",
+     "options": "superpoint__model"
+    }
+   ]
+  },
+  {
+   "name": "superpoint w8a8",
+   "model": "superpoint",
+   "variant": "w8a8",
+   "tasks": [
+    "feature_point_detection"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "superpoint__w8a8__model",
+     "options": "superpoint__model"
+    }
+   ]
+  },
+  {
+   "name": "supertonic_3 w8a16_w16a16",
+   "model": "supertonic_3",
+   "variant": "w8a16_w16a16",
+   "tasks": [
+    "text_to_speech"
+   ],
+   "components": [
+    {
+     "component": "vector_estimator",
+     "id": "supertonic_3__w8a16_w16a16__vector_estimator",
+     "options": null
+    },
+    {
+     "component": "vocoder",
+     "id": "supertonic_3__w8a16_w16a16__vocoder",
+     "options": null
+    }
+   ]
+  },
+  {
+   "name": "vgg_11 w16a16",
+   "model": "vgg_11",
+   "variant": "w16a16",
+   "tasks": [
+    "image_classification"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "vgg_11__w16a16__model",
+     "options": "vgg_11__model"
+    }
+   ]
+  },
+  {
+   "name": "vgg_11 w8a8",
+   "model": "vgg_11",
+   "variant": "w8a8",
+   "tasks": [
+    "image_classification"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "vgg_11__w8a8__model",
+     "options": "vgg_11__model"
+    }
+   ]
+  },
+  {
+   "name": "vgg_11_bn w16a16",
+   "model": "vgg_11_bn",
+   "variant": "w16a16",
+   "tasks": [
+    "image_classification"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "vgg_11_bn__w16a16__model",
+     "options": "vgg_11_bn__model"
+    }
+   ]
+  },
+  {
+   "name": "vgg_11_bn w8a8",
+   "model": "vgg_11_bn",
+   "variant": "w8a8",
+   "tasks": [
+    "image_classification"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "vgg_11_bn__w8a8__model",
+     "options": "vgg_11_bn__model"
+    }
+   ]
+  },
+  {
+   "name": "vgg_13 w16a16",
+   "model": "vgg_13",
+   "variant": "w16a16",
+   "tasks": [
+    "image_classification"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "vgg_13__w16a16__model",
+     "options": "vgg_13__model"
+    }
+   ]
+  },
+  {
+   "name": "vgg_13 w8a8",
+   "model": "vgg_13",
+   "variant": "w8a8",
+   "tasks": [
+    "image_classification"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "vgg_13__w8a8__model",
+     "options": "vgg_13__model"
+    }
+   ]
+  },
+  {
+   "name": "vgg_13_bn w16a16",
+   "model": "vgg_13_bn",
+   "variant": "w16a16",
+   "tasks": [
+    "image_classification"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "vgg_13_bn__w16a16__model",
+     "options": "vgg_13_bn__model"
+    }
+   ]
+  },
+  {
+   "name": "vgg_13_bn w8a8",
+   "model": "vgg_13_bn",
+   "variant": "w8a8",
+   "tasks": [
+    "image_classification"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "vgg_13_bn__w8a8__model",
+     "options": "vgg_13_bn__model"
+    }
+   ]
+  },
+  {
+   "name": "vgg_16 w16a16",
+   "model": "vgg_16",
+   "variant": "w16a16",
+   "tasks": [
+    "image_classification"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "vgg_16__w16a16__model",
+     "options": "vgg_16__model"
+    }
+   ]
+  },
+  {
+   "name": "vgg_16 w8a8",
+   "model": "vgg_16",
+   "variant": "w8a8",
+   "tasks": [
+    "image_classification"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "vgg_16__w8a8__model",
+     "options": "vgg_16__model"
+    }
+   ]
+  },
+  {
+   "name": "vgg_16_bn w16a16",
+   "model": "vgg_16_bn",
+   "variant": "w16a16",
+   "tasks": [
+    "image_classification"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "vgg_16_bn__w16a16__model",
+     "options": "vgg_16_bn__model"
+    }
+   ]
+  },
+  {
+   "name": "vgg_16_bn w8a8",
+   "model": "vgg_16_bn",
+   "variant": "w8a8",
+   "tasks": [
+    "image_classification"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "vgg_16_bn__w8a8__model",
+     "options": "vgg_16_bn__model"
+    }
+   ]
+  },
+  {
+   "name": "vgg_19 w16a16",
+   "model": "vgg_19",
+   "variant": "w16a16",
+   "tasks": [
+    "image_classification"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "vgg_19__w16a16__model",
+     "options": "vgg_19__model"
+    }
+   ]
+  },
+  {
+   "name": "vgg_19 w8a8",
+   "model": "vgg_19",
+   "variant": "w8a8",
+   "tasks": [
+    "image_classification"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "vgg_19__w8a8__model",
+     "options": "vgg_19__model"
+    }
+   ]
+  },
+  {
+   "name": "vgg_19_bn w16a16",
+   "model": "vgg_19_bn",
+   "variant": "w16a16",
+   "tasks": [
+    "image_classification"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "vgg_19_bn__w16a16__model",
+     "options": "vgg_19_bn__model"
+    }
+   ]
+  },
+  {
+   "name": "vgg_19_bn w8a8",
+   "model": "vgg_19_bn",
+   "variant": "w8a8",
+   "tasks": [
+    "image_classification"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "vgg_19_bn__w8a8__model",
+     "options": "vgg_19_bn__model"
+    }
+   ]
+  },
+  {
+   "name": "vit_b_16 w16a16",
+   "model": "vit_b_16",
+   "variant": "w16a16",
+   "tasks": [
+    "image_classification"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "vit_b_16__w16a16__model",
+     "options": "vit_b_16__model"
+    }
+   ]
+  },
+  {
+   "name": "vit_b_16 w8a16",
+   "model": "vit_b_16",
+   "variant": "w8a16",
+   "tasks": [
+    "image_classification"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "vit_b_16__w8a16__model",
+     "options": "vit_b_16__model"
+    }
+   ]
+  },
+  {
+   "name": "wide_resnet_50_2 w16a16",
+   "model": "wide_resnet_50_2",
+   "variant": "w16a16",
+   "tasks": [
+    "image_classification"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "wide_resnet_50_2__w16a16__model",
+     "options": "wide_resnet_50_2__model"
+    }
+   ]
+  },
+  {
+   "name": "wide_resnet_50_2 w8a8",
+   "model": "wide_resnet_50_2",
+   "variant": "w8a8",
+   "tasks": [
+    "image_classification"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "wide_resnet_50_2__w8a8__model",
+     "options": "wide_resnet_50_2__model"
+    }
+   ]
+  },
+  {
+   "name": "yolo11l w16a16",
+   "model": "yolo11l",
+   "variant": "w16a16",
+   "tasks": [
+    "object_detection"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "yolo11l__w16a16__model",
+     "options": "yolo11l__model"
+    }
+   ]
+  },
+  {
+   "name": "yolo11l w8a16",
+   "model": "yolo11l",
+   "variant": "w8a16",
+   "tasks": [
+    "object_detection"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "yolo11l__w8a16__model",
+     "options": "yolo11l__model"
+    }
+   ]
+  },
+  {
+   "name": "yolo11l w8a8",
+   "model": "yolo11l",
+   "variant": "w8a8",
+   "tasks": [
+    "object_detection"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "yolo11l__w8a8__model",
+     "options": "yolo11l__model"
+    }
+   ]
+  },
+  {
+   "name": "yolo11l_obb w16a16",
+   "model": "yolo11l_obb",
+   "variant": "w16a16",
+   "tasks": [
+    "oriented_object_detection"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "yolo11l_obb__w16a16__model",
+     "options": "yolo11l_obb__model"
+    }
+   ]
+  },
+  {
+   "name": "yolo11l_obb w8a8",
+   "model": "yolo11l_obb",
+   "variant": "w8a8",
+   "tasks": [
+    "oriented_object_detection"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "yolo11l_obb__w8a8__model",
+     "options": "yolo11l_obb__model"
+    }
+   ]
+  },
+  {
+   "name": "yolo11m w16a16",
+   "model": "yolo11m",
+   "variant": "w16a16",
+   "tasks": [
+    "object_detection"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "yolo11m__w16a16__model",
+     "options": "yolo11m__model"
+    }
+   ]
+  },
+  {
+   "name": "yolo11m w8a16",
+   "model": "yolo11m",
+   "variant": "w8a16",
+   "tasks": [
+    "object_detection"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "yolo11m__w8a16__model",
+     "options": "yolo11m__model"
+    }
+   ]
+  },
+  {
+   "name": "yolo11m w8a8",
+   "model": "yolo11m",
+   "variant": "w8a8",
+   "tasks": [
+    "object_detection"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "yolo11m__w8a8__model",
+     "options": "yolo11m__model"
+    }
+   ]
+  },
+  {
+   "name": "yolo11m_obb w16a16",
+   "model": "yolo11m_obb",
+   "variant": "w16a16",
+   "tasks": [
+    "oriented_object_detection"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "yolo11m_obb__w16a16__model",
+     "options": "yolo11m_obb__model"
+    }
+   ]
+  },
+  {
+   "name": "yolo11m_obb w8a8",
+   "model": "yolo11m_obb",
+   "variant": "w8a8",
+   "tasks": [
+    "oriented_object_detection"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "yolo11m_obb__w8a8__model",
+     "options": "yolo11m_obb__model"
+    }
+   ]
+  },
+  {
+   "name": "yolo11n w16a16",
+   "model": "yolo11n",
+   "variant": "w16a16",
+   "tasks": [
+    "object_detection"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "yolo11n__w16a16__model",
+     "options": "yolo11n__model"
+    }
+   ]
+  },
+  {
+   "name": "yolo11n w8a16",
+   "model": "yolo11n",
+   "variant": "w8a16",
+   "tasks": [
+    "object_detection"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "yolo11n__w8a16__model",
+     "options": "yolo11n__model"
+    }
+   ]
+  },
+  {
+   "name": "yolo11n w8a8",
+   "model": "yolo11n",
+   "variant": "w8a8",
+   "tasks": [
+    "object_detection"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "yolo11n__w8a8__model",
+     "options": "yolo11n__model"
+    }
+   ]
+  },
+  {
+   "name": "yolo11n_obb w16a16",
+   "model": "yolo11n_obb",
+   "variant": "w16a16",
+   "tasks": [
+    "oriented_object_detection"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "yolo11n_obb__w16a16__model",
+     "options": "yolo11n_obb__model"
+    }
+   ]
+  },
+  {
+   "name": "yolo11n_obb w8a8",
+   "model": "yolo11n_obb",
+   "variant": "w8a8",
+   "tasks": [
+    "oriented_object_detection"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "yolo11n_obb__w8a8__model",
+     "options": "yolo11n_obb__model"
+    }
+   ]
+  },
+  {
+   "name": "yolo11s w16a16",
+   "model": "yolo11s",
+   "variant": "w16a16",
+   "tasks": [
+    "object_detection"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "yolo11s__w16a16__model",
+     "options": "yolo11s__model"
+    }
+   ]
+  },
+  {
+   "name": "yolo11s w8a16",
+   "model": "yolo11s",
+   "variant": "w8a16",
+   "tasks": [
+    "object_detection"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "yolo11s__w8a16__model",
+     "options": "yolo11s__model"
+    }
+   ]
+  },
+  {
+   "name": "yolo11s w8a8",
+   "model": "yolo11s",
+   "variant": "w8a8",
+   "tasks": [
+    "object_detection"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "yolo11s__w8a8__model",
+     "options": "yolo11s__model"
+    }
+   ]
+  },
+  {
+   "name": "yolo11s_obb w16a16",
+   "model": "yolo11s_obb",
+   "variant": "w16a16",
+   "tasks": [
+    "oriented_object_detection"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "yolo11s_obb__w16a16__model",
+     "options": "yolo11s_obb__model"
+    }
+   ]
+  },
+  {
+   "name": "yolo11s_obb w8a8",
+   "model": "yolo11s_obb",
+   "variant": "w8a8",
+   "tasks": [
+    "oriented_object_detection"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "yolo11s_obb__w8a8__model",
+     "options": "yolo11s_obb__model"
+    }
+   ]
+  },
+  {
+   "name": "yolo11x w16a16",
+   "model": "yolo11x",
+   "variant": "w16a16",
+   "tasks": [
+    "object_detection"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "yolo11x__w16a16__model",
+     "options": "yolo11x__model"
+    }
+   ]
+  },
+  {
+   "name": "yolo11x w8a16",
+   "model": "yolo11x",
+   "variant": "w8a16",
+   "tasks": [
+    "object_detection"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "yolo11x__w8a16__model",
+     "options": "yolo11x__model"
+    }
+   ]
+  },
+  {
+   "name": "yolo11x w8a8",
+   "model": "yolo11x",
+   "variant": "w8a8",
+   "tasks": [
+    "object_detection"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "yolo11x__w8a8__model",
+     "options": "yolo11x__model"
+    }
+   ]
+  },
+  {
+   "name": "yolo11x_obb w16a16",
+   "model": "yolo11x_obb",
+   "variant": "w16a16",
+   "tasks": [
+    "oriented_object_detection"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "yolo11x_obb__w16a16__model",
+     "options": "yolo11x_obb__model"
+    }
+   ]
+  },
+  {
+   "name": "yolo11x_obb w8a8",
+   "model": "yolo11x_obb",
+   "variant": "w8a8",
+   "tasks": [
+    "oriented_object_detection"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "yolo11x_obb__w8a8__model",
+     "options": "yolo11x_obb__model"
+    }
+   ]
+  },
+  {
+   "name": "yolo26l w16a16",
+   "model": "yolo26l",
+   "variant": "w16a16",
+   "tasks": [
+    "object_detection"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "yolo26l__w16a16__model",
+     "options": "yolo26l__model"
+    }
+   ]
+  },
+  {
+   "name": "yolo26l w8a16",
+   "model": "yolo26l",
+   "variant": "w8a16",
+   "tasks": [
+    "object_detection"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "yolo26l__w8a16__model",
+     "options": "yolo26l__model"
+    }
+   ]
+  },
+  {
+   "name": "yolo26l w8a8",
+   "model": "yolo26l",
+   "variant": "w8a8",
+   "tasks": [
+    "object_detection"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "yolo26l__w8a8__model",
+     "options": "yolo26l__model"
+    }
+   ]
+  },
+  {
+   "name": "yolo26l_obb w16a16",
+   "model": "yolo26l_obb",
+   "variant": "w16a16",
+   "tasks": [
+    "oriented_object_detection"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "yolo26l_obb__w16a16__model",
+     "options": "yolo26l_obb__model"
+    }
+   ]
+  },
+  {
+   "name": "yolo26l_obb w8a16",
+   "model": "yolo26l_obb",
+   "variant": "w8a16",
+   "tasks": [
+    "oriented_object_detection"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "yolo26l_obb__w8a16__model",
+     "options": "yolo26l_obb__model"
+    }
+   ]
+  },
+  {
+   "name": "yolo26l_obb w8a8",
+   "model": "yolo26l_obb",
+   "variant": "w8a8",
+   "tasks": [
+    "oriented_object_detection"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "yolo26l_obb__w8a8__model",
+     "options": "yolo26l_obb__model"
+    }
+   ]
+  },
+  {
+   "name": "yolo26l_pose w16a16",
+   "model": "yolo26l_pose",
+   "variant": "w16a16",
+   "tasks": [
+    "pose_estimation"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "yolo26l_pose__w16a16__model",
+     "options": "yolo26l_pose__model"
+    }
+   ]
+  },
+  {
+   "name": "yolo26l_pose w8a16",
+   "model": "yolo26l_pose",
+   "variant": "w8a16",
+   "tasks": [
+    "pose_estimation"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "yolo26l_pose__w8a16__model",
+     "options": "yolo26l_pose__model"
+    }
+   ]
+  },
+  {
+   "name": "yolo26l_pose w8a8",
+   "model": "yolo26l_pose",
+   "variant": "w8a8",
+   "tasks": [
+    "pose_estimation"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "yolo26l_pose__w8a8__model",
+     "options": "yolo26l_pose__model"
+    }
+   ]
+  },
+  {
+   "name": "yolo26l_seg w16a16",
+   "model": "yolo26l_seg",
+   "variant": "w16a16",
+   "tasks": [
+    "instance_segmentation"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "yolo26l_seg__w16a16__model",
+     "options": "yolo26l_seg__model"
+    }
+   ]
+  },
+  {
+   "name": "yolo26l_seg w8a16",
+   "model": "yolo26l_seg",
+   "variant": "w8a16",
+   "tasks": [
+    "instance_segmentation"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "yolo26l_seg__w8a16__model",
+     "options": "yolo26l_seg__model"
+    }
+   ]
+  },
+  {
+   "name": "yolo26l_seg w8a8",
+   "model": "yolo26l_seg",
+   "variant": "w8a8",
+   "tasks": [
+    "instance_segmentation"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "yolo26l_seg__w8a8__model",
+     "options": "yolo26l_seg__model"
+    }
+   ]
+  },
+  {
+   "name": "yolo26m w16a16",
+   "model": "yolo26m",
+   "variant": "w16a16",
+   "tasks": [
+    "object_detection"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "yolo26m__w16a16__model",
+     "options": "yolo26m__model"
+    }
+   ]
+  },
+  {
+   "name": "yolo26m w8a16",
+   "model": "yolo26m",
+   "variant": "w8a16",
+   "tasks": [
+    "object_detection"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "yolo26m__w8a16__model",
+     "options": "yolo26m__model"
+    }
+   ]
+  },
+  {
+   "name": "yolo26m w8a8",
+   "model": "yolo26m",
+   "variant": "w8a8",
+   "tasks": [
+    "object_detection"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "yolo26m__w8a8__model",
+     "options": "yolo26m__model"
+    }
+   ]
+  },
+  {
+   "name": "yolo26m_obb w16a16",
+   "model": "yolo26m_obb",
+   "variant": "w16a16",
+   "tasks": [
+    "oriented_object_detection"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "yolo26m_obb__w16a16__model",
+     "options": "yolo26m_obb__model"
+    }
+   ]
+  },
+  {
+   "name": "yolo26m_obb w8a8",
+   "model": "yolo26m_obb",
+   "variant": "w8a8",
+   "tasks": [
+    "oriented_object_detection"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "yolo26m_obb__w8a8__model",
+     "options": "yolo26m_obb__model"
+    }
+   ]
+  },
+  {
+   "name": "yolo26m_pose w16a16",
+   "model": "yolo26m_pose",
+   "variant": "w16a16",
+   "tasks": [
+    "pose_estimation"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "yolo26m_pose__w16a16__model",
+     "options": "yolo26m_pose__model"
+    }
+   ]
+  },
+  {
+   "name": "yolo26m_pose w8a16",
+   "model": "yolo26m_pose",
+   "variant": "w8a16",
+   "tasks": [
+    "pose_estimation"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "yolo26m_pose__w8a16__model",
+     "options": "yolo26m_pose__model"
+    }
+   ]
+  },
+  {
+   "name": "yolo26m_pose w8a8",
+   "model": "yolo26m_pose",
+   "variant": "w8a8",
+   "tasks": [
+    "pose_estimation"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "yolo26m_pose__w8a8__model",
+     "options": "yolo26m_pose__model"
+    }
+   ]
+  },
+  {
+   "name": "yolo26m_seg w16a16",
+   "model": "yolo26m_seg",
+   "variant": "w16a16",
+   "tasks": [
+    "instance_segmentation"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "yolo26m_seg__w16a16__model",
+     "options": "yolo26m_seg__model"
+    }
+   ]
+  },
+  {
+   "name": "yolo26m_seg w8a16",
+   "model": "yolo26m_seg",
+   "variant": "w8a16",
+   "tasks": [
+    "instance_segmentation"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "yolo26m_seg__w8a16__model",
+     "options": "yolo26m_seg__model"
+    }
+   ]
+  },
+  {
+   "name": "yolo26m_seg w8a8",
+   "model": "yolo26m_seg",
+   "variant": "w8a8",
+   "tasks": [
+    "instance_segmentation"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "yolo26m_seg__w8a8__model",
+     "options": "yolo26m_seg__model"
+    }
+   ]
+  },
+  {
+   "name": "yolo26n w16a16",
+   "model": "yolo26n",
+   "variant": "w16a16",
+   "tasks": [
+    "object_detection"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "yolo26n__w16a16__model",
+     "options": "yolo26n__model"
+    }
+   ]
+  },
+  {
+   "name": "yolo26n w8a16",
+   "model": "yolo26n",
+   "variant": "w8a16",
+   "tasks": [
+    "object_detection"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "yolo26n__w8a16__model",
+     "options": "yolo26n__model"
+    }
+   ]
+  },
+  {
+   "name": "yolo26n w8a8",
+   "model": "yolo26n",
+   "variant": "w8a8",
+   "tasks": [
+    "object_detection"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "yolo26n__w8a8__model",
+     "options": "yolo26n__model"
+    }
+   ]
+  },
+  {
+   "name": "yolo26n_obb w16a16",
+   "model": "yolo26n_obb",
+   "variant": "w16a16",
+   "tasks": [
+    "oriented_object_detection"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "yolo26n_obb__w16a16__model",
+     "options": "yolo26n_obb__model"
+    }
+   ]
+  },
+  {
+   "name": "yolo26n_obb w8a8",
+   "model": "yolo26n_obb",
+   "variant": "w8a8",
+   "tasks": [
+    "oriented_object_detection"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "yolo26n_obb__w8a8__model",
+     "options": "yolo26n_obb__model"
+    }
+   ]
+  },
+  {
+   "name": "yolo26n_pose w16a16",
+   "model": "yolo26n_pose",
+   "variant": "w16a16",
+   "tasks": [
+    "pose_estimation"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "yolo26n_pose__w16a16__model",
+     "options": "yolo26n_pose__model"
+    }
+   ]
+  },
+  {
+   "name": "yolo26n_pose w8a16",
+   "model": "yolo26n_pose",
+   "variant": "w8a16",
+   "tasks": [
+    "pose_estimation"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "yolo26n_pose__w8a16__model",
+     "options": "yolo26n_pose__model"
+    }
+   ]
+  },
+  {
+   "name": "yolo26n_pose w8a8",
+   "model": "yolo26n_pose",
+   "variant": "w8a8",
+   "tasks": [
+    "pose_estimation"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "yolo26n_pose__w8a8__model",
+     "options": "yolo26n_pose__model"
+    }
+   ]
+  },
+  {
+   "name": "yolo26n_seg w16a16",
+   "model": "yolo26n_seg",
+   "variant": "w16a16",
+   "tasks": [
+    "instance_segmentation"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "yolo26n_seg__w16a16__model",
+     "options": "yolo26n_seg__model"
+    }
+   ]
+  },
+  {
+   "name": "yolo26n_seg w8a16",
+   "model": "yolo26n_seg",
+   "variant": "w8a16",
+   "tasks": [
+    "instance_segmentation"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "yolo26n_seg__w8a16__model",
+     "options": "yolo26n_seg__model"
+    }
+   ]
+  },
+  {
+   "name": "yolo26n_seg w8a8",
+   "model": "yolo26n_seg",
+   "variant": "w8a8",
+   "tasks": [
+    "instance_segmentation"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "yolo26n_seg__w8a8__model",
+     "options": "yolo26n_seg__model"
+    }
+   ]
+  },
+  {
+   "name": "yolo26s w16a16",
+   "model": "yolo26s",
+   "variant": "w16a16",
+   "tasks": [
+    "object_detection"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "yolo26s__w16a16__model",
+     "options": "yolo26s__model"
+    }
+   ]
+  },
+  {
+   "name": "yolo26s w8a16",
+   "model": "yolo26s",
+   "variant": "w8a16",
+   "tasks": [
+    "object_detection"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "yolo26s__w8a16__model",
+     "options": "yolo26s__model"
+    }
+   ]
+  },
+  {
+   "name": "yolo26s w8a8",
+   "model": "yolo26s",
+   "variant": "w8a8",
+   "tasks": [
+    "object_detection"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "yolo26s__w8a8__model",
+     "options": "yolo26s__model"
+    }
+   ]
+  },
+  {
+   "name": "yolo26s_obb w16a16",
+   "model": "yolo26s_obb",
+   "variant": "w16a16",
+   "tasks": [
+    "oriented_object_detection"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "yolo26s_obb__w16a16__model",
+     "options": "yolo26s_obb__model"
+    }
+   ]
+  },
+  {
+   "name": "yolo26s_obb w8a16",
+   "model": "yolo26s_obb",
+   "variant": "w8a16",
+   "tasks": [
+    "oriented_object_detection"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "yolo26s_obb__w8a16__model",
+     "options": "yolo26s_obb__model"
+    }
+   ]
+  },
+  {
+   "name": "yolo26s_obb w8a8",
+   "model": "yolo26s_obb",
+   "variant": "w8a8",
+   "tasks": [
+    "oriented_object_detection"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "yolo26s_obb__w8a8__model",
+     "options": "yolo26s_obb__model"
+    }
+   ]
+  },
+  {
+   "name": "yolo26s_pose w16a16",
+   "model": "yolo26s_pose",
+   "variant": "w16a16",
+   "tasks": [
+    "pose_estimation"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "yolo26s_pose__w16a16__model",
+     "options": "yolo26s_pose__model"
+    }
+   ]
+  },
+  {
+   "name": "yolo26s_pose w8a16",
+   "model": "yolo26s_pose",
+   "variant": "w8a16",
+   "tasks": [
+    "pose_estimation"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "yolo26s_pose__w8a16__model",
+     "options": "yolo26s_pose__model"
+    }
+   ]
+  },
+  {
+   "name": "yolo26s_pose w8a8",
+   "model": "yolo26s_pose",
+   "variant": "w8a8",
+   "tasks": [
+    "pose_estimation"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "yolo26s_pose__w8a8__model",
+     "options": "yolo26s_pose__model"
+    }
+   ]
+  },
+  {
+   "name": "yolo26s_seg w16a16",
+   "model": "yolo26s_seg",
+   "variant": "w16a16",
+   "tasks": [
+    "instance_segmentation"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "yolo26s_seg__w16a16__model",
+     "options": "yolo26s_seg__model"
+    }
+   ]
+  },
+  {
+   "name": "yolo26s_seg w8a16",
+   "model": "yolo26s_seg",
+   "variant": "w8a16",
+   "tasks": [
+    "instance_segmentation"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "yolo26s_seg__w8a16__model",
+     "options": "yolo26s_seg__model"
+    }
+   ]
+  },
+  {
+   "name": "yolo26s_seg w8a8",
+   "model": "yolo26s_seg",
+   "variant": "w8a8",
+   "tasks": [
+    "instance_segmentation"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "yolo26s_seg__w8a8__model",
+     "options": "yolo26s_seg__model"
+    }
+   ]
+  },
+  {
+   "name": "yolo26x w16a16",
+   "model": "yolo26x",
+   "variant": "w16a16",
+   "tasks": [
+    "object_detection"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "yolo26x__w16a16__model",
+     "options": "yolo26x__model"
+    }
+   ]
+  },
+  {
+   "name": "yolo26x w8a16",
+   "model": "yolo26x",
+   "variant": "w8a16",
+   "tasks": [
+    "object_detection"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "yolo26x__w8a16__model",
+     "options": "yolo26x__model"
+    }
+   ]
+  },
+  {
+   "name": "yolo26x w8a8",
+   "model": "yolo26x",
+   "variant": "w8a8",
+   "tasks": [
+    "object_detection"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "yolo26x__w8a8__model",
+     "options": "yolo26x__model"
+    }
+   ]
+  },
+  {
+   "name": "yolo26x_obb w16a16",
+   "model": "yolo26x_obb",
+   "variant": "w16a16",
+   "tasks": [
+    "oriented_object_detection"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "yolo26x_obb__w16a16__model",
+     "options": "yolo26x_obb__model"
+    }
+   ]
+  },
+  {
+   "name": "yolo26x_obb w8a8",
+   "model": "yolo26x_obb",
+   "variant": "w8a8",
+   "tasks": [
+    "oriented_object_detection"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "yolo26x_obb__w8a8__model",
+     "options": "yolo26x_obb__model"
+    }
+   ]
+  },
+  {
+   "name": "yolo26x_pose w16a16",
+   "model": "yolo26x_pose",
+   "variant": "w16a16",
+   "tasks": [
+    "pose_estimation"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "yolo26x_pose__w16a16__model",
+     "options": "yolo26x_pose__model"
+    }
+   ]
+  },
+  {
+   "name": "yolo26x_pose w8a16",
+   "model": "yolo26x_pose",
+   "variant": "w8a16",
+   "tasks": [
+    "pose_estimation"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "yolo26x_pose__w8a16__model",
+     "options": "yolo26x_pose__model"
+    }
+   ]
+  },
+  {
+   "name": "yolo26x_pose w8a8",
+   "model": "yolo26x_pose",
+   "variant": "w8a8",
+   "tasks": [
+    "pose_estimation"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "yolo26x_pose__w8a8__model",
+     "options": "yolo26x_pose__model"
+    }
+   ]
+  },
+  {
+   "name": "yolo26x_seg w16a16",
+   "model": "yolo26x_seg",
+   "variant": "w16a16",
+   "tasks": [
+    "instance_segmentation"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "yolo26x_seg__w16a16__model",
+     "options": "yolo26x_seg__model"
+    }
+   ]
+  },
+  {
+   "name": "yolo26x_seg w8a16",
+   "model": "yolo26x_seg",
+   "variant": "w8a16",
+   "tasks": [
+    "instance_segmentation"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "yolo26x_seg__w8a16__model",
+     "options": "yolo26x_seg__model"
+    }
+   ]
+  },
+  {
+   "name": "yolo26x_seg w8a8",
+   "model": "yolo26x_seg",
+   "variant": "w8a8",
+   "tasks": [
+    "instance_segmentation"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "yolo26x_seg__w8a8__model",
+     "options": "yolo26x_seg__model"
+    }
+   ]
+  },
+  {
+   "name": "yolo_world_l w16a16_w8a8_mixed",
+   "model": "yolo_world_l",
+   "variant": "w16a16_w8a8_mixed",
+   "tasks": [
+    "object_detection"
+   ],
+   "components": [
+    {
+     "component": "detector",
+     "id": "yolo_world_l__w16a16_w8a8_mixed__detector",
+     "options": "yolo_world_l__detector"
+    },
+    {
+     "component": "text_encoder",
+     "id": "yolo_world_l__w16a16_w8a8_mixed__text_encoder",
+     "options": "yolo_world_l__text_encoder"
+    }
+   ]
+  },
+  {
+   "name": "yolo_world_m w16a16_w8a8_mixed",
+   "model": "yolo_world_m",
+   "variant": "w16a16_w8a8_mixed",
+   "tasks": [
+    "object_detection"
+   ],
+   "components": [
+    {
+     "component": "detector",
+     "id": "yolo_world_m__w16a16_w8a8_mixed__detector",
+     "options": "yolo_world_m__detector"
+    },
+    {
+     "component": "text_encoder",
+     "id": "yolo_world_m__w16a16_w8a8_mixed__text_encoder",
+     "options": "yolo_world_m__text_encoder"
+    }
+   ]
+  },
+  {
+   "name": "yolo_world_s w16a16_w8a8_mixed",
+   "model": "yolo_world_s",
+   "variant": "w16a16_w8a8_mixed",
+   "tasks": [
+    "object_detection"
+   ],
+   "components": [
+    {
+     "component": "detector",
+     "id": "yolo_world_s__w16a16_w8a8_mixed__detector",
+     "options": "yolo_world_s__detector"
+    },
+    {
+     "component": "text_encoder",
+     "id": "yolo_world_s__w16a16_w8a8_mixed__text_encoder",
+     "options": "yolo_world_s__text_encoder"
+    }
+   ]
+  },
+  {
+   "name": "yolov8l w16a16",
+   "model": "yolov8l",
+   "variant": "w16a16",
+   "tasks": [
+    "object_detection"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "yolov8l__w16a16__model",
+     "options": "yolov8l__model"
+    }
+   ]
+  },
+  {
+   "name": "yolov8l w8a16",
+   "model": "yolov8l",
+   "variant": "w8a16",
+   "tasks": [
+    "object_detection"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "yolov8l__w8a16__model",
+     "options": "yolov8l__model"
+    }
+   ]
+  },
+  {
+   "name": "yolov8l w8a8",
+   "model": "yolov8l",
+   "variant": "w8a8",
+   "tasks": [
+    "object_detection"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "yolov8l__w8a8__model",
+     "options": "yolov8l__model"
+    }
+   ]
+  },
+  {
+   "name": "yolov8l_obb w16a16",
+   "model": "yolov8l_obb",
+   "variant": "w16a16",
+   "tasks": [
+    "oriented_object_detection"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "yolov8l_obb__w16a16__model",
+     "options": "yolov8l_obb__model"
+    }
+   ]
+  },
+  {
+   "name": "yolov8l_obb w8a8",
+   "model": "yolov8l_obb",
+   "variant": "w8a8",
+   "tasks": [
+    "oriented_object_detection"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "yolov8l_obb__w8a8__model",
+     "options": "yolov8l_obb__model"
+    }
+   ]
+  },
+  {
+   "name": "yolov8m w16a16",
+   "model": "yolov8m",
+   "variant": "w16a16",
+   "tasks": [
+    "object_detection"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "yolov8m__w16a16__model",
+     "options": "yolov8m__model"
+    }
+   ]
+  },
+  {
+   "name": "yolov8m w8a16",
+   "model": "yolov8m",
+   "variant": "w8a16",
+   "tasks": [
+    "object_detection"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "yolov8m__w8a16__model",
+     "options": "yolov8m__model"
+    }
+   ]
+  },
+  {
+   "name": "yolov8m w8a8",
+   "model": "yolov8m",
+   "variant": "w8a8",
+   "tasks": [
+    "object_detection"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "yolov8m__w8a8__model",
+     "options": "yolov8m__model"
+    }
+   ]
+  },
+  {
+   "name": "yolov8m_obb w16a16",
+   "model": "yolov8m_obb",
+   "variant": "w16a16",
+   "tasks": [
+    "oriented_object_detection"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "yolov8m_obb__w16a16__model",
+     "options": "yolov8m_obb__model"
+    }
+   ]
+  },
+  {
+   "name": "yolov8m_obb w8a8",
+   "model": "yolov8m_obb",
+   "variant": "w8a8",
+   "tasks": [
+    "oriented_object_detection"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "yolov8m_obb__w8a8__model",
+     "options": "yolov8m_obb__model"
+    }
+   ]
+  },
+  {
+   "name": "yolov8n w16a16",
+   "model": "yolov8n",
+   "variant": "w16a16",
+   "tasks": [
+    "object_detection"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "yolov8n__w16a16__model",
+     "options": "yolov8n__model"
+    }
+   ]
+  },
+  {
+   "name": "yolov8n w8a16",
+   "model": "yolov8n",
+   "variant": "w8a16",
+   "tasks": [
+    "object_detection"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "yolov8n__w8a16__model",
+     "options": "yolov8n__model"
+    }
+   ]
+  },
+  {
+   "name": "yolov8n w8a8",
+   "model": "yolov8n",
+   "variant": "w8a8",
+   "tasks": [
+    "object_detection"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "yolov8n__w8a8__model",
+     "options": "yolov8n__model"
+    }
+   ]
+  },
+  {
+   "name": "yolov8n_obb w16a16",
+   "model": "yolov8n_obb",
+   "variant": "w16a16",
+   "tasks": [
+    "oriented_object_detection"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "yolov8n_obb__w16a16__model",
+     "options": "yolov8n_obb__model"
+    }
+   ]
+  },
+  {
+   "name": "yolov8n_obb w8a8",
+   "model": "yolov8n_obb",
+   "variant": "w8a8",
+   "tasks": [
+    "oriented_object_detection"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "yolov8n_obb__w8a8__model",
+     "options": "yolov8n_obb__model"
+    }
+   ]
+  },
+  {
+   "name": "yolov8s w16a16",
+   "model": "yolov8s",
+   "variant": "w16a16",
+   "tasks": [
+    "object_detection"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "yolov8s__w16a16__model",
+     "options": "yolov8s__model"
+    }
+   ]
+  },
+  {
+   "name": "yolov8s w8a16",
+   "model": "yolov8s",
+   "variant": "w8a16",
+   "tasks": [
+    "object_detection"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "yolov8s__w8a16__model",
+     "options": "yolov8s__model"
+    }
+   ]
+  },
+  {
+   "name": "yolov8s w8a8",
+   "model": "yolov8s",
+   "variant": "w8a8",
+   "tasks": [
+    "object_detection"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "yolov8s__w8a8__model",
+     "options": "yolov8s__model"
+    }
+   ]
+  },
+  {
+   "name": "yolov8s_obb w16a16",
+   "model": "yolov8s_obb",
+   "variant": "w16a16",
+   "tasks": [
+    "oriented_object_detection"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "yolov8s_obb__w16a16__model",
+     "options": "yolov8s_obb__model"
+    }
+   ]
+  },
+  {
+   "name": "yolov8s_obb w8a8",
+   "model": "yolov8s_obb",
+   "variant": "w8a8",
+   "tasks": [
+    "oriented_object_detection"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "yolov8s_obb__w8a8__model",
+     "options": "yolov8s_obb__model"
+    }
+   ]
+  },
+  {
+   "name": "yolov8x w16a16",
+   "model": "yolov8x",
+   "variant": "w16a16",
+   "tasks": [
+    "object_detection"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "yolov8x__w16a16__model",
+     "options": "yolov8x__model"
+    }
+   ]
+  },
+  {
+   "name": "yolov8x w8a16",
+   "model": "yolov8x",
+   "variant": "w8a16",
+   "tasks": [
+    "object_detection"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "yolov8x__w8a16__model",
+     "options": "yolov8x__model"
+    }
+   ]
+  },
+  {
+   "name": "yolov8x w8a8",
+   "model": "yolov8x",
+   "variant": "w8a8",
+   "tasks": [
+    "object_detection"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "yolov8x__w8a8__model",
+     "options": "yolov8x__model"
+    }
+   ]
+  },
+  {
+   "name": "yolov8x_obb w16a16",
+   "model": "yolov8x_obb",
+   "variant": "w16a16",
+   "tasks": [
+    "oriented_object_detection"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "yolov8x_obb__w16a16__model",
+     "options": "yolov8x_obb__model"
+    }
+   ]
+  },
+  {
+   "name": "yolov8x_obb w8a8",
+   "model": "yolov8x_obb",
+   "variant": "w8a8",
+   "tasks": [
+    "oriented_object_detection"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "yolov8x_obb__w8a8__model",
+     "options": "yolov8x_obb__model"
+    }
+   ]
+  },
+  {
+   "name": "yolox_l w8a8",
+   "model": "yolox_l",
+   "variant": "w8a8",
+   "tasks": [
+    "object_detection"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "yolox_l__w8a8__model",
+     "options": "yolox_l__model"
+    }
+   ]
+  },
+  {
+   "name": "yolox_m w8a8",
+   "model": "yolox_m",
+   "variant": "w8a8",
+   "tasks": [
+    "object_detection"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "yolox_m__w8a8__model",
+     "options": "yolox_m__model"
+    }
+   ]
+  },
+  {
+   "name": "yolox_s w8a8",
+   "model": "yolox_s",
+   "variant": "w8a8",
+   "tasks": [
+    "object_detection"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "yolox_s__w8a8__model",
+     "options": "yolox_s__model"
+    }
+   ]
+  },
+  {
+   "name": "yolox_x w8a8",
+   "model": "yolox_x",
+   "variant": "w8a8",
+   "tasks": [
+    "object_detection"
+   ],
+   "components": [
+    {
+     "component": "model",
+     "id": "yolox_x__w8a8__model",
+     "options": "yolox_x__model"
+    }
+   ]
+  }
+ ]
+}
