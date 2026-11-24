@@ -14,26 +14,20 @@
    "entry": "Graph: Input() -> model.preprocess() -> model.inference() -> model.postprocess() -> Output(), Graph::build(seed), Run::push / Run::pull(int, Sample&, PullError*) and Run::pull(std::chrono::milliseconds)"
   },
   "model": {
-   "state": "pending",
-   "until": "S3 (the Model's own route reaches the planner)",
-   "owner": "p1-model",
+   "state": "active",
    "entry": "Model::build(seed) + Model::Runner push/pull: lockstep and sizes on the default RunOptions, free-running on {queue_depth 4, Block, ZeroCopy}"
   },
   "model_run": {
-   "state": "pending",
-   "until": "S3",
-   "owner": "p1-model",
+   "state": "active",
    "entry": "Model::run(inputs, timeout_ms)"
   },
   "plan": {
-   "state": "pending",
-   "until": "S5 (Model::execution_plan on Dataflow)",
-   "owner": "p1-model",
+   "state": "active",
    "entry": "Model::execution_plan().to_json(), byte-equal"
   },
   "bench": {
    "state": "pending",
-   "until": "S6 (Core's latency sampling on Dataflow); S7 as well on image routes with BoxDecode",
+   "until": "S6 (Core's latency sampling on Dataflow)",
    "owner": "phase 1 statistics step",
    "entry": "Model::benchmark(BenchmarkOptions{num_samples 50, min_duration_ms 0, the view's frame}): the report's filled fields"
   }
@@ -7871,14 +7865,7 @@
       "boxdecode@A65"
      ]
     }
-   ],
-   "forms": {
-    "bench": {
-     "state": "pending",
-     "until": "S6 and S7 (Model::benchmark attaches Semantic::preprocess to the frames of a BoxDecode image route)",
-     "owner": "phase 1 statistics step; S7"
-    }
-   }
+   ]
   },
   {
    "package": "yolo11l w16a16",
@@ -7921,14 +7908,7 @@
       "boxdecode@A65"
      ]
     }
-   ],
-   "forms": {
-    "bench": {
-     "state": "pending",
-     "until": "S6 and S7 (Model::benchmark attaches Semantic::preprocess to the frames of a BoxDecode image route)",
-     "owner": "phase 1 statistics step; S7"
-    }
-   }
+   ]
   },
   {
    "package": "yolo11l w8a16",
@@ -7971,14 +7951,7 @@
       "boxdecode@A65"
      ]
     }
-   ],
-   "forms": {
-    "bench": {
-     "state": "pending",
-     "until": "S6 and S7 (Model::benchmark attaches Semantic::preprocess to the frames of a BoxDecode image route)",
-     "owner": "phase 1 statistics step; S7"
-    }
-   }
+   ]
   },
   {
    "package": "yolo11l w8a8",
@@ -8129,14 +8102,7 @@
       "boxdecode@A65"
      ]
     }
-   ],
-   "forms": {
-    "bench": {
-     "state": "pending",
-     "until": "S6 and S7 (Model::benchmark attaches Semantic::preprocess to the frames of a BoxDecode image route)",
-     "owner": "phase 1 statistics step; S7"
-    }
-   }
+   ]
   },
   {
    "package": "yolo11m w16a16",
@@ -8179,14 +8145,7 @@
       "boxdecode@A65"
      ]
     }
-   ],
-   "forms": {
-    "bench": {
-     "state": "pending",
-     "until": "S6 and S7 (Model::benchmark attaches Semantic::preprocess to the frames of a BoxDecode image route)",
-     "owner": "phase 1 statistics step; S7"
-    }
-   }
+   ]
   },
   {
    "package": "yolo11m w8a16",
@@ -8229,14 +8188,7 @@
       "boxdecode@A65"
      ]
     }
-   ],
-   "forms": {
-    "bench": {
-     "state": "pending",
-     "until": "S6 and S7 (Model::benchmark attaches Semantic::preprocess to the frames of a BoxDecode image route)",
-     "owner": "phase 1 statistics step; S7"
-    }
-   }
+   ]
   },
   {
    "package": "yolo11m w8a8",
@@ -8387,14 +8339,7 @@
       "boxdecode@A65"
      ]
     }
-   ],
-   "forms": {
-    "bench": {
-     "state": "pending",
-     "until": "S6 and S7 (Model::benchmark attaches Semantic::preprocess to the frames of a BoxDecode image route)",
-     "owner": "phase 1 statistics step; S7"
-    }
-   }
+   ]
   },
   {
    "package": "yolo11n w16a16",
@@ -8437,14 +8382,7 @@
       "boxdecode@A65"
      ]
     }
-   ],
-   "forms": {
-    "bench": {
-     "state": "pending",
-     "until": "S6 and S7 (Model::benchmark attaches Semantic::preprocess to the frames of a BoxDecode image route)",
-     "owner": "phase 1 statistics step; S7"
-    }
-   }
+   ]
   },
   {
    "package": "yolo11n w8a16",
@@ -8487,14 +8425,7 @@
       "boxdecode@A65"
      ]
     }
-   ],
-   "forms": {
-    "bench": {
-     "state": "pending",
-     "until": "S6 and S7 (Model::benchmark attaches Semantic::preprocess to the frames of a BoxDecode image route)",
-     "owner": "phase 1 statistics step; S7"
-    }
-   }
+   ]
   },
   {
    "package": "yolo11n w8a8",
@@ -8645,14 +8576,7 @@
       "boxdecode@A65"
      ]
     }
-   ],
-   "forms": {
-    "bench": {
-     "state": "pending",
-     "until": "S6 and S7 (Model::benchmark attaches Semantic::preprocess to the frames of a BoxDecode image route)",
-     "owner": "phase 1 statistics step; S7"
-    }
-   }
+   ]
   },
   {
    "package": "yolo11s w16a16",
@@ -8695,14 +8619,7 @@
       "boxdecode@A65"
      ]
     }
-   ],
-   "forms": {
-    "bench": {
-     "state": "pending",
-     "until": "S6 and S7 (Model::benchmark attaches Semantic::preprocess to the frames of a BoxDecode image route)",
-     "owner": "phase 1 statistics step; S7"
-    }
-   }
+   ]
   },
   {
    "package": "yolo11s w8a16",
@@ -8745,14 +8662,7 @@
       "boxdecode@A65"
      ]
     }
-   ],
-   "forms": {
-    "bench": {
-     "state": "pending",
-     "until": "S6 and S7 (Model::benchmark attaches Semantic::preprocess to the frames of a BoxDecode image route)",
-     "owner": "phase 1 statistics step; S7"
-    }
-   }
+   ]
   },
   {
    "package": "yolo11s w8a8",
@@ -8903,14 +8813,7 @@
       "boxdecode@A65"
      ]
     }
-   ],
-   "forms": {
-    "bench": {
-     "state": "pending",
-     "until": "S6 and S7 (Model::benchmark attaches Semantic::preprocess to the frames of a BoxDecode image route)",
-     "owner": "phase 1 statistics step; S7"
-    }
-   }
+   ]
   },
   {
    "package": "yolo11x w16a16",
@@ -8953,14 +8856,7 @@
       "boxdecode@A65"
      ]
     }
-   ],
-   "forms": {
-    "bench": {
-     "state": "pending",
-     "until": "S6 and S7 (Model::benchmark attaches Semantic::preprocess to the frames of a BoxDecode image route)",
-     "owner": "phase 1 statistics step; S7"
-    }
-   }
+   ]
   },
   {
    "package": "yolo11x w8a16",
@@ -9003,14 +8899,7 @@
       "boxdecode@A65"
      ]
     }
-   ],
-   "forms": {
-    "bench": {
-     "state": "pending",
-     "until": "S6 and S7 (Model::benchmark attaches Semantic::preprocess to the frames of a BoxDecode image route)",
-     "owner": "phase 1 statistics step; S7"
-    }
-   }
+   ]
   },
   {
    "package": "yolo11x w8a8",
@@ -12533,14 +12422,7 @@
       "boxdecode@A65"
      ]
     }
-   ],
-   "forms": {
-    "bench": {
-     "state": "pending",
-     "until": "S6 and S7 (Model::benchmark attaches Semantic::preprocess to the frames of a BoxDecode image route)",
-     "owner": "phase 1 statistics step; S7"
-    }
-   }
+   ]
   },
   {
    "package": "yolov8l w16a16",
@@ -12583,14 +12465,7 @@
       "boxdecode@A65"
      ]
     }
-   ],
-   "forms": {
-    "bench": {
-     "state": "pending",
-     "until": "S6 and S7 (Model::benchmark attaches Semantic::preprocess to the frames of a BoxDecode image route)",
-     "owner": "phase 1 statistics step; S7"
-    }
-   }
+   ]
   },
   {
    "package": "yolov8l w8a16",
@@ -12633,14 +12508,7 @@
       "boxdecode@A65"
      ]
     }
-   ],
-   "forms": {
-    "bench": {
-     "state": "pending",
-     "until": "S6 and S7 (Model::benchmark attaches Semantic::preprocess to the frames of a BoxDecode image route)",
-     "owner": "phase 1 statistics step; S7"
-    }
-   }
+   ]
   },
   {
    "package": "yolov8l w8a8",
@@ -12791,14 +12659,7 @@
       "boxdecode@A65"
      ]
     }
-   ],
-   "forms": {
-    "bench": {
-     "state": "pending",
-     "until": "S6 and S7 (Model::benchmark attaches Semantic::preprocess to the frames of a BoxDecode image route)",
-     "owner": "phase 1 statistics step; S7"
-    }
-   }
+   ]
   },
   {
    "package": "yolov8m w16a16",
@@ -12841,14 +12702,7 @@
       "boxdecode@A65"
      ]
     }
-   ],
-   "forms": {
-    "bench": {
-     "state": "pending",
-     "until": "S6 and S7 (Model::benchmark attaches Semantic::preprocess to the frames of a BoxDecode image route)",
-     "owner": "phase 1 statistics step; S7"
-    }
-   }
+   ]
   },
   {
    "package": "yolov8m w8a16",
@@ -12891,14 +12745,7 @@
       "boxdecode@A65"
      ]
     }
-   ],
-   "forms": {
-    "bench": {
-     "state": "pending",
-     "until": "S6 and S7 (Model::benchmark attaches Semantic::preprocess to the frames of a BoxDecode image route)",
-     "owner": "phase 1 statistics step; S7"
-    }
-   }
+   ]
   },
   {
    "package": "yolov8m w8a8",
@@ -13049,14 +12896,7 @@
       "boxdecode@A65"
      ]
     }
-   ],
-   "forms": {
-    "bench": {
-     "state": "pending",
-     "until": "S6 and S7 (Model::benchmark attaches Semantic::preprocess to the frames of a BoxDecode image route)",
-     "owner": "phase 1 statistics step; S7"
-    }
-   }
+   ]
   },
   {
    "package": "yolov8n w16a16",
@@ -13099,14 +12939,7 @@
       "boxdecode@A65"
      ]
     }
-   ],
-   "forms": {
-    "bench": {
-     "state": "pending",
-     "until": "S6 and S7 (Model::benchmark attaches Semantic::preprocess to the frames of a BoxDecode image route)",
-     "owner": "phase 1 statistics step; S7"
-    }
-   }
+   ]
   },
   {
    "package": "yolov8n w8a16",
@@ -13149,14 +12982,7 @@
       "boxdecode@A65"
      ]
     }
-   ],
-   "forms": {
-    "bench": {
-     "state": "pending",
-     "until": "S6 and S7 (Model::benchmark attaches Semantic::preprocess to the frames of a BoxDecode image route)",
-     "owner": "phase 1 statistics step; S7"
-    }
-   }
+   ]
   },
   {
    "package": "yolov8n w8a8",
@@ -13307,14 +13133,7 @@
       "boxdecode@A65"
      ]
     }
-   ],
-   "forms": {
-    "bench": {
-     "state": "pending",
-     "until": "S6 and S7 (Model::benchmark attaches Semantic::preprocess to the frames of a BoxDecode image route)",
-     "owner": "phase 1 statistics step; S7"
-    }
-   }
+   ]
   },
   {
    "package": "yolov8s w16a16",
@@ -13357,14 +13176,7 @@
       "boxdecode@A65"
      ]
     }
-   ],
-   "forms": {
-    "bench": {
-     "state": "pending",
-     "until": "S6 and S7 (Model::benchmark attaches Semantic::preprocess to the frames of a BoxDecode image route)",
-     "owner": "phase 1 statistics step; S7"
-    }
-   }
+   ]
   },
   {
    "package": "yolov8s w8a16",
@@ -13407,14 +13219,7 @@
       "boxdecode@A65"
      ]
     }
-   ],
-   "forms": {
-    "bench": {
-     "state": "pending",
-     "until": "S6 and S7 (Model::benchmark attaches Semantic::preprocess to the frames of a BoxDecode image route)",
-     "owner": "phase 1 statistics step; S7"
-    }
-   }
+   ]
   },
   {
    "package": "yolov8s w8a8",
@@ -13565,14 +13370,7 @@
       "boxdecode@A65"
      ]
     }
-   ],
-   "forms": {
-    "bench": {
-     "state": "pending",
-     "until": "S6 and S7 (Model::benchmark attaches Semantic::preprocess to the frames of a BoxDecode image route)",
-     "owner": "phase 1 statistics step; S7"
-    }
-   }
+   ]
   },
   {
    "package": "yolov8x w16a16",
@@ -13615,14 +13413,7 @@
       "boxdecode@A65"
      ]
     }
-   ],
-   "forms": {
-    "bench": {
-     "state": "pending",
-     "until": "S6 and S7 (Model::benchmark attaches Semantic::preprocess to the frames of a BoxDecode image route)",
-     "owner": "phase 1 statistics step; S7"
-    }
-   }
+   ]
   },
   {
    "package": "yolov8x w8a16",
@@ -13665,14 +13456,7 @@
       "boxdecode@A65"
      ]
     }
-   ],
-   "forms": {
-    "bench": {
-     "state": "pending",
-     "until": "S6 and S7 (Model::benchmark attaches Semantic::preprocess to the frames of a BoxDecode image route)",
-     "owner": "phase 1 statistics step; S7"
-    }
-   }
+   ]
   },
   {
    "package": "yolov8x w8a8",

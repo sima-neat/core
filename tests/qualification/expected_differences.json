@@ -3,55 +3,6 @@
  "about": "The differences between the two backends that a row of expected.json may show and still be `equal`. Each row names what GStreamer gives and what Dataflow gives, why the difference exists and who removes it; the comparator (qualify.py) accepts a difference only where an active row's fields, scope and relation all hold, and fails a must_observe row whose fields were compared and found equal everywhere (the difference is gone: the change that removed it deletes the row). kind: kept = the owner decided to keep Dataflow's behaviour (DECISIONS.md 5, 14) or the field is new surface; interim = a named later step removes it; proposed = no decision covers it yet: the row states the proposal and the decision it needs. state: active = applied now; planned = the step that creates the difference has not landed, so the fields must still be equal; not_exercised = no comparator scenario observes it yet (the row says which test does); not_observed = the comparator looked and both backends agree on the catalogue's routes. check: fields (record fields), stderr (lines), none.",
  "rows": [
   {
-   "id": "input_seq_seed_preflight",
-   "kind": "interim",
-   "state": "active",
-   "check": "fields",
-   "must_observe": true,
-   "until": "S4 (seeded-build preflight on Dataflow, plan-entry.md 5.1)",
-   "decision": "PHASE1.md update 2026-11-24 (input_seq and stamp numbering until preflight lands); contract 3",
-   "gstreamer": "a seeded build pushes and pulls the seed once (startup_preflight), so the first frame the customer pushes is input_seq 1",
-   "dataflow": "the seed only binds the input: the first frame is input_seq 0",
-   "fields": [
-    "sample.input_seq",
-    "sample.orig_input_seq"
-   ],
-   "relation": {
-    "offset": 1
-   },
-   "scope": {
-    "forms": [
-     "graph",
-     "model"
-    ]
-   }
-  },
-  {
-   "id": "stamp_seq_seed_preflight",
-   "kind": "interim",
-   "state": "active",
-   "check": "fields",
-   "must_observe": true,
-   "until": "S4 (seeded-build preflight on Dataflow)",
-   "decision": "PHASE1.md update 2026-11-24; E3.md",
-   "gstreamer": "the pulled tensor's Stamp::seq counts the preflight's seed too (the first pushed frame is 2)",
-   "dataflow": "Stamp::seq starts at 1 with the first pushed frame",
-   "fields": [
-    "tensors[*].stamp.seq"
-   ],
-   "relation": {
-    "offset": 1
-   },
-   "scope": {
-    "forms": [
-     "graph"
-    ],
-    "scenarios": [
-     "lock_tl"
-    ]
-   }
-  },
-  {
    "id": "stamp_publish_time",
    "kind": "kept",
    "state": "active",
