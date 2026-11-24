@@ -249,13 +249,7 @@ build_graph_metrics_report_run_lifetime(const std::shared_ptr<const runtime::Run
     {
       std::lock_guard<std::mutex> lock(core->latency_mu);
       start = core->created_at;
-      // A Run on Dataflow keeps its last pull's time itself, without this lock.
-      const std::chrono::steady_clock::time_point dataflow_pull =
-          core->dataflow_ ? core->dataflow_->last_pull_at()
-                          : std::chrono::steady_clock::time_point{};
-      if (dataflow_pull != std::chrono::steady_clock::time_point{}) {
-        end = dataflow_pull;
-      } else if (core->pull_timing_init) {
+      if (core->pull_timing_init) {
         end = core->last_pull_at;
       } else if (core->output_timing_init) {
         end = core->last_output_at;

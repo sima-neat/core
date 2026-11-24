@@ -16,10 +16,6 @@ RunStats runtime::RunCore::stats() const {
   out.outputs_ready = outputs_ready.load();
   out.outputs_pulled = outputs_pulled.load();
   out.outputs_dropped = outputs_dropped.load();
-  if (dataflow_) {
-    (void)dataflow_->latency(out.avg_latency_ms, out.min_latency_ms, out.max_latency_ms);
-    return out;
-  }
   {
     std::lock_guard<std::mutex> lock(latency_mu);
     if (latency_count > 0) {

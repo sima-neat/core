@@ -142,6 +142,7 @@ DataflowPushOutcome DataflowInputPort::device_push_planes(const DataflowPushItem
       b->wraps && dataflow_planar_frame_wraps(route, frame) &&
       dataflow_device::wrap_tensor(frame, b->binding.spec, b->slot_bytes, b->wrap_mask, wrap);
   const df::Acquire mode = block ? df::Acquire::Block : df::Acquire::Fail;
+  const std::int64_t alloc_start = dataflow_now_ns();
   df::Result<df::WriteLoan> allocated =
       b->session.alloc(b->feed, mode, df::kNoDeadline, wrapped ? &wrap : nullptr);
   if (const df::Error* error = df::failure(allocated)) {
@@ -154,6 +155,7 @@ DataflowPushOutcome DataflowInputPort::device_push_planes(const DataflowPushItem
       return {DataflowPushOutcome::Stage::Alloc, *again};
     }
   }
+  const std::int64_t alloc_end = dataflow_now_ns();
   df::WriteLoan loan = std::get<df::WriteLoan>(std::move(allocated));
   if (wrapped) {
     if (!b->has_wraps.load(std::memory_order_relaxed)) {
@@ -167,16 +169,17 @@ DataflowPushOutcome DataflowInputPort::device_push_planes(const DataflowPushItem
   df::Extent extent;
   extent.rank = 1;
   extent.dims[0] = static_cast<std::int64_t>(b->slot_bytes);
-  if (!block) {
-    return {DataflowPushOutcome::Stage::Publish,
-            b->session.push(b->feed, std::move(loan), stamp, extent, df::Deadline{})};
-  }
-  if (lossy_block_) {
-    return {DataflowPushOutcome::Stage::Publish,
-            b->session.push(b->feed, std::move(loan), stamp, extent, df::kNoDeadline)};
-  }
-  return {DataflowPushOutcome::Stage::Publish,
-          b->session.push_waiting(b->feed, std::move(loan), stamp, extent, df::kNoDeadline)};
+  return publish_timed(
+      [&] {
+        if (!block) {
+          return b->session.push(b->feed, std::move(loan), stamp, extent, df::Deadline{});
+        }
+        if (lossy_block_) {
+          return b->session.push(b->feed, std::move(loan), stamp, extent, df::kNoDeadline);
+        }
+        return b->session.push_waiting(b->feed, std::move(loan), stamp, extent, df::kNoDeadline);
+      },
+      alloc_start, alloc_end);
 }
 
 } // namespace simaai::neat::runtime

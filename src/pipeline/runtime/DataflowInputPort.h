@@ -24,6 +24,7 @@
 
 #include <array>
 #include <atomic>
+#include <chrono>
 #include <condition_variable>
 #include <cstddef>
 #include <cstdint>
@@ -40,6 +41,16 @@ namespace simaai::neat::runtime {
 
 namespace df = pipeline_internal::df;
 
+// The times of a push that reached the publish, for the Run's input statistics
+// (InputStreamStats): its slot (Session::alloc, waiting for a free one included), its bytes (the
+// copy into the slot; nothing for a wrap), and the publish itself (Session::push or push_waiting,
+// waiting for room on the links included). Nanoseconds.
+struct DataflowPushTiming {
+  std::int64_t alloc_ns = 0;
+  std::int64_t copy_ns = 0;
+  std::int64_t publish_ns = 0;
+};
+
 // What the Session answered a push: where it ended, and the runtime's own answer.
 struct DataflowPushOutcome {
   enum class Stage : std::uint8_t {
@@ -49,7 +60,81 @@ struct DataflowPushOutcome {
   };
   Stage stage = Stage::Unbound;
   df::Result<df::PublishResult> answer;
+  DataflowPushTiming timing; ///< Stage::Publish only
 };
+
+// A model route's publish instants, for the latency of its outputs (RunStats, MeasureReport): the
+// steady_clock instant at which each item entering the route was published, kept by the item's
+// ordinal among the items the route takes. That ordinal is the seq the route's last operator
+// stamps on the item's output: each operator publishes one output per item, in order, and every
+// link behind the Feed's waits for room instead of dropping. An item the Feed's link refuses
+// (DropIncoming, or a try_push refused before its slot) takes no ordinal; one it evicts
+// (DropOldest, KeepLatest's try_push) gives its ordinal back to the items behind it.
+// The pushing thread writes an item's instant before the publish (`claim`), so that the pull of
+// its output always finds one, and the instant the publish returned after it (`settle`), which is
+// the one the pull reads unless the route outran the pushing thread. With several threads pushing
+// into one input at once an output may read its neighbour's instant, or none.
+class DataflowPublishTimes {
+public:
+  // More items than a route holds between their publish and the pull of their outputs.
+  static constexpr std::uint64_t kSize = 1024;
+
+  // Before the publish: `ns` kept for the next ordinal.
+  void claim(std::int64_t ns) noexcept {
+    put(entered_.load(std::memory_order_relaxed) + 1U, ns);
+  }
+  // After the publish of the item `claim` was asked for, at `ns`: whether the item entered the
+  // route, and whether its link evicted the oldest of the `depth` items it held.
+  void settle(std::int64_t ns, bool entered, bool evicted, std::uint32_t depth) noexcept {
+    if (!entered) {
+      return; // the next claim takes the ordinal again
+    }
+    const std::uint64_t taken = entered_.fetch_add(1, std::memory_order_relaxed) + 1U;
+    put(taken, ns);
+    if (evicted && taken > depth) {
+      // The evicted item never reaches the route: each item queued behind it takes the ordinal
+      // before its own.
+      for (std::uint64_t k = taken - depth; k < taken; ++k) {
+        put(k, at_slot(k + 1U).ns.load(std::memory_order_relaxed));
+      }
+      entered_.fetch_sub(1, std::memory_order_relaxed);
+    }
+  }
+  // The publish instant of the item whose output the route's last operator stamped `seq`.
+  std::optional<std::int64_t> at(std::uint64_t seq) const noexcept {
+    const Entry& entry = at_slot(seq);
+    if (seq == 0U || entry.ordinal.load(std::memory_order_relaxed) != seq) {
+      return std::nullopt;
+    }
+    return entry.ns.load(std::memory_order_relaxed);
+  }
+
+private:
+  struct Entry {
+    std::atomic<std::uint64_t> ordinal{0};
+    std::atomic<std::int64_t> ns{0};
+  };
+  Entry& at_slot(std::uint64_t ordinal) noexcept {
+    return ring_[ordinal & (kSize - 1U)];
+  }
+  const Entry& at_slot(std::uint64_t ordinal) const noexcept {
+    return ring_[ordinal & (kSize - 1U)];
+  }
+  void put(std::uint64_t ordinal, std::int64_t ns) noexcept {
+    Entry& entry = at_slot(ordinal);
+    entry.ns.store(ns, std::memory_order_relaxed);
+    entry.ordinal.store(ordinal, std::memory_order_relaxed);
+  }
+  std::array<Entry, kSize> ring_{};
+  std::atomic<std::uint64_t> entered_{0};
+};
+
+// steady_clock's instant, as the nanoseconds DataflowPublishTimes keeps.
+inline std::int64_t dataflow_now_ns() noexcept {
+  return std::chrono::duration_cast<std::chrono::nanoseconds>(
+             std::chrono::steady_clock::now().time_since_epoch())
+      .count();
+}
 
 // One item of a public push, as the Run hands it to its input: what DataflowInputPort::push,
 // dataflow_device::push and dataflow_device::push_frame take.
@@ -109,6 +194,12 @@ public:
   /// The Run the input belongs to.
   const RunCore& core() const noexcept {
     return run_.core;
+  }
+  /// A model route's publish instants; null for an Input that feeds its Outputs directly, whose
+  /// pulled message carries its own (the Feed's publish_time, which a Fetch reading it makes a
+  /// steady_clock instant).
+  const DataflowPublishTimes* publish_times() const noexcept {
+    return publish_times_.get();
   }
 
   // Binds now when `seed` (one tensor: a leaf; several: a record), the declaration or, in front of
@@ -268,6 +359,12 @@ private:
                                                      RunAllocation* allocation, bool wrappable,
                                                      bool device_port, bool frame_port,
                                                      const std::type_info* map_fn);
+  // The publish itself (`send` calls Session::push or push_waiting), timed: a push whose slot was
+  // asked for at `alloc_start` and obtained at `alloc_end` (both 0 for a Run::alloc slot), its
+  // bytes then written. A model route's publish instant is kept around it (publish_times_).
+  template <class Send>
+  [[gnu::always_inline]] DataflowPushOutcome publish_timed(Send&& send, std::int64_t alloc_start,
+                                                           std::int64_t alloc_end);
 
   const DataflowPortContext run_;
   const std::size_t index_;
@@ -275,6 +372,10 @@ private:
   const std::uint32_t stream_; ///< its default stream's id (StreamNames)
   bool lossy_block_ = false;
   const bool device_; ///< InputOptions::memory_policy resolved to Ev74 or Dms0
+  /// A model route: the publish instants of the items it takes, and the depth of the Feed's link
+  /// in front of its first operator.
+  std::unique_ptr<DataflowPublishTimes> publish_times_;
+  std::uint32_t feed_depth_ = 1;
 
   // The binding is written once under mu_ and read lock-free; cv_ wakes a pull that waits for it.
   std::mutex mu_;
@@ -332,6 +433,31 @@ private:
   df::WriteLoan& loan_;
 };
 
+template <class Send>
+inline DataflowPushOutcome DataflowInputPort::publish_timed(Send&& send, std::int64_t alloc_start,
+                                                            std::int64_t alloc_end) {
+  const std::int64_t start = dataflow_now_ns();
+  if (publish_times_) {
+    publish_times_->claim(start);
+  }
+  DataflowPushOutcome outcome{DataflowPushOutcome::Stage::Publish, send(), {}};
+  const std::int64_t end = dataflow_now_ns();
+  if (publish_times_) {
+    bool entered = false;
+    bool evicted = false;
+    if (const auto* result = std::get_if<df::PublishResult>(&outcome.answer);
+        result && result->published() && result->size() == 1U) {
+      evicted = result->outcome(0) == df::Link::Offer::DroppedOldest;
+      entered = evicted || result->outcome(0) == df::Link::Offer::Accepted;
+    }
+    publish_times_->settle(end, entered, evicted, feed_depth_);
+  }
+  outcome.timing.alloc_ns = alloc_end - alloc_start;
+  outcome.timing.copy_ns = alloc_end == 0 ? 0 : start - alloc_end;
+  outcome.timing.publish_ns = end - start;
+  return outcome;
+}
+
 // The one path of every push: the slot, its bytes, the publish.
 //   the slot   the loan of the allocation (a Tensor from Run::alloc), or one from the pool:
 //              Acquire::Block for push, Acquire::Fail for try_push, backed by the tensor's own
@@ -353,6 +479,8 @@ inline DataflowPushOutcome DataflowInputPort::publish(Bound& b, const DataflowPu
   const LentSlot lent(allocation, loan, where);
   const Tensor& first = item.tensors.front();
   bool wrapped = false;
+  std::int64_t alloc_start = 0;
+  std::int64_t alloc_end = 0;
   if (allocation) {
     if (!loan || !first.is_dense() || first.byte_offset != 0 || !first.is_contiguous()) {
       dataflow_codec::throw_input_shape(
@@ -393,6 +521,7 @@ inline DataflowPushOutcome DataflowInputPort::publish(Bound& b, const DataflowPu
                                           map_fn ? *map_fn : dataflow_codec::map_fn_type(first),
                                           wrap));
     const df::Acquire mode = block ? df::Acquire::Block : df::Acquire::Fail;
+    alloc_start = dataflow_now_ns();
     df::Result<df::WriteLoan> allocated =
         b.session.alloc(b.feed, mode, df::kNoDeadline, wrapped ? &wrap : nullptr);
     if (const df::Error* error = df::failure(allocated)) {
@@ -411,22 +540,26 @@ inline DataflowPushOutcome DataflowInputPort::publish(Bound& b, const DataflowPu
         return {DataflowPushOutcome::Stage::Alloc, *again};
       }
     }
+    alloc_end = dataflow_now_ns();
     loan = std::get<df::WriteLoan>(std::move(allocated));
   }
   const auto send = [&](const auto& extent) {
-    if (!block) {
-      return b.session.push(b.feed, std::move(loan), stamp, extent, df::Deadline{});
-    }
-    if (lossy_block_) {
-      return b.session.push(b.feed, std::move(loan), stamp, extent, df::kNoDeadline);
-    }
-    return b.session.push_waiting(b.feed, std::move(loan), stamp, extent, df::kNoDeadline);
+    return publish_timed(
+        [&] {
+          if (!block) {
+            return b.session.push(b.feed, std::move(loan), stamp, extent, df::Deadline{});
+          }
+          if (lossy_block_) {
+            return b.session.push(b.feed, std::move(loan), stamp, extent, df::kNoDeadline);
+          }
+          return b.session.push_waiting(b.feed, std::move(loan), stamp, extent, df::kNoDeadline);
+        },
+        alloc_start, alloc_end);
   };
   if (b.binding.is_record()) {
     std::array<df::Extent, df::kMaxFields> extents{};
     dataflow_codec::copy_record(b.binding, item.tensors, loan.bytes(), extents, where);
-    return {DataflowPushOutcome::Stage::Publish,
-            send(std::span<const df::Extent>(extents.data(), item.tensors.size()))};
+    return send(std::span<const df::Extent>(extents.data(), item.tensors.size()));
   }
   df::Extent extent;
   if (wrapped) {
@@ -440,7 +573,7 @@ inline DataflowPushOutcome DataflowInputPort::publish(Bound& b, const DataflowPu
   } else {
     extent = dataflow_codec::copy_into(b.binding, first, loan.bytes(), where);
   }
-  return {DataflowPushOutcome::Stage::Publish, send(extent)};
+  return send(extent);
 }
 
 inline DataflowPushOutcome DataflowInputPort::push(const DataflowPushItem& pushed, bool device_port,

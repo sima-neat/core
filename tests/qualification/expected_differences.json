@@ -107,34 +107,6 @@
    }
   },
   {
-   "id": "measure_end_to_end_samples",
-   "kind": "interim",
-   "state": "active",
-   "check": "fields",
-   "must_observe": true,
-   "until": "S6 (Core's latency sampling on Dataflow)",
-   "decision": "plan-entry.md 2.3 B4, B5; 4.2",
-   "gstreamer": "MeasureReport::end_to_end holds one sample per pulled output",
-   "dataflow": "end_to_end.count 0, latency_samples_collected false",
-   "fields": [
-    "counters.end_to_end.count",
-    "counters.latency_samples_collected"
-   ],
-   "relation": {
-    "gstreamer": "*",
-    "dataflow": [
-     0,
-     false
-    ]
-   },
-   "scope": {
-    "forms": [
-     "graph",
-     "model"
-    ]
-   }
-  },
-  {
    "id": "gstreamer_verbose_progress",
    "kind": "interim",
    "state": "active",

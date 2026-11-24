@@ -335,7 +335,8 @@ public:
                   PullError* err) override {
     df::Message message;
     DataflowInputPort::Bound* bound = nullptr;
-    const PullStatus status = take(output, timeout_ms, err, message, bound);
+    Taken taken;
+    const PullStatus status = take(output, timeout_ms, err, message, bound, taken);
     if (status != PullStatus::Ok) {
       return status;
     }
@@ -354,7 +355,7 @@ public:
     if (orig >= 0) {
       out.orig_input_seq = orig;
     }
-    count_pulled();
+    count_pulled(taken);
     return PullStatus::Ok;
   }
 
@@ -362,7 +363,8 @@ public:
                   PullError* err) override {
     df::Message message;
     DataflowInputPort::Bound* bound = nullptr;
-    const PullStatus status = take(output, timeout_ms, err, message, bound);
+    Taken taken;
+    const PullStatus status = take(output, timeout_ms, err, message, bound, taken);
     if (status != PullStatus::Ok) {
       return status;
     }
@@ -373,7 +375,7 @@ public:
       codec::fill_tensors(bound->binding, bound->has_wraps.load(std::memory_order_relaxed),
                           streams_, owned_output(), std::move(message), out);
     }
-    count_pulled();
+    count_pulled(taken);
     return PullStatus::Ok;
   }
 
@@ -412,7 +414,15 @@ public:
     core_.outputs_ready.store(0, std::memory_order_relaxed);
     core_.outputs_pulled.store(0, std::memory_order_relaxed);
     polls_.store(0, std::memory_order_relaxed);
-    last_pull_ns_.store(0, std::memory_order_relaxed);
+    for (std::atomic<std::uint64_t>* sum : {&alloc_ns_, &copy_ns_, &publish_ns_, &pull_wait_ns_}) {
+      sum->store(0, std::memory_order_relaxed);
+    }
+    std::lock_guard<std::mutex> lock(core_.latency_mu);
+    core_.latency_count = 0;
+    core_.latency_init = false;
+    core_.latency_mean_ms = core_.latency_min_ms = core_.latency_max_ms = 0.0;
+    core_.pull_timing_init = false;
+    core_.output_timing_init = false;
   }
 
   // Every input of the Run (Run::close_input names none): each one's queued messages stay pullable,
@@ -502,7 +512,10 @@ public:
   // pushes that returned true (settle's count), not the Feeds' published messages: a try_push
   // that a full DropIncoming link refused is published and dropped, and one that a dropping Feed
   // keeps at its flow limit's admission and replaces is accepted and never published
-  // (FlowReport::refused). Both are in dropped_frames.
+  // (FlowReport::refused). Both are in dropped_frames. The averages are those of the pushes that
+  // returned true (each one's slot, its copy into the slot, its publish: DataflowPushTiming) and
+  // of the pulls that returned an output (each one's wait from its call to its output). There is
+  // no buffer to map, nothing is decoded, no pool grows and no caps renegotiate: those stay 0.
   InputStreamStats input_stats() const override {
     InputStreamStats out;
     out.push_count = core_.inputs_pushed.load(std::memory_order_relaxed);
@@ -516,43 +529,16 @@ public:
         out.dropped_frames += report->dropped_frames;
       }
     }
+    const auto avg_us = [](const std::atomic<std::uint64_t>& total_ns, std::uint64_t count) {
+      return count == 0U ? 0.0
+                         : static_cast<double>(total_ns.load(std::memory_order_relaxed)) /
+                               static_cast<double>(count) / 1000.0;
+    };
+    out.avg_alloc_us = avg_us(alloc_ns_, out.push_count);
+    out.avg_copy_us = avg_us(copy_ns_, out.push_count);
+    out.avg_push_us = avg_us(publish_ns_, out.push_count);
+    out.avg_pull_wait_us = avg_us(pull_wait_ns_, out.pull_count);
     return out;
-  }
-
-  bool latency(double& avg_ms, double& min_ms, double& max_ms) const override {
-    std::uint64_t count = 0;
-    double sum_ns = 0;
-    std::int64_t lowest = 0;
-    std::int64_t highest = 0;
-    for (const auto& port : ports_) {
-      const std::optional<df::SessionReport> report = port->report();
-      if (!report || !report->timing) {
-        continue;
-      }
-      for (const df::FetchReport& fetch : report->fetches) {
-        const df::Distribution& d = fetch.latency;
-        if (d.count == 0U) {
-          continue;
-        }
-        lowest = count == 0U ? d.min_ns : std::min(lowest, d.min_ns);
-        highest = count == 0U ? d.max_ns : std::max(highest, d.max_ns);
-        sum_ns += d.mean_ns * static_cast<double>(d.count);
-        count += d.count;
-      }
-    }
-    if (count == 0U) {
-      return false;
-    }
-    constexpr double kNsPerMs = 1e6;
-    avg_ms = sum_ns / static_cast<double>(count) / kNsPerMs;
-    min_ms = static_cast<double>(lowest) / kNsPerMs;
-    max_ms = static_cast<double>(highest) / kNsPerMs;
-    return true;
-  }
-
-  std::chrono::steady_clock::time_point last_pull_at() const override {
-    return std::chrono::steady_clock::time_point(
-        std::chrono::steady_clock::duration(last_pull_ns_.load(std::memory_order_relaxed)));
   }
 
 private:
@@ -668,6 +654,10 @@ private:
       core_.inputs_enqueued.fetch_add(1, std::memory_order_relaxed);
       core_.inputs_pushed.fetch_add(1, std::memory_order_relaxed);
       core_.outputs_ready.fetch_add(v.outputs_ready, std::memory_order_relaxed);
+      const DataflowPushTiming& t = outcome.timing;
+      alloc_ns_.fetch_add(static_cast<std::uint64_t>(t.alloc_ns), std::memory_order_relaxed);
+      copy_ns_.fetch_add(static_cast<std::uint64_t>(t.copy_ns), std::memory_order_relaxed);
+      publish_ns_.fetch_add(static_cast<std::uint64_t>(t.publish_ns), std::memory_order_relaxed);
     }
     if (v.inputs_dropped != 0U) {
       core_.inputs_dropped.fetch_add(v.inputs_dropped, std::memory_order_relaxed);
@@ -730,10 +720,17 @@ private:
     return kNoEndpoint;
   }
 
+  // What take() knows of a message besides the message: when the pull began waiting for it, and
+  // when its item was published.
+  struct Taken {
+    std::int64_t wait_start_ns = 0;
+    std::int64_t published_ns = -1; ///< published_at
+  };
+
   // The next message of the output and the bound input it came through, or why there is none
   // (both pull verbs). The call's name for messages is built only when a message needs it.
   PullStatus take(std::optional<std::string_view> output, int timeout_ms, PullError* err,
-                  df::Message& message, DataflowInputPort::Bound*& bound) {
+                  df::Message& message, DataflowInputPort::Bound*& bound, Taken& taken) {
     clear_pull_error(err);
     const auto where = [&output] {
       return output ? "Run::pull(\"" + std::string(*output) + "\")" : std::string("Run::pull");
@@ -758,6 +755,7 @@ private:
       return timed_out(timeout_ms, where(), err);
     }
 
+    taken.wait_start_ns = dataflow_now_ns();
     df::Result<df::Message> pulled = DataflowInputPort::pull(*bound, slot.link, deadline);
     if (const df::Error* error = df::failure(pulled)) {
       const pipeline_internal::DataflowErrorMapping mapping =
@@ -791,15 +789,75 @@ private:
       return PullStatus::Error;
     }
     message = std::get<df::Message>(std::move(pulled));
+    taken.published_ns = published_at(*port, message.stamp());
     return PullStatus::Ok;
   }
 
-  // The Run's pull count and the time of its last pull (the run-lifetime throughput reads it:
-  // last_pull_at): one relaxed RMW, one clock read, one relaxed store.
-  void count_pulled() {
+  // The instant the item behind a pulled message was published into its input: a model route's
+  // kept instant (DataflowPublishTimes, by the seq the route's last operator stamped), or the
+  // message's own publish_time (the Feed's steady_clock instant, for an Input that feeds its
+  // Output directly). -1 when it is not known.
+  static std::int64_t published_at(const DataflowInputPort& port, const df::Stamp& stamp) {
+    if (const DataflowPublishTimes* times = port.publish_times()) {
+      return times->at(stamp.seq).value_or(-1);
+    }
+    return stamp.publish_time.clock == df::ClockId::Monotonic && stamp.publish_time.ns > 0
+               ? stamp.publish_time.ns
+               : -1;
+  }
+
+  // An output the pull obtained, as GStreamer's Run records one (RunCore's counters and latency
+  // fields, the latter under latency_mu): the pull count; the output's latency from its item's
+  // publish to now, the pull's own instant, into RunStats and, inside a measurement,
+  // MeasureReport::end_to_end; the time of the pull (the run-lifetime throughput); the pull's wait
+  // (InputStreamStats::avg_pull_wait_us); and on a Run GStreamer builds as one pipeline segment
+  // the gap from the previous output (MeasureReport::frame_gap). One clock read.
+  void count_pulled(const Taken& taken) {
+    const std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now();
+    const std::int64_t now_ns =
+        std::chrono::duration_cast<std::chrono::nanoseconds>(now.time_since_epoch()).count();
     core_.outputs_pulled.fetch_add(1, std::memory_order_relaxed);
-    last_pull_ns_.store(std::chrono::steady_clock::now().time_since_epoch().count(),
-                        std::memory_order_relaxed);
+    pull_wait_ns_.fetch_add(static_cast<std::uint64_t>(now_ns - taken.wait_start_ns),
+                            std::memory_order_relaxed);
+    std::lock_guard<std::mutex> lock(core_.latency_mu);
+    if (taken.published_ns >= 0) {
+      const double ms = static_cast<double>(now_ns - taken.published_ns) / 1e6;
+      ++core_.latency_count;
+      if (!core_.latency_init) {
+        core_.latency_mean_ms = core_.latency_min_ms = core_.latency_max_ms = ms;
+        core_.latency_init = true;
+      } else {
+        core_.latency_mean_ms +=
+            (ms - core_.latency_mean_ms) / static_cast<double>(core_.latency_count);
+        core_.latency_min_ms = std::min(core_.latency_min_ms, ms);
+        core_.latency_max_ms = std::max(core_.latency_max_ms, ms);
+      }
+      if (core_.measurement_active) {
+        core_.measurement_latencies_ms.push_back(ms);
+      }
+    }
+    if (!core_.pull_timing_init) {
+      core_.first_pull_at = now;
+      core_.pull_timing_init = true;
+    }
+    core_.last_pull_at = now;
+    if (config_.graph_run) {
+      return;
+    }
+    if (!core_.output_timing_init) {
+      core_.first_output_at = now;
+      core_.output_timing_init = true;
+    }
+    core_.last_output_at = now;
+    if (core_.measurement_active) {
+      if (core_.measurement_output_timing_init) {
+        core_.measurement_frame_gaps_ms.push_back(
+            std::chrono::duration<double, std::milli>(now - core_.measurement_last_output_at)
+                .count());
+      }
+      core_.measurement_last_output_at = now;
+      core_.measurement_output_timing_init = true;
+    }
   }
 
   // With SIMA_GRAPH_DEBUG or SIMA_PIPELINE_DEBUG set (the [NEAT] lines of
@@ -850,7 +908,12 @@ private:
 
   std::atomic<bool> stopped_{false};
   std::atomic<std::uint64_t> polls_{0};
-  std::atomic<std::chrono::steady_clock::rep> last_pull_ns_{0}; ///< count_pulled's clock read
+  // The input statistics' sums, ns (input_stats): of the accepted pushes' slots, copies and
+  // publishes (settle), and of the pulls' waits (count_pulled).
+  std::atomic<std::uint64_t> alloc_ns_{0};
+  std::atomic<std::uint64_t> copy_ns_{0};
+  std::atomic<std::uint64_t> publish_ns_{0};
+  std::atomic<std::uint64_t> pull_wait_ns_{0};
   // A Run of several inputs: the counter of its pushes, orig_input_seq.
   std::atomic<std::uint64_t> run_seq_{0};
 

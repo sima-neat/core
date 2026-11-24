@@ -26,9 +26,7 @@
    "entry": "Model::execution_plan().to_json(), byte-equal"
   },
   "bench": {
-   "state": "pending",
-   "until": "S6 (Core's latency sampling on Dataflow)",
-   "owner": "phase 1 statistics step",
+   "state": "active",
    "entry": "Model::benchmark(BenchmarkOptions{num_samples 50, min_duration_ms 0, the view's frame}): the report's filled fields"
   }
  },

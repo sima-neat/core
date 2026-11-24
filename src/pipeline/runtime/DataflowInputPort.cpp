@@ -175,6 +175,8 @@ DataflowInputPort::DataflowInputPort(const DataflowPortContext& run, std::size_t
     // The route's model and kernels, loaded and checked at the build, where a file the MLA
     // refuses or a request the Kernels package refuses is the build's error.
     model_ = load_dataflow_model_route(*config_.model, run_.config.where.c_str());
+    publish_times_ = std::make_unique<DataflowPublishTimes>();
+    feed_depth_ = run_.config.outputs[config_.outputs.front()].link_depth;
   }
 }
 
