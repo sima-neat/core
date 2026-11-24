@@ -289,10 +289,11 @@ void deprecated_forms() {
 
 // The options without a counterpart on this backend. An appsrc's own (is_live, do_timestamp,
 // stream_type, max_bytes, block, fps) describe a GStreamer element this backend does not have:
-// the Run builds and round trips, and nothing is printed. The ones that change what the
-// application observes are refused at the build in the one form: caps_override (the caps a
-// GStreamer pipeline negotiates), OutputOptions::sync (pacing by GStreamer's clock), and a queue
-// GStreamer leaves unbounded (queue_depth or max_buffers <= 0).
+// the Run builds and round trips, and nothing is printed but the build's progress lines (which
+// GStreamer's build prints too). The ones that change what the application observes are refused at
+// the build in the one form: caps_override (the caps a GStreamer pipeline negotiates),
+// OutputOptions::sync (pacing by GStreamer's clock), and a queue GStreamer leaves unbounded
+// (queue_depth or max_buffers <= 0).
 void options_without_a_counterpart() {
   std::string text;
   {
@@ -315,7 +316,16 @@ void options_without_a_counterpart() {
     run.close();
     text = capture.text();
   }
-  require(text.empty(), "an appsrc's options print nothing:\n" + text);
+  std::string other;
+  std::istringstream lines(text);
+  for (std::string line; std::getline(lines, line);) {
+    const bool progress =
+        line.size() > 3U && line[0] == '[' && line[1] >= '0' && line[1] <= '9' && line[2] == '/';
+    if (!progress) {
+      other += line + "\n";
+    }
+  }
+  require(other.empty(), "an appsrc's options print nothing but the build's progress:\n" + text);
 
   const auto refused = [](const InputOptions& in, const OutputOptions& out, const RunOptions& opt,
                           const std::string& subject) {
