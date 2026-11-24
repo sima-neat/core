@@ -49,6 +49,10 @@ Load the Whisper directory and set `audio_file` to a host audio path. Use `langu
 ## Run
 
 Follow [Install PCIe Host](/getting-started/neat-library/pcie-host/) and [Tutorial Setup](/tutorials/before-you-run). Use matching host and card packages that expose the PCIe GenAI API. Run all commands below on the host, from the extracted PCIe extras root.
+On Windows, set up the tutorials and run the programs as described in
+[Run applications on Windows](/getting-started/neat-library/pcie-host/#run-applications-on-windows).
+The Windows package contains the PCIe GenAI API, but it is not a supported
+customer configuration in this preview.
 
 ### Download prepared models
 

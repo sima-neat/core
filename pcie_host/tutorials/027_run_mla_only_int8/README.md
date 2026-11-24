@@ -68,6 +68,8 @@ is zero.
 
 Install the PCIe host package and download the tutorial bundle as described in
 [Tutorial Setup](/tutorials/before-you-run).
+On Windows, set up the tutorials and run the programs as described in
+[Run applications on Windows](/getting-started/neat-library/pcie-host/#run-applications-on-windows).
 
 The tutorial runs the YOLO26n `w8a8` archive from the
 [Model Browser](/tools/model-browser/), which is compiled for direct MLA input

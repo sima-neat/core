@@ -43,7 +43,7 @@ q = clamp(round(x / scale) + zero_point, -128, 127)
 
 ## Run
 
-PCIeホストパッケージをインストールし、[チュートリアルの設定](/tutorials/before-you-run)で説明されているように、チュートリアルバンドルをダウンロードします。
+PCIeホストパッケージをインストールし、[チュートリアルの設定](/tutorials/before-you-run)で説明されているように、チュートリアルバンドルをダウンロードします。Windowsでは、[Windowsでアプリケーションを実行する](/getting-started/neat-library/pcie-host/#run-applications-on-windows)の説明に従ってチュートリアルを設定し、プログラムを実行します。
 
 このチュートリアルは、MLAの入出力を直接扱うようにコンパイルされた[Model Browser](/tools/model-browser/)のYOLO26n `w8a8`アーカイブを実行します。抽出したPCIeエクストラのルートでモデルをダウンロードし、ダウンロードしたZIPファイルからアーカイブを展開します。
 

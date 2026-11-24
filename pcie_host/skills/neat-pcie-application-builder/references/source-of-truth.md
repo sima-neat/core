@@ -85,6 +85,9 @@ selected with `--python-executable`. Run its interpreter directly; activation is
 For GenAI, inspect `genai/GenAIModel.h` and import `pyneatpcie.genai`. On Windows, the transport
 also depends on the matching Platform service in `SiMaPCIe.dll`; do not treat importable symbols
 alone as connected-card support.
+On Windows, each open queue reserves contiguous host memory, so a host with less memory may fail
+with error 1450 before six queues are open. Shut a Windows host down and power it on; do not
+restart it.
 Older installed releases may not include GenAI; do not silently substitute local Core APIs.
 
 Nanobind callables do not always expose useful `inspect.signature()` output. Prefer `help()`,

@@ -53,6 +53,14 @@ The Windows preview has these limits:
   Application Control, and enforced AppLocker policies block them.
 - GenAI model folders must have paths that the Windows system code page can
   represent.
+- Windows can stop with a blue screen if the card leaves the PCIe bus while
+  Windows is running, for example when the card or its PCIe port is restarted
+  in Device Manager or with `pnputil`. Do not restart the card or its port
+  while Windows is running. If the card stops responding, shut the host down
+  and power it on.
+- The Platform package prints queue messages such as `Opening simaai_mla_c0`
+  to the standard output of every PCIe application. Do not parse an
+  application's standard output as data; write results to a file instead.
 - [Offline installation](#offline-installation) is available for Ubuntu hosts
   only. A Windows host needs internet access to install the package.
 
@@ -322,7 +330,11 @@ in your working directory also remain.
 `sima-cli` or that folder. If the receipt is gone, either run the install
 command for the installed release again, which restores the receipt, and then
 remove the packages as above; or uninstall `sima-pcie-host` and then
-`simaai-scheduler-pcie-host` under **Settings > Apps > Installed apps**.
+`simaai-scheduler-pcie-host` under **Settings > Apps > Installed apps**. If you
+deleted the whole `%USERPROFILE%\.sima-cli` folder, the install command stops
+first with a message that the skill already exists outside the sima-cli
+registry; delete the skill folders that the message names, then run the
+install command again.
 
 The receipt belongs to the Windows account that ran the install, while the
 packages are installed for the whole machine, so another account runs the same
@@ -410,6 +422,7 @@ On Windows, also check these cases:
 | `SiMa.ai MLA Device` is missing or shows a warning in Device Manager, or the installer reports that the Platform driver was not found | The Platform package is not installed; Secure Boot is on or test-signing is off, so Windows does not load the test-signed driver; or Windows has not detected the card | Install the Platform package. From PowerShell started as administrator, check that `Confirm-SecureBootUEFI` prints `False` and that `bcdedit` lists `testsigning Yes`. If Secure Boot is on, turn it off in firmware setup, then run `bcdedit /set testsigning on`. If both settings are correct, check that the card is seated and powered. Then shut the host down and power it on. |
 | Windows asks for a restart after an installation, or the card is missing after a restart | The card does not always return after a Windows restart | Shut the host down and power it on instead of restarting. |
 | A model fails to start while other models are open, and the Platform reports error 1450 | Each open queue reserves physically contiguous host memory for its buffers, which grows with the queue depth and tensor size | Open fewer models at the same time and close other applications. Hosts with less memory can open fewer queues at once. |
+| `SiMaMlaDaemon` does not stop, or a Platform package upgrade waits | An application still has a GenAI model open | Close the application, then stop or upgrade the service. |
 | Installation stops with exit code 1625 | A Smart App Control, Windows Defender Application Control, or AppLocker policy blocks the unsigned packages | Install on a host where that policy allows the packages. |
 | Installation of an older release stops with exit code 1603 | Windows Installer does not replace a newer version | Uninstall the installed release, then install the older one. |
 | The administrator approval prompt does not appear, or a policy blocks it | Endpoint security blocks the elevation request | Start PowerShell as administrator, change to your working directory, and run the install command there. |

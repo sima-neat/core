@@ -135,5 +135,9 @@ ls share/*/tutorials/
 - Successful C++ tutorials finish with `[OK]`; Python tutorials print a compact
   result such as `top1=...`, `completed=...`, or `detections=...`.
 
+On Windows, the host package does not install `build.sh`. Run the tutorials as
+described in
+[Run applications on Windows](/getting-started/neat-library/pcie-host/#run-applications-on-windows).
+
 If a tutorial reports a missing file, first check the current directory and the
 model filename. For more help, see [Troubleshooting](/reference/troubleshooting/).

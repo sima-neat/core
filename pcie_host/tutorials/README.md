@@ -18,6 +18,10 @@ for ResNet-50 classification in the multi-queue chapter.
 
 ## Packaged layout
 
+On Windows, the host package installs these tutorials and their prebuilt
+programs; there is no extras archive or `build.sh`. Copy and run them as
+described in Run applications on Windows on the Install PCIe Host page.
+
 The PCIe host extras archive is relocatable, but it does not contain an
 enclosing directory. Create a destination directory before extracting it:
 

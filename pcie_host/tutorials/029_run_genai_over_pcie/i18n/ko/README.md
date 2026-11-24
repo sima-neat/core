@@ -48,7 +48,7 @@ Whisper 디렉터리를 로드하고 `audio_file`에 호스트 오디오 경로�
 
 ## Run
 
-[PCIe 호스트 설치](/getting-started/neat-library/pcie-host/)와 [튜토리얼 준비](/tutorials/before-you-run)를 따르세요. PCIe GenAI API를 제공하는 서로 호환되는 호스트 및 카드 패키지를 사용합니다. 아래 모든 명령은 호스트에서 압축 해제한 PCIe extras 루트를 기준으로 실행하세요.
+[PCIe 호스트 설치](/getting-started/neat-library/pcie-host/)와 [튜토리얼 준비](/tutorials/before-you-run)를 따르세요. PCIe GenAI API를 제공하는 서로 호환되는 호스트 및 카드 패키지를 사용합니다. 아래 모든 명령은 호스트에서 압축 해제한 PCIe extras 루트를 기준으로 실행하세요. Windows에서는 [Windows에서 애플리케이션 실행](/getting-started/neat-library/pcie-host/#run-applications-on-windows)에 설명된 대로 튜토리얼을 설정하고 프로그램을 실행하세요. Windows 패키지에는 PCIe GenAI API가 포함되어 있지만, 이 프리뷰에서는 지원되는 고객 구성이 아닙니다.
 
 ### 준비된 모델 다운로드하기
 

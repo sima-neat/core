@@ -48,7 +48,7 @@ VLM 範例在主機上使用 OpenCV 讀取圖片，將 BGR 轉換為 RGB，並�
 
 ## Run
 
-請依照[安裝 PCIe 主機](/getting-started/neat-library/pcie-host/)與[教學準備](/tutorials/before-you-run)操作。使用互相相容且提供 PCIe GenAI API 的主機與卡端套件。以下所有命令都在主機上，從解壓縮後的 PCIe extras 根目錄執行。
+請依照[安裝 PCIe 主機](/getting-started/neat-library/pcie-host/)與[教學準備](/tutorials/before-you-run)操作。使用互相相容且提供 PCIe GenAI API 的主機與卡端套件。以下所有命令都在主機上，從解壓縮後的 PCIe extras 根目錄執行。在 Windows 上，請依照[在 Windows 上執行應用程式](/getting-started/neat-library/pcie-host/#run-applications-on-windows)的說明設定教學課程並執行程式。Windows 套件包含 PCIe GenAI API，但在此預覽版中並非受支援的客戶設定。
 
 ### 下載已準備好的模型
 

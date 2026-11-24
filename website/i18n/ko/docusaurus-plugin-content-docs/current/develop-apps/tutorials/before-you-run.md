@@ -119,4 +119,6 @@ ls share/*/tutorials/
 - 성공적인 C++ 튜토리얼은 `[OK]`로 마무리됩니다. Python 튜토리얼은 간결한 내용을 출력합니다.
   예를 들어 다음과 같은 결과 `top1=...`, `completed=...`또는 `detections=...`.
 
+Windows에서는 호스트 패키지가 `build.sh`를 설치하지 않습니다. [Windows에서 애플리케이션 실행](/getting-started/neat-library/pcie-host/#run-applications-on-windows)에 설명된 대로 튜토리얼을 실행하세요.
+
 튜토리얼에서 파일이 누락되었다는 메시지가 표시되면 먼저 현재 디렉터리와 모델 파일 이름을 확인하십시오. 추가 지원이 필요하면 다음을 참조하십시오. [문제 해결](/reference/troubleshooting/).

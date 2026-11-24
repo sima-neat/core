@@ -117,4 +117,6 @@ ls share/*/tutorials/
 - `./build.sh --list-targets` 列出您可以重新建置的 C++ 程式。
 - 成功的 C++ 教程會以 `[OK]` 結束；Python 教程會列印出簡潔的結果，例如 `top1=...`、`completed=...` 或 `detections=...`。
 
+在 Windows 上，主機套件不會安裝 `build.sh`。請依照[在 Windows 上執行應用程式](/getting-started/neat-library/pcie-host/#run-applications-on-windows)的說明執行教學課程。
+
 如果某個教程報告缺少檔案，請先檢查目前目錄和模型檔案名稱。 如需更多協助，請參閱 [疑難排解](/reference/troubleshooting/)（疑難排解）。

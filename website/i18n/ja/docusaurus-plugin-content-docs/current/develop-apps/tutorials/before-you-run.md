@@ -117,4 +117,6 @@ ls share/*/tutorials/
 - `./build.sh --list-targets`には、再構築できるC++プログラムのリストが記載されています。
 - 正常に完了したC++のチュートリアルは、`[OK]`で終了します。Pythonのチュートリアルは、`top1=...`、`completed=...`、または`detections=...`などの簡潔な結果を出力します。
 
+Windowsでは、ホストパッケージは`build.sh`をインストールしません。[Windowsでアプリケーションを実行する](/getting-started/neat-library/pcie-host/#run-applications-on-windows)の説明に従ってチュートリアルを実行してください。
+
 チュートリアルでファイルが見つからないというエラーが表示された場合は、まず現在のディレクトリとモデルファイル名を確認してください。さらに詳しい情報が必要な場合は、[トラブルシューティング](/reference/troubleshooting/)を参照してください。

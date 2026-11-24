@@ -43,7 +43,7 @@ q = clamp(round(x / scale) + zero_point, -128, 127)
 
 ## Run
 
-[튜토리얼 설정](/tutorials/before-you-run)에 설명된 대로 PCIe 호스트 패키지를 설치하고 튜토리얼 번들을 다운로드합니다.
+[튜토리얼 설정](/tutorials/before-you-run)에 설명된 대로 PCIe 호스트 패키지를 설치하고 튜토리얼 번들을 다운로드합니다. Windows에서는 [Windows에서 애플리케이션 실행](/getting-started/neat-library/pcie-host/#run-applications-on-windows)에 설명된 대로 튜토리얼을 설정하고 프로그램을 실행하세요.
 
 이 튜토리얼은 MLA 입출력을 직접 처리하도록 컴파일된 [Model Browser](/tools/model-browser/)의 YOLO26n `w8a8` 아카이브를 실행합니다. 추출된 PCIe extras 루트에서 모델을 다운로드하고, 다운로드한 ZIP 파일에서 아카이브를 추출하세요.
 

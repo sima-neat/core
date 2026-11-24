@@ -43,7 +43,7 @@ q = clamp(round(x / scale) + zero_point, -128, 127)
 
 ## Run
 
-依照[教學設定](/tutorials/before-you-run)的說明安裝 PCIe 主機套件並下載教學套件包。
+依照[教學設定](/tutorials/before-you-run)的說明安裝 PCIe 主機套件並下載教學套件包。在 Windows 上，請依照[在 Windows 上執行應用程式](/getting-started/neat-library/pcie-host/#run-applications-on-windows)的說明設定教學課程並執行程式。
 
 本教學執行 [Model Browser](/tools/model-browser/) 的 YOLO26n `w8a8` 封存檔，它是為直接 MLA 輸入與輸出而編譯的。在解壓縮後的 PCIe extras 根目錄下載模型，並從下載的 ZIP 檔案中解壓縮封存檔：
 
