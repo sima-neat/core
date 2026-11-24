@@ -24,18 +24,15 @@ slug: /develop-apps/contribute/release-checklist
 5. Після кроків генерування робоче дерево чисте.
 6. Немає невирішених аварійних збоїв чи помилок коректності — ні перед push, ні на ref випуску.
 7. Перевірки аварійних збоїв, коректності, стрес-тестування та санітайзерів мають зелений статус на ref випуску.
-8. Перевірка безпеки архівів моделей має зелений статус (`model-archive-security-gate`).
-9. Базовий (smoke) тест встановлення має зелений статус (`install-smoke`).
-10. Перевірка регресії продуктивності має зелений статус (`perf-regression-gate`).
-11. Група тривалих тестів стабільності має зелений статус для тегів випуску (`soak-weekly`).
-12. Група фазинг-тестування має зелений статус для кандидатів на випуск (`fuzz-nightly`).
-13. Перевірка відсутності пропущених тестів має зелений статус (`zero-skip-gate`) для суворих тестових груп.
-14. Обов’язкові файли керування проєктом наявні й коректні:
+8. Група тривалих тестів стабільності має зелений статус для тегів випуску (`soak-weekly`).
+9. Група фазинг-тестування має зелений статус для кандидатів на випуск (`fuzz-nightly`).
+10. Перевірка відсутності пропущених тестів має зелений статус (`zero-skip-gate`) для суворих тестових груп.
+11. Обов’язкові файли керування проєктом наявні й коректні:
    - `.github/CODEOWNERS`
    - `.github/PULL_REQUEST_TEMPLATE.md`
    - `CONTRIBUTING.md`
    - `docs/develop-apps/contribute/release-checklist.md`
-15. Метадані випуску повні:
+12. Метадані випуску повні:
    - `project(SimaNeat VERSION x.y.z)` оновлено в `CMakeLists.txt`
    - `package-version` та `platform-version` оновлено в `deps/manifest.json`, коли це потрібно
    - `modelzoo-version` явно вибирає перевірений випуск Model Zoo, якщо він відрізняється від
@@ -57,9 +54,6 @@ slug: /develop-apps/contribute/release-checklist
 - `configure-build-sanity`
 - `docs-link-check`
 - `crash-correctness-gate`
-- `model-archive-security-gate`
-- `install-smoke`
-- `perf-regression-gate`
 - `zero-skip-gate`
 - `soak-weekly` (обов’язкова для тегів випуску)
 - `fuzz-nightly` (обов’язкова для кандидатів на випуск)
@@ -69,22 +63,13 @@ slug: /develop-apps/contribute/release-checklist
 
 Ці перевірки реалізовано в:
 
-- `.github/workflows/release-gate.yml`
+- `.github/workflows/vulcan-ci.yml`
 - `.github/workflows/test-crash-correctness-nightly.yml`
-- `.github/workflows/model-archive-security.yml`
-- `.github/workflows/install-smoke.yml`
-- `.github/workflows/perf-regression.yml`
-- `.github/workflows/zero-skip.yml`
 - `.github/workflows/test-soak-weekly.yml`
 - `.github/workflows/long-tests-weekly.yml`
 - `.github/workflows/vulcan-fuzz-nightly.yml`
 - `.github/workflows/test-stress-nightly.yml`
 - `.github/workflows/sanitizers.yml`
-
-Розподіл тригерів, щоб перевірки не запускалися двічі:
-
-- PR, не пов’язані з випуском, у `main` запускають `model-archive-security`, `install-smoke`, `perf-regression` та `zero-skip` з їхніх окремих робочих процесів.
-- PR випуску (head refs `release/*`) і refs випуску (`release/**`, `v*`) запускають ті самі групи з `.github/workflows/release-gate.yml`.
 
 ## Захист гілок і тегів у GitHub
 
