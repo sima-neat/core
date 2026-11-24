@@ -3439,6 +3439,7 @@ PreMlaParityResult run_pre_mla_parity_check_local(const ProbeResult& probe, Rout
     sync_opt.preprocess.kind = simaai::neat::InputKind::Image;
     sync_opt.preprocess.enable = simaai::neat::AutoFlag::On;
     sync_opt.preprocess.color_convert.input_format = simaai::neat::PreprocessColorFormat::BGR;
+    sync_opt.preprocess.normalize.enable = simaai::neat::AutoFlag::On;
     sync_opt.upstream_name = "decoder";
     simaai::neat::Model sync_model(probe.tar_path, sync_opt);
 
@@ -5107,16 +5108,10 @@ int main(int argc, char** argv) {
     } else {
       fs::path variants_dir = resolve_variants_dir(root, argc, argv);
       packs = collect_model_packs(variants_dir);
-      if (packs.empty()) {
-        // Mandatory test — download the six yolov8n variants on demand via
-        // the shared helper (uses sima-cli for the OAuth-gated
-        // docs.sima.ai endpoint) and rescan.
-        variants_dir = sima_yolov8_test::ensure_yolov8n_drive_variants(root);
-        packs = collect_model_packs(variants_dir);
-      }
       require(!packs.empty(), "no model packs found in " + variants_dir.string() +
-                                  " even after download attempt; check sima-cli login and "
-                                  "SIMA_YOLOV8N_VARIANTS_BASE_URL");
+                                  "; set SIMA_YOLOV8_VARIANTS_DIR to a folder with the "
+                                  "yolov8n_<variant>_mpk.tar.gz files from "
+                                  "'sima-cli models download --id yolov8n --variant <variant>'");
     }
 
     const cv::Mat img_bgr = sima_yolov8_test::load_people_image_or_skip(root);

@@ -572,6 +572,7 @@ set(UNIT_TESTS
   unit_model_semantic_segmentation_test
   unit_model_metadata_test
   unit_model_route_planner_test
+  unit_model_preproc_normalize_off_quantize_regression_test
   unit_resnet50_mla_handoff_segment_test
   unit_cast_fanout_contract_test
   unit_mla_boundary_output_contract_test
@@ -1004,6 +1005,7 @@ set(E2E_TESTS
   graph_validate_report_regression_test
   stage_routing_regression_test
   stage_chain_cache_admission_test
+  model_preproc_normalize_off_quantize_regression_test
   udp_output_loopback_integration_test
   multipart_header_capture_http_e2e_test
   multipart_header_capture_decode_e2e_test
