@@ -564,6 +564,18 @@ inline std::string resolve_resnet50_tar() {
   return "";
 }
 
+// For the stress test in an installed tree: the variables, then the one fixed cache path.
+// No folder search and no download.
+inline std::string resolve_yolov8s_tar_local_only(const fs::path& root_in = {}) {
+  const std::string env_tar = env_existing_model_tar_path("SIMA_YOLO_TAR");
+  if (!env_tar.empty())
+    return env_tar;
+  const fs::path local = default_asset_root(root_in) / "tmp" / "yolo_v8s_mpk.tar.gz";
+  if (is_usable_regular_file(local))
+    return local.string();
+  return "";
+}
+
 inline std::string resolve_yolov8s_tar(const fs::path& = {}) {
   for (const char* name : {"SIMA_YOLO_TAR", "SIMA_MODEL_TAR"}) {
     const char* value = std::getenv(name);
