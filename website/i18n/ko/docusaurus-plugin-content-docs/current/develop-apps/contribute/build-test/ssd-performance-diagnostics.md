@@ -67,6 +67,7 @@ Scheduler는 검증된 구성원을 Runner를 통해 제출합니다.
 : "${CORE_ROOT:?set the target Core checkout path}"
 : "${CORE_TESTS:?set the installed target test directory}"
 : "${SIMA_HARDWARE_SUPERVISOR_SOCKET:?use an admitted hardware-test scope}"
+: "${SIMA_YOLO_TAR:?set to the Model Browser yolov8s_w8a8_mpk.tar.gz}"
 cd "$CORE_ROOT"
 export SIMA_NEAT_METRICS_RETAIN_TRACE=1
 export SIMA_NEAT_METRICS_TRACE_DIR="$CORE_ROOT/boxdecode-diagnostic-traces"

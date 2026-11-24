@@ -70,6 +70,7 @@ directory and admitting the diagnostic environment:
 : "${CORE_ROOT:?set the target Core checkout path}"
 : "${CORE_TESTS:?set the installed target test directory}"
 : "${SIMA_HARDWARE_SUPERVISOR_SOCKET:?use an admitted hardware-test scope}"
+: "${SIMA_YOLO_TAR:?set to the Model Browser yolov8s_w8a8_mpk.tar.gz}"
 cd "$CORE_ROOT"
 export SIMA_NEAT_METRICS_RETAIN_TRACE=1
 export SIMA_NEAT_METRICS_TRACE_DIR="$CORE_ROOT/boxdecode-diagnostic-traces"
@@ -80,9 +81,9 @@ python3 tests/perf/tools/run_perf_matrix.py \
   --results-dir "$CORE_ROOT/boxdecode-diagnostic-results"
 ```
 
-This runs the full weekly performance matrix, including `yolov8s_boxdecode`. It does not rebuild
-providers. Use SDK cross-compilation and the DevKit launcher for target programs;
-never execute AArch64 tests on an x86 host.
+This runs the full weekly performance matrix, including `yolov8s_boxdecode`.
+It does not rebuild providers. Use SDK cross-compilation and the DevKit launcher
+for target programs; never execute AArch64 tests on an x86 host.
 
 With trace retention, a nonempty trace-directory override, or an iteration
 override, the result records `run_meta.execution_purpose: diagnostic`. Comparisons
