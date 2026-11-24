@@ -476,14 +476,14 @@ DataflowRunConfig derive_config(const Graph& graph, const DataflowGraphView& vie
   const bool graph_path =
       !view.linear || !config.input_names.empty() || !config.output_names.empty();
 
-  // RunOptions resolved as GStreamer resolves them for that path, by the same code. A plain linear
-  // Run's options are resolve_build_opt's (via prepare_build_input_context, in
-  // RunCore::start_pipeline_segment, kept by start_single_pipeline): RunPreset fills queue_depth
-  // where it equals its RunOptions{} default and overflow_policy where it is OverflowPolicy::Auto,
-  // so an explicit Block under Realtime stays Block there. A graph Run keeps the caller's
-  // RunOptions as given (start_graph_plan; its ingress queue is the given queue_depth): the
-  // preset does not reach its ingress.
-  config.run = graph_path ? opt : session_build_resolve_build_opt(RunMode::Async, opt);
+  // RunOptions resolved as GStreamer resolves them for either path, by the same code,
+  // resolve_build_opt: a plain linear Run's (prepare_build_input_context, in
+  // RunCore::start_pipeline_segment, kept by start_single_pipeline), and a graph Run's ingress
+  // (graph_runtime_options_from_run_options: its queue the resolved queue_depth, its policy the
+  // resolved overflow_policy). RunPreset fills queue_depth where it equals its RunOptions{}
+  // default and overflow_policy where it is OverflowPolicy::Auto, so an explicit Block under
+  // Realtime stays Block, and Realtime with Auto is KeepLatest at the preset's depth.
+  config.run = session_build_resolve_build_opt(RunMode::Async, opt);
   config.link_policy = config.run.overflow_policy;
 
   // One link stands in for both of Core's queues on the way to each Output (RunOptions):

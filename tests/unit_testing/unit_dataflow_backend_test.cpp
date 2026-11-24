@@ -770,23 +770,44 @@ struct RealtimeBlock {
   }
 };
 
-// A connected (or named) graph is a graph Run, which keeps its RunOptions as given: under Realtime
-// an explicit Block refuses a try_push when the queue is full and drops nothing, and a blocking
-// push waits for a pull (pyneat's test_blocking_push_gil builds this graph).
-void connected_realtime_explicit_block() {
-  const RealtimeBlock c;
+Graph connected_input_output(const InputOptions& in) {
   Graph source("input");
-  source.add(nodes::Input("input", c.in));
+  source.add(nodes::Input("input", in));
   Graph sink("output");
   sink.add(nodes::Output("output", OutputOptions::EveryFrame(1)));
   Graph g("preset_overflow");
   g.connect(source, sink);
+  return g;
+}
+
+// A connected (or named) graph is a graph Run, which resolves the Run preset as a plain linear Run
+// does: under Realtime an explicit Block refuses a try_push when the queue is full and drops
+// nothing, and a blocking push waits for a pull (pyneat's test_blocking_push_gil builds this
+// graph); OverflowPolicy::Auto takes the preset's KeepLatest at the preset's queue depth (try_push
+// never refuses and evicts the oldest). The same on both backends (each process runs it on its
+// own).
+void connected_realtime_resolves_the_preset() {
+  const std::string on = std::string(" (") + sima_test::backend_name() + ")";
+  {
+    RealtimeBlock c;
+    c.opt.overflow_policy = OverflowPolicy::Auto;
+    c.opt.queue_depth = RunOptions{}.queue_depth;
+    Graph g = connected_input_output(c.in);
+    Run run = g.build(c.opt);
+    std::uint64_t dropped = 0;
+    require(!RealtimeBlock::refuses_when_full(run, "input", dropped),
+            "connected Realtime + Auto: KeepLatest, try_push must never refuse" + on);
+    require(dropped > 0U, "connected Realtime + Auto: KeepLatest evicts past the queue depth" + on);
+    run.close();
+  }
+  const RealtimeBlock c;
+  Graph g = connected_input_output(c.in);
   Run run = g.build(c.opt);
   std::uint64_t dropped = 0;
   require(RealtimeBlock::refuses_when_full(run, "input", dropped),
-          "connected Realtime + explicit Block: try_push must refuse when full");
-  require(dropped == 0U,
-          "connected Realtime + explicit Block: try_push dropped " + std::to_string(dropped));
+          "connected Realtime + explicit Block: try_push must refuse when full" + on);
+  require(dropped == 0U, "connected Realtime + explicit Block: try_push dropped " +
+                             std::to_string(dropped) + on);
   auto consumer = std::async(std::launch::async, [&] {
     std::this_thread::sleep_for(std::chrono::milliseconds(200));
     return pull_sample(run, 5000, "output");
@@ -797,8 +818,9 @@ void connected_realtime_explicit_block() {
   require(consumer.wait_for(std::chrono::seconds(10)) == std::future_status::ready &&
               consumer.get().has_value(),
           "the consumer pulled a frame");
-  require(pushed, "the blocking push is accepted once a pull makes room");
-  require(waited >= 100, "the blocking push waited for room (" + std::to_string(waited) + " ms)");
+  require(pushed, "the blocking push is accepted once a pull makes room" + on);
+  require(waited >= 100,
+          "the blocking push waited for room (" + std::to_string(waited) + " ms)" + on);
   run.close();
 }
 
@@ -1308,9 +1330,10 @@ void mat_and_bundle_pushes() {
 
 RUN_BACKEND_TEST("unit_dataflow_backend_test", ([] {
            deprecated_forms();
+           // The rows that hold on both backends.
+           linear_realtime_keeps_an_explicit_block();
+           connected_realtime_resolves_the_preset();
            if (!sima_test::on_dataflow()) {
-             // The rows that hold on both backends.
-             linear_realtime_keeps_an_explicit_block();
              return;
            }
            ignored_options_warn_once();
@@ -1325,8 +1348,6 @@ RUN_BACKEND_TEST("unit_dataflow_backend_test", ([] {
            try_push_accounting();
            refused_try_push_reads_no_byte();
            blocking_push_never_drops();
-           connected_realtime_explicit_block();
-           linear_realtime_keeps_an_explicit_block();
            close_input_cancels_a_parked_push();
            stop_unblocks_pull_and_refuses_push();
            concurrent_stops_with_a_parked_push();
