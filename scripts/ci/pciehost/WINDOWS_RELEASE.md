@@ -585,7 +585,10 @@ Two jobs of `pcie-host-windows.yml` own it:
   `metadata.json` to be the one the bundle was assembled from, uploads the
   archive create-only and then `metadata-offline.json`, and invalidates only
   that file. It never touches the online files or `latest.tag`. An identical
-  published bundle is left alone; a different one is refused.
+  published bundle is left alone; a different one is refused. It also refuses
+  a bundle whose pinned `sima-cli` is neither a release (`X.Y.Z`) nor a build
+  of sima-cli `main` (`X.Y.Z+main.<commit12>`), so a tag never ships another
+  branch's `sima-cli` to customers.
 
 Keep the pins current. Whoever changes `Requires-Dist` in
 `pcie_host/python/build_wheel.py` or bumps numpy, opencv-python or CPython

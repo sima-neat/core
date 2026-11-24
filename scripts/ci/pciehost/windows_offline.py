@@ -44,6 +44,8 @@ SIMA_CLI_REQUIREMENTS = "sima-cli/requirements.txt"
 NAME = "gh:sima-neat/core/pciehost/windows/amd64/offline"
 # pip resolves the closure; any interpreter with pip can assemble for the Windows target.
 PYTHON = sys.executable
+# A sima-cli release, or a build of sima-cli main: the channels WINDOWS_RELEASE.md pins.
+PUBLISHABLE_SIMA_CLI = re.compile(r"[0-9]+[.][0-9]+[.][0-9]+(?:[+]main[.][0-9a-f]{12})?")
 
 
 def _mebibytes(size: int) -> str:
@@ -304,6 +306,10 @@ def publish(storage, ref: str, commit: str, offline_dir: Path) -> list[str]:
   offline = json.loads(document)
   inventory = _read_json(offline_dir / INVENTORY)
   require_release_ref("tag", ref, offline["version"])
+  sima_cli = inventory["sima_cli"]["version"]
+  if not PUBLISHABLE_SIMA_CLI.fullmatch(sima_cli):
+    raise ValueError(f"the bundle carries sima-cli {sima_cli}; a release bundles a sima-cli "
+                     "release X.Y.Z or a main build X.Y.Z+main.<commit12>, never another branch")
   if offline.get("commit") != commit:
     raise ValueError(f"offline bundle names commit {offline.get('commit')}, not {commit}")
   archive_name = offline["resources"][0]

@@ -403,6 +403,22 @@ class PublishContracts(_Case):
       self.publish(storage)
     self.assertEqual(storage.writes, [])
 
+  def test_bundled_sima_cli_must_be_a_release_or_a_main_build(self):
+    path = self.output / OFFLINE.INVENTORY
+    inventory = json.loads(path.read_text())
+    for version in ("2.1.23", "2.1.23+main.0123456789ab"):
+      with self.subTest(version):
+        path.write_text(json.dumps(dict(inventory, sima_cli={"version": version, "files": 2})))
+        self.publish(MemoryStorage(self.live))
+    for version in ("2.1.23+feat.windows.offline.install.0123456789ab",
+                    "2.1.23+codex.1074.windows.msi.install.91d5420c7db9", "2.1.23rc1"):
+      with self.subTest(version):
+        path.write_text(json.dumps(dict(inventory, sima_cli={"version": version, "files": 2})))
+        storage = MemoryStorage(self.live)
+        with self.assertRaisesRegex(ValueError, "never another branch"):
+          self.publish(storage)
+        self.assertEqual(storage.writes, [])
+
   def test_refuses_a_branch_or_other_commit(self):
     with self.assertRaisesRegex(ValueError, "release tag"):
       OFFLINE.publish(MemoryStorage(self.live), "develop", COMMIT, self.output)
