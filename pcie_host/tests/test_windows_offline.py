@@ -742,6 +742,15 @@ class InputContracts(unittest.TestCase):
     self.assertEqual(OFFLINE.SIMA_CLI_REQUIREMENTS, "sima-cli/requirements.txt")
     self.assertEqual(OFFLINE.CARD_RESOURCE, "card/neat-core-offline-installer.tar.gz")
 
+  def test_install_guide_gets_the_platform_package_with_sima_cli(self):
+    # The Platform package comes from the customer's own sima-cli login, never
+    # from another server, and is not in the bundle.
+    guide = (OFFLINE.OFFLINE / "WINDOWS_INSTALL.md").read_text(encoding="utf-8")
+    self.assertIn("sima-cli install drivers/windows --download-only -d platform", guide)
+    self.assertIn("SiMaNetAdapter, is test-signed", guide)
+    for text in ("artifacts.neat.sima.ai", "daily-platform-images", "host_files"):
+      self.assertNotIn(text, guide)
+
 
 if __name__ == "__main__":
   unittest.main()

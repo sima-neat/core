@@ -6,9 +6,20 @@ and its Python dependencies, and the `sima-cli` that installs them. It also
 holds the Neat Library package for the cards. It is the same release as the
 online package, with the same files.
 
-It does not install the SiMa Platform 3.0 Windows package, its drivers, or
-card firmware. Install the Platform package first, as described in the PCIe
-Driver Installation guide.
+It does not install the SiMa Platform 3.0 Windows driver package or card
+firmware. Install the Platform package first. On a computer with internet
+access, download it with your SiMa.ai login; the command saves the package's
+files without installing them:
+
+```text
+sima-cli install drivers/windows --download-only -d platform
+```
+
+Copy the `platform` folder to the host and run its `install.bat` from a Command
+Prompt started as administrator. The package's network adapter driver,
+SiMaNetAdapter, is test-signed: Windows loads it only with Secure Boot turned
+off and test-signing mode turned on, as the online installation guide
+describes.
 
 Copy the complete downloaded folder to a local disk of the host. The installer
 writes its Windows Installer logs beside the packages, so the folder must be
