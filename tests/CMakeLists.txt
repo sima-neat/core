@@ -933,6 +933,22 @@ if (SIMANEAT_DATAFLOW_SOURCE_DIR AND
   simaneat_add_backend_pair(unit_dataflow_model_route_test)
 endif()
 
+# The stage key of a model route's output and the Sample label drawn from the stage's name, with
+# GraphOptions' element-name prefix and suffix set or not, on both backends
+# (simaneat_add_backend_pair), public API only. It needs the MLA and a compiled model package
+# (--model-package or SIMA_TEST_MODEL_PACKAGE; it downloads nothing), so it is a long test that
+# skips without one.
+if (SIMANEAT_DATAFLOW_SOURCE_DIR AND
+    NOT unit_run_stage_key_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  simaneat_backend_pair_args(unit_run_stage_key_test _pair_args)
+  add_pipeline_test_long(unit_run_stage_key_test
+    SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/unit_testing/unit_run_stage_key_test.cpp
+    ARGS ${_pair_args})
+  set_tests_properties(unit_run_stage_key_test PROPERTIES TIMEOUT 300)
+  set_property(TEST unit_run_stage_key_test APPEND PROPERTY LABELS "unit;dataflow")
+  simaneat_add_backend_pair(unit_run_stage_key_test)
+endif()
+
 # The image preproc stage (H1, step Y1): Input -> Model::preprocess() -> Output of a detection model
 # on both backends (simaneat_add_backend_pair), public API only. It needs the EV74 on the Kernels
 # firmware and a model package with an image input (--model-package, SIMA_TEST_PREPROC_MODEL_PACKAGE
