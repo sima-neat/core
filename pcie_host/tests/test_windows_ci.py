@@ -1024,7 +1024,7 @@ class WindowsCiContracts(unittest.TestCase):
         ),
         2,
     )
-    self.assertEqual(workflow.count("shell: powershell"), 11)
+    self.assertEqual(workflow.count("shell: powershell"), 15)
     hardware_job = workflow.split("  hardware:\n", 1)[1].split("  publish:\n", 1)[0]
     # Self-hosted Windows keeps the default Restricted script policy, as customer PCs do;
     # run every step like pcie-setup.cmd does instead of provisioning the host.

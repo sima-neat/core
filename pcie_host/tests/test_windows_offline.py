@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Contracts for the Windows PCIe-host offline bundle: producer and publication."""
+"""Contracts for the Windows PCIe-host offline bundle: producer, gate and publication."""
 
 import copy
 import hashlib
@@ -23,6 +23,7 @@ WORKFLOW = ROOT / ".github" / "workflows" / "pcie-host-windows.yml"
 MAIN_WORKFLOW = ROOT / ".github" / "workflows" / "vulcan-ci.yml"
 sys.path.insert(0, str(SCRIPT_DIR))
 import windows_offline as OFFLINE  # noqa: E402
+import validate_windows_offline as GATE  # noqa: E402
 from create_windows_metadata import gstreamer_installer_url  # noqa: E402
 from qualify_windows_hardware import CARD_BUNDLE_ARTIFACT  # noqa: E402
 
@@ -405,6 +406,114 @@ class PublishContracts(_Case):
       OFFLINE.publish(MemoryStorage(self.live), "develop", COMMIT, self.output)
     with self.assertRaisesRegex(ValueError, "names commit"):
       OFFLINE.publish(MemoryStorage(self.live), f"v{VERSION}", "d" * 40, self.output)
+
+
+class GateContracts(unittest.TestCase):
+  def test_hosted_metadata_drops_only_the_platform_steps(self):
+    with tempfile.TemporaryDirectory() as directory:
+      original = Fixture(Path(directory)).metadata
+    derived, removed = GATE.hosted_gate_metadata(original)
+    self.assertEqual(removed, ["prerequisite SiMa Platform MLA driver",
+                               "prerequisite SiMa Platform PCIe service",
+                               "verification", "setup"])
+    self.assertEqual([item["type"] for item in derived["installation"]["prerequisites"]],
+                     ["executable", "command-version"])
+    restored = copy.deepcopy(derived)
+    restored["installation"]["prerequisites"] = original["installation"]["prerequisites"]
+    restored["installation"]["verification"] = original["installation"]["verification"]
+    restored["installation"]["setup"] = original["installation"]["setup"]
+    self.assertEqual(restored, original)
+    self.assertIn("verification", original["installation"])
+
+  def test_managed_environment_must_hold_exactly_the_bundle(self):
+    inventory = {"python": {"distribution": "pyneatpcie", "version": VERSION, "wheelhouse": [
+        {"distribution": "numpy", "version": "2.5.4"},
+        {"distribution": "opencv-python", "version": "5.0.0.93"}]}}
+    exact = [{"name": "pip", "version": "26.0"}, {"name": "pyneatpcie", "version": VERSION},
+             {"name": "numpy", "version": "2.5.4"},
+             {"name": "opencv_python", "version": "5.0.0.93"}]
+    GATE.require_environment_packages(exact, inventory)
+    for listed in (exact[1:], exact[:2] + [{"name": "numpy", "version": "2.6.0"}] + exact[3:],
+                   exact + [{"name": "pillow", "version": "13.0.0"}]):
+      with self.subTest(listed=listed), self.assertRaises(RuntimeError):
+        GATE.require_environment_packages(listed, inventory)
+
+  def test_local_channel_has_the_release_layout(self):
+    with tempfile.TemporaryDirectory() as directory:
+      root = Path(directory)
+      offline = root / "offline"
+      offline.mkdir()
+      (offline / "neat-pcie-offline-installer-12345678.tar.gz").write_bytes(b"a")
+      (offline / "metadata-offline.json").write_text(json.dumps({
+          "version": VERSION, "commit": COMMIT,
+          "resources": ["neat-pcie-offline-installer-12345678.tar.gz"]}))
+      target = GATE.stage_channel(offline, root / "channel")
+      self.assertEqual(target, f"core/pciehost/windows/amd64@v{VERSION}")
+      self.assertEqual((root / "channel" / "core" / f"v{VERSION}" / "latest.tag").read_text(),
+                       COMMIT[:12] + "\n")
+      package = root / "channel" / PublishContracts.PREFIX
+      self.assertEqual(sorted(path.name for path in package.iterdir()),
+                       ["metadata-offline.json", "neat-pcie-offline-installer-12345678.tar.gz"])
+
+  def test_block_covers_every_installer_process(self):
+    programs = GATE.blocked_programs(Path("C:/py"), Path("C:/home"), Path("C:/Windows"))
+    self.assertEqual(programs, [
+        Path("C:/py/python.exe"), Path("C:/home/.sima-cli-env/Scripts/python.exe"),
+        Path("C:/home/pyneatpcie/Scripts/python.exe"),
+        Path("C:/Windows/System32/msiexec.exe"), Path("C:/Windows/SysWOW64/msiexec.exe")])
+    source = (SCRIPT_DIR / "validate_windows_offline.py").read_text(encoding="utf-8")
+    # The proof is a canary that must fail; a dead proxy alone is not a block.
+    self.assertIn('raise RuntimeError("the firewall block is not effective', source)
+    for name in ("PIP_FIND_LINKS", "PIP_NO_INDEX", "SIMA_CLI_CHECK_FOR_UPDATE"):
+      self.assertIn(f'"{name}"', source)
+
+
+def workflow_job(source, name):
+  return re.search(rf"(?ms)^  {re.escape(name)}:\n(.*?)(?=^  [\w-]+:\n|\Z)", source)[1]
+
+
+class WorkflowContracts(unittest.TestCase):
+  def setUp(self):
+    self.windows = WORKFLOW.read_text(encoding="utf-8")
+
+  def test_offline_job_assembles_and_gates_beside_the_hardware_job(self):
+    job = workflow_job(self.windows, "offline")
+    self.assertIn("    runs-on: windows-2025\n", job)
+    self.assertIn(
+        "    needs: [native, linux_release, card_candidate, resolve-vulcan-config]\n", job)
+    self.assertEqual(re.search(r"(?m)^    if: (.+)$", job)[1],
+                     re.search(r"(?m)^    if: (.+)$", workflow_job(self.windows, "hardware"))[1])
+    self.assertNotRegex(job, r"(?m)^    environment:")
+    for text in ("windows_offline.py assemble", "validate_windows_offline.py",
+                 "name: core-pciehost-windows-offline\n",
+                 "name: core-pcie-card-qualification-candidate",
+                 "name: core-pciehost-windows-card-inputs"):
+      self.assertIn(text, job)
+    # A release tag's card bundle carries the bare tag version, as in the hardware job.
+    self.assertIn("            --ref $env:GITHUB_REF_NAME `\n", job)
+    cleanup = job.split("      - name: Remove the network block\n", 1)[1]
+    self.assertIn("        if: always()\n", cleanup)
+    self.assertIn('Get-NetFirewallRule -DisplayName "neat-offline-gate"', cleanup)
+    self.assertIn("firewall-profiles.json", cleanup)
+    self.assertIn('RULE = "neat-offline-gate"',
+                  (SCRIPT_DIR / "validate_windows_offline.py").read_text(encoding="utf-8"))
+
+  def test_publish_offline_follows_publish_and_offline_only(self):
+    job = workflow_job(self.windows, "publish-offline")
+    self.assertIn("    needs: [publish, offline, resolve-vulcan-config]\n", job)
+    self.assertIn("    if: ${{ needs.publish.result == 'success' && "
+                  "needs.offline.result == 'success' }}\n", job)
+    self.assertIn("cancel-in-progress: false", job)
+    self.assertIn("windows_offline.py publish", job)
+    self.assertIn("awscli==1.42.49", job)
+    self.assertNotIn("publish_windows.sh", job)
+    # The online publication is unchanged and does not wait for the offline bundle.
+    self.assertIn("    needs: [hardware, linux_release, resolve-vulcan-config]\n",
+                  workflow_job(self.windows, "publish"))
+
+  def test_contract_job_runs_these_tests(self):
+    self.assertIn("      - run: python3 pcie_host/tests/test_windows_offline.py\n",
+                  workflow_job(self.windows, "contracts"))
 
 
 class InputContracts(unittest.TestCase):
