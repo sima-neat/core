@@ -42,8 +42,11 @@ INVENTORY = "windows-offline-bundle.json"
 CARD_RESOURCE = f"card/{CARD_BUNDLE_ARCHIVE}"
 SIMA_CLI_REQUIREMENTS = "sima-cli/requirements.txt"
 NAME = "gh:sima-neat/core/pciehost/windows/amd64/offline"
-# pip resolves the closure; any interpreter with pip can assemble for the Windows target.
+# pip resolves the closure for the Windows target, but evaluates environment markers for
+# the interpreter that runs it: a closure with markers is assembled on the target.
 PYTHON = sys.executable
+INTERPRETER = ("import sys, sysconfig; print(sys.platform, sysconfig.get_platform(), "
+               "sys.implementation.name, '%d.%d' % sys.version_info[:2])")
 # A sima-cli release, or a build of sima-cli main: the channels WINDOWS_RELEASE.md pins.
 PUBLISHABLE_SIMA_CLI = re.compile(r"[0-9]+[.][0-9]+[.][0-9]+(?:[+]main[.][0-9a-f]{12})?")
 
@@ -90,14 +93,18 @@ def vendor_installers(manifest: dict, metadata: dict) -> list[dict]:
   return selected
 
 
-def wheel_identity(wheel: Path) -> tuple[str, str]:
-  """Distribution name and version from the wheel's own METADATA."""
+def _wheel_metadata(wheel: Path):
   with zipfile.ZipFile(wheel) as archive:
     names = [name for name in archive.namelist()
              if re.fullmatch(r"[^/]+[.]dist-info/METADATA", name)]
     if len(names) != 1:
       raise ValueError(f"wheel has no unique METADATA: {wheel.name}")
-    headers = BytesHeaderParser().parsebytes(archive.read(names[0]))
+    return BytesHeaderParser().parsebytes(archive.read(names[0]))
+
+
+def wheel_identity(wheel: Path) -> tuple[str, str]:
+  """Distribution name and version from the wheel's own METADATA."""
+  headers = _wheel_metadata(wheel)
   name, version = headers.get("Name"), headers.get("Version")
   if not name or not version:
     raise ValueError(f"wheel METADATA lacks Name or Version: {wheel.name}")
@@ -118,7 +125,18 @@ def resolve_closure(wheel: Path, wheelhouse: Path, python_package: dict) -> list
         "--python-version", python_version, "--abi", "cp" + python_version.replace(".", ""),
         "--find-links", str(wheelhouse), "--dest", directory, str(wheel)], check=True)
     names = sorted(path.name for path in Path(directory).iterdir() if path.name != wheel.name)
-  return [wheelhouse / name for name in names]
+  closure = [wheelhouse / name for name in names]
+  conditional = [f"{path.name}: {requirement}" for path in (wheel, *closure)
+                 for requirement in _wheel_metadata(path).get_all("Requires-Dist", [])
+                 if ";" in requirement]
+  if conditional:
+    host = subprocess.run([PYTHON, "-I", "-c", INTERPRETER], capture_output=True, text=True,
+                          check=True).stdout.split()
+    if host != ["win32", "win-amd64", "cpython", python_version]:
+      raise ValueError(
+          f"{conditional[0]} has environment markers, which pip evaluates for the assembling "
+          f"interpreter ({' '.join(host)}); assemble with CPython {python_version} x64 on Windows")
+  return closure
 
 
 def require_pinned(paths: list[Path], pinned: dict[str, dict], recorded: dict[str, str],

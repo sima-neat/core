@@ -296,6 +296,16 @@ class AssembleContracts(_Case):
     with self.assertRaisesRegex(ValueError, "differs from the build's wheelhouse record"):
       self.fixture.assemble(self.root / "record")
 
+  @unittest.skipIf(sys.platform == "win32", "the target interpreter evaluates markers right")
+  def test_closure_with_environment_markers_needs_the_target_interpreter(self):
+    # pip on another OS would drop this dependency from the Windows closure.
+    write_wheel(self.fixture.wheelhouse, "pywin32-ctypes", "0.2.3")
+    wheel = write_wheel(self.root, "pyneatpcie", VERSION,
+                        ["numpy", 'pywin32-ctypes; sys_platform == "win32"'])
+    with self.assertRaisesRegex(ValueError, "environment markers.*CPython 3.14 x64 on Windows"):
+      OFFLINE.resolve_closure(wheel, self.fixture.wheelhouse,
+                              self.fixture.metadata["installation"]["python"])
+
   def test_card_bundle_version_follows_the_ref(self):
     # A branch build's card version ends in the commit; a release tag build's is the tag.
     self.fixture.assemble(self.root / "branch", ref="develop")
