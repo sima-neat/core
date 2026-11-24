@@ -38,17 +38,14 @@ export LD_LIBRARY_PATH=/usr/lib/aarch64-linux-gnu/neat/runtime:$LD_LIBRARY_PATH
 ```
 :::
 
-### 3. モデルアーカイブが見つかりません — `sima-cli modelzoo` がまだ実行されていません。
+### 3. モデルアーカイブが見つからない
 
 :::info 原因
 コード（または`SIMA_YOLO_TAR` / `SIMA_RESNET50_TAR` / `SIMA_MODEL_TAR`）で参照されている`.tar.gz`というモデルアーカイブがディスク上に存在しません。
 :::
 
 :::tip 修正
-Model Zooからダウンロードしてください。
-```bash
-sima-cli modelzoo get yolo_v8s     # or resnet_50, etc.
-```
+[モデルアーカイブを準備する](/tutorials/before-you-run#prepare-model-archives)の手順に従って、Model Browser からダウンロードしてください。
 :::
 
 ## ビルド

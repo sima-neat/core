@@ -39,15 +39,11 @@ PCIe 호스트 API는 모델에 사용할 수 있는 텐서 또는 디코딩된 
 PCIe 호스트 패키지를 설치하고 [튜토리얼 설정](/tutorials/before-you-run)에 설명된 대로 튜토리얼 번들을 다운로드합니다. 추출된 PCIe 추가 루트에서 다음 명령을 실행합니다.
 
 ```bash
-sima-cli modelzoo get yolo_v8s
+sima-cli models download --id yolov8s --variant w8a8
+unzip -p models/yolov8s/w8a8/yolov8s_w8a8_default.zip yolov8s_w8a8_mpk.tar.gz > yolo_v8s_mpk.tar.gz
 ```
 
-프로그램에는 이 디렉터리에 `yolo_v8s_mpk.tar.gz`가 필요합니다. Model Zoo 출력 이름과 위치는 다를 수 있습니다. 명령이 정확히 해당 경로를 생성하지 않은 경우 다운로드한 아카이브를 해당 위치에 복사하고 확인합니다.
-
-```bash
-cp /absolute/path/to/downloaded-yolov8s-archive.tar.gz yolo_v8s_mpk.tar.gz
-test -f yolo_v8s_mpk.tar.gz
-```
+프로그램에는 이 디렉터리에 `yolo_v8s_mpk.tar.gz`가 필요합니다. 두 번째 명령은 다운로드한 ZIP에서 이 파일을 추출합니다.
 
 **Python:**
 

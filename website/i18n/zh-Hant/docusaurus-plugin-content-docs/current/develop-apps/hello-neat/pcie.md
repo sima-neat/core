@@ -20,15 +20,16 @@ PCIe 協同處理將應用程式控制和輸入準備保留在主機機器上，
 
 ## 取得模型和影像
 
-在主機機器上建立一個工作目錄，並從 Model Zoo 下載 ResNet-50：
+在主機機器上建立一個工作目錄，從 Model Browser 下載 ResNet-50，並從下載的 ZIP 中將模型封存檔解壓縮為 `resnet_50.tar.gz`：
 
 <ShellCommand prompt="pcie-host">
 mkdir -p pcie-host-quickstart/assets
 cd pcie-host-quickstart
-sima-cli modelzoo get resnet_50
+sima-cli models download --id resnet_50 --variant w8a8
+unzip -p models/resnet_50/w8a8/resnet_50_w8a8_default.zip resnet_50_w8a8_mpk.tar.gz > resnet_50.tar.gz
 </ShellCommand>
 
-將下載的壓縮檔放在這個目錄中，檔案名稱為 `resnet_50.tar.gz`。
+所有教學課程的模型準備方式，請參閱[教學設定](/tutorials/before-you-run)。
 
 下載 [拉布拉多犬範例圖片](../../images/hello-neat-pcie-labrador.jpg)，並將其儲存為 `assets/sample.png`。
 

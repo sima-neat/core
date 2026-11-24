@@ -47,6 +47,13 @@
 
 ## Run
 
+Завантажте ResNet-50 із Model Browser і видобудьте його архів моделі в `/tmp/resnet_50.tar.gz` — шлях, який наведені нижче команди передають як `--model`:
+
+```bash
+sima-cli models download --id resnet_50 --variant w8a8
+unzip -p models/resnet_50/w8a8/resnet_50_w8a8_default.zip resnet_50_w8a8_mpk.tar.gz > /tmp/resnet_50.tar.gz
+```
+
 Запустіть програму, і ви повинні побачити передбачений індекс класу, який буде виведено в стандартний вивід (stdout). Запустіть команди **Python** і **C++ (попередньо скомпільовані)** з Neat встановити в кореневу директорію **(директорію, яка містить) `share/` і `lib/`); виконайте команди **збірки з вихідного коду** з **кореневої директорії репозиторію**.
 
 **Python:**
@@ -63,7 +70,7 @@ python3 share/sima-neat/tutorials/001_run_your_first_model/run_your_first_model.
 
 **C++ (build from source):**
 ```bash
-./build.sh --target tutorial_001_run_your_first_model
+./tutorials/build.sh --target tutorial_001_run_your_first_model
 ./build/tutorials-standalone/tutorial_001_run_your_first_model \
   --model /tmp/resnet_50.tar.gz
 ```
@@ -81,45 +88,7 @@ top1=285
 
 ## In Practice
 
-Де навчальні матеріали та тести шукають архіви моделей (`.tar.gz`) та приклади ресурсів, а також способи їх надання локально. Це є обов’язковою умовою для кожного навчального посібника, що базується на моделі.
-
-### Переконайтеся `sima-cli` міститься в PATH
-
-Деякі тести викликають `sima-cli` з неінтерактивних оболонок. Використовуйте це один раз після встановлення. `sima-cli`:
-
-```bash
-SIMA_CLI_BIN_DIR="<path-to-sima-cli-bin>"
-grep -Fqx "export PATH=\"${SIMA_CLI_BIN_DIR}:\$PATH\"" ~/.bashrc || echo "export PATH=\"${SIMA_CLI_BIN_DIR}:\$PATH\"" >> ~/.bashrc
-source ~/.bashrc
-```
-
-Потім перевірте:
-
-```bash
-/bin/sh -c 'command -v sima-cli'
-```
-
-### Розташування архіву моделі та змінні середовища
-
-Налаштування для вилучення/розміщення в середовищі виконання:
-- `SIMA_MPK_EXTRACT_ROOT=<dir>` встановлює базову директорію для вилучення даних.
-- `SIMA_MPK_CLEANUP_EXTRACTED=0` зберігає вилучені дані моделі `proc_run_*` після завершення процесу.
-- `SIMA_MPK_EXTRACT_GC_STALE_PROC=0` вимикає очищення покинутих каталогів `proc_run_*` під час запуску на основі блокування власника.
-
-Старі каталоги `proc_<pid>` слід видаляти вручну, переконавшись, що вони більше не використовуються.
-
-#### ResNet50
-
-Порядок пошуку:
-1. `SIMA_RESNET50_TAR` (заміна для кожної моделі)
-2. `SIMA_MODEL_TAR` (спільний варіант для резервного копіювання тестів/прикладів моделі-архіву)
-3. `tmp/resnet_50.tar.gz`
-4. Локальні файли переміщено до `tmp/` якщо знайдено: `resnet_50.tar.gz`, `resnet-50.tar.gz`
-
-Завантажити (якщо `sima-cli` доступний):
-```bash
-sima-cli modelzoo get resnet_50
-```
+Перевизначення архівів моделей, шляхи, у яких шукають тести з дерева вихідного коду, і налаштування розпакування описано в розділі [Навчальні матеріали та архів моделі](/reference/tutorial-assets).
 
 ### Зразки зображень
 
