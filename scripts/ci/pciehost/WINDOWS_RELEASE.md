@@ -590,6 +590,15 @@ Two jobs of `pcie-host-windows.yml` own it:
   of sima-cli `main` (`X.Y.Z+main.<commit12>`), so a tag never ships another
   branch's `sima-cli` to customers.
 
+Offline publication is one-shot for each release. `publish` does not wait for
+`offline`, and a later run on the same tag builds a candidate with other bytes,
+so `windows_release.py` refuses its online publish and its `publish-offline`
+never runs. The release owner therefore checks that `offline` succeeded before
+approving the `publish` environment of a release run. If `publish` succeeded
+and `offline` or `publish-offline` failed, use **Re-run failed jobs** on the
+same run while its artifacts exist: the candidate, card and offline artifacts
+are kept for 7 days. After that the tag has no offline bundle.
+
 Keep the pins current. Whoever changes `Requires-Dist` in
 `pcie_host/python/build_wheel.py` or bumps numpy, opencv-python or CPython
 updates `windows_build_inputs.json` with the URL and SHA-256 from
