@@ -296,6 +296,7 @@ int main(int argc, char** argv) {
 
     pcie::ModelOptions model_options;
     model_options.preprocess.kind = pcie::InputKind::Image;
+    model_options.preprocess.normalize.enable = pcie::AutoFlag::On;
 
     if (args.opencv_overload) {
 #if !defined(SIMA_PCIE_HAS_OPENCV_OVERLOAD)

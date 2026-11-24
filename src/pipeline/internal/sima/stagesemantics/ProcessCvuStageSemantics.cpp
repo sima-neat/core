@@ -6128,6 +6128,7 @@ initialize_preproc_payload_from_options_local(const ::simaai::neat::PreprocOptio
   payload.default_input_name =
       opt.graph_input_name.empty() ? std::string("input_image") : opt.graph_input_name;
   payload.preproc_single_output_handoff = opt.single_output_handoff;
+  payload.model_managed_preproc = opt.model_managed_contract;
   if (!opt.input_shape.empty()) {
     payload.input_shapes = {opt.input_shape};
   }
