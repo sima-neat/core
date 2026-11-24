@@ -455,6 +455,22 @@ class GateContracts(unittest.TestCase):
       self.assertEqual(sorted(path.name for path in package.iterdir()),
                        ["metadata-offline.json", "neat-pcie-offline-installer-12345678.tar.gz"])
 
+  def test_only_the_blocked_profile_checks_for_a_newer_sima_cli(self):
+    with tempfile.TemporaryDirectory() as directory:
+      work = Path(directory)
+      ci = {"PIP_NO_INDEX": "1", "HTTPS_PROXY": "http://proxy.example:3128"}
+      with mock.patch.dict(os.environ, ci):
+        connected = GATE.customer_profile(work / "connected", work, blocked=False)
+        target = GATE.customer_profile(work / "target", work, blocked=True)
+    # With stdin closed, the update prompt aborts a connected run once PyPI has a newer
+    # sima-cli than the pin; behind the block the check must fail and continue.
+    self.assertEqual(connected["SIMA_CLI_CHECK_FOR_UPDATE"], "0")
+    self.assertNotIn("SIMA_CLI_CHECK_FOR_UPDATE", target)
+    for environment in (connected, target):
+      self.assertFalse({"PIP_FIND_LINKS", "PIP_NO_INDEX"} & set(environment))
+    self.assertNotIn("HTTPS_PROXY", connected)
+    self.assertEqual(target["HTTPS_PROXY"], GATE.DEAD_PROXY)
+
   def test_block_covers_every_installer_process(self):
     programs = GATE.blocked_programs(Path("C:/py"), Path("C:/home"), Path("C:/Windows"))
     self.assertEqual(programs, [

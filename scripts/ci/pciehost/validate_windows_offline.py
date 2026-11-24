@@ -94,13 +94,19 @@ def blocked_programs(base_prefix: Path, home: Path, system_root: Path) -> list[P
 
 
 def customer_profile(home: Path, work: Path, *, blocked: bool) -> dict[str, str]:
-  """A fresh customer profile: none of the CI pip or update-check settings."""
+  """A fresh customer profile: none of the CI pip or proxy settings.
+
+  Behind the block sima-cli also looks for a newer release, as a customer's does, and
+  must continue without the network. A connected run keeps the check off: with closed
+  stdin its update prompt aborts once PyPI has a newer sima-cli than the pin.
+  """
   home.mkdir(parents=True, exist_ok=True)
   # The wheelhouse argument only feeds PIP_FIND_LINKS, which is removed below.
   environment = isolated_sima_cli_environment(home, work, work)
+  removed = {"PIP_FIND_LINKS", "PIP_NO_INDEX", "NO_PROXY", "HTTP_PROXY", "HTTPS_PROXY",
+             "ALL_PROXY"} | ({"SIMA_CLI_CHECK_FOR_UPDATE"} if blocked else set())
   for name in list(environment):
-    if name.upper() in {"PIP_FIND_LINKS", "PIP_NO_INDEX", "SIMA_CLI_CHECK_FOR_UPDATE",
-                        "NO_PROXY", "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY"}:
+    if name.upper() in removed:
       environment.pop(name)
   if blocked:
     environment.update({"HTTP_PROXY": DEAD_PROXY, "HTTPS_PROXY": DEAD_PROXY,
