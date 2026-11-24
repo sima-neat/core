@@ -41,17 +41,14 @@ export LD_LIBRARY_PATH=/usr/lib/aarch64-linux-gnu/neat/runtime:$LD_LIBRARY_PATH
 ```
 :::
 
-### 3. Model archive missing — `sima-cli modelzoo` not yet run
+### 3. Model archive missing
 
 :::info Cause
 The `.tar.gz` model archive referenced by your code (or by `SIMA_YOLO_TAR` / `SIMA_RESNET50_TAR` / `SIMA_MODEL_TAR`) doesn't exist on disk.
 :::
 
 :::tip Fix
-Download it from the Model Zoo:
-```bash
-sima-cli modelzoo get yolo_v8s     # or resnet_50, etc.
-```
+Download it with the Model Browser as described in [Prepare model archives](/tutorials/before-you-run#prepare-model-archives).
 :::
 
 ## Build

@@ -70,7 +70,7 @@ python3 share/sima-neat/tutorials/001_run_your_first_model/run_your_first_model.
 
 **C++ (build from source):**
 ```bash
-./build.sh --target tutorial_001_run_your_first_model
+./tutorials/build.sh --target tutorial_001_run_your_first_model
 ./build/tutorials-standalone/tutorial_001_run_your_first_model \
   --model /tmp/resnet_50.tar.gz
 ```

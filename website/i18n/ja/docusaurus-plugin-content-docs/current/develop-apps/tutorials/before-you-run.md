@@ -61,7 +61,7 @@ source ~/pyneatpcie/bin/activate
 python3 -c "import pyneatpcie; print('pyneatpcie ready')"
 </ShellCommand>
 
-## 4. モデルアーカイブを準備する
+## 4. モデルアーカイブを準備する {#prepare-model-archives}
 
 チュートリアルでは、[Model Browser](/tools/model-browser/)のResNet-50とYOLOv8sを使用します。これらは、Palette SDKに含まれる`sima-cli`でダウンロードできます。
 
