@@ -530,6 +530,77 @@ three packages back. MSI repair, repeat installation, and failure recovery
 are exercised on every publishing run and `release_qualification` rehearsal, and clean removal on every run; the older-version upgrade is the
 separate formal gate described above.
 
+## Offline bundle
+
+Customers without internet access on the Windows host download the release on
+any connected computer, then install from the copied folder with the
+`sima-cli` it contains, as `neat-offline\INSTALL.md` describes:
+
+```text
+sima-cli neat install core/pciehost/windows/amd64@v<package-version> -t offline -d .\pcie-offline
+```
+
+`metadata-offline.json` sits beside the online `metadata.json` and names three
+resources: `neat-pcie-offline-installer-<sha8>.tar.gz`, and the exact
+GStreamer and CPython installers at their vendors' URLs with the SHA-256 values
+pinned in `windows_build_inputs.json` (`use: gstreamer` and
+`use: python-installer`). SiMa does not host the two installers. The archive
+holds the online `metadata.json` with only resources and
+`installation.python.wheelhouse` added, both MSIs and the wheel with the
+candidate's bytes, the dependency wheels pip selects from the pinned
+`wheelhouse` files, the qualified card bundle, the pinned `sima-cli` wheels with
+a hash-checked `requirements.txt`, and `INSTALL.md`. The Platform package is
+never bundled.
+
+Two jobs of `pcie-host-windows.yml` own it:
+
+- `offline` runs beside `hardware` on every run of the lane, on a hosted
+  `windows-2025` runner. `windows_offline.py assemble` builds the bundle from
+  this run's `core-pciehost-windows-amd64`, the build's wheelhouse in
+  `core-pciehost-windows-card-inputs` and
+  `core-pcie-card-qualification-candidate`. It refuses a file that is not
+  pinned or differs from the build's `host-candidate.json` record.
+  `validate_windows_offline.py` then runs the documented download against a
+  local copy of the release channel, installs GStreamer from the downloaded
+  installer, and blocks outbound traffic of Python and `msiexec` with Windows
+  Firewall rules named `neat-offline-gate`. A canary must fail to reach PyPI
+  through the block; if it succeeds, or the rules cannot be added, the job
+  fails. Behind the block it installs `sima-cli` from the bundle, installs the
+  release with `sima-cli install -m`, checks the receipt, both products and the
+  exact Python packages, installs again and removes it. A hosted runner has no
+  Platform package, so the gate drops the Platform driver and service
+  prerequisites, the doctor and the card setup step from a copy of the
+  metadata; the evidence names them. With `require_upgrade=true` it first
+  installs the published baseline. Its evidence is
+  `core-pciehost-windows-offline-evidence-<run>-<attempt>`.
+- `publish-offline` runs only after `publish` and `offline` succeed, so only
+  for a qualified release tag. `windows_offline.py publish` requires the live
+  `metadata.json` to be the one the bundle was assembled from, uploads the
+  archive create-only and then `metadata-offline.json`, and invalidates only
+  that file. It never touches the online files or `latest.tag`. An identical
+  published bundle is left alone; a different one is refused.
+
+Keep the pins current. Whoever changes `Requires-Dist` in
+`pcie_host/python/build_wheel.py` or bumps numpy, opencv-python or CPython
+updates `windows_build_inputs.json` with the URL and SHA-256 from
+`https://pypi.org/pypi/<name>/<version>/json`. The `python-installer` pin must
+name the CPython version that `python-version:` installs in CI, and the
+GStreamer pin must be the installer the package requires; contract tests check
+both.
+
+The target installs from a local `windows-msi` metadata file, which needs a
+`sima-cli` that reads resources from the metadata's folder and installs
+`installation.python.wheelhouse` without an index (sima-cli branch
+`feat/windows-msi-offline`). The bundle carries the `sima-cli` that
+`windows_build_inputs.json` pins, so re-pin `sima_cli_version`,
+`sima_cli_publication` and the `sima_cli-*.whl` entry to a publication that
+contains it, and later to the release that does, as described in Runner setup.
+Until then the gate's install step fails.
+
+When the pinned `sima-cli` release has a per-user Windows installer, replace
+the bundle's `sima-cli` folder with that installer as a fourth resource of
+`metadata-offline.json`, pinned like the other two.
+
 ## Evidence and recovery
 
 Retain these artifacts with the release record:
@@ -538,6 +609,8 @@ Retain these artifacts with the release record:
 - `core-pciehost-windows-dependencies`;
 - `core-pciehost-windows-amd64`;
 - `core-pciehost-windows-hardware-<run>-<attempt>`;
+- `core-pciehost-windows-offline` and
+  `core-pciehost-windows-offline-evidence-<run>-<attempt>`;
 - `core-pciehost-linux-admission-<run>-<attempt>`.
 
 Actions deletes them after 7 to 14 days (`retention-days`), so download the Core
