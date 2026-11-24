@@ -1535,7 +1535,7 @@ jobs:
           export SIMA_GST_REGISTRY_DIR="$(cat _work/gst_registry_dir.txt)"
           echo "Using SIMA_MPK_EXTRACT_ROOT=${SIMA_MPK_EXTRACT_ROOT}"
           echo "Using SIMA_GST_REGISTRY_DIR=${SIMA_GST_REGISTRY_DIR}"
-          # Not written to GITHUB_ENV: the Python binding tests read SIMA_YOLO_TAR and still use the legacy QuantTess model.
+          # Not written to GITHUB_ENV: a preset SIMA_YOLO_TAR keeps priority, and the Python pytest step exports its own.
           export SIMA_YOLO_TAR="${SIMA_YOLO_TAR:-${SIMA_NEAT_TUTORIAL_MODEL_YOLO:?}}"
           COVERAGE_DIR=_work/coverage/perf bash scripts/ci/run_zero_skip_gate.sh \
             ctest --test-dir "${TEST_DIR}" \
@@ -1645,6 +1645,8 @@ jobs:
           export SIMA_GRAPH_PHASE3_PY_RUNTIME=1
           : "${SIMA_RESNET50_TAR:?Model Browser ResNet-50 preparation required}"
           test -s "${SIMA_RESNET50_TAR}"
+          export SIMA_YOLO_TAR="${SIMA_YOLO_TAR:-${SIMA_NEAT_TUTORIAL_MODEL_YOLO:?Model Browser YOLOv8s preparation required}}"
+          test -s "${SIMA_YOLO_TAR}"
           PYTHON_MARKS=()
           case "${NEAT_CI_PYTHON_PROFILE}" in
             runtime)

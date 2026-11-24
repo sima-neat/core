@@ -5,7 +5,7 @@ returns a list of decoded-boxes tensors, positional 1:1. Each output is a float3
 tensor of shape [num_detections, 6] with columns (x1, y1, x2, y2, score, class_id).
 
 Validated against the byte-level _parse_bbox_payload oracle in
-test_real_model_fixtures.py. Gated on SIMA_YOLO_TAR; image from SIMA_TEST_IMAGE
+test_real_model_fixtures.py. Needs SIMA_YOLO_TAR; image from SIMA_TEST_IMAGE
 or the standard fixture lookup.
 """
 import math

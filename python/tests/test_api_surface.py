@@ -1341,21 +1341,24 @@ def test_graph_describe_backend_includes_quant_tess_stage():
   assert "quanttess" in text or "quant_tess" in text
 
 
-def test_graph_describe_backend_includes_detess_dequant_stage(tmp_path):
-  model_path = _strict_yolo_model_path()
-  model = pyneat.Model(str(model_path))
+def test_graph_describe_backend_includes_detess_dequant_stage():
+  # Explicit options instead of DetessDequantOptions(Model): the Model Browser YOLOv8s
+  # dequantizes without detessellation, and this checks the stage itself.
+  detess = pyneat.DetessDequantOptions()
+  detess.num_buffers_locked = True
+  detess.num_buffers_model = 1
+  detess.num_buffers = 1
+  detess.config_json = {
+      "graph_name": "detessdequant", "input_width": 640, "input_height": 640, "input_depth": 3,
+      "output_width": 640, "output_height": 640, "output_depth": 3,
+  }
 
   graph = pyneat.Graph()
   graph.add(pyneat.nodes.input())
-  graph.add(pyneat.groups.mla(model))
-  graph.add(pyneat.nodes.detess_dequant(pyneat.DetessDequantOptions(model)))
+  graph.add(pyneat.nodes.detess_dequant(detess))
   graph.add(pyneat.nodes.output())
 
-  # A fused physical cohort need not use the logical operation as its element name.
   assert "detessdequant" in graph.describe().lower()
-  info = model.info()
-  assert info.capabilities.has_post_detessellation
-  assert info.capabilities.has_post_dequantization
   assert "neatkernelrunner" in graph.describe_backend().lower()
 
 
