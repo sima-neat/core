@@ -813,6 +813,23 @@ foreach(_c2_test unit_run_verb_resolution_test unit_run_tensor_surface_test)
     endif()
   endif()
 endforeach()
+# A Run's statistics (RunStats, MeasureReport, Model::benchmark) on both backends, against the test's
+# own clock reads: the Input -> Output rows anywhere, the model rows with a YOLOv8 detection package
+# (--model-package, SIMA_TEST_BOXDECODE_MODEL_PACKAGE or SIMA_YOLO_TAR) and the EV74 on the Kernels
+# firmware, which skip otherwise.
+if (NOT unit_run_statistics_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  add_pipeline_test(unit_run_statistics_test
+    ${CMAKE_CURRENT_SOURCE_DIR}/unit_testing/unit_run_statistics_test.cpp)
+  set_tests_properties(unit_run_statistics_test PROPERTIES TIMEOUT 600)
+  set_property(TEST unit_run_statistics_test APPEND PROPERTY LABELS "unit")
+  if (SIMANEAT_DATAFLOW_SOURCE_DIR)
+    simaneat_add_test(NAME unit_run_statistics_test_dataflow
+      COMMAND unit_run_statistics_test --backend=dataflow)
+    simaneat_append_ctest_env(unit_run_statistics_test_dataflow)
+    set_tests_properties(unit_run_statistics_test_dataflow PROPERTIES TIMEOUT 600)
+    set_property(TEST unit_run_statistics_test_dataflow APPEND PROPERTY LABELS "unit;dataflow")
+  endif()
+endif()
 # The public Graph header without GStreamer's headers: no Run is built, so no backend is involved.
 if (NOT unit_graph_header_no_gstreamer_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
   add_pipeline_test(unit_graph_header_no_gstreamer_test
