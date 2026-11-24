@@ -89,13 +89,16 @@ RUN_TEST("graph_migration_phase3_lazy_dynamic_spec_test", [] {
   }
 
   {
-    const std::filesystem::path mnist_tar = graph_phase3_test::resolve_mnist_or_throw(root);
-    simaai::neat::Model mnist(mnist_tar.string(), graph_phase3_test::mnist_gray8_options());
-    const cv::Mat digit0(28, 28, CV_8UC1, cv::Scalar(0));
-    const cv::Mat digit1(28, 28, CV_8UC1, cv::Scalar(255));
-    (void)run_lazy_connected_model(mnist, digit0, digit1,
+    // Single-channel ingress: the first GRAY8 push completes the input spec, and preprocessing
+    // expands it to the RGB input the model expects.
+    const std::filesystem::path resnet_tar = graph_phase3_test::resolve_resnet50_or_throw(root);
+    simaai::neat::Model resnet(resnet_tar.string(),
+                               graph_phase3_test::resnet_imagenet_gray8_options());
+    const cv::Mat gray0(224, 224, CV_8UC1, cv::Scalar(0));
+    const cv::Mat gray1(224, 224, CV_8UC1, cv::Scalar(255));
+    (void)run_lazy_connected_model(resnet, gray0, gray1,
                                    simaai::neat::ImageSpec::PixelFormat::GRAY8,
-                                   "MNIST lazy connected Graph");
+                                   "ResNet GRAY8 lazy connected Graph");
   }
 });
 #endif
