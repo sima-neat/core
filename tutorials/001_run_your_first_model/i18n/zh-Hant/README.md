@@ -47,6 +47,13 @@
 
 ## Run
 
+從 Model Browser 下載 ResNet-50，並將其模型封存檔解壓縮到 `/tmp/resnet_50.tar.gz`，也就是下列命令以 `--model` 傳遞的路徑：
+
+```bash
+sima-cli models download --id resnet_50 --variant w8a8
+unzip -p models/resnet_50/w8a8/resnet_50_w8a8_default.zip resnet_50_w8a8_mpk.tar.gz > /tmp/resnet_50.tar.gz
+```
+
 執行它，您應該會看到預測的類別索引列印到標準輸出。從 Neat 安裝根目錄（包含 `share/` 和 `lib/` 的目錄）執行 **Python** 和 **C++（預先建置）** 命令；從 **原始碼建置** 命令的 **儲存庫根目錄** 執行。
 
 **Python:**
@@ -63,7 +70,7 @@ python3 share/sima-neat/tutorials/001_run_your_first_model/run_your_first_model.
 
 **C++ (build from source):**
 ```bash
-./build.sh --target tutorial_001_run_your_first_model
+./tutorials/build.sh --target tutorial_001_run_your_first_model
 ./build/tutorials-standalone/tutorial_001_run_your_first_model \
   --model /tmp/resnet_50.tar.gz
 ```
@@ -81,45 +88,7 @@ top1=285
 
 ## In Practice
 
-教學和測試會尋找模型封存檔（`.tar.gz`）和範例資源的位置，以及如何本機提供它們。這是所有基於模型的教學的先決條件。
-
-### 確保 `sima-cli` 位於 PATH 環境變數中
-
-某些測試會從非互動式 shell 呼叫 `sima-cli`。在安裝 `sima-cli` 後，只需執行一次：
-
-```bash
-SIMA_CLI_BIN_DIR="<path-to-sima-cli-bin>"
-grep -Fqx "export PATH=\"${SIMA_CLI_BIN_DIR}:\$PATH\"" ~/.bashrc || echo "export PATH=\"${SIMA_CLI_BIN_DIR}:\$PATH\"" >> ~/.bashrc
-source ~/.bashrc
-```
-
-然後驗證：
-
-```bash
-/bin/sh -c 'command -v sima-cli'
-```
-
-### 模型封存檔位置和環境變數
-
-提取/執行階段放置控制項：
-- `SIMA_MPK_EXTRACT_ROOT=<dir>` 設定基本提取目錄。
-- `SIMA_MPK_CLEANUP_EXTRACTED=0` 在程序結束後保留提取的 `proc_run_*` 模型資料。
-- `SIMA_MPK_EXTRACT_GC_STALE_PROC=0` 停用啟動時依據擁有權鎖定清理已無人使用的 `proc_run_*` 目錄。
-
-請在確認無人使用後手動移除舊版 `proc_<pid>` 根目錄。
-
-#### ResNet50
-
-搜尋順序：
-1. `SIMA_RESNET50_TAR`（每個模型的覆寫）
-2. `SIMA_MODEL_TAR`（模型封存檔測試/範例的共享後備）
-3. `tmp/resnet_50.tar.gz`
-4. 如果找到，則將本機檔案移動到 `tmp/`：`resnet_50.tar.gz`、`resnet-50.tar.gz`
-
-下載（如果 `sima-cli` 可用）：
-```bash
-sima-cli modelzoo get resnet_50
-```
+模型封存檔覆寫、原始碼樹測試搜尋的路徑以及解壓縮設定，請參閱[教學資源與模型封存檔](/reference/tutorial-assets)。
 
 ### 範例圖像
 

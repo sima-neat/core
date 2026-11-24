@@ -66,30 +66,40 @@ source ~/pyneatpcie/bin/activate
 python3 -c "import pyneatpcie; print('pyneatpcie ready')"
 </ShellCommand>
 
-## 4. Prepare model archives
+## 4. Prepare model archives {#prepare-model-archives}
 
-Use Model Zoo to download the model named by the tutorial. For example:
+The tutorials use ResNet-50 and YOLOv8s from the
+[Model Browser](/tools/model-browser/). The `sima-cli` that the Palette SDK
+provides downloads them.
 
-<ShellCommand prompt="sdk|devkit|pcie-host">
-sima-cli modelzoo get resnet_50
-sima-cli modelzoo get yolo_v8s
+For Neat Library tutorials, download both models and extract each model
+archive from its ZIP to the path the tutorial commands pass as `--model`:
+
+<ShellCommand prompt="sdk|devkit">
+sima-cli models download --id resnet_50 --variant w8a8
+unzip -p models/resnet_50/w8a8/resnet_50_w8a8_default.zip resnet_50_w8a8_mpk.tar.gz > /tmp/resnet_50.tar.gz
+sima-cli models download --id yolov8s --variant w8a8
+unzip -p models/yolov8s/w8a8/yolov8s_w8a8_default.zip yolov8s_w8a8_mpk.tar.gz > /tmp/yolo_v8s.tar.gz
 </ShellCommand>
 
-Neat Library tutorials accept `--model`, so you can pass the downloaded archive
-directly. PCIe tutorials use fixed filenames in the PCIe extras root:
+PCIe tutorials use fixed filenames in the PCIe extras root:
 
 | PCIe tutorial | Required model file |
 | --- | --- |
 | Run Your First Model over PCIe | `yolo_v8s_mpk.tar.gz` |
 | Run PCIe Inference Async | `yolo_v8s_mpk.tar.gz` |
 | Run Multiple Models | `resnet_50_mpk.tar.gz` and `yolo_v8s_mpk.tar.gz` |
+| Wrap External Tensor Memory | `yolo_v8s_mpk.tar.gz` |
 
-Model Zoo output names and locations can vary. If necessary, copy the archives
-into the PCIe extras root using the required names:
+Each download is a ZIP file under `models/<model id>/<variant>/`. Download the
+models the tutorial needs from the PCIe extras root, and extract each model
+archive from its ZIP under the required name:
 
 <ShellCommand prompt="pcie-host">
-cp /absolute/path/to/downloaded-resnet-archive.tar.gz resnet_50_mpk.tar.gz
-cp /absolute/path/to/downloaded-yolov8s-archive.tar.gz yolo_v8s_mpk.tar.gz
+sima-cli models download --id resnet_50 --variant w8a8
+unzip -p models/resnet_50/w8a8/resnet_50_w8a8_default.zip resnet_50_w8a8_mpk.tar.gz > resnet_50_mpk.tar.gz
+sima-cli models download --id yolov8s --variant w8a8
+unzip -p models/yolov8s/w8a8/yolov8s_w8a8_default.zip yolov8s_w8a8_mpk.tar.gz > yolo_v8s_mpk.tar.gz
 </ShellCommand>
 
 ## 5. Verify paths and expected output

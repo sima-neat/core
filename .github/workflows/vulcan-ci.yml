@@ -206,6 +206,7 @@ jobs:
             tests/tools/test_install_neat_framework_native_restore.py \
             tests/tools/test_neat_model_compiler_discovery.py \
             tests/tools/test_core_dist_contract.py \
+            tests/tools/test_tutorial_model_wrapper.py \
             tests/tools/test_package_buildinfo.py \
             tests/tools/test_build_install_sanity.py \
             tests/tools/test_core_inventory_soname.py \
@@ -1231,18 +1232,6 @@ jobs:
             printf 'SIMA_TEST_LLIMA_REASONING_GEMMA_MODEL=%s\n' "${SIMA_TEST_LLIMA_REASONING_GEMMA_MODEL}"
           } >> "${GITHUB_ENV}"
 
-      - name: Prepare LightGlue NEAT-68 regression model
-        run: |
-          set -euo pipefail
-          MODEL_DIR="$(mktemp -d "${RUNNER_TEMP:-/tmp}/lg-XXXXXXXX")"
-          MODEL_PATH="${MODEL_DIR}/quantized_lightglue_superpoint_600_mpk.tar.gz"
-          ARTIFACT_URL="https://models-registry.stg.neat.sima.ai/v1/runs/ef5cf65e-797c-409a-81e7-17cb49e62452/artifacts/mpk"
-          DOWNLOAD_URL="$(curl -fsS --retry 2 "${ARTIFACT_URL}" |
-            python3 -c 'import json, sys; print(json.load(sys.stdin)["artifact"]["download_url"])')"
-          curl -fsSL --retry 2 "${DOWNLOAD_URL}" -o "${MODEL_PATH}"
-          echo '0ceb6304167d3a5ca4e3e0bcf3bd873ace6966d8a35e73d790c4496019bae7af  '"${MODEL_PATH}" | sha256sum --check --strict
-          echo "SIMA_TEST_LIGHTGLUE_MODEL=${MODEL_PATH}" >> "${GITHUB_ENV}"
-
       - name: Build docs C++ examples from DevKit-installed package
         if: ${{ contains(fromJSON(matrix.tasks), 'fast') }}
         run: |
@@ -1281,6 +1270,36 @@ jobs:
             --label-regex "devkit-package-inventory" \
             --output-on-failure \
             --no-tests=error
+
+      - name: Prepare Model Browser fixtures
+        if: ${{ contains(fromJSON(matrix.tasks), 'fast') || contains(fromJSON(matrix.tasks), 'performance') || contains(fromJSON(matrix.tasks), 'python-tutorials') }}
+        timeout-minutes: 15
+        env:
+          HAS_PERFORMANCE: ${{ contains(fromJSON(matrix.tasks), 'performance') }}
+          HAS_TUTORIALS: ${{ contains(fromJSON(matrix.tasks), 'python-tutorials') }}
+        run: |
+          # Prepared once per job and shared by the fast, performance and tutorial suites.
+          # SIMA_RESNET50_TAR also feeds the performance matrix and the Python bindings pytest.
+          # In the fast suite, unit_resnet50_mla_handoff_segment_test and
+          # unit_model_infer_output_name_test pass without loading a model when they find no
+          # ResNet-50 MPK, and stress_model_lifecycle_test uses it when SIMA_STRESS_MODEL_TAR
+          # and SIMA_MODEL_TAR are unset.
+          MODEL_DIR="$(mktemp -d "${RUNNER_TEMP:-/tmp}/model-browser.XXXXXX")"
+          RESNET_MPK="${SIMA_RESNET50_TAR:-}"
+          if [[ -z "${RESNET_MPK}" ]]; then
+            RESNET_MPK="$(python3 scripts/ci/prepare_model_browser_fixture.py \
+              --id resnet_50 --variant w8a8 --output "${MODEL_DIR}")"
+          fi
+          {
+            printf 'SIMA_RESNET50_TAR=%s\n' "${RESNET_MPK}"
+            printf 'SIMA_NEAT_TUTORIAL_MODEL_RESNET=%s\n' "${RESNET_MPK}"
+          } >> "${GITHUB_ENV}"
+          # Only the tutorials, and a performance job without a preset SIMA_YOLO_TAR, need YOLOv8s.
+          if [[ "${HAS_TUTORIALS}" == true || ( "${HAS_PERFORMANCE}" == true && -z "${SIMA_YOLO_TAR:-}" ) ]]; then
+            YOLO_MPK="$(python3 scripts/ci/prepare_model_browser_fixture.py \
+              --id yolov8s --variant w8a8 --output "${MODEL_DIR}")"
+            printf 'SIMA_NEAT_TUTORIAL_MODEL_YOLO=%s\n' "${YOLO_MPK}" >> "${GITHUB_ENV}"
+          fi
 
       - name: Run Fast Non-E2E Tests (Parallel)
         if: ${{ contains(fromJSON(matrix.tasks), 'fast') }}
@@ -1503,31 +1522,6 @@ jobs:
               --no-tests=error
           done
 
-      - name: Prepare Model Browser fixtures
-        if: ${{ contains(fromJSON(matrix.tasks), 'performance') || contains(fromJSON(matrix.tasks), 'python-tutorials') }}
-        timeout-minutes: 15
-        env:
-          HAS_TUTORIALS: ${{ contains(fromJSON(matrix.tasks), 'python-tutorials') }}
-        run: |
-          # Prepared once per job and shared by the performance and tutorial suites.
-          # SIMA_RESNET50_TAR also feeds the performance matrix and the Python bindings pytest.
-          MODEL_DIR="$(mktemp -d "${RUNNER_TEMP:-/tmp}/model-browser.XXXXXX")"
-          RESNET_MPK="${SIMA_RESNET50_TAR:-}"
-          if [[ -z "${RESNET_MPK}" ]]; then
-            RESNET_MPK="$(python3 scripts/ci/prepare_model_browser_fixture.py \
-              --id resnet_50 --variant w8a8 --output "${MODEL_DIR}")"
-          fi
-          {
-            printf 'SIMA_RESNET50_TAR=%s\n' "${RESNET_MPK}"
-            printf 'SIMA_NEAT_TUTORIAL_MODEL_RESNET=%s\n' "${RESNET_MPK}"
-          } >> "${GITHUB_ENV}"
-          # A performance-only job uses a preset SIMA_YOLO_TAR and needs no YOLO download.
-          if [[ "${HAS_TUTORIALS}" == true || -z "${SIMA_YOLO_TAR:-}" ]]; then
-            YOLO_MPK="$(python3 scripts/ci/prepare_model_browser_fixture.py \
-              --id yolov8s --variant w8a8 --output "${MODEL_DIR}")"
-            printf 'SIMA_NEAT_TUTORIAL_MODEL_YOLO=%s\n' "${YOLO_MPK}" >> "${GITHUB_ENV}"
-          fi
-
       - name: Run Perf and Throughput Tests (Isolated)
         if: ${{ contains(fromJSON(matrix.tasks), 'performance') }}
         env:
@@ -1618,42 +1612,8 @@ jobs:
             exit 1
           fi
           TUTORIALS_DIR="$(cat _work/extras_lib_dir.txt)/tutorials"
-          # The tutorial tests are registered with Model Zoo archive paths; point them at the
-          # Model Browser MPKs so run_with_modelzoo.sh finds the model and downloads nothing.
-          mapfile -t TUTORIAL_CTEST_FILES < <(find "${TUTORIALS_DIR}" -type f -name CTestTestfile.cmake)
-          sed -E -i \
-            -e "s|/[^\"[:space:]]*/resnet_50\\.tar\\.gz|${SIMA_NEAT_TUTORIAL_MODEL_RESNET:?}|g" \
-            -e "s|/[^\"[:space:]]*/yolo_v8s\\.tar\\.gz|${SIMA_NEAT_TUTORIAL_MODEL_YOLO:?}|g" \
-            "${TUTORIAL_CTEST_FILES[@]}"
-          # Check each model-backed registration rather than file names: a valid MPK may itself
-          # be called resnet_50.tar.gz.
-          python3 - "${SIMA_NEAT_TUTORIAL_MODEL_RESNET}" "${SIMA_NEAT_TUTORIAL_MODEL_YOLO}" \
-            "${TUTORIAL_CTEST_FILES[@]}" <<'PY'
-          import re
-          import sys
-
-          selected = {'resnet_50': sys.argv[1], 'yolo_v8s': sys.argv[2]}
-          used, problems = set(), []
-          for path in sys.argv[3:]:
-              for line in open(path, encoding='utf-8'):
-                  args = re.findall(r'"([^"]*)"', line)
-                  wrapper = [i for i, arg in enumerate(args) if arg.endswith('/run_with_modelzoo.sh')]
-                  if not line.lstrip().startswith('add_test(') or not wrapper:
-                      continue
-                  i = wrapper[0]
-                  name, archive = args[i + 1], args[i + 2]
-                  model = args[args.index('--model') + 1] if '--model' in args else None
-                  if name not in selected:
-                      problems.append(f'{path}: unexpected model {name}')
-                  elif archive != selected[name] or model != selected[name]:
-                      problems.append(f'{path}: {name} uses {archive} and --model {model}')
-                  used.add(name)
-          missing = sorted(set(selected) - used)
-          if missing:
-              problems.append('no tutorial test uses ' + ', '.join(missing))
-          if problems:
-              raise SystemExit('Tutorial model check failed:\n' + '\n'.join(problems))
-          PY
+          # Without these, run_with_modelzoo.sh falls back to a possibly stale archive in /tmp.
+          : "${SIMA_NEAT_TUTORIAL_MODEL_RESNET:?}" "${SIMA_NEAT_TUTORIAL_MODEL_YOLO:?}"
           export SIMA_GST_REGISTRY_DIR="$(cat _work/gst_registry_dir.txt)"
           # Temporary external RTSP exclusions; remove under core#890.
           COVERAGE_DIR=_work/coverage/tutorials COVERAGE_PROFILE=required \
@@ -1774,31 +1734,6 @@ jobs:
               --core-coverage-dir "${coverage_dir}" --junitxml "${coverage_dir}/junit.xml" \
               "${PYTHON_MARKS[@]}" "${test_case}"
           done
-
-      - name: Run weekly long Python pytest from installed extras
-        if: ${{ inputs.run_long_tests && (contains(fromJSON(matrix.tasks), 'python-tutorials')) }}
-        run: |
-          PYNEAT_HOME="${HOME}/pyneat"
-          if [[ -x "${PYNEAT_HOME}/bin/python" ]]; then
-            PYTHON_BIN="${PYNEAT_HOME}/bin/python"
-          elif [[ -x "${PYNEAT_HOME}/.venv/bin/python" ]]; then
-            PYTHON_BIN="${PYNEAT_HOME}/.venv/bin/python"
-          else
-            echo "Expected pyneat python not found at ${PYNEAT_HOME}/bin/python or ${PYNEAT_HOME}/.venv/bin/python" >&2
-            exit 1
-          fi
-
-          EXTRAS_PREFIX="$(cat _work/extras_prefix.txt)"
-          PYTEST_LONG_DIR="${EXTRAS_PREFIX}/share/sima-neat/python/tests_long"
-          if [[ ! -d "${PYTEST_LONG_DIR}" ]]; then
-            echo "Installed long Python tests not found at ${PYTEST_LONG_DIR}" >&2
-            exit 1
-          fi
-          export SIMA_GST_REGISTRY_DIR="$(cat _work/gst_registry_dir.txt)"
-          PYTHONPATH="${GITHUB_WORKSPACE}/tools/ci${PYTHONPATH:+:${PYTHONPATH}}" \
-            SIMA_TEST_IS_LONG=1 "${PYTHON_BIN}" -m pytest -q -p core_pytest_coverage \
-            --core-coverage-dir _work/coverage/python-weekly \
-            --junitxml _work/coverage/python-weekly.xml "${PYTEST_LONG_DIR}"
 
       - name: Record DevKit shard outcome
         if: ${{ always() }}

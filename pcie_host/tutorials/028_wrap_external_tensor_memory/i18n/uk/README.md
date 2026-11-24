@@ -47,9 +47,8 @@
 Установіть пакет хоста PCIe та завантажте комплект посібників, як описано в розділі [Налаштування посібників](/tutorials/before-you-run). Завантажте YOLOv8s до кореня розпакованих додаткових файлів PCIe:
 
 ```bash
-sima-cli modelzoo get yolo_v8s
-cp /absolute/path/to/downloaded-yolov8s-archive.tar.gz yolo_v8s_mpk.tar.gz
-test -f yolo_v8s_mpk.tar.gz
+sima-cli models download --id yolov8s --variant w8a8
+unzip -p models/yolov8s/w8a8/yolov8s_w8a8_default.zip yolov8s_w8a8_mpk.tar.gz > yolo_v8s_mpk.tar.gz
 ```
 
 **C++ (prebuilt):**

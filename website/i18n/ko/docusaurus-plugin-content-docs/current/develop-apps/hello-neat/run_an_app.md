@@ -40,14 +40,15 @@ mdx:
     mkdir -p assets
     </ShellCommand>
 
-2. **모델을 다운로드하세요:**
+2. Model Browser에서 **모델을 다운로드**하고 다운로드한 ZIP에서 모델 아카이브를 추출하세요.
 
     <ShellCommand prompt="sdk|devkit">
-    sima-cli modelzoo -v 2.1.3 get yolo_v8s
+    sima-cli models download --id yolov8s --variant w8a8
+    unzip -p models/yolov8s/w8a8/yolov8s_w8a8_default.zip yolov8s_w8a8_mpk.tar.gz > assets/yolo_v8s_mpk.tar.gz
     </ShellCommand>
 
     :::note sima-cli 모델 다운로드
-    만약 `sima-cli` 모델을 지정된 위치가 아닌 다른 곳에 기록합니다. `assets` 디렉터리, 해당 파일을 복사하여 `assets/yolo_v8s_mpk.tar.gz`.
+    프로그램은 `assets/yolo_v8s_mpk.tar.gz`를 엽니다. 모든 튜토리얼의 모델 준비는 [튜토리얼 설정](/tutorials/before-you-run)을 참조하세요.
     :::
 3. **샘플 이미지를 다운로드**하여 문서에 있는 대로 저장합니다. `assets/tutorial_sample_image.png`.
 

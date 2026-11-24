@@ -47,6 +47,13 @@
 
 ## Run
 
+Model BrowserからResNet-50をダウンロードし、そのモデルアーカイブを、以下のコマンドが`--model`として渡すパスである`/tmp/resnet_50.tar.gz`に展開します。
+
+```bash
+sima-cli models download --id resnet_50 --variant w8a8
+unzip -p models/resnet_50/w8a8/resnet_50_w8a8_default.zip resnet_50_w8a8_mpk.tar.gz > /tmp/resnet_50.tar.gz
+```
+
 実行すると、予測されたクラスのインデックスが標準出力に出力されるはずです。**Neat のインストールルート**（`share/` と `lib/` を含むディレクトリ）から **Python** および **C++（事前に構築されたもの）** コマンドを実行します。**ソースからビルドする** コマンドは、**リポジトリのルート**から実行します。
 
 **Python:**
@@ -63,7 +70,7 @@ python3 share/sima-neat/tutorials/001_run_your_first_model/run_your_first_model.
 
 **C++ (build from source):**
 ```bash
-./build.sh --target tutorial_001_run_your_first_model
+./tutorials/build.sh --target tutorial_001_run_your_first_model
 ./build/tutorials-standalone/tutorial_001_run_your_first_model \
   --model /tmp/resnet_50.tar.gz
 ```
@@ -81,45 +88,7 @@ top1=285
 
 ## In Practice
 
-チュートリアルとテストがモデルアーカイブ（`.tar.gz`）とサンプルアセットを探す場所、およびそれらをローカルで提供する方法。これは、モデルをベースにしたすべてのチュートリアルの前提条件です。
-
-### `sima-cli` がPATHにあることを確認する
-
-一部のテストは、非対話型のシェルから `sima-cli` を呼び出します。`sima-cli` をインストールした後、これを一度実行してください。
-
-```bash
-SIMA_CLI_BIN_DIR="<path-to-sima-cli-bin>"
-grep -Fqx "export PATH=\"${SIMA_CLI_BIN_DIR}:\$PATH\"" ~/.bashrc || echo "export PATH=\"${SIMA_CLI_BIN_DIR}:\$PATH\"" >> ~/.bashrc
-source ~/.bashrc
-```
-
-次に、確認します。
-
-```bash
-/bin/sh -c 'command -v sima-cli'
-```
-
-### モデルアーカイブの場所と環境変数
-
-抽出/ランタイム配置の制御ノブ：
-- `SIMA_MPK_EXTRACT_ROOT=<dir>` は、ベースの抽出ディレクトリを設定します。
-- `SIMA_MPK_CLEANUP_EXTRACTED=0` は、プロセス終了後に抽出された `proc_run_*` モデルデータを保持します。
-- `SIMA_MPK_EXTRACT_GC_STALE_PROC=0` は、所有権ロックに基づく、起動時の未使用の `proc_run_*` ディレクトリの削除を無効にします。
-
-従来の `proc_<pid>` ルートは、使用されていないことを確認してから手動で削除してください。
-
-#### ResNet50
-
-検索順序：
-1. `SIMA_RESNET50_TAR`（モデルごとのオーバーライド）
-2. `SIMA_MODEL_TAR`（モデルアーカイブテスト/例の共有フォールバック）
-3. `tmp/resnet_50.tar.gz`
-4. ローカルファイルが `tmp/` に移動した場合：`resnet_50.tar.gz`、`resnet-50.tar.gz`
-
-ダウンロード（`sima-cli` が利用可能な場合）：
-```bash
-sima-cli modelzoo get resnet_50
-```
+モデルアーカイブのオーバーライド、ソースツリーのテストが検索するパス、および展開の設定については、[チュートリアルのアセットとモデルアーカイブ](/reference/tutorial-assets)を参照してください。
 
 ### サンプル画像
 
