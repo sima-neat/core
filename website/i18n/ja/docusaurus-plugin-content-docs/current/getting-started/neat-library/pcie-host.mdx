@@ -13,8 +13,8 @@ Neat PCIeホストパッケージは、ホストマシンから接続されたMo
 :::
 
 :::tip オフラインでのインストールが必要な場合
-Ubuntuの対象がSiMa.aiサービスからパッケージをダウンロードできない場合は、[オフラインでのインストール](#offline-installation)を使用してください。
-インターネットに接続されたコンピューターでパッケージをダウンロードしてください。Windowsホストでは、オフラインでのインストールはまだ利用できません。
+対象ホストがSiMa.aiサービスからパッケージをダウンロードできない場合は、[Ubuntu](#offline-installation)または[Windows](#offline-installation-windows)のオフラインでのインストールを使用してください。
+インターネットに接続されたコンピューターでパッケージをダウンロードしてください。
 :::
 
 ## 対応するホストのオペレーティングシステム
@@ -39,7 +39,6 @@ Windowsプレビューには、次の制限があります。
 - GenAIモデルフォルダーのパスは、Windowsのシステムコードページで表現できる文字だけで構成する必要があります。
 - Windowsの実行中にカードがPCIeバスから外れると、Windowsがブルースクリーンで停止することがあります。たとえば、デバイスマネージャーや`pnputil`でカードまたはそのPCIeポートを再起動した場合です。Windowsの実行中にカードやそのポートを再起動しないでください。カードが応答しなくなった場合は、ホストをシャットダウンしてから電源を入れてください。
 - Platformパッケージは、`Opening simaai_mla_c0`などのキューメッセージをすべてのPCIeアプリケーションの標準出力に出力します。アプリケーションの標準出力をデータとして解析せず、結果はファイルに書き込んでください。
-- [オフラインでのインストール](#offline-installation)はUbuntuホストでのみ利用できます。Windowsホストでパッケージをインストールするには、インターネット接続が必要です。
 
 ## オンラインインストールの前提条件
 
@@ -215,6 +214,8 @@ Windows Installerは、パッケージを古いバージョンで置き換えま
 
 ホスト上の空の作業ディレクトリで、次のコマンドを実行します。これらのコマンドは、Neat Libraryのオフラインパッケージをダウンロードして`10.0.0.2`のカードにコピーし、カード上でそのインストーラーを実行します。インストーラーから求められたら、カードの`sima`アカウントのパスワードを入力してください。別のカードの場合は、`10.0.0.2`をそのカードのアドレス`10.0.N.2`に置き換えてください。
 
+インターネットに接続できないWindowsホストでは、代わりに[Windowsでのオフラインインストール](#offline-installation-windows)の手順5のコマンドを使用してください。
+
 Ubuntuの場合:
 
 <ShellCommand prompt="pcie-host">
@@ -365,6 +366,108 @@ sudo python3 -B install.py
 インストールに失敗した場合は、表示されたパスの診断ログを読んでください。
 インストール中にカードへの接続が失敗した場合は、再試行前にカードのインストールプロセスが停止したことを確認してください。
 失敗しても、インストーラーは以前のインストール状態を自動的には復元しません。
+
+## Windowsでのオフラインインストール {#offline-installation-windows}
+
+Windows用のオフラインパッケージは、それを含む最初のNeatリリースから公開されます。
+
+Windowsパッケージは、Windows 11 x64ホストにNeat PCIeホストパッケージをインストールします。その後、同じフォルダーから各カードにNeatをインストールします。このインストールでは、ホストにインターネット接続は必要ありません。
+
+### 1. ホストとカードを準備する
+
+Neatをインストールする前に、次の作業を完了してください：
+
+- オンラインのWindowsインストールの説明に従って、セキュアブートをオフにし、テスト署名モードをオンにしてください。手順2と3でダウンロードしてインストールするSiMa Platform 3.0 Windowsドライバーパッケージには、テスト署名されたネットワークアダプタードライバーSiMaNetAdapterが含まれています。Windowsはこれらの設定の場合にのみこのドライバーを読み込みます。オフラインパッケージにはPlatformパッケージは含まれていません。
+- ホストがPCIeネットワークリンク経由で各カードにアクセスできることを確認してください。
+- 各カードの`sima`アカウントのパスワードを用意してください。
+
+### 2. パッケージをダウンロードする
+
+インターネットに接続されたコンピューターに`sima-cli`をインストールしてください。このコンピューターはLinux、macOS、Windowsのいずれでもかまいません。[sima-cli インストールガイド](/tools/sima-cli/)を参照してください。
+
+バージョンには、Windows用のオフラインパッケージがあるNeatリリースを指定してください。この例では、インターネットに接続されたコンピューターでバージョン %%release.core%% をダウンロードします：
+
+<ShellCommand prompt="host">
+sima-cli neat install core/pciehost/windows/amd64@v%%release.core%% -t offline -d ./pcie-offline
+</ShellCommand>
+
+`pcie-offline`フォルダーには、パッケージのアーカイブ、展開された`neat-pcie-offline-installer-*`フォルダー、およびパッケージに必要なGStreamerとPythonのインストーラーが格納されます。このコマンドはパッケージをダウンロードして展開します。Neatはインストールしません。
+
+次に、SiMa Platform Windowsドライバーパッケージを同じフォルダーにダウンロードします。このコマンドはSiMa.aiのログインを使用し、パッケージのファイルをインストールせずに保存します：
+
+<ShellCommand prompt="host">
+sima-cli install drivers/windows --download-only -d ./pcie-offline/platform
+</ShellCommand>
+
+### 3. 前提条件とsima-cliをインストールする
+
+`pcie-offline`フォルダー全体をホストのローカルディスクにコピーしてください。インストーラーはこのフォルダーにログを書き込みます。管理者としてではなく通常のユーザーとして、コピーしたフォルダーでPowerShellを開き、GStreamerとPythonのインストーラーを実行してください。GStreamerインストーラーでは、開発ファイルを含むセットアップの種類を選択してください。同じバージョンがすでにインストールされているインストーラーは省略してください。
+
+```powershell
+Start-Process -Wait (Get-Item .\gstreamer-1.0-msvc-x86_64-*.exe).FullName
+Start-Process -Wait (Get-Item .\python-3.14.*-amd64.exe).FullName
+```
+
+PowerShellを閉じて、同じフォルダーで新しいウィンドウを開いてください。次に、パッケージから`sima-cli`をインストールします。pipはパッケージ内のファイルだけをインストールし、各ファイルをSHA-256と照合します：
+
+```powershell
+Set-Location .\neat-pcie-offline-installer-*\neat-offline
+py -3.14 -m venv "$env:USERPROFILE\.sima-cli-env"
+& "$env:USERPROFILE\.sima-cli-env\Scripts\python.exe" -m pip install --no-index --find-links .\sima-cli --require-hashes -r .\sima-cli\requirements.txt
+$cli = "$env:USERPROFILE\.sima-cli-env\Scripts\sima-cli.exe"
+```
+
+`neat-offline`フォルダーには`INSTALL.md`も含まれています。このファイルでは、これらの手順と、PowerShellが`py`を見つけられない場合の対処方法を説明しています。
+
+最後に、Platformパッケージをインストールします。コピーした`pcie-offline\platform`フォルダーで、管理者として起動したコマンドプロンプトから`install.bat`を実行してください。
+
+### 4. インストールして結果を確認する
+
+同じ`neat-offline`フォルダーで次のコマンドを実行してください：
+
+```powershell
+& $cli install -m .\metadata.json
+```
+
+Windowsは、2つのMSIパッケージについて管理者の承認を1回だけ求めます。どちらかのMSIを実行する前に、`sima-cli`はオンラインインストールと同じ前提条件を確認し、パッケージ内のすべてのファイルをSHA-256と照合します。ファイルが欠けているか変更されている場合は、何もインストールせずに停止します。インストールの最後にカードへのSSHを設定します。OpenSSHはカードの`sima`アカウントのパスワードを1回だけ求めます。`%USERPROFILE%\pyneatpcie`では、`numpy`と`opencv-python`がパッケージ内のバージョンに設定されます。オンラインインストールと同様に、`--python-executable <path>`または`--native-only`を使用できます。
+
+インストールを確認します：
+
+```powershell
+$venv = "$env:USERPROFILE\pyneatpcie"
+$root = "$env:ProgramFiles\SimaPCIeHost"
+& "$root\bin\sima-pcie-host-doctor.cmd"
+& "$venv\Scripts\python.exe" -m pip check
+& "$venv\Scripts\python.exe" -c "import pyneatpcie as p; print(p.__version__, p.Model)"
+& "$root\bin\neat.cmd"
+```
+
+新しいPowerShellウィンドウでは、先に`neat-offline`フォルダーを開き、`$cli`をもう一度設定してください：
+
+```powershell
+$cli = "$env:USERPROFILE\.sima-cli-env\Scripts\sima-cli.exe"
+```
+
+インストールを修復するには、インストールコマンドをもう一度実行してください。アップグレードするには、新しいパッケージの`neat-offline`フォルダーで実行してください。パッケージを削除するには、`& $cli packages list`に表示されるバージョンを使用します：
+
+```powershell
+& $cli packages remove gh:sima-neat/core/pciehost/windows/amd64 --version <version> --yes
+```
+
+その他の`sima-cli`コマンドは、起動時に新しい`sima-cli`を確認し、インターネットに接続できなくても処理を続行します。この確認を省略するには、先に`$env:SIMA_CLI_CHECK_FOR_UPDATE = "0"`を実行してください。
+
+### 5. カードにNeatをインストールする
+
+同じ`neat-offline`フォルダーで次のコマンドを実行してください。カードのインストーラーから求められたら、カードの`sima`アカウントのパスワードを入力してください。別のカードの場合は、`10.0.0.2`をそのカードのアドレス`10.0.N.2`に置き換えてください。カードのインストーラーにインターネット接続は必要ありません。
+
+```powershell
+$bundle = (Get-Item .\card\neat-core-offline-installer.tar.gz).FullName
+scp -i "$env:USERPROFILE\.ssh\sima_neat_pcie_ed25519" $bundle sima@10.0.0.2:/var/tmp/neat-core-offline-installer.tar.gz
+ssh -t -i "$env:USERPROFILE\.ssh\sima_neat_pcie_ed25519" sima@10.0.0.2 "cd /var/tmp && rm -rf neat-core-offline && tar -xzf neat-core-offline-installer.tar.gz && cd neat-core-offline && ./install.sh && ./install.sh --verify && cd /var/tmp && rm -rf neat-core-offline neat-core-offline-installer.tar.gz"
+& "$env:ProgramFiles\SimaPCIeHost\bin\neat.cmd"
+```
+
+`neat.cmd`は、ホストとカードのNeatリリースを表示します。両者は同じである必要があります。
 
 ## 次のステップ
 
