@@ -24,18 +24,15 @@ slug: /develop-apps/contribute/release-checklist
 5. 生成ステップの後に、作業ツリーがクリーンな状態であること。
 6. リリース前に、未解決のクラッシュ/正当性に関する問題がゼロであること、およびリリースリファレンス上でもゼロであること。
 7. クラッシュ/正当性/ストレステスト/サニタイザーゲートが、リリースリファレンス上ですべて緑色であること。
-8. モデルアーカイブセキュリティゲートが緑色であること（`model-archive-security-gate`）。
-9. インストールスモークゲートが緑色であること（`install-smoke`）。
-10. パフォーマンス回帰ゲートが緑色であること（`perf-regression-gate`）。
-11. リリースタグに対するソーク安定性テストが緑色であること（`soak-weekly`）。
-12. リリース候補に対するファズテストが緑色であること（`fuzz-nightly`）。
-13. 厳格なテストレーンに対して、ゼロスキップゲートが緑色であること（`zero-skip-gate`）。
-14. 必要なガバナンスファイルが存在し、有効であること：
+8. リリースタグに対するソーク安定性テストが緑色であること（`soak-weekly`）。
+9. リリース候補に対するファズテストが緑色であること（`fuzz-nightly`）。
+10. 厳格なテストレーンに対して、ゼロスキップゲートが緑色であること（`zero-skip-gate`）。
+11. 必要なガバナンスファイルが存在し、有効であること：
    - `.github/CODEOWNERS`
    - `.github/PULL_REQUEST_TEMPLATE.md`
    - `CONTRIBUTING.md`
    - `docs/develop-apps/contribute/release-checklist.md`
-15. リリースメタデータが完了していること：
+12. リリースメタデータが完了していること：
    - `project(SimaNeat VERSION x.y.z)` が `CMakeLists.txt` に更新されていること
    - 必要に応じて、`package-version` と `platform-version` が `deps/manifest.json` に更新されていること
    - `modelzoo-version` が、`platform-version` と異なる場合に、検証済みの Model Zoo リリースを明示的に選択すること。省略された場合、Model Zoo の解決はデフォルトで `platform-version` になります。
@@ -55,9 +52,6 @@ slug: /develop-apps/contribute/release-checklist
 - `configure-build-sanity`
 - `docs-link-check`
 - `crash-correctness-gate`
-- `model-archive-security-gate`
-- `install-smoke`
-- `perf-regression-gate`
 - `zero-skip-gate`
 - `soak-weekly`（リリースタグに必要）
 - `fuzz-nightly`（リリース候補に必要）
@@ -67,22 +61,13 @@ slug: /develop-apps/contribute/release-checklist
 
 これらのチェックは、以下に実装されています。
 
-- `.github/workflows/release-gate.yml`
+- `.github/workflows/vulcan-ci.yml`
 - `.github/workflows/test-crash-correctness-nightly.yml`
-- `.github/workflows/model-archive-security.yml`
-- `.github/workflows/install-smoke.yml`
-- `.github/workflows/perf-regression.yml`
-- `.github/workflows/zero-skip.yml`
 - `.github/workflows/test-soak-weekly.yml`
 - `.github/workflows/long-tests-weekly.yml`
 - `.github/workflows/vulcan-fuzz-nightly.yml`
 - `.github/workflows/test-stress-nightly.yml`
 - `.github/workflows/sanitizers.yml`
-
-重複するゲート実行を避けるために、所有権をトリガーします。
-
-- `main` への非リリース PR は、それぞれのスタンドアロンワークフローから `model-archive-security`、`install-smoke`、`perf-regression`、および `zero-skip` を実行します。
-- リリース PR（`release/*` ヘッドリファレンス）およびリリースリファレンス（`release/**`、`v*`）は、`.github/workflows/release-gate.yml` から同じ処理フローを実行します。
 
 ## GitHub ブランチとタグの保護
 
