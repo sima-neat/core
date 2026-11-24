@@ -540,7 +540,7 @@ void declined(const Route& route, const std::string& archive) {
         Graph g = route.graph(route.input(), 2, /*drop=*/true);
         (void)g.build(seed, on());
       },
-      error_codes::kPipelineShape, "OutputOptions::drop behind a model");
+      error_codes::kOptionOutOfRange, "OutputOptions::drop behind a model");
   // The model's preprocessing in front of its inference: stages this backend does not run yet.
   // Explicit Dataflow fails at the build, naming what it does not take; nothing runs.
   Model full(archive);
@@ -575,8 +575,9 @@ void declined(const Route& route, const std::string& archive) {
     }
     throw std::runtime_error("declined: a preprocess stage built on the Dataflow backend");
   } catch (const NeatError& error) {
-    require(error.report().error_code == error_codes::kPipelineShape,
-            std::string("explicit Dataflow on stages beside the MLA is a build error: ") +
+    require(error.report().error_code == error_codes::kDispatcherUnavailable,
+            std::string("a stage on an EV74 without the Kernels firmware is the board's build "
+                        "error: ") +
                 error.what());
     std::cout << "[declined] " << error.what() << "\n";
   }

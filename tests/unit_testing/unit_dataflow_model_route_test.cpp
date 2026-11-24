@@ -938,14 +938,18 @@ void policies(const Route& route) {
 
 void declined(const Route& route, bool ev74) {
   const TensorList seed{route.tensor(0)};
+  // The code: an option's for OutputOptions::drop, the board's for a stage on an EV74 that does
+  // not run the Kernels firmware.
   const auto refused = [&](const GraphOptions& options, bool drop, const char* text,
                            const char* what) {
+    const std::string code =
+        drop ? error_codes::kOptionOutOfRange : error_codes::kDispatcherUnavailable;
     try {
       Graph g = route.graph(route.input(), 2, drop, options);
       (void)g.build(seed, on());
     } catch (const NeatError& error) {
-      require(error.report().error_code == error_codes::kPipelineShape,
-              std::string(what) + ": a build error of the pipeline's shape: " + error.what());
+      require(error.report().error_code == code,
+              std::string(what) + ": the build error " + code + ": " + error.what());
       require_contains(error.what(), text, std::string(what) + ": " + error.what());
       std::cout << "[declined] " << what << ": " << error.what() << "\n";
       return;

@@ -552,8 +552,17 @@ void seeds() {
     Graph g;
     g.output("left_out", g.input("left"));
     g.output("right_out", g.input("right"));
-    require_neat_error([&] { (void)g.build(TensorList{rgb(1)}, dataflow()); },
-                       error_codes::kInputShape, "no unambiguous default input");
+    // A mistake both backends refuse: GStreamer's own error, not a refusal of the Dataflow
+    // backend.
+    bool threw = false;
+    try {
+      (void)g.build(TensorList{rgb(1)}, dataflow());
+    } catch (const std::exception& e) {
+      threw = true;
+      require_contains(e.what(), "graph has no unambiguous default input",
+                       "a seed for a graph of several Inputs is GStreamer's error");
+    }
+    require(threw, "a seed for a graph of several Inputs fails the build");
   }
 }
 
