@@ -34,6 +34,10 @@ namespace simaai::neat {
 class NeatError;
 }
 
+namespace simaai::neat::pipeline_internal {
+struct SegmentBuildPlan;
+}
+
 namespace simaai::neat::runtime {
 
 struct ExecutionGraphPlan;
@@ -352,6 +356,9 @@ struct RunCore : std::enable_shared_from_this<RunCore> {
   // Set when Graph::build put this Run on the Neat Dataflow runtime (set_backend). Then
   // `pipeline` and `graph_execution_` stay empty, and every public entry branches to it first.
   std::unique_ptr<DataflowRunState> dataflow_;
+  // A Run on Dataflow built for Model::execution_plan: the plan GStreamer's build of the same
+  // Graph records on its segment's diagnostics (session_build_segment_plan).
+  std::shared_ptr<const pipeline_internal::SegmentBuildPlan> dataflow_plan_;
 
   // Run::on_output (RunTensor.cpp): the delivery threads, and the flag every public pull reads
   // first (an output with a callback is not pulled by the application).

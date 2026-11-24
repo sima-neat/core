@@ -9,6 +9,7 @@
 #include "pipeline/internal/TerminalOutputContractQuery.h"
 
 #include <cstddef>
+#include <functional>
 #include <memory>
 #include <span>
 #include <string>
@@ -50,6 +51,10 @@ apply_explicit_public_output_options(InputStreamOptions& stream_opt,
 
 } // namespace graph_build_internal
 
+namespace pipeline_internal {
+struct SegmentBuildPlan;
+} // namespace pipeline_internal
+
 namespace pipeline_internal::terminal_output_contract {
 struct PublicOutputEndpointSelector;
 } // namespace pipeline_internal::terminal_output_contract
@@ -87,6 +92,15 @@ InputStreamOptions session_build_make_stream_options(const RunOptions& opt, RunM
 // (RunOptions::startup_preflight, or SIMA_INPUTSTREAM_PREFLIGHT_RUN), and within how long that
 // output must come (the Run's resolved input timeout).
 bool session_build_startup_preflight(const RunOptions& opt, RunMode mode, int* timeout_ms);
+// The plan GStreamer's build records for the pipeline segment `build` builds (SegmentBuildPlan,
+// what Model::execution_plan reads), made by that build's cold steps alone: the nodes' launch
+// fragments, the compiled contracts and the prepared stage manifest. The build stops there, before
+// a pipeline is parsed, started or a device opened; an error before that point is rethrown. For a
+// Run on another backend: while it runs, session_build_recording_segment_plan() is true on this
+// thread, and the backend dispatch leaves `build` to GStreamer's path.
+std::shared_ptr<const pipeline_internal::SegmentBuildPlan>
+session_build_segment_plan(const std::function<void()>& build);
+bool session_build_recording_segment_plan() noexcept;
 void session_build_finalize_public_zero_copy_holder_loan_credits(InputStreamOptions& stream_opt);
 void session_build_tune_internal_zero_copy_holder_window(InputStreamOptions& stream_opt,
                                                          std::size_t edge_queue,

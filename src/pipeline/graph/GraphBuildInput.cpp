@@ -34,6 +34,7 @@
 #include "pipeline/internal/SelectedStageBoundary.h"
 #include "pipeline/internal/InputRouteProcessor.h"
 #include "pipeline/internal/SampleUtil.h"
+#include "pipeline/internal/SegmentBuildPlan.h"
 #include "pipeline/internal/sima/ContractRender.h"
 #include "pipeline/internal/SyncBuild.h"
 #include "pipeline/internal/TerminalOutputContractQuery.h"
@@ -69,6 +70,17 @@ InputOptions input_opts_from_spec(const OutputSpec& spec, bool complete);
 namespace simaai::neat {
 
 namespace {
+
+// A build that records its segment's plan and stops there (session_build_segment_plan): where the
+// plan goes, on this thread; null for every other build.
+thread_local std::shared_ptr<const pipeline_internal::SegmentBuildPlan>* t_segment_plan = nullptr;
+
+// Ends such a build once its plan is recorded, before anything is parsed, started or opened.
+struct SegmentPlanRecorded final : std::exception {
+  const char* what() const noexcept override {
+    return "the pipeline segment's plan is recorded";
+  }
+};
 
 bool run_options_equal_for_cache_local(const RunOptions& a, const RunOptions& b);
 std::string dtype_token_from_tensor(const Tensor& tensor);
@@ -1887,6 +1899,15 @@ InputStream run_input_stream_internal_typed(const std::vector<std::shared_ptr<No
     session_build_clamp_sync_kernel_runner_capacity(br);
   }
   session_build_prepare_stage_contracts(br, "Graph::build(input)");
+  if (t_segment_plan) {
+    // What the parse records on the segment's diagnostics (SegmentBuildPlan): nothing between
+    // here and there changes the node reports or the prepared manifest.
+    auto plan = std::make_shared<pipeline_internal::SegmentBuildPlan>();
+    plan->node_reports = br.diag->node_reports;
+    plan->rendered_manifest = br.prepared_manifest;
+    *t_segment_plan = std::move(plan);
+    throw SegmentPlanRecorded{};
+  }
   if (has_sink) {
     maybe_apply_public_terminal_output_override(br, build_nodes, stream_opt, "Graph::build(input)");
   }
@@ -2965,6 +2986,28 @@ bool session_build_should_insert_async_queue2(RunMode mode, const RunOptions& op
 
 InputStreamOptions session_build_make_stream_options(const RunOptions& opt, RunMode mode) {
   return make_stream_options(opt, mode);
+}
+
+std::shared_ptr<const pipeline_internal::SegmentBuildPlan>
+session_build_segment_plan(const std::function<void()>& build) {
+  std::shared_ptr<const pipeline_internal::SegmentBuildPlan> plan;
+  std::shared_ptr<const pipeline_internal::SegmentBuildPlan>* const outer = t_segment_plan;
+  t_segment_plan = &plan;
+  try {
+    build();
+  } catch (...) {
+    t_segment_plan = outer;
+    if (!plan) {
+      throw;
+    }
+    return plan;
+  }
+  t_segment_plan = outer;
+  return plan;
+}
+
+bool session_build_recording_segment_plan() noexcept {
+  return t_segment_plan != nullptr;
 }
 
 bool session_build_startup_preflight(const RunOptions& opt, RunMode mode, int* timeout_ms) {

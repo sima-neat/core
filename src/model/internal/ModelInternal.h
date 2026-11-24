@@ -136,7 +136,7 @@ struct ModelAccess {
                                             const Model::RouteOptions& opt);
   // The mark of a Model's own build of the Graph it made of the model's node list
   // (pipeline_internal::ModelRouteScope; only the Dataflow backend reads it). Its call is the
-  // enclosing Model::run or benchmark on this thread, else Model::build.
+  // enclosing Model::run, benchmark or execution_plan on this thread, else Model::build.
   static std::shared_ptr<const pipeline_internal::ModelRouteOrigin>
   model_route_origin(const Model& model);
 };

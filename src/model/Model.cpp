@@ -4514,22 +4514,27 @@ build_preprocess_plan_with_verbosity(const std::string& tar_gz, const Model::Opt
 }
 
 // The customer's call a Model's own build serves on this thread (ModelRouteOrigin::call): set by
-// Model::run and Model::benchmark around the build they make, which then names that call; a build
-// outside every scope is the customer's Model::build.
+// Model::run, Model::benchmark and Model::execution_plan around the build they make, which then
+// names that call; a build outside every scope is the customer's Model::build.
 struct ModelCallScope {
-  explicit ModelCallScope(const char* call) noexcept : saved_call_(current_call) {
+  ModelCallScope(const char* call, bool record_plan) noexcept
+      : saved_call_(current_call), saved_record_plan_(record_plan_now) {
     current_call = call;
+    record_plan_now = record_plan;
   }
   ~ModelCallScope() {
     current_call = saved_call_;
+    record_plan_now = saved_record_plan_;
   }
   ModelCallScope(const ModelCallScope&) = delete;
   ModelCallScope& operator=(const ModelCallScope&) = delete;
 
   static inline thread_local const char* current_call = nullptr;
+  static inline thread_local bool record_plan_now = false;
 
 private:
   const char* saved_call_;
+  bool saved_record_plan_;
 };
 
 } // namespace
@@ -4566,7 +4571,7 @@ struct Model::Impl {
       sync_runner = Runner{};
     }
     if (!sync_ready) {
-      const ModelCallScope call("Model::run");
+      const ModelCallScope call("Model::run", false);
       sync_runner = model.build(inputs);
       sync_ready = true;
       sync_original_size = original_size;
@@ -7766,14 +7771,20 @@ simaai::neat::RunOptions plan_run_options(simaai::neat::RunOptions run_opt) {
   return run_opt;
 }
 
-// Reads the plan the build recorded; the Runner closes its pipeline when it goes out of scope.
+// Reads the plan the build recorded: on GStreamer on its segment's diagnostics, on Dataflow on the
+// Run (GStreamer's plan of the same Graph). The Runner closes its Run when it goes out of scope.
 ExecutionPlan plan_of_build(Model::Runner runner, const std::string& model_name) {
   const auto core = run_internal::core(internal::ModelAccess::run(runner));
-  const auto diag = core ? core->pipeline.stream.diag_ctx() : nullptr;
-  if (!diag || !diag->build_plan) {
+  std::shared_ptr<const pipeline_internal::SegmentBuildPlan> plan;
+  if (core && core->dataflow_) {
+    plan = core->dataflow_plan_;
+  } else if (const auto diag = core ? core->pipeline.stream.diag_ctx() : nullptr) {
+    plan = diag->build_plan;
+  }
+  if (!plan) {
     throw std::runtime_error("Model::execution_plan: the build recorded no plan");
   }
-  return internal::ExecutionPlanAccess::make(*diag->build_plan, model_name);
+  return internal::ExecutionPlanAccess::make(*plan, model_name);
 }
 
 } // namespace
@@ -7792,12 +7803,14 @@ ExecutionPlan Model::execution_plan(const simaai::neat::RunOptions& run_opt) {
 
 ExecutionPlan Model::execution_plan(const Model::RouteOptions& opt,
                                     const simaai::neat::RunOptions& run_opt) {
+  const ModelCallScope call("Model::execution_plan", true);
   return plan_of_build(build(opt, plan_run_options(run_opt)), impl_->pack.logical_package_name());
 }
 
 ExecutionPlan Model::execution_plan(const simaai::neat::TensorList& inputs,
                                     const Model::RouteOptions& opt,
                                     const simaai::neat::RunOptions& run_opt) {
+  const ModelCallScope call("Model::execution_plan", true);
   return plan_of_build(build(inputs, opt, plan_run_options(run_opt)),
                        impl_->pack.logical_package_name());
 }
@@ -7805,6 +7818,7 @@ ExecutionPlan Model::execution_plan(const simaai::neat::TensorList& inputs,
 ExecutionPlan Model::execution_plan(const simaai::neat::Sample& inputs,
                                     const Model::RouteOptions& opt,
                                     const simaai::neat::RunOptions& run_opt) {
+  const ModelCallScope call("Model::execution_plan", true);
   return plan_of_build(build(inputs, opt, plan_run_options(run_opt)),
                        impl_->pack.logical_package_name());
 }
@@ -7813,6 +7827,7 @@ ExecutionPlan Model::execution_plan(const simaai::neat::Sample& inputs,
 ExecutionPlan Model::execution_plan(const std::vector<cv::Mat>& inputs,
                                     const Model::RouteOptions& opt,
                                     const simaai::neat::RunOptions& run_opt) {
+  const ModelCallScope call("Model::execution_plan", true);
   return plan_of_build(build(inputs, opt, plan_run_options(run_opt)),
                        impl_->pack.logical_package_name());
 }
@@ -8116,7 +8131,7 @@ const Run& ModelAccess::run(const Model::Runner& runner) {
 Model::Runner ModelAccess::build_benchmark_runner(Model& model, const TensorList& inputs,
                                                   const RunOptions& run_options,
                                                   const Model::Options& model_options) {
-  const ModelCallScope call("Model::benchmark");
+  const ModelCallScope call("Model::benchmark", false);
   return model.build_with_model_options(inputs, Model::RouteOptions{}, run_options, model_options);
 }
 
@@ -8563,6 +8578,7 @@ ModelAccess::model_route_origin(const Model& model) {
   origin->inputs =
       std::max<std::size_t>(1U, normalized_ingress_contracts(plan.session_route_plan).size());
   origin->direct_mla = plan_uses_direct_mla_tensor_set_ingress(plan);
+  origin->record_plan = ModelCallScope::record_plan_now;
   return origin;
 }
 

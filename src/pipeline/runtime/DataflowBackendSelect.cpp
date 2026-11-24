@@ -147,9 +147,11 @@ std::string describe_choice(const DataflowRunConfig& config,
 
 // What a seeded entry gives the build besides the seed's tensors: how the seed is pushed into the
 // Run (DataflowRunState::preflight), in the entry's own form (a TensorList, a Sample, the cv::Mat
-// images).
+// images), and how GStreamer's path builds the same Graph with the same seed
+// (session_build_segment_plan).
 struct SeedForms {
   std::function<bool(DataflowRunState&, const char* where)> push;
+  std::function<void()> gstreamer_build;
 };
 
 std::shared_ptr<RunCore> build_impl(const Graph& graph, const RunOptions& opt, RunMode mode,
@@ -222,6 +224,11 @@ std::shared_ptr<RunCore> build_impl(const Graph& graph, const RunOptions& opt, R
     DataflowRunState& run = *core->dataflow_;
     run.preflight([&] { return forms.push(run, call.c_str()); }, timeout_ms, call.c_str());
   }
+  // Model::execution_plan reads the plan GStreamer's build of this Graph records: the same
+  // stages, made by GStreamer's own cold steps, so that both backends describe one route alike.
+  if (origin && origin->record_plan && forms.gstreamer_build) {
+    core->dataflow_plan_ = session_build_segment_plan(forms.gstreamer_build);
+  }
   trace_choice(where, "dataflow", describe_choice(config, bindings));
   return core;
 }
@@ -237,7 +244,7 @@ template <class... Args> std::shared_ptr<RunCore> build_impl(const Args&...) {
 
 // The common head of the four entries: a Run for GStreamer, or no runtime in this build.
 template <class Build> std::shared_ptr<RunCore> dispatch(const char* where, Build&& build) {
-  if (!wants_dataflow()) {
+  if (!wants_dataflow() || session_build_recording_segment_plan()) {
     return nullptr;
   }
 #if defined(SIMANEAT_WITH_DATAFLOW)
@@ -266,9 +273,11 @@ std::shared_ptr<RunCore> DataflowGraphAccess::build(const Graph& graph, const Ru
     }
     DataflowSeed s;
     s.tensors = seed;
-    return build_impl(graph, opt, mode, s, where, {[&seed](DataflowRunState& run, const char* at) {
-                        return run.push(std::nullopt, seed, true, at);
-                      }});
+    return build_impl(graph, opt, mode, s, where,
+                      {[&seed](DataflowRunState& run, const char* at) {
+                         return run.push(std::nullopt, seed, true, at);
+                       },
+                       [&] { (void)const_cast<Graph&>(graph).build(seed, opt); }});
   });
 }
 
@@ -281,8 +290,9 @@ std::shared_ptr<RunCore> DataflowGraphAccess::build(const Graph& graph, const Ru
     }
     return build_impl(graph, opt, mode, seed_from_sample(seed), where,
                       {[&seed](DataflowRunState& run, const char* at) {
-                        return run.push(std::nullopt, seed, true, at);
-                      }});
+                         return run.push(std::nullopt, seed, true, at);
+                       },
+                       [&] { (void)const_cast<Graph&>(graph).build(seed, opt); }});
   });
 }
 
@@ -312,9 +322,11 @@ std::shared_ptr<RunCore> DataflowGraphAccess::build(const Graph& graph, const Ru
     input.memory_policy = InputMemoryPolicy::SystemMemory;
     const Tensor view = tensor_from_cv_mat(seed.front(), input, "Graph::build(inputs)");
     s.tensors = std::span<const Tensor>(&view, 1);
-    return build_impl(graph, opt, mode, s, where, {[&seed](DataflowRunState& run, const char* at) {
-                        return run.push(std::nullopt, seed, true, at);
-                      }});
+    return build_impl(graph, opt, mode, s, where,
+                      {[&seed](DataflowRunState& run, const char* at) {
+                         return run.push(std::nullopt, seed, true, at);
+                       },
+                       [&] { (void)const_cast<Graph&>(graph).build(seed, opt); }});
 #else
     throw std::runtime_error("Graph::build(inputs): this build has no OpenCV");
 #endif
