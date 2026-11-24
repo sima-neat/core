@@ -171,13 +171,14 @@ Core 分支。只有在解析失敗，且 Scheduler 的已發布分支索引確�
 驗證發布者雜湊。已安裝的 Scheduler 協調器會分割並驗證隨附的 Runner、Kernels 和
 Codecs 封存檔。Core 不會獨立解析這些儲存庫。
 
-選定的 Scheduler 套件會安裝其確切 SDK 原則。在 SDK 中，`build.sh` 會執行
-`scripts/ci/prepare_scheduler_sdk.sh`，該指令碼會檢查 sysroot 版本，並以專用的 APT 設定將
-Runner 所需確切的平台封存檔下載至 `deps/`。只有指定 `--update-sysroot` 時，
-它才會執行 `sysroot update`。協調器會檢查實際的 GCC14 版本／目標與目標 SDK 身分，
-再透過 `NEAT_RUNNER_PLATFORM_RUNTIME_DEBS` 選擇 Runner 所使用的確切執行階段
-提供者封存檔。原生 ARM64 與交叉編譯器的執行檔位元組不必完全相同，
-但目標 ABI 與所選平台必須一致。此步驟不會安裝裝置套件或驗證韌體。
+選定的 Scheduler 套件會安裝確切的 SDK 原則。在 SDK 中，`build.sh` 會執行
+`scripts/ci/prepare_scheduler_sdk.sh`，透過 Scheduler 的 `verify-sdk` 命令驗證目前
+使用的目標 sysroot，並將觀察結果存至 `deps/`。共用的 `build_platform` 記錄包含
+`elxr_version`、完整的 `sysroot_version` 及編譯器 `target`，必須與 Runner 和
+Scheduler 的建置記錄一致。不會下載平台 DEB。每日版或預先發行版目標只有在指定
+`--update-sysroot` 時才執行 `sysroot update`；正式版本使用既有的作用中目標 sysroot。
+相符的覆蓋層可能比原始容器映像更新。原生 ARM64 與交叉編譯器必須使用相同的目標
+ABI 及平台，但執行檔的位元組不必完全相同。此步驟不會安裝或驗證 DevKit。
 
 `--scheduler` 資料夾絕不會與下載的套件混用，也不會被下載的套件取代。現有的
 `tools/ci/materialize_dependencies.py --manifest ... --output-root ...` 命令仍是
@@ -217,24 +218,13 @@ Runner 執行 API 建置的 Scheduler。`SIMANEAT_REQUIRE_INT32_RENDERER` 預設
 繪製使用選定的 Kernels/Runner 套件，而非獨立的平台繪製器封存檔。
 請為要求 API 修訂版 2 一併重新建置整個套件組。
 
-在 SDK 中，`build.sh` 會透過 `scripts/ci/prepare_scheduler_sdk.sh` 設定下列項目。
-在 SDK 之外，請提供：
+平台 SimaHeap、MLA 和 TVM 程式庫來自選定的 SDK/sysroot。請勿提供
+`NEAT_RUNNER_PLATFORM_RUNTIME_DEBS`，也不必下載平台封存檔來證明來源。Scheduler
+會將實際 SDK 識別資訊與自身及 Runner 的 `build_platform` 記錄比對。Core 會把驗證後的
+識別資訊寫入安裝的 `buildinfo.json`，於編譯後重新檢查，並在發布套件中繼資料前驗證
+最終 CMake sysroot 與編譯器目標。
 
-- `NEAT_RUNNER_PLATFORM_RUNTIME_DEBS`：JSON 陣列，內含 Runner 選定的確切執行階段
-  提供者 DEB 的絕對路徑。必須包含其所需的 SimaHeap 執行階段封存檔；若啟用 MLA 與
-  TVM 後端，也須包含它們的執行階段封存檔。不要在此陣列中加入開發封存檔。
-  Runner 會驗證實際載入器名稱與程式庫位元組。Scheduler 保留確切封存檔身分與負載
-  清單，作為建置證據。由 Runner 宣告為 Platform 擁有的提供者不會包含在 Core 的
-  可安裝 DEB 集合內；未宣告的提供者仍維持確切封存檔組合。
-
-使用 `--scheduler` 資料夾時，這項選擇同樣必須明確指定。
-不可變的四元件具體化工具不會下載平台提供者封存檔。請在呼叫 Core 前向受支援的
-產生者取得它們；缺少或未被使用的提供者會導致失敗，而不會退回 sysroot。
-編譯時請使用相符的開發套件。在 DevKit 上，Scheduler 經驗證的准入工具會在套件變更前，
-檢查已安裝的 Platform 提供者與即將安裝的使用元件是否相容。安裝程式拒絕替換或移除
-這些提供者的 APT 計畫，並在事後驗證其身分與已安裝使用元件的完整相依集合。
-`FORCE_INSTALL` 不會豁免這些檢查。不要為了將私用 DSO 標成已發行的提供者而重建 DEB。
-
-套件組合檢查會確認負載擁有權互不重疊、相依版本確切且封存檔未變更。
-這些建置時檢查不代表數值執行、動態遮罩或硬體安全釋放已通過驗證。
-後者需要在選定的目標套件組上執行對應的整合測試。
+此次中繼資料轉換須依 Runner、Scheduler、Core 順序重新建置。缺少 `build_platform`
+的產生端必須重新建置，舊記錄無法略過 SDK 驗證。NEAT 相依 DEB 的確切套件、校驗和及
+承載資料擁有權檢查仍會保留。平台擁有的程式庫不會包含在 Core 的可安裝套件組中。
+既有的裝置安裝與硬體驗證仍須另行進行；建置中繼資料無法證明數值執行或作業結束。

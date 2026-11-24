@@ -36,6 +36,8 @@ paste command output summary here
 
 Docs notes:
 
+Select `No docs update needed` when existing guidance remains accurate and no meaningful API, architecture, contract, or workflow change needs explanation.
+
 ## Migration Impact
 
 - [ ] No migration impact

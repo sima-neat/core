@@ -77,6 +77,9 @@ def _resolve_fixture_image(rel_path: Path) -> Path | None:
     installed_candidate = root / "lib" / "sima-neat" / rel_path
     if installed_candidate.is_file():
       return installed_candidate
+    test_asset = root / "test-assets" / rel_path
+    if test_asset.is_file():
+      return test_asset
 
   return None
 
@@ -121,6 +124,40 @@ def _image_input_model(
   opt.decode_type = decode_type
   opt.top_k = top_k
   return pyneat.Model(str(model_tar), opt)
+
+
+def test_standalone_preproc_matches_graph_and_preserves_batch_outputs():
+  model = _image_input_model(_env_path("SIMA_YOLO_TAR"))
+  rgb = cv2.resize(_decode_rgb_image(_fixture_image_path(Path("tests/images/people.jpg"))),
+                   (640, 480))
+  bgr = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
+  image = _rgb_tensor(rgb)
+  graph = pyneat.Graph()
+  graph.add(pyneat.nodes.input(model.input_appsrc_options(False)))
+  graph.add_graph(model.preprocess())
+  graph.add(pyneat.nodes.output())
+  run = graph.build([image])
+  try:
+    assert run.push([image])
+    expected, = run.pull_tensors(10000)
+    reference = bytes(expected.copy_payload_bytes())
+  finally:
+    run.close()
+
+  def preprocess(images, fmt, rois=None):
+    return pyneat.stages.preproc(images, model, image_format=fmt, rois=rois)
+
+  first, second = preprocess([bgr, np.zeros_like(bgr)], pyneat.PixelFormat.BGR)
+  tagged_rgb, = preprocess([rgb], pyneat.PixelFormat.RGB)
+  assert bytes(first.copy_payload_bytes()) == bytes(tagged_rgb.copy_payload_bytes()) == reference
+  assert bytes(second.copy_payload_bytes()) != reference
+
+  rois = [pyneat.PreprocessRoi(0, 0, 0, 320, 240), pyneat.PreprocessRoi(0, 120, 80, 160, 160)]
+  crops = preprocess([bgr], pyneat.PixelFormat.BGR, rois)
+  assert len(crops) == len(rois)
+  for crop, roi in zip(crops, rois):
+    single, = preprocess([bgr], pyneat.PixelFormat.BGR, [roi])
+    assert bytes(crop.copy_payload_bytes()) == bytes(single.copy_payload_bytes())
 
 
 def _rgb_tensor(image: np.ndarray) -> pyneat.Tensor:
@@ -548,7 +585,10 @@ def _assert_overlay_changed(path: Path, image: np.ndarray) -> None:
 def test_resnet_real_fixture_run_preserves_stable_classification_contract(monkeypatch, seeded):
   monkeypatch.setenv("SIMA_INPUTSTREAM_PREFLIGHT_RUN", "1")
   model = _image_input_model(_env_path("SIMA_RESNET50_TAR"))
-  image = _decode_rgb_image(_fixture_image_path(Path("test.jpg")))
+  # Same image and class as tutorial 026 (top1=208). test.jpg has no confident ResNet-50
+  # class, so its top-1 differs between ResNet-50 builds.
+  labrador = Path("pcie_host/tutorials/assets/labrador.jpg")
+  image = _decode_rgb_image(_fixture_image_path(labrador))
 
   input_tensor = _rgb_tensor(image)
   runner = model.build([input_tensor]) if seeded else model.build()
@@ -579,7 +619,7 @@ def test_resnet_real_fixture_run_preserves_stable_classification_contract(monkey
   assert all(summary["payload_tag"] == "EVXX_FLOAT32" for summary in summaries)
   assert all(summary["format"] == "EVXX_FLOAT32" for summary in summaries)
   assert all(summary["media_type"] == "application/vnd.simaai.tensor" for summary in summaries)
-  assert [summary["argmax"] for summary in summaries] == [839, 839, 839]
+  assert [summary["argmax"] for summary in summaries] == [208, 208, 208]
 
 
 def test_real_fixture_paths_resolve():

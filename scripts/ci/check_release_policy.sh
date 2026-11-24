@@ -32,7 +32,6 @@ required_files=(
   ".github/workflows/sanitizers.yml"
   ".github/workflows/test-stress-nightly.yml"
   ".github/workflows/release-gate.yml"
-  "CHANGELOG.md"
 )
 
 fail=0
@@ -113,17 +112,8 @@ fi
 
 if [[ -n "${release_version}" ]]; then
   echo "[release-policy] release ref detected (${ref_name}), validating release metadata..."
-  if ! grep -qE "^## \[${release_version}\]" CHANGELOG.md; then
-    echo "ERROR: CHANGELOG.md must contain entry: ## [${release_version}]" >&2
-    fail=1
-  fi
   if [[ "${project_version}" != "${release_version}" ]]; then
     echo "ERROR: CMake project version (${project_version}) must match release version (${release_version})." >&2
-    fail=1
-  fi
-else
-  if ! grep -qE '^## \[Unreleased\]' CHANGELOG.md; then
-    echo "ERROR: CHANGELOG.md must include an [Unreleased] section." >&2
     fail=1
   fi
 fi

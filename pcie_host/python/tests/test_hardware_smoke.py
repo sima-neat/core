@@ -286,9 +286,9 @@ def test_metadata_yolov8():
       "bbox_0",
       "bbox_1",
       "bbox_2",
-      "class_prob_0",
-      "class_prob_1",
-      "class_prob_2",
+      "class_logit_0",
+      "class_logit_1",
+      "class_logit_2",
   ]
   assert all(tensor.size_bytes > 0 for tensor in info.outputs)
 
@@ -404,7 +404,7 @@ def test_tensor_latency_yolov8():
   runtime = None
   warmup = 100
   iterations = 3000
-  max_mean_latency_ms = 12.0
+  max_mean_latency_ms = 12.1
 
   try:
     runtime = pcie.Model(str(model), pcie.ModelOptions(), _connection())

@@ -27,6 +27,7 @@ sidebar_position: 1
       <li><a class="overview-link-card" href="/reference/environment-variables/"><strong>Змінні середовища</strong><span>Перегляньте змінні середовища для середовища виконання та компілятора.</span></a></li>
       <li><a class="overview-link-card" href="/reference/tutorial-assets/"><strong>Навчальні матеріали</strong><span>Керуйте шляхами до архіву моделі та навчальними матеріалами в дереві вихідного коду.</span></a></li>
       <li><a class="overview-link-card" href="/reference/boxdecode_decode_types/"><strong>Типи декодування BoxDecode</strong><span>Виберіть типи декодування та аналізуйте упаковані вихідні дані виявлення.</span></a></li>
+      <li><a class="overview-link-card" href="/reference/semantic_segmentation_decode/"><strong>Декодування семантичної сегментації</strong><span>Перетворюйте оцінки класів на масштабовану карту класів на EV74.</span></a></li>
       <li><a class="overview-link-card" href="/reference/error-codes/"><strong>Коди помилок</strong><span>Зіставте константи помилок фреймворку з причинами та наступними кроками.</span></a></li>
       <li><a class="overview-link-card" href="/reference/error_format/"><strong>Формат помилок плагіна</strong><span>Зрозумійте структуровані поля помилок, про які повідомляють збої плагіна GStreamer. </span></a></li>
     </ul>
@@ -39,6 +40,7 @@ sidebar_position: 1
     <ul class="overview-link-list">
       <li><a class="overview-link-card" href="/reference/glossary/"><strong>Глосарій</strong><span>Перегляд термінів та абревіатур, що використовуються в документації.</span></a></li>
       <li><a class="overview-link-card" href="/reference/elxr-sdk-host-setup/ubuntu/"><strong>Налаштування хоста SDK</strong><span>Примітки щодо налаштування хоста для Ubuntu, macOS та Windows.</span></a></li>
+      <li><a class="overview-link-card" href="/reference/devkit-containers/"><strong>Контейнери DevKit</strong><span>Встановлення Docker на DevKit, команди <code>dk container</code> і контейнери Ubuntu.</span></a></li>
       <li><a class="overview-link-card" href="/reference/two-step-sdk-installation/"><strong>Двоетапна установка SDK</strong><span>Застарілий процес завантаження та налаштування образів для SDK 2.0.0, 2.1.2.0 та 2.1.2.1.</span></a></li>
     </ul>
   </section>

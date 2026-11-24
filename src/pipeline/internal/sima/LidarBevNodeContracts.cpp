@@ -6,7 +6,6 @@
 #include "pipeline/internal/contract/CompiledNodeContractQuery.h"
 #include "pipeline/internal/contract/CompiledKernelTensor.h"
 #include "pipeline/internal/contract/ContractFacts.h"
-#include "pipeline/internal/TensorBufferEnvelope.h"
 #include "pipeline/internal/sima/KernelTensorLayout.h"
 #include "pipeline/internal/sima/KernelStageRecipe.h"
 #include "pipeline/internal/sima/StaticSpecBuilders.h"
@@ -72,21 +71,10 @@ const CompiledRuntimeContract& resolve_inputs(const ContractCompileInput& input,
   }
   if (!input.ingress.ingress_sample)
     throw std::invalid_argument(node_kind + " requires a typed upstream tensor contract");
-  const auto& sample = *input.ingress.ingress_sample;
-  const auto tensors = tensors_from_sample(sample, true);
-  for (const auto& tensor : tensors)
-    if (!tensor.storage || !tensor.storage->size_bytes || tensor.is_composite() ||
-        tensor.semantic.tess)
-      throw std::invalid_argument(node_kind + " ingress requires typed single-plane tensors; "
-                                              "detessellate image/tile inputs first");
   std::string error;
-  const auto holder = pipeline_internal::sample_to_gst_envelope_holder(sample, &error);
-  pipeline_internal::TensorBufferView view;
-  if (!holder || !pipeline_internal::tensor_buffer_descriptor_from_sample(
-                     static_cast<GstSample*>(holder.get()), &view, &error))
-    throw std::invalid_argument(node_kind + ": cannot resolve ingress carriers: " + error);
   ingress.emplace();
-  if (!specs::build_ingress_runtime_contract(view, tensors, &*ingress, &error))
+  if (!specs::build_dense_ingress_runtime_contract(*input.ingress.ingress_sample, &*ingress,
+                                                   &error))
     throw std::invalid_argument(node_kind + ": " + error);
   return *ingress;
 }
@@ -263,6 +251,26 @@ bool SimaBEVPoolPlan::compile_node_contract(const ContractCompileInput& input,
     const auto facts =
         bev_tensor_facts(upstream, ingress ? nullptr : input.immediate_upstream, kind());
     const auto plan = kr::bev_pool_plan_request(opt_, facts);
+    return compile_bev_contract(kind(), element_names(input.node_index).front(),
+                                contract_definition(), upstream, ingress.has_value(), plan, out,
+                                error);
+  } catch (const std::exception& exception) {
+    if (error)
+      *error = exception.what();
+    return false;
+  }
+}
+
+bool ResizeArgMax::compile_node_contract(const ContractCompileInput& input,
+                                         CompiledNodeContract* out, std::string* error) const {
+  try {
+    std::optional<CompiledRuntimeContract> ingress;
+    const auto& upstream = resolve_inputs(input, kind(), ingress);
+    // Reads the producer's logical view in place: an MLA output whose slice stage
+    // drops padded channels arrives as its strided [N,h,w,C] view, not a copy.
+    const auto facts =
+        bev_tensor_facts(upstream, ingress ? nullptr : input.immediate_upstream, kind());
+    const auto plan = kr::resize_argmax_request(opt_, facts);
     return compile_bev_contract(kind(), element_names(input.node_index).front(),
                                 contract_definition(), upstream, ingress.has_value(), plan, out,
                                 error);

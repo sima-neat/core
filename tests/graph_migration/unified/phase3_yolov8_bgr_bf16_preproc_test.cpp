@@ -24,8 +24,8 @@ simaai::neat::RunOptions phase3_yolo_run_options() {
 
 RUN_TEST("graph_migration_phase3_yolov8_bgr_bf16_preproc_test", [] {
   const fs::path root = graph_phase3_test::repo_root();
-  const fs::path tar = graph_phase3_test::resolve_yolov8n_variant_or_throw(
-      root, "yolov8n_A_BF16_W_INT8_MLATess.tar.gz");
+  const fs::path tar =
+      graph_phase3_test::resolve_yolov8n_variant_or_throw(root, "yolov8n_w8a16_mpk.tar.gz");
   const cv::Mat img_bgr = sima_yolov8_test::load_people_image_or_skip(root);
 
   simaai::neat::Model model(tar.string(), graph_phase3_test::yolo_image_bgr_to_rgb_bf16_options());

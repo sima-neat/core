@@ -4,8 +4,10 @@
 #include "model/internal/ModelPack.h"
 #include "model/internal/ModelFormat.h"
 #include "model/internal/ModelInternal.h"
+#include "nodes/sima/internal/LetterboxGeometry.h"
 #include "pipeline/internal/InputStreamUtil.h"
 #include "pipeline/internal/sima/BoxDecodeKernelAdmission.h"
+#include "pipeline/internal/sima/BoxDecodeTypeUtils.h"
 #include "pipeline/internal/TelemetryMonitorInternal.h"
 #include "pipeline/internal/TensorMath.h"
 
@@ -316,6 +318,27 @@ void attach_benchmark_preprocess_meta_for_boxdecode(const Model& model,
                                                     const BenchmarkOptions& options) {
   if (internal::ModelAccess::resolved_post_kind(model) != internal::PostRouteStageKind::BoxDecode)
     return;
+  const auto decode_type = internal::ModelAccess::options(model).decode_type;
+  if (pipeline_internal::sima::box_decode_type_is_sam(decode_type)) {
+    validate_benchmark_options(options);
+    const auto contract = internal::ModelAccess::build_boxdecode_stage_contract(model, false);
+    const auto& roles = contract.payload.tensor_roles;
+    // A prompt decoder's inputs are encoder outputs. Without published facts on
+    // the provided inputs, assume the model's own encoder geometry; inputs that
+    // carry semantic.preprocess keep theirs. A concept image model preprocesses
+    // its own image, as any detection model does.
+    if (std::find(roles.begin(), roles.end(),
+                  pipeline_internal::sima::BoxDecodeTensorRole::SamConceptDetections) ==
+        roles.end()) {
+      const auto meta = internal::sam_benchmark_preprocess_meta(
+          decode_type, options.original_width.value_or(1024),
+          options.original_height.value_or(1024));
+      for (Tensor& tensor : inputs)
+        if (!tensor.semantic.preprocess)
+          tensor.semantic.preprocess = meta;
+      return;
+    }
+  }
 
   const internal::PreprocessContractFlags flags =
       internal::ModelAccess::preprocess_contract_flags(model);
@@ -443,6 +466,44 @@ PreprocessRuntimeMeta resolve_benchmark_preprocess_meta(const Tensor& tensor,
   if (tensor.semantic.preprocess.has_value())
     return *tensor.semantic.preprocess;
   return resolve_benchmark_preprocess_meta_impl(tensor, plan, flags, options);
+}
+
+PreprocessRuntimeMeta sam_benchmark_preprocess_meta(BoxDecodeType decode_type, int source_width,
+                                                    int source_height) {
+  if (source_width < 1 || source_height < 1)
+    throw std::runtime_error("Model::benchmark: Segment Anything geometry must be positive");
+  // Each model's encoder canvas and resize: MobileSAM letterboxes 1024 at the
+  // top left; EdgeTAM and EfficientSAM stretch to 1024, EfficientSAM3 to 1008.
+  const int canvas = decode_type == BoxDecodeType::EfficientSam3 ? 1008 : 1024;
+  PreprocessRuntimeMeta meta;
+  meta.original_width = source_width;
+  meta.original_height = source_height;
+  meta.resized_width = meta.resized_height = canvas;
+  if (decode_type != BoxDecodeType::MobileSam) {
+    meta.scaled_width = meta.scaled_height = canvas;
+    meta.resize_mode = "stretch";
+    meta.affine_m00 = meta.affine_scale_x = double(source_width) / canvas;
+    meta.affine_m11 = meta.affine_scale_y = double(source_height) / canvas;
+    return meta;
+  }
+  // The same rounding and per-axis affine the Model's top-left letterbox publishes.
+  const int longest = std::max(source_width, source_height);
+  meta.scaled_width = source_width == longest
+                          ? canvas
+                          : int(internal::nearest_letterbox_extent(source_width, canvas, longest));
+  meta.scaled_height =
+      source_height == longest
+          ? canvas
+          : int(internal::nearest_letterbox_extent(source_height, canvas, longest));
+  if (meta.scaled_width < 1 || meta.scaled_height < 1)
+    throw std::runtime_error("Model::benchmark: MobileSAM letterbox rounds the shorter image "
+                             "side to zero pixels");
+  meta.pad_right = canvas - meta.scaled_width;
+  meta.pad_bottom = canvas - meta.scaled_height;
+  meta.resize_mode = "letterbox";
+  meta.affine_m00 = meta.affine_scale_x = double(source_width) / meta.scaled_width;
+  meta.affine_m11 = meta.affine_scale_y = double(source_height) / meta.scaled_height;
+  return meta;
 }
 
 Model::Options benchmark_build_model_options(const Model::Options& model_options) {

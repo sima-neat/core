@@ -7,12 +7,19 @@
 #include "model/internal/ModelPack.h"
 #include "model/internal/RoutePlanner.h"
 
-#include <array>
 #include <string>
 #include <string_view>
 #include <vector>
 
 namespace simaai::neat::internal {
+
+// One intent predicate shared by input and route planning. Numerical admission
+// stays in Kernels; this only prevents explicit image work being routed away.
+// Resolve the typed sampler and legacy compatibility string at the cold boundary.
+std::string resolve_resize_scaling_type(const ResizeSpec&);
+
+bool fixed_preprocess_arithmetic_requested(const PreprocessOptions&);
+bool antialiased_preprocess_resize_requested(const PreprocessOptions&);
 
 enum class RequiredPreprocessOp {
   Resize = 0,
@@ -67,9 +74,6 @@ struct PreprocessCapabilities {
   GraphFamilyCapabilities tess;
   GraphFamilyCapabilities quanttess;
   PreprocessGraphFamily tensor_auto_family = PreprocessGraphFamily::Disabled;
-  bool has_model_input_normalization = false;
-  std::array<float, 3> model_input_mean = {0.0f, 0.0f, 0.0f};
-  std::array<float, 3> model_input_stddev = {1.0f, 1.0f, 1.0f};
 };
 
 struct PreprocessPlannerResult {
@@ -91,6 +95,8 @@ struct PreprocessPlannerResult {
   int modelpack_max_width = 0;
   int modelpack_max_height = 0;
   int modelpack_max_depth = 0;
+  // Effective Auto intent, retained for diagnostics after image-route selection.
+  bool normalize_auto_without_config = false;
   bool normalize = false;
   std::vector<float> mean;
   std::vector<float> stddev;

@@ -20,7 +20,9 @@ C++：
 
 using namespace simaai::neat;
 
-Model model("/path/to/model.tar.gz");
+Model::Options opt;
+opt.preprocess.resize.enable = AutoFlag::On;
+Model model("/path/to/model.tar.gz", opt);
 
 std::vector<cv::Mat> images = {
     cv::imread("/data/camera0.jpg", cv::IMREAD_COLOR),
@@ -48,7 +50,9 @@ Python：
 import cv2
 import pyneat
 
-model = pyneat.Model("/path/to/model.tar.gz")
+opt = pyneat.ModelOptions()
+opt.preprocess.resize.enable = pyneat.AutoFlag.On
+model = pyneat.Model("/path/to/model.tar.gz", opt)
 
 images = [
     cv2.imread("/data/camera0.jpg", cv2.IMREAD_COLOR),
@@ -82,7 +86,6 @@ C++：
 
 ```cpp
 Model::Options opt;
-opt.preprocess.resize.enable = AutoFlag::On;
 opt.preprocess.resize.width = 640;
 opt.preprocess.resize.height = 640;
 opt.preprocess.resize.mode = ResizeMode::Letterbox;
@@ -101,7 +104,6 @@ Python：
 
 ```python
 opt = pyneat.ModelOptions()
-opt.preprocess.resize.enable = pyneat.AutoFlag.On
 opt.preprocess.resize.width = 640
 opt.preprocess.resize.height = 640
 opt.preprocess.resize.mode = pyneat.ResizeMode.Letterbox

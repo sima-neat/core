@@ -439,8 +439,14 @@ inline fs::path writable_asset_tmp_dir(const fs::path& root, const std::string& 
   return primary;
 }
 
-inline int run_modelzoo_get_noninteractive(const std::string& model_name) {
-  std::string cmd = "SIMA_CLI_CHECK_FOR_UPDATE=0 sima-cli modelzoo";
+inline int run_modelzoo_get_noninteractive(const std::string& model_name,
+                                           const fs::path& download_dir = {}) {
+  std::string cmd;
+  if (!download_dir.empty()) {
+    // The CLI writes relative to its working directory. Change it in the child only.
+    cmd = "cd " + shell_quote(fs::absolute(download_dir).string()) + " && ";
+  }
+  cmd += "SIMA_CLI_CHECK_FOR_UPDATE=0 sima-cli modelzoo";
   const std::string version = modelzoo_version();
   if (!version.empty()) {
     cmd += " -v " + shell_quote(version);
@@ -575,6 +581,28 @@ inline std::string resolve_resnet50_tar(const fs::path& root_in = {}) {
   return "";
 }
 
+// The caller holds the cache lock while downloading and staging the archive.
+inline std::string download_yolov8s_tar_to_cache(const fs::path& tmp_tar,
+                                                 const std::vector<std::string>& names) {
+  const auto tmp_dir = tmp_tar.parent_path();
+  if (run_modelzoo_get_noninteractive("yolo_v8s", tmp_dir) != 0)
+    return "";
+
+  // Model Zoo may write directly or under a model-named subdirectory.
+  for (const auto& dir : {tmp_dir, tmp_dir / "yolo_v8s"}) {
+    for (const auto& name : names) {
+      const auto downloaded = dir / name;
+      if (is_listable_tar_gz(downloaded)) {
+        if (downloaded == tmp_tar || move_to_tmp(downloaded, tmp_tar))
+          return tmp_tar.string();
+        return downloaded.string();
+      }
+      purge_unlistable_tar_gz(downloaded);
+    }
+  }
+  return "";
+}
+
 inline std::string resolve_yolov8s_tar_local_first(const fs::path& root_in, bool skip_download) {
   const fs::path root = default_asset_root(root_in);
   const fs::path root_tmp = root / "tmp";
@@ -663,15 +691,9 @@ inline std::string resolve_yolov8s_tar_local_first(const fs::path& root_in, bool
   }
 
   if (!skip_download) {
-    const int rc = run_modelzoo_get_noninteractive("yolo_v8s");
-    if (rc == 0 && is_usable_regular_file(tmp_tar)) {
-      // After a real download we *do* validate — the modelzoo path is
-      // the one that has historically produced partial/corrupt tarballs
-      // that fail `tar -tzf` and surface deep in ModelPack.
-      if (is_listable_tar_gz(tmp_tar))
-        return tmp_tar.string();
-      purge_unlistable_tar_gz(tmp_tar);
-    }
+    const auto downloaded = download_yolov8s_tar_to_cache(tmp_tar, names);
+    if (!downloaded.empty())
+      return downloaded;
   }
 
   for (const auto& dir : search_dirs) {

@@ -1,8 +1,10 @@
 #ifndef SIMA_NEAT_INTERNAL
 #define SIMA_NEAT_INTERNAL 1
 #endif
+#include "graphs/Fragments.h"
 #include "model/Model.h"
 #include "nodes/common/Output.h"
+#include "nodes/common/Queue.h"
 #include "nodes/io/Input.h"
 #include "pipeline/ErrorCodes.h"
 #include "pipeline/NeatError.h"
@@ -21,6 +23,7 @@
 #include <future>
 #include <mutex>
 #include <thread>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -309,6 +312,92 @@ void runner_try_push_preserves_policy_and_ownership(simaai::neat::OverflowPolicy
   runner.close();
 }
 
+enum class Topology { Linear, DirectFanout, QueuedFanout };
+
+void named_input_backpressure(simaai::neat::OverflowPolicy policy, Topology topology) {
+  using namespace simaai::neat;
+  InputOptions input;
+  input.payload_type = PayloadType::Tensor;
+  input.format = FormatTag::FP32;
+  input.memory_policy = InputMemoryPolicy::SystemMemory;
+  auto source = nodes::Input("in", input);
+  auto output = nodes::Output("out", OutputOptions::EveryFrame(1));
+  Graph graph;
+  const bool fanout = topology != Topology::Linear;
+  if (topology == Topology::QueuedFanout) {
+    const QueueOptions queue{.max_buffers = 1};
+    Graph upstream("in");
+    upstream.add(source);
+    upstream.add(nodes::Queue(queue));
+    auto branch = graphs::Branch("in", {"a", "b"});
+    graph.connect(upstream, branch);
+    for (const auto& [port, name] : {std::pair{"a", "out"}, std::pair{"b", "copy"}}) {
+      Graph leg(port);
+      leg.add(nodes::Input(port, input));
+      leg.add(nodes::Queue(queue));
+      leg.add(nodes::Output(name, OutputOptions::EveryFrame(1)));
+      graph.connect(branch, leg);
+    }
+  } else if (fanout) {
+    graph.connect(source, output);
+    graph.connect(source, nodes::Output("copy", OutputOptions::EveryFrame(1)));
+  } else {
+    graph.add(source);
+    graph.add(output);
+  }
+  RunOptions options;
+  options.queue_depth = 1;
+  options.overflow_policy = policy;
+  options.output_memory = OutputMemory::Owned;
+  Run run = graph.build(make_tensor_pair(0), options);
+  auto measurement = run.start_measurement();
+  // Stall both the consumer and the producer. Once push times out, the last accepted sample
+  // is still waiting in the one-slot ingress queue.
+  int accepted = 0;
+  auto retry = make_tensor_pair(accepted);
+  auto push_start = std::chrono::steady_clock::now();
+  while (accepted < 128) {
+    push_start = std::chrono::steady_clock::now();
+    if (!run.push(retry))
+      break;
+    retry = make_tensor_pair(++accepted);
+  }
+  require(accepted > 0 && accepted < 128, "blocking push must eventually time out on full input");
+  require(std::chrono::steady_clock::now() - push_start >= std::chrono::milliseconds(100),
+          "push must wait for input space under every overflow policy");
+  require(run.last_error().empty(), "input timeout must leave the run usable");
+  require(run_internal::stats(run).inputs_dropped == 0, "blocking push must preserve queued work");
+
+  const bool replace = policy == OverflowPolicy::KeepLatest;
+  const auto submit_start = std::chrono::steady_clock::now();
+  require(run.try_push("in", make_tensor_pair(128)) == replace,
+          "try_push must apply the configured policy at named input");
+  require(std::chrono::steady_clock::now() - submit_start < std::chrono::seconds(1),
+          "try_push must return without waiting for input space");
+  const auto drain = [&](int expected) {
+    require_tensor_pair(run.pull_tensors("out", 2000), expected);
+    if (fanout)
+      require_tensor_pair(run.pull_tensors("copy", 2000), expected);
+  };
+  for (int id = 0; id < accepted; ++id) {
+    drain(replace && id == accepted - 1 ? 128 : id);
+  }
+  require(run.try_push(retry), "input must accept the timed-out sample after draining");
+  run.close_input();
+  require(!run.try_push("in", make_tensor_pair(130)), "closed input must reject new work");
+  drain(accepted);
+  Sample out;
+  require(run.pull("out", 2000, out) == PullStatus::Closed, "drained output must reach EOS");
+  if (fanout)
+    require(run.pull("copy", 2000, out) == PullStatus::Closed, "both branches must reach EOS");
+  const auto counters = measurement.stop().counters;
+  require(counters.inputs_enqueued == static_cast<std::uint64_t>(accepted + replace + 1),
+          "only accepted inputs count as enqueued");
+  require(counters.inputs_pushed == counters.inputs_enqueued, "graph push counts accepted inputs");
+  require(counters.inputs_dropped == (policy == OverflowPolicy::Block ? 0U : 1U),
+          "only policy drops count as dropped inputs");
+}
+
 } // namespace
 
 RUN_TEST("unit_run_overflow_policy_parity_test", ([] {
@@ -319,6 +408,10 @@ RUN_TEST("unit_run_overflow_policy_parity_test", ([] {
            require_policy_parity(OverflowPolicy::KeepLatest, false, true);
            for (auto policy :
                 {OverflowPolicy::Block, OverflowPolicy::DropIncoming, OverflowPolicy::KeepLatest}) {
+             named_input_backpressure(policy, Topology::Linear);
+             named_input_backpressure(policy, Topology::QueuedFanout);
+             if (policy == OverflowPolicy::KeepLatest)
+               named_input_backpressure(policy, Topology::DirectFanout);
              for (bool tensor_list : {false, true}) {
                runner_try_push_preserves_policy_and_ownership(policy, tensor_list);
              }

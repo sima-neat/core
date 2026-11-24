@@ -941,7 +941,9 @@ SimaBoxDecode::SimaBoxDecode(const simaai::neat::Model& model, BoxDecodeType dec
     } else if (decode_type_option == BoxDecodeTypeOption::GroupedByRoleLogit ||
                decode_type_option == BoxDecodeTypeOption::InterleavedByHeadLogit) {
       compiled_contract.payload.score_activation =
-          pipeline_internal::sima::BoxDecodeScoreActivation::Sigmoid;
+          compiled_contract.payload.decode_type == BoxDecodeType::Detr
+              ? pipeline_internal::sima::BoxDecodeScoreActivation::Softmax
+              : pipeline_internal::sima::BoxDecodeScoreActivation::Sigmoid;
     }
   }
   apply_yolov26_compiled_payload_overrides(&compiled_contract);
@@ -963,8 +965,11 @@ SimaBoxDecode::SimaBoxDecode(const simaai::neat::Model& model, BoxDecodeType dec
   opt->requested_post_route = simaai::neat::internal::RequestedPostRouteKind::BoxDecode;
   opt->element_name = element_name;
   const auto resolved = model.resolved_preprocess_plan();
-  opt->native_model_width = resolved.mla_contract.width;
-  opt->native_model_height = resolved.mla_contract.height;
+  // SAM types derive their canvas from the published preprocess facts, not the MLA input.
+  if (!pipeline_internal::sima::box_decode_type_is_sam(compiled_contract.payload.decode_type)) {
+    opt->native_model_width = resolved.mla_contract.width;
+    opt->native_model_height = resolved.mla_contract.height;
+  }
   if (resolved.enabled && resolved.effective.resize.enable != AutoFlag::Off)
     opt->native_resize_mode = resolved.effective.resize.mode;
   std::optional<ResizeMode> effective_resize_mode = resize_mode_override;

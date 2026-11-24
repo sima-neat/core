@@ -1,5 +1,6 @@
 
 import importlib
+import socket
 import warnings
 
 import numpy as np
@@ -1810,6 +1811,31 @@ def test_model_run_build_reject_layout_and_image_format_kwargs():
     raise AssertionError("expected model.run(..., image_format=...) to fail with TypeError")
 
 
+def test_http_pull_timeout_logs_only_the_origin(capfd):
+  # A listening socket with no response keeps the live HTTP source waiting for data.
+  with socket.create_server(("127.0.0.1", 0)) as server:
+    host, port = server.getsockname()
+    http = pyneat.HttpSourceOptions()
+    http.location = f"http://camera-user:camera-pass@{host}:{port}/private-feed?channel=private-channel"
+    http.is_live = True
+    graph = pyneat.Graph()
+    graph.add(pyneat.nodes.http_source(http))
+    graph.add(pyneat.nodes.output())
+    options = pyneat.RunOptions()
+    options.startup_preflight = False
+    run = graph.build(options)
+    try:
+      capfd.readouterr()
+      assert run.pull(50) is None
+      log = capfd.readouterr().err
+      assert "Pipeline:" in log and "souphttpsrc" in log
+      assert f'location="http://{host}:{port}"' in log
+      for private in ("camera-user", "camera-pass", "private-feed", "private-channel"):
+        assert private not in log
+    finally:
+      run.close()
+
+
 def test_graph_video_push_uses_input_format_without_image_semantic():
   graph = pyneat.Graph()
   opt = pyneat.InputOptions()
@@ -1838,6 +1864,111 @@ def test_input_options_use_simaai_pool_is_deprecated_compatibility_property():
     opt.use_simaai_pool = False
   assert opt.use_simaai_pool is False
   assert any("use_simaai_pool is deprecated" in str(w.message) for w in caught)
+
+
+@pytest.mark.parametrize("field,value", [
+    ("fps_n", -1), ("fps_d", -1), ("fps_d", 0),
+    ("pool_min_buffers", -1), ("pool_max_buffers", -1),
+    ("caps_override", "bogus_value"), ("caps_override", "video/x-raw;bogus_value"),
+    ("caps_override", "ANY"), ("caps_override", "EMPTY"),
+    ("caps_override", "video/x-raw,format=(string){RGB,BGR}"),
+])
+def test_invalid_input_options(field, value):
+  options = pyneat.InputOptions()
+  setattr(options, field, value)
+  with pytest.raises(pyneat.NeatError, match=field):
+    pyneat.Graph().add(pyneat.nodes.input("in", options))
+
+
+def test_run_and_output_queue_limits():
+  out = pyneat.OutputOptions()
+  out.max_buffers = -1
+  with pytest.raises(pyneat.NeatError, match="max_buffers"):
+    pyneat.Graph().add(pyneat.nodes.output("out", out))
+  out.max_buffers = 0
+  graph = pyneat.Graph()
+  graph.add(pyneat.nodes.input("in"))
+  graph.add(pyneat.nodes.output("out", out))
+  frame = pyneat.Tensor.from_numpy(np.zeros((4, 4), dtype=np.uint8), copy=True)
+  options = pyneat.RunOptions()
+  options.queue_depth = -1
+  with pytest.raises(pyneat.NeatError, match="queue_depth"):
+    graph.build([frame], options)
+  options.queue_depth = 0
+  run = graph.build([frame], options)
+  try:
+    assert run.push([frame])
+    assert run.pull(timeout_ms=2000) is not None
+  finally:
+    run.close()
+
+
+@pytest.mark.parametrize("host,port,field", [
+    ("127.0.0.1", 0, "port"), ("127.0.0.1", -1, "port"),
+    ("127.0.0.1", 65536, "port"), ("", 5004, "host"),
+])
+def test_invalid_udp_destination(host, port, field):
+  udp = pyneat.UdpOutputOptions()
+  udp.host, udp.port = host, port
+  with pytest.raises(pyneat.NeatError, match=field):
+    pyneat.Graph().add(pyneat.nodes.udp_output(udp))
+  group = pyneat.UdpH264OutputGroupOptions()
+  group.udp_host, group.udp_port = host, port
+  with pytest.raises(pyneat.NeatError, match=field):
+    pyneat.groups.udp_h264_output_group(group)
+
+
+def test_udp_host_is_resolved_on_target(tmp_path):
+  host = "no-such-host.invalid"
+  options = pyneat.UdpOutputOptions()
+  options.host = host
+  group = pyneat.UdpH264OutputGroupOptions()
+  group.udp_host = host
+  assert host in pyneat.groups.udp_h264_output_group(group).describe_backend()
+
+  graph = pyneat.Graph()
+  graph.add(pyneat.nodes.input())
+  graph.add(pyneat.nodes.udp_output(options))
+  graph.save(str(tmp_path / "udp.json"))
+  frame = pyneat.Tensor.from_numpy(np.zeros((4, 4), dtype=np.uint8), copy=True)
+  with pytest.raises(pyneat.NeatError, match=host) as failure:
+    graph.build([frame])
+  assert "io.open" in str(failure.value)
+
+
+@pytest.mark.parametrize("host", ["127.0.0.1", "localhost"])
+def test_udp_destination_accepts_resolvable_host(host):
+  options = pyneat.UdpOutputOptions()
+  options.host = host
+  graph = pyneat.Graph()
+  input_options = pyneat.InputOptions()
+  input_options.caps_override = "application/octet-stream"
+  graph.add(pyneat.nodes.input("in", input_options))
+  graph.add(pyneat.nodes.udp_output(options))
+  frame = pyneat.Tensor.from_numpy(np.zeros((4, 4), dtype=np.uint8), copy=True)
+  run = graph.build([frame])
+  try:
+    assert run.push([frame])
+  finally:
+    run.close()
+
+
+def test_udp_resolution_uses_the_typed_sink():
+  options = pyneat.UdpOutputOptions()
+  options.host = "127.0.0.1"
+  input_options = pyneat.InputOptions()
+  input_options.caps_override = "application/octet-stream"
+  graph = pyneat.Graph()
+  graph.add(pyneat.nodes.input("in", input_options))
+  graph.add(pyneat.nodes.custom(
+      'tee name=split ! queue ! udpsink host=127.0.0.1 clients="" async=false split. ! queue'))
+  graph.add(pyneat.nodes.udp_output(options))
+  frame = pyneat.Tensor.from_numpy(np.zeros((4, 4), dtype=np.uint8), copy=True)
+  run = graph.build([frame])
+  try:
+    assert run.push([frame])
+  finally:
+    run.close()
 
 
 def test_graph_error_in_python_exposes_structured_fields():
@@ -1972,3 +2103,12 @@ def test_sima_encode_and_sender_options(codec):
     encode.quality = 80
     with pytest.raises(ValueError, match='quality'):
       pyneat.nodes.sima_encode(encode)
+
+
+def test_sima_decode_rejects_unknown_decoder_tuning():
+  # The factory refuses an unknown tuning; the attribute write itself does not.
+  opt = pyneat.SimaDecodeOptions()
+  opt.decoder_tuning = "bogus_value"
+  with pytest.raises(pyneat.NeatError) as excinfo:
+    pyneat.nodes.sima_decode(opt)
+  assert excinfo.value.error_code == pyneat.ERROR_OPTION_OUT_OF_RANGE

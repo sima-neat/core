@@ -8,6 +8,7 @@
 #include "pipeline/internal/TensorUtil.h"
 #include "test_main.h"
 
+#include <cmath>
 #include <gst/gst.h>
 
 #include <algorithm>
@@ -590,11 +591,74 @@ RUN_TEST(
       different_option([](auto& o) { o.score_threshold = 0.25f; });
       different_option([](auto& o) { o.nms_iou_threshold = 0.5f; });
       different_option([](auto& o) { o.top_k = 10; });
+      different_option(
+          [](auto& o) { o.preprocess.resize.interpolation = ResizeInterpolation::Bilinear; });
+      different_option([](auto& o) {
+        o.preprocess.resize.interpolation = ResizeInterpolation::BilinearAntialiased;
+      });
+      different_option([](auto& o) { o.preprocess.resize.mode = ResizeMode::Crop; });
+      different_option([](auto& o) {
+        o.preprocess.resize.mode = ResizeMode::Crop;
+        o.preprocess.resize.shorter_side = 256;
+      });
+      different_option([](auto& o) { o.preprocess.rescale_factor = 1.f; });
+      different_option([](auto& o) { o.preprocess.quantization_step = 0.25f; });
+      different_option([](auto& o) {
+        o.preprocess.color_conversion_placement = PreprocColorConversionPlacement::BeforeResize;
+      });
+      different_option([](auto& o) {
+        o.preprocess.floating_conversion = PreprocFloatingConversion::NearestEven;
+      });
+      Model::Options crop = defaults;
+      crop.preprocess.resize.mode = ResizeMode::Crop;
+      const auto cover_key = internal::model_stage_options_cache_identity(crop);
+      crop.preprocess.resize.shorter_side = 256;
+      const auto short_key = internal::model_stage_options_cache_identity(crop);
+      crop.preprocess.resize.shorter_side = 257;
+      require(cover_key != short_key &&
+                  short_key != internal::model_stage_options_cache_identity(crop),
+              "shorter-side geometry reused an incompatible cached Model stage");
+      Model::Options typed_nearest = defaults, legacy_nearest = defaults;
+      typed_nearest.preprocess.resize.interpolation = ResizeInterpolation::Nearest;
+      legacy_nearest.preprocess.resize.scaling_type = "NEAREST";
+      require(internal::model_stage_options_cache_identity(typed_nearest) !=
+                  internal::model_stage_options_cache_identity(legacy_nearest),
+              "explicit typed resize intent must not collide with a dormant legacy token");
+      Model::Options next_factor = defaults;
+      next_factor.preprocess.rescale_factor = 0.25f;
+      const auto factor_key = internal::model_stage_options_cache_identity(next_factor);
+      next_factor.preprocess.rescale_factor = std::nextafter(0.25f, 1.f);
+      require(internal::model_stage_options_cache_identity(next_factor) != factor_key,
+              "one-ULP source coefficient changes must invalidate preparation identity");
       different_option([](auto& o) { o.num_classes = 80; });
+      different_option([](auto& o) { o.decode_type = BoxDecodeType::MobileSam; });
+      // Each SAM model, EdgeTAM with or without its raw outputs, and each multimask_output
+      // choice is its own stage.
+      std::vector<std::string> sam_keys;
+      for (const auto type :
+           {BoxDecodeType::MobileSam, BoxDecodeType::EdgeTamSeg, BoxDecodeType::EdgeTamTrack,
+            BoxDecodeType::EfficientSam, BoxDecodeType::EfficientSam3})
+        for (const bool multimask : {true, false}) {
+          Model::Options sam = defaults;
+          sam.decode_type = type;
+          sam.multimask_output = multimask;
+          sam_keys.push_back(internal::model_stage_options_cache_identity(sam));
+        }
+      for (std::size_t i = 0; i < sam_keys.size(); ++i)
+        for (std::size_t j = i + 1; j < sam_keys.size(); ++j)
+          require(sam_keys[i] != sam_keys[j],
+                  "the SAM model and mask choice must change the stage identity");
+      different_option([](auto& o) { o.multimask_output = false; });
+      require(default_key.find("multimask_output") == std::string::npos,
+              "the default route must keep its established identity");
       different_option([](auto& o) { o.yolox_seg_pose.pose_classes = {0, 5}; });
       different_option([](auto& o) { o.superpoint.profile = SuperPointProfile::LightGlueV1; });
       different_option([](auto& o) { o.superpoint.nms_radius = 0; });
       different_option([](auto& o) { o.superpoint.border_margin = 0; });
+      different_option(
+          [](auto& o) { o.preprocess.resize.placement = LetterboxPlacement::TopLeft; });
+      require(default_key.find("\"placement\"") == std::string::npos,
+              "the default centered letterbox must keep its established identity");
       different_option([](auto& o) { o.superpoint.descriptor_output_dtype = TensorDType::Int8; });
       different_option([](auto& o) {
         o.superpoint.output_format = SuperPointOutputFormat::LegacyA65InterleavedV0;

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Plan capability-aware DevKit workers without consuming RTSP capacity unnecessarily."""
+"""Plan DevKit workers by firmware and memory capacity."""
 from __future__ import annotations
 import argparse
 from collections import Counter
@@ -12,6 +12,8 @@ from urllib.request import Request, urlopen
 # Seconds from successful develop run 40626198772. Setup is per worker.
 LANES = {"fast": 230, "e2e-0": 257, "e2e-1": 257,
          "genai": 129, "genai-python": 100, "performance": 276, "python-tutorials": 310}
+MAX_GENERAL_SHARDS = 6
+MAX_GENAI_SHARDS = 2
 
 def collect(get, path, key):
     result = []
@@ -50,7 +52,7 @@ def label_set(runner):
 
 def runner_selector(runner, required, blocked):
     """Keep mandatory capabilities and only labels needed to exclude blocked nodes."""
-    labels = label_set(runner) | required
+    labels = (label_set(runner) - {"rtsp"}) | required
     if any(labels <= label_set(other) for other in blocked):
         return None
     for label in sorted(labels - required):
@@ -64,43 +66,42 @@ def expected_lanes(weekly=False):
     return {**LANES, **({"streams": 120} if weekly else {})}
 
 
-def task_pool(task, stream_profile):
+def task_pool(task):
     if task in ("genai", "genai-python"):
         return "llm-16gb"
-    if task == "streams" and stream_profile != "none":
-        return "rtsp"
     return "default"
 
 
 def validate_plan(plan):
     shards = plan["shards"]
     expected = expected_lanes(plan.get("weekly", False))
-    if not 1 <= len(shards) <= 8:
-        raise ValueError("Expected one to eight DevKit shards")
+    maximum_shards = MAX_GENERAL_SHARDS + MAX_GENAI_SHARDS
+    if not 1 <= len(shards) <= maximum_shards:
+        raise ValueError(f"Expected 1 to {maximum_shards} DevKit shards")
     if len({s["id"] for s in shards}) != len(shards):
         raise ValueError("Duplicate shard IDs")
     if Counter(t for s in shards for t in s["tasks"]) != Counter(expected.keys()):
         raise ValueError("Every canonical lane must be assigned exactly once")
-    for pool, maximum in (("default", 5), ("llm-16gb", 2), ("rtsp", 1)):
+    for pool, maximum in (("default", MAX_GENERAL_SHARDS), ("llm-16gb", MAX_GENAI_SHARDS)):
         if sum(s["pool"] == pool for s in shards) > maximum:
             raise ValueError("Capability pool exceeds its fleet cap")
     for shard in shards:
         if not shard["tasks"] or not shard["labels"]:
             raise ValueError("Empty shard or runner selector")
-        pools = {task_pool(t, plan["stream_profile"]) for t in shard["tasks"]}
+        pools = {task_pool(t) for t in shard["tasks"]}
         if pools != {shard["pool"]}:
             raise ValueError("Lane assigned to the wrong capability pool")
         labels = {x.casefold() for x in shard["labels"]}
         if shard["pool"] == "llm-16gb" and "modalix-som-16gig" not in labels:
             raise ValueError("LLM tests require modalix-som-16gig")
-        if ("rtsp" in labels) != (shard["pool"] == "rtsp"):
-            raise ValueError("Only external-source lanes may require RTSP runners")
+        if "rtsp" in labels:
+            raise ValueError("DevKit selectors must not require the legacy RTSP label")
 
 
-def make_plan(runners, required, sha, maximum=5, plan_id="local", *, weekly=False,
+def make_plan(runners, required, sha, maximum=MAX_GENERAL_SHARDS, plan_id="local", *, weekly=False,
               stream_profile="http", excluded_names=()):
-    if not 1 <= maximum <= 5:
-        raise ValueError("Default fleet cap must be one to five")
+    if not 1 <= maximum <= MAX_GENERAL_SHARDS:
+        raise ValueError(f"Default fleet cap must be 1 to {MAX_GENERAL_SHARDS}")
     if weekly and stream_profile not in ("none", "http", "all"):
         raise ValueError("Unknown stream capability profile")
     required = {x.casefold() for x in required}
@@ -108,23 +109,19 @@ def make_plan(runners, required, sha, maximum=5, plan_id="local", *, weekly=Fals
         raise ValueError("Base runner selector must not require RTSP")
     expected = expected_lanes(weekly)
     excluded = [r for r in runners if r["name"].casefold() in {x.casefold() for x in excluded_names}]
-    rtsp = [r for r in runners if "rtsp" in label_set(r)]
     shards, reserved = [], set()
     # Admit scarce memory-specific workers first. Count each candidate once.
-    for pool, limit in (("llm-16gb", 2), ("default", maximum), ("rtsp", 1)):
-        tasks = {t: w for t, w in expected.items() if task_pool(t, stream_profile) == pool}
+    for pool, limit in (("llm-16gb", MAX_GENAI_SHARDS), ("default", maximum)):
+        tasks = {t: w for t, w in expected.items() if task_pool(t) == pool}
         if not tasks:
             continue
         candidates, selectors = [], {}
-        pool_required = required | ({"modalix-som-16gig"} if pool == "llm-16gb" else
-                                    {"rtsp"} if pool == "rtsp" else set())
-        blocked = excluded + (rtsp if pool != "rtsp" else [])
+        pool_required = required | ({"modalix-som-16gig"} if pool == "llm-16gb" else set())
         for r in runners:
             if (r["status"] != "online" or not required <= label_set(r)
-                    or ("rtsp" in label_set(r)) != (pool == "rtsp")
                     or (pool == "llm-16gb" and "modalix-som-16gig" not in label_set(r))):
                 continue
-            labels = runner_selector(r, pool_required, blocked)
+            labels = runner_selector(r, pool_required, excluded)
             if labels is None:
                 continue
             selectors[r["name"]] = labels

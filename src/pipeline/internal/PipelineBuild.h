@@ -3,6 +3,7 @@
 #error "Internal header. Not part of the public API."
 #endif
 
+#include "builder/internal/ElementNames.h"
 #include "pipeline/GraphOptions.h"
 #include "pipeline/internal/TensorMath.h"
 
@@ -14,10 +15,8 @@ namespace simaai::neat {
 
 class Node;
 
-struct NameTransform {
-  std::string prefix;
-  std::string suffix;
-};
+std::vector<std::string> rendered_element_names(const Node& node, int index,
+                                                const NameTransform& transform);
 
 NameTransform make_name_transform(const GraphOptions& opt);
 

@@ -28,6 +28,7 @@ details, diagnostics, or environment knobs.
       <li><a class="overview-link-card" href="/reference/environment-variables/"><strong>Environment Variables</strong><span>Review runtime and builder environment variables.</span></a></li>
       <li><a class="overview-link-card" href="/reference/tutorial-assets/"><strong>Tutorial Assets</strong><span>Control model archive paths and source-tree tutorial assets.</span></a></li>
       <li><a class="overview-link-card" href="/reference/boxdecode_decode_types/"><strong>BoxDecode Decode Types</strong><span>Choose decode types and parse packed detection outputs.</span></a></li>
+      <li><a class="overview-link-card" href="/reference/semantic_segmentation_decode/"><strong>Semantic Segmentation Decode</strong><span>Turn per-class scores into a resized class map on the EV74.</span></a></li>
       <li><a class="overview-link-card" href="/reference/error-codes/"><strong>Error Codes</strong><span>Map framework error constants to causes and next steps.</span></a></li>
       <li><a class="overview-link-card" href="/reference/error_format/"><strong>Plugin Error Format</strong><span>Understand structured error fields reported by GStreamer plugin failures.</span></a></li>
     </ul>
@@ -39,6 +40,7 @@ details, diagnostics, or environment knobs.
     <ul class="overview-link-list">
       <li><a class="overview-link-card" href="/reference/glossary/"><strong>Glossary</strong><span>Look up terms and acronyms used across the docs.</span></a></li>
       <li><a class="overview-link-card" href="/reference/elxr-sdk-host-setup/ubuntu/"><strong>SDK Host Setup</strong><span>Host setup notes for Ubuntu, macOS, and Windows.</span></a></li>
+      <li><a class="overview-link-card" href="/reference/devkit-containers/"><strong>DevKit Containers</strong><span>Install Docker on the DevKit, <code>dk container</code> commands, and Ubuntu containers.</span></a></li>
       <li><a class="overview-link-card" href="/reference/two-step-sdk-installation/"><strong>Two Step SDK Installation</strong><span>Legacy image pull and setup flow for SDK 2.0.0, 2.1.2.0, and 2.1.2.1.</span></a></li>
     </ul>
   </section>

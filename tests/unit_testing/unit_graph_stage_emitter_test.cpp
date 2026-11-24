@@ -37,8 +37,8 @@ struct StreamState {
 simaai::neat::Sample make_text_sample(const std::string& port, const std::string& text) {
   simaai::neat::Sample sample =
       simaai::neat::make_tensor_sample(port, simaai::neat::Tensor::from_text(text));
-  sample.port_name = port;
-  sample.stream_label = port;
+  require(sample.port_name == port && sample.stream_label == port,
+          "make_tensor_sample must retain the requested port");
   sample.stream_id = "stream";
   return sample;
 }
@@ -239,8 +239,10 @@ RUN_TEST("unit_graph_stage_emitter_test", [] {
               "push-backed graph rejected input before close_input");
     }
     run.close_input();
+    require(!run.can_push() && run.can_pull(), "closed input must still allow queued output");
     require(!run.push("in", make_text_sample("prompt", "late")),
             "push-backed graph accepted input after close_input");
+    require_contains(run.last_error(), "input is closed", "late push should explain refusal");
 
     simaai::neat::Sample sample;
     simaai::neat::PullError error;
@@ -254,6 +256,7 @@ RUN_TEST("unit_graph_stage_emitter_test", [] {
             "push-backed graph output did not close after ingress drain");
     require(error.code == simaai::neat::error_codes::kRuntimePull,
             "application-driven graph close should use runtime.pull closure");
+    require(!run.can_pull(), "closed and drained output must stop advertising more samples");
   }
 
   // A downstream pipeline may still be lazy when application ingress closes. Completion must

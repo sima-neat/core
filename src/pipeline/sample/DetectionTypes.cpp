@@ -52,8 +52,71 @@ std::string normalize_detection_format(std::string value) {
   return value;
 }
 
+bool is_masks_v1_payload(const std::vector<uint8_t>& bytes) {
+  std::uint32_t magic = 0;
+  if (bytes.size() < sizeof(magic))
+    return false;
+  std::memcpy(&magic, bytes.data(), sizeof(magic));
+  return magic == SegmentationMasksHeaderV1{}.magic;
+}
+
+// Complete validation before any record or mask is read. A legacy count can
+// never equal the magic: its capacity is at most 65536.
+SegmentationMasksHeaderV1 masks_v1_header(const std::vector<uint8_t>& bytes) {
+  SegmentationMasksHeaderV1 header;
+  if (bytes.size() < sizeof(header))
+    throw std::invalid_argument("masks V1 header is truncated");
+  std::memcpy(&header, bytes.data(), sizeof(header));
+  const std::uint64_t capacity = header.capacity;
+  const std::uint64_t mask_bytes = std::uint64_t(header.mask_height) * header.mask_width;
+  const std::uint64_t records_end = sizeof(header) + capacity * sizeof(RawBox);
+  if (header.version != 1 || header.header_bytes != sizeof(header) || header.flags != 0 ||
+      capacity < 1 || capacity > 65536 || header.count > header.capacity ||
+      header.mask_height < 1 || header.mask_width < 1 || header.mask_stride != mask_bytes ||
+      header.records_offset != sizeof(header) || header.record_stride != sizeof(RawBox) ||
+      header.masks_offset != ((records_end + 15U) & ~std::uint64_t{15}) ||
+      header.total_bytes != header.masks_offset + capacity * mask_bytes ||
+      header.total_bytes != bytes.size())
+    throw std::invalid_argument("invalid masks V1 header or extent");
+  return header;
+}
+
+ParsedBoxRecords parse_masks_v1_records(const std::vector<uint8_t>& bytes, int img_w, int img_h,
+                                        int expected_topk, bool strict) {
+  const auto header = masks_v1_header(bytes);
+  std::size_t count = header.count;
+  if (expected_topk > 0 && count > static_cast<std::size_t>(expected_topk)) {
+    if (strict)
+      throw std::runtime_error("masks V1 count exceeds expected topk");
+    count = static_cast<std::size_t>(expected_topk);
+  }
+  ParsedBoxRecords out;
+  out.boxes.reserve(count);
+  out.record_indices.reserve(count);
+  for (std::size_t i = 0; i < count; ++i) {
+    RawBox r{};
+    std::memcpy(&r, bytes.data() + header.records_offset + i * sizeof(RawBox), sizeof(RawBox));
+    float x1 = static_cast<float>(r.x);
+    float y1 = static_cast<float>(r.y);
+    float x2 = static_cast<float>(static_cast<int64_t>(r.x) + r.w);
+    float y2 = static_cast<float>(static_cast<int64_t>(r.y) + r.h);
+    if (img_w > 0 && img_h > 0) {
+      x1 = std::max(0.0f, std::min(x1, static_cast<float>(img_w)));
+      y1 = std::max(0.0f, std::min(y1, static_cast<float>(img_h)));
+      x2 = std::max(0.0f, std::min(x2, static_cast<float>(img_w)));
+      y2 = std::max(0.0f, std::min(y2, static_cast<float>(img_h)));
+    }
+    // An empty mask publishes an all-zero box; keep its score and mask index.
+    out.boxes.push_back(Box{x1, y1, x2, y2, r.score, static_cast<int>(r.cls)});
+    out.record_indices.push_back(i);
+  }
+  return out;
+}
+
 ParsedBoxRecords parse_bbox_records(const std::vector<uint8_t>& bytes, int img_w, int img_h,
                                     int expected_topk, bool strict) {
+  if (is_masks_v1_payload(bytes))
+    return parse_masks_v1_records(bytes, img_w, img_h, expected_topk, strict);
   ParsedBoxRecords out;
   if (bytes.size() < sizeof(uint32_t)) {
     if (strict)
@@ -213,17 +276,17 @@ simaai::neat::Tensor keypoints_to_tensor(const std::vector<uint8_t>& bytes,
 
 simaai::neat::Tensor masks_to_tensor(const std::vector<uint8_t>& bytes,
                                      const std::vector<std::size_t>& record_indices,
-                                     std::size_t capacity) {
+                                     std::size_t mask_base, int64_t mask_height,
+                                     int64_t mask_width) {
   const int64_t n = static_cast<int64_t>(record_indices.size());
   const std::size_t mask_bytes =
-      static_cast<std::size_t>(kDecodedMaskWidth) * static_cast<std::size_t>(kDecodedMaskHeight);
+      static_cast<std::size_t>(mask_width) * static_cast<std::size_t>(mask_height);
   const std::size_t bytes_out = static_cast<std::size_t>(n) * mask_bytes;
 
   auto storage = simaai::neat::make_cpu_owned_storage(bytes_out);
   if (bytes_out > 0) {
     simaai::neat::Mapping dst = storage->map(simaai::neat::MapMode::Write);
     auto* out = static_cast<uint8_t*>(dst.data);
-    const std::size_t mask_base = sizeof(uint32_t) + capacity * sizeof(RawBox);
     for (std::size_t i = 0; i < record_indices.size(); ++i) {
       const std::size_t source_index = record_indices[i];
       std::memcpy(out + i * mask_bytes, bytes.data() + mask_base + source_index * mask_bytes,
@@ -238,9 +301,17 @@ simaai::neat::Tensor masks_to_tensor(const std::vector<uint8_t>& bytes,
   t.byte_offset = 0;
   t.dtype = simaai::neat::TensorDType::UInt8;
   t.layout = simaai::neat::TensorLayout::Unknown;
-  t.shape = {n, kDecodedMaskHeight, kDecodedMaskWidth};
-  t.strides_bytes = {kDecodedMaskHeight * kDecodedMaskWidth, kDecodedMaskWidth, 1};
+  t.shape = {n, mask_height, mask_width};
+  t.strides_bytes = {mask_height * mask_width, mask_width, 1};
   return t;
+}
+
+// Headerless legacy payload: masks follow the capacity-strided box array.
+simaai::neat::Tensor masks_to_tensor(const std::vector<uint8_t>& bytes,
+                                     const std::vector<std::size_t>& record_indices,
+                                     std::size_t capacity) {
+  return masks_to_tensor(bytes, record_indices, sizeof(uint32_t) + capacity * sizeof(RawBox),
+                         kDecodedMaskHeight, kDecodedMaskWidth);
 }
 
 } // namespace
@@ -317,7 +388,8 @@ BoxDecodeResult decode_bbox_tensor(const simaai::neat::Tensor& tensor, int img_w
   // The box region is strided by the slot count, not by the buffer size: without this
   // bound a corrupt count reads mask bytes as boxes and strict mode never fires.
   int parse_topk = expected_topk;
-  if (const std::size_t ext = extended_extension_bytes(fmt); ext > 0) {
+  if (const std::size_t ext = extended_extension_bytes(fmt);
+      ext > 0 && !is_masks_v1_payload(out.raw)) {
     const std::size_t capacity = infer_extended_capacity(out.raw, ext, "bbox", strict);
     parse_topk = expected_topk > 0
                      ? static_cast<int>(
@@ -472,6 +544,8 @@ PoseDecodeTensors decode_pose_tensor(const simaai::neat::Tensor& tensor, int img
                                      int top_k, bool strict) {
   validate_extended_detection_format(tensor, "pose", detection_format_is_pose);
   std::vector<uint8_t> bytes = copy_detection_payload(tensor, "pose");
+  if (is_masks_v1_payload(bytes))
+    throw std::runtime_error("masks V1 payload carries no keypoints; use decode_segmentation");
   const std::size_t capacity = infer_extended_capacity(bytes, sizeof(RawPoseOut), "pose", strict);
   const int parse_topk =
       top_k > 0 ? static_cast<int>(std::min<std::size_t>(static_cast<std::size_t>(top_k), capacity))
@@ -502,6 +576,15 @@ SegmentationDecodeTensors decode_segmentation_tensor(const simaai::neat::Tensor&
                                                      int img_h, int top_k, bool strict) {
   validate_extended_detection_format(tensor, "segmentation", detection_format_is_segmentation);
   std::vector<uint8_t> bytes = copy_detection_payload(tensor, "segmentation");
+  if (is_masks_v1_payload(bytes)) {
+    const auto header = masks_v1_header(bytes);
+    ParsedBoxRecords parsed = parse_masks_v1_records(bytes, img_w, img_h, top_k, strict);
+    SegmentationDecodeTensors out;
+    out.boxes = boxes_to_tensor(parsed.boxes);
+    out.masks = masks_to_tensor(bytes, parsed.record_indices, header.masks_offset,
+                                header.mask_height, header.mask_width);
+    return out;
+  }
   const std::size_t mask_bytes =
       static_cast<std::size_t>(kDecodedMaskWidth) * static_cast<std::size_t>(kDecodedMaskHeight);
   const std::size_t capacity = infer_extended_capacity(bytes, mask_bytes, "segmentation", strict);
@@ -572,6 +655,8 @@ SegmentationPoseDecodeTensors decode_segmentation_pose_tensor(const simaai::neat
   validate_extended_detection_format(tensor, "segmentation-pose",
                                      detection_format_is_segmentation_pose);
   std::vector<uint8_t> bytes = copy_detection_payload(tensor, "segmentation-pose");
+  if (is_masks_v1_payload(bytes))
+    throw std::runtime_error("masks V1 payload carries no keypoints; use decode_segmentation");
   const std::size_t mask_bytes =
       static_cast<std::size_t>(kDecodedMaskWidth) * static_cast<std::size_t>(kDecodedMaskHeight);
   // Every region — boxes, masks, poses — is strided by the same slot count, so one
@@ -610,7 +695,15 @@ SegmentationPoseDecodeTensorList decode_segmentation_pose(const simaai::neat::Te
 }
 
 void tag_detection_format_in_sample(simaai::neat::Sample& sample) {
-  if (sample.kind == simaai::neat::SampleKind::TensorSet && sample.tensors.size() == 1U) {
+  // A BoxDecode route publishes its decoded tensor first. With
+  // BoxDecodeType::EdgeTamTrack the model's raw tensors follow it and keep no
+  // detection tag.
+  const bool decoded_first = sample.kind == simaai::neat::SampleKind::TensorSet &&
+                             sample.tensors.size() > 1U &&
+                             sample.tensors.front().dtype == simaai::neat::TensorDType::UInt8 &&
+                             sample.tensors.front().shape.size() == 1U;
+  if (sample.kind == simaai::neat::SampleKind::TensorSet &&
+      (sample.tensors.size() == 1U || decoded_first)) {
     simaai::neat::Tensor& tensor = sample.tensors.front();
     std::string fmt = sample_payload_format(sample);
     if (fmt.empty()) {

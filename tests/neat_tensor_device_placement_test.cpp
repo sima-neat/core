@@ -1,3 +1,4 @@
+#include "pipeline/NeatError.h"
 #include "pipeline/TensorAdapters.h"
 #include "pipeline/internal/TensorTransfer.h"
 #include "pipeline/internal/InputStreamUtil.h"
@@ -159,6 +160,36 @@ static void check_transfer_reuse(simaai::neat::TensorMemory memory) {
                 std::all_of(bytes + 17, bytes + mapping.size_bytes,
                             [](auto value) { return value == 0; }),
             "reused transfer exposed stale bytes beyond its payload");
+  }
+
+  // Grow and shrink logical spans within page and 64 KiB capacity classes.
+  // Reusing the backing must not expose slack or overwrite a held sibling.
+  for (const std::size_t capacity : {4096U, 65536U, 131072U}) {
+    const auto create = [&](std::size_t bytes, std::uint8_t value) {
+      return Tensor::from_vector(std::vector<std::uint8_t>(bytes, value),
+                                 {static_cast<std::int64_t>(bytes)}, memory);
+    };
+    const auto low = capacity > 65536U ? capacity - 65535U : capacity - 123U;
+    auto sibling = create(low, 91);
+    auto warm = create(low, 92);
+    const auto identity = transfer_identity(warm);
+    require(identity != transfer_identity(sibling), "capacity class reused a live sibling");
+    warm = {};
+    for (const auto bytes : {capacity, low, capacity - 1U, low + 1U}) {
+      auto resized = create(bytes, 93);
+      const auto resized_identity = transfer_identity(resized);
+      require(resized_identity.device == identity.device &&
+                  resized_identity.inode == identity.inode,
+              "changing logical span discarded the pooled allocation");
+      auto* resized_buffer =
+          gst_sample_get_buffer(static_cast<GstSample*>(resized.storage->holder.get()));
+      require(resized.storage->size_bytes == bytes && gst_buffer_get_size(resized_buffer) == bytes,
+              "capacity slack leaked into the tensor carrier");
+      require(resized.copy_payload_bytes() == std::vector<std::uint8_t>(bytes, 93),
+              "resized pooled transfer corrupted payload");
+    }
+    require(sibling.copy_payload_bytes() == std::vector<std::uint8_t>(low, 91),
+            "resizing a pooled buffer corrupted a held sibling");
   }
 
   // Pool growth must preserve earlier tensors without waiting for their release.
@@ -463,7 +494,7 @@ int main() {
       input_options.buffer_name = "ifm0";
       input_options.memory_policy = simaai::neat::InputMemoryPolicy::Auto;
       input_options.pool_min_buffers = 1;
-      input_options.pool_max_buffers = 1;
+      input_options.pool_max_buffers = 0; // Unbounded DMA pool.
       simaai::neat::InputBufferPoolGuard pool;
       std::unique_ptr<GstBuffer, decltype(&gst_buffer_unref)> buffer(
           simaai::neat::allocate_input_buffer(4096U, input_options, pool), gst_buffer_unref);
@@ -474,6 +505,23 @@ int main() {
       require(memory.has_value() &&
                   memory->knownHeapKind() == simaai::scheduler::client::dma::HeapKind::MlaDms,
               "Auto tensor ingress must allocate from the resolved DMS heap");
+
+      const auto expect_invalid_pool = [&](int minimum, int maximum) {
+        input_options.pool_min_buffers = minimum;
+        input_options.pool_max_buffers = maximum;
+        try {
+          decltype(pool) unused_pool;
+          std::unique_ptr<GstBuffer, decltype(&gst_buffer_unref)> invalid(
+              simaai::neat::allocate_input_buffer(4096U, input_options, unused_pool),
+              gst_buffer_unref);
+          throw std::runtime_error("invalid DMA pool limits were accepted");
+        } catch (const simaai::neat::NeatError& error) {
+          require(error.report().error_code == "misconfig.option_out_of_range",
+                  "DMA pool range must report an option error");
+        }
+      };
+      expect_invalid_pool(3, 2);
+      expect_invalid_pool(0, 0);
     }
 
     auto cpu_storage = simaai::neat::make_cpu_owned_storage(96);

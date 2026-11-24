@@ -2514,6 +2514,13 @@ GstBuffer* allocate_input_buffer(size_t bytes, const InputOptions& opt,
                               resolved.use_simaai_memory);
 
   if (resolved.use_simaai_memory) {
+    if (opt.pool_min_buffers <= 0)
+      pipeline_internal::error_util::throw_session_error(
+          error_codes::kOptionOutOfRange,
+          "InputOptions.pool_min_buffers must be positive for a DMA pool");
+    if (opt.pool_max_buffers > 0 && opt.pool_min_buffers > opt.pool_max_buffers)
+      pipeline_internal::error_util::throw_session_error(
+          error_codes::kOptionOutOfRange, "InputOptions.pool_min_buffers exceeds pool_max_buffers");
     GstBufferPool* pool = guard.pool.get();
     if (!pool) {
       const auto t_create_start = std::chrono::steady_clock::now();
@@ -3044,6 +3051,9 @@ bool write_simaai_preprocess_meta(GstBuffer* buffer, const PreprocessRuntimeMeta
     }
     return false;
   }
+  // A direct write describes applied facts; only the ingress-template wrapper
+  // below marks a prospective transform.
+  gst_structure_remove_field(s, "preproc_ingress_template");
   gst_structure_set(
       s, "preproc_original_width", G_TYPE_INT, meta.original_width, "preproc_original_height",
       G_TYPE_INT, meta.original_height, "preproc_resized_width", G_TYPE_INT, meta.resized_width,
@@ -3293,10 +3303,22 @@ bool copy_simaai_preprocess_meta(GstBuffer* dst, GstBuffer* src, std::string* er
       *err = "copy preprocess metadata: source buffer has no valid preprocess metadata";
     return false;
   }
+  // Snapshot origin before writing: source and destination may be the same envelope.
+  auto* source = gst_buffer_get_custom_meta(src, "GstSimaMeta");
+  gboolean prospective = FALSE;
+  if (source)
+    gst_structure_get_boolean(gst_custom_meta_get_structure(source), "preproc_ingress_template",
+                              &prospective);
   if (!write_simaai_preprocess_meta(dst, *meta)) {
     if (err)
       *err = "copy preprocess metadata: failed to write GstSimaMeta fields";
     return false;
+  }
+  // Copying metadata does not execute its prospective preprocessing policy.
+  if (prospective) {
+    auto* target = gst_buffer_get_custom_meta(dst, "GstSimaMeta");
+    gst_structure_set(gst_custom_meta_get_structure(target), "preproc_ingress_template",
+                      G_TYPE_BOOLEAN, TRUE, nullptr);
   }
   return true;
 #else
@@ -3568,7 +3590,16 @@ bool apply_simaai_preprocess_meta_template(GstBuffer* buffer, const InputOptions
   const auto meta = make_simaai_preprocess_meta_from_template(opt, input_width, input_height);
   if (!meta.has_value())
     return false;
-  return write_simaai_preprocess_meta(buffer, *meta);
+  if (!write_simaai_preprocess_meta(buffer, *meta))
+    return false;
+  auto* custom = gst_buffer_get_custom_meta(buffer, "GstSimaMeta");
+  if (!custom)
+    return false;
+  // Model/Stage ingress templates describe work still to execute, not spatial
+  // provenance of the raw pixels. Never compose their affine a second time.
+  gst_structure_set(gst_custom_meta_get_structure(custom), "preproc_ingress_template",
+                    G_TYPE_BOOLEAN, TRUE, nullptr);
+  return true;
 }
 
 GstBuffer* attach_simaai_meta_inplace(GstBuffer* buffer, const InputOptions& opt,
