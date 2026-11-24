@@ -530,6 +530,40 @@ inline ModelArchiveFixture make_strict_model_archive_fixture(
   return fixture;
 }
 
+// Same strict fixture, but the pre-MLA quantizer (the first channel_params pair of the
+// quantization_transform plugin) is replaced. The checksum-pinned seed itself is not edited:
+// the unpacked copy is patched and re-archived.
+inline ModelArchiveFixture
+make_strict_model_archive_fixture_with_quantizer(const std::string& tag, double q_scale, int q_zp,
+                                                 const std::string& model_name = "yolo_v9c_seg") {
+  auto fixture = make_strict_model_archive_fixture(tag, {}, true, model_name,
+                                                   /*include_topology_artifacts=*/true);
+  const fs::path mpk_path = fs::path(fixture.root_dir) / "etc" / "strict_seed_mpk.json";
+  std::ifstream input(mpk_path, std::ios::binary);
+  auto doc = nlohmann::json::parse(input);
+  bool patched = false;
+  for (auto& plugin : doc.at("plugins")) {
+    if (plugin.value("config_params", nlohmann::json::object()).value("kernel", std::string{}) !=
+        "quantization_transform") {
+      continue;
+    }
+    plugin["config_params"]["params"]["channel_params"] =
+        nlohmann::json::array({nlohmann::json::array({q_scale, q_zp})});
+    patched = true;
+    break;
+  }
+  if (!patched) {
+    throw std::runtime_error("model_archive_fixture_utils: fixture has no quantization_transform");
+  }
+  write_text_file(mpk_path, doc.dump(2));
+  const std::string cmd = "tar -czf " + model_archive_shell_quote(fixture.tar_path) + " -C " +
+                          model_archive_shell_quote(fixture.root_dir) + " .";
+  if (std::system(cmd.c_str()) != 0) {
+    throw std::runtime_error("model_archive_fixture_utils: failed to archive patched fixture");
+  }
+  return fixture;
+}
+
 inline ModelArchiveFixture make_malformed_model_archive_fixture(const std::string& tag) {
   return make_model_archive_fixture(
       tag,

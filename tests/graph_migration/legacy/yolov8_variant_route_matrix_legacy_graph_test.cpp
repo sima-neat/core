@@ -3447,6 +3447,7 @@ PreMlaParityResult run_pre_mla_parity_check_local(const ProbeResult& probe, Rout
     sync_opt.preprocess.kind = simaai::neat::InputKind::Image;
     sync_opt.preprocess.enable = simaai::neat::AutoFlag::On;
     sync_opt.preprocess.color_convert.input_format = simaai::neat::PreprocessColorFormat::BGR;
+    sync_opt.preprocess.normalize.enable = simaai::neat::AutoFlag::On;
     sync_opt.upstream_name = "decoder";
     simaai::neat::Model sync_model(probe.tar_path, sync_opt);
 
