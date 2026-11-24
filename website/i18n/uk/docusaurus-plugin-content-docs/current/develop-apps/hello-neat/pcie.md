@@ -52,7 +52,7 @@ pcie-host-quickstart/
 
 ## Створення застосунку
 
-Оберіть Python або C++ і створіть застосунок у робочому каталозі.
+Оберіть Python або C++ і створіть застосунок у робочій теці.
 
 <CodeTabs>
 <CodeTab label="Python" lang="python">
