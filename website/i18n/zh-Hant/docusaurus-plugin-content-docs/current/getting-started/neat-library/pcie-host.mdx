@@ -108,7 +108,7 @@ Windows 預覽是 `pcie::Model` 視覺 API 的原生 Visual Studio 建置，並�
    `Confirm-SecureBootUEFI` 必須輸出 `False`，且 `bcdedit` 的輸出必須列出 `testsigning Yes`。開啟測試簽章後，Windows 桌面會顯示 **測試模式**。安全開機需在電腦的韌體（UEFI）設定中關閉；步驟依電腦製造商而異，請參閱 [停用安全開機](https://learn.microsoft.com/windows-hardware/manufacture/desktop/disabling-secure-boot)。變更安全開機可能會啟動 BitLocker 修復。若系統磁碟機使用 BitLocker 或裝置加密，請在變更安全開機之前確認組織的裝置加密原則、暫停 BitLocker，並備妥修復金鑰。
 2. GStreamer 1.28.6 MSVC x64，下載自 [gstreamer-1.0-msvc-x86_64-1.28.6.exe](https://gstreamer.freedesktop.org/data/pkg/windows/1.28.6/msvc/gstreamer-1.0-msvc-x86_64-1.28.6.exe)。此套件必須使用這個確切版本。請選擇包含開發檔案的安裝類型，C++ 應用程式需要這些檔案。安裝完成後請開啟新的終端機，使其能讀取 GStreamer 安裝程式所設定的 `GSTREAMER_1_0_ROOT_MSVC_X86_64` 變數。
 3. 來自 [python.org](https://www.python.org/downloads/windows/) 的 64 位元 CPython 3.14，可為所有使用者或僅為目前使用者安裝。請在安裝 `sima-cli` 之前先安裝 Python。自由執行緒（free-threaded）建置無法載入此 wheel。
-4. 依照 [sima-cli 安裝指南](/tools/sima-cli/) 安裝的 `sima-cli`。接著使用 `sima-cli login` 登入。較舊的 `sima-cli` 會以 `Missing 'script' in 'installation'` 停止；請更新後再試一次。
+4. 依照 [sima-cli 安裝指南](/tools/sima-cli/) 安裝的 `sima-cli`。接著使用 `sima-cli login` 登入。較舊的 `sima-cli` 會以 `Missing 'script' in 'installation'` 停止；請重新執行 sima-cli 安裝程式加以更新，然後再試一次。若在新視窗中執行 `sima-cli --version` 仍顯示舊版本，表示 PATH 中有另一份副本排在前面；安裝程式會顯示警告，指出該副本以及修正方式。
 
 請以平常使用的使用者身分（而非系統管理員）開啟 PowerShell，並建立一個工作目錄來存放下載的套件與記錄檔。以系統管理員身分啟動的 PowerShell 視窗會在 `C:\Windows\System32` 中開啟；請勿從該處安裝。然後安裝 Windows 套件：
 
@@ -199,7 +199,13 @@ sima-cli playbooks remove neat-pcie-application-builder --yes
 
 請使用 `sima-cli packages list` 顯示的版本。此指令會在一次系統管理員核准下，先移除 Core，再移除 Scheduler。它不會刪除 Python 環境；若沒有其他應用程式使用 `%USERPROFILE%\pyneatpcie`，請將其刪除。SSH 金鑰 `%USERPROFILE%\.ssh\sima_neat_pcie_ed25519`、`%USERPROFILE%\.ssh\known_hosts` 中的卡片項目，以及工作目錄中下載的套件與記錄檔也會保留。
 
+`sima-cli` 會透過 `%USERPROFILE%\.sima-cli\registry.json` 中的安裝記錄（receipt）找到這些套件，因此請先移除套件，再移除 `sima-cli` 或該資料夾。若安裝記錄已遺失，可以再次執行已安裝版本的安裝指令以還原安裝記錄，然後依上述方式移除套件；或在 **Settings > Apps > Installed apps** 中先解除安裝 `sima-pcie-host`，再解除安裝 `simaai-scheduler-pcie-host`。
+
+安裝記錄屬於執行安裝的 Windows 帳戶，而套件則是為整台電腦安裝，因此其他帳戶須執行相同的安裝指令，以取得自己的安裝記錄、Python 環境、技能與卡片 SSH 金鑰；這會修復套件，而不會重新安裝。
+
 Windows Installer 不會以較舊的版本取代已安裝的套件。若要安裝較舊的版本，請先解除安裝目前已安裝的版本。
+
+移除套件後，若要移除 `sima-cli` 本身，請依照 [sima-cli 安裝指南](/tools/sima-cli/) 的說明，以 `uninstall` 引數執行其安裝程式。
 
 ## 在卡片上安裝 Neat {#install-neat-on-the-card}
 

@@ -108,7 +108,7 @@ Windowsプレビューは、`pcie::Model`ビジョンAPIのネイティブVisual
    `Confirm-SecureBootUEFI`は`False`を出力し、`bcdedit`の出力には`testsigning Yes`が含まれている必要があります。テスト署名が有効な場合、Windowsのデスクトップに**テスト モード**と表示されます。セキュアブートはPCのファームウェア（UEFI）設定で無効にします。手順はPCメーカーによって異なります。詳しくは[セキュアブートを無効にする](https://learn.microsoft.com/windows-hardware/manufacture/desktop/disabling-secure-boot)を参照してください。セキュアブートを変更すると、BitLockerの回復が開始されることがあります。システムドライブでBitLockerまたはデバイスの暗号化を使用している場合は、セキュアブートを変更する前に、組織のデバイス暗号化ポリシーを確認し、BitLockerを一時停止して、回復キーを用意してください。
 2. GStreamer 1.28.6 MSVC x64。[gstreamer-1.0-msvc-x86_64-1.28.6.exe](https://gstreamer.freedesktop.org/data/pkg/windows/1.28.6/msvc/gstreamer-1.0-msvc-x86_64-1.28.6.exe)から入手します。パッケージにはこのバージョンが厳密に必要です。C++アプリケーションに必要な開発ファイルを含むセットアップの種類を選択してください。インストール後は、GStreamerインストーラーが設定する`GSTREAMER_1_0_ROOT_MSVC_X86_64`変数が反映されるように、新しいターミナルを開いてください。
 3. [python.org](https://www.python.org/downloads/windows/)の64ビットCPython 3.14。すべてのユーザー向けと現在のユーザー向けのどちらのインストールでも使用できます。Pythonは`sima-cli`より先にインストールしてください。フリースレッドビルドではwheelを読み込めません。
-4. [sima-cliインストールガイド](/tools/sima-cli/)に従ってインストールした`sima-cli`。その後、`sima-cli login`でサインインします。古い`sima-cli`は`Missing 'script' in 'installation'`で停止します。更新してから再試行してください。
+4. [sima-cliインストールガイド](/tools/sima-cli/)に従ってインストールした`sima-cli`。その後、`sima-cli login`でサインインします。古い`sima-cli`は`Missing 'script' in 'installation'`で停止します。sima-cliのインストーラーを再度実行して更新してから、再試行してください。新しいウィンドウで`sima-cli --version`を実行しても古いバージョンが表示される場合は、PATH上で別のコピーが先に見つかっています。インストーラーは、そのコピーと対処方法を示す警告を表示します。
 
 PowerShellを管理者としてではなく通常のユーザーとして開き、ダウンロードしたパッケージとログを保存する作業ディレクトリを作成します。管理者として起動したPowerShellウィンドウは`C:\Windows\System32`で開くため、そこからはインストールしないでください。その後、Windowsパッケージをインストールします。
 
@@ -199,7 +199,13 @@ sima-cli playbooks remove neat-pcie-application-builder --yes
 
 `sima-cli packages list`に表示されるバージョンを使用してください。このコマンドは、1回の管理者承認でCore、次にSchedulerを削除します。Python環境は削除されません。ほかのアプリケーションで使用していない場合は、`%USERPROFILE%\pyneatpcie`を削除してください。SSHキー`%USERPROFILE%\.ssh\sima_neat_pcie_ed25519`、`%USERPROFILE%\.ssh\known_hosts`内のカードのエントリー、作業ディレクトリ内のダウンロードしたパッケージとログも残ります。
 
+`sima-cli`は、`%USERPROFILE%\.sima-cli\registry.json`にある受領記録（receipt）を使ってパッケージを見つけます。そのため、`sima-cli`またはこのフォルダーを削除する前にパッケージを削除してください。受領記録がなくなった場合は、インストール済みのリリースのインストールコマンドを再度実行して受領記録を復元してから上記の手順でパッケージを削除するか、**Settings > Apps > Installed apps**で`sima-pcie-host`、次に`simaai-scheduler-pcie-host`をアンインストールしてください。
+
+受領記録はインストールを実行したWindowsアカウントに属しますが、パッケージはマシン全体にインストールされます。そのため、別のアカウントでは同じインストールコマンドを実行して、そのアカウント用の受領記録、Python環境、スキル、カードのSSHキーを取得します。この場合、パッケージは再インストールされず修復されます。
+
 Windows Installerは、パッケージを古いバージョンで置き換えません。古いリリースをインストールするには、先にインストール済みのリリースをアンインストールしてください。
+
+パッケージを削除した後に`sima-cli`自体を削除するには、[sima-cliインストールガイド](/tools/sima-cli/)の説明に従って、インストーラーを`uninstall`引数付きで実行してください。
 
 ## カードにNeatをインストールする {#install-neat-on-the-card}
 

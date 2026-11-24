@@ -109,7 +109,7 @@ Windows 미리 보기는 `pcie::Model` 비전 API의 네이티브 Visual Studio 
    `Confirm-SecureBootUEFI`는 `False`를 출력해야 하고, `bcdedit` 출력에는 `testsigning Yes`가 있어야 합니다. 테스트 서명이 켜져 있으면 Windows 바탕 화면에 **테스트 모드**가 표시됩니다. Secure Boot는 PC의 펌웨어(UEFI) 설정에서 끕니다. 단계는 PC 제조업체에 따라 다르며, [Secure Boot 사용 안 함](https://learn.microsoft.com/windows-hardware/manufacture/desktop/disabling-secure-boot)에 설명되어 있습니다. Secure Boot를 변경하면 BitLocker 복구가 시작될 수 있습니다. 시스템 드라이브에서 BitLocker 또는 디바이스 암호화를 사용하는 경우 Secure Boot를 변경하기 전에 조직의 디바이스 암호화 정책을 확인하고, BitLocker를 일시 중단하고, 복구 키를 준비하세요.
 2. GStreamer 1.28.6 MSVC x64. [gstreamer-1.0-msvc-x86_64-1.28.6.exe](https://gstreamer.freedesktop.org/data/pkg/windows/1.28.6/msvc/gstreamer-1.0-msvc-x86_64-1.28.6.exe)에서 받으세요. 패키지에는 정확히 이 버전이 필요합니다. C++ 애플리케이션에 필요한 개발 파일이 포함된 설치 유형을 선택하세요. 설치 후에는 GStreamer 설치 프로그램이 설정하는 `GSTREAMER_1_0_ROOT_MSVC_X86_64` 변수를 인식하도록 새 터미널을 여세요.
 3. [python.org](https://www.python.org/downloads/windows/)의 64비트 CPython 3.14. 모든 사용자용 또는 현재 사용자용으로 설치할 수 있습니다. `sima-cli`보다 먼저 Python을 설치하세요. 프리 스레드 빌드는 wheel을 로드할 수 없습니다.
-4. [sima-cli 설치 가이드](/tools/sima-cli/)에 따라 설치한 `sima-cli`. 그런 다음 `sima-cli login`으로 로그인하세요. 이전 버전의 `sima-cli`는 `Missing 'script' in 'installation'` 오류로 중지됩니다. 업데이트한 후 다시 시도하세요.
+4. [sima-cli 설치 가이드](/tools/sima-cli/)에 따라 설치한 `sima-cli`. 그런 다음 `sima-cli login`으로 로그인하세요. 이전 버전의 `sima-cli`는 `Missing 'script' in 'installation'` 오류로 중지됩니다. sima-cli 설치 프로그램을 다시 실행하여 업데이트한 후 다시 시도하세요. 새 창에서 `sima-cli --version`이 여전히 이전 버전을 표시하면 PATH에서 다른 사본이 먼저 검색되는 것입니다. 설치 프로그램은 해당 사본과 해결 방법을 알려 주는 경고를 출력합니다.
 
 관리자가 아닌 평소 사용하는 사용자로 PowerShell을 열고, 다운로드한 패키지와 로그를 보관할 작업 디렉터리를 만드세요. 관리자 권한으로 시작한 PowerShell 창은 `C:\Windows\System32`에서 열리므로 그 위치에서 설치하지 마세요. 그런 다음 Windows 패키지를 설치합니다.
 
@@ -200,7 +200,13 @@ sima-cli playbooks remove neat-pcie-application-builder --yes
 
 `sima-cli packages list`에 표시되는 버전을 사용하세요. 이 명령은 한 번의 관리자 승인으로 Core를 제거한 다음 Scheduler를 제거합니다. Python 환경은 삭제하지 않습니다. 다른 애플리케이션에서 사용하지 않는다면 `%USERPROFILE%\pyneatpcie`를 삭제하세요. SSH 키 `%USERPROFILE%\.ssh\sima_neat_pcie_ed25519`, `%USERPROFILE%\.ssh\known_hosts`에 있는 카드 항목, 작업 디렉터리에 있는 다운로드한 패키지와 로그도 남습니다.
 
+`sima-cli`는 `%USERPROFILE%\.sima-cli\registry.json`에 있는 설치 기록(receipt)으로 패키지를 찾습니다. 따라서 `sima-cli`나 이 폴더를 제거하기 전에 패키지를 먼저 제거하세요. 설치 기록이 없어졌다면, 설치된 릴리스의 설치 명령을 다시 실행해 설치 기록을 복원한 다음 위의 방법으로 패키지를 제거하거나, **Settings > Apps > Installed apps**에서 `sima-pcie-host`를 제거한 다음 `simaai-scheduler-pcie-host`를 제거하세요.
+
+설치 기록은 설치를 실행한 Windows 계정에 속하지만 패키지는 컴퓨터 전체에 설치되므로, 다른 계정에서는 같은 설치 명령을 실행하여 해당 계정의 설치 기록, Python 환경, 스킬, 카드 SSH 키를 얻습니다. 이때 패키지는 다시 설치되지 않고 복구됩니다.
+
 Windows Installer는 패키지를 이전 버전으로 교체하지 않습니다. 이전 릴리스를 설치하려면 먼저 설치된 릴리스를 제거하세요.
+
+패키지를 제거한 후 `sima-cli` 자체를 제거하려면 [sima-cli 설치 가이드](/tools/sima-cli/)의 설명에 따라 설치 프로그램을 `uninstall` 인수와 함께 실행하세요.
 
 ## 카드에 Neat 설치 {#install-neat-on-the-card}
 

@@ -166,7 +166,10 @@ or card models. Install these prerequisites in this order:
    `sima-cli`. Free-threaded builds cannot load the wheel.
 4. `sima-cli`, from the [sima-cli installation guide](/tools/sima-cli/). Then
    sign in with `sima-cli login`. An older `sima-cli` stops with
-   `Missing 'script' in 'installation'`; update it and retry.
+   `Missing 'script' in 'installation'`; update it by running the sima-cli
+   installer again, then retry. If `sima-cli --version` in a new window still
+   shows the old version, another copy comes first on the PATH; the installer
+   prints a warning that names that copy and how to fix it.
 
 Open PowerShell as your usual user, not as administrator, and create a working
 directory for the downloaded packages and logs. A PowerShell window started as
@@ -314,8 +317,24 @@ uses it. The SSH key `%USERPROFILE%\.ssh\sima_neat_pcie_ed25519`, the card's
 entry in `%USERPROFILE%\.ssh\known_hosts`, and the downloaded packages and logs
 in your working directory also remain.
 
+`sima-cli` finds the packages through its receipt in
+`%USERPROFILE%\.sima-cli\registry.json`, so remove them before you remove
+`sima-cli` or that folder. If the receipt is gone, either run the install
+command for the installed release again, which restores the receipt, and then
+remove the packages as above; or uninstall `sima-pcie-host` and then
+`simaai-scheduler-pcie-host` under **Settings > Apps > Installed apps**.
+
+The receipt belongs to the Windows account that ran the install, while the
+packages are installed for the whole machine, so another account runs the same
+install command to get its own receipt, Python environment, skill and card SSH
+key; this repairs the packages instead of installing them again.
+
 Windows Installer does not replace a package with an older version. To install
 an older release, uninstall the installed one first.
+
+To remove `sima-cli` itself after the packages, run its installer with the
+`uninstall` argument, as described in the
+[sima-cli installation guide](/tools/sima-cli/).
 
 ## Install Neat on the card {#install-neat-on-the-card}
 
