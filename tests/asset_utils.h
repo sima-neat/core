@@ -442,8 +442,14 @@ inline fs::path writable_asset_tmp_dir(const fs::path& root, const std::string& 
   return primary;
 }
 
-inline int run_modelzoo_get_noninteractive(const std::string& model_name) {
-  std::string cmd = "SIMA_CLI_CHECK_FOR_UPDATE=0 sima-cli modelzoo";
+inline int run_modelzoo_get_noninteractive(const std::string& model_name,
+                                           const fs::path& download_dir = {}) {
+  std::string cmd;
+  if (!download_dir.empty()) {
+    // The CLI writes relative to its working directory. Change it in the child only.
+    cmd = "cd " + shell_quote(fs::absolute(download_dir).string()) + " && ";
+  }
+  cmd += "SIMA_CLI_CHECK_FOR_UPDATE=0 sima-cli modelzoo";
   const std::string version = modelzoo_version();
   if (!version.empty()) {
     cmd += " -v " + shell_quote(version);
@@ -671,8 +677,10 @@ inline std::string resolve_modelzoo_tar(const std::string& model_name,
   const char* home = std::getenv("HOME");
   const fs::path home_path = home ? fs::path(home) : fs::path();
   // In board mode, sima-cli modelzoo get writes <cwd>/<last name part>/<file>.
+  // It runs in tmp_dir, which is writable.
   const std::vector<fs::path> search_dirs = {
       tmp_dir,
+      tmp_dir / base,
       root,
       fs::current_path(),
       root / base,
@@ -694,7 +702,7 @@ inline std::string resolve_modelzoo_tar(const std::string& model_name,
     }
   }
 
-  if (run_modelzoo_get_noninteractive(model_name) != 0)
+  if (run_modelzoo_get_noninteractive(model_name, tmp_dir) != 0)
     return "";
 
   // Post-download validation: the modelzoo path historically produces

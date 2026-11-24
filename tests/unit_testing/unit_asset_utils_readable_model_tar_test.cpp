@@ -79,8 +79,14 @@ RUN_TEST("unit_asset_utils_readable_model_tar_test", ([] {
            require(sima_test::resolve_yolov8s_tar(root).empty(),
                    "a missing SIMA_YOLO_TAR file should be refused, not replaced");
 
+           set_or_unset("SIMA_YOLO_TAR", yolo);
+           require(sima_test::resolve_yolov8s_strict_mpk_tar(root).empty(),
+                   "a SIMA_YOLO_TAR that is not an MPK should be refused, not replaced");
+
            set_or_unset("SIMA_YOLO_TAR", {});
            set_or_unset("SIMA_MODEL_TAR", {});
            require(sima_test::resolve_yolov8s_tar(root).empty(),
                    "nothing should be found when both variables are unset");
+           require(sima_test::resolve_yolov8s_tar_local_only(root).empty(),
+                   "an unlistable <root>/tmp/yolo_v8s_mpk.tar.gz should not be returned");
          }));
