@@ -254,9 +254,10 @@ def assemble_bundle(candidate_dir: Path, wheelhouse: Path, card_candidate: Path,
       "resources-checksum": {archive.name: digest,
                              **{entry["url"]: entry["sha256"] for entry in vendors}},
       "selectable-resources": [],
+      # sima-cli extracts the archive into a folder named after it.
       "installation": {"script": "", "post-message": (
           "Offline installer downloaded. Copy this folder to the Windows PCIe host and "
-          "follow neat-offline\\INSTALL.md.")},
+          f"follow {archive.name.removesuffix('.tar.gz')}\\{TOP}\\INSTALL.md.")},
       "artifact": {"type": "offline", "repository": "core",
                    "package_path": "pciehost/windows/amd64", "distro": "windows",
                    "arches": ["amd64"]},

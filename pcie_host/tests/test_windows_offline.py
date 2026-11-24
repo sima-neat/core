@@ -259,6 +259,8 @@ class AssembleContracts(_Case):
     offline = json.loads((output / OFFLINE.OFFLINE_METADATA).read_text())
     self.assertEqual(offline["name"], "gh:sima-neat/core/pciehost/windows/amd64/offline")
     self.assertEqual(offline["installation"]["script"], "")
+    self.assertIn(f"follow neat-pcie-offline-installer-{sha(archive.read_bytes())[:8]}"
+                  "\\neat-offline\\INSTALL.md.", offline["installation"]["post-message"])
     self.assertEqual(offline["platforms"], [])
     self.assertEqual(offline["artifact"]["type"], "offline")
     self.assertEqual(offline["resources"], [
