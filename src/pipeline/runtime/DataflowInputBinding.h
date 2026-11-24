@@ -65,13 +65,16 @@ struct DataflowInputBinding {
 };
 
 // The input's binding from its declaration and, when given, a tensor (a seed or the first push).
-// nullopt with `why` set when this backend cannot carry it. A declared shape (InputOptions::shape)
-// binds from the declaration alone; each of its dynamic axes needs a bound (max_shape).
+// nullopt with `why` set when this backend does not carry it: the fact about the item, in the
+// present tense (DataflowNotCarried::fact, the input its subject). A declared shape
+// (InputOptions::shape) binds from the declaration alone; each of its dynamic axes needs a bound
+// (max_shape).
 std::optional<DataflowInputBinding> bind_dataflow_input(const InputOptions& declared,
                                                         const Tensor* tensor, std::string* why);
 
 // A record binding from the tensors of one item (2 or more): every field dense, bound by its
-// tensor (dtype and shape fixed). nullopt with `why` set when this backend cannot carry it.
+// tensor (dtype and shape fixed). nullopt with `why` set, as above, when this backend does not
+// carry it.
 std::optional<DataflowInputBinding> bind_dataflow_record(const InputOptions& declared,
                                                          std::span<const Tensor> fields,
                                                          std::string* why);

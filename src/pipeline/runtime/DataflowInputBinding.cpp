@@ -78,7 +78,7 @@ std::optional<df::Dim> axis_dim(int declared, int max, std::int64_t actual, std:
                                 const char* axis) {
   if (max > 0) {
     if (actual > max) {
-      *why = std::string("the seed's ") + axis + " " + std::to_string(actual) +
+      *why = std::string("its ") + axis + " " + std::to_string(actual) +
              " exceeds InputOptions::max_" + axis + " " + std::to_string(max);
       return std::nullopt;
     }
@@ -171,12 +171,12 @@ std::optional<DataflowInputBinding> bind_declared_shape(const InputOptions& decl
                                                         std::string* why) {
   const auto dtype = dataflow_dtype(declared.dtype);
   if (!dtype) {
-    *why = "the declared dtype Float64 has no Dataflow dtype";
+    *why = "its declared dtype is Float64";
     return std::nullopt;
   }
   if (declared.shape.size() > df::kMaxRank) {
-    *why = "a declared shape of rank " + std::to_string(declared.shape.size()) +
-           " is not supported (1 to 6)";
+    *why = "its declared shape has rank " + std::to_string(declared.shape.size()) +
+           ", where a tensor has rank 1 to 6";
     return std::nullopt;
   }
   df::TensorSpec spec;
@@ -192,8 +192,8 @@ std::optional<DataflowInputBinding> bind_declared_shape(const InputOptions& decl
       spec.shape.dims[i] = df::Dim(1, bound);
     } else {
       *why = "axis " + std::to_string(i) +
-             " of the declared shape is dynamic without a bound; the Dataflow backend sizes its "
-             "input pool at build, so declare one (Graph::input's max_shape)";
+             " of its declared shape is dynamic without a bound, and the input's pool is sized "
+             "at build (Graph::input's max_shape declares the bound)";
       return std::nullopt;
     }
   }
@@ -205,7 +205,7 @@ std::optional<DataflowInputBinding> bind_declared_shape(const InputOptions& decl
   binding.spec.capacity_hint =
       static_cast<std::uint32_t>(std::clamp(declared.pool_max_buffers, 0, 4096));
   if (const df::Status status = df::validate(binding.spec)) {
-    *why = std::string("the declared shape is not valid: ") + status->message;
+    *why = std::string("its declared shape is not valid: ") + status->message;
     return std::nullopt;
   }
   binding.text = describe_spec(binding.spec);
@@ -219,15 +219,14 @@ std::optional<DataflowInputBinding> bind_dataflow_input(const InputOptions& decl
   why->clear();
 #if !defined(SIMANEAT_WITH_DATAFLOW_DEVICE_MEMORY)
   if (memory_kind(declared.memory_policy) != df::MemoryKind::Host) {
-    *why = "InputOptions::memory_policy Ev74 or Dms0 (device memory) needs the Runner's memory "
-           "package, which this build of the Dataflow backend was configured without";
+    *why = "it is in device memory (InputOptions::memory_policy Ev74 or Dms0), and this build "
+           "of the Dataflow backend was configured without the Runner's memory package";
     return std::nullopt;
   }
 #endif
   if (declared.payload_type == PayloadType::Encoded || declared.format.tag == FormatTag::H264 ||
       declared.format.tag == FormatTag::H265 || declared.format.tag == FormatTag::ENCODED) {
-    *why = "an encoded input (an H.264, H.265 or other encoded payload) is not supported on the "
-           "Dataflow backend";
+    *why = "it is an encoded input (an H.264, H.265 or other encoded payload)";
     return std::nullopt;
   }
   if (!declared.shape.empty()) {
@@ -235,8 +234,7 @@ std::optional<DataflowInputBinding> bind_dataflow_input(const InputOptions& decl
   }
   const std::optional<ImageSpec::PixelFormat> fmt = image_format(declared, tensor);
   if (fmt == ImageSpec::PixelFormat::NV16) {
-    *why = "an NV16 input is not supported on the Dataflow backend (NV12, I420 and packed formats "
-           "are)";
+    *why = "it is an NV16 input, where an image input is NV12, I420 or a packed format";
     return std::nullopt;
   }
   const bool nv12 = fmt == ImageSpec::PixelFormat::NV12;
@@ -246,23 +244,22 @@ std::optional<DataflowInputBinding> bind_dataflow_input(const InputOptions& decl
   df::TensorSpec spec;
   if (tensor) {
     if (tensor->has_tiled_storage()) {
-      *why = "a tiled (MLA) tensor is not supported on the Dataflow backend";
+      *why = "it is a tiled (MLA) tensor";
       return std::nullopt;
     }
     if (tensor->semantic.encoded.has_value() || tensor->semantic.byte_stream.has_value()) {
-      *why = "an encoded or byte-stream tensor is not supported on the Dataflow backend";
+      *why = "it is an encoded or byte-stream tensor";
       return std::nullopt;
     }
     const auto dtype = dataflow_dtype(tensor->dtype);
     if (!dtype) {
-      *why = "Float64 tensors have no Dataflow dtype";
+      *why = "it is a Float64 tensor";
       return std::nullopt;
     }
     if (tensor->is_composite() != (nv12 || i420)) {
       *why = tensor->is_composite()
-                 ? "a composite tensor other than NV12 or I420 is not supported on the Dataflow "
-                   "backend"
-                 : "an NV12 or I420 tensor without plane records is not supported";
+                 ? "it is a composite tensor other than NV12 or I420"
+                 : "it is an NV12 or I420 tensor without plane records";
       return std::nullopt;
     }
     binding.dtype = tensor->dtype;
@@ -278,7 +275,7 @@ std::optional<DataflowInputBinding> bind_dataflow_input(const InputOptions& decl
       const auto wd = axis_dim(declared.width, declared.max_width, w, why, "width");
       if (!hd || !wd) {
         if (why->empty())
-          *why = "the seed has no width or height";
+          *why = "it has no width or height";
         return std::nullopt;
       }
       spec.shape = df::Shape::of({*hd, *wd, df::Dim(3)});
@@ -286,7 +283,7 @@ std::optional<DataflowInputBinding> bind_dataflow_input(const InputOptions& decl
     } else {
       const std::size_t rank = tensor->shape.size();
       if (rank == 0U || rank > df::kMaxRank) {
-        *why = "a tensor of rank " + std::to_string(rank) + " is not supported (1 to 6)";
+        *why = "it is a tensor of rank " + std::to_string(rank) + ", where a tensor has rank 1 to 6";
         return std::nullopt;
       }
       const AxisRoles roles = axis_roles(rank, tensor->layout);
@@ -306,7 +303,7 @@ std::optional<DataflowInputBinding> bind_dataflow_input(const InputOptions& decl
         }
         if (!dim) {
           if (why->empty())
-            *why = "axis " + std::to_string(i) + " of the seed is empty";
+            *why = "its axis " + std::to_string(i) + " is empty";
           return std::nullopt;
         }
         spec.shape.dims[i] = *dim;
@@ -360,7 +357,7 @@ std::optional<DataflowInputBinding> bind_dataflow_input(const InputOptions& decl
   binding.spec.capacity_hint =
       static_cast<std::uint32_t>(std::clamp(declared.pool_max_buffers, 0, 4096));
   if (const df::Status status = df::validate(binding.spec)) {
-    *why = std::string("the input's spec is not valid: ") + status->message;
+    *why = std::string("its spec is not valid: ") + status->message;
     return std::nullopt;
   }
   binding.text = describe_spec(binding.spec);
@@ -432,20 +429,20 @@ std::optional<DataflowInputBinding> bind_dataflow_record(const InputOptions& dec
                                                          std::string* why) {
   why->clear();
   if (!declared.shape.empty()) {
-    *why = "an item of " + std::to_string(fields.size()) +
+    *why = "it is an item of " + std::to_string(fields.size()) +
            " tensors where one tensor of a declared shape is expected";
     return std::nullopt;
   }
   if (memory_kind(declared.memory_policy) != df::MemoryKind::Host) {
     // The runtime's device ports carry one tensor (block.h); GStreamer's device pool is one too.
-    *why = "an item of " + std::to_string(fields.size()) +
-           " tensors (a record) into an input with InputOptions::memory_policy Ev74 or Dms0 is "
-           "not supported on the Dataflow backend (a device input carries one tensor a push)";
+    *why = "it is an item of " + std::to_string(fields.size()) +
+           " tensors (a record) into an input in device memory (InputOptions::memory_policy Ev74 "
+           "or Dms0), where a device input carries one tensor a push";
     return std::nullopt;
   }
   if (fields.size() > df::kMaxFields) {
-    *why = "a record of " + std::to_string(fields.size()) + " tensors is not supported (at most " +
-           std::to_string(df::kMaxFields) + ")";
+    *why = "it is a record of " + std::to_string(fields.size()) + " tensors, where a record has at most " +
+           std::to_string(df::kMaxFields);
     return std::nullopt;
   }
   // Each field binds as an undeclared tensor of its own: the InputOptions describe one tensor (an
@@ -462,13 +459,12 @@ std::optional<DataflowInputBinding> bind_dataflow_record(const InputOptions& dec
         bind_dataflow_input(field_declared, &fields[i], why);
     if (!field) {
       *why = "field " + std::to_string(i) +
-             " of the record: " + (why->empty() ? std::string("cannot be bound") : *why);
+             " of the record: " + (why->empty() ? std::string("it binds no spec") : *why);
       return std::nullopt;
     }
     if (field->planes != DataflowInputBinding::Planes::None) {
       *why = "field " + std::to_string(i) +
-             " of the record is an NV12 or I420 image; a planar record field is not supported on "
-             "the Dataflow backend";
+             " of the record is an NV12 or I420 image, where a record's fields are dense tensors";
       return std::nullopt;
     }
     // Dense fields, fixed by the tensor: a field has no declaration of its own.
@@ -490,7 +486,7 @@ std::optional<DataflowInputBinding> bind_dataflow_record(const InputOptions& dec
   binding.spec.capacity_hint =
       static_cast<std::uint32_t>(std::clamp(declared.pool_max_buffers, 0, 4096));
   if (const df::Status status = df::validate(binding.spec)) {
-    *why = std::string("the record's spec is not valid: ") + status->message;
+    *why = std::string("its record spec is not valid: ") + status->message;
     return std::nullopt;
   }
   const auto& bound = std::get<df::RecordSchema>(binding.spec.payload);

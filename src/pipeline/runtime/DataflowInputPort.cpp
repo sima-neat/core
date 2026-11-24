@@ -32,6 +32,7 @@
 
 #include "pipeline/ErrorCodes.h"
 #include "pipeline/internal/DataflowErrorMap.h"
+#include "pipeline/internal/DataflowNotCarried.h"
 #include "pipeline/internal/EnvUtil.h"
 #include "pipeline/internal/ErrorUtil.h"
 #include "pipeline/internal/InputStream.h"
@@ -192,7 +193,11 @@ void DataflowInputPort::bind_at_build(std::span<const Tensor> seed) {
   }
   std::optional<DataflowInputBinding> binding = bind_dataflow_item(config_.input, seed, &why);
   if (!why.empty()) {
-    throw_input_shape("Graph::build: " + why + " (Dataflow backend)");
+    pipeline_internal::throw_dataflow_not_carried(
+        "Graph::build", {error_codes::kInputShape,
+                         "Input " + dataflow_names_text(config_.names) +
+                             (seed.empty() ? " as declared" : " with this seed"),
+                         why});
   }
   if (binding && config_.model && !seed.empty()) {
     // A seed the model's first stage does not take binds nothing. GStreamer builds with such
@@ -223,14 +228,11 @@ DataflowInputPort::Bound* DataflowInputPort::bind_first(std::span<const Tensor> 
   std::string why;
   std::optional<DataflowInputBinding> binding = bind_dataflow_item(config_.input, item, &why);
   if (!binding) {
-    error_util::throw_session_error(
-        error_codes::kInputShape,
-        std::string(where) + ": " + (why.empty() ? std::string("the input cannot be bound") : why) +
-            " (Dataflow backend)",
-        {},
-        "Push a tensor this input takes. " +
-            pipeline_internal::dataflow_backend_action(
-                pipeline_internal::DataflowRemedy::BackendAndRebuild));
+    pipeline_internal::throw_dataflow_not_carried(
+        where, {error_codes::kInputShape,
+                "the first item pushed into Input " + dataflow_names_text(config_.names),
+                why.empty() ? std::string("it binds no spec") : why,
+                pipeline_internal::DataflowRemedy::BackendAndRebuild});
   }
   return bind_locked(std::move(*binding), where, /*at_build=*/false);
 }
