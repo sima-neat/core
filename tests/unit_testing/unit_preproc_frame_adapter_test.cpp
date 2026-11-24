@@ -2004,6 +2004,46 @@ void image_frontend_input_rejections() {
   std::cout << "Image frontend explicit color, interlace and ROI rejection PASS\n";
 }
 
+void image_frontend_input_colorimetry() {
+  const auto prepare = [](const char* colorimetry) {
+    auto cfg = config();
+    auto policy = std::make_shared<simaai::neat::internal::ImageTransformPolicy>();
+    policy->mode = simaai::neat::internal::ImageTransformMode::ColorConvert;
+    policy->color.matrix = simaai::neat::ImageColorMatrix::Bt709;
+    policy->color.range = simaai::neat::ImageYuvRange::Limited;
+    policy->colorimetry = colorimetry;
+    cfg->image_transform = policy;
+    cfg->input_img_type = cfg->output_img_type = "NV12";
+    cfg->output_shapes = {{8, 8, 1}};
+    cfg->output_dtype = "UINT8";
+    cfg->output_tensors = {{descriptor(true), "UINT8"}};
+    cfg->normalize = cfg->aspect_ratio = 0;
+    cfg->scaling_type = "NO_SCALING";
+    probe::Options options;
+    options.capture = preproc_capture();
+    return PreprocProbe::create(cfg, options);
+  };
+  constexpr auto disagree = "explicit color metadata must agree with image policy";
+  rejects_with(prepare("bt601"), disagree, "input_colorimetry with another matrix accepted");
+  rejects_with(prepare("1:3:5:1"), disagree, "input_colorimetry with full range accepted");
+  auto adapter = take(prepare("bt709"));
+  const auto source = [&](const char* colorimetry) {
+    std::unique_ptr<GstCaps, decltype(&gst_caps_unref)> caps(
+        gst_caps_new_simple("video/x-raw", "format", G_TYPE_STRING, "NV12", "width", G_TYPE_INT, 8,
+                            "height", G_TYPE_INT, 8, nullptr),
+        gst_caps_unref);
+    if (colorimetry)
+      gst_caps_set_simple(caps.get(), "colorimetry", G_TYPE_STRING, colorimetry, nullptr);
+    return adapter->accepts_caps(caps.get());
+  };
+  okay(source("bt709"));
+  for (const char* other : {static_cast<const char*>(nullptr), "bt601", "1:3:5:1"}) {
+    const auto error = source(other);
+    require(error && error->field == "input.colorimetry",
+            "source caps without the authored input_colorimetry accepted");
+  }
+}
+
 } // namespace
 int main(int argc, char** argv) {
   gst_init(&argc, &argv);
@@ -2017,6 +2057,7 @@ int main(int argc, char** argv) {
     yuyv_color_and_storage_contract();
     image_frontend_metadata_and_bounds();
     image_frontend_input_rejections();
+    image_frontend_input_colorimetry();
     cold_generic_preparation();
     immutable_policy_instances();
     contract();

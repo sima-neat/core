@@ -18,6 +18,7 @@
 
 #include <gst/allocators/gstdmabuf.h>
 #include <gst/gst.h>
+#include <gst/video/video.h>
 
 #include <opencv2/core/mat.hpp>
 
@@ -1365,7 +1366,9 @@ void read_video_interpretation(SampleSpec& spec, const GstCaps* caps) {
 void read_tensor_video_interpretation(SampleSpec& spec, const Tensor& input) {
   if (spec.kind != SampleMediaKind::RawVideo)
     return;
-  if (input.semantic.image)
+  GstVideoColorimetry colorimetry{};
+  if (input.semantic.image &&
+      gst_video_colorimetry_from_string(&colorimetry, input.semantic.image->color_space.c_str()))
     spec.video.colorimetry = input.semantic.image->color_space;
   if (input.storage && input.storage->kind == StorageKind::GstSample && input.storage->holder) {
     auto* sample = static_cast<GstSample*>(input.storage->holder.get());
@@ -2327,15 +2330,19 @@ namespace {
 SampleSpec sample_tensor_spec(const Sample& sample, const Tensor& tensor, const InputOptions& opt) {
   auto spec = derive_tensor_spec_or_throw(tensor, opt, "SampleSpec");
   // GstSample caps are authoritative when retained. Public CPU-backed samples
-  // may instead carry their interpretation in Sample::caps_string.
+  // may instead carry it in a fixed video/x-raw Sample::caps_string; any other
+  // caps_string is ignored.
   if (spec.kind == SampleMediaKind::RawVideo && !sample.caps_string.empty() &&
       (!tensor.storage || tensor.storage->kind != StorageKind::GstSample ||
        !tensor.storage->holder)) {
     auto caps = std::unique_ptr<GstCaps, decltype(&gst_caps_unref)>(
         gst_caps_from_string(sample.caps_string.c_str()), gst_caps_unref);
-    read_video_interpretation(spec, caps.get());
-    spec.caps_key = capkey_from_spec(spec);
-    spec.caps_string = caps_string_from_spec(spec);
+    if (caps && gst_caps_is_fixed(caps.get()) &&
+        gst_structure_has_name(gst_caps_get_structure(caps.get(), 0), "video/x-raw")) {
+      read_video_interpretation(spec, caps.get());
+      spec.caps_key = capkey_from_spec(spec);
+      spec.caps_string = caps_string_from_spec(spec);
+    }
   }
   return spec;
 }

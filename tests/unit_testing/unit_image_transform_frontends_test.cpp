@@ -375,6 +375,13 @@ void yuyv_input_boundary_chain() {
                 render_manifest_from_compiled_contracts(rgb_compiled, compile_input, &diagnostics),
             "packed Input must convert to RGB for model preprocessing" +
                 (diagnostics.errors.empty() ? std::string{} : ": " + diagnostics.errors.front()));
+    InputContract contract;
+    contract.media_type = boundary.media_type;
+    contract.format = alias;
+    contract.dtype = boundary.dtype;
+    contract.width = boundary.width;
+    contract.height = boundary.height;
+    contract.depth = boundary.depth;
     // Kernels reconstruct YUYV chroma only from centered siting; RGB output has
     // no siting field, so a cosited request must not be silently reinterpreted.
     for (const auto output : {ImageFormat::RGB, ImageFormat::NV12}) {
@@ -384,17 +391,19 @@ void yuyv_input_boundary_chain() {
       cosited.color.output_siting = {ImageChromaSiting::Centered, ImageChromaSiting::Centered};
       cosited.color.input_siting = {ImageChromaSiting::Cosited, ImageChromaSiting::Centered};
       auto rejected = nodes::ColorConvert(cosited);
-      InputContract contract;
-      contract.media_type = boundary.media_type;
-      contract.format = alias;
-      contract.dtype = boundary.dtype;
-      contract.width = boundary.width;
-      contract.height = boundary.height;
-      contract.depth = boundary.depth;
       std::string error;
       preproc(rejected).apply_input_contract(contract, &error);
       require(error.find("centered input chroma") != std::string::npos,
               "YUYV ColorConvert accepted cosited input chroma: " + error);
+    }
+    ResizeOptions resize;
+    resize.width = 8;
+    resize.height = 8;
+    for (const auto& packed : {nodes::Resize(resize), nodes::Normalization()}) {
+      std::string error;
+      preproc(packed).apply_input_contract(contract, &error);
+      require(error.find("packed Resize/Normalization/output are unsupported") != std::string::npos,
+              "YUYV input accepted by Resize or Normalization: " + error);
     }
   }
   PreprocOptions explicit_options;
@@ -422,7 +431,9 @@ void yuyv_input_boundary_chain() {
       graph.save((std::filesystem::temp_directory_path() / "yuyv_save.json").string());
       require(false, "Graph::save dropped an explicit YUYV color");
     } catch (const std::exception& e) {
-      require(std::string(e.what()).find("does not store the explicit color") != std::string::npos,
+      require(std::string(e.what()).find("does not store PreprocOptions::input_color or "
+                                         "ColorConvertOptions::input_colorimetry") !=
+                  std::string::npos,
               std::string("unexpected Graph::save error: ") + e.what());
     }
   }

@@ -1,6 +1,5 @@
 #include "nodes/io/internal/UvcCamera.h"
 #include "nodes/io/internal/UvcMode.h"
-#include <gst/video/video.h>
 
 #include "nodes/sima/internal/JpegOutputFormat.h"
 
@@ -457,14 +456,13 @@ ResolvedCamera resolve_camera(const UsbCameraInputOptions& opt, UsbCameraFormat 
     fmt.fmt.pix.pixelformat = V4L2_PIX_FMT_YUYV;
     fmt.fmt.pix.field = V4L2_FIELD_NONE;
     if (xioctl(fd.fd, VIDIOC_S_FMT, &fmt) != 0)
-      throw fail("cannot configure YUYV: " + errno_text(errno));
+      throw fail(errno == EBUSY ? "is in use by another process"
+                                : "cannot configure YUYV: " + errno_text(errno));
     const auto& pix = fmt.fmt.pix;
     if (pix.width != opt.width || pix.height != opt.height ||
         pix.pixelformat != V4L2_PIX_FMT_YUYV || pix.field != V4L2_FIELD_NONE)
       throw fail("adjusted the requested progressive YUYV mode; select an advertised mode");
-    const std::uint64_t active = std::uint64_t(opt.width) * 2;
-    if (pix.bytesperline < active ||
-        pix.sizeimage < std::uint64_t(opt.height - 1) * pix.bytesperline + active)
+    if (!yuyv_layout_valid(pix))
       throw fail("returned an invalid YUYV stride or storage capacity");
     v4l2_streamparm parm{};
     parm.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
@@ -476,58 +474,16 @@ ResolvedCamera resolve_camera(const UsbCameraInputOptions& opt, UsbCameraFormat 
                         opt.framerate_den))
       throw fail("did not accept " + std::to_string(opt.framerate_num) + "/" +
                  std::to_string(opt.framerate_den) + " fps");
-    // V4L2 defaults describe matrix/range; never equate DEFAULT to full-range 601.
-    const auto colorspace =
-        pix.colorspace == V4L2_COLORSPACE_DEFAULT
-            ? V4L2_MAP_COLORSPACE_DEFAULT(opt.width <= 720 && opt.height <= 576,
-                                          opt.width <= 1920 && opt.height <= 1080)
-            : pix.colorspace;
-    const auto encoding = pix.ycbcr_enc == V4L2_YCBCR_ENC_DEFAULT
-                              ? V4L2_MAP_YCBCR_ENC_DEFAULT(colorspace)
-                              : pix.ycbcr_enc;
-    const auto range = pix.quantization == V4L2_QUANTIZATION_DEFAULT
-                           ? V4L2_MAP_QUANTIZATION_DEFAULT(false, colorspace, encoding)
-                           : pix.quantization;
-    const auto transfer = pix.xfer_func == V4L2_XFER_FUNC_DEFAULT
-                              ? V4L2_MAP_XFER_FUNC_DEFAULT(colorspace)
-                              : pix.xfer_func;
-    if ((encoding != V4L2_YCBCR_ENC_601 && encoding != V4L2_YCBCR_ENC_709) ||
-        (range != V4L2_QUANTIZATION_FULL_RANGE && range != V4L2_QUANTIZATION_LIM_RANGE) ||
-        (transfer != V4L2_XFER_FUNC_709 && transfer != V4L2_XFER_FUNC_SRGB))
-      throw fail("has unsupported YUYV matrix/range/transfer metadata");
-    GstVideoColorimetry color{};
-    color.matrix = encoding == V4L2_YCBCR_ENC_601 ? GST_VIDEO_COLOR_MATRIX_BT601
-                                                  : GST_VIDEO_COLOR_MATRIX_BT709;
-    color.range = range == V4L2_QUANTIZATION_FULL_RANGE ? GST_VIDEO_COLOR_RANGE_0_255
-                                                        : GST_VIDEO_COLOR_RANGE_16_235;
-    color.transfer =
-        transfer == V4L2_XFER_FUNC_709 ? GST_VIDEO_TRANSFER_BT709 : GST_VIDEO_TRANSFER_SRGB;
-    switch (colorspace) {
-    case V4L2_COLORSPACE_SMPTE170M:
-      color.primaries = GST_VIDEO_COLOR_PRIMARIES_SMPTE170M;
-      break;
-    case V4L2_COLORSPACE_REC709:
-    case V4L2_COLORSPACE_SRGB:
-    case V4L2_COLORSPACE_JPEG:
-      color.primaries = GST_VIDEO_COLOR_PRIMARIES_BT709;
-      break;
-    default:
-      throw fail("has unsupported YUYV color primaries");
-    }
+    auto color = yuyv_color(pix);
+    if (color.error)
+      throw fail(color.error);
     ResolvedCamera camera{node.device, FormatTag::YUYV, opt.camera_name, sysfs_root,
                           node_index(sysfs_root, node.device)};
     camera.format = format;
     camera.row_stride = pix.bytesperline;
     camera.storage_bytes = pix.sizeimage;
-    camera.color.matrix =
-        encoding == V4L2_YCBCR_ENC_601 ? ImageColorMatrix::Bt601 : ImageColorMatrix::Bt709;
-    camera.color.range =
-        range == V4L2_QUANTIZATION_FULL_RANGE ? ImageYuvRange::Full : ImageYuvRange::Limited;
-    gchar* text = gst_video_colorimetry_to_string(&color);
-    if (!text)
-      throw fail("cannot describe YUYV color metadata");
-    camera.colorimetry = text;
-    g_free(text);
+    camera.color = color.color;
+    camera.colorimetry = std::move(color.colorimetry);
     return camera;
   }
   if (capture) {

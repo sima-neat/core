@@ -550,8 +550,8 @@ void reject_unsaved_source_color(const std::shared_ptr<Node>& node, const std::s
   const auto* policy = internal::ImageTransformAccess::policy(*pre);
   if (pre->options().input_color || (policy && !policy->colorimetry.empty()))
     throw_io_error(error_codes::kPipelineShape, "Graph::save", path,
-                   "Graph JSON does not store the explicit color of Preproc(options, color) or "
-                   "ColorConvert(options, colorimetry).",
+                   "Graph JSON does not store PreprocOptions::input_color or "
+                   "ColorConvertOptions::input_colorimetry.",
                    "Build this Graph in code from usb_camera_info(...) instead of saving it.");
 }
 

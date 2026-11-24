@@ -6,6 +6,7 @@
 #include "nodes/sima/SimaBoxDecode.h"
 #include "nodes/sima/Preproc.h"
 #include "pipeline/internal/contract/CompiledNodeContract.h"
+#include "pipeline/internal/sima/PreprocFrameAdapter.h"
 #include "pipeline/BoxDecodeType.h"
 #include "pipeline/graph/internal/GraphBuildInternal.h"
 #include "test_main.h"
@@ -252,6 +253,13 @@ RUN_TEST(
       require(Preproc(PreprocOptions(raw_model)).compile_node_contract({}, &uncolored, &err) &&
                   uncolored.processcvu && !uncolored.processcvu->payload.input_color,
               "YUYV Preproc without input_color must not acquire a color");
+      const auto unchecked =
+          pipeline_internal::sima::kernel_lowering::PreprocFrameAdapter::check_policy(
+              uncolored.processcvu->payload);
+      const auto* rejected = std::get_if<simaai::scheduler::client::Error>(&unchecked);
+      require(rejected &&
+                  rejected->message.find("YUYV requires explicit input color") != std::string::npos,
+              "YUYV Preproc without input_color must fail preparation");
 
       std::vector<std::shared_ptr<Node>> nodes;
       nodes.push_back(std::make_shared<ManualPostProbeNode>(probe_binding));

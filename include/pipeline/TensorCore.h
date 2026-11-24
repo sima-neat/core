@@ -135,7 +135,8 @@ enum class MapMode {
  * @brief Image-tensor metadata: pixel format and (optional) color space.
  *
  * Set on the `Tensor::semantic.image` optional when the tensor carries pixel data. The
- * pixel format is the structural shape (channels, plane count); color space is informational.
+ * pixel format is the structural shape (channels, plane count). Raw-video transport forwards a
+ * valid GStreamer colorimetry in `color_space` into the caps and ignores any other value.
  * @ingroup tensors
  */
 struct ImageSpec {
@@ -152,7 +153,9 @@ struct ImageSpec {
   };
 
   PixelFormat format = PixelFormat::UNKNOWN; ///< Pixel format of the image data.
-  std::string color_space; ///< Color space hint (e.g., `"bt709"`, `"srgb"`); empty = unspecified.
+  /// GStreamer colorimetry (e.g., `"bt709"`, `"bt601"`, `"sRGB"`); raw-video
+  /// transport forwards it into the caps when valid. Empty = unspecified.
+  std::string color_space;
 };
 
 /// Short public alias for image pixel format in Tensor/Sample constructors.

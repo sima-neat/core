@@ -53,6 +53,40 @@ void raw_caps_defaults() {
   require(capkey_from_spec(implicit) != capkey_from_spec(changed),
           "non-square pixels must retain distinct caps identity");
 }
+Sample rgb_sample(const std::string& color_space, const std::string& caps_string = {}) {
+  auto tensor = Tensor::from_vector(std::vector<uint8_t>(12), {2, 2, 3}, TensorMemory::CPU);
+  tensor.layout = TensorLayout::HWC;
+  tensor.semantic.image = ImageSpec{ImageType::RGB, color_space};
+  auto sample = sample_from_tensors(TensorList{tensor});
+  sample.caps_string = caps_string;
+  return sample;
+}
+void raw_color_space_hint() {
+  auto spec = derive_sample_spec_or_throw(rgb_sample("srgb"));
+  require(spec.video.colorimetry.empty() &&
+              spec.caps_string.find("colorimetry") == std::string::npos,
+          "a color space GStreamer cannot parse must not reach the caps");
+  spec = derive_sample_spec_or_throw(rgb_sample("sRGB"));
+  GstCaps* caps = caps_from_spec(spec);
+  require(spec.video.colorimetry == "sRGB" &&
+              std::string(gst_structure_get_string(gst_caps_get_structure(caps, 0),
+                                                   "colorimetry")) == "sRGB",
+          "a valid colorimetry is forwarded into the caps");
+  gst_caps_unref(caps);
+}
+void raw_sample_caps_string() {
+  for (const char* ignored :
+       {"application/x-rtp,media=video", "video/x-raw,format=RGB,width=[1,4]"}) {
+    const auto spec = derive_sample_spec_or_throw(rgb_sample("", ignored));
+    require(spec.video.colorimetry.empty() && spec.width == 2 && spec.format == "RGB",
+            "caps_string that is not fixed raw video is ignored");
+  }
+  const auto spec = derive_sample_spec_or_throw(
+      rgb_sample("", "video/x-raw,format=RGB,width=2,height=2,colorimetry=sRGB"));
+  require(spec.video.colorimetry == "sRGB" &&
+              spec.caps_string.find("colorimetry=(string)sRGB") != std::string::npos,
+          "raw-video caps_string carries its colorimetry");
+}
 void packed_view(bool copy_input, int extra_capacity = 0) {
   constexpr int width = 6, height = 3, pitch = 20, offset = 7;
   constexpr int active_extent = offset + (height - 1) * pitch + width * 2;
@@ -247,6 +281,8 @@ int main(int argc, char** argv) {
   try {
     require(simaai::gst::tensor_buffer_register_meta(), "register Scheduler transport metadata");
     raw_caps_defaults();
+    raw_color_space_hint();
+    raw_sample_caps_string();
     // Old function-pointer forms remain unambiguous with explicit signatures.
     [[maybe_unused]] auto old_source =
         static_cast<std::shared_ptr<Node> (*)(UsbCameraInputOptions)>(&nodes::UsbCameraInput);
