@@ -1105,6 +1105,53 @@ void dynamic_preparation_cache() {
 
 // Defaults are CAPS-owned, while each current frame can carry independent
 // geometry/pitch. Returning to defaults must never reuse an override as a base.
+// ROI geometry is independent of the pixel order: RGB and BGR sources, and RGB or BGR model
+// canvases, must publish the same ROI, placement and model-to-source affine for BoxDecode (#1507).
+void roi_geometry_ignores_color_order() {
+  const auto publish = [](const char* in, const char* out_format, bool list) {
+    probe::Options options;
+    options.capture = preproc_capture();
+    auto cfg = config(list ? 3 : 1);
+    cfg->input_img_type = in;
+    cfg->output_img_type = out_format;
+    auto stage = take(PreprocProbe::create(cfg, options));
+    auto* input = gst_buffer_new_allocate(nullptr, 192, nullptr);
+    auto* meta = gst_custom_meta_get_structure(gst_buffer_add_custom_meta(input, "GstSimaMeta"));
+    if (list) {
+      gst_structure_set(meta, "preproc_roi_count", G_TYPE_INT, 3, nullptr);
+      set_list(meta, "preproc_roi_rects", {0, 0, 8, 4, 0, 0, 0, 4, -1, 1, 4, 8});
+      set_list(meta, "preproc_roi_batch_indices", {0, 0, 0});
+    } else {
+      gst_structure_set(meta, "preproc_roi_enable", G_TYPE_BOOLEAN, TRUE, "preproc_roi_x",
+                        G_TYPE_INT, 1, "preproc_roi_y", G_TYPE_INT, 0, "preproc_roi_width",
+                        G_TYPE_INT, 4, "preproc_roi_height", G_TYPE_INT, 8, nullptr);
+    }
+    auto* published = gst_structure_new_empty("test");
+    probe::Binding binding;
+    okay(stage->bind(input, Storage{}, binding, published));
+    // The color labels name the source; every other published field is geometry.
+    const char* color_in = gst_structure_get_string(published, "preproc_color_in");
+    require(!color_in || std::string_view(color_in) == in, "published source color differs");
+    for (const char* name : {"preproc_color_in", "preproc_color_out"})
+      gst_structure_remove_field(published, name);
+    gst_buffer_unref(input);
+    return published;
+  };
+  for (const bool list : {false, true}) {
+    auto* reference = publish("RGB", "RGB", list);
+    require(gst_structure_has_field(reference, "preproc_affine_m00") ||
+                gst_structure_has_field(reference, "preproc_affine_scale_x"),
+            "ROI publication carries no affine to compare");
+    for (const auto& [in, out_format] :
+         {std::pair{"BGR", "BGR"}, std::pair{"BGR", "RGB"}, std::pair{"RGB", "BGR"}}) {
+      auto* other = publish(in, out_format, list);
+      require(gst_structure_is_equal(reference, other),
+              "ROI geometry published for BGR differs from RGB");
+      gst_structure_free(other);
+    }
+    gst_structure_free(reference);
+  }
+}
 void default_geometry_and_padding() {
   probe::Options options;
   options.capture = preproc_capture();
@@ -1981,6 +2028,7 @@ int main(int argc, char** argv) {
     maximum_roi_admission();
     publication_ownership_and_replacement();
     default_geometry_and_padding();
+    roi_geometry_ignores_color_order();
     borrowed_roi_indices();
     if (argc == 2 && std::string_view(argv[1]) == "--benchmark-bind")
       benchmark_preparation();

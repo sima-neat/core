@@ -101,6 +101,7 @@
 
 #if defined(SIMA_WITH_OPENCV)
 #include <opencv2/core.hpp>
+#include <opencv2/imgproc.hpp>
 #endif
 
 #include <cstddef>
@@ -677,6 +678,10 @@ void delete_dlpack_managed(DLManagedTensor* managed) {
 PyObject* tensor_to_dlpack_capsule(const Tensor& input) {
   if (input.has_tiled_storage())
     throw std::runtime_error("__dlpack__: tiled storage requires explicit detessellation");
+  // Judge the view against its own storage before any transfer: a mapper may expose more bytes
+  // than the segment assigned to the tensor.
+  if (const char* error = simaai::neat::pipeline_internal::dense_storage_bounds_error(input))
+    throw std::runtime_error(std::string("__dlpack__: ") + error);
   const Tensor source_pin = input;
   Tensor tensor = source_pin;
   if (tensor.device.type != DeviceType::CPU) {
@@ -702,6 +707,16 @@ PyObject* tensor_to_dlpack_capsule(const Tensor& input) {
     }
   }
 
+  if (!tensor.strides_bytes.empty() && tensor.strides_bytes.size() != tensor.shape.size())
+    throw std::runtime_error("__dlpack__: tensor strides rank differs from shape rank");
+  bool has_elements = true;
+  for (int64_t dim : tensor.shape) {
+    if (dim < 0)
+      throw std::runtime_error("__dlpack__: tensor shape has a negative dimension");
+    if (dim == 0)
+      has_elements = false;
+  }
+
   auto owner = std::make_unique<DlpackExportOwner>();
   owner->tensor = std::move(tensor);
   {
@@ -710,6 +725,11 @@ PyObject* tensor_to_dlpack_capsule(const Tensor& input) {
   }
   if (!owner->mapping.data)
     throw std::runtime_error("tensor mapping failed");
+  if (has_elements) {
+    const std::size_t span = span_bytes(owner->tensor.shape, owner->tensor.strides_bytes, elem);
+    if (span > owner->mapping.size_bytes)
+      throw std::runtime_error("__dlpack__: tensor view exceeds its storage mapping");
+  }
 
   owner->shape = owner->tensor.shape;
   owner->strides_elems.clear();
@@ -1115,7 +1135,7 @@ std::vector<int64_t> contiguous_uint8_image_strides(const std::vector<int64_t>& 
 }
 
 PythonPreprocImageBatch
-python_preproc_images_to_cv_mats(const nb::object& images,
+python_preproc_images_to_cv_mats(const nb::object& images, const simaai::neat::Model& model,
                                  const std::optional<ImageSpec::PixelFormat>& image_format,
                                  bool copy) {
   PythonPreprocImageBatch batch;
@@ -1128,6 +1148,7 @@ python_preproc_images_to_cv_mats(const nb::object& images,
   batch.mappings.reserve(batch.tensors.size());
   batch.mats.reserve(batch.tensors.size());
 
+  const auto expected = model.resolved_preprocess_plan().effective.color_convert.input_format;
   for (Tensor& tensor : batch.tensors) {
     tensor = tensor.to_cpu_if_needed();
     if (!tensor.is_dense()) {
@@ -1195,8 +1216,17 @@ python_preproc_images_to_cv_mats(const nb::object& images,
 
     auto* data = static_cast<std::uint8_t*>(mapping.data);
     batch.mappings.push_back(std::move(mapping));
-    batch.mats.emplace_back(height, width, CV_8UC(channels), data,
-                            static_cast<std::size_t>(final_row_stride));
+    cv::Mat view(height, width, CV_8UC(channels), data, static_cast<std::size_t>(final_row_stride));
+    const auto format =
+        tensor.semantic.image ? tensor.semantic.image->format : ImageSpec::PixelFormat::UNKNOWN;
+    using Color = simaai::neat::PreprocessColorFormat;
+    if (channels == 3 && ((format == ImageSpec::PixelFormat::RGB &&
+                           (expected == Color::Auto || expected == Color::BGR)) ||
+                          (format == ImageSpec::PixelFormat::BGR && expected == Color::RGB))) {
+      cv::cvtColor(view, batch.mats.emplace_back(), cv::COLOR_BGR2RGB);
+    } else {
+      batch.mats.push_back(std::move(view));
+    }
   }
 
   return batch;
@@ -1208,7 +1238,8 @@ TensorList python_stage_preproc(const nb::object& images, const simaai::neat::Mo
                                 const std::optional<ImageSpec::PixelFormat>& image_format,
                                 bool copy) {
 #if defined(SIMA_WITH_OPENCV)
-  PythonPreprocImageBatch batch = python_preproc_images_to_cv_mats(images, image_format, copy);
+  PythonPreprocImageBatch batch =
+      python_preproc_images_to_cv_mats(images, model, image_format, copy);
   TensorList out;
   {
     nb::gil_scoped_release release;
@@ -2672,9 +2703,12 @@ NB_MODULE(_pyneat_core, m) {
 
   nb::class_<MeasureOptions>(m, "MeasureOptions")
       .def(nb::init<>())
-      .def_rw("duration_ms", &MeasureOptions::duration_ms)
-      .def_rw("warmup_ms", &MeasureOptions::warmup_ms)
-      .def_rw("timeout_ms", &MeasureOptions::timeout_ms)
+      .def_rw("duration_ms", &MeasureOptions::duration_ms,
+              "Deprecated. Report metadata only. End measurement with `scope.stop`.")
+      .def_rw("warmup_ms", &MeasureOptions::warmup_ms,
+              "Deprecated. Report metadata only. Finish warmup before starting measurement.")
+      .def_rw("timeout_ms", &MeasureOptions::timeout_ms,
+              "Deprecated. Report metadata only. Set the timeout on each `pull` call.")
       .def_rw("include_plugin_latency", &MeasureOptions::include_plugin_latency,
               "Deprecated: plugin latency will be removed.")
       .def_rw("plugin_latency_source", &MeasureOptions::plugin_latency_source)

@@ -294,7 +294,7 @@ roi_tensors = pyneat.stages.preproc(
 
 ## メタデータとBoxDecode
 
-`Preproc` は、後続のノードが画像変換を正しく逆変換できるように、前処理メタデータを書き込みます。特に、`SimaBoxDecode` は、このメタデータを使用して、検出ボックスを元の画像または ROI 座標空間にマッピングします。
+`Preproc` は、後続のノードが画像変換を正しく逆変換できるように、前処理メタデータを書き込みます。[対応するプロファイル](/reference/boxdecode_decode_types#crop-coordinate-mapping)では、`SimaBoxDecode` は ROI の検出結果をソースフレーム全体の座標で報告します。
 
 重要なメタデータフィールドには、以下のようなものがあります。
 

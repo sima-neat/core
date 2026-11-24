@@ -20,15 +20,16 @@ PCIe 공동 처리 방식을 사용하면 애플리케이션 제어 및 입력 �
 
 ## 모델과 이미지를 가져오세요
 
-호스트 시스템에 작업 디렉터리를 생성하고 Model Zoo에서 ResNet-50을 다운로드합니다.
+호스트 시스템에 작업 디렉터리를 생성하고, Model Browser에서 ResNet-50을 다운로드한 다음, 다운로드한 ZIP에서 모델 아카이브를 `resnet_50.tar.gz`로 추출합니다.
 
 <ShellCommand prompt="pcie-host">
 mkdir -p pcie-host-quickstart/assets
 cd pcie-host-quickstart
-sima-cli modelzoo get resnet_50
+sima-cli models download --id resnet_50 --variant w8a8
+unzip -p models/resnet_50/w8a8/resnet_50_w8a8_default.zip resnet_50_w8a8_mpk.tar.gz > resnet_50.tar.gz
 </ShellCommand>
 
-다운로드한 압축 파일을 이 디렉터리에 `resnet_50.tar.gz`로 저장하십시오.
+모든 튜토리얼의 모델 준비는 [튜토리얼 설정](/tutorials/before-you-run)을 참조하세요.
 
 [래브라도어 견종 이미지 예시](../../images/hello-neat-pcie-labrador.jpg)를 다운로드하고 `assets/sample.png`로 저장하세요.
 

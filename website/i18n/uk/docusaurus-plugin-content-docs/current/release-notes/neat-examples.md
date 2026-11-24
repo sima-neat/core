@@ -1,13 +1,13 @@
 ---
-title: "Neat Examples Примітки до випуску"
+title: "Примітки до випуску Neat Examples"
 sidebar_position: 4
 ---
 
-# Neat Examples Примітки до випуску
+# Примітки до випуску Neat Examples
 
-Примітки до випуску для прикладних програм SiMa.ai Neat.
+Примітки до випуску прикладів застосунків SiMa.ai Neat.
 
-| Випуск | Сумісний з Neat Library. | Примітки |
+| Випуск | Сумісна версія Neat Library | Примітки |
 | --- | --- | --- |
 | 0.6.2 | 0.6.2 | [Neat Examples 0.6.2](https://github.com/sima-neat/apps/releases/tag/v0.6.2) |
 | 0.6.1 | 0.6.1 | [Neat Examples 0.6.1](https://github.com/sima-neat/apps/releases/tag/v0.6.1) |

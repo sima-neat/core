@@ -281,16 +281,19 @@ enum class MetricsTraceSource {
 };
 
 /**
- * @brief Options for framework-owned runtime measurement.
+ * @brief Options for observing an application-controlled push/pull interval.
  *
  * Default construction is the production-safe/customer path: public E2E latency and throughput
  * only.  It does not start plugin tracing, message tracing, graph queue probes, or measurement-
  * local power monitoring.
  */
 struct MeasureOptions {
-  int duration_ms = 10000; ///< Timed measurement window.
-  int warmup_ms = 1000;    ///< Warmup window excluded from latency/metrics results.
-  int timeout_ms = 5000;   ///< Per-output pull timeout.
+  /// @deprecated Report metadata only. End measurement with `MeasureScope::stop`.
+  int duration_ms = 10000;
+  /// @deprecated Report metadata only. Finish warmup before starting measurement.
+  int warmup_ms = 1000;
+  /// @deprecated Report metadata only. Set the timeout on each `pull` call.
+  int timeout_ms = 5000;
   /// Deprecated: capture per-plugin execution latency through LTTng. It will be removed.
   bool include_plugin_latency = false;
   /// Deprecated with `include_plugin_latency`: backend used for plugin execution latency.

@@ -41,15 +41,11 @@
 PCIeホストパッケージをインストールし、[チュートリアルの設定](/tutorials/before-you-run)で説明されているように、チュートリアルのバンドルをダウンロードします。抽出されたPCIeエクストラルのルートから、YOLOv8sがまだ存在しない場合は、ダウンロードします。
 
 ```bash
-sima-cli modelzoo get yolo_v8s
+sima-cli models download --id yolov8s --variant w8a8
+unzip -p models/yolov8s/w8a8/yolov8s_w8a8_default.zip yolov8s_w8a8_mpk.tar.gz > yolo_v8s_mpk.tar.gz
 ```
 
-プログラムには、このディレクトリ内の正確なパス`yolo_v8s_mpk.tar.gz`が必要です。Model Zooが別の名前または場所を使用した場合は、ダウンロードしたアーカイブを適切な場所にコピーします。
-
-```bash
-cp /absolute/path/to/downloaded-yolov8s-archive.tar.gz yolo_v8s_mpk.tar.gz
-test -f yolo_v8s_mpk.tar.gz
-```
+プログラムには、このディレクトリ内の正確なパス`yolo_v8s_mpk.tar.gz`が必要です。2番目のコマンドは、ダウンロードしたZIPからこのファイルを展開します。
 
 Pythonを実行します。
 

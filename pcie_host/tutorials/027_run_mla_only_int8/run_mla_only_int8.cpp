@@ -1,7 +1,7 @@
 // Quantize on the host, run only the MLA over PCIe, and dequantize the INT8 results.
 //
 // Usage:
-//   tutorial_027_run_mla_only_int8 --model yolo26n-det-int8-b1.tar.gz [--card 0]
+//   tutorial_027_run_mla_only_int8 --model yolo26n_w8a8_mpk.tar.gz [--card 0]
 
 #include <simaai/neat/pcie/Model.h>
 
@@ -50,14 +50,14 @@ Args parse_args(int argc, char** argv) {
     } else if (arg == "--card") {
       args.card_id = std::stoi(require_value(argc, argv, index, "--card"));
     } else if (arg == "-h" || arg == "--help") {
-      std::cout << "Usage: " << argv[0] << " --model yolo26n-det-int8-b1.tar.gz [--card 0]\n";
+      std::cout << "Usage: " << argv[0] << " --model yolo26n_w8a8_mpk.tar.gz [--card 0]\n";
       std::exit(0);
     } else {
       throw std::runtime_error("unknown argument: " + arg);
     }
   }
   if (args.model.empty()) {
-    throw std::runtime_error("--model is required: yolo26n-det-int8-b1.tar.gz from the Model Zoo");
+    throw std::runtime_error("--model is required: yolo26n_w8a8_mpk.tar.gz from the Model Browser");
   }
   return args;
 }
