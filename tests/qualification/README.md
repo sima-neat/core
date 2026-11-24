@@ -59,8 +59,8 @@ in place (1.06-1.10 ms over a copy) against 6.4 ms; the comparator hashed 530 MB
 | tier | what | where | measured | when |
 |---|---|---|---|---|
 | T0 | `qualify.py census` over the 37 MB census corpus: 280 components, both views, against `expected.json`; `qualify.py selftest` | A65 CPU, no device opened (the devkit, or an arm64 runner); the selftest anywhere | 525 s with 4 processes on 4 cores (464 s of census, the rest waiting for dirty pages); 1,621 CPU-s, median 1.8 s per component and view | every PR |
-| T1 | `qualify.py compare --tier T1 --floor`: 9 carried rows of each route class and 15 refused rows of each obstacle class, every form, 200 frames | a devkit on the Kernels firmware | 1,521 s for the 24 rows (three processes per form group) | PRs touching `src/pipeline/runtime/Dataflow*`, `src/model/` |
-| T2 | `qualify.py compare --floor` over every carried row (and a refused sample), `graph` form now, every form once active, 1,000 frames | devkits, sharded by row | about 60 s per row at 200 frames: 90 rows about 90 min on one board | nightly |
+| T1 | `qualify.py compare --tier T1 --floor`: 9 carried rows, one per route class, and 15 refused rows, one per obstacle class; every form; 200 frames | a devkit on the Kernels firmware | 1,521 s for the 24 rows (the forms Dataflow carries: GStreamer, Dataflow, GStreamer again; the pending ones: GStreamer, Dataflow) | PRs touching `src/pipeline/runtime/Dataflow*`, `src/model/` |
+| T2 | `qualify.py compare --floor` over every row, the active forms, 1,000 frames | devkits, sharded by row | the `graph` form at 200 frames (432 frames a process): 81 rows in 3,941 s, median 47 s a row of which about 25 s is the wait for dirty pages; processes median 8.9 s GStreamer, 6.2 s Dataflow. All 90 carried rows: about 75 min on one board; at 1,000 frames about 2 h (estimated) | nightly |
 | T3 | `launch_script.py` over every package's `performance.py` and `accuracy.py --limit N`, per backend | devkits with the datasets | not run (the scripts reach Dataflow once `Model::build` does) | weekly, and for the rows a step flips |
 
 On a board whose EV74 runs the stock firmware every route with an EV74 kernel is (correctly) `not_carried`
@@ -69,7 +69,8 @@ with the firmware form, so T1-T3 need the Kernels firmware; the census records t
 ## Determinism floor
 
 `compare --floor` runs GStreamer twice; a field that differs between the two runs is that package's floor and
-is not judged.
+is not judged. On the 120 component views of the first pass (2026-11-24) the two GStreamer runs agreed on every
+field and every output byte: the floor is empty.
 
 ## CI wiring (not done here)
 
