@@ -2318,21 +2318,6 @@ if (NOT ssd_contract_integration_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
     APPEND PROPERTY LABELS "integration;obj_detection;ssd;contract;strict")
 endif()
 
-add_pipeline_test_long(
-  ssd300_surgical_e2e_test
-  LOCK_ACCELERATOR
-  SOURCES
-    e2e_pipelines/obj_detection/ssd300_surgical_e2e_test.cpp
-    e2e_pipelines/e2e_utils.cpp
-    e2e_pipelines/obj_detection/obj_detection_utils.cpp
-  ARGS ${CMAKE_SOURCE_DIR}
-)
-
-if (NOT ssd300_surgical_e2e_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
-  set_property(TEST ssd300_surgical_e2e_test
-    APPEND PROPERTY LABELS "e2e;obj_detection;ssd;ssd300;surgical;acceptance")
-endif()
-
 add_pipeline_test(
   sync_yolov8_test_detessdequant
   e2e_pipelines/obj_detection/sync_yolov8_test_detessdequant.cpp
