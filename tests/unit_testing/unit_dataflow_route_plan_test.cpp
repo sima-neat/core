@@ -464,13 +464,39 @@ void boxdecode(const Yolo& y) {
   }
   // The decode families: a (profile, task) pair runs once a device row has shown its wire
   // byte-equal to GStreamer's; the stage's shape is the same for all of them.
-  for (const char* profile : {"yolo26_v1", "yolox_v1", "ssd_v1", "yolov5_v1", "detr_v1"}) {
+  for (const char* profile : {"yolo_dfl_obb_v1", "yolo26_obb_v1"}) {
+    accepts(decode([profile](si::StageStaticSpec&, si::KernelStageRecipe& r) {
+              r.boxdecode_program->profile = profile;
+            }),
+            std::string("the decode family ") + profile + "/detection");
+  }
+  for (const char* profile :
+       {"yolo26_v1", "yolox_v1", "ssd_v1", "yolov5_v1", "detr_v1", "yolox_seg_pose_v1"}) {
     declines(decode([profile](si::StageStaticSpec&, si::KernelStageRecipe& r) {
                r.boxdecode_program->profile = profile;
              }),
              "the BoxDecode stage runs the decode families yolo_dfl_v1/detection",
              std::string("a decode family without a device row: ") + profile);
   }
+  // A decode that takes each frame's affine: the oriented-box families, on frames whose
+  // letterbox has one scale for both axes.
+  declines(decode([](si::StageStaticSpec&, si::KernelStageRecipe& r) {
+             r.boxdecode_program->complete_geometry = true;
+           }),
+           "a complete-geometry profile takes each frame's preprocess affine",
+           "a detection decode that takes each frame's affine");
+  const auto oriented = [&decode](int width, int height) {
+    Ask a = decode([](si::StageStaticSpec&, si::KernelStageRecipe& r) {
+      r.boxdecode_program->profile = "yolo_dfl_obb_v1";
+      r.boxdecode_program->complete_geometry = r.boxdecode_program->uniform_transform = true;
+    });
+    a.declared.width = width;
+    a.declared.height = height;
+    return a;
+  };
+  accepts(oriented(1280, 720), "oriented boxes on 1280x720 frames (one scale)");
+  declines(oriented(642, 362), "oriented boxes require equal authoritative affine scales",
+           "oriented boxes on 642x362 frames (two scales)");
   for (const char* task : {"pose", "segmentation", "segmentation_pose"}) {
     declines(decode([task](si::StageStaticSpec&, si::KernelStageRecipe& r) {
                r.boxdecode_program->task = task;

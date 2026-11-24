@@ -52,14 +52,19 @@
 //     kernel is made for the frames the route's image preproc is planned for
 //     (boxdecode_geometry_for_frames: what GStreamer's per-frame resolver selects for such a
 //     frame): once when the frame size is declared; otherwise the operator runs each frame size
-//     with the Run's kernel's "image_size" variant (soc::Kernel::with), selected by the stamp's
-//     user word (DataflowFrames). Carried: the decode families whose wire a device row has
-//     shown byte-equal to GStreamer's (the table in front of plan_boxdecode_stage: YOLOv8-style
-//     detection), with C-blocked heads. A head that is a dense or strided tensor must span exactly
-//     the bytes its kernel reads: one whose rows carry channel padding does not, and is not
-//     carried. The other decode families, pose, segmentation and oriented boxes, tiled heads
-//     (detess members), and a decode that takes each frame's size without the image preproc in
-//     front are not carried (the plan says so).
+//     with the Run's kernel's geometry variant (soc::Kernel::with: "image_size", or
+//     "image_geometry" with the frame's model-to-original transform for oriented boxes), selected
+//     by the stamp's user word (DataflowFrames). Carried: the decode families whose wire a device
+//     row has shown byte-equal to GStreamer's (the table in front of plan_boxdecode_stage:
+//     YOLOv8-style detection, wire BBOX, with C-blocked heads; YOLOv8-style and YOLO26 oriented
+//     boxes, wire BBOX_OBB_V1). A head that is a dense or strided tensor must span exactly the
+//     bytes its kernel reads: one whose rows carry channel padding does not, and is not carried.
+//     An oriented-box decode maps boxes back with one scale for both axes: a frame size whose
+//     letterbox has two is refused, at the build when it is the declared size or the port's
+//     bound, at its push otherwise (the Run goes on). The other decode families, pose and
+//     segmentation, a non-oriented decode that takes each frame's affine (a crop, an off-centre
+//     letterbox, an explicit transform), tiled heads (detess members), and a decode that takes
+//     each frame's size without the image preproc in front are not carried (the plan says so).
 // Here: what the route's stages are, read from what Core compiles and lowers for the same nodes on
 // GStreamer (the rendered stage manifest and its checked kernel recipes), and what the input's
 // port does with them: load the model and make the kernels, check the input's binding against

@@ -11,7 +11,8 @@
 //   graph      Input() -> model.preprocess() -> inference() -> postprocess() -> Output() in a Graph
 //              with the Model's placement options, built seeded with the first input; scenarios
 //              lock (push one, pull one), sizes (image views: frames of eight sizes on the same
-//              Run) and free (a pushing and a pulling thread, on a Run of its own)
+//              Run, last on it: a frame size a backend does not take ends the scenario, and on
+//              GStreamer the Run) and free (a pushing and a pulling thread, on a Run of its own)
 //   model      Model::build(seed) + Runner: lock and sizes on the default RunOptions; free on the
 //              catalogue's own {queue_depth 4, Block, ZeroCopy}
 //   model_run  Model::run(inputs, timeout) per frame
@@ -26,9 +27,9 @@
 //   neat_qualification_compare --backend gstreamer|dataflow --package <tar.gz> --opts <file|->
 //       --images <dir> --out <file.jsonl> [--forms graph] [--frames 200] [--timeout-ms 20000]
 //       [--route full|pre] [--hash-bench] [--idle-pull]
-// Scenarios of the graph form: lock, sizes, lock_tl (16 more frames on the same Run through
-// Run::pull(std::chrono::milliseconds), which returns the tensors with their Stamp), idle (with
-// --idle-pull: one 200 ms pull before the first push of the free Run) and free.
+// Scenarios of the graph form: lock, lock_tl (16 more frames on the same Run through
+// Run::pull(std::chrono::milliseconds), which returns the tensors with their Stamp), sizes, idle
+// (with --idle-pull: one 200 ms pull before the first push of the free Run) and free.
 
 #include "model/Model.h"
 #include "neat/runtime.h"
@@ -870,6 +871,22 @@ void build_record(const std::string& form, const std::string& group, bool ok, do
   emit(o.text());
 }
 
+// The close of a scenario group's Run, as a record: whether it returned. A Run that a refused
+// frame ended (GStreamer's, after a frame its decode does not take) may refuse its close; the
+// forms behind it still run.
+template <class Close>
+void close_record(const std::string& form, const std::string& group, Close&& close) {
+  q::Obj o;
+  o.str("record", "close").str("form", form).str("group", group);
+  try {
+    close();
+    o.boolean("ok", true);
+  } catch (const std::exception& e) {
+    o.boolean("ok", false).str("error", e.what());
+  }
+  emit(o.text());
+}
+
 // The Graph's options are the Model's placement options, as Model::build gives them to its own
 // Graph (and as the census asks the planner): without them the fragments' kernels take the
 // default placement.
@@ -904,13 +921,15 @@ void form_graph(Ctx& c, Model& model) {
     build_record("graph", "lock", true, seconds_since(t0));
     Port p = port_of(*run);
     lockstep(c, p, "graph", "lock", c.inputs, c.labels, c.frames);
+    // The same Run through the pull that returns the tensors with their Stamp.
+    lockstep(c, p, "graph", "lock_tl", c.inputs, c.labels, 16);
     if (!c.sized.empty()) {
       lockstep(c, p, "graph", "sizes", c.sized, c.sized_labels, static_cast<long>(c.sized.size()));
     }
-    // The same Run through the pull that returns the tensors with their Stamp.
-    lockstep(c, p, "graph", "lock_tl", c.inputs, c.labels, 16);
-    run->close_input();
-    run->close();
+    close_record("graph", "lock", [&run] {
+      run->close_input();
+      run->close();
+    });
   }
   {
     const auto t0 = Clock::now();
@@ -960,7 +979,7 @@ void form_model(Ctx& c, Model& model) {
     if (!c.sized.empty()) {
       lockstep(c, p, "model", "sizes", c.sized, c.sized_labels, static_cast<long>(c.sized.size()));
     }
-    runner->close();
+    close_record("model", "lock", [&runner] { runner->close(); });
   }
   {
     // The catalogue's multi-component scripts' RunOptions.
@@ -1229,8 +1248,11 @@ int main(int argc, char** argv) {
         c.inputs.push_back(TensorList{frame_tensor(frames.back(), c.set.frame_format)});
         c.labels.push_back("img" + std::to_string(k) + "@1280x720");
       }
-      const std::pair<int, int> sizes[] = {{1280, 720}, {640, 360}, {1024, 576}, {854, 480},
-                                           {640, 427},  {720, 480}, {960, 540},  {1120, 630}};
+      // The 16:9 sizes first: their letterbox has one scale on both axes on every canvas of the
+      // catalogue, which is what an oriented-box decode takes (expected_differences.json,
+      // oriented_boxes_unequal_scales); the scenario ends at the first frame a backend refuses.
+      const std::pair<int, int> sizes[] = {{1280, 720}, {640, 360}, {1024, 576}, {960, 540},
+                                           {1120, 630}, {854, 480}, {640, 427},  {720, 480}};
       for (int round = 0; round < 2; ++round) {
         int n = 0;
         for (const auto& [w, h] : sizes) {

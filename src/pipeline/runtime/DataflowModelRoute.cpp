@@ -184,10 +184,13 @@ bool dataflow_has_model_route() noexcept {
 //
 // The two kernels of a geometry: the preproc's is made for the frame's size (its tensors are
 // the frame's). The BoxDecode kernel is the Run's loaded one (`decode_kernel`, the port's
-// bound's) with the frame's original image size in its "image_size" variant (Kernel::with),
-// which keeps the kernel's tensors: the operator prepares it from one it keeps and runs it on
-// the buffers it has admitted. The table starts with the bound's geometry, whose kernels the
-// Run loaded (seed_dataflow_frames).
+// bound's) with the frame's geometry in the variant the stage binds for it (Kernel::with): the
+// original image size in "image_size", or, for oriented boxes, the size and the frame's
+// model-to-original transform in "image_geometry". A variant keeps the kernel's tensors: the
+// operator prepares it from one it keeps and runs it on the buffers it has admitted. A frame
+// size whose letterbox has two different scales is one an oriented-box decode does not take: it
+// is refused at its push (FrameNotCarried) and the Run goes on. The table starts with the bound's
+// geometry, whose kernels the Run loaded (seed_dataflow_frames).
 struct DataflowFrames {
   using Adapter = si::kernel_lowering::PreprocFrameAdapter;
   // What the plan fixed.
@@ -975,6 +978,8 @@ struct CarriedDecode {
 };
 constexpr CarriedDecode kCarriedDecodes[] = {
     {"yolo_dfl_v1", "detection"},
+    {"yolo_dfl_obb_v1", "detection"},
+    {"yolo26_obb_v1", "detection"},
 };
 
 bool carried_decode(std::string_view profile, std::string_view task) {
@@ -1051,8 +1056,9 @@ std::string plan_boxdecode_stage(const si::StageStaticSpec& stage, bool first, b
     return "it decodes profile '" + program.profile + "', task '" + program.task +
            "': the BoxDecode stage runs the decode families " + carried_decodes_text() + " only";
   }
-  if (!program.write || recipe.output_format != kDetectionFormatBbox) {
-    return "it publishes another wire than BBOX ('" + recipe.output_format + "')";
+  if (!program.write || (recipe.output_format != kDetectionFormatBbox &&
+                         recipe.output_format != kDetectionFormatBboxObbV1)) {
+    return "it publishes another wire than BBOX or BBOX_OBB_V1 ('" + recipe.output_format + "')";
   }
   // The decode is the recipe's first member (BoxDecodeProgram::member) when no detess member is
   // in front of it, and the stage's host task (the serializer) the second.
@@ -1077,7 +1083,11 @@ std::string plan_boxdecode_stage(const si::StageStaticSpec& stage, bool first, b
   // for such a frame.
   const PreprocessRuntimeMeta* const facts =
       route.output.preprocess ? &*route.output.preprocess : nullptr;
-  auto fixed = program.complete_geometry
+  // A decode that takes each frame's affine as well as its size runs for the oriented-box
+  // families, which always take both (their rows show the "image_geometry" variant). The other
+  // families take it only for a crop, an off-centre letterbox or an explicit transform, which
+  // no row has shown.
+  auto fixed = program.complete_geometry && !program.uniform_transform
                    ? client::Result<si::BoxDecodeFrameGeometry>(client::Error{
                          client::ErrorCode::InvalidRequest, "boxdecode.geometry",
                          "a complete-geometry profile takes each frame's preprocess affine"})
@@ -2078,13 +2088,29 @@ std::shared_ptr<df::soc::Kernel> make_kernel(const DataflowModelStage& stage, co
 
 using FrameGeometry = std::shared_ptr<const DataflowFrames::Geometry>;
 
+// A frame geometry this backend does not carry: the fact about "this frame" (the one error form),
+// where a std::string in its place is a mistake of the frame.
+struct FrameNotCarried {
+  std::string fact;
+};
+using FrameGeometryOrWhy = std::variant<FrameGeometry, std::string, FrameNotCarried>;
+
+// Why `found` is no geometry, as one text.
+std::string no_geometry_text(const FrameGeometryOrWhy& found) {
+  if (const std::string* why = std::get_if<std::string>(&found)) {
+    return *why;
+  }
+  const FrameNotCarried* const not_carried = std::get_if<FrameNotCarried>(&found);
+  return not_carried ? not_carried->fact : std::string();
+}
+
 // What Core derives from one frame geometry, by the functions the plan used for the port's
 // bound: the image stage's request for it and the facts it publishes
 // (PreprocFrameAdapter::checked_fixed_frame), what the BoxDecode stage runs for frames of it
 // (boxdecode_geometry_for_frames), and the two kernels made of them. Cold: the Kernels package
 // checks the preproc's request and the decode's variant. The geometry, or why it has none.
-std::variant<FrameGeometry, std::string>
-make_frame_geometry(const DataflowFrames& frames, std::uint64_t word, const char* where) {
+FrameGeometryOrWhy make_frame_geometry(const DataflowFrames& frames, std::uint64_t word,
+                                       const char* where) {
   using Adapter = DataflowFrames::Adapter;
   const std::int64_t width = DataflowFrames::width_of(word);
   const std::int64_t height = DataflowFrames::height_of(word);
@@ -2113,6 +2139,20 @@ make_frame_geometry(const DataflowFrames& frames, std::uint64_t word, const char
   geometry->word = word;
   try {
     geometry->preprocess = preprocess_from_compact_facts(*facts);
+    // An oriented-box decode maps a box back with one scale for both axes (the Kernels package's
+    // rule and the resolver's). The letterbox has two wherever the image's shorter side does
+    // not land on a whole number of canvas pixels.
+    if (const PreprocessRuntimeMeta& own = geometry->preprocess;
+        frames.decode && frames.decode->boxdecode_program->uniform_transform &&
+        own.affine_m00 != own.affine_m11) {
+      char scales[96];
+      std::snprintf(scales, sizeof scales, "%.9g across, %.9g down", own.affine_m00,
+                    own.affine_m11);
+      return FrameNotCarried{"it is resized onto the model's " + std::to_string(own.resized_width) +
+                             "x" + std::to_string(own.resized_height) +
+                             " canvas with two different scales (" + scales +
+                             "), and the oriented-box decode maps boxes back with one scale"};
+    }
     DataflowModelStage stage = frames.preproc_stage;
     DataflowModelStage::Kernel& kernel = std::get<DataflowModelStage::Kernel>(stage.kind);
     kernel.parameters = std::move(request.parameters);
@@ -2128,8 +2168,9 @@ make_frame_geometry(const DataflowFrames& frames, std::uint64_t word, const char
     }
     geometry->preproc = make_kernel(stage, where, pipeline_internal::DataflowErrorSite::Running);
     if (frames.decode) {
-      // The resolver's checks for such a frame (its resize mode, its size); then the Run's
-      // kernel, or its "image_size" variant where the frame says the original image's size.
+      // The resolver's checks for such a frame (its resize mode, its size, its affine); then the
+      // Run's kernel, or the variant the stage binds for a frame's geometry with the frame's
+      // values: "image_size", or "image_geometry" with the model-to-original transform as well.
       auto decode =
           si::boxdecode_geometry_for_frames(*frames.decode, boxdecode_facts(&geometry->preprocess));
       if (const auto* error = std::get_if<client::Error>(&decode)) {
@@ -2140,11 +2181,19 @@ make_frame_geometry(const DataflowFrames& frames, std::uint64_t word, const char
       geometry->decode = base;
       if (!selected.variant.empty()) {
         using Scalar = df::soc::KernelParameter::Scalar;
-        const df::soc::KernelParameter size{
-            "image_size", std::vector<Scalar>{Scalar{std::int64_t{selected.image_size[0]}},
-                                              Scalar{std::int64_t{selected.image_size[1]}}}};
-        df::Result<std::shared_ptr<df::soc::Kernel>> varied =
-            base->with(selected.variant, {&size, 1});
+        std::vector<df::soc::KernelParameter> values;
+        values.push_back(
+            {"image_size", std::vector<Scalar>{Scalar{std::int64_t{selected.image_size[0]}},
+                                               Scalar{std::int64_t{selected.image_size[1]}}}});
+        if (selected.model_to_original) {
+          // The FP32 values the resolver hands the variant, each widened once.
+          std::vector<Scalar> transform;
+          for (const float value : *selected.model_to_original) {
+            transform.push_back(Scalar{static_cast<double>(value)});
+          }
+          values.push_back({"model_to_original", std::move(transform)});
+        }
+        df::Result<std::shared_ptr<df::soc::Kernel>> varied = base->with(selected.variant, values);
         if (const df::Error* error = df::failure(varied)) {
           return std::string("the decode does not take such frames: ") + error->message;
         }
@@ -2176,8 +2225,8 @@ void seed_dataflow_frames(DataflowFrames& frames, std::shared_ptr<df::soc::Kerne
 
 // The table's entry for the geometry `word` states, made and kept when the table has none (the
 // entry used longest ago leaves; whoever still reads it keeps it).
-std::variant<FrameGeometry, std::string> frame_geometry(const DataflowFrames& frames,
-                                                        std::uint64_t word, const char* where) {
+FrameGeometryOrWhy frame_geometry(const DataflowFrames& frames, std::uint64_t word,
+                                  const char* where) {
   const auto kept = [&frames, word]() -> FrameGeometry {
     for (std::size_t i = 0; i < DataflowFrames::kKept; ++i) {
       if (frames.kept[i] && frames.kept[i]->word == word) {
@@ -2193,7 +2242,7 @@ std::variant<FrameGeometry, std::string> frame_geometry(const DataflowFrames& fr
       return found;
     }
   }
-  std::variant<FrameGeometry, std::string> made = make_frame_geometry(frames, word, where);
+  FrameGeometryOrWhy made = make_frame_geometry(frames, word, where);
   if (!std::holds_alternative<FrameGeometry>(made)) {
     return made;
   }
@@ -2223,12 +2272,12 @@ std::shared_ptr<const PreprocessRuntimeMeta> frame_facts(const DataflowFrames* f
   if (!frames) {
     return nullptr;
   }
-  std::variant<FrameGeometry, std::string> found = frame_geometry(*frames, word, "Run::pull");
-  if (const std::string* why = std::get_if<std::string>(&found)) {
+  FrameGeometryOrWhy found = frame_geometry(*frames, word, "Run::pull");
+  if (!std::holds_alternative<FrameGeometry>(found)) {
     pipeline_internal::error_util::throw_session_error(
         error_codes::kRuntimePull,
-        "Run::pull: no preprocess facts for the pulled frame's geometry: " + *why +
-            " (Dataflow backend)");
+        "Run::pull: no preprocess facts for the pulled frame's geometry: " +
+            no_geometry_text(found) + " (Dataflow backend)");
   }
   const FrameGeometry& geometry = std::get<FrameGeometry>(found);
   return std::shared_ptr<const PreprocessRuntimeMeta>(geometry, &geometry->preprocess);
@@ -2240,8 +2289,7 @@ std::shared_ptr<const PreprocessRuntimeMeta> frame_facts(const DataflowFrames* f
 df::Result<std::shared_ptr<df::soc::Kernel>>
 frame_kernel(const DataflowFrames& frames, std::uint64_t word, bool decode) noexcept {
   try {
-    std::variant<FrameGeometry, std::string> found =
-        frame_geometry(frames, word, "the Dataflow route's operator");
+    FrameGeometryOrWhy found = frame_geometry(frames, word, "the Dataflow route's operator");
     if (const FrameGeometry* geometry = std::get_if<FrameGeometry>(&found)) {
       return decode ? (*geometry)->decode : (*geometry)->preproc;
     }
@@ -2431,7 +2479,10 @@ std::uint64_t dataflow_frame_word(const DataflowModelRoute& route, const Tensor&
   }
   // The geometry's kernels are made here when the table has none, so that the Worker is never
   // asked for one the Kernels package refuses.
-  const std::variant<FrameGeometry, std::string> found = frame_geometry(frames, word, where);
+  const FrameGeometryOrWhy found = frame_geometry(frames, word, where);
+  if (const FrameNotCarried* not_carried = std::get_if<FrameNotCarried>(&found)) {
+    throw_frame_not_carried(where, not_carried->fact.c_str());
+  }
   if (const std::string* why = std::get_if<std::string>(&found)) {
     refuse("a " + std::to_string(width) + "x" + std::to_string(height) + " " + frames.format +
            " frame is not one the model's image preproc stage takes: " + *why +

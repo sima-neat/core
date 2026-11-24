@@ -1,6 +1,6 @@
 {
  "schema": 1,
- "about": "The differences between the two backends that a row of expected.json may show and still be `equal`. Each row names what GStreamer gives and what Dataflow gives, why the difference exists and who removes it; the comparator (qualify.py) accepts a difference only where an active row's fields, scope and relation all hold, and fails a must_observe row whose fields were compared and found equal everywhere (the difference is gone: the change that removed it deletes the row). kind: kept = the owner decided to keep Dataflow's behaviour (DECISIONS.md 5, 14) or the field is new surface; interim = a named later step removes it; proposed = no decision covers it yet: the row states the proposal and the decision it needs. state: active = applied now; planned = the step that creates the difference has not landed, so the fields must still be equal; not_exercised = no comparator scenario observes it yet (the row says which test does); not_observed = the comparator looked and both backends agree on the catalogue's routes. check: fields (record fields), stderr (lines), none.",
+ "about": "The differences between the two backends that a row of expected.json may show and still be `equal`. Each row names what GStreamer gives and what Dataflow gives, why the difference exists and who removes it; the comparator (qualify.py) accepts a difference only where an active row's fields, scope and relation all hold, and fails a must_observe row whose fields were compared and found equal everywhere (the difference is gone: the change that removed it deletes the row). kind: kept = the owner decided to keep Dataflow's behaviour (DECISIONS.md 5, 14) or the field is new surface; interim = a named later step removes it; proposed = no decision covers it yet: the row states the proposal and the decision it needs. state: active = applied now; planned = the step that creates the difference has not landed, so the fields must still be equal; not_exercised = no comparator scenario observes it yet (the row says which test does); not_observed = the comparator looked and both backends agree on the catalogue's routes. check: fields (record fields), stderr (lines), stop (a scenario both backends end at the same frame, each with the row's error), none.",
  "rows": [
   {
    "id": "stamp_publish_time",
@@ -182,6 +182,40 @@
      "img\\d@640x427",
      "img\\d@720x480",
      "img\\d@854x480"
+    ]
+   }
+  },
+  {
+   "id": "oriented_boxes_unequal_scales",
+   "kind": "interim",
+   "state": "active",
+   "check": "stop",
+   "must_observe": true,
+   "until": "the Kernels package's oriented-box decode takes a model-to-original transform whose two scales differ (A65/boxdecode: check_image_geometry_spec and the two OBB recipes' mapping) and Core's four checks of equal scales follow it",
+   "decision": "DECISIONS.md 14 (one letterbox rule: the two scales differ wherever the non-limiting axis is rounded up); ROUND2 p3-box rule 2",
+   "gstreamer": "the frame is pushed; the BoxDecode stage's resolver refuses it (oriented boxes require equal authoritative affine scales), the pull returns the error and the Run is dead",
+   "dataflow": "the frame is refused at its push in the one form (this frame is not carried) and the Run goes on",
+   "sizes": "of the comparator's size scenario on the 1024x1024 canvas of the oriented-box models: 854x480, 640x427 and 720x480; the 16:9 sizes in front of them (1280x720, 640x360, 1024x576, 960x540, 1120x630) have one scale and are compared byte for byte",
+   "gstreamer_error": ".*oriented boxes require equal authoritative affine scales.*",
+   "dataflow_error": ".*this frame is not carried by the Dataflow backend: .*the oriented-box decode.*",
+   "scope": {
+    "views": [
+     "app"
+    ],
+    "forms": [
+     "graph",
+     "model"
+    ],
+    "scenarios": [
+     "sizes"
+    ],
+    "inputs": [
+     "img\\d@854x480",
+     "img\\d@640x427",
+     "img\\d@720x480"
+    ],
+    "components": [
+     ".*_obb__.*"
     ]
    }
   }

@@ -47,6 +47,11 @@
 //   nv12             a model that reads NV12 frames: the frame's two planes as two views of the
 //                    input's one buffer; a frame of the declared bound's size (wrapped) and a
 //                    smaller one (copied to the port's offsets).
+//   scales           Dataflow, an oriented-box package (--opts): a frame size whose letterbox has
+//                    two different scales is refused at its push in the not-carried form and the
+//                    Run goes on; declared as the Input's frame size it is refused at the build.
+// An oriented-box decode takes frames whose letterbox has one scale for both axes: with such a
+// package the rows above push 16:9 and 4:3 sizes only.
 // On a board whose EV74 runs the stock firmware the test is one check: the build is refused,
 // naming the firmware.
 
@@ -184,6 +189,11 @@ Model::Options image_options(std::optional<PreprocessColorFormat> format = std::
   Model::Options o = g_decode.options;
   if (format) {
     o.preprocess.color_convert.input_format = *format;
+  }
+  if (g_decode.from_file) {
+    // The test's largest frame, where the catalogue's sets say their application's.
+    o.preprocess.input_max_width = 1920;
+    o.preprocess.input_max_height = 1080;
   }
   o.top_k = kTopK;
   return o;
@@ -532,9 +542,10 @@ std::vector<TensorList> sized_frames(const std::vector<cv::Mat>& images) {
     out.push_back({bgr(resized(image, image.cols / 2, image.rows / 2))});
     out.push_back({whole});
   }
+  const bool oriented = g_decode.task == sima_test::DecodeTask::Oriented;
   out.push_back({bgr(cropped(images[0], 640, 480))});
-  out.push_back({bgr(cropped(images[0], 642, 362))});
-  out.push_back({bgr(cropped(images[0], 1000, 700))});
+  out.push_back({bgr(oriented ? cropped(images[0], 960, 540) : cropped(images[0], 642, 362))});
+  out.push_back({bgr(oriented ? cropped(images[0], 1024, 576) : cropped(images[0], 1000, 700))});
   out.push_back({bgr(images[0])});
   return out;
 }
@@ -603,11 +614,18 @@ void two_sizes(sima_test::Reference& ref, const Model& model, const std::vector<
 void many(sima_test::Reference& ref, const Model& model, const std::vector<cv::Mat>& images) {
   // Eighteen sizes: more than the frames' table and an operator keep (sixteen each). The
   // first, the seed, is the largest: the stage's capacity.
-  constexpr int kSizes[18][2] = {{1920, 1080}, {640, 360},  {1280, 720}, {640, 480},  {1000, 700},
-                                 {642, 362},   {800, 600},  {320, 240},  {1024, 576}, {960, 540},
-                                 {720, 480},   {1600, 900}, {1366, 768}, {854, 480},  {1152, 648},
-                                 {480, 270},   {1440, 810}, {576, 324}};
-  constexpr std::size_t kCount = sizeof kSizes / sizeof kSizes[0];
+  constexpr int kAnySizes[18][2] = {
+      {1920, 1080}, {640, 360}, {1280, 720}, {640, 480}, {1000, 700}, {642, 362},
+      {800, 600},   {320, 240}, {1024, 576}, {960, 540}, {720, 480},  {1600, 900},
+      {1366, 768},  {854, 480}, {1152, 648}, {480, 270}, {1440, 810}, {576, 324}};
+  // 16:9 sizes whose height lands on a whole number of pixels of a 640 or 1024 canvas: one scale.
+  constexpr int kOneScaleSizes[18][2] = {
+      {1920, 1080}, {640, 360},  {1280, 720}, {960, 540}, {1600, 900}, {320, 180},
+      {800, 450},   {1120, 630}, {1024, 576}, {480, 270}, {1440, 810}, {1760, 990},
+      {1088, 612},  {1152, 648}, {864, 486},  {704, 396}, {1344, 756}, {576, 324}};
+  const auto& kSizes =
+      g_decode.task == sima_test::DecodeTask::Oriented ? kOneScaleSizes : kAnySizes;
+  constexpr std::size_t kCount = sizeof kAnySizes / sizeof kAnySizes[0];
   std::vector<TensorList> frames;
   for (int round = 0; round < 3; ++round) {
     for (const auto& size : kSizes) {
@@ -874,6 +892,54 @@ void nv12_frames(sima_test::Reference& ref, const std::string& archive,
   }
 }
 
+// An oriented-box decode maps boxes back with one scale for both axes. A 642x362 frame's
+// letterbox has two on every canvas of the catalogue (its 362 rows land on 360.87 or 577.4).
+void scales(const Model& model, const std::vector<cv::Mat>& images,
+            const std::vector<Frame>& expected) {
+  const TensorList whole{bgr(images[0])};
+  const TensorList uneven{bgr(cropped(images[0], 642, 362))};
+  Graph g = route_graph(model);
+  Run run = g.build(whole, on());
+  bool refused = false;
+  try {
+    (void)run.push(uneven);
+  } catch (const NeatError& error) {
+    refused = true;
+    require(error.report().error_code == error_codes::kInputShape,
+            std::string("scales: an input-shape error: ") + error.what());
+    require_contains(error.what(), "this frame is not carried by the Dataflow backend",
+                     std::string("scales: ") + error.what());
+    require_contains(error.what(), "two different scales", std::string("scales: ") + error.what());
+    std::cout << "[scales] a 642x362 frame: " << error.what() << "\n";
+  }
+  require(refused, "scales: a frame whose letterbox has two scales is refused at its push");
+  for (int i = 0; i < 3; ++i) {
+    require(run.push(whole), "scales: the Run goes on");
+    require(pull_frame(run, false, "scales").bytes[0] == expected[0].bytes[0],
+            "scales: the next frame gives its wire");
+  }
+  require(run.last_error().empty(), "scales: no error on the Run: " + run.last_error());
+  run.close();
+  // Declared as the Input's frame size, such a size is refused when the Run is built.
+  InputOptions in;
+  in.payload_type = PayloadType::Image;
+  in.format = g_decode.input_format;
+  in.width = 642;
+  in.height = 362;
+  try {
+    Graph declared = route_graph(model, 3, &in);
+    (void)declared.build(uneven, on());
+  } catch (const NeatError& error) {
+    require_contains(error.what(), "is not carried by the Dataflow backend",
+                     std::string("scales: ") + error.what());
+    require_contains(error.what(), "oriented boxes require equal authoritative affine scales",
+                     std::string("scales: ") + error.what());
+    std::cout << "[scales] a declared 642x362 frame size: " << error.what() << "\n";
+    return;
+  }
+  throw std::runtime_error("scales: a Run for 642x362 frames of an oriented-box model was built");
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -952,6 +1018,9 @@ int main(int argc, char** argv) {
       row("refused", [&] { refused(model, images, expected); });
     }
     row("nv12", [&] { nv12_frames(ref, archive, images); });
+    if (dataflow && g_decode.task == sima_test::DecodeTask::Oriented) {
+      row("scales", [&] { scales(model, images, expected); });
+    }
     if (only.empty() || !dataflow) {
       ref.finish();
     }

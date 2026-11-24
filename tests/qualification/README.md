@@ -13,6 +13,12 @@ Dataflow backend has exactly one of two outcomes:
 
 Anything else fails. It is a bug for the change that caused it, never a row to add.
 
+A frame a backend does not take ends a scenario: both backends must then end it at the same frame,
+each with the error an active `stop` row of `expected_differences.json` names (an oriented-box decode
+and a frame size whose letterbox has two scales: GStreamer's Run is dead after it, Dataflow refuses
+the push and goes on). The size scenario runs last on its Run and pushes the sizes every decode
+takes first.
+
 ## Files
 
 | file | what |

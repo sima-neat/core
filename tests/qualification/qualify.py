@@ -381,8 +381,8 @@ def index_records(recs):
             idx[(r['form'], r['sc'], 'frame', r['i'])] = r
         elif kind == 'end':
             idx[(r['form'], r['sc'], 'end', 0)] = r
-        elif kind == 'build':
-            idx[(r['form'], r['group'], 'build', 0)] = r
+        elif kind in ('build', 'close'):
+            idx[(r['form'], r['group'], kind, 0)] = r
         elif kind in ('plan', 'bench', 'model', 'process'):
             idx[(kind, '', kind, 0)] = r
     return idx
@@ -522,9 +522,51 @@ def build_of(recs, form, group):
     return None
 
 
-def frames_ok(recs, form):
+def frames_ok(recs, form, stops=None):
+    """Whether every scenario of `form` delivered every frame; a scenario in `stops` (a documented
+    stop: documented_stops) delivered every frame up to the one both backends refuse."""
     ends = [r for r in recs if r.get('record') == 'end' and r.get('form') == form]
-    return ends and all(r.get('frames_ok') == r.get('frames') for r in ends), ends
+    return ends and all(r.get('frames_ok') == r.get('frames') or (form, r.get('sc')) in (stops or {})
+                        for r in ends), ends
+
+
+def documented_stops(g_recs, d_recs, differences, view, comp_id, forms):
+    """{(form, scenario): (frame index, row id)} of the scenarios that end early on both backends
+    as an active row of check `stop` says: at the same frame, whose input is in the row's scope,
+    each backend with the row's error (GStreamer's pull, Dataflow's push). And the ids of the
+    must_observe stop rows in scope of this component whose stop did not happen."""
+    rows = [r for r in differences['rows'] if r.get('state') == 'active' and r.get('check') == 'stop']
+    a, b = index_records(g_recs), index_records(d_recs)
+    found, seen, hit = {}, set(), set()
+    for row in rows:
+        scope = row.get('scope', {})
+        if scope.get('components') and not any(re.fullmatch(x, comp_id) for x in scope['components']):
+            continue
+        for key in sorted(set(a) & set(b), key=str):
+            form, sc, kind, _ = key
+            if kind != 'end' or form not in forms:
+                continue
+            ga, db = a[key], b[key]
+            labels = [r.get('input', '') for (f, s, k, _), r in a.items() if (f, s, k) == (form, sc, 'frame')]
+            labels += [r.get('input', '') for (f, s, k, _), r in b.items() if (f, s, k) == (form, sc, 'frame')]
+            if not any(row_applies(row, view, form, sc, label) for label in labels):
+                if not scope.get('inputs') and row_applies(row, view, form, sc):
+                    seen.add(row['id'])
+                continue
+            seen.add(row['id'])
+            i = ga.get('frames_ok')
+            gf, df = a.get((form, sc, 'frame', i)), b.get((form, sc, 'frame', i))
+            if i is None or i != db.get('frames_ok') or i >= ga.get('frames', 0) or gf is None or df is None:
+                continue
+            if not (row_applies(row, view, form, sc, gf.get('input', '')) and
+                    gf.get('input') == df.get('input') and
+                    re.fullmatch(row['gstreamer_error'], ga.get('first_error', ''), re.S) and
+                    re.fullmatch(row['dataflow_error'], db.get('first_error', ''), re.S)):
+                continue
+            found[(form, sc)] = (i, row['id'])
+            hit.add(row['id'])
+    stale = sorted(r['id'] for r in rows if r.get('must_observe') and r['id'] in seen and r['id'] not in hit)
+    return found, stale
 
 
 def form_state(row, expected, form):
@@ -568,7 +610,8 @@ def judge_component(comp, row, expected, differences, g, d, floor, view, forms, 
             out['forms'][form] = fv
             verdicts.append(fv['outcome'])
             continue
-        g_ok, _ = frames_ok(g['records'], form)
+        stops, unstopped = documented_stops(g['records'], d['records'], differences, view, comp['id'], [form])
+        g_ok, _ = frames_ok(g['records'], form, stops)
         if form not in ('plan', 'bench') and not g_ok:
             fv['outcome'] = 'FAIL'
             fv['why'] = 'GStreamer did not deliver every frame'
@@ -610,12 +653,19 @@ def judge_component(comp, row, expected, differences, g, d, floor, view, forms, 
                 out['explained']['floor'] += 1
                 continue
             rid = explain(diff, rows, view)
+            stop = stops.get((diff[0], diff[1]))
+            if rid is None and stop is not None and (diff[2] == 'end' or (diff[2] == 'frame' and diff[3] == stop[0])):
+                # the frame both backends refuse, each in its way, and what the Run says after it
+                rid = stop[1]
+            if rid is None and diff[2] == 'close':
+                # the close of a Run whose scenario a documented stop ended
+                rid = next((row for (form, _), (_, row) in stops.items() if form == diff[0]), None)
             if rid:
                 out['explained'][rid] += 1
             else:
                 unexplained.append(diff)
-        stale = stale_rows(g['records'], d['records'], rows, view, [form])
-        d_ok, _ = frames_ok(d['records'], form)
+        stale = stale_rows(g['records'], d['records'], rows, view, [form]) + unstopped
+        d_ok, _ = frames_ok(d['records'], form, stops)
         if unexplained or stale or (form not in ('plan', 'bench') and not d_ok):
             fv['outcome'] = 'FAIL'
             fv['why'] = ('Dataflow did not deliver every frame; ' if not d_ok and form not in ('plan', 'bench') else '') + \
@@ -937,6 +987,47 @@ def selftest(_args):
     check(r['outcome'] == 'pending', 'judge: a pending form refused in the one form')
     r = judge_component(comp, row, pend, differences, g, d, g, 'app', ['graph'])
     check(r['outcome'] == 'FAIL' and r['forms']['graph']['outcome'] == 'FLIP', 'judge: a pending form that passes must flip')
+    # A documented stop: both backends end a scenario at the same frame, each with the row's error.
+    def stopped(error, push, pull, state, at=2, label='img0@854x480'):
+        p = proc(3)
+        recs = [r for r in p['records'] if r.get('record') != 'done']
+        for i in range(at):
+            recs.append({'record': 'frame', 'form': 'graph', 'sc': 'sizes', 'i': i, 'input': 'img0@1280x720',
+                         'push': 'ok', 'pull': 'Ok', 'sample': {'input_seq': 4 + i, 'caps_string': 'x'},
+                         'tensors': [{'xxh64': 'aa', 'stamp': {'seq': 0}}]})
+        recs.append({'record': 'frame', 'form': 'graph', 'sc': 'sizes', 'i': at, 'input': label,
+                     'push': push, 'pull': pull, 'error': error})
+        recs.append({'record': 'end', 'form': 'graph', 'sc': 'sizes', 'frames': 16, 'frames_ok': at,
+                     'first_error': error, 'state': state})
+        recs.append({'record': 'done'})
+        return {'rc': 0, 'records': recs, 'stderr': ''}
+    stop_row = {'id': 'stop', 'state': 'active', 'check': 'stop', 'must_observe': True,
+                'scope': {'forms': ['graph'], 'scenarios': ['sizes'], 'inputs': [r'img\d@854x480'],
+                          'components': [r'.*_obb__.*']},
+                'gstreamer_error': r'.*equal authoritative affine scales.*',
+                'dataflow_error': r'.*this frame is not carried by the Dataflow backend: .*'}
+    with_stop = {'rows': [stop_row]}
+    obb = {'id': 'm_obb__w8a8__model', 'planner': 'accepted'}
+    gs = stopped('Error: oriented boxes require equal authoritative affine scales', 'ok', 'Error', 'dead')
+    ds = stopped('[misconfig.input_shape] Run::push: this frame is not carried by the Dataflow backend: x.',
+                 'threw', '', 'running')
+    r = judge_component(obb, row, expected, with_stop, gs, ds, gs, 'app', ['graph'])
+    check(r['outcome'] == 'equal' and r['explained'].get('stop'), f'judge: a documented stop ({r})')
+    r = judge_component(comp, row, expected, with_stop, gs, ds, gs, 'app', ['graph'])
+    check(r['outcome'] == 'FAIL', 'judge: a stop row out of its components does not excuse a short scenario')
+    r = judge_component(obb, row, expected, with_stop, gs, stopped('other', 'threw', '', 'running'), gs, 'app',
+                        ['graph'])
+    check(r['outcome'] == 'FAIL', "judge: a stop with another error is not the row's")
+    r = judge_component(obb, row, expected, with_stop, gs, stopped(ds['records'][-2]['first_error'], 'threw', '',
+                                                                   'running', at=1), gs, 'app', ['graph'])
+    check(r['outcome'] == 'FAIL', 'judge: the backends must stop at the same frame')
+    full = proc(3)
+    full['records'][-1:-1] = [{'record': 'frame', 'form': 'graph', 'sc': 'sizes', 'i': 0, 'input': 'img0@854x480',
+                               'push': 'ok', 'pull': 'Ok', 'sample': {'input_seq': 4, 'caps_string': 'x'},
+                               'tensors': [{'xxh64': 'aa', 'stamp': {'seq': 0}}]},
+                              {'record': 'end', 'form': 'graph', 'sc': 'sizes', 'frames': 1, 'frames_ok': 1}]
+    r = judge_component(obb, row, expected, with_stop, full, full, full, 'app', ['graph'])
+    check(r['outcome'] == 'FAIL' and 'stop' in r['stale_rows'], 'judge: a stop that no longer happens is stale')
     check(judge_row({'outcome': 'equal', 'components': [comp]}, [{'outcome': 'equal'}]) == 'equal', 'row: equal')
     check(judge_row({'outcome': 'not_carried', 'components': [comp_r, comp]},
                     [{'outcome': 'not_carried'}, {'outcome': 'equal'}]) == 'not_carried', 'row: not_carried')
