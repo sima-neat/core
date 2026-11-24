@@ -26,8 +26,9 @@ Start-Process -Wait (Get-Item .\gstreamer-1.0-msvc-x86_64-*.exe).FullName
 Start-Process -Wait (Get-Item .\python-3.14.*-amd64.exe).FullName
 ```
 
-Close PowerShell and open a new window, so that it sees the settings of both
-installers. Skip a prerequisite that is already installed at the same version.
+Close PowerShell and open a new window in the same downloaded folder, so that
+it sees the settings of both installers. Skip a prerequisite that is already
+installed at the same version.
 
 ## 2. Install sima-cli from the bundle
 
@@ -100,9 +101,16 @@ on the host and the card; they must be the same.
 
 ## Repair, upgrade and remove
 
-Run the install command of step 3 again to repair the installation. To upgrade,
-run it from the `neat-offline` folder of a newer bundle. Windows Installer does
-not replace a package with an older version.
+In a new PowerShell window, set `$cli` again first:
+
+```powershell
+$cli = "$env:USERPROFILE\.sima-cli-env\Scripts\sima-cli.exe"
+```
+
+Run the install command of step 3 again in the same `neat-offline` folder to
+repair the installation. To upgrade, run it from the `neat-offline` folder of a
+newer bundle. Windows Installer does not replace a package with an older
+version.
 
 To remove the host package, use the version that `& $cli packages list` shows:
 
