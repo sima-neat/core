@@ -119,7 +119,7 @@ class CardBundle:
   metadata: dict
 
 
-def validate_card_bundle(directory: Path, expected_commit: str) -> CardBundle:
+def validate_card_bundle(directory: Path, expected_commit: str, ref: str) -> CardBundle:
   """Validate the standalone Core offline bundle that installs this commit on the card."""
   root = directory.resolve(strict=True)
   try:
@@ -131,7 +131,12 @@ def validate_card_bundle(directory: Path, expected_commit: str) -> CardBundle:
   if (metadata.get("name") != "gh:sima-neat/core/offline"
       or metadata.get("artifact") != CARD_BUNDLE_ARTIFACT):
     raise ValueError("card bundle is not the standalone Core offline card bundle")
-  if expected_commit[:12] not in str(metadata.get("version", "")):
+  # Linux's offline metadata_identity rule: branch builds suffix the version with
+  # the commit, while a release tag build carries the bare tag version.
+  version = str(metadata.get("version", ""))
+  release = (re.fullmatch(r"v[0-9]+\.[0-9]+\.[0-9]+(?:[.-][0-9A-Za-z][0-9A-Za-z.-]*)?", ref)
+             and version == ref[1:])
+  if not (version.endswith("." + expected_commit[:12]) or release):
     raise ValueError("card bundle version is not tied to the selected Core commit")
   if metadata.get("installer_revision") != expected_commit:
     raise ValueError("card bundle installer revision is not the selected Core commit")
@@ -2624,7 +2629,8 @@ def qualify(args: argparse.Namespace) -> None:
   if not args.dependency_runtime_dir:
     raise RuntimeError("hardware qualification requires dependency runtime directories")
   candidate = validate_candidate(args.candidate)
-  card_bundle = validate_card_bundle(args.card_candidate, args.expected_card_commit)
+  card_bundle = validate_card_bundle(
+      args.card_candidate, args.expected_card_commit, args.ref)
   if args.expected_card_commit != candidate.core_commit:
     raise ValueError("Windows and card candidates must name the same Core commit")
   upgrade_base = load_upgrade_base(
@@ -3133,6 +3139,7 @@ def main() -> None:
   parser.add_argument("--remote-lock-path", default="/tmp/neat-pcie-card0.lock")
   parser.add_argument("--platform-runtime", type=Path, required=True)
   parser.add_argument("--python-wheelhouse", type=Path, required=True)
+  parser.add_argument("--ref", required=True, help="Git ref name of the selected Core commit")
   parser.add_argument(
       "--release-qualification", action="store_true",
       help="also run the Windows-only release checks: customer-install failure and "

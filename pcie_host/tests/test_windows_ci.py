@@ -507,6 +507,8 @@ class WindowsCiContracts(unittest.TestCase):
     self.assertIn("prepare_card_qualification_candidate.py", prepare)
     self.assertIn("name: core-pcie-card-offline-bundle", prepare)
     self.assertIn('--bundle "${RUNNER_TEMP}/core-card-bundle"', prepare)
+    # A release tag's card bundle carries the bare tag version, so both checks need the ref.
+    self.assertIn('--ref "${GITHUB_REF_NAME}"', prepare)
     self.assertIn("core-pcie-card-qualification-candidate", prepare)
     hardware = workflow.split("  hardware:\n", 1)[1].split("  publish:", 1)[0]
     self.assertIn("needs: [native, linux_release, card_candidate, resolve-vulcan-config]", hardware)
@@ -966,6 +968,7 @@ class WindowsCiContracts(unittest.TestCase):
     self.assertIn("name: neat-core-dist", source)
     self.assertIn("--card-candidate", source)
     self.assertIn("--expected-card-commit", source)
+    self.assertIn('"--ref", $env:GITHUB_REF_NAME,', source)
     self.assertIn("SIMA_WINDOWS_PCIE_ASSET_MANIFEST", source)
     # The asset manifest is written in-job from the resolved assets, not a variable.
     self.assertNotIn("SIMA_WINDOWS_PCIE_GENAI_ASSET_MANIFEST", source)
@@ -3248,7 +3251,8 @@ class WindowsCiContracts(unittest.TestCase):
           "exact Linux GenAI worker",
           lambda value: value["card_candidate"].update(genai_worker_sha256=""), genai=True)
 
-  def card_bundle(self, root, commit, *, source_metadata=b'{"version": "fixture"}'):
+  def card_bundle(self, root, commit, *, source_metadata=b'{"version": "fixture"}',
+                  version=None):
     """Write a standalone Core offline card bundle as assemble.py lays it out."""
     tree = root / "tree" / "neat-core-offline"
     (tree / "card" / "payload").mkdir(parents=True)
@@ -3268,7 +3272,7 @@ class WindowsCiContracts(unittest.TestCase):
         "name": "gh:sima-neat/core/offline",
         "artifact": {"type": "offline", "repository": "core", "package_path": "offline",
                      "distro": "elxr26", "arches": ["arm64"]},
-        "version": "0.6.2+feature." + commit[:12],
+        "version": version or "0.6.2+feature." + commit[:12],
         "installer_revision": commit,
         "resources": [CARD_BUNDLE_ARCHIVE],
         "resources-checksum": {CARD_BUNDLE_ARCHIVE: sha256(archive)},
@@ -3281,10 +3285,10 @@ class WindowsCiContracts(unittest.TestCase):
       root = Path(directory).resolve()
       commit = "c" * 40
       bundle = self.card_bundle(root, commit)
-      validated = validate_card_bundle(bundle, commit)
+      validated = validate_card_bundle(bundle, commit, "feature")
       self.assertEqual(validated.sha256, sha256(bundle / CARD_BUNDLE_ARCHIVE))
       with self.assertRaisesRegex(ValueError, "not tied"):
-        validate_card_bundle(bundle, "d" * 40)
+        validate_card_bundle(bundle, "d" * 40, "feature")
       metadata = json.loads((bundle / "metadata.json").read_text())
       for field, value, message in (
           ("installer_revision", "d" * 40, "installer revision"),
@@ -3293,12 +3297,42 @@ class WindowsCiContracts(unittest.TestCase):
         with self.subTest(field=field):
           (bundle / "metadata.json").write_text(json.dumps({**metadata, field: value}))
           with self.assertRaisesRegex(ValueError, message):
-            validate_card_bundle(bundle, commit)
+            validate_card_bundle(bundle, commit, "feature")
       (bundle / "metadata.json").write_text(json.dumps(metadata))
       with (bundle / CARD_BUNDLE_ARCHIVE).open("ab") as archive:
         archive.write(b"changed")
       with self.assertRaisesRegex(ValueError, "checksum differs"):
-        validate_card_bundle(bundle, commit)
+        validate_card_bundle(bundle, commit, "feature")
+
+  def test_card_bundle_version_follows_the_linux_offline_identity_rule(self):
+    # Branch builds suffix the version with the commit; release tags carry the
+    # bare tag version (tools/compute_version.sh, offline/ci.py metadata_identity).
+    with tempfile.TemporaryDirectory() as directory:
+      root = Path(directory).resolve()
+      commit = "c" * 40
+      for ref, version, accepted in (
+          ("feature", "0.6.2+feature." + commit[:12], True),
+          ("v0.6.2", "0.6.2+v0.6.2." + commit[:12], True),
+          ("v0.6.2", "0.6.2", True),
+          ("v0.7.0-rc.1", "0.7.0-rc.1", True),
+          ("v0.6.2", "0.6.1", False),
+          ("feature", "0.6.2", False),
+          ("0.6.2", "0.6.2", False),
+          ("v0.6.2", commit[:12] + "+0.6.2", False),
+      ):
+        with self.subTest(ref=ref, version=version):
+          case = root / f"{ref}-{version}"
+          case.mkdir()
+          bundle = self.card_bundle(case, commit, version=version)
+          if accepted:
+            validate_card_bundle(bundle, commit, ref)
+          else:
+            with self.assertRaisesRegex(ValueError, "not tied"):
+              validate_card_bundle(bundle, commit, ref)
+      # The installer revision still binds a release bundle to the selected commit.
+      bundle = self.card_bundle(root / "revision", commit, version="0.6.2")
+      with self.assertRaisesRegex(ValueError, "installer revision"):
+        validate_card_bundle(bundle, "d" * 40, "v0.6.2")
 
   def test_card_candidate_binds_the_bundle_to_the_linux_candidate(self):
     with tempfile.TemporaryDirectory() as directory:
@@ -3308,17 +3342,17 @@ class WindowsCiContracts(unittest.TestCase):
       source.mkdir()
       (source / "metadata.json").write_bytes(b'{"version": "fixture"}')
       bundle = self.card_bundle(root, commit)
-      CARD_PREP.prepare(source, bundle, root / "candidate", commit)
+      CARD_PREP.prepare(source, bundle, root / "candidate", commit, "feature")
       receipt = json.loads((root / "candidate" / "windows-card-offline-bundle.json").read_text())
       self.assertEqual(receipt["bundle_sha256"], sha256(bundle / CARD_BUNDLE_ARCHIVE))
       self.assertEqual(receipt["baseline_image"], "sha256:" + "e" * 64)
-      self.assertEqual(validate_card_bundle(root / "candidate", commit).sha256,
+      self.assertEqual(validate_card_bundle(root / "candidate", commit, "feature").sha256,
                        receipt["bundle_sha256"])
 
       # A bundle assembled from different Core metadata is refused.
       (source / "metadata.json").write_bytes(b'{"version": "other"}')
       with self.assertRaisesRegex(ValueError, "not assembled from this Linux candidate"):
-        CARD_PREP.prepare(source, bundle, root / "other", commit)
+        CARD_PREP.prepare(source, bundle, root / "other", commit, "feature")
       shutil.rmtree(root / "tree")
       shutil.rmtree(bundle)
       bundle = self.card_bundle(root, commit, source_metadata=b'{"version": "payload"}')
@@ -3326,13 +3360,13 @@ class WindowsCiContracts(unittest.TestCase):
       metadata["source_metadata_sha256"] = {"card": sha256(source / "metadata.json")}
       (bundle / "metadata.json").write_text(json.dumps(metadata))
       with self.assertRaisesRegex(ValueError, "payload metadata differs"):
-        CARD_PREP.prepare(source, bundle, root / "payload", commit)
+        CARD_PREP.prepare(source, bundle, root / "payload", commit, "feature")
 
   def test_card_install_runs_the_linux_offline_lifecycle(self):
     with tempfile.TemporaryDirectory() as directory:
       root = Path(directory).resolve()
       commit = "c" * 40
-      bundle = validate_card_bundle(self.card_bundle(root, commit), commit)
+      bundle = validate_card_bundle(self.card_bundle(root, commit), commit, "feature")
       args = SimpleNamespace(remote_lock_path="/tmp/neat-pcie-card0.lock",
                              expected_card_commit=commit)
       outputs = {

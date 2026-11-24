@@ -23,9 +23,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "pcie_host" / "scri
 import assemble  # noqa: E402
 
 
-def prepare(source: Path, bundle_directory: Path, output: Path, expected_commit: str) -> None:
+def prepare(source: Path, bundle_directory: Path, output: Path, expected_commit: str,
+            ref: str) -> None:
   source = source.resolve(strict=True)
-  bundle = validate_card_bundle(bundle_directory, expected_commit)
+  bundle = validate_card_bundle(bundle_directory, expected_commit, ref)
   source_metadata = source / "metadata.json"
   if bundle.metadata.get("source_metadata_sha256") != {"card": sha256(source_metadata)}:
     raise ValueError("card bundle was not assembled from this Linux candidate's metadata")
@@ -59,8 +60,9 @@ def main() -> None:
   parser.add_argument("--bundle", type=Path, required=True)
   parser.add_argument("--output", type=Path, required=True)
   parser.add_argument("--expected-commit", required=True)
+  parser.add_argument("--ref", required=True, help="Git ref name of the selected Core commit")
   args = parser.parse_args()
-  prepare(args.source, args.bundle, args.output, args.expected_commit)
+  prepare(args.source, args.bundle, args.output, args.expected_commit, args.ref)
 
 
 if __name__ == "__main__":

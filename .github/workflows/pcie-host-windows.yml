@@ -396,7 +396,8 @@ jobs:
             --source "${RUNNER_TEMP}/core-card-source" \
             --bundle "${RUNNER_TEMP}/core-card-bundle" \
             --output "${RUNNER_TEMP}/core-card-candidate" \
-            --expected-commit "${GITHUB_SHA}"
+            --expected-commit "${GITHUB_SHA}" \
+            --ref "${GITHUB_REF_NAME}"
       - name: Retain the card qualification candidate
         uses: actions/upload-artifact@v6
         with:
@@ -737,6 +738,7 @@ jobs:
             "--card-candidate", "$env:RUNNER_TEMP\core-card-candidate",
             "--card-host", $env:SIMAPCIE_CARD_HOST,
             "--expected-card-commit", $env:GITHUB_SHA,
+            "--ref", $env:GITHUB_REF_NAME,
             "--expected-sima-cli-commit", $selection.sima_cli.commit,
             "--gstreamer-root", $env:GSTREAMER_ROOT_X86_64,
             "--lock-file", "$env:USERPROFILE\.sima\locks\neat-pcie-card0.lock",
