@@ -681,6 +681,8 @@ inline std::string resolve_modelzoo_tar(const std::string& model_name,
   const std::vector<fs::path> search_dirs = {
       tmp_dir,
       tmp_dir / base,
+      // Read-only candidate when tmp_dir fell back to the system temp directory.
+      root / "tmp",
       root,
       fs::current_path(),
       root / base,
