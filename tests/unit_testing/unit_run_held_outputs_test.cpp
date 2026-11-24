@@ -33,6 +33,7 @@ namespace {
 
 using namespace simaai::neat;
 
+// A BGR image in EV74 memory, where the model's preproc stage reads it.
 Tensor frame(unsigned index) {
   cv::Mat mat(720, 1280, CV_8UC3);
   for (int r = 0; r < mat.rows; ++r) {
@@ -41,7 +42,7 @@ Tensor frame(unsigned index) {
       row[c] = static_cast<std::uint8_t>((r * 5 + c * 3 + 29 * index) & 0xffU);
     }
   }
-  return Tensor::from_cv_mat(mat, ImageSpec::PixelFormat::BGR, TensorMemory::CPU);
+  return Tensor::from_cv_mat(mat, ImageSpec::PixelFormat::BGR, TensorMemory::EV74);
 }
 
 Model::Options detection_options() {

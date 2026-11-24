@@ -61,7 +61,8 @@ double mean(const std::vector<double>& v) {
   return v.empty() ? 0.0 : total / static_cast<double>(v.size());
 }
 
-Tensor frame(int width, int height, unsigned index) {
+// A BGR image; a model's route takes it in EV74 memory (where its preproc stage reads it).
+Tensor frame(int width, int height, unsigned index, TensorMemory memory = TensorMemory::CPU) {
   cv::Mat mat(height, width, CV_8UC3);
   for (int r = 0; r < height; ++r) {
     std::uint8_t* row = mat.ptr<std::uint8_t>(r);
@@ -69,7 +70,7 @@ Tensor frame(int width, int height, unsigned index) {
       row[c] = static_cast<std::uint8_t>((r * 7 + c * 3 + 31 * index) & 0xffU);
     }
   }
-  return Tensor::from_cv_mat(mat, ImageSpec::PixelFormat::BGR, TensorMemory::CPU);
+  return Tensor::from_cv_mat(mat, ImageSpec::PixelFormat::BGR, memory);
 }
 
 // A lockstep measurement of `n` push/pull pairs on `push` and `pull`, against the brackets.
@@ -187,10 +188,12 @@ Model::Options detection_options() {
 
 void model(const std::string& archive) {
   Model m(archive, detection_options());
-  const TensorList seed{frame(1280, 720, 0)};
+  const TensorList seed{frame(1280, 720, 0, TensorMemory::EV74)};
   Model::Runner runner = m.build(seed);
   Run& run = internal::ModelAccess::run(runner);
-  const auto push = [&](int i) { return runner.push(TensorList{frame(1280, 720, i % 4)}); };
+  const auto push = [&](int i) {
+    return runner.push(TensorList{frame(1280, 720, i % 4, TensorMemory::EV74)});
+  };
   const auto pull = [&] { return !runner.pull(kTimeoutMs).empty(); };
   lockstep_measures(run, 100, push, pull, /*linear=*/true, "model");
   free_running_measures(run, 100, push, pull, "model");
@@ -213,7 +216,8 @@ void keep_latest(const std::string& archive) {
   RunOptions ro;
   ro.queue_depth = 2;
   ro.overflow_policy = OverflowPolicy::KeepLatest;
-  Model::Runner runner = m.build(TensorList{frame(1280, 720, 0)}, Model::RouteOptions{}, ro);
+  Model::Runner runner =
+      m.build(TensorList{frame(1280, 720, 0, TensorMemory::EV74)}, Model::RouteOptions{}, ro);
   Run& run = internal::ModelAccess::run(runner);
   MeasureScope scope = run.start_measurement(MeasureOptions{});
   constexpr int kFrames = 120;
@@ -223,7 +227,8 @@ void keep_latest(const std::string& archive) {
       Stamp proposal;
       proposal.frame_id = i;
       pushed[static_cast<std::size_t>(i)] = Clock::now();
-      (void)run.try_push(TensorList{frame(1280, 720, i % 4).with_stamp(proposal)});
+      (void)run.try_push(
+          TensorList{frame(1280, 720, i % 4, TensorMemory::EV74).with_stamp(proposal)});
       std::this_thread::sleep_for(std::chrono::microseconds(700));
     }
   });
