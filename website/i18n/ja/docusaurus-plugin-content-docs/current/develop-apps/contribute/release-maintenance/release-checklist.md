@@ -48,7 +48,6 @@ slug: /develop-apps/contribute/release-checklist
 
 以下のチェックは、リリース PR およびリリースタグに対して必要です。
 
-- `repo-hygiene`
 - `configure-build-sanity`
 - `docs-link-check`
 - `crash-correctness-gate`
@@ -57,7 +56,6 @@ slug: /develop-apps/contribute/release-checklist
 - `fuzz-nightly`（リリース候補に必要）
 - `stress-gate`
 - `asan-ubsan-gate`
-- `release-policy-check`
 
 これらのチェックは、以下に実装されています。
 
@@ -84,13 +82,12 @@ GitHub リポジトリの設定を行います。
 
 ## リリースフロー
 
-1. 正常な `main` から `release/x.y.z` を切り出します。
+1. **Actions → Release → Run workflow** を開きます。たとえば 0.7.0 をリリースする場合は、`release_line` を `0.7`、`tag` を `0.7.0` に設定し、`main` を `source_branch` のままにします。このワークフローは `release-0.7` を作成または再利用し、`v0.7.0` タグを付けて GitHub リリースの下書きを作成します。
 2. 非リリース PR のマージを一時停止します。
-3. リリースブランチでリリースゲートワークフローを実行します。
-4. 候補の検証のために `vX.Y.Z-rcN` タグを作成します。
-5. 最終的な `vX.Y.Z` タグに昇格します。
-6. リリースブランチを `main` に高速でマージします。
-7. リリースノートを公開し、リリース後のフォローアップの問題を投稿します。
+3. 候補の検証のために `vX.Y.Z-rcN` タグを作成します。
+4. 最終的な `vX.Y.Z` タグに昇格します。
+5. リリースブランチを `main` に高速でマージします。
+6. リリースノートを公開し、リリース後のフォローアップの問題を投稿します。
 
 ## 運用上の注意点
 

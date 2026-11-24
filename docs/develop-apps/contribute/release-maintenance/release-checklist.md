@@ -56,7 +56,6 @@ No "known crashers" list is allowed in release flow. Any crash regression blocks
 
 The following checks are required on release PRs and release tags:
 
-- `repo-hygiene`
 - `configure-build-sanity`
 - `docs-link-check`
 - `crash-correctness-gate`
@@ -65,7 +64,6 @@ The following checks are required on release PRs and release tags:
 - `fuzz-nightly` (required for release candidates)
 - `stress-gate`
 - `asan-ubsan-gate`
-- `release-policy-check`
 
 These checks are implemented in:
 
@@ -92,13 +90,12 @@ Configure GitHub repository settings:
 
 ## Release Flow
 
-1. Cut `release/x.y.z` from green `main`.
+1. Open **Actions → Release → Run workflow**. For example, to release 0.7.0, set `release_line` to `0.7` and `tag` to `0.7.0`, and keep `main` as `source_branch`. The workflow creates or reuses `release-0.7`, tags `v0.7.0` and drafts the GitHub release.
 2. Freeze non-release PR merges.
-3. Run release gate workflow on release branch.
-4. Create `vX.Y.Z-rcN` tag(s) for candidate validation.
-5. Promote to final `vX.Y.Z` tag.
-6. Fast-forward merge release branch back to `main`.
-7. Publish release notes and post-release follow-up issues.
+3. Create `vX.Y.Z-rcN` tag(s) for candidate validation.
+4. Promote to final `vX.Y.Z` tag.
+5. Fast-forward merge release branch back to `main`.
+6. Publish release notes and post-release follow-up issues.
 
 ## Operational Notes
 

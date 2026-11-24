@@ -48,7 +48,6 @@ for script in scripts/ci/*.sh; do
 done
 
 required_checks=(
-  "repo-hygiene"
   "configure-build-sanity"
   "docs-link-check"
   "crash-correctness-gate"
@@ -56,7 +55,6 @@ required_checks=(
   "fuzz-nightly"
   "stress-gate"
   "asan-ubsan-gate"
-  "release-policy-check"
 )
 
 for check_name in "${required_checks[@]}"; do

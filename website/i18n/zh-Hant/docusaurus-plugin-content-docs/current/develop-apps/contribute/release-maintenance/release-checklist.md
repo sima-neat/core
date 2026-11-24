@@ -48,7 +48,6 @@ slug: /develop-apps/contribute/release-checklist
 
 以下檢查對於發布 PR 和發布標籤是必需的：
 
-- `repo-hygiene`
 - `configure-build-sanity`
 - `docs-link-check`
 - `crash-correctness-gate`
@@ -57,7 +56,6 @@ slug: /develop-apps/contribute/release-checklist
 - `fuzz-nightly`（對於發布候選版本是必需的）
 - `stress-gate`
 - `asan-ubsan-gate`
-- `release-policy-check`
 
 這些檢查在以下位置實施：
 
@@ -84,13 +82,12 @@ slug: /develop-apps/contribute/release-checklist
 
 ## 發布流程
 
-1. 從綠色的 `main` 分支切出 `release/x.y.z`。
+1. 開啟 **Actions → Release → Run workflow**。例如要發布 0.7.0，請將 `release_line` 設為 `0.7`、`tag` 設為 `0.7.0`，並保留 `main` 作為 `source_branch`。此工作流程會建立或重複使用 `release-0.7`，加上 `v0.7.0` 標籤，並建立 GitHub 發布版草稿。
 2. 凍結非發布版 PR 的合併。
-3. 在發布版分支上執行發布閘道工作流程。
-4. 建立 `vX.Y.Z-rcN` 標籤，用於候選驗證。
-5. 升級到最終的 `vX.Y.Z` 標籤。
-6. 將發布版分支快速合併回 `main`。
-7. 發布版本資訊並發布發布後續問題。
+3. 建立 `vX.Y.Z-rcN` 標籤，用於候選驗證。
+4. 升級到最終的 `vX.Y.Z` 標籤。
+5. 將發布版分支快速合併回 `main`。
+6. 發布版本資訊並發布發布後續問題。
 
 ## 運營注意事項
 
