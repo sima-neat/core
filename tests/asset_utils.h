@@ -743,15 +743,23 @@ inline std::string resolve_yolov8s_strict_mpk_tar(const fs::path& root = {}) {
     std::cerr << name << "=" << value << " is not a .tar.gz MPK with a *_mpk.json\n";
     return "";
   }
-  std::string modelzoo = resolve_modelzoo_tar("yolo_v8s", root);
-  if (!modelzoo.empty() && !is_strict_mpk_tar_gz(modelzoo)) {
-    // A cached archive without *_mpk.json would be returned again on every run.
-    std::error_code ec;
-    fs::remove(modelzoo, ec);
-    modelzoo = resolve_modelzoo_tar("yolo_v8s", root);
-  }
-  if (!modelzoo.empty() && is_strict_mpk_tar_gz(modelzoo))
+  const std::string modelzoo = resolve_modelzoo_tar("yolo_v8s", root);
+  if (modelzoo.empty())
+    return "";
+  if (is_strict_mpk_tar_gz(modelzoo))
     return modelzoo;
+  // A cached archive without *_mpk.json. Drop the staged copy and fetch a fresh archive into
+  // the same cache, without searching the folders that held the rejected one again.
+  const fs::path cached(modelzoo);
+  const fs::path cache_dir = cached.parent_path();
+  std::error_code ec;
+  fs::remove(cached, ec);
+  if (run_modelzoo_get_noninteractive("yolo_v8s", cache_dir) != 0)
+    return "";
+  for (const fs::path& candidate : {cached, cache_dir / "yolo_v8s" / cached.filename()}) {
+    if (is_usable_regular_file(candidate) && is_strict_mpk_tar_gz(candidate))
+      return candidate.string();
+  }
   return "";
 }
 
