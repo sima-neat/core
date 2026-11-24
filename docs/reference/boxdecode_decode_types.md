@@ -485,8 +485,10 @@ Each `RawBox` record is 24 bytes:
 The matching Python `struct` format for one record is `"<iiiifi"`.
 
 Coordinates are in original-image pixels when upstream preprocessing metadata is
-present. They are not normalized to `[0, 1]` and are not expressed in the
-model's internal letterboxed input space.
+present. For a frame preprocessed from an ROI, the original image is the full source
+frame, not the ROI (see [Crop coordinate mapping](#crop-coordinate-mapping)). They
+are not normalized to `[0, 1]` and are not expressed in the model's internal
+letterboxed input space.
 
 ### Combined segmentation + pose payload
 
@@ -775,8 +777,8 @@ width and height must be multiples of 32; they need not be equal. The prototype
 remains 160×160×32 and does not resize silently with model dimensions.
 
 Use preprocess metadata for off-center padding or crop coordinates. The affine
-maps **model to original** coordinates; shear, rotation and ROI lists are not
-supported by this combined profile. Crop needs authoritative affine metadata at
+maps **model to original** coordinates; shear, rotation and ROI lists with more than one slot are
+unsupported by this combined profile. Crop needs authoritative affine metadata at
 preparation. This is a decoder contract for externally preprocessed tensors,
 not new support for crop production in `Model` preprocessing. A model with
 fewer than 17 keypoints still publishes the fixed
@@ -786,3 +788,16 @@ fewer than 17 keypoints still publishes the fixed
 ## Crop coordinate mapping {#crop-coordinate-mapping}
 
 Model-managed Crop supplies the actual inverse image transform to supported detection profiles, including classic DETR, DetrFocal and ordinary YOLO detection. Selection and NMS stay in model coordinates; accepted boxes are then mapped and clipped to the original image. Missing or conflicting transform metadata fails explicitly. This does not enable new crop combinations for masks, pose, RCNN proposals or SSD multiclass. Existing oriented-box profiles still require equal axis scales; integer resize dimensions may make the scales unequal.
+
+A Preproc that crops a region of interest (ROI) and letterboxes or stretches it into the model canvas publishes, for each frame, the affine that maps model coordinates back to the full source frame. The detection profiles decode every frame with the affine its preprocess published, so boxes come out in source-frame pixels for a single ROI, a centered or non-centered letterbox, a stretch and a whole frame alike. The source frame is the uncropped image, never the ROI. Whole-frame detections are reported in source-frame pixels. Ingress that publishes only the image dimensions, with no affine, keeps the whole-frame mapping.
+
+Pass one ROI per BoxDecode call. For an ROI-list buffer, use capacity 1.
+
+| Profile | Single ROI, crop or stretch |
+| --- | --- |
+| YOLO26, YOLOv5, YOLOv6, YOLOv7, YOLOv8 to YOLOv11, YOLOX, decoded YOLO, EfficientDet, CenterNet, DETR, DetrFocal, SSD (not the 91-class multiclass SSD recipes) | Boxes in source-frame pixels |
+| YOLOX segmentation and pose, oriented boxes | Boxes in source-frame pixels (oriented boxes need equal axis scales) |
+| Pose, segmentation (YOLOv5, v7, v8, v9, v10, YOLO26), RCNN proposals, 91-class multiclass SSD | Fails, naming the profile |
+| Segment Anything | Fails: it needs the whole image resized once |
+
+A profile fails instead of decoding in whole-frame coordinates because its kernel accepts no transform. It still decodes whole frames. A Crop resize requested for such a profile fails when the graph is built.

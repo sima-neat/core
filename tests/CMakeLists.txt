@@ -2419,6 +2419,21 @@ if (NOT preproc_roi_user_smoke_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
 endif()
 
 add_pipeline_test(
+  preproc_roi_boxdecode_moving_test
+  e2e_pipelines/obj_detection/preproc_roi_boxdecode_moving_test.cpp
+  e2e_pipelines/e2e_utils.cpp
+  e2e_pipelines/obj_detection/obj_detection_utils.cpp
+  ARGS ${CMAKE_SOURCE_DIR}
+  LOCK_ACCELERATOR
+)
+
+if (NOT preproc_roi_boxdecode_moving_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  set_property(TEST preproc_roi_boxdecode_moving_test APPEND PROPERTY
+    LABELS "e2e;obj_detection;preproc;roi;boxdecode")
+  set_tests_properties(preproc_roi_boxdecode_moving_test PROPERTIES TIMEOUT 120)
+endif()
+
+add_pipeline_test(
   yolov8_variant_route_matrix_test
   e2e_pipelines/obj_detection/yolov8_variant_route_matrix_test.cpp
   e2e_pipelines/e2e_utils.cpp
@@ -2571,6 +2586,8 @@ if (NOT rtsp_encoded_boundary_caps_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
   set_property(TEST rtsp_encoded_boundary_caps_test APPEND PROPERTY LABELS "e2e;rtsp")
   set_property(TEST rtsp_encoded_boundary_caps_test APPEND PROPERTY RESOURCE_LOCK "rtsp")
   set_tests_properties(rtsp_encoded_boundary_caps_test PROPERTIES SKIP_RETURN_CODE 77)
+  simaneat_add_test(NAME rtsp_loopback_offer_test COMMAND rtsp_encoded_boundary_caps_test --loopback)
+  set_tests_properties(rtsp_loopback_offer_test PROPERTIES LABELS "e2e;rtsp" RESOURCE_LOCK "rtsp")
 endif()
 
 add_pipeline_test(

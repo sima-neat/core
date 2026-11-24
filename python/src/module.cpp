@@ -101,6 +101,7 @@
 
 #if defined(SIMA_WITH_OPENCV)
 #include <opencv2/core.hpp>
+#include <opencv2/imgproc.hpp>
 #endif
 
 #include <cstddef>
@@ -1132,7 +1133,7 @@ std::vector<int64_t> contiguous_uint8_image_strides(const std::vector<int64_t>& 
 }
 
 PythonPreprocImageBatch
-python_preproc_images_to_cv_mats(const nb::object& images,
+python_preproc_images_to_cv_mats(const nb::object& images, const simaai::neat::Model& model,
                                  const std::optional<ImageSpec::PixelFormat>& image_format,
                                  bool copy) {
   PythonPreprocImageBatch batch;
@@ -1145,6 +1146,7 @@ python_preproc_images_to_cv_mats(const nb::object& images,
   batch.mappings.reserve(batch.tensors.size());
   batch.mats.reserve(batch.tensors.size());
 
+  const auto expected = model.resolved_preprocess_plan().effective.color_convert.input_format;
   for (Tensor& tensor : batch.tensors) {
     tensor = tensor.to_cpu_if_needed();
     if (!tensor.is_dense()) {
@@ -1212,8 +1214,17 @@ python_preproc_images_to_cv_mats(const nb::object& images,
 
     auto* data = static_cast<std::uint8_t*>(mapping.data);
     batch.mappings.push_back(std::move(mapping));
-    batch.mats.emplace_back(height, width, CV_8UC(channels), data,
-                            static_cast<std::size_t>(final_row_stride));
+    cv::Mat view(height, width, CV_8UC(channels), data, static_cast<std::size_t>(final_row_stride));
+    const auto format =
+        tensor.semantic.image ? tensor.semantic.image->format : ImageSpec::PixelFormat::UNKNOWN;
+    using Color = simaai::neat::PreprocessColorFormat;
+    if (channels == 3 && ((format == ImageSpec::PixelFormat::RGB &&
+                           (expected == Color::Auto || expected == Color::BGR)) ||
+                          (format == ImageSpec::PixelFormat::BGR && expected == Color::RGB))) {
+      cv::cvtColor(view, batch.mats.emplace_back(), cv::COLOR_BGR2RGB);
+    } else {
+      batch.mats.push_back(std::move(view));
+    }
   }
 
   return batch;
@@ -1225,7 +1236,8 @@ TensorList python_stage_preproc(const nb::object& images, const simaai::neat::Mo
                                 const std::optional<ImageSpec::PixelFormat>& image_format,
                                 bool copy) {
 #if defined(SIMA_WITH_OPENCV)
-  PythonPreprocImageBatch batch = python_preproc_images_to_cv_mats(images, image_format, copy);
+  PythonPreprocImageBatch batch =
+      python_preproc_images_to_cv_mats(images, model, image_format, copy);
   TensorList out;
   {
     nb::gil_scoped_release release;

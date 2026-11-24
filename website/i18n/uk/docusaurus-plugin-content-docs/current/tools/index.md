@@ -17,7 +17,7 @@ sidebar_position: 0
       <li><a class="overview-link-card" href="/tools/sima-cli/"><strong>sima-cli</strong><span>Встановлюйте та оновлюйте пакети, керуйте середовищами SDK, отримуйте доступ до артефактів моделей і працюйте з DevKit.</span></a></li>
       <li><a class="overview-link-card" href="/tools/model-browser/"><strong>Model Browser</strong><span>Знаходьте, порівнюйте, завантажуйте та відтворюйте моделі, скомпільовані й виміряні для Modalix.</span></a></li>
       <li><a class="overview-link-card" href="/tools/model-zoo/"><strong>Model Zoo</strong><span>Застаріло. Використовуйте Model Browser.</span></a></li>
-      <li><a class="overview-link-card" href="/tools/insight/"><strong>Insight</strong><span>Переглядайте файли робочого простору, джерела медіа, доставку потоків і вивід застосунку у вебпереглядачі.</span></a></li>
+      <li><a class="overview-link-card" href="/tools/insight/"><strong>Insight</strong><span>Перевіряйте файли робочого простору, джерела медіа, доставку потоків і вивід застосунку у вебпереглядачі.</span></a></li>
       <li><a class="overview-link-card" href="/tools/sentinel/"><strong>Sentinel</strong><span>Відстежуйте живлення, температуру, CPU, пам’ять, сховище та мережеву активність DevKit, а потім записуйте й порівнюйте запуски робочих навантажень.</span></a></li>
     </ul>
   </section>

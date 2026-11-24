@@ -364,6 +364,9 @@ void check_one(const std::string& model, bool integer, bool permuted = false,
   const auto factory_error = ps::wire_kernel_stage_factories(*stage.native_kernel, program);
   require(!factory_error,
           name + ": factories: " + (factory_error ? factory_error->message : std::string()));
+  // RouteProbe checks static carrier placement, so disable per-frame resolution here.
+  for (auto& member : program.members)
+    member.resolve_factory = nullptr;
   request.program = std::move(program);
   test::RouteProbe probe;
   const auto failure = probe.prepare(request);

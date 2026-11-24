@@ -14,7 +14,7 @@ if(NOT TARGET SimaScheduler::frontend)
 endif()
 pkg_check_modules(_SimaNeat_GST REQUIRED
   gstreamer-1.0 gstreamer-app-1.0 gstreamer-video-1.0 gstreamer-allocators-1.0
-  gstreamer-sdp-1.0 gstreamer-rtsp-server-1.0 glib-2.0)
+  gstreamer-rtp-1.0 gstreamer-sdp-1.0 gstreamer-rtsp-server-1.0 glib-2.0)
 pkg_check_modules(_SimaNeat_OpenCV REQUIRED opencv4)
 
 if (NOT TARGET SimaNeat::sima_neat)

@@ -38,6 +38,8 @@
 #include <bit>
 #include <cmath>
 #include <cstring>
+#include <functional>
+#include <optional>
 #include <new>
 #include <limits>
 #include <stdexcept>
@@ -2981,6 +2983,7 @@ void rejects() {
 }
 #include "boxdecode_obb_conversion_cases.inc"
 #include "boxdecode_obb_publication_cases.inc"
+#include "boxdecode_roi_affine_cases.inc"
 void linear_metadata_contracts() {
   require(boxdecode_linear_storage({1, 4, 8, 6}, {}, "NCHW", 4)->stride_bytes ==
               std::vector<std::int64_t>{24, 4, 192},
@@ -3114,6 +3117,7 @@ int main(int argc, char** argv) {
     focal_numerical_publication(true);
     crop_source_geometry();
     composed_frontend_detection_geometry();
+    roi_affine_geometry();
     families();
     oriented_contract_and_execution();
     oriented_carrier_conversions();
