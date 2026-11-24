@@ -700,6 +700,19 @@ class InputContracts(unittest.TestCase):
                 + self.windows_python_versions(MAIN_WORKFLOW.read_text(encoding="utf-8")))
     self.assertEqual(set(versions), {version})
 
+  def test_offline_docs_get_the_platform_package_with_sima_cli(self):
+    # The Platform package comes from the customer's own sima-cli login.
+    page = (ROOT / "docs/getting-started/neat-library/pcie-host.mdx").read_text(
+      encoding="utf-8")
+    section = page[page.index("{#offline-installation-windows}"):]
+    section = section[:section.index("\n## ")]
+    self.assertIn("sima-cli install drivers/windows --download-only -d ./pcie-offline/platform",
+                  section)
+    self.assertIn("run `install.bat` from a Command Prompt started as administrator", section)
+    self.assertIn("driver, SiMaNetAdapter", section)
+    for text in ("artifacts.neat.sima.ai", "daily-platform-images", "driver-installation"):
+      self.assertNotIn(text, section)
+
   def test_install_guide_uses_the_bundle_paths(self):
     guide = (OFFLINE.OFFLINE / "WINDOWS_INSTALL.md").read_text(encoding="utf-8")
     for text in (r"--find-links .\sima-cli --require-hashes -r .\sima-cli\requirements.txt",

@@ -545,9 +545,11 @@ not need internet access for this installation.
 
 Complete these tasks before you install Neat:
 
-- Install the SiMa Platform 3.0 Windows package, as described in the
-  [PCIe Driver Installation guide](https://developer.sima.ai/hardware/getting-started/pcie-mode/driver-installation).
-  The offline package does not contain it.
+- Turn Secure Boot off and test-signing mode on, as described for the online
+  Windows installation. The SiMa Platform 3.0 Windows driver package, which
+  steps 2 and 3 download and install, contains a test-signed network adapter
+  driver, SiMaNetAdapter. Windows loads it only with these settings. The
+  offline package does not contain the Platform package.
 - Check that the host reaches each card over the PCIe network link.
 - Have the password of each card's `sima` account available.
 
@@ -567,6 +569,14 @@ The `pcie-offline` folder then holds the package archive, its extracted
 `neat-pcie-offline-installer-*` folder, and the GStreamer and Python
 installers that the package requires. The command downloads and extracts the
 package. It does not install Neat.
+
+Then download the SiMa Platform Windows driver package into the same folder.
+The command uses your SiMa.ai login and saves the package's files without
+installing them:
+
+<ShellCommand prompt="host">
+sima-cli install drivers/windows --download-only -d ./pcie-offline/platform
+</ShellCommand>
 
 ### 3. Install the prerequisites and sima-cli
 
@@ -594,6 +604,9 @@ $cli = "$env:USERPROFILE\.sima-cli-env\Scripts\sima-cli.exe"
 
 The `neat-offline` folder also holds `INSTALL.md`, which describes these steps
 and what to do if PowerShell does not find `py`.
+
+Last, install the Platform package: in the copied `pcie-offline\platform`
+folder, run `install.bat` from a Command Prompt started as administrator.
 
 ### 4. Install and check the results
 

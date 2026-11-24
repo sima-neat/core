@@ -378,7 +378,7 @@ Windows 패키지는 Windows 11 x64 호스트에 Neat PCIe 호스트 패키지�
 
 Neat를 설치하기 전에 다음 작업을 완료하세요:
 
-- [PCIe 드라이버 설치 가이드](https://developer.sima.ai/hardware/getting-started/pcie-mode/driver-installation)에 설명된 대로 SiMa Platform 3.0 Windows 패키지를 설치하세요. 오프라인 패키지에는 이 패키지가 포함되어 있지 않습니다.
+- 온라인 Windows 설치에서 설명한 대로 보안 부팅을 끄고 테스트 서명 모드를 켜세요. 2단계와 3단계에서 다운로드하여 설치하는 SiMa Platform 3.0 Windows 드라이버 패키지에는 테스트 서명된 네트워크 어댑터 드라이버 SiMaNetAdapter가 포함되어 있습니다. Windows는 이 설정에서만 이 드라이버를 로드합니다. 오프라인 패키지에는 Platform 패키지가 포함되어 있지 않습니다.
 - 호스트가 PCIe 네트워크 링크를 통해 각 카드에 연결되는지 확인하세요.
 - 각 카드의 `sima` 계정 암호를 준비하세요.
 
@@ -393,6 +393,12 @@ sima-cli neat install core/pciehost/windows/amd64@v%%release.core%% -t offline -
 </ShellCommand>
 
 그러면 `pcie-offline` 폴더에 패키지 아카이브, 압축을 푼 `neat-pcie-offline-installer-*` 폴더, 그리고 패키지에 필요한 GStreamer 및 Python 설치 프로그램이 들어 있습니다. 이 명령은 패키지를 다운로드하고 압축을 풉니다. Neat를 설치하지는 않습니다.
+
+그런 다음 SiMa Platform Windows 드라이버 패키지를 같은 폴더에 다운로드합니다. 이 명령은 SiMa.ai 로그인을 사용하며 패키지 파일을 설치하지 않고 저장합니다.
+
+<ShellCommand prompt="host">
+sima-cli install drivers/windows --download-only -d ./pcie-offline/platform
+</ShellCommand>
 
 ### 3. 필수 구성 요소 및 sima-cli 설치
 
@@ -413,6 +419,8 @@ $cli = "$env:USERPROFILE\.sima-cli-env\Scripts\sima-cli.exe"
 ```
 
 `neat-offline` 폴더에는 이 단계와 PowerShell에서 `py`를 찾지 못할 때의 조치를 설명하는 `INSTALL.md`도 있습니다.
+
+마지막으로 Platform 패키지를 설치합니다. 복사한 `pcie-offline\platform` 폴더에서 관리자 권한으로 시작한 명령 프롬프트로 `install.bat`을 실행하세요.
 
 ### 4. 설치 및 결과 확인
 

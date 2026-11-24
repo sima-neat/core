@@ -377,7 +377,7 @@ Windowsパッケージは、Windows 11 x64ホストにNeat PCIeホストパッ�
 
 Neatをインストールする前に、次の作業を完了してください：
 
-- [PCIeドライバーインストールガイド](https://developer.sima.ai/hardware/getting-started/pcie-mode/driver-installation)の説明に従って、SiMa Platform 3.0 Windowsパッケージをインストールしてください。オフラインパッケージには含まれていません。
+- オンラインのWindowsインストールの説明に従って、セキュアブートをオフにし、テスト署名モードをオンにしてください。手順2と3でダウンロードしてインストールするSiMa Platform 3.0 Windowsドライバーパッケージには、テスト署名されたネットワークアダプタードライバーSiMaNetAdapterが含まれています。Windowsはこれらの設定の場合にのみこのドライバーを読み込みます。オフラインパッケージにはPlatformパッケージは含まれていません。
 - ホストがPCIeネットワークリンク経由で各カードにアクセスできることを確認してください。
 - 各カードの`sima`アカウントのパスワードを用意してください。
 
@@ -392,6 +392,12 @@ sima-cli neat install core/pciehost/windows/amd64@v%%release.core%% -t offline -
 </ShellCommand>
 
 `pcie-offline`フォルダーには、パッケージのアーカイブ、展開された`neat-pcie-offline-installer-*`フォルダー、およびパッケージに必要なGStreamerとPythonのインストーラーが格納されます。このコマンドはパッケージをダウンロードして展開します。Neatはインストールしません。
+
+次に、SiMa Platform Windowsドライバーパッケージを同じフォルダーにダウンロードします。このコマンドはSiMa.aiのログインを使用し、パッケージのファイルをインストールせずに保存します：
+
+<ShellCommand prompt="host">
+sima-cli install drivers/windows --download-only -d ./pcie-offline/platform
+</ShellCommand>
 
 ### 3. 前提条件とsima-cliをインストールする
 
@@ -412,6 +418,8 @@ $cli = "$env:USERPROFILE\.sima-cli-env\Scripts\sima-cli.exe"
 ```
 
 `neat-offline`フォルダーには`INSTALL.md`も含まれています。このファイルでは、これらの手順と、PowerShellが`py`を見つけられない場合の対処方法を説明しています。
+
+最後に、Platformパッケージをインストールします。コピーした`pcie-offline\platform`フォルダーで、管理者として起動したコマンドプロンプトから`install.bat`を実行してください。
 
 ### 4. インストールして結果を確認する
 

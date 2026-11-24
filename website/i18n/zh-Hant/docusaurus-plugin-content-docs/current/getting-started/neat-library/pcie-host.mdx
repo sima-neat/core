@@ -377,7 +377,7 @@ Windows 套件會在 Windows 11 x64 主機上安裝 Neat PCIe 主機套件。接
 
 安裝 Neat 之前，請完成下列工作：
 
-- 依照 [PCIe 驅動程式安裝指南](https://developer.sima.ai/hardware/getting-started/pcie-mode/driver-installation)的說明，安裝 SiMa Platform 3.0 Windows 套件。離線套件不包含此套件。
+- 依照線上 Windows 安裝的說明，關閉安全開機並開啟測試簽章模式。步驟 2 和 3 下載並安裝的 SiMa Platform 3.0 Windows 驅動程式套件，包含經過測試簽章的網路介面卡驅動程式 SiMaNetAdapter。Windows 只有在這些設定下才會載入它。離線套件不包含 Platform 套件。
 - 確認主機可透過 PCIe 網路連結連上每張卡片。
 - 準備好每張卡片 `sima` 帳戶的密碼。
 
@@ -392,6 +392,12 @@ sima-cli neat install core/pciehost/windows/amd64@v%%release.core%% -t offline -
 </ShellCommand>
 
 完成後，`pcie-offline` 資料夾會包含套件封存檔、解壓縮後的 `neat-pcie-offline-installer-*` 資料夾，以及套件所需的 GStreamer 和 Python 安裝程式。此命令會下載並解壓縮套件，不會安裝 Neat。
+
+接著將 SiMa Platform Windows 驅動程式套件下載到同一個資料夾。此命令使用您的 SiMa.ai 登入，只儲存套件的檔案而不安裝：
+
+<ShellCommand prompt="host">
+sima-cli install drivers/windows --download-only -d ./pcie-offline/platform
+</ShellCommand>
 
 ### 3. 安裝先決條件和 sima-cli
 
@@ -412,6 +418,8 @@ $cli = "$env:USERPROFILE\.sima-cli-env\Scripts\sima-cli.exe"
 ```
 
 `neat-offline` 資料夾中也有 `INSTALL.md`，其中說明這些步驟，以及 PowerShell 找不到 `py` 時的處理方式。
+
+最後安裝 Platform 套件：在複製的 `pcie-offline\platform` 資料夾中，從以系統管理員身分啟動的命令提示字元執行 `install.bat`。
 
 ### 4. 安裝並檢查結果
 
