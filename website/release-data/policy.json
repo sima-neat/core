@@ -21,7 +21,7 @@
     },
     {
       "path": "docs/getting-started/neat-library/pcie-host.mdx",
-      "line": "2. GStreamer 1.28.6 MSVC x64, from",
+      "line": "4. GStreamer 1.28.6 MSVC x64, from",
       "count": 1,
       "reason": "Windows third-party prerequisite version pinned in scripts/ci/pciehost/windows_build_inputs.json, not a Neat release"
     },
@@ -135,7 +135,7 @@
     },
     {
       "path": "website/i18n/ja/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
-      "line": "2. GStreamer 1.28.6 MSVC x64。[gstreamer-1.0-msvc-x86_64-1.28.6.exe](https://gstreamer.freedesktop.org/data/pkg/windows/1.28.6/msvc/gstreamer-1.0-msvc-x86_64-1.28.6.exe)から入手します。パッケージにはこのバージョンが厳密に必要です。C++アプリケーションに必要な開発ファイルを含むセットアップの種類を選択してください。インストール後は、GStreamerインストーラーが設定する`GSTREAMER_1_0_ROOT_MSVC_X86_64`変数が反映されるように、新しいターミナルを開いてください。",
+      "line": "4. GStreamer 1.28.6 MSVC x64。[gstreamer-1.0-msvc-x86_64-1.28.6.exe](https://gstreamer.freedesktop.org/data/pkg/windows/1.28.6/msvc/gstreamer-1.0-msvc-x86_64-1.28.6.exe)から入手します。パッケージにはこのバージョンが厳密に必要です。C++アプリケーションに必要な開発ファイルを含むセットアップの種類を選択してください。インストール後は、GStreamerインストーラーが設定する`GSTREAMER_1_0_ROOT_MSVC_X86_64`変数が反映されるように、新しいターミナルを開いてください。",
       "count": 1,
       "reason": "Windows third-party prerequisite version pinned in scripts/ci/pciehost/windows_build_inputs.json, not a Neat release"
     },
@@ -237,7 +237,7 @@
     },
     {
       "path": "website/i18n/ko/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
-      "line": "2. GStreamer 1.28.6 MSVC x64. [gstreamer-1.0-msvc-x86_64-1.28.6.exe](https://gstreamer.freedesktop.org/data/pkg/windows/1.28.6/msvc/gstreamer-1.0-msvc-x86_64-1.28.6.exe)에서 받으세요. 패키지에는 정확히 이 버전이 필요합니다. C++ 애플리케이션에 필요한 개발 파일이 포함된 설치 유형을 선택하세요. 설치 후에는 GStreamer 설치 프로그램이 설정하는 `GSTREAMER_1_0_ROOT_MSVC_X86_64` 변수를 인식하도록 새 터미널을 여세요.",
+      "line": "4. GStreamer 1.28.6 MSVC x64. [gstreamer-1.0-msvc-x86_64-1.28.6.exe](https://gstreamer.freedesktop.org/data/pkg/windows/1.28.6/msvc/gstreamer-1.0-msvc-x86_64-1.28.6.exe)에서 받으세요. 패키지에는 정확히 이 버전이 필요합니다. C++ 애플리케이션에 필요한 개발 파일이 포함된 설치 유형을 선택하세요. 설치 후에는 GStreamer 설치 프로그램이 설정하는 `GSTREAMER_1_0_ROOT_MSVC_X86_64` 변수를 인식하도록 새 터미널을 여세요.",
       "count": 1,
       "reason": "Windows third-party prerequisite version pinned in scripts/ci/pciehost/windows_build_inputs.json, not a Neat release"
     },
@@ -339,7 +339,7 @@
     },
     {
       "path": "website/i18n/uk/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
-      "line": "2. GStreamer 1.28.6 MSVC x64 з [gstreamer-1.0-msvc-x86_64-1.28.6.exe](https://gstreamer.freedesktop.org/data/pkg/windows/1.28.6/msvc/gstreamer-1.0-msvc-x86_64-1.28.6.exe). Пакет потребує саме цієї версії. Виберіть тип встановлення, що містить файли для розроблення, потрібні застосункам C++. Після встановлення відкрийте новий термінал, щоб він бачив змінну `GSTREAMER_1_0_ROOT_MSVC_X86_64`, яку задає програма встановлення GStreamer.",
+      "line": "4. GStreamer 1.28.6 MSVC x64 з [gstreamer-1.0-msvc-x86_64-1.28.6.exe](https://gstreamer.freedesktop.org/data/pkg/windows/1.28.6/msvc/gstreamer-1.0-msvc-x86_64-1.28.6.exe). Пакет потребує саме цієї версії. Виберіть тип встановлення, що містить файли для розроблення, потрібні застосункам C++. Після встановлення відкрийте новий термінал, щоб він бачив змінну `GSTREAMER_1_0_ROOT_MSVC_X86_64`, яку задає програма встановлення GStreamer.",
       "count": 1,
       "reason": "Windows third-party prerequisite version pinned in scripts/ci/pciehost/windows_build_inputs.json, not a Neat release"
     },
@@ -441,7 +441,7 @@
     },
     {
       "path": "website/i18n/zh-Hant/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
-      "line": "2. GStreamer 1.28.6 MSVC x64，下載自 [gstreamer-1.0-msvc-x86_64-1.28.6.exe](https://gstreamer.freedesktop.org/data/pkg/windows/1.28.6/msvc/gstreamer-1.0-msvc-x86_64-1.28.6.exe)。此套件必須使用這個確切版本。請選擇包含開發檔案的安裝類型，C++ 應用程式需要這些檔案。安裝完成後請開啟新的終端機，使其能讀取 GStreamer 安裝程式所設定的 `GSTREAMER_1_0_ROOT_MSVC_X86_64` 變數。",
+      "line": "4. GStreamer 1.28.6 MSVC x64，下載自 [gstreamer-1.0-msvc-x86_64-1.28.6.exe](https://gstreamer.freedesktop.org/data/pkg/windows/1.28.6/msvc/gstreamer-1.0-msvc-x86_64-1.28.6.exe)。此套件必須使用這個確切版本。請選擇包含開發檔案的安裝類型，C++ 應用程式需要這些檔案。安裝完成後請開啟新的終端機，使其能讀取 GStreamer 安裝程式所設定的 `GSTREAMER_1_0_ROOT_MSVC_X86_64` 變數。",
       "count": 1,
       "reason": "Windows third-party prerequisite version pinned in scripts/ci/pciehost/windows_build_inputs.json, not a Neat release"
     },

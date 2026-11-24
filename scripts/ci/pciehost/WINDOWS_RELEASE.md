@@ -74,14 +74,17 @@ must stay in hardware or a cloud HSM, so a PFX file stored as a secret is not an
 option.
 
 The card runner must be a Windows 11 x64 client workstation with the
-supported Platform package and a directly attached Modalix card. Like the
+Platform package that `sima-cli install drivers/windows` installs and a
+directly attached Modalix card. Like the
 Linux card job, the Windows card job selects its runner by labels only:
 `self-hosted`, `Windows`, `X64`, and `pcie`.
 
 Provision the host once before its first run:
 
-1. Install the supported Platform package, which provides the drivers and the
-   `SiMaMlaDaemon` service. Attach the card, and install GStreamer 1.28.6 MSVC
+1. Install the Platform package, which provides the drivers and the
+   `SiMaMlaDaemon` service, with `sima-cli install drivers/windows` from
+   PowerShell started as administrator after `sima-cli login`. The workflows
+   never download or install it. Attach the card, and install GStreamer 1.28.6 MSVC
    and CPython 3.14 x64 for all users, as for a customer host. The card itself
    must pass the offline installer's preflight: eLxr 26.04 with `unshare`,
    `flock`, `timeout`, `python3`, `tar`, and `sha256sum`; a clean `dpkg --audit`;
@@ -162,7 +165,9 @@ cohort. Every Windows Platform build reports the same version, so the hardware
 job also requires the card PC's installed Platform runtime to hold exactly the
 DLLs that Scheduler's installed Platform record
 (`share/SimaScheduler/host/platform-windows.json`, carried in the candidate as
-`scheduler-platform-windows.json`) names, byte for byte.
+`scheduler-platform-windows.json`) names, byte for byte. That record names the
+DLLs of the package `sima-cli install drivers/windows` installs, so a card PC
+with another Platform build fails the hardware job.
 
 The card has no internet access, so the lane installs the candidate the way the
 Linux offline installer installs a card without internet. Vulcan CI's

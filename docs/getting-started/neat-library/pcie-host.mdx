@@ -41,10 +41,10 @@ The Windows preview has these limits:
 
 - Windows 10, Windows Server, Windows in S mode, and Arm64 Windows are not
   supported.
-- The current Platform 3.0 Windows driver package is test-signed. Windows loads
-  it only with Secure Boot turned off and Windows test-signing mode turned on.
-  A host that must keep Secure Boot on cannot use the preview until a
-  production-signed Platform driver is available.
+- The Platform 3.0 Windows package's virtual Ethernet driver, `SiMaNetAdapter`,
+  is test-signed. Windows loads it only with Secure Boot turned off and Windows
+  test-signing mode turned on. A host that must keep Secure Boot on cannot use
+  the preview until a production-signed `SiMaNetAdapter` driver is available.
 - After a Windows restart, the card may be missing or models may time out. Shut
   the host down and power it on instead of restarting. Sleep, hibernation, and
   Fast Startup have not been validated.
@@ -132,19 +132,19 @@ API and includes `pcie::genai::GenAIModel`. GenAI remains release-gated as
 described above; installing the API alone does not qualify the Platform transport
 or card models. Install these prerequisites in this order:
 
-1. The SiMa Platform 3.0 Windows package that matches the Neat release, as
-   described in the
-   [PCIe Driver Installation guide](https://developer.sima.ai/hardware/getting-started/pcie-mode/driver-installation).
-   It provides the PCIe drivers and the `SiMaMlaDaemon` service. The installer
-   checks the driver version, not the package name shown under **Installed apps**.
-   To see the driver version, run
-   `Get-CimInstance Win32_PnPSignedDriver | Where-Object DeviceName -like 'SiMa.ai*' | Select-Object DeviceName, DriverVersion`
-   in PowerShell. With the card installed, it lists `SiMa.ai MLA Device` and
-   `SiMa.ai Virtual Ethernet Adapter`.
-
-   The current Platform 3.0 Windows driver package is test-signed, not
-   production-signed. Windows loads it only with Secure Boot turned off and
-   Windows test-signing mode turned on. The Platform installer turns
+1. 64-bit CPython 3.14 from [python.org](https://www.python.org/downloads/windows/),
+   installed for all users or for the current user. Install Python before
+   `sima-cli`. Free-threaded builds cannot load the wheel.
+2. `sima-cli`, from the [sima-cli installation guide](/tools/sima-cli/). Then
+   sign in with `sima-cli login`. An older `sima-cli` stops with
+   `Missing 'script' in 'installation'`; update it by running the sima-cli
+   installer again, then retry. If `sima-cli --version` in a new window still
+   shows the old version, another copy comes first on the PATH; the installer
+   prints a warning that names that copy and how to fix it.
+3. The SiMa Platform 3.0 Windows package. It provides the PCIe drivers and the
+   `SiMaMlaDaemon` service. Its virtual Ethernet driver, `SiMaNetAdapter`, is
+   test-signed, not production-signed. Windows loads it only with Secure Boot
+   turned off and Windows test-signing mode turned on. The Platform installer turns
    test-signing on, which Windows does not allow while Secure Boot is on, so
    turn Secure Boot off before you install the Platform package. To check both
    settings, start PowerShell as administrator and run:
@@ -163,21 +163,29 @@ or card models. Install these prerequisites in this order:
    BitLocker or device encryption, check your organization's device-encryption
    policy, suspend BitLocker, and have the recovery key available before you
    change Secure Boot.
-2. GStreamer 1.28.6 MSVC x64, from
+
+   Then start PowerShell as administrator and install the package. `sima-cli`
+   downloads it into the current directory, and an administrator window opens
+   in `C:\Windows\System32`, so change to a working directory first:
+
+   ```powershell
+   New-Item -ItemType Directory -Force "$HOME\sima-platform" | Out-Null
+   Set-Location "$HOME\sima-platform"
+   sima-cli install drivers/windows
+   ```
+
+   When the installer asks to restart Windows, answer `N`. Then shut the host
+   down and power it on. The Neat installer checks the driver version, not the
+   package name shown under **Installed apps**. To see the driver version, run
+   `Get-CimInstance Win32_PnPSignedDriver | Where-Object DeviceName -like 'SiMa.ai*' | Select-Object DeviceName, DriverVersion`
+   in PowerShell. With the card installed, it lists `SiMa.ai MLA Device` and
+   `SiMa.ai Virtual Ethernet Adapter`.
+4. GStreamer 1.28.6 MSVC x64, from
    [gstreamer-1.0-msvc-x86_64-1.28.6.exe](https://gstreamer.freedesktop.org/data/pkg/windows/1.28.6/msvc/gstreamer-1.0-msvc-x86_64-1.28.6.exe).
    The package requires exactly this version. Choose a setup type that includes
    the development files, which C++ applications need. Open a new terminal after
    the installation so that it sees the `GSTREAMER_1_0_ROOT_MSVC_X86_64`
    variable that the GStreamer installer sets.
-3. 64-bit CPython 3.14 from [python.org](https://www.python.org/downloads/windows/),
-   installed for all users or for the current user. Install Python before
-   `sima-cli`. Free-threaded builds cannot load the wheel.
-4. `sima-cli`, from the [sima-cli installation guide](/tools/sima-cli/). Then
-   sign in with `sima-cli login`. An older `sima-cli` stops with
-   `Missing 'script' in 'installation'`; update it by running the sima-cli
-   installer again, then retry. If `sima-cli --version` in a new window still
-   shows the old version, another copy comes first on the PATH; the installer
-   prints a warning that names that copy and how to fix it.
 
 Open PowerShell as your usual user, not as administrator, and create a working
 directory for the downloaded packages and logs. A PowerShell window started as
@@ -419,7 +427,7 @@ On Windows, also check these cases:
 
 | Symptom | Cause | What to do |
 | --- | --- | --- |
-| `SiMa.ai MLA Device` is missing or shows a warning in Device Manager, or the installer reports that the Platform driver was not found | The Platform package is not installed; Secure Boot is on or test-signing is off, so Windows does not load the test-signed driver; or Windows has not detected the card | Install the Platform package. From PowerShell started as administrator, check that `Confirm-SecureBootUEFI` prints `False` and that `bcdedit` lists `testsigning Yes`. If Secure Boot is on, turn it off in firmware setup, then run `bcdedit /set testsigning on`. If both settings are correct, check that the card is seated and powered. Then shut the host down and power it on. |
+| `SiMa.ai MLA Device` or `SiMa.ai Virtual Ethernet Adapter` is missing or shows a warning in Device Manager, or the installer reports that the Platform driver was not found | The Platform package is not installed; Secure Boot is on or test-signing is off, so Windows does not load the test-signed `SiMaNetAdapter` driver; or Windows has not detected the card | Install the Platform package with `sima-cli install drivers/windows`. From PowerShell started as administrator, check that `Confirm-SecureBootUEFI` prints `False` and that `bcdedit` lists `testsigning Yes`. If Secure Boot is on, turn it off in firmware setup, then run `bcdedit /set testsigning on`. If both settings are correct, check that the card is seated and powered. Then shut the host down and power it on. |
 | Windows asks for a restart after an installation, or the card is missing after a restart | The card does not always return after a Windows restart | Shut the host down and power it on instead of restarting. |
 | A model fails to start while other models are open, and the Platform reports error 1450 | Each open queue reserves physically contiguous host memory for its buffers, which grows with the queue depth and tensor size | Open fewer models at the same time and close other applications. Hosts with less memory can open fewer queues at once. |
 | `SiMaMlaDaemon` does not stop, or a Platform package upgrade waits | An application still has a GenAI model open | Close the application, then stop or upgrade the service. |
