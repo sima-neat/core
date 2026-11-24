@@ -4608,7 +4608,8 @@ class HostedWindowsBuildContracts(unittest.TestCase):
     self.assertEqual(len(names), len(set(names)))
     self.assertEqual(
         {entry["use"] for entry in manifest["files"]},
-        {"gstreamer", "opencv", "nlohmann-json", "wix", "wheelhouse", "sima-cli"})
+        {"gstreamer", "opencv", "nlohmann-json", "wix", "wheelhouse", "sima-cli",
+         "python-installer"})
     for entry in manifest["files"]:
       with self.subTest(input=entry["name"]):
         self.assertRegex(entry["url"], r"^https://[^\s?#]+$")

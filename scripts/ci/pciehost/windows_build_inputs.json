@@ -7,7 +7,15 @@
       "use": "gstreamer",
       "name": "gstreamer-1.0-msvc-x86_64-1.28.6.exe",
       "url": "https://gstreamer.freedesktop.org/data/pkg/windows/1.28.6/msvc/gstreamer-1.0-msvc-x86_64-1.28.6.exe",
-      "sha256": "059251444d1267b486eba390b18d25fed87e10315e72f757ec6c7e912fa746b5"
+      "sha256": "059251444d1267b486eba390b18d25fed87e10315e72f757ec6c7e912fa746b5",
+      "size": 528572178
+    },
+    {
+      "use": "python-installer",
+      "name": "python-3.14.7-amd64.exe",
+      "url": "https://www.python.org/ftp/python/3.14.7/python-3.14.7-amd64.exe",
+      "sha256": "9d9eb2709ef81bf5cd30db3c2096bdbc4ea10087c22e62f27d356b36f6ae9649",
+      "size": 33258168
     },
     {
       "use": "opencv",
