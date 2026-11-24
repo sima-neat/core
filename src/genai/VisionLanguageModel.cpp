@@ -184,13 +184,13 @@ struct VisionLanguageModel::Impl {
     validate_thinking_request(request);
     GenerationResult result;
     llima::GenerationOptions options;
-    options.info_callback = [&](const std::string& metric, double value) {
+    options.callbacks.info = [&](const std::string& metric, double value) {
       if (metric == "ttft")
         result.metrics.time_to_first_token_s = value;
       if (metric == "tps")
         result.metrics.tokens_per_second = value;
     };
-    options.text_callback = [](const std::string&, bool, bool) {};
+    options.callbacks.text = [](const std::string&, bool, bool) {};
     const auto output = generate(request, std::move(options));
     result.metrics.generated_tokens = output.performance.generated_tokens;
     simaai::llima::ReasoningStreamParser reasoning_parser(reasoning_format, request.enable_thinking,
@@ -319,7 +319,7 @@ GenerationStream VisionLanguageModel::stream(const GenerationRequest& request) {
       [model = impl_, request, token = stop.get_token()](GenerationStream::Producer& producer) {
         llima::GenerationOptions options;
         options.stop = token;
-        options.info_callback = [&producer](const std::string& metric, double value) {
+        options.callbacks.info = [&producer](const std::string& metric, double value) {
           if (metric == "ttft" || metric == "tps")
             producer.record_metric(metric, value);
         };
@@ -347,9 +347,9 @@ GenerationStream VisionLanguageModel::stream(const GenerationRequest& request) {
                 producer.push(std::move(sample));
               }
             };
-        options.text_callback = [&producer, parse_tools, &reasoning_parser, &tool_parser,
-                                 &handle_tool_parser_events](const std::string& text,
-                                                             bool stream_end, bool) {
+        options.callbacks.text = [&producer, parse_tools, &reasoning_parser, &tool_parser,
+                                  &handle_tool_parser_events](const std::string& text,
+                                                              bool stream_end, bool) {
           for (auto& event : reasoning_parser.add(text, stream_end)) {
             if (event.reasoning) {
               TokenSample sample;
