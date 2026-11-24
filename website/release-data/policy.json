@@ -117,7 +117,7 @@
     },
     {
       "path": "website/i18n/uk/docusaurus-plugin-content-docs/current/getting-started/neat-library/pcie-host.mdx",
-      "line": "  доступний із хоста. Типова адреса для карти 0 — `10.0.0.2`.",
+      "line": "  доступний із хоста. Адреса для карти 0 за замовчуванням — `10.0.0.2`.",
       "count": 1,
       "reason": "Network address example, not a release version"
     },
