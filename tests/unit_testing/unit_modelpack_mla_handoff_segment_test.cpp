@@ -366,9 +366,10 @@ RUN_TEST(
       sima_test::initialize_cold_contract_gstreamer();
       using namespace simaai::neat;
 
-      const std::filesystem::path core_root = sima_test::test_source_root();
-      const std::string tar_path = sima_test::resolve_yolov8s_strict_mpk_tar(core_root);
-      require(!tar_path.empty(), "expected modelzoo-backed yolo_v8s .tar.gz MPK with *_mpk.json");
+      // The legacy yolo_v8s package: INT8 QuantTess, a six-head packed MLA output and
+      // DetessDequant, which the Model Browser yolov8s package does not have.
+      const std::string tar_path =
+          sima_test::resolve_yolov8_variant_fixture("yolo_v8s_mpk").tar_path;
 
       Model::Options model_opt;
       model_opt.preprocess.kind = InputKind::Image;
@@ -508,7 +509,6 @@ RUN_TEST(
 
       const std::vector<std::filesystem::path> bf16_candidates = {
           sima_test::resolve_yolov8_variant_fixture("yolov8n_A_W_BF16_mpk").tar_path,
-          core_root / "tmp" / "yolov8n_drive" / "yolov8n_A_BF16_W_INT8_mpk.tar.gz",
       };
       bool tested_bf16 = false;
       for (const auto& bf16_path : bf16_candidates) {
