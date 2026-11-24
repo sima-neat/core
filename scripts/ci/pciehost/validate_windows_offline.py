@@ -270,7 +270,9 @@ def validate(args: argparse.Namespace) -> None:
     run_logged([managed, "-c", "import pyneatpcie"], evidence / "import.log", env=offline,
                timeout=120)
     if upgrade_base is not None:
-      if any(msi_product_state(code) == INSTALLSTATE_DEFAULT for code in base_products):
+      # A newer Core release may reuse the baseline's Scheduler MSI, which then stays.
+      if any(msi_product_state(code) == INSTALLSTATE_DEFAULT
+             for code in set(base_products) - set(products)):
         raise RuntimeError("the upgrade left the baseline products installed")
       if "Replaced the registry receipt" not in (evidence / "install.log").read_text(
           encoding="utf-8", errors="replace"):

@@ -506,6 +506,7 @@ class GateRun(unittest.TestCase):
   """validate() on Linux, with Windows, MSI, firewall and sima-cli replaced by fakes."""
 
   ARCHIVE = "neat-pcie-offline-installer-12345678.tar.gz"
+  PRODUCTS = {"{core.msi}", "{scheduler.msi}"}
   INSTALLERS = {"gstreamer-1.0-msvc-x86_64-1.28.6.exe": "4" * 64,
                 "python-3.14.7-amd64.exe": "5" * 64}
 
@@ -523,6 +524,8 @@ class GateRun(unittest.TestCase):
                               for name, digest in self.INSTALLERS.items()]}))
     self.installed, self.canaries, self.unblocked = set(), [], set()
     self.blocked, self.commands = [], []
+    # An upgrade baseline, and the baseline products its upgrade fails to remove.
+    self.upgrade_base, self.left_behind = None, set()
 
   def run_logged(self, command, log, *, env=None, cwd=None, timeout=3600):
     argv = [str(value) for value in command]
@@ -535,10 +538,14 @@ class GateRun(unittest.TestCase):
       (tree / "metadata.json").write_text(json.dumps({"installation": {"prerequisites": []}}))
       for name in self.INSTALLERS:
         (folder / name).write_bytes(b"installer")
+    elif argv[1:3] == ["install", "-m"] and "--native-only" in argv:
+      self.installed.update(self.base_products())
     elif argv[1:3] == ["install", "-m"]:
-      if self.installed:
-        text = "is already installed and verified\n"
-      self.installed.update({"{core.msi}", "{scheduler.msi}"})
+      text = ("is already installed and verified\n" if self.PRODUCTS <= self.installed
+              else "Replaced the registry receipt\n")
+      # Windows Installer upgrades the baseline's products; a shared one stays.
+      self.installed -= self.base_products() - self.PRODUCTS - self.left_behind
+      self.installed.update(self.PRODUCTS)
     elif argv[1:3] == ["packages", "remove"]:
       self.installed.clear()
     log.write_text(text)
@@ -553,9 +560,14 @@ class GateRun(unittest.TestCase):
     self.canaries.append((Path(python), log.name))
     return log.name == "canary-before-block.log" or Path(python) in self.unblocked
 
+  def base_products(self):
+    base = self.upgrade_base
+    return {f"{{{base.core_msi}}}", f"{{{base.scheduler_msi}}}"} if base else set()
+
   def receipts(self, home, name):
     return [{"state": "installed", "version": VERSION, "native_packages": [
-        {"product_code": code} for code in sorted(self.installed)]}] if self.installed else []
+        {"product_code": code} for code in sorted(self.PRODUCTS)]}] if (
+            self.PRODUCTS <= self.installed) else []
 
   def validate(self):
     candidate = SimpleNamespace(metadata={"name": "pciehost", "version": VERSION},
@@ -574,7 +586,8 @@ class GateRun(unittest.TestCase):
                                                        "ProgramFiles": "C:/Program Files"}))
       for name, value in {
           "require_windows": lambda: None, "validate_candidate": lambda _: candidate,
-          "load_upgrade_base": lambda *_: None, "msi_product_code": lambda msi: f"{{{msi}}}",
+          "load_upgrade_base": lambda *_: self.upgrade_base,
+          "msi_product_code": lambda msi: f"{{{msi}}}",
           "msi_product_state": lambda code: 5 if code in self.installed else -1,
           "run_logged": self.run_logged, "powershell": self.powershell,
           "reaches_internet": self.reaches_internet, "receipts": self.receipts,
@@ -595,6 +608,26 @@ class GateRun(unittest.TestCase):
     self.assertIn(managed, self.blocked)
     self.assertTrue((self.root / "evidence" / "windows-offline-gate.json").is_file())
     self.assertEqual(self.installed, set())
+
+  def upgrade_from(self, core_msi, scheduler_msi):
+    root = self.root / "baseline"
+    root.mkdir()
+    self.upgrade_base = SimpleNamespace(
+        metadata={"name": "pciehost", "version": "0.6.0", "installation": {"prerequisites": []}},
+        root=root, core_msi=core_msi, scheduler_msi=scheduler_msi, core_commit="b" * 40)
+
+  def test_upgrade_may_keep_a_scheduler_the_baseline_shares(self):
+    # A newer Core release can reuse the baseline's Scheduler MSI and ProductCode.
+    self.upgrade_from("base-core.msi", "scheduler.msi")
+    self.validate()
+    self.assertTrue((self.root / "evidence" / "windows-offline-gate.json").is_file())
+    self.assertEqual(self.installed, set())
+
+  def test_upgrade_must_remove_every_baseline_only_product(self):
+    self.upgrade_from("base-core.msi", "scheduler.msi")
+    self.left_behind = {"{base-core.msi}"}
+    with self.assertRaisesRegex(RuntimeError, "left the baseline products installed"):
+      self.validate()
 
   def test_every_program_behind_the_block_is_blocked(self):
     self.validate()
