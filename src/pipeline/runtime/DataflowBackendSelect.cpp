@@ -163,17 +163,17 @@ std::shared_ptr<RunCore> build_impl(const Graph& graph, const RunOptions& opt, R
   const std::shared_ptr<const pipeline_internal::ModelRouteOrigin> origin =
       DataflowGraphAccess::model_origin(graph);
   const std::string call = origin ? origin->call : std::string(where ? where : "Graph::build");
-  if (mode != RunMode::Async) {
-    decline(call.c_str(),
-            {error_codes::kPipelineShape, "a synchronous Run",
-             "Graph::run(inputs) builds one, and the backend runs the Runs of Graph::build"});
-  }
   DataflowNotCarried declined;
   std::optional<DataflowRunConfig> planned = plan_dataflow_run(graph, opt, seed, where, &declined);
   if (!planned) {
     decline(call.c_str(), declined);
   }
   planned->where = call;
+  if (mode == RunMode::Sync && planned->run.output_memory == OutputMemory::Auto) {
+    // Graph::run's synchronous Run (driven once per call by Run::run, an asynchronous Run here):
+    // its outputs are the caller's own, as a synchronous Run's Auto gives them on GStreamer.
+    planned->run.output_memory = OutputMemory::Owned;
+  }
   const DataflowRunConfig& config = *planned;
   for (const DataflowOutputConfig& output : config.outputs) {
     if (output.link_depth > pipeline_internal::df::kMaxLinkDepth) {

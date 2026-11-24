@@ -9,7 +9,7 @@
 // building (unit_dataflow_endpoints_test covers several endpoints) and an Input feeding no Output;
 // a Run Dataflow does not carry (the not-carried error at Graph::build, never a Run on
 // GStreamer); the Session report Run::stop prints;
-// the holder push error; explicit Dataflow on a sync run; a record bound by its first push (C2);
+// the holder push error; Graph::run (a synchronous Run); a record bound by its first push (C2);
 // the link depth (the larger of queue_depth and max_buffers, each after its default or clamp);
 // try_push accounting
 // under KeepLatest, DropIncoming and Block; a blocking push that never drops under DropIncoming and
@@ -462,12 +462,15 @@ void build_errors() {
                        "this graph is not carried by the Dataflow backend: it has no public "
                        "Input (a source graph).");
   }
-  // A synchronous run (Graph::run) on Dataflow: loud, not a fallback.
+  // A synchronous run (Graph::run): a Run driven once per call, its output the caller's own.
   {
     Graph g = input_output();
-    require_neat_error([&] { (void)g.run(TensorList{rgb(8, 8, 1)}, dataflow()); },
-                       error_codes::kPipelineShape,
-                       "a synchronous Run is not carried by the Dataflow backend: Graph::run");
+    for (std::uint8_t k = 1; k <= 2; ++k) {
+      const TensorList out = g.run(TensorList{rgb(8, 8, k)}, dataflow());
+      require(out.size() == 1U && bytes_of(out.front()) == bytes_of(rgb(8, 8, k)) &&
+                  out.front().storage->kind == StorageKind::CpuOwned,
+              "Graph::run gives the frame, owned");
+    }
   }
   // Records (an item of several tensors) bind a record port since C2; the binding is enforced.
   {
