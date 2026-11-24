@@ -1,8 +1,4 @@
-"""Strict, device-independent Python API coverage for SSD box decode.
-
-Fixture- and dispatcher-dependent behavior lives in the explicitly long
-``python/tests_long/test_ssd_boxdecode_device.py`` lane.
-"""
+"""Strict, device-independent Python API coverage for SSD box decode."""
 
 import pyneat
 

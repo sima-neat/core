@@ -149,16 +149,4 @@ inline cv::Mat load_coco_people_image_or_skip(const fs::path& root = {}) {
   return img;
 }
 
-// Golden detections produced by the bit-exact host SSD decode (== TensorFlow full model) on the
-// zidane sample, in original-frame pixels. class_id follows the MS-COCO 90-index map that this
-// model emits (1 = person). Only the two strong person detections are asserted: the on-device
-// int8 pipeline stays well within IoU tolerance of these, while weaker classes (e.g. the tie at
-// ~0.42) are near the int8 score floor and intentionally left out to keep the check stable.
-inline std::vector<objdet::ExpectedBox> expected_ssd_people_boxes() {
-  return {
-      {737.0f, 54.0f, 1147.0f, 699.0f, 1},
-      {96.0f, 194.0f, 1105.0f, 707.0f, 1},
-  };
-}
-
 } // namespace sima_ssd_mobilenet_test
