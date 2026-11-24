@@ -39,6 +39,14 @@ public:
   std::vector<std::string> model_names() const;
 
   void serve();
+  /**
+   * @brief Start serving in the background and return once the server accepts connections.
+   *
+   * Registered models are warmed up on the calling thread before the port is bound.
+   * @throws std::runtime_error if the server cannot listen on `host:port` (for example, the
+   *         port is already in use), if warm-up fails, or if it is already started or running.
+   *         The registered models are kept and start() can be called again.
+   */
   void start();
   void stop();
 

@@ -1748,13 +1748,45 @@ struct GenAIServer::Impl {
     }
   }
 
+  [[noreturn]] void throw_listen_failure() {
+    // Nothing is serving here; this only clears the "decommissioned" state so a later start works.
+    http.stop();
+    throw std::runtime_error("GenAIServer failed to listen on " + options.host + ":" +
+                             std::to_string(options.port));
+  }
+
   void start() {
     if (worker.joinable()) {
       throw std::runtime_error("GenAIServer is already started");
     }
+    if (running.exchange(true)) {
+      throw std::runtime_error("GenAIServer is already running");
+    }
     stopping.store(false);
-    warmup_models_once();
-    worker = std::thread([this] { serve(); });
+    try {
+      warmup_models_once();
+      // Bind on the caller's thread so bind errors reach the caller instead of a worker thread.
+      if (!http.bind_to_port(options.host, options.port)) {
+        throw_listen_failure();
+      }
+      // An exception must not escape the worker; decommission() ends the readiness wait below.
+      worker = std::thread([this] {
+        try {
+          (void)http.listen_after_bind();
+        } catch (...) {
+          http.decommission();
+        }
+      });
+      // httplib's stop() only closes a server whose accept loop is running, so wait for it.
+      http.wait_until_ready();
+      if (!http.is_running()) {
+        worker.join();
+        throw_listen_failure();
+      }
+    } catch (...) {
+      running.store(false);
+      throw;
+    }
   }
 
   void stop() {
