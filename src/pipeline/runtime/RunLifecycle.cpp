@@ -68,6 +68,9 @@ void runtime::RunCore::stop() {
 
   if (dataflow_) {
     stop_requested.store(true);
+    if (power_monitor) {
+      power_monitor->stop();
+    }
     dataflow_->stop();
     return;
   }

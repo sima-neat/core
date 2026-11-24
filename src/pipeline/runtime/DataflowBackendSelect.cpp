@@ -21,6 +21,7 @@
 #include "gst/GstInit.h"
 #include "pipeline/ErrorCodes.h"
 #include "pipeline/Graph.h"
+#include "pipeline/PowerTelemetry.h"
 #include "pipeline/graph/internal/GraphBuildInternal.h"
 #include "pipeline/internal/BackendSetting.h"
 #include "pipeline/internal/DataflowNotCarried.h"
@@ -223,6 +224,15 @@ std::shared_ptr<RunCore> build_impl(const Graph& graph, const RunOptions& opt, R
   core->mode = RunMode::Async;
   core->dataflow_ = make_dataflow_run_state(*core, config, seed.tensors);
   warn_ignored_dataflow_options(config);
+  // RunOptions::power_monitor (deprecated): the board's rails sampled for the Run's lifetime, from
+  // its build to its stop, as GStreamer's Run samples them (MeasureReport::power, the exports).
+  if (core->opt.power_monitor.enabled) {
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+    core->power_monitor = std::make_unique<PowerMonitor>(core->opt.power_monitor);
+#pragma GCC diagnostic pop
+    core->power_monitor->start();
+  }
   // A seeded build pushes its seed and pulls the output once before it returns, where GStreamer's
   // does: every seeded Run of one Output (nothing this backend carries is a pipeline GStreamer
   // skips the preflight for). A first-frame refusal of the seed is then the build's error.
