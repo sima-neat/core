@@ -239,6 +239,7 @@ public:
     // no default, as on GStreamer's graph path (plan.default_input, plan.default_output).
     default_input_ = ports_.size() == 1U ? ports_.front().get() : nullptr;
     default_output_ = config_.outputs.size() == 1U ? 0U : kNoEndpoint;
+    drained_ = std::make_unique<std::atomic<bool>[]>(config_.outputs.size());
   }
 
   // A seed (one input only: the build checked it), or a declaration that gives the spec, binds now;
@@ -439,12 +440,17 @@ public:
     return !stopped_.load(std::memory_order_acquire);
   }
 
+  // As GStreamer's Run answers them: the default input takes pushes until close_input or a stop;
+  // the default output has something to pull until a stop, or until a pull found it closed and
+  // drained.
   bool can_push() const override {
-    return default_input_ != nullptr;
+    return default_input_ != nullptr && !default_input_->closed() &&
+           !stopped_.load(std::memory_order_acquire);
   }
 
   bool can_pull() const override {
-    return default_output_ != kNoEndpoint;
+    return default_output_ != kNoEndpoint && !stopped_.load(std::memory_order_acquire) &&
+           !drained_[default_output_].load(std::memory_order_acquire);
   }
 
   std::vector<std::string> input_names() const override {
@@ -623,6 +629,10 @@ private:
               const char* where) {
     const PushVerdict v = push_verdict(
         outcome, PushPolicy{block, port.lossy_block(), port.fan_out(), config_.link_policy});
+    if (!v.accepted && port.closed()) {
+      // Run::last_error says why, as on GStreamer: "Run::push: input is closed".
+      core_.push_refused_after_close.store(true, std::memory_order_relaxed);
+    }
     if (v.error) {
       pipeline_internal::throw_dataflow_error(*df::failure(outcome.answer), where, {},
                                             pipeline_internal::DataflowErrorSite::Running);
@@ -715,6 +725,7 @@ private:
       // (WORKER.md 18.1).
       if (stopped_.load(std::memory_order_acquire) || port->closed()) {
         error_util::set_pull_error(err, error_codes::kRuntimePull, where() + ": stream closed");
+        drained_[o].store(true, std::memory_order_release);
         return PullStatus::Closed;
       }
       return timed_out(timeout_ms, where(), err);
@@ -729,6 +740,7 @@ private:
       }
       if (mapping.status == PullStatus::Closed) {
         error_util::set_pull_error(err, error_codes::kRuntimePull, where() + ": stream closed");
+        drained_[o].store(true, std::memory_order_release);
         // Closed and drained after close_input: a Run of one output stops itself, as the GStreamer
         // Run does at its end of stream (RunCore::pull). With several outputs the others
         // may still hold messages; GStreamer's graph path does not stop at a closed output either.
@@ -806,6 +818,8 @@ private:
   std::vector<OutputSlot> slots_;
   DataflowInputPort* default_input_ = nullptr;
   std::size_t default_output_ = kNoEndpoint;
+  // Per public Output (config_.outputs order): a pull found it closed and drained.
+  std::unique_ptr<std::atomic<bool>[]> drained_;
 
   std::atomic<bool> stopped_{false};
   std::atomic<std::uint64_t> polls_{0};

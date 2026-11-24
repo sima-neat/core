@@ -824,6 +824,48 @@ void connected_realtime_resolves_the_preset() {
   run.close();
 }
 
+// Run::can_push, can_pull and last_error follow close_input and the drain, as GStreamer's Run
+// answers them, on a plain linear Run and on a connected graph Run: open, both true; after
+// close_input no push is taken, a refused push's reason is last_error ("input is closed"), and
+// what was pushed stays pullable; once a pull found the output closed and drained, can_pull is
+// false. The same on both backends (each process runs it on its own).
+void readiness_follows_close_and_drain() {
+  const std::string on = std::string(" (") + sima_test::backend_name() + ")";
+  for (const bool connected : {false, true}) {
+    const std::string what = std::string(connected ? "connected" : "linear") + on;
+    const RealtimeBlock c;
+    RunOptions opt;
+    opt.queue_depth = 4;
+    opt.startup_preflight = false;
+    Graph g = connected ? connected_input_output(c.in) : input_output(c.in);
+    Run run = connected ? g.build(opt) : g.build(TensorList{rgb(32, 24, 1)}, opt);
+    require(run.can_push() && run.can_pull(), "an open Run of one Input and one Output: " + what);
+    const auto push = [&](std::uint8_t tag) {
+      const TensorList item{rgb(32, 24, tag)};
+      return connected ? run.push("input", item) : run.push(item);
+    };
+    const auto pull = [&](int timeout_ms) {
+      return connected ? run.pull("output", std::chrono::milliseconds(timeout_ms))
+                       : run.pull(std::chrono::milliseconds(timeout_ms));
+    };
+    require(push(2) && push(3), "two pushes: " + what);
+    run.close_input();
+    require(!run.can_push(), "close_input ends can_push: " + what);
+    require(run.can_pull(), "what was pushed stays pullable: " + what);
+    require(!push(4), "a push after close_input is refused: " + what);
+    require_contains(run.last_error(), "input is closed",
+                     "last_error says why the push was refused: " + what);
+    for (int i = 0; i < 2; ++i) {
+      const Result<TensorList> r = pull(5000);
+      require(r.ok() && r->size() == 1U, "a queued item is pulled after close_input: " + what);
+    }
+    const Result<TensorList> end = pull(5000);
+    require(end.status() == PullStatus::Closed, "then the output is closed: " + what);
+    require(!run.can_pull() && !run.can_push(), "a drained Run advertises nothing: " + what);
+    run.close();
+  }
+}
+
 // A plain linear Run resolves its options as GStreamer's one-segment Run does, by the same code: an
 // explicit Block survives the Realtime preset (try_push refuses when the queue is full and drops
 // nothing), and only OverflowPolicy::Auto takes the preset's KeepLatest (try_push never refuses
@@ -1333,6 +1375,7 @@ RUN_BACKEND_TEST("unit_dataflow_backend_test", ([] {
            // The rows that hold on both backends.
            linear_realtime_keeps_an_explicit_block();
            connected_realtime_resolves_the_preset();
+           readiness_follows_close_and_drain();
            if (!sima_test::on_dataflow()) {
              return;
            }

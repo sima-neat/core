@@ -67,9 +67,10 @@ public:
   virtual void stop() = 0;
 
   virtual bool running() const = 0;
-  // A default input (output) exists: the graph has exactly one public Input (Output), so the
-  // unnamed push (pull) reaches it. Run::can_push and Run::can_pull, as the graph path answers
-  // them.
+  // Run::can_push and Run::can_pull, as GStreamer's Run answers them: a default input (output)
+  // exists (the graph has exactly one public Input, Output), so the unnamed push (pull) reaches
+  // it, and it is open: the input until close_input or a stop, the output until a stop or until a
+  // pull found it closed and drained.
   virtual bool can_push() const = 0;
   virtual bool can_pull() const = 0;
   virtual std::vector<std::string> input_names() const = 0;
