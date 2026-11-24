@@ -1,11 +1,11 @@
 ---
-title: Встановлення в автономному режимі
+title: Офлайн-встановлення
 description: Встановлення пакетів SDK та Model Compiler без доступу до інтернету на цільовому хості
 sidebar_position: 6
 ---
 
-:::tip Коли потрібне автономне встановлення
-Використовуйте автономне встановлення, якщо цільовий хост не може завантажити пакети зі служб SiMa.ai.
+:::tip Коли потрібне офлайн-встановлення
+Використовуйте офлайн-встановлення, якщо цільовий хост не може завантажити пакети зі служб SiMa.ai.
 Це може бути потрібно, якщо ваша організація:
 
 - Блокує завантаження великих файлів.
@@ -17,7 +17,7 @@ sidebar_position: 6
 Завантажте пакет на комп’ютері з доступом до інтернету.
 Потім перенесіть пакет на цільовий хост для встановлення.
 
-Пакети середовища виконання описано в розділах [автономного встановлення хоста PCIe](/getting-started/neat-library/pcie-host/#offline-installation) та [автономного встановлення Neat Library](/getting-started/neat-library/install-or-update/#offline-installation).
+Про пакети середовища виконання див. [офлайн-встановлення на хості PCIe](/getting-started/neat-library/pcie-host/#offline-installation) або [офлайн-встановлення Neat Library](/getting-started/neat-library/install-or-update/#offline-installation).
 
 ## Виберіть пакет
 
@@ -60,7 +60,7 @@ sima-cli neat install sdk@v%%release.sdk%% -t offline-arm64
 
 Встановлення Model Compiler необов’язкове.
 Якщо вам не потрібно компілювати моделі, пропустіть завантаження Model Compiler і виконайте наведені нижче кроки встановлення SDK.
-Коли програма встановлення SDK запитає, чи встановлювати Model Compiler, виберіть пропуск.
+Коли програма встановлення SDK запитає, чи встановлювати Model Compiler, відмовтеся.
 
 Щоб встановити Model Compiler разом із SDK, [завантажте офлайн-пакет Model Compiler](#download-model-compiler-package).
 Покладіть файл офлайн-пакета Model Compiler у ту саму теку, що й офлайн-пакет SDK.

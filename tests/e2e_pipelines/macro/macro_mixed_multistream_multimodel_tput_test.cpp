@@ -2308,11 +2308,11 @@ int main(int argc, char** argv) {
     }
 
     if (args.resnet_lanes > 0 && args.resnet_model.empty())
-      args.resnet_model = sima_test::resolve_resnet50_tar(args.root);
+      args.resnet_model = sima_test::resolve_resnet50_tar();
     if (args.resnet_lanes > 0 && args.resnet_model.empty()) {
       require_assets_or_skip(args.require_assets,
-                             "ResNet50 model pack not found; set --resnet-model, SIMA_MODEL_TAR, "
-                             "SIMA_RESNET50_TAR, or run modelzoo get resnet_50");
+                             "ResNet50 model pack not found; set --resnet-model, SIMA_MODEL_TAR or "
+                             "SIMA_RESNET50_TAR");
     }
     if (args.yolo_lanes > 0 && args.yolo_model.empty() && is_yolo26_family(args.yolo_decode_type)) {
       args.yolo_model = sima_test::env_existing_model_tar_path("SIMA_YOLO26_TAR");

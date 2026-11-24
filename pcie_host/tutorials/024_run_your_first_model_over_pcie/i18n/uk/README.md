@@ -52,17 +52,12 @@ PCIe host API приймає або тензор, готовий до викор
 команди з кореневої папки розпакованих додаткових матеріалів PCIe:
 
 ```bash
-sima-cli modelzoo get yolo_v8s
+sima-cli models download --id yolov8s --variant w8a8
+unzip -p models/yolov8s/w8a8/yolov8s_w8a8_default.zip yolov8s_w8a8_mpk.tar.gz > yolo_v8s_mpk.tar.gz
 ```
 
-Програми вимагають наявності `yolo_v8s_mpk.tar.gz` у цьому каталозі. Вихідні
-імена та розташування Model Zoo можуть відрізнятися. Якщо команда не створила саме цей шлях,
-скопіюйте завантажений архів на місце та перевірте його:
-
-```bash
-cp /absolute/path/to/downloaded-yolov8s-archive.tar.gz yolo_v8s_mpk.tar.gz
-test -f yolo_v8s_mpk.tar.gz
-```
+Програми вимагають наявності `yolo_v8s_mpk.tar.gz` у цьому каталозі. Друга
+команда видобуває його із завантаженого ZIP-файлу.
 
 **Python:**
 

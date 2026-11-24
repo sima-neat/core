@@ -38,17 +38,14 @@ export LD_LIBRARY_PATH=/usr/lib/aarch64-linux-gnu/neat/runtime:$LD_LIBRARY_PATH
 ```
 :::
 
-### 3. 缺少模型封存檔 — `sima-cli modelzoo` 尚未執行。
+### 3. 缺少模型封存檔
 
 :::info 原因
 您程式碼中參考的 `.tar.gz` 模型封存檔（或 `SIMA_YOLO_TAR` / `SIMA_RESNET50_TAR` / `SIMA_MODEL_TAR`）在磁碟上不存在。
 :::
 
 :::tip 修復
-請從 Model Zoo 下載。
-```bash
-sima-cli modelzoo get yolo_v8s     # or resnet_50, etc.
-```
+請依照[準備模型封存檔](/tutorials/before-you-run#prepare-model-archives)中的說明，從 Model Browser 下載。
 :::
 
 ## 建立

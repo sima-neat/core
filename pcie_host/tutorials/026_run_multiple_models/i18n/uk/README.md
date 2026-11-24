@@ -39,18 +39,13 @@ PCIe-карта Modalix надає доступ до черг співоброб
 Встановіть пакет хоста PCIe та завантажте пакет для посібника, як описано в [Налаштування навчального посібника.](/tutorials/before-you-run). З кореневої папки додаткових матеріалів PCIe, завантажте обидві моделі:
 
 ```bash
-sima-cli modelzoo get resnet_50
-sima-cli modelzoo get yolo_v8s
+sima-cli models download --id resnet_50 --variant w8a8
+unzip -p models/resnet_50/w8a8/resnet_50_w8a8_default.zip resnet_50_w8a8_mpk.tar.gz > resnet_50_mpk.tar.gz
+sima-cli models download --id yolov8s --variant w8a8
+unzip -p models/yolov8s/w8a8/yolov8s_w8a8_default.zip yolov8s_w8a8_mpk.tar.gz > yolo_v8s_mpk.tar.gz
 ```
 
-Програма вимагає точних шляхів до `resnet_50_mpk.tar.gz` і `yolo_v8s_mpk.tar.gz` у цьому каталозі. Якщо Model Zoo використовував інші імена або розташування, скопіюйте завантажені архіви на відповідні місця та перевірте їх:
-
-```bash
-cp /absolute/path/to/downloaded-resnet-archive.tar.gz resnet_50_mpk.tar.gz
-cp /absolute/path/to/downloaded-yolov8s-archive.tar.gz yolo_v8s_mpk.tar.gz
-test -f resnet_50_mpk.tar.gz
-test -f yolo_v8s_mpk.tar.gz
-```
+Програма вимагає точних шляхів до `resnet_50_mpk.tar.gz` і `yolo_v8s_mpk.tar.gz` у цьому каталозі. Кожна команда `unzip` видобуває один із них із відповідного завантаженого ZIP-файлу.
 
 Запустіть Python:
 

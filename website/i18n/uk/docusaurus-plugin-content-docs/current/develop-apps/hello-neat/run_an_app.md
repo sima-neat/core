@@ -31,23 +31,24 @@ mdx:
 ## Налаштування проєкту
 
 :::tip Уже пройшли [Запуск моделі](/develop-apps/hello-neat/run_first_model)?
-Ви можете пропустити цей розділ: у ньому використовуються той самий каталог `assets/`, пакет моделі та зразок зображення. Перейдіть одразу до розділу [Огляд коду](#walk-through-the-code).
+Ви можете пропустити цей розділ: у ньому використовуються та сама тека `assets/`, пакет моделі та зразок зображення. Перейдіть одразу до розділу [Огляд коду](#walk-through-the-code).
 :::
 
-1. **Створіть каталог для ресурсів** для моделі та вхідного зображення:
+1. **Створіть теку для ресурсів** для моделі та вхідного зображення:
 
     <ShellCommand prompt="sdk|devkit">
     mkdir -p assets
     </ShellCommand>
 
-2. **Завантажте модель:**
+2. **Завантажте модель** із Model Browser і видобудьте архів моделі із завантаженого ZIP-файлу:
 
     <ShellCommand prompt="sdk|devkit">
-    sima-cli modelzoo -v 2.1.3 get yolo_v8s
+    sima-cli models download --id yolov8s --variant w8a8
+    unzip -p models/yolov8s/w8a8/yolov8s_w8a8_default.zip yolov8s_w8a8_mpk.tar.gz > assets/yolo_v8s_mpk.tar.gz
     </ShellCommand>
 
     :::note Завантаження моделі через sima-cli
-    Якщо `sima-cli` зберігає модель не в каталозі `assets`, скопіюйте цей файл до `assets/yolo_v8s_mpk.tar.gz`.
+    Програма відкриває `assets/yolo_v8s_mpk.tar.gz`. Підготовку моделей для всіх навчальних матеріалів описано в розділі [Налаштування навчального посібника](/tutorials/before-you-run).
     :::
 3. **Завантажте зразок зображення** з документації та збережіть його під назвою `assets/tutorial_sample_image.png`.
 
@@ -287,7 +288,7 @@ for (int64_t i = 0; i < boxes.shape[0]; ++i) {
 
 ## Повна програма
 
-Створіть файли в каталозі вашого проєкту, а потім зберіть і запустіть.
+Створіть файли в теці вашого проєкту, а потім зберіть і запустіть.
 
 <CodeTabs>
 <CodeTab label="Python" lang="python">
@@ -404,7 +405,7 @@ target_link_libraries(sima_neat_app
 )
 ```
 
-Саме два виділені рядки підключають ваш застосунок до Neat: `find_package(SimaNeat REQUIRED CONFIG)` знаходить встановлений пакет Neat (через `SimaNeatConfig.cmake`), а `target_link_libraries(sima_neat_app PRIVATE SimaNeat::sima_neat ...)` підключає його до застосунку — імпортована ціль `SimaNeat::sima_neat` автоматично передає каталоги заголовків і транзитивні залежності Neat, тому не потрібно вказувати шляхи до заголовків/бібліотек вручну. (`PkgConfig::OPENCV` потрібен лише тому, що цей застосунок використовує OpenCV для завантаження зображень.)
+Саме два виділені рядки підключають ваш застосунок до Neat: `find_package(SimaNeat REQUIRED CONFIG)` знаходить встановлений пакет Neat (через `SimaNeatConfig.cmake`), а `target_link_libraries(sima_neat_app PRIVATE SimaNeat::sima_neat ...)` підключає його до застосунку — імпортована ціль `SimaNeat::sima_neat` автоматично передає теки заголовків і транзитивні залежності Neat, тому не потрібно вказувати шляхи до заголовків/бібліотек вручну. (`PkgConfig::OPENCV` потрібен лише тому, що цей застосунок використовує OpenCV для завантаження зображень.)
 
 ```cpp title="main.cpp" {13-19,30-31,34-37,40-42,44-46}
 #include "neat.h"
