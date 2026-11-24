@@ -123,41 +123,42 @@ simaai::neat::Model::Options ssd300_options(int num_classes) {
 
 } // namespace
 
-RUN_TEST(
-    "unit_ssd300_class_selection_admission_test", ([] {
-      using namespace simaai::neat;
-      using pipeline_internal::sima::stagesemantics::SsdClassSelectionKind;
-      sima_test::initialize_cold_contract_gstreamer();
-      const auto fixture = make_ssd300_heads_fixture();
+RUN_TEST("unit_ssd300_class_selection_admission_test", ([] {
+           using namespace simaai::neat;
+           using pipeline_internal::sima::stagesemantics::SsdClassSelectionKind;
+           sima_test::initialize_cold_contract_gstreamer();
+           const auto fixture = make_ssd300_heads_fixture();
 
-      Model narrowed(fixture.tar_path, ssd300_options(kSelectedClasses));
-      for (const bool sync : {false, true}) {
-        const auto contract = internal::ModelAccess::build_boxdecode_stage_contract(narrowed, sync);
-        const auto& selection = contract.payload.ssd_class_selection;
-        require(contract.payload.decode_type == BoxDecodeType::Ssd,
-                "the SSD300 heads must resolve to an SSD BoxDecode contract");
-        require(selection.encoded_count == kEncodedClasses,
-                "num_classes = 8 must keep the 81 classes the SSD300 heads encode");
-        require(selection.selected_count == kSelectedClasses,
-                "num_classes = 8 must select 8 classes; 81 means the option was ignored");
-        require(selection.kind == SsdClassSelectionKind::PrefixFromZero,
-                "SSD300 must narrow to a prefix of the encoded classes");
-      }
+           Model narrowed(fixture.tar_path, ssd300_options(kSelectedClasses));
+           for (const bool sync : {false, true}) {
+             const auto contract =
+                 internal::ModelAccess::build_boxdecode_stage_contract(narrowed, sync);
+             const auto& selection = contract.payload.ssd_class_selection;
+             require(contract.payload.decode_type == BoxDecodeType::Ssd,
+                     "the SSD300 heads must resolve to an SSD BoxDecode contract");
+             require(selection.encoded_count == kEncodedClasses,
+                     "num_classes = 8 must keep the 81 classes the SSD300 heads encode");
+             require(selection.selected_count == kSelectedClasses,
+                     "num_classes = 8 must select 8 classes; 81 means the option was ignored");
+             require(selection.kind == SsdClassSelectionKind::PrefixFromZero,
+                     "SSD300 must narrow to a prefix of the encoded classes");
+           }
 
-      // Without the option the contract keeps every encoded class. This is the value the
-      // narrowed case must not report.
-      Model full(fixture.tar_path, ssd300_options(0));
-      const auto full_contract = internal::ModelAccess::build_boxdecode_stage_contract(full, false);
-      require(full_contract.payload.ssd_class_selection.encoded_count == kEncodedClasses &&
-                  full_contract.payload.ssd_class_selection.selected_count == kEncodedClasses,
-              "without num_classes the SSD300 contract must select all 81 encoded classes");
+           // Without the option the contract keeps every encoded class. This is the value the
+           // narrowed case must not report.
+           Model full(fixture.tar_path, ssd300_options(0));
+           const auto full_contract =
+               internal::ModelAccess::build_boxdecode_stage_contract(full, false);
+           require(full_contract.payload.ssd_class_selection.encoded_count == kEncodedClasses &&
+                       full_contract.payload.ssd_class_selection.selected_count == kEncodedClasses,
+                   "without num_classes the SSD300 contract must select all 81 encoded classes");
 
-      bool over_rejected = false;
-      try {
-        Model over(fixture.tar_path, ssd300_options(kEncodedClasses + 10));
-        (void)internal::ModelAccess::build_boxdecode_stage_contract(over, false);
-      } catch (const std::exception&) {
-        over_rejected = true;
-      }
-      require(over_rejected, "num_classes above the 81 encoded classes must be rejected");
-    }));
+           bool over_rejected = false;
+           try {
+             Model over(fixture.tar_path, ssd300_options(kEncodedClasses + 10));
+             (void)internal::ModelAccess::build_boxdecode_stage_contract(over, false);
+           } catch (const std::exception&) {
+             over_rejected = true;
+           }
+           require(over_rejected, "num_classes above the 81 encoded classes must be rejected");
+         }));
