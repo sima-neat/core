@@ -35,7 +35,7 @@
    "must_observe": false,
    "decision": "DECISIONS.md 5 (the tensor placement difference owned by agent stages; plan-entry.md 2.3 B30)",
    "gstreamer": "a pulled tensor is a view into the GStreamer buffer of the last stage: segments allocation_0 (the stage's input) and allocation_1 (its output, page-rounded size), the tensor's route naming allocation_1 (memory and physical index 1); a BoxDecode BBOX sits at byte 384 of a 4,096-byte buffer (E4.md)",
-   "dataflow": "a view into the one output slot of the last port: one segment of the output's own size, named as GStreamer names the allocation of the stage's final layout that holds the tensor (allocation_1 behind the packages' A65 cast or dequant, allocation_0 where that stage's layout has one allocation), route memory index 0 and physical index that allocation's, the BBOX at byte 0",
+   "dataflow": "a view into the one output slot of the last port: one segment allocation_0 of the output's own size, route memory and physical index 0, the BBOX at byte 0",
    "fields": [
     "tensors[*].storage.size_bytes",
     "tensors[*].byte_offset",
@@ -59,13 +59,13 @@
    "must_observe": false,
    "decision": "DECISIONS.md 5 (the tensor placement difference owned by agent stages; plan-entry.md 2.3 B30)",
    "gstreamer": "the storage lists the last stage's allocations by name and size (its input and output for a cast or dequant stage)",
-   "dataflow": "one segment, the allocation of the stage's final layout that holds the tensor, by GStreamer's name, of the output slot's size",
+   "dataflow": "one segment, allocation_0, of the output slot's size",
    "fields": [
     "tensors[*].storage.segments"
    ],
    "relation": {
     "gstreamer": "re:\\[.*'allocation_\\d+:\\d+'\\]",
-    "dataflow": "re:\\['allocation_\\d:\\d+'\\]"
+    "dataflow": "re:\\['allocation_0:\\d+'\\]"
    },
    "applies_to": "routes whose last stage is a cast, a dequant or BoxDecode (an EV74 preproc stage last has the same layout on both backends)"
   },

@@ -9,7 +9,6 @@
 
 #include "pipeline/DetectionTypes.h"
 #include "pipeline/ErrorCodes.h"
-#include "pipeline/graph/internal/GraphBuildInternal.h"
 #include "pipeline/internal/DataflowErrorMap.h"
 #include "pipeline/internal/DataflowNotCarried.h"
 #include "pipeline/internal/ErrorUtil.h"
@@ -20,7 +19,6 @@
 #include "pipeline/internal/sima/BoxDecodeGeometry.h"
 #include "pipeline/internal/sima/KernelStageRecipe.h"
 #include "pipeline/internal/sima/PreprocFrameAdapter.h"
-#include "pipeline/internal/sima/StageMemoryPolicy.h"
 #include "pipeline/internal/sima/StageRecipePreparation.h"
 #include "pipeline/runtime/DataflowDeviceMemory.h"
 #include "pipeline/runtime/DataflowInputBinding.h"
@@ -400,27 +398,15 @@ void describe_pulled(const si::StageStaticSpec& stage, const si::LogicalTensorSt
   pulled.route.logical_index = out.logical_index;
   pulled.route.backend_output_index = out.backend_output_index;
   pulled.route.route_slot = out.output_slot;
-  // The route names the allocation of the stage's final layout that holds the tensor, as
-  // GStreamer's publication names it (build_publish_contract_from_manifest_stage_local:
-  // "allocation_<index>"), allocation 0 for a stage without a final layout. The memory index is
-  // the pulled slot's one memory.
-  std::size_t allocation = 0;
-  if (stage.frame_layout && out.backend_output_index >= 0) {
-    const auto& outputs = stage.frame_layout->outputs;
-    const auto binding = std::find_if(outputs.begin(), outputs.end(), [&](const auto& candidate) {
-      return candidate.tensor == static_cast<std::size_t>(out.backend_output_index);
-    });
-    if (binding != outputs.end()) {
-      allocation = binding->span.allocation_index;
-    }
-  }
-  pulled.route.physical_index = static_cast<int>(allocation);
+  // One output buffer: the final layout's allocation 0 (build_publish_contract_from_manifest_
+  // stage_local names a finalized stage's physical outputs "allocation_<index>").
+  pulled.route.physical_index = 0;
   pulled.route.memory_index = 0;
   pulled.route.physical_byte_offset = out.byte_offset;
   pulled.route.name =
       out.logical_name.empty() ? "output" + std::to_string(out.logical_index) : out.logical_name;
   pulled.route.backend_name = out.backend_name;
-  pulled.route.segment_name = "allocation_" + std::to_string(allocation);
+  pulled.route.segment_name = "allocation_0";
   if (out.quant.has_value()) {
     QuantSpec quant;
     quant.axis = out.quant->axis;
@@ -1377,19 +1363,6 @@ dataflow_model_manifest(const std::vector<std::shared_ptr<Node>>& route,
     } catch (const std::exception& error) {
       return decline(std::string("the model's kernel stages do not lower: ") + error.what());
     }
-  }
-  // Each stage's final layout, as GStreamer's build places the stages' storage for the segment's
-  // public output (finalize_pipeline_storage): the published tensors' allocations are named by
-  // it. Placed on a copy so that nothing else the planner reads changes; a manifest it does not
-  // place keeps no final layout.
-  try {
-    si::SimaPluginStaticManifest placed = *manifest;
-    const auto terminal = session_build_public_output_endpoint_selector(route);
-    si::finalize_pipeline_storage(placed, &terminal);
-    for (std::size_t i = 0; i < manifest->stages.size() && i < placed.stages.size(); ++i) {
-      manifest->stages[i].frame_layout = placed.stages[i].frame_layout;
-    }
-  } catch (const std::exception&) {
   }
   return manifest;
 }
