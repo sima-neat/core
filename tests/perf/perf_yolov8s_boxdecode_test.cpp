@@ -142,8 +142,7 @@ int main(int argc, char** argv) {
     graph.add(nodes::Input());
     graph.add(nodes::groups::Preprocess(model));
     graph.add(nodes::groups::Infer(model));
-    graph.add(
-        nodes::SimaBoxDecode(model, BoxDecodeType::YoloV8, kScoreThreshold, kNmsIou, kTopK));
+    graph.add(nodes::SimaBoxDecode(model, BoxDecodeType::YoloV8, kScoreThreshold, kNmsIou, kTopK));
     graph.add(nodes::Output());
 
     auto make_sample = [&]() {
@@ -250,8 +249,8 @@ int main(int argc, char** argv) {
         {kStageComponent.component_id, std::move(stage_rows)},
     };
     progress_output.restore();
-    sima_perf::emit_metrics_json("yolov8s_boxdecode", iterations, metrics, "sync", &power,
-                                 &report, &component_latency);
+    sima_perf::emit_metrics_json("yolov8s_boxdecode", iterations, metrics, "sync", &power, &report,
+                                 &component_latency);
     return 0;
   } catch (const SkipTest& error) {
     std::cerr << "perf_yolov8s_boxdecode_test skipped: " << error.what() << "\n";
