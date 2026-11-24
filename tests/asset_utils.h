@@ -571,16 +571,13 @@ inline std::string resolve_yolov8s_tar(const fs::path& = {}) {
       continue;
     if (is_usable_regular_file(value))
       return value;
-    std::cerr << name << "=" << value
-              << " is not a non-empty file
-                 ";
-        return "";
+    std::cerr << name << "=" << value << " is not a non-empty file\n";
+    return "";
   }
   std::cerr << "SIMA_YOLO_TAR is not set. Set it, or SIMA_MODEL_TAR, to the "
                "yolov8s_w8a8_mpk.tar.gz from 'sima-cli models download --id yolov8s "
-               "--variant w8a8'.
-               ";
-      return "";
+               "--variant w8a8'.\n";
+  return "";
 }
 
 inline std::string resolve_modelzoo_tar(const std::string& model_name,
