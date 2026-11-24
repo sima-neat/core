@@ -7,7 +7,7 @@ slug: /develop-apps/advanced-concepts/usb-camera-input
 
 # USB 카메라 사용하기
 
-`nodes::UsbCameraInput`은 USB(UVC) 웹캠을 읽습니다. 기본적으로 MJPEG를 캡처하여 카메라의 JPEG 프레임을 출력하며, `UsbCameraFormat::YUYV`를 사용하면 [YUYV 캡처](#capture-yuyv)에 설명한 대로 압축되지 않은 YUYV 프레임을 대신 캡처합니다. 카메라의 고정 ID를 전달하세요. `UsbCameraInputOptions`는 ([MIPI 카메라](./mipi-camera-input.md)의) `CameraInputOptions`와 같은 필드 이름과 기본값을 사용하지만, `camera_name`은 필수이고 `format`은 없습니다.
+`nodes::UsbCameraInput`은 USB(UVC) 웹캠을 읽습니다. 기본적으로 MJPEG를 캡처하여 카메라의 JPEG 프레임을 출력하며, `format`을 `UsbCameraFormat::YUYV`로 설정하면 [YUYV 캡처](#capture-yuyv)에 설명한 대로 압축되지 않은 YUYV 프레임을 대신 캡처합니다. 카메라의 고정 ID를 전달하세요. `UsbCameraInputOptions`는 ([MIPI 카메라](./mipi-camera-input.md)의) `CameraInputOptions`와 같은 필드 이름과 기본값을 사용하지만, `camera_name`은 필수이고 `format`은 `UsbCameraFormat`이며 기본값은 `MJPEG`입니다.
 
 ```text
 USB camera -> UsbCameraInput (JPEG) -+-> VideoSender passthrough (MJPEG)
@@ -219,50 +219,52 @@ graph.connect(source, pyneat.groups.video_sender(sender), video_link)
 | `YUYV requires an even width` | 너비가 짝수인 YUYV 모드를 고르세요. |
 | `adjusted the requested progressive YUYV mode` 또는 `did not accept 30/1 fps` | 카메라가 이 모드를 목록에 표시했지만 받아들이지 않았습니다. 목록에 있는 다른 모드를 고르세요. |
 | `has unsupported YUYV matrix/range/transfer metadata` 또는 `has unsupported YUYV color primaries` | 카메라가 BT.601 또는 BT.709가 아닌 색 공간을 보고합니다. MJPEG를 캡처하세요. |
-| `capture info format does not match the selected mode` | `camera` 멤버가 아니라 `usb_camera_info(camera, UsbCameraFormat::YUYV)`가 반환한 `UsbCameraCaptureInfo`를 전달하세요. |
+| `capture info format does not match the selected mode` | `usb_camera_info`가 반환한 `UsbCameraInfo`를 그대로 전달하세요. |
+| `capture info format does not match opt.format` | 정보가 다른 `format`으로 확인되었습니다. `UsbCameraInput`에 전달하는 옵션으로 `usb_camera_info`를 호출하세요. |
 | `capture info describes another mode` | 옵션이 `usb_camera_info`에 전달한 옵션과 다릅니다. 두 호출에 같은 옵션을 전달하세요. |
 | 카메라가 스트리밍을 시작할 때 YUYV Run이 실패함 | DevKit에서 `dmesg`를 실행하세요. `Failed to submit URB 0 (-28)`(`ENOSPC`)은 USB 컨트롤러가 압축되지 않은 모드에 필요한 대역폭을 확보할 수 없다는 뜻입니다. 더 낮은 해상도나 프레임 속도를 고르거나, 동시에 스트리밍하는 다른 USB 카메라나 오디오 장치를 중지하거나, MJPEG를 캡처하세요. |
-| `YUYV requires explicit input color` | `info.color`를 `Preproc(options, info.color)`에 전달하세요. |
+| `YUYV requires explicit input color` | `PreprocOptions::input_color`를 `info.color`로 설정하세요. |
 | `YUYV input does not support antialiased sampling`, `FP32 transforms require supported RGB/Gray tensor output`, `crop currently requires RGB, BGR or Gray input` 또는 `ROI lists require RGB/BGR/Gray inputs/outputs` | 모델 전처리에 YUYV 입력이 지원하지 않는 옵션이 필요합니다. [YUYV 프레임으로 모델 실행하기](#run-a-model-on-yuyv-frames)를 참조하세요. |
 | `Strict encoder ingress requires EncoderNv12 output from ColorConvert` | 엄격한 `VideoSender` 앞에 `ImageSurfaceLayout::EncoderNv12`와 NV12 출력을 사용하는 `ColorConvert`를 두세요. |
 | `Strict encoder ingress requires an exact integer frame rate` | 정수 프레임 속도의 모드를 캡처하고 인코더의 `fps`를 그 값으로 설정하세요. |
-| `Graph JSON does not store the explicit color` | YUYV를 캡처하는 그래프는 코드로 구성하세요. `Graph::save`는 카메라의 색 정보를 저장할 수 없습니다. |
+| `Graph JSON does not store PreprocOptions::input_color or ColorConvertOptions::input_colorimetry` | YUYV를 캡처하는 그래프는 코드로 구성하세요. `Graph::save`는 카메라의 색 정보를 저장할 수 없습니다. |
 
 ## YUYV 캡처 {#capture-yuyv}
 
 많은 UVC 카메라는 압축되지 않은 YUYV도 보냅니다. 이는 패킹된 4:2:2 프레임으로, GStreamer에서는 `YUY2`라고 부릅니다. YUYV 프레임은 디코더가 필요 없으며, 모델 전처리와 `ColorConvert`가 캡처 버퍼에서 그 자리에서 읽습니다. 압축되지 않은 프레임은 MJPEG보다 훨씬 많은 USB 대역폭이 필요하므로, 카메라는 보통 YUYV를 더 낮은 해상도나 프레임 속도로 제공합니다.
 
-`UsbCameraFormat::YUYV`를 `usb_camera_info`에 전달하고 그 결과를 `UsbCameraInput`에 전달하세요. 카메라가 제공하는 YUYV 모드 중 너비가 짝수인 모드를 고르세요. 반환된 `UsbCameraCaptureInfo`는 프레임도 설명합니다. `row_stride`는 바이트 단위 행 피치, `storage_bytes`는 각 캡처 버퍼의 크기, `color`는 카메라의 행렬(BT.601 또는 BT.709)과 범위, `colorimetry`는 같은 해석을 GStreamer colorimetry 문자열로 나타낸 것입니다.
+`format`을 `UsbCameraFormat::YUYV`로 설정하고 `usb_camera_info`를 호출한 다음 그 결과를 `UsbCameraInput`에 전달하세요. 카메라가 제공하는 YUYV 모드 중 너비가 짝수인 모드를 고르세요. 반환된 `UsbCameraInfo`는 프레임도 설명합니다. `row_stride`는 바이트 단위 행 피치, `storage_bytes`는 각 캡처 버퍼의 크기, `color`는 카메라의 행렬(BT.601 또는 BT.709)과 범위, `colorimetry`는 같은 해석을 GStreamer colorimetry 문자열로 나타낸 것입니다.
 
 <CodeTabs>
 <CodeTab label="C++" lang="cpp">
 
 ```cpp
+camera.format = neat::UsbCameraFormat::YUYV;
 camera.width = 640;
 camera.height = 480;
-const neat::UsbCameraCaptureInfo info =
-    neat::usb_camera_info(camera, neat::UsbCameraFormat::YUYV);  // opens the camera once
-auto source = neat::nodes::UsbCameraInput(camera, info);       // reuses info
+const neat::UsbCameraInfo info = neat::usb_camera_info(camera);  // opens the camera once
+auto source = neat::nodes::UsbCameraInput(camera, info);         // reuses info
 ```
 
 </CodeTab>
 <CodeTab label="Python" lang="python">
 
 ```python
+camera.format = pyneat.UsbCameraFormat.YUYV
 camera.width = 640
 camera.height = 480
-info = pyneat.usb_camera_info(camera, pyneat.UsbCameraFormat.YUYV)  # opens the camera once
+info = pyneat.usb_camera_info(camera)  # opens the camera once
 source = pyneat.nodes.usb_camera_input(camera, info)  # reuses info
 ```
 
 </CodeTab>
 </CodeTabs>
 
-노드는 픽셀당 2바이트인 HWC 레이아웃의 `UInt8` 프레임을 출력합니다. 프레임은 30000/1001 같은 분수 속도를 포함해 카메라의 프레임 속도를 유지하며, 홀수 높이도 허용됩니다. 형식을 지정하지 않은 호출은 여전히 MJPEG를 캡처합니다.
+노드는 픽셀당 2바이트인 HWC 레이아웃의 `UInt8` 프레임을 출력합니다. 프레임은 30000/1001 같은 분수 속도를 포함해 카메라의 프레임 속도를 유지하며, 홀수 높이도 허용됩니다. 기본값인 `UsbCameraFormat::MJPEG`에서는 노드가 MJPEG를 캡처합니다.
 
 ### YUYV 프레임으로 모델 실행하기 {#run-a-model-on-yuyv-frames}
 
-모델의 `preprocess.color_convert.input_format`을 `PreprocessColorFormat::YUYV`로 설정하고 최대 입력 크기를 카메라 모드에 맞추세요. YUYV 프레임은 어떤 행렬과 범위를 쓰는지 알려 주지 않으므로, `info.color`를 담은 `Preproc`으로 모델 경로를 구성하고 그 뒤에 모델의 추론과 후처리를 이어 붙이세요.
+모델의 `preprocess.color_convert.input_format`을 `PreprocessColorFormat::YUYV`로 설정하고 최대 입력 크기를 카메라 모드에 맞추세요. YUYV 프레임은 어떤 행렬과 범위를 쓰는지 알려 주지 않으므로, `input_color`가 `info.color`인 `Preproc`으로 모델 경로를 구성하고 그 뒤에 모델의 추론과 후처리를 이어 붙이세요.
 
 <CodeTabs>
 <CodeTab label="C++" lang="cpp">
@@ -274,9 +276,12 @@ options.preprocess.input_max_width = 640;
 options.preprocess.input_max_height = 480;
 neat::Model model("model.tar.gz", options);
 
+neat::PreprocOptions preproc(model);
+preproc.input_color = info.color;
+
 neat::Graph graph("usb_camera_yuyv");
 graph.add(neat::nodes::UsbCameraInput(camera, info));
-graph.add(neat::nodes::Preproc(neat::PreprocOptions(model), info.color));
+graph.add(neat::nodes::Preproc(preproc));
 graph.add(model.inference());
 graph.add(model.postprocess());
 graph.add(neat::nodes::Output());
@@ -292,9 +297,12 @@ options.preprocess.input_max_width = 640
 options.preprocess.input_max_height = 480
 model = pyneat.Model("model.tar.gz", options)
 
+preproc = pyneat.PreprocOptions(model)
+preproc.input_color = info.color
+
 graph = pyneat.Graph("usb_camera_yuyv")
 graph.add(pyneat.nodes.usb_camera_input(camera, info))
-graph.add(pyneat.nodes.preproc(pyneat.PreprocOptions(model), info.color))
+graph.add(pyneat.nodes.preproc(preproc))
 graph.add(model.inference())
 graph.add(model.postprocess())
 graph.add(pyneat.nodes.output())
@@ -310,11 +318,11 @@ YUYV 프레임에 대한 모델 전처리는 다음을 지원하지 않습니다
 - `ResizeMode::Crop`
 - 런타임 ROI 목록
 
-전처리에 이 중 하나가 필요한 모델은 그래프를 빌드할 때 실패합니다. 대신 MJPEG를 캡처하거나, 먼저 `ColorConvert`로 프레임을 `ImageFormat::RGB`로 변환하고(`info.color`와 `info.colorimetry` 전달) 모델의 입력 형식을 `PreprocessColorFormat::RGB`로 설정하세요.
+전처리에 이 중 하나가 필요한 모델은 그래프를 빌드할 때 실패합니다. 대신 MJPEG를 캡처하거나, 먼저 `ColorConvert`로 프레임을 `ImageFormat::RGB`로 변환하고(`color`를 `info.color`로, `input_colorimetry`를 `info.colorimetry`로 설정) 모델의 입력 형식을 `PreprocessColorFormat::RGB`로 설정하세요.
 
 ### YUYV 프레임을 H.264로 보기 {#view-yuyv-frames-as-h264}
 
-카메라 영상을 뷰어에도 보내려면 `Preproc` 앞에서 분기하고 뷰어 분기를 `RealtimeLatestByStream`으로 연결하여 뷰어가 모델을 지연시키지 않게 하세요. `ColorConvert(options, info.colorimetry)`로 프레임을 인코더 레이아웃의 NV12로 변환한 다음, 엄격한 H.264 `VideoSender`로 인코딩하세요.
+카메라 영상을 뷰어에도 보내려면 `Preproc` 앞에서 분기하고 뷰어 분기를 `RealtimeLatestByStream`으로 연결하여 뷰어가 모델을 지연시키지 않게 하세요. `input_colorimetry`가 `info.colorimetry`인 `ColorConvert`로 프레임을 인코더 레이아웃의 NV12로 변환한 다음, `SimaEncodeOptions::input_policy`가 `EncoderInputPolicy::RequireDirect`인 엄격한 H.264 `VideoSender`로 인코딩하세요.
 
 <CodeTabs>
 <CodeTab label="C++" lang="cpp">
@@ -326,13 +334,17 @@ convert.surface = neat::ImageSurfaceLayout::EncoderNv12;
 convert.color = info.color;
 convert.color.output_siting = {neat::ImageChromaSiting::Cosited,
                                neat::ImageChromaSiting::Centered};
+convert.input_colorimetry = info.colorimetry;
 
-auto sender = neat::nodes::groups::VideoSenderOptions::FromRaw({.fps = 30});
+neat::SimaEncodeOptions encode;
+encode.fps = 30;
+encode.input_policy = neat::EncoderInputPolicy::RequireDirect;
+auto sender = neat::nodes::groups::VideoSenderOptions::FromRaw(encode);
 sender.host = "127.0.0.1";
 
 neat::Graph viewer("usb_camera_yuyv_viewer");
-viewer.add(neat::nodes::ColorConvert(convert, info.colorimetry));
-viewer.add(neat::nodes::groups::VideoSender(sender, neat::EncoderInputPolicy::RequireDirect));
+viewer.add(neat::nodes::ColorConvert(convert));
+viewer.add(neat::nodes::groups::VideoSender(sender));
 ```
 
 </CodeTab>
@@ -344,15 +356,17 @@ convert.output_format = pyneat.ImageFormat.NV12
 convert.surface = pyneat.ImageSurfaceLayout.EncoderNv12
 convert.color = info.color
 convert.color.output_siting = [pyneat.ImageChromaSiting.Cosited, pyneat.ImageChromaSiting.Centered]
+convert.input_colorimetry = info.colorimetry
 
 encode = pyneat.SimaEncodeOptions()
 encode.fps = 30
+encode.input_policy = pyneat.EncoderInputPolicy.RequireDirect
 sender = pyneat.VideoSenderOptions.from_raw(encode)
 sender.host = "127.0.0.1"
 
 viewer = pyneat.Graph("usb_camera_yuyv_viewer")
-viewer.add(pyneat.nodes.color_convert(convert, info.colorimetry))
-viewer.add(pyneat.groups.video_sender(sender, pyneat.EncoderInputPolicy.RequireDirect))
+viewer.add(pyneat.nodes.color_convert(convert))
+viewer.add(pyneat.groups.video_sender(sender))
 ```
 
 </CodeTab>

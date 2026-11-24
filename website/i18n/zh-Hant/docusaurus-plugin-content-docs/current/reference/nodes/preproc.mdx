@@ -212,7 +212,7 @@ opt.preprocess.resize.placement = pyneat.LetterboxPlacement.TopLeft
 
 | 選項 | 意義 |
 | --- | --- |
-| `opt.preprocess.color_convert.input_format` | 來源格式提示：`RGB`、`BGR`、`GRAY8`、`NV12`、`NV16`、`I420`、`YUYV` 或 `Auto`。`YUYV` 影格需要將攝影機的色彩傳給 `Preproc(options, color)`；請參閱[使用 USB 攝影機](/develop-apps/advanced-concepts/usb-camera-input#run-a-model-on-yuyv-frames)。|
+| `opt.preprocess.color_convert.input_format` | 來源格式提示：`RGB`、`BGR`、`GRAY8`、`NV12`、`NV16`、`I420`、`YUYV` 或 `Auto`。`YUYV` 影格需要在 `PreprocOptions::input_color` 中設定攝影機的色彩；請參閱[使用 USB 攝影機](/develop-apps/advanced-concepts/usb-camera-input#run-a-model-on-yuyv-frames)。|
 | `opt.preprocess.color_convert.output_format` | 模型輸入的色彩空間，通常為 `RGB`、`BGR` 或 `GRAY8`。|
 | `opt.preprocess.normalize.enable` | 啟用或停用平均值/標準差正規化。`Auto` 會在選取了正規化預設，或 `normalize.has_explicit_stats` 為 true 時啟用正規化。正規化為 `Off` 時，由模型管理的 INT8 影像階段仍會套用模型包的量化器。 |
 | `opt.preprocess.normalize.mean` | 每個通道的平均值。與模型的訓練預處理方式相符。|

@@ -84,10 +84,11 @@ RGB/GRAY-to-YUV는 중앙 색차를 사용하는 전체 범위만 지원하며, 
 다른 범위/샘플 위치 설정을 요청하면 조용히 근사 처리하지 않고 실패합니다.
 단, YUYV 입력을 RGB/BGR로 변환할 때는 예외로 전체 또는 제한 범위를 따릅니다.
 
-`ColorConvert(options, colorimetry)`는 YUYV 카메라의 `usb_camera_info(...).colorimetry`처럼
+`ColorConvertOptions::input_colorimetry`는 YUYV 카메라의 `usb_camera_info(...).colorimetry`처럼
 소스의 GStreamer colorimetry 문자열을 받습니다. 이 문자열은 원색과 전달 함수를 지정하고
-`options.color`의 행렬 및 범위와 일치해야 합니다. 그러면 노드는 다른 colorimetry를 가진
+`color`의 행렬 및 범위와 일치해야 합니다. 그러면 노드는 다른 colorimetry를 가진
 입력 caps를 거부하고, 다운스트림의 엄격한 H.264 인코더는 이를 스트림에 신호로 전달합니다.
+기본값인 빈 문자열이면 출력은 `color`만으로 기술됩니다.
 전달 함수 변환은 수행하지 않습니다. Graph JSON은 이 colorimetry를 저장하지 않으므로
 `Graph::save`는 이를 가진 그래프를 거부합니다.
 

@@ -45,7 +45,7 @@ RTP/JPEG는 크기 제한이 더 엄격합니다. MJPEG 원시 전송의 각 축
 
 ### 엄격한 인코더 입력 {#strict-encoder-input}
 
-`VideoSender(options, EncoderInputPolicy::RequireDirect)`(Python: `pyneat.groups.video_sender(options, pyneat.EncoderInputPolicy.RequireDirect)`)는 CPU에서 원시 프레임을 변환하거나 복사하지 않습니다. H.264 `FromRaw` 옵션, `ImageSurfaceLayout::EncoderNv12`를 사용하는 `ColorConvert`가 만든 인코더 레이아웃의 NV12 입력, 그리고 인코더의 정수 `fps`와 같은 입력 프레임 속도가 필요합니다. 그 밖의 입력은 그래프를 빌드할 때 실패합니다. 원색, 전달 특성, 행렬, 범위를 포함한 입력의 colorimetry를 H.264 스트림에 신호로 전달합니다. `SimaEncode(options, EncoderInputPolicy::RequireDirect)`는 독립 실행형 인코더에 같은 규칙을 적용합니다. 기본값인 `EncoderInputPolicy::Compatible`은 위에서 설명한 변환을 유지합니다. YUYV 카메라 뷰어는 [USB 카메라 사용하기](./usb-camera-input.md#view-yuyv-frames-as-h264)를 참조하세요.
+`VideoSenderOptions::FromRaw`에 전달하는 옵션의 `SimaEncodeOptions::input_policy`를 `EncoderInputPolicy::RequireDirect`(Python: `pyneat.EncoderInputPolicy.RequireDirect`)로 설정하면 `VideoSender`는 CPU에서 원시 프레임을 변환하거나 복사하지 않습니다. H.264, `ImageSurfaceLayout::EncoderNv12`를 사용하는 `ColorConvert`가 만든 인코더 레이아웃의 NV12 입력, 그리고 인코더의 정수 `fps`와 같은 입력 프레임 속도가 필요합니다. 그 밖의 입력은 그래프를 빌드할 때 실패합니다. 원색, 전달 특성, 행렬, 범위를 포함한 입력의 colorimetry를 H.264 스트림에 신호로 전달합니다. `input_policy`가 `RequireDirect`인 독립 실행형 `SimaEncode`에도 같은 규칙이 적용됩니다. 기본값인 `EncoderInputPolicy::Compatible`은 위에서 설명한 변환을 유지합니다. YUYV 카메라 뷰어는 [USB 카메라 사용하기](./usb-camera-input.md#view-yuyv-frames-as-h264)를 참조하세요.
 
 ```cpp
 simaai::neat::Graph graph;

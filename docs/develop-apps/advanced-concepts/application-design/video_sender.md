@@ -61,15 +61,15 @@ instead of being partially copied.
 
 ### Strict encoder input {#strict-encoder-input}
 
-`VideoSender(options, EncoderInputPolicy::RequireDirect)` (Python:
-`pyneat.groups.video_sender(options, pyneat.EncoderInputPolicy.RequireDirect)`)
-never converts or copies raw frames on the CPU. It requires H.264 `FromRaw`
-options, NV12 input in the encoder's layout from a `ColorConvert` with
-`ImageSurfaceLayout::EncoderNv12`, and an input frame rate equal to the
-encoder's integer `fps`. Other input fails when the graph is built. It signals
-the input's colorimetry, including primaries, transfer, matrix and range, in the
-H.264 stream. `SimaEncode(options, EncoderInputPolicy::RequireDirect)` applies
-the same rules to a standalone encoder. The default
+Set `SimaEncodeOptions::input_policy` to `EncoderInputPolicy::RequireDirect`
+(Python: `pyneat.EncoderInputPolicy.RequireDirect`) on the options passed to
+`VideoSenderOptions::FromRaw`, and `VideoSender` never converts or copies raw
+frames on the CPU. It requires H.264, NV12 input in the encoder's layout from a
+`ColorConvert` with `ImageSurfaceLayout::EncoderNv12`, and an input frame rate
+equal to the encoder's integer `fps`. Other input fails when the graph is built.
+It signals the input's colorimetry, including primaries, transfer, matrix and
+range, in the H.264 stream. A standalone `SimaEncode` whose `input_policy` is
+`RequireDirect` applies the same rules. The default
 `EncoderInputPolicy::Compatible` keeps the conversion described above. See
 [Use a USB Camera](./usb-camera-input.md#view-yuyv-frames-as-h264) for a YUYV
 camera viewer.

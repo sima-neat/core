@@ -72,10 +72,10 @@ RGB/GRAY 到 YUV 僅支援完整範圍與置中色度。其他設定組合會在
 解讀方式；要求其他範圍／取樣位置設定會失敗，而不會暗中使用近似值。
 YUYV 輸入轉為 RGB/BGR 是例外：它會依循完整或有限範圍。
 
-`ColorConvert(options, colorimetry)` 接受來源的 GStreamer colorimetry 字串，例如 YUYV 攝影機的
-`usb_camera_info(...).colorimetry`。此字串必須指明原色與轉移函數，並與 `options.color` 中的
+`ColorConvertOptions::input_colorimetry` 接受來源的 GStreamer colorimetry 字串，例如 YUYV 攝影機的
+`usb_camera_info(...).colorimetry`。此字串必須指明原色與轉移函數，並與 `color` 中的
 矩陣與範圍一致。節點之後會拒絕帶有其他 colorimetry 的輸入 caps，下游的嚴格 H.264 編碼器
-則會在串流中傳遞它。不執行轉移函數轉換。Graph JSON 不會儲存此 colorimetry，因此
+則會在串流中傳遞它。若為預設的空字串，輸出僅依 `color` 描述。不執行轉移函數轉換。Graph JSON 不會儲存此 colorimetry，因此
 `Graph::save` 會拒絕帶有它的圖。
 
 多平面結果是**具有單一儲存擁有者的一張影像**。平面位移與正值列距來自

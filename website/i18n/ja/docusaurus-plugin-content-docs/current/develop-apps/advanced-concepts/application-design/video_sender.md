@@ -45,7 +45,7 @@ RTP/JPEG の制限はより厳密です。MJPEG の生入力送信には、各�
 
 ### 厳格なエンコーダー入力 {#strict-encoder-input}
 
-`VideoSender(options, EncoderInputPolicy::RequireDirect)`（Python：`pyneat.groups.video_sender(options, pyneat.EncoderInputPolicy.RequireDirect)`）は、CPU で生のフレームを変換もコピーもしません。H.264 の `FromRaw` オプション、`ImageSurfaceLayout::EncoderNv12` を指定した `ColorConvert` からのエンコーダーのレイアウトの NV12 入力、およびエンコーダーの整数の `fps` と等しい入力フレームレートが必要です。それ以外の入力は、グラフの構築時に失敗します。入力の colorimetry（原色、伝達特性、行列、レンジを含む）を H.264 ストリームで伝えます。`SimaEncode(options, EncoderInputPolicy::RequireDirect)` は、単体のエンコーダーに同じ規則を適用します。既定の `EncoderInputPolicy::Compatible` は、上記の変換を維持します。YUYV カメラのビューアーについては、[USBカメラを使う](./usb-camera-input.md#view-yuyv-frames-as-h264)を参照してください。
+`VideoSenderOptions::FromRaw` に渡すオプションの `SimaEncodeOptions::input_policy` を `EncoderInputPolicy::RequireDirect`（Python：`pyneat.EncoderInputPolicy.RequireDirect`）に設定すると、`VideoSender` は CPU で生のフレームを変換もコピーもしません。H.264、`ImageSurfaceLayout::EncoderNv12` を指定した `ColorConvert` からのエンコーダーのレイアウトの NV12 入力、およびエンコーダーの整数の `fps` と等しい入力フレームレートが必要です。それ以外の入力は、グラフの構築時に失敗します。入力の colorimetry（原色、伝達特性、行列、レンジを含む）を H.264 ストリームで伝えます。`input_policy` が `RequireDirect` の単体の `SimaEncode` にも同じ規則が適用されます。既定の `EncoderInputPolicy::Compatible` は、上記の変換を維持します。YUYV カメラのビューアーについては、[USBカメラを使う](./usb-camera-input.md#view-yuyv-frames-as-h264)を参照してください。
 
 ```cpp
 simaai::neat::Graph graph;

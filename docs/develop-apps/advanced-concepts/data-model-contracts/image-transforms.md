@@ -85,13 +85,14 @@ retain legacy full-range, centered YUV interpretation; requesting other
 range/siting settings fails instead of silently approximating them. YUYV input to
 RGB/BGR is the exception: it honors full or limited range.
 
-`ColorConvert(options, colorimetry)` takes the source's GStreamer colorimetry
-string, such as `usb_camera_info(...).colorimetry` for a YUYV camera. It must
-name the primaries and transfer function and agree with the matrix and range in
-`options.color`. The node then rejects input caps with other colorimetry, and a
-strict H.264 encoder downstream signals it in the stream. No transfer-function
-conversion is performed. Graph JSON does not store this colorimetry, so
-`Graph::save` rejects a graph that carries it.
+`ColorConvertOptions::input_colorimetry` takes the source's GStreamer
+colorimetry string, such as `usb_camera_info(...).colorimetry` for a YUYV
+camera. It must name the primaries and transfer function and agree with the
+matrix and range in `color`. The node then rejects input caps with other
+colorimetry, and a strict H.264 encoder downstream signals it in the stream.
+When it is empty, the default, the output is described from `color` alone. No
+transfer-function conversion is performed. Graph JSON does not store this
+colorimetry, so `Graph::save` rejects a graph that carries it.
 
 A multi-plane result is **one image with one storage owner**. Plane offsets and
 positive pitches come from `GstVideoMeta`; consumers must not assume tightly

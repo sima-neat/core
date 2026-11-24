@@ -7,7 +7,7 @@ slug: /develop-apps/advanced-concepts/usb-camera-input
 
 # 使用 USB 攝影機
 
-`nodes::UsbCameraInput` 會讀取 USB（UVC）網路攝影機。預設會擷取 MJPEG 並輸出攝影機的 JPEG 影格；`UsbCameraFormat::YUYV` 則改為擷取未壓縮的 YUYV 影格，詳見[擷取 YUYV](#capture-yuyv)。請傳入攝影機的穩定 ID。`UsbCameraInputOptions` 沿用（[MIPI 攝影機](./mipi-camera-input.md)的）`CameraInputOptions` 欄位名稱與預設值，但 `camera_name` 為必填，且沒有 `format`。
+`nodes::UsbCameraInput` 會讀取 USB（UVC）網路攝影機。預設會擷取 MJPEG 並輸出攝影機的 JPEG 影格；將 `format` 設為 `UsbCameraFormat::YUYV` 則改為擷取未壓縮的 YUYV 影格，詳見[擷取 YUYV](#capture-yuyv)。請傳入攝影機的穩定 ID。`UsbCameraInputOptions` 沿用（[MIPI 攝影機](./mipi-camera-input.md)的）`CameraInputOptions` 欄位名稱與預設值，但 `camera_name` 為必填，且 `format` 為 `UsbCameraFormat`，預設為 `MJPEG`。
 
 ```text
 USB camera -> UsbCameraInput (JPEG) -+-> VideoSender passthrough (MJPEG)
@@ -219,50 +219,52 @@ graph.connect(source, pyneat.groups.video_sender(sender), video_link)
 | `YUYV requires an even width` | 選擇寬度為偶數的 YUYV 模式。 |
 | `adjusted the requested progressive YUYV mode` 或 `did not accept 30/1 fps` | 攝影機列出了此模式，但不接受它。請選擇另一個列出的模式。 |
 | `has unsupported YUYV matrix/range/transfer metadata` 或 `has unsupported YUYV color primaries` | 攝影機回報的色彩空間不是 BT.601 或 BT.709。請擷取 MJPEG。 |
-| `capture info format does not match the selected mode` | 請傳入 `usb_camera_info(camera, UsbCameraFormat::YUYV)` 傳回的 `UsbCameraCaptureInfo`，而不是其 `camera` 成員。 |
+| `capture info format does not match the selected mode` | 請傳入 `usb_camera_info` 傳回的完整 `UsbCameraInfo`。 |
+| `capture info format does not match opt.format` | 該資訊是以另一個 `format` 檢查的。請以傳給 `UsbCameraInput` 的選項呼叫 `usb_camera_info`。 |
 | `capture info describes another mode` | 選項與傳給 `usb_camera_info` 的選項不同。請在兩次呼叫中傳入相同的選項。 |
 | 攝影機開始串流時 YUYV Run 失敗 | 在 DevKit 上執行 `dmesg`。`Failed to submit URB 0 (-28)`（`ENOSPC`）表示 USB 控制器無法保留未壓縮模式所需的頻寬。請選擇較低的解析度或影格率、停止同時串流的其他 USB 攝影機或音訊裝置，或改為擷取 MJPEG。 |
-| `YUYV requires explicit input color` | 將 `info.color` 傳給 `Preproc(options, info.color)`。 |
+| `YUYV requires explicit input color` | 將 `PreprocOptions::input_color` 設為 `info.color`。 |
 | `YUYV input does not support antialiased sampling`、`FP32 transforms require supported RGB/Gray tensor output`、`crop currently requires RGB, BGR or Gray input` 或 `ROI lists require RGB/BGR/Gray inputs/outputs` | 模型的前處理需要 YUYV 輸入不支援的選項。請參閱[在 YUYV 影格上執行模型](#run-a-model-on-yuyv-frames)。 |
 | `Strict encoder ingress requires EncoderNv12 output from ColorConvert` | 在嚴格的 `VideoSender` 之前，放置使用 `ImageSurfaceLayout::EncoderNv12` 與 NV12 輸出的 `ColorConvert`。 |
 | `Strict encoder ingress requires an exact integer frame rate` | 擷取整數影格率的模式，並將編碼器的 `fps` 設為該值。 |
-| `Graph JSON does not store the explicit color` | 請以程式碼建立擷取 YUYV 的圖；`Graph::save` 無法儲存攝影機的色彩資訊。 |
+| `Graph JSON does not store PreprocOptions::input_color or ColorConvertOptions::input_colorimetry` | 請以程式碼建立擷取 YUYV 的圖；`Graph::save` 無法儲存攝影機的色彩資訊。 |
 
 ## 擷取 YUYV {#capture-yuyv}
 
 許多 UVC 攝影機也會傳送未壓縮的 YUYV：封裝的 4:2:2 影格，GStreamer 稱之為 `YUY2`。YUYV 影格不需要解碼器；模型的前處理與 `ColorConvert` 會直接從擷取緩衝區就地讀取。未壓縮影格需要的 USB 頻寬遠高於 MJPEG，因此攝影機通常只以較低的解析度或影格率列出 YUYV。
 
-將 `UsbCameraFormat::YUYV` 傳給 `usb_camera_info`，再將其結果傳給 `UsbCameraInput`。請選擇攝影機列出且寬度為偶數的 YUYV 模式。傳回的 `UsbCameraCaptureInfo` 也會描述影格：`row_stride` 是以位元組為單位的列間距，`storage_bytes` 是每個擷取緩衝區的大小，`color` 是攝影機的矩陣（BT.601 或 BT.709）與範圍，`colorimetry` 則是以 GStreamer colorimetry 字串表示的相同解讀。
+將 `format` 設為 `UsbCameraFormat::YUYV`，呼叫 `usb_camera_info`，再將其結果傳給 `UsbCameraInput`。請選擇攝影機列出且寬度為偶數的 YUYV 模式。傳回的 `UsbCameraInfo` 也會描述影格：`row_stride` 是以位元組為單位的列間距，`storage_bytes` 是每個擷取緩衝區的大小，`color` 是攝影機的矩陣（BT.601 或 BT.709）與範圍，`colorimetry` 則是以 GStreamer colorimetry 字串表示的相同解讀。
 
 <CodeTabs>
 <CodeTab label="C++" lang="cpp">
 
 ```cpp
+camera.format = neat::UsbCameraFormat::YUYV;
 camera.width = 640;
 camera.height = 480;
-const neat::UsbCameraCaptureInfo info =
-    neat::usb_camera_info(camera, neat::UsbCameraFormat::YUYV);  // opens the camera once
-auto source = neat::nodes::UsbCameraInput(camera, info);       // reuses info
+const neat::UsbCameraInfo info = neat::usb_camera_info(camera);  // opens the camera once
+auto source = neat::nodes::UsbCameraInput(camera, info);         // reuses info
 ```
 
 </CodeTab>
 <CodeTab label="Python" lang="python">
 
 ```python
+camera.format = pyneat.UsbCameraFormat.YUYV
 camera.width = 640
 camera.height = 480
-info = pyneat.usb_camera_info(camera, pyneat.UsbCameraFormat.YUYV)  # opens the camera once
+info = pyneat.usb_camera_info(camera)  # opens the camera once
 source = pyneat.nodes.usb_camera_input(camera, info)  # reuses info
 ```
 
 </CodeTab>
 </CodeTabs>
 
-節點輸出每像素兩位元組、HWC 排列的 `UInt8` 影格。影格保留攝影機的影格率，包括 30000/1001 這類分數影格率，且允許奇數高度。未指定格式的呼叫仍會擷取 MJPEG。
+節點輸出每像素兩位元組、HWC 排列的 `UInt8` 影格。影格保留攝影機的影格率，包括 30000/1001 這類分數影格率，且允許奇數高度。使用預設的 `UsbCameraFormat::MJPEG` 時，節點會擷取 MJPEG。
 
 ### 在 YUYV 影格上執行模型 {#run-a-model-on-yuyv-frames}
 
-將模型的 `preprocess.color_convert.input_format` 設為 `PreprocessColorFormat::YUYV`，並將其最大輸入尺寸設為攝影機模式的尺寸。YUYV 影格不會標示所用的矩陣與範圍，因此請從攜帶 `info.color` 的 `Preproc` 建立模型路徑，接著接上模型的推論與後處理：
+將模型的 `preprocess.color_convert.input_format` 設為 `PreprocessColorFormat::YUYV`，並將其最大輸入尺寸設為攝影機模式的尺寸。YUYV 影格不會標示所用的矩陣與範圍，因此請從 `input_color` 為 `info.color` 的 `Preproc` 建立模型路徑，接著接上模型的推論與後處理：
 
 <CodeTabs>
 <CodeTab label="C++" lang="cpp">
@@ -274,9 +276,12 @@ options.preprocess.input_max_width = 640;
 options.preprocess.input_max_height = 480;
 neat::Model model("model.tar.gz", options);
 
+neat::PreprocOptions preproc(model);
+preproc.input_color = info.color;
+
 neat::Graph graph("usb_camera_yuyv");
 graph.add(neat::nodes::UsbCameraInput(camera, info));
-graph.add(neat::nodes::Preproc(neat::PreprocOptions(model), info.color));
+graph.add(neat::nodes::Preproc(preproc));
 graph.add(model.inference());
 graph.add(model.postprocess());
 graph.add(neat::nodes::Output());
@@ -292,9 +297,12 @@ options.preprocess.input_max_width = 640
 options.preprocess.input_max_height = 480
 model = pyneat.Model("model.tar.gz", options)
 
+preproc = pyneat.PreprocOptions(model)
+preproc.input_color = info.color
+
 graph = pyneat.Graph("usb_camera_yuyv")
 graph.add(pyneat.nodes.usb_camera_input(camera, info))
-graph.add(pyneat.nodes.preproc(pyneat.PreprocOptions(model), info.color))
+graph.add(pyneat.nodes.preproc(preproc))
 graph.add(model.inference())
 graph.add(model.postprocess())
 graph.add(pyneat.nodes.output())
@@ -310,11 +318,11 @@ graph.add(pyneat.nodes.output())
 - `ResizeMode::Crop`；
 - 執行階段 ROI 清單。
 
-前處理需要上述任一項的模型會在建置圖時失敗。請改為擷取 MJPEG，或先以 `ColorConvert` 將影格轉換為 `ImageFormat::RGB`（傳入 `info.color` 與 `info.colorimetry`），並將模型的輸入格式設為 `PreprocessColorFormat::RGB`。
+前處理需要上述任一項的模型會在建置圖時失敗。請改為擷取 MJPEG，或先以 `ColorConvert` 將影格轉換為 `ImageFormat::RGB`（將其 `color` 設為 `info.color`，`input_colorimetry` 設為 `info.colorimetry`），並將模型的輸入格式設為 `PreprocessColorFormat::RGB`。
 
 ### 以 H.264 檢視 YUYV 影格 {#view-yuyv-frames-as-h264}
 
-若也要將攝影機的視訊傳送到檢視器，請在 `Preproc` 之前分流，並以 `RealtimeLatestByStream` 連接檢視分支，使其絕不拖慢模型。使用 `ColorConvert(options, info.colorimetry)` 將影格轉換為編碼器排列方式的 NV12，再以嚴格的 H.264 `VideoSender` 編碼：
+若也要將攝影機的視訊傳送到檢視器，請在 `Preproc` 之前分流，並以 `RealtimeLatestByStream` 連接檢視分支，使其絕不拖慢模型。使用 `input_colorimetry` 為 `info.colorimetry` 的 `ColorConvert` 將影格轉換為編碼器排列方式的 NV12，再以 `SimaEncodeOptions::input_policy` 為 `EncoderInputPolicy::RequireDirect` 的嚴格 H.264 `VideoSender` 編碼：
 
 <CodeTabs>
 <CodeTab label="C++" lang="cpp">
@@ -326,13 +334,17 @@ convert.surface = neat::ImageSurfaceLayout::EncoderNv12;
 convert.color = info.color;
 convert.color.output_siting = {neat::ImageChromaSiting::Cosited,
                                neat::ImageChromaSiting::Centered};
+convert.input_colorimetry = info.colorimetry;
 
-auto sender = neat::nodes::groups::VideoSenderOptions::FromRaw({.fps = 30});
+neat::SimaEncodeOptions encode;
+encode.fps = 30;
+encode.input_policy = neat::EncoderInputPolicy::RequireDirect;
+auto sender = neat::nodes::groups::VideoSenderOptions::FromRaw(encode);
 sender.host = "127.0.0.1";
 
 neat::Graph viewer("usb_camera_yuyv_viewer");
-viewer.add(neat::nodes::ColorConvert(convert, info.colorimetry));
-viewer.add(neat::nodes::groups::VideoSender(sender, neat::EncoderInputPolicy::RequireDirect));
+viewer.add(neat::nodes::ColorConvert(convert));
+viewer.add(neat::nodes::groups::VideoSender(sender));
 ```
 
 </CodeTab>
@@ -344,15 +356,17 @@ convert.output_format = pyneat.ImageFormat.NV12
 convert.surface = pyneat.ImageSurfaceLayout.EncoderNv12
 convert.color = info.color
 convert.color.output_siting = [pyneat.ImageChromaSiting.Cosited, pyneat.ImageChromaSiting.Centered]
+convert.input_colorimetry = info.colorimetry
 
 encode = pyneat.SimaEncodeOptions()
 encode.fps = 30
+encode.input_policy = pyneat.EncoderInputPolicy.RequireDirect
 sender = pyneat.VideoSenderOptions.from_raw(encode)
 sender.host = "127.0.0.1"
 
 viewer = pyneat.Graph("usb_camera_yuyv_viewer")
-viewer.add(pyneat.nodes.color_convert(convert, info.colorimetry))
-viewer.add(pyneat.groups.video_sender(sender, pyneat.EncoderInputPolicy.RequireDirect))
+viewer.add(pyneat.nodes.color_convert(convert))
+viewer.add(pyneat.groups.video_sender(sender))
 ```
 
 </CodeTab>
