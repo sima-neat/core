@@ -38,25 +38,22 @@
 
 ## Run
 
-依照[教學設定](/tutorials/before-you-run)的說明安裝 PCIe 主機套件並下載教學套件包。在解壓縮後的 PCIe extras 根目錄執行下列命令。在 Windows 上，請依照[在 Windows 上執行應用程式](/getting-started/neat-library/pcie-host/#run-applications-on-windows)的說明設定教學課程並執行程式。
-
-該程式需要此目錄中的確切路徑 `yolo_v8s_mpk.tar.gz`。如果尚未存在，請從 [Model Browser](/tools/model-browser/) 下載 YOLOv8s，從下載的 ZIP 檔案中解壓縮封存檔，並以該名稱儲存：
+安裝 PCIe 主機套件，並按照 [教學設定](/tutorials/before-you-run) 中所述下載教學套件。從解壓縮後的 PCIe extras 根目錄中，下載 YOLOv8s（如果尚未存在）：
 
 ```bash
-sima-cli models download --id yolov8s --variant w8a8 --output models --force
-unzip -o models/yolov8s/w8a8/*.zip yolov8s_w8a8_mpk.tar.gz
-mv yolov8s_w8a8_mpk.tar.gz yolo_v8s_mpk.tar.gz
+sima-cli models download --id yolov8s --variant w8a8 --force
+unzip -p models/yolov8s/w8a8/yolov8s_w8a8_default.zip yolov8s_w8a8_mpk.tar.gz > yolo_v8s_mpk.tar.gz
 ```
 
-在 Windows 上，請在 PowerShell 中下載模型，並使用 `Expand-Archive` 解壓縮封存檔：
+該程式需要此目錄中的確切路徑 `yolo_v8s_mpk.tar.gz`。第二個命令會從下載的 ZIP 中解壓縮該檔案。
+
+在 Windows 上，請依照[在 Windows 上執行應用程式](/getting-started/neat-library/pcie-host/#run-applications-on-windows)的說明設定教學課程並執行程式。請在 PowerShell 中下載模型，並使用 `Expand-Archive` 解壓縮封存檔：
 
 ```powershell
-sima-cli models download --id yolov8s --variant w8a8 --output models --force
-Expand-Archive models\yolov8s\w8a8\*.zip -DestinationPath models\yolov8s\w8a8 -Force
+sima-cli models download --id yolov8s --variant w8a8 --force
+Expand-Archive models\yolov8s\w8a8\yolov8s_w8a8_default.zip -DestinationPath models\yolov8s\w8a8 -Force
 Copy-Item models\yolov8s\w8a8\yolov8s_w8a8_mpk.tar.gz yolo_v8s_mpk.tar.gz
 ```
-
-如果下載的是 `<id>_<variant>_mpk.tar.gz` 檔案而不是 ZIP 檔案（例如 Model Browser 開始以 ZIP 檔案封裝模型之前最後一次建置的模型），請直接從 `models/<id>/<variant>` 複製該檔案，不要解壓縮。
 
 執行 Python：
 

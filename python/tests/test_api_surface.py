@@ -1341,21 +1341,24 @@ def test_graph_describe_backend_includes_quant_tess_stage():
   assert "quanttess" in text or "quant_tess" in text
 
 
-def test_graph_describe_backend_includes_detess_dequant_stage(tmp_path):
-  model_path = _strict_yolo_model_path()
-  model = pyneat.Model(str(model_path))
+def test_graph_describe_backend_includes_detess_dequant_stage():
+  # Explicit options instead of DetessDequantOptions(Model): the Model Browser YOLOv8s
+  # dequantizes without detessellation, and this checks the stage itself.
+  detess = pyneat.DetessDequantOptions()
+  detess.num_buffers_locked = True
+  detess.num_buffers_model = 1
+  detess.num_buffers = 1
+  detess.config_json = {
+      "graph_name": "detessdequant", "input_width": 640, "input_height": 640, "input_depth": 3,
+      "output_width": 640, "output_height": 640, "output_depth": 3,
+  }
 
   graph = pyneat.Graph()
   graph.add(pyneat.nodes.input())
-  graph.add(pyneat.groups.mla(model))
-  graph.add(pyneat.nodes.detess_dequant(pyneat.DetessDequantOptions(model)))
+  graph.add(pyneat.nodes.detess_dequant(detess))
   graph.add(pyneat.nodes.output())
 
-  # A fused physical cohort need not use the logical operation as its element name.
   assert "detessdequant" in graph.describe().lower()
-  info = model.info()
-  assert info.capabilities.has_post_detessellation
-  assert info.capabilities.has_post_dequantization
   assert "neatkernelrunner" in graph.describe_backend().lower()
 
 
@@ -1386,18 +1389,17 @@ def test_model_preproc_normalize_explicit_on_resolves_preproc_semantics(tmp_path
   assert pre.normalize is True
 
 
-def test_model_preproc_normalize_false_overrides_model_pack_value(tmp_path):
+def test_model_preproc_normalize_false_keeps_pack_quantizer_for_quantized_model_pack(tmp_path):
   model = _resnet_model_with_preproc(normalize=pyneat.AutoFlag.Off)
+
+  # Normalization Off is valid for raw 0-255 models; the stage still quantizes with the
+  # pack's quantizer rather than handing raw bytes to the MLA.
+  requirements = model.preprocess_requirements()
   pre = pyneat.PreprocOptions(model)
-
-  graph = pyneat.Graph()
-  graph.add(pyneat.nodes.input(model.input_appsrc_options(False)))
-  graph.add(pyneat.nodes.preproc(pre))
-  graph.add(pyneat.nodes.output())
-
-  backend = graph.describe_backend().lower()
-  assert "preproc" in backend
   assert pre.normalize is False
+  assert pre.output_dtype == "INT8"
+  assert pre.q_scale == requirements.q_scale
+  assert pre.q_zp == requirements.q_zp
 
 
 def test_sima_box_decode_without_runtime_dims_uses_model_pack_defaults(tmp_path):

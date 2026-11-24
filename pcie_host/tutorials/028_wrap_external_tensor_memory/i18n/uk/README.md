@@ -44,25 +44,20 @@
 
 ## Run
 
-Установіть пакет хоста PCIe та завантажте набір навчальних матеріалів, як описано в розділі [Налаштування навчальних матеріалів](/tutorials/before-you-run). Виконайте наведені нижче команди в корені розпакованих додаткових матеріалів PCIe. У Windows налаштуйте навчальні матеріали та запускайте програми, як описано в розділі [Запуск застосунків у Windows](/getting-started/neat-library/pcie-host/#run-applications-on-windows).
-
-Програмі потрібен файл `yolo_v8s_mpk.tar.gz` у цьому каталозі. Завантажте YOLOv8s з [Model Browser](/tools/model-browser/), видобудьте архів із завантаженого ZIP-файлу та збережіть його під цією назвою:
+Установіть пакет хоста PCIe та завантажте комплект посібників, як описано в розділі [Налаштування посібників](/tutorials/before-you-run). Завантажте YOLOv8s до кореня розпакованих додаткових файлів PCIe:
 
 ```bash
-sima-cli models download --id yolov8s --variant w8a8 --output models --force
-unzip -o models/yolov8s/w8a8/*.zip yolov8s_w8a8_mpk.tar.gz
-mv yolov8s_w8a8_mpk.tar.gz yolo_v8s_mpk.tar.gz
+sima-cli models download --id yolov8s --variant w8a8 --force
+unzip -p models/yolov8s/w8a8/yolov8s_w8a8_default.zip yolov8s_w8a8_mpk.tar.gz > yolo_v8s_mpk.tar.gz
 ```
 
-У Windows завантажте модель у PowerShell і видобудьте архів за допомогою `Expand-Archive`:
+У Windows налаштуйте навчальні матеріали та запускайте програми, як описано в розділі [Запуск застосунків у Windows](/getting-started/neat-library/pcie-host/#run-applications-on-windows). Завантажте модель у PowerShell і видобудьте архів за допомогою `Expand-Archive`:
 
 ```powershell
-sima-cli models download --id yolov8s --variant w8a8 --output models --force
-Expand-Archive models\yolov8s\w8a8\*.zip -DestinationPath models\yolov8s\w8a8 -Force
+sima-cli models download --id yolov8s --variant w8a8 --force
+Expand-Archive models\yolov8s\w8a8\yolov8s_w8a8_default.zip -DestinationPath models\yolov8s\w8a8 -Force
 Copy-Item models\yolov8s\w8a8\yolov8s_w8a8_mpk.tar.gz yolo_v8s_mpk.tar.gz
 ```
-
-Якщо завантажено файл `<id>_<variant>_mpk.tar.gz`, а не ZIP-файл (так буває з моделлю, востаннє зібраною до того, як Model Browser почав пакувати моделі у ZIP-файли), скопіюйте цей файл із `models/<id>/<variant>` замість розпакування.
 
 **C++ (prebuilt):**
 

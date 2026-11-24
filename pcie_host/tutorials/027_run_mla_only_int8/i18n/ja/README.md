@@ -45,24 +45,22 @@ q = clamp(round(x / scale) + zero_point, -128, 127)
 
 PCIeホストパッケージをインストールし、[チュートリアルの設定](/tutorials/before-you-run)で説明されているように、チュートリアルバンドルをダウンロードします。Windowsでは、[Windowsでアプリケーションを実行する](/getting-started/neat-library/pcie-host/#run-applications-on-windows)の説明に従ってチュートリアルを設定し、プログラムを実行します。
 
-このチュートリアルは、MLAの入出力を直接扱うようにコンパイルされた[Model Browser](/tools/model-browser/)のYOLO26n `w8a8`アーカイブを実行します。抽出したPCIeエクストラのルートでモデルをダウンロードし、ダウンロードしたZIPファイルからアーカイブを展開します。
+このチュートリアルは、MLAの入出力を直接扱うようにコンパイルされたModel BrowserのYOLO26n `w8a8`パッケージを実行します。抽出したPCIeエクストラのルートにダウンロードし、MPKアーカイブを取り出します。
 
 ```bash
-sima-cli models download --id yolo26n --variant w8a8 --output models --force
-unzip -o models/yolo26n/w8a8/*.zip yolo26n_w8a8_mpk.tar.gz
+sima-cli models download --id yolo26n --variant w8a8 --force
+unzip -p models/yolo26n/w8a8/yolo26n_w8a8_default.zip yolo26n_w8a8_mpk.tar.gz > yolo26n_w8a8_mpk.tar.gz
 ```
 
 Windowsでは、PowerShellでモデルをダウンロードし、`Expand-Archive`でアーカイブを展開します。
 
 ```powershell
-sima-cli models download --id yolo26n --variant w8a8 --output models --force
-Expand-Archive models\yolo26n\w8a8\*.zip -DestinationPath models\yolo26n\w8a8 -Force
+sima-cli models download --id yolo26n --variant w8a8 --force
+Expand-Archive models\yolo26n\w8a8\yolo26n_w8a8_default.zip -DestinationPath models\yolo26n\w8a8 -Force
 Copy-Item models\yolo26n\w8a8\yolo26n_w8a8_mpk.tar.gz .
 ```
 
-ダウンロードしたファイルが ZIP ファイルではなく `<id>_<variant>_mpk.tar.gz` ファイルの場合（Model Browser がモデルを ZIP ファイルとして提供する前に最後にビルドされたモデルの場合）は、展開せずに `models/<id>/<variant>` からそのファイルをコピーしてください。
-
-その他のアーカイブは、Model SDKの`tessellate_parameters`で`enable_mla=True`を指定し、すべての入力に`HWC`のDRAMレイアウト、すべての出力に`HWC16`を指定してコンパイルされていれば条件を満たします。Model Zooの`yolo_v8s`ビルドのように代わりにCVUでテッセレーションを行うアーカイブは、`mla_only`を有効にすると拒否されます。
+その他のアーカイブは、Model SDKの`tessellate_parameters`で`enable_mla=True`を指定し、すべての入力に`HWC`のDRAMレイアウト、すべての出力に`HWC16`を指定してコンパイルされていれば条件を満たします。代わりにCVUでテッセレーションを行うアーカイブは、`mla_only`を有効にすると拒否されます。
 
 ```text
 mla_only does not support stage 'tessellate_quantize_0_MLA_0/...' (tess)

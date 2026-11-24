@@ -71,33 +71,28 @@ Install the PCIe host package and download the tutorial bundle as described in
 On Windows, set up the tutorials and run the programs as described in
 [Run applications on Windows](/getting-started/neat-library/pcie-host/#run-applications-on-windows).
 
-The tutorial runs the YOLO26n `w8a8` archive from the
-[Model Browser](/tools/model-browser/), which is compiled for direct MLA input
-and output. From the extracted PCIe extras root, download the model and extract
-the archive from the downloaded ZIP file:
+The tutorial runs the Model Browser YOLO26n `w8a8` package, which is compiled for
+direct MLA input and output. Download it into the extracted PCIe extras root and
+extract the MPK archive:
 
 ```bash
-sima-cli models download --id yolo26n --variant w8a8 --output models --force
-unzip -o models/yolo26n/w8a8/*.zip yolo26n_w8a8_mpk.tar.gz
+sima-cli models download --id yolo26n --variant w8a8 --force
+unzip -p models/yolo26n/w8a8/yolo26n_w8a8_default.zip yolo26n_w8a8_mpk.tar.gz > yolo26n_w8a8_mpk.tar.gz
 ```
 
 On Windows, download the model in PowerShell and extract the archive with
 `Expand-Archive`:
 
 ```powershell
-sima-cli models download --id yolo26n --variant w8a8 --output models --force
-Expand-Archive models\yolo26n\w8a8\*.zip -DestinationPath models\yolo26n\w8a8 -Force
+sima-cli models download --id yolo26n --variant w8a8 --force
+Expand-Archive models\yolo26n\w8a8\yolo26n_w8a8_default.zip -DestinationPath models\yolo26n\w8a8 -Force
 Copy-Item models\yolo26n\w8a8\yolo26n_w8a8_mpk.tar.gz .
 ```
 
-If the download is a `<id>_<variant>_mpk.tar.gz` file instead of a ZIP file, as
-for a model last built before Model Browser packaged models as ZIP files, copy
-that file from `models/<id>/<variant>` instead of extracting it.
-
 Other archives qualify when they were compiled with the Model SDK
 `tessellate_parameters` `enable_mla=True`, an `HWC` DRAM layout on every input,
-and `HWC16` on every output. Archives that tessellate on the CVU instead, such as
-the Model Zoo `yolo_v8s` build, are rejected when `mla_only` is enabled:
+and `HWC16` on every output. Archives that tessellate on the CVU instead are
+rejected when `mla_only` is enabled:
 
 ```text
 mla_only does not support stage 'tessellate_quantize_0_MLA_0/...' (tess)

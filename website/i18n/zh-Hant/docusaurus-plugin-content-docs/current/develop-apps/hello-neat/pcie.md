@@ -20,14 +20,13 @@ PCIe 協同處理將應用程式控制和輸入準備保留在主機機器上，
 
 ## 取得模型和影像
 
-在主機機器上建立一個工作目錄，並從 [Model Browser](/tools/model-browser/) 下載 ResNet-50 `w8a8` 模型。從下載的 ZIP 檔案中解壓縮封存檔，並將其儲存為 `resnet_50.tar.gz`：
+在主機機器上建立一個工作目錄，從 Model Browser 下載 ResNet-50，並從下載的 ZIP 中將模型封存檔解壓縮為 `resnet_50.tar.gz`：
 
 <ShellCommand prompt="pcie-host">
 mkdir -p pcie-host-quickstart/assets
 cd pcie-host-quickstart
-sima-cli models download --id resnet_50 --variant w8a8 --output models --force
-unzip -o models/resnet_50/w8a8/*.zip resnet_50_w8a8_mpk.tar.gz
-mv resnet_50_w8a8_mpk.tar.gz resnet_50.tar.gz
+sima-cli models download --id resnet_50 --variant w8a8 --force
+unzip -p models/resnet_50/w8a8/resnet_50_w8a8_default.zip resnet_50_w8a8_mpk.tar.gz > resnet_50.tar.gz
 </ShellCommand>
 
 在 Windows 上，請在 PowerShell 中執行相同步驟，並使用 `Expand-Archive` 解壓縮封存檔：
@@ -35,12 +34,12 @@ mv resnet_50_w8a8_mpk.tar.gz resnet_50.tar.gz
 ```powershell
 New-Item -ItemType Directory -Force pcie-host-quickstart\assets | Out-Null
 Set-Location pcie-host-quickstart
-sima-cli models download --id resnet_50 --variant w8a8 --output models --force
-Expand-Archive models\resnet_50\w8a8\*.zip -DestinationPath models\resnet_50\w8a8 -Force
+sima-cli models download --id resnet_50 --variant w8a8 --force
+Expand-Archive models\resnet_50\w8a8\resnet_50_w8a8_default.zip -DestinationPath models\resnet_50\w8a8 -Force
 Copy-Item models\resnet_50\w8a8\resnet_50_w8a8_mpk.tar.gz resnet_50.tar.gz
 ```
 
-如果下載的是 `<id>_<variant>_mpk.tar.gz` 檔案而不是 ZIP 檔案（例如 Model Browser 開始以 ZIP 檔案封裝模型之前最後一次建置的模型），請直接從 `models/<id>/<variant>` 複製該檔案，不要解壓縮。
+所有教學課程的模型準備方式，請參閱[教學設定](/tutorials/before-you-run)。
 
 下載 [拉布拉多犬範例圖片](../../images/hello-neat-pcie-labrador.jpg)，並將其儲存為 `assets/sample.png`。
 

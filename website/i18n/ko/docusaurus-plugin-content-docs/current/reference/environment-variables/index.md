@@ -184,10 +184,6 @@ ProcessCVU 단계는 기본적으로 Runtime의 `neatkernelrunner`를 통해 실
   패키지의 존재/부재, 패키지 식별 정보 및 OTA 가용성/식별 정보입니다. 설치된 DevKit
   패키지 인벤토리 테스트에는 선택한 패키지 인벤토리와 함께 이 기준 정보가 필요합니다.
   설치 후의 상태에서 이 기준 정보를 다시 생성하지 마세요.
-- `SIMA_RUN_MNIST_PREPROC_CHANNELS1=1` — 장시간 MNIST 전처리 정확도 테스트를
-  명시적으로 활성화합니다. 건너뛰기를 막기 위해 임의로 설정하지 말고, 픽스처 검증 후
-  `tools/ci/prepare_weekly_fixtures.py`에서 이 값을 얻으세요. 로컬 실행기는
-  `--environment-json`을 사용하며, CI는 `--github-env`를 통해 같은 매핑을 사용합니다.
 
 픽스처 그룹 선택 및 설치된 패키지 프로파일은
 [테스트 요구 사항](../../develop-apps/contribute/build-test/test_requirements.md)을 참조하세요.

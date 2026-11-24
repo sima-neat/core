@@ -20,13 +20,19 @@ slug: /reference/tutorial-assets
 | `SIMA_RESNET50_TAR` | ResNet-50 튜토리얼 및 테스트에 대한 모델별 재정의입니다. |
 | `SIMA_MODEL_TAR` | 모델 기반 테스트 및 예제에서 사용되는 공유 기본 모델 아카이브입니다. |
 | 스크립트에서 지원하는 경우 YOLO 스타일의 감지 튜토리얼 및 테스트에 대한 모델별 재정의입니다. | `SIMA_YOLO_TAR` |
+| `SIMA_NEAT_TUTORIAL_MODEL_RESNET` | 튜토리얼 테스트용 ResNet-50 아카이브입니다. C++ 튜토리얼 CTest 실행과 Python 튜토리얼 테스트는 이 값을 튜토리얼에 `--model`로 전달합니다. |
+| `SIMA_NEAT_TUTORIAL_MODEL_YOLO` | 튜토리얼 테스트용 YOLOv8s 아카이브이며, 같은 방식으로 사용됩니다. |
 
 튜토리얼 명령어는 여전히 명시적인 플래그를 허용합니다. 단일 실행의 경우 `--model <path>`를 사용하는 것이 좋으며, 여러 명령어가 동일한 아티팩트를 공유해야 하는 경우 환경 변수를 사용하십시오.
 
 <ShellCommand prompt="sdk|devkit">
 export SIMA_RESNET50_TAR=/path/to/resnet_50.tar.gz
 export SIMA_YOLO_TAR=/path/to/yolo_v8s.tar.gz
+export SIMA_NEAT_TUTORIAL_MODEL_RESNET=/path/to/resnet_50.tar.gz
+export SIMA_NEAT_TUTORIAL_MODEL_YOLO=/path/to/yolo_v8s.tar.gz
 </ShellCommand>
+
+튜토리얼 테스트 변수가 설정되지 않은 경우, C++ 튜토리얼 CTest 실행은 `/tmp/resnet_50.tar.gz`와 `/tmp/yolo_v8s.tar.gz`를 사용합니다. 준비 방법은 [튜토리얼 설정](/tutorials/before-you-run)을 참조하세요.
 
 ## 일반적인 소스 트리 경로
 
@@ -70,7 +76,7 @@ export SIMA_COCO_URL=https://example.com/path/to/coco_sample.jpg
 1. 메시지에 표시된 경로를 확인하세요.
 2. 튜토리얼 플래그와 함께 에셋을 명시적으로 전달하세요.
 3. 소스 트리 테스트를 실행하는 경우 해당 환경 변수를 설정하십시오.
-4. 만약 해당 에셋이 Model Zoo에서 다운로드된 것이라면, 다운로드한 파일 이름을 확인하십시오.
-   튜토리얼에서 실제 `.tar.gz` 파일로 경로를 지정하십시오.
+4. 모델을 Model Browser에서 가져온 경우, 다운로드한 ZIP에서 모델 아카이브를 추출하고
+   튜토리얼에서 해당 `.tar.gz` 파일로 경로를 지정하십시오.
 
 일반적인 실행 시에는 모델 아카이브를 직접 압축 해제하지 마십시오. Neat는 컴파일된 아카이브 경로를 예상하고 자체적으로 압축 해제를 처리합니다.

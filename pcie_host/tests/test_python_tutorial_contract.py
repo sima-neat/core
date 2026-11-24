@@ -43,6 +43,7 @@ class PythonTutorialContract(unittest.TestCase):
   def test_model_download_steps_can_run_again_in_the_same_folder(self):
     # A second tutorial in the same folder repeats the steps: without these flags
     # sima-cli, unzip and Expand-Archive stop on the files the first one left.
+    # unzip -p writes the member to standard output, so it never stops there.
     pages = [*TUTORIALS.glob("[0-9][0-9][0-9]_*/README.md"),
              *TUTORIALS.glob("[0-9][0-9][0-9]_*/i18n/*/README.md")]
     for page in ("develop-apps/hello-neat/pcie.md", "develop-apps/tutorials/before-you-run.md"):
@@ -55,7 +56,7 @@ class PythonTutorialContract(unittest.TestCase):
           if line.startswith("sima-cli models download "):
             self.assertIn(" --force", line)
           elif line.startswith("unzip "):
-            self.assertTrue(line.startswith("unzip -o "))
+            self.assertTrue(line.startswith(("unzip -o ", "unzip -p ")))
           elif line.startswith("Expand-Archive "):
             self.assertTrue(line.endswith(" -Force"))
           else:

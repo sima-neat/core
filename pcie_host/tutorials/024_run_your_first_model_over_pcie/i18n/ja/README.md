@@ -36,25 +36,22 @@ PCIe ホスト API は、モデルで使用できるテンソルまたはデコ�
 
 ## Run
 
-PCIeホストパッケージをインストールし、[チュートリアルの設定](/tutorials/before-you-run)で説明されているように、チュートリアルバンドルをダウンロードします。抽出したPCIeエクストラのルートで次のコマンドを実行します。Windowsでは、[Windowsでアプリケーションを実行する](/getting-started/neat-library/pcie-host/#run-applications-on-windows)の説明に従ってチュートリアルを設定し、プログラムを実行します。
-
-プログラムには、このディレクトリに `yolo_v8s_mpk.tar.gz` が必要です。[Model Browser](/tools/model-browser/)からYOLOv8sをダウンロードし、ダウンロードしたZIPファイルからアーカイブを展開して、その名前で保存します。
+PCIe ホストパッケージをインストールし、[チュートリアルの設定](/tutorials/before-you-run) で説明されているように、チュートリアルバンドルをダウンロードします。抽出された PCIe extras ルートから、次のコマンドを実行します。
 
 ```bash
-sima-cli models download --id yolov8s --variant w8a8 --output models --force
-unzip -o models/yolov8s/w8a8/*.zip yolov8s_w8a8_mpk.tar.gz
-mv yolov8s_w8a8_mpk.tar.gz yolo_v8s_mpk.tar.gz
+sima-cli models download --id yolov8s --variant w8a8 --force
+unzip -p models/yolov8s/w8a8/yolov8s_w8a8_default.zip yolov8s_w8a8_mpk.tar.gz > yolo_v8s_mpk.tar.gz
 ```
 
-Windowsでは、PowerShellでモデルをダウンロードし、`Expand-Archive`でアーカイブを展開します。
+プログラムには、このディレクトリに `yolo_v8s_mpk.tar.gz` が必要です。2 番目のコマンドは、ダウンロードした ZIP からこのファイルを展開します。
+
+Windowsでは、[Windowsでアプリケーションを実行する](/getting-started/neat-library/pcie-host/#run-applications-on-windows)の説明に従ってチュートリアルを設定し、プログラムを実行します。PowerShellでモデルをダウンロードし、`Expand-Archive`でアーカイブを展開します。
 
 ```powershell
-sima-cli models download --id yolov8s --variant w8a8 --output models --force
-Expand-Archive models\yolov8s\w8a8\*.zip -DestinationPath models\yolov8s\w8a8 -Force
+sima-cli models download --id yolov8s --variant w8a8 --force
+Expand-Archive models\yolov8s\w8a8\yolov8s_w8a8_default.zip -DestinationPath models\yolov8s\w8a8 -Force
 Copy-Item models\yolov8s\w8a8\yolov8s_w8a8_mpk.tar.gz yolo_v8s_mpk.tar.gz
 ```
-
-ダウンロードしたファイルが ZIP ファイルではなく `<id>_<variant>_mpk.tar.gz` ファイルの場合（Model Browser がモデルを ZIP ファイルとして提供する前に最後にビルドされたモデルの場合）は、展開せずに `models/<id>/<variant>` からそのファイルをコピーしてください。
 
 **Python:**
 

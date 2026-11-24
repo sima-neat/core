@@ -25,16 +25,15 @@ You need:
 
 ## Get the model and image
 
-Create a working directory on the host machine and download the ResNet-50
-`w8a8` model from the [Model Browser](/tools/model-browser/). Extract the
-archive from the downloaded ZIP file and save it as `resnet_50.tar.gz`:
+Create a working directory on the host machine, download ResNet-50 from the
+Model Browser, and extract the model archive from the downloaded ZIP as
+`resnet_50.tar.gz`:
 
 <ShellCommand prompt="pcie-host">
 mkdir -p pcie-host-quickstart/assets
 cd pcie-host-quickstart
-sima-cli models download --id resnet_50 --variant w8a8 --output models --force
-unzip -o models/resnet_50/w8a8/*.zip resnet_50_w8a8_mpk.tar.gz
-mv resnet_50_w8a8_mpk.tar.gz resnet_50.tar.gz
+sima-cli models download --id resnet_50 --variant w8a8 --force
+unzip -p models/resnet_50/w8a8/resnet_50_w8a8_default.zip resnet_50_w8a8_mpk.tar.gz > resnet_50.tar.gz
 </ShellCommand>
 
 On Windows, run the same steps in PowerShell and extract the archive with
@@ -43,14 +42,13 @@ On Windows, run the same steps in PowerShell and extract the archive with
 ```powershell
 New-Item -ItemType Directory -Force pcie-host-quickstart\assets | Out-Null
 Set-Location pcie-host-quickstart
-sima-cli models download --id resnet_50 --variant w8a8 --output models --force
-Expand-Archive models\resnet_50\w8a8\*.zip -DestinationPath models\resnet_50\w8a8 -Force
+sima-cli models download --id resnet_50 --variant w8a8 --force
+Expand-Archive models\resnet_50\w8a8\resnet_50_w8a8_default.zip -DestinationPath models\resnet_50\w8a8 -Force
 Copy-Item models\resnet_50\w8a8\resnet_50_w8a8_mpk.tar.gz resnet_50.tar.gz
 ```
 
-If the download is a `<id>_<variant>_mpk.tar.gz` file instead of a ZIP file, as
-for a model last built before Model Browser packaged models as ZIP files, copy
-that file from `models/<id>/<variant>` instead of extracting it.
+[Tutorial Setup](/tutorials/before-you-run) describes model preparation
+for all tutorials.
 
 Download the [sample Labrador image](../../images/hello-neat-pcie-labrador.jpg)
 and save it as `assets/sample.png`.

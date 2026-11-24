@@ -45,24 +45,22 @@ q = clamp(round(x / scale) + zero_point, -128, 127)
 
 Установіть пакет хоста PCIe та завантажте набір навчальних матеріалів, як описано в розділі [Налаштування навчальних матеріалів](/tutorials/before-you-run). У Windows налаштуйте навчальні матеріали та запускайте програми, як описано в розділі [Запуск застосунків у Windows](/getting-started/neat-library/pcie-host/#run-applications-on-windows).
 
-Посібник виконує архів YOLO26n `w8a8` з [Model Browser](/tools/model-browser/), скомпільований для прямого входу та виходу MLA. У корені розпакованих додаткових матеріалів PCIe завантажте модель і видобудьте архів із завантаженого ZIP-файлу:
+Посібник виконує пакет YOLO26n `w8a8` з Model Browser, скомпільований для прямого входу та виходу MLA. Завантажте його в корінь розпакованих додаткових матеріалів PCIe і видобудьте архів MPK:
 
 ```bash
-sima-cli models download --id yolo26n --variant w8a8 --output models --force
-unzip -o models/yolo26n/w8a8/*.zip yolo26n_w8a8_mpk.tar.gz
+sima-cli models download --id yolo26n --variant w8a8 --force
+unzip -p models/yolo26n/w8a8/yolo26n_w8a8_default.zip yolo26n_w8a8_mpk.tar.gz > yolo26n_w8a8_mpk.tar.gz
 ```
 
 У Windows завантажте модель у PowerShell і видобудьте архів за допомогою `Expand-Archive`:
 
 ```powershell
-sima-cli models download --id yolo26n --variant w8a8 --output models --force
-Expand-Archive models\yolo26n\w8a8\*.zip -DestinationPath models\yolo26n\w8a8 -Force
+sima-cli models download --id yolo26n --variant w8a8 --force
+Expand-Archive models\yolo26n\w8a8\yolo26n_w8a8_default.zip -DestinationPath models\yolo26n\w8a8 -Force
 Copy-Item models\yolo26n\w8a8\yolo26n_w8a8_mpk.tar.gz .
 ```
 
-Якщо завантажено файл `<id>_<variant>_mpk.tar.gz`, а не ZIP-файл (так буває з моделлю, востаннє зібраною до того, як Model Browser почав пакувати моделі у ZIP-файли), скопіюйте цей файл із `models/<id>/<variant>` замість розпакування.
-
-Інші архіви підходять, якщо їх скомпільовано з `tessellate_parameters` у Model SDK з `enable_mla=True`, розкладкою DRAM `HWC` на кожному вході та `HWC16` на кожному виході. Архіви, що натомість виконують теселяцію на CVU, як-от збірка `yolo_v8s` з Model Zoo, відхиляються, коли ввімкнено `mla_only`:
+Інші архіви підходять, якщо їх скомпільовано з `tessellate_parameters` у Model SDK з `enable_mla=True`, розкладкою DRAM `HWC` на кожному вході та `HWC16` на кожному виході. Архіви, що натомість виконують теселяцію на CVU, відхиляються, коли ввімкнено `mla_only`:
 
 ```text
 mla_only does not support stage 'tessellate_quantize_0_MLA_0/...' (tess)

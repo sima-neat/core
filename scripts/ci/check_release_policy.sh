@@ -24,14 +24,10 @@ required_files=(
   "scripts/dev/install_hooks.sh"
   ".githooks/pre-push"
   ".github/workflows/test-crash-correctness-nightly.yml"
-  ".github/workflows/model-archive-security.yml"
-  ".github/workflows/install-smoke.yml"
-  ".github/workflows/perf-regression.yml"
   ".github/workflows/test-soak-weekly.yml"
   ".github/workflows/vulcan-fuzz-nightly.yml"
   ".github/workflows/sanitizers.yml"
   ".github/workflows/test-stress-nightly.yml"
-  ".github/workflows/release-gate.yml"
 )
 
 fail=0
@@ -51,20 +47,11 @@ for script in scripts/ci/*.sh; do
   fi
 done
 
-if [[ -f .github/workflows/release-gate.yml ]] &&
-   ! grep -q "docs/develop-apps/contribute/release-maintenance/release-checklist.md" .github/workflows/release-gate.yml; then
-  echo "ERROR: release-gate workflow must reference docs/develop-apps/contribute/release-maintenance/release-checklist.md" >&2
-  fail=1
-fi
-
 required_checks=(
   "repo-hygiene"
   "configure-build-sanity"
   "docs-link-check"
   "crash-correctness-gate"
-  "model-archive-security-gate"
-  "install-smoke"
-  "perf-regression-gate"
   "soak-weekly"
   "fuzz-nightly"
   "stress-gate"

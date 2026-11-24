@@ -580,6 +580,7 @@ set(UNIT_TESTS
   unit_model_semantic_segmentation_test
   unit_model_metadata_test
   unit_model_route_planner_test
+  unit_model_preproc_normalize_off_quantize_regression_test
   unit_resnet50_mla_handoff_segment_test
   unit_cast_fanout_contract_test
   unit_mla_boundary_output_contract_test
@@ -827,6 +828,16 @@ set_tests_properties(unit_canonical_graph_stage_admission_test PROPERTIES
 target_link_libraries(unit_processcvu_v2_mpk_encoding_test PRIVATE
   SimaScheduler::frontend
   )
+# Execute those requests on each backend against the test's own reference,
+# including the wide CBlock16 tile that once produced no EV74 output.
+foreach(backend ev74 a65)
+  simaneat_add_test(NAME processcvu_v2_mpk_encoding_${backend}_test
+    COMMAND unit_processcvu_v2_mpk_encoding_test --${backend})
+  simaneat_append_ctest_env(processcvu_v2_mpk_encoding_${backend}_test)
+  set_tests_properties(processcvu_v2_mpk_encoding_${backend}_test PROPERTIES
+    TIMEOUT 60 LABELS "strict;e2e;runtime;kernel-runner;modalix-only"
+    RESOURCE_LOCK "accelerator-device")
+endforeach()
 
 # Exercise mutable current-frame facts with both the default reader policy and
 # the explicit legacy static-preprocess shortcut. Compact facts always refresh.
@@ -1002,6 +1013,7 @@ set(E2E_TESTS
   graph_validate_report_regression_test
   stage_routing_regression_test
   stage_chain_cache_admission_test
+  model_preproc_normalize_off_quantize_regression_test
   udp_output_loopback_integration_test
   multipart_header_capture_http_e2e_test
   multipart_header_capture_decode_e2e_test
@@ -1238,22 +1250,15 @@ if (NOT preproc_build_input_repro_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
 endif()
 
 
-add_pipeline_test_long(
-  mnist_preproc_channels1_accuracy_test
-  e2e_testing/mnist_preproc_channels1_accuracy_test.cpp
+# Two-thread push/pull must hand each consumer the output of its own input; the synchronous run()
+# result for the same image is the reference. CI prepares the Model Browser resnet_18 w8a8 MPK.
+add_pipeline_test(
+  resnet18_async_consumer_visibility_test
+  e2e_testing/resnet18_async_consumer_visibility_test.cpp
 )
 
-if (NOT mnist_preproc_channels1_accuracy_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
-  set_property(TEST mnist_preproc_channels1_accuracy_test APPEND PROPERTY LABELS "e2e;modelzoo;long")
-endif()
-
-add_pipeline_test_long(
-  mnist_async_consumer_visibility_control_test
-  e2e_testing/mnist_async_consumer_visibility_control_test.cpp
-)
-
-if (NOT mnist_async_consumer_visibility_control_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
-  set_property(TEST mnist_async_consumer_visibility_control_test APPEND PROPERTY LABELS "e2e;modelzoo;long;perf")
+if (NOT resnet18_async_consumer_visibility_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  set_property(TEST resnet18_async_consumer_visibility_test APPEND PROPERTY LABELS "e2e;img_classification")
 endif()
 
 add_pipeline_test_long(
@@ -2312,19 +2317,6 @@ if (NOT yolov8_dynamic_boxdecode_geometry_async_test IN_LIST PIPELINESESSION_TES
     LABELS "e2e;obj_detection;boxdecode;dynamic;async")
 endif()
 
-add_pipeline_test_long(
-  ssd_mobilenet_e2e_test
-  e2e_pipelines/obj_detection/ssd_mobilenet_e2e_test.cpp
-  e2e_pipelines/e2e_utils.cpp
-  e2e_pipelines/obj_detection/obj_detection_utils.cpp
-  ARGS ${CMAKE_SOURCE_DIR}
-)
-
-if (NOT ssd_mobilenet_e2e_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
-  set_property(TEST ssd_mobilenet_e2e_test
-    APPEND PROPERTY LABELS "e2e;obj_detection;ssd;accuracy;modalix-only")
-endif()
-
 # Device-free SSD contract coverage. No SKIP_RETURN_CODE: it must fail, never skip.
 add_pipeline_test(
   ssd_contract_integration_test
@@ -2423,6 +2415,21 @@ if (NOT preproc_roi_user_smoke_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
     PRIVATE SIMA_ROI_USER_SMOKE_DEFAULT=1)
   set_property(TEST preproc_roi_user_smoke_test APPEND PROPERTY
     LABELS "e2e;obj_detection;preproc;roi;smoke")
+endif()
+
+add_pipeline_test(
+  preproc_roi_boxdecode_moving_test
+  e2e_pipelines/obj_detection/preproc_roi_boxdecode_moving_test.cpp
+  e2e_pipelines/e2e_utils.cpp
+  e2e_pipelines/obj_detection/obj_detection_utils.cpp
+  ARGS ${CMAKE_SOURCE_DIR}
+  LOCK_ACCELERATOR
+)
+
+if (NOT preproc_roi_boxdecode_moving_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  set_property(TEST preproc_roi_boxdecode_moving_test APPEND PROPERTY
+    LABELS "e2e;obj_detection;preproc;roi;boxdecode")
+  set_tests_properties(preproc_roi_boxdecode_moving_test PROPERTIES TIMEOUT 120)
 endif()
 
 add_pipeline_test(
@@ -2839,8 +2846,8 @@ foreach(test
     hybrid_graph_stage_model_test
     preproc_standalone_test
     preproc_build_input_repro_test
-    mnist_preproc_channels1_accuracy_test
     modelzoo_bulk_models_test
+    resnet18_async_consumer_visibility_test
     preproc_dynamic_renegotiate_test
     graph_migration_legacy_hybrid_graph_stage_model_test
     graph_migration_legacy_yolov8_variant_route_matrix_test

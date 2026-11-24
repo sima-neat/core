@@ -46,3 +46,8 @@ def test_an_empty_explicit_path_fails(monkeypatch, tmp_path):
   monkeypatch.setenv("SIMA_MODEL_TAR", str(empty))
   with pytest.raises(pytest.fail.Exception, match="SIMA_MODEL_TAR="):
     model_fixtures.resolve_model_tar("SIMA_RESNET50_TAR")
+
+
+def test_an_unset_variable_fails_and_names_the_model_to_download():
+  with pytest.raises(pytest.fail.Exception, match="SIMA_RESNET50_TAR is not set.*--id resnet_50 --variant w8a8"):
+    model_fixtures.resolve_model_tar("SIMA_RESNET50_TAR")

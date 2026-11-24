@@ -4264,8 +4264,8 @@ internal::PreprocessPlannerResult build_preprocess_plan(const std::string& tar_g
   }
   if (route_uses_image_ingress(session_route_plan) && plan.normalize_auto_without_config) {
     plan.resolved_plan.warnings.push_back(
-        "preprocess.normalize=Auto resolved Off: set preprocess.normalize.enable=On with "
-        "mean/stddev or choose a preprocess.preset; set normalize.enable=Off for raw pixels.");
+        "preprocess.normalize=Auto resolved Off. If your model expects normalized input, set "
+        "preprocess.normalize.enable=On or choose a preprocess.preset.");
   }
   if (options.decode_type == BoxDecodeType::EdgeTamTrack && session_route_plan.boxdecode_selected) {
     // EdgeTAM tracking: the raw outputs are exactly what the same Model returns without BoxDecode.

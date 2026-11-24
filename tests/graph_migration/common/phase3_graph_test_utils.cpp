@@ -3,10 +3,6 @@
 #include "asset_utils.h"
 #include "test_utils.h"
 
-#if defined(SIMA_WITH_OPENCV)
-#include "yolov8_test_utils.h"
-#endif
-
 #include <array>
 #include <cstdlib>
 #include <cstring>
@@ -62,36 +58,23 @@ fs::path resolve_yolov8n_variant_or_throw(const fs::path& root, std::string_view
     return env_path;
   }
 
-  const fs::path found = first_existing({root / "tmp" / "yolov8n_6_variants" / name,
-                                         root / "tmp" / "yolov8n_drive" / name,
-                                         fs::current_path() / "tmp" / "yolov8n_6_variants" / name,
-                                         fs::current_path() / "tmp" / "yolov8n_drive" / name,
-                                         fs::path("/tmp") / "sima-yolov8n-drive" / name});
-  if (!found.empty()) {
-    return found;
+  const fs::path variants_dir = env_string("SIMA_YOLOV8_VARIANTS_DIR");
+  if (variants_dir.empty()) {
+    throw std::runtime_error("SIMA_YOLOV8_VARIANTS_DIR is not set; it must hold " + name);
   }
-
-#if defined(SIMA_WITH_OPENCV)
-  // Match the YOLO matrix tests: these variants are mandatory in CI, so a
-  // missing staged tarball should be fetched on demand and validated instead
-  // of failing this focused phase3 coverage first.
-  const fs::path variants_dir = sima_yolov8_test::ensure_yolov8n_drive_variants(root);
-  const fs::path downloaded = variants_dir / name;
-  if (sima_test::is_listable_tar_gz(downloaded)) {
-    return downloaded;
+  const fs::path path = variants_dir / name;
+  if (!usable_file(path)) {
+    throw std::runtime_error("YOLOv8n MPK is missing or empty: " + path.string() +
+                             " (from SIMA_YOLOV8_VARIANTS_DIR)");
   }
-#endif
-
-  throw std::runtime_error("failed to resolve YOLOv8n variant tarball: " + name +
-                           " (stage it under tmp/yolov8n_6_variants or tmp/yolov8n_drive, "
-                           "or set SIMA_YOLOV8N_VARIANTS_BASE_URL to a mirror)");
+  return path;
 }
 
 std::vector<fs::path> resolve_yolov8n_variants_or_throw(const fs::path& root) {
   const std::vector<std::string> names = {
-      "yolov8n_A_BF16_W_INT8_MLATess.tar.gz", "yolov8n_A_BF16_W_INT8_mpk.tar.gz",
-      "yolov8n_A_W_BF16_MLATess.tar.gz",      "yolov8n_A_W_BF16_mpk.tar.gz",
-      "yolov8n_A_W_INT8_MLATess.tar.gz",      "yolov8n_A_W_int8_mpk.tar.gz",
+      "yolov8n_w8a8_mpk.tar.gz",
+      "yolov8n_w8a16_mpk.tar.gz",
+      "yolov8n_w16a16_mpk.tar.gz",
   };
   std::vector<fs::path> out;
   out.reserve(names.size());
@@ -102,12 +85,12 @@ std::vector<fs::path> resolve_yolov8n_variants_or_throw(const fs::path& root) {
 }
 
 fs::path resolve_resnet50_or_throw(const fs::path& root) {
-  const std::string resolved = sima_test::resolve_resnet50_tar(root);
+  (void)root;
+  const std::string resolved = sima_test::resolve_resnet50_tar();
   if (!resolved.empty() && usable_file(resolved)) {
     return resolved;
   }
-  throw std::runtime_error("failed to resolve ResNet50 model tarball; set SIMA_RESNET50_TAR or "
-                           "stage/download resnet_50_mpk.tar.gz");
+  throw std::runtime_error("failed to resolve ResNet50 model tarball; set SIMA_RESNET50_TAR");
 }
 
 fs::path resolve_mnist_or_throw(const fs::path& root) {

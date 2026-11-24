@@ -38,17 +38,14 @@ export LD_LIBRARY_PATH=/usr/lib/aarch64-linux-gnu/neat/runtime:$LD_LIBRARY_PATH
 ```
 :::
 
-### 3. 缺少模型封存檔 — `sima-cli modelzoo` 尚未執行。
+### 3. 缺少模型封存檔
 
 :::info 原因
 您程式碼中參考的 `.tar.gz` 模型封存檔（或 `SIMA_YOLO_TAR` / `SIMA_RESNET50_TAR` / `SIMA_MODEL_TAR`）在磁碟上不存在。
 :::
 
 :::tip 修復
-請從 Model Zoo 下載。
-```bash
-sima-cli modelzoo get yolo_v8s     # or resnet_50, etc.
-```
+請依照[準備模型封存檔](/tutorials/before-you-run#prepare-model-archives)中的說明，從 Model Browser 下載。
 :::
 
 ## 建立
@@ -356,6 +353,16 @@ case simaai::neat::PullStatus::Error:
 
 :::tip 修復
 通過其中一個，但不能同時通過兩個。
+:::
+
+### 23. 量化 INT8 模型上的影像輸入 Model 回傳很少、沒有或品質不佳的偵測結果
+
+:::info 原因
+正規化為 Off。可能是明確設為 `Off`（不會有警告），或保留 `Auto` 但沒有預設也沒有明確統計值，此時規劃器會警告 `preprocess.normalize=Auto resolved Off`。正規化為 Off 時，該階段會量化原始 0–255 像素值。
+:::
+
+:::tip 修正
+對於以 `[0,1]` 輸入訓練的偵測器，請啟用正規化。對於以原始 `0–255` 像素訓練的模型，請保持正規化關閉。
 :::
 
 ## 來自另一個堆疊。

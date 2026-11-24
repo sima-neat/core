@@ -52,40 +52,32 @@ its assigned queue.
 ## Run
 
 Install the PCIe host package and download the tutorial bundle as described in
-[Tutorial Setup](/tutorials/before-you-run). Run the following
-commands from the extracted PCIe extras root.
-On Windows, set up the tutorials and run the programs as described in
-[Run applications on Windows](/getting-started/neat-library/pcie-host/#run-applications-on-windows).
-
-The program requires the exact paths `resnet_50_mpk.tar.gz` and
-`yolo_v8s_mpk.tar.gz` in this directory. Download both models from the
-[Model Browser](/tools/model-browser/), extract the archives from the downloaded
-ZIP files, and save them under those names:
+[Tutorial Setup](/tutorials/before-you-run). From the extracted PCIe
+extras root, download both models:
 
 ```bash
-sima-cli models download --id resnet_50 --variant w8a8 --output models --force
-sima-cli models download --id yolov8s --variant w8a8 --output models --force
-unzip -o models/resnet_50/w8a8/*.zip resnet_50_w8a8_mpk.tar.gz
-unzip -o models/yolov8s/w8a8/*.zip yolov8s_w8a8_mpk.tar.gz
-mv resnet_50_w8a8_mpk.tar.gz resnet_50_mpk.tar.gz
-mv yolov8s_w8a8_mpk.tar.gz yolo_v8s_mpk.tar.gz
+sima-cli models download --id resnet_50 --variant w8a8 --force
+unzip -p models/resnet_50/w8a8/resnet_50_w8a8_default.zip resnet_50_w8a8_mpk.tar.gz > resnet_50_mpk.tar.gz
+sima-cli models download --id yolov8s --variant w8a8 --force
+unzip -p models/yolov8s/w8a8/yolov8s_w8a8_default.zip yolov8s_w8a8_mpk.tar.gz > yolo_v8s_mpk.tar.gz
 ```
 
-On Windows, download the models in PowerShell and extract the archives with
-`Expand-Archive`:
+The program requires the exact paths `resnet_50_mpk.tar.gz` and
+`yolo_v8s_mpk.tar.gz` in this directory. Each `unzip` command extracts one of
+them from its downloaded ZIP.
+
+On Windows, set up the tutorials and run the programs as described in
+[Run applications on Windows](/getting-started/neat-library/pcie-host/#run-applications-on-windows).
+Download the models in PowerShell and extract the archives with `Expand-Archive`:
 
 ```powershell
-sima-cli models download --id resnet_50 --variant w8a8 --output models --force
-sima-cli models download --id yolov8s --variant w8a8 --output models --force
-Expand-Archive models\resnet_50\w8a8\*.zip -DestinationPath models\resnet_50\w8a8 -Force
-Expand-Archive models\yolov8s\w8a8\*.zip -DestinationPath models\yolov8s\w8a8 -Force
+sima-cli models download --id resnet_50 --variant w8a8 --force
+Expand-Archive models\resnet_50\w8a8\resnet_50_w8a8_default.zip -DestinationPath models\resnet_50\w8a8 -Force
 Copy-Item models\resnet_50\w8a8\resnet_50_w8a8_mpk.tar.gz resnet_50_mpk.tar.gz
+sima-cli models download --id yolov8s --variant w8a8 --force
+Expand-Archive models\yolov8s\w8a8\yolov8s_w8a8_default.zip -DestinationPath models\yolov8s\w8a8 -Force
 Copy-Item models\yolov8s\w8a8\yolov8s_w8a8_mpk.tar.gz yolo_v8s_mpk.tar.gz
 ```
-
-If the download is a `<id>_<variant>_mpk.tar.gz` file instead of a ZIP file, as
-for a model last built before Model Browser packaged models as ZIP files, copy
-that file from `models/<id>/<variant>` instead of extracting it.
 
 Run Python:
 

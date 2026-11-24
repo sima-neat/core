@@ -284,7 +284,7 @@ fan_out_graph.add(simaai::neat::nodes::Output("model_image"));
 image_input --> original_image --> model_image
 ```
 
-Потім використайте `connect()`, щоб замінити типову лінійну схему з’єднань на потрібну вам топологію:
+Потім використайте `connect()`, щоб замінити лінійну схему з’єднань за замовчуванням на потрібну вам топологію:
 
 ```cpp
 fan_out_graph.connect("image_input", "original_image");
@@ -346,7 +346,7 @@ render_inputs_graph.add(simaai::neat::nodes::Output("render_inputs", render_opti
 image -> bbox -> render_inputs
 ```
 
-Потім використайте `connect()`, щоб замінити типову лінійну схему з’єднань на потрібну вам топологію:
+Потім використайте `connect()`, щоб замінити лінійну схему з’єднань за замовчуванням на потрібну вам топологію:
 
 ```cpp
 render_inputs_graph.connect("image", "render_inputs");

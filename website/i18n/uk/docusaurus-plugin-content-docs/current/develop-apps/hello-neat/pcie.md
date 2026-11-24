@@ -22,14 +22,13 @@ sidebar_position: 4
 
 ## Отримання моделі та зображення
 
-Створіть робочий каталог на хост-машині та завантажте модель ResNet-50 `w8a8` з [Model Browser](/tools/model-browser/). Видобудьте архів із завантаженого ZIP-файлу та збережіть його як `resnet_50.tar.gz`:
+Створіть робочу теку на хост-машині, завантажте ResNet-50 із Model Browser і видобудьте архів моделі із завантаженого ZIP-файлу як `resnet_50.tar.gz`:
 
 <ShellCommand prompt="pcie-host">
 mkdir -p pcie-host-quickstart/assets
 cd pcie-host-quickstart
-sima-cli models download --id resnet_50 --variant w8a8 --output models --force
-unzip -o models/resnet_50/w8a8/*.zip resnet_50_w8a8_mpk.tar.gz
-mv resnet_50_w8a8_mpk.tar.gz resnet_50.tar.gz
+sima-cli models download --id resnet_50 --variant w8a8 --force
+unzip -p models/resnet_50/w8a8/resnet_50_w8a8_default.zip resnet_50_w8a8_mpk.tar.gz > resnet_50.tar.gz
 </ShellCommand>
 
 У Windows виконайте ті самі кроки в PowerShell і видобудьте архів за допомогою `Expand-Archive`:
@@ -37,12 +36,12 @@ mv resnet_50_w8a8_mpk.tar.gz resnet_50.tar.gz
 ```powershell
 New-Item -ItemType Directory -Force pcie-host-quickstart\assets | Out-Null
 Set-Location pcie-host-quickstart
-sima-cli models download --id resnet_50 --variant w8a8 --output models --force
-Expand-Archive models\resnet_50\w8a8\*.zip -DestinationPath models\resnet_50\w8a8 -Force
+sima-cli models download --id resnet_50 --variant w8a8 --force
+Expand-Archive models\resnet_50\w8a8\resnet_50_w8a8_default.zip -DestinationPath models\resnet_50\w8a8 -Force
 Copy-Item models\resnet_50\w8a8\resnet_50_w8a8_mpk.tar.gz resnet_50.tar.gz
 ```
 
-Якщо завантажено файл `<id>_<variant>_mpk.tar.gz`, а не ZIP-файл (так буває з моделлю, востаннє зібраною до того, як Model Browser почав пакувати моделі у ZIP-файли), скопіюйте цей файл із `models/<id>/<variant>` замість розпакування.
+Підготовку моделей для всіх навчальних матеріалів описано в розділі [Налаштування навчального посібника](/tutorials/before-you-run).
 
 Завантажте [зразок зображення породи лабрадор](../../images/hello-neat-pcie-labrador.jpg)
 і збережіть його як `assets/sample.png`.
@@ -52,7 +51,7 @@ Copy-Item models\resnet_50\w8a8\resnet_50_w8a8_mpk.tar.gz resnet_50.tar.gz
 (автор фото — Elf, зміни внесли Djmirko та FT2) і поширюється за ліцензією
 [CC BY-SA 3.0](https://creativecommons.org/licenses/by-sa/3.0/).
 
-Тепер ваш робочий каталог має містити:
+Тепер ваша робоча тека має містити:
 
 ```text
 pcie-host-quickstart/
@@ -64,7 +63,7 @@ pcie-host-quickstart/
 
 ## Створення застосунку
 
-Оберіть Python або C++ і створіть застосунок у робочому каталозі.
+Оберіть Python або C++ і створіть застосунок у робочій теці.
 
 <CodeTabs>
 <CodeTab label="Python" lang="python">

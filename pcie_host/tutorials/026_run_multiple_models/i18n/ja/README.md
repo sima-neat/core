@@ -36,31 +36,27 @@ Modalix PCIeカードは、協調処理用のキュー0から5までを公開し
 
 ## Run
 
-PCIeホストパッケージをインストールし、[チュートリアルの設定](/tutorials/before-you-run)で説明されているように、チュートリアルバンドルをダウンロードします。抽出したPCIeエクストラのルートで次のコマンドを実行します。Windowsでは、[Windowsでアプリケーションを実行する](/getting-started/neat-library/pcie-host/#run-applications-on-windows)の説明に従ってチュートリアルを設定し、プログラムを実行します。
-
-このプログラムでは、このディレクトリ内の正確なパス`resnet_50_mpk.tar.gz`と`yolo_v8s_mpk.tar.gz`が必要です。[Model Browser](/tools/model-browser/)から両方のモデルをダウンロードし、ダウンロードしたZIPファイルからアーカイブを展開して、それらの名前で保存します。
+PCIeホストパッケージをインストールし、[チュートリアルの設定](/tutorials/before-you-run)で説明されているように、チュートリアルバンドルをダウンロードします。抽出されたPCIeエクストラルのルートから、両方のモデルをダウンロードします。
 
 ```bash
-sima-cli models download --id resnet_50 --variant w8a8 --output models --force
-sima-cli models download --id yolov8s --variant w8a8 --output models --force
-unzip -o models/resnet_50/w8a8/*.zip resnet_50_w8a8_mpk.tar.gz
-unzip -o models/yolov8s/w8a8/*.zip yolov8s_w8a8_mpk.tar.gz
-mv resnet_50_w8a8_mpk.tar.gz resnet_50_mpk.tar.gz
-mv yolov8s_w8a8_mpk.tar.gz yolo_v8s_mpk.tar.gz
+sima-cli models download --id resnet_50 --variant w8a8 --force
+unzip -p models/resnet_50/w8a8/resnet_50_w8a8_default.zip resnet_50_w8a8_mpk.tar.gz > resnet_50_mpk.tar.gz
+sima-cli models download --id yolov8s --variant w8a8 --force
+unzip -p models/yolov8s/w8a8/yolov8s_w8a8_default.zip yolov8s_w8a8_mpk.tar.gz > yolo_v8s_mpk.tar.gz
 ```
 
-Windowsでは、PowerShellでモデルをダウンロードし、`Expand-Archive`でアーカイブを展開します。
+このプログラムでは、このディレクトリ内の正確なパス`resnet_50_mpk.tar.gz`と`yolo_v8s_mpk.tar.gz`が必要です。各`unzip`コマンドは、ダウンロードしたZIPからそれぞれ1つのファイルを展開します。
+
+Windowsでは、[Windowsでアプリケーションを実行する](/getting-started/neat-library/pcie-host/#run-applications-on-windows)の説明に従ってチュートリアルを設定し、プログラムを実行します。PowerShellでモデルをダウンロードし、`Expand-Archive`でアーカイブを展開します。
 
 ```powershell
-sima-cli models download --id resnet_50 --variant w8a8 --output models --force
-sima-cli models download --id yolov8s --variant w8a8 --output models --force
-Expand-Archive models\resnet_50\w8a8\*.zip -DestinationPath models\resnet_50\w8a8 -Force
-Expand-Archive models\yolov8s\w8a8\*.zip -DestinationPath models\yolov8s\w8a8 -Force
+sima-cli models download --id resnet_50 --variant w8a8 --force
+Expand-Archive models\resnet_50\w8a8\resnet_50_w8a8_default.zip -DestinationPath models\resnet_50\w8a8 -Force
 Copy-Item models\resnet_50\w8a8\resnet_50_w8a8_mpk.tar.gz resnet_50_mpk.tar.gz
+sima-cli models download --id yolov8s --variant w8a8 --force
+Expand-Archive models\yolov8s\w8a8\yolov8s_w8a8_default.zip -DestinationPath models\yolov8s\w8a8 -Force
 Copy-Item models\yolov8s\w8a8\yolov8s_w8a8_mpk.tar.gz yolo_v8s_mpk.tar.gz
 ```
-
-ダウンロードしたファイルが ZIP ファイルではなく `<id>_<variant>_mpk.tar.gz` ファイルの場合（Model Browser がモデルを ZIP ファイルとして提供する前に最後にビルドされたモデルの場合）は、展開せずに `models/<id>/<variant>` からそのファイルをコピーしてください。
 
 Pythonを実行します。
 

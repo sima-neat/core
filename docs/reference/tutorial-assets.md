@@ -24,6 +24,8 @@ model archive path without changing every command:
 | `SIMA_RESNET50_TAR` | Per-model override for ResNet-50 tutorials and tests. |
 | `SIMA_MODEL_TAR` | Shared fallback model archive used by model-backed tests and examples. |
 | `SIMA_YOLO_TAR` | Per-model override for YOLO-style detection tutorials and tests when supported by the script. |
+| `SIMA_NEAT_TUTORIAL_MODEL_RESNET` | ResNet-50 archive for the tutorial tests. The C++ tutorial CTest runs and the Python tutorial tests pass it to the tutorial as `--model`. |
+| `SIMA_NEAT_TUTORIAL_MODEL_YOLO` | YOLOv8s archive for the tutorial tests, used the same way. |
 
 Tutorial commands still accept explicit flags. Prefer `--model <path>` for a
 single run; use environment variables when many commands should share the same
@@ -32,7 +34,13 @@ artifact.
 <ShellCommand prompt="sdk|devkit">
 export SIMA_RESNET50_TAR=/path/to/resnet_50.tar.gz
 export SIMA_YOLO_TAR=/path/to/yolo_v8s.tar.gz
+export SIMA_NEAT_TUTORIAL_MODEL_RESNET=/path/to/resnet_50.tar.gz
+export SIMA_NEAT_TUTORIAL_MODEL_YOLO=/path/to/yolo_v8s.tar.gz
 </ShellCommand>
+
+When a tutorial test variable is unset, the C++ tutorial CTest runs use
+`/tmp/resnet_50.tar.gz` and `/tmp/yolo_v8s.tar.gz`. See
+[Tutorial Setup](/tutorials/before-you-run) to prepare them.
 
 ## Common source-tree paths
 
@@ -81,8 +89,8 @@ If a tutorial prints `SKIP: missing ...` or fails to open a model:
 1. Check the path shown in the message.
 2. Pass the asset explicitly with the tutorial flag.
 3. If you run source-tree tests, set the matching environment variable.
-4. If the asset came from the Model Zoo, confirm the downloaded filename and
-   point the tutorial at the actual `.tar.gz` file.
+4. If the model came from the Model Browser, extract the model archive from the
+   downloaded ZIP and point the tutorial at that `.tar.gz` file.
 
 Do not unpack the model archive by hand for normal runs. Neat expects the
 compiled archive path and handles extraction itself.

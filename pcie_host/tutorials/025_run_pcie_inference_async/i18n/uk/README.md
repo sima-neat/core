@@ -38,25 +38,22 @@
 
 ## Run
 
-Установіть пакет хоста PCIe та завантажте набір навчальних матеріалів, як описано в розділі [Налаштування навчальних матеріалів](/tutorials/before-you-run). Виконайте наведені нижче команди в корені розпакованих додаткових матеріалів PCIe. У Windows налаштуйте навчальні матеріали та запускайте програми, як описано в розділі [Запуск застосунків у Windows](/getting-started/neat-library/pcie-host/#run-applications-on-windows).
-
-Програмі потрібен точний шлях `yolo_v8s_mpk.tar.gz` у цьому каталозі. Якщо файлу ще немає, завантажте YOLOv8s з [Model Browser](/tools/model-browser/), видобудьте архів із завантаженого ZIP-файлу та збережіть його під цією назвою:
+Встановіть пакет PCIe host і завантажте пакет навчального посібника, як описано в [Налаштування навчального посібника.](/tutorials/before-you-run). З кореневої папки розпакованих додаткових матеріалів PCIe завантажте YOLOv8s, якщо він ще не присутній:
 
 ```bash
-sima-cli models download --id yolov8s --variant w8a8 --output models --force
-unzip -o models/yolov8s/w8a8/*.zip yolov8s_w8a8_mpk.tar.gz
-mv yolov8s_w8a8_mpk.tar.gz yolo_v8s_mpk.tar.gz
+sima-cli models download --id yolov8s --variant w8a8 --force
+unzip -p models/yolov8s/w8a8/yolov8s_w8a8_default.zip yolov8s_w8a8_mpk.tar.gz > yolo_v8s_mpk.tar.gz
 ```
 
-У Windows завантажте модель у PowerShell і видобудьте архів за допомогою `Expand-Archive`:
+Програма вимагає точного шляху `yolo_v8s_mpk.tar.gz` у цьому каталозі. Друга команда видобуває його із завантаженого ZIP-файлу.
+
+У Windows налаштуйте навчальні матеріали та запускайте програми, як описано в розділі [Запуск застосунків у Windows](/getting-started/neat-library/pcie-host/#run-applications-on-windows). Завантажте модель у PowerShell і видобудьте архів за допомогою `Expand-Archive`:
 
 ```powershell
-sima-cli models download --id yolov8s --variant w8a8 --output models --force
-Expand-Archive models\yolov8s\w8a8\*.zip -DestinationPath models\yolov8s\w8a8 -Force
+sima-cli models download --id yolov8s --variant w8a8 --force
+Expand-Archive models\yolov8s\w8a8\yolov8s_w8a8_default.zip -DestinationPath models\yolov8s\w8a8 -Force
 Copy-Item models\yolov8s\w8a8\yolov8s_w8a8_mpk.tar.gz yolo_v8s_mpk.tar.gz
 ```
-
-Якщо завантажено файл `<id>_<variant>_mpk.tar.gz`, а не ZIP-файл (так буває з моделлю, востаннє зібраною до того, як Model Browser почав пакувати моделі у ZIP-файли), скопіюйте цей файл із `models/<id>/<variant>` замість розпакування.
 
 Запустіть Python:
 

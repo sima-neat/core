@@ -214,7 +214,7 @@ opt.preprocess.resize.placement = pyneat.LetterboxPlacement.TopLeft
 | --- | --- |
 | `opt.preprocess.color_convert.input_format` | 來源格式提示：`RGB`、`BGR`、`GRAY8`、`NV12`、`NV16`、`I420` 或 `Auto`。|
 | `opt.preprocess.color_convert.output_format` | 模型輸入的色彩空間，通常為 `RGB`、`BGR` 或 `GRAY8`。|
-| `opt.preprocess.normalize.enable` | 啟用或停用平均值/標準差正規化。|
+| `opt.preprocess.normalize.enable` | 啟用或停用平均值/標準差正規化。`Auto` 會在選取了正規化預設，或 `normalize.has_explicit_stats` 為 true 時啟用正規化。正規化為 `Off` 時，由模型管理的 INT8 影像階段仍會套用模型包的量化器。 |
 | `opt.preprocess.normalize.mean` | 每個通道的平均值。與模型的訓練預處理方式相符。|
 | `opt.preprocess.normalize.stddev` | 每個通道的除數。使用與模型訓練期間相同的正規化通道統計資訊，例如 ImageNet 樣式的數值，接近 `{0.229,0.224,0.225}`。|
 | 當模型預期輸出為量化格式時，規劃器/使用者控制量化輸出的設定。| `opt.preprocess.quantize.enable` |
@@ -294,7 +294,7 @@ roi_tensors = pyneat.stages.preproc(
 
 ## 元資料與 BoxDecode
 
-`Preproc` 會寫入預處理的元資料，以便後續節點能夠正確地反轉影像轉換。特別是，`SimaBoxDecode` 會使用這些元資料，將檢測框映射回原始影像或 ROI 座標空間。
+`Preproc` 會寫入預處理的元資料，以便後續節點能夠正確地反轉影像轉換。對於[支援的設定檔](/reference/boxdecode_decode_types#crop-coordinate-mapping)，`SimaBoxDecode` 會以完整來源影格座標回報 ROI 偵測結果。
 
 重要的元資料欄位包括：
 

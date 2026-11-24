@@ -64,42 +64,45 @@ source ~/pyneatpcie/bin/activate
 python3 -c "import pyneatpcie; print('pyneatpcie ready')"
 </ShellCommand>
 
-## 4. Підготуйте архіви моделей.
+## 4. Підготуйте архіви моделей {#prepare-model-archives}
 
-Завантажте моделі, які використовують навчальні матеріали, з [Model Browser](/tools/model-browser/) і видобудьте архів із кожного ZIP-файлу:
+У навчальних матеріалах використовуються ResNet-50 і YOLOv8s із [Model Browser](/tools/model-browser/). Завантажити їх можна за допомогою `sima-cli`, який надає Palette SDK.
 
-<ShellCommand prompt="sdk|devkit|pcie-host">
-sima-cli models download --id resnet_50 --variant w8a8 --output models --force
-sima-cli models download --id yolov8s --variant w8a8 --output models --force
-unzip -o models/resnet_50/w8a8/*.zip resnet_50_w8a8_mpk.tar.gz
-unzip -o models/yolov8s/w8a8/*.zip yolov8s_w8a8_mpk.tar.gz
+Для навчальних матеріалів Neat Library завантажте обидві моделі й видобудьте кожен архів моделі з його ZIP-файлу за шляхом, який команди навчальних матеріалів передають як `--model`:
+
+<ShellCommand prompt="sdk|devkit">
+sima-cli models download --id resnet_50 --variant w8a8 --force
+unzip -p models/resnet_50/w8a8/resnet_50_w8a8_default.zip resnet_50_w8a8_mpk.tar.gz > /tmp/resnet_50.tar.gz
+sima-cli models download --id yolov8s --variant w8a8 --force
+unzip -p models/yolov8s/w8a8/yolov8s_w8a8_default.zip yolov8s_w8a8_mpk.tar.gz > /tmp/yolo_v8s.tar.gz
 </ShellCommand>
 
-Якщо завантажено файл `<id>_<variant>_mpk.tar.gz`, а не ZIP-файл (так буває з моделлю, востаннє зібраною до того, як Model Browser почав пакувати моделі у ZIP-файли), скопіюйте цей файл із `models/<id>/<variant>` замість розпакування. Якщо `unzip` не встановлено, натомість виконайте `python3 -m zipfile -e models/yolov8s/w8a8/*.zip .` і так само для `resnet_50`; ця команда розпаковує всі файли із ZIP-файлу в поточний каталог.
-
-Навчальні матеріали Neat Library приймають `--model`, тому ви можете безпосередньо передавати видобутий архів. У навчальних матеріалах щодо PCIe використовуються фіксовані імена файлів у кореневій теці додаткових матеріалів PCIe:
+У навчальних матеріалах щодо PCIe використовуються фіксовані імена файлів у кореневій теці додаткових матеріалів PCIe:
 
 | Навчальний посібник з PCIe | Необхідний файл моделі. |
 | --- | --- |
 | Запустіть свою першу модель через інтерфейс PCIe. | `yolo_v8s_mpk.tar.gz` |
 | Запустіть асинхронний процес виведення даних PCIe. | `yolo_v8s_mpk.tar.gz` |
 | Запустіть кілька моделей. | `resnet_50_mpk.tar.gz` та `yolo_v8s_mpk.tar.gz` |
+| Обгорніть зовнішню пам’ять тензора. | `yolo_v8s_mpk.tar.gz` |
 
-Для навчальних матеріалів щодо PCIe виконайте команди в кореневій теці додаткових матеріалів PCIe і перейменуйте архіви:
+Кожне завантаження — це ZIP-файл у `models/<model id>/<variant>/`. Завантажте моделі, потрібні для навчального матеріалу, з кореневої теки додаткових матеріалів PCIe і видобудьте кожен архів моделі з його ZIP-файлу під необхідною назвою:
 
 <ShellCommand prompt="pcie-host">
-mv resnet_50_w8a8_mpk.tar.gz resnet_50_mpk.tar.gz
-mv yolov8s_w8a8_mpk.tar.gz yolo_v8s_mpk.tar.gz
+sima-cli models download --id resnet_50 --variant w8a8 --force
+unzip -p models/resnet_50/w8a8/resnet_50_w8a8_default.zip resnet_50_w8a8_mpk.tar.gz > resnet_50_mpk.tar.gz
+sima-cli models download --id yolov8s --variant w8a8 --force
+unzip -p models/yolov8s/w8a8/yolov8s_w8a8_default.zip yolov8s_w8a8_mpk.tar.gz > yolo_v8s_mpk.tar.gz
 </ShellCommand>
 
 У Windows виконайте ці команди PowerShell у своїй копії навчальних матеріалів:
 
 ```powershell
-sima-cli models download --id resnet_50 --variant w8a8 --output models --force
-sima-cli models download --id yolov8s --variant w8a8 --output models --force
-Expand-Archive models\resnet_50\w8a8\*.zip -DestinationPath models\resnet_50\w8a8 -Force
-Expand-Archive models\yolov8s\w8a8\*.zip -DestinationPath models\yolov8s\w8a8 -Force
+sima-cli models download --id resnet_50 --variant w8a8 --force
+Expand-Archive models\resnet_50\w8a8\resnet_50_w8a8_default.zip -DestinationPath models\resnet_50\w8a8 -Force
 Copy-Item models\resnet_50\w8a8\resnet_50_w8a8_mpk.tar.gz resnet_50_mpk.tar.gz
+sima-cli models download --id yolov8s --variant w8a8 --force
+Expand-Archive models\yolov8s\w8a8\yolov8s_w8a8_default.zip -DestinationPath models\yolov8s\w8a8 -Force
 Copy-Item models\yolov8s\w8a8\yolov8s_w8a8_mpk.tar.gz yolo_v8s_mpk.tar.gz
 ```
 

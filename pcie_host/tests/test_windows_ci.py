@@ -1287,8 +1287,7 @@ class WindowsCiContracts(unittest.TestCase):
       text = path.read_text(encoding="utf-8")
       if "uses: ./.github/workflows/vulcan-ci.yml" in text:
         callers[path.name] = re.search(r"(?m)^name: (.+)$", text)[1].strip()
-    self.assertEqual(set(callers), {
-        "long-tests-weekly.yml", "vulcan-fuzz-nightly.yml", "zero-skip.yml"})
+    self.assertEqual(set(callers), {"long-tests-weekly.yml", "vulcan-fuzz-nightly.yml"})
     gate_flag = re.search(r"(?m)^          WINDOWS_PCIE_CI: (.+)$", job("validation-complete"))[1]
     for workflow_name in (*callers.values(), "Vulcan CI"):
       with self.subTest(workflow=workflow_name):

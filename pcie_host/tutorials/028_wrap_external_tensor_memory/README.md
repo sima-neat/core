@@ -67,33 +67,23 @@ active.
 ## Run
 
 Install the PCIe host package and download the tutorial bundle as described in
-[Tutorial Setup](/tutorials/before-you-run). Run the following
-commands from the extracted PCIe extras root.
-On Windows, set up the tutorials and run the programs as described in
-[Run applications on Windows](/getting-started/neat-library/pcie-host/#run-applications-on-windows).
-
-The program requires `yolo_v8s_mpk.tar.gz` in this directory. Download YOLOv8s
-from the [Model Browser](/tools/model-browser/), extract the archive from the
-downloaded ZIP file, and save it under that name:
+[Tutorial Setup](/tutorials/before-you-run). Download YOLOv8s into the extracted
+PCIe extras root:
 
 ```bash
-sima-cli models download --id yolov8s --variant w8a8 --output models --force
-unzip -o models/yolov8s/w8a8/*.zip yolov8s_w8a8_mpk.tar.gz
-mv yolov8s_w8a8_mpk.tar.gz yolo_v8s_mpk.tar.gz
+sima-cli models download --id yolov8s --variant w8a8 --force
+unzip -p models/yolov8s/w8a8/yolov8s_w8a8_default.zip yolov8s_w8a8_mpk.tar.gz > yolo_v8s_mpk.tar.gz
 ```
 
-On Windows, download the model in PowerShell and extract the archive with
-`Expand-Archive`:
+On Windows, set up the tutorials and run the programs as described in
+[Run applications on Windows](/getting-started/neat-library/pcie-host/#run-applications-on-windows).
+Download the model in PowerShell and extract the archive with `Expand-Archive`:
 
 ```powershell
-sima-cli models download --id yolov8s --variant w8a8 --output models --force
-Expand-Archive models\yolov8s\w8a8\*.zip -DestinationPath models\yolov8s\w8a8 -Force
+sima-cli models download --id yolov8s --variant w8a8 --force
+Expand-Archive models\yolov8s\w8a8\yolov8s_w8a8_default.zip -DestinationPath models\yolov8s\w8a8 -Force
 Copy-Item models\yolov8s\w8a8\yolov8s_w8a8_mpk.tar.gz yolo_v8s_mpk.tar.gz
 ```
-
-If the download is a `<id>_<variant>_mpk.tar.gz` file instead of a ZIP file, as
-for a model last built before Model Browser packaged models as ZIP files, copy
-that file from `models/<id>/<variant>` instead of extracting it.
 
 **C++ (prebuilt):**
 

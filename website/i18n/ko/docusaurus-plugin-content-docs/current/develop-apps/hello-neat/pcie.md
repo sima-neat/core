@@ -20,14 +20,13 @@ PCIe 공동 처리 방식을 사용하면 애플리케이션 제어 및 입력 �
 
 ## 모델과 이미지를 가져오세요
 
-호스트 시스템에 작업 디렉터리를 생성하고 [Model Browser](/tools/model-browser/)에서 ResNet-50 `w8a8` 모델을 다운로드합니다. 다운로드한 ZIP 파일에서 아카이브를 추출하여 `resnet_50.tar.gz`로 저장하세요.
+호스트 시스템에 작업 디렉터리를 생성하고, Model Browser에서 ResNet-50을 다운로드한 다음, 다운로드한 ZIP에서 모델 아카이브를 `resnet_50.tar.gz`로 추출합니다.
 
 <ShellCommand prompt="pcie-host">
 mkdir -p pcie-host-quickstart/assets
 cd pcie-host-quickstart
-sima-cli models download --id resnet_50 --variant w8a8 --output models --force
-unzip -o models/resnet_50/w8a8/*.zip resnet_50_w8a8_mpk.tar.gz
-mv resnet_50_w8a8_mpk.tar.gz resnet_50.tar.gz
+sima-cli models download --id resnet_50 --variant w8a8 --force
+unzip -p models/resnet_50/w8a8/resnet_50_w8a8_default.zip resnet_50_w8a8_mpk.tar.gz > resnet_50.tar.gz
 </ShellCommand>
 
 Windows에서는 PowerShell에서 같은 단계를 실행하고 `Expand-Archive`로 아카이브를 추출하세요.
@@ -35,12 +34,12 @@ Windows에서는 PowerShell에서 같은 단계를 실행하고 `Expand-Archive`
 ```powershell
 New-Item -ItemType Directory -Force pcie-host-quickstart\assets | Out-Null
 Set-Location pcie-host-quickstart
-sima-cli models download --id resnet_50 --variant w8a8 --output models --force
-Expand-Archive models\resnet_50\w8a8\*.zip -DestinationPath models\resnet_50\w8a8 -Force
+sima-cli models download --id resnet_50 --variant w8a8 --force
+Expand-Archive models\resnet_50\w8a8\resnet_50_w8a8_default.zip -DestinationPath models\resnet_50\w8a8 -Force
 Copy-Item models\resnet_50\w8a8\resnet_50_w8a8_mpk.tar.gz resnet_50.tar.gz
 ```
 
-다운로드한 파일이 ZIP 파일이 아니라 `<id>_<variant>_mpk.tar.gz` 파일인 경우(Model Browser가 모델을 ZIP 파일로 패키징하기 전에 마지막으로 빌드된 모델), 압축을 풀지 말고 `models/<id>/<variant>`에서 해당 파일을 복사하세요.
+모든 튜토리얼의 모델 준비는 [튜토리얼 설정](/tutorials/before-you-run)을 참조하세요.
 
 [래브라도어 견종 이미지 예시](../../images/hello-neat-pcie-labrador.jpg)를 다운로드하고 `assets/sample.png`로 저장하세요.
 

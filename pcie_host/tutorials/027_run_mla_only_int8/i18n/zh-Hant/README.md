@@ -45,24 +45,22 @@ q = clamp(round(x / scale) + zero_point, -128, 127)
 
 依照[教學設定](/tutorials/before-you-run)的說明安裝 PCIe 主機套件並下載教學套件包。在 Windows 上，請依照[在 Windows 上執行應用程式](/getting-started/neat-library/pcie-host/#run-applications-on-windows)的說明設定教學課程並執行程式。
 
-本教學執行 [Model Browser](/tools/model-browser/) 的 YOLO26n `w8a8` 封存檔，它是為直接 MLA 輸入與輸出而編譯的。在解壓縮後的 PCIe extras 根目錄下載模型，並從下載的 ZIP 檔案中解壓縮封存檔：
+本教學執行 Model Browser 的 YOLO26n `w8a8` 套件，它是為直接 MLA 輸入與輸出而編譯的。將它下載到解壓縮後的 PCIe extras 根目錄，並取出 MPK 封存檔：
 
 ```bash
-sima-cli models download --id yolo26n --variant w8a8 --output models --force
-unzip -o models/yolo26n/w8a8/*.zip yolo26n_w8a8_mpk.tar.gz
+sima-cli models download --id yolo26n --variant w8a8 --force
+unzip -p models/yolo26n/w8a8/yolo26n_w8a8_default.zip yolo26n_w8a8_mpk.tar.gz > yolo26n_w8a8_mpk.tar.gz
 ```
 
 在 Windows 上，請在 PowerShell 中下載模型，並使用 `Expand-Archive` 解壓縮封存檔：
 
 ```powershell
-sima-cli models download --id yolo26n --variant w8a8 --output models --force
-Expand-Archive models\yolo26n\w8a8\*.zip -DestinationPath models\yolo26n\w8a8 -Force
+sima-cli models download --id yolo26n --variant w8a8 --force
+Expand-Archive models\yolo26n\w8a8\yolo26n_w8a8_default.zip -DestinationPath models\yolo26n\w8a8 -Force
 Copy-Item models\yolo26n\w8a8\yolo26n_w8a8_mpk.tar.gz .
 ```
 
-如果下載的是 `<id>_<variant>_mpk.tar.gz` 檔案而不是 ZIP 檔案（例如 Model Browser 開始以 ZIP 檔案封裝模型之前最後一次建置的模型），請直接從 `models/<id>/<variant>` 複製該檔案，不要解壓縮。
-
-其他封存檔若以 Model SDK 的 `tessellate_parameters` 設定 `enable_mla=True`、每個輸入使用 `HWC` DRAM 版面配置、每個輸出使用 `HWC16` 編譯，也符合條件。改在 CVU 上進行鑲嵌的封存檔，例如 Model Zoo 的 `yolo_v8s` 建置，在啟用 `mla_only` 時會被拒絕：
+其他封存檔若以 Model SDK 的 `tessellate_parameters` 設定 `enable_mla=True`、每個輸入使用 `HWC` DRAM 版面配置、每個輸出使用 `HWC16` 編譯，也符合條件。改在 CVU 上進行鑲嵌的封存檔在啟用 `mla_only` 時會被拒絕：
 
 ```text
 mla_only does not support stage 'tessellate_quantize_0_MLA_0/...' (tess)

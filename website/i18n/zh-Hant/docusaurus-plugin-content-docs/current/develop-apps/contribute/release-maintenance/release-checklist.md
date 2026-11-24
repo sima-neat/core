@@ -24,18 +24,15 @@ slug: /develop-apps/contribute/release-checklist
 5. 在生成步驟之後，工作樹是乾淨的。
 6. 在提交和發布參考版本中，沒有未解決的崩潰/正確性錯誤。
 7. 崩潰/正確性/壓力/消毒器閘道在發布參考版本中顯示為綠色。
-8. 模型存檔安全閘道顯示為綠色（`model-archive-security-gate`）。
-9. 安裝煙霧測試閘道顯示為綠色（`install-smoke`）。
-10. 性能回歸閘道顯示為綠色（`perf-regression-gate`）。
-11. 穩定性測試通道對於發布標籤顯示為綠色（`soak-weekly`）。
-12. 模糊測試通道對於發布候選版本顯示為綠色（`fuzz-nightly`）。
-13. 零跳過閘道對於嚴格測試通道顯示為綠色（`zero-skip-gate`）。
-14. 必需的治理檔案存在且有效：
+8. 穩定性測試通道對於發布標籤顯示為綠色（`soak-weekly`）。
+9. 模糊測試通道對於發布候選版本顯示為綠色（`fuzz-nightly`）。
+10. 零跳過閘道對於嚴格測試通道顯示為綠色（`zero-skip-gate`）。
+11. 必需的治理檔案存在且有效：
    - `.github/CODEOWNERS`
    - `.github/PULL_REQUEST_TEMPLATE.md`
    - `CONTRIBUTING.md`
    - `docs/develop-apps/contribute/release-checklist.md`
-15. 發布元資料已完成：
+12. 發布元資料已完成：
    - `project(SimaNeat VERSION x.y.z)` 在 `CMakeLists.txt` 中更新
    - `package-version` 和 `platform-version` 在 `deps/manifest.json` 中更新（如果需要）
    - `modelzoo-version` 顯式選擇經過驗證的 Model Zoo 發布版本，當其與 `platform-version` 不同時；如果省略，Model Zoo 解析將預設為 `platform-version`
@@ -55,9 +52,6 @@ slug: /develop-apps/contribute/release-checklist
 - `configure-build-sanity`
 - `docs-link-check`
 - `crash-correctness-gate`
-- `model-archive-security-gate`
-- `install-smoke`
-- `perf-regression-gate`
 - `zero-skip-gate`
 - `soak-weekly`（對於發布標籤是必需的）
 - `fuzz-nightly`（對於發布候選版本是必需的）
@@ -67,22 +61,13 @@ slug: /develop-apps/contribute/release-checklist
 
 這些檢查在以下位置實施：
 
-- `.github/workflows/release-gate.yml`
+- `.github/workflows/vulcan-ci.yml`
 - `.github/workflows/test-crash-correctness-nightly.yml`
-- `.github/workflows/model-archive-security.yml`
-- `.github/workflows/install-smoke.yml`
-- `.github/workflows/perf-regression.yml`
-- `.github/workflows/zero-skip.yml`
 - `.github/workflows/test-soak-weekly.yml`
 - `.github/workflows/long-tests-weekly.yml`
 - `.github/workflows/vulcan-fuzz-nightly.yml`
 - `.github/workflows/test-stress-nightly.yml`
 - `.github/workflows/sanitizers.yml`
-
-觸發所有權，以避免重複執行閘道：
-
-- 非發布版 PR 合併到 `main` 時，會從其獨立的工作流程中執行 `model-archive-security`、`install-smoke`、`perf-regression` 和 `zero-skip`。
-- 發布版 PR（`release/*` 分支的頂端提交）和發布版分支（`release/**`、`v*`）會從 `.github/workflows/release-gate.yml` 執行相同的流程。
 
 ## GitHub 分支和標籤保護
 

@@ -181,6 +181,7 @@ def _image_options(image: np.ndarray) -> pcie.ModelOptions:
   options.preprocess.color_convert.input_format = pcie.ColorFormat.BGR
   options.preprocess.resize.enable = pcie.AutoFlag.On
   options.preprocess.resize.mode = pcie.ResizeMode.Letterbox
+  options.preprocess.normalize.enable = pcie.AutoFlag.On
   return options
 
 
