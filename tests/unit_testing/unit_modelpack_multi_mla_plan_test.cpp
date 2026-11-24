@@ -15,6 +15,7 @@
 #include "pipeline/internal/RenderedMlaContractQuery.h"
 #include "pipeline/internal/SelectedStageBoundary.h"
 #include "pipeline/internal/sima/MpkContract.h"
+#include "pipeline/internal/sima/static_contract/PhysicalExecutionPlan.h"
 #include "test_main.h"
 
 #include <glib.h>
@@ -106,37 +107,107 @@ void write_host_module(const std::filesystem::path& path, const std::uint64_t ro
   write_host_module(path, rows, {"host_input"});
 }
 
-void write_mla_a65_manifest(const std::filesystem::path& path, const std::uint64_t rows) {
+// Where a CVU cast sits relative to the terminal A65 of the synthetic pack.
+enum class MlaTailCast { None, BeforeA65, AfterA65 };
+
+std::string mla_elf_name(const std::size_t index) {
+  return index == 0U ? "model.elf" : "model_" + std::to_string(index) + ".elf";
+}
+
+// `mla_count` blocks of MLA -> A65 (-> cast -> next MLA), ending in a terminal A65. `cast` adds a
+// bfloat16 cast between the last MLA and that A65, or after it. Zero MLA stages leaves only the
+// A65.
+void write_mla_a65_manifest(const std::filesystem::path& path, const std::uint64_t rows,
+                            const std::size_t mla_count = 1U,
+                            const MlaTailCast cast = MlaTailCast::None) {
+  using json = nlohmann::ordered_json;
   const std::uint64_t logical_bytes = rows * 1225U * 4U;
+  const auto tensor = [&](const std::string& name, const std::uint64_t bytes,
+                          const std::string& dtype) {
+    return json{{"name", name}, {"size", bytes}, {"dtype", dtype}, {"shape", {rows, 1225U}}};
+  };
+  const auto config_type = [](const json& node) {
+    return json::array({{{"scalar", node["dtype"]}, {"shape", node["shape"]}}});
+  };
+  const auto cast_plugin = [&](const std::string& name, const int sequence, const json& in,
+                               const json& out) {
+    return json{{"name", name},
+                {"sequence", sequence},
+                {"processor", "EV74"},
+                {"type", "sgpProcess"},
+                {"config_params",
+                 {{"desired_batch_size", 1},
+                  {"actual_batch_size", 1},
+                  {"kernel", "cast_transform"},
+                  {"params",
+                   {{"out_dtype", out["dtype"]},
+                    {"input_shapes", json::array({in["shape"]})},
+                    {"output_shapes", json::array({out["shape"]})}}}}},
+                {"input_nodes", json::array({in})},
+                {"output_nodes", json::array({out})}};
+  };
+  json model_input = tensor("input", logical_bytes, "float32");
+  if (mla_count > 0U)
+    model_input = {{"name", "input"}, {"size", 16}, {"dtype", "float32"}, {"shape", {1, 4}}};
+  json previous = model_input;
+  json plugins = json::array();
+  int sequence = 1;
+  for (std::size_t index = 0U; index < std::max<std::size_t>(mla_count, 1U); ++index) {
+    const bool last = index + 1U >= mla_count;
+    json a65_input = previous;
+    if (mla_count > 0U) {
+      const bool bf16_out = last && cast == MlaTailCast::BeforeA65;
+      const json mla_out =
+          tensor("pitched_" + std::to_string(index), bf16_out ? logical_bytes / 2U : logical_bytes,
+                 bf16_out ? "bfloat16" : "float32");
+      plugins.push_back({{"name", "MLA_" + std::to_string(sequence - 1)},
+                         {"sequence", sequence++},
+                         {"processor", "MLA"},
+                         {"type", "sgpProcess"},
+                         {"config_params",
+                          {{"desired_batch_size", 1},
+                           {"actual_batch_size", 1},
+                           {"number_of_quads_to_user", 4},
+                           {"input_types", config_type(previous)},
+                           {"output_types", config_type(mla_out)}}},
+                         {"input_nodes", json::array({previous})},
+                         {"output_nodes", json::array({mla_out})},
+                         {"resources", {{"executable", mla_elf_name(index)}}}});
+      a65_input = mla_out;
+      if (bf16_out) {
+        a65_input = tensor("cast_in_" + std::to_string(index), logical_bytes, "float32");
+        plugins.push_back(
+            cast_plugin("cast_" + std::to_string(sequence - 1), sequence++, mla_out, a65_input));
+      }
+    }
+    const bool publishes = last && cast != MlaTailCast::AfterA65;
+    const json a65_out = tensor(publishes ? "output" : "host_out_" + std::to_string(index),
+                                logical_bytes, "float32");
+    plugins.push_back({{"name", "APU_" + std::to_string(sequence - 1)},
+                       {"sequence", sequence++},
+                       {"processor", "A65"},
+                       {"type", "sgpProcess"},
+                       {"config_params",
+                        {{"input_names", json::array({"host_input"})},
+                         {"input_types", config_type(a65_input)},
+                         {"output_types", config_type(a65_out)}}},
+                       {"input_nodes", json::array({a65_input})},
+                       {"output_nodes", json::array({a65_out})},
+                       {"resources", {{"executable", "host.so"}}}});
+    if (!last || cast == MlaTailCast::AfterA65) {
+      previous = tensor(last ? "output" : "cast_out_" + std::to_string(index), logical_bytes / 2U,
+                        "bfloat16");
+      plugins.push_back(
+          cast_plugin("cast_" + std::to_string(sequence - 1), sequence++, a65_out, previous));
+    }
+  }
+  const json manifest{{"name", "modelpack-mla-a65-pitch"},
+                      {"model_sdk_version", "2.1.0"},
+                      {"input_nodes", json::array({model_input})},
+                      {"plugins", plugins}};
   std::ofstream output(path);
   require(output.is_open(), "failed to create synthetic MLA-to-A65 MPK");
-  output << R"json({
-    "name":"modelpack-mla-a65-pitch","model_sdk_version":"2.1.0",
-    "input_nodes":[{"name":"input","size":16}],
-    "plugins":[
-      {"name":"MLA_0","sequence":1,"processor":"MLA","type":"sgpProcess",
-       "config_params":{"desired_batch_size":1,"actual_batch_size":1,
-                        "number_of_quads_to_user":4,
-                        "input_types":[{"scalar":"float32","shape":[1,4]}],
-                        "output_types":[{"scalar":"float32","shape":[)json"
-         << rows << R"json(,1225]}]},
-       "input_nodes":[{"name":"input","size":16}],
-       "output_nodes":[{"name":"pitched","size":)json"
-         << logical_bytes << R"json(}],
-       "resources":{"executable":"model.elf"}},
-      {"name":"APU_1","sequence":2,"processor":"A65","type":"sgpProcess",
-       "config_params":{"input_names":["host_input"],
-                        "input_types":[{"scalar":"float32","shape":[)json"
-         << rows << R"json(,1225]}],
-                        "output_types":[{"scalar":"float32","shape":[)json"
-         << rows << R"json(,1225]}]},
-       "input_nodes":[{"name":"pitched","size":)json"
-         << logical_bytes << R"json(}],
-       "output_nodes":[{"name":"output","size":)json"
-         << logical_bytes << R"json(}],
-       "resources":{"executable":"host.so"}}
-    ]
-  })json";
+  output << manifest.dump(2);
   require(output.good(), "failed to write synthetic MLA-to-A65 MPK");
 }
 
@@ -871,17 +942,23 @@ RUN_TEST(
       fs::remove(transform_archive, ec);
       fs::remove_all(transform_package, ec);
 
-      const auto make_mla_a65_package = [&](const std::string& label, const std::uint64_t rows) {
+      const auto make_mla_a65_package = [&](const std::string& label, const std::uint64_t rows,
+                                            const std::size_t mla_count = 1U,
+                                            const MlaTailCast cast = MlaTailCast::None) {
         const fs::path package = root.parent_path() / label;
         fs::remove_all(package, ec);
         fs::create_directories(package / "etc", ec);
         fs::create_directories(package / "lib", ec);
         fs::create_directories(package / "share", ec);
         require(!ec, "failed to create synthetic MLA-to-A65 package layout");
-        write_mla_a65_manifest(package / "etc" / "model_mpk.json", rows);
-        write_topology_elf(package / "share" / "model.elf",
-                           "data.ifm.persistent.afe_direct_input_0.b0", 16U,
-                           "data.ofm.persistent.afe_mla_output_0.b0", rows * 4912U);
+        write_mla_a65_manifest(package / "etc" / "model_mpk.json", rows, mla_count, cast);
+        for (std::size_t index = 0U; index < mla_count; ++index) {
+          const bool bf16_out = index + 1U == mla_count && cast == MlaTailCast::BeforeA65;
+          write_topology_elf(package / "share" / mla_elf_name(index),
+                             "data.ifm.persistent.afe_direct_input_0.b0", index == 0U ? 16U : 2450U,
+                             "data.ofm.persistent.afe_mla_output_0.b0",
+                             bf16_out ? 2464U : rows * 4912U);
+        }
         write_host_module(package / "lib" / "host.so", rows);
         return package;
       };
@@ -925,6 +1002,109 @@ RUN_TEST(
               singleton_facts[1].transport_compiled->runtime_contract.logical_inputs[0].shape ==
                   std::vector<std::int64_t>({1, 1225}),
           "[1,1225] QMLA pitch is dense-address-equivalent and must remain valid for A65");
+
+      // The model/application boundary follows the last compute command (MLA or A65). A cast
+      // between the last MLA and a terminal A65 is inference work, and a cast after a terminal
+      // A65 is post-processing.
+      using simaai::neat::internal::PostRouteStageKind;
+      const auto find_fact = [](const auto& all_facts, const std::string& stage_name) {
+        return std::find_if(all_facts.begin(), all_facts.end(),
+                            [&](const auto& fact) { return fact.stage_name == stage_name; });
+      };
+      const auto plan_route = [&](const ModelPack& pack) {
+        const auto capability = simaai::neat::internal::extract_route_capability(
+            pack, simaai::neat::internal::PreprocessPlannerResult{});
+        return simaai::neat::internal::build_route_plan(
+            singleton_options, simaai::neat::internal::build_model_semantics(pack), &capability,
+            &pack);
+      };
+      for (const std::size_t mla_count : {std::size_t{1U}, std::size_t{2U}}) {
+        const std::string label =
+            std::to_string(mla_count) + "-MLA pack, cast before terminal A65: ";
+        const fs::path cast_package = make_mla_a65_package("neat-modelpack-cast-before-a65-" +
+                                                               std::to_string(mla_count) + "-unit",
+                                                           1U, mla_count, MlaTailCast::BeforeA65);
+        ModelPack cast_model(cast_package.string());
+        cast_model.prepare_for_execution();
+        const auto cast_plan = cast_model.execution_plan();
+        const auto& infer = cast_plan.infer;
+        require(cast_plan.post.empty(),
+                label + "the cast feeding the A65 must not be post-processing");
+        require(infer.size() >= 3U &&
+                    infer[infer.size() - 1U].kind == ExecutionStageKind::HostTvm &&
+                    infer[infer.size() - 2U].kind == ExecutionStageKind::Cast &&
+                    infer[infer.size() - 3U].kind == ExecutionStageKind::Mla,
+                label + "inference must end with the MLA, the cast and the A65");
+        const auto cast_full = cast_model.stage_facts_for_model_stage(ModelStage::Full);
+        require(cast_model.stage_facts_for_model_stage(ModelStage::MlaOnly).size() ==
+                    cast_full.size(),
+                label + "the MLA-only view must keep the cast");
+        // The cast feeding the terminal A65 is the last cast of the plan, wherever it landed.
+        std::string cast_name;
+        for (const auto* region : {&cast_plan.infer, &cast_plan.post})
+          for (const auto& stage : *region)
+            if (stage.kind == ExecutionStageKind::Cast)
+              cast_name = stage.stage_name;
+        const auto cast_fact = find_fact(cast_full, cast_name);
+        const auto a65_fact = find_fact(cast_full, infer.back().stage_name);
+        require(cast_fact != cast_full.end() && cast_fact->processcvu_contract &&
+                    cast_fact->processcvu_contract->physical_command_role ==
+                        sc::PhysicalCommandRole::Interstitial,
+                label + "the cast feeding the A65 must be an interstitial command");
+        require(a65_fact != cast_full.end() && cast_fact < a65_fact,
+                label + "the cast must run before the A65 that consumes it");
+        const auto cast_route = plan_route(cast_model);
+        require(!cast_route.include_post_stage && cast_route.post_chain.empty() &&
+                    cast_route.selected_post_kind == PostRouteStageKind::None,
+                label + "the route must not add a post stage");
+        require(!cast_route.egress_contracts.empty() &&
+                    cast_route.egress_contracts.front().source_stage == infer.back().stage_name,
+                label + "the route must publish the terminal A65 output");
+      }
+
+      const fs::path post_cast_package =
+          make_mla_a65_package("neat-modelpack-cast-after-a65-unit", 1U, 1U, MlaTailCast::AfterA65);
+      ModelPack post_cast_model(post_cast_package.string());
+      post_cast_model.prepare_for_execution();
+      const auto post_cast_plan = post_cast_model.execution_plan();
+      require(post_cast_plan.post.size() == 1U &&
+                  post_cast_plan.post.front().kind == ExecutionStageKind::Cast &&
+                  !post_cast_plan.infer.empty() &&
+                  post_cast_plan.infer.back().kind == ExecutionStageKind::HostTvm,
+              "a cast after the terminal A65 must be the only post stage");
+      const auto post_cast_full = post_cast_model.stage_facts_for_model_stage(ModelStage::Full);
+      require(post_cast_model.stage_facts_for_model_stage(ModelStage::MlaOnly).size() + 1U ==
+                  post_cast_full.size(),
+              "the MLA-only view must end at the terminal A65");
+      const auto post_cast_fact = find_fact(post_cast_full, post_cast_plan.post.front().stage_name);
+      require(post_cast_fact != post_cast_full.end() && post_cast_fact->processcvu_contract &&
+                  post_cast_fact->processcvu_contract->physical_command_role ==
+                      sc::PhysicalCommandRole::Egress,
+              "a cast after the terminal A65 must be an egress command");
+      require(post_cast_model.infer_output_name() == post_cast_plan.infer.back().stage_name,
+              "the inference output name must be the last inference stage");
+      const auto post_cast_route = plan_route(post_cast_model);
+      require(post_cast_route.include_post_stage && post_cast_route.post_chain.size() == 1U &&
+                  !post_cast_route.egress_contracts.empty() &&
+                  post_cast_route.egress_contracts.front().source_stage ==
+                      post_cast_plan.post.front().stage_name,
+              "the route must keep the trailing cast as its post stage and publish its output");
+
+      // A pack without any MLA stage is refused, naming only the criterion that is applied.
+      const fs::path no_mla_package = make_mla_a65_package("neat-modelpack-no-mla-unit", 1U, 0U);
+      std::string no_mla_refusal;
+      try {
+        const ModelPack no_mla_model(no_mla_package.string());
+        (void)simaai::neat::internal::inspect_preprocess_capabilities(no_mla_model);
+      } catch (const std::runtime_error& failure) {
+        no_mla_refusal = failure.what();
+      }
+      require(!no_mla_refusal.empty(), "a pack without an MLA stage must be refused");
+      require_contains(no_mla_refusal, "processor='MLA'",
+                       "the refusal must name the MLA processor criterion");
+      require(no_mla_refusal.find("kernel='") == std::string::npos,
+              "the refusal must not advertise a kernel criterion that is not applied: " +
+                  no_mla_refusal);
 
       // A terminal consumer changes only the rendered execution boundary.
       // The compiler-authored semantic/physical source and its audit

@@ -517,7 +517,7 @@ PreprocessCapabilities inspect_preprocess_capabilities(const ModelPack& pack) {
   if (!mla_stage) {
     throw std::runtime_error(
         "preprocess planner: MPK contract is missing an MLA stage for pre route selection."
-        " Expected a plugin with processor='MLA' or kernel='infer'/'mla' in the MPK manifest.");
+        " Expected at least one plugin with processor='MLA' in the MPK manifest.");
   }
   const auto mla_idx = pipeline_internal::sima::find_plugin_index_by_name_or_id(
       contract, !mla_stage->name.empty() ? mla_stage->name : mla_stage->plugin_id);

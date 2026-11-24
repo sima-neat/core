@@ -830,6 +830,20 @@ PhysicalExecutionLowerer::lower(const ModelExecutionPlan& semantic, std::string*
     public_values.emplace(output.value_id);
   }
 
+  // The last compute command (MLA or A65) in execution order bounds inference; the route planner
+  // uses the same rank. CVU work ranked after it is application-side, work before it is not.
+  std::optional<std::uint64_t> last_compute_sequence;
+  bool last_compute_is_a65 = false;
+  for (const auto& op : ops) {
+    if (op.kind == OpKind::Mla || op.kind == OpKind::HostTvm) {
+      last_compute_sequence = op.sequence;
+      last_compute_is_a65 = op.kind == OpKind::HostTvm;
+    }
+  }
+  const auto after_last_compute = [&](const OpId op_id) {
+    return last_compute_sequence && ops[op_id].sequence > *last_compute_sequence;
+  };
+
   std::unordered_set<OpId> claimed;
   std::vector<DraftCommand> drafts;
   PhysicalCohortId next_cohort_id = 0U;
@@ -842,8 +856,6 @@ PhysicalExecutionLowerer::lower(const ModelExecutionPlan& semantic, std::string*
     }
     const auto ingress_role =
         mla_ordinal == 0U ? PhysicalCommandRole::Ingress : PhysicalCommandRole::Interstitial;
-    const auto egress_role = mla_ordinal + 1U == mla_count ? PhysicalCommandRole::Egress
-                                                           : PhysicalCommandRole::Interstitial;
     std::vector<Lane> ingress;
     std::vector<IngressFrontierValue> ingress_frontier;
     for (const auto input : mla.inputs) {
@@ -875,6 +887,15 @@ PhysicalExecutionLowerer::lower(const ModelExecutionPlan& semantic, std::string*
       egress.push_back({static_cast<std::uint32_t>(ordinal),
                         egress_lane(semantic, consumers, egress_frontier[ordinal], public_values)});
     }
+    const auto egress_role =
+        mla_ordinal + 1U == mla_count &&
+                std::all_of(egress.begin(), egress.end(),
+                            [&](const Lane& lane) {
+                              return std::all_of(lane.operations.begin(), lane.operations.end(),
+                                                 after_last_compute);
+                            })
+            ? PhysicalCommandRole::Egress
+            : PhysicalCommandRole::Interstitial;
     if (!add_aligned_cohorts(semantic, std::move(egress), false, egress_role, &claimed, &drafts,
                              &next_cohort_id, error)) {
       return std::nullopt;
@@ -910,9 +931,11 @@ PhysicalExecutionLowerer::lower(const ModelExecutionPlan& semantic, std::string*
     residual_pairs.emplace_back(first.id, *second_id);
   }
   for (const auto& [first, second] : residual_pairs) {
-    if (!add_aligned_cohorts(semantic, {{0U, {first, second}}}, false,
-                             PhysicalCommandRole::Interstitial, &claimed, &drafts, &next_cohort_id,
-                             error)) {
+    const auto pair_role = last_compute_is_a65 && after_last_compute(first)
+                               ? PhysicalCommandRole::Egress
+                               : PhysicalCommandRole::Interstitial;
+    if (!add_aligned_cohorts(semantic, {{0U, {first, second}}}, false, pair_role, &claimed, &drafts,
+                             &next_cohort_id, error)) {
       return std::nullopt;
     }
   }
@@ -934,8 +957,13 @@ PhysicalExecutionLowerer::lower(const ModelExecutionPlan& semantic, std::string*
     draft.cohort_id = next_cohort_id++;
     draft.stable_order = op.sequence;
     draft.engine = engine_for(op);
-    draft.role = draft.engine == PhysicalEngine::Cvu ? PhysicalCommandRole::Interstitial
-                                                     : PhysicalCommandRole::NonCvu;
+    if (draft.engine != PhysicalEngine::Cvu) {
+      draft.role = PhysicalCommandRole::NonCvu;
+    } else {
+      draft.role = last_compute_is_a65 && after_last_compute(op.id)
+                       ? PhysicalCommandRole::Egress
+                       : PhysicalCommandRole::Interstitial;
+    }
     draft.implementation_id = identity;
     const auto batch = batch_for(op);
     if (batch <= 0 ||

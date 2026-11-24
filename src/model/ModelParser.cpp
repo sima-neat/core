@@ -77,6 +77,26 @@ ParsedKernelKind canonical_kernel_kind(const std::string& raw_kernel) {
   return ParsedKernelKind::Unknown;
 }
 
+// Materialized post-capable work; mirrors the route planner's materialized post graph kinds.
+// Address-only views (slice, reshape, unpack, pass-through) parse as Unknown.
+bool is_materialized_post_kernel_kind(ParsedKernelKind kind) {
+  switch (kind) {
+  case ParsedKernelKind::Cast:
+  case ParsedKernelKind::DetessDequant:
+  case ParsedKernelKind::Detessellate:
+  case ParsedKernelKind::Dequantize:
+  case ParsedKernelKind::BoxDecode:
+    return true;
+  case ParsedKernelKind::Unknown:
+  case ParsedKernelKind::Preproc:
+  case ParsedKernelKind::Quantize:
+  case ParsedKernelKind::Tessellate:
+  case ParsedKernelKind::QuantTess:
+    return false;
+  }
+  return false;
+}
+
 std::string canonical_dtype_for_signal(std::string raw) {
   for (char& c : raw) {
     c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
@@ -294,6 +314,15 @@ void parse_mpk_plugins(const pipeline_internal::sima::MpkContract& contract, Par
     }
   }
 
+  std::size_t last_compute_rank = last_mla_rank;
+  for (std::size_t rank = 0; rank < out->execution_order.size(); ++rank) {
+    const std::size_t idx = out->execution_order[rank];
+    if (idx < contract.plugins.size() && rank > last_compute_rank &&
+        pipeline_internal::lower_copy(contract.plugins[idx].processor) == "a65") {
+      last_compute_rank = rank;
+    }
+  }
+
   out->plugins.reserve(out->execution_order.size());
   for (const std::size_t plugin_idx : out->execution_order) {
     if (plugin_idx >= contract.plugins.size()) {
@@ -319,6 +348,13 @@ void parse_mpk_plugins(const pipeline_internal::sima::MpkContract& contract, Par
     dst.before_mla = rank < mla_rank;
     dst.after_mla = rank > last_mla_rank;
     out->plugins.push_back(dst);
+    // Materialized non-A65 work before the last compute command is inference, not
+    // post-processing. Address-only views are not skipped and keep their usual post signals.
+    if (dst.after_mla && rank < last_compute_rank &&
+        pipeline_internal::lower_copy(src.processor) != "a65" &&
+        is_materialized_post_kernel_kind(kind)) {
+      continue;
+    }
 
     const std::string canonical = kernel_kind_name(kind);
     const std::string in_dtype = primary_tensor_dtype(src.input_tensors);

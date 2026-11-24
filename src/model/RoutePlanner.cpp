@@ -1488,6 +1488,24 @@ stage_output_contracts_from_graph_node_local(const pipeline_internal::sima::MpkC
   return outputs;
 }
 
+// The last compute command (MLA or A65) in execution order bounds inference; materialized post
+// work ranked before it belongs to inference, while address-only views keep their route handling.
+std::optional<std::size_t>
+last_compute_plugin_rank(const pipeline_internal::sima::MpkContract& contract,
+                         const std::vector<std::size_t>& ordered) {
+  std::optional<std::size_t> last;
+  for (std::size_t rank = 0; rank < ordered.size(); ++rank) {
+    if (ordered[rank] >= contract.plugins.size()) {
+      continue;
+    }
+    const auto processor = lower_copy(contract.plugins[ordered[rank]].processor);
+    if (processor == "mla" || processor == "a65") {
+      last = rank;
+    }
+  }
+  return last;
+}
+
 struct MpkPostGraphView {
   std::unordered_map<std::string, std::size_t> node_index_by_id;
   std::vector<std::vector<std::size_t>> incoming_edges;
@@ -2487,6 +2505,13 @@ std::vector<RouteRegion> derive_post_regions_from_graph(const ModelPack& pack) {
   if (view.mla_node_index == std::numeric_limits<std::size_t>::max()) {
     return {};
   }
+  const auto ordered = pipeline_internal::sima::plugins_in_execution_order(contract);
+  std::unordered_map<std::size_t, std::size_t> rank_by_index;
+  rank_by_index.reserve(ordered.size());
+  for (std::size_t rank = 0; rank < ordered.size(); ++rank) {
+    rank_by_index[ordered[rank]] = rank;
+  }
+  const auto boundary = last_compute_plugin_rank(contract, ordered);
   std::vector<std::size_t> candidate_nodes;
   candidate_nodes.reserve(graph.nodes.size());
   for (std::size_t node_index = 0; node_index < graph.nodes.size(); ++node_index) {
@@ -2496,6 +2521,15 @@ std::vector<RouteRegion> derive_post_regions_from_graph(const ModelPack& pack) {
     const auto kind = route_graph_kind_from_mpk_node_local(graph.nodes[node_index]);
     if (!is_graph_post_stage_kind(kind)) {
       continue;
+    }
+    // Materialized post work before the last compute command is inference, not post-processing.
+    // Address-only views stay in the raw graph evidence.
+    if (boundary.has_value() && is_materialized_post_graph_kind(kind) &&
+        graph.nodes[node_index].plugin_index < contract.plugins.size()) {
+      const auto node_rank_it = rank_by_index.find(graph.nodes[node_index].plugin_index);
+      if (node_rank_it != rank_by_index.end() && node_rank_it->second < *boundary) {
+        continue;
+      }
     }
     candidate_nodes.push_back(node_index);
   }
@@ -2610,6 +2644,8 @@ bool extract_route_capability_from_mpk_graph(const ModelPack& pack, RouteCapabil
     return false;
   }
   const std::size_t last_mla_rank = last_mla_rank_it->second;
+  const std::size_t last_compute_rank =
+      last_compute_plugin_rank(contract, ordered).value_or(last_mla_rank);
   const auto pre_kind_dbg = [](PreRouteStageKind kind) -> const char* {
     switch (kind) {
     case PreRouteStageKind::None:
@@ -2717,6 +2753,14 @@ bool extract_route_capability_from_mpk_graph(const ModelPack& pack, RouteCapabil
         out->egress_contracts.insert(out->egress_contracts.end(), outputs.begin(), outputs.end());
       }
       continue;
+    }
+    // Materialized non-A65 work before the last compute command is inference, not
+    // post-processing. Address-only views keep their route handling.
+    if (after_mla && rank_it->second < last_compute_rank) {
+      const auto* node = pipeline_internal::sima::route_graph_node(graph, plugin_idx);
+      if (node != nullptr && is_materialized_post_graph_kind(node->kind)) {
+        continue;
+      }
     }
     std::string kernel_source = plugin.kernel;
     if (kernel_source.empty()) {
