@@ -24,7 +24,7 @@ takes first.
 | file | what |
 |---|---|
 | `catalogue.json` | the 239 compiled packages (280 components) of the Models registry and, per component, the ModelOptions its `performance.py` sets: the `app` view (1280x720 RGB frames); the `default` view is `Model(package)` with the model's tensors |
-| `expected.json` | one row per package and view: the outcome; per component the planner's verdict (a refusal: code, subject, fact, the obstacle units and the PLAN.md phase that lifts them); `forms`, the state of each entry form; `tiers` |
+| `expected.json` | one row per package and view: the outcome; per component the planner's verdict (a refusal: code, subject, fact, the obstacle units and the PLAN.md phase that lifts them; `form_refusals` where an entry form refuses at another point and so states another subject and fact); `forms`, the state of each entry form; `tiers` |
 | `expected_differences.json` | the differences an `equal` row may show: what each backend gives, why, who removes it, and the relation the comparator checks |
 | `census.cpp` | `neat_qualification_census`: the planner's verdict per component and view (CPU only, internal headers) |
 | `compare.cpp` | `neat_qualification_compare`: one backend's records of one component (public API only) |

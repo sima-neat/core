@@ -899,6 +899,20 @@
      "owners": [
       "inputs",
       "stages"
+     ],
+     "form_refusals": [
+      {
+       "forms": [
+        "model",
+        "model_run",
+        "plan",
+        "bench"
+       ],
+       "code": "misconfig.pipeline_shape",
+       "subject": "model dfine_n__w16a16__decoder",
+       "fact": "it reads 3 inputs",
+       "observed": "T1 at af66a7b7 (the Graph of a Model of several inputs is refused at its qualification, before the stages are planned)"
+      }
      ]
     }
    ],
@@ -2733,6 +2747,20 @@
      "phase": 6,
      "owners": [
       "inputs"
+     ],
+     "form_refusals": [
+      {
+       "forms": [
+        "model",
+        "model_run",
+        "plan",
+        "bench"
+       ],
+       "code": "misconfig.pipeline_shape",
+       "subject": "model lightglue_superpoint__w8a8__model",
+       "fact": "it reads 4 inputs",
+       "observed": "T1 at af66a7b7 (the Graph of a Model of several inputs is refused at its qualification, before the stages are planned)"
+      }
      ]
     }
    ],
@@ -6398,6 +6426,20 @@
       "inputs",
       "phase 7 (mixed)",
       "stages"
+     ],
+     "form_refusals": [
+      {
+       "forms": [
+        "model",
+        "model_run",
+        "plan",
+        "bench"
+       ],
+       "code": "misconfig.pipeline_shape",
+       "subject": "model supertonic_3__w8a16_w16a16__vector_estimator",
+       "fact": "it reads 8 inputs",
+       "observed": "T1 at af66a7b7 (the Graph of a Model of several inputs is refused at its qualification, before the stages are planned)"
+      }
      ]
     },
     {

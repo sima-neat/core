@@ -164,6 +164,19 @@ def read_census(path):
     return recs
 
 
+def expected_refusal(comp, form):
+    """The refusal expected.json records for a refused component under one entry form: the
+    component's own (the planner's verdict on the route's stages, which the census checks), unless
+    an entry of its `form_refusals` names the form. A form that refuses at another point states its
+    own there: a Model of several inputs is refused when the Graph of its stages is qualified,
+    before the stages are planned, so its model, model_run, plan and bench forms name the model
+    where the graph form names the stage."""
+    for r in comp.get('form_refusals', []):
+        if form in r.get('forms', []):
+            return r
+    return comp
+
+
 def census_verdict(rec):
     """What one census record says, in the form expected.json keeps."""
     if rec is None:
@@ -273,6 +286,11 @@ def check_census(recs, expected, cat, other=None, only=None):
                         failures.append(f"{key}: {field} {got[field]!r}, expected.json says {exp.get(field)!r}")
                 for bad in check_sentence(got['code'], got['subject'], got['fact']):
                     failures.append(f'{key}: refusal breaks the standard: {bad}')
+                for fr in exp.get('form_refusals', []):
+                    for bad in check_sentence(fr.get('code'), fr.get('subject'), fr.get('fact')):
+                        failures.append(f"{key}: the refusal of forms {fr.get('forms')} breaks the standard: {bad}")
+                    if not set(fr.get('forms', [])) <= set(FORMS) or not fr.get('forms'):
+                        failures.append(f"{key}: form_refusals names forms {fr.get('forms')}")
             rec = recs[(c['id'], view)]
             ev74 = any(k.endswith('@EV74') for k in rec.get('kinds', []))
             if ev74 and rec.get('stock_accepted'):
@@ -317,6 +335,10 @@ def seed(args):
             if v['planner'] in ('missing', 'error'):
                 sys.exit(f"{c['id']} {view}: census {v['planner']} {v.get('error', '')}")
             entry = {'id': c['id'], **v}
+            prev_comp = next((x for x in old_rows.get((p['name'], view), {}).get('components', [])
+                              if x.get('id') == c['id']), {})
+            if v['planner'] == 'refused' and prev_comp.get('form_refusals'):
+                entry['form_refusals'] = prev_comp['form_refusals']
             ob = obstacles.get(f"{c['id']} {view}")
             if ob is not None:
                 if ob.get('tally') != v['planner']:
@@ -636,8 +658,8 @@ def judge_component(comp, row, expected, differences, g, d, floor, view, forms, 
                 fv['outcome'] = 'pending'
                 fv['refusal'] = {k: parts[k] for k in ('code', 'where', 'subject', 'fact')}
             elif comp.get('planner') == 'refused':
-                same = parts['subject'] == comp.get('subject') and parts['fact'] == comp.get('fact') \
-                    and parts['code'] == comp.get('code')
+                exp = expected_refusal(comp, form)
+                same = all(parts[k] == exp.get(k) for k in ('code', 'subject', 'fact'))
                 fv['outcome'] = 'not_carried' if same else 'FAIL'
                 fv['refusal'] = {k: parts[k] for k in ('code', 'where', 'subject', 'fact')}
                 if not same:
@@ -1068,7 +1090,9 @@ def judge_script(row, spec, script, g, d, differences):
                        + (d['launch'].get('exception') or last_line(d['stderr']))[:400])
             return out
         out['refusal'] = {k: parts[k] for k in ('code', 'where', 'subject', 'fact')}
-        refused = [c for c in row['components'] if c.get('planner') == 'refused']
+        # performance.py reaches the backend through Model::benchmark, accuracy.py through Model::build
+        form = 'bench' if script == 'performance' else 'model'
+        refused = [expected_refusal(c, form) for c in row['components'] if c.get('planner') == 'refused']
         same = any(all(parts[k] == c.get(k) for k in ('code', 'subject', 'fact')) for c in refused)
         out.update(outcome='not_carried') if same else \
             out.update(outcome='FAIL', why='refusal differs from expected.json (code, subject or fact)')
@@ -1329,6 +1353,22 @@ def selftest(_args):
     r = judge_component(comp_r, {'outcome': 'not_carried'}, expected, differences, g,
                         proc(0, build_error='[misconfig.pipeline_shape] Graph::build: no'), g, 'app', ['graph'])
     check(r['outcome'] == 'FAIL', 'judge: a refusal out of the form fails')
+    # A form that refuses at another point than the planner states its own refusal.
+    early = good.replace("stage 1 'MLA_0' (model on the MLA)", 'model m').replace(
+        p['fact'], 'it reads 4 inputs').replace('Graph::build(inputs)', 'Model::build')
+    comp_f = dict(comp_r, form_refusals=[{'forms': ['model', 'bench'], 'code': 'misconfig.pipeline_shape',
+                                          'subject': 'model m', 'fact': 'it reads 4 inputs'}])
+    as_model = lambda pr: {**pr, 'records': [dict(x, form='model') if 'form' in x else x for x in pr['records']]}
+    exp_m = {'forms': {'graph': {'state': 'active'}, 'model': {'state': 'active'}}}
+    r = judge_component(comp_f, {'outcome': 'not_carried'}, exp_m, differences, as_model(g),
+                        as_model(proc(0, build_error=early)), None, 'app', ['model'])
+    check(r['outcome'] == 'not_carried', f'judge: a form with its own expected refusal ({r})')
+    r = judge_component(comp_f, {'outcome': 'not_carried'}, exp_m, differences, g, proc(0, build_error=early),
+                        None, 'app', ['graph'])
+    check(r['outcome'] == 'FAIL', "judge: a form's own refusal does not stand for the other forms")
+    r = judge_component(comp_f, {'outcome': 'not_carried'}, exp_m, differences, as_model(g),
+                        as_model(proc(0, build_error=good)), None, 'app', ['model'])
+    check(r['outcome'] == 'FAIL', "judge: the planner's refusal does not stand for a form that states its own")
     pend = {'forms': {'graph': {'state': 'pending', 'until': 'S3'}}}
     r = judge_component(comp, row, pend, differences, g, proc(0, build_error=good), g, 'app', ['graph'])
     check(r['outcome'] == 'pending', 'judge: a pending form refused in the one form')
@@ -1423,6 +1463,11 @@ def selftest(_args):
     check(r['outcome'] == 'FAIL', 'scripts: another fact fails')
     r = js(row_n, 'accuracy', srun(report=acc(0.81)), srun(rc=1, error='RuntimeError: no'))
     check(r['outcome'] == 'FAIL' and 'one form' in r['why'], 'scripts: a failure out of the form fails')
+    row_f = {'view': 'default', 'outcome': 'not_carried', 'components': [comp_f]}
+    r = js(row_f, 'accuracy', srun(report=acc(0.81)), srun(rc=1, error=early))
+    check(r['outcome'] == 'not_carried', f"scripts: accuracy.py meets the model form's refusal ({r})")
+    r = js(row_f, 'accuracy', srun(report=acc(0.81)), srun(rc=1, error=good))
+    check(r['outcome'] == 'FAIL', "scripts: the planner's refusal where the model form states its own fails")
     r = js(row_n, 'accuracy', srun(report=acc(0.81)), srun(report=acc(0.81)))
     check(r['outcome'] == 'FAIL', 'scripts: a row expected.json says is not carried must flip when it runs')
     sp = speed_rows([{'package': 'p', 'script': 'performance', 'verdict': 'equal', 'metrics': {
