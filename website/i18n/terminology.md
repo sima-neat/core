@@ -45,6 +45,22 @@ documentation. Product names and source-code identifiers remain unchanged.
 | user | 사용자 | ユーザー | 使用者 | користувач |
 | return (from an API) | 반환 | 返す | 傳回 | повернення |
 
+## Ukrainian term choices
+
+These Ukrainian choices were agreed in the native review of the Ukrainian
+documentation (#911). They apply to Ukrainian only. The last column lists
+variants not to use for that meaning. Those words stay correct in their other
+meanings, for example «вміст» for content, «типовий» for typical, «каталог»
+for a catalog, and «Опис» for a Description column.
+
+| English | Ukrainian (`uk-UA`) | Avoid for this meaning |
+| --- | --- | --- |
+| payload (concept) | корисні дані | вміст, корисне навантаження |
+| default | за замовчуванням | типовий |
+| detection (object detection) | виявлення | детекція |
+| directory | тека | каталог |
+| Meaning (table column header) | Значення | Опис |
+
 ## Protected text
 
 Keep the following text exactly as authored:

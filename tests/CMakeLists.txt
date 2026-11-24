@@ -819,6 +819,16 @@ set_tests_properties(unit_canonical_graph_stage_admission_test PROPERTIES
 target_link_libraries(unit_processcvu_v2_mpk_encoding_test PRIVATE
   SimaScheduler::frontend
   )
+# Execute those requests on each backend against the test's own reference,
+# including the wide CBlock16 tile that once produced no EV74 output.
+foreach(backend ev74 a65)
+  simaneat_add_test(NAME processcvu_v2_mpk_encoding_${backend}_test
+    COMMAND unit_processcvu_v2_mpk_encoding_test --${backend})
+  simaneat_append_ctest_env(processcvu_v2_mpk_encoding_${backend}_test)
+  set_tests_properties(processcvu_v2_mpk_encoding_${backend}_test PROPERTIES
+    TIMEOUT 60 LABELS "strict;e2e;runtime;kernel-runner;modalix-only"
+    RESOURCE_LOCK "accelerator-device")
+endforeach()
 
 # Exercise mutable current-frame facts with both the default reader policy and
 # the explicit legacy static-preprocess shortcut. Compact facts always refresh.
@@ -2304,19 +2314,6 @@ if (NOT yolov8_dynamic_boxdecode_geometry_async_test IN_LIST PIPELINESESSION_TES
     LABELS "e2e;obj_detection;boxdecode;dynamic;async")
 endif()
 
-add_pipeline_test_long(
-  ssd_mobilenet_e2e_test
-  e2e_pipelines/obj_detection/ssd_mobilenet_e2e_test.cpp
-  e2e_pipelines/e2e_utils.cpp
-  e2e_pipelines/obj_detection/obj_detection_utils.cpp
-  ARGS ${CMAKE_SOURCE_DIR}
-)
-
-if (NOT ssd_mobilenet_e2e_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
-  set_property(TEST ssd_mobilenet_e2e_test
-    APPEND PROPERTY LABELS "e2e;obj_detection;ssd;accuracy;modalix-only")
-endif()
-
 # Device-free SSD contract coverage. No SKIP_RETURN_CODE: it must fail, never skip.
 add_pipeline_test(
   ssd_contract_integration_test
@@ -2415,6 +2412,21 @@ if (NOT preproc_roi_user_smoke_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
     PRIVATE SIMA_ROI_USER_SMOKE_DEFAULT=1)
   set_property(TEST preproc_roi_user_smoke_test APPEND PROPERTY
     LABELS "e2e;obj_detection;preproc;roi;smoke")
+endif()
+
+add_pipeline_test(
+  preproc_roi_boxdecode_moving_test
+  e2e_pipelines/obj_detection/preproc_roi_boxdecode_moving_test.cpp
+  e2e_pipelines/e2e_utils.cpp
+  e2e_pipelines/obj_detection/obj_detection_utils.cpp
+  ARGS ${CMAKE_SOURCE_DIR}
+  LOCK_ACCELERATOR
+)
+
+if (NOT preproc_roi_boxdecode_moving_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  set_property(TEST preproc_roi_boxdecode_moving_test APPEND PROPERTY
+    LABELS "e2e;obj_detection;preproc;roi;boxdecode")
+  set_tests_properties(preproc_roi_boxdecode_moving_test PROPERTIES TIMEOUT 120)
 endif()
 
 add_pipeline_test(

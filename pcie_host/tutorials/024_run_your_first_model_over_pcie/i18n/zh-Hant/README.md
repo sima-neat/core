@@ -41,15 +41,11 @@ PCIe 主機 API 接受模型準備好的張量或已解碼的圖像像素。
 如 [教學設定](/tutorials/before-you-run) 中所述，安裝 PCIe 主機套件並下載教學捆綁包。從提取的 PCIe 附加檔案根目錄執行以下命令：
 
 ```bash
-sima-cli modelzoo get yolo_v8s
+sima-cli models download --id yolov8s --variant w8a8
+unzip -p models/yolov8s/w8a8/yolov8s_w8a8_default.zip yolov8s_w8a8_mpk.tar.gz > yolo_v8s_mpk.tar.gz
 ```
 
-這些程式需要此目錄中的 `yolo_v8s_mpk.tar.gz`。Model Zoo 輸出名稱和位置可能會有所不同。如果該命令沒有建立完全相同的路徑，請將下載的檔案複製到指定位置並進行驗證：
-
-```bash
-cp /absolute/path/to/downloaded-yolov8s-archive.tar.gz yolo_v8s_mpk.tar.gz
-test -f yolo_v8s_mpk.tar.gz
-```
+這些程式需要此目錄中的 `yolo_v8s_mpk.tar.gz`。第二個命令會從下載的 ZIP 中解壓縮該檔案。
 
 **Python:**
 

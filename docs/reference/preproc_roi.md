@@ -148,7 +148,7 @@ For Python, pass `image_format=pyneat.PixelFormat.BGR` for `cv2.imread` images, 
 - the dtype and layout chosen by the model route, including BF16 or INT8 and dense or tessellated output;
 - per-output `tensor.semantic.preprocess` metadata.
 
-Each output's preprocess metadata includes the selected ROI, letterbox geometry, normalization/quantization/tessellation flags, and an affine transform that maps model/preprocessed coordinates back to the original source-frame coordinate system.
+Each output's preprocess metadata includes the selected ROI, letterbox geometry, normalization/quantization/tessellation flags, and an affine transform that maps model/preprocessed coordinates back to the original source-frame coordinate system. See [BoxDecode](/reference/boxdecode_decode_types#crop-coordinate-mapping) for supported ROI profiles.
 
 ## Out-of-frame ROIs
 

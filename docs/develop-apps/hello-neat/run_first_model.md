@@ -27,14 +27,15 @@ You do not need to master the full API yet; for now, focus on how `Model` and `M
     cd assets
     </ShellCommand>
 
-2. **Download the model:**
+2. **Download the model** from the Model Browser and extract the model archive from the downloaded ZIP:
 
     <ShellCommand prompt="sdk|devkit">
-    sima-cli modelzoo -v 2.1.3 get yolo_v8s
+    sima-cli models download --id yolov8s --variant w8a8
+    unzip -p models/yolov8s/w8a8/yolov8s_w8a8_default.zip yolov8s_w8a8_mpk.tar.gz > yolo_v8s_mpk.tar.gz
     </ShellCommand>
 
     :::note sima-cli model download
-    If `sima-cli` writes the model somewhere other than the `assets` directory, copy that file into `assets/yolo_v8s_mpk.tar.gz`.
+    The program opens `assets/yolo_v8s_mpk.tar.gz`. [Tutorial Setup](/tutorials/before-you-run) describes model preparation for all tutorials.
     :::
 3. **Download the sample image** from the docs and save it as `tutorial_sample_image.png` in the `assets` directory.
 

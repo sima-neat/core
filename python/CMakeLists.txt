@@ -106,14 +106,6 @@ install(
 )
 
 install(
-  DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/tests_long/
-  DESTINATION share/sima-neat/python/tests_long
-  COMPONENT extras
-  FILES_MATCHING
-  PATTERN "*.py"
-)
-
-install(
   PROGRAMS
     ${PROJECT_SOURCE_DIR}/scripts/neat
     ${PROJECT_SOURCE_DIR}/scripts/neat_pcie_status.py
