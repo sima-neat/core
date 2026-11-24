@@ -458,6 +458,7 @@ set(UNIT_TESTS
   unit_boxdecode_render_manifest_from_model_test
   unit_boxdecode_yolo_layout_matrix_test
   unit_boxdecode_ssd_layout_matrix_test
+  unit_ssd300_class_selection_admission_test
   unit_boxdecode_yolox_seg_pose_class_inference_test
   unit_boxdecode_yolox_seg_pose_standalone_contract_test
   unit_boxdecode_pose_class_gate_test
