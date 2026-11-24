@@ -85,13 +85,13 @@ sample.attributes = {"image-time": "..."}   # replaces the whole map
 
 | Обмеження | Значення |
 | --- | --- |
-| `kMultipartHeaderCaptureMaxHeaders` | 64 обрані назви заголовків |
+| `kMultipartHeaderCaptureMaxHeaders` | 64 вибрані назви заголовків |
 | `kMultipartHeaderCaptureMaxNameBytes` | 128 байтів на назву |
 | `kMultipartHeaderCaptureMaxLineBytes` | 8 КіБ на рядок заголовка |
 | `kMultipartHeaderCaptureMaxBlockBytes` | 64 КіБ на блок заголовків частини |
 | Тіло JPEG у multipart | 64 МіБ на частину MIME |
 
-Некоректний список дозволених заголовків відхиляється під час створення з `std::invalid_argument`.
+Некоректний список дозволених заголовків відхиляється під час створення винятком `std::invalid_argument`.
 
 ## Непідтримувані шляхи
 

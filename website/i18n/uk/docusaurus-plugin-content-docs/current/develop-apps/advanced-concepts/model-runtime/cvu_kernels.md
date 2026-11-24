@@ -70,7 +70,7 @@ slug: /develop-apps/advanced-concepts/cvu_kernels
 - `cvu/tess/<geometry>` — варіанти Tess.
 - `cvu/postproc/box_decode_<type>` — варіанти BoxDecode.
 
-Точний каталог міститься в `core/src/pipeline/internal/sima/` (рівень фреймворку з прямим доступом до нижчих шарів).
+Точний каталог міститься в `core/src/pipeline/internal/sima/` (рівень фреймворку з прямим доступом до нижчих рівнів).
 
 ## Додаткові матеріали
 
