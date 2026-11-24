@@ -358,10 +358,10 @@ case simaai::neat::PullStatus::Error:
 どちらか一方のみを合格すればよい。両方合格する必要はない。
 :::
 
-### 23. `misconfig.option_out_of_range` — `preprocess.normalize resolved Off … quantized`
+### 23. 量子化された画像モデルで検出が少ない、または品質が低い — `preprocess.normalize=Auto resolved Off …`
 
 :::info 原因
-モデルの MLA 入力は量子化 INT8 ですが、`preprocess.normalize` が Off に解決されました。mean/stddev も preset も指定せず `Auto` のままにしたか、明示的に `Off` に設定したためです。0〜255 の生のピクセルバイトが量子化されないまま MLA に渡され、結果が劣化するため、前処理ステージの構築は拒否されます。
+量子化 INT8 モデル上の画像入力 `Model` で、検出がほとんど（またはまったく）得られない、あるいは品質が低く、プランナーが `preprocess.normalize=Auto resolved Off …` と警告します。正規化が Off に解決されたためです。mean/stddev も preset も指定せず `Auto` のままにしたか、明示的に `Off` に設定した場合です。この場合、前処理ステージは 0〜255 の生のピクセル値を量子化します。これは 0〜255 の生の入力で学習したモデルでのみ正しい動作です。`[0,1]` または mean/stddev で正規化された入力を想定するモデルでは、値の大半が飽和し（量子化器が約 255 の場合は 127 など）、エラーは報告されません。
 :::
 
 :::tip 修正

@@ -358,10 +358,10 @@ case simaai::neat::PullStatus::Error:
 通過其中一個，但不能同時通過兩個。
 :::
 
-### 23. `misconfig.option_out_of_range` — `preprocess.normalize resolved Off … quantized`
+### 23. 量化影像模型的偵測結果很少或品質不佳 — `preprocess.normalize=Auto resolved Off …`
 
 :::info 原因
-模型的 MLA 輸入為量化 INT8，但 `preprocess.normalize` 解析為 Off：未設定 mean/stddev 與 preset 而保留 `Auto`，或明確設為 `Off`。原始 0–255 像素位元組會在未量化的情況下送入 MLA 並降低結果品質，因此前處理階段的建置會被拒絕。
+量化 INT8 模型上的影像輸入 `Model` 只回傳很少（或沒有）偵測結果，或結果品質不佳，且規劃器警告 `preprocess.normalize=Auto resolved Off …`。這是因為正規化解析為 Off：未設定 mean/stddev 與 preset 而保留 `Auto`，或明確設為 `Off`。此時前處理階段會量化原始 0–255 像素值，這僅適用於以原始 0–255 輸入訓練的模型。若模型預期 `[0,1]` 或經 mean/stddev 正規化的輸入，大多數數值會飽和（例如量化器約為 255 時飽和於 127），且不會回報任何錯誤。
 :::
 
 :::tip 修正

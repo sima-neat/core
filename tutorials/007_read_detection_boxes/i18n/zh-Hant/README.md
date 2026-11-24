@@ -23,7 +23,7 @@
 
 這些選項同時設定輸入合約和後處理行為。`decode_type`（這裡為 `YoloV8`）選擇模型系列的解碼路徑。置信度閾值會在 NMS 之前剔除較弱的候選者；NMS IoU 閾值控制重疊框的合併程度；`top_k` 限制最終數量，以實現確定性的下游成本；`boxdecode_original_width`/`boxdecode_original_height` 將解碼後的座標映射回源圖像像素。關於這些參數的調整指南，請參閱下面的「實務參考」。
 
-本教學也啟用了前處理正規化（`normalize.enable = On`，此 `[0,1]` YOLO 模型使用預設 mean 0 / stddev 1）。偵測器的輸入為量化格式，因此正規化解析為 Off 的 `Model` 會拒絕建置其前處理階段。
+本教學也啟用了前處理正規化（`normalize.enable = On`，此 `[0,1]` YOLO 模型使用預設 mean 0 / stddev 1）。偵測器預期 `[0,1]` 輸入；若正規化為 Off，其前處理階段會改為量化原始 0–255 像素值。
 
 **C++：** `decode_type` 採用 `BoxDecodeType::YoloV8` 列舉。閾值/NMS/`top_k` 值稍後通過 `stages::BoxDecodeOptions` 傳遞，而不是通過 `Model::Options`。
 

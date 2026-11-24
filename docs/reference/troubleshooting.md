@@ -361,10 +361,10 @@ A tensor was constructed with both `byte_format=` (opaque bytes) and `image_form
 Pass one or the other, not both.
 :::
 
-### 23. `misconfig.option_out_of_range` — `preprocess.normalize resolved Off … quantized`
+### 23. Quantized image model returns few or low-quality detections — `preprocess.normalize=Auto resolved Off …`
 
 :::info Cause
-The model's MLA input is quantized INT8, but `preprocess.normalize` resolved Off: it was left at `Auto` with no mean/stddev and no preset, or set explicitly to `Off`. Raw 0–255 pixel bytes would reach the MLA unquantized and degrade results, so the preprocess stage refuses to build.
+An image-input `Model` on a quantized INT8 model returns few or no detections, or low-quality ones, and the planner warns `preprocess.normalize=Auto resolved Off …`. Normalization resolved Off: it was left at `Auto` with no mean/stddev and no preset, or set explicitly to `Off`. The preprocess stage then quantizes the raw 0–255 pixel values, which is correct only for models trained on raw 0–255 input. A model that expects `[0,1]` or mean/stddev-normalized input receives values that mostly saturate (for example at 127 for a quantizer of about 255), and no error is reported.
 :::
 
 :::tip Fix

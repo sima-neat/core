@@ -1386,14 +1386,17 @@ def test_model_preproc_normalize_explicit_on_resolves_preproc_semantics(tmp_path
   assert pre.normalize is True
 
 
-def test_model_preproc_normalize_false_is_refused_for_quantized_model_pack(tmp_path):
+def test_model_preproc_normalize_false_keeps_pack_quantizer_for_quantized_model_pack(tmp_path):
   model = _resnet_model_with_preproc(normalize=pyneat.AutoFlag.Off)
 
-  # The pack quantizes its input, so building the Preproc stage with normalization Off would
-  # hand raw pixels to the MLA typed INT8. It must be refused instead.
-  with pytest.raises(pyneat.NeatError, match="preprocess.normalize") as excinfo:
-    pyneat.PreprocOptions(model)
-  assert excinfo.value.error_code == "misconfig.option_out_of_range"
+  # Normalization Off is valid for raw 0-255 models; the stage still quantizes with the
+  # pack's quantizer rather than handing raw bytes to the MLA.
+  requirements = model.preprocess_requirements()
+  pre = pyneat.PreprocOptions(model)
+  assert pre.normalize is False
+  assert pre.output_dtype == "INT8"
+  assert pre.q_scale == requirements.q_scale
+  assert pre.q_zp == requirements.q_zp
 
 
 def test_sima_box_decode_without_runtime_dims_uses_model_pack_defaults(tmp_path):

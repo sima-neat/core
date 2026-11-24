@@ -214,7 +214,7 @@ opt.preprocess.resize.placement = pyneat.LetterboxPlacement.TopLeft
 | --- | --- |
 | `opt.preprocess.color_convert.input_format` | 入力フォーマットのヒント：`RGB`、`BGR`、`GRAY8`、`NV12`、`NV16`、`I420`、または`Auto`。|
 | `opt.preprocess.color_convert.output_format` | モデルへの入力カラーフォーマット。通常は、`RGB`、`BGR`、または`GRAY8`です。|
-| `opt.preprocess.normalize.enable` | 平均値/標準偏差による正規化を有効または無効にします。`Auto` は、`preset` が設定されているか `normalize.has_explicit_stats` が true でない限り Off に解決されます（`mean`/`stddev` を設定しただけでは有効になりません）。MLA 入力が量子化 INT8 のモデルでは、正規化が Off に解決される画像入力の `Model` は、前処理ステージの構築時に拒否されます。`On`（モデルの mean/stddev とともに）または `preset` を設定してください。 |
+| `opt.preprocess.normalize.enable` | 平均値/標準偏差による正規化を有効または無効にします。`Auto` は、`preset` が設定されているか `normalize.has_explicit_stats` が true でない限り Off に解決されます（`mean`/`stddev` を設定しただけでは有効になりません）。MLA 入力が量子化 INT8 のモデルでは、正規化が Off に解決される画像入力の `Model` も通常どおり構築され、前処理ステージはパックの量子化器で 0〜255 の生のピクセル値を量子化します。これは 0〜255 の生のピクセルで学習したモデルに適しています。`[0,1]` または mean/stddev で正規化された入力で学習したモデルでは、`On`（モデルの mean/stddev とともに。`[0,1]` の YOLO 系モデルではデフォルトの mean 0 / stddev 1）または `preset` を設定してください。そうしないと量子化値の大半が飽和し、エラーなく結果が劣化します。 |
 | `opt.preprocess.normalize.mean` | チャンネルごとの平均値。モデルの学習時に使用した前処理と一致させる。 |
 | `opt.preprocess.normalize.stddev` | チャンネルごとの除数。モデルのトレーニング中に使用されたのと同じ正規化されたチャンネル統計を使用します。たとえば、ImageNetスタイルの値（`{0.229,0.224,0.225}`付近の値）などです。|
 | モデルが量子化された出力を期待する場合に、プランナー/ユーザーが量子化された出力を制御できるようにします。| `opt.preprocess.quantize.enable` |
