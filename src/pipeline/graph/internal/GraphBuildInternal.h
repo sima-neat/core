@@ -75,6 +75,10 @@ void session_build_dump_flow_snapshot(const std::shared_ptr<DiagCtx>& diag, cons
 void session_build_dump_pipeline_string_force(const std::shared_ptr<DiagCtx>& diag,
                                               const char* label);
 
+// GStreamer's check of a seeded build's InputOptions::caps_override: the caps must parse
+// (misconfig.caps, naming `where`). GStreamer must be initialized.
+void session_build_validate_caps_override(const InputOptions& src_opt, const char* where);
+
 RunOptions session_build_apply_run_defaults(const RunOptions& opt, const GraphOptions& sess_opt);
 RunOptions session_build_resolve_build_opt(RunMode mode, const RunOptions& opt);
 bool session_build_should_insert_async_queue2(RunMode mode, const RunOptions& opt);

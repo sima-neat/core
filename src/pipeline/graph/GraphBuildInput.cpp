@@ -2976,6 +2976,10 @@ RunOptions session_build_apply_run_defaults(const RunOptions& opt, const GraphOp
   return opt;
 }
 
+void session_build_validate_caps_override(const InputOptions& src_opt, const char* where) {
+  validate_caps_override_or_throw(src_opt, where, {});
+}
+
 RunOptions session_build_resolve_build_opt(RunMode mode, const RunOptions& opt) {
   return resolve_build_opt(mode, opt);
 }

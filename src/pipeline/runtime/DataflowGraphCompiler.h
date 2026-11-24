@@ -63,9 +63,6 @@ struct __attribute__((visibility("hidden"))) DataflowGraphAccess {
 
 #pragma GCC visibility push(hidden)
 
-// One stderr line per process and key: the options Dataflow ignores or clamps.
-void dataflow_warn_once(const std::string& key, const std::string& message);
-
 // The seed of a seeded build: the Run's representative input, which binds the (one) input's spec.
 // A view of the caller's tensors, which outlive the build.
 struct DataflowSeed {
@@ -88,10 +85,6 @@ InputOptions dataflow_seed_input_options(const Graph& graph);
 std::optional<DataflowRunConfig> plan_dataflow_run(const Graph& graph, const RunOptions& opt,
                                                    const DataflowSeed& seed, const char* where,
                                                    pipeline_internal::DataflowNotCarried* why);
-
-// The options Dataflow does not read, when set away from their defaults: one warning per process
-// and option.
-void warn_ignored_dataflow_options(const DataflowRunConfig& config);
 
 #endif // SIMANEAT_WITH_DATAFLOW
 

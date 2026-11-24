@@ -10,7 +10,7 @@
 // a Run Dataflow does not carry (the not-carried error at Graph::build, never a Run on
 // GStreamer); the Session report Run::stop prints;
 // the holder push error; Graph::run (a synchronous Run); a record bound by its first push (C2);
-// the link depth (the larger of queue_depth and max_buffers, each after its default or clamp);
+// the link depth (the larger of queue_depth and max_buffers, each after its default);
 // try_push accounting
 // under KeepLatest, DropIncoming and Block; a blocking push that never drops under DropIncoming and
 // KeepLatest; close_input cancelling a parked push; stop unblocking a pending pull; pull timeouts
@@ -18,8 +18,10 @@
 // tensors; Owned output; a pulled tensor outliving its Run; named endpoints; the push-time checks
 // of a tensor that repeats an accepted geometry, back for any change they read (C7a); a try_push
 // refused by a full link reading none of its tensor's bytes (C7c; with copy_input, so that the
-// accepted ones copy: W2 wraps them otherwise, unit_run_push_wrap_test); the one-time warnings (the
-// deprecated Run forms, the options this backend ignores); RunPreset::Realtime with an explicit
+// accepted ones copy: W2 wraps them otherwise, unit_run_push_wrap_test); the deprecated Run forms'
+// one-time warnings; the options without a counterpart here (an appsrc's own: accepted, silently;
+// caps_override, OutputOptions::sync, an unbounded queue: refused at the build in the one form);
+// RunPreset::Realtime with an explicit
 // Block on a connected graph (kept as given) and on a linear Run (kept too: only
 // OverflowPolicy::Auto takes the preset's KeepLatest, on both backends); concurrent stops;
 // state and measurement reads racing a stop; device inputs (H0b: InputOptions::memory_policy Ev74
@@ -285,40 +287,59 @@ void deprecated_forms() {
           "the warning says the form does not work on the Dataflow backend:\n" + text);
 }
 
-// Each option this backend ignores prints one line however many builds set it (H0 3.10): the
-// first build that sets them in the process.
-void ignored_options_warn_once() {
+// The options without a counterpart on this backend. An appsrc's own (is_live, do_timestamp,
+// stream_type, max_bytes, block, fps) describe a GStreamer element this backend does not have:
+// the Run builds and round trips, and nothing is printed. The ones that change what the
+// application observes are refused at the build in the one form: caps_override (the caps a
+// GStreamer pipeline negotiates), OutputOptions::sync (pacing by GStreamer's clock), and a queue
+// GStreamer leaves unbounded (queue_depth or max_buffers <= 0).
+void options_without_a_counterpart() {
   std::string text;
   {
     StderrCapture capture;
-    for (int i = 0; i < 2; ++i) {
-      InputOptions in;
-      in.is_live = false;
-      in.do_timestamp = false;
-      in.stream_type = 1;
-      in.caps_override = "application/vnd.simaai.tensor";
-      in.max_bytes = 1U << 20U;
-      OutputOptions out;
-      out.sync = true;
-      Graph ignored;
-      ignored.add(nodes::Input("x", in));
-      ignored.add(nodes::Output("y", out));
-      Run quiet = ignored.build(dataflow());
-      require(quiet.push(TensorList{rgb(16, 8, 40)}) &&
-                  quiet.pull("y", std::chrono::milliseconds(5000)).ok(),
-              "a Run with ignored options round trips");
-      quiet.close();
-    }
+    InputOptions in;
+    in.is_live = false;
+    in.do_timestamp = false;
+    in.stream_type = 1;
+    in.max_bytes = 1U << 20U;
+    in.block = false;
+    in.fps_n = 30;
+    in.fps_d = 1;
+    Graph g;
+    g.add(nodes::Input("x", in));
+    g.add(nodes::Output("y", OutputOptions{}));
+    Run run = g.build(dataflow());
+    require(run.push(TensorList{rgb(16, 8, 40)}) &&
+                run.pull("y", std::chrono::milliseconds(5000)).ok(),
+            "a Run with an appsrc's options round trips");
+    run.close();
     text = capture.text();
   }
-  for (const char* option :
-       {"InputOptions::is_live", "InputOptions::do_timestamp", "InputOptions::stream_type",
-        "InputOptions::caps_override", "InputOptions::max_bytes", "OutputOptions::sync"}) {
-    const int n = lines_starting_with(text, std::string("[WARN] Dataflow backend: ") + option +
-                                                " has no meaning on this backend");
-    require(n == 1, std::string(option) + " warns once on Dataflow (it warned " +
-                        std::to_string(n) + " times):\n" + text);
-  }
+  require(text.empty(), "an appsrc's options print nothing:\n" + text);
+
+  const auto refused = [](const InputOptions& in, const OutputOptions& out, const RunOptions& opt,
+                          const std::string& subject) {
+    require_neat_error(
+        [&] {
+          Graph g;
+          g.add(nodes::Input("x", in));
+          g.add(nodes::Output("y", out));
+          (void)g.build(TensorList{rgb(8, 8, 1)}, opt);
+        },
+        error_codes::kOptionOutOfRange,
+        "Graph::build(inputs): " + subject + " is not carried by the Dataflow backend: ",
+        "\nHint: To run this program on the GStreamer backend, ");
+  };
+  InputOptions caps;
+  caps.caps_override = "application/vnd.simaai.tensor";
+  refused(caps, OutputOptions{}, dataflow(), "option InputOptions::caps_override of Input [x]");
+  OutputOptions sync;
+  sync.sync = true;
+  refused(InputOptions{}, sync, dataflow(), "option OutputOptions::sync");
+  OutputOptions unbounded;
+  unbounded.max_buffers = 0;
+  refused(InputOptions{}, unbounded, dataflow(), "option OutputOptions::max_buffers = 0");
+  refused(InputOptions{}, OutputOptions{}, dataflow(0), "option RunOptions::queue_depth = 0");
 }
 
 void undeclared_input_bound_by_first_push() {
@@ -546,7 +567,7 @@ void holder_push_is_an_error() {
 }
 
 // The link holds max(RunOptions::queue_depth, OutputOptions::max_buffers) messages (the deeper of
-// GStreamer's input queue and its appsink), each after its default or clamp: counted with try_push
+// GStreamer's input queue and its appsink), each after its default: counted with try_push
 // on a Block link, which refuses only when the link holds the whole depth.
 int accepted_until_full(Run& run, int limit) {
   int accepted = 0;
@@ -569,8 +590,6 @@ void link_depth_is_max_of_queue_depth_and_max_buffers() {
       {"defaults (queue_depth 4, max_buffers 4)", dataflow(), OutputOptions{}.max_buffers, 4},
       {"queue_depth 2, max_buffers 5", dataflow(2), 5, 5},
       {"Reliable preset (queue_depth 8), max_buffers 4", reliable, 4, 8},
-      {"max_buffers 0 (unbounded) counts as queue_depth 2", dataflow(2), 0, 2},
-      {"queue_depth 0 (unbounded) counts as 4, max_buffers 1", dataflow(0), 1, 4},
   };
   for (const Case& c : cases) {
     OutputOptions out;
@@ -1408,7 +1427,7 @@ RUN_BACKEND_TEST("unit_dataflow_backend_test", ([] {
                    if (!sima_test::on_dataflow()) {
                      return;
                    }
-                   ignored_options_warn_once();
+                   options_without_a_counterpart();
                    undeclared_input_bound_by_first_push();
                    declared_input_with_dynamic_axis();
                    push_outside_declared_shape_rejected();

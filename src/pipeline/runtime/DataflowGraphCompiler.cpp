@@ -13,6 +13,7 @@
 
 #include "pipeline/runtime/DataflowGraphCompiler.h"
 
+#include "gst/GstInit.h"
 #include "pipeline/ErrorCodes.h"
 #include "pipeline/Graph.h"
 #include "pipeline/graph/internal/GraphBuildInternal.h"
@@ -518,37 +519,38 @@ DataflowRunConfig derive_config(const Graph& graph, const DataflowGraphView& vie
   //   link depth = max(queue_depth, max_buffers)
   // not their sum: with a pusher faster than the puller the link stays full, so the latency and
   // the tensors the application must keep alive both scale with the depth, and the sum doubled
-  // them whenever the two were set equal. queue_depth is as resolved above, a value <= 0
-  // (unbounded on GStreamer) counting as 4, reported; max_buffers <= 0 (unbounded) counts as
-  // queue_depth, reported.
+  // them whenever the two were set equal. A queue GStreamer leaves unbounded (queue_depth or
+  // max_buffers <= 0) has no link to stand for it: not carried.
   // The Output's drop flag makes its link lossy for every push, as appsink drop=true is;
   // otherwise RunOptions' overflow policy applies to try_push (KeepLatest is DropOldest). Either
   // acts only when the link holds the whole depth. In a fan-out each Output's link has its own.
-  std::uint32_t ingress_depth = 4U;
-  if (config.run.queue_depth > 0) {
-    ingress_depth = static_cast<std::uint32_t>(config.run.queue_depth);
-  } else {
-    dataflow_warn_once(
-        "clamp:queue_depth",
-        "Dataflow backend: RunOptions::queue_depth=" + std::to_string(config.run.queue_depth) +
-            " (unbounded) has no equivalent on this backend; it counts as " +
-            std::to_string(ingress_depth) + " in the link depth");
+  const auto unbounded = [why](std::string option, int value) {
+    why->subject = "option " + std::move(option) + " = " + std::to_string(value);
+    why->fact = "it leaves a queue unbounded, and every link of this backend holds a bounded "
+                "number of items";
+    why->code = error_codes::kOptionOutOfRange;
+  };
+  if (config.run.queue_depth <= 0) {
+    unbounded("RunOptions::queue_depth", config.run.queue_depth);
+    return config;
   }
+  const auto ingress_depth = static_cast<std::uint32_t>(config.run.queue_depth);
   for (std::size_t o = 0; o < q.outputs.size(); ++o) {
     DataflowOutputConfig& output = config.outputs[o];
     output.output = dynamic_cast<const Output*>(view.vertices[q.outputs[o]].get())->options();
-    output.ingress_depth = ingress_depth;
-    if (output.output.max_buffers > 0) {
-      output.terminal_depth = static_cast<std::uint32_t>(output.output.max_buffers);
-    } else {
-      output.terminal_depth = ingress_depth;
-      dataflow_warn_once("clamp:max_buffers",
-                         "Dataflow backend: OutputOptions::max_buffers=" +
-                             std::to_string(output.output.max_buffers) +
-                             " (unbounded) has no equivalent on this backend; the link depth is "
-                             "RunOptions::queue_depth's, " +
-                             std::to_string(ingress_depth));
+    if (output.output.max_buffers <= 0) {
+      unbounded("OutputOptions::max_buffers", output.output.max_buffers);
+      return config;
     }
+    if (output.output.sync) {
+      why->subject = "option OutputOptions::sync";
+      why->fact = "it paces the Output by GStreamer's pipeline clock, and this backend's Outputs "
+                  "hand each item over when it is ready";
+      why->code = error_codes::kOptionOutOfRange;
+      return config;
+    }
+    output.ingress_depth = ingress_depth;
+    output.terminal_depth = static_cast<std::uint32_t>(output.output.max_buffers);
     output.link_depth = std::max(output.ingress_depth, output.terminal_depth);
     output.terminal_drop = output.output.drop;
     output.input = q.producer[o];
@@ -556,6 +558,19 @@ DataflowRunConfig derive_config(const Graph& graph, const DataflowGraphView& vie
   for (std::size_t i = 0; i < q.inputs.size(); ++i) {
     DataflowInputConfig& input = config.inputs[i];
     input.input = *view.inputs[q.inputs[i]];
+    // A model route's Input carries the Model's own options (Model::input_appsrc_options), not
+    // the caller's.
+    if (q.stages.empty() && !input.input.caps_override.empty()) {
+      // Caps that do not parse are the application's mistake, refused as GStreamer refuses it.
+      gst_init_once();
+      session_build_validate_caps_override(input.input, "Graph::build(input)");
+      why->subject = "option InputOptions::caps_override of Input " +
+                     dataflow_names_text(config.inputs[i].names);
+      why->fact = "it is a GStreamer caps string, and this backend's inputs take the spec of what "
+                  "is pushed";
+      why->code = error_codes::kOptionOutOfRange;
+      return config;
+    }
     if (view.origin && input.input.payload_type == PayloadType::Image) {
       // A Model's own build gives its Input the size of the seed's frame (GStreamer's first caps)
       // and the model's capacity as the bound: each frame brings its own size up to the bound,
@@ -633,44 +648,6 @@ DataflowRunConfig derive_config(const Graph& graph, const DataflowGraphView& vie
 }
 
 } // namespace
-
-// The options Dataflow does not read, when set away from their defaults: one warning per process
-// and option.
-void warn_ignored_dataflow_options(const DataflowRunConfig& config) {
-  const InputOptions defaults{};
-  const auto ignored = [](const char* option) {
-    dataflow_warn_once(std::string("ignored:") + option,
-                       std::string("Dataflow backend: ") + option +
-                           " has no meaning on this backend and is ignored");
-  };
-  for (const DataflowInputConfig& input : config.inputs) {
-    const InputOptions& in = input.input;
-    if (in.is_live != defaults.is_live)
-      ignored("InputOptions::is_live");
-    if (in.do_timestamp != defaults.do_timestamp)
-      ignored("InputOptions::do_timestamp");
-    if (in.stream_type != defaults.stream_type)
-      ignored("InputOptions::stream_type");
-    if (!in.caps_override.empty())
-      ignored("InputOptions::caps_override");
-    if (in.max_bytes != defaults.max_bytes)
-      ignored("InputOptions::max_bytes");
-    if (in.block != defaults.block)
-      ignored("InputOptions::block");
-    if (in.fps_n != defaults.fps_n || in.fps_d != defaults.fps_d)
-      ignored("InputOptions::fps_n/fps_d");
-    // A model route's Input usually carries the model's own options (Model::input_appsrc_options),
-    // which name the model's input buffer and its preprocess metadata: nothing the caller set.
-    if (!in.buffer_name.empty() && !input.model)
-      ignored("InputOptions::buffer_name");
-    if (in.preprocess_meta.has_value() && in.preprocess_meta->enabled && !input.model)
-      ignored("InputOptions::preprocess_meta");
-  }
-  for (const DataflowOutputConfig& output : config.outputs) {
-    if (output.output.sync)
-      ignored("OutputOptions::sync");
-  }
-}
 
 InputOptions dataflow_seed_input_options(const Graph& graph) {
   const DataflowGraphView view = DataflowGraphAccess::view(graph);

@@ -42,8 +42,6 @@
 #include <cctype>
 #include <cstdio>
 #include <functional>
-#include <mutex>
-#include <set>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -54,18 +52,6 @@
 #endif
 
 namespace simaai::neat::runtime {
-
-void dataflow_warn_once(const std::string& key, const std::string& message) {
-  static std::mutex mu;
-  static std::set<std::string> seen;
-  {
-    std::lock_guard<std::mutex> lock(mu);
-    if (!seen.insert(key).second) {
-      return;
-    }
-  }
-  std::fprintf(stderr, "[WARN] %s\n", message.c_str());
-}
 
 namespace {
 
@@ -223,7 +209,6 @@ std::shared_ptr<RunCore> build_impl(const Graph& graph, const RunOptions& opt, R
   core->opt = config.run;
   core->mode = RunMode::Async;
   core->dataflow_ = make_dataflow_run_state(*core, config, seed.tensors);
-  warn_ignored_dataflow_options(config);
   // RunOptions::power_monitor (deprecated): the board's rails sampled for the Run's lifetime, from
   // its build to its stop, as GStreamer's Run samples them (MeasureReport::power, the exports).
   if (core->opt.power_monitor.enabled) {
