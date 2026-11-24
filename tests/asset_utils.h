@@ -741,7 +741,13 @@ inline std::string resolve_yolov8s_strict_mpk_tar(const fs::path& root = {}) {
     std::cerr << name << "=" << value << " is not a .tar.gz MPK with a *_mpk.json\n";
     return "";
   }
-  const std::string modelzoo = resolve_modelzoo_tar("yolo_v8s", root);
+  std::string modelzoo = resolve_modelzoo_tar("yolo_v8s", root);
+  if (!modelzoo.empty() && !is_strict_mpk_tar_gz(modelzoo)) {
+    // A cached archive without *_mpk.json would be returned again on every run.
+    std::error_code ec;
+    fs::remove(modelzoo, ec);
+    modelzoo = resolve_modelzoo_tar("yolo_v8s", root);
+  }
   if (!modelzoo.empty() && is_strict_mpk_tar_gz(modelzoo))
     return modelzoo;
   return "";
