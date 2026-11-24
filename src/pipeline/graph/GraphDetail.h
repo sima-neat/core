@@ -177,6 +177,9 @@ struct Graph::CompositionGraph {
   std::vector<NamedFragment> named_fragments;
   VertexId tail = kInvalid;
   bool endpoint_mode = false;
+  // GraphOptions::element_name_prefix and element_name_suffix as the Graph's creator gave them,
+  // before the constructor numbers an empty suffix for GStreamer's element names.
+  NameTransform creator_names;
 
   struct ImportedFragment {
     std::uint64_t source_version = 0;

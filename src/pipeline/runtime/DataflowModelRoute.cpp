@@ -14,6 +14,7 @@
 #include "pipeline/internal/ErrorUtil.h"
 #include "pipeline/internal/InputPolicy.h"
 #include "pipeline/internal/InputStreamUtil.h"
+#include "pipeline/internal/PipelineBuild.h"
 #include "pipeline/internal/RenderedMlaContractQuery.h"
 #include "pipeline/internal/SampleUtil.h"
 #include "pipeline/internal/sima/BoxDecodeGeometry.h"
@@ -336,7 +337,9 @@ std::string kernel_caps_format_of(const std::string& token, const std::string& f
   return up;
 }
 
-// The stage's name, as GStreamer names its element before the per-pipeline numbering.
+// The stage's name: its name in the model package, with the prefix and suffix the Graph's creator
+// set (plan_dataflow_model_route), as GStreamer's publication keys the stage
+// (stage_key_from_stage_spec_local).
 std::string stage_key_of(const si::StageStaticSpec& stage) {
   return stage.logical_stage_id.empty() ? stage.element_name : stage.logical_stage_id;
 }
@@ -1485,12 +1488,25 @@ plan_dataflow_model_route(const std::vector<std::shared_ptr<Node>>& route,
                           const GraphOptions& options, const InputOptions& declared,
                           std::span<const Tensor> seed,
                           pipeline_internal::DataflowNotCarried* why) {
-  const std::optional<si::SimaPluginStaticManifest> manifest =
+  std::optional<si::SimaPluginStaticManifest> manifest =
       dataflow_model_manifest(route, options, why);
   if (!manifest) {
     return nullptr;
   }
   check_seed_preprocess(route, options, seed);
+  // A prefix or suffix in `options` names the stages as GStreamer's build names its elements
+  // (apply_name_transform over the manifest's stages): the route's stage key, and the Sample label
+  // drawn from it, carry it. Without one a stage keeps its name in the model package.
+  const NameTransform names = make_name_transform(options);
+  if (name_transform_enabled(names)) {
+    for (si::StageStaticSpec& stage : manifest->stages) {
+      stage.element_name = apply_name_transform(names, stage.element_name);
+      stage.logical_stage_id = apply_name_transform(names, stage.logical_stage_id);
+      for (si::InputBindingStaticSpec& binding : stage.input_bindings) {
+        binding.src_stage_id = apply_name_transform(names, binding.src_stage_id);
+      }
+    }
+  }
   std::string ev74_obstacle;
 #if defined(SIMANEAT_WITH_DATAFLOW_SOC_KERNELS)
   // Asked only of a route with a kernel stage on the EV74. Cold: sysfs is read; nothing is

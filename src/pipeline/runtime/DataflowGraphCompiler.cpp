@@ -54,7 +54,10 @@ struct __attribute__((visibility("hidden"))) DataflowGraphView {
   // A Model's own build of the Graph (ModelRouteScope): every vertex between its Input and its
   // Output is a stage of that Model.
   std::shared_ptr<const pipeline_internal::ModelRouteOrigin> origin;
-  GraphOptions options; // the Graph's options, as its build reads them
+  // The Graph's options, as its build reads them, except the element-name prefix and suffix: the
+  // ones the Graph's creator set (empty when unset; the constructor's numbered suffix names
+  // GStreamer's elements only).
+  GraphOptions options;
   bool linear = true;
   std::string name;
   std::vector<std::shared_ptr<Node>> vertices;
@@ -77,6 +80,8 @@ DataflowGraphView DataflowGraphAccess::view(const Graph& graph) {
   out.model_route = static_cast<bool>(graph.input_route_processor_);
   out.linear = composition.linear;
   out.options = composition.options;
+  out.options.element_name_prefix = graph.composition_->creator_names.prefix;
+  out.options.element_name_suffix = graph.composition_->creator_names.suffix;
   out.name = composition.graph_name;
   out.vertices = composition.vertices;
   for (const auto& stage : composition.runtime_vertices) {

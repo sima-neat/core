@@ -358,8 +358,14 @@ struct GraphOptions {
   int callback_timeout_ms = 1000; ///< Maximum time a user callback (e.g., `set_tensor_callback`)
                                   ///< may take before the framework intervenes.
   /// Prefix prepended to every generated GStreamer element name (sanitized to valid characters).
+  /// On the Dataflow backend, when set, it is prepended to the stage key of each output
+  /// (`TensorRouteMeta::stage_key`) and to a Sample label drawn from the stage's name, as on
+  /// GStreamer.
   std::string element_name_prefix;
   /// Suffix appended to every generated GStreamer element name (sanitized to valid characters).
+  /// Left empty, GStreamer element names get a per-process Graph number instead. On the Dataflow
+  /// backend, when set, it is appended to the stage key of each output and to a Sample label
+  /// drawn from the stage's name, as on GStreamer; left empty, nothing is appended.
   std::string element_name_suffix;
   /// Diagnostic verbosity for this Graph.
   VerboseOptions verbose;

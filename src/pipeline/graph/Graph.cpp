@@ -368,6 +368,7 @@ Graph::Graph(const GraphOptions& opt)
   opt_.resolve_advanced_execution();
   graph_id_ = next_graph_id();
   verbose_guard_ = pipeline_internal::ux::acquire_runtime_verbosity(opt_.verbose);
+  composition_->creator_names = NameTransform{opt_.element_name_prefix, opt_.element_name_suffix};
   if (opt_.element_name_suffix.empty()) {
     const std::uint64_t id = g_pipeline_instance.fetch_add(1) + 1;
     opt_.element_name_suffix = "_" + std::to_string(id);

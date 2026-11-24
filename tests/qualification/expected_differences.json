@@ -33,7 +33,7 @@
    "state": "active",
    "check": "fields",
    "must_observe": false,
-   "decision": "DECISIONS.md 5 (the tensor placement difference owned by agent stages; plan-entry.md 2.3 B30)",
+   "decision": "DECISIONS.md 5 and 24: a permanent documented difference (the tensor's place in its storage; route.memory_index and the segment list name the same address; Dataflow's values equal GStreamer's own under OutputMemory::Owned); plan-entry.md 2.3 B30",
    "gstreamer": "a pulled tensor is a view into the GStreamer buffer of the last stage: segments allocation_0 (the stage's input) and allocation_1 (its output, page-rounded size), the tensor's route naming allocation_1 (memory and physical index 1); a BoxDecode BBOX sits at byte 384 of a 4,096-byte buffer (E4.md)",
    "dataflow": "a view into the one output slot of the last port: one segment allocation_0 of the output's own size, route memory and physical index 0, the BBOX at byte 0",
    "fields": [
@@ -57,7 +57,7 @@
    "state": "active",
    "check": "fields",
    "must_observe": false,
-   "decision": "DECISIONS.md 5 (the tensor placement difference owned by agent stages; plan-entry.md 2.3 B30)",
+   "decision": "DECISIONS.md 5 and 24: a permanent documented difference (the tensor's place in its storage; route.memory_index and the segment list name the same address; Dataflow's values equal GStreamer's own under OutputMemory::Owned); plan-entry.md 2.3 B30",
    "gstreamer": "the storage lists the last stage's allocations by name and size (its input and output for a cast or dequant stage)",
    "dataflow": "one segment, allocation_0, of the output slot's size",
    "fields": [
@@ -71,13 +71,13 @@
   },
   {
    "id": "route_stage_key_instance_suffix",
-   "kind": "proposed",
+   "kind": "kept",
    "state": "active",
    "check": "fields",
    "must_observe": true,
-   "decision": "needed (DECISIONS.md D8 class); S8c keeps Dataflow's: the counter numbers the GStreamer elements the process has built (each GStreamer build, the cold ones included), which a Dataflow Run cannot know without GStreamer; for the owner (pending item J)",
-   "gstreamer": "Tensor::route.stage_key is the stage's element name with the element instance counter of the process: post_cast_0_1 on the first Run built, post_cast_0_5 on the second",
-   "dataflow": "the stage's name without the counter (post_cast_0), the same on every Run",
+   "decision": "DECISIONS.md 23: a permanent documented difference. Dataflow names a stage by its name in the model package; GStreamer's element names carry Core's per-process Graph number (Graph's constructor fills an empty GraphOptions::element_name_suffix with _<n>). A prefix or suffix the customer sets in GraphOptions applies on both backends (unit_run_stage_key_test)",
+   "gstreamer": "Tensor::route.stage_key is the stage's element name, which carries Core's per-process Graph number when GraphOptions::element_name_suffix is empty: post_cast_0_1 for one Graph the process built, post_cast_0_5 for a later one",
+   "dataflow": "the stage's name in the model package (post_cast_0), the same in every process and Run",
    "fields": [
     "tensors[*].route.stage_key"
    ],

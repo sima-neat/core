@@ -622,10 +622,17 @@ struct I420Mapped {
  * (`stage_key`), what logical output index, where in physical memory, and the user-facing
  * name. Most application code doesn't read this — it's used by the framework's pull
  * machinery to assemble correct `Sample` payloads.
+ *
+ * `name` and `logical_index` identify an output. `stage_key` names the stage that produced
+ * it inside the model package (for example `post_cast_0` or `boxdecode`). On the GStreamer
+ * backend it is the stage's element name, which carries a per-process Graph number
+ * (`post_cast_0_3`) unless the Graph's creator set `GraphOptions::element_name_suffix`; on
+ * the Dataflow backend it carries no number. A prefix or suffix set in `GraphOptions` is part
+ * of it on both backends.
  * @ingroup tensors
  */
 struct TensorRouteMeta {
-  std::string stage_key;            ///< Producing stage's identifier.
+  std::string stage_key;            ///< Producing stage's name inside the model package.
   int logical_index = -1;           ///< Logical output index (user-facing).
   int backend_output_index = -1;    ///< Backend output index (per-stage; may differ from logical).
   int route_slot = -1;              ///< Internal route-graph slot ID.

@@ -152,7 +152,7 @@ struct DataflowPulledTensor {
   /// (fill_dataflow_stage_tensors). The one flag a pull reads on its way to the one dense tensor
   /// of every other route; set once, when the route is planned.
   bool beyond_leaf = false;
-  std::string stage_key; ///< the stage's name
+  std::string stage_key; ///< the stage's name in the model package, with the Graph's set names
   /// Sample::stream_label and segment_name: the stage's name for an MLA stage, the stage's
   /// published output name for a kernel stage (TensorStagePublication::output_name).
   std::string sample_label;
@@ -248,7 +248,8 @@ bool dataflow_has_model_route() noexcept;
 // The stages of `route` when every stage is one this backend can carry; null with `why`
 // otherwise: plan_dataflow_route_stages of its manifest (dataflow_model_manifest,
 // DataflowRoutePlan.h), with the board's EV74 asked for a route with a kernel stage on the EV74
-// (soc::ev74_runs_kernels_firmware).
+// (soc::ev74_runs_kernels_firmware). The element-name prefix and suffix of `options`, when set,
+// name the stages as GStreamer's build names its elements.
 std::shared_ptr<const DataflowModelRoute>
 plan_dataflow_model_route(const std::vector<std::shared_ptr<Node>>& route,
                           const GraphOptions& options, const InputOptions& declared,
