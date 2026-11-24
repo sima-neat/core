@@ -153,12 +153,15 @@ RUN_TEST("unit_ssd300_class_selection_admission_test", ([] {
                        full_contract.payload.ssd_class_selection.selected_count == kEncodedClasses,
                    "without num_classes the SSD300 contract must select all 81 encoded classes");
 
-           bool over_rejected = false;
+           std::string over_error;
            try {
              Model over(fixture.tar_path, ssd300_options(kEncodedClasses + 10));
              (void)internal::ModelAccess::build_boxdecode_stage_contract(over, false);
-           } catch (const std::exception&) {
-             over_rejected = true;
+           } catch (const std::exception& error) {
+             over_error = error.what();
            }
-           require(over_rejected, "num_classes above the 81 encoded classes must be rejected");
+           require(over_error.find("num_classes=91 exceeds the 81 classes encoded") !=
+                       std::string::npos,
+                   "num_classes = 91 must be rejected because the heads encode 81 classes, got: " +
+                       (over_error.empty() ? std::string("no error") : over_error));
          }));
