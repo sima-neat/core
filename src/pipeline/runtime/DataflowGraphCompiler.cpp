@@ -667,6 +667,11 @@ std::optional<DataflowRunConfig> plan_dataflow_run(const Graph& graph, const Run
                                                    const DataflowSeed& seed, const char* where,
                                                    DataflowNotCarried* why) {
   const DataflowGraphView view = DataflowGraphAccess::view(graph);
+  if (view.linear && (!seed.tensors.empty() || !seed.unsupported.empty())) {
+    // A seeded build of a linear graph without an Input, or with a source, is the application's
+    // mistake: GStreamer's build refuses it first, and so does this one, with its text.
+    enforce_push_run_mode(view.vertices, "Graph::build(input)");
+  }
   Qualification q = qualify(view);
   if (q.declined) {
     *why = std::move(q.declined);
