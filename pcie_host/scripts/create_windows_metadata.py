@@ -34,12 +34,12 @@ def metadata(msi: Path, wheel: Path, version: str, branch: str, commit: str,
   resources = []
   openssh = "Install the Windows OpenSSH Client optional feature and reopen the terminal."
   platform_driver = (
-      f"Install the SiMa Platform 3.0 Windows host package whose drivers report version "
-      f"{platform_version}, as described in the PCIe Driver Installation guide "
-      "(https://developer.sima.ai/hardware/getting-started/pcie-mode/driver-installation). "
-      "If no device is found although that package is installed, Windows did not load the "
-      "test-signed driver or has not detected the card. The driver loads only with Secure Boot "
-      "off and test-signing on: in PowerShell started as administrator, Confirm-SecureBootUEFI "
+      "Install the SiMa Platform 3.0 Windows host package with "
+      "`sima-cli install drivers/windows` from PowerShell started as administrator; its "
+      f"drivers report version {platform_version}. If a device is missing although that "
+      "package is installed, Windows did not load the package's test-signed virtual Ethernet "
+      "driver (SiMaNetAdapter) or has not detected the card. That driver loads only with Secure "
+      "Boot off and test-signing on: in PowerShell started as administrator, Confirm-SecureBootUEFI "
       "must print False and bcdedit must list testsigning Yes. If both are set, check that the "
       "card is seated and powered, then shut the host down and power it on."
   )
@@ -61,8 +61,8 @@ def metadata(msi: Path, wheel: Path, version: str, branch: str, commit: str,
               "type": "windows-service",
               "value": "SiMaMlaDaemon",
               "guidance": (
-                  "Install the compatible SiMa Platform 3.0 Windows package and start "
-                  "the SiMaMlaDaemon service."
+                  "Install the SiMa Platform 3.0 Windows package with "
+                  "`sima-cli install drivers/windows` and start the SiMaMlaDaemon service."
               ),
           },
           {

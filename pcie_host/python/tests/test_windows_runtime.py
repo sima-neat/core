@@ -63,6 +63,7 @@ class WindowsRuntimeTests(unittest.TestCase):
     self.assertIn(str(Path("/program-files/SimaPCIeHost/bin")), message)
     self.assertIn(str(Path("/gstreamer/bin")), message)
     self.assertIn("SIMA_PCIE_HOST_LIBRARY_PATH", message)
+    self.assertIn("sima-cli install drivers/windows", message)
 
   def test_loaded_dll_outside_approved_directories_is_rejected(self):
     with tempfile.TemporaryDirectory() as directory:

@@ -132,8 +132,9 @@ def extension_load_error(error, directories):
   searched = "; ".join(str(path) for path in directories) or "none"
   return ImportError(
       f"{error}. PyNeatPCIe searched for the Neat PCIe host, SiMa Platform and GStreamer "
-      f"DLLs in: {searched}. Install the Platform package and GStreamer MSVC x64 that this "
-      "release requires, run sima-pcie-host-doctor.cmd, or set SIMA_PCIE_HOST_LIBRARY_PATH "
+      f"DLLs in: {searched}. Install the Platform package with sima-cli install "
+      "drivers/windows and the GStreamer MSVC x64 that this release requires, run "
+      "sima-pcie-host-doctor.cmd, or set SIMA_PCIE_HOST_LIBRARY_PATH "
       "to the directories that contain them.")
 
 

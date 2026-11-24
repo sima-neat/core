@@ -30,7 +30,7 @@ if defined _SIMA_PCIE_HOST_SERVICE for %%K in (%_SIMA_PCIE_HOST_SERVICE%) do if 
 set "_SIMA_PCIE_HOST_SERVICE="
 if not exist "%SIMA_WINDOWS_PLATFORM_RUNTIME_DIR%\SiMaPCIe.dll" (
   1>&2 echo Neat PCIe host: the SiMa Platform runtime was not found at "%SIMA_WINDOWS_PLATFORM_RUNTIME_DIR%".
-  1>&2 echo Install the supported Platform package or set SIMA_WINDOWS_PLATFORM_RUNTIME_DIR to its runtime directory.
+  1>&2 echo Install the Platform package with sima-cli install drivers/windows or set SIMA_WINDOWS_PLATFORM_RUNTIME_DIR to its runtime directory.
   exit /b 3
 )
 

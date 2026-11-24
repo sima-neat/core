@@ -11,10 +11,10 @@ if not "%errorlevel%"=="0" (
   exit /b 10
 )
 
-rem Informational only: the test-signed Platform driver loads only with Secure Boot off and
-rem test-signing on. SystemStartOptions is readable without elevation; Confirm-SecureBootUEFI
-rem may not be.
-"%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe" -NoLogo -NoProfile -NonInteractive -Command "if (Get-CimInstance Win32_PnPEntity -Filter 'Name=''SiMa.ai MLA Device'' AND ConfigManagerErrorCode=0' -ErrorAction SilentlyContinue) { exit 0 }; try { $secureBoot = if (Confirm-SecureBootUEFI -ErrorAction Stop) { 'on' } else { 'off' } } catch { $secureBoot = 'unknown, run Confirm-SecureBootUEFI from an elevated PowerShell to check' }; try { $testSigning = if ((Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control' -ErrorAction Stop).SystemStartOptions -match 'TESTSIGNING') { 'on' } else { 'off' } } catch { $testSigning = 'unknown, run bcdedit from an elevated PowerShell to check' }; [Console]::Error.WriteLine('Neat PCIe host: no working SiMa.ai MLA Device. The test-signed Platform driver loads only with Secure Boot off and test-signing on.'); [Console]::Error.WriteLine('Neat PCIe host: Secure Boot: ' + $secureBoot + '; test-signing: ' + $testSigning + '.')"
+rem Informational only: the Platform package's test-signed SiMaNetAdapter driver loads only
+rem with Secure Boot off and test-signing on. SystemStartOptions is readable without
+rem elevation; Confirm-SecureBootUEFI may not be.
+"%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe" -NoLogo -NoProfile -NonInteractive -Command "if (Get-CimInstance Win32_PnPEntity -Filter 'Name=''SiMa.ai MLA Device'' AND ConfigManagerErrorCode=0' -ErrorAction SilentlyContinue) { exit 0 }; try { $secureBoot = if (Confirm-SecureBootUEFI -ErrorAction Stop) { 'on' } else { 'off' } } catch { $secureBoot = 'unknown, run Confirm-SecureBootUEFI from an elevated PowerShell to check' }; try { $testSigning = if ((Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control' -ErrorAction Stop).SystemStartOptions -match 'TESTSIGNING') { 'on' } else { 'off' } } catch { $testSigning = 'unknown, run bcdedit from an elevated PowerShell to check' }; [Console]::Error.WriteLine('Neat PCIe host: no working SiMa.ai MLA Device. Install the Platform package with sima-cli install drivers/windows. Its test-signed SiMaNetAdapter driver loads only with Secure Boot off and test-signing on.'); [Console]::Error.WriteLine('Neat PCIe host: Secure Boot: ' + $secureBoot + '; test-signing: ' + $testSigning + '.')"
 
 rem Service status names are not translated; service-control text is.
 "%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe" -NoLogo -NoProfile -NonInteractive -Command "if ((Get-Service -Name SiMaMlaDaemon -ErrorAction Stop).Status -ne 'Running') { exit 1 }" >nul 2>nul

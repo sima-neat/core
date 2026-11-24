@@ -74,6 +74,8 @@ class WindowsMetadataTests(unittest.TestCase):
         "SiMaMlaDaemon",
         [item.get("value") for item in prerequisites],
     )
+    service = next(item for item in prerequisites if item["value"] == "SiMaMlaDaemon")
+    self.assertIn("sima-cli install drivers/windows", service["guidance"])
     platform_drivers = [
         item for item in prerequisites if item["type"] == "windows-pnp-driver"
     ]
@@ -122,7 +124,9 @@ class WindowsMetadataTests(unittest.TestCase):
     for driver in platform_drivers:
       with self.subTest(driver=driver["value"]):
         self.assertIn("version 3.0.0.2", driver["guidance"])
-        self.assertIn("pcie-mode/driver-installation", driver["guidance"])
+        self.assertIn("sima-cli install drivers/windows", driver["guidance"])
+        self.assertNotIn("driver-installation", driver["guidance"])
+        self.assertIn("test-signed virtual Ethernet driver (SiMaNetAdapter)", driver["guidance"])
         self.assertIn("has not detected the card", driver["guidance"])
         self.assertIn("Secure Boot off and test-signing on", driver["guidance"])
         self.assertIn("Confirm-SecureBootUEFI must print False", driver["guidance"])

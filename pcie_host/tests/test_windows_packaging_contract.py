@@ -216,6 +216,8 @@ class WindowsPackagingContract(unittest.TestCase):
 
     environment = read_source("scripts/windows/sima-pcie-host-env.cmd")
     self.assertIn("SIMA_WINDOWS_PLATFORM_RUNTIME_DIR", environment)
+    self.assertIn("Install the Platform package with sima-cli install drivers/windows",
+                  environment)
     # sc.exe labels and states are translated with the display language; the registry
     # value name, its type and the PowerShell status name are not.
     self.assertNotIn("sc.exe", environment)
@@ -362,6 +364,10 @@ class WindowsPackagingContract(unittest.TestCase):
     self.assertIn("catch { $secureBoot = 'unknown, run Confirm-SecureBootUEFI from an "
                   "elevated PowerShell to check' }", line)
     self.assertIn("Secure Boot off and test-signing on", line)
+    # Only the virtual Ethernet driver is test-signed; the MLA driver is not.
+    self.assertIn("sima-cli install drivers/windows", line)
+    self.assertIn("test-signed SiMaNetAdapter driver", line)
+    self.assertNotIn("test-signed Platform driver", doctor)
     # One cmd.exe-quoted argument: no inner double quotes or %-expansion.
     command = line.split(' -Command "', 1)[1]
     self.assertTrue(command.endswith('"'))
