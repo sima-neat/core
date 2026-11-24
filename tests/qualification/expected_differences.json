@@ -28,24 +28,6 @@
    }
   },
   {
-   "id": "sample_caps_string",
-   "kind": "interim",
-   "state": "active",
-   "check": "fields",
-   "must_observe": true,
-   "until": "S8c (the Sample fields Dataflow can derive from the route)",
-   "decision": "plan-entry.md 2.3 B12; E4.md (caps_string is a route fact: one of three forms)",
-   "gstreamer": "the caps of the route's last stage: the EVXX form for one tensor of a cast or dequant stage, the tensor-set form otherwise (E4.md)",
-   "dataflow": "empty; every other Sample field (media_type, payload_tag, format, stream_label, segment_name, stream_id, kind) already equal",
-   "fields": [
-    "sample.caps_string"
-   ],
-   "relation": {
-    "gstreamer": "re:application/vnd\\.simaai\\.tensor, .+",
-    "dataflow": ""
-   }
-  },
-  {
    "id": "output_allocation_layout",
    "kind": "kept",
    "state": "active",
@@ -53,7 +35,7 @@
    "must_observe": false,
    "decision": "DECISIONS.md 5 (the tensor placement difference owned by agent stages; plan-entry.md 2.3 B30)",
    "gstreamer": "a pulled tensor is a view into the GStreamer buffer of the last stage: segments allocation_0 (the stage's input) and allocation_1 (its output, page-rounded size), the tensor's route naming allocation_1 (memory and physical index 1); a BoxDecode BBOX sits at byte 384 of a 4,096-byte buffer (E4.md)",
-   "dataflow": "a view into the one output slot of the last port: one segment allocation_0 of the output's own size, route memory and physical index 0, the BBOX at byte 0",
+   "dataflow": "a view into the one output slot of the last port: one segment of the output's own size, named as GStreamer names the stage's output allocation (allocation_1 behind a kernel on the A65, allocation_0 otherwise), route memory index 0 and physical index that allocation's, the BBOX at byte 0",
    "fields": [
     "tensors[*].storage.size_bytes",
     "tensors[*].byte_offset",
@@ -77,13 +59,13 @@
    "must_observe": false,
    "decision": "DECISIONS.md 5 (the tensor placement difference owned by agent stages; plan-entry.md 2.3 B30)",
    "gstreamer": "the storage lists the last stage's allocations by name and size (its input and output for a cast or dequant stage)",
-   "dataflow": "one segment, allocation_0, of the output slot's size",
+   "dataflow": "one segment, the stage's output allocation (allocation_1 behind a kernel on the A65, allocation_0 otherwise), of the output slot's size",
    "fields": [
     "tensors[*].storage.segments"
    ],
    "relation": {
     "gstreamer": "re:\\[.*'allocation_\\d+:\\d+'\\]",
-    "dataflow": "re:\\['allocation_0:\\d+'\\]"
+    "dataflow": "re:\\['allocation_\\d:\\d+'\\]"
    },
    "applies_to": "routes whose last stage is a cast, a dequant or BoxDecode (an EV74 preproc stage last has the same layout on both backends)"
   },
@@ -93,7 +75,7 @@
    "state": "active",
    "check": "fields",
    "must_observe": true,
-   "decision": "needed (DECISIONS.md D8 class: carry it or document it as GStreamer-only); proposed: keep Dataflow's",
+   "decision": "needed (DECISIONS.md D8 class); S8c keeps Dataflow's: the counter numbers the GStreamer elements the process has built (each GStreamer build, the cold ones included), which a Dataflow Run cannot know without GStreamer; for the owner (pending item J)",
    "gstreamer": "Tensor::route.stage_key is the stage's element name with the element instance counter of the process: post_cast_0_1 on the first Run built, post_cast_0_5 on the second",
    "dataflow": "the stage's name without the counter (post_cast_0), the same on every Run",
    "fields": [

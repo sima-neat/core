@@ -131,7 +131,7 @@ DataflowPushOutcome DataflowInputPort::device_push_planes(const DataflowPushItem
       return {};
     }
   }
-  df::Stamp stamp = dataflow_codec::runtime_stamp(pushed.proposal, run_.streams, stream_);
+  df::Stamp stamp = dataflow_codec::runtime_stamp(pushed.proposal, run_.streams, stream_, true);
   stamp.user = frame_word;
   const DataflowModelRoute& route = *config_.model;
   // The slot: the frame's own DMA-BUF, by its descriptor, when the frame is the port's bytes as

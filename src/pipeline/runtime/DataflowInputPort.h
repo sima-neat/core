@@ -625,7 +625,8 @@ inline DataflowPushOutcome DataflowInputPort::push(const DataflowPushItem& pushe
       return {};
     }
   }
-  df::Stamp stamp = dataflow_codec::runtime_stamp(pushed.proposal, run_.streams, stream_);
+  df::Stamp stamp = dataflow_codec::runtime_stamp(pushed.proposal, run_.streams, stream_,
+                                                  config_.model != nullptr);
   bool wrappable = false;
   if (item.size() > 1U || b->binding.is_record()) {
     if (const std::string why = dataflow_record_mismatch(b->binding, item); !why.empty()) {

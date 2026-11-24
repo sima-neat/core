@@ -120,6 +120,9 @@ struct DataflowPulledTensor {
   TensorRouteMeta route; ///< as GStreamer's tensor-set descriptor fills it
   std::optional<QuantSpec> quant;
   std::string format; ///< the caps format token of the output ("EVXX_INT8", "EVXX_FLOAT32")
+  /// Sample::caps_string: the caps GStreamer's publication of the route's last stage gives its
+  /// buffers, as GStreamer serializes them.
+  std::string caps;
   /// A tiled output published as its packed storage (the image preproc's tensor in front of the
   /// MLA): the checked storage description GStreamer's publication gives it (the tile shape, the
   /// axes, the storage bytes), with `format` empty and no strides. Unset: a dense output, whose

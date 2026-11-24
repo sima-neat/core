@@ -430,6 +430,7 @@ Sample pulled_sample(const DataflowInputBinding& binding,
     out.payload_type = PayloadType::Tensor;
     out.payload_tag = pulled->format;
     out.format = pulled->format;
+    out.caps_string = pulled->caps;
     out.stream_label = pulled->sample_label;
     out.segment_name = pulled->sample_label;
     out.output_index = pulled->route.logical_index;

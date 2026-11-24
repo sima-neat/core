@@ -13,6 +13,7 @@
 #include "pipeline/TensorCore.h"
 #include "pipeline/internal/DataflowRuntime.h"
 #include "pipeline/internal/ErrorUtil.h"
+#include "pipeline/internal/InputStreamUtil.h"
 #include "pipeline/internal/SampleProjection.h"
 #include "pipeline/internal/SampleUtil.h"
 #include "pipeline/runtime/DataflowInputBinding.h"
@@ -60,14 +61,18 @@ static_assert(static_cast<std::uint16_t>(StampFlags::Discontinuity) ==
 
 // The runtime's stamp for what a push proposes: the stream interned (an empty name is the input's
 // default stream, `default_stream`), the author's frame_id, source_time (any clock) and flags. emit
-// writes seq and publish_time.
+// writes seq and publish_time. On a model route (`model_route`) a push that proposes no frame_id
+// takes the next of the process's input frame ids, the counter GStreamer's ingress stamps it with
+// there (next_input_frame_id); elsewhere it keeps none, as GStreamer's Input -> Output Run does.
 static inline df::Stamp runtime_stamp(const Stamp& proposal,
                                       pipeline_internal::StreamNames& streams,
-                                      std::uint32_t default_stream) {
+                                      std::uint32_t default_stream, bool model_route) {
   df::Stamp out;
   out.stream = df::StreamId{proposal.stream_name.empty() ? default_stream
                                                          : streams.intern(proposal.stream_name)};
-  out.frame_id = proposal.frame_id >= 0 ? proposal.frame_id : df::kNoFrameId;
+  out.frame_id = proposal.frame_id >= 0 ? proposal.frame_id
+                 : model_route         ? simaai::neat::next_input_frame_id()
+                                       : df::kNoFrameId;
   if (proposal.source_time.valid()) {
     out.source_time = df::TimePoint{proposal.source_time.ns,
                                     static_cast<df::ClockId>(proposal.source_time.clock)};
