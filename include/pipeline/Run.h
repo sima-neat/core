@@ -157,20 +157,17 @@ struct RunAutoExportOptions {
 using GraphRunAutoExportOptions = RunAutoExportOptions;
 
 /**
- * @brief Which runtime executes a Run built by `Graph::build()`.
+ * @brief The runtime that executes a process's Models and Graphs (`simaai::neat::set_backend`,
+ * `neat/runtime.h`).
  *
- * `GStreamer` is the established runtime. `Dataflow` is the Neat Dataflow runtime, available only
- * in builds configured with it, and only for graphs it supports: in this release, exactly one
- * public `Input` connected to one public `Output`. `Auto` selects `Dataflow` when the environment
- * variable `SIMA_NEAT_BACKEND=dataflow` is set, the build has the Dataflow runtime and the graph
- * qualifies, and `GStreamer` otherwise. An explicit `Dataflow` request that the build or the graph
- * cannot honor fails `Graph::build()` with a `NeatError`; it never falls back silently.
+ * `Dataflow` is the Neat Dataflow runtime, available in builds configured with it. A Run it does
+ * not carry fails at its build with a `NeatError` that names what is not carried and how to select
+ * `GStreamer`; nothing is built on GStreamer in its place. `GStreamer` is the GStreamer runtime.
  * @ingroup pipeline
  */
 enum class RunBackend {
-  Auto = 0,  ///< Dataflow with `SIMA_NEAT_BACKEND=dataflow` and a qualifying graph; else GStreamer.
-  GStreamer, ///< Always the GStreamer runtime.
-  Dataflow,  ///< The Neat Dataflow runtime; a build error when unavailable for this graph.
+  Dataflow,  ///< The Neat Dataflow runtime.
+  GStreamer, ///< The GStreamer runtime.
 };
 
 /**
@@ -275,14 +272,6 @@ struct RunOptions {
    * pushing thread; keep it short.
    */
   std::function<void(const struct InputDropInfo&)> on_input_drop;
-
-  /**
-   * @brief Runtime that executes this Run (see `RunBackend`).
-   *
-   * Read by `Graph::build()`; `Auto` takes `SIMA_NEAT_BACKEND` when it is set, and otherwise the
-   * process's backend (`simaai::neat::set_backend`, `neat/runtime.h`).
-   */
-  RunBackend backend = RunBackend::Auto;
 };
 
 /**

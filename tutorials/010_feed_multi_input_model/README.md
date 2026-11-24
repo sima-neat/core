@@ -79,7 +79,7 @@ bundle_fields=2
 [OK] 010_feed_multi_input_model
 ```
 
-(The C++ build labels a field by its `port_name`, else its `stream_label`, else its position, so with `SIMA_NEAT_BACKEND=dataflow` the labels read `field_0` and `field_1`. The Python build prints `bundle_fields=2`, `field=0 shape=[48, 64, 3]`, and `field=1 shape=[48, 64, 3]`.) To integrate this chapter's C++ source into your own project with a custom `CMakeLists.txt` (no extras folder required), see [How to Run Tutorials](/tutorials#compile-a-copy-yourself) on the landing page.
+(The C++ build labels a field by its `port_name`, else its `stream_label`, else its position, so on the Dataflow backend (`simaai::neat::set_backend(simaai::neat::RunBackend::Dataflow)`) the labels read `field_0` and `field_1`. The Python build prints `bundle_fields=2`, `field=0 shape=[48, 64, 3]`, and `field=1 shape=[48, 64, 3]`.) To integrate this chapter's C++ source into your own project with a custom `CMakeLists.txt` (no extras folder required), see [How to Run Tutorials](/tutorials#compile-a-copy-yourself) on the landing page.
 
 ## In Practice
 

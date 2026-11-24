@@ -763,12 +763,14 @@ private:
                         std::memory_order_relaxed);
   }
 
-  // With SIMA_NEAT_BACKEND set (the [NEAT] lines of DataflowBackendSelect.cpp), each input's
+  // With SIMA_GRAPH_DEBUG or SIMA_PIPELINE_DEBUG set (the [NEAT] lines of
+  // DataflowBackendSelect.cpp), each input's
   // Session report as the stop finds it (SessionReport::to_text): its Feed and the Feed's flow
   // limit, its links, operators, Fetches and pools, the Worker. The header names the input's
   // Outputs, whose Fetches the report lists in that order.
   void trace_report() const {
-    if (pipeline_internal::env_str("SIMA_NEAT_BACKEND", "").empty()) {
+    if (!pipeline_internal::env_bool("SIMA_GRAPH_DEBUG", false) &&
+        !pipeline_internal::env_bool("SIMA_PIPELINE_DEBUG", false)) {
       return;
     }
     for (const auto& port : ports_) {

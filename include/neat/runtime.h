@@ -54,6 +54,7 @@ std::future<void> prewarm_runtime_async();
  * A process runs on one backend, `RunBackend::GStreamer` unless the program selects another. Call
  * this before the program constructs its first `Model` or builds its first `Graph`: every
  * `Model`, `Graph`, `Run`, `Model::Runner` and benchmark of the process then runs on `backend`.
+ * This call is the only selector: no option of a Run and no environment variable chooses one.
  *
  * The first `Model` constructed or `Graph` built fixes the backend for the rest of the process,
  * whether or not that object still exists and whether or not its build succeeded. Until then the

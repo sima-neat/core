@@ -1815,13 +1815,11 @@ NB_MODULE(_pyneat_core, m) {
 
   nb::enum_<simaai::neat::RunBackend>(
       m, "RunBackend",
-      "Which runtime executes a Run built by Graph.build() (RunOptions.backend). Auto takes "
-      "Dataflow when SIMA_NEAT_BACKEND=dataflow is set, the build has the Dataflow runtime and the "
-      "graph qualifies (one Input connected to one Output), else GStreamer. An explicit Dataflow "
-      "that cannot be honored fails Graph.build() with NeatError; it never falls back.")
-      .value("Auto", simaai::neat::RunBackend::Auto)
-      .value("GStreamer", simaai::neat::RunBackend::GStreamer)
-      .value("Dataflow", simaai::neat::RunBackend::Dataflow);
+      "The runtime that executes the process's Models and Graphs (set_backend). A Run Dataflow "
+      "does not carry fails at its build with NeatError, which names what is not carried and how "
+      "to select GStreamer; it never falls back.")
+      .value("Dataflow", simaai::neat::RunBackend::Dataflow)
+      .value("GStreamer", simaai::neat::RunBackend::GStreamer);
 
   nb::enum_<OutputMemory>(m, "OutputMemory")
       .value("Auto", OutputMemory::Auto)
@@ -3163,8 +3161,6 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("run_export", &RunOptions::run_export)
       .def_rw("graph_run_export", &RunOptions::graph_run_export)
       .def_rw("on_input_drop", &RunOptions::on_input_drop)
-      .def_rw("backend", &RunOptions::backend,
-              "Runtime that executes this Run (RunBackend); Auto by default.")
       .def(
           "enable_board_power",
           [](RunOptions& self, int sample_interval_ms) -> RunOptions& {

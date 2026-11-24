@@ -422,11 +422,11 @@ void no_fallback_to_gstreamer() {
   }
 }
 
-// With SIMA_NEAT_BACKEND set, Run::stop prints each input's Session report (SessionReport::to_text)
+// With SIMA_GRAPH_DEBUG set, Run::stop prints each input's Session report (SessionReport::to_text)
 // under a [NEAT] line naming the input and its Outputs.
 void stop_prints_the_session_report() {
   std::string text;
-  ::setenv("SIMA_NEAT_BACKEND", "dataflow", 1);
+  ::setenv("SIMA_GRAPH_DEBUG", "1", 1);
   {
     StderrCapture capture;
     Graph g = input_output(InputOptions{}, OutputOptions{});
@@ -438,7 +438,7 @@ void stop_prints_the_session_report() {
     run.close();
     text = capture.text();
   }
-  ::unsetenv("SIMA_NEAT_BACKEND");
+  ::unsetenv("SIMA_GRAPH_DEBUG");
   for (const char* line :
        {"[NEAT] Run::stop: input [", ", outputs [", "[NEAT]   session  dropped_frames 0",
         "[NEAT]   feed     input", "pushes 2", "[NEAT]   link     input.0 -> output.0",

@@ -622,7 +622,7 @@ else:
 - `run.push(...)`, `run.try_push(...)`, and `run([tensor])` take a list, as in C++; a single Tensor is refused.
 - `run.on_output("out", callback)` calls `callback(tensors)` with each item's list on a thread the `Run` owns, with the GIL held. `run.stop()`, `run.close()`, and dropping the last reference to the `Run` release the GIL while they wait for a callback in progress. If the callback raises, delivery ends, the exception is reported through `sys.unraisablehook`, and `run.last_error()` names it; the process keeps running.
 - `run.alloc("points")` returns a writable Tensor of the bound shape; fill it with `tensor.copy_from(array)`, then push it with `run.push("points", [tensor])`, its commit.
-- `pn.Tensor.record([a, b])`, `tensor.with_stamp(pn.Stamp(frame_id=7))`, `tensor["0"]`, `tensor[0]`, `tensor.fields()`, and `tensor.leaves()` mirror the C++ record accessors; `pn.to_tensor(sample)` and `pn.to_sample(tensor)` are the projection. `RunOptions.backend` takes `pn.RunBackend.Auto`, `GStreamer`, or `Dataflow`.
+- `pn.Tensor.record([a, b])`, `tensor.with_stamp(pn.Stamp(frame_id=7))`, `tensor["0"]`, `tensor[0]`, `tensor.fields()`, and `tensor.leaves()` mirror the C++ record accessors; `pn.to_tensor(sample)` and `pn.to_sample(tensor)` are the projection. `pn.set_backend(pn.RunBackend.GStreamer)` (or `Dataflow`), called before the program constructs its first Model or builds its first Graph, selects the process's backend; `pn.backend()` reads it.
 
 ## Connect live fragments
 

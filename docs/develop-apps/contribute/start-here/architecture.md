@@ -1302,7 +1302,13 @@ uploaded per frame.
 * `pull(...)` dequeues outputs from the appsink: a `Result<TensorList>`, or a `Sample` from `pull(timeout_ms, sample)`
 * `try_push(...)` applies `RunOptions::overflow_policy` immediately when the input queue is full
 
-`RunOptions::backend` selects the runtime behind the same `Run` surface. On the Neat
+`simaai::neat::set_backend(RunBackend)` (`neat/runtime.h`; Python `pyneat.set_backend`)
+selects the runtime behind the same `Run` surface, once for the process: the first `Model`
+constructed or `Graph` built fixes it, and a later call with the other value throws. No option of
+a Run and no environment variable selects one. There is no fallback: a graph, an option or a
+model route the Dataflow backend does not carry fails its build with an error that names what is
+not carried and the call that selects GStreamer, and so does a Run whose build on Dataflow fails
+(a model or a device pool it cannot set up). On the Neat
 Dataflow backend (an opt-in build with `SIMANEAT_DATAFLOW_SOURCE_DIR`, for graphs of public
 `Input`s feeding public `Output`s, each `Output` fed by one `Input`), each input is one Feed
 with one link and one Fetch per output it feeds. A fan-out (one `Graph::input` handle given
@@ -1365,7 +1371,7 @@ The Python binding (`python/src/module.cpp`) exposes the same verbs on Python li
 `Run.try_push` and `Run(tensors)` take a list, `Run.pull_result(name, timeout_ms)` returns a
 `PullResult` (`Result<TensorList>`, whose `value()` is a list), and `Run.pull` keeps returning
 `Sample | None` for one release with a `DeprecationWarning`; `Run.pull_tensors` warns too. It
-also exposes `RunOptions.backend`, the `Stamp` (a frozen value), the record accessors,
+also exposes `set_backend` and `backend`, the `Stamp` (a frozen value), the record accessors,
 `Graph.input`/`Graph.output`, `Run.alloc` (filled with `Tensor.copy_from`) and the
 `to_tensor`/`to_sample` projection. `Run.on_output` runs
 the Python callback on the Run's delivery thread, which takes the GIL; every binding that waits for
@@ -2140,18 +2146,11 @@ The runtime supports environment-driven debugging knobs:
 * `SIMA_GST_TEARDOWN_TIMEOUT_MS` -- wait for NULL state (ms)
 * `SIMA_GST_TEARDOWN_REAPER_MS` -- reaper retry interval (ms)
 * `SIMA_GST_TEARDOWN_ASYNC` -- skip wait, defer to reaper
-* `SIMA_NEAT_BACKEND` -- `dataflow` makes `RunBackend::Auto` (the default
-  `RunOptions::backend`) build a Run on the Neat Dataflow runtime; unset, `auto` or
-  `gstreamer` keep GStreamer. Read at every `Graph::build()`. Only builds configured with
-  `SIMANEAT_DATAFLOW_SOURCE_DIR` carry the Dataflow runtime. There is no fallback: a graph,
-  an option or a model route the Dataflow backend does not carry fails `Graph::build()` with
-  an error that names what is not carried and how to build the Run on GStreamer, and so
-  does a Run whose build on Dataflow fails (a model or a device pool it cannot set up). An
+* `SIMA_GRAPH_DEBUG` / `SIMA_PIPELINE_DEBUG` -- on the Neat Dataflow backend, each
+  `Graph::build()` prints what it built to stderr, and each `Run::stop()` prints each input's
+  session report (its feed and flow limit, links, operators, fetches, pools and worker). An
   input with neither a declared shape nor a seed is bound by its first push, after
-  `Graph::build()`, so an error of its Dataflow session is that push's. When set, each
-  `Graph::build()` on Dataflow prints what it built to stderr, and each `Run::stop()` on
-  Dataflow prints each input's session report (its feed and flow limit, links, operators,
-  fetches, pools and worker). An explicit `RunBackend::Dataflow` does not read the variable.
+  `Graph::build()`, so an error of its Dataflow session is that push's.
 
 These knobs are intentionally outside the public API so you can turn them on in CI or in the field without recompiling.
 There are additional low-level debug flags in `src/pipeline/internal/*` (input stream

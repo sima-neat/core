@@ -55,8 +55,7 @@ struct __attribute__((visibility("hidden"))) DataflowGraphAccess {
 
 #pragma GCC visibility push(hidden)
 
-// One stderr line per process and key: the options Dataflow ignores or clamps, and an unknown
-// SIMA_NEAT_BACKEND value.
+// One stderr line per process and key: the options Dataflow ignores or clamps.
 void dataflow_warn_once(const std::string& key, const std::string& message);
 
 // The seed of a seeded build: the Run's representative input, which binds the (one) input's spec.

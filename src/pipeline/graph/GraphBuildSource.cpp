@@ -3744,7 +3744,7 @@ Run Graph::build(const RunOptions& opt) {
 }
 
 Run Graph::build_source_internal_(const RunOptions& opt) {
-  // RunOptions::backend: before gst_init_once(), so a Run on Dataflow never initializes GStreamer.
+  // The process's backend first: a Run on Dataflow never initializes GStreamer.
   if (auto core = runtime::DataflowGraphAccess::build(*this, opt, RunMode::Async, "Graph::build")) {
     return Run(std::move(core));
   }

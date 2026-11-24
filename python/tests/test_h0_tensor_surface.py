@@ -136,7 +136,8 @@ def test_backend_setting():
   assert exc.value.error_code == "misconfig.option_out_of_range"
   assert "a process runs on one backend" in str(exc.value)
   assert pn.backend() == fixed
-  assert {"GStreamer", "Dataflow"} <= {m.name for m in pn.RunBackend}
+  assert {m.name for m in pn.RunBackend} == {"Dataflow", "GStreamer"}
+  assert not hasattr(pn.RunOptions(), "backend")
   # Before the first build, in a process of its own: the default, and any number of sets.
   values = ["GStreamer"] + (["Dataflow", "GStreamer", "Dataflow"] if _dataflow_available() else [])
   script = "import pyneat as pn\nassert pn.backend() == pn.RunBackend.GStreamer\n" + "".join(

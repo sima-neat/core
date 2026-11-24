@@ -4,7 +4,7 @@
 #endif
 
 // The Dataflow backend's Run state. RunCore holds one in `dataflow_` for a Run that
-// Graph::build() put on the Neat Dataflow runtime (RunOptions::backend), and every public Run entry
+// Graph::build() put on the Neat Dataflow runtime (set_backend), and every public Run entry
 // branches to it before it reads any GStreamer state. The interface uses Core types only; the
 // implementation (DataflowRun.cpp and its DataflowInputPort) holds the runtime objects, and it
 // exists only in builds configured with SIMANEAT_DATAFLOW_SOURCE_DIR.

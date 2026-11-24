@@ -1,5 +1,5 @@
-// Which runtime a Graph::build() takes: an explicit RunOptions::backend, else SIMA_NEAT_BACKEND,
-// else the process's backend (set_backend, BackendSetting.h), which every build fixes.
+// Which runtime a Graph::build() takes: the process's backend (set_backend, BackendSetting.h),
+// which every build fixes.
 // Graph::build's four entries call DataflowGraphAccess::build before gst_init_once(): nullptr is
 // a Run for GStreamer, by that choice alone. A Run for Dataflow is built on Dataflow or the build
 // throws; nothing is built on GStreamer in its place:
@@ -50,23 +50,6 @@
 
 namespace simaai::neat::runtime {
 
-namespace {
-
-constexpr const char* kBackendEnv = "SIMA_NEAT_BACKEND";
-
-std::string lower(std::string value) {
-  std::transform(value.begin(), value.end(), value.begin(),
-                 [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-  return value;
-}
-
-// SIMA_NEAT_BACKEND, read at every Graph::build so a test can set it per run.
-std::string backend_env() {
-  return lower(pipeline_internal::env_str(kBackendEnv, ""));
-}
-
-} // namespace
-
 void dataflow_warn_once(const std::string& key, const std::string& message) {
   static std::mutex mu;
   static std::set<std::string> seen;
@@ -81,38 +64,20 @@ void dataflow_warn_once(const std::string& key, const std::string& message) {
 
 namespace {
 
-// With SIMA_NEAT_BACKEND set, every Graph::build on Dataflow says so and what it built: the
-// evidence a test log needs.
+// With SIMA_GRAPH_DEBUG or SIMA_PIPELINE_DEBUG set, every Graph::build on Dataflow says so and
+// what it built: the evidence a test log needs.
 void trace_choice(const char* where, const char* backend, const std::string& detail) {
-  if (pipeline_internal::env_str(kBackendEnv, "").empty()) {
+  if (!pipeline_internal::env_bool("SIMA_GRAPH_DEBUG", false) &&
+      !pipeline_internal::env_bool("SIMA_PIPELINE_DEBUG", false)) {
     return;
   }
   std::fprintf(stderr, "[NEAT] %s: backend=%s (%s)\n", where ? where : "Graph::build", backend,
                detail.c_str());
 }
 
-// Whether this Run is for Dataflow: RunOptions::backend says it; RunBackend::Auto reads
-// SIMA_NEAT_BACKEND and, without it, the process's backend. Every build fixes the process's
-// backend (use_backend).
-bool wants_dataflow(const RunOptions& opt) {
-  const RunBackend process = pipeline_internal::use_backend();
-  if (opt.backend != RunBackend::Auto) {
-    return opt.backend == RunBackend::Dataflow;
-  }
-  const std::string env = backend_env();
-  if (env.empty()) {
-    return process == RunBackend::Dataflow;
-  }
-  if (env == "auto" || env == "gstreamer") {
-    return false;
-  }
-  if (env != "dataflow") {
-    dataflow_warn_once("env:" + env,
-                       std::string(kBackendEnv) + "=" + env +
-                           " is not a backend (dataflow, gstreamer, auto); using GStreamer");
-    return false;
-  }
-  return true;
+// Whether this Run is for Dataflow: the process's backend, which the build fixes (use_backend).
+bool wants_dataflow() {
+  return pipeline_internal::use_backend() == RunBackend::Dataflow;
 }
 
 using pipeline_internal::DataflowNotCarried;
@@ -245,8 +210,8 @@ template <class... Args> std::shared_ptr<RunCore> build_impl(const Args&...) {
 
 // The common head of the four entries: a Run for GStreamer, or no runtime in this build.
 template <class Build>
-std::shared_ptr<RunCore> dispatch(const RunOptions& opt, const char* where, Build&& build) {
-  if (!wants_dataflow(opt)) {
+std::shared_ptr<RunCore> dispatch(const char* where, Build&& build) {
+  if (!wants_dataflow()) {
     return nullptr;
   }
 #if defined(SIMANEAT_WITH_DATAFLOW)
@@ -263,14 +228,13 @@ std::shared_ptr<RunCore> dispatch(const RunOptions& opt, const char* where, Buil
 
 std::shared_ptr<RunCore> DataflowGraphAccess::build(const Graph& graph, const RunOptions& opt,
                                                     RunMode mode, const char* where) {
-  return dispatch(opt, where,
-                  [&] { return build_impl(graph, opt, mode, DataflowSeed{}, where); });
+  return dispatch(where, [&] { return build_impl(graph, opt, mode, DataflowSeed{}, where); });
 }
 
 std::shared_ptr<RunCore> DataflowGraphAccess::build(const Graph& graph, const RunOptions& opt,
                                                     RunMode mode, const TensorList& seed,
                                                     const char* where) {
-  return dispatch(opt, where, [&] {
+  return dispatch(where, [&] {
     if (seed.empty()) {
       throw std::runtime_error("Graph::build(inputs): empty tensor list");
     }
@@ -283,7 +247,7 @@ std::shared_ptr<RunCore> DataflowGraphAccess::build(const Graph& graph, const Ru
 std::shared_ptr<RunCore> DataflowGraphAccess::build(const Graph& graph, const RunOptions& opt,
                                                     RunMode mode, const Sample& seed,
                                                     const char* where) {
-  return dispatch(opt, where, [&] {
+  return dispatch(where, [&] {
     if (seed.empty()) {
       throw std::runtime_error("Graph::build(inputs): empty sample list");
     }
@@ -294,7 +258,7 @@ std::shared_ptr<RunCore> DataflowGraphAccess::build(const Graph& graph, const Ru
 std::shared_ptr<RunCore> DataflowGraphAccess::build(const Graph& graph, const RunOptions& opt,
                                                     RunMode mode, const std::vector<cv::Mat>& seed,
                                                     const char* where) {
-  return dispatch(opt, where, [&]() -> std::shared_ptr<RunCore> {
+  return dispatch(where, [&]() -> std::shared_ptr<RunCore> {
 #if defined(SIMA_WITH_OPENCV)
     // GStreamer's own checks and texts (Graph::build_seeded_internal).
     if (seed.empty()) {

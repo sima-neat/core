@@ -484,7 +484,6 @@ DataflowRunConfig derive_config(const Graph& graph, const DataflowGraphView& vie
   // RunOptions as given (start_graph_plan; its ingress queue is the given queue_depth): the
   // preset does not reach its ingress.
   config.run = graph_path ? opt : session_build_resolve_build_opt(RunMode::Async, opt);
-  config.run.backend = RunBackend::Dataflow;
   config.link_policy = config.run.overflow_policy;
 
   // One link stands in for both of Core's queues on the way to each Output (RunOptions):

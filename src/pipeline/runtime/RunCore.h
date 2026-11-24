@@ -349,7 +349,7 @@ struct RunCore : std::enable_shared_from_this<RunCore> {
   std::atomic<bool> closed{false};
   bool diag_enabled = false;
   std::atomic<bool> diag_logged{false};
-  // Set when Graph::build put this Run on the Neat Dataflow runtime (RunOptions::backend). Then
+  // Set when Graph::build put this Run on the Neat Dataflow runtime (set_backend). Then
   // `pipeline` and `graph_execution_` stay empty, and every public entry branches to it first.
   std::unique_ptr<DataflowRunState> dataflow_;
 
