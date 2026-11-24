@@ -1,0 +1,296 @@
+{
+ "schema": 1,
+ "about": "The differences between the two backends that a row of expected.json may show and still be `equal`. Each row names what GStreamer gives and what Dataflow gives, why the difference exists and who removes it; the comparator (qualify.py) accepts a difference only where an active row's fields, scope and relation all hold, and fails a must_observe row whose fields were compared and found equal everywhere (the difference is gone: the change that removed it deletes the row). kind: kept = the owner decided to keep Dataflow's behaviour (DECISIONS.md 5, 14) or the field is new surface; interim = a named later step removes it; proposed = no decision covers it yet: the row states the proposal and the decision it needs. state: active = applied now; planned = the step that creates the difference has not landed, so the fields must still be equal; not_exercised = no comparator scenario observes it yet (the row says which test does); not_observed = the comparator looked and both backends agree on the catalogue's routes. check: fields (record fields), stderr (lines), none.",
+ "rows": [
+  {
+   "id": "input_seq_seed_preflight",
+   "kind": "interim",
+   "state": "active",
+   "check": "fields",
+   "must_observe": true,
+   "until": "S4 (seeded-build preflight on Dataflow, plan-entry.md 5.1)",
+   "decision": "PHASE1.md update 2026-11-24 (input_seq and stamp numbering until preflight lands); contract 3",
+   "gstreamer": "a seeded build pushes and pulls the seed once (startup_preflight), so the first frame the customer pushes is input_seq 1",
+   "dataflow": "the seed only binds the input: the first frame is input_seq 0",
+   "fields": [
+    "sample.input_seq",
+    "sample.orig_input_seq"
+   ],
+   "relation": {
+    "offset": 1
+   },
+   "scope": {
+    "forms": [
+     "graph",
+     "model"
+    ]
+   }
+  },
+  {
+   "id": "stamp_seq_seed_preflight",
+   "kind": "interim",
+   "state": "active",
+   "check": "fields",
+   "must_observe": true,
+   "until": "S4 (seeded-build preflight on Dataflow)",
+   "decision": "PHASE1.md update 2026-11-24; E3.md",
+   "gstreamer": "the pulled tensor's Stamp::seq counts the preflight's seed too (the first pushed frame is 2)",
+   "dataflow": "Stamp::seq starts at 1 with the first pushed frame",
+   "fields": [
+    "tensors[*].stamp.seq"
+   ],
+   "relation": {
+    "offset": 1
+   },
+   "scope": {
+    "forms": [
+     "graph"
+    ],
+    "scenarios": [
+     "lock_tl"
+    ]
+   }
+  },
+  {
+   "id": "stamp_publish_time",
+   "kind": "kept",
+   "state": "active",
+   "check": "fields",
+   "must_observe": true,
+   "decision": "plan-entry.md 2.3 B36 (new surface only; kept, P4)",
+   "gstreamer": "Stamp::publish_time is never set (E3.md)",
+   "dataflow": "the runtime's publication instant on CLOCK_MONOTONIC (clock id 1)",
+   "fields": [
+    "tensors[*].stamp.publish_time"
+   ],
+   "relation": {
+    "gstreamer": "unset",
+    "dataflow": "set:1"
+   },
+   "scope": {
+    "forms": [
+     "graph"
+    ],
+    "scenarios": [
+     "lock_tl"
+    ]
+   }
+  },
+  {
+   "id": "sample_caps_string",
+   "kind": "interim",
+   "state": "active",
+   "check": "fields",
+   "must_observe": true,
+   "until": "S8c (the Sample fields Dataflow can derive from the route)",
+   "decision": "plan-entry.md 2.3 B12; E4.md (caps_string is a route fact: one of three forms)",
+   "gstreamer": "the caps of the route's last stage: the EVXX form for one tensor of a cast or dequant stage, the tensor-set form otherwise (E4.md)",
+   "dataflow": "empty; every other Sample field (media_type, payload_tag, format, stream_label, segment_name, stream_id, kind) already equal",
+   "fields": [
+    "sample.caps_string"
+   ],
+   "relation": {
+    "gstreamer": "re:application/vnd\\.simaai\\.tensor, .+",
+    "dataflow": ""
+   }
+  },
+  {
+   "id": "output_allocation_layout",
+   "kind": "kept",
+   "state": "active",
+   "check": "fields",
+   "must_observe": false,
+   "decision": "DECISIONS.md 5 (the tensor placement difference owned by agent stages; plan-entry.md 2.3 B30)",
+   "gstreamer": "a pulled tensor is a view into the GStreamer buffer of the last stage: segments allocation_0 (the stage's input) and allocation_1 (its output, page-rounded size), the tensor's route naming allocation_1 (memory and physical index 1); a BoxDecode BBOX sits at byte 384 of a 4,096-byte buffer (E4.md)",
+   "dataflow": "a view into the one output slot of the last port: one segment allocation_0 of the output's own size, route memory and physical index 0, the BBOX at byte 0",
+   "fields": [
+    "tensors[*].storage.size_bytes",
+    "tensors[*].byte_offset",
+    "tensors[*].route.physical_byte_offset",
+    "tensors[*].route.segment_name",
+    "tensors[*].route.memory_index",
+    "tensors[*].route.physical_index"
+   ],
+   "relation": {
+    "gstreamer": "*",
+    "dataflow": "*"
+   },
+   "note": "bytes, dtype, shape, strides, offset, device, read_only, storage kind and the sharing of one allocation by a Sample's tensors are compared and equal",
+   "applies_to": "routes whose last stage is a cast, a dequant or BoxDecode (an EV74 preproc stage last has the same layout on both backends)"
+  },
+  {
+   "id": "output_allocation_segments",
+   "kind": "kept",
+   "state": "active",
+   "check": "fields",
+   "must_observe": false,
+   "decision": "DECISIONS.md 5 (the tensor placement difference owned by agent stages; plan-entry.md 2.3 B30)",
+   "gstreamer": "the storage lists the last stage's allocations by name and size (its input and output for a cast or dequant stage)",
+   "dataflow": "one segment, allocation_0, of the output slot's size",
+   "fields": [
+    "tensors[*].storage.segments"
+   ],
+   "relation": {
+    "gstreamer": "re:\\[.*'allocation_\\d+:\\d+'\\]",
+    "dataflow": "re:\\['allocation_0:\\d+'\\]"
+   },
+   "applies_to": "routes whose last stage is a cast, a dequant or BoxDecode (an EV74 preproc stage last has the same layout on both backends)"
+  },
+  {
+   "id": "route_stage_key_instance_suffix",
+   "kind": "proposed",
+   "state": "active",
+   "check": "fields",
+   "must_observe": true,
+   "decision": "needed (DECISIONS.md D8 class: carry it or document it as GStreamer-only); proposed: keep Dataflow's",
+   "gstreamer": "Tensor::route.stage_key is the stage's element name with the element instance counter of the process: post_cast_0_1 on the first Run built, post_cast_0_5 on the second",
+   "dataflow": "the stage's name without the counter (post_cast_0), the same on every Run",
+   "fields": [
+    "tensors[*].route.stage_key"
+   ],
+   "relation": {
+    "rewrite": [
+     "^(.+)_\\d+$",
+     "\\1"
+    ]
+   }
+  },
+  {
+   "id": "measure_end_to_end_samples",
+   "kind": "interim",
+   "state": "active",
+   "check": "fields",
+   "must_observe": true,
+   "until": "S6 (Core's latency sampling on Dataflow)",
+   "decision": "plan-entry.md 2.3 B4, B5; 4.2",
+   "gstreamer": "MeasureReport::end_to_end holds one sample per pulled output",
+   "dataflow": "end_to_end.count 0, latency_samples_collected false",
+   "fields": [
+    "counters.end_to_end.count",
+    "counters.latency_samples_collected"
+   ],
+   "relation": {
+    "gstreamer": "*",
+    "dataflow": [
+     0,
+     false
+    ]
+   },
+   "scope": {
+    "forms": [
+     "graph",
+     "model"
+    ]
+   }
+  },
+  {
+   "id": "gstreamer_verbose_progress",
+   "kind": "interim",
+   "state": "active",
+   "check": "stderr",
+   "side": "gstreamer",
+   "until": "S8d (exports and verbose progress lines on a Dataflow Run)",
+   "decision": "plan-entry.md 2.3 B37 (fix: print the same steps)",
+   "gstreamer": "Graph::build prints [1/4] Initializing runtime..., [2/4] Preparing input stream..., [3/4] Building graph..., [4/4] Graph ready (N ms)",
+   "dataflow": "nothing",
+   "regex": "^\\[N/N\\] (Initializing runtime|Preparing input stream|Building graph|Graph ready)"
+  },
+  {
+   "id": "gstreamer_kernel_driver_arch_warning",
+   "kind": "proposed",
+   "state": "active",
+   "check": "stderr",
+   "side": "gstreamer",
+   "decision": "needed; proposed: keep (a GStreamer plugin's own line, printed when its element starts; Dataflow loads no plugin)",
+   "gstreamer": "WARN:kernel-driver implies arch: Modalix, twice per process",
+   "dataflow": "nothing",
+   "regex": "^WARN:kernel-driver implies arch: Modalix$"
+  },
+  {
+   "id": "gstreamer_timeout_pipeline_dump",
+   "kind": "proposed",
+   "state": "active",
+   "check": "stderr",
+   "side": "gstreamer",
+   "decision": "needed; proposed: keep (a diagnostic of GStreamer's pipeline; a Dataflow Run has no launch string)",
+   "gstreamer": "a timed pull that returns Timeout before the first push prints 'Pipeline:' and the gst-launch string of the Run",
+   "dataflow": "nothing (the pull returns Timeout as well)",
+   "regex": "^(Pipeline:|appsrc name=mysrc_N .*)$"
+  },
+  {
+   "id": "push_mistake_reported_at_push",
+   "kind": "kept",
+   "state": "not_exercised",
+   "check": "none",
+   "decision": "DECISIONS.md 5 (keep Dataflow's behaviour); plan-entry.md 2.3 B8",
+   "gstreamer": "simple checks at the push; what the pipeline finds later stops the Run and is reported by the next pull or push",
+   "dataflow": "thrown by the push itself",
+   "observed_by": "the both-backend mistakes test of contract 4 (a later step); no comparator scenario pushes a mistake"
+  },
+  {
+   "id": "pushed_cpu_storage_kept",
+   "kind": "kept",
+   "state": "not_exercised",
+   "check": "none",
+   "decision": "DECISIONS.md 5; plan-entry.md 2.3 B9",
+   "gstreamer": "a pushed CPU tensor is copied by Core's input thread",
+   "dataflow": "wrapped where safe and kept until the item is pulled and released; Input -> Output returns the pushed storage itself",
+   "observed_by": "unit_run_push_wrap_test (both backends); not visible in a model route's outputs"
+  },
+  {
+   "id": "two_frame_hold",
+   "kind": "kept",
+   "state": "not_observed",
+   "check": "none",
+   "decision": "DECISIONS.md 5; plan-entry.md 2.3 B11",
+   "gstreamer": "on Balanced/Reliable the linear ingress holds a frame of a new shape until two consecutive frames agree, and may drop it (on_input_drop)",
+   "dataflow": "takes every frame of a changing size",
+   "observed_by": "the comparator's sizes scenario (eight sizes from 1280x720 to 640x360, twice, on one Run built for 1280x720): on the Graph form with default RunOptions both backends deliver every frame of each new size, byte-equal, on every carried image row (T1 2026-11-24); the hold belongs to Balanced/Reliable linear ingress, which the catalogue's model routes do not take"
+  },
+  {
+   "id": "timed_pull_before_first_push",
+   "kind": "kept",
+   "state": "not_observed",
+   "check": "fields",
+   "must_observe": false,
+   "decision": "DECISIONS.md 5; plan-entry.md 2.3 B18",
+   "gstreamer": "a timed pull before the first push on a connected graph returns after about 5 s whatever its timeout",
+   "dataflow": "honours the timeout",
+   "observed_by": "the comparator's idle scenario (--idle-pull): on the Graph form of the catalogue's model routes both backends return within 1 s with Timeout (T1 pilot, clip_vit_b_16 w8a16 both views), so the 5 s return of c2.md row 7 does not occur there; the row stays for the connected Input -> Output graphs where it was seen"
+  },
+  {
+   "id": "letterbox_one_rule",
+   "kind": "kept",
+   "state": "planned",
+   "check": "fields",
+   "until": "activated by the step that gives Dataflow the one letterbox rule (GEOMETRY.md); removed when GStreamer's own fix meets the same rule",
+   "decision": "DECISIONS.md 14; phase1/p1-gstref/letterbox-rule.md rev 2 (sections 6, 7)",
+   "gstreamer": "a size-only BoxDecode maps boxes back with one scale and a fractional, always-centred margin (P4)",
+   "dataflow": "the decode is handed the rule's four FP32 numbers (2.4); same preproc tensor, MLA outputs, box count and scores",
+   "sizes": "of the comparator's size scenario: 1024x576 (FP32 residue only, may differ by one in a coordinate, rarely), 640x427 (odd remainder: half a pixel times the scale), 720x480 and 854x480 (non-integer quotient: up to one model pixel); equal by construction on 1280x720, 640x360, 960x540, 1120x630 (letterbox-rule.md 7.1)",
+   "fields": [
+    "tensors[*].xxh64",
+    "tensors[*].bytes"
+   ],
+   "relation": {
+    "gstreamer": "*",
+    "dataflow": "*"
+   },
+   "scope": {
+    "forms": [
+     "graph",
+     "model"
+    ],
+    "scenarios": [
+     "sizes"
+    ],
+    "inputs": [
+     "img\\d@1024x576",
+     "img\\d@640x427",
+     "img\\d@720x480",
+     "img\\d@854x480"
+    ]
+   }
+  }
+ ]
+}
