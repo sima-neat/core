@@ -72,11 +72,28 @@ def partition(names, weights):
     return [sorted(b) for b in bins]
 
 
+# (variable, Model Browser id, variant, CTest names that read the variable).
+FIXTURES = (
+    ('SIMA_TEST_MLA_ONLY_MODEL', 'yolo26n', 'w8a8', {'model_execution_plan_test'}),
+    ('SIMA_RESNET50_TAR', 'resnet_50', 'w8a8', RESNET50_TESTS),
+    ('SIMA_RESNET18_TAR', 'resnet_18', 'w8a8', {'resnet18_async_consumer_visibility_test'}),
+    ('SIMA_YOLO_TAR', 'yolov8s', 'w8a8', YOLOV8S_TESTS),
+    ('SIMA_DETR_RESNET50_TAR', 'detr_resnet_50', 'w8a8_mixed', {'detr_resnet50_multi_output_test'}),
+)
+
+
 def prepare_fixture(model_id, variant, output):
     return subprocess.check_output(
         [sys.executable, str(ROOT / 'scripts/ci/prepare_model_browser_fixture.py'),
          '--id', model_id, '--variant', variant, '--output', str(output)], text=True,
         timeout=900).strip()
+
+
+def prepare_selected_fixtures(selected, env, output):
+    """Prepare each fixture a selected test reads, unless its variable is already set."""
+    for var, model_id, variant, consumers in FIXTURES:
+        if consumers & set(selected) and not env.get(var):
+            env[var] = prepare_fixture(model_id, variant, output)
 
 
 def main():
@@ -99,13 +116,7 @@ def main():
     # partial selection and executes CTest with its original timeout/jobs/labels.
     env = os.environ.copy()
     with tempfile.TemporaryDirectory(prefix='model-browser-', dir=env.get('RUNNER_TEMP')) as tmp:
-        fixtures = [('SIMA_TEST_MLA_ONLY_MODEL', 'yolo26n', {'model_execution_plan_test'}),
-                    ('SIMA_RESNET50_TAR', 'resnet_50', RESNET50_TESTS),
-                    ('SIMA_RESNET18_TAR', 'resnet_18', {'resnet18_async_consumer_visibility_test'}),
-                    ('SIMA_YOLO_TAR', 'yolov8s', YOLOV8S_TESTS)]
-        for var, model_id, consumers in fixtures:
-            if consumers & set(selected) and not env.get(var):
-                env[var] = prepare_fixture(model_id, 'w8a8', tmp)
+        prepare_selected_fixtures(selected, env, tmp)
         # The tests that load every MPK need a directory of their own for YOLOv8n. They take
         # SIMA_YOLOV8_SINGLE_MODEL first when it is set; the phase3 tests read only the directory,
         # so it is prepared either way.

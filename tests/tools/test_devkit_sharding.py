@@ -139,6 +139,24 @@ def test_weighted_partition_is_deterministic_and_complete():
     with pytest.raises(ValueError): partitioner.partition(['a', 'a'], {})
 
 
+def test_fixtures_are_prepared_only_for_selected_tests(monkeypatch):
+    calls = []
+    monkeypatch.setattr(partitioner, 'prepare_fixture',
+                        lambda model_id, variant, output: calls.append((model_id, variant)) or
+                        f'/fixtures/{model_id}_{variant}_mpk.tar.gz')
+    env = {}
+    partitioner.prepare_selected_fixtures(['detr_resnet50_multi_output_test', 'other_test'], env,
+                                          '/tmp')
+    assert calls == [('detr_resnet_50', 'w8a8_mixed')]
+    assert env == {'SIMA_DETR_RESNET50_TAR': '/fixtures/detr_resnet_50_w8a8_mixed_mpk.tar.gz'}
+    calls.clear()
+    preset = {'SIMA_DETR_RESNET50_TAR': '/preset.tar.gz'}
+    partitioner.prepare_selected_fixtures(['detr_resnet50_multi_output_test', 'sync_yolov8_test'],
+                                          preset, '/tmp')
+    assert calls == [('yolov8s', 'w8a8')]
+    assert preset['SIMA_DETR_RESNET50_TAR'] == '/preset.tar.gz'
+
+
 def test_real_ctest_partition_executes_all_selected_tests(tmp_path):
     # Uses harmless host Python registrations; no aarch64 binary is executed.
     marker = tmp_path / 'executed'

@@ -1254,6 +1254,17 @@ if (NOT resnet18_async_consumer_visibility_test IN_LIST PIPELINESESSION_TEST_BLA
   set_property(TEST resnet18_async_consumer_visibility_test APPEND PROPERTY LABELS "e2e;img_classification")
 endif()
 
+# Two-output DETR on a host-preprocessed tensor: output contract, CPU decode, async against sync,
+# retained outputs and input rejection. CI prepares the Model Browser detr_resnet_50 w8a8_mixed MPK.
+add_pipeline_test(
+  detr_resnet50_multi_output_test
+  e2e_testing/detr_resnet50_multi_output_test.cpp
+)
+
+if (NOT detr_resnet50_multi_output_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  set_property(TEST detr_resnet50_multi_output_test APPEND PROPERTY LABELS "e2e;obj_detection")
+endif()
+
 add_pipeline_test_long(
   modelzoo_bulk_models_test
   e2e_testing/modelzoo_bulk_models_test.cpp
@@ -2826,6 +2837,7 @@ foreach(test
     preproc_build_input_repro_test
     modelzoo_bulk_models_test
     resnet18_async_consumer_visibility_test
+    detr_resnet50_multi_output_test
     preproc_dynamic_renegotiate_test
     graph_migration_legacy_hybrid_graph_stage_model_test
     graph_migration_legacy_yolov8_variant_route_matrix_test
