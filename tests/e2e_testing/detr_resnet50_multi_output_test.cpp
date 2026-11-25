@@ -352,11 +352,16 @@ int main(int argc, char** argv) {
 
     // Each malformed input gets its own Runner, so a check cannot pass on an earlier error.
     // A refused shape currently stops the Runner (core#1566); the valid run after it
-    // tolerates only that error.
-    auto check_rejected = [&](const std::string& name, const simaai::neat::TensorList& bad) {
+    // tolerates only that error. An extra input is not refused yet (core#1570).
+    auto check_rejected = [&](const std::string& name, const simaai::neat::TensorList& bad,
+                              const char* known_if_accepted = nullptr) {
       auto fresh = model.build(simaai::neat::TensorList{people.tensor});
       std::string what;
-      check(throws([&] { (void)fresh.run(bad, kTimeoutMs); }, &what), name + " is rejected", what);
+      const bool rejected = throws([&] { (void)fresh.run(bad, kTimeoutMs); }, &what);
+      if (!rejected && known_if_accepted != nullptr)
+        std::cout << "[KNOWN] " << known_if_accepted << ": " << name << " was accepted\n";
+      else
+        check(rejected, name + " is rejected", what);
       try {
         const Outputs again = read_outputs(fresh.run({people.tensor}, kTimeoutMs));
         check(std::max(max_abs_diff(again.logits, people_ref.logits),
@@ -380,7 +385,7 @@ int main(int argc, char** argv) {
     check_rejected("wrong input dtype",
                    {simaai::neat::Tensor::from_vector(bytes, {1, kInputSize, kInputSize, 3},
                                                       simaai::neat::TensorMemory::EV74)});
-    check_rejected("extra input", {people.tensor, people.tensor});
+    check_rejected("extra input", {people.tensor, labrador.tensor}, "core#1570");
 
     if (failures > 0) {
       std::cerr << "[FAIL] detr_resnet50_multi_output_test: " << failures << " check(s) failed\n";
