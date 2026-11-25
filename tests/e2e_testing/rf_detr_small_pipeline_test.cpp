@@ -271,10 +271,10 @@ std::string resolve_component(const char* var, const char* component, int argc, 
   if (path.empty() || !fs::is_regular_file(path, ec) || fs::file_size(path, ec) == 0) {
     throw std::runtime_error(
         std::string("RF-DETR Small ") + component + " MPK is missing or empty: '" + path +
-        "'. Set " + var + " (or pass --" + component + ") to the rf_detr_small_w8a8_w16a16_" +
+        "'. Set " + var + " (or pass --" + component + ") to the rf_detr_small_w8a16_w16a16_" +
         component + "_mpk.tar.gz from 'sima-cli models download --id rf_detr_small --variant " +
-        "w8a8_w16a16', or run scripts/ci/prepare_model_browser_fixture.py --id rf_detr_small " +
-        "--variant w8a8_w16a16 --component backbone --component decoder --output <dir>");
+        "w8a16_w16a16', or run scripts/ci/prepare_model_browser_fixture.py --id rf_detr_small " +
+        "--variant w8a16_w16a16 --component backbone --component decoder --output <dir>");
   }
   return path;
 }
@@ -301,7 +301,7 @@ int main(int argc, char** argv) {
     } catch (const std::exception& e) {
       return fail_test(e.what());
     }
-    std::cout << "[MODEL] rf_detr_small w8a8_w16a16 backbone=" << backbone_path
+    std::cout << "[MODEL] rf_detr_small w8a16_w16a16 backbone=" << backbone_path
               << " decoder=" << decoder_path << "\n";
 
     simaai::neat::Model backbone(backbone_path);

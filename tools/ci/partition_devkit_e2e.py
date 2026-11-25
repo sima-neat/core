@@ -81,7 +81,7 @@ FIXTURES = (
     ('SIMA_YOLO_TAR', 'yolov8s', 'w8a8', YOLOV8S_TESTS),
     ('SIMA_DETR_RESNET50_TAR', 'detr_resnet_50', 'w8a8_mixed', {'detr_resnet50_multi_output_test'}),
     ({'backbone': 'SIMA_RF_DETR_BACKBONE_TAR', 'decoder': 'SIMA_RF_DETR_DECODER_TAR'},
-     'rf_detr_small', 'w8a8_w16a16', {'rf_detr_small_pipeline_test'}),
+     'rf_detr_small', 'w8a16_w16a16', {'rf_detr_small_pipeline_test'}),
 )
 
 

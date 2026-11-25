@@ -1266,7 +1266,7 @@ if (NOT detr_resnet50_multi_output_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
 endif()
 
 # Two-component RF-DETR: backbone, top 300 proposals on the CPU, decoder, then CPU decode. CI
-# prepares the Model Browser rf_detr_small w8a8_w16a16 backbone and decoder MPKs.
+# prepares the Model Browser rf_detr_small w8a16_w16a16 backbone and decoder MPKs.
 add_pipeline_test(
   rf_detr_small_pipeline_test
   e2e_testing/rf_detr_small_pipeline_test.cpp

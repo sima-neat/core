@@ -164,10 +164,10 @@ def test_fixtures_are_prepared_only_for_selected_tests(monkeypatch):
     env = {}
     partitioner.prepare_selected_fixtures(['rf_detr_small_pipeline_test', 'other_test'], env,
                                           '/tmp')
-    assert calls == [('rf_detr_small', 'w8a8_w16a16', ('backbone', 'decoder'))]
+    assert calls == [('rf_detr_small', 'w8a16_w16a16', ('backbone', 'decoder'))]
     assert env == {
-        'SIMA_RF_DETR_BACKBONE_TAR': '/fixtures/rf_detr_small_w8a8_w16a16_backbone_mpk.tar.gz',
-        'SIMA_RF_DETR_DECODER_TAR': '/fixtures/rf_detr_small_w8a8_w16a16_decoder_mpk.tar.gz',
+        'SIMA_RF_DETR_BACKBONE_TAR': '/fixtures/rf_detr_small_w8a16_w16a16_backbone_mpk.tar.gz',
+        'SIMA_RF_DETR_DECODER_TAR': '/fixtures/rf_detr_small_w8a16_w16a16_decoder_mpk.tar.gz',
     }
     calls.clear()
     preset = {'SIMA_RF_DETR_BACKBONE_TAR': '/b.tar.gz', 'SIMA_RF_DETR_DECODER_TAR': '/d.tar.gz'}
