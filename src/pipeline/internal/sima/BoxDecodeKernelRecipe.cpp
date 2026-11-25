@@ -18,6 +18,7 @@
 #include <optional>
 #include <span>
 #include <stdexcept>
+#include <variant>
 
 namespace simaai::neat::pipeline_internal::sima {
 namespace {
@@ -460,6 +461,22 @@ bool boxdecode_payload_supports_detection_transform(const BoxDecodeStagePayload&
          !uses_source_multiclass_ssd_policy(payload);
 }
 
+bool boxdecode_payload_may_take_transform(const BoxDecodeStagePayload& payload) {
+  switch (payload.decode_type) {
+  case BoxDecodeType::YoloV26Pose:
+  case BoxDecodeType::YoloV26Seg:
+  case BoxDecodeType::YoloV8Pose:
+  case BoxDecodeType::YoloV5Seg:
+  case BoxDecodeType::YoloV7Seg:
+  case BoxDecodeType::YoloV8Seg:
+  case BoxDecodeType::YoloV9Seg:
+  case BoxDecodeType::YoloV10Seg:
+    return true;
+  default:
+    return uses_source_multiclass_ssd_policy(payload);
+  }
+}
+
 ResizeMode sam_required_resize(BoxDecodeType type) {
   return type == BoxDecodeType::MobileSam ? ResizeMode::Letterbox : ResizeMode::Stretch;
 }
@@ -510,7 +527,8 @@ BoxDecodeKernelRecipeResult prepare_boxdecode_kernel(const CompiledBoxDecodeCont
   if (geometry.resize == ResizeMode::Crop && p.decode_type != BoxDecodeType::SuperPoint &&
       !((p.decode_type == BoxDecodeType::YoloXSegPose ||
          box_decode_type_is_oriented(p.decode_type) ||
-         boxdecode_payload_supports_detection_transform(p)) &&
+         boxdecode_payload_supports_detection_transform(p) ||
+         boxdecode_payload_may_take_transform(p)) &&
         geometry.model_to_original))
     invalid("crop geometry is not supported by the numerical recipe");
   if (p.topk == 0)
@@ -1057,13 +1075,29 @@ BoxDecodeKernelRecipeResult prepare_boxdecode_kernel(const CompiledBoxDecodeCont
       parameters.push_back({"pose_classes", std::move(pose_classes)});
     }
     if (geometry.model_to_original) {
-      if (!seg_pose && !oriented && !boxdecode_payload_supports_detection_transform(p))
+      if (!seg_pose && !oriented && !boxdecode_payload_supports_detection_transform(p) &&
+          !boxdecode_payload_may_take_transform(p))
         invalid("explicit affine is unsupported by this BoxDecode profile/task");
       const auto& t = *geometry.model_to_original;
       parameters.push_back({"model_to_original", k::ParameterArray{t[0], t[1], t[2], t[3]}});
     }
-    numerical = checked(
-        scheduler::check_kernel({"boxdecode", k::Target::A65, tensors, outputs, parameters}));
+    auto admission =
+        scheduler::check_kernel({"boxdecode", k::Target::A65, tensors, outputs, parameters});
+    if (std::holds_alternative<rt::Error>(admission) && geometry.model_to_original &&
+        boxdecode_payload_may_take_transform(p)) {
+      // Only an older kernel's refusal of the transform is a missing capability; any other
+      // failure is the recipe's own.
+      const auto refusal = std::get<rt::Error>(admission);
+      parameters.pop_back();
+      if (std::holds_alternative<rt::KernelExecutable>(
+              scheduler::check_kernel({"boxdecode", k::Target::A65, tensors, outputs, parameters})))
+        throw BoxDecodeTransformUnavailable(
+            "BoxDecode kernel recipe: the installed kernel accepts no model-to-original "
+            "transform for " +
+            std::string(selected_profile) + " " + std::string(selected_task) + ": " +
+            std::string(refusal.field) + ": " + refusal.message);
+    }
+    numerical = checked(std::move(admission));
   }
   gs::TensorStageMember decode;
   decode.executable = std::move(numerical);

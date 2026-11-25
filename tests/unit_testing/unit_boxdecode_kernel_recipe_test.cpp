@@ -1328,6 +1328,22 @@ void ssd300_class_selection() {
   require(std::abs(wire.read<float>(20) - 1.f) < 1e-3f,
           "SSD300 score is not a softmax of its logits");
 }
+// The 91-class SSD under a model-to-original transform (a Kernels release that has it): the
+// known-logit box above is (365, 56, 60, 30) when 300x300 is stretched to 600x300, so in model
+// pixels it is (182.5, 56, 30, 30); source = model + (100, 50) must give (282.5, 106, 30, 30).
+void ssd_multiclass_transform() {
+  constexpr std::size_t classes = 91, anchors_19 = 3, cell = 4 * 19 + 12;
+  BoxDecodeGeometryOptions geometry{300, 300, 600, 300, ResizeMode::Stretch};
+  geometry.model_to_original = std::array<float, 4>{1.f, 1.f, 100.f, 50.f};
+  const auto wire =
+      ssd_decode_wire(stagesemantics::SsdRecipeId::SsdMobile300V1, {19, 10, 5, 3, 2, 1},
+                      {3, 6, 6, 6, 6, 6}, geometry, {{cell * anchors_19 * classes + 1, 5.f}});
+  require(wire.read<std::int32_t>(0) == 1, "transformed SSD published other than one detection");
+  const auto near = [](std::int32_t got, int want) { return std::abs(got - want) <= 2; };
+  require(near(wire.read<std::int32_t>(4), 282) && near(wire.read<std::int32_t>(8), 106) &&
+              near(wire.read<std::int32_t>(12), 30) && near(wire.read<std::int32_t>(16), 30),
+          "multiclass SSD box does not follow the model-to-original transform");
+}
 void ssd_source_policy_execution() {
   using stagesemantics::SsdRecipeId;
   require(ssd_policy_detections(SsdRecipeId::SsdMobile300V1, 300, {19, 10, 5, 3, 2, 1},
@@ -1338,6 +1354,7 @@ void ssd_source_policy_execution() {
           "SSD-Mobile-320-v1 must keep its one-class-per-anchor policy");
   ssd_known_logit_detection();
   ssd300_class_selection();
+  ssd_multiclass_transform();
 }
 
 void detr_numerical_publication(bool crop = false) {
