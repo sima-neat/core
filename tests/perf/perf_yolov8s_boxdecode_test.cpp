@@ -9,6 +9,7 @@
 #include "perf_metrics_common.h"
 #include "pipeline/Graph.h"
 
+#include "asset_utils.h"
 #include "e2e_pipelines/obj_detection/obj_detection_utils.h"
 #include "e2e_pipelines/obj_detection/yolov8_test_utils.h"
 #include "test_utils.h"
@@ -42,9 +43,9 @@ std::string require_yolov8s_archive() {
         "SIMA_YOLO_TAR is not set. Set it to the yolov8s_w8a8_mpk.tar.gz from 'sima-cli models "
         "download --id yolov8s --variant w8a8'.");
   }
-  std::error_code ec;
-  if (!fs::is_regular_file(value, ec) || ec || fs::file_size(value, ec) == 0 || ec) {
-    throw std::runtime_error(std::string("SIMA_YOLO_TAR=") + value + " is not a non-empty file");
+  if (!sima_test::is_usable_regular_file(value)) {
+    throw std::runtime_error(std::string("SIMA_YOLO_TAR=") + value +
+                             " is not a readable, non-empty file");
   }
   return value;
 }
