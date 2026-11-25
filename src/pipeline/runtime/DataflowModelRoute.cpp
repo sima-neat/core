@@ -1092,8 +1092,9 @@ struct CarriedDecode {
   std::string_view profile, task;
 };
 constexpr CarriedDecode kCarriedDecodes[] = {
-    {"yolo_dfl_v1", "detection"}, {"yolo_dfl_obb_v1", "detection"}, {"yolo26_obb_v1", "detection"},
-    {"yolo26_v1", "detection"},   {"yolox_v1", "detection"},        {"yolo26_v1", "pose"},
+    {"yolo_dfl_v1", "detection"},  {"yolo_dfl_obb_v1", "detection"}, {"yolo26_obb_v1", "detection"},
+    {"yolo26_v1", "detection"},    {"yolox_v1", "detection"},        {"yolo26_v1", "pose"},
+    {"yolo26_v1", "segmentation"},
 };
 
 bool carried_decode(std::string_view profile, std::string_view task) {

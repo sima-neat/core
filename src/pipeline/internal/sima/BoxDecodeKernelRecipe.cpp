@@ -1122,6 +1122,18 @@ BoxDecodeKernelRecipeResult prepare_boxdecode_kernel(const CompiledBoxDecodeCont
       program->wire = publication.plan;
       program->write = publication.write;
       program->wire_bytes = publication.bytes;
+    } else {
+      // The members above write this stage's masks straight into the wire. A backend that runs
+      // the decode into buffers of its own writes the same wire from all five outputs with the
+      // Masks serializer: the boxes as the prefix serializer writes them, then the kernel's masks
+      // (complete for every detection, zero in the unused capacity).
+      const auto whole =
+          prepare_boxdecode_publication(wire, std::span<const k::TensorSpec>(outputs));
+      if (whole.bytes != wire_bytes)
+        invalid("the Masks wire differs in size from the wire the stage's members write");
+      program->wire = whole.plan;
+      program->write = whole.write;
+      program->wire_bytes = whole.bytes;
     }
     build.recipe->boxdecode_program = std::move(program);
   }

@@ -88,7 +88,9 @@ struct KernelStageRecipe {
     bool uniform_transform = false, frame_transform_required = false;
     // Core's wire serializer (BoxDecodePublication.cpp), the function the stage's host task
     // calls: `inputs` are the numerical member's outputs in its order, `output` the wire of
-    // `wire_bytes`. Null where the wire is not written from all of the member's outputs.
+    // `wire_bytes`. Where the stage's own members write part of the wire in place (YOLO26
+    // segmentation: the kernel writes the masks into the wire, the host task its prefix), the
+    // serializer that writes the same wire from all of the member's outputs.
     std::shared_ptr<const void> wire;
     ::simaai::scheduler::client::HostStatus (*write)(
         const void* wire, std::span<const ::simaai::scheduler::client::ConstBytes> inputs,
