@@ -1772,14 +1772,12 @@ struct GenAIServer::Impl {
     stopping.store(false);
     try {
       warmup_models_once();
-      // Bind on the caller's thread so bind errors reach the caller instead of a worker thread.
-      if (!http.bind_to_port(options.host, options.port)) {
-        throw_listen_failure();
-      }
-      // An exception must not escape the worker; decommission() ends the readiness wait below.
+      // The worker binds and serves, so a failed thread launch never leaves the port bound. A
+      // failed bind decommissions the server, which ends the readiness wait below; an exception
+      // must not escape the worker, so its handler does the same.
       worker = std::thread([this] {
         try {
-          (void)http.listen_after_bind();
+          (void)http.listen(options.host, options.port);
         } catch (...) {
           http.decommission();
         }
