@@ -271,10 +271,10 @@ void enforce_device_visible_push_or_throw(bool require_device_visible,
   }
 }
 
-// Checked for every pushed sample.
+// Read live: this bypasses a buffer-lifetime check, so every push path must agree with
+// GraphRunControl and the graph build path, which read it directly.
 bool allow_cross_run_gstsample_push() {
-  static pipeline_internal::CachedEnvBool enabled("SIMA_ALLOW_CROSS_RUN_GSTSAMPLE_PUSH");
-  return enabled.get();
+  return pipeline_internal::env_bool("SIMA_ALLOW_CROSS_RUN_GSTSAMPLE_PUSH", false);
 }
 
 void enforce_live_gstsample_producer_or_throw(const simaai::neat::Sample& sample, const char* where,

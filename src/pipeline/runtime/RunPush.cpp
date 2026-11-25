@@ -36,8 +36,7 @@ bool run_push_timing_enabled() {
 }
 
 bool allow_public_cross_run_gstsample_push() {
-  static pipeline_internal::CachedEnvBool enabled("SIMA_ALLOW_CROSS_RUN_GSTSAMPLE_PUSH");
-  return enabled.get();
+  return pipeline_internal::env_bool("SIMA_ALLOW_CROSS_RUN_GSTSAMPLE_PUSH", false);
 }
 
 bool graph_zero_copy_debug_enabled() {
