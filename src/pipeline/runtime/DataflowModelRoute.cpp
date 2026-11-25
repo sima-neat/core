@@ -137,6 +137,11 @@ std::size_t aligned(std::size_t bytes) {
   return (bytes + kSlotAlignment - 1U) & ~(kSlotAlignment - 1U);
 }
 
+// The MLA's buffers: the model compiler makes each input and output buffer of a model a multiple
+// of this many bytes, so a buffer is up to 15 bytes longer than the tensor in it
+// (DataflowModelRoute.h, "The MLA's padding").
+constexpr std::uint64_t kMlaBufferGranule = 16;
+
 // The axes of an image stage's frame tensor, [1, height, width, channels].
 constexpr std::size_t kHeightAxis = 1, kWidthAxis = 2;
 
@@ -594,6 +599,92 @@ plain_contract(const client::Result<client::KernelInspection>& inspected, std::s
   return nullptr;
 }
 
+// Whether an MLA input buffer of `buffer` bytes is a tensor of `tensor` bytes with the MLA's
+// padding behind it: longer than the tensor, and the tensor's bytes rounded up to the granule.
+bool mla_pads(std::uint64_t tensor, std::uint64_t buffer) {
+  return tensor != 0U && tensor < buffer &&
+         (tensor + kMlaBufferGranule - 1U) / kMlaBufferGranule * kMlaBufferGranule == buffer;
+}
+
+// A kernel stage's one output tensor (`planned`, as its own port; `needs`: what the kernel asks
+// of it) in front of the MLA stage `next`, when the MLA's input buffer is that tensor and the
+// MLA's padding: the stage's output port becomes the MLA's buffer as bytes and the tensor a view
+// at its front (soc::KernelOp::Options::Packing), where the kernel writes its tensor's bytes and
+// no others. The padding behind them is written by nobody after the port's pool wrote the slot
+// with zeros when it made it (DataflowModelRoute.h, "The MLA's padding"). "" when the port stays
+// the tensor's own (no MLA stage behind, or buffers that agree, or that differ otherwise: the
+// route's check says so) and when it became the MLA's; otherwise the fact about the stage that
+// this backend does not carry.
+std::string pad_to_mla_input(const si::StageStaticSpec* next,
+                             const client::TensorRequirements& needs, DataflowModelStage& planned) {
+  if (!next || next->payload_kind != si::StagePayloadKind::ProcessMla ||
+      next->physical_inputs.size() != 1U ||
+      !mla_pads(planned.output_bytes, next->physical_inputs.front().size_bytes)) {
+    return {};
+  }
+  if (needs.alignment_bytes == 0U || kSlotAlignment % needs.alignment_bytes != 0U) {
+    return "its output tensor asks for an alignment of " + std::to_string(needs.alignment_bytes) +
+           " bytes, which the front of the MLA's input buffer (a buffer of bytes) does not have";
+  }
+  DataflowModelStage::Kernel& kernel = std::get<DataflowModelStage::Kernel>(planned.kind);
+  kernel.packed_outputs.push_back(
+      {kernel.output, 0U, static_cast<std::size_t>(planned.output_bytes)});
+  planned.output_bytes = next->physical_inputs.front().size_bytes;
+  return {};
+}
+
+// A kernel stage's one input tensor (`planned`, as its own port; `needs`: what the kernel asks of
+// it) behind the MLA stage `mla`: the bytes of the MLA's one output buffer at the offset the
+// manifest gives the tensor (where the stage's input buffer begins in the MLA's, the tensor in
+// that, the kernel's port in the tensor). The whole buffer from its first byte: the port stays
+// the tensor's own. Otherwise (a buffer longer than the tensor: the MLA's padding, or a strided
+// view that ends before the buffer does) the stage's input port becomes the MLA's buffer as bytes
+// and the tensor a view of it (soc::KernelOp::Options::Packing): the kernel reads its tensor's
+// bytes and no others, so what the MLA leaves in its padding reaches nobody. "" or the fact about
+// the stage that this backend does not carry.
+std::string view_of_mla_output(const si::StageStaticSpec& stage,
+                               const client::TensorStageMember& member,
+                               const client::TensorRequirements& needs,
+                               const DataflowModelStage& mla, DataflowModelStage& planned) {
+  const std::uint64_t buffer = mla.output_bytes;
+  const std::uint64_t bytes = planned.input_bytes;
+  std::int64_t at = 0;
+  if (!stage.physical_inputs.empty()) {
+    const si::PhysicalBufferStaticSpec& carrier = stage.physical_inputs.front();
+    if (carrier.source_physical_index > 0) {
+      return "it reads output buffer " + std::to_string(carrier.source_physical_index) +
+             " of the MLA stage '" + mla.key + "', which writes one output buffer";
+    }
+    at = carrier.source_byte_offset;
+  }
+  if (!stage.logical_inputs.empty() && at >= 0) {
+    const std::int64_t in_carrier = stage.logical_inputs.front().byte_offset;
+    at = in_carrier < 0 ? -1 : at + in_carrier;
+  }
+  const std::uint64_t offset =
+      at < 0 ? buffer + 1U : static_cast<std::uint64_t>(at) + member.inputs.front().byte_offset;
+  if (offset == 0U && bytes == buffer) {
+    return {};
+  }
+  if (bytes == 0U || offset > buffer || bytes > buffer - offset) {
+    return "its input tensor of " + std::to_string(bytes) + " bytes at offset " +
+           (at < 0 ? std::string("(negative)") : std::to_string(offset)) +
+           " does not lie in the output buffer of " + std::to_string(buffer) +
+           " bytes that the MLA stage '" + mla.key + "' writes";
+  }
+  if (needs.alignment_bytes == 0U || kSlotAlignment % needs.alignment_bytes != 0U ||
+      offset % needs.alignment_bytes != 0U) {
+    return "its input tensor asks for an alignment of " + std::to_string(needs.alignment_bytes) +
+           " bytes, which a view at offset " + std::to_string(offset) +
+           " of the MLA's output buffer (a buffer of bytes) does not have";
+  }
+  DataflowModelStage::Kernel& kernel = std::get<DataflowModelStage::Kernel>(planned.kind);
+  kernel.packed_inputs.push_back(
+      {kernel.input, static_cast<std::size_t>(offset), static_cast<std::size_t>(bytes)});
+  planned.input_bytes = buffer;
+  return {};
+}
+
 // The frames an image stage is planned for: what the build says of the input's size.
 struct PlannedFrame {
   /// The Input declares the frame's size: every frame has it. Otherwise width and height are a
@@ -713,10 +804,13 @@ std::string planned_frame(const InputOptions& declared, std::span<const Tensor> 
 // at that size. Without one the stage's request is the one at the port's bound and
 // `route.frames` gives each frame its own (DataflowFrames). The requests, the published
 // tensor's description and the preprocess facts all come from the stage's own checked policy
-// (PreprocFrameAdapter), by the functions the adapter runs for a frame of that geometry.
+// (PreprocFrameAdapter), by the functions the adapter runs for a frame of that geometry. `next`
+// is the stage behind it (null at the route's end): in front of an MLA stage whose input buffer
+// is the kernel's tensor and the MLA's padding, the kernel writes at the buffer's front
+// (pad_to_mla_input), whatever the frame's size (its output is the model's input).
 std::string plan_frame_stage(const si::StageStaticSpec& stage, bool first, bool last,
-                             const InputOptions& declared, std::span<const Tensor> seed,
-                             DataflowModelRoute& route) {
+                             const si::StageStaticSpec* next, const InputOptions& declared,
+                             std::span<const Tensor> seed, DataflowModelRoute& route) {
   using Adapter = si::kernel_lowering::PreprocFrameAdapter;
   const si::KernelStageRecipe& recipe = *stage.native_kernel;
   const si::ProcessCvuStagePayload& payload = stage.processcvu;
@@ -841,6 +935,12 @@ std::string plan_frame_stage(const si::StageStaticSpec& stage, bool first, bool 
   kernel.operation = "preproc";
   kernel.output = request.outputs.front();
   kernel.parameters = std::move(request.parameters);
+  const std::uint64_t tensor_bytes = planned.output_bytes;
+  if (const std::string why =
+          pad_to_mla_input(next, contract.output_requirements().front(), planned);
+      !why.empty()) {
+    return why;
+  }
   if (nv12) {
     // One port of bytes, the frame at the bound as it is: the luma plane at 0, the chroma
     // plane behind its rows. A smaller frame's planes are written to the same two offsets.
@@ -957,7 +1057,10 @@ std::string plan_frame_stage(const si::StageStaticSpec& stage, bool first, bool 
                                : "") +
                          ", a kernel per frame size; at the bound") +
       "; " + parameters_text(kernel.parameters) + "): " + std::to_string(planned.input_bytes) +
-      " -> " + std::to_string(planned.output_bytes) + " bytes" +
+      " -> " + std::to_string(tensor_bytes) + " bytes" +
+      (kernel.packed_outputs.empty() ? std::string()
+                                     : " at the front of the MLA's input buffer of " +
+                                           std::to_string(planned.output_bytes)) +
       (last ? ", output " + out.dtype + " " + dims_text(out.shape) + " " +
                   std::to_string(out.size_bytes) + " bytes at " + std::to_string(out.byte_offset)
             : std::string());
@@ -1241,9 +1344,13 @@ struct PlanInput {
 // One kernel stage of the manifest (its checked recipe, as prepare_kernel_stage_recipes left it)
 // as a route stage; "" or the fact about it that this backend does not carry. `board` is set
 // when that fact is the board's: the stage is placed on the EV74 and the EV74 does not run the
-// Kernels firmware (`in.ev74_obstacle` says what it runs).
+// Kernels firmware (`in.ev74_obstacle` says what it runs). `next` is the stage behind it (null
+// at the route's end). A canonical transform beside the MLA stage has its one tensor of that side
+// in the MLA's buffer: the whole buffer, or, where the MLA's buffer is longer, a view of it
+// (view_of_mla_output behind the MLA, pad_to_mla_input in front of it).
 std::string plan_kernel_stage(const si::StageStaticSpec& stage, bool first, bool last,
-                              const PlanInput& in, DataflowModelRoute& route, bool& board) {
+                              const si::StageStaticSpec* next, const PlanInput& in,
+                              DataflowModelRoute& route, bool& board) {
   const si::KernelStageRecipe& recipe = *stage.native_kernel;
   const std::string key = stage_key_of(stage);
   board = false;
@@ -1251,6 +1358,7 @@ std::string plan_kernel_stage(const si::StageStaticSpec& stage, bool first, bool
   (void)recipe;
   (void)first;
   (void)last;
+  (void)next;
   (void)in;
   (void)route;
   return "this build of libsima_neat runs no kernel stage on the Dataflow backend (it was built "
@@ -1267,7 +1375,7 @@ std::string plan_kernel_stage(const si::StageStaticSpec& stage, bool first, bool
            std::string(kKernelsFirmwareName) + "' only";
   }
   if (recipe.frame_adapter_factory || recipe.image_publication || stage.image_publication) {
-    return plan_frame_stage(stage, first, last, in.declared, in.seed, route);
+    return plan_frame_stage(stage, first, last, next, in.declared, in.seed, route);
   }
   if (recipe.boxdecode_program) {
     return plan_boxdecode_stage(stage, first, last, route);
@@ -1291,7 +1399,10 @@ std::string plan_kernel_stage(const si::StageStaticSpec& stage, bool first, bool
            std::to_string(member.outputs.size()) +
            " outputs: a kernel of several inputs or outputs";
   }
-  if (member.inputs.front().byte_offset != 0U || member.outputs.front().byte_offset != 0U ||
+  // Behind the MLA stage the input may begin inside the MLA's buffer (view_of_mla_output); the
+  // application's tensor and the stage's output begin at their buffers' first byte.
+  if ((first && member.inputs.front().byte_offset != 0U) ||
+      member.outputs.front().byte_offset != 0U ||
       member.inputs.front().source != client::TensorStagePortSource::Input ||
       member.outputs.front().source != client::TensorStagePortSource::Output ||
       !member.dependencies.empty()) {
@@ -1323,6 +1434,21 @@ std::string plan_kernel_stage(const si::StageStaticSpec& stage, bool first, bool
   kernel.input = request.inputs.front();
   kernel.output = request.outputs.front();
   kernel.parameters = request.parameters;
+  const std::uint64_t in_tensor_bytes = planned.input_bytes;
+  const std::uint64_t out_tensor_bytes = planned.output_bytes;
+  if (!first && std::holds_alternative<DataflowModelStage::Mla>(route.stages.back().kind)) {
+    if (const std::string why =
+            view_of_mla_output(stage, member, contract->input_requirements().front(),
+                               route.stages.back(), planned);
+        !why.empty()) {
+      return why;
+    }
+  }
+  if (const std::string why =
+          pad_to_mla_input(next, contract->output_requirements().front(), planned);
+      !why.empty()) {
+    return why;
+  }
   if (first) {
     if (!std::holds_alternative<client::Contiguous>(kernel.input.layout)) {
       return "it reads a strided or tiled tensor from the application";
@@ -1355,8 +1481,15 @@ std::string plan_kernel_stage(const si::StageStaticSpec& stage, bool first, bool
       std::string(route.text.empty() ? "" : " -> ") + "kernel stage " + key + " (" +
       kernel.operation + " on the " + target_text(recipe.target) +
       (kernel.parameters.empty() ? std::string() : "; " + parameters_text(kernel.parameters)) +
-      "): " + std::to_string(planned.input_bytes) + " -> " + std::to_string(planned.output_bytes) +
-      " bytes" +
+      "): " + std::to_string(in_tensor_bytes) +
+      (kernel.packed_inputs.empty() ? std::string()
+                                    : " at " + std::to_string(kernel.packed_inputs.front().offset) +
+                                          " of the MLA's output buffer of " +
+                                          std::to_string(planned.input_bytes)) +
+      " -> " + std::to_string(out_tensor_bytes) + " bytes" +
+      (kernel.packed_outputs.empty() ? std::string()
+                                     : " at the front of the MLA's input buffer of " +
+                                           std::to_string(planned.output_bytes)) +
       (last ? ", output " + out.dtype + " " + dims_text(out.shape) + " " +
                   std::to_string(out.size_bytes) + " bytes at " + std::to_string(out.byte_offset)
             : std::string());
@@ -1534,7 +1667,8 @@ plan_dataflow_route_stages(const si::SimaPluginStaticManifest& manifest,
           std::holds_alternative<DataflowModelStage::Kernel>(planned->stages.back().kind)) {
         fact = "it is the second of two kernel stages in a row (the route's stages: " + kinds + ")";
       } else {
-        fact = plan_kernel_stage(stage, first, last, in, *planned, board);
+        fact = plan_kernel_stage(stage, first, last, last ? nullptr : &manifest.stages[i + 1U],
+                                 in, *planned, board);
       }
     } else {
       fact = "it is neither an MLA stage nor a kernel stage";
@@ -1555,14 +1689,19 @@ plan_dataflow_route_stages(const si::SimaPluginStaticManifest& manifest,
                                       " MLA stages: a route has exactly one MLA stage, or is "
                                       "the image preproc stage alone");
   }
+  // Each stage reads the buffer the stage in front writes. Beside the MLA stage a kernel stage's
+  // port was brought to the MLA's buffer where that is the kernel's tensor and the MLA's padding
+  // (pad_to_mla_input, view_of_mla_output), so what differs here is neither.
   for (std::size_t i = 0; i + 1U < planned->stages.size(); ++i) {
     if (planned->stages[i].output_bytes != planned->stages[i + 1U].input_bytes) {
-      return decline(route_subject, "stage '" + planned->stages[i].key + "' writes " +
-                                        std::to_string(planned->stages[i].output_bytes) +
-                                        " bytes and stage '" + planned->stages[i + 1U].key +
-                                        "' reads " +
-                                        std::to_string(planned->stages[i + 1U].input_bytes) +
-                                        ": not one whole buffer handed on");
+      return decline(route_subject,
+                     "stage '" + planned->stages[i].key + "' writes " +
+                         std::to_string(planned->stages[i].output_bytes) + " bytes and stage '" +
+                         planned->stages[i + 1U].key + "' reads " +
+                         std::to_string(planned->stages[i + 1U].input_bytes) +
+                         ": not one whole buffer handed on, nor a tensor at the front of an MLA "
+                         "input buffer that is the tensor's bytes rounded up to a multiple of " +
+                         std::to_string(kMlaBufferGranule));
     }
   }
   planned->output.beyond_leaf = planned->output.frame_semantics || !planned->output.more.empty();
@@ -2592,23 +2731,22 @@ std::vector<std::uint32_t> add_dataflow_model_ops(df::Net& net, const DataflowMo
       df::soc::MlaOp::Options options;
       options.depth = std::get<DataflowModelStage::Mla>(stage.kind).depth;
       options.inputs = {carried};
-      // The output port: at the route's end, or in front of a kernel that reads several tensors
-      // in this buffer (BoxDecode, whose packed input port is that byte tensor), the MLA's output
-      // buffer as it is (bytes, in the MLA's memory; a pulled tensor is a view of it,
-      // DataflowPulledTensor). In front of a kernel of one input, that kernel's tensor (the MLA's
-      // bytes, typed as the kernel reads them): in the MLA's memory (Dms0) for an A65 kernel,
-      // which reads it through the CPU's address; in Ev74 memory (the kernel's own port spec)
-      // for a kernel on the EV74, which reaches linux,cma only and reads it by descriptor.
+      // The output port: at the route's end, or in front of a kernel whose tensors are views of
+      // this buffer (BoxDecode's heads; one tensor shorter than the buffer, which ends in the
+      // MLA's padding), the MLA's output buffer as it is (bytes; a pulled tensor is a view of it,
+      // DataflowPulledTensor). In front of a kernel whose one input is the whole buffer, that
+      // kernel's tensor (the MLA's bytes, typed as the kernel reads them). Either way in the
+      // MLA's memory (Dms0) for an A65 kernel, which reads it through the CPU's address, and in
+      // Ev74 memory for a kernel on the EV74, which reaches linux,cma only and reads it by
+      // descriptor.
       carried = model->outputs().front();
 #if defined(SIMANEAT_WITH_DATAFLOW_SOC_KERNELS)
       if (!last) {
         const auto& next = std::get<DataflowModelStage::Kernel>(route.stages[i + 1U].kind);
         if (next.packed_inputs.empty()) {
           carried = loaded->kernels[i + 1U]->inputs().front();
-          if (!next.ev74) {
-            carried.memory = df::MemoryKind::Dms0;
-          }
         }
+        carried.memory = next.ev74 ? df::MemoryKind::Ev74 : df::MemoryKind::Dms0;
       }
 #endif
       options.outputs = {carried};
@@ -2632,14 +2770,18 @@ std::vector<std::uint32_t> add_dataflow_model_ops(df::Net& net, const DataflowMo
     // by descriptor, and at the route's end Core's pull hands a DMA-BUF out, as GStreamer's
     // appsink does; the write epoch of that output is the runtime's (a job-written port). BoxDecode
     // writes its outputs into one host buffer, which the wire operator behind it reads on the
-    // Worker.
+    // Worker. A kernel whose one output is the front of the MLA's longer input buffer writes into
+    // a port of that buffer's bytes, in the memory it would write its own tensor in.
     df::soc::KernelOp::Options options;
     df::PortSpec produced = kernel->outputs().front();
+    if (!request.packed_outputs.empty()) {
+      produced = byte_port(stage.output_bytes, produced.memory);
+    }
     if (!request.ev74) {
-      const bool host_out = !request.packed_outputs.empty();
+      const bool host_out =
+          !last && std::holds_alternative<DataflowModelStage::Wire>(route.stages[i + 1U].kind);
       options.inputs = {carried.memory};
       options.outputs = {host_out ? df::MemoryKind::Host : df::MemoryKind::Dms0};
-      produced = host_out ? byte_port(stage.output_bytes, df::MemoryKind::Host) : produced;
       produced.memory = options.outputs.front();
     }
     // A packed side: one port of the side's bytes, each kernel tensor a view of it at its offset

@@ -274,56 +274,34 @@
   {
    "package": "densenet_121 w8a8",
    "view": "app",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "densenet_121__w8a8__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "the model route (3 stages: preproc@EV74, mla, dequant@A65)",
-     "fact": "stage 'MLA_0' writes 1008 bytes and stage 'dequantize_1' reads 1000: not one whole buffer handed on",
+     "planner": "accepted",
      "kinds": [
       "preproc@EV74",
       "mla",
       "dequant@A65"
-     ],
-     "obstacles": [
-      "MLA-PADDING"
-     ],
-     "phase": 2,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 2
+   ]
   },
   {
    "package": "densenet_121 w8a8",
    "view": "default",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "densenet_121__w8a8__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "the model route (3 stages: quant@EV74, mla, dequant@A65)",
-     "fact": "stage 'MLA_0' writes 1008 bytes and stage 'dequantize_1' reads 1000: not one whole buffer handed on",
+     "planner": "accepted",
      "kinds": [
       "quant@EV74",
       "mla",
       "dequant@A65"
-     ],
-     "obstacles": [
-      "MLA-PADDING"
-     ],
-     "phase": 2,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 2
+   ]
   },
   {
    "package": "densenet_161 w16a16",
@@ -360,56 +338,34 @@
   {
    "package": "densenet_161 w8a8",
    "view": "app",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "densenet_161__w8a8__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "the model route (3 stages: preproc@EV74, mla, dequant@A65)",
-     "fact": "stage 'MLA_0' writes 1008 bytes and stage 'dequantize_1' reads 1000: not one whole buffer handed on",
+     "planner": "accepted",
      "kinds": [
       "preproc@EV74",
       "mla",
       "dequant@A65"
-     ],
-     "obstacles": [
-      "MLA-PADDING"
-     ],
-     "phase": 2,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 2
+   ]
   },
   {
    "package": "densenet_161 w8a8",
    "view": "default",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "densenet_161__w8a8__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "the model route (3 stages: quant@EV74, mla, dequant@A65)",
-     "fact": "stage 'MLA_0' writes 1008 bytes and stage 'dequantize_1' reads 1000: not one whole buffer handed on",
+     "planner": "accepted",
      "kinds": [
       "quant@EV74",
       "mla",
       "dequant@A65"
-     ],
-     "obstacles": [
-      "MLA-PADDING"
-     ],
-     "phase": 2,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 2
+   ]
   },
   {
    "package": "densenet_169 w16a16",
@@ -446,56 +402,34 @@
   {
    "package": "densenet_169 w8a8",
    "view": "app",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "densenet_169__w8a8__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "the model route (3 stages: preproc@EV74, mla, dequant@A65)",
-     "fact": "stage 'MLA_0' writes 1008 bytes and stage 'dequantize_1' reads 1000: not one whole buffer handed on",
+     "planner": "accepted",
      "kinds": [
       "preproc@EV74",
       "mla",
       "dequant@A65"
-     ],
-     "obstacles": [
-      "MLA-PADDING"
-     ],
-     "phase": 2,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 2
+   ]
   },
   {
    "package": "densenet_169 w8a8",
    "view": "default",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "densenet_169__w8a8__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "the model route (3 stages: quant@EV74, mla, dequant@A65)",
-     "fact": "stage 'MLA_0' writes 1008 bytes and stage 'dequantize_1' reads 1000: not one whole buffer handed on",
+     "planner": "accepted",
      "kinds": [
       "quant@EV74",
       "mla",
       "dequant@A65"
-     ],
-     "obstacles": [
-      "MLA-PADDING"
-     ],
-     "phase": 2,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 2
+   ]
   },
   {
    "package": "depth_anything_3_small_1view_280x504 w8a16",
@@ -608,164 +542,98 @@
   {
    "package": "depth_anything_v2_small w16a16",
    "view": "app",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "depth_anything_v2_small__w16a16__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "the model route (3 stages: preproc@EV74, mla, cast@A65)",
-     "fact": "stage 'preproc' writes 2132088 bytes and stage 'MLA_0' reads 2132096: not one whole buffer handed on",
+     "planner": "accepted",
      "kinds": [
       "preproc@EV74",
       "mla",
       "cast@A65"
-     ],
-     "obstacles": [
-      "MLA-PADDING"
-     ],
-     "phase": 2,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 2
+   ]
   },
   {
    "package": "depth_anything_v2_small w16a16",
    "view": "default",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "depth_anything_v2_small__w16a16__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "the model route (3 stages: cast@EV74, mla, cast@A65)",
-     "fact": "stage 'cast' writes 2132088 bytes and stage 'MLA_0' reads 2132096: not one whole buffer handed on",
+     "planner": "accepted",
      "kinds": [
       "cast@EV74",
       "mla",
       "cast@A65"
-     ],
-     "obstacles": [
-      "MLA-PADDING"
-     ],
-     "phase": 2,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 2
+   ]
   },
   {
    "package": "depth_anything_v2_small w8a16",
    "view": "app",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "depth_anything_v2_small__w8a16__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "the model route (3 stages: preproc@EV74, mla, cast@A65)",
-     "fact": "stage 'preproc' writes 2132088 bytes and stage 'MLA_0' reads 2132096: not one whole buffer handed on",
+     "planner": "accepted",
      "kinds": [
       "preproc@EV74",
       "mla",
       "cast@A65"
-     ],
-     "obstacles": [
-      "MLA-PADDING"
-     ],
-     "phase": 2,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 2
+   ]
   },
   {
    "package": "depth_anything_v2_small w8a16",
    "view": "default",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "depth_anything_v2_small__w8a16__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "the model route (3 stages: cast@EV74, mla, cast@A65)",
-     "fact": "stage 'cast' writes 2132088 bytes and stage 'MLA_0' reads 2132096: not one whole buffer handed on",
+     "planner": "accepted",
      "kinds": [
       "cast@EV74",
       "mla",
       "cast@A65"
-     ],
-     "obstacles": [
-      "MLA-PADDING"
-     ],
-     "phase": 2,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 2
+   ]
   },
   {
    "package": "depth_anything_v2_small w8a8_mixed",
    "view": "app",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "depth_anything_v2_small__w8a8_mixed__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "the model route (3 stages: preproc@EV74, mla, dequant@A65)",
-     "fact": "stage 'preproc' writes 1066044 bytes and stage 'MLA_0' reads 1066048: not one whole buffer handed on",
+     "planner": "accepted",
      "kinds": [
       "preproc@EV74",
       "mla",
       "dequant@A65"
-     ],
-     "obstacles": [
-      "MLA-PADDING"
-     ],
-     "phase": 2,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 2
+   ]
   },
   {
    "package": "depth_anything_v2_small w8a8_mixed",
    "view": "default",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "depth_anything_v2_small__w8a8_mixed__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "the model route (3 stages: quant@EV74, mla, dequant@A65)",
-     "fact": "stage 'quant' writes 1066044 bytes and stage 'MLA_0' reads 1066048: not one whole buffer handed on",
+     "planner": "accepted",
      "kinds": [
       "quant@EV74",
       "mla",
       "dequant@A65"
-     ],
-     "obstacles": [
-      "MLA-PADDING"
-     ],
-     "phase": 2,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 2
+   ]
   },
   {
    "package": "detr_resnet_101 w16a16",
@@ -2270,56 +2138,34 @@
   {
    "package": "dla_34 w8a8",
    "view": "app",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "dla_34__w8a8__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "the model route (3 stages: preproc@EV74, mla, dequant@A65)",
-     "fact": "stage 'MLA_0' writes 1008 bytes and stage 'dequantize_1' reads 1000: not one whole buffer handed on",
+     "planner": "accepted",
      "kinds": [
       "preproc@EV74",
       "mla",
       "dequant@A65"
-     ],
-     "obstacles": [
-      "MLA-PADDING"
-     ],
-     "phase": 2,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 2
+   ]
   },
   {
    "package": "dla_34 w8a8",
    "view": "default",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "dla_34__w8a8__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "the model route (3 stages: quant@EV74, mla, dequant@A65)",
-     "fact": "stage 'MLA_0' writes 1008 bytes and stage 'dequantize_1' reads 1000: not one whole buffer handed on",
+     "planner": "accepted",
      "kinds": [
       "quant@EV74",
       "mla",
       "dequant@A65"
-     ],
-     "obstacles": [
-      "MLA-PADDING"
-     ],
-     "phase": 2,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 2
+   ]
   },
   {
    "package": "edgetam w16a16_w8a16_w16a16_w8a8",
@@ -2712,164 +2558,98 @@
   {
    "package": "hrnet_w32 w8a8",
    "view": "app",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "hrnet_w32__w8a8__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "the model route (3 stages: preproc@EV74, mla, dequant@A65)",
-     "fact": "stage 'MLA_0' writes 1008 bytes and stage 'dequantize_1' reads 1000: not one whole buffer handed on",
+     "planner": "accepted",
      "kinds": [
       "preproc@EV74",
       "mla",
       "dequant@A65"
-     ],
-     "obstacles": [
-      "MLA-PADDING"
-     ],
-     "phase": 2,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 2
+   ]
   },
   {
    "package": "hrnet_w32 w8a8",
    "view": "default",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "hrnet_w32__w8a8__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "the model route (3 stages: quant@EV74, mla, dequant@A65)",
-     "fact": "stage 'MLA_0' writes 1008 bytes and stage 'dequantize_1' reads 1000: not one whole buffer handed on",
+     "planner": "accepted",
      "kinds": [
       "quant@EV74",
       "mla",
       "dequant@A65"
-     ],
-     "obstacles": [
-      "MLA-PADDING"
-     ],
-     "phase": 2,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 2
+   ]
   },
   {
    "package": "inception_v3 w16a16",
    "view": "app",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "inception_v3__w16a16__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "the model route (3 stages: preproc@EV74, mla, cast@A65)",
-     "fact": "stage 'preproc' writes 536406 bytes and stage 'MLA_0' reads 536416: not one whole buffer handed on",
+     "planner": "accepted",
      "kinds": [
       "preproc@EV74",
       "mla",
       "cast@A65"
-     ],
-     "obstacles": [
-      "MLA-PADDING"
-     ],
-     "phase": 2,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 2
+   ]
   },
   {
    "package": "inception_v3 w16a16",
    "view": "default",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "inception_v3__w16a16__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "the model route (3 stages: cast@EV74, mla, cast@A65)",
-     "fact": "stage 'cast' writes 536406 bytes and stage 'MLA_0' reads 536416: not one whole buffer handed on",
+     "planner": "accepted",
      "kinds": [
       "cast@EV74",
       "mla",
       "cast@A65"
-     ],
-     "obstacles": [
-      "MLA-PADDING"
-     ],
-     "phase": 2,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 2
+   ]
   },
   {
    "package": "inception_v3 w8a8",
    "view": "app",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "inception_v3__w8a8__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "the model route (3 stages: preproc@EV74, mla, dequant@A65)",
-     "fact": "stage 'preproc' writes 268203 bytes and stage 'MLA_0' reads 268208: not one whole buffer handed on",
+     "planner": "accepted",
      "kinds": [
       "preproc@EV74",
       "mla",
       "dequant@A65"
-     ],
-     "obstacles": [
-      "MLA-PADDING"
-     ],
-     "phase": 2,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 2
+   ]
   },
   {
    "package": "inception_v3 w8a8",
    "view": "default",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "inception_v3__w8a8__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "the model route (3 stages: quant@EV74, mla, dequant@A65)",
-     "fact": "stage 'quant' writes 268203 bytes and stage 'MLA_0' reads 268208: not one whole buffer handed on",
+     "planner": "accepted",
      "kinds": [
       "quant@EV74",
       "mla",
       "dequant@A65"
-     ],
-     "obstacles": [
-      "MLA-PADDING"
-     ],
-     "phase": 2,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 2
+   ]
   },
   {
    "package": "lightglue_superpoint w16a16",
@@ -3042,272 +2822,162 @@
   {
    "package": "lightstereo_l w8a8_mixed",
    "view": "app",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "lightstereo_l__w8a8_mixed__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "the model route (3 stages: preproc@EV74, mla, cast@A65)",
-     "fact": "stage 'MLA_0' writes 8294400 bytes and stage 'post_cast_0' reads 8294386: not one whole buffer handed on",
+     "planner": "accepted",
      "kinds": [
       "preproc@EV74",
       "mla",
       "cast@A65"
-     ],
-     "obstacles": [
-      "MLA-PADDING"
-     ],
-     "phase": 2,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 2
+   ]
   },
   {
    "package": "lightstereo_l w8a8_mixed",
    "view": "default",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "lightstereo_l__w8a8_mixed__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "the model route (3 stages: quant@EV74, mla, cast@A65)",
-     "fact": "stage 'MLA_0' writes 8294400 bytes and stage 'post_cast_0' reads 8294386: not one whole buffer handed on",
+     "planner": "accepted",
      "kinds": [
       "quant@EV74",
       "mla",
       "cast@A65"
-     ],
-     "obstacles": [
-      "MLA-PADDING"
-     ],
-     "phase": 2,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 2
+   ]
   },
   {
    "package": "lightstereo_m w16a16",
    "view": "app",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "lightstereo_m__w16a16__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "the model route (3 stages: preproc@EV74, mla, cast@A65)",
-     "fact": "stage 'MLA_0' writes 8294400 bytes and stage 'post_cast_0' reads 8294386: not one whole buffer handed on",
+     "planner": "accepted",
      "kinds": [
       "preproc@EV74",
       "mla",
       "cast@A65"
-     ],
-     "obstacles": [
-      "MLA-PADDING"
-     ],
-     "phase": 2,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 2
+   ]
   },
   {
    "package": "lightstereo_m w16a16",
    "view": "default",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "lightstereo_m__w16a16__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "the model route (3 stages: cast@EV74, mla, cast@A65)",
-     "fact": "stage 'MLA_0' writes 8294400 bytes and stage 'post_cast_0' reads 8294386: not one whole buffer handed on",
+     "planner": "accepted",
      "kinds": [
       "cast@EV74",
       "mla",
       "cast@A65"
-     ],
-     "obstacles": [
-      "MLA-PADDING"
-     ],
-     "phase": 2,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 2
+   ]
   },
   {
    "package": "lightstereo_m w8a8_mixed",
    "view": "app",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "lightstereo_m__w8a8_mixed__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "the model route (3 stages: preproc@EV74, mla, cast@A65)",
-     "fact": "stage 'MLA_0' writes 8294400 bytes and stage 'post_cast_0' reads 8294386: not one whole buffer handed on",
+     "planner": "accepted",
      "kinds": [
       "preproc@EV74",
       "mla",
       "cast@A65"
-     ],
-     "obstacles": [
-      "MLA-PADDING"
-     ],
-     "phase": 2,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 2
+   ]
   },
   {
    "package": "lightstereo_m w8a8_mixed",
    "view": "default",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "lightstereo_m__w8a8_mixed__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "the model route (3 stages: quant@EV74, mla, cast@A65)",
-     "fact": "stage 'MLA_0' writes 8294400 bytes and stage 'post_cast_0' reads 8294386: not one whole buffer handed on",
+     "planner": "accepted",
      "kinds": [
       "quant@EV74",
       "mla",
       "cast@A65"
-     ],
-     "obstacles": [
-      "MLA-PADDING"
-     ],
-     "phase": 2,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 2
+   ]
   },
   {
    "package": "lightstereo_s w16a16",
    "view": "app",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "lightstereo_s__w16a16__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "the model route (3 stages: preproc@EV74, mla, cast@A65)",
-     "fact": "stage 'MLA_0' writes 8294400 bytes and stage 'post_cast_0' reads 8294386: not one whole buffer handed on",
+     "planner": "accepted",
      "kinds": [
       "preproc@EV74",
       "mla",
       "cast@A65"
-     ],
-     "obstacles": [
-      "MLA-PADDING"
-     ],
-     "phase": 2,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 2
+   ]
   },
   {
    "package": "lightstereo_s w16a16",
    "view": "default",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "lightstereo_s__w16a16__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "the model route (3 stages: cast@EV74, mla, cast@A65)",
-     "fact": "stage 'MLA_0' writes 8294400 bytes and stage 'post_cast_0' reads 8294386: not one whole buffer handed on",
+     "planner": "accepted",
      "kinds": [
       "cast@EV74",
       "mla",
       "cast@A65"
-     ],
-     "obstacles": [
-      "MLA-PADDING"
-     ],
-     "phase": 2,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 2
+   ]
   },
   {
    "package": "lightstereo_s w8a8_mixed",
    "view": "app",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "lightstereo_s__w8a8_mixed__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "the model route (3 stages: preproc@EV74, mla, cast@A65)",
-     "fact": "stage 'MLA_0' writes 8294400 bytes and stage 'post_cast_0' reads 8294386: not one whole buffer handed on",
+     "planner": "accepted",
      "kinds": [
       "preproc@EV74",
       "mla",
       "cast@A65"
-     ],
-     "obstacles": [
-      "MLA-PADDING"
-     ],
-     "phase": 2,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 2
+   ]
   },
   {
    "package": "lightstereo_s w8a8_mixed",
    "view": "default",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "lightstereo_s__w8a8_mixed__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "the model route (3 stages: quant@EV74, mla, cast@A65)",
-     "fact": "stage 'MLA_0' writes 8294400 bytes and stage 'post_cast_0' reads 8294386: not one whole buffer handed on",
+     "planner": "accepted",
      "kinds": [
       "quant@EV74",
       "mla",
       "cast@A65"
-     ],
-     "obstacles": [
-      "MLA-PADDING"
-     ],
-     "phase": 2,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 2
+   ]
   },
   {
    "package": "netvlad w16a16",
@@ -3408,56 +3078,34 @@
   {
    "package": "raft_stereo_realtime w16a16",
    "view": "app",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "raft_stereo_realtime__w16a16__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "the model route (3 stages: preproc@EV74, mla, cast@A65)",
-     "fact": "stage 'MLA_0' writes 8294400 bytes and stage 'post_cast_0' reads 8294386: not one whole buffer handed on",
+     "planner": "accepted",
      "kinds": [
       "preproc@EV74",
       "mla",
       "cast@A65"
-     ],
-     "obstacles": [
-      "MLA-PADDING"
-     ],
-     "phase": 2,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 2
+   ]
   },
   {
    "package": "raft_stereo_realtime w16a16",
    "view": "default",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "raft_stereo_realtime__w16a16__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "the model route (3 stages: cast@EV74, mla, cast@A65)",
-     "fact": "stage 'MLA_0' writes 8294400 bytes and stage 'post_cast_0' reads 8294386: not one whole buffer handed on",
+     "planner": "accepted",
      "kinds": [
       "cast@EV74",
       "mla",
       "cast@A65"
-     ],
-     "obstacles": [
-      "MLA-PADDING"
-     ],
-     "phase": 2,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 2
+   ]
   },
   {
    "package": "resnet_18 w16a16",
@@ -3494,56 +3142,34 @@
   {
    "package": "resnet_18 w8a8",
    "view": "app",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "resnet_18__w8a8__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "the model route (3 stages: preproc@EV74, mla, dequant@A65)",
-     "fact": "stage 'MLA_0' writes 1008 bytes and stage 'dequantize_1' reads 1000: not one whole buffer handed on",
+     "planner": "accepted",
      "kinds": [
       "preproc@EV74",
       "mla",
       "dequant@A65"
-     ],
-     "obstacles": [
-      "MLA-PADDING"
-     ],
-     "phase": 2,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 2
+   ]
   },
   {
    "package": "resnet_18 w8a8",
    "view": "default",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "resnet_18__w8a8__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "the model route (3 stages: quant@EV74, mla, dequant@A65)",
-     "fact": "stage 'MLA_0' writes 1008 bytes and stage 'dequantize_1' reads 1000: not one whole buffer handed on",
+     "planner": "accepted",
      "kinds": [
       "quant@EV74",
       "mla",
       "dequant@A65"
-     ],
-     "obstacles": [
-      "MLA-PADDING"
-     ],
-     "phase": 2,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 2
+   ]
   },
   {
    "package": "resnet_34 w16a16",
@@ -3580,56 +3206,34 @@
   {
    "package": "resnet_34 w8a8",
    "view": "app",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "resnet_34__w8a8__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "the model route (3 stages: preproc@EV74, mla, dequant@A65)",
-     "fact": "stage 'MLA_0' writes 1008 bytes and stage 'dequantize_1' reads 1000: not one whole buffer handed on",
+     "planner": "accepted",
      "kinds": [
       "preproc@EV74",
       "mla",
       "dequant@A65"
-     ],
-     "obstacles": [
-      "MLA-PADDING"
-     ],
-     "phase": 2,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 2
+   ]
   },
   {
    "package": "resnet_34 w8a8",
    "view": "default",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "resnet_34__w8a8__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "the model route (3 stages: quant@EV74, mla, dequant@A65)",
-     "fact": "stage 'MLA_0' writes 1008 bytes and stage 'dequantize_1' reads 1000: not one whole buffer handed on",
+     "planner": "accepted",
      "kinds": [
       "quant@EV74",
       "mla",
       "dequant@A65"
-     ],
-     "obstacles": [
-      "MLA-PADDING"
-     ],
-     "phase": 2,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 2
+   ]
   },
   {
    "package": "resnet_50 w16a16",
@@ -3698,56 +3302,34 @@
   {
    "package": "resnet_50 w8a8",
    "view": "app",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "resnet_50__w8a8__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "the model route (3 stages: preproc@EV74, mla, dequant@A65)",
-     "fact": "stage 'MLA_0' writes 1008 bytes and stage 'dequantize_1' reads 1000: not one whole buffer handed on",
+     "planner": "accepted",
      "kinds": [
       "preproc@EV74",
       "mla",
       "dequant@A65"
-     ],
-     "obstacles": [
-      "MLA-PADDING"
-     ],
-     "phase": 2,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 2
+   ]
   },
   {
    "package": "resnet_50 w8a8",
    "view": "default",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "resnet_50__w8a8__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "the model route (3 stages: quant@EV74, mla, dequant@A65)",
-     "fact": "stage 'MLA_0' writes 1008 bytes and stage 'dequantize_1' reads 1000: not one whole buffer handed on",
+     "planner": "accepted",
      "kinds": [
       "quant@EV74",
       "mla",
       "dequant@A65"
-     ],
-     "obstacles": [
-      "MLA-PADDING"
-     ],
-     "phase": 2,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 2
+   ]
   },
   {
    "package": "resnext_101_32x8d w16a16",
@@ -3784,56 +3366,34 @@
   {
    "package": "resnext_101_32x8d w8a8",
    "view": "app",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "resnext_101_32x8d__w8a8__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "the model route (3 stages: preproc@EV74, mla, dequant@A65)",
-     "fact": "stage 'MLA_0' writes 1008 bytes and stage 'dequantize_1' reads 1000: not one whole buffer handed on",
+     "planner": "accepted",
      "kinds": [
       "preproc@EV74",
       "mla",
       "dequant@A65"
-     ],
-     "obstacles": [
-      "MLA-PADDING"
-     ],
-     "phase": 2,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 2
+   ]
   },
   {
    "package": "resnext_101_32x8d w8a8",
    "view": "default",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "resnext_101_32x8d__w8a8__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "the model route (3 stages: quant@EV74, mla, dequant@A65)",
-     "fact": "stage 'MLA_0' writes 1008 bytes and stage 'dequantize_1' reads 1000: not one whole buffer handed on",
+     "planner": "accepted",
      "kinds": [
       "quant@EV74",
       "mla",
       "dequant@A65"
-     ],
-     "obstacles": [
-      "MLA-PADDING"
-     ],
-     "phase": 2,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 2
+   ]
   },
   {
    "package": "resnext_101_64x4d w16a16",
@@ -3870,56 +3430,34 @@
   {
    "package": "resnext_101_64x4d w8a8",
    "view": "app",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "resnext_101_64x4d__w8a8__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "the model route (3 stages: preproc@EV74, mla, dequant@A65)",
-     "fact": "stage 'MLA_0' writes 1008 bytes and stage 'dequantize_1' reads 1000: not one whole buffer handed on",
+     "planner": "accepted",
      "kinds": [
       "preproc@EV74",
       "mla",
       "dequant@A65"
-     ],
-     "obstacles": [
-      "MLA-PADDING"
-     ],
-     "phase": 2,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 2
+   ]
   },
   {
    "package": "resnext_101_64x4d w8a8",
    "view": "default",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "resnext_101_64x4d__w8a8__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "the model route (3 stages: quant@EV74, mla, dequant@A65)",
-     "fact": "stage 'MLA_0' writes 1008 bytes and stage 'dequantize_1' reads 1000: not one whole buffer handed on",
+     "planner": "accepted",
      "kinds": [
       "quant@EV74",
       "mla",
       "dequant@A65"
-     ],
-     "obstacles": [
-      "MLA-PADDING"
-     ],
-     "phase": 2,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 2
+   ]
   },
   {
    "package": "resnext_50_32x4d w16a16",
@@ -3956,56 +3494,34 @@
   {
    "package": "resnext_50_32x4d w8a8",
    "view": "app",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "resnext_50_32x4d__w8a8__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "the model route (3 stages: preproc@EV74, mla, dequant@A65)",
-     "fact": "stage 'MLA_0' writes 1008 bytes and stage 'dequantize_1' reads 1000: not one whole buffer handed on",
+     "planner": "accepted",
      "kinds": [
       "preproc@EV74",
       "mla",
       "dequant@A65"
-     ],
-     "obstacles": [
-      "MLA-PADDING"
-     ],
-     "phase": 2,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 2
+   ]
   },
   {
    "package": "resnext_50_32x4d w8a8",
    "view": "default",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "resnext_50_32x4d__w8a8__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "the model route (3 stages: quant@EV74, mla, dequant@A65)",
-     "fact": "stage 'MLA_0' writes 1008 bytes and stage 'dequantize_1' reads 1000: not one whole buffer handed on",
+     "planner": "accepted",
      "kinds": [
       "quant@EV74",
       "mla",
       "dequant@A65"
-     ],
-     "obstacles": [
-      "MLA-PADDING"
-     ],
-     "phase": 2,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 2
+   ]
   },
   {
    "package": "rf_detr_large w8a16_w16a16",
@@ -6382,164 +5898,98 @@
   {
    "package": "segformer_b0_ade_512 w16a16",
    "view": "app",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "segformer_b0_ade_512__w16a16__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "the model route (3 stages: preproc@EV74, mla, cast@A65)",
-     "fact": "stage 'MLA_0' writes 4980736 bytes and stage 'post_cast_0' reads 4980732: not one whole buffer handed on",
+     "planner": "accepted",
      "kinds": [
       "preproc@EV74",
       "mla",
       "cast@A65"
-     ],
-     "obstacles": [
-      "MLA-PADDING"
-     ],
-     "phase": 2,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 2
+   ]
   },
   {
    "package": "segformer_b0_ade_512 w16a16",
    "view": "default",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "segformer_b0_ade_512__w16a16__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "the model route (3 stages: cast@EV74, mla, cast@A65)",
-     "fact": "stage 'MLA_0' writes 4980736 bytes and stage 'post_cast_0' reads 4980732: not one whole buffer handed on",
+     "planner": "accepted",
      "kinds": [
       "cast@EV74",
       "mla",
       "cast@A65"
-     ],
-     "obstacles": [
-      "MLA-PADDING"
-     ],
-     "phase": 2,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 2
+   ]
   },
   {
    "package": "segformer_b0_ade_512 w8a8",
    "view": "app",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "segformer_b0_ade_512__w8a8__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "the model route (3 stages: preproc@EV74, mla, dequant@A65)",
-     "fact": "stage 'MLA_0' writes 2621440 bytes and stage 'dequantize_1' reads 2621430: not one whole buffer handed on",
+     "planner": "accepted",
      "kinds": [
       "preproc@EV74",
       "mla",
       "dequant@A65"
-     ],
-     "obstacles": [
-      "MLA-PADDING"
-     ],
-     "phase": 2,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 2
+   ]
   },
   {
    "package": "segformer_b0_ade_512 w8a8",
    "view": "default",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "segformer_b0_ade_512__w8a8__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "the model route (3 stages: quant@EV74, mla, dequant@A65)",
-     "fact": "stage 'MLA_0' writes 2621440 bytes and stage 'dequantize_1' reads 2621430: not one whole buffer handed on",
+     "planner": "accepted",
      "kinds": [
       "quant@EV74",
       "mla",
       "dequant@A65"
-     ],
-     "obstacles": [
-      "MLA-PADDING"
-     ],
-     "phase": 2,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 2
+   ]
   },
   {
    "package": "segformer_b0_ade_512 w8a8_mixed",
    "view": "app",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "segformer_b0_ade_512__w8a8_mixed__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "the model route (3 stages: preproc@EV74, mla, dequant@A65)",
-     "fact": "stage 'MLA_0' writes 2621440 bytes and stage 'dequantize_102' reads 2621430: not one whole buffer handed on",
+     "planner": "accepted",
      "kinds": [
       "preproc@EV74",
       "mla",
       "dequant@A65"
-     ],
-     "obstacles": [
-      "MLA-PADDING"
-     ],
-     "phase": 2,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 2
+   ]
   },
   {
    "package": "segformer_b0_ade_512 w8a8_mixed",
    "view": "default",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "segformer_b0_ade_512__w8a8_mixed__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "the model route (3 stages: quant@EV74, mla, dequant@A65)",
-     "fact": "stage 'MLA_0' writes 2621440 bytes and stage 'dequantize_102' reads 2621430: not one whole buffer handed on",
+     "planner": "accepted",
      "kinds": [
       "quant@EV74",
       "mla",
       "dequant@A65"
-     ],
-     "obstacles": [
-      "MLA-PADDING"
-     ],
-     "phase": 2,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 2
+   ]
   },
   {
    "package": "siglip2_vit_b_16 w16a16",
@@ -6659,13 +6109,11 @@
      ],
      "obstacles": [
       "MLA-IN-BUFFERS",
-      "MLA-PADDING",
       "MULTI-TENSOR-PRE"
      ],
      "phase": 6,
      "owners": [
-      "inputs",
-      "stages"
+      "inputs"
      ]
     }
    ],
@@ -6689,13 +6137,11 @@
      ],
      "obstacles": [
       "MLA-IN-BUFFERS",
-      "MLA-PADDING",
       "MULTI-TENSOR-PRE"
      ],
      "phase": 6,
      "owners": [
-      "inputs",
-      "stages"
+      "inputs"
      ]
     }
    ],
@@ -6719,13 +6165,11 @@
      ],
      "obstacles": [
       "MLA-IN-BUFFERS",
-      "MLA-PADDING",
       "MULTI-TENSOR-PRE"
      ],
      "phase": 6,
      "owners": [
-      "inputs",
-      "stages"
+      "inputs"
      ]
     }
    ],
@@ -6749,13 +6193,11 @@
      ],
      "obstacles": [
       "MLA-IN-BUFFERS",
-      "MLA-PADDING",
       "MULTI-TENSOR-PRE"
      ],
      "phase": 6,
      "owners": [
-      "inputs",
-      "stages"
+      "inputs"
      ]
     }
    ],
@@ -7046,56 +6488,34 @@
   {
    "package": "vgg_11 w8a8",
    "view": "app",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "vgg_11__w8a8__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "the model route (3 stages: preproc@EV74, mla, dequant@A65)",
-     "fact": "stage 'MLA_0' writes 1008 bytes and stage 'dequantize_1' reads 1000: not one whole buffer handed on",
+     "planner": "accepted",
      "kinds": [
       "preproc@EV74",
       "mla",
       "dequant@A65"
-     ],
-     "obstacles": [
-      "MLA-PADDING"
-     ],
-     "phase": 2,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 2
+   ]
   },
   {
    "package": "vgg_11 w8a8",
    "view": "default",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "vgg_11__w8a8__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "the model route (3 stages: quant@EV74, mla, dequant@A65)",
-     "fact": "stage 'MLA_0' writes 1008 bytes and stage 'dequantize_1' reads 1000: not one whole buffer handed on",
+     "planner": "accepted",
      "kinds": [
       "quant@EV74",
       "mla",
       "dequant@A65"
-     ],
-     "obstacles": [
-      "MLA-PADDING"
-     ],
-     "phase": 2,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 2
+   ]
   },
   {
    "package": "vgg_11_bn w16a16",
@@ -7132,56 +6552,34 @@
   {
    "package": "vgg_11_bn w8a8",
    "view": "app",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "vgg_11_bn__w8a8__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "the model route (3 stages: preproc@EV74, mla, dequant@A65)",
-     "fact": "stage 'MLA_0' writes 1008 bytes and stage 'dequantize_1' reads 1000: not one whole buffer handed on",
+     "planner": "accepted",
      "kinds": [
       "preproc@EV74",
       "mla",
       "dequant@A65"
-     ],
-     "obstacles": [
-      "MLA-PADDING"
-     ],
-     "phase": 2,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 2
+   ]
   },
   {
    "package": "vgg_11_bn w8a8",
    "view": "default",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "vgg_11_bn__w8a8__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "the model route (3 stages: quant@EV74, mla, dequant@A65)",
-     "fact": "stage 'MLA_0' writes 1008 bytes and stage 'dequantize_1' reads 1000: not one whole buffer handed on",
+     "planner": "accepted",
      "kinds": [
       "quant@EV74",
       "mla",
       "dequant@A65"
-     ],
-     "obstacles": [
-      "MLA-PADDING"
-     ],
-     "phase": 2,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 2
+   ]
   },
   {
    "package": "vgg_13 w16a16",
@@ -7218,56 +6616,34 @@
   {
    "package": "vgg_13 w8a8",
    "view": "app",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "vgg_13__w8a8__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "the model route (3 stages: preproc@EV74, mla, dequant@A65)",
-     "fact": "stage 'MLA_0' writes 1008 bytes and stage 'dequantize_1' reads 1000: not one whole buffer handed on",
+     "planner": "accepted",
      "kinds": [
       "preproc@EV74",
       "mla",
       "dequant@A65"
-     ],
-     "obstacles": [
-      "MLA-PADDING"
-     ],
-     "phase": 2,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 2
+   ]
   },
   {
    "package": "vgg_13 w8a8",
    "view": "default",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "vgg_13__w8a8__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "the model route (3 stages: quant@EV74, mla, dequant@A65)",
-     "fact": "stage 'MLA_0' writes 1008 bytes and stage 'dequantize_1' reads 1000: not one whole buffer handed on",
+     "planner": "accepted",
      "kinds": [
       "quant@EV74",
       "mla",
       "dequant@A65"
-     ],
-     "obstacles": [
-      "MLA-PADDING"
-     ],
-     "phase": 2,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 2
+   ]
   },
   {
    "package": "vgg_13_bn w16a16",
@@ -7304,56 +6680,34 @@
   {
    "package": "vgg_13_bn w8a8",
    "view": "app",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "vgg_13_bn__w8a8__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "the model route (3 stages: preproc@EV74, mla, dequant@A65)",
-     "fact": "stage 'MLA_0' writes 1008 bytes and stage 'dequantize_1' reads 1000: not one whole buffer handed on",
+     "planner": "accepted",
      "kinds": [
       "preproc@EV74",
       "mla",
       "dequant@A65"
-     ],
-     "obstacles": [
-      "MLA-PADDING"
-     ],
-     "phase": 2,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 2
+   ]
   },
   {
    "package": "vgg_13_bn w8a8",
    "view": "default",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "vgg_13_bn__w8a8__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "the model route (3 stages: quant@EV74, mla, dequant@A65)",
-     "fact": "stage 'MLA_0' writes 1008 bytes and stage 'dequantize_1' reads 1000: not one whole buffer handed on",
+     "planner": "accepted",
      "kinds": [
       "quant@EV74",
       "mla",
       "dequant@A65"
-     ],
-     "obstacles": [
-      "MLA-PADDING"
-     ],
-     "phase": 2,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 2
+   ]
   },
   {
    "package": "vgg_16 w16a16",
@@ -7390,56 +6744,34 @@
   {
    "package": "vgg_16 w8a8",
    "view": "app",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "vgg_16__w8a8__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "the model route (3 stages: preproc@EV74, mla, dequant@A65)",
-     "fact": "stage 'MLA_0' writes 1008 bytes and stage 'dequantize_1' reads 1000: not one whole buffer handed on",
+     "planner": "accepted",
      "kinds": [
       "preproc@EV74",
       "mla",
       "dequant@A65"
-     ],
-     "obstacles": [
-      "MLA-PADDING"
-     ],
-     "phase": 2,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 2
+   ]
   },
   {
    "package": "vgg_16 w8a8",
    "view": "default",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "vgg_16__w8a8__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "the model route (3 stages: quant@EV74, mla, dequant@A65)",
-     "fact": "stage 'MLA_0' writes 1008 bytes and stage 'dequantize_1' reads 1000: not one whole buffer handed on",
+     "planner": "accepted",
      "kinds": [
       "quant@EV74",
       "mla",
       "dequant@A65"
-     ],
-     "obstacles": [
-      "MLA-PADDING"
-     ],
-     "phase": 2,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 2
+   ]
   },
   {
    "package": "vgg_16_bn w16a16",
@@ -7476,56 +6808,34 @@
   {
    "package": "vgg_16_bn w8a8",
    "view": "app",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "vgg_16_bn__w8a8__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "the model route (3 stages: preproc@EV74, mla, dequant@A65)",
-     "fact": "stage 'MLA_0' writes 1008 bytes and stage 'dequantize_1' reads 1000: not one whole buffer handed on",
+     "planner": "accepted",
      "kinds": [
       "preproc@EV74",
       "mla",
       "dequant@A65"
-     ],
-     "obstacles": [
-      "MLA-PADDING"
-     ],
-     "phase": 2,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 2
+   ]
   },
   {
    "package": "vgg_16_bn w8a8",
    "view": "default",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "vgg_16_bn__w8a8__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "the model route (3 stages: quant@EV74, mla, dequant@A65)",
-     "fact": "stage 'MLA_0' writes 1008 bytes and stage 'dequantize_1' reads 1000: not one whole buffer handed on",
+     "planner": "accepted",
      "kinds": [
       "quant@EV74",
       "mla",
       "dequant@A65"
-     ],
-     "obstacles": [
-      "MLA-PADDING"
-     ],
-     "phase": 2,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 2
+   ]
   },
   {
    "package": "vgg_19 w16a16",
@@ -7562,56 +6872,34 @@
   {
    "package": "vgg_19 w8a8",
    "view": "app",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "vgg_19__w8a8__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "the model route (3 stages: preproc@EV74, mla, dequant@A65)",
-     "fact": "stage 'MLA_0' writes 1008 bytes and stage 'dequantize_1' reads 1000: not one whole buffer handed on",
+     "planner": "accepted",
      "kinds": [
       "preproc@EV74",
       "mla",
       "dequant@A65"
-     ],
-     "obstacles": [
-      "MLA-PADDING"
-     ],
-     "phase": 2,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 2
+   ]
   },
   {
    "package": "vgg_19 w8a8",
    "view": "default",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "vgg_19__w8a8__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "the model route (3 stages: quant@EV74, mla, dequant@A65)",
-     "fact": "stage 'MLA_0' writes 1008 bytes and stage 'dequantize_1' reads 1000: not one whole buffer handed on",
+     "planner": "accepted",
      "kinds": [
       "quant@EV74",
       "mla",
       "dequant@A65"
-     ],
-     "obstacles": [
-      "MLA-PADDING"
-     ],
-     "phase": 2,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 2
+   ]
   },
   {
    "package": "vgg_19_bn w16a16",
@@ -7648,56 +6936,34 @@
   {
    "package": "vgg_19_bn w8a8",
    "view": "app",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "vgg_19_bn__w8a8__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "the model route (3 stages: preproc@EV74, mla, dequant@A65)",
-     "fact": "stage 'MLA_0' writes 1008 bytes and stage 'dequantize_1' reads 1000: not one whole buffer handed on",
+     "planner": "accepted",
      "kinds": [
       "preproc@EV74",
       "mla",
       "dequant@A65"
-     ],
-     "obstacles": [
-      "MLA-PADDING"
-     ],
-     "phase": 2,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 2
+   ]
   },
   {
    "package": "vgg_19_bn w8a8",
    "view": "default",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "vgg_19_bn__w8a8__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "the model route (3 stages: quant@EV74, mla, dequant@A65)",
-     "fact": "stage 'MLA_0' writes 1008 bytes and stage 'dequantize_1' reads 1000: not one whole buffer handed on",
+     "planner": "accepted",
      "kinds": [
       "quant@EV74",
       "mla",
       "dequant@A65"
-     ],
-     "obstacles": [
-      "MLA-PADDING"
-     ],
-     "phase": 2,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 2
+   ]
   },
   {
    "package": "vit_b_16 w16a16",
@@ -7798,56 +7064,34 @@
   {
    "package": "wide_resnet_50_2 w8a8",
    "view": "app",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "wide_resnet_50_2__w8a8__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "the model route (3 stages: preproc@EV74, mla, dequant@A65)",
-     "fact": "stage 'MLA_0' writes 1008 bytes and stage 'dequantize_1' reads 1000: not one whole buffer handed on",
+     "planner": "accepted",
      "kinds": [
       "preproc@EV74",
       "mla",
       "dequant@A65"
-     ],
-     "obstacles": [
-      "MLA-PADDING"
-     ],
-     "phase": 2,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 2
+   ]
   },
   {
    "package": "wide_resnet_50_2 w8a8",
    "view": "default",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "wide_resnet_50_2__w8a8__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "the model route (3 stages: quant@EV74, mla, dequant@A65)",
-     "fact": "stage 'MLA_0' writes 1008 bytes and stage 'dequantize_1' reads 1000: not one whole buffer handed on",
+     "planner": "accepted",
      "kinds": [
       "quant@EV74",
       "mla",
       "dequant@A65"
-     ],
-     "obstacles": [
-      "MLA-PADDING"
-     ],
-     "phase": 2,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 2
+   ]
   },
   {
    "package": "yolo11l w16a16",

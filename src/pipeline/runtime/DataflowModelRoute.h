@@ -19,6 +19,19 @@
 //     ProcessCvuRunTargetPolicy.cpp). A stage on the EV74 is taken only where the EV74 runs the
 //     Kernels firmware; on a board with another firmware the route is not carried, and the plan
 //     says so as the board's fact.
+//   - The MLA's padding. The model compiler makes each buffer of an MLA model a multiple of 16
+//     bytes, so a buffer is up to 15 bytes longer than the tensor in it, and a kernel beside the
+//     MLA has exact bytes. Such a kernel stage has one port of the MLA's buffer as bytes on that
+//     side, and its tensor is a view of it at the offset the manifest gives
+//     (soc::KernelOp::Options::Packing); the MLA's own port is its buffer, as ever. What the
+//     bytes behind the tensor hold, and who writes them:
+//       - behind the MLA (its output buffer): the MLA writes its whole buffer; the kernel reads
+//         its tensor's bytes and no others, and no pulled tensor covers the padding;
+//       - in front of the MLA, written by a kernel stage (its packed output port): the kernel
+//         writes its tensor's bytes and no others. The padding is written once, with zeros, by
+//         the port's pool when the Session is made (the runtime writes every slot of a device
+//         pool with zeros before its first use), and by nobody afterwards: the MLA reads zeros
+//         there with every frame.
 //   - Model::preprocess() of a model whose pre stage is the image preproc (the Kernels package's
 //     "preproc", EV74 only: resize, colour, normalize, quantize and tessellate an RGB or BGR
 //     frame, or an NV12 one), alone or in front of the stages above. GStreamer runs it
@@ -211,8 +224,11 @@ struct DataflowModelStage {
         ::simaai::scheduler::client::MutableBytes output) = nullptr;
   };
   std::string key;                ///< the stage's name (messages, the operator's name)
-  std::uint64_t input_bytes = 0;  ///< its one input buffer
-  std::uint64_t output_bytes = 0; ///< its one output buffer
+  /// Its one input buffer and its one output buffer: the bytes of its ports. Beside an MLA stage
+  /// whose buffer is longer than the kernel's tensor, a kernel stage's is the MLA's buffer and
+  /// the tensor a view of it (Kernel::packed_inputs, packed_outputs).
+  std::uint64_t input_bytes = 0;
+  std::uint64_t output_bytes = 0;
   std::variant<Mla, Kernel, Wire> kind;
 };
 

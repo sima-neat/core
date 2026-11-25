@@ -9,13 +9,18 @@
 // frames; and a model package whose pre and post stages are canonical transforms (--resnet-package,
 // or SIMA_TEST_MODEL_PACKAGE; ResNet-50 is the one it was written with), placed on the A65.
 // Without the first the test is skipped; without the second its kernel-stage rows are (said in
-// the output). It downloads nothing.
+// the output). A third, optional package is one whose MLA buffers are longer than the tensors of
+// the canonical transforms beside the MLA (--padded-package, or SIMA_TEST_PADDED_MODEL_PACKAGE;
+// Inception-v3 is the one the rows were written with: its MLA input is 299x299x3 elements in a
+// buffer rounded up to 16 bytes); without it the row `padding` is not run (said in the output).
+// It downloads nothing.
 //
 // Rows: `accepted` (the unchanged manifests plan), `route` (the route's shape: stage kinds, the
 // stage count, buffers handed on), `mla` (the MLA stage), `frames` (what the build says of the
 // frames: seed, declaration), `image` (the image preproc stage), `boxdecode`, `kernel` (a
-// canonical transform). Each decline's text is checked for the words that say what is not
-// carried.
+// canonical transform), `padding` (a kernel stage's tensor in an MLA buffer that is longer than
+// it: the routes that plan, and each decline of a tensor that is not such a view). Each
+// decline's text is checked for the words that say what is not carried.
 
 #include "model/Model.h"
 #include "model/internal/ModelInternal.h"
@@ -32,6 +37,8 @@
 #include "cli_utils.h"
 #include "test_main.h"
 #include "test_utils.h"
+
+#include <simaai/scheduler/client/kernel.h>
 
 #include <cstddef>
 #include <cstdint>
@@ -674,6 +681,87 @@ void kernel(const Yolo& y, const Ask* resnet) {
   }
 }
 
+// The manifests of a model whose MLA buffers are longer than the tensors beside them.
+struct Padded {
+  Ask full, inf, pre_inf, inf_post;
+};
+
+// What the kernel of stage `i`'s one invocation asks of its input tensor's alignment.
+std::size_t input_alignment(const si::SimaPluginStaticManifest& manifest, std::size_t i) {
+  const auto inspected =
+      client::inspect_kernel(manifest.stages.at(i).native_kernel->members.at(0).executable);
+  const auto* contract = std::get_if<client::KernelInspection>(&inspected);
+  return contract && !contract->input_requirements().empty()
+             ? contract->input_requirements().front().alignment_bytes
+             : 0U;
+}
+
+void padding(const Padded& p) {
+  const si::StageStaticSpec& mla = p.full.manifest.stages[1];
+  const std::uint64_t in_buffer = mla.physical_inputs.at(0).size_bytes;
+  const std::uint64_t out_buffer = mla.physical_outputs.at(0).size_bytes;
+  const std::uint64_t pre_bytes = p.full.manifest.stages[0].physical_outputs.at(0).size_bytes;
+  const std::uint64_t post_bytes = p.full.manifest.stages[2].physical_inputs.at(0).size_bytes;
+  std::cout << "[padding] the pre stage writes " << pre_bytes << " bytes, the MLA reads "
+            << in_buffer << " and writes " << out_buffer << ", the post stage reads " << post_bytes
+            << "\n";
+  check(pre_bytes < in_buffer && (pre_bytes + 15U) / 16U * 16U == in_buffer,
+        "the padded model's MLA input buffer is its pre stage's tensor rounded up to 16 bytes");
+  accepts(p.full, "padded: preprocess, inference, postprocess");
+  accepts(p.pre_inf, "padded: preprocess and inference (the kernel writes the buffer's front)");
+  accepts(p.inf_post, "padded: inference and postprocess (a pushed tensor is the buffer's front)");
+  accepts(p.inf, "padded: inference alone");
+  {
+    Ask a = p.full;
+    a.ev74_obstacle = "the EV74 is running with firmware 'simaai_cvu'";
+    if (a.manifest.stages[0].native_kernel->target != client::Hardware::A65) {
+      declines(a, "is not carried by the Dataflow backend on this board",
+               "padded: an EV74 kernel stage on the stock firmware");
+    }
+  }
+  // In front of the MLA: a buffer that is not the kernel's tensor rounded up to 16 bytes.
+  {
+    Ask a = p.full;
+    a.manifest.stages[1].physical_inputs[0].size_bytes += 16;
+    declines(a, "nor a tensor at the front of an MLA input buffer",
+             "the MLA reads 16 bytes more than its padding");
+    a = p.full;
+    a.manifest.stages[1].physical_inputs[0].size_bytes = pre_bytes - 1U;
+    declines(a, "not one whole buffer handed on", "the MLA reads fewer bytes than are written");
+  }
+  // Behind the MLA: the kernel's tensor is a view of the MLA's output buffer.
+  {
+    // A buffer 16 bytes longer than the manifest's: the tensor is its front, or lies 8 bytes in.
+    Ask longer = p.full;
+    longer.manifest.stages[1].physical_outputs[0].size_bytes += 16;
+    accepts(longer, "padded: a post tensor at the front of a longer MLA buffer");
+    const std::size_t alignment = input_alignment(p.full.manifest, 2);
+    Ask a = longer;
+    a.manifest.stages[2].physical_inputs[0].source_byte_offset = 8;
+    if (alignment != 0U && 8U % alignment == 0U) {
+      accepts(a, "padded: a post tensor 8 bytes into a longer MLA buffer");
+    }
+    a = longer;
+    a.manifest.stages[2].physical_inputs[0].source_byte_offset = 64;
+    declines(a, "does not lie in the output buffer of", "a post tensor that ends past the buffer");
+    a = longer;
+    a.manifest.stages[2].logical_inputs[0].byte_offset = -1;
+    declines(a, "does not lie in the output buffer of", "a post tensor at a negative offset");
+    a = longer;
+    a.manifest.stages[2].physical_inputs[0].source_physical_index = 1;
+    declines(a, "reads output buffer 1 of the MLA stage", "a post tensor in a second MLA buffer");
+    if (alignment > 1U) {
+      a = longer;
+      recipe_of(a.manifest, 2).members[0].inputs[0].byte_offset = 1;
+      declines(a, "asks for an alignment of " + std::to_string(alignment) + " bytes",
+               "a post tensor at an offset its kernel's alignment does not divide");
+    } else {
+      std::cout << "[padding] the post kernel reads bytes (alignment " << alignment
+                << "): the alignment decline is not run\n";
+    }
+  }
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -696,6 +784,12 @@ int main(int argc, char** argv) {
   if (const char* staged = std::getenv("SIMA_TEST_MODEL_PACKAGE");
       resnet_archive.empty() && staged) {
     resnet_archive = staged;
+  }
+  std::string padded_archive;
+  sima_test::get_arg(argc, argv, "--padded-package", padded_archive);
+  if (const char* staged = std::getenv("SIMA_TEST_PADDED_MODEL_PACKAGE");
+      padded_archive.empty() && staged) {
+    padded_archive = staged;
   }
   std::string only_row;
   sima_test::get_arg(argc, argv, "--row", only_row);
@@ -741,6 +835,29 @@ int main(int argc, char** argv) {
     row("image", [&] { image(y); });
     row("boxdecode", [&] { boxdecode(y); });
     row("kernel", [&] { kernel(y, r); });
+    if (!padded_archive.empty() && file_exists(padded_archive)) {
+      Model::Options tensor;
+      tensor.preprocess.kind = InputKind::Tensor;
+      const Model model(padded_archive, tensor);
+      const InputOptions declared = model.input_appsrc_options(true);
+      Padded p;
+      for (Ask* ask : {&p.full, &p.inf, &p.pre_inf, &p.inf_post}) {
+        ask->declared = declared;
+      }
+      p.full.manifest = manifest_of(model, declared, true, true, true, defaults);
+      p.inf.manifest = manifest_of(model, declared, false, true, false, defaults);
+      p.pre_inf.manifest = manifest_of(model, declared, true, true, false, defaults);
+      p.inf_post.manifest = manifest_of(model, declared, false, true, true, defaults);
+      require(p.full.manifest.stages.size() == 3U && p.full.manifest.stages[0].native_kernel &&
+                  p.full.manifest.stages[2].native_kernel &&
+                  p.full.manifest.stages[0].native_kernel->members.size() == 1U &&
+                  p.full.manifest.stages[2].native_kernel->members.size() == 1U,
+              "the padded model's manifest has a canonical transform on either side of the MLA");
+      row("padding", [&] { padding(p); });
+    } else {
+      std::cout << "[padding] the row needs --padded-package or SIMA_TEST_PADDED_MODEL_PACKAGE: "
+                   "not run\n";
+    }
     std::cout << "[summary] " << g_declines << " declines executed, " << g_failures.size()
               << " failures\n";
     require(g_failures.empty(), std::to_string(g_failures.size()) + " rows failed (above)");
