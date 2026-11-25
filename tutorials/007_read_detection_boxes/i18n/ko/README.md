@@ -23,6 +23,8 @@
 
 이러한 옵션은 입력 계약과 후처리 동작을 모두 설정합니다. `decode_type` (`YoloV8` 사용)는 모델 패밀리 디코드 경로를 선택합니다. 신뢰도 임계값은 NMS 전에 약한 후보를 제거합니다. NMS IoU 임계값은 겹치는 바운딩 박스가 얼마나 적극적으로 병합되는지를 제어합니다. `top_k`은 결정론적 다운스트림 비용을 위해 최종 수를 제한하고, `boxdecode_original_width`/`boxdecode_original_height`은 디코드된 좌표를 소스 이미지 픽셀로 다시 매핑합니다. 이러한 각 값에 대한 조정 지침은 아래의 "실제 적용"에서 확인할 수 있습니다.
 
+이 YOLO 모델은 `[0,1]` 범위의 RGB 값을 기대하므로, 이 예제는 `normalize.enable = On`을 설정합니다.
+
 **C++:** `decode_type`은 `BoxDecodeType::YoloV8` 열거형을 사용합니다. 임계값/NMS/`top_k` 값은 `Model::Options`가 아닌 `stages::BoxDecodeOptions`를 통해 나중에 전달됩니다.
 
 **Python:** `decode_type`은 `pyneat.BoxDecodeType.YoloV8` 열거형을 사용하며, `score_threshold`, `nms_iou_threshold`, `top_k` 및 `boxdecode_original_width`/`boxdecode_original_height`은 `ModelOptions`에 직접 설정됩니다. (`score_threshold`와 C++의 `detection_threshold`는 동일한 컨트롤을 나타냅니다. 자세한 내용은 "실제 적용"의 명명 참고 사항을 참조하십시오.)

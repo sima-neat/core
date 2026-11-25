@@ -358,6 +358,16 @@ A tensor was constructed with both `byte_format=` (opaque bytes) and `image_form
 Pass one or the other, not both.
 :::
 
+### 23. An image-input Model on a quantized INT8 model returns few, no, or low-quality detections
+
+:::info Cause
+Normalization is Off. Either it was set explicitly to `Off` (no warning), or it was left at `Auto` with no preset and no explicit stats, in which case the planner warns `preprocess.normalize=Auto resolved Off`. With normalization Off, the stage quantizes the raw 0–255 pixel values.
+:::
+
+:::tip Fix
+For a detector trained on `[0,1]` input, enable normalization. For a model trained on raw `0–255` pixels, leave normalization off.
+:::
+
 ## Coming from another stack
 
 - **"Where's my `.engine` / `.blob` / `.dlc` / `.hef`?"** — Neat loads a `.tar.gz` model archive; that's the equivalent compiled artifact.

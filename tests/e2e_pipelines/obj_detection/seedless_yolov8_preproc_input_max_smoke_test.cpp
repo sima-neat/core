@@ -31,6 +31,7 @@ simaai::neat::Model::Options make_options(bool set_input_max) {
   options.preprocess.kind = simaai::neat::InputKind::Image;
   options.preprocess.enable = simaai::neat::AutoFlag::On;
   options.preprocess.color_convert.input_format = simaai::neat::PreprocessColorFormat::BGR;
+  options.preprocess.normalize.enable = simaai::neat::AutoFlag::On;
   if (set_input_max) {
     options.preprocess.input_max_width = 1280;
     options.preprocess.input_max_height = 960;

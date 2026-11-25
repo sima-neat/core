@@ -42,6 +42,7 @@ int main(int argc, char** argv) {
     // STEP configure-decode
     simaai::neat::Model::Options opt;
     opt.preprocess.color_convert.input_format = simaai::neat::PreprocessColorFormat::BGR;
+    opt.preprocess.normalize.enable = simaai::neat::AutoFlag::On;
     opt.preprocess.input_max_width = bgr.cols;
     opt.preprocess.input_max_height = bgr.rows;
     opt.preprocess.input_max_depth = bgr.channels();

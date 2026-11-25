@@ -397,6 +397,9 @@ struct ProcessCvuStagePayload {
   /// Model-level top-left letterbox: round the non-limiting axis to the nearest pixel
   /// (internal::nearest_letterbox_extent). False keeps the legacy FP32 ceil.
   bool letterbox_nearest_extent = false;
+  /// Marks a Preproc stage built by a Model for itself, so the lowering can quantize with
+  /// normalization off.
+  bool model_managed_preproc = false;
   std::optional<int> shorter_side;
   std::optional<float> rescale_factor;
   /// Original positive FP32 INT8 step, never reconstructed from a reciprocal.

@@ -36,6 +36,7 @@ def main(argv: list[str]) -> int:
   opt = pyneat.ModelOptions()
   opt.preprocess.kind = pyneat.InputKind.Image
   opt.preprocess.color_convert.input_format = pyneat.PreprocessColorFormat.RGB
+  opt.preprocess.normalize.enable = pyneat.AutoFlag.On
   opt.preprocess.input_max_width = args.width
   opt.preprocess.input_max_height = args.height
   opt.preprocess.input_max_depth = 3
