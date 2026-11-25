@@ -99,6 +99,8 @@
     "model_seeded_input_capacity_oversize_height_test": 2.48,
     "preproc_roi_user_smoke_test": 2.58,
     "preproc_roi_boxdecode_moving_test": 6,
+    "preproc_roi_boxdecode_pose_moving_test": 6,
+    "preproc_roi_boxdecode_seg_moving_test": 6,
     "boxdecode_yolo_layout_matrix_e2e_test": 1.24,
     "graphpipes_yolo_metadata_sender_16stream_test": 3.32,
     "model_resnet50_multi_test": 3.22,

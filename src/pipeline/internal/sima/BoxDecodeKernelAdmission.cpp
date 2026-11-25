@@ -228,10 +228,14 @@ bool boxdecode_letterbox_is_off_center(const PreprocessRuntimeMeta* observed,
          padding == "BOTTOMRIGHT";
 }
 
-CompiledKernelContract compile_boxdecode_kernel(const CompiledBoxDecodeContract& compiled,
-                                                const ContractCompileInput& input,
-                                                BoxDecodeGeometryOptions geometry,
-                                                std::optional<ResizeMode> resize_mode) {
+namespace {
+// `kernel_transform` tries the preprocess transform on the profiles that only newer kernels
+// accept (pose, segmentation, 91-class multiclass SSD).
+CompiledKernelContract compile_boxdecode_kernel_with(const CompiledBoxDecodeContract& compiled,
+                                                     const ContractCompileInput& input,
+                                                     BoxDecodeGeometryOptions geometry,
+                                                     std::optional<ResizeMode> resize_mode,
+                                                     bool kernel_transform) {
   namespace si = ::simaai::neat::pipeline_internal::sima;
   // The old plugin resolved source carriers dynamically from metadata.
   // Runner requires their allocation extents once, before admitting work.
@@ -375,7 +379,9 @@ CompiledKernelContract compile_boxdecode_kernel(const CompiledBoxDecodeContract&
   const bool upstream_image_transform =
       input.upstream_preprocess && input.upstream_preprocess->payload.image_transform;
   const bool crop_requested = resize_mode == ResizeMode::Crop || upstream_crop;
-  const bool detection_transform = boxdecode_payload_supports_detection_transform(compiled.payload);
+  const bool detection_transform =
+      boxdecode_payload_supports_detection_transform(compiled.payload) ||
+      (kernel_transform && boxdecode_payload_may_take_transform(compiled.payload));
   geometry.uniform_transform_required = box_decode_type_is_oriented(compiled.payload.decode_type);
   geometry.complete_geometry =
       compiled.payload.decode_type == BoxDecodeType::YoloXSegPose ||
@@ -608,5 +614,18 @@ CompiledKernelContract compile_boxdecode_kernel(const CompiledBoxDecodeContract&
     native.compiled.recipe = std::move(recipe);
   }
   return std::move(native.compiled);
+}
+} // namespace
+
+CompiledKernelContract compile_boxdecode_kernel(const CompiledBoxDecodeContract& compiled,
+                                                const ContractCompileInput& input,
+                                                BoxDecodeGeometryOptions geometry,
+                                                std::optional<ResizeMode> resize_mode) {
+  try {
+    return compile_boxdecode_kernel_with(compiled, input, geometry, resize_mode, true);
+  } catch (const BoxDecodeTransformUnavailable&) {
+    // The installed kernel accepts no transform for this profile: whole frames only.
+    return compile_boxdecode_kernel_with(compiled, input, geometry, resize_mode, false);
+  }
 }
 } // namespace simaai::neat::pipeline_internal::sima

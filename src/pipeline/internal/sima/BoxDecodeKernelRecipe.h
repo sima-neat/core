@@ -6,6 +6,7 @@
 #include "model/PreprocessPlan.h"
 #include <array>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include "pipeline/internal/contract/PluginCompiledContracts.h"
 
@@ -44,6 +45,13 @@ bool boxdecode_supports_detection_transform(BoxDecodeType);
 // The same for one admitted payload: multiclass SSD shares BoxDecodeType::Ssd with the
 // detection recipe, but its kernel profile accepts no transform.
 bool boxdecode_payload_supports_detection_transform(const BoxDecodeStagePayload&);
+// Pose, segmentation and 91-class multiclass SSD: the transform is accepted only by kernels from
+// the Kernels release that added it. Admission tries it; prepare_boxdecode_kernel() throws
+// BoxDecodeTransformUnavailable when the installed kernel refuses it and nothing else.
+bool boxdecode_payload_may_take_transform(const BoxDecodeStagePayload&);
+struct BoxDecodeTransformUnavailable : std::invalid_argument {
+  using std::invalid_argument::invalid_argument;
+};
 // Segment Anything: the resize each model was trained on (MobileSAM a top-left
 // letterbox, the others a stretch).
 ResizeMode sam_required_resize(BoxDecodeType);

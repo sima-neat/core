@@ -102,7 +102,9 @@ def main():
         fixtures = [('SIMA_TEST_MLA_ONLY_MODEL', 'yolo26n', {'model_execution_plan_test'}),
                     ('SIMA_RESNET50_TAR', 'resnet_50', RESNET50_TESTS),
                     ('SIMA_RESNET18_TAR', 'resnet_18', {'resnet18_async_consumer_visibility_test'}),
-                    ('SIMA_YOLO_TAR', 'yolov8s', YOLOV8S_TESTS)]
+                    ('SIMA_YOLO_TAR', 'yolov8s', YOLOV8S_TESTS),
+                    ('SIMA_POSE_TAR', 'yolo26n_pose', {'preproc_roi_boxdecode_pose_moving_test'}),
+                    ('SIMA_SEG_TAR', 'yolo26n_seg', {'preproc_roi_boxdecode_seg_moving_test'})]
         for var, model_id, consumers in fixtures:
             if consumers & set(selected) and not env.get(var):
                 env[var] = prepare_fixture(model_id, 'w8a8', tmp)

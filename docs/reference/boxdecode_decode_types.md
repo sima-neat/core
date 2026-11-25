@@ -87,7 +87,7 @@ Axis-aligned detection-display graphs can feed the result to `SimaRender`. Use `
 
 ## Letterbox placement {#letterbox-placement}
 
-A non-centered letterbox, such as `LetterboxPlacement::TopLeft` (see [Preproc resize](/reference/nodes/preproc#resize-and-aspect-ratio)), is supported by the detection profiles, which map boxes through each frame's model-to-original affine: the YOLO detection families, decoded YOLO, EfficientDet, DETR, DetrFocal, CenterNet and SSD. Pose, segmentation and RCNN proposal profiles reject it instead of returning shifted results. Centered letterboxes keep their mapping. The Segment Anything types have their own requirements; see [Segment Anything rules](#segment-anything-rules).
+A non-centered letterbox, such as `LetterboxPlacement::TopLeft` (see [Preproc resize](/reference/nodes/preproc#resize-and-aspect-ratio)), is supported by the detection profiles, which map boxes through each frame's model-to-original affine: the YOLO detection families, decoded YOLO, EfficientDet, DETR, DetrFocal, CenterNet and SSD. Pose, segmentation and 91-class multiclass SSD do the same when the installed Kernels release accepts the transform for them (see [Crop coordinate mapping](#crop-coordinate-mapping)); otherwise, and always for RCNN proposals, the profile rejects it instead of returning shifted results. Centered letterboxes keep their mapping. The Segment Anything types have their own requirements; see [Segment Anything rules](#segment-anything-rules).
 
 ## Classic DETR {#classic-detr}
 
@@ -787,7 +787,7 @@ fewer than 17 keypoints still publishes the fixed
 
 ## Crop coordinate mapping {#crop-coordinate-mapping}
 
-Model-managed Crop supplies the actual inverse image transform to supported detection profiles, including classic DETR, DetrFocal and ordinary YOLO detection. Selection and NMS stay in model coordinates; accepted boxes are then mapped and clipped to the original image. Missing or conflicting transform metadata fails explicitly. This does not enable new crop combinations for masks, pose, RCNN proposals or SSD multiclass. Existing oriented-box profiles still require equal axis scales; integer resize dimensions may make the scales unequal.
+Model-managed Crop supplies the actual inverse image transform to supported detection profiles, including classic DETR, DetrFocal and ordinary YOLO detection. Selection and NMS stay in model coordinates; accepted boxes are then mapped and clipped to the original image. Missing or conflicting transform metadata fails explicitly. This does not enable crop for RCNN proposals. Existing oriented-box profiles still require equal axis scales; integer resize dimensions may make the scales unequal.
 
 A Preproc that crops a region of interest (ROI) and letterboxes or stretches it into the model canvas publishes, for each frame, the affine that maps model coordinates back to the full source frame. The detection profiles decode every frame with the affine its preprocess published, so boxes come out in source-frame pixels for a single ROI, a centered or non-centered letterbox, a stretch and a whole frame alike. The source frame is the uncropped image, never the ROI. Whole-frame detections are reported in source-frame pixels. Ingress that publishes only the image dimensions, with no affine, keeps the whole-frame mapping.
 
@@ -797,7 +797,10 @@ Pass one ROI per BoxDecode call. For an ROI-list buffer, use capacity 1.
 | --- | --- |
 | YOLO26, YOLOv5, YOLOv6, YOLOv7, YOLOv8 to YOLOv11, YOLOX, decoded YOLO, EfficientDet, CenterNet, DETR, DetrFocal, SSD (not the 91-class multiclass SSD recipes) | Boxes in source-frame pixels |
 | YOLOX segmentation and pose, oriented boxes | Boxes in source-frame pixels (oriented boxes need equal axis scales) |
-| Pose, segmentation (YOLOv5, v7, v8, v9, v10, YOLO26), RCNN proposals, 91-class multiclass SSD | Fails, naming the profile |
+| Pose (YOLOv8, YOLO26), segmentation (YOLOv5, v7, v8, v9, v10, YOLO26), 91-class multiclass SSD | Boxes and keypoints in source-frame pixels, when the installed Kernels release accepts the transform for the profile; otherwise fails, naming the profile |
+| RCNN proposals | Fails, naming the profile |
 | Segment Anything | Fails: it needs the whole image resized once |
 
-A profile fails instead of decoding in whole-frame coordinates because its kernel accepts no transform. It still decodes whole frames. A Crop resize requested for such a profile fails when the graph is built.
+Segmentation masks stay in model space: each 160×160 mask covers the whole model canvas, not the box and not the source frame, and is cropped by the box in model coordinates. A mask therefore does not move or scale with the ROI, while its box does; map a mask pixel to the source frame with the same affine the Preproc published for the frame.
+
+A profile fails instead of decoding in whole-frame coordinates when its kernel accepts no transform: RCNN proposals always, and pose, segmentation and multiclass SSD with a Kernels release that predates the transform. It still decodes whole frames. A Crop resize requested for such a profile fails when the graph is built.
