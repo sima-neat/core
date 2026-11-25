@@ -25,6 +25,7 @@
 
 #include <opencv2/imgproc.hpp>
 
+#include <algorithm>
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
@@ -100,8 +101,15 @@ bool near(float a, float b, float shift) {
 }
 
 // Every detection of `from` must have the same detection in `to`, shifted by (dx, dy).
-void require_shifted(const Decoded& from, const Decoded& to, float dx, float dy,
-                     const std::string& label) {
+// The kernel clamps keypoints to the frame (pose_coord_to_u32), so a keypoint the model places
+// beyond a frame edge cannot move by the offset; it is skipped. Returns the keypoints compared.
+bool clamped(const float* k, const cv::Size& frame) {
+  return k[0] <= 0.5f || k[1] <= 0.5f || k[0] >= frame.width - 1.5f || k[1] >= frame.height - 1.5f;
+}
+
+std::size_t require_shifted(const Decoded& from, const Decoded& to, float dx, float dy,
+                            const cv::Size& frame, const std::string& label) {
+  std::size_t compared = 0;
   require(from.count == to.count, label + ": detection count changed with the ROI");
   for (std::size_t i = 0; i < from.count; ++i) {
     const float* a = &from.boxes[i * 6];
@@ -113,10 +121,11 @@ void require_shifted(const Decoded& from, const Decoded& to, float dx, float dy,
       for (std::size_t k = 0; k < 17; ++k) {
         const float* p = &from.keypoints[(i * 17 + k) * 3];
         const float* q = &to.keypoints[(i * 17 + k) * 3];
-        if (p[2] < kMinScore)
+        if (p[2] < kMinScore || clamped(p, frame) || clamped(q, frame))
           continue;
         require(near(p[0], q[0], dx) && near(p[1], q[1], dy),
                 label + ": keypoint " + std::to_string(k) + " did not move by the ROI offset");
+        ++compared;
       }
     } else {
       // The mask is in model space and the model saw the same pixels.
@@ -126,6 +135,7 @@ void require_shifted(const Decoded& from, const Decoded& to, float dx, float dy,
               label + ": mask " + std::to_string(i) + " changed with the ROI");
     }
   }
+  return compared;
 }
 
 } // namespace
@@ -155,17 +165,20 @@ int main(int argc, char** argv) {
     opt.upstream_name = "decoder";
     const simaai::neat::Model model(tar, opt);
 
-    // The same patch at two offsets of one canvas.
+    // The same patch at two offsets of one canvas, both away from every frame edge so keypoints
+    // the model places just outside the patch are not clamped in one frame only.
     constexpr int kShiftX = 600, kShiftY = 300;
-    const cv::Size canvas(kShiftX + patch.cols, kShiftY + patch.rows);
-    require(canvas.width <= 1920 && canvas.height <= 1080,
-            "the canvas exceeds the default dynamic image capacity");
+    const int margin =
+        std::min((1920 - kShiftX - patch.cols) / 2, (1080 - kShiftY - patch.rows) / 2);
+    require(margin >= 32, "the canvas leaves no margin within the default dynamic image capacity");
+    const cv::Size canvas(kShiftX + patch.cols + 2 * margin, kShiftY + patch.rows + 2 * margin);
     cv::Mat frame(canvas, patch.type(), cv::Scalar(114, 114, 114));
-    patch.copyTo(frame(cv::Rect(0, 0, patch.cols, patch.rows)));
+    patch.copyTo(frame(cv::Rect(margin, margin, patch.cols, patch.rows)));
     cv::Mat moved_frame(canvas, patch.type(), cv::Scalar(114, 114, 114));
-    patch.copyTo(moved_frame(cv::Rect(kShiftX, kShiftY, patch.cols, patch.rows)));
-    const simaai::neat::PreprocessRoi first{0, 0, 0, patch.cols, patch.rows};
-    const simaai::neat::PreprocessRoi second{0, kShiftX, kShiftY, patch.cols, patch.rows};
+    patch.copyTo(moved_frame(cv::Rect(margin + kShiftX, margin + kShiftY, patch.cols, patch.rows)));
+    const simaai::neat::PreprocessRoi first{0, margin, margin, patch.cols, patch.rows};
+    const simaai::neat::PreprocessRoi second{0, margin + kShiftX, margin + kShiftY, patch.cols,
+                                             patch.rows};
 
     const auto wire = [&](const cv::Mat& image, const simaai::neat::PreprocessRoi& roi) {
       const simaai::neat::TensorList pre = simaai::neat::stages::Preproc(
@@ -184,14 +197,17 @@ int main(int argc, char** argv) {
     const auto at_first = decode(run, wire(frame, first), canvas, "first ROI");
     require(at_first.count > 0, "the first ROI produced no detections");
     const auto at_second = decode(run, wire(moved_frame, second), canvas, "second ROI");
-    require_shifted(at_first, at_second, float(kShiftX), float(kShiftY), "second ROI");
+    const std::size_t compared =
+        require_shifted(at_first, at_second, float(kShiftX), float(kShiftY), canvas, "second ROI");
+    if (kPose)
+      require(compared >= 5, "fewer than 5 confident, unclamped keypoints to compare");
     // Returning to the first ROI must not keep the second ROI's transform.
     const auto again = decode(run, wire(frame, first), canvas, "first ROI again");
-    require_shifted(at_first, again, 0.0f, 0.0f, "first ROI again");
+    require_shifted(at_first, again, 0.0f, 0.0f, canvas, "first ROI again");
     run.close_input();
     run.close();
     std::cout << "[OK] preproc_roi_boxdecode_" << (kPose ? "pose" : "seg")
-              << "_moving_test detections=" << at_first.count << "\n";
+              << "_moving_test detections=" << at_first.count << " keypoints=" << compared << "\n";
     return 0;
   } catch (const SkipTest& e) {
     return skip_long_test(e.what());
