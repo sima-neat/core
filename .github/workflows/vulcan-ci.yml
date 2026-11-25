@@ -1304,7 +1304,6 @@ jobs:
       - name: Run Fast Non-E2E Tests (Parallel)
         if: ${{ contains(fromJSON(matrix.tasks), 'fast') }}
         env:
-          SIMA_YOLOV8_VARIANTS_BASE_URL: https://docs.sima.ai/pkg_downloads/SDK2.0.0/models/modalix
           SIMA_CTEST_TAIL_ONLY: "0"
           SIMA_CTEST_FAST_JOBS: "4"
         run: |
@@ -1506,8 +1505,6 @@ jobs:
 
       - name: Run Perf and Throughput Tests (Isolated)
         if: ${{ contains(fromJSON(matrix.tasks), 'performance') }}
-        env:
-          SIMA_YOLOV8_VARIANTS_BASE_URL: https://docs.sima.ai/pkg_downloads/SDK2.0.0/models/modalix
         run: |
           set -x
           TEST_DIR="$(cat _work/extras_lib_dir.txt)/tests"

@@ -4,6 +4,7 @@
 #include "model/internal/ModelPack.h"
 #include "model/internal/RoutePlanner.h"
 #include "asset_utils.h"
+#include "support/yolov8_variant_fixture.h"
 #include "model_archive_fixture_utils.h"
 #include "test_main.h"
 
@@ -38,10 +39,10 @@ RUN_TEST(
                         "mla_planning_source=mpk_static_contract") != capability.evidence.end(),
               "route capability should record MPK static-contract planning evidence");
 
-      const auto raw_yolo_bf16 =
-          sima_test::test_source_root() / "tmp" / "yolov8n_drive" / "yolov8n_A_W_BF16_mpk.tar.gz";
-      if (sima_test::is_strict_mpk_tar_gz(raw_yolo_bf16)) {
-        ModelPack raw_pack(raw_yolo_bf16.string());
+      {
+        const std::string raw_yolo_bf16 =
+            sima_test::resolve_yolov8_variant_fixture("yolov8n_A_W_BF16_mpk").tar_path;
+        ModelPack raw_pack(raw_yolo_bf16);
         const PreprocessCapabilities raw_capabilities = inspect_preprocess_capabilities(raw_pack);
         const PreprocessPlannerResult raw_preprocess_plan =
             plan_preprocess(Model::Options{}, raw_capabilities);
@@ -63,7 +64,7 @@ RUN_TEST(
         // are probabilities or logits.  Keep the production ambiguity guard
         // strict and make the fixture's known score domain explicit.
         explicit_boxdecode.decode_type_option = BoxDecodeTypeOption::GroupedByRoleProbability;
-        Model explicit_model(raw_yolo_bf16.string(), explicit_boxdecode);
+        Model explicit_model(raw_yolo_bf16, explicit_boxdecode);
         require(ModelAccess::has_model_managed_stage(explicit_model, StageNodeKind::BoxDecode),
                 "explicit decode_type should select a model-managed BoxDecode stage");
         require(ModelAccess::resolved_post_kind(explicit_model) == PostRouteStageKind::BoxDecode,
