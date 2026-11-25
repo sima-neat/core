@@ -481,14 +481,14 @@ void boxdecode(const Yolo& y) {
   }
   // The decode families: a (profile, task) pair runs once a device row has shown its wire
   // byte-equal to GStreamer's; the stage's shape is the same for all of them.
-  for (const char* profile : {"yolo_dfl_obb_v1", "yolo26_obb_v1"}) {
+  for (const char* profile : {"yolo_dfl_obb_v1", "yolo26_obb_v1", "yolo26_v1", "yolox_v1"}) {
     accepts(decode([profile](si::StageStaticSpec&, si::KernelStageRecipe& r) {
               r.boxdecode_program->profile = profile;
             }),
             std::string("the decode family ") + profile + "/detection");
   }
   for (const char* profile :
-       {"yolo26_v1", "yolox_v1", "ssd_v1", "yolov5_v1", "detr_v1", "yolox_seg_pose_v1"}) {
+       {"ssd_v1", "yolov5_v1", "yolov6_v1", "yolov7_v1", "detr_v1", "yolox_seg_pose_v1"}) {
     declines(decode([profile](si::StageStaticSpec&, si::KernelStageRecipe& r) {
                r.boxdecode_program->profile = profile;
              }),
