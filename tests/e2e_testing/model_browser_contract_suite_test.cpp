@@ -168,8 +168,8 @@ void check_outputs(const TensorList& outputs, const Contract& contract, const st
     std::cout << "[OUTPUT] " << run << " " << i << " shape=" << shape_text(t.shape)
               << " dtype=" << static_cast<int>(t.dtype) << "\n";
     const std::vector<double> values = float_values(t);
-    const bool finite = std::all_of(values.begin(), values.end(),
-                                    [](double v) { return std::isfinite(v); });
+    const bool finite =
+        std::all_of(values.begin(), values.end(), [](double v) { return std::isfinite(v); });
     check(finite, run + " output " + std::to_string(i) + " finite");
     check(!bytes_of(t).empty(), run + " output " + std::to_string(i) + " has data");
   }
@@ -245,8 +245,7 @@ int main(int argc, char** argv) {
     check(model.compiled_batch_size() == 1, "compiled batch size is 1",
           std::to_string(model.compiled_batch_size()));
     check(model.output_specs().size() == contract.output_elements.size(),
-          "output_specs() count matches the README",
-          std::to_string(model.output_specs().size()));
+          "output_specs() count matches the README", std::to_string(model.output_specs().size()));
 
     constexpr int timeout_ms = 30000;
     const TensorList first = model.run(std::vector<cv::Mat>{images[0]}, timeout_ms);
