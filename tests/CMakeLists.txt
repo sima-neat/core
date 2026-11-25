@@ -529,6 +529,7 @@ set(UNIT_TESTS
   unit_inputstream_cpu_gst_copy_test
   unit_http_mjpeg_decoded_group_test
   unit_rtsp_encoded_input_group_test
+  unit_h264_depacketize_idr_recovery_test
   unit_input_policy_test
   unit_input_metadata_geometry_test
   unit_ordered_public_input_contract_test
