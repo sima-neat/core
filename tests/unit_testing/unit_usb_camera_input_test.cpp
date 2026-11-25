@@ -135,6 +135,14 @@ UsbCameraInputOptions mjpeg_options() {
 }
 
 void check_validation() {
+  // Positional aggregate initialization written before `format` existed still compiles and
+  // still selects MJPEG.
+  const simaai::neat::UsbCameraInputOptions positional{"front", 640, 480, 30, 1};
+  require(positional.width == 640 && positional.height == 480 && positional.framerate_num == 30 &&
+              positional.framerate_den == 1 &&
+              positional.format == simaai::neat::UsbCameraFormat::MJPEG,
+          "positional UsbCameraInputOptions keeps its fields and the MJPEG default");
+
   auto opt = mjpeg_options();
   opt.camera_name.clear();
   require_throws<std::invalid_argument>([&] { (void)UsbCameraInput(opt); }, "requires camera_name",

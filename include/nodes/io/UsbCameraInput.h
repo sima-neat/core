@@ -33,9 +33,6 @@ struct UsbCameraInputOptions {
   // Required stable USB camera ID from usb_camera_ids().
   std::string camera_name;
 
-  // Capture format; the mode below must be one the camera lists for it.
-  UsbCameraFormat format = UsbCameraFormat::MJPEG;
-
   // An exact mode of the camera in `format`.
   std::uint32_t width = 1920;
   std::uint32_t height = 1080;
@@ -49,6 +46,9 @@ struct UsbCameraInputOptions {
   bool insert_queue = true;
   bool leaky_queue = true;
   std::uint32_t queue_depth = 2;
+
+  // Capture format; the mode above must be one the camera lists for it.
+  UsbCameraFormat format = UsbCameraFormat::MJPEG;
 };
 
 /// A USB camera as UsbCameraInput opens it.
