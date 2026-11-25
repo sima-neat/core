@@ -85,7 +85,7 @@ opt.top_k = 100;
 
 ## 信箱式放置位置 {#letterbox-placement}
 
-未置中的信箱式調整（例如 `LetterboxPlacement::TopLeft`，請參閱 [Preproc 調整大小](/reference/nodes/preproc#resize-and-aspect-ratio)）受偵測設定檔支援，這些設定檔會使用每個影格的模型座標到原始影像座標仿射轉換來對應邊界框：YOLO 偵測系列、已解碼的 YOLO、EfficientDet、DETR、DetrFocal、CenterNet 與 SSD。姿勢、分割與 RCNN 提議設定檔會拒絕這種調整，而不是傳回偏移的結果。置中的信箱式調整會維持其對應方式。Segment Anything 類型有各自的要求；請參閱 [Segment Anything 規則](#segment-anything-rules)。
+未置中的信箱式調整（例如 `LetterboxPlacement::TopLeft`，請參閱 [Preproc 調整大小](/reference/nodes/preproc#resize-and-aspect-ratio)）受偵測設定檔支援，這些設定檔會使用每個影格的模型座標到原始影像座標仿射轉換來對應邊界框：YOLO 偵測系列、已解碼的 YOLO、EfficientDet、DETR、DetrFocal、CenterNet 與 SSD。當已安裝的 Kernels 版本接受其轉換時 (請參閱 [裁切座標映射](#crop-coordinate-mapping))，姿勢、分割與 91 類多類別 SSD 的處理方式相同；否則，以及 RCNN 提議一律，設定檔會拒絕這種調整，而不是傳回偏移的結果。置中的信箱式調整會維持其對應方式。Segment Anything 類型有各自的要求；請參閱 [Segment Anything 規則](#segment-anything-rules)。
 
 ## 傳統 DETR {#classic-detr}
 
@@ -606,7 +606,7 @@ Core 保留這些逐埠資訊供 Kernels 准入使用，而不會將第一個輸
 
 ## 裁切座標映射 {#crop-coordinate-mapping}
 
-模型管理的 Crop 會將實際影像反向轉換提供給支援的偵測設定檔，包括傳統 DETR、DetrFocal 及一般 YOLO 偵測。選取與 NMS 保持在模型座標中，再將接受的框映射並裁切至原始影像範圍。缺少或衝突的轉換中繼資料會明確失敗。這不會啟用遮罩、姿態、RCNN 提案或 SSD multiclass 的新裁切組合。既有旋轉框設定檔仍要求兩軸縮放比例相同；整數縮放尺寸可能導致比例不同。
+模型管理的 Crop 會將實際影像反向轉換提供給支援的偵測設定檔，包括傳統 DETR、DetrFocal 及一般 YOLO 偵測。選取與 NMS 保持在模型座標中，再將接受的框映射並裁切至原始影像範圍。缺少或衝突的轉換中繼資料會明確失敗。這不會為 RCNN 提案啟用裁切。既有旋轉框設定檔仍要求兩軸縮放比例相同；整數縮放尺寸可能導致比例不同。
 
 裁切感興趣區域 (ROI) 並將其以黑邊或拉伸方式放入模型畫布的 Preproc，會為每個影格發佈將模型座標對應回完整來源影格的仿射轉換。偵測設定檔會以其預處理所發佈的仿射轉換解碼每個影格，因此無論是單一 ROI、置中或非置中的黑邊、拉伸或整個影格，方框都會以來源影格的像素為單位輸出。來源影格是未經裁切的影像，而不是 ROI。整個影格的偵測結果以來源影格的像素回報。只發佈影像尺寸而未發佈仿射轉換的輸入，維持整個影格的對應方式。
 
@@ -616,7 +616,10 @@ Core 保留這些逐埠資訊供 Kernels 准入使用，而不會將第一個輸
 | --- | --- |
 | YOLO26、YOLOv5、YOLOv6、YOLOv7、YOLOv8 至 YOLOv11、YOLOX、已解碼 YOLO、EfficientDet、CenterNet、DETR、DetrFocal、SSD (不含 91 類多類別 SSD 配方) | 以來源影格像素為單位的方框 |
 | YOLOX 分割與姿勢、旋轉方框 | 以來源影格像素為單位的方框 (旋轉方框需要兩軸縮放比例相同) |
-| 姿勢、分割 (YOLOv5、v7、v8、v9、v10、YOLO26)、RCNN 提案、91 類多類別 SSD | 失敗，並指出設定檔名稱 |
+| 姿勢 (YOLOv8、YOLO26)、分割 (YOLOv5、v7、v8、v9、v10、YOLO26)、91 類多類別 SSD | 若已安裝的 Kernels 版本接受該設定檔的轉換，則為以來源影格像素為單位的方框與關鍵點；否則失敗，並指出設定檔名稱 |
+| RCNN 提案 | 失敗，並指出設定檔名稱 |
 | Segment Anything | 失敗：需要將整張影像僅調整大小一次 |
 
-由於設定檔的核心不接受轉換，因此它會失敗，而不是以整個影格座標解碼。它仍可解碼整個影格。對此類設定檔要求的 Crop 調整大小，會在建置圖時失敗。
+分割遮罩維持在模型空間：每個 160×160 遮罩涵蓋整個模型畫布，而不是方框或來源影格，並以模型座標中的方框裁切。因此遮罩不會隨 ROI 移動或縮放，但方框會。若要將遮罩像素對應到來源影格，請使用 Preproc 為該影格發佈的同一個仿射轉換。
+
+當設定檔的核心不接受轉換時 (RCNN 提案一律如此，姿勢、分割與多類別 SSD 則是在早於該轉換的 Kernels 版本)，設定檔會失敗，而不是以整個影格座標解碼。它仍可解碼整個影格。對此類設定檔要求的 Crop 調整大小，會在建置圖時失敗。
