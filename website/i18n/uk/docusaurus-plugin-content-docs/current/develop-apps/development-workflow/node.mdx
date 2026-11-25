@@ -376,6 +376,7 @@ run = graph.build()
 - [`Preproc`](/reference/nodes/preproc): об’єднана попередня обробка зображень CVU для зміни розміру, перетворення кольорів, нормалізації, квантування, теселяції та створення списків ROI для середовища виконання.
 - [`CameraInput`](/reference/nodes/camera-input): кадри MIPI/libcamera від власного джерела з адаптивним передаванням пам’яті SiMaAI подальшим етапам обробки CVU/MLA.
 - [`SimaBoxDecode`](/reference/boxdecode_decode_types): постобробка для виявлення об’єктів, яка декодує виходи моделі в обмежувальні рамки й використовує метадані попередньої обробки з попередніх етапів для відображення координат.
+- [`nodes::SimaGridSample2D`](/reference/cppapi/classes/simaai-neat-simagridsample2d) вибирає значення ознак NHWC на A65 за сіткою FP32 `(x, y)`. Для кожного кадру можна подавати нову сітку.
 
 <a id="boundary-nodes"></a>
 ## Граничні вузли: `Input` та `Output`

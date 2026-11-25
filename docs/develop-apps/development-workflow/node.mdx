@@ -427,6 +427,7 @@ Some SiMa nodes are common enough that they have focused reference or how-to pag
 - [`Preproc`](/reference/nodes/preproc): fused CVU image preprocessing for resize, color conversion, normalization, quantization, tessellation, and runtime ROI lists.
 - [`CameraInput`](/reference/nodes/camera-input): source-owned MIPI/libcamera frames with adaptive SiMaAI memory handoff for downstream CVU/MLA stages.
 - [`SimaBoxDecode`](/reference/boxdecode_decode_types): detection postprocessing that decodes model heads into bounding boxes and uses upstream preprocess metadata for coordinate mapping.
+- [`nodes::SimaGridSample2D`](/reference/cppapi/classes/simaai-neat-simagridsample2d) samples NHWC features on A65 using an FP32 `(x, y)` grid. A new grid can be supplied on each frame.
 
 <a id="boundary-nodes"></a>
 ## Boundary nodes: `Input` and `Output`

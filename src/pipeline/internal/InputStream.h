@@ -9,6 +9,7 @@
 #include "pipeline/TensorCore.h"
 #include "pipeline/Run.h"
 #include "pipeline/internal/OutputTensorOverride.h"
+#include "pipeline/internal/OrderedPublicInputContract.h"
 
 #include <gst/gst.h>
 
@@ -129,6 +130,8 @@ struct InputStreamOptions {
   bool allow_ingress_cvu_format_renegotiation = false;
   // Canonical wire shape selected by a directly bound Model tensor ingress.
   std::vector<std::int64_t> model_input_shape;
+  // Contextual ingress policy authored by the first compiled tensor stage.
+  std::optional<pipeline_internal::OrderedPublicInputContract> public_input_contract;
   std::optional<OutputTensorOverride> output_override;
   std::function<void(const InputDropInfo&)> on_input_drop;
 };
@@ -147,6 +150,7 @@ public:
   explicit operator bool() const noexcept;
   bool can_push() const noexcept;
   bool can_pull() const noexcept;
+  std::optional<pipeline_internal::OrderedPublicInputContract> public_input_contract() const;
   std::shared_ptr<pipeline_internal::InputPublicationMeasurement>
   input_publication_measurement() noexcept;
 

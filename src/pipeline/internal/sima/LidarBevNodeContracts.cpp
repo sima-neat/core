@@ -289,9 +289,22 @@ bool SimaGridSample2D::compile_node_contract(const ContractCompileInput& input,
     const auto facts =
         bev_tensor_facts(upstream, ingress ? nullptr : input.immediate_upstream, kind());
     const auto plan = kr::grid_sample_2d_request(opt_, facts);
-    return compile_bev_contract(kind(), element_names(input.node_index).front(),
-                                contract_definition(), upstream, ingress.has_value(), plan, out,
-                                error);
+    pipeline_internal::OrderedPublicInputContract public_input;
+    if (ingress) {
+      public_input.inputs = {
+          {"features",
+           facts[0].dtype == rt::DType::BFloat16 ? TensorDType::BFloat16 : TensorDType::Float32,
+           TensorLayout::HWC, facts[0].shape},
+          {"grid", TensorDType::Float32, TensorLayout::HWC, facts[1].shape}};
+      pipeline_internal::validate_ordered_public_input(public_input, *input.ingress.ingress_sample);
+    }
+    if (!compile_bev_contract(kind(), element_names(input.node_index).front(),
+                              contract_definition(), upstream, ingress.has_value(), plan, out,
+                              error))
+      return false;
+    if (ingress)
+      out->public_input_contract = std::move(public_input);
+    return true;
   } catch (const std::exception& exception) {
     if (error)
       *error = exception.what();

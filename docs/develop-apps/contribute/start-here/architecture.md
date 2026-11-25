@@ -785,8 +785,6 @@ replaces a model's dequantize or cast postprocess with that node, which reads th
 MLA scores through the producer's strided view; the `Model` constructor rejects any
 other postprocess.
 
-`SimaGridSample2D` uses the same checked tensor-stage path for dynamic grids on A65. Core derives the output shape from the grid and feature channel count, then forwards `grid_sample_2d` through Scheduler’s frontend. The kernel consumes each submitted grid; preparation retains metadata only. Runner owns optional shared host workers and asynchronous completion.
-
 Standalone `Cast` compiles typed views into a canonical `cast` request checked by Kernels. Logical identities, strides and tensor-relative offsets remain explicit. Semantic compilation reconciles ordered MLA input ports before packing; rendering preserves the checked contracts. Execution capacity defaults to four asynchronously and one synchronously, with separate output carriers for retention. Subset or reordered TensorSets use parent-retaining metadata envelopes without changing the held publication or payload.
 
 #### Typed image frontends and multi-plane publication

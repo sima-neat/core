@@ -11,6 +11,78 @@ namespace neat = simaai::neat;
 namespace {
 constexpr int timeout = 30000;
 
+template <class Fn> void rejects_layout(Fn&& fn) {
+  try {
+    fn();
+  } catch (const std::exception& error) {
+    gt::require(std::string(error.what()).find("layout") != std::string::npos,
+                "GridSample missing layout diagnostic: " + std::string(error.what()));
+    return;
+  }
+  throw std::runtime_error("GridSample accepted incompatible logical axes/layout");
+}
+
+void layout_contract() {
+  using Axis = neat::TensorAxisSemantic;
+  gt::Frame frame({"layout", 3, 2, 1, 2, 3, true}, false);
+  frame.features = {0, 1, 2, 3, 4, 5};
+  frame.grid[0] = 1;
+  frame.grid[1] = -1;
+  // Reject both explicit axis orders, including an Unknown layout tag that
+  // cannot encode [N,W,H,C]. Unequal H/W exposes accidental reinterpretation.
+  for (std::size_t port = 0; port < 2; ++port)
+    for (const auto layout : {neat::TensorLayout::Unknown, neat::TensorLayout::HWC}) {
+      auto inputs = frame.tensors();
+      inputs[port].layout = layout;
+      inputs[port].axis_semantics = {Axis::N, Axis::W, Axis::H, Axis::C};
+      auto pipeline = gt::graph(frame.options);
+      rejects_layout([&] { auto rejected = pipeline.build(inputs); });
+    }
+  auto initial = frame.tensors();
+  auto pipeline = gt::graph(frame.options);
+  auto run = pipeline.build(initial);
+  try {
+    frame.check(run.run(initial, timeout));
+    for (std::size_t port = 0; port < 2; ++port)
+      for (int metadata = 0; metadata < 3; ++metadata) {
+        // Fresh owners with identical shape/dtype must still obey the prepared
+        // metadata. Check layout-only, explicit NCHW and unknown swapped axes.
+        auto inputs = frame.tensors();
+        inputs[port].layout = metadata == 2 ? neat::TensorLayout::Unknown : neat::TensorLayout::CHW;
+        if (metadata == 1)
+          inputs[port].axis_semantics = {Axis::N, Axis::C, Axis::H, Axis::W};
+        else if (metadata == 2)
+          inputs[port].axis_semantics = {Axis::N, Axis::W, Axis::H, Axis::C};
+        rejects_layout([&] { (void)run.run(inputs, timeout); });
+        neat::Sample sample;
+        sample.kind = neat::SampleKind::TensorSet;
+        sample.tensors = std::move(inputs);
+        rejects_layout([&] { (void)run.push(sample); });
+        frame.check(run.run(frame.tensors(), timeout));
+      }
+    // Positional NHWC without any layout/axis annotation remains supported.
+    auto unannotated = frame.tensors();
+    for (auto& tensor : unannotated)
+      tensor.layout = neat::TensorLayout::Unknown;
+    auto positional_pipeline = gt::graph(frame.options);
+    auto positional_run = positional_pipeline.build(unannotated);
+    frame.check(positional_run.run(unannotated, timeout));
+    positional_run.close();
+    for (auto& tensor : unannotated)
+      tensor.axis_semantics = {Axis::N, Axis::H, Axis::W, Axis::C};
+    auto annotated_pipeline = gt::graph(frame.options);
+    auto annotated_run = annotated_pipeline.build(unannotated);
+    frame.check(annotated_run.run(unannotated, timeout));
+    annotated_run.close();
+  } catch (...) {
+    run.close();
+    throw;
+  }
+  run.close();
+  std::cout << "GRID_SAMPLE_LAYOUT build_rejections=4 run_rejections=6 push_rejections=6 "
+               "recovery=PASS unannotated=PASS result=PASS\n";
+}
+
 void numerical_cases() {
   for (const auto c : gt::comparison_cases)
     for (const bool bf : {false, true}) {
@@ -117,6 +189,7 @@ void asynchronous_retention() {
 
 int main() {
   try {
+    layout_contract();
     numerical_cases();
     asynchronous_retention();
     std::cout << "GRID_SAMPLE_SUITE result=PASS\n";

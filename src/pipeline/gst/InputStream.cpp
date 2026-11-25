@@ -48,6 +48,12 @@ namespace simaai::neat {
 using pipeline_internal::trim_copy;
 using pipeline_internal::upper_copy;
 
+std::optional<pipeline_internal::OrderedPublicInputContract>
+InputStream::public_input_contract() const {
+  const auto state = std::atomic_load_explicit(&state_, std::memory_order_acquire);
+  return state ? state->opt.public_input_contract : std::nullopt;
+}
+
 bool buffer_name_matches_expected(const std::string& expected_list, const std::string& actual) {
   const std::string expected = trim_copy(expected_list);
   if (expected.empty())
