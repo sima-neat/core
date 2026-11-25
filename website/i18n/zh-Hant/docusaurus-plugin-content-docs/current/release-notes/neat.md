@@ -7,6 +7,12 @@ sidebar_position: 3
 
 SiMa.ai Neat Library 的版本資訊。
 
+## 0.6.3（尚未發行） {#v063}
+
+### 修正 {#v063-fixes}
+
+- RTSP H.264 輸入現在預設會在每個 IDR 之前重複 SPS/PPS。`RtspEncodedInputOptions`、`RtspDecodedInputOptions` 與 `H264Depacketize` 的預設值 `h264_parse_config_interval = -1` 過去會讓 `h264parse` 維持元素本身的預設值，而該預設值從不重複 SPS/PPS。錯過串流第一個存取單元的取用端（例如啟動時融合圖的已編碼輸出），現在會從下一個 IDR 繼續，而不會在整個執行期間都收不到影像。若要關閉重複，請設定 `h264_parse_config_interval = 0`；小於 `-1` 的值會被拒絕。
+
 ## 0.6.2 {#v062}
 
 ### 重大變更 {#v062-breaking}
