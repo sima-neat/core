@@ -198,6 +198,8 @@ This is the full environment-variable inventory detected from source, tests, tut
 - `SIMA_PREPROC_USE_POOL`
 - `SIMA_MODEL_TAR`
 - `SIMA_RESNET50_TAR`
+- `SIMA_RF_DETR_BACKBONE_TAR`
+- `SIMA_RF_DETR_DECODER_TAR`
 - `SIMA_RTSP_ATTEMPTS`
 - `SIMA_RTSP_PORT`
 - `SIMA_RTSP_PORT_BASE`

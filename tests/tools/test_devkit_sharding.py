@@ -141,20 +141,41 @@ def test_weighted_partition_is_deterministic_and_complete():
 
 def test_fixtures_are_prepared_only_for_selected_tests(monkeypatch):
     calls = []
-    monkeypatch.setattr(partitioner, 'prepare_fixture',
-                        lambda model_id, variant, output: calls.append((model_id, variant)) or
-                        f'/fixtures/{model_id}_{variant}_mpk.tar.gz')
+
+    def fake_prepare(model_id, variant, output, components=()):
+        calls.append((model_id, variant, tuple(components)))
+        if components:
+            return [f'/fixtures/{model_id}_{variant}_{c}_mpk.tar.gz' for c in components]
+        return f'/fixtures/{model_id}_{variant}_mpk.tar.gz'
+
+    monkeypatch.setattr(partitioner, 'prepare_fixture', fake_prepare)
     env = {}
     partitioner.prepare_selected_fixtures(['detr_resnet50_multi_output_test', 'other_test'], env,
                                           '/tmp')
-    assert calls == [('detr_resnet_50', 'w8a8_mixed')]
+    assert calls == [('detr_resnet_50', 'w8a8_mixed', ())]
     assert env == {'SIMA_DETR_RESNET50_TAR': '/fixtures/detr_resnet_50_w8a8_mixed_mpk.tar.gz'}
     calls.clear()
     preset = {'SIMA_DETR_RESNET50_TAR': '/preset.tar.gz'}
     partitioner.prepare_selected_fixtures(['detr_resnet50_multi_output_test', 'sync_yolov8_test'],
                                           preset, '/tmp')
-    assert calls == [('yolov8s', 'w8a8')]
+    assert calls == [('yolov8s', 'w8a8', ())]
     assert preset['SIMA_DETR_RESNET50_TAR'] == '/preset.tar.gz'
+    calls.clear()
+    env = {}
+    partitioner.prepare_selected_fixtures(['rf_detr_small_pipeline_test', 'other_test'], env,
+                                          '/tmp')
+    assert calls == [('rf_detr_small', 'w8a8_w16a16', ('backbone', 'decoder'))]
+    assert env == {
+        'SIMA_RF_DETR_BACKBONE_TAR': '/fixtures/rf_detr_small_w8a8_w16a16_backbone_mpk.tar.gz',
+        'SIMA_RF_DETR_DECODER_TAR': '/fixtures/rf_detr_small_w8a8_w16a16_decoder_mpk.tar.gz',
+    }
+    calls.clear()
+    preset = {'SIMA_RF_DETR_BACKBONE_TAR': '/b.tar.gz', 'SIMA_RF_DETR_DECODER_TAR': '/d.tar.gz'}
+    partitioner.prepare_selected_fixtures(['rf_detr_small_pipeline_test', 'sync_yolov8_test'],
+                                          preset, '/tmp')
+    assert calls == [('yolov8s', 'w8a8', ())]
+    assert preset['SIMA_RF_DETR_BACKBONE_TAR'] == '/b.tar.gz'
+    assert preset['SIMA_RF_DETR_DECODER_TAR'] == '/d.tar.gz'
 
 
 def test_real_ctest_partition_executes_all_selected_tests(tmp_path):
