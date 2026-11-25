@@ -71,7 +71,7 @@ model=yolo_v8s physical_outputs=1 logical_outputs=1
 
 (Версія для Python виводить опис графа, а потім `model fragment added to public Graph`.)
 
-Щоб інтегрувати початковий код C++ цього розділу у свій проєкт із власним файлом `CMakeLists.txt` (тека extras не потрібна), див. [Як запускати навчальні посібники](/tutorials#compile-a-copy-yourself) на головній сторінці.
+Щоб інтегрувати початковий код C++ цього розділу у свій проєкт із власним файлом `CMakeLists.txt` (тека extras не потрібна), див. розділ [Як запускати навчальні посібники](/tutorials#compile-a-copy-yourself) на головній сторінці.
 
 ## Файли початкового коду
 - C++: `tutorials/014_embed_model_inside_graph/embed_model_inside_graph.cpp`

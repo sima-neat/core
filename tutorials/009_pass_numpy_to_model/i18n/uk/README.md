@@ -83,7 +83,7 @@ numpy_roundtrip_shape=(96, 128, 3)
 torch_roundtrip_shape=(96, 128, 3)
 ```
 
-(Без `torch` версія для Python замість рядка torch виводить `torch_roundtrip_skipped=True`.) Щоб інтегрувати початковий код C++ цього розділу у свій проєкт із власним файлом `CMakeLists.txt` (тека extras не потрібна), див. [Як запускати навчальні посібники](/tutorials#compile-a-copy-yourself) на головній сторінці.
+(Без `torch` версія для Python замість рядка torch виводить `torch_roundtrip_skipped=True`.) Щоб інтегрувати початковий код C++ цього розділу у свій проєкт із власним файлом `CMakeLists.txt` (тека extras не потрібна), див. розділ [Як запускати навчальні посібники](/tutorials#compile-a-copy-yourself) на головній сторінці.
 
 ## In Practice
 

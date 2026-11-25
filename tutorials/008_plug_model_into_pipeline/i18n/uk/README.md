@@ -73,7 +73,7 @@ direct_rank=3
 [OK] 008_plug_model_into_pipeline
 ```
 
-(Версія для Python виводить `direct_graph_backend=` і рядок бекенду, а потім `attached_graph_built=True`.) Щоб інтегрувати початковий код C++ цього розділу у свій проєкт із власним файлом `CMakeLists.txt` (тека extras не потрібна), див. [Як запускати навчальні посібники](/tutorials#compile-a-copy-yourself) на головній сторінці.
+(Версія для Python виводить `direct_graph_backend=` і рядок бекенду, а потім `attached_graph_built=True`.) Щоб інтегрувати початковий код C++ цього розділу у свій проєкт із власним файлом `CMakeLists.txt` (тека extras не потрібна), див. розділ [Як запускати навчальні посібники](/tutorials#compile-a-copy-yourself) на головній сторінці.
 
 ## Файли початкового коду
 - C++: `tutorials/008_plug_model_into_pipeline/plug_model_into_pipeline.cpp`
