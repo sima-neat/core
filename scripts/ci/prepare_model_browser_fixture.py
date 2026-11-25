@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """Download one Model Browser package with sima-cli and extract its MPK for the device tests.
 
-Prints the extracted MPK path on stdout. The registry run_id and ZIP sha256 go to stderr so a
-failing test can be traced to the exact package it used.
+Prints the extracted MPK path on stdout. With --component, a multi-component package is
+downloaded once and each named component MPK is extracted, one path per line in argument order.
+The registry run_id and ZIP sha256 go to stderr so a failing test can be traced to the exact
+package it used.
 
 On GitHub Actions (GITHUB_ACTIONS=true) sima-cli runs with HOME set to a fresh empty directory.
 Its Developer Portal session lives only under ~/.sima-cli, so a CI download proves that the
@@ -29,7 +31,9 @@ class FixtureError(RuntimeError):
     pass
 
 
-def mpk_member(model_id: str, variant: str) -> str:
+def mpk_member(model_id: str, variant: str, component: str | None = None) -> str:
+    if component:
+        return f"{model_id}_{variant}_{component}_mpk.tar.gz"
     return f"{model_id}_{variant}_mpk.tar.gz"
 
 
@@ -77,12 +81,15 @@ def extract_mpk(zip_path: Path, member: str, destination: Path) -> Path:
     return target
 
 
-def prepare(sima_cli: str, model_id: str, variant: str, output: Path) -> Path:
+def prepare(
+    sima_cli: str, model_id: str, variant: str, output: Path, components: list[str] | None = None
+) -> list[Path]:
     output.mkdir(parents=True, exist_ok=True)
     in_ci = os.environ.get("GITHUB_ACTIONS") == "true"
     home_dir = (tempfile.TemporaryDirectory(prefix="sima-cli-home-") if in_ci
                 else contextlib.nullcontext())
     with home_dir as home:
+        # One download per package: sima-cli refuses to write over a ZIP that is already there.
         info = download(sima_cli, model_id, variant, output, Path(home) if home else None)
         print(
             f"Model Browser {model_id} {variant} on main: run_id={info.get('run_id')} "
@@ -90,7 +97,11 @@ def prepare(sima_cli: str, model_id: str, variant: str, output: Path) -> Path:
             + (f" empty HOME={home}" if home else ""),
             file=sys.stderr,
         )
-        return extract_mpk(Path(info["path"]), mpk_member(model_id, variant), output)
+        zip_path = Path(info["path"])
+        return [
+            extract_mpk(zip_path, mpk_member(model_id, variant, component), output)
+            for component in (components or [None])
+        ]
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -99,13 +110,18 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--variant", required=True)
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--sima-cli", default="sima-cli")
+    parser.add_argument(
+        "--component", action="append", dest="components", metavar="NAME",
+        help="extract <id>_<variant>_<NAME>_mpk.tar.gz; repeat for each component",
+    )
     args = parser.parse_args(argv)
     try:
-        mpk = prepare(args.sima_cli, args.model_id, args.variant, args.output)
+        mpks = prepare(args.sima_cli, args.model_id, args.variant, args.output, args.components)
     except FixtureError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
-    print(mpk)
+    for mpk in mpks:
+        print(mpk)
     return 0
 
 
