@@ -56,7 +56,7 @@
     "description": "The label for category 'GenAI' in sidebar 'docs'"
   },
   "sidebar.docs.category.PCIe Co-Processing": {
-    "message": "Співобробка PCIe",
+    "message": "Співобробка через PCIe",
     "description": "The label for category 'PCIe Co-Processing' in sidebar 'docs'"
   },
   "sidebar.docs.category.Advanced Concepts": {

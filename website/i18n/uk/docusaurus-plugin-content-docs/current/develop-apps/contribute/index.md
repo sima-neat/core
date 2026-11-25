@@ -42,7 +42,7 @@ slug: /develop-apps/contribute/
     <h2>Збірка й тестування</h2>
     <p>Зберіть фреймворк, перевірте зміни та попрацюйте з прив’язками для Python.</p>
     <ul class="overview-link-list">
-      <li><a class="overview-link-card" href="/develop-apps/contribute/build/"><strong>Збірка</strong><span>Зберіть Neat з вихідного коду та виберіть профілі CMake або перемикачі збірки.</span></a></li>
+      <li><a class="overview-link-card" href="/develop-apps/contribute/build/"><strong>Збірка</strong><span>Зберіть Neat з початкового коду та виберіть профілі CMake або перемикачі збірки.</span></a></li>
       <li><a class="overview-link-card" href="/develop-apps/contribute/test_requirements/"><strong>Вимоги до тестування</strong><span>З’ясуйте, які тести й оновлення документації очікуються для кожного типу змін.</span></a></li>
       <li><a class="overview-link-card" href="/develop-apps/contribute/python_bindings/"><strong>Прив’язки для Python</strong><span>Збирайте, тестуйте й пакуйте прив’язки PyNeat як учасник розробки.</span></a></li>
     </ul>
