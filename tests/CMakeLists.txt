@@ -1277,6 +1277,12 @@ if (NOT metadata_sender_udp_integration_test IN_LIST PIPELINESESSION_TEST_BLACKL
 endif()
 
 if (SimaLMM_FOUND)
+  add_pipeline_test_long(genai_kv_cache_test e2e_testing/genai/genai_kv_cache_test.cpp)
+  target_link_libraries(genai_kv_cache_test PRIVATE ${SIMANEAT_HTTPLIB_LIBRARY})
+  if (NOT genai_kv_cache_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+    set_property(TEST genai_kv_cache_test APPEND PROPERTY LABELS "e2e;genai;llima;server;long")
+    set_property(TEST genai_kv_cache_test APPEND PROPERTY RESOURCE_LOCK "accelerator-device")
+  endif()
   add_pipeline_test_long(
     genai_llm_run_test
     e2e_testing/genai/genai_llm_run_test.cpp

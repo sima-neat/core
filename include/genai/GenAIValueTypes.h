@@ -20,6 +20,8 @@ struct GenerationMetrics {
   std::uint32_t generated_tokens = 0;
   double time_to_first_token_s = 0.0;
   double tokens_per_second = 0.0;
+  std::uint32_t cached_prompt_tokens = 0;
+  bool cache_created = false;
 };
 
 struct GenerationResult {

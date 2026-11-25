@@ -16,10 +16,14 @@ struct GenAIModel::Impl {
   using ModelVariant = std::variant<VisionLanguageModel, ASRModel>;
 
   static ModelVariant make_model(internal::ModelLoadContext context) {
+    if (context.options.max_kv_cache_slots == 0)
+      throw std::invalid_argument("max_kv_cache_slots must be positive");
     switch (context.info.task) {
     case GenAITask::VisionLanguage:
       return internal::ModelAccess::vision(std::move(context));
     case GenAITask::ASR:
+      if (context.options.max_kv_cache_slots != 1)
+        throw std::invalid_argument("Multiple KV caches are not supported for ASR models");
       return internal::ModelAccess::asr(std::move(context));
     }
     throw std::runtime_error("Unsupported GenAI task");
@@ -31,6 +35,13 @@ struct GenAIModel::Impl {
 
 GenAIModel::GenAIModel(std::filesystem::path model_dir)
     : GenAIModel(internal::local_model_context(model_dir)) {}
+
+GenAIModel::GenAIModel(std::filesystem::path model_dir, GenAIModelOptions options)
+    : GenAIModel([&] {
+        auto context = internal::local_model_context(model_dir);
+        context.options = options;
+        return context;
+      }()) {}
 
 GenAIModel::GenAIModel(internal::ModelLoadContext context)
     : impl_(std::make_unique<Impl>(std::move(context))) {}
@@ -84,6 +95,38 @@ void GenAIModel::unset_lora() {
     throw std::invalid_argument("Dynamic LoRA is not supported for ASR models");
   }
   model->unset_lora();
+}
+
+std::size_t GenAIModel::kv_cache_count() const {
+  const auto* model = std::get_if<VisionLanguageModel>(&impl_->model);
+  if (!model) {
+    throw std::invalid_argument("KV caches are not supported for ASR models");
+  }
+  return model->kv_cache_count();
+}
+
+bool GenAIModel::remove_kv_cache(const std::string& cache_id) {
+  auto* model = std::get_if<VisionLanguageModel>(&impl_->model);
+  if (!model) {
+    throw std::invalid_argument("KV caches are not supported for ASR models");
+  }
+  return model->remove_kv_cache(cache_id);
+}
+
+void GenAIModel::clear_kv_caches() {
+  auto* model = std::get_if<VisionLanguageModel>(&impl_->model);
+  if (!model) {
+    throw std::invalid_argument("KV caches are not supported for ASR models");
+  }
+  model->clear_kv_caches();
+}
+
+std::size_t GenAIModel::kv_cache_bytes_per_slot() const {
+  const auto* model = std::get_if<VisionLanguageModel>(&impl_->model);
+  if (!model) {
+    throw std::invalid_argument("KV caches are not supported for ASR models");
+  }
+  return model->kv_cache_bytes_per_slot();
 }
 
 GenerationResult GenAIModel::run(const GenerationRequest& request) {

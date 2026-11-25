@@ -103,11 +103,13 @@ struct VisionLanguageModel::Impl {
                                info.root.string());
 
     internal::ensure_llima_runtime_connected();
-    runtime = std::make_unique<llima::VisionLanguageModel>(info.root, std::nullopt, std::nullopt,
-                                                           std::move(context.files));
+    runtime = std::make_unique<llima::VisionLanguageModel>(
+        info.root, std::nullopt, std::nullopt, std::move(context.files),
+        llima::ModelOptions{context.options.max_kv_cache_slots});
     if (info.draft_root) {
       llima::VisionLanguageModel draft(*info.draft_root, std::nullopt, std::nullopt,
-                                       std::move(context.draft_files));
+                                       std::move(context.draft_files),
+                                       llima::ModelOptions{context.options.max_kv_cache_slots});
       runtime->set_draft_vlm(&draft);
     }
     tool_call_format = runtime->tool_call_format();
@@ -137,6 +139,7 @@ struct VisionLanguageModel::Impl {
       options.max_new_tokens = static_cast<uint16_t>(request.max_new_tokens);
     options.performance_summary = false;
     options.reject_oversized_prompt = true;
+    options.cache_id = request.cache_id;
 
     auto chat = runtime->create_chat();
     chat.set_enable_thinking(request.enable_thinking);
@@ -177,7 +180,11 @@ struct VisionLanguageModel::Impl {
         options.encoded_images = ordered;
       }
     }
-    return runtime->generate(chat, options);
+    try {
+      return runtime->generate(chat, options);
+    } catch (const llima::KVCacheCapacityError& e) {
+      throw KVCacheCapacityError(e.what());
+    }
   }
 
   GenerationResult run(const GenerationRequest& request) {
@@ -193,6 +200,8 @@ struct VisionLanguageModel::Impl {
     options.callbacks.text = [](const std::string&, bool, bool) {};
     const auto output = generate(request, std::move(options));
     result.metrics.generated_tokens = output.performance.generated_tokens;
+    result.metrics.cached_prompt_tokens = output.performance.cached_prompt_tokens;
+    result.metrics.cache_created = output.performance.cache_created;
     simaai::llima::ReasoningStreamParser reasoning_parser(reasoning_format, request.enable_thinking,
                                                           prompt_opens_reasoning(request));
     for (auto& event : reasoning_parser.add(output.text, true)) {
@@ -242,6 +251,13 @@ struct VisionLanguageModel::Impl {
 VisionLanguageModel::VisionLanguageModel(std::filesystem::path model_dir)
     : VisionLanguageModel(internal::local_model_context(model_dir)) {}
 
+VisionLanguageModel::VisionLanguageModel(std::filesystem::path model_dir, GenAIModelOptions options)
+    : VisionLanguageModel([&] {
+        auto context = internal::local_model_context(model_dir);
+        context.options = options;
+        return context;
+      }()) {}
+
 VisionLanguageModel internal::ModelAccess::vision(ModelLoadContext context) {
   return VisionLanguageModel(std::move(context));
 }
@@ -284,6 +300,31 @@ void VisionLanguageModel::unset_lora() {
   impl_->runtime->unset_reloc();
 }
 
+std::size_t VisionLanguageModel::kv_cache_count() const {
+  std::unique_lock lock(impl_->operations, std::try_to_lock);
+  if (!lock.owns_lock())
+    throw std::logic_error("KV cache control requires an idle model");
+  return impl_->runtime->kv_cache_count();
+}
+
+bool VisionLanguageModel::remove_kv_cache(const std::string& cache_id) {
+  std::unique_lock lock(impl_->operations, std::try_to_lock);
+  if (!lock.owns_lock())
+    throw std::logic_error("KV cache control requires an idle model");
+  return impl_->runtime->remove_kv_cache(cache_id);
+}
+
+void VisionLanguageModel::clear_kv_caches() {
+  std::unique_lock lock(impl_->operations, std::try_to_lock);
+  if (!lock.owns_lock())
+    throw std::logic_error("KV cache control requires an idle model");
+  impl_->runtime->clear_kv_caches();
+}
+
+std::size_t VisionLanguageModel::kv_cache_bytes_per_slot() const {
+  return impl_->runtime->kv_cache_bytes_per_slot();
+}
+
 std::size_t VisionLanguageModel::cached_image_count() const {
   return impl_->cached_count.load();
 }
@@ -320,7 +361,8 @@ GenerationStream VisionLanguageModel::stream(const GenerationRequest& request) {
         llima::GenerationOptions options;
         options.stop = token;
         options.callbacks.info = [&producer](const std::string& metric, double value) {
-          if (metric == "ttft" || metric == "tps")
+          if (metric == "ttft" || metric == "tps" || metric == "cache_created" ||
+              metric == "cached_prompt_tokens")
             producer.record_metric(metric, value);
         };
         const bool parse_tools = internal::tool_calls_enabled(request);

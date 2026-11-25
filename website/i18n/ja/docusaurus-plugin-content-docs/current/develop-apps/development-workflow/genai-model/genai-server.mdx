@@ -21,9 +21,12 @@ slug: /develop-apps/development-workflow/genai-model/genai-server
 
 int main() {
   simaai::neat::genai::GenAIServer server;
+  simaai::neat::genai::GenAIModelOptions llm_options;
+  llm_options.max_kv_cache_slots = 4;
   server.add_model(
       "/media/nvme/llima/models/Qwen3-4B-Instruct-2507-GPTQ-a16w4",
-      "llm");
+      "llm",
+      llm_options);
   server.add_model(
       "/media/nvme/llima/models/Qwen3-VL-4B-Instruct-GPTQ-a16w4",
       "vlm");
@@ -38,9 +41,12 @@ int main() {
 import pyneat as neat
 
 server = neat.genai.GenAIServer()
+llm_options = neat.genai.GenAIModelOptions()
+llm_options.max_kv_cache_slots = 4
 server.add_model(
     "/media/nvme/llima/models/Qwen3-4B-Instruct-2507-GPTQ-a16w4",
     "llm",
+    llm_options,
 )
 server.add_model(
     "/media/nvme/llima/models/Qwen3-VL-4B-Instruct-GPTQ-a16w4",
@@ -97,6 +103,8 @@ curl http://<modalix-ip>:9998/v1/models
 | `POST` | `/stop` | 1つのモデルまたはすべてのモデルの、アクティブなストリームをキャンセル。 |
 | `POST` | `/set_lora` | 動的なLoRAアダプターをアクティブにするか、置き換える。 |
 | `POST` | `/unset_lora` | 動的に適応されたモデルを、元のベースラインの重みに戻す。 |
+| `POST` | `/remove_cache` | 再利用可能なプロンプトコンテキストを 1 つ解放します。 |
+| `POST` | `/clear_caches` | 提供中のモデルの全プロンプトコンテキストを解放します。 |
 
 互換性のあるエイリアス`/audio/transcriptions`と`/audio/translations`も受け入れられます。新しいクライアントでは、`/v1/audio/...`ルートを使用することを推奨します。
 
@@ -130,6 +138,48 @@ VLMリクエストの場合、OpenAIチャット `image_url` コンテンツの�
 OpenCVに対応した状態でビルドします。
 
 コンパイル済みコンテキストに応答用の空きがないプロンプトには、`context_length_exceeded` を返します（HTTP 400、ストリーミング開始後は SSE エラー）。コンテキストまたは出力トークン数の上限に達した場合は `finish_reason: "length"`、正常に完了した場合は `"stop"` を返します。会話履歴は保持されます。
+
+## プロンプトコンテキストを再利用する
+
+同じプロンプトコンテキストに属する OpenAI または Ollama 互換リクエストには、同じ空でない `cache_id` を指定します。
+
+```bash
+curl http://<modalix-ip>:9998/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "llm",
+    "cache_id": "driver-assistant",
+    "messages": [
+      {"role": "system", "content": "<large infotainment and tool prompt>"},
+      {"role": "user", "content": "Navigate home."}
+    ],
+    "stream": false
+  }'
+```
+
+モデルの上限は `GenAIModelOptions.max_kv_cache_slots` で設定します。既定値は 1 で、`cache_id` を省略した従来のコンテキストも含みます。自動削除はなく、満杯で新しい ID を要求すると HTTP 429、エラー型 `cache_capacity_error` を返します。
+
+非ストリーミング応答には `cache_created` と `usage.cached_prompt_tokens` が含まれます。OpenAI と Ollama のストリーミング応答には、他のメトリクスとともに `cache_created` と `cached_prompt_tokens` が含まれます。
+
+セッション終了時にコンテキストを解放します。
+
+```bash
+curl http://<modalix-ip>:9998/remove_cache \
+  -H "Content-Type: application/json" \
+  -d '{"model":"llm","cache_id":"driver-assistant"}'
+```
+
+提供中の 1 モデルのすべてのコンテキストを解放します。
+
+```bash
+curl http://<modalix-ip>:9998/clear_caches \
+  -H "Content-Type: application/json" \
+  -d '{"model":"llm"}'
+```
+
+アプリケーションからは `server.remove_kv_cache(served_name, cache_id)`、`server.clear_kv_caches(served_name)`、`server.kv_cache_count(served_name)` を使用できます。同じ `GenAIModel` の別名はコンテキストプールを共有します。
+
+起動時のウォームアップはアプリケーションのコンテキストを割り当てず、共有モデルで事前に作成されたコンテキストを保持します。
 
 ## Ollama互換のリクエスト
 

@@ -113,6 +113,58 @@ print()
 
 Викличте `cancel()` для потоку, якщо користувач закриває запит, змінює промпт або ваш застосунок перериває генерування за тайм-аутом.
 
+## Повторне використання кількох контекстів підказок
+
+Щоб перемикати системні підказки та набори інструментів у межах однієї моделі, задайте ліміт слотів KV-кешу під час створення та передавайте сталий `cache_id` у кожному запиті одного контексту.
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+simaai::neat::genai::GenAIModelOptions options;
+options.max_kv_cache_slots = 4;
+simaai::neat::genai::GenAIModel model(model_dir, options);
+
+simaai::neat::genai::GenerationRequest request;
+request.system_prompt = infotainment_system_prompt;
+request.prompt = "Find a charging station near the destination.";
+request.tools = infotainment_tools;
+request.cache_id = "driver-assistant";
+
+const auto result = model.run(request);
+std::cout << "cached prompt tokens="
+          << result.metrics.cached_prompt_tokens << "\n";
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+options = neat.genai.GenAIModelOptions()
+options.max_kv_cache_slots = 4
+model = neat.genai.GenAIModel(model_dir, options)
+
+request = neat.genai.GenerationRequest()
+request.system_prompt = infotainment_system_prompt
+request.prompt = "Find a charging station near the destination."
+request.tools = infotainment_tools
+request.cache_id = "driver-assistant"
+
+result = model.run(request)
+print(f"cached prompt tokens={result.metrics.cached_prompt_tokens}")
+```
+
+</CodeTab>
+</CodeTabs>
+
+Типово доступний один слот. Безіменний попередній контекст запитів без `cache_id` також враховується в ліміті. Новий ID отримує призначення під час першого запиту; наступні запити повторно використовують відповідний префікс підказки. `GenerationMetrics.cache_created` показує створення призначення, а `GenerationMetrics.cached_prompt_tokens` — кількість повторно використаних токенів.
+
+Кожен слот потребує повного кешу пристрою для цієї моделі. Плануйте місткість через `kv_cache_bytes_per_slot()`, перевіряйте кількість призначень через `kv_cache_count()`. Після сеансу викликайте `remove_kv_cache(cache_id)`, для всіх призначень — `clear_kv_caches()`. Фізична пам’ять зберігається до знищення моделі. Автоматичного LRU-витіснення немає: новий ID за повного пулу спричиняє `KVCacheCapacityError`.
+
+Щоразу надсилайте повну підказку або історію повідомлень. ID вибирає стан і не додає повідомлень автоматично. Керування кешем потребує вільної моделі та повертає помилку під час генерації. Пам’ять слотів і рекурентного стану резервується під час створення; ваги й робочий простір виконання спільні. Компонування публічних типів значень змінюється: перебудуйте Core, PyNeat і застосунки з відповідними пакетами розробки LLiMa та Core.
+
+ID підтримуються для текстових, візуально-мовних запитів і спекулятивного декодування. ASR не приймає ID. Зміна або вилучення адаптера LoRA робить недійсними всі збережені мовні контексти.
+
 ## Додавання зображень для VLM
 
 VLM приймають текст і одне або кілька зображень. Зображення передаються через `GenerationRequest.images` для простого промпту або через `ChatMessage.images`, коли ви використовуєте історію чату.

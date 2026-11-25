@@ -41,7 +41,7 @@ ModelLoadContext provider_model_context(const std::filesystem::path& root,
   info.accepts_text = vlm;
   info.accepts_image = vlm && has_vision_capability(config);
   info.accepts_audio = asr;
-  return {std::move(info), std::move(files), std::move(draft_files)};
+  return {std::move(info), std::move(files), std::move(draft_files), {}};
 }
 
 ModelLoadContext local_model_context(const std::filesystem::path& root) {
@@ -50,7 +50,7 @@ ModelLoadContext local_model_context(const std::filesystem::path& root) {
   auto draft_files = info.draft_root
                          ? std::make_shared<simaai::llima::DiskFileProvider>(*info.draft_root)
                          : nullptr;
-  return {std::move(info), std::move(files), std::move(draft_files)};
+  return {std::move(info), std::move(files), std::move(draft_files), {}};
 }
 
 std::string model_id_from_path(const std::filesystem::path& path) {

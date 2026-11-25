@@ -633,6 +633,66 @@ void check_context_limits(int port, const fs::path& model_dir) {
   }
 }
 
+void request_named_contexts(int port, simaai::neat::genai::GenAIServer& server) {
+  const Json request = {
+      {"model", "llm"},
+      {"cache_id", "session-a"},
+      {"messages",
+       Json::array({{{"role", "user"}, {"content", "What is the capital of Germany?"}}})},
+      {"max_tokens", 24},
+      {"stream", false},
+  };
+
+  auto post = [&](const Json& body, const std::string& label) {
+    auto client = make_client(port);
+    return parse_response(client.Post("/v1/chat/completions", body.dump(), "application/json"),
+                          label);
+  };
+  const Json first = post(request, "POST /v1/chat/completions session-a cold");
+  const std::string first_text =
+      first.at("choices").at(0).at("message").at("content").get<std::string>();
+  require(!trim_text(first_text).empty(), "server text completion returned unexpected text");
+  require(first.at("cache_created").get<bool>(), "cold request should create session-a");
+  require(first.at("usage").at("cached_prompt_tokens").get<std::uint32_t>() == 0U,
+          "cold request should not report cached prompt tokens");
+
+  const Json second = post(request, "POST /v1/chat/completions session-a warm");
+  const std::string second_text =
+      second.at("choices").at(0).at("message").at("content").get<std::string>();
+  require(trim_text(second_text) == trim_text(first_text),
+          "warm server text completion changed generated text");
+  require(!second.at("cache_created").get<bool>(), "warm request should reuse session-a");
+  require(second.at("usage").at("cached_prompt_tokens").get<std::uint32_t>() > 0U,
+          "warm request should report cached prompt tokens");
+
+  Json second_session = request;
+  second_session["cache_id"] = "session-b";
+  (void)post(second_session, "POST /v1/chat/completions session-b cold");
+  require(server.kv_cache_count("llm") == 2U, "server should report two assigned caches");
+
+  Json over_capacity = request;
+  over_capacity["cache_id"] = "session-c";
+  auto client = make_client(port);
+  const auto rejected =
+      client.Post("/v1/chat/completions", over_capacity.dump(), "application/json");
+  require(rejected != nullptr, "capacity request failed without an HTTP response");
+  require(rejected->status == 429, "cache capacity should return HTTP 429");
+  const Json rejected_body = Json::parse(rejected->body);
+  require(rejected_body.at("error").at("type") == "cache_capacity_error",
+          "cache capacity should return the typed server error");
+
+  const Json remove_body = parse_response(
+      client.Post("/remove_cache", R"({"model":"llm","cache_id":"session-a"})", "application/json"),
+      "POST /remove_cache");
+  require(remove_body.at("removed").get<bool>(), "session-a should be removed");
+  require(server.kv_cache_count("llm") == 1U, "server cache count should decrease after removal");
+
+  (void)parse_response(client.Post("/clear_caches", R"({"model":"llm"})", "application/json"),
+                       "POST /clear_caches");
+  require(server.kv_cache_count("llm") == 0U, "server cache clear should release all IDs");
+  std::cout << "GENAI_SERVER_TEXT text=" << first_text << "\n";
+}
+
 void reject_unsupported_thinking(int port) {
   const std::vector<std::pair<std::string, Json>> requests = {
       {"/v1/chat/completions",
@@ -766,7 +826,9 @@ int main(int argc, char** argv) {
     options.port = port;
     simaai::neat::genai::GenAIServer server(options);
     ServerGuard guard(server);
-    server.add_model(text_model_dir, "llm");
+    simaai::neat::genai::GenAIModelOptions text_model_options;
+    text_model_options.max_kv_cache_slots = 2;
+    server.add_model(text_model_dir, "llm", text_model_options);
     server.add_model(vlm_model_dir, "vlm");
     server.add_model(asr_model_dir, "asr");
     server.start();
@@ -781,6 +843,8 @@ int main(int argc, char** argv) {
         text_model_dir.filename() == simaai::neat::test::kDefaultTextModelName;
     const bool default_asr_model =
         asr_model_dir.filename() == simaai::neat::test::kDefaultAsrModelName;
+    server.clear_kv_caches("llm");
+    request_named_contexts(port, server);
     request_text_completion(port, default_text_model);
     require_unique_completion_ids(port);
     request_streamed_chunks(port);

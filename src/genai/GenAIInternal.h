@@ -18,6 +18,7 @@ struct ModelLoadContext {
   ModelDirectoryInfo info;
   std::shared_ptr<simaai::llima::FileProvider> files;
   std::shared_ptr<simaai::llima::FileProvider> draft_files;
+  GenAIModelOptions options;
 };
 
 ModelLoadContext local_model_context(const std::filesystem::path& root);

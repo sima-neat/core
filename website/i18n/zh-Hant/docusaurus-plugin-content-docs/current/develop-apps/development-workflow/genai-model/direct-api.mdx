@@ -113,6 +113,58 @@ print()
 
 如果使用者關閉請求、變更提示詞，或您的應用程式產生內容時逾時，請呼叫 `cancel()` 以停止串流。
 
+## 重複使用多個提示詞上下文
+
+使用同一個模型切換多種系統提示詞和工具組時，請在建構時設定 KV 快取槽位上限，並在同一上下文的每個請求中附上固定的 `cache_id`。
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+simaai::neat::genai::GenAIModelOptions options;
+options.max_kv_cache_slots = 4;
+simaai::neat::genai::GenAIModel model(model_dir, options);
+
+simaai::neat::genai::GenerationRequest request;
+request.system_prompt = infotainment_system_prompt;
+request.prompt = "Find a charging station near the destination.";
+request.tools = infotainment_tools;
+request.cache_id = "driver-assistant";
+
+const auto result = model.run(request);
+std::cout << "cached prompt tokens="
+          << result.metrics.cached_prompt_tokens << "\n";
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+options = neat.genai.GenAIModelOptions()
+options.max_kv_cache_slots = 4
+model = neat.genai.GenAIModel(model_dir, options)
+
+request = neat.genai.GenerationRequest()
+request.system_prompt = infotainment_system_prompt
+request.prompt = "Find a charging station near the destination."
+request.tools = infotainment_tools
+request.cache_id = "driver-assistant"
+
+result = model.run(request)
+print(f"cached prompt tokens={result.metrics.cached_prompt_tokens}")
+```
+
+</CodeTab>
+</CodeTabs>
+
+預設為一個槽位。省略 `cache_id` 的既有上下文也計入上限。新 ID 會在首次請求時建立關聯，後續請求則重複使用相符的提示詞前綴。`GenerationMetrics.cache_created` 表示是否建立關聯，`GenerationMetrics.cached_prompt_tokens` 表示重複使用的權杖數量。
+
+每個槽位都需要完整的模型專用裝置快取。請用 `kv_cache_bytes_per_slot()` 規劃容量，以 `kv_cache_count()` 查看已指派數量。工作階段結束時呼叫 `remove_kv_cache(cache_id)`，以 `clear_kv_caches()` 解除全部關聯。實體配置會保留到模型銷毀。不會自動進行 LRU 淘汰；容量已滿時要求新 ID 會引發 `KVCacheCapacityError`。
+
+每次都應傳送完整提示詞或訊息歷史記錄。ID 只選擇狀態，不會自動附加訊息。快取控制需要閒置模型，生成期間會引發錯誤。槽位和循環狀態空間會在建構時保留，權重與執行工作區則共用。公開值型別的配置已變更，因此請使用相符的 LLiMa 和 Core 開發套件重新建置 Core、PyNeat 及應用程式。
+
+ID 支援純文字、視覺語言及推測解碼請求。ASR 請求不支援 ID。變更或移除 LoRA 轉接器會使所有保留的語言上下文失效。
+
 ## 為 VLMs 增加圖片
 
 VLMs 接受文字以及一張或多張圖片。圖片會透過 `GenerationRequest.images` 傳遞，以用於簡單的提示詞，或在您使用聊天記錄時，透過 `ChatMessage.images` 傳遞。

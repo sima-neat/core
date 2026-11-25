@@ -20,6 +20,7 @@ struct ModelAccess;
 class GenAIModel {
 public:
   explicit GenAIModel(std::filesystem::path model_dir);
+  GenAIModel(std::filesystem::path model_dir, GenAIModelOptions options);
   ~GenAIModel();
 
   GenAIModel(GenAIModel&&) noexcept;
@@ -35,6 +36,10 @@ public:
   std::string model_id() const;
   void set_lora(const std::string& adapter_name);
   void unset_lora();
+  std::size_t kv_cache_count() const;
+  bool remove_kv_cache(const std::string& cache_id);
+  void clear_kv_caches();
+  std::size_t kv_cache_bytes_per_slot() const;
   GenerationResult run(const GenerationRequest& request);
   GenerationStream stream(const GenerationRequest& request);
 

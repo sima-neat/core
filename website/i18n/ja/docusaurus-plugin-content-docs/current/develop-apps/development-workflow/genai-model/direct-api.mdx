@@ -113,6 +113,58 @@ print()
 
 ユーザーがリクエストを閉じたり、プロンプトを変更したり、アプリケーションが生成処理のタイムアウトに達した場合、ストリームに対して`cancel()`を呼び出します。
 
+## 複数のプロンプトコンテキストを再利用する
+
+1 つのモデルで複数のシステムプロンプトやツール群を切り替える場合、構築時に KV キャッシュスロットの上限を設定し、同じコンテキストのリクエストには安定した `cache_id` を付けます。
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+simaai::neat::genai::GenAIModelOptions options;
+options.max_kv_cache_slots = 4;
+simaai::neat::genai::GenAIModel model(model_dir, options);
+
+simaai::neat::genai::GenerationRequest request;
+request.system_prompt = infotainment_system_prompt;
+request.prompt = "Find a charging station near the destination.";
+request.tools = infotainment_tools;
+request.cache_id = "driver-assistant";
+
+const auto result = model.run(request);
+std::cout << "cached prompt tokens="
+          << result.metrics.cached_prompt_tokens << "\n";
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+options = neat.genai.GenAIModelOptions()
+options.max_kv_cache_slots = 4
+model = neat.genai.GenAIModel(model_dir, options)
+
+request = neat.genai.GenerationRequest()
+request.system_prompt = infotainment_system_prompt
+request.prompt = "Find a charging station near the destination."
+request.tools = infotainment_tools
+request.cache_id = "driver-assistant"
+
+result = model.run(request)
+print(f"cached prompt tokens={result.metrics.cached_prompt_tokens}")
+```
+
+</CodeTab>
+</CodeTabs>
+
+既定値は 1 スロットです。`cache_id` を省略した従来のコンテキストも上限に含まれます。新しい ID の関連付けは最初のリクエスト時に作られ、その後は一致するプロンプトのプレフィックスを再利用します。`GenerationMetrics.cache_created` は関連付けの新規作成、`GenerationMetrics.cached_prompt_tokens` は再利用したトークン数を示します。
+
+各スロットにはモデル固有の完全なデバイスキャッシュが必要です。`kv_cache_bytes_per_slot()` で容量を計画し、`kv_cache_count()` で割り当て数を確認します。セッション終了時は `remove_kv_cache(cache_id)`、全解除は `clear_kv_caches()` を使用します。物理領域はモデルの破棄まで保持されます。自動 LRU 削除はなく、満杯で新しい ID を要求すると `KVCacheCapacityError` が発生します。
+
+毎回、完全なプロンプトまたはメッセージ履歴を送信してください。ID は状態を選択し、メッセージを自動追加しません。キャッシュ制御にはアイドル状態のモデルが必要で、生成中はエラーになります。スロットと再帰的状態の領域は構築時に予約され、重みと実行ワークスペースは共有されます。公開値型のレイアウトが変わるため、対応する LLiMa と Core の開発パッケージで Core、PyNeat、アプリケーションを再ビルドしてください。
+
+ID はテキスト専用、画像と言語、投機的デコードのリクエストで使用できます。ASR では使用できません。LoRA アダプターの変更や解除は保持されたすべての言語コンテキストを無効化します。
+
 ## VLMに画像を追加する
 
 VLMは、テキストに加えて1つ以上の画像を受け入れます。画像は、単純なプロンプトの場合は`GenerationRequest.images`を介して、チャット履歴を使用する場合は`ChatMessage.images`を介して渡されます。

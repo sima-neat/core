@@ -26,6 +26,7 @@
 #include <mutex>
 #include <optional>
 #include <random>
+#include <set>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -75,7 +76,9 @@ void set_error(httplib::Response& res, const std::string& message, int status) {
 
 nlohmann::json generation_error(const std::exception& error) {
   nlohmann::json body = {{"error", {{"message", error.what()}, {"type", "invalid_request_error"}}}};
-  if (dynamic_cast<const std::length_error*>(&error)) {
+  if (dynamic_cast<const KVCacheCapacityError*>(&error)) {
+    body["error"]["type"] = "cache_capacity_error";
+  } else if (dynamic_cast<const std::length_error*>(&error)) {
     body["error"]["code"] = "context_length_exceeded";
   }
   return body;
@@ -83,7 +86,21 @@ nlohmann::json generation_error(const std::exception& error) {
 
 void set_error(httplib::Response& res, const std::exception& error) {
   set_json(res, generation_error(error),
-           dynamic_cast<const std::length_error*>(&error) ? 400 : 500);
+           dynamic_cast<const KVCacheCapacityError*>(&error) ? 429
+           : dynamic_cast<const std::length_error*>(&error)  ? 400
+                                                             : 500);
+}
+
+std::optional<std::string> apply_cache_id(const nlohmann::json& body, GenerationRequest& request) {
+  if (!body.contains("cache_id") || body.at("cache_id").is_null()) {
+    return std::nullopt;
+  }
+  if (!body.at("cache_id").is_string() ||
+      body.at("cache_id").get_ref<const std::string&>().empty()) {
+    return "cache_id must be a non-empty string or null";
+  }
+  request.cache_id = body.at("cache_id").get<std::string>();
+  return std::nullopt;
 }
 
 std::optional<std::string> apply_tool_options(const nlohmann::json& body,
@@ -284,6 +301,11 @@ nlohmann::json chat_message_response(const GenerationResult& result, bool ollama
   return message;
 }
 
+void add_cache_metrics(nlohmann::json& body, const GenerationMetrics& metrics) {
+  body["cached_prompt_tokens"] = metrics.cached_prompt_tokens;
+  body["cache_created"] = metrics.cache_created;
+}
+
 GenerationMetrics metrics_with_ttft_once(GenerationMetrics metrics, bool& ttft_sent) {
   if (metrics.time_to_first_token_s <= 0.0) {
     return metrics;
@@ -307,6 +329,7 @@ std::string chat_chunk(const std::string& model_name, const std::string& complet
   chunk["created"] = created;
   chunk["model"] = model_name;
   if (metrics.has_value()) {
+    add_cache_metrics(chunk, *metrics);
     if (metrics->time_to_first_token_s > 0.0) {
       chunk["ttft"] = metrics->time_to_first_token_s;
     }
@@ -346,6 +369,7 @@ std::string chat_tool_call_chunk(const std::string& model_name, const std::strin
   chunk["object"] = "chat.completion.chunk";
   chunk["created"] = created;
   chunk["model"] = model_name;
+  add_cache_metrics(chunk, metrics);
   if (metrics.time_to_first_token_s > 0.0) {
     chunk["ttft"] = metrics.time_to_first_token_s;
   }
@@ -395,6 +419,7 @@ std::string completion_chunk(const std::string& model_name, const std::string& c
   chunk["created"] = created;
   chunk["model"] = model_name;
   if (metrics.has_value()) {
+    add_cache_metrics(chunk, *metrics);
     if (metrics->time_to_first_token_s > 0.0) {
       chunk["ttft"] = metrics->time_to_first_token_s;
     }
@@ -476,6 +501,7 @@ std::string ollama_chat_line(const std::string& model_name, const std::string& t
     body["done_reason"] = finish_reason.value_or("stop");
   }
   if (metrics.has_value()) {
+    add_cache_metrics(body, *metrics);
     if (metrics->time_to_first_token_s > 0.0) {
       body["ttft"] = metrics->time_to_first_token_s;
     }
@@ -504,6 +530,7 @@ std::string ollama_generate_line(const std::string& model_name, const std::strin
     body["done_reason"] = finish_reason.value_or("stop");
   }
   if (metrics.has_value()) {
+    add_cache_metrics(body, *metrics);
     if (metrics->time_to_first_token_s > 0.0) {
       body["ttft"] = metrics->time_to_first_token_s;
     }
@@ -827,6 +854,12 @@ struct GenAIServer::Impl {
     http.Post("/unset_lora", [this](const httplib::Request& req, httplib::Response& res) {
       handle_lora(req, res, false);
     });
+    http.Post("/remove_cache", [this](const httplib::Request& req, httplib::Response& res) {
+      handle_cache(req, res, false);
+    });
+    http.Post("/clear_caches", [this](const httplib::Request& req, httplib::Response& res) {
+      handle_cache(req, res, true);
+    });
     auto options_handler = [](const httplib::Request&, httplib::Response& res) {
       set_cors(res);
       res.status = 200;
@@ -843,6 +876,8 @@ struct GenAIServer::Impl {
     http.Options("/stop", options_handler);
     http.Options("/set_lora", options_handler);
     http.Options("/unset_lora", options_handler);
+    http.Options("/remove_cache", options_handler);
+    http.Options("/clear_caches", options_handler);
   }
 
   static void set_cors(httplib::Response& res) {
@@ -852,11 +887,20 @@ struct GenAIServer::Impl {
   }
 
   std::string add_model(std::filesystem::path model_dir) {
+    return add_model(std::move(model_dir), GenAIModelOptions{});
+  }
+
+  std::string add_model(std::filesystem::path model_dir, GenAIModelOptions model_options) {
     const auto info = internal::inspect_model_directory(model_dir);
-    return add_model(info.package_root, default_served_name(info.root));
+    return add_model(info.package_root, default_served_name(info.root), model_options);
   }
 
   std::string add_model(std::filesystem::path model_dir, std::string served_name) {
+    return add_model(std::move(model_dir), std::move(served_name), GenAIModelOptions{});
+  }
+
+  std::string add_model(std::filesystem::path model_dir, std::string served_name,
+                        GenAIModelOptions model_options) {
     if (served_name.empty()) {
       throw std::invalid_argument("GenAIServer::add_model requires a non-empty served name");
     }
@@ -868,7 +912,7 @@ struct GenAIServer::Impl {
       }
     }
 
-    auto model = std::make_shared<GenAIModel>(std::move(model_dir));
+    auto model = std::make_shared<GenAIModel>(std::move(model_dir), model_options);
     add_model(std::move(served_name), std::move(model));
     return registered_name;
   }
@@ -900,6 +944,30 @@ struct GenAIServer::Impl {
       names.push_back(name);
     }
     return names;
+  }
+
+  std::size_t kv_cache_count(const std::string& served_name) const {
+    auto model = find_model(served_name);
+    if (!model) {
+      throw std::invalid_argument("Unknown model: " + served_name);
+    }
+    return model->kv_cache_count();
+  }
+
+  bool remove_kv_cache(const std::string& served_name, const std::string& cache_id) {
+    auto model = find_model(served_name);
+    if (!model) {
+      throw std::invalid_argument("Unknown model: " + served_name);
+    }
+    return model->remove_kv_cache(cache_id);
+  }
+
+  void clear_kv_caches(const std::string& served_name) {
+    auto model = find_model(served_name);
+    if (!model) {
+      throw std::invalid_argument("Unknown model: " + served_name);
+    }
+    model->clear_kv_caches();
   }
 
   std::shared_ptr<GenAIModel> find_model(const std::string& served_name) const {
@@ -1093,7 +1161,7 @@ struct GenAIServer::Impl {
                      {"model", model_name.value_or(std::string{"*"})},
                      {"cancelled_streams", cancelled}});
     } catch (const std::exception& e) {
-      set_error(res, e.what(), 500);
+      set_error(res, e);
     }
   }
 
@@ -1178,7 +1246,45 @@ struct GenAIServer::Impl {
     } catch (const std::filesystem::filesystem_error& e) {
       set_error(res, e.what(), 404);
     } catch (const std::exception& e) {
-      set_error(res, e.what(), 500);
+      set_error(res, e);
+    }
+  }
+
+  void handle_cache(const httplib::Request& req, httplib::Response& res, bool clear_all) {
+    set_cors(res);
+    try {
+      const auto body = parse_json_body(req);
+      if (!body.is_object()) {
+        set_error(res, "Cache request body must be a JSON object", 400);
+        return;
+      }
+      const std::string model_name = body.value("model", std::string{});
+      auto model = require_model(model_name, res, "Cache");
+      if (!model || !require_text_or_vision_model(*model, model_name, res)) {
+        return;
+      }
+
+      if (clear_all) {
+        model->clear_kv_caches();
+        set_json(res, {{"status", "ok"}, {"model", model_name}, {"cache_count", 0}});
+        return;
+      }
+      if (!body.contains("cache_id") || !body.at("cache_id").is_string() ||
+          body.at("cache_id").get_ref<const std::string&>().empty()) {
+        set_error(res, "Cache removal requires a non-empty string cache_id", 400);
+        return;
+      }
+      const auto cache_id = body.at("cache_id").get<std::string>();
+      const bool removed = model->remove_kv_cache(cache_id);
+      set_json(res, {{"status", "ok"},
+                     {"model", model_name},
+                     {"cache_id", cache_id},
+                     {"removed", removed},
+                     {"cache_count", model->kv_cache_count()}});
+    } catch (const std::invalid_argument& e) {
+      set_error(res, e.what(), 400);
+    } catch (const std::exception& e) {
+      set_error(res, e);
     }
   }
 
@@ -1196,6 +1302,10 @@ struct GenAIServer::Impl {
       }
 
       GenerationRequest request;
+      if (const auto error = apply_cache_id(body, request)) {
+        set_error(res, *error, 400);
+        return;
+      }
       request.enable_thinking = request_enable_thinking(body);
       if (!require_thinking_capability(*model, request, res)) {
         return;
@@ -1229,7 +1339,10 @@ struct GenAIServer::Impl {
                             {{{"index", 0},
                               {"message", message},
                               {"finish_reason", choice_finish_reason(result.finish_reason)}}})},
-                       {"usage", {{"completion_tokens", result.metrics.generated_tokens}}}});
+                       {"usage",
+                        {{"completion_tokens", result.metrics.generated_tokens},
+                         {"cached_prompt_tokens", result.metrics.cached_prompt_tokens}}},
+                       {"cache_created", result.metrics.cache_created}});
       }
     } catch (const std::exception& e) {
       set_error(res, e);
@@ -1250,6 +1363,10 @@ struct GenAIServer::Impl {
       }
 
       GenerationRequest request;
+      if (const auto error = apply_cache_id(body, request)) {
+        set_error(res, *error, 400);
+        return;
+      }
       request.enable_thinking = request_enable_thinking(body);
       if (!require_thinking_capability(*model, request, res)) {
         return;
@@ -1275,7 +1392,10 @@ struct GenAIServer::Impl {
                             {{{"index", 0},
                               {"text", result.text},
                               {"finish_reason", choice_finish_reason(result.finish_reason)}}})},
-                       {"usage", {{"completion_tokens", result.metrics.generated_tokens}}}});
+                       {"usage",
+                        {{"completion_tokens", result.metrics.generated_tokens},
+                         {"cached_prompt_tokens", result.metrics.cached_prompt_tokens}}},
+                       {"cache_created", result.metrics.cache_created}});
       }
     } catch (const std::exception& e) {
       set_error(res, e);
@@ -1296,6 +1416,10 @@ struct GenAIServer::Impl {
       }
 
       GenerationRequest request;
+      if (const auto error = apply_cache_id(body, request)) {
+        set_error(res, *error, 400);
+        return;
+      }
       request.enable_thinking = request_enable_thinking(body, true);
       if (!require_thinking_capability(*model, request, res)) {
         return;
@@ -1323,7 +1447,9 @@ struct GenAIServer::Impl {
                        {"message", chat_message_response(result, true)},
                        {"done", true},
                        {"done_reason", choice_finish_reason(result.finish_reason)},
-                       {"eval_count", result.metrics.generated_tokens}});
+                       {"eval_count", result.metrics.generated_tokens},
+                       {"cached_prompt_tokens", result.metrics.cached_prompt_tokens},
+                       {"cache_created", result.metrics.cache_created}});
       }
     } catch (const std::exception& e) {
       set_error(res, e);
@@ -1355,6 +1481,10 @@ struct GenAIServer::Impl {
       }
 
       GenerationRequest request;
+      if (const auto error = apply_cache_id(body, request)) {
+        set_error(res, *error, 400);
+        return;
+      }
       request.enable_thinking = request_enable_thinking(body, true);
       if (!require_thinking_capability(*model, request, res)) {
         return;
@@ -1378,7 +1508,9 @@ struct GenAIServer::Impl {
                                    {"response", result.text},
                                    {"done", true},
                                    {"done_reason", choice_finish_reason(result.finish_reason)},
-                                   {"eval_count", result.metrics.generated_tokens}};
+                                   {"eval_count", result.metrics.generated_tokens},
+                                   {"cached_prompt_tokens", result.metrics.cached_prompt_tokens},
+                                   {"cache_created", result.metrics.cache_created}};
         if (!result.reasoning.empty()) {
           response["thinking"] = result.reasoning;
         }
@@ -1504,6 +1636,7 @@ struct GenAIServer::Impl {
                       {"tool_calls", openai_tool_calls_to_ollama(pending_tool_calls)}};
                   body["done"] = true;
                   body["done_reason"] = choice_finish_reason(sample->finish_reason);
+                  add_cache_metrics(body, pending_tool_metrics);
                   if (pending_tool_metrics.time_to_first_token_s > 0.0) {
                     body["ttft"] = pending_tool_metrics.time_to_first_token_s;
                   }
@@ -1716,9 +1849,19 @@ struct GenAIServer::Impl {
       }
     }
 
+    std::set<const GenAIModel*> warmed;
     for (const auto& [name, model] : models) {
+      if (!warmed.insert(model.get()).second)
+        continue;
       try {
+        // Shared models may already have all slots assigned by a direct caller.
+        // Their contexts must survive server registration and startup.
+        if (model->task() == GenAITask::VisionLanguage && model->kv_cache_count() != 0)
+          continue;
         (void)model->run(make_warmup_request(*model));
+        if (model->task() == GenAITask::VisionLanguage) {
+          model->clear_kv_caches();
+        }
       } catch (const std::exception& e) {
         throw std::runtime_error("GenAIServer warmup failed for model '" + name + "': " + e.what());
       }
@@ -1813,8 +1956,18 @@ std::string GenAIServer::add_model(std::filesystem::path model_dir) {
   return impl_->add_model(std::move(model_dir));
 }
 
+std::string GenAIServer::add_model(std::filesystem::path model_dir,
+                                   GenAIModelOptions model_options) {
+  return impl_->add_model(std::move(model_dir), model_options);
+}
+
 std::string GenAIServer::add_model(std::filesystem::path model_dir, std::string served_name) {
   return impl_->add_model(std::move(model_dir), std::move(served_name));
+}
+
+std::string GenAIServer::add_model(std::filesystem::path model_dir, std::string served_name,
+                                   GenAIModelOptions model_options) {
+  return impl_->add_model(std::move(model_dir), std::move(served_name), model_options);
 }
 
 void GenAIServer::add_model(std::string served_name, std::shared_ptr<GenAIModel> model) {
@@ -1827,6 +1980,18 @@ bool GenAIServer::remove_model(const std::string& served_name) {
 
 std::vector<std::string> GenAIServer::model_names() const {
   return impl_->model_names();
+}
+
+std::size_t GenAIServer::kv_cache_count(const std::string& served_name) const {
+  return impl_->kv_cache_count(served_name);
+}
+
+bool GenAIServer::remove_kv_cache(const std::string& served_name, const std::string& cache_id) {
+  return impl_->remove_kv_cache(served_name, cache_id);
+}
+
+void GenAIServer::clear_kv_caches(const std::string& served_name) {
+  impl_->clear_kv_caches(served_name);
 }
 
 void GenAIServer::serve() {

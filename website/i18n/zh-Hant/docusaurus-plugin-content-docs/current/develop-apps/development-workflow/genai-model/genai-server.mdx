@@ -21,9 +21,12 @@ slug: /develop-apps/development-workflow/genai-model/genai-server
 
 int main() {
   simaai::neat::genai::GenAIServer server;
+  simaai::neat::genai::GenAIModelOptions llm_options;
+  llm_options.max_kv_cache_slots = 4;
   server.add_model(
       "/media/nvme/llima/models/Qwen3-4B-Instruct-2507-GPTQ-a16w4",
-      "llm");
+      "llm",
+      llm_options);
   server.add_model(
       "/media/nvme/llima/models/Qwen3-VL-4B-Instruct-GPTQ-a16w4",
       "vlm");
@@ -38,9 +41,12 @@ int main() {
 import pyneat as neat
 
 server = neat.genai.GenAIServer()
+llm_options = neat.genai.GenAIModelOptions()
+llm_options.max_kv_cache_slots = 4
 server.add_model(
     "/media/nvme/llima/models/Qwen3-4B-Instruct-2507-GPTQ-a16w4",
     "llm",
+    llm_options,
 )
 server.add_model(
     "/media/nvme/llima/models/Qwen3-VL-4B-Instruct-GPTQ-a16w4",
@@ -98,6 +104,8 @@ curl http://<modalix-ip>:9998/v1/models
 | `POST` | `/stop` | 取消一個模型或所有模型的活動串流。 |
 | `POST` | `/set_lora` | 啟用或替換動態 LoRA 調整器。 |
 | `POST` | `/unset_lora` | 將動態調整的模型恢復到其基準權重。 |
+| `POST` | `/remove_cache` | 釋放一個可重複使用的提示詞上下文。 |
+| `POST` | `/clear_caches` | 釋放提供中模型的全部提示詞上下文。 |
 
 相容性別名 `/audio/transcriptions` 和 `/audio/translations` 也可以接受。 建議在新客戶端中使用 `/v1/audio/...` 路由。
 
@@ -128,6 +136,48 @@ curl http://<modalix-ip>:9998/v1/chat/completions \
 對於 VLM 請求，OpenAI 對話 `image_url` 內容部分必須包含一個 base64 資料 URI，例如 `data:image/jpeg;base64,...`。影像解碼需要一個具有 OpenCV 支援的 Neat 版本。
 
 若提示在已編譯的上下文中未留下回覆空間，會傳回 `context_length_exceeded`（HTTP 400；若串流已開始，則傳回 SSE 錯誤）。達到上下文或輸出詞元上限時，會傳回 `finish_reason: "length"`；正常完成則傳回 `"stop"`。對話記錄會保留。
+
+## 重複使用提示詞上下文
+
+對屬於同一提示詞上下文的 OpenAI 或 Ollama 相容請求，加入相同且非空白的 `cache_id`。
+
+```bash
+curl http://<modalix-ip>:9998/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "llm",
+    "cache_id": "driver-assistant",
+    "messages": [
+      {"role": "system", "content": "<large infotainment and tool prompt>"},
+      {"role": "user", "content": "Navigate home."}
+    ],
+    "stream": false
+  }'
+```
+
+模型容量由 `GenAIModelOptions.max_kv_cache_slots` 設定。預設為 1，省略 `cache_id` 的既有上下文也計入上限。不會自動淘汰；容量已滿時要求新 ID 會回傳 HTTP 429，錯誤型別為 `cache_capacity_error`。
+
+非串流回應包含 `cache_created` 和 `usage.cached_prompt_tokens`。OpenAI 及 Ollama 串流回應會將 `cache_created` 和 `cached_prompt_tokens` 與其他生成指標一併回傳。
+
+工作階段結束時釋放上下文：
+
+```bash
+curl http://<modalix-ip>:9998/remove_cache \
+  -H "Content-Type: application/json" \
+  -d '{"model":"llm","cache_id":"driver-assistant"}'
+```
+
+釋放某個提供中模型的所有上下文：
+
+```bash
+curl http://<modalix-ip>:9998/clear_caches \
+  -H "Content-Type: application/json" \
+  -d '{"model":"llm"}'
+```
+
+應用程式也可呼叫 `server.remove_kv_cache(served_name, cache_id)`、`server.clear_kv_caches(served_name)` 和 `server.kv_cache_count(served_name)`。以相同 `GenAIModel` 註冊的別名會共用上下文集區。
+
+啟動暖機不會指派應用程式上下文，並會保留共用模型中已預先填入的上下文。
 
 ## 與 Ollama 相容的請求
 

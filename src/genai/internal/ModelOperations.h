@@ -21,6 +21,14 @@ public:
     lock(std::stop_token{});
   }
 
+  bool try_lock() {
+    std::lock_guard lock(mutex_);
+    if (busy_)
+      return false;
+    busy_ = true;
+    return true;
+  }
+
   void unlock() {
     {
       std::lock_guard lock(mutex_);

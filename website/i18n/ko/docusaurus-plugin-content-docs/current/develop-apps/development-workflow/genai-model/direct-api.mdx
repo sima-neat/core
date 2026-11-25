@@ -113,6 +113,58 @@ print()
 
 사용자가 요청을 닫거나, 프롬프트를 변경하거나, 애플리케이션에서 이미지 생성 시간이 초과되면 스트림에서 `cancel()`을 호출합니다.
 
+## 여러 프롬프트 컨텍스트 재사용
+
+하나의 모델로 여러 시스템 프롬프트와 도구 집합을 전환하려면 생성 시 KV 캐시 슬롯 한도를 설정하고 동일한 컨텍스트의 요청마다 일정한 `cache_id`를 지정하세요.
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+simaai::neat::genai::GenAIModelOptions options;
+options.max_kv_cache_slots = 4;
+simaai::neat::genai::GenAIModel model(model_dir, options);
+
+simaai::neat::genai::GenerationRequest request;
+request.system_prompt = infotainment_system_prompt;
+request.prompt = "Find a charging station near the destination.";
+request.tools = infotainment_tools;
+request.cache_id = "driver-assistant";
+
+const auto result = model.run(request);
+std::cout << "cached prompt tokens="
+          << result.metrics.cached_prompt_tokens << "\n";
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+options = neat.genai.GenAIModelOptions()
+options.max_kv_cache_slots = 4
+model = neat.genai.GenAIModel(model_dir, options)
+
+request = neat.genai.GenerationRequest()
+request.system_prompt = infotainment_system_prompt
+request.prompt = "Find a charging station near the destination."
+request.tools = infotainment_tools
+request.cache_id = "driver-assistant"
+
+result = model.run(request)
+print(f"cached prompt tokens={result.metrics.cached_prompt_tokens}")
+```
+
+</CodeTab>
+</CodeTabs>
+
+기본값은 슬롯 하나입니다. `cache_id`를 생략한 기존 컨텍스트도 한도에 포함됩니다. 새 ID의 연결은 첫 요청에서 생성되며 이후 일치하는 프롬프트 접두사를 재사용합니다. `GenerationMetrics.cache_created`는 연결 생성 여부를, `GenerationMetrics.cached_prompt_tokens`는 재사용한 토큰 수를 나타냅니다.
+
+각 슬롯에는 모델별 전체 장치 캐시가 필요합니다. `kv_cache_bytes_per_slot()`로 용량을 계획하고 `kv_cache_count()`로 할당 수를 확인하세요. 세션 종료 시 `remove_kv_cache(cache_id)`를, 전체 해제 시 `clear_kv_caches()`를 사용합니다. 물리적 할당은 모델이 소멸할 때까지 유지됩니다. 자동 LRU 제거는 없으며 가득 찬 상태에서 새 ID를 요청하면 `KVCacheCapacityError`가 발생합니다.
+
+매번 전체 프롬프트 또는 메시지 기록을 보내세요. ID는 상태를 선택하며 메시지를 자동 추가하지 않습니다. 캐시 제어에는 유휴 모델이 필요하며 생성 중에는 오류가 발생합니다. 슬롯과 순환 상태의 저장소는 생성 시 예약되고 가중치와 실행 작업 공간은 공유됩니다. 공개 값 형식의 레이아웃이 변경되므로 일치하는 LLiMa 및 Core 개발 패키지로 Core, PyNeat와 애플리케이션을 다시 빌드하세요.
+
+ID는 텍스트 전용, 비전 언어 및 추측 디코딩 요청을 지원합니다. ASR 요청은 지원하지 않습니다. LoRA 어댑터를 변경하거나 제거하면 보존된 모든 언어 컨텍스트가 무효화됩니다.
+
 ## VLM에 이미지 추가
 
 VLM은 텍스트와 하나 이상의 이미지를 입력으로 받습니다. 이미지는 간단한 프롬프트에 대해 `GenerationRequest.images`를 통해 전달되거나, 채팅 기록을 사용할 때 `ChatMessage.images`를 통해 전달됩니다.

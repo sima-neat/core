@@ -24,7 +24,14 @@ int main(int argc, char** argv) {
     chat.set_messages(nlohmann::ordered_json::array());
     chat.set_tools(nlohmann::ordered_json::array());
     auto& model = *reinterpret_cast<simaai::llima::VisionLanguageModel*>(argv[0]);
-    return model.generate(chat).token_ids.empty();
+    simaai::llima::GenerationOptions options;
+    options.cache_id = "probe";
+    auto result = model.generate(chat, options);
+    model.remove_kv_cache("probe");
+    model.clear_kv_caches();
+    simaai::llima::VisionLanguageModel candidate(argv[0], simaai::llima::ModelOptions{2});
+    return result.token_ids.empty() && candidate.kv_cache_count() == 0 &&
+            candidate.kv_cache_bytes_per_slot() > 0;
   }
   return 0;
 }
@@ -35,7 +42,8 @@ int main(int argc, char** argv) {
   if(NOT SIMANEAT_LLIMA_CLIENT_LINKS)
     message(FATAL_ERROR
       "LLiMa client header/link check failed. Use the JSON development package "
-      "matching the selected LLiMa C++ ABI and complete its runtime dependencies; "
+      "matching the selected LLiMa C++ ABI, including named KV cache support, "
+      "and complete its runtime dependencies; "
       "see CMakeConfigureLog.yaml. No GenAI stub fallback is allowed for a found provider.")
   endif()
 endif()

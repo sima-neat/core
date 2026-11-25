@@ -21,9 +21,12 @@ slug: /develop-apps/development-workflow/genai-model/genai-server
 
 int main() {
   simaai::neat::genai::GenAIServer server;
+  simaai::neat::genai::GenAIModelOptions llm_options;
+  llm_options.max_kv_cache_slots = 4;
   server.add_model(
       "/media/nvme/llima/models/Qwen3-4B-Instruct-2507-GPTQ-a16w4",
-      "llm");
+      "llm",
+      llm_options);
   server.add_model(
       "/media/nvme/llima/models/Qwen3-VL-4B-Instruct-GPTQ-a16w4",
       "vlm");
@@ -38,9 +41,12 @@ int main() {
 import pyneat as neat
 
 server = neat.genai.GenAIServer()
+llm_options = neat.genai.GenAIModelOptions()
+llm_options.max_kv_cache_slots = 4
 server.add_model(
     "/media/nvme/llima/models/Qwen3-4B-Instruct-2507-GPTQ-a16w4",
     "llm",
+    llm_options,
 )
 server.add_model(
     "/media/nvme/llima/models/Qwen3-VL-4B-Instruct-GPTQ-a16w4",
@@ -96,6 +102,8 @@ curl http://<modalix-ip>:9998/v1/models
 | `POST` | `/stop` | Скасування активних потоків для однієї моделі або для всіх моделей. |
 | `POST` | `/set_lora` | Активація або заміна динамічного адаптера LoRA. |
 | `POST` | `/unset_lora` | Повернення динамічно адаптованої моделі до її базових ваг. |
+| `POST` | `/remove_cache` | Звільнити один контекст підказки для повторного використання. |
+| `POST` | `/clear_caches` | Звільнити всі контексти підказок обслуговуваної моделі. |
 
 Також приймаються альтернативні назви для забезпечення сумісності: `/audio/transcriptions` та `/audio/translations`. У нових клієнтах рекомендується використовувати маршрути `/v1/audio/...`.
 
@@ -131,6 +139,48 @@ curl http://<modalix-ip>:9998/v1/chat/completions \
 Для запитів VLM частина вмісту OpenAI chat `image_url` повинна містити URI даних у форматі base64, наприклад `data:image/jpeg;base64,...`. Для декодування зображення потрібна збірка Neat з підтримкою OpenCV.
 
 Якщо промпт не залишає місця для відповіді в скомпільованому контексті, повертається `context_length_exceeded` (HTTP 400 або помилка SSE, якщо потокове передавання вже почалося). Досягнення межі контексту чи кількості вихідних токенів повертає `finish_reason: "length"`, а звичайне завершення — `"stop"`. Історія розмови зберігається.
+
+## Повторне використання контекстів підказок
+
+Додавайте однаковий непорожній `cache_id` до кожного сумісного з OpenAI або Ollama запиту одного контексту підказки.
+
+```bash
+curl http://<modalix-ip>:9998/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "llm",
+    "cache_id": "driver-assistant",
+    "messages": [
+      {"role": "system", "content": "<large infotainment and tool prompt>"},
+      {"role": "user", "content": "Navigate home."}
+    ],
+    "stream": false
+  }'
+```
+
+Ліміт моделі задається через `GenAIModelOptions.max_kv_cache_slots`. Типове значення — 1; безіменний попередній контекст запитів без `cache_id` також враховується. Автоматичного витіснення немає. Новий ID за повного пулу повертає HTTP 429 із типом помилки `cache_capacity_error`.
+
+Непотокові відповіді містять `cache_created` та `usage.cached_prompt_tokens`. Потокові відповіді OpenAI й Ollama містять `cache_created` і `cached_prompt_tokens` разом з іншими метриками генерації.
+
+Звільняйте контекст після завершення сеансу:
+
+```bash
+curl http://<modalix-ip>:9998/remove_cache \
+  -H "Content-Type: application/json" \
+  -d '{"model":"llm","cache_id":"driver-assistant"}'
+```
+
+Звільняйте всі контексти однієї обслуговуваної моделі:
+
+```bash
+curl http://<modalix-ip>:9998/clear_caches \
+  -H "Content-Type: application/json" \
+  -d '{"model":"llm"}'
+```
+
+Застосунок також може викликати `server.remove_kv_cache(served_name, cache_id)`, `server.clear_kv_caches(served_name)` і `server.kv_cache_count(served_name)`. Псевдоніми одного `GenAIModel` використовують спільний пул контекстів.
+
+Прогрівання під час запуску не призначає контекст застосунку й зберігає контексти, уже заповнені через спільну модель.
 
 ## Запити, сумісні з Ollama
 

@@ -18,6 +18,7 @@
 #include <iterator>
 #include <memory>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -33,6 +34,18 @@ class ASRModel;
 class GenAIModel;
 class GenAIServer;
 class VisionLanguageModel;
+
+/// Options fixed when a model and its bounded sequence cache pool are loaded.
+struct GenAIModelOptions {
+  /// Includes the unnamed legacy context. Must be positive; no automatic eviction.
+  std::size_t max_kv_cache_slots = 1;
+};
+
+/// A new context was requested while every cache slot was assigned.
+class KVCacheCapacityError : public std::runtime_error {
+public:
+  using std::runtime_error::runtime_error;
+};
 
 /**
  * @brief Ordered image inputs for GenAI requests and chat messages.
@@ -97,6 +110,8 @@ struct GenerationRequest {
   /// How much the model reasons: `low`, `medium` or `high`. Independent of
   /// `enable_thinking`, which controls whether reasoning is returned.
   std::string reasoning_effort = "low";
+  /// Selects an independent prompt context; omitted uses the unnamed legacy context.
+  std::optional<std::string> cache_id;
 };
 
 class GenerationStream {
