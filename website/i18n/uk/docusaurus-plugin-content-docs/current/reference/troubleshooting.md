@@ -35,7 +35,7 @@ source ~/pyneat/bin/activate
 :::
 
 :::tip Виправлення
-Перед запуском додайте каталог середовища виконання до `LD_LIBRARY_PATH`:
+Перед запуском додайте теку середовища виконання до `LD_LIBRARY_PATH`:
 ```bash
 export LD_LIBRARY_PATH=/usr/lib/aarch64-linux-gnu/neat/runtime:$LD_LIBRARY_PATH
 ```
