@@ -314,14 +314,11 @@ void parse_mpk_plugins(const pipeline_internal::sima::MpkContract& contract, Par
     }
   }
 
-  std::size_t last_compute_rank = last_mla_rank;
-  for (std::size_t rank = 0; rank < out->execution_order.size(); ++rank) {
-    const std::size_t idx = out->execution_order[rank];
-    if (idx < contract.plugins.size() && rank > last_compute_rank &&
-        pipeline_internal::lower_copy(contract.plugins[idx].processor) == "a65") {
-      last_compute_rank = rank;
-    }
-  }
+  const auto compute_feeding_tail =
+      out->last_mla_plugin_index >= 0
+          ? compute_feeding_tail_plugins(contract,
+                                         static_cast<std::size_t>(out->last_mla_plugin_index))
+          : std::vector<bool>(contract.plugins.size(), false);
 
   out->plugins.reserve(out->execution_order.size());
   for (const std::size_t plugin_idx : out->execution_order) {
@@ -348,10 +345,9 @@ void parse_mpk_plugins(const pipeline_internal::sima::MpkContract& contract, Par
     dst.before_mla = rank < mla_rank;
     dst.after_mla = rank > last_mla_rank;
     out->plugins.push_back(dst);
-    // Materialized non-A65 work before the last compute command is inference, not
-    // post-processing. Address-only views are not skipped and keep their usual post signals.
-    if (dst.after_mla && rank < last_compute_rank &&
-        pipeline_internal::lower_copy(src.processor) != "a65" &&
+    // Materialized work that feeds a compute plugin is inference, not post-processing.
+    // Address-only views are not skipped and keep their usual post signals.
+    if (dst.after_mla && compute_feeding_tail[plugin_idx] &&
         is_materialized_post_kernel_kind(kind)) {
       continue;
     }
