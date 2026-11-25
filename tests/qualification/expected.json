@@ -437,110 +437,66 @@
   {
    "package": "depth_anything_3_small_1view_280x504 w8a16",
    "view": "app",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "depth_anything_3_small_1view_280x504__w8a16__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 2 tensors in its one output buffer and stage 'post_cast_0' (cast@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "preproc@EV74",
       "mla",
       "cast@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 4
+   ]
   },
   {
    "package": "depth_anything_3_small_1view_280x504 w8a16",
    "view": "default",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "depth_anything_3_small_1view_280x504__w8a16__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 2 tensors in its one output buffer and stage 'post_cast_0' (cast@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "cast@EV74",
       "mla",
       "cast@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 4
+   ]
   },
   {
    "package": "depth_anything_3_small_1view_378x504 w8a16",
    "view": "app",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "depth_anything_3_small_1view_378x504__w8a16__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 2 tensors in its one output buffer and stage 'post_cast_0' (cast@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "preproc@EV74",
       "mla",
       "cast@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 4
+   ]
   },
   {
    "package": "depth_anything_3_small_1view_378x504 w8a16",
    "view": "default",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "depth_anything_3_small_1view_378x504__w8a16__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 2 tensors in its one output buffer and stage 'post_cast_0' (cast@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "cast@EV74",
       "mla",
       "cast@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 4
+   ]
   },
   {
    "package": "depth_anything_v2_small w16a16",
@@ -668,29 +624,18 @@
   {
    "package": "detr_resnet_101 w16a16",
    "view": "default",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "detr_resnet_101__w16a16__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 2 tensors in its one output buffer and stage 'post_cast_0' (cast@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "cast@EV74",
       "mla",
       "cast@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 4
+   ]
   },
   {
    "package": "detr_resnet_101 w8a8_mixed",
@@ -722,29 +667,18 @@
   {
    "package": "detr_resnet_101 w8a8_mixed",
    "view": "default",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "detr_resnet_101__w8a8_mixed__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 2 tensors in its one output buffer and stage 'post_cast_0' (cast@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "quant@EV74",
       "mla",
       "cast@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 4
+   ]
   },
   {
    "package": "detr_resnet_50 w16a16",
@@ -776,29 +710,18 @@
   {
    "package": "detr_resnet_50 w16a16",
    "view": "default",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "detr_resnet_50__w16a16__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 2 tensors in its one output buffer and stage 'post_cast_0' (cast@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "cast@EV74",
       "mla",
       "cast@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 4
+   ]
   },
   {
    "package": "detr_resnet_50 w8a8_mixed",
@@ -830,29 +753,18 @@
   {
    "package": "detr_resnet_50 w8a8_mixed",
    "view": "default",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "detr_resnet_50__w8a8_mixed__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 2 tensors in its one output buffer and stage 'post_cast_0' (cast@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "quant@EV74",
       "mla",
       "cast@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 4
+   ]
   },
   {
    "package": "dfine_n w16a16",
@@ -863,8 +775,8 @@
      "id": "dfine_n__w16a16__backbone",
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 4 tensors in its one output buffer and stage 'post_cast_0' (cast@EV74) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "subject": "stage 2 'post_cast_0' (kernel cast on the EV74)",
+     "fact": "it runs 4 kernel invocations per frame on the EV74 (a stage of several invocations runs on the A65)",
      "kinds": [
       "preproc@EV74",
       "mla",
@@ -883,7 +795,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 0 'cast' (kernel cast on the EV74)",
-     "fact": "it runs 3 kernel invocations per frame (a batched model or several tensors)",
+     "fact": "it runs 3 kernel invocations per frame in front of the MLA stage (a stage of several invocations runs behind it)",
      "kinds": [
       "cast@EV74",
       "mla",
@@ -925,21 +837,11 @@
    "components": [
     {
      "id": "dfine_n__w16a16__backbone",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 4 tensors in its one output buffer and stage 'post_cast_0' (cast@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "cast@EV74",
       "mla",
       "cast@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     },
     {
@@ -947,7 +849,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 0 'cast' (kernel cast on the EV74)",
-     "fact": "it runs 3 kernel invocations per frame (a batched model or several tensors)",
+     "fact": "it runs 3 kernel invocations per frame in front of the MLA stage (a stage of several invocations runs behind it)",
      "kinds": [
       "cast@EV74",
       "mla",
@@ -977,8 +879,8 @@
      "id": "dfine_n__w8a8_mixed_w16a16__backbone",
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 4 tensors in its one output buffer and stage 'post_cast_0' (cast@EV74) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "subject": "stage 2 'post_cast_0' (kernel cast on the EV74)",
+     "fact": "it runs 4 kernel invocations per frame on the EV74 (a stage of several invocations runs on the A65)",
      "kinds": [
       "preproc@EV74",
       "mla",
@@ -997,7 +899,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 0 'cast' (kernel cast on the EV74)",
-     "fact": "it runs 3 kernel invocations per frame (a batched model or several tensors)",
+     "fact": "it runs 3 kernel invocations per frame in front of the MLA stage (a stage of several invocations runs behind it)",
      "kinds": [
       "cast@EV74",
       "mla",
@@ -1025,21 +927,11 @@
    "components": [
     {
      "id": "dfine_n__w8a8_mixed_w16a16__backbone",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 4 tensors in its one output buffer and stage 'post_cast_0' (cast@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "quant@EV74",
       "mla",
       "cast@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     },
     {
@@ -1047,7 +939,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 0 'cast' (kernel cast on the EV74)",
-     "fact": "it runs 3 kernel invocations per frame (a batched model or several tensors)",
+     "fact": "it runs 3 kernel invocations per frame in front of the MLA stage (a stage of several invocations runs behind it)",
      "kinds": [
       "cast@EV74",
       "mla",
@@ -1077,8 +969,8 @@
      "id": "dfine_n__w8a8_w16a16__backbone",
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 4 tensors in its one output buffer and stage 'physical_cvu_cohort_1' (dequant@EV74) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "subject": "stage 2 'physical_cvu_cohort_1' (kernel dequant on the EV74)",
+     "fact": "it runs 4 kernel invocations per frame on the EV74 (a stage of several invocations runs on the A65)",
      "kinds": [
       "preproc@EV74",
       "mla",
@@ -1097,7 +989,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 0 'cast' (kernel cast on the EV74)",
-     "fact": "it runs 3 kernel invocations per frame (a batched model or several tensors)",
+     "fact": "it runs 3 kernel invocations per frame in front of the MLA stage (a stage of several invocations runs behind it)",
      "kinds": [
       "cast@EV74",
       "mla",
@@ -1125,21 +1017,11 @@
    "components": [
     {
      "id": "dfine_n__w8a8_w16a16__backbone",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 4 tensors in its one output buffer and stage 'physical_cvu_cohort_1' (dequant@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "quant@EV74",
       "mla",
       "dequant@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     },
     {
@@ -1147,7 +1029,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 0 'cast' (kernel cast on the EV74)",
-     "fact": "it runs 3 kernel invocations per frame (a batched model or several tensors)",
+     "fact": "it runs 3 kernel invocations per frame in front of the MLA stage (a stage of several invocations runs behind it)",
      "kinds": [
       "cast@EV74",
       "mla",
@@ -2193,8 +2075,8 @@
      "id": "edgetam__w16a16_w8a16_w16a16_w8a8__image_encoder",
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 3 tensors in its one output buffer and stage 'post_cast_0' (cast@EV74) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "subject": "stage 2 'post_cast_0' (kernel cast on the EV74)",
+     "fact": "it runs 3 kernel invocations per frame on the EV74 (a stage of several invocations runs on the A65)",
      "kinds": [
       "preproc@EV74",
       "mla",
@@ -2213,7 +2095,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 0 'cast' (kernel cast on the A65)",
-     "fact": "it runs 5 kernel invocations per frame (a batched model or several tensors)",
+     "fact": "it runs 5 kernel invocations per frame in front of the MLA stage (a stage of several invocations runs behind it)",
      "kinds": [
       "cast@A65",
       "mla",
@@ -2235,7 +2117,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 0 'cast' (kernel cast on the EV74)",
-     "fact": "it runs 5 kernel invocations per frame (a batched model or several tensors)",
+     "fact": "it runs 5 kernel invocations per frame in front of the MLA stage (a stage of several invocations runs behind it)",
      "kinds": [
       "cast@EV74",
       "mla",
@@ -2255,7 +2137,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 0 'quant' (kernel quant on the EV74)",
-     "fact": "it runs 2 kernel invocations per frame (a batched model or several tensors)",
+     "fact": "it runs 2 kernel invocations per frame in front of the MLA stage (a stage of several invocations runs behind it)",
      "kinds": [
       "quant@EV74",
       "mla",
@@ -2280,21 +2162,11 @@
    "components": [
     {
      "id": "edgetam__w16a16_w8a16_w16a16_w8a8__image_encoder",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 3 tensors in its one output buffer and stage 'post_cast_0' (cast@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "cast@EV74",
       "mla",
       "cast@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     },
     {
@@ -2302,7 +2174,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 0 'cast' (kernel cast on the EV74)",
-     "fact": "it runs 5 kernel invocations per frame (a batched model or several tensors)",
+     "fact": "it runs 5 kernel invocations per frame in front of the MLA stage (a stage of several invocations runs behind it)",
      "kinds": [
       "cast@EV74",
       "mla",
@@ -2324,7 +2196,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 0 'cast' (kernel cast on the EV74)",
-     "fact": "it runs 5 kernel invocations per frame (a batched model or several tensors)",
+     "fact": "it runs 5 kernel invocations per frame in front of the MLA stage (a stage of several invocations runs behind it)",
      "kinds": [
       "cast@EV74",
       "mla",
@@ -2344,7 +2216,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 0 'quant' (kernel quant on the EV74)",
-     "fact": "it runs 2 kernel invocations per frame (a batched model or several tensors)",
+     "fact": "it runs 2 kernel invocations per frame in front of the MLA stage (a stage of several invocations runs behind it)",
      "kinds": [
       "quant@EV74",
       "mla",
@@ -2371,8 +2243,8 @@
      "id": "edgetam__w8a8_w8a16_w16a16_w8a8__image_encoder",
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 3 tensors in its one output buffer and stage 'physical_cvu_cohort_1' (dequant@EV74) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "subject": "stage 2 'physical_cvu_cohort_1' (kernel dequant on the EV74)",
+     "fact": "it runs 3 kernel invocations per frame on the EV74 (a stage of several invocations runs on the A65)",
      "kinds": [
       "preproc@EV74",
       "mla",
@@ -2391,7 +2263,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 0 'cast' (kernel cast on the A65)",
-     "fact": "it runs 5 kernel invocations per frame (a batched model or several tensors)",
+     "fact": "it runs 5 kernel invocations per frame in front of the MLA stage (a stage of several invocations runs behind it)",
      "kinds": [
       "cast@A65",
       "mla",
@@ -2413,7 +2285,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 0 'cast' (kernel cast on the EV74)",
-     "fact": "it runs 5 kernel invocations per frame (a batched model or several tensors)",
+     "fact": "it runs 5 kernel invocations per frame in front of the MLA stage (a stage of several invocations runs behind it)",
      "kinds": [
       "cast@EV74",
       "mla",
@@ -2433,7 +2305,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 0 'quant' (kernel quant on the EV74)",
-     "fact": "it runs 2 kernel invocations per frame (a batched model or several tensors)",
+     "fact": "it runs 2 kernel invocations per frame in front of the MLA stage (a stage of several invocations runs behind it)",
      "kinds": [
       "quant@EV74",
       "mla",
@@ -2458,21 +2330,11 @@
    "components": [
     {
      "id": "edgetam__w8a8_w8a16_w16a16_w8a8__image_encoder",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 3 tensors in its one output buffer and stage 'physical_cvu_cohort_1' (dequant@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "quant@EV74",
       "mla",
       "dequant@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     },
     {
@@ -2480,7 +2342,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 0 'cast' (kernel cast on the EV74)",
-     "fact": "it runs 5 kernel invocations per frame (a batched model or several tensors)",
+     "fact": "it runs 5 kernel invocations per frame in front of the MLA stage (a stage of several invocations runs behind it)",
      "kinds": [
       "cast@EV74",
       "mla",
@@ -2502,7 +2364,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 0 'cast' (kernel cast on the EV74)",
-     "fact": "it runs 5 kernel invocations per frame (a batched model or several tensors)",
+     "fact": "it runs 5 kernel invocations per frame in front of the MLA stage (a stage of several invocations runs behind it)",
      "kinds": [
       "cast@EV74",
       "mla",
@@ -2522,7 +2384,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 0 'quant' (kernel quant on the EV74)",
-     "fact": "it runs 2 kernel invocations per frame (a batched model or several tensors)",
+     "fact": "it runs 2 kernel invocations per frame in front of the MLA stage (a stage of several invocations runs behind it)",
      "kinds": [
       "quant@EV74",
       "mla",
@@ -2678,7 +2540,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 0 'cast' (kernel cast on the EV74)",
-     "fact": "it runs 4 kernel invocations per frame (a batched model or several tensors)",
+     "fact": "it runs 4 kernel invocations per frame in front of the MLA stage (a stage of several invocations runs behind it)",
      "kinds": [
       "cast@EV74",
       "mla",
@@ -2706,7 +2568,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 0 'cast' (kernel cast on the EV74)",
-     "fact": "it runs 4 kernel invocations per frame (a batched model or several tensors)",
+     "fact": "it runs 4 kernel invocations per frame in front of the MLA stage (a stage of several invocations runs behind it)",
      "kinds": [
       "cast@EV74",
       "mla",
@@ -2734,7 +2596,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 0 'quant' (kernel quant on the EV74)",
-     "fact": "it runs 4 kernel invocations per frame (a batched model or several tensors)",
+     "fact": "it runs 4 kernel invocations per frame in front of the MLA stage (a stage of several invocations runs behind it)",
      "kinds": [
       "quant@EV74",
       "mla",
@@ -2776,7 +2638,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 0 'quant' (kernel quant on the EV74)",
-     "fact": "it runs 4 kernel invocations per frame (a batched model or several tensors)",
+     "fact": "it runs 4 kernel invocations per frame in front of the MLA stage (a stage of several invocations runs behind it)",
      "kinds": [
       "quant@EV74",
       "mla",
@@ -2804,7 +2666,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 0 'quant' (kernel quant on the EV74)",
-     "fact": "it runs 4 kernel invocations per frame (a batched model or several tensors)",
+     "fact": "it runs 4 kernel invocations per frame in front of the MLA stage (a stage of several invocations runs behind it)",
      "kinds": [
       "quant@EV74",
       "mla",
@@ -2832,7 +2694,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 0 'quant' (kernel quant on the EV74)",
-     "fact": "it runs 4 kernel invocations per frame (a batched model or several tensors)",
+     "fact": "it runs 4 kernel invocations per frame in front of the MLA stage (a stage of several invocations runs behind it)",
      "kinds": [
       "quant@EV74",
       "mla",
@@ -3561,21 +3423,11 @@
    "components": [
     {
      "id": "rf_detr_large__w8a16_w16a16__backbone",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 3 tensors in its one output buffer and stage 'post_cast_0' (cast@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "preproc@EV74",
       "mla",
       "cast@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     },
     {
@@ -3583,7 +3435,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 0 'cast' (kernel cast on the EV74)",
-     "fact": "it runs 2 kernel invocations per frame (a batched model or several tensors)",
+     "fact": "it runs 2 kernel invocations per frame in front of the MLA stage (a stage of several invocations runs behind it)",
      "kinds": [
       "cast@EV74",
       "mla",
@@ -3610,21 +3462,11 @@
    "components": [
     {
      "id": "rf_detr_large__w8a16_w16a16__backbone",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 3 tensors in its one output buffer and stage 'post_cast_0' (cast@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "cast@EV74",
       "mla",
       "cast@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     },
     {
@@ -3632,7 +3474,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 0 'cast' (kernel cast on the EV74)",
-     "fact": "it runs 2 kernel invocations per frame (a batched model or several tensors)",
+     "fact": "it runs 2 kernel invocations per frame in front of the MLA stage (a stage of several invocations runs behind it)",
      "kinds": [
       "cast@EV74",
       "mla",
@@ -3659,21 +3501,11 @@
    "components": [
     {
      "id": "rf_detr_large__w8a8_mixed_w16a16__backbone",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 3 tensors in its one output buffer and stage 'post_cast_0' (cast@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "preproc@EV74",
       "mla",
       "cast@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     },
     {
@@ -3681,7 +3513,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 0 'cast' (kernel cast on the EV74)",
-     "fact": "it runs 2 kernel invocations per frame (a batched model or several tensors)",
+     "fact": "it runs 2 kernel invocations per frame in front of the MLA stage (a stage of several invocations runs behind it)",
      "kinds": [
       "cast@EV74",
       "mla",
@@ -3708,21 +3540,11 @@
    "components": [
     {
      "id": "rf_detr_large__w8a8_mixed_w16a16__backbone",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 3 tensors in its one output buffer and stage 'post_cast_0' (cast@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "quant@EV74",
       "mla",
       "cast@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     },
     {
@@ -3730,7 +3552,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 0 'cast' (kernel cast on the EV74)",
-     "fact": "it runs 2 kernel invocations per frame (a batched model or several tensors)",
+     "fact": "it runs 2 kernel invocations per frame in front of the MLA stage (a stage of several invocations runs behind it)",
      "kinds": [
       "cast@EV74",
       "mla",
@@ -3757,21 +3579,11 @@
    "components": [
     {
      "id": "rf_detr_large__w8a8_w16a16__backbone",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 3 tensors in its one output buffer and stage 'physical_cvu_cohort_1' (dequant@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "preproc@EV74",
       "mla",
       "dequant@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     },
     {
@@ -3779,7 +3591,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 0 'cast' (kernel cast on the EV74)",
-     "fact": "it runs 2 kernel invocations per frame (a batched model or several tensors)",
+     "fact": "it runs 2 kernel invocations per frame in front of the MLA stage (a stage of several invocations runs behind it)",
      "kinds": [
       "cast@EV74",
       "mla",
@@ -3806,21 +3618,11 @@
    "components": [
     {
      "id": "rf_detr_large__w8a8_w16a16__backbone",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 3 tensors in its one output buffer and stage 'physical_cvu_cohort_1' (dequant@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "quant@EV74",
       "mla",
       "dequant@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     },
     {
@@ -3828,7 +3630,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 0 'cast' (kernel cast on the EV74)",
-     "fact": "it runs 2 kernel invocations per frame (a batched model or several tensors)",
+     "fact": "it runs 2 kernel invocations per frame in front of the MLA stage (a stage of several invocations runs behind it)",
      "kinds": [
       "cast@EV74",
       "mla",
@@ -3855,21 +3657,11 @@
    "components": [
     {
      "id": "rf_detr_medium__w8a16_w16a16__backbone",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 3 tensors in its one output buffer and stage 'post_cast_0' (cast@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "preproc@EV74",
       "mla",
       "cast@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     },
     {
@@ -3877,7 +3669,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 0 'cast' (kernel cast on the EV74)",
-     "fact": "it runs 2 kernel invocations per frame (a batched model or several tensors)",
+     "fact": "it runs 2 kernel invocations per frame in front of the MLA stage (a stage of several invocations runs behind it)",
      "kinds": [
       "cast@EV74",
       "mla",
@@ -3905,21 +3697,11 @@
    "components": [
     {
      "id": "rf_detr_medium__w8a16_w16a16__backbone",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 3 tensors in its one output buffer and stage 'post_cast_0' (cast@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "cast@EV74",
       "mla",
       "cast@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     },
     {
@@ -3927,7 +3709,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 0 'cast' (kernel cast on the EV74)",
-     "fact": "it runs 2 kernel invocations per frame (a batched model or several tensors)",
+     "fact": "it runs 2 kernel invocations per frame in front of the MLA stage (a stage of several invocations runs behind it)",
      "kinds": [
       "cast@EV74",
       "mla",
@@ -3955,21 +3737,11 @@
    "components": [
     {
      "id": "rf_detr_medium__w8a8_mixed_w16a16__backbone",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 3 tensors in its one output buffer and stage 'post_cast_0' (cast@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "preproc@EV74",
       "mla",
       "cast@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     },
     {
@@ -3977,7 +3749,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 0 'cast' (kernel cast on the EV74)",
-     "fact": "it runs 2 kernel invocations per frame (a batched model or several tensors)",
+     "fact": "it runs 2 kernel invocations per frame in front of the MLA stage (a stage of several invocations runs behind it)",
      "kinds": [
       "cast@EV74",
       "mla",
@@ -4005,21 +3777,11 @@
    "components": [
     {
      "id": "rf_detr_medium__w8a8_mixed_w16a16__backbone",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 3 tensors in its one output buffer and stage 'post_cast_0' (cast@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "quant@EV74",
       "mla",
       "cast@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     },
     {
@@ -4027,7 +3789,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 0 'cast' (kernel cast on the EV74)",
-     "fact": "it runs 2 kernel invocations per frame (a batched model or several tensors)",
+     "fact": "it runs 2 kernel invocations per frame in front of the MLA stage (a stage of several invocations runs behind it)",
      "kinds": [
       "cast@EV74",
       "mla",
@@ -4055,21 +3817,11 @@
    "components": [
     {
      "id": "rf_detr_medium__w8a8_w16a16__backbone",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 3 tensors in its one output buffer and stage 'physical_cvu_cohort_1' (dequant@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "preproc@EV74",
       "mla",
       "dequant@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     },
     {
@@ -4077,7 +3829,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 0 'cast' (kernel cast on the EV74)",
-     "fact": "it runs 2 kernel invocations per frame (a batched model or several tensors)",
+     "fact": "it runs 2 kernel invocations per frame in front of the MLA stage (a stage of several invocations runs behind it)",
      "kinds": [
       "cast@EV74",
       "mla",
@@ -4105,21 +3857,11 @@
    "components": [
     {
      "id": "rf_detr_medium__w8a8_w16a16__backbone",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 3 tensors in its one output buffer and stage 'physical_cvu_cohort_1' (dequant@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "quant@EV74",
       "mla",
       "dequant@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     },
     {
@@ -4127,7 +3869,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 0 'cast' (kernel cast on the EV74)",
-     "fact": "it runs 2 kernel invocations per frame (a batched model or several tensors)",
+     "fact": "it runs 2 kernel invocations per frame in front of the MLA stage (a stage of several invocations runs behind it)",
      "kinds": [
       "cast@EV74",
       "mla",
@@ -4155,21 +3897,11 @@
    "components": [
     {
      "id": "rf_detr_nano__w8a16_w16a16__backbone",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 3 tensors in its one output buffer and stage 'post_cast_0' (cast@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "preproc@EV74",
       "mla",
       "cast@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     },
     {
@@ -4177,7 +3909,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 0 'cast' (kernel cast on the EV74)",
-     "fact": "it runs 2 kernel invocations per frame (a batched model or several tensors)",
+     "fact": "it runs 2 kernel invocations per frame in front of the MLA stage (a stage of several invocations runs behind it)",
      "kinds": [
       "cast@EV74",
       "mla",
@@ -4205,21 +3937,11 @@
    "components": [
     {
      "id": "rf_detr_nano__w8a16_w16a16__backbone",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 3 tensors in its one output buffer and stage 'post_cast_0' (cast@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "cast@EV74",
       "mla",
       "cast@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     },
     {
@@ -4227,7 +3949,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 0 'cast' (kernel cast on the EV74)",
-     "fact": "it runs 2 kernel invocations per frame (a batched model or several tensors)",
+     "fact": "it runs 2 kernel invocations per frame in front of the MLA stage (a stage of several invocations runs behind it)",
      "kinds": [
       "cast@EV74",
       "mla",
@@ -4255,21 +3977,11 @@
    "components": [
     {
      "id": "rf_detr_nano__w8a8_mixed_w16a16__backbone",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 3 tensors in its one output buffer and stage 'post_cast_0' (cast@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "preproc@EV74",
       "mla",
       "cast@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     },
     {
@@ -4277,7 +3989,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 0 'cast' (kernel cast on the EV74)",
-     "fact": "it runs 2 kernel invocations per frame (a batched model or several tensors)",
+     "fact": "it runs 2 kernel invocations per frame in front of the MLA stage (a stage of several invocations runs behind it)",
      "kinds": [
       "cast@EV74",
       "mla",
@@ -4305,21 +4017,11 @@
    "components": [
     {
      "id": "rf_detr_nano__w8a8_mixed_w16a16__backbone",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 3 tensors in its one output buffer and stage 'post_cast_0' (cast@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "quant@EV74",
       "mla",
       "cast@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     },
     {
@@ -4327,7 +4029,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 0 'cast' (kernel cast on the EV74)",
-     "fact": "it runs 2 kernel invocations per frame (a batched model or several tensors)",
+     "fact": "it runs 2 kernel invocations per frame in front of the MLA stage (a stage of several invocations runs behind it)",
      "kinds": [
       "cast@EV74",
       "mla",
@@ -4355,21 +4057,11 @@
    "components": [
     {
      "id": "rf_detr_nano__w8a8_w16a16__backbone",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 3 tensors in its one output buffer and stage 'physical_cvu_cohort_1' (dequant@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "preproc@EV74",
       "mla",
       "dequant@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     },
     {
@@ -4377,7 +4069,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 0 'cast' (kernel cast on the EV74)",
-     "fact": "it runs 2 kernel invocations per frame (a batched model or several tensors)",
+     "fact": "it runs 2 kernel invocations per frame in front of the MLA stage (a stage of several invocations runs behind it)",
      "kinds": [
       "cast@EV74",
       "mla",
@@ -4405,21 +4097,11 @@
    "components": [
     {
      "id": "rf_detr_nano__w8a8_w16a16__backbone",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 3 tensors in its one output buffer and stage 'physical_cvu_cohort_1' (dequant@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "quant@EV74",
       "mla",
       "dequant@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     },
     {
@@ -4427,7 +4109,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 0 'cast' (kernel cast on the EV74)",
-     "fact": "it runs 2 kernel invocations per frame (a batched model or several tensors)",
+     "fact": "it runs 2 kernel invocations per frame in front of the MLA stage (a stage of several invocations runs behind it)",
      "kinds": [
       "cast@EV74",
       "mla",
@@ -4455,21 +4137,11 @@
    "components": [
     {
      "id": "rf_detr_seg_medium__w8a16_w16a16__backbone",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 3 tensors in its one output buffer and stage 'post_cast_0' (cast@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "preproc@EV74",
       "mla",
       "cast@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     },
     {
@@ -4477,7 +4149,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 0 'cast' (kernel cast on the EV74)",
-     "fact": "it runs 2 kernel invocations per frame (a batched model or several tensors)",
+     "fact": "it runs 2 kernel invocations per frame in front of the MLA stage (a stage of several invocations runs behind it)",
      "kinds": [
       "cast@EV74",
       "mla",
@@ -4504,21 +4176,11 @@
    "components": [
     {
      "id": "rf_detr_seg_medium__w8a16_w16a16__backbone",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 3 tensors in its one output buffer and stage 'post_cast_0' (cast@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "cast@EV74",
       "mla",
       "cast@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     },
     {
@@ -4526,7 +4188,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 0 'cast' (kernel cast on the EV74)",
-     "fact": "it runs 2 kernel invocations per frame (a batched model or several tensors)",
+     "fact": "it runs 2 kernel invocations per frame in front of the MLA stage (a stage of several invocations runs behind it)",
      "kinds": [
       "cast@EV74",
       "mla",
@@ -4553,21 +4215,11 @@
    "components": [
     {
      "id": "rf_detr_seg_medium__w8a16_w8a8_mixed__backbone",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 3 tensors in its one output buffer and stage 'post_cast_0' (cast@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "preproc@EV74",
       "mla",
       "cast@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     },
     {
@@ -4575,7 +4227,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 0 'quant' (kernel quant on the EV74)",
-     "fact": "it runs 2 kernel invocations per frame (a batched model or several tensors)",
+     "fact": "it runs 2 kernel invocations per frame in front of the MLA stage (a stage of several invocations runs behind it)",
      "kinds": [
       "quant@EV74",
       "mla",
@@ -4602,21 +4254,11 @@
    "components": [
     {
      "id": "rf_detr_seg_medium__w8a16_w8a8_mixed__backbone",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 3 tensors in its one output buffer and stage 'post_cast_0' (cast@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "cast@EV74",
       "mla",
       "cast@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     },
     {
@@ -4624,7 +4266,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 0 'quant' (kernel quant on the EV74)",
-     "fact": "it runs 2 kernel invocations per frame (a batched model or several tensors)",
+     "fact": "it runs 2 kernel invocations per frame in front of the MLA stage (a stage of several invocations runs behind it)",
      "kinds": [
       "quant@EV74",
       "mla",
@@ -4651,21 +4293,11 @@
    "components": [
     {
      "id": "rf_detr_seg_medium__w8a8_mixed_w16a16__backbone",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 3 tensors in its one output buffer and stage 'post_cast_0' (cast@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "preproc@EV74",
       "mla",
       "cast@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     },
     {
@@ -4673,7 +4305,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 0 'cast' (kernel cast on the EV74)",
-     "fact": "it runs 2 kernel invocations per frame (a batched model or several tensors)",
+     "fact": "it runs 2 kernel invocations per frame in front of the MLA stage (a stage of several invocations runs behind it)",
      "kinds": [
       "cast@EV74",
       "mla",
@@ -4700,21 +4332,11 @@
    "components": [
     {
      "id": "rf_detr_seg_medium__w8a8_mixed_w16a16__backbone",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 3 tensors in its one output buffer and stage 'post_cast_0' (cast@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "quant@EV74",
       "mla",
       "cast@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     },
     {
@@ -4722,7 +4344,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 0 'cast' (kernel cast on the EV74)",
-     "fact": "it runs 2 kernel invocations per frame (a batched model or several tensors)",
+     "fact": "it runs 2 kernel invocations per frame in front of the MLA stage (a stage of several invocations runs behind it)",
      "kinds": [
       "cast@EV74",
       "mla",
@@ -4749,21 +4371,11 @@
    "components": [
     {
      "id": "rf_detr_seg_medium__w8a8_w16a16__backbone",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 3 tensors in its one output buffer and stage 'physical_cvu_cohort_1' (dequant@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "preproc@EV74",
       "mla",
       "dequant@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     },
     {
@@ -4771,7 +4383,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 0 'cast' (kernel cast on the EV74)",
-     "fact": "it runs 2 kernel invocations per frame (a batched model or several tensors)",
+     "fact": "it runs 2 kernel invocations per frame in front of the MLA stage (a stage of several invocations runs behind it)",
      "kinds": [
       "cast@EV74",
       "mla",
@@ -4798,21 +4410,11 @@
    "components": [
     {
      "id": "rf_detr_seg_medium__w8a8_w16a16__backbone",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 3 tensors in its one output buffer and stage 'physical_cvu_cohort_1' (dequant@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "quant@EV74",
       "mla",
       "dequant@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     },
     {
@@ -4820,7 +4422,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 0 'cast' (kernel cast on the EV74)",
-     "fact": "it runs 2 kernel invocations per frame (a batched model or several tensors)",
+     "fact": "it runs 2 kernel invocations per frame in front of the MLA stage (a stage of several invocations runs behind it)",
      "kinds": [
       "cast@EV74",
       "mla",
@@ -4847,21 +4449,11 @@
    "components": [
     {
      "id": "rf_detr_seg_nano__w8a16_w16a16__backbone",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 3 tensors in its one output buffer and stage 'post_cast_0' (cast@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "preproc@EV74",
       "mla",
       "cast@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     },
     {
@@ -4869,7 +4461,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 0 'cast' (kernel cast on the EV74)",
-     "fact": "it runs 2 kernel invocations per frame (a batched model or several tensors)",
+     "fact": "it runs 2 kernel invocations per frame in front of the MLA stage (a stage of several invocations runs behind it)",
      "kinds": [
       "cast@EV74",
       "mla",
@@ -4896,21 +4488,11 @@
    "components": [
     {
      "id": "rf_detr_seg_nano__w8a16_w16a16__backbone",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 3 tensors in its one output buffer and stage 'post_cast_0' (cast@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "cast@EV74",
       "mla",
       "cast@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     },
     {
@@ -4918,7 +4500,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 0 'cast' (kernel cast on the EV74)",
-     "fact": "it runs 2 kernel invocations per frame (a batched model or several tensors)",
+     "fact": "it runs 2 kernel invocations per frame in front of the MLA stage (a stage of several invocations runs behind it)",
      "kinds": [
       "cast@EV74",
       "mla",
@@ -4945,21 +4527,11 @@
    "components": [
     {
      "id": "rf_detr_seg_nano__w8a16_w8a8_mixed__backbone",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 3 tensors in its one output buffer and stage 'post_cast_0' (cast@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "preproc@EV74",
       "mla",
       "cast@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     },
     {
@@ -4967,7 +4539,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 0 'quant' (kernel quant on the EV74)",
-     "fact": "it runs 2 kernel invocations per frame (a batched model or several tensors)",
+     "fact": "it runs 2 kernel invocations per frame in front of the MLA stage (a stage of several invocations runs behind it)",
      "kinds": [
       "quant@EV74",
       "mla",
@@ -4995,21 +4567,11 @@
    "components": [
     {
      "id": "rf_detr_seg_nano__w8a16_w8a8_mixed__backbone",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 3 tensors in its one output buffer and stage 'post_cast_0' (cast@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "cast@EV74",
       "mla",
       "cast@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     },
     {
@@ -5017,7 +4579,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 0 'quant' (kernel quant on the EV74)",
-     "fact": "it runs 2 kernel invocations per frame (a batched model or several tensors)",
+     "fact": "it runs 2 kernel invocations per frame in front of the MLA stage (a stage of several invocations runs behind it)",
      "kinds": [
       "quant@EV74",
       "mla",
@@ -5045,21 +4607,11 @@
    "components": [
     {
      "id": "rf_detr_seg_nano__w8a8_mixed_w16a16__backbone",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 3 tensors in its one output buffer and stage 'post_cast_0' (cast@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "preproc@EV74",
       "mla",
       "cast@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     },
     {
@@ -5067,7 +4619,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 0 'cast' (kernel cast on the EV74)",
-     "fact": "it runs 2 kernel invocations per frame (a batched model or several tensors)",
+     "fact": "it runs 2 kernel invocations per frame in front of the MLA stage (a stage of several invocations runs behind it)",
      "kinds": [
       "cast@EV74",
       "mla",
@@ -5094,21 +4646,11 @@
    "components": [
     {
      "id": "rf_detr_seg_nano__w8a8_mixed_w16a16__backbone",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 3 tensors in its one output buffer and stage 'post_cast_0' (cast@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "quant@EV74",
       "mla",
       "cast@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     },
     {
@@ -5116,7 +4658,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 0 'cast' (kernel cast on the EV74)",
-     "fact": "it runs 2 kernel invocations per frame (a batched model or several tensors)",
+     "fact": "it runs 2 kernel invocations per frame in front of the MLA stage (a stage of several invocations runs behind it)",
      "kinds": [
       "cast@EV74",
       "mla",
@@ -5143,21 +4685,11 @@
    "components": [
     {
      "id": "rf_detr_seg_nano__w8a8_w16a16__backbone",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 3 tensors in its one output buffer and stage 'physical_cvu_cohort_1' (dequant@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "preproc@EV74",
       "mla",
       "dequant@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     },
     {
@@ -5165,7 +4697,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 0 'cast' (kernel cast on the EV74)",
-     "fact": "it runs 2 kernel invocations per frame (a batched model or several tensors)",
+     "fact": "it runs 2 kernel invocations per frame in front of the MLA stage (a stage of several invocations runs behind it)",
      "kinds": [
       "cast@EV74",
       "mla",
@@ -5192,21 +4724,11 @@
    "components": [
     {
      "id": "rf_detr_seg_nano__w8a8_w16a16__backbone",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 3 tensors in its one output buffer and stage 'physical_cvu_cohort_1' (dequant@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "quant@EV74",
       "mla",
       "dequant@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     },
     {
@@ -5214,7 +4736,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 0 'cast' (kernel cast on the EV74)",
-     "fact": "it runs 2 kernel invocations per frame (a batched model or several tensors)",
+     "fact": "it runs 2 kernel invocations per frame in front of the MLA stage (a stage of several invocations runs behind it)",
      "kinds": [
       "cast@EV74",
       "mla",
@@ -5241,21 +4763,11 @@
    "components": [
     {
      "id": "rf_detr_seg_small__w8a16_w16a16__backbone",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 3 tensors in its one output buffer and stage 'post_cast_0' (cast@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "preproc@EV74",
       "mla",
       "cast@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     },
     {
@@ -5263,7 +4775,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 0 'cast' (kernel cast on the EV74)",
-     "fact": "it runs 2 kernel invocations per frame (a batched model or several tensors)",
+     "fact": "it runs 2 kernel invocations per frame in front of the MLA stage (a stage of several invocations runs behind it)",
      "kinds": [
       "cast@EV74",
       "mla",
@@ -5290,21 +4802,11 @@
    "components": [
     {
      "id": "rf_detr_seg_small__w8a16_w16a16__backbone",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 3 tensors in its one output buffer and stage 'post_cast_0' (cast@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "cast@EV74",
       "mla",
       "cast@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     },
     {
@@ -5312,7 +4814,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 0 'cast' (kernel cast on the EV74)",
-     "fact": "it runs 2 kernel invocations per frame (a batched model or several tensors)",
+     "fact": "it runs 2 kernel invocations per frame in front of the MLA stage (a stage of several invocations runs behind it)",
      "kinds": [
       "cast@EV74",
       "mla",
@@ -5339,21 +4841,11 @@
    "components": [
     {
      "id": "rf_detr_seg_small__w8a16_w8a8_mixed__backbone",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 3 tensors in its one output buffer and stage 'post_cast_0' (cast@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "preproc@EV74",
       "mla",
       "cast@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     },
     {
@@ -5361,7 +4853,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 0 'quant' (kernel quant on the EV74)",
-     "fact": "it runs 2 kernel invocations per frame (a batched model or several tensors)",
+     "fact": "it runs 2 kernel invocations per frame in front of the MLA stage (a stage of several invocations runs behind it)",
      "kinds": [
       "quant@EV74",
       "mla",
@@ -5388,21 +4880,11 @@
    "components": [
     {
      "id": "rf_detr_seg_small__w8a16_w8a8_mixed__backbone",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 3 tensors in its one output buffer and stage 'post_cast_0' (cast@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "cast@EV74",
       "mla",
       "cast@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     },
     {
@@ -5410,7 +4892,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 0 'quant' (kernel quant on the EV74)",
-     "fact": "it runs 2 kernel invocations per frame (a batched model or several tensors)",
+     "fact": "it runs 2 kernel invocations per frame in front of the MLA stage (a stage of several invocations runs behind it)",
      "kinds": [
       "quant@EV74",
       "mla",
@@ -5437,21 +4919,11 @@
    "components": [
     {
      "id": "rf_detr_seg_small__w8a8_mixed_w16a16__backbone",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 3 tensors in its one output buffer and stage 'post_cast_0' (cast@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "preproc@EV74",
       "mla",
       "cast@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     },
     {
@@ -5459,7 +4931,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 0 'cast' (kernel cast on the EV74)",
-     "fact": "it runs 2 kernel invocations per frame (a batched model or several tensors)",
+     "fact": "it runs 2 kernel invocations per frame in front of the MLA stage (a stage of several invocations runs behind it)",
      "kinds": [
       "cast@EV74",
       "mla",
@@ -5486,21 +4958,11 @@
    "components": [
     {
      "id": "rf_detr_seg_small__w8a8_mixed_w16a16__backbone",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 3 tensors in its one output buffer and stage 'post_cast_0' (cast@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "quant@EV74",
       "mla",
       "cast@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     },
     {
@@ -5508,7 +4970,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 0 'cast' (kernel cast on the EV74)",
-     "fact": "it runs 2 kernel invocations per frame (a batched model or several tensors)",
+     "fact": "it runs 2 kernel invocations per frame in front of the MLA stage (a stage of several invocations runs behind it)",
      "kinds": [
       "cast@EV74",
       "mla",
@@ -5535,21 +4997,11 @@
    "components": [
     {
      "id": "rf_detr_seg_small__w8a8_w16a16__backbone",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 3 tensors in its one output buffer and stage 'physical_cvu_cohort_1' (dequant@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "preproc@EV74",
       "mla",
       "dequant@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     },
     {
@@ -5557,7 +5009,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 0 'cast' (kernel cast on the EV74)",
-     "fact": "it runs 2 kernel invocations per frame (a batched model or several tensors)",
+     "fact": "it runs 2 kernel invocations per frame in front of the MLA stage (a stage of several invocations runs behind it)",
      "kinds": [
       "cast@EV74",
       "mla",
@@ -5584,21 +5036,11 @@
    "components": [
     {
      "id": "rf_detr_seg_small__w8a8_w16a16__backbone",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 3 tensors in its one output buffer and stage 'physical_cvu_cohort_1' (dequant@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "quant@EV74",
       "mla",
       "dequant@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     },
     {
@@ -5606,7 +5048,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 0 'cast' (kernel cast on the EV74)",
-     "fact": "it runs 2 kernel invocations per frame (a batched model or several tensors)",
+     "fact": "it runs 2 kernel invocations per frame in front of the MLA stage (a stage of several invocations runs behind it)",
      "kinds": [
       "cast@EV74",
       "mla",
@@ -5633,21 +5075,11 @@
    "components": [
     {
      "id": "rf_detr_small__w8a16_w16a16__backbone",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 3 tensors in its one output buffer and stage 'post_cast_0' (cast@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "preproc@EV74",
       "mla",
       "cast@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     },
     {
@@ -5655,7 +5087,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 0 'cast' (kernel cast on the EV74)",
-     "fact": "it runs 2 kernel invocations per frame (a batched model or several tensors)",
+     "fact": "it runs 2 kernel invocations per frame in front of the MLA stage (a stage of several invocations runs behind it)",
      "kinds": [
       "cast@EV74",
       "mla",
@@ -5683,21 +5115,11 @@
    "components": [
     {
      "id": "rf_detr_small__w8a16_w16a16__backbone",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 3 tensors in its one output buffer and stage 'post_cast_0' (cast@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "cast@EV74",
       "mla",
       "cast@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     },
     {
@@ -5705,7 +5127,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 0 'cast' (kernel cast on the EV74)",
-     "fact": "it runs 2 kernel invocations per frame (a batched model or several tensors)",
+     "fact": "it runs 2 kernel invocations per frame in front of the MLA stage (a stage of several invocations runs behind it)",
      "kinds": [
       "cast@EV74",
       "mla",
@@ -5733,21 +5155,11 @@
    "components": [
     {
      "id": "rf_detr_small__w8a8_mixed_w16a16__backbone",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 3 tensors in its one output buffer and stage 'post_cast_0' (cast@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "preproc@EV74",
       "mla",
       "cast@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     },
     {
@@ -5755,7 +5167,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 0 'cast' (kernel cast on the EV74)",
-     "fact": "it runs 2 kernel invocations per frame (a batched model or several tensors)",
+     "fact": "it runs 2 kernel invocations per frame in front of the MLA stage (a stage of several invocations runs behind it)",
      "kinds": [
       "cast@EV74",
       "mla",
@@ -5783,21 +5195,11 @@
    "components": [
     {
      "id": "rf_detr_small__w8a8_mixed_w16a16__backbone",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 3 tensors in its one output buffer and stage 'post_cast_0' (cast@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "quant@EV74",
       "mla",
       "cast@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     },
     {
@@ -5805,7 +5207,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 0 'cast' (kernel cast on the EV74)",
-     "fact": "it runs 2 kernel invocations per frame (a batched model or several tensors)",
+     "fact": "it runs 2 kernel invocations per frame in front of the MLA stage (a stage of several invocations runs behind it)",
      "kinds": [
       "cast@EV74",
       "mla",
@@ -5833,21 +5235,11 @@
    "components": [
     {
      "id": "rf_detr_small__w8a8_w16a16__backbone",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 3 tensors in its one output buffer and stage 'physical_cvu_cohort_1' (dequant@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "preproc@EV74",
       "mla",
       "dequant@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     },
     {
@@ -5855,7 +5247,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 0 'cast' (kernel cast on the EV74)",
-     "fact": "it runs 2 kernel invocations per frame (a batched model or several tensors)",
+     "fact": "it runs 2 kernel invocations per frame in front of the MLA stage (a stage of several invocations runs behind it)",
      "kinds": [
       "cast@EV74",
       "mla",
@@ -5883,21 +5275,11 @@
    "components": [
     {
      "id": "rf_detr_small__w8a8_w16a16__backbone",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 3 tensors in its one output buffer and stage 'physical_cvu_cohort_1' (dequant@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "quant@EV74",
       "mla",
       "dequant@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     },
     {
@@ -5905,7 +5287,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 0 'cast' (kernel cast on the EV74)",
-     "fact": "it runs 2 kernel invocations per frame (a batched model or several tensors)",
+     "fact": "it runs 2 kernel invocations per frame in front of the MLA stage (a stage of several invocations runs behind it)",
      "kinds": [
       "cast@EV74",
       "mla",
@@ -6132,7 +5514,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 0 'cast' (kernel cast on the EV74)",
-     "fact": "it runs 6 kernel invocations per frame (a batched model or several tensors)",
+     "fact": "it runs 6 kernel invocations per frame in front of the MLA stage (a stage of several invocations runs behind it)",
      "kinds": [
       "cast@EV74",
       "mla",
@@ -6160,7 +5542,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 0 'cast' (kernel cast on the EV74)",
-     "fact": "it runs 6 kernel invocations per frame (a batched model or several tensors)",
+     "fact": "it runs 6 kernel invocations per frame in front of the MLA stage (a stage of several invocations runs behind it)",
      "kinds": [
       "cast@EV74",
       "mla",
@@ -6188,7 +5570,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 0 'quant' (kernel quant on the EV74)",
-     "fact": "it runs 6 kernel invocations per frame (a batched model or several tensors)",
+     "fact": "it runs 6 kernel invocations per frame in front of the MLA stage (a stage of several invocations runs behind it)",
      "kinds": [
       "quant@EV74",
       "mla",
@@ -6216,7 +5598,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 0 'quant' (kernel quant on the EV74)",
-     "fact": "it runs 6 kernel invocations per frame (a batched model or several tensors)",
+     "fact": "it runs 6 kernel invocations per frame in front of the MLA stage (a stage of several invocations runs behind it)",
      "kinds": [
       "quant@EV74",
       "mla",
@@ -6243,8 +5625,8 @@
      "id": "superpoint__w16a16__model",
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 2 tensors in its one output buffer and stage 'boxdecode' (SimaBoxDecode@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "subject": "stage 2 'boxdecode' (kernel SimaBoxDecode on the A65)",
+     "fact": "it has no recorded kernel request for every invocation (not a canonical transform)",
      "kinds": [
       "preproc@EV74",
       "mla",
@@ -6264,29 +5646,18 @@
   {
    "package": "superpoint w16a16",
    "view": "default",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "superpoint__w16a16__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 2 tensors in its one output buffer and stage 'post_cast_0' (cast@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "cast@EV74",
       "mla",
       "cast@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 4
+   ]
   },
   {
    "package": "superpoint w8a16",
@@ -6297,8 +5668,8 @@
      "id": "superpoint__w8a16__model",
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 2 tensors in its one output buffer and stage 'boxdecode' (SimaBoxDecode@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "subject": "stage 2 'boxdecode' (kernel SimaBoxDecode on the A65)",
+     "fact": "it has no recorded kernel request for every invocation (not a canonical transform)",
      "kinds": [
       "preproc@EV74",
       "mla",
@@ -6318,29 +5689,18 @@
   {
    "package": "superpoint w8a16",
    "view": "default",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "superpoint__w8a16__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 2 tensors in its one output buffer and stage 'post_cast_0' (cast@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "cast@EV74",
       "mla",
       "cast@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 4
+   ]
   },
   {
    "package": "superpoint w8a8",
@@ -6351,8 +5711,8 @@
      "id": "superpoint__w8a8__model",
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 2 tensors in its one output buffer and stage 'boxdecode' (SimaBoxDecode@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "subject": "stage 2 'boxdecode' (kernel SimaBoxDecode on the A65)",
+     "fact": "it has no recorded kernel request for every invocation (not a canonical transform)",
      "kinds": [
       "preproc@EV74",
       "mla",
@@ -6372,29 +5732,18 @@
   {
    "package": "superpoint w8a8",
    "view": "default",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "superpoint__w8a8__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 2 tensors in its one output buffer and stage 'physical_cvu_cohort_1' (dequant@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "quant@EV74",
       "mla",
       "dequant@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 4
+   ]
   },
   {
    "package": "supertonic_3 w8a16_w16a16",
@@ -6406,7 +5755,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 0 'cast' (kernel cast on the EV74)",
-     "fact": "it runs 8 kernel invocations per frame (a batched model or several tensors)",
+     "fact": "it runs 8 kernel invocations per frame in front of the MLA stage (a stage of several invocations runs behind it)",
      "kinds": [
       "cast@EV74",
       "mla",
@@ -6464,7 +5813,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 0 'cast' (kernel cast on the EV74)",
-     "fact": "it runs 8 kernel invocations per frame (a batched model or several tensors)",
+     "fact": "it runs 8 kernel invocations per frame in front of the MLA stage (a stage of several invocations runs behind it)",
      "kinds": [
       "cast@EV74",
       "mla",
@@ -7157,29 +6506,18 @@
   {
    "package": "yolo11l w16a16",
    "view": "default",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "yolo11l__w16a16__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 6 tensors in its one output buffer and stage 'post_cast_0' (cast@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "cast@EV74",
       "mla",
       "cast@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 4
+   ]
   },
   {
    "package": "yolo11l w8a16",
@@ -7200,29 +6538,18 @@
   {
    "package": "yolo11l w8a16",
    "view": "default",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "yolo11l__w8a16__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 6 tensors in its one output buffer and stage 'post_cast_0' (cast@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "cast@EV74",
       "mla",
       "cast@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 4
+   ]
   },
   {
    "package": "yolo11l w8a8",
@@ -7243,29 +6570,18 @@
   {
    "package": "yolo11l w8a8",
    "view": "default",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "yolo11l__w8a8__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 6 tensors in its one output buffer and stage 'physical_cvu_cohort_1' (dequant@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "quant@EV74",
       "mla",
       "dequant@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 4
+   ]
   },
   {
    "package": "yolo11l_obb w16a16",
@@ -7286,29 +6602,18 @@
   {
    "package": "yolo11l_obb w16a16",
    "view": "default",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "yolo11l_obb__w16a16__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 9 tensors in its one output buffer and stage 'post_cast_0' (cast@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "cast@EV74",
       "mla",
       "cast@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 4
+   ]
   },
   {
    "package": "yolo11l_obb w8a8",
@@ -7329,29 +6634,18 @@
   {
    "package": "yolo11l_obb w8a8",
    "view": "default",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "yolo11l_obb__w8a8__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 9 tensors in its one output buffer and stage 'physical_cvu_cohort_1' (dequant@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "quant@EV74",
       "mla",
       "dequant@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 4
+   ]
   },
   {
    "package": "yolo11m w16a16",
@@ -7372,29 +6666,18 @@
   {
    "package": "yolo11m w16a16",
    "view": "default",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "yolo11m__w16a16__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 6 tensors in its one output buffer and stage 'post_cast_0' (cast@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "cast@EV74",
       "mla",
       "cast@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 4
+   ]
   },
   {
    "package": "yolo11m w8a16",
@@ -7415,29 +6698,18 @@
   {
    "package": "yolo11m w8a16",
    "view": "default",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "yolo11m__w8a16__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 6 tensors in its one output buffer and stage 'post_cast_0' (cast@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "cast@EV74",
       "mla",
       "cast@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 4
+   ]
   },
   {
    "package": "yolo11m w8a8",
@@ -7458,29 +6730,18 @@
   {
    "package": "yolo11m w8a8",
    "view": "default",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "yolo11m__w8a8__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 6 tensors in its one output buffer and stage 'physical_cvu_cohort_1' (dequant@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "quant@EV74",
       "mla",
       "dequant@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 4
+   ]
   },
   {
    "package": "yolo11m_obb w16a16",
@@ -7501,29 +6762,18 @@
   {
    "package": "yolo11m_obb w16a16",
    "view": "default",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "yolo11m_obb__w16a16__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 9 tensors in its one output buffer and stage 'post_cast_0' (cast@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "cast@EV74",
       "mla",
       "cast@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 4
+   ]
   },
   {
    "package": "yolo11m_obb w8a8",
@@ -7544,29 +6794,18 @@
   {
    "package": "yolo11m_obb w8a8",
    "view": "default",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "yolo11m_obb__w8a8__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 9 tensors in its one output buffer and stage 'physical_cvu_cohort_1' (dequant@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "quant@EV74",
       "mla",
       "dequant@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 4
+   ]
   },
   {
    "package": "yolo11n w16a16",
@@ -7587,29 +6826,18 @@
   {
    "package": "yolo11n w16a16",
    "view": "default",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "yolo11n__w16a16__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 6 tensors in its one output buffer and stage 'post_cast_0' (cast@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "cast@EV74",
       "mla",
       "cast@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 4
+   ]
   },
   {
    "package": "yolo11n w8a16",
@@ -7630,29 +6858,18 @@
   {
    "package": "yolo11n w8a16",
    "view": "default",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "yolo11n__w8a16__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 6 tensors in its one output buffer and stage 'post_cast_0' (cast@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "cast@EV74",
       "mla",
       "cast@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 4
+   ]
   },
   {
    "package": "yolo11n w8a8",
@@ -7673,29 +6890,18 @@
   {
    "package": "yolo11n w8a8",
    "view": "default",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "yolo11n__w8a8__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 6 tensors in its one output buffer and stage 'physical_cvu_cohort_1' (dequant@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "quant@EV74",
       "mla",
       "dequant@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 4
+   ]
   },
   {
    "package": "yolo11n_obb w16a16",
@@ -7716,29 +6922,18 @@
   {
    "package": "yolo11n_obb w16a16",
    "view": "default",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "yolo11n_obb__w16a16__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 9 tensors in its one output buffer and stage 'post_cast_0' (cast@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "cast@EV74",
       "mla",
       "cast@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 4
+   ]
   },
   {
    "package": "yolo11n_obb w8a8",
@@ -7759,29 +6954,18 @@
   {
    "package": "yolo11n_obb w8a8",
    "view": "default",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "yolo11n_obb__w8a8__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 9 tensors in its one output buffer and stage 'physical_cvu_cohort_1' (dequant@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "quant@EV74",
       "mla",
       "dequant@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 4
+   ]
   },
   {
    "package": "yolo11s w16a16",
@@ -7802,29 +6986,18 @@
   {
    "package": "yolo11s w16a16",
    "view": "default",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "yolo11s__w16a16__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 6 tensors in its one output buffer and stage 'post_cast_0' (cast@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "cast@EV74",
       "mla",
       "cast@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 4
+   ]
   },
   {
    "package": "yolo11s w8a16",
@@ -7845,29 +7018,18 @@
   {
    "package": "yolo11s w8a16",
    "view": "default",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "yolo11s__w8a16__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 6 tensors in its one output buffer and stage 'post_cast_0' (cast@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "cast@EV74",
       "mla",
       "cast@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 4
+   ]
   },
   {
    "package": "yolo11s w8a8",
@@ -7888,29 +7050,18 @@
   {
    "package": "yolo11s w8a8",
    "view": "default",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "yolo11s__w8a8__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 6 tensors in its one output buffer and stage 'physical_cvu_cohort_1' (dequant@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "quant@EV74",
       "mla",
       "dequant@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 4
+   ]
   },
   {
    "package": "yolo11s_obb w16a16",
@@ -7931,29 +7082,18 @@
   {
    "package": "yolo11s_obb w16a16",
    "view": "default",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "yolo11s_obb__w16a16__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 9 tensors in its one output buffer and stage 'post_cast_0' (cast@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "cast@EV74",
       "mla",
       "cast@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 4
+   ]
   },
   {
    "package": "yolo11s_obb w8a8",
@@ -7974,29 +7114,18 @@
   {
    "package": "yolo11s_obb w8a8",
    "view": "default",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "yolo11s_obb__w8a8__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 9 tensors in its one output buffer and stage 'physical_cvu_cohort_1' (dequant@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "quant@EV74",
       "mla",
       "dequant@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 4
+   ]
   },
   {
    "package": "yolo11x w16a16",
@@ -8017,29 +7146,18 @@
   {
    "package": "yolo11x w16a16",
    "view": "default",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "yolo11x__w16a16__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 6 tensors in its one output buffer and stage 'post_cast_0' (cast@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "cast@EV74",
       "mla",
       "cast@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 4
+   ]
   },
   {
    "package": "yolo11x w8a16",
@@ -8060,29 +7178,18 @@
   {
    "package": "yolo11x w8a16",
    "view": "default",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "yolo11x__w8a16__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 6 tensors in its one output buffer and stage 'post_cast_0' (cast@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "cast@EV74",
       "mla",
       "cast@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 4
+   ]
   },
   {
    "package": "yolo11x w8a8",
@@ -8103,29 +7210,18 @@
   {
    "package": "yolo11x w8a8",
    "view": "default",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "yolo11x__w8a8__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 6 tensors in its one output buffer and stage 'physical_cvu_cohort_1' (dequant@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "quant@EV74",
       "mla",
       "dequant@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 4
+   ]
   },
   {
    "package": "yolo11x_obb w16a16",
@@ -8146,29 +7242,18 @@
   {
    "package": "yolo11x_obb w16a16",
    "view": "default",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "yolo11x_obb__w16a16__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 9 tensors in its one output buffer and stage 'post_cast_0' (cast@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "cast@EV74",
       "mla",
       "cast@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 4
+   ]
   },
   {
    "package": "yolo11x_obb w8a8",
@@ -8189,29 +7274,18 @@
   {
    "package": "yolo11x_obb w8a8",
    "view": "default",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "yolo11x_obb__w8a8__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 9 tensors in its one output buffer and stage 'physical_cvu_cohort_1' (dequant@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "quant@EV74",
       "mla",
       "dequant@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 4
+   ]
   },
   {
    "package": "yolo26l w16a16",
@@ -8232,29 +7306,18 @@
   {
    "package": "yolo26l w16a16",
    "view": "default",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "yolo26l__w16a16__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 6 tensors in its one output buffer and stage 'post_cast_0' (cast@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "cast@EV74",
       "mla",
       "cast@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 4
+   ]
   },
   {
    "package": "yolo26l w8a16",
@@ -8275,29 +7338,18 @@
   {
    "package": "yolo26l w8a16",
    "view": "default",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "yolo26l__w8a16__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 6 tensors in its one output buffer and stage 'post_cast_0' (cast@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "cast@EV74",
       "mla",
       "cast@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 4
+   ]
   },
   {
    "package": "yolo26l w8a8",
@@ -8318,29 +7370,18 @@
   {
    "package": "yolo26l w8a8",
    "view": "default",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "yolo26l__w8a8__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 6 tensors in its one output buffer and stage 'physical_cvu_cohort_1' (dequant@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "quant@EV74",
       "mla",
       "dequant@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 4
+   ]
   },
   {
    "package": "yolo26l_obb w16a16",
@@ -8361,29 +7402,18 @@
   {
    "package": "yolo26l_obb w16a16",
    "view": "default",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "yolo26l_obb__w16a16__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 9 tensors in its one output buffer and stage 'post_cast_0' (cast@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "cast@EV74",
       "mla",
       "cast@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 4
+   ]
   },
   {
    "package": "yolo26l_obb w8a16",
@@ -8404,29 +7434,18 @@
   {
    "package": "yolo26l_obb w8a16",
    "view": "default",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "yolo26l_obb__w8a16__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 9 tensors in its one output buffer and stage 'post_cast_0' (cast@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "cast@EV74",
       "mla",
       "cast@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 4
+   ]
   },
   {
    "package": "yolo26l_obb w8a8",
@@ -8447,29 +7466,18 @@
   {
    "package": "yolo26l_obb w8a8",
    "view": "default",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "yolo26l_obb__w8a8__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 9 tensors in its one output buffer and stage 'physical_cvu_cohort_1' (dequant@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "quant@EV74",
       "mla",
       "dequant@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 4
+   ]
   },
   {
    "package": "yolo26l_pose w16a16",
@@ -8490,29 +7498,18 @@
   {
    "package": "yolo26l_pose w16a16",
    "view": "default",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "yolo26l_pose__w16a16__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 9 tensors in its one output buffer and stage 'post_cast_0' (cast@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "cast@EV74",
       "mla",
       "cast@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 4
+   ]
   },
   {
    "package": "yolo26l_pose w8a16",
@@ -8533,29 +7530,18 @@
   {
    "package": "yolo26l_pose w8a16",
    "view": "default",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "yolo26l_pose__w8a16__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 9 tensors in its one output buffer and stage 'post_cast_0' (cast@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "cast@EV74",
       "mla",
       "cast@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 4
+   ]
   },
   {
    "package": "yolo26l_pose w8a8",
@@ -8576,29 +7562,18 @@
   {
    "package": "yolo26l_pose w8a8",
    "view": "default",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "yolo26l_pose__w8a8__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 9 tensors in its one output buffer and stage 'physical_cvu_cohort_1' (dequant@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "quant@EV74",
       "mla",
       "dequant@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 4
+   ]
   },
   {
    "package": "yolo26l_seg w16a16",
@@ -8619,29 +7594,18 @@
   {
    "package": "yolo26l_seg w16a16",
    "view": "default",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "yolo26l_seg__w16a16__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 10 tensors in its one output buffer and stage 'post_cast_0' (cast@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "cast@EV74",
       "mla",
       "cast@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 4
+   ]
   },
   {
    "package": "yolo26l_seg w8a16",
@@ -8662,29 +7626,18 @@
   {
    "package": "yolo26l_seg w8a16",
    "view": "default",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "yolo26l_seg__w8a16__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 10 tensors in its one output buffer and stage 'post_cast_0' (cast@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "cast@EV74",
       "mla",
       "cast@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 4
+   ]
   },
   {
    "package": "yolo26l_seg w8a8",
@@ -8705,29 +7658,18 @@
   {
    "package": "yolo26l_seg w8a8",
    "view": "default",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "yolo26l_seg__w8a8__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 10 tensors in its one output buffer and stage 'physical_cvu_cohort_1' (dequant@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "quant@EV74",
       "mla",
       "dequant@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 4
+   ]
   },
   {
    "package": "yolo26m w16a16",
@@ -8748,29 +7690,18 @@
   {
    "package": "yolo26m w16a16",
    "view": "default",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "yolo26m__w16a16__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 6 tensors in its one output buffer and stage 'post_cast_0' (cast@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "cast@EV74",
       "mla",
       "cast@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 4
+   ]
   },
   {
    "package": "yolo26m w8a16",
@@ -8791,29 +7722,18 @@
   {
    "package": "yolo26m w8a16",
    "view": "default",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "yolo26m__w8a16__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 6 tensors in its one output buffer and stage 'post_cast_0' (cast@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "cast@EV74",
       "mla",
       "cast@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 4
+   ]
   },
   {
    "package": "yolo26m w8a8",
@@ -8834,29 +7754,18 @@
   {
    "package": "yolo26m w8a8",
    "view": "default",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "yolo26m__w8a8__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 6 tensors in its one output buffer and stage 'physical_cvu_cohort_1' (dequant@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "quant@EV74",
       "mla",
       "dequant@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 4
+   ]
   },
   {
    "package": "yolo26m_obb w16a16",
@@ -8877,29 +7786,18 @@
   {
    "package": "yolo26m_obb w16a16",
    "view": "default",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "yolo26m_obb__w16a16__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 9 tensors in its one output buffer and stage 'post_cast_0' (cast@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "cast@EV74",
       "mla",
       "cast@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 4
+   ]
   },
   {
    "package": "yolo26m_obb w8a8",
@@ -8920,29 +7818,18 @@
   {
    "package": "yolo26m_obb w8a8",
    "view": "default",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "yolo26m_obb__w8a8__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 9 tensors in its one output buffer and stage 'physical_cvu_cohort_1' (dequant@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "quant@EV74",
       "mla",
       "dequant@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 4
+   ]
   },
   {
    "package": "yolo26m_pose w16a16",
@@ -8963,29 +7850,18 @@
   {
    "package": "yolo26m_pose w16a16",
    "view": "default",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "yolo26m_pose__w16a16__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 9 tensors in its one output buffer and stage 'post_cast_0' (cast@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "cast@EV74",
       "mla",
       "cast@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 4
+   ]
   },
   {
    "package": "yolo26m_pose w8a16",
@@ -9006,29 +7882,18 @@
   {
    "package": "yolo26m_pose w8a16",
    "view": "default",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "yolo26m_pose__w8a16__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 9 tensors in its one output buffer and stage 'post_cast_0' (cast@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "cast@EV74",
       "mla",
       "cast@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 4
+   ]
   },
   {
    "package": "yolo26m_pose w8a8",
@@ -9049,29 +7914,18 @@
   {
    "package": "yolo26m_pose w8a8",
    "view": "default",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "yolo26m_pose__w8a8__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 9 tensors in its one output buffer and stage 'physical_cvu_cohort_1' (dequant@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "quant@EV74",
       "mla",
       "dequant@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 4
+   ]
   },
   {
    "package": "yolo26m_seg w16a16",
@@ -9092,29 +7946,18 @@
   {
    "package": "yolo26m_seg w16a16",
    "view": "default",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "yolo26m_seg__w16a16__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 10 tensors in its one output buffer and stage 'post_cast_0' (cast@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "cast@EV74",
       "mla",
       "cast@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 4
+   ]
   },
   {
    "package": "yolo26m_seg w8a16",
@@ -9135,29 +7978,18 @@
   {
    "package": "yolo26m_seg w8a16",
    "view": "default",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "yolo26m_seg__w8a16__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 10 tensors in its one output buffer and stage 'post_cast_0' (cast@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "cast@EV74",
       "mla",
       "cast@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 4
+   ]
   },
   {
    "package": "yolo26m_seg w8a8",
@@ -9178,29 +8010,18 @@
   {
    "package": "yolo26m_seg w8a8",
    "view": "default",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "yolo26m_seg__w8a8__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 10 tensors in its one output buffer and stage 'physical_cvu_cohort_1' (dequant@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "quant@EV74",
       "mla",
       "dequant@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 4
+   ]
   },
   {
    "package": "yolo26n w16a16",
@@ -9221,29 +8042,18 @@
   {
    "package": "yolo26n w16a16",
    "view": "default",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "yolo26n__w16a16__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 6 tensors in its one output buffer and stage 'post_cast_0' (cast@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "cast@EV74",
       "mla",
       "cast@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 4
+   ]
   },
   {
    "package": "yolo26n w8a16",
@@ -9264,29 +8074,18 @@
   {
    "package": "yolo26n w8a16",
    "view": "default",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "yolo26n__w8a16__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 6 tensors in its one output buffer and stage 'post_cast_0' (cast@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "cast@EV74",
       "mla",
       "cast@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 4
+   ]
   },
   {
    "package": "yolo26n w8a8",
@@ -9307,29 +8106,18 @@
   {
    "package": "yolo26n w8a8",
    "view": "default",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "yolo26n__w8a8__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 6 tensors in its one output buffer and stage 'physical_cvu_cohort_1' (dequant@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "quant@EV74",
       "mla",
       "dequant@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 4
+   ]
   },
   {
    "package": "yolo26n_obb w16a16",
@@ -9350,29 +8138,18 @@
   {
    "package": "yolo26n_obb w16a16",
    "view": "default",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "yolo26n_obb__w16a16__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 9 tensors in its one output buffer and stage 'post_cast_0' (cast@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "cast@EV74",
       "mla",
       "cast@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 4
+   ]
   },
   {
    "package": "yolo26n_obb w8a8",
@@ -9393,29 +8170,18 @@
   {
    "package": "yolo26n_obb w8a8",
    "view": "default",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "yolo26n_obb__w8a8__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 9 tensors in its one output buffer and stage 'physical_cvu_cohort_1' (dequant@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "quant@EV74",
       "mla",
       "dequant@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 4
+   ]
   },
   {
    "package": "yolo26n_pose w16a16",
@@ -9436,29 +8202,18 @@
   {
    "package": "yolo26n_pose w16a16",
    "view": "default",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "yolo26n_pose__w16a16__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 9 tensors in its one output buffer and stage 'post_cast_0' (cast@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "cast@EV74",
       "mla",
       "cast@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 4
+   ]
   },
   {
    "package": "yolo26n_pose w8a16",
@@ -9479,29 +8234,18 @@
   {
    "package": "yolo26n_pose w8a16",
    "view": "default",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "yolo26n_pose__w8a16__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 9 tensors in its one output buffer and stage 'post_cast_0' (cast@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "cast@EV74",
       "mla",
       "cast@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 4
+   ]
   },
   {
    "package": "yolo26n_pose w8a8",
@@ -9522,29 +8266,18 @@
   {
    "package": "yolo26n_pose w8a8",
    "view": "default",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "yolo26n_pose__w8a8__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 9 tensors in its one output buffer and stage 'physical_cvu_cohort_1' (dequant@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "quant@EV74",
       "mla",
       "dequant@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 4
+   ]
   },
   {
    "package": "yolo26n_seg w16a16",
@@ -9565,29 +8298,18 @@
   {
    "package": "yolo26n_seg w16a16",
    "view": "default",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "yolo26n_seg__w16a16__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 10 tensors in its one output buffer and stage 'post_cast_0' (cast@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "cast@EV74",
       "mla",
       "cast@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 4
+   ]
   },
   {
    "package": "yolo26n_seg w8a16",
@@ -9608,29 +8330,18 @@
   {
    "package": "yolo26n_seg w8a16",
    "view": "default",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "yolo26n_seg__w8a16__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 10 tensors in its one output buffer and stage 'post_cast_0' (cast@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "cast@EV74",
       "mla",
       "cast@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 4
+   ]
   },
   {
    "package": "yolo26n_seg w8a8",
@@ -9651,29 +8362,18 @@
   {
    "package": "yolo26n_seg w8a8",
    "view": "default",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "yolo26n_seg__w8a8__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 10 tensors in its one output buffer and stage 'physical_cvu_cohort_1' (dequant@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "quant@EV74",
       "mla",
       "dequant@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 4
+   ]
   },
   {
    "package": "yolo26s w16a16",
@@ -9694,29 +8394,18 @@
   {
    "package": "yolo26s w16a16",
    "view": "default",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "yolo26s__w16a16__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 6 tensors in its one output buffer and stage 'post_cast_0' (cast@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "cast@EV74",
       "mla",
       "cast@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 4
+   ]
   },
   {
    "package": "yolo26s w8a16",
@@ -9737,29 +8426,18 @@
   {
    "package": "yolo26s w8a16",
    "view": "default",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "yolo26s__w8a16__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 6 tensors in its one output buffer and stage 'post_cast_0' (cast@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "cast@EV74",
       "mla",
       "cast@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 4
+   ]
   },
   {
    "package": "yolo26s w8a8",
@@ -9780,29 +8458,18 @@
   {
    "package": "yolo26s w8a8",
    "view": "default",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "yolo26s__w8a8__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 6 tensors in its one output buffer and stage 'physical_cvu_cohort_1' (dequant@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "quant@EV74",
       "mla",
       "dequant@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 4
+   ]
   },
   {
    "package": "yolo26s_obb w16a16",
@@ -9823,29 +8490,18 @@
   {
    "package": "yolo26s_obb w16a16",
    "view": "default",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "yolo26s_obb__w16a16__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 9 tensors in its one output buffer and stage 'post_cast_0' (cast@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "cast@EV74",
       "mla",
       "cast@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 4
+   ]
   },
   {
    "package": "yolo26s_obb w8a16",
@@ -9866,29 +8522,18 @@
   {
    "package": "yolo26s_obb w8a16",
    "view": "default",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "yolo26s_obb__w8a16__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 9 tensors in its one output buffer and stage 'post_cast_0' (cast@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "cast@EV74",
       "mla",
       "cast@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 4
+   ]
   },
   {
    "package": "yolo26s_obb w8a8",
@@ -9909,29 +8554,18 @@
   {
    "package": "yolo26s_obb w8a8",
    "view": "default",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "yolo26s_obb__w8a8__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 9 tensors in its one output buffer and stage 'physical_cvu_cohort_1' (dequant@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "quant@EV74",
       "mla",
       "dequant@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 4
+   ]
   },
   {
    "package": "yolo26s_pose w16a16",
@@ -9952,29 +8586,18 @@
   {
    "package": "yolo26s_pose w16a16",
    "view": "default",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "yolo26s_pose__w16a16__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 9 tensors in its one output buffer and stage 'post_cast_0' (cast@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "cast@EV74",
       "mla",
       "cast@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 4
+   ]
   },
   {
    "package": "yolo26s_pose w8a16",
@@ -9995,29 +8618,18 @@
   {
    "package": "yolo26s_pose w8a16",
    "view": "default",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "yolo26s_pose__w8a16__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 9 tensors in its one output buffer and stage 'post_cast_0' (cast@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "cast@EV74",
       "mla",
       "cast@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 4
+   ]
   },
   {
    "package": "yolo26s_pose w8a8",
@@ -10038,29 +8650,18 @@
   {
    "package": "yolo26s_pose w8a8",
    "view": "default",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "yolo26s_pose__w8a8__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 9 tensors in its one output buffer and stage 'physical_cvu_cohort_1' (dequant@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "quant@EV74",
       "mla",
       "dequant@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 4
+   ]
   },
   {
    "package": "yolo26s_seg w16a16",
@@ -10081,29 +8682,18 @@
   {
    "package": "yolo26s_seg w16a16",
    "view": "default",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "yolo26s_seg__w16a16__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 10 tensors in its one output buffer and stage 'post_cast_0' (cast@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "cast@EV74",
       "mla",
       "cast@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 4
+   ]
   },
   {
    "package": "yolo26s_seg w8a16",
@@ -10124,29 +8714,18 @@
   {
    "package": "yolo26s_seg w8a16",
    "view": "default",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "yolo26s_seg__w8a16__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 10 tensors in its one output buffer and stage 'post_cast_0' (cast@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "cast@EV74",
       "mla",
       "cast@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 4
+   ]
   },
   {
    "package": "yolo26s_seg w8a8",
@@ -10167,29 +8746,18 @@
   {
    "package": "yolo26s_seg w8a8",
    "view": "default",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "yolo26s_seg__w8a8__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 10 tensors in its one output buffer and stage 'physical_cvu_cohort_1' (dequant@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "quant@EV74",
       "mla",
       "dequant@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 4
+   ]
   },
   {
    "package": "yolo26x w16a16",
@@ -10210,29 +8778,18 @@
   {
    "package": "yolo26x w16a16",
    "view": "default",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "yolo26x__w16a16__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 6 tensors in its one output buffer and stage 'post_cast_0' (cast@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "cast@EV74",
       "mla",
       "cast@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 4
+   ]
   },
   {
    "package": "yolo26x w8a16",
@@ -10253,29 +8810,18 @@
   {
    "package": "yolo26x w8a16",
    "view": "default",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "yolo26x__w8a16__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 6 tensors in its one output buffer and stage 'post_cast_0' (cast@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "cast@EV74",
       "mla",
       "cast@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 4
+   ]
   },
   {
    "package": "yolo26x w8a8",
@@ -10296,29 +8842,18 @@
   {
    "package": "yolo26x w8a8",
    "view": "default",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "yolo26x__w8a8__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 6 tensors in its one output buffer and stage 'physical_cvu_cohort_1' (dequant@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "quant@EV74",
       "mla",
       "dequant@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 4
+   ]
   },
   {
    "package": "yolo26x_obb w16a16",
@@ -10339,29 +8874,18 @@
   {
    "package": "yolo26x_obb w16a16",
    "view": "default",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "yolo26x_obb__w16a16__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 9 tensors in its one output buffer and stage 'post_cast_0' (cast@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "cast@EV74",
       "mla",
       "cast@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 4
+   ]
   },
   {
    "package": "yolo26x_obb w8a8",
@@ -10382,29 +8906,18 @@
   {
    "package": "yolo26x_obb w8a8",
    "view": "default",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "yolo26x_obb__w8a8__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 9 tensors in its one output buffer and stage 'physical_cvu_cohort_1' (dequant@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "quant@EV74",
       "mla",
       "dequant@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 4
+   ]
   },
   {
    "package": "yolo26x_pose w16a16",
@@ -10425,29 +8938,18 @@
   {
    "package": "yolo26x_pose w16a16",
    "view": "default",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "yolo26x_pose__w16a16__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 9 tensors in its one output buffer and stage 'post_cast_0' (cast@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "cast@EV74",
       "mla",
       "cast@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 4
+   ]
   },
   {
    "package": "yolo26x_pose w8a16",
@@ -10468,29 +8970,18 @@
   {
    "package": "yolo26x_pose w8a16",
    "view": "default",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "yolo26x_pose__w8a16__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 9 tensors in its one output buffer and stage 'post_cast_0' (cast@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "cast@EV74",
       "mla",
       "cast@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 4
+   ]
   },
   {
    "package": "yolo26x_pose w8a8",
@@ -10511,29 +9002,18 @@
   {
    "package": "yolo26x_pose w8a8",
    "view": "default",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "yolo26x_pose__w8a8__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 9 tensors in its one output buffer and stage 'physical_cvu_cohort_1' (dequant@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "quant@EV74",
       "mla",
       "dequant@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 4
+   ]
   },
   {
    "package": "yolo26x_seg w16a16",
@@ -10554,29 +9034,18 @@
   {
    "package": "yolo26x_seg w16a16",
    "view": "default",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "yolo26x_seg__w16a16__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 10 tensors in its one output buffer and stage 'post_cast_0' (cast@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "cast@EV74",
       "mla",
       "cast@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 4
+   ]
   },
   {
    "package": "yolo26x_seg w8a16",
@@ -10597,29 +9066,18 @@
   {
    "package": "yolo26x_seg w8a16",
    "view": "default",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "yolo26x_seg__w8a16__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 10 tensors in its one output buffer and stage 'post_cast_0' (cast@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "cast@EV74",
       "mla",
       "cast@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 4
+   ]
   },
   {
    "package": "yolo26x_seg w8a8",
@@ -10640,29 +9098,18 @@
   {
    "package": "yolo26x_seg w8a8",
    "view": "default",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "yolo26x_seg__w8a8__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 10 tensors in its one output buffer and stage 'physical_cvu_cohort_1' (dequant@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "quant@EV74",
       "mla",
       "dequant@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 4
+   ]
   },
   {
    "package": "yolo_world_l w16a16_w8a8_mixed",
@@ -10674,7 +9121,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 0 'quant' (kernel quant on the EV74)",
-     "fact": "it runs 3 kernel invocations per frame (a batched model or several tensors)",
+     "fact": "it runs 3 kernel invocations per frame in front of the MLA stage (a stage of several invocations runs behind it)",
      "kinds": [
       "quant@EV74",
       "mla",
@@ -10694,7 +9141,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 0 'cast' (kernel cast on the EV74)",
-     "fact": "it runs 2 kernel invocations per frame (a batched model or several tensors)",
+     "fact": "it runs 2 kernel invocations per frame in front of the MLA stage (a stage of several invocations runs behind it)",
      "kinds": [
       "cast@EV74",
       "mla",
@@ -10722,7 +9169,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 0 'quant' (kernel quant on the EV74)",
-     "fact": "it runs 3 kernel invocations per frame (a batched model or several tensors)",
+     "fact": "it runs 3 kernel invocations per frame in front of the MLA stage (a stage of several invocations runs behind it)",
      "kinds": [
       "quant@EV74",
       "mla",
@@ -10744,7 +9191,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 0 'cast' (kernel cast on the EV74)",
-     "fact": "it runs 2 kernel invocations per frame (a batched model or several tensors)",
+     "fact": "it runs 2 kernel invocations per frame in front of the MLA stage (a stage of several invocations runs behind it)",
      "kinds": [
       "cast@EV74",
       "mla",
@@ -10772,7 +9219,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 0 'quant' (kernel quant on the EV74)",
-     "fact": "it runs 3 kernel invocations per frame (a batched model or several tensors)",
+     "fact": "it runs 3 kernel invocations per frame in front of the MLA stage (a stage of several invocations runs behind it)",
      "kinds": [
       "quant@EV74",
       "mla",
@@ -10792,7 +9239,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 0 'cast' (kernel cast on the EV74)",
-     "fact": "it runs 2 kernel invocations per frame (a batched model or several tensors)",
+     "fact": "it runs 2 kernel invocations per frame in front of the MLA stage (a stage of several invocations runs behind it)",
      "kinds": [
       "cast@EV74",
       "mla",
@@ -10820,7 +9267,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 0 'quant' (kernel quant on the EV74)",
-     "fact": "it runs 3 kernel invocations per frame (a batched model or several tensors)",
+     "fact": "it runs 3 kernel invocations per frame in front of the MLA stage (a stage of several invocations runs behind it)",
      "kinds": [
       "quant@EV74",
       "mla",
@@ -10842,7 +9289,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 0 'cast' (kernel cast on the EV74)",
-     "fact": "it runs 2 kernel invocations per frame (a batched model or several tensors)",
+     "fact": "it runs 2 kernel invocations per frame in front of the MLA stage (a stage of several invocations runs behind it)",
      "kinds": [
       "cast@EV74",
       "mla",
@@ -10870,7 +9317,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 0 'quant' (kernel quant on the EV74)",
-     "fact": "it runs 3 kernel invocations per frame (a batched model or several tensors)",
+     "fact": "it runs 3 kernel invocations per frame in front of the MLA stage (a stage of several invocations runs behind it)",
      "kinds": [
       "quant@EV74",
       "mla",
@@ -10890,7 +9337,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 0 'cast' (kernel cast on the EV74)",
-     "fact": "it runs 2 kernel invocations per frame (a batched model or several tensors)",
+     "fact": "it runs 2 kernel invocations per frame in front of the MLA stage (a stage of several invocations runs behind it)",
      "kinds": [
       "cast@EV74",
       "mla",
@@ -10918,7 +9365,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 0 'quant' (kernel quant on the EV74)",
-     "fact": "it runs 3 kernel invocations per frame (a batched model or several tensors)",
+     "fact": "it runs 3 kernel invocations per frame in front of the MLA stage (a stage of several invocations runs behind it)",
      "kinds": [
       "quant@EV74",
       "mla",
@@ -10940,7 +9387,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 0 'cast' (kernel cast on the EV74)",
-     "fact": "it runs 2 kernel invocations per frame (a batched model or several tensors)",
+     "fact": "it runs 2 kernel invocations per frame in front of the MLA stage (a stage of several invocations runs behind it)",
      "kinds": [
       "cast@EV74",
       "mla",
@@ -10977,29 +9424,18 @@
   {
    "package": "yolov8l w16a16",
    "view": "default",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "yolov8l__w16a16__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 6 tensors in its one output buffer and stage 'post_cast_0' (cast@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "cast@EV74",
       "mla",
       "cast@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 4
+   ]
   },
   {
    "package": "yolov8l w8a16",
@@ -11020,29 +9456,18 @@
   {
    "package": "yolov8l w8a16",
    "view": "default",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "yolov8l__w8a16__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 6 tensors in its one output buffer and stage 'post_cast_0' (cast@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "cast@EV74",
       "mla",
       "cast@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 4
+   ]
   },
   {
    "package": "yolov8l w8a8",
@@ -11063,29 +9488,18 @@
   {
    "package": "yolov8l w8a8",
    "view": "default",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "yolov8l__w8a8__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 6 tensors in its one output buffer and stage 'physical_cvu_cohort_1' (dequant@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "quant@EV74",
       "mla",
       "dequant@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 4
+   ]
   },
   {
    "package": "yolov8l_obb w16a16",
@@ -11106,29 +9520,18 @@
   {
    "package": "yolov8l_obb w16a16",
    "view": "default",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "yolov8l_obb__w16a16__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 9 tensors in its one output buffer and stage 'post_cast_0' (cast@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "cast@EV74",
       "mla",
       "cast@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 4
+   ]
   },
   {
    "package": "yolov8l_obb w8a8",
@@ -11149,29 +9552,18 @@
   {
    "package": "yolov8l_obb w8a8",
    "view": "default",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "yolov8l_obb__w8a8__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 9 tensors in its one output buffer and stage 'physical_cvu_cohort_1' (dequant@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "quant@EV74",
       "mla",
       "dequant@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 4
+   ]
   },
   {
    "package": "yolov8m w16a16",
@@ -11192,29 +9584,18 @@
   {
    "package": "yolov8m w16a16",
    "view": "default",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "yolov8m__w16a16__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 6 tensors in its one output buffer and stage 'post_cast_0' (cast@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "cast@EV74",
       "mla",
       "cast@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 4
+   ]
   },
   {
    "package": "yolov8m w8a16",
@@ -11235,29 +9616,18 @@
   {
    "package": "yolov8m w8a16",
    "view": "default",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "yolov8m__w8a16__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 6 tensors in its one output buffer and stage 'post_cast_0' (cast@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "cast@EV74",
       "mla",
       "cast@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 4
+   ]
   },
   {
    "package": "yolov8m w8a8",
@@ -11278,29 +9648,18 @@
   {
    "package": "yolov8m w8a8",
    "view": "default",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "yolov8m__w8a8__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 6 tensors in its one output buffer and stage 'physical_cvu_cohort_1' (dequant@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "quant@EV74",
       "mla",
       "dequant@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 4
+   ]
   },
   {
    "package": "yolov8m_obb w16a16",
@@ -11321,29 +9680,18 @@
   {
    "package": "yolov8m_obb w16a16",
    "view": "default",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "yolov8m_obb__w16a16__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 9 tensors in its one output buffer and stage 'post_cast_0' (cast@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "cast@EV74",
       "mla",
       "cast@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 4
+   ]
   },
   {
    "package": "yolov8m_obb w8a8",
@@ -11364,29 +9712,18 @@
   {
    "package": "yolov8m_obb w8a8",
    "view": "default",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "yolov8m_obb__w8a8__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 9 tensors in its one output buffer and stage 'physical_cvu_cohort_1' (dequant@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "quant@EV74",
       "mla",
       "dequant@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 4
+   ]
   },
   {
    "package": "yolov8n w16a16",
@@ -11407,29 +9744,18 @@
   {
    "package": "yolov8n w16a16",
    "view": "default",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "yolov8n__w16a16__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 6 tensors in its one output buffer and stage 'post_cast_0' (cast@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "cast@EV74",
       "mla",
       "cast@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 4
+   ]
   },
   {
    "package": "yolov8n w8a16",
@@ -11450,29 +9776,18 @@
   {
    "package": "yolov8n w8a16",
    "view": "default",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "yolov8n__w8a16__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 6 tensors in its one output buffer and stage 'post_cast_0' (cast@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "cast@EV74",
       "mla",
       "cast@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 4
+   ]
   },
   {
    "package": "yolov8n w8a8",
@@ -11493,29 +9808,18 @@
   {
    "package": "yolov8n w8a8",
    "view": "default",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "yolov8n__w8a8__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 6 tensors in its one output buffer and stage 'physical_cvu_cohort_1' (dequant@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "quant@EV74",
       "mla",
       "dequant@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 4
+   ]
   },
   {
    "package": "yolov8n_obb w16a16",
@@ -11536,29 +9840,18 @@
   {
    "package": "yolov8n_obb w16a16",
    "view": "default",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "yolov8n_obb__w16a16__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 9 tensors in its one output buffer and stage 'post_cast_0' (cast@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "cast@EV74",
       "mla",
       "cast@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 4
+   ]
   },
   {
    "package": "yolov8n_obb w8a8",
@@ -11579,29 +9872,18 @@
   {
    "package": "yolov8n_obb w8a8",
    "view": "default",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "yolov8n_obb__w8a8__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 9 tensors in its one output buffer and stage 'physical_cvu_cohort_1' (dequant@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "quant@EV74",
       "mla",
       "dequant@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 4
+   ]
   },
   {
    "package": "yolov8s w16a16",
@@ -11622,29 +9904,18 @@
   {
    "package": "yolov8s w16a16",
    "view": "default",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "yolov8s__w16a16__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 6 tensors in its one output buffer and stage 'post_cast_0' (cast@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "cast@EV74",
       "mla",
       "cast@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 4
+   ]
   },
   {
    "package": "yolov8s w8a16",
@@ -11665,29 +9936,18 @@
   {
    "package": "yolov8s w8a16",
    "view": "default",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "yolov8s__w8a16__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 6 tensors in its one output buffer and stage 'post_cast_0' (cast@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "cast@EV74",
       "mla",
       "cast@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 4
+   ]
   },
   {
    "package": "yolov8s w8a8",
@@ -11708,29 +9968,18 @@
   {
    "package": "yolov8s w8a8",
    "view": "default",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "yolov8s__w8a8__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 6 tensors in its one output buffer and stage 'physical_cvu_cohort_1' (dequant@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "quant@EV74",
       "mla",
       "dequant@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 4
+   ]
   },
   {
    "package": "yolov8s_obb w16a16",
@@ -11751,29 +10000,18 @@
   {
    "package": "yolov8s_obb w16a16",
    "view": "default",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "yolov8s_obb__w16a16__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 9 tensors in its one output buffer and stage 'post_cast_0' (cast@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "cast@EV74",
       "mla",
       "cast@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 4
+   ]
   },
   {
    "package": "yolov8s_obb w8a8",
@@ -11794,29 +10032,18 @@
   {
    "package": "yolov8s_obb w8a8",
    "view": "default",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "yolov8s_obb__w8a8__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 9 tensors in its one output buffer and stage 'physical_cvu_cohort_1' (dequant@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "quant@EV74",
       "mla",
       "dequant@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 4
+   ]
   },
   {
    "package": "yolov8x w16a16",
@@ -11837,29 +10064,18 @@
   {
    "package": "yolov8x w16a16",
    "view": "default",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "yolov8x__w16a16__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 6 tensors in its one output buffer and stage 'post_cast_0' (cast@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "cast@EV74",
       "mla",
       "cast@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 4
+   ]
   },
   {
    "package": "yolov8x w8a16",
@@ -11880,29 +10096,18 @@
   {
    "package": "yolov8x w8a16",
    "view": "default",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "yolov8x__w8a16__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 6 tensors in its one output buffer and stage 'post_cast_0' (cast@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "cast@EV74",
       "mla",
       "cast@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 4
+   ]
   },
   {
    "package": "yolov8x w8a8",
@@ -11923,29 +10128,18 @@
   {
    "package": "yolov8x w8a8",
    "view": "default",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "yolov8x__w8a8__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 6 tensors in its one output buffer and stage 'physical_cvu_cohort_1' (dequant@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "quant@EV74",
       "mla",
       "dequant@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 4
+   ]
   },
   {
    "package": "yolov8x_obb w16a16",
@@ -11966,29 +10160,18 @@
   {
    "package": "yolov8x_obb w16a16",
    "view": "default",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "yolov8x_obb__w16a16__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 9 tensors in its one output buffer and stage 'post_cast_0' (cast@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "cast@EV74",
       "mla",
       "cast@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 4
+   ]
   },
   {
    "package": "yolov8x_obb w8a8",
@@ -12009,29 +10192,18 @@
   {
    "package": "yolov8x_obb w8a8",
    "view": "default",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "yolov8x_obb__w8a8__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 9 tensors in its one output buffer and stage 'physical_cvu_cohort_1' (dequant@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "quant@EV74",
       "mla",
       "dequant@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 4
+   ]
   },
   {
    "package": "yolox_l w8a8",
@@ -12052,29 +10224,18 @@
   {
    "package": "yolox_l w8a8",
    "view": "default",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "yolox_l__w8a8__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 9 tensors in its one output buffer and stage 'physical_cvu_cohort_1' (dequant@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "quant@EV74",
       "mla",
       "dequant@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 4
+   ]
   },
   {
    "package": "yolox_m w8a8",
@@ -12095,29 +10256,18 @@
   {
    "package": "yolox_m w8a8",
    "view": "default",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "yolox_m__w8a8__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 9 tensors in its one output buffer and stage 'physical_cvu_cohort_1' (dequant@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "quant@EV74",
       "mla",
       "dequant@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 4
+   ]
   },
   {
    "package": "yolox_s w8a8",
@@ -12138,29 +10288,18 @@
   {
    "package": "yolox_s w8a8",
    "view": "default",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "yolox_s__w8a8__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 9 tensors in its one output buffer and stage 'physical_cvu_cohort_1' (dequant@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "quant@EV74",
       "mla",
       "dequant@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 4
+   ]
   },
   {
    "package": "yolox_x w8a8",
@@ -12181,29 +10320,18 @@
   {
    "package": "yolox_x w8a8",
    "view": "default",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "yolox_x__w8a8__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 1 'MLA_0' (model on the MLA)",
-     "fact": "it publishes 9 tensors in its one output buffer and stage 'physical_cvu_cohort_1' (dequant@A65) reads them: behind an MLA stage of several tensors only BoxDecode runs (such a model also runs when Model::inference() is the route's last stage: the pull returns the tensors)",
+     "planner": "accepted",
      "kinds": [
       "quant@EV74",
       "mla",
       "dequant@A65"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     }
-   ],
-   "flips_at_phase": 4
+   ]
   }
  ]
 }

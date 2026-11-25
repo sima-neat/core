@@ -10,9 +10,9 @@
 //   - Model::inference() of an MLA-only model: the MLA stage alone. A model writes one output
 //     buffer. The tensors it publishes in that buffer may be several, each at its byte offset (the
 //     heads of a detection model): when the MLA stage is the route's last, a pull returns them
-//     as GStreamer's does, a TensorList of views of the one pulled message. A model of several
-//     output buffers, and a stage other than BoxDecode behind an MLA stage of several tensors,
-//     are not carried: the plan says so and the build fails;
+//     as GStreamer's does, a TensorList of views of the one pulled message. Behind it, BoxDecode
+//     reads them as views of the buffer, and so does a post stage of several invocations (below).
+//     A model of several output buffers is not carried: the plan says so and the build fails;
 //   - Model::preprocess(), inference(), postprocess() of a model package whose pre and post stages
 //     are canonical transforms (quanttess, detessdequant, ...), each on the A65 or on the EV74 as
 //     the Graph places it (GraphOptions::processcvu.pre_run_target / post_run_target,
@@ -41,6 +41,19 @@
 //     The model's outputs do not depend on those bytes: unit_dataflow_mla_route_test, row
 //     padding, pushes the same tensor in front of paddings of zeros, of ones and of noise and
 //     compares every output byte.
+//   - A post stage of several kernel invocations behind the MLA stage, at the route's end: one
+//     canonical transform per tensor of the MLA's buffer (the six dequantizations of a YOLO model's
+//     heads when its BoxDecode is off), each of one input and one output, independent of the
+//     others. It is one operator that runs every invocation per message (soc::KernelOp of several
+//     kernels), on the A65 (placed on the EV74, the stage is not carried): its input port is the
+//     MLA's output buffer as bytes, each invocation's input a view of it at the offset the manifest
+//     gives; its output port one buffer of the stage's published tensors in their logical order,
+//     each at a multiple of 64 bytes. A pull returns them as GStreamer's does, a TensorList of
+//     views of the one pulled message (one storage), the generic tensor-set's caps with no format.
+//     Where each tensor lies in that storage is Dataflow's own (GStreamer's stage arena places them
+//     by size: a documented difference). An invocation that reads another's output, a private
+//     buffer, constants or per-frame variants, and such a stage anywhere but behind the MLA, are
+//     not carried.
 //   - Model::preprocess() of a model whose pre stage is the image preproc (the Kernels package's
 //     "preproc", EV74 only: resize, colour, normalize, quantize and tessellate an RGB or BGR
 //     frame, or an NV12 one), alone or in front of the stages above. GStreamer runs it
@@ -213,6 +226,13 @@ struct DataflowModelStage {
   // operation's name, its tensors, its parameters. A packed side lists every tensor of the side
   // in the kernel's order, each a view of the port's `input_bytes` or `output_bytes`; `input` or
   // `output` is then not read. An empty list: the side is its one tensor.
+  // A stage of several invocations: this is the first one's request, and `more` the others', in
+  // the stage's order; each invocation has one input and one output, so invocation i's tensors
+  // are packed_inputs[i] and packed_outputs[i] (both sides are packed).
+  struct Invocation {
+    std::string operation;
+    std::vector<::simaai::scheduler::client::Parameter> parameters;
+  };
   struct Kernel {
     // Which kernel runs a message (soc::KernelOp::Options::Variants): the stage's one kernel
     // (None); or, on a route whose frames change size, the image stage's or the BoxDecode kernel
@@ -226,6 +246,7 @@ struct DataflowModelStage {
     std::vector<::simaai::scheduler::client::Parameter> parameters;
     std::vector<View> packed_inputs, packed_outputs;
     Variants variants = Variants::None;
+    std::vector<Invocation> more;
   };
   // Core's BoxDecode wire serializer behind the BoxDecode kernel (KernelStageRecipe::
   // BoxDecodeProgram): `inputs` are the kernel's outputs in the stage's input buffer (offset and

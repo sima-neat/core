@@ -471,11 +471,11 @@ std::string plan_mla_stage(const si::StageStaticSpec& stage, bool first,
            " tensors): an MLA stage writes one output buffer (its tensors may be several, each at "
            "its offset of that buffer)";
   }
-  if (tensors > 1U && !last && !(next->native_kernel && next->native_kernel->boxdecode_program)) {
+  if (tensors > 1U && !last && !next->native_kernel) {
     return "it publishes " + std::to_string(tensors) +
            " tensors in its one output buffer and stage '" + stage_key_of(*next) + "' (" +
            stage_kind_text(*next) +
-           ") reads them: behind an MLA stage of several tensors only BoxDecode runs (such a "
+           ") reads them: behind an MLA stage of several tensors only a kernel stage runs (such a "
            "model also runs when Model::inference() is the route's last stage: the pull returns "
            "the tensors)";
   }
@@ -1369,6 +1369,205 @@ struct PlanInput {
   const std::string& ev74_obstacle;
 };
 
+#if defined(SIMANEAT_WITH_DATAFLOW_SOC_KERNELS)
+
+// A kernel stage of several invocations (`recipe.members`, each with its recorded request) behind
+// the MLA stage, at the route's end, as one route stage; "" or the fact about it that this backend
+// does not carry. Each invocation is a canonical transform of one input and one output, independent
+// of the others: its input a view of the MLA's one output buffer at the offset the manifest gives
+// (where the stage's input buffer begins in the MLA's, the tensor in that, the kernel's port in the
+// tensor), its output one of the stage's published tensors. The operator's input port is the MLA's
+// buffer as bytes; its output port is the published tensors one behind the other in their logical
+// order, each at a multiple of kSlotAlignment (DataflowModelRoute.h).
+std::string plan_invocations(const si::StageStaticSpec& stage, bool first, bool last,
+                             DataflowModelRoute& route) {
+  const si::KernelStageRecipe& recipe = *stage.native_kernel;
+  const std::size_t n = recipe.members.size();
+  const std::string runs = "it runs " + std::to_string(n) + " kernel invocations per frame";
+  if (first || route.stages.empty() ||
+      !std::holds_alternative<DataflowModelStage::Mla>(route.stages.back().kind)) {
+    return runs + " in front of the MLA stage (a stage of several invocations runs behind it)";
+  }
+  if (!last) {
+    return runs + " and is not the route's last stage";
+  }
+  if (recipe.target != client::Hardware::A65) {
+    return runs + " on the EV74 (a stage of several invocations runs on the A65)";
+  }
+  if (recipe.requests.size() != n) {
+    return "it has no recorded kernel request for every invocation (not a canonical transform)";
+  }
+  if (!recipe.resolver_factories.empty() || !recipe.constant_data.empty() ||
+      !recipe.private_buffers.empty() || !recipe.private_outputs.empty()) {
+    return runs + " with per-frame variants, constants or private buffers; only independent "
+                  "invocations from the stage's inputs to its outputs are carried";
+  }
+  const DataflowModelStage& mla = route.stages.back();
+  const std::uint64_t buffer = mla.output_bytes;
+  const std::size_t outputs = stage.logical_outputs.size();
+  if (outputs != n) {
+    return runs + " and publishes " + std::to_string(outputs) +
+           " tensors: each invocation writes one published tensor";
+  }
+  // The published tensors' places in the output buffer, in their logical order.
+  std::vector<std::size_t> placed(outputs, 0U);
+  std::size_t output_bytes = 0;
+  std::vector<std::size_t> writer(outputs, n); // which invocation writes each published tensor
+  std::vector<const client::KernelInspection*> contracts(n, nullptr);
+  std::vector<client::Result<client::KernelInspection>> inspected;
+  inspected.reserve(n);
+  for (std::size_t m = 0; m < n; ++m) {
+    const client::TensorStageMember& member = recipe.members[m];
+    const si::KernelStageRecipe::Request& request = recipe.requests[m];
+    const std::string which = "invocation " + std::to_string(m) + " of " + std::to_string(n);
+    if (member.inputs.size() != 1U || member.outputs.size() != 1U || request.inputs.size() != 1U ||
+        request.outputs.size() != 1U) {
+      return which + " has " + std::to_string(member.inputs.size()) + " inputs and " +
+             std::to_string(member.outputs.size()) +
+             " outputs; a stage of several invocations runs kernels of one input and one output";
+    }
+    if (member.inputs.front().source != client::TensorStagePortSource::Input ||
+        member.outputs.front().source != client::TensorStagePortSource::Output ||
+        !member.dependencies.empty() || member.resolve_factory) {
+      return which + " reads another invocation's output (or a constant, or per-frame variants); "
+                     "only independent invocations from the stage's inputs to its outputs are "
+                     "carried";
+    }
+    const std::size_t t_out = member.outputs.front().tensor;
+    if (t_out >= outputs || writer[t_out] != n || member.outputs.front().byte_offset != 0U) {
+      return which + " writes inside a shared buffer or a tensor another invocation writes";
+    }
+    writer[t_out] = m;
+    std::string unsupported;
+    inspected.push_back(client::inspect_kernel(member.executable));
+    contracts[m] = plain_contract(inspected.back(), 1U, 1U, unsupported);
+    if (!contracts[m]) {
+      return which + ": " + unsupported;
+    }
+    if (!dtype_of(request.inputs.front().dtype) || !dtype_of(request.outputs.front().dtype)) {
+      return which + ": a tensor's dtype has no Core dtype";
+    }
+  }
+  for (std::size_t t = 0; t < outputs; ++t) {
+    const si::LogicalTensorStaticSpec& out = stage.logical_outputs[t];
+    const std::size_t m = writer[t];
+    const std::uint64_t kernel_bytes = contracts[m]->output_requirements().front().storage_bytes;
+    const std::optional<TensorDType> published = dtype_of(out.dtype);
+    if (!published || *published != *dtype_of(recipe.requests[m].outputs.front().dtype)) {
+      return "the published tensor " + std::to_string(t) + " (" + out.logical_name +
+             ") has the dtype '" + out.dtype + "', not its invocation's";
+    }
+    if (out.byte_offset < 0 || out.size_bytes == 0U || out.shape.empty() ||
+        static_cast<std::uint64_t>(out.byte_offset) > kernel_bytes ||
+        out.size_bytes > kernel_bytes - static_cast<std::uint64_t>(out.byte_offset)) {
+      return "the published tensor " + std::to_string(t) + " (" + out.logical_name +
+             ") does not lie in its invocation's output";
+    }
+    placed[t] = output_bytes;
+    output_bytes = aligned(output_bytes + static_cast<std::size_t>(kernel_bytes));
+  }
+  DataflowModelStage planned;
+  planned.key = stage_key_of(stage);
+  planned.input_bytes = buffer;
+  planned.output_bytes = output_bytes;
+  DataflowModelStage::Kernel& kernel = planned.kind.emplace<DataflowModelStage::Kernel>();
+  kernel.ev74 = recipe.target != client::Hardware::A65;
+  kernel.operation = recipe.requests.front().operation;
+  kernel.input = recipe.requests.front().inputs.front();
+  kernel.output = recipe.requests.front().outputs.front();
+  kernel.parameters = recipe.requests.front().parameters;
+  for (std::size_t m = 0; m < n; ++m) {
+    const client::TensorStageMember& member = recipe.members[m];
+    const si::KernelStageRecipe::Request& request = recipe.requests[m];
+    const client::TensorRequirements& needs = contracts[m]->input_requirements().front();
+    const std::string which = "invocation " + std::to_string(m) + " of " + std::to_string(n);
+    // Where its input lies in the MLA's buffer: its carrier's place there, the tensor's in the
+    // carrier, the kernel's port in the tensor.
+    const std::size_t t_in = member.inputs.front().tensor;
+    if (t_in >= stage.logical_inputs.size()) {
+      return which + " reads an input tensor the stage does not have";
+    }
+    const si::LogicalInputStaticSpec& tensor = stage.logical_inputs[t_in];
+    std::int64_t at = 0;
+    if (!stage.physical_inputs.empty()) {
+      if (tensor.physical_index < 0 ||
+          static_cast<std::size_t>(tensor.physical_index) >= stage.physical_inputs.size()) {
+        return which + " reads an input buffer the stage does not have";
+      }
+      const si::PhysicalBufferStaticSpec& carrier =
+          stage.physical_inputs[static_cast<std::size_t>(tensor.physical_index)];
+      if (carrier.source_physical_index > 0) {
+        return which + " reads output buffer " + std::to_string(carrier.source_physical_index) +
+               " of the MLA stage '" + mla.key + "', which writes one output buffer";
+      }
+      at = carrier.source_byte_offset;
+    }
+    at = at < 0 || tensor.byte_offset < 0 ? -1 : at + tensor.byte_offset;
+    const std::uint64_t offset =
+        at < 0 ? buffer + 1U : static_cast<std::uint64_t>(at) + member.inputs.front().byte_offset;
+    const std::uint64_t bytes = needs.storage_bytes;
+    if (bytes == 0U || offset > buffer || bytes > buffer - offset) {
+      return which + "'s input tensor of " + std::to_string(bytes) + " bytes at offset " +
+             (at < 0 ? std::string("(negative)") : std::to_string(offset)) +
+             " does not lie in the output buffer of " + std::to_string(buffer) +
+             " bytes that the MLA stage '" + mla.key + "' writes";
+    }
+    if (needs.alignment_bytes == 0U || kSlotAlignment % needs.alignment_bytes != 0U ||
+        offset % needs.alignment_bytes != 0U) {
+      return which + "'s input tensor asks for an alignment of " +
+             std::to_string(needs.alignment_bytes) + " bytes, which a view at offset " +
+             std::to_string(offset) + " of the MLA's output buffer does not have";
+    }
+    const client::TensorRequirements& wants = contracts[m]->output_requirements().front();
+    const std::size_t out_at = placed[member.outputs.front().tensor];
+    if (wants.alignment_bytes == 0U || kSlotAlignment % wants.alignment_bytes != 0U) {
+      return which + "'s output tensor asks for an alignment of " +
+             std::to_string(wants.alignment_bytes) +
+             " bytes, which a view of a buffer of bytes does not have";
+    }
+    kernel.packed_inputs.push_back({request.inputs.front(), static_cast<std::size_t>(offset),
+                                    static_cast<std::size_t>(bytes)});
+    kernel.packed_outputs.push_back(
+        {request.outputs.front(), out_at, static_cast<std::size_t>(wants.storage_bytes)});
+    if (m > 0U) {
+      kernel.more.push_back({request.operation, request.parameters});
+    }
+  }
+  // The published tensors: GStreamer's tensor-set of the stage, in logical order, each a view of
+  // the one pulled message at its place there; the generic caps, no format.
+  for (std::size_t t = 0; t < outputs; ++t) {
+    const si::LogicalTensorStaticSpec& out = stage.logical_outputs[t];
+    DataflowPulledTensor& pulled = t == 0U ? route.output : route.output.more.emplace_back();
+    describe_pulled(stage, out, *dtype_of(out.dtype), pulled);
+    pulled.byte_offset = static_cast<std::int64_t>(placed[t]) + out.byte_offset;
+    pulled.route.physical_byte_offset = pulled.byte_offset;
+    if (t > 0U) {
+      pulled.preprocess = route.output.preprocess;
+      pulled.frame_semantics = route.output.frame_semantics;
+      pulled.frames = route.output.frames;
+    }
+  }
+  route.output.format.clear();
+  // TensorStagePublication::output_name (finalize_processcvu_publication).
+  route.output.sample_label = stage.processcvu.primary_output_name.empty()
+                                  ? route.output.stage_key
+                                  : stage.processcvu.primary_output_name;
+  route.text += " -> kernel stage " + planned.key + " (" + std::to_string(n) + " invocations of " +
+                kernel.operation + " on the " + target_text(recipe.target) +
+                "): " + std::to_string(n) + " views of the MLA's output buffer of " +
+                std::to_string(buffer) + " -> " + std::to_string(n) + " outputs in one buffer of " +
+                std::to_string(output_bytes) + " bytes";
+  for (std::size_t t = 0; t < outputs; ++t) {
+    const si::LogicalTensorStaticSpec& out = stage.logical_outputs[t];
+    route.text += (t == 0U ? ": " : "; ") + out.dtype + " " + dims_text(out.shape) + " " +
+                  std::to_string(out.size_bytes) + " bytes at " + std::to_string(placed[t]);
+  }
+  route.stages.push_back(std::move(planned));
+  return {};
+}
+
+#endif // SIMANEAT_WITH_DATAFLOW_SOC_KERNELS
+
 // One kernel stage of the manifest (its checked recipe, as prepare_kernel_stage_recipes left it)
 // as a route stage; "" or the fact about it that this backend does not carry. `board` is set
 // when that fact is the board's: the stage is placed on the EV74 and the EV74 does not run the
@@ -1408,9 +1607,11 @@ std::string plan_kernel_stage(const si::StageStaticSpec& stage, bool first, bool
   if (recipe.boxdecode_program) {
     return plan_boxdecode_stage(stage, first, last, route);
   }
-  if (recipe.members.size() != 1U) {
-    return "it runs " + std::to_string(recipe.members.size()) +
-           " kernel invocations per frame (a batched model or several tensors)";
+  if (recipe.members.size() > 1U) {
+    return plan_invocations(stage, first, last, route);
+  }
+  if (recipe.members.empty()) {
+    return "it runs no kernel invocation";
   }
   if (recipe.requests.size() != recipe.members.size()) {
     return "it has no recorded kernel request (not a canonical transform)";
@@ -2105,6 +2306,9 @@ struct LoadedRoute {
   std::vector<std::shared_ptr<df::soc::MlaModel>> models;
 #if defined(SIMANEAT_WITH_DATAFLOW_SOC_KERNELS)
   std::vector<std::shared_ptr<df::soc::Kernel>> kernels;
+  // A kernel stage of several invocations: each one's kernel, in order (kernels[i] is the first);
+  // empty for any other stage.
+  std::vector<std::vector<std::shared_ptr<df::soc::Kernel>>> invocations;
 #endif
 };
 
@@ -2226,6 +2430,50 @@ bool same_bytes(std::span<const df::PortSpec> made, std::uint64_t bytes,
     same = df::slot_bytes(made[i]) == views[i].bytes;
   }
   return same;
+}
+
+// The soc::Kernel of invocation `i` of a kernel stage of several (Kernel::more): its request, its
+// tensors packed_inputs[i] and packed_outputs[i]. Throws NeatError as make_kernel does.
+std::shared_ptr<df::soc::Kernel> make_invocation(const DataflowModelStage& stage, std::size_t i,
+                                                 const char* where) {
+  const DataflowModelStage::Kernel& request = std::get<DataflowModelStage::Kernel>(stage.kind);
+  const std::string& operation = i == 0U ? request.operation : request.more[i - 1U].operation;
+  const std::vector<client::Parameter>& given =
+      i == 0U ? request.parameters : request.more[i - 1U].parameters;
+  const std::string name = "kernel stage " + stage.key + " (invocation " + std::to_string(i) +
+                           " of " + std::to_string(request.more.size() + 1U) + ", " + operation +
+                           ")";
+  const std::optional<df::TensorSpec> input = runtime_tensor(request.packed_inputs[i].tensor);
+  const std::optional<df::TensorSpec> output = runtime_tensor(request.packed_outputs[i].tensor);
+  if (!input || !output) {
+    pipeline_internal::error_util::throw_session_error(
+        error_codes::kPipelineShape,
+        std::string(where) + ": " + name +
+            " has a tensor the Dataflow runtime does not describe (Dataflow backend)");
+  }
+  std::vector<df::soc::KernelParameter> parameters;
+  for (const client::Parameter& parameter : given) {
+    parameters.push_back(runtime_parameter(parameter));
+  }
+  df::Result<std::shared_ptr<df::soc::Kernel>> made = df::soc::Kernel::make(
+      operation, request.ev74 ? df::soc::Kernel::Target::Ev74 : df::soc::Kernel::Target::A65,
+      {&*input, 1}, {&*output, 1}, parameters);
+  if (const df::Error* error = df::failure(made)) {
+    pipeline_internal::throw_dataflow_error(*error, where, name,
+                                            pipeline_internal::DataflowErrorSite::Build);
+  }
+  std::shared_ptr<df::soc::Kernel> kernel =
+      std::get<std::shared_ptr<df::soc::Kernel>>(std::move(made));
+  if (df::slot_bytes(kernel->inputs().front()) != request.packed_inputs[i].bytes ||
+      df::slot_bytes(kernel->outputs().front()) != request.packed_outputs[i].bytes) {
+    pipeline_internal::error_util::throw_session_error(
+        error_codes::kPipelineShape,
+        std::string(where) + ": " + name + " does not have the " +
+            std::to_string(request.packed_inputs[i].bytes) + " and " +
+            std::to_string(request.packed_outputs[i].bytes) +
+            " bytes of the stage Core lowered for GStreamer (Dataflow backend)");
+  }
+  return kernel;
 }
 
 // The soc::Kernel of a kernel stage. Throws NeatError when the Kernels package refuses the
@@ -2729,6 +2977,7 @@ std::shared_ptr<void> load_dataflow_model_route(const DataflowModelRoute& route,
   loaded->models.resize(route.stages.size());
 #if defined(SIMANEAT_WITH_DATAFLOW_SOC_KERNELS)
   loaded->kernels.resize(route.stages.size());
+  loaded->invocations.resize(route.stages.size());
   std::shared_ptr<df::soc::Kernel> decode; // BoxDecode's: the kernel stage in front of the wire
 #endif
   for (std::size_t i = 0; i < route.stages.size(); ++i) {
@@ -2737,7 +2986,15 @@ std::shared_ptr<void> load_dataflow_model_route(const DataflowModelRoute& route,
       loaded->models[i] = load_model(stage, where);
     } else if (std::holds_alternative<DataflowModelStage::Kernel>(stage.kind)) {
 #if defined(SIMANEAT_WITH_DATAFLOW_SOC_KERNELS)
-      loaded->kernels[i] = make_kernel(stage, where, pipeline_internal::DataflowErrorSite::Build);
+      const DataflowModelStage::Kernel& request = std::get<DataflowModelStage::Kernel>(stage.kind);
+      if (request.more.empty()) {
+        loaded->kernels[i] = make_kernel(stage, where, pipeline_internal::DataflowErrorSite::Build);
+      } else {
+        for (std::size_t k = 0; k <= request.more.size(); ++k) {
+          loaded->invocations[i].push_back(make_invocation(stage, k, where));
+        }
+        loaded->kernels[i] = loaded->invocations[i].front();
+      }
 #else
       pipeline_internal::error_util::throw_session_error(
           error_codes::kPipelineShape, std::string(where) +
@@ -2862,7 +3119,12 @@ std::vector<std::uint32_t> add_dataflow_model_ops(df::Net& net, const DataflowMo
       };
     }
     carried = produced;
-    operators.push_back(net.add<df::soc::KernelOp>(stage.key, kernel, std::move(options)).index);
+    // A stage of several invocations: one operator runs each one's kernel per message, in order.
+    operators.push_back(
+        request.more.empty()
+            ? net.add<df::soc::KernelOp>(stage.key, kernel, std::move(options)).index
+            : net.add<df::soc::KernelOp>(stage.key, loaded->invocations[i], std::move(options))
+                  .index);
 #endif
   }
   output = carried;

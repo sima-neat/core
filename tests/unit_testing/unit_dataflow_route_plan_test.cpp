@@ -19,7 +19,9 @@
 // stage count, buffers handed on), `mla` (the MLA stage), `frames` (what the build says of the
 // frames: seed, declaration), `image` (the image preproc stage), `boxdecode`, `kernel` (a
 // canonical transform), `padding` (a kernel stage's tensor in an MLA buffer that is longer than
-// it: the routes that plan, and each decline of a tensor that is not such a view). Each
+// it: the routes that plan, and each decline of a tensor that is not such a view), `invocations`
+// (the YOLOv8 package with BoxDecode off: a post stage of six dequantizations behind the MLA on
+// the A65, and its decline on the EV74; each decline of a stage of several invocations). Each
 // decline's text is checked for the words that say what is not carried.
 
 #include "model/Model.h"
@@ -325,10 +327,15 @@ void mla(const Yolo& y) {
   declines(mla_stage([](si::StageStaticSpec& s) { s.logical_outputs[1].logical_index = 7; }),
            "is not published in the stage's logical order", "heads out of order");
   {
-    // Six heads read by a stage other than BoxDecode.
+    // Six heads read by a kernel stage that is not BoxDecode's program: the stage is planned as
+    // any kernel stage, which runs canonical transforms of one input and one output only (the
+    // decode is one invocation of six inputs, or several invocations without recorded requests).
     Ask a = y.full;
-    recipe_of(a.manifest, 2).boxdecode_program.reset();
-    declines(a, "behind an MLA stage of several tensors only BoxDecode runs",
+    si::KernelStageRecipe& decode = recipe_of(a.manifest, 2);
+    decode.boxdecode_program.reset();
+    declines(a,
+             decode.members.size() > 1U ? "not a canonical transform"
+                                        : "a kernel of several inputs or outputs",
              "six heads read by another kernel");
   }
 }
@@ -702,6 +709,72 @@ void kernel(const Yolo& y, const Ask* resnet) {
   }
 }
 
+// A post stage of several invocations: YOLOv8 with BoxDecode off, its tensors in and out (the
+// model package's default post stage: one dequantization per head of the MLA's buffer).
+struct Invocations {
+  Ask a65, ev74;
+};
+
+void invocations(const Invocations& v) {
+  const si::StageStaticSpec& post = v.a65.manifest.stages.at(2);
+  const si::KernelStageRecipe& recipe = *post.native_kernel;
+  const std::size_t n = recipe.members.size();
+  check(n == 6U && post.logical_outputs.size() == n,
+        "YOLOv8 without BoxDecode: a post stage of six invocations, six published tensors");
+  accepts(v.a65, "YOLOv8 without BoxDecode: six dequantizations on the A65 behind the MLA");
+  declines(v.ev74, "kernel invocations per frame on the EV74",
+           "YOLOv8 without BoxDecode: six dequantizations on the EV74 behind the MLA");
+  const auto change =
+      [&v](const std::function<void(si::StageStaticSpec&, si::KernelStageRecipe&)>& edit) {
+        Ask a = v.a65;
+        edit(a.manifest.stages[2], recipe_of(a.manifest, 2));
+        return a;
+      };
+  declines(change([](si::StageStaticSpec&, si::KernelStageRecipe& r) {
+             r.members[3].dependencies.push_back(1);
+           }),
+           "reads another invocation's output", "an invocation that depends on another");
+  declines(change([](si::StageStaticSpec&, si::KernelStageRecipe& r) {
+             r.members[2].inputs[0].source = client::TensorStagePortSource::Output;
+           }),
+           "reads another invocation's output", "an invocation reading the stage's output");
+  declines(change([](si::StageStaticSpec&, si::KernelStageRecipe& r) {
+             r.members[1].inputs.push_back(r.members[1].inputs.front());
+           }),
+           "runs kernels of one input and one output", "an invocation of two inputs");
+  declines(change([](si::StageStaticSpec&, si::KernelStageRecipe& r) {
+             r.members[4].outputs[0].tensor = r.members[3].outputs[0].tensor;
+           }),
+           "a tensor another invocation writes", "two invocations writing one tensor");
+  declines(change([](si::StageStaticSpec&, si::KernelStageRecipe& r) { r.requests.pop_back(); }),
+           "no recorded kernel request for every invocation", "a request missing");
+  declines(change([](si::StageStaticSpec&, si::KernelStageRecipe& r) {
+             r.private_buffers.push_back(si::PhysicalBufferStaticSpec{});
+           }),
+           "per-frame variants, constants or private buffers", "a private buffer");
+  declines(
+      change([](si::StageStaticSpec& s, si::KernelStageRecipe&) { s.logical_outputs.pop_back(); }),
+      "each invocation writes one published tensor", "five published tensors for six");
+  declines(change([](si::StageStaticSpec& s, si::KernelStageRecipe&) {
+             s.physical_inputs[3].source_byte_offset = 1 << 30;
+           }),
+           "does not lie in the output buffer", "a head outside the MLA's buffer");
+  declines(change([](si::StageStaticSpec& s, si::KernelStageRecipe&) {
+             s.physical_inputs[1].source_physical_index = 1;
+           }),
+           "reads output buffer 1 of the MLA stage", "a head in a second MLA buffer");
+  declines(change([](si::StageStaticSpec& s, si::KernelStageRecipe&) {
+             const std::string& was = s.logical_outputs[2].dtype;
+             s.logical_outputs[2].dtype = was == "int8" || was == "INT8" ? "float32" : "int8";
+           }),
+           "not its invocation's", "a published dtype other than the kernel's");
+  {
+    Ask a = v.a65;
+    a.manifest = only(v.a65.manifest, {2});
+    declines(a, "in front of the MLA stage", "a stage of several invocations first");
+  }
+}
+
 // The manifests of a model whose MLA buffers are longer than the tensors beside them.
 struct Padded {
   Ask full, pre, inf, pre_inf, inf_post;
@@ -850,6 +923,24 @@ int main(int argc, char** argv) {
               "the canonical-transform model's manifest has three stages");
     }
     const Ask* const r = resnet ? &*resnet : nullptr;
+    {
+      // The same package with BoxDecode off and its tensors in and out: a post stage of six
+      // invocations, placed on the A65 and on the EV74.
+      Model::Options tensor;
+      tensor.preprocess.kind = InputKind::Tensor;
+      const Model model(yolo, tensor);
+      Invocations v;
+      GraphOptions post;
+      for (Ask* ask : {&v.a65, &v.ev74}) {
+        post.processcvu.post_run_target = ask == &v.a65 ? "A65" : "EV74";
+        ask->declared = model.input_appsrc_options(true);
+        ask->manifest = manifest_of(model, ask->declared, true, true, true, post);
+      }
+      require(v.a65.manifest.stages.size() == 3U && v.a65.manifest.stages[2].native_kernel &&
+                  v.ev74.manifest.stages.size() == 3U,
+              "YOLOv8 without BoxDecode: three stages, a kernel stage behind the MLA");
+      row("invocations", [&] { invocations(v); });
+    }
     row("accepted", [&] { accepted(y, r); });
     row("route", [&] { route_shape(y, r); });
     row("mla", [&] { mla(y); });
