@@ -34,7 +34,9 @@
 //                    the test. Both backends against it, for every image.
 //   partial          the two shorter routes: preprocess + inference of an MLA-only terminal
 //                    (kernel -> MLA) and inference + postprocess of a model without preprocess
-//                    (MLA -> kernel): both backends, the same bytes.
+//                    (MLA -> kernel): both backends, the same bytes. The second is not run for
+//                    a model whose MLA input buffer is longer than its INT8 tensor (a buffer
+//                    rounded up to 16 bytes): neither backend takes that tensor there.
 //   input_contract   which tensors the route takes: TensorMemory::EV74 and MLA tensors, with and
 //                    without the batch axis, seeded and not; a CPU tensor is refused with
 //                    GStreamer's guard message; a tensor of another dtype or size is refused.
@@ -384,6 +386,17 @@ void differential(const Route& route, sima_test::Reference& ref) {
   }
 }
 
+// ---- the MLA's own input ----------------------------------------------------------------------
+
+// Whether the MLA's input buffer is longer than the model's INT8 tensor of `elements` bytes: the
+// model compiler makes the buffer a multiple of 16 bytes. Then the model's tensor is not what a
+// route whose first stage is the MLA takes, on either backend (GStreamer's inference-only ingress
+// refuses it by its count of bytes and builds no such route for the buffer either), and the rows
+// that push it there are not run.
+bool padded_mla_input(std::size_t elements) {
+  return elements % 16U != 0U;
+}
+
 // ---- reference ---------------------------------------------------------------------------------
 
 struct Dequant {
@@ -429,6 +442,11 @@ void reference(const Route& route, const std::string& archive, const Dequant& de
       route.shape[3] != pre.slice_shape[2]) {
     std::cout << "[reference] not computed for this model (its pre stage is not a whole-tile "
                  "quantize + tessellate)\n";
+    return;
+  }
+  if (padded_mla_input(route.elements)) {
+    std::cout << "[reference] not computed for this model (its MLA input buffer is longer than "
+                 "its tensor: the MLA alone is no route for the tensor)\n";
     return;
   }
   // The reference: the test's own quantization and tessellation, the MLA alone, the test's own
@@ -521,7 +539,11 @@ void partial(const Route& route, const std::string& archive, sima_test::Referenc
     compare(ref, run_frames(graph(), inputs, 16), "partial kernel -> MLA");
   }
   // inference + postprocess of a model without preprocess: MLA -> kernel. Its input is the MLA's.
-  {
+  if (padded_mla_input(route.elements)) {
+    std::cout << "[partial] MLA -> kernel: not run for this model (its MLA input buffer is longer "
+                 "than its tensor of "
+              << route.elements << " bytes, which neither backend takes in front of the MLA)\n";
+  } else {
     Model::Options o = Route::options();
     o.preprocess.enable = AutoFlag::Off;
     const Model model(archive, o);

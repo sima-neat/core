@@ -29,6 +29,13 @@
 //   owned            OutputMemory::Owned: a CPU copy with the same bytes.
 //   alloc            Run::alloc lends a slot of the input's device pool; what the CPU writes
 //                    there is what the MLA reads.
+//   padding          for a model whose MLA input buffer is longer than its INT8 tensor (the model
+//                    compiler rounds the buffer up to 16 bytes; Inception-v3's 299x299x3): the
+//                    bytes behind the tensor do not reach the outputs. The buffer is pushed
+//                    whole under a plain Input, the same values in front of paddings of zeros, of
+//                    ones and of noise: every output byte is the same. The model's tensor alone
+//                    is refused. (A model whose buffer is its tensor has no padding: the row
+//                    says so.)
 //   declined         what stays off this backend: OutputOptions::drop behind a model, and the
 //                    model's preprocessing in front of its inference (explicit Dataflow fails at
 //                    the build; nothing runs).
@@ -537,6 +544,79 @@ void alloc(const Route& route) {
   run.close();
 }
 
+// ---- padding -----------------------------------------------------------------------------------
+
+// The model compiler makes the MLA's input buffer a multiple of 16 bytes, so it may be up to 15
+// bytes longer than the model's tensor. What the bytes behind the tensor hold must not reach the
+// outputs (in front of a kernel stage they are the zeros its port's pool wrote once). Here the
+// MLA's buffer is the route's input: a plain Input of INT8 tensors takes a tensor of the
+// buffer's bytes, and the same values are pushed in front of paddings of zeros, of ones and of
+// noise. Every output byte is the same. The model's tensor alone, under the model's own Input
+// options, is not the route's input (GStreamer's inference-only ingress refuses it too, and
+// builds no inference-only route for such a model's buffer either: this row has no comparison
+// row on GStreamer).
+void padding(const Route& route) {
+  const std::size_t buffer = (route.bytes + 15U) / 16U * 16U;
+  if (buffer == route.bytes) {
+    std::cout << "[padding] the MLA's input buffer is the model's tensor (" << route.bytes
+              << " bytes, a multiple of 16): no padding to vary\n";
+    return;
+  }
+  const std::size_t tail = buffer - route.bytes;
+  // The model's tensor alone: refused at the build (its preflight pushes the seed), with the
+  // buffer's bytes in the text.
+  {
+    const TensorList seed{route.tensor(0)};
+    const std::string outcome = push_outcome(route, route.input(), route.tensor(1), &seed);
+    require(outcome != "accepted", "padding: the model's tensor alone is refused");
+    require_contains(outcome, "in a buffer of " + std::to_string(buffer) + " bytes",
+                     "padding: the refusal says what the buffer is: " + outcome);
+    std::cout << "[padding] the model's tensor alone: " << outcome << "\n";
+  }
+  InputOptions in;
+  in.payload_type = PayloadType::Tensor;
+  in.format = FormatTag::INT8;
+  in.dtype = TensorDType::Int8;
+  const auto whole = [&](unsigned p, int fill) {
+    std::vector<std::int8_t> bytes(buffer);
+    const std::vector<std::int8_t> values = pattern(route.bytes, p);
+    std::memcpy(bytes.data(), values.data(), route.bytes);
+    const std::vector<std::int8_t> noise = pattern(tail, 100U + p);
+    for (std::size_t i = 0; i < tail; ++i) {
+      bytes[route.bytes + i] = fill < 0 ? noise[i] : static_cast<std::int8_t>(fill);
+    }
+    return Tensor::from_vector(bytes, {static_cast<std::int64_t>(buffer)}, TensorMemory::MLA);
+  };
+  Graph g = route.graph(in);
+  Run run = g.build(TensorList{whole(0, 0x00)}, on());
+  std::size_t compared = 0;
+  std::vector<std::vector<std::uint8_t>> outputs;
+  for (unsigned p = 0; p < kPatterns; ++p) {
+    std::vector<std::uint8_t> zeros;
+    for (const int fill : {0x00, 0xFF, -1}) {
+      require(run.push({whole(p, fill)}), "padding: push");
+      std::vector<std::uint8_t> out = bytes_of(pull_ok(run, "padding").front());
+      if (fill == 0x00) {
+        zeros = std::move(out);
+      } else {
+        require(out == zeros, "padding: pattern " + std::to_string(p) + ", a padding of " +
+                                  (fill < 0 ? "noise" : "ones") +
+                                  ": the outputs differ from those in front of zeros");
+        ++compared;
+      }
+    }
+    outputs.push_back(std::move(zeros));
+  }
+  run.close();
+  for (unsigned p = 1; p < kPatterns; ++p) {
+    require(outputs[p] != outputs[0], "padding: the outputs of different inputs differ");
+  }
+  std::cout << "[padding] " << tail << " bytes of padding behind the tensor's " << route.bytes
+            << ": " << compared << " outputs in front of ones and of noise, each equal to the "
+            << "output of the same values in front of zeros (" << kPatterns << " patterns, "
+            << outputs[0].size() << " bytes each)\n";
+}
+
 void declined(const Route& route, const std::string& archive) {
   const TensorList seed{route.tensor(0)};
   // OutputOptions::drop behind a model.
@@ -632,6 +712,7 @@ int main(int argc, char** argv) {
     row("recreate", [&] { recreate(route); });
     row("owned", [&] { owned(route); });
     row("alloc", [&] { alloc(route); });
+    row("padding", [&] { padding(route); });
     row("declined", [&] { declined(route, archive); });
     if (only.empty() || only == "differential") {
       ref.finish();

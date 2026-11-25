@@ -142,6 +142,13 @@ std::size_t aligned(std::size_t bytes) {
 // (DataflowModelRoute.h, "The MLA's padding").
 constexpr std::uint64_t kMlaBufferGranule = 16;
 
+// Whether an MLA input buffer of `buffer` bytes is a tensor of `tensor` bytes with the MLA's
+// padding behind it: longer than the tensor, and the tensor's bytes rounded up to the granule.
+bool mla_pads(std::uint64_t tensor, std::uint64_t buffer) {
+  return tensor != 0U && tensor < buffer &&
+         (tensor + kMlaBufferGranule - 1U) / kMlaBufferGranule * kMlaBufferGranule == buffer;
+}
+
 // The axes of an image stage's frame tensor, [1, height, width, channels].
 constexpr std::size_t kHeightAxis = 1, kWidthAxis = 2;
 
@@ -525,6 +532,15 @@ std::string plan_mla_stage(const si::StageStaticSpec& stage, bool first,
     route.input_bytes = planned.input_bytes;
     route.input_dtype = *in_dtype;
     route.input_shape = in.shape;
+    // The application pushes the MLA's input buffer. Where that is the model's tensor and the
+    // MLA's padding, the binding's refusal of the model's tensor says so.
+    std::uint64_t tensor_bytes = static_cast<std::uint64_t>(dtype_size(*in_dtype));
+    for (const std::int64_t dim : in.shape) {
+      tensor_bytes = dim > 0 ? tensor_bytes * static_cast<std::uint64_t>(dim) : 0U;
+    }
+    if (!in.shape.empty() && mla_pads(tensor_bytes, planned.input_bytes)) {
+      route.input_padding = planned.input_bytes - tensor_bytes;
+    }
   }
   if (last) {
     describe_pulled(stage, out, *dtype_of(out.dtype), route.output);
@@ -550,7 +566,12 @@ std::string plan_mla_stage(const si::StageStaticSpec& stage, bool first,
   }
   route.text += std::string(route.text.empty() ? "" : " -> ") + "MLA stage " + planned.key +
                 " (depth " + std::to_string(model.depth) + "): input " + in.dtype + " " +
-                dims_text(in.shape) + " in " + std::to_string(planned.input_bytes) + " bytes, ";
+                dims_text(in.shape) + " in " + std::to_string(planned.input_bytes) + " bytes" +
+                (first && route.input_padding != 0U
+                     ? " (the last " + std::to_string(route.input_padding) +
+                           " the MLA's padding: the route's input is the whole buffer)"
+                     : std::string()) +
+                ", ";
   for (std::size_t i = 0; i < tensors; ++i) {
     const si::LogicalTensorStaticSpec& tensor = stage.logical_outputs[i];
     route.text += (i == 0U ? (tensors == 1U ? std::string("output ")
@@ -597,13 +618,6 @@ plain_contract(const client::Result<client::KernelInspection>& inspected, std::s
     return &contract;
   }
   return nullptr;
-}
-
-// Whether an MLA input buffer of `buffer` bytes is a tensor of `tensor` bytes with the MLA's
-// padding behind it: longer than the tensor, and the tensor's bytes rounded up to the granule.
-bool mla_pads(std::uint64_t tensor, std::uint64_t buffer) {
-  return tensor != 0U && tensor < buffer &&
-         (tensor + kMlaBufferGranule - 1U) / kMlaBufferGranule * kMlaBufferGranule == buffer;
 }
 
 // A kernel stage's one output tensor (`planned`, as its own port; `needs`: what the kernel asks
@@ -1777,11 +1791,22 @@ std::string bind_dataflow_model_input(const DataflowModelRoute& route,
   // front of an image preproc whose frames change size, the port's bound.
   const std::vector<std::int64_t>& want = route.frames ? route.frame_shape : route.input_shape;
   const std::string input = route.kernel_input ? "the model's input" : "the model's MLA input";
-  const std::string expected = input + " is " +
-                               (route.planar_input ? std::string("an NV12 frame in ")
-                                : route.frames     ? "a frame of up to " + dims_text(want) + " in "
-                                                   : dims_text(want) + " of ") +
-                               std::to_string(route.input_bytes) + " bytes";
+  // An MLA stage first, with a buffer longer than the model's tensor: the input is the buffer, and
+  // the refusal of the model's tensor says what the buffer is (GStreamer's inference-only ingress
+  // refuses that tensor by the same count of bytes).
+  const std::string expected =
+      input + " is " +
+      (route.planar_input ? std::string("an NV12 frame in ")
+       : route.frames     ? "a frame of up to " + dims_text(want) + " in "
+       : route.input_padding != 0U
+           ? dims_text(want) + " in a buffer of "
+           : dims_text(want) + " of ") +
+      std::to_string(route.input_bytes) + " bytes" +
+      (route.input_padding != 0U
+           ? " (the tensor's " + std::to_string(route.input_bytes - route.input_padding) +
+                 " and " + std::to_string(route.input_padding) +
+                 " of the MLA's padding)"
+           : std::string());
   const bool planes = binding.planes != DataflowInputBinding::Planes::None;
   if (binding.is_record() ||
       (planes && !(route.planar_input && binding.planes == DataflowInputBinding::Planes::Nv12))) {

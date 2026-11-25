@@ -31,7 +31,15 @@
 //         writes its tensor's bytes and no others. The padding is written once, with zeros, by
 //         the port's pool when the Session is made (the runtime writes every slot of a device
 //         pool with zeros before its first use), and by nobody afterwards: the MLA reads zeros
-//         there with every frame.
+//         there with every frame;
+//       - in front of the MLA, pushed by the application (the MLA stage first:
+//         DataflowModelRoute::input_padding): the route's input is the MLA's whole buffer, so
+//         the padding is the application's own bytes, which Core neither reads nor writes. The
+//         model's tensor alone is refused, as GStreamer's inference-only ingress refuses it
+//         (with a model's own Input options GStreamer builds no such route for a padded model).
+//     The model's outputs do not depend on those bytes: unit_dataflow_mla_route_test, row
+//     padding, pushes the same tensor in front of paddings of zeros, of ones and of noise and
+//     compares every output byte.
 //   - Model::preprocess() of a model whose pre stage is the image preproc (the Kernels package's
 //     "preproc", EV74 only: resize, colour, normalize, quantize and tessellate an RGB or BGR
 //     frame, or an NV12 one), alone or in front of the stages above. GStreamer runs it
@@ -238,6 +246,11 @@ struct DataflowModelRoute {
   std::uint64_t input_bytes = 0; ///< the first stage's input buffer
   TensorDType input_dtype = TensorDType::UInt8;
   std::vector<std::int64_t> input_shape; ///< the first stage's logical input
+  /// The first stage is the MLA and its input buffer (`input_bytes`) is longer than the model's
+  /// tensor (`input_shape`) by this many bytes, the MLA's padding (above). The input's port is
+  /// the buffer; the binding's refusal of a tensor of other bytes says what the buffer is.
+  /// 0: the buffer is the tensor.
+  std::uint64_t input_padding = 0;
   /// The first stage is a kernel: a tensor that differs from `input_shape` by leading unit axes
   /// only is pushed as `input_shape` (GStreamer takes both). On the A65 (`ev74_input` false) it
   /// reads its input through the CPU's address, so a pushed device tensor is wrapped with one.
