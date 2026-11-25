@@ -82,7 +82,7 @@ GitHub 저장소 설정을 구성합니다.
 
 ## 릴리스 흐름
 
-1. **Actions → Release → Run workflow**를 열어 릴리스 후보를 만듭니다. 예를 들어 0.7.0을 릴리스하려면 `release_line`을 `0.7`로, `tag`를 `0.7.0-rc1`로 설정하고, `main`을 `source_branch`로 그대로 둔 뒤 `prerelease`를 켜고 `latest`를 끕니다. 이 워크플로는 `release-0.7`을 만들거나 재사용하고, `v0.7.0-rc1` 태그를 지정한 뒤 프리릴리스 초안을 만듭니다.
+1. **Actions → Release → Run workflow**를 열어 릴리스 후보를 만듭니다. 예를 들어 0.7.0을 릴리스하려면 `release_line`을 `0.7`로, `tag`를 `0.7.0-rc1`로 설정하고, `main`을 `source_branch`로 그대로 둔 뒤 `prerelease`를 켜고 `latest`를 끕니다. 이 워크플로는 `release-0.7`을 만들거나 재사용하고, `v0.7.0-rc1` 태그를 지정한 뒤 프리릴리스 초안을 만듭니다. `release-0.7`이 이미 있으면(예: 0.7.1) `branch_exists_behavior`의 기본값이 `reuse`이므로 워크플로는 그 최신 커밋에 태그를 지정합니다. 첫 후보를 만들기 전에 풀 리퀘스트로 `main`을 `release-0.7`에 병합합니다.
 2. 릴리스가 아닌 PR 병합을 중단합니다.
 3. 후보를 검증합니다. 수정이 필요하면 수정 사항을 `release-0.7`에 반영한 뒤 `0.7.0-rc2`와 같은 다음 후보 태그로 워크플로를 다시 실행합니다.
 4. 후보가 검증을 통과하면 `release-0.7`이 여전히 그 후보를 가리키는지 확인합니다. 워크플로는 `release-0.7`의 최신 커밋에 태그를 지정하며 더 오래된 커밋에는 태그를 지정할 수 없습니다. `git fetch --tags origin` 후 `git rev-parse origin/release-0.7`이 `git rev-parse v0.7.0-rcN^{commit}`과 같은 커밋을 출력해야 합니다. 여기서 `rcN`은 검증을 통과한 후보입니다. 후보 이후에 변경이 들어왔다면 먼저 새 후보를 만듭니다. 그런 다음 `tag`를 `0.7.0`으로 설정하고 `prerelease`를 끄고 `latest`를 켠 상태로 워크플로를 실행합니다. 워크플로는 그 커밋에 `v0.7.0` 태그를 지정하고 최종 릴리스 초안을 만듭니다. 이 실행에서는 Target Release가 `core-0.7.0`인 모든 이슈가 Done이어야 하며, 그 후 해당 이슈의 Release Status를 `released`로 설정합니다. 후보 실행에서는 이 검사를 건너뜁니다.
