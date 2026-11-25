@@ -20,9 +20,9 @@
 // frames: seed, declaration), `image` (the image preproc stage), `boxdecode`, `kernel` (a
 // canonical transform), `padding` (a kernel stage's tensor in an MLA buffer that is longer than
 // it: the routes that plan, and each decline of a tensor that is not such a view), `invocations`
-// (the YOLOv8 package with BoxDecode off: a post stage of six dequantizations behind the MLA on
-// the A65, and its decline on the EV74; each decline of a stage of several invocations). Each
-// decline's text is checked for the words that say what is not carried.
+// (the YOLOv8 package with BoxDecode off: a post stage of six dequantizations behind the MLA, on
+// the A65 and on the EV74; each decline of a stage of several invocations). Each decline's text
+// is checked for the words that say what is not carried.
 
 #include "model/Model.h"
 #include "model/internal/ModelInternal.h"
@@ -722,8 +722,7 @@ void invocations(const Invocations& v) {
   check(n == 6U && post.logical_outputs.size() == n,
         "YOLOv8 without BoxDecode: a post stage of six invocations, six published tensors");
   accepts(v.a65, "YOLOv8 without BoxDecode: six dequantizations on the A65 behind the MLA");
-  declines(v.ev74, "kernel invocations per frame on the EV74",
-           "YOLOv8 without BoxDecode: six dequantizations on the EV74 behind the MLA");
+  accepts(v.ev74, "YOLOv8 without BoxDecode: six dequantizations on the EV74 behind the MLA");
   const auto change =
       [&v](const std::function<void(si::StageStaticSpec&, si::KernelStageRecipe&)>& edit) {
         Ask a = v.a65;
@@ -925,7 +924,7 @@ int main(int argc, char** argv) {
     const Ask* const r = resnet ? &*resnet : nullptr;
     {
       // The same package with BoxDecode off and its tensors in and out: a post stage of six
-      // invocations, placed on the A65 and on the EV74.
+      // invocations, on the A65 and on the EV74.
       Model::Options tensor;
       tensor.preprocess.kind = InputKind::Tensor;
       const Model model(yolo, tensor);

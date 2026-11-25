@@ -773,21 +773,11 @@
    "components": [
     {
      "id": "dfine_n__w16a16__backbone",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 2 'post_cast_0' (kernel cast on the EV74)",
-     "fact": "it runs 4 kernel invocations per frame on the EV74 (a stage of several invocations runs on the A65)",
+     "planner": "accepted",
      "kinds": [
       "preproc@EV74",
       "mla",
       "cast@EV74"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     },
     {
@@ -877,21 +867,11 @@
    "components": [
     {
      "id": "dfine_n__w8a8_mixed_w16a16__backbone",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 2 'post_cast_0' (kernel cast on the EV74)",
-     "fact": "it runs 4 kernel invocations per frame on the EV74 (a stage of several invocations runs on the A65)",
+     "planner": "accepted",
      "kinds": [
       "preproc@EV74",
       "mla",
       "cast@EV74"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     },
     {
@@ -967,21 +947,11 @@
    "components": [
     {
      "id": "dfine_n__w8a8_w16a16__backbone",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 2 'physical_cvu_cohort_1' (kernel dequant on the EV74)",
-     "fact": "it runs 4 kernel invocations per frame on the EV74 (a stage of several invocations runs on the A65)",
+     "planner": "accepted",
      "kinds": [
       "preproc@EV74",
       "mla",
       "dequant@EV74"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     },
     {
@@ -2073,21 +2043,11 @@
    "components": [
     {
      "id": "edgetam__w16a16_w8a16_w16a16_w8a8__image_encoder",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 2 'post_cast_0' (kernel cast on the EV74)",
-     "fact": "it runs 3 kernel invocations per frame on the EV74 (a stage of several invocations runs on the A65)",
+     "planner": "accepted",
      "kinds": [
       "preproc@EV74",
       "mla",
       "cast@EV74"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     },
     {
@@ -2241,21 +2201,11 @@
    "components": [
     {
      "id": "edgetam__w8a8_w8a16_w16a16_w8a8__image_encoder",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 2 'physical_cvu_cohort_1' (kernel dequant on the EV74)",
-     "fact": "it runs 3 kernel invocations per frame on the EV74 (a stage of several invocations runs on the A65)",
+     "planner": "accepted",
      "kinds": [
       "preproc@EV74",
       "mla",
       "dequant@EV74"
-     ],
-     "obstacles": [
-      "MULTI-TENSOR-POST"
-     ],
-     "phase": 4,
-     "owners": [
-      "stages"
      ]
     },
     {

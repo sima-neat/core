@@ -45,7 +45,7 @@
 //     canonical transform per tensor of the MLA's buffer (the six dequantizations of a YOLO model's
 //     heads when its BoxDecode is off), each of one input and one output, independent of the
 //     others. It is one operator that runs every invocation per message (soc::KernelOp of several
-//     kernels), on the A65 (placed on the EV74, the stage is not carried): its input port is the
+//     kernels), on the A65 or on the EV74 as the Graph places the stage: its input port is the
 //     MLA's output buffer as bytes, each invocation's input a view of it at the offset the manifest
 //     gives; its output port one buffer of the stage's published tensors in their logical order,
 //     each at a multiple of 64 bytes. A pull returns them as GStreamer's does, a TensorList of

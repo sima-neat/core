@@ -1391,9 +1391,6 @@ std::string plan_invocations(const si::StageStaticSpec& stage, bool first, bool 
   if (!last) {
     return runs + " and is not the route's last stage";
   }
-  if (recipe.target != client::Hardware::A65) {
-    return runs + " on the EV74 (a stage of several invocations runs on the A65)";
-  }
   if (recipe.requests.size() != n) {
     return "it has no recorded kernel request for every invocation (not a canonical transform)";
   }
