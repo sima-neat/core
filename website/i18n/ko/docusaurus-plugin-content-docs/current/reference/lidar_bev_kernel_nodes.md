@@ -194,6 +194,12 @@ INT8 Scatter 입력의 채널별 양자화는 `[1,M,1,C]` 같은 모양을 포�
 `SimaBEVPool`은 프레임 사이에 상태를 유지하지 않습니다. 실행할 때마다 계획의 헤더와
 내용을 검사하고, 자신의 형태와 맞지 않는 계획을 거부합니다.
 
+`Graph::build`는 입력 텐서에 포함된 계획의 헤더도 읽습니다. 헤더에 기록된 형식이
+`plan_format`과 다르면 빌드가 `misconfig.pipeline_shape`로 실패하며 두 형식을 모두
+알려 줍니다. 일치하는 `SimaBEVPoolPlanOptions.format`으로 계획을 만들거나,
+`plan_format`을 계획의 형식에 맞추십시오. 빌드 이후에야 도착하는 계획이나 상위
+`SimaBEVPoolPlan` 단계에서 오는 계획은 커널이 실행될 때만 검사됩니다.
+
 ## 대상별 제한
 
 EV74는 A65 계약에 다음 제한을 추가합니다.
