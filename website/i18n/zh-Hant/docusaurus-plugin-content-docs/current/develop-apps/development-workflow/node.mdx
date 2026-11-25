@@ -83,7 +83,7 @@ graph.add(pyneat.groups.video_input(vopt))
 | 應用程式推送張量、圖片或樣本。 | `nodes::Input("name", options)` | `pyneat.nodes.input("name", options)` |
 | 應用程式提取完整的樣本。 | `nodes::Output("name", options)` | `pyneat.nodes.output("name", options)` |
 | 從檔案中讀取影格。 | `nodes::FileInput(...)`，再加上解碼節點，或者使用 `nodes::groups::VideoInputGroup(...)`。 | `pyneat.nodes.file_input(...)`，再加上解碼節點，或者使用 `pyneat.groups.video_input(...)`。 |
-| 將一張圖片讀取為來源。 | `nodes::StillImageInput(...)` | `pyneat.nodes.still_image_input(...)` |
+| 使用 `run_rtsp()` 串流靜態影像。 | `nodes::StillImageInput(...)` | `pyneat.nodes.still_image_input(...)` |
 | 讀取 MIPI/libcamera 相機 | `nodes::CameraInput(...)` | `pyneat.nodes.camera_input(...)` |
 | 讀取 USB（UVC）MJPEG 攝影機 | `nodes::UsbCameraInput(...)` | `pyneat.nodes.usb_camera_input(...)` |
 | 讀取 RTSP 串流。 | `nodes::RTSPInput(...)`、`nodes::groups::RtspEncodedInput(...)` 或 `nodes::groups::RtspDecodedInput(...)`。 | `pyneat.nodes.rtsp_input(...)`、`pyneat.groups.rtsp_encoded_input(...)` 或 `pyneat.groups.rtsp_decoded_input(...)` |
@@ -163,6 +163,7 @@ Core 會將明確的 `num_buffers` 值傳給解碼器，由解碼器套用硬體
 
 將 `decoder_tuning` 留空可保留外掛程式預設值。明確值（包括
 `default` 與 `auto`）會與 `memory_opt` 和緩衝區數量覆寫一起傳給外掛程式，讓解碼器套用調校優先順序。
+標準預設組態為 `auto`、`default`、`low-memory` 與 `throughput-low-latency`，也接受解碼器的別名，例如 `low_memory` 與 `throughput`。比對時忽略大小寫與前後空白；任何其他非空值都會使 `SimaDecode` 與 `RtspDecodedInput` 在建立時以 `misconfig.option_out_of_range` 拒絕。
 `throughput-low-latency` 會停用解碼影像重新排序，720p 以下使用命令深度一，
 更大影格使用深度二。只適用於沒有 B 影格的串流；一般串流請維持未設定調校。
 

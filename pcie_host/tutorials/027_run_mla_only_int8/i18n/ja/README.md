@@ -7,7 +7,7 @@
 | Category | PCIe Co-Processing |
 | Difficulty | Intermediate |
 | Estimated Read Time | 15分 |
-| Model | yolo26n-det-int8-b1（Model Zoo、直接のMLA入出力用にコンパイル） |
+| Model | yolo26n w8a8（Model Browser、直接のMLA入出力用にコンパイル） |
 | Labels | PCIe, MLA, INT8, quantization, tensor |
 
 ## Concept
@@ -45,13 +45,14 @@ q = clamp(round(x / scale) + zero_point, -128, 127)
 
 PCIeホストパッケージをインストールし、[チュートリアルの設定](/tutorials/before-you-run)で説明されているように、チュートリアルバンドルをダウンロードします。
 
-このチュートリアルは、MLAの入出力を直接扱うようにコンパイルされたModel ZooのYOLO26n INT8アーカイブを実行します。抽出したPCIeエクストラのルートにダウンロードします。
+このチュートリアルは、MLAの入出力を直接扱うようにコンパイルされたModel BrowserのYOLO26n `w8a8`パッケージを実行します。抽出したPCIeエクストラのルートにダウンロードし、MPKアーカイブを取り出します。
 
 ```bash
-sima-cli download https://docs.sima.ai/pkg_downloads/SDK2.1.3/models/modalix/yolo26-detection/yolo26n-det-int8-b1.tar.gz
+sima-cli models download --id yolo26n --variant w8a8
+unzip -p models/yolo26n/w8a8/yolo26n_w8a8_default.zip yolo26n_w8a8_mpk.tar.gz > yolo26n_w8a8_mpk.tar.gz
 ```
 
-その他のアーカイブは、Model SDKの`tessellate_parameters`で`enable_mla=True`を指定し、すべての入力に`HWC`のDRAMレイアウト、すべての出力に`HWC16`を指定してコンパイルされていれば条件を満たします。Model Zooの`yolo_v8s`ビルドのように代わりにCVUでテッセレーションを行うアーカイブは、`mla_only`を有効にすると拒否されます。
+その他のアーカイブは、Model SDKの`tessellate_parameters`で`enable_mla=True`を指定し、すべての入力に`HWC`のDRAMレイアウト、すべての出力に`HWC16`を指定してコンパイルされていれば条件を満たします。代わりにCVUでテッセレーションを行うアーカイブは、`mla_only`を有効にすると拒否されます。
 
 ```text
 mla_only does not support stage 'tessellate_quantize_0_MLA_0/...' (tess)
@@ -62,14 +63,14 @@ mla_only does not support stage 'tessellate_quantize_0_MLA_0/...' (tess)
 ```bash
 source ~/pyneatpcie/bin/activate
 python3 share/sima-pcie-host/tutorials/027_run_mla_only_int8/run_mla_only_int8.py \
-  --model yolo26n-det-int8-b1.tar.gz
+  --model yolo26n_w8a8_mpk.tar.gz
 ```
 
 **C++ (prebuilt):**
 
 ```bash
 ./lib/sima-pcie-host/tutorials/tutorial_027_run_mla_only_int8 \
-  --model yolo26n-det-int8-b1.tar.gz
+  --model yolo26n_w8a8_mpk.tar.gz
 ```
 
 **C++ (build from source):**
@@ -77,15 +78,15 @@ python3 share/sima-pcie-host/tutorials/027_run_mla_only_int8/run_mla_only_int8.p
 ```bash
 ./build.sh --target tutorial_027_run_mla_only_int8
 ./build/tutorials-standalone/tutorial_027_run_mla_only_int8 \
-  --model yolo26n-det-int8-b1.tar.gz
+  --model yolo26n_w8a8_mpk.tar.gz
 ```
 
 両方のバージョンがコントラクトと、すべてのヘッドでゼロの偏差を出力します。
 
 ```text
 MLA-only contract:
-  input images INT8 [640, 640, 3] scale=0.00390434 zero_point=-128
-  output bbox_0 INT8 [80, 80, 4] scale=0.0302856 zero_point=-117
+  input images INT8 [640, 640, 3] scale=0.00391965 zero_point=-128
+  output bbox_0 INT8 [80, 80, 4] scale=0.0331556 zero_point=-108
   ...
 Dequantized MLA-only outputs vs the default route (error in scale units):
   bbox_0 [80, 80, 4] max_err=0.0000

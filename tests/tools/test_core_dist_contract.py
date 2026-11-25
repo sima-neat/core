@@ -353,7 +353,8 @@ def test_actual_tutorial_install_rules_preserve_targets_without_build_internals(
         path = tutorials / relative; path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text('extern "C" int dependency(); int main() { return dependency(); }\n')
     for relative in ('cmake/NeatGuardedTests.cmake', 'tools/hardware_test_supervisor.py',
-                     'tutorials/build.sh', 'tutorials/run_with_modelzoo.sh'):
+                     'tutorials/build.sh', 'tutorials/run_with_modelzoo.sh',
+                     'scripts/ci/prepare_model_browser_fixture.py'):
         path = source / relative; path.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(ROOT / relative, path)
     (tutorials / 'fixture.jpg').write_bytes(b'asset-preservation-control')
@@ -382,6 +383,9 @@ add_subdirectory(tutorials)
     runtime = installed / 'lib/sima-neat/tutorials'
     assert {p.name for p in runtime.iterdir()} == set(targets) | {'CTestTestfile.cmake'}
     assert (installed / 'share/sima-neat/tutorials/fixture.jpg').read_bytes() == b'asset-preservation-control'
+    # build.sh --download-models-only looks for the Model Browser helper here in the extras.
+    helper = 'scripts/ci/prepare_model_browser_fixture.py'
+    assert (installed / 'share/sima-neat' / helper).read_bytes() == (ROOT / helper).read_bytes()
     for target in targets:
         path = runtime / target
         assert path.read_bytes().startswith(b'\x7fELF')
@@ -2421,7 +2425,6 @@ def test_installed_python_extras_include_pcie_status_test_dependencies(tmp_path)
     source = tmp_path/'producer'
     tests = source/'python/tests'
     tests.mkdir(parents=True)
-    (source/'python/tests_long').mkdir()
     (source/'scripts').mkdir()
     shutil.copy2(ROOT/'python/tests/test_neat_pcie_status.py', tests)
     for name in ('neat', 'neat_pcie_status.py'):

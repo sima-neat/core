@@ -75,6 +75,7 @@ int main(int argc, char** argv) {
     options.preprocess.kind = InputKind::Image;
     options.preprocess.enable = AutoFlag::On;
     options.preprocess.color_convert.input_format = PreprocessColorFormat::BGR;
+    options.preprocess.normalize.enable = AutoFlag::On;
     if (mode != "defaults") {
       options.preprocess.input_max_width = 1920;
       options.preprocess.input_max_height = 1920;

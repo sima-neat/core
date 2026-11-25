@@ -1,4 +1,5 @@
 #include <simaai/scheduler/client/tensor_buffer.h>
+#include "gst/GstInit.h"
 #include "support/processcvu_plan_fixture.h"
 #include "model/internal/ModelPack.h"
 #include "pipeline/internal/sima/ContractRender.h"
@@ -44,14 +45,36 @@ namespace pss = simaai::neat::pipeline_internal::sima::stagesemantics;
 namespace sc = simaai::neat::pipeline_internal::sima::static_contract;
 using json = nlohmann::json;
 
-enum class ExecutionMode { None, Preflight, EV74 };
+enum class ExecutionMode { None, Preflight, EV74, A65 };
+
+// One INT8 CBlock16 frame of H x W x C, tiled along W only. Each W tile is its
+// own set of C16 blocks; a tile's size is a multiple of 16 bytes, so tiles
+// follow each other without alignment gaps.
+struct CBlockGeometry {
+  unsigned height, width, channels, tile_width;
+  unsigned elements() const {
+    return height * width * channels;
+  }
+  unsigned stored_channels() const {
+    return (channels + 15U) / 16U * 16U;
+  }
+  unsigned packed_bytes() const {
+    return height * width * stored_channels();
+  }
+};
+// Three C16 blocks of six pixels in one tile; the last block is half padding.
+constexpr CBlockGeometry kSmallCBlock{2, 3, 33, 3};
+// The LightGlue score head. One 67-wide tile (40736 input bytes, 40267 output
+// floats) is larger than the EV74 kernel's local panels, so the kernel must
+// split it; the model once produced no output at this shape.
+constexpr CBlockGeometry kLightGlueCBlock{1, 601, 601, 67};
 
 void ensure_gst_ready() {
   static bool ready = false;
   if (!ready) {
-    int argc = 0;
-    char** argv = nullptr;
-    gst_init(&argc, &argv);
+    // CTest runs this with GST_PLUGIN_SYSTEM_PATH_1_0 empty; Neat's init still adds the system
+    // plugin directories that hold appsrc and appsink.
+    simaai::neat::gst_init_once();
     require(simaai::gst::tensor_buffer_register_meta(), "canonical tensor metadata registration");
     ready = true;
   }
@@ -220,10 +243,13 @@ void check_metadata_encoding(const std::filesystem::path& root, const bool padde
 // Execute the same compiler-produced canonical recipe checked below. The test
 // never constructs numerical requests or substitutes its layouts/placement.
 void execute_compiler_contract(const ps::SimaPluginStaticManifest& manifest, bool bf16,
-                               unsigned batches, ExecutionMode mode, bool blocked = true) {
+                               unsigned batches, ExecutionMode mode, bool blocked = true,
+                               const CBlockGeometry& cblock = kSmallCBlock) {
   namespace dma = simaai::scheduler::client::dma;
   namespace tr = simaai::gst;
   namespace gs = simaai::scheduler::client;
+  const bool a65 = mode == ExecutionMode::A65;
+  const auto target = a65 ? gs::Target::A65 : gs::Target::EV74;
   require(test::register_element(), "native kernel element registration failed");
   require(manifest.stages.size() == 1, "one compiled fixture stage required");
   const auto& authored = manifest.stages.front();
@@ -237,20 +263,21 @@ void execute_compiler_contract(const ps::SimaPluginStaticManifest& manifest, boo
               << " phase=" << name << std::endl;
   };
   phase("construct pipeline");
-  require(recipe.target == gs::Hardware::EV74,
-          "fixture must retain the EV backend selected by Core policy");
+  require(recipe.target == (a65 ? gs::Hardware::A65 : gs::Hardware::EV74),
+          "fixture must retain the backend selected by Core policy");
   for (const auto& member : recipe.members) {
     const auto checked = gs::inspect_kernel(member.executable);
     const auto* inspection = std::get_if<gs::KernelInspection>(&checked);
-    require(inspection && inspection->target() == gs::Target::EV74,
-            "every checked fixture member must retain the selected EV backend");
+    require(inspection && inspection->target() == target,
+            "every checked fixture member must retain the selected backend");
   }
   require(bool(authored.frame_layout), "fixture output layout is absent");
   for (const auto& output : authored.frame_layout->outputs) {
     const auto& allocation = authored.frame_layout->allocations.at(output.span.allocation_index);
-    require(allocation.policy == gs::AllocationPolicy::RequireCma &&
-                (allocation.required_device_access & gs::kAccessEv74),
-            "EV fixture output allocation must require EV74-visible CMA");
+    require(a65 ? (allocation.required_device_access & gs::kAccessCpuA65) != 0U
+                : allocation.policy == gs::AllocationPolicy::RequireCma &&
+                      (allocation.required_device_access & gs::kAccessEv74) != 0U,
+            "fixture output allocation must be visible to the selected backend");
   }
   auto pipeline = std::shared_ptr<GstElement>(gst_pipeline_new("core-blocked-contract"),
                                               [](GstElement* element) {
@@ -270,32 +297,58 @@ void execute_compiler_contract(const ps::SimaPluginStaticManifest& manifest, boo
           "fixture links failed");
   std::string issue;
 
-  // Independent HWC oracle for two spatial rows, three columns and 33 channels:
-  // three C16 blocks, each containing six pixel records. BF16 stores separate
-  // low/high 16-byte lanes in each record. No production packing helper is used.
-  const std::size_t input_bytes = batches * (blocked ? 288U : 198U) * (bf16 ? 2U : 1U);
+  // Independent oracles; no production packing helper is used.
+  const std::size_t input_bytes =
+      bf16 ? batches * (blocked ? 576U : 396U) : std::size_t(batches) * cblock.packed_bytes();
   std::vector<std::byte> packed(input_bytes, std::byte{0xa5});
-  std::vector<float> expected(batches * 198U);
-  for (unsigned batch = 0; batch < batches; ++batch)
-    for (unsigned pixel = 0; pixel < 6; ++pixel)
-      for (unsigned channel = 0; channel < 33; ++channel) {
-        const auto logical = (batch * 6U + pixel) * 33U + channel;
-        const auto record = (channel / 16U) * 6U + pixel;
-        const auto lane = channel % 16U;
-        if (bf16) {
+  std::vector<float> expected(batches * (bf16 ? 198U : cblock.elements()));
+  if (bf16) {
+    // HWC with two spatial rows, three columns and 33 channels: three C16
+    // blocks of six pixel records, with separate low/high 16-byte lanes.
+    for (unsigned batch = 0; batch < batches; ++batch)
+      for (unsigned pixel = 0; pixel < 6; ++pixel)
+        for (unsigned channel = 0; channel < 33; ++channel) {
+          const auto logical = (batch * 6U + pixel) * 33U + channel;
+          const auto record = (channel / 16U) * 6U + pixel;
+          const auto lane = channel % 16U;
           // Exact BF16 finite values vary in both byte planes.
           const auto bits = std::uint16_t(0x3e00U + logical * 13U);
           const auto at = blocked ? batch * 576U + record * 32U + lane : logical * 2U;
           packed[at] = std::byte(bits & 255U);
           packed[at + (blocked ? 16U : 1U)] = std::byte(bits >> 8U);
           expected[logical] = std::bit_cast<float>(std::uint32_t(bits) << 16U);
-        } else {
-          const auto code = std::bit_cast<std::int8_t>(std::uint8_t(logical * 73U));
-          packed[batch * 288U + record * 16U + lane] = std::byte(std::uint8_t(code));
-          // Compiler q_scale is a public multiplier: dequant lowers its reciprocal.
-          expected[logical] = (float(code) + 7.0F) * 4.0F;
         }
+  } else {
+    // INT8 CBlock16: W tiles in order; inside a tile, each C16 block holds 16
+    // lanes for every pixel of that tile only. Every logical value differs from
+    // its neighbours, so an output the kernel never wrote cannot match. Padding
+    // lanes carry codes too, so a reader that takes them for channels fails.
+    std::size_t tile_offset = 0;
+    for (unsigned batch = 0; batch < batches; ++batch)
+      for (unsigned first_w = 0; first_w < cblock.width; first_w += cblock.tile_width) {
+        const auto tile_width = std::min(cblock.tile_width, cblock.width - first_w);
+        const auto pixels = cblock.height * tile_width;
+        for (unsigned block = 0; block < cblock.stored_channels() / 16U; ++block)
+          for (unsigned pixel = 0; pixel < pixels; ++pixel)
+            for (unsigned lane = 0; lane < 16U; ++lane) {
+              const auto at = tile_offset + (block * pixels + pixel) * 16U + lane;
+              const auto channel = block * 16U + lane;
+              if (channel >= cblock.channels) {
+                packed[at] = std::byte(std::uint8_t(at * 29U + 11U));
+                continue;
+              }
+              const auto h = pixel / tile_width;
+              const auto w = first_w + pixel % tile_width;
+              const auto logical =
+                  ((batch * cblock.height + h) * cblock.width + w) * cblock.channels + channel;
+              const auto code = std::bit_cast<std::int8_t>(std::uint8_t(logical * 73U));
+              packed[at] = std::byte(std::uint8_t(code));
+              // Compiler q_scale is a public multiplier: dequant lowers its reciprocal.
+              expected[logical] = (float(code) + 7.0F) * 4.0F;
+            }
+        tile_offset += std::size_t(cblock.stored_channels()) * pixels;
       }
+  }
   require(authored.physical_inputs.size() == 1, "one physical fixture input required");
   const auto& input_contract = authored.physical_inputs.front();
   require(input_contract.source_byte_offset >= 0 && input_contract.size_bytes >= input_bytes,
@@ -382,8 +435,8 @@ void execute_compiler_contract(const ps::SimaPluginStaticManifest& manifest, boo
   require(execution.valid && !execution.members.empty(),
           "Core attachment did not prepare execution");
   for (const auto& member : execution.members)
-    require(member.prepared && member.target == gs::Target::EV74,
-            "fixture must qualify actual EV74 execution, not an A65 fallback");
+    require(member.prepared && member.target == target,
+            "fixture must qualify execution on the requested backend, not a fallback");
 
   phase("allocate input");
   dma::Error error;
@@ -474,32 +527,39 @@ void execute_compiler_contract(const ps::SimaPluginStaticManifest& manifest, boo
   require(std::memcmp(mapped->data(), initial.data(), initial.size()) == 0,
           "kernel modified input or surrounding guards");
   require(mapped->finish(&error), error.message());
-  std::cout << "PASS: Core compiler -> plugin -> Runner -> EV74 "
+  std::cout << "PASS: Core compiler -> plugin -> Runner -> " << (a65 ? "A65 " : "EV74 ")
             << (!blocked ? "BF16 dense Cast"
                 : bf16   ? "BF16 blocked DetessCast"
                          : "INT8 CBlock DetessDequant")
             << " batch=" << batches << " values=" << expected.size() << '\n';
 }
 
-ps::SimaPluginStaticManifest make_detessdequant_cblock_manifest(unsigned batches = 1) {
+ps::SimaPluginStaticManifest
+make_detessdequant_cblock_manifest(unsigned batches = 1,
+                                   const CBlockGeometry& cblock = kSmallCBlock,
+                                   ExecutionMode mode = ExecutionMode::None) {
   const auto batch = static_cast<std::int64_t>(batches);
-  const auto input_bytes = std::size_t(batches) * 288U;
-  const auto dense_bytes = std::size_t(batches) * 198U;
+  const std::int64_t height = cblock.height;
+  const std::int64_t width = cblock.width;
+  const std::int64_t channels = cblock.channels;
+  const auto input_bytes = std::size_t(batches) * cblock.packed_bytes();
+  const auto dense_bytes = std::size_t(batches) * cblock.elements();
   const auto output_bytes = dense_bytes * 4U;
   pcs::DetessDequantHeadContractSubset head;
-  head.per_head_input_shape = {batch, 2, 3, 33};
-  head.input_transport_shape = {batch, 2, 3, 48};
+  head.per_head_input_shape = {batch, height, width, channels};
+  head.input_transport_shape = {batch, height, width, cblock.stored_channels()};
   head.input_transport_size_bytes = input_bytes;
   head.per_head_quant_params.scales = {0.25};
   head.per_head_quant_params.zero_points = {-7};
-  head.frame_shape = {batch, 2, 3, 33};
+  head.frame_shape = {batch, height, width, channels};
   head.frame_type = "INT8";
-  head.slice_shape = {2, 3, 33};
+  head.slice_shape = {height, cblock.tile_width, channels};
   head.align_c16 = true;
   head.cblock = true;
   head.output_dtype = "FP32";
   const auto contract = pcs::build_detessdequant_tensor_descriptor_contract(head, head.frame_shape);
-  require(contract.input.storage.nbytes == 288U && contract.batch_size == int(batches),
+  require(contract.input.storage.nbytes == cblock.packed_bytes() &&
+              contract.batch_size == int(batches),
           "authoritative DetessDequant factory must preserve CBlock physical capacity: batch=" +
               std::to_string(batches) + " expected=" + std::to_string(input_bytes) +
               " actual=" + std::to_string(contract.input.storage.nbytes));
@@ -508,8 +568,8 @@ ps::SimaPluginStaticManifest make_detessdequant_cblock_manifest(unsigned batches
   // its final descriptor alignment; those belong to command projection.
   sc::ModelExecutionPlanData data;
   data.contract_version = "2.1.0";
-  const sc::TensorShape shape{batch, 2, 3, 33};
-  const sc::TensorShape tile{2, 3, 33};
+  const sc::TensorShape shape{batch, height, width, channels};
+  const sc::TensorShape tile{height, cblock.tile_width, channels};
   data.carriers = {
       {0U, input_bytes, 64U, sc::ValueRepresentation::Tessellated},
       {1U, dense_bytes, 64U, sc::ValueRepresentation::Dense},
@@ -579,10 +639,12 @@ ps::SimaPluginStaticManifest make_detessdequant_cblock_manifest(unsigned batches
   pipeline.fully_renderable = true;
   ps::ManifestBuildDiagnostics diagnostics;
   simaai::neat::ContractCompileInput compile_input;
-  compile_input.processcvu_requested_run_target = "EV74";
+  const bool a65 = mode == ExecutionMode::A65;
+  compile_input.processcvu_requested_run_target = a65 ? "A65" : "EV74";
   ps::resolve_compiled_execution_targets(pipeline.stages.front(), compile_input);
-  require(pipeline.stages.front().resolved_executor == sc::PhysicalEngine::Cvu,
-          "explicit Core EV74 policy must select the physical EV executor");
+  require(pipeline.stages.front().resolved_executor ==
+              (a65 ? sc::PhysicalEngine::A65 : sc::PhysicalEngine::Cvu),
+          "explicit Core run-target policy must select the requested executor");
   auto manifest =
       simaai::neat::render_manifest_from_compiled_contracts(pipeline, compile_input, &diagnostics);
   require(manifest.has_value(), "CBlock production manifest rendering must succeed");
@@ -614,10 +676,11 @@ void reject_malformed_canonical_alignment() {
 
 simaai::scheduler::client::Layout
 authoritative_detessdequant_cblock_layout(ExecutionMode mode = ExecutionMode::None,
-                                          unsigned batches = 1) {
-  const auto input_bytes = std::size_t(batches) * 288U;
-  const auto output_bytes = std::size_t(batches) * 792U;
-  auto manifest = make_detessdequant_cblock_manifest(batches);
+                                          unsigned batches = 1,
+                                          const CBlockGeometry& cblock = kSmallCBlock) {
+  const auto input_bytes = std::size_t(batches) * cblock.packed_bytes();
+  const auto output_bytes = std::size_t(batches) * cblock.elements() * 4U;
+  auto manifest = make_detessdequant_cblock_manifest(batches, cblock, mode);
   ensure_gst_ready();
   lower_recipes(manifest);
   const auto& authored = manifest.stages.front();
@@ -636,7 +699,7 @@ authoritative_detessdequant_cblock_layout(ExecutionMode mode = ExecutionMode::No
               recipe.members.front().outputs.front().byte_offset == 0U,
           "CBlock must create one checked member with exact offsets without device access");
   if (mode != ExecutionMode::None)
-    execute_compiler_contract(manifest, false, batches, mode);
+    execute_compiler_contract(manifest, false, batches, mode, true, cblock);
   return inspection.inputs().front().layout;
 }
 
@@ -924,13 +987,17 @@ void authoritative_bf16_contract(ExecutionMode mode = ExecutionMode::None, bool 
 
 int main(int argc, char** argv) {
   const bool device = argc == 2 && std::strcmp(argv[1], "--ev74") == 0;
+  const bool a65 = argc == 2 && std::strcmp(argv[1], "--a65") == 0;
   const bool preflight = argc == 2 && std::strcmp(argv[1], "--preflight-only") == 0;
   const auto mode = device      ? ExecutionMode::EV74
+                    : a65       ? ExecutionMode::A65
                     : preflight ? ExecutionMode::Preflight
                                 : ExecutionMode::None;
+  // The BF16 fixtures author an EV74-only route; only CBlock16 runs on A65.
+  const auto bf16_mode = a65 ? ExecutionMode::None : mode;
   return sima_test::run_test("unit_processcvu_v2_mpk_encoding_test", [&] {
-    require(argc == 1 || device || preflight,
-            "usage: unit_processcvu_v2_mpk_encoding_test [--ev74|--preflight-only]");
+    require(argc == 1 || device || a65 || preflight,
+            "usage: unit_processcvu_v2_mpk_encoding_test [--ev74|--a65|--preflight-only]");
     ps::GraphTiledChannelEncoding encoding;
     std::string encoding_error;
     require(!ps::resolve_graph_processcvu_tiled_channel_encoding("detessellate", true, true,
@@ -954,15 +1021,18 @@ int main(int argc, char** argv) {
             "model encoding query requires an output destination");
 
     verify_tiled_explicit_batch_axes();
-    authoritative_bf16_contract(mode);
-    authoritative_bf16_contract(mode, true, 2);
-    authoritative_bf16_contract(mode, false, 2);
+    authoritative_bf16_contract(bf16_mode);
+    authoritative_bf16_contract(bf16_mode, true, 2);
+    authoritative_bf16_contract(bf16_mode, false, 2);
     const auto cblock_n2 = authoritative_detessdequant_cblock_layout(mode, 2);
     require(std::holds_alternative<simaai::scheduler::client::MlaCBlocked>(cblock_n2),
             "N2 DetessDequant must preserve its full CBlock tensor in one executable");
     const auto cblock = authoritative_detessdequant_cblock_layout(mode);
     require(std::holds_alternative<simaai::scheduler::client::MlaCBlocked>(cblock),
             "authoritative DetessDequant must retain canonical CBlock16");
+    const auto wide = authoritative_detessdequant_cblock_layout(mode, 1, kLightGlueCBlock);
+    require(std::holds_alternative<simaai::scheduler::client::MlaCBlocked>(wide),
+            "a wide W tile must keep CBlock16 storage, not a pixel-major alias");
     reject_malformed_canonical_alignment();
     check_metadata_encoding(write_mpk_fixture("padded_hwc", true, false, 576U), true);
     check_metadata_encoding(write_mpk_fixture("compact", false, false, 396U), false);

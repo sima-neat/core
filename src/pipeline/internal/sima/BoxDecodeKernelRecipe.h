@@ -6,6 +6,7 @@
 #include "model/PreprocessPlan.h"
 #include <array>
 #include <optional>
+#include <string>
 #include "pipeline/internal/contract/PluginCompiledContracts.h"
 
 namespace simaai::neat::pipeline_internal::sima {
@@ -13,7 +14,9 @@ namespace simaai::neat::pipeline_internal::sima {
 // model-shaped input with no resize operation. Explicit provenance still wins.
 constexpr ResizeMode default_boxdecode_resize_mode(BoxDecodeType type) {
   return (type == BoxDecodeType::Ssd || type == BoxDecodeType::Detr ||
-          type == BoxDecodeType::DetrFocal)
+          type == BoxDecodeType::DetrFocal || type == BoxDecodeType::EdgeTamSeg ||
+          type == BoxDecodeType::EdgeTamTrack || type == BoxDecodeType::EfficientSam ||
+          type == BoxDecodeType::EfficientSam3)
              ? ResizeMode::Stretch
              : ResizeMode::Letterbox;
 }
@@ -29,10 +32,33 @@ struct BoxDecodeGeometryOptions {
   bool uniform_transform_required = false;
   // A source-driven cold seed must never substitute for per-frame authority.
   bool require_frame_transform = false;
+  // Use full-frame mapping when the frame supplies no affine.
+  bool frame_affine_optional = false;
+  // Reject frames that cover only part of the source image.
+  bool full_frame_only = false;
+  std::string profile;
 };
 // Axis-aligned ordinary boxes only; proposals and auxiliary payloads are not
 // implicitly admitted when a new decode type is added.
 bool boxdecode_supports_detection_transform(BoxDecodeType);
+// The same for one admitted payload: multiclass SSD shares BoxDecodeType::Ssd with the
+// detection recipe, but its kernel profile accepts no transform.
+bool boxdecode_payload_supports_detection_transform(const BoxDecodeStagePayload&);
+// Segment Anything: the resize each model was trained on (MobileSAM a top-left
+// letterbox, the others a stretch).
+ResizeMode sam_required_resize(BoxDecodeType);
+// One prompt-decoder run's plane choice for Kernels profile sam_mask: "fixed"
+// (plane first), "best_iou" (best IoU of [first, first + count)) or
+// "stability" (plane 0 when stable, else best IoU of [first, first + count)).
+struct SamMaskSelection {
+  const char* mode = "fixed";
+  int first = 0;
+  int count = 1;
+};
+// Model::Options::multimask_output for a model's decoder with C mask channels,
+// as upstream predict(multimask_output=...) answers it. Throws
+// std::invalid_argument, naming the model, for a combination it cannot answer.
+SamMaskSelection resolve_sam_mask_selection(BoxDecodeType, int masks, bool multimask_output);
 struct BoxDecodeKernelRecipeResult {
   CompiledKernelContract compiled;
   std::size_t decode_member = 0;

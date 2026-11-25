@@ -1,8 +1,4 @@
-"""Strict, device-independent Python API coverage for SSD box decode.
-
-Fixture- and dispatcher-dependent behavior lives in the explicitly long
-``python/tests_long/test_ssd_boxdecode_device.py`` lane.
-"""
+"""Strict, device-independent Python API coverage for SSD box decode."""
 
 import pyneat
 
@@ -32,3 +28,14 @@ def test_ssd_model_options_are_mutable():
   assert opt.decode_type == pyneat.BoxDecodeType.Ssd
   assert opt.num_classes == 91
   assert opt.preprocess.resize.mode == pyneat.ResizeMode.Stretch
+
+
+def test_ssd_policy_uses_the_existing_family_and_stage_options():
+  # V1/V2 use one TF300 numerical contract; V3 uses its resolved TV320 recipe.
+  policy = pyneat.BoxDecodeType.Ssd
+  model = pyneat.ModelOptions()
+  model.decode_type = policy
+  model.num_classes = 91
+  stage = pyneat.BoxDecodeOptions(policy)
+  assert model.decode_type == stage.decode_type == policy
+  assert model.num_classes == 91

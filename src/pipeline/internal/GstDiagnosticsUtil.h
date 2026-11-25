@@ -41,8 +41,6 @@ bool map_video_frame_read(SampleHolder& h, std::string& err);
 // GStreamer stringify helpers
 // -----------------------------
 std::string gst_caps_to_string_safe(GstCaps* caps);
-std::string gst_structure_to_string_safe(const GstStructure* st);
-std::string gst_message_to_string(GstMessage* msg);
 
 // Optional convenience for caps formatting
 std::string caps_features_string(GstCaps* caps);

@@ -1,14 +1,18 @@
 ---
-title: "Insight Примітки до випуску"
+title: "Примітки до випуску Insight"
 sidebar_position: 6
 ---
 
-# Insight Примітки до випуску
+# Примітки до випуску Insight
 
-Примітки до випуску для SiMa.ai Neat Insight.
+Примітки до випуску SiMa.ai Neat Insight.
 
 | Випуск | Примітки |
 | --- | --- |
+| 0.0.11 | [Insight 0.0.11](https://github.com/sima-neat/insight/releases/tag/v0.0.11) |
+| 0.0.10 | [Insight 0.0.10](https://github.com/sima-neat/insight/releases/tag/v0.0.10) |
+| 0.0.9 | [Insight 0.0.9](https://github.com/sima-neat/insight/releases/tag/v0.0.9) |
+| 0.0.8 | [Insight 0.0.8](https://github.com/sima-neat/insight/releases/tag/v0.0.8) |
 | 0.0.7 | [Insight 0.0.7](https://github.com/sima-neat/insight/releases/tag/v0.0.7) |
 | 0.0.6 | [Insight 0.0.6](https://github.com/sima-neat/insight/releases/tag/v0.0.6) |
 | 0.0.5 | [Insight 0.0.5](https://github.com/sima-neat/insight/releases/tag/v0.0.5) |

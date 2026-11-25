@@ -104,8 +104,7 @@ Before opening or merging a PR:
 
 - Added/updated tests match the behavioral surface changed.
 - Existing related tests still pass.
-- Docs are updated for user-visible behavior.
-- API/architecture changes are reflected in [Architecture](/develop-apps/contribute/architecture).
+- Documentation impact follows the [documentation policy](/develop-apps/contribute/coding_standard).
 - Public API changes comply with the API compatibility policy in [Coding Standard](/develop-apps/contribute/coding_standard).
 
 ## Required coverage and capability profiles
@@ -149,37 +148,9 @@ and Torch exclusions remain coverage gaps, not passes. Stream profiles cover the
 Each stream case has separate smoke and repeated-contract results, so an available
 HTTP stream cannot hide an unexecuted RTSP case under an aggregate PASS.
 
-For weekly model preparation, set a local path or HTTPS location and reviewed
-SHA-256 for each of `SIMA_CI_MNIST_MODEL`, `SIMA_CI_SSD300_MODEL`,
-`SIMA_CI_MNIST_IMAGES` and `SIMA_CI_MNIST_LABELS`. Each checksum uses the matching
-`_SHA256` variable. The dataset inputs are compressed MNIST IDX test files.
-Preparation checks exact bytes and stages the existing tests' cache/variables;
-missing or mismatched inputs are preparation failures. It never modifies an
-unrelated existing cache. Model preparation does not depend on RTSP availability.
-
 Keep selection, outcomes and profile-exclusion reports with the lane results.
 A selected-profile pass is not a claim that all optional hardware or integration
 profiles passed.
-
-### Local weekly preparation
-
-Use `tools/ci/prepare_weekly_fixtures.py` for local runs as well as CI. By default,
-preparation requires both `mnist` and `ssd300`. To qualify only MNIST, pass
-`--fixture-group mnist` explicitly; the report identifies SSD300 as unqualified.
-This selection does not change CTest selection or make a skipped required case
-pass. Full weekly qualification still requires both groups.
-
-Use `--environment-json <file>` for a local launcher, `--github-env <file>` for
-GitHub Actions, or both. Both outputs contain the same environment mapping.
-The local launcher must merge the JSON mapping into the test process environment
-before recording selection or admitting a hardware process. The JSON is not a
-shell script and is not a test result. Merely creating it does not export variables.
-
-The helper exports `SIMA_RUN_MNIST_PREPROC_CHANNELS1=1` only after the selected
-model and MNIST gzip/IDX files pass validation. It checks gzip CRC, IDX geometry,
-length, image/label counts and label range, and rejects conflicting compressed or
-raw cache entries. Use a new output directory for each preparation attempt;
-failed staged bytes remain available for diagnosis.
 
 ### Installed packages versus private-prefix integration
 

@@ -9,7 +9,7 @@
     "build": "NO_UPDATE_NOTIFIER=1 docusaurus build",
     "check:i18n": "sima-i18n check --config ../sima-i18n.config.json && node scripts/check-i18n-catalogs.js",
     "check:i18n-complete": "sima-i18n check --config ../sima-i18n.config.json --require-complete && node scripts/check-i18n-catalogs.js",
-    "check:i18n-navigation": "node scripts/check-i18n-preview-navigation.js && node scripts/check-localized-developer-center-links.js",
+    "check:i18n-navigation": "node scripts/check-i18n-preview-navigation.js && node scripts/check-localized-developer-center-links.js && node scripts/check-locale-bootstrap.js",
     "check:analytics": "node scripts/check-analytics-consent.js",
     "check:i18n-pilot": "node scripts/check-i18n-pilot.js",
     "translate:i18n": "sima-i18n translate --config ../sima-i18n.config.json",
@@ -29,6 +29,7 @@
     "docusaurus-plugin-openapi-docs": "5.2.0",
     "docusaurus-plugin-sass": "0.2.6",
     "docusaurus-theme-openapi-docs": "5.2.0",
+    "js-yaml": "4.3.0",
     "prism-react-renderer": "^2.1.0",
     "react": "^18.2.0",
     "react-dom": "^18.2.0"

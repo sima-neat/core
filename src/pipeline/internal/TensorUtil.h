@@ -84,6 +84,13 @@ inline bool is_bound_dense_scalar(const simaai::neat::Tensor& tensor) noexcept {
 // the existing custom/selected-segment mapping contract.
 simaai::neat::Mapping map_dense_tensor_read(const simaai::neat::Tensor& tensor);
 
+// Metadata-only check that a single-plane, non-tiled view lies inside its bound storage:
+// byte_offset, stride rank, dimensions and the strided byte range against
+// storage->size_bytes (0 means unknown and skips only the upper bound). Never maps the
+// storage, so a mapper wider than the tensor's segment cannot widen the view. Returns
+// nullptr when the view is in bounds or the rule does not apply.
+const char* dense_storage_bounds_error(const simaai::neat::Tensor& tensor) noexcept;
+
 // Materialize public output storage once per carrier, retaining tensor views and
 // metadata but no producer buffer/pool loan. Auto may preserve actual DMA-BUFs
 // and certified framework terminal host carriers, selected per tensor span.

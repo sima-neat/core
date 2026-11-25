@@ -27,17 +27,95 @@
 #include <gst/SimaPluginStaticManifestAbi.h>
 #include <iostream>
 #include <simaai/scheduler/client/kernel.h>
+#include <algorithm>
 #include <array>
+#include <atomic>
+#include <cstdio>
+#include <cstdlib>
+#include <cerrno>
+#include <sys/wait.h>
+#include <unistd.h>
 #include <bit>
 #include <cmath>
 #include <cstring>
+#include <functional>
+#include <optional>
 #include <new>
 #include <limits>
 #include <stdexcept>
+#include <string_view>
 
 namespace test = simaai::scheduler::testing;
 namespace c = simaai::scheduler::client;
+void check_ssd_mpk_carrier_contracts();
+void check_ssd_model_carrier_contract(const std::string& archive);
 namespace {
+std::atomic<bool> ssd_artifact_completed{false};
+
+// A dependency may terminate the process without returning through main. An
+// exit status of zero is not evidence that both artifact routes were checked.
+void require_ssd_artifact_completion() noexcept {
+  if (ssd_artifact_completed.load(std::memory_order_acquire))
+    return;
+  constexpr char message[] = "SSD_ARTIFACT_INCOMPLETE_EXIT_REJECTED\n";
+  (void)std::fwrite(message, 1, sizeof(message) - 1, stderr);
+  (void)std::fflush(stderr);
+  std::_Exit(EXIT_FAILURE);
+}
+
+void arm_ssd_artifact_completion_guard() {
+  if (std::atexit(require_ssd_artifact_completion) != 0)
+    throw std::runtime_error("could not register SSD artifact completion guard");
+}
+
+void check_ssd_artifact_completion_guard(const char* executable) {
+  int descriptors[2];
+  if (::pipe(descriptors) != 0)
+    throw std::runtime_error("completion guard pipe failed");
+  const auto child = ::fork();
+  if (child < 0) {
+    ::close(descriptors[0]);
+    ::close(descriptors[1]);
+    throw std::runtime_error("completion guard fork failed");
+  }
+  if (child == 0) {
+    ::close(descriptors[0]);
+    if (::dup2(descriptors[1], STDERR_FILENO) < 0)
+      ::_exit(127);
+    ::close(descriptors[1]);
+    ::execl(executable, executable, "--ssd-completion-guard-negative", nullptr);
+    ::_exit(127);
+  }
+  ::close(descriptors[1]);
+  std::string diagnostic;
+  bool oversized = false;
+  char bytes[512];
+  ssize_t count;
+  while ((count = ::read(descriptors[0], bytes, sizeof(bytes))) != 0) {
+    if (count < 0) {
+      if (errno == EINTR)
+        continue;
+      break;
+    }
+    if (diagnostic.size() + std::size_t(count) <= 16384)
+      diagnostic.append(bytes, std::size_t(count));
+    else
+      oversized = true;
+  }
+  const auto read_error = count < 0;
+  ::close(descriptors[0]);
+  int status = 0;
+  pid_t waited;
+  do {
+    waited = ::waitpid(child, &status, 0);
+  } while (waited < 0 && errno == EINTR);
+  if (read_error || oversized || waited != child || !WIFEXITED(status) ||
+      WEXITSTATUS(status) != EXIT_FAILURE ||
+      diagnostic.find("SSD_ARTIFACT_INCOMPLETE_EXIT_REJECTED\n") == std::string::npos)
+    throw std::runtime_error("premature zero exit was not rejected with its completion diagnostic");
+  std::cout << "SSD_ARTIFACT_COMPLETION_GUARD_NEGATIVE_PASS\n";
+}
+
 c::KernelInspection inspect(const c::KernelExecutable& value) {
   auto result = c::inspect_kernel(value);
   if (const auto* error = std::get_if<c::Error>(&result))
@@ -478,6 +556,511 @@ void auxiliary_tasks() {
   }
 }
 
+// Segment Anything prompt decoder: logits [256,256,C] of a 16-channel MLA
+// carrier, IoU [1,1,C] of a 16-value carrier and an optional object score,
+// bound by role (MobileSAM C = 4, EfficientSAM C = 3, an EfficientSAM3 single
+// mask C = 1, EdgeTAM C = 4 with object score and an unused pointer output).
+// Core-owned controls fail before admission; accepted requests need Kernels
+// sam_mask v2.
+CompiledBoxDecodeContract sam_mask_source(BoxDecodeType type, const std::string& logits_dtype,
+                                          const std::string& iou_dtype, int masks = 4,
+                                          bool object_score = false) {
+  auto s = source(type, masks);
+  s.payload.topk = 1;
+  s.payload.detection_threshold = 0;
+  s.payload.nms_iou_threshold = 0;
+  s.payload.score_activation = BoxDecodeScoreActivation::Identity;
+  s.payload.decode_type_option = BoxDecodeTypeOption::Auto;
+  const auto width = [](const std::string& dtype) -> std::int64_t {
+    return dtype == "INT8" ? 1 : dtype == "BF16" ? 2 : 4;
+  };
+  input(s, 256, 256, 16, logits_dtype);
+  input(s, 1, 1, 16, iou_dtype, 1, 1048576);
+  for (std::size_t i = 0; i < 2; ++i) {
+    auto& logical = s.runtime_contract.logical_inputs[i];
+    const auto w = width(logical.dtype);
+    logical.stride_bytes = {logical.shape[1] * 16 * w, 16 * w, w};
+    s.payload.slice_shapes[i].sizes[2] = masks;
+  }
+  s.payload.tensor_roles = {BoxDecodeTensorRole::SamMaskLogits,
+                            BoxDecodeTensorRole::SamIouPredictions};
+  if (object_score) {
+    // EdgeTAM: one FP32 object score, then object pointers [1,4,256] that are
+    // not a BoxDecode head and stay unread.
+    input(s, 1, 1, 1, "FP32");
+    input(s, 1, 4, 256, "FP32");
+    s.payload.tensor_roles.push_back(BoxDecodeTensorRole::SamObjectScore);
+    s.payload.tensor_roles.push_back(BoxDecodeTensorRole::Unknown);
+  }
+  return s;
+}
+// EfficientSAM3 concept image model: detections [1,200,6] (from an eight-value
+// BF16 row) and query-innermost mask logits [192,192,200].
+CompiledBoxDecodeContract sam_concept_source(const std::string& logits_dtype, int topk) {
+  auto s = source(BoxDecodeType::EfficientSam3, 1);
+  s.payload.topk = topk;
+  s.payload.detection_threshold = .5;
+  s.payload.nms_iou_threshold = 0;
+  s.payload.score_activation = BoxDecodeScoreActivation::Identity;
+  s.payload.decode_type_option = BoxDecodeTypeOption::Auto;
+  input(s, 1, 200, 6, "FP32");
+  input(s, 192, 192, 200, logits_dtype);
+  s.payload.tensor_roles = {BoxDecodeTensorRole::SamConceptDetections,
+                            BoxDecodeTensorRole::SamMaskLogits};
+  return s;
+}
+// Model::Options::multimask_output per model and exported channel count.
+void sam_mask_selection_contract() {
+  struct Selection {
+    BoxDecodeType type;
+    int masks;
+    bool multimask;
+    std::string_view mode;
+    int first;
+    int count;
+  };
+  const Selection selections[] = {{BoxDecodeType::MobileSam, 4, true, "best_iou", 1, 3},
+                                  {BoxDecodeType::MobileSam, 4, false, "fixed", 0, 1},
+                                  {BoxDecodeType::EdgeTamSeg, 4, true, "best_iou", 1, 3},
+                                  {BoxDecodeType::EdgeTamSeg, 4, false, "stability", 1, 3},
+                                  {BoxDecodeType::EdgeTamTrack, 4, true, "best_iou", 1, 3},
+                                  {BoxDecodeType::EdgeTamTrack, 4, false, "stability", 1, 3},
+                                  {BoxDecodeType::EfficientSam, 3, true, "best_iou", 0, 3},
+                                  {BoxDecodeType::EfficientSam3, 4, true, "best_iou", 1, 3},
+                                  {BoxDecodeType::EfficientSam3, 4, false, "stability", 1, 3},
+                                  {BoxDecodeType::EfficientSam3, 3, true, "best_iou", 0, 3}};
+  for (const auto& c : selections) {
+    const auto choice = resolve_sam_mask_selection(c.type, c.masks, c.multimask);
+    require(choice.mode == c.mode && choice.first == c.first && choice.count == c.count,
+            "multimask_output maps to another mask selection");
+  }
+  // A single-mask export has only its answer, whatever the option says.
+  for (auto type :
+       {BoxDecodeType::MobileSam, BoxDecodeType::EdgeTamSeg, BoxDecodeType::EdgeTamTrack,
+        BoxDecodeType::EfficientSam, BoxDecodeType::EfficientSam3})
+    for (bool multimask : {true, false}) {
+      const auto choice = resolve_sam_mask_selection(type, 1, multimask);
+      require(choice.mode == std::string_view("fixed") && choice.first == 0 && choice.count == 1,
+              "a one-channel export must select mask 0");
+    }
+  struct Rejection {
+    BoxDecodeType type;
+    int masks;
+    bool multimask;
+    const char* message;
+  };
+  const Rejection rejections[] = {
+      {BoxDecodeType::EfficientSam, 3, false, "EfficientSAM exports no single-mask token"},
+      {BoxDecodeType::EfficientSam3, 3, false,
+       "EfficientSAM3 decoder with three mask channels exports no single-mask token"},
+      {BoxDecodeType::MobileSam, 3, true,
+       "MobileSAM decoders export 1 or 4 mask channels; this one has 3"},
+      {BoxDecodeType::EdgeTamSeg, 3, true,
+       "EdgeTAM decoders export 1 or 4 mask channels; this one has 3"},
+      {BoxDecodeType::EdgeTamTrack, 3, true,
+       "EdgeTAM decoders export 1 or 4 mask channels; this one has 3"},
+      {BoxDecodeType::EfficientSam, 4, true,
+       "EfficientSAM decoders export 1 or 3 mask channels; this one has 4"},
+      {BoxDecodeType::EfficientSam3, 2, true,
+       "EfficientSAM3 decoders export 1, 3 or 4 mask channels; this one has 2"},
+      {BoxDecodeType::YoloV8Seg, 4, true, "yolov8-seg is not a Segment Anything decode type"}};
+  for (const auto& c : rejections) {
+    bool rejected = false;
+    try {
+      (void)resolve_sam_mask_selection(c.type, c.masks, c.multimask);
+    } catch (const std::invalid_argument& error) {
+      rejected = std::string(error.what()).find(c.message) != std::string::npos;
+    }
+    require(rejected, "an unsupported multimask_output choice was not rejected by name");
+  }
+}
+void sam_core_contract() {
+  static_assert(static_cast<int>(BoxDecodeType::MobileSam) == 28);
+  static_assert(static_cast<int>(BoxDecodeType::EdgeTamSeg) == 29);
+  static_assert(static_cast<int>(BoxDecodeType::EfficientSam) == 30);
+  static_assert(static_cast<int>(BoxDecodeType::EfficientSam3) == 31);
+  static_assert(static_cast<int>(BoxDecodeType::EdgeTamTrack) == 32);
+  struct Token {
+    BoxDecodeType type;
+    const char* token;
+    const char* alias;
+    const char* model;
+    ResizeMode resize;
+  };
+  for (const auto& c : {Token{BoxDecodeType::MobileSam, "mobilesam", "Mobile-SAM", "MobileSAM",
+                              ResizeMode::Letterbox},
+                        Token{BoxDecodeType::EdgeTamSeg, "edgetam-seg", "EdgeTAM_Seg", "EdgeTAM",
+                              ResizeMode::Stretch},
+                        Token{BoxDecodeType::EdgeTamTrack, "edgetam-track", "EdgeTAM_Track",
+                              "EdgeTAM", ResizeMode::Stretch},
+                        Token{BoxDecodeType::EfficientSam, "efficientsam", "efficient-sam",
+                              "EfficientSAM", ResizeMode::Stretch},
+                        Token{BoxDecodeType::EfficientSam3, "efficientsam3", "Efficient-SAM3",
+                              "EfficientSAM3", ResizeMode::Stretch}}) {
+    require(parse_box_decode_type_token(c.token) == c.type &&
+                parse_box_decode_type_token(c.alias) == c.type &&
+                std::string(box_decode_type_token(c.type)) == c.token &&
+                std::string(box_decode_type_sam_model_name(c.type)) == c.model,
+            "Segment Anything public tokens did not round-trip");
+    require(box_decode_type_is_segmentation(c.type) && !box_decode_type_is_yolo_family(c.type) &&
+                !box_decode_type_is_pose(c.type) && box_decode_type_uses_per_port_dtype(c.type) &&
+                box_decode_type_is_sam(c.type) && sam_required_resize(c.type) == c.resize,
+            "Segment Anything family predicates changed");
+  }
+  for (const auto* retired : {"sam-mask", "sam-mask-single", "sam-mask-stability", "sam-concept"})
+    require(!parse_box_decode_type_token(retired), "policy-named SAM tokens are not decode types");
+  require(!box_decode_type_is_sam(BoxDecodeType::YoloV8Seg), "YOLO-seg is not a SAM type");
+  sam_mask_selection_contract();
+  const BoxDecodeGeometryOptions letterbox{1024, 1024, 1280, 720, ResizeMode::Letterbox};
+  const BoxDecodeGeometryOptions stretch{1024, 1024, 1280, 720, ResizeMode::Stretch};
+  const auto rejected = [](const CompiledBoxDecodeContract& s, const BoxDecodeGeometryOptions& g,
+                           const char* message) {
+    try {
+      (void)prepare_boxdecode_kernel(s, g);
+    } catch (const std::invalid_argument& error) {
+      return std::string(error.what()).find(message) != std::string::npos;
+    }
+    return false;
+  };
+  for (int fault = 0; fault < 13; ++fault) {
+    auto s = sam_mask_source(BoxDecodeType::MobileSam, "INT8", "INT8");
+    auto g = letterbox;
+    const char* message = "MobileSAM";
+    if (fault == 0)
+      s.payload.topk = 4;
+    else if (fault == 1)
+      s.payload.nms_iou_threshold = .5;
+    else if (fault == 2)
+      s.payload.num_classes = 5;
+    else if (fault == 3)
+      s.payload.tensor_roles = {BoxDecodeTensorRole::SamMaskLogits,
+                                BoxDecodeTensorRole::SamMaskLogits};
+    else if (fault == 4) {
+      s = sam_mask_source(BoxDecodeType::EdgeTamTrack, "BF16", "BF16", 4, true);
+      s.payload.tensor_roles[3] = BoxDecodeTensorRole::SamObjectScore; // Two object scores.
+      g = stretch;
+      message = "EdgeTAM tensor roles are incomplete";
+    } else if (fault == 5)
+      g.model_height = 768; // The canvas is S x S.
+    else if (fault == 6)
+      g.model_to_original = std::array<float, 4>{1.25f, 1.25f, 0.f, 0.f};
+    else if (fault == 7) {
+      s.runtime_contract.logical_inputs[1].shape = {1, 4, 16};
+      s.runtime_contract.logical_inputs[1].stride_bytes = {64, 16, 1};
+    } else if (fault == 8) {
+      // Two mask channels are not a SAM decoder output.
+      s = sam_mask_source(BoxDecodeType::MobileSam, "INT8", "INT8", 2);
+      message = "MobileSAM decoders export 1 or 4 mask channels; this one has 2";
+    } else if (fault == 9) {
+      // EfficientSAM's three channels are its multimask tokens: no single mask.
+      s = sam_mask_source(BoxDecodeType::EfficientSam, "INT8", "INT8", 3);
+      s.payload.multimask_output = false;
+      g = stretch;
+      message = "EfficientSAM exports no single-mask token";
+    } else if (fault == 10) {
+      s = sam_mask_source(BoxDecodeType::EfficientSam3, "INT8", "INT8", 3);
+      s.payload.multimask_output = false;
+      g = stretch;
+      message = "EfficientSAM3 decoder with three mask channels exports no single-mask token";
+    } else if (fault == 11) {
+      // MobileSAM was trained on a top-left letterbox ...
+      g = stretch;
+      message = "MobileSAM requires a top-left letterbox";
+    } else {
+      // ... and the others on a stretch.
+      s = sam_mask_source(BoxDecodeType::EdgeTamSeg, "BF16", "BF16", 4, true);
+      message = "EdgeTAM requires a stretch";
+    }
+    require(rejected(s, g, message), "a Segment Anything contract violation reached Kernels");
+  }
+  for (int fault = 0; fault < 6; ++fault) {
+    auto s = sam_concept_source("FP32", 100);
+    auto g = BoxDecodeGeometryOptions{1008, 1008, 1280, 720, ResizeMode::Stretch};
+    const char* message = "EfficientSAM3 concept";
+    if (fault == 0)
+      s.payload.topk = 201; // K <= Q.
+    else if (fault == 1) {
+      g.resize = ResizeMode::Letterbox;
+      message = "EfficientSAM3 concept requires a stretch";
+    } else if (fault == 2) {
+      s.runtime_contract.logical_inputs[1].shape = {192, 192, 199};
+      s.payload.slice_shapes[1].sizes[2] = 199;
+    } else if (fault == 3) {
+      s.payload.tensor_roles = {BoxDecodeTensorRole::SamMaskLogits,
+                                BoxDecodeTensorRole::SamMaskLogits};
+      message = "EfficientSAM3 tensor roles are incomplete";
+    } else if (fault == 4)
+      g.model_to_original = std::array<float, 4>{1.25f, 1.25f, 0.f, 0.f};
+    else {
+      // A concept image model ranks detections; there is no multimask choice.
+      s.payload.multimask_output = false;
+      message = "EfficientSAM3 concept detection has no multimask choice";
+    }
+    require(rejected(s, g, message), "an EfficientSAM3 concept contract violation reached Kernels");
+  }
+}
+void sam_recipe() {
+  sam_core_contract();
+  struct Case {
+    BoxDecodeType type;
+    const char* logits;
+    const char* iou;
+    int masks;
+    bool object;
+    ResizeMode resize;
+    int side;
+    bool multimask;
+  };
+  // MobileSAM top-left letterbox; EdgeTAM stretch with an object score;
+  // EfficientSAM stretch with tokens 0..2; EfficientSAM3 prompt decoders
+  // (C = 1, 3 or 4) on a 1008 canvas.
+  const Case cases[] = {
+      {BoxDecodeType::MobileSam, "INT8", "INT8", 4, false, ResizeMode::Letterbox, 1024, true},
+      {BoxDecodeType::MobileSam, "BF16", "BF16", 4, false, ResizeMode::Letterbox, 1024, true},
+      {BoxDecodeType::MobileSam, "FP32", "FP32", 4, false, ResizeMode::Letterbox, 1024, true},
+      {BoxDecodeType::MobileSam, "BF16", "INT8", 4, false, ResizeMode::Letterbox, 1024, true},
+      {BoxDecodeType::MobileSam, "INT8", "INT8", 4, false, ResizeMode::Letterbox, 1024, false},
+      {BoxDecodeType::EdgeTamSeg, "BF16", "BF16", 4, true, ResizeMode::Stretch, 1024, true},
+      {BoxDecodeType::EdgeTamSeg, "BF16", "BF16", 4, true, ResizeMode::Stretch, 1024, false},
+      {BoxDecodeType::EdgeTamTrack, "FP32", "FP32", 4, true, ResizeMode::Stretch, 1024, false},
+      {BoxDecodeType::EfficientSam, "INT8", "INT8", 3, false, ResizeMode::Stretch, 1024, true},
+      {BoxDecodeType::EfficientSam3, "FP32", "FP32", 1, false, ResizeMode::Stretch, 1008, true},
+      {BoxDecodeType::EfficientSam3, "FP32", "FP32", 1, false, ResizeMode::Stretch, 1008, false},
+      {BoxDecodeType::EfficientSam3, "BF16", "BF16", 4, false, ResizeMode::Stretch, 1008, false},
+      {BoxDecodeType::EfficientSam3, "BF16", "BF16", 3, false, ResizeMode::Stretch, 1008, true}};
+  for (const auto& c : cases) {
+    auto s = sam_mask_source(c.type, c.logits, c.iou, c.masks, c.object);
+    s.payload.multimask_output = c.multimask;
+    // The score threshold is forwarded, validated by Kernels and ignored.
+    if (!c.multimask)
+      s.payload.detection_threshold = .25;
+    const auto r = check(s, {c.side, c.side, 1280, 720, c.resize});
+    const auto& recipe = *r.compiled.recipe;
+    const auto& decode = recipe.members[r.decode_member];
+    require(recipe.output_format == kDetectionFormatBbox && recipe.members.size() == 2,
+            "Segment Anything keeps the segmentation tag and one publication member");
+    require(decode.outputs.size() == 5 && decode.outputs[4].tensor == 0 &&
+                decode.outputs[4].byte_offset == 80 &&
+                decode.outputs[4].source == gs::TensorStagePortSource::Output,
+            "the Segment Anything mask must be written after the 80-byte V1 prefix");
+    require(r.compiled.runtime_contract.physical_outputs.front().size_bytes == 80 + 1280 * 720 &&
+                r.compiled.runtime_contract.logical_outputs.front().publication_relation ==
+                    PublicationViewRelation::PackedStorage,
+            "Segment Anything wire extent or relation");
+    const auto inspection = inspect(decode.executable);
+    const std::int64_t masks = c.masks;
+    require(
+        inspection.inputs().size() == (c.object ? 3U : 2U) &&
+            inspection.inputs()[0].shape == std::vector<std::int64_t>({256, 256, masks}) &&
+            inspection.inputs()[1].shape == std::vector<std::int64_t>({1, 1, masks}) &&
+            (!c.object || inspection.inputs()[2].shape == std::vector<std::int64_t>({1, 1, 1})) &&
+            inspection.outputs()[4].shape == std::vector<std::int64_t>({1, 720, 1280}) &&
+            inspection.outputs()[4].dtype == c::DType::UInt8,
+        "Segment Anything request ports differ from the contract");
+  }
+  for (const auto* dtype : {"FP32", "BF16", "INT8"}) {
+    const auto r = check(sam_concept_source(dtype, 3), {1008, 1008, 640, 480, ResizeMode::Stretch});
+    const auto& decode = r.compiled.recipe->members[r.decode_member];
+    // Header 48 + three 24-byte records = 120, rounded up to 128 for the masks.
+    require(decode.outputs.size() == 5 && decode.outputs[4].byte_offset == 128 &&
+                r.compiled.runtime_contract.physical_outputs.front().size_bytes ==
+                    128 + 3 * 640 * 480,
+            "EfficientSAM3 concept masks follow K records of the V1 prefix");
+    const auto inspection = inspect(decode.executable);
+    require(inspection.inputs().size() == 2 &&
+                inspection.inputs()[0].shape == std::vector<std::int64_t>({1, 200, 6}) &&
+                inspection.inputs()[1].shape == std::vector<std::int64_t>({192, 192, 200}) &&
+                inspection.outputs()[0].shape == std::vector<std::int64_t>({3, 4}) &&
+                inspection.outputs()[4].shape == std::vector<std::int64_t>({3, 480, 640}),
+            "EfficientSAM3 concept request ports differ from the contract");
+  }
+  // The MPK's detections carrier is [1,200,8] BF16 (two padding values per
+  // query). The port keeps that 16-byte row pitch while it describes the six
+  // used values, so column 4 is each query's score.
+  {
+    auto s = source(BoxDecodeType::EfficientSam3, 1);
+    s.payload.topk = 5;
+    s.payload.detection_threshold = .5;
+    s.payload.nms_iou_threshold = 0;
+    s.payload.score_activation = BoxDecodeScoreActivation::Identity;
+    s.payload.decode_type_option = BoxDecodeTypeOption::Auto;
+    input(s, 1, 200, 8, "BF16");
+    s.payload.slice_shapes[0].sizes[2] = 6;
+    input(s, 192, 192, 200, "BF16");
+    s.payload.tensor_roles = {BoxDecodeTensorRole::SamConceptDetections,
+                              BoxDecodeTensorRole::SamMaskLogits};
+    const auto r = check(s, {1008, 1008, 1280, 720, ResizeMode::Stretch});
+    const auto port = inspect(r.compiled.recipe->members[r.decode_member].executable).inputs()[0];
+    const auto* strided = std::get_if<c::Strided>(&port.layout);
+    require(port.shape == std::vector<std::int64_t>({1, 200, 6}) && strided &&
+                strided->strides_bytes[0] == 3200 && strided->strides_bytes[1] == 16 &&
+                strided->strides_bytes[2] == 2,
+            "EfficientSAM3 detections must keep their carrier's row pitch");
+  }
+}
+
+// The Scheduler's Identity publication rule on the stage contract Core builds:
+// every member output routed to a public tensor without a physical-view
+// authority publishes exactly its checked kernel output (shape and dense
+// strides), so graph build cannot reject it with "publication shape differs
+// from checked kernel output".
+void require_exact_member_publications(const BoxDecodeKernelRecipeResult& r, const char* what) {
+  const auto& runtime = r.compiled.runtime_contract;
+  StageStaticSpec stage;
+  stage.element_name = stage.logical_stage_id = "publication_rule";
+  stage.native_kernel = r.compiled.recipe;
+  stage.logical_outputs = runtime.logical_outputs;
+  stage.physical_outputs = runtime.physical_outputs;
+  stage.physical_outputs.insert(stage.physical_outputs.end(),
+                                r.compiled.recipe->private_buffers.begin(),
+                                r.compiled.recipe->private_buffers.end());
+  stage.output_order = runtime.output_order;
+  c::TensorStagePublication publication;
+  std::string error;
+  require(build_kernel_stage_publication(stage, &publication, &error), error.c_str());
+  require(publication.contract != nullptr, what);
+  for (const auto& member : r.compiled.recipe->members) {
+    const auto inspection = inspect(member.executable);
+    for (std::size_t port = 0; port < member.outputs.size(); ++port) {
+      const auto& route = member.outputs[port];
+      if (route.source != gs::TensorStagePortSource::Output)
+        continue;
+      const auto& outputs = publication.contract->logical_outputs;
+      const auto output = std::find_if(outputs.begin(), outputs.end(), [&](const auto& candidate) {
+        return candidate.backend_output_index == static_cast<int>(route.tensor);
+      });
+      const bool authority =
+          std::any_of(publication.physical_views.begin(), publication.physical_views.end(),
+                      [&](const auto& view) {
+                        return view.backend_output_index == static_cast<int>(route.tensor);
+                      });
+      if (output == outputs.end() || authority)
+        continue;
+      const auto& checked = inspection.outputs()[port];
+      require(output->shape == checked.shape, what);
+      if (!output->stride_bytes.empty() && std::holds_alternative<c::Contiguous>(checked.layout)) {
+        std::int64_t dense = static_cast<std::int64_t>(
+            checked.dtype == c::DType::Float32 || checked.dtype == c::DType::Int32 ? 4
+            : checked.dtype == c::DType::BFloat16                                  ? 2
+                                                                                   : 1);
+        for (std::size_t axis = checked.shape.size(); axis-- > 0;) {
+          require(checked.shape[axis] <= 1 || output->stride_bytes[axis] == dense, what);
+          dense *= checked.shape[axis];
+        }
+      }
+    }
+  }
+}
+
+// BoxDecodeType::EdgeTamTrack: the stage also publishes every input
+// as the route without BoxDecode returns it, after the BoxDecode tensor. The
+// EdgeTAM decoder: BF16 logits and IoU slices, an FP32 object score and the
+// FP32 object pointers that no head reads.
+std::vector<BoxDecodeRawOutput> edgetam_raw_outputs() {
+  return {{"mask_logits", "FP32", {1, 256, 256, 4}},
+          {"iou_scores", "FP32", {1, 4}},
+          {"object_score_logits", "FP32", {1, 1}},
+          {"object_pointers", "FP32", {1, 4, 256}}};
+}
+void boxdecode_raw_outputs_core_contract() {
+  const BoxDecodeGeometryOptions geometry{1024, 1024, 1280, 720, ResizeMode::Stretch};
+  for (int fault = 0; fault < 3; ++fault) {
+    auto s = sam_mask_source(BoxDecodeType::EdgeTamTrack, "BF16", "BF16", 4, true);
+    s.payload.raw_outputs = edgetam_raw_outputs();
+    if (fault == 0)
+      s.payload.raw_outputs.pop_back(); // One raw output per input.
+    else if (fault == 1)
+      s.payload.raw_outputs[3].shape = {1, 4, 128}; // The extent of input 3.
+    else
+      s.payload.raw_outputs[2].dtype = "INT8"; // No FP32 -> INT8 publication.
+    bool rejected = false;
+    try {
+      (void)prepare_boxdecode_kernel(s, geometry);
+    } catch (const std::invalid_argument& error) {
+      rejected = std::string(error.what()).find("raw output") != std::string::npos;
+    }
+    require(rejected, "an inconsistent raw output reached Kernels admission");
+  }
+}
+void boxdecode_raw_outputs() {
+  boxdecode_raw_outputs_core_contract();
+  const BoxDecodeGeometryOptions geometry{1024, 1024, 1280, 720, ResizeMode::Stretch};
+  auto s = sam_mask_source(BoxDecodeType::EdgeTamSeg, "BF16", "BF16", 4, true);
+  // EdgeTamSeg publishes the BoxDecode tensor alone.
+  const auto plain = prepare_boxdecode_kernel(s, geometry);
+  require(plain.compiled.runtime_contract.logical_outputs.size() == 1 &&
+              plain.compiled.runtime_contract.physical_outputs.size() == 1 &&
+              plain.compiled.recipe->members.size() == 2,
+          "BoxDecode without raw outputs must keep one public output and two members");
+  s = sam_mask_source(BoxDecodeType::EdgeTamTrack, "BF16", "BF16", 4, true);
+  s.payload.raw_outputs = edgetam_raw_outputs();
+  const auto r = prepare_boxdecode_kernel(s, geometry);
+  const auto& runtime = r.compiled.runtime_contract;
+  const auto& recipe = *r.compiled.recipe;
+  const auto raw = edgetam_raw_outputs();
+  require(runtime.logical_outputs.size() == 5 && runtime.physical_outputs.size() == 5 &&
+              runtime.output_order.size() == 5 && recipe.members.size() == 6 &&
+              recipe.output_format == kDetectionFormatBbox,
+          "raw outputs must follow the BoxDecode tensor, one member each");
+  require(runtime.logical_outputs[0].dtype == "UINT8" &&
+              runtime.logical_outputs[0].shape.size() == 1,
+          "the BoxDecode tensor stays first");
+  // BF16 heads are cast, FP32 heads are copied; every raw member reads only
+  // its stage input and writes its own public output.
+  const std::array<c::DType, 4> sources{c::DType::BFloat16, c::DType::BFloat16, c::DType::Float32,
+                                        c::DType::Float32};
+  const std::array<std::vector<std::int64_t>, 4> views{
+      std::vector<std::int64_t>{256, 256, 4}, std::vector<std::int64_t>{1, 1, 4},
+      std::vector<std::int64_t>{1, 1, 1}, std::vector<std::int64_t>{1, 4, 256}};
+  for (std::size_t i = 0; i < raw.size(); ++i) {
+    const auto& logical = runtime.logical_outputs[1 + i];
+    std::uint64_t bytes = 4;
+    for (const auto dimension : raw[i].shape)
+      bytes *= static_cast<std::uint64_t>(dimension);
+    require(logical.logical_name == raw[i].name && logical.dtype == "FP32" &&
+                logical.shape == raw[i].shape &&
+                runtime.physical_outputs[1 + i].size_bytes == bytes &&
+                runtime.output_order[1 + i].cm_output_name == raw[i].name,
+            "raw output name, dtype, shape or size differs from the route without BoxDecode");
+    const auto& member = recipe.members[2 + i];
+    require(member.inputs.size() == 1 && member.inputs[0].tensor == i &&
+                member.inputs[0].source == gs::TensorStagePortSource::Input &&
+                member.outputs.size() == 1 && member.outputs[0].tensor == 1 + i &&
+                member.outputs[0].source == gs::TensorStagePortSource::Output &&
+                member.dependencies.empty(),
+            "a raw member must read its stage input and write its public output");
+    const auto inspection = inspect(member.executable);
+    // A BF16 cast reads the view with the published shape; an FP32 copy reads
+    // the HWC view. Either way the member writes the published tensor itself.
+    const bool cast = sources[i] == c::DType::BFloat16;
+    require(inspection.inputs().size() == 1 && inspection.inputs()[0].dtype == sources[i] &&
+                inspection.inputs()[0].shape == (cast ? raw[i].shape : views[i]) &&
+                inspection.outputs()[0].dtype == c::DType::Float32 &&
+                inspection.outputs()[0].shape == raw[i].shape &&
+                inspection.outputs()[0].shape == runtime.logical_outputs[1 + i].shape,
+            "a raw member must write exactly its published tensor");
+  }
+  require_exact_member_publications(r, "a raw output publishes another shape than its member "
+                                       "writes");
+  // INT8 heads are dequantized with the canonical reciprocal scale.
+  auto quantized = sam_mask_source(BoxDecodeType::MobileSam, "INT8", "INT8");
+  quantized.payload.raw_outputs = {{"masks", "FP32", {1, 256, 256, 4}},
+                                   {"iou_predictions", "FP32", {1, 4}}};
+  const auto q =
+      prepare_boxdecode_kernel(quantized, {1024, 1024, 1280, 720, ResizeMode::Letterbox});
+  const auto dequant = inspect(q.compiled.recipe->members[2].executable);
+  require(q.compiled.runtime_contract.logical_outputs.size() == 3 &&
+              dequant.inputs()[0].dtype == c::DType::Int8 &&
+              dequant.inputs()[0].shape == std::vector<std::int64_t>({1, 256, 256, 4}) &&
+              dequant.outputs()[0].shape == std::vector<std::int64_t>({1, 256, 256, 4}) &&
+              inspect(q.compiled.recipe->members[3].executable).outputs()[0].shape ==
+                  std::vector<std::int64_t>({1, 4}),
+          "INT8 MobileSAM raw outputs must be dequantized from their carriers in their published "
+          "shape");
+  require_exact_member_publications(q, "an INT8 raw output publishes another shape than its "
+                                       "member writes");
+}
+
 // Identity scale does not make nominal resize modes interchangeable: YOLO26
 // declares centered letterbox even when original and model extents coincide.
 void yolo26_seg_identity_resize_contract() {
@@ -629,6 +1212,134 @@ struct HostStorage final {
     std::memcpy(static_cast<std::byte*>(memory.get()) + element * 4, &value, 4);
   }
 };
+// One BF16 logit in the first score head, as (element, value). Every other logit is -10.
+struct SsdLogit {
+  std::size_t element;
+  float value;
+};
+// Runs the checked SSD numerical member and the publication member on the host
+// with zero box offsets, which decode to the priors, and returns the wire. The
+// score heads carry `classes` encoded classes; the request selects `selected`.
+HostStorage
+ssd_decode_wire(stagesemantics::SsdRecipeId id, const std::array<int, 6>& dims,
+                const std::array<int, 6>& anchors, const BoxDecodeGeometryOptions& geometry,
+                const std::vector<SsdLogit>& logits, int classes = 91, int selected = 91,
+                BoxDecodeScoreActivation activation = BoxDecodeScoreActivation::Sigmoid) {
+  auto request = source(BoxDecodeType::Ssd, selected);
+  request.payload.ssd_recipe_id = id;
+  request.payload.score_activation = activation;
+  for (std::size_t i = 0; i < dims.size(); ++i)
+    input(request, dims[i], dims[i], anchors[i] * 4);
+  for (std::size_t i = 0; i < dims.size(); ++i)
+    input(request, dims[i], dims[i], anchors[i] * classes);
+  const auto prepared = check(request, geometry);
+  const auto& members = prepared.compiled.recipe->members;
+  require(prepared.decode_member == 0, "SSD decode must read the stage inputs directly");
+  const auto& numerical = members[prepared.decode_member].executable;
+  const auto& publication = members.back().executable;
+  const auto description = inspect(numerical);
+  std::vector<std::shared_ptr<HostStorage>> inputs, outputs;
+  std::vector<c::ConstBytes> in, public_inputs;
+  std::vector<c::MutableBytes> out;
+  for (const auto& req : description.input_requirements()) {
+    inputs.push_back(std::make_shared<HostStorage>(req.storage_bytes));
+    in.push_back({static_cast<const std::byte*>(inputs.back()->memory.get()), req.storage_bytes});
+  }
+  const auto set_bf16 = [](HostStorage& storage, std::size_t element, float value) {
+    std::uint32_t bits = 0;
+    std::memcpy(&bits, &value, 4);
+    const auto upper = static_cast<std::uint16_t>(bits >> 16);
+    std::memcpy(static_cast<std::byte*>(storage.memory.get()) + element * 2, &upper, 2);
+  };
+  for (std::size_t head = 0; head < dims.size(); ++head) {
+    auto& scores = *inputs[dims.size() + head];
+    const std::size_t elements =
+        std::size_t(dims[head]) * std::size_t(dims[head]) * std::size_t(anchors[head] * classes);
+    require(scores.size >= elements * 2, "SSD score head is smaller than its dense extent");
+    for (std::size_t e = 0; e < elements; ++e)
+      set_bf16(scores, e, -10.f);
+  }
+  for (const auto& logit : logits)
+    set_bf16(*inputs[dims.size()], logit.element, logit.value);
+  for (const auto& req : description.output_requirements()) {
+    outputs.push_back(std::make_shared<HostStorage>(req.storage_bytes));
+    auto* data = static_cast<std::byte*>(outputs.back()->memory.get());
+    out.push_back({data, req.storage_bytes});
+    public_inputs.push_back({data, req.storage_bytes});
+  }
+  test::OperationProbe executor, publisher;
+  require(!executor.prepare(numerical) && !publisher.prepare(publication),
+          "SSD numerical/publication preparation failed");
+  const auto status = executor.execute_host(executor.operation(), in, out);
+  require(!status, status ? status->message.c_str() : "SSD checked numerical execution failed");
+  const auto wire_bytes = inspect(publication).output_requirements()[0].storage_bytes;
+  HostStorage wire(wire_bytes);
+  const std::array<c::MutableBytes, 1> published{
+      {{static_cast<std::byte*>(wire.memory.get()), wire_bytes}}};
+  require(!publisher.execute_host(publisher.operation(), public_inputs, published),
+          "SSD publication failed");
+  return wire;
+}
+// The 91-class SSD-Mobile-300-v1 and SSDlite-Mobile-320-v1 signatures decode as
+// their source models do: every foreground anchor/class pair, NMS per class.
+// Other signatures keep one class per anchor. One anchor whose two foreground
+// classes both pass the threshold tells the two policies apart.
+std::int32_t ssd_policy_detections(stagesemantics::SsdRecipeId id, int side,
+                                   const std::array<int, 6>& dims,
+                                   const std::array<int, 6>& anchors) {
+  // Classes 1 and 2 of the first anchor of the first cell at 5 and 4.
+  const auto wire = ssd_decode_wire(
+      id, dims, anchors, {side, side, side, side, ResizeMode::Stretch}, {{1, 5.f}, {2, 4.f}});
+  const auto count = wire.read<std::int32_t>(0);
+  for (std::int32_t row = 1; row < count; ++row)
+    require(wire.read<std::int32_t>(4 + row * 24 + 20) != wire.read<std::int32_t>(4 + 20),
+            "SSD published one class twice for a single anchor");
+  return count;
+}
+// The first SSD-MobileNet-v1 anchor at row 4, column 12 is a 0.1-wide square
+// centered at (12.5/19, 4.5/19). With zero offsets, stretching to 600x300
+// gives the expected (x, y, width, height) of about (365, 56, 60, 30).
+void ssd_known_logit_detection() {
+  constexpr std::size_t classes = 91, anchors_19 = 3, cell = 4 * 19 + 12;
+  const auto wire = ssd_decode_wire(
+      stagesemantics::SsdRecipeId::SsdMobile300V1, {19, 10, 5, 3, 2, 1}, {3, 6, 6, 6, 6, 6},
+      {300, 300, 600, 300, ResizeMode::Stretch}, {{cell * anchors_19 * classes + 1, 5.f}});
+  require(wire.read<std::int32_t>(0) == 1, "SSD-Mobile-300 published other than one detection");
+  const auto near = [](std::int32_t got, int want) { return std::abs(got - want) <= 1; };
+  require(near(wire.read<std::int32_t>(4), 365) && near(wire.read<std::int32_t>(8), 56) &&
+              near(wire.read<std::int32_t>(12), 60) && near(wire.read<std::int32_t>(16), 30),
+          "SSD-Mobile-300 box does not match its prior stretched to the original frame");
+  require(wire.read<std::int32_t>(24) == 1, "SSD-Mobile-300 published the wrong class");
+  require(std::abs(wire.read<float>(20) - 1.f / (1.f + std::exp(-5.f))) < 1e-3f,
+          "SSD-Mobile-300 score is not the sigmoid of its logit");
+}
+// SSD300 indexes scores by class * anchors_per_cell + anchor.
+// Selecting the first 8 of 81 classes keeps class 3 and excludes class 50.
+void ssd300_class_selection() {
+  constexpr std::size_t anchors_38 = 4;
+  const auto wire = ssd_decode_wire(stagesemantics::SsdRecipeId::Ssd300V1, {38, 19, 10, 5, 3, 1},
+                                    {4, 6, 6, 6, 4, 4}, {300, 300, 300, 300, ResizeMode::Stretch},
+                                    {{3 * anchors_38 + 0, 5.f}, {50 * anchors_38 + 1, 5.f}}, 81, 8,
+                                    BoxDecodeScoreActivation::Softmax);
+  require(wire.read<std::int32_t>(0) == 1,
+          "SSD300 81-to-8 decode published other than one detection");
+  require(wire.read<std::int32_t>(24) == 3, "SSD300 81-to-8 decode lost the class-3 detection");
+  // Softmax gives at least 0.99997 over 81 or 8 classes; sigmoid(5) would give 0.993.
+  require(std::abs(wire.read<float>(20) - 1.f) < 1e-3f,
+          "SSD300 score is not a softmax of its logits");
+}
+void ssd_source_policy_execution() {
+  using stagesemantics::SsdRecipeId;
+  require(ssd_policy_detections(SsdRecipeId::SsdMobile300V1, 300, {19, 10, 5, 3, 2, 1},
+                                {3, 6, 6, 6, 6, 6}) == 2,
+          "91-class SSD-Mobile-300-v1 must keep both foreground classes of one anchor");
+  require(ssd_policy_detections(SsdRecipeId::SsdMobile320V1, 320, {20, 10, 5, 3, 2, 1},
+                                {3, 6, 6, 6, 6, 6}) == 1,
+          "SSD-Mobile-320-v1 must keep its one-class-per-anchor policy");
+  ssd_known_logit_detection();
+  ssd300_class_selection();
+}
+
 void detr_numerical_publication(bool crop = false) {
   auto request = source(BoxDecodeType::Detr, 2);
   request.payload.topk = 2;
@@ -1103,6 +1814,7 @@ void combined_execution(bool planar, int ingress_route = 0, bool gaps = false) {
   if (ingress_route) {
     TensorList tensors;
     CompiledNodeContract upstream;
+    upstream.element_name = upstream.logical_stage_id = "strided_head_producer";
     upstream.kernel.emplace();
     for (std::size_t i = 0; i < grouped.size(); ++i) {
       const auto& original = authored_inputs[grouped[i]];
@@ -1511,6 +2223,7 @@ void crop_source_geometry() {
       // The MLA-like upstream head carrier is distinct from graph ingress,
       // which contains the image and its older preprocessing provenance.
       CompiledNodeContract head_producer;
+      head_producer.logical_stage_id = "detr_head_producer";
       head_producer.kernel.emplace();
       head_producer.kernel->runtime_contract.physical_outputs =
           heads.runtime_contract.physical_inputs;
@@ -1580,6 +2293,22 @@ void crop_source_geometry() {
     }
 }
 
+// A Segment Anything decoder has no image geometry without inputs, so Model::build()
+// and execution_plan() with no inputs fail and name the calls that take inputs.
+void sam_requires_input_geometry() {
+  auto heads = sam_mask_source(BoxDecodeType::MobileSam, "INT8", "INT8");
+  heads.runtime_contract.logical_inputs.clear();
+  std::string message;
+  try {
+    (void)compile_boxdecode_kernel(heads, ContractCompileInput{}, BoxDecodeGeometryOptions{});
+  } catch (const std::invalid_argument& error) {
+    message = error.what();
+  }
+  require(message.find("MobileSAM requires semantic.preprocess geometry") != std::string::npos &&
+              message.find("execution_plan(inputs)") != std::string::npos,
+          "a SAM decoder without input geometry must say to build it from inputs");
+}
+
 // The final frontend reports its local stretch policy, while its affine still
 // maps all the way through an earlier Cover. Decoder activation must follow
 // that authoritative mapping, not only a nearest-producer "crop" token.
@@ -1643,6 +2372,7 @@ void composed_frontend_detection_geometry() {
         heads.payload.topk = 2;
         heads.payload.detection_threshold = .6;
         CompiledNodeContract head_producer;
+        head_producer.logical_stage_id = "detr_head_producer";
         head_producer.kernel.emplace();
         head_producer.kernel->runtime_contract.physical_outputs =
             heads.runtime_contract.physical_inputs;
@@ -2303,6 +3033,7 @@ void rejects() {
 }
 #include "boxdecode_obb_conversion_cases.inc"
 #include "boxdecode_obb_publication_cases.inc"
+#include "boxdecode_roi_affine_cases.inc"
 void linear_metadata_contracts() {
   require(boxdecode_linear_storage({1, 4, 8, 6}, {}, "NCHW", 4)->stride_bytes ==
               std::vector<std::int64_t>{24, 4, 192},
@@ -2345,6 +3076,27 @@ void linear_metadata_contracts() {
 } // namespace
 int main(int argc, char** argv) {
   try {
+    if (argc == 2 && std::string(argv[1]) == "--ssd-completion-guard-test") {
+      check_ssd_artifact_completion_guard(argv[0]);
+      return 0;
+    }
+    if (argc == 2 && std::string(argv[1]) == "--ssd-completion-guard-negative") {
+      arm_ssd_artifact_completion_guard();
+      std::exit(EXIT_SUCCESS); // Must be converted to failure by the guard.
+    }
+    if (argc == 3 && std::string(argv[1]) == "--ssd-model-carrier-contract") {
+      arm_ssd_artifact_completion_guard();
+      simaai::neat::gst_init_once();
+      check_ssd_model_carrier_contract(argv[2]);
+      ssd_artifact_completed.store(true, std::memory_order_release);
+      return 0;
+    }
+    if (argc == 2 && std::string(argv[1]) == "--ssd-mpk-carrier-contract") {
+      gst_init(nullptr, nullptr);
+      check_ssd_mpk_carrier_contracts();
+      std::cout << "SSD_MPK_CARRIER_CONTRACT_PASS\n";
+      return 0;
+    }
     // Pure cold numerical recipe admission: no plugin init, Tensor allocation,
     // executable invocation, Graph/Model build, or accelerator/device access.
     if (argc == 2 && std::string(argv[1]) == "--yolo26-seg-identity-resize-contract") {
@@ -2357,6 +3109,17 @@ int main(int argc, char** argv) {
       gst_init(nullptr, nullptr);
       yolo26_direct_mask_projection();
       std::cout << "YOLO26_DIRECT_MASK_PROJECTION_HOST_OPERATIONS_PASS\n";
+      return 0;
+    }
+    if (argc == 2 && std::string(argv[1]) == "--sam-core-contract") {
+      sam_core_contract();
+      sam_requires_input_geometry();
+      std::cout << "SAM_CORE_CONTRACT_PASS_NO_EXECUTION\n";
+      return 0;
+    }
+    if (argc == 2 && std::string(argv[1]) == "--boxdecode-raw-outputs-core-contract") {
+      boxdecode_raw_outputs_core_contract();
+      std::cout << "BOXDECODE_RAW_OUTPUTS_CORE_CONTRACT_PASS_NO_EXECUTION\n";
       return 0;
     }
     if (argc == 2 && std::string(argv[1]) == "--yolo26-obb-carrier-conversions") {
@@ -2377,7 +3140,13 @@ int main(int argc, char** argv) {
       std::cout << "YOLO26_OBB_SOURCE_GEOMETRY_PASS\n";
       return 0;
     }
+    if (argc == 2 && std::string(argv[1]) == "--ssd-source-policy-execution") {
+      ssd_source_policy_execution();
+      std::cout << "SSD_SOURCE_POLICY_EXECUTION_PASS\n";
+      return 0;
+    }
     simaai::neat::gst_init_once();
+    check_ssd_mpk_carrier_contracts();
     dfl_oriented_contract_and_execution();
     oriented_publication_sample_bridge(BoxDecodeType::YoloV8Obb);
     oriented_source_geometry(BoxDecodeType::YoloV8Obb);
@@ -2385,15 +3154,20 @@ int main(int argc, char** argv) {
     oriented_publication_sample_bridge();
     linear_metadata_contracts();
     focal_query_contract();
+    sam_recipe();
+    sam_requires_input_geometry();
+    boxdecode_raw_outputs();
     detr_default_resolution();
     query_source_dtypes();
     detr_numerical_publication();
     detr_numerical_publication(true);
+    ssd_source_policy_execution();
     detr_padded_numerical_publication();
     focal_numerical_publication();
     focal_numerical_publication(true);
     crop_source_geometry();
     composed_frontend_detection_geometry();
+    roi_affine_geometry();
     families();
     oriented_contract_and_execution();
     oriented_carrier_conversions();

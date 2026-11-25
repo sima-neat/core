@@ -138,6 +138,7 @@ model = pyneat.Model(model_path, options)
 | `nms_iou_threshold` | デコード処理では、非最大値抑制を適用する必要があります。 | `0`；モデルにパッケージされた値を保持します。パッケージされた値がない場合、YOLO26はNMSをスキップし、その他のデコーダーは重なりのあるボックスをすべて抑制します。 |
 | `top_k` | 1回の出力あたりの検出件数に上限を設けたいのですね。 | `0`；上位K件の制限なし。 |
 | `num_classes` | クラスヘッドの深さは、例えば単一クラスのYOLO分割ヘッドのように、確実に推測することはできません。 | `0`。MPKメタデータまたは従来の推論を使用してください。 |
+| `multimask_output` | Segment Anything のプロンプトデコーダーに、ボックスや複数の点の場合と同様の単一マスクの答えを返させる場合。`false` を受け付けるのは Segment Anything のデコードタイプだけです。 | `true`。1 回のクリックの場合と同様に、予測 IoU が最も高い候補マスクを残します。[Segment Anything のマスク](/reference/boxdecode_decode_types#segment-anything-masks)を参照してください。 |
 
 ほとんどのYOLOスタイルのモデルでは、まず`decode_type`、`score_threshold`、`nms_iou_threshold`、および`top_k`から始めます。モデルの構造に調整が必要な場合にのみ、`num_classes`を追加します。テンソルの順序について、特定のセレクターが必要であることがわかっている場合を除き、`decode_type_option`を`Auto`に設定したままにします。
 
@@ -206,7 +207,7 @@ model = pyneat.Model(model_path)
 | 画像またはテンソルを入力として選択してください。 | `preprocess.kind` |
 | 従来の前処理制御（MPKに必要なアダプターは維持） | `preprocess.enable` |
 | 動的な画像の入力を制限する | `preprocess.input_max_width`, `preprocess.input_max_height`, `preprocess.input_max_depth` |
-| サイズ変更、トリミング、またはレターボックス表示 | `preprocess.resize` |
+| サイズ変更、トリミング、またはレターボックス表示（中央または左上配置） | `preprocess.resize`、`preprocess.resize.placement` |
 | RGB、BGR、NV12、I420、またはグレースケールに変換します。 | `preprocess.color_convert` |
 | HWC、CHW、またはその他の軸の順序を変換します。 | `preprocess.layout_convert` |
 | 平均値/標準偏差による正規化を適用します。 | `preprocess.normalize`または`preprocess.preset` |

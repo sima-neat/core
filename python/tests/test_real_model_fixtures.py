@@ -16,7 +16,6 @@ import pyneat
 
 ROOT = model_fixtures.ROOT
 SANDBOX_API_TESTS = ROOT / "sandbox" / "api-tests"
-MODELZOO_PLATFORM_VERSION = model_fixtures.MODELZOO_PLATFORM_VERSION
 BOXDECODE_THRESHOLDS = (0.50, 0.60, 0.70)
 TOP_SCORE_HIGHLIGHT_COUNT = 3
 
@@ -25,17 +24,12 @@ def _env_path(name: str) -> Path:
   return model_fixtures.strict_model_tar_path(name)
 
 
-def test_model_fixture_path_helper_skips_when_unresolved(monkeypatch):
+def test_model_fixture_path_helper_fails_when_unset(monkeypatch):
   model_fixtures._MODEL_PATH_CACHE.clear()
   monkeypatch.delenv("SIMA_RESNET50_TAR", raising=False)
-  monkeypatch.setattr(
-      model_fixtures,
-      "resolve_model_tar",
-      lambda _name: None,
-      raising=False,
-  )
+  monkeypatch.delenv("SIMA_MODEL_TAR", raising=False)
 
-  with pytest.raises(pytest.skip.Exception, match="SIMA_RESNET50_TAR"):
+  with pytest.raises(pytest.fail.Exception, match="SIMA_RESNET50_TAR is not set"):
     model_fixtures.fixture_model_path("SIMA_RESNET50_TAR")
 
 
@@ -77,6 +71,9 @@ def _resolve_fixture_image(rel_path: Path) -> Path | None:
     installed_candidate = root / "lib" / "sima-neat" / rel_path
     if installed_candidate.is_file():
       return installed_candidate
+    test_asset = root / "test-assets" / rel_path
+    if test_asset.is_file():
+      return test_asset
 
   return None
 
@@ -121,6 +118,40 @@ def _image_input_model(
   opt.decode_type = decode_type
   opt.top_k = top_k
   return pyneat.Model(str(model_tar), opt)
+
+
+def test_standalone_preproc_matches_graph_and_preserves_batch_outputs():
+  model = _image_input_model(_env_path("SIMA_YOLO_TAR"))
+  rgb = cv2.resize(_decode_rgb_image(_fixture_image_path(Path("tests/images/people.jpg"))),
+                   (640, 480))
+  bgr = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
+  image = _rgb_tensor(rgb)
+  graph = pyneat.Graph()
+  graph.add(pyneat.nodes.input(model.input_appsrc_options(False)))
+  graph.add_graph(model.preprocess())
+  graph.add(pyneat.nodes.output())
+  run = graph.build([image])
+  try:
+    assert run.push([image])
+    expected, = run.pull_tensors(10000)
+    reference = bytes(expected.copy_payload_bytes())
+  finally:
+    run.close()
+
+  def preprocess(images, fmt, rois=None):
+    return pyneat.stages.preproc(images, model, image_format=fmt, rois=rois)
+
+  first, second = preprocess([bgr, np.zeros_like(bgr)], pyneat.PixelFormat.BGR)
+  tagged_rgb, = preprocess([rgb], pyneat.PixelFormat.RGB)
+  assert bytes(first.copy_payload_bytes()) == bytes(tagged_rgb.copy_payload_bytes()) == reference
+  assert bytes(second.copy_payload_bytes()) != reference
+
+  rois = [pyneat.PreprocessRoi(0, 0, 0, 320, 240), pyneat.PreprocessRoi(0, 120, 80, 160, 160)]
+  crops = preprocess([bgr], pyneat.PixelFormat.BGR, rois)
+  assert len(crops) == len(rois)
+  for crop, roi in zip(crops, rois):
+    single, = preprocess([bgr], pyneat.PixelFormat.BGR, [roi])
+    assert bytes(crop.copy_payload_bytes()) == bytes(single.copy_payload_bytes())
 
 
 def _rgb_tensor(image: np.ndarray) -> pyneat.Tensor:
@@ -258,7 +289,7 @@ def _run_mla_on_byte_stream(model: pyneat.Model, model_tar: Path) -> list[pyneat
   return _run_mla_byte_stream_pipeline(model, model_tar)
 
 
-def _cpu_quanttess_input(model: pyneat.Model, image: np.ndarray) -> np.ndarray:
+def _cpu_quantize_input(model: pyneat.Model, image: np.ndarray) -> np.ndarray:
   pre = pyneat.PreprocOptions(model)
   dst_h = int(pre.output_shape[0])
   dst_w = int(pre.output_shape[1])
@@ -548,7 +579,10 @@ def _assert_overlay_changed(path: Path, image: np.ndarray) -> None:
 def test_resnet_real_fixture_run_preserves_stable_classification_contract(monkeypatch, seeded):
   monkeypatch.setenv("SIMA_INPUTSTREAM_PREFLIGHT_RUN", "1")
   model = _image_input_model(_env_path("SIMA_RESNET50_TAR"))
-  image = _decode_rgb_image(_fixture_image_path(Path("test.jpg")))
+  # Same image and class as tutorial 026 (top1=208). test.jpg has no confident ResNet-50
+  # class, so its top-1 differs between ResNet-50 builds.
+  labrador = Path("pcie_host/tutorials/assets/labrador.jpg")
+  image = _decode_rgb_image(_fixture_image_path(labrador))
 
   input_tensor = _rgb_tensor(image)
   runner = model.build([input_tensor]) if seeded else model.build()
@@ -579,7 +613,7 @@ def test_resnet_real_fixture_run_preserves_stable_classification_contract(monkey
   assert all(summary["payload_tag"] == "EVXX_FLOAT32" for summary in summaries)
   assert all(summary["format"] == "EVXX_FLOAT32" for summary in summaries)
   assert all(summary["media_type"] == "application/vnd.simaai.tensor" for summary in summaries)
-  assert [summary["argmax"] for summary in summaries] == [839, 839, 839]
+  assert [summary["argmax"] for summary in summaries] == [208, 208, 208]
 
 
 def test_real_fixture_paths_resolve():
@@ -594,28 +628,14 @@ def test_model_backed_option_structs_preserve_real_fixture_semantics():
   resnet_preproc_opt = pyneat.ModelOptions()
   resnet_preproc_opt.preprocess.normalize.enable = pyneat.AutoFlag.On
   resnet_preproc_model = pyneat.Model(str(_env_path("SIMA_RESNET50_TAR")), resnet_preproc_opt)
-  quant_model = _tensor_input_model(_env_path("SIMA_YOLO_TAR"))
-  yolo_model = _image_input_model(_env_path("SIMA_YOLO_TAR"))
 
   pre = pyneat.PreprocOptions(resnet_preproc_model)
-  quant = pyneat.QuantTessOptions(quant_model)
-  detess = pyneat.DetessDequantOptions(yolo_model)
 
   assert pre.node_name == "preproc"
   assert pre.has_input_shape()
   assert pre.has_output_shape()
   assert pre.num_buffers == pre.num_buffers_model == 4
   assert pre.num_buffers_locked is True
-
-  assert quant.config_json is None
-  assert quant.num_buffers == quant.num_buffers_model == 4
-  assert quant.num_buffers_locked is True
-  assert pyneat.nodes.quant_tess(quant) is not None
-
-  assert detess.upstream_name
-  assert detess.element_name
-  assert detess.num_buffers == detess.num_buffers_model == 4
-  assert detess.num_buffers_locked is True
 
 
 def test_yolo_mla_group_matches_explicit_preprocess_plus_inference_structure():
@@ -671,22 +691,11 @@ def test_yolo_mla_group_rejects_image_input_with_byte_stream_contract_message():
   assert f"expected {expected_bytes} bytes, got {got_bytes} bytes" in str(exc.value)
 
 
-def test_yolo_detess_and_boxdecode_real_fixture_paths_are_runtime_usable(tmp_path):
+def test_yolo_boxdecode_real_fixture_path_is_runtime_usable(tmp_path):
   image = _decode_rgb_image(_fixture_image_path(Path("tests/images/people.jpg")))
   model_tar = _env_path("SIMA_YOLO_TAR")
-  detess_model = _image_input_model(model_tar)
   boxdecode_model = _image_input_model(model_tar, pyneat.BoxDecodeType.YoloV8)
   boxdecode_top_k = 120
-
-  detess_tensors = _run_mla_byte_stream_pipeline(
-      detess_model,
-      model_tar,
-      pyneat.nodes.detess_dequant(pyneat.DetessDequantOptions(detess_model)),
-  )
-  detess_shapes = [list(tensor.shape) for tensor in detess_tensors]
-  detess_dtypes = [tensor.dtype for tensor in detess_tensors]
-  del detess_tensors
-  _release_accelerator_outputs()
 
   graph = pyneat.Graph()
   graph.add(pyneat.nodes.input(boxdecode_model.input_appsrc_options(False)))
@@ -711,24 +720,13 @@ def test_yolo_detess_and_boxdecode_real_fixture_paths_are_runtime_usable(tmp_pat
   finally:
     runner.close()
 
-  assert len(detess_shapes) == 6
-  assert detess_shapes == [
-      [1, 80, 80, 64],
-      [1, 40, 40, 64],
-      [1, 20, 20, 64],
-      [1, 80, 80, 80],
-      [1, 40, 40, 80],
-      [1, 20, 20, 80],
-  ]
-  assert all(dtype == pyneat.TensorDType.Float32 for dtype in detess_dtypes)
-
   box_tensor = _sample_tensor(box_output)
   assert box_output.payload_tag in ("", "BBOX")
   assert box_tensor.dtype == pyneat.TensorDType.UInt8
   assert list(box_tensor.shape) == [4 + boxdecode_top_k * 24]
 
 
-def test_tensor_input_model_uses_quanttess_frontend_contract():
+def test_tensor_input_model_uses_quantize_frontend_contract():
   model_a = _tensor_input_model(_env_path("SIMA_YOLO_TAR"))
   model_b = _tensor_input_model(_env_path("SIMA_YOLO_TAR"))
 
@@ -742,9 +740,9 @@ def test_tensor_input_model_uses_quanttess_frontend_contract():
     assert appsrc.payload_type == pyneat.PayloadType.Tensor
     assert appsrc.format == pyneat.Format.FP32
     # Image preprocessing is disabled; the authored tensor frontend remains active.
-    assert list(info.pre_kernels) == ["quantize", "tessellate"]
-    assert info.needs.pre_quantization and info.needs.pre_tessellation
-    assert info.capabilities.has_pre_quantization and info.capabilities.has_pre_tessellation
+    assert "quantize" in list(info.pre_kernels)
+    assert info.needs.pre_quantization
+    assert info.capabilities.has_pre_quantization
     assert "neatkernelrunner" in model.backend_fragment(pyneat.ModelStage.Preprocess).lower()
 
 
@@ -754,7 +752,7 @@ def test_tensor_input_model_unseeded_build_accepts_hwc(monkeypatch, as_sample):
   model = _tensor_input_model(_env_path("SIMA_YOLO_TAR"))
   image = _decode_rgb_image(_fixture_image_path(Path("tests/images/people.jpg")))
   image_model = _image_input_model(_env_path("SIMA_YOLO_TAR"))
-  values = _cpu_quanttess_input(image_model, image)
+  values = _cpu_quantize_input(image_model, image)
   inputs = [
       pyneat.Tensor.from_numpy(values, copy=True, memory=pyneat.TensorMemory.EV74,
                               layout=pyneat.TensorLayout.HWC),
@@ -788,11 +786,11 @@ def test_tensor_input_model_unseeded_build_accepts_hwc(monkeypatch, as_sample):
       np.testing.assert_array_equal(actual, expected)
 
 
-def test_cpu_quanttess_input_matches_letterboxed_fp32_tensor_contract():
+def test_cpu_quantize_input_matches_letterboxed_fp32_tensor_contract():
   image = _decode_rgb_image(_fixture_image_path(Path("tests/images/people.jpg")))
   preproc_model = _image_input_model(_env_path("SIMA_YOLO_TAR"))
 
-  quant_input = _cpu_quanttess_input(preproc_model, image)
+  quant_input = _cpu_quantize_input(preproc_model, image)
 
   assert list(quant_input.shape) == [640, 640, 3]
   assert quant_input.dtype == np.float32
@@ -804,7 +802,7 @@ def test_cpu_quanttess_input_matches_letterboxed_fp32_tensor_contract():
   assert np.any(quant_input[532] > 0.0)
 
 
-def _run_quanttess_boxdecode_on_real_input(
+def _run_quantize_boxdecode_on_real_input(
     model: pyneat.Model,
     image: np.ndarray,
     quant_input: np.ndarray,
@@ -828,7 +826,7 @@ def _run_quanttess_boxdecode_on_real_input(
           detection_threshold=detection_threshold,
           nms_iou_threshold=0.55,
           top_k=120,
-          # _cpu_quanttess_input letterboxes when the model expects aspect-ratio
+          # _cpu_quantize_input letterboxes when the model expects aspect-ratio
           # preservation (the default for YOLOv8). The pipeline below skips the
           # model's Preproc stage, so per-buffer preproc_resize_mode meta is
           # never written by upstream — pass the override explicitly so the
@@ -853,23 +851,23 @@ def _run_quanttess_boxdecode_on_real_input(
   return backend, box_output
 
 
-def test_tensor_model_quanttess_mla_boxdecode_writes_model_overlay(tmp_path):
+def test_tensor_model_quantize_mla_boxdecode_writes_model_overlay(tmp_path):
   image = _decode_rgb_image(_fixture_image_path(Path("tests/images/people.jpg")))
   model = _tensor_input_model(_env_path("SIMA_YOLO_TAR"), pyneat.BoxDecodeType.YoloV8)
   preproc_model = _image_input_model(_env_path("SIMA_YOLO_TAR"), pyneat.BoxDecodeType.YoloV8)
-  quant_input = _cpu_quanttess_input(preproc_model, image)
+  quant_input = _cpu_quantize_input(preproc_model, image)
 
   counts = []
   for threshold in BOXDECODE_THRESHOLDS:
-    backend, box_output = _run_quanttess_boxdecode_on_real_input(
+    backend, box_output = _run_quantize_boxdecode_on_real_input(
         model,
         image,
         quant_input,
-        pyneat.nodes.quant_tess(pyneat.QuantTessOptions(model)),
+        model.preprocess(),
         threshold,
     )
 
-    assert "quanttess" in backend
+    assert "prestage_quant" in backend
     assert "preproc" not in backend
     assert "neatprocessmla" in backend
     payload, raw_records = _validated_bbox_output(box_output, image.shape[1], image.shape[0], threshold)
@@ -891,23 +889,23 @@ def test_tensor_model_quanttess_mla_boxdecode_writes_model_overlay(tmp_path):
   assert counts == sorted(counts, reverse=True)
 
 
-def test_custom_graph_quanttess_mla_boxdecode_writes_explicit_overlay(tmp_path):
+def test_custom_graph_quantize_mla_boxdecode_writes_explicit_overlay(tmp_path):
   image = _decode_rgb_image(_fixture_image_path(Path("tests/images/people.jpg")))
   model = _tensor_input_model(_env_path("SIMA_YOLO_TAR"), pyneat.BoxDecodeType.YoloV8)
   preproc_model = _image_input_model(_env_path("SIMA_YOLO_TAR"), pyneat.BoxDecodeType.YoloV8)
-  quant_input = _cpu_quanttess_input(preproc_model, image)
+  quant_input = _cpu_quantize_input(preproc_model, image)
 
   counts = []
   for threshold in BOXDECODE_THRESHOLDS:
-    backend, box_output = _run_quanttess_boxdecode_on_real_input(
+    backend, box_output = _run_quantize_boxdecode_on_real_input(
         model,
         image,
         quant_input,
-        pyneat.nodes.quant_tess(pyneat.QuantTessOptions(model)),
+        model.preprocess(),
         threshold,
     )
 
-    assert "quanttess" in backend
+    assert "prestage_quant" in backend
     assert "preproc" not in backend
     assert "neatprocessmla" in backend
     payload, raw_records = _validated_bbox_output(box_output, image.shape[1], image.shape[0], threshold)
@@ -915,7 +913,7 @@ def test_custom_graph_quanttess_mla_boxdecode_writes_explicit_overlay(tmp_path):
     boxes = _parse_bbox_payload(payload, image.shape[1], image.shape[0], min_score=threshold)
     counts.append(len(raw_records))
     out_path = tmp_path / (
-        f"people_quanttess_mla_boxdecode_overlay_{_threshold_suffix(threshold)}.png"
+        f"people_quantize_mla_boxdecode_overlay_{_threshold_suffix(threshold)}.png"
     )
 
     assert list(quant_input.shape) == [640, 640, 3]
@@ -971,13 +969,13 @@ def test_boxdecode_explicit_original_geometry_reaches_numerical_output():
   image = _decode_rgb_image(_fixture_image_path(Path("tests/images/people.jpg")))
   model = _tensor_input_model(_env_path("SIMA_YOLO_TAR"), pyneat.BoxDecodeType.YoloV8)
   preproc_model = _image_input_model(_env_path("SIMA_YOLO_TAR"), pyneat.BoxDecodeType.YoloV8)
-  quant_input = _cpu_quanttess_input(preproc_model, image)
+  quant_input = _cpu_quantize_input(preproc_model, image)
   assert list(quant_input.shape) == [640, 640, 3]
   threshold = 0.25
 
   def decode(size):
-    _, output = _run_quanttess_boxdecode_on_real_input(
-        model, image, quant_input, pyneat.nodes.quant_tess(pyneat.QuantTessOptions(model)),
+    _, output = _run_quantize_boxdecode_on_real_input(
+        model, image, quant_input, model.preprocess(),
         threshold, original_size=size,
     )
     payload, records = _validated_bbox_output(output, *size, threshold)
@@ -1128,7 +1126,7 @@ def test_benchmark_boxdecode_image_route_uses_provided_image_geometry(tmp_path):
 def test_benchmark_tensor_route_takes_real_tensors_and_rejects_mismatches():
   preproc_model = _image_input_model(_env_path("SIMA_YOLO_TAR"))
   model = _tensor_input_model(_env_path("SIMA_YOLO_TAR"), pyneat.BoxDecodeType.YoloV8, top_k=100)
-  letterboxed = _cpu_quanttess_input(preproc_model, cv2.cvtColor(_people_bgr(), cv2.COLOR_BGR2RGB))
+  letterboxed = _cpu_quantize_input(preproc_model, cv2.cvtColor(_people_bgr(), cv2.COLOR_BGR2RGB))
   tensor = pyneat.Tensor.from_numpy(letterboxed, copy=True)
 
   _assert_measured(model.benchmark(_benchmark_options([tensor])), "provided")

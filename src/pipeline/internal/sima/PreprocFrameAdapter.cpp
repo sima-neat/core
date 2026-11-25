@@ -1,5 +1,6 @@
 #include "pipeline/internal/sima/PreprocFrameAdapter.h"
 #include "nodes/sima/internal/CropGeometry.h"
+#include "nodes/sima/internal/LetterboxGeometry.h"
 #include "pipeline/internal/sima/PreprocGeometryContract.h"
 #include <simaai/scheduler/client/diagnostics.h>
 #include <algorithm>
@@ -430,8 +431,18 @@ Result<Rectangle> PreprocFrameAdapter::destination(std::int64_t source_w, std::i
   std::int64_t scaled_w = cfg.scaled_width > 0 ? cfg.scaled_width : w;
   std::int64_t scaled_h = cfg.scaled_height > 0 ? cfg.scaled_height : h;
   if (cfg.resize_mode ? *cfg.resize_mode == ResizeMode::Letterbox : cfg.aspect_ratio == 1) {
-    // Legacy contain geometry rounds the non-limiting axis upward in FP32.
-    if (w * source_h < h * source_w) {
+    if (cfg.letterbox_nearest_extent) {
+      if (w * source_h < h * source_w) {
+        scaled_w = w;
+        scaled_h = internal::nearest_letterbox_extent(source_h, w, source_w);
+      } else {
+        scaled_h = h;
+        scaled_w = internal::nearest_letterbox_extent(source_w, h, source_h);
+      }
+      if (scaled_w < 1 || scaled_h < 1)
+        return invalid("destination", "letterbox rounds the shorter image side to zero pixels");
+    } else if (w * source_h < h * source_w) {
+      // Legacy contain geometry rounds the non-limiting axis upward in FP32.
       scaled_w = w;
       scaled_h = std::int64_t(std::ceil(float(source_h * w) / float(source_w)));
     } else {
@@ -537,8 +548,10 @@ PreprocFrameAdapter::check_policy(const ProcessCvuStagePayload& prepared) {
       return *error;
     policy->output = std::get<TensorSpec>(std::move(output));
     if (cfg.normalize != 1 && policy->output.dtype == DType::Int8 && !cfg.rescale_factor &&
-        !cfg.quantization_step && cfg.floating_conversion == PreprocFloatingConversion::Legacy) {
-      // Legacy raw INT8 names byte-preserving [0,255] storage, not signed math.
+        !cfg.quantization_step && cfg.floating_conversion == PreprocFloatingConversion::Legacy &&
+        !cfg.model_managed_preproc) {
+      // Standalone legacy raw INT8 names byte-preserving [0,255] storage, not signed math.
+      // A Model-managed stage instead quantizes with the pack's quantizer.
       // Native UInt8 explicitly preserves those bytes in dense or tiled storage.
       policy->output.dtype = DType::UInt8;
     }
@@ -956,7 +969,8 @@ Result<std::vector<Parameter>> PreprocFrameAdapter::static_parameters() const {
   result.push_back({"affine_offset", std::move(offsets)});
   result.push_back({"affine_multiplier", std::move(multipliers)});
   if (policy_->output.dtype == DType::Int8) {
-    result.push_back({"quantization_multiplier", 1.0f});
+    result.push_back(
+        {"quantization_multiplier", cfg.normalize == 1 ? 1.0f : static_cast<float>(cfg.q_scale)});
     result.push_back({"quantization_zero_point", cfg.q_zp});
   }
   return result;

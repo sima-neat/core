@@ -138,6 +138,7 @@ model = pyneat.Model(model_path, options)
 | `nms_iou_threshold` | 解碼路徑應該應用非最大值抑制。 | `0`；保留模型封裝的值。若未封裝任何值，YOLO26 會略過 NMS，其他解碼器會抑制所有重疊的方框。 |
 | `top_k` | 您希望對每個輸出設定硬性上限的檢測數量。 | `0`；沒有頂級 K 上限。 |
 | `num_classes` | 無法可靠地推斷出類別頭的深度，例如單一類別的 YOLO 分割頭。 | `0`；使用 MPK 中繼資料或舊版推論。 |
+| `multimask_output` | Segment Anything 提示解碼器應傳回單一遮罩的答案時，例如使用方框或多個點。只有 Segment Anything 解碼類型接受 `false`。 | `true`；如同單次點擊，保留預測 IoU 最高的候選遮罩。請參閱 [Segment Anything 遮罩](/reference/boxdecode_decode_types#segment-anything-masks)。 |
 
 對於大多數 YOLO 樣式的模型，請從 `decode_type`、`score_threshold`、`nms_iou_threshold` 和 `top_k` 開始。只有在模型合約需要協助時，才新增 `num_classes`。除非已知張量排序需要特定的選擇器，否則將 `decode_type_option` 保持在 `Auto` 上。
 
@@ -206,7 +207,7 @@ model = pyneat.Model(model_path)
 | 選擇圖像或張量輸入 | `preprocess.kind` |
 | 既有前處理控制（保留 MPK 所需的轉接器） | `preprocess.enable` |
 | 限制動態圖像輸入 | `preprocess.input_max_width`、`preprocess.input_max_height`、`preprocess.input_max_depth` |
-| 調整大小、裁剪或使用信箱格式 | `preprocess.resize` |
+| 調整大小、裁剪或使用信箱格式（置中或左上角放置） | `preprocess.resize`、`preprocess.resize.placement` |
 | 轉換 RGB、BGR、NV12、I420 或灰度 | `preprocess.color_convert` |
 | 轉換 HWC、CHW 或其他軸順序 | `preprocess.layout_convert` |
 | 應用平均值/標準差正規化 | `preprocess.normalize` 或 `preprocess.preset` |

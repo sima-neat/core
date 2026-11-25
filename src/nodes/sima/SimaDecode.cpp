@@ -2,12 +2,19 @@
 #include "nodes/sima/internal/JpegOutputFormat.h"
 
 #include "gst/GstHelpers.h"
+#include "pipeline/ErrorCodes.h"
+#include "pipeline/NeatError.h"
 
+#include <glib.h>
+
+#include <algorithm>
+#include <array>
 #include <cstddef>
 #include <memory>
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -56,6 +63,47 @@ void require_raw_output_format_supported(const SimaDecodeOptions& opt) {
   }
   throw std::invalid_argument(
       "SimaDecode: raw_output supports only NV12 or I420 (or NV16 for JPEG/MJPEG)");
+}
+
+// Presets and aliases accepted by the `neatdecoder` `decoder-tuning` property, in lower case.
+constexpr std::array<std::string_view, 9> kAcceptedDecoderTunings = {
+    "auto",
+    "default",
+    "low-memory",
+    "low_memory",
+    "memory",
+    "throughput-low-latency",
+    "throughput_low_latency",
+    "throughput",
+    "low-latency-throughput",
+};
+
+// Matching ignores ASCII case and surrounding whitespace, as the decoder does; the caller's
+// original spelling is what gets forwarded.
+void require_decoder_tuning_supported(const SimaDecodeOptions& opt) {
+  if (opt.decoder_tuning.empty()) {
+    return;
+  }
+  std::string_view trimmed = opt.decoder_tuning;
+  while (!trimmed.empty() && g_ascii_isspace(trimmed.front())) {
+    trimmed.remove_prefix(1);
+  }
+  while (!trimmed.empty() && g_ascii_isspace(trimmed.back())) {
+    trimmed.remove_suffix(1);
+  }
+  std::string lowered(trimmed);
+  std::transform(lowered.begin(), lowered.end(), lowered.begin(), g_ascii_tolower);
+  if (std::find(kAcceptedDecoderTunings.begin(), kAcceptedDecoderTunings.end(), lowered) !=
+      kAcceptedDecoderTunings.end()) {
+    return;
+  }
+  const std::string note = "SimaDecode: decoder_tuning '" + opt.decoder_tuning +
+                           "' is not supported; use auto, default, low-memory or "
+                           "throughput-low-latency, or leave it empty for the decoder default";
+  GraphReport rep;
+  rep.error_code = error_codes::kOptionOutOfRange;
+  rep.repro_note = note;
+  throw NeatError("[" + std::string(error_codes::kOptionOutOfRange) + "] " + note, std::move(rep));
 }
 
 void append_decoder_properties(std::ostringstream& ss, const SimaDecodeOptions& opt) {
@@ -130,7 +178,9 @@ FormatTag internal::jpeg_output_format(std::span<const std::uint8_t> jpeg) {
   throw std::invalid_argument("jpeg_output_format: no 3-component frame header before scan data");
 }
 
-SimaDecode::SimaDecode(SimaDecodeOptions opt) : opt_(std::move(opt)) {}
+SimaDecode::SimaDecode(SimaDecodeOptions opt) : opt_(std::move(opt)) {
+  require_decoder_tuning_supported(opt_);
+}
 
 std::string SimaDecode::backend_fragment(int node_index) const {
   require_tensordecoder("SimaDecode::backend_fragment");

@@ -5,6 +5,11 @@ sidebar_position: 5
 
 # Model Zoo
 
+:::warning Deprecated
+The Model Zoo is deprecated. Use the [Model Browser](/tools/model-browser/) to
+find, compare, and download models for Modalix.
+:::
+
 The Model Zoo is a curated collection of precompiled and quantized models that
 are ready to run on SiMa devices.
 

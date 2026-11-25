@@ -103,7 +103,8 @@ case for features; redact secrets and customer data from examples and logs.
   - test evidence,
   - docs impact,
   - migration impact.
-- If public behavior changes, update docs in the same PR.
+- Follow the [documentation policy](docs/develop-apps/contribute/start-here/coding_standard.md#documentation-obligations);
+  `No docs update needed` is valid when existing guidance remains accurate and no new concept or workflow needs explanation.
 
 ## API Deprecation Process
 
@@ -117,7 +118,7 @@ When changing public API in `include/*`:
 
 ## Release Hygiene
 
-Releases must follow `docs/develop-apps/contribute/release-maintenance/release-checklist.md` and pass all required checks in `.github/workflows/release-gate.yml`, including model-archive security, install smoke, perf regression, soak, and fuzz gates.
+Releases must follow `docs/develop-apps/contribute/release-maintenance/release-checklist.md` and pass the required checks it lists.
 
 Before merging `develop` into `main`, check that production docs will build. Production docs import each sibling repository's `main`, while push-triggered staging builds import their `develop`. Run the staging-only check on the commit you will promote:
 

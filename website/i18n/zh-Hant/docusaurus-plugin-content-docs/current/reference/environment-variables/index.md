@@ -180,12 +180,8 @@ ProcessCVU 階段預設透過 Runtime 的 `neatkernelrunner` 執行。
   `tools/ci/verify_core_dist.py --capture-platform-baseline` **在安裝前**擷取的
   原生平台套件存在／不存在狀態、套件身分與 OTA 可用性／身分。已安裝 DevKit 的
   套件清單測試需要它與所選套件清單。不要從安裝後狀態重新產生此基準。
-- `SIMA_RUN_MNIST_PREPROC_CHANNELS1=1` — 選擇執行長時間 MNIST 前處理準確度測試。
-  請在測試固定資料驗證後，從 `tools/ci/prepare_weekly_fixtures.py` 取得此值，
-  而不是只為避免略過而手動設定。本機啟動程式使用 `--environment-json`；
-  CI 則透過 `--github-env` 使用相同的對應資料。
 
-測試固定資料群組選擇與已安裝套件設定組合，請參閱
+已安裝套件設定組合，請參閱
 [測試需求](../../develop-apps/contribute/build-test/test_requirements.md)。
 
 ## PCIe 主機與卡片狀態

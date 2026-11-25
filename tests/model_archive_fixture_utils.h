@@ -18,6 +18,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -79,10 +80,11 @@ inline void write_binary_file(const fs::path& path, const std::vector<unsigned c
             static_cast<std::streamsize>(bytes.size()));
 }
 
-// Synthetic topology evidence for plan/render tests, not a hardware-executable program.
-inline void write_topology_elf(const std::filesystem::path& path, const std::string& ifm_name,
-                               const std::uint64_t ifm_extent, const std::string& ofm_name,
-                               const std::uint64_t ofm_extent, const unsigned batch_size = 1U) {
+// Synthetic topology evidence for plan/render tests, not a hardware-executable program:
+// one 16-byte {extent, 1} tensor section per (section name, extent), in order.
+inline void
+write_topology_elf_sections(const std::filesystem::path& path,
+                            const std::vector<std::pair<std::string, std::uint64_t>>& tensors) {
   struct Elf64Header {
     std::uint8_t ident[16]{};
     std::uint16_t type = 0;
@@ -123,12 +125,8 @@ inline void write_topology_elf(const std::filesystem::path& path, const std::str
   };
   const auto shstrtab_name = append_name(".shstrtab");
   std::vector<std::uint32_t> tensor_names;
-  for (const auto& name : {ifm_name, ofm_name}) {
-    for (unsigned batch = 0; batch < batch_size; ++batch) {
-      tensor_names.push_back(
-          append_name(batch_size == 1U ? name : name + ".b" + std::to_string(batch)));
-    }
-  }
+  for (const auto& tensor : tensors)
+    tensor_names.push_back(append_name(tensor.first));
   const std::uint64_t names_offset = sizeof(Elf64Header);
   const std::uint64_t sections_offset = (names_offset + names.size() + 7U) & ~std::uint64_t{7U};
 
@@ -163,9 +161,14 @@ inline void write_topology_elf(const std::filesystem::path& path, const std::str
     section.size = 16U;
   }
 
+  // The executable's directory (share/, or a subdirectory the MPK names) may not
+  // exist yet in a fresh fixture root, whatever the working directory is.
+  std::error_code directory_error;
+  std::filesystem::create_directories(path.parent_path(), directory_error);
   std::ofstream output(path, std::ios::binary | std::ios::trunc);
   if (!output.is_open()) {
-    throw std::runtime_error("failed to create synthetic MLA ELF");
+    throw std::runtime_error("failed to create synthetic MLA ELF " + path.string() +
+                             (directory_error ? ": " + directory_error.message() : ""));
   }
   output.write(reinterpret_cast<const char*>(&header), sizeof(header));
   output.write(names.data(), static_cast<std::streamsize>(names.size()));
@@ -174,14 +177,53 @@ inline void write_topology_elf(const std::filesystem::path& path, const std::str
   output.write(padding.data(), static_cast<std::streamsize>(padding.size()));
   output.write(reinterpret_cast<const char*>(sections.data()),
                static_cast<std::streamsize>(sections.size() * sizeof(sections.front())));
-  for (const auto extent : {ifm_extent, ofm_extent}) {
-    const std::array<std::uint64_t, 2U> tensor_header{extent, 1U};
-    for (unsigned batch = 0; batch < batch_size; ++batch) {
-      output.write(reinterpret_cast<const char*>(tensor_header.data()), 16);
-    }
+  for (const auto& tensor : tensors) {
+    const std::array<std::uint64_t, 2U> tensor_header{tensor.second, 1U};
+    output.write(reinterpret_cast<const char*>(tensor_header.data()), 16);
   }
   if (!output.good()) {
     throw std::runtime_error("failed to write synthetic MLA ELF");
+  }
+}
+
+inline void write_topology_elf(const std::filesystem::path& path, const std::string& ifm_name,
+                               const std::uint64_t ifm_extent, const std::string& ofm_name,
+                               const std::uint64_t ofm_extent, const unsigned batch_size = 1U) {
+  std::vector<std::pair<std::string, std::uint64_t>> tensors;
+  for (const auto& [name, extent] :
+       {std::pair{ifm_name, ifm_extent}, std::pair{ofm_name, ofm_extent}}) {
+    for (unsigned batch = 0; batch < batch_size; ++batch) {
+      tensors.emplace_back(batch_size == 1U ? name : name + ".b" + std::to_string(batch), extent);
+    }
+  }
+  write_topology_elf_sections(path, tensors);
+}
+
+// Topology evidence for every MLA plugin of an MPK, as the compiler names its
+// ports: one monolithic data.ifm.b0/data.ofm.b0 section for a single port, or
+// data.ifm.persistent.input_N/<stage>/... and data.ofm.persistent.output_N/<stage>/...
+// in node order, each with the node's byte size.
+inline void write_mpk_topology_elfs(const fs::path& package_root, const std::string& mpk_json) {
+  const auto contract = nlohmann::json::parse(mpk_json);
+  for (const auto& plugin : contract.at("plugins")) {
+    if (plugin.value("processor", std::string{}) != "MLA")
+      continue;
+    const std::string stage = plugin.at("name").get<std::string>();
+    std::vector<std::pair<std::string, std::uint64_t>> tensors;
+    for (const auto& [nodes, single, prefix] :
+         {std::tuple{&plugin.at("input_nodes"), "data.ifm.b0", "data.ifm.persistent.input_"},
+          std::tuple{&plugin.at("output_nodes"), "data.ofm.b0", "data.ofm.persistent.output_"}}) {
+      for (std::size_t i = 0; i < nodes->size(); ++i) {
+        const auto& node = (*nodes)[i];
+        tensors.emplace_back(nodes->size() == 1U ? std::string(single)
+                                                 : prefix + std::to_string(i) + "/" + stage + "/" +
+                                                       node.at("name").get<std::string>() + ".b0",
+                             node.at("size").get<std::uint64_t>());
+      }
+    }
+    write_topology_elf_sections(package_root / "share" /
+                                    plugin.at("resources").at("executable").get<std::string>(),
+                                tensors);
   }
 }
 
@@ -484,6 +526,40 @@ inline ModelArchiveFixture make_strict_model_archive_fixture(
                           model_archive_shell_quote(fixture.root_dir) + " .";
   if (std::system(cmd.c_str()) != 0) {
     throw std::runtime_error("model_archive_fixture_utils: failed to archive MLA topology");
+  }
+  return fixture;
+}
+
+// Same strict fixture, but the pre-MLA quantizer (the first channel_params pair of the
+// quantization_transform plugin) is replaced. The checksum-pinned seed itself is not edited:
+// the unpacked copy is patched and re-archived.
+inline ModelArchiveFixture
+make_strict_model_archive_fixture_with_quantizer(const std::string& tag, double q_scale, int q_zp,
+                                                 const std::string& model_name = "yolo_v9c_seg") {
+  auto fixture = make_strict_model_archive_fixture(tag, {}, true, model_name,
+                                                   /*include_topology_artifacts=*/true);
+  const fs::path mpk_path = fs::path(fixture.root_dir) / "etc" / "strict_seed_mpk.json";
+  std::ifstream input(mpk_path, std::ios::binary);
+  auto doc = nlohmann::json::parse(input);
+  bool patched = false;
+  for (auto& plugin : doc.at("plugins")) {
+    if (plugin.value("config_params", nlohmann::json::object()).value("kernel", std::string{}) !=
+        "quantization_transform") {
+      continue;
+    }
+    plugin["config_params"]["params"]["channel_params"] =
+        nlohmann::json::array({nlohmann::json::array({q_scale, q_zp})});
+    patched = true;
+    break;
+  }
+  if (!patched) {
+    throw std::runtime_error("model_archive_fixture_utils: fixture has no quantization_transform");
+  }
+  write_text_file(mpk_path, doc.dump(2));
+  const std::string cmd = "tar -czf " + model_archive_shell_quote(fixture.tar_path) + " -C " +
+                          model_archive_shell_quote(fixture.root_dir) + " .";
+  if (std::system(cmd.c_str()) != 0) {
+    throw std::runtime_error("model_archive_fixture_utils: failed to archive patched fixture");
   }
   return fixture;
 }

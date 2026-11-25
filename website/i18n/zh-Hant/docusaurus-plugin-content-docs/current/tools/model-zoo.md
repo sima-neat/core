@@ -5,6 +5,10 @@ sidebar_position: 5
 
 # Model Zoo
 
+:::warning 已淘汰
+Model Zoo 已淘汰。請使用 [Model Browser](/tools/model-browser/) 來尋找、比較及下載適用於 Modalix 的模型。
+:::
+
 Model Zoo 是一套經過精心挑選的預先編譯和量化模型集合，可直接在 SiMa 裝置上執行。
 
 適合在以下情況使用：

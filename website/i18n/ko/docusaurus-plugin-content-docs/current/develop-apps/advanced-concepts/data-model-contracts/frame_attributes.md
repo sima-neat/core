@@ -54,7 +54,7 @@ opt.header_capture.headers = ["Image-Index", "Image-Time"]
 source = pyneat.groups.http_mjpeg_decoded_input(opt)
 
 # ... later, on a pulled sample:
-index = sample.attributes.get("image-index")
+index = sample.attributes["image-index"] if "image-index" in sample.attributes else None
 
 sample.attributes["image-index"] = "42"     # reaches the Sample
 sample.attributes = {"image-time": "..."}   # replaces the whole map
@@ -76,7 +76,7 @@ sample.attributes = {"image-time": "..."}   # replaces the whole map
 | JPEG 페이로드 | 파트에는 SOI에서 EOI까지 정확히 하나의 완전한 JPEG가 포함되어야 합니다. 잘리거나 비어 있거나 연결된 이미지는 스트림에서 오류가 발생합니다. |
 | 잘못된 입력 | 잘못된 헤더 이름, 접힌 헤더 줄 및 CR/LF/NUL 삽입은 거부됩니다. 안전하게 보이는 형태로 정규화하는 대신 스트림에 오류가 발생합니다. |
 
-"없음"과 "비어 있음"을 빈 문자열을 테스트하는 대신 `count()` / `get()`을 사용하여 구별합니다.
+Python에서는 `in`으로, C++에서는 `count()`로 키가 있는지 확인합니다. 키가 있어도 값은 빈 문자열일 수 있습니다.
 
 ### 제한
 

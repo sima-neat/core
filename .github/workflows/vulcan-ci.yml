@@ -196,6 +196,8 @@ jobs:
           "${test_venv}/bin/python" -m pytest -q --durations=25 \
             python/tests/test_neat_cli.py \
             python/tests/test_neat_pcie_status.py \
+            python/tests/test_model_fixture_helpers.py \
+            tests/test_prepare_model_browser_fixture.py \
             tests/test_build_pyneat_wheel.py \
             tests/test_resolve_compiler_cache.py \
             tests/tools/test_internals_package_boundary.py \
@@ -204,6 +206,7 @@ jobs:
             tests/tools/test_install_neat_framework_native_restore.py \
             tests/tools/test_neat_model_compiler_discovery.py \
             tests/tools/test_core_dist_contract.py \
+            tests/tools/test_tutorial_model_wrapper.py \
             tests/tools/test_package_buildinfo.py \
             tests/tools/test_build_install_sanity.py \
             tests/tools/test_core_inventory_soname.py \
@@ -1229,29 +1232,6 @@ jobs:
             printf 'SIMA_TEST_LLIMA_REASONING_GEMMA_MODEL=%s\n' "${SIMA_TEST_LLIMA_REASONING_GEMMA_MODEL}"
           } >> "${GITHUB_ENV}"
 
-      - name: Prepare LightGlue NEAT-68 regression model
-        run: |
-          set -euo pipefail
-          MODEL_ROOT="${RUNNER_TEMP:-/tmp}/lg-${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-0}"
-          MODEL_SPEC="models/runtime_lightglue_superpoint_600@runtime-lightglue-neat68-v1:00d3bdc1f3b1"
-          # The restricted regression fixture is intentionally staging-only.
-          MODEL_VULCAN_ENV=stg
-          mkdir -p "${MODEL_ROOT}"
-          sima-cli neat install \
-            --env "${MODEL_VULCAN_ENV}" \
-            --install-dir "${MODEL_ROOT}" \
-            "${MODEL_SPEC}"
-
-          mapfile -t archives < <(find "${MODEL_ROOT}" -type f -name '*_mpk.tar.gz' | sort)
-          if [[ "${#archives[@]}" -ne 1 ]]; then
-            echo "Expected exactly one LightGlue MPK from ${MODEL_SPEC}, found ${#archives[@]}." >&2
-            find "${MODEL_ROOT}" -maxdepth 4 -type f -print >&2 || true
-            exit 1
-          fi
-          echo '0ceb6304167d3a5ca4e3e0bcf3bd873ace6966d8a35e73d790c4496019bae7af  '"${archives[0]}" | sha256sum --check --strict
-          echo "SIMA_TEST_LIGHTGLUE_MODEL=${archives[0]}" >> "${GITHUB_ENV}"
-          echo "Installed immutable LightGlue regression model: ${archives[0]}"
-
       - name: Build docs C++ examples from DevKit-installed package
         if: ${{ contains(fromJSON(matrix.tasks), 'fast') }}
         run: |
@@ -1291,6 +1271,36 @@ jobs:
             --output-on-failure \
             --no-tests=error
 
+      - name: Prepare Model Browser fixtures
+        if: ${{ contains(fromJSON(matrix.tasks), 'fast') || contains(fromJSON(matrix.tasks), 'performance') || contains(fromJSON(matrix.tasks), 'python-tutorials') }}
+        timeout-minutes: 15
+        env:
+          HAS_PERFORMANCE: ${{ contains(fromJSON(matrix.tasks), 'performance') }}
+          HAS_TUTORIALS: ${{ contains(fromJSON(matrix.tasks), 'python-tutorials') }}
+        run: |
+          # Prepared once per job and shared by the fast, performance and tutorial suites.
+          # SIMA_RESNET50_TAR also feeds the performance matrix and the Python bindings pytest.
+          # In the fast suite, unit_resnet50_mla_handoff_segment_test and
+          # unit_model_infer_output_name_test pass without loading a model when they find no
+          # ResNet-50 MPK, and stress_model_lifecycle_test uses it when SIMA_STRESS_MODEL_TAR
+          # and SIMA_MODEL_TAR are unset.
+          MODEL_DIR="$(mktemp -d "${RUNNER_TEMP:-/tmp}/model-browser.XXXXXX")"
+          RESNET_MPK="${SIMA_RESNET50_TAR:-}"
+          if [[ -z "${RESNET_MPK}" ]]; then
+            RESNET_MPK="$(python3 scripts/ci/prepare_model_browser_fixture.py \
+              --id resnet_50 --variant w8a8 --output "${MODEL_DIR}")"
+          fi
+          {
+            printf 'SIMA_RESNET50_TAR=%s\n' "${RESNET_MPK}"
+            printf 'SIMA_NEAT_TUTORIAL_MODEL_RESNET=%s\n' "${RESNET_MPK}"
+          } >> "${GITHUB_ENV}"
+          # Only the tutorials, and a performance job without a preset SIMA_YOLO_TAR, need YOLOv8s.
+          if [[ "${HAS_TUTORIALS}" == true || ( "${HAS_PERFORMANCE}" == true && -z "${SIMA_YOLO_TAR:-}" ) ]]; then
+            YOLO_MPK="$(python3 scripts/ci/prepare_model_browser_fixture.py \
+              --id yolov8s --variant w8a8 --output "${MODEL_DIR}")"
+            printf 'SIMA_NEAT_TUTORIAL_MODEL_YOLO=%s\n' "${YOLO_MPK}" >> "${GITHUB_ENV}"
+          fi
+
       - name: Run Fast Non-E2E Tests (Parallel)
         if: ${{ contains(fromJSON(matrix.tasks), 'fast') }}
         env:
@@ -1323,28 +1333,9 @@ jobs:
             --output-on-failure \
             --no-tests=error
 
-      - name: Prepare mandatory weekly model fixtures
-        if: ${{ inputs.run_long_tests }}
-        env:
-          SIMA_CI_MNIST_MODEL: ${{ vars.SIMA_CI_MNIST_MODEL }}
-          SIMA_CI_MNIST_MODEL_SHA256: ${{ vars.SIMA_CI_MNIST_MODEL_SHA256 }}
-          SIMA_CI_SSD300_MODEL: ${{ vars.SIMA_CI_SSD300_MODEL }}
-          SIMA_CI_SSD300_MODEL_SHA256: ${{ vars.SIMA_CI_SSD300_MODEL_SHA256 }}
-          SIMA_CI_MNIST_IMAGES: ${{ vars.SIMA_CI_MNIST_IMAGES }}
-          SIMA_CI_MNIST_IMAGES_SHA256: ${{ vars.SIMA_CI_MNIST_IMAGES_SHA256 }}
-          SIMA_CI_MNIST_LABELS: ${{ vars.SIMA_CI_MNIST_LABELS }}
-          SIMA_CI_MNIST_LABELS_SHA256: ${{ vars.SIMA_CI_MNIST_LABELS_SHA256 }}
-        run: |
-          python3 tools/ci/prepare_weekly_fixtures.py \
-            --output "${GITHUB_WORKSPACE}/_work/weekly-fixtures" \
-            --runtime-manifest "$(cat _work/extras_lib_dir.txt)/test-fixtures/runtime_manifest.json" \
-            --github-env "${GITHUB_ENV}" \
-            --environment-json "${GITHUB_WORKSPACE}/_work/weekly-environment.json"
-
       - name: Run E2E Tests
         if: ${{ contains(fromJSON(matrix.tasks), 'e2e-0') }}
         env:
-          SIMA_YOLOV8_VARIANTS_BASE_URL: https://docs.sima.ai/pkg_downloads/SDK2.0.0/models/modalix
           SIMA_NEAT_TEST_USB_CAMERA: ${{ vars.SIMA_NEAT_TEST_USB_CAMERA }}
           SIMA_CTEST_TAIL_ONLY: "0"
           SIMA_CTEST_E2E_JOBS: "1"
@@ -1363,12 +1354,14 @@ jobs:
           TAIL_REGEX='^(sync_yolov8_test|sync_yolov8_test_detessdequant|yolov8_variant_route_matrix_test|boxdecode_yolo_layout_matrix_e2e_test|preproc_yolov8_matrix_test|graphpipes_yolo_metadata_sender_16stream_test)$'
           # Temporary external RTSP exclusions; remove under core#890.
           EXTERNAL_RTSP_TESTS='rtsp_encoded_boundary_caps_test|decoder_multirun_admission_boundary_test|h265_rtsp_resnet50_e2e_test'
+          # Needs a model with a DetessDequant stage; remove under core#1454.
+          TESS_FIXTURE_TESTS='|sync_yolov8_test_detessdequant'
           USB_CAMERA_TESTS=''
           if [[ -z "${SIMA_NEAT_TEST_USB_CAMERA}" ]]; then
             USB_CAMERA_TESTS='|usb_camera_input_e2e_test'
             echo 'EXCLUDED profile: USB camera hardware; set vars.SIMA_NEAT_TEST_USB_CAMERA to a camera ID.'
           fi
-          SKIP_REGEX="^(unit_dispatcher_watchdog_test|${EXTERNAL_RTSP_TESTS}${USB_CAMERA_TESTS})$"
+          SKIP_REGEX="^(unit_dispatcher_watchdog_test|${EXTERNAL_RTSP_TESTS}${TESS_FIXTURE_TESTS}${USB_CAMERA_TESTS})$"
           E2E_LABEL_EXCLUDE='perf|llima|codec_stream|codec_aggregate'
           if [[ "${{ inputs.run_long_tests }}" != "true" ]]; then
             E2E_LABEL_EXCLUDE+='|long'
@@ -1396,7 +1389,6 @@ jobs:
       - name: Run E2E Tests (partition 2)
         if: ${{ contains(fromJSON(matrix.tasks), 'e2e-1') }}
         env:
-          SIMA_YOLOV8_VARIANTS_BASE_URL: https://docs.sima.ai/pkg_downloads/SDK2.0.0/models/modalix
           SIMA_NEAT_TEST_USB_CAMERA: ${{ vars.SIMA_NEAT_TEST_USB_CAMERA }}
           SIMA_CTEST_TAIL_ONLY: "0"
           SIMA_CTEST_E2E_JOBS: "1"
@@ -1415,12 +1407,14 @@ jobs:
           TAIL_REGEX='^(sync_yolov8_test|sync_yolov8_test_detessdequant|yolov8_variant_route_matrix_test|boxdecode_yolo_layout_matrix_e2e_test|preproc_yolov8_matrix_test|graphpipes_yolo_metadata_sender_16stream_test)$'
           # Temporary external RTSP exclusions; remove under core#890.
           EXTERNAL_RTSP_TESTS='rtsp_encoded_boundary_caps_test|decoder_multirun_admission_boundary_test|h265_rtsp_resnet50_e2e_test'
+          # Needs a model with a DetessDequant stage; remove under core#1454.
+          TESS_FIXTURE_TESTS='|sync_yolov8_test_detessdequant'
           USB_CAMERA_TESTS=''
           if [[ -z "${SIMA_NEAT_TEST_USB_CAMERA}" ]]; then
             USB_CAMERA_TESTS='|usb_camera_input_e2e_test'
             echo 'EXCLUDED profile: USB camera hardware; set vars.SIMA_NEAT_TEST_USB_CAMERA to a camera ID.'
           fi
-          SKIP_REGEX="^(unit_dispatcher_watchdog_test|${EXTERNAL_RTSP_TESTS}${USB_CAMERA_TESTS})$"
+          SKIP_REGEX="^(unit_dispatcher_watchdog_test|${EXTERNAL_RTSP_TESTS}${TESS_FIXTURE_TESTS}${USB_CAMERA_TESTS})$"
           E2E_LABEL_EXCLUDE='perf|llima|codec_stream|codec_aggregate'
           if [[ "${{ inputs.run_long_tests }}" != "true" ]]; then
             E2E_LABEL_EXCLUDE+='|long'
@@ -1523,6 +1517,8 @@ jobs:
           export SIMA_GST_REGISTRY_DIR="$(cat _work/gst_registry_dir.txt)"
           echo "Using SIMA_MPK_EXTRACT_ROOT=${SIMA_MPK_EXTRACT_ROOT}"
           echo "Using SIMA_GST_REGISTRY_DIR=${SIMA_GST_REGISTRY_DIR}"
+          # Not written to GITHUB_ENV: a preset SIMA_YOLO_TAR keeps priority, and the Python pytest step exports its own.
+          export SIMA_YOLO_TAR="${SIMA_YOLO_TAR:-${SIMA_NEAT_TUTORIAL_MODEL_YOLO:?}}"
           COVERAGE_DIR=_work/coverage/perf bash scripts/ci/run_zero_skip_gate.sh \
             ctest --test-dir "${TEST_DIR}" \
             --label-regex "perf" \
@@ -1597,26 +1593,14 @@ jobs:
             echo "Expected extras layout: build.sh next to lib/ and share/ under ${EXTRAS_PREFIX}" >&2
             exit 1
           fi
-          TUTORIAL_MODEL_DIR="/tmp"
-          "${TUTORIALS_BUILD_SH}" --download-models-only --model-target-folder "${TUTORIAL_MODEL_DIR}"
-
           TUTORIALS_DIR="$(cat _work/extras_lib_dir.txt)/tutorials"
+          # Without these, run_with_modelzoo.sh falls back to a possibly stale archive in /tmp.
+          : "${SIMA_NEAT_TUTORIAL_MODEL_RESNET:?}" "${SIMA_NEAT_TUTORIAL_MODEL_YOLO:?}"
           export SIMA_GST_REGISTRY_DIR="$(cat _work/gst_registry_dir.txt)"
           # Temporary external RTSP exclusions; remove under core#890.
           COVERAGE_DIR=_work/coverage/tutorials COVERAGE_PROFILE=required \
             bash scripts/ci/run_zero_skip_gate.sh ctest --test-dir "${TUTORIALS_DIR}" --output-on-failure \
             -E '^tutorial_018_consume_rtsp_stream(_h265)?$'
-
-          RESNET_TAR="${TUTORIAL_MODEL_DIR}/resnet_50.tar.gz"
-          YOLO_TAR="${TUTORIAL_MODEL_DIR}/yolo_v8s.tar.gz"
-          if [[ ! -s "${RESNET_TAR}" || ! -s "${YOLO_TAR}" ]]; then
-            echo "CTest did not produce expected tutorial model tarballs under ${TUTORIAL_MODEL_DIR}." >&2
-            exit 1
-          fi
-          {
-            printf 'SIMA_NEAT_TUTORIAL_MODEL_RESNET=%s\n' "${RESNET_TAR}"
-            printf 'SIMA_NEAT_TUTORIAL_MODEL_YOLO=%s\n' "${YOLO_TAR}"
-          } >> "${GITHUB_ENV}"
 
       - name: Run Python pytest from installed extras
         if: ${{ contains(fromJSON(matrix.tasks), 'python-tutorials') }}
@@ -1641,8 +1625,10 @@ jobs:
           export SIMA_GST_REGISTRY_DIR="$(cat _work/gst_registry_dir.txt)"
           export SIMA_NEAT_TUTORIAL_REQUIRE_RUNTIME=1
           export SIMA_GRAPH_PHASE3_PY_RUNTIME=1
-          export SIMA_RESNET50_TAR="${SIMA_NEAT_TUTORIAL_MODEL_RESNET:?Tutorial model preparation required}"
+          : "${SIMA_RESNET50_TAR:?Model Browser ResNet-50 preparation required}"
           test -s "${SIMA_RESNET50_TAR}"
+          export SIMA_YOLO_TAR="${SIMA_YOLO_TAR:-${SIMA_NEAT_TUTORIAL_MODEL_YOLO:?Model Browser YOLOv8s preparation required}}"
+          test -s "${SIMA_YOLO_TAR}"
           PYTHON_MARKS=()
           case "${NEAT_CI_PYTHON_PROFILE}" in
             runtime)
@@ -1732,31 +1718,6 @@ jobs:
               --core-coverage-dir "${coverage_dir}" --junitxml "${coverage_dir}/junit.xml" \
               "${PYTHON_MARKS[@]}" "${test_case}"
           done
-
-      - name: Run weekly long Python pytest from installed extras
-        if: ${{ inputs.run_long_tests && (contains(fromJSON(matrix.tasks), 'python-tutorials')) }}
-        run: |
-          PYNEAT_HOME="${HOME}/pyneat"
-          if [[ -x "${PYNEAT_HOME}/bin/python" ]]; then
-            PYTHON_BIN="${PYNEAT_HOME}/bin/python"
-          elif [[ -x "${PYNEAT_HOME}/.venv/bin/python" ]]; then
-            PYTHON_BIN="${PYNEAT_HOME}/.venv/bin/python"
-          else
-            echo "Expected pyneat python not found at ${PYNEAT_HOME}/bin/python or ${PYNEAT_HOME}/.venv/bin/python" >&2
-            exit 1
-          fi
-
-          EXTRAS_PREFIX="$(cat _work/extras_prefix.txt)"
-          PYTEST_LONG_DIR="${EXTRAS_PREFIX}/share/sima-neat/python/tests_long"
-          if [[ ! -d "${PYTEST_LONG_DIR}" ]]; then
-            echo "Installed long Python tests not found at ${PYTEST_LONG_DIR}" >&2
-            exit 1
-          fi
-          export SIMA_GST_REGISTRY_DIR="$(cat _work/gst_registry_dir.txt)"
-          PYTHONPATH="${GITHUB_WORKSPACE}/tools/ci${PYTHONPATH:+:${PYTHONPATH}}" \
-            SIMA_TEST_IS_LONG=1 "${PYTHON_BIN}" -m pytest -q -p core_pytest_coverage \
-            --core-coverage-dir _work/coverage/python-weekly \
-            --junitxml _work/coverage/python-weekly.xml "${PYTEST_LONG_DIR}"
 
       - name: Record DevKit shard outcome
         if: ${{ always() }}

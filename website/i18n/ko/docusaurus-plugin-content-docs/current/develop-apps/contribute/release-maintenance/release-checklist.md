@@ -24,22 +24,22 @@ slug: /develop-apps/contribute/release-checklist
 5. 생성 단계 후 작업 트리가 깨끗합니다.
 6. 푸시 전과 릴리스 브랜치에서 해결되지 않은 충돌/정확성 오류가 없습니다.
 7. 충돌/정확성/스트레스/정적 분석 게이트가 릴리스 브랜치에서 녹색 상태입니다.
-8. 모델 아카이브 보안 게이트가 녹색 상태입니다(`model-archive-security-gate`).
-9. 설치 스모크 게이트가 녹색 상태입니다(`install-smoke`).
-10. 성능 회귀 게이트가 녹색 상태입니다(`perf-regression-gate`).
-11. 릴리스 태그에 대한 소크 안정성 테스트가 녹색 상태입니다(`soak-weekly`).
-12. 릴리스 후보에 대한 퍼즈 테스트가 녹색 상태입니다(`fuzz-nightly`).
-13. 제로 스킵 게이트가 엄격한 테스트 레인에 대해 녹색 상태입니다(`zero-skip-gate`).
-14. 필수 거버넌스 파일이 존재하고 유효합니다.
+8. 릴리스 태그에 대한 소크 안정성 테스트가 녹색 상태입니다(`soak-weekly`).
+9. 릴리스 후보에 대한 퍼즈 테스트가 녹색 상태입니다(`fuzz-nightly`).
+10. 제로 스킵 게이트가 엄격한 테스트 레인에 대해 녹색 상태입니다(`zero-skip-gate`).
+11. 필수 거버넌스 파일이 존재하고 유효합니다.
    - `.github/CODEOWNERS`
    - `.github/PULL_REQUEST_TEMPLATE.md`
    - `CONTRIBUTING.md`
    - `docs/develop-apps/contribute/release-checklist.md`
-15. 릴리스 메타데이터가 완료되었습니다.
+12. 릴리스 메타데이터가 완료되었습니다.
    - `project(SimaNeat VERSION x.y.z)`가 `CMakeLists.txt`에 업데이트되었습니다.
    - `package-version` 및 `platform-version`가 필요한 경우 `deps/manifest.json`에 업데이트되었습니다.
    - `modelzoo-version`이 검증된 Model Zoo 릴리스를 명시적으로 선택하며, `platform-version`과 다를 경우에만 해당됩니다. 생략하면 Model Zoo 해결은 기본적으로 `platform-version`으로 설정됩니다.
-   - `abi-version`이 `deps/manifest.json`에 있으며, 공개 C++ 유형 레이아웃 또는 내보낸 바이너리 계약이 호환되지 않게 변경될 때마다 증가합니다. 모든 C++ 애플리케이션 및 Python 바인딩은 해당 ABI를 사용하여 다시 빌드됩니다.
+   - `deps/manifest.json`의 `abi-version`은 공개 C++ 유형 레이아웃 또는 내보낸 바이너리 계약에 호환되지 않는 변경이 있고,
+     `develop`이 여전히 `main`과 같은 ABI 버전을 사용하는 경우에만 증가시킵니다.
+     `develop`에 다음 릴리스를 위한 더 높은 ABI 버전이 이미 있으면, 릴리스 전의 추가적인 ABI 비호환 변경에도 그 버전을 유지합니다.
+     호환되지 않는 변경 후에는 일치하는 헤더와 라이브러리를 사용하여 모든 C++ 애플리케이션과 Python 바인딩을 다시 빌드합니다.
    - 릴리스/태그 본문에 릴리스 노트가 준비되었습니다.
 
 릴리스 흐름에서 "알려진 충돌 목록"은 허용되지 않습니다. 모든 충돌 회귀는 수정될 때까지 릴리스를 차단합니다.
@@ -52,9 +52,6 @@ slug: /develop-apps/contribute/release-checklist
 - `configure-build-sanity`
 - `docs-link-check`
 - `crash-correctness-gate`
-- `model-archive-security-gate`
-- `install-smoke`
-- `perf-regression-gate`
 - `zero-skip-gate`
 - `soak-weekly` (릴리스 태그에 필요)
 - `fuzz-nightly` (릴리스 후보에 필요)
@@ -64,22 +61,13 @@ slug: /develop-apps/contribute/release-checklist
 
 이러한 검사는 다음에서 구현됩니다.
 
-- `.github/workflows/release-gate.yml`
+- `.github/workflows/vulcan-ci.yml`
 - `.github/workflows/test-crash-correctness-nightly.yml`
-- `.github/workflows/model-archive-security.yml`
-- `.github/workflows/install-smoke.yml`
-- `.github/workflows/perf-regression.yml`
-- `.github/workflows/zero-skip.yml`
 - `.github/workflows/test-soak-weekly.yml`
 - `.github/workflows/long-tests-weekly.yml`
 - `.github/workflows/vulcan-fuzz-nightly.yml`
 - `.github/workflows/test-stress-nightly.yml`
 - `.github/workflows/sanitizers.yml`
-
-중복된 게이트 실행을 방지하기 위해 소유권 설정을 적용합니다.
-
-- `main`에 대한 릴리스가 아닌 PR은 자체 워크플로에서 `model-archive-security`, `install-smoke`, `perf-regression` 및 `zero-skip`을 실행합니다.
-- 릴리스 PR(`release/*` 헤드 참조) 및 릴리스 참조(`release/**`, `v*`)는 `.github/workflows/release-gate.yml`에서 동일한 단계를 실행합니다.
 
 ## GitHub 브랜치 및 태그 보호
 

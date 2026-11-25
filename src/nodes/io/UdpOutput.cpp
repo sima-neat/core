@@ -7,18 +7,18 @@
 
 namespace simaai::neat {
 
-std::string UdpOutput::backend_fragment(int /*node_index*/) const {
+std::string UdpOutput::backend_fragment(int node_index) const {
   std::ostringstream ss;
   // A retained last packet shares its frame's memory (RTP payloaders slice the input), so the
   // frame would return to its capture pool still referenced instead of being reused.
   ss << "udpsink host=" << opt_.host << " port=" << opt_.port
      << " sync=" << (opt_.sync ? "true" : "false") << " async=" << (opt_.async ? "true" : "false")
-     << " enable-last-sample=false";
+     << " enable-last-sample=false name=" << element_names(node_index).front();
   return ss.str();
 }
 
-std::vector<std::string> UdpOutput::element_names(int /*node_index*/) const {
-  return {};
+std::vector<std::string> UdpOutput::element_names(int node_index) const {
+  return {"n" + std::to_string(node_index) + "_udpsink"};
 }
 
 } // namespace simaai::neat

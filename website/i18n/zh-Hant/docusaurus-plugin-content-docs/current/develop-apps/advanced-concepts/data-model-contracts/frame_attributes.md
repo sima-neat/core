@@ -54,7 +54,7 @@ opt.header_capture.headers = ["Image-Index", "Image-Time"]
 source = pyneat.groups.http_mjpeg_decoded_input(opt)
 
 # ... later, on a pulled sample:
-index = sample.attributes.get("image-index")
+index = sample.attributes["image-index"] if "image-index" in sample.attributes else None
 
 sample.attributes["image-index"] = "42"     # reaches the Sample
 sample.attributes = {"image-time": "..."}   # replaces the whole map
@@ -76,7 +76,7 @@ sample.attributes = {"image-time": "..."}   # replaces the whole map
 | JPEG 有效載荷 | 一個部分必須包含精確一個完整的 JPEG，從 SOI 到 EOI。截斷、空白或串連的圖像會導致資料流失敗。 |
 | 無效輸入 | 無效的標頭名稱、摺疊的標頭行以及 CR/LF/NUL 注入都會被拒絕——資料流會產生錯誤，而不是正規化為看似安全的形式。 |
 
-使用 `count()` / `get()` 來區分「不存在」和「空白」，而不是通過測試空字串。
+在 Python 中使用 `in`、在 C++ 中使用 `count()` 檢查鍵是否存在。即使鍵存在，其值也可能是空字串。
 
 ### 限制
 

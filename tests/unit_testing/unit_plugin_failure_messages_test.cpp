@@ -202,7 +202,8 @@ static void test_neatdecoder_failure() {
 
   const std::string err = expect_pipeline_error("neatdecoder", [&] {
     Run run = p.build(simaai::neat::Sample{sample}, opt);
-    (void)run;
+    run.push(sample);
+    (void)run.pull_samples(5000);
   });
 
   maybe_dump_error("neatdecoder", err);

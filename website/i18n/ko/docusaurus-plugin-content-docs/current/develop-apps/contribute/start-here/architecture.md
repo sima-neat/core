@@ -922,9 +922,9 @@ Core 소유 Preproc 프레임 어댑터는 동적 이미지/ROI 형상과 메타
 
 `Run`은 입력/출력 큐와 입력 스레드를 소유합니다.
 
-* `push(...)`는 입력 큐에 입력을 추가합니다(`RunOptions::overflow_policy`에 따라 차단하거나 삭제).
+* `push(...)`는 입력 큐에 자리가 날 때까지 기다린 뒤 샘플을 추가합니다
 * `pull(...)`은 앱싱크에서 `Sample` 출력을 큐에서 제거합니다.
-* `try_push(...)`는 차단되지 않습니다(큐가 가득 차면 false를 반환합니다).
+* `try_push(...)`는 입력 큐가 가득 차면 즉시 `RunOptions::overflow_policy`를 적용합니다
 
 유휴 상태의 `Run`은 계속 사용할 수 있습니다. 작업 기한은 대기 시간을 제한하며 입력 제출 사이의 일시 중지에는 적용되지 않습니다.
 
@@ -1641,3 +1641,7 @@ JSON의 각 Python 항목에 `installations` 배열이 추가됩니다. 각 레�
 ## 자르기 기하 정보의 소유권 {#crop-geometry-ownership}
 
 Core는 실제 원본 크기로 Crop의 가상 크기 조정 크기와 중앙 창 오프셋을 계산하고 검증합니다. Kernels는 원본 필터 범위를 유지하여 창을 직접 계산하며 중간 이미지나 CPU 자르기를 삽입하지 않습니다. 최종 크기는 MPK가 소유합니다. Preproc는 반 픽셀 샘플 중심 좌표와 구별되는 실제 모델-원본 경계 좌표 아핀 변환을 게시합니다. 지원되는 검출 레시피는 모델 공간 선택 후 이 정보를 사용하며 누락되거나 충돌하는 기하 정보는 거부합니다.
+
+## SDK 플랫폼 빌드 식별 정보 {#sdk-platform-build-identity}
+
+Core는 활성 타깃 SDK의 `elxr_version`, 전체 `sysroot_version`, 컴파일러 `target`을 `build_platform`에 기록합니다. Scheduler는 같은 식별 정보를 Runner 및 자체 빌드 기록과 비교합니다. Core는 컴파일 후 검증을 새로 수행하고 최종 CMake sysroot와 컴파일러 타깃을 확인한 뒤 설치 메타데이터를 생성합니다. 플랫폼 라이브러리는 선택한 SDK가 제공하며 출처 검사를 위해 플랫폼 DEB를 다운로드하지 않습니다. NEAT 패키지 무결성 검사와 별도의 타깃 검증은 계속 필요합니다. 식별 정보가 없는 생성자 기록은 Runner, Scheduler, Core 순으로 다시 빌드해 전환합니다.

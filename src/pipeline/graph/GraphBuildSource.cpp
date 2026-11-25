@@ -730,11 +730,10 @@ bool attach_source_sima_meta_probe_for_node(GstElement* pipeline,
     return false;
   }
 
-  std::vector<std::string> element_names = node->element_names(actual_element_index);
+  const auto element_names = rendered_element_names(*node, actual_element_index, name_transform);
   if (element_names.empty()) {
     return false;
   }
-  element_names = apply_name_transform(name_transform, element_names);
   const std::string source_tail = element_names.back();
   std::string buffer_name = node->buffer_name_hint(actual_element_index);
   if (buffer_name.empty()) {
@@ -894,7 +893,7 @@ PreparedSourcePipeline prepare_source_pipeline_from_nodes(
   session_build_attach_boxdecode_debug_probes(pipeline.get());
   session_build_attach_h264_caps_fixups(pipeline.get(), build_nodes, name_transform);
   session_build_attach_encoded_caps_fixups(pipeline.get(), build_nodes, name_transform);
-  session_build_attach_rtsp_debug(pipeline.get(), build_nodes, name_transform);
+  session_build_attach_rtsp_diagnostics(pipeline.get(), build_nodes, name_transform);
 
   // --- 6. resolve and configure sink ------------------------------------------------
   pipeline_internal::GstSinkPtr sink;
@@ -3546,7 +3545,7 @@ SourceStreamBuildContext session_build_fused_realtime_source_stream_internal(
   attach_fused_realtime_pad_probes(pipeline.get());
   session_build_attach_h264_caps_fixups(pipeline.get(), build_consumer_nodes, name_transform);
   session_build_attach_encoded_caps_fixups(pipeline.get(), build_consumer_nodes, name_transform);
-  session_build_attach_rtsp_debug(pipeline.get(), build_consumer_nodes, name_transform);
+  session_build_attach_rtsp_diagnostics(pipeline.get(), build_consumer_nodes, name_transform);
   for (std::size_t branch_index = 0; branch_index < build_branch_nodes.size(); ++branch_index) {
     session_build_attach_h264_caps_fixups(pipeline.get(), build_branch_nodes[branch_index],
                                           branch_name_transforms[branch_index],
@@ -3554,9 +3553,9 @@ SourceStreamBuildContext session_build_fused_realtime_source_stream_internal(
     session_build_attach_encoded_caps_fixups(pipeline.get(), build_branch_nodes[branch_index],
                                              branch_name_transforms[branch_index],
                                              &branch_actual_indices[branch_index]);
-    session_build_attach_rtsp_debug(pipeline.get(), build_branch_nodes[branch_index],
-                                    branch_name_transforms[branch_index],
-                                    &branch_actual_indices[branch_index]);
+    session_build_attach_rtsp_diagnostics(pipeline.get(), build_branch_nodes[branch_index],
+                                          branch_name_transforms[branch_index],
+                                          &branch_actual_indices[branch_index]);
   }
 
   pipeline_internal::GstSinkPtr sink;
@@ -3746,6 +3745,10 @@ Run Graph::build_source_internal_(const RunOptions& opt) {
   gst_init_once();
 
   progress.step("Building graph...");
+  if (composition_) {
+    for (const auto& vertex : composition_->vertices)
+      enforce_still_image_source_mode(vertex.pipeline_node.get(), "Graph::build");
+  }
   runtime::ExecutionGraphPlan plan = runtime::compile_public_graph(*this, opt, std::nullopt);
   if (plan.linear_compat) {
     progress.detail(std::string("mode=async nodes=") +

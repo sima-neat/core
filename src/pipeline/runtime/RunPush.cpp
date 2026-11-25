@@ -231,12 +231,11 @@ runtime::Endpoint named_input_endpoint_or_throw(const runtime::RunCore& core,
 }
 
 runtime::EdgeRouterOptions graph_router_options_for_push(const runtime::RunCore& core, bool block) {
-  runtime::EdgeRouterOptions options = core.graph_options.router_options();
-  if (!block) {
-    options.push_timeout_ms = 0;
-    options.request_stop_on_backpressure = false;
-  }
-  return options;
+  return {.edge_queue = core.graph_options.edge_queue,
+          .push_timeout_ms = block ? core.graph_options.push_timeout_ms : 0,
+          .request_stop_on_backpressure = false,
+          .public_try_push_policy =
+              block ? std::nullopt : std::optional{core.graph_options.pipeline.overflow_policy}};
 }
 
 std::string default_input_name(const runtime::RunCore& core) {
@@ -295,6 +294,7 @@ bool push_graph_samples_to_endpoint(runtime::RunCore& core, const runtime::Endpo
       pipeline_internal::validate_ordered_public_input(*segment->public_input_contract, msg);
   }
   if (!core.graph_begin_public_push()) {
+    core.push_refused_after_close = true;
     return false;
   }
   struct PublicPushGuard {
@@ -328,7 +328,6 @@ bool push_graph_samples_to_endpoint(runtime::RunCore& core, const runtime::Endpo
                    static_cast<long long>(stamped.duration_ns), stamped.stream_id.c_str(),
                    block ? 1 : 0);
     }
-    core.inputs_enqueued.fetch_add(1, std::memory_order_relaxed);
     const auto entry_at = std::chrono::steady_clock::now();
     runtime::trace_graph_message_event(runtime::TraceGraphMessageEventType::GraphEntry,
                                        core.graph_execution_.get(), runtime::invalid_edge_index(),
@@ -336,8 +335,11 @@ bool push_graph_samples_to_endpoint(runtime::RunCore& core, const runtime::Endpo
     if (!core.graph_push(endpoint.node, endpoint.port,
                          endpoint.port != simaai::neat::graph::kInvalidPort, stamped,
                          graph_router_options_for_push(core, block))) {
+      if (core.graph_public_input_closed())
+        core.push_refused_after_close = true;
       return false;
     }
+    core.inputs_enqueued.fetch_add(1, std::memory_order_relaxed);
     core.record_graph_sample_entry(endpoint_name, stamped, entry_at);
     core.inputs_pushed.fetch_add(1, std::memory_order_relaxed);
   }
@@ -378,12 +380,6 @@ std::optional<Sample> try_materialize_image_sample(const Sample& msg) {
 }
 #endif
 
-struct InputQueueAdmission {
-  bool accepted = false;
-  int max = 0;
-  const char* reason = "";
-};
-
 void release_realtime_credits_for_dropped_input(const InputItem& item, const char* mode) {
   if (item.kind != QueuedInputKind::Message) {
     return;
@@ -391,12 +387,23 @@ void release_realtime_credits_for_dropped_input(const InputItem& item, const cha
   pipeline_internal::release_realtime_frame_credits_for_sample(item.msg, mode);
 }
 
-InputQueueAdmission admit_input_queue_locked(runtime::RunCore& core,
-                                             runtime::PipelineSegmentRuntime& segment,
-                                             std::unique_lock<std::mutex>& lock, bool block) {
+bool admit_input_queue_locked(runtime::RunCore& core, runtime::PipelineSegmentRuntime& segment,
+                              std::unique_lock<std::mutex>& lock, bool block) {
   const int max = core.opt.queue_depth;
+  const auto reject = [&](const char* reason) {
+    if (segment.input_closed)
+      core.push_refused_after_close = true;
+    if (push_return_debug_enabled())
+      std::fprintf(stderr, "[PIPELINE] push_return_false reason=%s qsize=%zu max=%d drop=%d\n",
+                   reason, segment.in_queue.size(), max,
+                   static_cast<int>(core.opt.overflow_policy));
+    return false;
+  };
+  if ((core.stop_requested.load() || segment.stream.reached_eos())) {
+    return reject("stop_requested");
+  }
   if (segment.input_closed) {
-    return {false, max, "input_closed"};
+    return reject("input_closed");
   }
 
   // A blocking caller must never silently drop. Internal inter-segment forwarding pushes with
@@ -406,17 +413,17 @@ InputQueueAdmission admit_input_queue_locked(runtime::RunCore& core,
   // try_push at graph ingress, which pushes with block=false).
   if (block) {
     segment.in_cv.wait(lock, [&]() {
-      return core.stop_requested.load() || segment.input_closed ||
+      return (core.stop_requested.load() || segment.stream.reached_eos()) || segment.input_closed ||
              !run_internal::queue_full(segment.in_queue, max);
     });
   } else if (core.opt.overflow_policy == OverflowPolicy::Block) {
     if (run_internal::queue_full(segment.in_queue, max)) {
-      return {false, max, "queue_full_block"};
+      return reject("queue_full_block");
     }
   } else if (core.opt.overflow_policy == OverflowPolicy::DropIncoming) {
     if (run_internal::queue_full(segment.in_queue, max)) {
       core.inputs_dropped.fetch_add(1, std::memory_order_relaxed);
-      return {false, max, "queue_full_drop_newest"};
+      return reject("queue_full_drop_newest");
     }
   } else if (core.opt.overflow_policy == OverflowPolicy::KeepLatest) {
     if (run_internal::queue_full(segment.in_queue, max)) {
@@ -427,25 +434,13 @@ InputQueueAdmission admit_input_queue_locked(runtime::RunCore& core,
     }
   }
 
-  if (core.stop_requested.load()) {
-    return {false, max, "stop_requested"};
+  if ((core.stop_requested.load() || segment.stream.reached_eos())) {
+    return reject("stop_requested");
   }
   if (segment.input_closed) {
-    return {false, max, "input_closed"};
+    return reject("input_closed");
   }
-  return {true, max, ""};
-}
-
-void maybe_log_push_rejection(const runtime::RunCore& core,
-                              const runtime::PipelineSegmentRuntime& segment,
-                              const InputQueueAdmission& admission) {
-  if (!push_return_debug_enabled() || admission.accepted || !admission.reason ||
-      !admission.reason[0]) {
-    return;
-  }
-  std::fprintf(stderr, "[PIPELINE] push_return_false reason=%s qsize=%zu max=%d drop=%d\n",
-               admission.reason, segment.in_queue.size(), admission.max,
-               static_cast<int>(core.opt.overflow_policy));
+  return true;
 }
 
 bool push_mat_to_core(runtime::RunCore& core, const cv::Mat& input, bool block) {
@@ -460,11 +455,8 @@ bool push_mat_to_core(runtime::RunCore& core, const cv::Mat& input, bool block) 
   auto* st = &core;
   {
     std::unique_lock<std::mutex> lock(st->pipeline.in_mu);
-    const InputQueueAdmission admission = admit_input_queue_locked(*st, st->pipeline, lock, block);
-    if (!admission.accepted) {
-      maybe_log_push_rejection(*st, st->pipeline, admission);
+    if (!admit_input_queue_locked(*st, st->pipeline, lock, block))
       return false;
-    }
 
     InputItem item;
     item.kind = QueuedInputKind::Mat;
@@ -512,14 +504,12 @@ bool push_message_to_core(runtime::RunCore& core, const Sample& msg, bool block)
   {
     std::unique_lock<std::mutex> lock(st->pipeline.in_mu);
     q_before = st->pipeline.in_queue.size();
-    const InputQueueAdmission admission = admit_input_queue_locked(*st, st->pipeline, lock, block);
+    const bool accepted = admit_input_queue_locked(*st, st->pipeline, lock, block);
     if (timing) {
       t_admit = std::chrono::steady_clock::now();
     }
-    if (!admission.accepted) {
-      maybe_log_push_rejection(*st, st->pipeline, admission);
+    if (!accepted)
       return false;
-    }
 
     InputItem item;
     item.kind = QueuedInputKind::Message;
@@ -619,11 +609,8 @@ bool Run::push_impl(const cv::Mat& input, bool block) {
   validate_public_input(input, declared_linear_input(*st), st->pipeline.stream_opt, "Run::push");
   {
     std::unique_lock<std::mutex> lock(st->pipeline.in_mu);
-    const InputQueueAdmission admission = admit_input_queue_locked(*st, st->pipeline, lock, block);
-    if (!admission.accepted) {
-      maybe_log_push_rejection(*st, st->pipeline, admission);
+    if (!admit_input_queue_locked(*st, st->pipeline, lock, block))
       return false;
-    }
 
     InputItem item;
     item.kind = QueuedInputKind::Mat;
@@ -655,11 +642,8 @@ bool Run::push_impl(const simaai::neat::Tensor& input, bool block) {
   validate_public_input(input, declared_linear_input(*st), st->pipeline.stream_opt, "Run::push");
   {
     std::unique_lock<std::mutex> lock(st->pipeline.in_mu);
-    const InputQueueAdmission admission = admit_input_queue_locked(*st, st->pipeline, lock, block);
-    if (!admission.accepted) {
-      maybe_log_push_rejection(*st, st->pipeline, admission);
+    if (!admit_input_queue_locked(*st, st->pipeline, lock, block))
       return false;
-    }
 
     InputItem item;
     item.kind = QueuedInputKind::Tensor;
@@ -699,11 +683,8 @@ bool Run::push_holder_impl(const std::shared_ptr<void>& holder, bool block) {
   auto st = core_;
   {
     std::unique_lock<std::mutex> lock(st->pipeline.in_mu);
-    const InputQueueAdmission admission = admit_input_queue_locked(*st, st->pipeline, lock, block);
-    if (!admission.accepted) {
-      maybe_log_push_rejection(*st, st->pipeline, admission);
+    if (!admit_input_queue_locked(*st, st->pipeline, lock, block))
       return false;
-    }
 
     InputItem item;
     item.kind = QueuedInputKind::Holder;

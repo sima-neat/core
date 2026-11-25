@@ -19,7 +19,7 @@ function checkRendered(buildDir = path.join(root, "website/build"), locales = ["
     ["reference/elxr-sdk-host-setup/windows", values["dependency.docker.minimum"]],
     ["reference/elxr-sdk-host-setup/ubuntu", values["dependency.docker.minimum"]],
     ["getting-started/neat-library/pcie-host", `sima-cli neat install core/pciehost/ubuntu24/amd64@v${values.core}`],
-    ["getting-started/dev-environment/install-the-environment", `sima-cli neat install sdk@${values.sdk_channel}`],
+    ["getting-started/dev-environment/install-the-environment", `sima-cli neat install sdk@v${values.sdk}`],
     ["getting-started/dev-environment/offline-installation", `sima-cli neat install sdk@v${values.sdk} -t offline-amd64`],
     ["getting-started/dev-environment/install-model-compiler", `sima-cli neat install model-compiler/amd64@v${values.model_compiler}`],
   ];

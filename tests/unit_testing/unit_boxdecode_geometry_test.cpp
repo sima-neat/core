@@ -1,13 +1,18 @@
 #include "pipeline/internal/sima/BoxDecodeGeometry.h"
+#include "pipeline/internal/sima/BoxDecodeKernelAdmission.h"
 #include "pipeline/internal/sima/KernelStageRecipe.h"
 #include <simaai/scheduler/testing/probe.h>
 
 #include <gstsimaaitensorbuffer_meta.h>
 
 #include <array>
+#include <cstdint>
 #include <iostream>
 #include <limits>
+#include <optional>
 #include <stdexcept>
+#include <string>
+#include <utility>
 
 namespace {
 namespace k = simaai::scheduler::client;
@@ -255,13 +260,775 @@ void geometry(bool crop = false) {
   require(std::holds_alternative<rt::Error>(explicit_resolve(executor.preparer(), buffers)),
           "affine source extent conflict accepted");
 }
+// Placement is derived from published pads (or the Preproc policy before the
+// first frame), never from tensor shapes. One odd pixel is centering remainder.
+void letterbox_placement() {
+  simaai::neat::PreprocessRuntimeMeta facts;
+  facts.resize_mode = "letterbox";
+  facts.original_width = 1280;
+  facts.original_height = 720;
+  facts.scaled_width = 1024;
+  facts.scaled_height = 576;
+  facts.pad_top = facts.pad_bottom = 224;
+  require(!core::boxdecode_letterbox_is_off_center(&facts, nullptr),
+          "centered letterbox reported as off-center");
+  facts.pad_top = 0;
+  facts.pad_bottom = 448;
+  require(core::boxdecode_letterbox_is_off_center(&facts, nullptr),
+          "SAM top-left letterbox (pad_bottom 448) was not detected");
+  facts.pad_top = 1;
+  facts.pad_bottom = 0;
+  require(!core::boxdecode_letterbox_is_off_center(&facts, nullptr),
+          "one-pixel centering remainder must stay centered");
+  facts.pad_top = facts.pad_bottom = 0;
+  facts.pad_left = 0;
+  facts.pad_right = 2;
+  require(core::boxdecode_letterbox_is_off_center(&facts, nullptr),
+          "horizontal off-center placement was not detected");
+  facts.resize_mode = "stretch";
+  require(!core::boxdecode_letterbox_is_off_center(&facts, nullptr), "stretch has no placement");
+  core::ProcessCvuStagePayload policy;
+  policy.aspect_ratio = 1;
+  for (const char* padding : {"TOPLEFT", "topleft", "TopRight", "BOTTOMLEFT", "bottomright"}) {
+    policy.padding_type = padding;
+    require(core::boxdecode_letterbox_is_off_center(nullptr, &policy),
+            "Preproc corner placement was not detected");
+  }
+  for (const char* padding : {"CENTER", "NONE", ""}) {
+    policy.padding_type = padding;
+    require(!core::boxdecode_letterbox_is_off_center(nullptr, &policy),
+            "centered or crop Preproc policy reported as off-center");
+  }
+  policy.padding_type = "TOPLEFT";
+  policy.aspect_ratio = 0;
+  require(!core::boxdecode_letterbox_is_off_center(nullptr, &policy),
+          "a stretch Preproc policy has no placement");
+  policy.aspect_ratio = 1;
+  facts.resize_mode = "letterbox";
+  facts.pad_left = facts.pad_right = 0;
+  require(!core::boxdecode_letterbox_is_off_center(&facts, &policy),
+          "published facts must take precedence over the Preproc policy");
+  using simaai::neat::BoxDecodeType;
+  for (const auto type : {BoxDecodeType::YoloV8, BoxDecodeType::YoloV26, BoxDecodeType::Detr,
+                          BoxDecodeType::DetrFocal, BoxDecodeType::Ssd})
+    require(core::boxdecode_supports_detection_transform(type),
+            "detection profile lost its explicit transform");
+  for (const auto type : {BoxDecodeType::YoloV8Seg, BoxDecodeType::YoloV8Pose,
+                          BoxDecodeType::RcnnStage1, BoxDecodeType::SuperPoint})
+    require(!core::boxdecode_supports_detection_transform(type),
+            "auxiliary or proposal payload implicitly admitted an explicit transform");
+}
+// Segment Anything geometry comes only from published preprocess facts: a
+// top-left letterbox (MobileSAM) or a stretch (EdgeTAM, EfficientSAM,
+// EfficientSAM3); the model size is the canvas, never a tensor-shape ratio.
+void sam_geometry() {
+  using simaai::neat::BoxDecodeType;
+  using simaai::neat::ResizeMode;
+  // The error names the encoder preprocess setting the model needs.
+  const auto fails = [](BoxDecodeType type, const simaai::neat::PreprocessRuntimeMeta& facts,
+                        core::BoxDecodeGeometryOptions requested, const char* message = "") {
+    try {
+      (void)core::sam_boxdecode_geometry(type, facts, requested);
+    } catch (const std::invalid_argument& error) {
+      return std::string(error.what()).find(message) != std::string::npos;
+    }
+    return false;
+  };
+  // A Preproc publishes original = model * (original / scaled) - pad * that scale.
+  const auto whole_image = [](simaai::neat::PreprocessRuntimeMeta& facts) {
+    facts.affine_m00 = double(facts.original_width) / facts.scaled_width;
+    facts.affine_m11 = double(facts.original_height) / facts.scaled_height;
+    facts.affine_m02 = -facts.pad_left * facts.affine_m00;
+    facts.affine_m12 = -facts.pad_top * facts.affine_m11;
+  };
+  simaai::neat::PreprocessRuntimeMeta letterbox;
+  letterbox.resize_mode = "letterbox";
+  letterbox.original_width = 1280;
+  letterbox.original_height = 720;
+  letterbox.resized_width = letterbox.resized_height = 1024;
+  letterbox.scaled_width = 1024;
+  letterbox.scaled_height = 576;
+  letterbox.pad_bottom = 448;
+  whole_image(letterbox);
+  auto g = core::sam_boxdecode_geometry(BoxDecodeType::MobileSam, letterbox, {});
+  require(g.resize == ResizeMode::Letterbox && g.model_width == 1024 && g.model_height == 1024 &&
+              g.original_width == 1280 && g.original_height == 720 && !g.complete_geometry,
+          "MobileSAM top-left letterbox geometry");
+  constexpr const char* kTopLeft =
+      "MobileSAM needs the image preprocessed with resize.mode=Letterbox and "
+      "resize.placement=TopLeft on the Model that preprocesses it";
+  auto centered = letterbox;
+  centered.pad_top = centered.pad_bottom = 224;
+  whole_image(centered);
+  require(fails(BoxDecodeType::MobileSam, centered, {}, kTopLeft),
+          "a centered letterbox must be rejected with the MobileSAM encoder setting");
+  // The kernel crops int(extent * canvas / longest + 0.5) pixels: 1000x601 scales to
+  // 1024x615. A standalone TOPLEFT Preproc rounds upward to 616.
+  auto odd = letterbox;
+  odd.original_width = 1000;
+  odd.original_height = 601;
+  odd.scaled_height = 615;
+  odd.pad_bottom = 1024 - 615;
+  whole_image(odd);
+  g = core::sam_boxdecode_geometry(BoxDecodeType::MobileSam, odd, {});
+  require(g.original_width == 1000 && g.original_height == 601 && g.model_height == 1024,
+          "the SAM-rounded 1000x601 letterbox must be admitted");
+  auto rounded_up = odd;
+  rounded_up.scaled_height = 616;
+  rounded_up.pad_bottom = 1024 - 616;
+  whole_image(rounded_up);
+  require(fails(BoxDecodeType::MobileSam, rounded_up, {},
+                "masks need the 1000x601 image scaled to 1024x615 on its 1024x1024 canvas; its "
+                "preprocess facts report 1024x616"),
+          "an upward-rounded scaled extent must be rejected");
+  auto wide = letterbox;
+  wide.resized_height = 768;
+  wide.scaled_height = 576;
+  wide.pad_bottom = 192;
+  whole_image(wide);
+  require(fails(BoxDecodeType::MobileSam, wide, {}, "letterboxes onto a square canvas"),
+          "a non-square letterbox canvas must be rejected");
+  // A crop composed before the resize keeps the resize mode but maps the canvas onto
+  // part of the image.
+  auto cropped = letterbox;
+  cropped.affine_m02 = 160.;
+  require(fails(BoxDecodeType::MobileSam, cropped, {},
+                "the preprocess affine must map the 1024x576 scaled image onto the whole "
+                "1280x720 image (affine_m00 = 1280/1024, affine_m11 = 720/576"),
+          "a letterbox of a cropped region must be rejected");
+  auto identity = letterbox;
+  identity.affine_m00 = identity.affine_m11 = 1.;
+  identity.affine_m02 = identity.affine_m12 = 0.;
+  require(fails(BoxDecodeType::MobileSam, identity, {}, "or facts without that affine"),
+          "facts without their model-to-original affine must be rejected");
+  core::BoxDecodeGeometryOptions transform;
+  transform.model_to_original = std::array<float, 4>{1.25f, 1.25f, 0.f, 0.f};
+  require(fails(BoxDecodeType::MobileSam, letterbox, transform, "explicit model-to-original"),
+          "an explicit transform must be rejected");
+  for (const auto& [type, model] : {std::pair{BoxDecodeType::EdgeTamSeg, "EdgeTAM"},
+                                    std::pair{BoxDecodeType::EdgeTamTrack, "EdgeTAM"},
+                                    std::pair{BoxDecodeType::EfficientSam, "EfficientSAM"},
+                                    std::pair{BoxDecodeType::EfficientSam3, "EfficientSAM3"}})
+    require(fails(type, letterbox, {},
+                  (std::string(model) + " needs the image preprocessed with resize.mode=Stretch")
+                      .c_str()),
+            "a letterbox must be rejected with the stretch encoder setting");
+  simaai::neat::PreprocessRuntimeMeta stretch;
+  stretch.resize_mode = "stretch";
+  stretch.original_width = 640;
+  stretch.original_height = 480;
+  stretch.resized_width = stretch.resized_height = 1008;
+  stretch.scaled_width = stretch.scaled_height = 1008;
+  whole_image(stretch);
+  require(fails(BoxDecodeType::MobileSam, stretch, {}, kTopLeft),
+          "a stretch must be rejected with the MobileSAM encoder setting");
+  for (const auto type : {BoxDecodeType::EdgeTamSeg, BoxDecodeType::EdgeTamTrack,
+                          BoxDecodeType::EfficientSam, BoxDecodeType::EfficientSam3}) {
+    // A decoder Model's nominal Letterbox resize does not override the facts.
+    core::BoxDecodeGeometryOptions nominal;
+    nominal.resize = ResizeMode::Letterbox;
+    g = core::sam_boxdecode_geometry(type, stretch, nominal);
+    require(g.resize == ResizeMode::Stretch && g.model_width == 1008 && g.model_height == 1008 &&
+                g.original_width == 640 && g.original_height == 480,
+            "1008 stretch geometry");
+  }
+  core::BoxDecodeGeometryOptions requested;
+  requested.model_width = requested.model_height = 1024;
+  require(fails(BoxDecodeType::EdgeTamSeg, stretch, requested, "model size differs"),
+          "a model size other than the published canvas must be rejected");
+  requested = {};
+  requested.original_width = 1920;
+  requested.original_height = 1080;
+  require(fails(BoxDecodeType::EdgeTamTrack, stretch, requested, "original image size conflicts"),
+          "an original size other than the published one must be rejected");
+  auto crop = stretch;
+  crop.resize_mode = "crop";
+  require(fails(BoxDecodeType::EfficientSam, crop, {}, "report resize_mode 'crop'"),
+          "crop is not a SAM geometry");
+  // Crop then Stretch: Preproc composes the crop into the affine and publishes the
+  // last stage's stretch over the original 640x480 source.
+  auto crop_then_stretch = stretch;
+  crop_then_stretch.affine_m00 = 540. / 1008.;
+  crop_then_stretch.affine_m02 = 100.;
+  require(fails(BoxDecodeType::EfficientSam, crop_then_stretch, {}, "onto the whole 640x480 image"),
+          "a stretch of a cropped region must be rejected");
+  auto padded = stretch;
+  padded.scaled_width = 1000;
+  padded.pad_right = 8;
+  whole_image(padded);
+  require(fails(BoxDecodeType::EdgeTamSeg, padded, {}, "image scaled to 1008x1008"),
+          "a stretch that leaves padding must be rejected");
+}
+// A prepared Segment Anything plan keeps the image and preprocessing it was
+// admitted for. Every frame is checked against all of it, not only its size:
+// a centered letterbox of the same image would otherwise get masks placed for
+// the admitted top-left letterbox.
+void sam_fixed_image() {
+  probe::OperationProbe executor;
+  const auto checked = executable();
+  require(!executor.prepare(checked), "real A65 preparation failed");
+  const auto base = executor.operation();
+  core::KernelStageRecipe recipe;
+  recipe.members.resize(1);
+  recipe.members.front().executable = checked;
+  // MobileSAM: 1280x720 letterboxed top-left onto 1024x1024, scaled to 1024x576.
+  const core::BoxDecodeFixedImage image{1280, 720, "letterbox", 1024, 1024, {0, 0, 1024, 576}};
+  bool rejected = false;
+  try {
+    auto incomplete = image;
+    incomplete.resize_mode.clear();
+    core::attach_boxdecode_fixed_image_guard(recipe, 0, incomplete);
+  } catch (const std::invalid_argument&) {
+    rejected = true;
+  }
+  require(rejected && recipe.resolver_factories.empty(),
+          "a fixed image without its preprocessing must be rejected");
+  core::attach_boxdecode_fixed_image_guard(recipe, 0, image);
+  auto resolve = recipe.resolver_factories.front().instantiate();
+  const auto rejects = [&](GstBuffer* buffer, const char* message) {
+    const std::array<GstBuffer*, 1> one{buffer};
+    auto result = resolve(executor.preparer(), one);
+    const auto* error = std::get_if<rt::Error>(&result);
+    return error && error->message.find(message) != std::string::npos;
+  };
+  constexpr const char* kPreprocessing = "another resize mode, canvas or placement";
+  const gchar* tags[] = {nullptr};
+  if (!gst_meta_get_info("GstSimaMeta"))
+    require(gst_meta_register_custom("GstSimaMeta", tags, nullptr, nullptr, nullptr),
+            "metadata registration failed");
+  Buffer legacy(gst_buffer_new()), prompt(gst_buffer_new());
+  auto* meta =
+      gst_custom_meta_get_structure(gst_buffer_add_custom_meta(legacy.get(), "GstSimaMeta"));
+  const auto set = [meta](const char* mode, int original_width, int original_height, int canvas,
+                          int scaled_width, int scaled_height, int top) {
+    gst_structure_remove_all_fields(meta);
+    gst_structure_set(
+        meta, "preproc_original_width", G_TYPE_INT, original_width, "preproc_original_height",
+        G_TYPE_INT, original_height, "preproc_resized_width", G_TYPE_INT, canvas,
+        "preproc_resized_height", G_TYPE_INT, canvas, "preproc_scaled_width", G_TYPE_INT,
+        scaled_width, "preproc_scaled_height", G_TYPE_INT, scaled_height, "preproc_pad_left",
+        G_TYPE_INT, 0, "preproc_pad_right", G_TYPE_INT, canvas - scaled_width, "preproc_pad_top",
+        G_TYPE_INT, top, "preproc_pad_bottom", G_TYPE_INT, canvas - scaled_height - top,
+        "preproc_resize_mode", G_TYPE_STRING, mode, nullptr);
+  };
+  set("letterbox", 1280, 720, 1024, 1024, 576, 0);
+  const std::array<GstBuffer*, 2> with_prompt{prompt.get(), legacy.get()};
+  require(take(resolve(executor.preparer(), with_prompt)) == base,
+          "the admitted frame and a prompt without facts must keep the prepared plan");
+  // A later run whose inputs all lack facts must not reuse the previous image's geometry.
+  require(rejects(prompt.get(), "semantic.preprocess facts on its inputs on every run"),
+          "a run without any image facts must be rejected");
+  set("letterbox", 1280, 720, 1024, 1024, 576, 0);
+  gst_structure_set(meta, "preproc_roi_list_enable", G_TYPE_BOOLEAN, TRUE, nullptr);
+  require(rejects(legacy.get(), "ROI-list"), "ROI-list facts must be rejected as at admission");
+  set("letterbox", 1280, 720, 1024, 1024, 576, 224);
+  require(rejects(legacy.get(), kPreprocessing), "a centered letterbox must be rejected");
+  set("stretch", 1280, 720, 1024, 1024, 1024, 0);
+  require(rejects(legacy.get(), kPreprocessing), "a stretch must be rejected");
+  set("letterbox", 1280, 720, 1008, 1008, 567, 0);
+  require(rejects(legacy.get(), kPreprocessing), "another canvas must be rejected");
+  set("letterbox", 1280, 720, 1024, 1024, 577, 0);
+  require(rejects(legacy.get(), kPreprocessing), "another scaled extent must be rejected");
+  set("letterbox", 1920, 1080, 1024, 1024, 576, 0);
+  require(rejects(legacy.get(), "sized for another original image"),
+          "another image size must be rejected");
+  // The kernel ignores the affine: a crop composed before the resize must fail every run.
+  constexpr const char* kAffine = "does not map the scaled image onto the whole image";
+  set("letterbox", 1280, 720, 1024, 1024, 576, 0);
+  gst_structure_set(meta, "preproc_affine_m00", G_TYPE_DOUBLE, 1.25, "preproc_affine_m01",
+                    G_TYPE_DOUBLE, 0., "preproc_affine_m02", G_TYPE_DOUBLE, 0.,
+                    "preproc_affine_m10", G_TYPE_DOUBLE, 0., "preproc_affine_m11", G_TYPE_DOUBLE,
+                    1.25, "preproc_affine_m12", G_TYPE_DOUBLE, 0., nullptr);
+  require(take(resolve(executor.preparer(), with_prompt)) == base,
+          "a whole-image legacy affine must keep the prepared plan");
+  gst_structure_set(meta, "preproc_affine_m02", G_TYPE_DOUBLE, 160., nullptr);
+  require(rejects(legacy.get(), kAffine), "a legacy affine of a cropped region must be rejected");
+  set("letterbox", 1280, 720, 1024, 1024, 576, 0);
+  gst_structure_set(meta, "preproc_affine_scale_x", G_TYPE_DOUBLE, 1.0, "preproc_affine_scale_y",
+                    G_TYPE_DOUBLE, 1.0, "preproc_affine_offset_x", G_TYPE_DOUBLE, 0.,
+                    "preproc_affine_offset_y", G_TYPE_DOUBLE, 0., nullptr);
+  require(rejects(legacy.get(), kAffine), "legacy affine aliases must be checked too");
+  // Contradicting affine fields are reported, not skipped: the matrix says the crop starts at 160
+  // while a stale alias says 0.
+  set("letterbox", 1280, 720, 1024, 1024, 576, 0);
+  gst_structure_set(meta, "preproc_affine_m00", G_TYPE_DOUBLE, 1.25, "preproc_affine_m01",
+                    G_TYPE_DOUBLE, 0., "preproc_affine_m02", G_TYPE_DOUBLE, 160.,
+                    "preproc_affine_m10", G_TYPE_DOUBLE, 0., "preproc_affine_m11", G_TYPE_DOUBLE,
+                    1.25, "preproc_affine_m12", G_TYPE_DOUBLE, 0., "preproc_affine_scale_x",
+                    G_TYPE_DOUBLE, 1.25, "preproc_affine_scale_y", G_TYPE_DOUBLE, 1.25,
+                    "preproc_affine_offset_x", G_TYPE_DOUBLE, 0., "preproc_affine_offset_y",
+                    G_TYPE_DOUBLE, 0., nullptr);
+  require(rejects(legacy.get(), "disagree"),
+          "a crop whose matrix and aliases disagree was accepted by the Segment Anything guard");
+  // Compact producer facts are checked the same way.
+  const auto compact = [](std::array<std::int64_t, 4> placed, double crop_x = 0.) {
+    Buffer buffer(gst_buffer_new_allocate(nullptr, 4, nullptr));
+    std::string error;
+    require(
+        simaai::gst::tensor_buffer_attach_publication(buffer.get(), compact_publication(), &error),
+        "attach compact publication failed");
+    simaai::gst::TensorBufferPreprocessFacts facts;
+    facts.original_width = 1280;
+    facts.original_height = 720;
+    facts.resized_width = facts.resized_height = 1024;
+    facts.primary = {0, 0, 1280, 720};
+    facts.placed = placed;
+    facts.affine = {1.25, 0.,   crop_x - 1.25 * double(placed[0]),
+                    0.,   1.25, -1.25 * double(placed[1])};
+    facts.source_stride = 3840;
+    facts.resize_mode = "letterbox";
+    facts.color_in = facts.color_out = "RGB";
+    simaai::gst::TensorBufferFrameMetadata frame;
+    frame.preprocess = simaai::gst::tensor_buffer_freeze_preprocess_facts(facts, &error);
+    require(bool(frame.preprocess), "compact facts freeze failed");
+    require(
+        simaai::gst::tensor_buffer_attach_frame_metadata(buffer.get(), std::move(frame), &error),
+        "compact facts attach failed");
+    return buffer;
+  };
+  auto top_left = compact({0, 0, 1024, 576});
+  const std::array<GstBuffer*, 1> admitted{top_left.get()};
+  require(take(resolve(executor.preparer(), admitted)) == base,
+          "compact facts of the admitted preprocessing must keep the prepared plan");
+  auto centered = compact({0, 224, 1024, 576});
+  require(rejects(centered.get(), kPreprocessing), "a compact centered letterbox must be rejected");
+  auto composed = compact({0, 0, 1024, 576}, 160.);
+  require(rejects(composed.get(), kAffine), "a compact composed crop must be rejected");
+}
+// #1507: an ordinary detection profile decodes each frame with the affine its preprocess
+// published (an ROI, a stretch, a whole frame); legacy ingress that publishes dimensions only keeps
+// the recipe's fallback. A profile whose kernel accepts no transform refuses ROI and crop frames.
+void set_published_frame(GstStructure* meta, const char* mode, double scale_x, double scale_y,
+                         double offset_x, double offset_y, bool affine = true) {
+  gst_structure_remove_all_fields(meta);
+  gst_structure_set(meta, "preproc_original_width", G_TYPE_INT, 1280, "preproc_original_height",
+                    G_TYPE_INT, 720, "preproc_resized_width", G_TYPE_INT, 640,
+                    "preproc_resized_height", G_TYPE_INT, 640, "preproc_scaled_width", G_TYPE_INT,
+                    640, "preproc_scaled_height", G_TYPE_INT, 640, "preproc_pad_left", G_TYPE_INT,
+                    0, "preproc_pad_right", G_TYPE_INT, 0, "preproc_pad_top", G_TYPE_INT, 0,
+                    "preproc_pad_bottom", G_TYPE_INT, 0, "preproc_resize_mode", G_TYPE_STRING, mode,
+                    nullptr);
+  if (affine)
+    gst_structure_set(meta, "preproc_affine_m00", G_TYPE_DOUBLE, scale_x, "preproc_affine_m01",
+                      G_TYPE_DOUBLE, 0., "preproc_affine_m02", G_TYPE_DOUBLE, offset_x,
+                      "preproc_affine_m10", G_TYPE_DOUBLE, 0., "preproc_affine_m11", G_TYPE_DOUBLE,
+                      scale_y, "preproc_affine_m12", G_TYPE_DOUBLE, offset_y, nullptr);
+}
+void published_frame_geometry() {
+  probe::OperationProbe executor;
+  const auto checked = executable(true);
+  require(!executor.prepare(checked), "real A65 preparation failed");
+  const auto base = executor.operation();
+  core::KernelStageRecipe recipe;
+  recipe.members.resize(1);
+  recipe.members.front().executable = checked;
+  // The cold executable carries a seed transform; no frame ever decodes with it.
+  core::BoxDecodeGeometryOptions options{640, 640, 640, 640, simaai::neat::ResizeMode::Stretch};
+  options.complete_geometry = options.frame_affine_optional = true;
+  options.model_to_original = std::array<float, 4>{1.f, 1.f, 0.f, 0.f};
+  core::attach_boxdecode_geometry_resolver(recipe, 0, options, true, true);
+  auto resolve = recipe.resolver_factories.front().instantiate();
+  const gchar* tags[] = {nullptr};
+  if (!gst_meta_get_info("GstSimaMeta"))
+    require(gst_meta_register_custom("GstSimaMeta", tags, nullptr, nullptr, nullptr),
+            "metadata registration failed");
+  Buffer frame(gst_buffer_new());
+  auto* meta =
+      gst_custom_meta_get_structure(gst_buffer_add_custom_meta(frame.get(), "GstSimaMeta"));
+  const std::array<GstBuffer*, 1> one{frame.get()};
+  // The issue's ROI stretched into the canvas, and the same size at another offset.
+  set_published_frame(meta, "stretch", 1., .5625, 400., 200.);
+  const auto roi = take(resolve(executor.preparer(), one));
+  require(roi != base && take(resolve(executor.preparer(), one)) == roi,
+          "an ROI frame did not select (and cache) its own affine");
+  // The whole frame stretched: its published affine is the recipe's fallback.
+  set_published_frame(meta, "stretch", 2., 1.125, 0., 0.);
+  const auto whole = take(resolve(executor.preparer(), one));
+  require(whole != roi, "a whole frame reused an ROI's affine");
+  // Legacy GstSimaMeta that follows PreprocessRuntimeMeta (resized_* before padding, pads around
+  // it) describes the padded 640x640 canvas, exactly as Core's own projection (resized_* the
+  // canvas, scaled_* the placed image) does: both letterbox the issue's ROI, so both decode alike.
+  core::KernelStageRecipe boxed;
+  boxed.members.resize(1);
+  boxed.members.front().executable = checked;
+  auto letterbox = options;
+  letterbox.resize = simaai::neat::ResizeMode::Letterbox;
+  core::attach_boxdecode_geometry_resolver(boxed, 0, letterbox, true, true);
+  auto resolve_boxed = boxed.resolver_factories.front().instantiate();
+  set_published_frame(meta, "letterbox", 1., 1., 400., 60.);
+  gst_structure_set(meta, "preproc_scaled_width", G_TYPE_INT, 640, "preproc_scaled_height",
+                    G_TYPE_INT, 360, "preproc_pad_top", G_TYPE_INT, 140, "preproc_pad_bottom",
+                    G_TYPE_INT, 140, nullptr);
+  const auto projected = take(resolve_boxed(executor.preparer(), one));
+  require(projected != base, "a letterboxed ROI frame did not select its affine");
+  gst_structure_set(meta, "preproc_resized_height", G_TYPE_INT, 360, "preproc_scaled_width",
+                    G_TYPE_INT, 0, "preproc_scaled_height", G_TYPE_INT, 0, nullptr);
+  require(take(resolve_boxed(executor.preparer(), one)) == projected,
+          "legacy letterbox metadata with resized_* before padding was not read as its canvas");
+}
+// Compact facts of a 1280x720 frame stretched into 640x640 from the issue's ROI.
+simaai::gst::TensorBufferPreprocessFacts stretched_roi_facts() {
+  simaai::gst::TensorBufferPreprocessFacts facts;
+  facts.original_width = 1280;
+  facts.original_height = 720;
+  facts.resized_width = facts.resized_height = 640;
+  facts.primary = {400, 200, 640, 360};
+  facts.placed = {0, 0, 640, 640};
+  facts.affine = {1., 0., 400., 0., .5625, 200.};
+  facts.source_stride = 3840;
+  facts.has_roi = true;
+  facts.resize_mode = "stretch";
+  facts.color_in = facts.color_out = "RGB";
+  return facts;
+}
+Buffer compact_buffer(const simaai::gst::TensorBufferPreprocessFacts& facts) {
+  Buffer buffer(gst_buffer_new_allocate(nullptr, 4, nullptr));
+  std::string error;
+  require(
+      simaai::gst::tensor_buffer_attach_publication(buffer.get(), compact_publication(), &error),
+      "attach compact publication failed");
+  simaai::gst::TensorBufferFrameMetadata frame;
+  frame.preprocess = simaai::gst::tensor_buffer_freeze_preprocess_facts(facts, &error);
+  require(bool(frame.preprocess),
+          ("compact facts freeze failed: " + error + " resize=" + facts.resize_mode +
+           " primary=" + std::to_string(facts.primary[2]) +
+           " affine0=" + std::to_string(facts.affine[0]) + " cap=" + std::to_string(facts.capacity))
+              .c_str());
+  require(simaai::gst::tensor_buffer_attach_frame_metadata(buffer.get(), std::move(frame), &error),
+          "compact facts attach failed");
+  return buffer;
+}
+// The same facts as Scheduler's GstSimaMeta serializer writes them.
+Buffer serialized_buffer(const simaai::gst::TensorBufferPreprocessFacts& facts) {
+  if (!gst_meta_get_info("GstSimaMeta")) {
+    const gchar* tags[] = {nullptr};
+    require(gst_meta_register_custom("GstSimaMeta", tags, nullptr, nullptr, nullptr),
+            "metadata registration failed");
+  }
+  Buffer buffer(gst_buffer_new());
+  auto* meta =
+      gst_custom_meta_get_structure(gst_buffer_add_custom_meta(buffer.get(), "GstSimaMeta"));
+  simaai::gst::tensor_buffer_write_preprocess_facts(meta, facts, true);
+  return buffer;
+}
+// Compact facts and their GstSimaMeta serialization are one frame: absent, valid and malformed
+// transforms, ROI-list validity and source rectangles must decode the same from either (#1507).
+void frame_metadata_formats() {
+  probe::OperationProbe executor;
+  const auto checked = executable(true);
+  require(!executor.prepare(checked), "real A65 preparation failed");
+  const auto base = executor.operation();
+  const auto resolver = [&](core::BoxDecodeGeometryOptions options) {
+    auto recipe = std::make_shared<core::KernelStageRecipe>();
+    recipe->members.resize(1);
+    recipe->members.front().executable = checked;
+    core::attach_boxdecode_geometry_resolver(*recipe, 0, options, !options.full_frame_only,
+                                             !options.full_frame_only);
+    return std::pair{recipe, recipe->resolver_factories.front().instantiate()};
+  };
+  core::BoxDecodeGeometryOptions detection{640, 640, 640, 640, simaai::neat::ResizeMode::Stretch};
+  detection.complete_geometry = detection.frame_affine_optional = true;
+  detection.model_to_original = std::array<float, 4>{1.f, 1.f, 0.f, 0.f};
+  auto [detection_recipe, detect] = resolver(detection);
+  core::BoxDecodeGeometryOptions guarded{640, 640, 640, 640, simaai::neat::ResizeMode::Letterbox};
+  guarded.full_frame_only = true;
+  guarded.profile = "yolov8-seg";
+  auto [guarded_recipe, guard] = resolver(guarded);
+  // Both representations of one fixture give one result.
+  const auto same = [&](auto& resolve, const simaai::gst::TensorBufferPreprocessFacts& facts,
+                        const char* message) {
+    auto compact = compact_buffer(facts);
+    auto legacy = serialized_buffer(facts);
+    const std::array<GstBuffer*, 1> from_compact{compact.get()}, from_legacy{legacy.get()};
+    auto a = resolve(executor.preparer(), from_compact);
+    auto b = resolve(executor.preparer(), from_legacy);
+    require(a.index() == b.index(), message);
+    if (const auto* x = std::get_if<rt::PreparedSelection>(&a))
+      require(*x == std::get<rt::PreparedSelection>(b), message);
+    return a;
+  };
+  auto facts = stretched_roi_facts();
+  const auto roi = take(same(detect, facts, "an ROI frame decodes differently per format"));
+  require(roi != base, "an ROI frame did not select its affine");
+  // The same size at another offset reselects its own affine.
+  auto moved = facts;
+  moved.primary[0] = 440;
+  moved.affine[2] = 440.;
+  require(take(same(detect, moved, "a moved ROI decodes differently per format")) != roi,
+          "a second ROI reused the first ROI's affine");
+  // Dimensions only: no affine is published, so the recipe's fallback applies in both formats.
+  facts.affine = {};
+  facts.primary = {0, 0, 1280, 720};
+  facts.has_roi = false;
+  require(std::holds_alternative<rt::PreparedSelection>(
+              same(detect, facts, "a dimensions-only frame decodes differently per format")),
+          "a dimensions-only frame was rejected");
+  const auto dimensions_only = take(same(detect, facts, "dimensions-only repeat"));
+  // Facts attached with dimensions only serialize a default identity: still no transform.
+  auto attached = facts;
+  attached.affine = {1., 0., 0., 0., 1., 0.};
+  require(take(same(detect, attached, "an attached identity decodes differently per format")) ==
+              dimensions_only,
+          "the default identity of dimension-only facts was applied as a published transform");
+  // A published partial ROI without a usable transform has nothing to fall back to.
+  auto unusable = stretched_roi_facts();
+  unusable.affine = {};
+  require(std::holds_alternative<rt::Error>(
+              same(detect, unusable, "a partial ROI without transform differs per format")),
+          "a partial ROI without a usable transform took the dimensions-only fallback");
+  // A real identity, confirmed by its placement (640x360 at the origin of a 640x640 canvas, 280
+  // pixels of padding below), is kept.
+  {
+    core::BoxDecodeGeometryOptions seeded{640, 640, 640, 640, simaai::neat::ResizeMode::Letterbox};
+    seeded.complete_geometry = seeded.frame_affine_optional = true;
+    seeded.model_to_original = std::array<float, 4>{2.f, 2.f, 0.f, -140.f};
+    auto [seeded_recipe, seeded_resolve] = resolver(seeded);
+    simaai::gst::TensorBufferPreprocessFacts real;
+    real.original_width = 640;
+    real.original_height = 360;
+    real.resized_width = real.resized_height = 640;
+    real.primary = {0, 0, 640, 360};
+    real.placed = {0, 0, 640, 360};
+    real.affine = {1., 0., 0., 0., 1., 0.};
+    real.source_stride = 1920;
+    real.resize_mode = "letterbox";
+    real.color_in = real.color_out = "RGB";
+    const auto confirmed = take(same(seeded_resolve, real, "a confirmed identity differs"));
+    real.affine = {};
+    require(take(same(seeded_resolve, real, "a dimensions-only frame differs")) != confirmed,
+            "a real identity transform was read as dimensions-only metadata");
+  }
+  // A published transform that is not axis-aligned is malformed in both.
+  facts = stretched_roi_facts();
+  facts.affine[1] = .1;
+  require(std::holds_alternative<rt::Error>(
+              same(detect, facts, "a sheared affine decodes differently per format")),
+          "a sheared affine was accepted");
+  // Partial matrices and conflicting aliases remain errors.
+  {
+    auto legacy = serialized_buffer(stretched_roi_facts());
+    auto* meta =
+        gst_custom_meta_get_structure(gst_buffer_get_custom_meta(legacy.get(), "GstSimaMeta"));
+    const std::array<GstBuffer*, 1> one{legacy.get()};
+    gst_structure_remove_field(meta, "preproc_affine_m12");
+    require(std::holds_alternative<rt::Error>(detect(executor.preparer(), one)),
+            "a partial affine matrix was accepted");
+  }
+  {
+    auto legacy = serialized_buffer(stretched_roi_facts());
+    auto* meta =
+        gst_custom_meta_get_structure(gst_buffer_get_custom_meta(legacy.get(), "GstSimaMeta"));
+    const std::array<GstBuffer*, 1> one{legacy.get()};
+    gst_structure_set(meta, "preproc_affine_scale_x", G_TYPE_DOUBLE, 3., nullptr);
+    require(std::holds_alternative<rt::Error>(detect(executor.preparer(), one)),
+            "partial affine aliases were accepted");
+    gst_structure_set(meta, "preproc_affine_scale_y", G_TYPE_DOUBLE, .5625,
+                      "preproc_affine_offset_x", G_TYPE_DOUBLE, 400., "preproc_affine_offset_y",
+                      G_TYPE_DOUBLE, 200., nullptr);
+    require(std::holds_alternative<rt::Error>(detect(executor.preparer(), one)),
+            "aliases that conflict with the matrix were accepted");
+  }
+  // One-slot ROI lists need one valid ROI: an empty list leaves EV74's unused slot zeroed.
+  facts = stretched_roi_facts();
+  facts.roi_list = true;
+  facts.capacity = 1;
+  facts.counts = {1, 1, 0, 0};
+  facts.roi_batch_indices = {0};
+  facts.roi_rects = {400, 200, 640, 360};
+  facts.roi_affines = {1., 0., 400., 0., .5625, 200.};
+  require(take(same(detect, facts, "a one-ROI list decodes differently per format")) == roi,
+          "a one-slot ROI list with one valid ROI lost its affine");
+  {
+    auto wide = facts;
+    wide.capacity = 4;
+    require(std::holds_alternative<rt::Error>(
+                same(detect, wide, "a four-slot list decodes differently per format")),
+            "an ROI list of four slots was decoded with one affine");
+    auto legacy_list = serialized_buffer(facts);
+    auto* list_meta =
+        gst_custom_meta_get_structure(gst_buffer_get_custom_meta(legacy_list.get(), "GstSimaMeta"));
+    const std::array<GstBuffer*, 1> one{legacy_list.get()};
+    gst_structure_remove_field(list_meta, "preproc_roi_count");
+    require(std::holds_alternative<rt::Error>(detect(executor.preparer(), one)),
+            "an ROI list of unknown valid count was decoded with one affine");
+    gst_structure_remove_field(list_meta, "preproc_roi_capacity");
+    require(std::holds_alternative<rt::Error>(detect(executor.preparer(), one)),
+            "an ROI list of unknown capacity was decoded with one affine");
+  }
+  facts.counts = {0, 0, 0, 0};
+  facts.has_roi = false;
+  facts.primary = {0, 0, 1280, 720};
+  facts.affine = {};
+  facts.roi_batch_indices.clear();
+  facts.roi_rects.clear();
+  facts.roi_affines.clear();
+  require(std::holds_alternative<rt::Error>(
+              same(detect, facts, "an empty ROI list decodes differently per format")),
+          "a one-slot ROI list without a valid ROI was decoded as a whole frame");
+  require(std::holds_alternative<rt::Error>(
+              same(guard, facts, "an empty ROI list decodes differently per format")),
+          "a full-frame-only profile decoded an empty ROI list");
+  // A whole frame, then a window the 1.5-pixel tolerance cannot tell from it: the published source
+  // rectangle decides where Preproc supplies one.
+  facts = {};
+  facts.original_width = 1280;
+  facts.original_height = 720;
+  facts.resized_width = facts.resized_height = 640;
+  facts.placed = {0, 140, 640, 360};
+  facts.affine = {2., 0., 0., 0., 2., -280.};
+  facts.resize_mode = "letterbox";
+  facts.source_stride = 3840;
+  facts.color_in = facts.color_out = "RGB";
+  facts.primary = {0, 0, 1280, 720};
+  require(std::holds_alternative<rt::PreparedSelection>(
+              same(guard, facts, "a whole frame decodes differently per format")),
+          "a whole frame was refused by a full-frame-only profile");
+  facts.primary = {2, 0, 1278, 720};
+  facts.has_roi = true;
+  facts.placed = {0, 139, 640, 361};
+  facts.affine = {1.996875, 0., 2., 0., 1.996875, -277.565625};
+  require(std::holds_alternative<rt::Error>(
+              same(guard, facts, "a two-pixel crop decodes differently per format")),
+          "a window of two pixels was taken for the whole frame");
+  // Without a rectangle only the affine describes the window, and rounding is tolerated.
+  auto legacy = serialized_buffer(facts);
+  auto* meta =
+      gst_custom_meta_get_structure(gst_buffer_get_custom_meta(legacy.get(), "GstSimaMeta"));
+  require(gst_structure_has_field(meta, "preproc_roi_x"),
+          "the serializer no longer publishes the ROI rectangle");
+  for (const char* name : {"preproc_roi_enable", "preproc_roi_x", "preproc_roi_y",
+                           "preproc_roi_width", "preproc_roi_height", "preproc_roi_rects"})
+    gst_structure_remove_field(meta, name);
+  const std::array<GstBuffer*, 1> one{legacy.get()};
+  require(std::holds_alternative<rt::PreparedSelection>(guard(executor.preparer(), one)),
+          "rounding of the placed extent was refused");
+}
+// Precedence and canvas rules for frames that publish an affine.
+void frame_geometry_precedence() {
+  probe::OperationProbe executor;
+  const auto checked = executable(true);
+  require(!executor.prepare(checked), "real A65 preparation failed");
+  const auto make = [&](std::int64_t original_width, std::int64_t original_height) {
+    auto recipe = std::make_shared<core::KernelStageRecipe>();
+    recipe->members.resize(1);
+    recipe->members.front().executable = checked;
+    core::BoxDecodeGeometryOptions options{640, 640, int(original_width), int(original_height),
+                                           simaai::neat::ResizeMode::Stretch};
+    options.complete_geometry = options.frame_affine_optional = true;
+    options.model_to_original = std::array<float, 4>{1.f, 1.f, 0.f, 0.f};
+    core::attach_boxdecode_geometry_resolver(*recipe, 0, options, original_width == 0,
+                                             original_width == 0);
+    return std::pair{recipe, recipe->resolver_factories.front().instantiate()};
+  };
+  auto [metadata_recipe, from_metadata] = make(0, 0);
+  const auto frame = [&](auto& resolve, const simaai::gst::TensorBufferPreprocessFacts& facts) {
+    auto buffer = serialized_buffer(facts);
+    const std::array<GstBuffer*, 1> one{buffer.get()};
+    return resolve(executor.preparer(), one);
+  };
+  const auto roi = take(frame(from_metadata, stretched_roi_facts()));
+  // The model canvas must be the checked one for a frame that publishes an affine.
+  auto other_canvas = stretched_roi_facts();
+  other_canvas.resized_width = other_canvas.resized_height = 320;
+  other_canvas.placed = {0, 0, 320, 320};
+  const auto rejected = frame(from_metadata, other_canvas);
+  const auto* error = std::get_if<rt::Error>(&rejected);
+  require(error && error->message.find("differ from the checked model") != std::string::npos,
+          "a frame preprocessed to another canvas was accepted");
+  // An explicit original size keeps its precedence over another source's affine.
+  auto [explicit_recipe, explicit_size] = make(1280, 720);
+  Buffer bare(gst_buffer_new());
+  const std::array<GstBuffer*, 1> bare_one{bare.get()};
+  const auto fallback_frame = take(explicit_size(executor.preparer(), bare_one));
+  require(take(frame(explicit_size, stretched_roi_facts())) != fallback_frame,
+          "an ROI frame under a matching explicit size lost its affine");
+  auto other_source = stretched_roi_facts();
+  other_source.original_width = 1920;
+  other_source.original_height = 1080;
+  require(take(frame(explicit_size, other_source)) == fallback_frame,
+          "an explicit original size lost its precedence over another source's affine");
+}
+void full_frame_only_geometry() {
+  probe::OperationProbe executor;
+  const auto checked = executable(true);
+  require(!executor.prepare(checked), "real A65 preparation failed");
+  const auto base = executor.operation();
+  core::KernelStageRecipe recipe;
+  recipe.members.resize(1);
+  recipe.members.front().executable = checked;
+  core::BoxDecodeGeometryOptions options{640, 640, 640, 640, simaai::neat::ResizeMode::Letterbox};
+  options.full_frame_only = true;
+  options.profile = "yolov8-seg";
+  core::attach_boxdecode_geometry_resolver(recipe, 0, options, false, false);
+  require(recipe.resolver_factories.size() == 1,
+          "a profile that accepts no transform needs a per-frame guard");
+  auto resolve = recipe.resolver_factories.front().instantiate();
+  const gchar* tags[] = {nullptr};
+  if (!gst_meta_get_info("GstSimaMeta"))
+    require(gst_meta_register_custom("GstSimaMeta", tags, nullptr, nullptr, nullptr),
+            "metadata registration failed");
+  Buffer frame(gst_buffer_new());
+  auto* meta =
+      gst_custom_meta_get_structure(gst_buffer_add_custom_meta(frame.get(), "GstSimaMeta"));
+  const std::array<GstBuffer*, 1> one{frame.get()};
+  const auto refused = [&](const char* message) {
+    auto result = resolve(executor.preparer(), one);
+    const auto* error = std::get_if<rt::Error>(&result);
+    return error && error->message.find("yolov8-seg") != std::string::npos &&
+           error->message.find(message) != std::string::npos;
+  };
+  // Whole frames keep decoding: a centered letterbox (pad 140, scale 2), a placed extent rounded by
+  // a pixel, and legacy ingress.
+  set_published_frame(meta, "letterbox", 2., 1.125, 0., 0.);
+  require(take(resolve(executor.preparer(), one)) == base, "a whole frame was refused");
+  set_published_frame(meta, "letterbox", 2., 2., 0., -280.);
+  gst_structure_set(meta, "preproc_scaled_height", G_TYPE_INT, 360, "preproc_pad_top", G_TYPE_INT,
+                    140, "preproc_pad_bottom", G_TYPE_INT, 140, nullptr);
+  require(take(resolve(executor.preparer(), one)) == base, "a whole letterboxed frame was refused");
+  // Preprocess rounds the placed extent; a pixel of drift is still the whole frame.
+  gst_structure_set(meta, "preproc_affine_m12", G_TYPE_DOUBLE, -282., nullptr);
+  require(take(resolve(executor.preparer(), one)) == base, "rounding of the placed extent refused");
+  set_published_frame(meta, "letterbox", 0., 0., 0., 0., false);
+  require(take(resolve(executor.preparer(), one)) == base, "dimensions-only ingress was refused");
+  // Dimensions-only facts serialize a default identity affine; a whole 1280x720 frame resized into
+  // the 640x640 canvas must still decode.
+  set_published_frame(meta, "letterbox", 1., 1., 0., 0.);
+  require(take(resolve(executor.preparer(), one)) == base,
+          "dimensions-only metadata with the default identity affine was refused as an ROI");
+  // An ROI, a crop and an ROI list decoded in full-frame coordinates would be wrong.
+  set_published_frame(meta, "letterbox", 1., .5625, 400., 200.);
+  require(refused("ROI, a crop or a window"), "an ROI frame decoded in full-frame coordinates");
+  set_published_frame(meta, "letterbox", 2., 2., 0., -280.);
+  gst_structure_set(meta, "preproc_scaled_height", G_TYPE_INT, 360, "preproc_pad_top", G_TYPE_INT,
+                    140, "preproc_pad_bottom", G_TYPE_INT, 140, "preproc_affine_m12", G_TYPE_DOUBLE,
+                    -284., nullptr);
+  require(refused("ROI, a crop or a window"), "a window of the source decoded as a whole frame");
+  set_published_frame(meta, "crop", 2., 1.125, 0., 0.);
+  require(refused("ROI, a crop or a window"), "a crop frame decoded in full-frame coordinates");
+  set_published_frame(meta, "letterbox", 2., 1.125, 0., 0.);
+  gst_structure_set(meta, "preproc_roi_list_enable", G_TYPE_BOOLEAN, TRUE, "preproc_roi_capacity",
+                    G_TYPE_INT, 4, nullptr);
+  require(refused("ROI, a crop or a window"), "an ROI list decoded in full-frame coordinates");
+}
 } // namespace
 int main(int argc, char** argv) {
   gst_init(&argc, &argv);
   try {
+    letterbox_placement();
+    std::cout << "BoxDecode letterbox placement passed\n";
+    sam_geometry();
+    std::cout << "BoxDecode Segment Anything geometry passed\n";
+    sam_fixed_image();
+    std::cout << "BoxDecode Segment Anything fixed image guard passed\n";
     geometry();
     geometry(true);
     std::cout << "BoxDecode complete geometry and retained variant cache passed\n";
+    published_frame_geometry();
+    std::cout << "BoxDecode published frame affine passed\n";
+    full_frame_only_geometry();
+    frame_metadata_formats();
+    frame_geometry_precedence();
+    std::cout << "BoxDecode full-frame-only profiles passed\n";
     return 0;
   } catch (const std::exception& error) {
     std::cerr << error.what() << '\n';

@@ -101,6 +101,7 @@
 
 #if defined(SIMA_WITH_OPENCV)
 #include <opencv2/core.hpp>
+#include <opencv2/imgproc.hpp>
 #endif
 
 #include <cstddef>
@@ -675,6 +676,10 @@ void delete_dlpack_managed(DLManagedTensor* managed) {
 PyObject* tensor_to_dlpack_capsule(const Tensor& input) {
   if (input.has_tiled_storage())
     throw std::runtime_error("__dlpack__: tiled storage requires explicit detessellation");
+  // Judge the view against its own storage before any transfer: a mapper may expose more bytes
+  // than the segment assigned to the tensor.
+  if (const char* error = simaai::neat::pipeline_internal::dense_storage_bounds_error(input))
+    throw std::runtime_error(std::string("__dlpack__: ") + error);
   const Tensor source_pin = input;
   Tensor tensor = source_pin;
   if (tensor.device.type != DeviceType::CPU) {
@@ -700,6 +705,16 @@ PyObject* tensor_to_dlpack_capsule(const Tensor& input) {
     }
   }
 
+  if (!tensor.strides_bytes.empty() && tensor.strides_bytes.size() != tensor.shape.size())
+    throw std::runtime_error("__dlpack__: tensor strides rank differs from shape rank");
+  bool has_elements = true;
+  for (int64_t dim : tensor.shape) {
+    if (dim < 0)
+      throw std::runtime_error("__dlpack__: tensor shape has a negative dimension");
+    if (dim == 0)
+      has_elements = false;
+  }
+
   auto owner = std::make_unique<DlpackExportOwner>();
   owner->tensor = std::move(tensor);
   {
@@ -708,6 +723,11 @@ PyObject* tensor_to_dlpack_capsule(const Tensor& input) {
   }
   if (!owner->mapping.data)
     throw std::runtime_error("tensor mapping failed");
+  if (has_elements) {
+    const std::size_t span = span_bytes(owner->tensor.shape, owner->tensor.strides_bytes, elem);
+    if (span > owner->mapping.size_bytes)
+      throw std::runtime_error("__dlpack__: tensor view exceeds its storage mapping");
+  }
 
   owner->shape = owner->tensor.shape;
   owner->strides_elems.clear();
@@ -1113,7 +1133,7 @@ std::vector<int64_t> contiguous_uint8_image_strides(const std::vector<int64_t>& 
 }
 
 PythonPreprocImageBatch
-python_preproc_images_to_cv_mats(const nb::object& images,
+python_preproc_images_to_cv_mats(const nb::object& images, const simaai::neat::Model& model,
                                  const std::optional<ImageSpec::PixelFormat>& image_format,
                                  bool copy) {
   PythonPreprocImageBatch batch;
@@ -1126,6 +1146,7 @@ python_preproc_images_to_cv_mats(const nb::object& images,
   batch.mappings.reserve(batch.tensors.size());
   batch.mats.reserve(batch.tensors.size());
 
+  const auto expected = model.resolved_preprocess_plan().effective.color_convert.input_format;
   for (Tensor& tensor : batch.tensors) {
     tensor = tensor.to_cpu_if_needed();
     if (!tensor.is_dense()) {
@@ -1193,8 +1214,17 @@ python_preproc_images_to_cv_mats(const nb::object& images,
 
     auto* data = static_cast<std::uint8_t*>(mapping.data);
     batch.mappings.push_back(std::move(mapping));
-    batch.mats.emplace_back(height, width, CV_8UC(channels), data,
-                            static_cast<std::size_t>(final_row_stride));
+    cv::Mat view(height, width, CV_8UC(channels), data, static_cast<std::size_t>(final_row_stride));
+    const auto format =
+        tensor.semantic.image ? tensor.semantic.image->format : ImageSpec::PixelFormat::UNKNOWN;
+    using Color = simaai::neat::PreprocessColorFormat;
+    if (channels == 3 && ((format == ImageSpec::PixelFormat::RGB &&
+                           (expected == Color::Auto || expected == Color::BGR)) ||
+                          (format == ImageSpec::PixelFormat::BGR && expected == Color::RGB))) {
+      cv::cvtColor(view, batch.mats.emplace_back(), cv::COLOR_BGR2RGB);
+    } else {
+      batch.mats.push_back(std::move(view));
+    }
   }
 
   return batch;
@@ -1206,7 +1236,8 @@ TensorList python_stage_preproc(const nb::object& images, const simaai::neat::Mo
                                 const std::optional<ImageSpec::PixelFormat>& image_format,
                                 bool copy) {
 #if defined(SIMA_WITH_OPENCV)
-  PythonPreprocImageBatch batch = python_preproc_images_to_cv_mats(images, image_format, copy);
+  PythonPreprocImageBatch batch =
+      python_preproc_images_to_cv_mats(images, model, image_format, copy);
   TensorList out;
   {
     nb::gil_scoped_release release;
@@ -1302,7 +1333,7 @@ Sample sample_batch_from_python_input(const nb::object& input) {
 void reject_single_tensor_or_sample(const nb::object& input, const char* where) {
   if (nb::isinstance<Sample>(input)) {
     throw std::runtime_error(std::string(where) +
-                             " expects Sample; pass [sample] instead of a single Sample");
+                             " expects a list or tuple of Samples; pass [sample]");
   }
   if (nb::isinstance<Tensor>(input)) {
     throw std::runtime_error(std::string(where) +
@@ -1478,7 +1509,8 @@ NB_MODULE(_pyneat_core, m) {
   nb::enum_<simaai::neat::OverflowPolicy>(m, "OverflowPolicy")
       .value("Block", simaai::neat::OverflowPolicy::Block)
       .value("KeepLatest", simaai::neat::OverflowPolicy::KeepLatest)
-      .value("DropIncoming", simaai::neat::OverflowPolicy::DropIncoming);
+      .value("DropIncoming", simaai::neat::OverflowPolicy::DropIncoming)
+      .value("Auto", simaai::neat::OverflowPolicy::Auto);
 
   nb::class_<simaai::neat::QueueOptions>(m, "QueueOptions")
       .def(nb::init<>())
@@ -2105,7 +2137,10 @@ NB_MODULE(_pyneat_core, m) {
       },
       "Decode BoxDecode segmentation tensors into boxes and masks tensors, positional 1:1.\n\n"
       "Each result has `boxes`, a float32 tensor of shape [N, 6], and `masks`,\n"
-      "a uint8 tensor of shape [N, 160, 160].\n\n"
+      "a uint8 tensor of shape [N, 160, 160]. A versioned masks payload\n"
+      "(the Segment Anything BoxDecode types) is recognized by its header and\n"
+      "returns masks [N, H, W] at the original image size, 0 or 255; its records\n"
+      "are kept even when the mask is empty.\n\n"
       "Args:\n"
       "  segmentation_tensors: list[Tensor] of BoxDecode segmentation-format tensors.\n"
       "  clamp_to:             Optional (width, height) - clamp box coordinates to that "
@@ -2665,9 +2700,12 @@ NB_MODULE(_pyneat_core, m) {
 
   nb::class_<MeasureOptions>(m, "MeasureOptions")
       .def(nb::init<>())
-      .def_rw("duration_ms", &MeasureOptions::duration_ms)
-      .def_rw("warmup_ms", &MeasureOptions::warmup_ms)
-      .def_rw("timeout_ms", &MeasureOptions::timeout_ms)
+      .def_rw("duration_ms", &MeasureOptions::duration_ms,
+              "Deprecated. Report metadata only. End measurement with `scope.stop`.")
+      .def_rw("warmup_ms", &MeasureOptions::warmup_ms,
+              "Deprecated. Report metadata only. Finish warmup before starting measurement.")
+      .def_rw("timeout_ms", &MeasureOptions::timeout_ms,
+              "Deprecated. Report metadata only. Set the timeout on each `pull` call.")
       .def_rw("include_plugin_latency", &MeasureOptions::include_plugin_latency,
               "Deprecated: plugin latency will be removed.")
       .def_rw("plugin_latency_source", &MeasureOptions::plugin_latency_source)
@@ -3977,13 +4015,18 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("transmit", &simaai::neat::SimaRenderOptions::transmit);
   nb::class_<simaai::neat::SimaArgMaxOptions>(m, "SimaArgMaxOptions")
       .def(nb::init<>())
-      .def_rw("config_path", &simaai::neat::SimaArgMaxOptions::config_path)
-      .def_rw("sima_allocator_type", &simaai::neat::SimaArgMaxOptions::sima_allocator_type)
+      .def_rw("config_path", &simaai::neat::SimaArgMaxOptions::config_path,
+              "Deprecated. Leave empty. ArgMax uses axis and keepdims.")
+      .def_rw("sima_allocator_type", &simaai::neat::SimaArgMaxOptions::sima_allocator_type,
+              "Deprecated. The runtime chooses the allocator. Both 0 and 2 are accepted.")
       .def_rw("silent", &simaai::neat::SimaArgMaxOptions::silent)
-      .def_rw("emit_signals", &simaai::neat::SimaArgMaxOptions::emit_signals)
-      .def_rw("transmit", &simaai::neat::SimaArgMaxOptions::transmit)
-      .def_rw("axis", &simaai::neat::SimaArgMaxOptions::axis)
-      .def_rw("keepdims", &simaai::neat::SimaArgMaxOptions::keepdims);
+      .def_rw("emit_signals", &simaai::neat::SimaArgMaxOptions::emit_signals,
+              "Deprecated. Leave false.")
+      .def_rw("transmit", &simaai::neat::SimaArgMaxOptions::transmit, "Deprecated. Leave false.")
+      .def_rw("axis", &simaai::neat::SimaArgMaxOptions::axis,
+              "Reduction axis. Negative values count from the end.")
+      .def_rw("keepdims", &simaai::neat::SimaArgMaxOptions::keepdims,
+              "Retain the reduced axis with size one.");
   nb::class_<simaai::neat::ResizeArgMaxOptions>(m, "ResizeArgMaxOptions")
       .def(nb::init<>())
       .def_rw("output_width", &simaai::neat::ResizeArgMaxOptions::output_width)
@@ -4145,7 +4188,8 @@ NB_MODULE(_pyneat_core, m) {
           .def_rw("element_name", &simaai::neat::DequantOptions::element_name)
           .def_rw("stage_id", &simaai::neat::DequantOptions::stage_id)
           .def_rw("model_managed", &simaai::neat::DequantOptions::model_managed)
-          .def_rw("q_scale", &simaai::neat::DequantOptions::q_scale)
+          .def_rw("q_scale", &simaai::neat::DequantOptions::q_scale,
+                  "Positive quantization multiplier. FP32 output is (INT8 input - q_zp) / q_scale.")
           .def_rw("q_zp", &simaai::neat::DequantOptions::q_zp)
           .def_rw("num_buffers", &simaai::neat::DequantOptions::num_buffers)
           .def_rw("num_buffers_model", &simaai::neat::DequantOptions::num_buffers_model)
@@ -4295,7 +4339,8 @@ NB_MODULE(_pyneat_core, m) {
             simaai::neat::StillImageInput::FramesPerSecond{fps});
       },
       "image_path"_a, "content_width"_a, "content_height"_a, "encode_width"_a, "encode_height"_a,
-      "fps"_a = 30);
+      "fps"_a = 30,
+      "Load a still image for Graph.run_rtsp() to stream at the configured frame rate.");
   // SimaRender (S6): render bbox overlays onto a frame — the render stage UdpOutputGroupG needs, so
   // binding it here keeps the overlay→UDP power reachable while that group stays deferred.
   nodes_mod.def("sima_render", &simaai::neat::nodes::SimaRender,
@@ -4485,6 +4530,10 @@ NB_MODULE(_pyneat_core, m) {
       .value("Letterbox", simaai::neat::ResizeMode::Letterbox)
       .value("Crop", simaai::neat::ResizeMode::Crop);
 
+  nb::enum_<simaai::neat::LetterboxPlacement>(m, "LetterboxPlacement")
+      .value("Center", simaai::neat::LetterboxPlacement::Center)
+      .value("TopLeft", simaai::neat::LetterboxPlacement::TopLeft);
+
   nb::enum_<simaai::neat::PreprocessColorFormat>(m, "PreprocessColorFormat")
       .value("Auto", simaai::neat::PreprocessColorFormat::Auto)
       .value("RGB", simaai::neat::PreprocessColorFormat::RGB)
@@ -4531,6 +4580,11 @@ NB_MODULE(_pyneat_core, m) {
       .value("Ssd", simaai::neat::BoxDecodeType::Ssd)
       .value("Detr", simaai::neat::BoxDecodeType::Detr)
       .value("DetrFocal", simaai::neat::BoxDecodeType::DetrFocal)
+      .value("MobileSam", simaai::neat::BoxDecodeType::MobileSam)
+      .value("EdgeTamSeg", simaai::neat::BoxDecodeType::EdgeTamSeg)
+      .value("EdgeTamTrack", simaai::neat::BoxDecodeType::EdgeTamTrack)
+      .value("EfficientSam", simaai::neat::BoxDecodeType::EfficientSam)
+      .value("EfficientSam3", simaai::neat::BoxDecodeType::EfficientSam3)
       .value("EffDet", simaai::neat::BoxDecodeType::EffDet)
       .value("RcnnStage1", simaai::neat::BoxDecodeType::RcnnStage1)
       .value("Centernet", simaai::neat::BoxDecodeType::Centernet)
@@ -4614,6 +4668,7 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("height", &simaai::neat::ResizeSpec::height)
       .def_rw("mode", &simaai::neat::ResizeSpec::mode)
       .def_rw("pad_value", &simaai::neat::ResizeSpec::pad_value)
+      .def_rw("placement", &simaai::neat::ResizeSpec::placement)
       .def_rw("scaling_type", &simaai::neat::ResizeSpec::scaling_type)
       .def_rw("interpolation", &simaai::neat::ResizeSpec::interpolation,
               nb::for_setter(nb::arg("interpolation").none()))
@@ -4746,6 +4801,9 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("boxdecode_original_width", &simaai::neat::Model::Options::boxdecode_original_width)
       .def_rw("boxdecode_original_height", &simaai::neat::Model::Options::boxdecode_original_height)
       .def_rw("boxdecode_resize_mode", &simaai::neat::Model::Options::boxdecode_resize_mode)
+      .def_rw("multimask_output", &simaai::neat::Model::Options::multimask_output,
+              "Segment Anything decoders: True keeps the best of the multimask candidates, False "
+              "the single-mask answer (upstream predict(multimask_output=...)).")
       .def_rw("upstream_name", &simaai::neat::Model::Options::upstream_name)
       .def_rw("name_suffix", &simaai::neat::Model::Options::name_suffix)
       .def_rw("cleanup_extracted_model_data",

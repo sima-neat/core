@@ -81,6 +81,16 @@ NameTransform make_name_transform(const GraphOptions& opt) {
 
 namespace {
 
+NameTransform remaining_name_transform(const Node& node, const NameTransform& requested) {
+  const auto* saved = dynamic_cast<const SerializedElementNames*>(&node);
+  if (!saved) {
+    return requested;
+  }
+  const auto& applied = saved->applied_name_transform;
+  return {requested.prefix == applied.prefix ? "" : requested.prefix,
+          requested.suffix == applied.suffix ? "" : requested.suffix};
+}
+
 bool is_rtsp_payloader_name(std::string_view name) {
   if (name.size() < 4)
     return false;
@@ -130,6 +140,11 @@ std::vector<std::string> apply_name_transform(const NameTransform& t,
   return out;
 }
 
+std::vector<std::string> rendered_element_names(const Node& node, int index,
+                                                const NameTransform& transform) {
+  return apply_name_transform(remaining_name_transform(node, transform), node.element_names(index));
+}
+
 std::string rewrite_fragment_names(const std::string& fragment,
                                    const std::unordered_map<std::string, std::string>& mapping) {
   using namespace gst::launch;
@@ -139,10 +154,11 @@ std::string rewrite_fragment_names(const std::string& fragment,
 }
 
 NodeFragment make_node_fragment(const std::shared_ptr<Node>& node, int index,
-                                const NameTransform& transform) {
+                                const NameTransform& requested) {
   NodeFragment out;
   if (!node)
     return out;
+  const NameTransform transform = remaining_name_transform(*node, requested);
   const std::string original_fragment = node->backend_fragment(index);
   const auto analysis = gst::launch::analyze(original_fragment);
   std::vector<std::string> base_names = node->element_names(index);

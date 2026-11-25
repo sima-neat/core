@@ -279,7 +279,9 @@ bool should_run_stress_cases(const fs::path& tar, std::size_t pack_count) {
     return true;
   if (sima_yolov8_test::env_bool("SIMA_GRAPH_MODEL_COMPOSITION_FULL_MATRIX", false))
     return true;
-  return tar.filename().string() == "yolov8n_A_W_INT8_MLATess.tar.gz";
+  // The INT8 build: the Model Browser pack CI prepares, or the legacy one the test downloads.
+  const std::string name = tar.filename().string();
+  return name == "yolov8n_w8a8_mpk.tar.gz" || name == "yolov8n_A_W_INT8_MLATess.tar.gz";
 }
 
 } // namespace
@@ -310,11 +312,10 @@ int main(int argc, char** argv) {
     } else {
       fs::path variants_dir = resolve_variants_dir(root, argc, argv);
       packs = collect_model_packs(variants_dir);
-      if (packs.empty()) {
-        variants_dir = sima_yolov8_test::ensure_yolov8n_drive_variants(root);
-        packs = collect_model_packs(variants_dir);
-      }
-      require(!packs.empty(), "no model packs found in " + variants_dir.string());
+      require(!packs.empty(), "no model packs found in " + variants_dir.string() +
+                                  "; set SIMA_YOLOV8_VARIANTS_DIR to a folder with the "
+                                  "yolov8n_<variant>_mpk.tar.gz files from "
+                                  "'sima-cli models download --id yolov8n --variant <variant>'");
     }
 
     const cv::Mat img_bgr = sima_yolov8_test::load_people_image_or_skip(root);

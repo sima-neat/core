@@ -194,13 +194,15 @@ EV 장치 빌드는 별도의 라이선스가 필요한 워크플로입니다. �
 아카이브를 분리하고 검증합니다. Core는 해당 저장소들을 독립적으로 해석하지 않습니다.
 
 선택한 Scheduler 패키지는 정확한 SDK 정책을 설치합니다. SDK에서 `build.sh`는
-`scripts/ci/prepare_scheduler_sdk.sh`를 실행하며, 이 스크립트는 sysroot 버전을 확인하고, 전용 APT 구성을 사용해
-Runner의 정확한 플랫폼 아카이브를 `deps/`에 다운로드합니다. `sysroot update`는
-`--update-sysroot`를 지정한 경우에만 실행합니다. 코디네이터는 실제 GCC14 버전/타깃과
-타깃 SDK 식별 정보를 확인한 다음 `NEAT_RUNNER_PLATFORM_RUNTIME_DEBS`를 통해
-Runner가 소비한 정확한 런타임 제공자 아카이브를 선택합니다. 네이티브 ARM64와
-크로스 컴파일러의 실행 파일 바이트가 같을 필요는 없습니다. 타깃 ABI와 선택한
-플랫폼은 일치해야 합니다. 이 단계에서는 장치 설치나 펌웨어 검증을 수행하지 않습니다.
+`scripts/ci/prepare_scheduler_sdk.sh`를 실행합니다. 이 스크립트는 Scheduler의
+`verify-sdk` 명령으로 활성 타깃 sysroot를 검증하고 관찰 결과를 `deps/`에 저장합니다.
+공통 `build_platform` 기록은 `elxr_version`, 전체 `sysroot_version`, 컴파일러
+`target`을 포함하며 Runner 및 Scheduler 빌드 기록과 일치해야 합니다. 플랫폼 DEB는
+다운로드하지 않습니다. 일일 또는 사전 릴리스 타깃의 `sysroot update`는
+`--update-sysroot`를 지정할 때만 실행합니다. 공식 릴리스는 기존 활성 타깃 sysroot를
+사용합니다. 일치하는 오버레이가 원래 컨테이너 이미지보다 최신일 수 있습니다.
+네이티브 ARM64 및 크로스 컴파일러는 같은 타깃 ABI와 플랫폼을 사용해야 하지만 실행
+파일 바이트까지 같을 필요는 없습니다. 이 단계는 DevKit 설치나 검증을 수행하지 않습니다.
 
 `--scheduler` 폴더는 다운로드한 집합과 섞이거나 그것으로 대체되지 않습니다. 기존
 `tools/ci/materialize_dependencies.py --manifest ... --output-root ...` 명령은 별도로
@@ -244,27 +246,16 @@ Core의 프로덕션 박스/마스크 게시는 int32 좌표를 사용합니다.
 렌더링은 별도의 플랫폼 렌더러 아카이브가 아니라 선택한 Kernels/Runner 패키지를
 사용합니다. 요청 API 리비전 2에 맞춰 구성 요소 집합을 함께 다시 빌드합니다.
 
-SDK에서는 `build.sh`가 `scripts/ci/prepare_scheduler_sdk.sh`를 통해 다음을
-설정합니다. SDK 밖에서는 직접 제공합니다.
+플랫폼 SimaHeap, MLA 및 TVM 라이브러리는 선택한 SDK/sysroot에서 가져옵니다.
+`NEAT_RUNNER_PLATFORM_RUNTIME_DEBS`를 제공하거나 출처 확인을 위해 플랫폼 아카이브를
+가져오지 마세요. Scheduler는 실제 SDK 식별 정보를 자신과 Runner의 `build_platform`
+기록과 비교합니다. Core는 검증된 식별 정보를 설치되는 `buildinfo.json`에 기록하고,
+컴파일 후 다시 확인하며, 패키지 메타데이터 게시 전에 최종 CMake sysroot와 컴파일러
+타깃을 검증합니다.
 
-- `NEAT_RUNNER_PLATFORM_RUNTIME_DEBS`: Runner가 선택한 정확한 런타임 제공자 DEB의
-  절대 경로를 담은 JSON 배열입니다. 필수 SimaHeap 런타임 아카이브를 포함하고,
-  해당 백엔드가 활성화되면 MLA 및 TVM 런타임 아카이브도 포함합니다. 이 배열에는
-  개발 아카이브를 포함하지 마세요. Runner는 실제 로더 이름과 라이브러리 바이트를
-  검증합니다. Scheduler는 정확한 아카이브 식별 정보와 페이로드 목록을 빌드 증거로
-  유지합니다. Runner가 Platform 소유로 선언한 제공자는 Core의 설치 가능한 DEB
-  집합에서 제외되며, 선언되지 않은 제공자는 정확한 아카이브 구성을 유지합니다.
-
-`--scheduler` 폴더를 사용해도 이 선택은 명시적으로 유지됩니다. 불변 네 구성 요소 구체화 도구는 플랫폼 제공자 아카이브를 가져오지
-않습니다. Core를 호출하기 전에 지원되는 생성기에서 획득하세요. 제공자가 없거나
-소비되지 않으면 sysroot로 폴백하지 않고 실패합니다. 컴파일에는 일치하는 개발
-패키지를 사용합니다. DevKit에서는 Scheduler의 인증된 허용 검사 도구가 패키지
-변경 전에 설치된 Platform 제공자를 들어오는 소비자와 대조합니다. 설치 프로그램은
-이 제공자를 교체하거나 제거하는 APT 계획을 거부하고, 이후 식별 정보와 설치된
-소비자의 의존성 집합을 검증합니다. `FORCE_INSTALL`로도 이 검사를 면제할 수 없습니다.
-비공개 DSO를 릴리스된 제공자로 표시하기 위한 목적으로 DEB를 다시 빌드하지 마세요.
-
-패키지 구성 검사는 겹치지 않는 페이로드 소유권, 정확한 의존성 버전 및 변하지 않은
-아카이브를 확인합니다. 이러한 빌드 시점 검사는 수치 실행, 동적 마스크 또는 하드웨어
-작업 종료를 검증하지 않습니다. 해당 검증에는 선택한 타깃 구성 요소 집합에서의
-통합 테스트가 필요합니다.
+이 메타데이터 전환에서는 Runner, Scheduler, Core 순으로 다시 빌드합니다.
+`build_platform`이 없는 생성자는 다시 빌드해야 하며 이전 기록으로 SDK 검증을
+우회할 수 없습니다. NEAT 의존성 DEB의 정확한 패키지, 체크섬, 페이로드 소유권 검사는
+유지됩니다. 플랫폼 소유 라이브러리는 Core의 설치 가능한 패키지 집합에 포함되지
+않습니다. 기존 장치 설치와 하드웨어 검증은 별도이며, 빌드 메타데이터가 수치 실행이나
+작업 종료를 증명하지는 않습니다.

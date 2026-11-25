@@ -11,7 +11,7 @@
  * graph execution without owning a long-lived runner.
  *
  * This header also defines:
- *   - `OverflowPolicy` — how `push()` behaves when the input queue is full.
+ *   - `OverflowPolicy` — how `try_push()` handles a full input queue.
  *   - `RunPreset` — preset bundles for common workloads (realtime, balanced, reliable).
  *   - `RunOptions` — runtime knobs (queue depth, overflow policy, output memory).
  *   - `MeasureScope` / `MeasureReport` — the canonical measurement surface.
@@ -154,7 +154,7 @@ using GraphRunAutoExportOptions = RunAutoExportOptions;
 struct RunOptions {
   RunPreset preset = RunPreset::Balanced; ///< Convenience preset that tunes the other fields.
   /**
-   * @brief Capacity of ingress and internal runtime queues.
+   * @brief Default capacity per ingress or internal runtime queue, in samples.
    *
    * Framework-created output queues also use this default. A public `Output` node owns its
    * terminal queue contract through `OutputOptions::max_buffers`, which takes precedence over this
@@ -162,11 +162,13 @@ struct RunOptions {
    */
   int queue_depth = 4;
   /**
-   * @brief Overflow policy for ingress and general runtime queues.
+   * @brief Admission policy for `try_push()` on a full input queue.
    *
-   * A public `Output` node uses its `OutputOptions::drop` policy instead.
+   * `Block` returns false for retry. `DropIncoming` counts a drop and returns false.
+   * `KeepLatest` replaces the oldest pending input, counts a drop, and returns true.
+   * A public `Output` node has its own `OutputOptions::drop` policy.
    */
-  OverflowPolicy overflow_policy = OverflowPolicy::Block;
+  OverflowPolicy overflow_policy = OverflowPolicy::Auto;
   OutputMemory output_memory =
       OutputMemory::Auto; ///< Whether output tensors are zero-copy or owned.
   /**
@@ -184,7 +186,8 @@ struct RunOptions {
    * `Sample`. It catches payload-level failures (for example invalid encoded bitstreams or
    * caps that only the GStreamer element can reject) at build time instead of letting the first
    * failure surface asynchronously after a `Run` has already been returned. Seedless/source builds
-   * ignore this option.
+   * ignore this option. A decoder reporting H.264 or H.265 can require several frames, so
+   * Core skips the one-frame probe, including when the codec is still the element default.
    *
    * Set to `false` for latency-sensitive callers that only want the seed for caps/shape
    * adaptation and are prepared to observe first-sample errors through `Run::last_error()` or
@@ -236,7 +239,7 @@ struct RunOptions {
   }
 
   /**
-   * @brief Optional callback invoked when an input frame is dropped by the overflow policy.
+   * @brief Optional callback for frames discarded while the input stream changes format.
    *
    * Useful for telemetry — log the drop reason, update a counter, etc. Callback runs on the
    * pushing thread; keep it short.
@@ -261,7 +264,7 @@ struct InputDropInfo {
   int64_t frame_id = -1;                 ///< Source-assigned frame ID, if any.
   std::string stream_id;                 ///< Stream identifier (multi-stream pipelines).
   std::string port_name;                 ///< Ingress port name (multi-input models).
-  std::string reason; ///< Human-readable reason (e.g., `"queue_full"`, `"size_limit_exceeded"`).
+  std::string reason; ///< Why the pending input was discarded during a format change.
 };
 
 /**
@@ -278,16 +281,19 @@ enum class MetricsTraceSource {
 };
 
 /**
- * @brief Options for framework-owned runtime measurement.
+ * @brief Options for observing an application-controlled push/pull interval.
  *
  * Default construction is the production-safe/customer path: public E2E latency and throughput
  * only.  It does not start plugin tracing, message tracing, graph queue probes, or measurement-
  * local power monitoring.
  */
 struct MeasureOptions {
-  int duration_ms = 10000; ///< Timed measurement window.
-  int warmup_ms = 1000;    ///< Warmup window excluded from latency/metrics results.
-  int timeout_ms = 5000;   ///< Per-output pull timeout.
+  /// @deprecated Report metadata only. End measurement with `MeasureScope::stop`.
+  int duration_ms = 10000;
+  /// @deprecated Report metadata only. Finish warmup before starting measurement.
+  int warmup_ms = 1000;
+  /// @deprecated Report metadata only. Set the timeout on each `pull` call.
+  int timeout_ms = 5000;
   /// Deprecated: capture per-plugin execution latency through LTTng. It will be removed.
   bool include_plugin_latency = false;
   /// Deprecated with `include_plugin_latency`: backend used for plugin execution latency.
@@ -649,12 +655,13 @@ public:
 
   /**
    * @brief Push `cv::Mat` inputs into the pipeline. Multi-input models accept one Mat per ingress.
-   * @return `true` on success; behavior on full queue is governed by `RunOptions::overflow_policy`.
+   * @return `true` once accepted. Waits for input space under every overflow policy.
+   * A graph input timeout returns `false` and leaves accepted work available to drain.
    */
   bool push(const std::vector<cv::Mat>& inputs);
   /// Push `cv::Mat` inputs into a named graph ingress. Use for multi-input graphs.
   bool push(std::string_view input_name, const std::vector<cv::Mat>& inputs);
-  /// Non-blocking variant of `push`; returns `false` immediately if the queue is full.
+  /// Applies `RunOptions::overflow_policy` without waiting for input space.
   bool try_push(const std::vector<cv::Mat>& inputs);
   /// Non-blocking named-ingress variant.
   bool try_push(std::string_view input_name, const std::vector<cv::Mat>& inputs);
@@ -666,7 +673,8 @@ public:
   bool try_push(const TensorList& inputs);
   /// Non-blocking named-ingress variant.
   bool try_push(std::string_view input_name, const TensorList& inputs);
-  /// Push full `Sample` inputs (carrying per-buffer metadata).
+  /// Push a Sample with its metadata. A bundle is submitted in order and can be partially
+  /// accepted. Submit one sample per call when retrying individual inputs.
   bool push(const Sample& msgs);
   /// Push full `Sample` inputs into a named graph ingress. Use for multi-input graphs.
   bool push(std::string_view input_name, const Sample& msgs);

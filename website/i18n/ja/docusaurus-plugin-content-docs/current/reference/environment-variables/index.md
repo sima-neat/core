@@ -168,9 +168,8 @@ ProcessCVU ステージはデフォルトで Runtime の `neatkernelrunner` を�
 
 - `SIMA_TEST_PACKAGE_INVENTORY=<absolute-path>` — 選択して検証した配布アーカイブから `tools/ci/verify_core_dist.py --write-package-inventory` で生成する、期待するパッケージ制御情報とペイロード識別情報です。インストール済み DevKit のパッケージインベントリテストで必要です。`dpkg` をプライベートプレフィックスへ向けるものでも、インストール結果レポートでもありません。
 - `SIMA_TEST_PLATFORM_BASELINE=<absolute-path>` — `tools/ci/verify_core_dist.py --capture-platform-baseline` で**インストール前**に取得した、ネイティブプラットフォームの存在・不在、パッケージ識別情報、OTA の利用可否と識別情報です。インストール済み DevKit のパッケージインベントリテストでは、選択したパッケージインベントリとともに必要です。インストール後の状態からこのベースラインを再生成しないでください。
-- `SIMA_RUN_MNIST_PREPROC_CHANNELS1=1` — 長時間の MNIST 前処理精度テストを有効にします。単にスキップを抑制するために設定せず、フィクスチャの検証後に `tools/ci/prepare_weekly_fixtures.py` から値を取得してください。ローカルランチャーは `--environment-json` を使い、CI は同じマッピングを `--github-env` で受け取ります。
 
-フィクスチャグループの選択とインストール済みパッケージのプロファイルについては、[テスト要件](../../develop-apps/contribute/build-test/test_requirements.md)を参照してください。
+インストール済みパッケージのプロファイルについては、[テスト要件](../../develop-apps/contribute/build-test/test_requirements.md)を参照してください。
 
 ## PCIe ホストとカードの状態
 

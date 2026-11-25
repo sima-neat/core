@@ -41,19 +41,13 @@ PCIe 호스트 패키지를 설치하고, 설명서에 나와 있는 대로 튜�
 추가 루트에서 두 모델을 모두 다운로드합니다.
 
 ```bash
-sima-cli modelzoo get resnet_50
-sima-cli modelzoo get yolo_v8s
+sima-cli models download --id resnet_50 --variant w8a8
+unzip -p models/resnet_50/w8a8/resnet_50_w8a8_default.zip resnet_50_w8a8_mpk.tar.gz > resnet_50_mpk.tar.gz
+sima-cli models download --id yolov8s --variant w8a8
+unzip -p models/yolov8s/w8a8/yolov8s_w8a8_default.zip yolov8s_w8a8_mpk.tar.gz > yolo_v8s_mpk.tar.gz
 ```
 
-이 프로그램은 정확한 경로를 필요로 합니다. `resnet_50_mpk.tar.gz` 그리고
-`yolo_v8s_mpk.tar.gz` 이 디렉터리 안에 있습니다. 만약 Model Zoo 다른 이름이나 위치를 사용한 경우, 다운로드한 파일을 해당 위치에 복사하고 파일이 올바른지 확인합니다.
-
-```bash
-cp /absolute/path/to/downloaded-resnet-archive.tar.gz resnet_50_mpk.tar.gz
-cp /absolute/path/to/downloaded-yolov8s-archive.tar.gz yolo_v8s_mpk.tar.gz
-test -f resnet_50_mpk.tar.gz
-test -f yolo_v8s_mpk.tar.gz
-```
+이 프로그램에는 이 디렉터리의 정확한 경로 `resnet_50_mpk.tar.gz`와 `yolo_v8s_mpk.tar.gz`가 필요합니다. 각 `unzip` 명령은 다운로드한 ZIP에서 이 중 하나를 추출합니다.
 
 Python 실행:
 

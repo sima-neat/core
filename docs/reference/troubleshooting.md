@@ -41,17 +41,14 @@ export LD_LIBRARY_PATH=/usr/lib/aarch64-linux-gnu/neat/runtime:$LD_LIBRARY_PATH
 ```
 :::
 
-### 3. Model archive missing — `sima-cli modelzoo` not yet run
+### 3. Model archive missing
 
 :::info Cause
 The `.tar.gz` model archive referenced by your code (or by `SIMA_YOLO_TAR` / `SIMA_RESNET50_TAR` / `SIMA_MODEL_TAR`) doesn't exist on disk.
 :::
 
 :::tip Fix
-Download it from the Model Zoo:
-```bash
-sima-cli modelzoo get yolo_v8s     # or resnet_50, etc.
-```
+Download it from the Model Browser as described in [Prepare model archives](/tutorials/before-you-run#prepare-model-archives).
 :::
 
 ## Build
@@ -359,6 +356,16 @@ A tensor was constructed with both `byte_format=` (opaque bytes) and `image_form
 
 :::tip Fix
 Pass one or the other, not both.
+:::
+
+### 23. An image-input Model on a quantized INT8 model returns few, no, or low-quality detections
+
+:::info Cause
+Normalization is Off. Either it was set explicitly to `Off` (no warning), or it was left at `Auto` with no preset and no explicit stats, in which case the planner warns `preprocess.normalize=Auto resolved Off`. With normalization Off, the stage quantizes the raw 0–255 pixel values.
+:::
+
+:::tip Fix
+For a detector trained on `[0,1]` input, enable normalization. For a model trained on raw `0–255` pixels, leave normalization off.
 :::
 
 ## Coming from another stack
