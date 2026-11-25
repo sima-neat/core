@@ -82,10 +82,10 @@ slug: /develop-apps/contribute/release-checklist
 
 ## 發布流程
 
-1. 開啟 **Actions → Release → Run workflow**。例如要發布 0.7.0，請將 `release_line` 設為 `0.7`、`tag` 設為 `0.7.0`，並保留 `main` 作為 `source_branch`。此工作流程會建立或重複使用 `release-0.7`，加上 `v0.7.0` 標籤，並建立 GitHub 發布版草稿。
+1. 開啟 **Actions → Release → Run workflow** 以建立發布候選版本。例如要發布 0.7.0，請將 `release_line` 設為 `0.7`、`tag` 設為 `0.7.0-rc1`，保留 `main` 作為 `source_branch`，並開啟 `prerelease`、關閉 `latest`。此工作流程會建立或重複使用 `release-0.7`，加上 `v0.7.0-rc1` 標籤，並建立預先發布版草稿。
 2. 凍結非發布版 PR 的合併。
-3. 建立 `vX.Y.Z-rcN` 標籤，用於候選驗證。
-4. 升級到最終的 `vX.Y.Z` 標籤。
+3. 驗證候選版本。若需要修正，請先將修正合併到 `release-0.7`，再以下一個候選標籤重新執行工作流程，例如 `0.7.0-rc2`。
+4. 候選版本通過驗證後，將 `tag` 設為 `0.7.0`，關閉 `prerelease` 並開啟 `latest`，然後執行工作流程。它會將 `v0.7.0` 標籤加在 `release-0.7` 的最新提交上，並建立正式發布版草稿。
 5. 將發布版分支快速合併回 `main`。
 6. 發布版本資訊並發布發布後續問題。
 

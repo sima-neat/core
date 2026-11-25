@@ -90,10 +90,10 @@ Configure GitHub repository settings:
 
 ## Release Flow
 
-1. Open **Actions → Release → Run workflow**. For example, to release 0.7.0, set `release_line` to `0.7` and `tag` to `0.7.0`, and keep `main` as `source_branch`. The workflow creates or reuses `release-0.7`, tags `v0.7.0` and drafts the GitHub release.
+1. Open **Actions → Release → Run workflow** to create a release candidate. For example, to release 0.7.0, set `release_line` to `0.7` and `tag` to `0.7.0-rc1`, keep `main` as `source_branch`, turn on `prerelease` and turn off `latest`. The workflow creates or reuses `release-0.7`, tags `v0.7.0-rc1` and drafts a prerelease.
 2. Freeze non-release PR merges.
-3. Create `vX.Y.Z-rcN` tag(s) for candidate validation.
-4. Promote to final `vX.Y.Z` tag.
+3. Validate the candidate. If it needs fixes, land them on `release-0.7` and run the workflow again with the next candidate tag, for example `0.7.0-rc2`.
+4. When a candidate passes, run the workflow with `tag` set to `0.7.0`, `prerelease` off and `latest` on. It tags `v0.7.0` on the head of `release-0.7` and drafts the final release.
 5. Fast-forward merge release branch back to `main`.
 6. Publish release notes and post-release follow-up issues.
 
