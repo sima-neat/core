@@ -68,7 +68,7 @@ for a catalog, «Опис» for a Description column, «вихідний» for o
 | bundle (distributed set of files: tutorial, offline, Core, Scheduler bundle) | набір | пакет, комплект |
 | bundle (`Sample` kind `Bundle`) | зразок типу `Bundle`; in prose набір (іменованих полів) | пакет, пакетний зразок |
 | PCIe Co-Processing (category name) | Співобробка через PCIe | Співобробка PCIe, Співпроцесинг PCIe, спільна обробка через PCIe |
-| head (model output: class head, packed heads) | вихід (виходи моделі), вихідний тензор | голова, хедер, хед |
+| head (model output: class head, packed heads) | вихід (виходи моделі), вихідний тензор | голова, головка, хедер, хед |
 
 ## Protected text
 
