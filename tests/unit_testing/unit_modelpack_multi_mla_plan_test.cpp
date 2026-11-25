@@ -2,6 +2,7 @@
 #include "model/Model.h"
 #include "model_archive_fixture_utils.h"
 #include "model/internal/ModelPack.h"
+#include "model/internal/ModelParser.h"
 #include "model/internal/InputPlanner.h"
 #include "model/internal/RoutePlanner.h"
 #include "nodes/common/Queue.h"
@@ -138,10 +139,11 @@ std::string mla_elf_name(const std::size_t index) {
 
 // `mla_count` blocks of MLA -> A65 (-> cast -> next MLA), ending in a terminal A65. `cast` adds a
 // bfloat16 cast between the last MLA and that A65, or after it. Zero MLA stages leaves only the
-// A65.
+// A65. `ingress_cast` puts a float32 -> bfloat16 cast in front of the first MLA.
 void write_mla_a65_manifest(const std::filesystem::path& path, const std::uint64_t rows,
                             const std::size_t mla_count = 1U,
-                            const MlaTailCast cast = MlaTailCast::None) {
+                            const MlaTailCast cast = MlaTailCast::None,
+                            const bool ingress_cast = false) {
   using json = nlohmann::ordered_json;
   const std::uint64_t logical_bytes = rows * 1225U * 4U;
   const auto tensor = [&](const std::string& name, const std::uint64_t bytes,
@@ -161,6 +163,10 @@ void write_mla_a65_manifest(const std::filesystem::path& path, const std::uint64
   json previous = model_input;
   json plugins = json::array();
   int sequence = 1;
+  if (ingress_cast && mla_count > 0U) {
+    previous = {{"name", "ingress_out"}, {"size", 8}, {"dtype", "bfloat16"}, {"shape", {1, 4}}};
+    plugins.push_back(cast_plugin("cast_ingress", sequence++, model_input, previous));
+  }
   for (std::size_t index = 0U; index < std::max<std::size_t>(mla_count, 1U); ++index) {
     const bool last = index + 1U >= mla_count;
     json a65_input = previous;
@@ -1070,26 +1076,28 @@ RUN_TEST(
       fs::remove(transform_archive, ec);
       fs::remove_all(transform_package, ec);
 
-      const auto make_mla_a65_package = [&](const std::string& label, const std::uint64_t rows,
-                                            const std::size_t mla_count = 1U,
-                                            const MlaTailCast cast = MlaTailCast::None) {
-        const fs::path package = root.parent_path() / label;
-        fs::remove_all(package, ec);
-        fs::create_directories(package / "etc", ec);
-        fs::create_directories(package / "lib", ec);
-        fs::create_directories(package / "share", ec);
-        require(!ec, "failed to create synthetic MLA-to-A65 package layout");
-        write_mla_a65_manifest(package / "etc" / "model_mpk.json", rows, mla_count, cast);
-        for (std::size_t index = 0U; index < mla_count; ++index) {
-          const bool bf16_out = index + 1U == mla_count && cast == MlaTailCast::BeforeA65;
-          write_topology_elf(package / "share" / mla_elf_name(index),
-                             "data.ifm.persistent.afe_direct_input_0.b0", index == 0U ? 16U : 2450U,
-                             "data.ofm.persistent.afe_mla_output_0.b0",
-                             bf16_out ? 2464U : rows * 4912U);
-        }
-        write_host_module(package / "lib" / "host.so", rows);
-        return package;
-      };
+      const auto make_mla_a65_package =
+          [&](const std::string& label, const std::uint64_t rows, const std::size_t mla_count = 1U,
+              const MlaTailCast cast = MlaTailCast::None, const bool ingress_cast = false) {
+            const fs::path package = root.parent_path() / label;
+            fs::remove_all(package, ec);
+            fs::create_directories(package / "etc", ec);
+            fs::create_directories(package / "lib", ec);
+            fs::create_directories(package / "share", ec);
+            require(!ec, "failed to create synthetic MLA-to-A65 package layout");
+            write_mla_a65_manifest(package / "etc" / "model_mpk.json", rows, mla_count, cast,
+                                   ingress_cast);
+            for (std::size_t index = 0U; index < mla_count; ++index) {
+              const bool bf16_out = index + 1U == mla_count && cast == MlaTailCast::BeforeA65;
+              write_topology_elf(package / "share" / mla_elf_name(index),
+                                 "data.ifm.persistent.afe_direct_input_0.b0",
+                                 index == 0U ? (ingress_cast ? 8U : 16U) : 2450U,
+                                 "data.ofm.persistent.afe_mla_output_0.b0",
+                                 bf16_out ? 2464U : rows * 4912U);
+            }
+            write_host_module(package / "lib" / "host.so", rows);
+            return package;
+          };
 
       const fs::path singleton_package =
           make_mla_a65_package("neat-modelpack-mla-a65-singleton-pitch-unit", 1U);
@@ -2096,5 +2104,46 @@ RUN_TEST(
                       lane_route.egress_contracts.front().source_stage == "cast_public",
                   label + "the route must publish the public cast output");
         }
+      }
+
+      // A cast in front of the first MLA is balanced by a cast between the last MLA and the A65
+      // that consumes it: that cast is inference work, but it still satisfies cast symmetry, adds
+      // no post stage, and leaves the route unambiguous.
+      for (const std::size_t mla_count : {std::size_t{1U}, std::size_t{2U}}) {
+        const std::string label =
+            std::to_string(mla_count) + "-MLA pack, ingress cast and cast before terminal A65: ";
+        const fs::path symmetry_package = make_mla_a65_package(
+            "neat-modelpack-cast-symmetry-" + std::to_string(mla_count) + "-unit", 1U, mla_count,
+            MlaTailCast::BeforeA65, /*ingress_cast=*/true);
+        ModelPack symmetry_model(symmetry_package.string());
+        const auto parsed = simaai::neat::internal::parse_model_from_pack(symmetry_model);
+        require(parsed.needs.pre_cast, label + "the pack must have an ingress cast");
+        for (const auto& warning : parsed.warnings)
+          require(warning.find("cast symmetry unresolved") == std::string::npos,
+                  label + "the parser must not warn about cast symmetry, got: " + warning);
+        simaai::neat::internal::ModelSemantics symmetry_semantics;
+        require(simaai::neat::internal::parse_model_semantics_from_pack(symmetry_model,
+                                                                        &symmetry_semantics),
+                label + "the semantics must parse");
+        require(symmetry_semantics.pre_cast_needed && symmetry_semantics.cast_symmetry_ok,
+                label + "the semantics must report cast symmetry as satisfied");
+        const auto symmetry_capability = simaai::neat::internal::extract_route_capability(
+            symmetry_model, simaai::neat::internal::PreprocessPlannerResult{});
+        require(symmetry_capability.needs.pre_cast,
+                label + "the capability must see the ingress cast");
+        for (const auto& evidence : symmetry_capability.evidence)
+          require(evidence.find("cast_symmetry_unresolved") == std::string::npos,
+                  label + "the capability must not record unresolved symmetry, got: " + evidence);
+        const auto selection = simaai::neat::internal::plan_route_selection(
+            singleton_options, simaai::neat::internal::PreprocessPlannerResult{},
+            symmetry_capability);
+        require(!selection.ambiguous && selection.effective.cast_symmetry_ok,
+                label + "the route must not be ambiguous, got: " + selection.ambiguity_reason);
+        require(!parsed.needs.post_cast && !symmetry_capability.needs.post_cast,
+                label + "the cast feeding the A65 must not count as a post cast");
+        const auto symmetry_route = plan_route(symmetry_model);
+        require(!symmetry_route.include_post_stage && symmetry_route.post_chain.empty() &&
+                    symmetry_route.selected_post_kind == PostRouteStageKind::None,
+                label + "the route must not add a post stage");
       }
     }));

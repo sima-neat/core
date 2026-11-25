@@ -2733,6 +2733,12 @@ bool extract_route_capability_from_mpk_graph(const ModelPack& pack, RouteCapabil
     if (after_mla && compute_feeding_tail[plugin_idx]) {
       const auto* node = pipeline_internal::sima::route_graph_node(graph, plugin_idx);
       if (node != nullptr && is_materialized_post_graph_kind(node->kind)) {
+        // Count it toward cast symmetry exactly where the post route would have counted a cast.
+        const std::string skipped_kernel = canonical_mpk_kernel_kind(
+            plugin.kernel.empty() ? contract.plugins[plugin_idx].name : plugin.kernel);
+        if (skipped_kernel == "cast" || skipped_kernel == "detesscast") {
+          out->inference_tail_cast = true;
+        }
         continue;
       }
     }
@@ -4101,7 +4107,7 @@ RouteCapability extract_route_capability(const ModelPack& pack,
   out.needs.post_detessellation = out.tess_needed;
   out.needs.post_dequantization = out.has_external_dequant;
   out.needs.post_cast = out.has_external_post_cast;
-  if (out.needs.pre_cast && !out.needs.post_cast) {
+  if (out.needs.pre_cast && !out.needs.post_cast && !out.inference_tail_cast) {
     out.evidence.push_back("cast_symmetry_unresolved=pre_cast_without_post_cast");
   }
 
@@ -4279,7 +4285,8 @@ RouteSelection plan_route_selection(const Model::Options& options,
     }
   }
 
-  effective.cast_symmetry_ok = !capability.needs.pre_cast || capability.needs.post_cast;
+  effective.cast_symmetry_ok =
+      !capability.needs.pre_cast || capability.needs.post_cast || capability.inference_tail_cast;
   if (!effective.cast_symmetry_ok) {
     out.ambiguous = true;
     out.ambiguity_reason = "route ambiguity: cast symmetry violated (pre cast requires post cast)";

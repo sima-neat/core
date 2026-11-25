@@ -225,6 +225,8 @@ struct RouteCapability {
   bool has_external_detess = false;
   bool has_external_dequant = false;
   bool has_external_post_cast = false;
+  // A cast moved into inference still balances the ingress cast for cast symmetry.
+  bool inference_tail_cast = false;
   bool has_external_boxdecode = false;
   bool has_strict_boxdecode_route = false;
 

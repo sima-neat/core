@@ -345,12 +345,6 @@ void parse_mpk_plugins(const pipeline_internal::sima::MpkContract& contract, Par
     dst.before_mla = rank < mla_rank;
     dst.after_mla = rank > last_mla_rank;
     out->plugins.push_back(dst);
-    // Materialized work that feeds a compute plugin is inference, not post-processing.
-    // Address-only views are not skipped and keep their usual post signals.
-    if (dst.after_mla && compute_feeding_tail[plugin_idx] &&
-        is_materialized_post_kernel_kind(kind)) {
-      continue;
-    }
 
     const std::string canonical = kernel_kind_name(kind);
     const std::string in_dtype = primary_tensor_dtype(src.input_tensors);
@@ -369,6 +363,17 @@ void parse_mpk_plugins(const pipeline_internal::sima::MpkContract& contract, Par
     const bool hint_cast = dtype_transition && !hint_pre_quant && !hint_post_dequant;
     const bool hint_pre_tess = dst.before_mla && in_rank >= 3 && out_rank > 0 && out_rank < in_rank;
     const bool hint_post_detess = dst.after_mla && in_rank > 0 && in_rank <= 2 && out_rank >= 3;
+
+    // Materialized work that feeds a compute plugin is inference, not post-processing.
+    // Address-only views are not skipped and keep their usual post signals.
+    if (dst.after_mla && compute_feeding_tail[plugin_idx] &&
+        is_materialized_post_kernel_kind(kind)) {
+      if (hint_cast ||
+          (kind == ParsedKernelKind::Cast && !hint_post_detess && !hint_post_dequant)) {
+        out->needs.inference_tail_cast = true;
+      }
+      continue;
+    }
 
     if (dst.before_mla) {
       bool emitted_pre_signal = false;
@@ -467,7 +472,7 @@ void parse_mpk_plugins(const pipeline_internal::sima::MpkContract& contract, Par
   }
   out->needs.post_detessellation = out->needs.tess_needed;
 
-  if (out->needs.pre_cast && !out->needs.post_cast) {
+  if (out->needs.pre_cast && !out->needs.post_cast && !out->needs.inference_tail_cast) {
     // Do not auto-heal cast symmetry at parse time; the route policy must decide.
     out->warnings.push_back(
         "model-parser: cast symmetry unresolved (pre_cast detected without post_cast)");
@@ -617,7 +622,8 @@ bool parse_model_semantics_from_pack(const ModelPack& pack, ModelSemantics* out)
   out->has_post_cast_adapter = parsed.capabilities.has_post_cast;
   out->pre_cast_needed = parsed.needs.pre_cast;
   out->post_cast_needed = parsed.needs.post_cast;
-  out->cast_symmetry_ok = !out->pre_cast_needed || out->post_cast_needed;
+  out->cast_symmetry_ok =
+      !out->pre_cast_needed || out->post_cast_needed || parsed.needs.inference_tail_cast;
   out->output_physical_count = parsed.outputs.physical.size();
   out->output_logical_count = parsed.outputs.logical.size();
 
