@@ -430,8 +430,8 @@ int main(int argc, char** argv) {
             std::max(max_abs_diff(got.dets, want.dets), max_abs_diff(got.labels, want.labels));
         if (diff > kTolerance) {
           ok = false;
-          detail += order[i]->label + "#" + std::to_string(i) + " diff=" + std::to_string(diff) +
-                    " ";
+          detail +=
+              order[i]->label + "#" + std::to_string(i) + " diff=" + std::to_string(diff) + " ";
         }
       }
       check(ok, "alternating images give each image its own result", detail);
@@ -453,8 +453,8 @@ int main(int argc, char** argv) {
             std::max(max_abs_diff(got.scores, want.scores), max_abs_diff(got.boxes, want.boxes));
         if (diff > kTolerance) {
           ok = false;
-          detail += order[i]->label + "#" + std::to_string(i) + " diff=" + std::to_string(diff) +
-                    " ";
+          detail +=
+              order[i]->label + "#" + std::to_string(i) + " diff=" + std::to_string(diff) + " ";
         }
       }
       check(ok, "async backbone results match sync results on alternating images", detail);
