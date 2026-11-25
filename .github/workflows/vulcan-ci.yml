@@ -1378,7 +1378,7 @@ jobs:
               python3 tools/ci/partition_devkit_e2e.py --index 0 -- ctest --test-dir "${TEST_DIR}" \
               --label-regex "e2e" \
               --label-exclude "${E2E_LABEL_EXCLUDE}" \
-              -E "${SKIP_REGEX}|^(modelzoo_bulk_models_test)$" \
+              -E "${SKIP_REGEX}" \
               --timeout 240 \
               -j "${SIMA_CTEST_E2E_JOBS:-1}" \
               --output-on-failure \
@@ -1431,7 +1431,7 @@ jobs:
               python3 tools/ci/partition_devkit_e2e.py --index 1 -- ctest --test-dir "${TEST_DIR}" \
               --label-regex "e2e" \
               --label-exclude "${E2E_LABEL_EXCLUDE}" \
-              -E "${SKIP_REGEX}|^(modelzoo_bulk_models_test)$" \
+              -E "${SKIP_REGEX}" \
               --timeout 240 \
               -j "${SIMA_CTEST_E2E_JOBS:-1}" \
               --output-on-failure \
@@ -1520,7 +1520,6 @@ jobs:
             ctest --test-dir "${TEST_DIR}" \
             --label-regex "perf" \
             --label-exclude "llima|disabled|long" \
-            -E "^(modelzoo_bulk_models_test)$" \
             --output-on-failure \
             --no-tests=error
 
