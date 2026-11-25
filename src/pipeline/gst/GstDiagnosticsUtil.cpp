@@ -706,8 +706,10 @@ std::optional<GstSample*> try_pull_sample_sliced(GstElement* pipeline, GstElemen
   const bool infinite = (timeout_ms < 0);
   int remaining = timeout_ms;
 
+  // Pull loops time out and retry several times per frame.
+  static CachedEnvBool caps_debug("SIMA_APPSINK_CAPS_DEBUG");
   auto maybe_log_caps = [&](const char* reason) {
-    if (!env_bool("SIMA_APPSINK_CAPS_DEBUG", false))
+    if (!caps_debug.get())
       return;
     if (!appsink)
       return;

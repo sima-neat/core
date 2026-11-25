@@ -84,8 +84,10 @@ std::string make_run_uuid() {
   return oss.str();
 }
 
+// Checked for every routed frame.
 bool graph_debug_enabled_for_core() {
-  return pipeline_internal::env_bool("SIMA_GRAPH_DEBUG", false);
+  static pipeline_internal::CachedEnvBool enabled("SIMA_GRAPH_DEBUG");
+  return enabled.get();
 }
 
 bool graph_serial_pipeline_build_enabled_for_core() {
@@ -151,7 +153,7 @@ std::size_t effective_identity_map_capacity(const PipelineSegmentRuntime& pipe) 
   if (base == 0) {
     return 0;
   }
-  const int per_input_edge =
+  static const int per_input_edge =
       std::max(0, pipeline_internal::env_int("SIMA_GRAPH_IDENTITY_MAP_PER_INPUT_EDGE", 128));
   if (per_input_edge <= 0 || pipe.seg.input_edges.size() <= 1U) {
     return base;

@@ -469,8 +469,10 @@ std::shared_ptr<runtime::RunCore> runtime::RunCore::start_single_pipeline(
       }
       st->pipeline.out_queue.push_back(std::move(out));
       st->outputs_ready.fetch_add(1, std::memory_order_relaxed);
-      if (pipeline_internal::env_bool("SIMA_PIPELINE_DEBUG", false) ||
-          pipeline_internal::env_bool("SIMA_GRAPH_DEBUG", false)) {
+      // Checked for every output.
+      static pipeline_internal::CachedEnvBool pipeline_debug("SIMA_PIPELINE_DEBUG");
+      static pipeline_internal::CachedEnvBool graph_debug("SIMA_GRAPH_DEBUG");
+      if (pipeline_debug.get() || graph_debug.get()) {
         const Sample& latest = st->pipeline.out_queue.back();
         const char* kind = "Unknown";
         if (latest.kind == SampleKind::TensorSet)

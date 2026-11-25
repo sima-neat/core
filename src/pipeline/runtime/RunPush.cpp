@@ -29,12 +29,19 @@ bool push_return_debug_enabled() {
   return pipeline_internal::env_bool("SIMA_PIPELINE_PUSH_RETURN_DEBUG", false);
 }
 
+// Checked for every pushed sample.
 bool run_push_timing_enabled() {
-  return pipeline_internal::env_bool("SIMA_RUN_PUSH_TIMING", false);
+  static pipeline_internal::CachedEnvBool enabled("SIMA_RUN_PUSH_TIMING");
+  return enabled.get();
 }
 
 bool allow_public_cross_run_gstsample_push() {
   return pipeline_internal::env_bool("SIMA_ALLOW_CROSS_RUN_GSTSAMPLE_PUSH", false);
+}
+
+bool graph_zero_copy_debug_enabled() {
+  static pipeline_internal::CachedEnvBool enabled("SIMA_GRAPH_ZERO_COPY_DEBUG");
+  return enabled.get();
 }
 
 void enforce_public_sample_push_transferable(const Sample& msg, const char* where) {
@@ -519,9 +526,8 @@ bool push_message_to_core(runtime::RunCore& core, const Sample& msg, bool block)
       run_internal::force_copy_sample_if_zero_copy(copy);
     } else if (!input_prefers_device_storage(*st)) {
       const std::size_t qsize = st->pipeline.in_queue.size();
-      run_internal::maybe_force_copy_for_backpressure(
-          copy, qsize, "queue_depth",
-          pipeline_internal::env_bool("SIMA_GRAPH_ZERO_COPY_DEBUG", false));
+      run_internal::maybe_force_copy_for_backpressure(copy, qsize, "queue_depth",
+                                                      graph_zero_copy_debug_enabled());
     }
     item.msg = std::move(copy);
     if (timing) {
@@ -655,9 +661,8 @@ bool Run::push_impl(const simaai::neat::Tensor& input, bool block) {
       item.tensor = input;
       if (!input_prefers_device_storage(*st)) {
         const std::size_t qsize = st->pipeline.in_queue.size();
-        run_internal::maybe_force_copy_for_backpressure(
-            item.tensor, qsize, "queue_depth",
-            pipeline_internal::env_bool("SIMA_GRAPH_ZERO_COPY_DEBUG", false));
+        run_internal::maybe_force_copy_for_backpressure(item.tensor, qsize, "queue_depth",
+                                                        graph_zero_copy_debug_enabled());
       }
     }
     st->pipeline.in_queue.push_back(std::move(item));

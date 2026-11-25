@@ -1,4 +1,5 @@
 #include "pipeline/internal/UxLogging.h"
+#include "pipeline/internal/EnvUtil.h"
 
 #include <algorithm>
 #include <cctype>
@@ -284,6 +285,7 @@ void restore_saved_runtime_env_locked() {
   } else {
     ::unsetenv("SIMA_NEAT_VERBOSE_TOPICS");
   }
+  env_generation().fetch_add(1, std::memory_order_release);
 }
 
 void sync_runtime_env_locked() {
@@ -303,6 +305,7 @@ void sync_runtime_env_locked() {
   } else {
     ::setenv("SIMA_NEAT_VERBOSE_TOPICS", topics_csv.c_str(), 1);
   }
+  env_generation().fetch_add(1, std::memory_order_release);
 }
 
 class RuntimeVerboseLease {

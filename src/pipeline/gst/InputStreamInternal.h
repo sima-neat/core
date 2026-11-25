@@ -53,6 +53,11 @@ using pipeline_internal::DiagCtx;
 using pipeline_internal::trim_copy;
 using pipeline_internal::upper_copy;
 
+// Called after a pull from an appsink: GstAppSink retains the sample it
+// returned last until the next pull, so that pull can make a deferred pooled
+// parent of the previous sample returnable.
+void wake_deferred_pool_buffer_releaser();
+
 bool prepare_holder_buffer_for_zero_copy_transfer(GstBuffer** buffer, const Sample* sample,
                                                   const std::shared_ptr<void>& holder,
                                                   const char* where);

@@ -1,10 +1,9 @@
 #include "InputStreamInternal.h"
+#include "DeferredPoolBufferReleaser.h"
 #include "gst/GstSampleAttributes.h"
 #include "gst/SimaTensorSetMetaAbi.h"
 #include "pipeline/internal/InputPolicy.h"
 #include "pipeline/internal/SampleUtil.h"
-
-#include <unordered_set>
 
 namespace simaai::neat {
 
@@ -57,110 +56,11 @@ struct MessageMetaOverrides {
   SampleAttributes attributes;
 };
 
-class DeferredPoolBufferReleaser {
-public:
-  DeferredPoolBufferReleaser() : worker_([this] { run(); }) {}
-
-  ~DeferredPoolBufferReleaser() {
-    {
-      std::lock_guard<std::mutex> lock(mu_);
-      stopping_ = true;
-    }
-    cv_.notify_one();
-    worker_.join();
-
-    // pending_ is a non-owning worklist. tracked_ owns the one retained
-    // reference for every root that has not been returned to its pool yet.
-    for (GstBuffer* buffer : tracked_) {
-      gst_buffer_unref(buffer);
-    }
-  }
-
-  void enqueue(std::vector<GstBuffer*> buffers) {
-    if (buffers.empty()) {
-      return;
-    }
-    std::size_t redundant_count = buffers.size();
-    bool wake_worker = false;
-    {
-      std::lock_guard<std::mutex> lock(mu_);
-      if (!stopping_) {
-        auto redundant_end = buffers.begin();
-        for (GstBuffer* buffer : buffers) {
-          if (tracked_.insert(buffer).second) {
-            // tracked_ owns this reference. pending_ only schedules checks.
-            pending_.push_back(buffer);
-          } else {
-            // Every enqueue transfers an owned reference. One retained root is
-            // sufficient to keep the pooled buffer alive, so consume extras.
-            *redundant_end++ = buffer;
-          }
-        }
-        redundant_count = static_cast<std::size_t>(redundant_end - buffers.begin());
-        wake_worker = true;
-      }
-    }
-
-    // GstBuffer finalizers can run qdata callbacks that enqueue more roots.
-    // Never unref while holding mu_, or that re-entry can deadlock.
-    for (std::size_t i = 0; i < redundant_count; ++i) {
-      gst_buffer_unref(buffers[i]);
-    }
-    if (wake_worker) {
-      cv_.notify_one();
-    }
-  }
-
-private:
-  void run() {
-    std::unique_lock<std::mutex> lock(mu_);
-    while (!stopping_) {
-      cv_.wait(lock, [this] { return stopping_ || !pending_.empty(); });
-      while (!stopping_ && !pending_.empty()) {
-        std::vector<GstBuffer*> buffers;
-        buffers.swap(pending_);
-        lock.unlock();
-
-        const auto releasable_end =
-            std::partition(buffers.begin(), buffers.end(), [](GstBuffer* buffer) {
-              // Some supported GStreamer releases finalize parent metadata
-              // before releasing shared memory. Return pooled parents only
-              // after every downstream memory reference is gone.
-              return gst_buffer_is_writable(buffer) && gst_buffer_is_all_memory_writable(buffer);
-            });
-
-        lock.lock();
-        pending_.insert(pending_.end(), releasable_end, buffers.end());
-
-        // Stop tracking before the final unref can synchronously return a
-        // buffer to its pool and make the pointer available for reuse.
-        for (auto it = buffers.begin(); it != releasable_end; ++it) {
-          tracked_.erase(*it);
-        }
-
-        lock.unlock();
-        for (auto it = buffers.begin(); it != releasable_end; ++it) {
-          gst_buffer_unref(*it);
-        }
-        lock.lock();
-
-        if (!pending_.empty()) {
-          cv_.wait_for(lock, std::chrono::milliseconds(1));
-        }
-      }
-    }
-  }
-
-  std::mutex mu_;
-  std::condition_variable cv_;
-  std::vector<GstBuffer*> pending_;
-  std::unordered_set<GstBuffer*> tracked_;
-  bool stopping_ = false;
-  std::thread worker_;
-};
+std::atomic<DeferredPoolBufferReleaser*> started_deferred_pool_buffer_releaser{nullptr};
 
 DeferredPoolBufferReleaser& deferred_pool_buffer_releaser() {
   static DeferredPoolBufferReleaser releaser;
+  started_deferred_pool_buffer_releaser.store(&releaser, std::memory_order_release);
   return releaser;
 }
 
@@ -371,6 +271,8 @@ void enforce_device_visible_push_or_throw(bool require_device_visible,
   }
 }
 
+// Read live: this bypasses a buffer-lifetime check, so every push path must agree with
+// GraphRunControl and the graph build path, which read it directly.
 bool allow_cross_run_gstsample_push() {
   return pipeline_internal::env_bool("SIMA_ALLOW_CROSS_RUN_GSTSAMPLE_PUSH", false);
 }
@@ -1015,6 +917,13 @@ GstSample* holder_as_gstsample(const std::shared_ptr<void>& holder) {
 }
 
 } // namespace
+
+void wake_deferred_pool_buffer_releaser() {
+  // Only roots enqueued earlier can need a re-check; never start the worker here.
+  if (auto* releaser = started_deferred_pool_buffer_releaser.load(std::memory_order_acquire)) {
+    releaser->wake();
+  }
+}
 
 bool prepare_holder_buffer_for_zero_copy_transfer(GstBuffer** buffer, const Sample* sample,
                                                   const std::shared_ptr<void>& holder,

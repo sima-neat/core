@@ -69,12 +69,15 @@ std::string join_dims(const std::vector<int64_t>& dims, char sep) {
   return ss.str();
 }
 
+// Checked for every sample conversion.
 bool sample_debug_enabled() {
-  return env_bool("SIMA_SAMPLE_DEBUG", false);
+  static CachedEnvBool enabled("SIMA_SAMPLE_DEBUG");
+  return enabled.get();
 }
 
 bool sample_bytes_enabled() {
-  return env_bool("SIMA_SAMPLE_BYTES", false);
+  static CachedEnvBool enabled("SIMA_SAMPLE_BYTES");
+  return enabled.get();
 }
 
 struct TensorBufferRuntimeSidecar {

@@ -313,12 +313,15 @@ void maybe_restore_cached_preprocess_meta_on_sample(InputStream::State& st, Samp
 constexpr const char* kSampleMetaName = "GstSimaSampleMeta";
 constexpr const char* kTensorSetMetaName = SIMA_TENSOR_SET_META_NAME;
 
+// Checked for every pulled sample.
 bool sample_debug_enabled() {
-  return pipeline_internal::env_bool("SIMA_SAMPLE_DEBUG", false);
+  static pipeline_internal::CachedEnvBool enabled("SIMA_SAMPLE_DEBUG");
+  return enabled.get();
 }
 
 bool sample_bytes_enabled() {
-  return pipeline_internal::env_bool("SIMA_SAMPLE_BYTES", false);
+  static pipeline_internal::CachedEnvBool enabled("SIMA_SAMPLE_BYTES");
+  return enabled.get();
 }
 
 bool sample_storage_debug_enabled() {
@@ -329,7 +332,8 @@ bool sample_storage_debug_enabled() {
 }
 
 bool tensor_set_debug_enabled() {
-  return pipeline_internal::env_bool("SIMA_TENSOR_SET_DEBUG", false);
+  static pipeline_internal::CachedEnvBool enabled("SIMA_TENSOR_SET_DEBUG");
+  return enabled.get();
 }
 
 bool inputstream_restore_preproc_buffer_meta_enabled() {
@@ -874,7 +878,8 @@ static Sample output_from_sample_stream_inner(GstSample* sample, const char* whe
   if (is_raw) {
     simaai::neat::Tensor neat = simaai::neat::from_gst_sample(sample);
     log_sample_tensor_state(where, "from_gst_sample", neat);
-    if (pipeline_internal::env_bool("SIMA_NEAT_CAPS_TRACE", false)) {
+    static pipeline_internal::CachedEnvBool caps_trace("SIMA_NEAT_CAPS_TRACE");
+    if (caps_trace.get()) {
       const auto constraint = pipeline_internal::tensor_constraint_from_caps(out_caps);
       std::fprintf(stderr, "[NEAT_CAPS] caps=%s constraint=%s tensor=%s\n", out.caps_string.c_str(),
                    pipeline_internal::tensor_constraint_debug_string(constraint).c_str(),
@@ -2051,6 +2056,9 @@ Sample InputStream::pull(int timeout_ms) {
     t_wait_start = std::chrono::steady_clock::now();
   auto sample_opt = pipeline_internal::try_pull_sample_sliced(
       state_->pipeline, state_->appsink, timeout, state_->diag, "InputStream::pull");
+  if (sample_opt.has_value()) {
+    wake_deferred_pool_buffer_releaser();
+  }
   std::chrono::steady_clock::time_point t_wait_end{};
   if (timings)
     t_wait_end = std::chrono::steady_clock::now();
@@ -2203,6 +2211,9 @@ void InputStream::pull_and_discard(int timeout_ms) {
     t_wait_start = std::chrono::steady_clock::now();
   auto sample_opt = pipeline_internal::try_pull_sample_sliced(
       state_->pipeline, state_->appsink, timeout, state_->diag, "InputStream::pull_and_discard");
+  if (sample_opt.has_value()) {
+    wake_deferred_pool_buffer_releaser();
+  }
   std::chrono::steady_clock::time_point t_wait_end{};
   if (timings)
     t_wait_end = std::chrono::steady_clock::now();

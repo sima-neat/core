@@ -341,6 +341,7 @@ void InputStream::start(std::function<void(Sample)> on_output,
                 &eos_seen);
             if (sample_opt.has_value()) {
               sample = sample_opt.value();
+              wake_deferred_pool_buffer_releaser();
             }
           }
         }
@@ -807,6 +808,7 @@ void InputStream::drain_before_teardown(int timeout_ms) {
         "InputStream::drain_before_teardown", &eos_seen);
     if (sample_opt.has_value()) {
       gst_sample_unref(sample_opt.value());
+      wake_deferred_pool_buffer_releaser();
     }
     if (eos_seen || gst_app_sink_is_eos(GST_APP_SINK(state_->appsink))) {
       break;
