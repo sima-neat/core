@@ -79,11 +79,11 @@ class PerfSchemaTest(unittest.TestCase):
             schema.STANDARD_SCENARIO_IDS + schema.LONG_SCENARIO_IDS,
         )
         self.assertNotIn(
-            "ssd_mobilenet_boxdecode",
+            "yolov8s_boxdecode",
             schema.expected_result_scenario_ids(include_long=False),
         )
         self.assertIn(
-            "ssd_mobilenet_boxdecode",
+            "yolov8s_boxdecode",
             schema.expected_result_scenario_ids(include_long=True),
         )
 
@@ -146,7 +146,7 @@ class PerfSchemaTest(unittest.TestCase):
             schema.parse_optional_power_payload(payload)
 
     def test_component_thresholds_and_exact_rows_parse(self) -> None:
-        baseline_data = valid_scenario_dict("ssd_mobilenet_boxdecode")
+        baseline_data = valid_scenario_dict("yolov8s_boxdecode")
         baseline_data["component_latency_thresholds"] = {
             "boxdecode_plugin_exclusive": {
                 "required": True,
@@ -167,7 +167,7 @@ class PerfSchemaTest(unittest.TestCase):
         self.assertEqual(components["boxdecode_plugin_exclusive"][0].p99_ms, 0.8)
 
     def test_component_threshold_requires_an_absolute_cap(self) -> None:
-        baseline_data = valid_scenario_dict("ssd_mobilenet_boxdecode")
+        baseline_data = valid_scenario_dict("yolov8s_boxdecode")
         baseline_data["component_latency_thresholds"] = {
             "boxdecode": {"required": True, "min_samples": 1000}
         }

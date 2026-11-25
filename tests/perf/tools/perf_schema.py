@@ -97,7 +97,7 @@ STANDARD_SCENARIO_IDS = (
 )
 
 LONG_SCENARIO_IDS = (
-    "ssd_mobilenet_boxdecode",
+    "yolov8s_boxdecode",
 )
 
 # Baseline packages contain every registered scenario, while a result directory

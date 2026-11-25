@@ -1,11 +1,11 @@
 ---
-title: 診斷 SSD 元件延遲
+title: 診斷 BoxDecode 元件延遲
 description: 保留效能證據，同時維持驗收契約不變
 ---
 
-# 診斷 SSD 元件延遲
+# 診斷 BoxDecode 元件延遲
 
-當 `ssd_mobilenet_boxdecode` 未達元件延遲預算時，請使用此程序。
+當 `yolov8s_boxdecode` 未達元件延遲預算時，請使用此程序。
 FPS 結果通過不能抵銷元件 p99 失敗。
 
 ## 明確保留量測邊界
@@ -25,8 +25,8 @@ Core 擁有輸出線路格式；Kernels 擁有數值操作。Scheduler 透過 Ru
 `boxdecode_backend` 和 `boxdecode_plugin_exclusive` 不同的身分。不要比較不同區間
 來證明數值核心效能退化，也不要移除佇列時間讓結果通過。
 
-已納入版本控制的每週基準要求 1,000 個樣本，後端與階段的絕對 p99 上限分別為
-0.7 ms 和 0.93 ms。一般吞吐量容忍度不會放寬這些元件限制。
+已納入版本控制的每週基準要求 1,000 個階段樣本，並設有階段的絕對 p99 上限。
+後端 p99 僅供診斷回報，沒有上限。一般吞吐量容忍度不會放寬此元件限制。
 診斷時請保持限制、測試固定資料、暖機、迭代次數與期限不變。
 
 ## 保留現有證據
@@ -60,17 +60,18 @@ Core 擁有輸出線路格式；Kernels 擁有數值操作。Scheduler 透過 Ru
 : "${CORE_ROOT:?set the target Core checkout path}"
 : "${CORE_TESTS:?set the installed target test directory}"
 : "${SIMA_HARDWARE_SUPERVISOR_SOCKET:?use an admitted hardware-test scope}"
+: "${SIMA_YOLO_TAR:?set to the Model Browser yolov8s_w8a8_mpk.tar.gz}"
 cd "$CORE_ROOT"
 export SIMA_NEAT_METRICS_RETAIN_TRACE=1
-export SIMA_NEAT_METRICS_TRACE_DIR="$CORE_ROOT/ssd-diagnostic-traces"
+export SIMA_NEAT_METRICS_TRACE_DIR="$CORE_ROOT/boxdecode-diagnostic-traces"
 python3 tests/perf/tools/run_perf_matrix.py \
   --repo-root "$CORE_ROOT" \
   --prebuilt-tests-dir "$CORE_TESTS" \
   --include-long \
-  --results-dir "$CORE_ROOT/ssd-diagnostic-results"
+  --results-dir "$CORE_ROOT/boxdecode-diagnostic-results"
 ```
 
-這會執行完整的每週效能矩陣，包括 SSD，不會重新建置提供者。
+這會執行完整的每週效能矩陣，包括 `yolov8s_boxdecode`，不會重新建置提供者。
 目標程式請使用 SDK 交叉編譯與 DevKit 啟動程式；絕不可在 x86 主機上執行 AArch64 測試。
 
 若啟用追蹤保留、提供非空的追蹤目錄覆寫，或覆寫迭代次數，結果會記錄
