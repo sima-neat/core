@@ -62,7 +62,7 @@ python3 share/sima-neat/tutorials/006_preprocess_images/preprocess_images.py \
   --model /tmp/resnet_50.tar.gz --size 224
 ```
 
-Очікуваний результат (збірка C++ виводить ранг попередньо обробленого тензора та значення переліку dtype):
+Очікуваний результат (версія для C++ виводить ранг попередньо обробленого тензора та значення переліку dtype):
 
 ```text
 preproc_rank=3
@@ -70,7 +70,7 @@ preproc_dtype=1
 [OK] 006_preprocess_images
 ```
 
-(Версія для Python виводить `preproc_graph=ready`, опис графа та `output_count=...`.) Щоб інтегрувати початковий код C++ цього розділу у свій проєкт із власним файлом `CMakeLists.txt` (тека extras не потрібна), див. [Як запускати навчальні посібники](/tutorials#compile-a-copy-yourself) на головній сторінці.
+(Версія для Python виводить `preproc_graph=ready`, опис графа та `output_count=...`.) Щоб інтегрувати початковий код C++ цього розділу у свій проєкт із власним файлом `CMakeLists.txt` (тека extras не потрібна), див. розділ [Як запускати навчальні посібники](/tutorials#compile-a-copy-yourself) на головній сторінці.
 
 ## Файли початкового коду
 - C++: `tutorials/006_preprocess_images/preprocess_images.cpp`

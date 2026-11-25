@@ -79,7 +79,7 @@ tensor_rank=3
 [OK] 004_build_inference_pipeline
 ```
 
-(Версія для Python виводить `output_rank=...`.) Щоб інтегрувати початковий код C++ цього розділу у свій проєкт із власним файлом `CMakeLists.txt` (тека extras не потрібна), див. [Як запускати навчальні посібники](/tutorials#compile-a-copy-yourself) на головній сторінці.
+(Версія для Python виводить `output_rank=...`.) Щоб інтегрувати початковий код C++ цього розділу у свій проєкт із власним файлом `CMakeLists.txt` (тека extras не потрібна), див. розділ [Як запускати навчальні посібники](/tutorials#compile-a-copy-yourself) на головній сторінці.
 
 ## In Practice
 
