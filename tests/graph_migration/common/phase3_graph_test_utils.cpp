@@ -85,12 +85,12 @@ std::vector<fs::path> resolve_yolov8n_variants_or_throw(const fs::path& root) {
 }
 
 fs::path resolve_resnet50_or_throw(const fs::path& root) {
-  const std::string resolved = sima_test::resolve_resnet50_tar(root);
+  (void)root;
+  const std::string resolved = sima_test::resolve_resnet50_tar();
   if (!resolved.empty() && usable_file(resolved)) {
     return resolved;
   }
-  throw std::runtime_error("failed to resolve ResNet50 model tarball; set SIMA_RESNET50_TAR or "
-                           "stage/download resnet_50_mpk.tar.gz");
+  throw std::runtime_error("failed to resolve ResNet50 model tarball; set SIMA_RESNET50_TAR");
 }
 
 fs::path resolve_mnist_or_throw(const fs::path& root) {

@@ -22,7 +22,7 @@ sidebar_position: 4
 
 ## Отримання моделі та зображення
 
-Створіть робочий каталог на хост-машині, завантажте ResNet-50 із Model Browser і видобудьте архів моделі із завантаженого ZIP-файлу як `resnet_50.tar.gz`:
+Створіть робочу теку на хост-машині, завантажте ResNet-50 із Model Browser і видобудьте архів моделі із завантаженого ZIP-файлу як `resnet_50.tar.gz`:
 
 <ShellCommand prompt="pcie-host">
 mkdir -p pcie-host-quickstart/assets
@@ -41,7 +41,7 @@ unzip -p models/resnet_50/w8a8/resnet_50_w8a8_default.zip resnet_50_w8a8_mpk.tar
 (автор фото — Elf, зміни внесли Djmirko та FT2) і поширюється за ліцензією
 [CC BY-SA 3.0](https://creativecommons.org/licenses/by-sa/3.0/).
 
-Тепер ваш робочий каталог має містити:
+Тепер ваша робоча тека має містити:
 
 ```text
 pcie-host-quickstart/
@@ -52,7 +52,7 @@ pcie-host-quickstart/
 
 ## Створення застосунку
 
-Оберіть Python або C++ і створіть застосунок у робочому каталозі.
+Оберіть Python або C++ і створіть застосунок у робочій теці.
 
 <CodeTabs>
 <CodeTab label="Python" lang="python">

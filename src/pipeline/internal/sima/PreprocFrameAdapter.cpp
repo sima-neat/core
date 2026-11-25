@@ -548,8 +548,10 @@ PreprocFrameAdapter::check_policy(const ProcessCvuStagePayload& prepared) {
       return *error;
     policy->output = std::get<TensorSpec>(std::move(output));
     if (cfg.normalize != 1 && policy->output.dtype == DType::Int8 && !cfg.rescale_factor &&
-        !cfg.quantization_step && cfg.floating_conversion == PreprocFloatingConversion::Legacy) {
-      // Legacy raw INT8 names byte-preserving [0,255] storage, not signed math.
+        !cfg.quantization_step && cfg.floating_conversion == PreprocFloatingConversion::Legacy &&
+        !cfg.model_managed_preproc) {
+      // Standalone legacy raw INT8 names byte-preserving [0,255] storage, not signed math.
+      // A Model-managed stage instead quantizes with the pack's quantizer.
       // Native UInt8 explicitly preserves those bytes in dense or tiled storage.
       policy->output.dtype = DType::UInt8;
     }
@@ -967,7 +969,8 @@ Result<std::vector<Parameter>> PreprocFrameAdapter::static_parameters() const {
   result.push_back({"affine_offset", std::move(offsets)});
   result.push_back({"affine_multiplier", std::move(multipliers)});
   if (policy_->output.dtype == DType::Int8) {
-    result.push_back({"quantization_multiplier", 1.0f});
+    result.push_back(
+        {"quantization_multiplier", cfg.normalize == 1 ? 1.0f : static_cast<float>(cfg.q_scale)});
     result.push_back({"quantization_zero_point", cfg.q_zp});
   }
   return result;
