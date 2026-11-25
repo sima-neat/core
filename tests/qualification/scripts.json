@@ -5,7 +5,7 @@
   "models_registry": "models-develop 36d97e4"
  },
  "limit": 100,
- "limit_about": "accuracy.py --limit N: the first N validation images (ImageNet), a seeded sample of N images (COCO), the first N queries against the whole database (Pittsburgh 30k)",
+ "limit_about": "accuracy.py --limit N: the first N validation images (ImageNet), a seeded sample of N images (COCO, DOTA), the first N queries against the whole database (Pittsburgh 30k)",
  "measured_fields": [
   "(^|\\.)latency(_[a-z0-9]+)*_(ms|us)$",
   "(^|\\.)(fps|throughput_fps|throughput_duration_ms|throughput_samples)$",
@@ -36,6 +36,13 @@
    "sha256": "a40de1caf42b47c5a8976eb97efe3c83f3a41337c4d16d318eb15d65c293f2da",
    "size_bytes": 898368520,
    "models": 10
+  },
+  "dota-v1-0-val": {
+   "id": "dota-v1-0",
+   "variant": "val",
+   "sha256": "abeff63703f14da97d8e2033c67accacb88b732ce4ada940feddfeeac8f94a37",
+   "size_bytes": 327598055,
+   "models": 15
   }
  },
  "models": {
@@ -598,6 +605,28 @@
     "faster-coco-eval==1.8.0"
    ]
   },
+  "yolo11l_obb": {
+   "dataset": "dota-v1-0-val",
+   "performance": {
+    "benchmark": {
+     "num_samples": 1000,
+     "min_duration_ms": 60000,
+     "include_mla_layer_stats": true,
+     "include_mla_stage_stats": true
+    }
+   },
+   "accuracy": {
+    "view": "default"
+   },
+   "modules": [
+    "cv2",
+    "numpy",
+    "shapely"
+   ],
+   "requirements": [
+    "shapely==2.1.2"
+   ]
+  },
   "yolo11m": {
    "dataset": "coco-2017-val",
    "performance": {
@@ -618,6 +647,28 @@
    ],
    "requirements": [
     "faster-coco-eval==1.8.0"
+   ]
+  },
+  "yolo11m_obb": {
+   "dataset": "dota-v1-0-val",
+   "performance": {
+    "benchmark": {
+     "num_samples": 1000,
+     "min_duration_ms": 60000,
+     "include_mla_layer_stats": true,
+     "include_mla_stage_stats": true
+    }
+   },
+   "accuracy": {
+    "view": "default"
+   },
+   "modules": [
+    "cv2",
+    "numpy",
+    "shapely"
+   ],
+   "requirements": [
+    "shapely==2.1.2"
    ]
   },
   "yolo11n": {
@@ -642,6 +693,28 @@
     "faster-coco-eval==1.8.0"
    ]
   },
+  "yolo11n_obb": {
+   "dataset": "dota-v1-0-val",
+   "performance": {
+    "benchmark": {
+     "num_samples": 1000,
+     "min_duration_ms": 60000,
+     "include_mla_layer_stats": true,
+     "include_mla_stage_stats": true
+    }
+   },
+   "accuracy": {
+    "view": "default"
+   },
+   "modules": [
+    "cv2",
+    "numpy",
+    "shapely"
+   ],
+   "requirements": [
+    "shapely==2.1.2"
+   ]
+  },
   "yolo11s": {
    "dataset": "coco-2017-val",
    "performance": {
@@ -662,6 +735,28 @@
    ],
    "requirements": [
     "faster-coco-eval==1.8.0"
+   ]
+  },
+  "yolo11s_obb": {
+   "dataset": "dota-v1-0-val",
+   "performance": {
+    "benchmark": {
+     "num_samples": 1000,
+     "min_duration_ms": 60000,
+     "include_mla_layer_stats": true,
+     "include_mla_stage_stats": true
+    }
+   },
+   "accuracy": {
+    "view": "default"
+   },
+   "modules": [
+    "cv2",
+    "numpy",
+    "shapely"
+   ],
+   "requirements": [
+    "shapely==2.1.2"
    ]
   },
   "yolo11x": {
@@ -686,6 +781,138 @@
     "faster-coco-eval==1.8.0"
    ]
   },
+  "yolo11x_obb": {
+   "dataset": "dota-v1-0-val",
+   "performance": {
+    "benchmark": {
+     "num_samples": 1000,
+     "min_duration_ms": 60000,
+     "include_mla_layer_stats": true,
+     "include_mla_stage_stats": true
+    }
+   },
+   "accuracy": {
+    "view": "default"
+   },
+   "modules": [
+    "cv2",
+    "numpy",
+    "shapely"
+   ],
+   "requirements": [
+    "shapely==2.1.2"
+   ]
+  },
+  "yolo26l_obb": {
+   "dataset": "dota-v1-0-val",
+   "performance": {
+    "benchmark": {
+     "num_samples": 1000,
+     "min_duration_ms": 60000,
+     "include_mla_layer_stats": true,
+     "include_mla_stage_stats": true
+    }
+   },
+   "accuracy": {
+    "view": "default"
+   },
+   "modules": [
+    "cv2",
+    "numpy",
+    "shapely"
+   ],
+   "requirements": [
+    "shapely==2.1.2"
+   ]
+  },
+  "yolo26m_obb": {
+   "dataset": "dota-v1-0-val",
+   "performance": {
+    "benchmark": {
+     "num_samples": 1000,
+     "min_duration_ms": 60000,
+     "include_mla_layer_stats": true,
+     "include_mla_stage_stats": true
+    }
+   },
+   "accuracy": {
+    "view": "default"
+   },
+   "modules": [
+    "cv2",
+    "numpy",
+    "shapely"
+   ],
+   "requirements": [
+    "shapely==2.1.2"
+   ]
+  },
+  "yolo26n_obb": {
+   "dataset": "dota-v1-0-val",
+   "performance": {
+    "benchmark": {
+     "num_samples": 1000,
+     "min_duration_ms": 60000,
+     "include_mla_layer_stats": true,
+     "include_mla_stage_stats": true
+    }
+   },
+   "accuracy": {
+    "view": "default"
+   },
+   "modules": [
+    "cv2",
+    "numpy",
+    "shapely"
+   ],
+   "requirements": [
+    "shapely==2.1.2"
+   ]
+  },
+  "yolo26s_obb": {
+   "dataset": "dota-v1-0-val",
+   "performance": {
+    "benchmark": {
+     "num_samples": 1000,
+     "min_duration_ms": 60000,
+     "include_mla_layer_stats": true,
+     "include_mla_stage_stats": true
+    }
+   },
+   "accuracy": {
+    "view": "default"
+   },
+   "modules": [
+    "cv2",
+    "numpy",
+    "shapely"
+   ],
+   "requirements": [
+    "shapely==2.1.2"
+   ]
+  },
+  "yolo26x_obb": {
+   "dataset": "dota-v1-0-val",
+   "performance": {
+    "benchmark": {
+     "num_samples": 1000,
+     "min_duration_ms": 60000,
+     "include_mla_layer_stats": true,
+     "include_mla_stage_stats": true
+    }
+   },
+   "accuracy": {
+    "view": "default"
+   },
+   "modules": [
+    "cv2",
+    "numpy",
+    "shapely"
+   ],
+   "requirements": [
+    "shapely==2.1.2"
+   ]
+  },
   "yolov8l": {
    "dataset": "coco-2017-val",
    "performance": {
@@ -706,6 +933,28 @@
    ],
    "requirements": [
     "faster-coco-eval==1.8.0"
+   ]
+  },
+  "yolov8l_obb": {
+   "dataset": "dota-v1-0-val",
+   "performance": {
+    "benchmark": {
+     "num_samples": 1000,
+     "min_duration_ms": 60000,
+     "include_mla_layer_stats": true,
+     "include_mla_stage_stats": true
+    }
+   },
+   "accuracy": {
+    "view": "default"
+   },
+   "modules": [
+    "cv2",
+    "numpy",
+    "shapely"
+   ],
+   "requirements": [
+    "shapely==2.1.2"
    ]
   },
   "yolov8m": {
@@ -730,6 +979,28 @@
     "faster-coco-eval==1.8.0"
    ]
   },
+  "yolov8m_obb": {
+   "dataset": "dota-v1-0-val",
+   "performance": {
+    "benchmark": {
+     "num_samples": 1000,
+     "min_duration_ms": 60000,
+     "include_mla_layer_stats": true,
+     "include_mla_stage_stats": true
+    }
+   },
+   "accuracy": {
+    "view": "default"
+   },
+   "modules": [
+    "cv2",
+    "numpy",
+    "shapely"
+   ],
+   "requirements": [
+    "shapely==2.1.2"
+   ]
+  },
   "yolov8n": {
    "dataset": "coco-2017-val",
    "performance": {
@@ -750,6 +1021,28 @@
    ],
    "requirements": [
     "faster-coco-eval==1.8.0"
+   ]
+  },
+  "yolov8n_obb": {
+   "dataset": "dota-v1-0-val",
+   "performance": {
+    "benchmark": {
+     "num_samples": 1000,
+     "min_duration_ms": 60000,
+     "include_mla_layer_stats": true,
+     "include_mla_stage_stats": true
+    }
+   },
+   "accuracy": {
+    "view": "default"
+   },
+   "modules": [
+    "cv2",
+    "numpy",
+    "shapely"
+   ],
+   "requirements": [
+    "shapely==2.1.2"
    ]
   },
   "yolov8s": {
@@ -774,6 +1067,28 @@
     "faster-coco-eval==1.8.0"
    ]
   },
+  "yolov8s_obb": {
+   "dataset": "dota-v1-0-val",
+   "performance": {
+    "benchmark": {
+     "num_samples": 1000,
+     "min_duration_ms": 60000,
+     "include_mla_layer_stats": true,
+     "include_mla_stage_stats": true
+    }
+   },
+   "accuracy": {
+    "view": "default"
+   },
+   "modules": [
+    "cv2",
+    "numpy",
+    "shapely"
+   ],
+   "requirements": [
+    "shapely==2.1.2"
+   ]
+  },
   "yolov8x": {
    "dataset": "coco-2017-val",
    "performance": {
@@ -794,6 +1109,28 @@
    ],
    "requirements": [
     "faster-coco-eval==1.8.0"
+   ]
+  },
+  "yolov8x_obb": {
+   "dataset": "dota-v1-0-val",
+   "performance": {
+    "benchmark": {
+     "num_samples": 1000,
+     "min_duration_ms": 60000,
+     "include_mla_layer_stats": true,
+     "include_mla_stage_stats": true
+    }
+   },
+   "accuracy": {
+    "view": "default"
+   },
+   "modules": [
+    "cv2",
+    "numpy",
+    "shapely"
+   ],
+   "requirements": [
+    "shapely==2.1.2"
    ]
   }
  }

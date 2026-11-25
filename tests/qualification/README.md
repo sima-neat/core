@@ -124,8 +124,8 @@ that requests those statistics; any other new line, and this line in any other r
 
 | | |
 |---|---|
-| modules | `pyneat` (of the library under test), `numpy`, `cv2` (both in the 3.0.1 image: 2.2.4, 4.10.0) and, pinned by the models' `requirements-accuracy.txt`: `pillow==12.3.0` (24 models), `faster-coco-eval==1.8.0` (the 10 YOLO models), `tokenizers==0.23.3` (CLIP, SigLIP 2) |
-| datasets | `imagenet-2012-val` (6,666,407,650 bytes, 23 models), `coco-2017-val` (898,368,520 bytes, 10 models), `pitts30k-val` (611,858,077 bytes, NetVLAD): the pins of each `model.yaml`, resolved with the registry's `dataset-registry resolve <id> --variant val` (SiMa Artifactory; anonymous reads are refused) |
+| modules | `pyneat` (of the library under test), `numpy`, `cv2` (both in the 3.0.1 image: 2.2.4, 4.10.0) and, pinned by the models' `requirements-accuracy.txt`: `pillow==12.3.0` (24 models), `faster-coco-eval==1.8.0` (the 10 YOLO detection models), `shapely==2.1.2` (the 15 oriented-box models), `tokenizers==0.23.3` (CLIP, SigLIP 2) |
+| datasets | `imagenet-2012-val` (6,666,407,650 bytes, 23 models), `coco-2017-val` (898,368,520 bytes, 10 models), `pitts30k-val` (611,858,077 bytes, NetVLAD), `dota-v1-0-val` (327,598,055 bytes, the 15 oriented-box models): the pins of each `model.yaml`, resolved with the registry's `dataset-registry resolve <id> --variant val` (SiMa Artifactory; anonymous reads are refused) |
 | supporting files | CLIP and SigLIP 2 `accuracy.py` read the tokenizer and the token-embedding table of the package (`--resources`) |
 
 On a devkit this needs no root. The environment the first pass used stays on the board under
@@ -134,7 +134,7 @@ On a devkit this needs no root. The environment the first pass used stays on the
 ```
 python3 -m venv --system-site-packages --without-pip /media/nvme/dataflow-qual/venv   # the image has no ensurepip
 python3 -m pip --python /media/nvme/dataflow-qual/venv/bin/python install --no-index --no-deps --no-compile \
-  /media/nvme/dataflow-qual/wheels/*.whl        # cp313 / abi3 manylinux aarch64 wheels of the three pins, from PyPI
+  /media/nvme/dataflow-qual/wheels/*.whl        # cp313 / abi3 manylinux aarch64 wheels of the four pins, from PyPI
 # datasets/artifacts/<archive>.tgz as dataset-registry resolved it, extracted to datasets/<source id>/
 ```
 
