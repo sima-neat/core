@@ -28,8 +28,11 @@ inline Yolov8VariantFixture resolve_yolov8_variant_fixture(const std::string& st
   require(fs::is_directory(seed, ec) && !ec,
           "legacy YOLOv8 fixture metadata is missing: " + seed.string());
 
-  const std::string root = make_fixture_temp_dir("legacy_" + stem);
-  const fs::path root_path(root);
+  // Each call gets its own directory, which holds the package root and the archive. Tests
+  // run in parallel, and a shared archive path could be read while another test writes it.
+  const fs::path base(make_fixture_temp_dir("legacy_" + stem));
+  const fs::path root_path = base / "package";
+  fs::create_directories(root_path);
   std::string manifest_text;
   for (const auto& entry : fs::recursive_directory_iterator(seed)) {
     if (!entry.is_regular_file())
@@ -53,12 +56,12 @@ inline Yolov8VariantFixture resolve_yolov8_variant_fixture(const std::string& st
     fs::rename(entry.path(), root_path / entry.path().filename());
   fs::remove(share);
 
-  const fs::path tar_path = root_path.parent_path() / ("legacy_" + stem + ".tar.gz");
+  const fs::path tar_path = base / ("legacy_" + stem + ".tar.gz");
   const std::string command = "tar -czf " + shell_quote(tar_path.string()) + " -C " +
                               shell_quote(root_path.string()) + " .";
   require(std::system(command.c_str()) == 0,
           "failed to archive legacy YOLOv8 fixture " + tar_path.string());
-  return {tar_path.string(), root};
+  return {tar_path.string(), root_path.string()};
 }
 
 } // namespace sima_test
