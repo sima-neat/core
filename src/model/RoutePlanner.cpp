@@ -2733,10 +2733,10 @@ bool extract_route_capability_from_mpk_graph(const ModelPack& pack, RouteCapabil
     if (after_mla && compute_feeding_tail[plugin_idx]) {
       const auto* node = pipeline_internal::sima::route_graph_node(graph, plugin_idx);
       if (node != nullptr && is_materialized_post_graph_kind(node->kind)) {
-        // Count it toward cast symmetry exactly where the post route would have counted a cast.
-        const std::string skipped_kernel = canonical_mpk_kernel_kind(
-            plugin.kernel.empty() ? contract.plugins[plugin_idx].name : plugin.kernel);
-        if (skipped_kernel == "cast" || skipped_kernel == "detesscast") {
+        // A cast moved into inference, alone or fused with detessellation, still balances an
+        // ingress cast for cast symmetry.
+        using GraphKind = pipeline_internal::sima::RouteGraphKernelKind;
+        if (node->kind == GraphKind::Cast || node->kind == GraphKind::DetessCast) {
           out->inference_tail_cast = true;
         }
         continue;
