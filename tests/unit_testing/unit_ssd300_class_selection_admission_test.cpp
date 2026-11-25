@@ -12,11 +12,7 @@
 #include <string>
 #include <vector>
 
-// The surgical SSD300 pack encodes the canonical 81-way SSD300 confidence layout, while the
-// application reports only background plus seven tool classes. This replaces the retired
-// ssd300_surgical_e2e_test admission check: Model must accept num_classes = 8 and narrow the
-// BoxDecode contract to that prefix instead of ignoring or rejecting the option. Which classes
-// survive the narrowing is covered by unit_boxdecode_kernel_recipe_test.
+// SSD300 encodes 81 classes; requesting 8 must select background plus the first seven tool classes.
 
 namespace {
 
@@ -99,9 +95,7 @@ sima_test::ModelArchiveFixture make_ssd300_heads_fixture() {
   }
   const auto fixture = sima_test::make_model_archive_fixture(
       "ssd300_class_selection", {{"etc/ssd300_heads_mpk.json", mpk.dump()}}, false);
-  std::filesystem::create_directories(std::filesystem::path(fixture.root_dir) / "share");
-  sima_test::write_topology_elf(std::filesystem::path(fixture.root_dir) / "share/model.elf",
-                                "data.ifm.b0", 300 * 300 * 3 * 2, "data.ofm.b0", total_bytes);
+  sima_test::write_mpk_topology_elfs(fixture.root_dir, mpk.dump());
   const auto archive = "tar -czf " + sima_test::model_archive_shell_quote(fixture.tar_path) +
                        " -C " + sima_test::model_archive_shell_quote(fixture.root_dir) + " .";
   require(std::system(archive.c_str()) == 0, "failed to archive the SSD300 heads fixture");
