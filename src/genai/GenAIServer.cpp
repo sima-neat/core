@@ -733,6 +733,13 @@ struct TempFileGuard {
 
 struct GenAIServer::Impl {
   explicit Impl(GenAIServerOptions options_in) : options(std::move(options_in)) {
+    // httplib's default sets SO_REUSEPORT on Linux, which lets a second server bind the same
+    // port and silently share its connections. SO_REUSEADDR alone still allows a quick restart
+    // but makes a port that another server listens on fail to bind.
+    http.set_socket_options([](socket_t sock) {
+      int enable = 1;
+      ::setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &enable, sizeof(enable));
+    });
     configure_routes();
   }
 

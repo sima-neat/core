@@ -118,6 +118,27 @@ void start_reports_port_in_use_and_can_be_retried() {
   server.stop();
 }
 
+// A port that another server already listens on must be reported as in use, not shared with it.
+void start_on_port_of_another_server_throws() {
+  GenAIServerOptions options;
+  options.host = "127.0.0.1";
+  options.port = pick_free_port();
+  GenAIServer first(options);
+  first.start();
+
+  GenAIServer second(options);
+  const std::string expected = "failed to listen on 127.0.0.1:" + std::to_string(options.port);
+  bool threw = false;
+  try {
+    second.start();
+  } catch (const std::runtime_error& e) {
+    threw = true;
+    require_contains(e.what(), expected, "unexpected start() error");
+  }
+  first.stop();
+  require(threw, "start() on a port another server listens on must throw std::runtime_error");
+}
+
 // stop() right after start() must return instead of waiting on a server that never closes.
 void stop_right_after_start_returns() {
   GenAIServerOptions options;
@@ -187,6 +208,7 @@ void start_while_serve_is_running_throws() {
 RUN_TEST("unit_genai_server_port_in_use_regression_test", ([] {
            start_watchdog(std::chrono::seconds(30));
            start_reports_port_in_use_and_can_be_retried();
+           start_on_port_of_another_server_throws();
            stop_right_after_start_returns();
            started_server_accepts_connections_and_rejects_serve();
            start_while_serve_is_running_throws();
