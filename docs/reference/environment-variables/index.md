@@ -220,7 +220,7 @@ guarantee.
   inventory. Do not regenerate this baseline from the post-install state.
 
 See [Test Requirements](../../develop-apps/contribute/build-test/test_requirements.md)
-for fixture-group selection and installed-package profiles.
+for installed-package profiles.
 
 ## PCIe host and card status
 
