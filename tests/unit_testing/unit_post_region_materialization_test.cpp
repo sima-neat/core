@@ -7,6 +7,7 @@
 #include "pipeline/internal/contract/CompiledNodeContractQuery.h"
 #include "pipeline/internal/contract/ContractCompiler.h"
 #include "pipeline/internal/sima/MpkContract.h"
+#include "support/yolov8_variant_fixture.h"
 #include "test_main.h"
 
 #include <algorithm>
@@ -18,12 +19,18 @@ std::filesystem::path core_root() {
   return sima_test::test_source_root();
 }
 
-std::filesystem::path bf16_int8_model_path() {
-  return core_root() / "tmp" / "yolov8n_drive" / "yolov8n_A_BF16_W_INT8_mpk.tar.gz";
+// Stands in for yolov8n_A_BF16_W_INT8_mpk: both BF16 EV74 builds route six heads through
+// DetessCast.
+std::filesystem::path bf16_model_path() {
+  static const std::string path =
+      sima_test::resolve_yolov8_variant_fixture("yolov8n_A_W_BF16_mpk").tar_path;
+  return path;
 }
 
 std::filesystem::path int8_model_path() {
-  return core_root() / "tmp" / "yolov8n_drive" / "yolov8n_A_W_int8_mpk.tar.gz";
+  static const std::string path =
+      sima_test::resolve_yolov8_variant_fixture("yolov8n_A_W_int8_mpk").tar_path;
+  return path;
 }
 
 std::filesystem::path bf16_mlatess_model_path() {
@@ -122,7 +129,7 @@ RUN_TEST(
             }
           };
 
-      check_model(bf16_int8_model_path(),
+      check_model(bf16_model_path(),
                   {
                       {RouteRegionKind::FanoutMap,
                        pipeline_internal::sima::RouteGraphKernelKind::DetessCast},
@@ -199,7 +206,7 @@ RUN_TEST(
       };
 
       check_packed_processcvu_payload(int8_mlatess_model_path(), "dequantize", 6);
-      if (std::filesystem::exists(int8_model_path())) {
+      {
         Model::Options opt;
         opt.preprocess.kind = InputKind::Tensor;
         opt.preprocess.enable = AutoFlag::On;
@@ -220,11 +227,11 @@ RUN_TEST(
                 "INT8 EV74 detessdequant stage should preserve six routed heads");
       }
 
-      if (std::filesystem::exists(bf16_int8_model_path())) {
+      {
         Model::Options opt;
         opt.preprocess.kind = InputKind::Tensor;
         opt.preprocess.enable = AutoFlag::On;
-        Model model(bf16_int8_model_path().string(), opt);
+        Model model(bf16_model_path().string(), opt);
 
         const auto post = ModelAccess::build_postprocess_nodes(model, false);
         pipeline_internal::sima::ManifestBuildDiagnostics diagnostics;
@@ -351,7 +358,7 @@ RUN_TEST(
       };
 
       check_routed_input_addressing(int8_mlatess_model_path(), "dequantize");
-      if (std::filesystem::exists(int8_model_path())) {
+      {
         Model::Options opt;
         opt.preprocess.kind = InputKind::Tensor;
         opt.preprocess.enable = AutoFlag::On;

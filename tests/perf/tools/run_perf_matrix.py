@@ -73,8 +73,8 @@ ENCODER_SCENARIOS: tuple[ScenarioSpec, ...] = tuple(
 
 LONG_SCENARIOS: tuple[ScenarioSpec, ...] = (
     ScenarioSpec(
-        "ssd_mobilenet_boxdecode",
-        "perf_ssd_mobilenet_boxdecode_test",
+        "yolov8s_boxdecode",
+        "perf_yolov8s_boxdecode_test",
         allow_skip=True,
     ),
 )

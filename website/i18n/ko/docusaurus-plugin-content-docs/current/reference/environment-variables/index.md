@@ -185,7 +185,7 @@ ProcessCVU 단계는 기본적으로 Runtime의 `neatkernelrunner`를 통해 실
   패키지 인벤토리 테스트에는 선택한 패키지 인벤토리와 함께 이 기준 정보가 필요합니다.
   설치 후의 상태에서 이 기준 정보를 다시 생성하지 마세요.
 
-픽스처 그룹 선택 및 설치된 패키지 프로파일은
+설치된 패키지 프로파일은
 [테스트 요구 사항](../../develop-apps/contribute/build-test/test_requirements.md)을 참조하세요.
 
 ## PCIe 호스트 및 카드 상태

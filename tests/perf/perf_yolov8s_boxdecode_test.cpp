@@ -9,14 +9,16 @@
 #include "perf_metrics_common.h"
 #include "pipeline/Graph.h"
 
+#include "asset_utils.h"
 #include "e2e_pipelines/obj_detection/obj_detection_utils.h"
-#include "e2e_pipelines/obj_detection/ssd_mobilenet_test_utils.h"
+#include "e2e_pipelines/obj_detection/yolov8_test_utils.h"
 #include "test_utils.h"
 
 #include <opencv2/imgcodecs.hpp>
 
 #include <cmath>
 #include <cstdint>
+#include <cstdlib>
 #include <filesystem>
 #include <iostream>
 #include <stdexcept>
@@ -27,6 +29,40 @@
 namespace {
 
 namespace fs = std::filesystem;
+
+constexpr int kTopK = 100;
+constexpr float kScoreThreshold = 0.49F;
+constexpr float kNmsIou = 0.5F;
+
+// CI prepares the Model Browser archive and exports SIMA_YOLO_TAR. A missing or unusable archive
+// is a harness failure, not a skip, and nothing is downloaded here.
+std::string require_yolov8s_archive() {
+  const char* value = std::getenv("SIMA_YOLO_TAR");
+  if (!value || !*value) {
+    throw std::runtime_error(
+        "SIMA_YOLO_TAR is not set. Set it to the yolov8s_w8a8_mpk.tar.gz from 'sima-cli models "
+        "download --id yolov8s --variant w8a8'.");
+  }
+  if (!sima_test::is_usable_regular_file(value)) {
+    throw std::runtime_error(std::string("SIMA_YOLO_TAR=") + value +
+                             " is not a readable, non-empty file");
+  }
+  return value;
+}
+
+simaai::neat::Model::Options make_model_options() {
+  simaai::neat::Model::Options options;
+  options.preprocess.kind = simaai::neat::InputKind::Image;
+  options.preprocess.enable = simaai::neat::AutoFlag::On;
+  options.preprocess.normalize.enable = simaai::neat::AutoFlag::On;
+  options.preprocess.color_convert.input_format = simaai::neat::PreprocessColorFormat::BGR;
+  options.decode_type = simaai::neat::BoxDecodeType::YoloV8;
+  options.score_threshold = kScoreThreshold;
+  options.nms_iou_threshold = kNmsIou;
+  options.top_k = kTopK;
+  options.upstream_name = "decoder";
+  return options;
+}
 
 struct ComponentIdentity {
   const char* component_id;
@@ -97,19 +133,17 @@ int main(int argc, char** argv) {
     sima_perf::ScopedStdoutToStderr progress_output;
 
     const fs::path root = (argc > 1) ? fs::path(argv[1]) : fs::current_path();
-    const int warmup = sima_perf::env_int("SIMA_SSD_PERF_WARMUP", 25);
+    const int warmup = sima_perf::env_int("SIMA_YOLOV8S_PERF_WARMUP", 25);
     const int iterations = sima_perf::env_int("SIMA_PERF_ITERS", 1000);
-    const auto config = sima_ssd_mobilenet_test::ModelConfig{};
-    const std::string archive = sima_ssd_mobilenet_test::resolve_ssd_mobilenet_tar_or_skip(root);
-    const cv::Mat image = sima_ssd_mobilenet_test::load_coco_people_image_or_skip(root);
+    const std::string archive = require_yolov8s_archive();
+    const cv::Mat image = sima_yolov8_test::load_people_image_or_skip(root);
 
-    Model model(archive, sima_ssd_mobilenet_test::make_model_options(config));
+    Model model(archive, make_model_options());
     Graph graph;
     graph.add(nodes::Input());
     graph.add(nodes::groups::Preprocess(model));
     graph.add(nodes::groups::Infer(model));
-    graph.add(nodes::SimaBoxDecode(model, BoxDecodeType::Ssd, config.score_threshold,
-                                   config.nms_iou, config.top_k));
+    graph.add(nodes::SimaBoxDecode(model, BoxDecodeType::YoloV8, kScoreThreshold, kNmsIou, kTopK));
     graph.add(nodes::Output());
 
     auto make_sample = [&]() {
@@ -123,13 +157,13 @@ int main(int argc, char** argv) {
     for (int i = 0; i < warmup; ++i) {
       const Sample outputs = run.run(make_sample(), 30000);
       if (outputs.empty()) {
-        throw std::runtime_error("SSD performance warmup returned no output");
+        throw std::runtime_error("YOLOv8s performance warmup returned no output");
       }
     }
 
     MeasureOptions measure_options;
-    measure_options.title = "SSD-MobileNetV2 full graph and BoxDecode";
-    measure_options.model = "ssd-mobile-300-v1";
+    measure_options.title = "YOLOv8s full graph and BoxDecode";
+    measure_options.model = "yolov8s_w8a8";
     measure_options.input = std::to_string(image.cols) + "x" + std::to_string(image.rows) + " BGR";
     measure_options.placement = "CVU + MLA + on-device BoxDecode";
     measure_options.warmup_ms = 0;
@@ -152,7 +186,7 @@ int main(int argc, char** argv) {
       const Sample outputs = run.run(make_sample(), 30000);
       const auto t1 = sima_perf::Clock::now();
       if (outputs.empty()) {
-        throw std::runtime_error("SSD performance run returned no output at iteration " +
+        throw std::runtime_error("YOLOv8s performance run returned no output at iteration " +
                                  std::to_string(i));
       }
       latencies_ms.push_back(sima_perf::elapsed_ms(t0, t1));
@@ -162,9 +196,9 @@ int main(int argc, char** argv) {
       std::vector<std::uint8_t> payload;
       std::string error;
       if (!objdet::extract_bbox_payload(outputs.front(), i, payload, error)) {
-        throw std::runtime_error("SSD performance output validation failed: " + error);
+        throw std::runtime_error("YOLOv8s performance output validation failed: " + error);
       }
-      (void)objdet::parse_boxes_strict(payload, image.cols, image.rows, config.top_k, false);
+      (void)objdet::parse_boxes_strict(payload, image.cols, image.rows, kTopK, false);
     }
     const auto run_t1 = sima_perf::Clock::now();
     power_monitor.stop();
@@ -174,14 +208,14 @@ int main(int argc, char** argv) {
 
     if (report.outputs != static_cast<std::size_t>(iterations) ||
         !report.latency_samples_collected) {
-      throw std::runtime_error("SSD performance measurement did not correlate every output");
+      throw std::runtime_error("YOLOv8s performance measurement did not correlate every output");
     }
     if (report.plugin_latency_status != "collected") {
       for (const auto& warning : report.warnings)
-        std::cerr << "SSD metrics: " << warning << '\n';
+        std::cerr << "YOLOv8s metrics: " << warning << '\n';
       if (!report.metrics_trace_dir.empty())
-        std::cerr << "SSD metrics trace: " << report.metrics_trace_dir << '\n';
-      throw std::runtime_error("SSD BoxDecode plugin latency was not collected (status=" +
+        std::cerr << "YOLOv8s metrics trace: " << report.metrics_trace_dir << '\n';
+      throw std::runtime_error("YOLOv8s BoxDecode plugin latency was not collected (status=" +
                                report.plugin_latency_status + ")");
     }
     // V2 wall envelopes are deliberate new identities, not aliases for legacy
@@ -216,17 +250,17 @@ int main(int argc, char** argv) {
         {kStageComponent.component_id, std::move(stage_rows)},
     };
     progress_output.restore();
-    sima_perf::emit_metrics_json("ssd_mobilenet_boxdecode", iterations, metrics, "sync", &power,
-                                 &report, &component_latency);
+    sima_perf::emit_metrics_json("yolov8s_boxdecode", iterations, metrics, "sync", &power, &report,
+                                 &component_latency);
     return 0;
   } catch (const SkipTest& error) {
-    std::cerr << "perf_ssd_mobilenet_boxdecode_test skipped: " << error.what() << "\n";
+    std::cerr << "perf_yolov8s_boxdecode_test skipped: " << error.what() << "\n";
     return skip_long_test(error.what());
   } catch (const std::exception& error) {
     if (is_dispatcher_unavailable(error.what())) {
       return skip_long_test("dispatcher unavailable");
     }
-    std::cerr << "perf_ssd_mobilenet_boxdecode_test exception: " << error.what() << "\n";
+    std::cerr << "perf_yolov8s_boxdecode_test exception: " << error.what() << "\n";
     return 1;
   }
 }

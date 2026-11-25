@@ -37,9 +37,9 @@ def make_baseline() -> schema.ScenarioBaseline:
 
 def make_component_baseline() -> schema.ScenarioBaseline:
     data = {
-        "scenario_id": "ssd_mobilenet_boxdecode",
-        "model_id": "ssd_mobilenet_v2_heads_mpk",
-        "pipeline_id": "ssd_boxdecode",
+        "scenario_id": "yolov8s_boxdecode",
+        "model_id": "yolov8s_w8a8_mpk",
+        "pipeline_id": "yolov8s_boxdecode",
         "run_mode": "sync",
         "iterations": 1000,
         "metrics_thresholds": {

@@ -6,6 +6,7 @@
 #include "pipeline/runtime/ExecutionGraphPlan.h"
 #include "nodes/common/Output.h"
 #include "model_archive_fixture_utils.h"
+#include "support/yolov8_variant_fixture.h"
 #include "test_main.h"
 #include "test_utils.h"
 
@@ -752,23 +753,12 @@ RUN_TEST(
       }
 
       {
-        const auto root = sima_test::repo_root_for_modelzoo();
-        const std::vector<std::filesystem::path> bf16_candidates = {
-            root / "tmp" / "yolov8n_drive" / "yolov8n_A_W_BF16_mpk.tar.gz",
-            root / "tmp" / "yolov8n_drive" / "yolov8n_A_BF16_W_INT8_mpk.tar.gz",
-        };
-        for (const auto& bf16_model : bf16_candidates) {
-          if (!std::filesystem::exists(bf16_model)) {
-            continue;
-          }
-          Model model(bf16_model.string());
-          const std::vector<TensorSpec> specs = model.input_specs();
-          require(!specs.empty(), "BF16 model input_specs should not be empty");
-          const TensorSpec& spec = specs.front();
-          require(!spec.dtypes.empty() && spec.dtypes[0] == TensorDType::Float32,
-                  "BF16 cast ingress must expose Float32 Model boundary input_specs");
-          break;
-        }
+        Model model(sima_test::resolve_yolov8_variant_fixture("yolov8n_A_W_BF16_mpk").tar_path);
+        const std::vector<TensorSpec> specs = model.input_specs();
+        require(!specs.empty(), "BF16 model input_specs should not be empty");
+        const TensorSpec& spec = specs.front();
+        require(!spec.dtypes.empty() && spec.dtypes[0] == TensorDType::Float32,
+                "BF16 cast ingress must expose Float32 Model boundary input_specs");
       }
 
       {

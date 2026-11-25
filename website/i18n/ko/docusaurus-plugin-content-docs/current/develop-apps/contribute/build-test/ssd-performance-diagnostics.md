@@ -1,11 +1,11 @@
 ---
-title: "SSD 구성 요소 지연 시간 진단"
+title: "BoxDecode 구성 요소 지연 시간 진단"
 description: "승인 기준을 바꾸지 않고 성능 증거 보존하기"
 ---
 
-# SSD 구성 요소 지연 시간 진단
+# BoxDecode 구성 요소 지연 시간 진단
 
-`ssd_mobilenet_boxdecode`가 구성 요소 지연 시간 예산을 충족하지 못할 때
+`yolov8s_boxdecode`가 구성 요소 지연 시간 예산을 충족하지 못할 때
 이 절차를 사용하세요. FPS 결과가 통과해도 실패한 구성 요소 p99를 무효화하지 않습니다.
 
 ## 측정 경계를 명확하게 유지하기
@@ -27,8 +27,8 @@ Scheduler는 검증된 구성원을 Runner를 통해 제출합니다.
 다른 측정 항목입니다. 서로 다른 구간을 비교하여 수치 커널 성능 저하의 증거로
 삼거나, 결과를 통과시키기 위해 큐 시간을 제거하지 마세요.
 
-저장소의 주간 기준은 샘플 1,000개와 백엔드 0.7ms, 단계 0.93ms의 절대 p99 제한을
-요구합니다. 일반 처리량 허용 오차는 이러한 구성 요소 제한을 확대하지 않습니다.
+저장소의 주간 기준은 단계 샘플 1,000개와 단계의 절대 p99 제한을 요구합니다.
+백엔드 p99는 진단용으로 보고되며 제한이 없습니다. 일반 처리량 허용 오차는 이 구성 요소 제한을 확대하지 않습니다.
 진단하는 동안 제한, 픽스처, 워밍업, 반복 횟수 및 제한 시간을 그대로 유지하세요.
 
 ## 기존 증거 보존하기
@@ -67,17 +67,18 @@ Scheduler는 검증된 구성원을 Runner를 통해 제출합니다.
 : "${CORE_ROOT:?set the target Core checkout path}"
 : "${CORE_TESTS:?set the installed target test directory}"
 : "${SIMA_HARDWARE_SUPERVISOR_SOCKET:?use an admitted hardware-test scope}"
+: "${SIMA_YOLO_TAR:?set to the Model Browser yolov8s_w8a8_mpk.tar.gz}"
 cd "$CORE_ROOT"
 export SIMA_NEAT_METRICS_RETAIN_TRACE=1
-export SIMA_NEAT_METRICS_TRACE_DIR="$CORE_ROOT/ssd-diagnostic-traces"
+export SIMA_NEAT_METRICS_TRACE_DIR="$CORE_ROOT/boxdecode-diagnostic-traces"
 python3 tests/perf/tools/run_perf_matrix.py \
   --repo-root "$CORE_ROOT" \
   --prebuilt-tests-dir "$CORE_TESTS" \
   --include-long \
-  --results-dir "$CORE_ROOT/ssd-diagnostic-results"
+  --results-dir "$CORE_ROOT/boxdecode-diagnostic-results"
 ```
 
-이 명령은 SSD를 포함한 전체 주간 성능 매트릭스를 실행하며, 공급자를 다시 빌드하지는
+이 명령은 `yolov8s_boxdecode`를 포함한 전체 주간 성능 매트릭스를 실행하며, 공급자를 다시 빌드하지는
 않습니다. 타깃 프로그램에는 SDK 크로스 컴파일과 DevKit 실행기를 사용하세요.
 AArch64 테스트를 x86 호스트에서 실행하지 마세요.
 

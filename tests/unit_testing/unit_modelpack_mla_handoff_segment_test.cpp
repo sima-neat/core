@@ -366,9 +366,10 @@ RUN_TEST(
       sima_test::initialize_cold_contract_gstreamer();
       using namespace simaai::neat;
 
-      const std::filesystem::path core_root = sima_test::test_source_root();
-      const std::string tar_path = sima_test::resolve_yolov8s_strict_mpk_tar(core_root);
-      require(!tar_path.empty(), "expected modelzoo-backed yolo_v8s .tar.gz MPK with *_mpk.json");
+      // The legacy yolo_v8s package: INT8 QuantTess, a six-head packed MLA output and
+      // DetessDequant, which the Model Browser yolov8s package does not have.
+      const std::string tar_path =
+          sima_test::resolve_yolov8_variant_fixture("yolo_v8s_mpk").tar_path;
 
       Model::Options model_opt;
       model_opt.preprocess.kind = InputKind::Image;
@@ -506,21 +507,14 @@ RUN_TEST(
       require(checked_fused_publication, "YOLO must expose a fused post-stage to validate");
       require_default_sync_retention_contract(model);
 
-      const std::vector<std::filesystem::path> bf16_candidates = {
-          sima_test::resolve_yolov8_variant_fixture("yolov8n_A_W_BF16_mpk").tar_path,
-          core_root / "tmp" / "yolov8n_drive" / "yolov8n_A_BF16_W_INT8_mpk.tar.gz",
-      };
-      bool tested_bf16 = false;
-      for (const auto& bf16_path : bf16_candidates) {
-        if (!std::filesystem::exists(bf16_path)) {
-          continue;
-        }
+      {
+        const std::filesystem::path bf16_path =
+            sima_test::resolve_yolov8_variant_fixture("yolov8n_A_W_BF16_mpk").tar_path;
 
         Model::Options bf16_opt;
         bf16_opt.preprocess.kind = InputKind::Tensor;
         bf16_opt.preprocess.enable = AutoFlag::On;
         Model bf16_model(bf16_path.string(), bf16_opt);
-        tested_bf16 = true;
 
         const CastTessOptions tess_opt(bf16_model);
         require(tess_opt.compiled_contract != nullptr,
@@ -730,7 +724,5 @@ RUN_TEST(
                       std::to_string(i) + " producer=" + std::to_string(producer_address) +
                       " consumer=" + std::to_string(consumer_address));
         }
-        break;
       }
-      require(tested_bf16, "BF16 CastTess handoff coverage requires an authentic model fixture");
     }));

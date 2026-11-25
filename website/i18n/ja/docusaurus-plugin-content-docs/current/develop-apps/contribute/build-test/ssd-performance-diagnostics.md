@@ -1,11 +1,11 @@
 ---
-title: SSD コンポーネントのレイテンシを診断する
+title: BoxDecode コンポーネントのレイテンシを診断する
 description: 受け入れ契約を変更せずに性能の証拠を保持する
 ---
 
-# SSD コンポーネントのレイテンシを診断する
+# BoxDecode コンポーネントのレイテンシを診断する
 
-`ssd_mobilenet_boxdecode` がコンポーネントのレイテンシ予算を超える場合に、この手順を使用します。FPS が合格しても、コンポーネントの p99 の失敗を覆すことはできません。
+`yolov8s_boxdecode` がコンポーネントのレイテンシ予算を超える場合に、この手順を使用します。FPS が合格しても、コンポーネントの p99 の失敗を覆すことはできません。
 
 ## 計測境界を明確にする
 
@@ -20,7 +20,7 @@ description: 受け入れ契約を変更せずに性能の証拠を保持する
 
 これらは実経過時間の範囲であり、CPU 使用率や純粋なカーネル時間ではありません。旧 `boxdecode_backend` および `boxdecode_plugin_exclusive` 区間とは意図的に異なる識別名になっています。異なる区間を比較して数値カーネルの退行の証明としたり、合格させるためにキュー時間を除去したりしないでください。
 
-リポジトリの週次ベースラインは 1,000 サンプルを要求し、p99 の絶対上限はバックエンドが 0.7 ms、ステージが 0.93 ms です。一般的なスループットの許容幅は、これらのコンポーネント上限を緩和しません。診断中も上限、フィクスチャ、ウォームアップ、反復回数、期限を変更しないでください。
+リポジトリの週次ベースラインは、ステージの 1,000 サンプルとステージ p99 の絶対上限を要求します。バックエンドの p99 は診断用に報告され、上限はありません。一般的なスループットの許容幅は、このコンポーネント上限を緩和しません。診断中も上限、フィクスチャ、ウォームアップ、反復回数、期限を変更しないでください。
 
 ## 既存の証拠を保持する
 
@@ -45,17 +45,18 @@ description: 受け入れ契約を変更せずに性能の証拠を保持する
 : "${CORE_ROOT:?set the target Core checkout path}"
 : "${CORE_TESTS:?set the installed target test directory}"
 : "${SIMA_HARDWARE_SUPERVISOR_SOCKET:?use an admitted hardware-test scope}"
+: "${SIMA_YOLO_TAR:?set to the Model Browser yolov8s_w8a8_mpk.tar.gz}"
 cd "$CORE_ROOT"
 export SIMA_NEAT_METRICS_RETAIN_TRACE=1
-export SIMA_NEAT_METRICS_TRACE_DIR="$CORE_ROOT/ssd-diagnostic-traces"
+export SIMA_NEAT_METRICS_TRACE_DIR="$CORE_ROOT/boxdecode-diagnostic-traces"
 python3 tests/perf/tools/run_perf_matrix.py \
   --repo-root "$CORE_ROOT" \
   --prebuilt-tests-dir "$CORE_TESTS" \
   --include-long \
-  --results-dir "$CORE_ROOT/ssd-diagnostic-results"
+  --results-dir "$CORE_ROOT/boxdecode-diagnostic-results"
 ```
 
-これは SSD を含む週次性能マトリクス全体を実行します。プロバイダーの再ビルドはしません。ターゲットプログラムには SDK クロスコンパイルと DevKit ランチャーを使い、x86 ホストで AArch64 テストを直接実行しないでください。
+これは `yolov8s_boxdecode` を含む週次性能マトリクス全体を実行します。プロバイダーの再ビルドはしません。ターゲットプログラムには SDK クロスコンパイルと DevKit ランチャーを使い、x86 ホストで AArch64 テストを直接実行しないでください。
 
 トレース保持、空でないトレースディレクトリの上書き、反復回数の上書きがある場合、結果に `run_meta.execution_purpose: diagnostic` が記録されます。比較と失敗コードは変わりません。このラベルはゲートを緩和する許可ではありません。これらの上書きがなければ `baseline_comparison` が記録されますが、それだけで完全な標準 CI 実行の証明にはなりません。
 

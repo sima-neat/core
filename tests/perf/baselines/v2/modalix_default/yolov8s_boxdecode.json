@@ -1,0 +1,24 @@
+{
+  "scenario_id": "yolov8s_boxdecode",
+  "model_id": "yolov8s_w8a8_mpk",
+  "pipeline_id": "bgr_preprocess_mla_yolov8_boxdecode",
+  "run_mode": "sync",
+  "iterations": 1000,
+  "metrics_thresholds": {
+    "throughput_min": 230.0,
+    "p50_max": 4.4,
+    "p95_max": 4.5,
+    "startup_max": 750.0,
+    "rss_peak_kb_max": 270000.0,
+    "input_drop_count_max": 0.0,
+    "output_drop_count_max": 0.0,
+    "regression_tolerance_percent": 10.0
+  },
+  "component_latency_thresholds": {
+    "boxdecode_stage_wall_v2": {
+      "required": true,
+      "min_samples": 1000,
+      "p99_max_ms": 0.85
+    }
+  }
+}

@@ -1,11 +1,11 @@
 ---
-title: Diagnose SSD component latency
+title: Diagnose BoxDecode component latency
 description: Retain performance evidence without changing the acceptance contract
 ---
 
-# Diagnose SSD component latency
+# Diagnose BoxDecode component latency
 
-Use this procedure when `ssd_mobilenet_boxdecode` fails its component-latency
+Use this procedure when `yolov8s_boxdecode` fails its component-latency
 budget. A passing FPS result does not override a failing component p99.
 
 ## Keep the measurement boundaries explicit
@@ -28,10 +28,10 @@ are deliberately different identities from the old `boxdecode_backend` and
 `boxdecode_plugin_exclusive` spans. Do not compare unlike spans as proof of a
 numerical-kernel regression, or remove queue time to make a result pass.
 
-The checked-in weekly baseline requires 1,000 samples and absolute p99 limits
-of 0.7 ms for backend and 0.93 ms for stage. The general throughput tolerance does
-not widen these component limits. Keep those limits, fixtures, warmups,
-iterations and deadlines unchanged during diagnosis.
+The checked-in weekly baseline requires 1,000 stage samples and an absolute stage
+p99 limit. Backend p99 is reported for diagnosis and has no limit. The general
+throughput tolerance does not widen the component limit. Keep that limit, fixtures,
+warmups, iterations and deadlines unchanged during diagnosis.
 
 ## Retain the existing evidence
 
@@ -70,19 +70,20 @@ directory and admitting the diagnostic environment:
 : "${CORE_ROOT:?set the target Core checkout path}"
 : "${CORE_TESTS:?set the installed target test directory}"
 : "${SIMA_HARDWARE_SUPERVISOR_SOCKET:?use an admitted hardware-test scope}"
+: "${SIMA_YOLO_TAR:?set to the Model Browser yolov8s_w8a8_mpk.tar.gz}"
 cd "$CORE_ROOT"
 export SIMA_NEAT_METRICS_RETAIN_TRACE=1
-export SIMA_NEAT_METRICS_TRACE_DIR="$CORE_ROOT/ssd-diagnostic-traces"
+export SIMA_NEAT_METRICS_TRACE_DIR="$CORE_ROOT/boxdecode-diagnostic-traces"
 python3 tests/perf/tools/run_perf_matrix.py \
   --repo-root "$CORE_ROOT" \
   --prebuilt-tests-dir "$CORE_TESTS" \
   --include-long \
-  --results-dir "$CORE_ROOT/ssd-diagnostic-results"
+  --results-dir "$CORE_ROOT/boxdecode-diagnostic-results"
 ```
 
-This runs the full weekly performance matrix, including SSD. It does not rebuild
-providers. Use SDK cross-compilation and the DevKit launcher for target programs;
-never execute AArch64 tests on an x86 host.
+This runs the full weekly performance matrix, including `yolov8s_boxdecode`.
+It does not rebuild providers. Use SDK cross-compilation and the DevKit launcher
+for target programs; never execute AArch64 tests on an x86 host.
 
 With trace retention, a nonempty trace-directory override, or an iteration
 override, the result records `run_meta.execution_purpose: diagnostic`. Comparisons

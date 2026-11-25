@@ -181,7 +181,7 @@ ProcessCVU 階段預設透過 Runtime 的 `neatkernelrunner` 執行。
   原生平台套件存在／不存在狀態、套件身分與 OTA 可用性／身分。已安裝 DevKit 的
   套件清單測試需要它與所選套件清單。不要從安裝後狀態重新產生此基準。
 
-測試固定資料群組選擇與已安裝套件設定組合，請參閱
+已安裝套件設定組合，請參閱
 [測試需求](../../develop-apps/contribute/build-test/test_requirements.md)。
 
 ## PCIe 主機與卡片狀態

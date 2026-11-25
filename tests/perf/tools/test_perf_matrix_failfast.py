@@ -28,9 +28,9 @@ def write_json(path: Path, payload: dict[str, object]) -> None:
 def component_baseline() -> schema.ScenarioBaseline:
     return schema.parse_scenario_baseline(
         {
-            "scenario_id": "ssd_mobilenet_boxdecode",
-            "model_id": "ssd",
-            "pipeline_id": "ssd_boxdecode",
+            "scenario_id": "yolov8s_boxdecode",
+            "model_id": "yolov8s",
+            "pipeline_id": "yolov8s_boxdecode",
             "run_mode": "sync",
             "iterations": 1000,
             "metrics_thresholds": {
@@ -56,7 +56,7 @@ def component_baseline() -> schema.ScenarioBaseline:
 
 def passing_payload() -> dict[str, object]:
     return {
-        "scenario_id": "ssd_mobilenet_boxdecode",
+        "scenario_id": "yolov8s_boxdecode",
         "iterations": 1000,
         "run_mode": "sync",
         "throughput": 100.0,
@@ -108,7 +108,7 @@ class PerfMatrixFailfastTest(unittest.TestCase):
         return dict(
             repo_root=root, executable_dir=root, results_dir=root / "results",
             profile=schema.PerfProfile("modalix", "board", "sdk", "cc", "gst", "bundle"),
-            spec=run_perf_matrix.ScenarioSpec("ssd_mobilenet_boxdecode", executable.name),
+            spec=run_perf_matrix.ScenarioSpec("yolov8s_boxdecode", executable.name),
             baseline=replace(component_baseline(), component_latency_thresholds={}),
             timeout_sec=10, iterations_override=None,
         )
@@ -253,12 +253,12 @@ class PerfMatrixFailfastTest(unittest.TestCase):
             self.assertEqual(result.reason_code, schema.ReasonCode.ENV_TIMEOUT)
             self.assertEqual(Path(result.run_meta["artifacts"]["stdout"]).read_bytes(), b"partial\xff")
 
-    def test_ssd_scenario_is_weekly_only(self) -> None:
+    def test_yolov8s_boxdecode_scenario_is_weekly_only(self) -> None:
         standard_ids = {spec.scenario_id for spec in run_perf_matrix.STANDARD_SCENARIOS}
         long_ids = {spec.scenario_id for spec in run_perf_matrix.LONG_SCENARIOS}
 
-        self.assertNotIn("ssd_mobilenet_boxdecode", standard_ids)
-        self.assertIn("ssd_mobilenet_boxdecode", long_ids)
+        self.assertNotIn("yolov8s_boxdecode", standard_ids)
+        self.assertIn("yolov8s_boxdecode", long_ids)
         self.assertTrue(run_perf_matrix.LONG_SCENARIOS[0].allow_skip)
         self.assertTrue(all(not spec.allow_skip for spec in run_perf_matrix.STANDARD_SCENARIOS))
         self.assertEqual(
@@ -317,7 +317,7 @@ class PerfMatrixFailfastTest(unittest.TestCase):
                 results_dir=root / "results",
                 profile=profile,
                 spec=run_perf_matrix.ScenarioSpec(
-                    "ssd_mobilenet_boxdecode", executable.name, allow_skip=True
+                    "yolov8s_boxdecode", executable.name, allow_skip=True
                 ),
                 baseline=baseline,
                 timeout_sec=10,
@@ -334,7 +334,7 @@ class PerfMatrixFailfastTest(unittest.TestCase):
                 results_dir=root / "results",
                 profile=profile,
                 spec=run_perf_matrix.ScenarioSpec(
-                    "ssd_mobilenet_boxdecode", executable.name
+                    "yolov8s_boxdecode", executable.name
                 ),
                 baseline=baseline,
                 timeout_sec=10,
@@ -350,7 +350,7 @@ class PerfMatrixFailfastTest(unittest.TestCase):
                 results_dir=root / "results",
                 profile=profile,
                 spec=run_perf_matrix.ScenarioSpec(
-                    "ssd_mobilenet_boxdecode", executable.name, allow_skip=True
+                    "yolov8s_boxdecode", executable.name, allow_skip=True
                 ),
                 baseline=baseline,
                 timeout_sec=10,
@@ -543,7 +543,7 @@ class PerfMatrixFailfastTest(unittest.TestCase):
                 results_dir=root / "results",
                 profile=profile,
                 spec=run_perf_matrix.ScenarioSpec(
-                    "ssd_mobilenet_boxdecode", executable.name
+                    "yolov8s_boxdecode", executable.name
                 ),
                 baseline=component_baseline(),
                 timeout_sec=10,
@@ -569,7 +569,7 @@ class PerfMatrixFailfastTest(unittest.TestCase):
                 results_dir=root / "results",
                 profile=profile,
                 spec=run_perf_matrix.ScenarioSpec(
-                    "ssd_mobilenet_boxdecode", executable.name
+                    "yolov8s_boxdecode", executable.name
                 ),
                 baseline=component_baseline(),
                 timeout_sec=10,
@@ -599,7 +599,7 @@ class PerfMatrixFailfastTest(unittest.TestCase):
                 results_dir=root / "results",
                 profile=profile,
                 spec=run_perf_matrix.ScenarioSpec(
-                    "ssd_mobilenet_boxdecode", executable.name
+                    "yolov8s_boxdecode", executable.name
                 ),
                 baseline=component_baseline(),
                 timeout_sec=10,

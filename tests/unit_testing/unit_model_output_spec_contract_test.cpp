@@ -1,6 +1,7 @@
 #include "model/Model.h"
 #include "model/internal/ModelInternal.h"
 #include "model_archive_fixture_utils.h"
+#include "support/yolov8_variant_fixture.h"
 #include "sam_decoder_fixtures.h"
 #include "test_main.h"
 #include "test_utils.h"
@@ -282,27 +283,15 @@ RUN_TEST(
       }
 
       {
-        const auto root = sima_test::repo_root_for_modelzoo();
-        const std::vector<std::filesystem::path> bf16_candidates = {
-            root / "tmp" / "yolov8n_drive" / "yolov8n_A_W_BF16_mpk.tar.gz",
-            root / "tmp" / "yolov8n_drive" / "yolov8n_A_W_BF16_MLATess.tar.gz",
-        };
-        for (const auto& bf16_model : bf16_candidates) {
-          if (!std::filesystem::exists(bf16_model)) {
-            continue;
-          }
-          Model model(bf16_model.string());
-          const std::vector<TensorSpec> specs = model.output_specs();
-          require(!specs.empty(), "BF16 model output_specs should not be empty");
-          for (size_t i = 0; i < specs.size(); ++i) {
-            require(specs[i].rank != 0,
-                    "BF16 model output_specs rank should not be zero at index " +
-                        std::to_string(i));
-            require(!specs[i].dtypes.empty() && specs[i].dtypes[0] == TensorDType::Float32,
-                    "BF16 cast egress must expose Float32 Model boundary output_specs at index " +
-                        std::to_string(i));
-          }
-          break;
+        Model model(sima_test::resolve_yolov8_variant_fixture("yolov8n_A_W_BF16_mpk").tar_path);
+        const std::vector<TensorSpec> specs = model.output_specs();
+        require(!specs.empty(), "BF16 model output_specs should not be empty");
+        for (size_t i = 0; i < specs.size(); ++i) {
+          require(specs[i].rank != 0,
+                  "BF16 model output_specs rank should not be zero at index " + std::to_string(i));
+          require(!specs[i].dtypes.empty() && specs[i].dtypes[0] == TensorDType::Float32,
+                  "BF16 cast egress must expose Float32 Model boundary output_specs at index " +
+                      std::to_string(i));
         }
       }
 

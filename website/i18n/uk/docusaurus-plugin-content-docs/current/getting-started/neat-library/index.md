@@ -22,7 +22,7 @@ Neat Library — це API для C++ і Python, призначений для з
     <p>Встановіть Neat Library, налаштуйте PCIe-хост, використовуйте прив’язки Python або перевіряйте середовище з командного рядка.</p>
     <ul class="overview-link-list neat-library-setup-grid">
       <li><a class="overview-link-card" href="/getting-started/neat-library/install-or-update/"><strong>Встановлення або оновлення Neat Library</strong><span>Встановіть пакет sima-neat, компоненти GStreamer і середовище PyNeat за замовчуванням.</span></a></li>
-      <li><a class="overview-link-card" href="/getting-started/neat-library/pcie-host/"><strong>Встановлення на PCIe-хост</strong><span>Встановіть пакет для PCIe-хоста, щоб запускати застосунки спільної обробки з під’єднаною картою Modalix PCIe.</span></a></li>
+      <li><a class="overview-link-card" href="/getting-started/neat-library/pcie-host/"><strong>Встановлення хоста PCIe</strong><span>Встановіть пакет для PCIe-хоста, щоб запускати застосунки спільної обробки з під’єднаною картою Modalix PCIe.</span></a></li>
       <li><a class="overview-link-card" href="/getting-started/neat-library/pyneat/"><strong>Встановлення PyNeat</strong><span>Використовуйте wheel-пакет PyNeat у власному віртуальному середовищі Python.</span></a></li>
       <li><a class="overview-link-card" href="/getting-started/neat-library/neat-cli/"><strong>Neat CLI</strong><span>Перевіряйте встановлені версії, стан SDK та оновлюйте встановлені компоненти.</span></a></li>
     </ul>

@@ -458,6 +458,7 @@ set(UNIT_TESTS
   unit_boxdecode_render_manifest_from_model_test
   unit_boxdecode_yolo_layout_matrix_test
   unit_boxdecode_ssd_layout_matrix_test
+  unit_ssd300_class_selection_admission_test
   unit_boxdecode_yolox_seg_pose_class_inference_test
   unit_boxdecode_yolox_seg_pose_standalone_contract_test
   unit_boxdecode_pose_class_gate_test
@@ -1447,7 +1448,7 @@ set(PERF_TARGETS
   perf_runtime_codec_h264_decode_test
   perf_runtime_codec_h265_decode_test
   perf_runtime_model_archive_load_test
-  perf_ssd_mobilenet_boxdecode_test
+  perf_yolov8s_boxdecode_test
   perf_yolox_seg_pose_payload_representative_test
   perf_yolox_seg_pose_payload_heavy_test
 )
@@ -1464,7 +1465,7 @@ foreach(target ${PERF_TARGETS})
       ${CMAKE_CURRENT_SOURCE_DIR}/e2e_pipelines
       ${CMAKE_CURRENT_SOURCE_DIR}/e2e_pipelines/obj_detection
   )
-  if (target STREQUAL "perf_ssd_mobilenet_boxdecode_test")
+  if (target STREQUAL "perf_yolov8s_boxdecode_test")
     target_sources(${target}
       PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/e2e_pipelines/e2e_utils.cpp
@@ -1479,18 +1480,18 @@ foreach(target ${PERF_TARGETS})
   list(APPEND PIPELINESESSION_TEST_TARGETS ${target})
 endforeach()
 
-if (NOT perf_ssd_mobilenet_boxdecode_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+if (NOT perf_yolov8s_boxdecode_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
   simaneat_add_test(
-    NAME ssd_mobilenet_boxdecode_perf_smoke
-    COMMAND perf_ssd_mobilenet_boxdecode_test ${CMAKE_SOURCE_DIR}
+    NAME yolov8s_boxdecode_perf_smoke
+    COMMAND perf_yolov8s_boxdecode_test ${CMAKE_SOURCE_DIR}
   )
-  simaneat_append_ctest_env(ssd_mobilenet_boxdecode_perf_smoke)
-  set_tests_properties(ssd_mobilenet_boxdecode_perf_smoke PROPERTIES
-    LABELS "perf;ssd;boxdecode;metrics;long;modalix-only"
+  simaneat_append_ctest_env(yolov8s_boxdecode_perf_smoke)
+  set_tests_properties(yolov8s_boxdecode_perf_smoke PROPERTIES
+    LABELS "perf;yolov8;boxdecode;metrics;long;modalix-only"
     RESOURCE_LOCK "perf-device;accelerator-device"
     SKIP_RETURN_CODE 77
   )
-  set_property(TEST ssd_mobilenet_boxdecode_perf_smoke
+  set_property(TEST yolov8s_boxdecode_perf_smoke
     APPEND PROPERTY ENVIRONMENT "SIMA_TEST_IS_LONG=1")
 endif()
 
@@ -2320,21 +2321,6 @@ add_pipeline_test(
 if (NOT ssd_contract_integration_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
   set_property(TEST ssd_contract_integration_test
     APPEND PROPERTY LABELS "integration;obj_detection;ssd;contract;strict")
-endif()
-
-add_pipeline_test_long(
-  ssd300_surgical_e2e_test
-  LOCK_ACCELERATOR
-  SOURCES
-    e2e_pipelines/obj_detection/ssd300_surgical_e2e_test.cpp
-    e2e_pipelines/e2e_utils.cpp
-    e2e_pipelines/obj_detection/obj_detection_utils.cpp
-  ARGS ${CMAKE_SOURCE_DIR}
-)
-
-if (NOT ssd300_surgical_e2e_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
-  set_property(TEST ssd300_surgical_e2e_test
-    APPEND PROPERTY LABELS "e2e;obj_detection;ssd;ssd300;surgical;acceptance")
 endif()
 
 add_pipeline_test(
