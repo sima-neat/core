@@ -82,7 +82,7 @@ jobs:
       prerelease: ${{ inputs.prerelease }}
       latest: ${{ inputs.latest }}
       dry_run: ${{ inputs.dry_run }}
-      validate_release_issues: true
+      validate_release_issues: ${{ !contains(inputs.tag, '-rc') }}
     secrets:
       NEAT_RELEASES_APP_ID: ${{ secrets.NEAT_RELEASES_APP_ID }}
       NEAT_RELEASES_APP_PRIVATE_KEY: ${{ secrets.NEAT_RELEASES_APP_PRIVATE_KEY }}
