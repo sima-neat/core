@@ -59,6 +59,12 @@ YOLOV8N_VARIANT_TESTS = {
     'preproc_yolov8_matrix_test',
     'yolov8_variant_route_matrix_test',
 }
+# CTest name -> (Model Browser id, variant) for model_browser_contract_suite_test. Each test reads
+# <id>_<variant>_mpk.tar.gz from SIMA_MODEL_BROWSER_DIR.
+MODEL_BROWSER_SUITE = {
+    'model_browser_contract_inception_v3': ('inception_v3', 'w8a8'),
+    'model_browser_contract_yolox_s': ('yolox_s', 'w8a8'),
+}
 
 
 def partition(names, weights):
@@ -110,6 +116,16 @@ def prepare_selected_fixtures(selected, env, output):
             env[target] = prepare_fixture(model_id, variant, output)
 
 
+def prepare_model_browser_suite(selected, env, tmp):
+    """Prepare only the suite packages this partition runs; a preset directory wins."""
+    wanted = [MODEL_BROWSER_SUITE[n] for n in sorted(MODEL_BROWSER_SUITE) if n in selected]
+    if not wanted or env.get('SIMA_MODEL_BROWSER_DIR'):
+        return
+    suite_dir = Path(tmp, 'model-browser-suite')
+    for model_id, variant in wanted:
+        prepare_fixture(model_id, variant, suite_dir)
+    env['SIMA_MODEL_BROWSER_DIR'] = str(suite_dir)
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--index', type=int, choices=(0, 1), required=True)
@@ -139,6 +155,7 @@ def main():
             for variant in ('w8a8', 'w8a16', 'w16a16'):
                 prepare_fixture('yolov8n', variant, variants_dir)
             env['SIMA_YOLOV8_VARIANTS_DIR'] = str(variants_dir)
+        prepare_model_browser_suite(set(selected), env, tmp)
         result = subprocess.run([sys.executable, str(ROOT / 'tools/ci/check_test_coverage.py'),
                     '--profile', env.get('COVERAGE_PROFILE', 'strict'),
                     '--output-dir', str(coverage), '--', *command, '-R', regex], env=env)

@@ -1276,13 +1276,39 @@ if (NOT rf_detr_small_pipeline_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
   set_property(TEST rf_detr_small_pipeline_test APPEND PROPERTY LABELS "e2e;obj_detection")
 endif()
 
-add_pipeline_test_long(
-  modelzoo_bulk_models_test
-  e2e_testing/modelzoo_bulk_models_test.cpp
-)
-
-if (NOT modelzoo_bulk_models_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
-  set_property(TEST modelzoo_bulk_models_test APPEND PROPERTY LABELS "e2e;modelzoo;long")
+# One executable, one CTest per Model Browser package. CI prepares each package only on the
+# DevKit shard that runs its test (tools/ci/partition_devkit_e2e.py).
+if (NOT model_browser_contract_suite_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  add_executable(
+    model_browser_contract_suite_test
+    e2e_testing/model_browser_contract_suite_test.cpp
+  )
+  add_dependencies(model_browser_contract_suite_test prepare_test_fixtures)
+  target_link_libraries(model_browser_contract_suite_test PRIVATE
+    sima_neat sima_neat_internal_headers)
+  target_include_directories(model_browser_contract_suite_test
+    PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}
+      ${CMAKE_CURRENT_SOURCE_DIR}/e2e_pipelines
+      ${CMAKE_CURRENT_SOURCE_DIR}/e2e_pipelines/obj_detection
+  )
+  list(APPEND PIPELINESESSION_TEST_TARGETS model_browser_contract_suite_test)
+  foreach(_mb inception_v3:w8a8 yolox_s:w8a8)
+    string(REPLACE ":" ";" _mb_parts "${_mb}")
+    list(GET _mb_parts 0 _mb_id)
+    list(GET _mb_parts 1 _mb_variant)
+    simaneat_add_test(
+      NAME model_browser_contract_${_mb_id}
+      COMMAND model_browser_contract_suite_test --id ${_mb_id} --variant ${_mb_variant}
+    )
+    simaneat_append_ctest_env(model_browser_contract_${_mb_id})
+    set_property(TEST model_browser_contract_${_mb_id} APPEND PROPERTY
+      LABELS "strict;e2e;long;modalix-only")
+    set_property(TEST model_browser_contract_${_mb_id} APPEND PROPERTY
+      RESOURCE_LOCK "accelerator-device")
+    set_property(TEST model_browser_contract_${_mb_id} APPEND PROPERTY
+      ENVIRONMENT "SIMA_TEST_IS_LONG=1")
+  endforeach()
 endif()
 
 add_pipeline_test_long(
@@ -2846,7 +2872,6 @@ foreach(test
     hybrid_graph_stage_model_test
     preproc_standalone_test
     preproc_build_input_repro_test
-    modelzoo_bulk_models_test
     resnet18_async_consumer_visibility_test
     detr_resnet50_multi_output_test
     rf_detr_small_pipeline_test
@@ -2890,7 +2915,8 @@ foreach(test
     graph_migration_legacy_preproc_yolov8_matrix_test
     graph_migration_unified_preproc_yolov8_matrix_test
     preproc_yolov8_matrix_test
-    modelzoo_bulk_models_test
+    model_browser_contract_inception_v3
+    model_browser_contract_yolox_s
     unit_yolov8_contract_subset_test)
   set_pipeline_test_cost(${test} 90)
 endforeach()
