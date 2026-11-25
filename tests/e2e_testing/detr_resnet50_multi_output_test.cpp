@@ -189,7 +189,8 @@ struct Image {
   simaai::neat::Tensor tensor;
 };
 
-// Stretch to 640x640 with bilinear resampling, divide by 255, then ImageNet mean and std, HWC.
+// Stretch to 640x640 with bilinear resampling, divide by 255, then ImageNet mean and std, NHWC
+// in EV74 memory, which the model's device-visible input route requires.
 Image load_image(const std::string& label, const fs::path& path) {
   cv::Mat bgr = cv::imread(path.string(), cv::IMREAD_COLOR);
   if (bgr.empty())
@@ -208,8 +209,8 @@ Image load_image(const std::string& label, const fs::path& path) {
             (static_cast<float>(px[x][c]) / 255.0f - mean[c]) / std_dev[c];
   }
   return {label, bgr.cols, bgr.rows,
-          simaai::neat::Tensor::from_vector(data, {kInputSize, kInputSize, 3},
-                                            simaai::neat::TensorMemory::CPU)};
+          simaai::neat::Tensor::from_vector(data, {1, kInputSize, kInputSize, 3},
+                                            simaai::neat::TensorMemory::EV74)};
 }
 
 bool throws(const std::function<void()>& fn, std::string* what) {
@@ -356,7 +357,7 @@ int main(int argc, char** argv) {
               [&] {
                 std::vector<float> small(320 * 320 * 3, 0.0f);
                 (void)runner.run({simaai::neat::Tensor::from_vector(
-                                     small, {320, 320, 3}, simaai::neat::TensorMemory::CPU)},
+                                     small, {1, 320, 320, 3}, simaai::neat::TensorMemory::EV74)},
                                  kTimeoutMs);
               },
               &what),
@@ -366,8 +367,8 @@ int main(int argc, char** argv) {
                 std::vector<uint8_t> bytes(static_cast<std::size_t>(kInputSize) * kInputSize * 3,
                                            0);
                 (void)runner.run(
-                    {simaai::neat::Tensor::from_vector(bytes, {kInputSize, kInputSize, 3},
-                                                       simaai::neat::TensorMemory::CPU)},
+                    {simaai::neat::Tensor::from_vector(bytes, {1, kInputSize, kInputSize, 3},
+                                                       simaai::neat::TensorMemory::EV74)},
                     kTimeoutMs);
               },
               &what),
