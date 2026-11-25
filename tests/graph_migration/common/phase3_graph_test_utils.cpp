@@ -154,24 +154,6 @@ simaai::neat::Model::Options yolo_image_bgr_to_rgb_bf16_options() {
   return opt;
 }
 
-simaai::neat::Model::Options resnet_imagenet_bgr_options() {
-  simaai::neat::Model::Options opt;
-  opt.preprocess.kind = simaai::neat::InputKind::Image;
-  opt.preprocess.enable = simaai::neat::AutoFlag::On;
-  opt.preprocess.color_convert.enable = simaai::neat::AutoFlag::On;
-  opt.preprocess.color_convert.input_format = simaai::neat::PreprocessColorFormat::BGR;
-  opt.preprocess.preset = simaai::neat::NormalizePreset::ImageNet;
-  opt.upstream_name = "decoder";
-  return opt;
-}
-
-simaai::neat::Model::Options resnet_imagenet_gray8_options() {
-  simaai::neat::Model::Options opt = resnet_imagenet_bgr_options();
-  opt.preprocess.color_convert.input_format = simaai::neat::PreprocessColorFormat::GRAY8;
-  opt.preprocess.color_convert.output_format = simaai::neat::PreprocessColorFormat::RGB;
-  return opt;
-}
-
 void require_nonempty_tensor_output(const simaai::neat::TensorList& out, std::string_view where) {
   require(!out.empty(), std::string(where) + ": expected non-empty TensorList output");
 }
