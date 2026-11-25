@@ -103,7 +103,7 @@ For INT8 output, supply the original positive `quantization_step`; Core checks i
 
 For YUV-to-RGB input, `color_conversion_placement` defaults to `PreprocColorConversionPlacement.AfterResize`: component resizing precedes the UInt8 RGB decode boundary, then rescale/normalization run. `BeforeResize` moves that decode boundary before RGB rescale/sampling. Other color routes reject this override. Do not assume either route is equivalent to a Pillow/torchvision preprocessing pipeline; verify its order and intermediate dtype.
 
-Use image input without a `transforms` override. Conflicting disable flags and unsupported combinations fail rather than silently changing the request. The MPK still owns output shape, dtype, quantization and physical layout; source capacity is independent of model dimensions. Omitting the new options preserves legacy arithmetic. These additive fields change C++ object layouts: this version uses ABI 7 (`libsima_neat.so.7`). Rebuild applications, plugins and Python bindings with matching headers/libraries; do not use compatibility symlinks to load ABI 5 or 6 binaries.
+Use image input without a `transforms` override. Conflicting disable flags and unsupported combinations fail rather than silently changing the request. The MPK still owns output shape, dtype, quantization and physical layout; source capacity is independent of model dimensions. Omitting the new options preserves legacy arithmetic. These additive fields change C++ object layouts: this version uses ABI 8 (`libsima_neat.so.8`). Rebuild applications, plugins and Python bindings with matching headers/libraries; do not use compatibility symlinks to load ABI 5 or 6 binaries.
 
 
 
