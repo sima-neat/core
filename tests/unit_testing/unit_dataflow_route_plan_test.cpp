@@ -521,8 +521,8 @@ void boxdecode(const Yolo& y) {
              std::string("task '") + task + "': the BoxDecode stage runs the decode families",
              std::string("a task without a device row: ") + task);
   }
-  // A head stated as a strided tensor whose rows are pitched for more channels than it has: the
-  // kernel reads every row to the end of its padding, the tensor ends at its last element.
+  // A head stated as a strided tensor of which the kernel reads neither its own extent nor its
+  // rows whole (here: rows pitched far wider than the bytes the kernel reads).
   declines(decode([](si::StageStaticSpec&, si::KernelStageRecipe& r) {
              client::TensorSpec& head = r.boxdecode_program->request.inputs.front();
              const std::size_t rank = head.shape.size();
@@ -534,7 +534,8 @@ void boxdecode(const Yolo& y) {
              }
              head.layout = pitched;
            }),
-           "is a strided tensor of", "a strided head with channel padding");
+           "which is neither the tensor's own extent",
+           "a strided head whose kernel reads neither of its two byte counts");
   declines(decode([](si::StageStaticSpec&, si::KernelStageRecipe& r) {
              r.boxdecode_program->write = nullptr;
            }),

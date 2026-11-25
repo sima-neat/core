@@ -79,8 +79,10 @@
 //     by the stamp's user word (DataflowFrames). Carried: the decode families whose wire a device
 //     row has shown byte-equal to GStreamer's (the table in front of plan_boxdecode_stage:
 //     YOLOv8-style detection, wire BBOX, with C-blocked heads; YOLOv8-style and YOLO26 oriented
-//     boxes, wire BBOX_OBB_V1). A head that is a dense or strided tensor must span exactly the
-//     bytes its kernel reads: one whose rows carry channel padding does not, and is not carried.
+//     boxes, wire BBOX_OBB_V1). A head that is a dense or strided tensor is one whose kernel
+//     reads either the tensor's own extent or, of a strided head, its rows whole to the end of
+//     their pitch (pixels pitched for more channels than the head has); another count is not
+//     carried.
 //     An oriented-box decode maps boxes back with one scale for both axes: a frame size whose
 //     letterbox has two is refused, at the build when it is the declared size or the port's
 //     bound, at its push otherwise (the Run goes on). The other decode families, pose and

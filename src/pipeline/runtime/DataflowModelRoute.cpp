@@ -1087,9 +1087,7 @@ std::string plan_frame_stage(const si::StageStaticSpec& stage, bool first, bool 
 // for every family (one decode kernel on the heads in the MLA's buffer, the stage's serializer over
 // its outputs); what a family's row shows is its own: the kernel's one-phase entry gives the bytes
 // of the staged entry GStreamer's host tasks give it, and its per-frame geometry variant gives the
-// bytes of the request. A family is added with its row; one without a row is not carried. YOLO26
-// and YOLOX detection, YOLO26 pose and segmentation have no row: their box head is a strided
-// tensor with channel padding, which the Run's kernel object does not hold (below).
+// bytes of the request. A family is added with its row; one without a row is not carried.
 struct CarriedDecode {
   std::string_view profile, task;
 };
@@ -1121,18 +1119,34 @@ std::string carried_decodes_text() {
 // A kernel request's tensor as the runtime states it (defined with the kernels' making, below).
 std::optional<df::TensorSpec> runtime_tensor(const client::TensorSpec& tensor);
 
-// The bytes the Run's kernel object holds a dense or strided tensor of a request in: the tensor's
-// own extent, to the end of its last element (soc::Kernel::make checks the Kernels package's
-// byte count against it). 0: an MLA layout, whose bytes are the Kernels package's, or a tensor
-// the runtime does not state.
-std::size_t kernel_object_bytes(const client::TensorSpec& tensor) {
+// The two byte counts the Run's kernel object holds a dense or strided tensor of a request in
+// (soc::Kernel::make checks the Kernels package's count against them): `own`, the tensor's own
+// extent, to the end of its last element; and for a strided tensor `whole`, its rows whole,
+// every row of its outermost dimension to the end of its pitch (a head whose pixels are pitched
+// for more channels than it has, read to the end of the last pixel's padding). Both 0: an MLA
+// layout, whose bytes are the Kernels package's, or a tensor the runtime does not state.
+struct KernelObjectBytes {
+  std::size_t own = 0, whole = 0;
+};
+KernelObjectBytes kernel_object_bytes(const client::TensorSpec& tensor) {
   const std::optional<df::TensorSpec> spec = runtime_tensor(tensor);
   if (!spec || std::holds_alternative<df::MlaTiled>(spec->layout) ||
       std::holds_alternative<df::MlaCBlocked>(spec->layout)) {
-    return 0;
+    return {};
   }
   const df::PortSpec port{.payload = *spec, .memory = df::MemoryKind::Host};
-  return df::validate(port) ? 0 : df::slot_bytes(port);
+  if (df::validate(port)) {
+    return {};
+  }
+  KernelObjectBytes held{df::slot_bytes(port), 0};
+  std::int64_t whole = 0;
+  if (const auto* strided = std::get_if<df::Strided>(&spec->layout);
+      strided && spec->shape.rank > 0U &&
+      !__builtin_mul_overflow(strided->stride_bytes[0], spec->shape.dims[0].max, &whole) &&
+      whole > 0) {
+    held.whole = static_cast<std::size_t>(whole);
+  }
+  return held;
 }
 
 // A frame's preprocess facts as the BoxDecode stage's geometry reads them (null: the route has no
@@ -1257,13 +1271,15 @@ std::string plan_boxdecode_stage(const si::StageStaticSpec& stage, bool first, b
              "buffer of " +
              std::to_string(carrier.size_bytes) + " bytes";
     }
-    if (const std::size_t extent = kernel_object_bytes(request.inputs[i]);
-        extent != 0U && extent != bytes) {
-      return head + " is a strided tensor of " + dims_text(request.inputs[i].shape) +
+    if (const KernelObjectBytes held = kernel_object_bytes(request.inputs[i]);
+        held.own != 0U && held.own != bytes && held.whole != bytes) {
+      return head + " is a tensor of " + dims_text(request.inputs[i].shape) +
              " whose kernel reads " + std::to_string(bytes) +
-             " bytes of it, its rows to the end of their channel padding, where the tensor's own "
-             "extent is " +
-             std::to_string(extent) + " bytes";
+             " bytes of it, which is neither the tensor's own extent (" + std::to_string(held.own) +
+             " bytes)" +
+             (held.whole != 0U ? " nor its rows whole to the end of their pitch (" +
+                                     std::to_string(held.whole) + " bytes)"
+                               : std::string());
     }
     for (const DataflowModelStage::View& other : kernel.packed_inputs) {
       if (offset < other.offset + other.bytes && other.offset < offset + bytes) {
