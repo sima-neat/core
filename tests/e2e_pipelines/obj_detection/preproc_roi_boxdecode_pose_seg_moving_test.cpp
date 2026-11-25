@@ -167,10 +167,11 @@ int main(int argc, char** argv) {
 
     // The same patch at two offsets of one canvas, both away from every frame edge so keypoints
     // the model places just outside the patch are not clamped in one frame only.
-    constexpr int kShiftX = 600, kShiftY = 300;
+    // With the default 1280x720 people image this leaves an 80 px margin on every side.
+    constexpr int kShiftX = 400, kShiftY = 200;
     const int margin =
         std::min((1920 - kShiftX - patch.cols) / 2, (1080 - kShiftY - patch.rows) / 2);
-    require(margin >= 32, "the canvas leaves no margin within the default dynamic image capacity");
+    require(margin >= 64, "the canvas leaves no margin within the default dynamic image capacity");
     const cv::Size canvas(kShiftX + patch.cols + 2 * margin, kShiftY + patch.rows + 2 * margin);
     cv::Mat frame(canvas, patch.type(), cv::Scalar(114, 114, 114));
     patch.copyTo(frame(cv::Rect(margin, margin, patch.cols, patch.rows)));
