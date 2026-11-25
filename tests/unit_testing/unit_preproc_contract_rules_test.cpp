@@ -815,6 +815,18 @@ RUN_TEST(
         require(input_shapes.size() == 1U && input_shapes.front().size() == 3U &&
                     input_shapes.front().back() == 1,
                 "compiled single-channel GRAY8 Preproc input must have one channel");
+        const auto& output_shapes = compiled.stages.front().processcvu->payload.output_shapes;
+        std::string output_shape_text;
+        for (const auto& shape : output_shapes) {
+          output_shape_text += "[";
+          for (const int dim : shape)
+            output_shape_text += std::to_string(dim) + ",";
+          output_shape_text += "]";
+        }
+        require(output_shapes.size() == 1U && !output_shapes.front().empty() &&
+                    output_shapes.front().back() == 1,
+                "compiled single-channel GRAY8 Preproc output must have one channel, got " +
+                    output_shape_text);
       }
 
 #ifdef SIMA_NEAT_INTERNAL
