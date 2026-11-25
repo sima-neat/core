@@ -1,11 +1,11 @@
 ---
-title: Діагностика затримки компонентів SSD
+title: Діагностика затримки компонентів BoxDecode
 description: Зберігайте докази продуктивності, не змінюючи контракт прийняття
 ---
 
-# Діагностика затримки компонентів SSD
+# Діагностика затримки компонентів BoxDecode
 
-Використовуйте цю процедуру, коли `ssd_mobilenet_boxdecode` перевищує бюджет
+Використовуйте цю процедуру, коли `yolov8s_boxdecode` перевищує бюджет
 затримки компонента. Успішний результат FPS не скасовує невдалий p99 компонента.
 
 ## Явні межі вимірювання
@@ -28,9 +28,10 @@ description: Зберігайте докази продуктивності, н�
 і `boxdecode_plugin_exclusive`. Не порівнюйте різні інтервали як доказ регресії
 числового ядра й не вилучайте час черги, щоб отримати успішний результат.
 
-Збережений у репозиторії щотижневий еталон потребує 1 000 вимірів та абсолютних
-меж p99: 0,7 мс для бекенду й 0,93 мс для стадії. Загальний допуск пропускної
-здатності не розширює ці межі компонентів. Під час діагностики не змінюйте межі,
+Збережений у репозиторії щотижневий еталон потребує 1 000 вимірів стадії та абсолютної
+межі p99 для стадії. Значення p99 бекенду наводиться для діагностики й не має межі.
+Загальний допуск пропускної здатності не розширює цю межу компонента. Під час
+діагностики не змінюйте межу,
 тестові фікстури, прогрівання, кількість ітерацій та граничні строки.
 
 ## Збереження наявних доказів
@@ -70,17 +71,18 @@ description: Зберігайте докази продуктивності, н�
 : "${CORE_ROOT:?set the target Core checkout path}"
 : "${CORE_TESTS:?set the installed target test directory}"
 : "${SIMA_HARDWARE_SUPERVISOR_SOCKET:?use an admitted hardware-test scope}"
+: "${SIMA_YOLO_TAR:?set to the Model Browser yolov8s_w8a8_mpk.tar.gz}"
 cd "$CORE_ROOT"
 export SIMA_NEAT_METRICS_RETAIN_TRACE=1
-export SIMA_NEAT_METRICS_TRACE_DIR="$CORE_ROOT/ssd-diagnostic-traces"
+export SIMA_NEAT_METRICS_TRACE_DIR="$CORE_ROOT/boxdecode-diagnostic-traces"
 python3 tests/perf/tools/run_perf_matrix.py \
   --repo-root "$CORE_ROOT" \
   --prebuilt-tests-dir "$CORE_TESTS" \
   --include-long \
-  --results-dir "$CORE_ROOT/ssd-diagnostic-results"
+  --results-dir "$CORE_ROOT/boxdecode-diagnostic-results"
 ```
 
-Це виконує повну щотижневу матрицю продуктивності, включно з SSD, і не
+Це виконує повну щотижневу матрицю продуктивності, включно з `yolov8s_boxdecode`, і не
 перебудовує постачальників. Для цільових програм використовуйте крос-компіляцію
 SDK та засіб запуску DevKit; ніколи не виконуйте тести AArch64 на хості x86.
 
