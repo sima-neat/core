@@ -11,10 +11,6 @@ on:
         description: JSON object mapping ambiguous issue/PR numbers to reviewed categories.
         type: string
         default: '{}'
-      shared_workflow_ref:
-        description: Shared triage implementation ref.
-        type: string
-        default: main
 
 permissions:
   contents: read
@@ -28,13 +24,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-        with:
-          path: caller-repo
-      - uses: actions/checkout@v6
-        with:
-          repository: sima-neat/.github
-          ref: ${{ inputs.shared_workflow_ref }}
-          path: shared-github
       - name: Preview or apply reviewed label migration
         env:
           GITHUB_TOKEN: ${{ github.token }}
@@ -42,8 +31,7 @@ jobs:
           DRY_RUN: ${{ inputs.dry_run }}
         run: |
           python3 -c 'import os,pathlib; pathlib.Path(os.environ["RUNNER_TEMP"], "assignments.json").write_text(os.environ["ASSIGNMENTS"])'
-          python3 shared-github/scripts/issue_triage.py migrate-labels \
-            --repo-triage-path caller-repo/.github/issue-triage \
+          python3 tools/ci/migrate_issue_labels.py \
             --assignments "${RUNNER_TEMP}/assignments.json" \
             --dry-run "${DRY_RUN}" \
             | tee "${RUNNER_TEMP}/label-migration.json"
