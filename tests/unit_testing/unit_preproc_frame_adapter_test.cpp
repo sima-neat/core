@@ -1740,6 +1740,126 @@ void crop_geometry_dynamic_cache() {
       << "Crop exact window, actual-frame geometry, immutable cache and affine authority PASS\n";
 }
 
+// The kernel limits that the YUYV documentation names. Errors are pinned so the
+// documented fallback (MJPEG, or ColorConvert to RGB first) stays accurate.
+void rejects_with(const rt::Result<std::shared_ptr<PreprocProbe>>& result, std::string_view text,
+                  const std::string& label) {
+  const auto* error = std::get_if<rt::Error>(&result);
+  const auto detail = label + (error ? ": " + error->message : ": accepted");
+  require(error && error->message.find(text) != std::string::npos, detail.c_str());
+}
+
+void yuyv_color_and_storage_contract() {
+  auto cfg = config();
+  auto desc = cfg->input_tensors[0].descriptor();
+  desc.shape.sizes[0] = 3;
+  desc.shape.sizes[1] = 6;
+  desc.shape.sizes[2] = 2;
+  desc.layout.strided.strides_bytes[0] = 12;
+  desc.layout.strided.strides_bytes[1] = 2;
+  simaai::neat::ImageColorOptions color;
+  color.matrix = simaai::neat::ImageColorMatrix::Bt709;
+  color.range = simaai::neat::ImageYuvRange::Limited;
+  const auto yuyv = [&](std::shared_ptr<core::ProcessCvuStagePayload> p) {
+    p->input_img_type = "YUY2";
+    p->input_tensors[0] = p->input_tensors[0].with_geometry(desc);
+    p->input_color = color;
+    return p;
+  };
+  probe::Options options;
+  options.capture = preproc_capture();
+  cfg = yuyv(cfg);
+  cfg->input_color.reset();
+  rejects_with(PreprocProbe::create(cfg, options), "YUYV requires explicit input color",
+               "YUYV must not implicitly assume input color");
+  cfg->input_color = color;
+  // Antialiased sampling, fixed source arithmetic and Crop are rejected for YUYV
+  // and admitted for the same model on RGB, the ColorConvert fallback.
+  constexpr float step = 1.f / 31.75f;
+  for (int fault = 0; fault < 7; ++fault) {
+    const auto apply = [&](std::shared_ptr<core::ProcessCvuStagePayload> p) {
+      if (fault == 0)
+        p->scaling_type = "BILINEAR_ANTIALIASED";
+      if (fault >= 1 && fault <= 5) {
+        p->scaling_type = "NEAREST"; // Fixed arithmetic samples with Nearest or antialiasing.
+        p->rescale_factor = 1.f / 255.f;
+      }
+      if (fault == 1)
+        p->normalize = 0;
+      if (fault == 3) {
+        p->quantization_step = step;
+        p->q_scale = 1.f / step;
+      }
+      if (fault == 4)
+        p->floating_conversion = simaai::neat::PreprocFloatingConversion::NearestEven;
+      if (fault == 5)
+        p->color_conversion_placement = simaai::neat::PreprocColorConversionPlacement::BeforeResize;
+      if (fault == 6) {
+        p->resize_mode = simaai::neat::ResizeMode::Crop;
+        p->shorter_side = 10;
+      }
+      return p;
+    };
+    const auto text = fault == 0   ? "YUYV input does not support antialiased sampling"
+                      : fault == 6 ? "crop currently requires RGB, BGR or Gray input"
+                                   : "FP32 transforms require supported RGB/Gray tensor output";
+    rejects_with(PreprocProbe::create(apply(yuyv(config(1, fault == 3))), options), text,
+                 "YUYV admitted kernel-unsupported preprocessing " + std::to_string(fault));
+    // Color conversion before resize applies only to YUV input; RGB needs none.
+    if (fault != 5)
+      (void)take(PreprocProbe::create(apply(config(1, fault == 3)), options));
+  }
+  auto stage = take(PreprocProbe::create(cfg, options));
+  auto* caps = gst_caps_from_string("video/x-raw,format=YUY2,width=6,height=3,framerate=30000/"
+                                    "1001,colorimetry=bt709,chroma-site=jpeg");
+  okay(stage->accepts_caps(caps));
+  gst_caps_set_simple(caps, "colorimetry", G_TYPE_STRING, "bt601", nullptr);
+  require(stage->accepts_caps(caps).has_value(), "YUYV accepted conflicting matrix");
+  gst_caps_unref(caps);
+  const auto frame = [](std::size_t bytes) {
+    auto* buffer = gst_buffer_new_allocate(nullptr, bytes, nullptr);
+    gsize offsets[GST_VIDEO_MAX_PLANES] = {7};
+    gint strides[GST_VIDEO_MAX_PLANES] = {20};
+    require(gst_buffer_add_video_meta_full(buffer, GST_VIDEO_FRAME_FLAG_NONE, GST_VIDEO_FORMAT_YUY2,
+                                           6, 3, 1, offsets, strides),
+            "YUYV fixture meta");
+    return buffer;
+  };
+  auto* published = gst_structure_new_empty("test");
+  auto* input = frame(59);
+  // Default test storage rebases each span; keep the carrier-relative offset.
+  struct ExactStorage final : Storage {
+    std::shared_ptr<Owner> owner = std::make_shared<Owner>(59, 0x100000);
+    rt::Result<probe::Buffer> resolve(GstBuffer*, GstMemory*, std::size_t offset,
+                                      std::size_t length, probe::Access) const override {
+      return probe::Buffer{owner, offset, length};
+    }
+  } storage;
+  probe::Binding binding;
+  okay(stage->bind(input, storage, binding, published));
+  require(binding.inputs.size() == 1 && binding.inputs[0].offset_bytes == 7 &&
+              binding.inputs[0].length_bytes == 52,
+          "YUYV active extent/offset lost");
+  gst_buffer_unref(input);
+  auto* roi_input = frame(59);
+  auto* roi = gst_custom_meta_get_structure(gst_buffer_add_custom_meta(roi_input, "GstSimaMeta"));
+  gst_structure_set(roi, "preproc_roi_count", G_TYPE_INT, 1, nullptr);
+  set_list(roi, "preproc_roi_rects", {0, 0, 4, 2});
+  set_list(roi, "preproc_roi_batch_indices", {0});
+  probe::Binding roi_binding;
+  const auto roi_error = stage->bind(roi_input, storage, roi_binding, published);
+  require(roi_error &&
+              roi_error->message.find("ROI lists require RGB/BGR/Gray") != std::string::npos,
+          "YUYV accepted a runtime ROI list");
+  gst_buffer_unref(roi_input);
+  input = frame(58);
+  probe::Binding short_binding;
+  require(stage->bind(input, Storage{}, short_binding, published).has_value(),
+          "YUYV truncated final active row accepted");
+  gst_buffer_unref(input);
+  gst_structure_free(published);
+}
+
 void image_frontend_metadata_and_bounds() {
   auto cfg = config();
   auto policy = std::make_shared<simaai::neat::internal::ImageTransformPolicy>();
@@ -1884,6 +2004,46 @@ void image_frontend_input_rejections() {
   std::cout << "Image frontend explicit color, interlace and ROI rejection PASS\n";
 }
 
+void image_frontend_input_colorimetry() {
+  const auto prepare = [](const char* colorimetry) {
+    auto cfg = config();
+    auto policy = std::make_shared<simaai::neat::internal::ImageTransformPolicy>();
+    policy->mode = simaai::neat::internal::ImageTransformMode::ColorConvert;
+    policy->color.matrix = simaai::neat::ImageColorMatrix::Bt709;
+    policy->color.range = simaai::neat::ImageYuvRange::Limited;
+    policy->colorimetry = colorimetry;
+    cfg->image_transform = policy;
+    cfg->input_img_type = cfg->output_img_type = "NV12";
+    cfg->output_shapes = {{8, 8, 1}};
+    cfg->output_dtype = "UINT8";
+    cfg->output_tensors = {{descriptor(true), "UINT8"}};
+    cfg->normalize = cfg->aspect_ratio = 0;
+    cfg->scaling_type = "NO_SCALING";
+    probe::Options options;
+    options.capture = preproc_capture();
+    return PreprocProbe::create(cfg, options);
+  };
+  constexpr auto disagree = "explicit color metadata must agree with image policy";
+  rejects_with(prepare("bt601"), disagree, "input_colorimetry with another matrix accepted");
+  rejects_with(prepare("1:3:5:1"), disagree, "input_colorimetry with full range accepted");
+  auto adapter = take(prepare("bt709"));
+  const auto source = [&](const char* colorimetry) {
+    std::unique_ptr<GstCaps, decltype(&gst_caps_unref)> caps(
+        gst_caps_new_simple("video/x-raw", "format", G_TYPE_STRING, "NV12", "width", G_TYPE_INT, 8,
+                            "height", G_TYPE_INT, 8, nullptr),
+        gst_caps_unref);
+    if (colorimetry)
+      gst_caps_set_simple(caps.get(), "colorimetry", G_TYPE_STRING, colorimetry, nullptr);
+    return adapter->accepts_caps(caps.get());
+  };
+  okay(source("bt709"));
+  for (const char* other : {static_cast<const char*>(nullptr), "bt601", "1:3:5:1"}) {
+    const auto error = source(other);
+    require(error && error->field == "input.colorimetry",
+            "source caps without the authored input_colorimetry accepted");
+  }
+}
+
 } // namespace
 int main(int argc, char** argv) {
   gst_init(&argc, &argv);
@@ -1894,8 +2054,10 @@ int main(int argc, char** argv) {
   try {
     geometry_descriptor_compatibility();
     crop_geometry_dynamic_cache();
+    yuyv_color_and_storage_contract();
     image_frontend_metadata_and_bounds();
     image_frontend_input_rejections();
+    image_frontend_input_colorimetry();
     cold_generic_preparation();
     immutable_policy_instances();
     contract();

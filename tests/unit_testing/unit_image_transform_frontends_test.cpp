@@ -11,6 +11,7 @@
 #include "pipeline/TensorAdapters.h"
 #include "test_main.h"
 #include <gst/video/video.h>
+#include <filesystem>
 #include <memory>
 #include <utility>
 
@@ -89,6 +90,24 @@ void contracts() {
     nodes::Resize(o);
   });
 
+  {
+    ColorConvertOptions options;
+    options.output_format = ImageFormat::NV12;
+    options.surface = ImageSurfaceLayout::EncoderNv12;
+    options.color.matrix = ImageColorMatrix::Bt709;
+    options.color.range = ImageYuvRange::Limited;
+    auto explicit_options = options;
+    explicit_options.input_colorimetry = "bt709";
+    auto explicit_color = nodes::ColorConvert(explicit_options);
+    const auto* policy = internal::ImageTransformAccess::policy(preproc(explicit_color));
+    require(policy->colorimetry == "bt709" && policy->color.matrix == ImageColorMatrix::Bt709 &&
+                policy->color.range == ImageYuvRange::Limited &&
+                policy->surface == ImageSurfaceLayout::EncoderNv12,
+            "explicit source color must retain the encoder surface and numerical policy");
+    auto implicit_color = nodes::ColorConvert(options);
+    require(internal::ImageTransformAccess::policy(preproc(implicit_color))->colorimetry.empty(),
+            "legacy ColorConvert must not acquire another node's source color");
+  }
   for (const auto format : {ImageFormat::RGB, ImageFormat::BGR, ImageFormat::GRAY8,
                             ImageFormat::NV12, ImageFormat::I420, ImageFormat::NV16}) {
     ColorConvertOptions options;
@@ -286,6 +305,140 @@ void planar_image_boundary_chain() {
           "NV16 image chain failed canonical rendering");
 }
 
+void yuyv_input_boundary_chain() {
+  for (const auto* alias : {"YUYV", "YUY2"}) {
+    InputOptions options;
+    options.payload_type = PayloadType::Image;
+    options.format = alias;
+    options.width = 18;
+    options.height = 10;
+    auto source = std::make_shared<Input>(options);
+    auto* caps = gst_caps_from_string(source->caps_string().c_str());
+    GstVideoInfo info{};
+    require(caps && gst_video_info_from_caps(&info, caps) &&
+                GST_VIDEO_INFO_FORMAT(&info) == GST_VIDEO_FORMAT_YUY2,
+            "public packed Input must publish valid GStreamer caps");
+    gst_caps_unref(caps);
+    const auto boundary = source->output_spec({});
+    require(boundary.format == "YUY2" && boundary.layout == "HWC" && boundary.depth == 2 &&
+                boundary.byte_size == 18U * 10U * 2U,
+            "packed Input boundary must infer HWC2 and use canonical caps format");
+    ColorConvertOptions convert;
+    convert.output_format = ImageFormat::NV12;
+    convert.surface = ImageSurfaceLayout::EncoderNv12;
+    convert.color.matrix = ImageColorMatrix::Bt709;
+    convert.color.range = ImageYuvRange::Limited;
+    convert.color.output_siting = {ImageChromaSiting::Cosited, ImageChromaSiting::Centered};
+    convert.input_colorimetry = "bt709";
+    auto transform = nodes::ColorConvert(convert);
+    auto& p = preproc(transform);
+    // Repeated graph contract walks must consider the two public aliases equal.
+    auto upstream = boundary;
+    for (const auto* token : {alias, "YUYV", "YUY2"}) {
+      upstream.format = token;
+      const auto out = p.output_spec(upstream);
+      InputContract contract;
+      contract.media_type = upstream.media_type;
+      contract.format = token;
+      contract.dtype = upstream.dtype;
+      contract.width = upstream.width;
+      contract.height = upstream.height;
+      contract.depth = upstream.depth;
+      std::string error;
+      p.apply_input_contract(contract, &error);
+      require(error.empty(),
+              "equivalent packed alias must survive repeated contract application: " + error);
+      require(out.format == "NV12" && p.options().input_img_type == "YUY2",
+              "preprocessing must persist the normalized input format");
+    }
+    ContractCompileInput compile_input;
+    pipeline_internal::sima::ManifestBuildDiagnostics diagnostics;
+    const auto compiled = compile_node_contracts({source, transform}, compile_input, &diagnostics);
+    require(compiled.fully_renderable && diagnostics.errors.empty(),
+            "packed Input must compose with ColorConvert" +
+                (diagnostics.errors.empty() ? std::string{} : ": " + diagnostics.errors.front()));
+    const auto manifest =
+        render_manifest_from_compiled_contracts(compiled, compile_input, &diagnostics);
+    require(manifest && manifest->stages.size() == 1 && diagnostics.errors.empty(),
+            "packed Input conversion must render through the canonical path");
+    // Model preprocessing that YUYV input cannot use runs after a conversion to RGB.
+    ColorConvertOptions rgb;
+    rgb.output_format = ImageFormat::RGB;
+    rgb.color.matrix = convert.color.matrix;
+    rgb.color.range = convert.color.range;
+    rgb.input_colorimetry = "bt709";
+    auto rgb_convert = nodes::ColorConvert(rgb);
+    require(preproc(rgb_convert).output_spec(boundary).format == "RGB", "YUYV to RGB output");
+    const auto rgb_compiled =
+        compile_node_contracts({source, rgb_convert}, compile_input, &diagnostics);
+    require(rgb_compiled.fully_renderable && diagnostics.errors.empty() &&
+                render_manifest_from_compiled_contracts(rgb_compiled, compile_input, &diagnostics),
+            "packed Input must convert to RGB for model preprocessing" +
+                (diagnostics.errors.empty() ? std::string{} : ": " + diagnostics.errors.front()));
+    InputContract contract;
+    contract.media_type = boundary.media_type;
+    contract.format = alias;
+    contract.dtype = boundary.dtype;
+    contract.width = boundary.width;
+    contract.height = boundary.height;
+    contract.depth = boundary.depth;
+    // Kernels reconstruct YUYV chroma only from centered siting; RGB output has
+    // no siting field, so a cosited request must not be silently reinterpreted.
+    for (const auto output : {ImageFormat::RGB, ImageFormat::NV12}) {
+      ColorConvertOptions cosited = convert;
+      cosited.output_format = output;
+      cosited.surface = ImageSurfaceLayout::Native;
+      cosited.color.output_siting = {ImageChromaSiting::Centered, ImageChromaSiting::Centered};
+      cosited.color.input_siting = {ImageChromaSiting::Cosited, ImageChromaSiting::Centered};
+      auto rejected = nodes::ColorConvert(cosited);
+      std::string error;
+      preproc(rejected).apply_input_contract(contract, &error);
+      require(error.find("centered input chroma") != std::string::npos,
+              "YUYV ColorConvert accepted cosited input chroma: " + error);
+    }
+    ResizeOptions resize;
+    resize.width = 8;
+    resize.height = 8;
+    for (const auto& packed : {nodes::Resize(resize), nodes::Normalization()}) {
+      std::string error;
+      preproc(packed).apply_input_contract(contract, &error);
+      require(error.find("packed Resize/Normalization/output are unsupported") != std::string::npos,
+              "YUYV input accepted by Resize or Normalization: " + error);
+    }
+  }
+  PreprocOptions explicit_options;
+  explicit_options.input_img_type = "YUYV";
+  Preproc explicit_preproc(explicit_options);
+  require(explicit_preproc.options().input_img_type == "YUY2",
+          "explicit Preproc format must use the same normalization");
+  // Graph JSON cannot carry an explicit source color, so saving fails instead of dropping it.
+  ImageColorOptions camera_color;
+  camera_color.matrix = ImageColorMatrix::Bt709;
+  camera_color.range = ImageYuvRange::Limited;
+  ColorConvertOptions viewer;
+  viewer.output_format = ImageFormat::NV12;
+  viewer.color = camera_color;
+  viewer.input_colorimetry = "bt709";
+  explicit_options.input_color = camera_color;
+  PreprocOptions rgb_options;
+  rgb_options.input_img_type = "RGB";
+  rgb_options.input_color = camera_color;
+  rejects([&] { Preproc rejected(rgb_options); });
+  for (const auto& node : {nodes::ColorConvert(viewer), nodes::Preproc(explicit_options)}) {
+    Graph graph("yuyv_save");
+    graph.add(node);
+    try {
+      graph.save((std::filesystem::temp_directory_path() / "yuyv_save.json").string());
+      require(false, "Graph::save dropped an explicit YUYV color");
+    } catch (const std::exception& e) {
+      require(std::string(e.what()).find("does not store PreprocOptions::input_color or "
+                                         "ColorConvertOptions::input_colorimetry") !=
+                  std::string::npos,
+              std::string("unexpected Graph::save error: ") + e.what());
+    }
+  }
+}
+
 void yuv_video_meta_envelopes() {
   for (const auto* format : {"NV12", "I420", "NV16"}) {
     const bool nv16 = std::string_view(format) == "NV16";
@@ -430,6 +583,7 @@ RUN_TEST("image transform frontends", [] {
   gst_init(nullptr, nullptr);
   contracts();
   planar_image_boundary_chain();
+  yuyv_input_boundary_chain();
   nv16_sample();
   yuv_video_meta_envelopes();
 })

@@ -1701,6 +1701,13 @@ PyNeat 和 PyNeatPCIe 狀態會列出每個偵測到的安裝版本及其虛擬�
 
 JSON 中的每個 Python 項目會新增 `installations` 陣列。每筆記錄包含 `version`、`environment` 和 `path`（套件目錄）。在虛擬環境以外，`environment` 為 `null`。若安裝版本不同，摘要的 `version` 為 `null`；僅有多個安裝不會設定 `error`。指向同一安裝的符號連結路徑只會列出一次。
 
+### 明確選擇原始 USB 擷取
+
+`UsbCameraFormat::YUYV` 選擇既有 V4L2 來源的獨立原始分支。`neatcapturepool` 提供支援 video-meta 的 CMA 池，並記錄攝影機寫入而不掃描像素。Core 將 YUY2 作為具有實際步距與偏移的 UInt8 HWC2 傳遞。模型 Preproc 需要明確的協商色彩資訊。獨立的最新影格檢視路徑以 EV ColorConvert 產生 EncoderNv12，再交給明確啟用色彩訊號的嚴格直接 H.264 編碼。既有 MJPEG 預設行為與分離壓縮輸出所有權的複製維持不變。擷取／推論允許有理數影格率，嚴格檢視器則會明確拒絕分數影格率。EV74 Preproc 會拒絕 YUYV 輸入的抗鋸齒取樣、固定來源運算、Crop 與 ROI 清單。Graph JSON 沒有用於明確來源色彩的欄位，因此 `Graph::save` 會拒絕帶有此色彩的圖。
+
+分段圖形之間的傳遞會保留緊密排列 HWC2 的偏移、步距與有效範圍，包括最後一列沒有填充的影格。原始 caps 保留色彩資訊、色度位置、交錯模式與像素長寬比；這些欄位納入 caps 識別與非幾何參數的重新協商檢查。重新指定模型綁定的後處理路徑時，重建數值處理路徑仍會保留明確指定的 Preproc 輸入色彩。
+
+明確要求複製原始影片時，會保留相對於緩衝區起點的像素位置與中繼資料偏移，並將映射影像檢視之前的區域填零。共用緩衝區路徑不變。公開 API 的 `YUYV` 與 `YUY2` 別名都會在 GStreamer caps 與前處理契約中使用 `YUY2`；公開格式列舉仍保留 `YUYV` 名稱。
 
 ## 裁切幾何的權責 {#crop-geometry-ownership}
 

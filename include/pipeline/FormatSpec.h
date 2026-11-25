@@ -187,8 +187,8 @@ inline std::string normalize_tensor_caps_format(std::string value) {
  * @brief Normalize a caps-format string conditionally on its media type.
  *
  * Tensor caps (`application/vnd.simaai.tensor`) are normalized to canonical
- * EVXX_ tokens; other media types (raw video, encoded video) are returned
- * unchanged.
+ * EVXX_ tokens. Raw YUYV uses GStreamer's YUY2 token; other formats are
+ * returned unchanged.
  *
  * @param media_type GStreamer-style media type (e.g., `application/vnd.simaai.tensor`).
  * @param format     Format string to potentially normalize.
@@ -201,6 +201,11 @@ inline std::string normalize_caps_format_for_media(std::string media_type, std::
   const std::string media_up = upper_copy_ascii(std::move(media_type));
   if (media_up == "APPLICATION/VND.SIMAAI.TENSOR") {
     return normalize_tensor_caps_format(std::move(format));
+  }
+  if (media_up == "VIDEO/X-RAW") {
+    const auto format_up = upper_copy_ascii(format);
+    if (format_up == "YUYV" || format_up == "YUY2")
+      return "YUY2";
   }
   return format;
 }
@@ -222,7 +227,7 @@ inline FormatTag format_tag_from_string(const std::string& value) {
     return FormatTag::NV12;
   if (up == "I420" || up == "YUV420")
     return FormatTag::I420;
-  if (up == "YUYV")
+  if (up == "YUYV" || up == "YUY2")
     return FormatTag::YUYV;
   if (up == "ENCODED")
     return FormatTag::ENCODED;

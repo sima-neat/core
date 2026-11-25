@@ -2,6 +2,7 @@
 #include "pipeline/ErrorCodes.h"
 #include "pipeline/Graph.h"
 #include "nodes/common/Output.h"
+#include "nodes/groups/internal/VideoSenderRawIngress.h"
 #include "nodes/io/Input.h"
 #include "test_main.h"
 #include "test_utils.h"
@@ -65,6 +66,19 @@ RUN_TEST(
       require(!original.empty(),
               io_case("roundtrip_non_empty", "saved pipeline should be non-empty"));
       require(original == restored, io_case("roundtrip_match", "save/load backend mismatch"));
+
+      {
+        Graph strict_graph;
+        strict_graph.add(nodes::groups::internal::VideoSenderRawIngress(
+            {.width = 64, .height = 64, .fps = 30, .require_direct = true}));
+        const std::string strict_path = tmp_json_path("graph_io_strict_ingress.json");
+        strict_graph.save(strict_path);
+        const std::string strict_roundtrip_path = tmp_json_path("graph_io_strict_ingress_rt.json");
+        Graph::load(strict_path).save(strict_roundtrip_path);
+        require_contains(
+            read_text(strict_roundtrip_path), "\"require_direct\":true",
+            io_case("strict_ingress_roundtrip", "strict encoder ingress must survive save/load"));
+      }
 
       Graph input_graph;
       InputOptions input_opt;

@@ -1,4 +1,5 @@
 #include "nodes/io/internal/UvcCamera.h"
+#include "nodes/io/internal/UvcMode.h"
 
 #include "nodes/sima/internal/JpegOutputFormat.h"
 
@@ -87,13 +88,13 @@ bool fraction_equal(std::uint32_t a_num, std::uint32_t a_den, std::uint32_t b_nu
   return std::uint64_t(a_num) * b_den == std::uint64_t(b_num) * a_den;
 }
 
-// True when the camera lists `width`x`height` at num/den fps for MJPEG; fills
+// True when the camera lists `width`x`height` at num/den fps for `fourcc`; fills
 // `modes` with what it does list, for the error message.
-bool mjpeg_mode_listed(int fd, std::uint32_t width, std::uint32_t height, std::uint32_t num,
-                       std::uint32_t den, std::vector<std::string>* modes) {
+bool mode_listed(int fd, std::uint32_t fourcc, std::uint32_t width, std::uint32_t height,
+                 std::uint32_t num, std::uint32_t den, std::vector<std::string>* modes) {
   bool found = false;
   v4l2_frmsizeenum size{};
-  size.pixel_format = V4L2_PIX_FMT_MJPEG;
+  size.pixel_format = fourcc;
   for (; xioctl(fd, VIDIOC_ENUM_FRAMESIZES, &size) == 0; ++size.index) {
     const bool discrete = size.type == V4L2_FRMSIZE_TYPE_DISCRETE;
     std::uint32_t w = 0, h = 0;
@@ -119,26 +120,30 @@ bool mjpeg_mode_listed(int fd, std::uint32_t width, std::uint32_t height, std::u
     }
     bool first = true;
     v4l2_frmivalenum ival{};
-    ival.pixel_format = V4L2_PIX_FMT_MJPEG;
+    ival.pixel_format = fourcc;
     ival.width = w;
     ival.height = h;
     for (; (discrete || size_ok) && xioctl(fd, VIDIOC_ENUM_FRAMEINTERVALS, &ival) == 0;
          ++ival.index) {
       // A frame interval is the reciprocal of the frame rate.
+      bool listed_rate = false;
       if (ival.type == V4L2_FRMIVAL_TYPE_DISCRETE) {
         const auto& iv = ival.discrete;
         listed << (first ? "" : ",") << iv.denominator << '/' << iv.numerator;
-        found = found || (size_ok && fraction_equal(num, den, iv.denominator, iv.numerator));
+        listed_rate = fraction_equal(num, den, iv.denominator, iv.numerator);
       } else {
         const auto& s = ival.stepwise;
         listed << (first ? "" : ",") << s.max.denominator << '/' << s.max.numerator << "-"
                << s.min.denominator << '/' << s.min.numerator;
         // Interval within [min, max]: compare den/num against each bound.
-        found = found ||
-                (size_ok &&
-                 std::uint64_t(den) * s.min.denominator >= std::uint64_t(num) * s.min.numerator &&
-                 std::uint64_t(den) * s.max.denominator <= std::uint64_t(num) * s.max.numerator);
+        listed_rate =
+            std::uint64_t(den) * s.min.denominator >= std::uint64_t(num) * s.min.numerator &&
+            std::uint64_t(den) * s.max.denominator <= std::uint64_t(num) * s.max.numerator;
       }
+      // YUYV additionally requires an exact step; MJPEG keeps its in-range rule.
+      if (fourcc == V4L2_PIX_FMT_YUYV)
+        listed_rate = interval_contains(ival, num, den);
+      found = found || (size_ok && listed_rate);
       first = false;
       if (ival.type != V4L2_FRMIVAL_TYPE_DISCRETE)
         break;
@@ -153,7 +158,7 @@ bool mjpeg_mode_listed(int fd, std::uint32_t width, std::uint32_t height, std::u
   return found;
 }
 
-bool captures_mjpeg(int fd) {
+bool captures_format(int fd, std::uint32_t fourcc) {
   v4l2_capability cap{};
   if (xioctl(fd, VIDIOC_QUERYCAP, &cap) != 0)
     return false;
@@ -164,7 +169,7 @@ bool captures_mjpeg(int fd) {
   v4l2_fmtdesc fmt{};
   fmt.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
   for (; xioctl(fd, VIDIOC_ENUM_FMT, &fmt) == 0; ++fmt.index) {
-    if (fmt.pixelformat == V4L2_PIX_FMT_MJPEG)
+    if (fmt.pixelformat == fourcc)
       return true;
   }
   return false;
@@ -387,11 +392,12 @@ ResolvedCamera resolve_mjpeg_camera(const std::string& id, std::uint32_t width,
     if (fd.fd < 0)
       throw std::runtime_error("UsbCameraInput: cannot open USB camera '" + id + "' (" +
                                node.device + "): " + errno_text(errno));
-    if (!captures_mjpeg(fd.fd))
+    if (!captures_format(fd.fd, V4L2_PIX_FMT_MJPEG))
       continue;
     mjpeg_node = true;
     // A camera can expose several MJPEG nodes; use the first that lists the mode.
-    if (!mjpeg_mode_listed(fd.fd, width, height, framerate_num, framerate_den, &modes))
+    if (!mode_listed(fd.fd, V4L2_PIX_FMT_MJPEG, width, height, framerate_num, framerate_den,
+                     &modes))
       continue;
     return {node.device, read_sampling(fd.fd, id, width, height, framerate_num, framerate_den), id,
             sysfs_root, node_index(sysfs_root, node.device)};
@@ -414,6 +420,86 @@ ResolvedCamera resolve_mjpeg_camera(const std::string& id, std::uint32_t width,
   for (std::size_t i = 0; i < ids.size(); ++i)
     m << (i ? ", " : "; connected USB camera IDs: ") << ids[i];
   throw std::runtime_error(m.str());
+}
+
+ResolvedCamera resolve_camera(const UsbCameraInputOptions& opt, UsbCameraFormat format,
+                              const std::string& sysfs_root) {
+  if (format == UsbCameraFormat::MJPEG)
+    return resolve_mjpeg_camera(opt.camera_name, opt.width, opt.height, opt.framerate_num,
+                                opt.framerate_den, sysfs_root);
+  if (format != UsbCameraFormat::YUYV || !opt.width || (opt.width & 1U) || !opt.height ||
+      !opt.framerate_num || !opt.framerate_den)
+    throw std::invalid_argument("UsbCameraInput: invalid YUYV mode");
+  const auto fail = [&](const std::string& reason) {
+    return std::runtime_error("UsbCameraInput: USB camera '" + opt.camera_name + "' " + reason);
+  };
+  bool matched = false, capture = false;
+  std::vector<std::string> modes;
+  const auto nodes = list_nodes(sysfs_root);
+  for (const auto& node : nodes) {
+    if (node.id != opt.camera_name)
+      continue;
+    matched = true;
+    Fd fd(::open(node.device.c_str(), O_RDWR | O_CLOEXEC));
+    if (fd.fd < 0)
+      throw fail("cannot open " + node.device + ": " + errno_text(errno));
+    if (!captures_format(fd.fd, V4L2_PIX_FMT_YUYV))
+      continue;
+    capture = true;
+    if (!mode_listed(fd.fd, V4L2_PIX_FMT_YUYV, opt.width, opt.height, opt.framerate_num,
+                     opt.framerate_den, &modes))
+      continue;
+    v4l2_format fmt{};
+    fmt.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+    fmt.fmt.pix.width = opt.width;
+    fmt.fmt.pix.height = opt.height;
+    fmt.fmt.pix.pixelformat = V4L2_PIX_FMT_YUYV;
+    fmt.fmt.pix.field = V4L2_FIELD_NONE;
+    if (xioctl(fd.fd, VIDIOC_S_FMT, &fmt) != 0)
+      throw fail(errno == EBUSY ? "is in use by another process"
+                                : "cannot configure YUYV: " + errno_text(errno));
+    const auto& pix = fmt.fmt.pix;
+    if (pix.width != opt.width || pix.height != opt.height ||
+        pix.pixelformat != V4L2_PIX_FMT_YUYV || pix.field != V4L2_FIELD_NONE)
+      throw fail("adjusted the requested progressive YUYV mode; select an advertised mode");
+    if (!yuyv_layout_valid(pix))
+      throw fail("returned an invalid YUYV stride or storage capacity");
+    v4l2_streamparm parm{};
+    parm.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+    parm.parm.capture.timeperframe = {opt.framerate_den, opt.framerate_num};
+    if (xioctl(fd.fd, VIDIOC_S_PARM, &parm) != 0 || !parm.parm.capture.timeperframe.numerator ||
+        !parm.parm.capture.timeperframe.denominator ||
+        !fraction_equal(parm.parm.capture.timeperframe.denominator,
+                        parm.parm.capture.timeperframe.numerator, opt.framerate_num,
+                        opt.framerate_den))
+      throw fail("did not accept " + std::to_string(opt.framerate_num) + "/" +
+                 std::to_string(opt.framerate_den) + " fps");
+    auto color = yuyv_color(pix);
+    if (color.error)
+      throw fail(color.error);
+    ResolvedCamera camera{node.device, FormatTag::YUYV, opt.camera_name, sysfs_root,
+                          node_index(sysfs_root, node.device)};
+    camera.format = format;
+    camera.row_stride = pix.bytesperline;
+    camera.storage_bytes = pix.sizeimage;
+    camera.color = color.color;
+    camera.colorimetry = std::move(color.colorimetry);
+    return camera;
+  }
+  if (capture) {
+    std::ostringstream message;
+    message << "has no YUYV mode " << opt.width << 'x' << opt.height << " at " << opt.framerate_num
+            << '/' << opt.framerate_den << " fps; YUYV modes:";
+    for (const auto& mode : modes)
+      message << ' ' << mode;
+    throw fail(message.str());
+  }
+  if (matched)
+    throw fail("has no YUYV capture node");
+  std::string available;
+  for (const auto& id : camera_ids(nodes))
+    available += " " + id;
+  throw fail("is not connected; connected USB camera IDs:" + available);
 }
 
 } // namespace simaai::neat::internal::uvc

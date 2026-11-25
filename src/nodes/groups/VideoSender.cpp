@@ -151,6 +151,7 @@ VideoSenderOptions VideoSenderOptions::FromRaw(SimaEncodeOptions encode) {
   opt.idr_interval_ = encode.idr_interval;
   opt.quality_ = encode.quality;
   opt.num_buffers_ = encode.num_buffers;
+  opt.input_policy_ = encode.input_policy;
   return opt;
 }
 
@@ -187,6 +188,11 @@ VideoSenderOptions VideoSenderOptions::Passthrough(RtspCodec codec) {
 }
 
 simaai::neat::Graph VideoSender(const VideoSenderOptions& opt) {
+  const auto policy = opt.input_policy_;
+  if (policy != EncoderInputPolicy::Compatible && policy != EncoderInputPolicy::RequireDirect)
+    throw std::invalid_argument("VideoSender: invalid encoder input policy");
+  if (policy == EncoderInputPolicy::RequireDirect && opt.codec_ != RtspCodec::H264)
+    throw std::invalid_argument("Strict VideoSender currently supports H.264 only");
   std::vector<std::shared_ptr<simaai::neat::Node>> nodes;
   nodes.reserve(opt.is_raw_input() ? 5 : 3);
 
@@ -229,8 +235,13 @@ simaai::neat::Graph VideoSender(const VideoSenderOptions& opt) {
         encode.profile = "high";
       encode.level = opt.encoder.level;
     }
-    nodes.push_back(internal::VideoSenderRawIngress(opt.width(), opt.height(), opt.fps()));
-    nodes.push_back(simaai::neat::internal::SimaEncodeAccess::prepared_input(std::move(encode)));
+    if (policy == EncoderInputPolicy::RequireDirect) {
+      encode.input_policy = policy;
+      nodes.push_back(nodes::SimaEncode(std::move(encode)));
+    } else {
+      nodes.push_back(internal::VideoSenderRawIngress(opt.width(), opt.height(), opt.fps()));
+      nodes.push_back(simaai::neat::internal::SimaEncodeAccess::prepared_input(std::move(encode)));
+    }
   }
 
   // A Scheduler with neatjpegudpsink reads the JPEG headers, packetizes and sends in one sink;

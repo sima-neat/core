@@ -24,6 +24,10 @@ enum class SimaEncodeType {
   MJPEG = 2,
 };
 
+/// Opt-in admission: RequireDirect requires H.264, EncoderNv12, explicit color and integer FPS;
+/// it never copies/converts raw input on the CPU.
+enum class EncoderInputPolicy { Compatible, RequireDirect };
+
 /// Codec-specific fields are optional; defaults are selected after `type`.
 struct SimaEncodeOptions {
   SimaEncodeType type = SimaEncodeType::H264;
@@ -36,6 +40,7 @@ struct SimaEncodeOptions {
   std::optional<int> idr_interval;         ///< H.264/H.265: nonnegative; 0 uses three times FPS.
   std::optional<int> quality;              ///< MJPEG: 1..100, default 80.
   int num_buffers = -1; ///< Encoded outputs: -1 uses the native default, or 1..20.
+  EncoderInputPolicy input_policy = EncoderInputPolicy::Compatible; ///< Raw input admission.
 };
 
 namespace internal {

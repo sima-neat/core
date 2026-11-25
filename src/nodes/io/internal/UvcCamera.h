@@ -36,6 +36,10 @@ struct ResolvedCamera {
   std::string id;         ///< The camera ID; empty skips require_still_connected().
   std::string sysfs_root; ///< Where `id` was resolved.
   int index = -1;         ///< sysfs index of `device` in its interface (capture 0); -1 unknown.
+  UsbCameraFormat format = UsbCameraFormat::MJPEG;
+  std::uint32_t row_stride = 0, storage_bytes = 0;
+  ImageColorOptions color;
+  std::string colorimetry;
 };
 
 /// Throw when `camera.device` no longer belongs to `camera.id` or is no longer the node at
@@ -56,6 +60,9 @@ ResolvedCamera resolve_mjpeg_camera(const std::string& camera_id, std::uint32_t 
                                     std::uint32_t height, std::uint32_t framerate_num,
                                     std::uint32_t framerate_den,
                                     const std::string& sysfs_root = "/sys");
+
+ResolvedCamera resolve_camera(const UsbCameraInputOptions& options, UsbCameraFormat format,
+                              const std::string& sysfs_root = "/sys");
 
 /// The UsbCameraInput node for an already resolved camera (validated options).
 std::shared_ptr<Node> camera_node(const UsbCameraInputOptions& opt, const ResolvedCamera& camera);

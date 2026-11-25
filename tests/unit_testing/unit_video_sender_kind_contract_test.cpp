@@ -34,6 +34,35 @@ int main() {
         throw std::runtime_error(
             "ingress must retain actual DMA/layout validation in either variant");
     }
+    // Strict ingress keeps require_direct through specialization and rejects other input.
+    const auto strict = VideoSenderRawIngress({.width = 64,
+                                               .height = 64,
+                                               .fps = 30,
+                                               .fallback_element_names = {},
+                                               .require_direct = true});
+    const auto* strict_specializer =
+        dynamic_cast<const internal::InputSpecSpecializer*>(strict.get());
+    const auto selected = strict_specializer->specialize_for_input(input, context);
+    const auto config = video_sender_raw_ingress_config(*selected);
+    if (!config || !config->require_direct ||
+        selected->backend_fragment(0).find("require-direct=true") == std::string::npos)
+      throw std::runtime_error("strict ingress lost require_direct when specialized");
+    const auto rejects = [&](OutputSpec bad, const std::string& text) {
+      try {
+        (void)strict_specializer->specialize_for_input(bad, context);
+      } catch (const std::invalid_argument& error) {
+        if (std::string(error.what()).find(text) != std::string::npos)
+          return;
+      }
+      throw std::runtime_error("strict ingress accepted input it must reject: " + text);
+    };
+    auto rgb = input;
+    rgb.format = "RGB";
+    rejects(rgb, "EncoderNv12");
+    auto fractional = input;
+    fractional.fps_num = 30000;
+    fractional.fps_den = 1001;
+    rejects(fractional, "exact integer frame rate");
     return 0;
   } catch (const std::exception& error) {
     std::cerr << error.what() << '\n';

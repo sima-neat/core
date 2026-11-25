@@ -45,6 +45,10 @@ RTP/JPEG 的限制更嚴格：MJPEG 原始傳送的尺寸必須可被八整除�
 
 硬體儲存對齊與可見幾何分開處理。Neat 在 caps 中保留要求的尺寸，並產生符合硬體所需 pitch 與儲存高度的編碼器表面。使用自訂實體佈局的原始緩衝區必須攜帶 `GstVideoMeta`，提供具決定權的平面偏移與步長。缺少此中繼資料時，會使用協商的 GStreamer 佈局；由屬性驅動的檔案輸入，每個緩衝區必須恰好包含一個緊密排列的影格。無效、截斷或不受支援的佈局會同步失敗，不會只複製部分資料。
 
+### 嚴格的編碼器輸入 {#strict-encoder-input}
+
+在傳給 `VideoSenderOptions::FromRaw` 的選項中將 `SimaEncodeOptions::input_policy` 設為 `EncoderInputPolicy::RequireDirect`（Python：`pyneat.EncoderInputPolicy.RequireDirect`），`VideoSender` 便絕不會在 CPU 上轉換或複製原始影格。它需要 H.264、由使用 `ImageSurfaceLayout::EncoderNv12` 的 `ColorConvert` 產生且採用編碼器排列方式的 NV12 輸入，以及等於編碼器整數 `fps` 的輸入影格率。其他輸入會在建置圖時失敗。它會在 H.264 串流中傳遞輸入的 colorimetry，包括原色、傳遞特性、矩陣與範圍。`input_policy` 為 `RequireDirect` 的獨立 `SimaEncode` 也會套用相同規則。預設的 `EncoderInputPolicy::Compatible` 維持上述轉換。YUYV 攝影機檢視器請參閱[使用 USB 攝影機](./usb-camera-input.md#view-yuyv-frames-as-h264)。
+
 ```cpp
 simaai::neat::Graph graph;
 const int channel = 0;

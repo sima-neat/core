@@ -43,6 +43,10 @@ RTP/JPEG는 크기 제한이 더 엄격합니다. MJPEG 원시 전송의 각 축
 
 하드웨어 저장 정렬은 표시 크기와 별개입니다. Neat는 요청한 크기를 caps에 유지하고 하드웨어에 필요한 피치와 저장 높이로 인코더 메모리를 생성합니다. 사용자 지정 물리 레이아웃을 가진 원시 버퍼에는 기준이 되는 평면 오프셋과 스트라이드를 포함한 `GstVideoMeta`가 있어야 합니다. 이 메타데이터가 없으면 협상된 GStreamer 레이아웃을 사용합니다. 속성 기반 파일 입력의 각 버퍼에는 조밀하게 패킹된 프레임이 정확히 하나 있어야 합니다. 잘못되거나 잘리거나 지원되지 않는 레이아웃은 일부만 복사되지 않고 동기적으로 실패합니다.
 
+### 엄격한 인코더 입력 {#strict-encoder-input}
+
+`VideoSenderOptions::FromRaw`에 전달하는 옵션의 `SimaEncodeOptions::input_policy`를 `EncoderInputPolicy::RequireDirect`(Python: `pyneat.EncoderInputPolicy.RequireDirect`)로 설정하면 `VideoSender`는 CPU에서 원시 프레임을 변환하거나 복사하지 않습니다. H.264, `ImageSurfaceLayout::EncoderNv12`를 사용하는 `ColorConvert`가 만든 인코더 레이아웃의 NV12 입력, 그리고 인코더의 정수 `fps`와 같은 입력 프레임 속도가 필요합니다. 그 밖의 입력은 그래프를 빌드할 때 실패합니다. 원색, 전달 특성, 행렬, 범위를 포함한 입력의 colorimetry를 H.264 스트림에 신호로 전달합니다. `input_policy`가 `RequireDirect`인 독립 실행형 `SimaEncode`에도 같은 규칙이 적용됩니다. 기본값인 `EncoderInputPolicy::Compatible`은 위에서 설명한 변환을 유지합니다. YUYV 카메라 뷰어는 [USB 카메라 사용하기](./usb-camera-input.md#view-yuyv-frames-as-h264)를 참조하세요.
+
 ```cpp
 simaai::neat::Graph graph;
 const int channel = 0;

@@ -22,6 +22,8 @@ inline std::string image_format_name(simaai::neat::ImageSpec::PixelFormat fmt) {
     return "NV12";
   case ImageSpec::PixelFormat::NV16:
     return "NV16";
+  case ImageSpec::PixelFormat::YUYV:
+    return "YUY2";
   case ImageSpec::PixelFormat::I420:
     return "I420";
   case ImageSpec::PixelFormat::UNKNOWN:
@@ -44,6 +46,8 @@ inline std::string preprocess_color_format_name(PreprocessColorFormat fmt) {
     return "I420";
   case PreprocessColorFormat::NV16:
     return "NV16";
+  case PreprocessColorFormat::YUYV:
+    return "YUY2";
   case PreprocessColorFormat::Auto:
     break;
   }

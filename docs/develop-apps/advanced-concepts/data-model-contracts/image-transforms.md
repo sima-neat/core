@@ -30,7 +30,9 @@ Python exposes the same option types and `pyneat.nodes.resize`,
   maximum uses the initial input dimension. Use `ResizeFit::Contain` for letterboxing
   or `Stretch` for independent axis scaling. The input format stays fixed.
 - **ColorConvert** preserves dimensions and produces RGB, BGR, GRAY8, NV12, I420, or
-  NV16. Input geometry and format are fixed when the node is first materialized.
+  NV16. Packed YUYV input (`YUY2`) converts to RGB, BGR, or NV12 only; it requires
+  even width and centered input chroma, and Resize and Normalization reject it.
+  Input geometry and format are fixed when the node is first materialized.
   Construct a fresh node and graph to change them; rebuilding the same graph
   does not reset the node.
 - **Normalization** accepts UInt8 RGB, BGR, or GRAY8 and produces a dense BF16
@@ -80,7 +82,17 @@ RGB/GRAY-to-YUV supports only full range with centered chroma. Other profiles
 are rejected during preparation. These options do not perform transfer-function
 conversion. Packed RGB/GRAY outputs
 retain legacy full-range, centered YUV interpretation; requesting other
-range/siting settings fails instead of silently approximating them.
+range/siting settings fails instead of silently approximating them. YUYV input to
+RGB/BGR is the exception: it honors full or limited range.
+
+`ColorConvertOptions::input_colorimetry` takes the source's GStreamer
+colorimetry string, such as `usb_camera_info(...).colorimetry` for a YUYV
+camera. It must name the primaries and transfer function and agree with the
+matrix and range in `color`. The node then rejects input caps with other
+colorimetry, and a strict H.264 encoder downstream signals it in the stream.
+When it is empty, the default, the output is described from `color` alone. No
+transfer-function conversion is performed. Graph JSON does not store this
+colorimetry, so `Graph::save` rejects a graph that carries it.
 
 A multi-plane result is **one image with one storage owner**. Plane offsets and
 positive pitches come from `GstVideoMeta`; consumers must not assume tightly

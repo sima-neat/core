@@ -584,7 +584,7 @@ masks = seg.masks.to_numpy()
 
 ## 升級
 
-先前的 BoxDecode 選項引入了 ABI 6。目前的來源運算選項需要 ABI 7 (`libsima_neat.so.7`)。請以相符的標頭與函式庫重新建置 C++ 應用程式、外掛程式及 Python 繫結；不要透過相容性符號連結載入 ABI 5 或 6 二進位檔。
+先前的 BoxDecode 選項引入了 ABI 6。目前的來源運算選項需要 ABI 8 (`libsima_neat.so.8`)。請以相符的標頭與函式庫重新建置 C++ 應用程式、外掛程式及 Python 繫結；不要透過相容性符號連結載入 ABI 5 或 6 二進位檔。
 
 
 ### 組合 YOLOX 輸入准入

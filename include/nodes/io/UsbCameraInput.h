@@ -1,7 +1,7 @@
 /**
  * @file
  * @ingroup nodes_io
- * @brief USB (UVC) MJPEG camera source node: the camera's JPEG frames.
+ * @brief USB (UVC) camera source node: the camera's JPEG frames or packed YUYV frames.
  *
  * @see CameraInput
  * @see SimaDecode
@@ -10,6 +10,7 @@
 
 #include "builder/Node.h"
 #include "pipeline/FormatSpec.h"
+#include "nodes/sima/ImageTransform.h"
 
 #include <cstdint>
 #include <memory>
@@ -18,17 +19,21 @@
 
 namespace simaai::neat {
 
+/// Capture format of a USB camera.
+enum class UsbCameraFormat { MJPEG, YUYV };
+
 /**
  * @brief Options for UsbCameraInput, with CameraInputOptions' field names and defaults.
  *
- * `camera_name` is required here, and there is no `format`: the node outputs the camera's
- * JPEG frames, and `usb_camera_info()` says which layout they decode to.
+ * `camera_name` is required here. `format` selects what the node outputs: the camera's JPEG
+ * frames (MJPEG, the default), for which `usb_camera_info()` says which layout they decode
+ * to, or packed YUYV frames that need no decoder.
  */
 struct UsbCameraInputOptions {
   // Required stable USB camera ID from usb_camera_ids().
   std::string camera_name;
 
-  // An exact MJPEG mode of the camera.
+  // An exact mode of the camera in `format`.
   std::uint32_t width = 1920;
   std::uint32_t height = 1080;
   std::uint32_t framerate_num = 30;
@@ -41,13 +46,23 @@ struct UsbCameraInputOptions {
   bool insert_queue = true;
   bool leaky_queue = true;
   std::uint32_t queue_depth = 2;
+
+  // Capture format; the mode above must be one the camera lists for it.
+  UsbCameraFormat format = UsbCameraFormat::MJPEG;
 };
 
 /// A USB camera as UsbCameraInput opens it.
 struct UsbCameraInfo {
-  std::string device;                         ///< /dev/videoN that captures its MJPEG.
-  FormatTag decoded_format = FormatTag::Auto; ///< NV12 for 4:2:0 JPEGs, NV16 for 4:2:2.
+  std::string device;                         ///< /dev/videoN that captures in `format`.
+  FormatTag decoded_format = FormatTag::Auto; ///< NV12 for 4:2:0 JPEGs, NV16 for 4:2:2; YUYV.
   int node_index = -1; ///< sysfs index of `device` in its USB interface; -1 unknown.
+  UsbCameraFormat format = UsbCameraFormat::MJPEG; ///< Capture format that was checked.
+  std::uint32_t row_stride = 0;                    ///< Negotiated raw layout; zero for MJPEG.
+  std::uint32_t storage_bytes = 0; ///< Raw frame capacity, not a per-frame payload length.
+  ImageColorOptions color; ///< Raw interpretation, for ColorConvert; YUYV chroma is centered.
+  std::string colorimetry; ///< Negotiated GStreamer colorimetry; empty for MJPEG.
+  /// Mode the info was checked for; zero when not recorded.
+  std::uint32_t width = 0, height = 0, framerate_num = 0, framerate_den = 0;
 };
 
 /// Stable IDs of the connected USB (UVC) cameras, for `UsbCameraInputOptions::camera_name`.
@@ -57,12 +72,17 @@ struct UsbCameraInfo {
 std::vector<std::string> usb_camera_ids();
 
 /**
- * @brief Validate `opt`, find its camera, check the mode and read one frame.
+ * @brief Validate `opt`, find its camera and check the mode in `opt.format`.
  *
- * `decoded_format` is the layout the camera's JPEGs decode to: set it as a `SimaDecode`
- * `out_format`. A model reads NV16 directly: set its preprocessing input format to match
- * (`PreprocessColorFormat::NV16`). Pass the result to `UsbCameraInput(opt, info)` so the
- * camera is not opened a second time.
+ * MJPEG reads one frame: `decoded_format` is the layout the camera's JPEGs decode to; set it
+ * as a `SimaDecode` `out_format`. A model reads NV16 directly: set its preprocessing input
+ * format to match (`PreprocessColorFormat::NV16`).
+ *
+ * YUYV configures the mode without reading a frame and records the negotiated layout and
+ * color: pass `color` to `PreprocOptions::input_color` or `ColorConvertOptions::color`, and
+ * `colorimetry` to `ColorConvertOptions::input_colorimetry`. YUYV requires an even width.
+ *
+ * Pass the result to `UsbCameraInput(opt, info)` so the camera is not opened a second time.
  * @throws std::invalid_argument and std::runtime_error as UsbCameraInput does.
  */
 UsbCameraInfo usb_camera_info(const UsbCameraInputOptions& opt);
@@ -72,15 +92,18 @@ UsbCameraInfo usb_camera_info(const UsbCameraInputOptions& opt);
 namespace simaai::neat::nodes {
 
 /**
- * @brief Live USB (UVC) MJPEG camera source.
+ * @brief Live USB (UVC) camera source.
  *
  * Opens the camera whose stable ID is `opt.camera_name` (see `usb_camera_ids()`),
- * requires the exact MJPEG mode `opt.width` x `opt.height` at
+ * requires the exact `opt.format` mode `opt.width` x `opt.height` at
  * `opt.framerate_num`/`opt.framerate_den`, and captures through V4L2.
  *
- * The node outputs the camera's JPEG frames for `VideoSender` passthrough (MJPEG) and
- * `SimaDecode` (MJPEG) on the same Graph. The camera captures into CMA DMA-BUFs that the
+ * With MJPEG, the node outputs the camera's JPEG frames for `VideoSender` passthrough (MJPEG)
+ * and `SimaDecode` (MJPEG) on the same Graph. The camera captures into CMA DMA-BUFs that the
  * hardware decoder reads in place, so no frame is copied between capture and decode.
+ *
+ * With YUYV, the node outputs packed UInt8 YUY2 frames captured directly into device memory,
+ * for `Preproc` or `ColorConvert` with the color that `usb_camera_info()` reports.
  *
  * Building a Graph again after the camera was unplugged, moved or renumbered
  * throws; call UsbCameraInput again to open it.
@@ -89,7 +112,7 @@ namespace simaai::neat::nodes {
  *         or rate.
  * @throws std::runtime_error when the camera is not connected, is in use, lacks the mode,
  *         or sends no decodable frame. The message names the camera ID and lists the
- *         connected IDs or the camera's MJPEG modes.
+ *         connected IDs or the camera's modes.
  */
 std::shared_ptr<simaai::neat::Node> UsbCameraInput(simaai::neat::UsbCameraInputOptions opt);
 
@@ -98,9 +121,11 @@ std::shared_ptr<simaai::neat::Node> UsbCameraInput(simaai::neat::UsbCameraInputO
  *
  * Reuses `info` instead of opening the camera again: it validates `opt` like the overload
  * above and confirms, from sysfs only, that `info.device` still belongs to the camera ID
- * `opt.camera_name`. Pass the same `opt` that produced `info`; the mode is not checked again.
+ * `opt.camera_name`. Pass the same `opt` that produced `info`. An MJPEG mode is not checked
+ * again; a YUYV `info` must record the mode, layout and color of `opt`.
  *
- * @throws std::invalid_argument for invalid options, as the overload above.
+ * @throws std::invalid_argument for invalid options, as the overload above, or when `info` was
+ *         checked for another format or, for YUYV, another mode.
  * @throws std::runtime_error when `info` is stale (the camera was unplugged, moved or
  *         renumbered since) or describes another camera; call usb_camera_info again.
  */

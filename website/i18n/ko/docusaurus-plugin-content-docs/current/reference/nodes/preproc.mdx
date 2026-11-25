@@ -103,7 +103,7 @@ INT8 출력에는 원본 양수 `quantization_step`을 지정하세요. Core는 
 
 YUV-to-RGB에서 `color_conversion_placement`의 기본값은 `PreprocColorConversionPlacement.AfterResize`입니다. 성분 크기 조정 후 UInt8 RGB 디코드 경계를 거쳐 재스케일링과 정규화를 수행합니다. `BeforeResize`는 이 경계를 RGB 재스케일링과 샘플링 앞으로 옮깁니다. 다른 색상 경로에서는 이 재정의가 거부됩니다. Pillow/torchvision과 같다고 가정하지 말고 순서와 중간 dtype을 검증하세요.
 
-`transforms` 재정의 없이 이미지 입력을 사용하세요. 비활성화 플래그 충돌이나 지원하지 않는 조합은 요청을 몰래 바꾸지 않고 실패합니다. 출력 형상, dtype, 양자화, 물리 레이아웃은 여전히 MPK가 결정하며 입력 용량은 모델 크기와 독립적입니다. 새 옵션을 생략하면 기존 연산을 유지합니다. 추가 필드로 C++ 객체 레이아웃이 변경되어 이 버전은 ABI 7 (`libsima_neat.so.7`)을 사용합니다. 일치하는 헤더와 라이브러리로 앱, 플러그인, Python 바인딩을 다시 빌드하고, 호환성 심볼릭 링크로 ABI 5 또는 6 바이너리를 로드하지 마세요.
+`transforms` 재정의 없이 이미지 입력을 사용하세요. 비활성화 플래그 충돌이나 지원하지 않는 조합은 요청을 몰래 바꾸지 않고 실패합니다. 출력 형상, dtype, 양자화, 물리 레이아웃은 여전히 MPK가 결정하며 입력 용량은 모델 크기와 독립적입니다. 새 옵션을 생략하면 기존 연산을 유지합니다. 추가 필드로 C++ 객체 레이아웃이 변경되어 이 버전은 ABI 8 (`libsima_neat.so.8`)을 사용합니다. 일치하는 헤더와 라이브러리로 앱, 플러그인, Python 바인딩을 다시 빌드하고, 호환성 심볼릭 링크로 ABI 5 또는 6 바이너리를 로드하지 마세요.
 
 
 
@@ -213,7 +213,7 @@ opt.preprocess.resize.placement = pyneat.LetterboxPlacement.TopLeft
 
 | 옵션 | 의미 |
 | --- | --- |
-| `opt.preprocess.color_convert.input_format` | 소스 형식 힌트: `RGB`, `BGR`, `GRAY8`, `NV12`, `NV16`, `I420` 또는 `Auto`. |
+| `opt.preprocess.color_convert.input_format` | 소스 형식 힌트: `RGB`, `BGR`, `GRAY8`, `NV12`, `NV16`, `I420`, `YUYV` 또는 `Auto`. `YUYV` 프레임에는 카메라의 색 정보를 `PreprocOptions::input_color`에 설정해야 합니다. [USB 카메라 사용하기](/develop-apps/advanced-concepts/usb-camera-input#run-a-model-on-yuyv-frames)를 참조하세요. |
 | `opt.preprocess.color_convert.output_format` | 모델 입력 색 공간으로, 일반적으로 `RGB`, `BGR` 또는 `GRAY8`을 사용합니다. |
 | `opt.preprocess.normalize.enable` | 평균/표준 편차 정규화를 활성화하거나 비활성화합니다. `Auto`는 정규화 프리셋이 선택되었거나 `normalize.has_explicit_stats`가 true이면 정규화를 활성화합니다. 정규화가 `Off`여도 모델이 관리하는 INT8 이미지 스테이지는 팩의 양자화기를 그대로 적용합니다. |
 | `opt.preprocess.normalize.mean` | 채널별 평균. 모델 학습 시 사용된 전처리 방식과 일치시켜야 합니다. |

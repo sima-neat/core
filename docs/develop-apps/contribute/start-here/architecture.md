@@ -2298,6 +2298,13 @@ PyNeat and PyNeatPCIe status lists each detected installation with its version a
 
 Each Python entry in JSON adds an `installations` array. Each record contains `version`, `environment`, and `path` (the package directory). `environment` is `null` outside a virtual environment. The summary `version` is `null` when installed versions differ; multiple installations alone do not set `error`. Symlinked paths to the same installation are listed once.
 
+### Explicit raw USB capture
+
+`UsbCameraFormat::YUYV` selects a separate raw branch of the existing V4L2 source. `neatcapturepool` offers a video-meta-aware CMA pool and records camera writes without scanning pixels. Core carries YUY2 as packed UInt8 HWC2 with authoritative stride/offset. Model Preproc needs explicit negotiated color. A separate latest-frame viewer invokes EV ColorConvert into EncoderNv12, then strict direct H.264 encoding with opt-in color signaling. Existing MJPEG defaults and compressed-output ownership-detaching copies remain. Fractional rates are admitted for capture/inference and explicitly rejected by the strict viewer. EV74 Preproc rejects antialiased sampling, fixed source arithmetic, Crop and ROI lists for YUYV input. Graph JSON has no field for explicit source color, so `Graph::save` rejects a graph that carries one.
+
+Segmented graph handoffs preserve packed HWC2 offsets, pitch and active extent, including frames without final-row padding. Raw caps retain colorimetry, chroma siting, interlace mode and pixel aspect ratio; these fields participate in caps identity and non-geometry renegotiation checks. Model-bound postprocessor retargeting preserves explicitly authored Preproc input color when rebuilding the numerical route.
+
+Explicit raw-video copies retain carrier-relative pixel placement and metadata offsets, zeroing any prefix outside the mapped image view. The shared-buffer path is unchanged. Public `YUYV` and `YUY2` aliases both publish GStreamer `YUY2` caps and preprocessing contracts; the public format enum retains its `YUYV` spelling.
 
 ## Crop geometry ownership {#crop-geometry-ownership}
 

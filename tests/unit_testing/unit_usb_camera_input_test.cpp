@@ -3,7 +3,10 @@
 // access itself (mode listing, first-frame sampling) is covered on a DevKit.
 #include "nodes/io/UsbCameraInput.h"
 #include "nodes/io/internal/UvcCamera.h"
+#include "nodes/io/internal/UvcMode.h"
+#include <limits>
 #include "pipeline/Graph.h"
+#include "pipeline/graph/internal/GraphTestHooks.h"
 
 #include "test_utils.h"
 
@@ -132,6 +135,14 @@ UsbCameraInputOptions mjpeg_options() {
 }
 
 void check_validation() {
+  // Positional aggregate initialization written before `format` existed still compiles and
+  // still selects MJPEG.
+  const simaai::neat::UsbCameraInputOptions positional{"front", 640, 480, 30, 1};
+  require(positional.width == 640 && positional.height == 480 && positional.framerate_num == 30 &&
+              positional.framerate_den == 1 &&
+              positional.format == simaai::neat::UsbCameraFormat::MJPEG,
+          "positional UsbCameraInputOptions keeps its fields and the MJPEG default");
+
   auto opt = mjpeg_options();
   opt.camera_name.clear();
   require_throws<std::invalid_argument>([&] { (void)UsbCameraInput(opt); }, "requires camera_name",
@@ -336,10 +347,265 @@ void check_from_info() {
   stale(info, "unplugged camera");
 }
 
+void check_yuyv_pipeline() {
+  auto opt = mjpeg_options();
+  UsbCameraInfo cached;
+  cached.decoded_format = FormatTag::YUYV;
+  require_throws<std::invalid_argument>(
+      [&] { (void)simaai::neat::nodes::UsbCameraInput(opt, cached); }, "capture info format",
+      "raw info must not silently select legacy MJPEG capture");
+  require_throws<std::runtime_error>(
+      [&] { (void)simaai::neat::nodes::UsbCameraInput(opt, UsbCameraInfo{}); },
+      "as its UsbCameraInfo says", "a default info keeps the MJPEG connection check");
+  cached.format = simaai::neat::UsbCameraFormat::YUYV;
+  require_throws<std::invalid_argument>(
+      [&] { (void)simaai::neat::nodes::UsbCameraInput(opt, cached); }, "capture info format",
+      "MJPEG selection must reject raw capture info");
+  opt.format = simaai::neat::UsbCameraFormat::YUYV;
+  require_throws<std::invalid_argument>(
+      [&] { (void)simaai::neat::nodes::UsbCameraInput(opt, UsbCameraInfo{}); },
+      "capture info format", "YUYV selection must reject an MJPEG info");
+  require_throws<std::invalid_argument>(
+      [&] { (void)simaai::neat::nodes::UsbCameraInput(opt, cached); }, "describes another mode",
+      "YUYV info must record the selected mode");
+  cached.decoded_format = FormatTag::NV16;
+  require_throws<std::invalid_argument>(
+      [&] { (void)simaai::neat::nodes::UsbCameraInput(opt, cached); }, "capture info format",
+      "YUYV selection must reject decoded MJPEG capture info");
+  opt.width = 642;
+  opt.height = 481;
+  uvc::ResolvedCamera camera{"/dev/video9", FormatTag::YUYV};
+  camera.format = simaai::neat::UsbCameraFormat::YUYV;
+  camera.row_stride = 1344;
+  camera.storage_bytes = 1344 * 481;
+  camera.colorimetry = "bt709";
+  const auto node = uvc::camera_node(opt, camera);
+  // Preproc binds a raw frame only with the GstSimaMeta frame-id and timestamp the source
+  // probe stamps; JPEG frames get theirs from the decoder.
+  require(simaai::neat::session_test::source_sima_meta_probe_required_for_test(*node),
+          "YUYV capture must stamp source frame metadata");
+  require(!simaai::neat::session_test::source_sima_meta_probe_required_for_test(
+              *uvc::camera_node(opt, uvc::ResolvedCamera{"/dev/video9", FormatTag::NV16})),
+          "MJPEG capture keeps its memory contract");
+  const auto text = node->backend_fragment(1);
+  require_contains(text, "video/x-raw,format=YUY2,interlace-mode=progressive,width=642,height=481",
+                   "packed YUYV caps");
+  require_contains(text, "colorimetry=bt709,chroma-site=jpeg", "negotiated interpretation");
+  require_contains(text, "io-mode=dmabuf-import", "same import pool");
+  require_not_contains(text, "image/jpeg", "raw does not use JPEG caps");
+  require_not_contains(text, "neatdecoder", "raw does not decode");
+  const auto spec =
+      dynamic_cast<const simaai::neat::OutputSpecProvider*>(node.get())->output_spec({});
+  require(spec.payload_type == simaai::neat::PayloadType::Image && spec.format == "YUY2" &&
+              spec.depth == 2 && spec.memory == "SimaAI" && spec.byte_size == camera.storage_bytes,
+          "raw source preserves storage contract");
+  opt.width = 641;
+  require_throws<std::invalid_argument>([&] { (void)simaai::neat::usb_camera_info(opt); },
+                                        "even width", "odd widths reject before device access");
+  opt.width = 642;
+  opt.framerate_num = std::numeric_limits<std::uint32_t>::max();
+  require_throws<std::invalid_argument>([&] { (void)simaai::neat::usb_camera_info(opt); },
+                                        "signed caps", "caps integer overflow");
+}
+
+void check_rational_intervals() {
+  v4l2_frmivalenum iv{};
+  iv.type = V4L2_FRMIVAL_TYPE_DISCRETE;
+  iv.discrete = {1001, 30000};
+  require(uvc::interval_contains(iv, 30000, 1001), "exact fractional rate");
+  require(uvc::interval_contains(iv, 60000, 2002), "equivalent fractional rate");
+  require(!uvc::interval_contains(iv, 30, 1), "no rate rounding");
+  iv.type = V4L2_FRMIVAL_TYPE_STEPWISE;
+  iv.stepwise = {{1, 60}, {1, 15}, {1, 60}};
+  require(uvc::interval_contains(iv, 60, 1) && uvc::interval_contains(iv, 30, 1) &&
+              uvc::interval_contains(iv, 20, 1) && uvc::interval_contains(iv, 15, 1),
+          "supported interval steps");
+  require(!uvc::interval_contains(iv, 24, 1), "in-range off-step interval rejected");
+  iv.type = V4L2_FRMIVAL_TYPE_CONTINUOUS;
+  require(uvc::interval_contains(iv, 24, 1), "continuous interval admitted");
+  require(!uvc::interval_contains(iv, 0, 1) && !uvc::interval_contains(iv, 30, 0),
+          "zero fractions rejected");
+  iv.type = V4L2_FRMIVAL_TYPE_STEPWISE;
+  iv.stepwise.step = {0, 1};
+  require(!uvc::interval_contains(iv, 30, 1), "invalid interval step rejected");
+}
+
+// Synthetic v4l2_pix_format values; the expectations follow the V4L2 colorspace definitions and
+// default-mapping macros in linux/videodev2.h, not any one camera.
+v4l2_pix_format yuyv_format(std::uint32_t width, std::uint32_t height, std::uint32_t colorspace,
+                            std::uint32_t encoding, std::uint32_t range, std::uint32_t transfer) {
+  v4l2_pix_format pix{};
+  pix.width = width;
+  pix.height = height;
+  pix.pixelformat = V4L2_PIX_FMT_YUYV;
+  pix.bytesperline = width * 2;
+  pix.sizeimage = width * 2 * height;
+  pix.colorspace = colorspace;
+  pix.ycbcr_enc = encoding;
+  pix.quantization = range;
+  pix.xfer_func = transfer;
+  return pix;
+}
+
+void check_yuyv_color_mapping() {
+  using simaai::neat::ImageColorMatrix;
+  using simaai::neat::ImageYuvRange;
+  struct Case {
+    const char* name;
+    v4l2_pix_format pix;
+    ImageColorMatrix matrix;
+    ImageYuvRange range;
+    GstVideoColorimetry gst;
+  };
+  constexpr auto lim = GST_VIDEO_COLOR_RANGE_16_235;
+  constexpr auto full = GST_VIDEO_COLOR_RANGE_0_255;
+  constexpr auto m601 = GST_VIDEO_COLOR_MATRIX_BT601;
+  constexpr auto m709 = GST_VIDEO_COLOR_MATRIX_BT709;
+  constexpr auto t709 = GST_VIDEO_TRANSFER_BT709;
+  constexpr auto srgb = GST_VIDEO_TRANSFER_SRGB;
+  constexpr auto p170m = GST_VIDEO_COLOR_PRIMARIES_SMPTE170M;
+  constexpr auto p709 = GST_VIDEO_COLOR_PRIMARIES_BT709;
+  const Case cases[] = {
+      {"explicit BT.601 limited",
+       yuyv_format(640, 480, V4L2_COLORSPACE_SMPTE170M, V4L2_YCBCR_ENC_601,
+                   V4L2_QUANTIZATION_LIM_RANGE, V4L2_XFER_FUNC_709),
+       ImageColorMatrix::Bt601,
+       ImageYuvRange::Limited,
+       {lim, m601, t709, p170m}},
+      {"explicit BT.601 full",
+       yuyv_format(640, 480, V4L2_COLORSPACE_SRGB, V4L2_YCBCR_ENC_601, V4L2_QUANTIZATION_FULL_RANGE,
+                   V4L2_XFER_FUNC_SRGB),
+       ImageColorMatrix::Bt601,
+       ImageYuvRange::Full,
+       {full, m601, srgb, p709}},
+      {"explicit BT.709 limited",
+       yuyv_format(1280, 720, V4L2_COLORSPACE_REC709, V4L2_YCBCR_ENC_709,
+                   V4L2_QUANTIZATION_LIM_RANGE, V4L2_XFER_FUNC_709),
+       ImageColorMatrix::Bt709,
+       ImageYuvRange::Limited,
+       {lim, m709, t709, p709}},
+      {"explicit BT.709 full",
+       yuyv_format(1280, 720, V4L2_COLORSPACE_REC709, V4L2_YCBCR_ENC_709,
+                   V4L2_QUANTIZATION_FULL_RANGE, V4L2_XFER_FUNC_709),
+       ImageColorMatrix::Bt709,
+       ImageYuvRange::Full,
+       {full, m709, t709, p709}},
+      {"all DEFAULT, SDTV size maps to SMPTE 170M",
+       yuyv_format(720, 576, V4L2_COLORSPACE_DEFAULT, V4L2_YCBCR_ENC_DEFAULT,
+                   V4L2_QUANTIZATION_DEFAULT, V4L2_XFER_FUNC_DEFAULT),
+       ImageColorMatrix::Bt601,
+       ImageYuvRange::Limited,
+       {lim, m601, t709, p170m}},
+      {"all DEFAULT, HDTV size maps to Rec. 709",
+       yuyv_format(1920, 1080, V4L2_COLORSPACE_DEFAULT, V4L2_YCBCR_ENC_DEFAULT,
+                   V4L2_QUANTIZATION_DEFAULT, V4L2_XFER_FUNC_DEFAULT),
+       ImageColorMatrix::Bt709,
+       ImageYuvRange::Limited,
+       {lim, m709, t709, p709}},
+      {"all DEFAULT, larger size maps to sRGB",
+       yuyv_format(2560, 1440, V4L2_COLORSPACE_DEFAULT, V4L2_YCBCR_ENC_DEFAULT,
+                   V4L2_QUANTIZATION_DEFAULT, V4L2_XFER_FUNC_DEFAULT),
+       ImageColorMatrix::Bt601,
+       ImageYuvRange::Limited,
+       {lim, m601, srgb, p709}},
+      {"DEFAULT encoding follows Rec. 709",
+       yuyv_format(640, 480, V4L2_COLORSPACE_REC709, V4L2_YCBCR_ENC_DEFAULT,
+                   V4L2_QUANTIZATION_LIM_RANGE, V4L2_XFER_FUNC_709),
+       ImageColorMatrix::Bt709,
+       ImageYuvRange::Limited,
+       {lim, m709, t709, p709}},
+      {"DEFAULT quantization of JPEG is full range",
+       yuyv_format(640, 480, V4L2_COLORSPACE_JPEG, V4L2_YCBCR_ENC_601, V4L2_QUANTIZATION_DEFAULT,
+                   V4L2_XFER_FUNC_SRGB),
+       ImageColorMatrix::Bt601,
+       ImageYuvRange::Full,
+       {full, m601, srgb, p709}},
+      {"DEFAULT quantization of sRGB YCbCr is limited range",
+       yuyv_format(640, 480, V4L2_COLORSPACE_SRGB, V4L2_YCBCR_ENC_601, V4L2_QUANTIZATION_DEFAULT,
+                   V4L2_XFER_FUNC_SRGB),
+       ImageColorMatrix::Bt601,
+       ImageYuvRange::Limited,
+       {lim, m601, srgb, p709}},
+      {"DEFAULT transfer of JPEG is sRGB",
+       yuyv_format(640, 480, V4L2_COLORSPACE_JPEG, V4L2_YCBCR_ENC_601, V4L2_QUANTIZATION_FULL_RANGE,
+                   V4L2_XFER_FUNC_DEFAULT),
+       ImageColorMatrix::Bt601,
+       ImageYuvRange::Full,
+       {full, m601, srgb, p709}},
+  };
+  for (const auto& c : cases) {
+    const auto mapped = uvc::yuyv_color(c.pix);
+    require(!mapped.error, std::string(c.name) + ": rejected");
+    require(mapped.color.matrix == c.matrix && mapped.color.range == c.range,
+            std::string(c.name) + ": matrix/range");
+    GstVideoColorimetry parsed{};
+    require(gst_video_colorimetry_from_string(&parsed, mapped.colorimetry.c_str()) &&
+                parsed.range == c.gst.range && parsed.matrix == c.gst.matrix &&
+                parsed.transfer == c.gst.transfer && parsed.primaries == c.gst.primaries,
+            std::string(c.name) + ": colorimetry " + mapped.colorimetry);
+  }
+
+  const struct {
+    const char* name;
+    v4l2_pix_format pix;
+    const char* error;
+  } rejected[] = {
+      {"BT.2020 encoding",
+       yuyv_format(640, 480, V4L2_COLORSPACE_REC709, V4L2_YCBCR_ENC_BT2020,
+                   V4L2_QUANTIZATION_LIM_RANGE, V4L2_XFER_FUNC_709),
+       "matrix/range/transfer"},
+      {"DEFAULT encoding of SMPTE 240M",
+       yuyv_format(640, 480, V4L2_COLORSPACE_SMPTE240M, V4L2_YCBCR_ENC_DEFAULT,
+                   V4L2_QUANTIZATION_LIM_RANGE, V4L2_XFER_FUNC_709),
+       "matrix/range/transfer"},
+      {"no transfer function",
+       yuyv_format(640, 480, V4L2_COLORSPACE_REC709, V4L2_YCBCR_ENC_709,
+                   V4L2_QUANTIZATION_LIM_RANGE, V4L2_XFER_FUNC_NONE),
+       "matrix/range/transfer"},
+      {"DEFAULT transfer of raw colorspace",
+       yuyv_format(640, 480, V4L2_COLORSPACE_RAW, V4L2_YCBCR_ENC_601, V4L2_QUANTIZATION_LIM_RANGE,
+                   V4L2_XFER_FUNC_DEFAULT),
+       "matrix/range/transfer"},
+      {"unknown quantization",
+       yuyv_format(640, 480, V4L2_COLORSPACE_REC709, V4L2_YCBCR_ENC_709, 7, V4L2_XFER_FUNC_709),
+       "matrix/range/transfer"},
+      {"BT.2020 primaries",
+       yuyv_format(640, 480, V4L2_COLORSPACE_BT2020, V4L2_YCBCR_ENC_709,
+                   V4L2_QUANTIZATION_LIM_RANGE, V4L2_XFER_FUNC_709),
+       "color primaries"},
+      {"DCI-P3 primaries",
+       yuyv_format(640, 480, V4L2_COLORSPACE_DCI_P3, V4L2_YCBCR_ENC_DEFAULT,
+                   V4L2_QUANTIZATION_LIM_RANGE, V4L2_XFER_FUNC_709),
+       "color primaries"},
+  };
+  for (const auto& r : rejected) {
+    const auto mapped = uvc::yuyv_color(r.pix);
+    require(mapped.error && std::string(mapped.error).find(r.error) != std::string::npos,
+            std::string(r.name) + ": expected rejection naming " + r.error);
+  }
+}
+
+void check_yuyv_layout() {
+  auto pix = yuyv_format(640, 480, V4L2_COLORSPACE_DEFAULT, 0, 0, 0);
+  require(uvc::yuyv_layout_valid(pix), "tight YUYV layout");
+  pix.bytesperline = 640 * 2 + 64;
+  pix.sizeimage = 479 * pix.bytesperline + 640 * 2;
+  require(uvc::yuyv_layout_valid(pix), "padded stride without final-row padding");
+  pix.sizeimage -= 1;
+  require(!uvc::yuyv_layout_valid(pix), "sizeimage smaller than the frame rejected");
+  pix.bytesperline = 640 * 2 - 2;
+  pix.sizeimage = 640 * 2 * 480;
+  require(!uvc::yuyv_layout_valid(pix), "stride smaller than width * 2 rejected");
+}
+
 } // namespace
 
 int main() {
   try {
+    check_rational_intervals();
+    check_yuyv_color_mapping();
+    check_yuyv_layout();
+    check_yuyv_pipeline();
     check_validation();
     check_ids_sorted();
     check_reconnect();

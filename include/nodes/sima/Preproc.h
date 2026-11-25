@@ -15,6 +15,7 @@
 #include "builder/NodeContractConfigurable.h"
 #include "builder/NodeContractProvider.h"
 #include "builder/Node.h"
+#include "nodes/sima/ImageTransform.h"
 #include "builder/OutputSpec.h"
 
 #include "nodes/sima/PreprocMath.h"
@@ -115,6 +116,9 @@ struct PreprocOptions {
   PreprocColorConversionPlacement color_conversion_placement =
       PreprocColorConversionPlacement::AfterResize;
   PreprocFloatingConversion floating_conversion = PreprocFloatingConversion::Legacy;
+  /// Camera matrix and range of YUYV input, for example `usb_camera_info(...).color`.
+  /// Required for YUYV input and rejected for any other input format.
+  std::optional<ImageColorOptions> input_color;
 
   /// Replace the input image shape (H, W, C).
   void set_input_shape(std::vector<int> shape) {

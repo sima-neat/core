@@ -104,8 +104,18 @@ SimaEncode::SimaEncode(SimaEncodeOptions options) : SimaEncode(std::move(options
 SimaEncode::SimaEncode(SimaEncodeOptions options, bool prepare_input)
     : options_(std::move(options)) {
   internal::validate_encode_options(options_);
+  const bool require_direct = options_.input_policy == EncoderInputPolicy::RequireDirect;
+  if (options_.input_policy != EncoderInputPolicy::Compatible && !require_direct)
+    throw std::invalid_argument("SimaEncode: invalid input policy");
+  if (require_direct && options_.type != SimaEncodeType::H264)
+    throw std::invalid_argument("Strict encoder color signaling currently supports H.264 only");
   if (prepare_input) {
-    input_adapter_ = nodes::groups::internal::VideoSenderRawIngress(0, 0, options_.fps);
+    input_adapter_ =
+        nodes::groups::internal::VideoSenderRawIngress({.width = 0,
+                                                        .height = 0,
+                                                        .fps = options_.fps,
+                                                        .fallback_element_names = {},
+                                                        .require_direct = require_direct});
   }
 }
 
@@ -116,6 +126,8 @@ MemoryContract SimaEncode::memory_contract() const {
 std::string SimaEncode::backend_fragment(int node_index) const {
   auto fragment = internal::encoder_fragment(options_, node_index);
   if (input_adapter_) {
+    if (options_.input_policy == EncoderInputPolicy::RequireDirect)
+      fragment += " signal-input-color=true";
     fragment = input_adapter_->backend_fragment(node_index) + " ! " + fragment;
   }
   return fragment;

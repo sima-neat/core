@@ -30,7 +30,9 @@ Python에서도 동일한 옵션 타입과 `pyneat.nodes.resize`,
   생략하면 초기 입력 크기를 사용합니다. 레터박스에는 `ResizeFit::Contain`을,
   각 축의 독립적인 배율 조정에는 `Stretch`를 사용하세요. 입력 형식은 고정됩니다.
 - **ColorConvert**는 크기를 유지하며 RGB, BGR, GRAY8, NV12, I420 또는
-  NV16을 생성합니다. 입력 크기와 형식은 노드를 처음 구체화할 때 고정됩니다.
+  NV16을 생성합니다. 패킹된 YUYV 입력(`YUY2`)은 RGB, BGR 또는 NV12로만 변환되며,
+  짝수 너비와 중앙 입력 색차가 필요하고 Resize와 Normalization은 이를 거부합니다.
+  입력 크기와 형식은 노드를 처음 구체화할 때 고정됩니다.
   이를 변경하려면 새 노드와 그래프를 생성하세요. 동일한 그래프를 다시 빌드해도
   노드는 초기화되지 않습니다.
 - **Normalization**은 UInt8 RGB, BGR 또는 GRAY8을 받아 원시 비디오가 아닌
@@ -80,6 +82,15 @@ RGB/GRAY-to-YUV는 중앙 색차를 사용하는 전체 범위만 지원하며, 
 준비 단계에서 거부됩니다. 이 옵션은 전달 함수 변환을 수행하지 않습니다.
 패킹된 RGB/GRAY 출력은 기존의 전체 범위, 중앙 색차 YUV 해석을 유지합니다.
 다른 범위/샘플 위치 설정을 요청하면 조용히 근사 처리하지 않고 실패합니다.
+단, YUYV 입력을 RGB/BGR로 변환할 때는 예외로 전체 또는 제한 범위를 따릅니다.
+
+`ColorConvertOptions::input_colorimetry`는 YUYV 카메라의 `usb_camera_info(...).colorimetry`처럼
+소스의 GStreamer colorimetry 문자열을 받습니다. 이 문자열은 원색과 전달 함수를 지정하고
+`color`의 행렬 및 범위와 일치해야 합니다. 그러면 노드는 다른 colorimetry를 가진
+입력 caps를 거부하고, 다운스트림의 엄격한 H.264 인코더는 이를 스트림에 신호로 전달합니다.
+기본값인 빈 문자열이면 출력은 `color`만으로 기술됩니다.
+전달 함수 변환은 수행하지 않습니다. Graph JSON은 이 colorimetry를 저장하지 않으므로
+`Graph::save`는 이를 가진 그래프를 거부합니다.
 
 다중 평면 결과는 **하나의 저장소 소유자를 가진 하나의 이미지**입니다. 평면 오프셋과
 양수 피치는 `GstVideoMeta`에서 가져옵니다. 소비자는 평면이 빈틈없이 패킹되어

@@ -42,6 +42,7 @@
 #include "nodes/sima/Cast.h"
 #include "nodes/sima/CastTess.h"
 #include "nodes/sima/Preproc.h"
+#include "nodes/sima/internal/ImageTransformPolicy.h"
 #include "nodes/sima/Quant.h"
 #include "nodes/sima/QuantTess.h"
 #include "nodes/sima/SimaBoxDecode.h"
@@ -541,6 +542,19 @@ bool bool_field(const JsonValue::JsonObject& obj, const char* key, bool fallback
   return value && value->type == JsonValue::Type::Bool ? value->b : fallback;
 }
 
+// Graph JSON has no field for an explicit YUYV color interpretation; refuse to drop it.
+void reject_unsaved_source_color(const std::shared_ptr<Node>& node, const std::string& path) {
+  const auto* pre = dynamic_cast<const Preproc*>(node.get());
+  if (!pre)
+    return;
+  const auto* policy = internal::ImageTransformAccess::policy(*pre);
+  if (pre->options().input_color || (policy && !policy->colorimetry.empty()))
+    throw_io_error(error_codes::kPipelineShape, "Graph::save", path,
+                   "Graph JSON does not store PreprocOptions::input_color or "
+                   "ColorConvertOptions::input_colorimetry.",
+                   "Build this Graph in code from usb_camera_info(...) instead of saving it.");
+}
+
 void write_video_sender_raw_ingress_json(std::ostream& out, const Node* node) {
   if (!node) {
     return;
@@ -550,7 +564,8 @@ void write_video_sender_raw_ingress_json(std::ostream& out, const Node* node) {
     return;
   }
   out << "\"video_sender_raw_ingress\":{\"width\":" << config->width
-      << ",\"height\":" << config->height << ",\"fps\":" << config->fps << "},";
+      << ",\"height\":" << config->height << ",\"fps\":" << config->fps
+      << ",\"require_direct\":" << (config->require_direct ? "true" : "false") << "},";
 }
 
 std::optional<nodes::groups::internal::VideoSenderRawIngressConfig>
@@ -571,6 +586,7 @@ parse_video_sender_raw_ingress_json(const JsonValue::JsonObject& node, const std
       .height = int_field(*value->obj, "height", -1),
       .fps = int_field(*value->obj, "fps", -1),
       .fallback_element_names = {},
+      .require_direct = bool_field(*value->obj, "require_direct", false),
   };
   const bool valid_geometry =
       (config.width == 0 && config.height == 0) || (config.width > 0 && config.height > 0);
@@ -1619,6 +1635,10 @@ std::string Graph::describe(const GraphPrinter::Options& opt) const {
 }
 
 void Graph::save(const std::string& path) const {
+  if (composition_) {
+    for (const auto& vertex : composition_->vertices)
+      reject_unsaved_source_color(vertex.pipeline_node, path);
+  }
   if (composition_ &&
       (!composition_->is_linear() || has_any_model_fragment_provenance(composition_->fragments) ||
        std::any_of(composition_->vertices.begin(), composition_->vertices.end(), [](const auto& n) {

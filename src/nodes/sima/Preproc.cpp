@@ -55,6 +55,8 @@ namespace {
 int channels_from_format(const std::string& fmt, int fallback) {
   if (!fmt.empty()) {
     const std::string up = upper_copy(fmt);
+    if (up == "YUYV" || up == "YUY2")
+      return 2;
     if (up == "GRAY" || up == "GRAY8")
       return 1;
     if (up == "RGB" || up == "BGR" || up == "NV12" || up == "I420")
@@ -423,7 +425,7 @@ json build_preproc_json(const PreprocOptions& opt) {
       {
           {"name", "format"},
           {"type", "string"},
-          {"values", "GRAY, RGB, BGR, I420, NV12"},
+          {"values", "GRAY, RGB, BGR, I420, NV12, NV16, YUY2"},
           {"json_field", "input_img_type"},
       },
   });
@@ -473,9 +475,24 @@ json build_preproc_json(const PreprocOptions& opt) {
   return j;
 }
 
+void validate_input_color(const PreprocOptions& opt) {
+  if (!opt.input_color)
+    return;
+  const auto input_format = upper_copy(opt.input_img_type);
+  if (input_format != "YUYV" && input_format != "YUY2")
+    throw std::invalid_argument("Explicit Preproc input color currently requires YUYV input");
+  const auto& color = *opt.input_color;
+  if ((color.matrix != ImageColorMatrix::Bt601 && color.matrix != ImageColorMatrix::Bt709) ||
+      (color.range != ImageYuvRange::Full && color.range != ImageYuvRange::Limited) ||
+      color.input_siting != std::array{ImageChromaSiting::Centered, ImageChromaSiting::Centered})
+    throw std::invalid_argument(
+        "Preproc input color requires BT.601/709, full/limited range and centered chroma");
+}
+
 } // namespace
 
 Preproc::Preproc(PreprocOptions opt) : opt_(std::move(opt)) {
+  opt_.input_img_type = normalize_caps_format_for_media("video/x-raw", opt_.input_img_type);
   if (opt_.num_buffers_locked) {
     if (opt_.num_buffers != opt_.num_buffers_model) {
       throw std::runtime_error("Preproc: num_buffers override is not allowed; must match model.");
@@ -497,6 +514,7 @@ Preproc::Preproc(PreprocOptions opt) : opt_(std::move(opt)) {
   auto holder = std::make_shared<PreprocConfigHolder>();
   if (!opt_.model_managed_contract) {
     config_holder_ = std::move(holder);
+    validate_input_color(opt_);
     return;
   }
 
@@ -541,6 +559,7 @@ Preproc::Preproc(PreprocOptions opt) : opt_(std::move(opt)) {
   holder->has_config = true;
   config_path_.clear();
   config_holder_ = std::move(holder);
+  validate_input_color(opt_);
 }
 
 void Preproc::materialize_config_from_input_contract(const InputContract& contract) {
@@ -581,12 +600,21 @@ void Preproc::materialize_config_from_input_contract(const InputContract& contra
     if (contract.media_type != "video/x-raw" ||
         (!contract.dtype.empty() && upper_copy(contract.dtype) != "UINT8"))
       throw std::invalid_argument("Image transforms require UInt8 raw-video input");
-    auto format = upper_copy(contract.format);
+    auto format = normalize_caps_format_for_media("video/x-raw", upper_copy(contract.format));
     if (format == "GRAY")
       format = "GRAY8";
     if (format != "RGB" && format != "BGR" && format != "GRAY8" && format != "GRAY" &&
-        format != "NV12" && format != "I420" && format != "NV16")
+        format != "NV12" && format != "I420" && format != "NV16" && format != "YUY2")
       throw std::invalid_argument("Image transform: unsupported raw-image format");
+    if (format == "YUY2" &&
+        (policy->mode != internal::ImageTransformMode::ColorConvert || (contract.width & 1) ||
+         (opt_.output_img_type != "NV12" && opt_.output_img_type != "RGB" &&
+          opt_.output_img_type != "BGR")))
+      throw std::invalid_argument("YUYV supports ColorConvert to RGB/BGR/NV12; packed "
+                                  "Resize/Normalization/output are unsupported");
+    if (format == "YUY2" && policy->color.input_siting != std::array{ImageChromaSiting::Centered,
+                                                                     ImageChromaSiting::Centered})
+      throw std::invalid_argument("YUYV ColorConvert requires centered input chroma siting");
     if ((policy->max_input_width > 0 && contract.width > policy->max_input_width) ||
         (policy->max_input_height > 0 && contract.height > policy->max_input_height))
       throw std::invalid_argument("Resize input exceeds its authored capacity envelope");
@@ -615,18 +643,20 @@ void Preproc::materialize_config_from_input_contract(const InputContract& contra
                             opt_.output_img_type == "NV16";
     if (yuv_output && opt_.pad_value != 0)
       throw std::invalid_argument("YUV image padding uses yuv_padding; pad_value must remain zero");
-    if (!yuv_output && (policy->color.range != ImageYuvRange::Full ||
-                        policy->color.input_siting !=
-                            std::array{ImageChromaSiting::Centered, ImageChromaSiting::Centered} ||
-                        policy->color.output_siting !=
-                            std::array{ImageChromaSiting::Centered, ImageChromaSiting::Centered}))
+    if (format != "YUY2" && !yuv_output &&
+        (policy->color.range != ImageYuvRange::Full ||
+         policy->color.input_siting !=
+             std::array{ImageChromaSiting::Centered, ImageChromaSiting::Centered} ||
+         policy->color.output_siting !=
+             std::array{ImageChromaSiting::Centered, ImageChromaSiting::Centered}))
       throw std::invalid_argument(
           "RGB/GRAY output supports only legacy full-range centered YUV interpretation");
     if (policy->surface == ImageSurfaceLayout::EncoderNv12 && opt_.output_img_type != "NV12")
       throw std::invalid_argument("EncoderNv12 surface requires NV12 output");
   }
   opt_.set_input_shape(compact_shape({contract.height, contract.width, 0}));
-  std::string contract_format = upper_copy(contract.format);
+  std::string contract_format =
+      normalize_caps_format_for_media("video/x-raw", upper_copy(contract.format));
   if (internal::ImageTransformAccess::policy(*this) && contract_format == "GRAY")
     contract_format = "GRAY8";
   if (!opt_.model_managed_contract || opt_.input_img_type.empty()) {
@@ -772,13 +802,14 @@ bool Preproc::compile_node_contract(const ContractCompileInput& input, CompiledN
       }
     }
     namespace semantics = pipeline_internal::sima::stagesemantics;
-    const auto compiled =
-        config_holder_ && config_holder_->image_transform
-            ? semantics::build_image_transform_compiled_contract_from_options(
-                  compile_opt, config_holder_->image_transform)
-        : compile_opt.compiled_contract
-            ? *compile_opt.compiled_contract
-            : semantics::build_processcvu_compiled_contract_from_options(compile_opt);
+    auto compiled = config_holder_ && config_holder_->image_transform
+                        ? semantics::build_image_transform_compiled_contract_from_options(
+                              compile_opt, config_holder_->image_transform)
+                    : compile_opt.compiled_contract
+                        ? *compile_opt.compiled_contract
+                        : semantics::build_processcvu_compiled_contract_from_options(compile_opt);
+    if (opt_.input_color)
+      compiled.payload.input_color = opt_.input_color;
     if (!pipeline_internal::sima::stagesemantics::build_processcvu_node_contract(
             kind(), element_name, element_name, contract_definition(), compiled, out, err)) {
       return false;
@@ -806,6 +837,8 @@ void Preproc::apply_compiled_contract(const CompiledNodeContract& contract, std:
     return;
   }
   const auto& payload = contract.processcvu->payload;
+  if (payload.input_color)
+    opt_.input_color = payload.input_color;
   if (payload.image_transform)
     return;
   if (!payload.input_shapes.empty()) {
@@ -1005,6 +1038,7 @@ std::shared_ptr<Node> ColorConvert(ColorConvertOptions options) {
   internal::ImageTransformPolicy policy;
   policy.mode = internal::ImageTransformMode::ColorConvert;
   policy.color = options.color;
+  policy.colorimetry = std::move(options.input_colorimetry);
   policy.surface = options.surface;
   return image_node(std::move(opt), std::move(policy));
 }

@@ -29,7 +29,8 @@ Python 提供相同的選項型別，以及 `pyneat.nodes.resize`、
   使用 `ResizeFit::Contain` 進行 letterbox 填補，或使用 `Stretch` 分別縮放各軸。
   輸入格式保持固定。
 - **ColorConvert** 會保留尺寸並產生 RGB、BGR、GRAY8、NV12、I420 或 NV16。
-  節點首次具體化時即固定輸入幾何尺寸與格式。若要變更，請建立新的節點與圖；
+  封裝式 YUYV 輸入（`YUY2`）只能轉換為 RGB、BGR 或 NV12；需要偶數寬度與置中的輸入色度，
+  且 Resize 與 Normalization 會拒絕此輸入。節點首次具體化時即固定輸入幾何尺寸與格式。若要變更，請建立新的節點與圖；
   重新建置同一個圖不會重設節點。
 - **Normalization** 接受 UInt8 RGB、BGR 或 GRAY8，並產生密集 BF16 張量，
   而非原始視訊。它會保留尺寸和通道順序。如同 ColorConvert，若要變更已具體化的
@@ -69,6 +70,13 @@ EV74 將來源與輸出的每個維度限制為 4096 像素。`BoxAverage` 允�
 RGB/GRAY 到 YUV 僅支援完整範圍與置中色度。其他設定組合會在準備階段被拒絕。
 這些選項不執行轉移函數轉換。封裝式 RGB/GRAY 輸出保留既有的完整範圍、置中 YUV
 解讀方式；要求其他範圍／取樣位置設定會失敗，而不會暗中使用近似值。
+YUYV 輸入轉為 RGB/BGR 是例外：它會依循完整或有限範圍。
+
+`ColorConvertOptions::input_colorimetry` 接受來源的 GStreamer colorimetry 字串，例如 YUYV 攝影機的
+`usb_camera_info(...).colorimetry`。此字串必須指明原色與轉移函數，並與 `color` 中的
+矩陣與範圍一致。節點之後會拒絕帶有其他 colorimetry 的輸入 caps，下游的嚴格 H.264 編碼器
+則會在串流中傳遞它。若為預設的空字串，輸出僅依 `color` 描述。不執行轉移函數轉換。Graph JSON 不會儲存此 colorimetry，因此
+`Graph::save` 會拒絕帶有它的圖。
 
 多平面結果是**具有單一儲存擁有者的一張影像**。平面位移與正值列距來自
 `GstVideoMeta`；使用者不可假設平面緊密排列。公開的 NV16 樣本帶有 Y 與 UV 平面，

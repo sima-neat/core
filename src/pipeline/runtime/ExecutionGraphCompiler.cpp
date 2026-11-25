@@ -1942,7 +1942,8 @@ std::optional<SimaDecodeType> encoded_source_codec(const PipelineSegmentPlan& so
   }
   // A USB camera's JPEG capture. Other MJPEG sources (HTTP, files) stay segmented.
   if (!source.nodes.empty() && source.nodes.back() &&
-      source.nodes.back()->kind() == "UsbCameraInput") {
+      source.nodes.back()->kind() == "UsbCameraInput" &&
+      derive_output_spec(source.nodes).media_type == "image/jpeg") {
     return SimaDecodeType::MJPEG;
   }
   return std::nullopt;

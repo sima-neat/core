@@ -221,9 +221,11 @@ CapsDecision maybe_update_caps_for_spec(InputStream::State& st, const SampleSpec
 
   const CapKey& cur = *st.current_key;
   const bool non_geometry_change = cur.media_type != key.media_type || cur.format != key.format ||
-                                   cur.fps_n != key.fps_n || cur.fps_d != key.fps_d;
+                                   cur.fps_n != key.fps_n || cur.fps_d != key.fps_d ||
+                                   cur.video != key.video;
   const bool format_only_change = (cur.media_type == key.media_type) && (cur.fps_n == key.fps_n) &&
-                                  (cur.fps_d == key.fps_d) && (cur.format != key.format);
+                                  (cur.fps_d == key.fps_d) && (cur.video == key.video) &&
+                                  (cur.format != key.format);
   // CVU ingress-dynamic path currently consumes width/height/stride/format from caps.
   // Keep media/fps transitions blocked in this mode until plugin+pipeline support is
   // validated end-to-end; fully-dynamic graphs may allow broader renegotiation.

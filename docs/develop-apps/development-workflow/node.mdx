@@ -203,7 +203,9 @@ H.264 remains the default. Select H.265 or HEVC explicitly.
 
 ### Decode MJPEG cameras
 
-USB cameras send MJPEG with 4:2:0 or 4:2:2 color sampling; most use 4:2:2. With
+USB cameras send MJPEG with 4:2:0 or 4:2:2 color sampling; most use 4:2:2. (A USB
+camera captured as YUYV needs no decoder; see
+[Use a USB Camera](/develop-apps/advanced-concepts/usb-camera-input#capture-yuyv).) With
 zero-copy output, the decoder writes only the stream's own sampling, so the graph must
 know it before it is built. For a USB camera, `usb_camera_info(...)` reports it as
 `decoded_format`; use that as the decoder's `out_format`. For another MJPEG source, set
