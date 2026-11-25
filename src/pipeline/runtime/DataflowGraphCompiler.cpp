@@ -17,6 +17,7 @@
 #include "pipeline/ErrorCodes.h"
 #include "pipeline/Graph.h"
 #include "pipeline/graph/internal/GraphBuildInternal.h"
+#include "pipeline/internal/CredentialRedaction.h"
 #include "pipeline/internal/DataflowNotCarried.h"
 #include "pipeline/internal/InputPolicy.h"
 #include "pipeline/internal/InputStreamUtil.h"
@@ -148,8 +149,11 @@ namespace {
 namespace df = pipeline_internal::df;
 using pipeline_internal::DataflowNotCarried;
 
+// A node as a refusal names it: its kind and its label. A source's label is its URL: the
+// credentials in it never reach a refusal (`user:password@` becomes `<redacted>@`, as
+// GStreamer's errors print a source).
 std::string node_text(const Node& node) {
-  const std::string label = node.user_label();
+  const std::string label = pipeline_internal::redact_gst_credentials(node.user_label());
   return label.empty() ? node.kind() : node.kind() + " '" + label + "'";
 }
 

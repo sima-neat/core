@@ -731,6 +731,16 @@ if (SIMANEAT_DATAFLOW_SOURCE_DIR AND
   set_property(TEST unit_dataflow_backend_test_gstreamer APPEND PROPERTY LABELS "strict;unit")
 endif()
 
+# No RTSP credentials in what the Dataflow backend says about a graph it refuses (no server needed).
+if (SIMANEAT_DATAFLOW_SOURCE_DIR AND
+    NOT unit_dataflow_credentials_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  add_pipeline_test(unit_dataflow_credentials_test
+    SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/unit_testing/unit_dataflow_credentials_test.cpp
+    ARGS --backend=dataflow
+  )
+  set_property(TEST unit_dataflow_credentials_test APPEND PROPERTY LABELS "unit;dataflow")
+endif()
+
 # A test that compares the two backends. A process runs on one backend (set_backend), so it is two
 # tests: `name` on GStreamer records what it pulls into a reference record, and `name`_dataflow on
 # Dataflow runs the same and compares with the record (a ctest fixture runs the first before the
