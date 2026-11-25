@@ -1,10 +1,13 @@
 #pragma once
 
 #include "asset_utils.h"
+#include "model_archive_fixture_utils.h"
 #include "test_main.h"
 
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <string>
 
 namespace sima_test {
@@ -14,48 +17,51 @@ struct Yolov8VariantFixture {
   std::string unpack_root;
 };
 
-// Both model-contract tests must provision their own required BF16 fixture;
-// neither may depend on test execution order or silently skip a missing model.
+// Legacy YOLOv8 packages rebuilt from their committed MPK manifests. Each manifest is the
+// one the legacy archive shipped; each MLA executable is replaced by an ELF that carries
+// only the compiler-named I/O sections and their sizes, which is all the contract tests
+// read from it. Nothing is downloaded.
 inline Yolov8VariantFixture resolve_yolov8_variant_fixture(const std::string& stem) {
   namespace fs = std::filesystem;
-  const fs::path root = test_source_root();
-  const fs::path drive_dir = root / "tmp" / "yolov8n_drive";
-  const fs::path unpack_dir = root / "tmp" / "yolov8n_unpack" / stem;
-  const fs::path tar_path = drive_dir / (stem + ".tar.gz");
+  const fs::path seed = test_model_archive_fixture_root_path() / "strict-seeds" / "legacy" / stem;
   std::error_code ec;
-  fs::create_directories(drive_dir, ec);
-  ec.clear();
-  fs::create_directories(unpack_dir.parent_path(), ec);
-  const ScopedFileLock lock(drive_dir / ".download.lock");
-  if (!is_listable_tar_gz(tar_path)) {
-    purge_unlistable_tar_gz(tar_path);
-    std::string base = "https://docs.sima.ai/pkg_downloads/SDK2.0.0/models/modalix";
-    if (const char* env = std::getenv("SIMA_YOLOV8N_VARIANTS_BASE_URL"); env && *env)
-      base = env;
-    else if (const char* env = std::getenv("SIMA_YOLOV8_VARIANTS_BASE_URL"); env && *env)
-      base = env;
-    while (!base.empty() && base.back() == '/')
-      base.pop_back();
-    const auto url = base + "/" + stem + ".tar.gz";
-    require(download_file(url, tar_path),
-            "failed to download YOLOv8n fixture from " + url +
-                " (run `sima-cli login` or set SIMA_YOLOV8N_VARIANTS_BASE_URL to a mirror)");
-    require(is_listable_tar_gz(tar_path),
-            "YOLOv8n fixture is not a readable tar.gz: " + tar_path.string());
+  require(fs::is_directory(seed, ec) && !ec,
+          "legacy YOLOv8 fixture metadata is missing: " + seed.string());
+
+  // Each call gets its own directory, which holds the package root and the archive. Tests
+  // run in parallel, and a shared archive path could be read while another test writes it.
+  const fs::path base(make_fixture_temp_dir("legacy_" + stem));
+  const fs::path root_path = base / "package";
+  fs::create_directories(root_path);
+  std::string manifest_text;
+  for (const auto& entry : fs::recursive_directory_iterator(seed)) {
+    if (!entry.is_regular_file())
+      continue;
+    const fs::path relative = entry.path().lexically_relative(seed);
+    const fs::path target = root_path / relative;
+    fs::create_directories(target.parent_path());
+    fs::copy_file(entry.path(), target, fs::copy_options::overwrite_existing);
+    if (entry.path().filename().string().ends_with("_mpk.json")) {
+      require(manifest_text.empty(), "legacy YOLOv8 fixture has more than one MPK manifest");
+      std::ifstream input(entry.path(), std::ios::binary);
+      manifest_text.assign(std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>());
+    }
   }
-  const auto manifest = unpack_dir / "yolov8n_modified_mpk.json";
-  if (!is_usable_regular_file(manifest)) {
-    fs::remove_all(unpack_dir, ec);
-    ec.clear();
-    fs::create_directories(unpack_dir, ec);
-    const auto command =
-        "tar -xzf " + shell_quote(tar_path.string()) + " -C " + shell_quote(unpack_dir.string());
-    require(std::system(command.c_str()) == 0,
-            "failed to unpack YOLOv8n fixture " + tar_path.string());
-    require(is_usable_regular_file(manifest),
-            "YOLOv8n fixture is missing its authoritative MPK manifest");
-  }
-  return {tar_path.string(), unpack_dir.string()};
+  require(!manifest_text.empty(), "legacy YOLOv8 fixture has no MPK manifest: " + seed.string());
+  // The legacy archives are flat, with the executable beside the manifest. Keep that
+  // layout for both the archive and the unpacked package root.
+  write_mpk_topology_elfs(root_path, manifest_text);
+  const fs::path share = root_path / "share";
+  for (const auto& entry : fs::directory_iterator(share))
+    fs::rename(entry.path(), root_path / entry.path().filename());
+  fs::remove(share);
+
+  const fs::path tar_path = base / ("legacy_" + stem + ".tar.gz");
+  const std::string command = "tar -czf " + shell_quote(tar_path.string()) + " -C " +
+                              shell_quote(root_path.string()) + " .";
+  require(std::system(command.c_str()) == 0,
+          "failed to archive legacy YOLOv8 fixture " + tar_path.string());
+  return {tar_path.string(), root_path.string()};
 }
 
 } // namespace sima_test

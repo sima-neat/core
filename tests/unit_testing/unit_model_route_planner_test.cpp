@@ -4,6 +4,7 @@
 #include "model/internal/RoutePlanner.h"
 #include "model_archive_fixture_utils.h"
 #include "pipeline/Graph.h"
+#include "support/yolov8_variant_fixture.h"
 #include "test_main.h"
 #include "test_utils.h"
 
@@ -727,12 +728,18 @@ sima_test::ModelArchiveFixture make_packed_post_fixture(const int batch) {
   return fixture;
 }
 
+// Stands in for yolov8n_A_BF16_W_INT8_mpk: both BF16 EV74 builds route six heads through
+// DetessCast.
 std::filesystem::path bf16_ev74_model_path() {
-  return core_root() / "tmp" / "yolov8n_drive" / "yolov8n_A_BF16_W_INT8_mpk.tar.gz";
+  static const std::string path =
+      sima_test::resolve_yolov8_variant_fixture("yolov8n_A_W_BF16_mpk").tar_path;
+  return path;
 }
 
 std::filesystem::path int8_ev74_model_path() {
-  return core_root() / "tmp" / "yolov8n_drive" / "yolov8n_A_W_int8_mpk.tar.gz";
+  static const std::string path =
+      sima_test::resolve_yolov8_variant_fixture("yolov8n_A_W_int8_mpk").tar_path;
+  return path;
 }
 
 std::filesystem::path bf16_mlatess_model_path() {

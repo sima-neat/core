@@ -229,6 +229,7 @@ while pulled < len(inputs):
 pcie::ModelOptions options;
 options.preprocess.kind = pcie::InputKind::Image;
 options.preprocess.color_convert.input_format = pcie::ColorFormat::BGR;
+options.preprocess.normalize.enable = pcie::AutoFlag::On;
 options.preprocess.resize.enable = pcie::AutoFlag::On;
 options.preprocess.resize.mode = pcie::ResizeMode::Letterbox;
 options.decode_type = pcie::BoxDecodeType::YoloV8;
@@ -254,6 +255,7 @@ import pyneatpcie as pcie
 options = pcie.ModelOptions()
 options.preprocess.kind = pcie.InputKind.Image
 options.preprocess.color_convert.input_format = pcie.ColorFormat.BGR
+options.preprocess.normalize.enable = pcie.AutoFlag.On
 options.preprocess.resize.enable = pcie.AutoFlag.On
 options.preprocess.resize.mode = pcie.ResizeMode.Letterbox
 options.decode_type = pcie.BoxDecodeType.YoloV8

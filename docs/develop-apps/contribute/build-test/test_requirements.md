@@ -148,30 +148,9 @@ and Torch exclusions remain coverage gaps, not passes. Stream profiles cover the
 Each stream case has separate smoke and repeated-contract results, so an available
 HTTP stream cannot hide an unexecuted RTSP case under an aggregate PASS.
 
-For weekly model preparation, set a local path or HTTPS location and reviewed
-SHA-256 for `SIMA_CI_SSD300_MODEL`. The checksum uses the matching `_SHA256`
-variable. Preparation checks exact bytes and exports `SIMA_SSD300_TAR`; missing
-or mismatched inputs are preparation failures. Model preparation does not depend
-on RTSP availability.
-
 Keep selection, outcomes and profile-exclusion reports with the lane results.
 A selected-profile pass is not a claim that all optional hardware or integration
 profiles passed.
-
-### Local weekly preparation
-
-Use `tools/ci/prepare_weekly_fixtures.py` for local runs as well as CI.
-Preparation requires the `ssd300` fixture group. It does not change CTest
-selection or make a skipped required case pass.
-
-Use `--environment-json <file>` for a local launcher, `--github-env <file>` for
-GitHub Actions, or both. Both outputs contain the same environment mapping.
-The local launcher must merge the JSON mapping into the test process environment
-before recording selection or admitting a hardware process. The JSON is not a
-shell script and is not a test result. Merely creating it does not export variables.
-
-Use a new output directory for each preparation attempt; failed staged bytes
-remain available for diagnosis.
 
 ### Installed packages versus private-prefix integration
 
