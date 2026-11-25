@@ -645,7 +645,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 2 'boxdecode' (kernel SimaBoxDecode on the A65)",
-     "fact": "it decodes profile 'detr_v1', task 'detection': the BoxDecode stage runs the decode families yolo_dfl_v1/detection, yolo_dfl_obb_v1/detection, yolo26_obb_v1/detection, yolo26_v1/detection, yolox_v1/detection only",
+     "fact": "it decodes profile 'detr_v1', task 'detection': the BoxDecode stage runs the decode families yolo_dfl_v1/detection, yolo_dfl_obb_v1/detection, yolo26_obb_v1/detection, yolo26_v1/detection, yolox_v1/detection, yolo26_v1/pose only",
      "kinds": [
       "preproc@EV74",
       "mla",
@@ -699,7 +699,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 2 'boxdecode' (kernel SimaBoxDecode on the A65)",
-     "fact": "it decodes profile 'detr_v1', task 'detection': the BoxDecode stage runs the decode families yolo_dfl_v1/detection, yolo_dfl_obb_v1/detection, yolo26_obb_v1/detection, yolo26_v1/detection, yolox_v1/detection only",
+     "fact": "it decodes profile 'detr_v1', task 'detection': the BoxDecode stage runs the decode families yolo_dfl_v1/detection, yolo_dfl_obb_v1/detection, yolo26_obb_v1/detection, yolo26_v1/detection, yolox_v1/detection, yolo26_v1/pose only",
      "kinds": [
       "preproc@EV74",
       "mla",
@@ -753,7 +753,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 2 'boxdecode' (kernel SimaBoxDecode on the A65)",
-     "fact": "it decodes profile 'detr_v1', task 'detection': the BoxDecode stage runs the decode families yolo_dfl_v1/detection, yolo_dfl_obb_v1/detection, yolo26_obb_v1/detection, yolo26_v1/detection, yolox_v1/detection only",
+     "fact": "it decodes profile 'detr_v1', task 'detection': the BoxDecode stage runs the decode families yolo_dfl_v1/detection, yolo_dfl_obb_v1/detection, yolo26_obb_v1/detection, yolo26_v1/detection, yolox_v1/detection, yolo26_v1/pose only",
      "kinds": [
       "preproc@EV74",
       "mla",
@@ -807,7 +807,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 2 'boxdecode' (kernel SimaBoxDecode on the A65)",
-     "fact": "it decodes profile 'detr_v1', task 'detection': the BoxDecode stage runs the decode families yolo_dfl_v1/detection, yolo_dfl_obb_v1/detection, yolo26_obb_v1/detection, yolo26_v1/detection, yolox_v1/detection only",
+     "fact": "it decodes profile 'detr_v1', task 'detection': the BoxDecode stage runs the decode families yolo_dfl_v1/detection, yolo_dfl_obb_v1/detection, yolo26_obb_v1/detection, yolo26_v1/detection, yolox_v1/detection, yolo26_v1/pose only",
      "kinds": [
       "preproc@EV74",
       "mla",
@@ -8429,29 +8429,18 @@
   {
    "package": "yolo26l_pose w16a16",
    "view": "app",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "yolo26l_pose__w16a16__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 2 'boxdecode' (kernel SimaBoxDecode on the A65)",
-     "fact": "it decodes profile 'yolo26_v1', task 'pose': the BoxDecode stage runs the decode families yolo_dfl_v1/detection, yolo_dfl_obb_v1/detection, yolo26_obb_v1/detection, yolo26_v1/detection, yolox_v1/detection only",
+     "planner": "accepted",
      "kinds": [
       "preproc@EV74",
       "mla",
       "boxdecode@A65"
-     ],
-     "obstacles": [
-      "BOXDECODE yolo26_v1/pose"
-     ],
-     "phase": 3,
-     "owners": [
-      "boxdecode"
      ]
     }
-   ],
-   "flips_at_phase": 3
+   ]
   },
   {
    "package": "yolo26l_pose w16a16",
@@ -8483,29 +8472,18 @@
   {
    "package": "yolo26l_pose w8a16",
    "view": "app",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "yolo26l_pose__w8a16__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 2 'boxdecode' (kernel SimaBoxDecode on the A65)",
-     "fact": "it decodes profile 'yolo26_v1', task 'pose': the BoxDecode stage runs the decode families yolo_dfl_v1/detection, yolo_dfl_obb_v1/detection, yolo26_obb_v1/detection, yolo26_v1/detection, yolox_v1/detection only",
+     "planner": "accepted",
      "kinds": [
       "preproc@EV74",
       "mla",
       "boxdecode@A65"
-     ],
-     "obstacles": [
-      "BOXDECODE yolo26_v1/pose"
-     ],
-     "phase": 3,
-     "owners": [
-      "boxdecode"
      ]
     }
-   ],
-   "flips_at_phase": 3
+   ]
   },
   {
    "package": "yolo26l_pose w8a16",
@@ -8537,29 +8515,18 @@
   {
    "package": "yolo26l_pose w8a8",
    "view": "app",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "yolo26l_pose__w8a8__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 2 'boxdecode' (kernel SimaBoxDecode on the A65)",
-     "fact": "it decodes profile 'yolo26_v1', task 'pose': the BoxDecode stage runs the decode families yolo_dfl_v1/detection, yolo_dfl_obb_v1/detection, yolo26_obb_v1/detection, yolo26_v1/detection, yolox_v1/detection only",
+     "planner": "accepted",
      "kinds": [
       "preproc@EV74",
       "mla",
       "boxdecode@A65"
-     ],
-     "obstacles": [
-      "BOXDECODE yolo26_v1/pose"
-     ],
-     "phase": 3,
-     "owners": [
-      "boxdecode"
      ]
     }
-   ],
-   "flips_at_phase": 3
+   ]
   },
   {
    "package": "yolo26l_pose w8a8",
@@ -8598,7 +8565,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 2 'boxdecode' (kernel SimaBoxDecode on the A65)",
-     "fact": "it decodes profile 'yolo26_v1', task 'segmentation': the BoxDecode stage runs the decode families yolo_dfl_v1/detection, yolo_dfl_obb_v1/detection, yolo26_obb_v1/detection, yolo26_v1/detection, yolox_v1/detection only",
+     "fact": "it decodes profile 'yolo26_v1', task 'segmentation': the BoxDecode stage runs the decode families yolo_dfl_v1/detection, yolo_dfl_obb_v1/detection, yolo26_obb_v1/detection, yolo26_v1/detection, yolox_v1/detection, yolo26_v1/pose only",
      "kinds": [
       "preproc@EV74",
       "mla",
@@ -8652,7 +8619,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 2 'boxdecode' (kernel SimaBoxDecode on the A65)",
-     "fact": "it decodes profile 'yolo26_v1', task 'segmentation': the BoxDecode stage runs the decode families yolo_dfl_v1/detection, yolo_dfl_obb_v1/detection, yolo26_obb_v1/detection, yolo26_v1/detection, yolox_v1/detection only",
+     "fact": "it decodes profile 'yolo26_v1', task 'segmentation': the BoxDecode stage runs the decode families yolo_dfl_v1/detection, yolo_dfl_obb_v1/detection, yolo26_obb_v1/detection, yolo26_v1/detection, yolox_v1/detection, yolo26_v1/pose only",
      "kinds": [
       "preproc@EV74",
       "mla",
@@ -8706,7 +8673,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 2 'boxdecode' (kernel SimaBoxDecode on the A65)",
-     "fact": "it decodes profile 'yolo26_v1', task 'segmentation': the BoxDecode stage runs the decode families yolo_dfl_v1/detection, yolo_dfl_obb_v1/detection, yolo26_obb_v1/detection, yolo26_v1/detection, yolox_v1/detection only",
+     "fact": "it decodes profile 'yolo26_v1', task 'segmentation': the BoxDecode stage runs the decode families yolo_dfl_v1/detection, yolo_dfl_obb_v1/detection, yolo26_obb_v1/detection, yolo26_v1/detection, yolox_v1/detection, yolo26_v1/pose only",
      "kinds": [
       "preproc@EV74",
       "mla",
@@ -8968,29 +8935,18 @@
   {
    "package": "yolo26m_pose w16a16",
    "view": "app",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "yolo26m_pose__w16a16__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 2 'boxdecode' (kernel SimaBoxDecode on the A65)",
-     "fact": "it decodes profile 'yolo26_v1', task 'pose': the BoxDecode stage runs the decode families yolo_dfl_v1/detection, yolo_dfl_obb_v1/detection, yolo26_obb_v1/detection, yolo26_v1/detection, yolox_v1/detection only",
+     "planner": "accepted",
      "kinds": [
       "preproc@EV74",
       "mla",
       "boxdecode@A65"
-     ],
-     "obstacles": [
-      "BOXDECODE yolo26_v1/pose"
-     ],
-     "phase": 3,
-     "owners": [
-      "boxdecode"
      ]
     }
-   ],
-   "flips_at_phase": 3
+   ]
   },
   {
    "package": "yolo26m_pose w16a16",
@@ -9022,29 +8978,18 @@
   {
    "package": "yolo26m_pose w8a16",
    "view": "app",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "yolo26m_pose__w8a16__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 2 'boxdecode' (kernel SimaBoxDecode on the A65)",
-     "fact": "it decodes profile 'yolo26_v1', task 'pose': the BoxDecode stage runs the decode families yolo_dfl_v1/detection, yolo_dfl_obb_v1/detection, yolo26_obb_v1/detection, yolo26_v1/detection, yolox_v1/detection only",
+     "planner": "accepted",
      "kinds": [
       "preproc@EV74",
       "mla",
       "boxdecode@A65"
-     ],
-     "obstacles": [
-      "BOXDECODE yolo26_v1/pose"
-     ],
-     "phase": 3,
-     "owners": [
-      "boxdecode"
      ]
     }
-   ],
-   "flips_at_phase": 3
+   ]
   },
   {
    "package": "yolo26m_pose w8a16",
@@ -9076,29 +9021,18 @@
   {
    "package": "yolo26m_pose w8a8",
    "view": "app",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "yolo26m_pose__w8a8__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 2 'boxdecode' (kernel SimaBoxDecode on the A65)",
-     "fact": "it decodes profile 'yolo26_v1', task 'pose': the BoxDecode stage runs the decode families yolo_dfl_v1/detection, yolo_dfl_obb_v1/detection, yolo26_obb_v1/detection, yolo26_v1/detection, yolox_v1/detection only",
+     "planner": "accepted",
      "kinds": [
       "preproc@EV74",
       "mla",
       "boxdecode@A65"
-     ],
-     "obstacles": [
-      "BOXDECODE yolo26_v1/pose"
-     ],
-     "phase": 3,
-     "owners": [
-      "boxdecode"
      ]
     }
-   ],
-   "flips_at_phase": 3
+   ]
   },
   {
    "package": "yolo26m_pose w8a8",
@@ -9137,7 +9071,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 2 'boxdecode' (kernel SimaBoxDecode on the A65)",
-     "fact": "it decodes profile 'yolo26_v1', task 'segmentation': the BoxDecode stage runs the decode families yolo_dfl_v1/detection, yolo_dfl_obb_v1/detection, yolo26_obb_v1/detection, yolo26_v1/detection, yolox_v1/detection only",
+     "fact": "it decodes profile 'yolo26_v1', task 'segmentation': the BoxDecode stage runs the decode families yolo_dfl_v1/detection, yolo_dfl_obb_v1/detection, yolo26_obb_v1/detection, yolo26_v1/detection, yolox_v1/detection, yolo26_v1/pose only",
      "kinds": [
       "preproc@EV74",
       "mla",
@@ -9191,7 +9125,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 2 'boxdecode' (kernel SimaBoxDecode on the A65)",
-     "fact": "it decodes profile 'yolo26_v1', task 'segmentation': the BoxDecode stage runs the decode families yolo_dfl_v1/detection, yolo_dfl_obb_v1/detection, yolo26_obb_v1/detection, yolo26_v1/detection, yolox_v1/detection only",
+     "fact": "it decodes profile 'yolo26_v1', task 'segmentation': the BoxDecode stage runs the decode families yolo_dfl_v1/detection, yolo_dfl_obb_v1/detection, yolo26_obb_v1/detection, yolo26_v1/detection, yolox_v1/detection, yolo26_v1/pose only",
      "kinds": [
       "preproc@EV74",
       "mla",
@@ -9245,7 +9179,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 2 'boxdecode' (kernel SimaBoxDecode on the A65)",
-     "fact": "it decodes profile 'yolo26_v1', task 'segmentation': the BoxDecode stage runs the decode families yolo_dfl_v1/detection, yolo_dfl_obb_v1/detection, yolo26_obb_v1/detection, yolo26_v1/detection, yolox_v1/detection only",
+     "fact": "it decodes profile 'yolo26_v1', task 'segmentation': the BoxDecode stage runs the decode families yolo_dfl_v1/detection, yolo_dfl_obb_v1/detection, yolo26_obb_v1/detection, yolo26_v1/detection, yolox_v1/detection, yolo26_v1/pose only",
      "kinds": [
       "preproc@EV74",
       "mla",
@@ -9507,29 +9441,18 @@
   {
    "package": "yolo26n_pose w16a16",
    "view": "app",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "yolo26n_pose__w16a16__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 2 'boxdecode' (kernel SimaBoxDecode on the A65)",
-     "fact": "it decodes profile 'yolo26_v1', task 'pose': the BoxDecode stage runs the decode families yolo_dfl_v1/detection, yolo_dfl_obb_v1/detection, yolo26_obb_v1/detection, yolo26_v1/detection, yolox_v1/detection only",
+     "planner": "accepted",
      "kinds": [
       "preproc@EV74",
       "mla",
       "boxdecode@A65"
-     ],
-     "obstacles": [
-      "BOXDECODE yolo26_v1/pose"
-     ],
-     "phase": 3,
-     "owners": [
-      "boxdecode"
      ]
     }
-   ],
-   "flips_at_phase": 3
+   ]
   },
   {
    "package": "yolo26n_pose w16a16",
@@ -9561,29 +9484,18 @@
   {
    "package": "yolo26n_pose w8a16",
    "view": "app",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "yolo26n_pose__w8a16__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 2 'boxdecode' (kernel SimaBoxDecode on the A65)",
-     "fact": "it decodes profile 'yolo26_v1', task 'pose': the BoxDecode stage runs the decode families yolo_dfl_v1/detection, yolo_dfl_obb_v1/detection, yolo26_obb_v1/detection, yolo26_v1/detection, yolox_v1/detection only",
+     "planner": "accepted",
      "kinds": [
       "preproc@EV74",
       "mla",
       "boxdecode@A65"
-     ],
-     "obstacles": [
-      "BOXDECODE yolo26_v1/pose"
-     ],
-     "phase": 3,
-     "owners": [
-      "boxdecode"
      ]
     }
-   ],
-   "flips_at_phase": 3
+   ]
   },
   {
    "package": "yolo26n_pose w8a16",
@@ -9615,29 +9527,18 @@
   {
    "package": "yolo26n_pose w8a8",
    "view": "app",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "yolo26n_pose__w8a8__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 2 'boxdecode' (kernel SimaBoxDecode on the A65)",
-     "fact": "it decodes profile 'yolo26_v1', task 'pose': the BoxDecode stage runs the decode families yolo_dfl_v1/detection, yolo_dfl_obb_v1/detection, yolo26_obb_v1/detection, yolo26_v1/detection, yolox_v1/detection only",
+     "planner": "accepted",
      "kinds": [
       "preproc@EV74",
       "mla",
       "boxdecode@A65"
-     ],
-     "obstacles": [
-      "BOXDECODE yolo26_v1/pose"
-     ],
-     "phase": 3,
-     "owners": [
-      "boxdecode"
      ]
     }
-   ],
-   "flips_at_phase": 3
+   ]
   },
   {
    "package": "yolo26n_pose w8a8",
@@ -9676,7 +9577,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 2 'boxdecode' (kernel SimaBoxDecode on the A65)",
-     "fact": "it decodes profile 'yolo26_v1', task 'segmentation': the BoxDecode stage runs the decode families yolo_dfl_v1/detection, yolo_dfl_obb_v1/detection, yolo26_obb_v1/detection, yolo26_v1/detection, yolox_v1/detection only",
+     "fact": "it decodes profile 'yolo26_v1', task 'segmentation': the BoxDecode stage runs the decode families yolo_dfl_v1/detection, yolo_dfl_obb_v1/detection, yolo26_obb_v1/detection, yolo26_v1/detection, yolox_v1/detection, yolo26_v1/pose only",
      "kinds": [
       "preproc@EV74",
       "mla",
@@ -9730,7 +9631,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 2 'boxdecode' (kernel SimaBoxDecode on the A65)",
-     "fact": "it decodes profile 'yolo26_v1', task 'segmentation': the BoxDecode stage runs the decode families yolo_dfl_v1/detection, yolo_dfl_obb_v1/detection, yolo26_obb_v1/detection, yolo26_v1/detection, yolox_v1/detection only",
+     "fact": "it decodes profile 'yolo26_v1', task 'segmentation': the BoxDecode stage runs the decode families yolo_dfl_v1/detection, yolo_dfl_obb_v1/detection, yolo26_obb_v1/detection, yolo26_v1/detection, yolox_v1/detection, yolo26_v1/pose only",
      "kinds": [
       "preproc@EV74",
       "mla",
@@ -9784,7 +9685,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 2 'boxdecode' (kernel SimaBoxDecode on the A65)",
-     "fact": "it decodes profile 'yolo26_v1', task 'segmentation': the BoxDecode stage runs the decode families yolo_dfl_v1/detection, yolo_dfl_obb_v1/detection, yolo26_obb_v1/detection, yolo26_v1/detection, yolox_v1/detection only",
+     "fact": "it decodes profile 'yolo26_v1', task 'segmentation': the BoxDecode stage runs the decode families yolo_dfl_v1/detection, yolo_dfl_obb_v1/detection, yolo26_obb_v1/detection, yolo26_v1/detection, yolox_v1/detection, yolo26_v1/pose only",
      "kinds": [
       "preproc@EV74",
       "mla",
@@ -10089,29 +9990,18 @@
   {
    "package": "yolo26s_pose w16a16",
    "view": "app",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "yolo26s_pose__w16a16__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 2 'boxdecode' (kernel SimaBoxDecode on the A65)",
-     "fact": "it decodes profile 'yolo26_v1', task 'pose': the BoxDecode stage runs the decode families yolo_dfl_v1/detection, yolo_dfl_obb_v1/detection, yolo26_obb_v1/detection, yolo26_v1/detection, yolox_v1/detection only",
+     "planner": "accepted",
      "kinds": [
       "preproc@EV74",
       "mla",
       "boxdecode@A65"
-     ],
-     "obstacles": [
-      "BOXDECODE yolo26_v1/pose"
-     ],
-     "phase": 3,
-     "owners": [
-      "boxdecode"
      ]
     }
-   ],
-   "flips_at_phase": 3
+   ]
   },
   {
    "package": "yolo26s_pose w16a16",
@@ -10143,29 +10033,18 @@
   {
    "package": "yolo26s_pose w8a16",
    "view": "app",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "yolo26s_pose__w8a16__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 2 'boxdecode' (kernel SimaBoxDecode on the A65)",
-     "fact": "it decodes profile 'yolo26_v1', task 'pose': the BoxDecode stage runs the decode families yolo_dfl_v1/detection, yolo_dfl_obb_v1/detection, yolo26_obb_v1/detection, yolo26_v1/detection, yolox_v1/detection only",
+     "planner": "accepted",
      "kinds": [
       "preproc@EV74",
       "mla",
       "boxdecode@A65"
-     ],
-     "obstacles": [
-      "BOXDECODE yolo26_v1/pose"
-     ],
-     "phase": 3,
-     "owners": [
-      "boxdecode"
      ]
     }
-   ],
-   "flips_at_phase": 3
+   ]
   },
   {
    "package": "yolo26s_pose w8a16",
@@ -10197,29 +10076,18 @@
   {
    "package": "yolo26s_pose w8a8",
    "view": "app",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "yolo26s_pose__w8a8__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 2 'boxdecode' (kernel SimaBoxDecode on the A65)",
-     "fact": "it decodes profile 'yolo26_v1', task 'pose': the BoxDecode stage runs the decode families yolo_dfl_v1/detection, yolo_dfl_obb_v1/detection, yolo26_obb_v1/detection, yolo26_v1/detection, yolox_v1/detection only",
+     "planner": "accepted",
      "kinds": [
       "preproc@EV74",
       "mla",
       "boxdecode@A65"
-     ],
-     "obstacles": [
-      "BOXDECODE yolo26_v1/pose"
-     ],
-     "phase": 3,
-     "owners": [
-      "boxdecode"
      ]
     }
-   ],
-   "flips_at_phase": 3
+   ]
   },
   {
    "package": "yolo26s_pose w8a8",
@@ -10258,7 +10126,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 2 'boxdecode' (kernel SimaBoxDecode on the A65)",
-     "fact": "it decodes profile 'yolo26_v1', task 'segmentation': the BoxDecode stage runs the decode families yolo_dfl_v1/detection, yolo_dfl_obb_v1/detection, yolo26_obb_v1/detection, yolo26_v1/detection, yolox_v1/detection only",
+     "fact": "it decodes profile 'yolo26_v1', task 'segmentation': the BoxDecode stage runs the decode families yolo_dfl_v1/detection, yolo_dfl_obb_v1/detection, yolo26_obb_v1/detection, yolo26_v1/detection, yolox_v1/detection, yolo26_v1/pose only",
      "kinds": [
       "preproc@EV74",
       "mla",
@@ -10312,7 +10180,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 2 'boxdecode' (kernel SimaBoxDecode on the A65)",
-     "fact": "it decodes profile 'yolo26_v1', task 'segmentation': the BoxDecode stage runs the decode families yolo_dfl_v1/detection, yolo_dfl_obb_v1/detection, yolo26_obb_v1/detection, yolo26_v1/detection, yolox_v1/detection only",
+     "fact": "it decodes profile 'yolo26_v1', task 'segmentation': the BoxDecode stage runs the decode families yolo_dfl_v1/detection, yolo_dfl_obb_v1/detection, yolo26_obb_v1/detection, yolo26_v1/detection, yolox_v1/detection, yolo26_v1/pose only",
      "kinds": [
       "preproc@EV74",
       "mla",
@@ -10366,7 +10234,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 2 'boxdecode' (kernel SimaBoxDecode on the A65)",
-     "fact": "it decodes profile 'yolo26_v1', task 'segmentation': the BoxDecode stage runs the decode families yolo_dfl_v1/detection, yolo_dfl_obb_v1/detection, yolo26_obb_v1/detection, yolo26_v1/detection, yolox_v1/detection only",
+     "fact": "it decodes profile 'yolo26_v1', task 'segmentation': the BoxDecode stage runs the decode families yolo_dfl_v1/detection, yolo_dfl_obb_v1/detection, yolo26_obb_v1/detection, yolo26_v1/detection, yolox_v1/detection, yolo26_v1/pose only",
      "kinds": [
       "preproc@EV74",
       "mla",
@@ -10628,29 +10496,18 @@
   {
    "package": "yolo26x_pose w16a16",
    "view": "app",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "yolo26x_pose__w16a16__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 2 'boxdecode' (kernel SimaBoxDecode on the A65)",
-     "fact": "it decodes profile 'yolo26_v1', task 'pose': the BoxDecode stage runs the decode families yolo_dfl_v1/detection, yolo_dfl_obb_v1/detection, yolo26_obb_v1/detection, yolo26_v1/detection, yolox_v1/detection only",
+     "planner": "accepted",
      "kinds": [
       "preproc@EV74",
       "mla",
       "boxdecode@A65"
-     ],
-     "obstacles": [
-      "BOXDECODE yolo26_v1/pose"
-     ],
-     "phase": 3,
-     "owners": [
-      "boxdecode"
      ]
     }
-   ],
-   "flips_at_phase": 3
+   ]
   },
   {
    "package": "yolo26x_pose w16a16",
@@ -10682,29 +10539,18 @@
   {
    "package": "yolo26x_pose w8a16",
    "view": "app",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "yolo26x_pose__w8a16__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 2 'boxdecode' (kernel SimaBoxDecode on the A65)",
-     "fact": "it decodes profile 'yolo26_v1', task 'pose': the BoxDecode stage runs the decode families yolo_dfl_v1/detection, yolo_dfl_obb_v1/detection, yolo26_obb_v1/detection, yolo26_v1/detection, yolox_v1/detection only",
+     "planner": "accepted",
      "kinds": [
       "preproc@EV74",
       "mla",
       "boxdecode@A65"
-     ],
-     "obstacles": [
-      "BOXDECODE yolo26_v1/pose"
-     ],
-     "phase": 3,
-     "owners": [
-      "boxdecode"
      ]
     }
-   ],
-   "flips_at_phase": 3
+   ]
   },
   {
    "package": "yolo26x_pose w8a16",
@@ -10736,29 +10582,18 @@
   {
    "package": "yolo26x_pose w8a8",
    "view": "app",
-   "outcome": "not_carried",
+   "outcome": "equal",
    "components": [
     {
      "id": "yolo26x_pose__w8a8__model",
-     "planner": "refused",
-     "code": "misconfig.pipeline_shape",
-     "subject": "stage 2 'boxdecode' (kernel SimaBoxDecode on the A65)",
-     "fact": "it decodes profile 'yolo26_v1', task 'pose': the BoxDecode stage runs the decode families yolo_dfl_v1/detection, yolo_dfl_obb_v1/detection, yolo26_obb_v1/detection, yolo26_v1/detection, yolox_v1/detection only",
+     "planner": "accepted",
      "kinds": [
       "preproc@EV74",
       "mla",
       "boxdecode@A65"
-     ],
-     "obstacles": [
-      "BOXDECODE yolo26_v1/pose"
-     ],
-     "phase": 3,
-     "owners": [
-      "boxdecode"
      ]
     }
-   ],
-   "flips_at_phase": 3
+   ]
   },
   {
    "package": "yolo26x_pose w8a8",
@@ -10797,7 +10632,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 2 'boxdecode' (kernel SimaBoxDecode on the A65)",
-     "fact": "it decodes profile 'yolo26_v1', task 'segmentation': the BoxDecode stage runs the decode families yolo_dfl_v1/detection, yolo_dfl_obb_v1/detection, yolo26_obb_v1/detection, yolo26_v1/detection, yolox_v1/detection only",
+     "fact": "it decodes profile 'yolo26_v1', task 'segmentation': the BoxDecode stage runs the decode families yolo_dfl_v1/detection, yolo_dfl_obb_v1/detection, yolo26_obb_v1/detection, yolo26_v1/detection, yolox_v1/detection, yolo26_v1/pose only",
      "kinds": [
       "preproc@EV74",
       "mla",
@@ -10851,7 +10686,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 2 'boxdecode' (kernel SimaBoxDecode on the A65)",
-     "fact": "it decodes profile 'yolo26_v1', task 'segmentation': the BoxDecode stage runs the decode families yolo_dfl_v1/detection, yolo_dfl_obb_v1/detection, yolo26_obb_v1/detection, yolo26_v1/detection, yolox_v1/detection only",
+     "fact": "it decodes profile 'yolo26_v1', task 'segmentation': the BoxDecode stage runs the decode families yolo_dfl_v1/detection, yolo_dfl_obb_v1/detection, yolo26_obb_v1/detection, yolo26_v1/detection, yolox_v1/detection, yolo26_v1/pose only",
      "kinds": [
       "preproc@EV74",
       "mla",
@@ -10905,7 +10740,7 @@
      "planner": "refused",
      "code": "misconfig.pipeline_shape",
      "subject": "stage 2 'boxdecode' (kernel SimaBoxDecode on the A65)",
-     "fact": "it decodes profile 'yolo26_v1', task 'segmentation': the BoxDecode stage runs the decode families yolo_dfl_v1/detection, yolo_dfl_obb_v1/detection, yolo26_obb_v1/detection, yolo26_v1/detection, yolox_v1/detection only",
+     "fact": "it decodes profile 'yolo26_v1', task 'segmentation': the BoxDecode stage runs the decode families yolo_dfl_v1/detection, yolo_dfl_obb_v1/detection, yolo26_obb_v1/detection, yolo26_v1/detection, yolox_v1/detection, yolo26_v1/pose only",
      "kinds": [
       "preproc@EV74",
       "mla",

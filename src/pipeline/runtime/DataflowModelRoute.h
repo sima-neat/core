@@ -80,13 +80,13 @@
 //     row has shown byte-equal to GStreamer's (the table in front of plan_boxdecode_stage:
 //     YOLOv8-style detection, wire BBOX, with C-blocked heads; YOLOv8-style and YOLO26 oriented
 //     boxes, wire BBOX_OBB_V1; YOLO26 and YOLOX detection, whose heads are strided tensors in the
-//     MLA's buffer). A head that is a dense or strided tensor is one whose kernel
-//     reads either the tensor's own extent or, of a strided head, its rows whole to the end of
-//     their pitch (pixels pitched for more channels than the head has); another count is not
-//     carried.
-//     An oriented-box decode maps boxes back with one scale for both axes: a frame size whose
-//     letterbox has two is refused, at the build when it is the declared size or the port's
-//     bound, at its push otherwise (the Run goes on). The other decode families, pose and
+//     MLA's buffer; YOLO26 pose, whose keypoints are a fifth output and whose wire is the BBOX
+//     wire with the keypoint blocks behind it). A head that is a dense or strided tensor is one
+//     whose kernel reads either the tensor's own extent or, of a strided head, its rows whole to
+//     the end of their pitch (pixels pitched for more channels than the head has); another count is
+//     not carried. An oriented-box decode maps boxes back with one scale for both axes: a frame
+//     size whose letterbox has two is refused, at the build when it is the declared size or the
+//     port's bound, at its push otherwise (the Run goes on). The other decode families, pose and
 //     segmentation, a non-oriented decode that takes each frame's affine (a crop, an off-centre
 //     letterbox, an explicit transform), tiled heads (detess members), and a decode that takes
 //     each frame's size without the image preproc in front are not carried (the plan says so).

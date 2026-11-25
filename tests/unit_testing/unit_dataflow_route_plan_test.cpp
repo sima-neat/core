@@ -487,6 +487,11 @@ void boxdecode(const Yolo& y) {
             }),
             std::string("the decode family ") + profile + "/detection");
   }
+  accepts(decode([](si::StageStaticSpec&, si::KernelStageRecipe& r) {
+            r.boxdecode_program->profile = "yolo26_v1";
+            r.boxdecode_program->task = "pose";
+          }),
+          "the decode family yolo26_v1/pose");
   for (const char* profile :
        {"ssd_v1", "yolov5_v1", "yolov6_v1", "yolov7_v1", "detr_v1", "yolox_seg_pose_v1"}) {
     declines(decode([profile](si::StageStaticSpec&, si::KernelStageRecipe& r) {
