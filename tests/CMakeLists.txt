@@ -2410,6 +2410,28 @@ if (NOT preproc_roi_boxdecode_moving_test IN_LIST PIPELINESESSION_TEST_BLACKLIST
   set_tests_properties(preproc_roi_boxdecode_moving_test PROPERTIES TIMEOUT 120)
 endif()
 
+# The same moving ROI for pose and segmentation (Kernels with the transform for them), on the
+# Model Browser yolo26n_pose / yolo26n_seg fixtures of tools/ci/partition_devkit_e2e.py.
+foreach (_roi_kind pose seg)
+  set(_roi_test preproc_roi_boxdecode_${_roi_kind}_moving_test)
+  add_pipeline_test(
+    ${_roi_test}
+    e2e_pipelines/obj_detection/preproc_roi_boxdecode_pose_seg_moving_test.cpp
+    e2e_pipelines/e2e_utils.cpp
+    e2e_pipelines/obj_detection/obj_detection_utils.cpp
+    ARGS ${CMAKE_SOURCE_DIR}
+    LOCK_ACCELERATOR
+  )
+  if (_roi_kind STREQUAL "pose")
+    target_compile_definitions(${_roi_test} PRIVATE SIMA_ROI_TEST_POSE=1)
+  endif()
+  if (NOT ${_roi_test} IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+    set_property(TEST ${_roi_test} APPEND PROPERTY
+      LABELS "e2e;obj_detection;preproc;roi;boxdecode")
+    set_tests_properties(${_roi_test} PROPERTIES TIMEOUT 120)
+  endif()
+endforeach()
+
 add_pipeline_test(
   yolov8_variant_route_matrix_test
   e2e_pipelines/obj_detection/yolov8_variant_route_matrix_test.cpp
