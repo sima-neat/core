@@ -18,7 +18,8 @@
 //     the Graph places it (GraphOptions::processcvu.pre_run_target / post_run_target,
 //     ProcessCvuRunTargetPolicy.cpp). A stage on the EV74 is taken only where the EV74 runs the
 //     Kernels firmware; on a board with another firmware the route is not carried, and the plan
-//     says so as the board's fact.
+//     says so as the board's fact. Model::preprocess() of such a model alone, between the Input
+//     and the Output, is the one kernel operator (a dense output; a tiled one is not carried).
 //   - The MLA's padding. The model compiler makes each buffer of an MLA model a multiple of 16
 //     bytes, so a buffer is up to 15 bytes longer than the tensor in it, and a kernel beside the
 //     MLA has exact bytes. Such a kernel stage has one port of the MLA's buffer as bytes on that

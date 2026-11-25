@@ -49,6 +49,7 @@
 #include <optional>
 #include <string>
 #include <utility>
+#include <variant>
 #include <vector>
 
 namespace {
@@ -268,9 +269,18 @@ void route_shape(const Yolo& y, const Ask* resnet) {
     declines(a, "is neither an MLA stage nor a kernel stage", "a stage of no kind");
   }
   if (resnet) {
+    // A canonical transform alone (Model::preprocess() between the Input and the Output) is a
+    // route when the tensor it publishes is dense; one into the MLA's tiled layout is not.
     Ask a = *resnet;
     a.manifest = only(resnet->manifest, {0});
-    declines(a, "with 0 MLA stages", "a kernel stage without an MLA stage");
+    const auto& pre = *resnet->manifest.stages[0].native_kernel;
+    if (!pre.requests.empty() && !pre.requests.front().outputs.empty() &&
+        std::holds_alternative<client::Contiguous>(pre.requests.front().outputs.front().layout)) {
+      accepts(a, "a kernel stage alone, its output dense");
+    } else {
+      declines(a, "publishes a tiled or strided tensor as the route's output",
+               "a kernel stage alone, its output tiled");
+    }
     a.manifest = only(resnet->manifest, {1, 1});
     declines(a, "with 2 MLA stages", "two MLA stages");
     a = *resnet;
@@ -683,7 +693,7 @@ void kernel(const Yolo& y, const Ask* resnet) {
 
 // The manifests of a model whose MLA buffers are longer than the tensors beside them.
 struct Padded {
-  Ask full, inf, pre_inf, inf_post;
+  Ask full, pre, inf, pre_inf, inf_post;
 };
 
 // What the kernel of stage `i`'s one invocation asks of its input tensor's alignment.
@@ -711,6 +721,7 @@ void padding(const Padded& p) {
   accepts(p.pre_inf, "padded: preprocess and inference (the kernel writes the buffer's front)");
   accepts(p.inf_post, "padded: inference and postprocess (a pushed tensor is the buffer's front)");
   accepts(p.inf, "padded: inference alone");
+  accepts(p.pre, "padded: preprocess alone (one kernel stage, its output dense)");
   {
     Ask a = p.full;
     a.ev74_obstacle = "the EV74 is running with firmware 'simaai_cvu'";
@@ -841,10 +852,11 @@ int main(int argc, char** argv) {
       const Model model(padded_archive, tensor);
       const InputOptions declared = model.input_appsrc_options(true);
       Padded p;
-      for (Ask* ask : {&p.full, &p.inf, &p.pre_inf, &p.inf_post}) {
+      for (Ask* ask : {&p.full, &p.pre, &p.inf, &p.pre_inf, &p.inf_post}) {
         ask->declared = declared;
       }
       p.full.manifest = manifest_of(model, declared, true, true, true, defaults);
+      p.pre.manifest = manifest_of(model, declared, true, false, false, defaults);
       p.inf.manifest = manifest_of(model, declared, false, true, false, defaults);
       p.pre_inf.manifest = manifest_of(model, declared, true, true, false, defaults);
       p.inf_post.manifest = manifest_of(model, declared, false, true, true, defaults);

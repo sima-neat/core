@@ -1484,6 +1484,14 @@ std::string plan_kernel_stage(const si::StageStaticSpec& stage, bool first, bool
         out.size_bytes > planned.output_bytes - static_cast<std::uint64_t>(out.byte_offset)) {
       return "the published output does not lie in the kernel's output buffer";
     }
+    if (first && !std::holds_alternative<client::Contiguous>(kernel.output.layout)) {
+      // Alone on the route (Model::preprocess() between the Input and the Output), the stage
+      // publishes the tensor it would hand the MLA. A dense one is described as any kernel
+      // stage's published tensor; a tiled one is published as its packed storage, which this
+      // stage's plan does not describe.
+      return "it publishes a tiled or strided tensor as the route's output (a transform into the "
+             "MLA's layout alone on the route)";
+    }
     describe_pulled(stage, out, *out_dtype, route.output);
     route.output.format = kernel_caps_format_of(out.dtype, stage.processcvu.output_dtype);
     // TensorStagePublication::output_name (finalize_processcvu_publication).
@@ -1695,13 +1703,13 @@ plan_dataflow_route_stages(const si::SimaPluginStaticManifest& manifest,
       return decline(stage_subject(i, stage, manifest.model_id), std::move(fact));
     }
   }
-  // Exactly one MLA stage, or the image preproc alone (Model::preprocess() between the Input and
-  // the Output).
+  // Exactly one MLA stage, or one kernel stage alone (Model::preprocess() between the Input and
+  // the Output: the image preproc, or a canonical transform of the application's tensor).
   if (mla_stages != 1U &&
-      !(mla_stages == 0U && planned->frame_input && planned->stages.size() == 1U)) {
+      !(mla_stages == 0U && planned->kernel_input && planned->stages.size() == 1U)) {
     return decline(route_subject, "it is a route with " + std::to_string(mla_stages) +
                                       " MLA stages: a route has exactly one MLA stage, or is "
-                                      "the image preproc stage alone");
+                                      "one kernel stage alone");
   }
   // Each stage reads the buffer the stage in front writes. Beside the MLA stage a kernel stage's
   // port was brought to the MLA's buffer where that is the kernel's tensor and the MLA's padding
