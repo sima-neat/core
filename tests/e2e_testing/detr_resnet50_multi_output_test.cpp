@@ -339,12 +339,12 @@ int main(int argc, char** argv) {
         simaai::neat::Sample sample = runner.pull(kTimeoutMs);
         const Outputs got = read_outputs(simaai::neat::tensors_from_sample(sample));
         const Outputs& want = order[i] == &people ? people_ref : labrador_ref;
-        const double diff = std::max(max_abs_diff(got.logits, want.logits),
-                                     max_abs_diff(got.boxes, want.boxes));
+        const double diff =
+            std::max(max_abs_diff(got.logits, want.logits), max_abs_diff(got.boxes, want.boxes));
         if (diff > kAsyncTolerance) {
           ok = false;
-          detail += order[i]->label + "#" + std::to_string(i) + " diff=" + std::to_string(diff) +
-                    " ";
+          detail +=
+              order[i]->label + "#" + std::to_string(i) + " diff=" + std::to_string(diff) + " ";
         }
       }
       check(ok, "async results match sync results on alternating images", detail);
@@ -365,10 +365,10 @@ int main(int argc, char** argv) {
               [&] {
                 std::vector<uint8_t> bytes(static_cast<std::size_t>(kInputSize) * kInputSize * 3,
                                            0);
-                (void)runner.run({simaai::neat::Tensor::from_vector(
-                                     bytes, {kInputSize, kInputSize, 3},
-                                     simaai::neat::TensorMemory::CPU)},
-                                 kTimeoutMs);
+                (void)runner.run(
+                    {simaai::neat::Tensor::from_vector(bytes, {kInputSize, kInputSize, 3},
+                                                       simaai::neat::TensorMemory::CPU)},
+                    kTimeoutMs);
               },
               &what),
           "wrong input dtype is rejected", what);
