@@ -1333,17 +1333,6 @@ jobs:
             --output-on-failure \
             --no-tests=error
 
-      - name: Prepare mandatory weekly model fixtures
-        if: ${{ inputs.run_long_tests }}
-        env:
-          SIMA_CI_SSD300_MODEL: ${{ vars.SIMA_CI_SSD300_MODEL }}
-          SIMA_CI_SSD300_MODEL_SHA256: ${{ vars.SIMA_CI_SSD300_MODEL_SHA256 }}
-        run: |
-          python3 tools/ci/prepare_weekly_fixtures.py \
-            --output "${GITHUB_WORKSPACE}/_work/weekly-fixtures" \
-            --github-env "${GITHUB_ENV}" \
-            --environment-json "${GITHUB_WORKSPACE}/_work/weekly-environment.json"
-
       - name: Run E2E Tests
         if: ${{ contains(fromJSON(matrix.tasks), 'e2e-0') }}
         env:

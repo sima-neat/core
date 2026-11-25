@@ -220,7 +220,7 @@ slug: /reference/environment-variables
   пакетів, встановлених на DevKit, разом із вибраним переліком пакетів. Не створюйте цей базовий
   стан заново зі стану після встановлення.
 
-Про вибір груп фікстур і профілі встановлених пакетів див. [Вимоги до тестування](../../develop-apps/contribute/build-test/test_requirements.md).
+Про профілі встановлених пакетів див. [Вимоги до тестування](../../develop-apps/contribute/build-test/test_requirements.md).
 
 ## Стан хоста й карт PCIe
 
