@@ -1,48 +1,27 @@
 ---
 name: Feature Request
-about: Suggest an improvement to Neat Core
+about: Request a new Neat Core capability
 title: "[Feature] "
-labels: enhancement
+labels: feature
 assignees: ''
 ---
 
-## Feature Summary
+## Which workflow needs this capability?
 
-Describe the proposed improvement to Neat Core.
+Describe what you are trying to do, the current limitation, and who is affected.
 
-## Application Use Case
+## What outcome would solve the problem?
 
-What application or developer workflow needs this capability? Describe the
-current limitation and who would benefit. Include relevant input sources,
-models, stream counts, or latency/throughput needs where useful.
+Describe the desired behavior and an observable result that would show it works.
+Include measurable requirements when useful.
 
-## Proposed Behavior
+## Current workaround
 
-Describe the desired behavior and affected surface: C++/Python API,
-Model/Graph/Run, nodes, diagnostics, tooling, or documentation.
-Include a small example of the desired API usage or command where useful.
+Describe any existing API, node composition, or workaround you tried and where
+it falls short. Mention any concrete customer or release need, if known.
 
-## Compatibility and Scope
+## Additional context (optional)
 
-Would this change existing public APIs, defaults, tensor contracts, or
-application behavior? Describe any expected migration or deprecation needs,
-and whether the capability should be available in both C++ and Python.
-
-If known, describe any support needed from Scheduler, Runner, Kernels, Codecs,
-or LLiMa. Implementation details are optional; focus on the application-facing
-behavior that Core should provide.
-
-## Alternatives Considered
-
-Describe existing APIs, node compositions, or workarounds you tried and why
-they do not meet the use case.
-
-## Acceptance Criteria
-
-Describe the observable result, example application, or test that would show
-the feature works. Include measurable requirements where applicable.
-
-## Additional Context
-
-Link related issues, examples, tutorials, or designs. Redact credentials,
-private stream URLs, and customer data.
+Link related issues or examples. API sketches, compatibility considerations,
+and cross-repository implementation details are welcome when already known.
+Redact credentials, private stream URLs, and customer data.

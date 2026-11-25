@@ -21,16 +21,6 @@ permissions:
 
 jobs:
   triage:
-    if: >-
-      ${{
-        github.event_name == 'workflow_dispatch' ||
-        (
-          !contains(github.event.issue.labels.*.name, 'no-ai-triage') &&
-          !contains(github.event.issue.labels.*.name, 'customer-confidential') &&
-          !contains(github.event.issue.labels.*.name, 'security') &&
-          !contains(github.event.issue.labels.*.name, 'manual-triage')
-        )
-      }}
     uses: sima-neat/.github/.github/workflows/reusable-issue-triage.yml@main
     with:
       issue_number: ${{ github.event.issue.number || inputs.issue_number }}

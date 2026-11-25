@@ -2,19 +2,43 @@
   "labels": {
     "allowed": [
       "bug",
-      "documentation",
+      "feature",
       "enhancement",
-      "question",
-      "help wanted",
-      "needs-repro",
-      "triage",
+      "documentation",
       "ci",
-      "tutorials"
+      "needs-repro"
+    ],
+    "categories": [
+      "bug",
+      "feature",
+      "enhancement",
+      "documentation",
+      "ci"
+    ],
+    "managed": [
+      "needs-repro"
+    ],
+    "deprecated": [
+      "dependencies",
+      "duplicate",
+      "good first issue",
+      "help wanted",
+      "invalid",
+      "javascript",
+      "manual-triage",
+      "no-ai-triage",
+      "patch-candidate",
+      "question",
+      "security",
+      "triage",
+      "tutorials",
+      "wontfix"
     ]
   },
   "automation": {
     "apply_labels": true,
-    "post_comment": true
+    "post_comment": true,
+    "apply_priority": true
   },
   "cross_reference_repos": [
     {
@@ -42,5 +66,6 @@
   "triage_max_files": 20,
   "triage_file_limit_bytes": 50000,
   "triage_total_limit_bytes": 200000,
-  "max_comment_chars": 2400
+  "max_comment_chars": 2400,
+  "priority_field_id": 39559438
 }
