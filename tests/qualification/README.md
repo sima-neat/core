@@ -124,8 +124,8 @@ that requests those statistics; any other new line, and this line in any other r
 
 | | |
 |---|---|
-| modules | `pyneat` (of the library under test), `numpy`, `cv2` (both in the 3.0.1 image: 2.2.4, 4.10.0) and, pinned by the models' `requirements-accuracy.txt`: `pillow==12.3.0` (24 models), `faster-coco-eval==1.8.0` (the 10 YOLO detection models), `shapely==2.1.2` (the 15 oriented-box models), `tokenizers==0.23.3` (CLIP, SigLIP 2) |
-| datasets | `imagenet-2012-val` (6,666,407,650 bytes, 23 models), `coco-2017-val` (898,368,520 bytes, 10 models), `pitts30k-val` (611,858,077 bytes, NetVLAD), `dota-v1-0-val` (327,598,055 bytes, the 15 oriented-box models): the pins of each `model.yaml`, resolved with the registry's `dataset-registry resolve <id> --variant val` (SiMa Artifactory; anonymous reads are refused) |
+| modules | `pyneat` (of the library under test), `numpy`, `cv2` (both in the 3.0.1 image: 2.2.4, 4.10.0) and, pinned by the models' `requirements-accuracy.txt`: `pillow==12.3.0` (30 models), `faster-coco-eval==1.8.0` (the 29 YOLOv8, YOLO11, YOLO26 and YOLOX detection, pose and segmentation models), `shapely==2.1.2` (the 15 oriented-box models), `tokenizers==0.23.3` (CLIP, SigLIP 2), `opencv-python-headless==4.11.0.86` (Depth Anything V2) |
+| datasets | `imagenet-2012-val` (6,666,407,650 bytes, 24 models), `coco-2017-val` (898,368,520 bytes, 29 models), `pitts30k-val` (611,858,077 bytes, NetVLAD), `dota-v1-0-val` (327,598,055 bytes, the 15 oriented-box models), `scene-flow-val` (14,868,088,916 bytes, LightStereo S/M/L and RAFT-Stereo), `nyu-depth-v2-val` (156,136,510 bytes, Depth Anything V2), `ade20k-val` (87,700,104 bytes, SegFormer): the pins of each `model.yaml`, resolved with the registry's `dataset-registry resolve <id> --variant val` (SiMa Artifactory; anonymous reads are refused) |
 | supporting files | CLIP and SigLIP 2 `accuracy.py` read the tokenizer and the token-embedding table of the package (`--resources`) |
 
 On a devkit this needs no root. The environment the first pass used stays on the board under

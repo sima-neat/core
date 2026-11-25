@@ -21,7 +21,21 @@
    "variant": "val",
    "sha256": "018bf95eb75b8b7f1d7766303cdecf3c45ecb02ccf4cf161122ae885c4d7a36f",
    "size_bytes": 6666407650,
-   "models": 23
+   "models": 24
+  },
+  "nyu-depth-v2-val": {
+   "id": "nyu-depth-v2",
+   "variant": "val",
+   "sha256": "6e94b032248af78cc091b6a295808fc95ed4830d32e5084f1e7ec3797eec679e",
+   "size_bytes": 156136510,
+   "models": 1
+  },
+  "scene-flow-val": {
+   "id": "scene-flow",
+   "variant": "val",
+   "sha256": "f355b01ceab38e3ac1e3fd069bf3af61a140fff88d7cf21acaa610195799c500",
+   "size_bytes": 14868088916,
+   "models": 4
   },
   "pitts30k-val": {
    "id": "pitts30k",
@@ -30,12 +44,19 @@
    "size_bytes": 611858077,
    "models": 1
   },
+  "ade20k-val": {
+   "id": "ade20k",
+   "variant": "val",
+   "sha256": "b98b1c9c66fe7d4531e34de3256d54a192ee123e8b0fa5b81dfc81fb0a27c453",
+   "size_bytes": 87700104,
+   "models": 1
+  },
   "coco-2017-val": {
    "id": "coco-2017",
    "variant": "val",
    "sha256": "a40de1caf42b47c5a8976eb97efe3c83f3a41337c4d16d318eb15d65c293f2da",
    "size_bytes": 898368520,
-   "models": 10
+   "models": 29
   },
   "dota-v1-0-val": {
    "id": "dota-v1-0",
@@ -138,6 +159,28 @@
     "pillow==12.3.0"
    ]
   },
+  "depth_anything_v2_small": {
+   "dataset": "nyu-depth-v2-val",
+   "performance": {
+    "benchmark": {
+     "num_samples": 1000,
+     "min_duration_ms": 60000,
+     "include_mla_layer_stats": true,
+     "include_mla_stage_stats": true
+    }
+   },
+   "accuracy": {
+    "view": "default",
+    "builds": "1 Model(package, options)"
+   },
+   "modules": [
+    "cv2",
+    "numpy"
+   ],
+   "requirements": [
+    "opencv-python-headless==4.11.0.86"
+   ]
+  },
   "dla_34": {
    "dataset": "imagenet-2012-val",
    "performance": {
@@ -182,8 +225,122 @@
     "pillow==12.3.0"
    ]
   },
+  "inception_v3": {
+   "dataset": "imagenet-2012-val",
+   "performance": {
+    "benchmark": {
+     "num_samples": 1000,
+     "min_duration_ms": 60000,
+     "include_mla_layer_stats": true,
+     "include_mla_stage_stats": true
+    }
+   },
+   "accuracy": {
+    "view": "default"
+   },
+   "modules": [
+    "PIL",
+    "cv2",
+    "numpy"
+   ],
+   "requirements": [
+    "pillow==12.3.0"
+   ]
+  },
+  "lightstereo_l": {
+   "dataset": "scene-flow-val",
+   "performance": {
+    "benchmark": {
+     "num_samples": 1000,
+     "min_duration_ms": 60000,
+     "include_mla_layer_stats": true,
+     "include_mla_stage_stats": true
+    }
+   },
+   "accuracy": {
+    "view": "default",
+    "builds": "1 Model(package, options)"
+   },
+   "modules": [
+    "PIL",
+    "cv2",
+    "numpy"
+   ],
+   "requirements": [
+    "pillow==12.3.0"
+   ]
+  },
+  "lightstereo_m": {
+   "dataset": "scene-flow-val",
+   "performance": {
+    "benchmark": {
+     "num_samples": 1000,
+     "min_duration_ms": 60000,
+     "include_mla_layer_stats": true,
+     "include_mla_stage_stats": true
+    }
+   },
+   "accuracy": {
+    "view": "default",
+    "builds": "1 Model(package, options)"
+   },
+   "modules": [
+    "PIL",
+    "cv2",
+    "numpy"
+   ],
+   "requirements": [
+    "pillow==12.3.0"
+   ]
+  },
+  "lightstereo_s": {
+   "dataset": "scene-flow-val",
+   "performance": {
+    "benchmark": {
+     "num_samples": 1000,
+     "min_duration_ms": 60000,
+     "include_mla_layer_stats": true,
+     "include_mla_stage_stats": true
+    }
+   },
+   "accuracy": {
+    "view": "default",
+    "builds": "1 Model(package, options)"
+   },
+   "modules": [
+    "PIL",
+    "cv2",
+    "numpy"
+   ],
+   "requirements": [
+    "pillow==12.3.0"
+   ]
+  },
   "netvlad": {
    "dataset": "pitts30k-val",
+   "performance": {
+    "benchmark": {
+     "num_samples": 1000,
+     "min_duration_ms": 60000,
+     "include_mla_layer_stats": true,
+     "include_mla_stage_stats": true
+    }
+   },
+   "accuracy": {
+    "view": "default",
+    "builds": "1 Model(package, options)"
+   },
+   "modules": [
+    "PIL",
+    "cv2",
+    "numpy"
+   ],
+   "requirements": [
+    "pillow==12.3.0"
+   ]
+  },
+  "raft_stereo_realtime": {
+   "dataset": "scene-flow-val",
    "performance": {
     "benchmark": {
      "num_samples": 1000,
@@ -327,6 +484,29 @@
    },
    "accuracy": {
     "view": "default"
+   },
+   "modules": [
+    "PIL",
+    "cv2",
+    "numpy"
+   ],
+   "requirements": [
+    "pillow==12.3.0"
+   ]
+  },
+  "segformer_b0_ade_512": {
+   "dataset": "ade20k-val",
+   "performance": {
+    "benchmark": {
+     "num_samples": 1000,
+     "min_duration_ms": 60000,
+     "include_mla_layer_stats": true,
+     "include_mla_stage_stats": true
+    }
+   },
+   "accuracy": {
+    "view": "default",
+    "builds": "1 Model(package, options)"
    },
    "modules": [
     "PIL",
@@ -803,6 +983,28 @@
     "shapely==2.1.2"
    ]
   },
+  "yolo26l": {
+   "dataset": "coco-2017-val",
+   "performance": {
+    "benchmark": {
+     "num_samples": 1000,
+     "min_duration_ms": 60000,
+     "include_mla_layer_stats": true,
+     "include_mla_stage_stats": true
+    }
+   },
+   "accuracy": {
+    "view": "default"
+   },
+   "modules": [
+    "cv2",
+    "faster_coco_eval",
+    "numpy"
+   ],
+   "requirements": [
+    "faster-coco-eval==1.8.0"
+   ]
+  },
   "yolo26l_obb": {
    "dataset": "dota-v1-0-val",
    "performance": {
@@ -823,6 +1025,72 @@
    ],
    "requirements": [
     "shapely==2.1.2"
+   ]
+  },
+  "yolo26l_pose": {
+   "dataset": "coco-2017-val",
+   "performance": {
+    "benchmark": {
+     "num_samples": 1000,
+     "min_duration_ms": 60000,
+     "include_mla_layer_stats": true,
+     "include_mla_stage_stats": true
+    }
+   },
+   "accuracy": {
+    "view": "default"
+   },
+   "modules": [
+    "cv2",
+    "faster_coco_eval",
+    "numpy"
+   ],
+   "requirements": [
+    "faster-coco-eval==1.8.0"
+   ]
+  },
+  "yolo26l_seg": {
+   "dataset": "coco-2017-val",
+   "performance": {
+    "benchmark": {
+     "num_samples": 1000,
+     "min_duration_ms": 60000,
+     "include_mla_layer_stats": true,
+     "include_mla_stage_stats": true
+    }
+   },
+   "accuracy": {
+    "view": "default"
+   },
+   "modules": [
+    "cv2",
+    "faster_coco_eval",
+    "numpy"
+   ],
+   "requirements": [
+    "faster-coco-eval==1.8.0"
+   ]
+  },
+  "yolo26m": {
+   "dataset": "coco-2017-val",
+   "performance": {
+    "benchmark": {
+     "num_samples": 1000,
+     "min_duration_ms": 60000,
+     "include_mla_layer_stats": true,
+     "include_mla_stage_stats": true
+    }
+   },
+   "accuracy": {
+    "view": "default"
+   },
+   "modules": [
+    "cv2",
+    "faster_coco_eval",
+    "numpy"
+   ],
+   "requirements": [
+    "faster-coco-eval==1.8.0"
    ]
   },
   "yolo26m_obb": {
@@ -847,6 +1115,72 @@
     "shapely==2.1.2"
    ]
   },
+  "yolo26m_pose": {
+   "dataset": "coco-2017-val",
+   "performance": {
+    "benchmark": {
+     "num_samples": 1000,
+     "min_duration_ms": 60000,
+     "include_mla_layer_stats": true,
+     "include_mla_stage_stats": true
+    }
+   },
+   "accuracy": {
+    "view": "default"
+   },
+   "modules": [
+    "cv2",
+    "faster_coco_eval",
+    "numpy"
+   ],
+   "requirements": [
+    "faster-coco-eval==1.8.0"
+   ]
+  },
+  "yolo26m_seg": {
+   "dataset": "coco-2017-val",
+   "performance": {
+    "benchmark": {
+     "num_samples": 1000,
+     "min_duration_ms": 60000,
+     "include_mla_layer_stats": true,
+     "include_mla_stage_stats": true
+    }
+   },
+   "accuracy": {
+    "view": "default"
+   },
+   "modules": [
+    "cv2",
+    "faster_coco_eval",
+    "numpy"
+   ],
+   "requirements": [
+    "faster-coco-eval==1.8.0"
+   ]
+  },
+  "yolo26n": {
+   "dataset": "coco-2017-val",
+   "performance": {
+    "benchmark": {
+     "num_samples": 1000,
+     "min_duration_ms": 60000,
+     "include_mla_layer_stats": true,
+     "include_mla_stage_stats": true
+    }
+   },
+   "accuracy": {
+    "view": "default"
+   },
+   "modules": [
+    "cv2",
+    "faster_coco_eval",
+    "numpy"
+   ],
+   "requirements": [
+    "faster-coco-eval==1.8.0"
+   ]
+  },
   "yolo26n_obb": {
    "dataset": "dota-v1-0-val",
    "performance": {
@@ -867,6 +1201,72 @@
    ],
    "requirements": [
     "shapely==2.1.2"
+   ]
+  },
+  "yolo26n_pose": {
+   "dataset": "coco-2017-val",
+   "performance": {
+    "benchmark": {
+     "num_samples": 1000,
+     "min_duration_ms": 60000,
+     "include_mla_layer_stats": true,
+     "include_mla_stage_stats": true
+    }
+   },
+   "accuracy": {
+    "view": "default"
+   },
+   "modules": [
+    "cv2",
+    "faster_coco_eval",
+    "numpy"
+   ],
+   "requirements": [
+    "faster-coco-eval==1.8.0"
+   ]
+  },
+  "yolo26n_seg": {
+   "dataset": "coco-2017-val",
+   "performance": {
+    "benchmark": {
+     "num_samples": 1000,
+     "min_duration_ms": 60000,
+     "include_mla_layer_stats": true,
+     "include_mla_stage_stats": true
+    }
+   },
+   "accuracy": {
+    "view": "default"
+   },
+   "modules": [
+    "cv2",
+    "faster_coco_eval",
+    "numpy"
+   ],
+   "requirements": [
+    "faster-coco-eval==1.8.0"
+   ]
+  },
+  "yolo26s": {
+   "dataset": "coco-2017-val",
+   "performance": {
+    "benchmark": {
+     "num_samples": 1000,
+     "min_duration_ms": 60000,
+     "include_mla_layer_stats": true,
+     "include_mla_stage_stats": true
+    }
+   },
+   "accuracy": {
+    "view": "default"
+   },
+   "modules": [
+    "cv2",
+    "faster_coco_eval",
+    "numpy"
+   ],
+   "requirements": [
+    "faster-coco-eval==1.8.0"
    ]
   },
   "yolo26s_obb": {
@@ -891,6 +1291,72 @@
     "shapely==2.1.2"
    ]
   },
+  "yolo26s_pose": {
+   "dataset": "coco-2017-val",
+   "performance": {
+    "benchmark": {
+     "num_samples": 1000,
+     "min_duration_ms": 60000,
+     "include_mla_layer_stats": true,
+     "include_mla_stage_stats": true
+    }
+   },
+   "accuracy": {
+    "view": "default"
+   },
+   "modules": [
+    "cv2",
+    "faster_coco_eval",
+    "numpy"
+   ],
+   "requirements": [
+    "faster-coco-eval==1.8.0"
+   ]
+  },
+  "yolo26s_seg": {
+   "dataset": "coco-2017-val",
+   "performance": {
+    "benchmark": {
+     "num_samples": 1000,
+     "min_duration_ms": 60000,
+     "include_mla_layer_stats": true,
+     "include_mla_stage_stats": true
+    }
+   },
+   "accuracy": {
+    "view": "default"
+   },
+   "modules": [
+    "cv2",
+    "faster_coco_eval",
+    "numpy"
+   ],
+   "requirements": [
+    "faster-coco-eval==1.8.0"
+   ]
+  },
+  "yolo26x": {
+   "dataset": "coco-2017-val",
+   "performance": {
+    "benchmark": {
+     "num_samples": 1000,
+     "min_duration_ms": 60000,
+     "include_mla_layer_stats": true,
+     "include_mla_stage_stats": true
+    }
+   },
+   "accuracy": {
+    "view": "default"
+   },
+   "modules": [
+    "cv2",
+    "faster_coco_eval",
+    "numpy"
+   ],
+   "requirements": [
+    "faster-coco-eval==1.8.0"
+   ]
+  },
   "yolo26x_obb": {
    "dataset": "dota-v1-0-val",
    "performance": {
@@ -911,6 +1377,50 @@
    ],
    "requirements": [
     "shapely==2.1.2"
+   ]
+  },
+  "yolo26x_pose": {
+   "dataset": "coco-2017-val",
+   "performance": {
+    "benchmark": {
+     "num_samples": 1000,
+     "min_duration_ms": 60000,
+     "include_mla_layer_stats": true,
+     "include_mla_stage_stats": true
+    }
+   },
+   "accuracy": {
+    "view": "default"
+   },
+   "modules": [
+    "cv2",
+    "faster_coco_eval",
+    "numpy"
+   ],
+   "requirements": [
+    "faster-coco-eval==1.8.0"
+   ]
+  },
+  "yolo26x_seg": {
+   "dataset": "coco-2017-val",
+   "performance": {
+    "benchmark": {
+     "num_samples": 1000,
+     "min_duration_ms": 60000,
+     "include_mla_layer_stats": true,
+     "include_mla_stage_stats": true
+    }
+   },
+   "accuracy": {
+    "view": "default"
+   },
+   "modules": [
+    "cv2",
+    "faster_coco_eval",
+    "numpy"
+   ],
+   "requirements": [
+    "faster-coco-eval==1.8.0"
    ]
   },
   "yolov8l": {
@@ -1131,6 +1641,98 @@
    ],
    "requirements": [
     "shapely==2.1.2"
+   ]
+  },
+  "yolox_l": {
+   "dataset": "coco-2017-val",
+   "performance": {
+    "benchmark": {
+     "num_samples": 1000,
+     "min_duration_ms": 60000,
+     "include_mla_layer_stats": true,
+     "include_mla_stage_stats": true
+    }
+   },
+   "accuracy": {
+    "view": "default",
+    "builds": "1 Model(package, options)"
+   },
+   "modules": [
+    "cv2",
+    "faster_coco_eval",
+    "numpy"
+   ],
+   "requirements": [
+    "faster-coco-eval==1.8.0"
+   ]
+  },
+  "yolox_m": {
+   "dataset": "coco-2017-val",
+   "performance": {
+    "benchmark": {
+     "num_samples": 1000,
+     "min_duration_ms": 60000,
+     "include_mla_layer_stats": true,
+     "include_mla_stage_stats": true
+    }
+   },
+   "accuracy": {
+    "view": "default",
+    "builds": "1 Model(package, options)"
+   },
+   "modules": [
+    "cv2",
+    "faster_coco_eval",
+    "numpy"
+   ],
+   "requirements": [
+    "faster-coco-eval==1.8.0"
+   ]
+  },
+  "yolox_s": {
+   "dataset": "coco-2017-val",
+   "performance": {
+    "benchmark": {
+     "num_samples": 1000,
+     "min_duration_ms": 60000,
+     "include_mla_layer_stats": true,
+     "include_mla_stage_stats": true
+    }
+   },
+   "accuracy": {
+    "view": "default",
+    "builds": "1 Model(package, options)"
+   },
+   "modules": [
+    "cv2",
+    "faster_coco_eval",
+    "numpy"
+   ],
+   "requirements": [
+    "faster-coco-eval==1.8.0"
+   ]
+  },
+  "yolox_x": {
+   "dataset": "coco-2017-val",
+   "performance": {
+    "benchmark": {
+     "num_samples": 1000,
+     "min_duration_ms": 60000,
+     "include_mla_layer_stats": true,
+     "include_mla_stage_stats": true
+    }
+   },
+   "accuracy": {
+    "view": "default",
+    "builds": "1 Model(package, options)"
+   },
+   "modules": [
+    "cv2",
+    "faster_coco_eval",
+    "numpy"
+   ],
+   "requirements": [
+    "faster-coco-eval==1.8.0"
    ]
   }
  }
