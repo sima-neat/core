@@ -206,12 +206,18 @@ cannot pin as Linux pins its image digest. A failed Windows build fails the
 matrix, which blocks package metadata, branch `latest` promotion, and
 validation-only runs.
 
-Vulcan CI runs the self-hosted hardware lane only when Vulcan CI is the
-top-level workflow (not when another workflow calls it) and either the
-repository variable `ENABLE_WINDOWS_PCIE_CI` is `true` or a manual run ticks
-`run_windows_pcie` (see "Run the Windows card lane by hand" below). Otherwise
-it skips the lane, and branch `latest` promotion and validation-only runs
-accept that skip. A run that enables the lane either way requires it to pass.
+Vulcan CI runs the self-hosted hardware lane automatically when Vulcan CI is
+the top-level workflow (not when another workflow calls it). The Linux card lane
+runs for every non-docs push on two runners; the Windows lane has one card runner
+and takes about 23 minutes, so it runs for every push to `develop`, every release
+tag, every manual run, and a feature branch push only when the branch changes
+the Windows host's inputs relative to `develop`: `pcie_host/`,
+`scripts/ci/pciehost/`, `.github/workflows/pcie-host-windows.yml` or
+`deps/manifest.json` (the `windows_pcie` output of `detect-changes`). A run that
+includes the lane requires it to pass before branch `latest` promotion and in
+validation-only runs; a run that skips it accepts the skip. A run waits for the
+runner while it is busy; if the runner is offline, GitHub fails the job after
+24 hours in the queue.
 Without a `sima_cli_run_id` selector, the lane's customer-flow sima-cli is the
 publication that the bootstrap pins (`sima_cli_publication` in
 `windows_build_inputs.json`), because no released sima-cli reads the MSI-style
@@ -219,20 +225,18 @@ metadata yet. A direct release dispatch still resolves sima-cli `main`.
 
 ### Run the Windows card lane by hand
 
-Use this to test the card on the self-hosted Windows runner labelled `pcie`
-without enabling `ENABLE_WINDOWS_PCIE_CI` for every push:
+A manual run always includes the card lane, so use it to test a branch whose
+push skipped the lane:
 
 1. In GitHub, open sima-neat/core, then **Actions**, then **Vulcan CI**.
-2. Click **Run workflow** and select the branch to test.
-3. Tick **Run the Windows PCIe card lane on the self-hosted Windows runner
-   for this manual run**. Leave the other inputs at their defaults.
-4. Click **Run workflow**.
+2. Click **Run workflow** and select the branch to test. Leave the inputs at
+   their defaults.
+3. Click **Run workflow**.
 
 From a shell:
 
 ```text
-gh workflow run vulcan-ci.yml --repo sima-neat/core --ref <branch> \
-  -f run_windows_pcie=true
+gh workflow run vulcan-ci.yml --repo sima-neat/core --ref <branch>
 ```
 
 The run is a normal Vulcan CI run of that branch with the card lane added. It

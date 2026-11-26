@@ -1056,7 +1056,7 @@ class WindowsCiContracts(unittest.TestCase):
       leaks += [(index + 1, text.strip()) for text in body if "${{" in text]
     self.assertEqual(leaks, [])
 
-  def test_main_ci_requires_windows_acceptance_before_promotion_only_when_enabled(self):
+  def test_main_ci_requires_windows_acceptance_before_promotion_whenever_it_applies(self):
     source = MAIN_WORKFLOW.read_text(encoding="utf-8")
     job, condition = partial(workflow_job, source), partial(job_condition, source)
     self.assertIn("uses: ./.github/workflows/pcie-host-windows.yml", source)
@@ -1066,15 +1066,14 @@ class WindowsCiContracts(unittest.TestCase):
         "          python3 - <<'PYGATE'\n", 1)[1].split("\n          PYGATE", 1)[0])
     gate_flag = re.search(r"(?m)^          WINDOWS_PCIE_CI: (.+)$", job("validation-complete"))[1]
     bundle_flag = re.search(r"(?m)^          CARD_BUNDLE: (.+)$", job("validation-complete"))[1]
-    for variable in ("", "false", "true"):
+    for variable in ("false", "true"):
       for hardware in ("success", "skipped"):
         for outcome in ("success", "failure"):
-          with self.subTest(variable=variable, hardware=hardware, outcome=outcome):
+          with self.subTest(windows_pcie=variable, hardware=hardware, outcome=outcome):
             context = {
                 "always()": True,
-                "vars.ENABLE_WINDOWS_PCIE_CI": variable,
+                "needs.detect-changes.outputs.windows_pcie": variable,
                 "github.event_name": "push",
-                "inputs.run_windows_pcie": False,
                 "github.workflow": "Vulcan CI",
                 "inputs.offline_source_run_id": "",
                 "inputs.validation_only": False,
@@ -1121,50 +1120,62 @@ class WindowsCiContracts(unittest.TestCase):
                 with self.assertRaisesRegex(SystemExit, "test-pciehost-windows"):
                   exec(compile(gate, str(MAIN_WORKFLOW), "exec"), {})
 
-  def test_manual_opt_in_runs_the_card_lane_like_the_repository_flag(self):
+  @unittest.skipIf(os.name == "nt", WORKFLOW_BASH_SKIP)
+  def test_card_lane_runs_automatically_for_windows_host_changes(self):
+    # Like the Linux card lane it needs no repository variable or dispatch opt-in.
+    # One Windows card runner (~23 min a job) cannot take every push as the two
+    # Linux card runners do, so a feature branch push runs it only for changes to
+    # the Windows host's inputs; develop, tags and manual runs always run it.
     source = MAIN_WORKFLOW.read_text(encoding="utf-8")
-    job, condition = partial(workflow_job, source), partial(job_condition, source)
-    dispatch_inputs = source.split("  workflow_dispatch:\n", 1)[1].split("\npermissions:", 1)[0]
+    self.assertNotIn("ENABLE_WINDOWS_PCIE_CI", source)
+    self.assertNotIn("run_windows_pcie", source)
+    detect = workflow_job(source, "detect-changes")
     self.assertIn(
-        "      run_windows_pcie:\n"
-        '        description: "Run the Windows PCIe card lane on the self-hosted Windows '
-        'runner for this manual run"\n'
-        "        required: false\n        default: false\n        type: boolean\n",
-        dispatch_inputs)
-    gate_flag = re.search(r"(?m)^          WINDOWS_PCIE_CI: (.+)$", job("validation-complete"))[1]
-    for event in ("push", "workflow_dispatch"):
-      for variable in ("", "true"):
-        for opt_in in (False, True):
-          for outcome in ("success", "failure"):
-            with self.subTest(event=event, variable=variable, opt_in=opt_in, outcome=outcome):
-              # A push cannot carry the dispatch input; GitHub leaves it unset.
-              context = {
-                  "always()": True,
-                  "vars.ENABLE_WINDOWS_PCIE_CI": variable,
-                  "github.event_name": event,
-                  "inputs.run_windows_pcie": opt_in and event == "workflow_dispatch",
-                  "github.workflow": "Vulcan CI",
-                  "inputs.offline_source_run_id": "",
-                  "inputs.validation_only": False,
-                  "inputs.build_mode": "standard",
-                  "github.ref_type": "branch",
-                  "startsWith(github.ref, 'refs/tags/v')": False,
-                  "needs.detect-changes.outputs.docs_only": "false",
-              }
-              for upstream in (
-                  "validate-windows-cohort-selectors", "build",
-                  "build-pcie-card-offline-bundle", "build-pciehost-packages",
-                  "test-devkit", "test-pciehost-hardware", "publish-pciehost-package"):
-                context[f"needs.{upstream}.result"] = "success"
-              enabled = variable == "true" or (event == "workflow_dispatch" and opt_in)
-              for gated in ("build-pcie-card-offline-bundle", "test-pciehost-windows"):
-                self.assertEqual(evaluate_actions_expression(condition(gated), context), enabled)
-              self.assertEqual(evaluate_actions_expression(gate_flag, context), enabled)
-              context["needs.test-pciehost-windows.result"] = outcome if enabled else "skipped"
-              # An opted-in run must pass the card lane, exactly as with the flag on.
-              self.assertEqual(
-                  evaluate_actions_expression(condition("promote-latest-tag"), context),
-                  outcome == "success" or not enabled)
+        "      windows_pcie: ${{ steps.detect.outputs.windows_pcie }}\n", detect)
+    script = textwrap.dedent(workflow_step(
+        detect, "Detect docs-only and Windows PCIe host changesets").split(
+            "        run: |\n", 1)[1])
+    branch_change = lambda *paths: ("push", "branch", "feature/x", paths)
+    cases = (
+        (branch_change("pcie_host/src/host.cpp"), "false", "true"),
+        (branch_change("scripts/ci/pciehost/qualify_windows_hardware.py"), "false", "true"),
+        (branch_change(".github/workflows/pcie-host-windows.yml"), "false", "true"),
+        (branch_change("src/pipeline/Session.cpp", "deps/manifest.json"), "false", "true"),
+        (branch_change("src/pipeline/Session.cpp", ".github/workflows/vulcan-ci.yml"),
+         "false", "false"),
+        (branch_change("docs/index.md"), "true", "false"),
+        (("push", "branch", "develop", ("src/pipeline/Session.cpp",)), "false", "true"),
+        (("push", "tag", "v0.7.0", ()), "false", "true"),
+        (("workflow_dispatch", "branch", "feature/x", ("src/pipeline/Session.cpp",)),
+         "false", "true"),
+    )
+    bash = shutil.which("bash")
+    self.assertIsNotNone(bash)
+    with tempfile.TemporaryDirectory() as temporary:
+      root = Path(temporary)
+      git = root / "git"
+      git.write_text(
+          '#!/bin/sh\ncase "$1" in\n  merge-base) echo base ;;\n'
+          '  diff) cat "$CHANGED_FILES" ;;\nesac\n', encoding="utf-8")
+      git.chmod(0o755)
+      for (event, ref_type, ref_name, paths), docs_only, windows_pcie in cases:
+        with self.subTest(event=event, ref=ref_name, paths=paths):
+          (root / "changed").write_text("".join(f"{path}\n" for path in paths))
+          output = root / "github-output"
+          output.write_text("")
+          environment = os.environ.copy()
+          environment.update({
+              "PATH": f"{root}{os.pathsep}{environment['PATH']}",
+              "CHANGED_FILES": str(root / "changed"), "GITHUB_OUTPUT": str(output),
+              "GITHUB_EVENT_NAME": event, "GITHUB_REF_TYPE": ref_type,
+              "GITHUB_REF_NAME": ref_name})
+          result = subprocess.run(
+              [bash, "-e", "-c", script], capture_output=True, text=True, check=False,
+              env=environment)
+          self.assertEqual(result.returncode, 0, result.stderr)
+          self.assertEqual(
+              dict(line.split("=", 1) for line in output.read_text().splitlines()),
+              {"docs_only": docs_only, "windows_pcie": windows_pcie})
 
   def test_release_tags_build_the_card_bundle_and_other_tags_block_nothing(self):
     # The release dispatch downloads a release tag run's card bundle. A bundle
@@ -1177,15 +1188,14 @@ class WindowsCiContracts(unittest.TestCase):
     flag = lambda name: re.search(
         rf"(?m)^          {name}: (.+)$", job("validation-complete"))[1]
     for ref in ("refs/heads/develop", "refs/tags/v0.7.0", "refs/tags/3.0.2121"):
-      for variable in ("", "true"):
+      for variable in ("false", "true"):
         for workflow_name in ("Vulcan CI", "Long Tests Weekly"):
-          with self.subTest(ref=ref, variable=variable, workflow=workflow_name):
+          with self.subTest(ref=ref, windows_pcie=variable, workflow=workflow_name):
             release = ref.startswith("refs/tags/v")
             context = {
                 "always()": True,
-                "vars.ENABLE_WINDOWS_PCIE_CI": variable,
+                "needs.detect-changes.outputs.windows_pcie": variable,
                 "github.event_name": "push",
-                "inputs.run_windows_pcie": False,
                 "github.workflow": workflow_name,
                 "inputs.offline_source_run_id": "",
                 "inputs.validation_only": False,
@@ -1293,9 +1303,8 @@ class WindowsCiContracts(unittest.TestCase):
       with self.subTest(workflow=workflow_name):
         context = {
             "always()": True,
-            "vars.ENABLE_WINDOWS_PCIE_CI": "true",
+            "needs.detect-changes.outputs.windows_pcie": "true",
             "github.event_name": "push",
-            "inputs.run_windows_pcie": False,
             "github.workflow": workflow_name,
             "inputs.offline_source_run_id": "",
             "inputs.validation_only": False,
@@ -4473,9 +4482,9 @@ class WindowsCiContracts(unittest.TestCase):
     main = MAIN_WORKFLOW.read_text(encoding="utf-8")
     self.assertIn('\non:\n  push:\n    branches:\n      - "**"\n', main.split("\njobs:\n", 1)[0])
     build = workflow_job(main, "build-pciehost-packages")
-    # Not the card lane's opt-in gates: this job runs for every non-docs change.
+    # Not the card lane's gates: this job runs for every non-docs change.
     condition = job_condition(main, "build-pciehost-packages")
-    for gate in ("ENABLE_WINDOWS_PCIE_CI", "run_windows_pcie", "refs/tags"):
+    for gate in ("windows_pcie", "refs/tags"):
       self.assertNotIn(gate, condition)
     self.assertIn("          - distro: windows\n            deb_arch: amd64\n", build)
     step = workflow_step(build, "Build, test, package, install, and remove the Windows cohort")
@@ -4558,7 +4567,7 @@ class HostedWindowsBuildContracts(unittest.TestCase):
     self.assertIn("    environment: ${{ needs.resolve-vulcan-config.outputs.vulcan_env }}\n",
                   workflow_job(self.windows, "publish"))
 
-  def test_hardware_lane_stays_self_hosted_and_opt_in(self):
+  def test_hardware_lane_stays_self_hosted_and_follows_windows_host_changes(self):
     hardware = workflow_job(self.windows, "hardware")
     # Selected like the Linux card job (labels only, including pcie), not by group.
     self.assertIn("    runs-on: [self-hosted, Windows, X64, pcie]\n", hardware)
@@ -4570,7 +4579,8 @@ class HostedWindowsBuildContracts(unittest.TestCase):
     self.assertIn("    environment: production\n", hardware)
     self.assertIn("needs.native.result == 'success'", job_condition(self.windows, "hardware"))
     for gated in ("build-pcie-card-offline-bundle", "test-pciehost-windows"):
-      self.assertIn("vars.ENABLE_WINDOWS_PCIE_CI == 'true'", job_condition(self.main, gated))
+      self.assertIn("needs.detect-changes.outputs.windows_pcie == 'true'",
+                    job_condition(self.main, gated))
 
   def test_publication_gating_is_unchanged(self):
     self.assertEqual(job_condition(self.windows, "publish"), self.PUBLISH_CONDITION)

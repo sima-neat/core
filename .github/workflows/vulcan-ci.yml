@@ -122,11 +122,6 @@ on:
         required: false
         default: ""
         type: string
-      run_windows_pcie:
-        description: "Run the Windows PCIe card lane on the self-hosted Windows runner for this manual run"
-        required: false
-        default: false
-        type: boolean
 
 permissions:
   actions: write
@@ -325,6 +320,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       docs_only: ${{ steps.detect.outputs.docs_only }}
+      windows_pcie: ${{ steps.detect.outputs.windows_pcie }}
 
     steps:
       - name: Checkout code
@@ -333,13 +329,16 @@ jobs:
           clean: true
           fetch-depth: 0
 
-      - name: Detect docs-only changeset
+      - name: Detect docs-only and Windows PCIe host changesets
         id: detect
         shell: bash
         run: |
           set -euo pipefail
 
           docs_only=false
+          # The single Windows card runner cannot take every push, as the Linux card
+          # runners do: a feature branch push runs it only for Windows host inputs.
+          windows_pcie=true
           compare_base=""
 
           if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
@@ -357,6 +356,15 @@ jobs:
             mapfile -t changed_files < <(git diff --name-only "${compare_base}" HEAD | sed '/^$/d')
             printf 'Changed files (%s):\n' "${#changed_files[@]}"
             printf '  %s\n' "${changed_files[@]}"
+            windows_pcie=false
+            for path in "${changed_files[@]}"; do
+              case "${path}" in
+                pcie_host/*|scripts/ci/pciehost/*|.github/workflows/pcie-host-windows.yml|deps/manifest.json)
+                  windows_pcie=true
+                  break
+                  ;;
+              esac
+            done
             if [[ "${#changed_files[@]}" -gt 0 ]]; then
               docs_only=true
               for path in "${changed_files[@]}"; do
@@ -371,6 +379,7 @@ jobs:
           fi
 
           echo "docs_only=${docs_only}" | tee -a "${GITHUB_OUTPUT}"
+          echo "windows_pcie=${windows_pcie}" | tee -a "${GITHUB_OUTPUT}"
 
   code-hygiene:
     name: Code Hygiene
@@ -664,7 +673,7 @@ jobs:
     # card without internet: from the standalone Core offline bundle. Release
     # tag runs always build it, because the Windows release dispatch downloads
     # it. Other tags never do: the bundle accepts only release tag versions.
-    if: ${{ ((github.ref_type != 'tag' && (vars.ENABLE_WINDOWS_PCIE_CI == 'true' || (github.event_name == 'workflow_dispatch' && inputs.run_windows_pcie))) || startsWith(github.ref, 'refs/tags/v')) && github.workflow == 'Vulcan CI' && !inputs.offline_source_run_id && (inputs.build_mode || 'standard') == 'standard' && needs.detect-changes.outputs.docs_only != 'true' && needs.build.result == 'success' }}
+    if: ${{ ((github.ref_type != 'tag' && needs.detect-changes.outputs.windows_pcie == 'true') || startsWith(github.ref, 'refs/tags/v')) && github.workflow == 'Vulcan CI' && !inputs.offline_source_run_id && (inputs.build_mode || 'standard') == 'standard' && needs.detect-changes.outputs.docs_only != 'true' && needs.build.result == 'success' }}
     needs:
       - resolve-vulcan-config
       - detect-changes
@@ -2555,12 +2564,12 @@ jobs:
 
   test-pciehost-windows:
     name: Build and qualify Windows PCIe host
-    # Opt-in until the Windows runners, variables and published dependencies exist:
-    # ENABLE_WINDOWS_PCIE_CI for every run, or run_windows_pcie for one manual run.
+    # Runs where detect-changes reports Windows host changes: every develop, tag and
+    # manual run, and feature branch pushes that change the Windows host's inputs.
     # Callers of Vulcan CI cannot use same-run Linux admission (pcie-host-windows.yml).
     # Runs beside the Linux card and DevKit tests: this call is validation-only, and a
     # Windows release is admitted only from a fully successful prior run (linux_run_id).
-    if: ${{ always() && (vars.ENABLE_WINDOWS_PCIE_CI == 'true' || (github.event_name == 'workflow_dispatch' && inputs.run_windows_pcie)) && github.workflow == 'Vulcan CI' && needs.validate-windows-cohort-selectors.result == 'success' && !inputs.offline_source_run_id && (inputs.build_mode || 'standard') == 'standard' && needs.detect-changes.outputs.docs_only != 'true' && needs.build.result == 'success' && needs.build-pcie-card-offline-bundle.result == 'success' && needs.build-pciehost-packages.result == 'success' }}
+    if: ${{ always() && needs.detect-changes.outputs.windows_pcie == 'true' && github.workflow == 'Vulcan CI' && needs.validate-windows-cohort-selectors.result == 'success' && !inputs.offline_source_run_id && (inputs.build_mode || 'standard') == 'standard' && needs.detect-changes.outputs.docs_only != 'true' && needs.build.result == 'success' && needs.build-pcie-card-offline-bundle.result == 'success' && needs.build-pciehost-packages.result == 'success' }}
     needs:
       - validate-windows-cohort-selectors
       - detect-changes
@@ -2586,7 +2595,7 @@ jobs:
 
   promote-latest-tag:
     name: Promote Latest Tag
-    if: ${{ always() && needs.validate-windows-cohort-selectors.result == 'success' && !inputs.validation_only && (github.ref_type == 'branch' || github.ref_type == 'tag') && (inputs.build_mode || 'standard') == 'standard' && needs.detect-changes.outputs.docs_only != 'true' && needs.test-devkit.result == 'success' && needs.publish-pciehost-package.result == 'success' && (needs.test-pciehost-hardware.result == 'success' || needs.test-pciehost-hardware.result == 'skipped') && (needs.test-pciehost-windows.result == 'success' || (needs.test-pciehost-windows.result == 'skipped' && ((vars.ENABLE_WINDOWS_PCIE_CI != 'true' && !(github.event_name == 'workflow_dispatch' && inputs.run_windows_pcie)) || github.workflow != 'Vulcan CI' || (github.ref_type == 'tag' && !startsWith(github.ref, 'refs/tags/v'))))) }}
+    if: ${{ always() && needs.validate-windows-cohort-selectors.result == 'success' && !inputs.validation_only && (github.ref_type == 'branch' || github.ref_type == 'tag') && (inputs.build_mode || 'standard') == 'standard' && needs.detect-changes.outputs.docs_only != 'true' && needs.test-devkit.result == 'success' && needs.publish-pciehost-package.result == 'success' && (needs.test-pciehost-hardware.result == 'success' || needs.test-pciehost-hardware.result == 'skipped') && (needs.test-pciehost-windows.result == 'success' || (needs.test-pciehost-windows.result == 'skipped' && (needs.detect-changes.outputs.windows_pcie != 'true' || github.workflow != 'Vulcan CI' || (github.ref_type == 'tag' && !startsWith(github.ref, 'refs/tags/v'))))) }}
     needs:
       - validate-windows-cohort-selectors
       - detect-changes
@@ -2664,9 +2673,9 @@ jobs:
         env:
           RESULTS: ${{ toJSON(needs) }}
           BUILD_MODE: ${{ inputs.build_mode || 'standard' }}
-          WINDOWS_PCIE_CI: ${{ (vars.ENABLE_WINDOWS_PCIE_CI == 'true' || (github.event_name == 'workflow_dispatch' && inputs.run_windows_pcie)) && github.workflow == 'Vulcan CI' && (github.ref_type != 'tag' || startsWith(github.ref, 'refs/tags/v')) }}
+          WINDOWS_PCIE_CI: ${{ needs.detect-changes.outputs.windows_pcie == 'true' && github.workflow == 'Vulcan CI' && (github.ref_type != 'tag' || startsWith(github.ref, 'refs/tags/v')) }}
           # The trigger of build-pcie-card-offline-bundle.
-          CARD_BUNDLE: ${{ ((github.ref_type != 'tag' && (vars.ENABLE_WINDOWS_PCIE_CI == 'true' || (github.event_name == 'workflow_dispatch' && inputs.run_windows_pcie))) || startsWith(github.ref, 'refs/tags/v')) && github.workflow == 'Vulcan CI' }}
+          CARD_BUNDLE: ${{ ((github.ref_type != 'tag' && needs.detect-changes.outputs.windows_pcie == 'true') || startsWith(github.ref, 'refs/tags/v')) && github.workflow == 'Vulcan CI' }}
         run: |
           python3 - <<'PYGATE'
           import json, os
