@@ -372,8 +372,6 @@ int main(int argc, char** argv) {
     }
 
     // Each malformed input set gets its own Runner, so a check cannot pass on an earlier error.
-    // A refused shape can stop the Runner (core#1566, seen with DETR but not with this model on
-    // 0.6.2); the valid run after it tolerates only that error.
     auto check_rejected = [&](const std::string& name, const simaai::neat::TensorList& bad) {
       auto fresh = vector.build(to_tensors(base));
       std::string what;
@@ -384,12 +382,7 @@ int main(int argc, char** argv) {
         check(bitwise_equal(again, a), "valid run after " + name + " matches the base run",
               max_diff(again, a));
       } catch (const std::exception& e) {
-        const std::string msg = e.what();
-        if (msg.find("push returned false") != std::string::npos &&
-            msg.find("tensor changes are not supported") != std::string::npos)
-          std::cout << "[KNOWN] core#1566: valid run after " << name << " failed: " << msg << "\n";
-        else
-          check(false, "valid run after " + name + " matches the base run", msg);
+        check(false, "valid run after " + name + " matches the base run", e.what());
       }
       fresh.close();
     };
