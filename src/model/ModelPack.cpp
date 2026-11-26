@@ -9,6 +9,7 @@
 #include "builder/NodeContractConfigurable.h"
 #include "builder/NodeContractProvider.h"
 #include "gst/GstHelpers.h"
+#include "neat/runtime.h"
 #include "nodes/sima/Preproc.h"
 #include "pipeline/internal/DmabufEligibility.h"
 #include "pipeline/internal/EnvUtil.h"
@@ -280,7 +281,9 @@ static std::string require_stage_factory(ExecutionStageKind kind,
                              std::to_string(static_cast<int>(kind)) +
                              "); no GStreamer element is mapped for this stage kind");
   }
-  if (!simaai::neat::element_exists(factory)) {
+  // The element must be installed for a pipeline of it on the GStreamer backend. A process on the
+  // Dataflow backend runs no element and never starts GStreamer to look for one.
+  if (simaai::neat::backend() != RunBackend::Dataflow && !simaai::neat::element_exists(factory)) {
     throw std::runtime_error(
         std::string("ModelFragment: required NEAT factory not found: '") + factory +
         "' (typed stage kind=" + std::to_string(static_cast<int>(kind)) +

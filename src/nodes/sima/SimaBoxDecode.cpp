@@ -1,6 +1,7 @@
 #include "nodes/sima/SimaBoxDecode.h"
 
 #include "gst/GstHelpers.h"
+#include "neat/runtime.h"
 #include "builder/InputContractConfigurable.h"
 #include "model/internal/ModelInternal.h"
 #include "model/internal/ModelPack.h"
@@ -400,7 +401,11 @@ std::string resolve_boxdecode_factory(BoxDecodeType type) {
       forced && *forced && std::string_view(forced) != factory)
     throw std::runtime_error("SimaBoxDecode: remove SIMA_BOXDECODE_FACTORY; the checked decode "
                              "profile selects its backend");
-  require_element(factory, "SimaBoxDecode");
+  // The element must be installed for a pipeline of it on the GStreamer backend. A process on the
+  // Dataflow backend runs no element and never starts GStreamer to look for one.
+  if (simaai::neat::backend() != RunBackend::Dataflow) {
+    require_element(factory, "SimaBoxDecode");
+  }
   return factory;
 }
 

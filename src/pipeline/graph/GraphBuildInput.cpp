@@ -12,6 +12,7 @@
 
 #include "gst/GstHelpers.h"
 #include "gst/GstInit.h"
+#include "neat/runtime.h"
 
 #include "builder/InputContractConfigurable.h"
 #include "builder/internal/InputSpecSpecialization.h"
@@ -2378,7 +2379,11 @@ Sample run_sync_cached_input(const std::vector<std::shared_ptr<Node>>& nodes,
                              NodesVersionT& nodes_version, std::string& last_pipeline,
                              CachePtrT& run_cache, const InputT& input, const RunOptions& opt,
                              RunInputKind kind, BuildFn&& build_sync_runner) {
-  gst_init_once();
+  // The Run comes from Graph::build, which takes the process's backend: on Dataflow, which never
+  // starts GStreamer, nothing here needs it.
+  if (simaai::neat::backend() != RunBackend::Dataflow) {
+    gst_init_once();
+  }
 
   enforce_caps_behavior(nodes, "Graph::run(input)");
   enforce_sink_last(nodes);
