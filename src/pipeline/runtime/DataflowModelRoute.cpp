@@ -3,12 +3,9 @@
 
 #include "pipeline/runtime/DataflowModelRoute.h"
 
-#include "gst/GstInit.h"
-
-#include <gst/gst.h>
-
 #include "pipeline/DetectionTypes.h"
 #include "pipeline/ErrorCodes.h"
+#include "pipeline/internal/CapsText.h"
 #include "pipeline/internal/DataflowErrorMap.h"
 #include "pipeline/internal/DataflowNotCarried.h"
 #include "pipeline/internal/ErrorUtil.h"
@@ -17,6 +14,7 @@
 #include "pipeline/internal/PipelineBuild.h"
 #include "pipeline/internal/RenderedMlaContractQuery.h"
 #include "pipeline/internal/SampleUtil.h"
+#include "pipeline/internal/UxLogging.h"
 #include "pipeline/internal/sima/BoxDecodeGeometry.h"
 #include "pipeline/internal/sima/KernelStageRecipe.h"
 #include "pipeline/internal/sima/PreprocFrameAdapter.h"
@@ -1631,36 +1629,29 @@ dataflow_model_manifest(const std::vector<std::shared_ptr<Node>>& route,
 namespace {
 
 // Sample::caps_string of a route's output: the caps GStreamer's publication of the route's last
-// stage gives its buffers (StageRecipePreparation.cpp), serialized by GStreamer. One tensor with a
-// caps format: that format as the format and the dtype, the rank, each dim and the shape
+// stage gives its buffers (StageRecipePreparation.cpp), in GStreamer's text (CapsText). One tensor
+// with a caps format: that format as the format and the dtype, the rank, each dim and the shape
 // (processmla_make_tensor_caps_from_tensor). Several tensors, a tiled one, or the BoxDecode wire:
 // the generic tensor-set's, the wire with its format (build_kernel_stage_publication).
 std::string dataflow_output_caps(const DataflowPulledTensor& out) {
-  gst_init_once();
-  GstCaps* caps = nullptr;
+  pipeline_internal::CapsText caps("application/vnd.simaai.tensor");
   if (out.more.empty() && !out.format.empty() && !out.detection && !out.shape.empty()) {
-    caps = gst_caps_new_simple("application/vnd.simaai.tensor", "format", G_TYPE_STRING,
-                               out.format.c_str(), "dtype", G_TYPE_STRING, out.format.c_str(),
-                               "rank", G_TYPE_INT, static_cast<gint>(out.shape.size()), nullptr);
+    caps.string("format", out.format)
+        .string("dtype", out.format)
+        .integer("rank", static_cast<std::int32_t>(out.shape.size()));
     std::string csv;
     for (std::size_t i = 0; i < out.shape.size(); ++i) {
-      gst_caps_set_simple(caps, ("dim" + std::to_string(i)).c_str(), G_TYPE_INT,
-                          static_cast<gint>(out.shape[i]), nullptr);
+      caps.integer("dim" + std::to_string(i), static_cast<std::int32_t>(out.shape[i]));
       csv += (i == 0U ? "" : ",") + std::to_string(out.shape[i]);
     }
-    gst_caps_set_simple(caps, "shape", G_TYPE_STRING, csv.c_str(), nullptr);
+    caps.string("shape", csv);
   } else {
-    caps = gst_caps_new_simple("application/vnd.simaai.tensor", "representation", G_TYPE_STRING,
-                               "tensor-set", "storage", G_TYPE_STRING, "tensorbuffer", nullptr);
+    caps.string("representation", "tensor-set").string("storage", "tensorbuffer");
     if (out.detection && !out.format.empty()) {
-      gst_caps_set_simple(caps, "format", G_TYPE_STRING, out.format.c_str(), nullptr);
+      caps.string("format", out.format);
     }
   }
-  gchar* text = gst_caps_to_string(caps);
-  std::string result = text ? text : "";
-  g_free(text);
-  gst_caps_unref(caps);
-  return result;
+  return caps.text();
 }
 
 } // namespace
@@ -1744,6 +1735,9 @@ plan_dataflow_route_stages(const si::SimaPluginStaticManifest& manifest,
   }
   planned->output.beyond_leaf = planned->output.frame_semantics || !planned->output.more.empty();
   planned->output.caps = dataflow_output_caps(planned->output);
+  // A model route's process keeps the output a GStreamer Run of it would give: the drivers' lines
+  // off stdout and stderr (Core's filter, which GStreamer's initialisation installs elsewhere).
+  pipeline_internal::ux::install_device_log_filters();
   return planned;
 }
 
