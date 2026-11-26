@@ -739,6 +739,10 @@ if (SIMANEAT_DATAFLOW_SOURCE_DIR AND
     ARGS --backend=dataflow
   )
   set_property(TEST unit_dataflow_credentials_test APPEND PROPERTY LABELS "unit;dataflow")
+  simaneat_add_test(NAME unit_dataflow_credentials_test_gstreamer
+    COMMAND unit_dataflow_credentials_test --backend=gstreamer)
+  simaneat_append_ctest_env(unit_dataflow_credentials_test_gstreamer)
+  set_property(TEST unit_dataflow_credentials_test_gstreamer APPEND PROPERTY LABELS "strict;unit")
 endif()
 
 # A process on the Dataflow backend never starts GStreamer and makes no GStreamer object

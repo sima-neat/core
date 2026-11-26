@@ -8,6 +8,8 @@
 #include "pipeline/Graph.h"
 #include "GraphDetail.h"
 #include "internal/GraphBuildInternal.h"
+#include "neat/runtime.h"
+#include "pipeline/internal/CredentialRedaction.h"
 
 #include "gst/GstInit.h"
 #include "gst/GstParseLaunch.h"
@@ -1546,6 +1548,12 @@ private:
 } // namespace
 
 std::string Graph::describe(const GraphPrinter::Options& opt) const {
+  // No credentials in it, on either backend (a node's label or fragment can be a URL with
+  // `user:password@`). A process on the Dataflow backend asks nothing of GStreamer for it.
+  if (simaai::neat::backend() == RunBackend::Dataflow && !session_build_without_gstreamer()) {
+    const SessionBuildWithoutGstreamer without_gstreamer;
+    return describe(opt);
+  }
   if (composition_ && !composition_->is_linear()) {
     (void)opt;
     std::ostringstream oss;
@@ -1615,7 +1623,7 @@ std::string Graph::describe(const GraphPrinter::Options& opt) const {
       oss << "\n";
     }
     oss << "}\n";
-    return oss.str();
+    return pipeline_internal::redact_gst_credentials(oss.str());
   }
 
   const NameTransform name_transform = make_name_transform(opt_);
@@ -1623,7 +1631,7 @@ std::string Graph::describe(const GraphPrinter::Options& opt) const {
   const std::vector<std::shared_ptr<Node>> describe_nodes =
       session_build_materialize_model_bound_nodes(nodes, false);
   if (!name_transform_enabled(name_transform)) {
-    return GraphPrinter::to_text(describe_nodes, opt);
+    return pipeline_internal::redact_gst_credentials(GraphPrinter::to_text(describe_nodes, opt));
   }
 
   std::vector<std::shared_ptr<Node>> renamed;
@@ -1638,7 +1646,7 @@ std::string Graph::describe(const GraphPrinter::Options& opt) const {
     renamed.push_back(std::make_shared<ConfiguredNode>(node->kind(), node->user_label(),
                                                        frag.fragment, frag.element_names));
   }
-  return GraphPrinter::to_text(renamed, opt);
+  return pipeline_internal::redact_gst_credentials(GraphPrinter::to_text(renamed, opt));
 }
 
 void Graph::save(const std::string& path) const {

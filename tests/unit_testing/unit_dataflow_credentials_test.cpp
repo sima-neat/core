@@ -5,8 +5,13 @@
 // GStreamer's own errors print a source. Nothing connects: the refusal comes before anything is
 // opened, so no server is needed.
 //
-// Registered with --backend=dataflow only: GStreamer's texts are its own
-// (Graph::describe_backend() and Graph::last_pipeline() keep the launch string as it is).
+// Graph::describe() (DECISIONS.md 43) names the source the same way on both backends. On Dataflow,
+// Graph::describe_backend() (what GStreamer's build of the Graph would run) holds no credentials
+// either and is made without starting GStreamer (support/gstreamer_footprint.h).
+//
+// Registered with --backend=dataflow and --backend=gstreamer: the refusal and the
+// describe_backend() rows on Dataflow; on GStreamer, describe() redacted and describe_backend() its
+// own launch string as it is (the URL in it unchanged).
 
 #include "nodes/common/Output.h"
 #include "nodes/io/RTSPInput.h"
@@ -14,6 +19,7 @@
 #include "pipeline/Graph.h"
 #include "pipeline/NeatError.h"
 #include "support/backend_selection.h"
+#include "support/gstreamer_footprint.h"
 #include "test_main.h"
 #include "test_utils.h"
 
@@ -51,11 +57,49 @@ void refusal_names_the_source_without_credentials() {
   }
 }
 
+Graph rtsp_graph() {
+  Graph g;
+  g.add(nodes::RTSPInput(kUrl));
+  g.add(nodes::Output());
+  return g;
+}
+
+void require_no_credentials(const std::string& text, const std::string& what) {
+  require(text.find(kPassword) == std::string::npos, what + ": the password appears in: " + text);
+  require(text.find(kUser) == std::string::npos, what + ": the user appears in: " + text);
+}
+
+// Graph::describe() on either backend: the source named without its credentials.
+void describe_names_the_source_without_credentials() {
+  const std::string text = rtsp_graph().describe();
+  require_contains(text, "RTSPInput", "describe() lists the source");
+  require_no_credentials(text, "describe()");
+}
+
+// Graph::describe_backend() on Dataflow: GStreamer's launch string for the Graph, its source's
+// location redacted, and GStreamer never started for it.
+void describe_backend_on_dataflow_without_credentials() {
+  const std::string text = rtsp_graph().describe_backend();
+  require_contains(text, "rtspsrc", "describe_backend() is the launch string");
+  require_contains(text, kRedacted, "the location redacted");
+  require_no_credentials(text, "describe_backend()");
+  const sima_test::GStreamerFootprint gst = sima_test::gstreamer_footprint();
+  require(gst.empty(), "describe_backend() on Dataflow left GStreamer " + gst.text());
+}
+
+// Graph::describe_backend() on GStreamer: its own launch string, unchanged.
+void describe_backend_on_gstreamer_as_it_is() {
+  require_contains(rtsp_graph().describe_backend(), kUrl, "the location as given");
+}
+
 } // namespace
 
 RUN_BACKEND_TEST("unit_dataflow_credentials_test", ([] {
+                   describe_names_the_source_without_credentials();
                    if (!sima_test::on_dataflow()) {
+                     describe_backend_on_gstreamer_as_it_is();
                      return;
                    }
+                   describe_backend_on_dataflow_without_credentials();
                    refusal_names_the_source_without_credentials();
                  }));

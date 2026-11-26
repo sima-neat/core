@@ -6,6 +6,8 @@
 
 #include "GraphDetail.h"
 #include "internal/GraphBuildInternal.h"
+#include "neat/runtime.h"
+#include "pipeline/internal/CredentialRedaction.h"
 #include "pipeline/internal/RtpJpegEndMarker.h"
 #include "pipeline/internal/TensorUtil.h"
 
@@ -3813,6 +3815,13 @@ void Graph::build_cached_source() {
 }
 
 std::string Graph::describe_backend(bool insert_boundaries) const {
+  // A process on the Dataflow backend gets the same text (what GStreamer's build of the Graph would
+  // run), made without GStreamer (its registry is not asked) and without credentials: nothing the
+  // Dataflow path returns holds them. On GStreamer it is GStreamer's own, as it is.
+  if (simaai::neat::backend() == RunBackend::Dataflow && !session_build_without_gstreamer()) {
+    const SessionBuildWithoutGstreamer without_gstreamer;
+    return pipeline_internal::redact_gst_credentials(describe_backend(insert_boundaries));
+  }
   if (composition_ && !composition_->is_linear()) {
     (void)insert_boundaries;
     const runtime::ExecutionGraphPlan plan =
