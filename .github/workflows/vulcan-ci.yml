@@ -1355,12 +1355,14 @@ jobs:
           EXTERNAL_RTSP_TESTS='rtsp_encoded_boundary_caps_test|decoder_multirun_admission_boundary_test|h265_rtsp_resnet50_e2e_test'
           # Needs a model with a DetessDequant stage; remove under core#1454.
           TESS_FIXTURE_TESTS='|sync_yolov8_test_detessdequant'
+          # No model source, the test skips with 77 in long runs; remove under core#1560.
+          MODEL_SOURCE_TESTS='|async_yolov11_pose_bf16_tput_test'
           USB_CAMERA_TESTS=''
           if [[ -z "${SIMA_NEAT_TEST_USB_CAMERA}" ]]; then
             USB_CAMERA_TESTS='|usb_camera_input_e2e_test'
             echo 'EXCLUDED profile: USB camera hardware; set vars.SIMA_NEAT_TEST_USB_CAMERA to a camera ID.'
           fi
-          SKIP_REGEX="^(unit_dispatcher_watchdog_test|${EXTERNAL_RTSP_TESTS}${TESS_FIXTURE_TESTS}${USB_CAMERA_TESTS})$"
+          SKIP_REGEX="^(unit_dispatcher_watchdog_test|${EXTERNAL_RTSP_TESTS}${TESS_FIXTURE_TESTS}${MODEL_SOURCE_TESTS}${USB_CAMERA_TESTS})$"
           E2E_LABEL_EXCLUDE='perf|llima|codec_stream|codec_aggregate'
           if [[ "${{ inputs.run_long_tests }}" != "true" ]]; then
             E2E_LABEL_EXCLUDE+='|long'
@@ -1408,12 +1410,14 @@ jobs:
           EXTERNAL_RTSP_TESTS='rtsp_encoded_boundary_caps_test|decoder_multirun_admission_boundary_test|h265_rtsp_resnet50_e2e_test'
           # Needs a model with a DetessDequant stage; remove under core#1454.
           TESS_FIXTURE_TESTS='|sync_yolov8_test_detessdequant'
+          # No model source, the test skips with 77 in long runs; remove under core#1560.
+          MODEL_SOURCE_TESTS='|async_yolov11_pose_bf16_tput_test'
           USB_CAMERA_TESTS=''
           if [[ -z "${SIMA_NEAT_TEST_USB_CAMERA}" ]]; then
             USB_CAMERA_TESTS='|usb_camera_input_e2e_test'
             echo 'EXCLUDED profile: USB camera hardware; set vars.SIMA_NEAT_TEST_USB_CAMERA to a camera ID.'
           fi
-          SKIP_REGEX="^(unit_dispatcher_watchdog_test|${EXTERNAL_RTSP_TESTS}${TESS_FIXTURE_TESTS}${USB_CAMERA_TESTS})$"
+          SKIP_REGEX="^(unit_dispatcher_watchdog_test|${EXTERNAL_RTSP_TESTS}${TESS_FIXTURE_TESTS}${MODEL_SOURCE_TESTS}${USB_CAMERA_TESTS})$"
           E2E_LABEL_EXCLUDE='perf|llima|codec_stream|codec_aggregate'
           if [[ "${{ inputs.run_long_tests }}" != "true" ]]; then
             E2E_LABEL_EXCLUDE+='|long'
