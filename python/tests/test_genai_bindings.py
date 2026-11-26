@@ -471,6 +471,22 @@ def test_genai_server_constructor_is_llima_backed():
     server.stop()
 
 
+def test_genai_server_start_reports_port_in_use():
+  # A busy port must surface as a catchable RuntimeError from start(), not end the process.
+  with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as holder:
+    holder.bind(("127.0.0.1", 0))
+    holder.listen(1)
+    port = holder.getsockname()[1]
+
+    options = pyneat.GenAIServerOptions()
+    options.host = "127.0.0.1"
+    options.port = port
+    server = pyneat.GenAIServer(options)
+    with pytest.raises(RuntimeError, match="failed to listen"):
+      server.start()
+    server.stop()
+
+
 def test_genai_direct_text_generation_and_streaming():
   try:
     model = pyneat.VisionLanguageModel(_text_model_dir())

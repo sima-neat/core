@@ -733,6 +733,13 @@ struct TempFileGuard {
 
 struct GenAIServer::Impl {
   explicit Impl(GenAIServerOptions options_in) : options(std::move(options_in)) {
+    // httplib's default sets SO_REUSEPORT on Linux, which lets a second server bind the same
+    // port and silently share its connections. SO_REUSEADDR alone still allows a quick restart
+    // but makes a port that another server listens on fail to bind.
+    http.set_socket_options([](socket_t sock) {
+      int enable = 1;
+      ::setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &enable, sizeof(enable));
+    });
     configure_routes();
   }
 
@@ -1748,13 +1755,43 @@ struct GenAIServer::Impl {
     }
   }
 
+  [[noreturn]] void throw_listen_failure() {
+    // Nothing is serving here; this only clears the "decommissioned" state so a later start works.
+    http.stop();
+    throw std::runtime_error("GenAIServer failed to listen on " + options.host + ":" +
+                             std::to_string(options.port));
+  }
+
   void start() {
     if (worker.joinable()) {
       throw std::runtime_error("GenAIServer is already started");
     }
+    if (running.exchange(true)) {
+      throw std::runtime_error("GenAIServer is already running");
+    }
     stopping.store(false);
-    warmup_models_once();
-    worker = std::thread([this] { serve(); });
+    try {
+      warmup_models_once();
+      // The worker binds and serves, so a failed thread launch never leaves the port bound. A
+      // failed bind decommissions the server, which ends the readiness wait below; an exception
+      // must not escape the worker, so its handler does the same.
+      worker = std::thread([this] {
+        try {
+          (void)http.listen(options.host, options.port);
+        } catch (...) {
+          http.decommission();
+        }
+      });
+      // httplib's stop() only closes a server whose accept loop is running, so wait for it.
+      http.wait_until_ready();
+      if (!http.is_running()) {
+        worker.join();
+        throw_listen_failure();
+      }
+    } catch (...) {
+      running.store(false);
+      throw;
+    }
   }
 
   void stop() {

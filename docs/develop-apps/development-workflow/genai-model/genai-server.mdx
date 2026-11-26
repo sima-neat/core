@@ -69,6 +69,9 @@ registered model so the first client request does not pay the full initializatio
 cost. Warm-up does not print generated text or performance statistics.
 Calling `stop()` also removes every registered model; add the models again
 before restarting the same server object.
+`start()` waits until the server is listening. If the configured port is busy,
+it raises an exception and keeps the registered models. Retry once the port is
+free, or create a new server to use a different port.
 
 `GenAIServer` does not provide authentication or TLS termination, and it allows
 CORS requests from any origin. Bind it only to a trusted interface or place it

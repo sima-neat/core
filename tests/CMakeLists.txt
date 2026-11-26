@@ -692,7 +692,10 @@ if (SIMA_WITH_OPENCV AND OPENCV_FOUND)
   list(APPEND UNIT_TESTS unit_tensor_from_cv_mat_exactness_test)
 endif()
 if (SimaLMM_FOUND)
-  list(APPEND UNIT_TESTS unit_genai_server_linkage_test)
+  list(APPEND UNIT_TESTS
+    unit_genai_server_linkage_test
+    unit_genai_server_port_in_use_regression_test
+  )
 endif()
 
 foreach(test ${UNIT_TESTS})
@@ -719,6 +722,10 @@ if (TARGET unit_inputstream_idle_resume_test)
     TIMEOUT 30 LABELS "strict;unit;gstreamer")
   set_property(TEST unit_inputstream_idle_resume_callbacks_test APPEND PROPERTY ENVIRONMENT
     "SIMA_INPUTSTREAM_USE_APPSINK_CALLBACKS=1" "SIMA_INPUTSTREAM_PREFLIGHT_RUN=")
+endif()
+
+if (TARGET unit_genai_server_port_in_use_regression_test)
+  set_tests_properties(unit_genai_server_port_in_use_regression_test PROPERTIES TIMEOUT 60)
 endif()
 
 # Keep host dispatch evidence separate from the real DMA allocation requirement.
