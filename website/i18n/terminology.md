@@ -51,7 +51,8 @@ These Ukrainian choices were agreed in the native review of the Ukrainian
 documentation (#911). They apply to Ukrainian only. The last column lists
 variants not to use for that meaning. Those words stay correct in their other
 meanings, for example «вміст» for content, «типовий» for typical, «каталог»
-for a catalog, and «Опис» for a Description column.
+for a catalog, «Опис» for a Description column, «вихідний» for output
+(вихідні дані, вихідний тензор), and «пакет» for a software package or a batch.
 
 | English | Ukrainian (`uk-UA`) | Avoid for this meaning |
 | --- | --- | --- |
@@ -60,6 +61,14 @@ for a catalog, and «Опис» for a Description column.
 | detection (object detection) | виявлення | детекція |
 | directory | тека | каталог |
 | Meaning (table column header) | Значення | Опис |
+| source code / source file | початковий код / файл початкового коду | вихідний код, вихідний файл |
+| floating point | рухома кома (число з рухомою комою) | плаваюча кома, плаваюча точка |
+| throw / raise (an exception) | генерувати виняток | викидати виняток, кидати виняток |
+| source language (ASR, translation) | мова оригіналу | вихідна мова, мова джерела |
+| bundle (distributed set of files: tutorial, offline, Core, Scheduler bundle) | набір | пакет, комплект |
+| bundle (`Sample` kind `Bundle`) | зразок типу `Bundle`; in prose набір (іменованих полів) | пакет, пакетний зразок |
+| PCIe Co-Processing (category name) | Співобробка через PCIe | Співобробка PCIe, Співпроцесинг PCIe, спільна обробка через PCIe |
+| head (model output: class head, packed heads) | вихід (виходи моделі), вихідний тензор | голова, головка, хедер, хед |
 
 ## Protected text
 

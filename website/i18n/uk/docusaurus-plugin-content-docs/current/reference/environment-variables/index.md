@@ -119,7 +119,7 @@ slug: /reference/environment-variables
 - `SIMA_INPUTSTREAM_PREFLIGHT_RUN=1` — попередній запуск для InputStream.
 - `SIMA_SAMPLE_DEBUG=1` — журналювати перетворення зразків.
 - `SIMA_SAMPLE_BYTES=1` — журналювати розміри зразків у байтах.
-- `SIMA_SAMPLE_FORCE_BUNDLE=1` — примусово видавати вихід у форматі bundle для налагодження.
+- `SIMA_SAMPLE_FORCE_BUNDLE=1` — примусово видавати вихід у вигляді набору для налагодження.
 - `SIMA_NEAT_CAPS_TRACE=1` — трасувати виведення caps для Tensor.
 
 ## Попередня обробка / Detess / з’єднання

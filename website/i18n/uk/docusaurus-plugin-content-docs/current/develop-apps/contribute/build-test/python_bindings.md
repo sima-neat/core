@@ -23,7 +23,7 @@ slug: /develop-apps/contribute/python_bindings
 
 Інструкції з налаштування хоста див. на сторінці [Збірка](/develop-apps/contribute/build).
 
-## Встановлення з вихідного коду
+## Встановлення з початкового коду
 
 ```bash
 python3 -m venv .venv

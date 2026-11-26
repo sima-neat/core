@@ -172,7 +172,7 @@ SiMa.ai Neat підтримує агентну розробку застосун
     <ul class="overview-link-list">
       <li><a class="overview-link-card" href="/develop-apps/advanced-concepts/"><strong>Розширені концепції</strong><span>Зрозумійте графи, формати, пам’ять, потоки й поведінку середовища виконання.</span></a></li>
       <li><a class="overview-link-card" href="/reference/"><strong>Довідка</strong><span>Переглядайте матеріали з C++, Python, Model Compiler, усунення несправностей і допоміжні матеріали.</span></a></li>
-      <li><a class="overview-link-card" href="/develop-apps/contribute/architecture/"><strong>Участь у розробці</strong><span>Зрозумійте архітектуру, збирання з вихідного коду, вимоги до тестування й домовленості репозиторію.</span></a></li>
+      <li><a class="overview-link-card" href="/develop-apps/contribute/architecture/"><strong>Участь у розробці</strong><span>Зрозумійте архітектуру, збирання з початкового коду, вимоги до тестування й домовленості репозиторію.</span></a></li>
     </ul>
   </section>
 </div>

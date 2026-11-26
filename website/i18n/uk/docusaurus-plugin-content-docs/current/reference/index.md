@@ -25,7 +25,7 @@ sidebar_position: 1
     <ul class="overview-link-list">
       <li><a class="overview-link-card" href="/reference/troubleshooting/"><strong>Усунення несправностей</strong><span>Знайдіть упорядковані за симптомами рішення поширених проблем із налаштуванням, середовищем виконання та конвеєрами.</span></a></li>
       <li><a class="overview-link-card" href="/reference/environment-variables/"><strong>Змінні середовища</strong><span>Перегляньте змінні середовища для середовища виконання та збирача.</span></a></li>
-      <li><a class="overview-link-card" href="/reference/tutorial-assets/"><strong>Ресурси навчальних посібників і архіви моделей</strong><span>Керуйте шляхами до архівів моделей і ресурсами навчальних посібників у дереві вихідного коду.</span></a></li>
+      <li><a class="overview-link-card" href="/reference/tutorial-assets/"><strong>Ресурси навчальних посібників і архіви моделей</strong><span>Керуйте шляхами до архівів моделей і ресурсами навчальних посібників у дереві початкового коду.</span></a></li>
       <li><a class="overview-link-card" href="/reference/boxdecode_decode_types/"><strong>BoxDecode: типи декодування</strong><span>Виберіть типи декодування та розберіть упаковані виходи виявлення.</span></a></li>
       <li><a class="overview-link-card" href="/reference/semantic_segmentation_decode/"><strong>Декодування семантичної сегментації</strong><span>Перетворіть оцінки для кожного класу на карту класів зі зміненим розміром на EV74.</span></a></li>
       <li><a class="overview-link-card" href="/reference/error-codes/"><strong>Каталог кодів помилок</strong><span>Зіставте константи помилок фреймворку з причинами та подальшими кроками.</span></a></li>
