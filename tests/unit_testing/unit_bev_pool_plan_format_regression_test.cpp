@@ -51,6 +51,35 @@ Sample pool_sample(const ref::BEVPoolCase& fixture, const std::vector<std::uint8
   return sample_from_tensors({depth, context, plan_tensor});
 }
 
+// What a connected graph delivers to SimaBEVPool's segment: graphs::Combine joins
+// a camera fragment's depth and context with a SimaBEVPoolPlan fragment's plan
+// into one Bundle, and the pool's contract compiles from that joined sample.
+Sample joined_sample(const ref::BEVPoolCase& fixture, const std::vector<std::uint8_t>& plan) {
+  const auto flat = tensors_from_sample(pool_sample(fixture, plan), true);
+  Sample camera = sample_from_tensors({flat[0], flat[1]});
+  Sample plan_field;
+  plan_field.kind = SampleKind::Tensor;
+  plan_field.tensor = flat[2];
+  Sample bundle;
+  bundle.kind = SampleKind::Bundle;
+  bundle.fields = {camera, plan_field};
+  return bundle;
+}
+
+CompileOutcome compile_with(const ref::BEVPoolCase& fixture, Sample ingress,
+                            std::optional<SimaBEVPoolPlanFormat> plan_format) {
+  auto options = fixture.options;
+  options.plan_format = plan_format;
+  ContractCompileInput input;
+  input.node_index = 3;
+  input.ingress.ingress_sample = std::move(ingress);
+  CompiledNodeContract compiled;
+  CompileOutcome outcome;
+  outcome.ok = SimaBEVPool(options).compile_node_contract(input, &compiled, &outcome.error);
+  outcome.error_code = compiled.failure_error_code;
+  return outcome;
+}
+
 // Compiles a SimaBEVPool contract from an ingress sample holding the fixture's
 // depth and context and the given plan bytes.
 CompileOutcome compile_pool(const ref::BEVPoolCase& fixture, const std::vector<std::uint8_t>& plan,
@@ -159,6 +188,21 @@ void run() {
     require(outcome.ok, "a headerless plan with plan_format unset is prepared for V2 (whose "
                         "72-byte floor it meets): " +
                             outcome.error);
+  });
+
+  // Connected producer: V1 chosen only on SimaBEVPoolPlan reaches the consumer
+  // through the joined sample's plan header.
+  check("connected_producer_v1_is_inherited", [&] {
+    const auto outcome = compile_with(fixture, joined_sample(fixture, fixture.plan), std::nullopt);
+    require(outcome.ok, "a joined V1 plan with plan_format unset must compile: " + outcome.error);
+    const auto small =
+        compile_with(fixture, joined_sample(fixture, headed_plan(100, 1)), std::nullopt);
+    require(!small.ok && small.error.find("smaller than a worst-case plan") != std::string::npos,
+            "the inherited V1 format must apply V1's plan-size rule, got: " + small.error);
+  });
+  check("connected_producer_conflict_is_refused", [&] {
+    require_format_refusal(compile_with(fixture, joined_sample(fixture, fixture.plan), v2), "V1",
+                           "V2", "joined V1 plan");
   });
 
   // A plan without the header magic is not checked.
