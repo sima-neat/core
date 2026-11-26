@@ -48,8 +48,7 @@ for script in scripts/ci/*.sh; do
 done
 
 required_checks=(
-  "configure-build-sanity"
-  "docs-link-check"
+  ".github/workflows/vulcan-ci.yml"
 )
 
 for check_name in "${required_checks[@]}"; do

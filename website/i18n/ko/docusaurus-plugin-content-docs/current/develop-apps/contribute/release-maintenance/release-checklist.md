@@ -24,7 +24,7 @@ slug: /develop-apps/contribute/release-checklist
 5. 생성 단계 후 작업 트리가 깨끗합니다.
 6. 푸시 전과 릴리스 브랜치에서 해결되지 않은 충돌/정확성 오류가 없습니다.
 7. Vulcan CI(`.github/workflows/vulcan-ci.yml`)가 태그를 지정할 바로 그 커밋에서 통과했습니다.
-8. 제로 스킵 게이트가 엄격한 테스트 레인에 대해 녹색 상태입니다(`zero-skip-gate`).
+8. 제로 스킵 게이트(`scripts/ci/run_zero_skip_gate.sh`)가 Vulcan CI 테스트 레인에서 통과합니다.
 9. 필수 거버넌스 파일이 존재하고 유효합니다.
    - `.github/CODEOWNERS`
    - `.github/PULL_REQUEST_TEMPLATE.md`
@@ -46,12 +46,6 @@ slug: /develop-apps/contribute/release-checklist
 
 릴리스 태그를 만들기 전에 태그를 지정할 바로 그 커밋에서 Vulcan CI(`.github/workflows/vulcan-ci.yml`)가
 통과해야 합니다. 확인 방법은 릴리스 흐름의 5단계에 있습니다.
-
-다음 검사도 릴리스 PR 및 릴리스 태그에서 필수입니다.
-
-- `configure-build-sanity`
-- `docs-link-check`
-- `zero-skip-gate`
 
 ## 예약 실행 테스트 레인
 
@@ -91,7 +85,7 @@ GitHub 저장소 설정을 구성합니다.
    - 기존 라인: 풀 리퀘스트로 `main`을 `release-0.6`에 병합합니다. `branch_exists_behavior`의 기본값이 `reuse`이므로 워크플로는 `release-0.6`을 재사용하고 그 최신 커밋에 태그를 지정합니다. 커밋은 `git rev-parse origin/release-0.6`입니다.
 
    태그가 만들어질 때까지 그 브랜치에는 아무것도 병합하지 않습니다.
-4. 그 커밋의 버전을 확인합니다. `git show <commit>:deps/manifest.json`에 `"package-version": "0.7.0"`이 표시되어야 합니다.
+4. 그 커밋의 버전을 확인합니다. `git show <commit>:deps/manifest.json`에 `"package-version": "0.7.0"`이 표시되어야 합니다. Release 워크플로도 첫 번째 작업에서 같은 검사를 수행합니다. 버전이 다르면 브랜치나 태그를 만들기 전, 그리고 이슈를 릴리스됨으로 표시하기 전에 중단합니다.
 5. 바로 그 커밋에서 Vulcan CI가 통과했는지 확인합니다. `gh run list --repo sima-neat/core --workflow vulcan-ci.yml --commit <commit>`으로 실행 목록을 볼 수 있습니다. `main` 또는 릴리스 브랜치에서 성공한 실행도 인정됩니다. 없으면 3단계의 브랜치에서 `gh workflow run vulcan-ci.yml --repo sima-neat/core --ref main`으로 Vulcan CI를 시작합니다. 패치 릴리스에서는 `--ref release-0.6`을 사용합니다. 새 실행의 `headSha`가 그 커밋인지 확인한 뒤 `gh run watch <run-id> --repo sima-neat/core --exit-status`로 완료를 기다립니다. 그 커밋의 실행이 통과할 때까지 태그를 지정하지 않습니다.
 6. **Actions → Release → Run workflow**를 엽니다. `release_line`을 `0.7`로, `tag`를 `0.7.0`으로 설정하고, `main`을 `source_branch`로 그대로 두며, `prerelease`는 끄고 `latest`는 켠 상태로 둡니다. 0.6.3의 경우 `release_line`을 `0.6`으로, `tag`를 `0.6.3`으로 설정하고, 더 새로운 라인이 이미 릴리스되었다면 `latest`를 끕니다. 워크플로는 `v0.7.0` 태그를 지정하고 릴리스 초안을 만듭니다. Target Release가 `core-0.7.0`인 모든 이슈가 Done이어야 하며, 그 후 해당 이슈의 Release Status를 `released`로 설정합니다. 실행 요약의 **Target SHA**가 3단계의 커밋인지 확인합니다. 다르면 릴리스 초안을 게시하지 않습니다.
 7. 릴리스 초안에 릴리스 노트를 작성해 게시하고 릴리스 후 후속 이슈를 엽니다.

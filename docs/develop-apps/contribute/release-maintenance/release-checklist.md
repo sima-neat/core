@@ -30,7 +30,7 @@ A release is blocked unless all conditions below are true:
 5. Working tree is clean after generation steps.
 6. Zero unresolved crash/correctness failures before push and on release refs.
 7. Vulcan CI (`.github/workflows/vulcan-ci.yml`) passed on the exact commit being tagged.
-8. Zero-skip gate is green (`zero-skip-gate`) for strict test lanes.
+8. The zero-skip gate (`scripts/ci/run_zero_skip_gate.sh`) passes in the Vulcan CI test lanes.
 9. Required governance files are present and valid:
    - `.github/CODEOWNERS`
    - `.github/PULL_REQUEST_TEMPLATE.md`
@@ -54,12 +54,6 @@ No "known crashers" list is allowed in release flow. Any crash regression blocks
 
 Before a release tag is created, Vulcan CI (`.github/workflows/vulcan-ci.yml`) must pass on the
 exact commit being tagged. Step 5 of the Release Flow shows how to check it.
-
-The following checks are also required on release PRs and release tags:
-
-- `configure-build-sanity`
-- `docs-link-check`
-- `zero-skip-gate`
 
 ## Scheduled Test Lanes
 
@@ -100,7 +94,7 @@ line, for example 0.6.3, differs in steps 3 and 6.
    - Existing line: merge `main` into `release-0.6` through a pull request. The workflow reuses `release-0.6` and tags its head, because `branch_exists_behavior` defaults to `reuse`. The commit is `git rev-parse origin/release-0.6`.
 
    Do not merge anything into that branch until the tag exists.
-4. Check the version at that commit. `git show <commit>:deps/manifest.json` must show `"package-version": "0.7.0"`.
+4. Check the version at that commit. `git show <commit>:deps/manifest.json` must show `"package-version": "0.7.0"`. The Release workflow runs the same check in its first job. If the versions differ, it stops before it creates the branch or the tag and before it marks issues released.
 5. Check that Vulcan CI passed on that exact commit. `gh run list --repo sima-neat/core --workflow vulcan-ci.yml --commit <commit>` lists its runs. A successful run on `main` or on the release branch counts. If there is none, start Vulcan CI on the branch from step 3 with `gh workflow run vulcan-ci.yml --repo sima-neat/core --ref main`, or `--ref release-0.6` for a patch release. Check that the new run's `headSha` is the commit, then wait with `gh run watch <run-id> --repo sima-neat/core --exit-status`. Do not tag until a run on that commit has passed.
 6. Open **Actions → Release → Run workflow**. Set `release_line` to `0.7` and `tag` to `0.7.0`, keep `main` as `source_branch`, leave `prerelease` off and `latest` on. For 0.6.3, set `release_line` to `0.6` and `tag` to `0.6.3`, and turn `latest` off if a newer line is already released. The workflow tags `v0.7.0` and drafts the release. It requires every issue with Target Release `core-0.7.0` to be Done, then sets its Release Status to `released`. Check that **Target SHA** in the run summary is the commit from step 3. If it is not, do not publish the draft release.
 7. Publish the release notes in the draft release and open post-release follow-up issues.

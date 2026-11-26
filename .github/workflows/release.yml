@@ -69,7 +69,41 @@ permissions:
   contents: write
 
 jobs:
+  check-version:
+    name: Check package-version
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.source_branch }}
+          fetch-depth: 0
+      - name: Compare the tag with package-version at the commit to be tagged
+        env:
+          RELEASE_LINE: ${{ inputs.release_line }}
+          VERSION_TAG: ${{ inputs.tag }}
+          SOURCE_BRANCH: ${{ inputs.source_branch }}
+          BRANCH_EXISTS_BEHAVIOR: ${{ inputs.branch_exists_behavior }}
+        run: |
+          set -euo pipefail
+          release_branch="release-${RELEASE_LINE}"
+          git fetch --quiet --no-tags origin "+refs/heads/*:refs/remotes/origin/*"
+          if git show-ref --verify --quiet "refs/remotes/origin/${release_branch}" &&
+             [[ "${BRANCH_EXISTS_BEHAVIOR}" != "update_from_source" ]]; then
+            ref="origin/${release_branch}"
+          else
+            ref="origin/${SOURCE_BRANCH}"
+          fi
+          commit="$(git rev-parse "${ref}")"
+          version="$(git show "${commit}:deps/manifest.json" | python3 -c 'import json, sys; print(json.load(sys.stdin)["package-version"])')"
+          echo "Commit to be tagged: ${commit} (${ref}), package-version: ${version}"
+          if [[ "${version}" != "${VERSION_TAG}" ]]; then
+            echo "ERROR: deps/manifest.json at ${commit} has package-version ${version}, not ${VERSION_TAG}." >&2
+            exit 1
+          fi
+
   release:
+    needs: check-version
     uses: sima-neat/.github/.github/workflows/vulcan-release.yml@main
     with:
       release_line: ${{ inputs.release_line }}

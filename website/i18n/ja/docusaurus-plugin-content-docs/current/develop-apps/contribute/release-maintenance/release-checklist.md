@@ -24,7 +24,7 @@ slug: /develop-apps/contribute/release-checklist
 5. 生成ステップの後に、作業ツリーがクリーンな状態であること。
 6. リリース前に、未解決のクラッシュ/正当性に関する問題がゼロであること、およびリリースリファレンス上でもゼロであること。
 7. Vulcan CI（`.github/workflows/vulcan-ci.yml`）が、タグを付けるコミットそのもので合格していること。
-8. 厳格なテストレーンに対して、ゼロスキップゲートが緑色であること（`zero-skip-gate`）。
+8. Vulcan CI のテストレーンで、ゼロスキップゲート（`scripts/ci/run_zero_skip_gate.sh`）に合格していること。
 9. 必要なガバナンスファイルが存在し、有効であること：
    - `.github/CODEOWNERS`
    - `.github/PULL_REQUEST_TEMPLATE.md`
@@ -46,12 +46,6 @@ slug: /develop-apps/contribute/release-checklist
 
 リリースタグを作成する前に、タグを付けるコミットそのもので Vulcan CI（`.github/workflows/vulcan-ci.yml`）が
 合格している必要があります。確認方法はリリースフローの手順 5 に記載しています。
-
-以下のチェックも、リリース PR およびリリースタグに対して必要です。
-
-- `configure-build-sanity`
-- `docs-link-check`
-- `zero-skip-gate`
 
 ## スケジュール実行のテストレーン
 
@@ -91,7 +85,7 @@ GitHub リポジトリの設定を行います。
    - 既存のライン：プルリクエストで `main` を `release-0.6` にマージします。`branch_exists_behavior` の既定値が `reuse` であるため、ワークフローは `release-0.6` を再利用し、その最新のコミットにタグを付けます。コミットは `git rev-parse origin/release-0.6` です。
 
    タグが作成されるまで、そのブランチには何もマージしません。
-4. そのコミットのバージョンを確認します。`git show <commit>:deps/manifest.json` に `"package-version": "0.7.0"` が表示される必要があります。
+4. そのコミットのバージョンを確認します。`git show <commit>:deps/manifest.json` に `"package-version": "0.7.0"` が表示される必要があります。Release ワークフローも最初のジョブで同じチェックを行います。バージョンが一致しない場合は、ブランチやタグを作成する前、また issue をリリース済みにする前に停止します。
 5. そのコミットそのもので Vulcan CI が合格していることを確認します。`gh run list --repo sima-neat/core --workflow vulcan-ci.yml --commit <commit>` で実行の一覧を確認できます。`main` またはリリースブランチ上の成功した実行も有効です。なければ、手順 3 のブランチで `gh workflow run vulcan-ci.yml --repo sima-neat/core --ref main` を実行して Vulcan CI を開始します。パッチリリースでは `--ref release-0.6` を使います。新しい実行の `headSha` がそのコミットであることを確認し、`gh run watch <run-id> --repo sima-neat/core --exit-status` で完了を待ちます。そのコミットでの実行が合格するまでタグを付けません。
 6. **Actions → Release → Run workflow** を開きます。`release_line` を `0.7`、`tag` を `0.7.0` に設定し、`main` を `source_branch` のままにして、`prerelease` はオフ、`latest` はオンのままにします。0.6.3 の場合は `release_line` を `0.6`、`tag` を `0.6.3` に設定し、新しいラインがすでにリリースされていれば `latest` をオフにします。ワークフローは `v0.7.0` タグを付け、リリースの下書きを作成します。Target Release が `core-0.7.0` のすべての issue が Done であることが必要で、その後それらの Release Status を `released` に設定します。実行サマリーの **Target SHA** が手順 3 のコミットであることを確認します。一致しない場合は、リリースの下書きを公開しません。
 7. リリースの下書きにリリースノートを記載して公開し、リリース後のフォローアップの issue を作成します。
