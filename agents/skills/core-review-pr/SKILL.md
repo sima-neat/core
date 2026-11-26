@@ -17,7 +17,7 @@ contribution. Include staged and working changes for a local review and check
    paths are supported. Trace the changed code through installed C++ headers,
    implementation, and PyNeat entry points where relevant. Check ownership and
    buffer lifetime across push, pull, and teardown paths.
-2. Check the [runtime contracts](../../../.agents/runtime-contracts.md) when the
+2. Check the [runtime contracts](../../../agents/runtime-contracts.md) when the
    change crosses Scheduler, LLiMa, GStreamer transport, or an MPK boundary.
    Trace geometry, layout, dtype, and strides to the consumer. For numerical
    changes, check quantization scales, rounding, and saturation where they

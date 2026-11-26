@@ -93,15 +93,16 @@ and [link check](scripts/ci/check_docs_links.sh).
 Fill in the [PR template](.github/PULL_REQUEST_TEMPLATE.md) with the issue,
 reason for the change, risk, validation, and any API, ABI, migration, or docs
 impact. After implementation, tests, and docs edits, review the full diff against
-`develop` using [core-review-pr](.agents/skills/core-review-pr/SKILL.md). You can
+`develop` using [core-review-pr](agents/skills/core-review-pr/SKILL.md). You can
 follow the skill manually. Address applicable findings, check the self-review box,
 and add one sentence describing what changed during review, or write `No findings`.
 Repeat after a substantial rewrite. Resolve reviewer findings and check the
 required CI results before merging.
 
-[AGENTS.md](AGENTS.md) maps tasks to the five Core skills. Codex discovers
-`.agents/skills/`. Claude Code uses the committed links under `.claude/skills/`
-and imports AGENTS.md through CLAUDE.md.
+[AGENTS.md](AGENTS.md) maps tasks to the Core skills in `agents/skills/`.
+The committed `.agents/skills` and `.claude/skills` symlinks point to that
+directory for Codex and Claude Code. Claude Code imports AGENTS.md through
+CLAUDE.md.
 
 ## Before releasing
 

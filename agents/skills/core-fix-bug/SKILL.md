@@ -11,7 +11,7 @@ description: Reproduce and fix a Core defect through the affected C++ or PyNeat 
    failure, capture the relevant structured Neat error or `GraphReport`.
 2. Follow the failing path through C++ and PyNeat where both can reach it.
    Identify which component owns the failure using the
-   [runtime contracts](../../../.agents/runtime-contracts.md). For model routing,
+   [runtime contracts](../../../agents/runtime-contracts.md). For model routing,
    read only the MPK manifest and trace the input through the failing stage.
    Confirm the cause before changing shared behavior.
 3. Fix it at the owning boundary. Use an existing validator or contract if it

@@ -29,7 +29,7 @@ dist/
 .vscode/
 .idea/
 /.claude/*
-!/.claude/skills/
+!/.claude/skills
 
 # OS junk
 .DS_Store

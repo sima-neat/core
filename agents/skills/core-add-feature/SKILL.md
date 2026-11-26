@@ -14,7 +14,7 @@ description: Add a user capability to Neat Core, including public C++ or PyNeat 
    [coding standard](../../../docs/develop-apps/contribute/start-here/coding_standard.md)
    and check compatibility with supported callers and packages. Apply the ABI
    rule in the [release checklist](../../../docs/develop-apps/contribute/release-maintenance/release-checklist.md).
-3. Respect [runtime ownership](../../../.agents/runtime-contracts.md). Keep policy
+3. Respect [runtime ownership](../../../agents/runtime-contracts.md). Keep policy
    and MPK interpretation in Core and use the installed Scheduler interface for
    execution. For a node, exercise deterministic fragments, parse/caps validation,
    and a realistic integration chain. Match the remaining checks to the
