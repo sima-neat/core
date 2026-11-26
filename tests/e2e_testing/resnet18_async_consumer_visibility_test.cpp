@@ -304,13 +304,13 @@ int main(int argc, char** argv) {
 #if !defined(SIMA_WITH_OPENCV)
   (void)argc;
   (void)argv;
-  return skip_test("OpenCV required");
+  return fail_test("OpenCV required");
 #else
   try {
     simaai::neat::gst_init_once();
     if (!simaai::neat::element_exists("neatkernelrunner") ||
         !simaai::neat::element_exists("neatprocessmla")) {
-      return skip_test("missing SimaAI plugins");
+      return fail_test("missing SimaAI plugins");
     }
 
     constexpr int count = 32;
