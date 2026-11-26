@@ -53,18 +53,21 @@ Recommend a value and one sentence explaining impact and workarounds. Leave
 | Value | Meaning |
 | --- | --- |
 | Urgent | A critical failure needs immediate action, such as a broken release with no workaround |
-| High | A supported workflow is blocked or silently produces incorrect results |
+| High | A supported workflow is blocked, silently produces incorrect results, or needs a new capability for a concrete delivery requirement with no practical workaround |
 | Medium | Meaningful impact with limited scope or a practical workaround |
 | Low | Minor friction or polish with limited impact on completing the task |
 
-Urgent and High for features require a maintainer. For automatic High on a bug,
-set `confidence` to `high` only when reproducible steps or equivalent concrete
-evidence establish the impact. Cite that evidence in `priority_evidence`.
+Urgent requires a maintainer's confirmation and assignment. High can be assigned
+automatically in any category. Recommend High or Urgent only when reproducible
+steps or equivalent concrete evidence establish the impact with high confidence.
+Cite that evidence in `priority_evidence`. Set `needs_human_review` for Urgent.
 An unsupported claim of “release blocker” leaves Priority empty and requires a
 focused question or maintainer review. Set `needs_human_review` when judgment
 or missing evidence requires a maintainer. The runner appends `priority_reason`
 to the public comment and assigns Priority only on the initial issue-creation
-run. Later recommendations support a human decision.
+run. Initial High assignments and Urgent recommendations trigger a Slack alert
+with the issue link and priority action. Later runs support a human decision
+without another alert.
 
 ## Routing and comment
 

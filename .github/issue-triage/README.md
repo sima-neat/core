@@ -6,8 +6,15 @@ investigation and is cleared once enough evidence is available.
 
 The [triage skill](skills/core-triage/SKILL.md) defines classification and
 priority. The bot can assign an empty Priority only in the initial issue-creation
-run. Later runs recommend a priority in their comment. Urgent assignments require
-a maintainer. High for feature requests also requires a maintainer.
+run. Later runs recommend a priority in their comment. High can be assigned in any
+category with concrete evidence and high confidence. Urgent assignments require
+a maintainer.
+
+Initial High assignments and evidenced Urgent recommendations alert Slack with
+only the repository, issue link, and priority action. Set the organization Actions
+variable `SLACK_ISSUE_TRIAGE_CHANNEL_ID` with access for Core, make `SLACK_BOT_TOKEN`
+available to Core, and invite that bot to the channel. Dry runs, edits, reopens,
+and reruns do not send alerts.
 
 ## Label migration
 
