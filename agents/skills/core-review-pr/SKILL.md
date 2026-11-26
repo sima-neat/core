@@ -29,6 +29,11 @@ contribution. Include staged and working changes for a local review and check
    [release checklist](../../../docs/develop-apps/contribute/release-maintenance/release-checklist.md)
    and check the PR's downstream migration and approval evidence where applicable.
 
+| Change | Check together |
+| --- | --- |
+| Public option default | C++ and PyNeat defaults where exposed, and regression coverage of the default behavior. |
+| Submission validation | `push` and `try_push` on affected paths, including Model and Graph routes. |
+
 ## Check simplicity, docs, and evidence
 
 - Look for duplicate validation, extra flags, unnecessary abstraction, and

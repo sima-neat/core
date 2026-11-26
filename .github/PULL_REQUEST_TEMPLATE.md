@@ -1,6 +1,7 @@
 ## Summary
 
-<!-- Link the issue using Fixes #<issue> or Refs #<issue>. Describe what changed and why. -->
+<!-- Link the issue using Fixes #<issue> or Refs #<issue>. Describe what changed and why.
+     Add a short flow sketch if it helps explain a change to routing, queues, or buffer ownership. Mark the changed step or link. -->
 
 ## Risk
 
@@ -8,7 +9,8 @@
 
 ## Test evidence
 
-<!-- Link the passing test result or give the command and outcome. For a bug fix, describe the original failure and the regression that now passes. For device behavior, name the target and package tested. List any outstanding checks. -->
+<!-- State what each test verifies. Link the passing result or give the command and outcome.
+     For a bug fix, describe the original failure and the regression that now passes. For device behavior, name the target and package tested. List any outstanding checks. -->
 
 ## API, ABI, and migration
 
