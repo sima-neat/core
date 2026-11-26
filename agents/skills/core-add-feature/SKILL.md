@@ -47,5 +47,5 @@ description: Add a user capability to Neat Core, including public C++ or PyNeat 
 5. **Report and document.** Explain the design choice in the PR and include
    the test command, observable result, tested target and package, and any
    limitations. Update the existing guide, reference, or example where callers
-   need new instructions. For localized docs, update required translations and
-   source hashes using the [localization guide](../../../website/i18n/README.md).
+   need new instructions. For docs edits, follow
+   [core-update-docs](../core-update-docs/SKILL.md).

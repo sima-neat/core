@@ -15,13 +15,15 @@ description: Reproduce and fix a Core defect through the affected C++ or PyNeat 
    reproduce, record what you tried, any relevant environment mismatch, and
    the specific evidence needed next.
 2. **Trace.** Follow the failing path through C++ and PyNeat where both can
-   reach it. Identify which component owns the failure using the
-   [runtime contracts](../../../agents/runtime-contracts.md). For model routing,
-   read only the MPK manifest and trace the input through the failing stage.
+   reach it. For model routing, read only the MPK manifest and trace the input
+   through the failing stage.
    If the cause is unclear, use existing [pipeline diagnostics](../../../tutorials/012_diagnose_a_pipeline/README.md)
    or a focused trace to find where the value or state first goes wrong. When a
    working case is available, compare it by changing one factor at a time.
-   Confirm the cause before changing shared behavior.
+   Confirm the cause before changing shared behavior. Use the
+   [runtime contracts](../../../agents/runtime-contracts.md) to identify which
+   repository owns the broken contract. If the fix belongs in another repo,
+   identify any Core integration work it requires.
 3. **Fix.** Make the smallest change that addresses the cause at the owning
    boundary. Use an existing validator or contract if it covers the admitted
    inputs. Add a guard when a supported caller can reach a failing state.
@@ -41,5 +43,5 @@ description: Reproduce and fix a Core defect through the affected C++ or PyNeat 
    restored in the PR. Include the test command, result, package, target, and
    any outstanding device checks. Update existing docs when the fix changes
    what readers need to know or do. Write `No docs update needed` when existing
-   guidance still applies. For localized docs, update required translations and
-   source hashes using the [localization guide](../../../website/i18n/README.md).
+   guidance still applies. For docs edits, follow
+   [core-update-docs](../core-update-docs/SKILL.md).
