@@ -56,7 +56,6 @@ No "known crashers" list is allowed in release flow. Any crash regression blocks
 
 The following checks are required on release PRs and release tags:
 
-- `repo-hygiene`
 - `configure-build-sanity`
 - `docs-link-check`
 - `crash-correctness-gate`
@@ -65,7 +64,6 @@ The following checks are required on release PRs and release tags:
 - `fuzz-nightly` (required for release candidates)
 - `stress-gate`
 - `asan-ubsan-gate`
-- `release-policy-check`
 
 These checks are implemented in:
 
@@ -92,13 +90,12 @@ Configure GitHub repository settings:
 
 ## Release Flow
 
-1. Cut `release/x.y.z` from green `main`.
+1. Open **Actions → Release → Run workflow** to create a release candidate. For example, to release 0.7.0, set `release_line` to `0.7` and `tag` to `0.7.0-rc1`, keep `main` as `source_branch`, turn on `prerelease` and turn off `latest`. The workflow creates or reuses `release-0.7`, tags `v0.7.0-rc1` and drafts a prerelease. If `release-0.7` already exists, for example for 0.7.1, the workflow tags its current head, because `branch_exists_behavior` defaults to `reuse`. Merge `main` into `release-0.7` through a pull request before you create the first candidate.
 2. Freeze non-release PR merges.
-3. Run release gate workflow on release branch.
-4. Create `vX.Y.Z-rcN` tag(s) for candidate validation.
-5. Promote to final `vX.Y.Z` tag.
-6. Fast-forward merge release branch back to `main`.
-7. Publish release notes and post-release follow-up issues.
+3. Validate the candidate. If it needs fixes, land them on `release-0.7` and run the workflow again with the next candidate tag, for example `0.7.0-rc2`.
+4. When a candidate passes, check that `release-0.7` still points at it. The workflow tags the head of `release-0.7` and cannot tag an older commit. After `git fetch --tags origin`, `git rev-parse origin/release-0.7` must print the same commit as `git rev-parse v0.7.0-rcN^{commit}`. Here `rcN` is the candidate that passed. If anything landed after the candidate, create a new candidate first. Then run the workflow with `tag` set to `0.7.0`, `prerelease` off and `latest` on. It tags `v0.7.0` on that commit and drafts the final release. This run also requires every issue with Target Release `core-0.7.0` to be Done, then sets its Release Status to `released`. Candidate runs skip this check.
+5. Fast-forward merge release branch back to `main`.
+6. Publish release notes and post-release follow-up issues.
 
 ## Operational Notes
 

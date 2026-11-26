@@ -48,7 +48,6 @@ slug: /develop-apps/contribute/release-checklist
 
 以下のチェックは、リリース PR およびリリースタグに対して必要です。
 
-- `repo-hygiene`
 - `configure-build-sanity`
 - `docs-link-check`
 - `crash-correctness-gate`
@@ -57,7 +56,6 @@ slug: /develop-apps/contribute/release-checklist
 - `fuzz-nightly`（リリース候補に必要）
 - `stress-gate`
 - `asan-ubsan-gate`
-- `release-policy-check`
 
 これらのチェックは、以下に実装されています。
 
@@ -84,13 +82,12 @@ GitHub リポジトリの設定を行います。
 
 ## リリースフロー
 
-1. 正常な `main` から `release/x.y.z` を切り出します。
+1. **Actions → Release → Run workflow** を開いてリリース候補を作成します。たとえば 0.7.0 をリリースする場合は、`release_line` を `0.7`、`tag` を `0.7.0-rc1` に設定し、`main` を `source_branch` のままにして、`prerelease` をオン、`latest` をオフにします。このワークフローは `release-0.7` を作成または再利用し、`v0.7.0-rc1` タグを付けてプレリリースの下書きを作成します。`release-0.7` がすでに存在する場合（たとえば 0.7.1 の場合）、`branch_exists_behavior` の既定値が `reuse` であるため、ワークフローはその最新のコミットにタグを付けます。最初の候補を作成する前に、プルリクエストで `main` を `release-0.7` にマージします。
 2. 非リリース PR のマージを一時停止します。
-3. リリースブランチでリリースゲートワークフローを実行します。
-4. 候補の検証のために `vX.Y.Z-rcN` タグを作成します。
-5. 最終的な `vX.Y.Z` タグに昇格します。
-6. リリースブランチを `main` に高速でマージします。
-7. リリースノートを公開し、リリース後のフォローアップの問題を投稿します。
+3. 候補を検証します。修正が必要な場合は、修正を `release-0.7` にマージしてから、`0.7.0-rc2` などの次の候補タグでワークフローを再実行します。
+4. 候補が検証に合格したら、`release-0.7` がまだその候補を指していることを確認します。ワークフローは `release-0.7` の最新のコミットにタグを付け、それより古いコミットにはタグを付けられません。`git fetch --tags origin` の後、`git rev-parse origin/release-0.7` が `git rev-parse v0.7.0-rcN^{commit}` と同じコミットを出力する必要があります。ここで `rcN` は検証に合格した候補です。候補の後に変更が入っていたら、先に新しい候補を作成します。そのうえで `tag` を `0.7.0` に設定し、`prerelease` をオフ、`latest` をオンにしてワークフローを実行します。ワークフローはそのコミットに `v0.7.0` タグを付け、正式リリースの下書きを作成します。この実行では、Target Release が `core-0.7.0` のすべての issue が Done であることも必要で、その後それらの Release Status を `released` に設定します。候補の実行ではこのチェックを行いません。
+5. リリースブランチを `main` に高速でマージします。
+6. リリースノートを公開し、リリース後のフォローアップの問題を投稿します。
 
 ## 運用上の注意点
 

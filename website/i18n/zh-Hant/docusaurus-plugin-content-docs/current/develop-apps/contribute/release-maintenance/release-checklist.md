@@ -48,7 +48,6 @@ slug: /develop-apps/contribute/release-checklist
 
 以下檢查對於發布 PR 和發布標籤是必需的：
 
-- `repo-hygiene`
 - `configure-build-sanity`
 - `docs-link-check`
 - `crash-correctness-gate`
@@ -57,7 +56,6 @@ slug: /develop-apps/contribute/release-checklist
 - `fuzz-nightly`（對於發布候選版本是必需的）
 - `stress-gate`
 - `asan-ubsan-gate`
-- `release-policy-check`
 
 這些檢查在以下位置實施：
 
@@ -84,13 +82,12 @@ slug: /develop-apps/contribute/release-checklist
 
 ## 發布流程
 
-1. 從綠色的 `main` 分支切出 `release/x.y.z`。
+1. 開啟 **Actions → Release → Run workflow** 以建立發布候選版本。例如要發布 0.7.0，請將 `release_line` 設為 `0.7`、`tag` 設為 `0.7.0-rc1`，保留 `main` 作為 `source_branch`，並開啟 `prerelease`、關閉 `latest`。此工作流程會建立或重複使用 `release-0.7`，加上 `v0.7.0-rc1` 標籤，並建立預先發布版草稿。若 `release-0.7` 已存在（例如發布 0.7.1 時），由於 `branch_exists_behavior` 預設為 `reuse`，工作流程會將標籤加在其最新提交上。請在建立第一個候選版本之前，透過拉取請求將 `main` 合併到 `release-0.7`。
 2. 凍結非發布版 PR 的合併。
-3. 在發布版分支上執行發布閘道工作流程。
-4. 建立 `vX.Y.Z-rcN` 標籤，用於候選驗證。
-5. 升級到最終的 `vX.Y.Z` 標籤。
-6. 將發布版分支快速合併回 `main`。
-7. 發布版本資訊並發布發布後續問題。
+3. 驗證候選版本。若需要修正，請先將修正合併到 `release-0.7`，再以下一個候選標籤重新執行工作流程，例如 `0.7.0-rc2`。
+4. 候選版本通過驗證後，確認 `release-0.7` 仍指向該候選版本。工作流程會將標籤加在 `release-0.7` 的最新提交上，無法標記較舊的提交。執行 `git fetch --tags origin` 後，`git rev-parse origin/release-0.7` 必須輸出與 `git rev-parse v0.7.0-rcN^{commit}` 相同的提交。其中 `rcN` 是通過驗證的候選版本。若候選版本之後有變更進入分支，請先建立新的候選版本。接著將 `tag` 設為 `0.7.0`，關閉 `prerelease` 並開啟 `latest`，然後執行工作流程。它會將 `v0.7.0` 標籤加在該提交上，並建立正式發布版草稿。此次執行也要求所有 Target Release 為 `core-0.7.0` 的 issue 皆為 Done，之後將它們的 Release Status 設為 `released`。候選版本的執行會略過此檢查。
+5. 將發布版分支快速合併回 `main`。
+6. 發布版本資訊並發布發布後續問題。
 
 ## 運營注意事項
 
