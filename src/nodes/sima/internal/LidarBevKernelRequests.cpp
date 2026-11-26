@@ -313,8 +313,8 @@ void validate(const SimaBEVPoolOptions& opt) {
   const auto valid_storage = [](SimaBEVPoolStorage storage) {
     return storage == SimaBEVPoolStorage::Contiguous || storage == SimaBEVPoolStorage::ChannelsLast;
   };
-  if (!valid_storage(opt.input_storage) || !valid_storage(opt.output_storage))
-    fail("SimaBEVPool", "input_storage and output_storage must be Contiguous or ChannelsLast");
+  if (!valid_storage(opt.input_storage))
+    fail("SimaBEVPool", "input_storage must be Contiguous or ChannelsLast");
   narrow_dtype(opt.output_dtype, "SimaBEVPool", "output_dtype");
 }
 
@@ -587,17 +587,12 @@ KernelRequestPlan bev_pool_request(const SimaBEVPoolOptions& opt,
   const auto channels = context.shape[1];
   const auto k = checked_extent_mul(nz, channels, node);
   const auto dtype = narrow_dtype(opt.output_dtype, node, "output_dtype");
-  const std::array<std::int64_t, 4> logical{1, k, nx, ny};
+  // The kernel's bev is logical NHWC [1,nX,nY,nZ*C]; its dense Contiguous form is
+  // requested and published unchanged.
+  const std::array<std::int64_t, 4> logical{1, nx, ny, k};
   checked_tensor_bytes(logical, dtype, node);
   rt::TensorSpec bev{{logical.begin(), logical.end()}, dtype};
-  PublishedOutput published{"bev", {logical.begin(), logical.end()}, {}, "CHW", false, {}};
-  if (opt.output_storage == SimaBEVPoolStorage::ChannelsLast) {
-    const auto strides = channels_last_strides(logical, scalar_bytes(dtype), node);
-    rt::Strided layout;
-    std::copy(strides.begin(), strides.end(), layout.strides_bytes.begin());
-    bev.layout = layout;
-    published.stride_bytes.assign(strides.begin(), strides.end());
-  }
+  PublishedOutput published{"bev", {logical.begin(), logical.end()}, {}, "NHWC", false, {}};
 
   KernelRequestPlan plan;
   plan.operation = "bev_pool";

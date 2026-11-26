@@ -96,15 +96,15 @@ def test_bev_pool_plan_options_and_node():
 def test_bev_pool_options_and_node():
   opt = pyneat.SimaBEVPoolOptions()
   assert opt.input_storage == pyneat.SimaBEVPoolStorage.ChannelsLast
-  assert opt.output_storage == pyneat.SimaBEVPoolStorage.ChannelsLast
   assert opt.output_dtype == pyneat.TensorDType.Int8
   assert opt.plan_format == pyneat.SimaBEVPoolPlanFormat.V1
   opt.cells = [256, 256, 1]
   opt.depth_zero_point = -128
   opt.context_zero_point = -5
   opt.plan_format = pyneat.SimaBEVPoolPlanFormat.V2
-  opt.output_storage = pyneat.SimaBEVPoolStorage.Contiguous
+  opt.input_storage = pyneat.SimaBEVPoolStorage.Contiguous
   assert list(opt.cells) == [256, 256, 1]
+  assert not hasattr(opt, "output_storage")
   assert pyneat.nodes.sima_bev_pool(opt).kind() == "SimaBEVPool"
   opt.output_dtype = pyneat.TensorDType.Float32
   with pytest.raises(ValueError, match="output_dtype"):

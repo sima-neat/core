@@ -47,14 +47,22 @@ neat::TensorList inputs(const ref::BEVPoolCase& c, const neat::Tensor* retained_
 void check(const neat::TensorList& output, const ref::BEVPoolCase& c, const std::string& what) {
   bt::require(output.size() == 1, what + ": one bev");
   const auto& o = c.options;
-  // The public bev is logical [1,nZ*C,nX,nY], whatever its byte order.
-  const std::vector<std::int64_t> shape{1, o.cells[2] * c.channels, o.cells[0], o.cells[1]};
+  // The bev is NHWC [1,nX,nY,nZ*C]; the references are in [1,nZ*C,nX,nY] order.
+  const std::int64_t k = o.cells[2] * std::int64_t(c.channels), nx = o.cells[0], ny = o.cells[1];
+  const std::vector<std::int64_t> shape{1, nx, ny, k};
+  const auto in_published_order = [&](const auto& logical) {
+    return ref::to_channels_last(logical, 1, k, nx, ny);
+  };
+  // The runtime tensor describes the bytes as the node contract does: a dense
+  // HWC tensor, so NumPy, DLPack and dense copies read them in published order.
+  bt::require(output[0].layout == neat::TensorLayout::HWC && output[0].is_dense(),
+              what + ": the bev is a dense HWC tensor");
   if (o.output_dtype == neat::TensorDType::BFloat16)
     bt::expect_bytes(bt::values<std::uint16_t>(output[0], neat::TensorDType::BFloat16, shape, what),
-                     ref::bev_pool_bf16(c), what + " BF16 bev");
+                     in_published_order(ref::bev_pool_bf16(c)), what + " BF16 bev");
   else
     bt::expect_bytes(bt::values<std::int8_t>(output[0], neat::TensorDType::Int8, shape, what),
-                     wide(c) ? ref::bev_pool_bf16_to_int8(c) : ref::bev_pool(c),
+                     in_published_order(wide(c) ? ref::bev_pool_bf16_to_int8(c) : ref::bev_pool(c)),
                      what + " INT8 bev");
 }
 
@@ -68,16 +76,14 @@ void run_cases(const std::vector<ref::BEVPoolCase>& cases, const std::string& wh
     check(outputs[i], cases[i], what + " frame " + std::to_string(i));
 }
 
-ref::BEVPoolCase int8_case(Storage in = Storage::ChannelsLast,
-                           Storage out = Storage::ChannelsLast) {
+ref::BEVPoolCase int8_case(Storage in = Storage::ChannelsLast) {
   auto c = ref::bev_pool_case(bt::suite_target());
   c.options.input_storage = in;
-  c.options.output_storage = out;
   return c;
 }
-ref::BEVPoolCase bf16_case(neat::TensorDType output, Storage storage = Storage::ChannelsLast) {
+ref::BEVPoolCase bf16_case(neat::TensorDType output, Storage in = Storage::ChannelsLast) {
   auto c = ref::bev_pool_case_bf16(bt::suite_target(), output);
-  c.options.input_storage = c.options.output_storage = storage;
+  c.options.input_storage = in;
   return c;
 }
 
@@ -123,7 +129,7 @@ void retained_outputs(bool with_consumer) {
     pipeline.add(neat::nodes::SimaBEVPool(c.options));
     if (with_consumer) {
       neat::SimaArgMaxOptions argmax;
-      argmax.axis = 1;
+      argmax.axis = 3; // the channels of the published NHWC bev
       pipeline.add(neat::nodes::SimaArgMax(argmax));
     }
     pipeline.add(neat::nodes::Output());
@@ -134,8 +140,8 @@ void retained_outputs(bool with_consumer) {
         check(output, expected, what);
         return;
       }
-      // The producer stores NHWC but publishes logical NCHW with strides.
-      // ArgMax must consume that authority rather than reinterpret the bytes.
+      // The producer publishes its NHWC bytes as NHWC; ArgMax reduces their
+      // channel axis, giving each cell's index as over the NCHW reference.
       const auto channels = std::size_t(c.options.cells[2]) * c.channels;
       const auto cells = std::size_t(c.options.cells[0]) * c.options.cells[1];
       std::vector<std::int32_t> indices;
@@ -311,12 +317,12 @@ void rejections() {
   missing.pop_back();
   bt::expect_rejected(node(c.options), missing, "expects 3 input tensors", "missing plan");
   if (bt::on_ev74()) {
-    // EV74 admits only channels-last context and bev; there is no A65 fallback.
-    const auto contiguous = int8_case(Storage::Contiguous, Storage::Contiguous);
+    // EV74 admits only channels-last context; there is no A65 fallback.
+    const auto contiguous = int8_case(Storage::Contiguous);
     bt::expect_rejected(node(contiguous.options), inputs(contiguous),
                         "bev_pool admission failed: inputs[1].layout: BEVPool on EV74 requires "
                         "dense channels-last context",
-                        "EV74 contiguous context and bev");
+                        "EV74 contiguous context");
   }
   auto empty = c.options;
   empty.cells[1] = 0;
@@ -326,14 +332,13 @@ void rejections() {
 
 std::vector<std::string> scenarios() {
   std::vector<std::string> names{"int8_v1_channels_last"};
-  if (!bt::on_ev74()) // EV74 admits channels-last context and bev only
-    names.insert(names.end(), {"int8_v1_contiguous", "int8_v1_contiguous_to_channels_last",
-                               "int8_v1_channels_last_to_contiguous"});
+  if (!bt::on_ev74()) // EV74 admits channels-last context only
+    names.push_back("int8_v1_contiguous_inputs");
   names.insert(names.end(), {"int8_two_height_cells", "int8_plan_node_v1", "int8_plan_node_v2",
                              "bf16_to_bf16_v1", "bf16_to_int8_v1", "bf16_accumulation_order",
                              "bf16_plan_node_v2", "bf16_to_int8_plan_node_v2"});
   if (!bt::on_ev74())
-    names.push_back("bf16_contiguous");
+    names.push_back("bf16_contiguous_inputs");
   names.insert(names.end(),
                {"reuse_across_pushes", "retained_outputs_in_flight", "argmax_graph_handoff",
                 "retained_plan_handoff", "shared_offset_view", "rejects_invalid_requests"});
@@ -345,17 +350,9 @@ int main(int argc, char**) {
   return bt::main_test(argc, [] {
     bt::Suite suite("SimaBEVPool", scenarios());
     suite.run("int8_v1_channels_last", [] { run_cases({int8_case()}, "INT8 channels-last"); });
-    if (!bt::on_ev74()) {
-      suite.run("int8_v1_contiguous", [] {
-        run_cases({int8_case(Storage::Contiguous, Storage::Contiguous)}, "INT8 contiguous");
-      });
-      suite.run("int8_v1_contiguous_to_channels_last", [] {
-        run_cases({int8_case(Storage::Contiguous, Storage::ChannelsLast)}, "INT8 NCHW->NHWC");
-      });
-      suite.run("int8_v1_channels_last_to_contiguous", [] {
-        run_cases({int8_case(Storage::ChannelsLast, Storage::Contiguous)}, "INT8 NHWC->NCHW");
-      });
-    }
+    if (!bt::on_ev74())
+      suite.run("int8_v1_contiguous_inputs",
+                [] { run_cases({int8_case(Storage::Contiguous)}, "INT8 NCHW inputs"); });
     suite.run("int8_two_height_cells", [] {
       auto c = ref::bev_pool_case_two_heights(bt::suite_target());
       run_cases({c}, "nZ = 2");
@@ -386,8 +383,9 @@ int main(int argc, char**) {
           "BF16->INT8 node plan v2");
     });
     if (!bt::on_ev74())
-      suite.run("bf16_contiguous", [] {
-        run_cases({bf16_case(neat::TensorDType::BFloat16, Storage::Contiguous)}, "BF16 contiguous");
+      suite.run("bf16_contiguous_inputs", [] {
+        run_cases({bf16_case(neat::TensorDType::BFloat16, Storage::Contiguous)},
+                  "BF16 NCHW inputs");
       });
     suite.run("reuse_across_pushes", reuse);
     suite.run("retained_outputs_in_flight", [] { retained_outputs(false); });
