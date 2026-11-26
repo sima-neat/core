@@ -69,7 +69,7 @@ in place (1.06-1.10 ms over a copy) against 6.4 ms; the comparator hashed 530 MB
 | T0 | `qualify.py census` over the 37 MB census corpus: 280 components, both views, against `expected.json`; `qualify.py selftest` | A65 CPU, no device opened (the devkit, or an arm64 runner); the selftest anywhere | 525 s with 4 processes on 4 cores (464 s of census, the rest waiting for dirty pages); 1,621 CPU-s, median 1.8 s per component and view | every PR |
 | T1 | `qualify.py compare --tier T1 --floor`: 9 carried rows, one per route class, and 15 refused rows, one per obstacle class; every form; 200 frames | a devkit on the Kernels firmware | 1,521 s for the 24 rows (the forms Dataflow carries: GStreamer, Dataflow, GStreamer again; the pending ones: GStreamer, Dataflow) | PRs touching `src/pipeline/runtime/Dataflow*`, `src/model/` |
 | T2 | `qualify.py compare --floor` over every row, the active forms, 1,000 frames | devkits, sharded by row | the `graph` form at 200 frames (432 frames a process): 81 rows in 3,941 s, median 47 s a row of which about 25 s is the wait for dirty pages; processes median 8.9 s GStreamer, 6.2 s Dataflow. All 90 carried rows: about 75 min on one board; at 1,000 frames about 2 h (estimated) | nightly |
-| T3 | `launch_script.py` over every package's `performance.py` and `accuracy.py --limit N`, per backend | devkits with the datasets | not run (the scripts reach Dataflow once `Model::build` does) | weekly, and for the rows a step flips |
+| T3 | `launch_script.py` over every package's `performance.py` and `accuracy.py --limit N`, per backend | devkits with the datasets | first pass 2026-11-25: `accuracy.py --limit 100` of the 60 carried packages and one `performance.py` per model (37 models), both backends, 194 processes in about 5.6 h of board sessions; a process: `accuracy.py` 5-25 s (ImageNet, COCO), 165-332 s (NetVLAD), 216-528 s (CLIP, SigLIP 2); `performance.py` 127-288 s, median 135 s | weekly, and for the rows a step flips |
 
 ## Tier T3: the catalogue's own scripts
 
@@ -117,8 +117,13 @@ qualify.py scripts --registry <models checkout> --packages <dir of <component id
 
 `performance.py` asks the benchmark for MLA layer statistics. On platform 3.0.1 each MLA model then leaves
 kernel-log lines `mla 5000000.mla: non-FTL IRQ tlc=0x200 msc=0x8 with no in-flight job`, on GStreamer and on
-Dataflow alike. `--accept-kernel-line <regex>` counts such lines per run (`run.json`) in the runs of a script
-that requests those statistics; any other new line, and this line in any other run, stops the tier (exit 22).
+Dataflow alike (zero to five a run by model; none for NetVLAD and YOLO11x). The layer statistics drive the
+MLA from user space (mla-rt's MIP backend), which clears the driver's non-fatal IRQ masks; the driver re-arms
+them at the next open and says so once per boot: `mla 5000000.mla: non-fatal IRQ masks cleared by an external agent
+(TLC_EN=0x00001e00 SYS_EN=0x00000000) — re-arming`. A read of the board's power controllers on bus i2c-3 can
+lose arbitration to another master meanwhile: `i2c_designware 402b000.i2c: i2c_dw_handle_tx_abort: lost
+arbitration`. `--accept-kernel-line <regex>` counts such lines per run (`run.json`) in the runs of a script
+that requests those statistics; any other new line, and these lines in any other run, stop the tier (exit 22).
 
 ### What the scripts need
 
