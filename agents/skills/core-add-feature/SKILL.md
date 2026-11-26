@@ -5,20 +5,43 @@ description: Add a user capability to Neat Core, including public C++ or PyNeat 
 
 # Add a Core feature
 
-1. Describe the caller's workflow, desired result, and supported inputs. Look for
-   an existing `Model`, `Graph`, `Run`, Node or NodeGroup composition that meets
-   the need. Add a public option when the caller needs a choice that the current
-   arguments and contracts cannot express.
-2. Keep the public additions small and preserve existing defaults. Carry the
-   behavior through affected C++ entry points and PyNeat bindings. Follow the
+## Workflow
+
+1. **Define the use case.** Show one realistic call or command with its
+   input and expected result before implementation. State the supported
+   inputs and check whether an existing `Model`, `Graph`, `Run`, Node, or
+   NodeGroup composition meets the need.
+2. **Propose the design.** Keep public additions small and preserve existing
+   defaults. Derive behavior from existing inputs or options when they
+   determine it. Add a public option only when callers need an independent
+   choice that the current API cannot express.
+
+   Include the caller example, recommended approach, compatibility impact,
+   and verification plan. If you opened the feature issue, put the proposal
+   in its description. If someone else opened the feature request, write the
+   proposal as a comment on that issue. If viable designs differ in caller
+   behavior or component ownership and the choice is still open, explain the
+   two strongest options and recommend one with a reason.
+
+   Get the relevant code owner's approval before implementing a feature that
+   adds or changes a public API, changes a default, or shifts responsibility
+   between components. Reuse an approved design already recorded in the issue.
+
+3. **Implement at the owning boundary.** Reuse existing APIs and follow the
+   [runtime ownership rules](../../../agents/runtime-contracts.md). Keep policy
+   and MPK interpretation in Core and use the installed Scheduler interface
+   for execution. Carry the behavior through affected C++ entry points and
+   PyNeat bindings. Follow the
    [coding standard](../../../docs/develop-apps/contribute/start-here/coding_standard.md)
    and check compatibility with supported callers and packages. Apply the ABI
    rule in the [release checklist](../../../docs/develop-apps/contribute/release-maintenance/release-checklist.md).
-3. Respect [runtime ownership](../../../agents/runtime-contracts.md). Keep policy
-   and MPK interpretation in Core and use the installed Scheduler interface for
-   execution. For a node, exercise deterministic fragments, parse/caps validation,
-   and a realistic integration chain. Match the remaining checks to the
+4. **Verify.** Exercise the new use case and the relevant unsupported-input
+   path. When the feature touches shared behavior, verify the existing default.
+   For a node, exercise deterministic fragments, parse/caps validation, and a
+   realistic integration chain. Match the remaining checks to the
    [test requirements](../../../docs/develop-apps/contribute/build-test/test_requirements.md).
-4. Verify a realistic use case and the relevant unsupported-input path. Show the
-   observable result, tested target and package, and any limitations in the PR.
-   Update the existing guide or example where callers need new instructions.
+5. **Report and document.** Explain the design choice in the PR and include
+   the test command, observable result, tested target and package, and any
+   limitations. Update the existing guide, reference, or example where callers
+   need new instructions. For localized docs, update required translations and
+   source hashes using the [localization guide](../../../website/i18n/README.md).
