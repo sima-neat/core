@@ -10,24 +10,40 @@ jobs:
     name: soak-weekly
     runs-on: [self-hosted, Linux, ARM64, modalix]
     steps:
+      - name: Resolve latest develop package
+        id: package
+        run: |
+          TAG="$(curl -fsSL https://artifacts.neat.sima.ai/core/develop/latest.tag | tr -d '[:space:]')"
+          if [[ -z "${TAG}" ]]; then
+            echo "Failed to resolve latest.tag for develop branch." >&2
+            exit 1
+          fi
+          echo "Testing develop commit ${TAG}"
+          echo "tag=${TAG}" >> "${GITHUB_OUTPUT}"
+
       - name: Checkout
         uses: actions/checkout@v5
+        with:
+          ref: develop
+          fetch-depth: 0
+
+      - name: Check out the packaged develop commit
+        env:
+          TAG: ${{ steps.package.outputs.tag }}
+        run: git checkout --detach "${TAG}"
 
       - name: Install soak dependencies
-        run: ./build.sh --install-deps-only
+        run: GITHUB_REF_NAME=develop ./build.sh --install-deps-only
 
-      - name: Install runtime from latest main metadata-all
+      - name: Install runtime from latest develop metadata-all
+        env:
+          TAG: ${{ steps.package.outputs.tag }}
         run: |
           if ! command -v sima-cli >/dev/null 2>&1; then
             echo "sima-cli not found on runner." >&2
             exit 1
           fi
-          TAG="$(curl -fsSL https://artifacts.neat.sima.ai/core/main/latest.tag | tr -d '[:space:]')"
-          if [[ -z "${TAG}" ]]; then
-            echo "Failed to resolve latest.tag for main branch." >&2
-            exit 1
-          fi
-          METADATA_URL="https://artifacts.neat.sima.ai/core/main/${TAG}/metadata-all.json"
+          METADATA_URL="https://artifacts.neat.sima.ai/core/develop/${TAG}/metadata-all.json"
           echo "Installing from ${METADATA_URL}"
           SIMA_CLI_CHECK_FOR_UPDATE=0 sima-cli install -m "${METADATA_URL}"
 
