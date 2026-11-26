@@ -1239,9 +1239,7 @@ void gst_init_once() {
       throw std::runtime_error(msg);
     }
 
-    if (env_bool("SIMA_GST_SUPPRESS_DEVICE_LOGS", true)) {
-      install_stdio_filters();
-    }
+    pipeline_internal::ux::install_device_log_filters();
 
     // Keep CVU preprocess outputs as a fixed pool by default.  If a model path
     // cannot consume frames fast enough, backpressure should surface to the
@@ -1439,5 +1437,15 @@ void prewarm_runtime() {
 std::future<void> prewarm_runtime_async() {
   return std::async(std::launch::async, []() { prewarm_runtime(); });
 }
+
+namespace pipeline_internal::ux {
+
+void install_device_log_filters() {
+  if (env_bool("SIMA_GST_SUPPRESS_DEVICE_LOGS", true)) {
+    install_stdio_filters();
+  }
+}
+
+} // namespace pipeline_internal::ux
 
 } // namespace simaai::neat

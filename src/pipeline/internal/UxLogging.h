@@ -32,6 +32,13 @@ private:
 
 std::shared_ptr<void> acquire_runtime_verbosity(const VerboseOptions& opt);
 
+// The process's stdout and stderr through Core's filter (once per process, unless
+// SIMA_GST_SUPPRESS_DEVICE_LOGS=0): the device drivers' and the plugins' lines, and the verbose
+// topics the current VerboseOptions do not ask for, are dropped. gst_init_once installs it; a
+// process on the Dataflow backend installs it where its first build or device tensor would have
+// initialised GStreamer, without initialising it. No GStreamer call.
+void install_device_log_filters();
+
 const VerboseOptions& current_verbose_options();
 VerboseOptions current_effective_verbose_options();
 
