@@ -125,9 +125,9 @@ inline bool has_tar_gz_suffix(const fs::path& path) {
 
 // Defensive: returns false when `tar -tzf` cannot list the archive (file is
 // truncated, gzip CRC is wrong, content is HTML from a failed download, etc.).
-// Callers of resolve_yolov8s_tar_*() rely on this to reject corrupt cached
-// fixtures that previously slipped through `is_usable_regular_file` (which
-// only checks size>0) and surfaced as ModelPack "tar listing failed".
+// resolve_modelzoo_tar() relies on this to reject a corrupt cached archive
+// that `is_usable_regular_file` (size > 0 only) lets through, which would
+// otherwise surface as ModelPack "tar listing failed".
 inline bool is_listable_tar_gz(const fs::path& tar_path) {
   if (!is_usable_regular_file(tar_path) || !has_tar_gz_suffix(tar_path))
     return false;
@@ -415,31 +415,6 @@ inline bool ensure_writable_directory(const fs::path& dir) {
   return true;
 }
 
-inline fs::path writable_asset_tmp_dir(const fs::path& root, const std::string& fallback_name) {
-  const fs::path primary = root / "tmp";
-  if (ensure_writable_directory(primary))
-    return primary;
-
-  fs::path temp_root;
-  try {
-    temp_root = fs::temp_directory_path();
-  } catch (...) {
-    temp_root = fs::path("/tmp");
-  }
-
-  const std::vector<fs::path> fallbacks = {
-      temp_root / fallback_name,
-      fs::path("/tmp") / fallback_name,
-  };
-  for (const auto& candidate : fallbacks) {
-    if (ensure_writable_directory(candidate))
-      return candidate;
-  }
-
-  // Let the original path surface the concrete create/open error to callers.
-  return primary;
-}
-
 inline int run_modelzoo_get_noninteractive(const std::string& model_name,
                                            const fs::path& download_dir = {}) {
   std::string cmd;
@@ -564,217 +539,32 @@ inline std::string resolve_resnet50_tar() {
   return "";
 }
 
-// The caller holds the cache lock while downloading and staging the archive.
-inline std::string download_yolov8s_tar_to_cache(const fs::path& tmp_tar,
-                                                 const std::vector<std::string>& names) {
-  const auto tmp_dir = tmp_tar.parent_path();
-  if (run_modelzoo_get_noninteractive("yolo_v8s", tmp_dir) != 0)
-    return "";
-
-  // Model Zoo may write directly or under a model-named subdirectory.
-  for (const auto& dir : {tmp_dir, tmp_dir / "yolo_v8s"}) {
-    for (const auto& name : names) {
-      const auto downloaded = dir / name;
-      if (is_listable_tar_gz(downloaded)) {
-        if (downloaded == tmp_tar || move_to_tmp(downloaded, tmp_tar))
-          return tmp_tar.string();
-        return downloaded.string();
-      }
-      purge_unlistable_tar_gz(downloaded);
-    }
-  }
-  return "";
-}
-
-inline std::string resolve_yolov8s_tar_local_first(const fs::path& root_in, bool skip_download) {
-  const fs::path root = default_asset_root(root_in);
-  const fs::path root_tmp = root / "tmp";
-  const fs::path tmp_dir = writable_asset_tmp_dir(root, "sima-yolov8s-cache");
-  const fs::path tmp_tar = tmp_dir / "yolo_v8s_mpk.tar.gz";
-  const ScopedFileLock lock(tmp_tar.string() + ".lock");
-
-  // Drop corrupt cached tars up front so the subsequent search/download
-  // path can refresh them. is_usable_regular_file only checks size>0;
-  // a partial download or HTML error page satisfies that but fails
-  // `tar -tzf` and surfaces deep in ModelPack as "tar listing failed".
-  //
-  // NB: we intentionally do NOT apply is_listable_tar_gz to the broader
-  // search-loop candidates below — unit_asset_utils_readable_model_tar_test
-  // pre-stages dummy non-tar payloads to validate move_to_tmp semantics,
-  // and downstream callers handle real corruption via the cached-tar
-  // validation they perform on the path we return.
-  purge_unlistable_tar_gz(tmp_tar);
-  purge_unlistable_tar_gz(root / "yolo_v8s_mpk.tar.gz");
-  purge_unlistable_tar_gz(root_tmp / "yolo_v8s_mpk.tar.gz");
-
+// For the stress test in an installed tree: the variables, then the one fixed cache path.
+// No folder search and no download.
+inline std::string resolve_yolov8s_tar_local_only(const fs::path& root_in = {}) {
   const std::string env_tar = env_existing_model_tar_path("SIMA_YOLO_TAR");
-  if (!env_tar.empty()) {
+  if (!env_tar.empty())
     return env_tar;
-  }
-
-  const fs::path direct_tar = root / "yolo_v8s_mpk.tar.gz";
-  if (is_usable_regular_file(direct_tar))
-    return direct_tar.string();
-
-  const fs::path root_tmp_tar = root_tmp / "yolo_v8s_mpk.tar.gz";
-  if (root_tmp_tar != tmp_tar && is_usable_regular_file(root_tmp_tar)) {
-    if (move_to_tmp(root_tmp_tar, tmp_tar))
-      return tmp_tar.string();
-    return root_tmp_tar.string();
-  }
-
-  if (is_usable_regular_file(tmp_tar))
-    return tmp_tar.string();
-
-  auto stage_candidate = [&](const fs::path& candidate) -> std::string {
-    if (!is_usable_regular_file(candidate))
-      return "";
-    if (candidate == tmp_tar)
-      return tmp_tar.string();
-    if (move_to_tmp(candidate, tmp_tar))
-      return tmp_tar.string();
-    return candidate.string();
-  };
-
-  const char* home = std::getenv("HOME");
-  const fs::path home_path = home ? fs::path(home) : fs::path();
-  fs::path temp_root;
-  try {
-    temp_root = fs::temp_directory_path();
-  } catch (...) {
-    temp_root = fs::path("/tmp");
-  }
-  const std::vector<fs::path> search_dirs = {
-      root,
-      fs::current_path(),
-      root_tmp,
-      tmp_dir,
-      temp_root,
-      home_path / ".simaai",
-      home_path / ".simaai" / "modelzoo",
-      home_path / ".sima" / "modelzoo",
-      "/data/simaai/modelzoo",
-  };
-
-  const std::vector<std::string> names = {
-      "yolo_v8s_mpk.tar.gz",
-      "yolo-v8s_mpk.tar.gz",
-      "yolov8s_mpk.tar.gz",
-      "yolov8_s_mpk.tar.gz",
-  };
-
-  for (const auto& dir : search_dirs) {
-    if (dir.empty())
-      continue;
-    for (const auto& name : names) {
-      const std::string staged = stage_candidate(dir / name);
-      if (!staged.empty())
-        return staged;
-    }
-  }
-
-  if (!skip_download) {
-    const auto downloaded = download_yolov8s_tar_to_cache(tmp_tar, names);
-    if (!downloaded.empty())
-      return downloaded;
-  }
-
-  for (const auto& dir : search_dirs) {
-    if (dir.empty())
-      continue;
-    for (const auto& name : names) {
-      fs::path candidate = dir / name;
-      if (is_usable_regular_file(candidate) && move_to_tmp(candidate, tmp_tar)) {
-        return tmp_tar.string();
-      }
-    }
-  }
-
-  // First, try the explicit sima-cli internal-mode layout. When sima-cli
-  // detects board mode (Environment: board (modalix)) it routes through
-  // _download_model_internal, which lands the tarball at
-  //   <getcwd()>/<model_name>/<filename>
-  // (see /usr/local/lib/python3.11/dist-packages/sima_cli/model_zoo/model.py
-  //  around `dest_dir = os.path.join(os.getcwd(), selected_model.split("/")[-1])`).
-  // None of the directories in the broader search loop above check this
-  // per-model subdir form, so the CI runner — which detects board mode
-  // because /etc/build advertises SIMA_BUILD_VERSION+MACHINE — trips the
-  // SKIP path after a perfectly successful sima-cli download. Add the exact
-  // subdir as an explicit candidate before falling back to recursive walks.
-  const std::vector<fs::path> board_mode_subdir_roots = {
-      root,
-      fs::current_path(),
-  };
-  for (const auto& base : board_mode_subdir_roots) {
-    if (base.empty())
-      continue;
-    const fs::path subdir = base / "yolo_v8s";
-    for (const auto& name : names) {
-      const fs::path candidate = subdir / name;
-      const std::string staged = stage_candidate(candidate);
-      if (!staged.empty())
-        return staged;
-    }
-  }
-
-  // Defensive recursive fallback: sima-cli reports "File already exists and is
-  // complete: yolo_v8s_mpk.tar.gz" when its own cache has the file, but the
-  // exact cache layout (subdir-per-model, environment-specific paths) is
-  // not directly observable from the resolver — it can't see sima-cli's
-  // stdout. The top-level + per-known-cache-dir scan above misses these
-  // sub-cached copies and the test then trips with
-  // "Failed to locate yolo_v8s model archive" even though sima-cli succeeded.
-  // Walk a bounded set of cache roots one level deep so we recover the file
-  // wherever sima-cli's modelzoo layout put it, then move it into tmp_tar so
-  // subsequent calls hit the fast path. Skip if a candidate cache root is
-  // missing — we don't want this fallback to slow down the common path with
-  // nonexistent traversals.
-  const std::vector<fs::path> recursive_roots = {
-      root,
-      fs::current_path(),
-      home_path.empty() ? fs::path{} : home_path / ".simaai",
-      home_path.empty() ? fs::path{} : home_path / ".sima",
-      "/data/simaai",
-  };
-  for (const auto& base : recursive_roots) {
-    if (base.empty())
-      continue;
-    std::error_code rec_ec;
-    if (!fs::is_directory(base, rec_ec) || rec_ec)
-      continue;
-    fs::recursive_directory_iterator it(base, fs::directory_options::skip_permission_denied,
-                                        rec_ec);
-    if (rec_ec)
-      continue;
-    for (const auto& entry : it) {
-      if (!entry.is_regular_file(rec_ec) || rec_ec)
-        continue;
-      const std::string fname = entry.path().filename().string();
-      for (const auto& name : names) {
-        if (fname != name)
-          continue;
-        const fs::path& found = entry.path();
-        if (!is_usable_regular_file(found))
-          continue;
-        // Try to stage into tmp_tar so the fast path picks it up next time,
-        // but if that fails (e.g. `root` is a synthetic path on the test
-        // runner so `root/tmp/` can't be created), fall back to the located
-        // path. Either way the caller gets a usable tarball — silently
-        // skipping here was the bug behind the "Failed to locate" CI flake
-        // when sima-cli's board-mode cache layout puts the file under a
-        // per-model subdir (e.g. `<cwd>/yolo_v8s/yolo_v8s_mpk.tar.gz`).
-        const std::string staged = stage_candidate(found);
-        if (!staged.empty())
-          return staged;
-      }
-    }
-  }
-
+  const fs::path local = default_asset_root(root_in) / "tmp" / "yolo_v8s_mpk.tar.gz";
+  if (is_usable_regular_file(local) && is_listable_tar_gz(local))
+    return local.string();
   return "";
 }
 
-inline std::string resolve_yolov8s_tar(const fs::path& root = {}) {
-  return resolve_yolov8s_tar_local_first(root, false);
+inline std::string resolve_yolov8s_tar(const fs::path& = {}) {
+  for (const char* name : {"SIMA_YOLO_TAR", "SIMA_MODEL_TAR"}) {
+    const char* value = std::getenv(name);
+    if (!value || !*value)
+      continue;
+    if (is_usable_regular_file(value))
+      return value;
+    std::cerr << name << "=" << value << " is not a non-empty file\n";
+    return "";
+  }
+  std::cerr << "SIMA_YOLO_TAR is not set. Set it, or SIMA_MODEL_TAR, to the "
+               "yolov8s_w8a8_mpk.tar.gz from 'sima-cli models download --id yolov8s "
+               "--variant w8a8'.\n";
+  return "";
 }
 
 inline std::string resolve_modelzoo_tar(const std::string& model_name,
@@ -905,21 +695,12 @@ inline std::string resolve_modelzoo_tar(const std::string& model_name,
   return "";
 }
 
+// The same variables as resolve_yolov8s_tar(), and the archive must contain a *_mpk.json.
 inline std::string resolve_yolov8s_strict_mpk_tar(const fs::path& root = {}) {
-  const std::string local_first = resolve_yolov8s_tar_local_first(root, false);
-  if (!local_first.empty() && is_strict_mpk_tar_gz(local_first))
-    return local_first;
-
-  const fs::path tmp_tar = default_asset_root(root) / "tmp" / "yolo_v8s_mpk.tar.gz";
-  if (is_usable_regular_file(tmp_tar) && !is_strict_mpk_tar_gz(tmp_tar)) {
-    std::error_code ec;
-    fs::remove(tmp_tar, ec);
-  }
-
-  const std::string modelzoo = resolve_modelzoo_tar("yolo_v8s", root);
-  if (!modelzoo.empty() && is_strict_mpk_tar_gz(modelzoo))
-    return modelzoo;
-
+  const std::string tar = resolve_yolov8s_tar(root);
+  if (tar.empty() || is_strict_mpk_tar_gz(tar))
+    return tar;
+  std::cerr << tar << " is not a .tar.gz MPK with a *_mpk.json\n";
   return "";
 }
 

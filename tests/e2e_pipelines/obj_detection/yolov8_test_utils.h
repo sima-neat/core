@@ -116,8 +116,9 @@ inline std::string resolve_yolov8s_tar_or_skip(const fs::path& root = {}) {
   const std::string tar_gz = sima_e2e::resolve_yolov8s_tar(root);
   if (tar_gz.empty()) {
     skip_long_test_exception(
-        "Failed to locate yolo_v8s model archive. Set SIMA_MODEL_TAR (or SIMA_YOLO_TAR) or run "
-        "sima-cli modelzoo get yolo_v8s.");
+        "Failed to locate the YOLOv8s model archive. Set SIMA_YOLO_TAR (or SIMA_MODEL_TAR) to "
+        "the yolov8s_w8a8_mpk.tar.gz from 'sima-cli models download --id yolov8s --variant "
+        "w8a8'.");
   }
   return tar_gz;
 }

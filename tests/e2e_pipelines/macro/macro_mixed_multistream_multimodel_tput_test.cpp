@@ -2333,7 +2333,7 @@ int main(int argc, char** argv) {
       }
       require_assets_or_skip(args.require_assets,
                              "YOLOv8s model pack not found; set --yolo-model, SIMA_YOLO_TAR, "
-                             "SIMA_MODEL_TAR, or run modelzoo get yolo_v8s");
+                             "or SIMA_MODEL_TAR");
     }
 
     for (int i = 0; i < args.streams; ++i) {

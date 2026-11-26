@@ -41,8 +41,7 @@ std::string resolve_model_pack_for_stress() {
   if (!tar.empty()) {
     return tar;
   }
-  tar = sima_test::resolve_yolov8s_tar_local_first(root, true);
-  return tar;
+  return sima_test::resolve_yolov8s_tar_local_only(root);
 }
 
 std::vector<int64_t> contiguous_strides_bytes(const std::vector<int64_t>& shape,
