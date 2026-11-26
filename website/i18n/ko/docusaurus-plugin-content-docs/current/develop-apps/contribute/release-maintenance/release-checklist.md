@@ -23,18 +23,16 @@ slug: /develop-apps/contribute/release-checklist
 4. 문서 링크 검사가 엄격한 모드에서 통과합니다(`DOCS_STRICT_LINKS=1`).
 5. 생성 단계 후 작업 트리가 깨끗합니다.
 6. 푸시 전과 릴리스 브랜치에서 해결되지 않은 충돌/정확성 오류가 없습니다.
-7. 충돌/정확성/스트레스/정적 분석 게이트가 릴리스 브랜치에서 녹색 상태입니다.
-8. 릴리스 태그에 대한 소크 안정성 테스트가 녹색 상태입니다(`soak-weekly`).
-9. 릴리스 후보에 대한 퍼즈 테스트가 녹색 상태입니다(`fuzz-nightly`).
-10. 제로 스킵 게이트가 엄격한 테스트 레인에 대해 녹색 상태입니다(`zero-skip-gate`).
-11. 필수 거버넌스 파일이 존재하고 유효합니다.
+7. Vulcan CI(`.github/workflows/vulcan-ci.yml`)가 태그를 지정할 바로 그 커밋에서 통과했습니다.
+8. 제로 스킵 게이트가 엄격한 테스트 레인에 대해 녹색 상태입니다(`zero-skip-gate`).
+9. 필수 거버넌스 파일이 존재하고 유효합니다.
    - `.github/CODEOWNERS`
    - `.github/PULL_REQUEST_TEMPLATE.md`
    - `CONTRIBUTING.md`
    - `docs/develop-apps/contribute/release-checklist.md`
-12. 릴리스 메타데이터가 완료되었습니다.
-   - `project(SimaNeat VERSION x.y.z)`가 `CMakeLists.txt`에 업데이트되었습니다.
-   - `package-version` 및 `platform-version`가 필요한 경우 `deps/manifest.json`에 업데이트되었습니다.
+10. 릴리스 메타데이터가 완료되었습니다.
+   - 태그를 지정할 커밋의 `deps/manifest.json`에 있는 `package-version`이 릴리스 버전과 같습니다. 예를 들어 `v0.7.0`이면 `0.7.0`입니다.
+   - `platform-version`가 필요한 경우 `deps/manifest.json`에 업데이트되었습니다.
    - `modelzoo-version`이 검증된 Model Zoo 릴리스를 명시적으로 선택하며, `platform-version`과 다를 경우에만 해당됩니다. 생략하면 Model Zoo 해결은 기본적으로 `platform-version`으로 설정됩니다.
    - `deps/manifest.json`의 `abi-version`은 공개 C++ 유형 레이아웃 또는 내보낸 바이너리 계약에 호환되지 않는 변경이 있고,
      `develop`이 여전히 `main`과 같은 ABI 버전을 사용하는 경우에만 증가시킵니다.
@@ -46,26 +44,26 @@ slug: /develop-apps/contribute/release-checklist
 
 ## 필수 상태 검사
 
-다음 검사는 릴리스 PR 및 릴리스 태그에서 필수적으로 수행됩니다.
+릴리스 태그를 만들기 전에 태그를 지정할 바로 그 커밋에서 Vulcan CI(`.github/workflows/vulcan-ci.yml`)가
+통과해야 합니다. 확인 방법은 릴리스 흐름의 5단계에 있습니다.
+
+다음 검사도 릴리스 PR 및 릴리스 태그에서 필수입니다.
 
 - `configure-build-sanity`
 - `docs-link-check`
-- `crash-correctness-gate`
 - `zero-skip-gate`
-- `soak-weekly` (릴리스 태그에 필요)
-- `fuzz-nightly` (릴리스 후보에 필요)
-- `stress-gate`
-- `asan-ubsan-gate`
 
-이러한 검사는 다음에서 구현됩니다.
+## 예약 실행 테스트 레인
 
-- `.github/workflows/vulcan-ci.yml`
+이 레인은 릴리스를 차단하지 않습니다. 충돌/정확성, 스트레스, 정적 분석, 퍼즈 테스트는 매일 밤 실행됩니다.
+소크 안정성 테스트와 장시간 테스트는 매주 실행됩니다.
+
 - `.github/workflows/test-crash-correctness-nightly.yml`
-- `.github/workflows/test-soak-weekly.yml`
-- `.github/workflows/long-tests-weekly.yml`
-- `.github/workflows/vulcan-fuzz-nightly.yml`
 - `.github/workflows/test-stress-nightly.yml`
 - `.github/workflows/sanitizers.yml`
+- `.github/workflows/vulcan-fuzz-nightly.yml`
+- `.github/workflows/test-soak-weekly.yml`
+- `.github/workflows/long-tests-weekly.yml`
 
 ## GitHub 브랜치 및 태그 보호
 
@@ -82,12 +80,21 @@ GitHub 저장소 설정을 구성합니다.
 
 ## 릴리스 흐름
 
-1. **Actions → Release → Run workflow**를 열어 릴리스 후보를 만듭니다. 예를 들어 0.7.0을 릴리스하려면 `release_line`을 `0.7`로, `tag`를 `0.7.0-rc1`로 설정하고, `main`을 `source_branch`로 그대로 둔 뒤 `prerelease`를 켜고 `latest`를 끕니다. 이 워크플로는 `release-0.7`을 만들거나 재사용하고, `v0.7.0-rc1` 태그를 지정한 뒤 프리릴리스 초안을 만듭니다. `release-0.7`이 이미 있으면(예: 0.7.1) `branch_exists_behavior`의 기본값이 `reuse`이므로 워크플로는 그 최신 커밋에 태그를 지정합니다. 첫 후보를 만들기 전에 풀 리퀘스트로 `main`을 `release-0.7`에 병합합니다.
-2. 릴리스가 아닌 PR 병합을 중단합니다.
-3. 후보를 검증합니다. 수정이 필요하면 수정 사항을 `release-0.7`에 반영한 뒤 `0.7.0-rc2`와 같은 다음 후보 태그로 워크플로를 다시 실행합니다.
-4. 후보가 검증을 통과하면 `release-0.7`이 여전히 그 후보를 가리키는지 확인합니다. 워크플로는 `release-0.7`의 최신 커밋에 태그를 지정하며 더 오래된 커밋에는 태그를 지정할 수 없습니다. `git fetch --tags origin` 후 `git rev-parse origin/release-0.7`이 `git rev-parse v0.7.0-rcN^{commit}`과 같은 커밋을 출력해야 합니다. 여기서 `rcN`은 검증을 통과한 후보입니다. 후보 이후에 변경이 들어왔다면 먼저 새 후보를 만듭니다. 그런 다음 `tag`를 `0.7.0`으로 설정하고 `prerelease`를 끄고 `latest`를 켠 상태로 워크플로를 실행합니다. 워크플로는 그 커밋에 `v0.7.0` 태그를 지정하고 최종 릴리스 초안을 만듭니다. 이 실행에서는 Target Release가 `core-0.7.0`인 모든 이슈가 Done이어야 하며, 그 후 해당 이슈의 Release Status를 `released`로 설정합니다. 후보 실행에서는 이 검사를 건너뜁니다.
-5. 릴리스 브랜치를 `main`으로 빠르게 병합합니다.
-6. 릴리스 노트를 게시하고 릴리스 후 후속 작업을 수행합니다.
+`v0.7.0`과 같은 최종 태그로 릴리스합니다. 릴리스 후보 태그는 만들지 않습니다. Release 워크플로
+(**Actions → Release**)는 `release-X.Y`를 만들거나 재사용하고, 그 최신 커밋에 태그를 지정한 뒤 GitHub 릴리스 초안을 만듭니다.
+아래 단계는 새 라인에서 0.7.0을 릴리스하는 경우입니다. 기존 라인의 패치 릴리스(예: 0.6.3)는 3단계와 6단계가 다릅니다.
+
+1. `develop`에서 `deps/manifest.json`의 `package-version`을 `0.7.0`으로 설정합니다. 릴리스 차단 조건에서 요구하면 `platform-version`, `modelzoo-version`, `abi-version`을 업데이트하고, 최신 문서 버전 절의 설명에 따라 릴리스 데이터를 업데이트합니다.
+2. 풀 리퀘스트로 `develop`을 `main`에 병합합니다.
+3. 태그를 지정할 커밋을 확인합니다. 먼저 `git fetch origin`을 실행합니다.
+   - 새 라인: 워크플로가 `main`의 최신 커밋에서 `release-0.7`을 만듭니다. 커밋은 `git rev-parse origin/main`입니다.
+   - 기존 라인: 풀 리퀘스트로 `main`을 `release-0.6`에 병합합니다. `branch_exists_behavior`의 기본값이 `reuse`이므로 워크플로는 `release-0.6`을 재사용하고 그 최신 커밋에 태그를 지정합니다. 커밋은 `git rev-parse origin/release-0.6`입니다.
+
+   태그가 만들어질 때까지 그 브랜치에는 아무것도 병합하지 않습니다.
+4. 그 커밋의 버전을 확인합니다. `git show <commit>:deps/manifest.json`에 `"package-version": "0.7.0"`이 표시되어야 합니다.
+5. 바로 그 커밋에서 Vulcan CI가 통과했는지 확인합니다. `gh run list --repo sima-neat/core --workflow vulcan-ci.yml --commit <commit>`으로 실행 목록을 볼 수 있습니다. `main` 또는 릴리스 브랜치에서 성공한 실행도 인정됩니다. 없으면 3단계의 브랜치에서 `gh workflow run vulcan-ci.yml --repo sima-neat/core --ref main`으로 Vulcan CI를 시작합니다. 패치 릴리스에서는 `--ref release-0.6`을 사용합니다. 새 실행의 `headSha`가 그 커밋인지 확인한 뒤 `gh run watch <run-id> --repo sima-neat/core --exit-status`로 완료를 기다립니다. 그 커밋의 실행이 통과할 때까지 태그를 지정하지 않습니다.
+6. **Actions → Release → Run workflow**를 엽니다. `release_line`을 `0.7`로, `tag`를 `0.7.0`으로 설정하고, `main`을 `source_branch`로 그대로 두며, `prerelease`는 끄고 `latest`는 켠 상태로 둡니다. 0.6.3의 경우 `release_line`을 `0.6`으로, `tag`를 `0.6.3`으로 설정하고, 더 새로운 라인이 이미 릴리스되었다면 `latest`를 끕니다. 워크플로는 `v0.7.0` 태그를 지정하고 릴리스 초안을 만듭니다. Target Release가 `core-0.7.0`인 모든 이슈가 Done이어야 하며, 그 후 해당 이슈의 Release Status를 `released`로 설정합니다. 실행 요약의 **Target SHA**가 3단계의 커밋인지 확인합니다. 다르면 릴리스 초안을 게시하지 않습니다.
+7. 릴리스 초안에 릴리스 노트를 작성해 게시하고 릴리스 후 후속 이슈를 엽니다.
 
 ## 운영 참고 사항
 

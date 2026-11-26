@@ -23,18 +23,16 @@ slug: /develop-apps/contribute/release-checklist
 4. ドキュメントのリンクチェックが厳格なモードで合格すること（`DOCS_STRICT_LINKS=1`）。
 5. 生成ステップの後に、作業ツリーがクリーンな状態であること。
 6. リリース前に、未解決のクラッシュ/正当性に関する問題がゼロであること、およびリリースリファレンス上でもゼロであること。
-7. クラッシュ/正当性/ストレステスト/サニタイザーゲートが、リリースリファレンス上ですべて緑色であること。
-8. リリースタグに対するソーク安定性テストが緑色であること（`soak-weekly`）。
-9. リリース候補に対するファズテストが緑色であること（`fuzz-nightly`）。
-10. 厳格なテストレーンに対して、ゼロスキップゲートが緑色であること（`zero-skip-gate`）。
-11. 必要なガバナンスファイルが存在し、有効であること：
+7. Vulcan CI（`.github/workflows/vulcan-ci.yml`）が、タグを付けるコミットそのもので合格していること。
+8. 厳格なテストレーンに対して、ゼロスキップゲートが緑色であること（`zero-skip-gate`）。
+9. 必要なガバナンスファイルが存在し、有効であること：
    - `.github/CODEOWNERS`
    - `.github/PULL_REQUEST_TEMPLATE.md`
    - `CONTRIBUTING.md`
    - `docs/develop-apps/contribute/release-checklist.md`
-12. リリースメタデータが完了していること：
-   - `project(SimaNeat VERSION x.y.z)` が `CMakeLists.txt` に更新されていること
-   - 必要に応じて、`package-version` と `platform-version` が `deps/manifest.json` に更新されていること
+10. リリースメタデータが完了していること：
+   - タグを付けるコミットの `deps/manifest.json` の `package-version` がリリースバージョンと一致していること（たとえば `v0.7.0` なら `0.7.0`）
+   - 必要に応じて、`platform-version` が `deps/manifest.json` に更新されていること
    - `modelzoo-version` が、`platform-version` と異なる場合に、検証済みの Model Zoo リリースを明示的に選択すること。省略された場合、Model Zoo の解決はデフォルトで `platform-version` になります。
    - `abi-version` は、公開 C++ 型のレイアウトまたはエクスポートされたバイナリコントラクトに互換性のない変更があり、
      かつ `develop` の ABI バージョンが `main` と同じ場合にのみ、`deps/manifest.json` でインクリメントすること。
@@ -46,26 +44,26 @@ slug: /develop-apps/contribute/release-checklist
 
 ## 必要なステータスチェック
 
-以下のチェックは、リリース PR およびリリースタグに対して必要です。
+リリースタグを作成する前に、タグを付けるコミットそのもので Vulcan CI（`.github/workflows/vulcan-ci.yml`）が
+合格している必要があります。確認方法はリリースフローの手順 5 に記載しています。
+
+以下のチェックも、リリース PR およびリリースタグに対して必要です。
 
 - `configure-build-sanity`
 - `docs-link-check`
-- `crash-correctness-gate`
 - `zero-skip-gate`
-- `soak-weekly`（リリースタグに必要）
-- `fuzz-nightly`（リリース候補に必要）
-- `stress-gate`
-- `asan-ubsan-gate`
 
-これらのチェックは、以下に実装されています。
+## スケジュール実行のテストレーン
 
-- `.github/workflows/vulcan-ci.yml`
+これらのレーンはリリースをブロックしません。クラッシュ/正当性、ストレステスト、サニタイザー、ファズテストは毎晩実行されます。
+ソーク安定性テストと長時間テストは毎週実行されます。
+
 - `.github/workflows/test-crash-correctness-nightly.yml`
-- `.github/workflows/test-soak-weekly.yml`
-- `.github/workflows/long-tests-weekly.yml`
-- `.github/workflows/vulcan-fuzz-nightly.yml`
 - `.github/workflows/test-stress-nightly.yml`
 - `.github/workflows/sanitizers.yml`
+- `.github/workflows/vulcan-fuzz-nightly.yml`
+- `.github/workflows/test-soak-weekly.yml`
+- `.github/workflows/long-tests-weekly.yml`
 
 ## GitHub ブランチとタグの保護
 
@@ -82,12 +80,21 @@ GitHub リポジトリの設定を行います。
 
 ## リリースフロー
 
-1. **Actions → Release → Run workflow** を開いてリリース候補を作成します。たとえば 0.7.0 をリリースする場合は、`release_line` を `0.7`、`tag` を `0.7.0-rc1` に設定し、`main` を `source_branch` のままにして、`prerelease` をオン、`latest` をオフにします。このワークフローは `release-0.7` を作成または再利用し、`v0.7.0-rc1` タグを付けてプレリリースの下書きを作成します。`release-0.7` がすでに存在する場合（たとえば 0.7.1 の場合）、`branch_exists_behavior` の既定値が `reuse` であるため、ワークフローはその最新のコミットにタグを付けます。最初の候補を作成する前に、プルリクエストで `main` を `release-0.7` にマージします。
-2. 非リリース PR のマージを一時停止します。
-3. 候補を検証します。修正が必要な場合は、修正を `release-0.7` にマージしてから、`0.7.0-rc2` などの次の候補タグでワークフローを再実行します。
-4. 候補が検証に合格したら、`release-0.7` がまだその候補を指していることを確認します。ワークフローは `release-0.7` の最新のコミットにタグを付け、それより古いコミットにはタグを付けられません。`git fetch --tags origin` の後、`git rev-parse origin/release-0.7` が `git rev-parse v0.7.0-rcN^{commit}` と同じコミットを出力する必要があります。ここで `rcN` は検証に合格した候補です。候補の後に変更が入っていたら、先に新しい候補を作成します。そのうえで `tag` を `0.7.0` に設定し、`prerelease` をオフ、`latest` をオンにしてワークフローを実行します。ワークフローはそのコミットに `v0.7.0` タグを付け、正式リリースの下書きを作成します。この実行では、Target Release が `core-0.7.0` のすべての issue が Done であることも必要で、その後それらの Release Status を `released` に設定します。候補の実行ではこのチェックを行いません。
-5. リリースブランチを `main` に高速でマージします。
-6. リリースノートを公開し、リリース後のフォローアップの問題を投稿します。
+`v0.7.0` のような正式なタグでリリースします。リリース候補のタグは作成しません。Release ワークフロー
+（**Actions → Release**）は `release-X.Y` を作成または再利用し、その最新のコミットにタグを付けて、GitHub リリースの下書きを作成します。
+以下の手順は、新しいラインで 0.7.0 をリリースする場合です。既存のラインでのパッチリリース（たとえば 0.6.3）では、手順 3 と 6 が異なります。
+
+1. `develop` で、`deps/manifest.json` の `package-version` を `0.7.0` に設定します。リリースをブロックする条件で必要な場合は `platform-version`、`modelzoo-version`、`abi-version` を更新し、「最新ドキュメントのバージョン」の説明に従ってリリースデータを更新します。
+2. プルリクエストで `develop` を `main` にマージします。
+3. タグを付けるコミットを特定します。先に `git fetch origin` を実行します。
+   - 新しいライン：ワークフローは `main` の最新のコミットから `release-0.7` を作成します。コミットは `git rev-parse origin/main` です。
+   - 既存のライン：プルリクエストで `main` を `release-0.6` にマージします。`branch_exists_behavior` の既定値が `reuse` であるため、ワークフローは `release-0.6` を再利用し、その最新のコミットにタグを付けます。コミットは `git rev-parse origin/release-0.6` です。
+
+   タグが作成されるまで、そのブランチには何もマージしません。
+4. そのコミットのバージョンを確認します。`git show <commit>:deps/manifest.json` に `"package-version": "0.7.0"` が表示される必要があります。
+5. そのコミットそのもので Vulcan CI が合格していることを確認します。`gh run list --repo sima-neat/core --workflow vulcan-ci.yml --commit <commit>` で実行の一覧を確認できます。`main` またはリリースブランチ上の成功した実行も有効です。なければ、手順 3 のブランチで `gh workflow run vulcan-ci.yml --repo sima-neat/core --ref main` を実行して Vulcan CI を開始します。パッチリリースでは `--ref release-0.6` を使います。新しい実行の `headSha` がそのコミットであることを確認し、`gh run watch <run-id> --repo sima-neat/core --exit-status` で完了を待ちます。そのコミットでの実行が合格するまでタグを付けません。
+6. **Actions → Release → Run workflow** を開きます。`release_line` を `0.7`、`tag` を `0.7.0` に設定し、`main` を `source_branch` のままにして、`prerelease` はオフ、`latest` はオンのままにします。0.6.3 の場合は `release_line` を `0.6`、`tag` を `0.6.3` に設定し、新しいラインがすでにリリースされていれば `latest` をオフにします。ワークフローは `v0.7.0` タグを付け、リリースの下書きを作成します。Target Release が `core-0.7.0` のすべての issue が Done であることが必要で、その後それらの Release Status を `released` に設定します。実行サマリーの **Target SHA** が手順 3 のコミットであることを確認します。一致しない場合は、リリースの下書きを公開しません。
+7. リリースの下書きにリリースノートを記載して公開し、リリース後のフォローアップの issue を作成します。
 
 ## 運用上の注意点
 
