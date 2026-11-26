@@ -87,8 +87,9 @@ GitHub 저장소 설정을 구성합니다.
    태그가 만들어질 때까지 그 브랜치에는 아무것도 병합하지 않습니다.
 4. 그 커밋의 버전을 확인합니다. `git show <commit>:deps/manifest.json`에 `"package-version": "0.7.0"`이 표시되어야 합니다. Release 워크플로도 첫 번째 작업에서 같은 검사를 수행합니다. 버전이 다르면 브랜치나 태그를 만들기 전, 그리고 이슈를 릴리스됨으로 표시하기 전에 중단합니다.
 5. 바로 그 커밋에서 Vulcan CI가 통과했는지 확인합니다. `gh run list --repo sima-neat/core --workflow vulcan-ci.yml --commit <commit>`으로 실행 목록을 볼 수 있습니다. `main` 또는 릴리스 브랜치에서 성공한 실행도 인정됩니다. 없으면 3단계의 브랜치에서 `gh workflow run vulcan-ci.yml --repo sima-neat/core --ref main`으로 Vulcan CI를 시작합니다. 패치 릴리스에서는 `--ref release-0.6`을 사용합니다. 새 실행의 `headSha`가 그 커밋인지 확인한 뒤 `gh run watch <run-id> --repo sima-neat/core --exit-status`로 완료를 기다립니다. 그 커밋의 실행이 통과할 때까지 태그를 지정하지 않습니다.
-6. **Actions → Release → Run workflow**를 엽니다. `release_line`을 `0.7`로, `tag`를 `0.7.0`으로 설정하고, `main`을 `source_branch`로 그대로 두며, `prerelease`는 끄고 `latest`는 켠 상태로 둡니다. 0.6.3의 경우 `release_line`을 `0.6`으로, `tag`를 `0.6.3`으로 설정하고, 더 새로운 라인이 이미 릴리스되었다면 `latest`를 끕니다. 워크플로는 `v0.7.0` 태그를 지정하고 릴리스 초안을 만듭니다. Target Release가 `core-0.7.0`인 모든 이슈가 Done이어야 하며, 그 후 해당 이슈의 Release Status를 `released`로 설정합니다. 실행 요약의 **Target SHA**가 3단계의 커밋인지 확인합니다. 다르면 릴리스 초안을 게시하지 않습니다.
-7. 릴리스 초안에 릴리스 노트를 작성해 게시하고 릴리스 후 후속 이슈를 엽니다.
+6. **Actions → Release → Run workflow**를 엽니다. `release_line`을 `0.7`로, `tag`를 `0.7.0`으로 설정하고, `main`을 `source_branch`로 그대로 두며, `prerelease`는 끄고 `latest`는 켠 상태로 둡니다. 0.6.3의 경우 `release_line`을 `0.6`으로, `tag`를 `0.6.3`으로 설정하고, 더 새로운 라인이 이미 릴리스되었다면 `latest`를 끕니다. 워크플로는 `v0.7.0` 태그를 지정하고 릴리스 초안을 만듭니다. Target Release가 `core-0.7.0`인 모든 이슈가 Done이어야 하며, 그 후 해당 이슈의 Release Status를 `released`로 설정합니다. 해당 Target Release를 가진 이슈가 하나도 없어도 이 검사는 실패합니다. 실행 요약의 **Target SHA**가 3단계의 커밋인지 확인합니다. 다르면 릴리스 초안을 게시하지 않습니다.
+7. `gh workflow run vulcan-ci.yml --repo sima-neat/core --ref v0.7.0`으로 태그에 대해 Vulcan CI를 시작합니다. 워크플로가 지정한 태그만으로는 워크플로 실행이 시작되지 않습니다. `https://artifacts.neat.sima.ai/core/v0.7.0/latest.tag`에 태그를 지정한 커밋이 표시될 때까지 기다립니다. 이 실행은 `sima-cli neat install core@v0.7.0`이 설치하는 패키지와 오프라인 번들을 게시합니다.
+8. 릴리스 초안에 릴리스 노트를 작성해 게시하고 릴리스 후 후속 이슈를 엽니다.
 
 ## 운영 참고 사항
 

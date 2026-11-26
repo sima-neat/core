@@ -87,8 +87,9 @@ GitHub リポジトリの設定を行います。
    タグが作成されるまで、そのブランチには何もマージしません。
 4. そのコミットのバージョンを確認します。`git show <commit>:deps/manifest.json` に `"package-version": "0.7.0"` が表示される必要があります。Release ワークフローも最初のジョブで同じチェックを行います。バージョンが一致しない場合は、ブランチやタグを作成する前、また issue をリリース済みにする前に停止します。
 5. そのコミットそのもので Vulcan CI が合格していることを確認します。`gh run list --repo sima-neat/core --workflow vulcan-ci.yml --commit <commit>` で実行の一覧を確認できます。`main` またはリリースブランチ上の成功した実行も有効です。なければ、手順 3 のブランチで `gh workflow run vulcan-ci.yml --repo sima-neat/core --ref main` を実行して Vulcan CI を開始します。パッチリリースでは `--ref release-0.6` を使います。新しい実行の `headSha` がそのコミットであることを確認し、`gh run watch <run-id> --repo sima-neat/core --exit-status` で完了を待ちます。そのコミットでの実行が合格するまでタグを付けません。
-6. **Actions → Release → Run workflow** を開きます。`release_line` を `0.7`、`tag` を `0.7.0` に設定し、`main` を `source_branch` のままにして、`prerelease` はオフ、`latest` はオンのままにします。0.6.3 の場合は `release_line` を `0.6`、`tag` を `0.6.3` に設定し、新しいラインがすでにリリースされていれば `latest` をオフにします。ワークフローは `v0.7.0` タグを付け、リリースの下書きを作成します。Target Release が `core-0.7.0` のすべての issue が Done であることが必要で、その後それらの Release Status を `released` に設定します。実行サマリーの **Target SHA** が手順 3 のコミットであることを確認します。一致しない場合は、リリースの下書きを公開しません。
-7. リリースの下書きにリリースノートを記載して公開し、リリース後のフォローアップの issue を作成します。
+6. **Actions → Release → Run workflow** を開きます。`release_line` を `0.7`、`tag` を `0.7.0` に設定し、`main` を `source_branch` のままにして、`prerelease` はオフ、`latest` はオンのままにします。0.6.3 の場合は `release_line` を `0.6`、`tag` を `0.6.3` に設定し、新しいラインがすでにリリースされていれば `latest` をオフにします。ワークフローは `v0.7.0` タグを付け、リリースの下書きを作成します。Target Release が `core-0.7.0` のすべての issue が Done であることが必要で、その後それらの Release Status を `released` に設定します。その Target Release を持つ issue が 1 つもない場合も、このチェックは失敗します。実行サマリーの **Target SHA** が手順 3 のコミットであることを確認します。一致しない場合は、リリースの下書きを公開しません。
+7. `gh workflow run vulcan-ci.yml --repo sima-neat/core --ref v0.7.0` でタグに対して Vulcan CI を開始します。ワークフローが付けたタグだけでは、ワークフローの実行は開始されません。`https://artifacts.neat.sima.ai/core/v0.7.0/latest.tag` にタグを付けたコミットが表示されるまで待ちます。この実行により、`sima-cli neat install core@v0.7.0` がインストールするパッケージとオフラインバンドルが公開されます。
+8. リリースの下書きにリリースノートを記載して公開し、リリース後のフォローアップの issue を作成します。
 
 ## 運用上の注意点
 
