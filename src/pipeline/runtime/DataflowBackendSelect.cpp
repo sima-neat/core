@@ -242,13 +242,13 @@ std::shared_ptr<RunCore> build_impl(const Graph& graph, const RunOptions& opt, R
           "RunCore::start_pipeline_segment: push-style segment requires an input seed");
     }
   }
-  // A tensor pulled from a device pool is a GstSample over a GstDmaBufMemory
-  // (DataflowDeviceMemory.cpp), so a Run with a device input starts GStreamer here, as a GStreamer
-  // Run does at its build. A Run of host inputs only never does.
+  // A Run with a device input keeps the output a GStreamer Run gives: the drivers' lines off stdout
+  // and stderr (Core's filter, which GStreamer's initialisation installs there). A Run of host
+  // inputs only installs nothing.
   for (const DataflowInputConfig& input : config.inputs) {
     if (input.input.memory_policy == InputMemoryPolicy::Ev74 ||
         input.input.memory_policy == InputMemoryPolicy::Dms0) {
-      gst_init_once();
+      pipeline_internal::ux::install_device_log_filters();
       break;
     }
   }

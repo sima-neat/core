@@ -360,6 +360,8 @@ const char* storage_kind_name_local(simaai::neat::StorageKind kind) {
     return "CpuExternal";
   case simaai::neat::StorageKind::GstSample:
     return "GstSample";
+  case simaai::neat::StorageKind::DeviceHandle:
+    return "DeviceHandle";
   }
   return "Unknown";
 }
@@ -756,6 +758,8 @@ const char* storage_kind_name(simaai::neat::StorageKind kind) {
     return "CpuExternal";
   case simaai::neat::StorageKind::GstSample:
     return "GstSample";
+  case simaai::neat::StorageKind::DeviceHandle:
+    return "DeviceHandle";
   }
   return "Unknown";
 }

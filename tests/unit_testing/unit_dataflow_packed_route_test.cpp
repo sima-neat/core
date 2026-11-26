@@ -517,7 +517,9 @@ void owned(const Inference& route) {
     Run run = g.build(inputs[0], on());
     require(run.push(inputs[1]), "owned: push");
     Result<TensorList> out = run.pull(std::chrono::milliseconds(30000));
-    require(static_cast<bool>(out) && out->front().storage->kind == StorageKind::GstSample,
+    require(static_cast<bool>(out) &&
+                out->front().storage->kind ==
+                    (sima_test::on_dataflow() ? StorageKind::DeviceHandle : StorageKind::GstSample),
             "owned: the default output is the MLA's buffer");
     for (const Tensor& tensor : *out) {
       expected.push_back(tensor.copy_dense_bytes_tight());

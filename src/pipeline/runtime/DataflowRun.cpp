@@ -26,7 +26,7 @@
 //             message's is the pushed storage itself, and the slot returns at the pull. The
 //             Outputs of a fan-out lease the one slot each message has: no copy per Output.
 //             From a device input (memory_policy Ev74 or Dms0) it is device memory, a
-//             GstSample over the slot's DMA-BUF, read-only as well.
+//             DeviceHandle storage of the slot's DMA-BUF, read-only as well.
 // A device input's push and the tensors of its pulled messages are DataflowDeviceMemory.cpp's
 // (dataflow_device::push, pulled_sample, pulled_tensors): another translation unit, reached here
 // by one branch each, so that what this file compiles for a host input stays what it was.

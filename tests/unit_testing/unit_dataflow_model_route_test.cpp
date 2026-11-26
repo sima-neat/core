@@ -297,6 +297,15 @@ std::vector<Frame> run_frames(Graph g, const std::vector<TensorList>& inputs, in
   return seen;
 }
 
+// A device buffer's storage is each backend's own kind (GStreamer's GstSample, Dataflow's
+// DeviceHandle: qualification/expected_differences.json, device_storage_kind); the differential
+// compares it as the one "device buffer", every other kind as it is.
+std::string storage_kind_text(StorageKind kind) {
+  const StorageKind device =
+      sima_test::on_dataflow() ? StorageKind::DeviceHandle : StorageKind::GstSample;
+  return kind == device ? std::string("device buffer") : sima_test::text(kind);
+}
+
 // Every field a user reads of a backend's frames, and every byte: recorded by the GStreamer run
 // and compared by the Dataflow run (`row` names the record's keys). GStreamer numbers some
 // elements per pipeline built in the process (MLA_0_<n>), so the stage's name is compared by
@@ -332,7 +341,7 @@ void compare(sima_test::Reference& ref, const std::vector<Frame>& frames, const 
     ref.equal(at("semantic.quant"), t.semantic.quant.has_value());
     require(!t.semantic.image, at("no image semantic"));
     ref.equal(at("storage kind, placement, segments"),
-              sima_test::text(f.storage_kind) + "/" + sima_test::text(f.storage_device) + "/" +
+              storage_kind_text(f.storage_kind) + "/" + sima_test::text(f.storage_device) + "/" +
                   sima_test::text(f.storage_target_flags) + "/" +
                   sima_test::text(f.storage_segments) + "/'" + f.storage_segment + "'");
     require(!f.bytes.empty(), at("bytes"));
@@ -842,7 +851,8 @@ void owned(const Route& route) {
     Run run = g.build(a, on());
     require(run.push(a), "push");
     const Tensor t = pull_ok(run, "owned reference").front();
-    require(t.storage && t.storage->kind == StorageKind::GstSample,
+    require(t.storage && t.storage->kind == (sima_test::on_dataflow() ? StorageKind::DeviceHandle
+                                                                      : StorageKind::GstSample),
             "the default output is the last stage's buffer");
     zero_copy = bytes_of(t);
     run.close();

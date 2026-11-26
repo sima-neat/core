@@ -4,7 +4,9 @@
  *
  * This file implements:
  *  - transfer_to_device(): copies a Tensor payload into a device-backed GstBuffer,
- *    wraps it in a GstSample, and returns a Tensor that references that storage.
+ *    wraps it in a GstSample, and returns a Tensor that references that storage. In a process
+ *    on the Dataflow backend the payload goes into the runtime's device memory instead
+ *    (DataflowDeviceMemory.h): no GStreamer object.
  *  - transfer_to_cpu(): copies payload into CPU-owned storage.
  *
  * Payload semantics (consistent with the rest of the repo):
@@ -28,13 +30,19 @@
 
 #include "pipeline/internal/TensorTransfer.h"
 
+#include "neat/runtime.h"
 #include "pipeline/internal/GstDataAdapter.h"
 #include "pipeline/internal/InputStreamUtil.h"
 #include "pipeline/internal/SimaaiGstCompat.h"
 #include "pipeline/internal/TensorUtil.h"
 #include "pipeline/internal/TensorMath.h"
+#include "pipeline/internal/UxLogging.h"
 #include "gst/GstInit.h"
 #include <simaai/scheduler/client/dma_memory.h>
+
+#if defined(SIMANEAT_WITH_DATAFLOW)
+#include "pipeline/runtime/DataflowDeviceMemory.h"
+#endif
 
 #include <gst/gst.h>
 #include <gstsimaaitensorbuffer_meta.h>
@@ -737,6 +745,27 @@ Tensor transfer_to_driver_dmabuf(const Tensor& src, const Device& target,
   return finalize_transfer_tensor(src, storage, segments);
 }
 
+#if defined(SIMANEAT_WITH_DATAFLOW)
+// transfer_to_driver_dmabuf in a process on the Dataflow backend: the same payload and layout in
+// device memory of the runtime's (DataflowDeviceMemory.h), no GStreamer object.
+Tensor transfer_to_dataflow_device(const Tensor& src, const Device& target,
+                                   const std::vector<Segment>& segments,
+                                   std::size_t payload_bytes) {
+  const std::size_t allocation_bytes = segment_total_bytes(segments);
+  auto storage = runtime::dataflow_device::make_device_storage(
+      target, allocation_bytes, [&](std::byte* data, std::size_t size) {
+        if (!copy_tensor_payload(src, reinterpret_cast<std::uint8_t*>(data), size)) {
+          throw std::runtime_error("transfer: device memory payload copy failed");
+        }
+        // As a reused carrier's padding: the bytes past the payload are zero.
+        if (size > payload_bytes) {
+          std::memset(data + payload_bytes, 0, size - payload_bytes);
+        }
+      });
+  return finalize_transfer_tensor(src, storage, segments);
+}
+#endif
+
 } // namespace
 
 std::shared_ptr<Storage> make_driver_dmabuf_storage(GstSample* sample, const Device& target,
@@ -766,8 +795,6 @@ Tensor transfer_to_device(const Tensor& src, const Device& target,
     throw std::runtime_error("transfer: unsupported target device");
   }
 
-  simaai::neat::gst_init_once();
-
   // Determine payload bytes. Prefer tight size; otherwise fall back to mapped size.
   std::size_t payload_bytes = 0;
   try {
@@ -792,6 +819,15 @@ Tensor transfer_to_device(const Tensor& src, const Device& target,
 
   const std::vector<Segment> segments = resolve_segments(required_segments, payload_bytes);
 
+#if defined(SIMANEAT_WITH_DATAFLOW)
+  // A process on the Dataflow backend never starts GStreamer: its device tensors are the runtime's
+  // (and Core's stdio filter, which GStreamer's initialisation installs here, is installed alone).
+  if (simaai::neat::backend() == RunBackend::Dataflow) {
+    pipeline_internal::ux::install_device_log_filters();
+    return transfer_to_dataflow_device(src, target, segments, payload_bytes);
+  }
+#endif
+  simaai::neat::gst_init_once();
   return transfer_to_driver_dmabuf(src, target, target_flags, segments, payload_bytes);
 }
 

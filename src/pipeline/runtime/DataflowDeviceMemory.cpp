@@ -9,25 +9,28 @@
 #include "pipeline/internal/ErrorUtil.h"
 #include "pipeline/internal/SampleUtil.h"
 #include "pipeline/internal/SimaaiGstCompat.h"
-#include "pipeline/internal/TensorTransfer.h"
 #include "pipeline/runtime/DataflowInputPort.h"
 #include "pipeline/runtime/DataflowModelRoute.h"
 #include "pipeline/runtime/DataflowTensorCodec.h"
 
 #include <gst/allocators/gstdmabuf.h>
-#include <gst/allocators/gstfdmemory.h>
 #include <gst/gst.h>
 
 #include <sys/mman.h>
 #include <unistd.h>
 
+#include <algorithm>
 #include <array>
+#include <atomic>
+#include <functional>
 #include <mutex>
 #include <optional>
 #include <span>
+#include <string>
 #include <typeinfo>
 #include <utility>
 #include <variant>
+#include <vector>
 
 namespace simaai::neat::runtime::dataflow_device {
 
@@ -52,7 +55,8 @@ struct WrapHold {
 // codec's SlotLeaseMapper marks a host slot's lease. The pulled tensor is read-only: a CPU write
 // needs the pool's write epoch, which only a push holds.
 struct SlotMapper {
-  std::shared_ptr<void> holder; ///< the GstSample: its memory keeps the Message
+  std::shared_ptr<void>
+      holder; ///< the storage's holder: a copy of the Message, which keeps the slot
   void* data = nullptr;
   std::size_t size = 0;
   Mapping operator()(MapMode mode) const {
@@ -75,51 +79,168 @@ std::uint64_t target_flags_of(df::MemoryKind kind) {
                                                                  : GST_SIMAAI_MEMORY_TARGET_EV74);
 }
 
-// The one GstMemory of the storage's GstSample when it is a standard DMA-BUF; nullptr otherwise.
-GstMemory* dmabuf_memory(const TensorBuffer& storage) {
+// The DMA-BUF of a GstSample's storage: its one memory, when it is a standard DMA-BUF. Such a
+// tensor came from a GStreamer object the application made (this backend makes none).
+[[gnu::cold, gnu::noinline]] bool gst_device_memory(const TensorBuffer& storage,
+                                                    DeviceMemory& out) {
   auto* sample = static_cast<GstSample*>(storage.holder.get());
   GstBuffer* buffer = sample && GST_IS_SAMPLE(sample) ? gst_sample_get_buffer(sample) : nullptr;
   if (!buffer || gst_buffer_n_memory(buffer) != 1U) {
-    return nullptr;
+    return false;
   }
   GstMemory* memory = gst_buffer_peek_memory(buffer, 0U);
-  return memory && gst_is_dmabuf_memory(memory) ? memory : nullptr;
+  if (!memory || !gst_is_dmabuf_memory(memory)) {
+    return false;
+  }
+  gsize offset = 0;
+  const gsize size = gst_memory_get_sizes(memory, &offset, nullptr);
+  out.fd = gst_dmabuf_memory_get_fd(memory);
+  out.fd_offset = static_cast<std::size_t>(offset);
+  out.size = static_cast<std::size_t>(size);
+  return out.fd >= 0;
 }
 
-// A slot of a device pool as a TensorMemory::EV74 (MLA) tensor's storage.
-std::shared_ptr<TensorBuffer> slot_storage(const df::Message& message, const df::Block& block) {
-  // Process-wide and never freed: memories of it may outlive every Run.
-  static GstAllocator* const allocator = gst_dmabuf_allocator_new();
-  static const GQuark message_quark = g_quark_from_static_string("sima-neat-dataflow-slot");
-  const std::span<const std::byte> bytes = message.bytes();
-  GstMemory* memory = gst_dmabuf_allocator_alloc_with_flags(
-      allocator, block.fd, block.fd_offset + bytes.size(), GST_FD_MEMORY_FLAG_DONT_CLOSE);
-  GstBuffer* buffer = memory ? gst_buffer_new() : nullptr;
-  if (!buffer) {
-    if (memory) {
-      gst_memory_unref(memory);
+// ---- Core's own device memory (make_device_storage) ------------------------------------------
+
+// One allocation of the runtime's source, the holder of the storage made of it. Its memory goes
+// back to the cache when the last holder (the storage, a Mapping of it, a Block that backs a slot
+// with it) drops it; an allocation whose write epoch did not end goes to the source's quarantine.
+struct DeviceAllocation {
+  df::Block block;
+  std::atomic<bool> lost{false};
+  DeviceAllocation() = default;
+  DeviceAllocation(const DeviceAllocation&) = delete;
+  DeviceAllocation& operator=(const DeviceAllocation&) = delete;
+  ~DeviceAllocation();
+};
+
+// The map_fn of Core's own device storage. A write map is the Runner's write epoch, ended (the
+// cache clean) by the Mapping's end; a second writer at once is refused (an empty Mapping), as a
+// GStreamer memory refuses a second exclusive map. A read map is the CPU's own view: only the CPU
+// writes this memory (a device reads it), so the view is current. One type, so that device_memory
+// finds the Block by it.
+struct BlockMapper {
+  std::shared_ptr<DeviceAllocation> allocation;
+  std::size_t size = 0; ///< the storage's bytes, from the Block's first
+  Mapping operator()(MapMode mode) const;
+};
+
+#if defined(SIMANEAT_WITH_DATAFLOW_DEVICE_MEMORY)
+
+// The memory Core's device storages gave back, for the next storage of the same memory and size
+// class: a transfer per frame takes the memory the last frame's released instead of asking the heap
+// again (an ioctl, a mapping, the first touch of every page). As the GStreamer backend's transfer
+// cache: a capacity is the size rounded up to a page, or to 64 KiB above 64 KiB; at most 128
+// allocations and 256 MiB are kept, the most recently given back first; memory past either bound
+// is freed at once. Never destroyed: storages may outlive every static.
+class DeviceAllocationCache {
+public:
+  static constexpr std::size_t kMaxBytes = 256U * 1024U * 1024U;
+  static constexpr std::size_t kMaxBlocks = 128U;
+  static constexpr std::size_t kClassQuantum = 64U * 1024U;
+
+  static DeviceAllocationCache& instance() {
+    static auto* const cache = new DeviceAllocationCache;
+    return *cache;
+  }
+
+  static std::size_t capacity_of(std::size_t bytes) {
+    static const auto page = static_cast<std::size_t>(::sysconf(_SC_PAGESIZE));
+    const std::size_t quantum = bytes <= kClassQuantum ? page : std::max(page, kClassQuantum);
+    return ((bytes + quantum - 1U) / quantum) * quantum;
+  }
+
+  // A kept allocation of `kind` and `capacity`, or an empty Block.
+  df::Block take(df::MemoryKind kind, std::size_t capacity) {
+    std::lock_guard<std::mutex> lock(mu_);
+    for (auto it = kept_.begin(); it != kept_.end(); ++it) {
+      if (it->kind == kind && it->size == capacity) {
+        df::Block block = std::move(*it);
+        kept_.erase(it);
+        bytes_ -= capacity;
+        return block;
+      }
     }
-    pipeline_internal::error_util::throw_session_error(
-        error_codes::kMemoryAllocationFailed,
-        "Run::pull: GStreamer gave no DMA-BUF memory for a device slot (Dataflow backend)");
+    return {};
   }
-  if (block.fd_offset != 0U) {
-    gst_memory_resize(memory, static_cast<gssize>(block.fd_offset), bytes.size());
+
+  void give(df::Block&& block) {
+    std::vector<df::Block> freed;
+    {
+      std::lock_guard<std::mutex> lock(mu_);
+      if (block.size <= kMaxBytes) {
+        bytes_ += block.size;
+        kept_.insert(kept_.begin(), std::move(block));
+      } else {
+        freed.push_back(std::move(block));
+      }
+      while (bytes_ > kMaxBytes || kept_.size() > kMaxBlocks) {
+        bytes_ -= kept_.back().size;
+        freed.push_back(std::move(kept_.back()));
+        kept_.pop_back();
+      }
+    }
+    for (df::Block& gone : freed) {
+      df::runner::block_source().release(std::move(gone));
+    }
   }
-  // The memory, not the buffer, keeps the slot: a GstMemory can outlive the buffer it came in.
-  gst_mini_object_set_qdata(GST_MINI_OBJECT_CAST(memory), message_quark, new df::Message(message),
-                            [](gpointer kept) { delete static_cast<df::Message*>(kept); });
-  gst_buffer_append_memory(buffer, memory);
-  GstSample* sample = gst_sample_new(buffer, nullptr, nullptr, nullptr);
-  gst_buffer_unref(buffer);
-  std::shared_ptr<TensorBuffer> storage = pipeline_internal::make_driver_dmabuf_storage(
-      sample, device_of(block.kind), target_flags_of(block.kind));
-  gst_sample_unref(sample);
-  if (!storage) {
-    pipeline_internal::error_util::throw_session_error(
-        error_codes::kMemoryAllocationFailed,
-        "Run::pull: no storage for a device slot's DMA-BUF (Dataflow backend)");
+
+private:
+  std::mutex mu_;
+  std::vector<df::Block> kept_; ///< the most recently given back first
+  std::size_t bytes_ = 0;
+};
+
+DeviceAllocation::~DeviceAllocation() {
+  if (block.holder) {
+    if (lost.load(std::memory_order_acquire)) {
+      df::runner::block_source().quarantine(std::move(block));
+    } else {
+      DeviceAllocationCache::instance().give(std::move(block));
+    }
   }
+}
+
+Mapping BlockMapper::operator()(MapMode mode) const {
+  Mapping mapping;
+  const df::Block& block = allocation->block;
+  if (mode != MapMode::Read) {
+    if (df::runner::block_source().begin_write(block)) {
+      return mapping;
+    }
+    mapping.unmap = [allocation = allocation] {
+      if (df::runner::block_source().end_write(allocation->block)) {
+        allocation->lost.store(true, std::memory_order_release);
+      }
+    };
+  }
+  mapping.data = block.data;
+  mapping.size_bytes = size;
+  mapping.keepalive = allocation;
+  return mapping;
+}
+
+#else
+
+DeviceAllocation::~DeviceAllocation() = default;
+
+Mapping BlockMapper::operator()(MapMode /*mode*/) const {
+  return {};
+}
+
+#endif
+
+// A slot of a device pool as a TensorMemory::EV74 (MLA) tensor's storage: one segment, named as a
+// GStreamer buffer of one plain memory names it.
+std::shared_ptr<TensorBuffer> slot_storage(const df::Message& message, const df::Block& block) {
+  const std::span<const std::byte> bytes = message.bytes();
+  auto storage = std::make_shared<TensorBuffer>();
+  storage->kind = StorageKind::DeviceHandle;
+  storage->device = device_of(block.kind);
+  storage->size_bytes = bytes.size();
+  storage->holder = std::make_shared<df::Message>(message);
+  storage->sima_mem_target_flags = target_flags_of(block.kind);
+  storage->sima_segments = {Segment{"memory0", bytes.size()}};
   // The CPU reads the slot through the pool's own mapping. The slot was written by the CPU and
   // cleaned at its push, or (a model stage's output) by the device, and the Worker invalidated
   // the CPU's view of it before it published the message: either way the view is current and a
@@ -129,6 +250,81 @@ std::shared_ptr<TensorBuffer> slot_storage(const df::Message& message, const df:
 }
 
 } // namespace
+
+bool device_memory(const TensorBuffer& storage, DeviceMemory& out) {
+  if (storage.kind == StorageKind::DeviceHandle) {
+    const BlockMapper* const own = storage.map_fn.target<BlockMapper>();
+    if (!own || !own->allocation || own->allocation->block.fd < 0) {
+      return false;
+    }
+    out.fd = own->allocation->block.fd;
+    out.fd_offset = own->allocation->block.fd_offset;
+    out.size = own->size;
+    return true;
+  }
+  return storage.kind == StorageKind::GstSample && storage.holder &&
+         gst_device_memory(storage, out);
+}
+
+std::shared_ptr<TensorBuffer>
+make_device_storage(const Device& target, std::size_t bytes,
+                    const std::function<void(std::byte* data, std::size_t size)>& fill) {
+#if defined(SIMANEAT_WITH_DATAFLOW_DEVICE_MEMORY)
+  const df::MemoryKind kind =
+      target.type == DeviceType::SIMA_MLA ? df::MemoryKind::Dms0 : df::MemoryKind::Ev74;
+  const df::BlockSource& source = df::runner::block_source();
+  const std::size_t capacity = DeviceAllocationCache::capacity_of(std::max<std::size_t>(bytes, 1U));
+  auto allocation = std::make_shared<DeviceAllocation>();
+  allocation->block = DeviceAllocationCache::instance().take(kind, capacity);
+  if (!allocation->block.holder) {
+    df::Result<df::Block> allocated = source.allocate(kind, capacity);
+    if (const df::Error* error = df::failure(allocated)) {
+      pipeline_internal::error_util::throw_session_error(
+          error_codes::kMemoryAllocationFailed,
+          "transfer: no device memory for a tensor of " + std::to_string(bytes) +
+              " bytes (Dataflow backend): " + std::string(error->message));
+    }
+    allocation->block = std::get<df::Block>(std::move(allocated));
+  }
+  if (const df::Status refused = source.begin_write(allocation->block)) {
+    pipeline_internal::error_util::throw_session_error(
+        error_codes::kMemoryAllocationFailed,
+        "transfer: the device memory's write epoch did not begin (Dataflow backend): " +
+            std::string(refused->message));
+  }
+  try {
+    fill(allocation->block.data, bytes);
+  } catch (...) {
+    if (source.end_write(allocation->block)) {
+      allocation->lost.store(true, std::memory_order_release);
+    }
+    throw;
+  }
+  if (const df::Status unclean = source.end_write(allocation->block)) {
+    allocation->lost.store(true, std::memory_order_release);
+    pipeline_internal::error_util::throw_session_error(
+        error_codes::kMemoryAllocationFailed,
+        "transfer: the device memory's write epoch did not end (Dataflow backend): " +
+            std::string(unclean->message));
+  }
+  auto storage = std::make_shared<TensorBuffer>();
+  storage->kind = StorageKind::DeviceHandle;
+  storage->device = target;
+  storage->size_bytes = bytes;
+  storage->holder = allocation;
+  storage->sima_mem_target_flags = target_flags_of(kind);
+  storage->map_fn = BlockMapper{std::move(allocation), bytes};
+  return storage;
+#else
+  (void)target;
+  (void)fill;
+  pipeline_internal::error_util::throw_session_error(
+      error_codes::kMemoryAllocationFailed,
+      "transfer: a tensor of " + std::to_string(bytes) +
+          " bytes in device memory: this build of the Dataflow backend was configured without "
+          "the Runner's memory package");
+#endif
+}
 
 // One read-only mapping per pushed tensor (DataflowDeviceMemory.h), found again by the tensor's
 // storage, byte offset and bytes.
@@ -193,7 +389,7 @@ bool wrap_tensor(const Tensor& t, const df::PortSpec& port_spec, std::size_t slo
                  std::uintptr_t align_mask, df::Block& out, bool any_device_memory,
                  MappedWraps* mapped) {
   const df::MemoryKind port = port_spec.memory;
-  if (port == df::MemoryKind::Host || !t.storage || t.storage->kind != StorageKind::GstSample ||
+  if (port == df::MemoryKind::Host || !t.storage || !device_storage_kind(t.storage->kind) ||
       !t.storage->holder || t.byte_offset < 0) {
     return false;
   }
@@ -205,20 +401,18 @@ bool wrap_tensor(const Tensor& t, const df::PortSpec& port_spec, std::size_t slo
       pipeline_internal::tensor_has_device_gstsample_producer_lifetime(t)) {
     return false;
   }
-  GstMemory* memory = dmabuf_memory(storage);
-  const int fd = memory ? gst_dmabuf_memory_get_fd(memory) : -1;
-  if (fd < 0) {
+  DeviceMemory memory;
+  if (!device_memory(storage, memory)) {
     return false;
   }
-  gsize memory_offset = 0;
-  const gsize memory_size = gst_memory_get_sizes(memory, &memory_offset, nullptr);
+  const int fd = memory.fd;
   const auto offset = static_cast<std::size_t>(t.byte_offset);
-  if (offset > memory_size || memory_size - offset < slot_bytes) {
+  if (offset > memory.size || memory.size - offset < slot_bytes) {
     return false;
   }
   out.size = slot_bytes;
   out.fd = fd;
-  out.fd_offset = static_cast<std::size_t>(memory_offset) + offset;
+  out.fd_offset = memory.fd_offset + offset;
   out.kind = port;
   if (mapped) {
     // The CPU's address of the tensor's first byte, from Core's own mapping of it (MappedWraps).
@@ -272,12 +466,9 @@ std::shared_ptr<TensorBuffer> pulled_storage(const df::Message& message, const d
     // Wrapped by its descriptor (wrap_tensor): the holder is the pushed tensor's TensorBuffer, and
     // the tensor's first byte is where the Block's offset says, past the memory's own.
     auto storage = std::static_pointer_cast<TensorBuffer>(block.holder);
-    GstMemory* memory = dmabuf_memory(*storage);
-    gsize memory_offset = 0;
-    if (memory) {
-      gst_memory_get_sizes(memory, &memory_offset, nullptr);
-    }
-    if (!memory || block.fd_offset < memory_offset) {
+    DeviceMemory memory;
+    const bool known = device_memory(*storage, memory);
+    if (!known || block.fd_offset < memory.fd_offset) {
       // The application replaced the storage's memory while the Run held it, which a pushed
       // tensor's contract forbids.
       pipeline_internal::error_util::throw_session_error(
@@ -285,7 +476,7 @@ std::shared_ptr<TensorBuffer> pulled_storage(const df::Message& message, const d
           "Run::pull: the storage of a pushed device tensor changed while the Run held it "
           "(Dataflow backend)");
     }
-    byte_offset = static_cast<std::int64_t>(block.fd_offset - memory_offset);
+    byte_offset = static_cast<std::int64_t>(block.fd_offset - memory.fd_offset);
     return storage;
   }
   if (block.holder) {
@@ -394,7 +585,7 @@ std::shared_ptr<TensorBuffer> leaf_storage(bool owned, const df::Message& messag
 
 void fill_stage_leaf(Tensor& tensor, const DataflowPulledTensor& pulled,
                      std::shared_ptr<TensorBuffer> storage, std::int64_t byte_offset) {
-  if (storage->kind == StorageKind::GstSample) {
+  if (storage->map_fn.target_type() == typeid(SlotMapper)) {
     // The output buffer as a GStreamer Run's appsink hands it out: a DMA-BUF carrier without a
     // device placement, its one segment named as the stage's publication names the allocation.
     storage->device = {DeviceType::CPU, 0};
@@ -495,7 +686,7 @@ void pulled_tensors(const DataflowInputBinding& binding,
 
 namespace simaai::neat::runtime {
 
-// A device input's validated geometries: of the first device tensor (GstSample storage) that
+// A device input's validated geometries: of the first device tensor (device_storage_kind) that
 // passed the checks, kept by device_remember, and of the first CPU tensor (pushed with the
 // compatibility copy allowed), kept by the push itself. The geometry of a device tensor is not who
 // produced its memory: Core's cross-Run rule is asked of every push that repeats it.

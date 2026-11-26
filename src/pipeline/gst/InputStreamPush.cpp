@@ -322,6 +322,11 @@ bool tensor_requires_cpu_to_device_copy_for_push(const simaai::neat::Tensor& ten
   if (tensor.storage->kind == simaai::neat::StorageKind::GstSample) {
     return !pipeline_internal::tensor_has_dmabuf_memory(tensor);
   }
+  // Device memory of the Dataflow backend's own (a pulled device slot labelled CPU as a GStreamer
+  // Run's output is, or Core's device tensor in such a process).
+  if (tensor.storage->kind == simaai::neat::StorageKind::DeviceHandle) {
+    return false;
+  }
   return tensor.device.type == simaai::neat::DeviceType::CPU;
 }
 

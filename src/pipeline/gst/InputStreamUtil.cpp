@@ -1481,8 +1481,11 @@ InputGeometry describe_tensor_geometry_or_throw(const simaai::neat::Tensor& inpu
     throw std::invalid_argument(std::string(tag) + ": simaai::neat::Tensor missing storage");
   }
   validate_declared_tensor_storage(input, tag);
+  // Device memory is a GStreamer carrier's, or, in a process on the Dataflow backend, the
+  // runtime's own (DeviceHandle).
   if (input.device.type != simaai::neat::DeviceType::CPU &&
-      input.storage->kind != simaai::neat::StorageKind::GstSample) {
+      input.storage->kind != simaai::neat::StorageKind::GstSample &&
+      input.storage->kind != simaai::neat::StorageKind::DeviceHandle) {
     throw std::invalid_argument(std::string(tag) +
                                 ": non-CPU tensors must be backed by GstSample storage");
   }

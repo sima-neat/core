@@ -223,7 +223,7 @@ public:
   push(const DataflowPushItem& item, bool device_port = false, std::uint64_t frame_word = 0);
 
   // After a device input's push answered `outcome` (dataflow_device::push; defined in
-  // DataflowDeviceMemory.cpp): the first device tensor (GstSample storage) that passed the push's
+  // DataflowDeviceMemory.cpp): the first device tensor (device storage) that passed the push's
   // checks has its geometry kept, and a push that repeats it skips those checks (device_known).
   void device_remember(std::span<const Tensor> item, const DataflowPushOutcome& outcome);
   // Before a device input's try_push (dataflow_device::push): the refusal Session::alloc gives a
@@ -384,7 +384,7 @@ private:
   std::atomic<Bound*> bound_{nullptr};
   std::atomic<bool> closed_{false};
   DataflowValidatedLeaf validated_;
-  DataflowValidatedLeaf validated_device_; ///< a device input: of a device tensor (GstSample)
+  DataflowValidatedLeaf validated_device_; ///< a device input: of a device tensor
   /// A model route: the loaded model and the checked kernels of the input's stages
   /// (DataflowModelRoute.h), for this Run's operators. Null otherwise.
   std::shared_ptr<void> model_;

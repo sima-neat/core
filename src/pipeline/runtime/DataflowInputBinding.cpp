@@ -6,6 +6,7 @@
 #include "pipeline/runtime/DataflowInputBinding.h"
 
 #include "pipeline/internal/SampleProjection.h"
+#include "pipeline/runtime/DataflowDeviceMemory.h"
 #include "pipeline/runtime/DataflowModelRoute.h"
 
 #include <algorithm>
@@ -559,7 +560,8 @@ bool DataflowLeafGeometry::keepable(const Tensor& t) noexcept {
 }
 
 bool DataflowLeafGeometry::keepable_device(const Tensor& t) noexcept {
-  return t.storage && t.storage->kind == StorageKind::GstSample && plain_semantic(t.semantic);
+  return t.storage && dataflow_device::device_storage_kind(t.storage->kind) &&
+         plain_semantic(t.semantic);
 }
 
 // matches() for a device tensor: the same fields. Its own copy of the comparison, out of line, so
@@ -628,9 +630,10 @@ void DataflowValidatedLeaf::remember(const Tensor& tensor, bool wrappable) {
 // its planes at the offsets and pitches of the port's layout, which planar_layout packs back to
 // back. Everything read here is part of DataflowLeafGeometry, so a repeated geometry reuses the
 // answer; wrap_block (DataflowTensorCodec.h) checks the rest per push.
-// A device port (memory Ev74 or Dms0) takes device memory only: the tensor's storage is a
-// GstSample's (a TensorMemory::EV74 or MLA tensor; dataflow_device::wrap_tensor checks that it is
-// one DMA-BUF of the port's kind), laid out by the same rule. A CPU tensor is copied into the slot.
+// A device port (memory Ev74 or Dms0) takes device memory only: the tensor's storage is device
+// storage (dataflow_device::device_storage_kind: a TensorMemory::EV74 or MLA tensor;
+// dataflow_device::wrap_tensor checks that it is one DMA-BUF of the port's kind), laid out by the
+// same rule. A CPU tensor is copied into the slot.
 // A model route whose frames change size (the binding's pulled tensor has the frames' table)
 // has a bounded device port that takes every frame as it is: a dense, contiguous frame
 // below the bound, held in memory of its own size, is wrapped too (the runtime's wrap shorter
@@ -642,7 +645,7 @@ bool dataflow_wrap_layout(const DataflowInputBinding& binding, std::size_t slot_
     return false;
   }
   if (binding.spec.memory != df::MemoryKind::Host
-          ? t.storage->kind != StorageKind::GstSample
+          ? !dataflow_device::device_storage_kind(t.storage->kind)
           : t.storage->kind != StorageKind::CpuOwned &&
                 t.storage->kind != StorageKind::CpuExternal) {
     return false;

@@ -1303,8 +1303,8 @@ void cpu_tensor_into_device_input(InputMemoryPolicy memory, DeviceType device) {
   const Tensor pushed = rgb(64, 48, 0x21);
   require(run.push(TensorList{pushed}), "a CPU tensor into a device input");
   const Tensor out = pulled_tensor(run, 2000, "device input");
-  require(out.storage->kind == StorageKind::GstSample && sima_test::dmabuf_inode(out) != 0U,
-          "the pulled tensor is DMA-BUF memory");
+  require(out.storage->kind == StorageKind::DeviceHandle && sima_test::dmabuf_inode(out) != 0U,
+          "the pulled tensor is DMA-BUF memory, the runtime's own");
   require(out.storage->device.type == device, "its storage is placed on the input's device");
   require(pushed.storage.use_count() == 1, "the pushed CPU storage is not kept");
   const std::vector<std::uint8_t> expected = bytes_of(pushed);

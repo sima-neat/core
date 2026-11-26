@@ -227,6 +227,15 @@ std::vector<Frame> run_frames(const Route& route, int frames) {
   return seen;
 }
 
+// A device buffer's storage is each backend's own kind (GStreamer's GstSample, Dataflow's
+// DeviceHandle: qualification/expected_differences.json, device_storage_kind); the differential
+// compares it as the one "device buffer", every other kind as it is.
+std::string storage_kind_text(StorageKind kind) {
+  const StorageKind device =
+      sima_test::on_dataflow() ? StorageKind::DeviceHandle : StorageKind::GstSample;
+  return kind == device ? std::string("device buffer") : sima_test::text(kind);
+}
+
 // What both backends give the same, recorded by the GStreamer run and compared by the Dataflow run;
 // the values each backend gives its own way are printed side by side.
 void differential(const Route& route, sima_test::Reference& ref) {
@@ -263,7 +272,7 @@ void differential(const Route& route, sima_test::Reference& ref) {
     ref.equal(at("semantic.quant"), t.semantic.quant.has_value());
     require(!t.semantic.image, at("no image semantic"));
     ref.equal(at("storage kind, placement, segments"),
-              sima_test::text(f.storage_kind) + "/" + sima_test::text(f.storage_device) + "/" +
+              storage_kind_text(f.storage_kind) + "/" + sima_test::text(f.storage_device) + "/" +
                   sima_test::text(f.storage_target_flags) + "/" +
                   sima_test::text(f.storage_segments));
     require(!f.bytes.empty(), at("bytes"));
@@ -488,7 +497,8 @@ void owned(const Route& route) {
     Run run = g.build(a, on());
     require(run.push(a), "push");
     const Tensor t = pull_ok(run, "owned reference").front();
-    require(t.storage && t.storage->kind == StorageKind::GstSample,
+    require(t.storage && t.storage->kind == (sima_test::on_dataflow() ? StorageKind::DeviceHandle
+                                                                      : StorageKind::GstSample),
             "the default output is the MLA's buffer");
     zero_copy = bytes_of(t);
     run.close();

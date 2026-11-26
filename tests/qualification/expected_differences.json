@@ -70,6 +70,24 @@
    "applies_to": "routes whose last stage is a cast, a dequant or BoxDecode (an EV74 preproc stage last has the same layout on both backends)"
   },
   {
+   "id": "device_storage_kind",
+   "kind": "kept",
+   "state": "active",
+   "check": "fields",
+   "must_observe": false,
+   "decision": "DECISIONS.md 31 and 35 (media/PLAN-rtsp-decode.md D1 (a), taken as recommended): a process on the Dataflow backend makes no GStreamer object, so a device tensor's storage is the runtime's own; a documented difference",
+   "gstreamer": "a pulled tensor in device memory (an output slot of the last stage) has GStreamer's storage: StorageKind::GstSample",
+   "dataflow": "the same bytes, placement, size, segments and holder sharing in the runtime's device memory: StorageKind::DeviceHandle",
+   "fields": [
+    "tensors[*].storage.kind"
+   ],
+   "relation": {
+    "gstreamer": "GstSample",
+    "dataflow": "DeviceHandle"
+   },
+   "applies_to": "routes whose output is pulled in device memory (OutputMemory Auto or ZeroCopy)"
+  },
+  {
    "id": "route_stage_key_instance_suffix",
    "kind": "kept",
    "state": "active",

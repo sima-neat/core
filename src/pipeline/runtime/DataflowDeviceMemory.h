@@ -4,11 +4,17 @@
 #endif
 
 // Device memory on the Dataflow backend: Core's DMA-BUF tensors to and from the runtime's Blocks. A
-// device input (InputOptions::memory_policy Ev74 or Dms0) has a pool of one DMA-BUF per slot. The
-// pull of such a slot is a Tensor of GstSample storage over a GstDmaBufMemory of the slot's
-// descriptor, which is what a TensorMemory::EV74 (MLA) tensor is, so Core and GStreamer code
-// downstream use it as device memory; a push of such a tensor backs the slot with the tensor's own
-// DMA-BUF instead of copying it.
+// device input (InputOptions::memory_policy Ev74 or Dms0) has a pool of one DMA-BUF per slot.
+//
+// A device tensor on this backend is no GStreamer object. Its storage is StorageKind::DeviceHandle:
+// one DMA-BUF of the runtime's memory, the Block its map_fn carries, of one of two kinds:
+//   - a slot of a device pool, pulled (pulled_storage): read-only, the slot leased until the
+//     storage goes;
+//   - Core's own device memory (make_device_storage): what Tensor creation and the transfers place
+//     in EV74 or MLA memory in a process on this backend, from the runtime's Runner-backed source.
+// A device port backs its slot with such a tensor's DMA-BUF instead of copying it (wrap_tensor), as
+// it does with a GstSample over one standard DMA-BUF (a tensor a GStreamer object gave the
+// application, which this backend takes as it is but never makes).
 //
 // Everything a device input does differently is compiled in DataflowDeviceMemory.cpp: its push
 // (the port's inline funnel, instantiated there with the device wrap) and the tensors of its
@@ -21,6 +27,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <span>
 
@@ -38,6 +45,39 @@ struct DataflowModelRoute;
 namespace dataflow_device {
 
 namespace df = pipeline_internal::df;
+
+// Whether a storage of `kind` can be device memory a device port takes by its descriptor: this
+// backend's (DeviceHandle) or a GStreamer object's (GstSample). device_memory says whether it is.
+constexpr bool device_storage_kind(StorageKind kind) noexcept {
+  return kind == StorageKind::DeviceHandle || kind == StorageKind::GstSample;
+}
+
+// The DMA-BUF of a device storage: its descriptor (borrowed: valid while the storage lives), the
+// offset of the storage's first byte in it, and the storage's bytes from there.
+struct DeviceMemory {
+  int fd = -1;
+  std::size_t fd_offset = 0;
+  std::size_t size = 0;
+};
+
+// The DMA-BUF of `storage` when it is one a device port can take: Core's own device memory on this
+// backend (make_device_storage), or a GstSample over one standard DMA-BUF memory. False for every
+// other storage, a pulled slot's included (a wrap of it would pin a slot of its pool).
+bool device_memory(const TensorBuffer& storage, DeviceMemory& out);
+
+// Core's own device memory on this backend: `bytes` of `target`'s memory (SIMA_CVU: EV74 memory,
+// linux,cma; SIMA_MLA: the MLA's DMS0 heap) from the runtime's Runner-backed source, filled by
+// `fill` inside the CPU's write epoch, whose end (the cache clean) makes the bytes visible to a
+// device before this returns. The storage: DeviceHandle, placed on `target` with its target flags,
+// `bytes` long, no CPU pointer (`data` null, as a DMA-BUF carrier's); its map is the Runner's write
+// epoch for a write (a second writer at once is refused: an empty Mapping) and the CPU's own view
+// for a read, which is current because only the CPU writes this memory (a device reads it). Memory
+// released by its last holder is kept for the next storage of the same size (at most 128
+// allocations, 256 MiB). Throws NeatError when this build has no device memory, when the heap has
+// none, or when the write epoch fails; std::exception from `fill` passes through.
+std::shared_ptr<TensorBuffer>
+make_device_storage(const Device& target, std::size_t bytes,
+                    const std::function<void(std::byte* data, std::size_t size)>& fill);
 
 // DataflowInputPort::push for a device input: the same checks, binding and publish, with a wrap
 // that is device memory (wrap_tensor) where a host input's is CPU storage. Before them, GStreamer's
@@ -118,7 +158,7 @@ void fill_stage_leaf(Tensor& tensor, const DataflowPulledTensor& pulled,
 // Push. The Block that backs a slot of a device port (`port`: Ev74 or Dms0) with the DMA-BUF of
 // `t`, whose layout is a whole slot's (dataflow_wrap_layout). True when all of these hold, and a
 // copy into the slot otherwise:
-//   - the storage is a GstSample over one standard DMA-BUF memory, with a descriptor;
+//   - the storage has a DMA-BUF a device port takes (device_memory);
 //   - it is the port's kind (an Ev74 port: placed on SIMA_CVU; a Dms0 port: on SIMA_MLA), or,
 //     with `any_device_memory` (a model route, whose only consumer is the MLA: it reads a DMA-BUF
 //     of either heap), placed on either;
@@ -146,13 +186,12 @@ bool wrap_tensor(const Tensor& t, const df::PortSpec& port, std::size_t slot_byt
 //     TensorBuffer itself; a wrap with a CPU address holds the mapping it came from (a read map
 //     of the storage, on a bounded port, or one of MappedWraps), which ends when the last holder
 //     drops it. A CPU read of the pulled tensor maps through that storage, as of any EV74 tensor;
-//   - a slot of the device pool: a GstSample over one GstDmaBufMemory of the slot's descriptor
-//     (not closed with the memory: the pool owns it), placed as make_driver_dmabuf_storage places
-//     a TensorMemory::EV74 (MLA) tensor. The memory keeps a copy of the Message, and so the slot,
-//     until the memory itself is freed: whatever maps or imports that memory has ended before the
-//     pool hands the slot out again (a retained read map would refuse the next write epoch). Its
-//     CPU read map is the slot's own mapping, which the pool's writer left current.
-// Throws NeatError when GStreamer gives no memory for the slot.
+//   - a slot of the device pool: a DeviceHandle storage of the slot's bytes, placed and segmented
+//     as a TensorMemory::EV74 (MLA) tensor of that size is (its one segment `memory0`). It keeps a
+//     copy of the Message, and so the slot, until the storage itself is freed: whatever maps the
+//     storage has ended before the pool hands the slot out again. Its CPU read map is the slot's
+//     own mapping, which the pool's writer left current; a write map is refused.
+// Throws NeatError when the storage of a pushed device tensor changed while the Run held it.
 std::shared_ptr<TensorBuffer> pulled_storage(const df::Message& message, const df::Block& block,
                                              std::int64_t& byte_offset);
 

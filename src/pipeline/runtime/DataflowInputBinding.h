@@ -101,9 +101,9 @@ std::string dataflow_record_mismatch(const DataflowInputBinding& binding,
                                      std::span<const Tensor> fields);
 
 // Whether a leaf's bytes are laid out exactly as a whole slot (`slot_bytes`) of `binding`'s port,
-// so that the slot can be backed by the tensor's own storage: CPU storage for a host port, a
-// GstSample's (device memory) for a device port. Reads only what DataflowLeafGeometry keeps,
-// so a repeated geometry reuses the answer.
+// so that the slot can be backed by the tensor's own storage: CPU storage for a host port, device
+// storage (DeviceHandle or GstSample) for a device port. Reads only what DataflowLeafGeometry
+// keeps, so a repeated geometry reuses the answer.
 bool dataflow_wrap_layout(const DataflowInputBinding& binding, std::size_t slot_bytes,
                           const Tensor& tensor);
 
@@ -113,7 +113,7 @@ bool dataflow_wrap_layout(const DataflowInputBinding& binding, std::size_t slot_
 // fields and of the Run's InputOptions and InputStreamOptions, which never change: a tensor whose
 // geometry equals one that passed both passes both. Only CPU storage and no Semantic beyond an
 // image spec are kept, so a tensor with anything else is always checked in full.
-// A device input also keeps the geometry of a device tensor (GstSample storage), in a cache
+// A device input also keeps the geometry of a device tensor (DeviceHandle or GstSample), in a cache
 // of its own (keepable_device, matches_device): both functions read the same fields of it, the
 // storage's kind and size among them. What they do not read is asked of every push of such a
 // tensor: its memory, and whose it is (DataflowDeviceMemory.h).

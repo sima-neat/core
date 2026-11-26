@@ -21,8 +21,7 @@
 // slot's write epoch, and the push ends it (the cache clean) before the message is visible. A
 // TensorMemory::EV74 or MLA tensor of the port's kind is wrapped instead
 // (dataflow_device::wrap_tensor): its DMA-BUF backs the slot. Run::alloc lends the slot's own
-// mapping, its epoch open until the push or the drop. A host input copies device tensors
-// (GstSample storage).
+// mapping, its epoch open until the push or the drop. A host input copies device tensors.
 //
 // An item is one tensor (a leaf: a TensorSpec port) or several (a record: a RecordSchema port with
 // positional field names). The first item binds which, as it binds the shape.
