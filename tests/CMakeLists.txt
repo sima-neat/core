@@ -1276,6 +1276,18 @@ if (NOT rf_detr_small_pipeline_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
   set_property(TEST rf_detr_small_pipeline_test APPEND PROPERTY LABELS "e2e;obj_detection")
 endif()
 
+# Supertonic 3: the batch-2 vector estimator on synthetic inputs, then one guided latent update
+# through the batch-1 vocoder. CI prepares the Model Browser supertonic_3 w8a16_w16a16
+# vector_estimator and vocoder MPKs.
+add_pipeline_test(
+  supertonic3_batch2_test
+  e2e_testing/supertonic3_batch2_test.cpp
+)
+
+if (NOT supertonic3_batch2_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  set_property(TEST supertonic3_batch2_test APPEND PROPERTY LABELS "e2e;tts")
+endif()
+
 add_pipeline_test_long(
   modelzoo_bulk_models_test
   e2e_testing/modelzoo_bulk_models_test.cpp
@@ -2850,6 +2862,7 @@ foreach(test
     resnet18_async_consumer_visibility_test
     detr_resnet50_multi_output_test
     rf_detr_small_pipeline_test
+    supertonic3_batch2_test
     preproc_dynamic_renegotiate_test
     graph_migration_legacy_hybrid_graph_stage_model_test
     graph_migration_legacy_yolov8_variant_route_matrix_test
