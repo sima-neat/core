@@ -13,7 +13,6 @@
 
 #include "pipeline/runtime/DataflowGraphCompiler.h"
 
-#include "gst/GstInit.h"
 #include "pipeline/ErrorCodes.h"
 #include "pipeline/Graph.h"
 #include "pipeline/graph/internal/GraphBuildInternal.h"
@@ -578,9 +577,7 @@ DataflowRunConfig derive_config(const Graph& graph, const DataflowGraphView& vie
     // A model route's Input carries the Model's own options (Model::input_appsrc_options), not
     // the caller's.
     if (q.stages.empty() && !input.input.caps_override.empty()) {
-      // Caps that do not parse are the application's mistake, refused as GStreamer refuses it.
-      gst_init_once();
-      session_build_validate_caps_override(input.input, "Graph::build(input)");
+      // Refused as it is: whether the caps parse is GStreamer's to say, on GStreamer.
       why->subject = "option InputOptions::caps_override of Input " +
                      dataflow_names_text(config.inputs[i].names);
       why->fact = "it is a GStreamer caps string, and this backend's inputs take the spec of what "
