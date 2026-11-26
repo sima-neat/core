@@ -72,6 +72,24 @@ class PrepareModelBrowserFixtureTests(unittest.TestCase):
         self.assertIn("run_id=run-1", stderr)
         self.assertIn("sha256=abc123", stderr)
 
+    def test_cli_runs_with_an_empty_home_that_is_not_the_real_one(self):
+        zip_path = write_zip(self.tmp / "dl" / "resnet_50_w8a8_default.zip",
+                             {"resnet_50_w8a8_mpk.tar.gz": MPK})
+        report = self.tmp / "home-report.json"
+        cli = fake_cli(self.tmp, f"""\
+            import os
+            home = os.environ["HOME"]
+            with open({str(report)!r}, "w") as f:
+                json.dump({{"home": home, "entries": os.listdir(home)}}, f)
+            print(json.dumps({{"path": {str(zip_path)!r}}}))
+            """)
+        code, _, stderr = self.run_main(cli)
+        self.assertEqual(code, 0, stderr)
+        seen = json.loads(report.read_text())
+        self.assertEqual(seen["entries"], [])
+        self.assertNotEqual(Path(seen["home"]).resolve(), Path.home().resolve())
+        self.assertIn(f"empty HOME={seen['home']}", stderr)
+
     def test_missing_mpk_names_what_the_zip_holds(self):
         cli = self.cli_returning({"licenses/LICENSE": b"x", "resnet_50_w8a16_mpk.tar.gz": b"y"})
         code, stdout, stderr = self.run_main(cli)

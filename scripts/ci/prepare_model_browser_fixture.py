@@ -3,15 +3,20 @@
 
 Prints the extracted MPK path on stdout. The registry run_id and ZIP sha256 go to stderr so a
 failing test can be traced to the exact package it used.
+
+sima-cli runs with HOME set to a fresh empty directory. Its Developer Portal session lives only
+under ~/.sima-cli, so the download proves that the package needs no saved login.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import os
 import shutil
 import subprocess
 import sys
+import tempfile
 import zipfile
 from pathlib import Path
 
@@ -24,12 +29,15 @@ def mpk_member(model_id: str, variant: str) -> str:
     return f"{model_id}_{variant}_mpk.tar.gz"
 
 
-def download(sima_cli: str, model_id: str, variant: str, output: Path) -> dict:
+def download(sima_cli: str, model_id: str, variant: str, output: Path, home: Path) -> dict:
     command = [
         sima_cli, "models", "download", "--branch", "main", "--id", model_id,
         "--variant", variant, "--output", str(output), "--json",
     ]
-    result = subprocess.run(command, capture_output=True, text=True, errors="replace", check=False)
+    result = subprocess.run(
+        command, capture_output=True, text=True, errors="replace", check=False,
+        env={**os.environ, "HOME": str(home)},
+    )
     if result.returncode != 0:
         tail = "\n".join((result.stderr or result.stdout).strip().splitlines()[-5:])
         raise FixtureError(f"sima-cli models download exited {result.returncode}: {tail}")
@@ -67,13 +75,14 @@ def extract_mpk(zip_path: Path, member: str, destination: Path) -> Path:
 
 def prepare(sima_cli: str, model_id: str, variant: str, output: Path) -> Path:
     output.mkdir(parents=True, exist_ok=True)
-    info = download(sima_cli, model_id, variant, output)
-    print(
-        f"Model Browser {model_id} {variant} on main: run_id={info.get('run_id')} "
-        f"sha256={info.get('sha256')} zip={info['path']}",
-        file=sys.stderr,
-    )
-    return extract_mpk(Path(info["path"]), mpk_member(model_id, variant), output)
+    with tempfile.TemporaryDirectory(prefix="sima-cli-home-") as home:
+        info = download(sima_cli, model_id, variant, output, Path(home))
+        print(
+            f"Model Browser {model_id} {variant} on main: run_id={info.get('run_id')} "
+            f"sha256={info.get('sha256')} zip={info['path']} empty HOME={home}",
+            file=sys.stderr,
+        )
+        return extract_mpk(Path(info["path"]), mpk_member(model_id, variant), output)
 
 
 def main(argv: list[str] | None = None) -> int:
