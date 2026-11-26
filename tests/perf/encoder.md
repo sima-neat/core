@@ -30,10 +30,10 @@ python3 tests/perf/tools/prepare_codec_perf_fixtures.py \
 Both the `prepare_perf_codec_fixtures` build target and extras installation use
 this command. `tools/codec_perf_fixtures.lock.json` pins the accepted H.264/H.265
 streams **and** their twelve-frame NV12 references from immutable Core extras.
-The preparer verifies sizes and content hashes, downloads the exact archive with
-`sima-cli` if needed, and replaces only these four files. A generator stamp or
-nonempty file is not evidence of a matching workload. Existing JPEG and I/P/B
-accuracy fixtures keep their separate recipes.
+The preparer verifies sizes and content hashes, downloads the exact archive from
+the public artifact host over HTTPS if needed, and replaces only these four
+files. A generator stamp or nonempty file is not evidence of a matching
+workload. Existing JPEG and I/P/B accuracy fixtures keep their separate recipes.
 
 Verified baseline files are reusable without network access. To repair from a
 previously downloaded archive without downloading again:
