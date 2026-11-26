@@ -355,9 +355,10 @@ int main(int argc, char** argv) {
     runner.close();
 
     // Each malformed input gets its own Runner, so a check cannot pass on an earlier error.
-    // A refused shape currently stops the Runner (core#1566); the valid run after it
-    // tolerates only that error. An extra input is not refused yet (core#1570).
+    // A refused shape currently stops the Runner (core#1566); only the valid run after a
+    // wrong shape tolerates that error. An extra input is not refused yet (core#1570).
     auto check_rejected = [&](const std::string& name, const simaai::neat::TensorList& bad,
+                              bool stops_runner_1566 = false,
                               const char* known_if_accepted = nullptr) {
       auto fresh = model.build(simaai::neat::TensorList{people.tensor});
       std::string what;
@@ -373,7 +374,7 @@ int main(int argc, char** argv) {
               "valid run after " + name + " matches the first run");
       } catch (const std::exception& e) {
         const std::string msg = e.what();
-        if (msg.find("push returned false") != std::string::npos &&
+        if (stops_runner_1566 && msg.find("push returned false") != std::string::npos &&
             msg.find("tensor changes are not supported") != std::string::npos)
           std::cout << "[KNOWN] core#1566: valid run after " << name << " failed: " << msg << "\n";
         else
@@ -384,12 +385,13 @@ int main(int argc, char** argv) {
     std::vector<float> small(320 * 320 * 3, 0.0f);
     check_rejected("wrong input shape",
                    {simaai::neat::Tensor::from_vector(small, {1, 320, 320, 3},
-                                                      simaai::neat::TensorMemory::EV74)});
+                                                      simaai::neat::TensorMemory::EV74)},
+                   true);
     std::vector<uint8_t> bytes(static_cast<std::size_t>(kInputSize) * kInputSize * 3, 0);
     check_rejected("wrong input dtype",
                    {simaai::neat::Tensor::from_vector(bytes, {1, kInputSize, kInputSize, 3},
                                                       simaai::neat::TensorMemory::EV74)});
-    check_rejected("extra input", {people.tensor, labrador.tensor}, "core#1570");
+    check_rejected("extra input", {people.tensor, labrador.tensor}, false, "core#1570");
 
     if (failures > 0) {
       std::cerr << "[FAIL] detr_resnet50_multi_output_test: " << failures << " check(s) failed\n";
