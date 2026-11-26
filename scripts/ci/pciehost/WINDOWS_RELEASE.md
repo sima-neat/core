@@ -541,6 +541,13 @@ separate formal gate described above.
 
 ## Evidence and recovery
 
+The card job's first check after elevation, `Check the PCIe card is present`,
+fails within seconds when the `SiMa.ai MLA Device` or `SiMa.ai Virtual Ethernet
+Adapter` is missing or not `OK`, or the card does not answer ping. The card does
+not recover from a warm restart of the card PC: its PCIe link goes down and does
+not come back. Do not restart the card PC remotely; shut it down and power it
+on with someone on site, then rerun the failed job.
+
 Retain these artifacts with the release record:
 
 - `scheduler-native-windows-amd64`;

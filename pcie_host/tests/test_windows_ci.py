@@ -1024,18 +1024,42 @@ class WindowsCiContracts(unittest.TestCase):
         ),
         2,
     )
-    self.assertEqual(workflow.count("shell: powershell"), 11)
+    self.assertEqual(workflow.count("shell: powershell"), 12)
     hardware_job = workflow.split("  hardware:\n", 1)[1].split("  publish:\n", 1)[0]
     # Self-hosted Windows keeps the default Restricted script policy, as customer PCs do;
     # run every step like pcie-setup.cmd does instead of provisioning the host.
     self.assertNotIn("        shell: powershell\n", hardware_job)
-    self.assertEqual(hardware_job.count("shell: powershell -NoLogo -NoProfile -ExecutionPolicy Bypass"), 7)
+    self.assertEqual(hardware_job.count("shell: powershell -NoLogo -NoProfile -ExecutionPolicy Bypass"), 8)
     for job in (native_job, hardware_job):
       # MSI install/remove needs an elevated token; fail before checkout, not mid-build.
       steps = job.split("    steps:\n", 1)[1]
       self.assertTrue(steps.startswith("      - name: Require an elevated runner\n"))
       self.assertIn("IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)", steps)
       self.assertIn("exit 1", steps.split("      - uses: actions/checkout@v5", 1)[0])
+
+  def test_card_job_checks_the_card_before_any_setup(self):
+    # As Linux's preflight.sh pings the card before its setup, an absent card fails
+    # here in seconds with its cause and recovery, not later in SSH key enrollment.
+    hardware = workflow_job(WORKFLOW.read_text(encoding="utf-8"), "hardware")
+    steps = [name or uses for name, uses in re.findall(
+        r"(?m)^      - (?:name: (.+)|uses: (.+))$", hardware)]
+    self.assertEqual(steps[:3], [
+        "Require an elevated runner", "Check the PCIe card is present", "actions/checkout@v5"])
+    check = workflow_step(hardware, "Check the PCIe card is present")
+    self.assertIn('shell: powershell -NoLogo -NoProfile -ExecutionPolicy Bypass', check)
+    for text in (
+        "@('SiMa.ai MLA Device', 'SiMa.ai Virtual Ethernet Adapter')",
+        "Get-PnpDevice -PresentOnly",
+        "$_.Status -ne 'OK'",
+        "Test-Connection -ComputerName $env:SIMAPCIE_CARD_HOST -Count 1 -Quiet",
+        "power-cycle the card PC on site",
+        "Evidence and recovery",
+    ):
+      with self.subTest(text=text):
+        self.assertIn(text, check)
+    self.assertEqual(check.count("exit 1"), 3)
+    runbook = (SCRIPT_DIR / "WINDOWS_RELEASE.md").read_text(encoding="utf-8")
+    self.assertIn("Check the PCIe card is present", runbook)
 
   def test_workflow_run_bodies_receive_inputs_only_through_env(self):
     # Expression text is substituted into the script before the shell parses

@@ -626,6 +626,33 @@ jobs:
               "(scripts/ci/pciehost/WINDOWS_RELEASE.md, Runner setup).")
             exit 1
           }
+      - name: Check the PCIe card is present
+        shell: powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -Command ". '{0}'"
+        run: |
+          # As Linux's preflight.sh pings the card before its setup.
+          $recovery = ("Shut down and power-cycle the card PC on site: a remote restart does not " +
+            "bring the card back (scripts/ci/pciehost/WINDOWS_RELEASE.md, Evidence and recovery).")
+          foreach ($name in @('SiMa.ai MLA Device', 'SiMa.ai Virtual Ethernet Adapter')) {
+            $devices = @(Get-PnpDevice -PresentOnly -ErrorAction Stop | Where-Object {
+              ($_.FriendlyName -replace ' #[0-9]+$', '') -eq $name })
+            if ($devices.Count -lt 1) {
+              Write-Output ("::error::No present $name on $($env:COMPUTERNAME): the card is off " +
+                "the PCIe bus or the Platform driver is not installed. $recovery")
+              exit 1
+            }
+            $failed = @($devices | Where-Object { $_.Status -ne 'OK' })
+            if ($failed.Count -gt 0) {
+              Write-Output ("::error::$name is $($failed[0].Status) (problem code " +
+                "$($failed[0].Problem)) on $($env:COMPUTERNAME). $recovery")
+              exit 1
+            }
+          }
+          if (-not (Test-Connection -ComputerName $env:SIMAPCIE_CARD_HOST -Count 1 -Quiet)) {
+            Write-Output ("::error::The card at $($env:SIMAPCIE_CARD_HOST) does not answer " +
+              "ping over the SiMa.ai Virtual Ethernet Adapter. $recovery")
+            exit 1
+          }
+          Write-Output "PCIe card present and reachable at $($env:SIMAPCIE_CARD_HOST)"
       - uses: actions/checkout@v5
         with:
           persist-credentials: false
