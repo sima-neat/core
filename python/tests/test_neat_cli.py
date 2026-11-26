@@ -63,6 +63,7 @@ def base_env(tmp_path: Path, bin_dir: Path) -> dict[str, str]:
         "NEAT_INSIGHT_BASE_URL": "https://insight.test",
         "NEAT_PORT_MAP_FILE": str(tmp_path / "missing-port-map.json"),
         "NEAT_INSIGHT_VENV_DIR": str(tmp_path / "missing-insight-venv"),
+        "NEAT_SYSTEM_PYTHON": str(tmp_path / "system-python" / "bin" / "python3"),
         "NEAT_MODEL_COMPILER_DIR": str(tmp_path / "missing-model-compiler"),
         "SIMA_CLI_BIN": "",
         "SIMA_CLI_REGISTRY_FILE": str(home / ".sima-cli" / "registry.json"),
@@ -865,10 +866,10 @@ def test_devkit_status_uses_dpkg_and_pyneat_venv(tmp_path: Path) -> None:
         #!/usr/bin/env bash
         pkg="${@: -1}"
         case "$pkg" in
-          sima-neat) printf '0.0.0+main-4444444' ;;
-          sima-neat-dev) printf '0.0.0+main-4444444' ;;
-          neat-runtime) printf '0.0.1-main-5555555' ;;
-          neat-gst-plugins) printf '0.0.1-main-5555555' ;;
+          sima-neat) printf 'installed 0.0.0+main-4444444' ;;
+          sima-neat-dev) printf 'installed 0.0.0+main-4444444' ;;
+          neat-runtime) printf 'installed 0.0.1-main-5555555' ;;
+          neat-gst-plugins) printf 'installed 0.0.1-main-5555555' ;;
           *) exit 1 ;;
         esac
         """,
@@ -916,7 +917,7 @@ def test_status_reports_actual_split_and_legacy_components(
         buildinfo = tmp_path / "buildinfo"
         buildinfo.write_text("DISTRO = eLxr\nMACHINE = modalix\n", encoding="utf-8")
         env["NEAT_BUILDINFO_FILE"] = str(buildinfo)
-        cases = "\n".join(f"{name}) printf '%s' '{version}' ;;" for name, version in versions.items())
+        cases = "\n".join(f"{name}) printf 'installed %s' '{version}' ;;" for name, version in versions.items())
         write_exe(
             bin_dir / "dpkg-query",
             f'#!/usr/bin/env bash\ncase "${{@: -1}}" in\n{cases}\n*) exit 1 ;;\nesac\n',
@@ -1112,7 +1113,7 @@ def test_matching_insight_sha_prefix_is_current_across_status_json_and_update(
         """\
         #!/usr/bin/env bash
         case "${@: -1}" in
-          sima-neat|sima-neat-dev) printf '0.0.0+main-abcdef0' ;;
+          sima-neat) printf 'installed 0.0.0+main-abcdef0' ;;
           *) exit 1 ;;
         esac
         """,
@@ -1202,7 +1203,7 @@ def test_update_channel_and_tag_override_core_only(tmp_path: Path) -> None:
         """\
         #!/usr/bin/env bash
         case "${@: -1}" in
-          sima-neat|sima-neat-dev) printf '0.0.0+main-1111111' ;;
+          sima-neat) printf 'installed 0.0.0+main-1111111' ;;
           *) exit 1 ;;
         esac
         """,
@@ -1251,7 +1252,7 @@ def test_vulcan_buildinfo_selects_core_update_environment(tmp_path: Path) -> Non
         """\
         #!/usr/bin/env bash
         case "${@: -1}" in
-          sima-neat|sima-neat-dev) printf '2.0.0+feat.x.1111111' ;;
+          sima-neat) printf 'installed 2.0.0+feat.x.1111111' ;;
           *) exit 1 ;;
         esac
         """,
@@ -1325,6 +1326,84 @@ def make_metadata_python(venv_dir: Path, package: str, version: str | None) -> N
             f"Metadata-Version: 2.1\nName: {package}\nVersion: {version}\n",
             encoding="utf-8",
         )
+
+
+@pytest.mark.parametrize("home_install", ["absent", "empty", "installed"])
+def test_devkit_status_runtime_only_system_pyneat(tmp_path: Path, home_install: str) -> None:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    env = base_env(tmp_path, bin_dir)
+    (bin_dir / "dpkg-query").symlink_to("/usr/bin/dpkg-query")
+    admindir = tmp_path / "dpkg"
+    admindir.mkdir()
+    status = admindir / "status"
+    status.write_text(
+        "Package: sima-neat\nStatus: install ok installed\nVersion: 0.6.2\n"
+        "Architecture: arm64\nMaintainer: Test <test@example.org>\nDescription: runtime\n",
+        encoding="utf-8",
+    )
+    env["DPKG_ADMINDIR"] = str(admindir)
+    make_metadata_python(Path(env["NEAT_SYSTEM_PYTHON"]).parents[1], "pyneat", "0.6.2")
+    if home_install != "absent":
+        make_metadata_python(
+            Path(env["HOME"]) / "pyneat", "pyneat", "0.7.0" if home_install == "installed" else None
+        )
+    expected = "0.7.0" if home_install == "installed" else "0.6.2"
+
+    text = run_neat(tmp_path, ["status", "--offline"], env)
+    assert text.returncode == 0, text.stderr
+    assert "0.6.2" in component_line(text.stdout, "Neat core")
+    assert expected in component_line(text.stdout, "PyNeat")
+    result = run_neat(tmp_path, ["status", "--offline", "--json"], env)
+    assert result.returncode == 0, result.stderr
+    components = json.loads(result.stdout)["components"]
+    assert components["core"]["version"] == "0.6.2"
+    assert components["pyneat"]["version"] == expected
+
+    if home_install == "absent":
+        status.write_text(
+            status.read_text(encoding="utf-8").replace("install ok installed", "deinstall ok config-files"),
+            encoding="utf-8",
+        )
+        removed = run_neat(tmp_path, ["status", "--offline"], env)
+        assert removed.returncode == 0, removed.stderr
+        assert "not installed" in component_line(removed.stdout, "Neat core")
+
+
+def test_devkit_status_reports_incomplete_dpkg_packages(tmp_path: Path) -> None:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    env = base_env(tmp_path, bin_dir)
+    (bin_dir / "dpkg-query").symlink_to("/usr/bin/dpkg-query")
+    packages = {
+        "sima-neat": ("hold ok installed", "0.6.2"),
+        "simaai-runner": ("install ok half-configured", "0.6.3"),
+        "simaai-scheduler": ("install ok unpacked", "0.6.4"),
+        "neat-runtime": ("deinstall ok config-files", "0.5.0"),
+    }
+    (tmp_path / "status").write_text("\n".join(
+        f"Package: {package}\nStatus: {state}\nVersion: {version}\n"
+        "Architecture: arm64\nMaintainer: Test <test@example.org>\nDescription: runtime\n"
+        for package, (state, version) in packages.items()
+    ), encoding="utf-8")
+    env["DPKG_ADMINDIR"] = str(tmp_path)
+
+    text = run_neat(tmp_path, ["status", "--offline"], env)
+    assert text.returncode == 0, text.stderr
+    assert "0.6.2" in component_line(text.stdout, "Neat core")
+    assert component_line(text.stdout, "simaai-runner").split()[1:] == ["0.6.3", "half-configured"]
+    assert component_line(text.stdout, "simaai-scheduler").split()[1:] == ["0.6.4", "unpacked"]
+    assert "neat-runtime" not in text.stdout
+    assert "neat-gst-plugins" not in text.stdout
+
+    result = run_neat(tmp_path, ["status", "--offline", "--json"], env)
+    assert result.returncode == 0, result.stderr
+    components = json.loads(result.stdout)["components"]
+    assert components["runner"]["version"] == "0.6.3"
+    assert components["runner"]["dpkgState"] == "half-configured"
+    assert components["scheduler"]["version"] == "0.6.4"
+    assert components["scheduler"]["dpkgState"] == "unpacked"
+    assert components["runtime"]["version"] is None
 
 
 @pytest.mark.parametrize("component", ["pyneat", "insight"])
