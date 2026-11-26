@@ -79,6 +79,12 @@ std::shared_ptr<TensorBuffer>
 make_device_storage(const Device& target, std::size_t bytes,
                     const std::function<void(std::byte* data, std::size_t size)>& fill);
 
+// prewarm_runtime() in a process on this backend: the device memory's one-time setup that the first
+// device tensor or device pool would do otherwise (the Runner's capability probe and the heap's
+// first allocation), with one page allocated and freed. Nothing when this build has no device
+// memory; a failure is left for that first use to report.
+void prewarm_device_memory() noexcept;
+
 // DataflowInputPort::push for a device input: the same checks, binding and publish, with a wrap
 // that is device memory (wrap_tensor) where a host input's is CPU storage. Before them, GStreamer's
 // guard of a device-visible route (enforce_device_visible_tensors_or_throw): a CPU-backed tensor,

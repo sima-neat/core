@@ -1430,14 +1430,6 @@ void gst_init_once() {
   }
 }
 
-void prewarm_runtime() {
-  gst_init_once();
-}
-
-std::future<void> prewarm_runtime_async() {
-  return std::async(std::launch::async, []() { prewarm_runtime(); });
-}
-
 namespace pipeline_internal::ux {
 
 void install_device_log_filters() {

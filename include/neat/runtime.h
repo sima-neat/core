@@ -34,10 +34,12 @@ namespace simaai::neat {
 /**
  * @brief Initialize NEAT's runtime substrate early.
  *
- * This performs the same one-time GStreamer/plugin setup that the first
- * Graph::build() would otherwise perform. Calling it during application
- * startup/model loading can hide cold plugin-registry cost from the first
- * latency-sensitive build.
+ * This performs the same one-time setup that the first Graph::build() on the
+ * process's backend (set_backend) would otherwise perform: on GStreamer, its
+ * plugin setup; on Dataflow, the device memory's (a process on Dataflow never
+ * starts GStreamer). Calling it during application startup/model loading can
+ * hide that cold cost from the first latency-sensitive build. It reads the
+ * backend set so far and does not fix it.
  */
 void prewarm_runtime();
 

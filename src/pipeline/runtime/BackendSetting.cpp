@@ -2,12 +2,19 @@
 
 #include "pipeline/internal/BackendSetting.h"
 
+#include "gst/GstInit.h"
 #include "neat/runtime.h"
 #include "pipeline/ErrorCodes.h"
 #include "pipeline/internal/ErrorUtil.h"
+#include "pipeline/internal/UxLogging.h"
+
+#if defined(SIMANEAT_WITH_DATAFLOW)
+#include "pipeline/runtime/DataflowDeviceMemory.h"
+#endif
 
 #include <atomic>
 #include <cstdint>
+#include <future>
 #include <string>
 
 namespace simaai::neat {
@@ -73,6 +80,24 @@ void set_backend(RunBackend backend) {
 
 RunBackend backend() {
   return backend_of(g_backend.load(std::memory_order_acquire));
+}
+
+// The process's backend's one-time setup, which its first build would do otherwise; the setting is
+// read, not fixed. GStreamer: GStreamer and its plugins (and Core's stdio filter). Dataflow: the
+// device memory's and Core's stdio filter (GStreamer is never started in such a process).
+void prewarm_runtime() {
+  if (backend() == RunBackend::Dataflow) {
+    pipeline_internal::ux::install_device_log_filters();
+#if defined(SIMANEAT_WITH_DATAFLOW)
+    runtime::dataflow_device::prewarm_device_memory();
+#endif
+    return;
+  }
+  gst_init_once();
+}
+
+std::future<void> prewarm_runtime_async() {
+  return std::async(std::launch::async, []() { prewarm_runtime(); });
 }
 
 namespace pipeline_internal {

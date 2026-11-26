@@ -266,6 +266,16 @@ bool device_memory(const TensorBuffer& storage, DeviceMemory& out) {
          gst_device_memory(storage, out);
 }
 
+void prewarm_device_memory() noexcept {
+#if defined(SIMANEAT_WITH_DATAFLOW_DEVICE_MEMORY)
+  static const auto page = static_cast<std::size_t>(::sysconf(_SC_PAGESIZE));
+  df::Result<df::Block> allocated = df::runner::block_source().allocate(df::MemoryKind::Ev74, page);
+  if (df::Block* block = std::get_if<df::Block>(&allocated)) {
+    df::runner::block_source().release(std::move(*block));
+  }
+#endif
+}
+
 std::shared_ptr<TensorBuffer>
 make_device_storage(const Device& target, std::size_t bytes,
                     const std::function<void(std::byte* data, std::size_t size)>& fill) {
