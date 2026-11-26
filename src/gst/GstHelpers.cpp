@@ -2,6 +2,7 @@
 #include "gst/GstHelpers.h"
 
 #include "gst/GstInit.h"
+#include "pipeline/graph/internal/GraphBuildInternal.h"
 
 #include <gst/gst.h>
 
@@ -11,6 +12,11 @@
 namespace simaai::neat {
 
 bool element_exists(const char* factory) {
+  // A build without GStreamer (SessionBuildWithoutGstreamer: what a process on the Dataflow backend
+  // asks of GStreamer's build path) asks nothing of GStreamer's registry.
+  if (session_build_without_gstreamer()) {
+    return true;
+  }
   gst_init_once();
   GstElementFactory* f = gst_element_factory_find(factory);
   if (f) {

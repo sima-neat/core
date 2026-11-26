@@ -1841,7 +1841,7 @@ InputStream run_input_stream_internal_typed(const std::vector<std::shared_ptr<No
                                        " nodes=" + std::to_string(nodes.size()) +
                                        " sync=" + std::to_string(sync_mode ? 1 : 0));
 
-  gst_init_once();
+  session_build_init_gstreamer();
   enforce_push_run_mode(nodes, "Graph::build(input)");
   trace_step(Traits::trace_start());
 
@@ -1862,10 +1862,14 @@ InputStream run_input_stream_internal_typed(const std::vector<std::shared_ptr<No
   apply_input_contract_to_nodes(build_nodes, input_contract_from_input(sample));
   validate_inference_only_ingress_or_throw(build_nodes, seed_spec);
 
-  require_element("appsrc", "Graph::build(input)");
-  if (has_sink) {
-    require_element("appsink", "Graph::build(input)");
-    require_element("identity", "Graph::build(input)");
+  // The plugins a pipeline would need: GStreamer's registry, which a build without GStreamer
+  // (SessionBuildWithoutGstreamer: a plan recorded for the Dataflow backend) neither has nor needs.
+  if (!session_build_without_gstreamer()) {
+    require_element("appsrc", "Graph::build(input)");
+    if (has_sink) {
+      require_element("appsink", "Graph::build(input)");
+      require_element("identity", "Graph::build(input)");
+    }
   }
 
   const bool insert_boundaries =
@@ -2722,7 +2726,7 @@ Run Graph::build_seeded_internal(const std::vector<cv::Mat>& inputs, RunMode mod
   pipeline_internal::ux::ScopedVerboseContext verbose_ctx(opt_.verbose);
   pipeline_internal::ux::ProgressReporter progress(opt_.verbose, 4);
   progress.step("Initializing runtime...");
-  gst_init_once();
+  session_build_init_gstreamer();
   if (inputs.empty()) {
     throw std::runtime_error("Graph::build(inputs): empty image list");
   }
@@ -2797,7 +2801,7 @@ Run Graph::build_seeded_internal(const TensorList& inputs, RunMode mode, const R
   pipeline_internal::ux::ScopedVerboseContext verbose_ctx(opt_.verbose);
   pipeline_internal::ux::ProgressReporter progress(opt_.verbose, 4);
   progress.step("Initializing runtime...");
-  gst_init_once();
+  session_build_init_gstreamer();
   if (inputs.empty()) {
     throw std::runtime_error("Graph::build(inputs): empty tensor list");
   }
@@ -2862,7 +2866,7 @@ Run Graph::build_seeded_internal(const Sample& inputs, RunMode mode, const RunOp
   pipeline_internal::ux::ScopedVerboseContext verbose_ctx(opt_.verbose);
   pipeline_internal::ux::ProgressReporter progress(opt_.verbose, 4);
   progress.step("Initializing runtime...");
-  gst_init_once();
+  session_build_init_gstreamer();
   if (inputs.empty()) {
     throw std::runtime_error("Graph::build(inputs): empty sample list");
   }
@@ -2996,6 +3000,7 @@ std::shared_ptr<const pipeline_internal::SegmentBuildPlan>
 session_build_segment_plan(const std::function<void()>& build) {
   std::shared_ptr<const pipeline_internal::SegmentBuildPlan> plan;
   std::shared_ptr<const pipeline_internal::SegmentBuildPlan>* const outer = t_segment_plan;
+  const SessionBuildWithoutGstreamer without_gstreamer;
   t_segment_plan = &plan;
   try {
     build();
@@ -3012,6 +3017,31 @@ session_build_segment_plan(const std::function<void()>& build) {
 
 bool session_build_recording_segment_plan() noexcept {
   return t_segment_plan != nullptr;
+}
+
+namespace {
+thread_local bool t_without_gstreamer = false;
+} // namespace
+
+SessionBuildWithoutGstreamer::SessionBuildWithoutGstreamer() noexcept
+    : outer_(t_without_gstreamer) {
+  t_without_gstreamer = true;
+}
+
+SessionBuildWithoutGstreamer::~SessionBuildWithoutGstreamer() {
+  t_without_gstreamer = outer_;
+}
+
+bool session_build_without_gstreamer() noexcept {
+  return t_without_gstreamer;
+}
+
+void session_build_init_gstreamer() {
+  if (t_without_gstreamer) {
+    pipeline_internal::ux::install_device_log_filters();
+    return;
+  }
+  gst_init_once();
 }
 
 bool session_build_startup_preflight(const RunOptions& opt, RunMode mode, int* timeout_ms) {

@@ -105,6 +105,26 @@ bool session_build_startup_preflight(const RunOptions& opt, RunMode mode, int* t
 std::shared_ptr<const pipeline_internal::SegmentBuildPlan>
 session_build_segment_plan(const std::function<void()>& build);
 bool session_build_recording_segment_plan() noexcept;
+// While one lives on this thread, a build's cold steps (the nodes' launch fragments, the contracts,
+// the stage manifest) make no GStreamer call: session_build_init_gstreamer does not initialise
+// GStreamer, element_exists answers yes without asking GStreamer's registry, and the stages'
+// publications (their caps) are not made. For what a process on the Dataflow backend asks of
+// GStreamer's build path, which it never starts: the plan session_build_segment_plan records takes
+// one. Nests.
+class SessionBuildWithoutGstreamer {
+public:
+  SessionBuildWithoutGstreamer() noexcept;
+  ~SessionBuildWithoutGstreamer();
+  SessionBuildWithoutGstreamer(const SessionBuildWithoutGstreamer&) = delete;
+  SessionBuildWithoutGstreamer& operator=(const SessionBuildWithoutGstreamer&) = delete;
+
+private:
+  bool outer_;
+};
+bool session_build_without_gstreamer() noexcept;
+// GStreamer's initialisation for a build on GStreamer's path (gst_init_once); without GStreamer
+// (SessionBuildWithoutGstreamer), of what the initialisation does, Core's stdio filter alone.
+void session_build_init_gstreamer();
 void session_build_finalize_public_zero_copy_holder_loan_credits(InputStreamOptions& stream_opt);
 void session_build_tune_internal_zero_copy_holder_window(InputStreamOptions& stream_opt,
                                                          std::size_t edge_queue,

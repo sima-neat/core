@@ -1623,7 +1623,7 @@ void RunCore::graph_finish_sink_pull(Sample& sample) {
 std::shared_ptr<RunCore> RunCore::start_pipeline_segment(const PipelineSegmentPlan& segment,
                                                          RunCoreStartOptions opt) {
   const auto total_start = pipeline_internal::build_timing_now();
-  gst_init_once();
+  session_build_init_gstreamer();
 
   const auto materialize_start = pipeline_internal::build_timing_now();
   MaterializedSegmentNodes materialized = materialize_segment_nodes(segment);

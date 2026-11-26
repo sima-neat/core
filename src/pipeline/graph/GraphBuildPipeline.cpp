@@ -908,8 +908,13 @@ void prepare_stage_contracts(BuildResult& build, const char* where) {
       build.compiled_contracts->model_storage_scopes.reset();
     if (build.rendered_manifest)
       build.rendered_manifest->model_storage_scopes.reset();
-    if (auto failure = pipeline_internal::sima::finalize_stage_publications(&*transformed_manifest))
-      throw_kernel_preparation_error(*failure, where, pipeline_string);
+    // The stages' GStreamer publications (their caps): a build without GStreamer makes no GStreamer
+    // object (SessionBuildWithoutGstreamer), and what it is for reads none of them.
+    if (!session_build_without_gstreamer()) {
+      if (auto failure =
+              pipeline_internal::sima::finalize_stage_publications(&*transformed_manifest))
+        throw_kernel_preparation_error(*failure, where, pipeline_string);
+    }
     const SimaPluginStaticManifest& manifest = *transformed_manifest;
     dump_mla_contract_debug(manifest, where);
     if (env_bool("SIMA_MANIFEST_DEBUG", false)) {

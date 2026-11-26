@@ -1615,7 +1615,7 @@ GraphRuntimeOptions graph_runtime_options_from_run_options(const RunOptions& opt
 }
 
 std::shared_ptr<RunCore> RunCore::start(ExecutionGraphPlan plan, RunCoreStartOptions opt) {
-  gst_init_once();
+  session_build_init_gstreamer();
 
   if (is_simple_linear_plan(plan)) {
     auto export_plan = std::make_unique<ExecutionGraphPlan>(plan);
