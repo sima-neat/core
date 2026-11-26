@@ -71,11 +71,12 @@ std::vector<int> model_managed_preproc_max_input_shape(const simaai::neat::Prepr
   return {};
 }
 
-// The MLA input canvas is canvas x canvas (640 unless a test needs another size).
+// The MLA input canvas is canvas x canvas x channels (640 x 640 x 3 unless a test needs
+// another size).
 sima_test::ModelArchiveFixture
 make_preproc_fixture(const std::string& tag, int canvas = 640,
                      const nlohmann::json& input_range = nlohmann::json::array({0.0, 1.0}),
-                     bool mpk_image_preproc = false) {
+                     bool mpk_image_preproc = false, int channels = 3) {
   const auto fixture = sima_test::make_model_archive_fixture(tag,
                                                              {
                                                                  {"etc/test_model_mpk.json",
@@ -201,17 +202,19 @@ make_preproc_fixture(const std::string& tag, int canvas = 640,
 })json"},
                                                              },
                                                              false);
-  // Another canvas rescales the 640x640x3 shapes and their FP32/BF16 byte sizes.
+  // Another canvas or channel count rescales the 640x640x3 shapes and their FP32/BF16 byte
+  // sizes.
   for (const char* name : {"etc/test_model_mpk.json", "etc/0_preproc.json"}) {
-    if (canvas == 640)
+    if (canvas == 640 && channels == 3)
       continue;
     const auto path = std::filesystem::path(fixture.root_dir) / name;
     std::ifstream in(path);
     std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
     in.close();
     const std::pair<std::string, std::string> sizes[] = {
-        {"4915200", std::to_string(canvas * canvas * 12)},
-        {"2457600", std::to_string(canvas * canvas * 6)},
+        {"640, 3]", std::to_string(canvas) + ", " + std::to_string(channels) + "]"},
+        {"4915200", std::to_string(canvas * canvas * 4 * channels)},
+        {"2457600", std::to_string(canvas * canvas * 2 * channels)},
         {"640", std::to_string(canvas)}};
     for (const auto& [from, to] : sizes)
       for (auto at = text.find(from); at != std::string::npos; at = text.find(from, at + to.size()))
@@ -238,8 +241,8 @@ make_preproc_fixture(const std::string& tag, int canvas = 640,
   const auto share = std::filesystem::path(fixture.root_dir) / "share";
   std::filesystem::create_directories(share);
   sima_test::write_topology_elf(share / "stage0.elf", "data.ifm.b0",
-                                static_cast<std::uint64_t>(canvas) * canvas * 6U, "data.ofm.b0",
-                                76800U);
+                                static_cast<std::uint64_t>(canvas) * canvas * 2U * channels,
+                                "data.ofm.b0", 76800U);
   const std::string archive = "tar -czf " + sima_test::model_archive_shell_quote(fixture.tar_path) +
                               " -C " + sima_test::model_archive_shell_quote(fixture.root_dir) +
                               " .";
@@ -772,6 +775,58 @@ RUN_TEST(
                     PreprocOptions::shape_dim(rebound_max_shape, 0) == 1080,
                 "runtime contract rebinding must not shrink the model-managed capacity");
 #endif
+      }
+
+      // A single-channel model, as MNIST was: GRAY8 ingress with depth 1 must reach the MLA as
+      // one channel instead of being converted to RGB. Planning only, no MLA run.
+      {
+        const auto fixture = make_preproc_fixture("preproc_gray8_single_channel", 28,
+                                                  nlohmann::json::array({0.0, 1.0}), false, 1);
+        Model::Options model_opt;
+        model_opt.preprocess.kind = InputKind::Image;
+        model_opt.preprocess.enable = AutoFlag::On;
+        model_opt.preprocess.input_max_depth = 1;
+        model_opt.preprocess.color_convert.input_format = PreprocessColorFormat::GRAY8;
+        model_opt.preprocess.normalize.enable = AutoFlag::On;
+        model_opt.preprocess.normalize.mean = {0.1307f, 0.1307f, 0.1307f};
+        model_opt.preprocess.normalize.stddev = {0.3081f, 0.3081f, 0.3081f};
+        model_opt.preprocess.normalize.has_explicit_stats = true;
+        Model model(fixture.tar_path, model_opt);
+
+        const auto requirements = model.preprocess_requirements();
+        require(requirements.has_preproc_stage && requirements.output_format == "GRAY8",
+                "single-channel GRAY8 Preproc must publish GRAY8, got " +
+                    requirements.output_format);
+
+        PreprocOptions opt(model);
+        require(opt.input_channels() == 1,
+                "single-channel GRAY8 Preproc must take one input channel, got " +
+                    std::to_string(opt.input_channels()));
+        require(opt.output_img_type == "GRAY8",
+                "single-channel GRAY8 Preproc must not convert to RGB, got " + opt.output_img_type);
+
+        pipeline_internal::sima::ManifestBuildDiagnostics diagnostics;
+        const std::vector<std::shared_ptr<Node>> nodes{std::make_shared<Preproc>(opt)};
+        const auto compiled = compile_node_contracts(nodes, ContractCompileInput{}, &diagnostics);
+        require(diagnostics.errors.empty() && compiled.fully_renderable &&
+                    compiled.stages.size() == 1U && compiled.stages.front().processcvu.has_value(),
+                "single-channel GRAY8 Preproc contract must compile without diagnostics");
+        const auto& input_shapes = compiled.stages.front().processcvu->payload.input_shapes;
+        require(input_shapes.size() == 1U && input_shapes.front().size() == 3U &&
+                    input_shapes.front().back() == 1,
+                "compiled single-channel GRAY8 Preproc input must have one channel");
+        const auto& output_shapes = compiled.stages.front().processcvu->payload.output_shapes;
+        std::string output_shape_text;
+        for (const auto& shape : output_shapes) {
+          output_shape_text += "[";
+          for (const int dim : shape)
+            output_shape_text += std::to_string(dim) + ",";
+          output_shape_text += "]";
+        }
+        require(output_shapes.size() == 1U && !output_shapes.front().empty() &&
+                    output_shapes.front().back() == 1,
+                "compiled single-channel GRAY8 Preproc output must have one channel, got " +
+                    output_shape_text);
       }
 
 #ifdef SIMA_NEAT_INTERNAL

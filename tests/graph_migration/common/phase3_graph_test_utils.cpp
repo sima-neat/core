@@ -93,19 +93,6 @@ fs::path resolve_resnet50_or_throw(const fs::path& root) {
   throw std::runtime_error("failed to resolve ResNet50 model tarball; set SIMA_RESNET50_TAR");
 }
 
-fs::path resolve_mnist_or_throw(const fs::path& root) {
-  if (const std::string env = env_string("SIMA_MNIST_MODEL_TAR");
-      !env.empty() && usable_file(env)) {
-    return env;
-  }
-  const std::string resolved = sima_test::resolve_modelzoo_tar("mnist_cnn", root);
-  if (!resolved.empty() && usable_file(resolved)) {
-    return resolved;
-  }
-  throw std::runtime_error("failed to resolve MNIST model tarball; set SIMA_MNIST_MODEL_TAR or "
-                           "stage/download mnist_cnn");
-}
-
 #if defined(SIMA_WITH_OPENCV)
 cv::Mat load_people_bgr_or_throw(const fs::path& root) {
   const fs::path path = first_existing(
@@ -164,30 +151,6 @@ simaai::neat::Model::Options yolo_image_bgr_to_rgb_bf16_options() {
   opt.preprocess.layout_convert.enable = simaai::neat::AutoFlag::On;
   opt.preprocess.layout_convert.perm = {0, 1, 2};
   opt.upstream_name = "decoder";
-  return opt;
-}
-
-simaai::neat::Model::Options resnet_imagenet_bgr_options() {
-  simaai::neat::Model::Options opt;
-  opt.preprocess.kind = simaai::neat::InputKind::Image;
-  opt.preprocess.enable = simaai::neat::AutoFlag::On;
-  opt.preprocess.color_convert.enable = simaai::neat::AutoFlag::On;
-  opt.preprocess.color_convert.input_format = simaai::neat::PreprocessColorFormat::BGR;
-  opt.preprocess.preset = simaai::neat::NormalizePreset::ImageNet;
-  opt.upstream_name = "decoder";
-  return opt;
-}
-
-simaai::neat::Model::Options mnist_gray8_options() {
-  simaai::neat::Model::Options opt;
-  opt.preprocess.kind = simaai::neat::InputKind::Image;
-  opt.preprocess.enable = simaai::neat::AutoFlag::On;
-  opt.preprocess.input_max_depth = 1;
-  opt.preprocess.color_convert.input_format = simaai::neat::PreprocessColorFormat::GRAY8;
-  opt.preprocess.normalize.enable = simaai::neat::AutoFlag::On;
-  opt.preprocess.normalize.mean = {0.1307f, 0.1307f, 0.1307f};
-  opt.preprocess.normalize.stddev = {0.3081f, 0.3081f, 0.3081f};
-  opt.preprocess.normalize.has_explicit_stats = true;
   return opt;
 }
 

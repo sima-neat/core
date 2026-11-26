@@ -309,7 +309,7 @@ void lazy_failure_after_completed_run_closes_on_assertion(bool explicit_close) {
   const Tensor seed = make_color_tensor(32, 24, ImageSpec::PixelFormat::RGB, 0x37);
   {
     // A failed second graph must not make qualification forget work completed
-    // earlier in the same process (the original test runs ResNet before MNIST).
+    // earlier in the same process (the original test runs ResNet BGR before ResNet GRAY8).
     Run prior = sima_test::make_async_rgb_run(seed, 2, 2);
     require(prior.try_push(TensorList{seed}), "prior CPU sub-run must accept work");
     const auto output = prior.pull(2000);

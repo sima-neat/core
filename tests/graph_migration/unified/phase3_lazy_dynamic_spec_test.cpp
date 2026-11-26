@@ -18,6 +18,16 @@ RUN_TEST("graph_migration_phase3_lazy_dynamic_spec_test",
 #else
 namespace {
 
+simaai::neat::Model::Options resnet_imagenet_options() {
+  simaai::neat::Model::Options opt;
+  opt.preprocess.kind = simaai::neat::InputKind::Image;
+  opt.preprocess.enable = simaai::neat::AutoFlag::On;
+  opt.preprocess.color_convert.enable = simaai::neat::AutoFlag::On;
+  opt.preprocess.preset = simaai::neat::NormalizePreset::ImageNet;
+  opt.upstream_name = "decoder";
+  return opt;
+}
+
 simaai::neat::TensorList run_lazy_connected_model(simaai::neat::Model& model,
                                                   const cv::Mat& seedless_first_input,
                                                   const cv::Mat& second_input,
@@ -77,11 +87,12 @@ simaai::neat::TensorList run_lazy_connected_model(simaai::neat::Model& model,
 
 RUN_TEST("graph_migration_phase3_lazy_dynamic_spec_test", [] {
   const std::filesystem::path root = graph_phase3_test::repo_root();
+  const std::filesystem::path resnet_tar = graph_phase3_test::resolve_resnet50_or_throw(root);
 
   {
-    const std::filesystem::path resnet_tar = graph_phase3_test::resolve_resnet50_or_throw(root);
-    simaai::neat::Model resnet(resnet_tar.string(),
-                               graph_phase3_test::resnet_imagenet_bgr_options());
+    simaai::neat::Model::Options options = resnet_imagenet_options();
+    options.preprocess.color_convert.input_format = simaai::neat::PreprocessColorFormat::BGR;
+    simaai::neat::Model resnet(resnet_tar.string(), options);
     const cv::Mat img0(224, 224, CV_8UC3, cv::Scalar(11, 47, 83));
     const cv::Mat img1(224, 224, CV_8UC3, cv::Scalar(17, 31, 127));
     (void)run_lazy_connected_model(resnet, img0, img1, simaai::neat::ImageSpec::PixelFormat::BGR,
@@ -89,13 +100,17 @@ RUN_TEST("graph_migration_phase3_lazy_dynamic_spec_test", [] {
   }
 
   {
-    const std::filesystem::path mnist_tar = graph_phase3_test::resolve_mnist_or_throw(root);
-    simaai::neat::Model mnist(mnist_tar.string(), graph_phase3_test::mnist_gray8_options());
-    const cv::Mat digit0(28, 28, CV_8UC1, cv::Scalar(0));
-    const cv::Mat digit1(28, 28, CV_8UC1, cv::Scalar(255));
-    (void)run_lazy_connected_model(mnist, digit0, digit1,
+    // Single-channel ingress: the first GRAY8 push completes the input spec, and preprocessing
+    // expands it to the RGB input the model expects.
+    simaai::neat::Model::Options options = resnet_imagenet_options();
+    options.preprocess.color_convert.input_format = simaai::neat::PreprocessColorFormat::GRAY8;
+    options.preprocess.color_convert.output_format = simaai::neat::PreprocessColorFormat::RGB;
+    simaai::neat::Model resnet(resnet_tar.string(), options);
+    const cv::Mat gray0(224, 224, CV_8UC1, cv::Scalar(0));
+    const cv::Mat gray1(224, 224, CV_8UC1, cv::Scalar(255));
+    (void)run_lazy_connected_model(resnet, gray0, gray1,
                                    simaai::neat::ImageSpec::PixelFormat::GRAY8,
-                                   "MNIST lazy connected Graph");
+                                   "ResNet GRAY8 lazy connected Graph");
   }
 });
 #endif
