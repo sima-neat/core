@@ -138,8 +138,12 @@ bool all_finite(const std::vector<double>& values) {
 
 double max_abs_diff(const std::vector<double>& a, const std::vector<double>& b) {
   double diff = a.size() == b.size() ? 0.0 : INFINITY;
-  for (std::size_t i = 0; i < a.size() && i < b.size(); ++i)
-    diff = std::max(diff, std::abs(a[i] - b[i]));
+  for (std::size_t i = 0; i < a.size() && i < b.size(); ++i) {
+    const double d = std::abs(a[i] - b[i]);
+    if (!std::isfinite(d))
+      return INFINITY;
+    diff = std::max(diff, d);
+  }
   return diff;
 }
 
@@ -285,7 +289,7 @@ int main(int argc, char** argv) {
 #if !defined(SIMA_WITH_OPENCV)
   (void)argc;
   (void)argv;
-  return skip_test("OpenCV required");
+  return fail_test("OpenCV required");
 #else
   try {
     simaai::neat::gst_init_once();
