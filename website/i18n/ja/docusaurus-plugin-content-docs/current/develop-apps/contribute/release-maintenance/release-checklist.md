@@ -31,9 +31,8 @@ slug: /develop-apps/contribute/release-checklist
    - `.github/CODEOWNERS`
    - `.github/PULL_REQUEST_TEMPLATE.md`
    - `CONTRIBUTING.md`
-   - `docs/develop-apps/contribute/release-checklist.md`
+   - `docs/develop-apps/contribute/release-maintenance/release-checklist.md`
 12. リリースメタデータが完了していること：
-   - `project(SimaNeat VERSION x.y.z)` が `CMakeLists.txt` に更新されていること
    - 必要に応じて、`package-version` と `platform-version` が `deps/manifest.json` に更新されていること
    - `modelzoo-version` が、`platform-version` と異なる場合に、検証済みの Model Zoo リリースを明示的に選択すること。省略された場合、Model Zoo の解決はデフォルトで `platform-version` になります。
    - `abi-version` は、公開 C++ 型のレイアウトまたはエクスポートされたバイナリコントラクトに互換性のない変更があり、

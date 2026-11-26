@@ -37,9 +37,8 @@ A release is blocked unless all conditions below are true:
    - `.github/CODEOWNERS`
    - `.github/PULL_REQUEST_TEMPLATE.md`
    - `CONTRIBUTING.md`
-   - `docs/develop-apps/contribute/release-checklist.md`
+   - `docs/develop-apps/contribute/release-maintenance/release-checklist.md`
 12. Release metadata is complete:
-   - `project(SimaNeat VERSION x.y.z)` updated in `CMakeLists.txt`
    - `package-version` and `platform-version` updated in `deps/manifest.json` when required
    - `modelzoo-version` explicitly selects the validated Model Zoo release when it differs from
      `platform-version`; if omitted, Model Zoo resolution defaults to `platform-version`

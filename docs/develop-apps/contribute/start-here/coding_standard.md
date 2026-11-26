@@ -43,7 +43,7 @@ Public API compatibility is a hard requirement for all installed headers under `
 
 Before merging a breaking API change:
 
-1. Document the change in the PR description under a dedicated `Breaking API Change` section.
+1. Document the change in the PR description's `API, ABI, and migration` section.
 2. Include impact analysis: affected headers/symbols, expected downstream breakage, and migration steps.
 3. Include versioning/release intent (when the break is allowed to ship).
 4. Update docs and examples to the new API in the same change set.

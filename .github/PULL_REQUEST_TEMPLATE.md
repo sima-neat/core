@@ -1,71 +1,27 @@
 ## Summary
 
-Describe what changed and why. Link related issues with `Fixes #<issue>`.
-
-## Change Type
-
-- [ ] Bug fix
-- [ ] Refactor
-- [ ] Feature
-- [ ] Docs
-- [ ] Test-only
-- [ ] Build/CI
-- [ ] Breaking change
+<!-- Link the issue using Fixes #<issue> or Refs #<issue>. Describe what changed and why. -->
 
 ## Risk
 
-- [ ] Low
-- [ ] Medium
-- [ ] High
+<!-- Low, Medium, or High. Explain the affected behavior and scope. -->
 
-Risk notes (required for Medium/High):
+## Test evidence
 
-## Test Evidence
+<!-- Link the passing test result or give the command and outcome. For a bug fix, describe the original failure and the regression that now passes. For device behavior, name the target and package tested. List any outstanding checks. -->
 
-Commands run and outcomes:
+## API, ABI, and migration
 
-```text
-paste command output summary here
-```
+<!-- Write None if unaffected. Describe changes to C++ or PyNeat behavior, signatures, layout, or exported symbols. For a break, identify the affected symbols and users, migration steps, release intent, and maintainer approval. Compare abi-version with main using the release checklist. -->
 
-## Docs Impact
+## Docs impact
 
-- [ ] No docs update needed
-- [ ] Docs updated in this PR
-- [ ] Docs follow-up required (linked issue)
+<!-- Link any guide, example, or skill updates. Include required translations and source hashes in this PR. Use No docs update needed if existing guidance still applies. -->
 
-Docs notes:
+## Author checks
 
-Select `No docs update needed` when existing guidance remains accurate and no meaningful API, architecture, contract, or workflow change needs explanation.
+- [ ] Each new option, helper, or fallback serves a concrete case. I removed unrelated changes.
+- [ ] I trimmed comments that repeat the code and limited documentation edits to guidance readers need.
+- [ ] Before marking this PR ready for review, I reviewed the full diff against `develop` using `core-review-pr` and addressed the applicable findings.
 
-## Migration Impact
-
-- [ ] No migration impact
-- [ ] Migration required and documented
-
-Migration notes (required if impact exists):
-
-## Breaking API Change
-
-- [ ] Not applicable
-- [ ] This PR changes public API signatures under `include/*`
-
-If applicable, provide:
-
-- Affected headers/symbols:
-- Downstream breakage risk:
-- Migration steps:
-- Planned release/version for the break:
-- Explicit maintainer approval reference:
-
-## API / Deprecation Checklist
-
-- [ ] Public API unchanged
-- [ ] Public API changed with deprecation path documented in docs/how-to
-- [ ] Naming contract respected (`docs/architecture/naming.md`)
-
-## Release Hygiene Checklist
-
-- [ ] `scripts/ci/check_naming_and_conflicts.sh` passed
-- [ ] `scripts/ci/check_artifacts.sh` passed
-- [ ] `scripts/ci/check_release_policy.sh` passed
+**Review outcome** <!-- Required. One sentence describing what you fixed during review, or No findings. -->

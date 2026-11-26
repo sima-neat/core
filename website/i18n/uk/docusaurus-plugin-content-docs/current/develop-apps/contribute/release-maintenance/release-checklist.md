@@ -31,9 +31,8 @@ slug: /develop-apps/contribute/release-checklist
    - `.github/CODEOWNERS`
    - `.github/PULL_REQUEST_TEMPLATE.md`
    - `CONTRIBUTING.md`
-   - `docs/develop-apps/contribute/release-checklist.md`
+   - `docs/develop-apps/contribute/release-maintenance/release-checklist.md`
 12. Метадані випуску повні:
-   - `project(SimaNeat VERSION x.y.z)` оновлено в `CMakeLists.txt`
    - `package-version` та `platform-version` оновлено в `deps/manifest.json`, коли це потрібно
    - `modelzoo-version` явно вибирає перевірений випуск Model Zoo, якщо він відрізняється від
      `platform-version`; якщо параметр не вказано, версія Model Zoo за замовчуванням визначається за `platform-version`

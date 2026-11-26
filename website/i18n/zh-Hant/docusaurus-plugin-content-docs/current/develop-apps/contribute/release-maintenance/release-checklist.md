@@ -31,9 +31,8 @@ slug: /develop-apps/contribute/release-checklist
    - `.github/CODEOWNERS`
    - `.github/PULL_REQUEST_TEMPLATE.md`
    - `CONTRIBUTING.md`
-   - `docs/develop-apps/contribute/release-checklist.md`
+   - `docs/develop-apps/contribute/release-maintenance/release-checklist.md`
 12. 發布元資料已完成：
-   - `project(SimaNeat VERSION x.y.z)` 在 `CMakeLists.txt` 中更新
    - `package-version` 和 `platform-version` 在 `deps/manifest.json` 中更新（如果需要）
    - `modelzoo-version` 顯式選擇經過驗證的 Model Zoo 發布版本，當其與 `platform-version` 不同時；如果省略，Model Zoo 解析將預設為 `platform-version`
    - 只有在公開 C++ 型別佈局或匯出的二進位契約發生不相容變更，且 `develop` 仍使用與 `main` 相同的 ABI 版本時，

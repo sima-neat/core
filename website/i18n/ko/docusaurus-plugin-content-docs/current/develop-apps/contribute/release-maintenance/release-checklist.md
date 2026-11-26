@@ -31,9 +31,8 @@ slug: /develop-apps/contribute/release-checklist
    - `.github/CODEOWNERS`
    - `.github/PULL_REQUEST_TEMPLATE.md`
    - `CONTRIBUTING.md`
-   - `docs/develop-apps/contribute/release-checklist.md`
+   - `docs/develop-apps/contribute/release-maintenance/release-checklist.md`
 12. 릴리스 메타데이터가 완료되었습니다.
-   - `project(SimaNeat VERSION x.y.z)`가 `CMakeLists.txt`에 업데이트되었습니다.
    - `package-version` 및 `platform-version`가 필요한 경우 `deps/manifest.json`에 업데이트되었습니다.
    - `modelzoo-version`이 검증된 Model Zoo 릴리스를 명시적으로 선택하며, `platform-version`과 다를 경우에만 해당됩니다. 생략하면 Model Zoo 해결은 기본적으로 `platform-version`으로 설정됩니다.
    - `deps/manifest.json`의 `abi-version`은 공개 C++ 유형 레이아웃 또는 내보낸 바이너리 계약에 호환되지 않는 변경이 있고,

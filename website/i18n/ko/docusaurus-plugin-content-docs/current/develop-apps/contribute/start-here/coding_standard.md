@@ -43,7 +43,7 @@ bash scripts/check_duplicate_includes.sh --changed-only
 
 호환성을 해치는 API 변경을 병합하기 전에:
 
-1. PR 설명의 전용 `Breaking API Change` 섹션에 변경 사항을 문서화합니다.
+1. PR 설명의 `API, ABI, and migration` 섹션에 변경 사항을 기록합니다.
 2. 영향 분석을 포함합니다. 영향을 받는 헤더/심볼, 예상되는 다운스트림 호환성 문제 및 마이그레이션 단계를 포함합니다.
 3. 버전 관리/릴리스 의도를 포함합니다(변경 사항이 적용될 시점).
 4. 동일한 변경 세트에서 새 API로 문서 및 예제를 업데이트합니다.
