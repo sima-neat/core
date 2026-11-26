@@ -85,13 +85,25 @@ checked when the graph is built.
   code that the consuming model's input quantization assigns to 0.0. An INT8
   canvas's bytes are in dense NHWC order.
 - **SimaBEVPoolPlan** takes its frustum (`xs`, `ys`, `ds`) and grid (`bx`, `dx`, `nx`)
-  from the checkpoint's view transform. `SimaBEVPoolPlanFormat::V1`, the default,
-  groups the points by BEV cell; use `SimaBEVPoolPlanFormat::V2` with
-  `context_channels` for an EV74 `SimaBEVPool`. By default `P` is the worst-case plan
-  size; bytes past the plan's used length are not written.
+  from the checkpoint's view transform. `SimaBEVPoolPlanFormat::V2`, the default,
+  schedules the points in work tiles with planned cache loads. It pools faster on A65
+  and is the only fast EV74 route, and it needs `context_channels`, the channel count `C`
+  of the consuming `SimaBEVPool`'s context. Without it the build fails with
+  `misconfig.kernel_request`; no graph input carries `C`, so set it. Choose
+  `SimaBEVPoolPlanFormat::V1`, which groups the points by BEV cell, only for an A65
+  pipeline that rebuilds its plan every frame (V1 builds about twice as fast), or when
+  admission reports that the geometry exceeds V2's limits. By default `P` is the
+  worst-case plan size; bytes past the plan's used length are not written.
 - **SimaBEVPool** sums `depth x context` over each cell's plan points and quantizes the
-  sum with `quantization`. Set `cells` to the plan's `nx`, `plan_format` to the
-  plan's `format`, and, for INT8 inputs, `quantization.multiplier` to
+  sum with `quantization`. Set `cells` to the plan's `nx`. Leave `plan_format` unset:
+  the Node then takes the format that the plan's header records, as `SimaBEVPoolPlan`
+  wrote it, when the build's input tensors hold the plan, and `V2` otherwise, so choosing
+  `V1` on `SimaBEVPoolPlan` is enough. An explicit `plan_format` that the plan's header
+  contradicts fails the build with `misconfig.kernel_request`, naming both formats. A
+  plan first supplied at run time must have the Node's format; a plan of the other
+  format is refused before any output is written, as `misconfig.kernel_request` on A65
+  (EV74 reports only an execution failure). For INT8 inputs, set
+  `quantization.multiplier` to
   `depth_scale * context_scale / output_scale`. With the default
   `SimaBEVPoolStorage::ChannelsLast`, inputs arrive as `[N,fH,fW,D]` and `[N,fH,fW,C]`,
   as camera models produce them. The output is published as logical

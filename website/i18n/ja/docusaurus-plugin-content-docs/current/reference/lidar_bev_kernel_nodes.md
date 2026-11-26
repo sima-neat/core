@@ -85,13 +85,24 @@ Python では同じオプション型と、`pyneat.nodes.sima_voxelize`、
   キャンバスを読むモデルの入力量子化が 0.0 に割り当てる INT8 コードでなければ
   なりません。INT8 キャンバスのバイトは密な NHWC 順です。
 - **SimaBEVPoolPlan** は、錐台（`xs`、`ys`、`ds`）とグリッド（`bx`、`dx`、`nx`）を
-  チェックポイントのビュー変換から取得します。既定の `SimaBEVPoolPlanFormat::V1` は
-  点を BEV セルごとにまとめます。EV74 の `SimaBEVPool` には、`context_channels` とともに
-  `SimaBEVPoolPlanFormat::V2` を使用します。既定では `P` は最悪ケースのプランサイズで、
+  チェックポイントのビュー変換から取得します。既定の `SimaBEVPoolPlanFormat::V2` は、
+  キャッシュ読み込みを計画したワークタイルに点をスケジュールします。A65 でより速くプールでき、
+  EV74 で唯一の高速な経路です。`context_channels`（消費側 `SimaBEVPool` のコンテキストの
+  チャネル数 `C`）が必要で、指定しないとビルドは `misconfig.kernel_request` で失敗します。
+  `C` を運ぶグラフ入力はないため、設定してください。点を BEV セルごとにまとめる
+  `SimaBEVPoolPlanFormat::V1` は、毎フレームプランを再構築する A65 パイプライン
+  （V1 の構築は約 2 倍速い）か、ジオメトリが V2 の制限を超えるとアドミッションが
+  報告した場合にのみ選択します。既定では `P` は最悪ケースのプランサイズで、
   プランが使用する長さを超えるバイトは書き込まれません。
 - **SimaBEVPool** は各セルのプラン点について `depth x context` を合計し、その和を
-  `quantization` で量子化します。`cells` にはプランの `nx` を、`plan_format` には
-  プランの `format` を、INT8 入力の場合は `quantization.multiplier` に
+  `quantization` で量子化します。`cells` にはプランの `nx` を設定します。`plan_format`
+  は未設定のままにします。ビルドの入力テンソルにプランがあれば、ノードは `SimaBEVPoolPlan`
+  が書いたプランのヘッダーが記録する形式を使い、なければ `V2` を使います。したがって
+  `SimaBEVPoolPlan` で `V1` を選ぶだけで十分です。プランのヘッダーと矛盾する明示的な
+  `plan_format` は、両方の形式を示して `misconfig.kernel_request` でビルドが失敗します。
+  実行時に初めて渡されるプランはノードの形式でなければならず、別の形式のプランは出力を
+  書き込む前に拒否されます（A65 では `misconfig.kernel_request`、EV74 は実行失敗のみを
+  報告します）。INT8 入力の場合は `quantization.multiplier` に
   `depth_scale * context_scale / output_scale` を設定します。既定の
   `SimaBEVPoolStorage::ChannelsLast` では、入力はカメラモデルが出力するとおり
   `[N,fH,fW,D]` と `[N,fH,fW,C]` で渡されます。出力はチャネルラストのストライドを持つ

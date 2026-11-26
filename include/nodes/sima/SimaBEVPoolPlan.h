@@ -42,8 +42,13 @@ struct SimaBEVPoolPlanOptions {
   std::array<float, 3> bx{}; ///< BEV grid cell centre of cell 0, per axis.
   std::array<float, 3> dx{}; ///< BEV cell size, per axis.
   std::array<int, 3> nx{};   ///< BEV cell counts `nX`, `nY`, `nZ`.
-  SimaBEVPoolPlanFormat format = SimaBEVPoolPlanFormat::V1; ///< Plan layout.
-  int context_channels = 0; ///< SimaBEVPool's `C`; required for `V2`.
+  /// Plan layout. Keep `V2`, which pools faster on A65 and is the only fast EV74 route.
+  /// Choose `V1` only for an A65 pipeline that rebuilds its plan every frame (V1 builds
+  /// about 2x faster), or when admission reports that the geometry exceeds V2's limits.
+  SimaBEVPoolPlanFormat format = SimaBEVPoolPlanFormat::V2;
+  /// Channel count `C` of the context tensor the consuming SimaBEVPool reads. Required for
+  /// `V2`, which sizes its context caches by it; the build refuses `V2` without it.
+  int context_channels = 0;
   /// Element type of SimaBEVPool's depth and context: `Int8` or `BFloat16`. A `V2` plan
   /// budgets its caches in bytes, so BF16 halves them; `V1` does not depend on it.
   TensorDType input_dtype = TensorDType::Int8;

@@ -4,6 +4,7 @@
 // SimaBEVPool hardware suites. Every graph is built and run through the public
 // Graph/Node/Run API; numerical truth comes from the independent oracles in
 // bevfusion_kernel_reference.h, never from a provider call.
+#include "pipeline/ErrorCodes.h"
 #include <neat.h>
 
 #include "bevfusion_kernel_reference.h"

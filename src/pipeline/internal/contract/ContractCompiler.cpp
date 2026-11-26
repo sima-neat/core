@@ -271,6 +271,8 @@ compile_node_contracts(const std::vector<std::shared_ptr<Node>>& nodes,
       continue;
     }
 
+    // The fallback compiler below may reuse `stage`; keep the provider's code.
+    const std::string provider_code = stage.failure_error_code;
     bool handled_directly = false;
     std::string direct_err;
     const bool direct_ok = compile_known_node_contract(node, stage.definition, stage_input, &stage,
@@ -299,6 +301,8 @@ compile_node_contracts(const std::vector<std::shared_ptr<Node>>& nodes,
       if (diagnostics) {
         diagnostics->errors.push_back("contract compiler: node kind '" + node->kind() +
                                       "' failed: " + err);
+        if (diagnostics->error_code.empty() && err == provider_err)
+          diagnostics->error_code = provider_code;
       }
       compiled_node_indices[node_index] = compiled.stages.size();
       compiled.stages.push_back(std::move(stage));

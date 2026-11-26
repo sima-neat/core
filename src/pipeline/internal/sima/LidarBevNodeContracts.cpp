@@ -6,6 +6,8 @@
 #include "pipeline/internal/contract/CompiledNodeContractQuery.h"
 #include "pipeline/internal/contract/CompiledKernelTensor.h"
 #include "pipeline/internal/contract/ContractFacts.h"
+#include "pipeline/ErrorCodes.h"
+#include "pipeline/internal/TensorUtil.h"
 #include "pipeline/internal/sima/KernelTensorLayout.h"
 #include "pipeline/internal/sima/KernelStageRecipe.h"
 #include "pipeline/internal/sima/StaticSpecBuilders.h"
@@ -13,6 +15,8 @@
 #include <simaai/scheduler/client/kernel.h>
 
 #include <algorithm>
+#include <array>
+#include <cstdint>
 #include <optional>
 #include <stdexcept>
 #include <utility>
@@ -205,6 +209,41 @@ bool compile_bev_contract(const std::string& node_kind, const std::string& eleme
     error->clear();
   return true;
 }
+
+// The format a plan in the build's input tensors records in its header (one
+// read-only map of its first eight bytes), or nullopt when there is no such
+// plan, it cannot be mapped, or its header is not a recognised BEV pool plan.
+std::optional<SimaBEVPoolPlanFormat> ingress_plan_format(const Sample& ingress_sample) {
+  const auto tensors = tensors_from_sample(ingress_sample, true);
+  if (tensors.size() != 3)
+    return std::nullopt;
+  Tensor prefix = tensors[2];
+  constexpr std::int64_t header_bytes = 8;
+  if (prefix.shape.size() != 1 || prefix.shape[0] < header_bytes)
+    return std::nullopt;
+  prefix.shape = {header_bytes};
+  std::array<std::uint8_t, header_bytes> bytes{};
+  try {
+    const Mapping mapping = pipeline_internal::map_dense_tensor_read(prefix);
+    if (!mapping.data || mapping.size_bytes < static_cast<std::size_t>(header_bytes))
+      return std::nullopt;
+    const auto* data = static_cast<const std::uint8_t*>(mapping.data);
+    std::copy(data, data + header_bytes, bytes.begin());
+  } catch (const std::exception&) {
+    return std::nullopt; // An unmappable plan is checked by the kernel when it runs.
+  }
+  return kr::bev_pool_plan_header_format(bytes);
+}
+
+// Refusals the Node's options cause carry misconfig.kernel_request to Graph::build.
+bool refuse(const std::exception& exception, bool kernel_request, CompiledNodeContract* out,
+            std::string* error) {
+  if (kernel_request && out)
+    out->failure_error_code = error_codes::kKernelRequest;
+  if (error)
+    *error = exception.what();
+  return false;
+}
 } // namespace
 
 bool SimaVoxelize::compile_node_contract(const ContractCompileInput& input,
@@ -254,10 +293,10 @@ bool SimaBEVPoolPlan::compile_node_contract(const ContractCompileInput& input,
     return compile_bev_contract(kind(), element_names(input.node_index).front(),
                                 contract_definition(), upstream, ingress.has_value(), plan, out,
                                 error);
+  } catch (const kr::KernelRequestError& exception) {
+    return refuse(exception, true, out, error);
   } catch (const std::exception& exception) {
-    if (error)
-      *error = exception.what();
-    return false;
+    return refuse(exception, false, out, error);
   }
 }
 
@@ -288,14 +327,22 @@ bool SimaBEVPool::compile_node_contract(const ContractCompileInput& input,
     const auto& upstream = resolve_inputs(input, kind(), ingress);
     const auto facts =
         bev_tensor_facts(upstream, ingress ? nullptr : input.immediate_upstream, kind());
-    const auto plan = kr::bev_pool_request(opt_, facts);
+    // A plan in the build's input tensors states its own format, as SimaBEVPoolPlan
+    // wrote it; a plan from a compiled upstream stage, or first pushed at run time,
+    // is prepared for the declared format (V2 when unset) and checked by the kernel.
+    auto options = opt_;
+    options.plan_format = kr::resolve_bev_pool_plan_format(
+        opt_.plan_format,
+        ingress ? ingress_plan_format(*input.ingress.ingress_sample) : std::nullopt,
+        "the plan header records format");
+    const auto plan = kr::bev_pool_request(options, facts);
     return compile_bev_contract(kind(), element_names(input.node_index).front(),
                                 contract_definition(), upstream, ingress.has_value(), plan, out,
                                 error);
+  } catch (const kr::KernelRequestError& exception) {
+    return refuse(exception, true, out, error);
   } catch (const std::exception& exception) {
-    if (error)
-      *error = exception.what();
-    return false;
+    return refuse(exception, false, out, error);
   }
 }
 

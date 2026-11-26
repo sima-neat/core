@@ -656,6 +656,7 @@ set(UNIT_TESTS
   unit_sima_plugins_test
   unit_bevfusion_kernel_requests_test
   unit_bevfusion_kernel_nodes_test
+  unit_bev_pool_plan_format_regression_test
   unit_internal_edge_contract_resolver_test
   unit_terminal_output_contract_query_test
   unit_tensor_set_meta_route_contract_test
@@ -751,7 +752,8 @@ target_link_libraries(unit_mpk_decoder_test PRIVATE
 
 # BEVFusion/PointPillars kernel Nodes. The references are exact only without FMA
 # contraction. Node admission needs the Scheduler set that bundles the pinned Kernels.
-foreach(_target unit_bevfusion_kernel_requests_test unit_bevfusion_kernel_nodes_test)
+foreach(_target unit_bevfusion_kernel_requests_test unit_bevfusion_kernel_nodes_test
+                unit_bev_pool_plan_format_regression_test)
   if (TARGET ${_target})
     target_compile_options(${_target} PRIVATE -ffp-contract=off)
     set_property(TEST ${_target} APPEND PROPERTY LABELS "contracts")
@@ -759,6 +761,9 @@ foreach(_target unit_bevfusion_kernel_requests_test unit_bevfusion_kernel_nodes_
 endforeach()
 if (TARGET unit_bevfusion_kernel_nodes_test)
   target_link_libraries(unit_bevfusion_kernel_nodes_test PRIVATE SimaScheduler::frontend)
+endif()
+if (TARGET unit_bev_pool_plan_format_regression_test)
+  target_link_libraries(unit_bev_pool_plan_format_regression_test PRIVATE SimaScheduler::frontend)
 endif()
 
 target_sources(unit_output_metadata_cache_contract_test

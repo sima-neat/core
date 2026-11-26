@@ -1258,6 +1258,8 @@ void append_manifest_diagnostics(BuildResult* dst, const BuildResult& src) {
   dst->manifest_diagnostics.errors.insert(dst->manifest_diagnostics.errors.end(),
                                           src.manifest_diagnostics.errors.begin(),
                                           src.manifest_diagnostics.errors.end());
+  if (dst->manifest_diagnostics.error_code.empty())
+    dst->manifest_diagnostics.error_code = src.manifest_diagnostics.error_code;
   dst->manifest_diagnostics.warnings.insert(dst->manifest_diagnostics.warnings.end(),
                                             src.manifest_diagnostics.warnings.begin(),
                                             src.manifest_diagnostics.warnings.end());

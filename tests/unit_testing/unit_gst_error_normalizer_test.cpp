@@ -115,6 +115,39 @@ RUN_TEST(
                          "verbose reports must retain the separate technical diagnostic");
       }
 
+      // A kernel that refuses an input's contents before writing (a BEV pool plan
+      // of another format) is a request error, not an accelerator fault, whether
+      // the Runtime reports it as execution_failed or invalid_request (core#1528).
+      for (const auto* phase : {"execution", "unavailable"}) {
+        auto raw = raw_error("neatkernelrunner", "gst-stream-error-quark", GST_STREAM_ERROR_FAILED,
+                             "inputs[2]: BEVPool plan header records format 1; this call "
+                             "expects format 2");
+        raw.details["neat-diagnostic-id"] = "neatkernelrunner.failure";
+        raw.details["runtime-category"] = "execution_failed";
+        raw.details["runtime-phase"] = phase;
+        raw.details["runtime-field"] = "inputs[2]";
+        raw.details["kernel-code"] = "11"; // ProviderErrorCode::InvalidParameter
+        const auto diagnostic = classify_gst_error(std::move(raw));
+        require_code(diagnostic, error_codes::kKernelRequest);
+        const auto text = render_diagnostic_body(diagnostic, false);
+        require_contains(text, "Reason: inputs[2]: BEVPool plan header records format 1",
+                         "an input refusal must keep the kernel's field and formats");
+        require_contains(text, "plan of the format the Node was built for",
+                         "an input refusal must say how to correct the plan");
+      }
+      for (const auto& [field, code] : {std::pair{"outputs[0]", "11"}, std::pair{"inputs[2]", "6"},
+                                        std::pair{"inputs[0]", ""}}) {
+        auto raw = raw_error("neatkernelrunner", "gst-stream-error-quark", GST_STREAM_ERROR_FAILED,
+                             "kernel failure");
+        raw.details["neat-diagnostic-id"] = "neatkernelrunner.failure";
+        raw.details["runtime-category"] = "execution_failed";
+        raw.details["runtime-phase"] = "execution";
+        raw.details["runtime-field"] = field;
+        if (*code)
+          raw.details["kernel-code"] = code;
+        require_code(classify_gst_error(std::move(raw)), error_codes::kAcceleratorExecutionFailed);
+      }
+
       {
         auto raw = raw_error("neatkernelrunner", "gst-stream-error-quark", GST_STREAM_ERROR_FAILED,
                              "span mismatch: " + std::string(17000, 'x') + " password=late-secret");

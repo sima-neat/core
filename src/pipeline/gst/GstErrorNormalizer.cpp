@@ -701,6 +701,18 @@ NormalizedDiagnostic kernel_runner_failure(RawGstError raw) {
       category == "execution_failed" &&
       find_structured_detail(raw, {"runtime-phase"}) == "implementation_admission" &&
       find_structured_detail(raw, {"kernel-rule"}) == "memory.allocation_failed";
+  // A kernel that refuses an input's contents (InvalidShape or InvalidParameter on
+  // an inputs[...] field, as BEVPool does for a plan of another format) refuses it
+  // before writing any output. That is a request error, whether the Runtime
+  // reports it as invalid_request or, today, as execution_failed.
+  const auto phase = find_structured_detail(raw, {"runtime-phase"}).value_or("");
+  const auto kernel_code = find_structured_detail(raw, {"kernel-code"}).value_or("");
+  const auto field = find_structured_detail(raw, {"runtime-field"}).value_or("");
+  constexpr std::string_view kInvalidShape = "2", kInvalidParameter = "11"; // ProviderErrorCode
+  const bool input_refused = category == "execution_failed" &&
+                             (phase.empty() || phase == "execution" || phase == "unavailable") &&
+                             (kernel_code == kInvalidShape || kernel_code == kInvalidParameter) &&
+                             field.rfind("inputs[", 0) == 0;
   const char* code = error_codes::kRuntimeElementFailed;
   const char* title = "The kernel stage could not complete.";
   const char* action = "Inspect the stage's Runtime diagnostic and underlying device cause.";
@@ -709,6 +721,11 @@ NormalizedDiagnostic kernel_runner_failure(RawGstError raw) {
     title = "The kernel stage could not allocate its required memory.";
     action = "Check the reported allocation size and pool count; reduce retained buffers or "
              "concurrent workloads, and verify available memory in the required allocation domain.";
+  } else if (input_refused) {
+    code = error_codes::kKernelRequest;
+    title = "The kernel refused an input before writing any output.";
+    action = "Correct the reported input so it matches the prepared request; for SimaBEVPool, "
+             "supply a plan of the format the Node was built for (V2 unless plan_format says V1).";
   } else if (category == "invalid_request") {
     code = error_codes::kKernelRequest;
     title = "The kernel request violates its operation contract.";
@@ -747,6 +764,7 @@ NormalizedDiagnostic kernel_runner_failure(RawGstError raw) {
   }
   auto out = base(std::move(raw), code,
                   allocation_failed ? "neatkernelrunner.memory_allocation_failed"
+                  : input_refused   ? std::string("neatkernelrunner.input_refused")
                                     : "neatkernelrunner." + category,
                   title);
   for (const auto* key : {"runtime-category", "runtime-phase", "runtime-field", "kernel-rule",
@@ -755,8 +773,8 @@ NormalizedDiagnostic kernel_runner_failure(RawGstError raw) {
   // Access contention is not necessarily exhausted execution capacity. Preserve
   // the provider cause without guessing from its category; serialization is
   // failure-only, bounded and credential-redacted.
-  if (allocation_failed || category == "invalid_request" || category == "invalid_binding" ||
-      category == "resource_busy")
+  if (allocation_failed || input_refused || category == "invalid_request" ||
+      category == "invalid_binding" || category == "resource_busy")
     add_fact(out, "Reason", sanitize_gst_diagnostic_text(out.raw.message));
   out.actions = {action};
   return out;

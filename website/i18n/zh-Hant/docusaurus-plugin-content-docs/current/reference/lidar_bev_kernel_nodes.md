@@ -80,12 +80,20 @@ Python 提供相同的選項型別，以及 `pyneat.nodes.sima_voxelize`、
   特徵模型輸出的 `[1,M,1,C]`。`C` 必須是 16 的倍數。空白格存放 `zero_point`，此值必須是
   讀取畫布的模型其輸入量化對應到 0.0 的 INT8 代碼。INT8 畫布的位元組採用密集的 NHWC 順序。
 - **SimaBEVPoolPlan** 從檢查點的視角轉換取得視錐（`xs`、`ys`、`ds`）與網格（`bx`、`dx`、
-  `nx`）。預設的 `SimaBEVPoolPlanFormat::V1` 依 BEV 格子分組各點；若要供 EV74 的
-  `SimaBEVPool` 使用，請將 `SimaBEVPoolPlanFormat::V2` 與 `context_channels` 搭配使用。根據
-  預設，`P` 是最壞情況的計畫大小；計畫實際使用長度之後的位元組不會寫入。
+  `nx`）。預設的 `SimaBEVPoolPlanFormat::V2` 將各點排入已規劃快取載入的工作分塊；它在 A65
+  上彙集更快，也是 EV74 唯一的快速路徑，並需要 `context_channels`，即使用此計畫的
+  `SimaBEVPool` 之 context 通道數 `C`。未設定時建置會以 `misconfig.kernel_request` 失敗；
+  沒有任何圖輸入會帶入 `C`，因此請自行設定。依 BEV 格子分組各點的
+  `SimaBEVPoolPlanFormat::V1`，只在每幀重建計畫的 A65 管線（V1 建置約快兩倍），或准入回報
+  幾何超出 V2 限制時才選用。根據預設，`P` 是最壞情況的計畫大小；計畫實際使用長度之後的
+  位元組不會寫入。
 - **SimaBEVPool** 針對每個格子的計畫點加總 `depth x context`，再以 `quantization` 量化總和。
-  請將 `cells` 設為計畫的 `nx`、`plan_format` 設為計畫的 `format`，並將
-  INT8 輸入時將 `quantization.multiplier` 設為 `depth_scale * context_scale / output_scale`。使用預設的
+  請將 `cells` 設為計畫的 `nx`，並讓 `plan_format` 保持未設定：建置的輸入張量含有計畫時，
+  節點會採用計畫標頭記錄的格式（即 `SimaBEVPoolPlan` 寫入的格式），否則採用 `V2`，因此只需在
+  `SimaBEVPoolPlan` 上選擇 `V1`。與計畫標頭矛盾的明確 `plan_format` 會使建置以
+  `misconfig.kernel_request` 失敗，並列出兩種格式。執行時才首次提供的計畫必須是節點的格式；
+  其他格式的計畫會在寫入任何輸出前被拒絕（A65 回報 `misconfig.kernel_request`，EV74 只回報
+  執行失敗）。INT8 輸入時將 `quantization.multiplier` 設為 `depth_scale * context_scale / output_scale`。使用預設的
   `SimaBEVPoolStorage::ChannelsLast` 時，輸入會以相機模型產生的 `[N,fH,fW,D]` 與
   `[N,fH,fW,C]` 形式傳入。輸出會以帶有通道在後步幅的邏輯形狀 `[1,nZ*C,nX,nY]` 發布，
   因此其位元組為 NHWC `[1,nX,nY,nZ*C]`。`SimaBEVPoolStorage::Contiguous` 使用

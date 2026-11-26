@@ -308,14 +308,58 @@ void validate(const SimaBEVPoolPlanOptions& opt) {
 void validate(const SimaBEVPoolOptions& opt) {
   if (std::any_of(opt.cells.begin(), opt.cells.end(), [](int n) { return n <= 0; }))
     fail("SimaBEVPool", "every cell count must be positive");
-  if (opt.plan_format != SimaBEVPoolPlanFormat::V1 && opt.plan_format != SimaBEVPoolPlanFormat::V2)
-    fail("SimaBEVPool", "plan_format must be V1 or V2");
+  if (opt.plan_format && *opt.plan_format != SimaBEVPoolPlanFormat::V1 &&
+      *opt.plan_format != SimaBEVPoolPlanFormat::V2)
+    fail("SimaBEVPool", "plan_format must be V1, V2 or unset");
   const auto valid_storage = [](SimaBEVPoolStorage storage) {
     return storage == SimaBEVPoolStorage::Contiguous || storage == SimaBEVPoolStorage::ChannelsLast;
   };
   if (!valid_storage(opt.input_storage) || !valid_storage(opt.output_storage))
     fail("SimaBEVPool", "input_storage and output_storage must be Contiguous or ChannelsLast");
   narrow_dtype(opt.output_dtype, "SimaBEVPool", "output_dtype");
+}
+
+namespace {
+const char* format_name(SimaBEVPoolPlanFormat format) {
+  return format == SimaBEVPoolPlanFormat::V1 ? "V1" : "V2";
+}
+} // namespace
+
+std::optional<SimaBEVPoolPlanFormat>
+bev_pool_plan_header_format(std::span<const std::uint8_t> prefix) {
+  if (prefix.size() < 8)
+    return std::nullopt;
+  const auto word = [&](std::size_t i) {
+    return static_cast<std::uint32_t>(prefix[4 * i]) |
+           (static_cast<std::uint32_t>(prefix[4 * i + 1]) << 8) |
+           (static_cast<std::uint32_t>(prefix[4 * i + 2]) << 16) |
+           (static_cast<std::uint32_t>(prefix[4 * i + 3]) << 24);
+  };
+  if (word(0) != 0x4C505642U) // "BVPL"
+    return std::nullopt;
+  switch (word(1)) {
+  case 1:
+    return SimaBEVPoolPlanFormat::V1;
+  case 2:
+    return SimaBEVPoolPlanFormat::V2;
+  default:
+    return std::nullopt; // The kernel stays the authority on other versions.
+  }
+}
+
+SimaBEVPoolPlanFormat resolve_bev_pool_plan_format(std::optional<SimaBEVPoolPlanFormat> declared,
+                                                   std::optional<SimaBEVPoolPlanFormat> plan,
+                                                   const std::string& plan_format_source) {
+  if (declared && plan && *declared != *plan) {
+    const std::string want = format_name(*declared), have = format_name(*plan);
+    throw KernelRequestError(
+        "SimaBEVPool: plan_format is " + want + " but " + plan_format_source + " " + have +
+        "; build the plan with SimaBEVPoolPlanOptions.format = " + want +
+        ", or leave SimaBEVPoolOptions.plan_format unset (or set it to " + have + ")");
+  }
+  if (declared)
+    return *declared;
+  return plan.value_or(SimaBEVPoolPlanFormat::V2);
 }
 
 KernelRequestPlan voxelize_request(const SimaVoxelizeOptions& opt,
@@ -481,6 +525,13 @@ KernelRequestPlan bev_pool_plan_request(const SimaBEVPoolPlanOptions& opt,
                      describe(facts[i].shape));
   if (facts[3].shape != std::vector<std::int64_t>{4, 4})
     fail(node, "lidar_aug_matrix must be [4,4], got " + describe(facts[3].shape));
+  // V2 budgets its context cache per channel; no graph input carries the
+  // consumer's channel count, so the caller states it.
+  if (opt.format == SimaBEVPoolPlanFormat::V2 && opt.context_channels <= 0)
+    throw KernelRequestError(
+        "SimaBEVPoolPlan: format V2 (the default) needs context_channels, the channel count C "
+        "of the context tensor the SimaBEVPool consuming this plan reads; set "
+        "SimaBEVPoolPlanOptions.context_channels, or choose format V1");
 
   const std::uint64_t capacity = opt.plan_capacity_bytes > 0
                                      ? static_cast<std::uint64_t>(opt.plan_capacity_bytes)
@@ -607,7 +658,8 @@ KernelRequestPlan bev_pool_request(const SimaBEVPoolOptions& opt,
   plan.parameters.push_back({"depth_zero_point", static_cast<std::int64_t>(opt.depth_zero_point)});
   plan.parameters.push_back(
       {"context_zero_point", static_cast<std::int64_t>(opt.context_zero_point)});
-  plan.parameters.push_back({"plan_format", static_cast<std::int64_t>(opt.plan_format)});
+  plan.parameters.push_back({"plan_format", static_cast<std::int64_t>(opt.plan_format.value_or(
+                                                SimaBEVPoolPlanFormat::V2))});
   append_quantization(plan.parameters, opt.quantization);
   // An INT8 sum of codes is real only through both input scales; BF16 sums are
   // real already. Without both scales the output scale is unknown.

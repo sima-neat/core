@@ -73,7 +73,8 @@ def test_pillar_scatter_options_and_node():
 def test_bev_pool_plan_options_and_node():
   opt = pyneat.SimaBEVPoolPlanOptions()
   assert (opt.format, opt.workers, opt.tile_h, opt.tile_w) == (
-      pyneat.SimaBEVPoolPlanFormat.V1, 4, 8, 8)
+      pyneat.SimaBEVPoolPlanFormat.V2, 4, 8, 8)
+  assert opt.context_channels == 0
   assert opt.cache_plan is False
   assert opt.plan_capacity_bytes == 0
   assert opt.input_dtype == pyneat.TensorDType.Int8
@@ -83,13 +84,13 @@ def test_bev_pool_plan_options_and_node():
   opt.bx = [-51.0, -51.0, 0.0]
   opt.dx = [0.4, 0.4, 20.0]
   opt.nx = [256, 256, 1]
-  opt.format = pyneat.SimaBEVPoolPlanFormat.V2
+  opt.format = pyneat.SimaBEVPoolPlanFormat.V1
   opt.context_channels = 80
   opt.cache_plan = True
   assert list(opt.nx) == [256, 256, 1]
   opt.input_dtype = pyneat.TensorDType.BFloat16
   assert opt.input_dtype == pyneat.TensorDType.BFloat16
-  assert opt.format == pyneat.SimaBEVPoolPlanFormat.V2
+  assert opt.format == pyneat.SimaBEVPoolPlanFormat.V1
   assert pyneat.nodes.sima_bev_pool_plan(opt).kind() == "SimaBEVPoolPlan"
 
 
@@ -98,11 +99,15 @@ def test_bev_pool_options_and_node():
   assert opt.input_storage == pyneat.SimaBEVPoolStorage.ChannelsLast
   assert opt.output_storage == pyneat.SimaBEVPoolStorage.ChannelsLast
   assert opt.output_dtype == pyneat.TensorDType.Int8
-  assert opt.plan_format == pyneat.SimaBEVPoolPlanFormat.V1
+  # Unset: the plan's own format, else V2.
+  assert opt.plan_format is None
   opt.cells = [256, 256, 1]
   opt.depth_zero_point = -128
   opt.context_zero_point = -5
-  opt.plan_format = pyneat.SimaBEVPoolPlanFormat.V2
+  opt.plan_format = pyneat.SimaBEVPoolPlanFormat.V1
+  assert opt.plan_format == pyneat.SimaBEVPoolPlanFormat.V1
+  opt.plan_format = None
+  assert opt.plan_format is None
   opt.output_storage = pyneat.SimaBEVPoolStorage.Contiguous
   assert list(opt.cells) == [256, 256, 1]
   assert pyneat.nodes.sima_bev_pool(opt).kind() == "SimaBEVPool"

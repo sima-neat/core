@@ -274,10 +274,14 @@ void bev_pool_request() {
           "bev_pool bev is channels-last [1,nZ*C,nX,nY]");
   require(scalar<std::int64_t>(plan, "depth_zero_point") == -128 &&
               scalar<std::int64_t>(plan, "context_zero_point") == -5 &&
-              scalar<std::int64_t>(plan, "plan_format") == 1 &&
+              scalar<std::int64_t>(plan, "plan_format") == 2 &&
               scalar<double>(plan, "quantization_multiplier") == 0.0625 &&
               scalar<std::int64_t>(plan, "quantization_zero_point") == 3,
-          "bev_pool parameters");
+          "bev_pool parameters (an unset plan_format requests V2)");
+  opt.plan_format = SimaBEVPoolPlanFormat::V1;
+  require(scalar<std::int64_t>(kr::bev_pool_request(opt, facts), "plan_format") == 1,
+          "bev_pool requests an explicit plan_format");
+  opt.plan_format.reset();
   // A producer that already publishes logical [N,D,fH,fW] with channels-last
   // strides is the same request.
   const std::array strided{fact({2, 2, 2, 3}, rt::DType::Int8, {12, 1, 6, 2}),
@@ -601,6 +605,62 @@ void bf16_reference_known_answers() {
           "SimaBEVPool BF16 sums in binary32: 1 + 2^-8 + 10 * 2^-30 stays on the tie");
 }
 
+// Plan formats: V2 by default, a plan's own header format when the consumer's is
+// unset, and an explicit conflict refused as a kernel-request error.
+void bev_pool_plan_formats() {
+  require(SimaBEVPoolPlanOptions{}.format == SimaBEVPoolPlanFormat::V2 &&
+              !SimaBEVPoolOptions{}.plan_format,
+          "plans default to V2 and SimaBEVPool's plan_format to unset");
+  const auto header = [](std::uint32_t magic, std::uint32_t version) {
+    std::vector<std::uint8_t> bytes(8);
+    for (int i = 0; i < 4; ++i) {
+      bytes[i] = static_cast<std::uint8_t>(magic >> (8 * i));
+      bytes[4 + i] = static_cast<std::uint8_t>(version >> (8 * i));
+    }
+    return bytes;
+  };
+  require(kr::bev_pool_plan_header_format(header(0x4C505642U, 1)) == SimaBEVPoolPlanFormat::V1 &&
+              kr::bev_pool_plan_header_format(header(0x4C505642U, 2)) == SimaBEVPoolPlanFormat::V2,
+          "a BVPL header names its format");
+  require(!kr::bev_pool_plan_header_format(header(0x4C505642U, 3)) &&
+              !kr::bev_pool_plan_header_format(header(0, 1)) &&
+              !kr::bev_pool_plan_header_format(std::vector<std::uint8_t>(7, 0)),
+          "unknown versions, missing magic and short prefixes are left to the kernel");
+  const auto v1 = SimaBEVPoolPlanFormat::V1, v2 = SimaBEVPoolPlanFormat::V2;
+  require(kr::resolve_bev_pool_plan_format(std::nullopt, std::nullopt, "x") == v2 &&
+              kr::resolve_bev_pool_plan_format(std::nullopt, v1, "x") == v1 &&
+              kr::resolve_bev_pool_plan_format(v1, std::nullopt, "x") == v1 &&
+              kr::resolve_bev_pool_plan_format(v2, v2, "x") == v2,
+          "declared, else the plan's own, else V2");
+  try {
+    (void)kr::resolve_bev_pool_plan_format(v2, v1, "the plan header records format");
+    throw std::runtime_error("a conflicting plan format must be refused");
+  } catch (const kr::KernelRequestError& error) {
+    require_contains(error.what(), "plan_format is V2 but the plan header records format V1",
+                     "the refusal names both formats");
+    require_contains(error.what(), "SimaBEVPoolPlanOptions.format = V2", "the refusal's remedy");
+  }
+
+  // V2 sizes its context caches by C, which the caller supplies.
+  auto c = ref::bev_pool_plan_case();
+  c.options.format = SimaBEVPoolPlanFormat::V2;
+  c.options.context_channels = 0;
+  std::vector<kr::TensorFact> facts;
+  for (std::size_t i = 0; i < 3; ++i)
+    facts.push_back(fact({2, 4, 4}, rt::DType::Float32));
+  facts.push_back(fact({4, 4}, rt::DType::Float32));
+  try {
+    (void)kr::bev_pool_plan_request(c.options, facts);
+    throw std::runtime_error("a V2 plan without context_channels must be refused");
+  } catch (const kr::KernelRequestError& error) {
+    require_contains(error.what(), "format V2 (the default) needs context_channels",
+                     "the refusal names the missing option");
+  }
+  c.options.context_channels = 16;
+  require(scalar<std::int64_t>(kr::bev_pool_plan_request(c.options, facts), "format") == 2,
+          "a V2 plan with context_channels forms its request");
+}
+
 void reference_known_answers() {
   const SimaKernelQuantization q{2.0f, -3, SimaQuantRounding::NearestEven};
   require(ref::quantize(1.25f, q) == -1, "Quant rounds before adding the zero point");
@@ -812,6 +872,7 @@ int main() {
     pillar_scatter_request();
     bev_pool_plan_request();
     bev_pool_request();
+    bev_pool_plan_formats();
     bev_pool_logical_axes();
     checked_extent_boundaries();
     dtype_tokens();
