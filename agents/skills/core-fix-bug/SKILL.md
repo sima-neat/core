@@ -22,7 +22,8 @@ description: Reproduce and fix a Core defect through the affected C++ or PyNeat 
    Confirm the cause before changing shared behavior.
 3. Fix it at the owning boundary. Use an existing validator or contract if it
    covers the admitted inputs. Add a guard when a supported caller can reach a
-   failing state. Keep the fix and its regression in the same change.
+   failing state. Keep the code change focused on the cause and include the
+   regression in the same patch.
 4. Add a regression at the closest layer that exercises the reported behavior.
    Show the failing result before the fix and the passing result after it.
    Remove temporary probes and rerun the original reproducer when available.
@@ -31,7 +32,10 @@ description: Reproduce and fix a Core defect through the affected C++ or PyNeat 
    and DevKit wrappers for cases that depend on hardware.
 5. In the PR, describe the cause, the supported behavior restored, and the
    command, result, and package/target tested. Identify any device check still
-   outstanding. Update existing guidance if behavior now differs from it.
+   outstanding. Update existing docs when the fix changes what readers need to
+   know or do. Write `No docs update needed` when existing guidance still applies.
+   For localized docs, update required translations and source hashes using the
+   [localization guide](../../../website/i18n/README.md).
 
 For a two-input `TensorSet` with an invalid attribute key, keep both inputs and
 submit through the affected Model route. Check for `misconfig.sample_attributes`
