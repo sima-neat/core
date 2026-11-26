@@ -617,6 +617,13 @@ def judge_component(comp, row, expected, differences, g, d, floor, view, forms, 
             out['outcome'] = 'FAIL'
             out['why'] = f'the {who} process wrote no end record'
             return out
+    # Nothing of GStreamer in a process on the Dataflow backend (DECISIONS.md 31): at its end it has
+    # not initialised GStreamer and holds no GStreamer type (compare.cpp's done record).
+    gst = next(r for r in d['records'] if r.get('record') == 'done').get('gstreamer')
+    if gst is None or gst.get('initialized') or gst.get('types'):
+        out['outcome'] = 'FAIL'
+        out['why'] = f'the dataflow process holds GStreamer at its end: {gst}'
+        return out
     rows = active_rows(differences)
     floor_paths = set()
     floor_lines = set()
@@ -1311,7 +1318,7 @@ def selftest(_args):
                 recs.append({'record': 'frame', 'form': 'graph', 'sc': 'lock', 'i': i, 'push': 'ok',
                              'pull': 'Ok', 'sample': s, 'tensors': [t]})
             recs.append({'record': 'end', 'form': 'graph', 'sc': 'lock', 'frames': frames, 'frames_ok': frames})
-        recs.append({'record': 'done'})
+        recs.append({'record': 'done', 'gstreamer': {'initialized': False, 'types': []}})
         return {'rc': 0, 'records': recs, 'stderr': stderr}
 
     differences = {'rows': [
@@ -1374,6 +1381,22 @@ def selftest(_args):
     check(r['outcome'] == 'pending', 'judge: a pending form refused in the one form')
     r = judge_component(comp, row, pend, differences, g, d, g, 'app', ['graph'])
     check(r['outcome'] == 'FAIL' and r['forms']['graph']['outcome'] == 'FLIP', 'judge: a pending form that passes must flip')
+    # Nothing of GStreamer in the Dataflow process; GStreamer's own holds what it holds.
+    def holding(p, initialized, types):
+        p = dict(p, records=[dict(r) for r in p['records']])
+        p['records'][-1]['gstreamer'] = {'initialized': initialized, 'types': types}
+        return p
+    r = judge_component(comp, row, expected, differences, holding(g, True, ['GstObject']), d, g, 'app', ['graph'])
+    check(r['outcome'] == 'equal', 'judge: the GStreamer process may hold GStreamer')
+    r = judge_component(comp, row, expected, differences, g, holding(d, True, []), g, 'app', ['graph'])
+    check(r['outcome'] == 'FAIL' and 'holds GStreamer' in r['why'], 'judge: Dataflow initialised GStreamer')
+    r = judge_component(comp, row, expected, differences, g, holding(d, False, ['GstFraction']), g, 'app',
+                        ['graph'])
+    check(r['outcome'] == 'FAIL' and 'GstFraction' in r['why'], 'judge: Dataflow made a GStreamer type')
+    r = judge_component(comp, row, expected, differences, g,
+                        dict(d, records=[r for r in d['records'] if r.get('record') != 'done'] + [{'record': 'done'}]),
+                        g, 'app', ['graph'])
+    check(r['outcome'] == 'FAIL', 'judge: an end record without the footprint fails')
     # A documented stop: both backends end a scenario at the same frame, each with the row's error.
     def stopped(error, push, pull, state, at=2, label='img0@854x480'):
         p = proc(3)
@@ -1386,7 +1409,7 @@ def selftest(_args):
                      'push': push, 'pull': pull, 'error': error})
         recs.append({'record': 'end', 'form': 'graph', 'sc': 'sizes', 'frames': 16, 'frames_ok': at,
                      'first_error': error, 'state': state})
-        recs.append({'record': 'done'})
+        recs.append({'record': 'done', 'gstreamer': {'initialized': False, 'types': []}})
         return {'rc': 0, 'records': recs, 'stderr': ''}
     stop_row = {'id': 'stop', 'state': 'active', 'check': 'stop', 'must_observe': True,
                 'scope': {'forms': ['graph'], 'scenarios': ['sizes'], 'inputs': [r'img\d@854x480'],

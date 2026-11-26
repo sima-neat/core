@@ -22,7 +22,8 @@
 // format; a tensor view pushes four deterministic synthetic tensor lists from the model's
 // input_specs(). Both in EV74 memory (Tensor::cvu()): GStreamer refuses a CPU tensor on a route
 // whose first stage is an EV74 kernel. Every pushed tensor carries a Stamp whose frame_id is the
-// frame's index.
+// frame's index. The last record (done) also says what the process holds of GStreamer at its end
+// (tests/support/gstreamer_footprint.h): a process on Dataflow must hold nothing.
 //
 //   neat_qualification_compare --backend gstreamer|dataflow --package <tar.gz> --opts <file|->
 //       --images <dir> --out <file.jsonl> [--forms graph] [--frames 200] [--timeout-ms 20000]
@@ -41,6 +42,7 @@
 #include "pipeline/TensorCore.h"
 
 #include "qualification_common.h"
+#include "../support/gstreamer_footprint.h"
 
 #include <algorithm>
 #include <atomic>
@@ -1307,6 +1309,11 @@ int main(int argc, char** argv) {
   o.integer("hashed_tensors", static_cast<long long>(c.hash.tensors));
   o.integer("hashed_bytes", static_cast<long long>(c.hash.bytes));
   o.num("hash_ms", static_cast<double>(c.hash.ns) / 1e6);
+  // What the process holds of GStreamer at its end: nothing on Dataflow (qualify.py judges it).
+  const sima_test::GStreamerFootprint gst = sima_test::gstreamer_footprint();
+  q::Obj g;
+  g.boolean("initialized", gst.initialized).raw("types", q::json_strings(gst.types));
+  o.raw("gstreamer", g.text());
   emit(o.text());
   g_out.flush();
   return 0;

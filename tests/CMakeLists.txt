@@ -741,6 +741,17 @@ if (SIMANEAT_DATAFLOW_SOURCE_DIR AND
   set_property(TEST unit_dataflow_credentials_test APPEND PROPERTY LABELS "unit;dataflow")
 endif()
 
+# A process on the Dataflow backend never starts GStreamer and makes no GStreamer object
+# (support/gstreamer_footprint.h). Its model scenarios run where --model=<package> is given.
+if (SIMANEAT_DATAFLOW_SOURCE_DIR AND
+    NOT unit_dataflow_gstreamer_free_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  add_pipeline_test(unit_dataflow_gstreamer_free_test
+    SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/unit_testing/unit_dataflow_gstreamer_free_test.cpp
+    ARGS --backend=dataflow
+  )
+  set_property(TEST unit_dataflow_gstreamer_free_test APPEND PROPERTY LABELS "unit;dataflow")
+endif()
+
 # A test that compares the two backends. A process runs on one backend (set_backend), so it is two
 # tests: `name` on GStreamer records what it pulls into a reference record, and `name`_dataflow on
 # Dataflow runs the same and compares with the record (a ctest fixture runs the first before the
