@@ -32,6 +32,28 @@ constexpr int kNalIdr = 5;
 constexpr int kNalSps = 7;
 constexpr int kNalPps = 8;
 
+// A software H.264 encoder this host provides, set to an IDR every kGopFrames frames without
+// B-frames, or "" if it has none. avenc_h264 is left out: no test image here provides it, so its
+// settings could not be checked.
+std::string software_h264_encoder() {
+  if (simaai::neat::element_exists("x264enc")) {
+    return "x264enc tune=zerolatency speed-preset=ultrafast bframes=0 byte-stream=true "
+           "key-int-max=" +
+           std::to_string(kGopFrames);
+  }
+  if (simaai::neat::element_exists("openh264enc")) {
+    return "openh264enc gop-size=" + std::to_string(kGopFrames);
+  }
+  return {};
+}
+
+// A software H.264 decoder this host provides, or "" if it has none. avdec_h264 is kept from
+// outputting frames it decoded without their references, so only cleanly decoded frames count.
+std::string software_h264_decoder() {
+  const std::string decoder = sima_test::first_available_element({"avdec_h264", "openh264dec"});
+  return decoder == "avdec_h264" ? decoder + " output-corrupt=false" : decoder;
+}
+
 struct NalUnit {
   std::size_t begin = 0; // start of the start code
   std::size_t end = 0;   // one past the last byte of the NAL unit
@@ -150,30 +172,37 @@ void add_buffer_probe(GstElement* pipeline, const char* element, const char* pad
   gst_object_unref(pad);
 }
 
+// The element factory at the start of a fragment such as "x264enc key-int-max=10".
+std::string factory_name(const std::string& fragment) {
+  return fragment.substr(0, fragment.find(' '));
+}
+
 struct ArmResult {
   int source_access_units = 0;
   int source_access_units_with_sps = 0;
   int parsed_idrs = 0;
   int parsed_idrs_with_sps = 0;
   int decoded_frames = 0;
-  std::string end; // "eos", or the bus error the pipeline stopped with
+  std::string end;    // "eos", or the bus error the pipeline stopped with
+  std::string codecs; // encoder and decoder factories, for failure messages
 };
 
 // Encodes kFrames, sends them through RTP and the depacketizer, and decodes what is left after
 // dropping the first `drop_access_units`. `config_interval` unset uses the node default.
-ArmResult run_arm(std::optional<int> config_interval, int drop_access_units) {
+ArmResult run_arm(const std::string& encoder, const std::string& decoder,
+                  std::optional<int> config_interval, int drop_access_units) {
   const auto depacketize =
       config_interval ? simaai::neat::nodes::H264Depacketize(kPayloadType, *config_interval)
                       : simaai::neat::nodes::H264Depacketize(kPayloadType);
   const std::string launch =
       "videotestsrc num-buffers=" + std::to_string(kFrames) +
       " ! video/x-raw,format=I420,width=160,height=120,framerate=30/1"
-      " ! openh264enc gop-size=" +
-      std::to_string(kGopFrames) +
+      " ! " +
+      encoder +
       " ! capsfilter name=source_caps caps=\"video/x-h264,stream-format=byte-stream,alignment=au\""
       " ! rtph264pay pt=" +
       std::to_string(kPayloadType) + " ! " + depacketize->backend_fragment(1) +
-      " ! h264parse name=consumer_parse ! openh264dec ! fakesink name=decoded_sink sync=false";
+      " ! h264parse name=consumer_parse ! " + decoder + " ! fakesink name=decoded_sink sync=false";
 
   GError* error = nullptr;
   std::unique_ptr<GstElement, void (*)(gpointer)> owned(gst_parse_launch(launch.c_str(), &error),
@@ -199,13 +228,18 @@ ArmResult run_arm(std::optional<int> config_interval, int drop_access_units) {
   require(started, "pipeline failed to start\n" + launch);
   require(eos || !bus_error.empty(), "pipeline timed out before EOS\n" + launch);
 
-  return {counters.source_access_units.load(), counters.source_access_units_with_sps.load(),
-          counters.parsed_idrs.load(),         counters.parsed_idrs_with_sps.load(),
-          counters.decoded_frames.load(),      eos ? "eos" : bus_error};
+  return {counters.source_access_units.load(),
+          counters.source_access_units_with_sps.load(),
+          counters.parsed_idrs.load(),
+          counters.parsed_idrs_with_sps.load(),
+          counters.decoded_frames.load(),
+          eos ? "eos" : bus_error,
+          factory_name(encoder) + "/" + factory_name(decoder)};
 }
 
 std::string describe(const char* arm, const ArmResult& r) {
-  return std::string(arm) + ": source_aus=" + std::to_string(r.source_access_units) +
+  return std::string(arm) + " (" + r.codecs +
+         "): source_aus=" + std::to_string(r.source_access_units) +
          " source_aus_with_sps=" + std::to_string(r.source_access_units_with_sps) +
          " parsed_idrs=" + std::to_string(r.parsed_idrs) +
          " parsed_idrs_with_sps=" + std::to_string(r.parsed_idrs_with_sps) +
@@ -225,20 +259,24 @@ void require_source_shape(const char* arm, const ArmResult& r) {
 
 RUN_TEST("unit_h264_depacketize_idr_recovery_test", ([] {
            simaai::neat::gst_init_once();
-           for (const char* element : {"videotestsrc", "openh264enc", "rtph264pay", "rtph264depay",
-                                       "h264parse", "openh264dec"}) {
+           for (const char* element : {"videotestsrc", "rtph264pay", "rtph264depay", "h264parse"}) {
              require(simaai::neat::element_exists(element),
                      std::string("missing GStreamer element: ") + element);
            }
+           const std::string encoder = software_h264_encoder();
+           const std::string decoder = software_h264_decoder();
+           require(!encoder.empty(), "missing software H.264 encoder (x264enc or openh264enc)");
+           require(!decoder.empty(), "missing software H.264 decoder (avdec_h264 or openh264dec)");
 
            // Control: nothing dropped, so every frame decodes without repetition.
-           const ArmResult control = run_arm(/*config_interval=*/0, /*drop_access_units=*/0);
+           const ArmResult control = run_arm(encoder, decoder, /*config_interval=*/0,
+                                             /*drop_access_units=*/0);
            require_source_shape("control", control);
            require(control.decoded_frames == kFrames && control.end == "eos",
                    describe("control", control) + ": every frame should decode");
 
            // Default: the consumer misses the first IDR and resumes at the next one.
-           const ArmResult repeated = run_arm(std::nullopt, kDroppedAccessUnits);
+           const ArmResult repeated = run_arm(encoder, decoder, std::nullopt, kDroppedAccessUnits);
            require_source_shape("default", repeated);
            require(repeated.parsed_idrs_with_sps == kIdrCount,
                    describe("default", repeated) + ": SPS/PPS should precede every IDR");
@@ -248,7 +286,8 @@ RUN_TEST("unit_h264_depacketize_idr_recovery_test", ([] {
 
            // Negative control: without repetition the consumer never sees SPS/PPS again, decodes
            // nothing, and its h264parse fails at EOS for lack of valid frames.
-           const ArmResult off = run_arm(/*config_interval=*/0, kDroppedAccessUnits);
+           const ArmResult off =
+               run_arm(encoder, decoder, /*config_interval=*/0, kDroppedAccessUnits);
            require_source_shape("off", off);
            require(off.parsed_idrs_with_sps == 1,
                    describe("off", off) + ": SPS/PPS should not repeat");

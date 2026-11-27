@@ -9,6 +9,7 @@
 #include "pipeline/Graph.h"
 #include "pipeline/TensorAdapters.h"
 #include "asset_utils.h"
+#include "gst_test_utils.h"
 #include "test_utils.h"
 
 #include <gst/app/gstappsink.h>
@@ -28,7 +29,6 @@
 #include <cstring>
 #include <exception>
 #include <filesystem>
-#include <initializer_list>
 #include <iostream>
 #include <iterator>
 #include <limits>
@@ -631,22 +631,13 @@ constexpr EncodedCodec kMjpeg{
     .payload_type = 26,
 };
 
-std::string first_available_element(std::initializer_list<const char*> candidates) {
-  for (const char* candidate : candidates) {
-    if (simaai::neat::element_exists(candidate)) {
-      return candidate;
-    }
-  }
-  return {};
-}
-
 std::string software_decoder(const EncodedCodec& codec) {
   if (codec.format == FormatTag::ENCODED)
-    return first_available_element({"jpegdec"});
+    return sima_test::first_available_element({"jpegdec"});
   if (codec.format == FormatTag::H264) {
-    return first_available_element({"avdec_h264", "openh264dec"});
+    return sima_test::first_available_element({"avdec_h264", "openh264dec"});
   }
-  return first_available_element({"avdec_h265", "libde265dec"});
+  return sima_test::first_available_element({"avdec_h265", "libde265dec"});
 }
 
 std::string software_encoder(const EncodedCodec& codec) {
@@ -656,12 +647,12 @@ std::string software_encoder(const EncodedCodec& codec) {
       // short fixture to produce output without an EOS-only flush.
       return "x264enc tune=zerolatency speed-preset=ultrafast key-int-max=1 byte-stream=true";
     }
-    return first_available_element({"openh264enc", "avenc_h264"});
+    return sima_test::first_available_element({"openh264enc", "avenc_h264"});
   }
   if (simaai::neat::element_exists("x265enc")) {
     return "x265enc tune=zerolatency speed-preset=ultrafast";
   }
-  return first_available_element({"avenc_h265"});
+  return sima_test::first_available_element({"avenc_h265"});
 }
 
 std::string encoded_caps(const EncodedCodec& codec) {
