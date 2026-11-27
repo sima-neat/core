@@ -31,20 +31,22 @@ int main(int argc, char** argv) {
     namespace fs = std::filesystem;
     using namespace simaai::neat;
     const fs::path root = argc > 1 ? argv[1] : fs::current_path();
-    const char* configured = std::getenv("SIMA_YOLO11_POSE_BF16_TAR");
-    const fs::path archive =
-        configured && *configured ? fs::path(configured) : root / "tmp/yolov11_mpk_bf16.tar.gz";
-    if (!fs::exists(archive)) {
-      if (configured && *configured)
-        throw std::runtime_error("Configured SIMA_YOLO11_POSE_BF16_TAR does not exist");
-      return skip_long_test("Set SIMA_YOLO11_POSE_BF16_TAR to a YOLO11 pose BF16 MPK archive");
-    }
+    // CI prepares the Model Browser yolo26n_pose w16a16 MPK (tools/ci/partition_devkit_e2e.py).
+    const char* configured = std::getenv("SIMA_YOLO26N_POSE_TAR");
+    const fs::path archive = configured && *configured ? fs::path(configured) : fs::path();
+    std::error_code ec;
+    if (archive.empty() || !fs::is_regular_file(archive, ec) || fs::file_size(archive, ec) == 0)
+      return fail_test("YOLO26n pose MPK is missing or empty: '" + archive.string() +
+                       "'. Set SIMA_YOLO26N_POSE_TAR to the yolo26n_pose_w16a16_mpk.tar.gz from "
+                       "'sima-cli models download --id yolo26n_pose --variant w16a16', or run "
+                       "scripts/ci/prepare_model_browser_fixture.py --id yolo26n_pose --variant "
+                       "w16a16 --output <dir>");
     const auto image = sima_yolov8_test::load_people_image_or_skip(root);
     Model::Options options;
     options.preprocess.kind = InputKind::Image;
     options.preprocess.enable = AutoFlag::On;
     options.preprocess.color_convert.input_format = PreprocessColorFormat::BGR;
-    options.decode_type = BoxDecodeType::YoloV8Pose;
+    options.decode_type = BoxDecodeType::YoloV26Pose;
     options.score_threshold = 0.25f;
     options.nms_iou_threshold = 0.5f;
     options.top_k = 100;
@@ -53,7 +55,7 @@ int main(int argc, char** argv) {
     graph.add(nodes::Input());
     graph.add(nodes::groups::Preprocess(model));
     graph.add(nodes::groups::Infer(model));
-    graph.add(nodes::SimaBoxDecode(model, BoxDecodeType::YoloV8Pose, 0.25, 0.5, 100));
+    graph.add(nodes::SimaBoxDecode(model, BoxDecodeType::YoloV26Pose, 0.25, 0.5, 100));
     graph.add(nodes::Output());
     // Separate in-flight DMA allocations avoid same-buffer ownership contention.
     gst_init_once();
@@ -96,7 +98,7 @@ int main(int argc, char** argv) {
     const double seconds =
         std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
     const double fps = seconds > 0 ? 40.0 / seconds : 0;
-    std::cout << "YOLO11_POSE outputs=40 fps=" << fps << '\n';
+    std::cout << "YOLO26N_POSE outputs=40 fps=" << fps << '\n';
     require(fps >= 1.0, "pose integration smoke must sustain at least 1 FPS");
     return 0;
   } catch (const SkipTest& error) {

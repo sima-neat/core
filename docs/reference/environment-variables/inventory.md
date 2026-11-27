@@ -227,7 +227,7 @@ This is the full environment-variable inventory detected from source, tests, tut
 - `SIMA_WATCHDOG_MODEL_PACK`
 - `SIMA_WATCHDOG_TEST_HANDLE`
 - `SIMA_WATCHDOG_TEST_MODEL`
-- `SIMA_YOLO11_POSE_BF16_TAR`
+- `SIMA_YOLO26N_POSE_TAR`
 - `SIMA_YOLO_TAR`
 
 ## Shell / CI Defaults and Pass-through
