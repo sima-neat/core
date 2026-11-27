@@ -1,0 +1,42 @@
+name: Migrate Issue Labels
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Preview label changes before applying them.
+        type: boolean
+        default: true
+      assignments:
+        description: JSON object mapping ambiguous issue/PR numbers to reviewed categories.
+        type: string
+        default: '{}'
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  migrate:
+    concurrency:
+      group: issue-label-migration
+      cancel-in-progress: false
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Preview or apply reviewed label migration
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          ASSIGNMENTS: ${{ inputs.assignments }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          python3 -c 'import os,pathlib; pathlib.Path(os.environ["RUNNER_TEMP"], "assignments.json").write_text(os.environ["ASSIGNMENTS"])'
+          python3 tools/ci/migrate_issue_labels.py \
+            --assignments "${RUNNER_TEMP}/assignments.json" \
+            --dry-run "${DRY_RUN}" \
+            | tee "${RUNNER_TEMP}/label-migration.json"
+      - uses: actions/upload-artifact@v5
+        if: always()
+        with:
+          name: label-migration
+          path: ${{ runner.temp }}/label-migration.json

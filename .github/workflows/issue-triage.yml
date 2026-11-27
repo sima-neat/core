@@ -21,18 +21,31 @@ permissions:
 
 jobs:
   triage:
-    if: >-
-      ${{
-        github.event_name == 'workflow_dispatch' ||
-        (
-          !contains(github.event.issue.labels.*.name, 'no-ai-triage') &&
-          !contains(github.event.issue.labels.*.name, 'customer-confidential') &&
-          !contains(github.event.issue.labels.*.name, 'security') &&
-          !contains(github.event.issue.labels.*.name, 'manual-triage')
-        )
-      }}
     uses: sima-neat/.github/.github/workflows/reusable-issue-triage.yml@main
     with:
       issue_number: ${{ github.event.issue.number || inputs.issue_number }}
       dry_run: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || false }}
       repo_triage_path: .github/issue-triage
+
+  notify-priority:
+    needs: triage
+    if: >-
+      ${{ vars.SLACK_ISSUE_TRIAGE_CHANNEL_ID != '' &&
+          (needs.triage.outputs.priority_action == 'high_assigned' ||
+           needs.triage.outputs.priority_action == 'urgent_recommended') }}
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - name: Notify issue priority in Slack
+        uses: slackapi/slack-github-action@dcb1066f776dd043e64d0e8ba94ca15cc7e1875d # v4.0.0
+        with:
+          errors: true
+          method: chat.postMessage
+          token: ${{ secrets.SLACK_BOT_TOKEN }}
+          payload: |
+            {
+              "channel": "${{ vars.SLACK_ISSUE_TRIAGE_CHANNEL_ID }}",
+              "text": "${{ needs.triage.outputs.priority_action == 'high_assigned' && 'High priority assigned' || 'Urgent priority recommended; maintainer confirmation required' }}\n${{ github.repository }}#${{ github.event.issue.number }}\n${{ github.server_url }}/${{ github.repository }}/issues/${{ github.event.issue.number }}",
+              "unfurl_links": false,
+              "unfurl_media": false
+            }
